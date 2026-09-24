@@ -1,0 +1,233 @@
+// Tests for the parts of the extractor that do not need Windows: JSON, sync code / site checks,
+// game version parsing, progress mapping, config, and the HTTP client against tests/mock-server.mjs.
+//
+//   CoreTests <mock base url> [account.json to send]
+//
+// Built by tests/run-tests.sh with the .NET 8 SDK's csc (no NuGet needed).
+
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.IO.Compression;
+using System.Net;
+using System.Security.Cryptography;
+using System.Text;
+using RealmForge;
+
+static class CoreTests {
+  static int passed, failed;
+
+  static void Check(bool ok, string what) {
+    if (ok) { passed++; Console.WriteLine("  ok   " + what); }
+    else { failed++; Console.WriteLine("  FAIL " + what); }
+  }
+
+  static void Eq<T>(T expected, T actual, string what) {
+    Check(EqualityComparer<T>.Default.Equals(expected, actual), what + " (expected " + expected + ", got " + actual + ")");
+  }
+
+  static string Tok(char c) { return "rf_" + new string(c, 32); }
+
+  static int Main(string[] args) {
+    string mock = args.Length > 0 ? args[0] : "http://localhost:3999";
+    string realAccount = args.Length > 1 ? args[1] : null;
+
+    Console.WriteLine("MiniJson");
+    var o = (Dictionary<string, object>)MiniJson.Parse("\uFEFF {\"a\":[1,2.5,-3e2,true,false,null],\"s\":\"x\\\"\\u0416\\n\",\"o\":{}} ");
+    Eq(3, o.Count, "object keys");
+    Eq(6, ((List<object>)o["a"]).Count, "array length");
+    Eq("x\"Ж\n", (string)o["s"], "string escapes");
+    Eq(-300.0, (double)((List<object>)o["a"])[2], "exponent number");
+    Check(MiniJson.TryParse("{\"a\":1,}") == null, "rejects trailing comma");
+    Check(MiniJson.TryParse("{\"a\":1} x") == null, "rejects trailing data");
+    Check(MiniJson.TryParse("") == null && MiniJson.TryParse(null) == null, "rejects empty");
+    Eq("\"a\\\"b\\\\c\\u0001\"", MiniJson.Quote("a\"b\\c\u0001"), "Quote escapes");
+
+    Console.WriteLine("Sync code");
+    Check(SyncClient.IsValidCode(Tok('A')), "valid code");
+    Check(SyncClient.IsValidCode("rf_0123456789abcdefghijABCDEFGHIJxy"), "valid mixed base62 code");
+    Check(!SyncClient.IsValidCode("rf_" + new string('A', 31)), "31 chars rejected");
+    Check(!SyncClient.IsValidCode("rf_" + new string('A', 33)), "33 chars rejected");
+    Check(!SyncClient.IsValidCode("RF_" + new string('A', 32)), "prefix is case-sensitive");
+    Check(!SyncClient.IsValidCode("rf_" + new string('A', 31) + "-"), "non-base62 rejected");
+    Eq(Tok('A'), SyncClient.ExtractCode("  " + Tok('A') + "\r\n"), "paste with whitespace");
+    Eq(Tok('A'), SyncClient.ExtractCode("Ваш код: " + Tok('A') + "."), "paste with surrounding text");
+    Eq("rf_abc", SyncClient.ExtractCode(" rf_abc "), "incomplete code kept as typed");
+
+    Console.WriteLine("Site address");
+    string err;
+    Eq("https://realmforge.vercel.app", SyncClient.NormalizeSite("https://realmforge.vercel.app/", out err), "trailing slash");
+    Eq("https://realmforge.vercel.app", SyncClient.NormalizeSite("realmforge.vercel.app", out err), "scheme added");
+    Eq("https://example.com/rf", SyncClient.NormalizeSite(" https://example.com/rf/ ", out err), "path prefix kept");
+    Eq("http://localhost:3999", SyncClient.NormalizeSite("http://localhost:3999", out err), "http allowed for localhost");
+    Check(SyncClient.NormalizeSite("http://example.com", out err) == null && err == "https", "http refused for remote hosts");
+    Check(SyncClient.NormalizeSite("ftp://example.com", out err) == null && err == "invalid", "ftp refused");
+    Check(SyncClient.NormalizeSite("https://example.com/?q=1", out err) == null, "query refused");
+    Check(SyncClient.NormalizeSite("", out err) == null, "empty refused");
+    Eq("https://x.app/app/h?s=1", SyncClient.ResolveUrl("https://x.app", "/app/h?s=1"), "relative viewUrl resolved");
+    Eq("https://y.app/a", SyncClient.ResolveUrl("https://x.app", "https://y.app/a"), "absolute viewUrl kept");
+    Check(SyncClient.ResolveUrl("https://x.app", "file:///C:/Windows/notepad.exe") == null, "file: viewUrl refused");
+    Check(SyncClient.ResolveUrl("https://x.app", "javascript:alert(1)") == null, "javascript: viewUrl refused");
+
+    Console.WriteLine("Reply mapping");
+    var r = SyncClient.Interpret(200, "{\"ok\":true,\"snapshotId\":\"s1\",\"heroes\":2,\"items\":3,\"artifacts\":4,\"viewUrl\":\"/v\"}", null, null, "https://x.app");
+    Check(r.Status == SyncStatus.Ok && r.Heroes == 2 && r.Items == 3 && r.Artifacts == 4 && r.ViewUrl == "https://x.app/v", "200 ok");
+    Eq(SyncStatus.Unexpected, SyncClient.Interpret(200, "{\"ok\":false}", null, null, "https://x.app").Status, "200 without ok:true");
+    Eq(SyncStatus.Unexpected, SyncClient.Interpret(200, "<html>", null, null, "https://x.app").Status, "200 html");
+    Eq(SyncStatus.InvalidToken, SyncClient.Interpret(401, "{\"ok\":false,\"error\":\"invalid_token\"}", null, null, "https://x.app").Status, "401");
+    Eq(SyncStatus.TooLarge, SyncClient.Interpret(413, null, null, null, "https://x.app").Status, "413");
+    Eq(SyncStatus.UnsupportedMedia, SyncClient.Interpret(415, "", null, null, "https://x.app").Status, "415");
+    r = SyncClient.Interpret(422, "{\"ok\":false,\"error\":\"invalid_payload\",\"details\":[\"a\",{\"path\":\"heroes\",\"message\":\"bad\"}]}", null, null, "https://x.app");
+    Check(r.Status == SyncStatus.InvalidPayload && r.Details == "a; heroes: bad", "422 details: " + r.Details);
+    r = SyncClient.Interpret(429, "{\"ok\":false,\"error\":\"rate_limited\"}", "90", null, "https://x.app");
+    Check(r.Status == SyncStatus.RateLimited && r.RetryAfterSeconds == 90, "429 Retry-After header");
+    r = SyncClient.Interpret(429, "{\"ok\":false,\"retryAfter\":30}", null, null, "https://x.app");
+    Check(r.RetryAfterSeconds == 30, "429 retryAfter in body");
+    Eq(SyncStatus.ServerError, SyncClient.Interpret(500, null, null, null, "https://x.app").Status, "500");
+    Eq(SyncStatus.ServerError, SyncClient.Interpret(503, null, null, null, "https://x.app").Status, "503");
+    Eq(SyncStatus.Unexpected, SyncClient.Interpret(404, null, null, null, "https://x.app").Status, "404");
+    r = SyncClient.Interpret(308, null, null, "https://www.x.app/api/sync", "https://x.app");
+    Check(r.Status == SyncStatus.Redirect && r.Details == "https://www.x.app/api/sync", "308 redirect");
+
+    Console.WriteLine("Game version (realversion.xml)");
+    Eq("1.2.3", GameInfo.ParseVersionXml("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<root><version>1.2.3</version></root>"), "<version> element");
+    Eq("2.4.0.51", GameInfo.ParseVersionXml("<?xml version=\"1.0\"?><Config RealVersion=\"2.4.0.51\" />"), "attribute, xml declaration ignored");
+    Eq("1.10.2", GameInfo.ParseVersionXml("<a><b>1.10.2</b></a>"), "first version-like text node");
+    Eq("1.0.7", GameInfo.ParseVersionXml("\uFEFF1.0.7\r\n"), "plain text file");
+    Check(GameInfo.ParseVersionXml("<a><b>hello</b></a>") == null, "no version -> null");
+    Check(GameInfo.ParseVersionXml(null) == null, "null input");
+    Check(GameInfo.TryReadVersion(null) == null && GameInfo.TryReadVersion("/nonexistent/game.exe") == null, "missing file -> null");
+
+    Console.WriteLine("Russian plurals / texts");
+    Strings.Lang = "ru";
+    Eq("1 герой", Strings.Heroes(1), "1"); Eq("3 героя", Strings.Heroes(3), "3"); Eq("5 героев", Strings.Heroes(5), "5");
+    Eq("11 героев", Strings.Heroes(11), "11"); Eq("21 герой", Strings.Heroes(21), "21"); Eq("112 предметов", Strings.Items(112), "112");
+    Eq("1109 предметов", Strings.Items(1109), "1109"); Eq("22 артефакта", Strings.Artifacts(22), "22");
+    Strings.Lang = "en";
+    Eq("1 hero", Strings.Heroes(1), "en 1"); Eq("128 heroes", Strings.Heroes(128), "en 128");
+    Eq("2 min", Strings.Wait(90), "wait 90 s");
+    Strings.Lang = "ru";
+
+    Console.WriteLine("Read progress");
+    var rp = new ReadProgress();
+    string[] v04Log = {
+      "RW regions: 812, 2400 MB", "  lua string 'iStarLvl' @ 0x1", "Strings found in 6 s",
+      "Equipment tables...", "  nodes keyed 'iStarLvl': 2300", "  tables: 1200", "  item tables: 1150", "  references: 5000",
+      "  equipment container #1: 1109 entries", "  equipment items (owned): 1109",
+      "Hero tables...", "  nodes keyed 'vEquipSlot': 300", "  tables: 140", "  hero tables: 130", "  references: 900",
+      "  hero container #1: 128 entries", "  heroes (owned): 128",
+      "Faction rewards...", "  nodes keyed 'm_CampHeroPerfectReward': 2", "  tables: 1", "  reward events: 9",
+      "Artifacts...", "  nodes keyed 'm_vArtifacts': 2", "  tables: 1", "  artifacts: 40", "Done in 41 s" };
+    double last = 0; bool monotonic = true;
+    foreach (var line in v04Log) { double p = rp.Feed(line); if (p < last) monotonic = false; last = p; }
+    Check(monotonic && Math.Abs(last - 1.0) < 1e-9, "13 passes reach 100% (" + last + ")");
+
+    Console.WriteLine("Extractor.Check");
+    string payload = realAccount != null ? File.ReadAllText(realAccount, Encoding.UTF8) : SyntheticAccount();
+    var ex = Extractor.Check(payload, new ExtractResult());
+    Check(ex.Error == ExtractError.None && ex.Heroes > 0 && ex.Items > 0, "payload counts: " + ex.Heroes + " heroes, " + ex.Items + " items, " + ex.Artifacts + " artifacts");
+    Eq(ExtractError.NoAccountData, Extractor.Check("{\"equipment\":[],\"heroes\":[],\"campRewards\":null,\"artifacts\":null,\"meta\":{}}", new ExtractResult()).Error, "empty account -> NoAccountData");
+    Eq(ExtractError.Failed, Extractor.Check("{\"equipment\":[", new ExtractResult()).Error, "broken JSON -> Failed");
+
+    Console.WriteLine("Config");
+    var cfg = new AppConfig(); cfg.Code = Tok('A'); cfg.Site = "https://example.com"; cfg.Lang = "en"; cfg.SaveCopy = true;
+    string cj = cfg.ToJson();
+    Check(cj.IndexOf(Tok('A'), StringComparison.Ordinal) < 0 && cj.Contains("\"code\": \"dpapi:"), "code not stored in plain text");
+    var back = AppConfig.FromJson(cj);
+    Check(back.Code == Tok('A') && back.Site == "https://example.com" && back.Lang == "en" && back.SaveCopy, "config round trip");
+    var def = AppConfig.FromJson("not json");
+    Check(def.Site == SyncClient.DefaultSite && def.Lang == "ru" && def.Code == "" && !def.SaveCopy, "broken config -> defaults");
+    Eq("", AppConfig.FromJson("{\"code\":\"" + Tok('A') + "\"}").Code, "plain-text code in config is ignored");
+    string tmp = Path.Combine(Path.GetTempPath(), "rf-test-" + Guid.NewGuid().ToString("N"), "config.json");
+    cfg.Save(tmp); cfg.Save(tmp);
+    Check(AppConfig.Load(tmp).Code == Tok('A'), "config save/load file (overwrite)");
+    Directory.Delete(Path.GetDirectoryName(tmp), true);
+
+    Console.WriteLine("Gzip");
+    byte[] gz = SyncClient.Gzip(payload);
+    Check(gz.Length > 2 && gz[0] == 0x1f && gz[1] == 0x8b, "gzip magic bytes");
+    byte[] unz;
+    using (var ms = new MemoryStream(gz)) using (var z = new GZipStream(ms, CompressionMode.Decompress)) using (var outMs = new MemoryStream()) {
+      z.CopyTo(outMs); unz = outMs.ToArray();
+    }
+    Check(Convert.ToBase64String(unz) == Convert.ToBase64String(new UTF8Encoding(false).GetBytes(payload)),
+      "gzip round trip, UTF-8 without BOM (" + unz.Length + " -> " + gz.Length + " bytes)");
+
+    Console.WriteLine("HTTP against " + mock);
+    string site = SyncClient.NormalizeSite(mock, out err);
+    string sha = Sha256(payload);
+    r = SyncClient.Send(site, Tok('A'), payload);
+    Check(r.Status == SyncStatus.Ok, "200: status " + r.Status + " (HTTP " + r.HttpCode + ")");
+    Check(r.Heroes == ex.Heroes && r.Items == ex.Items && r.Artifacts == ex.Artifacts, "200: server counted " + r.Heroes + "/" + r.Items + "/" + r.Artifacts);
+    Check(r.SnapshotId != null && r.SnapshotId.StartsWith("snap_"), "200: snapshotId " + r.SnapshotId);
+    Check(r.ViewUrl != null && r.ViewUrl.StartsWith(site + "/app/"), "200: viewUrl " + r.ViewUrl);
+    var lastReq = (Dictionary<string, object>)MiniJson.Parse(new WebClient().DownloadString(site + "/__last"));
+    var h = (Dictionary<string, object>)lastReq["headers"];
+    Eq(sha, (string)lastReq["sha256"], "server decoded exactly the same JSON (sha256)");
+    Eq("Bearer " + Tok('A'), (string)h["authorization"], "Authorization header");
+    Eq("application/json", (string)h["contentType"], "Content-Type header");
+    Eq("gzip", (string)h["contentEncoding"], "Content-Encoding header");
+    Eq("0.5", (string)h["extractor"], "X-RF-Extractor header");
+    Eq("RealmForge-Extractor/0.5", (string)h["userAgent"], "User-Agent header");
+    Eq(gz.Length.ToString(), (string)h["contentLength"], "Content-Length = gzip size");
+
+    r = SyncClient.Send(site, "rf_" + new string('Z', 32), payload);
+    Check(r.Status == SyncStatus.InvalidToken && r.HttpCode == 401, "401 invalid token");
+    r = SyncClient.Send(site, Tok('R'), payload);
+    Check(r.Status == SyncStatus.RateLimited && r.RetryAfterSeconds == 120, "429 rate limited, retry after " + r.RetryAfterSeconds);
+    r = SyncClient.Send(site, Tok('S'), payload);
+    Check(r.Status == SyncStatus.ServerError && r.HttpCode == 500, "500 server error");
+    r = SyncClient.Send(site, Tok('L'), payload);
+    Check(r.Status == SyncStatus.TooLarge, "413 too large");
+    r = SyncClient.Send(site, Tok('M'), payload);
+    Check(r.Status == SyncStatus.UnsupportedMedia, "415 unsupported");
+    r = SyncClient.Send(site, Tok('P'), payload);
+    Check(r.Status == SyncStatus.InvalidPayload && r.Details != null && r.Details.EndsWith("..."), "422 details: " + r.Details);
+    r = SyncClient.Send(site, Tok('A'), "{\"heroes\":{},\"equipment\":[]}");
+    Check(r.Status == SyncStatus.InvalidPayload && r.Details.Contains("heroes"), "422 from payload validation: " + r.Details);
+    r = SyncClient.Send(site, Tok('D'), payload);
+    Check(r.Status == SyncStatus.Redirect && r.Details == "https://realmforge.example/api/sync", "308 not followed, reported");
+    r = SyncClient.Send(site, Tok('H'), payload);
+    Check(r.Status == SyncStatus.Unexpected && r.HttpCode == 200, "200 HTML -> unexpected");
+    r = SyncClient.Send(site + "/nope", Tok('A'), payload);
+    Check(r.Status == SyncStatus.Unexpected && r.HttpCode == 404, "404 -> unexpected");
+    int saved = SyncClient.TimeoutMs; SyncClient.TimeoutMs = 1500;
+    r = SyncClient.Send(site, Tok('T'), payload);
+    SyncClient.TimeoutMs = saved;
+    Check(r.Status == SyncStatus.Timeout, "timeout (" + r.Status + ": " + r.Details + ")");
+    r = SyncClient.Send("http://127.0.0.1:1", Tok('A'), payload);
+    Check(r.Status == SyncStatus.Unreachable, "connection refused -> unreachable (" + r.Details + ")");
+    r = SyncClient.Send("https://realmforge-nonexistent.invalid", Tok('A'), payload);
+    Check(r.Status == SyncStatus.Unreachable || r.Status == SyncStatus.Timeout, "unknown host -> unreachable (" + r.Details + ")");
+
+    Console.WriteLine();
+    Console.WriteLine(passed + " passed, " + failed + " failed");
+    return failed == 0 ? 0 : 1;
+  }
+
+  static string Sha256(string s) {
+    using (var sha = SHA256.Create()) {
+      var sb = new StringBuilder();
+      foreach (byte b in sha.ComputeHash(new UTF8Encoding(false).GetBytes(s))) sb.Append(b.ToString("x2"));
+      return sb.ToString();
+    }
+  }
+
+  // Same shape as the v0.4 output: equipment[], heroes[], campRewards{}, artifacts{}, meta{}.
+  static string SyntheticAccount() {
+    var sb = new StringBuilder("{\n\"equipment\":[\n");
+    for (int i = 1; i <= 2000; i++) {
+      if (i > 1) sb.Append(",\n");
+      sb.Append("{\"iItemUid\":" + i + ",\"iItemId\":" + (710100 + i % 50) + ",\"iStarLvl\":" + (i % 6) +
+        ",\"vViceAttrList\":{\"[1]\":{\"iAttrId\":310,\"iValue\":1350},\"[2]\":{\"iAttrId\":305,\"iValue\":109}},\"fRate\":0.125}");
+    }
+    sb.Append("\n],\n\"heroes\":[\n");
+    for (int i = 1; i <= 128; i++) {
+      if (i > 1) sb.Append(",\n");
+      sb.Append("{\"iHeroId\":" + i + ",\"iBaseId\":" + (2000 + i) + ",\"sName\":\"Герой №" + i + " \\\"тест\\\"\",\"vEquipSlot\":{\"[1]\":" + i + "}}");
+    }
+    sb.Append("\n],\n\"campRewards\":{\"[1]\":true},\n\"artifacts\":{\"[1]\":{\"iId\":1},\"[2]\":{\"iId\":2},\"[3]\":{\"iId\":3}}\n");
+    sb.Append(",\"meta\":{\"extractor\":\"0.5\",\"gameVersion\":\"1.2.3\",\"seconds\":41,\"equipment\":2000,\"heroes\":128}\n}\n");
+    return sb.ToString();
+  }
+}
