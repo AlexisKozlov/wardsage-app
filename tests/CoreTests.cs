@@ -56,8 +56,8 @@ static class CoreTests {
 
     Console.WriteLine("Site address");
     string err;
-    Eq("https://realmforge.vercel.app", SyncClient.NormalizeSite("https://realmforge.vercel.app/", out err), "trailing slash");
-    Eq("https://realmforge.vercel.app", SyncClient.NormalizeSite("realmforge.vercel.app", out err), "scheme added");
+    Eq("https://realmforge-wor.vercel.app", SyncClient.NormalizeSite("https://realmforge-wor.vercel.app/", out err), "trailing slash");
+    Eq("https://realmforge-wor.vercel.app", SyncClient.NormalizeSite("realmforge-wor.vercel.app", out err), "scheme added");
     Eq("https://example.com/rf", SyncClient.NormalizeSite(" https://example.com/rf/ ", out err), "path prefix kept");
     Eq("http://localhost:3999", SyncClient.NormalizeSite("http://localhost:3999", out err), "http allowed for localhost");
     Check(SyncClient.NormalizeSite("http://example.com", out err) == null && err == "https", "http refused for remote hosts");

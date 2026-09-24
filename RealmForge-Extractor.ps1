@@ -751,7 +751,7 @@ namespace RealmForge {
   public static class SyncClient {
     public const string Version = RFX.ExtractorVersion;
     public const string UserAgent = "RealmForge-Extractor/" + Version;
-    public const string DefaultSite = "https://realmforge.vercel.app";
+    public const string DefaultSite = "https://realmforge-wor.vercel.app";
     public static int TimeoutMs = 60000;   // per request; a field (not const) so tests can shorten it
     const int MaxReplyBytes = 1024 * 1024;
 
@@ -953,7 +953,7 @@ namespace RealmForge {
 // ===== src/Config.cs =====
 // RealmForge extractor - settings in %APPDATA%\RealmForge\config.json.
 //
-// {"site":"https://realmforge.vercel.app","lang":"ru","saveCopy":false,"code":"dpapi:<base64>"}
+// {"site":"https://realmforge-wor.vercel.app","lang":"ru","saveCopy":false,"code":"dpapi:<base64>"}
 // The sync code is never stored in plain text: it is encrypted with Windows DPAPI for the current
 // user (see CodeProtector), so the file is useless on another PC or under another Windows account.
 

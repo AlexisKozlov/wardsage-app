@@ -22,7 +22,7 @@ static class UiPreview {
     var cfg = new AppConfig();
     cfg.Lang = args.Length > 1 ? args[1] : "ru";
     if (state != "idle" && state != "done-save") cfg.Code = "rf_7Qm2xKp9LbT4vWc8NzY3hJd6RfS1aGe5";
-    if (state == "err-admin") cfg.Site = "https://realmforge.vercel.app";
+    if (state == "err-admin") cfg.Site = "https://realmforge-wor.vercel.app";
 
     Application.EnableVisualStyles();
     var form = new MainForm(cfg, "C:\\Games\\RealmForge\\RealmForge-Extractor.ps1");

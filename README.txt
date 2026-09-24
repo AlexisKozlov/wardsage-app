@@ -7,14 +7,14 @@ RealmForge Extractor 0.5
 -------
 Небольшая программа для Watcher of Realms (Windows). Она читает из памяти запущенной игры
 ваших героев, снаряжение, артефакты и награды фракций и отправляет их на сайт RealmForge
-(https://realmforge.vercel.app), где их можно смотреть и подбирать снаряжение.
+(https://realmforge-wor.vercel.app), где их можно смотреть и подбирать снаряжение.
 
 ТОЛЬКО ЧТЕНИЕ
 -------------
 * Программа только ЧИТАЕТ память игры (функция Windows ReadProcessMemory). Она ничего не
   записывает в игру, не меняет файлы игры и не обращается к серверам игры.
 * В сеть уходит один запрос: на адрес сайта, указанный в окне (по умолчанию
-  https://realmforge.vercel.app). Никакой телеметрии и сторонних сервисов.
+  https://realmforge-wor.vercel.app). Никакой телеметрии и сторонних сервисов.
 * Исходный код открыт: RealmForge-Extractor.ps1 — обычный текстовый файл, его можно прочитать.
 
 ЗАЧЕМ ПРАВА АДМИНИСТРАТОРА
@@ -78,14 +78,14 @@ WHAT IT IS
 ----------
 A small tool for Watcher of Realms (Windows). It reads your heroes, gear, artifacts and faction
 rewards from the memory of the running game and sends them to the RealmForge site
-(https://realmforge.vercel.app), where you can browse them and optimize your gear.
+(https://realmforge-wor.vercel.app), where you can browse them and optimize your gear.
 
 READ-ONLY
 ---------
 * The program only READS the game's memory (the Windows ReadProcessMemory function). It never
   writes to the game, never changes game files and never talks to the game servers.
 * It makes exactly one network request: to the site address shown in the window
-  (https://realmforge.vercel.app by default). No telemetry, no third-party services.
+  (https://realmforge-wor.vercel.app by default). No telemetry, no third-party services.
 * The code is open: RealmForge-Extractor.ps1 is a plain text file you can read.
 
 WHY ADMINISTRATOR RIGHTS

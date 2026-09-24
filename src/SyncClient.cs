@@ -37,7 +37,7 @@ namespace RealmForge {
   public static class SyncClient {
     public const string Version = RFX.ExtractorVersion;
     public const string UserAgent = "RealmForge-Extractor/" + Version;
-    public const string DefaultSite = "https://realmforge.vercel.app";
+    public const string DefaultSite = "https://realmforge-wor.vercel.app";
     public static int TimeoutMs = 60000;   // per request; a field (not const) so tests can shorten it
     const int MaxReplyBytes = 1024 * 1024;
 

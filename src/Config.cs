@@ -1,6 +1,6 @@
 // RealmForge extractor - settings in %APPDATA%\RealmForge\config.json.
 //
-// {"site":"https://realmforge.vercel.app","lang":"ru","saveCopy":false,"code":"dpapi:<base64>"}
+// {"site":"https://realmforge-wor.vercel.app","lang":"ru","saveCopy":false,"code":"dpapi:<base64>"}
 // The sync code is never stored in plain text: it is encrypted with Windows DPAPI for the current
 // user (see CodeProtector), so the file is useless on another PC or under another Windows account.
 
