@@ -1,0 +1,5 @@
+# Files players run on Windows keep Windows line endings.
+*.bat text eol=crlf
+README.txt text eol=crlf
+# Generated script: exact bytes (UTF-8 BOM + CRLF), see tools/build.mjs
+RealmForge-Extractor.ps1 -text
