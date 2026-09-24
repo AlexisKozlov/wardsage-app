@@ -85,7 +85,8 @@ namespace RealmForge {
     Label title, subtitle, langRu, langEn, codeLabel, codeCheck, codeHint, advToggle, siteLabel, siteError, status, footer;
     TextBox codeBox, siteBox;
     CheckBox showCode, saveCopy;
-    Button primary, siteReset, openSite, openFolder, restartAdmin, showLog;
+    Button primary, siteReset, openSite, openFolder, restartAdmin, showLog, equipBtn;
+    HelperForm helper;
     Panel advPanel;
     Label[] steps = new Label[4];
     StepState[] stepStates = new StepState[4];
@@ -238,6 +239,13 @@ namespace RealmForge {
       primary.Click += OnPrimary;
       root.Controls.Add(primary);
       AcceptButton = primary;
+
+      // equip helper («Переодевание»): builds sent from the site, hints over the game
+      equipBtn = NewButton(false);
+      equipBtn.Size = new Size(W, 32);
+      equipBtn.Margin = new Padding(0, 0, 0, 12);
+      equipBtn.Click += OnEquip;
+      root.Controls.Add(equipBtn);
 
       // steps + progress
       for (int i = 0; i < steps.Length; i++) {
@@ -394,6 +402,7 @@ namespace RealmForge {
       openFolder.Text = Strings.Get("btn_open_folder");
       restartAdmin.Text = Strings.Get("btn_restart_admin");
       showLog.Text = Strings.Get("btn_log");
+      equipBtn.Text = Strings.Get("btn_equip");
       footer.Text = Strings.Get("footer");
       UpdateMode();
       RenderSteps();
@@ -426,7 +435,19 @@ namespace RealmForge {
       siteReset.Enabled = !busy;
       primary.Text = busy ? Strings.Get("btn_busy") : Strings.Get(uploadMode ? "btn_sync" : "btn_save_only");
       primary.Enabled = !busy && (!uploadMode || (valid && siteErr == null));
+      equipBtn.Enabled = !busy && valid && siteErr == null;
       if (idleStatus) SetStatus(delegate { return Strings.Format("st_ready", primary.Text); }, Theme.Muted);
+    }
+
+    // Opens (or brings back) the equip helper window with the current site and code.
+    void OnEquip(object sender, EventArgs e) {
+      string err;
+      string siteUrl = SyncClient.NormalizeSite(siteBox.Text, out err);
+      if (siteUrl == null || !SyncClient.IsValidCode(codeBox.Text)) return;
+      SaveConfig();
+      if (helper != null && !helper.IsDisposed) { helper.Activate(); return; }
+      helper = new HelperForm(siteUrl, codeBox.Text);
+      helper.Show();
     }
 
     void OnCodeChanged(object sender, EventArgs e) {

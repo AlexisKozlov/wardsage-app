@@ -61,10 +61,10 @@ using System.Windows.Forms;
 //   * wrapped in the RealmForge namespace;
 //   * L() also forwards each log line to OnLog (progress in the window);
 //   * Run() records LastError / LastOpenError so the window can show a clear message;
-//   * meta.extractor comes from ExtractorVersion ("0.5"); meta.gameVersion is added when known.
+//   * meta.extractor comes from ExtractorVersion ("0.6"); meta.gameVersion is added when known.
 
 namespace RealmForge {
-  public static class RFX {
+  public static partial class RFX {
     [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr OpenProcess(int a, bool b, int pid);
     [DllImport("kernel32.dll")] static extern bool ReadProcessMemory(IntPtr h, IntPtr addr, byte[] buf, IntPtr size, out IntPtr read);
     [DllImport("kernel32.dll")] static extern IntPtr VirtualQueryEx(IntPtr h, IntPtr addr, out MBI m, IntPtr len);
@@ -72,7 +72,7 @@ namespace RealmForge {
     static IntPtr H;
     public static StringBuilder Log = new StringBuilder();
     // --- v0.5 hooks (the scanning logic below is unchanged from v0.4) ---
-    public const string ExtractorVersion = "0.5";
+    public const string ExtractorVersion = "0.6";
     public static Action<string> OnLog;        // called for every log line (from the worker thread)
     public static string GameVersion;          // written to meta.gameVersion when not null
     public static string LastError;            // "not_running" | "open_failed" | null
@@ -245,7 +245,7 @@ namespace RealmForge {
     }
 
     // Find Lua tables that hold references (TValue tt=table) to the given target tables; returns container -> targets
-    static Dictionary<ulong, List<ulong>> Containers(HashSet<ulong> targets) {
+    static Dictionary<ulong, List<ulong>> Containers(HashSet<ulong> targets, int minCount = 3) {
       var hitAt = new Dictionary<ulong, ulong>();
       Scan((b0, buf, len) => {
         for (int i = 0; i + 16 <= len; i += 8) {
@@ -266,7 +266,7 @@ namespace RealmForge {
           List<ulong> got = null;
           if (sa > 0) got = Collect(ha, hitAt, arr, arr + (ulong)sa * 16, 16, got);
           got = Collect(ha, hitAt, node, node + ((ulong)32 << lsize), 32, got);
-          if (got != null && got.Count >= 3) res[b0 + (ulong)i] = got;
+          if (got != null && got.Count >= minCount) res[b0 + (ulong)i] = got;
         }
       });
       return res;
@@ -339,6 +339,158 @@ namespace RealmForge {
       sb.Append(",\"seconds\":" + (int)sw.Elapsed.TotalSeconds + ",\"equipment\":" + ne + ",\"heroes\":" + nh + "}\n}\n");
       L("Done in " + (int)sw.Elapsed.TotalSeconds + " s");
       return sb.ToString();
+    }
+  }
+}
+
+// ===== src/EquipScan.cs =====
+// RealmForge extractor - equip helper: reading the game's equipment screen (READ-ONLY).
+//
+// Same access as the account reader: OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ),
+// VirtualQueryEx and ReadProcessMemory. Nothing is ever written to the game and no input is sent to it.
+//
+// What is read (Lua tables of the game UI, verified on the live game 2026-09-25):
+//   * the equipment list panel (the table that owns m_EquipIdToIndex): m_EquipIdToIndex (item uid -> row of
+//     m_EquipListRealData), m_EquipListRealData (rows {Type=1, Item={uid, uid, uid}}), m_FilterConfig (Part = shown slot,
+//     IsHideEquiped, IsHideEnhanced, Suits, MainAttrs, ...);
+//   * EquipData.m_CurrentSelectHeroUid — the hero whose gear screen is open;
+//   * item tables (iItemUid, iHeroId) of the plan items — who wears each item now.
+// FindEquip() scans the memory once (tens of seconds); Poll() then re-reads the found tables several times a second.
+
+namespace RealmForge {
+  public sealed class EquipAddrs {
+    public int Pid;
+    public ulong Panel;                         // 0 = not found (the gear screen has not been opened yet)
+    public ulong EquipData;                     // 0 = not found
+    public Dictionary<long, ulong> Items = new Dictionary<long, ulong>();   // plan item uid -> item table
+  }
+
+  public sealed class EquipLive {
+    public bool GameRunning = true;
+    public bool PanelOk;                        // the panel table is still readable
+    public long HeroUid;                        // 0 = unknown
+    public int Part = -1;                       // slot shown in the list, -1 = none (hero screen without a chosen slot)
+    public int ListCount = -1;                  // items in the list
+    public bool HideEquipped, HideEnhanced, HideLocked, FilterActive;
+    public Dictionary<long, int> Row = new Dictionary<long, int>();      // plan item uid -> 1-based row (visible list)
+    public Dictionary<long, int> Col = new Dictionary<long, int>();      // plan item uid -> 1-based position in the row
+    public Dictionary<long, long> Owner = new Dictionary<long, long>();  // plan item uid -> hero uid wearing it (0 = bag)
+  }
+
+  public static partial class RFX {
+    const string KPanel = "m_EquipIdToIndex", KList = "m_EquipListRealData", KFilter = "m_FilterConfig", KHero = "m_CurrentSelectHeroUid";
+
+    // One full scan. Must run under Extractor.Gate (RFX keeps its state in static fields).
+    public static EquipAddrs FindEquip(ICollection<long> itemUids, Action<string> onLog) {
+      OnLog = onLog;
+      try {
+        LastError = null; LastOpenError = 0;
+        var ps = Process.GetProcessesByName("Watcher of Realms");
+        if (ps.Length == 0) { LastError = "not_running"; return null; }
+        H = OpenProcess(0x0410, false, ps[0].Id);
+        if (H == IntPtr.Zero) { LastOpenError = Marshal.GetLastWin32Error(); LastError = "open_failed"; return null; }
+        var a = new EquipAddrs(); a.Pid = ps[0].Id;
+        regs = Regions();
+        var tstr = FindLuaStrings(new[] { KPanel, KHero, "iStarLvl", "iItemUid" });
+
+        foreach (var t in TablesWithKeys(tstr, KPanel)) { ulong v; int tt; if (Field(t, KList, out v, out tt) && tt == T_TABLE) { a.Panel = t; break; } }
+        foreach (var t in TablesWithKeys(tstr, KHero)) { ulong v; int tt; if (Field(t, KHero, out v, out tt)) { a.EquipData = t; break; } }
+
+        // item tables of the plan items: the copies held by the storage container (as in Run)
+        var want = new HashSet<long>(itemUids);
+        var itemT = new Dictionary<ulong, long>();
+        foreach (var t in TablesWithKeys(tstr, "iStarLvl")) {
+          ulong v; int tt;
+          if (!Field(t, "iItemUid", out v, out tt) || tt != T_INT || !want.Contains((long)v)) continue;
+          ulong c; int ctt; if (Field(t, "vConfig", out c, out ctt)) continue;
+          itemT[t] = (long)v;
+        }
+        L("  plan item tables: " + itemT.Count);
+        if (itemT.Count > 0) {
+          var bag = Containers(new HashSet<ulong>(itemT.Keys), 1);
+          ulong bagT = Best(bag, "plan items");
+          if (bagT != 0) foreach (var t in bag[bagT]) if (!a.Items.ContainsKey(itemT[t])) a.Items[itemT[t]] = t;
+          foreach (var kv in itemT) if (!a.Items.ContainsKey(kv.Value)) a.Items[kv.Value] = kv.Key;   // fallback
+        }
+        L("  panel " + (a.Panel != 0) + ", hero " + (a.EquipData != 0) + ", items " + a.Items.Count);
+        return a;
+      } finally { OnLog = null; }
+    }
+
+    // Re-reads the found tables. Cheap (a few hundred bytes); safe to call from a timer thread.
+    public static EquipLive Poll(EquipAddrs a, ICollection<long> itemUids) {
+      var s = new EquipLive();
+      try { if (Process.GetProcessById(a.Pid).HasExited) { s.GameRunning = false; return s; } }
+      catch (ArgumentException) { s.GameRunning = false; return s; }
+
+      ulong v; int tt;
+      if (a.EquipData != 0 && Field(a.EquipData, KHero, out v, out tt) && tt == T_INT) s.HeroUid = (long)v;
+
+      foreach (var uid in itemUids) {
+        ulong it; if (!a.Items.TryGetValue(uid, out it)) continue;
+        if (Field(it, "iItemUid", out v, out tt) && tt == T_INT && (long)v == uid && Field(it, "iHeroId", out v, out tt) && tt == T_INT)
+          s.Owner[uid] = (long)v;
+      }
+
+      if (a.Panel == 0) return s;
+      ulong idx, list, filter; int t1, t2, t3;
+      if (!Field(a.Panel, KPanel, out idx, out t1) || t1 != T_TABLE || !Field(a.Panel, KList, out list, out t2) || t2 != T_TABLE) return s;
+      s.PanelOk = true;
+
+      if (Field(a.Panel, KFilter, out filter, out t3) && t3 == T_TABLE) {
+        var f = ParseTable(filter, 1, new HashSet<ulong>());
+        if (f != null) {
+          var part = f.ContainsKey("Part") ? f["Part"] as Dictionary<string, object> : null;
+          if (part != null && part.Count == 1) foreach (var kv in part) if (kv.Value is long) s.Part = (int)(long)kv.Value;
+          s.HideEquipped = f.ContainsKey("IsHideEquiped") && f["IsHideEquiped"] is bool && (bool)f["IsHideEquiped"];
+          s.HideEnhanced = f.ContainsKey("IsHideEnhanced") && f["IsHideEnhanced"] is bool && (bool)f["IsHideEnhanced"];
+          s.HideLocked = f.ContainsKey("IsHideLocked") && f["IsHideLocked"] is bool && (bool)f["IsHideLocked"];
+          foreach (var k in new[] { "Suits", "MainAttrs", "SubAttrs", "Level", "Quality" }) {
+            var d = f.ContainsKey(k) ? f[k] as Dictionary<string, object> : null;
+            if (d != null && d.Count > 0) s.FilterActive = true;
+          }
+        }
+      }
+      if (Field(a.Panel, "m_EquipCount", out v, out tt) && tt == T_INT) s.ListCount = (int)(long)v;
+
+      foreach (var uid in itemUids) {
+        ulong row; int rtt;
+        if (!IntKey(idx, uid, out row, out rtt) || rtt != T_INT) continue;
+        long r = (long)row; if (r < 1 || r > 100000) continue;
+        s.Row[uid] = (int)r;
+        // position inside the row: m_EquipListRealData[r].Item = {uid, uid, uid}
+        ulong rowT; int rowTt;
+        if (!IntKey(list, r, out rowT, out rowTt) || rowTt != T_TABLE) continue;
+        ulong items; int itt;
+        if (!Field(rowT, "Item", out items, out itt) || itt != T_TABLE) continue;
+        for (int c = 1; c <= 6; c++) {
+          ulong u; int utt;
+          if (!IntKey(items, c, out u, out utt)) break;
+          if (utt == T_INT && (long)u == uid) { s.Col[uid] = c; break; }
+        }
+      }
+      return s;
+    }
+
+    // Value of an integer key of a Lua table (array part first, then the hash part).
+    static bool IntKey(ulong t, long key, out ulong val, out int tt) {
+      val = 0; tt = 0;
+      var h = Read(t, 56); if (h == null || h[8] != 5) return false;
+      int lsize = h[11]; uint sizearray = BitConverter.ToUInt32(h, 12);
+      if (lsize > 20 || sizearray > 1000000) return false;
+      if (key >= 1 && key <= sizearray) {
+        var b = Read(BitConverter.ToUInt64(h, 16) + (ulong)(key - 1) * 16, 16); if (b == null) return false;
+        val = BitConverter.ToUInt64(b, 0); tt = BitConverter.ToInt32(b, 8);
+        return tt != T_NIL;
+      }
+      int nn = 1 << lsize; var nb = Read(BitConverter.ToUInt64(h, 24), nn * 32); if (nb == null) return false;
+      for (int i = 0; i < nn; i++) {
+        int o = i * 32;
+        if (BitConverter.ToInt32(nb, o + 24) != T_INT || BitConverter.ToInt64(nb, o + 16) != key) continue;
+        val = BitConverter.ToUInt64(nb, o); tt = BitConverter.ToInt32(nb, o + 8);
+        return tt != T_NIL;
+      }
+      return false;
     }
   }
 }
@@ -650,7 +802,7 @@ namespace RealmForge {
   }
 
   public static class Extractor {
-    static readonly object Gate = new object();   // RFX keeps its state in static fields: one run at a time
+    internal static readonly object Gate = new object();   // RFX keeps its state in static fields: one run at a time
 
     public static string OutputDir {
       get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "RealmForge"); }
@@ -929,6 +1081,242 @@ namespace RealmForge {
   }
 }
 
+// ===== src/PlansClient.cs =====
+// RealmForge extractor - equip plans («Надеть в игре») from the RealmForge site.
+//
+// Contract (implemented by the site, lib/plans/handler.ts):
+//   GET  {site}/api/extractor/plans?lang=ru|en        Authorization: Bearer <sync code>
+//        200 {ok:true, plans:[{id, heroUid, heroName, createdAt,
+//              items:[{slot, uid, slotName, name, setName, level, stars, mainStat, fromHeroUid, fromHeroName}]}]}
+//        401 invalid_token
+//   POST {site}/api/extractor/plans/{id}                body {"status":"done"|"cancelled"}
+//        200 {ok:true} | 401 | 404 not_found
+// The site only stores builds; the extractor reads the game (read-only) and shows hints. Nothing is sent to the game.
+
+
+namespace RealmForge {
+  public sealed class PlanItem {
+    public int Slot;
+    public long Uid;
+    public string SlotName, Name, SetName, MainStat, FromHeroName;
+    public int Level, Stars;
+    public long FromHeroUid;
+  }
+
+  public sealed class Plan {
+    public string Id;
+    public long HeroUid;
+    public string HeroName;
+    public string CreatedAt;
+    public List<PlanItem> Items = new List<PlanItem>();
+  }
+
+  public enum PlansStatus { Ok, InvalidToken, NotFound, ServerError, Unreachable, Unexpected }
+
+  public sealed class PlansResult {
+    public PlansStatus Status;
+    public int HttpCode;
+    public List<Plan> Plans = new List<Plan>();
+    public string Details;
+  }
+
+  public static class PlansClient {
+    const int MaxReplyBytes = 1024 * 1024;
+
+    public static PlansResult List(string site, string code, string lang) {
+      return Request("GET", site + "/api/extractor/plans?lang=" + (lang == "en" ? "en" : "ru"), code, null, true);
+    }
+
+    public static PlansResult Finish(string site, string code, string planId, bool done) {
+      if (planId == null || planId.Length > 64) { var r = new PlansResult(); r.Status = PlansStatus.NotFound; return r; }
+      string body = done ? "{\"status\":\"done\"}" : "{\"status\":\"cancelled\"}";
+      return Request("POST", site + "/api/extractor/plans/" + Uri.EscapeDataString(planId), code, body, false);
+    }
+
+    static PlansResult Request(string method, string url, string code, string body, bool parsePlans) {
+      try {
+        SyncClient.EnableTls12();
+        ServicePointManager.Expect100Continue = false;
+        var req = (HttpWebRequest)WebRequest.Create(url);
+        req.Method = method;
+        req.Accept = "application/json";
+        req.UserAgent = SyncClient.UserAgent;
+        req.Headers["Authorization"] = "Bearer " + code;
+        req.Headers["X-RF-Extractor"] = SyncClient.Version;
+        req.Timeout = 30000;
+        req.ReadWriteTimeout = 30000;
+        req.AllowAutoRedirect = false;
+        req.AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate;
+        if (body != null) {
+          byte[] b = new UTF8Encoding(false).GetBytes(body);
+          req.ContentType = "application/json";
+          req.ContentLength = b.Length;
+          using (Stream s = req.GetRequestStream()) s.Write(b, 0, b.Length);
+        }
+        using (var resp = (HttpWebResponse)req.GetResponse()) return FromResponse(resp, parsePlans);
+      } catch (WebException e) {
+        var resp = e.Response as HttpWebResponse;
+        if (resp != null) using (resp) return FromResponse(resp, parsePlans);
+        var r = new PlansResult(); r.Status = PlansStatus.Unreachable; r.Details = e.Message; return r;
+      } catch (Exception e) {
+        var r = new PlansResult(); r.Status = PlansStatus.Unreachable; r.Details = e.Message; return r;
+      }
+    }
+
+    static PlansResult FromResponse(HttpWebResponse resp, bool parsePlans) {
+      string text = null;
+      try {
+        using (Stream s = resp.GetResponseStream())
+        using (var ms = new MemoryStream()) {
+          var buf = new byte[16384]; int n;
+          while ((n = s.Read(buf, 0, buf.Length)) > 0 && ms.Length < MaxReplyBytes) ms.Write(buf, 0, n);
+          text = Encoding.UTF8.GetString(ms.ToArray());
+        }
+      } catch (Exception) { }
+      return Interpret((int)resp.StatusCode, text, parsePlans);
+    }
+
+    // Maps an HTTP reply to a PlansResult. Pure function (tested without a network).
+    public static PlansResult Interpret(int code, string body, bool parsePlans) {
+      var r = new PlansResult(); r.HttpCode = code;
+      var obj = MiniJson.AsObject(MiniJson.TryParse(body));
+      if (code >= 200 && code < 300) {
+        if (obj == null || !MiniJson.GetBool(obj, "ok", false)) { r.Status = PlansStatus.Unexpected; return r; }
+        r.Status = PlansStatus.Ok;
+        if (parsePlans) {
+          object v; var list = obj.TryGetValue("plans", out v) ? v as List<object> : null;
+          if (list != null) foreach (var p in list) { var plan = ParsePlan(MiniJson.AsObject(p)); if (plan != null) r.Plans.Add(plan); }
+        }
+        return r;
+      }
+      if (code == 401) r.Status = PlansStatus.InvalidToken;
+      else if (code == 404) r.Status = PlansStatus.NotFound;
+      else if (code >= 500 && code < 600) r.Status = PlansStatus.ServerError;
+      else r.Status = PlansStatus.Unexpected;
+      return r;
+    }
+
+    static long Num(Dictionary<string, object> d, string key) {
+      object v; if (d == null || !d.TryGetValue(key, out v) || !(v is double)) return 0;
+      double x = (double)v; if (x < 0 || x > 9e15 || Math.Floor(x) != x) return 0;
+      return (long)x;
+    }
+
+    static Plan ParsePlan(Dictionary<string, object> o) {
+      if (o == null) return null;
+      var p = new Plan();
+      p.Id = MiniJson.GetString(o, "id");
+      p.HeroUid = Num(o, "heroUid");
+      p.HeroName = MiniJson.GetString(o, "heroName") ?? ("#" + p.HeroUid);
+      p.CreatedAt = MiniJson.GetString(o, "createdAt");
+      if (string.IsNullOrEmpty(p.Id) || p.HeroUid <= 0) return null;
+      object v; var items = o.TryGetValue("items", out v) ? v as List<object> : null;
+      if (items != null) foreach (var x in items) {
+        var d = MiniJson.AsObject(x); if (d == null) continue;
+        var it = new PlanItem();
+        it.Slot = (int)Num(d, "slot");
+        it.Uid = Num(d, "uid");
+        if (it.Uid <= 0 || it.Slot < 0 || it.Slot > 4) continue;
+        it.SlotName = MiniJson.GetString(d, "slotName") ?? ("#" + it.Slot);
+        it.Name = MiniJson.GetString(d, "name") ?? ("#" + it.Uid);
+        it.SetName = MiniJson.GetString(d, "setName");
+        it.MainStat = MiniJson.GetString(d, "mainStat") ?? "";
+        it.Level = (int)Num(d, "level");
+        it.Stars = (int)Num(d, "stars");
+        it.FromHeroUid = Num(d, "fromHeroUid");
+        it.FromHeroName = MiniJson.GetString(d, "fromHeroName");
+        p.Items.Add(it);
+      }
+      p.Items.Sort((a, b) => a.Slot.CompareTo(b.Slot));
+      return p.Items.Count > 0 ? p : null;
+    }
+  }
+}
+
+// ===== src/EquipGuide.cs =====
+// RealmForge extractor - equip helper: what to tell the player next. Pure logic, tested without the game.
+
+namespace RealmForge {
+  public enum GuideKind {
+    GameClosed,        // the game has exited
+    OpenHero,          // open the plan's hero -> gear
+    OpenSlot,          // press the slot of the next item
+    Pick,              // the item is in the list: row / position
+    HiddenEquipped,    // the item is on another hero and the list hides worn items
+    HiddenEnhanced,    // the list hides enhanced items
+    HiddenFilter,      // a set / stat / level / quality filter is on
+    NotInList,         // not in the list for another reason (sold, stale data): sync again
+    Done               // every item of the plan is on the hero
+  }
+
+  public enum ItemState { Waiting, Current, Done }
+
+  public sealed class GuideStep {
+    public GuideKind Kind;
+    public PlanItem Item;                 // the item the step is about (null for GameClosed/OpenHero/Done)
+    public int Row, Col;                  // Pick: 1-based
+    public string OtherHero;              // HiddenEquipped: who wears it now (name from the plan, may be null)
+    public Dictionary<long, ItemState> States = new Dictionary<long, ItemState>();
+    public int DoneCount;
+  }
+
+  public static class EquipGuide {
+    // Is the item on the plan's hero now? Unknown owner (table not found) counts as "not yet".
+    public static bool IsOn(Plan p, EquipLive s, PlanItem it) {
+      long owner; return s.Owner.TryGetValue(it.Uid, out owner) && owner == p.HeroUid;
+    }
+
+    public static GuideStep Next(Plan p, EquipLive s) {
+      var g = new GuideStep();
+      PlanItem next = null;
+      foreach (var it in p.Items) {
+        bool on = IsOn(p, s, it);
+        if (on) g.DoneCount++;
+        g.States[it.Uid] = on ? ItemState.Done : ItemState.Waiting;
+        if (!on && next == null) next = it;
+      }
+      if (next != null) g.States[next.Uid] = ItemState.Current;
+      if (!s.GameRunning) { g.Kind = GuideKind.GameClosed; return g; }
+      if (next == null) { g.Kind = GuideKind.Done; return g; }
+      g.Item = next;
+      if (s.HeroUid != p.HeroUid) { g.Kind = GuideKind.OpenHero; return g; }
+      if (!s.PanelOk || s.Part != next.Slot) { g.Kind = GuideKind.OpenSlot; return g; }
+
+      int row;
+      if (s.Row.TryGetValue(next.Uid, out row)) {
+        int col; s.Col.TryGetValue(next.Uid, out col);
+        g.Kind = GuideKind.Pick; g.Row = row; g.Col = col;
+        return g;
+      }
+      long owner;
+      if (!s.Owner.TryGetValue(next.Uid, out owner)) owner = next.FromHeroUid;
+      if (owner > 0 && owner != p.HeroUid && s.HideEquipped) {
+        g.Kind = GuideKind.HiddenEquipped;
+        g.OtherHero = owner == next.FromHeroUid ? next.FromHeroName : null;
+        return g;
+      }
+      if (s.HideEnhanced && next.Level > 0) { g.Kind = GuideKind.HiddenEnhanced; return g; }
+      if (s.FilterActive) { g.Kind = GuideKind.HiddenFilter; return g; }
+      g.Kind = GuideKind.NotInList;
+      return g;
+    }
+
+    // Plan for the hero open in the game, else the current choice (index into plans), else the first.
+    public static int PickPlan(List<Plan> plans, EquipLive s, int current) {
+      if (plans == null || plans.Count == 0) return -1;
+      if (s != null && s.HeroUid > 0) for (int i = 0; i < plans.Count; i++) if (plans[i].HeroUid == s.HeroUid) return i;
+      return current >= 0 && current < plans.Count ? current : 0;
+    }
+
+    public static string ItemLine(PlanItem it) {
+      string s = it.Name;
+      if (it.Level > 0) s += " +" + it.Level;
+      if (!string.IsNullOrEmpty(it.MainStat)) s += " · " + it.MainStat;
+      return s;
+    }
+  }
+}
+
 // ===== src/CodeProtector.cs =====
 // RealmForge extractor - encrypting the sync code with Windows DPAPI (current user).
 
@@ -1103,6 +1491,41 @@ namespace RealmForge {
       { "footer",             new[] { "Только чтение: программа читает память игры и ничего в ней не меняет.",
                                       "Read-only: the program reads game memory and never changes anything in it." } },
       { "minutes",            new[] { "{0} мин", "{0} min" } },
+      // equip helper («Переодевание»)
+      { "btn_equip",          new[] { "Переодевание", "Equip helper" } },
+      { "eq_title",           new[] { "Переодевание", "Equip helper" } },
+      { "eq_plan",            new[] { "Сборка", "Build" } },
+      { "eq_reload",          new[] { "Обновить сборки", "Reload builds" } },
+      { "eq_rescan",          new[] { "Найти заново", "Search again" } },
+      { "eq_skip",            new[] { "Убрать сборку", "Remove build" } },
+      { "eq_loading",         new[] { "Загружаю сборки с сайта…", "Loading builds from the site…" } },
+      { "eq_none",            new[] { "Сборок нет. На сайте в «Оптимизаторе» нажмите «Надеть в игре», затем «Обновить сборки».",
+                                      "No builds. On the site, press “Equip in game” in the Optimizer, then “Reload builds”." } },
+      { "eq_net",             new[] { "Не удалось загрузить сборки: {0}", "Could not load the builds: {0}" } },
+      { "eq_code",            new[] { "Код синхронизации не подходит — выпустите новый в настройках сайта.", "The sync code is not accepted: issue a new one in the site settings." } },
+      { "eq_scanning",        new[] { "Ищу окно снаряжения в игре (~1 мин, один раз)…", "Looking for the gear screen in the game (~1 min, once)…" } },
+      { "eq_scan_fail",       new[] { "Не удалось прочитать игру. Запустите игру и нажмите «Найти заново».", "Could not read the game. Start the game and press “Search again”." } },
+      { "eq_no_panel",        new[] { "Откройте в игре любого героя → Снаряжение → нажмите на слот, затем «Найти заново».",
+                                      "In the game open any hero → Gear → press a slot, then “Search again”." } },
+      { "eq_closed",          new[] { "Игра закрыта.", "The game is closed." } },
+      { "eq_open_hero",       new[] { "Откройте в игре героя «{0}» → Снаряжение.", "In the game open “{0}” → Gear." } },
+      { "eq_open_slot",       new[] { "Нажмите на слот «{0}».", "Press the “{0}” slot." } },
+      { "eq_pick",            new[] { "Нажмите предмет: ряд {0}, {1}-й слева, затем «Надеть» / «Заменить».",
+                                      "Press the item: row {0}, #{1} from the left, then “Equip” / “Replace”." } },
+      { "eq_pick_row",        new[] { "Нажмите предмет в ряду {0}, затем «Надеть» / «Заменить».", "Press the item in row {0}, then “Equip” / “Replace”." } },
+      { "eq_scroll",          new[] { "Прокрутите список вниз до ряда {0}.", "Scroll the list down to row {0}." } },
+      { "eq_hidden_equipped", new[] { "Предмет сейчас на герое {0}. В фильтре списка снимите «Скрыть надетое».",
+                                      "The item is on {0}. In the list filter, turn off “Hide equipped”." } },
+      { "eq_other_hero",      new[] { "другом", "another hero" } },
+      { "eq_hidden_enh",      new[] { "Список скрывает прокачанные предметы — снимите этот фильтр.", "The list hides enhanced items: turn that filter off." } },
+      { "eq_hidden_filter",   new[] { "Предмет скрыт фильтром — сбросьте фильтры списка.", "The item is hidden by a filter: reset the list filters." } },
+      { "eq_not_in_list",     new[] { "Предмета нет в списке. Возможно, он продан — синхронизируйте аккаунт и подберите сборку заново.",
+                                      "The item is not in the list. It may be gone: sync the account and optimize again." } },
+      { "eq_done",            new[] { "Готово ✓ Сборка надета.", "Done ✓ The build is on." } },
+      { "eq_done_sent",       new[] { "Готово ✓ Сборка надета и отмечена на сайте.", "Done ✓ The build is on and marked on the site." } },
+      { "eq_progress",        new[] { "Надето {0} из {1}", "{0} of {1} on" } },
+      { "eq_note",            new[] { "Помощник только читает игру и подсказывает. Предметы надеваете вы.",
+                                      "The helper only reads the game and gives hints. You put the items on yourself." } },
     };
 
     public static string Get(string key) {
@@ -1211,7 +1634,8 @@ namespace RealmForge {
     Label title, subtitle, langRu, langEn, codeLabel, codeCheck, codeHint, advToggle, siteLabel, siteError, status, footer;
     TextBox codeBox, siteBox;
     CheckBox showCode, saveCopy;
-    Button primary, siteReset, openSite, openFolder, restartAdmin, showLog;
+    Button primary, siteReset, openSite, openFolder, restartAdmin, showLog, equipBtn;
+    HelperForm helper;
     Panel advPanel;
     Label[] steps = new Label[4];
     StepState[] stepStates = new StepState[4];
@@ -1364,6 +1788,13 @@ namespace RealmForge {
       primary.Click += OnPrimary;
       root.Controls.Add(primary);
       AcceptButton = primary;
+
+      // equip helper («Переодевание»): builds sent from the site, hints over the game
+      equipBtn = NewButton(false);
+      equipBtn.Size = new Size(W, 32);
+      equipBtn.Margin = new Padding(0, 0, 0, 12);
+      equipBtn.Click += OnEquip;
+      root.Controls.Add(equipBtn);
 
       // steps + progress
       for (int i = 0; i < steps.Length; i++) {
@@ -1520,6 +1951,7 @@ namespace RealmForge {
       openFolder.Text = Strings.Get("btn_open_folder");
       restartAdmin.Text = Strings.Get("btn_restart_admin");
       showLog.Text = Strings.Get("btn_log");
+      equipBtn.Text = Strings.Get("btn_equip");
       footer.Text = Strings.Get("footer");
       UpdateMode();
       RenderSteps();
@@ -1552,7 +1984,19 @@ namespace RealmForge {
       siteReset.Enabled = !busy;
       primary.Text = busy ? Strings.Get("btn_busy") : Strings.Get(uploadMode ? "btn_sync" : "btn_save_only");
       primary.Enabled = !busy && (!uploadMode || (valid && siteErr == null));
+      equipBtn.Enabled = !busy && valid && siteErr == null;
       if (idleStatus) SetStatus(delegate { return Strings.Format("st_ready", primary.Text); }, Theme.Muted);
+    }
+
+    // Opens (or brings back) the equip helper window with the current site and code.
+    void OnEquip(object sender, EventArgs e) {
+      string err;
+      string siteUrl = SyncClient.NormalizeSite(siteBox.Text, out err);
+      if (siteUrl == null || !SyncClient.IsValidCode(codeBox.Text)) return;
+      SaveConfig();
+      if (helper != null && !helper.IsDisposed) { helper.Activate(); return; }
+      helper = new HelperForm(siteUrl, codeBox.Text);
+      helper.Show();
     }
 
     void OnCodeChanged(object sender, EventArgs e) {
@@ -1875,6 +2319,296 @@ namespace RealmForge {
       base.OnHandleCreated(e);
       try { int on = 1; DwmSetWindowAttribute(Handle, 20, ref on, 4); } catch (Exception) { }  // dark title bar (Win10 20H1+)
       try { SendMessage(codeBox.Handle, 0x1501, (IntPtr)1, "rf_…"); } catch (Exception) { }       // EM_SETCUEBANNER
+    }
+  }
+}
+
+// ===== src/HelperForm.cs =====
+// RealmForge extractor - equip helper window («Переодевание»).
+//
+// Loads the builds the player sent from the site («Надеть в игре»), finds the game's gear screen once
+// (read-only memory scan), then re-reads it several times a second and tells the player which slot / item
+// to press. The player equips everything in the game; when all items of a build are on the hero, the build is
+// marked done on the site. Nothing is written to the game and no input is sent to it.
+
+namespace RealmForge {
+  sealed class HelperForm : Form {
+    const int W = 380;
+    readonly string site, code;
+    readonly System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer();
+
+    Label title, status, instruction, progress, note;
+    ComboBox planBox;
+    Label[] rows = new Label[5];
+    Button reload, rescan, removePlan;
+
+    List<Plan> plans = new List<Plan>();
+    int planIdx = -1;
+    EquipAddrs addrs;
+    EquipLive live;
+    bool loading, scanning, finishing;
+    string statusKey; object[] statusArgs;
+    readonly HashSet<string> reported = new HashSet<string>();
+
+    public HelperForm(string site, string code) {
+      this.site = site;
+      this.code = code;
+      Build();
+      ApplyTexts();
+      timer.Interval = 400;
+      timer.Tick += delegate { Tick(); };
+      Shown += delegate { LoadPlans(true); };
+    }
+
+    // ------------------------------------------------------------------ layout
+
+    void Build() {
+      SuspendLayout();
+      AutoScaleDimensions = new SizeF(96F, 96F);
+      AutoScaleMode = AutoScaleMode.Dpi;
+      Text = "RealmForge";
+      BackColor = Theme.Bg;
+      ForeColor = Theme.Text;
+      Font = new Font("Segoe UI", 9.75F);
+      FormBorderStyle = FormBorderStyle.FixedToolWindow;
+      TopMost = true;                    // stays above the game window
+      ShowInTaskbar = true;
+      AutoSize = true;
+      AutoSizeMode = AutoSizeMode.GrowAndShrink;
+      StartPosition = FormStartPosition.Manual;
+      var wa = Screen.PrimaryScreen.WorkingArea;
+      Location = new Point(wa.Right - W - 60, wa.Top + 60);
+
+      var root = new FlowLayoutPanel();
+      root.FlowDirection = FlowDirection.TopDown;
+      root.WrapContents = false;
+      root.AutoSize = true;
+      root.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+      root.Padding = new Padding(16, 12, 16, 12);
+      Controls.Add(root);
+
+      title = Lbl(Theme.Gold, 13F, FontStyle.Bold);
+      title.Font = new Font("Georgia", 13F, FontStyle.Bold);
+      root.Controls.Add(title);
+
+      planBox = new ComboBox();
+      planBox.DropDownStyle = ComboBoxStyle.DropDownList;
+      planBox.Width = W;
+      planBox.BackColor = Theme.Field;
+      planBox.ForeColor = Theme.Text;
+      planBox.FlatStyle = FlatStyle.Flat;
+      planBox.Margin = new Padding(0, 8, 0, 8);
+      planBox.SelectedIndexChanged += delegate { if (planBox.SelectedIndex >= 0) planIdx = planBox.SelectedIndex; Render(); };
+      root.Controls.Add(planBox);
+
+      for (int i = 0; i < rows.Length; i++) {
+        rows[i] = Lbl(Theme.Muted, 9.5F, FontStyle.Regular);
+        rows[i].Margin = new Padding(0, 1, 0, 1);
+        root.Controls.Add(rows[i]);
+      }
+
+      instruction = Lbl(Theme.Gold, 12F, FontStyle.Bold);
+      instruction.Margin = new Padding(0, 12, 0, 4);
+      root.Controls.Add(instruction);
+      progress = Lbl(Theme.Muted, 9F, FontStyle.Regular);
+      root.Controls.Add(progress);
+      status = Lbl(Theme.Muted, 9F, FontStyle.Regular);
+      status.Margin = new Padding(0, 6, 0, 6);
+      root.Controls.Add(status);
+
+      var buttons = new FlowLayoutPanel();
+      buttons.AutoSize = true;
+      buttons.Margin = new Padding(0, 4, 0, 4);
+      reload = Btn(); reload.Click += delegate { LoadPlans(false); };
+      rescan = Btn(); rescan.Click += delegate { StartScan(); };
+      removePlan = Btn(); removePlan.Click += delegate { RemoveCurrent(); };
+      buttons.Controls.Add(reload); buttons.Controls.Add(rescan); buttons.Controls.Add(removePlan);
+      root.Controls.Add(buttons);
+
+      note = Lbl(Theme.Muted, 8.25F, FontStyle.Regular);
+      root.Controls.Add(note);
+      ResumeLayout(false);
+      PerformLayout();
+    }
+
+    Label Lbl(Color c, float size, FontStyle style) {
+      var l = new Label();
+      l.AutoSize = true;
+      l.MaximumSize = new Size(W, 0);
+      l.ForeColor = c;
+      l.Font = new Font("Segoe UI", size, style);
+      l.Margin = new Padding(0);
+      return l;
+    }
+
+    Button Btn() {
+      var b = new Button();
+      b.FlatStyle = FlatStyle.Flat;
+      b.UseVisualStyleBackColor = false;
+      b.BackColor = Theme.Field;
+      b.ForeColor = Theme.Text;
+      b.FlatAppearance.BorderColor = Theme.GoldDeep;
+      b.FlatAppearance.MouseOverBackColor = Theme.Track;
+      b.AutoSize = true;
+      b.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+      b.MinimumSize = new Size(0, 30);
+      b.Padding = new Padding(6, 0, 6, 0);
+      b.Margin = new Padding(0, 0, 6, 0);
+      b.Cursor = Cursors.Hand;
+      return b;
+    }
+
+    void ApplyTexts() {
+      title.Text = Strings.Get("eq_title");
+      reload.Text = Strings.Get("eq_reload");
+      rescan.Text = Strings.Get("eq_rescan");
+      removePlan.Text = Strings.Get("eq_skip");
+      note.Text = Strings.Get("eq_note");
+    }
+
+    void SetStatus(string key, params object[] args) { statusKey = key; statusArgs = args; Render(); }
+
+    // ------------------------------------------------------------------ work
+
+    void LoadPlans(bool scanAfter) {
+      if (loading) return;
+      loading = true;
+      SetStatus("eq_loading");
+      var w = new BackgroundWorker();
+      w.DoWork += (s, e) => { e.Result = PlansClient.List(site, code, Strings.Lang); };
+      w.RunWorkerCompleted += (s, e) => {
+        loading = false;
+        var r = e.Error == null ? e.Result as PlansResult : null;
+        if (r == null || r.Status != PlansStatus.Ok) {
+          if (r != null && r.Status == PlansStatus.InvalidToken) SetStatus("eq_code");
+          else SetStatus("eq_net", r == null ? (e.Error != null ? e.Error.Message : "?") : (r.Details ?? ("HTTP " + r.HttpCode)));
+          return;
+        }
+        plans = r.Plans;
+        planBox.Items.Clear();
+        foreach (var p in plans) planBox.Items.Add(p.HeroName + "  ·  " + p.Items.Count);
+        planIdx = plans.Count > 0 ? 0 : -1;
+        if (planIdx >= 0) planBox.SelectedIndex = 0;
+        if (plans.Count == 0) { SetStatus("eq_none"); return; }
+        SetStatus(null);
+        if (scanAfter || addrs == null || MissingItems()) StartScan();
+      };
+      w.RunWorkerAsync();
+    }
+
+    bool MissingItems() {
+      if (addrs == null) return true;
+      foreach (var p in plans) foreach (var it in p.Items) if (!addrs.Items.ContainsKey(it.Uid)) return true;
+      return false;
+    }
+
+    List<long> AllUids() {
+      var l = new List<long>();
+      foreach (var p in plans) foreach (var it in p.Items) if (!l.Contains(it.Uid)) l.Add(it.Uid);
+      return l;
+    }
+
+    void StartScan() {
+      if (scanning || plans.Count == 0) return;
+      scanning = true;
+      timer.Stop();
+      SetStatus("eq_scanning");
+      var uids = AllUids();
+      var w = new BackgroundWorker();
+      w.DoWork += (s, e) => { lock (Extractor.Gate) e.Result = RFX.FindEquip(uids, null); };
+      w.RunWorkerCompleted += (s, e) => {
+        scanning = false;
+        addrs = e.Error == null ? e.Result as EquipAddrs : null;
+        if (addrs == null) { SetStatus("eq_scan_fail"); return; }
+        SetStatus(addrs.Panel == 0 ? "eq_no_panel" : null);
+        timer.Start();
+        Tick();
+      };
+      w.RunWorkerAsync();
+    }
+
+    void Tick() {
+      if (addrs == null || scanning) return;
+      try { live = RFX.Poll(addrs, AllUids()); } catch (Exception) { live = null; }
+      if (live != null && !live.GameRunning) timer.Stop();
+      int auto = EquipGuide.PickPlan(plans, live, planIdx);
+      if (auto != planIdx && auto >= 0) { planIdx = auto; planBox.SelectedIndex = auto; }
+      Render();
+    }
+
+    void RemoveCurrent() {
+      if (planIdx < 0 || planIdx >= plans.Count) return;
+      var p = plans[planIdx];
+      Report(p, false);
+      DropPlan(p);
+    }
+
+    void DropPlan(Plan p) {
+      int i = plans.IndexOf(p); if (i < 0) return;
+      plans.RemoveAt(i);
+      planBox.Items.RemoveAt(i);
+      planIdx = plans.Count == 0 ? -1 : Math.Min(i, plans.Count - 1);
+      if (planIdx >= 0) planBox.SelectedIndex = planIdx;
+      if (plans.Count == 0) SetStatus("eq_none"); else Render();
+    }
+
+    // Marks the plan done (or cancelled) on the site, once.
+    void Report(Plan p, bool done) {
+      if (!reported.Add(p.Id)) return;
+      finishing = true;
+      var w = new BackgroundWorker();
+      w.DoWork += (s, e) => { e.Result = PlansClient.Finish(site, code, p.Id, done); };
+      w.RunWorkerCompleted += delegate { finishing = false; Render(); };
+      w.RunWorkerAsync();
+    }
+
+    // ------------------------------------------------------------------ view
+
+    void Render() {
+      status.Text = statusKey == null ? "" : Strings.Format(statusKey, statusArgs ?? new object[0]);
+      Plan p = planIdx >= 0 && planIdx < plans.Count ? plans[planIdx] : null;
+      for (int i = 0; i < rows.Length; i++) rows[i].Visible = false;
+      removePlan.Enabled = p != null;
+      rescan.Enabled = !scanning && plans.Count > 0;
+      reload.Enabled = !loading && !scanning;
+      if (p == null) { instruction.Text = ""; progress.Text = ""; return; }
+
+      GuideStep g = live != null ? EquipGuide.Next(p, live) : null;
+      for (int i = 0; i < rows.Length && i < p.Items.Count; i++) {
+        var it = p.Items[i];
+        ItemState st = ItemState.Waiting;
+        if (g != null) g.States.TryGetValue(it.Uid, out st);
+        rows[i].Visible = true;
+        rows[i].Text = (st == ItemState.Done ? "✓ " : st == ItemState.Current ? "▶ " : "• ") + it.SlotName + ": " + EquipGuide.ItemLine(it)
+          + (st != ItemState.Done && it.FromHeroUid > 0 && it.FromHeroUid != p.HeroUid && it.FromHeroName != null ? "  (" + it.FromHeroName + ")" : "");
+        rows[i].ForeColor = st == ItemState.Done ? Theme.Ok : st == ItemState.Current ? Theme.Text : Theme.Muted;
+      }
+      if (g == null) { instruction.Text = ""; progress.Text = ""; return; }
+      progress.Text = Strings.Format("eq_progress", g.DoneCount, p.Items.Count);
+      instruction.ForeColor = g.Kind == GuideKind.Done ? Theme.Ok : g.Kind == GuideKind.GameClosed || g.Kind == GuideKind.NotInList ? Theme.Error : Theme.Gold;
+      switch (g.Kind) {
+        case GuideKind.GameClosed: instruction.Text = Strings.Get("eq_closed"); break;
+        case GuideKind.OpenHero: instruction.Text = Strings.Format("eq_open_hero", p.HeroName); break;
+        case GuideKind.OpenSlot: instruction.Text = Strings.Format("eq_open_slot", g.Item.SlotName); break;
+        case GuideKind.Pick:
+          string pick = g.Col > 0 ? Strings.Format("eq_pick", g.Row, g.Col) : Strings.Format("eq_pick_row", g.Row);
+          instruction.Text = (g.Row > 4 ? Strings.Format("eq_scroll", g.Row) + " " : "") + pick;
+          break;
+        case GuideKind.HiddenEquipped: instruction.Text = Strings.Format("eq_hidden_equipped", g.OtherHero ?? Strings.Get("eq_other_hero")); break;
+        case GuideKind.HiddenEnhanced: instruction.Text = Strings.Get("eq_hidden_enh"); break;
+        case GuideKind.HiddenFilter: instruction.Text = Strings.Get("eq_hidden_filter"); break;
+        case GuideKind.NotInList: instruction.Text = Strings.Get("eq_not_in_list"); break;
+        case GuideKind.Done:
+          if (!reported.Contains(p.Id)) Report(p, true);
+          instruction.Text = Strings.Get(finishing ? "eq_done" : "eq_done_sent");
+          break;
+      }
+    }
+
+    protected override void OnFormClosed(FormClosedEventArgs e) {
+      timer.Stop();
+      timer.Dispose();
+      base.OnFormClosed(e);
     }
   }
 }

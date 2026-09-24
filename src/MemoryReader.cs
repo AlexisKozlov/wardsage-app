@@ -8,7 +8,7 @@
 //   * wrapped in the RealmForge namespace;
 //   * L() also forwards each log line to OnLog (progress in the window);
 //   * Run() records LastError / LastOpenError so the window can show a clear message;
-//   * meta.extractor comes from ExtractorVersion ("0.5"); meta.gameVersion is added when known.
+//   * meta.extractor comes from ExtractorVersion ("0.6"); meta.gameVersion is added when known.
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -17,7 +17,7 @@ using System.Text;
 using System.Globalization;
 
 namespace RealmForge {
-  public static class RFX {
+  public static partial class RFX {
     [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr OpenProcess(int a, bool b, int pid);
     [DllImport("kernel32.dll")] static extern bool ReadProcessMemory(IntPtr h, IntPtr addr, byte[] buf, IntPtr size, out IntPtr read);
     [DllImport("kernel32.dll")] static extern IntPtr VirtualQueryEx(IntPtr h, IntPtr addr, out MBI m, IntPtr len);
@@ -25,7 +25,7 @@ namespace RealmForge {
     static IntPtr H;
     public static StringBuilder Log = new StringBuilder();
     // --- v0.5 hooks (the scanning logic below is unchanged from v0.4) ---
-    public const string ExtractorVersion = "0.5";
+    public const string ExtractorVersion = "0.6";
     public static Action<string> OnLog;        // called for every log line (from the worker thread)
     public static string GameVersion;          // written to meta.gameVersion when not null
     public static string LastError;            // "not_running" | "open_failed" | null
@@ -198,7 +198,7 @@ namespace RealmForge {
     }
 
     // Find Lua tables that hold references (TValue tt=table) to the given target tables; returns container -> targets
-    static Dictionary<ulong, List<ulong>> Containers(HashSet<ulong> targets) {
+    static Dictionary<ulong, List<ulong>> Containers(HashSet<ulong> targets, int minCount = 3) {
       var hitAt = new Dictionary<ulong, ulong>();
       Scan((b0, buf, len) => {
         for (int i = 0; i + 16 <= len; i += 8) {
@@ -219,7 +219,7 @@ namespace RealmForge {
           List<ulong> got = null;
           if (sa > 0) got = Collect(ha, hitAt, arr, arr + (ulong)sa * 16, 16, got);
           got = Collect(ha, hitAt, node, node + ((ulong)32 << lsize), 32, got);
-          if (got != null && got.Count >= 3) res[b0 + (ulong)i] = got;
+          if (got != null && got.Count >= minCount) res[b0 + (ulong)i] = got;
         }
       });
       return res;

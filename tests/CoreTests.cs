@@ -167,8 +167,8 @@ static class CoreTests {
     Eq("Bearer " + Tok('A'), (string)h["authorization"], "Authorization header");
     Eq("application/json", (string)h["contentType"], "Content-Type header");
     Eq("gzip", (string)h["contentEncoding"], "Content-Encoding header");
-    Eq("0.5", (string)h["extractor"], "X-RF-Extractor header");
-    Eq("RealmForge-Extractor/0.5", (string)h["userAgent"], "User-Agent header");
+    Eq(RFX.ExtractorVersion, (string)h["extractor"], "X-RF-Extractor header");
+    Eq("RealmForge-Extractor/" + RFX.ExtractorVersion, (string)h["userAgent"], "User-Agent header");
     Eq(gz.Length.ToString(), (string)h["contentLength"], "Content-Length = gzip size");
 
     r = SyncClient.Send(site, "rf_" + new string('Z', 32), payload);
@@ -199,6 +199,59 @@ static class CoreTests {
     Check(r.Status == SyncStatus.Unreachable, "connection refused -> unreachable (" + r.Details + ")");
     r = SyncClient.Send("https://realmforge-nonexistent.invalid", Tok('A'), payload);
     Check(r.Status == SyncStatus.Unreachable || r.Status == SyncStatus.Timeout, "unknown host -> unreachable (" + r.Details + ")");
+
+    Console.WriteLine("Equip plans: reply parsing");
+    string plansJson = "{\"ok\":true,\"plans\":[{\"id\":\"p1\",\"heroUid\":214700000,\"heroName\":\"Сунь Укун\",\"createdAt\":\"2026-09-25T10:00:00Z\"," +
+      "\"items\":[{\"slot\":4,\"uid\":33,\"slotName\":\"Кольцо\",\"name\":\"Кольцо\",\"setName\":null,\"level\":0,\"stars\":5,\"mainStat\":\"\",\"fromHeroUid\":0,\"fromHeroName\":null}," +
+      "{\"slot\":2,\"uid\":6423,\"slotName\":\"Браслет\",\"name\":\"Браслет «Проклятие»\",\"setName\":\"Проклятие\",\"level\":16,\"stars\":6,\"mainStat\":\"Крит. УРН 50%\",\"fromHeroUid\":200,\"fromHeroName\":\"Байек\"}," +
+      "{\"slot\":9,\"uid\":1}]}, {\"id\":\"\",\"heroUid\":1,\"items\":[{\"slot\":0,\"uid\":1}]}]}";
+    var pr = PlansClient.Interpret(200, plansJson, true);
+    Check(pr.Status == PlansStatus.Ok, "plans ok");
+    Eq(1, pr.Plans.Count, "plan without id dropped");
+    var plan = pr.Plans[0];
+    Eq(2, plan.Items.Count, "bad slot dropped");
+    Eq(2, plan.Items[0].Slot, "items sorted by slot");
+    Eq(6423L, plan.Items[0].Uid, "uid");
+    Eq("Байек", plan.Items[0].FromHeroName, "from hero");
+    Eq(214700000L, plan.HeroUid, "hero uid");
+    Check(PlansClient.Interpret(401, "{\"ok\":false,\"error\":\"invalid_token\"}", true).Status == PlansStatus.InvalidToken, "401");
+    Check(PlansClient.Interpret(404, "{}", false).Status == PlansStatus.NotFound, "404");
+    Check(PlansClient.Interpret(200, "{\"ok\":false}", true).Status == PlansStatus.Unexpected, "ok:false");
+    Check(PlansClient.Interpret(502, "<html>", true).Status == PlansStatus.ServerError, "502");
+
+    Console.WriteLine("Equip guide");
+    var lv = new EquipLive();
+    Check(EquipGuide.Next(plan, lv).Kind == GuideKind.OpenHero, "other hero -> open hero");
+    lv.HeroUid = plan.HeroUid;
+    Check(EquipGuide.Next(plan, lv).Kind == GuideKind.OpenSlot, "no slot -> open slot");
+    lv.PanelOk = true; lv.Part = 4;
+    Check(EquipGuide.Next(plan, lv).Kind == GuideKind.OpenSlot, "wrong slot -> open slot");
+    lv.Part = 2; lv.HideEquipped = true;
+    var gs = EquipGuide.Next(plan, lv);
+    Check(gs.Kind == GuideKind.HiddenEquipped && gs.OtherHero == "Байек", "on another hero + hide equipped");
+    lv.HideEquipped = false; lv.FilterActive = true;
+    Check(EquipGuide.Next(plan, lv).Kind == GuideKind.HiddenFilter, "filter hides it");
+    lv.FilterActive = false; lv.HideEnhanced = true;
+    Check(EquipGuide.Next(plan, lv).Kind == GuideKind.HiddenEnhanced, "enhanced hidden");
+    lv.HideEnhanced = false;
+    Check(EquipGuide.Next(plan, lv).Kind == GuideKind.NotInList, "not in list");
+    lv.Row[6423] = 7; lv.Col[6423] = 3;
+    gs = EquipGuide.Next(plan, lv);
+    Check(gs.Kind == GuideKind.Pick && gs.Row == 7 && gs.Col == 3 && gs.Item.Uid == 6423, "pick row/col");
+    Check(gs.States[6423] == ItemState.Current && gs.States[33] == ItemState.Waiting, "states");
+    lv.Owner[6423] = plan.HeroUid;
+    gs = EquipGuide.Next(plan, lv);
+    Check(gs.Kind == GuideKind.OpenSlot && gs.Item.Uid == 33 && gs.DoneCount == 1, "first done -> next slot");
+    lv.Owner[33] = plan.HeroUid;
+    Check(EquipGuide.Next(plan, lv).Kind == GuideKind.Done, "all on -> done");
+    lv.GameRunning = false;
+    Check(EquipGuide.Next(plan, lv).Kind == GuideKind.GameClosed || EquipGuide.Next(plan, lv).Kind == GuideKind.Done, "closed game");
+    var two = new List<Plan> { new Plan { Id = "a", HeroUid = 1 }, plan };
+    var lv2 = new EquipLive(); lv2.HeroUid = plan.HeroUid;
+    Eq(1, EquipGuide.PickPlan(two, lv2, 0), "plan follows the open hero");
+    lv2.HeroUid = 5;
+    Eq(0, EquipGuide.PickPlan(two, lv2, 0), "keeps the choice otherwise");
+    Eq(-1, EquipGuide.PickPlan(new List<Plan>(), lv2, 0), "no plans");
 
     Console.WriteLine();
     Console.WriteLine(passed + " passed, " + failed + " failed");

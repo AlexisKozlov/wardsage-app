@@ -36,7 +36,7 @@ namespace RealmForge {
   }
 
   public static class Extractor {
-    static readonly object Gate = new object();   // RFX keeps its state in static fields: one run at a time
+    internal static readonly object Gate = new object();   // RFX keeps its state in static fields: one run at a time
 
     public static string OutputDir {
       get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "RealmForge"); }

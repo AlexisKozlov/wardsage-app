@@ -1,4 +1,4 @@
-RealmForge Extractor 0.5
+RealmForge Extractor 0.6
 ========================
 
 (English below)
@@ -13,7 +13,7 @@ RealmForge Extractor 0.5
 -------------
 * Программа только ЧИТАЕТ память игры (функция Windows ReadProcessMemory). Она ничего не
   записывает в игру, не меняет файлы игры и не обращается к серверам игры.
-* В сеть уходит один запрос: на адрес сайта, указанный в окне (по умолчанию
+* Сетевые запросы — только на адрес сайта, указанный в окне (по умолчанию
   https://realmforge-wor.vercel.app). Никакой телеметрии и сторонних сервисов.
 * Исходный код открыт: RealmForge-Extractor.ps1 — обычный текстовый файл, его можно прочитать.
 
@@ -43,6 +43,15 @@ RealmForge Extractor 0.5
 account.json» делает то же самое вместе с отправкой.
 
 Адрес сайта можно поменять в блоке «Дополнительно» (обычно не нужно).
+
+ПЕРЕОДЕВАНИЕ (помощник)
+-----------------------
+На сайте в «Оптимизаторе» нажмите «Надеть в игре». В экстракторе нажмите «Переодевание»:
+откроется небольшое окно поверх игры. Откройте в игре героя → Снаряжение → слот, и окно
+подскажет, какой предмет нажать (ряд и место в списке) и какой фильтр снять. Надели —
+строка отмечается сама, после 5 предметов сборка отмечается выполненной на сайте.
+Первый поиск окна снаряжения занимает около минуты. Помощник только читает игру:
+предметы надеваете вы сами, программа ничего не нажимает и ничего не меняет в игре.
 
 ЕСЛИ ЧТО-ТО НЕ ТАК
 ------------------
@@ -84,7 +93,7 @@ READ-ONLY
 ---------
 * The program only READS the game's memory (the Windows ReadProcessMemory function). It never
   writes to the game, never changes game files and never talks to the game servers.
-* It makes exactly one network request: to the site address shown in the window
+* Network requests go only to the site address shown in the window
   (https://realmforge-wor.vercel.app by default). No telemetry, no third-party services.
 * The code is open: RealmForge-Extractor.ps1 is a plain text file you can read.
 
@@ -113,6 +122,15 @@ Documents\RealmForge\account.json and not sent anywhere. The "Save a copy of acc
 checkbox does the same in addition to syncing.
 
 The site address can be changed under "Advanced" (normally not needed).
+
+EQUIP HELPER
+------------
+On the site, press "Equip in game" in the Optimizer. In the extractor press "Equip helper": a small
+window opens on top of the game. Open the hero in the game -> Gear -> a slot, and the window shows
+which item to press (row and position in the list) and which filter to turn off. Once an item is on,
+its line is ticked; after all items the build is marked done on the site. The first search for the
+gear screen takes about a minute. The helper only reads the game: you put the items on yourself,
+the program presses nothing and changes nothing in the game.
 
 TROUBLESHOOTING
 ---------------
