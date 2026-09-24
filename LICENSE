@@ -1,0 +1,37 @@
+Wardsage — Source-Available License
+
+Copyright (c) 2026 AlexisKozlov. All rights reserved.
+
+This repository is published so that anyone can read the source code and see
+what the Wardsage app does. You may:
+
+  - view and read the source code;
+  - build it on your own computer to check that the published app matches this
+    source, and run that build for your own personal use.
+
+You may NOT, without prior written permission from the copyright holder:
+
+  - copy, publish, distribute, sublicense or sell this code or any part of it,
+    or any program built from it;
+  - use this code or any part of it in another project, product or service;
+  - modify it to make, or use it to help make, tools that automate gameplay,
+    give an unfair advantage, or interfere with any game or its services
+    (bots, cheats, macros and similar).
+
+Contributions sent to this repository are made under these same terms, and the
+copyright holder may use them without restriction.
+
+Wardsage is an unofficial fan project. It is not affiliated with, endorsed by,
+or sponsored by the developers or publishers of Watcher of Realms. Game names
+and game content belong to their respective owners.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
+AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE. USE OF THE
+SOFTWARE WITH ANY GAME IS AT YOUR OWN RISK.
+
+Earlier copies of this code that were obtained under the MIT License remain
+under that license for those copies only.
