@@ -722,6 +722,12 @@ namespace RealmForge {
       catch (Win32Exception) { /* the user declined the UAC prompt: stay open */ }
     }
 
+    protected override void OnShown(EventArgs e) {
+      base.OnShown(e);
+      // With a saved code, Enter starts the sync right away; otherwise the code field waits for input.
+      if (SyncClient.IsValidCode(codeBox.Text)) primary.Focus(); else codeBox.Focus();
+    }
+
     protected override void OnFormClosing(FormClosingEventArgs e) {
       if (busy && e.CloseReason == CloseReason.UserClosing &&
           MessageBox.Show(this, Strings.Get("confirm_close"), "RealmForge", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) {
