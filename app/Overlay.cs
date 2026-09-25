@@ -203,8 +203,18 @@ namespace RealmForge {
 
     // ---------------------------------------------------------------- drawing
 
+    // the game's own «selected» glow frame (common_frame_chosen_light), embedded in the exe
+    static Image frameTex;
+    static Image FrameTex() {
+      if (frameTex == null) {
+        try { using (var s = typeof(OverlayController).Assembly.GetManifestResourceStream("overlay/frame.png")) if (s != null) frameTex = new Bitmap(Image.FromStream(s)); }
+        catch (Exception) { }
+      }
+      return frameTex;
+    }
+
     void Draw(string kind, int x, int y, int w, int h) {
-      const int M = 18;
+      const int M = 34;
       float pulse = (float)(0.6 + 0.4 * Math.Sin(frame * 0.45));
       string key = kind + x + ":" + y + ":" + w + ":" + h + ":" + (int)(pulse * 10);
       Say(kind == "box" ? "on" : kind == "up" ? "above" : "below");
@@ -214,12 +224,30 @@ namespace RealmForge {
         using (var bmp = new Bitmap(w + 2 * M, h + 2 * M, PixelFormat.Format32bppArgb)) {
           using (var gr = Graphics.FromImage(bmp)) {
             gr.SmoothingMode = SmoothingMode.AntiAlias; gr.Clear(Color.Transparent);
-            for (int i = M - 2; i >= 1; i -= 2) {
-              int a = (int)(90 * pulse * (1 - i / (float)M));
-              using (var pen = new Pen(Color.FromArgb(a, 255, 205, 90), 2f)) gr.DrawPath(pen, Round(M - i, M - i, w + 2 * i, h + 2 * i, 8 + i));
+            // wide pulsing glow
+            for (int i = M - 2; i >= 2; i -= 2) {
+              int a = (int)(150 * pulse * (1 - i / (float)M));
+              using (var pen = new Pen(Color.FromArgb(a, 255, 190, 60), 3f)) gr.DrawPath(pen, Round(M - i, M - i, w + 2 * i, h + 2 * i, 8 + i));
             }
-            using (var pen = new Pen(Color.FromArgb((int)(255 * (0.75 + 0.25 * pulse)), 255, 226, 140), 4f)) gr.DrawPath(pen, Round(M, M, w, h, 8));
-            using (var pen = new Pen(Color.FromArgb(200, 255, 250, 225), 1.5f)) gr.DrawPath(pen, Round(M + 2, M + 2, w - 4, h - 4, 6));
+            // dark outline so the frame shows on bright cells too, then a thick gold border
+            using (var pen = new Pen(Color.FromArgb(220, 30, 18, 4), 10f)) gr.DrawPath(pen, Round(M - 3, M - 3, w + 6, h + 6, 10));
+            using (var pen = new Pen(Color.FromArgb(255, 255, 214, 110), 6f)) gr.DrawPath(pen, Round(M - 3, M - 3, w + 6, h + 6, 10));
+            using (var pen = new Pen(Color.FromArgb((int)(200 + 55 * pulse), 255, 250, 220), 2f)) gr.DrawPath(pen, Round(M - 3, M - 3, w + 6, h + 6, 10));
+            // the game's selection frame texture on top, slightly bigger than the cell
+            var tex = FrameTex();
+            if (tex != null) {
+              var ia = new ImageAttributes();
+              ia.SetColorMatrix(new ColorMatrix { Matrix33 = (float)(0.7 + 0.3 * pulse) });
+              int pad = 10;
+              gr.DrawImage(tex, new Rectangle(M - pad, M - pad, w + 2 * pad, h + 2 * pad), 0, 0, tex.Width, tex.Height, GraphicsUnit.Pixel, ia);
+            }
+            // corner arrows pointing at the item
+            using (var br = new SolidBrush(Color.FromArgb(255, 255, 220, 120)))
+            using (var pen = new Pen(Color.FromArgb(230, 40, 22, 4), 2f)) {
+              float cx = M + w / 2f;
+              var tri = new[] { new PointF(cx - 14, 2), new PointF(cx + 14, 2), new PointF(cx, M - 8) };
+              gr.FillPolygon(br, tri); gr.DrawPolygon(pen, tri);
+            }
           }
           glow.Put(bmp, x - M, y - M);
         }
