@@ -14,7 +14,7 @@
     game: { running: false, version: null }, last: null, page: 'sync', editCode: false,
     sync: { phase: 'idle', stage: null, seconds: 0, result: null, error: null },
     plans: { status: 'idle', list: [], err: null }, sel: 0,
-    scan: { status: 'idle', panel: false }, live: null, reported: {}, compact: false, overlay: 'off', hl: 0,
+    scan: { status: 'idle', panel: false }, live: null, reported: {}, compact: false, overlay: 'off', hl: '',
   };
 
   // ---------------------------------------------------------------- helpers
@@ -245,7 +245,7 @@
     const url = G.itemUrl(S.site, icon), r = G.rankOf(stars), su = G.setUrl(S.site, setIcon);
     return `<span class="cell ${r ? 'r' + r : 'r0'} ${cls}"${card ? ` data-card="${esc(card)}"` : ''}>${url ? `<img src="${esc(url)}" alt="" onerror="this.src='img/slot${slot | 0}.webp';this.className='ph'">` : `<img class="ph" src="img/slot${slot | 0}.webp" alt="">`}`
       + `${su ? `<img class="set" src="${esc(su)}" alt="" onerror="this.remove()">` : ''}`
-      + `${level ? `<i class="lv num">+${level}</i>` : ''}${stars ? `<i class="sr num">${stars}</i>` : ''}</span>`;
+      + `${level ? `<i class="lv num">+${level}</i>` : ''}</span>`;
   }
 
   function planCard(p, i) {
@@ -273,6 +273,33 @@
     }).join('')}</ul>`;
   }
 
+  // «what to look for»: the cell as it looks in the game, its set and main stat with the game's icons, where it is
+  function findCard(it, g, compact) {
+    const su = G.setUrl(S.site, it.setIcon), sid = G.statId(it.mainStat), stu = G.statUrl(S.site, sid);
+    const pos = g.row > 0 ? `<span class="fpos"><span class="mm">${[1, 2, 3].map((c) => `<i class="${c === (g.col || 0) ? 'on' : ''}"></i>`).join('')}</span>
+        <span>${S.lang === 'en' ? `row <b class="num">${g.row}</b>${g.col ? `, #<b class="num">${g.col}</b> from the left` : ''}` : `ряд <b class="num">${g.row}</b>${g.col ? `, <b class="num">${g.col}</b>-й слева` : ''}`}</span></span>` : '';
+    return `<div class="find${compact ? ' sm' : ''}">
+      <span class="find-cell">${cell(it.icon, it.stars, it.level, it.slot, 'big', it.setIcon, it.uid + ':new')}</span>
+      <div class="find-info">
+        <b class="find-name">${esc(it.name)}</b>
+        <div class="find-tags">
+          ${it.setName ? `<span class="ftag">${su ? `<img src="${esc(su)}" alt="" onerror="this.remove()">` : ''}${esc(it.setName)}</span>` : ''}
+          ${it.mainStat ? `<span class="ftag stat">${stu ? `<img src="${esc(stu)}" alt="" onerror="this.remove()">` : ''}${esc(it.mainStat)}</span>` : ''}
+          ${it.level ? `<span class="ftag num">+${it.level}</span>` : ''}
+        </div>
+        ${pos}
+      </div></div>`;
+  }
+
+  // the game's filter as three steps with the same icons as in the game
+  function filterSteps(it) {
+    const su = G.setUrl(S.site, it.setIcon), stat = G.statOf(it.mainStat), stu = G.statUrl(S.site, G.statId(it.mainStat));
+    const steps = [`<span class="fk">${I.filter}${esc(t('fStep1'))}</span>`];
+    if (it.setName) steps.push(`${esc(t('fStep2'))} <b>${su ? `<img src="${esc(su)}" alt="">` : ''}${esc(it.setName)}</b>`);
+    if (stat) steps.push(`${esc(t('fStep3'))} <b>${stu ? `<img src="${esc(stu)}" alt="">` : ''}${esc(stat)}</b>`);
+    return `<ol class="fsteps">${steps.map((x) => `<li>${x}</li>`).join('')}</ol>`;
+  }
+
   function say(p, g) {
     if (S.scan.status === 'scanning') return sayBox('', `<span class="spinner"></span>`, t('scanning'), t('scanningP'));
     if (S.scan.status === 'fail') return sayBox('warn', I.warn, t('scanFail'), t('scanFailP'), rescanBtn());
@@ -282,27 +309,21 @@
     switch (g.kind) {
       case 'closed': return sayBox('warn', I.game, t('gClosed'), t('gClosedP'));
       case 'done': return sayBox('done', I.check, t('gDone'), t('gDoneP'));
-      case 'hero': return sayBox('', I.hand, t('gOpenHero', p.heroName), t('gOpenSlotP', itemText));
-      case 'slot': return sayBox('', I.hand, t('gOpenSlot', it.slotName || t('slot' + it.slot)), t('gOpenSlotP', itemText));
+      case 'hero': return sayBox('', I.hand, t('gOpenHero', p.heroName), '') + findCard(it, g, S.compact);
+      case 'slot': return sayBox('', I.hand, t('gOpenSlot', it.slotName || t('slot' + it.slot)), '') + findCard(it, g, S.compact);
       case 'pick': {
-        const head = g.col > 0
-          ? (S.lang === 'en' ? `Press the item: row <span class="pos"><b>${g.row}</b></span> · #<span class="pos"><b>${g.col}</b></span> from the left`
-                             : `Нажми предмет: ряд <span class="pos"><b>${g.row}</b></span> · <span class="pos"><b>${g.col}</b></span>-й слева`)
-          : esc(t('gPickRow', g.row));
-        const sub = [ovText(), (g.row > 4 ? t('gScroll', g.row) + ' ' : '') + t('gPickP', itemText)].filter(Boolean).join(' ');
-        return `<div class="say"><span class="ring">${I.hand}</span><div><p>${head}</p><small>${esc(sub)}</small></div></div>`;
+        // what to do right now, by what the frame over the game is doing
+        const head = { on: t('fOn'), below: t('fBelow'), above: t('fAbove'), need_click: t('fNeedClick') }[S.overlay] || t('fLook');
+        return sayBox('', I.hand, head, '') + findCard(it, g, S.compact);
       }
-      case 'filter': {
-        const stat = G.statOf(it.mainStat);
-        const head = it.setName ? t('gFilter', it.setName) + (stat ? ' ' + t('gFilterStat', stat) : '') : t('gFilterNoSet', stat || '—');
-        return sayBox('', I.filter, head, [t('gFilterP', g.row), ovText(), itemText].filter(Boolean).join(' '));
-      }
-      case 'selected': return sayBox('done', I.check, t('gSelected'), itemText);
+      case 'filter':
+        return `<div class="say"><span class="ring">${I.filter}</span><div><p>${esc(t('fFilterHead'))}</p>${filterSteps(it)}<small>${esc(t('fFilterP', g.row))}</small></div></div>` + findCard(it, g, S.compact);
+      case 'selected': return sayBox('done', I.check, t('gSelected'), '') + findCard(it, g, true);
       case 'rel': {
         const n = Math.abs(g.dr), col = g.col || 1;
         const rows = S.lang === 'en' ? `${n} row${n === 1 ? '' : 's'}` : `${n} ${G.plural(n, 'ряд', 'ряда', 'рядов')}`;
         const head = g.dr === 0 ? t('gRelSame', col) : t(g.dr > 0 ? 'gRelDown' : 'gRelUp', rows, col);
-        return sayBox('', I.hand, head, [ovText(), itemText].filter(Boolean).join(' '));
+        return sayBox('', I.hand, head, ovText()) + findCard(it, g, S.compact);
       }
       case 'hiddenEq': return sayBox('warn', I.warn, t('gHiddenEq', g.other || t('otherHero')), t('gHiddenEqP'));
       case 'hiddenEnh': return sayBox('warn', I.warn, t('gHiddenEnh'), t('gHiddenEnhP'));
@@ -357,6 +378,8 @@
         ${row(t('setSite'), t('setSiteP'), `<div class="row"><div class="input" style="flex:1;min-width:240px"><input id="site" value="${esc(S.site)}" spellcheck="false"></div>
           <button class="btn-line" data-act="saveSite">${esc(t('save'))}</button>${S.site !== S.defaultSite ? `<button class="btn-ghost" data-act="resetSite">${esc(t('reset'))}</button>` : ''}</div>`)}
         ${row(t('setLog'), t('setLogP'), `<button class="btn-line" data-act="openLog">${esc(t('openLog'))}</button>`)}
+        ${row(t('setDiag'), t('setDiagP'), `<button class="btn-line" data-act="diag">${esc(t('diagStart'))}</button>`)}
+        ${row(t('setFiles'), t('setFilesP'), `<button class="btn-line" data-act="gameFiles">${esc(t('filesStart'))}</button> <span class="hint" id="filesState">${esc(S.filesState || '')}</span>`)}
         ${row(t('setAbout'), '', `<p style="margin:0 0 10px;color:var(--muted)">${esc(t('aboutP', S.version))}</p>
           <button class="btn-line" data-act="open" data-url="https://github.com/AlexisKozlov/realmforge-extractor">${I.ext}${esc(t('source'))}</button>`)}
       </dl></div>`;
@@ -411,6 +434,8 @@
     else if (a === 'saveOnly') { S.sync = { phase: 'run', stage: 'find', seconds: 0 }; host.send({ cmd: 'sync', saveOnly: true }); S.page = 'sync'; render(); }
     else if (a === 'open') host.send({ cmd: 'open', url: el.dataset.url });
     else if (a === 'openLog') host.send({ cmd: 'openLog' });
+    else if (a === 'gameFiles') { host.send({ cmd: 'gameFiles' }); S.filesState = t('filesWork', 0); render(); }
+    else if (a === 'diag') { host.send({ cmd: 'diag' }); el.textContent = t('diagOn'); el.disabled = true; }
     else if (a === 'openFolder') host.send({ cmd: 'openFolder' });
     else if (a === 'editCode') { S.editCode = true; S.page = 'sync'; render(); setTimeout(() => $('#code') && $('#code').focus(), 30); }
     else if (a === 'cancelCode') { S.editCode = false; render(); }
@@ -473,6 +498,7 @@
         if (S.page === 'equip' || S.compact) render(); else syncHighlight();
         break;
       }
+      case 'gameFiles': S.filesState = m.state === 'progress' ? t('filesWork', m.n) : m.state === 'done' ? t('filesDone', m.n) : m.state === 'no_game' ? t('filesNoGame') : t('filesErr'); if (S.page === 'settings') render(); break;
       case 'overlay': S.overlay = m.state; if (S.page === 'equip' || S.compact) render(); break;
       case 'focusEquip': S.page = 'equip'; render(); break;
     }
@@ -481,8 +507,20 @@
   // tell the host which item to frame in the game
   function syncHighlight() {
     const p = current();
-    const uid = p && S.hasCode ? G.highlightUid(G.next(p, S.live)) : 0;
-    if (uid !== S.hl) { S.hl = uid; host.send({ cmd: 'highlight', uid }); }
+    const g = p && S.hasCode ? G.next(p, S.live) : null;
+    const uid = g ? G.highlightUid(g) : 0;
+    // hints on the game's own buttons: the filter to set, «Заменить», the next slot
+    let hint = '', slot = -1, line1 = '', line2 = '';
+    if (g && g.item) {
+      if (g.kind === 'filter') {
+        hint = 'filter';
+        line1 = g.item.setName ? t('hSet', g.item.setName) : '';
+        const st = G.statOf(g.item.mainStat); line2 = st ? t('hStat', st) : '';
+      } else if (g.kind === 'selected') hint = 'replace';
+      else if (g.kind === 'slot' && S.live && S.live.panelOk) { hint = 'slot'; slot = g.item.slot; line1 = t('hSlot', g.item.slotName || t('slot' + g.item.slot)); }
+    }
+    const key = [uid, hint, slot, line1, line2].join('|');
+    if (key !== S.hl) { S.hl = key; host.send({ cmd: 'highlight', uid, hint, slot, line1, line2 }); }
   }
 
   render();

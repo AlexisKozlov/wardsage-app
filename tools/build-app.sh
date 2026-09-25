@@ -7,9 +7,16 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-SDK_CSC=$(ls -d /usr/lib/dotnet/sdk/*/Roslyn/bincore/csc.dll | tail -1)
-CSC="dotnet $SDK_CSC -nologo -noconfig"
-FX=/usr/lib/mono/4.6.2-api
+# Linux: the .NET SDK's Roslyn + Mono's 4.6.2 reference assemblies. Windows (Git Bash): the installed .NET SDK's Roslyn +
+# the reference assemblies of the NuGet package Microsoft.NETFramework.ReferenceAssemblies.net462 (FX=... to point at them).
+if [ -d /usr/lib/dotnet/sdk ]; then
+  SDK_CSC=$(ls -d /usr/lib/dotnet/sdk/*/Roslyn/bincore/csc.dll | tail -1)
+  FX=${FX:-/usr/lib/mono/4.6.2-api}
+else
+  SDK_CSC=$(cygpath -w "$(ls -d "/c/Program Files/dotnet/sdk/"*/Roslyn/bincore/csc.dll | tail -1)")
+  FX=${FX:-/d/RealmForge/work/tools/net462/build/.NETFramework/v4.6.2}
+fi
+CSC=(dotnet "$SDK_CSC" -nologo -noconfig)
 WV=vendor/webview2
 OUT=build/app
 rm -rf "$OUT" && mkdir -p "$OUT/ui" dist
@@ -27,9 +34,9 @@ RES+=("-resource:app/res/frame.png,overlay/frame.png")
 for f in Microsoft.Web.WebView2.Core.dll Microsoft.Web.WebView2.WinForms.dll WebView2Loader.dll; do RES+=("-resource:$WV/$f,bin/$f"); done
 
 CORE="src/MemoryReader.cs src/EquipScan.cs src/MiniJson.cs src/GameInfo.cs src/Extractor.cs src/SyncClient.cs src/PlansClient.cs src/ListTracker.cs src/Config.cs src/CodeProtector.cs"
-APP="app/Program.cs app/AppWindow.cs app/HostBridge.cs app/Overlay.cs app/AssemblyInfo.cs"
+APP="app/Program.cs app/AppWindow.cs app/HostBridge.cs app/Overlay.cs app/HintGeometry.cs app/AssemblyInfo.cs"
 
-$CSC -langversion:7.3 -target:winexe -platform:x64 -optimize+ -deterministic -nostdlib -warnaserror -nowarn:1701,1702 \
+"${CSC[@]}" -langversion:7.3 -target:winexe -platform:x64 -optimize+ -deterministic -nostdlib -warnaserror -nowarn:1701,1702 \
   -r:$FX/mscorlib.dll -r:$FX/System.dll -r:$FX/System.Core.dll -r:$FX/System.Drawing.dll -r:$FX/System.Windows.Forms.dll \
   -r:$FX/System.Security.dll -r:$WV/Microsoft.Web.WebView2.Core.dll -r:$WV/Microsoft.Web.WebView2.WinForms.dll \
   -win32icon:app/res/icon.ico -win32manifest:app/res/app.manifest \

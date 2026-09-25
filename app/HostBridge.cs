@@ -7,7 +7,9 @@
 // URLs by scheme and host, item uids as numbers. Nothing here writes to the game.
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
+using System.IO;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -91,11 +93,52 @@ namespace RealmForge {
           case "highlight": {
             object v; double u = m.TryGetValue("uid", out v) && v is double ? (double)v : 0;
             overlay.SetTarget(u > 0 && u < 9e15 && watch.Contains((long)u) ? (long)u : 0);
+            // hint on the game's own buttons: filter / «Заменить» / next slot, with up to two short lines
+            string hint = MiniJson.GetString(m, "hint") ?? "";
+            if (hint != "filter" && hint != "replace" && hint != "slot") hint = "";
+            double slot = m.TryGetValue("slot", out v) && v is double ? (double)v : -1;
+            var lines = new List<string>();
+            foreach (var k in new[] { "line1", "line2" }) {
+              string l = MiniJson.GetString(m, k);
+              if (!string.IsNullOrEmpty(l)) lines.Add(l.Length > 80 ? l.Substring(0, 80) : l);
+            }
+            overlay.SetHint(hint, slot >= 0 && slot <= 4 ? (int)slot : -1, lines.ToArray());
             break;
           }
+          case "diag": overlay.StartDiag(5); break;
+          case "gameFiles": CopyGameFiles(); break;
           case "compact": win.SetCompact(MiniJson.GetBool(m, "on", false)); break;
         }
       } catch (Exception e) { Log.Write("message " + cmd + ": " + e); }
+    }
+
+    // Settings → «Файлы игры для разбора»: GameAssembly.dll and global-metadata.dat of the running game, copied in 6 MB
+    // parts into debug\parts next to the program (read-only open; nothing is sent anywhere).
+    void CopyGameFiles() {
+      var t = new Thread(() => {
+        try {
+          var ps = Process.GetProcessesByName("Watcher of Realms");
+          if (ps.Length == 0) { Post("{\"ev\":\"gameFiles\",\"state\":\"no_game\"}"); return; }
+          string dir = Path.GetDirectoryName(ps[0].MainModule.FileName);
+          string outDir = Path.Combine(Path.GetDirectoryName(Application.ExecutablePath), "debug", "parts");
+          Directory.CreateDirectory(outDir);
+          var files = new[] { Path.Combine(dir, "GameAssembly.dll"), Path.Combine(dir, "Watcher of Realms_Data", "il2cpp_data", "Metadata", "global-metadata.dat") };
+          int n = 0; const int Part = 6 << 20;
+          foreach (var f in files) {
+            if (!File.Exists(f)) continue;
+            using (var src = new FileStream(f, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete)) {
+              var buf = new byte[Part]; int got, i = 0;
+              while ((got = src.Read(buf, 0, Part)) > 0) {
+                using (var dst = File.Create(Path.Combine(outDir, Path.GetFileName(f) + ".part" + i.ToString("00")))) dst.Write(buf, 0, got);
+                i++; n++;
+                Post("{\"ev\":\"gameFiles\",\"state\":\"progress\",\"n\":" + n + "}");
+              }
+            }
+          }
+          Post("{\"ev\":\"gameFiles\",\"state\":\"done\",\"n\":" + n + "}");
+        } catch (Exception e) { Log.Write("gameFiles: " + e); Post("{\"ev\":\"gameFiles\",\"state\":\"error\"}"); }
+      });
+      t.IsBackground = true; t.Start();
     }
 
     void Save() { try { cfg.Save(); } catch (Exception e) { Log.Write("config save: " + e.Message); } }

@@ -63,6 +63,21 @@
     return first.replace(/\s*[+\-]?[\d\s.,]+%?$/, '').trim();
   }
 
+  // Stat id of a main-stat text («АТК 1 056», «Крит. УРН 80%», «HP 12%»): flat ATK/DEF/HP with % are the bonus stats.
+  const STAT_IDS = {
+    'атк': 1, 'atk': 1, 'защ': 2, 'def': 2, 'сопр. магии': 5, 'm. res.': 5, 'оз': 7, 'hp': 7,
+    'бонус к атк': 13, 'atk bonus': 13, 'бонус к защ': 14, 'def bonus': 14, 'бонус к оз': 19, 'hp bonus': 19,
+    'восстановление ярости': 23, 'rage regen': 23, 'шанс крита': 24, 'шанс крит.': 24, 'crit. rate': 24,
+    'крит. урн': 25, 'crit. dmg': 25, 'эффект исцеления': 27, 'healing effect': 27, 'са': 29, 'atk spd.': 29,
+  };
+  function statId(mainStat) {
+    const first = String(mainStat || '').split(',')[0].trim();
+    const id = STAT_IDS[statOf(first).toLowerCase()] || 0;
+    if (/%/.test(first) && (id === 1 || id === 2 || id === 7)) return id === 1 ? 13 : id === 2 ? 14 : 19;
+    return id;
+  }
+  function statUrl(site, id) { return id > 0 ? `${site}/art/ui/stat_${id}.webp` : ''; }
+
   // Hero bust on the site: hero uid = base id × 100000 (+ copy index).
   function bustUrl(site, heroUid) {
     const id = Math.floor(heroUid / 100000);
@@ -86,7 +101,8 @@
   }
 
   // Background texture by item stars (game rarity colours 1..6), 0 = none.
-  const rankOf = (stars) => (stars > 0 ? Math.min(6, Math.max(1, stars | 0)) : 0);
+  // (stars = the game's iStarLvl 1…13: EquipStarQuality → ItemQuality background rank; 7 = ancient legendary = rank 5)
+  const rankOf = (stars) => (stars > 0 ? (stars === 7 ? 5 : Math.min(6, Math.max(1, stars | 0))) : 0);
 
   // Item to frame in the game (0 = none): only while the list with it is on the screen.
   const HIGHLIGHT = { pick: 1, filter: 1, rel: 1, selected: 1 };
@@ -98,7 +114,7 @@
     return a > 10 && a < 20 ? many : b === 1 ? one : b >= 2 && b <= 4 ? few : many;
   }
 
-  const api = { next, pickPlan, highlightUid, plural, bustUrl, headUrl, itemUrl, setUrl, rankOf, statOf, VISIBLE_ROWS };
+  const api = { next, pickPlan, highlightUid, plural, bustUrl, headUrl, itemUrl, setUrl, rankOf, statOf, statId, statUrl, VISIBLE_ROWS };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.RFGuide = api;
 })(typeof window !== 'undefined' ? window : globalThis);

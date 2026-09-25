@@ -13,6 +13,7 @@
 // FindEquip() scans the memory once (tens of seconds); Poll() then re-reads the found tables several times a second.
 using System;
 using System.Collections.Generic;
+using System.Text;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 
@@ -143,6 +144,16 @@ namespace RealmForge {
       if (a == null || a.Panel == 0) return 0;
       ulong v; int tt;
       return Field(a.Panel, KSel, out v, out tt) && tt == T_INT && (long)v > 0 ? (long)v : 0;
+    }
+
+    /// <summary>The gear panel's Lua table as JSON (3 levels, the two big list tables skipped) for the frame diagnostics.</summary>
+    public static string DumpPanel(EquipAddrs a) {
+      if (a == null || a.Panel == 0) return null;
+      var d = ParseTable(a.Panel, 3, new HashSet<ulong>());
+      if (d == null) return null;
+      foreach (var k in new[] { "m_EquipListRealData", "m_EquipIdToIndex" }) if (d.ContainsKey(k)) d[k] = "<skipped>";
+      var sb = new StringBuilder(); J(sb, d);
+      return sb.ToString();
     }
 
     /// <summary>Row / position of one item in the current list (0 = not in it) and the list table (0 = unreadable).</summary>

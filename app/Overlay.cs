@@ -8,6 +8,8 @@ using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
+using System.Drawing.Text;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
@@ -82,18 +84,54 @@ namespace RealmForge {
   sealed class OverlayController : IDisposable {
     readonly Timer timer = new Timer();
     readonly GlowWindow glow = new GlowWindow();
+    readonly GlowWindow tip = new GlowWindow();     // hint on the game's own buttons (filter, «Заменить», next slot)
     readonly ListGeometry g = new ListGeometry();
+    readonly HintGeometry hg = new HintGeometry();
     readonly ScrollAnchor anchor = new ScrollAnchor();
     readonly Action<string> report;
     EquipAddrs addrs; long target; int[] types; ulong typesPtr; long lastSel = -1; int tryTop;
     string state = "off"; int frame; string drawnKey;
+    // diagnostics (Settings → «Диагностика рамки»): screenshots and list data into debug\ for a few minutes
+    DateTime diagUntil = DateTime.MinValue; int diagTick, diagN, shotN; string diagLast, diagDir, diagInfo = "";
+    string hintKind = ""; int hintSlot = -1; string[] hintLines = new string[0]; string tipKey;
 
     public OverlayController(Action<string> report) {
       this.report = report;
       timer.Interval = 100; timer.Tick += (s, e) => { try { Tick(); } catch (Exception ex) { Log.Write("overlay: " + ex.Message); Hide("off"); } };
     }
 
-    public void Dispose() { timer.Dispose(); glow.Dispose(); }
+    public void Dispose() { timer.Dispose(); glow.Dispose(); tip.Dispose(); }
+
+    public void StartDiag(int minutes) {
+      diagDir = Path.Combine(Path.GetDirectoryName(Application.ExecutablePath), "debug");
+      Directory.CreateDirectory(diagDir);
+      diagUntil = DateTime.Now.AddMinutes(minutes); diagN = 0; shotN = 0; diagLast = null;
+      DiagLog("start " + DateTime.Now.ToString("s"));
+      timer.Start();
+    }
+
+    void DiagLog(string line) { try { File.AppendAllText(Path.Combine(diagDir, "frame.log"), line + "\r\n"); } catch (Exception) { } }
+
+    // every 5th tick: a log line and the panel's Lua data when it changed (≤ 60 files); every 20th: a screenshot (≤ 12)
+    void DiagTick(IntPtr hwnd, W32.POINT o, W32.RECT cr, string info) {
+      if (DateTime.Now > diagUntil || diagDir == null || ++diagTick % 5 != 0) return;
+      DiagLog(DateTime.Now.ToString("HH:mm:ss.f") + " " + info);
+      string panel = RFX.DumpPanel(addrs);
+      if (panel != null && panel != diagLast && diagN < 60) {
+        diagLast = panel; diagN++;
+        try { File.WriteAllText(Path.Combine(diagDir, "panel_" + diagN.ToString("00") + ".json"), panel); } catch (Exception) { }
+        DiagLog("  panel_" + diagN.ToString("00") + ".json");
+      }
+      if (shotN >= 12 || diagTick % 20 != 0 || cr.R <= 0 || cr.B <= 0) return;
+      shotN++;
+      try {
+        using (var bmp = new Bitmap(cr.R, cr.B, PixelFormat.Format32bppArgb)) {
+          using (var gr = Graphics.FromImage(bmp)) gr.CopyFromScreen(o.X, o.Y, 0, 0, new Size(cr.R, cr.B), CopyPixelOperation.SourceCopy);
+          bmp.Save(Path.Combine(diagDir, "screen_" + shotN.ToString("00") + ".png"), ImageFormat.Png);
+        }
+        DiagLog("  screen_" + shotN.ToString("00") + ".png");
+      } catch (Exception e) { DiagLog("  shot failed: " + e.Message); }
+    }
 
     public void SetAddrs(EquipAddrs a) { if (a != addrs) { addrs = a; anchor.Has = false; types = null; lastSel = -1; } }
 
@@ -101,8 +139,24 @@ namespace RealmForge {
     public void SetTarget(long uid) {
       if (uid == target) return;
       target = uid;
-      if (uid == 0) { timer.Stop(); Hide("off"); } else timer.Start();
+      if (uid == 0) Hide("off");
+      Run();
     }
+
+    /// <summary>Hint on the game's own buttons: "filter", "replace", "slot" (slot 0–4) or "" = none; up to two text lines.</summary>
+    public void SetHint(string kind, int slot, string[] lines) {
+      kind = kind ?? ""; lines = lines ?? new string[0];
+      if (kind == hintKind && slot == hintSlot && string.Join("\n", lines) == string.Join("\n", hintLines)) return;
+      hintKind = kind; hintSlot = slot; hintLines = lines;
+      HideTip(); Run();
+    }
+
+    void Run() {
+      if (target != 0 || hintKind != "" || DateTime.Now < diagUntil) { timer.Start(); return; }
+      timer.Stop(); HideTip();
+    }
+
+    void HideTip() { if (tip.Visible) tip.Hide(); tipKey = null; }
 
     void Hide(string st) {
       if (glow.Visible) glow.Hide();
@@ -113,6 +167,11 @@ namespace RealmForge {
     void Say(string st) { if (st != state) { state = st; report(st); } }
 
     void Tick() {
+      if (DateTime.Now < diagUntil && addrs != null) {
+        IntPtr dh = GameWindow(); var dp = new W32.POINT(0, 0); W32.RECT dr;
+        if (dh != IntPtr.Zero && W32.GetClientRect(dh, out dr)) { W32.ClientToScreen(dh, ref dp); DiagTick(dh, dp, dr, diagInfo); }
+      }
+      TickHint();
       if (target == 0 || addrs == null) { Hide("off"); return; }
       int col; ulong list;
       int row = RFX.RowOfUid(addrs, target, out col, out list);
@@ -153,6 +212,8 @@ namespace RealmForge {
       // a fresh list opens at the top: anchor right away when the bars on the screen agree (no click needed)
       if (!anchor.Has && tryTop > 0) { tryTop--; if (hasPhase && anchor.FromTop(g, sy + ph, H, list)) tryTop = 0; }
       if (!anchor.Has) { Hide("need_click"); return; }
+      diagInfo = "H=" + H + " phase=" + (hasPhase ? (sy + ph).ToString("0.0") : "none") + " conf=" + conf.ToString("0.00")
+        + " row1=" + anchor.Row1Top.ToString("0.0") + " target=" + row + "/" + col + " sel=" + sel + " state=" + state;
 
       // follow the scrolling by the stat bars' phase
       if (hasPhase) {
@@ -167,6 +228,52 @@ namespace RealmForge {
       if (mid < g.ViewTop * H) Draw("up", o.X + (int)left, o.Y + sy, (int)cell, 0, (int)Math.Ceiling((g.ViewTop * H - top) / pitch));
       else if (mid > g.ViewBottom * H) Draw("down", o.X + (int)left, o.Y + sy + sh, (int)cell, 0, (int)Math.Ceiling((top + full - g.ViewBottom * H) / pitch));
       else Draw("box", o.X + (int)left, o.Y + (int)top, (int)cell, (int)full, 0);
+    }
+
+    void TickHint() {
+      if (hintKind == "" || addrs == null) { HideTip(); return; }
+      IntPtr hwnd = GameWindow();
+      if (hwnd == IntPtr.Zero || W32.IsIconic(hwnd) || !IsForeground(hwnd)) { HideTip(); return; }
+      W32.RECT cr; if (!W32.GetClientRect(hwnd, out cr) || cr.B < 200) { HideTip(); return; }
+      var o = new W32.POINT(0, 0); W32.ClientToScreen(hwnd, ref o);
+      double H = cr.B, W = cr.R;
+      int[] r = hintKind == "filter" ? hg.Filter(H) : hintKind == "replace" ? hg.Replace(H) : hintKind == "slot" ? hg.Slot(hintSlot, W, H) : null;
+      if (r == null) HideTip(); else DrawTip(o.X + r[0], o.Y + r[1], r[2], r[3], hintLines, H);
+    }
+
+    /// <summary>A pulsing gold frame around a button of the game (x, y, w, h: screen px) with a text plate above it.</summary>
+    void DrawTip(int x, int y, int w, int h, string[] lines, double H) {
+      float pulse = (float)(0.6 + 0.4 * Math.Sin(frame * 0.45));
+      string key = x + ":" + y + ":" + w + ":" + h + ":" + string.Join("|", lines) + ":" + (int)(pulse * 10);
+      if (key == tipKey) return;
+      tipKey = key;
+      float fs = (float)Math.Max(13.0, H * 0.022);
+      using (var f = new Font("Segoe UI", fs, FontStyle.Bold, GraphicsUnit.Pixel)) {
+        float tw = 0, lh = fs * 1.35f;
+        using (var probe = new Bitmap(1, 1)) using (var pg = Graphics.FromImage(probe)) foreach (var l in lines) tw = Math.Max(tw, pg.MeasureString(l, f).Width);
+        int pw = lines.Length > 0 ? (int)tw + 28 : 0, ph = lines.Length > 0 ? (int)(lh * lines.Length) + 16 : 0;
+        int bw = Math.Max(w + 52, pw + 8), bh = h + 52 + (ph > 0 ? ph + 14 : 0);
+        using (var bmp = new Bitmap(bw, bh, PixelFormat.Format32bppArgb)) {
+          using (var gr = Graphics.FromImage(bmp)) {
+            gr.SmoothingMode = SmoothingMode.AntiAlias; gr.TextRenderingHint = TextRenderingHint.AntiAliasGridFit; gr.Clear(Color.Transparent);
+            int fx = 26, fy = bh - h - 26;
+            for (int i = 24; i >= 2; i -= 2)
+              using (var pen = new Pen(Color.FromArgb((int)(140 * pulse * (1 - i / 26f)), 255, 190, 60), 3f)) gr.DrawPath(pen, Round(fx - i, fy - i, w + 2 * i, h + 2 * i, 6 + i));
+            using (var pen = new Pen(Color.FromArgb(220, 30, 18, 4), 8f)) gr.DrawPath(pen, Round(fx - 2, fy - 2, w + 4, h + 4, 8));
+            using (var pen = new Pen(Color.FromArgb(255, 255, 214, 110), 4f)) gr.DrawPath(pen, Round(fx - 2, fy - 2, w + 4, h + 4, 8));
+            if (ph > 0) {
+              var rc = new RectangleF(0, 0, pw, ph);
+              using (var bg = new SolidBrush(Color.FromArgb(235, 16, 12, 8))) gr.FillPath(bg, Round(rc.X + 1, rc.Y + 1, rc.Width - 2, rc.Height - 2, 6));
+              using (var pen = new Pen(Color.FromArgb(240, 232, 190, 110), 2f)) gr.DrawPath(pen, Round(rc.X + 1, rc.Y + 1, rc.Width - 2, rc.Height - 2, 6));
+              using (var fg = new SolidBrush(Color.FromArgb(255, 255, 236, 180))) for (int i = 0; i < lines.Length; i++) gr.DrawString(lines[i], f, fg, 14, 8 + i * lh);
+              float ax = Math.Min(pw - 20, fx + w / 2f);
+              var tri = new[] { new PointF(ax - 9, ph - 1), new PointF(ax + 9, ph - 1), new PointF(ax, ph + 11) };
+              using (var br = new SolidBrush(Color.FromArgb(240, 232, 190, 110))) gr.FillPolygon(br, tri);
+            }
+          }
+          tip.Put(bmp, x - 26, y - (bh - h - 26));
+        }
+      }
     }
 
     IntPtr gameWnd; int gameWndAge;
@@ -238,15 +345,6 @@ namespace RealmForge {
             // dark outline so the frame shows on bright cells too, then a thick gold border
             using (var pen = new Pen(Color.FromArgb(220, 30, 18, 4), 10f)) gr.DrawPath(pen, Round(M - 3, M - 3, w + 6, h + 6, 10));
             using (var pen = new Pen(Color.FromArgb(255, 255, 214, 110), 6f)) gr.DrawPath(pen, Round(M - 3, M - 3, w + 6, h + 6, 10));
-            using (var pen = new Pen(Color.FromArgb((int)(200 + 55 * pulse), 255, 250, 220), 2f)) gr.DrawPath(pen, Round(M - 3, M - 3, w + 6, h + 6, 10));
-            // the game's selection frame texture on top, slightly bigger than the cell
-            var tex = FrameTex();
-            if (tex != null) {
-              var ia = new ImageAttributes();
-              ia.SetColorMatrix(new ColorMatrix { Matrix33 = (float)(0.7 + 0.3 * pulse) });
-              int pad = 10;
-              gr.DrawImage(tex, new Rectangle(M - pad, M - pad, w + 2 * pad, h + 2 * pad), 0, 0, tex.Width, tex.Height, GraphicsUnit.Pixel, ia);
-            }
             // corner arrows pointing at the item
             using (var br = new SolidBrush(Color.FromArgb(255, 255, 220, 120)))
             using (var pen = new Pen(Color.FromArgb(230, 40, 22, 4), 2f)) {
