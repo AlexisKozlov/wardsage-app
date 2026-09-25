@@ -63,6 +63,12 @@ public sealed class ActionWorker(ActionQueue queue, ActionHandlerRegistry handle
                 log.LogInformation("Job {Job} canceled at command {Command}", job.Id, command.Id);
                 return;
             }
+            catch (ActionFailedException e)
+            {
+                job.CommandFailed(i, e.Message);
+                log.LogInformation("Job {Job}: command {Command} ({Type}) failed: {Error}", job.Id, command.Id, command.Type, e.Message);
+                return;
+            }
             catch (Exception e)
             {
                 job.CommandFailed(i, e.Message);

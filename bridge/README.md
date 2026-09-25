@@ -12,7 +12,8 @@ dotnet publish -c Release -r win-x64 --self-contained -o out   # один кат
 ```
 
 Любую настройку из `appsettings.json` (секция `Bridge`) можно переопределить аргументом:
-`--Bridge:Port=5056`, `--Bridge:StateFile=D:/data/state.json`.
+`--Bridge:Port=5056`, `--Bridge:StateFile=D:/data/state.json`. Справочник игры для имён и слотов:
+`--Bridge:ReferenceDir=D:/RealmForge/reference/data` — без него `equipment.equip` отклоняется.
 Остановка — Ctrl+C / SIGTERM: новые команды сразу получают 503, выполняемая команда получает отменённый
 `CancellationToken`, всё оставшееся в очереди помечается `canceled`.
 
@@ -39,7 +40,7 @@ const api = (path, init = {}) => fetch(`http://localhost:5055/api${path}`, {
 
 | Запрос | Ответ |
 |---|---|
-| `GET /api/state` | `200 {version, updatedAt, data, queue:{pending, capacity, accepting}}` |
+| `GET /api/state` | `200 {version, updatedAt, data, account, queue:{pending, capacity, accepting}, host:{connected, lastSeen}}`; `account` — снимок аккаунта (ниже), `null` пока программа его не прислала |
 | `POST /api/actions/apply` | `202` + `Location: /api/jobs/{id}` и статус задачи; `400` — ошибки по каждой команде (ничего не поставлено в очередь); `413` — тело больше `MaxRequestBodyBytes`; `415` — не `application/json`; `503` — очередь полна (`Retry-After`) или сервис останавливается |
 | `GET /api/jobs/{id}` | `200` статус задачи и каждой команды: `queued/running/succeeded/failed/canceled`, у команд ещё `pending/skipped`; `404` |
 
@@ -54,6 +55,61 @@ const api = (path, init = {}) => fetch(`http://localhost:5055/api${path}`, {
 
 `id` — 1..64 символа `[A-Za-z0-9._:-]`, уникален в пакете; `type` — зарегистрированный обработчик; `params` —
 объект (по умолчанию `{}`). Лишние и повторяющиеся поля — ошибка.
+
+## Снимок аккаунта (`account` в `/api/state`)
+
+```
+{ version, capturedAt, updatedAt, gameVersion, provisional,
+  heroes: [{ id, baseId, name, level, stars, power, equipped: [{slot, itemId}], artifactId }],
+  items:  [{ id, kind: gear|artifact, itemId, name, slotType, setId, rarity, level, locked,
+             primaryStat: {poolId, statId, name, isPercent, rawValue, value, rolls}, substats: [...], heroId }] }
+```
+
+`id` героя — его uid (baseId × 100000 + копия), `id` предмета — uid в игре. `slot`: `weapon`, `armor`, `bracer`,
+`amulet`, `ring` (0..4 в игре). `rarity` — звёзды предмета (`iStarLvl`). Правила разбора — те же, что у сайта
+(`lib/game/normalize.ts`). `provisional: true` — на снимок уже наложены результаты экипировки, следующее чтение
+игры их подтвердит.
+
+## Экипировка: `equipment.equip`
+
+```json
+[{ "id": "e1", "type": "equipment.equip",
+   "params": { "heroId": 229000000, "slots": [{ "slot": "weapon", "itemId": 42 }, { "slot": 2, "itemId": "408" }] } }]
+```
+
+`heroId`/`itemId` — положительные целые числом или строкой (uid артефактов не влезают в double JS), `slot` — имя
+или 0..4, 1..5 слотов без повторов. Сразу при приёме (400) и ещё раз перед выполнением проверяется по снимку:
+герой и предметы есть, предмет подходит к слоту. Надевать можно и вещь с другого героя — в игре она с него снимется.
+
+Выполнение (`Equipment/HostEquipmentService.cs`): мост передаёт команду программе RealmForge, та проводит игрока
+по гайду (открывает слот, листает, кликает вещь; «Заменить» нажимает игрок) и отвечает. Команда `succeeded` —
+вещи на герое, снимок сразу обновлён: вещь ушла с прежнего владельца, то, что было на герое в этих слотах, — в сумку.
+`failed` с причиной: `Cancelled` (игрок закрыл гайд), `HostUnavailable` (программа не подключена или пропала),
+`TimedOut` (`EquipTimeoutSeconds`, 10 мин), `Rejected` (снимок изменился). Уже надетое — `succeeded` без обращения к
+программе.
+
+## API для программы (`/api/host/*`)
+
+Программа — клиент моста, своего сервера у неё нет. Тот же токен (файл в `%LOCALAPPDATA%`, пользователь тот же);
+запросы с заголовком `Origin` (из браузера) отклоняются — страница не может выдать себя за программу.
+
+| Запрос | Что делает |
+|---|---|
+| `PUT /api/host/snapshot` | тело — `account.json` как есть (до 32 МБ); `X-Captured-At` — когда НАЧАЛОСЬ чтение игры, `X-Game-Version`. `200 {version, heroes, items}`; `409` — чтение началось раньше последней экипировки через мост (оно вернуло бы вещи назад), снимок не заменён |
+| `GET /api/host/commands?wait=25` | long poll (до 30 с) → `{commands:[{id, type:"equip", issuedAt, payload:{commandId, heroId, heroName, slots}}]}`. Заодно отметка «программа жива»: не опрашивала `HostOfflineAfterSeconds` (60 с) — считается отключённой |
+| `POST /api/host/commands/{id}/result` | `{status: "done"\|"cancelled"\|"failed", message?}` → `204`; `404` — ответ уже не ждут |
+
+### Что нужно в RealmForge.exe (следующий шаг, в программе пока нет)
+
+1. `src/BridgeClient.cs` (C# 7.3, `HttpWebRequest`, как `PlansClient`): токен из файла, `http://127.0.0.1:5055`,
+   короткие таймауты; мост не запущен — тихо ничего не делать.
+2. `HostBridge.RunSync`: после удачного `Extractor.Read` — `PUT /api/host/snapshot` с `X-Captured-At = started`.
+   Автосинхронизация уже запускается после смены владельцев вещей (`NoteOwners` → `RequestAutoSync(8)`), так что
+   мост получает свежее чтение сам.
+3. Фоновый поток: `GET /api/host/commands` в цикле → команда `equip` → `win.BeginInvoke` → на страницу
+   `{"ev":"bridge.equip", id, heroUid, items:[{slot, uid}]}` → `ui/guide.js` ведёт по тому же гайду, что и план с сайта
+   (`equip.scan` / `equip.watch` / `highlight`) → по завершении страница шлёт `{"cmd":"bridge.result", id, status}` →
+   `POST /api/host/commands/{id}/result`.
 
 ## Подключение воркера
 
@@ -73,6 +129,15 @@ Security/AccessToken            токен (создание, сравнение
 Actions/ActionBatchParser       разбор и строгая валидация пакета команд
 Actions/IActionHandler          контракт обработчика + реестр
 Actions/StateActionHandlers     state.set, state.remove
+Actions/EquipActionHandler      equipment.equip: параметры, проверка по снимку, вызов IEquipmentService
+Account/AccountSnapshot         DTO снимка: герои, предметы, слоты
+Account/AccountSnapshotMapper   account.json → DTO (правила сайта)
+Account/AccountSnapshotStore    текущий снимок: замена чтением программы, сдвиг вещей после экипировки
+Account/GameReference           справочник: имена, слоты и комплекты вещей, статы пулов
+Equipment/IEquipmentService     контракт экипировки; HostEquipmentService — через RealmForge.exe
+Equipment/EquipPlanChecker      герой и вещи есть в снимке, вещь подходит к слоту
+Host/HostLink                   очередь команд для программы, ожидание ответа, «программа жива»
+Host/HostEndpoints              /api/host/snapshot, /api/host/commands, /api/host/commands/{id}/result
 Queue/ActionQueue               ограниченный Channel<ActionJob>
 Queue/ActionWorker              BackgroundService: выполнение, отмена при остановке
 Queue/ActionJob, JobStore       статусы задач и команд

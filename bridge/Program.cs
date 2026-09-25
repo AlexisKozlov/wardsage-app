@@ -3,6 +3,7 @@
 //   GET  /api/state            current data (JSON) + queue info
 //   POST /api/actions/apply    [{ "id", "type", "params" }, ...] -> validated, queued -> 202 + /api/jobs/{id}
 //   GET  /api/jobs/{id}        status of an accepted batch and of each of its commands
+//   /api/host/*                RealmForge.exe: uploads account snapshots, long-polls equip commands (Host/HostEndpoints.cs)
 //
 // Listens on loopback only (localhost:5055). Browser access: CORS for http(s)://localhost:* and Origin "null"
 // (a dashboard opened from a file), plus the X-RealmForge-Token header on every /api request (Security/*).
@@ -11,7 +12,10 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using RealmForge.Bridge;
+using RealmForge.Bridge.Account;
 using RealmForge.Bridge.Actions;
+using RealmForge.Bridge.Equipment;
+using RealmForge.Bridge.Host;
 using RealmForge.Bridge.Queue;
 using RealmForge.Bridge.Security;
 using RealmForge.Bridge.State;
@@ -41,6 +45,14 @@ builder.Services.AddSingleton<ActionBatchParser>();
 builder.Services.AddSingleton<ActionHandlerRegistry>();
 builder.Services.AddSingleton<IActionHandler, SetStateHandler>();
 builder.Services.AddSingleton<IActionHandler, RemoveStateHandler>();
+
+// game account + equipping through RealmForge.exe
+builder.Services.AddSingleton(sp => GameReference.Load(options.ReferenceDir, options.Language,
+                                                       sp.GetRequiredService<ILogger<GameReference>>()));
+builder.Services.AddSingleton<AccountSnapshotStore>();
+builder.Services.AddSingleton<HostLink>();
+builder.Services.AddSingleton<IEquipmentService, HostEquipmentService>();
+builder.Services.AddSingleton<IActionHandler, EquipActionHandler>();
 builder.Services.AddHostedService<ActionWorker>();
 
 var app = builder.Build();
@@ -48,9 +60,11 @@ var app = builder.Build();
 app.UseExceptionHandler();
 app.UseMiddleware<LocalAccessMiddleware>();
 app.MapBridgeApi();
+app.MapHostApi();
 
 var queue = app.Services.GetRequiredService<ActionQueue>();
 var token = app.Services.GetRequiredService<AccessToken>();
+app.Services.GetRequiredService<GameReference>();   // load now: a missing reference shows in the log at start
 app.Lifetime.ApplicationStarted.Register(() => app.Logger.LogInformation(
     "RealmForge bridge on http://localhost:{Port}; token {Mode}: {File}",
     options.Port, options.RequireToken ? "required" : "NOT required", token.FilePath));

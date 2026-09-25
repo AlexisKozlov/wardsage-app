@@ -1,5 +1,7 @@
 using System.Text.Json;
+using RealmForge.Bridge.Account;
 using RealmForge.Bridge.Actions;
+using RealmForge.Bridge.Host;
 using RealmForge.Bridge.Queue;
 using RealmForge.Bridge.State;
 
@@ -7,7 +9,12 @@ namespace RealmForge.Bridge;
 
 public sealed record QueueInfo(int Pending, int Capacity, bool Accepting);
 
-public sealed record StateResponse(long Version, DateTimeOffset UpdatedAt, JsonElement Data, QueueInfo Queue);
+public sealed record HostInfo(bool Connected, DateTimeOffset? LastSeen);
+
+/// <param name="Data">Free-form dashboard data (state.set / state.remove).</param>
+/// <param name="Account">The game account from RealmForge; null until the app has sent one.</param>
+public sealed record StateResponse(
+    long Version, DateTimeOffset UpdatedAt, JsonElement Data, AccountSnapshotDto? Account, QueueInfo Queue, HostInfo Host);
 
 public static class Endpoints
 {
@@ -19,11 +26,12 @@ public static class Endpoints
         api.MapGet("/jobs/{id:guid}", GetJob);
     }
 
-    static StateResponse GetState(StateStore state, ActionQueue queue)
+    static StateResponse GetState(StateStore state, AccountSnapshotStore account, ActionQueue queue, HostLink host)
     {
         var snapshot = state.Snapshot;
-        return new StateResponse(snapshot.Version, snapshot.UpdatedAt, snapshot.Data,
-                                 new QueueInfo(queue.Pending, queue.Capacity, queue.Accepting));
+        return new StateResponse(snapshot.Version, snapshot.UpdatedAt, snapshot.Data, account.Current?.Snapshot,
+                                 new QueueInfo(queue.Pending, queue.Capacity, queue.Accepting),
+                                 new HostInfo(host.IsConnected, host.LastSeen));
     }
 
     /// <summary>202 + Location: /api/jobs/{id} when queued; 400 with per-command errors when anything is invalid

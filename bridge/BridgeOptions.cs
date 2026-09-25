@@ -21,6 +21,22 @@ public sealed class BridgeOptions
     /// <summary>Optional JSON object the state starts from; empty state when not set.</summary>
     public string? StateFile { get; set; }
 
+    /// <summary>Game reference folder (heroes.json, equipment.json, stat_pools.json, stats.json), e.g. D:\RealmForge\reference\data.
+    /// Without it hero/item names and gear slots are unknown and "equipment.equip" is refused.</summary>
+    public string? ReferenceDir { get; set; }
+
+    /// <summary>Language of the names in the snapshot: "ru" or "en".</summary>
+    public string Language { get; set; } = "ru";
+
+    /// <summary>Largest account.json RealmForge may upload.</summary>
+    public long MaxSnapshotBytes { get; set; } = 32 * 1024 * 1024;
+
+    /// <summary>How long an equip command waits for the player to finish RealmForge's guide.</summary>
+    public int EquipTimeoutSeconds { get; set; } = 600;
+
+    /// <summary>RealmForge counts as disconnected when it has not polled for commands for this long.</summary>
+    public int HostOfflineAfterSeconds { get; set; } = 60;
+
     public int QueueCapacity { get; set; } = 256;
     public int MaxCommandsPerRequest { get; set; } = 100;
     public long MaxRequestBodyBytes { get; set; } = 256 * 1024;
@@ -40,5 +56,9 @@ public sealed class BridgeOptions
         Check(MaxRequestBodyBytes > 0, "MaxRequestBodyBytes must be positive.");
         Check(KeepFinishedJobs > 0, "KeepFinishedJobs must be positive.");
         Check(ShutdownTimeoutSeconds > 0, "ShutdownTimeoutSeconds must be positive.");
+        Check(Language is "ru" or "en", "Language must be ru or en.");
+        Check(MaxSnapshotBytes > 0, "MaxSnapshotBytes must be positive.");
+        Check(EquipTimeoutSeconds > 0, "EquipTimeoutSeconds must be positive.");
+        Check(HostOfflineAfterSeconds > 30, "HostOfflineAfterSeconds must be above 30 (the longest poll).");
     }
 }
