@@ -35,6 +35,9 @@ namespace RealmForge {
     DateTime lastSyncStart = DateTime.MinValue, autoDue = DateTime.MaxValue;
     Dictionary<long, long> lastOwners;
     const int AutoEveryMin = 5, SyncGapSec = 31;   // the site takes one sync per code per 30 s
+    // automatic updates (app/Updater.cs): first check shortly after start, then every 6 hours
+    readonly System.Windows.Forms.Timer updateTimer = new System.Windows.Forms.Timer();
+    string updateReady;   // JSON of the downloaded update for the page, or null
 
     public HostBridge(AppWindow win, CoreWebView2 core) {
       this.win = win; this.core = core;
@@ -46,10 +49,21 @@ namespace RealmForge {
                                       st => Post("{\"ev\":\"auto\",\"state\":" + S(st) + "}"));
       overlay.AutoEnabled = cfg.AutoClick;
       autoTimer.Interval = 1000; autoTimer.Tick += (s, e) => AutoSyncTick(); autoTimer.Start();
+      updateTimer.Interval = 20000; updateTimer.Tick += (s, e) => { updateTimer.Interval = 6 * 3600 * 1000; CheckUpdate(); }; updateTimer.Start();
       Log.Write("RealmForge " + Program.Version + " started");
     }
 
-    public void Dispose() { gameTimer.Dispose(); liveTimer.Dispose(); autoTimer.Dispose(); overlay.Dispose(); }
+    public void Dispose() { gameTimer.Dispose(); liveTimer.Dispose(); autoTimer.Dispose(); updateTimer.Dispose(); overlay.Dispose(); }
+
+    void CheckUpdate() {
+      string site = cfg.Site;
+      Task.Factory.StartNew(() => {
+        var u = Updater.CheckAndDownload(site);
+        if (u == null) return;
+        updateReady = "{\"ev\":\"update\",\"version\":" + S(u.Version) + ",\"notes\":" + S(cfg.Lang == "en" ? u.NotesEn : u.NotesRu) + "}";
+        Post(updateReady);
+      });
+    }
 
     // ------------------------------------------------------------------ plumbing
 
@@ -69,7 +83,7 @@ namespace RealmForge {
       string cmd = MiniJson.GetString(m, "cmd");
       try {
         switch (cmd) {
-          case "init": SendState(null); CheckGame(true); break;
+          case "init": SendState(null); CheckGame(true); if (updateReady != null) Post(updateReady); break;
           case "setLang": cfg.Lang = MiniJson.GetString(m, "lang") == "en" ? "en" : "ru"; Save(); break;
           case "setCode": {
             string code = SyncClient.ExtractCode(MiniJson.GetString(m, "code") ?? "");
@@ -118,6 +132,7 @@ namespace RealmForge {
           case "diag": overlay.StartDiag(5); break;
           case "gameFiles": CopyGameFiles(); break;
           case "compact": win.SetCompact(MiniJson.GetBool(m, "on", false)); break;
+          case "update.restart": Program.RestartForUpdate(); break;
         }
       } catch (Exception e) { Log.Write("message " + cmd + ": " + e); }
     }

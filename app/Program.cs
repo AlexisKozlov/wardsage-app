@@ -15,7 +15,7 @@ using System.Windows.Forms;
 
 namespace RealmForge {
   static class Program {
-    public const string Version = "1.3.0";
+    public const string Version = "1.4.0";
     internal static string AppDir;          // unpacked resources of this build
     internal static string UiDir;
     internal static string DataDir;         // WebView2 user data (cache, local storage)
@@ -26,6 +26,8 @@ namespace RealmForge {
       bool created;
       single = new Mutex(true, "RealmForge.Desktop.SingleInstance", out created);
       if (!created) { BringOtherToFront(); return 0; }
+      // a downloaded, signed update waits: put it in place and start it (app/Updater.cs)
+      if (Updater.ApplyAtStart(ReleaseSingle)) return 0;
 
       Application.EnableVisualStyles();
       Application.SetCompatibleTextRenderingDefault(false);
@@ -94,6 +96,16 @@ namespace RealmForge {
         foreach (var d in Directory.GetDirectories(Path.Combine(root, "app")))
           if (!string.Equals(d, AppDir, StringComparison.OrdinalIgnoreCase)) try { Directory.Delete(d, true); } catch (Exception) { }
       } catch (Exception) { }
+    }
+
+    static void ReleaseSingle() { try { single.ReleaseMutex(); single.Dispose(); } catch (Exception) { } }
+
+    /// <summary>«Перезапустить» after an update was downloaded: a fresh start of this exe installs it.</summary>
+    internal static void RestartForUpdate() {
+      ReleaseSingle();
+      try { Process.Start(new ProcessStartInfo(Application.ExecutablePath) { UseShellExecute = false }); }
+      catch (Exception e) { Log.Write("restart: " + e.Message); return; }
+      Application.Exit();
     }
 
     static byte[] ReadAll(Stream s) { using (var ms = new MemoryStream()) { s.CopyTo(ms); return ms.ToArray(); } }

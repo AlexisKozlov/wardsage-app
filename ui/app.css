@@ -379,3 +379,7 @@ body.compact .slots li .sub { font-size: 12px }
 body.compact .say { margin-top: 0; padding: 12px 14px }
 body.compact .say p { font-size: 16px }
 .find-cell { display: flex }
+
+/* ---------- update downloaded (app/Updater.cs) ---------- */
+.upd { display: grid; gap: 4px; padding: 10px; margin-bottom: 10px; border: 1px solid var(--golddim); background: rgba(232, 207, 142, .08); font-size: 12px }
+.upd b { color: var(--gold) } .upd small { color: var(--muted) } .upd .btn-line { justify-self: start; margin-top: 4px }

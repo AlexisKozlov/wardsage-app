@@ -91,6 +91,8 @@
       ${nav('equip', I.equip, t('navEquip'), pending ? `<span class="badge">${pending}</span>` : '')}
       ${nav('settings', I.gear, t('navSettings'))}
       <div class="rail-foot">
+        ${S.update ? `<div class="upd"><b>${esc(t('updReady', S.update.version))}</b><small>${esc(S.update.notes || t('updNext'))}</small>
+          <button class="btn-line" data-act="updRestart">${esc(t('updRestart'))}</button></div>` : ''}
         <div class="game-state"><span class="dot ${S.game.running ? 'on' : ''}"></span><div>${esc(S.game.running ? t('gameOn') : t('gameOff'))}
           ${S.game.running && S.game.version ? `<small>${esc(t('gameVer', S.game.version))}</small>` : ''}</div></div>
         <div class="langs">
@@ -475,6 +477,7 @@
     else if (a === 'saveSite') host.send({ cmd: 'setSite', site: $('#site').value });
     else if (a === 'resetSite') host.send({ cmd: 'setSite', site: S.defaultSite });
     else if (a === 'reload') loadPlans();
+    else if (a === 'updRestart') host.send({ cmd: 'update.restart' });
     else if (a === 'rescan') scan();
     else if (a === 'pick') { S.sel = Number(el.dataset.i); render(); }
     else if (a === 'compact') { S.compact = !S.compact; host.send({ cmd: 'compact', on: S.compact }); render(); }
@@ -535,6 +538,7 @@
       }
       case 'gameFiles': S.filesState = m.state === 'progress' ? t('filesWork', m.n) : m.state === 'done' ? t('filesDone', m.n) : m.state === 'no_game' ? t('filesNoGame') : t('filesErr'); if (S.page === 'settings') render(); break;
       case 'overlay': S.overlay = m.state; if (S.page === 'equip' || S.compact) render(); break;
+      case 'update': S.update = { version: m.version, notes: m.notes || '' }; render(); break;
       case 'auto': S.auto = m.state; if (S.page === 'equip' || S.compact) render(); break;
       case 'focusEquip': S.page = 'equip'; render(); break;
     }
