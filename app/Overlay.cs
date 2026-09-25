@@ -85,7 +85,7 @@ namespace RealmForge {
     readonly ListGeometry g = new ListGeometry();
     readonly ScrollAnchor anchor = new ScrollAnchor();
     readonly Action<string> report;
-    EquipAddrs addrs; long target; int[] types; ulong typesPtr; long lastSel = -1;
+    EquipAddrs addrs; long target; int[] types; ulong typesPtr; long lastSel = -1; int tryTop;
     string state = "off"; int frame; string drawnKey;
 
     public OverlayController(Action<string> report) {
@@ -129,7 +129,7 @@ namespace RealmForge {
         types = RFX.RowTypes(list, 5000); typesPtr = list;
         int n = types.Length - 1; while (n > 0 && types[n] == 0) n--;
         Array.Resize(ref types, n + 1);
-        anchor.Has = false;
+        anchor.Has = false; tryTop = 8;   // ~0.8 s: the screen may still be fading in
       }
 
       // the player clicked an item: the cursor shows where its row is on the screen
@@ -145,13 +145,17 @@ namespace RealmForge {
         }
         lastSel = sel;
       }
-      if (!anchor.Has) { Hide("need_click"); return; }
-      if (!IsForeground(hwnd)) { Hide("background"); return; }
+      if (!IsForeground(hwnd)) { Hide(anchor.Has ? "background" : "need_click"); return; }
 
-      // follow the scrolling by the stat bars' phase
       int sx = (int)(g.StripLeft * H), sy = (int)(g.ViewTop * H), sw = (int)((g.StripRight - g.StripLeft) * H), sh = (int)((g.ViewBottom - g.ViewTop) * H);
       double ph, conf;
-      if (Phase(o.X + sx, o.Y + sy, sw, sh, H, out ph, out conf)) {
+      bool hasPhase = Phase(o.X + sx, o.Y + sy, sw, sh, H, out ph, out conf);
+      // a fresh list opens at the top: anchor right away when the bars on the screen agree (no click needed)
+      if (!anchor.Has && tryTop > 0) { tryTop--; if (hasPhase && anchor.FromTop(g, sy + ph, H, list)) tryTop = 0; }
+      if (!anchor.Has) { Hide("need_click"); return; }
+
+      // follow the scrolling by the stat bars' phase
+      if (hasPhase) {
         int refRow = anchor.VisibleRow(g, types, H);
         if (refRow > 0) anchor.Track(g, types, refRow, sy + ph, H);
       }

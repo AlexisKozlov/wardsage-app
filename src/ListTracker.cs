@@ -21,7 +21,8 @@ namespace RealmForge {
     public double PitchY = 0.1571;      // row step of item rows (template height 100)
     public double BarTop = 0.1139, BarBottom = 0.1453;   // stat bar under the cell, from the row top
     public double ViewTop = 0.1518, ViewBottom = 0.8743; // visible part of the list
-    public const double TitleRow = 0.44, EmptyRow = 0.60;  // other row kinds, relative to an item row (44 / 60 vs 100)
+    public const double TitleRow = 0.44, EmptyRow = 0.60;
+    public const double TopPad = 0.0135;   // gap between the list's top edge and row 1 at scroll 0 (measured on the game screen)  // other row kinds, relative to an item row (44 / 60 vs 100)
     public const int Columns = 3;
 
     public double RowHeight(int type) { return type == 2 ? PitchY * TitleRow : type == 3 ? PitchY * EmptyRow : PitchY; }
@@ -118,6 +119,20 @@ namespace RealmForge {
       double selTop = cursorY - g.BarBottom * H / 2;
       Row1Top = selTop - g.RowOffset(types, selRow) * H;
       Has = true; ListPtr = listPtr;
+    }
+
+    /// <summary>Row 1's top when the list is scrolled to the very top (the game opens the list there), client px.</summary>
+    public static double TopRow1(ListGeometry g, double H) { return (g.ViewTop + ListGeometry.TopPad) * H; }
+
+    /// <summary>The list was just (re)built: if the stat bars on the screen sit where they would with the list at the top,
+    /// anchor there without waiting for a click. <paramref name="phaseY"/> is a row top found on the screen (client px).
+    /// False when the phase does not match (the list is scrolled): then the first click anchors as before.</summary>
+    public bool FromTop(ListGeometry g, double phaseY, double H, ulong listPtr) {
+      double pitch = g.PitchY * H, top = TopRow1(g, H);
+      double d = (phaseY - top) % pitch; if (d < 0) d += pitch; if (d > pitch / 2) d -= pitch;
+      if (Math.Abs(d) > pitch * 0.12) return false;
+      Row1Top = top + d; Has = true; ListPtr = listPtr;
+      return true;
     }
 
     /// <summary>Follows the scrolling: <paramref name="phaseY"/> is a row-top position found on the screen (client px),

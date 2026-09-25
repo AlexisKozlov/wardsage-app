@@ -327,6 +327,11 @@ static class CoreTests {
     Check(Math.Abs(an.Row1Top - realRow1) < 0.001, "bar phase snaps the anchor exactly");
     an.Track(geo, types, 6, 400 - 40 + 5 * geo.PitchY * HH, HH);   // the list scrolled down by 40 px
     Check(Math.Abs(an.Row1Top - (realRow1 - 40)) < 0.001, "scrolling is followed");
+    var at = new ScrollAnchor();
+    double top1 = ScrollAnchor.TopRow1(geo, HH);
+    Check(at.FromTop(geo, top1 + 3 + 2 * geo.PitchY * HH, HH, 1) && Math.Abs(at.Row1Top - (top1 + 3)) < 0.001, "fresh list at the top: anchored without a click");
+    var at2 = new ScrollAnchor();
+    Check(!at2.FromTop(geo, top1 + geo.PitchY * HH * 0.4, HH, 1) && !at2.Has, "scrolled list: no guess, waits for a click");
     Eq(3, geo.ColumnAt(geo.ColLeft(3) + 0.05), "column under the cursor");
     Eq(0, geo.ColumnAt(geo.ColLeft(1) - 0.03), "left of the list");
 
