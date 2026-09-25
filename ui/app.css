@@ -320,9 +320,9 @@ body.compact .slots li .sub { font-size: 12px }
 .cell[data-card] { cursor: help }
 /* the game's tip panel (common_description_tips) with the ornament on top (common_tips_frame) */
 .icard { position: fixed; z-index: 20; width: 300px; pointer-events: none; font-size: 13px; animation: enter .15s var(--ease);
-  border: 14px solid transparent; border-image: url(img/tip_panel.webp) 22 fill / 14px / 6px stretch; background: rgba(22, 26, 36, .96);
-  background-clip: padding-box; filter: drop-shadow(0 14px 26px rgba(0, 0, 0, .6)) }
-.icard::before { content: ''; position: absolute; left: -14px; right: -14px; top: -16px; height: 46px; pointer-events: none;
+  border-style: solid; border-width: 8px 8px 16px; border-image: url(img/tip_panel.webp) 8 8 16 fill / 8px 8px 16px stretch;
+  background: rgba(22, 26, 36, .94); background-clip: padding-box; filter: drop-shadow(0 14px 26px rgba(0, 0, 0, .6)) }
+.icard::before { content: ''; position: absolute; left: -10px; right: -10px; top: -12px; height: 46px; pointer-events: none;
   border-style: solid; border-width: 12px 40px 0 40px; border-image: url(img/tipframe.webp) 12 40 0 40 stretch }
 .ic-head { display: grid; grid-template-columns: 58px minmax(0, 1fr); gap: 10px; align-items: center; padding: 10px 12px; background: center / cover no-repeat }
 .ic-head .cell { width: 58px; height: 58px }
@@ -334,7 +334,7 @@ body.compact .slots li .sub { font-size: 12px }
 .ic-main img { width: 18px; height: 18px } .ic-main span { flex: 1 }
 .ic-subs li:not(.plain) { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 2px 8px; align-items: center; padding: 3px 0 4px }
 .ic-subs li img { width: 16px; height: 16px }
-.ic-subs li.off { opacity: .45 } .ic-subs b.lock { font-weight: 400; font-size: 11px; color: var(--dim) }
+.ic-subs li.off { opacity: .6 } .ic-subs small.lock { font-size: 11px; color: var(--muted); white-space: nowrap }
 .ic-subs .bar { grid-column: 2 / -1; position: relative; height: 10px; background: url(img/bar_bg.webp) center / 100% 100% no-repeat }
 .ic-subs .bar i { position: absolute; left: 3px; top: 3px; bottom: 3px; max-width: calc(100% - 6px); background: center / 100% 100% no-repeat }
 .ic-subs, .ic-bonus { margin: 0; padding: 6px 12px 8px; list-style: none; display: grid; gap: 3px }

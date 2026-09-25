@@ -416,11 +416,12 @@
     // shows «from +N» and a dark bar
     const subs = (o.subs || []).map((x, n) => {
       if (!x.name) return `<li class="plain"><span>${esc(x.text)}</span>${x.rolls > 0 ? `<i class="pips">${'◆'.repeat(Math.min(x.rolls, 6))}</i>` : ''}</li>`;
+      // not working until +4·n (the game writes «works from +N»): shown dimmed with its value, which it will give then
       const off = (o.level || 0) < 4 * (n + 1);
       const q = typeof x.bar === 'number' ? x.bar : -1;
-      const col = off ? 'black' : q >= 1 ? 'red' : q >= 0.8 ? 'yellow' : q >= 0.6 ? 'purple' : 'blue';
-      const bar = off || q >= 0 ? `<span class="bar"><i style="width:${off ? 100 : Math.max(3, q * 100)}%;background-image:url(img/bar_${col}.webp)"></i></span>` : '';
-      return `<li class="${off ? 'off' : ''}">${icon(x.stat)}<span>${esc(x.name)}</span><b class="${off ? 'lock' : 'num'}">${esc(off ? t('subFrom', 4 * (n + 1)) : x.value)}</b>${bar}</li>`;
+      const col = q >= 1 ? 'red' : q >= 0.8 ? 'yellow' : q >= 0.6 ? 'purple' : 'blue';
+      const bar = q >= 0 ? `<span class="bar"><i style="width:${Math.max(3, q * 100)}%;background-image:url(img/bar_${col}.webp)"></i></span>` : '';
+      return `<li class="${off ? 'off' : ''}">${icon(x.stat)}<span>${esc(x.name)}${off ? ` <small class="lock">${esc(t('subFrom', 4 * (n + 1)))}</small>` : ''}</span><b class="num">${esc(x.value)}</b>${bar}</li>`;
     }).join('');
     const setB = which === 'cur' ? '' : (it.setBonus || []).map((b) => `<li><b class="num">${b.pieces}</b><span>${esc(b.text)}</span></li>`).join('');
     const head = which === 'cur' ? t('cardNow') : t('cardNew');
