@@ -99,17 +99,20 @@ const api = (path, init = {}) => fetch(`http://localhost:5055/api${path}`, {
 | `GET /api/host/commands?wait=25` | long poll (до 30 с) → `{commands:[{id, type:"equip", issuedAt, payload:{commandId, heroId, heroName, slots}}]}`. Заодно отметка «программа жива»: не опрашивала `HostOfflineAfterSeconds` (60 с) — считается отключённой |
 | `POST /api/host/commands/{id}/result` | `{status: "done"\|"cancelled"\|"failed", message?}` → `204`; `404` — ответ уже не ждут |
 
-### Что нужно в RealmForge.exe (следующий шаг, в программе пока нет)
+### Сторона RealmForge.exe
 
-1. `src/BridgeClient.cs` (C# 7.3, `HttpWebRequest`, как `PlansClient`): токен из файла, `http://127.0.0.1:5055`,
-   короткие таймауты; мост не запущен — тихо ничего не делать.
-2. `HostBridge.RunSync`: после удачного `Extractor.Read` — `PUT /api/host/snapshot` с `X-Captured-At = started`.
-   Автосинхронизация уже запускается после смены владельцев вещей (`NoteOwners` → `RequestAutoSync(8)`), так что
-   мост получает свежее чтение сам.
-3. Фоновый поток: `GET /api/host/commands` в цикле → команда `equip` → `win.BeginInvoke` → на страницу
-   `{"ev":"bridge.equip", id, heroUid, items:[{slot, uid}]}` → `ui/guide.js` ведёт по тому же гайду, что и план с сайта
-   (`equip.scan` / `equip.watch` / `highlight`) → по завершении страница шлёт `{"cmd":"bridge.result", id, status}` →
-   `POST /api/host/commands/{id}/result`.
+- `src/BridgeClient.cs`: `BridgeClient` отправляет снимок, забирает команды и отвечает на них (`HttpWebRequest`, без
+  прокси, токен из файла). `BridgePoller` — фоновый поток long poll. Пока мост не ответил ни разу, программа
+  спрашивает без ожидания и повторяет попытки через 2 → 4 → … → 30 с. `Stop()` обрывает ждущий запрос, поток
+  завершается за миллисекунды.
+- `app/HostBridge.cs`: после каждого чтения игры (ручного, автосинхронизации, после переодевания) снимок уходит в
+  мост с `X-Captured-At` = начало чтения. Когда мост подключён, автосинхронизация читает игру и без кода сайта
+  (тогда только для моста). Команда `equip` превращается в план `bridge:<id>` на странице. `equip.finish` отвечает
+  мосту `done`/`cancelled`. Закрытие игры даёт `failed`, закрытие программы — `cancelled`: мост узнаёт сразу, а не
+  через 10 минут.
+- `ui/`: план из моста идёт по тому же гайду (рамка, автонажатие, подсказки). От моста приходят только слот и uid,
+  поэтому вместо названия показано «Предмет #uid». Через 4 с после выполнения план убирается, а при
+  перезагрузке сборок с сайта не теряется (`RFGuide.mergePlans`).
 
 ## Подключение воркера
 

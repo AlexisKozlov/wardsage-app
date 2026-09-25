@@ -26,6 +26,7 @@ src/GameInfo.cs         game process, exe path, version from realversion.xml
 src/Extractor.cs        pipeline: find game -> read -> validate/count -> save copy
 src/SyncClient.cs       POST {site}/api/sync (gzip, Bearer code, TLS 1.2, 60 s)
 src/PlansClient.cs      GET/POST {site}/api/extractor/plans (builds sent with «Надеть в игре»)
+src/BridgeClient.cs     local bridge (bridge/): snapshot upload, equip commands by long poll, answers
 src/Config.cs           %APPDATA%\RealmForge\config.json (+ last sync), CodeProtector.cs: DPAPI for the code
 tools/build-app.sh      -> dist/RealmForge.exe (Roslyn from the .NET 8 SDK + Mono's .NET Framework reference assemblies)
 tools/pack-app.sh       -> dist/RealmForge.zip (exe + README)

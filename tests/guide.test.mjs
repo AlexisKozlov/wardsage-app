@@ -48,4 +48,12 @@ ok(G.next(plan, live({ rows: { 6423: [103, 1] }, selUid: 77, selRow: 101 })).kin
 ok(G.highlightUid(G.next(plan, live({ rows: { 6423: [3, 2] } }))) === 6423, 'frame the item while it is in the list');
 ok(G.highlightUid(G.next(plan, live({ part: -1 }))) === 0 && G.highlightUid(G.next(plan, null)) === 0, 'no frame otherwise');
 ok(G.plural(1, 'ряд', 'ряда', 'рядов') === 'ряд' && G.plural(3, 'ряд', 'ряда', 'рядов') === 'ряда' && G.plural(12, 'ряд', 'ряда', 'рядов') === 'рядов' && G.plural(22, 'ряд', 'ряда', 'рядов') === 'ряда', 'plural');
+// plans from the local bridge
+const bp = G.bridgePlan({ id: 'bridge:c1', heroUid: 214700000, heroName: 'Сунь Укун', items: [{ slot: 0, uid: 42 }, { slot: 2, uid: 6423 }] }, (u) => 'Item #' + u);
+ok(bp.bridge && bp.id === 'bridge:c1' && bp.items.length === 2 && bp.items[0].name === 'Item #42' && bp.items[1].slot === 2, 'bridge plan');
+ok(G.next(bp, live({ part: 0, rows: { 42: [2, 1] } })).kind === 'pick', 'bridge plan: the guide works without the site fields');
+ok(G.next(bp, live({ owner: { 42: 214700000, 6423: 214700000 } })).kind === 'done', 'bridge plan: done when the hero wears both');
+const merged = G.mergePlans([bp, plan, { ...bp, id: 'bridge:c2' }], [{ id: 's1', items: [] }], { 'bridge:c2': true });
+ok(merged.map((p) => p.id).join() === 'bridge:c1,s1', 'reload keeps unfinished bridge plans first, drops old site plans and finished bridge plans');
+ok(G.mergePlans(null, null, null).length === 0, 'merge of nothing');
 console.log(`guide: ${n} passed`);

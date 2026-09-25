@@ -335,6 +335,28 @@ static class CoreTests {
     Eq(3, geo.ColumnAt(geo.ColLeft(3) + 0.05), "column under the cursor");
     Eq(0, geo.ColumnAt(geo.ColLeft(1) - 0.03), "left of the list");
 
+    Console.WriteLine("Bridge: reply parsing");
+    Eq(BridgeStatus.Ok, BridgeClient.StatusOf(204), "204 -> ok");
+    Eq(BridgeStatus.Stale, BridgeClient.StatusOf(409), "409 -> stale snapshot");
+    Eq(BridgeStatus.NotFound, BridgeClient.StatusOf(404), "404 -> nobody waits");
+    Eq(BridgeStatus.Unreachable, BridgeClient.StatusOf(0), "no connection");
+    Eq(BridgeStatus.NoToken, BridgeClient.StatusOf(-1), "no token file");
+    Eq(BridgeStatus.Rejected, BridgeClient.StatusOf(401), "401 -> rejected");
+    string g1 = "0b6b4a7e-1c2d-4e5f-8a9b-0c1d2e3f4a5b", g2 = "1b6b4a7e-1c2d-4e5f-8a9b-0c1d2e3f4a5b", g3 = "2b6b4a7e-1c2d-4e5f-8a9b-0c1d2e3f4a5b";
+    var bc = BridgeClient.ParseCommands("{\"commands\":[" +
+      "{\"id\":\"" + g1 + "\",\"type\":\"equip\",\"payload\":{\"commandId\":\"e1\",\"heroId\":229000000,\"heroName\":\"Сунь Укун\"," +
+        "\"slots\":[{\"slot\":\"ring\",\"itemId\":74},{\"slot\":\"weapon\",\"itemId\":42}]}}," +
+      "{\"id\":\"" + g2 + "\",\"type\":\"equip\",\"payload\":{\"heroId\":1,\"slots\":[{\"slot\":\"ring\",\"itemId\":1},{\"slot\":\"ring\",\"itemId\":2}]}}," +
+      "{\"id\":\"" + g3 + "\",\"type\":\"reboot\"}," +
+      "{\"id\":\"../../x\",\"type\":\"equip\"}]}");
+    Check(bc != null && bc.Count == 3, "commands with a usable id: " + (bc == null ? -1 : bc.Count));
+    Check(bc[0].Type == "equip" && bc[0].HeroUid == 229000000 && bc[0].HeroName == "Сунь Укун" && bc[0].CommandId == "e1", "equip command");
+    Check(bc[0].Slots.Count == 2 && bc[0].Slots[0].Slot == 0 && bc[0].Slots[0].ItemUid == 42 && bc[0].Slots[1].Slot == 4, "slots by name, sorted");
+    Eq("invalid", bc[1].Type, "a slot given twice -> invalid (answered failed)");
+    Eq("reboot", bc[2].Type, "unknown type kept (answered failed)");
+    Check(BridgeClient.ParseCommands("{\"commands\":[]}").Count == 0, "no commands");
+    Check(BridgeClient.ParseCommands("<html>") == null && BridgeClient.ParseCommands(null) == null, "not a reply -> null");
+
     Console.WriteLine("AutoPilot (open the slot, scroll, click the item):");
     AutoPilotTests(geo, HH);
 
