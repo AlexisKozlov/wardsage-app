@@ -2,3 +2,5 @@ build/
 dist/
 *.tmp
 node_modules/
+bridge/bin/
+bridge/obj/
