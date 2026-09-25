@@ -163,9 +163,10 @@ namespace RealmForge {
       double top = anchor.RowTop(g, types, row, H), left = g.ColLeft(col) * H;
       double cell = g.CellW * H, full = g.BarBottom * H, mid = top + cell / 2;
       frame++;
-      if (mid < g.ViewTop * H) Draw("up", o.X + (int)left, o.Y + sy, (int)cell, 0);
-      else if (mid > g.ViewBottom * H) Draw("down", o.X + (int)left, o.Y + sy + sh, (int)cell, 0);
-      else Draw("box", o.X + (int)left, o.Y + (int)top, (int)cell, (int)full);
+      double pitch = g.PitchY * H;
+      if (mid < g.ViewTop * H) Draw("up", o.X + (int)left, o.Y + sy, (int)cell, 0, (int)Math.Ceiling((g.ViewTop * H - top) / pitch));
+      else if (mid > g.ViewBottom * H) Draw("down", o.X + (int)left, o.Y + sy + sh, (int)cell, 0, (int)Math.Ceiling((top + full - g.ViewBottom * H) / pitch));
+      else Draw("box", o.X + (int)left, o.Y + (int)top, (int)cell, (int)full, 0);
     }
 
     IntPtr gameWnd; int gameWndAge;
@@ -217,10 +218,11 @@ namespace RealmForge {
       return frameTex;
     }
 
-    void Draw(string kind, int x, int y, int w, int h) {
+    /// <param name="rows">For the arrows: how many rows to scroll (shown next to the arrow).</param>
+    void Draw(string kind, int x, int y, int w, int h, int rows) {
       const int M = 34;
       float pulse = (float)(0.6 + 0.4 * Math.Sin(frame * 0.45));
-      string key = kind + x + ":" + y + ":" + w + ":" + h + ":" + (int)(pulse * 10);
+      string key = kind + x + ":" + y + ":" + w + ":" + h + ":" + rows + ":" + (int)(pulse * 10);
       Say(kind == "box" ? "on" : kind == "up" ? "above" : "below");
       if (key == drawnKey) return;
       drawnKey = key;
@@ -257,18 +259,31 @@ namespace RealmForge {
         }
       } else {
         // the item is above / below the visible list: a pulsing arrow at the list edge in its column
-        int aw = Math.Max(28, w / 2), ah = aw * 2 / 3;
-        using (var bmp = new Bitmap(w, ah + 2 * M, PixelFormat.Format32bppArgb)) {
+        int aw = Math.Max(28, w / 2), ah = aw * 2 / 3, lh = Math.Max(22, w / 4);
+        using (var bmp = new Bitmap(w, ah + 2 * M + lh, PixelFormat.Format32bppArgb)) {
           using (var gr = Graphics.FromImage(bmp)) {
             gr.SmoothingMode = SmoothingMode.AntiAlias; gr.Clear(Color.Transparent);
-            float cx = w / 2f, t = M, b = M + ah;
+            float cx = w / 2f, t = M + (kind == "up" ? 0 : lh), b = t + ah;
             PointF[] tri = kind == "up" ? new[] { new PointF(cx, t), new PointF(cx - aw / 2f, b), new PointF(cx + aw / 2f, b) }
                                         : new[] { new PointF(cx, b), new PointF(cx - aw / 2f, t), new PointF(cx + aw / 2f, t) };
             for (int i = 6; i >= 1; i--) using (var pen = new Pen(Color.FromArgb((int)(40 * pulse), 255, 205, 90), i * 3f) { LineJoin = LineJoin.Round }) gr.DrawPolygon(pen, tri);
             using (var br = new SolidBrush(Color.FromArgb((int)(230 * (0.7 + 0.3 * pulse)), 255, 220, 120))) gr.FillPolygon(br, tri);
             using (var pen = new Pen(Color.FromArgb(220, 90, 60, 20), 2f)) gr.DrawPolygon(pen, tri);
+            // «↓ 3»: rows left to scroll, on a dark plate next to the arrow
+            if (rows > 0) {
+              string txt = (kind == "up" ? "\u2191 " : "\u2193 ") + rows;
+              using (var f = new Font("Segoe UI", lh * 0.62f, FontStyle.Bold, GraphicsUnit.Pixel))
+              using (var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center }) {
+                float ly = kind == "up" ? b + 6 : t - lh - 6;
+                var sz = gr.MeasureString(txt, f);
+                var rc = new RectangleF(cx - sz.Width / 2 - 8, ly, sz.Width + 16, lh);
+                using (var bg = new SolidBrush(Color.FromArgb(215, 20, 12, 4))) gr.FillPath(bg, Round(rc.X, rc.Y, rc.Width, rc.Height, lh / 2f - 1));
+                using (var pen = new Pen(Color.FromArgb(230, 255, 210, 110), 1.5f)) gr.DrawPath(pen, Round(rc.X, rc.Y, rc.Width, rc.Height, lh / 2f - 1));
+                using (var fg = new SolidBrush(Color.FromArgb(255, 255, 236, 180))) gr.DrawString(txt, f, fg, rc, sf);
+              }
+            }
           }
-          glow.Put(bmp, x, kind == "up" ? y + 4 : y - ah - 2 * M - 4);
+          glow.Put(bmp, x, kind == "up" ? y + 4 : y - ah - 2 * M - lh - 4);
         }
       }
     }
