@@ -334,7 +334,7 @@ body.compact .slots li .sub { font-size: 12px }
 .ic-main img { width: 18px; height: 18px } .ic-main span { flex: 1 }
 .ic-subs li:not(.plain) { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 2px 8px; align-items: center; padding: 3px 0 4px }
 .ic-subs li img { width: 16px; height: 16px }
-.ic-subs li.off { opacity: .6 } .ic-subs small.lock { font-size: 11px; color: var(--muted); white-space: nowrap }
+.ic-subs li.off { opacity: 1 } .ic-main small.now { font: 400 11px var(--body); color: var(--muted) } .ic-subs small.lock { font-size: 11px; color: var(--muted); white-space: nowrap }
 .ic-subs .bar { grid-column: 2 / -1; position: relative; height: 10px; background: url(img/bar_bg.webp) center / 100% 100% no-repeat }
 .ic-subs .bar i { position: absolute; left: 3px; top: 3px; bottom: 3px; max-width: calc(100% - 6px); background: center / 100% 100% no-repeat }
 .ic-subs, .ic-bonus { margin: 0; padding: 6px 12px 8px; list-style: none; display: grid; gap: 3px }

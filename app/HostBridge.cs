@@ -399,6 +399,7 @@ namespace RealmForge {
         sb.Append("{\"text\":").Append(S(l[i].Text)).Append(",\"").Append(numKey).Append("\":").Append(N(l[i].Rolls));
         if (l[i].Stat >= 0) sb.Append(",\"stat\":").Append(N(l[i].Stat));
         if (l[i].Name != null) sb.Append(",\"name\":").Append(S(l[i].Name)).Append(",\"value\":").Append(S(l[i].Value ?? ""));
+        if (l[i].Now != null) sb.Append(",\"now\":").Append(S(l[i].Now));
         if (l[i].Bar >= 0) sb.Append(",\"bar\":").Append(l[i].Bar.ToString("0.###", CultureInfo.InvariantCulture));
         sb.Append('}');
       }

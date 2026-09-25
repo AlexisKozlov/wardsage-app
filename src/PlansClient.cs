@@ -54,7 +54,7 @@ namespace RealmForge {
     public string Text;
     public int Rolls;
     public int Stat = -1;
-    public string Name, Value;
+    public string Name, Value, Now;   // Now: a main stat's value now when the card shows it at +16
     public double Bar = -1;
   }
 
@@ -170,6 +170,7 @@ namespace RealmForge {
         if (o.TryGetValue("stat", out sv) && sv is double && (double)sv >= 0 && (double)sv < 100000) s.Stat = (int)(double)sv;
         s.Name = Clip(MiniJson.GetString(o, "name"), 80);
         s.Value = Clip(MiniJson.GetString(o, "value"), 40);
+        s.Now = Clip(MiniJson.GetString(o, "now"), 40);
         if (o.TryGetValue("bar", out sv) && sv is double && (double)sv >= 0 && (double)sv <= 1) s.Bar = (double)sv;
         r.Add(s);
         if (r.Count == 12) break;

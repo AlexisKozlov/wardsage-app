@@ -427,7 +427,8 @@
     const head = which === 'cur' ? t('cardNow') : t('cardNew');
     const ink = QUALITY_INK[o.quality] || (o.quality >= 6 ? '#ff5353' : '#fff1c8');
     const mains = o.main && o.main.length
-      ? o.main.map((m) => `<div class="ic-main">${icon(m.stat)}<span>${esc(m.name)}</span><b class="num">${esc(m.value)}</b></div>`).join('')
+      // at +16, as the optimizer counts it; the value now beside it
+      ? o.main.map((m) => `<div class="ic-main">${icon(m.stat)}<span>${esc(m.name)}${m.now ? ` <small class="now">${esc(t('mainNow', m.now))}</small>` : ''}</span><b class="num">${esc(m.value)}</b></div>`).join('')
       : o.mainStat ? `<div class="ic-main"><span>${esc(o.mainStat)}</span></div>` : '';
     return `<div class="ic-head" style="background-image:url(img/tip${r}.webp)">
         <span class="cell r${r}">${url ? `<img src="${esc(url)}" alt="">` : `<img class="ph" src="img/slot${it.slot | 0}.webp" alt="">`}${o.level ? `<i class="lv num">+${o.level}</i>` : ''}</span>
