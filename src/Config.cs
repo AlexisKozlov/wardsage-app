@@ -15,6 +15,10 @@ namespace RealmForge {
     public string Code = "";
     public string Lang = "ru";
     public bool SaveCopy;
+    // last successful sync (shown on the start screen; the busts of the strongest heroes decorate the banner)
+    public string LastAt;                       // ISO 8601 UTC or null
+    public int LastHeroes = -1, LastItems = -1, LastArtifacts = -1;
+    public List<int> LastTop = new List<int>(); // base ids of the 3 strongest heroes
 
     const string ProtectedPrefix = "dpapi:";
 
@@ -49,6 +53,13 @@ namespace RealmForge {
       sb.Append(",\n  \"saveCopy\": ").Append(SaveCopy ? "true" : "false");
       string code = string.IsNullOrEmpty(Code) ? "" : ProtectedPrefix + CodeProtector.Protect(Code);
       sb.Append(",\n  \"code\": ").Append(MiniJson.Quote(code));
+      if (!string.IsNullOrEmpty(LastAt)) {
+        sb.Append(",\n  \"last\": {\"at\": ").Append(MiniJson.Quote(LastAt));
+        sb.Append(", \"heroes\": ").Append(LastHeroes).Append(", \"items\": ").Append(LastItems).Append(", \"artifacts\": ").Append(LastArtifacts);
+        sb.Append(", \"top\": [");
+        for (int i = 0; i < LastTop.Count; i++) { if (i > 0) sb.Append(", "); sb.Append(LastTop[i]); }
+        sb.Append("]}");
+      }
       sb.Append("\n}\n");
       return sb.ToString();
     }
@@ -61,6 +72,16 @@ namespace RealmForge {
       if (!string.IsNullOrEmpty(site)) c.Site = site;
       c.Lang = MiniJson.GetString(d, "lang") == "en" ? "en" : "ru";
       c.SaveCopy = MiniJson.GetBool(d, "saveCopy", false);
+      object lv;
+      var last = d.TryGetValue("last", out lv) ? MiniJson.AsObject(lv) : null;
+      if (last != null && MiniJson.GetString(last, "at") != null) {
+        c.LastAt = MiniJson.GetString(last, "at");
+        c.LastHeroes = MiniJson.GetCount(last, "heroes");
+        c.LastItems = MiniJson.GetCount(last, "items");
+        c.LastArtifacts = MiniJson.GetCount(last, "artifacts");
+        object tv; var top = last.TryGetValue("top", out tv) ? tv as List<object> : null;
+        if (top != null) foreach (var x in top) if (x is double && (double)x > 0 && (double)x < 1e7 && c.LastTop.Count < 3) c.LastTop.Add((int)(double)x);
+      }
       string code = MiniJson.GetString(d, "code");
       if (code != null && code.StartsWith(ProtectedPrefix, StringComparison.Ordinal)) {
         try { c.Code = CodeProtector.Unprotect(code.Substring(ProtectedPrefix.Length)) ?? ""; }

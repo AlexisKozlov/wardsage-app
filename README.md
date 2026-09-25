@@ -4,35 +4,35 @@ Reads a Watcher of Realms account (heroes, gear, artifacts, faction rewards) fro
 running game and sends it to the RealmForge site. Windows only; **read-only** (`ReadProcessMemory`).
 Player instructions (RU/EN): [README.txt](README.txt).
 
-What players get (`dist/RealmForge-Extractor.zip`):
-
-| File | |
-|---|---|
-| `Run-RealmForge.bat` | starts the script with a hidden console |
-| `RealmForge-Extractor.ps1` | the program: PowerShell 5.1 + C# 5 compiled in memory by `Add-Type` |
-| `README.txt` | what it does, why admin rights, troubleshooting |
-
-Nothing to install: Windows 10/11 ship PowerShell 5.1 and .NET Framework 4.x.
+What players get (`dist/RealmForge.zip`): **`RealmForge.exe`** — one file (≈1.3 MB), .NET Framework 4.6.2+,
+x64, asks for administrator rights (the game runs elevated). The interface is HTML/CSS (`ui/`) rendered by the
+Microsoft Edge **WebView2** Runtime that ships with Windows 10/11; the WebView2 SDK (`vendor/webview2`, Microsoft-signed)
+and `ui/` are embedded and unpacked to `%LOCALAPPDATA%\RealmForge\app\<build>\` on start.
 
 ## Layout
 
 ```
-src/MemoryReader.cs     v0.4 Lua-table scanner, unchanged except for small hooks (see its header)
+ui/                     the interface: index.html, app.css, app.js (screens), guide.js (equip hints), i18n.js,
+                        mock.js (browser preview only, not shipped), fonts (Cinzel, Alegreya Sans — OFL)
+app/Program.cs          entry: single instance, unpack resources, WebView2 runtime check
+app/AppWindow.cs        the window: WebView2, dark frame, «Поверх игры» compact always-on-top mode
+app/HostBridge.cs       page <-> program messages (see its header): sync, codes, plans, equip helper polling
+src/MemoryReader.cs     Lua-table scanner (read-only)
+src/EquipScan.cs        equip helper: finds the gear-list panel once, then re-reads it (read-only)
 src/GameInfo.cs         game process, exe path, version from realversion.xml
 src/Extractor.cs        pipeline: find game -> read -> validate/count -> save copy
 src/SyncClient.cs       POST {site}/api/sync (gzip, Bearer code, TLS 1.2, 60 s)
-src/Config.cs           %APPDATA%\RealmForge\config.json
-src/CodeProtector.cs    DPAPI (CurrentUser) for the sync code
-src/Strings.cs          RU/EN texts
-src/MainForm.cs         the WinForms window (BackgroundWorker for all slow work)
-src/App.cs              entry point: hides the console, STA, DPI
-src/RealmForge-Extractor.template.ps1   elevation + Add-Type + start
-tools/build.mjs         src/ -> RealmForge-Extractor.ps1 (UTF-8 BOM, CRLF); --zip -> dist/
-tests/                  mock server, C# tests, compile checks, UI screenshots
+src/PlansClient.cs      GET/POST {site}/api/extractor/plans (builds sent with «Надеть в игре»)
+src/Config.cs           %APPDATA%\RealmForge\config.json (+ last sync), CodeProtector.cs: DPAPI for the code
+tools/build-app.sh      -> dist/RealmForge.exe (Roslyn from the .NET 8 SDK + Mono's .NET Framework reference assemblies)
+tools/pack-app.sh       -> dist/RealmForge.zip (exe + README)
+tests/                  C# core tests (.NET 8 + Mono), guide.test.mjs, mock server, compile checks
 ```
 
-`RealmForge-Extractor.ps1` is generated: edit `src/`, then `node tools/build.mjs`.
-All C# must stay **C# 5** (the compiler built into .NET Framework): no `$"..."`, `?.`, `=>` members, `nameof`.
+Preview the interface without Windows: serve `ui/` and open `index.html?s=idle|reading|done|error|onboard|equip|pick|hidden|compact|settings`.
+
+Legacy 0.x (PowerShell script, `src/MainForm.cs`, `src/HelperForm.cs`, `tools/build.mjs`) is still built by the tests
+but no longer shipped.
 
 ## Sync contract
 

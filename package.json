@@ -1,6 +1,6 @@
 {
   "name": "realmforge-extractor",
-  "version": "0.6.0",
+  "version": "1.0.0",
   "private": true,
   "description": "Development tooling for RealmForge Extractor (build + tests). Players do not need Node.",
   "type": "module",
@@ -8,7 +8,9 @@
     "build": "node tools/build.mjs",
     "dist": "node tools/build.mjs --zip",
     "mock": "node tests/mock-server.mjs 3999",
-    "test": "bash tests/run-tests.sh"
+    "test": "bash tests/run-tests.sh",
+    "app": "bash tools/build-app.sh",
+    "app:zip": "bash tools/build-app.sh && bash tools/pack-app.sh"
   },
   "devDependencies": {
     "tree-sitter-powershell": "^0.26.4",

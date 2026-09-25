@@ -87,5 +87,12 @@ if command -v mono >/dev/null && [ -f "$FX/System.dll" ]; then
   LANG=C.UTF-8 mono "$OUT/CoreTests-mono.exe" "http://localhost:$PORT" $ACCOUNT
 fi
 
+step "7. Desktop interface: equip helper logic, script syntax"
+node tests/guide.test.mjs
+for f in ui/*.js; do node --check "$f"; done && echo "ui scripts: syntax ok"
+
+step "8. RealmForge.exe builds (C# 7.3, .NET Framework 4.6.2, WebView2 SDK checksums)"
+bash tools/build-app.sh
+
 echo
 echo "ALL CHECKS PASSED"
