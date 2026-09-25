@@ -375,10 +375,13 @@ namespace RealmForge {
     public Dictionary<long, int> Row = new Dictionary<long, int>();      // plan item uid -> 1-based row (visible list)
     public Dictionary<long, int> Col = new Dictionary<long, int>();      // plan item uid -> 1-based position in the row
     public Dictionary<long, long> Owner = new Dictionary<long, long>();  // plan item uid -> hero uid wearing it (0 = bag)
+    public long SelUid;                         // item the player selected in the list (m_CurrentSelectEquipUid), 0 = none
+    public int SelRow, SelCol;                  // its 1-based row / position in the row, 0 = not in the list
+    public ulong ListPtr;                       // m_EquipListRealData table: a new one on every list rebuild
   }
 
   public static partial class RFX {
-    const string KPanel = "m_EquipIdToIndex", KList = "m_EquipListRealData", KFilter = "m_FilterConfig", KHero = "m_CurrentSelectHeroUid";
+    const string KPanel = "m_EquipIdToIndex", KList = "m_EquipListRealData", KFilter = "m_FilterConfig", KHero = "m_CurrentSelectHeroUid", KSel = "m_CurrentSelectEquipUid";
 
     // One full scan. Must run under Extractor.Gate (RFX keeps its state in static fields).
     public static EquipAddrs FindEquip(ICollection<long> itemUids, Action<string> onLog) {
@@ -452,24 +455,64 @@ namespace RealmForge {
         }
       }
       if (Field(a.Panel, "m_EquipCount", out v, out tt) && tt == T_INT) s.ListCount = (int)(long)v;
+      s.ListPtr = list;
+      if (Field(a.Panel, KSel, out v, out tt) && tt == T_INT && (long)v > 0) {
+        s.SelUid = (long)v; int c;
+        s.SelRow = RowOf(idx, list, s.SelUid, out c); s.SelCol = c;
+      }
 
       foreach (var uid in itemUids) {
-        ulong row; int rtt;
-        if (!IntKey(idx, uid, out row, out rtt) || rtt != T_INT) continue;
-        long r = (long)row; if (r < 1 || r > 100000) continue;
-        s.Row[uid] = (int)r;
-        // position inside the row: m_EquipListRealData[r].Item = {uid, uid, uid}
-        ulong rowT; int rowTt;
-        if (!IntKey(list, r, out rowT, out rowTt) || rowTt != T_TABLE) continue;
-        ulong items; int itt;
-        if (!Field(rowT, "Item", out items, out itt) || itt != T_TABLE) continue;
-        for (int c = 1; c <= 6; c++) {
-          ulong u; int utt;
-          if (!IntKey(items, c, out u, out utt)) break;
-          if (utt == T_INT && (long)u == uid) { s.Col[uid] = c; break; }
-        }
+        int c; int r = RowOf(idx, list, uid, out c);
+        if (r > 0) { s.Row[uid] = r; if (c > 0) s.Col[uid] = c; }
       }
       return s;
+    }
+
+    /// <summary>Selected item uid only (one field read, for the fast overlay timer); 0 = none or unreadable.</summary>
+    public static long ReadSel(EquipAddrs a) {
+      if (a == null || a.Panel == 0) return 0;
+      ulong v; int tt;
+      return Field(a.Panel, KSel, out v, out tt) && tt == T_INT && (long)v > 0 ? (long)v : 0;
+    }
+
+    /// <summary>Row / position of one item in the current list (0 = not in it) and the list table (0 = unreadable).</summary>
+    public static int RowOfUid(EquipAddrs a, long uid, out int col, out ulong listPtr) {
+      col = 0; listPtr = 0;
+      if (a == null || a.Panel == 0) return 0;
+      ulong idx, list; int t1, t2;
+      if (!Field(a.Panel, KPanel, out idx, out t1) || t1 != T_TABLE || !Field(a.Panel, KList, out list, out t2) || t2 != T_TABLE) return 0;
+      listPtr = list;
+      return RowOf(idx, list, uid, out col);
+    }
+
+    // Row of an item uid in the list (1-based, 0 = not in it) and its position in the row (0 = unknown).
+    static int RowOf(ulong idx, ulong list, long uid, out int col) {
+      col = 0;
+      ulong row; int rtt;
+      if (!IntKey(idx, uid, out row, out rtt) || rtt != T_INT) return 0;
+      long r = (long)row; if (r < 1 || r > 100000) return 0;
+      // position inside the row: m_EquipListRealData[r].Item = {uid, uid, uid}
+      ulong rowT; int rowTt, itt; ulong items;
+      if (!IntKey(list, r, out rowT, out rowTt) || rowTt != T_TABLE) return (int)r;
+      if (!Field(rowT, "Item", out items, out itt) || itt != T_TABLE) return (int)r;
+      for (int c = 1; c <= 6; c++) {
+        ulong u; int utt;
+        if (!IntKey(items, c, out u, out utt)) break;
+        if (utt == T_INT && (long)u == uid) { col = c; break; }
+      }
+      return (int)r;
+    }
+
+    /// <summary>Row kinds of the list, rows 1..count (index 0 unused): 1 items, 2 section title, 3 empty-section row, 0 unknown.
+    /// The game gives them different heights (100 / 44 / 60), needed to turn a row number into a screen position.</summary>
+    public static int[] RowTypes(ulong list, int count) {
+      var r = new int[count + 1];
+      for (int i = 1; i <= count; i++) {
+        ulong rowT, v; int tt, vtt;
+        if (!IntKey(list, i, out rowT, out tt) || tt != T_TABLE) break;
+        if (Field(rowT, "Type", out v, out vtt) && vtt == T_INT) r[i] = (int)(long)v;
+      }
+      return r;
     }
 
     // Value of an integer key of a Lua table (array part first, then the hash part).
@@ -1087,7 +1130,8 @@ namespace RealmForge {
 // Contract (implemented by the site, lib/plans/handler.ts):
 //   GET  {site}/api/extractor/plans?lang=ru|en        Authorization: Bearer <sync code>
 //        200 {ok:true, plans:[{id, heroUid, heroName, createdAt,
-//              items:[{slot, uid, slotName, name, setName, level, stars, mainStat, fromHeroUid, fromHeroName}]}]}
+//              items:[{slot, uid, slotName, name, setName, level, stars, mainStat, fromHeroUid, fromHeroName, icon,
+//                     cur:{uid, name, level, stars, icon}|null}]}]}
 //        401 invalid_token
 //   POST {site}/api/extractor/plans/{id}                body {"status":"done"|"cancelled"}
 //        200 {ok:true} | 401 | 404 not_found
@@ -1101,6 +1145,16 @@ namespace RealmForge {
     public string SlotName, Name, SetName, MainStat, FromHeroName;
     public int Level, Stars;
     public long FromHeroUid;
+    /// <summary>Game icon sprite name (Item_123456) or "" — only [A-Za-z0-9_], it becomes part of a site URL.</summary>
+    public string Icon = "";
+    /// <summary>What the hero wears in that slot now (null: empty slot or an old plan).</summary>
+    public CurItem Cur;
+  }
+
+  public sealed class CurItem {
+    public long Uid;
+    public string Name, Icon = "";
+    public int Level, Stars;
   }
 
   public sealed class Plan {
@@ -1202,6 +1256,12 @@ namespace RealmForge {
       return (long)x;
     }
 
+    static string IconName(string s) {
+      if (string.IsNullOrEmpty(s) || s.Length > 64) return "";
+      foreach (char ch in s) if (!(ch == '_' || (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z'))) return "";
+      return s;
+    }
+
     static Plan ParsePlan(Dictionary<string, object> o) {
       if (o == null) return null;
       var p = new Plan();
@@ -1225,6 +1285,11 @@ namespace RealmForge {
         it.Stars = (int)Num(d, "stars");
         it.FromHeroUid = Num(d, "fromHeroUid");
         it.FromHeroName = MiniJson.GetString(d, "fromHeroName");
+        it.Icon = IconName(MiniJson.GetString(d, "icon"));
+        object cv; var c = d.TryGetValue("cur", out cv) ? MiniJson.AsObject(cv) : null;
+        if (c != null && Num(c, "uid") > 0)
+          it.Cur = new CurItem { Uid = Num(c, "uid"), Name = MiniJson.GetString(c, "name") ?? "", Icon = IconName(MiniJson.GetString(c, "icon")),
+                                 Level = (int)Num(c, "level"), Stars = (int)Num(c, "stars") };
         p.Items.Add(it);
       }
       p.Items.Sort((a, b) => a.Slot.CompareTo(b.Slot));

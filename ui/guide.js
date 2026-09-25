@@ -4,6 +4,9 @@
 // live (from the host, read-only memory reads): {gameRunning, heroUid, panelOk, part, hideEquipped, hideEnhanced,
 //   filterActive, rows:{uid:[row, col]}, owner:{uid: heroUid}}
 (function (root) {
+  // rows of the gear list visible without scrolling in the game (1080p: about 4.5)
+  const VISIBLE_ROWS = 4;
+
   function next(plan, live) {
     const g = { kind: null, item: null, row: 0, col: 0, other: null, states: {}, done: 0 };
     const owner = (live && live.owner) || {};
@@ -21,7 +24,20 @@
     if (live.heroUid !== plan.heroUid) { g.kind = 'hero'; return g; }
     if (!live.panelOk || live.part !== cur.slot) { g.kind = 'slot'; return g; }
     const pos = live.rows && live.rows[cur.uid];
-    if (pos) { g.kind = 'pick'; g.row = pos[0]; g.col = pos[1] || 0; return g; }
+    if (pos) {
+      g.row = pos[0]; g.col = pos[1] || 0;
+      // the player already selected it in the game list
+      if (live.selUid > 0 && live.selUid === cur.uid) { g.kind = 'selected'; return g; }
+      // far down a long list: narrow it with the game's filter first (set + main stat) instead of scrolling
+      const far = pos[0] > VISIBLE_ROWS && !live.filterActive;
+      // another item is selected: say where the right one is from there (unless that is still a long way)
+      if (live.selRow > 0) {
+        g.dr = pos[0] - live.selRow;
+        if (!far || Math.abs(g.dr) <= VISIBLE_ROWS) { g.kind = 'rel'; return g; }
+      }
+      g.kind = far ? 'filter' : 'pick';
+      return g;
+    }
     const who = owner[cur.uid] !== undefined ? owner[cur.uid] : cur.fromHeroUid;
     if (who > 0 && who !== plan.heroUid && live.hideEquipped) {
       g.kind = 'hiddenEq';
@@ -41,13 +57,43 @@
     return current >= 0 && current < plans.length ? current : 0;
   }
 
+  // Stat name of a main-stat text such as «ОЗ 750» / «Крит. УРН 80%» (for the filter hint).
+  function statOf(mainStat) {
+    const first = String(mainStat || '').split(',')[0].trim();
+    return first.replace(/\s*[+\-]?[\d\s.,]+%?$/, '').trim();
+  }
+
   // Hero bust on the site: hero uid = base id × 100000 (+ copy index).
   function bustUrl(site, heroUid) {
     const id = Math.floor(heroUid / 100000);
     return id > 0 ? `${site}/art/heroes/HeroBust_${id}.webp` : '';
   }
 
-  const api = { next, pickPlan, bustUrl };
+  // Hero portrait from the game (HeroHead_<base id>, 122×185) on the site.
+  function headUrl(site, heroUid) {
+    const id = Math.floor(heroUid / 100000);
+    return id > 0 ? `${site}/art/heads/HeroHead_${id}.webp` : '';
+  }
+
+  // Item icon from the game on the site; only plain sprite names (they come from the server).
+  function itemUrl(site, icon) {
+    return /^[A-Za-z0-9_]{1,64}$/.test(icon || '') ? `${site}/art/items/${icon}.webp` : '';
+  }
+
+  // Background texture by item stars (game rarity colours 1..6), 0 = none.
+  const rankOf = (stars) => (stars > 0 ? Math.min(6, Math.max(1, stars | 0)) : 0);
+
+  // Item to frame in the game (0 = none): only while the list with it is on the screen.
+  const HIGHLIGHT = { pick: 1, filter: 1, rel: 1, selected: 1 };
+  function highlightUid(g) { return g && g.item && HIGHLIGHT[g.kind] ? g.item.uid : 0; }
+
+  // Russian plural: 1 ряд, 2 ряда, 5 рядов.
+  function plural(n, one, few, many) {
+    const a = Math.abs(n) % 100, b = a % 10;
+    return a > 10 && a < 20 ? many : b === 1 ? one : b >= 2 && b <= 4 ? few : many;
+  }
+
+  const api = { next, pickPlan, highlightUid, plural, bustUrl, headUrl, itemUrl, rankOf, statOf, VISIBLE_ROWS };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.RFGuide = api;
 })(typeof window !== 'undefined' ? window : globalThis);

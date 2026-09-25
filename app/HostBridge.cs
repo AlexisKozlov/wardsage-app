@@ -1,8 +1,8 @@
 // RealmForge.exe - messages between the page (ui/app.js) and the program.
 //
 // page -> host  {cmd:"init"|"setLang"|"setCode"|"clearCode"|"setSaveCopy"|"setSite"|"paste"|"sync"|"open"|"openLog"|
-//                    "openFolder"|"plans.load"|"equip.scan"|"equip.watch"|"equip.finish"|"compact", ...}
-// host -> page  {ev:"state"|"game"|"paste"|"sync"|"plans"|"equip.scan"|"equip.live", ...}
+//                    "openFolder"|"plans.load"|"equip.scan"|"equip.watch"|"equip.finish"|"highlight"|"compact", ...}
+// host -> page  {ev:"state"|"game"|"paste"|"sync"|"plans"|"equip.scan"|"equip.live"|"overlay", ...}
 // The page is trusted content from our own folder, but every argument is still validated here: codes by format,
 // URLs by scheme and host, item uids as numbers. Nothing here writes to the game.
 using System;
@@ -27,6 +27,7 @@ namespace RealmForge {
     List<long> watch = new List<long>();
     string lastLive;
     string lastSavedPath;
+    readonly OverlayController overlay;
 
     public HostBridge(AppWindow win, CoreWebView2 core) {
       this.win = win; this.core = core;
@@ -34,10 +35,11 @@ namespace RealmForge {
       if (string.IsNullOrEmpty(cfg.Site)) cfg.Site = SyncClient.DefaultSite;
       gameTimer.Interval = 2000; gameTimer.Tick += (s, e) => CheckGame(false); gameTimer.Start();
       liveTimer.Interval = 400; liveTimer.Tick += (s, e) => PollLive();
+      overlay = new OverlayController(st => Post("{\"ev\":\"overlay\",\"state\":" + S(st) + "}"));
       Log.Write("RealmForge " + Program.Version + " started");
     }
 
-    public void Dispose() { gameTimer.Dispose(); liveTimer.Dispose(); }
+    public void Dispose() { gameTimer.Dispose(); liveTimer.Dispose(); overlay.Dispose(); }
 
     // ------------------------------------------------------------------ plumbing
 
@@ -86,6 +88,11 @@ namespace RealmForge {
           case "equip.scan": StartScan(Uids(m)); break;
           case "equip.watch": Watch(Uids(m)); break;
           case "equip.finish": FinishPlan(MiniJson.GetString(m, "id"), MiniJson.GetBool(m, "done", false)); break;
+          case "highlight": {
+            object v; double u = m.TryGetValue("uid", out v) && v is double ? (double)v : 0;
+            overlay.SetTarget(u > 0 && u < 9e15 && watch.Contains((long)u) ? (long)u : 0);
+            break;
+          }
           case "compact": win.SetCompact(MiniJson.GetBool(m, "on", false)); break;
         }
       } catch (Exception e) { Log.Write("message " + cmd + ": " + e); }
@@ -147,7 +154,7 @@ namespace RealmForge {
       if (!force && gameSent && running == gameRunning) return;
       gameSent = true; gameRunning = running;
       Post("{\"ev\":\"game\",\"running\":" + B(running) + ",\"version\":" + S(gameVersion) + "}");
-      if (!running && addrs != null) { addrs = null; liveTimer.Stop(); lastLive = null; }
+      if (!running && addrs != null) { addrs = null; overlay.SetAddrs(null); liveTimer.Stop(); lastLive = null; }
     }
 
     // ------------------------------------------------------------------ sync
@@ -264,7 +271,11 @@ namespace RealmForge {
             sb.Append("{\"slot\":").Append(N(it.Slot)).Append(",\"uid\":").Append(N(it.Uid)).Append(",\"slotName\":").Append(S(it.SlotName))
               .Append(",\"name\":").Append(S(it.Name)).Append(",\"setName\":").Append(S(it.SetName)).Append(",\"level\":").Append(N(it.Level))
               .Append(",\"stars\":").Append(N(it.Stars)).Append(",\"mainStat\":").Append(S(it.MainStat)).Append(",\"fromHeroUid\":").Append(N(it.FromHeroUid))
-              .Append(",\"fromHeroName\":").Append(S(it.FromHeroName)).Append('}');
+              .Append(",\"fromHeroName\":").Append(S(it.FromHeroName)).Append(",\"icon\":").Append(S(it.Icon)).Append(",\"cur\":");
+            if (it.Cur == null) sb.Append("null");
+            else sb.Append("{\"uid\":").Append(N(it.Cur.Uid)).Append(",\"name\":").Append(S(it.Cur.Name)).Append(",\"level\":").Append(N(it.Cur.Level))
+                   .Append(",\"stars\":").Append(N(it.Cur.Stars)).Append(",\"icon\":").Append(S(it.Cur.Icon)).Append('}');
+            sb.Append('}');
           }
           sb.Append("]}");
         }
@@ -280,7 +291,7 @@ namespace RealmForge {
         try { lock (Extractor.Gate) a = RFX.FindEquip(uids, null); }
         catch (Exception e) { Log.Write("equip scan: " + e); }
         win.BeginInvoke((Action)(() => {
-          scanning = false; addrs = a;
+          scanning = false; addrs = a; overlay.SetAddrs(a);
           Log.Write("equip scan: " + (a == null ? "failed " + RFX.LastError : "panel=" + (a.Panel != 0) + " items=" + a.Items.Count));
           Post("{\"ev\":\"equip.scan\",\"status\":" + S(a == null ? "fail" : "ok") + ",\"panel\":" + B(a != null && a.Panel != 0) + "}");
           if (a != null) { liveTimer.Start(); PollLive(); }
@@ -301,7 +312,8 @@ namespace RealmForge {
       var sb = new StringBuilder("{\"ev\":\"equip.live\",\"live\":{");
       sb.Append("\"gameRunning\":").Append(B(s.GameRunning)).Append(",\"heroUid\":").Append(N(s.HeroUid)).Append(",\"panelOk\":").Append(B(s.PanelOk))
         .Append(",\"part\":").Append(N(s.Part)).Append(",\"hideEquipped\":").Append(B(s.HideEquipped)).Append(",\"hideEnhanced\":").Append(B(s.HideEnhanced))
-        .Append(",\"filterActive\":").Append(B(s.FilterActive)).Append(",\"rows\":{");
+        .Append(",\"filterActive\":").Append(B(s.FilterActive)).Append(",\"selUid\":").Append(N(s.SelUid)).Append(",\"selRow\":").Append(N(s.SelRow))
+        .Append(",\"selCol\":").Append(N(s.SelCol)).Append(",\"rows\":{");
       bool first = true;
       foreach (var kv in s.Row) {
         int col; s.Col.TryGetValue(kv.Key, out col);
@@ -315,7 +327,7 @@ namespace RealmForge {
       if (json == lastLive) return;   // nothing changed on the game screen
       lastLive = json;
       Post(json);
-      if (!s.GameRunning) { liveTimer.Stop(); addrs = null; }
+      if (!s.GameRunning) { liveTimer.Stop(); addrs = null; overlay.SetAddrs(null); }
     }
 
     void FinishPlan(string id, bool done) {

@@ -3,7 +3,8 @@
 // Contract (implemented by the site, lib/plans/handler.ts):
 //   GET  {site}/api/extractor/plans?lang=ru|en        Authorization: Bearer <sync code>
 //        200 {ok:true, plans:[{id, heroUid, heroName, createdAt,
-//              items:[{slot, uid, slotName, name, setName, level, stars, mainStat, fromHeroUid, fromHeroName}]}]}
+//              items:[{slot, uid, slotName, name, setName, level, stars, mainStat, fromHeroUid, fromHeroName, icon,
+//                     cur:{uid, name, level, stars, icon}|null}]}]}
 //        401 invalid_token
 //   POST {site}/api/extractor/plans/{id}                body {"status":"done"|"cancelled"}
 //        200 {ok:true} | 401 | 404 not_found
@@ -22,6 +23,16 @@ namespace RealmForge {
     public string SlotName, Name, SetName, MainStat, FromHeroName;
     public int Level, Stars;
     public long FromHeroUid;
+    /// <summary>Game icon sprite name (Item_123456) or "" — only [A-Za-z0-9_], it becomes part of a site URL.</summary>
+    public string Icon = "";
+    /// <summary>What the hero wears in that slot now (null: empty slot or an old plan).</summary>
+    public CurItem Cur;
+  }
+
+  public sealed class CurItem {
+    public long Uid;
+    public string Name, Icon = "";
+    public int Level, Stars;
   }
 
   public sealed class Plan {
@@ -123,6 +134,12 @@ namespace RealmForge {
       return (long)x;
     }
 
+    static string IconName(string s) {
+      if (string.IsNullOrEmpty(s) || s.Length > 64) return "";
+      foreach (char ch in s) if (!(ch == '_' || (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z'))) return "";
+      return s;
+    }
+
     static Plan ParsePlan(Dictionary<string, object> o) {
       if (o == null) return null;
       var p = new Plan();
@@ -146,6 +163,11 @@ namespace RealmForge {
         it.Stars = (int)Num(d, "stars");
         it.FromHeroUid = Num(d, "fromHeroUid");
         it.FromHeroName = MiniJson.GetString(d, "fromHeroName");
+        it.Icon = IconName(MiniJson.GetString(d, "icon"));
+        object cv; var c = d.TryGetValue("cur", out cv) ? MiniJson.AsObject(cv) : null;
+        if (c != null && Num(c, "uid") > 0)
+          it.Cur = new CurItem { Uid = Num(c, "uid"), Name = MiniJson.GetString(c, "name") ?? "", Icon = IconName(MiniJson.GetString(c, "icon")),
+                                 Level = (int)Num(c, "level"), Stars = (int)Num(c, "stars") };
         p.Items.Add(it);
       }
       p.Items.Sort((a, b) => a.Slot.CompareTo(b.Slot));

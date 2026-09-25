@@ -14,7 +14,7 @@
     game: { running: false, version: null }, last: null, page: 'sync', editCode: false,
     sync: { phase: 'idle', stage: null, seconds: 0, result: null, error: null },
     plans: { status: 'idle', list: [], err: null }, sel: 0,
-    scan: { status: 'idle', panel: false }, live: null, reported: {}, compact: false,
+    scan: { status: 'idle', panel: false }, live: null, reported: {}, compact: false, overlay: 'off', hl: 0,
   };
 
   // ---------------------------------------------------------------- helpers
@@ -36,6 +36,7 @@
     sync: '<svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 0 1-14.3 4.9M4 12a8 8 0 0 1 14.3-4.9"/><path d="M18.5 3v4.2h-4.2M5.5 21v-4.2h4.2"/></svg>',
     equip: '<svg viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.4 3 8.3 7 10 4-1.7 7-5.6 7-10V6z"/><path d="m9 12 2 2 4-4"/></svg>',
     gear: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>',
+    arrow: '<svg viewBox="0 0 24 24"><path d="M4 12h15m-5-5 5 5-5 5"/></svg>',
     check: '<svg viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>',
     x: '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>',
     game: '<svg viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="11" rx="3"/><path d="M8 11v3M6.5 12.5h3M15 12h.01M17.5 13.5h.01"/></svg>',
@@ -49,6 +50,7 @@
     expand: '<svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>',
     reload: '<svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6"/></svg>',
     chest: '<svg viewBox="0 0 64 64"><path d="M10 26h44v26H10zM10 26l6-12h32l6 12M28 34h8v8h-8zM10 36h18M36 36h18"/></svg>',
+    filter: '<svg viewBox="0 0 24 24"><path d="M4 5h16l-6 7.5V19l-4 1v-7.5z"/></svg>',
     folder: '<svg viewBox="0 0 24 24"><path d="M3 7a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/></svg>',
   };
 
@@ -62,6 +64,7 @@
   let lastRail = '', lastPage = '', lastView = '';
   // Re-renders only what changed (the game is polled several times a second): no flicker, hover and focus survive.
   function render() {
+    syncHighlight();
     document.documentElement.lang = S.lang;
     document.body.classList.toggle('compact', S.compact);
     const r = rail();
@@ -230,9 +233,18 @@
     return `<div class="card empty">${I.chest}<b>${esc(title)}</b><p>${esc(text)}</p><div class="row" style="justify-content:center">${actions}</div></div>`;
   }
 
+  // hero portrait: the game's HeroHead card art, the site bust if it is missing
   function bust(p, cls = '') {
-    const url = G.bustUrl(S.site, p.heroUid);
-    return `<div class="bust ${cls}">${url ? `<img src="${esc(url)}" alt="" onerror="this.remove()">` : ''}</div>`;
+    const head = G.headUrl(S.site, p.heroUid), b = G.bustUrl(S.site, p.heroUid);
+    return `<div class="bust ${cls}">${head ? `<img src="${esc(head)}" data-alt="${esc(b)}" alt="" onerror="heroImgFail(this)">` : ''}</div>`;
+  }
+  window.heroImgFail = (img) => { const a = img.getAttribute('data-alt'); if (a) { img.removeAttribute('data-alt'); img.className = 'bust-img'; img.src = a; } else img.remove(); };
+
+  // item cell like in the game: rarity background by stars, icon, +level, stars
+  function cell(icon, stars, level, slot, cls = '') {
+    const url = G.itemUrl(S.site, icon), r = G.rankOf(stars);
+    return `<span class="cell ${r ? 'r' + r : 'r0'} ${cls}">${url ? `<img src="${esc(url)}" alt="" onerror="this.src='img/slot${slot | 0}.webp';this.className='ph'">` : `<img class="ph" src="img/slot${slot | 0}.webp" alt="">`}`
+      + `${level ? `<i class="lv num">+${level}</i>` : ''}${stars ? `<i class="sr num">${stars}</i>` : ''}</span>`;
   }
 
   function planCard(p, i) {
@@ -244,12 +256,19 @@
 
   function current() { return S.plans.list[S.sel] || null; }
 
+  // one row per slot: what the hero wears now → what to put on
   function slotList(p, g) {
     return `<ul class="slots">${p.items.map((it) => {
       const st = g.states[it.uid] || 'wait';
-      const from = st !== 'done' && it.fromHeroUid > 0 && it.fromHeroUid !== p.heroUid && it.fromHeroName ? ` · ${t('fromHero', it.fromHeroName)}` : '';
-      return `<li class="${st}"><span class="st">${I.check}</span><span class="slot">${esc(it.slotName || t('slot' + it.slot))}</span>
-        <span class="name">${esc(it.name)}${esc(it.mainStat ? ' · ' + it.mainStat : '')}${esc(from)}</span><span class="lvl num">${it.level ? '+' + it.level : ''}</span></li>`;
+      const from = st !== 'done' && it.fromHeroUid > 0 && it.fromHeroUid !== p.heroUid && it.fromHeroName ? t('fromHero', it.fromHeroName) : '';
+      const cur = it.cur && it.cur.uid !== it.uid ? it.cur : null;
+      const was = st === 'done' ? '' : cur ? cell(cur.icon, cur.stars, cur.level, it.slot, 'old') : cell('', 0, 0, it.slot, 'old none');
+      const curText = st === 'done' ? t('eqWorn') : cur ? t('eqNow', cur.name + (cur.level ? ' +' + cur.level : '')) : t('eqEmpty');
+      return `<li class="${st}"><span class="st">${I.check}</span>
+        <span class="swap">${was}${st === 'done' ? '' : `<span class="arrow">${I.arrow}</span>`}${cell(it.icon, it.stars, it.level, it.slot, 'new')}</span>
+        <span class="info"><span class="slot">${esc(it.slotName || t('slot' + it.slot))}</span>
+          <span class="name">${esc(it.name)}${it.setName ? `<em> · ${esc(it.setName)}</em>` : ''}</span>
+          <span class="sub">${esc([it.mainStat, from || curText].filter(Boolean).join(' · '))}</span></span></li>`;
     }).join('')}</ul>`;
   }
 
@@ -269,14 +288,30 @@
           ? (S.lang === 'en' ? `Press the item: row <span class="pos"><b>${g.row}</b></span> · #<span class="pos"><b>${g.col}</b></span> from the left`
                              : `Нажми предмет: ряд <span class="pos"><b>${g.row}</b></span> · <span class="pos"><b>${g.col}</b></span>-й слева`)
           : esc(t('gPickRow', g.row));
-        const sub = (g.row > 4 ? t('gScroll', g.row) + ' ' : '') + t('gPickP', itemText);
+        const sub = [ovText(), (g.row > 4 ? t('gScroll', g.row) + ' ' : '') + t('gPickP', itemText)].filter(Boolean).join(' ');
         return `<div class="say"><span class="ring">${I.hand}</span><div><p>${head}</p><small>${esc(sub)}</small></div></div>`;
+      }
+      case 'filter': {
+        const stat = G.statOf(it.mainStat);
+        const head = it.setName ? t('gFilter', it.setName) + (stat ? ' ' + t('gFilterStat', stat) : '') : t('gFilterNoSet', stat || '—');
+        return sayBox('', I.filter, head, [t('gFilterP', g.row), ovText(), itemText].filter(Boolean).join(' '));
+      }
+      case 'selected': return sayBox('done', I.check, t('gSelected'), itemText);
+      case 'rel': {
+        const n = Math.abs(g.dr), col = g.col || 1;
+        const rows = S.lang === 'en' ? `${n} row${n === 1 ? '' : 's'}` : `${n} ${G.plural(n, 'ряд', 'ряда', 'рядов')}`;
+        const head = g.dr === 0 ? t('gRelSame', col) : t(g.dr > 0 ? 'gRelDown' : 'gRelUp', rows, col);
+        return sayBox('', I.hand, head, [ovText(), itemText].filter(Boolean).join(' '));
       }
       case 'hiddenEq': return sayBox('warn', I.warn, t('gHiddenEq', g.other || t('otherHero')), t('gHiddenEqP'));
       case 'hiddenEnh': return sayBox('warn', I.warn, t('gHiddenEnh'), t('gHiddenEnhP'));
       case 'hiddenFilter': return sayBox('warn', I.warn, t('gHiddenFilter'), t('gHiddenFilterP'));
       default: return sayBox('warn', I.warn, t('gNotIn'), t('gNotInP'), rescanBtn());
     }
+  }
+  // what the frame over the game is doing (host «overlay» events)
+  function ovText() {
+    return { need_click: t('ovNeedClick'), on: t('ovOn'), above: t('ovAbove'), below: t('ovBelow') }[S.overlay] || '';
   }
   const rescanBtn = () => `<div class="row" style="margin-top:10px"><button class="btn-line" data-act="rescan">${I.reload}${esc(t('rescan'))}</button></div>`;
   const sayBox = (cls, icon, head, sub, extra = '') =>
@@ -402,12 +437,20 @@
         const auto = G.pickPlan(S.plans.list, S.live, S.sel); if (auto >= 0) S.sel = auto;
         const p = current();
         if (p && !S.reported[p.id] && G.next(p, S.live).kind === 'done') { S.reported[p.id] = true; host.send({ cmd: 'equip.finish', id: p.id, done: true }); }
-        if (S.page === 'equip' || S.compact) render();
+        if (S.page === 'equip' || S.compact) render(); else syncHighlight();
         break;
       }
+      case 'overlay': S.overlay = m.state; if (S.page === 'equip' || S.compact) render(); break;
       case 'focusEquip': S.page = 'equip'; render(); break;
     }
   });
+
+  // tell the host which item to frame in the game
+  function syncHighlight() {
+    const p = current();
+    const uid = p && S.hasCode ? G.highlightUid(G.next(p, S.live)) : 0;
+    if (uid !== S.hl) { S.hl = uid; host.send({ cmd: 'highlight', uid }); }
+  }
 
   render();
   host.send({ cmd: 'init' });

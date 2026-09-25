@@ -26,6 +26,33 @@ static class CoreTests {
     Check(EqualityComparer<T>.Default.Equals(expected, actual), what + " (expected " + expected + ", got " + actual + ")");
   }
 
+  static int Argb(int r, int g, int b) { return unchecked((int)0xFF000000) | (r << 16) | (g << 8) | b; }
+
+  // A drawn gear list strip: night background, red cells with icons, slate stat bars with white text; row 1 top at 6 - scroll.
+  static int[] FakeList(ListGeometry geo, double H, double scroll, out int w, out int h) {
+    w = (int)((geo.StripRight - geo.StripLeft) * H); h = (int)((geo.ViewBottom - geo.ViewTop) * H);
+    var px = new int[w * h]; var rnd = new Random(1);
+    for (int i = 0; i < px.Length; i++) px[i] = Argb(15 + rnd.Next(15), 22 + rnd.Next(15), 40 + rnd.Next(20));
+    double pitch = geo.PitchY * H;
+    for (int r = 0; r < 60; r++) {
+      double top = 6 - scroll + r * pitch;
+      for (int c = 1; c <= 3; c++) {
+        int l = (int)((geo.ColLeft(c) - geo.StripLeft) * H), cw = (int)(geo.CellW * H);
+        for (int y = (int)top; y < top + geo.BarBottom * H; y++) {
+          if (y < 0 || y >= h) continue;
+          bool bar = y >= top + geo.BarTop * H;
+          for (int x = l; x < l + cw && x < w; x++) {
+            int v;
+            if (bar) v = (x - l) % 9 < 2 && (y - (int)top) % 7 < 4 ? Argb(240, 240, 240) : Argb(74 + rnd.Next(10), 90 + rnd.Next(10), 124 + rnd.Next(10));
+            else v = (x - l - cw / 2) * (x - l - cw / 2) + (y - (int)top - cw / 2) * (y - (int)top - cw / 2) < cw * cw / 9 ? Argb(60 + rnd.Next(80), 70 + rnd.Next(40), 120 + rnd.Next(60)) : Argb(150, 38, 48);
+            px[y * w + x] = v;
+          }
+        }
+      }
+    }
+    return px;
+  }
+
   static string Tok(char c) { return "rf_" + new string(c, 32); }
 
   static int Main(string[] args) {
@@ -209,7 +236,8 @@ static class CoreTests {
     Console.WriteLine("Equip plans: reply parsing");
     string plansJson = "{\"ok\":true,\"plans\":[{\"id\":\"p1\",\"heroUid\":214700000,\"heroName\":\"Сунь Укун\",\"createdAt\":\"2026-09-25T10:00:00Z\"," +
       "\"items\":[{\"slot\":4,\"uid\":33,\"slotName\":\"Кольцо\",\"name\":\"Кольцо\",\"setName\":null,\"level\":0,\"stars\":5,\"mainStat\":\"\",\"fromHeroUid\":0,\"fromHeroName\":null}," +
-      "{\"slot\":2,\"uid\":6423,\"slotName\":\"Браслет\",\"name\":\"Браслет «Проклятие»\",\"setName\":\"Проклятие\",\"level\":16,\"stars\":6,\"mainStat\":\"Крит. УРН 50%\",\"fromHeroUid\":200,\"fromHeroName\":\"Байек\"}," +
+      "{\"slot\":2,\"uid\":6423,\"slotName\":\"Браслет\",\"name\":\"Браслет «Проклятие»\",\"setName\":\"Проклятие\",\"level\":16,\"stars\":6,\"mainStat\":\"Крит. УРН 50%\",\"fromHeroUid\":200,\"fromHeroName\":\"Байек\"," +
+      "\"icon\":\"Item_720104\",\"cur\":{\"uid\":44,\"name\":\"Старый\",\"level\":8,\"stars\":4,\"icon\":\"../x\"}}," +
       "{\"slot\":9,\"uid\":1}]}, {\"id\":\"\",\"heroUid\":1,\"items\":[{\"slot\":0,\"uid\":1}]}]}";
     var pr = PlansClient.Interpret(200, plansJson, true);
     Check(pr.Status == PlansStatus.Ok, "plans ok");
@@ -219,6 +247,10 @@ static class CoreTests {
     Eq(2, plan.Items[0].Slot, "items sorted by slot");
     Eq(6423L, plan.Items[0].Uid, "uid");
     Eq("Байек", plan.Items[0].FromHeroName, "from hero");
+    Eq("Item_720104", plan.Items[0].Icon, "icon");
+    Check(plan.Items[0].Cur != null && plan.Items[0].Cur.Uid == 44 && plan.Items[0].Cur.Level == 8, "current item");
+    Eq("", plan.Items[0].Cur.Icon, "unsafe icon name dropped");
+    Check(plan.Items[1].Cur == null && plan.Items[1].Icon == "", "old plan: no icon, no current item");
     Eq(214700000L, plan.HeroUid, "hero uid");
     Check(PlansClient.Interpret(401, "{\"ok\":false,\"error\":\"invalid_token\"}", true).Status == PlansStatus.InvalidToken, "401");
     Check(PlansClient.Interpret(404, "{}", false).Status == PlansStatus.NotFound, "404");
@@ -258,6 +290,42 @@ static class CoreTests {
     lv2.HeroUid = 5;
     Eq(0, EquipGuide.PickPlan(two, lv2, 0), "keeps the choice otherwise");
     Eq(-1, EquipGuide.PickPlan(new List<Plan>(), lv2, 0), "no plans");
+
+    Console.WriteLine("Highlight: list position on the screen");
+    Check(ListTracker.IsBar(Argb(74, 90, 124)) && ListTracker.IsBar(Argb(90, 108, 140)), "stat bar colour");
+    Check(!ListTracker.IsBar(Argb(150, 40, 50)) && !ListTracker.IsBar(Argb(120, 70, 170)) && !ListTracker.IsBar(Argb(50, 90, 170))
+      && !ListTracker.IsBar(Argb(100, 100, 106)) && !ListTracker.IsBar(Argb(20, 30, 52)) && !ListTracker.IsBar(Argb(235, 235, 240)), "rarity / background colours are not bars");
+    var geo = new ListGeometry();
+    double HH = 1058;   // client height
+    foreach (double scroll in new[] { 0.0, 37.3, 120.0, 1234.5 }) {
+      int fw, fh; int[] img = FakeList(geo, HH, scroll, out fw, out fh);
+      var xs = new int[6];
+      for (int c = 1; c <= 3; c++) { double l = (geo.ColLeft(c) - geo.StripLeft) * HH; xs[(c - 1) * 2] = (int)(l + 12); xs[(c - 1) * 2 + 1] = (int)(l + geo.CellW * HH - 12); }
+      double ph, cf;
+      bool found = ListTracker.FindPhase(ListTracker.BarProfile(img, fw, fh, xs), geo.PitchY * HH, geo.BarTop * HH, geo.BarBottom * HH, out ph, out cf);
+      // row 1 top in strip px = pad - scroll; its phase:
+      double pitchPx = geo.PitchY * HH, want = ((6 - scroll) % pitchPx + pitchPx) % pitchPx;
+      double perr = Math.Abs(ph - want); perr = Math.Min(perr, pitchPx - perr);
+      Check(found && perr < 1.5, "phase at scroll " + scroll + " (found " + ph.ToString("0.0") + ", want " + want.ToString("0.0") + ", conf " + cf.ToString("0.00") + ")");
+    }
+    int[] noise = new int[300 * 400]; var rnd = new Random(7); for (int i = 0; i < noise.Length; i++) noise[i] = Argb(rnd.Next(256), rnd.Next(60), rnd.Next(60));
+    double nph, ncf;
+    Check(!ListTracker.FindPhase(ListTracker.BarProfile(noise, 300, 400, new[] { 0, 300 }), geo.PitchY * HH, geo.BarTop * HH, geo.BarBottom * HH, out nph, out ncf), "no list on the screen -> no phase");
+    Eq(100.0, ListTracker.Snap(95, 100 % 166.2, 166.2), "snap forward");
+    Eq(-66.2, Math.Round(ListTracker.Snap(-10, 100, 166.2), 1), "snap backward over the pitch");
+    var types = new[] { 0, 2, 1, 1, 1, 2, 1, 1 };
+    Eq(Math.Round(geo.PitchY * (0.44 + 3 + 0.44), 6), Math.Round(geo.RowOffset(types, 6), 6), "row offset with section titles");
+    var an = new ScrollAnchor();
+    // row 6 top really at 400 px; the click was 30 px below its top
+    an.FromClick(geo, types, 6, 430, HH, 1);
+    double realRow1 = 400 - geo.RowOffset(types, 6) * HH;
+    Check(Math.Abs(an.Row1Top - realRow1) < geo.PitchY * HH / 2, "click gives the row within half a pitch");
+    an.Track(geo, types, 6, 400 - 3 * geo.PitchY * HH, HH);   // phase seen on the screen: some other row top
+    Check(Math.Abs(an.Row1Top - realRow1) < 0.001, "bar phase snaps the anchor exactly");
+    an.Track(geo, types, 6, 400 - 40 + 5 * geo.PitchY * HH, HH);   // the list scrolled down by 40 px
+    Check(Math.Abs(an.Row1Top - (realRow1 - 40)) < 0.001, "scrolling is followed");
+    Eq(3, geo.ColumnAt(geo.ColLeft(3) + 0.05), "column under the cursor");
+    Eq(0, geo.ColumnAt(geo.ColLeft(1) - 0.03), "left of the list");
 
     Console.WriteLine();
     Console.WriteLine(passed + " passed, " + failed + " failed");

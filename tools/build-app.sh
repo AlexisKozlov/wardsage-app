@@ -25,8 +25,8 @@ RES=()
 while IFS= read -r f; do RES+=("-resource:$f,ui/${f#$OUT/ui/}"); done < <(find "$OUT/ui" -type f | sort)
 for f in Microsoft.Web.WebView2.Core.dll Microsoft.Web.WebView2.WinForms.dll WebView2Loader.dll; do RES+=("-resource:$WV/$f,bin/$f"); done
 
-CORE="src/MemoryReader.cs src/EquipScan.cs src/MiniJson.cs src/GameInfo.cs src/Extractor.cs src/SyncClient.cs src/PlansClient.cs src/Config.cs src/CodeProtector.cs"
-APP="app/Program.cs app/AppWindow.cs app/HostBridge.cs app/AssemblyInfo.cs"
+CORE="src/MemoryReader.cs src/EquipScan.cs src/MiniJson.cs src/GameInfo.cs src/Extractor.cs src/SyncClient.cs src/PlansClient.cs src/ListTracker.cs src/Config.cs src/CodeProtector.cs"
+APP="app/Program.cs app/AppWindow.cs app/HostBridge.cs app/Overlay.cs app/AssemblyInfo.cs"
 
 $CSC -langversion:7.3 -target:winexe -platform:x64 -optimize+ -deterministic -nostdlib -warnaserror -nowarn:1701,1702 \
   -r:$FX/mscorlib.dll -r:$FX/System.dll -r:$FX/System.Core.dll -r:$FX/System.Drawing.dll -r:$FX/System.Windows.Forms.dll \

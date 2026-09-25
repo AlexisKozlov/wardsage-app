@@ -1,6 +1,6 @@
 // Development only: a fake host for previewing the interface in a normal browser (no WebView2).
 // Inert inside RealmForge.exe (window.chrome.webview exists there). Scenario: index.html?s=<name>
-//   onboard | idle | reading | done | error | equip | pick | hidden | done-plan | compact | settings | en
+//   onboard | idle | reading | done | error | equip | pick | rel | selected | hidden | done-plan | compact | settings | en
 (function () {
   if (window.chrome && window.chrome.webview) return;
   const q = new URLSearchParams(location.search);
@@ -11,11 +11,13 @@
   const plan = {
     id: 'p1', heroUid: 214700000, heroName: 'Сунь Укун', createdAt: '2026-09-25T00:33:00Z',
     items: [
-      { slot: 0, uid: 11, slotName: 'Оружие', name: 'Оружие «Дикая мощь»', setName: 'Дикая мощь', level: 16, stars: 6, mainStat: 'АТК 960', fromHeroUid: 0, fromHeroName: null },
-      { slot: 1, uid: 12, slotName: 'Нагрудник', name: 'Нагрудник «Дикая мощь»', setName: 'Дикая мощь', level: 16, stars: 6, mainStat: 'ЗДР 12,4%', fromHeroUid: 0, fromHeroName: null },
-      { slot: 2, uid: 6423, slotName: 'Браслет', name: 'Браслет «Проклятие»', setName: 'Проклятие', level: 16, stars: 6, mainStat: 'Крит. УРН 80%', fromHeroUid: 200100000, fromHeroName: 'Байек' },
-      { slot: 3, uid: 14, slotName: 'Амулет', name: 'Амулет «Проклятие»', setName: 'Проклятие', level: 12, stars: 6, mainStat: 'Шанс крит. 40%', fromHeroUid: 0, fromHeroName: null },
-      { slot: 4, uid: 15, slotName: 'Кольцо', name: 'Кольцо «Ярость»', setName: 'Ярость', level: 16, stars: 5, mainStat: 'АТК 25%', fromHeroUid: 0, fromHeroName: null },
+      { slot: 0, uid: 11, slotName: 'Оружие', name: 'Меч ярости', setName: 'Буря', level: 16, stars: 6, mainStat: 'АТК 960', fromHeroUid: 0, fromHeroName: null, icon: 'Item_101501', cur: null },
+      { slot: 1, uid: 12, slotName: 'Нагрудник', name: 'Нагрудник ярости', setName: 'Буря', level: 16, stars: 6, mainStat: 'ЗДР 12,4%', fromHeroUid: 0, fromHeroName: null, icon: 'Item_101502', cur: null },
+      { slot: 2, uid: 6423, slotName: 'Браслет', name: 'Шлем бесстрашия', setName: 'Критическая резня', level: 16, stars: 6, mainStat: 'Крит. УРН 80%', fromHeroUid: 200100000, fromHeroName: 'Байек', icon: 'Item_101403',
+        cur: { uid: 501, name: 'Шлем атаки', level: 12, stars: 5, icon: 'Item_100103' } },
+      { slot: 3, uid: 14, slotName: 'Амулет', name: 'Рукавицы бесстрашия', setName: 'Критическая резня', level: 12, stars: 6, mainStat: 'Шанс крит. 40%', fromHeroUid: 0, fromHeroName: null, icon: 'Item_101404',
+        cur: { uid: 502, name: 'Рукавицы жизни', level: 8, stars: 4, icon: 'Item_100204' } },
+      { slot: 4, uid: 15, slotName: 'Кольцо', name: 'Ботинки ярости', setName: 'Буря', level: 16, stars: 5, mainStat: 'АТК 25%', fromHeroUid: 0, fromHeroName: null, icon: 'Item_101505', cur: null },
     ],
   };
   const plans = [plan,
@@ -23,6 +25,9 @@
     { id: 'p3', heroUid: 202400000, heroName: 'Элизия', items: plan.items.slice(0, 5).map((i, n) => ({ ...i, uid: 800 + n })) }];
   const live = { gameRunning: true, heroUid: 214700000, panelOk: true, part: 2, hideEquipped: false, hideEnhanced: false, filterActive: false,
     rows: { 6423: [7, 2] }, owner: { 11: 214700000, 12: 214700000, 6423: 200100000, 14: 0, 15: 0 } };
+  if (s === 'pick') live.rows[6423] = [2, 2];
+  if (s === 'rel') { live.selUid = 77; live.selRow = 5; }
+  if (s === 'selected') { live.rows[6423] = [2, 2]; live.selUid = 6423; live.selRow = 2; }
   if (s === 'hidden') { delete live.rows[6423]; live.hideEquipped = true; }
   if (s === 'done-plan') plan.items.forEach((i) => { live.owner[i.uid] = plan.heroUid; });
   if (s === 'equip') { live.part = -1; }
@@ -37,7 +42,7 @@
         if (s === 'reading') emit({ ev: 'sync', stage: 'read', seconds: 17 });
         if (s === 'done') emit({ ev: 'sync', stage: 'done', result: { seconds: 41, heroes: 128, items: 1109, artifacts: 380, viewUrl: site + '/app/heroes' } });
         if (s === 'error') emit({ ev: 'sync', stage: 'error', error: { kind: 'not_running' } });
-        if (['equip', 'pick', 'hidden', 'done-plan', 'compact'].includes(s)) {
+        if (['equip', 'pick', 'rel', 'selected', 'hidden', 'done-plan', 'compact'].includes(s)) {
           setTimeout(() => document.querySelector('[data-page=equip]').click(), 20);
         }
         if (s === 'settings') setTimeout(() => document.querySelector('[data-page=settings]').click(), 20);
@@ -47,6 +52,8 @@
         emit({ ev: 'equip.scan', status: 'ok', panel: true });
         emit({ ev: 'equip.live', live });
         if (s === 'compact') setTimeout(() => document.querySelector('[data-act=compact]').click(), 30);
+      } else if (m.cmd === 'highlight') {
+        emit({ ev: 'overlay', state: !m.uid ? 'off' : s === 'pick' ? 'need_click' : 'on' });
       } else if (m.cmd === 'sync') {
         emit({ ev: 'sync', stage: 'find' });
         let sec = 0;

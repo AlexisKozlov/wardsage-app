@@ -19,7 +19,8 @@
 * { box-sizing: border-box }
 html, body { height: 100%; margin: 0 }
 body {
-  background: radial-gradient(ellipse 90% 70% at 70% -10%, #1c2a48 0%, var(--bg) 62%) fixed, var(--bg);
+  background: linear-gradient(180deg, rgba(11, 16, 27, .78), rgba(11, 16, 27, .93) 55%, var(--bg)) fixed,
+    url(img/bg_main.webp) center top / cover no-repeat fixed, var(--bg);
   color: var(--text); font: 16px/1.4 var(--body);
   overflow: hidden; user-select: none; -webkit-font-smoothing: antialiased;
 }
@@ -177,27 +178,49 @@ h2 { margin: 0 0 12px; font: 700 13px/1.2 var(--display); letter-spacing: 2px; c
 .plan b { display: block; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
 .plan span { font-size: 13px; color: var(--dim) }
 .bust { width: 58px; height: 58px; border-radius: 3px; overflow: hidden; background: radial-gradient(circle at 50% 30%, #2a3656, #121a2b); border: 1px solid var(--line); position: relative }
-.bust img { width: 100%; height: 100%; object-fit: cover; object-position: 50% 15% }
-.bust.lg { width: 112px; height: 112px; border-color: var(--gold2); box-shadow: 0 0 0 3px var(--bg2), 0 0 0 4px var(--edge), 0 12px 30px rgba(0, 0, 0, .4) }
+.bust img { width: 100%; height: 100%; object-fit: cover; object-position: 50% 8% }
+.bust img.bust-img { object-position: 50% 15% }
+.bust.lg { width: 100px; height: 150px; border-color: var(--gold2); box-shadow: 0 0 0 3px var(--bg2), 0 0 0 4px var(--edge), 0 12px 30px rgba(0, 0, 0, .4) }
 .mini-bar { height: 4px; border-radius: 2px; background: var(--line2); margin-top: 6px; overflow: hidden }
 .mini-bar i { display: block; height: 100%; background: var(--gold2) }
 
-.guide { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 20px; align-items: start }
+.guide { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 20px; align-items: start }
 .guide h3 { margin: 0; font: 700 22px/1.15 var(--display); color: var(--goldhi); letter-spacing: .5px }
 .guide .meta { color: var(--dim); font-size: 14px; margin: 4px 0 12px }
 .slots { display: grid; gap: 6px; margin: 16px 0 0; padding: 0; list-style: none }
-.slots li { display: grid; grid-template-columns: 26px 96px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 9px 12px; border-radius: 3px; border: 1px solid transparent; background: rgba(11, 16, 27, .35); color: var(--dim); font-size: 14px; transition: background .25s, border-color .25s, color .25s }
+.slots li { display: grid; grid-template-columns: 24px auto minmax(0, 1fr); gap: 12px; align-items: center; padding: 8px 12px; border-radius: 3px; border: 1px solid transparent; background: rgba(11, 16, 27, .45); color: var(--dim); font-size: 14px; transition: background .25s, border-color .25s, color .25s }
 .slots li .st { width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--line2); display: grid; place-items: center }
 .slots li .st svg { width: 13px; height: 13px; stroke: var(--bg); fill: none; stroke-width: 3; opacity: 0 }
-.slots li .slot { font: 700 11px/1 var(--display); letter-spacing: 1.2px; text-transform: uppercase; color: var(--dim) }
-.slots li .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--muted) }
-.slots li .lvl { color: var(--dim); font-size: 13px }
+.slots .swap { display: flex; align-items: center; gap: 6px }
+.slots .arrow svg { width: 18px; height: 18px; stroke: var(--gold2); fill: none; stroke-width: 2; display: block }
+.slots .info { display: grid; min-width: 0; line-height: 1.25 }
+.slots li .slot { font: 700 10.5px/1.2 var(--display); letter-spacing: 1px; text-transform: uppercase; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+.slots li .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--muted); font-weight: 500 }
+.slots li .name em { font-style: normal; font-weight: 400; color: var(--dim) }
+.slots li .sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--dim); font-size: 13px }
 .slots li.done { color: var(--ok) }
 .slots li.done .st { background: var(--ok); border-color: var(--ok) } .slots li.done .st svg { opacity: 1 }
-.slots li.done .name { color: #cfe6c2 }
-.slots li.now { border-color: var(--gold2); background: linear-gradient(90deg, rgba(232, 207, 142, .12), rgba(232, 207, 142, .02)) }
+.slots li.done .name { color: #cfe6c2 } .slots li.done .sub { color: #8fb57c }
+.slots li.now { border-color: var(--gold2); background: linear-gradient(90deg, rgba(232, 207, 142, .14), rgba(232, 207, 142, .02)), rgba(11, 16, 27, .55) }
 .slots li.now .st { border-color: var(--gold); box-shadow: 0 0 0 3px rgba(232, 207, 142, .18); animation: pulse 1.6s ease-in-out infinite }
 .slots li.now .slot, .slots li.now .name { color: var(--goldhi) }
+.slots li.now .sub { color: var(--muted) }
+
+/* item cell as in the game: rarity texture, icon, +level, stars */
+.cell { position: relative; width: 50px; height: 50px; flex: none; border-radius: 3px; overflow: hidden; background: #1a2030 center / cover no-repeat;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .55), 0 0 0 1px rgba(232, 207, 142, .22) }
+.cell.r1 { background-image: url(img/rank1.webp) } .cell.r2 { background-image: url(img/rank2.webp) } .cell.r3 { background-image: url(img/rank3.webp) }
+.cell.r4 { background-image: url(img/rank4.webp) } .cell.r5 { background-image: url(img/rank5.webp) } .cell.r6 { background-image: url(img/rank6.webp) }
+.cell img { position: absolute; inset: 3px; width: calc(100% - 6px); height: calc(100% - 6px); object-fit: contain; filter: drop-shadow(0 2px 2px rgba(0, 0, 0, .5)) }
+.cell img.ph { inset: 6px; width: calc(100% - 12px); height: calc(100% - 12px); opacity: .55; filter: none }
+.cell .lv { position: absolute; right: 2px; bottom: 1px; font: 700 11px/1 var(--body); font-style: normal; color: #fff; text-shadow: 0 0 3px #000, 0 1px 1px #000 }
+.cell .sr { position: absolute; left: 2px; top: 2px; padding-right: 11px; font: 700 10px/10px var(--body); font-style: normal; color: #ffe9a8; text-shadow: 0 0 3px #000;
+  background: url(img/star.webp) right center / 10px 10px no-repeat }
+.cell.old { width: 40px; height: 40px; opacity: .75; filter: saturate(.7) }
+.cell.old .lv { font-size: 10px } .cell.old .sr { display: none }
+.cell.none { background: rgba(11, 16, 27, .8) }
+.slots li.now .cell.new { box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .55), 0 0 0 2px var(--gold), 0 0 14px rgba(232, 207, 142, .45) }
+.slots li.done .cell.new { box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .55), 0 0 0 1px var(--ok) }
 @keyframes pulse { 50% { box-shadow: 0 0 0 6px rgba(232, 207, 142, .05) } }
 
 .say { margin-top: 18px; padding: 18px 20px; border-radius: 4px; border: 1px solid var(--gold2); background: linear-gradient(135deg, rgba(232, 207, 142, .14), rgba(232, 207, 142, .03) 60%), var(--panel);
@@ -243,8 +266,11 @@ body.compact .page { padding: 14px 16px 16px }
 body.compact .say { margin-top: 0; padding: 14px; grid-template-columns: 34px minmax(0, 1fr) }
 body.compact .say .ring { width: 34px; height: 34px } body.compact .say .ring svg { width: 18px; height: 18px }
 body.compact .say p { font-size: 16px }
-body.compact .slots { margin: 0 } body.compact .slots li { grid-template-columns: 22px 78px minmax(0, 1fr); padding: 6px 10px; font-size: 13px }
-body.compact .slots li .lvl { display: none }
+body.compact .slots { margin: 0; gap: 4px } body.compact .slots li { grid-template-columns: 20px auto minmax(0, 1fr); gap: 8px; padding: 5px 8px; font-size: 13px }
+body.compact .slots li .st { width: 20px; height: 20px }
+body.compact .cell { width: 42px; height: 42px } body.compact .cell.old { width: 32px; height: 32px }
+body.compact .slots .arrow svg { width: 14px; height: 14px }
+body.compact .slots li .sub { font-size: 12px }
 .icon-btn { all: unset; cursor: pointer; width: 32px; height: 32px; display: grid; place-items: center; border: 1px solid var(--line2); border-radius: 3px; color: var(--muted) }
 .icon-btn:hover { color: var(--gold); border-color: var(--golddim) }
 .icon-btn svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.8 }
@@ -276,3 +302,13 @@ body.compact .slots li .lvl { display: none }
 .tile.bad .ico { border-color: rgba(240, 160, 140, .45); background: var(--errbg) } .tile.bad .ico svg { stroke: var(--err) }
 @media (max-width: 900px) { .tiles { grid-template-columns: 1fr } .collage { opacity: .35 } }
 .head .row { flex-wrap: nowrap; flex: none }
+
+/* ---------- game textures ---------- */
+.banner { background: linear-gradient(90deg, rgba(14, 21, 36, .96) 30%, rgba(14, 21, 36, .6) 70%, rgba(14, 21, 36, .35)), url(img/bg_banner.webp) 60% 40% / cover no-repeat, var(--panel) }
+.btn-gold { border: 14px solid transparent; border-image: url(img/btn_gold.webp) 22 26 fill / 14px 16px stretch; background: none; box-shadow: none !important; padding: 0 14px; border-radius: 0; overflow: visible; filter: drop-shadow(0 6px 14px rgba(201, 164, 92, .25)) }
+.btn-gold::after { display: none }
+.btn-gold.big { min-height: 62px }
+.btn-gold:hover:not(:disabled) { filter: brightness(1.08) drop-shadow(0 8px 18px rgba(201, 164, 92, .4)) }
+.btn-gold { color: #2a1a05; text-shadow: 0 1px 0 rgba(255, 240, 200, .5) }
+.card.framed { border-image: url(img/frame.webp) 12 / 1px stretch }
+.bust.lg { border: 0; box-shadow: 0 0 0 1px var(--gold2), 0 0 0 4px var(--bg2), 0 0 0 5px var(--edge), 0 12px 30px rgba(0, 0, 0, .4); background: url(img/card5.webp) center / cover }
