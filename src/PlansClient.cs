@@ -25,14 +25,26 @@ namespace RealmForge {
     public long FromHeroUid;
     /// <summary>Game icon sprite name (Item_123456) or "" — only [A-Za-z0-9_], it becomes part of a site URL.</summary>
     public string Icon = "";
-    /// <summary>What the hero wears in that slot now (null: empty slot or an old plan).</summary>
+    /// <summary>Set icon sprite name (icon_suit_…) or "" — same rules as Icon.</summary>
+    public string SetIcon = "";
+    /// <summary>What the hero wears in that slot now (null: empty slot, or unknown when CurKnown is false).</summary>
     public CurItem Cur;
+    public bool CurKnown;
+    public List<SubStat> Subs = new List<SubStat>();
+    public List<SubStat> SetBonus = new List<SubStat>();   // Rolls = pieces needed
   }
 
   public sealed class CurItem {
     public long Uid;
-    public string Name, Icon = "";
+    public string Name, Icon = "", MainStat = "";
     public int Level, Stars;
+    public List<SubStat> Subs = new List<SubStat>();
+  }
+
+  /// <summary>Substat line of the item card («АТК +35») and its upgrade count; also used for set bonuses (Rolls = pieces).</summary>
+  public sealed class SubStat {
+    public string Text;
+    public int Rolls;
   }
 
   public sealed class Plan {
@@ -134,6 +146,20 @@ namespace RealmForge {
       return (long)x;
     }
 
+    // [{text, rolls}] lists of the item card (at most 12 lines of 200 characters)
+    static List<SubStat> Lines(Dictionary<string, object> d, string key, string textKey, string numKey) {
+      var r = new List<SubStat>(); object v;
+      var list = d != null && d.TryGetValue(key, out v) ? v as List<object> : null;
+      if (list == null) return r;
+      foreach (var x in list) {
+        var o = MiniJson.AsObject(x); if (o == null) continue;
+        string t = MiniJson.GetString(o, textKey); if (string.IsNullOrEmpty(t)) continue;
+        r.Add(new SubStat { Text = t.Length > 200 ? t.Substring(0, 200) : t, Rolls = (int)Math.Min(99, Num(o, numKey)) });
+        if (r.Count == 12) break;
+      }
+      return r;
+    }
+
     static string IconName(string s) {
       if (string.IsNullOrEmpty(s) || s.Length > 64) return "";
       foreach (char ch in s) if (!(ch == '_' || (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z'))) return "";
@@ -164,10 +190,15 @@ namespace RealmForge {
         it.FromHeroUid = Num(d, "fromHeroUid");
         it.FromHeroName = MiniJson.GetString(d, "fromHeroName");
         it.Icon = IconName(MiniJson.GetString(d, "icon"));
-        object cv; var c = d.TryGetValue("cur", out cv) ? MiniJson.AsObject(cv) : null;
+        it.SetIcon = IconName(MiniJson.GetString(d, "setIcon"));
+        object cv; it.CurKnown = d.TryGetValue("cur", out cv);
+        var c = it.CurKnown ? MiniJson.AsObject(cv) : null;
         if (c != null && Num(c, "uid") > 0)
           it.Cur = new CurItem { Uid = Num(c, "uid"), Name = MiniJson.GetString(c, "name") ?? "", Icon = IconName(MiniJson.GetString(c, "icon")),
-                                 Level = (int)Num(c, "level"), Stars = (int)Num(c, "stars") };
+                                 Level = (int)Num(c, "level"), Stars = (int)Num(c, "stars"), MainStat = MiniJson.GetString(c, "mainStat") ?? "",
+                                 Subs = Lines(c, "subs", "text", "rolls") };
+        it.Subs = Lines(d, "subs", "text", "rolls");
+        it.SetBonus = Lines(d, "setBonus", "text", "pieces");
         p.Items.Add(it);
       }
       p.Items.Sort((a, b) => a.Slot.CompareTo(b.Slot));

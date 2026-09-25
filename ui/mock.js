@@ -11,13 +11,15 @@
   const plan = {
     id: 'p1', heroUid: 214700000, heroName: 'Сунь Укун', createdAt: '2026-09-25T00:33:00Z',
     items: [
-      { slot: 0, uid: 11, slotName: 'Оружие', name: 'Меч ярости', setName: 'Буря', level: 16, stars: 6, mainStat: 'АТК 960', fromHeroUid: 0, fromHeroName: null, icon: 'Item_101501', cur: null },
-      { slot: 1, uid: 12, slotName: 'Нагрудник', name: 'Нагрудник ярости', setName: 'Буря', level: 16, stars: 6, mainStat: 'ЗДР 12,4%', fromHeroUid: 0, fromHeroName: null, icon: 'Item_101502', cur: null },
-      { slot: 2, uid: 6423, slotName: 'Браслет', name: 'Шлем бесстрашия', setName: 'Критическая резня', level: 16, stars: 6, mainStat: 'Крит. УРН 80%', fromHeroUid: 200100000, fromHeroName: 'Байек', icon: 'Item_101403',
-        cur: { uid: 501, name: 'Шлем атаки', level: 12, stars: 5, icon: 'Item_100103' } },
-      { slot: 3, uid: 14, slotName: 'Амулет', name: 'Рукавицы бесстрашия', setName: 'Критическая резня', level: 12, stars: 6, mainStat: 'Шанс крит. 40%', fromHeroUid: 0, fromHeroName: null, icon: 'Item_101404',
+      { slot: 0, uid: 11, slotName: 'Оружие', name: 'Меч ярости', setName: 'Буря', level: 16, stars: 6, mainStat: 'АТК 960', fromHeroUid: 0, fromHeroName: null, icon: 'Item_101501', setIcon: 'icon_suit_Anger', cur: null },
+      { slot: 1, uid: 12, slotName: 'Нагрудник', name: 'Нагрудник ярости', setName: 'Буря', level: 16, stars: 6, mainStat: 'ЗДР 12,4%', fromHeroUid: 0, fromHeroName: null, icon: 'Item_101502', setIcon: 'icon_suit_Anger', cur: null },
+      { slot: 2, uid: 6423, slotName: 'Браслет', name: 'Шлем бесстрашия', setName: 'Критическая резня', level: 16, stars: 6, mainStat: 'Крит. УРН 80%', fromHeroUid: 200100000, fromHeroName: 'Байек', icon: 'Item_101403', setIcon: 'icon_suit_Crit',
+        cur: { uid: 501, name: 'Шлем атаки', level: 12, stars: 5, icon: 'Item_100103', mainStat: 'АТК 18%', subs: [{ text: 'Скорость +6', rolls: 1 }, { text: 'ОЗ +310', rolls: 0 }] },
+        subs: [{ text: 'Шанс крит. +9%', rolls: 2 }, { text: 'АТК +12,5%', rolls: 1 }, { text: 'Скорость +11', rolls: 3 }, { text: 'ЗАЩ +40', rolls: 0 }],
+        setBonus: [{ pieces: 2, text: 'Крит. УРН +20%' }, { pieces: 4, text: 'Крит. удары снижают защиту цели на 15% на 2 хода' }] },
+      { slot: 3, uid: 14, slotName: 'Амулет', name: 'Рукавицы бесстрашия', setName: 'Критическая резня', level: 12, stars: 6, mainStat: 'Шанс крит. 40%', fromHeroUid: 0, fromHeroName: null, icon: 'Item_101404', setIcon: 'icon_suit_Crit',
         cur: { uid: 502, name: 'Рукавицы жизни', level: 8, stars: 4, icon: 'Item_100204' } },
-      { slot: 4, uid: 15, slotName: 'Кольцо', name: 'Ботинки ярости', setName: 'Буря', level: 16, stars: 5, mainStat: 'АТК 25%', fromHeroUid: 0, fromHeroName: null, icon: 'Item_101505', cur: null },
+      { slot: 4, uid: 15, slotName: 'Кольцо', name: 'Ботинки ярости', setName: 'Буря', level: 16, stars: 5, mainStat: 'АТК 25%', fromHeroUid: 0, fromHeroName: null, icon: 'Item_101505', setIcon: 'icon_suit_Anger', cur: null },
     ],
   };
   const plans = [plan,

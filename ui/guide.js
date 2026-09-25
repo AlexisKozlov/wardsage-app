@@ -80,6 +80,11 @@
     return /^[A-Za-z0-9_]{1,64}$/.test(icon || '') ? `${site}/art/items/${icon}.webp` : '';
   }
 
+  // Set icon from the game on the site (icon_suit_…).
+  function setUrl(site, icon) {
+    return /^[A-Za-z0-9_]{1,64}$/.test(icon || '') ? `${site}/art/sets/${icon}.webp` : '';
+  }
+
   // Background texture by item stars (game rarity colours 1..6), 0 = none.
   const rankOf = (stars) => (stars > 0 ? Math.min(6, Math.max(1, stars | 0)) : 0);
 
@@ -93,7 +98,7 @@
     return a > 10 && a < 20 ? many : b === 1 ? one : b >= 2 && b <= 4 ? few : many;
   }
 
-  const api = { next, pickPlan, highlightUid, plural, bustUrl, headUrl, itemUrl, rankOf, statOf, VISIBLE_ROWS };
+  const api = { next, pickPlan, highlightUid, plural, bustUrl, headUrl, itemUrl, setUrl, rankOf, statOf, VISIBLE_ROWS };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.RFGuide = api;
 })(typeof window !== 'undefined' ? window : globalThis);

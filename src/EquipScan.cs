@@ -8,7 +8,8 @@
 //     m_EquipListRealData), m_EquipListRealData (rows {Type=1, Item={uid, uid, uid}}), m_FilterConfig (Part = shown slot,
 //     IsHideEquiped, IsHideEnhanced, Suits, MainAttrs, ...);
 //   * EquipData.m_CurrentSelectHeroUid — the hero whose gear screen is open;
-//   * item tables (iItemUid, iHeroId) of the plan items — who wears each item now.
+//   * item tables (iItemUid, iHeroId) of the plan items — who wears each item now, looked up in EquipData.equips
+//     (uid -> item table) on every poll, because the game swaps in a new table when an item changes.
 // FindEquip() scans the memory once (tens of seconds); Poll() then re-reads the found tables several times a second.
 using System;
 using System.Collections.Generic;
@@ -87,8 +88,19 @@ namespace RealmForge {
       ulong v; int tt;
       if (a.EquipData != 0 && Field(a.EquipData, KHero, out v, out tt) && tt == T_INT) s.HeroUid = (long)v;
 
+      // Who wears each plan item. The game REPLACES an item's table when it changes (EquipData.equips[uid] = new table,
+      // e.g. right after the player puts it on), so the current table is looked up in EquipData.equips every time;
+      // the tables found by the scan are only a fallback.
+      ulong eqs = 0; int ett;
+      bool haveEq = a.EquipData != 0 && Field(a.EquipData, "equips", out eqs, out ett) && ett == T_TABLE;
       foreach (var uid in itemUids) {
-        ulong it; if (!a.Items.TryGetValue(uid, out it)) continue;
+        ulong it; int itt;
+        if (haveEq && IntKey(eqs, uid, out it, out itt) && itt == T_TABLE
+            && Field(it, "iHeroId", out v, out tt) && tt == T_INT) {
+          s.Owner[uid] = (long)v; a.Items[uid] = it;
+          continue;
+        }
+        if (!a.Items.TryGetValue(uid, out it)) continue;
         if (Field(it, "iItemUid", out v, out tt) && tt == T_INT && (long)v == uid && Field(it, "iHeroId", out v, out tt) && tt == T_INT)
           s.Owner[uid] = (long)v;
       }

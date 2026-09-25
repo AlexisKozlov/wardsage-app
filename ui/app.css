@@ -216,6 +216,9 @@ h2 { margin: 0 0 12px; font: 700 13px/1.2 var(--display); letter-spacing: 2px; c
 .cell .lv { position: absolute; right: 2px; bottom: 1px; font: 700 11px/1 var(--body); font-style: normal; color: #fff; text-shadow: 0 0 3px #000, 0 1px 1px #000 }
 .cell .sr { position: absolute; left: 2px; top: 2px; padding-right: 11px; font: 700 10px/10px var(--body); font-style: normal; color: #ffe9a8; text-shadow: 0 0 3px #000;
   background: url(img/star.webp) right center / 10px 10px no-repeat }
+.cell img.set { inset: auto; left: 1px; bottom: 1px; width: 38%; height: 38%; filter: drop-shadow(0 0 2px #000) }
+.cell.old img.set { display: none }
+.cell.unknown { visibility: hidden }
 .cell.old { width: 40px; height: 40px; opacity: .75; filter: saturate(.7) }
 .cell.old .lv { font-size: 10px } .cell.old .sr { display: none }
 .cell.none { background: rgba(11, 16, 27, .8) }
@@ -312,3 +315,22 @@ body.compact .slots li .sub { font-size: 12px }
 .btn-gold { color: #2a1a05; text-shadow: 0 1px 0 rgba(255, 240, 200, .5) }
 .card.framed { border-image: url(img/frame.webp) 12 / 1px stretch }
 .bust.lg { border: 0; box-shadow: 0 0 0 1px var(--gold2), 0 0 0 4px var(--bg2), 0 0 0 5px var(--edge), 0 12px 30px rgba(0, 0, 0, .4); background: url(img/card5.webp) center / cover }
+
+/* ---------- item card on hover (the game's item window) ---------- */
+.cell[data-card] { cursor: help }
+.icard { position: fixed; z-index: 20; width: 280px; pointer-events: none; border-radius: 4px; overflow: hidden; background: #111827;
+  border: 1px solid #6b5a36; box-shadow: 0 0 0 1px #000, 0 18px 40px rgba(0, 0, 0, .6); font-size: 13px; animation: enter .15s var(--ease) }
+.ic-head { display: grid; grid-template-columns: 58px minmax(0, 1fr); gap: 10px; align-items: center; padding: 10px 12px; background: center / cover no-repeat }
+.ic-head .cell { width: 58px; height: 58px }
+.ic-head small { display: block; font: 700 10px/1.2 var(--display); letter-spacing: 1px; text-transform: uppercase; color: rgba(255, 255, 255, .75) }
+.ic-head b { display: block; font: 700 15px/1.2 var(--display); color: #fff; text-shadow: 0 1px 2px #000 }
+.ic-head .stars { color: #ffe08a; font-size: 12px; letter-spacing: 1px; text-shadow: 0 0 3px #000 }
+.ic-main { padding: 8px 12px; font: 500 15px/1.3 var(--body); color: var(--goldhi); border-bottom: 1px solid var(--line2); background: rgba(232, 207, 142, .06) }
+.ic-subs, .ic-bonus { margin: 0; padding: 6px 12px 8px; list-style: none; display: grid; gap: 3px }
+.ic-subs li { display: flex; justify-content: space-between; gap: 8px; color: var(--text) }
+.ic-subs .pips { font-style: normal; font-size: 9px; color: var(--gold2); letter-spacing: 1px }
+.ic-none { margin: 0; padding: 8px 12px; color: var(--dim) }
+.ic-set { display: flex; align-items: center; gap: 8px; padding: 8px 12px 0; border-top: 1px solid var(--line2); color: var(--gold) }
+.ic-set img { width: 22px; height: 22px }
+.ic-bonus li { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 6px; color: var(--muted) }
+.ic-bonus b { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--golddim); color: var(--gold); font-size: 11px }

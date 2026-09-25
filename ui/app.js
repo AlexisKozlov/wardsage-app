@@ -241,9 +241,10 @@
   window.heroImgFail = (img) => { const a = img.getAttribute('data-alt'); if (a) { img.removeAttribute('data-alt'); img.className = 'bust-img'; img.src = a; } else img.remove(); };
 
   // item cell like in the game: rarity background by stars, icon, +level, stars
-  function cell(icon, stars, level, slot, cls = '') {
-    const url = G.itemUrl(S.site, icon), r = G.rankOf(stars);
-    return `<span class="cell ${r ? 'r' + r : 'r0'} ${cls}">${url ? `<img src="${esc(url)}" alt="" onerror="this.src='img/slot${slot | 0}.webp';this.className='ph'">` : `<img class="ph" src="img/slot${slot | 0}.webp" alt="">`}`
+  function cell(icon, stars, level, slot, cls = '', setIcon = '', card = '') {
+    const url = G.itemUrl(S.site, icon), r = G.rankOf(stars), su = G.setUrl(S.site, setIcon);
+    return `<span class="cell ${r ? 'r' + r : 'r0'} ${cls}"${card ? ` data-card="${esc(card)}"` : ''}>${url ? `<img src="${esc(url)}" alt="" onerror="this.src='img/slot${slot | 0}.webp';this.className='ph'">` : `<img class="ph" src="img/slot${slot | 0}.webp" alt="">`}`
+      + `${su ? `<img class="set" src="${esc(su)}" alt="" onerror="this.remove()">` : ''}`
       + `${level ? `<i class="lv num">+${level}</i>` : ''}${stars ? `<i class="sr num">${stars}</i>` : ''}</span>`;
   }
 
@@ -261,11 +262,11 @@
     return `<ul class="slots">${p.items.map((it) => {
       const st = g.states[it.uid] || 'wait';
       const from = st !== 'done' && it.fromHeroUid > 0 && it.fromHeroUid !== p.heroUid && it.fromHeroName ? t('fromHero', it.fromHeroName) : '';
-      const cur = it.cur && it.cur.uid !== it.uid ? it.cur : null;
-      const was = st === 'done' ? '' : cur ? cell(cur.icon, cur.stars, cur.level, it.slot, 'old') : cell('', 0, 0, it.slot, 'old none');
-      const curText = st === 'done' ? t('eqWorn') : cur ? t('eqNow', cur.name + (cur.level ? ' +' + cur.level : '')) : t('eqEmpty');
+      const known = it.cur !== undefined, cur = it.cur && it.cur.uid !== it.uid ? it.cur : null;
+      const was = st === 'done' ? '' : cur ? cell(cur.icon, cur.stars, cur.level, it.slot, 'old', '', it.uid + ':cur') : cell('', 0, 0, it.slot, 'old none' + (known ? '' : ' unknown'));
+      const curText = st === 'done' ? t('eqWorn') : cur ? t('eqNow', cur.name + (cur.level ? ' +' + cur.level : '')) : known ? t('eqEmpty') : '';
       return `<li class="${st}"><span class="st">${I.check}</span>
-        <span class="swap">${was}${st === 'done' ? '' : `<span class="arrow">${I.arrow}</span>`}${cell(it.icon, it.stars, it.level, it.slot, 'new')}</span>
+        <span class="swap">${was}${st === 'done' ? '' : `<span class="arrow">${I.arrow}</span>`}${cell(it.icon, it.stars, it.level, it.slot, 'new', it.setIcon, it.uid + ':new')}</span>
         <span class="info"><span class="slot">${esc(it.slotName || t('slot' + it.slot))}</span>
           <span class="name">${esc(it.name)}${it.setName ? `<em> · ${esc(it.setName)}</em>` : ''}</span>
           <span class="sub">${esc([it.mainStat, from || curText].filter(Boolean).join(' · '))}</span></span></li>`;
@@ -365,6 +366,38 @@
   function allUids() { const s = new Set(); S.plans.list.forEach((p) => p.items.forEach((i) => s.add(i.uid))); return [...s]; }
   function loadPlans() { if (!S.hasCode) return; S.plans.status = 'loading'; host.send({ cmd: 'plans.load', lang: S.lang }); render(); }
   function scan() { if (!S.plans.list.length) return; S.scan = { status: 'scanning', panel: false }; host.send({ cmd: 'equip.scan', uids: allUids() }); render(); }
+
+  // ---------------------------------------------------------------- item card on hover (like the game's item window)
+  function itemCard(key) {
+    const [uidS, which] = key.split(':'); const p = current(); if (!p) return '';
+    const it = p.items.find((x) => String(x.uid) === uidS); if (!it) return '';
+    const o = which === 'cur' ? it.cur : it; if (!o) return '';
+    const r = G.rankOf(o.stars) || 1, url = G.itemUrl(S.site, o.icon);
+    const subs = (o.subs || []).map((x) => `<li><span>${esc(x.text)}</span>${x.rolls > 0 ? `<i class="pips">${'◆'.repeat(Math.min(x.rolls, 6))}</i>` : ''}</li>`).join('');
+    const setB = which === 'cur' ? '' : (it.setBonus || []).map((b) => `<li><b class="num">${b.pieces}</b><span>${esc(b.text)}</span></li>`).join('');
+    const head = which === 'cur' ? t('cardNow') : t('cardNew');
+    return `<div class="ic-head" style="background-image:url(img/tip${r}.webp)">
+        <span class="cell r${r}">${url ? `<img src="${esc(url)}" alt="">` : `<img class="ph" src="img/slot${it.slot | 0}.webp" alt="">`}${o.level ? `<i class="lv num">+${o.level}</i>` : ''}</span>
+        <div><small>${esc(head)} · ${esc(it.slotName || t('slot' + it.slot))}</small><b>${esc(o.name)}</b>
+          <span class="stars">${'★'.repeat(Math.min(o.stars || 0, 8))}</span></div></div>
+      ${o.mainStat ? `<div class="ic-main">${esc(o.mainStat)}</div>` : ''}
+      ${subs ? `<ul class="ic-subs">${subs}</ul>` : o.subs ? '' : `<p class="ic-none">${esc(t('cardNoStats'))}</p>`}
+      ${which !== 'cur' && it.setName ? `<div class="ic-set">${G.setUrl(S.site, it.setIcon) ? `<img src="${esc(G.setUrl(S.site, it.setIcon))}" alt="">` : ''}<b>${esc(it.setName)}</b></div>${setB ? `<ul class="ic-bonus">${setB}</ul>` : ''}` : ''}`;
+  }
+  let cardKey = '';
+  document.addEventListener('mouseover', (e) => {
+    const c = e.target.closest && e.target.closest('[data-card]');
+    const box = $('#icard');
+    if (!c) { if (cardKey) { box.hidden = true; cardKey = ''; } return; }
+    const k = c.getAttribute('data-card');
+    if (k !== cardKey) { const h = itemCard(k); if (!h) return; box.innerHTML = h; cardKey = k; }
+    box.hidden = false;
+    const rc = c.getBoundingClientRect(), bw = box.offsetWidth, bh = box.offsetHeight;
+    let x = rc.right + 10, y = rc.top - 8;
+    if (x + bw > innerWidth - 8) x = Math.max(8, rc.left - bw - 10);
+    if (y + bh > innerHeight - 8) y = Math.max(8, innerHeight - bh - 8);
+    box.style.left = x + 'px'; box.style.top = y + 'px';
+  });
 
   document.addEventListener('click', (e) => {
     const el = e.target.closest('[data-act]'); if (!el) return;

@@ -271,16 +271,24 @@ namespace RealmForge {
             sb.Append("{\"slot\":").Append(N(it.Slot)).Append(",\"uid\":").Append(N(it.Uid)).Append(",\"slotName\":").Append(S(it.SlotName))
               .Append(",\"name\":").Append(S(it.Name)).Append(",\"setName\":").Append(S(it.SetName)).Append(",\"level\":").Append(N(it.Level))
               .Append(",\"stars\":").Append(N(it.Stars)).Append(",\"mainStat\":").Append(S(it.MainStat)).Append(",\"fromHeroUid\":").Append(N(it.FromHeroUid))
-              .Append(",\"fromHeroName\":").Append(S(it.FromHeroName)).Append(",\"icon\":").Append(S(it.Icon)).Append(",\"cur\":");
-            if (it.Cur == null) sb.Append("null");
-            else sb.Append("{\"uid\":").Append(N(it.Cur.Uid)).Append(",\"name\":").Append(S(it.Cur.Name)).Append(",\"level\":").Append(N(it.Cur.Level))
-                   .Append(",\"stars\":").Append(N(it.Cur.Stars)).Append(",\"icon\":").Append(S(it.Cur.Icon)).Append('}');
+              .Append(",\"fromHeroName\":").Append(S(it.FromHeroName)).Append(",\"icon\":").Append(S(it.Icon)).Append(",\"setIcon\":").Append(S(it.SetIcon))
+              .Append(",\"subs\":").Append(LinesJson(it.Subs, "rolls")).Append(",\"setBonus\":").Append(LinesJson(it.SetBonus, "pieces"));
+            if (it.CurKnown && it.Cur == null) sb.Append(",\"cur\":null");
+            else if (it.CurKnown) sb.Append(",\"cur\":{\"uid\":").Append(N(it.Cur.Uid)).Append(",\"name\":").Append(S(it.Cur.Name)).Append(",\"level\":").Append(N(it.Cur.Level))
+                   .Append(",\"stars\":").Append(N(it.Cur.Stars)).Append(",\"icon\":").Append(S(it.Cur.Icon))
+                   .Append(",\"mainStat\":").Append(S(it.Cur.MainStat)).Append(",\"subs\":").Append(LinesJson(it.Cur.Subs, "rolls")).Append('}');
             sb.Append('}');
           }
           sb.Append("]}");
         }
         Post(sb.Append("]}").ToString());
       });
+    }
+
+    static string LinesJson(List<SubStat> l, string numKey) {
+      var sb = new StringBuilder("[");
+      for (int i = 0; i < l.Count; i++) { if (i > 0) sb.Append(','); sb.Append("{\"text\":").Append(S(l[i].Text)).Append(",\"").Append(numKey).Append("\":").Append(N(l[i].Rolls)).Append('}'); }
+      return sb.Append(']').ToString();
     }
 
     void StartScan(List<long> uids) {
@@ -301,7 +309,8 @@ namespace RealmForge {
 
     void Watch(List<long> uids) {
       if (addrs == null) { StartScan(uids); return; }
-      foreach (var u in uids) if (!addrs.Items.ContainsKey(u)) { StartScan(uids); return; }   // new plan items: find their tables
+      // new plan items are found through EquipData.equips on the next poll; a full scan only without it
+      if (addrs.EquipData == 0) foreach (var u in uids) if (!addrs.Items.ContainsKey(u)) { StartScan(uids); return; }
       watch = uids;
     }
 

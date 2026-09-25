@@ -1,6 +1,6 @@
 {
   "name": "realmforge-extractor",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "private": true,
   "description": "Development tooling for RealmForge Extractor (build + tests). Players do not need Node.",
   "type": "module",
