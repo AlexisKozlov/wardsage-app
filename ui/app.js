@@ -218,7 +218,7 @@
   function equipPage() {
     const P = S.plans;
     let body;
-    if (!S.hasCode) body = emptyBox(t('needCode'), '', `<button class="btn-line" data-act="nav" data-page="sync">${esc(t('navSync'))}</button>`);
+    if (!S.hasCode && !P.list.length) body = emptyBox(t('needCode'), '', `<button class="btn-line" data-act="nav" data-page="sync">${esc(t('navSync'))}</button>`);
     else if (P.status === 'loading' && !P.list.length) body = `<div class="card"><div class="scan"><span class="spinner"></span>${esc(t('plansLoading'))}</div></div>`;
     else if (P.status === 'error') body = emptyBox(t('plansErr'), P.err === 'token' ? t('plansErrToken') : P.err || '', `<button class="btn-line" data-act="reload">${I.reload}${esc(t('reload'))}</button>`);
     else if (!P.list.length) body = emptyBox(t('plansNone'), t('plansNoneP'), `<button class="btn-line" data-act="open" data-url="${esc(S.site + '/app/optimizer')}">${I.ext}${esc(t('openOptimizer'))}</button>`);
@@ -402,6 +402,14 @@
   function allUids() { const s = new Set(); S.plans.list.forEach((p) => p.items.forEach((i) => s.add(i.uid))); return [...s]; }
   function loadPlans() { if (!S.hasCode) return; S.plans.status = 'loading'; host.send({ cmd: 'plans.load', lang: S.lang }); render(); }
   function scan() { if (!S.plans.list.length) return; S.scan = { status: 'scanning', panel: false }; host.send({ cmd: 'equip.scan', uids: allUids() }); render(); }
+  // the game needs to know the new plan's items: a first scan, or just the new list of watched items
+  function watchPlans() { if (!S.plans.list.length) return; if (S.scan.status !== 'ok') scan(); else host.send({ cmd: 'equip.watch', uids: allUids() }); }
+  function dropPlans(ids) {
+    const id = current() && current().id;
+    S.plans.list = S.plans.list.filter((p) => !ids.includes(p.id));
+    const i = S.plans.list.findIndex((p) => p.id === id); S.sel = i >= 0 ? i : 0;
+    render();
+  }
 
   // ---------------------------------------------------------------- item card on hover (like the game's item window)
   // name colour of an item quality (ItemQuality), as the game's GetQualityDarkColor
@@ -523,10 +531,9 @@
       case 'plans':
         if (m.status === 'ok') {
           const id = current() && current().id;
-          S.plans = { status: 'ok', list: m.plans, err: null };
+          S.plans = { status: 'ok', list: G.mergePlans(S.plans.list, m.plans, S.reported), err: null };
           const i = S.plans.list.findIndex((p) => p.id === id); S.sel = i >= 0 ? i : 0;
-          if (m.plans.length && S.scan.status !== 'ok') scan();
-          else if (m.plans.length) host.send({ cmd: 'equip.watch', uids: allUids() });
+          watchPlans();
         } else S.plans = { status: 'error', list: S.plans.list, err: m.status === 'invalid_token' ? 'token' : m.detail || '' };
         render(); break;
       case 'equip.scan': S.scan = { status: m.status, panel: !!m.panel }; render(); break;
@@ -534,7 +541,10 @@
         S.live = m.live;
         const auto = G.pickPlan(S.plans.list, S.live, S.sel); if (auto >= 0) S.sel = auto;
         const p = current();
-        if (p && !S.reported[p.id] && G.next(p, S.live).kind === 'done') { S.reported[p.id] = true; host.send({ cmd: 'equip.finish', id: p.id, done: true }); }
+        if (p && !S.reported[p.id] && G.next(p, S.live).kind === 'done') {
+          S.reported[p.id] = true; host.send({ cmd: 'equip.finish', id: p.id, done: true });
+          if (p.bridge) setTimeout(() => dropPlans([p.id]), 4000);   // «done» stays on screen a moment; the site does not list it
+        }
         if (S.page === 'equip' || S.compact) render(); else syncHighlight();
         break;
       }
@@ -543,13 +553,23 @@
       case 'update': S.update = { version: m.version, notes: m.notes || '' }; render(); break;
       case 'auto': S.auto = m.state; if (S.page === 'equip' || S.compact) render(); break;
       case 'focusEquip': S.page = 'equip'; render(); break;
+      // an equip command from the local bridge: a plan like the site's, walked through by the same guide
+      case 'bridge.equip': {
+        const p = G.bridgePlan(m.plan, (uid) => t('bridgeItem', uid));
+        S.plans.list = [p].concat(S.plans.list.filter((x) => x.id !== p.id));
+        S.sel = 0; S.page = 'equip'; S.editCode = false;
+        if (S.hasCode && S.plans.status === 'idle') loadPlans();
+        watchPlans(); render();
+        break;
+      }
+      case 'bridge.drop': dropPlans(m.ids || []); break;
     }
   });
 
   // tell the host which item to frame in the game
   function syncHighlight() {
     const p = current();
-    const g = p && S.hasCode ? G.next(p, S.live) : null;
+    const g = p && (S.hasCode || p.bridge) ? G.next(p, S.live) : null;
     const uid = g ? G.highlightUid(g) : 0;
     // hints on the game's own buttons: the filter to set, «Заменить», the next slot
     let hint = '', slot = -1, line1 = '', line2 = '';

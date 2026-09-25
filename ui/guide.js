@@ -1,6 +1,7 @@
 // RealmForge desktop — equip helper: what to tell the player next. Pure logic (tests: tests/guide.test.mjs).
 //
 // plan: {id, heroUid, heroName, items:[{slot, uid, slotName, name, setName, level, mainStat, fromHeroUid, fromHeroName}]}
+//   from the site, or {…, bridge: true} from the local bridge (bridgePlan)
 // live (from the host, read-only memory reads): {gameRunning, heroUid, panelOk, part, hideEquipped, hideEnhanced,
 //   filterActive, rows:{uid:[row, col]}, owner:{uid: heroUid}}
 (function (root) {
@@ -55,6 +56,23 @@
     if (!plans || !plans.length) return -1;
     if (live && live.heroUid > 0) { const i = plans.findIndex((p) => p.heroUid === live.heroUid); if (i >= 0) return i; }
     return current >= 0 && current < plans.length ? current : 0;
+  }
+
+  // A plan from the local bridge ({id: "bridge:…", heroUid, heroName, items: [{slot, uid}]}). The bridge says only what
+  // goes where; the fields a site plan fills (names, level, icons, the card) get neutral values.
+  function bridgePlan(raw, itemName) {
+    return {
+      id: raw.id, heroUid: raw.heroUid, heroName: raw.heroName, createdAt: null, bridge: true,
+      items: (raw.items || []).map((it) => ({
+        slot: it.slot, uid: it.uid, name: itemName(it.uid), slotName: '', setName: '', level: 0, stars: 0, mainStat: '',
+        fromHeroUid: 0, fromHeroName: null, icon: '', setIcon: '', subs: [], setBonus: [], main: [],
+      })),
+    };
+  }
+
+  // Plans after a reload from the site: the bridge's plans still in progress stay (first), the site's list follows.
+  function mergePlans(current, site, reported) {
+    return (current || []).filter((p) => p.bridge && !(reported && reported[p.id])).concat(site || []);
   }
 
   // Stat name of a main-stat text such as «ОЗ 750» / «Крит. УРН 80%» (for the filter hint).
@@ -114,7 +132,7 @@
     return a > 10 && a < 20 ? many : b === 1 ? one : b >= 2 && b <= 4 ? few : many;
   }
 
-  const api = { next, pickPlan, highlightUid, plural, bustUrl, headUrl, itemUrl, setUrl, rankOf, statOf, statId, statUrl, VISIBLE_ROWS };
+  const api = { next, pickPlan, bridgePlan, mergePlans, highlightUid, plural, bustUrl, headUrl, itemUrl, setUrl, rankOf, statOf, statId, statUrl, VISIBLE_ROWS };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.RFGuide = api;
 })(typeof window !== 'undefined' ? window : globalThis);

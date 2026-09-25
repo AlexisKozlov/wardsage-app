@@ -73,6 +73,7 @@ window.RF_TEXTS = {
     gNotIn: 'Предмета нет в списке', gNotInP: 'Возможно, он продан или разобран. Синхронизируй аккаунт и подбери сборку заново.',
     gDone: 'Сборка надета', gDoneP: 'Отмечено на сайте. Можно переходить к следующему герою.',
     slot0: 'Оружие', slot1: 'Нагрудник', slot2: 'Браслет', slot3: 'Амулет', slot4: 'Кольцо',
+    bridgeItem: 'Предмет #{0}',
 
     setTitle: 'Настройки', setCode: 'Код синхронизации', setCodeP: 'Связывает экстрактор с профилем на сайте.', change: 'Заменить', unlink: 'Отвязать',
     setLang: 'Язык', setCopy: 'Копия account.json', setCopyP: 'Сохранять снимок в Документы\\RealmForge.',
@@ -154,6 +155,7 @@ window.RF_TEXTS = {
     gNotIn: 'The item is not in the list', gNotInP: 'It may be sold or dismantled. Sync the account and optimize again.',
     gDone: 'The build is on', gDoneP: 'Marked on the site. Go on with the next hero.',
     slot0: 'Weapon', slot1: 'Armor', slot2: 'Bracer', slot3: 'Amulet', slot4: 'Ring',
+    bridgeItem: 'Item #{0}',
 
     setTitle: 'Settings', setCode: 'Sync code', setCodeP: 'Links the extractor to your profile on the site.', change: 'Replace', unlink: 'Unlink',
     setLang: 'Language', setCopy: 'Copy of account.json', setCopyP: 'Save the snapshot to Documents\\RealmForge.',
