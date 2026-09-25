@@ -402,19 +402,35 @@
   function scan() { if (!S.plans.list.length) return; S.scan = { status: 'scanning', panel: false }; host.send({ cmd: 'equip.scan', uids: allUids() }); render(); }
 
   // ---------------------------------------------------------------- item card on hover (like the game's item window)
+  // name colour of an item quality (ItemQuality), as the game's GetQualityDarkColor
+  const QUALITY_INK = { 1: '#acb0ab', 2: '#8cc87c', 3: '#96bcf6', 4: '#c87ff6', 5: '#fecf60', 7: '#fecf60' };
   function itemCard(key) {
     const [uidS, which] = key.split(':'); const p = current(); if (!p) return '';
     const it = p.items.find((x) => String(x.uid) === uidS); if (!it) return '';
     const o = which === 'cur' ? it.cur : it; if (!o) return '';
     const r = G.rankOf(o.stars) || 1, url = G.itemUrl(S.site, o.icon);
-    const subs = (o.subs || []).map((x) => `<li><span>${esc(x.text)}</span>${x.rolls > 0 ? `<i class="pips">${'◆'.repeat(Math.min(x.rolls, 6))}</i>` : ''}</li>`).join('');
+    const icon = (id) => { const u = G.statUrl(S.site, id); return u ? `<img src="${esc(u)}" alt="" onerror="this.style.visibility='hidden'">` : '<span></span>'; };
+    // substats as in the game's item window: icon, name, value, the roll bar (red / gold / purple / blue); a locked one
+    // shows «from +N» and a dark bar
+    const subs = (o.subs || []).map((x, n) => {
+      if (!x.name) return `<li class="plain"><span>${esc(x.text)}</span>${x.rolls > 0 ? `<i class="pips">${'◆'.repeat(Math.min(x.rolls, 6))}</i>` : ''}</li>`;
+      const off = (o.level || 0) < 4 * (n + 1);
+      const q = typeof x.bar === 'number' ? x.bar : -1;
+      const col = off ? 'black' : q >= 1 ? 'red' : q >= 0.8 ? 'yellow' : q >= 0.6 ? 'purple' : 'blue';
+      const bar = off || q >= 0 ? `<span class="bar"><i style="width:${off ? 100 : Math.max(3, q * 100)}%;background-image:url(img/bar_${col}.webp)"></i></span>` : '';
+      return `<li class="${off ? 'off' : ''}">${icon(x.stat)}<span>${esc(x.name)}</span><b class="${off ? 'lock' : 'num'}">${esc(off ? t('subFrom', 4 * (n + 1)) : x.value)}</b>${bar}</li>`;
+    }).join('');
     const setB = which === 'cur' ? '' : (it.setBonus || []).map((b) => `<li><b class="num">${b.pieces}</b><span>${esc(b.text)}</span></li>`).join('');
     const head = which === 'cur' ? t('cardNow') : t('cardNew');
+    const ink = QUALITY_INK[o.quality] || (o.quality >= 6 ? '#ff5353' : '#fff1c8');
+    const mains = o.main && o.main.length
+      ? o.main.map((m) => `<div class="ic-main">${icon(m.stat)}<span>${esc(m.name)}</span><b class="num">${esc(m.value)}</b></div>`).join('')
+      : o.mainStat ? `<div class="ic-main"><span>${esc(o.mainStat)}</span></div>` : '';
     return `<div class="ic-head" style="background-image:url(img/tip${r}.webp)">
         <span class="cell r${r}">${url ? `<img src="${esc(url)}" alt="">` : `<img class="ph" src="img/slot${it.slot | 0}.webp" alt="">`}${o.level ? `<i class="lv num">+${o.level}</i>` : ''}</span>
         <div><small>${esc(head)} · ${esc(it.slotName || t('slot' + it.slot))}</small><b>${esc(o.name)}</b>
-          <span class="stars">${'★'.repeat(Math.min(o.stars || 0, 8))}</span></div></div>
-      ${o.mainStat ? `<div class="ic-main">${esc(o.mainStat)}</div>` : ''}
+          <span class="stars" style="color:${ink}">${o.qualityName ? esc(o.qualityName) : '★'.repeat(Math.min(o.stars || 0, 8))}</span></div></div>
+      ${mains}
       ${subs ? `<ul class="ic-subs">${subs}</ul>` : o.subs ? '' : `<p class="ic-none">${esc(t('cardNoStats'))}</p>`}
       ${which !== 'cur' && it.setName ? `<div class="ic-set">${G.setUrl(S.site, it.setIcon) ? `<img src="${esc(G.setUrl(S.site, it.setIcon))}" alt="">` : ''}<b>${esc(it.setName)}</b></div>${setB ? `<ul class="ic-bonus">${setB}</ul>` : ''}` : ''}`;
   }

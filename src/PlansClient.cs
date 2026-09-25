@@ -32,6 +32,10 @@ namespace RealmForge {
     public bool CurKnown;
     public List<SubStat> Subs = new List<SubStat>();
     public List<SubStat> SetBonus = new List<SubStat>();   // Rolls = pieces needed
+    /// <summary>Game-style card (absent for older plans): main stats with the stat id, the item quality and its name.</summary>
+    public List<SubStat> Main = new List<SubStat>();
+    public int Quality;
+    public string QualityName;
   }
 
   public sealed class CurItem {
@@ -39,12 +43,19 @@ namespace RealmForge {
     public string Name, Icon = "", MainStat = "";
     public int Level, Stars;
     public List<SubStat> Subs = new List<SubStat>();
+    public List<SubStat> Main = new List<SubStat>();
+    public int Quality;
+    public string QualityName;
   }
 
-  /// <summary>Substat line of the item card («АТК +35») and its upgrade count; also used for set bonuses (Rolls = pieces).</summary>
+  /// <summary>Substat line of the item card («АТК +35») and its upgrade count; also used for set bonuses (Rolls = pieces)
+  /// and main stats. For the game-style card: stat id (icon; -1 unknown), name and value apart, the game's bar 0..1 (-1 none).</summary>
   public sealed class SubStat {
     public string Text;
     public int Rolls;
+    public int Stat = -1;
+    public string Name, Value;
+    public double Bar = -1;
   }
 
   public sealed class Plan {
@@ -154,10 +165,24 @@ namespace RealmForge {
       foreach (var x in list) {
         var o = MiniJson.AsObject(x); if (o == null) continue;
         string t = MiniJson.GetString(o, textKey); if (string.IsNullOrEmpty(t)) continue;
-        r.Add(new SubStat { Text = t.Length > 200 ? t.Substring(0, 200) : t, Rolls = (int)Math.Min(99, Num(o, numKey)) });
+        var s = new SubStat { Text = Clip(t, 200), Rolls = numKey == null ? 0 : (int)Math.Min(99, Num(o, numKey)) };
+        object sv;
+        if (o.TryGetValue("stat", out sv) && sv is double && (double)sv >= 0 && (double)sv < 100000) s.Stat = (int)(double)sv;
+        s.Name = Clip(MiniJson.GetString(o, "name"), 80);
+        s.Value = Clip(MiniJson.GetString(o, "value"), 40);
+        if (o.TryGetValue("bar", out sv) && sv is double && (double)sv >= 0 && (double)sv <= 1) s.Bar = (double)sv;
+        r.Add(s);
         if (r.Count == 12) break;
       }
       return r;
+    }
+
+    static string Clip(string s, int n) { return s == null ? null : s.Length > n ? s.Substring(0, n) : s; }
+
+    static void Card(Dictionary<string, object> o, out List<SubStat> main, out int quality, out string qualityName) {
+      main = Lines(o, "main", "name", null);
+      quality = (int)Math.Max(0, Math.Min(99, Num(o, "quality")));
+      qualityName = Clip(MiniJson.GetString(o, "qualityName"), 60);
     }
 
     static string IconName(string s) {
@@ -197,7 +222,9 @@ namespace RealmForge {
           it.Cur = new CurItem { Uid = Num(c, "uid"), Name = MiniJson.GetString(c, "name") ?? "", Icon = IconName(MiniJson.GetString(c, "icon")),
                                  Level = (int)Num(c, "level"), Stars = (int)Num(c, "stars"), MainStat = MiniJson.GetString(c, "mainStat") ?? "",
                                  Subs = Lines(c, "subs", "text", "rolls") };
+        if (it.Cur != null) Card(c, out it.Cur.Main, out it.Cur.Quality, out it.Cur.QualityName);
         it.Subs = Lines(d, "subs", "text", "rolls");
+        Card(d, out it.Main, out it.Quality, out it.QualityName);
         it.SetBonus = Lines(d, "setBonus", "text", "pieces");
         p.Items.Add(it);
       }
