@@ -1,8 +1,11 @@
-// RealmForge.exe — highlight over the game: a click-through, always-on-top frame around the item to put on.
+// RealmForge.exe — highlight over the game: a click-through, always-on-top frame around the item to put on, and the
+// auto-pilot that opens the gear slot, scrolls the list and clicks the item (src/AutoPilot.cs).
 //
-// Read-only like the rest: the game's memory is only read (which item is selected, list rows), the screen is only
-// looked at (a screenshot of the list area, see src/ListTracker.cs), and the frame is a separate transparent window
-// of ours that lets every click through to the game. Nothing is sent to the game.
+// The game's memory is only read (which item is selected, list rows), the screen is only looked at (a screenshot of
+// the list area, see src/ListTracker.cs), and the frame is a separate transparent window of ours that lets every
+// click through to the game. The auto-pilot moves the mouse like a player would (SendInput: a click on the slot or
+// the item, wheel notches over the list) and only while the game is in front and the player is not using the mouse;
+// it never presses «Заменить». Nothing is written into the game.
 using System;
 using System.Diagnostics;
 using System.Drawing;
@@ -27,6 +30,12 @@ namespace RealmForge {
     [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
     [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
     [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p);
+    [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+    [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vk);
+    [DllImport("user32.dll", SetLastError = true)] public static extern uint SendInput(uint n, INPUT[] inputs, int size);
+    [StructLayout(LayoutKind.Sequential)] public struct MOUSEINPUT { public int dx, dy; public uint mouseData, dwFlags, time; public IntPtr extra; }
+    [StructLayout(LayoutKind.Sequential)] public struct INPUT { public uint type; public MOUSEINPUT mi; }   // type 0 = mouse; 40 bytes on x64
+    public const uint LEFTDOWN = 0x0002, LEFTUP = 0x0004, WHEEL = 0x0800;
     [DllImport("user32.dll")] public static extern bool SetWindowDisplayAffinity(IntPtr h, uint affinity);
     [DllImport("user32.dll")] public static extern IntPtr GetDC(IntPtr h);
     [DllImport("user32.dll")] public static extern int ReleaseDC(IntPtr h, IntPtr dc);
@@ -89,14 +98,23 @@ namespace RealmForge {
     readonly HintGeometry hg = new HintGeometry();
     readonly ScrollAnchor anchor = new ScrollAnchor();
     readonly Action<string> report;
+    readonly Action<string> autoReport;
+    readonly AutoPilot pilot;
+    /// <summary>Settings → «Автонажатие»: the pilot acts only when this is on.</summary>
+    public bool AutoEnabled = true;
+    // what the frame tick found this tick (for the pilot)
+    int curRow, curCol; long curSel;
+    // player activity: the cursor moved by someone else than the pilot, or a mouse button went down
+    volatile bool sending; W32.POINT seen; bool seenSet; long lastMoveMs; bool btnWasDown, userClick; string autoSaid = "";
     EquipAddrs addrs; long target; int[] types; ulong typesPtr; long lastSel = -1; int tryTop;
     string state = "off"; int frame; string drawnKey;
     // diagnostics (Settings → «Диагностика рамки»): screenshots and list data into debug\ for a few minutes
     DateTime diagUntil = DateTime.MinValue; int diagTick, diagN, shotN; string diagLast, diagDir, diagInfo = "";
     string hintKind = ""; int hintSlot = -1; string[] hintLines = new string[0]; string tipKey;
 
-    public OverlayController(Action<string> report) {
-      this.report = report;
+    public OverlayController(Action<string> report, Action<string> autoReport) {
+      this.report = report; this.autoReport = autoReport;
+      pilot = new AutoPilot(g);
       timer.Interval = 100; timer.Tick += (s, e) => { try { Tick(); } catch (Exception ex) { Log.Write("overlay: " + ex.Message); Hide("off"); } };
     }
 
@@ -167,6 +185,12 @@ namespace RealmForge {
     void Say(string st) { if (st != state) { state = st; report(st); } }
 
     void Tick() {
+      curRow = curCol = 0; curSel = 0;
+      TickFrame();
+      TickAuto();
+    }
+
+    void TickFrame() {
       if (DateTime.Now < diagUntil && addrs != null) {
         IntPtr dh = GameWindow(); var dp = new W32.POINT(0, 0); W32.RECT dr;
         if (dh != IntPtr.Zero && W32.GetClientRect(dh, out dr)) { W32.ClientToScreen(dh, ref dp); DiagTick(dh, dp, dr, diagInfo); }
@@ -176,6 +200,7 @@ namespace RealmForge {
       int col; ulong list;
       int row = RFX.RowOfUid(addrs, target, out col, out list);
       if (row <= 0 || col <= 0 || list == 0) { Hide("off"); return; }
+      curRow = row; curCol = col;
 
       IntPtr hwnd = GameWindow();
       if (hwnd == IntPtr.Zero || W32.IsIconic(hwnd)) { Hide("off"); return; }
@@ -204,6 +229,7 @@ namespace RealmForge {
         }
         lastSel = sel;
       }
+      curSel = sel;
       if (!IsForeground(hwnd)) { Hide(anchor.Has ? "background" : "need_click"); return; }
 
       int sx = (int)(g.StripLeft * H), sy = (int)(g.ViewTop * H), sw = (int)((g.StripRight - g.StripLeft) * H), sh = (int)((g.ViewBottom - g.ViewTop) * H);
@@ -274,6 +300,76 @@ namespace RealmForge {
           tip.Put(bmp, x - 26, y - (bh - h - 26));
         }
       }
+    }
+
+    // ---------------------------------------------------------------- auto-pilot
+
+    static long NowMs() { return Environment.TickCount & 0x7FFFFFFF; }
+
+    void AutoSay(string st) { if (st != autoSaid) { autoSaid = st; autoReport(st); } }
+
+    /// <summary>The pilot's step for this tick: gather what the game shows, ask src/AutoPilot.cs, do the action.</summary>
+    void TickAuto() {
+      if (!AutoEnabled || addrs == null || sending) { if (!AutoEnabled) AutoSay("off"); return; }
+      long now = NowMs();
+      // the player's own mouse use (the pilot's moves are remembered in `seen`)
+      W32.POINT c;
+      if (W32.GetCursorPos(out c)) {
+        if (seenSet && (c.X != seen.X || c.Y != seen.Y)) lastMoveMs = now;
+        seen = c; seenSet = true;
+      }
+      bool down = (W32.GetAsyncKeyState(0x01) & 0x8000) != 0 || (W32.GetAsyncKeyState(0x02) & 0x8000) != 0;
+      if (down && !btnWasDown) userClick = true;
+      btnWasDown = down;
+
+      IntPtr hwnd = GameWindow();
+      if (hwnd == IntPtr.Zero || W32.IsIconic(hwnd)) { AutoSay("idle"); return; }
+      W32.RECT cr; if (!W32.GetClientRect(hwnd, out cr) || cr.B < 200) { AutoSay("idle"); return; }
+      var o = new W32.POINT(0, 0); W32.ClientToScreen(hwnd, ref o);
+      int fp, gp; W32.GetWindowThreadProcessId(W32.GetForegroundWindow(), out fp); W32.GetWindowThreadProcessId(hwnd, out gp);
+
+      var v = new AutoView {
+        NowMs = now, Foreground = fp == gp, UserBusy = down || now - lastMoveMs < 700, UserClicked = userClick, H = cr.B,
+        Slot = hintKind == "slot" ? hg.Slot(hintSlot, cr.R, cr.B) : null,
+        Target = target, Row = curRow, Col = curCol, Sel = curSel,
+        AnchorHas = anchor.Has && types != null && typesPtr != 0, Row1Top = anchor.Row1Top, Types = types
+      };
+      userClick = false;
+      var a = pilot.Step(v);
+      AutoSay(pilot.State);
+      if (a.Kind == AutoKind.None) return;
+      int x = o.X + (int)Math.Round(a.X), y = o.Y + (int)Math.Round(a.Y);
+      if (x < o.X || y < o.Y || x >= o.X + cr.R || y >= o.Y + cr.B) return;   // never outside the game's client area
+      Send(a, x, y);
+    }
+
+    /// <summary>Moves the cursor and clicks / turns the wheel there, off the UI thread (short pauses let the game see the
+    /// pointer over the button first).</summary>
+    void Send(AutoAction a, int x, int y) {
+      sending = true;
+      seen = new W32.POINT(x, y); seenSet = true;
+      var t = new System.Threading.Thread(() => {
+        try {
+          W32.SetCursorPos(x, y);
+          System.Threading.Thread.Sleep(60);
+          if (a.Kind == AutoKind.Click) {
+            Mouse(W32.LEFTDOWN, 0);
+            System.Threading.Thread.Sleep(60);
+            Mouse(W32.LEFTUP, 0);
+          } else {
+            int n = Math.Abs(a.Notches); uint delta = unchecked((uint)(a.Notches > 0 ? -120 : 120));
+            for (int i = 0; i < n; i++) { Mouse(W32.WHEEL, delta); System.Threading.Thread.Sleep(25); }
+          }
+          System.Threading.Thread.Sleep(30);
+        } catch (Exception e) { Log.Write("auto: " + e.Message); }
+        finally { sending = false; }
+      });
+      t.IsBackground = true; t.Start();
+    }
+
+    static void Mouse(uint flags, uint data) {
+      var inp = new[] { new W32.INPUT { type = 0, mi = new W32.MOUSEINPUT { dwFlags = flags, mouseData = data } } };
+      W32.SendInput(1, inp, Marshal.SizeOf(typeof(W32.INPUT)));
     }
 
     IntPtr gameWnd; int gameWndAge;

@@ -30,6 +30,11 @@ namespace RealmForge {
     string lastLive;
     string lastSavedPath;
     readonly OverlayController overlay;
+    // automatic sync (Settings → «Автосинхронизация»): the site learns about gear changes without a button press
+    readonly System.Windows.Forms.Timer autoTimer = new System.Windows.Forms.Timer();
+    DateTime lastSyncStart = DateTime.MinValue, autoDue = DateTime.MaxValue;
+    Dictionary<long, long> lastOwners;
+    const int AutoEveryMin = 5, SyncGapSec = 31;   // the site takes one sync per code per 30 s
 
     public HostBridge(AppWindow win, CoreWebView2 core) {
       this.win = win; this.core = core;
@@ -37,11 +42,14 @@ namespace RealmForge {
       if (string.IsNullOrEmpty(cfg.Site)) cfg.Site = SyncClient.DefaultSite;
       gameTimer.Interval = 2000; gameTimer.Tick += (s, e) => CheckGame(false); gameTimer.Start();
       liveTimer.Interval = 400; liveTimer.Tick += (s, e) => PollLive();
-      overlay = new OverlayController(st => Post("{\"ev\":\"overlay\",\"state\":" + S(st) + "}"));
+      overlay = new OverlayController(st => Post("{\"ev\":\"overlay\",\"state\":" + S(st) + "}"),
+                                      st => Post("{\"ev\":\"auto\",\"state\":" + S(st) + "}"));
+      overlay.AutoEnabled = cfg.AutoClick;
+      autoTimer.Interval = 1000; autoTimer.Tick += (s, e) => AutoSyncTick(); autoTimer.Start();
       Log.Write("RealmForge " + Program.Version + " started");
     }
 
-    public void Dispose() { gameTimer.Dispose(); liveTimer.Dispose(); overlay.Dispose(); }
+    public void Dispose() { gameTimer.Dispose(); liveTimer.Dispose(); autoTimer.Dispose(); overlay.Dispose(); }
 
     // ------------------------------------------------------------------ plumbing
 
@@ -70,6 +78,8 @@ namespace RealmForge {
           }
           case "clearCode": cfg.Code = ""; Save(); SendState(null); break;
           case "setSaveCopy": cfg.SaveCopy = MiniJson.GetBool(m, "on", false); Save(); break;
+          case "setAutoSync": cfg.AutoSync = MiniJson.GetBool(m, "on", true); Save(); if (cfg.AutoSync) RequestAutoSync(0); break;
+          case "setAutoClick": cfg.AutoClick = MiniJson.GetBool(m, "on", true); overlay.AutoEnabled = cfg.AutoClick; Save(); break;
           case "setSite": {
             string err; string site = SyncClient.NormalizeSite(MiniJson.GetString(m, "site"), out err);
             if (site != null) { cfg.Site = site; Save(); SendState("siteSaved"); }
@@ -82,7 +92,7 @@ namespace RealmForge {
             Post("{\"ev\":\"paste\",\"text\":" + S(text) + "}");
             break;
           }
-          case "sync": StartSync(MiniJson.GetBool(m, "saveOnly", false)); break;
+          case "sync": StartSync(MiniJson.GetBool(m, "saveOnly", false), false); break;
           case "open": OpenAllowed(MiniJson.GetString(m, "url")); break;
           case "openLog": Shell.OpenFile(Log.Path); break;
           case "openFolder": Shell.OpenFolder(lastSavedPath ?? Extractor.OutputDir); break;
@@ -169,6 +179,7 @@ namespace RealmForge {
       sb.Append(",\"hasCode\":").Append(B(has));
       sb.Append(",\"codePrefix\":").Append(S(has ? cfg.Code.Substring(0, 8) : ""));
       sb.Append(",\"saveCopy\":").Append(B(cfg.SaveCopy));
+      sb.Append(",\"autoSync\":").Append(B(cfg.AutoSync)).Append(",\"autoClick\":").Append(B(cfg.AutoClick));
       sb.Append(",\"last\":").Append(LastJson());
       if (flag != null) sb.Append(",\"").Append(flag).Append("\":true");
       sb.Append('}');
@@ -202,14 +213,43 @@ namespace RealmForge {
 
     // ------------------------------------------------------------------ sync
 
-    void SyncEv(string stage, string extra) { Post("{\"ev\":\"sync\",\"stage\":\"" + stage + "\"" + (extra ?? "") + "}"); }
+    [ThreadStatic] static bool autoRun;   // the sync running on this thread was started by AutoSyncTick
+    void SyncEv(string stage, string extra) { Post("{\"ev\":\"sync\",\"stage\":\"" + stage + "\"" + (autoRun ? ",\"auto\":true" : "") + (extra ?? "") + "}"); }
 
-    void StartSync(bool saveOnly) {
+    /// <summary>Sync by itself in <paramref name="delaySec"/> s (or as soon as the site allows): after gear changes in the
+    /// game, a finished plan, or turning the setting on. Several requests close together make one sync.</summary>
+    void RequestAutoSync(int delaySec) {
+      var due = DateTime.UtcNow.AddSeconds(delaySec);
+      if (due < autoDue) autoDue = due;
+    }
+
+    void AutoSyncTick() {
+      if (!cfg.AutoSync || !gameRunning || !SyncClient.IsValidCode(cfg.Code)) return;
+      var now = DateTime.UtcNow;
+      if (now - lastSyncStart > TimeSpan.FromMinutes(AutoEveryMin)) RequestAutoSync(0);   // changes made without a plan
+      if (syncing || now < autoDue || now - lastSyncStart < TimeSpan.FromSeconds(SyncGapSec)) return;
+      autoDue = DateTime.MaxValue;
+      StartSync(false, true);
+    }
+
+    /// <summary>Who wears the watched items changed (the player put something on): tell the site soon.</summary>
+    void NoteOwners(Dictionary<long, long> owners) {
+      if (lastOwners != null) {
+        bool changed = owners.Count != lastOwners.Count;
+        if (!changed) foreach (var kv in owners) { long o; if (!lastOwners.TryGetValue(kv.Key, out o) || o != kv.Value) { changed = true; break; } }
+        if (changed) RequestAutoSync(8);
+      }
+      lastOwners = new Dictionary<long, long>(owners);
+    }
+
+    void StartSync(bool saveOnly, bool auto) {
       if (syncing) return;
       bool upload = !saveOnly && SyncClient.IsValidCode(cfg.Code);
-      string code = cfg.Code, site = cfg.Site; bool copy = cfg.SaveCopy || !upload;
-      syncing = true;
+      if (auto && !upload) return;
+      string code = cfg.Code, site = cfg.Site; bool copy = !auto && (cfg.SaveCopy || !upload);
+      syncing = true; lastSyncStart = DateTime.UtcNow;
       var t = new Thread(() => {
+        autoRun = auto;
         try { RunSync(upload, copy, site, code); }
         catch (Exception e) { Log.Write("sync: " + e); SyncError("read", e.GetType().Name + ": " + e.Message, 0); }
         finally { syncing = false; }
@@ -223,6 +263,7 @@ namespace RealmForge {
     }
 
     void RunSync(bool upload, bool copy, string site, string code) {
+      bool isAuto = autoRun;
       SyncEv("find", null);
       string version;
       int pid = Extractor.FindGame(out version);
@@ -252,7 +293,11 @@ namespace RealmForge {
         switch (r.Status) {
           case SyncStatus.Ok: break;
           case SyncStatus.InvalidToken: SyncError("token", null, 0); return;
-          case SyncStatus.RateLimited: SyncError("rate", null, r.RetryAfterSeconds > 0 ? r.RetryAfterSeconds : 30); return;
+          case SyncStatus.RateLimited: {
+            int after = r.RetryAfterSeconds > 0 ? r.RetryAfterSeconds : 30;
+            if (autoRun) win.BeginInvoke((Action)(() => RequestAutoSync(after + 1)));
+            SyncError("rate", null, after); return;
+          }
           case SyncStatus.InvalidPayload: case SyncStatus.TooLarge: SyncError("payload", r.Details ?? r.Status.ToString(), 0); return;
           case SyncStatus.ServerError: case SyncStatus.Unexpected: case SyncStatus.Redirect: SyncError("server", "HTTP " + r.HttpCode, 0); return;
           default: SyncError("net", r.Details, 0); return;
@@ -268,6 +313,7 @@ namespace RealmForge {
         cfg.LastHeroes = heroes; cfg.LastItems = items; cfg.LastArtifacts = arts;
         if (top.Count > 0) cfg.LastTop = top;
         Save();
+        autoRun = isAuto;   // this part runs on the UI thread
         SyncEv("done", ",\"result\":{\"seconds\":" + N(seconds) + ",\"heroes\":" + N(heroes) + ",\"items\":" + N(items) + ",\"artifacts\":" + N(arts)
           + ",\"viewUrl\":" + S(viewUrl) + ",\"saved\":" + S(upload ? null : saved) + "},\"last\":" + LastJson());
       }));
@@ -375,6 +421,7 @@ namespace RealmForge {
       sb.Append("},\"owner\":{"); first = true;
       foreach (var kv in s.Owner) { if (!first) sb.Append(','); first = false; sb.Append('"').Append(N(kv.Key)).Append("\":").Append(N(kv.Value)); }
       sb.Append("}}}");
+      NoteOwners(s.Owner);
       string json = sb.ToString();
       if (json == lastLive) return;   // nothing changed on the game screen
       lastLive = json;
@@ -388,6 +435,7 @@ namespace RealmForge {
       Task.Factory.StartNew(() => {
         var r = PlansClient.Finish(site, code, id, done);
         Log.Write("plan " + id + " " + (done ? "done" : "cancelled") + ": " + r.Status);
+        if (done) win.BeginInvoke((Action)(() => RequestAutoSync(1)));
       });
     }
   }

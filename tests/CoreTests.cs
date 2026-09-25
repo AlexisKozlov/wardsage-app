@@ -335,9 +335,78 @@ static class CoreTests {
     Eq(3, geo.ColumnAt(geo.ColLeft(3) + 0.05), "column under the cursor");
     Eq(0, geo.ColumnAt(geo.ColLeft(1) - 0.03), "left of the list");
 
+    Console.WriteLine("AutoPilot (open the slot, scroll, click the item):");
+    AutoPilotTests(geo, HH);
+
     Console.WriteLine();
     Console.WriteLine(passed + " passed, " + failed + " failed");
     return failed == 0 ? 0 : 1;
+  }
+
+  // A simulated game list: 40 item rows; one wheel notch moves it `notch` px; clicking a cell selects the item there.
+  static void AutoPilotTests(ListGeometry geo, double H) {
+    var types = new int[41]; for (int i = 1; i <= 40; i++) types[i] = 1;
+    double pitch = geo.PitchY * H, cell = geo.CellW * H, notch = 37.5;
+    double top = ScrollAnchor.TopRow1(geo, H), maxScroll = 36 * pitch;   // real row 1 top on the screen
+    int targetRow = 23, targetCol = 2; long target = 9023;
+    Func<double, double, long> itemAt = (x, y) => {
+      int col = geo.ColumnAt(x / H); if (col == 0) return 0;
+      int row = (int)Math.Floor((y - top) / pitch) + 1;
+      double inRow = y - (top + (row - 1) * pitch);
+      return row >= 1 && row <= 40 && inRow <= cell ? 9000 + row + (col == targetCol && row == targetRow ? 0 : col * 100) : 0;
+    };
+    var p = new AutoPilot(geo);
+    var anchor = new ScrollAnchor(); long sel = 0; long now = 0; int clicks = 0, wheels = 0;
+    for (int tick = 0; tick < 400 && sel != target; tick++, now += 100) {
+      var a = p.Step(new AutoView { NowMs = now, Foreground = true, H = H, Target = target, Row = targetRow, Col = targetCol, Sel = sel,
+                                    AnchorHas = anchor.Has, Row1Top = anchor.Row1Top, Types = types });
+      if (a.Kind != AutoKind.None && Environment.GetEnvironmentVariable("AP_DEBUG") != null) Console.WriteLine("    t=" + now + " " + a.Kind + " x=" + a.X.ToString("0") + " y=" + a.Y.ToString("0") + " n=" + a.Notches + " top=" + top.ToString("0") + " anchor=" + anchor.Row1Top.ToString("0") + " sel=" + sel);
+      if (a.Kind == AutoKind.Click) {
+        clicks++;
+        long hit = itemAt(a.X, a.Y);
+        if (hit != 0 && hit != sel) {
+          sel = hit; int row = (int)(hit % 100);
+          anchor.FromClick(geo, types, row, a.Y, H, 1);
+          anchor.Track(geo, types, row, top + (row - 1) * pitch, H);   // the stat bars on the screen snap it exactly
+        }
+      } else if (a.Kind == AutoKind.Wheel) {
+        wheels++;
+        top = Math.Max(ScrollAnchor.TopRow1(geo, H) - maxScroll, Math.Min(ScrollAnchor.TopRow1(geo, H), top - a.Notches * notch));
+      }
+    }
+    p.Step(new AutoView { NowMs = now, Foreground = true, H = H, Target = target, Row = targetRow, Col = targetCol, Sel = sel, AnchorHas = anchor.Has, Row1Top = anchor.Row1Top, Types = types });
+    Eq(target, sel, "the target item gets selected (row 23 of 40, list scrolled by the wheel)");
+    Check(wheels <= 3 && clicks <= 6, "few wheel batches and clicks (" + wheels + " wheel, " + clicks + " clicks)");
+    Check(Math.Abs(p.PxPerNotch - notch) < 1, "wheel step measured: " + p.PxPerNotch.ToString("0.0") + " px");
+    Eq("done", p.State, "state after the selection");
+
+    // the player uses the mouse: the pilot waits; background window: nothing happens
+    var q = new AutoPilot(geo);
+    var busy = q.Step(new AutoView { NowMs = 0, Foreground = true, UserBusy = true, H = H, Target = 5, Row = 1, Col = 1, Types = types, AnchorHas = true, Row1Top = ScrollAnchor.TopRow1(geo, H) });
+    Check(busy.Kind == AutoKind.None && q.State == "paused", "mouse in use -> pause");
+    var bg = q.Step(new AutoView { NowMs = 100, Foreground = false, H = H, Target = 5, Row = 1, Col = 1, Types = types, AnchorHas = true, Row1Top = ScrollAnchor.TopRow1(geo, H) });
+    Check(bg.Kind == AutoKind.None && q.State == "background", "game not in front -> nothing");
+    var click = q.Step(new AutoView { NowMs = 200, Foreground = true, H = H, Target = 5, Row = 1, Col = 1, Types = types, AnchorHas = true, Row1Top = ScrollAnchor.TopRow1(geo, H) });
+    Check(click.Kind == AutoKind.Click && Math.Abs(click.Y - (ScrollAnchor.TopRow1(geo, H) + cell / 2)) < 0.01, "visible item -> click its centre");
+    var user = q.Step(new AutoView { NowMs = 1200, Foreground = true, UserClicked = true, H = H, Target = 5, Row = 1, Col = 1, Types = types, AnchorHas = true, Row1Top = ScrollAnchor.TopRow1(geo, H) });
+    Check(user.Kind == AutoKind.None && q.State == "paused", "the player clicked himself -> the pilot steps back");
+
+    // slot: click its centre, give up after 3 tries
+    var r = new AutoPilot(geo); int slotClicks = 0;
+    for (long t = 0; t < 10000; t += 100) {
+      var a = r.Step(new AutoView { NowMs = t, Foreground = true, H = H, Slot = new[] { 100, 200, 60, 60 } });
+      if (a.Kind == AutoKind.Click) { slotClicks++; Check(a.X == 130 && a.Y == 230, "slot centre"); }
+    }
+    Eq(3, slotClicks, "slot: 3 tries");
+    Eq("failed", r.State, "slot that does not open -> failed");
+
+    // the end of the list: the wheel does not move it -> give up instead of spinning
+    var e = new AutoPilot(geo); double stuckTop = ScrollAnchor.TopRow1(geo, H); int w2 = 0;
+    for (long t = 0; t < 30000 && e.State != "failed"; t += 100) {
+      var a = e.Step(new AutoView { NowMs = t, Foreground = true, H = H, Target = 7, Row = 30, Col = 1, Sel = 1, Types = types, AnchorHas = true, Row1Top = stuckTop });
+      if (a.Kind == AutoKind.Wheel) w2++;
+    }
+    Check(e.State == "failed" && w2 <= 3, "list does not scroll -> failed after " + w2 + " wheel batches");
   }
 
   static string Sha256(string s) {

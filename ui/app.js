@@ -15,6 +15,7 @@
     sync: { phase: 'idle', stage: null, seconds: 0, result: null, error: null },
     plans: { status: 'idle', list: [], err: null }, sel: 0,
     scan: { status: 'idle', panel: false }, live: null, reported: {}, compact: false, overlay: 'off', hl: '',
+    autoSync: true, autoClick: true, auto: 'idle', autoAt: null,
   };
 
   // ---------------------------------------------------------------- helpers
@@ -310,20 +311,21 @@
       case 'closed': return sayBox('warn', I.game, t('gClosed'), t('gClosedP'));
       case 'done': return sayBox('done', I.check, t('gDone'), t('gDoneP'));
       case 'hero': return sayBox('', I.hand, t('gOpenHero', p.heroName), '') + findCard(it, g, S.compact);
-      case 'slot': return sayBox('', I.hand, t('gOpenSlot', it.slotName || t('slot' + it.slot)), '') + findCard(it, g, S.compact);
+      case 'slot': return sayBox('', I.hand, autoHead() || t('gOpenSlot', it.slotName || t('slot' + it.slot)), autoSub()) + findCard(it, g, S.compact);
       case 'pick': {
         // what to do right now, by what the frame over the game is doing
-        const head = { on: t('fOn'), below: t('fBelow'), above: t('fAbove'), need_click: t('fNeedClick') }[S.overlay] || t('fLook');
-        return sayBox('', I.hand, head, '') + findCard(it, g, S.compact);
+        const head = autoHead() || { on: t('fOn'), below: t('fBelow'), above: t('fAbove'), need_click: t('fNeedClick') }[S.overlay] || t('fLook');
+        return sayBox('', I.hand, head, autoSub()) + findCard(it, g, S.compact);
       }
       case 'filter':
+        if (autoHead()) return sayBox('', I.hand, autoHead(), autoSub()) + findCard(it, g, S.compact);
         return `<div class="say"><span class="ring">${I.filter}</span><div><p>${esc(t('fFilterHead'))}</p>${filterSteps(it)}<small>${esc(t('fFilterP', g.row))}</small></div></div>` + findCard(it, g, S.compact);
       case 'selected': return sayBox('done', I.check, t('gSelected'), '') + findCard(it, g, true);
       case 'rel': {
         const n = Math.abs(g.dr), col = g.col || 1;
         const rows = S.lang === 'en' ? `${n} row${n === 1 ? '' : 's'}` : `${n} ${G.plural(n, 'ряд', 'ряда', 'рядов')}`;
         const head = g.dr === 0 ? t('gRelSame', col) : t(g.dr > 0 ? 'gRelDown' : 'gRelUp', rows, col);
-        return sayBox('', I.hand, head, ovText()) + findCard(it, g, S.compact);
+        return sayBox('', I.hand, autoHead() || head, autoHead() ? autoSub() : ovText()) + findCard(it, g, S.compact);
       }
       case 'hiddenEq': return sayBox('warn', I.warn, t('gHiddenEq', g.other || t('otherHero')), t('gHiddenEqP'));
       case 'hiddenEnh': return sayBox('warn', I.warn, t('gHiddenEnh'), t('gHiddenEnhP'));
@@ -332,6 +334,13 @@
     }
   }
   // what the frame over the game is doing (host «overlay» events)
+  // what the auto-pilot (the app opening the slot and clicking the item) is doing; '' = it is off or idle
+  function autoHead() {
+    if (!S.autoClick) return '';
+    return { work: t('aWork'), paused: t('aPaused'), background: t('aBackground'), failed: t('aFailed') }[S.auto] || '';
+  }
+  function autoSub() { return S.autoClick && S.auto === 'work' ? t('aWorkP') : S.autoClick && S.auto === 'failed' ? t('aFailedP') : ''; }
+
   function ovText() {
     return { need_click: t('ovNeedClick'), on: t('ovOn'), above: t('ovAbove'), below: t('ovBelow') }[S.overlay] || '';
   }
@@ -374,6 +383,8 @@
              <button class="btn-line" data-act="editCode">${esc(t('change'))}</button><button class="btn-ghost" data-act="unlink">${esc(t('unlink'))}</button></div>`
           : `<button class="btn-line" data-act="editCode">${esc(t('save'))}</button>`)}
         ${row(t('setLang'), '', `<div class="langs"><button data-act="lang" data-lang="ru" aria-pressed="${S.lang === 'ru'}">РУССКИЙ</button><button data-act="lang" data-lang="en" aria-pressed="${S.lang === 'en'}">ENGLISH</button></div>`)}
+        ${row(t('setAutoSync'), t('setAutoSyncP'), `<button class="switch" role="switch" data-act="autoSync" aria-checked="${S.autoSync}"></button>`)}
+        ${row(t('setAutoClick'), t('setAutoClickP'), `<button class="switch" role="switch" data-act="autoClick" aria-checked="${S.autoClick}"></button>`)}
         ${row(t('setCopy'), t('setCopyP'), `<button class="switch" role="switch" data-act="copy" aria-checked="${S.saveCopy}"></button>`)}
         ${row(t('setSite'), t('setSiteP'), `<div class="row"><div class="input" style="flex:1;min-width:240px"><input id="site" value="${esc(S.site)}" spellcheck="false"></div>
           <button class="btn-line" data-act="saveSite">${esc(t('save'))}</button>${S.site !== S.defaultSite ? `<button class="btn-ghost" data-act="resetSite">${esc(t('reset'))}</button>` : ''}</div>`)}
@@ -443,6 +454,8 @@
     else if (a === 'saveCode') { const v = $('#code').value.trim(); if (CODE_RE.test(v)) host.send({ cmd: 'setCode', code: v }); }
     else if (a === 'unlink') host.send({ cmd: 'clearCode' });
     else if (a === 'copy') { S.saveCopy = !S.saveCopy; host.send({ cmd: 'setSaveCopy', on: S.saveCopy }); render(); }
+    else if (a === 'autoSync') { S.autoSync = !S.autoSync; host.send({ cmd: 'setAutoSync', on: S.autoSync }); render(); }
+    else if (a === 'autoClick') { S.autoClick = !S.autoClick; host.send({ cmd: 'setAutoClick', on: S.autoClick }); render(); }
     else if (a === 'saveSite') host.send({ cmd: 'setSite', site: $('#site').value });
     else if (a === 'resetSite') host.send({ cmd: 'setSite', site: S.defaultSite });
     else if (a === 'reload') loadPlans();
@@ -464,6 +477,7 @@
     switch (m.ev) {
       case 'state':
         Object.assign(S, { lang: m.lang, version: m.version, site: m.site, defaultSite: m.defaultSite, hasCode: m.hasCode, codePrefix: m.codePrefix, saveCopy: m.saveCopy, last: m.last || S.last });
+        if (m.autoSync !== undefined) { S.autoSync = m.autoSync; S.autoClick = m.autoClick; }
         if (m.game) S.game = m.game;
         if (m.codeSaved) { S.editCode = false; toast(t('saved')); if (S.page === 'equip' || S.plans.status !== 'idle') loadPlans(); }
         if (m.siteSaved) toast(t('saved'));
@@ -475,6 +489,11 @@
       }
       case 'paste': { const i = $('#code'); if (i) { i.value = m.text || ''; codeTyped(); } break; }
       case 'sync':
+        if (m.auto) {
+          if (m.stage === 'done') { if (m.last) S.last = m.last; S.autoAt = Date.now(); loadPlans(); }
+          if (S.page === 'equip' || S.compact || S.page === 'sync') render();
+          break;
+        }
         if (m.stage === 'done') { S.sync = { phase: 'done', result: m.result }; if (m.last) S.last = m.last; }
         else if (m.stage === 'error') S.sync = { phase: 'error', stage: S.sync.stage, error: m.error };
         else S.sync = { phase: 'run', stage: m.stage, seconds: m.seconds || 0 };
@@ -500,6 +519,7 @@
       }
       case 'gameFiles': S.filesState = m.state === 'progress' ? t('filesWork', m.n) : m.state === 'done' ? t('filesDone', m.n) : m.state === 'no_game' ? t('filesNoGame') : t('filesErr'); if (S.page === 'settings') render(); break;
       case 'overlay': S.overlay = m.state; if (S.page === 'equip' || S.compact) render(); break;
+      case 'auto': S.auto = m.state; if (S.page === 'equip' || S.compact) render(); break;
       case 'focusEquip': S.page = 'equip'; render(); break;
     }
   });
@@ -522,6 +542,9 @@
     const key = [uid, hint, slot, line1, line2].join('|');
     if (key !== S.hl) { S.hl = key; host.send({ cmd: 'highlight', uid, hint, slot, line1, line2 }); }
   }
+
+  // plans made on the site meanwhile: reload every 20 s while the helper is on screen and the game runs
+  setInterval(() => { if (S.hasCode && S.game.running && (S.page === 'equip' || S.compact) && S.plans.status !== 'loading') loadPlans(); }, 20000);
 
   render();
   host.send({ cmd: 'init' });

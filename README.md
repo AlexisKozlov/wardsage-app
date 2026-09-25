@@ -1,7 +1,10 @@
 # RealmForge Extractor
 
 Reads a Watcher of Realms account (heroes, gear, artifacts, faction rewards) from the memory of the
-running game and sends it to the RealmForge site. Windows only; **read-only** (`ReadProcessMemory`).
+running game and sends it to the RealmForge site. Windows only; the game's memory is only read (`ReadProcessMemory`).
+The desktop app's equip helper can also open the gear slot, scroll the list and click the item with the mouse
+(`src/AutoPilot.cs`, Settings → «Автонажатие», on by default; «Заменить» is always the player's), and sends the account
+by itself after gear changes (Settings → «Автосинхронизация»).
 Player instructions (RU/EN): [README.txt](README.txt).
 
 What players get (`dist/RealmForge.zip`): **`RealmForge.exe`** — one file (≈1.3 MB), .NET Framework 4.6.2+,
