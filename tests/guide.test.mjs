@@ -72,6 +72,16 @@ ok(G.next(plan, live({ owner: { 6423: 0 } })).item.uid === 6423, 'in the bag: wa
   ok(G.freshPlan([mk('b', 10)], {}, now) === null, 'made 10 minutes ago: waits for «Надеть»');
   ok(G.freshPlan([{ ...mk('c', 1), bridge: true }], {}, now) === null, 'bridge plans start on their own');
 }
+// several builds started at once on the site: all of them, in order; the queue skips what is done or gone
+{
+  const now = Date.parse('2026-09-26T10:00:00Z');
+  const mk = (id, heroUid, items) => ({ id, heroUid, items, createdAt: new Date(now - 30000).toISOString() });
+  const a = mk('a', 1, [{ slot: 0, uid: 11, fromHeroUid: 0 }]), b = mk('b', 2, [{ slot: 0, uid: 22, fromHeroUid: 0 }]);
+  ok(G.freshPlans([a, b], {}, now).map((p) => p.id).join() === 'a,b', 'both fresh builds are started, in order');
+  const lv = live({ owner: { 11: 1, 22: 0 } });
+  ok(G.nextQueued(['a', 'b'], [a, b], lv).id === 'b', 'the queue skips a build that is on already');
+  ok(G.nextQueued(['x', 'b'], [a, b], lv).id === 'b' && G.nextQueued(['a'], [a, b], lv) === null, 'gone or done: skipped / nothing left');
+}
 // a bridge command names only the items: the owner when it arrives is the hero it is taken from on purpose
 {
   const bp = G.bridgePlan({ id: 'bridge:1', heroUid: 7, heroName: 'X', items: [{ slot: 0, uid: 321 }] }, (u) => '#' + u);

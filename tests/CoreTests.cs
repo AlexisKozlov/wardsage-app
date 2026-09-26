@@ -577,6 +577,20 @@ static class CoreTests {
     public double Gain = 1;   // how far the grid follows the pointer
     public bool City; public long CityHero;
     public bool Small;   // small cards: shorter rows
+    // the grid's filter: the funnel opens the pop-up; class / faction columns (row 0 = «Все»)
+    public bool FilterOpen; public List<long> Camps = new List<long>(); public long Class; public ulong Grid = 1;
+    public long[] All; public Dictionary<long, long[]> Tags;   // every hero, uid -> [class, factions...]
+    public static readonly long[] FactionList = { 0, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110 };
+    public void Refilter() {
+      var l = new List<long>();
+      foreach (var u in All) {
+        long[] t; Tags.TryGetValue(u, out t);
+        if (Class > 0 && (t == null || t[0] != Class)) continue;
+        if (Camps.Count > 0) { bool any = false; if (t != null) for (int i = 1; i < t.Length; i++) if (Camps.Contains(t[i])) any = true; if (!any) continue; }
+        l.Add(u);
+      }
+      Heroes = l.ToArray(); Scroll = 0; Grid++;
+    }
     double PY { get { return Small ? g.SmallPitchY : g.PitchY; } }
     double CH { get { return Small ? g.SmallCardH : g.CardH; } }   // the main city (the hero screen closed): its «Герои» opens CityHero
     readonly HeroGeometry g; readonly double W, H;
@@ -585,6 +599,14 @@ static class CoreTests {
     public double MaxScroll { get { int rows = (Heroes.Length + 2) / 3; return Math.Max(0, g.Row1Top * H + rows * PY * H - g.ViewBottom * H + 10); } }
     public void Click(double x, double y) {
       Clicks++;
+      if (Tags != null && Math.Abs(x - g.FunnelX * H) < 20 && Math.Abs(y - (H - g.FunnelDY * H)) < 20) { FilterOpen = !FilterOpen; return; }
+      if (FilterOpen) {
+        int r = (int)Math.Round((y / H - g.FilterRow0) / g.FilterPitch);
+        if (r < 0 || r >= HeroGeometry.FilterRows) return;
+        if (Math.Abs(x - g.ClassX * H) < 25) { Class = r == 0 ? 0 : HeroGeometry.ClassOrder[r - 1]; Refilter(); }
+        else if (Math.Abs(x - g.FactionX * H) < 25) { if (r == 0) Camps.Clear(); else if (Camps.Contains(FactionList[r])) Camps.Remove(FactionList[r]); else Camps.Add(FactionList[r]); Refilter(); }
+        return;   // the pop-up covers the grid
+      }
       if (City) { if (Math.Abs(x - (W - g.HeroesBtnDX * H)) < 20 && Math.Abs(y - (H - g.HeroesBtnDY * H)) < 20) { City = false; Shown = CityHero; } return; }
       if (Math.Abs(x - g.BackX * H) < 15 && Math.Abs(y - g.BackY * H) < 15) { if (Part >= 0) Part = -1; else Shown = 0; Backs++; return; }
       if (Math.Abs(x - (W - g.GearTabDX * H)) < 30 && Math.Abs(y - g.GearTabY * H) < 30) { Tab = 3; return; }
@@ -602,11 +624,15 @@ static class CoreTests {
     public void Drag(double dy) { Drags++; Scroll = Math.Max(0, Math.Min(MaxScroll, Scroll - dy * Gain)); }
   }
 
-  static string RunHero(HeroPilot p, FakeHeroGame game, long plan, int maxSteps, out HeroView last) {
+  static string RunHero(HeroPilot p, FakeHeroGame game, long plan, int maxSteps, out HeroView last) { return RunHero(p, game, plan, maxSteps, out last, null); }
+  static string RunHero(HeroPilot p, FakeHeroGame game, long plan, int maxSteps, out HeroView last, long[] tags) {
     last = null;
     for (long t = 0; t < maxSteps * 100L; t += 100) {
       var v = new HeroView { NowMs = t, Foreground = true, W = 1920, H = 1009, Plan = plan, Hero = game.Shown, Tab = game.Tab,
-        Part = game.Part, Heroes = game.Part >= 0 ? game.Heroes : game.Heroes, HeroesButton = game.City, ClientH = 1009, SmallCards = game.Small };
+        Part = game.Part, Heroes = game.Part >= 0 ? game.Heroes : game.Heroes, HeroesButton = game.City, ClientH = 1009, SmallCards = game.Small,
+        FilterOpen = game.FilterOpen, ChosenCamps = game.Camps.ToArray(), ClassChosen = game.Class > 0, GridPtr = game.Grid,
+        FactionList = game.Tags != null ? FakeHeroGame.FactionList : null, ClassCount = 7 };
+      if (tags != null) { v.HeroClass = tags[0]; v.HeroCamps = new long[tags.Length - 1]; Array.Copy(tags, 1, v.HeroCamps, 0, tags.Length - 1); }
       last = v;
       var a = p.Step(v);
       if (a == null) return p.State;
@@ -646,6 +672,25 @@ static class CoreTests {
       if (RunHero(new HeroPilot(g), gs, want, 3000, out lv) == "done" && gs.Shown == want) okSmall++;
     }
     Check(okSmall == 20, "small cards (shorter rows): " + okSmall + "/20");
+    // the grid filter: every hero has a class and a faction
+    var tagsAll = new Dictionary<long, long[]>(); var rt = new Random(5);
+    foreach (var u in heroes) tagsAll[u] = new long[] { HeroGeometry.ClassOrder[rt.Next(6)], FakeHeroGame.FactionList[1 + rt.Next(10)] };
+    Func<FakeHeroGame> mk = () => { var f = new FakeHeroGame(g, W, H) { All = heroes, Tags = tagsAll, Shown = heroes[2] }; f.Refilter(); return f; };
+    var fg1 = mk(); long far = heroes[125];
+    string sf = RunHero(new HeroPilot(g), fg1, far, 3000, out lv, tagsAll[far]);
+    Check(sf == "done" && fg1.Shown == far && fg1.Class == tagsAll[far][0] && !fg1.FilterOpen && fg1.Drags <= 1,
+          "hero far down: the grid filtered by its class and faction, then picked (" + fg1.Clicks + " clicks, " + fg1.Drags + " drags)");
+    // the next plan's hero is not in that filtered grid: the filter is cleared, then it is found
+    long next = heroes[3]; if (Array.IndexOf(fg1.Heroes, next) >= 0) next = heroes[4];
+    string sn = RunHero(new HeroPilot(g), fg1, next, 3000, out lv, null);
+    Check(sn == "done" && fg1.Shown == next, "the next plan's hero hidden by the filter left from before: cleared, found");
+    var fg2 = mk(); fg2.Camps.Add(101); fg2.Class = 8; fg2.Refilter(); long hid = heroes[40];
+    if (Array.IndexOf(fg2.Heroes, hid) >= 0) { fg2.Camps.Clear(); fg2.Camps.Add(tagsAll[hid][1] == 101 ? 102 : 101); fg2.Refilter(); }
+    string sh = RunHero(new HeroPilot(g), fg2, hid, 3000, out lv, null);
+    Check(sh == "done" && fg2.Shown == hid, "hero hidden by the player's grid filter: «Все», then found (" + fg2.Clicks + " clicks)");
+    var fg3 = mk(); long wrong = heroes[110]; var badTags = new long[] { tagsAll[wrong][0] == 1 ? 2 : 1, tagsAll[wrong][1] };
+    string sw = RunHero(new HeroPilot(g), fg3, wrong, 3000, out lv, badTags);
+    Check(sw == "done" && fg3.Shown == wrong, "wrong class in the tags (a game patch): the hero vanishes, «Все» undoes it, found anyway");
     var top = new FakeHeroGame(g, W, H) { Heroes = heroes, Shown = heroes[120] }; top.Scroll = top.MaxScroll;
     Check(RunHero(new HeroPilot(g), top, heroes[0], 3000, out lv) == "done" && top.Shown == heroes[0], "grid at its end, the first hero: up to the top");
 

@@ -56,6 +56,12 @@ namespace RealmForge {
     public bool SmallCards;      // the grid shows small cards (another layout)
     public long[] Heroes;        // the grid in display order (hero uids), null = unreadable
     public ulong GridPtr;        // m_InfinityGridProxy.m_Data: a new table when the grid is sorted / filtered again
+    // the grid's filter (Panel_CharactorFilterOrder, m_PanelDatas[6] = Hero_Filter)
+    public bool FilterOpen;      // the filter pop-up is on the screen (PanelBase.m_IsActive)
+    public long[] FactionList;   // its faction column, top down (0 = «Все"), null until it was opened once
+    public int ClassCount;       // entries of its class column («Все» included), 0 = unknown
+    public long[] ChosenCamps;   // factions the grid is filtered by now (empty = all)
+    public bool ClassChosen;     // the grid is filtered by a class now (which one is not readable: game config objects)
   }
 
   public static partial class RFX {
@@ -217,6 +223,7 @@ namespace RealmForge {
       ulong proxy, data; int t1, t2;
       if (!Field(a.Form, "m_InfinityGridProxy", out proxy, out t1) || t1 != T_TABLE || !Field(proxy, "m_Data", out data, out t2) || t2 != T_TABLE) return h;
       h.GridPtr = data;
+      ReadHeroFilter(a, h);
       if (prev != null && prev.GridPtr == data && prev.Heroes != null) { h.Heroes = prev.Heroes; return h; }
       var ids = new List<long>();
       for (int i = 1; i <= 2000; i++) {
@@ -226,6 +233,30 @@ namespace RealmForge {
       }
       h.Heroes = ids.ToArray();
       return h;
+    }
+
+    static void ReadHeroFilter(EquipAddrs a, HeroScreen h) {
+      ulong v; int tt;
+      h.ChosenCamps = new long[0];
+      ulong pd; int pdt;
+      if (Field(a.Form, "m_PanelDatas", out pd, out pdt) && pdt == T_TABLE && IntKey(pd, 6, out v, out tt) && tt == T_TABLE) {
+        ulong camps, cls; int ct, lt;
+        if (IntKey(v, 3, out camps, out ct) && ct == T_TABLE) { var c = IntArray(camps); var l = new List<long>(); foreach (var x in c) if (x > 0) l.Add(x); h.ChosenCamps = l.ToArray(); }
+        // the class column's choice: its «Все» is a Lua table with m_ProfessionID -1, a class is the game's config object
+        if (IntKey(v, 1, out cls, out lt) && lt == T_TABLE)
+          for (int i = 1; i <= 8; i++) {
+            ulong e, pid; int et, pt;
+            if (!IntKey(cls, i, out e, out et)) break;
+            if (et == T_TABLE && Field(e, "m_ProfessionID", out pid, out pt) && pt == T_INT && (long)pid == -1) continue;
+            h.ClassChosen = true; break;
+          }
+      }
+      ulong panels, p; int t1, t2;
+      if (!Field(a.Form, "m_Panels", out panels, out t1) || t1 != T_TABLE || !Field(panels, "Charactor_FilterOrder", out p, out t2) || t2 != T_TABLE) return;
+      // (whether the pop-up is on the screen is seen on the pixels: the game shows and hides it on the C# side)
+      ulong fp, fd, mp, md; int f1, f2, m1, m2;
+      if (Field(p, "m_FactionInfinityGridProxy", out fp, out f1) && f1 == T_TABLE && Field(fp, "m_Data", out fd, out f2) && f2 == T_TABLE) h.FactionList = IntArray(fd);
+      if (Field(p, "m_MainInfinityGridProxy", out mp, out m1) && m1 == T_TABLE && Field(mp, "m_Data", out md, out m2) && m2 == T_TABLE) h.ClassCount = EntryCount(md);
     }
 
     /// <summary>Selected item uid only (one field read, for the fast overlay timer); 0 = none or unreadable.</summary>

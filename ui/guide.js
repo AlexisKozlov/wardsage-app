@@ -78,10 +78,23 @@
   // A plan made on the site within the last 3 minutes that this app has not listed before: the player pressed «Надеть в
   // игре» just now, so it starts by itself. The first listing after the app starts only marks what is there.
   const FRESH_MS = 3 * 60 * 1000;
-  function freshPlan(plans, seen, now) {
-    if (!seen) return null;
-    return (plans || []).find((p) => !p.bridge && !seen[p.id] && p.createdAt && now - Date.parse(p.createdAt) < FRESH_MS
-      && now - Date.parse(p.createdAt) > -FRESH_MS) || null;
+  function freshPlans(plans, seen, now) {
+    if (!seen) return [];
+    return (plans || []).filter((p) => !p.bridge && !seen[p.id] && p.createdAt && now - Date.parse(p.createdAt) < FRESH_MS
+      && now - Date.parse(p.createdAt) > -FRESH_MS);
+  }
+  function freshPlan(plans, seen, now) { return freshPlans(plans, seen, now)[0] || null; }
+
+  // The started plans queue up («Надеть» on the site for several heroes, «Надеть все» here): the next one still to do,
+  // or null. A plan that is done, whose items are all on other heroes, or gone from the list is skipped.
+  function nextQueued(queue, plans, live) {
+    for (const id of queue || []) {
+      const p = (plans || []).find((x) => x.id === id);
+      if (!p) continue;
+      const k = next(p, live).kind;
+      if (k !== 'done' && k !== 'taken') return p;
+    }
+    return null;
   }
 
   // A bridge command names only the items: whoever wears an item when the command arrives is the hero it is taken from
@@ -156,7 +169,7 @@
     return a > 10 && a < 20 ? many : b === 1 ? one : b >= 2 && b <= 4 ? few : many;
   }
 
-  const api = { next, pickPlan, bridgePlan, mergePlans, freshPlan, adoptOwners, highlightUid, plural, bustUrl, headUrl, itemUrl, setUrl, rankOf, statOf, statId, statUrl, VISIBLE_ROWS };
+  const api = { next, pickPlan, bridgePlan, mergePlans, freshPlan, freshPlans, nextQueued, adoptOwners, highlightUid, plural, bustUrl, headUrl, itemUrl, setUrl, rankOf, statOf, statId, statUrl, VISIBLE_ROWS };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.RFGuide = api;
 })(typeof window !== 'undefined' ? window : globalThis);

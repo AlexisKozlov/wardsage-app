@@ -401,8 +401,12 @@ namespace RealmForge {
           NowMs = now, Foreground = v.Foreground, UserBusy = v.UserBusy, UserClicked = v.UserClicked, W = cr.R, H = Ui.Unit(cr.R, cr.B), ClientH = cr.B,
           Plan = runHero, Hero = heroScreen.Hero, Tab = heroScreen.Tab, Part = heroScreen.Part, SmallCards = heroScreen.SmallCards,
           Heroes = heroScreen.Heroes,
-          HeroesButton = heroScreen.Hero == 0 && v.Foreground && HeroesButtonSeen(o, cr.R, cr.B)
+          HeroesButton = heroScreen.Hero == 0 && v.Foreground && HeroesButtonSeen(o, cr.R, cr.B),
+          FilterOpen = v.Foreground && HeroFilterSeen(o, cr.R, cr.B), ClassChosen = heroScreen.ClassChosen, FactionList = heroScreen.FactionList,
+          ChosenCamps = heroScreen.ChosenCamps, ClassCount = heroScreen.ClassCount, GridPtr = heroScreen.GridPtr
         };
+        long[] tags = HeroTags(runHero);
+        if (tags != null) { hv.HeroClass = tags[0]; hv.HeroCamps = new long[tags.Length - 1]; Array.Copy(tags, 1, hv.HeroCamps, 0, tags.Length - 1); }
         var ha = hpilot.Step(hv);
         LogHero(hv);
         if (ha != null) {
@@ -547,6 +551,43 @@ namespace RealmForge {
 
     // ---------------------------------------------------------------- the city's «Герои» button
 
+    /// <summary>The hero grid's filter pop-up is on the screen: its dark background (or a chosen row's blue) left of the class
+    /// check boxes: 0.93 of the strip when open, at most 0.73 over the hero cards.</summary>
+    bool HeroFilterSeen(W32.POINT o, double W, double H) {
+      double U = Ui.Unit(W, H);
+      int x0 = (int)(0.030 * U), x1 = (int)(0.058 * U), y0 = (int)(0.30 * U), y1 = (int)(0.87 * U);
+      int[] px = Grab(o.X + x0, o.Y + y0, x1 - x0, y1 - y0);
+      if (px == null) return false;
+      int dark = 0;
+      // its dark background, or the blue of a chosen row (a class / faction just clicked)
+      foreach (int c in px) {
+        int r = (c >> 16) & 255, g = (c >> 8) & 255, b = c & 255;
+        if ((r + g + b < 170 && Math.Max(r, Math.Max(g, b)) - Math.Min(r, Math.Min(g, b)) < 45) || (b >= r + 25 && b >= g + 10 && b >= 70 && r < 140)) dark++;
+      }
+      return dark >= 0.85 * px.Length;
+    }
+
+    // hero base id -> class id, faction ids (app/res/hero_tags.json, built from the site's game data)
+    static System.Collections.Generic.Dictionary<long, long[]> heroTags;
+    static long[] HeroTags(long heroUid) {
+      if (heroTags == null) {
+        heroTags = new System.Collections.Generic.Dictionary<long, long[]>();
+        try {
+          using (var s = typeof(OverlayController).Assembly.GetManifestResourceStream("overlay/hero_tags.json"))
+          using (var r = new StreamReader(s)) {
+            var d = MiniJson.Parse(r.ReadToEnd()) as System.Collections.Generic.Dictionary<string, object>;
+            if (d != null) foreach (var kv in d) {
+              var l = kv.Value as System.Collections.Generic.List<object>; long id;
+              if (l == null || !long.TryParse(kv.Key, out id)) continue;
+              var a = new long[l.Count]; for (int i = 0; i < l.Count; i++) a[i] = l[i] is double ? (long)(double)l[i] : 0;
+              heroTags[id] = a;
+            }
+          }
+        } catch (Exception e) { Log.Write("hero tags: " + e.Message); }
+      }
+      long[] t; return heroTags.TryGetValue(heroUid / 100000, out t) && t.Length > 0 ? t : null;
+    }
+
     static float[] heroesTpl; static int heroesTplW, heroesTplH;   // grey levels at the reference scale (UI unit 900)
     float[] tplScaled; int tplW, tplH; double tplU;
 
@@ -611,6 +652,7 @@ namespace RealmForge {
     void LogHero(HeroView v) {
       int i = v.Heroes != null ? Array.IndexOf(v.Heroes, v.Plan) : -2, j = v.Heroes != null ? Array.IndexOf(v.Heroes, v.Hero) : -2;
       string line = "hero: plan " + v.Plan + "@" + i + " shown " + v.Hero + "@" + j + " tab=" + v.Tab + " list=" + v.Part
+        + " filter=" + (v.FilterOpen ? "open" : "closed") + " camps=" + string.Join(",", v.ChosenCamps ?? new long[0]) + " class=" + v.ClassChosen
         + " small=" + v.SmallCards + " grid=" + (v.Heroes != null ? v.Heroes.Length : -1) + " -> " + hpilot.State;
       if (line == heroLogged) return;
       heroLogged = line;

@@ -16,7 +16,7 @@
     plans: { status: 'idle', list: [], err: null }, sel: 0,
     scan: { status: 'idle', panel: false }, live: null, reported: {}, compact: false, overlay: 'off', hl: '',
     autoSync: true, autoClick: true, autoConfirm: false, auto: 'idle', autoAt: null,
-    run: null, seen: null, runKey: '',
+    run: null, seen: null, runKey: '', queue: [],
   };
 
   // ---------------------------------------------------------------- helpers
@@ -227,6 +227,7 @@
     return `
       <div class="head"><div><h1>${esc(t('equipTitle'))}</h1><p class="lead">${esc(t('equipLead'))}</p></div>
         <div class="row">
+          ${P.list.length > 1 && S.autoClick ? `<button class="btn-line" data-act="runAll">${esc(t('runAll'))}</button>` : ''}
           ${P.list.length ? `<button class="btn-line" data-act="compact">${I.pin}${esc(t('overlay'))}</button>` : ''}
           ${S.hasCode ? `<button class="btn-line" data-act="reload" ${P.status === 'loading' ? 'disabled' : ''}>${I.reload}${esc(t('reload'))}</button>` : ''}
         </div></div>
@@ -393,6 +394,17 @@
       : `<button class="btn-gold" data-act="run">${esc(t('runBtn'))}</button>`;
   }
 
+  // queue plans (ids) after the running one; start the first when none runs
+  function enqueue(plans) {
+    for (const p of plans) if (p.id !== S.run && !S.queue.includes(p.id)) S.queue.push(p.id);
+    if (!S.run) runNext();
+  }
+  function runNext() {
+    const p = G.nextQueued(S.queue, S.plans.list, S.live);
+    S.queue = p ? S.queue.slice(S.queue.indexOf(p.id) + 1) : [];
+    if (p) startRun(p);
+  }
+
   function startRun(p) {
     S.run = p.id; S.sel = S.plans.list.indexOf(p);
     host.send({ cmd: 'equip.run', hero: p.heroUid, restart: true }); S.runKey = String(p.heroUid);
@@ -522,7 +534,14 @@
     else if (a === 'rescan') scan();
     else if (a === 'pick') { S.sel = Number(el.dataset.i); render(); }
     else if (a === 'run') { const p = current(); if (!p) return; startRun(p); if (!S.autoConfirm) toast(t('runNoConfirm'), 6000); render(); }
-    else if (a === 'stopRun') { S.run = null; syncHighlight(); render(); }
+    else if (a === 'stopRun') { S.run = null; S.queue = []; syncHighlight(); render(); }
+    else if (a === 'runAll') {
+      const todo = S.plans.list.filter((p) => { const k = G.next(p, S.live).kind; return k !== 'done' && k !== 'taken'; });
+      if (!todo.length) return;
+      if (S.run) enqueue(todo); else { S.queue = todo.map((p) => p.id); runNext(); }
+      if (!S.autoConfirm) toast(t('runNoConfirm'), 6000);
+      render();
+    }
     else if (a === 'compact') { S.compact = !S.compact; host.send({ cmd: 'compact', on: S.compact }); render(); }
     else if (a === 'removePlan') {
       const p = current(); if (!p) return;
@@ -568,9 +587,10 @@
           S.plans = { status: 'ok', list: G.mergePlans(S.plans.list, m.plans, S.reported), err: null };
           const i = S.plans.list.findIndex((p) => p.id === id); S.sel = i >= 0 ? i : 0;
           // «Надеть в игре» pressed on the site a moment ago: start it (older plans wait for «Надеть» here)
-          const fresh = G.freshPlan(S.plans.list, S.seen, Date.now());
+          // (several heroes at once: they queue up and go one after another)
+          const fresh = G.freshPlans(S.plans.list, S.seen, Date.now());
           S.seen = S.seen || {}; S.plans.list.forEach((p) => { S.seen[p.id] = true; });
-          if (fresh && S.autoClick && S.game.running) { startRun(fresh); if (!S.compact) S.page = 'equip'; }
+          if (fresh.length && S.autoClick && S.game.running) { enqueue(fresh); if (!S.compact) S.page = 'equip'; }
           watchPlans();
         } else S.plans = { status: 'error', list: S.plans.list, err: m.status === 'invalid_token' ? 'token' : m.detail || '' };
         render(); break;
@@ -583,7 +603,10 @@
         const auto = ri >= 0 ? ri : G.pickPlan(S.plans.list, S.live, S.sel); if (auto >= 0) S.sel = auto;
         const p = current();
         const gk = p ? G.next(p, S.live).kind : '';
-        if (p && S.run === p.id && (gk === 'done' || gk === 'taken' || gk === 'closed')) S.run = null;
+        if (p && S.run === p.id && (gk === 'done' || gk === 'taken' || gk === 'closed')) {
+          S.run = null;
+          if (gk === 'closed') S.queue = []; else if (S.queue.length) setTimeout(runNext, 1500);   // the next build in the queue
+        }
         if (p && !S.reported[p.id] && gk === 'done') {
           S.reported[p.id] = true; host.send({ cmd: 'equip.finish', id: p.id, done: true });
           if (p.bridge) setTimeout(() => dropPlans([p.id]), 4000);   // «done» stays on screen a moment; the site does not list it
@@ -606,7 +629,7 @@
         S.plans.list = [p].concat(S.plans.list.filter((x) => x.id !== p.id));
         S.sel = 0; S.page = 'equip'; S.editCode = false;
         if (S.hasCode && S.plans.status === 'idle') loadPlans();
-        if (S.autoClick) startRun(p);
+        if (S.autoClick) enqueue([p]);
         watchPlans(); render();
         break;
       }
