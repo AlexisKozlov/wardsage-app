@@ -299,6 +299,72 @@ namespace RealmForge {
     /// <summary>Every Lua table holding a server battle hero (MTTDProto.CmdHeroFight: iHeroId, iBaseId, mAttr{attr id ->
     /// value}, ...) as JSON lines - still in memory after a battle until the Lua GC takes it. Read-only, for comparing the
     /// server's battle stats with the stats the site computes for the hero panel.</summary>
+    /// <summary>Battle study: the battle statistics of heroes still in memory (CSharpBattle.Battle.DamageStatisticsData:
+    /// iBaseID 0x10, iHeroID 0x14, iPower 0x18, fDamageAmount 0x28 (all enemies), fDamageAmountToBoss 0x30,
+    /// fTreatmentAmount 0x38, fAcceptDamageAmount 0x3C, iStarLevel 0x40, iSublimLevel 0x44), and the battle-end screen's
+    /// frame count (Form_BattleEnd.m_FightFramIdx; one logic frame = 270/4096 s). JSON lines, read-only.</summary>
+    public static string DumpBattleStats() {
+      var ps = Process.GetProcessesByName("Watcher of Realms");
+      if (ps.Length == 0) return null;
+      H = OpenProcess(0x0410, false, ps[0].Id);
+      if (H == IntPtr.Zero) return null;
+      regs = Regions();
+      var sb = new StringBuilder(); var seen = new HashSet<string>();
+      var hits = new List<ulong>();
+      ScanParallel((b0, buf, len) => {
+        for (int i = 0; i + 0x68 <= len; i += 8) {
+          int bid = BitConverter.ToInt32(buf, i + 0x10);
+          if (bid < 1000 || bid > 9999) continue;
+          uint uid = BitConverter.ToUInt32(buf, i + 0x14);
+          if (uid < (uint)bid * 100000u || uid >= (uint)bid * 100000u + 100) continue;
+          int star = BitConverter.ToInt32(buf, i + 0x40), sub = BitConverter.ToInt32(buf, i + 0x44);
+          long dmg = BitConverter.ToInt64(buf, i + 0x28);
+          if (star < 1 || star > 8 || sub < 0 || sub > 12 || dmg < 0 || dmg > 1000000000000L) continue;
+          if (BitConverter.ToUInt64(buf, i) == 0) continue;
+          lock (hits) hits.Add(b0 + (ulong)i);
+        }
+      });
+      foreach (var o in hits) {
+        var b = Read(o, 0x68); if (b == null) continue;
+        string line = "{\"at\":\"" + o.ToString("X") + "\",\"klass\":\"" + BitConverter.ToUInt64(b, 0).ToString("X") + "\",\"iBaseID\":" + BitConverter.ToInt32(b, 0x10)
+          + ",\"iHeroID\":" + BitConverter.ToUInt32(b, 0x14) + ",\"iPower\":" + BitConverter.ToUInt32(b, 0x18)
+          + ",\"damage\":" + BitConverter.ToInt64(b, 0x28) + ",\"toBoss\":" + BitConverter.ToInt64(b, 0x30)
+          + ",\"heal\":" + BitConverter.ToInt32(b, 0x38) + ",\"taken\":" + BitConverter.ToInt32(b, 0x3C)
+          + ",\"star\":" + BitConverter.ToInt32(b, 0x40) + ",\"sublim\":" + BitConverter.ToInt32(b, 0x44)
+          + ",\"overflow\":" + BitConverter.ToInt64(b, 0x58) + "}";
+        if (seen.Add(line.Substring(line.IndexOf("\"iBaseID\"")))) sb.Append(line).Append('\n');
+      }
+      // the simulations still in memory: CSharpBattle.Battle.GameSimulation and its kinds (TypeInfo RVAs of this game
+      // build, work/il2full/script.json): <CurrentFrameIdx> 0xC4, m_state 0xA4
+      ulong ga = 0;
+      try { foreach (ProcessModule m in ps[0].Modules) if (string.Equals(m.ModuleName, "GameAssembly.dll", StringComparison.OrdinalIgnoreCase)) ga = (ulong)(long)m.BaseAddress; } catch (Exception) { }
+      if (ga != 0) {
+        var klass = new Dictionary<ulong, string>();
+        foreach (var t in new[] { new KeyValuePair<string, ulong>("GameSimulation", 0), new KeyValuePair<string, ulong>("TDGameSimulation", 0),
+                                  new KeyValuePair<string, ulong>("TCGameSimulation", 0), new KeyValuePair<string, ulong>("PAGameSimulation", 0) }) {
+          var kb = Read(ga + t.Value, 8); ulong k = kb != null ? BitConverter.ToUInt64(kb, 0) : 0;
+          if (k != 0) klass[k] = t.Key;
+        }
+        var sims = new List<ulong>();
+        ScanParallel((b0, buf, len) => {
+          for (int i = 0; i + 0xC8 <= len; i += 8) if (klass.ContainsKey(BitConverter.ToUInt64(buf, i))) lock (sims) sims.Add(b0 + (ulong)i);
+        });
+        foreach (var o in sims) {
+          var b = Read(o, 0xC8); if (b == null) continue;
+          uint frames = BitConverter.ToUInt32(b, 0xC4); int state = BitConverter.ToInt32(b, 0xA4);
+          if (state < 1 || state > 2 || frames == 0 || frames > 200000) continue;   // ESimulationStatus Runing / End; a klass pointer elsewhere is no object
+          sb.Append("{\"sim\":\"" + klass[BitConverter.ToUInt64(b, 0)] + "\",\"at\":\"" + o.ToString("X") + "\",\"state\":" + BitConverter.ToInt32(b, 0xA4)
+            + ",\"frames\":" + frames + ",\"seconds\":" + (frames * 270 / 4096.0).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + "}\n");
+        }
+      }
+      // the battle-end screen: its frame count
+      var owners = OwnersOf(FindLuaStringsFast(new[] { "m_FightFramIdx" }), 1024);
+      List<ulong> l;
+      if (owners.TryGetValue("m_FightFramIdx", out l))
+        foreach (var t in l) { ulong v; int tt; if (Field(t, "m_FightFramIdx", out v, out tt) && tt == T_INT) sb.Append("{\"form\":\"" + t.ToString("X") + "\",\"frames\":" + (long)v + ",\"seconds\":" + ((long)v * 270 / 4096.0).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + "}\n"); }
+      return sb.ToString();
+    }
+
     public static string DumpHeroFights() {
       var ps = Process.GetProcessesByName("Watcher of Realms");
       if (ps.Length == 0) return null;
