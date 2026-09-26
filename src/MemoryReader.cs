@@ -301,7 +301,7 @@ namespace RealmForge {
       } catch (Exception e) { L("Live tables: " + e.Message + " - the full scan follows"); }
       regs = Regions(); ulong total = 0; foreach (var r in regs) total += r.Size;
       L("RW regions: " + regs.Count + ", " + (total >> 20) + " MB");
-      string[] names = { "iStarLvl", "iItemUid", "iBaseId", "vEquipSlot", "iStarLevel", "m_CampHeroPerfectReward", "m_vArtifacts",
+      string[] names = { "iStarLvl", "iItemUid", "iBaseId", "vEquipSlot", "iStarLevel", "m_CampHeroPerfectReward", "m_vArtifacts", "m_AllBeastInfo",
                          "m_CurrentSelectHeroUid", "m_CharactorDatas" };
       var tstr = FindLuaStrings(names);
       foreach (var kv in tstr) L("  lua string '" + kv.Value + "' @ 0x" + kv.Key.ToString("X"));
@@ -383,6 +383,9 @@ namespace RealmForge {
       var arts = BestField(tstr, "m_vArtifacts", 5);
       L("  artifacts: " + (arts == null ? 0 : arts.Count));
       sb.Append(",\n\"artifacts\":"); J(sb, arts);
+      // Deity Beasts: account-wide hero attributes (PlayerData.m_AllBeastInfo: beast id -> vAttrList {iAttrId, iLevel})
+      var beasts = BestField(tstr, "m_AllBeastInfo", 3);
+      sb.Append(",\n\"beasts\":"); J(sb, beasts);
       sb.Append("\n,\"meta\":{\"extractor\":\"" + ExtractorVersion + "\"");
       if (GameVersion != null) { sb.Append(",\"gameVersion\":"); J(sb, GameVersion); }
       sb.Append(",\"seconds\":" + (int)sw.Elapsed.TotalSeconds + ",\"equipment\":" + ne + ",\"heroes\":" + nh + "}\n}\n");

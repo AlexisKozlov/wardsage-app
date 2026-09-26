@@ -19,12 +19,12 @@ using System.Threading.Tasks;
 namespace RealmForge {
   public sealed class LiveTables {
     public int Pid;
-    public ulong EquipData, HeroData, CampOwner, ArtOwner, Form, Panel;
+    public ulong EquipData, HeroData, CampOwner, ArtOwner, BeastOwner, Form, Panel;
   }
 
   public static partial class RFX {
     static LiveTables live;
-    const string KCamp = "m_CampHeroPerfectReward", KArts = "m_vArtifacts", KHeroes = "m_CharactorDatas";
+    const string KCamp = "m_CampHeroPerfectReward", KArts = "m_vArtifacts", KHeroes = "m_CharactorDatas", KBeasts = "m_AllBeastInfo", KEquipData = "suitId2EquipIdExt";
 
     /// <summary>The live tables of the running game: the ones found before when they are still there, else searched for
     /// (again). <paramref name="needForm"/>: also the hero screen (created when the player first opens it).</summary>
@@ -44,21 +44,25 @@ namespace RealmForge {
 
     static LiveTables FindLive(int pid) {
       regs = Regions();
-      string[] anchors = { KHero, KHeroes, KCamp, KArts, KGrid, KPanel };
+      string[] anchors = { KEquipData, KHero, KHeroes, KCamp, KArts, KBeasts, KGrid, KPanel };
       var tstr = FindLuaStringsFast(anchors);
       var found = new List<string>(); foreach (var kv in tstr) found.Add(kv.Value + "@" + kv.Key.ToString("X"));
       L("Strings found: " + string.Join(", ", found.ToArray()));
       var owners = OwnersOf(tstr);
       var lt = new LiveTables { Pid = pid };
       List<ulong> l;
-      // EquipData: the owner of m_CurrentSelectHeroUid with the item map (UI panels own that key too)
-      if (owners.TryGetValue(KHero, out l)) {
+      // EquipData: the owner of suitId2EquipIdExt (set in EquipData:ctor) with the item map. m_CurrentSelectHeroUid and
+      // m_EquipFilterConfigs are set only once the gear screen was opened (and the first is nil again outside it: the key
+      // is gone after a GC), so they are only the fallback
+      if (owners.TryGetValue(KEquipData, out l)) foreach (var t in l) if (HasTable(t, "equips")) { lt.EquipData = t; break; }
+      if (lt.EquipData == 0 && owners.TryGetValue(KHero, out l)) {
         foreach (var t in l) if (HasTable(t, "equips") && HasTable(t, "m_EquipFilterConfigs")) { lt.EquipData = t; break; }
         if (lt.EquipData == 0) foreach (var t in l) if (HasTable(t, "equips")) { lt.EquipData = t; break; }
       }
       lt.HeroData = Largest(owners, KHeroes);
       lt.CampOwner = Largest(owners, KCamp);
       lt.ArtOwner = Largest(owners, KArts);
+      lt.BeastOwner = Largest(owners, KBeasts);
       if (owners.TryGetValue(KGrid, out l)) foreach (var t in l) if (HasTable(t, "m_InfinityGridProxy")) { lt.Form = t; break; }
       if (owners.TryGetValue(KPanel, out l)) foreach (var t in l) if (HasTable(t, KList) && HasTable(t, "m_Form")) { lt.Panel = t; break; }
       return lt;
@@ -202,6 +206,66 @@ namespace RealmForge {
       L("Sub stat values of " + res.Count + " items in " + sw.Elapsed.TotalSeconds.ToString("0.0") + " s");
     }
 
+    // ------------------------------------------------------------------ battle study (diagnostics)
+
+    /// <summary>Every Lua table holding a server battle hero (MTTDProto.CmdHeroFight: iHeroId, iBaseId, mAttr{attr id ->
+    /// value}, ...) as JSON lines - still in memory after a battle until the Lua GC takes it. Read-only, for comparing the
+    /// server's battle stats with the stats the site computes for the hero panel.</summary>
+    public static string DumpHeroFights() {
+      var ps = Process.GetProcessesByName("Watcher of Realms");
+      if (ps.Length == 0) return null;
+      H = OpenProcess(0x0410, false, ps[0].Id);
+      if (H == IntPtr.Zero) return null;
+      regs = Regions();
+      var tstr = FindLuaStringsFast(new[] { "mAttr" });
+      var owners = OwnersOf(tstr, 256);
+      var sb = new StringBuilder(); var seen = new HashSet<string>();
+      List<ulong> l;
+      if (owners.TryGetValue("mAttr", out l))
+        foreach (var t in l) {
+          var d = ParseTable(t, 2, new HashSet<ulong>());
+          if (d == null || !d.ContainsKey("iBaseId")) continue;
+          var one = new StringBuilder(); J(one, d);
+          if (seen.Add(one.ToString())) sb.Append(one).Append('\n');
+        }
+      // the battle's own heroes come in a C# message (CmdStartChallengeInfo), not through Lua: MTTDProto.CmdHeroFight
+      // objects - iHeroId 0x10, iBaseId 0x14, iLevel 0x18, iStarLevel 0x30, iSublimLevel 0x34, mAttr 0x48 (XDictionary:
+      // VersionedList<KeyValuePair<SdpUInt, SdpUInt>> - _items 0x10, _size 0x18; array data at 0x20), iPower 0x68
+      var hits = new List<ulong>();
+      ScanParallel((b0, buf, len) => {
+        for (int i = 0; i + 0x78 <= len; i += 8) {
+          uint bid = BitConverter.ToUInt32(buf, i + 0x14);
+          if (bid < 1000 || bid > 9999) continue;
+          uint uid = BitConverter.ToUInt32(buf, i + 0x10);
+          if (uid < bid * 100000u || uid >= bid * 100000u + 100) continue;
+          uint lv = BitConverter.ToUInt32(buf, i + 0x18), star = BitConverter.ToUInt32(buf, i + 0x30), pw = BitConverter.ToUInt32(buf, i + 0x68);
+          if (lv < 1 || lv > 100 || star < 1 || star > 8 || pw == 0 || pw > 10000000) continue;
+          if (BitConverter.ToUInt64(buf, i) == 0 || BitConverter.ToUInt64(buf, i + 0x48) == 0) continue;
+          lock (hits) hits.Add(b0 + (ulong)i);
+        }
+      });
+      foreach (var o in hits) {
+        var b = Read(o, 0x78); if (b == null) continue;
+        var lst = Read(BitConverter.ToUInt64(b, 0x48), 0x20); if (lst == null) continue;
+        int n = BitConverter.ToInt32(lst, 0x18); if (n <= 0 || n > 200) continue;
+        var arr = Read(BitConverter.ToUInt64(lst, 0x10) + 0x20, n * 8); if (arr == null) continue;
+        var one = new StringBuilder();
+        one.Append("{\"src\":\"cs\",\"iHeroId\":").Append(BitConverter.ToUInt32(b, 0x10)).Append(",\"iBaseId\":").Append(BitConverter.ToUInt32(b, 0x14))
+           .Append(",\"iLevel\":").Append(BitConverter.ToUInt32(b, 0x18)).Append(",\"iStarLevel\":").Append(BitConverter.ToUInt32(b, 0x30))
+           .Append(",\"iSublimLevel\":").Append(BitConverter.ToUInt32(b, 0x34)).Append(",\"iSquadId\":").Append(BitConverter.ToUInt32(b, 0x5C))
+           .Append(",\"iLordPosition\":").Append(BitConverter.ToUInt32(b, 0x60)).Append(",\"iAwakeningFlag\":").Append(BitConverter.ToUInt32(b, 0x64))
+           .Append(",\"iPower\":").Append(BitConverter.ToUInt32(b, 0x68)).Append(",\"mAttr\":{");
+        for (int k = 0; k < n; k++) {
+          if (k > 0) one.Append(',');
+          one.Append("\"[").Append(BitConverter.ToUInt32(arr, k * 8)).Append("]\":").Append(BitConverter.ToInt32(arr, k * 8 + 4));
+        }
+        one.Append("}}");
+        if (seen.Add(one.ToString())) sb.Append(one).Append('\n');
+      }
+      L("  C# hero fights: " + hits.Count);
+      return sb.ToString();
+    }
+
     // ------------------------------------------------------------------ the account from the live tables
 
     /// <summary>account.json from the live tables; null when they are not all there (the caller then does the full scan).</summary>
@@ -238,6 +302,10 @@ namespace RealmForge {
       L("  reward events: " + (camp == null ? 0 : camp.Count) + ", artifacts: " + (arts == null ? 0 : arts.Count));
       sb.Append("\n],\n\"campRewards\":"); J(sb, camp);
       sb.Append(",\n\"artifacts\":"); J(sb, arts);
+      // Deity Beasts: account-wide hero attributes (PlayerData.m_AllBeastInfo: beast id -> vAttrList {iAttrId, iLevel})
+      Dictionary<string, object> beasts = null; ulong bv; int bt;
+      if (lt.BeastOwner != 0 && Field(lt.BeastOwner, KBeasts, out bv, out bt) && bt == T_TABLE) beasts = ParseTable(bv, 3, new HashSet<ulong>());
+      sb.Append(",\n\"beasts\":"); J(sb, beasts);
       sb.Append("\n,\"meta\":{\"extractor\":\"" + ExtractorVersion + "\"");
       if (GameVersion != null) { sb.Append(",\"gameVersion\":"); J(sb, GameVersion); }
       sb.Append(",\"seconds\":" + (int)sw.Elapsed.TotalSeconds + ",\"equipment\":" + ne + ",\"heroes\":" + nh + ",\"live\":true}\n}\n");
