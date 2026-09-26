@@ -471,13 +471,79 @@ namespace RealmForge {
     internal static LiveTables EnsureLive(int pid, bool needForm) {
       var lt = live;
       if (lt != null && lt.Pid == pid && HasTable(lt.EquipData, "equips") && HasTable(lt.HeroData, KHeroes)
-          && (!needForm || HasTable(lt.Form, "m_InfinityGridProxy"))) return lt;
+          && (!needForm || (HasTable(lt.Form, "m_InfinityGridProxy") && LiveForm() == lt.Form))) return lt;
       var sw = Stopwatch.StartNew();
       lt = FindLive(pid);
       L("Live tables found in " + sw.Elapsed.TotalSeconds.ToString("0.0") + " s: equip " + (lt.EquipData != 0) + ", heroes " + (lt.HeroData != 0)
         + ", artifacts " + (lt.ArtOwner != 0) + ", rewards " + (lt.CampOwner != 0) + ", hero screen " + (lt.Form != 0));
       live = lt;
       return lt;
+    }
+
+    // ------------------------------------------------------------------ the live hero screen
+
+    // The game keeps its open windows in UIStatic's UIInstance (form id -> form). After a scene change (a battle) it
+    // builds the hero screen again, and the old table stays in memory for a while - with the same fields and even the
+    // same ____instanceId - so a table found by its keys can be the dead copy. The node of UIInstance keyed by the hero
+    // screen's id always holds the live one: found once, then read on every poll (8 bytes).
+    const long FormCharactorMainId = 0;   // UIDefines.ID_FORM_CHARACTORMAIN
+    internal const long FormBackpackId = 0; // UIDefines.ID_FORM_BACKPACKINTEGRATION («Инвентарь»)
+    static ulong formNode, invNode;
+
+    // the value of a UIInstance node keyed by the form id, when it is still that node and holds a table with the key
+    static ulong NodeValue(ulong n, long id, string key) {
+      var b = n != 0 ? Read(n, 32) : null; if (b == null) return 0;
+      if (BitConverter.ToInt64(b, 16) != id || BitConverter.ToInt32(b, 24) != T_INT || BitConverter.ToInt32(b, 8) != T_TABLE) return 0;
+      ulong f = BitConverter.ToUInt64(b, 0);
+      return HasTable(f, key) ? f : 0;
+    }
+    static ulong NodeForm(ulong n) { return NodeValue(n, FormCharactorMainId, "m_InfinityGridProxy"); }
+    static ulong NodeInv(ulong n) { return NodeValue(n, FormBackpackId, "m_CachedContentPanels"); }
+
+    /// <summary>Searches UIInstance's nodes of the hero screen and the inventory (one pass; a form the player has not
+    /// opened yet has none); returns the live hero screen (0 = none).</summary>
+    static ulong FindFormNode() {
+      var hits = new List<ulong>();
+      ScanParallel((b0, buf, len) => {
+        for (int i = 0; i + 32 <= len; i += 8) {
+          long k = BitConverter.ToInt64(buf, i + 16);
+          if (k != FormCharactorMainId && k != FormBackpackId) continue;
+          if (BitConverter.ToInt32(buf, i + 24) != T_INT || BitConverter.ToInt32(buf, i + 8) != T_TABLE) continue;
+          lock (hits) hits.Add(b0 + (ulong)i);
+        }
+      });
+      ulong form = 0; formNode = invNode = 0;
+      foreach (var n in hits) {
+        ulong f;
+        if (formNode == 0 && (f = NodeForm(n)) != 0) { formNode = n; form = f; }
+        else if (invNode == 0 && NodeInv(n) != 0) invNode = n;
+      }
+      return form;
+    }
+
+    /// <summary>The hero screen the game holds now (0 = unknown: the node moved or was never found).</summary>
+    internal static ulong LiveForm() { return NodeForm(formNode); }
+
+    /// <summary>The inventory (Form_BackpackIntegration) the game holds now; searched again (a full pass, about a second)
+    /// when its node is not known or has moved, at most every <paramref name="rescanMs"/> (&lt; 0: not now). 0 = the
+    /// player never opened it.</summary>
+    internal static ulong LiveInvForm(int rescanMs) {
+      ulong f = NodeInv(invNode);
+      if (f != 0 || rescanMs < 0) return f;
+      if (Environment.TickCount - lastNodeScan < rescanMs && lastNodeScan != 0) return 0;
+      lastNodeScan = Environment.TickCount;
+      if (regs == null) return 0;
+      FindFormNode();
+      return NodeInv(invNode);
+    }
+    static int lastNodeScan;
+
+    /// <summary>Some hero of the account (the storage cleanup opens the sell screen from a hero's gear list), 0 = none.</summary>
+    public static long AnyHeroUid() {
+      var lt = live; ulong heroes; int t;
+      if (lt == null || lt.HeroData == 0 || !Field(lt.HeroData, KHeroes, out heroes, out t) || t != T_TABLE) return 0;
+      foreach (var v in TableValues(heroes)) { ulong u; int ut; if (Field(v, "iHeroId", out u, out ut) && ut == T_INT && (long)u > 0) return (long)u; }
+      return 0;
     }
 
     static bool HasTable(ulong t, string key) { ulong v; int tt; return t != 0 && Field(t, key, out v, out tt) && tt == T_TABLE; }
@@ -503,7 +569,9 @@ namespace RealmForge {
       lt.CampOwner = Largest(owners, KCamp);
       lt.ArtOwner = Largest(owners, KArts);
       lt.BeastOwner = Largest(owners, KBeasts);
-      if (owners.TryGetValue(KGrid, out l)) foreach (var t in l) if (HasTable(t, "m_InfinityGridProxy")) { lt.Form = t; break; }
+      // the hero screen: the one the game's window list holds (a dead copy of an older one can own the keys too)
+      lt.Form = FindFormNode();
+      if (lt.Form == 0 && owners.TryGetValue(KGrid, out l)) foreach (var t in l) if (HasTable(t, "m_InfinityGridProxy")) { lt.Form = t; break; }
       if (owners.TryGetValue(KPanel, out l)) foreach (var t in l) if (HasTable(t, KList) && HasTable(t, "m_Form")) { lt.Panel = t; break; }
       return lt;
     }
@@ -644,6 +712,26 @@ namespace RealmForge {
         }
       subValues = res; subValuesPid = pid;
       L("Sub stat values of " + res.Count + " items in " + sw.Elapsed.TotalSeconds.ToString("0.0") + " s");
+    }
+
+    /// <summary>Diagnostics: every table owning the hero screen's grid key, with the types of its fields.</summary>
+    public static string DumpForms() {
+      var ps = Process.GetProcessesByName("Watcher of Realms");
+      if (ps.Length == 0) return null;
+      H = OpenProcess(0x0410, false, ps[0].Id);
+      if (H == IntPtr.Zero) return null;
+      regs = Regions();
+      var owners = OwnersOf(FindLuaStringsFast(new[] { KGrid }));
+      var sb = new StringBuilder(); List<ulong> l;
+      if (owners.TryGetValue(KGrid, out l))
+        foreach (var t in l) {
+          sb.Append(t.ToString("X")).Append(':');
+          var d = ParseTable(t, 0, new HashSet<ulong>());
+          if (d != null) foreach (var kv in d) sb.Append(' ').Append(kv.Key).Append('=').Append(kv.Value is string ? (string)kv.Value : kv.Value == null ? "nil" : kv.Value.ToString());
+          sb.Append('\n');
+        }
+      sb.Append("live (UIInstance): ").Append(FindFormNode().ToString("X")).Append(" node ").Append(formNode.ToString("X")).Append('\n');
+      return sb.ToString();
     }
 
     // ------------------------------------------------------------------ battle study (diagnostics)
@@ -922,6 +1010,7 @@ namespace RealmForge {
 
       ulong v; int tt;
       if (a.EquipData != 0 && Field(a.EquipData, KHero, out v, out tt) && tt == T_INT) s.HeroUid = (long)v;
+      CheckForm(a);
 
       // Who wears each plan item. The game REPLACES an item's table when it changes (EquipData.equips[uid] = new table,
       // e.g. right after the player puts it on), so the current table is looked up in EquipData.equips every time;
@@ -985,6 +1074,19 @@ namespace RealmForge {
     }
 
     // the hero screen is open (EquipData known from before and its hero set): then the scan must find the form too
+    /// <summary>The game built the hero screen again (after a battle, say): follow it to the new one. When the window
+    /// list's node has moved (the list grew), the form is dropped, so the host scans again.</summary>
+    static void CheckForm(EquipAddrs a) {
+      if (a.Form == 0 || formNode == 0) return;   // no node known: the form found by its keys stays
+      ulong f = LiveForm();
+      if (f == a.Form) return;
+      if (f == 0) formNode = 0;
+      L(f != 0 ? "  hero screen rebuilt by the game: following it" : "  hero screen lost: scanning again");
+      a.Form = f;
+      if (live != null) live.Form = f;
+      if (f != 0) RefreshPanel(a);
+    }
+
     static bool HeroScreenOpen() {
       var lt = live; ulong v; int tt;
       return lt != null && lt.EquipData != 0 && Field(lt.EquipData, KHero, out v, out tt) && tt == T_INT && (long)v > 0;
@@ -1912,6 +2014,14 @@ namespace RealmForge {
     }
 
     static PlansResult Request(string method, string url, string code, string body, bool parsePlans) {
+      int http; string text, err;
+      if (!Send(method, url, code, body, out http, out text, out err)) { var r = new PlansResult(); r.Status = PlansStatus.Unreachable; r.Details = err; return r; }
+      return Interpret(http, text, parsePlans);
+    }
+
+    /// <summary>One request with the sync code; false when the site was not reached (err says why).</summary>
+    internal static bool Send(string method, string url, string code, string body, out int http, out string text, out string err) {
+      http = 0; text = null; err = null;
       try {
         SyncClient.EnableTls12();
         ServicePointManager.Expect100Continue = false;
@@ -1931,27 +2041,26 @@ namespace RealmForge {
           req.ContentLength = b.Length;
           using (Stream s = req.GetRequestStream()) s.Write(b, 0, b.Length);
         }
-        using (var resp = (HttpWebResponse)req.GetResponse()) return FromResponse(resp, parsePlans);
+        using (var resp = (HttpWebResponse)req.GetResponse()) { http = (int)resp.StatusCode; text = ReadBody(resp); }
+        return true;
       } catch (WebException e) {
         var resp = e.Response as HttpWebResponse;
-        if (resp != null) using (resp) return FromResponse(resp, parsePlans);
-        var r = new PlansResult(); r.Status = PlansStatus.Unreachable; r.Details = e.Message; return r;
+        if (resp != null) using (resp) { http = (int)resp.StatusCode; text = ReadBody(resp); return true; }
+        err = e.Message; return false;
       } catch (Exception e) {
-        var r = new PlansResult(); r.Status = PlansStatus.Unreachable; r.Details = e.Message; return r;
+        err = e.Message; return false;
       }
     }
 
-    static PlansResult FromResponse(HttpWebResponse resp, bool parsePlans) {
-      string text = null;
+    static string ReadBody(HttpWebResponse resp) {
       try {
         using (Stream s = resp.GetResponseStream())
         using (var ms = new MemoryStream()) {
           var buf = new byte[16384]; int n;
           while ((n = s.Read(buf, 0, buf.Length)) > 0 && ms.Length < MaxReplyBytes) ms.Write(buf, 0, n);
-          text = Encoding.UTF8.GetString(ms.ToArray());
+          return Encoding.UTF8.GetString(ms.ToArray());
         }
-      } catch (Exception) { }
-      return Interpret((int)resp.StatusCode, text, parsePlans);
+      } catch (Exception) { return null; }
     }
 
     // Maps an HTTP reply to a PlansResult. Pure function (tested without a network).

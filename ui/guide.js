@@ -107,6 +107,20 @@
     }
   }
 
+  // «Снять с других героев» pressed for a plan (ids: plan id -> true): its items someone else put on after the plan
+  // was made are taken from whoever wears them now, like the items the optimizer took from other heroes. Applied after
+  // every reading and reload (plans from the site come as new objects).
+  function takeOver(plans, owner, ids) {
+    if (!owner || !ids) return;
+    for (const p of plans || []) {
+      if (!ids[p.id] || p.bridge) continue;
+      for (const it of p.items) {
+        const own = owner[it.uid];
+        if (own > 0 && own !== p.heroUid && it.fromHeroUid != null && own !== it.fromHeroUid) { it.fromHeroUid = own; it.fromHeroName = null; }
+      }
+    }
+  }
+
   // Plans after a reload from the site: the bridge's plans still in progress stay (first), the site's list follows.
   function mergePlans(current, site, reported) {
     return (current || []).filter((p) => p.bridge && !(reported && reported[p.id])).concat(site || []);
@@ -169,7 +183,7 @@
     return a > 10 && a < 20 ? many : b === 1 ? one : b >= 2 && b <= 4 ? few : many;
   }
 
-  const api = { next, pickPlan, bridgePlan, mergePlans, freshPlan, freshPlans, nextQueued, adoptOwners, highlightUid, plural, bustUrl, headUrl, itemUrl, setUrl, rankOf, statOf, statId, statUrl, VISIBLE_ROWS };
+  const api = { next, pickPlan, bridgePlan, mergePlans, freshPlan, freshPlans, nextQueued, adoptOwners, takeOver, highlightUid, plural, bustUrl, headUrl, itemUrl, setUrl, rankOf, statOf, statId, statUrl, VISIBLE_ROWS };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.RFGuide = api;
 })(typeof window !== 'undefined' ? window : globalThis);

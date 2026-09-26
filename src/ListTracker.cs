@@ -146,6 +146,37 @@ namespace RealmForge {
       return best >= 0.15;
     }
 
+    /// <summary>How many columns a grid of cells with stat bars fills the strip with (pixels row by row, width w): the
+    /// bars' horizontal profile repeats with the column step, so the count whose step correlates best wins (of nearly
+    /// equal ones the larger: half the count correlates at twice the step too). 0 = no bars seen. Checked on the
+    /// inventory at 1920×1009, 1600×1000 and 1300×1000 (8 columns, bars broken by the icons and numbers in them).</summary>
+    public static int GridColumns(int[] px, int w, int h, int min = 4, int max = 16) {
+      var col = new double[w]; int lines = 0;
+      for (int y = 0; y < h; y++) {
+        int row = y * w, n = 0;
+        for (int x = 0; x < w; x++) if (IsBar(px[row + x])) n++;
+        if (n <= 0.2 * w) continue;                  // only lines through the bars
+        lines++;
+        for (int x = 0; x < w; x++) if (IsBar(px[row + x])) col[x]++;
+      }
+      if (lines < 3) return 0;
+      double m = 0; foreach (var v in col) m += v; m /= w;
+      for (int x = 0; x < w; x++) col[x] -= m;
+      var score = new double[max + 1]; double best = double.MinValue;
+      for (int cols = min; cols <= max; cols++) {
+        double lag = w / (double)cols, s = 0; int n = 0;
+        for (int x = 0; x + lag < w - 1; x++) {
+          double xl = x + lag; int i = (int)xl; double f = xl - i;
+          s += col[x] * (col[i] * (1 - f) + col[i + 1] * f); n++;
+        }
+        score[cols] = n > 0 ? s / n : double.MinValue;
+        if (score[cols] > best) best = score[cols];
+      }
+      if (best <= 0) return 0;
+      for (int cols = max; cols >= min; cols--) if (score[cols] >= best * 0.9) return cols;
+      return 0;
+    }
+
     /// <summary>Moves y to the nearest position with the given phase (both in the same pixels); the move is in (-pitch/2, pitch/2].</summary>
     public static double Snap(double y, double phase, double pitch) {
       double d = (phase - y) % pitch;

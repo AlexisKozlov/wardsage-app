@@ -371,6 +371,7 @@ static class CoreTests {
 
     Console.WriteLine("HeroPilot (the plan's hero on the hero screen):");
     HeroPilotTests();
+    SellPilotTests();
 
     Console.WriteLine("Window shapes (the game's UI scale: height, or width below 16:9):");
     {
@@ -641,6 +642,175 @@ static class CoreTests {
       if (p.State == "failed" || p.State == "notfound" || p.State == "noscreen" || p.State == "small") return p.State;
     }
     return "timeout:" + p.State;
+  }
+
+  // The game's sell screen: rows of 6 items with title rows; a click toggles the item's selection and shows it as
+  // m_CurrentEquipUid; a drag moves the list by gain × pointer move; the part icons filter the list (and clear the choice,
+  // as the game does), «Сбросить» clears the filter.
+  sealed class FakeSellGame {
+    public SellGeometry G; public double W = 1920, H = 1009, U = 1009, Gain = 1.12, GainDown = 0.84, Scroll;   // the list follows drags down less (live)   // Scroll: px the list is moved up
+    public int[] Types; public Dictionary<long, int[]> Pos = new Dictionary<long, int[]>();
+    public HashSet<long> Sel = new HashSet<long>(); public long Cur; public ulong Ptr = 7; public int Clicks, Drags, FilterClicks;
+    public Dictionary<long, int> PartOf = new Dictionary<long, int>(); public HashSet<int> Parts = new HashSet<int>();
+    public bool Hidden;   // the player's own filter hides the first rows' items until «Сбросить»
+    // «Быстрое улучшение» after a click on an item below +16 (every third): over the lower middle of the list; a click on it
+    // is a disaster (DangerClicks), the empty spot right of the list closes it
+    public bool Popup, Shown, HasPopup = true; public int DangerClicks;   // HasPopup: the sell screen has one, the inventory not
+    public int RealCols = 6; public double? RealX0, RealPitchX;   // the game's own columns (a wrong guess of the pilot's)
+    public static int Level(long uid) { return uid % 3 == 0 ? 16 : (int)(uid % 4) * 4; }   // Popup: the game's m_bShow (stays set), Shown: on the screen
+    readonly List<long> all = new List<long>(); readonly int titleEvery;
+    public FakeSellGame(SellGeometry g, int rows, int titleEvery, int cols = 6) {
+      G = g; this.titleEvery = titleEvery; RealCols = cols;
+      for (int k = 0; k < rows * cols; k++) { long u = 5000 + k; all.Add(u); PartOf[u] = k % 5; }
+      Build();
+    }
+    public void Build() {
+      Pos.Clear(); var t = new List<int> { 0 }; int n = 0; var items = new List<long>();
+      foreach (var u in all) if ((Parts.Count == 0 || Parts.Contains(PartOf[u])) && !(Hidden && u < 5012)) items.Add(u);
+      for (int r = 1; n < items.Count; r++) {
+        if (titleEvery > 0 && r % titleEvery == 1) { t.Add(2); continue; }
+        t.Add(1); for (int c = 1; c <= RealCols && n < items.Count; c++) Pos[items[n++]] = new[] { t.Count - 1, c };
+      }
+      Types = t.ToArray(); Scroll = 0; Ptr++; Sel.Clear(); Cur = 0;
+    }
+    double Row1 { get { return G.ViewTopPx(U) + G.TopPad * U - Scroll; } }
+    // the list stops when its last row reaches the bottom of the view
+    public double MaxScroll { get { return Math.Max(0, G.RowOffset(Types, Types.Length) * U + G.TopPad * U - (G.ViewBottomPx(H, U) - G.ViewTopPx(U))); } }
+    public double Phase() {   // the row tops of the item rows on the screen, mod the row step
+      double pitch = G.PitchY * U; int r = 1; while (r < Types.Length && Types[r] != 1) r++;
+      double y = Row1 + G.RowOffset(Types, r) * U; double ph = y % pitch; return ph < 0 ? ph + pitch : ph;
+    }
+    public SellScreen Screen() {
+      var s = new SellScreen { Open = true, ListPtr = Ptr, Types = Types, Current = Cur, Popup = Popup };
+      foreach (var kv in Pos) s.Pos[kv.Key] = kv.Value; foreach (var u in Sel) s.Selected.Add(u); foreach (var p in Parts) s.Parts.Add(p);
+      return s;
+    }
+    public void Act(AutoAction a) {
+      if (a.Kind == AutoKind.Drag) { Drags++; Scroll = Math.Max(0, Math.Min(MaxScroll, Scroll - a.DY * (a.DY > 0 ? GainDown : Gain))); return; }
+      if (a.Kind != AutoKind.Click) return;
+      Clicks++;
+      var cl = G.Close(W, H, U); if (Math.Abs(a.X - cl[0]) < 20 && Math.Abs(a.Y - cl[1]) < 20) { Shown = false; return; }
+      if (Shown && a.X > W / 2 - 0.19 * U && a.X < W / 2 + 0.32 * U && a.Y > 0.505 * U && a.Y < 0.892 * U) { DangerClicks++; return; }
+      for (int p = 0; p <= 4; p++) { var c = G.Part(p, W, H, U); if (Math.Abs(a.X - c[0]) < 20 && Math.Abs(a.Y - c[1]) < 20) { FilterClicks++; if (!Parts.Remove(p)) Parts.Add(p); Build(); return; } }
+      var rs = G.Reset(W, H, U); if (Math.Abs(a.X - rs[0]) < 20 && Math.Abs(a.Y - rs[1]) < 20) { FilterClicks++; Parts.Clear(); Hidden = false; Build(); return; }
+      if (a.Y < G.ViewTopPx(U) || a.Y > G.ViewBottomPx(H, U)) return;
+      double y = a.Y - Row1; int row = 0; double top = 0;
+      for (int r = 1; r < Types.Length; r++) { double h = G.RowHeight(Types[r]) * U; if (y >= top && y < top + h) { row = r; break; } top += h; }
+      if (row == 0 || Types[row] != 1 || y - top > G.CellHeight * U) return;    // a title, a gap under the cells
+      double xr = (a.X - W / 2) / U - (RealX0 ?? G.X0), px = RealPitchX ?? G.PitchX; int col = (int)Math.Floor(xr / px) + 1;
+      if (col < 1 || col > RealCols || xr - (col - 1) * px > G.CellW) return;
+      foreach (var kv in Pos) if (kv.Value[0] == row && kv.Value[1] == col) {
+        if (!Sel.Remove(kv.Key)) Sel.Add(kv.Key);
+        Cur = Cur == kv.Key ? 0 : kv.Key; Popup = Shown = HasPopup && Level(kv.Key) < 16; return;
+      }
+    }
+  }
+
+  static string RunSell(SellPilot p, FakeSellGame game, ICollection<long> wanted, int maxSteps, bool phase = true) {
+    long now = 0; var traces = new List<string>(); var parts = new HashSet<int>(); foreach (var u in wanted) { int pt; if (game.PartOf.TryGetValue(u, out pt)) parts.Add(pt); }
+    for (int i = 0; i < maxSteps; i++) {
+      var lv = new Dictionary<long, int>(); foreach (var u in wanted) lv[u] = FakeSellGame.Level(u);
+      var a = p.Step(new SellView { NowMs = now, Foreground = true, W = game.W, H = game.H, U = game.U, Screen = game.Screen(), Wanted = wanted,
+                                    Parts = parts, Levels = lv, Phase = phase ? game.Phase() : double.NaN });
+      if (p.Trace != "") { traces.Add(p.Trace); if (traces.Count > 8) traces.RemoveAt(0); p.Trace = ""; }
+      game.Act(a); now += 100;   // (a stopped pilot may still take a stray item back: the app performs that click)
+      if ((p.State == "done" || p.State == "failed") && a.Kind == AutoKind.None) { if (p.State == "failed") Console.WriteLine("    last steps: " + string.Join(" | ", traces)); return p.State; }
+    }
+    return "timeout";
+  }
+
+  static void SellPilotTests() {
+    Console.WriteLine("Sell pilot");
+    var g = new SellGeometry();   // as measured on the game
+    var game = new FakeSellGame(g, 150, 60);
+    var rnd = new Random(3); var all = new List<long>(game.Pos.Keys); var want = new HashSet<long>();
+    while (want.Count < 60) want.Add(all[rnd.Next(all.Count)]);
+    var p = new SellPilot(g);
+    string st = RunSell(p, game, want, 30000);
+    Check(st == "done" && want.IsSubsetOf(game.Sel) && game.Sel.Count == want.Count && p.Extra == 0,
+          "60 items over 150 rows (all parts): all selected, nothing else (" + game.Clicks + " clicks, " + game.Drags + " drags, " + st + ")");
+    Check(game.Clicks <= want.Count * 2.0, "few extra clicks with the rows' phase from the screen (" + game.Clicks + " for " + want.Count + ", «Быстрое улучшение» closed too)");
+    Check(game.DangerClicks == 0, "never a click on «Быстрое улучшение» (it opens after a click on an item below +16)");
+
+    // only rings and amulets: the part filter first (a shorter list), then the items
+    var gp = new FakeSellGame(g, 150, 0); var wp = new HashSet<long>();
+    foreach (var kv in gp.PartOf) if ((kv.Value == 3 || kv.Value == 4) && kv.Key % 7 == 0) wp.Add(kv.Key);
+    var pp = new SellPilot(g);
+    string sp = RunSell(pp, gp, wp, 30000);
+    Check(sp == "done" && gp.Parts.SetEquals(new[] { 3, 4 }) && wp.IsSubsetOf(gp.Sel) && gp.Sel.Count == wp.Count,
+          "two parts only: the list filtered to them, then all " + wp.Count + " selected (" + gp.Drags + " drags, " + sp + ")");
+
+    // the player's filter hides some: «Сбросить» once, before anything is selected
+    var gh = new FakeSellGame(g, 30, 0) { Hidden = true }; gh.Build(); var wh = new HashSet<long> { 5001, 5050, 5100 };
+    var ph = new SellPilot(g);
+    string sh = RunSell(ph, gh, wh, 5000);
+    Check(sh == "done" && wh.IsSubsetOf(gh.Sel) && gh.Sel.Count == 3, "items hidden by the player's filter: «Сбросить», then selected (" + sh + ")");
+
+    // no phase on the screen (drags only estimated): still done, by the clicks' answers
+    var gn = new FakeSellGame(g, 80, 30); var wn = new HashSet<long>(); var alln = new List<long>(gn.Pos.Keys);
+    while (wn.Count < 40) wn.Add(alln[rnd.Next(alln.Count)]);
+    var pn = new SellPilot(g);
+    string sn = RunSell(pn, gn, wn, 30000, false);
+    Check(sn == "done" && wn.IsSubsetOf(gn.Sel) && gn.Sel.Count == wn.Count, "without the screen's phase: all selected, nothing else (" + gn.Clicks + " clicks, " + sn + ")");
+
+    // the list is not at the top when the pilot starts (the player scrolled it): a neighbour hit is taken back at once
+    var off = new FakeSellGame(g, 40, 0); off.Scroll = 0.6 * g.PitchY * 1009;
+    var w2 = new HashSet<long>(); foreach (var kv in off.Pos) if (kv.Value[0] % 3 == 0 && kv.Value[1] % 2 == 0) w2.Add(kv.Key);
+    var p2 = new SellPilot(g);
+    string st2 = RunSell(p2, off, w2, 20000, false);
+    Check(st2 == "done" && w2.IsSubsetOf(off.Sel) && off.Sel.Count == w2.Count, "list scrolled by the player: neighbours hit by mistake are taken back, all selected (" + st2 + ")");
+
+    // the last rows: the list stops at its end, the pilot clicks them there (no endless drags, no stray clicks)
+    var ge = new FakeSellGame(g, 60, 0); var we = new HashSet<long>(); foreach (var kv in ge.Pos) if (kv.Value[0] >= 58 || kv.Value[0] == 2) we.Add(kv.Key);
+    var pe = new SellPilot(g);
+    string se = RunSell(pe, ge, we, 20000);
+    Check(se == "done" && we.IsSubsetOf(ge.Sel) && ge.Sel.Count == we.Count, "items in the last rows (the list's end): all selected, nothing else (" + se + ", " + ge.Drags + " drags, missing " + pe.Missing + ")");
+
+    // the player's own choice stays and is reported (and no filter click then: it would clear it)
+    var g3 = new FakeSellGame(g, 20, 0); g3.Sel.Add(5003); var w3 = new HashSet<long> { 5001, 5010, 99999 };
+    var p3 = new SellPilot(g);
+    string st3 = RunSell(p3, g3, w3, 5000);
+    Check(st3 == "done" && g3.Sel.Contains(5001) && g3.Sel.Contains(5010) && g3.Sel.Contains(5003) && p3.Extra == 1 && p3.Missing == 1 && g3.FilterClicks == 0,
+          "the player's own choice kept (extra 1, no filter clicks), an item not in the list counted missing");
+
+    // the inventory's bulk sale (the app's way): 8 columns, no pop-up, no filter; 1920×1009 and a 4:3-ish 1300×1000
+    foreach (var sz in new[] { new[] { 1920.0, 1009 }, new[] { 1300.0, 1000 } }) {
+      double W = sz[0], H = sz[1], U = Ui.Unit(W, H);
+      var gi = SellGeometry.Inventory(W, U, 8);
+      var gv = new FakeSellGame(gi, 130, 0, 8) { W = W, H = H, U = U, HasPopup = false };
+      var wi = new HashSet<long>(); var ri = new Random(7); var alli = new List<long>(gv.Pos.Keys);
+      while (wi.Count < 150) wi.Add(alli[ri.Next(alli.Count)]);
+      foreach (var kv in gv.Pos) if (kv.Value[0] >= 129) wi.Add(kv.Key);   // the list's last rows too
+      var pi = new SellPilot(gi);
+      string si = RunSell(pi, gv, wi, 40000);
+      Check(si == "done" && wi.IsSubsetOf(gv.Sel) && gv.Sel.Count == wi.Count && gv.FilterClicks == 0,
+            "inventory " + W + "×" + H + ": " + wi.Count + " items over 130 rows selected, nothing else, no filter clicks (" + gv.Clicks + " clicks, " + gv.Drags + " drags, " + si + ")");
+      Check(gv.Clicks <= wi.Count * 1.25, "inventory: about one click per item (" + gv.Clicks + " for " + wi.Count + ")");
+    }
+    // the game has 9 columns where the pilot counts 8: the first click lands in another column - it is taken back, stop
+    {
+      double W = 1920, H = 1009, U = 1009;
+      var g8 = SellGeometry.Inventory(W, U, 8); var g9 = SellGeometry.Inventory(W, U, 9);
+      var gw = new FakeSellGame(g8, 40, 0, 9) { W = W, H = H, U = U, RealX0 = g9.X0, RealPitchX = g9.PitchX, HasPopup = false };
+      var ww = new HashSet<long>(); foreach (var kv in gw.Pos) if (kv.Value[1] >= 6 && kv.Value[0] % 2 == 0) ww.Add(kv.Key);
+      var screen = gw.Screen(); screen.Pos.Clear();   // the pilot's own idea of the list: rows of 8
+      var pw = new SellPilot(g8); long nowW = 0; string sw8 = "timeout"; var order = new List<long>(); foreach (var kv in gw.Pos) order.Add(kv.Key); order.Sort();
+      for (int i = 0; i < 5000; i++) {
+        var sc = gw.Screen(); sc.Pos.Clear(); for (int k = 0; k < order.Count; k++) sc.Pos[order[k]] = new[] { k / 8 + 1, k % 8 + 1 };
+        var t8 = new int[(order.Count + 7) / 8 + 1]; for (int r = 1; r < t8.Length; r++) t8[r] = 1; sc.Types = t8;
+        var a = pw.Step(new SellView { NowMs = nowW, Foreground = true, W = W, H = H, U = U, Screen = sc, Wanted = ww, Phase = double.NaN });
+        gw.Act(a); nowW += 100;   // (a stopped pilot may still take a stray item back: the app performs that click)
+        if ((pw.State == "done" || pw.State == "failed") && a.Kind == AutoKind.None) { sw8 = pw.State; break; }
+      }
+      bool noExtra = true; foreach (var u in gw.Sel) if (!ww.Contains(u)) noExtra = false;
+      Check(sw8 == "failed" && noExtra, "wrong column count: stopped with nothing extra selected (" + sw8 + ", " + gw.Sel.Count + " selected)");
+    }
+
+    // never clicks without the game in front or while the player moves the mouse
+    var g4 = new FakeSellGame(g, 10, 0); var p4 = new SellPilot(g);
+    var a4 = p4.Step(new SellView { NowMs = 0, Foreground = false, W = 1920, H = 1009, U = 1009, Screen = g4.Screen(), Wanted = new HashSet<long> { 5001 } });
+    var a5 = p4.Step(new SellView { NowMs = 100, Foreground = true, UserBusy = true, W = 1920, H = 1009, U = 1009, Screen = g4.Screen(), Wanted = new HashSet<long> { 5001 } });
+    Check(a4.Kind == AutoKind.None && a5.Kind == AutoKind.None, "no clicks with the game behind or the player busy");
   }
 
   static void HeroPilotTests() {

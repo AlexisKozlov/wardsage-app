@@ -16,7 +16,9 @@
     plans: { status: 'idle', list: [], err: null }, sel: 0,
     scan: { status: 'idle', panel: false }, live: null, reported: {}, compact: false, overlay: 'off', hl: '',
     autoSync: true, autoClick: true, autoConfirm: false, auto: 'idle', autoAt: null,
-    run: null, seen: null, runKey: '', queue: [],
+    run: null, seen: null, runKey: '', queue: [], takeOver: {},
+    // storage cleanup: the site's list, the pilot's state on the game's sell screen
+    sell: { list: null, run: false, state: '', selected: 0, missing: 0, extra: 0, seen: {} },
   };
 
   // ---------------------------------------------------------------- helpers
@@ -224,6 +226,7 @@
     else if (P.status === 'error') body = emptyBox(t('plansErr'), P.err === 'token' ? t('plansErrToken') : P.err || '', `<button class="btn-line" data-act="reload">${I.reload}${esc(t('reload'))}</button>`);
     else if (!P.list.length) body = emptyBox(t('plansNone'), t('plansNoneP'), `<button class="btn-line" data-act="open" data-url="${esc(S.site + '/app/optimizer')}">${I.ext}${esc(t('openOptimizer'))}</button>`);
     else body = `<div class="stack"><div class="plans">${P.list.map(planCard).join('')}</div>${guideCard()}</div>`;
+    if (S.sell.list) body = sellCard() + body;
     return `
       <div class="head"><div><h1>${esc(t('equipTitle'))}</h1><p class="lead">${esc(t('equipLead'))}</p></div>
         <div class="row">
@@ -232,6 +235,27 @@
           ${S.hasCode ? `<button class="btn-line" data-act="reload" ${P.status === 'loading' ? 'disabled' : ''}>${I.reload}${esc(t('reload'))}</button>` : ''}
         </div></div>
       ${body}`;
+  }
+
+  // «Чистка склада»: the list from the site; the app selects it on the game's sell screen, the player presses «Продать»
+  function sellCard() {
+    const L = S.sell, n = L.list.items.length;
+    const st = L.run ? (L.state === 'done' ? t('sellDone', L.selected) : L.state === 'failed' ? t('sellFailed') : L.state === 'no_city' ? t('sellNoCity')
+      : L.state === 'open' ? t('sellOpening') : L.state === 'background' ? t('sellBack') : L.state === 'paused' ? t('sellPaused') : t('sellWork', L.selected, n)) : '';
+    const warn = [L.missing ? t('sellMissing', L.missing) : '', L.extra ? t('sellExtra', L.extra) : ''].filter(Boolean).join(' ');
+    return `<div class="card sell"><div class="row" style="justify-content:space-between;align-items:flex-start">
+        <div><h3>${esc(t('sellTitle'))}</h3><div class="meta">${esc(t('sellCount', n))}</div></div>
+        <div class="row">${L.run ? `<button class="btn-line" data-act="sellStop">${esc(t('stopBtn'))}</button>`
+          : `<button class="btn" data-act="sellRun" ${S.game.running ? '' : 'disabled'}>${esc(t('sellRun'))}</button>`}
+          <button class="btn-line" data-act="sellCancel">${esc(t('sellCancel'))}</button></div></div>
+      <p class="lead">${esc(t('sellLead'))}</p>
+      ${st ? `<p><b>${esc(st)}</b></p>` : ''}${warn ? `<p class="warn">${esc(warn)}</p>` : ''}</div>`;
+  }
+  function sellStart() {
+    const L = S.sell; if (!L.list) return;
+    L.run = true; L.state = 'work';
+    host.send({ cmd: 'sell.run', uids: L.list.items.map((x) => x.uid), slots: [...new Set(L.list.items.map((x) => x.slot))], levels: L.list.items.map((x) => x.level || 0) });
+    render();
   }
 
   function emptyBox(title, text, actions) {
@@ -314,7 +338,8 @@
     switch (g.kind) {
       case 'closed': return sayBox('warn', I.game, t('gClosed'), t('gClosedP'));
       case 'done': return sayBox('done', I.check, t('gDone'), t('gDoneP'));
-      case 'taken': return sayBox('warn', I.warn, t('gTaken', g.taken), t(p.bridge ? 'gTakenBridge' : 'gTakenP'));
+      case 'taken': return sayBox('warn', I.warn, t('gTaken', g.taken), t(p.bridge ? 'gTakenBridge' : 'gTakenP'),
+        p.bridge ? '' : `<div class="row" style="margin-top:10px"><button class="btn-line" data-act="takeOver">${esc(t('takeOverBtn'))}</button></div>`);
       case 'hero': {
         if (S.run === p.id && S.autoClick) {
           const hs = S.auto && S.auto.indexOf('hero_') === 0 ? S.auto : '';
@@ -438,7 +463,7 @@
 
   // ---------------------------------------------------------------- actions
   function allUids() { const s = new Set(); S.plans.list.forEach((p) => p.items.forEach((i) => s.add(i.uid))); return [...s]; }
-  function loadPlans() { if (!S.hasCode) return; S.plans.status = 'loading'; host.send({ cmd: 'plans.load', lang: S.lang }); render(); }
+  function loadPlans() { if (!S.hasCode) return; S.plans.status = 'loading'; host.send({ cmd: 'plans.load', lang: S.lang }); host.send({ cmd: 'sell.load', lang: S.lang }); render(); }
   function scan() { if (!S.plans.list.length) return; S.scan = { status: 'scanning', panel: false }; host.send({ cmd: 'equip.scan', uids: allUids() }); render(); }
   // the game needs to know the new plan's items: a first scan, or just the new list of watched items
   function watchPlans() { if (!S.plans.list.length) return; if (S.scan.status !== 'ok') scan(); else host.send({ cmd: 'equip.watch', uids: allUids() }); }
@@ -534,6 +559,20 @@
     else if (a === 'rescan') scan();
     else if (a === 'pick') { S.sel = Number(el.dataset.i); render(); }
     else if (a === 'run') { const p = current(); if (!p) return; startRun(p); if (!S.autoConfirm) toast(t('runNoConfirm'), 6000); render(); }
+    else if (a === 'sellRun') sellStart();
+    else if (a === 'sellStop') { S.sell.run = false; host.send({ cmd: 'sell.stop' }); render(); }
+    else if (a === 'sellCancel') {
+      if (!S.sell.list) return;
+      host.send({ cmd: 'sell.stop' }); host.send({ cmd: 'sell.finish', id: S.sell.list.id, done: false });
+      S.sell.list = null; S.sell.run = false; render();
+    }
+    else if (a === 'takeOver') {
+      // the player asked to take the items off the heroes wearing them now (only this plan)
+      const p = current(); if (!p) return;
+      S.takeOver[p.id] = true; G.takeOver(S.plans.list, S.live && S.live.owner, S.takeOver);
+      if (S.autoClick && S.game.running) enqueue([p]);
+      render();
+    }
     else if (a === 'stopRun') { S.run = null; S.queue = []; syncHighlight(); render(); }
     else if (a === 'runAll') {
       const todo = S.plans.list.filter((p) => { const k = G.next(p, S.live).kind; return k !== 'done' && k !== 'taken'; });
@@ -598,6 +637,7 @@
       case 'equip.live': {
         S.live = m.live;
         G.adoptOwners(S.plans.list, S.live.owner);
+        G.takeOver(S.plans.list, S.live.owner, S.takeOver);
         const ri = S.run ? S.plans.list.findIndex((x) => x.id === S.run) : -1;
         if (S.run && ri < 0) S.run = null;
         const auto = ri >= 0 ? ri : G.pickPlan(S.plans.list, S.live, S.sel); if (auto >= 0) S.sel = auto;
@@ -622,6 +662,31 @@
       case 'overlay': S.overlay = m.state; if (S.page === 'equip' || S.compact) render(); break;
       case 'update': S.update = { version: m.version, notes: m.notes || '' }; render(); break;
       case 'auto': S.auto = m.state; if (S.page === 'equip' || S.compact) render(); break;
+      case 'sell': {
+        if (m.status !== 'ok') break;
+        const L = S.sell, was = L.list && L.list.id;
+        L.list = m.list;
+        if (!m.list) { if (L.run) host.send({ cmd: 'sell.stop' }); L.run = false; }
+        else if (m.list.id !== was) {
+          // «Очистить в игре» on the site a moment ago: start at once (an older list waits for «Выделить в игре»)
+          const fresh = !L.seen[m.list.id] && Date.now() - Date.parse(m.list.createdAt || '') < 10 * 60 * 1000;
+          L.seen[m.list.id] = true;
+          if (L.run) host.send({ cmd: 'sell.stop' });
+          L.run = false;
+          if (fresh && S.autoClick && S.game.running) { sellStart(); if (!S.compact) S.page = 'equip'; }
+        }
+        render(); break;
+      }
+      case 'sell.state': {
+        const L = S.sell; L.state = m.state; L.selected = m.selected; L.missing = m.missing; L.extra = m.extra;
+        // sold: none of the list's items is in the game any more
+        if (L.list && L.run && m.selected === 0 && m.missing === L.list.items.length) {
+          host.send({ cmd: 'sell.stop' }); host.send({ cmd: 'sell.finish', id: L.list.id, done: true });
+          toast(t('sellSold')); L.list = null; L.run = false;
+        }
+        if (S.page === 'equip' || S.compact) render();
+        break;
+      }
       case 'focusEquip': S.page = 'equip'; render(); break;
       // an equip command from the local bridge: a plan like the site's, walked through by the same guide
       case 'bridge.equip': {

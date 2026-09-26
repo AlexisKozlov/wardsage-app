@@ -90,6 +90,14 @@ namespace RealmForge {
     }
 
     static PlansResult Request(string method, string url, string code, string body, bool parsePlans) {
+      int http; string text, err;
+      if (!Send(method, url, code, body, out http, out text, out err)) { var r = new PlansResult(); r.Status = PlansStatus.Unreachable; r.Details = err; return r; }
+      return Interpret(http, text, parsePlans);
+    }
+
+    /// <summary>One request with the sync code; false when the site was not reached (err says why).</summary>
+    internal static bool Send(string method, string url, string code, string body, out int http, out string text, out string err) {
+      http = 0; text = null; err = null;
       try {
         SyncClient.EnableTls12();
         ServicePointManager.Expect100Continue = false;
@@ -109,27 +117,26 @@ namespace RealmForge {
           req.ContentLength = b.Length;
           using (Stream s = req.GetRequestStream()) s.Write(b, 0, b.Length);
         }
-        using (var resp = (HttpWebResponse)req.GetResponse()) return FromResponse(resp, parsePlans);
+        using (var resp = (HttpWebResponse)req.GetResponse()) { http = (int)resp.StatusCode; text = ReadBody(resp); }
+        return true;
       } catch (WebException e) {
         var resp = e.Response as HttpWebResponse;
-        if (resp != null) using (resp) return FromResponse(resp, parsePlans);
-        var r = new PlansResult(); r.Status = PlansStatus.Unreachable; r.Details = e.Message; return r;
+        if (resp != null) using (resp) { http = (int)resp.StatusCode; text = ReadBody(resp); return true; }
+        err = e.Message; return false;
       } catch (Exception e) {
-        var r = new PlansResult(); r.Status = PlansStatus.Unreachable; r.Details = e.Message; return r;
+        err = e.Message; return false;
       }
     }
 
-    static PlansResult FromResponse(HttpWebResponse resp, bool parsePlans) {
-      string text = null;
+    static string ReadBody(HttpWebResponse resp) {
       try {
         using (Stream s = resp.GetResponseStream())
         using (var ms = new MemoryStream()) {
           var buf = new byte[16384]; int n;
           while ((n = s.Read(buf, 0, buf.Length)) > 0 && ms.Length < MaxReplyBytes) ms.Write(buf, 0, n);
-          text = Encoding.UTF8.GetString(ms.ToArray());
+          return Encoding.UTF8.GetString(ms.ToArray());
         }
-      } catch (Exception) { }
-      return Interpret((int)resp.StatusCode, text, parsePlans);
+      } catch (Exception) { return null; }
     }
 
     // Maps an HTTP reply to a PlansResult. Pure function (tested without a network).

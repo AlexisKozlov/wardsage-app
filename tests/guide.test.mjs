@@ -82,6 +82,19 @@ ok(G.next(plan, live({ owner: { 6423: 0 } })).item.uid === 6423, 'in the bag: wa
   ok(G.nextQueued(['a', 'b'], [a, b], lv).id === 'b', 'the queue skips a build that is on already');
   ok(G.nextQueued(['x', 'b'], [a, b], lv).id === 'b' && G.nextQueued(['a'], [a, b], lv) === null, 'gone or done: skipped / nothing left');
 }
+// «Снять с других героев»: the items put on someone after the plan are taken from them - only for the plans asked for
+{
+  const p = { id: 't', heroUid: 1, items: [{ slot: 0, uid: 11, fromHeroUid: 0 }, { slot: 1, uid: 12, fromHeroUid: 0 }] };
+  const lv = live({ owner: { 11: 5, 12: 1 } });
+  ok(G.next(p, lv).kind === 'taken', 'an item put on another hero later: taken');
+  G.takeOver([p], lv.owner, {});
+  ok(G.next(p, lv).kind === 'taken', 'not asked: still taken');
+  G.takeOver([p], lv.owner, { t: true });
+  ok(p.items[0].fromHeroUid === 5 && G.next(p, lv).states[11] === 'now', 'asked: taken from the hero wearing it now');
+  const b = { id: 'b', bridge: true, heroUid: 1, items: [{ slot: 0, uid: 11, fromHeroUid: 0 }] };
+  G.takeOver([b], lv.owner, { b: true });
+  ok(b.items[0].fromHeroUid === 0, 'bridge commands: never (the dashboard decides)');
+}
 // a bridge command names only the items: the owner when it arrives is the hero it is taken from on purpose
 {
   const bp = G.bridgePlan({ id: 'bridge:1', heroUid: 7, heroName: 'X', items: [{ slot: 0, uid: 321 }] }, (u) => '#' + u);

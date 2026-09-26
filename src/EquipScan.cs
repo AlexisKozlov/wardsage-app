@@ -129,6 +129,7 @@ namespace RealmForge {
 
       ulong v; int tt;
       if (a.EquipData != 0 && Field(a.EquipData, KHero, out v, out tt) && tt == T_INT) s.HeroUid = (long)v;
+      CheckForm(a);
 
       // Who wears each plan item. The game REPLACES an item's table when it changes (EquipData.equips[uid] = new table,
       // e.g. right after the player puts it on), so the current table is looked up in EquipData.equips every time;
@@ -192,6 +193,19 @@ namespace RealmForge {
     }
 
     // the hero screen is open (EquipData known from before and its hero set): then the scan must find the form too
+    /// <summary>The game built the hero screen again (after a battle, say): follow it to the new one. When the window
+    /// list's node has moved (the list grew), the form is dropped, so the host scans again.</summary>
+    static void CheckForm(EquipAddrs a) {
+      if (a.Form == 0 || formNode == 0) return;   // no node known: the form found by its keys stays
+      ulong f = LiveForm();
+      if (f == a.Form) return;
+      if (f == 0) formNode = 0;
+      L(f != 0 ? "  hero screen rebuilt by the game: following it" : "  hero screen lost: scanning again");
+      a.Form = f;
+      if (live != null) live.Form = f;
+      if (f != 0) RefreshPanel(a);
+    }
+
     static bool HeroScreenOpen() {
       var lt = live; ulong v; int tt;
       return lt != null && lt.EquipData != 0 && Field(lt.EquipData, KHero, out v, out tt) && tt == T_INT && (long)v > 0;

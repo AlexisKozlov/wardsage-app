@@ -54,7 +54,8 @@ namespace RealmForge {
       gameTimer.Interval = 2000; gameTimer.Tick += (s, e) => CheckGame(false); gameTimer.Start();
       liveTimer.Interval = 400; liveTimer.Tick += (s, e) => PollLive();
       overlay = new OverlayController(st => Post("{\"ev\":\"overlay\",\"state\":" + S(st) + "}"),
-                                      st => Post("{\"ev\":\"auto\",\"state\":" + S(st) + "}"));
+                                      st => Post("{\"ev\":\"auto\",\"state\":" + S(st) + "}"),
+                                      (p, st) => Post("{\"ev\":\"sell.state\",\"state\":" + S(st) + ",\"selected\":" + p.Selected + ",\"missing\":" + p.Missing + ",\"extra\":" + p.Extra + "}"));
       overlay.AutoEnabled = cfg.AutoClick;
       overlay.AutoConfirm = cfg.AutoConfirm;
       autoTimer.Interval = 1000; autoTimer.Tick += (s, e) => AutoSyncTick(); autoTimer.Start();
@@ -133,6 +134,25 @@ namespace RealmForge {
           case "openLog": Shell.OpenFile(Log.Path); break;
           case "openFolder": Shell.OpenFolder(lastSavedPath ?? Extractor.OutputDir); break;
           case "plans.load": LoadPlans(MiniJson.GetString(m, "lang")); break;
+          case "sell.load": LoadSell(MiniJson.GetString(m, "lang")); break;
+          case "sell.run": {
+            // storage cleanup: select the list's items on the game's sell screen (from the gear list of the hero the game
+            // showed last, else of any hero); the game comes forward as for «Надеть»
+            var uids = Uids(m);
+            var parts = new List<int>(); object pv;
+            var pl = m.TryGetValue("slots", out pv) ? pv as List<object> : null;
+            if (pl != null) foreach (var x in pl) if (x is double && (double)x >= 0 && (double)x <= 4 && !parts.Contains((int)(double)x)) parts.Add((int)(double)x);
+            // upgrade levels, same order as the uids: below +16 the game opens «Быстрое улучшение» over the list
+            var levels = new Dictionary<long, int>(); object lv;
+            var ll = m.TryGetValue("levels", out lv) ? lv as List<object> : null;
+            if (ll != null) for (int i = 0; i < ll.Count && i < uids.Count; i++) if (ll[i] is double) levels[uids[i]] = (int)Math.Max(0, Math.Min(99, (double)ll[i]));
+            long hero = addrs != null ? RFX.ReadHero(addrs) : 0; if (hero <= 0) hero = RFX.AnyHeroUid();
+            overlay.SetSell(uids, parts, levels.Count == uids.Count ? levels : null, hero);
+            Log.Write("sell: run " + uids.Count + " items, hero " + hero);
+            break;
+          }
+          case "sell.stop": overlay.SetSell(null, null, null, 0); break;
+          case "sell.finish": FinishSell(MiniJson.GetString(m, "id"), MiniJson.GetBool(m, "done", false)); break;
           case "equip.scan": if (scanning) watch = Uids(m); else StartScan(Uids(m)); break;   // (the scan ahead is running: its result serves these items too)
           case "equip.watch": Watch(Uids(m)); break;
           case "equip.run": {
@@ -204,7 +224,7 @@ namespace RealmForge {
     static List<long> Uids(Dictionary<string, object> m) {
       var r = new List<long>(); object v;
       var list = m.TryGetValue("uids", out v) ? v as List<object> : null;
-      if (list != null) foreach (var x in list) if (x is double && (double)x > 0 && (double)x < 9e15 && r.Count < 500) r.Add((long)(double)x);
+      if (list != null) foreach (var x in list) if (x is double && (double)x > 0 && (double)x < 9e15 && r.Count < SellClient.MaxItems) r.Add((long)(double)x);
       return r;
     }
 
@@ -519,6 +539,42 @@ namespace RealmForge {
       Task.Factory.StartNew(() => {
         var r = PlansClient.Finish(site, code, id, done);
         Log.Write("plan " + id + " " + (done ? "done" : "cancelled") + ": " + r.Status);
+        if (done) win.BeginInvoke((Action)(() => RequestAutoSync(1)));
+      });
+    }
+
+    // ------------------------------------------------------------------ storage cleanup
+
+    void LoadSell(string lang) {
+      string site = cfg.Site, code = cfg.Code;
+      if (!SyncClient.IsValidCode(code)) { Post("{\"ev\":\"sell\",\"status\":\"invalid_token\"}"); return; }
+      Task.Factory.StartNew(() => {
+        var r = SellClient.Get(site, code, lang == "en" ? "en" : "ru");
+        if (r.Status != PlansStatus.Ok) {
+          Post("{\"ev\":\"sell\",\"status\":" + S(r.Status == PlansStatus.InvalidToken ? "invalid_token" : "error") + ",\"detail\":" + S(r.Details ?? ("HTTP " + r.HttpCode)) + "}");
+          return;
+        }
+        var sb = new StringBuilder("{\"ev\":\"sell\",\"status\":\"ok\",\"list\":");
+        if (r.List == null) sb.Append("null");
+        else {
+          sb.Append("{\"id\":").Append(S(r.List.Id)).Append(",\"createdAt\":").Append(S(r.List.CreatedAt)).Append(",\"items\":[");
+          for (int i = 0; i < r.List.Items.Count; i++) {
+            var it = r.List.Items[i]; if (i > 0) sb.Append(',');
+            sb.Append("{\"uid\":").Append(N(it.Uid)).Append(",\"slot\":").Append(N(it.Slot)).Append(",\"name\":").Append(S(it.Name))
+              .Append(",\"setName\":").Append(S(it.SetName)).Append(",\"level\":").Append(N(it.Level)).Append(",\"stars\":").Append(N(it.Stars)).Append('}');
+          }
+          sb.Append("]}");
+        }
+        Post(sb.Append('}').ToString());
+      });
+    }
+
+    void FinishSell(string id, bool done) {
+      string site = cfg.Site, code = cfg.Code;
+      if (string.IsNullOrEmpty(id) || !SyncClient.IsValidCode(code)) return;
+      Task.Factory.StartNew(() => {
+        var r = SellClient.Finish(site, code, id, done);
+        Log.Write("sell list " + id + " " + (done ? "done" : "cancelled") + ": " + r.Status);
         if (done) win.BeginInvoke((Action)(() => RequestAutoSync(1)));
       });
     }

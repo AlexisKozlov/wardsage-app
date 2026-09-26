@@ -134,9 +134,14 @@ namespace RealmForge {
     DateTime diagUntil = DateTime.MinValue; int diagTick, diagN, shotN; string diagLast, diagDir, diagInfo = "";
     string hintKind = ""; int hintSlot = -1; string[] hintLines = new string[0]; string tipKey; long hintHero;
     int[] confirmBtn;   // «Заменить» / «Надеть» found on the screen this tick (TickHint), for the pilot
+    // storage cleanup: the items to select on the game's sell screen (null = no run); the hero whose gear screen leads there
+    readonly SellPilot spilot;
+    readonly Action<SellPilot, string> sellReport;
+    System.Collections.Generic.HashSet<long> sellWanted; System.Collections.Generic.HashSet<int> sellParts; System.Collections.Generic.Dictionary<long, int> sellLevels; long sellHero; long sellBtnAt; string sellSaid = "";
 
-    public OverlayController(Action<string> report, Action<string> autoReport) {
-      this.report = report; this.autoReport = autoReport;
+    public OverlayController(Action<string> report, Action<string> autoReport, Action<SellPilot, string> sellReport) {
+      this.report = report; this.autoReport = autoReport; this.sellReport = sellReport;
+      spilot = new SellPilot(SellGeometry.Inventory(1920, 1009, 8));
       pilot = new AutoPilot(g);
       fpilot = new FilterPilot(fg);
       hpilot = new HeroPilot(heroG);
@@ -210,8 +215,18 @@ namespace RealmForge {
       HideTip(); Run();
     }
 
+    /// <summary>Storage cleanup: select these items on the game's sell screen (null = stop). The app opens the screen from
+    /// the gear list of <paramref name="hero"/> (or of the hero the game shows); «Продать» is pressed by the player.</summary>
+    public void SetSell(System.Collections.Generic.ICollection<long> uids, System.Collections.Generic.ICollection<int> parts, System.Collections.Generic.Dictionary<long, int> levels, long hero) {
+      sellLevels = levels;
+      sellWanted = uids != null && uids.Count > 0 ? new System.Collections.Generic.HashSet<long>(uids) : null;
+      sellParts = parts != null && parts.Count > 0 ? new System.Collections.Generic.HashSet<int>(parts) : null;
+      sellHero = hero; sellSaid = ""; spilot.Reset(); hpilot.Reset(); sellBtnAt = 0; sellScanOnce = true;
+      Run();
+    }
+
     void Run() {
-      if (target != 0 || filterItem != 0 || hintKind != "" || runHero != 0 || DateTime.Now < diagUntil) { timer.Start(); return; }
+      if (target != 0 || filterItem != 0 || hintKind != "" || runHero != 0 || sellWanted != null || DateTime.Now < diagUntil) { timer.Start(); return; }
       timer.Stop(); HideTip();
     }
 
@@ -370,7 +385,7 @@ namespace RealmForge {
       // a started plan («Надеть» here, on the site, from the bridge): the player's click left our window in front, so
       // the game is brought forward (and restored) - only from our own window, never over another program
       int fp0; W32.GetWindowThreadProcessId(W32.GetForegroundWindow(), out fp0);
-      if (runHero > 0 && hwnd != IntPtr.Zero && fp0 == SelfPid && now >= focusAfter) {
+      if ((runHero > 0 || sellWanted != null) && hwnd != IntPtr.Zero && fp0 == SelfPid && now >= focusAfter) {
         focusAfter = now + 3000;
         if (W32.IsIconic(hwnd)) W32.ShowWindow(hwnd, 9);   // SW_RESTORE
         W32.SetForegroundWindow(hwnd);
@@ -380,6 +395,7 @@ namespace RealmForge {
       W32.RECT cr; if (!W32.GetClientRect(hwnd, out cr) || cr.B < 200) { AutoSay("idle"); return; }
       var o = new W32.POINT(0, 0); W32.ClientToScreen(hwnd, ref o);
       int fp, gp; W32.GetWindowThreadProcessId(W32.GetForegroundWindow(), out fp); W32.GetWindowThreadProcessId(hwnd, out gp);
+      if (sellWanted != null) { bool busy = down || now - lastMoveMs < 700; bool uc = userClick; userClick = false; TickSell(o, cr, now, fp == gp, busy, uc); return; }
 
       // «Заменить»: the guide says the right item is selected; the pilot re-checks hero and owner in memory right now
       bool confirm = AutoConfirm && hintKind == "replace" && target > 0;
@@ -446,6 +462,105 @@ namespace RealmForge {
       int x = o.X + (int)Math.Round(a.X), y = o.Y + (int)Math.Round(a.Y), y2 = y + (int)Math.Round(a.DY);
       if (x < o.X || y < o.Y || x >= o.X + cr.R || y >= o.Y + cr.B) return;   // never outside the game's client area
       if (y2 < o.Y || y2 >= o.Y + cr.B) return;
+      Send(a, x, y);
+    }
+
+    // Storage cleanup, in the inventory: the city's «Инвентарь» → «Снаряжение» → «Массовая продажа», then the sell
+    // pilot selects the items. Only known screens are clicked; elsewhere the player is asked to open the city.
+    void TickSell(W32.POINT o, W32.RECT cr, long now, bool front, bool busy, bool userClicked) {
+      double W = cr.R, H = cr.B, U = Ui.Unit(W, H);
+      // the inventory in the game's window list: searched (a full pass, ~1 s) at the start and after a click that opens it
+      var inv = RFX.ReadInventory(sellScanOnce || now - sellBtnAt < 8000 ? 1500 : -1);
+      sellScanOnce = false;
+      if (inv != null && inv.Open) {
+        if (!inv.EquipTab || !inv.Bulk) {
+          SellSay(front ? "open" : "background");
+          if (!front || busy || now - sellBtnAt < 2000) return;
+          sellBtnAt = now;
+          // the left menu's «Снаряжение» (top left); «Массовая продажа» under the list (bottom left)
+          var a0 = !inv.EquipTab ? new AutoAction { Kind = AutoKind.Click, X = 0.085 * U, Y = 0.315 * U }
+                                 : new AutoAction { Kind = AutoKind.Click, X = 0.5867 * U, Y = H - 0.0723 * U };
+          SendInside(a0, o, cr);
+          return;
+        }
+        int cols = front && !busy ? InvColumns(o, cr, U) : 0;
+        if (cols > 0) sellCols = cols;
+        if (sellGeoW != W || sellGeoH != H || sellGeoCols != sellCols) {
+          sellGeoW = W; sellGeoH = H; sellGeoCols = sellCols;
+          spilot.Geometry = SellGeometry.Inventory(W, U, sellCols);
+        }
+        var a = spilot.Step(new SellView { NowMs = now, Foreground = front, UserBusy = busy, UserClicked = userClicked, W = W, H = H, U = U,
+                                           Screen = inv.AsSell(sellCols), Wanted = sellWanted, Phase = front && !busy ? SellPhase(o, cr, U) : double.NaN });
+        SellSay(spilot.State);
+        if (spilot.Trace != "") { Log.Write("sell: " + spilot.Trace); spilot.Trace = ""; }
+        if (a.Kind != AutoKind.None) SendInside(a, o, cr);
+        return;
+      }
+      if (!front || busy) { SellSay(front ? "paused" : "background"); return; }
+      // the hero screen (the gear screen as well): back to the city with the arrow top left
+      heroScreen = RFX.ReadHeroScreen(addrs, heroScreen);
+      if (heroScreen.Hero > 0 && heroScreen.Tab >= 0) {
+        SellSay("open");
+        if (now - sellBtnAt < 2000) return;
+        sellBtnAt = now;
+        SendInside(new AutoAction { Kind = AutoKind.Click, X = hg2.BackX * U, Y = hg2.BackY * U }, o, cr);
+        return;
+      }
+      // the city: «Инвентарь» in the bottom bar (found by its picture, as «Герои»)
+      if (InventoryButtonSeen(o, W, H)) {
+        SellSay("open");
+        if (now - sellBtnAt < 2500) return;
+        sellBtnAt = now;
+        SendInside(new AutoAction { Kind = AutoKind.Click, X = W - InvBtnDX * U, Y = H - hg2.HeroesBtnDY * U }, o, cr);
+        return;
+      }
+      SellSay("no_city");
+    }
+
+    const double InvBtnDX = 0.5222 + 0.9316;   // «Инвентарь»: 0.9316 left of «Герои» in the city's bottom bar
+    int sellCols = 8, sellGeoCols; double sellGeoW, sellGeoH; bool sellScanOnce;
+
+    // the rows' phase on the screen: the stat bars under the cells (client px mod the row step), NaN = unclear
+    double SellPhase(W32.POINT o, W32.RECT cr, double U) {
+      var sg = spilot.Geometry;
+      int x0 = (int)Math.Round(sg.X(sg.X0, cr.R, U)), x1 = (int)Math.Round(sg.X(sg.X0 + (sg.Columns - 1) * sg.PitchX + sg.CellW, cr.R, U));
+      int y0 = (int)Math.Round(sg.ViewTopPx(U)), y1 = (int)Math.Round(sg.ViewBottomPx(cr.B, U));
+      if (x0 < 0 || x1 > cr.R || y1 - y0 < 100) return double.NaN;
+      int w = x1 - x0, h = y1 - y0;
+      int[] px = Grab(o.X + x0, o.Y + y0, w, h);
+      if (px == null) return double.NaN;
+      var xs = new int[sg.Columns * 2];
+      for (int c = 1; c <= sg.Columns; c++) {
+        double l = (c - 1) * sg.PitchX * U;
+        xs[(c - 1) * 2] = (int)(l + sg.CellW * U * 0.12); xs[(c - 1) * 2 + 1] = (int)(l + sg.CellW * U * 0.88);
+      }
+      double ph, conf, pitch = sg.PitchY * U;
+      if (!ListTracker.FindPhase(ListTracker.BarProfile(px, w, h, xs), pitch, sg.BarTop * U, sg.BarBottom * U, out ph, out conf)) return double.NaN;
+      double c0 = (y0 + ph) % pitch; return c0 < 0 ? c0 + pitch : c0;
+    }
+
+    // the inventory's column count: the game fits cells of a fixed size into the list's width (8 on 16:9 .. 4:3); the
+    // stat bars' spacing on the screen tells which count it is (0 = not clear now: keep the last)
+    int InvColumns(W32.POINT o, W32.RECT cr, double U) {
+      int x0 = (int)Math.Round(0.205 * U), x1 = (int)Math.Round(cr.R - 0.522 * U);
+      int y0 = (int)Math.Round(0.19 * U), y1 = (int)Math.Round(cr.B - 0.17 * U);
+      if (x1 - x0 < 200 || y1 - y0 < 100) return 0;
+      int w = x1 - x0, h = y1 - y0;
+      int[] px = Grab(o.X + x0, o.Y + y0, w, h);
+      return px == null ? 0 : ListTracker.GridColumns(px, w, h);
+    }
+
+    void SellSay(string st) {
+      string key = st + "|" + spilot.Selected + "|" + spilot.Missing + "|" + spilot.Extra;
+      if (key == sellSaid) return;
+      sellSaid = key; sellReport(spilot, st);
+      Log.Write("sell: " + st + " selected " + spilot.Selected + "/" + (sellWanted != null ? sellWanted.Count : 0) + " missing " + spilot.Missing + " extra " + spilot.Extra);
+    }
+
+    // a pilot action at client px, never outside the game's client area
+    void SendInside(AutoAction a, W32.POINT o, W32.RECT cr) {
+      int x = o.X + (int)Math.Round(a.X), y = o.Y + (int)Math.Round(a.Y), y2 = y + (int)Math.Round(a.DY);
+      if (x < o.X || y < o.Y || x >= o.X + cr.R || y >= o.Y + cr.B || y2 < o.Y || y2 >= o.Y + cr.B) return;
       Send(a, x, y);
     }
 
@@ -588,64 +703,68 @@ namespace RealmForge {
       long[] t; return heroTags.TryGetValue(heroUid / 100000, out t) && t.Length > 0 ? t : null;
     }
 
-    static float[] heroesTpl; static int heroesTplW, heroesTplH;   // grey levels at the reference scale (UI unit 900)
-    float[] tplScaled; int tplW, tplH; double tplU;
-
-    /// <summary>Is the main city's «Герои» button on the screen, with nothing over it? Its picture is compared with the one
-    /// in the exe (normalised correlation of the grey levels, around the place it should be) and its contrast with the
-    /// original: a pop-up over the city leaves a dimmed, blurred copy (0.68 alike but a quarter of the contrast).</summary>
-    bool HeroesButtonSeen(W32.POINT o, double W, double H) {
-      if (!LoadHeroesTpl()) return false;
-      double U = Ui.Unit(W, H);
-      if (tplScaled == null || Math.Abs(tplU - U) > 0.5) {
-        tplU = U; double k = U / 900.0;
-        tplW = Math.Max(8, (int)Math.Round(heroesTplW * k)); tplH = Math.Max(8, (int)Math.Round(heroesTplH * k));
-        tplScaled = new float[tplW * tplH];
-        for (int y = 0; y < tplH; y++) for (int x = 0; x < tplW; x++)
-          tplScaled[y * tplW + x] = heroesTpl[Math.Min(heroesTplH - 1, (int)(y / k)) * heroesTplW + Math.Min(heroesTplW - 1, (int)(x / k))];
+    // the city's bottom bar buttons, found by their picture (grey levels at the reference scale, UI unit 900): the bar is
+    // anchored bottom right and wraps on narrow windows, so a button is clicked only where its picture is
+    sealed class ButtonTpl {
+      readonly string res; float[] g; int w, h; float[] scaled; int sw, sh; double su;
+      public ButtonTpl(string res) { this.res = res; }
+      bool Load() {
+        if (g != null) return true;
+        try {
+          using (var s = typeof(OverlayController).Assembly.GetManifestResourceStream(res)) {
+            if (s == null) return false;
+            using (var bmp = new Bitmap(s)) {
+              var t = new float[bmp.Width * bmp.Height];
+              for (int y = 0; y < bmp.Height; y++) for (int x = 0; x < bmp.Width; x++) { var c = bmp.GetPixel(x, y); t[y * bmp.Width + x] = 0.299f * c.R + 0.587f * c.G + 0.114f * c.B; }
+              w = bmp.Width; h = bmp.Height; g = t;
+            }
+          }
+        } catch (Exception) { return false; }
+        return true;
       }
-      double cx = W - hg2.HeroesBtnDX * U, cy = H - 0.1156 * U;   // the picture's centre (the click goes to the icon, a bit higher)
-      const int R = 6;
-      int gx = (int)(cx - tplW / 2.0) - R, gy = (int)(cy - tplH / 2.0) - R, gw = tplW + 2 * R, gh = tplH + 2 * R;
-      if (gx < 0 || gy < 0 || gx + gw > W || gy + gh > H) return false;
-      int[] px = Grab(o.X + gx, o.Y + gy, gw, gh);
-      if (px == null) return false;
-      var grey = new float[px.Length];
-      for (int i = 0; i < px.Length; i++) { int c = px[i]; grey[i] = 0.299f * ((c >> 16) & 255) + 0.587f * ((c >> 8) & 255) + 0.114f * (c & 255); }
-      double tm = 0; foreach (var t in tplScaled) tm += t; tm /= tplScaled.Length;
-      double tv = 0; foreach (var t in tplScaled) tv += (t - tm) * (t - tm);
-      double best = -1, bestStd = 0, tstd = Math.Sqrt(tv / tplScaled.Length);
-      for (int dy = 0; dy <= 2 * R; dy += 2)
-        for (int dx = 0; dx <= 2 * R; dx += 2) {
-          double m = 0;
-          for (int y = 0; y < tplH; y++) for (int x = 0; x < tplW; x++) m += grey[(y + dy) * gw + x + dx];
-          m /= tplScaled.Length;
-          double num = 0, pv = 0;
-          for (int y = 0; y < tplH; y++) for (int x = 0; x < tplW; x++) {
-            double p = grey[(y + dy) * gw + x + dx] - m, t = tplScaled[y * tplW + x] - tm;
-            num += p * t; pv += p * p;
-          }
-          double ncc = pv > 0 && tv > 0 ? num / Math.Sqrt(pv * tv) : 0;
-          if (ncc > best) { best = ncc; bestStd = Math.Sqrt(pv / tplScaled.Length); }
+      /// <summary>Is the picture at (cx, cy) (client px, its centre, within a few px)? NCC ≥ 0.75, contrast 0.6–1.6.</summary>
+      public bool Seen(W32.POINT o, double W, double H, double cx, double cy) {
+        if (!Load()) return false;
+        double U = Ui.Unit(W, H);
+        if (scaled == null || Math.Abs(su - U) > 0.5) {
+          su = U; double k = U / 900.0;
+          sw = Math.Max(8, (int)Math.Round(w * k)); sh = Math.Max(8, (int)Math.Round(h * k));
+          scaled = new float[sw * sh];
+          for (int y = 0; y < sh; y++) for (int x = 0; x < sw; x++)
+            scaled[y * sw + x] = g[Math.Min(h - 1, (int)(y / k)) * w + Math.Min(w - 1, (int)(x / k))];
         }
-      double contrast = tstd > 0 ? bestStd / tstd : 0;
-      return best >= 0.75 && contrast >= 0.6 && contrast <= 1.6;
+        const int R = 6;
+        int gx = (int)(cx - sw / 2.0) - R, gy = (int)(cy - sh / 2.0) - R, gw = sw + 2 * R, gh = sh + 2 * R;
+        if (gx < 0 || gy < 0 || gx + gw > W || gy + gh > H) return false;
+        int[] px = Grab(o.X + gx, o.Y + gy, gw, gh);
+        if (px == null) return false;
+        var grey = new float[px.Length];
+        for (int i = 0; i < px.Length; i++) { int c = px[i]; grey[i] = 0.299f * ((c >> 16) & 255) + 0.587f * ((c >> 8) & 255) + 0.114f * (c & 255); }
+        double tm = 0; foreach (var t in scaled) tm += t; tm /= scaled.Length;
+        double tv = 0; foreach (var t in scaled) tv += (t - tm) * (t - tm);
+        double best = -1, bestStd = 0, tstd = Math.Sqrt(tv / scaled.Length);
+        for (int dy = 0; dy <= 2 * R; dy += 2)
+          for (int dx = 0; dx <= 2 * R; dx += 2) {
+            double m = 0;
+            for (int y = 0; y < sh; y++) for (int x = 0; x < sw; x++) m += grey[(y + dy) * gw + x + dx];
+            m /= scaled.Length;
+            double num = 0, pv = 0;
+            for (int y = 0; y < sh; y++) for (int x = 0; x < sw; x++) {
+              double p = grey[(y + dy) * gw + x + dx] - m, t = scaled[y * sw + x] - tm;
+              num += p * t; pv += p * p;
+            }
+            double ncc = pv > 0 && tv > 0 ? num / Math.Sqrt(pv * tv) : 0;
+            if (ncc > best) { best = ncc; bestStd = Math.Sqrt(pv / scaled.Length); }
+          }
+        double contrast = tstd > 0 ? bestStd / tstd : 0;
+        return best >= 0.75 && contrast >= 0.6 && contrast <= 1.6;
+      }
     }
+    static readonly ButtonTpl heroesBtn = new ButtonTpl("overlay/heroes_btn.png"), inventoryBtn = new ButtonTpl("overlay/inventory_btn.png");
 
-    static bool LoadHeroesTpl() {
-      if (heroesTpl != null) return true;
-      try {
-        using (var s = typeof(OverlayController).Assembly.GetManifestResourceStream("overlay/heroes_btn.png")) {
-          if (s == null) return false;
-          using (var bmp = new Bitmap(s)) {
-            var t = new float[bmp.Width * bmp.Height];
-            for (int y = 0; y < bmp.Height; y++) for (int x = 0; x < bmp.Width; x++) { var c = bmp.GetPixel(x, y); t[y * bmp.Width + x] = 0.299f * c.R + 0.587f * c.G + 0.114f * c.B; }
-            heroesTplW = bmp.Width; heroesTplH = bmp.Height; heroesTpl = t;
-          }
-        }
-      } catch (Exception) { return false; }
-      return true;
-    }
+    // the picture's centre (the click goes to the icon, a bit higher)
+    bool HeroesButtonSeen(W32.POINT o, double W, double H) { double U = Ui.Unit(W, H); return heroesBtn.Seen(o, W, H, W - hg2.HeroesBtnDX * U, H - 0.1156 * U); }
+    bool InventoryButtonSeen(W32.POINT o, double W, double H) { double U = Ui.Unit(W, H); return inventoryBtn.Seen(o, W, H, W - InvBtnDX * U, H - 0.1156 * U); }
 
     string heroLogged;
     /// <summary>One journal line whenever the hero pilot's view or state changes.</summary>
