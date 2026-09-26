@@ -6,7 +6,7 @@
 //                                         X-Captured-At: when the reading STARTED (ISO 8601 UTC), X-Game-Version
 //        200 {version, heroes, items} | 409 the reading started before the last equip done through the bridge
 //   GET  /api/host/commands?wait=25       long poll -> {commands:[{id, type:"equip", issuedAt,
-//                                         payload:{commandId, heroId, heroName, slots:[{slot:"weapon", itemId}]}}]}
+//                                         payload:{commandId, heroId, heroName, slots:[{slot:"weapon", itemId, setId?, mainStatId?}]}}]}
 //   POST /api/host/commands/{id}/result   {status:"done"|"cancelled"|"failed", message?} -> 204 | 404 nobody waits
 // The bridge is optional: when it is not running every call fails at once (connection refused on loopback) and the
 // poller backs off. Nothing here touches the game; the equip itself is the same guide as for a plan from the site.
@@ -24,6 +24,7 @@ namespace RealmForge {
   public sealed class BridgeSlot {
     public int Slot;        // 0 weapon, 1 armor, 2 bracer, 3 amulet, 4 ring (the game's numbering)
     public long ItemUid;
+    public long SetId, MainStatId;   // for the game's filter; 0 = not sent (older bridge)
   }
 
   public sealed class BridgeCommand {
@@ -195,7 +196,7 @@ namespace RealmForge {
         long uid = Num(s, "itemId");
         if (slot < 0 || uid <= 0) return false;
         foreach (var had in c.Slots) if (had.Slot == slot || had.ItemUid == uid) return false;
-        c.Slots.Add(new BridgeSlot { Slot = slot, ItemUid = uid });
+        c.Slots.Add(new BridgeSlot { Slot = slot, ItemUid = uid, SetId = Num(s, "setId"), MainStatId = Num(s, "mainStatId") });
       }
       c.Slots.Sort((a, b) => a.Slot.CompareTo(b.Slot));
       return true;

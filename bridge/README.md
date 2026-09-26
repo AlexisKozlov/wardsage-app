@@ -82,7 +82,8 @@ const api = (path, init = {}) => fetch(`http://localhost:5055/api${path}`, {
 герой и предметы есть, предмет подходит к слоту. Надевать можно и вещь с другого героя — в игре она с него снимется.
 
 Выполнение (`Equipment/HostEquipmentService.cs`): мост передаёт команду программе RealmForge, та проводит игрока
-по гайду (открывает слот, листает, кликает вещь; «Заменить» нажимает игрок) и отвечает. Команда `succeeded` —
+по гайду (открывает героя, слот, ставит фильтр игры, кликает вещь; «Заменить» — игрок или программа, если в её настройках
+включено автоподтверждение) и отвечает. Команда `succeeded` —
 вещи на герое, снимок сразу обновлён: вещь ушла с прежнего владельца, то, что было на герое в этих слотах, — в сумку.
 `failed` с причиной: `Cancelled` (игрок закрыл гайд), `HostUnavailable` (программа не подключена или пропала),
 `TimedOut` (`EquipTimeoutSeconds`, 10 мин), `Rejected` (снимок изменился). Уже надетое — `succeeded` без обращения к
@@ -96,7 +97,7 @@ const api = (path, init = {}) => fetch(`http://localhost:5055/api${path}`, {
 | Запрос | Что делает |
 |---|---|
 | `PUT /api/host/snapshot` | тело — `account.json` как есть (до 32 МБ); `X-Captured-At` — когда НАЧАЛОСЬ чтение игры, `X-Game-Version`. `200 {version, heroes, items}`; `409` — чтение началось раньше последней экипировки через мост (оно вернуло бы вещи назад), снимок не заменён |
-| `GET /api/host/commands?wait=25` | long poll (до 30 с) → `{commands:[{id, type:"equip", issuedAt, payload:{commandId, heroId, heroName, slots}}]}`. Заодно отметка «программа жива»: не опрашивала `HostOfflineAfterSeconds` (60 с) — считается отключённой |
+| `GET /api/host/commands?wait=25` | long poll (до 30 с) → `{commands:[{id, type:"equip", issuedAt, payload:{commandId, heroId, heroName, slots:[{slot, itemId, setId, mainStatId}]}}]}` (`setId`/`mainStatId` — для фильтра игры, могут быть `null`). Заодно отметка «программа жива»: не опрашивала `HostOfflineAfterSeconds` (60 с) — считается отключённой |
 | `POST /api/host/commands/{id}/result` | `{status: "done"\|"cancelled"\|"failed", message?}` → `204`; `404` — ответ уже не ждут |
 
 ### Сторона RealmForge.exe

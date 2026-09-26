@@ -9,18 +9,23 @@
   const VISIBLE_ROWS = 4;
 
   function next(plan, live) {
-    const g = { kind: null, item: null, row: 0, col: 0, other: null, states: {}, done: 0 };
+    const g = { kind: null, item: null, row: 0, col: 0, other: null, states: {}, done: 0, taken: 0 };
     const owner = (live && live.owner) || {};
     let cur = null;
     for (const it of plan.items) {
-      const on = owner[it.uid] === plan.heroUid;
+      const own = owner[it.uid];
+      const on = own === plan.heroUid;
+      // on a hero the plan did not count on (put on someone after the plan was made): never taken away from them.
+      // fromHeroUid null: not known yet (a bridge plan before the first reading, see adoptOwners)
+      const taken = !on && own > 0 && it.fromHeroUid != null && own !== it.fromHeroUid;
       if (on) g.done++;
-      g.states[it.uid] = on ? 'done' : 'wait';
-      if (!on && !cur) cur = it;
+      if (taken) g.taken++;
+      g.states[it.uid] = on ? 'done' : taken ? 'taken' : 'wait';
+      if (!on && !taken && !cur) cur = it;
     }
     if (cur) g.states[cur.uid] = 'now';
     if (!live || live.gameRunning === false) { g.kind = 'closed'; return g; }
-    if (!cur) { g.kind = 'done'; return g; }
+    if (!cur) { g.kind = g.taken ? 'taken' : 'done'; return g; }
     g.item = cur;
     if (live.heroUid !== plan.heroUid) { g.kind = 'hero'; return g; }
     if (!live.panelOk || live.part !== cur.slot) { g.kind = 'slot'; return g; }
@@ -65,9 +70,28 @@
       id: raw.id, heroUid: raw.heroUid, heroName: raw.heroName, createdAt: null, bridge: true,
       items: (raw.items || []).map((it) => ({
         slot: it.slot, uid: it.uid, name: itemName(it.uid), slotName: '', setName: '', level: 0, stars: 0, mainStat: '',
-        fromHeroUid: 0, fromHeroName: null, icon: '', setIcon: '', subs: [], setBonus: [], main: [],
+        fromHeroUid: null, fromHeroName: null, icon: '', setIcon: '', subs: [], setBonus: [], main: [],
       })),
     };
+  }
+
+  // A plan made on the site within the last 3 minutes that this app has not listed before: the player pressed «Надеть в
+  // игре» just now, so it starts by itself. The first listing after the app starts only marks what is there.
+  const FRESH_MS = 3 * 60 * 1000;
+  function freshPlan(plans, seen, now) {
+    if (!seen) return null;
+    return (plans || []).find((p) => !p.bridge && !seen[p.id] && p.createdAt && now - Date.parse(p.createdAt) < FRESH_MS
+      && now - Date.parse(p.createdAt) > -FRESH_MS) || null;
+  }
+
+  // A bridge command names only the items: whoever wears an item when the command arrives is the hero it is taken from
+  // on purpose (the dashboard checked it against the same snapshot). Later changes of owner count as «taken».
+  function adoptOwners(plans, owner) {
+    if (!owner) return;
+    for (const p of plans || []) {
+      if (!p.bridge) continue;
+      for (const it of p.items) if (it.fromHeroUid == null && owner[it.uid] !== undefined) it.fromHeroUid = owner[it.uid] || 0;
+    }
   }
 
   // Plans after a reload from the site: the bridge's plans still in progress stay (first), the site's list follows.
@@ -132,7 +156,7 @@
     return a > 10 && a < 20 ? many : b === 1 ? one : b >= 2 && b <= 4 ? few : many;
   }
 
-  const api = { next, pickPlan, bridgePlan, mergePlans, highlightUid, plural, bustUrl, headUrl, itemUrl, setUrl, rankOf, statOf, statId, statUrl, VISIBLE_ROWS };
+  const api = { next, pickPlan, bridgePlan, mergePlans, freshPlan, adoptOwners, highlightUid, plural, bustUrl, headUrl, itemUrl, setUrl, rankOf, statOf, statId, statUrl, VISIBLE_ROWS };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.RFGuide = api;
 })(typeof window !== 'undefined' ? window : globalThis);

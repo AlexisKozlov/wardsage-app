@@ -15,7 +15,8 @@
     sync: { phase: 'idle', stage: null, seconds: 0, result: null, error: null },
     plans: { status: 'idle', list: [], err: null }, sel: 0,
     scan: { status: 'idle', panel: false }, live: null, reported: {}, compact: false, overlay: 'off', hl: '',
-    autoSync: true, autoClick: true, auto: 'idle', autoAt: null,
+    autoSync: true, autoClick: true, autoConfirm: false, auto: 'idle', autoAt: null,
+    run: null, seen: null, runKey: '',
   };
 
   // ---------------------------------------------------------------- helpers
@@ -56,9 +57,9 @@
   };
 
   let toastTimer;
-  function toast(msg) {
+  function toast(msg, ms) {
     const el = $('#toast'); el.textContent = msg; el.classList.add('show');
-    clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), 1800);
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), ms || 1800);
   }
 
   // ---------------------------------------------------------------- shell
@@ -134,7 +135,7 @@
   function progress() {
     const sy = S.sync;
     if (sy.stage === 'find') return 6;
-    if (sy.stage === 'read') return Math.min(84, 8 + (sy.seconds / 42) * 76);
+    if (sy.stage === 'read') return Math.min(84, 8 + (sy.seconds / 8) * 76);
     if (sy.stage === 'send' || sy.stage === 'save') return 92;
     return 100;
   }
@@ -264,10 +265,10 @@
   function slotList(p, g) {
     return `<ul class="slots">${p.items.map((it) => {
       const st = g.states[it.uid] || 'wait';
-      const from = st !== 'done' && it.fromHeroUid > 0 && it.fromHeroUid !== p.heroUid && it.fromHeroName ? t('fromHero', it.fromHeroName) : '';
+      const from = st !== 'done' && st !== 'taken' && it.fromHeroUid > 0 && it.fromHeroUid !== p.heroUid && it.fromHeroName ? t('fromHero', it.fromHeroName) : '';
       const known = it.cur !== undefined, cur = it.cur && it.cur.uid !== it.uid ? it.cur : null;
       const was = st === 'done' ? '' : cur ? cell(cur.icon, cur.stars, cur.level, it.slot, 'old', '', it.uid + ':cur') : cell('', 0, 0, it.slot, 'old none' + (known ? '' : ' unknown'));
-      const curText = st === 'done' ? t('eqWorn') : cur ? t('eqNow', cur.name + (cur.level ? ' +' + cur.level : '')) : known ? t('eqEmpty') : '';
+      const curText = st === 'done' ? t('eqWorn') : st === 'taken' ? t('eqTaken') : cur ? t('eqNow', cur.name + (cur.level ? ' +' + cur.level : '')) : known ? t('eqEmpty') : '';
       return `<li class="${st}"><span class="st">${I.check}</span>
         <span class="swap">${was}${st === 'done' ? '' : `<span class="arrow">${I.arrow}</span>`}${cell(it.icon, it.stars, it.level, it.slot, 'new', it.setIcon, it.uid + ':new')}</span>
         <span class="info"><span class="slot">${esc(it.slotName || t('slot' + it.slot))}</span>
@@ -312,7 +313,15 @@
     switch (g.kind) {
       case 'closed': return sayBox('warn', I.game, t('gClosed'), t('gClosedP'));
       case 'done': return sayBox('done', I.check, t('gDone'), t('gDoneP'));
-      case 'hero': return sayBox('', I.hand, t('gOpenHero', p.heroName), '') + findCard(it, g, S.compact);
+      case 'taken': return sayBox('warn', I.warn, t('gTaken', g.taken), t(p.bridge ? 'gTakenBridge' : 'gTakenP'));
+      case 'hero': {
+        if (S.run === p.id && S.autoClick) {
+          const hs = S.auto && S.auto.indexOf('hero_') === 0 ? S.auto : '';
+          if (hs) return sayBox('warn', I.warn, t(hs, p.heroName), t(hs + 'P')) + findCard(it, g, S.compact);
+          return sayBox('', I.hand, S.auto === 'paused' || S.auto === 'background' ? autoHead() : t('hWork', p.heroName), '') + findCard(it, g, S.compact);
+        }
+        return sayBox('', I.hand, t('gOpenHero', p.heroName), S.autoClick ? t('gOpenHeroP') : '') + findCard(it, g, S.compact);
+      }
       case 'slot': return sayBox('', I.hand, autoHead() || t('gOpenSlot', it.slotName || t('slot' + it.slot)), autoSub()) + findCard(it, g, S.compact);
       case 'pick': {
         // what to do right now, by what the frame over the game is doing
@@ -339,9 +348,12 @@
   // what the auto-pilot (the app opening the slot and clicking the item) is doing; '' = it is off or idle
   function autoHead() {
     if (!S.autoClick) return '';
-    return { work: t('aWork'), paused: t('aPaused'), background: t('aBackground'), failed: t('aFailed') }[S.auto] || '';
+    return { work: t('aWork'), paused: t('aPaused'), background: t('aBackground'), failed: t('aFailed'), slot_failed: t('aSlotFailed'), unconfirmed: t('aUnconfirmed') }[S.auto] || '';
   }
-  function autoSub() { return S.autoClick && S.auto === 'work' ? t('aWorkP') : S.autoClick && S.auto === 'failed' ? t('aFailedP') : ''; }
+  function autoSub() {
+    if (!S.autoClick) return '';
+    return S.auto === 'work' ? t(S.autoConfirm ? 'aWorkPAuto' : 'aWorkP') : S.auto === 'failed' ? t('aFailedP') : S.auto === 'slot_failed' ? t('aSlotFailedP') : S.auto === 'unconfirmed' ? t('aUnconfirmedP') : '';
+  }
 
   function ovText() {
     return { need_click: t('ovNeedClick'), on: t('ovOn'), above: t('ovAbove'), below: t('ovBelow') }[S.overlay] || '';
@@ -359,7 +371,7 @@
       ${say(p, g)}${slotList(p, g)}
       <div class="row" style="margin-top:16px;justify-content:space-between">
         <div class="readonly" style="margin:0">${I.lock}<span>${esc(t('readonly'))}</span></div>
-        <button class="btn-ghost" data-act="removePlan">${esc(t('remove'))}</button></div></div>`;
+        <div class="row">${runButton(p, g)}<button class="btn-ghost" data-act="removePlan">${esc(t('remove'))}</button></div></div></div>`;
   }
 
   function compactView() {
@@ -371,7 +383,20 @@
       <div class="compact-top">${bust(p)}<div><b>${esc(p.heroName)}</b><span>${esc(t('itemsOn', g.done, p.items.length))}</span>
         <div class="mini-bar"><i style="width:${Math.round((g.done / p.items.length) * 100)}%"></i></div></div>
         <button class="icon-btn" data-act="compact" title="${esc(t('expand'))}">${I.expand}</button></div>
-      ${say(p, g)}${slotList(p, g)}</div>`;
+      ${say(p, g)}<div class="row" style="margin:8px 0">${runButton(p, g)}</div>${slotList(p, g)}</div>`;
+  }
+
+  // «Надеть»: the program opens the hero and puts the items on by itself (a started plan); «Остановить» while it runs
+  function runButton(p, g) {
+    if (!S.autoClick || g.kind === 'done' || g.kind === 'taken' || g.kind === 'closed') return '';
+    return S.run === p.id ? `<button class="btn-line" data-act="stopRun">${esc(t('stopBtn'))}</button>`
+      : `<button class="btn-gold" data-act="run">${esc(t('runBtn'))}</button>`;
+  }
+
+  function startRun(p) {
+    S.run = p.id; S.sel = S.plans.list.indexOf(p);
+    host.send({ cmd: 'equip.run', hero: p.heroUid, restart: true }); S.runKey = String(p.heroUid);
+    watchPlans();
   }
 
   // ---------------------------------------------------------------- settings
@@ -387,6 +412,7 @@
         ${row(t('setLang'), '', `<div class="langs"><button data-act="lang" data-lang="ru" aria-pressed="${S.lang === 'ru'}">РУССКИЙ</button><button data-act="lang" data-lang="en" aria-pressed="${S.lang === 'en'}">ENGLISH</button></div>`)}
         ${row(t('setAutoSync'), t('setAutoSyncP'), `<button class="switch" role="switch" data-act="autoSync" aria-checked="${S.autoSync}"></button>`)}
         ${row(t('setAutoClick'), t('setAutoClickP'), `<button class="switch" role="switch" data-act="autoClick" aria-checked="${S.autoClick}"></button>`)}
+        ${row(t('setAutoConfirm'), t(S.autoClick ? 'setAutoConfirmP' : 'setAutoConfirmOff'), `<button class="switch" role="switch" data-act="autoConfirm" aria-checked="${S.autoConfirm}" ${S.autoClick ? '' : 'disabled'}></button>`)}
         ${row(t('setCopy'), t('setCopyP'), `<button class="switch" role="switch" data-act="copy" aria-checked="${S.saveCopy}"></button>`)}
         ${row(t('setSite'), t('setSiteP'), `<div class="row"><div class="input" style="flex:1;min-width:240px"><input id="site" value="${esc(S.site)}" spellcheck="false"></div>
           <button class="btn-line" data-act="saveSite">${esc(t('save'))}</button>${S.site !== S.defaultSite ? `<button class="btn-ghost" data-act="resetSite">${esc(t('reset'))}</button>` : ''}</div>`)}
@@ -484,12 +510,19 @@
     else if (a === 'copy') { S.saveCopy = !S.saveCopy; host.send({ cmd: 'setSaveCopy', on: S.saveCopy }); render(); }
     else if (a === 'autoSync') { S.autoSync = !S.autoSync; host.send({ cmd: 'setAutoSync', on: S.autoSync }); render(); }
     else if (a === 'autoClick') { S.autoClick = !S.autoClick; host.send({ cmd: 'setAutoClick', on: S.autoClick }); render(); }
+    else if (a === 'autoConfirm') {
+      S.autoConfirm = !S.autoConfirm; host.send({ cmd: 'setAutoConfirm', on: S.autoConfirm });
+      if (S.autoConfirm) toast(t('autoConfirmOn'));
+      render();
+    }
     else if (a === 'saveSite') host.send({ cmd: 'setSite', site: $('#site').value });
     else if (a === 'resetSite') host.send({ cmd: 'setSite', site: S.defaultSite });
     else if (a === 'reload') loadPlans();
     else if (a === 'updRestart') host.send({ cmd: 'update.restart' });
     else if (a === 'rescan') scan();
     else if (a === 'pick') { S.sel = Number(el.dataset.i); render(); }
+    else if (a === 'run') { const p = current(); if (!p) return; startRun(p); if (!S.autoConfirm) toast(t('runNoConfirm'), 6000); render(); }
+    else if (a === 'stopRun') { S.run = null; syncHighlight(); render(); }
     else if (a === 'compact') { S.compact = !S.compact; host.send({ cmd: 'compact', on: S.compact }); render(); }
     else if (a === 'removePlan') {
       const p = current(); if (!p) return;
@@ -506,7 +539,7 @@
     switch (m.ev) {
       case 'state':
         Object.assign(S, { lang: m.lang, version: m.version, site: m.site, defaultSite: m.defaultSite, hasCode: m.hasCode, codePrefix: m.codePrefix, saveCopy: m.saveCopy, last: m.last || S.last });
-        if (m.autoSync !== undefined) { S.autoSync = m.autoSync; S.autoClick = m.autoClick; }
+        if (m.autoSync !== undefined) { S.autoSync = m.autoSync; S.autoClick = m.autoClick; S.autoConfirm = !!m.autoConfirm; }
         if (m.game) S.game = m.game;
         if (m.codeSaved) { S.editCode = false; toast(t('saved')); if (S.page === 'equip' || S.plans.status !== 'idle') loadPlans(); }
         if (m.siteSaved) toast(t('saved'));
@@ -518,7 +551,8 @@
       }
       case 'paste': { const i = $('#code'); if (i) { i.value = m.text || ''; codeTyped(); } break; }
       case 'sync':
-        if (m.auto) {
+        // a background sync while the sync page shows a run (the player pressed «sync» meanwhile): it is that run
+        if (m.auto && S.sync.phase !== 'run') {
           if (m.stage === 'done') { if (m.last) S.last = m.last; S.autoAt = Date.now(); loadPlans(); }
           if (S.page === 'equip' || S.compact || S.page === 'sync') render();
           break;
@@ -533,17 +567,30 @@
           const id = current() && current().id;
           S.plans = { status: 'ok', list: G.mergePlans(S.plans.list, m.plans, S.reported), err: null };
           const i = S.plans.list.findIndex((p) => p.id === id); S.sel = i >= 0 ? i : 0;
+          // «Надеть в игре» pressed on the site a moment ago: start it (older plans wait for «Надеть» here)
+          const fresh = G.freshPlan(S.plans.list, S.seen, Date.now());
+          S.seen = S.seen || {}; S.plans.list.forEach((p) => { S.seen[p.id] = true; });
+          if (fresh && S.autoClick && S.game.running) { startRun(fresh); if (!S.compact) S.page = 'equip'; }
           watchPlans();
         } else S.plans = { status: 'error', list: S.plans.list, err: m.status === 'invalid_token' ? 'token' : m.detail || '' };
         render(); break;
       case 'equip.scan': S.scan = { status: m.status, panel: !!m.panel }; render(); break;
       case 'equip.live': {
         S.live = m.live;
-        const auto = G.pickPlan(S.plans.list, S.live, S.sel); if (auto >= 0) S.sel = auto;
+        G.adoptOwners(S.plans.list, S.live.owner);
+        const ri = S.run ? S.plans.list.findIndex((x) => x.id === S.run) : -1;
+        if (S.run && ri < 0) S.run = null;
+        const auto = ri >= 0 ? ri : G.pickPlan(S.plans.list, S.live, S.sel); if (auto >= 0) S.sel = auto;
         const p = current();
-        if (p && !S.reported[p.id] && G.next(p, S.live).kind === 'done') {
+        const gk = p ? G.next(p, S.live).kind : '';
+        if (p && S.run === p.id && (gk === 'done' || gk === 'taken' || gk === 'closed')) S.run = null;
+        if (p && !S.reported[p.id] && gk === 'done') {
           S.reported[p.id] = true; host.send({ cmd: 'equip.finish', id: p.id, done: true });
           if (p.bridge) setTimeout(() => dropPlans([p.id]), 4000);   // «done» stays on screen a moment; the site does not list it
+        } else if (p && p.bridge && !S.reported[p.id] && gk === 'taken') {
+          // the dashboard learns at once that the build cannot go on as it is
+          S.reported[p.id] = true; host.send({ cmd: 'equip.finish', id: p.id, done: false, taken: true });
+          setTimeout(() => dropPlans([p.id]), 6000);
         }
         if (S.page === 'equip' || S.compact) render(); else syncHighlight();
         break;
@@ -559,6 +606,7 @@
         S.plans.list = [p].concat(S.plans.list.filter((x) => x.id !== p.id));
         S.sel = 0; S.page = 'equip'; S.editCode = false;
         if (S.hasCode && S.plans.status === 'idle') loadPlans();
+        if (S.autoClick) startRun(p);
         watchPlans(); render();
         break;
       }
@@ -579,14 +627,21 @@
         line1 = g.item.setName ? t('hSet', g.item.setName) : '';
         const st = G.statOf(g.item.mainStat); line2 = st ? t('hStat', st) : '';
       } else if (g.kind === 'selected') hint = 'replace';
-      else if (g.kind === 'slot' && S.live && S.live.panelOk) { hint = 'slot'; slot = g.item.slot; line1 = t('hSlot', g.item.slotName || t('slot' + g.item.slot)); }
+      else if (g.kind === 'slot' && S.live && (S.live.panelOk || S.live.form) && !(S.live.tab >= 0 && S.live.tab !== 3)) { hint = 'slot'; slot = g.item.slot; line1 = t('hSlot', g.item.slotName || t('slot' + g.item.slot)); }
     }
-    const key = [uid, hint, slot, line1, line2].join('|');
-    if (key !== S.hl) { S.hl = key; host.send({ cmd: 'highlight', uid, hint, slot, line1, line2 }); }
+    const hero = p ? p.heroUid : 0;
+    // the item the guide is at and its verdict: the host sets the game's filter when the item is far down or hidden
+    const item = g && g.item ? g.item.uid : 0, kind = g ? g.kind || '' : '';
+    const key = [uid, hint, slot, line1, line2, hero, item, kind].join('|');
+    if (key !== S.hl) { S.hl = key; host.send({ cmd: 'highlight', uid, hint, slot, line1, line2, hero, item, kind }); }
+    // the started plan's hero (0 = none): the host brings it up on the hero screen
+    const run = p && S.run === p.id && S.autoClick ? String(p.heroUid) : '0';
+    if (run !== S.runKey) { S.runKey = run; host.send({ cmd: 'equip.run', hero: Number(run) }); }
   }
 
   // plans made on the site meanwhile: reload every 20 s while the helper is on screen and the game runs
-  setInterval(() => { if (S.hasCode && S.game.running && (S.page === 'equip' || S.compact) && S.plans.status !== 'loading') loadPlans(); }, 20000);
+  // (every 8 s while the game runs, on every page: «Надеть в игре» on the site starts here within seconds)
+  setInterval(() => { if (S.hasCode && S.game.running && S.plans.status !== 'loading') loadPlans(); }, 8000);
 
   render();
   host.send({ cmd: 'init' });

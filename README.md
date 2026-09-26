@@ -2,9 +2,16 @@
 
 Reads a Watcher of Realms account (heroes, gear, artifacts, faction rewards) from the memory of the
 running game and sends it to the RealmForge site. Windows only; the game's memory is only read (`ReadProcessMemory`).
-The desktop app's equip helper can also open the gear slot, scroll the list and click the item with the mouse
-(`src/AutoPilot.cs`, Settings → «Автонажатие», on by default; «Заменить» is always the player's), and sends the account
-by itself after gear changes (Settings → «Автосинхронизация»).
+The desktop app's equip helper can also put a build on by itself with the mouse, as a player would (Settings →
+«Автонажатие», on by default): for a build the player started («Надеть» in the app, «Надеть в игре» on the site a moment
+ago, or a bridge command) it brings up the hero on the hero screen (`src/HeroPilot.cs`), opens the slot, sets the game's
+gear filter to the item's set, main stat and sub stats so it is in the first row (`src/FilterPilot.cs`), clicks it
+(`src/AutoPilot.cs`) and — with Settings → «Автоматически подтверждать замену», off by default — presses «Заменить» /
+«Надеть» once per item after memory checks. Every click is checked against the game's memory. Positions follow the game's
+UI scale on any window shape (`Ui` in `src/ListTracker.cs`: 16:9 reference, width-fitted below 16:9; checked at 1920×1009,
+1600×1000, 1320×990, 1900×800).
+The account is read from the game's live tables, found once per game session (`src/LiveTables.cs`: ~3 s, then ~0.3 s per
+sync) and sent by itself after gear changes (Settings → «Автосинхронизация»).
 Player instructions (RU/EN): [README.txt](README.txt).
 
 What players get (`dist/RealmForge.zip`): **`RealmForge.exe`** — one file (≈1.3 MB), .NET Framework 4.6.2+,

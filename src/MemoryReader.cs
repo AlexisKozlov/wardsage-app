@@ -131,16 +131,27 @@ namespace RealmForge {
       return d;
     }
 
-    // Return raw TValue (value, tt) of a string-keyed field in a Lua table
+    // Return raw TValue (value, tt) of a string-keyed field in a Lua table.
+    // Short strings are interned in Lua 5.3 (one TString per content), so once a key's TString is known the nodes are
+    // matched by pointer: one read of the node array instead of one per key - big UI tables have hundreds of fields.
+    static readonly Dictionary<string, ulong> keyTs = new Dictionary<string, ulong>();
+    static IntPtr keyTsFor;
     static bool Field(ulong t, string key, out ulong val, out int tt) {
       val = 0; tt = 0;
       var h = Read(t, 56); if (h == null || h[8] != 5) return false;
       int lsize = h[11]; if (lsize > 20) return false;
       ulong node = BitConverter.ToUInt64(h, 24); int nn = 1 << lsize; var nb = Read(node, nn * 32); if (nb == null) return false;
+      ulong ts;
+      lock (keyTs) {
+        if (keyTsFor != H) { keyTs.Clear(); keyTsFor = H; }
+        if (!keyTs.TryGetValue(key, out ts)) ts = 0;
+      }
       for (int i = 0; i < nn; i++) {
         int o = i * 32; int ktt = BitConverter.ToInt32(nb, o + 24);
         if (ktt != T_SSTR) continue;
-        if (ReadLuaString(BitConverter.ToUInt64(nb, o + 16)) != key) continue;
+        ulong k = BitConverter.ToUInt64(nb, o + 16);
+        if (ts != 0 ? k != ts : ReadLuaString(k) != key) continue;
+        if (ts == 0 && key.Length <= 40) lock (keyTs) keyTs[key] = k;
         val = BitConverter.ToUInt64(nb, o); tt = BitConverter.ToInt32(nb, o + 8); return true;
       }
       return false;
@@ -239,6 +250,42 @@ namespace RealmForge {
       return keys.Count > 0 ? keys[0] : 0;
     }
 
+    /// <summary>The values (tables, parsed to <paramref name="depth"/>) of the map <paramref name="field"/> of the table that
+    /// owns the key <paramref name="anchor"/>; the largest such map when several tables own it. Null when none is found.</summary>
+    static List<Dictionary<string, object>> LiveMap(Dictionary<ulong, string> tstr, string anchor, string field, int depth, string[] skip) {
+      List<Dictionary<string, object>> best = null;
+      foreach (var t in TablesWithKeys(tstr, anchor)) {
+        ulong m; int mt;
+        if (!Field(t, field, out m, out mt) || mt != T_TABLE) continue;
+        var list = new List<Dictionary<string, object>>();
+        foreach (var v in TableValues(m)) {
+          // the skipped fields are not parsed at all (config rows are big and shared by many items)
+          var seen = new HashSet<ulong>();
+          if (skip != null) foreach (var k in skip) { ulong fv; int ft; if (Field(v, k, out fv, out ft) && ft == T_TABLE) seen.Add(fv); }
+          var d = ParseTable(v, depth, seen); if (d != null) list.Add(d);
+        }
+        if (best == null || list.Count > best.Count) best = list;
+      }
+      return best;
+    }
+
+    static long LNum(Dictionary<string, object> d, string k) { object v; return d != null && d.TryGetValue(k, out v) && v is long ? (long)v : 0; }
+
+    // The table values of a Lua table (array part, then hash part).
+    static List<ulong> TableValues(ulong t) {
+      var r = new List<ulong>();
+      var h = Read(t, 56); if (h == null || h[8] != 5) return r;
+      int lsize = h[11]; uint sizearray = BitConverter.ToUInt32(h, 12);
+      if (lsize > 20 || sizearray > 1000000) return r;
+      if (sizearray > 0) {
+        var ab = Read(BitConverter.ToUInt64(h, 16), (int)sizearray * 16);
+        if (ab != null) for (int i = 0; i < sizearray; i++) if (BitConverter.ToInt32(ab, i * 16 + 8) == T_TABLE) r.Add(BitConverter.ToUInt64(ab, i * 16));
+      }
+      int nn = 1 << lsize; var nb = Read(BitConverter.ToUInt64(h, 24), nn * 32);
+      if (nb != null) for (int i = 0; i < nn; i++) if (BitConverter.ToInt32(nb, i * 32 + 8) == T_TABLE && BitConverter.ToInt32(nb, i * 32 + 24) != T_NIL) r.Add(BitConverter.ToUInt64(nb, i * 32));
+      return r;
+    }
+
     public static string Run() {
       LastError = null; LastOpenError = 0;
       var ps = Process.GetProcessesByName("Watcher of Realms");
@@ -246,9 +293,16 @@ namespace RealmForge {
       H = OpenProcess(0x0410, false, ps[0].Id);
       if (H == IntPtr.Zero) { LastOpenError = Marshal.GetLastWin32Error(); LastError = "open_failed"; L("ERROR: cannot open game process (code " + LastOpenError + "). Run as administrator."); return null; }
       var sw = Stopwatch.StartNew();
+      // the game's live tables: found once per game session, then read directly (src/LiveTables.cs)
+      try {
+        var lt = EnsureLive(ps[0].Id, false);
+        if (lt.EquipData != 0 && lt.HeroData != 0) { var fast = AccountFromLive(lt, sw); if (fast != null) return fast; }
+        L("Live tables incomplete: the full scan follows");
+      } catch (Exception e) { L("Live tables: " + e.Message + " - the full scan follows"); }
       regs = Regions(); ulong total = 0; foreach (var r in regs) total += r.Size;
       L("RW regions: " + regs.Count + ", " + (total >> 20) + " MB");
-      string[] names = { "iStarLvl", "iItemUid", "iBaseId", "vEquipSlot", "iStarLevel", "m_CampHeroPerfectReward", "m_vArtifacts" };
+      string[] names = { "iStarLvl", "iItemUid", "iBaseId", "vEquipSlot", "iStarLevel", "m_CampHeroPerfectReward", "m_vArtifacts",
+                         "m_CurrentSelectHeroUid", "m_CharactorDatas" };
       var tstr = FindLuaStrings(names);
       foreach (var kv in tstr) L("  lua string '" + kv.Value + "' @ 0x" + kv.Key.ToString("X"));
       L("Strings found in " + (int)sw.Elapsed.TotalSeconds + " s");
@@ -262,9 +316,40 @@ namespace RealmForge {
         itemT[t] = d;
       }
       L("  item tables: " + itemT.Count);
-      var bag = Containers(new HashSet<ulong>(itemT.Keys)); ulong bagT = Best(bag, "equipment");
       int ne = 0; var seenUid = new HashSet<long>();
-      if (bagT != 0) foreach (var t in bag[bagT]) { var d = itemT[t]; if (!seenUid.Add((long)d["iItemUid"])) continue; if (ne++ > 0) sb.Append(",\n"); J(sb, d); }
+      var bag = Containers(new HashSet<ulong>(itemT.Keys)); ulong bagT = Best(bag, "equipment");
+      // The game's live map EquipData.equips (uid -> item) gets a NEW table whenever an item changes (put on, taken off,
+      // enhanced), while the server's copies (the format the site reads) stay in memory and in caches until collected:
+      // the biggest container can say who wore what at login (found on the live game 2026-09-26). So the live map says
+      // which items exist, who wears them and whether they are locked; of the server copies of an item the one with the
+      // live enhancement level is written (the live table itself is the game's reworked form: other field names).
+      var liveItems = LiveMap(tstr, "m_CurrentSelectHeroUid", "equips", 0, null);
+      L("  live equipment map: " + (liveItems == null ? "not found" : liveItems.Count + " entries"));
+      if (liveItems != null && liveItems.Count > 0) {
+        var inBag = bagT != 0 ? new HashSet<ulong>(bag[bagT]) : new HashSet<ulong>();
+        var copies = new Dictionary<long, List<ulong>>();
+        foreach (var kv in itemT) { long uid = (long)kv.Value["iItemUid"]; List<ulong> l; if (!copies.TryGetValue(uid, out l)) copies[uid] = l = new List<ulong>(); l.Add(kv.Key); }
+        int missing = 0, moved = 0;
+        foreach (var live in liveItems) {
+          long uid = LNum(live, "iItemUid"); if (uid <= 0 || !seenUid.Add(uid)) continue;
+          List<ulong> l; if (!copies.TryGetValue(uid, out l)) { missing++; continue; }
+          long lvl = LNum(live, "iIntensifyLvl"), hero = LNum(live, "iHeroId");
+          Dictionary<string, object> best = null; int bestScore = -1;
+          foreach (var t in l) {
+            var c = itemT[t];
+            int score = (LNum(c, "iLevel") == lvl ? 4 : 0) + (LNum(c, "iHeroId") == hero ? 2 : 0) + (inBag.Contains(t) ? 1 : 0);
+            if (score > bestScore) { bestScore = score; best = c; }
+          }
+          var d = new Dictionary<string, object>(best);
+          if (LNum(d, "iHeroId") != hero) moved++;
+          d["iHeroId"] = hero;
+          object lk; if (live.TryGetValue("bLocked", out lk) && lk is bool) d["bLocked"] = lk;
+          if (ne++ > 0) sb.Append(",\n"); J(sb, d);
+        }
+        L("  owner from the live map differs from the server copy: " + moved + ", no server copy: " + missing);
+      } else {
+        if (bagT != 0) foreach (var t in bag[bagT]) { var d = itemT[t]; if (!seenUid.Add((long)d["iItemUid"])) continue; if (ne++ > 0) sb.Append(",\n"); J(sb, d); }
+      }
       L("  equipment items (owned): " + ne);
       sb.Append("\n],\n\"heroes\":[\n");
       L("Hero tables...");
@@ -275,9 +360,20 @@ namespace RealmForge {
         heroT[t] = d;
       }
       L("  hero tables: " + heroT.Count);
-      var roster = Containers(new HashSet<ulong>(heroT.Keys)); ulong rosT = Best(roster, "hero");
       int nh = 0; var seenH = new HashSet<long>();
-      if (rosT != 0) foreach (var t in roster[rosT]) { var d = heroT[t]; if (!seenH.Add((long)d["iHeroId"])) continue; if (nh++ > 0) sb.Append(",\n"); J(sb, d); }
+      // same for heroes: HeroData.m_CharactorDatas (hero uid -> hero) is the live one
+      var liveHeroes = LiveMap(tstr, "m_CharactorDatas", "m_CharactorDatas", 2, null);
+      L("  live hero map: " + (liveHeroes == null ? "not found" : liveHeroes.Count + " entries"));
+      if (liveHeroes != null && liveHeroes.Count > 0) {
+        foreach (var d in liveHeroes) {
+          object u; if (!d.TryGetValue("iHeroId", out u) || !(u is long) || (long)u <= 0 || !d.ContainsKey("iBaseId") || !d.ContainsKey("vEquipSlot")) continue;
+          if (!seenH.Add((long)u)) continue;
+          if (nh++ > 0) sb.Append(",\n"); J(sb, d);
+        }
+      } else {
+        var roster = Containers(new HashSet<ulong>(heroT.Keys)); ulong rosT = Best(roster, "hero");
+        if (rosT != 0) foreach (var t in roster[rosT]) { var d = heroT[t]; if (!seenH.Add((long)d["iHeroId"])) continue; if (nh++ > 0) sb.Append(",\n"); J(sb, d); }
+      }
       L("  heroes (owned): " + nh);
       L("Faction rewards...");
       var camp = BestField(tstr, "m_CampHeroPerfectReward", 1);

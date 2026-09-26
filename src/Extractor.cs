@@ -23,7 +23,7 @@ namespace RealmForge {
   public sealed class ReadProgress {
     const int TotalPasses = 13;
     static readonly string[] PassDone = {
-      "Strings found", "  nodes keyed", "  tables:", "  references:", "  equipment items (owned)", "  heroes (owned)"
+      "Strings found", "  nodes keyed", "  tables:", "  references:", "  equipment items (owned)", "  heroes (owned)", "  tables with '"
     };
     int passes;
 

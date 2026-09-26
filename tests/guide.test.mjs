@@ -56,4 +56,29 @@ ok(G.next(bp, live({ owner: { 42: 214700000, 6423: 214700000 } })).kind === 'don
 const merged = G.mergePlans([bp, plan, { ...bp, id: 'bridge:c2' }], [{ id: 's1', items: [] }], { 'bridge:c2': true });
 ok(merged.map((p) => p.id).join() === 'bridge:c1,s1', 'reload keeps unfinished bridge plans first, drops old site plans and finished bridge plans');
 ok(G.mergePlans(null, null, null).length === 0, 'merge of nothing');
+// an item put on another hero after the plan was made is never taken away from them
+g = G.next(plan, live({ owner: { 6423: 999900000 } }));
+ok(g.states[6423] === 'taken' && g.item.uid === 33 && g.taken === 1, 'item on an unexpected hero: skipped, the next one is current');
+ok(G.next(plan, live({ owner: { 6423: 200100000 } })).item.uid === 6423, 'the hero the plan takes it from: still wanted');
+ok(G.next(plan, live({ owner: { 6423: 999900000, 33: 214700000 } })).kind === 'taken', 'only taken items left -> taken, not done');
+ok(G.next(plan, live({ owner: { 6423: 0 } })).item.uid === 6423, 'in the bag: wanted');
+// «Надеть в игре» on the site a moment ago: the app starts the plan by itself (older plans wait for «Надеть»)
+{
+  const now = Date.parse('2026-09-26T10:00:00Z');
+  const mk = (id, min) => ({ id, heroUid: 1, items: [], createdAt: new Date(now - min * 60000).toISOString() });
+  ok(G.freshPlan([mk('a', 1)], null, now) === null, 'first listing after the app starts: nothing started');
+  ok(G.freshPlan([mk('a', 1)], {}, now).id === 'a', 'a plan made a minute ago, not seen before: started');
+  ok(G.freshPlan([mk('a', 1)], { a: true }, now) === null, 'seen before: not started again');
+  ok(G.freshPlan([mk('b', 10)], {}, now) === null, 'made 10 minutes ago: waits for «Надеть»');
+  ok(G.freshPlan([{ ...mk('c', 1), bridge: true }], {}, now) === null, 'bridge plans start on their own');
+}
+// a bridge command names only the items: the owner when it arrives is the hero it is taken from on purpose
+{
+  const bp = G.bridgePlan({ id: 'bridge:1', heroUid: 7, heroName: 'X', items: [{ slot: 0, uid: 321 }] }, (u) => '#' + u);
+  const lv = (o) => live({ heroUid: 7, part: 0, ...o });
+  ok(G.next(bp, lv({ owner: { 321: 5 } })).kind !== 'taken', 'owner not adopted yet: not taken');
+  G.adoptOwners([bp], { 321: 5 });
+  ok(bp.items[0].fromHeroUid === 5 && G.next(bp, lv({ owner: { 321: 5 } })).kind !== 'taken', 'taken from hero 5 on purpose');
+  ok(G.next(bp, lv({ owner: { 321: 9 } })).kind === 'taken', 'on another hero afterwards: taken, not taken off');
+}
 console.log(`guide: ${n} passed`);

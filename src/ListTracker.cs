@@ -12,6 +12,18 @@ using System;
 using System.Collections.Generic;
 
 namespace RealmForge {
+  /// <summary>The game's UI scale (CanvasScalerRoot.HandleScaleWithScreenSize): the 16:9 reference layout (1200×675) is
+  /// fitted to the window height, or to its width when the window is narrower than 16:9 (16:10, 4:3). Unit(W, H) is the
+  /// height the reference layout gets on the screen, in client px: every size and every distance from the edge an element
+  /// is anchored to scales with it (measured on the live game 2026-09-26: 1920×1009, 1920×1057, 1600×1000). Elements
+  /// anchored to the top / left edge: f·U; to the bottom: H − (1 − f)·U; to the centre: H/2 + (f − 0.5)·U.</summary>
+  public static class Ui {
+    public const double RefAspect = 675.0 / 1200.0;
+    public static double Unit(double W, double H) { return Math.Min(H, W * RefAspect); }
+    public static double FromBottom(double f, double W, double H) { return H - (1 - f) * Unit(W, H); }
+    public static double FromMiddle(double f, double W, double H) { return H / 2 + (f - 0.5) * Unit(W, H); }
+  }
+
   /// <summary>Gear list layout of the equipment screen, in fractions of the game client height (measured on the
   /// live game, 1456×764 client). The game UI scales with the window height and is anchored to the left edge.</summary>
   public sealed class ListGeometry {
@@ -42,6 +54,42 @@ namespace RealmForge {
     public int ColumnAt(double x) {
       for (int c = 1; c <= Columns; c++) { double l = ColLeft(c); if (x >= l - 0.01 && x <= l + CellW + 0.01) return c; }
       return 0;
+    }
+  }
+
+  /// <summary>The game's blue action button («Заменить», «Надеть»). Measured on the live game (2026-09-26, 1920×1009 and
+  /// 61 diagnostics screenshots): in the middle of the button 0.35 («Заменить») / 0.43 («Надеть») of the pixels are its
+  /// blue fill (white text and the gradient are the rest), 0.26 while the item card is still fading in, 0.00 anywhere
+  /// else on the gear and hero screens (gold «Улучшить», grey «Макс. уровень», the dark background).</summary>
+  public static class ButtonCheck {
+    public const double MinShare = 0.2;   // 0.28 on a 1600×1000 window (smaller button, the text a bigger part of it)
+
+    public static bool IsBlueFill(int argb) {
+      int r = (argb >> 16) & 255, g = (argb >> 8) & 255, b = argb & 255;
+      return b >= 85 && b >= r + 30 && b >= g + 18;
+    }
+
+    public static double BlueShare(int[] px) { return Share(px, IsBlueFill); }
+
+    /// <summary>The red round × of the filter panels: about 0.6 of a small square on it, 0 when the panel is closed.</summary>
+    public static bool IsCloseRed(int argb) {
+      int r = (argb >> 16) & 255, g = (argb >> 8) & 255, b = argb & 255;
+      return r >= 150 && r >= g + 70 && r >= b + 70;
+    }
+
+    /// <summary>The gold round buttons of the sets panel: about 0.43, 0 on the stats panel.</summary>
+    public static bool IsGold(int argb) {
+      int r = (argb >> 16) & 255, g = (argb >> 8) & 255, b = argb & 255;
+      return r >= 150 && g >= 100 && r >= b + 60 && g >= b + 30;
+    }
+
+    public const double MinMarkShare = 0.25;
+
+    public static double Share(int[] px, Func<int, bool> test) {
+      if (px == null || px.Length == 0) return 0;
+      int n = 0;
+      foreach (int p in px) if (test(p)) n++;
+      return n / (double)px.Length;
     }
   }
 
@@ -127,9 +175,16 @@ namespace RealmForge {
     /// <summary>The list was just (re)built: if the stat bars on the screen sit where they would with the list at the top,
     /// anchor there without waiting for a click. <paramref name="phaseY"/> is a row top found on the screen (client px).
     /// False when the phase does not match (the list is scrolled): then the first click anchors as before.</summary>
-    public bool FromTop(ListGeometry g, double phaseY, double H, ulong listPtr) {
+    public bool FromTop(ListGeometry g, double phaseY, double H, ulong listPtr) { return FromTop(g, null, phaseY, H, listPtr); }
+
+    /// <summary>As above, for a list whose first rows may be section titles (the sub stats filter groups the items: «Полное
+    /// соотв.», «Частичное», «Несовпадение»): the bars belong to the first item row, below them.</summary>
+    public bool FromTop(ListGeometry g, int[] types, double phaseY, double H, ulong listPtr) {
       double pitch = g.PitchY * H, top = TopRow1(g, H);
-      double d = (phaseY - top) % pitch; if (d < 0) d += pitch; if (d > pitch / 2) d -= pitch;
+      int first = 1;
+      if (types != null) { first = 0; for (int r = 1; r < types.Length; r++) if (types[r] == 1) { first = r; break; } if (first == 0) return false; }
+      double itemTop = top + g.RowOffset(types, first) * H;
+      double d = (phaseY - itemTop) % pitch; if (d < 0) d += pitch; if (d > pitch / 2) d -= pitch;
       if (Math.Abs(d) > pitch * 0.12) return false;
       Row1Top = top + d; Has = true; ListPtr = listPtr;
       return true;

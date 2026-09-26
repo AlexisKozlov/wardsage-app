@@ -22,7 +22,8 @@ public sealed class HostEquipmentService(
         var changes = request.Slots.Where(s => view.Gear[s.ItemId].HeroId != request.HeroId).ToList();
         if (changes.Count == 0) return new EquipResult(EquipOutcome.AlreadyEquipped);
 
-        var payload = new HostEquipPayload(request.CommandId, request.HeroId, view.Heroes[request.HeroId].Name, changes);
+        var slots = changes.Select(s => new HostEquipSlot(s.Slot, s.ItemId, view.Gear[s.ItemId].SetId, view.Gear[s.ItemId].PrimaryStat?.StatId)).ToList();
+        var payload = new HostEquipPayload(request.CommandId, request.HeroId, view.Heroes[request.HeroId].Name, slots);
         log.LogInformation("Equip {Command}: hero {Hero}, {Count} item(s) -> RealmForge", request.CommandId, request.HeroId, changes.Count);
         var reply = await host.SendAsync(HostCommandTypes.Equip, payload, TimeSpan.FromSeconds(options.EquipTimeoutSeconds), cancellationToken);
 

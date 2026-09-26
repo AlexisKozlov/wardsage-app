@@ -57,7 +57,7 @@ else
   echo "SKIPPED: $FX not found (install mono-devel for the .NET Framework reference assemblies)"
 fi
 
-CORE="src/MemoryReader.cs src/EquipScan.cs src/MiniJson.cs src/GameInfo.cs src/Extractor.cs src/SyncClient.cs src/PlansClient.cs src/BridgeClient.cs src/ListTracker.cs src/AutoPilot.cs src/EquipGuide.cs src/Config.cs src/Strings.cs"
+CORE="src/MemoryReader.cs src/EquipScan.cs src/MiniJson.cs src/GameInfo.cs src/Extractor.cs src/SyncClient.cs src/PlansClient.cs src/BridgeClient.cs src/ListTracker.cs src/AutoPilot.cs src/FilterPilot.cs src/EquipGuide.cs src/Config.cs src/Strings.cs"
 
 step "3. Core (no WinForms) compiles as C# 5 for .NET 8; tests build"
 NET8_REFS=$(for f in "$NET8"/*.dll; do printf -- '-r:%s ' "$f"; done)

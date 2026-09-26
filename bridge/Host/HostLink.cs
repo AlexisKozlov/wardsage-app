@@ -1,6 +1,6 @@
 using System.Collections.Concurrent;
 using System.Threading.Channels;
-using RealmForge.Bridge.Equipment;
+using RealmForge.Bridge.Account;
 
 namespace RealmForge.Bridge.Host;
 
@@ -12,7 +12,10 @@ public static class HostCommandTypes
 /// <summary>A command for RealmForge.exe; <paramref name="Payload"/> depends on <paramref name="Type"/>.</summary>
 public sealed record HostCommand(Guid Id, string Type, DateTimeOffset IssuedAt, object Payload);
 
-public sealed record HostEquipPayload(string CommandId, long HeroId, string? HeroName, IReadOnlyList<SlotAssignment> Slots);
+public sealed record HostEquipPayload(string CommandId, long HeroId, string? HeroName, IReadOnlyList<HostEquipSlot> Slots);
+
+/// <summary>One item to put on; set and main stat let RealmForge set the game's gear filter so the item is in the first rows.</summary>
+public sealed record HostEquipSlot(SlotType Slot, long ItemId, int? SetId, int? MainStatId);
 
 public enum HostReplyStatus { Done, Cancelled, Failed, TimedOut, NotConnected }
 

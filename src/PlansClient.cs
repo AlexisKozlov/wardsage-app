@@ -3,7 +3,7 @@
 // Contract (implemented by the site, lib/plans/handler.ts):
 //   GET  {site}/api/extractor/plans?lang=ru|en        Authorization: Bearer <sync code>
 //        200 {ok:true, plans:[{id, heroUid, heroName, createdAt,
-//              items:[{slot, uid, slotName, name, setName, level, stars, mainStat, fromHeroUid, fromHeroName, icon,
+//              items:[{slot, uid, slotName, name, setName, setId?, level, stars, mainStat, fromHeroUid, fromHeroName, icon,
 //                     cur:{uid, name, level, stars, icon}|null}]}]}
 //        401 invalid_token
 //   POST {site}/api/extractor/plans/{id}                body {"status":"done"|"cancelled"}
@@ -23,6 +23,7 @@ namespace RealmForge {
     public string SlotName, Name, SetName, MainStat, FromHeroName;
     public int Level, Stars;
     public long FromHeroUid;
+    public long SetId;          // for the game's gear filter; 0 = not sent (older plans / site)
     /// <summary>Game icon sprite name (Item_123456) or "" — only [A-Za-z0-9_], it becomes part of a site URL.</summary>
     public string Icon = "";
     /// <summary>Set icon sprite name (icon_suit_…) or "" — same rules as Icon.</summary>
@@ -214,6 +215,7 @@ namespace RealmForge {
         it.Level = (int)Num(d, "level");
         it.Stars = (int)Num(d, "stars");
         it.FromHeroUid = Num(d, "fromHeroUid");
+        it.SetId = Num(d, "setId");
         it.FromHeroName = MiniJson.GetString(d, "fromHeroName");
         it.Icon = IconName(MiniJson.GetString(d, "icon"));
         it.SetIcon = IconName(MiniJson.GetString(d, "setIcon"));

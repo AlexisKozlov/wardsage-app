@@ -27,6 +27,7 @@ namespace RealmForge {
     readonly System.Windows.Forms.Timer liveTimer = new System.Windows.Forms.Timer();
     int gamePid; string gameVersion; bool gameSent, gameRunning;
     volatile bool syncing, scanning;
+    DateTime rescanAfter = DateTime.MinValue;
     EquipAddrs addrs;
     List<long> watch = new List<long>();
     string lastLive;
@@ -55,6 +56,7 @@ namespace RealmForge {
       overlay = new OverlayController(st => Post("{\"ev\":\"overlay\",\"state\":" + S(st) + "}"),
                                       st => Post("{\"ev\":\"auto\",\"state\":" + S(st) + "}"));
       overlay.AutoEnabled = cfg.AutoClick;
+      overlay.AutoConfirm = cfg.AutoConfirm;
       autoTimer.Interval = 1000; autoTimer.Tick += (s, e) => AutoSyncTick(); autoTimer.Start();
       updateTimer.Interval = 20000; updateTimer.Tick += (s, e) => { updateTimer.Interval = 6 * 3600 * 1000; CheckUpdate(); }; updateTimer.Start();
       bridgePoller = new BridgePoller(new BridgeClient(BridgeClient.DefaultUrl, BridgeClient.DefaultTokenPath),
@@ -113,6 +115,7 @@ namespace RealmForge {
           case "setSaveCopy": cfg.SaveCopy = MiniJson.GetBool(m, "on", false); Save(); break;
           case "setAutoSync": cfg.AutoSync = MiniJson.GetBool(m, "on", true); Save(); if (cfg.AutoSync) RequestAutoSync(0); break;
           case "setAutoClick": cfg.AutoClick = MiniJson.GetBool(m, "on", true); overlay.AutoEnabled = cfg.AutoClick; Save(); break;
+          case "setAutoConfirm": cfg.AutoConfirm = MiniJson.GetBool(m, "on", false); overlay.AutoConfirm = cfg.AutoConfirm; Save(); break;
           case "setSite": {
             string err; string site = SyncClient.NormalizeSite(MiniJson.GetString(m, "site"), out err);
             if (site != null) { cfg.Site = site; Save(); SendState("siteSaved"); }
@@ -130,9 +133,16 @@ namespace RealmForge {
           case "openLog": Shell.OpenFile(Log.Path); break;
           case "openFolder": Shell.OpenFolder(lastSavedPath ?? Extractor.OutputDir); break;
           case "plans.load": LoadPlans(MiniJson.GetString(m, "lang")); break;
-          case "equip.scan": StartScan(Uids(m)); break;
+          case "equip.scan": if (scanning) watch = Uids(m); else StartScan(Uids(m)); break;   // (the scan ahead is running: its result serves these items too)
           case "equip.watch": Watch(Uids(m)); break;
-          case "equip.finish": FinishPlan(MiniJson.GetString(m, "id"), MiniJson.GetBool(m, "done", false)); break;
+          case "equip.run": {
+            // the plan the player started («Надеть»): its hero is brought up on the hero screen
+            object v; double h = m.TryGetValue("hero", out v) && v is double ? (double)v : 0;
+            overlay.SetRun(h > 0 && h < 9e15 ? (long)h : 0);
+            if (MiniJson.GetBool(m, "restart", false)) overlay.RestartPilots();
+            break;
+          }
+          case "equip.finish": FinishPlan(MiniJson.GetString(m, "id"), MiniJson.GetBool(m, "done", false), MiniJson.GetBool(m, "taken", false)); break;
           case "highlight": {
             object v; double u = m.TryGetValue("uid", out v) && v is double ? (double)v : 0;
             overlay.SetTarget(u > 0 && u < 9e15 && watch.Contains((long)u) ? (long)u : 0);
@@ -145,7 +155,11 @@ namespace RealmForge {
               string l = MiniJson.GetString(m, k);
               if (!string.IsNullOrEmpty(l)) lines.Add(l.Length > 80 ? l.Substring(0, 80) : l);
             }
-            overlay.SetHint(hint, slot >= 0 && slot <= 4 ? (int)slot : -1, lines.ToArray());
+            double hero = m.TryGetValue("hero", out v) && v is double ? (double)v : 0;
+            double item = m.TryGetValue("item", out v) && v is double ? (double)v : 0;
+            string kind = MiniJson.GetString(m, "kind") ?? "";
+            overlay.SetFilterGoal(item > 0 && item < 9e15 && watch.Contains((long)item) ? (long)item : 0, kind.Length <= 20 ? kind : "");
+            overlay.SetHint(hint, slot >= 0 && slot <= 4 ? (int)slot : -1, lines.ToArray(), hero > 0 && hero < 9e15 ? (long)hero : 0);
             break;
           }
           case "diag": overlay.StartDiag(5); break;
@@ -213,7 +227,8 @@ namespace RealmForge {
       sb.Append(",\"hasCode\":").Append(B(has));
       sb.Append(",\"codePrefix\":").Append(S(has ? cfg.Code.Substring(0, 8) : ""));
       sb.Append(",\"saveCopy\":").Append(B(cfg.SaveCopy));
-      sb.Append(",\"autoSync\":").Append(B(cfg.AutoSync)).Append(",\"autoClick\":").Append(B(cfg.AutoClick));
+      sb.Append(",\"autoSync\":").Append(B(cfg.AutoSync)).Append(",\"autoClick\":").Append(B(cfg.AutoClick))
+        .Append(",\"autoConfirm\":").Append(B(cfg.AutoConfirm));
       sb.Append(",\"last\":").Append(LastJson());
       if (flag != null) sb.Append(",\"").Append(flag).Append("\":true");
       sb.Append('}');
@@ -244,6 +259,9 @@ namespace RealmForge {
       Post("{\"ev\":\"game\",\"running\":" + B(running) + ",\"version\":" + S(gameVersion) + "}");
       if (!running && addrs != null) { addrs = null; overlay.SetAddrs(null); liveTimer.Stop(); lastLive = null; }
       if (!running) CloseBridgeCommands("failed", "The game was closed.", false);
+      // the game's screens are found in memory at once (tens of seconds), not when the first «Надеть» comes: then the
+      // equip starts right away
+      if (running && addrs == null && !scanning && cfg.AutoClick) StartScan(watch, true);
     }
 
     // ------------------------------------------------------------------ sync
@@ -387,6 +405,13 @@ namespace RealmForge {
       if (!SyncClient.IsValidCode(code)) { Post("{\"ev\":\"plans\",\"status\":\"invalid_token\"}"); return; }
       Task.Factory.StartNew(() => {
         var r = PlansClient.List(site, code, lang == "en" ? "en" : "ru");
+        // set and main stat of every plan item: the auto-pilot sets the game's gear filter with them
+        if (r.Status == PlansStatus.Ok) {
+          var info = new List<long[]>();
+          foreach (var p in r.Plans) foreach (var it in p.Items)
+            info.Add(new[] { it.Uid, it.SetId, it.Main.Count > 0 && it.Main[0].Stat > 0 ? it.Main[0].Stat : 0 });
+          win.BeginInvoke((Action)(() => { foreach (var x in info) overlay.SetItemInfo(x[0], x[1], x[2]); }));
+        }
         if (r.Status != PlansStatus.Ok) {
           Post("{\"ev\":\"plans\",\"status\":" + S(r.Status == PlansStatus.InvalidToken ? "invalid_token" : "error") + ",\"detail\":" + S(r.Details ?? ("HTTP " + r.HttpCode)) + "}");
           return;
@@ -432,8 +457,8 @@ namespace RealmForge {
       return sb.Append(']').ToString();
     }
 
-    void StartScan(List<long> uids) {
-      if (scanning || uids.Count == 0) return;
+    void StartScan(List<long> uids, bool ahead = false) {
+      if (scanning || (uids.Count == 0 && !ahead)) return;
       scanning = true; watch = uids; liveTimer.Stop(); lastLive = null;
       Task.Factory.StartNew(() => {
         EquipAddrs a = null;
@@ -441,15 +466,15 @@ namespace RealmForge {
         catch (Exception e) { Log.Write("equip scan: " + e); }
         win.BeginInvoke((Action)(() => {
           scanning = false; addrs = a; overlay.SetAddrs(a);
-          Log.Write("equip scan: " + (a == null ? "failed " + RFX.LastError : "panel=" + (a.Panel != 0) + " items=" + a.Items.Count));
-          Post("{\"ev\":\"equip.scan\",\"status\":" + S(a == null ? "fail" : "ok") + ",\"panel\":" + B(a != null && a.Panel != 0) + "}");
+          Log.Write("equip scan: " + (a == null ? "failed " + RFX.LastError : "panel=" + (a.Panel != 0) + " form=" + (a.Form != 0) + " items=" + a.Items.Count));
+          Post("{\"ev\":\"equip.scan\",\"status\":" + S(a == null ? "fail" : "ok") + ",\"panel\":" + B(a != null && (a.Panel != 0 || a.Form != 0)) + "}");
           if (a != null) { liveTimer.Start(); PollLive(); }
         }));
       });
     }
 
     void Watch(List<long> uids) {
-      if (addrs == null) { StartScan(uids); return; }
+      if (addrs == null) { if (scanning) watch = uids; else StartScan(uids); return; }
       // new plan items are found through EquipData.equips on the next poll; a full scan only without it
       if (addrs.EquipData == 0) foreach (var u in uids) if (!addrs.Items.ContainsKey(u)) { StartScan(uids); return; }
       watch = uids;
@@ -459,8 +484,14 @@ namespace RealmForge {
       if (addrs == null || scanning) return;
       EquipLive s;
       try { s = RFX.Poll(addrs, watch); } catch (Exception) { return; }
+      // the hero screen is open, but the scan ran before the game built it (the player was in the city): scan again, at
+      // most once a minute - without the form the hero cannot be brought up and the gear list is not known to be open
+      if (s.GameRunning && s.HeroUid > 0 && addrs.Form == 0 && DateTime.UtcNow > rescanAfter) {
+        rescanAfter = DateTime.UtcNow.AddSeconds(60); Log.Write("equip scan again: the hero screen is open now"); StartScan(watch); return;
+      }
       var sb = new StringBuilder("{\"ev\":\"equip.live\",\"live\":{");
       sb.Append("\"gameRunning\":").Append(B(s.GameRunning)).Append(",\"heroUid\":").Append(N(s.HeroUid)).Append(",\"panelOk\":").Append(B(s.PanelOk))
+        .Append(",\"form\":").Append(B(s.FormOk)).Append(",\"tab\":").Append(N(s.Tab))
         .Append(",\"part\":").Append(N(s.Part)).Append(",\"hideEquipped\":").Append(B(s.HideEquipped)).Append(",\"hideEnhanced\":").Append(B(s.HideEnhanced))
         .Append(",\"filterActive\":").Append(B(s.FilterActive)).Append(",\"selUid\":").Append(N(s.SelUid)).Append(",\"selRow\":").Append(N(s.SelRow))
         .Append(",\"selCol\":").Append(N(s.SelCol)).Append(",\"rows\":{");
@@ -481,8 +512,8 @@ namespace RealmForge {
       if (!s.GameRunning) { liveTimer.Stop(); addrs = null; overlay.SetAddrs(null); }
     }
 
-    void FinishPlan(string id, bool done) {
-      if (id != null && id.StartsWith(BridgePlanPrefix, StringComparison.Ordinal)) { FinishBridgeCommand(id.Substring(BridgePlanPrefix.Length), done); return; }
+    void FinishPlan(string id, bool done, bool taken) {
+      if (id != null && id.StartsWith(BridgePlanPrefix, StringComparison.Ordinal)) { FinishBridgeCommand(id.Substring(BridgePlanPrefix.Length), done, taken); return; }
       string site = cfg.Site, code = cfg.Code;
       if (string.IsNullOrEmpty(id) || !SyncClient.IsValidCode(code)) return;
       Task.Factory.StartNew(() => {
@@ -507,6 +538,7 @@ namespace RealmForge {
       if (!gameRunning) { ReportBridge(c.Id, "failed", "The game is not running."); return; }
       if (bridgeOpen.ContainsKey(c.Id)) return;
       bridgeOpen[c.Id] = c;
+      foreach (var s in c.Slots) overlay.SetItemInfo(s.ItemUid, s.SetId, s.MainStatId);   // for the game's filter
       Log.Write("bridge equip " + c.Id + " (" + (c.CommandId ?? "") + "): hero " + N(c.HeroUid) + ", " + c.Slots.Count + " item(s)");
 
       var sb = new StringBuilder("{\"ev\":\"bridge.equip\",\"plan\":{\"id\":").Append(S(BridgePlanPrefix + c.Id))
@@ -519,9 +551,10 @@ namespace RealmForge {
       Post(sb.Append("]}}").ToString());
     }
 
-    void FinishBridgeCommand(string id, bool done) {
+    void FinishBridgeCommand(string id, bool done, bool taken) {
       if (!bridgeOpen.Remove(id)) return;
-      ReportBridge(id, done ? "done" : "cancelled", done ? null : "Removed in RealmForge.");
+      if (taken) ReportBridge(id, "failed", "An item is on another hero now; RealmForge does not take it off. Rebuild the plan.");
+      else ReportBridge(id, done ? "done" : "cancelled", done ? null : "Removed in RealmForge.");
       if (done) RequestAutoSync(1);   // a fresh reading confirms the move to the bridge and the site
     }
 
