@@ -925,9 +925,31 @@ namespace RealmForge {
     /// the spot whose middle is the game's blue button. Null when neither is (the card is still opening, another screen)
     /// or both are (unexpected: better not to press).</summary>
     int[] ConfirmButton(W32.POINT o, double W, double H) {
-      int[] rep = hg.Replace(W, H), eq = hg.Equip(W, H);
-      bool r = IsBlueButton(o, rep), e = IsBlueButton(o, eq);
-      return r == e ? null : r ? rep : eq;
+      int[] rep = FindBlue(o, hg.Replace(W, H), H), eq = FindBlue(o, hg.Equip(W, H), H);
+      int[] btn = (rep != null) == (eq != null) ? null : rep ?? eq;
+      if (btn == null && hintKind == "replace") {
+        // (the journal: why «Заменить» is not pressed - once per selected item)
+        if (confirmMissLogged != target) { confirmMissLogged = target; Log.Write("confirm: no single blue button (replace " + (rep != null) + ", equip " + (eq != null) + ") for item " + target); }
+      } else if (btn != null && (btn[1] != hg.Replace(W, H)[1] && btn[1] != hg.Equip(W, H)[1])) Log.Write("confirm: button found " + (btn[1] - (rep != null ? hg.Replace(W, H)[1] : hg.Equip(W, H)[1])) + " px off its usual place");
+      return btn;
+    }
+    long confirmMissLogged;
+
+    /// <summary>The button at its usual place, or moved: a card with more lines (sub-stats, set bonuses) is taller and its
+    /// button lower (27.09: an item with more extras was not put on) - searched from a bit above down to 0.14 of the
+    /// height below, in steps of a third of the button.</summary>
+    int[] FindBlue(W32.POINT o, int[] rc, double H) {
+      if (IsBlueButton(o, rc)) return rc;
+      int step = Math.Max(4, rc[3] / 3), up = (int)(0.03 * H), down = (int)(0.14 * H);
+      for (int d = step; d <= down; d += step) {
+        var r2 = new[] { rc[0], rc[1] + d, rc[2], rc[3] };
+        if (r2[1] + r2[3] < H && IsBlueButton(o, r2)) return r2;
+      }
+      for (int d = step; d <= up; d += step) {
+        var r2 = new[] { rc[0], rc[1] - d, rc[2], rc[3] };
+        if (r2[1] > 0 && IsBlueButton(o, r2)) return r2;
+      }
+      return null;
     }
 
     bool IsBlueButton(W32.POINT o, int[] rc) {
