@@ -458,9 +458,9 @@ namespace RealmForge {
       int seconds = (int)(DateTime.UtcNow - started).TotalSeconds;
       {   // the heroes of the account in the game now: plans for heroes not on it (another account) are set aside
         var uids = Uids(ex.Json, "heroes", "iHeroId");
-        var items = Uids(ex.Json, "equipment", "iItemUid");
+        var itemUids = Uids(ex.Json, "equipment", "iItemUid");
         if (uids.Count > 0) {
-          string hj = "{\"ev\":\"accountHeroes\",\"uids\":[" + string.Join(",", uids) + "],\"items\":[" + string.Join(",", items) + "]}";
+          string hj = "{\"ev\":\"accountHeroes\",\"uids\":[" + string.Join(",", uids) + "],\"items\":[" + string.Join(",", itemUids) + "]}";
           win.BeginInvoke((Action)(() => Post(hj)));
         }
       }
