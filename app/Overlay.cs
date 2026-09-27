@@ -752,7 +752,30 @@ namespace RealmForge {
         int r = (c >> 16) & 255, g = (c >> 8) & 255, b = c & 255;
         if ((r + g + b < 170 && Math.Max(r, Math.Max(g, b)) - Math.Min(r, Math.Min(g, b)) < 45) || (b >= r + 25 && b >= g + 10 && b >= 70 && r < 140)) dark++;
       }
-      return dark >= 0.85 * px.Length;
+      if (dark < 0.85 * px.Length) return false;
+      // a dark strip is not enough: a filtered grid of not-owned heroes (dark empty cards) looks the same, and a click
+      // on the funnel then OPENS the pop-up again (27.09: the filter kept opening and closing on Лайя). The pop-up's own
+      // mark: the thin light lines between its columns (Класс | Фракция | Фильтр), measured at 1920×1009: x 258 and 488
+      return DividerSeen(o, (int)(0.2557 * U), (int)(0.16 * U), (int)(0.87 * U)) && DividerSeen(o, (int)(0.4836 * U), (int)(0.16 * U), (int)(0.87 * U));
+    }
+
+    // a thin vertical line brighter than the pop-up around it, near x (a few pixels of play for rounding)
+    bool DividerSeen(W32.POINT o, int x, int y0, int y1) {
+      const int half = 12;
+      int w = 2 * half + 1, h = y1 - y0;
+      int[] px = Grab(o.X + x - half, o.Y + y0, w, h);
+      if (px == null || h <= 0) return false;
+      var mean = new double[w];
+      for (int c = 0; c < w; c++) {
+        long sum = 0; int n = 0;
+        for (int r = 0; r < h; r += 3) { int v = px[r * w + c]; sum += ((v >> 16) & 255) + ((v >> 8) & 255) + (v & 255); n++; }
+        mean[c] = n > 0 ? sum / (3.0 * n) : 0;
+      }
+      for (int c = 4; c < w - 4; c++) {
+        double side = (mean[c - 4] + mean[c + 4]) / 2;
+        if (mean[c] >= side + 30 && mean[c] >= mean[c - 1] && mean[c] >= mean[c + 1]) return true;
+      }
+      return false;
     }
 
     // hero base id -> class id, faction ids (app/res/hero_tags.json, built from the site's game data)
