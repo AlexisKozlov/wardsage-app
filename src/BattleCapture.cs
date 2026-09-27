@@ -98,7 +98,10 @@ namespace RealmForge {
 
     /// <summary>One fight as JSON: the result screen's name and its plain fields, the heroes' battle statistics and the
     /// simulations' lengths (DumpBattleStats). Null when nothing was found.</summary>
-    public static string CaptureBattle(int endKind, ulong endForm) {
+    public static string CaptureBattle(int endKind, ulong endForm) { return CaptureBattle(endKind, endForm, null); }
+
+    /// <summary>The same with the fight's timeline (FightRecorder.Json, src/BattleTimeline.cs) as "timeline".</summary>
+    public static string CaptureBattle(int endKind, ulong endForm, string timeline) {
       string stats = DumpBattleStats();
       if (string.IsNullOrEmpty(stats)) return null;
       var sb = new StringBuilder("{\"at\":\"" + DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ") + "\",\"screen\":\"" + (endKind >= 0 ? EndFormNames[endKind] : "manual") + "\"");
@@ -116,7 +119,9 @@ namespace RealmForge {
         if (!first) sb.Append(','); first = false;
         sb.Append(line.Trim());
       }
-      sb.Append("]}");
+      sb.Append(']');
+      if (!string.IsNullOrEmpty(timeline) && timeline[0] == '{') sb.Append(",\"timeline\":").Append(timeline);
+      sb.Append('}');
       return sb.ToString();
     }
 

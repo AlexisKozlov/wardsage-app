@@ -1229,7 +1229,10 @@ namespace RealmForge {
 
     /// <summary>One fight as JSON: the result screen's name and its plain fields, the heroes' battle statistics and the
     /// simulations' lengths (DumpBattleStats). Null when nothing was found.</summary>
-    public static string CaptureBattle(int endKind, ulong endForm) {
+    public static string CaptureBattle(int endKind, ulong endForm) { return CaptureBattle(endKind, endForm, null); }
+
+    /// <summary>The same with the fight's timeline (FightRecorder.Json, src/BattleTimeline.cs) as "timeline".</summary>
+    public static string CaptureBattle(int endKind, ulong endForm, string timeline) {
       string stats = DumpBattleStats();
       if (string.IsNullOrEmpty(stats)) return null;
       var sb = new StringBuilder("{\"at\":\"" + DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ") + "\",\"screen\":\"" + (endKind >= 0 ? EndFormNames[endKind] : "manual") + "\"");
@@ -1247,7 +1250,9 @@ namespace RealmForge {
         if (!first) sb.Append(','); first = false;
         sb.Append(line.Trim());
       }
-      sb.Append("]}");
+      sb.Append(']');
+      if (!string.IsNullOrEmpty(timeline) && timeline[0] == '{') sb.Append(",\"timeline\":").Append(timeline);
+      sb.Append('}');
       return sb.ToString();
     }
 
@@ -1316,6 +1321,8 @@ namespace RealmForge {
   public static partial class RFX {
     // the battle screen (UIDefines id = str_hash("Form_Battle")): a new showing of it = a new fight
     const long FormBattleId = 0;
+    // GameAssembly.dll's base in the game process (set by FindRunningSim; src/BattleTimeline.cs checks klasses with it)
+    static ulong simGa;
 
     /// <summary>A mark of the battle screen's showing (table and instance id), or null (UIInstance not known / no
     /// battle screen held). Cheap.</summary>
@@ -1344,6 +1351,7 @@ namespace RealmForge {
       ulong ga = 0;
       try { foreach (ProcessModule m in ps[0].Modules) if (string.Equals(m.ModuleName, "GameAssembly.dll", StringComparison.OrdinalIgnoreCase)) ga = (ulong)(long)m.BaseAddress; } catch (Exception) { }
       if (ga == 0) return false;
+      simGa = ga;
       var klass = new HashSet<ulong>();
       foreach (var rva in new ulong[] { 0, 0, 0, 0 }) {
         var kb = Read(ga + rva, 8); ulong k = kb != null ? BitConverter.ToUInt64(kb, 0) : 0;

@@ -12,6 +12,8 @@ namespace RealmForge {
   public static partial class RFX {
     // the battle screen (UIDefines id = str_hash("Form_Battle")): a new showing of it = a new fight
     const long FormBattleId = 0;
+    // GameAssembly.dll's base in the game process (set by FindRunningSim; src/BattleTimeline.cs checks klasses with it)
+    static ulong simGa;
 
     /// <summary>A mark of the battle screen's showing (table and instance id), or null (UIInstance not known / no
     /// battle screen held). Cheap.</summary>
@@ -40,6 +42,7 @@ namespace RealmForge {
       ulong ga = 0;
       try { foreach (ProcessModule m in ps[0].Modules) if (string.Equals(m.ModuleName, "GameAssembly.dll", StringComparison.OrdinalIgnoreCase)) ga = (ulong)(long)m.BaseAddress; } catch (Exception) { }
       if (ga == 0) return false;
+      simGa = ga;
       var klass = new HashSet<ulong>();
       foreach (var rva in new ulong[] { 0, 0, 0, 0 }) {
         var kb = Read(ga + rva, 8); ulong k = kb != null ? BitConverter.ToUInt64(kb, 0) : 0;

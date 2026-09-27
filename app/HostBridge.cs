@@ -360,6 +360,7 @@ namespace RealmForge {
             if (RFX.FindRunningSim(out sim, out stage)) {
               Log.Write("battle start: stage " + stage + (coach.Knows(stage) ? " (coach)" : ""));
               lastStage = stage; lastStageAt = DateTime.UtcNow;
+              StartRecorder(sim, stage);
               if (coach.Knows(stage)) win.BeginInvoke((Action)(() => coach.Start(sim, stage)));
               return;
             }
@@ -371,6 +372,30 @@ namespace RealmForge {
       });
     }
 
+    // the timeline of the fight going on (src/BattleTimeline.cs, read-only): every fight, not only the coach's bosses;
+    // attached to the fight's record when its result screen comes
+    volatile FightRecorder recorder;
+
+    void StartRecorder(ulong sim, int stage) {
+      var old = recorder; if (old != null) old.Stop();
+      var rec = new FightRecorder(sim, stage) { Log = Log.Write };
+      recorder = rec;
+      rec.Start();
+    }
+
+    /// <summary>The timeline of the last fight (null: none followed, or it ended over 10 minutes ago). At a result
+    /// screen it waits for the recorder to see the end and gives the fight up (a later capture must not get it again).</summary>
+    string TakeTimeline(bool ended) {
+      var rec = recorder;
+      if (rec == null || (DateTime.UtcNow - rec.StartedUtc).TotalMinutes > 45) return null;
+      if (!rec.Running && (DateTime.UtcNow - rec.EndedUtc).TotalMinutes > 10) return null;   // an older fight's
+      try {
+        string tl = rec.Json(ended ? 4000 : 0);
+        if (ended) { rec.Stop(); recorder = null; }
+        return tl;
+      } catch (Exception e) { Log.Write("fight recorder: " + e.Message); return null; }
+    }
+
     /// <summary>Reads the last fight's statistics (after <paramref name="waitMs"/>), keeps it and syncs; also the
     /// «Записать бой» button (kind -1: no result screen known).</summary>
     void CaptureNow(int kind, ulong form, int waitMs) {
@@ -379,13 +404,14 @@ namespace RealmForge {
       Task.Factory.StartNew(() => {
         try {
           if (waitMs > 0) System.Threading.Thread.Sleep(waitMs);   // the screen fills its numbers first
-          string json = RFX.CaptureBattle(kind, form);
+          string tl = TakeTimeline(kind >= 0);
+          string json = RFX.CaptureBattle(kind, form, tl);
           if (json == null) { Log.Write("battle end: no statistics found"); win.BeginInvoke((Action)(() => Post("{\"ev\":\"battle\",\"ok\":false}"))); return; }
           int st = lastStage;
           if (st > 0 && (DateTime.UtcNow - lastStageAt).TotalMinutes < 20 && json.StartsWith("{", StringComparison.Ordinal))
             json = "{\"stage\":" + st + "," + json.Substring(1);
           string path = RFX.SaveBattle(json);
-          Log.Write("battle kept: " + path + " (" + json.Length + " bytes)");
+          Log.Write("battle kept: " + path + " (" + json.Length + " bytes" + (tl != null ? ", timeline " + tl.Length : "") + ")");
           win.BeginInvoke((Action)(() => { Post("{\"ev\":\"battle\",\"ok\":true}"); RequestAutoSync(3); }));
         } catch (Exception e) { Log.Write("battle end: " + e.Message); }
         finally { capturing = false; }

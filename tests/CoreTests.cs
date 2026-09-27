@@ -373,6 +373,9 @@ static class CoreTests {
     HeroPilotTests();
     SellPilotTests();
 
+    Console.WriteLine("Fight timeline (src/TimelineBuilder.cs: samples of the running fight + its command record):");
+    TimelineTests();
+
     Console.WriteLine("Window shapes (the game's UI scale: height, or width below 16:9):");
     {
       double W = 1600, H = 1000;   // 16:10, measured on the live game 2026-09-26
@@ -394,6 +397,87 @@ static class CoreTests {
     Console.WriteLine();
     Console.WriteLine(passed + " passed, " + failed + " failed");
     return failed == 0 ? 0 : 1;
+  }
+
+  static HeroSample Hs(uint uid, int unit, uint tower, int x, int y, int card = 0, bool dead = false, int deadType = -1,
+                       double anger = 0, int angerState = 0, uint ult = 0) {
+    return new HeroSample { Uid = uid, Unit = unit, Squad = 1, Tower = tower, OnField = tower != 0, X = x, Y = y, Face = 0, CardState = card,
+                            Dead = dead, DeadType = deadType, Anger = anger, MaxAnger = 1000, AngerState = angerState, UltFrame = ult };
+  }
+
+  static void TimelineTests() {
+    // hero A (uid 100100001, unit 11001): placed by hand at frame 100 (command) and seen at 103; ultimate at 400 (the skill's
+    // frame) seen at 403 with rage falling; killed at ~700 (card reborn), placed again (auto, no command) at 900 on another tile
+    // hero B (uid 200200002, unit 22002, squad leader): never placed; hero C: placed by hand, retreated by command at 505
+    var tb = new TimelineBuilder();
+    uint A = 100100001, B = 200200002, C = 300300003;
+    Func<uint, HeroSample[], List<HeroSample>> S = (f, arr) => { var l = new List<HeroSample>(arr); tb.AddSample(f, l); return l; };
+    S(97, new[] { Hs(A, 11001, 0, -1, -1), Hs(B, 22002, 0, -1, -1), Hs(C, 33003, 0, -1, -1) });
+    S(103, new[] { Hs(A, 11001, 7, -1, -1, anger: 100), Hs(B, 22002, 0, -1, -1), Hs(C, 33003, 0, -1, -1) });
+    S(106, new[] { Hs(A, 11001, 7, 4, 3, anger: 200), Hs(B, 22002, 0, -1, -1), Hs(C, 33003, 9, 6, 2) });
+    S(400, new[] { Hs(A, 11001, 7, 4, 3, anger: 1000), Hs(B, 22002, 0, -1, -1), Hs(C, 33003, 9, 6, 2, anger: 1000) });
+    S(403, new[] { Hs(A, 11001, 7, 4, 3, anger: 50, angerState: 1, ult: 401), Hs(B, 22002, 0, -1, -1), Hs(C, 33003, 9, 6, 2, anger: 20, angerState: 1) });
+    S(506, new[] { Hs(A, 11001, 7, 4, 3, anger: 300), Hs(B, 22002, 0, -1, -1), Hs(C, 33003, 0, -1, -1) });
+    S(700, new[] { Hs(A, 11001, 7, 4, 3, dead: true, deadType: 0, ult: 401), Hs(B, 22002, 0, -1, -1), Hs(C, 33003, 0, -1, -1) });
+    S(703, new[] { Hs(A, 11001, 0, -1, -1, card: 2, ult: 401), Hs(B, 22002, 0, -1, -1), Hs(C, 33003, 0, -1, -1) });
+    S(900, new[] { Hs(A, 11001, 15, 5, 1, ult: 401), Hs(B, 22002, 0, -1, -1), Hs(C, 33003, 0, -1, -1) });
+    var bl = new List<HeroSample> { Hs(B, 22002, 0, -1, -1) }; bl[0].Leader = true; tb.AddSample(905, bl);
+    tb.AddBoss(100, 1000); tb.AddBoss(200, 995); tb.AddBoss(300, 980);
+    // the record, read twice (the union is kept): placements [unit, x, y, face], C's ultimate and retreat, an emoji
+    var cmds = new List<FrameCmd> {
+      new FrameCmd { Frame = 100, Cmd = 1000, CUid = 1, Params = new[] { 11001, 4, 3, 90 } },
+      new FrameCmd { Frame = 104, Cmd = 1000, CUid = 1, Params = new[] { 33003, 6, 2, 0 } },
+      new FrameCmd { Frame = 398, Cmd = 2000, CUid = 1, Params = new[] { 33003, 6, 2 } },
+      new FrameCmd { Frame = 505, Cmd = 1001, CUid = 1, Params = new[] { 33003, 6, 2 } },
+      new FrameCmd { Frame = 600, Cmd = 50001, CUid = 1, Params = new[] { 3 } } };
+    tb.AddCommands(cmds); tb.AddCommands(cmds.GetRange(0, 2));
+    Eq(5, tb.Commands, "timeline: commands kept once each (5 distinct of 7 read)");
+    var root = MiniJson.Parse(tb.ToJson()) as Dictionary<string, object>;
+    Check(root != null, "timeline JSON parses");
+    if (root == null) return;
+    Eq(905.0, Convert.ToDouble(root["frames"]), "timeline: frames = the last sampled frame");
+    Check(Math.Abs(Convert.ToDouble(root["frameSec"]) - 270.0 / 4096) < 1e-12, "timeline: frameSec 270/4096");
+    var hs = root["heroes"] as Dictionary<string, object>;
+    var a = hs[A.ToString()] as Dictionary<string, object>;
+    Func<object, string> Js = o => { var sb = new StringBuilder(); var l = o as List<object>; if (l == null) return "null";
+      sb.Append('['); for (int i = 0; i < l.Count; i++) { if (i > 0) sb.Append(','); sb.Append(l[i] is List<object> ? Js2(l[i]) : Convert.ToDouble(l[i]).ToString(System.Globalization.CultureInfo.InvariantCulture)); } return sb.Append(']').ToString(); };
+    Eq("[[100,4,3,90,1],[900,5,1,0,0]]", Js(a["placed"]), "A placed: the command (exact tile, face), then the sampled re-placement");
+    Eq("[700]", Js(a["fell"]), "A fell at the first sample with its tower dead");
+    Eq("[401]", Js(a["ult"]), "A ultimate: the skill's own frame, the rage drop at 403 merged into it");
+    Check(!a.ContainsKey("retreat"), "A: no retreat");
+    Eq(1.0, Convert.ToDouble(a["squad"]), "A squad 1");
+    var b = hs[B.ToString()] as Dictionary<string, object>;
+    Check(b["leader"] is bool && (bool)b["leader"], "B: squad leader");
+    Eq("[]", Js(b["placed"]), "B: never placed");
+    var c = hs[C.ToString()] as Dictionary<string, object>;
+    Eq("[[104,6,2,0,1]]", Js(c["placed"]), "C placed by command; the sample 2 frames later is the same placement");
+    Eq("[505]", Js(c["retreat"]), "C retreat: the command; the sampled leaving at 506 is that retreat, not a fall");
+    Eq("[]", Js(c["fell"]), "C: no fall");
+    Eq("[398]", Js(c["ult"]), "C ultimate: the command's frame (the rage drop at 403 is the same ultimate)");
+    var ops = root["ops"] as List<object>;
+    Check(ops != null && ops.Count == 4 && Js(ops[0]) == "[100,1000,1,11001,4,3,90]", "ops: the commands by frame, emojis left out");
+    Eq("[[100,1000],[300,980]]", Js(root["boss"]), "boss HP: kept when it moved by 1 % or more");
+
+    // placement seen before its tile is known; a sampled move; an ultimate seen only as a rage drop; a new tower between
+    // two samples (it went down in between: a fall, the card's reborn state says so)
+    var t2 = new TimelineBuilder();
+    t2.AddSample(10, new List<HeroSample> { Hs(A, 11001, 3, -1, -1, anger: 990) });
+    t2.AddSample(13, new List<HeroSample> { Hs(A, 11001, 3, 2, 2, anger: 1000) });
+    t2.AddSample(16, new List<HeroSample> { Hs(A, 11001, 3, 2, 2, anger: 100) });
+    t2.AddSample(300, new List<HeroSample> { Hs(A, 11001, 3, 3, 2) });
+    t2.AddSample(600, new List<HeroSample> { Hs(A, 11001, 8, 1, 1, card: 2) });
+    var r2 = MiniJson.Parse(t2.ToJson()) as Dictionary<string, object>;
+    var a2 = (r2["heroes"] as Dictionary<string, object>)[A.ToString()] as Dictionary<string, object>;
+    Eq("[[10,2,2,0,0],[300,3,2,0,0],[600,1,1,0,0]]", Js(a2["placed"]), "sampled: tile filled in later, a move, a new tower");
+    Eq("[16]", Js(a2["ult"]), "sampled: rage from full to low = an ultimate");
+    Eq("[600]", Js(a2["fell"]), "sampled: a new tower after an unseen death = a fall");
+    Eq(0.0, Convert.ToDouble(r2["samples"]) - 5, "sampled: 5 samples");
+  }
+
+  static string Js2(object o) {
+    var l = o as List<object>; var sb = new StringBuilder("[");
+    for (int i = 0; i < l.Count; i++) { if (i > 0) sb.Append(','); sb.Append(Convert.ToDouble(l[i]).ToString(System.Globalization.CultureInfo.InvariantCulture)); }
+    return sb.Append(']').ToString();
   }
 
   // A simulated game list: 40 item rows; a drag moves it with the pointer (gain 0.93); clicking a cell selects the item there.
