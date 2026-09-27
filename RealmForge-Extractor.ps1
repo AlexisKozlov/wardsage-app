@@ -471,6 +471,10 @@ namespace RealmForge {
 
     /// <summary>The live tables of the running game: the ones found before when they are still there, else searched for
     /// (again). <paramref name="needForm"/>: also the hero screen (created when the player first opens it).</summary>
+    /// <summary>The live tables are searched again on the next use (the helper's plan stood still: an item put on was not
+    /// seen until the app was restarted, live 27.09).</summary>
+    public static void ForgetLive() { live = null; }
+
     internal static LiveTables EnsureLive(int pid, bool needForm) {
       var lt = live;
       if (lt != null && lt.Pid == pid && HasTable(lt.EquipData, "equips") && HasTable(lt.HeroData, KHeroes)
@@ -580,7 +584,10 @@ namespace RealmForge {
       // EquipData: the owner of suitId2EquipIdExt (set in EquipData:ctor) with the item map. m_CurrentSelectHeroUid and
       // m_EquipFilterConfigs are set only once the gear screen was opened (and the first is nil again outside it: the key
       // is gone after a GC), so they are only the fallback
-      if (owners.TryGetValue(KEquipData, out l)) foreach (var t in l) if (HasTable(t, "equips")) { lt.EquipData = t; break; }
+      if (owners.TryGetValue(KEquipData, out l)) {
+        int n = 0; foreach (var t in l) if (HasTable(t, "equips")) { if (lt.EquipData == 0) lt.EquipData = t; n++; }
+        if (n > 1) L("  EquipData: " + n + " candidates, the first taken");
+      }
       if (lt.EquipData == 0 && owners.TryGetValue(KHero, out l)) {
         foreach (var t in l) if (HasTable(t, "equips") && HasTable(t, "m_EquipFilterConfigs")) { lt.EquipData = t; break; }
         if (lt.EquipData == 0) foreach (var t in l) if (HasTable(t, "equips")) { lt.EquipData = t; break; }

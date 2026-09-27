@@ -758,7 +758,16 @@
     // the started plan's hero (0 = none): the host brings it up on the hero screen
     const run = p && S.run === p.id && S.autoClick ? String(p.heroUid) : '0';
     if (run !== S.runKey) { S.runKey = run; host.send({ cmd: 'equip.run', hero: Number(run) }); }
+    // a started plan standing still: the same step for 10 s with the helper idle - the game may have rebuilt its tables
+    // (an item put on and not seen until a restart, live 27.09): the host reads them again
+    const step = run !== '0' ? [p.id, item, kind].join('|') : '';
+    if (step !== S.stepKey) { S.stepKey = step; S.stepAt = Date.now(); }
   }
+  setInterval(() => {
+    if (!S.stepKey || !S.game.running || Date.now() - S.stepAt < 10000) return;
+    if (S.auto === 'work' || S.auto === 'paused' || S.auto === 'background') return;
+    S.stepAt = Date.now(); host.send({ cmd: 'equip.rescan' });
+  }, 2000);
 
   // plans made on the site meanwhile: reload every 20 s while the helper is on screen and the game runs
   // (every 8 s while the game runs, on every page: «Надеть в игре» on the site starts here within seconds)

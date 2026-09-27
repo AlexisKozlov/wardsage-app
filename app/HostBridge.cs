@@ -168,6 +168,13 @@ namespace RealmForge {
             if (MiniJson.GetBool(m, "restart", false)) overlay.RestartPilots();
             break;
           }
+          case "equip.rescan":
+            // the page's plan stands still: the game's tables are read again (at most every 20 s)
+            if (addrs != null && !scanning && DateTime.UtcNow > rescanAfter) {
+              rescanAfter = DateTime.UtcNow.AddSeconds(20); Log.Write("equip scan again: the plan stands still");
+              StartScan(watch, false, true); overlay.RestartPilots();
+            }
+            break;
           case "equip.finish": FinishPlan(MiniJson.GetString(m, "id"), MiniJson.GetBool(m, "done", false), MiniJson.GetBool(m, "taken", false)); break;
           case "highlight": {
             object v; double u = m.TryGetValue("uid", out v) && v is double ? (double)v : 0;
@@ -570,12 +577,18 @@ namespace RealmForge {
       return sb.Append(']').ToString();
     }
 
-    void StartScan(List<long> uids, bool ahead = false) {
+    /// <param name="fresh">the live tables searched again too (not the ones found earlier this game session)</param>
+    void StartScan(List<long> uids, bool ahead = false, bool fresh = false) {
       if (scanning || (uids.Count == 0 && !ahead)) return;
       scanning = true; watch = uids; liveTimer.Stop(); lastLive = null;
       Task.Factory.StartNew(() => {
         EquipAddrs a = null;
-        try { lock (Extractor.Gate) a = RFX.FindEquip(uids, null); }
+        try {
+          lock (Extractor.Gate) {
+            if (fresh) RFX.ForgetLive();
+            a = RFX.FindEquip(uids, fresh ? (Action<string>)(s => Log.Write("  " + s)) : null);
+          }
+        }
         catch (Exception e) { Log.Write("equip scan: " + e); }
         win.BeginInvoke((Action)(() => {
           scanning = false; addrs = a; overlay.SetAddrs(a);
