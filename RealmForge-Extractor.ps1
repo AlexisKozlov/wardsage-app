@@ -459,12 +459,15 @@ namespace RealmForge {
 namespace RealmForge {
   public sealed class LiveTables {
     public int Pid;
-    public ulong EquipData, HeroData, CampOwner, ArtOwner, BeastOwner, Form, Panel;
+    public ulong EquipData, HeroData, CampOwner, ArtOwner, BeastOwner, ActOwner, Form, Panel;
   }
 
   public static partial class RFX {
     static LiveTables live;
     const string KCamp = "m_CampHeroPerfectReward", KArts = "m_vArtifacts", KHeroes = "m_CharactorDatas", KBeasts = "m_AllBeastInfo", KEquipData = "suitId2EquipIdExt";
+    // summoning: the open pools (ActivityData, activities of type 54) and the player's counters (PlayerData = the beasts' owner)
+    const string KAct = "m_ActData54";
+    static readonly string[] SummonPlayerKeys = { "m_SoftMustFivesNum", "m_SoftId2LotteryNum", "m_MustFiveNum", "m_mLotteryNum", "m_iTotalLotteryNum", "m_AwakePity", "m_LotteryRecord" };
 
     /// <summary>The live tables of the running game: the ones found before when they are still there, else searched for
     /// (again). <paramref name="needForm"/>: also the hero screen (created when the player first opens it).</summary>
@@ -497,7 +500,24 @@ namespace RealmForge {
       ulong f = BitConverter.ToUInt64(b, 0);
       return HasTable(f, key) ? f : 0;
     }
-    static ulong NodeForm(ulong n) { return NodeValue(n, FormCharactorMainId, "m_InfinityGridProxy"); }
+    static ulong NodeForm(ulong n) { ulong f = NodeValue(n, FormCharactorMainId, "m_InfinityGridProxy"); return f != 0 && FormAlive(f) ? f : 0; }
+
+    /// <summary>A hero screen the game still shows: its grid component is set. When the game closes a screen it clears the
+    /// component fields (nil) and the table lingers - and so can an old node array of UIInstance (after a rehash) that
+    /// still points at it. Reading such a dead copy, the pilots saw the old grid order and no gear list (27.09: clicks
+    /// on the wrong heroes, «slot does not open»).</summary>
+    internal static bool FormAlive(ulong f) { ulong v; int tt; return f != 0 && Field(f, KGrid, out v, out tt) && tt != T_NIL; }
+
+    /// <summary>The live hero screen searched again (a full pass, about a second), at most every <paramref name="ms"/>;
+    /// false when it is too soon (then <paramref name="form"/> is not known).</summary>
+    internal static bool RescanForm(int ms, out ulong form) {
+      form = 0;
+      if (regs == null) return false;
+      if (lastNodeScan != 0 && Environment.TickCount - lastNodeScan < ms) return false;
+      lastNodeScan = Environment.TickCount;
+      form = FindFormNode();
+      return true;
+    }
     static ulong NodeInv(ulong n) { return NodeValue(n, FormBackpackId, "m_CachedContentPanels"); }
 
     /// <summary>Searches UIInstance's nodes of the hero screen and the inventory (one pass; a form the player has not
@@ -550,7 +570,7 @@ namespace RealmForge {
 
     static LiveTables FindLive(int pid) {
       regs = Regions();
-      string[] anchors = { KEquipData, KHero, KHeroes, KCamp, KArts, KBeasts, KGrid, KPanel };
+      string[] anchors = { KEquipData, KHero, KHeroes, KCamp, KArts, KBeasts, KAct, KGrid, KPanel };
       var tstr = FindLuaStringsFast(anchors);
       var found = new List<string>(); foreach (var kv in tstr) found.Add(kv.Value + "@" + kv.Key.ToString("X"));
       L("Strings found: " + string.Join(", ", found.ToArray()));
@@ -569,6 +589,7 @@ namespace RealmForge {
       lt.CampOwner = Largest(owners, KCamp);
       lt.ArtOwner = Largest(owners, KArts);
       lt.BeastOwner = Largest(owners, KBeasts);
+      lt.ActOwner = Largest(owners, KAct);
       // the hero screen: the one the game's window list holds (a dead copy of an older one can own the keys too)
       lt.Form = FindFormNode();
       if (lt.Form == 0 && owners.TryGetValue(KGrid, out l)) foreach (var t in l) if (HasTable(t, "m_InfinityGridProxy")) { lt.Form = t; break; }
@@ -739,6 +760,72 @@ namespace RealmForge {
     /// <summary>Every Lua table holding a server battle hero (MTTDProto.CmdHeroFight: iHeroId, iBaseId, mAttr{attr id ->
     /// value}, ...) as JSON lines - still in memory after a battle until the Lua GC takes it. Read-only, for comparing the
     /// server's battle stats with the stats the site computes for the hero panel.</summary>
+    /// <summary>Battle study: the battle statistics of heroes still in memory (CSharpBattle.Battle.DamageStatisticsData:
+    /// iBaseID 0x10, iHeroID 0x14, iPower 0x18, fDamageAmount 0x28 (all enemies), fDamageAmountToBoss 0x30,
+    /// fTreatmentAmount 0x38, fAcceptDamageAmount 0x3C, iStarLevel 0x40, iSublimLevel 0x44), and the battle-end screen's
+    /// frame count (Form_BattleEnd.m_FightFramIdx; one logic frame = 270/4096 s). JSON lines, read-only.</summary>
+    public static string DumpBattleStats() {
+      var ps = Process.GetProcessesByName("Watcher of Realms");
+      if (ps.Length == 0) return null;
+      H = OpenProcess(0x0410, false, ps[0].Id);
+      if (H == IntPtr.Zero) return null;
+      regs = Regions();
+      var sb = new StringBuilder(); var seen = new HashSet<string>();
+      var hits = new List<ulong>();
+      ScanParallel((b0, buf, len) => {
+        for (int i = 0; i + 0x68 <= len; i += 8) {
+          int bid = BitConverter.ToInt32(buf, i + 0x10);
+          if (bid < 1000 || bid > 9999) continue;
+          uint uid = BitConverter.ToUInt32(buf, i + 0x14);
+          if (uid < (uint)bid * 100000u || uid >= (uint)bid * 100000u + 100) continue;
+          int star = BitConverter.ToInt32(buf, i + 0x40), sub = BitConverter.ToInt32(buf, i + 0x44);
+          long dmg = BitConverter.ToInt64(buf, i + 0x28);
+          if (star < 1 || star > 8 || sub < 0 || sub > 12 || dmg < 0 || dmg > 1000000000000L) continue;
+          if (BitConverter.ToUInt64(buf, i) == 0) continue;
+          lock (hits) hits.Add(b0 + (ulong)i);
+        }
+      });
+      foreach (var o in hits) {
+        var b = Read(o, 0x68); if (b == null) continue;
+        string line = "{\"at\":\"" + o.ToString("X") + "\",\"klass\":\"" + BitConverter.ToUInt64(b, 0).ToString("X") + "\",\"iBaseID\":" + BitConverter.ToInt32(b, 0x10)
+          + ",\"iHeroID\":" + BitConverter.ToUInt32(b, 0x14) + ",\"iPower\":" + BitConverter.ToUInt32(b, 0x18)
+          + ",\"damage\":" + BitConverter.ToInt64(b, 0x28) + ",\"toBoss\":" + BitConverter.ToInt64(b, 0x30)
+          + ",\"heal\":" + BitConverter.ToInt32(b, 0x38) + ",\"taken\":" + BitConverter.ToInt32(b, 0x3C)
+          + ",\"star\":" + BitConverter.ToInt32(b, 0x40) + ",\"sublim\":" + BitConverter.ToInt32(b, 0x44)
+          + ",\"overflow\":" + BitConverter.ToInt64(b, 0x58) + "}";
+        if (seen.Add(line.Substring(line.IndexOf("\"iBaseID\"")))) sb.Append(line).Append('\n');
+      }
+      // the simulations still in memory: CSharpBattle.Battle.GameSimulation and its kinds (TypeInfo RVAs of this game
+      // build, work/il2full/script.json): <CurrentFrameIdx> 0xC4, m_state 0xA4
+      ulong ga = 0;
+      try { foreach (ProcessModule m in ps[0].Modules) if (string.Equals(m.ModuleName, "GameAssembly.dll", StringComparison.OrdinalIgnoreCase)) ga = (ulong)(long)m.BaseAddress; } catch (Exception) { }
+      if (ga != 0) {
+        var klass = new Dictionary<ulong, string>();
+        foreach (var t in new[] { new KeyValuePair<string, ulong>("GameSimulation", 0), new KeyValuePair<string, ulong>("TDGameSimulation", 0),
+                                  new KeyValuePair<string, ulong>("TCGameSimulation", 0), new KeyValuePair<string, ulong>("PAGameSimulation", 0) }) {
+          var kb = Read(ga + t.Value, 8); ulong k = kb != null ? BitConverter.ToUInt64(kb, 0) : 0;
+          if (k != 0) klass[k] = t.Key;
+        }
+        var sims = new List<ulong>();
+        ScanParallel((b0, buf, len) => {
+          for (int i = 0; i + 0xC8 <= len; i += 8) if (klass.ContainsKey(BitConverter.ToUInt64(buf, i))) lock (sims) sims.Add(b0 + (ulong)i);
+        });
+        foreach (var o in sims) {
+          var b = Read(o, 0xC8); if (b == null) continue;
+          uint frames = BitConverter.ToUInt32(b, 0xC4); int state = BitConverter.ToInt32(b, 0xA4);
+          if (state < 1 || state > 2 || frames == 0 || frames > 200000) continue;   // ESimulationStatus Runing / End; a klass pointer elsewhere is no object
+          sb.Append("{\"sim\":\"" + klass[BitConverter.ToUInt64(b, 0)] + "\",\"at\":\"" + o.ToString("X") + "\",\"state\":" + BitConverter.ToInt32(b, 0xA4)
+            + ",\"frames\":" + frames + ",\"seconds\":" + (frames * 270 / 4096.0).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + "}\n");
+        }
+      }
+      // the battle-end screen: its frame count
+      var owners = OwnersOf(FindLuaStringsFast(new[] { "m_FightFramIdx" }), 1024);
+      List<ulong> l;
+      if (owners.TryGetValue("m_FightFramIdx", out l))
+        foreach (var t in l) { ulong v; int tt; if (Field(t, "m_FightFramIdx", out v, out tt) && tt == T_INT) sb.Append("{\"form\":\"" + t.ToString("X") + "\",\"frames\":" + (long)v + ",\"seconds\":" + ((long)v * 270 / 4096.0).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + "}\n"); }
+      return sb.ToString();
+    }
+
     public static string DumpHeroFights() {
       var ps = Process.GetProcessesByName("Watcher of Realms");
       if (ps.Length == 0) return null;
@@ -834,6 +921,20 @@ namespace RealmForge {
       Dictionary<string, object> beasts = null; ulong bv; int bt;
       if (lt.BeastOwner != 0 && Field(lt.BeastOwner, KBeasts, out bv, out bt) && bt == T_TABLE) beasts = ParseTable(bv, 3, new HashSet<ulong>());
       sb.Append(",\n\"beasts\":"); J(sb, beasts);
+      // Summoning (work/study/notes/03-summon.md): PlayerData counters (pulls left to the guarantee by softId, per pool)
+      // and ActivityData.m_ActData54.pool = the pools open now, with softId, the rate text (mDetailCfg) and times
+      var summon = new Dictionary<string, object>();
+      if (lt.BeastOwner != 0) foreach (var k in SummonPlayerKeys) {
+        ulong sv; int st;
+        if (!Field(lt.BeastOwner, k, out sv, out st)) continue;
+        if (st == T_TABLE) summon[k] = ParseTable(sv, k == "m_LotteryRecord" ? 4 : 3, new HashSet<ulong>());
+        else if (st == T_INT) summon[k] = (long)sv;
+      }
+      ulong a54, apool; int a54t, apt;
+      if (lt.ActOwner != 0 && Field(lt.ActOwner, KAct, out a54, out a54t) && a54t == T_TABLE && Field(a54, "pool", out apool, out apt) && apt == T_TABLE)
+        summon["pools"] = ParseTable(apool, 4, new HashSet<ulong>());
+      L("  summon: " + summon.Count + " parts" + (summon.ContainsKey("pools") ? "" : " (no pools)"));
+      sb.Append(",\n\"summon\":"); J(sb, summon);
       sb.Append("\n,\"meta\":{\"extractor\":\"" + ExtractorVersion + "\"");
       if (GameVersion != null) { sb.Append(",\"gameVersion\":"); J(sb, GameVersion); }
       sb.Append(",\"seconds\":" + (int)sw.Elapsed.TotalSeconds + ",\"equipment\":" + ne + ",\"heroes\":" + nh + ",\"live\":true}\n}\n");
@@ -1077,9 +1178,16 @@ namespace RealmForge {
     /// <summary>The game built the hero screen again (after a battle, say): follow it to the new one. When the window
     /// list's node has moved (the list grew), the form is dropped, so the host scans again.</summary>
     static void CheckForm(EquipAddrs a) {
-      if (a.Form == 0 || formNode == 0) return;   // no node known: the form found by its keys stays
+      if (a.Form == 0) return;
+      // no node known and the form found by its keys is still shown: it stays
+      if (formNode == 0 && FormAlive(a.Form)) return;
       ulong f = LiveForm();
       if (f == a.Form) return;
+      // the node is gone, moved, or holds a dead copy (the game rebuilt the screen after a battle): look for the live one
+      if (f == 0) {
+        if (!RescanForm(4000, out f)) return;   // too soon: the next poll tries again
+        if (f == a.Form) return;
+      }
       if (f == 0) formNode = 0;
       L(f != 0 ? "  hero screen rebuilt by the game: following it" : "  hero screen lost: scanning again");
       a.Form = f;

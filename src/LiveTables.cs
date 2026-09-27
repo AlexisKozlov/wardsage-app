@@ -60,7 +60,24 @@ namespace RealmForge {
       ulong f = BitConverter.ToUInt64(b, 0);
       return HasTable(f, key) ? f : 0;
     }
-    static ulong NodeForm(ulong n) { return NodeValue(n, FormCharactorMainId, "m_InfinityGridProxy"); }
+    static ulong NodeForm(ulong n) { ulong f = NodeValue(n, FormCharactorMainId, "m_InfinityGridProxy"); return f != 0 && FormAlive(f) ? f : 0; }
+
+    /// <summary>A hero screen the game still shows: its grid component is set. When the game closes a screen it clears the
+    /// component fields (nil) and the table lingers - and so can an old node array of UIInstance (after a rehash) that
+    /// still points at it. Reading such a dead copy, the pilots saw the old grid order and no gear list (27.09: clicks
+    /// on the wrong heroes, «slot does not open»).</summary>
+    internal static bool FormAlive(ulong f) { ulong v; int tt; return f != 0 && Field(f, KGrid, out v, out tt) && tt != T_NIL; }
+
+    /// <summary>The live hero screen searched again (a full pass, about a second), at most every <paramref name="ms"/>;
+    /// false when it is too soon (then <paramref name="form"/> is not known).</summary>
+    internal static bool RescanForm(int ms, out ulong form) {
+      form = 0;
+      if (regs == null) return false;
+      if (lastNodeScan != 0 && Environment.TickCount - lastNodeScan < ms) return false;
+      lastNodeScan = Environment.TickCount;
+      form = FindFormNode();
+      return true;
+    }
     static ulong NodeInv(ulong n) { return NodeValue(n, FormBackpackId, "m_CachedContentPanels"); }
 
     /// <summary>Searches UIInstance's nodes of the hero screen and the inventory (one pass; a form the player has not

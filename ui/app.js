@@ -397,7 +397,7 @@
       ${say(p, g)}${slotList(p, g)}
       <div class="row" style="margin-top:16px;justify-content:space-between">
         <div class="readonly" style="margin:0">${I.lock}<span>${esc(t('readonly'))}</span></div>
-        <div class="row">${runButton(p, g)}<button class="btn-ghost" data-act="removePlan">${esc(t('remove'))}</button></div></div></div>`;
+        <div class="row">${runButton(p, g)}${cancelButton()}</div></div></div>`;
   }
 
   function compactView() {
@@ -409,7 +409,7 @@
       <div class="compact-top">${bust(p)}<div><b>${esc(p.heroName)}</b><span>${esc(t('itemsOn', g.done, p.items.length))}</span>
         <div class="mini-bar"><i style="width:${Math.round((g.done / p.items.length) * 100)}%"></i></div></div>
         <button class="icon-btn" data-act="compact" title="${esc(t('expand'))}">${I.expand}</button></div>
-      ${say(p, g)}<div class="row" style="margin:8px 0">${runButton(p, g)}</div>${slotList(p, g)}</div>`;
+      ${say(p, g)}<div class="row" style="margin:8px 0">${runButton(p, g)}${cancelButton()}</div>${slotList(p, g)}</div>`;
   }
 
   // «Надеть»: the program opens the hero and puts the items on by itself (a started plan); «Остановить» while it runs
@@ -418,6 +418,10 @@
     return S.run === p.id ? `<button class="btn-line" data-act="stopRun">${esc(t('stopBtn'))}</button>`
       : `<button class="btn-gold" data-act="run">${esc(t('runBtn'))}</button>`;
   }
+
+  // «Отменить»: stops putting the build on and drops it (the site marks it cancelled) - in both views, so a build the
+  // program started by itself can be called off without the site
+  const cancelButton = () => `<button class="btn-ghost" data-act="removePlan" title="${esc(t('cancelPlanTip'))}">${esc(t('cancelPlan'))}</button>`;
 
   // queue plans (ids) after the running one; start the first when none runs
   function enqueue(plans) {
@@ -584,6 +588,8 @@
     else if (a === 'compact') { S.compact = !S.compact; host.send({ cmd: 'compact', on: S.compact }); render(); }
     else if (a === 'removePlan') {
       const p = current(); if (!p) return;
+      if (S.run === p.id) { S.run = null; syncHighlight(); }   // stop the pilot at once
+      S.queue = S.queue.filter((id) => id !== p.id);
       host.send({ cmd: 'equip.finish', id: p.id, done: false });
       S.plans.list.splice(S.sel, 1); S.sel = Math.max(0, Math.min(S.sel, S.plans.list.length - 1)); render();
     }

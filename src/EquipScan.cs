@@ -196,9 +196,16 @@ namespace RealmForge {
     /// <summary>The game built the hero screen again (after a battle, say): follow it to the new one. When the window
     /// list's node has moved (the list grew), the form is dropped, so the host scans again.</summary>
     static void CheckForm(EquipAddrs a) {
-      if (a.Form == 0 || formNode == 0) return;   // no node known: the form found by its keys stays
+      if (a.Form == 0) return;
+      // no node known and the form found by its keys is still shown: it stays
+      if (formNode == 0 && FormAlive(a.Form)) return;
       ulong f = LiveForm();
       if (f == a.Form) return;
+      // the node is gone, moved, or holds a dead copy (the game rebuilt the screen after a battle): look for the live one
+      if (f == 0) {
+        if (!RescanForm(4000, out f)) return;   // too soon: the next poll tries again
+        if (f == a.Form) return;
+      }
       if (f == 0) formNode = 0;
       L(f != 0 ? "  hero screen rebuilt by the game: following it" : "  hero screen lost: scanning again");
       a.Form = f;
