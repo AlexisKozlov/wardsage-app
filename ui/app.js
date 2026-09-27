@@ -109,7 +109,7 @@
   function syncPage() {
     if (!S.hasCode || S.editCode) return onboarding();
     const sy = S.sync;
-    const running = sy.phase === 'run';
+    const running = sy.phase === 'run' || sy.phase === 'wait';
     const last = S.last;
     const tops = (last && last.top && last.top.length ? last.top : []).slice(0, 3);
     const tile = (ok, icon, title, sub, extra = '') =>
@@ -123,6 +123,7 @@
           <button class="btn-line" data-act="battleCapture" title="${esc(t('battleCaptureTip'))}">${esc(t('battleCapture'))}</button>
           ${steps()}
           ${sy.phase === 'run' ? `<div class="bar"><i style="width:${progress()}%"></i></div><div class="status">${esc(sy.stage === 'read' ? t('readHint', sy.seconds) : sy.stage === 'send' ? t('sendHint') : '')}</div>` : ''}
+          ${sy.phase === 'wait' ? `<div class="bar"><i style="width:92%"></i></div><div class="status">${esc(t('rateWait', Math.max(1, Math.ceil((sy.until - Date.now()) / 1000))))}</div>` : ''}
           ${sy.phase === 'done' ? result() : ''}
           ${sy.phase === 'error' ? errorBox() : ''}
           <div class="readonly" style="margin:0">${I.lock}<span>${esc(t('readonly'))}</span></div>
@@ -624,6 +625,17 @@
           break;
         }
         if (m.stage === 'done') { S.sync = { phase: 'done', result: m.result }; if (m.last) S.last = m.last; }
+        else if (m.stage === 'error' && m.error && m.error.kind === 'rate') {
+          // the site takes one sync in 30 s: not an error — wait it out and send by itself
+          const until = Date.now() + ((m.error.retryAfter || 30) + 1) * 1000;
+          S.sync = { phase: 'wait', stage: 'send', until };
+          clearInterval(S.rateTimer);
+          S.rateTimer = setInterval(() => {
+            if (S.sync.phase !== 'wait') { clearInterval(S.rateTimer); return; }
+            if (Date.now() >= S.sync.until) { clearInterval(S.rateTimer); S.sync = { phase: 'run', stage: 'find', seconds: 0 }; host.send({ cmd: 'sync' }); }
+            if (S.page === 'sync' && !S.compact) render();
+          }, 1000);
+        }
         else if (m.stage === 'error') S.sync = { phase: 'error', stage: S.sync.stage, error: m.error };
         else S.sync = { phase: 'run', stage: m.stage, seconds: m.seconds || 0 };
         if (S.page === 'sync' && !S.compact) render();
