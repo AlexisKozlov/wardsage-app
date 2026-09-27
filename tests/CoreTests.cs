@@ -596,10 +596,12 @@ static class CoreTests {
     double CH { get { return Small ? g.SmallCardH : g.CardH; } }   // the main city (the hero screen closed): its «Герои» opens CityHero
     readonly HeroGeometry g; readonly double W, H;
     public int Clicks, Drags, Backs;
+    public bool Blocked;   // something over the grid takes the clicks (a pop-up left open)
     public FakeHeroGame(HeroGeometry g, double W, double H) { this.g = g; this.W = W; this.H = H; }
     public double MaxScroll { get { int rows = (Heroes.Length + 2) / 3; return Math.Max(0, g.Row1Top * H + rows * PY * H - g.ViewBottom * H + 10); } }
     public void Click(double x, double y) {
       Clicks++;
+      if (Blocked) return;
       if (Tags != null && Math.Abs(x - g.FunnelX * H) < 20 && Math.Abs(y - (H - g.FunnelDY * H)) < 20) { FilterOpen = !FilterOpen; return; }
       if (FilterOpen) {
         int r = (int)Math.Round((y / H - g.FilterRow0) / g.FilterPitch);
@@ -817,6 +819,20 @@ static class CoreTests {
     var g = new HeroGeometry(); double W = 1920, H = 1009;
     var heroes = new long[130]; for (int i = 0; i < heroes.Length; i++) heroes[i] = (200100 + i) * 100000L;
     HeroView lv;
+
+    {   // clicks do nothing for 20 s (a pop-up over the grid, live 27.09): failed, then tried again once it is gone
+      var gb = new FakeHeroGame(g, W, H) { Heroes = heroes, Shown = heroes[7], Blocked = true };
+      var pb = new HeroPilot(g); bool sawFail = false; string stb = "";
+      for (long t = 0; t < 60000; t += 100) {
+        if (t >= 20000) gb.Blocked = false;
+        var v = new HeroView { NowMs = t, Foreground = true, W = W, H = H, ClientH = H, Plan = heroes[5], Hero = gb.Shown, Tab = gb.Tab, Part = gb.Part, Heroes = gb.Heroes, GridPtr = gb.Grid };
+        var a = pb.Step(v);
+        if (pb.State == "failed") sawFail = true;
+        if (a == null) { stb = pb.State; break; }
+        if (a.Kind == AutoKind.Click) gb.Click(a.X, a.Y); else if (a.Kind == AutoKind.Drag) gb.Drag(a.DY);
+      }
+      Check(sawFail && stb == "done" && gb.Shown == heroes[5], "blocked grid: failed, retried after the pause -> " + stb);
+    }
 
     var game = new FakeHeroGame(g, W, H) { Heroes = heroes, Shown = heroes[4], Part = 2 };
     string st = RunHero(new HeroPilot(g), game, heroes[100], 3000, out lv);

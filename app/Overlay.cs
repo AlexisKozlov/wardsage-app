@@ -488,6 +488,14 @@ namespace RealmForge {
       // hidden), then the item itself
       if (runHero > 0) {
         heroScreen = RFX.ReadHeroScreen(addrs, heroScreen);
+        // the gear filter pop-up left open (the last item's) stays over the hero grid and takes its clicks: closed first
+        if (heroScreen.Hero > 0 && heroScreen.Hero != runHero && v.Foreground && !v.UserBusy && now >= slotCloseAfter
+            && Mark(o, fg.X(fg.MainCloseX, cr.R, cr.B), fg.Y(fg.CloseY, cr.R, cr.B), Ui.Unit(cr.R, cr.B), ButtonCheck.IsCloseRed)) {
+          slotCloseAfter = now + 900;
+          Log.Write("hero: the gear filter is open over the grid - closing it");
+          Send(new AutoAction { Kind = AutoKind.Click }, o.X + (int)Math.Round(fg.X(fg.MainCloseX, cr.R, cr.B)), o.Y + (int)Math.Round(fg.Y(fg.CloseY, cr.R, cr.B)));
+          return;
+        }
         var hv = new HeroView {
           NowMs = now, Foreground = v.Foreground, UserBusy = v.UserBusy, UserClicked = v.UserClicked, W = cr.R, H = Ui.Unit(cr.R, cr.B), ClientH = cr.B,
           Plan = runHero, Hero = heroScreen.Hero, Tab = heroScreen.Tab, Part = heroScreen.Part, SmallCards = heroScreen.SmallCards,

@@ -62,12 +62,15 @@ namespace RealmForge {
 
   public sealed class HeroPilot {
     public const int MaxClicks = 24, MaxDrags = 30, MaxBack = 3, MaxTab = 3, MaxCity = 2;
+    // a failed hero is tried again after a pause (something may have been over the grid meanwhile), this many times
+    public const int RetryMs = 6000, MaxRetries = 2;
     public const int FarRows = 5;   // the hero further down than this: filter the grid first
     public const int FilterClickMs = 1000;   // after a class / faction click: the game applies it before the pop-up closes
     public const int AfterClickMs = 500, AfterDragMs = 700, AfterBackMs = 900, UserPauseMs = 4000;   // each click is checked in memory
     public const double MinDragPx = 24;
     readonly HeroGeometry g;
-    long plan = -1, waitUntil, pauseUntil;
+    long plan = -1, waitUntil, pauseUntil, failedAt;
+    int retries;
     int clicks, drags, backs, tabs, misses, city;
     // the grid filter: 0 not started, 1 filtering, 2 done (or given up); clearing a filter that hides the hero
     int filterPhase, funnelTries, factionTries, clearTries, classResets; bool classClicked, factionDone, classDone;
@@ -89,7 +92,9 @@ namespace RealmForge {
     /// <summary>The click or drag to make, <see cref="AutoAction.Nothing"/> to wait, or null: the hero screen shows the
     /// plan's hero with the gear tab (or there is nothing to do), the gear pilots go on.</summary>
     public AutoAction Step(HeroView v) {
-      if (v.Plan != plan) { plan = v.Plan; Restart(); }
+      if (v.Plan != plan) { plan = v.Plan; Restart(); retries = 0; }
+      if (State == "failed" && failedAt == 0) failedAt = v.NowMs;
+      if (State == "failed" && retries < MaxRetries && v.NowMs - failedAt >= RetryMs) { retries++; Restart(); }
       if (v.Plan <= 0) { State = "idle"; return null; }
       if (pending) Learn(v);
       bool heroOk = v.Hero == v.Plan, tabOk = v.Tab == HeroGeometry.GearTab || v.Tab < 0;
@@ -245,7 +250,7 @@ namespace RealmForge {
     }
 
     void Restart() {
-      waitUntil = pauseUntil = 0; clicks = drags = backs = tabs = misses = city = 0; has = pending = false; State = "idle";
+      waitUntil = pauseUntil = failedAt = 0; clicks = drags = backs = tabs = misses = city = 0; has = pending = false; State = "idle";
       filterPhase = funnelTries = factionTries = clearTries = classResets = 0; classClicked = factionDone = classDone = false; lastGrid = 0;
     }
 
