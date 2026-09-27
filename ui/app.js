@@ -431,7 +431,9 @@
     if (!S.run) runNext();
   }
   // a plan for a hero not on the account in the game now (the player switched accounts): never run, marked in the list
-  const foreign = (p) => !!(S.accHeroes && p && !p.bridge && !S.accHeroes.has(p.heroUid));
+  // (hero uids repeat across accounts - base id × 100000 + n - so the plan's items decide: none of them on this account)
+  const foreign = (p) => !!(S.accHeroes && p && !p.bridge && (!S.accHeroes.has(p.heroUid)
+    || (S.accItems && S.accItems.size && p.items.length && !p.items.some((it) => S.accItems.has(it.uid)))));
   function runNext() {
     const p = G.nextQueued(S.queue.filter((id) => !foreign(S.plans.list.find((x) => x.id === id))), S.plans.list, S.live);
     S.queue = p ? S.queue.slice(S.queue.indexOf(p.id) + 1) : [];
@@ -724,7 +726,7 @@
       }
       case 'focusEquip': S.page = 'equip'; render(); break;
       case 'accountHeroes': {
-        S.accHeroes = new Set(m.uids || []);
+        S.accHeroes = new Set(m.uids || []); S.accItems = new Set(m.items || []);
         // the running plan's hero is not on this account: stop it and go on with the queue
         const cur = S.plans.list.find((x) => x.id === S.run);
         if (cur && foreign(cur)) { S.run = null; syncHighlight(); if (S.queue.length) runNext(); }
