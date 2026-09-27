@@ -33,6 +33,7 @@ while IFS= read -r f; do RES+=("-resource:$f,ui/${f#$OUT/ui/}"); done < <(find "
 RES+=("-resource:app/res/frame.png,overlay/frame.png")
 RES+=("-resource:app/res/heroes_btn.png,overlay/heroes_btn.png")
 RES+=("-resource:app/res/inventory_btn.png,overlay/inventory_btn.png")
+RES+=("-resource:app/res/btn_blue.png,overlay/btn_blue.png")
 RES+=("-resource:app/res/hero_tags.json,overlay/hero_tags.json")
 for f in Microsoft.Web.WebView2.Core.dll Microsoft.Web.WebView2.WinForms.dll WebView2Loader.dll; do RES+=("-resource:$WV/$f,bin/$f"); done
 

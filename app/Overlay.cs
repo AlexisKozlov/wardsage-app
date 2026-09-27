@@ -52,18 +52,25 @@ namespace RealmForge {
     [DllImport("gdi32.dll")] public static extern bool DeleteObject(IntPtr obj);
   }
 
-  /// <summary>A borderless per-pixel-alpha window that never takes focus or clicks.</summary>
+  /// <summary>A borderless per-pixel-alpha window that never takes focus; it lets clicks through, unless it is a
+  /// button (<see cref="Pressed"/>: the «Отменить» over the game).</summary>
   sealed class GlowWindow : Form {
-    public GlowWindow() {
+    readonly bool clickable;
+    /// <summary>A click on a button window (it still never takes the focus from the game).</summary>
+    public event Action Pressed;
+    public GlowWindow() : this(false) { }
+    public GlowWindow(bool clickable) {
+      this.clickable = clickable;
       FormBorderStyle = FormBorderStyle.None; ShowInTaskbar = false; StartPosition = FormStartPosition.Manual;
-      Text = "RealmForge highlight";
+      Text = clickable ? "RealmForge cancel" : "RealmForge highlight";
     }
     protected override bool ShowWithoutActivation { get { return true; } }
     protected override CreateParams CreateParams {
       get {
         var cp = base.CreateParams;
         // LAYERED | TRANSPARENT (clicks go through) | TOOLWINDOW (no taskbar / Alt+Tab) | NOACTIVATE | TOPMOST
-        cp.ExStyle |= 0x00080000 | 0x00000020 | 0x00000080 | 0x08000000 | 0x00000008;
+        cp.ExStyle |= 0x00080000 | 0x00000080 | 0x08000000 | 0x00000008;
+        if (!clickable) cp.ExStyle |= 0x00000020;
         return cp;
       }
     }
@@ -72,7 +79,9 @@ namespace RealmForge {
       try { W32.SetWindowDisplayAffinity(Handle, 0x11); } catch (Exception) { }   // keep it out of our own screenshots
     }
     protected override void WndProc(ref Message m) {
-      if (m.Msg == 0x0084) { m.Result = (IntPtr)(-1); return; }   // WM_NCHITTEST -> HTTRANSPARENT
+      if (!clickable && m.Msg == 0x0084) { m.Result = (IntPtr)(-1); return; }   // WM_NCHITTEST -> HTTRANSPARENT
+      if (clickable && m.Msg == 0x0021) { m.Result = (IntPtr)3; return; }     // WM_MOUSEACTIVATE -> MA_NOACTIVATE
+      if (clickable && m.Msg == 0x0202) { var p = Pressed; if (p != null) p(); return; }   // WM_LBUTTONUP
       base.WndProc(ref m);
     }
 
@@ -99,6 +108,14 @@ namespace RealmForge {
     readonly Timer timer = new Timer();
     readonly GlowWindow glow = new GlowWindow();
     readonly GlowWindow tip = new GlowWindow();     // hint on the game's own buttons (filter, «Заменить», next slot)
+    // «Отменить надевание» over the game while a build is being put on: the player's clicks in the game send our
+    // window to the back, so the way to call it off is where the player looks
+    readonly GlowWindow cancelWin = new GlowWindow(true);
+    /// <summary>The player pressed «Отменить надевание» over the game.</summary>
+    public event Action CancelPressed;
+    /// <summary>The button's text in the interface language.</summary>
+    public string CancelText = "Отменить надевание";
+    string cancelDrawn; Bitmap cancelBmp;
     readonly ListGeometry g = new ListGeometry();
     readonly HintGeometry hg = new HintGeometry();
     readonly ScrollAnchor anchor = new ScrollAnchor();
@@ -146,9 +163,10 @@ namespace RealmForge {
       fpilot = new FilterPilot(fg);
       hpilot = new HeroPilot(heroG);
       timer.Interval = 100; timer.Tick += (s, e) => { try { Tick(); } catch (Exception ex) { Log.Write("overlay: " + ex.Message); Hide("off"); } };
+      cancelWin.Pressed += () => { cancelWin.Hide(); var c = CancelPressed; if (c != null) c(); };
     }
 
-    public void Dispose() { timer.Dispose(); glow.Dispose(); tip.Dispose(); }
+    public void Dispose() { timer.Dispose(); glow.Dispose(); tip.Dispose(); cancelWin.Dispose(); }
 
     public void StartDiag(int minutes) {
       // one folder per run: a second run must not overwrite the first one's files
@@ -227,7 +245,7 @@ namespace RealmForge {
 
     void Run() {
       if (target != 0 || filterItem != 0 || hintKind != "" || runHero != 0 || sellWanted != null || DateTime.Now < diagUntil) { timer.Start(); return; }
-      timer.Stop(); HideTip();
+      timer.Stop(); HideTip(); if (cancelWin.Visible) cancelWin.Hide();
     }
 
     void HideTip() { if (tip.Visible) tip.Hide(); tipKey = null; }
@@ -244,6 +262,61 @@ namespace RealmForge {
       curRow = curCol = 0; curSel = 0;
       TickFrame();
       TickAuto();
+      TickCancel();
+    }
+
+    // «Отменить надевание»: top centre of the game (free on the hero screen and in the gear list), only while a started
+    // build is on and the game is in front
+    void TickCancel() {
+      IntPtr hwnd = GameWindow();
+      int fp = 0, gp = 0;
+      if (hwnd != IntPtr.Zero) { W32.GetWindowThreadProcessId(W32.GetForegroundWindow(), out fp); W32.GetWindowThreadProcessId(hwnd, out gp); }
+      W32.RECT cr;
+      if (runHero <= 0 || !AutoEnabled || hwnd == IntPtr.Zero || W32.IsIconic(hwnd) || fp != gp || !W32.GetClientRect(hwnd, out cr) || cr.B < 200) {
+        if (cancelWin.Visible) cancelWin.Hide();
+        return;
+      }
+      var o = new W32.POINT(0, 0); W32.ClientToScreen(hwnd, ref o);
+      double U = Ui.Unit(cr.R, cr.B);
+      int w = (int)(0.25 * U), h = (int)(0.058 * U);
+      string key = CancelText + "|" + w + "x" + h;
+      if (key != cancelDrawn || cancelBmp == null) {
+        if (cancelBmp != null) cancelBmp.Dispose();
+        cancelBmp = CancelBitmap(w, h, CancelText); cancelDrawn = key;
+      }
+      cancelWin.Put(cancelBmp, o.X + cr.R / 2 - w / 2, o.Y + (int)(0.012 * U));
+    }
+
+    static Bitmap blueTex;
+    /// <summary>The game's blue button (its texture, stretched by nine slices) with the text.</summary>
+    static Bitmap CancelBitmap(int w, int h, string text) {
+      if (blueTex == null)
+        try { using (var s = typeof(OverlayController).Assembly.GetManifestResourceStream("overlay/btn_blue.png")) if (s != null) blueTex = new Bitmap(Image.FromStream(s)); }
+        catch (Exception) { }
+      var bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb);
+      using (var gr = Graphics.FromImage(bmp)) {
+        gr.SmoothingMode = SmoothingMode.AntiAlias; gr.InterpolationMode = InterpolationMode.HighQualityBicubic;
+        gr.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
+        if (blueTex != null) {
+          // slices of the texture (as the site's border-image: 22 26): corners kept, edges and centre stretched
+          int sl = 26, st = 22, sw = blueTex.Width, sh = blueTex.Height;
+          int dl = Math.Min(w / 3, (int)(h * 0.42)), dt = Math.Min(h / 3, (int)(h * 0.36));
+          var ia = new ImageAttributes(); ia.SetWrapMode(System.Drawing.Drawing2D.WrapMode.TileFlipXY);
+          Action<int, int, int, int, int, int, int, int> part = (dx, dy, dw, dh, sx, sy, sww, shh) =>
+            gr.DrawImage(blueTex, new Rectangle(dx, dy, dw, dh), sx, sy, sww, shh, GraphicsUnit.Pixel, ia);
+          part(0, 0, dl, dt, 0, 0, sl, st); part(dl, 0, w - 2 * dl, dt, sl, 0, sw - 2 * sl, st); part(w - dl, 0, dl, dt, sw - sl, 0, sl, st);
+          part(0, dt, dl, h - 2 * dt, 0, st, sl, sh - 2 * st); part(dl, dt, w - 2 * dl, h - 2 * dt, sl, st, sw - 2 * sl, sh - 2 * st);
+          part(w - dl, dt, dl, h - 2 * dt, sw - sl, st, sl, sh - 2 * st);
+          part(0, h - dt, dl, dt, 0, sh - st, sl, st); part(dl, h - dt, w - 2 * dl, dt, sl, sh - st, sw - 2 * sl, st); part(w - dl, h - dt, dl, dt, sw - sl, sh - st, sl, st);
+        } else using (var b = new SolidBrush(Color.FromArgb(230, 40, 60, 130))) gr.FillRectangle(b, 0, 0, w, h);
+        using (var f = new Font("Segoe UI", Math.Max(9f, h * 0.30f), FontStyle.Bold, GraphicsUnit.Pixel))
+        using (var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center }) {
+          var r = new RectangleF(0, -h * 0.13f, w, h);   // the texture's blue field sits above its middle
+          using (var sh = new SolidBrush(Color.FromArgb(170, 0, 0, 0))) gr.DrawString(text, f, sh, new RectangleF(r.X + 1, r.Y + 1.5f, r.Width, r.Height), sf);
+          gr.DrawString(text, f, Brushes.White, r, sf);
+        }
+      }
+      return bmp;
     }
 
     void TickFrame() {

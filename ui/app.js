@@ -668,6 +668,18 @@
       case 'overlay': S.overlay = m.state; if (S.page === 'equip' || S.compact) render(); break;
       case 'update': S.update = { version: m.version, notes: m.notes || '' }; render(); break;
       case 'auto': S.auto = m.state; if (S.page === 'equip' || S.compact) render(); break;
+      case 'cancelRun': {
+        // «Отменить надевание» over the game: the running build is dropped (as «Отменить» here) and the queue stops
+        const p = S.run ? S.plans.list.find((x) => x.id === S.run) : null;
+        S.run = null; S.queue = [];
+        if (p) {
+          host.send({ cmd: 'equip.finish', id: p.id, done: false });
+          const i = S.plans.list.indexOf(p); S.plans.list.splice(i, 1);
+          S.sel = Math.max(0, Math.min(S.sel, S.plans.list.length - 1));
+          toast(t('cancelledOver', p.heroName), 5000);
+        }
+        syncHighlight(); render(); break;
+      }
       case 'sell': {
         if (m.status !== 'ok') break;
         const L = S.sell, was = L.list && L.list.id;

@@ -58,6 +58,9 @@ namespace RealmForge {
                                       (p, st) => Post("{\"ev\":\"sell.state\",\"state\":" + S(st) + ",\"selected\":" + p.Selected + ",\"missing\":" + p.Missing + ",\"extra\":" + p.Extra + "}"));
       overlay.AutoEnabled = cfg.AutoClick;
       overlay.AutoConfirm = cfg.AutoConfirm;
+      overlay.CancelText = CancelText(cfg.Lang);
+      // «Отменить надевание» over the game: the interface drops the running build (as its own «Отменить»)
+      overlay.CancelPressed += () => { Log.Write("cancel pressed over the game"); Post("{\"ev\":\"cancelRun\"}"); };
       autoTimer.Interval = 1000; autoTimer.Tick += (s, e) => AutoSyncTick(); autoTimer.Start();
       updateTimer.Interval = 20000; updateTimer.Tick += (s, e) => { updateTimer.Interval = 6 * 3600 * 1000; CheckUpdate(); }; updateTimer.Start();
       bridgePoller = new BridgePoller(new BridgeClient(BridgeClient.DefaultUrl, BridgeClient.DefaultTokenPath),
@@ -65,6 +68,8 @@ namespace RealmForge {
       bridgePoller.Start();
       Log.Write("RealmForge " + Program.Version + " started");
     }
+
+    static string CancelText(string lang) { return lang == "en" ? "Cancel equipping" : "Отменить надевание"; }
 
     public void Dispose() {
       bridgePoller.Dispose();   // the pending long poll is aborted: the thread ends at once
@@ -106,7 +111,7 @@ namespace RealmForge {
       try {
         switch (cmd) {
           case "init": SendState(null); CheckGame(true); if (updateReady != null) Post(updateReady); break;
-          case "setLang": cfg.Lang = MiniJson.GetString(m, "lang") == "en" ? "en" : "ru"; Save(); break;
+          case "setLang": cfg.Lang = MiniJson.GetString(m, "lang") == "en" ? "en" : "ru"; overlay.CancelText = CancelText(cfg.Lang); Save(); break;
           case "setCode": {
             string code = SyncClient.ExtractCode(MiniJson.GetString(m, "code") ?? "");
             if (SyncClient.IsValidCode(code)) { cfg.Code = code; Save(); SendState("codeSaved"); }
