@@ -188,6 +188,7 @@ namespace RealmForge {
             break;
           }
           case "diag": overlay.StartDiag(5); break;
+          case "battle.capture": CaptureNow(-1, 0, 0); break;
           case "gameFiles": CopyGameFiles(); break;
           case "compact": win.SetCompact(MiniJson.GetBool(m, "on", false)); break;
           case "update.restart": Program.RestartForUpdate(); break;
@@ -295,18 +296,25 @@ namespace RealmForge {
     // sent with the next sync. UIInstance is looked for (off this thread) at most every 60 s until found. The game keeps
     // closed result screens, so a new fight is a result screen whose mark (table, instance, frames) changed; the first
     // look after the start is only the baseline.
-    bool capturing, uiFinding;
+    bool capturing, uiFinding, uiLogged;
     Dictionary<int, string> endMarks;
     void WatchBattleEnd() {
-      if (!gameRunning || capturing || scanning) return;
+      if (!gameRunning || capturing) return;
       if (!RFX.UiKnown) {
-        if (!uiFinding) { uiFinding = true; Task.Factory.StartNew(() => { try { RFX.FindUi(60000); } catch (Exception) { } finally { uiFinding = false; } }); }
+        if (!uiFinding) {
+          uiFinding = true;
+          Task.Factory.StartNew(() => {
+            try { RFX.FindUi(60000); if (RFX.UiKnown && !uiLogged) { uiLogged = true; Log.Write("battle watch: game windows found at " + RFX.UiAddress.ToString("X")); } }
+            catch (Exception e) { Log.Write("battle watch: " + e.Message); }
+            finally { uiFinding = false; }
+          });
+        }
         return;
       }
       List<KeyValuePair<int, ulong>> forms; List<string> marks;
       try { forms = RFX.BattleEndForms(out marks); } catch (Exception) { return; }
       bool first = endMarks == null;
-      if (first) endMarks = new Dictionary<int, string>();
+      if (first) { endMarks = new Dictionary<int, string>(); Log.Write("battle watch: baseline " + string.Join(" ", marks.ToArray())); }
       int kind = -1; ulong form = 0;
       for (int i = 0; i < forms.Count; i++) {
         string was; int k = forms[i].Key;
@@ -315,16 +323,23 @@ namespace RealmForge {
         if (changed && !first) { kind = k; form = forms[i].Value; }
       }
       if (kind < 0) return;
-      capturing = true;
       Log.Write("battle end: " + kind + " " + string.Join(" ", marks.ToArray()));
+      CaptureNow(kind, form, 1500);
+    }
+
+    /// <summary>Reads the last fight's statistics (after <paramref name="waitMs"/>), keeps it and syncs; also the
+    /// «Записать бой» button (kind -1: no result screen known).</summary>
+    void CaptureNow(int kind, ulong form, int waitMs) {
+      if (capturing) return;
+      capturing = true;
       Task.Factory.StartNew(() => {
         try {
-          System.Threading.Thread.Sleep(1500);   // the screen fills its numbers first
+          if (waitMs > 0) System.Threading.Thread.Sleep(waitMs);   // the screen fills its numbers first
           string json = RFX.CaptureBattle(kind, form);
-          if (json == null) { Log.Write("battle end: no statistics found"); return; }
+          if (json == null) { Log.Write("battle end: no statistics found"); win.BeginInvoke((Action)(() => Post("{\"ev\":\"battle\",\"ok\":false}"))); return; }
           string path = RFX.SaveBattle(json);
           Log.Write("battle kept: " + path + " (" + json.Length + " bytes)");
-          win.BeginInvoke((Action)(() => { Post("{\"ev\":\"battle\"}"); RequestAutoSync(3); }));
+          win.BeginInvoke((Action)(() => { Post("{\"ev\":\"battle\",\"ok\":true}"); RequestAutoSync(3); }));
         } catch (Exception e) { Log.Write("battle end: " + e.Message); }
         finally { capturing = false; }
       });

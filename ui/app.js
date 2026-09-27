@@ -120,6 +120,7 @@
         ${tops.length ? `<div class="collage">${tops.map((id) => `<img src="${esc(S.site)}/art/heroes/HeroBust_${Number(id)}.webp" alt="" onerror="this.remove()">`).join('')}</div>` : ''}
         <div class="inner">
           <button class="btn-gold big" data-act="sync" ${running ? 'disabled' : ''}>${I.sync}<span>${esc(running ? t('btnBusy') : t('btnSync'))}</span></button>
+          <button class="btn-line" data-act="battleCapture" title="${esc(t('battleCaptureTip'))}">${esc(t('battleCapture'))}</button>
           ${steps()}
           ${sy.phase === 'run' ? `<div class="bar"><i style="width:${progress()}%"></i></div><div class="status">${esc(sy.stage === 'read' ? t('readHint', sy.seconds) : sy.stage === 'send' ? t('sendHint') : '')}</div>` : ''}
           ${sy.phase === 'done' ? result() : ''}
@@ -536,6 +537,7 @@
       if (S.page === 'equip' && S.plans.status === 'idle') loadPlans();
       render();
     } else if (a === 'lang') { S.lang = el.dataset.lang; host.send({ cmd: 'setLang', lang: S.lang }); render(); }
+    else if (a === 'battleCapture') { host.send({ cmd: 'battle.capture' }); toast(t('battleReading'), 4000); }
     else if (a === 'sync') { S.sync = { phase: 'run', stage: 'find', seconds: 0 }; host.send({ cmd: 'sync' }); render(); }
     else if (a === 'saveOnly') { S.sync = { phase: 'run', stage: 'find', seconds: 0 }; host.send({ cmd: 'sync', saveOnly: true }); S.page = 'sync'; render(); }
     else if (a === 'open') host.send({ cmd: 'open', url: el.dataset.url });
@@ -668,7 +670,7 @@
       case 'overlay': S.overlay = m.state; if (S.page === 'equip' || S.compact) render(); break;
       case 'update': S.update = { version: m.version, notes: m.notes || '' }; render(); break;
       case 'auto': S.auto = m.state; if (S.page === 'equip' || S.compact) render(); break;
-      case 'battle': toast(t('battleKept'), 6000); break;
+      case 'battle': toast(t(m.ok === false ? 'battleNone' : 'battleKept'), 6000); break;
       case 'cancelRun': {
         // «Отменить надевание» over the game: the running build is dropped (as «Отменить» here) and the queue stops
         const p = S.run ? S.plans.list.find((x) => x.id === S.run) : null;

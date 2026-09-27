@@ -27,7 +27,13 @@ namespace RealmForge {
       uiTable = 0;
       if (uiLastFind != 0 && Environment.TickCount - uiLastFind < rescanMs) return 0;
       uiLastFind = Environment.TickCount;
-      if (regs == null) regs = Regions();
+      // its own look at the game: the handle and the memory regions of now (no equip scan may have run since the start,
+      // and the regions change as the game allocates)
+      var ps = System.Diagnostics.Process.GetProcessesByName("Watcher of Realms");
+      if (ps.Length == 0) return 0;
+      if (H == IntPtr.Zero) H = OpenProcess(0x0410, false, ps[0].Id);
+      if (H == IntPtr.Zero) return 0;
+      regs = Regions();
       // nodes keyed by one of the forms, holding a table
       var nodes = new List<ulong>();
       ScanParallel((b0, buf, len) => {
@@ -54,6 +60,9 @@ namespace RealmForge {
       uiTable = found;
       return found;
     }
+
+    /// <summary>UIInstance's address (0 = not found yet), for the log.</summary>
+    public static ulong UiAddress { get { return uiTable; } }
 
     /// <summary>UIInstance is known and still a table (cheap).</summary>
     public static bool UiKnown { get { return uiTable != 0 && IsTable(uiTable); } }
@@ -92,7 +101,7 @@ namespace RealmForge {
     public static string CaptureBattle(int endKind, ulong endForm) {
       string stats = DumpBattleStats();
       if (string.IsNullOrEmpty(stats)) return null;
-      var sb = new StringBuilder("{\"at\":\"" + DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ") + "\",\"screen\":\"" + EndFormNames[endKind] + "\"");
+      var sb = new StringBuilder("{\"at\":\"" + DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ") + "\",\"screen\":\"" + (endKind >= 0 ? EndFormNames[endKind] : "manual") + "\"");
       // the result screen's own plain values (score, damage, boss, stage…: whatever it keeps)
       if (endForm != 0) {
         var d = ParseTable(endForm, 1, new HashSet<ulong>());
