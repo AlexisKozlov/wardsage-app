@@ -342,6 +342,9 @@ namespace RealmForge {
 
     // the battle screen shown anew: find the fight's simulation (a few tries while it starts) and its stage; a known
     // boss -> the coach follows its clock
+    // the stage of the fight that started last: the recorded fight names it (the site knows the boss from it)
+    volatile int lastStage; DateTime lastStageAt;
+
     void WatchBattleStart() {
       string mark;
       try { mark = RFX.BattleFormMark(); } catch (Exception) { return; }
@@ -356,6 +359,7 @@ namespace RealmForge {
             ulong sim; int stage;
             if (RFX.FindRunningSim(out sim, out stage)) {
               Log.Write("battle start: stage " + stage + (coach.Knows(stage) ? " (coach)" : ""));
+              lastStage = stage; lastStageAt = DateTime.UtcNow;
               if (coach.Knows(stage)) win.BeginInvoke((Action)(() => coach.Start(sim, stage)));
               return;
             }
@@ -377,6 +381,9 @@ namespace RealmForge {
           if (waitMs > 0) System.Threading.Thread.Sleep(waitMs);   // the screen fills its numbers first
           string json = RFX.CaptureBattle(kind, form);
           if (json == null) { Log.Write("battle end: no statistics found"); win.BeginInvoke((Action)(() => Post("{\"ev\":\"battle\",\"ok\":false}"))); return; }
+          int st = lastStage;
+          if (st > 0 && (DateTime.UtcNow - lastStageAt).TotalMinutes < 20 && json.StartsWith("{", StringComparison.Ordinal))
+            json = "{\"stage\":" + st + "," + json.Substring(1);
           string path = RFX.SaveBattle(json);
           Log.Write("battle kept: " + path + " (" + json.Length + " bytes)");
           win.BeginInvoke((Action)(() => { Post("{\"ev\":\"battle\",\"ok\":true}"); RequestAutoSync(3); }));
