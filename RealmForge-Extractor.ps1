@@ -1343,7 +1343,17 @@ namespace RealmForge {
     /// <summary>The game built the hero screen again (after a battle, say): follow it to the new one. When the window
     /// list's node has moved (the list grew), the form is dropped, so the host scans again.</summary>
     static void CheckForm(EquipAddrs a) {
-      if (a.Form == 0) return;
+      // no hero screen known (it was closed - the inventory, the city): look for it again, the player may have opened it
+      if (a.Form == 0) {
+        ulong f0;
+        if (RescanForm(4000, out f0) && f0 != 0) {
+          a.Form = f0;
+          if (live != null) live.Form = f0;
+          RefreshPanel(a);
+          L("  hero screen found again");
+        }
+        return;
+      }
       // no node known and the form found by its keys is still shown: it stays
       if (formNode == 0 && FormAlive(a.Form)) return;
       ulong f = LiveForm();
@@ -1384,6 +1394,9 @@ namespace RealmForge {
       if (Field(a.EquipData, KHero, out v, out tt) && tt == T_INT) h.Hero = (long)v;
       if (a.Form == 0) return h;
       h.FormOk = true;
+      // EquipData forgets the selected hero after the inventory (the key goes, 27.09): the hero screen's own last voiced
+      // hero is the one shown
+      if (h.Hero <= 0 && Field(a.Form, "m_LastPlayuSoundId", out v, out tt) && tt == T_INT && (long)v > 0) h.Hero = (long)v;
       if (Field(a.Form, "m_LastType", out v, out tt) && tt == T_INT) h.Tab = (int)(long)v;
       h.SmallCards = Field(a.Form, "m_IsUseSmallCard", out v, out tt) && tt == T_BOOL && v != 0;
       ulong pd; int pdt;
