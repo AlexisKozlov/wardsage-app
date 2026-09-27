@@ -59,6 +59,7 @@ namespace RealmForge {
       overlay.AutoEnabled = cfg.AutoClick;
       overlay.AutoConfirm = cfg.AutoConfirm;
       overlay.CancelText = CancelText(cfg.Lang);
+      coach.Lang = cfg.Lang;
       // «Отменить надевание» over the game: the interface drops the running build (as its own «Отменить»)
       overlay.CancelPressed += () => { Log.Write("cancel pressed over the game"); Post("{\"ev\":\"cancelRun\"}"); };
       autoTimer.Interval = 1000; autoTimer.Tick += (s, e) => AutoSyncTick(); autoTimer.Start();
@@ -111,7 +112,7 @@ namespace RealmForge {
       try {
         switch (cmd) {
           case "init": SendState(null); CheckGame(true); if (updateReady != null) Post(updateReady); break;
-          case "setLang": cfg.Lang = MiniJson.GetString(m, "lang") == "en" ? "en" : "ru"; overlay.CancelText = CancelText(cfg.Lang); Save(); break;
+          case "setLang": cfg.Lang = MiniJson.GetString(m, "lang") == "en" ? "en" : "ru"; overlay.CancelText = CancelText(cfg.Lang); coach.Lang = cfg.Lang; Save(); break;
           case "setCode": {
             string code = SyncClient.ExtractCode(MiniJson.GetString(m, "code") ?? "");
             if (SyncClient.IsValidCode(code)) { cfg.Code = code; Save(); SendState("codeSaved"); }
@@ -296,8 +297,11 @@ namespace RealmForge {
     // sent with the next sync. UIInstance is looked for (off this thread) at most every 60 s until found. The game keeps
     // closed result screens, so a new fight is a result screen whose mark (table, instance, frames) changed; the first
     // look after the start is only the baseline.
-    bool capturing, uiFinding, uiLogged;
+    bool capturing, uiFinding, uiLogged, simFinding;
     Dictionary<int, string> endMarks;
+    // the boss coach over the game (app/BattleCoach.cs): a new showing of the battle screen = a fight starts
+    readonly BattleCoach coach = new BattleCoach();
+    string battleMark; bool battleSeen;
     void WatchBattleEnd() {
       if (!gameRunning || capturing) return;
       if (!RFX.UiKnown) {
@@ -311,6 +315,7 @@ namespace RealmForge {
         }
         return;
       }
+      WatchBattleStart();
       List<KeyValuePair<int, ulong>> forms; List<string> marks;
       try { forms = RFX.BattleEndForms(out marks); } catch (Exception) { return; }
       bool first = endMarks == null;
@@ -325,6 +330,33 @@ namespace RealmForge {
       if (kind < 0) return;
       Log.Write("battle end: " + kind + " " + string.Join(" ", marks.ToArray()));
       CaptureNow(kind, form, 1500);
+    }
+
+    // the battle screen shown anew: find the fight's simulation (a few tries while it starts) and its stage; a known
+    // boss -> the coach follows its clock
+    void WatchBattleStart() {
+      string mark;
+      try { mark = RFX.BattleFormMark(); } catch (Exception) { return; }
+      bool first = !battleSeen; battleSeen = true;
+      if (mark == battleMark) return;
+      battleMark = mark;
+      if (first || mark == null || simFinding || coach.Running) return;
+      simFinding = true;
+      Task.Factory.StartNew(() => {
+        try {
+          for (int i = 0; i < 10; i++) {
+            ulong sim; int stage;
+            if (RFX.FindRunningSim(out sim, out stage)) {
+              Log.Write("battle start: stage " + stage + (coach.Knows(stage) ? " (coach)" : ""));
+              if (coach.Knows(stage)) win.BeginInvoke((Action)(() => coach.Start(sim, stage)));
+              return;
+            }
+            System.Threading.Thread.Sleep(1500);
+          }
+          Log.Write("battle start: no running fight found");
+        } catch (Exception e) { Log.Write("battle start: " + e.Message); }
+        finally { simFinding = false; }
+      });
     }
 
     /// <summary>Reads the last fight's statistics (after <paramref name="waitMs"/>), keeps it and syncs; also the
