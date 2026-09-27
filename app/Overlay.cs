@@ -499,7 +499,7 @@ namespace RealmForge {
         if (heroScreen.Hero > 0 && heroScreen.Hero != runHero && v.Foreground && !v.UserBusy && now >= slotCloseAfter
             && Mark(o, fg.X(fg.MainCloseX, cr.R, cr.B), fg.Y(fg.CloseY, cr.R, cr.B), Ui.Unit(cr.R, cr.B), ButtonCheck.IsCloseRed)) {
           slotCloseAfter = now + 900;
-          Log.Write("hero: the gear filter is open over the grid - closing it");
+          Log.Write("hero: a pop-up (the gear filter or an item card) is over the grid - closing it");
           Send(new AutoAction { Kind = AutoKind.Click }, o.X + (int)Math.Round(fg.X(fg.MainCloseX, cr.R, cr.B)), o.Y + (int)Math.Round(fg.Y(fg.CloseY, cr.R, cr.B)));
           return;
         }
@@ -930,10 +930,13 @@ namespace RealmForge {
       if (btn == null && hintKind == "replace") {
         // (the journal: why «Заменить» is not pressed - once per selected item)
         if (confirmMissLogged != target) { confirmMissLogged = target; Log.Write("confirm: no single blue button (replace " + (rep != null) + ", equip " + (eq != null) + ") for item " + target); }
-      } else if (btn != null && (btn[1] != hg.Replace(W, H)[1] && btn[1] != hg.Equip(W, H)[1])) Log.Write("confirm: button found " + (btn[1] - (rep != null ? hg.Replace(W, H)[1] : hg.Equip(W, H)[1])) + " px off its usual place");
+      } else if (btn != null && (btn[1] != hg.Replace(W, H)[1] && btn[1] != hg.Equip(W, H)[1]) && confirmFoundLogged != target) {
+        confirmFoundLogged = target;
+        Log.Write("confirm: button found " + (btn[1] - (rep != null ? hg.Replace(W, H)[1] : hg.Equip(W, H)[1])) + " px off its usual place, item " + target);
+      }
       return btn;
     }
-    long confirmMissLogged;
+    long confirmMissLogged, confirmFoundLogged;
 
     /// <summary>The button at its usual place, or moved: a card with more lines (sub-stats, set bonuses) is taller and its
     /// button lower (27.09: an item with more extras was not put on) - searched from a bit above down to 0.14 of the

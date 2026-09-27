@@ -456,6 +456,10 @@ namespace RealmForge {
         default: SyncError("read", ex.Detail, 0); return;
       }
       int seconds = (int)(DateTime.UtcNow - started).TotalSeconds;
+      {   // the heroes of the account in the game now: plans for heroes not on it (another account) are set aside
+        var uids = HeroUids(ex.Json);
+        if (uids.Count > 0) { string hj = "{\"ev\":\"accountHeroes\",\"uids\":[" + string.Join(",", uids) + "]}"; win.BeginInvoke((Action)(() => Post(hj))); }
+      }
       string saved = null;
       if (copy) { try { saved = Extractor.SaveCopy(ex.Json, RFX.Log.ToString()); lastSavedPath = saved; } catch (Exception e) { Log.Write("save: " + e.Message); } }
       if (toBridge) {
@@ -500,6 +504,16 @@ namespace RealmForge {
     }
 
     // Base ids of the three strongest heroes of the dump (by the game's own power value).
+    static List<long> HeroUids(string json) {
+      var res = new List<long>();
+      try {
+        var root = MiniJson.AsObject(MiniJson.Parse(json)); object hv;
+        var heroes = root != null && root.TryGetValue("heroes", out hv) ? hv as List<object> : null;
+        if (heroes != null) foreach (var h in heroes) { var d = MiniJson.AsObject(h); object u; if (d != null && d.TryGetValue("iHeroId", out u) && u is double) res.Add((long)(double)u); }
+      } catch (Exception) { }
+      return res;
+    }
+
     static List<int> TopHeroes(string json) {
       var res = new List<int>();
       try {

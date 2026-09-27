@@ -283,7 +283,7 @@
     const g = G.next(p, S.live);
     const pct = Math.round((g.done / p.items.length) * 100);
     return `<button class="plan" data-act="pick" data-i="${i}" aria-pressed="${i === S.sel}">${bust(p)}
-      <div><b>${esc(p.heroName)}</b><span>${esc(t('itemsOn', g.done, p.items.length))}</span><div class="mini-bar"><i style="width:${pct}%"></i></div></div></button>`;
+      <div><b>${esc(p.heroName)}</b><span>${esc(foreign(p) ? t('otherAccount') : t('itemsOn', g.done, p.items.length))}</span><div class="mini-bar"><i style="width:${pct}%"></i></div></div></button>`;
   }
 
   function current() { return S.plans.list[S.sel] || null; }
@@ -430,8 +430,10 @@
     for (const p of plans) if (p.id !== S.run && !S.queue.includes(p.id)) S.queue.push(p.id);
     if (!S.run) runNext();
   }
+  // a plan for a hero not on the account in the game now (the player switched accounts): never run, marked in the list
+  const foreign = (p) => !!(S.accHeroes && p && !p.bridge && !S.accHeroes.has(p.heroUid));
   function runNext() {
-    const p = G.nextQueued(S.queue, S.plans.list, S.live);
+    const p = G.nextQueued(S.queue.filter((id) => !foreign(S.plans.list.find((x) => x.id === id))), S.plans.list, S.live);
     S.queue = p ? S.queue.slice(S.queue.indexOf(p.id) + 1) : [];
     if (p) startRun(p);
   }
@@ -565,7 +567,7 @@
     else if (a === 'updRestart') host.send({ cmd: 'update.restart' });
     else if (a === 'rescan') scan();
     else if (a === 'pick') { S.sel = Number(el.dataset.i); render(); }
-    else if (a === 'run') { const p = current(); if (!p) return; startRun(p); if (!S.autoConfirm) toast(t('runNoConfirm'), 6000); render(); }
+    else if (a === 'run') { const p = current(); if (!p || foreign(p)) return; startRun(p); if (!S.autoConfirm) toast(t('runNoConfirm'), 6000); render(); }
     else if (a === 'sellRun') sellStart();
     else if (a === 'sellStop') { S.sell.run = false; host.send({ cmd: 'sell.stop' }); render(); }
     else if (a === 'sellCancel') {
@@ -582,7 +584,7 @@
     }
     else if (a === 'stopRun') { S.run = null; S.queue = []; syncHighlight(); render(); }
     else if (a === 'runAll') {
-      const todo = S.plans.list.filter((p) => { const k = G.next(p, S.live).kind; return k !== 'done' && k !== 'taken'; });
+      const todo = S.plans.list.filter((p) => { const k = G.next(p, S.live).kind; return k !== 'done' && k !== 'taken' && !foreign(p); });
       if (!todo.length) return;
       if (S.run) enqueue(todo); else { S.queue = todo.map((p) => p.id); runNext(); }
       if (!S.autoConfirm) toast(t('runNoConfirm'), 6000);
@@ -721,6 +723,14 @@
         break;
       }
       case 'focusEquip': S.page = 'equip'; render(); break;
+      case 'accountHeroes': {
+        S.accHeroes = new Set(m.uids || []);
+        // the running plan's hero is not on this account: stop it and go on with the queue
+        const cur = S.plans.list.find((x) => x.id === S.run);
+        if (cur && foreign(cur)) { S.run = null; syncHighlight(); if (S.queue.length) runNext(); }
+        if (S.page === 'equip' || S.compact) render();
+        break;
+      }
       // an equip command from the local bridge: a plan like the site's, walked through by the same guide
       case 'bridge.equip': {
         const p = G.bridgePlan(m.plan, (uid) => t('bridgeItem', uid));
