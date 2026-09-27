@@ -32,6 +32,8 @@ namespace RealmForge {
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
     [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr h, int cmd);
+    [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
+    [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr h, int index);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
     [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
     [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p);
@@ -642,15 +644,21 @@ namespace RealmForge {
     void Send(AutoAction a, int x, int y) {
       sending = true;
       seen = new W32.POINT(x, y); seenSet = true;
-      // our own window (the compact one over the game) must not catch the click: hidden for the moment, shown again
-      // without taking the focus
+      // our own window (the compact one over the game) must not catch the click: for the moment it goes under the
+      // game (z-order only: hiding it made its taskbar button vanish and come back on every click, 27.09) and back on
+      // top after, without taking the focus
       IntPtr self = AppWindowHandle();
-      bool hidden = false;
+      bool hidden = false, wasTop = false;
       W32.RECT wr;
+      const uint NoMoveSizeActivate = 0x0002 | 0x0001 | 0x0010;   // SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE
       if (self != IntPtr.Zero && W32.IsWindowVisible(self) && W32.GetWindowRect(self, out wr)) {
         int y2 = y + (a.Kind == AutoKind.Drag ? (int)Math.Round(a.DY) : 0);
         bool over = x >= wr.L && x < wr.R && Math.Max(y, y2) >= wr.T && Math.Min(y, y2) < wr.B;
-        if (over) { W32.ShowWindowAsync(self, 0); hidden = true; }   // SW_HIDE
+        if (over) {
+          wasTop = (W32.GetWindowLong(self, -20) & 0x00000008) != 0;   // GWL_EXSTYLE, WS_EX_TOPMOST
+          W32.SetWindowPos(self, (IntPtr)1, 0, 0, 0, 0, NoMoveSizeActivate);   // HWND_BOTTOM
+          hidden = true;
+        }
       }
       var t = new System.Threading.Thread(() => {
         try {
@@ -673,7 +681,11 @@ namespace RealmForge {
           }
           System.Threading.Thread.Sleep(30);
         } catch (Exception e) { Log.Write("auto: " + e.Message); }
-        finally { if (hidden) W32.ShowWindowAsync(self, 4); sending = false; }   // SW_SHOWNOACTIVATE
+        finally {
+          // back over the game: topmost again when it was («Поверх игры»), else just above it
+          if (hidden) W32.SetWindowPos(self, wasTop ? (IntPtr)(-1) : IntPtr.Zero, 0, 0, 0, 0, NoMoveSizeActivate | 0x4000);   // SWP_ASYNCWINDOWPOS
+          sending = false;
+        }
       });
       t.IsBackground = true; t.Start();
     }

@@ -51,7 +51,7 @@ namespace RealmForge {
       this.win = win; this.core = core;
       cfg = AppConfig.Load();
       if (string.IsNullOrEmpty(cfg.Site)) cfg.Site = SyncClient.DefaultSite;
-      gameTimer.Interval = 2000; gameTimer.Tick += (s, e) => CheckGame(false); gameTimer.Start();
+      gameTimer.Interval = 2000; gameTimer.Tick += (s, e) => { CheckGame(false); WatchBattleEnd(); }; gameTimer.Start();
       liveTimer.Interval = 400; liveTimer.Tick += (s, e) => PollLive();
       overlay = new OverlayController(st => Post("{\"ev\":\"overlay\",\"state\":" + S(st) + "}"),
                                       st => Post("{\"ev\":\"auto\",\"state\":" + S(st) + "}"),
@@ -287,6 +287,47 @@ namespace RealmForge {
       // the game's screens are found in memory at once (tens of seconds), not when the first «Надеть» comes: then the
       // equip starts right away
       if (running && addrs == null && !scanning && cfg.AutoClick) StartScan(watch, true);
+    }
+
+    // ------------------------------------------------------------------ boss fights
+
+    // A boss fight's result screen came up: its statistics are read once (src/BattleCapture.cs, read-only), kept and
+    // sent with the next sync. UIInstance is looked for (off this thread) at most every 60 s until found. The game keeps
+    // closed result screens, so a new fight is a result screen whose mark (table, instance, frames) changed; the first
+    // look after the start is only the baseline.
+    bool capturing, uiFinding;
+    Dictionary<int, string> endMarks;
+    void WatchBattleEnd() {
+      if (!gameRunning || capturing || scanning) return;
+      if (!RFX.UiKnown) {
+        if (!uiFinding) { uiFinding = true; Task.Factory.StartNew(() => { try { RFX.FindUi(60000); } catch (Exception) { } finally { uiFinding = false; } }); }
+        return;
+      }
+      List<KeyValuePair<int, ulong>> forms; List<string> marks;
+      try { forms = RFX.BattleEndForms(out marks); } catch (Exception) { return; }
+      bool first = endMarks == null;
+      if (first) endMarks = new Dictionary<int, string>();
+      int kind = -1; ulong form = 0;
+      for (int i = 0; i < forms.Count; i++) {
+        string was; int k = forms[i].Key;
+        bool changed = !endMarks.TryGetValue(k, out was) || was != marks[i];
+        endMarks[k] = marks[i];
+        if (changed && !first) { kind = k; form = forms[i].Value; }
+      }
+      if (kind < 0) return;
+      capturing = true;
+      Log.Write("battle end: " + kind + " " + string.Join(" ", marks.ToArray()));
+      Task.Factory.StartNew(() => {
+        try {
+          System.Threading.Thread.Sleep(1500);   // the screen fills its numbers first
+          string json = RFX.CaptureBattle(kind, form);
+          if (json == null) { Log.Write("battle end: no statistics found"); return; }
+          string path = RFX.SaveBattle(json);
+          Log.Write("battle kept: " + path + " (" + json.Length + " bytes)");
+          win.BeginInvoke((Action)(() => { Post("{\"ev\":\"battle\"}"); RequestAutoSync(3); }));
+        } catch (Exception e) { Log.Write("battle end: " + e.Message); }
+        finally { capturing = false; }
+      });
     }
 
     // ------------------------------------------------------------------ sync

@@ -495,6 +495,8 @@ namespace RealmForge {
         summon["pools"] = ParseTable(apool, 4, new HashSet<ulong>());
       L("  summon: " + summon.Count + " parts" + (summon.ContainsKey("pools") ? "" : " (no pools)"));
       sb.Append(",\n\"summon\":"); J(sb, summon);
+      // boss fights captured at their result screens (src/BattleCapture.cs): the site compares them with its simulation
+      sb.Append(",\n\"battles\":").Append(BattlesJson());
       sb.Append("\n,\"meta\":{\"extractor\":\"" + ExtractorVersion + "\"");
       if (GameVersion != null) { sb.Append(",\"gameVersion\":"); J(sb, GameVersion); }
       sb.Append(",\"seconds\":" + (int)sw.Elapsed.TotalSeconds + ",\"equipment\":" + ne + ",\"heroes\":" + nh + ",\"live\":true}\n}\n");

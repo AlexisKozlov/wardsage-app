@@ -668,6 +668,7 @@
       case 'overlay': S.overlay = m.state; if (S.page === 'equip' || S.compact) render(); break;
       case 'update': S.update = { version: m.version, notes: m.notes || '' }; render(); break;
       case 'auto': S.auto = m.state; if (S.page === 'equip' || S.compact) render(); break;
+      case 'battle': toast(t('battleKept'), 6000); break;
       case 'cancelRun': {
         // «Отменить надевание» over the game: the running build is dropped (as «Отменить» here) and the queue stops
         const p = S.run ? S.plans.list.find((x) => x.id === S.run) : null;
