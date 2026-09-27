@@ -460,6 +460,7 @@ namespace RealmForge {
   public sealed class LiveTables {
     public int Pid;
     public ulong EquipData, HeroData, CampOwner, ArtOwner, BeastOwner, ActOwner, Form, Panel;
+    public ulong ItemData, PlayerData;   // the bag (ItemData) and the currencies (PlayerData): "resources"
   }
 
   public static partial class RFX {
@@ -482,7 +483,8 @@ namespace RealmForge {
       var sw = Stopwatch.StartNew();
       lt = FindLive(pid);
       L("Live tables found in " + sw.Elapsed.TotalSeconds.ToString("0.0") + " s: equip " + (lt.EquipData != 0) + ", heroes " + (lt.HeroData != 0)
-        + ", artifacts " + (lt.ArtOwner != 0) + ", rewards " + (lt.CampOwner != 0) + ", hero screen " + (lt.Form != 0));
+        + ", artifacts " + (lt.ArtOwner != 0) + ", rewards " + (lt.CampOwner != 0) + ", hero screen " + (lt.Form != 0)
+        + ", bag " + (lt.ItemData != 0) + ", player " + (lt.PlayerData != 0));
       live = lt;
       return lt;
     }
@@ -574,7 +576,7 @@ namespace RealmForge {
 
     static LiveTables FindLive(int pid) {
       regs = Regions();
-      string[] anchors = { KEquipData, KHero, KHeroes, KCamp, KArts, KBeasts, KAct, KGrid, KPanel };
+      string[] anchors = { KEquipData, KHero, KHeroes, KCamp, KArts, KBeasts, KAct, KGrid, KPanel, KItems, KPlayer };
       var tstr = FindLuaStringsFast(anchors);
       var found = new List<string>(); foreach (var kv in tstr) found.Add(kv.Value + "@" + kv.Key.ToString("X"));
       L("Strings found: " + string.Join(", ", found.ToArray()));
@@ -597,6 +599,10 @@ namespace RealmForge {
       lt.ArtOwner = Largest(owners, KArts);
       lt.BeastOwner = Largest(owners, KBeasts);
       lt.ActOwner = Largest(owners, KAct);
+      // resources: ItemData (the bag) and PlayerData (currencies; also the owner of m_AllBeastInfo)
+      lt.ItemData = BestItemData(owners);
+      lt.PlayerData = Largest(owners, KPlayer);
+      if (lt.PlayerData == 0 || !HasNum(lt.PlayerData, "m_Coin")) lt.PlayerData = lt.BeastOwner;
       // the hero screen: the one the game's window list holds (a dead copy of an older one can own the keys too)
       lt.Form = FindFormNode();
       if (lt.Form == 0 && owners.TryGetValue(KGrid, out l)) foreach (var t in l) if (HasTable(t, "m_InfinityGridProxy")) { lt.Form = t; break; }
@@ -942,6 +948,12 @@ namespace RealmForge {
         summon["pools"] = ParseTable(apool, 4, new HashSet<ulong>());
       L("  summon: " + summon.Count + " parts" + (summon.ContainsKey("pools") ? "" : " (no pools)"));
       sb.Append(",\n\"summon\":"); J(sb, summon);
+      // resources (work/sim/RESOURCES.md): item id -> count, from the bag and the player's currencies
+      Dictionary<string, object> resMeta;
+      var resMap = ReadResources(lt, out resMeta);
+      L("  resources: " + (resMap == null ? "not found" : resMap.Count + " ids"));
+      sb.Append(",\n\"resources\":"); J(sb, resMap);
+      sb.Append(",\n\"resourcesMeta\":"); J(sb, resMeta);
       // boss fights captured at their result screens (src/BattleCapture.cs): the site compares them with its simulation
       sb.Append(",\n\"battles\":").Append(BattlesJson());
       sb.Append("\n,\"meta\":{\"extractor\":\"" + ExtractorVersion + "\"");
@@ -989,6 +1001,133 @@ namespace RealmForge {
         r[kv.Key] = e;
       }
       return r;
+    }
+
+    // ------------------------------------------------------------------ resources (bag + currencies)
+
+    // ItemData:ctor sets m_HeroBaseId2ItemId and PlayerData:_RoleInit m_mNegSpecialItem - both keys exist in no other
+    // Lua table of the game (work/sim/RESOURCES.md). The bag is ItemData.m_Items[itemType][itemId] = {m_Config, m_Count}
+    // (updated in place by Push_SetItem), time-limited items ItemData.m_TimeItems[itemId][uid] = {m_Count, m_EndTime, ..}.
+    const string KItems = "m_HeroBaseId2ItemId", KPlayer = "m_mNegSpecialItem";
+
+    // PlayerData scalar fields -> item id (CurrencyType, common/defines.lua; ItemData:GetItemNumById)
+    static readonly KeyValuePair<string, long>[] PlayerCurrencies = {
+      new KeyValuePair<string, long>("m_Coin", 1),                    // Gold
+      new KeyValuePair<string, long>("m_Exp", 2),                     // commander EXP
+      new KeyValuePair<string, long>("m_Energy", 3),                  // stamina
+      new KeyValuePair<string, long>("m_Diamond", 4),                 // diamonds (can be < 0: a debt)
+      new KeyValuePair<string, long>("m_ExpItem", 5),                 // Hero EXP Potion (hero level-ups)
+      new KeyValuePair<string, long>("m_TowerClimbTalentPoint", 16),  // TalentPoint
+      new KeyValuePair<string, long>("m_FriendHeartNum", 39),         // FriendHeart
+    };
+
+    /// <summary>The ItemData instance: of the owners of m_HeroBaseId2ItemId the one whose m_Items holds the most items
+    /// (after a relogin an old instance can linger until the GC takes it).</summary>
+    static ulong BestItemData(Dictionary<string, List<ulong>> owners) {
+      List<ulong> l; if (!owners.TryGetValue(KItems, out l)) return 0;
+      ulong best = 0; int bestN = -1;
+      foreach (var t in l) {
+        ulong m; int mt; if (!Field(t, "m_Items", out m, out mt) || mt != T_TABLE) continue;
+        int n = 0; foreach (var e in IntEntries(m)) if (e.Tt == T_TABLE) n += EntryCount(e.Val);
+        if (n > bestN) { bestN = n; best = t; }
+      }
+      if (l.Count > 1) L("  ItemData: " + l.Count + " candidates, " + bestN + " items in the chosen one");
+      return best;
+    }
+
+    static bool HasNum(ulong t, string key) { ulong v; int tt; return t != 0 && Field(t, key, out v, out tt) && (tt == T_INT || tt == T_FLT); }
+
+    struct IntEntry { public long Key; public ulong Val; public int Tt; }
+
+    /// <summary>The integer-keyed entries of a Lua table: the array part (key = index + 1) and the hash nodes with an
+    /// integer key.</summary>
+    static List<IntEntry> IntEntries(ulong t) {
+      var r = new List<IntEntry>();
+      var h = Read(t, 56); if (h == null || h[8] != 5) return r;
+      int lsize = h[11]; uint sizearray = BitConverter.ToUInt32(h, 12);
+      if (lsize > 20 || sizearray > 1000000) return r;
+      if (sizearray > 0) {
+        var ab = Read(BitConverter.ToUInt64(h, 16), (int)sizearray * 16);
+        if (ab != null) for (int i = 0; i < sizearray; i++) {
+          int tt = BitConverter.ToInt32(ab, i * 16 + 8); if (tt == T_NIL) continue;
+          r.Add(new IntEntry { Key = i + 1, Val = BitConverter.ToUInt64(ab, i * 16), Tt = tt });
+        }
+      }
+      int nn = 1 << lsize; var nb = Read(BitConverter.ToUInt64(h, 24), nn * 32);
+      if (nb != null) for (int i = 0; i < nn; i++) {
+        int o = i * 32; int tt = BitConverter.ToInt32(nb, o + 8);
+        if (tt == T_NIL || BitConverter.ToInt32(nb, o + 24) != T_INT) continue;
+        r.Add(new IntEntry { Key = BitConverter.ToInt64(nb, o + 16), Val = BitConverter.ToUInt64(nb, o), Tt = tt });
+      }
+      return r;
+    }
+
+    /// <summary>A Lua number as long: integer, float or a numeric string (m_mNegSpecialItem holds int64 values the game
+    /// reads with tonumber()).</summary>
+    static bool AsLong(ulong v, int tt, out long n) {
+      n = 0;
+      if (tt == T_INT) { n = (long)v; return true; }
+      if (tt == T_FLT) { double d = BitConverter.Int64BitsToDouble((long)v); if (double.IsNaN(d) || double.IsInfinity(d)) return false; n = (long)Math.Round(d); return true; }
+      if (tt == T_SSTR || tt == T_LSTR) {
+        var s = ReadLuaString(v);
+        return s != null && long.TryParse(s.Trim(), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out n);
+      }
+      return false;
+    }
+
+    /// <summary>The player's resources: item id -> count. The bag (ItemData.m_Items, plus m_TimeItems summed), then the
+    /// currencies of PlayerData, which win as in ItemData:GetItemNumById (scalars, m_SpecialItem, m_mNegSpecialItem).
+    /// Null when neither table is known; <paramref name="meta"/> says what was found.</summary>
+    internal static Dictionary<string, object> ReadResources(LiveTables lt, out Dictionary<string, object> meta) {
+      meta = new Dictionary<string, object>();
+      var counts = new SortedDictionary<long, long>();
+      bool bag = false, player = false; int types = 0;
+
+      ulong m; int mt;
+      if (lt.ItemData != 0 && Field(lt.ItemData, "m_Items", out m, out mt) && mt == T_TABLE) {
+        bag = true;
+        foreach (var byType in IntEntries(m)) {                       // itemType -> {itemId -> item}
+          if (byType.Tt != T_TABLE) continue;
+          types++;
+          foreach (var it in IntEntries(byType.Val)) {                // itemId -> {m_Config, m_Count}
+            if (it.Tt != T_TABLE || it.Key <= 0) continue;
+            ulong c; int ct; long n;
+            if (!Field(it.Val, "m_Count", out c, out ct) || !AsLong(c, ct, out n) || n == 0) continue;
+            long old; counts.TryGetValue(it.Key, out old); counts[it.Key] = old + n;
+          }
+        }
+        ulong ti; int tit;
+        if (Field(lt.ItemData, "m_TimeItems", out ti, out tit) && tit == T_TABLE)
+          foreach (var byId in IntEntries(ti)) {                      // itemId -> {uid -> {m_Count, m_EndTime}}
+            if (byId.Tt != T_TABLE || byId.Key <= 0) continue;
+            foreach (var one in TableValues(byId.Val)) {
+              ulong c; int ct; long n;
+              if (!Field(one, "m_Count", out c, out ct) || !AsLong(c, ct, out n) || n == 0) continue;
+              long old; counts.TryGetValue(byId.Key, out old); counts[byId.Key] = old + n;
+            }
+          }
+      }
+
+      if (lt.PlayerData != 0) {
+        foreach (var kv in PlayerCurrencies) {
+          ulong v; int tt; long n;
+          if (Field(lt.PlayerData, kv.Key, out v, out tt) && AsLong(v, tt, out n)) { counts[kv.Value] = n; player = true; }
+        }
+        // m_SpecialItem: tokens, coins, Mythril 18, awakening tokens 25/26...; m_mNegSpecialItem: the summoning crystals
+        // (8/21/22 free, 29/30/31 paid, 37), can be negative - it wins, as in PlayerData:GetNegSpecialItem
+        foreach (var key in new[] { "m_SpecialItem", "m_mNegSpecialItem" }) {
+          ulong sm; int st;
+          if (!Field(lt.PlayerData, key, out sm, out st) || st != T_TABLE) continue;
+          player = true;
+          foreach (var e in IntEntries(sm)) { long n; if (e.Key > 0 && AsLong(e.Val, e.Tt, out n)) counts[e.Key] = n; }
+        }
+      }
+
+      meta["bag"] = bag; meta["player"] = player; meta["types"] = (long)types;
+      if (!bag && !player) return null;
+      var res = new Dictionary<string, object>();
+      foreach (var kv in counts) res[kv.Key.ToString(System.Globalization.CultureInfo.InvariantCulture)] = kv.Value;
+      return res;
     }
   }
 }
