@@ -820,6 +820,19 @@ static class CoreTests {
     var heroes = new long[130]; for (int i = 0; i < heroes.Length; i++) heroes[i] = (200100 + i) * 100000L;
     HeroView lv;
 
+    {   // the shown hero in the middle column at the grid's middle (live 27.09, Элизия / Хассу): the first probe must not
+        // keep clicking its own card; the plan's hero near the top, half scrolled out
+      int okMid = 0, nMid = 0;
+      for (double sc = 0; sc <= 400; sc += 25) {
+        var gm = new FakeHeroGame(g, W, H) { Heroes = heroes, Scroll = sc };
+        double mid = (g.ViewTop * H + H - (1 - g.ViewBottom) * H) / 2, rel = mid - (g.Row1Top * H - sc);
+        int row = (int)Math.Floor(rel / (g.PitchY * H)); if (row < 0) continue;
+        gm.Shown = heroes[row * 3 + 1];
+        nMid++;
+        if (RunHero(new HeroPilot(g), gm, heroes[1], 3000, out lv) == "done" && gm.Shown == heroes[1]) okMid++;
+      }
+      Check(okMid == nMid, "shown hero under the first probe: " + okMid + "/" + nMid + " found");
+    }
     {   // clicks do nothing for 20 s (a pop-up over the grid, live 27.09): failed, then tried again once it is gone
       var gb = new FakeHeroGame(g, W, H) { Heroes = heroes, Shown = heroes[7], Blocked = true };
       var pb = new HeroPilot(g); bool sawFail = false; string stb = "";

@@ -150,7 +150,10 @@ namespace RealmForge {
       if (!has) {                                     // nothing known: a card near the middle tells where the rows are
         if (clicks >= MaxClicks) return Fail();
         double y = mid + (misses % 3 == 1 ? 0.5 : misses % 3 == 2 ? -0.5 : 0) * pitch;
-        return Pick(v, g.ColX(1) * H, y);
+        // not the shown hero's column: a click on its own card changes nothing (live 27.09: Элизия in the middle column
+        // at the middle of the grid took all 24 clicks)
+        int sj = Array.IndexOf(v.Heroes, v.Hero), col = sj >= 0 && sj % HeroGeometry.Columns == 1 ? 0 : 1;
+        return Pick(v, g.ColX(col) * H, y);
       }
       double row1 = (lo + hi) / 2, cy = row1 + (t / HeroGeometry.Columns) * pitch + card / 2;
       if (cy >= top + card * 0.3 && cy <= bottom - card * 0.3) {
@@ -235,6 +238,7 @@ namespace RealmForge {
     void Learn(HeroView v) {
       pending = false;
       // a gap, the hero already shown, or still loading: twice in a row means the rows are not where they were thought
+      // (the hero already shown: its own card or a gap between cards - which one is not known, so nothing is learnt)
       if (v.Heroes == null || v.Hero == heroBefore) { if (++misses >= 2) has = false; return; }
       int i = Array.IndexOf(v.Heroes, v.Hero); if (i < 0) return;
       misses = 0;
