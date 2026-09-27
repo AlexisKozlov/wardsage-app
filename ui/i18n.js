@@ -41,7 +41,7 @@ window.RF_TEXTS = {
     retry: 'Повторить', showLog: 'Журнал', newCode: 'Новый код',
 
     obTitle: 'Привяжи аккаунт', obLead: 'Один раз: код связывает экстрактор с твоим профилем на сайте. Пароль от игры не нужен.',
-    ob1: 'Войди на сайт', ob1p: 'Через Google или Discord.', ob2: 'Получи код', ob2p: 'Настройки → «Код синхронизации».', ob3: 'Вставь его ниже', ob3p: 'Код хранится зашифрованным.',
+    ob1: 'Войди на сайт', ob1p: 'По почте и паролю или через Google/Discord.', ob2: 'Получи код', ob2p: 'Настройки → «Код синхронизации».', ob3: 'Вставь его ниже', ob3p: 'Код хранится зашифрованным.',
     openSettings: 'Открыть настройки сайта', codeLabel: 'Код синхронизации', paste: 'Вставить', save: 'Сохранить',
     codeOk: 'Код в порядке', codeBad: 'Код — это rf_ и 32 латинские буквы или цифры ({0} из 35)',
     orSave: 'или только сохранить account.json без отправки',
@@ -146,7 +146,7 @@ window.RF_TEXTS = {
     retry: 'Retry', showLog: 'Log', newCode: 'New code',
 
     obTitle: 'Link your account', obLead: 'Once: the code links the extractor to your profile on the site. Your game password is not needed.',
-    ob1: 'Sign in on the site', ob1p: 'With Google or Discord.', ob2: 'Get the code', ob2p: 'Settings → “Sync code”.', ob3: 'Paste it below', ob3p: 'It is stored encrypted.',
+    ob1: 'Sign in on the site', ob1p: 'With e-mail and password, or Google/Discord.', ob2: 'Get the code', ob2p: 'Settings → “Sync code”.', ob3: 'Paste it below', ob3p: 'It is stored encrypted.',
     openSettings: 'Open site settings', codeLabel: 'Sync code', paste: 'Paste', save: 'Save',
     codeOk: 'The code looks right', codeBad: 'A code is rf_ + 32 Latin letters or digits ({0} of 35)',
     orSave: 'or only save account.json without uploading',

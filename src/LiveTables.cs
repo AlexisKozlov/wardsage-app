@@ -19,12 +19,15 @@ using System.Threading.Tasks;
 namespace RealmForge {
   public sealed class LiveTables {
     public int Pid;
-    public ulong EquipData, HeroData, CampOwner, ArtOwner, BeastOwner, Form, Panel;
+    public ulong EquipData, HeroData, CampOwner, ArtOwner, BeastOwner, ActOwner, Form, Panel;
   }
 
   public static partial class RFX {
     static LiveTables live;
     const string KCamp = "m_CampHeroPerfectReward", KArts = "m_vArtifacts", KHeroes = "m_CharactorDatas", KBeasts = "m_AllBeastInfo", KEquipData = "suitId2EquipIdExt";
+    // summoning: the open pools (ActivityData, activities of type 54) and the player's counters (PlayerData = the beasts' owner)
+    const string KAct = "m_ActData54";
+    static readonly string[] SummonPlayerKeys = { "m_SoftMustFivesNum", "m_SoftId2LotteryNum", "m_MustFiveNum", "m_mLotteryNum", "m_iTotalLotteryNum", "m_AwakePity", "m_LotteryRecord" };
 
     /// <summary>The live tables of the running game: the ones found before when they are still there, else searched for
     /// (again). <paramref name="needForm"/>: also the hero screen (created when the player first opens it).</summary>
@@ -110,7 +113,7 @@ namespace RealmForge {
 
     static LiveTables FindLive(int pid) {
       regs = Regions();
-      string[] anchors = { KEquipData, KHero, KHeroes, KCamp, KArts, KBeasts, KGrid, KPanel };
+      string[] anchors = { KEquipData, KHero, KHeroes, KCamp, KArts, KBeasts, KAct, KGrid, KPanel };
       var tstr = FindLuaStringsFast(anchors);
       var found = new List<string>(); foreach (var kv in tstr) found.Add(kv.Value + "@" + kv.Key.ToString("X"));
       L("Strings found: " + string.Join(", ", found.ToArray()));
@@ -129,6 +132,7 @@ namespace RealmForge {
       lt.CampOwner = Largest(owners, KCamp);
       lt.ArtOwner = Largest(owners, KArts);
       lt.BeastOwner = Largest(owners, KBeasts);
+      lt.ActOwner = Largest(owners, KAct);
       // the hero screen: the one the game's window list holds (a dead copy of an older one can own the keys too)
       lt.Form = FindFormNode();
       if (lt.Form == 0 && owners.TryGetValue(KGrid, out l)) foreach (var t in l) if (HasTable(t, "m_InfinityGridProxy")) { lt.Form = t; break; }
@@ -460,6 +464,20 @@ namespace RealmForge {
       Dictionary<string, object> beasts = null; ulong bv; int bt;
       if (lt.BeastOwner != 0 && Field(lt.BeastOwner, KBeasts, out bv, out bt) && bt == T_TABLE) beasts = ParseTable(bv, 3, new HashSet<ulong>());
       sb.Append(",\n\"beasts\":"); J(sb, beasts);
+      // Summoning (work/study/notes/03-summon.md): PlayerData counters (pulls left to the guarantee by softId, per pool)
+      // and ActivityData.m_ActData54.pool = the pools open now, with softId, the rate text (mDetailCfg) and times
+      var summon = new Dictionary<string, object>();
+      if (lt.BeastOwner != 0) foreach (var k in SummonPlayerKeys) {
+        ulong sv; int st;
+        if (!Field(lt.BeastOwner, k, out sv, out st)) continue;
+        if (st == T_TABLE) summon[k] = ParseTable(sv, k == "m_LotteryRecord" ? 4 : 3, new HashSet<ulong>());
+        else if (st == T_INT) summon[k] = (long)sv;
+      }
+      ulong a54, apool; int a54t, apt;
+      if (lt.ActOwner != 0 && Field(lt.ActOwner, KAct, out a54, out a54t) && a54t == T_TABLE && Field(a54, "pool", out apool, out apt) && apt == T_TABLE)
+        summon["pools"] = ParseTable(apool, 4, new HashSet<ulong>());
+      L("  summon: " + summon.Count + " parts" + (summon.ContainsKey("pools") ? "" : " (no pools)"));
+      sb.Append(",\n\"summon\":"); J(sb, summon);
       sb.Append("\n,\"meta\":{\"extractor\":\"" + ExtractorVersion + "\"");
       if (GameVersion != null) { sb.Append(",\"gameVersion\":"); J(sb, GameVersion); }
       sb.Append(",\"seconds\":" + (int)sw.Elapsed.TotalSeconds + ",\"equipment\":" + ne + ",\"heroes\":" + nh + ",\"live\":true}\n}\n");
