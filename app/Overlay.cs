@@ -216,6 +216,13 @@ namespace RealmForge {
     public void SetRun(long hero) { if (hero == runHero) return; runHero = hero; Run(); }
 
     /// <summary>Every pilot starts over (a new «Надеть»: after a failure the player may have fixed the game's screen).</summary>
+    /// <summary>What the helper is at while a started plan runs (null = no plan, or a pilot is clicking / waiting for the
+    /// player): the same key for long means the plan stands still.</summary>
+    public string StallKey() {
+      if (runHero <= 0 || autoSaid == "work" || autoSaid == "paused" || autoSaid == "background") return null;
+      return runHero + "|" + target + "|" + filterItem + "|" + filterKind + "|" + hintKind + "|" + autoSaid;
+    }
+
     public void RestartPilots() { pilot.Reset(); fpilot.Reset(); hpilot.Reset(); }
 
     /// <summary>Item to highlight (0 = none).</summary>

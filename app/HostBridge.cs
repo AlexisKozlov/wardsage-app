@@ -51,7 +51,7 @@ namespace RealmForge {
       this.win = win; this.core = core;
       cfg = AppConfig.Load();
       if (string.IsNullOrEmpty(cfg.Site)) cfg.Site = SyncClient.DefaultSite;
-      gameTimer.Interval = 2000; gameTimer.Tick += (s, e) => { CheckGame(false); WatchBattleEnd(); }; gameTimer.Start();
+      gameTimer.Interval = 2000; gameTimer.Tick += (s, e) => { CheckGame(false); WatchBattleEnd(); WatchStall(); }; gameTimer.Start();
       liveTimer.Interval = 400; liveTimer.Tick += (s, e) => PollLive();
       overlay = new OverlayController(st => Post("{\"ev\":\"overlay\",\"state\":" + S(st) + "}"),
                                       st => Post("{\"ev\":\"auto\",\"state\":" + S(st) + "}"),
@@ -168,6 +168,7 @@ namespace RealmForge {
             if (MiniJson.GetBool(m, "restart", false)) overlay.RestartPilots();
             break;
           }
+          case "log": Log.Write("ui: " + (MiniJson.GetString(m, "text") ?? "")); break;
           case "equip.rescan":
             // the page's plan stands still: the game's tables are read again (at most every 20 s)
             if (addrs != null && !scanning && DateTime.UtcNow > rescanAfter) {
@@ -606,10 +607,29 @@ namespace RealmForge {
       watch = uids;
     }
 
+    // A started plan standing still (the same step 10 s, no pilot clicking): the game's tables are searched afresh -
+    // live 27.09 an item put on was not seen until the app was restarted
+    string stallKey, pollError, ownersLogged; DateTime stallAt;
+    void WatchStall() {
+      string k = overlay.StallKey();
+      if (k == null || k != stallKey) { stallKey = k; stallAt = DateTime.UtcNow; return; }
+      if ((DateTime.UtcNow - stallAt).TotalSeconds < 10 || addrs == null || scanning || DateTime.UtcNow <= rescanAfter) return;
+      stallAt = DateTime.UtcNow; rescanAfter = DateTime.UtcNow.AddSeconds(20);
+      Log.Write("equip scan again: the plan stands still (" + k + ")");
+      StartScan(watch, false, true); overlay.RestartPilots();
+    }
+
     void PollLive() {
       if (addrs == null || scanning) return;
       EquipLive s;
-      try { s = RFX.Poll(addrs, watch); } catch (Exception) { return; }
+      try { s = RFX.Poll(addrs, watch); }
+      catch (Exception e) {
+        // (was swallowed: a poll failing every time froze the page's guide on one step)
+        string m = e.GetType().Name + ": " + e.Message;
+        if (m != pollError) { pollError = m; Log.Write("live poll failed: " + e); }
+        return;
+      }
+      pollError = null;
       // the hero screen is open, but the scan ran before the game built it (the player was in the city): scan again, at
       // most once a minute - without the form the hero cannot be brought up and the gear list is not known to be open
       if (s.GameRunning && s.HeroUid > 0 && addrs.Form == 0 && DateTime.UtcNow > rescanAfter) {
@@ -631,6 +651,12 @@ namespace RealmForge {
       foreach (var kv in s.Owner) { if (!first) sb.Append(','); first = false; sb.Append('"').Append(N(kv.Key)).Append("\":").Append(N(kv.Value)); }
       sb.Append("}}}");
       NoteOwners(s.Owner);
+      {   // the journal: who wears the plan items (on every change), the hero and the open slot
+        var ob = new StringBuilder("live: hero " + s.HeroUid + " part " + s.Part + " sel " + s.SelUid + " owners");
+        foreach (var kv in s.Owner) ob.Append(' ').Append(kv.Key).Append('>').Append(kv.Value);
+        string ol = ob.ToString();
+        if (ol != ownersLogged) { ownersLogged = ol; Log.Write(ol); }
+      }
       string json = sb.ToString();
       if (json == lastLive) return;   // nothing changed on the game screen
       lastLive = json;

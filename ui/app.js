@@ -761,12 +761,12 @@
     // a started plan standing still: the same step for 10 s with the helper idle - the game may have rebuilt its tables
     // (an item put on and not seen until a restart, live 27.09): the host reads them again
     const step = run !== '0' ? [p.id, item, kind].join('|') : '';
-    if (step !== S.stepKey) { S.stepKey = step; S.stepAt = Date.now(); }
+    if (step !== S.stepKey) { S.stepKey = step; S.stepAt = Date.now(); host.send({ cmd: 'log', text: 'step ' + (step || '-') + ' (' + (g ? g.kind : '-') + ')' }); }
   }
   setInterval(() => {
     if (!S.stepKey || !S.game.running || Date.now() - S.stepAt < 10000) return;
     if (S.auto === 'work' || S.auto === 'paused' || S.auto === 'background') return;
-    S.stepAt = Date.now(); host.send({ cmd: 'equip.rescan' });
+    S.stepAt = Date.now(); host.send({ cmd: 'log', text: 'step stands still: ' + S.stepKey + ' auto ' + S.auto }); host.send({ cmd: 'equip.rescan' });
   }, 2000);
 
   // plans made on the site meanwhile: reload every 20 s while the helper is on screen and the game runs
