@@ -376,6 +376,9 @@ static class CoreTests {
     Console.WriteLine("Fight timeline (src/TimelineBuilder.cs: samples of the running fight + its command record):");
     TimelineTests();
 
+    Console.WriteLine("Error reports (src/ErrorReport.cs: opt-in, scrubbed, deduped, capped):");
+    ErrorReportTests(mock);
+
     Console.WriteLine("Window shapes (the game's UI scale: height, or width below 16:9):");
     {
       double W = 1600, H = 1000;   // 16:10, measured on the live game 2026-09-26
@@ -397,6 +400,98 @@ static class CoreTests {
     Console.WriteLine();
     Console.WriteLine(passed + " passed, " + failed + " failed");
     return failed == 0 ? 0 : 1;
+  }
+
+  static void ErrorReportTests(string mock) {
+    string code = Tok('A');
+    // the setting: off by default, kept in config.json
+    Check(!new AppConfig().ErrorReports && !AppConfig.FromJson("{}").ErrorReports, "reports are off by default");
+    var rc = new AppConfig(); rc.ErrorReports = true;
+    Check(AppConfig.FromJson(rc.ToJson()).ErrorReports, "the switch survives save/load");
+
+    Eq("pilot.hero_failed", ErrorReports.NormalizeKind("pilot.hero_failed"), "kind kept");
+    Eq("sync_net", ErrorReports.NormalizeKind("Sync Net!"), "kind lower-cased, spaces -> _");
+    Eq("other", ErrorReports.NormalizeKind("  ###"), "nothing usable -> other");
+    Eq(64, ErrorReports.NormalizeKind(new string('a', 100)).Length, "kind capped at 64");
+
+    string prof = @"C:\Users\Alex";
+    string dirty = "send with " + code + " and Authorization: Bearer abc.DEF-123 saved " + @"c:\users\alex\AppData\Roaming\RealmForge\battles\b1.json";
+    string clean = ErrorReports.Scrub(dirty, prof);
+    Check(clean.IndexOf(code, StringComparison.Ordinal) < 0 && clean.Contains("rf_***"), "sync code masked: " + clean);
+    Check(clean.Contains("Bearer ***") && !clean.Contains("abc.DEF"), "bearer token masked");
+    Check(clean.Contains(@"%USERPROFILE%\AppData") && clean.IndexOf("alex", StringComparison.OrdinalIgnoreCase) < 0, "user folder hidden (any case)");
+    Check(ErrorReports.Scrub("item rf_" + new string('A', 31) + " ok", prof).Contains("rf_" + new string('A', 31)), "not a code (31 chars) left alone");
+
+    var lines = new StringBuilder();
+    for (int i = 1; i <= 1000; i++) lines.Append("2026-09-28 12:00:00  line ").Append(i).Append("\r\n");
+    string tail = ErrorReports.Tail(lines.ToString(), 300, 100000);
+    Check(tail.StartsWith("2026-09-28 12:00:00  line 701\n", StringComparison.Ordinal) && tail.EndsWith("line 1000\n", StringComparison.Ordinal), "tail: the last 300 lines");
+    Eq(300, tail.Split('\n').Length - 1, "tail line count");
+    string capped = ErrorReports.Tail(lines.ToString(), 300, 1000);
+    Check(capped.Length <= 1000 && capped.StartsWith("2026-", StringComparison.Ordinal) && capped.EndsWith("line 1000\n", StringComparison.Ordinal), "tail: char cap cuts at a line start");
+    Eq("a\nb", ErrorReports.Tail("a\nb", 300, 1000), "short text whole");
+    Eq("", ErrorReports.Tail(null, 300, 1000), "no text");
+
+    string logPath = Path.Combine(Path.GetTempPath(), "rf-report-test-" + Guid.NewGuid().ToString("N") + ".log");
+    try {
+      var big = new StringBuilder();
+      for (int i = 1; i <= 3000; i++) big.Append("2026-09-28 12:00:00  live: hero 229000000 part ").Append(i).Append(" Ж\r\n");
+      big.Append("2026-09-28 12:00:01  send: Ok 200 code " + code + "\r\n");
+      File.WriteAllText(logPath, big.ToString(), new UTF8Encoding(false));
+      using (var hold = new FileStream(logPath, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite)) {   // the program keeps it open
+        string lt = ErrorReports.ReadLogTail(logPath);
+        Check(lt.Split('\n').Length - 1 <= ErrorReports.LogLines && lt.Length <= ErrorReports.MaxLogChars, "journal tail: ≤300 lines, ≤20 000 chars (" + lt.Length + ")");
+        Check(lt.Contains("part 3000 Ж") && lt.TrimEnd('\n').EndsWith("code " + code, StringComparison.Ordinal), "journal tail read while the file is open, UTF-8");
+      }
+      Eq("", ErrorReports.ReadLogTail(logPath + ".missing"), "no journal -> empty");
+
+      var ctx = new Dictionary<string, string> { { "state", "hero_failed" }, { "exception", "at " + code + " " + new string('x', 5000) } };
+      string json = ErrorReports.BuildJson("Pilot.Hero_Failed", "auto: hero_failed with " + code, "1.6.16", "1.1.2", ctx,
+                                           ErrorReports.ReadLogTail(logPath), prof);
+      Check(json.IndexOf(code, StringComparison.Ordinal) < 0, "the sync code is nowhere in the report body");
+      var o = MiniJson.AsObject(MiniJson.Parse(json));
+      Check(o != null && MiniJson.GetString(o, "source") == "app" && MiniJson.GetString(o, "kind") == "pilot.hero_failed", "body: source app, kind normalized");
+      Check(MiniJson.GetString(o, "appVersion") == "1.6.16" && MiniJson.GetString(o, "gameVersion") == "1.1.2", "body: versions");
+      var co = MiniJson.AsObject(o["context"]);
+      Check(co != null && MiniJson.GetString(co, "state") == "hero_failed" && MiniJson.GetString(co, "exception").Length <= ErrorReports.MaxContextValue, "body: context values capped");
+      string lt2 = MiniJson.GetString(o, "logTail");
+      Check(lt2 != null && lt2.Length <= ErrorReports.MaxLogChars && lt2.Contains("rf_***"), "body: journal tail, capped and scrubbed");
+      string noMsg = ErrorReports.BuildJson("sync.net", "   ", null, null, null, null, prof);
+      var o2 = MiniJson.AsObject(MiniJson.Parse(noMsg));
+      Check(MiniJson.GetString(o2, "message") == "sync.net" && !o2.ContainsKey("logTail") && !o2.ContainsKey("gameVersion"), "empty message -> the kind; no journal / game version -> left out");
+      Check(MiniJson.GetString(MiniJson.AsObject(MiniJson.Parse(ErrorReports.BuildJson("k", new string('m', 5000), null, null, null, null, null))), "message").Length <= ErrorReports.MaxMessage, "message capped at 2000");
+
+      // limiter: the same kind once per 10 minutes, 20 a day, remembered across restarts
+      string marks = logPath + ".sent";
+      var t0 = new DateTime(2026, 9, 28, 12, 0, 0, DateTimeKind.Utc);
+      var lim = new ErrorReportLimiter(marks);
+      Check(lim.TryTake("sync.net", t0), "first report goes");
+      Check(!lim.TryTake("sync.net", t0.AddMinutes(9)), "same kind within 10 minutes: skipped");
+      Check(lim.TryTake("pilot.failed", t0.AddMinutes(1)), "another kind goes");
+      Check(lim.TryTake("sync.net", t0.AddMinutes(10).AddSeconds(1)), "same kind after 10 minutes goes");
+      var lim2 = new ErrorReportLimiter(marks);
+      Check(!lim2.TryTake("sync.net", t0.AddMinutes(15)), "marks survive a restart (a crash loop is deduped)");
+      Eq(3, lim2.CountToday(t0.AddMinutes(20)), "3 sent today");
+      int ok = 0;
+      for (int i = 0; i < 30; i++) if (lim2.TryTake("k" + i, t0.AddMinutes(30 + i))) ok++;
+      Eq(ErrorReportLimiter.MaxPerDay - 3, ok, "at most 20 a day");
+      Check(!lim2.TryTake("fresh", t0.AddHours(23)), "still full 23 h later");
+      Check(lim2.TryTake("fresh", t0.AddHours(24).AddMinutes(31)), "a day later there is room again");
+      var mem = new ErrorReportLimiter(null);
+      Check(mem.TryTake("a", t0) && !mem.TryTake("a", t0), "memory-only limiter");
+      File.Delete(marks);
+
+      // the site's contract, against tests/mock-server.mjs
+      Eq(ReportStatus.Sent, ErrorReports.Send(mock, code, json, 10000), "POST /api/report -> sent");
+      var lr = MiniJson.AsObject(MiniJson.Parse(new WebClient().DownloadString(mock + "/__lastReport")));
+      var lh = MiniJson.AsObject(lr["headers"]); var lb = MiniJson.AsObject(lr["body"]);
+      Check(MiniJson.GetString(lh, "authorization") == "Bearer " + code && MiniJson.GetString(lh, "contentType").StartsWith("application/json", StringComparison.Ordinal), "signed with the code in the header only, JSON");
+      Check(MiniJson.GetString(lb, "kind") == "pilot.hero_failed" && MiniJson.GetString(lb, "logTail").Length > 1000, "the mock got the report with the journal");
+      Eq(ReportStatus.RateLimited, ErrorReports.Send(mock, Tok('R'), json, 10000), "429 -> rate limited");
+      Eq(ReportStatus.InvalidToken, ErrorReports.Send(mock, Tok('Q'), json, 10000), "unknown code -> invalid token");
+      Eq(ReportStatus.Rejected, ErrorReports.Send(mock, code, "{\"source\":\"app\",\"kind\":\"Bad Kind\",\"message\":\"x\"}", 10000), "422 -> rejected");
+      Eq(ReportStatus.Unreachable, ErrorReports.Send("http://127.0.0.1:1", code, json, 3000), "no server -> unreachable");
+    } finally { try { File.Delete(logPath); } catch (Exception) { } }
   }
 
   static HeroSample Hs(uint uid, int unit, uint tower, int x, int y, int card = 0, bool dead = false, int deadType = -1,

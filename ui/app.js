@@ -15,7 +15,7 @@
     sync: { phase: 'idle', stage: null, seconds: 0, result: null, error: null },
     plans: { status: 'idle', list: [], err: null }, sel: 0,
     scan: { status: 'idle', panel: false }, live: null, reported: {}, compact: false, overlay: 'off', hl: '',
-    autoSync: true, autoClick: true, autoConfirm: false, auto: 'idle', autoAt: null,
+    autoSync: true, autoClick: true, autoConfirm: false, errorReports: false, auto: 'idle', autoAt: null,
     run: null, seen: null, runKey: '', queue: [], takeOver: {},
     // storage cleanup: the site's list, the pilot's state on the game's sell screen
     sell: { list: null, run: false, state: '', selected: 0, missing: 0, extra: 0, seen: {} },
@@ -463,6 +463,7 @@
         ${row(t('setCopy'), t('setCopyP'), `<button class="switch" role="switch" data-act="copy" aria-checked="${S.saveCopy}"></button>`)}
         ${row(t('setSite'), t('setSiteP'), `<div class="row"><div class="input" style="flex:1;min-width:240px"><input id="site" value="${esc(S.site)}" spellcheck="false"></div>
           <button class="btn-line" data-act="saveSite">${esc(t('save'))}</button>${S.site !== S.defaultSite ? `<button class="btn-ghost" data-act="resetSite">${esc(t('reset'))}</button>` : ''}</div>`)}
+        ${row(t('setReports'), t('setReportsP'), `<button class="switch" role="switch" data-act="errorReports" aria-checked="${S.errorReports}"></button>`)}
         ${row(t('setLog'), t('setLogP'), `<button class="btn-line" data-act="openLog">${esc(t('openLog'))}</button>`)}
         ${row(t('setDiag'), t('setDiagP'), `<button class="btn-line" data-act="diag">${esc(t('diagStart'))}</button>`)}
         ${row(t('setFiles'), t('setFilesP'), `<button class="btn-line" data-act="gameFiles">${esc(t('filesStart'))}</button> <span class="hint" id="filesState">${esc(S.filesState || '')}</span>`)}
@@ -556,6 +557,7 @@
     else if (a === 'saveCode') { const v = $('#code').value.trim(); if (CODE_RE.test(v)) host.send({ cmd: 'setCode', code: v }); }
     else if (a === 'unlink') host.send({ cmd: 'clearCode' });
     else if (a === 'copy') { S.saveCopy = !S.saveCopy; host.send({ cmd: 'setSaveCopy', on: S.saveCopy }); render(); }
+    else if (a === 'errorReports') { S.errorReports = !S.errorReports; host.send({ cmd: 'setErrorReports', on: S.errorReports }); if (S.errorReports) toast(t(S.hasCode ? 'reportsOn' : 'reportsNoCode'), 6000); render(); }
     else if (a === 'autoSync') { S.autoSync = !S.autoSync; host.send({ cmd: 'setAutoSync', on: S.autoSync }); render(); }
     else if (a === 'autoClick') { S.autoClick = !S.autoClick; host.send({ cmd: 'setAutoClick', on: S.autoClick }); render(); }
     else if (a === 'autoConfirm') {
@@ -610,7 +612,7 @@
     switch (m.ev) {
       case 'state':
         Object.assign(S, { lang: m.lang, version: m.version, site: m.site, defaultSite: m.defaultSite, hasCode: m.hasCode, codePrefix: m.codePrefix, saveCopy: m.saveCopy, last: m.last || S.last });
-        if (m.autoSync !== undefined) { S.autoSync = m.autoSync; S.autoClick = m.autoClick; S.autoConfirm = !!m.autoConfirm; }
+        if (m.autoSync !== undefined) { S.autoSync = m.autoSync; S.autoClick = m.autoClick; S.autoConfirm = !!m.autoConfirm; S.errorReports = !!m.errorReports; }
         if (m.game) S.game = m.game;
         if (m.codeSaved) { S.editCode = false; toast(t('saved')); if (S.page === 'equip' || S.plans.status !== 'idle') loadPlans(); }
         if (m.siteSaved) toast(t('saved'));

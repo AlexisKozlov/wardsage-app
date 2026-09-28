@@ -158,13 +158,27 @@ namespace RealmForge {
     readonly Action<SellPilot, string> sellReport;
     System.Collections.Generic.HashSet<long> sellWanted; System.Collections.Generic.HashSet<int> sellParts; System.Collections.Generic.Dictionary<long, int> sellLevels; long sellHero; long sellBtnAt; string sellSaid = "";
 
+    /// <summary>A failure worth an error report (kind, message): the filter pilot gave up, «Заменить» not found with the
+    /// auto-confirm on, an exception in the tick. HostBridge sends it when the player turned the reports on.</summary>
+    public event Action<string, string> Problem;
+    void RaiseProblem(string kind, string message) { var p = Problem; if (p != null) try { p(kind, message); } catch (Exception) { } }
+    bool filterFailSaid; string tickError;
+
     public OverlayController(Action<string> report, Action<string> autoReport, Action<SellPilot, string> sellReport) {
       this.report = report; this.autoReport = autoReport; this.sellReport = sellReport;
       spilot = new SellPilot(SellGeometry.Inventory(1920, 1009, 8));
       pilot = new AutoPilot(g);
       fpilot = new FilterPilot(fg);
       hpilot = new HeroPilot(heroG);
-      timer.Interval = 100; timer.Tick += (s, e) => { try { Tick(); } catch (Exception ex) { Log.Write("overlay: " + ex.Message); Hide("off"); } };
+      timer.Interval = 100; timer.Tick += (s, e) => {
+        try { Tick(); tickError = null; }
+        catch (Exception ex) {
+          // the same exception every 100 ms: journaled (with its stack) and reported once
+          string m = ex.GetType().Name + ": " + ex.Message;
+          if (m != tickError) { tickError = m; Log.Write("overlay: " + ex); RaiseProblem("overlay.exception", "overlay: " + m); }
+          Hide("off");
+        }
+      };
       cancelWin.Pressed += () => { cancelWin.Hide(); var c = CancelPressed; if (c != null) c(); };
     }
 
@@ -528,6 +542,9 @@ namespace RealmForge {
       var fview = FilterViewNow(o, cr, now, v.Foreground, v.UserBusy);
       var fa = fpilot.Step(fview);
       LogFilter(fview);
+      if (fpilot.State == "failed") {
+        if (!filterFailSaid) { filterFailSaid = true; RaiseProblem("pilot.filter_failed", "filter failed: the game's gear filter could not be set for item " + fview.Item + " (kind " + filterKind + ")"); }
+      } else filterFailSaid = false;
       if (fa != null) {
         pilot.Reset();
         AutoSay(fpilot.State == "failed" ? "idle" : "work");
@@ -929,7 +946,13 @@ namespace RealmForge {
       int[] btn = (rep != null) == (eq != null) ? null : rep ?? eq;
       if (btn == null && hintKind == "replace") {
         // (the journal: why «Заменить» is not pressed - once per selected item)
-        if (confirmMissLogged != target) { confirmMissLogged = target; Log.Write("confirm: no single blue button (replace " + (rep != null) + ", equip " + (eq != null) + ") for item " + target); }
+        if (confirmMissLogged != target) {
+          confirmMissLogged = target;
+          string miss = "confirm: no single blue button (replace " + (rep != null) + ", equip " + (eq != null) + ") for item " + target;
+          Log.Write(miss);
+          // reported only with the auto-confirm on: then the program cannot press «Заменить»; without it only the hint moves
+          if (AutoConfirm && AutoEnabled) RaiseProblem("pilot.confirm_no_button", miss);
+        }
       } else if (btn != null && (btn[1] != hg.Replace(W, H)[1] && btn[1] != hg.Equip(W, H)[1]) && confirmFoundLogged != target) {
         confirmFoundLogged = target;
         Log.Write("confirm: button found " + (btn[1] - (rep != null ? hg.Replace(W, H)[1] : hg.Equip(W, H)[1])) + " px off its usual place, item " + target);

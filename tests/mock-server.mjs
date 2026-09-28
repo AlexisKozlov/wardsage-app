@@ -11,6 +11,8 @@
 //   rf_ + 32 x "H"  -> 200 with an HTML page (unexpected reply)
 //   anything else   -> 401 invalid_token
 // GET /__last returns what the last POST carried (headers, sizes, sha256 of the decoded JSON).
+// POST /api/report (error reports, lib/report/handler.ts on the site): "A" -> 200, "R" -> 429, other codes -> 401,
+// a body outside the site's limits -> 422; GET /__lastReport returns the last accepted one (headers + body).
 
 import http from 'node:http';
 import zlib from 'node:zlib';
@@ -21,6 +23,7 @@ const MAX_GZIP = 5 * 1024 * 1024;
 const MAX_JSON = 20 * 1024 * 1024;
 const tok = (c) => 'rf_' + c.repeat(32);
 let last = null;
+let lastReport = null;
 
 function send(res, status, body, headers = {}) {
   const text = typeof body === 'string' ? body : JSON.stringify(body);
@@ -37,8 +40,31 @@ function readBody(req, limit) {
   });
 }
 
+async function report(req, res) {
+  const auth = req.headers.authorization ?? '';
+  const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+  let raw;
+  try { raw = await readBody(req, 128 * 1024); } catch { return send(res, 413, { ok: false, error: 'too_large' }); }
+  if (token === tok('R')) return send(res, 429, { ok: false, error: 'rate_limited', retryAfter: 600 }, { 'Retry-After': '600' });
+  if (token !== tok('A')) return send(res, 401, { ok: false, error: 'invalid_token' });
+  if (!/^application\/json\b/.test(req.headers['content-type'] ?? '')) return send(res, 415, { ok: false, error: 'unsupported_media_type' });
+  let b;
+  try { b = JSON.parse(raw.toString('utf8')); } catch (e) { return send(res, 422, { ok: false, error: 'invalid_payload', details: ['JSON: ' + e.message] }); }
+  const details = [];
+  if (b.source !== 'app') details.push('source');
+  if (!/^[a-z0-9][a-z0-9_.:-]{0,63}$/.test(b.kind ?? '')) details.push('kind');
+  if (typeof b.message !== 'string' || !b.message.trim() || b.message.length > 2000) details.push('message');
+  if (b.logTail != null && (typeof b.logTail !== 'string' || b.logTail.length > 20480)) details.push('logTail');
+  if (b.context != null && (typeof b.context !== 'object' || Array.isArray(b.context) || Buffer.byteLength(JSON.stringify(b.context)) > 16384)) details.push('context');
+  if (details.length) return send(res, 422, { ok: false, error: 'invalid_payload', details });
+  lastReport = { headers: { authorization: auth, contentType: req.headers['content-type'], extractor: req.headers['x-rf-extractor'] }, body: b };
+  return send(res, 200, { ok: true, id: '00000000-0000-4000-8000-000000000001' });
+}
+
 const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && req.url === '/__last') return send(res, 200, last ?? {});
+  if (req.method === 'GET' && req.url === '/__lastReport') return send(res, 200, lastReport ?? {});
+  if (req.url === '/api/report' && req.method === 'POST') return report(req, res);
   if (req.url !== '/api/sync') return send(res, 404, { ok: false, error: 'not_found' });
   if (req.method !== 'POST') return send(res, 405, { ok: false, error: 'method_not_allowed' });
 

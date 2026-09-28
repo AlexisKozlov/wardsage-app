@@ -15,7 +15,7 @@ using System.Windows.Forms;
 
 namespace RealmForge {
   static class Program {
-    public const string Version = "1.6.15";
+    public const string Version = "1.6.16";
     internal static string AppDir;          // unpacked resources of this build
     internal static string UiDir;
     internal static string DataDir;         // WebView2 user data (cache, local storage)
@@ -118,9 +118,14 @@ namespace RealmForge {
       } catch (Exception) { }
     }
 
+    /// <summary>Sends an unhandled exception to the site when the player turned the error reports on (set by HostBridge).</summary>
+    internal static Action<Exception> FatalReport;
+
     internal static void Fatal(Exception e) {
       string msg = e == null ? "unknown error" : e.GetType().Name + ": " + e.Message;
       try { Log.Write("FATAL " + (e == null ? msg : e.ToString())); } catch (Exception) { }
+      var fr = FatalReport;
+      if (fr != null && e != null) try { fr(e); } catch (Exception) { }
       MessageBox.Show("RealmForge: " + msg, "RealmForge", MessageBoxButtons.OK, MessageBoxIcon.Error);
     }
   }

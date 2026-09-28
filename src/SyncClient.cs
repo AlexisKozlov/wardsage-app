@@ -8,7 +8,8 @@
 // Replies (JSON):
 //   200 {ok:true, snapshotId, heroes, items, artifacts, viewUrl}
 //   401 invalid_token | 413 too_large | 415 | 422 {error:"invalid_payload", details} | 429 rate_limited | 500
-// Nothing else is sent anywhere: no telemetry, no third-party services.
+// Nothing else is sent anywhere: no telemetry, no third-party services (error reports, src/ErrorReport.cs, go to the
+// same site and only when the player turns them on).
 
 using System;
 using System.Collections.Generic;

@@ -2261,7 +2261,8 @@ namespace RealmForge {
 // Replies (JSON):
 //   200 {ok:true, snapshotId, heroes, items, artifacts, viewUrl}
 //   401 invalid_token | 413 too_large | 415 | 422 {error:"invalid_payload", details} | 429 rate_limited | 500
-// Nothing else is sent anywhere: no telemetry, no third-party services.
+// Nothing else is sent anywhere: no telemetry, no third-party services (error reports, src/ErrorReport.cs, go to the
+// same site and only when the player turns them on).
 
 
 namespace RealmForge {
@@ -2825,6 +2826,7 @@ namespace RealmForge {
     public bool AutoSync = true;    // send the account to the site by itself after gear changes and every few minutes
     public bool AutoClick = true;   // equip helper: open the slot, scroll the list and click the item in the game
     public bool AutoConfirm;        // ...and press «Заменить» itself (off by default: the player's explicit choice)
+    public bool ErrorReports;       // send failures to the site with the journal's last lines (src/ErrorReport.cs; off by default)
     // last successful sync (shown on the start screen; the busts of the strongest heroes decorate the banner)
     public string LastAt;                       // ISO 8601 UTC or null
     public int LastHeroes = -1, LastItems = -1, LastArtifacts = -1;
@@ -2864,6 +2866,7 @@ namespace RealmForge {
       sb.Append(",\n  \"autoSync\": ").Append(AutoSync ? "true" : "false");
       sb.Append(",\n  \"autoClick\": ").Append(AutoClick ? "true" : "false");
       sb.Append(",\n  \"autoConfirm\": ").Append(AutoConfirm ? "true" : "false");
+      sb.Append(",\n  \"errorReports\": ").Append(ErrorReports ? "true" : "false");
       string code = string.IsNullOrEmpty(Code) ? "" : ProtectedPrefix + CodeProtector.Protect(Code);
       sb.Append(",\n  \"code\": ").Append(MiniJson.Quote(code));
       if (!string.IsNullOrEmpty(LastAt)) {
@@ -2888,6 +2891,7 @@ namespace RealmForge {
       c.AutoSync = MiniJson.GetBool(d, "autoSync", true);
       c.AutoClick = MiniJson.GetBool(d, "autoClick", true);
       c.AutoConfirm = MiniJson.GetBool(d, "autoConfirm", false);
+      c.ErrorReports = MiniJson.GetBool(d, "errorReports", false);
       object lv;
       var last = d.TryGetValue("last", out lv) ? MiniJson.AsObject(lv) : null;
       if (last != null && MiniJson.GetString(last, "at") != null) {

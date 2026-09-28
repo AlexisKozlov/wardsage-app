@@ -1,6 +1,6 @@
 // RealmForge.exe - messages between the page (ui/app.js) and the program.
 //
-// page -> host  {cmd:"init"|"setLang"|"setCode"|"clearCode"|"setSaveCopy"|"setSite"|"paste"|"sync"|"open"|"openLog"|
+// page -> host  {cmd:"init"|"setLang"|"setCode"|"clearCode"|"setSaveCopy"|"setErrorReports"|"setSite"|"paste"|"sync"|"open"|"openLog"|
 //                    "openFolder"|"plans.load"|"equip.scan"|"equip.watch"|"equip.finish"|"highlight"|"compact", ...}
 // host -> page  {ev:"state"|"game"|"paste"|"sync"|"plans"|"equip.scan"|"equip.live"|"overlay"|"bridge.equip"|"bridge.drop", ...}
 // The local bridge (bridge/, optional): every reading of the game also goes to it, and its equip commands become
@@ -54,7 +54,7 @@ namespace RealmForge {
       gameTimer.Interval = 2000; gameTimer.Tick += (s, e) => { CheckGame(false); WatchBattleEnd(); WatchStall(); }; gameTimer.Start();
       liveTimer.Interval = 400; liveTimer.Tick += (s, e) => PollLive();
       overlay = new OverlayController(st => Post("{\"ev\":\"overlay\",\"state\":" + S(st) + "}"),
-                                      st => Post("{\"ev\":\"auto\",\"state\":" + S(st) + "}"),
+                                      st => { Post("{\"ev\":\"auto\",\"state\":" + S(st) + "}"); OnAutoState(st); },
                                       (p, st) => Post("{\"ev\":\"sell.state\",\"state\":" + S(st) + ",\"selected\":" + p.Selected + ",\"missing\":" + p.Missing + ",\"extra\":" + p.Extra + "}"));
       overlay.AutoEnabled = cfg.AutoClick;
       overlay.AutoConfirm = cfg.AutoConfirm;
@@ -62,6 +62,8 @@ namespace RealmForge {
       coach.Lang = cfg.Lang;
       // «Отменить надевание» over the game: the interface drops the running build (as its own «Отменить»)
       overlay.CancelPressed += () => { Log.Write("cancel pressed over the game"); Post("{\"ev\":\"cancelRun\"}"); };
+      overlay.Problem += (kind, message) => Report(kind, message, null);
+      Program.FatalReport = ReportFatal;
       autoTimer.Interval = 1000; autoTimer.Tick += (s, e) => AutoSyncTick(); autoTimer.Start();
       updateTimer.Interval = 20000; updateTimer.Tick += (s, e) => { updateTimer.Interval = 6 * 3600 * 1000; CheckUpdate(); }; updateTimer.Start();
       bridgePoller = new BridgePoller(new BridgeClient(BridgeClient.DefaultUrl, BridgeClient.DefaultTokenPath),
@@ -73,6 +75,7 @@ namespace RealmForge {
     static string CancelText(string lang) { return lang == "en" ? "Cancel equipping" : "Отменить надевание"; }
 
     public void Dispose() {
+      Program.FatalReport = null;
       bridgePoller.Dispose();   // the pending long poll is aborted: the thread ends at once
       CloseBridgeCommands("cancelled", "RealmForge was closed.", true);
       gameTimer.Dispose(); liveTimer.Dispose(); autoTimer.Dispose(); updateTimer.Dispose(); overlay.Dispose();
@@ -123,6 +126,7 @@ namespace RealmForge {
           case "setAutoSync": cfg.AutoSync = MiniJson.GetBool(m, "on", true); Save(); if (cfg.AutoSync) RequestAutoSync(0); break;
           case "setAutoClick": cfg.AutoClick = MiniJson.GetBool(m, "on", true); overlay.AutoEnabled = cfg.AutoClick; Save(); break;
           case "setAutoConfirm": cfg.AutoConfirm = MiniJson.GetBool(m, "on", false); overlay.AutoConfirm = cfg.AutoConfirm; Save(); break;
+          case "setErrorReports": cfg.ErrorReports = MiniJson.GetBool(m, "on", false); Save(); Log.Write("error reports " + (cfg.ErrorReports ? "on" : "off")); break;
           case "setSite": {
             string err; string site = SyncClient.NormalizeSite(MiniJson.GetString(m, "site"), out err);
             if (site != null) { cfg.Site = site; Save(); SendState("siteSaved"); }
@@ -202,7 +206,10 @@ namespace RealmForge {
           case "compact": win.SetCompact(MiniJson.GetBool(m, "on", false)); break;
           case "update.restart": Program.RestartForUpdate(); break;
         }
-      } catch (Exception e) { Log.Write("message " + cmd + ": " + e); }
+      } catch (Exception e) {
+        Log.Write("message " + cmd + ": " + e);
+        Report("unhandled", "message " + cmd + ": " + e.GetType().Name + ": " + e.Message, Ctx("exception", e.ToString()));
+      }
     }
 
     // Settings → «Файлы игры для разбора»: GameAssembly.dll and global-metadata.dat of the running game, copied in 6 MB
@@ -236,6 +243,47 @@ namespace RealmForge {
 
     void Save() { try { cfg.Save(); } catch (Exception e) { Log.Write("config save: " + e.Message); } }
 
+    // ------------------------------------------------------------------ error reports
+    // Settings → «Отправлять отчёты об ошибках» (OFF by default; src/ErrorReport.cs): failures of the pilots, the sync,
+    // the live poll, the fight recording and unhandled exceptions go to the site with the journal's last 300 lines, so
+    // the owner learns about them without the player describing them. Nothing is sent while the setting is off.
+    readonly ErrorReportLimiter reportLimit = new ErrorReportLimiter(Path.Combine(AppConfig.DefaultDir, "reports-sent.txt"));
+
+    static Dictionary<string, string> Ctx(string key, string value) { return new Dictionary<string, string> { { key, value } }; }
+
+    /// <summary>On, a code to sign it with, and not the same kind in 10 minutes / not over 20 a day.</summary>
+    bool ReportAllowed(string kind) {
+      return cfg.ErrorReports && SyncClient.IsValidCode(cfg.Code) && reportLimit.TryTake(ErrorReports.NormalizeKind(kind), DateTime.UtcNow);
+    }
+
+    string ReportJson(string kind, string message, Dictionary<string, string> ctx) {
+      return ErrorReports.BuildJson(kind, message, Program.Version, gameVersion, ctx, ErrorReports.ReadLogTail(Log.Path),
+                                    Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
+    }
+
+    /// <summary>Sends a report in the background (any thread).</summary>
+    void Report(string kind, string message, Dictionary<string, string> ctx) {
+      if (!ReportAllowed(kind)) return;
+      string site = cfg.Site, code = cfg.Code;
+      Task.Factory.StartNew(() => {
+        var st = ErrorReports.Send(site, code, ReportJson(kind, message, ctx), ErrorReports.TimeoutMs);
+        Log.Write("error report " + ErrorReports.NormalizeKind(kind) + ": " + st);
+      });
+    }
+
+    /// <summary>An unhandled exception: sent right away with a short wait (the program may be about to end).</summary>
+    void ReportFatal(Exception e) {
+      if (!ReportAllowed("unhandled")) return;
+      var st = ErrorReports.Send(cfg.Site, cfg.Code, ReportJson("unhandled", e.GetType().Name + ": " + e.Message, Ctx("exception", e.ToString())), 5000);
+      Log.Write("error report unhandled: " + st);
+    }
+
+    /// <summary>The equip pilot's state (Overlay AutoSay, on every change): its failures are reported.</summary>
+    void OnAutoState(string st) {
+      if (st == "failed" || st == "slot_failed" || st == "unconfirmed" || st == "hero_failed")
+        Report("pilot." + st, "auto: " + st, Ctx("state", st));
+    }
+
     static List<long> Uids(Dictionary<string, object> m) {
       var r = new List<long>(); object v;
       var list = m.TryGetValue("uids", out v) ? v as List<object> : null;
@@ -263,7 +311,7 @@ namespace RealmForge {
       sb.Append(",\"codePrefix\":").Append(S(has ? cfg.Code.Substring(0, 8) : ""));
       sb.Append(",\"saveCopy\":").Append(B(cfg.SaveCopy));
       sb.Append(",\"autoSync\":").Append(B(cfg.AutoSync)).Append(",\"autoClick\":").Append(B(cfg.AutoClick))
-        .Append(",\"autoConfirm\":").Append(B(cfg.AutoConfirm));
+        .Append(",\"autoConfirm\":").Append(B(cfg.AutoConfirm)).Append(",\"errorReports\":").Append(B(cfg.ErrorReports));
       sb.Append(",\"last\":").Append(LastJson());
       if (flag != null) sb.Append(",\"").Append(flag).Append("\":true");
       sb.Append('}');
@@ -406,14 +454,23 @@ namespace RealmForge {
           if (waitMs > 0) System.Threading.Thread.Sleep(waitMs);   // the screen fills its numbers first
           string tl = TakeTimeline(kind >= 0);
           string json = RFX.CaptureBattle(kind, form, tl);
-          if (json == null) { Log.Write("battle end: no statistics found"); win.BeginInvoke((Action)(() => Post("{\"ev\":\"battle\",\"ok\":false}"))); return; }
+          if (json == null) {
+            Log.Write("battle end: no statistics found");
+            // (the «Записать бой» button outside a fight finds nothing either: only a result screen the watch saw counts)
+            if (kind >= 0) Report("battle.no_stats", "battle end: no statistics found (result screen " + kind + ")", Ctx("screen", kind.ToString(CultureInfo.InvariantCulture)));
+            win.BeginInvoke((Action)(() => Post("{\"ev\":\"battle\",\"ok\":false}")));
+            return;
+          }
           int st = lastStage;
           if (st > 0 && (DateTime.UtcNow - lastStageAt).TotalMinutes < 20 && json.StartsWith("{", StringComparison.Ordinal))
             json = "{\"stage\":" + st + "," + json.Substring(1);
           string path = RFX.SaveBattle(json);
           Log.Write("battle kept: " + path + " (" + json.Length + " bytes" + (tl != null ? ", timeline " + tl.Length : "") + ")");
           win.BeginInvoke((Action)(() => { Post("{\"ev\":\"battle\",\"ok\":true}"); RequestAutoSync(3); }));
-        } catch (Exception e) { Log.Write("battle end: " + e.Message); }
+        } catch (Exception e) {
+          Log.Write("battle end: " + e.Message);
+          Report("battle.capture_failed", "battle end: " + e.GetType().Name + ": " + e.Message, Ctx("exception", e.ToString()));
+        }
         finally { capturing = false; }
       });
     }
@@ -467,6 +524,10 @@ namespace RealmForge {
 
     void SyncError(string kind, string detail, int retryAfter) {
       SyncEv("error", ",\"error\":{\"kind\":\"" + kind + "\",\"detail\":" + S(detail) + ",\"retryAfter\":" + N(retryAfter) + "}");
+      // reported: reading and sending failures. Not: the site's rate limit, the game not running (the player's state) and
+      // a rejected code (the report would be rejected the same way)
+      if (kind != "rate" && kind != "not_running" && kind != "token")
+        Report("sync." + kind, "sync: " + kind + (string.IsNullOrEmpty(detail) ? "" : ": " + detail), Ctx("auto", autoRun ? "true" : "false"));
     }
 
     void RunSync(bool upload, bool copy, string site, string code, bool toBridge) {
@@ -678,7 +739,7 @@ namespace RealmForge {
       catch (Exception e) {
         // (was swallowed: a poll failing every time froze the page's guide on one step)
         string m = e.GetType().Name + ": " + e.Message;
-        if (m != pollError) { pollError = m; Log.Write("live poll failed: " + e); }
+        if (m != pollError) { pollError = m; Log.Write("live poll failed: " + e); Report("live_poll_failed", "live poll failed: " + m, Ctx("exception", e.ToString())); }
         return;
       }
       pollError = null;
