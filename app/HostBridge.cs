@@ -409,10 +409,32 @@ namespace RealmForge {
       Log.Write("battle start: stage " + stage + " at " + RFX.FrameSeconds(fr).ToString("0") + " s" + (coach.Knows(stage) ? " (coach)" : "") + (wasSeen ? "" : " (first look)"));
       lastStage = stage; lastStageAt = DateTime.UtcNow;
       StartRecorder(sim, stage);
-      if (coach.Knows(stage)) {
-        if (coach.Running) coach.Stop();
-        coach.Start(sim, stage);
-      }
+      if (coach.Running) coach.Stop();
+      // the player's plan for this boss (the site's «Отправить план в игру»): fresh from the site when the copy is over a
+      // minute old, then the coach (off the UI thread: the site may take a moment)
+      string site = cfg.Site, code = cfg.Code;
+      Task.Factory.StartNew(() => {
+        FightPlan plan = null;
+        try {
+          if (SyncClient.IsValidCode(code) && (DateTime.UtcNow - fightPlansAt).TotalSeconds > 60) LoadFightPlans(site, code);
+          var heroes = new HashSet<long>();
+          foreach (var k in RFX.BattleHeroes(sim).Keys) heroes.Add(k);
+          plan = FightPlanClient.For(fightPlans, stage, heroes);
+          if (plan != null) Log.Write("battle start: plan for " + plan.Boss + ", " + plan.Steps.Count + " heroes (" + heroes.Count + " in the fight)");
+        } catch (Exception e) { Log.Write("fight plans: " + e.Message); }
+        win.BeginInvoke((Action)(() => { if (simSeen == sim && (plan != null || coach.Knows(stage))) coach.Start(sim, stage, plan); }));
+      });
+    }
+
+    // the account's fight plans (src/FightPlanClient.cs), fetched at a fight's start (at most once a minute)
+    volatile List<FightPlan> fightPlans = new List<FightPlan>();
+    DateTime fightPlansAt = DateTime.MinValue;
+
+    void LoadFightPlans(string site, string code) {
+      var r = FightPlanClient.Get(site, code);
+      if (r.Status == PlansStatus.Ok) { fightPlans = r.Plans; fightPlansAt = DateTime.UtcNow; Log.Write("fight plans: " + r.Plans.Count); }
+      else if (r.Status == PlansStatus.InvalidToken) { fightPlans = new List<FightPlan>(); fightPlansAt = DateTime.UtcNow; }
+      else Log.Write("fight plans: " + r.Status + (r.Details != null ? " " + r.Details : ""));
     }
 
     // the timeline of the fight going on (src/BattleTimeline.cs, read-only): every fight, not only the coach's bosses;
@@ -421,7 +443,7 @@ namespace RealmForge {
 
     void StartRecorder(ulong sim, int stage) {
       var old = recorder; if (old != null) old.Stop();
-      var rec = new FightRecorder(sim, stage) { Log = Log.Write };
+      var rec = new FightRecorder(sim, stage) { Log = Log.Write, OnSample = (f, hs) => coach.Feed(hs) };
       recorder = rec;
       rec.Start();
     }

@@ -372,6 +372,7 @@ static class CoreTests {
     Console.WriteLine("HeroPilot (the plan's hero on the hero screen):");
     HeroPilotTests();
     SellPilotTests();
+    FightPlanTests();
 
     Console.WriteLine("Fight timeline (src/TimelineBuilder.cs: samples of the running fight + its command record):");
     TimelineTests();
@@ -898,6 +899,38 @@ static class CoreTests {
       if ((p.State == "done" || p.State == "failed") && a.Kind == AutoKind.None) { if (p.State == "failed") Console.WriteLine("    last steps: " + string.Join(" | ", traces)); return p.State; }
     }
     return "timeout";
+  }
+
+  static void FightPlanTests() {
+    Console.WriteLine("Fight plans");
+    string body = "{\"ok\":true,\"plans\":[{\"v\":1,\"boss\":\"guild-7\",\"stage\":5001007,\"name\":{\"ru\":\"Кошмар\",\"en\":\"Nightmare\"},"
+      + "\"field\":{\"w\":3,\"h\":2,\"t\":[32,32,2,2,36,36],\"boss\":[1,1],\"half\":[0,0]},"
+      + "\"steps\":[{\"u\":200,\"id\":2380,\"n\":{\"ru\":\"Ригар\",\"en\":\"Rigar\"},\"sq\":1,\"why\":\"leader\",\"x\":0,\"y\":0,\"dir\":1},"
+      + "{\"u\":300,\"id\":2147,\"n\":{\"ru\":\"Сунь Укун\",\"en\":\"Sun\"},\"sq\":1,\"why\":\"dmg\",\"x\":2,\"y\":1,\"dir\":3},"
+      + "{\"u\":100,\"id\":2001,\"n\":{\"ru\":\"Мика\",\"en\":\"Mika\"},\"sq\":1,\"why\":\"bench\",\"x\":null,\"y\":null,\"dir\":null}],"
+      + "\"hold\":10,\"holdU\":[300],\"pts\":8726},"
+      + "{\"boss\":\"bad\",\"stage\":0,\"steps\":[]}]}";
+    var r = FightPlanClient.Interpret(200, body);
+    Check(r.Status == PlansStatus.Ok && r.Plans.Count == 1, "one good plan, the malformed one skipped");
+    var p = r.Plans[0];
+    Check(p.Stage == 5001007 && p.W == 3 && p.H == 2 && p.Cell(2, 1) == 36 && p.BossX == 1, "field and stage");
+    Check(p.Steps.Count == 3 && p.Steps[0].X == 0 && p.Steps[0].Dir == 1 && p.Steps[2].Bench && p.Steps[2].X == -1, "steps with tiles, reserve without");
+    Check(p.Hold == 10 && p.HoldU.Contains(300) && p.Pts == 8726, "ultimate advice");
+    Eq(PlansStatus.InvalidToken, FightPlanClient.Interpret(401, "{}").Status, "401");
+    Check(FightPlanClient.For(r.Plans, 5001007, new HashSet<long> { 200 }) == p && FightPlanClient.For(r.Plans, 1, null) == null, "plan by stage");
+
+    FightStep next, wrong; int wx, wy;
+    FightPlanClient.State(p, new List<HeroSample>(), out next, out wrong, out wx, out wy);
+    Check(next == p.Steps[0] && wrong == null, "nothing placed: step 1");
+    var hs = new List<HeroSample> { new HeroSample { Uid = 200, OnField = true, X = 0, Y = 0 } };
+    FightPlanClient.State(p, hs, out next, out wrong, out wx, out wy);
+    Check(next == p.Steps[1], "step 1 placed: step 2");
+    hs.Add(new HeroSample { Uid = 300, OnField = true, X = 1, Y = 0 });
+    FightPlanClient.State(p, hs, out next, out wrong, out wx, out wy);
+    Check(next == null && wrong == p.Steps[1] && wx == 1 && wy == 0, "all placed, one off its tile");
+    hs[1] = new HeroSample { Uid = 300, OnField = false, CardState = 2 };
+    FightPlanClient.State(p, hs, out next, out wrong, out wx, out wy);
+    Check(next == p.Steps[2], "a hero fell: the reserve is next");
   }
 
   static void SellPilotTests() {
