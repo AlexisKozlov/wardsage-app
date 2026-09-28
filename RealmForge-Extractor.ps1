@@ -1314,34 +1314,17 @@ namespace RealmForge {
 //
 // CSharpBattle.Battle.GameSimulation (and its kinds; TypeInfo RVAs of this game build, work/il2full/script.json):
 // m_state 0xA4 (ESimulationStatus: 1 running, 2 ended), <CurrentFrameIdx> 0xC4 (one logic frame = 270/4096 s),
-// _BattleData 0x48 -> BattleData.<iStageID> 0x18. The running one is found once when a fight starts (a full pass,
-// about a second), then two fields are read every tick.
+// _BattleData 0x48 -> BattleData.<iStageID> 0x18. The running one is the battle view's (BattleManager.instance), read
+// every couple of seconds; then two fields are read every tick.
 
 namespace RealmForge {
   public static partial class RFX {
-    // the battle screen (UIDefines id = str_hash("Form_Battle")): a new showing of it = a new fight
-    const long FormBattleId = 0;
-    // GameAssembly.dll's base in the game process (set by FindRunningSim; src/BattleTimeline.cs checks klasses with it)
-    static ulong simGa;
+    // GameAssembly.dll's base in the game process (set by CurrentSim / FindRunningSim; src/BattleTimeline.cs checks
+    // klasses with it)
+    static ulong simGa; static int simPid;
 
-    /// <summary>A mark of the battle screen's showing (table and instance id), or null (UIInstance not known / no
-    /// battle screen held). Cheap.</summary>
-    public static string BattleFormMark() {
-      ulong t = UiKnown ? uiTable : 0; if (t == 0) return null;
-      var h = Read(t, 56); if (h == null) return null;
-      int nn = 1 << h[11]; var nb = Read(BitConverter.ToUInt64(h, 24), nn * 32); if (nb == null) return null;
-      for (int i = 0; i < nn; i++) {
-        int o = i * 32;
-        if (BitConverter.ToInt32(nb, o + 24) != T_INT || BitConverter.ToInt32(nb, o + 8) != T_TABLE) continue;
-        if (!SameId(BitConverter.ToInt64(nb, o + 16), FormBattleId)) continue;
-        ulong f = BitConverter.ToUInt64(nb, o), v; int tt;
-        long inst = Field(f, "____instanceId", out v, out tt) && tt == T_INT ? (long)v : 0;
-        return f.ToString("X") + ":" + inst;
-      }
-      return null;
-    }
-
-    /// <summary>The fight going on now: its simulation and stage id (false = none running).</summary>
+    /// <summary>The fight going on now, by a full memory pass (about a second; CurrentSim is the cheap way): its
+    /// simulation and stage id (false = none running).</summary>
     public static bool FindRunningSim(out ulong sim, out int stage) {
       sim = 0; stage = 0;
       var ps = Process.GetProcessesByName("Watcher of Realms");
@@ -1382,6 +1365,39 @@ namespace RealmForge {
       stage = sb != null ? BitConverter.ToInt32(sb, 0) : 0;
       return true;
     }
+
+    // BattleView.BattleManager: TypeInfo RVA (script.json), static `instance` at static_fields + 0x0, `m_simulation` 0x10;
+    // Il2CppClass.static_fields at 0xB8 (work/il2full/il2cpp.h)
+    const ulong BattleManagerRva = 0;
+
+    /// <summary>The simulation the battle view holds now (BattleManager.instance.m_simulation), or 0. Cheap: four
+    /// pointer reads, no scan. The game keeps the last one after a fight ends, so check SimClock's state.</summary>
+    public static ulong CurrentSim() {
+      var ps = Process.GetProcessesByName("Watcher of Realms");
+      if (ps.Length == 0) { simPid = 0; return 0; }
+      if (ps[0].Id != simPid || simGa == 0 || H == IntPtr.Zero) {
+        // the game (re)started: its handle and GameAssembly's base anew
+        if (ps[0].Id != simPid || H == IntPtr.Zero) H = OpenProcess(0x0410, false, ps[0].Id);
+        if (H == IntPtr.Zero) return 0;
+        simGa = 0;
+        try { foreach (ProcessModule m in ps[0].Modules) if (string.Equals(m.ModuleName, "GameAssembly.dll", StringComparison.OrdinalIgnoreCase)) simGa = (ulong)(long)m.BaseAddress; } catch (Exception) { }
+        if (simGa == 0) return 0;
+        simPid = ps[0].Id;
+      }
+      ulong k = Ptr(simGa + BattleManagerRva); if (k == 0) return 0;
+      ulong sf = Ptr(k + 0xB8); if (sf == 0) return 0;
+      ulong bm = Ptr(sf); if (bm == 0) return 0;
+      return Ptr(bm + 0x10);
+    }
+
+    /// <summary>The stage id of a simulation (_BattleData.iStageID), 0 if unknown.</summary>
+    public static int SimStage(ulong sim) {
+      ulong data = Ptr(sim + 0x48);
+      var sb = data != 0 ? Read(data + 0x18, 4) : null;
+      return sb != null ? BitConverter.ToInt32(sb, 0) : 0;
+    }
+
+    static ulong Ptr(ulong at) { var b = at != 0 ? Read(at, 8) : null; return b != null ? BitConverter.ToUInt64(b, 0) : 0; }
 
     /// <summary>The simulation's frame count and state (1 running, 2 ended). Cheap.</summary>
     public static bool SimClock(ulong sim, out uint frames, out int state) {

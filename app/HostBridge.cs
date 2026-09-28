@@ -353,13 +353,13 @@ namespace RealmForge {
     // sent with the next sync. UIInstance is looked for (off this thread) at most every 60 s until found. The game keeps
     // closed result screens, so a new fight is a result screen whose mark (table, instance, frames) changed; the first
     // look after the start is only the baseline.
-    bool capturing, uiFinding, uiLogged, simFinding;
+    bool capturing, uiFinding, uiLogged;
     Dictionary<int, string> endMarks;
-    // the boss coach over the game (app/BattleCoach.cs): a new showing of the battle screen = a fight starts
+    // the boss coach over the game (app/BattleCoach.cs): a new running simulation = a fight starts
     readonly BattleCoach coach = new BattleCoach();
-    string battleMark; bool battleSeen;
     void WatchBattleEnd() {
       if (!gameRunning || capturing) return;
+      WatchBattleStart();
       if (!RFX.UiKnown) {
         if (!uiFinding) {
           uiFinding = true;
@@ -371,7 +371,6 @@ namespace RealmForge {
         }
         return;
       }
-      WatchBattleStart();
       List<KeyValuePair<int, ulong>> forms; List<string> marks;
       try { forms = RFX.BattleEndForms(out marks); } catch (Exception) { return; }
       bool first = endMarks == null;
@@ -388,36 +387,32 @@ namespace RealmForge {
       CaptureNow(kind, form, 1500);
     }
 
-    // the battle screen shown anew: find the fight's simulation (a few tries while it starts) and its stage; a known
-    // boss -> the coach follows its clock
+    // a new fight: its stage; the recorder follows it, and a known boss -> the coach follows its clock
     // the stage of the fight that started last: the recorded fight names it (the site knows the boss from it)
     volatile int lastStage; DateTime lastStageAt;
 
+    // The battle view's simulation (BattleManager.instance.m_simulation, four pointer reads): a fight starts when it is
+    // running and is another object than the last one seen, or its clock went back (the game reused it).
+    ulong simSeen; uint simFrames; bool simLogged;
     void WatchBattleStart() {
-      string mark;
-      try { mark = RFX.BattleFormMark(); } catch (Exception) { return; }
-      bool first = !battleSeen; battleSeen = true;
-      if (mark == battleMark) return;
-      battleMark = mark;
-      if (first || mark == null || simFinding || coach.Running) return;
-      simFinding = true;
-      Task.Factory.StartNew(() => {
-        try {
-          for (int i = 0; i < 10; i++) {
-            ulong sim; int stage;
-            if (RFX.FindRunningSim(out sim, out stage)) {
-              Log.Write("battle start: stage " + stage + (coach.Knows(stage) ? " (coach)" : ""));
-              lastStage = stage; lastStageAt = DateTime.UtcNow;
-              StartRecorder(sim, stage);
-              if (coach.Knows(stage)) win.BeginInvoke((Action)(() => coach.Start(sim, stage)));
-              return;
-            }
-            System.Threading.Thread.Sleep(1500);
-          }
-          Log.Write("battle start: no running fight found");
-        } catch (Exception e) { Log.Write("battle start: " + e.Message); }
-        finally { simFinding = false; }
-      });
+      ulong sim; uint fr = 0; int st = 0;
+      try { sim = RFX.CurrentSim(); if (sim == 0 || !RFX.SimClock(sim, out fr, out st)) sim = 0; } catch (Exception) { return; }
+      if (sim == 0) { st = 0; fr = 0; }
+      // once: the battle view found (or still not, when the game's windows already are)
+      if (!simLogged && (sim != 0 || RFX.UiKnown)) { simLogged = true; Log.Write("battle watch: battle view " + (sim != 0 ? sim.ToString("X") + " state " + st + " frames " + fr : "not found yet")); }
+      if (sim == 0) return;
+      bool fresh = st == 1 && (sim != simSeen || fr + 15 < simFrames);
+      bool wasSeen = simSeen != 0;
+      simSeen = sim; simFrames = fr;
+      if (!fresh) return;
+      int stage = RFX.SimStage(sim);
+      Log.Write("battle start: stage " + stage + " at " + RFX.FrameSeconds(fr).ToString("0") + " s" + (coach.Knows(stage) ? " (coach)" : "") + (wasSeen ? "" : " (first look)"));
+      lastStage = stage; lastStageAt = DateTime.UtcNow;
+      StartRecorder(sim, stage);
+      if (coach.Knows(stage)) {
+        if (coach.Running) coach.Stop();
+        coach.Start(sim, stage);
+      }
     }
 
     // the timeline of the fight going on (src/BattleTimeline.cs, read-only): every fight, not only the coach's bosses;
