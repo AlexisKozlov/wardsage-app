@@ -46,12 +46,12 @@ builder.Services.AddSingleton<ActionHandlerRegistry>();
 builder.Services.AddSingleton<IActionHandler, SetStateHandler>();
 builder.Services.AddSingleton<IActionHandler, RemoveStateHandler>();
 
-// game account + equipping (injection first, click fallback)
+// game account + equipping through RealmForge.exe
 builder.Services.AddSingleton(sp => GameReference.Load(options.ReferenceDir, options.Language,
                                                        sp.GetRequiredService<ILogger<GameReference>>()));
 builder.Services.AddSingleton<AccountSnapshotStore>();
 builder.Services.AddSingleton<HostLink>();
-builder.Services.AddSingleton<IEquipmentService, DirectEquipmentService>();
+builder.Services.AddSingleton<IEquipmentService, HostEquipmentService>();
 builder.Services.AddSingleton<IActionHandler, EquipActionHandler>();
 builder.Services.AddHostedService<ActionWorker>();
 
