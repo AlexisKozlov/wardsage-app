@@ -1292,6 +1292,17 @@ namespace RealmForge {
       return path;
     }
 
+    /// <summary>The account as it was for a kept fight (the sync's reading), in battles\accounts\ under the fight's name:
+    /// with the fight's statistics and timeline it lets the site's simulation be checked against the real fight. Not in
+    /// BattlesJson (a subfolder). The last 30 are kept, as the fights.</summary>
+    public static void SaveBattleAccount(string battlePath, string accountJson) {
+      string dir = Path.Combine(BattlesDir, "accounts");
+      Directory.CreateDirectory(dir);
+      File.WriteAllText(Path.Combine(dir, Path.GetFileName(battlePath)), accountJson, new UTF8Encoding(false));
+      var files = Directory.GetFiles(dir, "*.json"); Array.Sort(files);
+      for (int i = 0; i < files.Length - 30; i++) try { File.Delete(files[i]); } catch (Exception) { }
+    }
+
     /// <summary>The kept fights as a JSON array (for the account snapshot), newest last.</summary>
     static string BattlesJson() {
       try {

@@ -461,6 +461,13 @@ namespace RealmForge {
       } catch (Exception e) { Log.Write("fight recorder: " + e.Message); return null; }
     }
 
+    // the last account reading (the sync's) and the kept fight waiting for the next one (src/BattleCapture.cs SaveBattleAccount)
+    volatile string lastAccount, battleForAccount; DateTime lastAccountAt;
+    void SaveBattleAccount(string battle, string account) {
+      try { RFX.SaveBattleAccount(battle, account); Log.Write("battle account kept: " + System.IO.Path.GetFileName(battle) + " (" + account.Length + " bytes)"); }
+      catch (Exception e) { Log.Write("battle account: " + e.Message); }
+    }
+
     /// <summary>Reads the last fight's statistics (after <paramref name="waitMs"/>), keeps it and syncs; also the
     /// «Записать бой» button (kind -1: no result screen known).</summary>
     void CaptureNow(int kind, ulong form, int waitMs) {
@@ -483,6 +490,11 @@ namespace RealmForge {
             json = "{\"stage\":" + st + "," + json.Substring(1);
           string path = RFX.SaveBattle(json);
           Log.Write("battle kept: " + path + " (" + json.Length + " bytes" + (tl != null ? ", timeline " + tl.Length : "") + ")");
+          // the account for checking the simulation against this fight: the last reading now (gear cannot change during a
+          // fight), replaced by the reading of the sync that follows
+          var acc = lastAccount;
+          if (acc != null && (DateTime.UtcNow - lastAccountAt).TotalMinutes < 30) SaveBattleAccount(path, acc);
+          battleForAccount = path;
           win.BeginInvoke((Action)(() => { Post("{\"ev\":\"battle\",\"ok\":true}"); RequestAutoSync(3); }));
         } catch (Exception e) {
           Log.Write("battle end: " + e.Message);
@@ -567,6 +579,8 @@ namespace RealmForge {
         default: SyncError("read", ex.Detail, 0); return;
       }
       int seconds = (int)(DateTime.UtcNow - started).TotalSeconds;
+      lastAccount = ex.Json; lastAccountAt = DateTime.UtcNow;
+      { var bp = battleForAccount; if (bp != null) { battleForAccount = null; SaveBattleAccount(bp, ex.Json); } }
       {   // the heroes of the account in the game now: plans for heroes not on it (another account) are set aside
         var uids = Uids(ex.Json, "heroes", "iHeroId");
         var itemUids = Uids(ex.Json, "equipment", "iItemUid");
