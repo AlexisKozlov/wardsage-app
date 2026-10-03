@@ -1286,6 +1286,12 @@ namespace RealmForge {
     /// <summary>Keeps a captured fight (the last 30 files stay).</summary>
     public static string SaveBattle(string json) {
       Directory.CreateDirectory(BattlesDir);
+      // a replay of a kept fight (the game's battle report shows it again): the same heroes' statistics to the unit —
+      // not a new fight, not kept (it would count twice in the site's checks and the crowd's calibration)
+      string sig = StatsSignature(json);
+      if (sig.Length > 0)
+        foreach (var f in Directory.GetFiles(BattlesDir, "*.json"))
+          try { if (StatsSignature(File.ReadAllText(f, Encoding.UTF8)) == sig) { L("battle: a replay of " + Path.GetFileName(f) + ", not kept"); return null; } } catch (Exception) { }
       string path = Path.Combine(BattlesDir, DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".json");
       File.WriteAllText(path, json, new UTF8Encoding(false));
       var files = Directory.GetFiles(BattlesDir, "*.json"); Array.Sort(files);
@@ -1302,6 +1308,17 @@ namespace RealmForge {
       File.WriteAllText(Path.Combine(dir, Path.GetFileName(battlePath)), accountJson, new UTF8Encoding(false));
       var files = Directory.GetFiles(dir, "*.json"); Array.Sort(files);
       for (int i = 0; i < files.Length - 30; i++) try { File.Delete(files[i]); } catch (Exception) { }
+    }
+
+    /// <summary>The heroes' battle statistics of a kept fight as one string (hero, damage, heal, taken), sorted; empty
+    /// when there are none.</summary>
+    public static string StatsSignature(string json) {
+      var m = System.Text.RegularExpressions.Regex.Matches(json ?? "", "\"iHeroID\":(\\d+)[^{}]*?\"damage\":(\\d+)[^{}]*?\"heal\":(\\d+)[^{}]*?\"taken\":(\\d+)");
+      var parts = new List<string>();
+      foreach (System.Text.RegularExpressions.Match x in m) parts.Add(x.Groups[1].Value + ":" + x.Groups[2].Value + ":" + x.Groups[3].Value + ":" + x.Groups[4].Value);
+      if (parts.Count == 0) return "";
+      parts.Sort(StringComparer.Ordinal);
+      return string.Join(",", parts.ToArray());
     }
 
     /// <summary>The kept fights as a JSON array (for the account snapshot), newest last.</summary>

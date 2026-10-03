@@ -535,6 +535,7 @@ namespace RealmForge {
           if (st > 0 && (DateTime.UtcNow - lastStageAt).TotalMinutes < 20 && json.StartsWith("{", StringComparison.Ordinal))
             json = "{\"stage\":" + st + "," + json.Substring(1);
           string path = RFX.SaveBattle(json);
+          if (path == null) { Log.Write("battle end: a replay of a kept fight, not kept"); win.BeginInvoke((Action)(() => Post("{\"ev\":\"battle\",\"ok\":false}"))); return; }
           Log.Write("battle kept: " + path + " (" + json.Length + " bytes" + (tl != null ? ", timeline " + tl.Length : "") + ")");
           // the account for checking the simulation against this fight: the last reading now (gear cannot change during a
           // fight), replaced by the reading of the sync that follows
