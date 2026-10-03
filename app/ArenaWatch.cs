@@ -10,7 +10,7 @@ namespace RealmForge {
     readonly Func<string> site, code;
     volatile bool busy;
     string lastSig; DateTime lastSent = DateTime.MinValue; bool lastOpen; int failures;
-    DateTime pauseUntil = DateTime.MinValue, lastBlind = DateTime.MinValue; bool blindLogged;
+    DateTime pauseUntil = DateTime.MinValue, lastBlind = DateTime.MinValue; bool blindLogged, missLogged;
 
     public ArenaWatch(Func<string> site, Func<string> code) { this.site = site; this.code = code; }
 
@@ -21,23 +21,20 @@ namespace RealmForge {
       if (!SyncClient.IsValidCode(c) || string.IsNullOrEmpty(s)) return;
       bool? open;
       try { open = RFX.PvpScreenOpen(); } catch (Exception) { open = null; }
-      if (open == false) {
-        if (lastOpen) { lastOpen = false; Log.Write("arena: the arena screen closed"); }
-        return;
-      }
-      // the game's windows not found yet (UIInstance unknown): the screen can't be told, so the list is read every 10 s
-      // anyway (cheap once PVPData is known) and sent when it changes
-      if (open == null) {
+      // the arena screen's own flag (Form_PVPMain m_LuaLogicActive) did not tell it live: the list is read every 10 s
+      // whatever the screen (cheap once PVPData is known) and sent when it changes; at once when the flag says open
+      if (open != true) {
         if (DateTime.UtcNow - lastBlind < TimeSpan.FromSeconds(10)) return;
         lastBlind = DateTime.UtcNow;
-        if (!blindLogged) { blindLogged = true; Log.Write("arena: the game's windows are not known yet — reading the opponents every 10 s"); }
+        if (!blindLogged) { blindLogged = true; Log.Write("arena: reading the opponents every 10 s"); }
       } else if (!lastOpen) { lastOpen = true; Log.Write("arena: the arena screen is open"); }
       busy = true;
       Task.Factory.StartNew(() => {
         try {
           string sig;
-          string json = RFX.ReadArenaOpponents(120000, out sig);
-          if (json == null) { Log.Write("arena: the arena's data (PVPData) not found yet"); pauseUntil = DateTime.UtcNow.AddSeconds(30); return; }
+          string json = RFX.ReadArenaOpponents(30000, out sig);
+          if (json == null) { if (!missLogged) { missLogged = true; Log.Write("arena: the arena's data (PVPData) not found yet (open the arena once)"); } pauseUntil = DateTime.UtcNow.AddSeconds(30); return; }
+          missLogged = false;
           if (sig == lastSig && (DateTime.UtcNow - lastSent).TotalSeconds < 60) return;
           bool changed = sig != lastSig;
           string body = ArenaClient.WithFights(json, ArenaOpp.FightRecords(RFX.BattlesDir));
