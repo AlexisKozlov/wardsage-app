@@ -21,6 +21,7 @@ namespace RealmForge {
     public int Pid;
     public ulong EquipData, HeroData, CampOwner, ArtOwner, BeastOwner, ActOwner, Form, Panel;
     public ulong ItemData, PlayerData;   // the bag (ItemData) and the currencies (PlayerData): "resources"
+    public ulong UnionWeekBoss;          // UnionWeekBossData: the gear saved with the Zerbus teams (m_SavedTeamEquipsInfo)
   }
 
   public static partial class RFX {
@@ -136,7 +137,7 @@ namespace RealmForge {
 
     static LiveTables FindLive(int pid) {
       regs = Regions();
-      string[] anchors = { KEquipData, KHero, KHeroes, KCamp, KArts, KBeasts, KAct, KGrid, KPanel, KItems, KPlayer };
+      string[] anchors = { KEquipData, KHero, KHeroes, KCamp, KArts, KBeasts, KAct, KGrid, KPanel, KItems, KPlayer, KZerbus };
       var tstr = FindLuaStringsFast(anchors);
       var found = new List<string>(); foreach (var kv in tstr) found.Add(kv.Value + "@" + kv.Key.ToString("X"));
       L("Strings found: " + string.Join(", ", found.ToArray()));
@@ -162,6 +163,7 @@ namespace RealmForge {
       // resources: ItemData (the bag) and PlayerData (currencies; also the owner of m_AllBeastInfo)
       lt.ItemData = BestItemData(owners);
       lt.PlayerData = Largest(owners, KPlayer);
+      lt.UnionWeekBoss = Largest(owners, KZerbus);
       if (lt.PlayerData == 0 || !HasNum(lt.PlayerData, "m_Coin")) lt.PlayerData = lt.BeastOwner;
       // the hero screen: the one the game's window list holds (a dead copy of an older one can own the keys too)
       lt.Form = FindFormNode();
@@ -514,6 +516,16 @@ namespace RealmForge {
       L("  resources: " + (resMap == null ? "not found" : resMap.Count + " ids"));
       sb.Append(",\n\"resources\":"); J(sb, resMap);
       sb.Append(",\n\"resourcesMeta\":"); J(sb, resMeta);
+      // Zerbus: each team's saved gear (stage -> [{uiHeroId, vEquipUid, ulArtifactUid, ...}]) and power (UnionWeekBossData.lua
+      // SetSavedTeamEquipsBoss3 / _Handler_Union_SaveEquipPlan_SC); present once the game got the guild's boss data
+      if (lt.UnionWeekBoss != 0) {
+        ulong zv, zp; int zt, zpt;
+        var zer = new Dictionary<string, object>();
+        if (Field(lt.UnionWeekBoss, KZerbus, out zv, out zt) && zt == T_TABLE) zer["teams"] = ParseTable(zv, 4, new HashSet<ulong>());
+        if (Field(lt.UnionWeekBoss, "m_SavedTeamEquipPlanPower", out zp, out zpt) && zpt == T_TABLE) zer["power"] = ParseTable(zp, 1, new HashSet<ulong>());
+        L("  zerbus saved gear: " + (zer.ContainsKey("teams") ? "read" : "none"));
+        sb.Append(",\n\"zerbusSaved\":"); J(sb, zer);
+      }
       // boss fights captured at their result screens (src/BattleCapture.cs): the site compares them with its simulation
       sb.Append(",\n\"battles\":").Append(BattlesJson());
       sb.Append("\n,\"meta\":{\"extractor\":\"" + ExtractorVersion + "\"");
@@ -576,6 +588,8 @@ namespace RealmForge {
     // Lua table of the game (work/sim/RESOURCES.md). The bag is ItemData.m_Items[itemType][itemId] = {m_Config, m_Count}
     // (updated in place by Push_SetItem), time-limited items ItemData.m_TimeItems[itemId][uid] = {m_Count, m_EndTime, ..}.
     const string KItems = "m_HeroBaseId2ItemId", KPlayer = "m_mNegSpecialItem";
+    // UnionWeekBossData (the guild's weekly bosses): the third (Zerbus, two teams) fights with the gear saved with each team
+    const string KZerbus = "m_SavedTeamEquipsInfo";
 
     // PlayerData scalar fields -> item id (CurrencyType, common/defines.lua; ItemData:GetItemNumById)
     static readonly KeyValuePair<string, long>[] PlayerCurrencies = {
