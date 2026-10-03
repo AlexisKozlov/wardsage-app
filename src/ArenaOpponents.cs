@@ -336,7 +336,11 @@ namespace RealmForge {
     /// <summary>A kept arena fight (battles\*.json) as one record of the monster level's fit: when, the stage, the level,
     /// and both sides' battle power from the statistic lines ("c" 1 = the player, 2 = the opponent; app 1.6.24+) or from
     /// the start's reading (arenaInfo). Null when the file is no arena fight with a known level.</summary>
-    public static string FightRecord(string battleJson) {
+    public static string FightRecord(string battleJson) { return FightRecord(battleJson, false); }
+
+    /// <summary>With <paramref name="withStats"/>: also the player's heroes' battle stats as they entered the fight (the
+    /// timeline's heroes[…].base, app 1.6.30+) as "mine": [{uid, unit, base}] — the site runs the player's side on them.</summary>
+    public static string FightRecord(string battleJson, bool withStats) {
       var o = MiniJson.AsObject(MiniJson.TryParse(battleJson));
       var info = o != null ? MiniJson.AsObject(Get(o, "arenaInfo")) : null;
       if (info == null) return null;
@@ -356,6 +360,21 @@ namespace RealmForge {
       if (cnt[1] > 0) { Field(sb, "mySum", sum[1]); Field(sb, "myTop", top[1]); Field(sb, "myN", cnt[1]); }
       if (cnt[2] > 0) { Field(sb, "oppSum", sum[2]); Field(sb, "oppTop", top[2]); Field(sb, "oppN", cnt[2]); }
       if (opp != null) { Field(sb, "oppPower", Num(Get(opp, "power"))); Field(sb, "oppHeroes", Num(Get(opp, "heroes"))); Field(sb, "oppTopList", Num(Get(opp, "top"))); }
+      if (withStats) {
+        var tl = MiniJson.AsObject(Get(o, "timeline"));
+        var hs = tl != null ? MiniJson.AsObject(Get(tl, "heroes")) : null;
+        var mine = new StringBuilder(); int nm = 0;
+        if (hs != null) foreach (var kv in hs) {
+          var h = MiniJson.AsObject(kv.Value); if (h == null) continue;
+          if (Get(h, "c") is double && Num(Get(h, "c")) != 1) continue;
+          var b = MiniJson.AsObject(Get(h, "base")); if (b == null || nm >= 12) continue;
+          mine.Append(nm++ > 0 ? "," : "").Append("{\"uid\":").Append(Num(Get(h, "uid")).ToString(CultureInfo.InvariantCulture)).Append(",\"unit\":").Append(Num(Get(h, "unit")).ToString(CultureInfo.InvariantCulture)).Append(",\"base\":{");
+          int nb = 0;
+          foreach (var bv in b) { if (!(bv.Value is double) || nb >= 80) continue; mine.Append(nb++ > 0 ? "," : "").Append(MiniJson.Quote(bv.Key)).Append(':').Append(((double)bv.Value).ToString("R", CultureInfo.InvariantCulture)); }
+          mine.Append("}}");
+        }
+        if (nm > 0) sb.Append(",\"mine\":[").Append(mine).Append(']');
+      }
       sb.Append('}');
       return sb.ToString();
     }
@@ -366,9 +385,12 @@ namespace RealmForge {
       try {
         if (Directory.Exists(dir)) {
           var files = Directory.GetFiles(dir, "*.json"); Array.Sort(files);
+          int k = 0;
           foreach (var f in files) {
             string r = null;
-            try { var s = File.ReadAllText(f, Encoding.UTF8); if (s.IndexOf("\"arenaInfo\"", StringComparison.Ordinal) >= 0) r = FightRecord(s); } catch (Exception) { }
+            // the battle stats only for the newest 5 files (the request stays small)
+            bool stats = files.Length - k++ <= 5;
+            try { var s = File.ReadAllText(f, Encoding.UTF8); if (s.IndexOf("\"arenaInfo\"", StringComparison.Ordinal) >= 0) r = FightRecord(s, stats); } catch (Exception) { }
             if (r == null) continue;
             if (n++ > 0) sb.Append(','); sb.Append(r);
           }
