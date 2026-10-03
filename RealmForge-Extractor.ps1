@@ -1143,11 +1143,12 @@ namespace RealmForge {
 
 namespace RealmForge {
   public static partial class RFX {
-    // the result screens of boss fights: the guild dragon, the weekly guild boss, the rest
-    static readonly long[] EndFormIds = { 0, 0, 0 };
-    static readonly string[] EndFormNames = { "Form_UnionBossBattleEnd", "Form_UnionWeekBossBattleEnd", "Form_BattleEnd" };
+    // the result screens: the guild dragon, the weekly guild boss, the rest, the arena (GameData.lua: CHAPTERTYPE.Pvp ->
+    // Form_PvpBattleEnd) and the friendly arena fight (Form_SparringPvpBattleEnd); ids = UIDefines (str_hash of the name)
+    static readonly long[] EndFormIds = { 0, 0, 0, 0, 0 };
+    static readonly string[] EndFormNames = { "Form_UnionBossBattleEnd", "Form_UnionWeekBossBattleEnd", "Form_BattleEnd", "Form_PvpBattleEnd", "Form_SparringPvpBattleEnd" };
     // forms whose node leads to UIInstance: the hero screen, the inventory, the battle screen, the result screens
-    static readonly long[] UiAnchorIds = { FormCharactorMainId, FormBackpackId, 0, 0, 0, 0 };
+    static readonly long[] UiAnchorIds = { FormCharactorMainId, FormBackpackId, 0, 0, 0, 0, 0, 0 };
     static ulong uiTable; static int uiLastFind;
 
     static bool SameId(long key, long id) { return key == id || (id < 0 && key == (long)(uint)id); }
