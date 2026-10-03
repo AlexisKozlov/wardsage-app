@@ -431,7 +431,7 @@ namespace RealmForge {
       if (stage / 1000 == 6001) {
         ShootField(stage);
         arenaInfo = null; arenaInfoStage = stage;
-        Task.Factory.StartNew(() => { try { var ai = RFX.ArenaFightJson(sim); arenaInfo = ai; Log.Write("arena fight: " + (ai ?? "not read")); } catch (Exception ex) { Log.Write("arena fight: " + ex.Message); } });
+        Task.Factory.StartNew(() => { try { var ai = RFX.ArenaFightJson(sim); arenaInfo = ai; Log.Write("arena fight: " + (ai == null ? "not read" : ai.Length > 400 ? ai.Substring(0, 400) + "…" : ai)); } catch (Exception ex) { Log.Write("arena fight: " + ex.Message); } });
       }
       if (coach.Running) coach.Stop();
       // the player's plan for this boss (the site's «Отправить план в игру»): fresh from the site when the copy is over a

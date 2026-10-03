@@ -306,7 +306,7 @@ namespace RealmForge {
     }
 
     /// <summary>An arena fight's start: the stage, the monsters' level, the opponent (PVPData.m_stFightRole in the list)
-    /// and the player's attack team power. JSON.</summary>
+    /// with its whole record ("oppRaw", as in the list) and the player's attack team power. JSON.</summary>
     public static string FightJson(int stage, int level, int chapterType, Dictionary<string, object> pvp, IList<Dictionary<string, object>> opps) {
       var sb = new StringBuilder("{\"stage\":" + stage + ",\"level\":" + level + ",\"chapterType\":" + chapterType);
       if (pvp != null) {
@@ -323,6 +323,9 @@ namespace RealmForge {
             Field(sb, "power", N(o, "iPower")); Field(sb, "heroes", sum); Field(sb, "top", top); Field(sb, "n", n);
             Field(sb, "score", N(o, "iScore")); Field(sb, "rankId", N(o, "iRankId"));
             sb.Append(",\"robot\":").Append(N(o, "bRobot") != 0 ? "true" : "false").Append('}');
+            // the whole opponent as the list sends it (its heroes' stats, defence record): the site replays its forecast of this
+            // fight against the real outcome (realmforge-web scripts/arena-verdicts.ts)
+            sb.Append(",\"oppRaw\":"); Opponent(sb, o);
             break;
           }
       }
