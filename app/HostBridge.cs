@@ -51,7 +51,8 @@ namespace RealmForge {
       this.win = win; this.core = core;
       cfg = AppConfig.Load();
       if (string.IsNullOrEmpty(cfg.Site)) cfg.Site = SyncClient.DefaultSite;
-      gameTimer.Interval = 2000; gameTimer.Tick += (s, e) => { CheckGame(false); WatchBattleEnd(); WatchStall(); }; gameTimer.Start();
+      arenaWatch = new ArenaWatch(() => cfg.Site, () => cfg.Code);
+      gameTimer.Interval = 2000; gameTimer.Tick += (s, e) => { CheckGame(false); WatchBattleEnd(); WatchStall(); arenaWatch.Tick(gameRunning); }; gameTimer.Start();
       liveTimer.Interval = 400; liveTimer.Tick += (s, e) => PollLive();
       overlay = new OverlayController(st => Post("{\"ev\":\"overlay\",\"state\":" + S(st) + "}"),
                                       st => { Post("{\"ev\":\"auto\",\"state\":" + S(st) + "}"); OnAutoState(st); },
@@ -357,6 +358,10 @@ namespace RealmForge {
     Dictionary<int, string> endMarks;
     // the boss coach over the game (app/BattleCoach.cs): a new running simulation = a fight starts
     readonly BattleCoach coach = new BattleCoach();
+    // the arena's opponents to the site while the arena screen is open (app/ArenaWatch.cs); an arena fight's monster level
+    // and opponent, read at its start (src/ArenaOpponents.cs) and kept with the fight as "arenaInfo"
+    ArenaWatch arenaWatch;
+    volatile string arenaInfo; volatile int arenaInfoStage;
     FightRecorder arenaTaken;
     void WatchBattleEnd() {
       if (!gameRunning || capturing) return;
@@ -423,7 +428,11 @@ namespace RealmForge {
       Log.Write("battle start: stage " + stage + " at " + RFX.FrameSeconds(fr).ToString("0") + " s" + (coach.Knows(stage) ? " (coach)" : "") + (wasSeen ? "" : " (first look)"));
       lastStage = stage; lastStageAt = DateTime.UtcNow;
       StartRecorder(sim, stage);
-      if (stage / 1000 == 6001) ShootField(stage);
+      if (stage / 1000 == 6001) {
+        ShootField(stage);
+        arenaInfo = null; arenaInfoStage = stage;
+        Task.Factory.StartNew(() => { try { var ai = RFX.ArenaFightJson(sim); arenaInfo = ai; Log.Write("arena fight: " + (ai ?? "not read")); } catch (Exception ex) { Log.Write("arena fight: " + ex.Message); } });
+      }
       if (coach.Running) coach.Stop();
       // the player's plan for this boss (the site's «Отправить план в игру»): fresh from the site when the copy is over a
       // minute old, then the coach (off the UI thread: the site may take a moment)
@@ -534,6 +543,7 @@ namespace RealmForge {
           int st = lastStage;
           if (st > 0 && (DateTime.UtcNow - lastStageAt).TotalMinutes < 20 && json.StartsWith("{", StringComparison.Ordinal))
             json = "{\"stage\":" + st + "," + json.Substring(1);
+          { var ai = arenaInfo; if (ai != null && st == arenaInfoStage && json.StartsWith("{", StringComparison.Ordinal)) { json = "{\"arenaInfo\":" + ai + "," + json.Substring(1); arenaInfo = null; } }
           string path = RFX.SaveBattle(json);
           if (path == null) { Log.Write("battle end: a replay of a kept fight, not kept"); win.BeginInvoke((Action)(() => Post("{\"ev\":\"battle\",\"ok\":false}"))); return; }
           Log.Write("battle kept: " + path + " (" + json.Length + " bytes" + (tl != null ? ", timeline " + tl.Length : "") + ")");

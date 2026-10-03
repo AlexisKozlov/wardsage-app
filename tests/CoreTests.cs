@@ -398,9 +398,96 @@ static class CoreTests {
       Check(Math.Abs(hgeo.PitchY * 900 - 167) < 2 && Math.Abs(hgeo.Row1Top * 900 - 149) < 3, "hero grid: rows every 167 px from 149");
     }
 
+    ArenaOppTests();
+
     Console.WriteLine();
     Console.WriteLine(passed + " passed, " + failed + " failed");
     return failed == 0 ? 0 : 1;
+  }
+
+  // ParseTable-shaped Lua tables (arrays "[1]".., numbers long) for the arena opponents (src/ArenaOpponents.cs)
+  static Dictionary<string, object> Lt(params object[] kv) {
+    var d = new Dictionary<string, object>();
+    for (int i = 0; i + 1 < kv.Length; i += 2) d[(string)kv[i]] = kv[i + 1];
+    return d;
+  }
+  static Dictionary<string, object> LArr(params object[] xs) {
+    var d = new Dictionary<string, object>();
+    for (int i = 0; i < xs.Length; i++) d["[" + (i + 1) + "]"] = xs[i];
+    return d;
+  }
+
+  static void ArenaOppTests() {
+    Console.WriteLine("Arena opponents");
+    var hero = Lt("iHeroId", 203400000L, "iBaseId", 2034L, "iLevel", 60L, "iStarLevel", 6L, "iSublimLevel", 6L, "iAwakeningFlag", 3L,
+                  "iPower", 93829L, "iSquadId", 1L, "iLordPosition", 0L, "mSkillLevel", Lt("[0]", 5L, "[1]", 3L),
+                  "mAttr", Lt("[1]", 12000L, "[7]", 250000L, "[24]", 3500L), "vSkills", LArr(101L, 102L));
+    var hero2 = Lt("iHeroId", 209700000L, "iBaseId", 2097L, "iLevel", 60L, "iStarLevel", 6L, "iSublimLevel", 5L, "iPower", 70294L, "RealPower", 70300L,
+                   "mAttr", Lt("[1]", 9000L));
+    var opp = Lt("stRole", Lt("iZoneId", 4L, "iUid", 1234567L, "iRoleId", 1234567L), "sName", "Враг \"1\"", "iLevel", 70L, "iScore", 2450L,
+                 "iRank", 0L, "iRankId", 13L, "bRobot", false, "iPower", 164123L, "iChallengedTimes", 1L,
+                 "vHeroData", LArr(hero, hero2),
+                 "vFrameInfos", LArr(Lt("iIdx", 43L, "iCmd", 1000L, "iUid", 2L, "vParams", LArr(2097L, 0L, 7L, 0L)), Lt("iIdx", 601L, "iCmd", 1000L, "iUid", 2L, "vParams", LArr(2034L, 3L, 5L, 270L))),
+                 "mStageHeroBasicData", Lt("[6002631]", LArr(hero)));
+    var bot = Lt("stRole", Lt("iZoneId", 4L, "iUid", 77L), "sName", "Bot", "iScore", 2300L, "bRobot", true, "vHeroData", LArr(hero2), "iPower", 70300L);
+    var pvp = Lt("m_iPVPLastStageID", 6002631L, "m_iWeekIndex", 12L, "m_PvpRuleId", 4L, "m_iScore", 2400L, "m_iPower", 380000L,
+                 "m_iFreeRefreshOpponentNum", 1L, "m_iFreeRefreshCountInterval", 900L, "m_LastManualRefreshTime", 1790000000L,
+                 "m_iLastPushOpponentTime", 1790000001L, "m_vHeroData", LArr(Lt("iHeroId", 235300001L, "iBaseId", 2353L)),
+                 "m_stFightRole", Lt("iUid", 1234567L, "iZoneId", 4L));
+    var opps = new List<Dictionary<string, object>> { opp, bot };
+    string json = ArenaOpp.Json(pvp, opps);
+    var o = MiniJson.AsObject(MiniJson.TryParse(json));
+    Check(o != null, "opponents JSON parses: " + (json.Length > 300 ? json.Substring(0, 300) : json));
+    if (o == null) return;
+    Eq(6002631.0, (double)o["stage"], "stage");
+    Eq(1, ((List<object>)o["team"]).Count, "the player's attack team");
+    var refresh = (Dictionary<string, object>)o["refresh"];
+    Eq(900.0, (double)refresh["interval"], "refresh interval");
+    Eq(1790000001.0, (double)refresh["pushAt"], "last push");
+    var list = (List<object>)o["opponents"];
+    Eq(2, list.Count, "two opponents");
+    var o1 = (Dictionary<string, object>)list[0];
+    Eq("Враг \"1\"", (string)o1["name"], "name with quotes");
+    Eq(2450.0, (double)o1["score"], "score");
+    Eq(false, (bool)o1["robot"], "a player");
+    var hs = (List<object>)o1["heroes"];
+    Eq(2, hs.Count, "two defence heroes");
+    var h1 = (Dictionary<string, object>)hs[0];
+    Eq(2034.0, (double)h1["id"], "hero base id");
+    Eq(250000.0, (double)((Dictionary<string, object>)h1["attr"])["7"], "mAttr HP by attr id");
+    Eq(5.0, (double)((Dictionary<string, object>)h1["sl"])["0"], "skill level 0");
+    Eq(70300.0, (double)((Dictionary<string, object>)hs[1])["pw"], "RealPower preferred");
+    var fr = (List<object>)o1["frames"];
+    Eq(2, fr.Count, "two recorded commands");
+    Eq("601,1000,2,2034,3,5,270", string.Join(",", ((List<object>)fr[1]).ConvertAll(x => ((double)x).ToString(System.Globalization.CultureInfo.InvariantCulture)).ToArray()), "command [frame, cmd, ctl, params]");
+    Check(((Dictionary<string, object>)o1["stageHeroes"]).ContainsKey("6002631"), "stage heroes by stage");
+    Eq(true, (bool)((Dictionary<string, object>)list[1])["robot"], "a bot");
+    // the signature: the same reading gives the same one, a score change another
+    string s1 = ArenaOpp.Signature(pvp, opps);
+    Eq(s1, ArenaOpp.Signature(pvp, opps), "signature stable");
+    bot["iScore"] = 2310L;
+    Check(s1 != ArenaOpp.Signature(pvp, opps), "a score change changes the signature");
+    // the fight's start: the level and the opponent of the fight
+    var fj = MiniJson.AsObject(MiniJson.TryParse(ArenaOpp.FightJson(6001631, 1700, 3, pvp, opps)));
+    Check(fj != null && (double)fj["level"] == 1700 && fj.ContainsKey("opp"), "fight JSON with the level and the opponent");
+    if (fj != null && fj.ContainsKey("opp")) {
+      var fo = (Dictionary<string, object>)fj["opp"];
+      Eq(164123.0, (double)fo["power"], "opponent power"); Eq(164129.0, (double)fo["heroes"], "opponent heroes power"); Eq(93829.0, (double)fo["top"], "opponent top hero");
+    }
+    Check(!MiniJson.AsObject(MiniJson.TryParse(ArenaOpp.FightJson(6001631, 1700, 3, null, null))).ContainsKey("opp"), "no PVPData: level only");
+    // a kept fight -> a record of the level fit (the sides from the statistic lines "c")
+    string battle = "{\"arenaInfo\":" + ArenaOpp.FightJson(6001631, 1700, 3, pvp, opps) + ",\"stage\":6001631,\"at\":\"2026-10-03T10:46:30Z\",\"lines\":[" +
+      "{\"c\":1,\"at\":\"A\",\"iBaseID\":2353,\"iPower\":84241},{\"c\":1,\"at\":\"B\",\"iBaseID\":2034,\"iPower\":66809}," +
+      "{\"c\":2,\"at\":\"C\",\"iBaseID\":2034,\"iPower\":93829},{\"at\":\"D\",\"iBaseID\":1,\"iPower\":5},{\"sim\":\"TDGameSimulation\"}]}";
+    var rec = MiniJson.AsObject(MiniJson.TryParse(ArenaOpp.FightRecord(battle)));
+    Check(rec != null && (double)rec["level"] == 1700 && (double)rec["mySum"] == 151050 && (double)rec["myTop"] == 84241 && (double)rec["oppSum"] == 93829,
+          "fight record: level and both sides power");
+    Check(ArenaOpp.FightRecord("{\"stage\":6001631,\"lines\":[]}") == null, "a fight without arenaInfo is no record");
+    Eq("{\"v\":1,\"fights\":[]}", ArenaClient.WithFights("{\"v\":1}", null), "fights added");
+    string det;
+    Eq(PlansStatus.Ok, ArenaClient.Interpret(200, "{\"ok\":true}", out det), "200 ok");
+    Eq(PlansStatus.InvalidToken, ArenaClient.Interpret(401, "{\"ok\":false,\"error\":\"invalid_token\"}", out det), "401");
+    Check(ArenaClient.Interpret(422, "{\"ok\":false,\"error\":\"invalid_payload\",\"details\":[\"opponents: bad\"]}", out det) == PlansStatus.Unexpected && det != null && det.Contains("opponents: bad"), "422 details: " + det);
   }
 
   static void ErrorReportTests(string mock) {
