@@ -115,10 +115,12 @@ namespace RealmForge {
       }
       sb.Append(",\"lines\":[");
       bool first = true;
+      // each hero line marked with its side ("c": its controller) when the timeline read the same statistics object by side
+      var sides = TimelineBuilder.StatSides(timeline);
       foreach (var line in stats.Split('\n')) {
         if (line.Trim().Length == 0) continue;
         if (!first) sb.Append(','); first = false;
-        sb.Append(line.Trim());
+        sb.Append(TimelineBuilder.MarkSide(line.Trim(), sides));
       }
       sb.Append(']');
       if (!string.IsNullOrEmpty(timeline) && timeline[0] == '{') sb.Append(",\"timeline\":").Append(timeline);

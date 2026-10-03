@@ -568,6 +568,80 @@ static class CoreTests {
     Eq("[16]", Js(a2["ult"]), "sampled: rage from full to low = an ultimate");
     Eq("[600]", Js(a2["fell"]), "sampled: a new tower after an unseen death = a fall");
     Eq(0.0, Convert.ToDouble(r2["samples"]) - 5, "sampled: 5 samples");
+    ArenaTimelineTests();
+  }
+
+  // The arena: both sides have Hassu (uid 203400000, unit 2034) — the player (controller 1) at 2,5 by command, the
+  // opponent (2) by its recorded command at its own 3,5 = the map's 11,5 (15 wide); the opponent's 2096 placed by itself
+  // (no command) on the map's 12,1 face 0. Waves: controllers 100 / 101; side 2 clears round 1 first, the judge hits base
+  // 4305 (side 1, max 300 000) 2 % twice, a monster hit of 1 000 between; then side 1 clears.
+  static void ArenaTimelineTests() {
+    var tb = new TimelineBuilder { GridW = 15 };
+    uint H = 203400000, M = 209600000;
+    Func<uint, uint, int, uint, int, int, int, HeroSample> Sa = (c, uid, unit, tower, x, y, face) =>
+      new HeroSample { Uid = uid, C = c, Unit = unit, Squad = 1, Tower = tower, OnField = tower != 0, X = x, Y = y, Face = face, MaxAnger = 1000 };
+    tb.AddSample(600, new List<HeroSample> { Sa(1, H, 2034, 0, -1, -1, 0), Sa(2, H, 2034, 0, -1, -1, 0), Sa(2, M, 2096, 0, -1, -1, 0) });
+    tb.AddSample(603, new List<HeroSample> { Sa(1, H, 2034, 0, -1, -1, 0), Sa(2, H, 2034, 40, 11, 5, 270), Sa(2, M, 2096, 0, -1, -1, 0) });
+    tb.AddSample(856, new List<HeroSample> { Sa(1, H, 2034, 50, 2, 5, 90), Sa(2, H, 2034, 40, 11, 5, 270), Sa(2, M, 2096, 0, -1, -1, 0) });
+    tb.AddSample(930, new List<HeroSample> { Sa(1, H, 2034, 50, 2, 5, 90), Sa(2, H, 2034, 40, 11, 5, 270), Sa(2, M, 2096, 60, 12, 1, 0) });
+    for (uint f = 933; f < 960; f += 3)
+      tb.AddSample(f, new List<HeroSample> { Sa(1, H, 2034, 50, 2, 5, 90), Sa(2, H, 2034, 40, 11, 5, 270), Sa(2, M, 2096, 60, 12, 1, 0) });
+    tb.AddCommands(new List<FrameCmd> {
+      new FrameCmd { Frame = 601, Cmd = 1000, CUid = 2, Params = new[] { 2034, 3, 5, 270 } },
+      new FrameCmd { Frame = 854, Cmd = 1000, CUid = 1, Params = new[] { 2034, 2, 5, 90 } } });
+    Func<uint, int, int, int, int, ArenaSide> Sd = (ctl, wave, active, mon, ign) => new ArenaSide { Ctl = ctl, Wave = wave, Active = active, Monsters = mon, Ignore = ign, State = 1, MaxWave = 10 };
+    Func<double, double, ArenaBase[]> Bs = (h1, h2) => new[] { new ArenaBase { Unit = 4305, Owner = 0, Hp = h1, MaxHp = 300000 }, new ArenaBase { Unit = 4306, Owner = 0, Hp = h2, MaxHp = 300000 } };
+    Action<uint, ArenaSide, ArenaSide, ArenaBase[]> Ar = (f, s1, s2, b) => { var a = new ArenaSample(); a.Sides.Add(s1); a.Sides.Add(s2); a.Bases.AddRange(b); tb.AddArena(f, a); };
+    Ar(30, Sd(100, 1, 1, 0, 0), Sd(101, 1, 1, 0, 0), Bs(300000, 300000));      // round 1 starts, nothing spawned yet
+    Ar(33, Sd(100, 1, 1, 0, 0), Sd(101, 1, 1, 0, 0), Bs(300000, 300000));      // not cleared: no monster seen yet
+    Ar(36, Sd(100, 1, 1, 3, 0), Sd(101, 1, 1, 4, 0), Bs(300000, 300000));
+    Ar(200, Sd(100, 1, 0, 2, 0), Sd(101, 1, 0, 0, 0), Bs(300000, 300000));     // side 2 cleared
+    Ar(215, Sd(100, 1, 0, 2, 0), Sd(101, 1, 0, 0, 0), Bs(294000, 300000));     // judge 2 %
+    Ar(222, Sd(100, 1, 0, 1, 0), Sd(101, 1, 0, 0, 0), Bs(293000, 300000));     // a monster's hit
+    Ar(230, Sd(100, 1, 0, 1, 0), Sd(101, 1, 0, 0, 0), Bs(287000, 300000));     // judge 2 %
+    Ar(240, Sd(100, 1, 0, 0, 0), Sd(101, 1, 0, 0, 0), Bs(287000, 300000));     // side 1 cleared
+    Ar(290, Sd(100, 2, 1, 5, 0), Sd(101, 2, 1, 5, 0), Bs(287000, 300000));     // round 2 for both
+    tb.SetStats(new List<StatLine> { new StatLine { C = 1, Unit = 2034, Hero = H, At = 0x239876D15B0, Damage = 3538111 },
+                                     new StatLine { C = 2, Unit = 2034, Hero = H, At = 0x239871EF8C0, Damage = 4427865 } });
+    string json = tb.ToJson();
+    var root = MiniJson.Parse(json) as Dictionary<string, object>;
+    Check(root != null, "arena timeline JSON parses");
+    if (root == null) return;
+    Func<object, string> Jss = o => { var l = o as List<object>; var sb = new StringBuilder("["); for (int i = 0; i < l.Count; i++) { if (i > 0) sb.Append(','); sb.Append(Js2(l[i])); } return sb.Append(']').ToString(); };
+    var hs = root["heroes"] as Dictionary<string, object>;
+    Check(hs.ContainsKey(H.ToString()) && hs.ContainsKey("2:" + H) && hs.ContainsKey("2:" + M), "arena: Hassu twice — the player's by uid, the opponent's as 2:uid");
+    var mine = hs[H.ToString()] as Dictionary<string, object>; var his = hs["2:" + H] as Dictionary<string, object>; var m2 = hs["2:" + M] as Dictionary<string, object>;
+    Eq(1.0, Convert.ToDouble(mine["c"]), "arena: the player's hero has c 1");
+    Eq("[[854,2,5,90,1]]", Jss(mine["placed"]), "arena: the player's Hassu placed once (its command), no flipping between tiles");
+    Eq("[[601,3,5,270,1]]", Jss(his["placed"]), "arena: the opponent's Hassu: its own command (its local tile), the sample 11,5 is that placement");
+    Eq("[[930,2,1,180,0]]", Jss(m2["placed"]), "arena: a sampled opponent tile mirrored to its side (14 − 12 = 2), face 0 -> 180");
+    Eq(15.0, Convert.ToDouble(root["gridW"]), "arena: gridW kept");
+    var ar = root["arena"] as Dictionary<string, object>;
+    var rounds = ar["rounds"] as List<object>;
+    Eq(2, rounds.Count, "arena: two rounds seen");
+    var r1 = rounds[0] as Dictionary<string, object>;
+    Eq(2.0, Convert.ToDouble(r1["won"]), "round 1: side 2 cleared first");
+    Eq(200.0, Convert.ToDouble((r1["clear"] as Dictionary<string, object>)["2"]), "round 1: side 2 cleared at 200");
+    Eq(240.0, Convert.ToDouble((r1["clear"] as Dictionary<string, object>)["1"]), "round 1: side 1 cleared at 240 (not at 33: nothing spawned yet)");
+    Eq(30.0, Convert.ToDouble((r1["start"] as Dictionary<string, object>)["1"]), "round 1: started at 30");
+    Eq(36.0, Convert.ToDouble((r1["first"] as Dictionary<string, object>)["1"]), "round 1: first monster at 36");
+    Eq("[[215,20],[230,20]]", Jss((r1["judge"] as Dictionary<string, object>)["1"]), "round 1: the judge's two 2 % hits on side 1's base, the monster's hit left out");
+    Eq(43.0, Convert.ToDouble((r1["judgeLost"] as Dictionary<string, object>)["1"]), "round 1: side 1's base lost 4.3 % while the judge worked");
+    var r2 = rounds[1] as Dictionary<string, object>;
+    Eq(0.0, Convert.ToDouble(r2["won"]), "round 2: nobody cleared yet");
+    var bases = ar["bases"] as List<object>;
+    var b1 = bases[0] as Dictionary<string, object>;
+    Check(Convert.ToDouble(b1["unit"]) == 4305 && Convert.ToDouble(b1["side"]) == 1 && Jss(b1["hp"]) == "[[30,300000],[215,294000],[222,293000],[230,287000]]", "arena: base 4305 = side 1, its HP on change");
+    Check((ar["raw"] as List<object>).Count >= 6, "arena: the raw wave samples kept on change");
+    var sides = TimelineBuilder.StatSides(json);
+    Eq(2, sides.Count, "stats: two statistic objects by side");
+    Eq("{\"c\":2,\"at\":\"239871EF8C0\",\"iBaseID\":2034}", TimelineBuilder.MarkSide("{\"at\":\"239871EF8C0\",\"iBaseID\":2034}", sides), "stats: a result line marked with its side");
+    Eq("{\"at\":\"1\",\"iBaseID\":2034}", TimelineBuilder.MarkSide("{\"at\":\"1\",\"iBaseID\":2034}", sides), "stats: an unknown line left as it is");
+    // a boss fight (no controller known, or only 1): the old keys
+    var t3 = new TimelineBuilder();
+    t3.AddSample(5, new List<HeroSample> { Sa(1, H, 2034, 9, 4, 4, 0) });
+    var r3 = MiniJson.Parse(t3.ToJson()) as Dictionary<string, object>;
+    Check((r3["heroes"] as Dictionary<string, object>).ContainsKey(H.ToString()) && !r3.ContainsKey("arena") && !r3.ContainsKey("gridW"), "boss fight: heroes by uid, no arena part");
   }
 
   static string Js2(object o) {
