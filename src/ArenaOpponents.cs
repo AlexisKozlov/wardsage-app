@@ -100,13 +100,61 @@ namespace RealmForge {
     }
 
     /// <summary>The arena's opponents as the JSON the site takes (ArenaOpp.Json), with its signature (what changed:
-    /// the list, the scores, the refresh); null when PVPData is not found.</summary>
+    /// the list, the scores, the refresh); null when PVPData is not found. With the player's saved arena teams
+    /// ("teams": stage → hero uids in order, HeroData.m_TeamData for the arena's stages).</summary>
     public static string ReadArenaOpponents(int rescanMs, out string sig) {
       sig = null;
       Dictionary<string, object> plain; List<Dictionary<string, object>> opps;
       if (!ReadPvp(PvpData(rescanMs), out plain, out opps)) return null;
-      sig = ArenaOpp.Signature(plain, opps);
-      return ArenaOpp.Json(plain, opps);
+      string teams = ArenaTeams(rescanMs);
+      sig = ArenaOpp.Signature(plain, opps) + "|" + teams;
+      string json = ArenaOpp.Json(plain, opps);
+      return teams.Length > 2 && json.EndsWith("}", StringComparison.Ordinal) ? json.Substring(0, json.Length - 1) + ",\"teams\":" + teams + "}" : json;
+    }
+
+    // HeroData (the player's teams: m_TeamData[team id] = [{iHeroId, iSquadId, …}], the arena's team ids = its stage ids,
+    // GameData/HeroData.lua GetTeamHeros, PVPData GetAttackStageIDByRuleId): found once by its m_TeamData key
+    static ulong heroData; static int heroLastFind;
+    const string KTeams = "m_TeamData";
+
+    /// <summary>The player's saved teams for the arena's stages (6001000–6002999) as JSON {stage: [hero uid…]}; "{}" when
+    /// none / not found.</summary>
+    static string ArenaTeams(int rescanMs) {
+      if (heroData == 0 || !HasTable(heroData, KTeams)) {
+        heroData = 0;
+        if (heroLastFind != 0 && Environment.TickCount - heroLastFind < rescanMs) return "{}";
+        heroLastFind = Environment.TickCount;
+        if (regs == null) regs = Regions();
+        var owners = OwnersOf(FindLuaStringsFast(new[] { KTeams }), 1024);
+        List<ulong> l; int bestN = -1;
+        if (owners.TryGetValue(KTeams, out l))
+          foreach (var t in l) {
+            ulong m; int mt;
+            if (!Field(t, KTeams, out m, out mt) || mt != T_TABLE) continue;
+            int n = 0; foreach (var e in IntEntries(m)) if (e.Tt == T_TABLE) n++;
+            if (n > bestN) { bestN = n; heroData = t; }
+          }
+        if (heroData == 0) return "{}";
+      }
+      ulong td; int tt;
+      if (!Field(heroData, KTeams, out td, out tt) || tt != T_TABLE) return "{}";
+      var sb = new StringBuilder("{"); int k = 0;
+      foreach (var e in IntEntries(td)) {
+        if (e.Key < 6001000 || e.Key > 6002999 || e.Tt != T_TABLE) continue;
+        var uids = new List<string>();
+        foreach (var h in IntEntries(e.Val)) {
+          if (h.Tt != T_TABLE) continue;
+          ulong v; int ht;
+          if (Field(h.Val, "iHeroId", out v, out ht) && (ht == T_INT || ht == T_FLT)) {
+            long u = ht == T_INT ? (long)v : (long)BitConverter.Int64BitsToDouble((long)v);
+            if (u > 0 && uids.Count < 10) uids.Add(u.ToString(CultureInfo.InvariantCulture));
+          }
+        }
+        if (uids.Count == 0) continue;
+        if (k++ > 0) sb.Append(',');
+        sb.Append('"').Append(e.Key.ToString(CultureInfo.InvariantCulture)).Append("\":[").Append(string.Join(",", uids.ToArray())).Append(']');
+      }
+      return sb.Append('}').ToString();
     }
 
     /// <summary>An arena fight starting: the monsters' level (BattleData.iStageLevel), the stage, the opponent of the
