@@ -66,6 +66,27 @@ namespace RealmForge {
     static ulong P64(ulong a) { var b = a != 0 ? Read(a, 8) : null; return b != null ? BitConverter.ToUInt64(b, 0) : 0; }
     static double Fix(byte[] b, int o) { return BitConverter.ToInt64(b, o) / 4096.0; }
 
+    /// <summary>A sample wants a hero's battle stats (set by the recorder: only until it has them).</summary>
+    public static Func<HeroSample, bool> wantBase;
+    /// <summary>BattleAttributeData.m_attr (stBattleBaseAttr at +0x10, Fix64 = raw / 4096; percent stats in percent units)
+    /// by SoldierAttribute id as BattleAttributeData.GetOriAttr maps them (work/study/spec/D_buff.md §9), and its iPower.</summary>
+    static readonly int[] BaseMap = {
+      1, 0x88, 2, 0x00, 3, 0x08, 4, 0x18, 5, 0x40, 6, 0x38, 8, 0x80, 10, 0x78, 11, 0x28, 12, 0x58, 13, 0x30, 14, 0x90, 15, 0x10,
+      16, 0x50, 22, 0xC0, 23, 0xA8, 24, 0xB0, 25, 0xD8, 26, 0xF0, 27, 0xF8, 28, 0x100, 29, 0x108, 30, 0x110, 31, 0x118, 36, 0x148,
+      37, 0x98, 38, 0xA0, 42, 0x120, 45, 0xD0, 47, 0xC8, 48, 0xE0, 50, 0x20, 51, 0x48, 52, 0x68, 53, 0x60, 54, 0x70, 55, 0x128,
+      70, 0x1E8, 71, 0x1F0, 72, 0x1F8, 73, 0x200 };
+    static Dictionary<int, double> BaseAttrs(ulong ba) {
+      var b = Read(ba + 0x10, 0x210);
+      if (b == null) return null;
+      var d = new Dictionary<int, double>();
+      for (int i = 0; i < BaseMap.Length; i += 2) d[BaseMap[i]] = Fix(b, BaseMap[i + 1]);
+      d[43] = BitConverter.ToInt32(b, 0x144);   // iBlock
+      d[-1] = BitConverter.ToUInt32(b, 0x130);  // iPower
+      d[-2] = Fix(b, 0xB8);                     // iCritResistance
+      d[-3] = Fix(b, 0xE8);                     // iAttackAngerHedging
+      return d.ContainsKey(2) && d[2] > 0 ? d : null;
+    }
+
     /// <summary>The klass of a TypeInfo RVA (0 when GameAssembly's base is not known).</summary>
     static ulong Klass(ulong rva) { return simGa != 0 ? P64(simGa + rva) : 0; }
     static bool IsA(ulong obj, ulong klass) { return klass == 0 || (obj != 0 && P64(obj) == klass); }
@@ -233,6 +254,8 @@ namespace RealmForge {
             ulong ba = at != 0 ? P64(at + 0x28) : 0;
             var hb = ba != 0 ? Read(ba + 0x238, 16) : null;
             if (hb != null) { s.Hp = Fix(hb, 0); s.MaxHp = Fix(hb, 8); }
+            // the battle stats it entered with (m_attr, stBattleBaseAttr): read once, while the builder has none for it
+            if (ba != 0 && (wantBase == null || wantBase(s))) s.Base = BaseAttrs(ba);
             ulong pos = Comp(nodes, CT_Position);
             var pb = pos != 0 ? Read(pos + 0x30, 4) : null;
             if (pb != null) s.Face = BitConverter.ToInt32(pb, 0);

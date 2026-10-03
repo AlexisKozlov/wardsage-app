@@ -59,6 +59,7 @@ namespace RealmForge {
     public double Anger, MaxAnger; public int AngerState = -1;   // EAngerStatus 0 up, 1 down (after an ultimate)
     public uint UltFrame;            // frame of its last ultimate, 0 = none yet
     public double Hp, MaxHp;
+    public Dictionary<int, double> Base;   // its battle stats as it entered (m_attr by SoldierAttribute id; -1 iPower), null = not read
   }
 
   /// <summary>One command of the simulation's record (FrameIdxInfo).</summary>
@@ -107,6 +108,7 @@ namespace RealmForge {
       public uint Uid, C; public int Unit, Squad; public bool Leader;
       public bool On; public uint Tower; public int PX = -1, PY = -1; public uint LastUlt;
       public HeroSample Prev;
+      public Dictionary<int, double> Base;
       public List<int[]> Placed = new List<int[]>();   // [frame, x, y, face, exact]; sampled tiles as on the map
       public List<uint> Fell = new List<uint>(), Retreat = new List<uint>(), UltExact = new List<uint>(), UltGuess = new List<uint>();
     }
@@ -137,6 +139,7 @@ namespace RealmForge {
         if (s.Unit != 0) h.Unit = s.Unit;
         if (s.Squad != 0) h.Squad = s.Squad;
         if (s.Leader) h.Leader = true;
+        if (h.Base == null && s.Base != null) h.Base = s.Base;
         bool alive = s.OnField && !s.Dead && s.Tower != 0;
         // left the field (or a new tower since the last sample: it went down in between)
         if (h.On && (!alive || s.Tower != h.Tower)) {
@@ -412,6 +415,12 @@ namespace RealmForge {
         Frames1(sb, "fell", fell);
         if (retreat.Count > 0) Frames1(sb, "retreat", retreat);
         Frames1(sb, "ult", ult);
+        if (h.Base != null) {
+          sb.Append(",\"base\":{");
+          bool f1 = true;
+          foreach (var kv in h.Base) { if (!f1) sb.Append(','); f1 = false; sb.Append('"').Append(kv.Key).Append("\":").Append(Math.Round(kv.Value, 3).ToString(System.Globalization.CultureInfo.InvariantCulture)); }
+          sb.Append('}');
+        }
         sb.Append('}');
       }
       sb.Append('}');
