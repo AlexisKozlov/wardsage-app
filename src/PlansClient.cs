@@ -107,6 +107,7 @@ namespace RealmForge {
         req.UserAgent = SyncClient.UserAgent;
         req.Headers["Authorization"] = "Bearer " + code;
         req.Headers["X-RF-Extractor"] = SyncClient.Version;
+        SyncClient.AddPlayer(req);
         req.Timeout = 30000;
         req.ReadWriteTimeout = 30000;
         req.AllowAutoRedirect = false;

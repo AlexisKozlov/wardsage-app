@@ -38,6 +38,10 @@ namespace RealmForge {
   public static class SyncClient {
     public const string Version = RFX.ExtractorVersion;
     public const string UserAgent = "RealmForge-Extractor/" + Version;
+    /// <summary>The game account last read (PlayerData m_Uid; 0 = not known yet): every request names it in X-RF-Player, so
+    /// the site keeps two game accounts on one sync code apart.</summary>
+    public static long Player;
+    public static void AddPlayer(System.Net.HttpWebRequest req) { if (Player > 0) req.Headers["X-RF-Player"] = Player.ToString(System.Globalization.CultureInfo.InvariantCulture); }
     public const string DefaultSite = "https://realmforge-wor.vercel.app";
     public static int TimeoutMs = 60000;   // per request; a field (not const) so tests can shorten it
     const int MaxReplyBytes = 1024 * 1024;
@@ -107,6 +111,7 @@ namespace RealmForge {
         req.Headers["Authorization"] = "Bearer " + code;
         req.Headers["Content-Encoding"] = "gzip";
         req.Headers["X-RF-Extractor"] = Version;
+        AddPlayer(req);
         req.Timeout = TimeoutMs;
         req.ReadWriteTimeout = TimeoutMs;
         req.AllowAutoRedirect = false;   // a redirected POST would turn into a GET and lose the body

@@ -533,7 +533,7 @@ namespace RealmForge {
       // the game account (PlayerData m_Uid / m_Name, PlayerData.lua:1033): one site account may get two game accounts
       if (lt.PlayerData != 0) {
         ulong pv; int pt; long puid;
-        if (Field(lt.PlayerData, "m_Uid", out pv, out pt) && AsLong(pv, pt, out puid) && puid > 0) sb.Append(",\"player\":" + puid);
+        if (Field(lt.PlayerData, "m_Uid", out pv, out pt) && AsLong(pv, pt, out puid) && puid > 0) { sb.Append(",\"player\":" + puid); SyncClient.Player = puid; }
         if (Field(lt.PlayerData, "m_Name", out pv, out pt) && (pt == T_SSTR || pt == T_LSTR)) { sb.Append(",\"playerName\":"); J(sb, ReadLuaString(pv)); }
         if (Field(lt.PlayerData, "m_Level", out pv, out pt) && AsLong(pv, pt, out puid)) sb.Append(",\"playerLevel\":" + puid);
       }
