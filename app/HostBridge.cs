@@ -423,6 +423,7 @@ namespace RealmForge {
       Log.Write("battle start: stage " + stage + " at " + RFX.FrameSeconds(fr).ToString("0") + " s" + (coach.Knows(stage) ? " (coach)" : "") + (wasSeen ? "" : " (first look)"));
       lastStage = stage; lastStageAt = DateTime.UtcNow;
       StartRecorder(sim, stage);
+      if (stage / 1000 == 6001) ShootField(stage);
       if (coach.Running) coach.Stop();
       // the player's plan for this boss (the site's «Отправить план в игру»): fresh from the site when the copy is over a
       // minute old, then the coach (off the UI thread: the site may take a moment)
@@ -438,6 +439,37 @@ namespace RealmForge {
         } catch (Exception e) { Log.Write("fight plans: " + e.Message); }
         win.BeginInvoke((Action)(() => { if (simSeen == sim && (plan != null || coach.Knows(stage))) coach.Start(sim, stage, plan); }));
       });
+    }
+
+    /// <summary>An arena fight started: 3 s later, with the game in front, a picture of the game window (the field in
+    /// the game's own camera) is kept in battles/shots/ — the site draws its arena plan over it. A screen capture of the
+    /// game's window only (what the player sees); nothing is read from or written to the game. The last 30 are kept.</summary>
+    void ShootField(int stage) {
+      var t = new System.Windows.Forms.Timer { Interval = 3000 };
+      t.Tick += (s, e) => {
+        t.Stop(); t.Dispose();
+        try {
+          var ps = System.Diagnostics.Process.GetProcessesByName("Watcher of Realms");
+          IntPtr hwnd = ps.Length > 0 ? ps[0].MainWindowHandle : IntPtr.Zero;
+          int fp = 0, gp = 0;
+          if (hwnd != IntPtr.Zero) { W32.GetWindowThreadProcessId(W32.GetForegroundWindow(), out fp); W32.GetWindowThreadProcessId(hwnd, out gp); }
+          W32.RECT cr;
+          if (hwnd == IntPtr.Zero || W32.IsIconic(hwnd) || fp != gp || !W32.GetClientRect(hwnd, out cr) || cr.R < 400 || cr.B < 300) { Log.Write("arena shot: the game is not in front"); return; }
+          var o = new W32.POINT(0, 0); W32.ClientToScreen(hwnd, ref o);
+          string dir = System.IO.Path.Combine(RFX.BattlesDir, "shots");
+          System.IO.Directory.CreateDirectory(dir);
+          string path = System.IO.Path.Combine(dir, stage + "-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".png");
+          using (var bmp = new System.Drawing.Bitmap(cr.R, cr.B))
+          using (var g = System.Drawing.Graphics.FromImage(bmp)) {
+            g.CopyFromScreen(o.X, o.Y, 0, 0, new System.Drawing.Size(cr.R, cr.B));
+            bmp.Save(path, System.Drawing.Imaging.ImageFormat.Png);
+          }
+          var files = System.IO.Directory.GetFiles(dir, "*.png"); Array.Sort(files);
+          for (int i = 0; i < files.Length - 30; i++) try { System.IO.File.Delete(files[i]); } catch (Exception) { }
+          Log.Write("arena shot: " + path + " (" + cr.R + "x" + cr.B + ")");
+        } catch (Exception ex) { Log.Write("arena shot: " + ex.Message); }
+      };
+      t.Start();
     }
 
     // the account's fight plans (src/FightPlanClient.cs), fetched at a fight's start (at most once a minute)
