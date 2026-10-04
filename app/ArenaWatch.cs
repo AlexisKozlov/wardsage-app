@@ -37,6 +37,7 @@ namespace RealmForge {
           missLogged = false;
           if (sig == lastSig && (DateTime.UtcNow - lastSent).TotalSeconds < 60) return;
           bool changed = sig != lastSig;
+          if (changed) KeepList(json);
           string body = ArenaClient.WithFights(json, ArenaOpp.FightRecords(RFX.BattlesDir));
           string details;
           var st = ArenaClient.Send(s, c, body, out details);
@@ -47,6 +48,18 @@ namespace RealmForge {
         } catch (Exception e) { Log.Write("arena: " + e.Message); pauseUntil = DateTime.UtcNow.AddSeconds(30); }
         finally { busy = false; }
       });
+    }
+
+    /// <summary>Every new opponents' list kept in %APPDATA%RealmForgearena-lists (the newest 500): the arena's meta — which
+    /// heroes the players really field — is counted from them (realmforge-web scripts/build-arena-meta.mjs).</summary>
+    static void KeepList(string json) {
+      try {
+        string dir = System.IO.Path.Combine(AppConfig.DefaultDir, "arena-lists");
+        System.IO.Directory.CreateDirectory(dir);
+        System.IO.File.WriteAllText(System.IO.Path.Combine(dir, DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".json"), json);
+        var files = System.IO.Directory.GetFiles(dir, "*.json"); Array.Sort(files);
+        for (int i = 0; i < files.Length - 500; i++) System.IO.File.Delete(files[i]);
+      } catch (Exception e) { Log.Write("arena: keep list: " + e.Message); }
     }
 
     /// <summary>A line for the log: the stage and each opponent's name, power, score and hero count.</summary>
