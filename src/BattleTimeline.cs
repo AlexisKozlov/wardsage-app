@@ -477,7 +477,11 @@ namespace RealmForge {
 
     /// <summary>The boss's HP in per mille: the unit with the most max HP that is not one of the heroes' towers
     /// (-1 = none found).</summary>
-    public static int BossHpPermille(ulong sim, ICollection<uint> towers) {
+    public static int BossHpPermille(ulong sim, ICollection<uint> towers) { double hp, max; return BossHp(sim, towers, out hp, out max); }
+
+    /// <summary>The boss's HP and max HP (absolute) and its per mille (-1 = none found).</summary>
+    public static int BossHp(ulong sim, ICollection<uint> towers, out double hpOut, out double maxOut) {
+      hpOut = 0; maxOut = 0;
       ulong world = P64(sim + 0x28); if (world == 0) return -1;
       double best = 0, hp = 0;
       foreach (var at in WorldComps(world, CT_Attribute, 2000)) {
@@ -489,6 +493,7 @@ namespace RealmForge {
         double h = Fix(hb, 0), m = Fix(hb, 8);
         if (m > best && m < 1e13 && h >= 0 && h <= m) { best = m; hp = h; }
       }
+      hpOut = hp; maxOut = best;
       return best > 0 ? (int)Math.Round(hp * 1000 / best) : -1;
     }
   }
@@ -558,8 +563,9 @@ namespace RealmForge {
                 Commands();
                 var towers = new List<uint>();
                 if (hs != null) foreach (var h in hs) if (h.Tower != 0) towers.Add(h.Tower);
-                int bp = RFX.BossHpPermille(Sim, towers);
-                lock (gate) tl.AddBoss(fr, bp);
+                double bh, bm;
+                int bp = RFX.BossHp(Sim, towers, out bh, out bm);
+                lock (gate) { tl.AddBoss(fr, bp); tl.AddBossHp(fr, bh, bm); }
               }
             } catch (Exception e) { if (errors++ < 3) Say("fight recorder: " + e.Message); }
           }

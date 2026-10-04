@@ -183,6 +183,16 @@ namespace RealmForge {
       boss.Add(new[] { (int)frame, permille }); lastBoss = permille;
     }
 
+    /// <summary>The boss's absolute HP about every second while it moves (a guild boss's HP is so big that a whole fight
+    /// moves it by a few per mille: the per-mille track keeps one point) — the damage over time, the shields' windows.</summary>
+    public void AddBossHp(uint frame, double hp, double max) {
+      if (max <= 0 || bossHp.Count >= 2000) return;
+      if (bossHp.Count > 0 && bossHp[bossHp.Count - 1][1] == (long)hp) return;
+      bossHp.Add(new[] { (long)frame, (long)hp }); bossMax = (long)max;
+    }
+    readonly List<long[]> bossHp = new List<long[]>();
+    long bossMax;
+
     /// <summary>Commands of the simulation's record (read again and again: the union is kept).</summary>
     public void AddCommands(IEnumerable<FrameCmd> list) {
       foreach (var c in list) { if (c == null || c.Params == null) continue; cmds[c.Key()] = c; }
@@ -440,6 +450,11 @@ namespace RealmForge {
         sb.Append(",\"boss\":[");
         for (int i = 0; i < boss.Count; i++) { if (i > 0) sb.Append(','); sb.Append('[').Append(boss[i][0]).Append(',').Append(boss[i][1]).Append(']'); }
         sb.Append(']');
+      }
+      if (bossHp.Count > 0) {
+        sb.Append(",\"bossHp\":{\"max\":").Append(bossMax).Append(",\"hp\":[");
+        for (int i = 0; i < bossHp.Count; i++) { if (i > 0) sb.Append(','); sb.Append('[').Append(bossHp[i][0]).Append(',').Append(bossHp[i][1]).Append(']'); }
+        sb.Append("]}");
       }
       if (stats != null) {
         sb.Append(",\"stats\":[");
