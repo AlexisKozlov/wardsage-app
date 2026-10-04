@@ -371,7 +371,20 @@ namespace RealmForge {
           mine.Append(nm++ > 0 ? "," : "").Append("{\"uid\":").Append(Num(Get(h, "uid")).ToString(CultureInfo.InvariantCulture)).Append(",\"unit\":").Append(Num(Get(h, "unit")).ToString(CultureInfo.InvariantCulture)).Append(",\"base\":{");
           int nb = 0;
           foreach (var bv in b) { if (!(bv.Value is double) || nb >= 80) continue; mine.Append(nb++ > 0 ? "," : "").Append(MiniJson.Quote(bv.Key)).Append(':').Append(((double)bv.Value).ToString("R", CultureInfo.InvariantCulture)); }
-          mine.Append("}}");
+          mine.Append('}');
+          // where and when the game placed it ([frame, x, y, face] — the auto battle's placings repeat fight to fight)
+          var pl = Get(h, "placed") as List<object>;
+          if (pl != null) {
+            mine.Append(",\"placed\":["); int np = 0;
+            foreach (var p in pl) {
+              var a = p as List<object>; if (a == null || a.Count < 4 || np >= 8) continue;
+              mine.Append(np++ > 0 ? "," : "").Append('[');
+              for (int i = 0; i < 4; i++) mine.Append(i > 0 ? "," : "").Append(Num(a[i]).ToString(CultureInfo.InvariantCulture));
+              mine.Append(']');
+            }
+            mine.Append(']');
+          }
+          mine.Append('}');
         }
         if (nm > 0) sb.Append(",\"mine\":[").Append(mine).Append(']');
       }
