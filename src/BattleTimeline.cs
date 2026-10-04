@@ -84,7 +84,28 @@ namespace RealmForge {
       d[-1] = BitConverter.ToUInt32(b, 0x130);  // iPower
       d[-2] = Fix(b, 0xB8);                     // iCritResistance
       d[-3] = Fix(b, 0xE8);                     // iAttackAngerHedging
+      // iSkills 0x180 / iSkillLevels 0x188 (int[]): the skills the hero fights with — its own, its gear sets' and its
+      // artifact's, the opponent's too (the opponents' list has only their stats): -100-i = skill id, -200-i = its level
+      int[] ids = IntArray(BitConverter.ToUInt64(b, 0x180), 40), lvs = IntArray(BitConverter.ToUInt64(b, 0x188), 40);
+      for (int i = 0; ids != null && i < ids.Length; i++) {
+        d[-100 - i] = ids[i];
+        d[-200 - i] = lvs != null && i < lvs.Length ? lvs[i] : 0;
+      }
       return d.ContainsKey(2) && d[2] > 0 ? d : null;
+    }
+
+    /// <summary>An int[] (max_length 0x18, data 0x20), null when unreadable or longer than max.</summary>
+    static int[] IntArray(ulong arr, int max) {
+      var h = arr != 0 ? Read(arr + 0x18, 8) : null;
+      if (h == null) return null;
+      long n = BitConverter.ToInt64(h, 0);
+      if (n < 0 || n > max) return null;
+      if (n == 0) return new int[0];
+      var b = Read(arr + 0x20, (int)n * 4);
+      if (b == null) return null;
+      var r = new int[n];
+      for (int i = 0; i < n; i++) r[i] = BitConverter.ToInt32(b, i * 4);
+      return r;
     }
 
     /// <summary>The klass of a TypeInfo RVA (0 when GameAssembly's base is not known).</summary>
