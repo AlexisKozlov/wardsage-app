@@ -461,6 +461,7 @@ namespace RealmForge {
     public int Pid;
     public ulong EquipData, HeroData, CampOwner, ArtOwner, BeastOwner, ActOwner, Form, Panel;
     public ulong ItemData, PlayerData;   // the bag (ItemData) and the currencies (PlayerData): "resources"
+    public ulong UnionWeekBoss;          // UnionWeekBossData: the gear saved with the Zerbus teams (m_SavedTeamEquipsInfo)
   }
 
   public static partial class RFX {
@@ -576,7 +577,7 @@ namespace RealmForge {
 
     static LiveTables FindLive(int pid) {
       regs = Regions();
-      string[] anchors = { KEquipData, KHero, KHeroes, KCamp, KArts, KBeasts, KAct, KGrid, KPanel, KItems, KPlayer };
+      string[] anchors = { KEquipData, KHero, KHeroes, KCamp, KArts, KBeasts, KAct, KGrid, KPanel, KItems, KPlayer, KZerbus };
       var tstr = FindLuaStringsFast(anchors);
       var found = new List<string>(); foreach (var kv in tstr) found.Add(kv.Value + "@" + kv.Key.ToString("X"));
       L("Strings found: " + string.Join(", ", found.ToArray()));
@@ -602,6 +603,7 @@ namespace RealmForge {
       // resources: ItemData (the bag) and PlayerData (currencies; also the owner of m_AllBeastInfo)
       lt.ItemData = BestItemData(owners);
       lt.PlayerData = Largest(owners, KPlayer);
+      lt.UnionWeekBoss = Largest(owners, KZerbus);
       if (lt.PlayerData == 0 || !HasNum(lt.PlayerData, "m_Coin")) lt.PlayerData = lt.BeastOwner;
       // the hero screen: the one the game's window list holds (a dead copy of an older one can own the keys too)
       lt.Form = FindFormNode();
@@ -954,10 +956,27 @@ namespace RealmForge {
       L("  resources: " + (resMap == null ? "not found" : resMap.Count + " ids"));
       sb.Append(",\n\"resources\":"); J(sb, resMap);
       sb.Append(",\n\"resourcesMeta\":"); J(sb, resMeta);
+      // Zerbus: each team's saved gear (stage -> [{uiHeroId, vEquipUid, ulArtifactUid, ...}]) and power (UnionWeekBossData.lua
+      // SetSavedTeamEquipsBoss3 / _Handler_Union_SaveEquipPlan_SC); present once the game got the guild's boss data
+      if (lt.UnionWeekBoss != 0) {
+        ulong zv, zp; int zt, zpt;
+        var zer = new Dictionary<string, object>();
+        if (Field(lt.UnionWeekBoss, KZerbus, out zv, out zt) && zt == T_TABLE) zer["teams"] = ParseTable(zv, 4, new HashSet<ulong>());
+        if (Field(lt.UnionWeekBoss, "m_SavedTeamEquipPlanPower", out zp, out zpt) && zpt == T_TABLE) zer["power"] = ParseTable(zp, 1, new HashSet<ulong>());
+        L("  zerbus saved gear: " + (zer.ContainsKey("teams") ? "read" : "none"));
+        sb.Append(",\n\"zerbusSaved\":"); J(sb, zer);
+      }
       // boss fights captured at their result screens (src/BattleCapture.cs): the site compares them with its simulation
       sb.Append(",\n\"battles\":").Append(BattlesJson());
       sb.Append("\n,\"meta\":{\"extractor\":\"" + ExtractorVersion + "\"");
       if (GameVersion != null) { sb.Append(",\"gameVersion\":"); J(sb, GameVersion); }
+      // the game account (PlayerData m_Uid / m_Name, PlayerData.lua:1033): one site account may get two game accounts
+      if (lt.PlayerData != 0) {
+        ulong pv; int pt; long puid;
+        if (Field(lt.PlayerData, "m_Uid", out pv, out pt) && AsLong(pv, pt, out puid) && puid > 0) { sb.Append(",\"player\":" + puid); SyncClient.Player = puid; }
+        if (Field(lt.PlayerData, "m_Name", out pv, out pt) && (pt == T_SSTR || pt == T_LSTR)) { sb.Append(",\"playerName\":"); J(sb, ReadLuaString(pv)); }
+        if (Field(lt.PlayerData, "m_Level", out pv, out pt) && AsLong(pv, pt, out puid)) sb.Append(",\"playerLevel\":" + puid);
+      }
       sb.Append(",\"seconds\":" + (int)sw.Elapsed.TotalSeconds + ",\"equipment\":" + ne + ",\"heroes\":" + nh + ",\"live\":true}\n}\n");
       L("Done in " + sw.Elapsed.TotalSeconds.ToString("0.0") + " s");
       return sb.ToString();
@@ -1009,6 +1028,8 @@ namespace RealmForge {
     // Lua table of the game (work/sim/RESOURCES.md). The bag is ItemData.m_Items[itemType][itemId] = {m_Config, m_Count}
     // (updated in place by Push_SetItem), time-limited items ItemData.m_TimeItems[itemId][uid] = {m_Count, m_EndTime, ..}.
     const string KItems = "m_HeroBaseId2ItemId", KPlayer = "m_mNegSpecialItem";
+    // UnionWeekBossData (the guild's weekly bosses): the third (Zerbus, two teams) fights with the gear saved with each team
+    const string KZerbus = "m_SavedTeamEquipsInfo";
 
     // PlayerData scalar fields -> item id (CurrencyType, common/defines.lua; ItemData:GetItemNumById)
     static readonly KeyValuePair<string, long>[] PlayerCurrencies = {
@@ -2331,6 +2352,10 @@ namespace RealmForge {
   public static class SyncClient {
     public const string Version = RFX.ExtractorVersion;
     public const string UserAgent = "RealmForge-Extractor/" + Version;
+    /// <summary>The game account last read (PlayerData m_Uid; 0 = not known yet): every request names it in X-RF-Player, so
+    /// the site keeps two game accounts on one sync code apart.</summary>
+    public static long Player;
+    public static void AddPlayer(System.Net.HttpWebRequest req) { if (Player > 0) req.Headers["X-RF-Player"] = Player.ToString(System.Globalization.CultureInfo.InvariantCulture); }
     public const string DefaultSite = "https://realmforge-wor.vercel.app";
     public static int TimeoutMs = 60000;   // per request; a field (not const) so tests can shorten it
     const int MaxReplyBytes = 1024 * 1024;
@@ -2400,6 +2425,7 @@ namespace RealmForge {
         req.Headers["Authorization"] = "Bearer " + code;
         req.Headers["Content-Encoding"] = "gzip";
         req.Headers["X-RF-Extractor"] = Version;
+        AddPlayer(req);
         req.Timeout = TimeoutMs;
         req.ReadWriteTimeout = TimeoutMs;
         req.AllowAutoRedirect = false;   // a redirected POST would turn into a GET and lose the body
@@ -2614,6 +2640,7 @@ namespace RealmForge {
         req.UserAgent = SyncClient.UserAgent;
         req.Headers["Authorization"] = "Bearer " + code;
         req.Headers["X-RF-Extractor"] = SyncClient.Version;
+        SyncClient.AddPlayer(req);
         req.Timeout = 30000;
         req.ReadWriteTimeout = 30000;
         req.AllowAutoRedirect = false;
@@ -2874,6 +2901,7 @@ namespace RealmForge {
     public bool AutoClick = true;   // equip helper: open the slot, scroll the list and click the item in the game
     public bool AutoConfirm;        // ...and press «Заменить» itself (off by default: the player's explicit choice)
     public bool ErrorReports;       // send failures to the site with the journal's last lines (src/ErrorReport.cs; off by default)
+    public string AssistantDriver;  // the owner's AI assistant may play the game (app/AssistantDriver.cs): its command folder; null = off, no UI
     // last successful sync (shown on the start screen; the busts of the strongest heroes decorate the banner)
     public string LastAt;                       // ISO 8601 UTC or null
     public int LastHeroes = -1, LastItems = -1, LastArtifacts = -1;
@@ -2914,6 +2942,7 @@ namespace RealmForge {
       sb.Append(",\n  \"autoClick\": ").Append(AutoClick ? "true" : "false");
       sb.Append(",\n  \"autoConfirm\": ").Append(AutoConfirm ? "true" : "false");
       sb.Append(",\n  \"errorReports\": ").Append(ErrorReports ? "true" : "false");
+      if (!string.IsNullOrEmpty(AssistantDriver)) sb.Append(",\n  \"assistantDriver\": ").Append(MiniJson.Quote(AssistantDriver));
       string code = string.IsNullOrEmpty(Code) ? "" : ProtectedPrefix + CodeProtector.Protect(Code);
       sb.Append(",\n  \"code\": ").Append(MiniJson.Quote(code));
       if (!string.IsNullOrEmpty(LastAt)) {
@@ -2939,6 +2968,7 @@ namespace RealmForge {
       c.AutoClick = MiniJson.GetBool(d, "autoClick", true);
       c.AutoConfirm = MiniJson.GetBool(d, "autoConfirm", false);
       c.ErrorReports = MiniJson.GetBool(d, "errorReports", false);
+      c.AssistantDriver = MiniJson.GetString(d, "assistantDriver");
       object lv;
       var last = d.TryGetValue("last", out lv) ? MiniJson.AsObject(lv) : null;
       if (last != null && MiniJson.GetString(last, "at") != null) {

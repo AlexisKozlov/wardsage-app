@@ -47,11 +47,14 @@ namespace RealmForge {
     readonly BridgePoller bridgePoller;
     readonly Dictionary<string, BridgeCommand> bridgeOpen = new Dictionary<string, BridgeCommand>();   // UI thread only
 
+    readonly AssistantDriver driver;   // null unless config.json names its folder
+
     public HostBridge(AppWindow win, CoreWebView2 core) {
       this.win = win; this.core = core;
       cfg = AppConfig.Load();
       if (string.IsNullOrEmpty(cfg.Site)) cfg.Site = SyncClient.DefaultSite;
       arenaWatch = new ArenaWatch(() => cfg.Site, () => cfg.Code);
+      driver = AssistantDriver.StartIf(cfg.AssistantDriver);
       gameTimer.Interval = 2000; gameTimer.Tick += (s, e) => { CheckGame(false); WatchBattleEnd(); WatchStall(); arenaWatch.Tick(gameRunning); }; gameTimer.Start();
       liveTimer.Interval = 400; liveTimer.Tick += (s, e) => PollLive();
       overlay = new OverlayController(st => Post("{\"ev\":\"overlay\",\"state\":" + S(st) + "}"),
@@ -77,6 +80,7 @@ namespace RealmForge {
 
     public void Dispose() {
       Program.FatalReport = null;
+      if (driver != null) driver.Dispose();
       bridgePoller.Dispose();   // the pending long poll is aborted: the thread ends at once
       CloseBridgeCommands("cancelled", "RealmForge was closed.", true);
       gameTimer.Dispose(); liveTimer.Dispose(); autoTimer.Dispose(); updateTimer.Dispose(); overlay.Dispose();
