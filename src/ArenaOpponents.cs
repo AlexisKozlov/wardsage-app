@@ -379,7 +379,7 @@ namespace RealmForge {
           var b = MiniJson.AsObject(Get(h, "base")); if (b == null || nm >= 12) continue;
           mine.Append(nm++ > 0 ? "," : "").Append("{\"uid\":").Append(Num(Get(h, "uid")).ToString(CultureInfo.InvariantCulture)).Append(",\"unit\":").Append(Num(Get(h, "unit")).ToString(CultureInfo.InvariantCulture)).Append(",\"base\":{");
           int nb = 0;
-          foreach (var bv in b) { if (!(bv.Value is double) || nb >= 80) continue; mine.Append(nb++ > 0 ? "," : "").Append(MiniJson.Quote(bv.Key)).Append(':').Append(((double)bv.Value).ToString("R", CultureInfo.InvariantCulture)); }
+          foreach (var bv in b) { if (!(bv.Value is double) || nb >= 80 || bv.Key.StartsWith("-1") && bv.Key.Length > 2 || bv.Key.StartsWith("-2") && bv.Key.Length > 2) continue; mine.Append(nb++ > 0 ? "," : "").Append(MiniJson.Quote(bv.Key)).Append(':').Append(((double)bv.Value).ToString("R", CultureInfo.InvariantCulture)); }
           mine.Append('}');
           // where and when the game placed it ([frame, x, y, face] — the auto battle's placings repeat fight to fight)
           var pl = Get(h, "placed") as List<object>;
@@ -396,6 +396,24 @@ namespace RealmForge {
           mine.Append('}');
         }
         if (nm > 0) sb.Append(",\"mine\":[").Append(mine).Append(']');
+        // the opponent's heroes' battle skills ([skill, level], their sets' and artifact's with their own: the opponents'
+        // list never shows them) and the opponent's uid — a rematch counts them (the site: lib/arenaOpp/recSkills.ts)
+        var raw = MiniJson.AsObject(Get(info, "oppRaw"));
+        if (raw != null) Field(sb, "oppUid", Num(Get(raw, "uid")));
+        var theirs = new StringBuilder(); int nt = 0;
+        if (hs != null) foreach (var kv in hs) {
+          var h = MiniJson.AsObject(kv.Value); if (h == null || !(Get(h, "c") is double) || Num(Get(h, "c")) != 2 || nt >= 12) continue;
+          var b = MiniJson.AsObject(Get(h, "base")); if (b == null) continue;
+          var sk = new StringBuilder(); int ns = 0;
+          for (int i = 0; i < 40; i++) {
+            object id, lv; if (!b.TryGetValue((-100 - i).ToString(CultureInfo.InvariantCulture), out id) || !(id is double)) break;
+            b.TryGetValue((-200 - i).ToString(CultureInfo.InvariantCulture), out lv);
+            sk.Append(ns++ > 0 ? "," : "").Append('[').Append(((long)(double)id).ToString(CultureInfo.InvariantCulture)).Append(',').Append((lv is double ? (long)(double)lv : 1).ToString(CultureInfo.InvariantCulture)).Append(']');
+          }
+          if (ns == 0) continue;
+          theirs.Append(nt++ > 0 ? "," : "").Append("{\"unit\":").Append(Num(Get(h, "unit")).ToString(CultureInfo.InvariantCulture)).Append(",\"sk\":[").Append(sk).Append("]}");
+        }
+        if (nt > 0) sb.Append(",\"theirs\":[").Append(theirs).Append(']');
       }
       sb.Append('}');
       return sb.ToString();
