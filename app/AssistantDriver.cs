@@ -43,6 +43,8 @@ namespace RealmForge {
     readonly string dir, cmd, outF;
     readonly Thread loop;
     volatile bool stop;
+    /// <summary>When the last command came (an update's restart waits a minute after it).</summary>
+    public DateTime LastCommand = DateTime.MinValue;
 
     AssistantDriver(string dir) {
       this.dir = dir; cmd = Path.Combine(dir, "cmd.txt"); outF = Path.Combine(dir, "out.txt");
@@ -69,6 +71,7 @@ namespace RealmForge {
         if (!File.Exists(cmd)) { Thread.Sleep(100); continue; }
         string line;
         try { line = File.ReadAllText(cmd).Trim(); File.Delete(cmd); } catch (IOException) { Thread.Sleep(50); continue; }
+        LastCommand = DateTime.UtcNow;
         string res;
         try { res = Do(line); } catch (Exception e) { res = "error " + e.Message; }
         Log.Write("assistant driver: " + line + " -> " + res);

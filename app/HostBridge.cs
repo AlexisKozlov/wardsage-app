@@ -55,7 +55,7 @@ namespace RealmForge {
       if (string.IsNullOrEmpty(cfg.Site)) cfg.Site = SyncClient.DefaultSite;
       arenaWatch = new ArenaWatch(() => cfg.Site, () => cfg.Code);
       driver = AssistantDriver.StartIf(cfg.AssistantDriver);
-      gameTimer.Interval = 2000; gameTimer.Tick += (s, e) => { CheckGame(false); WatchBattleEnd(); WatchStall(); arenaWatch.Tick(gameRunning); }; gameTimer.Start();
+      gameTimer.Interval = 2000; gameTimer.Tick += (s, e) => { CheckGame(false); WatchBattleEnd(); WatchStall(); arenaWatch.Tick(gameRunning); TryAutoUpdate(); }; gameTimer.Start();
       liveTimer.Interval = 400; liveTimer.Tick += (s, e) => PollLive();
       overlay = new OverlayController(st => Post("{\"ev\":\"overlay\",\"state\":" + S(st) + "}"),
                                       st => { Post("{\"ev\":\"auto\",\"state\":" + S(st) + "}"); OnAutoState(st); },
@@ -69,7 +69,7 @@ namespace RealmForge {
       overlay.Problem += (kind, message) => Report(kind, message, null);
       Program.FatalReport = ReportFatal;
       autoTimer.Interval = 1000; autoTimer.Tick += (s, e) => AutoSyncTick(); autoTimer.Start();
-      updateTimer.Interval = 20000; updateTimer.Tick += (s, e) => { updateTimer.Interval = 6 * 3600 * 1000; CheckUpdate(); }; updateTimer.Start();
+      updateTimer.Interval = 20000; updateTimer.Tick += (s, e) => { updateTimer.Interval = 5 * 60 * 1000; if (updateReady == null) CheckUpdate(); }; updateTimer.Start();
       bridgePoller = new BridgePoller(new BridgeClient(BridgeClient.DefaultUrl, BridgeClient.DefaultTokenPath),
                                       c => OnUi(() => OnBridgeCommand(c)), up => OnUi(() => OnBridgeConnected(up)));
       bridgePoller.Start();
@@ -84,6 +84,24 @@ namespace RealmForge {
       bridgePoller.Dispose();   // the pending long poll is aborted: the thread ends at once
       CloseBridgeCommands("cancelled", "RealmForge was closed.", true);
       gameTimer.Dispose(); liveTimer.Dispose(); autoTimer.Dispose(); updateTimer.Dispose(); overlay.Dispose();
+    }
+
+    // «Обновлять автоматически» (on by default): a downloaded update is put in place by restarting in a quiet moment — no
+    // sync, scan or fight capture running, no fight going on, the equip / sell pilot idle, no open site command, the
+    // window untouched for 2 minutes and the assistant driver without a command for a minute
+    DateTime lastUi = DateTime.UtcNow;
+    bool restarting;
+    void TryAutoUpdate() {
+      if (updateReady == null || restarting || !cfg.AutoUpdate) return;
+      if (syncing || scanning || capturing || bridgeOpen.Count > 0 || overlay.Busy) return;
+      var rec = recorder;
+      if (rec != null && rec.Running) return;
+      if ((DateTime.UtcNow - lastUi).TotalMinutes < 2) return;
+      if (driver != null && (DateTime.UtcNow - driver.LastCommand).TotalMinutes < 1) return;
+      restarting = true;
+      Log.Write("update: restarting by itself in a quiet moment");
+      win.SaveForRestart();
+      Program.RestartForUpdate();
     }
 
     void CheckUpdate() {
@@ -117,6 +135,7 @@ namespace RealmForge {
       var m = MiniJson.AsObject(MiniJson.TryParse(json));
       if (m == null) return;
       string cmd = MiniJson.GetString(m, "cmd");
+      if (cmd != "init" && cmd != "log") lastUi = DateTime.UtcNow;
       try {
         switch (cmd) {
           case "init": SendState(null); CheckGame(true); if (updateReady != null) Post(updateReady); break;
@@ -131,6 +150,7 @@ namespace RealmForge {
           case "setAutoSync": cfg.AutoSync = MiniJson.GetBool(m, "on", true); Save(); if (cfg.AutoSync) RequestAutoSync(0); break;
           case "setAutoClick": cfg.AutoClick = MiniJson.GetBool(m, "on", true); overlay.AutoEnabled = cfg.AutoClick; Save(); break;
           case "setAutoConfirm": cfg.AutoConfirm = MiniJson.GetBool(m, "on", false); overlay.AutoConfirm = cfg.AutoConfirm; Save(); break;
+          case "setAutoUpdate": cfg.AutoUpdate = MiniJson.GetBool(m, "on", true); Save(); break;
           case "setErrorReports": cfg.ErrorReports = MiniJson.GetBool(m, "on", false); Save(); Log.Write("error reports " + (cfg.ErrorReports ? "on" : "off")); break;
           case "setSite": {
             string err; string site = SyncClient.NormalizeSite(MiniJson.GetString(m, "site"), out err);
@@ -316,7 +336,7 @@ namespace RealmForge {
       sb.Append(",\"codePrefix\":").Append(S(has ? cfg.Code.Substring(0, 8) : ""));
       sb.Append(",\"saveCopy\":").Append(B(cfg.SaveCopy));
       sb.Append(",\"autoSync\":").Append(B(cfg.AutoSync)).Append(",\"autoClick\":").Append(B(cfg.AutoClick))
-        .Append(",\"autoConfirm\":").Append(B(cfg.AutoConfirm)).Append(",\"errorReports\":").Append(B(cfg.ErrorReports));
+        .Append(",\"autoConfirm\":").Append(B(cfg.AutoConfirm)).Append(",\"errorReports\":").Append(B(cfg.ErrorReports)).Append(",\"autoUpdate\":").Append(B(cfg.AutoUpdate));
       sb.Append(",\"last\":").Append(LastJson());
       if (flag != null) sb.Append(",\"").Append(flag).Append("\":true");
       sb.Append('}');

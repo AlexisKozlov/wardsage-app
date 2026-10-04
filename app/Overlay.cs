@@ -143,6 +143,8 @@ namespace RealmForge {
     public bool AutoEnabled = true;
     /// <summary>Settings → «Автоматически подтверждать замену»: the pilot may also press «Заменить».</summary>
     public bool AutoConfirm;
+    /// <summary>A build being put on or a sell run going: no restart for an update now.</summary>
+    public bool Busy { get { return runHero != 0 || target != 0 || sellWanted != null || sending; } }
     // what the frame tick found this tick (for the pilot)
     int curRow, curCol; long curSel;
     // player activity: the cursor moved by someone else than the pilot, or a mouse button went down

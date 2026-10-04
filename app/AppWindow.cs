@@ -70,6 +70,7 @@ namespace RealmForge {
       MinimumSize = new Size(880, 600);
       Size = new Size(1100, 720);
       StartPosition = FormStartPosition.CenterScreen;
+      RestoreAfterUpdate();
       try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch (Exception) { }
       web.Dock = DockStyle.Fill;
       web.DefaultBackgroundColor = Color.FromArgb(11, 16, 27);
@@ -78,6 +79,36 @@ namespace RealmForge {
     }
 
     protected override void OnHandleCreated(EventArgs e) { base.OnHandleCreated(e); Native.DarkFrame(Handle); }
+
+    // A restart for an update in a quiet moment (HostBridge.TryAutoUpdate): the window comes back where and as it was —
+    // without taking the focus from the game. The state goes through a file (the updater starts the new exe itself).
+    static string RestartFile { get { return System.IO.Path.Combine(AppConfig.DefaultDir, "restart-window.txt"); } }
+    bool quiet;
+    protected override bool ShowWithoutActivation { get { return quiet; } }
+
+    public void SaveForRestart() {
+      try {
+        var b = WindowState == FormWindowState.Normal ? Bounds : RestoreBounds;
+        System.IO.File.WriteAllText(RestartFile, string.Join(",", new[] { b.X, b.Y, b.Width, b.Height, (int)WindowState, TopMost ? 1 : 0, Form.ActiveForm == this ? 1 : 0 }));
+      } catch (Exception e) { Log.Write("restart state: " + e.Message); }
+    }
+
+    void RestoreAfterUpdate() {
+      try {
+        var f = RestartFile;
+        if (!System.IO.File.Exists(f)) return;
+        bool fresh = (DateTime.UtcNow - System.IO.File.GetLastWriteTimeUtc(f)).TotalSeconds < 90;
+        var v = System.IO.File.ReadAllText(f).Split(',');
+        System.IO.File.Delete(f);
+        if (!fresh || v.Length < 7) return;
+        var n = Array.ConvertAll(v, int.Parse);
+        StartPosition = FormStartPosition.Manual;
+        Bounds = new Rectangle(n[0], n[1], n[2], n[3]);
+        WindowState = (FormWindowState)n[4];
+        TopMost = n[5] == 1;
+        quiet = n[6] == 0;   // it was not the active window: do not take the focus
+      } catch (Exception e) { Log.Write("restart state: " + e.Message); }
+    }
 
     async System.Threading.Tasks.Task Init() {
       try {

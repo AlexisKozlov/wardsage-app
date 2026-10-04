@@ -2901,6 +2901,7 @@ namespace RealmForge {
     public bool AutoClick = true;   // equip helper: open the slot, scroll the list and click the item in the game
     public bool AutoConfirm;        // ...and press «Заменить» itself (off by default: the player's explicit choice)
     public bool ErrorReports;       // send failures to the site with the journal's last lines (src/ErrorReport.cs; off by default)
+    public bool AutoUpdate = true;  // put a downloaded update in place by restarting in a quiet moment (HostBridge.TryAutoUpdate)
     public string AssistantDriver;  // the owner's AI assistant may play the game (app/AssistantDriver.cs): its command folder; null = off, no UI
     // last successful sync (shown on the start screen; the busts of the strongest heroes decorate the banner)
     public string LastAt;                       // ISO 8601 UTC or null
@@ -2942,6 +2943,7 @@ namespace RealmForge {
       sb.Append(",\n  \"autoClick\": ").Append(AutoClick ? "true" : "false");
       sb.Append(",\n  \"autoConfirm\": ").Append(AutoConfirm ? "true" : "false");
       sb.Append(",\n  \"errorReports\": ").Append(ErrorReports ? "true" : "false");
+      sb.Append(",\n  \"autoUpdate\": ").Append(AutoUpdate ? "true" : "false");
       if (!string.IsNullOrEmpty(AssistantDriver)) sb.Append(",\n  \"assistantDriver\": ").Append(MiniJson.Quote(AssistantDriver));
       string code = string.IsNullOrEmpty(Code) ? "" : ProtectedPrefix + CodeProtector.Protect(Code);
       sb.Append(",\n  \"code\": ").Append(MiniJson.Quote(code));
@@ -2968,6 +2970,7 @@ namespace RealmForge {
       c.AutoClick = MiniJson.GetBool(d, "autoClick", true);
       c.AutoConfirm = MiniJson.GetBool(d, "autoConfirm", false);
       c.ErrorReports = MiniJson.GetBool(d, "errorReports", false);
+      c.AutoUpdate = MiniJson.GetBool(d, "autoUpdate", true);
       c.AssistantDriver = MiniJson.GetString(d, "assistantDriver");
       object lv;
       var last = d.TryGetValue("last", out lv) ? MiniJson.AsObject(lv) : null;
