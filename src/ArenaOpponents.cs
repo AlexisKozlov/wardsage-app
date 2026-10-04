@@ -225,6 +225,15 @@ namespace RealmForge {
       Field(sb, "sq", N(h, "iSquadId")); Field(sb, "lord", N(h, "iLordPosition")); Field(sb, "skin", N(h, "iSkinId"));
       sb.Append(",\"sl\":"); NumMap(sb, Get(h, "mSkillLevel"));
       sb.Append(",\"attr\":"); NumMap(sb, Get(h, "mAttr"));
+      // vSkills [CmdIDNum {iId, iNum}]: the hero's battle skills as the server builds the fight — the sets' and the
+      // artifact's skills with the hero's own (the site runs them; mAttr carries only their stats)
+      sb.Append(",\"sk\":["); int k = 0;
+      foreach (var x in Items(Get(h, "vSkills"))) {
+        var s = x as Dictionary<string, object>; if (s == null || N(s, "iId") <= 0 || k >= 64) continue;
+        if (k++ > 0) sb.Append(',');
+        sb.Append('[').Append(N(s, "iId").ToString(CultureInfo.InvariantCulture)).Append(',').Append(N(s, "iNum").ToString(CultureInfo.InvariantCulture)).Append(']');
+      }
+      sb.Append(']');
       sb.Append('}');
     }
 
