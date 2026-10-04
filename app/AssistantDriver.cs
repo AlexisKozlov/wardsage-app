@@ -123,13 +123,20 @@ namespace RealmForge {
       }
     }
 
-    static IntPtr Game() {
+    IntPtr Game() {
       var ps = Process.GetProcessesByName("Watcher of Realms");
       if (ps.Length == 0) throw new Exception("the game is not running");
       var h = ps[0].MainWindowHandle;
       if (h == IntPtr.Zero) throw new Exception("the game has no window");
       if (IsIconic(h)) ShowWindow(h, 9);
-      if (GetForegroundWindow() != h) { SetForegroundWindow(h); Thread.Sleep(250); }
+      if (GetForegroundWindow() != h) {
+        // Windows lets a background process take the focus right after a key event of its own (the foreground lock):
+        // an Alt press and release, then SetForegroundWindow
+        Key(0x12, 0); Key(0x12, 2);
+        SetForegroundWindow(h); Thread.Sleep(250);
+      }
+      // never click or capture another window: the game must be in front
+      if (GetForegroundWindow() != h) throw new Exception("the game is not in front");
       return h;
     }
 
