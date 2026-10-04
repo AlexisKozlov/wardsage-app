@@ -94,21 +94,23 @@ namespace RealmForge {
         }
         case "click": {
           var w = Game(); var p = Inside(w, int.Parse(a[1]), int.Parse(a[2]));
-          SetCursorPos(p.X, p.Y); Thread.Sleep(40);
+          MoveTo(p.X, p.Y); Thread.Sleep(40);
           Mouse(0x0002); Thread.Sleep(60); Mouse(0x0004);
           return "ok";
         }
         case "drag": {
           var w = Game(); var p1 = Inside(w, int.Parse(a[1]), int.Parse(a[2])); var p2 = Inside(w, int.Parse(a[3]), int.Parse(a[4]));
           int ms = a.Length > 5 ? Math.Min(5000, Math.Max(50, int.Parse(a[5]))) : 400;
-          SetCursorPos(p1.X, p1.Y); Thread.Sleep(40);
-          Mouse(0x0002); Thread.Sleep(80);
-          const int Steps = 20;
+          // real mouse-move events (SendInput MOVE | ABSOLUTE): the game reads raw input, which SetCursorPos does not make —
+          // a card dragged so never left the hand (2026-10-04)
+          MoveTo(p1.X, p1.Y); Thread.Sleep(60);
+          Mouse(0x0002); Thread.Sleep(150);
+          const int Steps = 30;
           for (int i = 1; i <= Steps && !stop; i++) {
-            SetCursorPos(p1.X + (p2.X - p1.X) * i / Steps, p1.Y + (p2.Y - p1.Y) * i / Steps);
-            Thread.Sleep(ms / Steps);
+            MoveTo(p1.X + (p2.X - p1.X) * i / Steps, p1.Y + (p2.Y - p1.Y) * i / Steps);
+            Thread.Sleep(Math.Max(5, ms / Steps));
           }
-          Thread.Sleep(120); Mouse(0x0004);
+          Thread.Sleep(200); Mouse(0x0004);
           return "ok";
         }
         case "key": {
@@ -153,6 +155,15 @@ namespace RealmForge {
       var r = Client(h);
       if (x < 0 || y < 0 || x >= r.R - r.L || y >= r.B - r.T) throw new Exception("point outside the game window");
       return new POINT { X = r.L + x, Y = r.T + y };
+    }
+
+    [DllImport("user32.dll")] static extern int GetSystemMetrics(int i);
+    /** The cursor to screen (x, y) by a mouse-move event over the virtual desktop (MOVE | ABSOLUTE | VIRTUALDESK). */
+    void MoveTo(int x, int y) {
+      if (stop) return;
+      int vx = GetSystemMetrics(76), vy = GetSystemMetrics(77), vw = Math.Max(1, GetSystemMetrics(78) - 1), vh = Math.Max(1, GetSystemMetrics(79) - 1);
+      var mi = new MOUSEINPUT { dx = (int)((x - vx) * 65535L / vw), dy = (int)((y - vy) * 65535L / vh), dwFlags = 0x0001 | 0x8000 | 0x4000 };
+      SendInput(1, new[] { new INPUT { type = 0, mi = mi } }, Marshal.SizeOf(typeof(INPUT)));
     }
 
     void Mouse(uint flags) {
