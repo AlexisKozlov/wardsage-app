@@ -94,8 +94,9 @@
       ${nav('equip', I.equip, t('navEquip'), pending ? `<span class="badge">${pending}</span>` : '')}
       ${nav('settings', I.gear, t('navSettings'))}
       <div class="rail-foot">
-        ${S.update ? `<div class="upd"><b>${esc(t('updReady', S.update.version))}</b><small>${esc(S.update.notes || t('updNext'))}</small>
-          <button class="btn-line" data-act="updRestart">${esc(t('updRestart'))}</button></div>` : ''}
+        ${S.update ? `<div class="upd" role="status"><div class="upd-head"><span class="upd-ico">${I.reload}</span><div><small>${esc(t('updKicker'))}</small><b>${esc(S.update.version)}</b></div></div>
+          <p>${esc(S.update[S.lang] || S.update.ru || t('updNext'))}</p>
+          <button class="btn-gold" data-act="updRestart">${esc(t('updRestart'))}</button></div>` : ''}
         <div class="game-state"><span class="dot ${S.game.running ? 'on' : ''}"></span><div>${esc(S.game.running ? t('gameOn') : t('gameOff'))}
           ${S.game.running && S.game.version ? `<small>${esc(t('gameVer', S.game.version))}</small>` : ''}</div></div>
         <div class="langs">
@@ -688,7 +689,7 @@
         break;
       }
       case 'overlay': S.overlay = m.state; if (S.page === 'equip' || S.compact) render(); break;
-      case 'update': S.update = { version: m.version, notes: m.notes || '' }; render(); break;
+      case 'update': S.update = { version: m.version, ru: m.notesRu || '', en: m.notesEn || '' }; render(); break;
       case 'auto': S.auto = m.state; if (S.page === 'equip' || S.compact) render(); break;
       case 'battle': toast(t(m.ok === false ? 'battleNone' : 'battleKept'), 6000); break;
       case 'cancelRun': {

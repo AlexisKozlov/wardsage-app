@@ -105,7 +105,7 @@ namespace RealmForge {
       Task.Factory.StartNew(() => {
         var u = Updater.CheckAndDownload(site);
         if (u == null) return;
-        updateReady = "{\"ev\":\"update\",\"version\":" + S(u.Version) + ",\"notes\":" + S(cfg.Lang == "en" ? u.NotesEn : u.NotesRu) + "}";
+        updateReady = "{\"ev\":\"update\",\"version\":" + S(u.Version) + ",\"notesRu\":" + S(u.NotesRu) + ",\"notesEn\":" + S(u.NotesEn) + "}";   // the page shows the one of its language
         Post(updateReady);
       });
     }
