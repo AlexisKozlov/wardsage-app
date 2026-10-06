@@ -39,7 +39,7 @@ RES+=("-resource:app/res/hero_tags.json,overlay/hero_tags.json")
 for f in Microsoft.Web.WebView2.Core.dll Microsoft.Web.WebView2.WinForms.dll WebView2Loader.dll; do RES+=("-resource:$WV/$f,bin/$f"); done
 
 CORE="src/MemoryReader.cs src/EquipScan.cs src/MiniJson.cs src/GameInfo.cs src/Extractor.cs src/SyncClient.cs src/PlansClient.cs src/SellClient.cs src/FightPlanClient.cs src/ErrorReport.cs src/BridgeClient.cs src/ListTracker.cs src/AutoPilot.cs src/FilterPilot.cs src/HeroPilot.cs src/LiveTables.cs src/BattleCapture.cs src/BattleClock.cs src/BattleTimeline.cs src/TimelineBuilder.cs src/ArenaOpponents.cs src/ArenaClient.cs src/SellScan.cs src/SellPilot.cs src/Config.cs src/CodeProtector.cs"
-APP="app/Program.cs app/AppWindow.cs app/HostBridge.cs app/Overlay.cs app/BattleCoach.cs app/ArenaWatch.cs app/AssistantDriver.cs app/HintGeometry.cs app/Updater.cs app/AssemblyInfo.cs"
+APP="app/Program.cs app/AppWindow.cs app/HostBridge.cs app/Overlay.cs app/BattleCoach.cs app/ArenaWatch.cs app/HintGeometry.cs app/Updater.cs app/AssemblyInfo.cs"
 
 "${CSC[@]}" -langversion:7.3 -target:winexe -platform:x64 -optimize+ -deterministic -nostdlib -warnaserror -nowarn:1701,1702 \
   -r:$FX/mscorlib.dll -r:$FX/System.dll -r:$FX/System.Core.dll -r:$FX/System.Drawing.dll -r:$FX/System.Windows.Forms.dll \
