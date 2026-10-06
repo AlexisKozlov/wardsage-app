@@ -50,6 +50,7 @@ namespace RealmForge {
     public HostBridge(AppWindow win, CoreWebView2 core) {
       this.win = win; this.core = core;
       cfg = AppConfig.Load();
+      TakeInstallLang();
       if (string.IsNullOrEmpty(cfg.Site)) cfg.Site = SyncClient.DefaultSite;
       arenaWatch = new ArenaWatch(() => cfg.Site, () => cfg.Code);
       gameTimer.Interval = 2000; gameTimer.Tick += (s, e) => { CheckGame(false); WatchBattleEnd(); WatchStall(); arenaWatch.Tick(gameRunning); TryAutoUpdate(); }; gameTimer.Start();
@@ -317,6 +318,17 @@ namespace RealmForge {
       return sb.Append("]}").ToString();
     }
 
+    // The language picked in the installer (installer/RealmForge.iss leaves install-lang.txt next to the exe): taken once.
+    void TakeInstallLang() {
+      try {
+        string f = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "install-lang.txt");
+        if (!System.IO.File.Exists(f)) return;
+        string l = System.IO.File.ReadAllText(f).Trim();
+        System.IO.File.Delete(f);
+        if (l == "ru" || l == "en") { cfg.Lang = l; cfg.Save(); }
+      } catch (Exception) { }
+    }
+
     // ------------------------------------------------------------------ game status
 
     void CheckGame(bool force) {
@@ -325,6 +337,7 @@ namespace RealmForge {
       if (pid != gamePid) {
         gamePid = pid;
         gameVersion = pid != 0 ? GameInfo.TryReadVersion(GameInfo.TryGetExePath(pid)) : null;
+        Log.Write(pid != 0 ? "game found: #" + pid + " " + (GameInfo.TryGetExePath(pid) ?? "?") + ", version " + (gameVersion ?? "?") : "game closed");
       }
       bool running = pid != 0;
       if (!force && gameSent && running == gameRunning) return;
@@ -447,7 +460,7 @@ namespace RealmForge {
       t.Tick += (s, e) => {
         t.Stop(); t.Dispose();
         try {
-          var ps = System.Diagnostics.Process.GetProcessesByName("Watcher of Realms");
+          var ps = GameInfo.GameProcesses();
           IntPtr hwnd = ps.Length > 0 ? ps[0].MainWindowHandle : IntPtr.Zero;
           int fp = 0, gp = 0;
           if (hwnd != IntPtr.Zero) { W32.GetWindowThreadProcessId(W32.GetForegroundWindow(), out fp); W32.GetWindowThreadProcessId(hwnd, out gp); }
@@ -610,7 +623,10 @@ namespace RealmForge {
       SyncEv("find", null);
       string version;
       int pid = Extractor.FindGame(out version);
-      if (pid == 0) { SyncError("not_running", null, 0); return; }
+      if (pid == 0) {
+        if (!isAuto) { try { Log.Write("sync: the game is not found; similar processes: " + GameInfo.DescribeCandidates()); } catch (Exception) { } }
+        SyncError("not_running", null, 0); return;
+      }
       var started = DateTime.UtcNow;
       SyncEv("read", ",\"seconds\":0");
       var ticker = new System.Threading.Timer(_ => SyncEv("read", ",\"seconds\":" + N((long)(DateTime.UtcNow - started).TotalSeconds)), null, 1000, 1000);

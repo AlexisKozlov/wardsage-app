@@ -13,7 +13,7 @@ namespace RealmForge {
   public sealed class AppConfig {
     public string Site = SyncClient.DefaultSite;
     public string Code = "";
-    public string Lang = "ru";
+    public string Lang = SystemLang();   // until the player picks one: Windows's language (Russian for ru/uk/be/kk, else English)
     public bool SaveCopy;
     public bool AutoSync = true;    // send the account to the site by itself after gear changes and every few minutes
     public bool AutoClick;          // equip helper: open the slot, scroll the list and click the item in the game (off by default: the player turns it on)
@@ -26,6 +26,13 @@ namespace RealmForge {
     public List<int> LastTop = new List<int>(); // base ids of the 3 strongest heroes
 
     const string ProtectedPrefix = "dpapi:";
+
+    public static string SystemLang() {
+      try {
+        string l = System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName;
+        return l == "ru" || l == "uk" || l == "be" || l == "kk" ? "ru" : "en";
+      } catch (Exception) { return "en"; }
+    }
 
     public static string DefaultDir {
       get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "RealmForge"); }
@@ -80,7 +87,8 @@ namespace RealmForge {
       if (d == null) return c;
       string site = MiniJson.GetString(d, "site");
       if (!string.IsNullOrEmpty(site)) c.Site = site;
-      c.Lang = MiniJson.GetString(d, "lang") == "en" ? "en" : "ru";
+      string lang = MiniJson.GetString(d, "lang");
+      c.Lang = lang == "en" ? "en" : lang == "ru" ? "ru" : SystemLang();
       c.SaveCopy = MiniJson.GetBool(d, "saveCopy", false);
       c.AutoSync = MiniJson.GetBool(d, "autoSync", true);
       c.AutoClick = MiniJson.GetBool(d, "autoClick", false);

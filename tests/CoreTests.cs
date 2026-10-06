@@ -169,7 +169,7 @@ static class CoreTests {
     var back = AppConfig.FromJson(cj);
     Check(back.Code == Tok('A') && back.Site == "https://example.com" && back.Lang == "en" && back.SaveCopy, "config round trip");
     var def = AppConfig.FromJson("not json");
-    Check(def.Site == SyncClient.DefaultSite && def.Lang == "ru" && def.Code == "" && !def.SaveCopy, "broken config -> defaults");
+    Check(def.Site == SyncClient.DefaultSite && def.Lang == AppConfig.SystemLang() && def.Code == "" && !def.SaveCopy, "broken config -> defaults");
     Eq("", AppConfig.FromJson("{\"code\":\"" + Tok('A') + "\"}").Code, "plain-text code in config is ignored");
     string tmp = Path.Combine(Path.GetTempPath(), "rf-test-" + Guid.NewGuid().ToString("N"), "config.json");
     cfg.Save(tmp); cfg.Save(tmp);

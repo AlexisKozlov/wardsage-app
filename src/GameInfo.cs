@@ -10,9 +10,69 @@ using System.Text.RegularExpressions;
 namespace RealmForge {
   public static class GameInfo {
     public const string ProcessName = "Watcher of Realms";
+    const string WindowTitle = "Watcher of Realms";   // other regions' builds: «Watcher of Realms - US», ...
 
-    // <game folder>\Watcher of Realms_Data\StreamingAssets\version\windows\realversion.xml
-    static readonly string[] VersionFile = { "Watcher of Realms_Data", "StreamingAssets", "version", "windows", "realversion.xml" };
+    // <game folder>\<exe name>_Data\StreamingAssets\version\windows\realversion.xml
+    static readonly string[] VersionFile = { "StreamingAssets", "version", "windows", "realversion.xml" };
+
+    // A build with another exe name, found by its window once; then looked up by that name like the usual one.
+    static string otherName;
+    static DateTime nextScan = DateTime.MinValue;
+    static readonly object ScanGate = new object();
+
+    // The running game's processes (the caller disposes them), empty when it is not running. The usual build is found
+    // by its process name; a build named otherwise (another region or store) by a window titled «Watcher of Realms…»
+    // whose exe is a Unity game (GameAssembly.dll or <exe>_Data next to it), not its launcher.
+    public static Process[] GameProcesses() {
+      Process[] ps = Process.GetProcessesByName(ProcessName);
+      if (ps.Length > 0) return ps;
+      string other = otherName;
+      if (other != null) { ps = Process.GetProcessesByName(other); if (ps.Length > 0) return ps; }
+      lock (ScanGate) {
+        if (DateTime.UtcNow < nextScan) return ps;
+        nextScan = DateTime.UtcNow.AddSeconds(3);   // the window scan is heavier: not on every poll
+        Process found = null;
+        foreach (var p in Process.GetProcesses()) {
+          if (found == null && LooksLikeGame(p)) { found = p; continue; }
+          p.Dispose();
+        }
+        if (found == null) return ps;
+        otherName = found.ProcessName;
+        return new[] { found };
+      }
+    }
+
+    static bool LooksLikeGame(Process p) {
+      try {
+        if (p.ProcessName.IndexOf("launcher", StringComparison.OrdinalIgnoreCase) >= 0) return false;
+        string title = p.MainWindowTitle;
+        if (string.IsNullOrEmpty(title) || !title.StartsWith(WindowTitle, StringComparison.OrdinalIgnoreCase)) return false;
+        string exe = TryGetExePath(p.Id);
+        if (string.IsNullOrEmpty(exe)) return false;
+        string dir = Path.GetDirectoryName(exe);
+        return File.Exists(Path.Combine(dir, "GameAssembly.dll")) || Directory.Exists(Path.Combine(dir, Path.GetFileNameWithoutExtension(exe) + "_Data"));
+      } catch (Exception) { return false; }
+    }
+
+    // For the log when the game is not found: processes and windows that mention the game.
+    public static string DescribeCandidates() {
+      var sb = new StringBuilder();
+      foreach (var p in Process.GetProcesses()) {
+        try {
+          string name = p.ProcessName, title = "";
+          try { title = p.MainWindowTitle ?? ""; } catch (Exception) { }
+          if (name.IndexOf("watcher", StringComparison.OrdinalIgnoreCase) < 0 && name.IndexOf("realms", StringComparison.OrdinalIgnoreCase) < 0
+              && title.IndexOf("Watcher of Realms", StringComparison.OrdinalIgnoreCase) < 0) continue;
+          if (sb.Length > 0) sb.Append("; ");
+          sb.Append(name).Append(" #").Append(p.Id);
+          if (title.Length > 0) sb.Append(" «").Append(title).Append("»");
+          string exe = TryGetExePath(p.Id);
+          if (exe != null) sb.Append(" ").Append(exe);
+        } catch (Exception) { }
+        finally { p.Dispose(); }
+      }
+      return sb.Length > 0 ? sb.ToString() : "none";
+    }
 
     [DllImport("kernel32.dll", SetLastError = true)]
     static extern IntPtr OpenProcess(int access, bool inherit, int pid);
@@ -25,7 +85,7 @@ namespace RealmForge {
 
     // Id of the running game process, or 0.
     public static int FindGameProcess() {
-      Process[] ps = Process.GetProcessesByName(ProcessName);
+      Process[] ps = GameProcesses();
       try { return ps.Length > 0 ? ps[0].Id : 0; }
       finally { foreach (var p in ps) p.Dispose(); }
     }
@@ -51,7 +111,7 @@ namespace RealmForge {
     public static string TryReadVersion(string exePath) {
       try {
         if (string.IsNullOrEmpty(exePath)) return null;
-        string path = Path.GetDirectoryName(exePath);
+        string path = Path.Combine(Path.GetDirectoryName(exePath), Path.GetFileNameWithoutExtension(exePath) + "_Data");
         foreach (var part in VersionFile) path = Path.Combine(path, part);
         if (!File.Exists(path)) return null;
         var fi = new FileInfo(path);

@@ -43,8 +43,10 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 CloseApplications=yes
 RestartApplications=no
+ShowLanguageDialog=yes
 
 [Languages]
+; the installer asks for the language first; the app starts in the same one (install-lang.txt, read once by the app)
 Name: "ru"; MessagesFile: "compiler:Languages\Russian.isl"
 Name: "en"; MessagesFile: "compiler:Default.isl"
 
@@ -68,3 +70,10 @@ Filename: "{app}\RealmForge.exe"; Description: "{cm:LaunchProgram,RealmForge}"; 
 ; code (%APPDATA%\RealmForge) stay, so a reinstall keeps the link to the site.
 Type: files; Name: "{app}\RealmForge.exe.old"
 Type: filesandordirs; Name: "{localappdata}\RealmForge"
+
+[Code]
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssPostInstall then
+    SaveStringToFile(ExpandConstant('{app}\install-lang.txt'), ActiveLanguage, False);
+end;

@@ -288,7 +288,7 @@ namespace RealmForge {
 
     public static string Run() {
       LastError = null; LastOpenError = 0;
-      var ps = Process.GetProcessesByName("Watcher of Realms");
+      var ps = GameInfo.GameProcesses();
       if (ps.Length == 0) { LastError = "not_running"; L("ERROR: game not running."); return null; }
       H = OpenProcess(0x0410, false, ps[0].Id);
       if (H == IntPtr.Zero) { LastOpenError = Marshal.GetLastWin32Error(); LastError = "open_failed"; L("ERROR: cannot open game process (code " + LastOpenError + "). Run as administrator."); return null; }

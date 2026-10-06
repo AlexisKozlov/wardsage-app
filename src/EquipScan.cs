@@ -73,7 +73,7 @@ namespace RealmForge {
       OnLog = onLog;
       try {
         LastError = null; LastOpenError = 0;
-        var ps = Process.GetProcessesByName("Watcher of Realms");
+        var ps = GameInfo.GameProcesses();
         if (ps.Length == 0) { LastError = "not_running"; return null; }
         H = OpenProcess(0x0410, false, ps[0].Id);
         if (H == IntPtr.Zero) { LastOpenError = Marshal.GetLastWin32Error(); LastError = "open_failed"; return null; }

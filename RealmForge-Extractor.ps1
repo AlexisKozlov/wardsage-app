@@ -336,7 +336,7 @@ namespace RealmForge {
 
     public static string Run() {
       LastError = null; LastOpenError = 0;
-      var ps = Process.GetProcessesByName("Watcher of Realms");
+      var ps = GameInfo.GameProcesses();
       if (ps.Length == 0) { LastError = "not_running"; L("ERROR: game not running."); return null; }
       H = OpenProcess(0x0410, false, ps[0].Id);
       if (H == IntPtr.Zero) { LastOpenError = Marshal.GetLastWin32Error(); LastError = "open_failed"; L("ERROR: cannot open game process (code " + LastOpenError + "). Run as administrator."); return null; }
@@ -752,7 +752,7 @@ namespace RealmForge {
 
     /// <summary>Diagnostics: every table owning the hero screen's grid key, with the types of its fields.</summary>
     public static string DumpForms() {
-      var ps = Process.GetProcessesByName("Watcher of Realms");
+      var ps = GameInfo.GameProcesses();
       if (ps.Length == 0) return null;
       H = OpenProcess(0x0410, false, ps[0].Id);
       if (H == IntPtr.Zero) return null;
@@ -780,7 +780,7 @@ namespace RealmForge {
     /// fTreatmentAmount 0x38, fAcceptDamageAmount 0x3C, iStarLevel 0x40, iSublimLevel 0x44), and the battle-end screen's
     /// frame count (Form_BattleEnd.m_FightFramIdx; one logic frame = 270/4096 s). JSON lines, read-only.</summary>
     public static string DumpBattleStats() {
-      var ps = Process.GetProcessesByName("Watcher of Realms");
+      var ps = GameInfo.GameProcesses();
       if (ps.Length == 0) return null;
       H = OpenProcess(0x0410, false, ps[0].Id);
       if (H == IntPtr.Zero) return null;
@@ -842,7 +842,7 @@ namespace RealmForge {
     }
 
     public static string DumpHeroFights() {
-      var ps = Process.GetProcessesByName("Watcher of Realms");
+      var ps = GameInfo.GameProcesses();
       if (ps.Length == 0) return null;
       H = OpenProcess(0x0410, false, ps[0].Id);
       if (H == IntPtr.Zero) return null;
@@ -1182,7 +1182,7 @@ namespace RealmForge {
       uiLastFind = Environment.TickCount;
       // its own look at the game: the handle and the memory regions of now (no equip scan may have run since the start,
       // and the regions change as the game allocates)
-      var ps = System.Diagnostics.Process.GetProcessesByName("Watcher of Realms");
+      var ps = GameInfo.GameProcesses();
       if (ps.Length == 0) return 0;
       if (H == IntPtr.Zero) H = OpenProcess(0x0410, false, ps[0].Id);
       if (H == IntPtr.Zero) return 0;
@@ -1282,7 +1282,7 @@ namespace RealmForge {
 
     /// <summary>Diagnostics: finds UIInstance and lists its forms (id, and the name when known).</summary>
     public static string DiagUi() {
-      var ps = System.Diagnostics.Process.GetProcessesByName("Watcher of Realms");
+      var ps = GameInfo.GameProcesses();
       if (ps.Length == 0) return "no game\n";
       H = OpenProcess(0x0410, false, ps[0].Id);
       if (H == IntPtr.Zero) return "open failed\n";
@@ -1379,7 +1379,7 @@ namespace RealmForge {
     /// simulation and stage id (false = none running).</summary>
     public static bool FindRunningSim(out ulong sim, out int stage) {
       sim = 0; stage = 0;
-      var ps = Process.GetProcessesByName("Watcher of Realms");
+      var ps = GameInfo.GameProcesses();
       if (ps.Length == 0) return false;
       if (H == IntPtr.Zero) H = OpenProcess(0x0410, false, ps[0].Id);
       if (H == IntPtr.Zero) return false;
@@ -1425,7 +1425,7 @@ namespace RealmForge {
     /// <summary>The simulation the battle view holds now (BattleManager.instance.m_simulation), or 0. Cheap: four
     /// pointer reads, no scan. The game keeps the last one after a fight ends, so check SimClock's state.</summary>
     public static ulong CurrentSim() {
-      var ps = Process.GetProcessesByName("Watcher of Realms");
+      var ps = GameInfo.GameProcesses();
       if (ps.Length == 0) { simPid = 0; return 0; }
       if (ps[0].Id != simPid || simGa == 0 || H == IntPtr.Zero) {
         // the game (re)started: its handle and GameAssembly's base anew
@@ -1537,7 +1537,7 @@ namespace RealmForge {
       OnLog = onLog;
       try {
         LastError = null; LastOpenError = 0;
-        var ps = Process.GetProcessesByName("Watcher of Realms");
+        var ps = GameInfo.GameProcesses();
         if (ps.Length == 0) { LastError = "not_running"; return null; }
         H = OpenProcess(0x0410, false, ps[0].Id);
         if (H == IntPtr.Zero) { LastOpenError = Marshal.GetLastWin32Error(); LastError = "open_failed"; return null; }
@@ -2134,9 +2134,69 @@ namespace RealmForge {
 namespace RealmForge {
   public static class GameInfo {
     public const string ProcessName = "Watcher of Realms";
+    const string WindowTitle = "Watcher of Realms";   // other regions' builds: «Watcher of Realms - US», ...
 
-    // <game folder>\Watcher of Realms_Data\StreamingAssets\version\windows\realversion.xml
-    static readonly string[] VersionFile = { "Watcher of Realms_Data", "StreamingAssets", "version", "windows", "realversion.xml" };
+    // <game folder>\<exe name>_Data\StreamingAssets\version\windows\realversion.xml
+    static readonly string[] VersionFile = { "StreamingAssets", "version", "windows", "realversion.xml" };
+
+    // A build with another exe name, found by its window once; then looked up by that name like the usual one.
+    static string otherName;
+    static DateTime nextScan = DateTime.MinValue;
+    static readonly object ScanGate = new object();
+
+    // The running game's processes (the caller disposes them), empty when it is not running. The usual build is found
+    // by its process name; a build named otherwise (another region or store) by a window titled «Watcher of Realms…»
+    // whose exe is a Unity game (GameAssembly.dll or <exe>_Data next to it), not its launcher.
+    public static Process[] GameProcesses() {
+      Process[] ps = Process.GetProcessesByName(ProcessName);
+      if (ps.Length > 0) return ps;
+      string other = otherName;
+      if (other != null) { ps = Process.GetProcessesByName(other); if (ps.Length > 0) return ps; }
+      lock (ScanGate) {
+        if (DateTime.UtcNow < nextScan) return ps;
+        nextScan = DateTime.UtcNow.AddSeconds(3);   // the window scan is heavier: not on every poll
+        Process found = null;
+        foreach (var p in Process.GetProcesses()) {
+          if (found == null && LooksLikeGame(p)) { found = p; continue; }
+          p.Dispose();
+        }
+        if (found == null) return ps;
+        otherName = found.ProcessName;
+        return new[] { found };
+      }
+    }
+
+    static bool LooksLikeGame(Process p) {
+      try {
+        if (p.ProcessName.IndexOf("launcher", StringComparison.OrdinalIgnoreCase) >= 0) return false;
+        string title = p.MainWindowTitle;
+        if (string.IsNullOrEmpty(title) || !title.StartsWith(WindowTitle, StringComparison.OrdinalIgnoreCase)) return false;
+        string exe = TryGetExePath(p.Id);
+        if (string.IsNullOrEmpty(exe)) return false;
+        string dir = Path.GetDirectoryName(exe);
+        return File.Exists(Path.Combine(dir, "GameAssembly.dll")) || Directory.Exists(Path.Combine(dir, Path.GetFileNameWithoutExtension(exe) + "_Data"));
+      } catch (Exception) { return false; }
+    }
+
+    // For the log when the game is not found: processes and windows that mention the game.
+    public static string DescribeCandidates() {
+      var sb = new StringBuilder();
+      foreach (var p in Process.GetProcesses()) {
+        try {
+          string name = p.ProcessName, title = "";
+          try { title = p.MainWindowTitle ?? ""; } catch (Exception) { }
+          if (name.IndexOf("watcher", StringComparison.OrdinalIgnoreCase) < 0 && name.IndexOf("realms", StringComparison.OrdinalIgnoreCase) < 0
+              && title.IndexOf("Watcher of Realms", StringComparison.OrdinalIgnoreCase) < 0) continue;
+          if (sb.Length > 0) sb.Append("; ");
+          sb.Append(name).Append(" #").Append(p.Id);
+          if (title.Length > 0) sb.Append(" «").Append(title).Append("»");
+          string exe = TryGetExePath(p.Id);
+          if (exe != null) sb.Append(" ").Append(exe);
+        } catch (Exception) { }
+        finally { p.Dispose(); }
+      }
+      return sb.Length > 0 ? sb.ToString() : "none";
+    }
 
     [DllImport("kernel32.dll", SetLastError = true)]
     static extern IntPtr OpenProcess(int access, bool inherit, int pid);
@@ -2149,7 +2209,7 @@ namespace RealmForge {
 
     // Id of the running game process, or 0.
     public static int FindGameProcess() {
-      Process[] ps = Process.GetProcessesByName(ProcessName);
+      Process[] ps = GameProcesses();
       try { return ps.Length > 0 ? ps[0].Id : 0; }
       finally { foreach (var p in ps) p.Dispose(); }
     }
@@ -2175,7 +2235,7 @@ namespace RealmForge {
     public static string TryReadVersion(string exePath) {
       try {
         if (string.IsNullOrEmpty(exePath)) return null;
-        string path = Path.GetDirectoryName(exePath);
+        string path = Path.Combine(Path.GetDirectoryName(exePath), Path.GetFileNameWithoutExtension(exePath) + "_Data");
         foreach (var part in VersionFile) path = Path.Combine(path, part);
         if (!File.Exists(path)) return null;
         var fi = new FileInfo(path);
@@ -2895,7 +2955,7 @@ namespace RealmForge {
   public sealed class AppConfig {
     public string Site = SyncClient.DefaultSite;
     public string Code = "";
-    public string Lang = "ru";
+    public string Lang = SystemLang();   // until the player picks one: Windows's language (Russian for ru/uk/be/kk, else English)
     public bool SaveCopy;
     public bool AutoSync = true;    // send the account to the site by itself after gear changes and every few minutes
     public bool AutoClick;          // equip helper: open the slot, scroll the list and click the item in the game (off by default: the player turns it on)
@@ -2908,6 +2968,13 @@ namespace RealmForge {
     public List<int> LastTop = new List<int>(); // base ids of the 3 strongest heroes
 
     const string ProtectedPrefix = "dpapi:";
+
+    public static string SystemLang() {
+      try {
+        string l = System.Globalization.CultureInfo.CurrentUICulture.TwoLetterISOLanguageName;
+        return l == "ru" || l == "uk" || l == "be" || l == "kk" ? "ru" : "en";
+      } catch (Exception) { return "en"; }
+    }
 
     public static string DefaultDir {
       get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "RealmForge"); }
@@ -2962,7 +3029,8 @@ namespace RealmForge {
       if (d == null) return c;
       string site = MiniJson.GetString(d, "site");
       if (!string.IsNullOrEmpty(site)) c.Site = site;
-      c.Lang = MiniJson.GetString(d, "lang") == "en" ? "en" : "ru";
+      string lang = MiniJson.GetString(d, "lang");
+      c.Lang = lang == "en" ? "en" : lang == "ru" ? "ru" : SystemLang();
       c.SaveCopy = MiniJson.GetBool(d, "saveCopy", false);
       c.AutoSync = MiniJson.GetBool(d, "autoSync", true);
       c.AutoClick = MiniJson.GetBool(d, "autoClick", false);

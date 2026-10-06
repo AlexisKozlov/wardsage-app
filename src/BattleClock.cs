@@ -18,7 +18,7 @@ namespace RealmForge {
     /// simulation and stage id (false = none running).</summary>
     public static bool FindRunningSim(out ulong sim, out int stage) {
       sim = 0; stage = 0;
-      var ps = Process.GetProcessesByName("Watcher of Realms");
+      var ps = GameInfo.GameProcesses();
       if (ps.Length == 0) return false;
       if (H == IntPtr.Zero) H = OpenProcess(0x0410, false, ps[0].Id);
       if (H == IntPtr.Zero) return false;
@@ -64,7 +64,7 @@ namespace RealmForge {
     /// <summary>The simulation the battle view holds now (BattleManager.instance.m_simulation), or 0. Cheap: four
     /// pointer reads, no scan. The game keeps the last one after a fight ends, so check SimClock's state.</summary>
     public static ulong CurrentSim() {
-      var ps = Process.GetProcessesByName("Watcher of Realms");
+      var ps = GameInfo.GameProcesses();
       if (ps.Length == 0) { simPid = 0; return 0; }
       if (ps[0].Id != simPid || simGa == 0 || H == IntPtr.Zero) {
         // the game (re)started: its handle and GameAssembly's base anew

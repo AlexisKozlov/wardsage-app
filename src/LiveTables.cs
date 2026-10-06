@@ -312,7 +312,7 @@ namespace RealmForge {
 
     /// <summary>Diagnostics: every table owning the hero screen's grid key, with the types of its fields.</summary>
     public static string DumpForms() {
-      var ps = Process.GetProcessesByName("Watcher of Realms");
+      var ps = GameInfo.GameProcesses();
       if (ps.Length == 0) return null;
       H = OpenProcess(0x0410, false, ps[0].Id);
       if (H == IntPtr.Zero) return null;
@@ -340,7 +340,7 @@ namespace RealmForge {
     /// fTreatmentAmount 0x38, fAcceptDamageAmount 0x3C, iStarLevel 0x40, iSublimLevel 0x44), and the battle-end screen's
     /// frame count (Form_BattleEnd.m_FightFramIdx; one logic frame = 270/4096 s). JSON lines, read-only.</summary>
     public static string DumpBattleStats() {
-      var ps = Process.GetProcessesByName("Watcher of Realms");
+      var ps = GameInfo.GameProcesses();
       if (ps.Length == 0) return null;
       H = OpenProcess(0x0410, false, ps[0].Id);
       if (H == IntPtr.Zero) return null;
@@ -402,7 +402,7 @@ namespace RealmForge {
     }
 
     public static string DumpHeroFights() {
-      var ps = Process.GetProcessesByName("Watcher of Realms");
+      var ps = GameInfo.GameProcesses();
       if (ps.Length == 0) return null;
       H = OpenProcess(0x0410, false, ps[0].Id);
       if (H == IntPtr.Zero) return null;

@@ -55,7 +55,7 @@ namespace RealmForge {
     /// <summary>The PVPData table (0 = not found); searched (two passes, a few seconds) when not known, at most every
     /// <paramref name="rescanMs"/>. Call off the interface thread.</summary>
     public static ulong PvpData(int rescanMs) {
-      var ps = System.Diagnostics.Process.GetProcessesByName("Watcher of Realms");
+      var ps = GameInfo.GameProcesses();
       if (ps.Length == 0) { pvpData = 0; return 0; }
       if (ps[0].Id != pvpPid) { pvpData = 0; pvpPid = ps[0].Id; pvpLastFind = 0; H = OpenProcess(0x0410, false, ps[0].Id); }
       if (H == IntPtr.Zero) H = OpenProcess(0x0410, false, ps[0].Id);

@@ -190,6 +190,7 @@
     return `
       <div class="head"><div><h1>${esc(t('obTitle'))}</h1><p class="lead">${esc(t('obLead'))}</p></div></div>
       <div class="card framed">
+        ${S.hasCode ? '' : `<div class="obLang"><span>Язык · Language</span><div class="langs"><button data-act="lang" data-lang="ru" aria-pressed="${S.lang === 'ru'}">РУССКИЙ</button><button data-act="lang" data-lang="en" aria-pressed="${S.lang === 'en'}">ENGLISH</button></div></div>`}
         <ol class="onboard">
           <li><b>${esc(t('ob1'))}</b>${esc(t('ob1p'))}</li><li><b>${esc(t('ob2'))}</b>${esc(t('ob2p'))}</li><li><b>${esc(t('ob3'))}</b>${esc(t('ob3p'))}</li>
         </ol>

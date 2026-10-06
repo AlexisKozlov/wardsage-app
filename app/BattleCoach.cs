@@ -81,7 +81,7 @@ namespace RealmForge {
     void Tick() {
       uint frames; int state;
       if ((cur == null && plan == null) || !RFX.SimClock(sim, out frames, out state) || state != 1) { Stop(); return; }
-      var ps = System.Diagnostics.Process.GetProcessesByName("Watcher of Realms");
+      var ps = GameInfo.GameProcesses();
       IntPtr hwnd = ps.Length > 0 ? ps[0].MainWindowHandle : IntPtr.Zero;
       int fp = 0, gp = 0;
       if (hwnd != IntPtr.Zero) { W32.GetWindowThreadProcessId(W32.GetForegroundWindow(), out fp); W32.GetWindowThreadProcessId(hwnd, out gp); }

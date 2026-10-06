@@ -30,7 +30,7 @@ namespace RealmForge {
       uiLastFind = Environment.TickCount;
       // its own look at the game: the handle and the memory regions of now (no equip scan may have run since the start,
       // and the regions change as the game allocates)
-      var ps = System.Diagnostics.Process.GetProcessesByName("Watcher of Realms");
+      var ps = GameInfo.GameProcesses();
       if (ps.Length == 0) return 0;
       if (H == IntPtr.Zero) H = OpenProcess(0x0410, false, ps[0].Id);
       if (H == IntPtr.Zero) return 0;
@@ -130,7 +130,7 @@ namespace RealmForge {
 
     /// <summary>Diagnostics: finds UIInstance and lists its forms (id, and the name when known).</summary>
     public static string DiagUi() {
-      var ps = System.Diagnostics.Process.GetProcessesByName("Watcher of Realms");
+      var ps = GameInfo.GameProcesses();
       if (ps.Length == 0) return "no game\n";
       H = OpenProcess(0x0410, false, ps[0].Id);
       if (H == IntPtr.Zero) return "open failed\n";
