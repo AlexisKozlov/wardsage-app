@@ -180,6 +180,8 @@ namespace RealmForge {
             long hero = addrs != null ? RFX.ReadHero(addrs) : 0; if (hero <= 0) hero = RFX.AnyHeroUid();
             overlay.SetSell(uids, parts, levels.Count == uids.Count ? levels : null, hero);
             Log.Write("sell: run " + uids.Count + " items, hero " + hero);
+            if (!cfg.AutoClick) Log.Write("sell: waiting - auto click is off");
+            if (addrs == null && !scanning && cfg.AutoClick) StartScan(watch, true);   // the pilot needs the game's screens found
             break;
           }
           case "sell.stop": overlay.SetSell(null, null, null, 0); break;

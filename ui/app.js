@@ -248,9 +248,10 @@
     return `<div class="card sell"><div class="row" style="justify-content:space-between;align-items:flex-start">
         <div><h3>${esc(t('sellTitle'))}</h3><div class="meta">${esc(t('sellCount', n))}</div></div>
         <div class="row">${L.run ? `<button class="btn-line" data-act="sellStop">${esc(t('stopBtn'))}</button>`
-          : `<button class="btn" data-act="sellRun" ${S.game.running ? '' : 'disabled'}>${esc(t('sellRun'))}</button>`}
+          : `<button class="btn" data-act="${S.autoClick ? 'sellRun' : 'sellAuto'}" ${S.game.running ? '' : 'disabled'}>${esc(t(S.autoClick ? 'sellRun' : 'sellAutoRun'))}</button>`}
           <button class="btn-line" data-act="sellCancel">${esc(t('sellCancel'))}</button></div></div>
       <p class="lead">${esc(t('sellLead'))}</p>
+      ${S.autoClick ? '' : `<p class="warn">${esc(t('sellNeedAuto'))}</p>`}
       ${st ? `<p><b>${esc(st)}</b></p>` : ''}${warn ? `<p class="warn">${esc(warn)}</p>` : ''}</div>`;
   }
   function sellStart() {
@@ -573,6 +574,8 @@
     else if (a === 'pick') { S.sel = Number(el.dataset.i); render(); }
     else if (a === 'run') { const p = current(); if (!p || foreign(p)) return; startRun(p); if (!S.autoConfirm) toast(t('runNoConfirm'), 6000); render(); }
     else if (a === 'sellRun') sellStart();
+    // storage cleanup clicks in the game: it needs «Автонажатие» (off by default) — this button is the player's explicit choice
+    else if (a === 'sellAuto') { S.autoClick = true; host.send({ cmd: 'setAutoClick', on: true }); sellStart(); }
     else if (a === 'sellStop') { S.sell.run = false; host.send({ cmd: 'sell.stop' }); render(); }
     else if (a === 'sellCancel') {
       if (!S.sell.list) return;
