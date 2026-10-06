@@ -2415,6 +2415,8 @@ namespace RealmForge {
     /// <summary>The game account last read (PlayerData m_Uid; 0 = not known yet): every request names it in X-RF-Player, so
     /// the site keeps two game accounts on one sync code apart.</summary>
     public static long Player;
+    /// <summary>The desktop app's version (app/Program.cs), sent as X-RF-App so the site knows which build synced.</summary>
+    public static string App;
     public static void AddPlayer(System.Net.HttpWebRequest req) { if (Player > 0) req.Headers["X-RF-Player"] = Player.ToString(System.Globalization.CultureInfo.InvariantCulture); }
     public const string DefaultSite = "https://realmforge-wor.vercel.app";
     public static int TimeoutMs = 60000;   // per request; a field (not const) so tests can shorten it
@@ -2485,6 +2487,7 @@ namespace RealmForge {
         req.Headers["Authorization"] = "Bearer " + code;
         req.Headers["Content-Encoding"] = "gzip";
         req.Headers["X-RF-Extractor"] = Version;
+        if (!string.IsNullOrEmpty(App)) req.Headers["X-RF-App"] = App;
         AddPlayer(req);
         req.Timeout = TimeoutMs;
         req.ReadWriteTimeout = TimeoutMs;

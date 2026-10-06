@@ -50,6 +50,7 @@ namespace RealmForge {
     public HostBridge(AppWindow win, CoreWebView2 core) {
       this.win = win; this.core = core;
       cfg = AppConfig.Load();
+      SyncClient.App = Program.Version;
       TakeInstallLang();
       if (string.IsNullOrEmpty(cfg.Site)) cfg.Site = SyncClient.DefaultSite;
       arenaWatch = new ArenaWatch(() => cfg.Site, () => cfg.Code);
