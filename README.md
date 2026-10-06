@@ -16,6 +16,19 @@ The account is read from the game's live tables, found once per game session (`s
 sync) and sent by itself after gear changes (Settings → «Автосинхронизация»).
 Player instructions (RU/EN): [README.txt](README.txt).
 
+## What the app reads and sends
+
+- **Reads, never writes.** Only `ReadProcessMemory` on the running game; nothing is written into the game's memory or
+  files, no code is injected, nothing is sent to the game's servers.
+- **Sent to the RealmForge site** (with the player's sync code, over HTTPS): the account snapshot (heroes, gear,
+  artifacts, resources, summon history, arena teams); while the arena screen is open, the opponents list the game shows
+  (their names, power, heroes, defence records) and the player's own fight statistics after a fight — for the site's
+  fight forecast; error reports only if the player turned them on (off by default).
+- **Kept on the PC**: `%APPDATA%\RealmForge` (settings with the sync code encrypted by Windows DPAPI, the log, recent
+  fight records and opponents lists).
+- **Updates** are downloaded from the site and applied only if signed with the project's key (`app/Updater.cs`).
+- **Input**: the equip helper's clicks (above) — only for a build the player started; nothing else is clicked.
+
 What players get (`dist/RealmForge.zip`): **`RealmForge.exe`** — one file (≈1.3 MB), .NET Framework 4.6.2+,
 x64, asks for administrator rights (the game runs elevated). The interface is HTML/CSS (`ui/`) rendered by the
 Microsoft Edge **WebView2** Runtime that ships with Windows 10/11; the WebView2 SDK (`vendor/webview2`, Microsoft-signed)
