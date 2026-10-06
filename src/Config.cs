@@ -16,7 +16,7 @@ namespace RealmForge {
     public string Lang = "ru";
     public bool SaveCopy;
     public bool AutoSync = true;    // send the account to the site by itself after gear changes and every few minutes
-    public bool AutoClick = true;   // equip helper: open the slot, scroll the list and click the item in the game
+    public bool AutoClick;          // equip helper: open the slot, scroll the list and click the item in the game (off by default: the player turns it on)
     public bool AutoConfirm;        // ...and press «Заменить» itself (off by default: the player's explicit choice)
     public bool ErrorReports;       // send failures to the site with the journal's last lines (src/ErrorReport.cs; off by default)
     public bool AutoUpdate = true;  // put a downloaded update in place by restarting in a quiet moment (HostBridge.TryAutoUpdate)
@@ -83,7 +83,7 @@ namespace RealmForge {
       c.Lang = MiniJson.GetString(d, "lang") == "en" ? "en" : "ru";
       c.SaveCopy = MiniJson.GetBool(d, "saveCopy", false);
       c.AutoSync = MiniJson.GetBool(d, "autoSync", true);
-      c.AutoClick = MiniJson.GetBool(d, "autoClick", true);
+      c.AutoClick = MiniJson.GetBool(d, "autoClick", false);
       c.AutoConfirm = MiniJson.GetBool(d, "autoConfirm", false);
       c.ErrorReports = MiniJson.GetBool(d, "errorReports", false);
       c.AutoUpdate = MiniJson.GetBool(d, "autoUpdate", true);

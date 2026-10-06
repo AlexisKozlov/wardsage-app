@@ -15,7 +15,7 @@
     sync: { phase: 'idle', stage: null, seconds: 0, result: null, error: null },
     plans: { status: 'idle', list: [], err: null }, sel: 0,
     scan: { status: 'idle', panel: false }, live: null, reported: {}, compact: false, overlay: 'off', hl: '',
-    autoSync: true, autoClick: true, autoConfirm: false, errorReports: false, autoUpdate: true, auto: 'idle', autoAt: null,
+    autoSync: true, autoClick: false, autoConfirm: false, errorReports: false, autoUpdate: true, auto: 'idle', autoAt: null,
     run: null, seen: null, runKey: '', queue: [], takeOver: {},
     // storage cleanup: the site's list, the pilot's state on the game's sell screen
     sell: { list: null, run: false, state: '', selected: 0, missing: 0, extra: 0, seen: {} },
@@ -120,7 +120,6 @@
         ${tops.length ? `<div class="collage">${tops.map((id) => `<img src="${esc(S.site)}/art/heroes/HeroBust_${Number(id)}.webp" alt="" onerror="this.remove()">`).join('')}</div>` : ''}
         <div class="inner">
           <button class="btn-gold big" data-act="sync" ${running ? 'disabled' : ''}>${I.sync}<span>${esc(running ? t('btnBusy') : t('btnSync'))}</span></button>
-          <button class="btn-line" data-act="battleCapture" title="${esc(t('battleCaptureTip'))}">${esc(t('battleCapture'))}</button>
           ${steps()}
           ${sy.phase === 'run' ? `<div class="bar"><i style="width:${progress()}%"></i></div><div class="status">${esc(sy.stage === 'read' ? t('readHint', sy.seconds) : sy.stage === 'send' ? t('sendHint') : '')}</div>` : ''}
           ${sy.phase === 'wait' ? `<div class="bar"><i style="width:92%"></i></div><div class="status">${esc(t('rateWait', Math.max(1, Math.ceil((sy.until - Date.now()) / 1000))))}</div>` : ''}
@@ -467,7 +466,6 @@
         ${row(t('setReports'), t('setReportsP'), `<button class="switch" role="switch" data-act="errorReports" aria-checked="${S.errorReports}"></button>`)}
         ${row(t('setLog'), t('setLogP'), `<button class="btn-line" data-act="openLog">${esc(t('openLog'))}</button>`)}
         ${row(t('setDiag'), t('setDiagP'), `<button class="btn-line" data-act="diag">${esc(t('diagStart'))}</button>`)}
-        ${row(t('setFiles'), t('setFilesP'), `<button class="btn-line" data-act="gameFiles">${esc(t('filesStart'))}</button> <span class="hint" id="filesState">${esc(S.filesState || '')}</span>`)}
         ${row(t('setAbout'), '', `<p style="margin:0 0 10px;color:var(--muted)">${esc(t('aboutP', S.version))}</p>
           <button class="btn-line" data-act="open" data-url="https://github.com/AlexisKozlov/realmforge-extractor">${I.ext}${esc(t('source'))}</button>`)}
       </dl></div>`;
@@ -549,7 +547,6 @@
     else if (a === 'saveOnly') { S.sync = { phase: 'run', stage: 'find', seconds: 0 }; host.send({ cmd: 'sync', saveOnly: true }); S.page = 'sync'; render(); }
     else if (a === 'open') host.send({ cmd: 'open', url: el.dataset.url });
     else if (a === 'openLog') host.send({ cmd: 'openLog' });
-    else if (a === 'gameFiles') { host.send({ cmd: 'gameFiles' }); S.filesState = t('filesWork', 0); render(); }
     else if (a === 'diag') { host.send({ cmd: 'diag' }); el.textContent = t('diagOn'); el.disabled = true; }
     else if (a === 'openFolder') host.send({ cmd: 'openFolder' });
     else if (a === 'editCode') { S.editCode = true; S.page = 'sync'; render(); setTimeout(() => $('#code') && $('#code').focus(), 30); }
@@ -686,7 +683,6 @@
         if (S.page === 'equip' || S.compact) render(); else syncHighlight();
         break;
       }
-      case 'gameFiles': S.filesState = m.state === 'progress' ? t('filesWork', m.n) : m.state === 'done' ? t('filesDone', m.n) : m.state === 'no_game' ? t('filesNoGame') : t('filesErr'); if (S.page === 'settings') render(); break;
       case 'overlay': S.overlay = m.state; if (S.page === 'equip' || S.compact) render(); break;
       case 'update': S.update = { version: m.version, notes: m.notes || '' }; render(); break;
       case 'auto': S.auto = m.state; if (S.page === 'equip' || S.compact) render(); break;

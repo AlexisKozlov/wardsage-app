@@ -3,7 +3,7 @@
 Reads a Watcher of Realms account (heroes, gear, artifacts, faction rewards) from the memory of the
 running game and sends it to the RealmForge site. Windows only; the game's memory is only read (`ReadProcessMemory`).
 The desktop app's equip helper can also put a build on by itself with the mouse, as a player would (Settings →
-«Автонажатие», on by default): for a build the player started («Надеть» in the app, «Надеть в игре» on the site a moment
+«Автонажатие», off by default — the player turns it on): for a build the player started («Надеть» in the app, «Надеть в игре» on the site a moment
 ago, or a bridge command) it brings up the hero on the hero screen (`src/HeroPilot.cs`: from the city, filtering the hero
 grid by the hero's faction and class — `app/res/hero_tags.json`, rebuilt with `node tools/hero-tags.mjs` after a game
 patch — so it is in the first rows), opens the slot, sets the game's

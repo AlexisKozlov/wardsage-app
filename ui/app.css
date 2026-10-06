@@ -295,7 +295,8 @@ body.compact .slots li .sub { font-size: 12px }
   -webkit-mask-image: linear-gradient(90deg, transparent 0%, #000 45%); mask-image: linear-gradient(90deg, transparent 0%, #000 45%) }
 .collage img:first-child { filter: saturate(1.05) brightness(1) }
 .banner.has-collage .inner { max-width: calc(100% - 300px) }
-.banner .btn-gold.big { width: auto; min-width: 300px; justify-self: start }
+/* the sync button spans the banner's column: its label (icon + «СИНХРОНИЗИРОВАТЬ») never touches the frame */
+.banner .btn-gold.big { width: 100%; justify-self: stretch; padding: 0 22px; letter-spacing: 1.2px }
 .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 18px }
 .tile { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 12px; align-items: center; padding: 14px 16px }
 .tile .ico { width: 40px; height: 40px; display: grid }

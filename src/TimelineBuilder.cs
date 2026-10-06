@@ -24,7 +24,7 @@
 // monster, when it was cleared (the game's own test, WaveControllerNode.DoAdvanceCellNode: NodeData.iActiveNode < 1 and
 // TDStateData.vMonsterCount[c] <= vMonsterAdvanceIgnoreCount[c]), who cleared first; each base's HP; the judge's hits
 // on the slower side's base (its HP drops between the other side's clear and its own whose size is one of the judge's
-// rates, % of max HP: 2/4/6, 3.5/5.5/7.5, 6/8/10, 8/10/12, 12/16/20 — work/sim/ARENA.md §5).
+// rates, % of max HP: 2/4/6, 3.5/5.5/7.5, 6/8/10, 8/10/12, 12/16/20).
 //
 // JSON: {"v":2,"frames":N,"frameSec":0.06591796875,"samples":K,["gridW":W,]
 //        "heroes":{"<key>":{"c":C,"uid":U,"unit":U,"squad":S,"leader":false,"placed":[[frame,x,y,face,exact]],"fell":[frame],
@@ -101,7 +101,7 @@ namespace RealmForge {
     /// <summary>A sampled event this many frames (~3 s) after a command's frame is that command.</summary>
     public const int MatchFrames = 45;
     public const double FrameSec = 270.0 / 4096.0;
-    /// <summary>The judge's rates (‰ of the base's max HP a hit), all rounds (work/sim/ARENA.md §5).</summary>
+    /// <summary>The judge's rates (‰ of the base's max HP a hit), all rounds.</summary>
     static readonly int[] JudgeRates = { 20, 35, 40, 55, 60, 75, 80, 100, 120, 160, 200 };
 
     sealed class Hero {

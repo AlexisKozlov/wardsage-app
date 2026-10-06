@@ -2,7 +2,7 @@
 // went off, sampled from the running simulation, plus the simulation's own record of the player's commands. The pure
 // part (events from samples, merging, JSON) is src/TimelineBuilder.cs. Only ReadProcessMemory: nothing is written.
 //
-// Offsets (this game build, work/il2full/dump.cs; TypeInfo RVAs from script.json). IL2CPP objects: klass 0x0.
+// Offsets of this game build. IL2CPP objects: klass 0x0.
 //   CSharpBattle.Battle.GameSimulation: _EntityWorld 0x28, _FrameDataManager 0x38, _BattleData 0x48,
 //     _BattlePlayerManager 0x50, m_state 0xA4, <CurrentFrameIdx> 0xC4 (see src/BattleClock.cs).
 //   EntityWorld: _idEntities 0x20 (Dictionary<uint, IEntity>), _lTypeComponents 0x28 (Dictionary<int,
@@ -10,7 +10,7 @@
 //   Entity: <m_uID> 0x10, _componentQuerys 0x20 (Dictionary<int, DLNode<int, IComponent>>, key = EComponentType).
 //   DLList/DLRecordList: _FirstNode 0x10; DLNode: iIndex 0x10, _data 0x18, _prev 0x20, _next 0x28.
 //   AbstractComponent: IsEnable 0x10, _entity 0x18. EComponentType: Dead 2, Attribute 5, Skill 8, Position 19, Anger 35,
-//     Card 42, OwnerRelation 62, Map 69 (the numbers the game's own GetComponent calls pass, gh/fe decompiles).
+//     Card 42, OwnerRelation 62, Map 69.
 //   CardComponent (one per hero of the deck): iUid 0x20 (= hero uid), eState 0x24 (ECardStatus 0 running, 1 frozen,
 //     2 reborn, 3 delete), iCurRebornTime 0x28, iMaxRebornTime 0x2C, ePlaceFace 0x3C, iTowerUid 0x4C (the hero's entity
 //     on the field), eCardType 0x50 (0 hero, 1 soldier).
@@ -21,14 +21,14 @@
 //     <fHp> 0x238, m_fMaxHp 0x240, Fix64).
 //   PositionComponent: m_faceType 0x30 (FaceType 0 right, 90 down, 180 left, 270 up), m_position 0x48 (FixVector3).
 //   MapComponent: iMapSize 0x20, cMapMarker 0x40 -> MapMarker: m_iPosMapSize 0x18, m_vUidTowerExist 0x20 (uint[,]:
-//     the tower entity on each tile, [x, y] as MapMarker.GetTowerIdInGrid(x, y) — confirm with build/t/TimelineDiag).
+//     the tower entity on each tile, [x, y] as MapMarker.GetTowerIdInGrid(x, y)).
 //   BattlePlayerDataManager: _vPlayers 0x20 (Dictionary<uint, BattlePlayerInfo>); BattlePlayerInfo: <cUid> 0x10,
 //     m_lHeros 0x28 (List<BattleHeroInfo>); BattleHeroInfo: iUid 0x220, iUnitID 0x224, iSquadID 0x228,
 //     iLordPosition 0x22C (1 = the squad's lord), iLordFaction 0x230.
 //   FrameDataManager: _FrameRecord 0x30 -> FrameDataRecord: _vFrames 0x10, _vSuccessFrames 0x18 (Dictionary<uint frame,
 //     List<FrameIdxInfo>>); FrameIdxInfo: Idx 0x10, Cmd 0x14 (ushort), iUid 0x18 (the controller), Params 0x20 (int[]).
-//     SYNC_PUT_TOWER 1000 [unitId, x, y, face], SYNC_USE_POWERSKILL 2000 [unitId, x, y] (gh/fe decompiles).
-//   OwnerRelationComponent (on every card entity, EntitySpawn.CreateCardEntity gh/b2: AddComponent<OwnerRelation> then
+//     SYNC_PUT_TOWER 1000 [unitId, x, y, face], SYNC_USE_POWERSKILL 2000 [unitId, x, y].
+//   OwnerRelationComponent (on every card entity, EntitySpawn.CreateCardEntity: AddComponent<OwnerRelation> then
 //     cUid = the card's controller; also on the towers): cUid 0x20, iSquadID 0x24, iLordPosition 0x28.
 //   Sides (the arena): heroes of controller 1 (the player) and 2 (the opponent's recorded defence) share one world and
 //     often the same uid, so a hero is (controller, uid); the controller of a card = its entity's OwnerRelation cUid.
@@ -42,9 +42,9 @@
 //     iMaxPopulation 0x14, iActiveNode 0x18 -> 0x40 in the node), eState 0x44, iTimeDeviation 0x50, iMaxWaveCount 0x5C,
 //     iCurWaveCount 0x60. TDStateData (GameSimulation._lIndependentDatas 0x98, a DLList of IIndependentData; found by its
 //     klass): vMonsterCount 0x58, vMonsterAdvanceIgnoreCount 0x60 (Dictionary<uint, int>; WaveSystem.CanAdvanceUidCellNode
-//     reads them so, gh/b2). The bases: the units 4301–4306 / 4345–4350 (AttributeComponent m_tableData m_ID), their HP
+//     reads them so). The bases: the units 4301–4306 / 4345–4350 (AttributeComponent m_tableData m_ID), their HP
 //     as the heroes' (BattleAttributeData <fHp> 0x238, m_fMaxHp 0x240), their side from their OwnerRelation cUid.
-//     Not verified on a live arena fight yet (build/t/TimelineDiag prints all of it).
+//     Not verified on a live arena fight yet.
 //   .NET collections: Dictionary entries 0x18, count 0x20; Entry<int|uint, ref> = {hashCode, next, key, value@8}, 0x18
 //     bytes; Entry<uint, int> = {hashCode, next, key, value}, 0x10 bytes; List<T> _items 0x10, _size 0x18; arrays:
 //     max_length 0x18, data 0x20; T[,] bounds 0x10 ({length, lower} x 2).
@@ -69,7 +69,7 @@ namespace RealmForge {
     /// <summary>A sample wants a hero's battle stats (set by the recorder: only until it has them).</summary>
     public static Func<HeroSample, bool> wantBase;
     /// <summary>BattleAttributeData.m_attr (stBattleBaseAttr at +0x10, Fix64 = raw / 4096; percent stats in percent units)
-    /// by SoldierAttribute id as BattleAttributeData.GetOriAttr maps them (work/study/spec/D_buff.md §9), and its iPower.</summary>
+    /// by SoldierAttribute id as BattleAttributeData.GetOriAttr maps them, and its iPower.</summary>
     static readonly int[] BaseMap = {
       1, 0x88, 2, 0x00, 3, 0x08, 4, 0x18, 5, 0x40, 6, 0x38, 8, 0x80, 10, 0x78, 11, 0x28, 12, 0x58, 13, 0x30, 14, 0x90, 15, 0x10,
       16, 0x50, 22, 0xC0, 23, 0xA8, 24, 0xB0, 25, 0xD8, 26, 0xF0, 27, 0xF8, 28, 0x100, 29, 0x108, 30, 0x110, 31, 0x118, 36, 0x148,

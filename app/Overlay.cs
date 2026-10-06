@@ -140,7 +140,7 @@ namespace RealmForge {
     readonly System.Collections.Generic.Dictionary<int, long[]> statOrder = new System.Collections.Generic.Dictionary<int, long[]>();
     readonly System.Collections.Generic.Dictionary<int, long[]> subOrder = new System.Collections.Generic.Dictionary<int, long[]>();
     /// <summary>Settings → «Автонажатие»: the pilot acts only when this is on.</summary>
-    public bool AutoEnabled = true;
+    public bool AutoEnabled;
     /// <summary>Settings → «Автоматически подтверждать замену»: the pilot may also press «Заменить».</summary>
     public bool AutoConfirm;
     /// <summary>A build being put on or a sell run going: no restart for an update now.</summary>

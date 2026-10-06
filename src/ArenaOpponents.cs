@@ -2,7 +2,7 @@
 // for the site's «Соперники» tab (a verdict per opponent). Only ReadProcessMemory: nothing is written, nothing is sent to
 // the game's server, the game is not hooked.
 //
-// Where the client keeps them (work/lua/src/GameData/PVPData.lua): the PVPData singleton (mtPVPData()):
+// Where the client keeps them: the PVPData singleton (mtPVPData()):
 //   m_Opponents = the list the arena screen shows (Push_BasicPvp_OpponentData → _HandlerMessage_Push_BasicPvp_OpponentData:
 //     each a clone of BasicPvpPlayerData — stRole {iZoneId, iUid, iRoleId}, sName, iLevel, iScore, iRank, iRankId, bRobot,
 //     bPityRobot, bCopyRealPlayer, iChallengedTimes, iUnionId, iFaceId, vHeroData [BasicPvpHeroData: iHeroId, iBaseId, iLevel,
@@ -113,7 +113,7 @@ namespace RealmForge {
     }
 
     // HeroData (the player's teams: m_TeamData[team id] = [{iHeroId, iSquadId, …}], the arena's team ids = its stage ids,
-    // GameData/HeroData.lua GetTeamHeros, PVPData GetAttackStageIDByRuleId): found once by its m_TeamData key
+    // HeroData GetTeamHeros, PVPData GetAttackStageIDByRuleId): found once by its m_TeamData key
     static ulong heroData; static int heroLastFind;
     const string KTeams = "m_TeamData";
 

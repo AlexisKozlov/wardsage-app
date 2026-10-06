@@ -371,7 +371,7 @@ namespace RealmForge {
         if (seen.Add(line.Substring(line.IndexOf("\"iBaseID\"")))) sb.Append(line).Append('\n');
       }
       // the simulations still in memory: CSharpBattle.Battle.GameSimulation and its kinds (TypeInfo RVAs of this game
-      // build, work/il2full/script.json): <CurrentFrameIdx> 0xC4, m_state 0xA4
+      // build: <CurrentFrameIdx> 0xC4, m_state 0xA4
       ulong ga = 0;
       try { foreach (ProcessModule m in ps[0].Modules) if (string.Equals(m.ModuleName, "GameAssembly.dll", StringComparison.OrdinalIgnoreCase)) ga = (ulong)(long)m.BaseAddress; } catch (Exception) { }
       if (ga != 0) {
@@ -496,7 +496,7 @@ namespace RealmForge {
       Dictionary<string, object> beasts = null; ulong bv; int bt;
       if (lt.BeastOwner != 0 && Field(lt.BeastOwner, KBeasts, out bv, out bt) && bt == T_TABLE) beasts = ParseTable(bv, 3, new HashSet<ulong>());
       sb.Append(",\n\"beasts\":"); J(sb, beasts);
-      // Summoning (work/study/notes/03-summon.md): PlayerData counters (pulls left to the guarantee by softId, per pool)
+      // Summoning: PlayerData counters (pulls left to the guarantee by softId, per pool)
       // and ActivityData.m_ActData54.pool = the pools open now, with softId, the rate text (mDetailCfg) and times
       var summon = new Dictionary<string, object>();
       if (lt.BeastOwner != 0) foreach (var k in SummonPlayerKeys) {
@@ -510,13 +510,13 @@ namespace RealmForge {
         summon["pools"] = ParseTable(apool, 4, new HashSet<ulong>());
       L("  summon: " + summon.Count + " parts" + (summon.ContainsKey("pools") ? "" : " (no pools)"));
       sb.Append(",\n\"summon\":"); J(sb, summon);
-      // resources (work/sim/RESOURCES.md): item id -> count, from the bag and the player's currencies
+      // resources: item id -> count, from the bag and the player's currencies
       Dictionary<string, object> resMeta;
       var resMap = ReadResources(lt, out resMeta);
       L("  resources: " + (resMap == null ? "not found" : resMap.Count + " ids"));
       sb.Append(",\n\"resources\":"); J(sb, resMap);
       sb.Append(",\n\"resourcesMeta\":"); J(sb, resMeta);
-      // Zerbus: each team's saved gear (stage -> [{uiHeroId, vEquipUid, ulArtifactUid, ...}]) and power (UnionWeekBossData.lua
+      // Zerbus: each team's saved gear (stage -> [{uiHeroId, vEquipUid, ulArtifactUid, ...}]) and power (UnionWeekBossData
       // SetSavedTeamEquipsBoss3 / _Handler_Union_SaveEquipPlan_SC); present once the game got the guild's boss data
       if (lt.UnionWeekBoss != 0) {
         ulong zv, zp; int zt, zpt;
@@ -530,7 +530,7 @@ namespace RealmForge {
       sb.Append(",\n\"battles\":").Append(BattlesJson());
       sb.Append("\n,\"meta\":{\"extractor\":\"" + ExtractorVersion + "\"");
       if (GameVersion != null) { sb.Append(",\"gameVersion\":"); J(sb, GameVersion); }
-      // the game account (PlayerData m_Uid / m_Name, PlayerData.lua:1033): one site account may get two game accounts
+      // the game account (PlayerData m_Uid / m_Name): one site account may get two game accounts
       if (lt.PlayerData != 0) {
         ulong pv; int pt; long puid;
         if (Field(lt.PlayerData, "m_Uid", out pv, out pt) && AsLong(pv, pt, out puid) && puid > 0) { sb.Append(",\"player\":" + puid); SyncClient.Player = puid; }
@@ -585,13 +585,13 @@ namespace RealmForge {
     // ------------------------------------------------------------------ resources (bag + currencies)
 
     // ItemData:ctor sets m_HeroBaseId2ItemId and PlayerData:_RoleInit m_mNegSpecialItem - both keys exist in no other
-    // Lua table of the game (work/sim/RESOURCES.md). The bag is ItemData.m_Items[itemType][itemId] = {m_Config, m_Count}
+    // Lua table of the game. The bag is ItemData.m_Items[itemType][itemId] = {m_Config, m_Count}
     // (updated in place by Push_SetItem), time-limited items ItemData.m_TimeItems[itemId][uid] = {m_Count, m_EndTime, ..}.
     const string KItems = "m_HeroBaseId2ItemId", KPlayer = "m_mNegSpecialItem";
     // UnionWeekBossData (the guild's weekly bosses): the third (Zerbus, two teams) fights with the gear saved with each team
     const string KZerbus = "m_SavedTeamEquipsInfo";
 
-    // PlayerData scalar fields -> item id (CurrencyType, common/defines.lua; ItemData:GetItemNumById)
+    // PlayerData scalar fields -> item id (CurrencyType; ItemData:GetItemNumById)
     static readonly KeyValuePair<string, long>[] PlayerCurrencies = {
       new KeyValuePair<string, long>("m_Coin", 1),                    // Gold
       new KeyValuePair<string, long>("m_Exp", 2),                     // commander EXP

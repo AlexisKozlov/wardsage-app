@@ -72,7 +72,7 @@ window.RF_TEXTS = {
     gScroll: 'Прокрути список вниз до ряда {0}.',
     gFilter: 'Сузь список: «Фильтр» → комплект «{0}»', gFilterStat: 'и главный стат «{0}».', gFilterP: 'Так предмет окажется в первых рядах — сейчас он в ряду {0} из длинного списка.',
     gFilterNoSet: 'Сузь список: «Фильтр» → главный стат «{0}»',
-    setFiles: 'Файлы игры для разбора', setFilesP: 'Копирует код игры кусками по 6 МБ в папку debug\\parts рядом с программой — для разбора формул боя. Игра не меняется, ничего не отправляется. Игра должна быть запущена.', filesStart: 'Скопировать', filesWork: 'Копирую… частей: {0}', filesDone: 'Готово, частей: {0}', filesNoGame: 'Запусти игру и нажми ещё раз', filesErr: 'Не получилось — см. журнал',
+
     setDiag: 'Диагностика рамки', setDiagP: '5 минут: снимки окна игры и данные списка сохраняются в папку debug рядом с программой. Никуда не отправляются.', diagStart: 'Включить', diagOn: 'Включено на 5 минут',
     hSet: 'Фильтр → Комплект: {0}', hStat: 'Главный стат: {0}', hSlot: 'Дальше: {0}',
     fStep1: '«Фильтр» внизу списка', fStep2: 'Комплект:', fStep3: 'Главный стат:',
@@ -180,7 +180,7 @@ window.RF_TEXTS = {
     gScroll: 'Scroll the list down to row {0}.',
     gFilter: 'Narrow the list: “Filter” → set “{0}”', gFilterStat: 'and main stat “{0}”.', gFilterP: 'Then the item is in the first rows; now it is in row {0} of a long list.',
     gFilterNoSet: 'Narrow the list: “Filter” → main stat “{0}”',
-    setFiles: 'Game files for analysis', setFilesP: 'Copies the game code in 6 MB parts into debug\\parts next to the program — to work out the battle formulas. The game is not changed, nothing is sent. The game must be running.', filesStart: 'Copy', filesWork: 'Copying… parts: {0}', filesDone: 'Done, parts: {0}', filesNoGame: 'Start the game and press again', filesErr: 'Failed — see the log',
+
     setDiag: 'Frame diagnostics', setDiagP: '5 minutes: screenshots of the game window and list data are saved to the debug folder next to the program. Nothing is sent.', diagStart: 'Turn on', diagOn: 'On for 5 minutes',
     hSet: 'Filter → Set: {0}', hStat: 'Main stat: {0}', hSlot: 'Next: {0}',
     fStep1: '“Filter” under the list', fStep2: 'Set:', fStep3: 'Main stat:',

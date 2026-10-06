@@ -222,7 +222,6 @@ namespace RealmForge {
           }
           case "diag": overlay.StartDiag(5); break;
           case "battle.capture": CaptureNow(-1, 0, 0); break;
-          case "gameFiles": CopyGameFiles(); break;
           case "compact": win.SetCompact(MiniJson.GetBool(m, "on", false)); break;
           case "update.restart": Program.RestartForUpdate(); break;
         }
@@ -230,35 +229,6 @@ namespace RealmForge {
         Log.Write("message " + cmd + ": " + e);
         Report("unhandled", "message " + cmd + ": " + e.GetType().Name + ": " + e.Message, Ctx("exception", e.ToString()));
       }
-    }
-
-    // Settings → «Файлы игры для разбора»: GameAssembly.dll and global-metadata.dat of the running game, copied in 6 MB
-    // parts into debug\parts next to the program (read-only open; nothing is sent anywhere).
-    void CopyGameFiles() {
-      var t = new Thread(() => {
-        try {
-          var ps = Process.GetProcessesByName("Watcher of Realms");
-          if (ps.Length == 0) { Post("{\"ev\":\"gameFiles\",\"state\":\"no_game\"}"); return; }
-          string dir = Path.GetDirectoryName(ps[0].MainModule.FileName);
-          string outDir = Path.Combine(Path.GetDirectoryName(Application.ExecutablePath), "debug", "parts");
-          Directory.CreateDirectory(outDir);
-          var files = new[] { Path.Combine(dir, "GameAssembly.dll"), Path.Combine(dir, "Watcher of Realms_Data", "il2cpp_data", "Metadata", "global-metadata.dat") };
-          int n = 0; const int Part = 6 << 20;
-          foreach (var f in files) {
-            if (!File.Exists(f)) continue;
-            using (var src = new FileStream(f, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete)) {
-              var buf = new byte[Part]; int got, i = 0;
-              while ((got = src.Read(buf, 0, Part)) > 0) {
-                using (var dst = File.Create(Path.Combine(outDir, Path.GetFileName(f) + ".part" + i.ToString("00")))) dst.Write(buf, 0, got);
-                i++; n++;
-                Post("{\"ev\":\"gameFiles\",\"state\":\"progress\",\"n\":" + n + "}");
-              }
-            }
-          }
-          Post("{\"ev\":\"gameFiles\",\"state\":\"done\",\"n\":" + n + "}");
-        } catch (Exception e) { Log.Write("gameFiles: " + e); Post("{\"ev\":\"gameFiles\",\"state\":\"error\"}"); }
-      });
-      t.IsBackground = true; t.Start();
     }
 
     void Save() { try { cfg.Save(); } catch (Exception e) { Log.Write("config save: " + e.Message); } }
