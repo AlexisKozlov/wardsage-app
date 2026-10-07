@@ -2,7 +2,7 @@
 // went off, sampled from the running simulation, plus the simulation's own record of the player's commands. The pure
 // part (events from samples, merging, JSON) is src/TimelineBuilder.cs. Only ReadProcessMemory: nothing is written.
 //
-// Offsets of this game build. IL2CPP objects: klass 0x0.
+// Offsets of this game build. objects: class pointer at 0x0.
 //   CSharpBattle.Battle.GameSimulation: _EntityWorld 0x28, _FrameDataManager 0x38, _BattleData 0x48,
 //     _BattlePlayerManager 0x50, m_state 0xA4, <CurrentFrameIdx> 0xC4 (see src/BattleClock.cs).
 //   EntityWorld: _idEntities 0x20 (Dictionary<uint, IEntity>), _lTypeComponents 0x28 (Dictionary<int,
@@ -41,7 +41,7 @@
 //     m_NodeData 0x28 (stWaveNodeData: iMinFrame 0, iMaxFrame 4, iRemainCount 8, iMaxCount 0xC, iRemainPopulation 0x10,
 //     iMaxPopulation 0x14, iActiveNode 0x18 -> 0x40 in the node), eState 0x44, iTimeDeviation 0x50, iMaxWaveCount 0x5C,
 //     iCurWaveCount 0x60. TDStateData (GameSimulation._lIndependentDatas 0x98, a DLList of IIndependentData; found by its
-//     klass): vMonsterCount 0x58, vMonsterAdvanceIgnoreCount 0x60 (Dictionary<uint, int>; WaveSystem.CanAdvanceUidCellNode
+//     class): vMonsterCount 0x58, vMonsterAdvanceIgnoreCount 0x60 (Dictionary<uint, int>; WaveSystem.CanAdvanceUidCellNode
 //     reads them so). The bases: the units 4301–4306 / 4345–4350 (AttributeComponent m_tableData m_ID), their HP
 //     as the heroes' (BattleAttributeData <fHp> 0x238, m_fMaxHp 0x240), their side from their OwnerRelation cUid.
 //     Not verified on a live arena fight yet.
@@ -57,7 +57,7 @@ namespace RealmForge {
   public static partial class RFX {
     const int CT_Dead = 2, CT_Attribute = 5, CT_Skill = 8, CT_Position = 19, CT_Anger = 35, CT_Card = 42, CT_Owner = 62, CT_WaveInfo = 67,
               CT_Map = 69, CT_Statistics = 71;
-    // TypeInfo RVAs: CardComponent, AngerComponent, SkillComponent, FrameIdxInfo, BattleHeroInfo
+    // class addresses: CardComponent, AngerComponent, SkillComponent, FrameIdxInfo, BattleHeroInfo
     const ulong RvaCard = 0, RvaAnger = 0, RvaSkill = 0, RvaFrameIdxInfo = 0, RvaHeroInfo = 0;
     // OwnerRelationComponent, StatisticsComponent, DamageStatisticsData, TDStateData, WaveSystem, WaveControllerNode, AttributeComponent
     const ulong RvaOwner = 0, RvaStats = 0, RvaDmgStat = 0, RvaTDState = 0, RvaWaveSystem = 0,
@@ -108,7 +108,7 @@ namespace RealmForge {
       return r;
     }
 
-    /// <summary>The klass of a TypeInfo RVA (0 when GameAssembly's base is not known).</summary>
+    /// <summary>The class of a class address (0 when GameAssembly's base is not known).</summary>
     static ulong Klass(ulong rva) { return simGa != 0 ? P64(simGa + rva) : 0; }
     static bool IsA(ulong obj, ulong klass) { return klass == 0 || (obj != 0 && P64(obj) == klass); }
 

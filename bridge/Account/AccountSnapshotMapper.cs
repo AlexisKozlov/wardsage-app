@@ -4,8 +4,8 @@ using System.Text.Json;
 namespace RealmForge.Bridge.Account;
 
 /// <summary>
-/// RealmForge's account.json (the game's Lua tables as the extractor dumps them) -> <see cref="AccountSnapshotDto"/>.
-/// Same rules as the site (realmforge-web lib/game/normalize.ts): Lua lists are objects keyed "[1]", "[2]", ...;
+/// RealmForge's account.json (the game's script tables as the extractor dumps them) -> <see cref="AccountSnapshotDto"/>.
+/// Same rules as the site (realmforge-web lib/game/normalize.ts): script lists are objects keyed "[1]", "[2]", ...;
 /// attribute lists may hold the same attributes twice (the second half wins); a repeated item uid keeps its first
 /// position and its last value; tables with vConfig are item templates, not the player's items.
 /// </summary>
@@ -124,7 +124,7 @@ public static class AccountSnapshotMapper
         return list.GetRange(half, half);
     }
 
-    /// <summary>A Lua array: {"[1]": x, "[2]": y} in key order (plain JSON arrays are accepted too).</summary>
+    /// <summary>A script array: {"[1]": x, "[2]": y} in key order (plain JSON arrays are accepted too).</summary>
     static List<JsonElement> LuaList(JsonElement table)
     {
         if (table.ValueKind == JsonValueKind.Array) return table.EnumerateArray().ToList();

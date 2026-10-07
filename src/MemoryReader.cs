@@ -1,6 +1,6 @@
 // RealmForge extractor - memory reader (READ-ONLY).
 //
-// This is the Lua-table scanner of extractor v0.4, verified on the live game, moved here as is.
+// This is the table scanner of extractor v0.4, verified on the live game, moved here as is.
 // It only calls OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ), VirtualQueryEx and
 // ReadProcessMemory: nothing is ever written to the game process.
 //
@@ -62,7 +62,7 @@ namespace RealmForge {
         }
     }
 
-    // ---- Lua 5.3 (64-bit) layout ----
+    // ---- script table layout (64-bit) ----
     const int T_NIL = 0, T_BOOL = 1, T_FLT = 3, T_INT = 0x13, T_SSTR = 0x44, T_LSTR = 0x54, T_TABLE = 0x45;
 
     // Find TString objects (short strings) for given names. Content at TS+24, tt at TS+8 == 4, shrlen at TS+11.
@@ -94,7 +94,7 @@ namespace RealmForge {
       return Encoding.UTF8.GetString(b);
     }
 
-    // Parse Lua table into ordered dictionary: string keys -> values, int keys -> values
+    // Parse script table into ordered dictionary: string keys -> values, int keys -> values
     static object TV(byte[] b, int o, int depth, HashSet<ulong> seen) {
       ulong v = BitConverter.ToUInt64(b, o); int tt = BitConverter.ToInt32(b, o + 8);
       switch (tt) {
@@ -131,8 +131,8 @@ namespace RealmForge {
       return d;
     }
 
-    // Return raw TValue (value, tt) of a string-keyed field in a Lua table.
-    // Short strings are interned in Lua 5.3 (one TString per content), so once a key's TString is known the nodes are
+    // Return raw TValue (value, tt) of a string-keyed field in a script table.
+    // Short strings are interned in the script runtime (one TString per content), so once a key's TString is known the nodes are
     // matched by pointer: one read of the node array instead of one per key - big UI tables have hundreds of fields.
     static readonly Dictionary<string, ulong> keyTs = new Dictionary<string, ulong>();
     static IntPtr keyTsFor;
@@ -208,7 +208,7 @@ namespace RealmForge {
       return tables;
     }
 
-    // Find Lua tables that hold references (TValue tt=table) to the given target tables; returns container -> targets
+    // Find script tables that hold references (TValue tt=table) to the given target tables; returns container -> targets
     static Dictionary<ulong, List<ulong>> Containers(HashSet<ulong> targets, int minCount = 3) {
       var hitAt = new Dictionary<ulong, ulong>();
       Scan((b0, buf, len) => {
@@ -271,7 +271,7 @@ namespace RealmForge {
 
     static long LNum(Dictionary<string, object> d, string k) { object v; return d != null && d.TryGetValue(k, out v) && v is long ? (long)v : 0; }
 
-    // The table values of a Lua table (array part, then hash part).
+    // The table values of a script table (array part, then hash part).
     static List<ulong> TableValues(ulong t) {
       var r = new List<ulong>();
       var h = Read(t, 56); if (h == null || h[8] != 5) return r;

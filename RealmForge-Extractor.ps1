@@ -54,7 +54,7 @@ using System.Windows.Forms;
 // ===== src/MemoryReader.cs =====
 // RealmForge extractor - memory reader (READ-ONLY).
 //
-// This is the Lua-table scanner of extractor v0.4, verified on the live game, moved here as is.
+// This is the table scanner of extractor v0.4, verified on the live game, moved here as is.
 // It only calls OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ), VirtualQueryEx and
 // ReadProcessMemory: nothing is ever written to the game process.
 //
@@ -110,7 +110,7 @@ namespace RealmForge {
         }
     }
 
-    // ---- Lua 5.3 (64-bit) layout ----
+    // ---- script table layout (64-bit) ----
     const int T_NIL = 0, T_BOOL = 1, T_FLT = 3, T_INT = 0x13, T_SSTR = 0x44, T_LSTR = 0x54, T_TABLE = 0x45;
 
     // Find TString objects (short strings) for given names. Content at TS+24, tt at TS+8 == 4, shrlen at TS+11.
@@ -142,7 +142,7 @@ namespace RealmForge {
       return Encoding.UTF8.GetString(b);
     }
 
-    // Parse Lua table into ordered dictionary: string keys -> values, int keys -> values
+    // Parse script table into ordered dictionary: string keys -> values, int keys -> values
     static object TV(byte[] b, int o, int depth, HashSet<ulong> seen) {
       ulong v = BitConverter.ToUInt64(b, o); int tt = BitConverter.ToInt32(b, o + 8);
       switch (tt) {
@@ -179,8 +179,8 @@ namespace RealmForge {
       return d;
     }
 
-    // Return raw TValue (value, tt) of a string-keyed field in a Lua table.
-    // Short strings are interned in Lua 5.3 (one TString per content), so once a key's TString is known the nodes are
+    // Return raw TValue (value, tt) of a string-keyed field in a script table.
+    // Short strings are interned in the script runtime (one TString per content), so once a key's TString is known the nodes are
     // matched by pointer: one read of the node array instead of one per key - big UI tables have hundreds of fields.
     static readonly Dictionary<string, ulong> keyTs = new Dictionary<string, ulong>();
     static IntPtr keyTsFor;
@@ -256,7 +256,7 @@ namespace RealmForge {
       return tables;
     }
 
-    // Find Lua tables that hold references (TValue tt=table) to the given target tables; returns container -> targets
+    // Find script tables that hold references (TValue tt=table) to the given target tables; returns container -> targets
     static Dictionary<ulong, List<ulong>> Containers(HashSet<ulong> targets, int minCount = 3) {
       var hitAt = new Dictionary<ulong, ulong>();
       Scan((b0, buf, len) => {
@@ -319,7 +319,7 @@ namespace RealmForge {
 
     static long LNum(Dictionary<string, object> d, string k) { object v; return d != null && d.TryGetValue(k, out v) && v is long ? (long)v : 0; }
 
-    // The table values of a Lua table (array part, then hash part).
+    // The table values of a script table (array part, then hash part).
     static List<ulong> TableValues(ulong t) {
       var r = new List<ulong>();
       var h = Read(t, 56); if (h == null || h[8] != 5) return r;
@@ -444,15 +444,15 @@ namespace RealmForge {
 }
 
 // ===== src/LiveTables.cs =====
-// RealmForge extractor - the game's live Lua tables, found once per game session (READ-ONLY).
+// RealmForge extractor - the game's live script tables, found once per game session (READ-ONLY).
 //
-// The account and the equip helper both need a few tables of the game's Lua state: EquipData (items: equips, the
+// The account and the equip helper both need a few tables of the game's script state: EquipData (items: equips, the
 // hero on the gear screen), HeroData (heroes: m_CharactorDatas), the tables holding the artifacts and the faction
 // rewards, and the hero screen (Form_CharactorMain, its gear list panel). They are created at login and live as long as
 // the game runs (their contents change, the tables do not move), so the slow part - finding them in ~2 GB of memory -
 // is done once: afterwards a sync reads them directly (a second or two instead of a minute and more).
 //
-// The search itself: short Lua strings are interned and 8-byte aligned (TString: tt at +8, length at +11, text at +24),
+// The search itself: short script strings are interned and 8-byte aligned (TString: tt at +8, length at +11, text at +24),
 // so the key names are found by checking aligned positions only; then one pass finds the table nodes keyed by any of
 // them and one more the tables owning those nodes. The passes run on all processor cores.
 
@@ -653,7 +653,7 @@ namespace RealmForge {
         buf => { });
     }
 
-    /// <summary>Short Lua strings with these texts (TString address -> text): aligned positions only.</summary>
+    /// <summary>Short script strings with these texts (TString address -> text): aligned positions only.</summary>
     static Dictionary<ulong, string> FindLuaStringsFast(string[] names) {
       var res = new Dictionary<ulong, string>();
       var byLen = new Dictionary<int, List<KeyValuePair<byte[], string>>>();
@@ -772,8 +772,8 @@ namespace RealmForge {
 
     // ------------------------------------------------------------------ battle study (diagnostics)
 
-    /// <summary>Every Lua table holding a server battle hero (MTTDProto.CmdHeroFight: iHeroId, iBaseId, mAttr{attr id ->
-    /// value}, ...) as JSON lines - still in memory after a battle until the Lua GC takes it. Read-only, for comparing the
+    /// <summary>Every script table holding a server battle hero (MTTDProto.CmdHeroFight: iHeroId, iBaseId, mAttr{attr id ->
+    /// value}, ...) as JSON lines - still in memory after a battle until the game's garbage collector takes it. Read-only, for comparing the
     /// server's battle stats with the stats the site computes for the hero panel.</summary>
     /// <summary>Battle study: the battle statistics of heroes still in memory (CSharpBattle.Battle.DamageStatisticsData:
     /// iBaseID 0x10, iHeroID 0x14, iPower 0x18, fDamageAmount 0x28 (all enemies), fDamageAmountToBoss 0x30,
@@ -810,7 +810,7 @@ namespace RealmForge {
           + ",\"overflow\":" + BitConverter.ToInt64(b, 0x58) + "}";
         if (seen.Add(line.Substring(line.IndexOf("\"iBaseID\"")))) sb.Append(line).Append('\n');
       }
-      // the simulations still in memory: CSharpBattle.Battle.GameSimulation and its kinds (TypeInfo RVAs of this game
+      // the simulations still in memory: CSharpBattle.Battle.GameSimulation and its kinds (class addresses of this game
       // build: <CurrentFrameIdx> 0xC4, m_state 0xA4
       ulong ga = 0;
       try { foreach (ProcessModule m in ps[0].Modules) if (string.Equals(m.ModuleName, "GameAssembly.dll", StringComparison.OrdinalIgnoreCase)) ga = (ulong)(long)m.BaseAddress; } catch (Exception) { }
@@ -828,7 +828,7 @@ namespace RealmForge {
         foreach (var o in sims) {
           var b = Read(o, 0xC8); if (b == null) continue;
           uint frames = BitConverter.ToUInt32(b, 0xC4); int state = BitConverter.ToInt32(b, 0xA4);
-          if (state < 1 || state > 2 || frames == 0 || frames > 200000) continue;   // ESimulationStatus Runing / End; a klass pointer elsewhere is no object
+          if (state < 1 || state > 2 || frames == 0 || frames > 200000) continue;   // ESimulationStatus Runing / End; a class pointer elsewhere is no object
           sb.Append("{\"sim\":\"" + klass[BitConverter.ToUInt64(b, 0)] + "\",\"at\":\"" + o.ToString("X") + "\",\"state\":" + BitConverter.ToInt32(b, 0xA4)
             + ",\"frames\":" + frames + ",\"seconds\":" + (frames * 270 / 4096.0).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + "}\n");
         }
@@ -858,7 +858,7 @@ namespace RealmForge {
           var one = new StringBuilder(); J(one, d);
           if (seen.Add(one.ToString())) sb.Append(one).Append('\n');
         }
-      // the battle's own heroes come in a C# message (CmdStartChallengeInfo), not through Lua: MTTDProto.CmdHeroFight
+      // the battle's own heroes come in a C# message (CmdStartChallengeInfo), not through the scripts: MTTDProto.CmdHeroFight
       // objects - iHeroId 0x10, iBaseId 0x14, iLevel 0x18, iStarLevel 0x30, iSublimLevel 0x34, mAttr 0x48 (XDictionary:
       // VersionedList<KeyValuePair<SdpUInt, SdpUInt>> - _items 0x10, _size 0x18; array data at 0x20), iPower 0x68
       var hits = new List<ulong>();
@@ -1025,7 +1025,7 @@ namespace RealmForge {
     // ------------------------------------------------------------------ resources (bag + currencies)
 
     // ItemData:ctor sets m_HeroBaseId2ItemId and PlayerData:_RoleInit m_mNegSpecialItem - both keys exist in no other
-    // Lua table of the game. The bag is ItemData.m_Items[itemType][itemId] = {m_Config, m_Count}
+    // script table of the game. The bag is ItemData.m_Items[itemType][itemId] = {m_Config, m_Count}
     // (updated in place by Push_SetItem), time-limited items ItemData.m_TimeItems[itemId][uid] = {m_Count, m_EndTime, ..}.
     const string KItems = "m_HeroBaseId2ItemId", KPlayer = "m_mNegSpecialItem";
     // UnionWeekBossData (the guild's weekly bosses): the third (Zerbus, two teams) fights with the gear saved with each team
@@ -1060,7 +1060,7 @@ namespace RealmForge {
 
     struct IntEntry { public long Key; public ulong Val; public int Tt; }
 
-    /// <summary>The integer-keyed entries of a Lua table: the array part (key = index + 1) and the hash nodes with an
+    /// <summary>The integer-keyed entries of a script table: the array part (key = index + 1) and the hash nodes with an
     /// integer key.</summary>
     static List<IntEntry> IntEntries(ulong t) {
       var r = new List<IntEntry>();
@@ -1083,7 +1083,7 @@ namespace RealmForge {
       return r;
     }
 
-    /// <summary>A Lua number as long: integer, float or a numeric string (m_mNegSpecialItem holds int64 values the game
+    /// <summary>A script number as long: integer, float or a numeric string (m_mNegSpecialItem holds int64 values the game
     /// reads with tonumber()).</summary>
     static bool AsLong(ulong v, int tt, out long n) {
       n = 0;
@@ -1158,7 +1158,7 @@ namespace RealmForge {
 // comparing the site's battle simulation with real fights: each hero's damage to the boss, healing, damage taken, and
 // the fight's length. Kept in %APPDATA%\RealmForge\battles (the last 30) and sent with the account snapshot.
 //
-// The game keeps its open windows in UIStatic's UIInstance: a Lua table form id -> form, the id being the hash of the
+// The game keeps its open windows in UIStatic's UIInstance: a script table form id -> form, the id being the hash of the
 // form's name (str_hash, as the language keys: «Form_CharactorMain» = 0). The table is found once (from a
 // node of a known form), then read every poll: a few kilobytes.
 
@@ -1364,7 +1364,7 @@ namespace RealmForge {
 // ===== src/BattleClock.cs =====
 // RealmForge — the clock of the fight going on, for the boss coach over the game (read-only).
 //
-// CSharpBattle.Battle.GameSimulation (and its kinds; TypeInfo addresses of this game build):
+// CSharpBattle.Battle.GameSimulation (and its kinds; class addresses of this game build):
 // m_state 0xA4 (ESimulationStatus: 1 running, 2 ended), <CurrentFrameIdx> 0xC4 (one logic frame = 270/4096 s),
 // _BattleData 0x48 -> BattleData.<iStageID> 0x18. The running one is the battle view's (BattleManager.instance), read
 // every couple of seconds; then two fields are read every tick.
@@ -1372,7 +1372,7 @@ namespace RealmForge {
 namespace RealmForge {
   public static partial class RFX {
     // GameAssembly.dll's base in the game process (set by CurrentSim / FindRunningSim; src/BattleTimeline.cs checks
-    // klasses with it)
+    // classes with it)
     static ulong simGa; static int simPid;
 
     /// <summary>The fight going on now, by a full memory pass (about a second; CurrentSim is the cheap way): its
@@ -1418,8 +1418,8 @@ namespace RealmForge {
       return true;
     }
 
-    // BattleView.BattleManager: TypeInfo address, static `instance` at static_fields + 0x0, `m_simulation` 0x10;
-    // Il2CppClass.static_fields at 0xB8
+    // BattleView.BattleManager: class address, static `instance` at static_fields + 0x0, `m_simulation` 0x10;
+    // the class's static fields at 0xB8
     const ulong BattleManagerRva = 0;
 
     /// <summary>The simulation the battle view holds now (BattleManager.instance.m_simulation), or 0. Cheap: four
@@ -1472,7 +1472,7 @@ namespace RealmForge {
 // Same access as the account reader: OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ),
 // VirtualQueryEx and ReadProcessMemory. Nothing is ever written to the game and no input is sent to it.
 //
-// What is read (Lua tables of the game UI, verified on the live game 2026-09-25):
+// What is read (script tables of the game UI, verified on the live game 2026-09-25):
 //   * the equipment list panel (the table that owns m_EquipIdToIndex): m_EquipIdToIndex (item uid -> row of
 //     m_EquipListRealData), m_EquipListRealData (rows {Type=1, Item={uid, uid, uid}}), m_FilterConfig (Part = shown slot,
 //     IsHideEquiped, IsHideEnhanced, Suits, MainAttrs, ...);
@@ -1702,7 +1702,7 @@ namespace RealmForge {
       if (Field(p, KPanel, out v, out t3) && t3 == T_TABLE) a.Panel = p;
     }
 
-    /// <summary>The hero screen as the game's Lua has it now (read-only). Heroes is the hero grid in display order; it is
+    /// <summary>The hero screen as the game's script has it now (read-only). Heroes is the hero grid in display order; it is
     /// read again only when the game builds a new list (GridPtr).</summary>
     public static HeroScreen ReadHeroScreen(EquipAddrs a, HeroScreen prev) {
       var h = new HeroScreen();
@@ -1740,7 +1740,7 @@ namespace RealmForge {
       if (Field(a.Form, "m_PanelDatas", out pd, out pdt) && pdt == T_TABLE && IntKey(pd, 6, out v, out tt) && tt == T_TABLE) {
         ulong camps, cls; int ct, lt;
         if (IntKey(v, 3, out camps, out ct) && ct == T_TABLE) { var c = IntArray(camps); var l = new List<long>(); foreach (var x in c) if (x > 0) l.Add(x); h.ChosenCamps = l.ToArray(); }
-        // the class column's choice: its «Все» is a Lua table with m_ProfessionID -1, a class is the game's config object
+        // the class column's choice: its «Все» is a script table with m_ProfessionID -1, a class is the game's config object
         if (IntKey(v, 1, out cls, out lt) && lt == T_TABLE)
           for (int i = 1; i <= 8; i++) {
             ulong e, pid; int et, pt;
@@ -1870,7 +1870,7 @@ namespace RealmForge {
       return Field(it, "iHeroId", out v, out tt) && tt == T_INT ? (long)v : -1;
     }
 
-    /// <summary>The gear panel's Lua table as JSON (3 levels, the two big list tables skipped) for the frame diagnostics.</summary>
+    /// <summary>The gear panel's script table as JSON (3 levels, the two big list tables skipped) for the frame diagnostics.</summary>
     public static string DumpPanel(EquipAddrs a) {
       if (a == null || a.Panel == 0) return null;
       var d = ParseTable(a.Panel, 3, new HashSet<ulong>());
@@ -1920,7 +1920,7 @@ namespace RealmForge {
       return r;
     }
 
-    // Value of an integer key of a Lua table (array part first, then the hash part).
+    // Value of an integer key of a script table (array part first, then the hash part).
     static bool IntKey(ulong t, long key, out ulong val, out int tt) {
       val = 0; tt = 0;
       var h = Read(t, 56); if (h == null || h[8] != 5) return false;

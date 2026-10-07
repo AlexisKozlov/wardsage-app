@@ -2,7 +2,7 @@
 // comparing the site's battle simulation with real fights: each hero's damage to the boss, healing, damage taken, and
 // the fight's length. Kept in %APPDATA%\RealmForge\battles (the last 30) and sent with the account snapshot.
 //
-// The game keeps its open windows in UIStatic's UIInstance: a Lua table form id -> form, the id being the hash of the
+// The game keeps its open windows in UIStatic's UIInstance: a script table form id -> form, the id being the hash of the
 // form's name (str_hash, as the language keys: «Form_CharactorMain» = 0). The table is found once (from a
 // node of a known form), then read every poll: a few kilobytes.
 using System;

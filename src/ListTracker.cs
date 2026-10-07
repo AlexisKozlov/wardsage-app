@@ -3,8 +3,8 @@
 // Pure logic, no Windows APIs (tests: tests/CoreTests.cs). The screen is only LOOKED at: the host takes a
 // screenshot of the list area and passes its pixels here. Nothing is sent to the game.
 //
-// The list scroll position is not in the game's Lua data, so it is found like this:
-//   * anchor: when the player clicks an item, the game stores its uid (and we know its row from the Lua list);
+// The list scroll position is not in the game's script data, so it is found like this:
+//   * anchor: when the player clicks an item, the game stores its uid (and we know its row from the script list);
 //     the mouse cursor is on that item at that moment, which gives its row on the screen;
 //   * tracking: every item cell has a stat bar under it (slate-blue band with the main stat); the bars repeat with
 //     the row pitch, so their vertical phase on a screenshot shows how far the list has moved since the anchor.

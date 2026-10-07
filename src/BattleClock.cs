@@ -1,6 +1,6 @@
 // RealmForge — the clock of the fight going on, for the boss coach over the game (read-only).
 //
-// CSharpBattle.Battle.GameSimulation (and its kinds; TypeInfo addresses of this game build):
+// CSharpBattle.Battle.GameSimulation (and its kinds; class addresses of this game build):
 // m_state 0xA4 (ESimulationStatus: 1 running, 2 ended), <CurrentFrameIdx> 0xC4 (one logic frame = 270/4096 s),
 // _BattleData 0x48 -> BattleData.<iStageID> 0x18. The running one is the battle view's (BattleManager.instance), read
 // every couple of seconds; then two fields are read every tick.
@@ -11,7 +11,7 @@ using System.Diagnostics;
 namespace RealmForge {
   public static partial class RFX {
     // GameAssembly.dll's base in the game process (set by CurrentSim / FindRunningSim; src/BattleTimeline.cs checks
-    // klasses with it)
+    // classes with it)
     static ulong simGa; static int simPid;
 
     /// <summary>The fight going on now, by a full memory pass (about a second; CurrentSim is the cheap way): its
@@ -57,8 +57,8 @@ namespace RealmForge {
       return true;
     }
 
-    // BattleView.BattleManager: TypeInfo address, static `instance` at static_fields + 0x0, `m_simulation` 0x10;
-    // Il2CppClass.static_fields at 0xB8
+    // BattleView.BattleManager: class address, static `instance` at static_fields + 0x0, `m_simulation` 0x10;
+    // the class's static fields at 0xB8
     const ulong BattleManagerRva = 0;
 
     /// <summary>The simulation the battle view holds now (BattleManager.instance.m_simulation), or 0. Cheap: four

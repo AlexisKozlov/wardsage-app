@@ -67,7 +67,7 @@ namespace RealmForge {
           var byIndex = new SortedDictionary<int, long>();
           foreach (var kv in d) { int i; if (kv.Value is long && kv.Key.Length > 2 && int.TryParse(kv.Key.Substring(1, kv.Key.Length - 2), out i)) byIndex[i] = (long)kv.Value; }
           int expect = 1;
-          foreach (var kv in byIndex) { if (kv.Key != expect++) break; s.Uids.Add(kv.Value); }   // a Lua array: 1..n
+          foreach (var kv in byIndex) { if (kv.Key != expect++) break; s.Uids.Add(kv.Value); }   // a script array: 1..n
         }
       }
       ulong map; int mt;

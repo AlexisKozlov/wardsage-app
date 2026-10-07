@@ -42,7 +42,7 @@ ui/                     the interface: index.html, app.css, app.js (screens), gu
 app/Program.cs          entry: single instance, unpack resources, WebView2 runtime check
 app/AppWindow.cs        the window: WebView2, dark frame, «Поверх игры» compact always-on-top mode
 app/HostBridge.cs       page <-> program messages (see its header): sync, codes, plans, equip helper polling
-src/MemoryReader.cs     Lua-table scanner (read-only)
+src/MemoryReader.cs     account table scanner (read-only)
 src/EquipScan.cs        equip helper: finds the gear-list panel once, then re-reads it (read-only)
 src/GameInfo.cs         game process, exe path, version from realversion.xml
 src/Extractor.cs        pipeline: find game -> read -> validate/count -> save copy

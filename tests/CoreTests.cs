@@ -405,7 +405,7 @@ static class CoreTests {
     return failed == 0 ? 0 : 1;
   }
 
-  // ParseTable-shaped Lua tables (arrays "[1]".., numbers long) for the arena opponents (src/ArenaOpponents.cs)
+  // ParseTable-shaped script tables (arrays "[1]".., numbers long) for the arena opponents (src/ArenaOpponents.cs)
   static Dictionary<string, object> Lt(params object[] kv) {
     var d = new Dictionary<string, object>();
     for (int i = 0; i + 1 < kv.Length; i += 2) d[(string)kv[i]] = kv[i + 1];

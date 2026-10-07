@@ -3,7 +3,7 @@
 // Same access as the account reader: OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ),
 // VirtualQueryEx and ReadProcessMemory. Nothing is ever written to the game and no input is sent to it.
 //
-// What is read (Lua tables of the game UI, verified on the live game 2026-09-25):
+// What is read (script tables of the game UI, verified on the live game 2026-09-25):
 //   * the equipment list panel (the table that owns m_EquipIdToIndex): m_EquipIdToIndex (item uid -> row of
 //     m_EquipListRealData), m_EquipListRealData (rows {Type=1, Item={uid, uid, uid}}), m_FilterConfig (Part = shown slot,
 //     IsHideEquiped, IsHideEnhanced, Suits, MainAttrs, ...);
@@ -238,7 +238,7 @@ namespace RealmForge {
       if (Field(p, KPanel, out v, out t3) && t3 == T_TABLE) a.Panel = p;
     }
 
-    /// <summary>The hero screen as the game's Lua has it now (read-only). Heroes is the hero grid in display order; it is
+    /// <summary>The hero screen as the game's script has it now (read-only). Heroes is the hero grid in display order; it is
     /// read again only when the game builds a new list (GridPtr).</summary>
     public static HeroScreen ReadHeroScreen(EquipAddrs a, HeroScreen prev) {
       var h = new HeroScreen();
@@ -276,7 +276,7 @@ namespace RealmForge {
       if (Field(a.Form, "m_PanelDatas", out pd, out pdt) && pdt == T_TABLE && IntKey(pd, 6, out v, out tt) && tt == T_TABLE) {
         ulong camps, cls; int ct, lt;
         if (IntKey(v, 3, out camps, out ct) && ct == T_TABLE) { var c = IntArray(camps); var l = new List<long>(); foreach (var x in c) if (x > 0) l.Add(x); h.ChosenCamps = l.ToArray(); }
-        // the class column's choice: its «Все» is a Lua table with m_ProfessionID -1, a class is the game's config object
+        // the class column's choice: its «Все» is a script table with m_ProfessionID -1, a class is the game's config object
         if (IntKey(v, 1, out cls, out lt) && lt == T_TABLE)
           for (int i = 1; i <= 8; i++) {
             ulong e, pid; int et, pt;
@@ -406,7 +406,7 @@ namespace RealmForge {
       return Field(it, "iHeroId", out v, out tt) && tt == T_INT ? (long)v : -1;
     }
 
-    /// <summary>The gear panel's Lua table as JSON (3 levels, the two big list tables skipped) for the frame diagnostics.</summary>
+    /// <summary>The gear panel's script table as JSON (3 levels, the two big list tables skipped) for the frame diagnostics.</summary>
     public static string DumpPanel(EquipAddrs a) {
       if (a == null || a.Panel == 0) return null;
       var d = ParseTable(a.Panel, 3, new HashSet<ulong>());
@@ -456,7 +456,7 @@ namespace RealmForge {
       return r;
     }
 
-    // Value of an integer key of a Lua table (array part first, then the hash part).
+    // Value of an integer key of a script table (array part first, then the hash part).
     static bool IntKey(ulong t, long key, out ulong val, out int tt) {
       val = 0; tt = 0;
       var h = Read(t, 56); if (h == null || h[8] != 5) return false;

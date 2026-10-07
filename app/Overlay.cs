@@ -197,7 +197,7 @@ namespace RealmForge {
 
     void DiagLog(string line) { try { File.AppendAllText(Path.Combine(diagDir, "frame.log"), line + "\r\n"); } catch (Exception) { } }
 
-    // every 5th tick: a log line and the panel's Lua data when it changed (≤ 60 files); every 10th: a screenshot (≤ 60),
+    // every 5th tick: a log line and the panel's script data when it changed (≤ 60 files); every 10th: a screenshot (≤ 60),
     // only while the game is in front - the screen area of its window shows whatever window is on top otherwise
     void DiagTick(IntPtr hwnd, W32.POINT o, W32.RECT cr, string info) {
       if (DateTime.Now > diagUntil || diagDir == null || ++diagTick % 5 != 0) return;

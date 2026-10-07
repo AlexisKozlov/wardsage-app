@@ -78,7 +78,7 @@ namespace RealmForge {
       return best;
     }
 
-    /// <summary>PVPData's plain fields and its opponents (parsed Lua tables), or false when PVPData is not known.</summary>
+    /// <summary>PVPData's plain fields and its opponents (parsed script tables), or false when PVPData is not known.</summary>
     static bool ReadPvp(ulong pvp, out Dictionary<string, object> plain, out List<Dictionary<string, object>> opps) {
       plain = null; opps = null;
       if (pvp == 0) return false;
@@ -170,7 +170,7 @@ namespace RealmForge {
     }
   }
 
-  /// <summary>The pure part (tested without the game): Lua tables as ParseTable gives them → the site's JSON.</summary>
+  /// <summary>The pure part (tested without the game): script tables as ParseTable gives them → the site's JSON.</summary>
   public static class ArenaOpp {
     public const int Version = 1;
     const int MaxFrames = 400, MaxHeroes = 8, MaxStages = 6;
@@ -187,7 +187,7 @@ namespace RealmForge {
     static long N(Dictionary<string, object> d, string k) { return Num(Get(d, k)); }
     static bool Has(Dictionary<string, object> d, string k) { var v = Get(d, k); return v is long || v is double; }
 
-    /// <summary>A Lua array as ParseTable gives it ({"[1]": a, "[2]": b, …}): the values in index order.</summary>
+    /// <summary>A script array as ParseTable gives it ({"[1]": a, "[2]": b, …}): the values in index order.</summary>
     public static List<object> Items(object t) {
       var res = new List<object>();
       var d = t as Dictionary<string, object>; if (d == null) return res;
@@ -201,7 +201,7 @@ namespace RealmForge {
       return res;
     }
 
-    /// <summary>A Lua map {[k] = number}: "k" → number.</summary>
+    /// <summary>A script map {[k] = number}: "k" → number.</summary>
     static void NumMap(StringBuilder sb, object t) {
       sb.Append('{'); bool first = true;
       var d = t as Dictionary<string, object>;
