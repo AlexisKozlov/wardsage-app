@@ -975,9 +975,16 @@ namespace RealmForge {
     int[] ConfirmButton(W32.POINT o, double W, double H) {
       int[] rep = FindBlue(o, hg.Replace(W, H), H), eq = FindBlue(o, hg.Equip(W, H), H);
       int[] btn = (rep != null) == (eq != null) ? null : rep ?? eq;
+      if (btn != null || hintKind != "replace") confirmMissSince = 0;
       if (btn == null && hintKind == "replace") {
-        // (the journal: why «Заменить» is not pressed - once per selected item)
-        if (confirmMissLogged != target) {
+        // (the journal: why «Заменить» is not pressed - once per selected item). Right after a press the card closes while
+        // the game still shows the item selected for a moment: only a miss that lasts 2.5 s and leaves the item off the
+        // hero is one
+        long nowMs = NowMs();
+        if (confirmMissSince == 0 || confirmMissFor != target) { confirmMissSince = nowMs; confirmMissFor = target; }
+        bool lasting = nowMs - confirmMissSince >= 2500;
+        bool worn = lasting && addrs != null && hintHero > 0 && RFX.ReadOwner(addrs, target) == hintHero;
+        if (lasting && !worn && confirmMissLogged != target) {
           confirmMissLogged = target;
           string miss = "confirm: no single blue button (replace " + (rep != null) + ", equip " + (eq != null) + ") for item " + target;
           Log.Write(miss);
@@ -990,7 +997,7 @@ namespace RealmForge {
       }
       return btn;
     }
-    long confirmMissLogged, confirmFoundLogged;
+    long confirmMissLogged, confirmFoundLogged, confirmMissSince, confirmMissFor;
 
     /// <summary>The button at its usual place, or moved: a card with more lines (sub-stats, set bonuses) is taller and its
     /// button lower (27.09: an item with more extras was not put on) - searched from a bit above down to 0.14 of the

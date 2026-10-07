@@ -541,7 +541,9 @@ namespace RealmForge {
           if (json == null) {
             Log.Write("battle end: no statistics found");
             // (the «Записать бой» button outside a fight finds nothing either: only a result screen the watch saw counts)
-            if (kind >= 0) Report("battle.no_stats", "battle end: no statistics found (result screen " + kind + ")", Ctx("screen", kind.ToString(CultureInfo.InvariantCulture)));
+            // reported for the guild boss screens only (0, 1): their fights feed the calibration; the arena (3, 4) and the
+            // other stages (2) are not used yet
+            if (kind == 0 || kind == 1) Report("battle.no_stats", "battle end: no statistics found (result screen " + kind + ")", Ctx("screen", kind.ToString(CultureInfo.InvariantCulture)));
             win.BeginInvoke((Action)(() => Post("{\"ev\":\"battle\",\"ok\":false}")));
             return;
           }
