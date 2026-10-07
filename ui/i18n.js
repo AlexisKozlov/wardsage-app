@@ -3,7 +3,7 @@ window.RF_TEXTS = {
   ru: {
     tagline: 'Экстрактор аккаунта',
     navSync: 'Синхронизация', navEquip: 'Переодевание', navSettings: 'Настройки',
-    gameOn: 'Игра запущена', gameOff: 'Игра не запущена', gameVer: 'версия {0}',
+    gameOn: 'Игра запущена', gameOff: 'Игра не запущена', gameVer: 'игра {0}', appVer: 'RealmForge {0}',
 
     syncTitle: 'Синхронизация', syncLead: 'Экстрактор читает героев и снаряжение из запущенной игры и отправляет снимок в твой профиль на сайте.',
     chkGame: 'Watcher of Realms', chkGameOn: 'Запущена · версия {0}', chkGameOnNoVer: 'Запущена', chkGameOff: 'Запусти игру и дождись главного экрана',
@@ -112,7 +112,7 @@ window.RF_TEXTS = {
   en: {
     tagline: 'Account extractor',
     navSync: 'Sync', navEquip: 'Equip', navSettings: 'Settings',
-    gameOn: 'Game running', gameOff: 'Game not running', gameVer: 'version {0}',
+    gameOn: 'Game running', gameOff: 'Game not running', gameVer: 'game {0}', appVer: 'RealmForge {0}',
 
     syncTitle: 'Sync', syncLead: 'The extractor reads your heroes and gear from the running game and sends a snapshot to your profile on the site.',
     chkGame: 'Watcher of Realms', chkGameOn: 'Running · version {0}', chkGameOnNoVer: 'Running', chkGameOff: 'Start the game and wait for the main screen',

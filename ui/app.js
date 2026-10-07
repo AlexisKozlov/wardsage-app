@@ -98,7 +98,7 @@
           <p>${esc(S.update[S.lang] || S.update.ru || t('updNext'))}</p>
           <button class="btn-gold" data-act="updRestart">${esc(t('updRestart'))}</button></div>` : ''}
         <div class="game-state"><span class="dot ${S.game.running ? 'on' : ''}"></span><div>${esc(S.game.running ? t('gameOn') : t('gameOff'))}
-          ${S.game.running && S.game.version ? `<small>${esc(t('gameVer', S.game.version))}</small>` : ''}</div></div>
+          ${S.game.running && S.game.version ? `<small>${esc(t('gameVer', S.game.version))}</small>` : ''}${S.version ? `<small>${esc(t('appVer', S.version))}</small>` : ''}</div></div>
         <div class="langs">
           <button data-act="lang" data-lang="ru" aria-pressed="${S.lang === 'ru'}">RU</button>
           <button data-act="lang" data-lang="en" aria-pressed="${S.lang === 'en'}">EN</button>

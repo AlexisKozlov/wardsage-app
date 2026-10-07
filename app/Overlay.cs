@@ -620,7 +620,7 @@ namespace RealmForge {
         SellSay("open");
         if (now - sellBtnAt < 2500) return;
         sellBtnAt = now;
-        SendInside(new AutoAction { Kind = AutoKind.Click, X = W - InvBtnDX * U, Y = H - hg2.HeroesBtnDY * U }, o, cr);
+        SendInside(new AutoAction { Kind = AutoKind.Click, X = W - invDX * U, Y = H - hg2.HeroesBtnDY * U }, o, cr);
         return;
       }
       SellSay("no_city");
@@ -848,7 +848,9 @@ namespace RealmForge {
     // the city's bottom bar buttons, found by their picture (grey levels at the reference scale, UI unit 900): the bar is
     // anchored bottom right and wraps on narrow windows, so a button is clicked only where its picture is
     sealed class ButtonTpl {
-      readonly string res; float[] g; int w, h; float[] scaled; int sw, sh; double su;
+      // only the round icon is compared (the top ICON part): the label under it is in the game's language
+      const double ICON = 0.74;
+      readonly string res; float[] g; int w, h; float[] scaled; int sw, sh, fullH; double su;
       public ButtonTpl(string res) { this.res = res; }
       bool Load() {
         if (g != null) return true;
@@ -866,27 +868,38 @@ namespace RealmForge {
       }
       /// <summary>Is the picture at (cx, cy) (client px, its centre, within a few px)? NCC ≥ 0.75, contrast 0.6–1.6.</summary>
       public bool Seen(W32.POINT o, double W, double H, double cx, double cy) {
+        double x; return Find(o, W, H, cx, cx, cy, out x);
+      }
+
+      /// <summary>The picture's centre x between x0 and x1 (client px; the bar moves when the game adds an event button),
+      /// on the row cy; false = not there.</summary>
+      public bool Find(W32.POINT o, double W, double H, double x0, double x1, double cy, out double found) {
+        found = double.NaN;
         if (!Load()) return false;
         double U = Ui.Unit(W, H);
         if (scaled == null || Math.Abs(su - U) > 0.5) {
           su = U; double k = U / 900.0;
-          sw = Math.Max(8, (int)Math.Round(w * k)); sh = Math.Max(8, (int)Math.Round(h * k));
+          sw = Math.Max(8, (int)Math.Round(w * k)); fullH = Math.Max(8, (int)Math.Round(h * k)); sh = Math.Max(8, (int)Math.Round(fullH * ICON));
           scaled = new float[sw * sh];
           for (int y = 0; y < sh; y++) for (int x = 0; x < sw; x++)
             scaled[y * sw + x] = g[Math.Min(h - 1, (int)(y / k)) * w + Math.Min(w - 1, (int)(x / k))];
         }
         const int R = 6;
-        int gx = (int)(cx - sw / 2.0) - R, gy = (int)(cy - sh / 2.0) - R, gw = sw + 2 * R, gh = sh + 2 * R;
-        if (gx < 0 || gy < 0 || gx + gw > W || gy + gh > H) return false;
+        if (x1 < x0) { var tx = x0; x0 = x1; x1 = tx; }
+        int span = (int)Math.Round(x1 - x0);
+        int gx = (int)(x0 - sw / 2.0) - R, gy = (int)(cy - fullH / 2.0) - R, gw = sw + 2 * R + span, gh = sh + 2 * R;
+        if (gx < 0) { span += gx; gw += gx; gx = 0; }
+        if (gx + gw > W) { int cut = (int)(gx + gw - W); span -= cut; gw -= cut; }
+        if (span < 0 || gy < 0 || gy + gh > H) return false;
         int[] px = Grab(o.X + gx, o.Y + gy, gw, gh);
         if (px == null) return false;
         var grey = new float[px.Length];
         for (int i = 0; i < px.Length; i++) { int c = px[i]; grey[i] = 0.299f * ((c >> 16) & 255) + 0.587f * ((c >> 8) & 255) + 0.114f * (c & 255); }
         double tm = 0; foreach (var t in scaled) tm += t; tm /= scaled.Length;
         double tv = 0; foreach (var t in scaled) tv += (t - tm) * (t - tm);
-        double best = -1, bestStd = 0, tstd = Math.Sqrt(tv / scaled.Length);
+        double best = -1, bestStd = 0, bestX = 0, tstd = Math.Sqrt(tv / scaled.Length);
         for (int dy = 0; dy <= 2 * R; dy += 2)
-          for (int dx = 0; dx <= 2 * R; dx += 2) {
+          for (int dx = 0; dx <= 2 * R + span; dx += 2) {
             double m = 0;
             for (int y = 0; y < sh; y++) for (int x = 0; x < sw; x++) m += grey[(y + dy) * gw + x + dx];
             m /= scaled.Length;
@@ -896,17 +909,33 @@ namespace RealmForge {
               num += p * t; pv += p * p;
             }
             double ncc = pv > 0 && tv > 0 ? num / Math.Sqrt(pv * tv) : 0;
-            if (ncc > best) { best = ncc; bestStd = Math.Sqrt(pv / scaled.Length); }
+            if (ncc > best) { best = ncc; bestStd = Math.Sqrt(pv / scaled.Length); bestX = gx + dx + sw / 2.0; }
           }
         double contrast = tstd > 0 ? bestStd / tstd : 0;
-        return best >= 0.75 && contrast >= 0.6 && contrast <= 1.6;
+        if (!(best >= 0.75 && contrast >= 0.6 && contrast <= 1.6)) return false;
+        found = bestX;
+        return true;
       }
     }
     static readonly ButtonTpl heroesBtn = new ButtonTpl("overlay/heroes_btn.png"), inventoryBtn = new ButtonTpl("overlay/inventory_btn.png");
 
     // the picture's centre (the click goes to the icon, a bit higher)
     bool HeroesButtonSeen(W32.POINT o, double W, double H) { double U = Ui.Unit(W, H); return heroesBtn.Seen(o, W, H, W - hg2.HeroesBtnDX * U, H - 0.1156 * U); }
-    bool InventoryButtonSeen(W32.POINT o, double W, double H) { double U = Ui.Unit(W, H); return inventoryBtn.Seen(o, W, H, W - InvBtnDX * U, H - 0.1156 * U); }
+    // «Инвентарь» / «Storage»: at its usual place, else searched along the bar to the left of «Герои» (an event button
+    // such as «Demon Soldier» moves it); the place found is kept for the window
+    double invDX = InvBtnDX; long invScanAt;
+    bool InventoryButtonSeen(W32.POINT o, double W, double H) {
+      double U = Ui.Unit(W, H), cy = H - 0.1156 * U;
+      if (inventoryBtn.Seen(o, W, H, W - invDX * U, cy)) return true;
+      long now = NowMs();
+      if (now - invScanAt < 3000) return false;
+      invScanAt = now;
+      double x;
+      if (!inventoryBtn.Find(o, W, H, W - (hg2.HeroesBtnDX + 0.3) * U, W - (hg2.HeroesBtnDX + 2.8) * U, cy, out x)) return false;
+      invDX = (W - x) / U;
+      Log.Write("sell: «Инвентарь» found in the bar at " + invDX.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture) + " U from the right");
+      return true;
+    }
 
     string heroLogged;
     /// <summary>One journal line whenever the hero pilot's view or state changes.</summary>
