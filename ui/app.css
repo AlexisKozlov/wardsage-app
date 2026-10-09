@@ -299,7 +299,7 @@ body.compact .slots li .sub { font-size: 12px }
 .collage img:first-child { filter: saturate(1.05) brightness(1) }
 .banner.has-collage .inner { max-width: calc(100% - 300px) }
 /* the sync button spans the banner's column: its label (icon + «СИНХРОНИЗИРОВАТЬ») never touches the frame */
-.banner .btn-gold.big { width: 100%; justify-self: stretch; padding: 0 22px; letter-spacing: 1.2px }
+.banner .btn-gold.big { width: 100%; justify-self: stretch; padding: 0 22px 6px; letter-spacing: 1.2px }
 .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 18px }
 .tile { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 12px; align-items: center; padding: 14px 16px }
 .tile .ico { width: 40px; height: 40px; display: grid }
@@ -316,6 +316,9 @@ body.compact .slots li .sub { font-size: 12px }
 .btn-gold { border: 14px solid transparent; border-image: url(img/btn_gold.webp) 22 26 fill / 14px 16px stretch; background: none; box-shadow: none !important; padding: 0 14px; border-radius: 0; overflow: visible; filter: drop-shadow(0 6px 14px rgba(201, 164, 92, .25)) }
 .btn-gold::after { display: none }
 .btn-gold.big { min-height: 62px }
+/* the display face's capitals sit low in their line and the texture's bottom bevel is thicker than its top: the label is lifted so it looks centred on the gold face */
+.btn-gold { padding-bottom: 4px }
+.btn-gold.big { padding-bottom: 6px }
 .btn-gold:hover:not(:disabled) { filter: brightness(1.08) drop-shadow(0 8px 18px rgba(201, 164, 92, .4)) }
 .btn-gold { color: #2a1a05; text-shadow: 0 1px 0 rgba(255, 240, 200, .5) }
 .card.framed { border-image: url(img/frame.webp) 12 / 1px stretch }

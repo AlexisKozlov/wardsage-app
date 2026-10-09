@@ -289,7 +289,7 @@ namespace RealmForge {
     void OpenAllowed(string url) {
       Uri u, site;
       if (url == null || !Uri.TryCreate(url, UriKind.Absolute, out u) || u.Scheme != Uri.UriSchemeHttps && !(u.Scheme == Uri.UriSchemeHttp && u.IsLoopback)) return;
-      bool ok = u.Host == "github.com" || u.Host == "go.microsoft.com";
+      bool ok = u.Host == "github.com" || u.Host == "go.microsoft.com" || u.Host == "discord.gg" || u.Host == "discord.com";
       if (Uri.TryCreate(cfg.Site, UriKind.Absolute, out site) && u.Host == site.Host) ok = true;
       if (ok) Shell.OpenUrl(u.AbsoluteUri);
     }

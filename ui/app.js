@@ -173,6 +173,9 @@
       </div></div>`;
   }
 
+  // where players ask for help and report bugs (channels for bugs, questions and ideas)
+  const DISCORD = 'https://discord.gg/xJrfv3zYx5';
+
   function errorBox() {
     const e = S.sync.error || {};
     const map = {
@@ -184,7 +187,8 @@
     const arg = e.kind === 'rate' ? (e.retryAfter || 30) : e.detail || '';
     return `<div class="alert">${I.warn}<div><b>${esc(t(h))}</b><p>${esc(t(p, arg))}</p><div class="row">
       ${e.kind === 'token' ? `<button class="btn-line" data-act="open" data-url="${esc(S.site + '/app/settings')}">${I.ext}${esc(t('newCode'))}</button>` : ''}
-      <button class="btn-line" data-act="openLog">${esc(t('showLog'))}</button></div></div></div>`;
+      <button class="btn-line" data-act="openLog">${esc(t('showLog'))}</button>
+      <button class="btn-line" data-act="open" data-url="${DISCORD}">${I.ext}${esc(t('reportBug'))}</button></div></div></div>`;
   }
 
   function onboarding() {
@@ -458,6 +462,7 @@
           ? `<div class="row"><span class="num" style="font-family:Consolas,monospace;color:var(--gold)">${esc(S.codePrefix)}…</span>
              <button class="btn-line" data-act="editCode">${esc(t('change'))}</button><button class="btn-ghost" data-act="unlink">${esc(t('unlink'))}</button></div>`
           : `<button class="btn-line" data-act="editCode">${esc(t('save'))}</button>`)}
+        ${row(t('setHelp'), t('setHelpP'), `<button class="btn-line" data-act="open" data-url="${DISCORD}">${I.ext}${esc(t('openDiscord'))}</button>`)}
         ${row(t('setLang'), '', `<div class="langs"><button data-act="lang" data-lang="ru" aria-pressed="${S.lang === 'ru'}">РУССКИЙ</button><button data-act="lang" data-lang="en" aria-pressed="${S.lang === 'en'}">ENGLISH</button></div>`)}
         ${row(t('setAutoSync'), t('setAutoSyncP'), `<button class="switch" role="switch" data-act="autoSync" aria-checked="${S.autoSync}"></button>`)}
         ${row(t('setAutoClick'), t('setAutoClickP'), `<button class="switch" role="switch" data-act="autoClick" aria-checked="${S.autoClick}"></button>`)}
