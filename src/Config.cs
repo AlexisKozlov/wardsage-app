@@ -12,6 +12,7 @@ using System.Text;
 namespace RealmForge {
   public sealed class AppConfig {
     public string Site = SyncClient.DefaultSite;
+    const string OldSite = "https://realmforge-wor.vercel.app";
     public string Code = "";
     public string Lang = SystemLang();   // until the player picks one: Windows's language (Russian for ru/uk/be/kk, else English)
     public bool SaveCopy;
@@ -36,7 +37,7 @@ namespace RealmForge {
     }
 
     public static string DefaultDir {
-      get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "RealmForge"); }
+      get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), Channel.FolderName); }
     }
     public static string DefaultPath { get { return Path.Combine(DefaultDir, "config.json"); } }
 
@@ -89,6 +90,10 @@ namespace RealmForge {
       if (d == null) return c;
       string site = MiniJson.GetString(d, "site");
       if (!string.IsNullOrEmpty(site)) c.Site = site;
+      // the site moved from realmforge-wor.vercel.app: an old saved address follows (written on the next Save)
+      string siteErr;
+      string norm = SyncClient.NormalizeSite(site, out siteErr);
+      if (norm != null && string.Equals(norm, OldSite, StringComparison.OrdinalIgnoreCase)) c.Site = SyncClient.DefaultSite;
       string lang = MiniJson.GetString(d, "lang");
       c.Lang = lang == "en" ? "en" : lang == "ru" ? "ru" : SystemLang();
       c.SaveCopy = MiniJson.GetBool(d, "saveCopy", false);

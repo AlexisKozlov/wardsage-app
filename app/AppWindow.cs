@@ -1,4 +1,4 @@
-// RealmForge.exe - the window: a WebView2 filling a dark-framed form; «Поверх игры» = compact always-on-top mode.
+// Wardsage.exe - the window: a WebView2 filling a dark-framed form; «Поверх игры» = compact always-on-top mode.
 using System;
 using System.Drawing;
 using System.IO;
@@ -69,15 +69,15 @@ namespace RealmForge {
     FormWindowState shownState = FormWindowState.Normal;   // normal or maximized before it went to the tray
     /// <summary>Close to the tray (the player's setting, AppConfig.Tray; set by HostBridge).</summary>
     public bool TrayEnabled = true;
-    string trayOpen = "Открыть RealmForge", trayExit = "Выход";
-    string trayHint = "RealmForge работает в трее. Выход — правой кнопкой по значку.";
+    string trayOpen = "Открыть Wardsage", trayExit = "Выход";
+    string trayHint = "Wardsage работает в трее. Выход — правой кнопкой по значку.";
     // a real exit (the tray menu, a fatal error): the close button otherwise only hides the window in the tray
     bool exiting;
     bool hintShown;
 
     public AppWindow(bool hidden = false) {
       startHidden = hidden;
-      Text = "RealmForge";
+      Text = Channel.WindowTitle;
       BackColor = Color.FromArgb(11, 16, 27);
       AutoScaleMode = AutoScaleMode.Dpi;
       MinimumSize = new Size(880, 600);
@@ -102,7 +102,7 @@ namespace RealmForge {
 
     void SetupTray() {
       try { tray.Icon = Icon ?? SystemIcons.Application; } catch (Exception) { tray.Icon = SystemIcons.Application; }
-      tray.Text = "RealmForge";
+      tray.Text = Channel.WindowTitle;
       tray.Visible = true;
       tray.MouseClick += (s, e) => { if (e.Button == MouseButtons.Left) ShowFromTray(); };
       var menu = new ContextMenuStrip();
@@ -115,9 +115,9 @@ namespace RealmForge {
     /// <summary>The tray menu's words in the app's language.</summary>
     public void SetTrayLang(string lang) {
       bool en = lang == "en";
-      trayOpen = en ? "Open RealmForge" : "Открыть RealmForge";
+      trayOpen = en ? "Open Wardsage" : "Открыть Wardsage";
       trayExit = en ? "Exit" : "Выход";
-      trayHint = en ? "RealmForge keeps running in the tray. Exit: right-click the icon." : "RealmForge работает в трее. Выход — правой кнопкой по значку.";
+      trayHint = en ? "Wardsage keeps running in the tray. Exit: right-click the icon." : "Wardsage работает в трее. Выход — правой кнопкой по значку.";
     }
 
     /// <summary>The window back from the tray (or to the front), as it was.</summary>
@@ -236,7 +236,7 @@ namespace RealmForge {
         Hide();
         if (!hintShown) {
           hintShown = true;
-          try { tray.ShowBalloonTip(4000, "RealmForge", trayHint, ToolTipIcon.Info); } catch (Exception) { }
+          try { tray.ShowBalloonTip(4000, Channel.WindowTitle, trayHint, ToolTipIcon.Info); } catch (Exception) { }
         }
         return;
       }

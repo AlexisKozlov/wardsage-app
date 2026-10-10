@@ -1,4 +1,4 @@
-/* RealmForge desktop — same palette and type as the site (realmforge-wor.vercel.app). */
+/* Wardsage desktop — same palette and type as the site (wardsage.com). */
 @font-face { font-family: Cinzel; src: url(fonts/cinzel-500.woff2) format('woff2'); font-weight: 500; font-display: block }
 @font-face { font-family: Cinzel; src: url(fonts/cinzel-700.woff2) format('woff2'); font-weight: 700; font-display: block }
 @font-face { font-family: Alegreya; src: url(fonts/alegreya-sans-400.woff2) format('woff2'); font-weight: 400; font-display: block }
@@ -46,6 +46,7 @@ button { cursor: pointer }
   font: 700 21px/1 var(--display); color: var(--gold);
 }
 .brand b { font: 700 15px/1.1 var(--display); letter-spacing: 1.4px; color: var(--gold); white-space: nowrap }
+.test-badge { margin-left: 8px; padding: 2px 6px 1px; background: var(--gold); color: var(--bg2); font: 700 10px/1.2 var(--display); letter-spacing: 1.2px; vertical-align: 2px }
 .brand small { display: block; font-size: 12px; color: var(--dim); letter-spacing: .3px; margin-top: 3px }
 
 .nav { all: unset; display: flex; align-items: center; gap: 12px; padding: 11px 12px; border-radius: 3px; cursor: pointer;

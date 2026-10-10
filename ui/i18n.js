@@ -1,9 +1,9 @@
-// RealmForge desktop — interface texts (ru default, en).
+// Wardsage desktop — interface texts (ru default, en).
 window.RF_TEXTS = {
   ru: {
     tagline: 'Экстрактор аккаунта',
     navSync: 'Синхронизация', navEquip: 'Переодевание', navSettings: 'Настройки', navNews: 'Что нового', newsTitle: 'Что нового', newsLead: 'Изменения программы по версиям.', newsVer: 'Версия {0}', newsYours: 'у тебя',
-    gameOn: 'Игра запущена', gameOff: 'Игра не запущена', gameVer: 'игра {0}', appVer: 'RealmForge {0}',
+    gameOn: 'Игра запущена', gameOff: 'Игра не запущена', gameVer: 'игра {0}', appVer: 'Wardsage {0}',
 
     syncTitle: 'Синхронизация', syncLead: 'Экстрактор читает героев и снаряжение из запущенной игры и отправляет снимок в твой профиль на сайте.',
     chkGame: 'Watcher of Realms', chkGameOn: 'Запущена · версия {0}', chkGameOnNoVer: 'Запущена', chkGameOff: 'Запусти игру и дождись главного экрана',
@@ -23,11 +23,11 @@ window.RF_TEXTS = {
     setAutoClick: 'Автонажатие', setAutoClickP: 'В «Переодевании» программа сама открывает нужный слот, прокручивает список и нажимает вещь (мышью, как игрок). «Заменить» нажимаешь ты, если не включено автоподтверждение ниже. Правила игры могут запрещать автоматизацию — решай сам.',
     setAutoConfirm: 'Автоматически подтверждать замену вещей', setAutoConfirmP: 'Программа сама нажимает «Заменить» и переходит к следующему слоту, пока вся сборка не будет надета. Нажимает, только когда по памяти игры выбрана именно нужная вещь, открыт нужный герой и вещь на нём ещё не надета; один раз на вещь. Это уже полная автоматизация действий в игре — правила игры могут её запрещать, риск блокировки аккаунта на тебе. По умолчанию выключено.',
     setAutoConfirmOff: 'Работает вместе с «Автонажатием» — включи его выше.',
-    setTray: 'Прятать в трей', setTrayP: 'Крестик прячет окно в трей рядом с часами — программа продолжает работать (сворачивание оставляет её на панели задач, как обычно). Открыть: щелчок по значку RealmForge, выход — правой кнопкой по значку.',
+    setTray: 'Прятать в трей', setTrayP: 'Крестик прячет окно в трей рядом с часами — программа продолжает работать (сворачивание оставляет её на панели задач, как обычно). Открыть: щелчок по значку Wardsage, выход — правой кнопкой по значку.',
     setAutostart: 'Запускать вместе с Windows', setAutostartP: 'Программа стартует при входе в Windows сразу в трей и сама синхронизирует аккаунт и записывает бои, когда запущена игра.',
     setAutoUpdate: 'Обновлять автоматически', setAutoUpdateP: 'Программа проверяет обновления каждые 5 минут и сама перезапускается в новую версию в спокойный момент: не идёт бой, синхронизация или переодевание, и ты не трогал программу пару минут. Окно возвращается на то же место и не перехватывает фокус у игры. Выключи — и обновление будет ждать кнопки «Перезапустить».',
     setHelp: 'Помощь и ошибки', setHelpP: 'Нашёл ошибку, что-то не работает или есть идея — пиши в наш Discord: там есть каналы для ошибок, вопросов и предложений. К сообщению об ошибке приложи журнал (строка «Журнал» ниже) и версию программы.', openDiscord: 'Открыть Discord', reportBug: 'Сообщить в Discord',
-    setReports: 'Отправлять отчёты об ошибках', setReportsP: 'Если «Переодевание», синхронизация или запись боя дадут сбой, программа сама сообщит разработчику — описывать ничего не придётся. Уходит на сайт RealmForge (с твоим кодом синхронизации, как при обычной синхронизации): тип сбоя, короткое описание, версии программы и игры и последние 300 строк журнала — это id героев и вещей, экраны игры и шаги программы. Код синхронизации, пароли и файлы в отчёт не попадают, папка пользователя Windows заменяется на %USERPROFILE%. Одинаковые сбои — не чаще раза в 10 минут, всего не больше 20 в день. Видит только администратор сайта. По умолчанию выключено: без переключателя ничего не отправляется.',
+    setReports: 'Отправлять отчёты об ошибках', setReportsP: 'Если «Переодевание», синхронизация или запись боя дадут сбой, программа сама сообщит разработчику — описывать ничего не придётся. Уходит на сайт Wardsage (с твоим кодом синхронизации, как при обычной синхронизации): тип сбоя, короткое описание, версии программы и игры и последние 300 строк журнала — это id героев и вещей, экраны игры и шаги программы. Код синхронизации, пароли и файлы в отчёт не попадают, папка пользователя Windows заменяется на %USERPROFILE%. Одинаковые сбои — не чаще раза в 10 минут, всего не больше 20 в день. Видит только администратор сайта. По умолчанию выключено: без переключателя ничего не отправляется.',
     reportsOn: 'Отчёты об ошибках включены — спасибо! Сбои будут приходить разработчику сами.', reportsNoCode: 'Отчёты включены, но уйдут только после того, как ты сохранишь код синхронизации.',
     autoConfirmOn: 'Автоподтверждение включено: «Заменить» программа нажмёт сама',
     aWork: 'Программа сама ищет и нажимает вещь — не трогай мышь пару секунд', aWorkP: 'Когда вещь будет выбрана, нажми «Заменить».',
@@ -38,7 +38,7 @@ window.RF_TEXTS = {
     aFailed: 'Не получилось нажать вещь автоматически — найди её сам по подсказкам', aFailedP: 'Подсказки и рамка в игре остаются.',
 
     errNotRunning: 'Игра не найдена', errNotRunningP: 'Запусти Watcher of Realms, дождись главного экрана и нажми «Синхронизировать» ещё раз.',
-    errAccess: 'Нет прав на чтение памяти игры', errAccessP: 'Игра запущена от администратора. Перезапусти RealmForge и нажми «Да» в окне Windows.',
+    errAccess: 'Нет прав на чтение памяти игры', errAccessP: 'Игра запущена от администратора. Перезапусти Wardsage и нажми «Да» в окне Windows.',
     errRead: 'Не удалось прочитать данные', errReadP: 'Зайди в игру до главного экрана (не экран загрузки) и попробуй снова. Если повторяется — открой журнал.',
     errToken: 'Код не принят сайтом', errTokenP: 'Код отозван или неверен. Выпусти новый в настройках сайта и вставь его сюда.',
     otherAccount: 'другой аккаунт — не надевается', rateWait: 'Сайт принимает данные раз в 30 секунд — отправлю сам через {0} с.', errRate: 'Слишком часто', errRateP: 'Синхронизировать можно раз в 30 секунд. Подожди {0} с.',
@@ -110,13 +110,13 @@ window.RF_TEXTS = {
     setLang: 'Язык', setCopy: 'Копия account.json', setCopyP: 'Сохранять снимок в Документы\\RealmForge.',
     setSite: 'Адрес сайта', setSiteP: 'Менять не нужно.', reset: 'По умолчанию',
     setLog: 'Журнал', setLogP: 'Если что-то пошло не так.', openLog: 'Открыть журнал',
-    setAbout: 'О программе', aboutP: 'RealmForge {0} · фанатский проект, не связан с разработчиком игры. Исходный код открыт.',
+    setAbout: 'О программе', aboutP: 'Wardsage {0} · фанатский проект, не связан с разработчиком игры. Исходный код открыт.',
     source: 'Исходный код', copied: 'Скопировано', saved: 'Сохранено',
   },
   en: {
     tagline: 'Account extractor',
     navSync: 'Sync', navEquip: 'Equip', navSettings: 'Settings', navNews: "What's new", newsTitle: "What's new", newsLead: "The program's changes by version.", newsVer: 'Version {0}', newsYours: 'yours',
-    gameOn: 'Game running', gameOff: 'Game not running', gameVer: 'game {0}', appVer: 'RealmForge {0}',
+    gameOn: 'Game running', gameOff: 'Game not running', gameVer: 'game {0}', appVer: 'Wardsage {0}',
 
     syncTitle: 'Sync', syncLead: 'The extractor reads your heroes and gear from the running game and sends a snapshot to your profile on the site.',
     chkGame: 'Watcher of Realms', chkGameOn: 'Running · version {0}', chkGameOnNoVer: 'Running', chkGameOff: 'Start the game and wait for the main screen',
@@ -136,11 +136,11 @@ window.RF_TEXTS = {
     setAutoClick: 'Auto click', setAutoClickP: 'The equip helper opens the slot, scrolls the list and clicks the item by itself (with the mouse, like a player). You press “Replace” unless auto-confirm below is on. The game’s rules may forbid automation — your call.',
     setAutoConfirm: 'Confirm the replacement automatically', setAutoConfirmP: 'The program presses “Replace” itself and moves on to the next slot until the whole build is on. It presses only when the game’s memory shows exactly the right item selected, the right hero open and the item not on that hero yet; once per item. This is full automation of actions in the game — the game’s rules may forbid it, the risk of an account ban is yours. Off by default.',
     setAutoConfirmOff: 'Works together with “Auto click” — turn that on above.',
-    setTray: 'Hide in the tray', setTrayP: 'The close button hides the window in the tray next to the clock — the program keeps working (minimizing keeps it on the taskbar as usual). Open: click the RealmForge icon, exit: right-click the icon.',
+    setTray: 'Hide in the tray', setTrayP: 'The close button hides the window in the tray next to the clock — the program keeps working (minimizing keeps it on the taskbar as usual). Open: click the Wardsage icon, exit: right-click the icon.',
     setAutostart: 'Start with Windows', setAutostartP: 'The program starts with Windows straight in the tray and syncs the account and records fights by itself while the game runs.',
     setAutoUpdate: 'Update automatically', setAutoUpdateP: 'The program checks for updates every 5 minutes and restarts into the new version by itself in a quiet moment: no fight, sync or equipping going on, and the program untouched for a couple of minutes. The window comes back where it was and does not take the focus from the game. Turn it off and an update waits for the «Restart» button.',
     setHelp: 'Help and bugs', setHelpP: 'Found a bug, something does not work or have an idea — write on our Discord: it has channels for bugs, questions and suggestions. With a bug report, attach the log (the «Log» row below) and the program version.', openDiscord: 'Open Discord', reportBug: 'Report on Discord',
-    setReports: 'Send error reports', setReportsP: 'If the equip helper, the sync or a fight recording fails, the program tells the developer by itself — you will not have to describe it. It goes to the RealmForge site (signed with your sync code, as a sync is): the kind of failure, a short description, the program and game versions and the last 300 lines of the journal — hero and item ids, the game’s screens and the program’s steps. The sync code, passwords and files are never in a report, the Windows user folder is replaced with %USERPROFILE%. The same failure at most once in 10 minutes, at most 20 a day. Only the site’s admin sees them. Off by default: nothing is sent without the switch.',
+    setReports: 'Send error reports', setReportsP: 'If the equip helper, the sync or a fight recording fails, the program tells the developer by itself — you will not have to describe it. It goes to the Wardsage site (signed with your sync code, as a sync is): the kind of failure, a short description, the program and game versions and the last 300 lines of the journal — hero and item ids, the game’s screens and the program’s steps. The sync code, passwords and files are never in a report, the Windows user folder is replaced with %USERPROFILE%. The same failure at most once in 10 minutes, at most 20 a day. Only the site’s admin sees them. Off by default: nothing is sent without the switch.',
     reportsOn: 'Error reports are on — thank you! Failures will reach the developer by themselves.', reportsNoCode: 'Error reports are on, but they go out only once you save a sync code.',
     autoConfirmOn: 'Auto-confirm is on: the program will press “Replace” itself',
     aWork: 'The program is finding and clicking the item — leave the mouse for a moment', aWorkP: 'Once the item is selected, press “Replace”.',
@@ -151,7 +151,7 @@ window.RF_TEXTS = {
     aFailed: 'Could not click the item automatically — find it with the hints', aFailedP: 'The hints and the frame in the game stay on.',
 
     errNotRunning: 'Game not found', errNotRunningP: 'Start Watcher of Realms, wait for the main screen and press “Sync” again.',
-    errAccess: 'No permission to read the game', errAccessP: 'The game runs as administrator. Restart RealmForge and press “Yes” in the Windows prompt.',
+    errAccess: 'No permission to read the game', errAccessP: 'The game runs as administrator. Restart Wardsage and press “Yes” in the Windows prompt.',
     errRead: 'Could not read the data', errReadP: 'Get to the main screen (not the loading screen) and retry. If it repeats, open the log.',
     errToken: 'The site rejected the code', errTokenP: 'The code was revoked or is wrong. Issue a new one in the site settings and paste it here.',
     otherAccount: 'another account — not put on', rateWait: 'The site takes data once every 30 seconds — sending by itself in {0} s.', errRate: 'Too often', errRateP: 'You can sync once every 30 seconds. Wait {0} s.',
@@ -223,7 +223,7 @@ window.RF_TEXTS = {
     setLang: 'Language', setCopy: 'Copy of account.json', setCopyP: 'Save the snapshot to Documents\\RealmForge.',
     setSite: 'Site address', setSiteP: 'No need to change it.', reset: 'Default',
     setLog: 'Log', setLogP: 'If something went wrong.', openLog: 'Open log',
-    setAbout: 'About', aboutP: 'RealmForge {0} · a fan project, not affiliated with the game developer. Open source.',
+    setAbout: 'About', aboutP: 'Wardsage {0} · a fan project, not affiliated with the game developer. Open source.',
     source: 'Source code', copied: 'Copied', saved: 'Saved',
   },
 };

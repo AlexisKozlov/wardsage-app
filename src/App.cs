@@ -29,7 +29,7 @@ namespace RealmForge {
       try { Application.SetCompatibleTextRenderingDefault(false); } catch (InvalidOperationException) { }
       Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
       Application.ThreadException += delegate(object s, ThreadExceptionEventArgs e) {
-        MessageBox.Show(Strings.Format("err_internal", e.Exception.Message), "RealmForge", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        MessageBox.Show(Strings.Format("err_internal", e.Exception.Message), Channel.ProductName, MessageBoxButtons.OK, MessageBoxIcon.Error);
       };
       using (var form = new MainForm(AppConfig.Load(), scriptPath)) Application.Run(form);
     }

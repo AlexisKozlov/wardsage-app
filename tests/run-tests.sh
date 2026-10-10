@@ -57,7 +57,7 @@ else
   echo "SKIPPED: $FX not found (install mono-devel for the .NET Framework reference assemblies)"
 fi
 
-CORE="src/MemoryReader.cs src/EquipScan.cs src/MiniJson.cs src/GameInfo.cs src/Extractor.cs src/SyncClient.cs src/PlansClient.cs src/ErrorReport.cs src/BridgeClient.cs src/ListTracker.cs src/AutoPilot.cs src/FilterPilot.cs src/EquipGuide.cs src/Config.cs src/Strings.cs src/TimelineBuilder.cs"
+CORE="src/Channel.cs src/MemoryReader.cs src/EquipScan.cs src/MiniJson.cs src/GameInfo.cs src/Extractor.cs src/SyncClient.cs src/PlansClient.cs src/ErrorReport.cs src/BridgeClient.cs src/ListTracker.cs src/AutoPilot.cs src/FilterPilot.cs src/EquipGuide.cs src/Config.cs src/Strings.cs src/TimelineBuilder.cs"
 
 step "3. Core (no WinForms) compiles as C# 5 for .NET 8; tests build"
 NET8_REFS=$(for f in "$NET8"/*.dll; do printf -- '-r:%s ' "$f"; done)
@@ -91,7 +91,7 @@ step "7. Desktop interface: equip helper logic, script syntax"
 node tests/guide.test.mjs
 for f in ui/*.js; do node --check "$f"; done && echo "ui scripts: syntax ok"
 
-step "8. RealmForge.exe builds (C# 7.3, .NET Framework 4.6.2, WebView2 SDK checksums)"
+step "8. Wardsage.exe builds (C# 7.3, .NET Framework 4.6.2, WebView2 SDK checksums)"
 bash tools/build-app.sh
 
 echo

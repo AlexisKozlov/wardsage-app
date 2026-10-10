@@ -83,8 +83,8 @@ static class CoreTests {
 
     Console.WriteLine("Site address");
     string err;
-    Eq("https://realmforge-wor.vercel.app", SyncClient.NormalizeSite("https://realmforge-wor.vercel.app/", out err), "trailing slash");
-    Eq("https://realmforge-wor.vercel.app", SyncClient.NormalizeSite("realmforge-wor.vercel.app", out err), "scheme added");
+    Eq("https://wardsage.com", SyncClient.NormalizeSite("https://wardsage.com/", out err), "trailing slash");
+    Eq("https://wardsage.com", SyncClient.NormalizeSite("wardsage.com", out err), "scheme added");
     Eq("https://example.com/rf", SyncClient.NormalizeSite(" https://example.com/rf/ ", out err), "path prefix kept");
     Eq("http://localhost:3999", SyncClient.NormalizeSite("http://localhost:3999", out err), "http allowed for localhost");
     Check(SyncClient.NormalizeSite("http://example.com", out err) == null && err == "https", "http refused for remote hosts");
@@ -175,6 +175,9 @@ static class CoreTests {
     var def = AppConfig.FromJson("not json");
     Check(def.Site == SyncClient.DefaultSite && def.Lang == AppConfig.SystemLang() && def.Code == "" && !def.SaveCopy, "broken config -> defaults");
     Eq("", AppConfig.FromJson("{\"code\":\"" + Tok('A') + "\"}").Code, "plain-text code in config is ignored");
+    Eq(SyncClient.DefaultSite, AppConfig.FromJson("{\"site\":\"https://realmforge-wor.vercel.app\"}").Site, "old site address migrates to the new one");
+    Eq(SyncClient.DefaultSite, AppConfig.FromJson("{\"site\":\"HTTPS://RealmForge-Wor.Vercel.App/\"}").Site, "old site address migrates (case, trailing slash)");
+    Eq("https://example.com", AppConfig.FromJson("{\"site\":\"https://example.com\"}").Site, "another site address is kept");
     string tmp = Path.Combine(Path.GetTempPath(), "rf-test-" + Guid.NewGuid().ToString("N"), "config.json");
     cfg.Save(tmp); cfg.Save(tmp);
     Check(AppConfig.Load(tmp).Code == Tok('A'), "config save/load file (overwrite)");
@@ -205,7 +208,7 @@ static class CoreTests {
     Eq("application/json", (string)h["contentType"], "Content-Type header");
     Eq("gzip", (string)h["contentEncoding"], "Content-Encoding header");
     Eq(RFX.ExtractorVersion, (string)h["extractor"], "X-RF-Extractor header");
-    Eq("RealmForge-Extractor/" + RFX.ExtractorVersion, (string)h["userAgent"], "User-Agent header");
+    Eq("Wardsage/" + RFX.ExtractorVersion, (string)h["userAgent"], "User-Agent header");
     Eq(gz.Length.ToString(), (string)h["contentLength"], "Content-Length = gzip size");
 
     r = SyncClient.Send(site, "rf_" + new string('Z', 32), payload);

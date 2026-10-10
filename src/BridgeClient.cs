@@ -1,4 +1,4 @@
-// RealmForge extractor - link to the local RealmForge bridge (bridge/, a .NET 8 service on http://127.0.0.1:5055).
+// Wardsage extractor - link to the local bridge (bridge/, a .NET 8 service on http://127.0.0.1:5055).
 //
 // Contract (bridge/Host/HostEndpoints.cs); every request carries X-RealmForge-Token, which the bridge writes to
 // %LOCALAPPDATA%\RealmForge\bridge-token.txt on its first start (the same Windows user runs both):
@@ -36,13 +36,13 @@ namespace RealmForge {
   }
 
   public sealed class BridgeClient {
-    public const string DefaultUrl = "http://127.0.0.1:5055";
+    public const string DefaultUrl = "http://127.0.0.1:" + Channel.BridgePort;
     public const string TokenHeader = "X-RealmForge-Token";
     const int MaxReplyBytes = 1024 * 1024;
     static readonly string[] SlotNames = { "weapon", "armor", "bracer", "amulet", "ring" };
 
     public static string DefaultTokenPath {
-      get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "RealmForge", "bridge-token.txt"); }
+      get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), Channel.FolderName, "bridge-token.txt"); }
     }
 
     readonly string baseUrl, tokenPath;
@@ -238,7 +238,7 @@ namespace RealmForge {
       this.client = client; this.onCommand = onCommand; this.onConnected = onConnected;
       thread = new Thread(Run);
       thread.IsBackground = true;
-      thread.Name = "RealmForge bridge poller";
+      thread.Name = Channel.ProductName + " bridge poller";
     }
 
     /// <summary>The last poll reached the bridge.</summary>

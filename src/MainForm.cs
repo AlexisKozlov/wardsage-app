@@ -126,7 +126,7 @@ namespace RealmForge {
       SuspendLayout();
       AutoScaleDimensions = new SizeF(96F, 96F);
       AutoScaleMode = AutoScaleMode.Dpi;
-      Text = "RealmForge";
+      Text = Channel.ProductName;
       BackColor = Theme.Bg;
       ForeColor = Theme.Text;
       Font = new Font("Segoe UI", 9.75F);
@@ -151,7 +151,7 @@ namespace RealmForge {
       header.Size = new Size(W, 40);
       header.Margin = new Padding(0);
       title = new Label();
-      title.Text = "REALMFORGE";
+      title.Text = "WARDSAGE";
       title.Font = new Font("Georgia", 20F, FontStyle.Bold);
       title.ForeColor = Theme.Gold;
       title.AutoSize = true;
@@ -751,7 +751,7 @@ namespace RealmForge {
 
     protected override void OnFormClosing(FormClosingEventArgs e) {
       if (busy && e.CloseReason == CloseReason.UserClosing &&
-          MessageBox.Show(this, Strings.Get("confirm_close"), "RealmForge", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) {
+          MessageBox.Show(this, Strings.Get("confirm_close"), Channel.ProductName, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) {
         e.Cancel = true;
         return;
       }

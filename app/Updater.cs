@@ -1,4 +1,4 @@
-// RealmForge.exe — automatic updates.
+// Wardsage.exe — automatic updates.
 //
 // The site publishes /downloads/latest.json: {version, url, size, sha256, sig, notes:{ru,en}}. The app checks it at
 // start and every few hours, downloads a newer RealmForge.exe in the background into %LOCALAPPDATA%\RealmForge\update\
@@ -29,9 +29,9 @@ namespace RealmForge {
     const string KeyE = "AQAB";
     const long MaxSize = 64L << 20;
 
-    static string Dir { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "RealmForge", "update"); } }
-    static string StagedExe(string v) { return Path.Combine(Dir, "RealmForge-" + v + ".exe"); }
-    static string StagedMeta(string v) { return Path.Combine(Dir, "RealmForge-" + v + ".json"); }
+    static string Dir { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), Channel.FolderName, "update"); } }
+    static string StagedExe(string v) { return Path.Combine(Dir, Channel.StagedPrefix + v + ".exe"); }
+    static string StagedMeta(string v) { return Path.Combine(Dir, Channel.StagedPrefix + v + ".json"); }
 
     /// <summary>Is <paramref name="candidate"/> a later version than <paramref name="current"/> (1.3.0 style; missing
     /// parts = 0; anything unparsable is never newer)?</summary>
@@ -111,7 +111,7 @@ namespace RealmForge {
     public static UpdateInfo CheckAndDownload(string site) {
       try {
         Uri baseUri; if (!Uri.TryCreate(site, UriKind.Absolute, out baseUri)) return null;
-        var u = FromJson(Encoding.UTF8.GetString(Fetch(site.TrimEnd('/') + "/downloads/latest.json", 64 * 1024)));
+        var u = FromJson(Encoding.UTF8.GetString(Fetch(site.TrimEnd('/') + Channel.FeedPath, 64 * 1024)));
         if (u == null || !Newer(u.Version, Program.Version)) return null;
         if (Staged(u.Version) != null) return u;
         // the build comes from the same site only
@@ -140,8 +140,8 @@ namespace RealmForge {
       try {
         if (!Directory.Exists(Dir)) return null;
         UpdateInfo best = null;
-        foreach (var f in Directory.GetFiles(Dir, "RealmForge-*.json")) {
-          string v = Path.GetFileNameWithoutExtension(f).Substring("RealmForge-".Length);
+        foreach (var f in Directory.GetFiles(Dir, Channel.StagedPrefix + "*.json")) {
+          string v = Path.GetFileNameWithoutExtension(f).Substring(Channel.StagedPrefix.Length);
           if (Newer(v, Program.Version) && (best == null || Newer(v, best.Version))) { var u = Staged(v); if (u != null) best = u; }
         }
         return best;
@@ -169,8 +169,8 @@ namespace RealmForge {
     static void CleanStaged() {
       try {
         if (!Directory.Exists(Dir)) return;
-        foreach (var f in Directory.GetFiles(Dir, "RealmForge-*.*")) {
-          string v = Path.GetFileNameWithoutExtension(f).Substring("RealmForge-".Length);
+        foreach (var f in Directory.GetFiles(Dir, Channel.StagedPrefix + "*.*")) {
+          string v = Path.GetFileNameWithoutExtension(f).Substring(Channel.StagedPrefix.Length);
           if (!Newer(v, Program.Version)) try { File.Delete(f); } catch (Exception) { }
         }
       } catch (Exception) { }

@@ -1,4 +1,4 @@
-// RealmForge extractor - interface texts (Russian by default, English).
+// Wardsage extractor - interface texts (Russian by default, English).
 
 using System;
 using System.Collections.Generic;
@@ -12,8 +12,8 @@ namespace RealmForge {
       { "subtitle",           new[] { "Экстрактор аккаунта · v" + RFX.ExtractorVersion, "Account extractor · v" + RFX.ExtractorVersion } },
       { "code_label",         new[] { "Код синхронизации", "Sync code" } },
       { "code_show",          new[] { "Показать", "Show" } },
-      { "code_hint",          new[] { "Код выдаёт сайт RealmForge: войдите и откройте раздел «Синхронизация». Без кода можно только сохранить файл.",
-                                      "Get the code on the RealmForge site: sign in and open the Sync section. Without a code you can only save the file." } },
+      { "code_hint",          new[] { "Код выдаёт сайт Wardsage: войдите и откройте раздел «Синхронизация». Без кода можно только сохранить файл.",
+                                      "Get the code on the Wardsage site: sign in and open the Sync section. Without a code you can only save the file." } },
       { "code_ok",            new[] { "✓ Код в порядке", "✓ The code looks right" } },
       { "code_bad",           new[] { "Код: rf_ и ещё 32 латинские буквы или цифры (сейчас символов: {0} из 35)",
                                       "A code is rf_ followed by 32 Latin letters or digits ({0} of 35 characters)" } },
@@ -49,10 +49,10 @@ namespace RealmForge {
       { "game_version",       new[] { "Версия игры: {0}", "Game version: {0}" } },
       { "err_not_running",    new[] { "Игра не запущена. Запустите Watcher of Realms, дождитесь главного экрана и нажмите ещё раз.",
                                       "The game is not running. Start Watcher of Realms, wait for the main screen and try again." } },
-      { "err_access",         new[] { "Нет прав на чтение памяти игры: она запущена от администратора. Перезапустите RealmForge от администратора (кнопка ниже или Run-RealmForge.bat).",
-                                      "No permission to read the game memory: the game runs as administrator. Restart RealmForge as administrator (button below or Run-RealmForge.bat)." } },
-      { "err_open",           new[] { "Не удалось открыть процесс игры (код Windows {0}). Попробуйте перезапустить игру и RealmForge.",
-                                      "Could not open the game process (Windows code {0}). Try restarting the game and RealmForge." } },
+      { "err_access",         new[] { "Нет прав на чтение памяти игры: она запущена от администратора. Перезапустите Wardsage от администратора (кнопка ниже или Run-RealmForge.bat).",
+                                      "No permission to read the game memory: the game runs as administrator. Restart Wardsage as administrator (button below or Run-RealmForge.bat)." } },
+      { "err_open",           new[] { "Не удалось открыть процесс игры (код Windows {0}). Попробуйте перезапустить игру и Wardsage.",
+                                      "Could not open the game process (Windows code {0}). Try restarting the game and Wardsage." } },
       { "err_no_data",        new[] { "Данные аккаунта не найдены в памяти. Войдите в игру до главного экрана (не экран загрузки) и повторите.",
                                       "No account data found in memory. Get into the game up to the main screen (not the loading screen) and try again." } },
       { "err_failed",         new[] { "Не удалось прочитать память игры: {0}", "Could not read the game memory: {0}" } },

@@ -64,7 +64,7 @@ namespace RealmForge {
     public GlowWindow(bool clickable) {
       this.clickable = clickable;
       FormBorderStyle = FormBorderStyle.None; ShowInTaskbar = false; StartPosition = FormStartPosition.Manual;
-      Text = clickable ? "RealmForge cancel" : "RealmForge highlight";
+      Text = clickable ? "Wardsage cancel" : "Wardsage highlight";
     }
     protected override bool ShowWithoutActivation { get { return true; } }
     protected override CreateParams CreateParams {

@@ -51,6 +51,41 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
+// ===== src/Channel.cs =====
+// The build channel: the normal build and the test build (tools/build-app.sh --test defines TESTBUILD) coexist on one PC
+// and one site account, so everything that must not be shared lives here: names, folders, mutex, feed, bridge port.
+
+namespace RealmForge {
+  public static class Channel {
+#if TESTBUILD
+    public static readonly bool IsTest = true;   // readonly, not const: no "unreachable code" warnings
+    public const string ProductName = "Wardsage Test";
+    public const string WindowTitle = "Wardsage TEST";
+    public const string DefaultSite = "https://test.wardsage.com";
+    public const string FolderName = "WardsageTest";
+    public const string MutexName = "Wardsage.Test.SingleInstance";
+    public const string EventName = "Wardsage.Test.Show";
+    public const string AutostartName = "Wardsage Test";
+    public const string FeedPath = "/downloads/test/latest.json";
+    public const string BridgePort = "5056";   // a string: used in a const URL
+    public const string StagedPrefix = "Wardsage-Test-";
+#else
+    public static readonly bool IsTest = false;   // readonly, not const: no "unreachable code" warnings
+    public const string ProductName = "Wardsage";
+    public const string WindowTitle = "Wardsage";
+    public const string DefaultSite = "https://wardsage.com";
+    // the folders keep their old name: existing installs keep their settings, sync code and downloaded updates
+    public const string FolderName = "RealmForge";
+    public const string MutexName = "RealmForge.Desktop.SingleInstance";
+    public const string EventName = "RealmForge.Desktop.Show";
+    public const string AutostartName = "Wardsage";
+    public const string FeedPath = "/downloads/latest.json";
+    public const string BridgePort = "5055";   // a string: used in a const URL
+    public const string StagedPrefix = "RealmForge-";
+#endif
+  }
+}
+
 // ===== src/MemoryReader.cs =====
 // RealmForge extractor - memory reader (READ-ONLY).
 //
@@ -2347,7 +2382,7 @@ namespace RealmForge {
     internal static readonly object Gate = new object();   // RFX keeps its state in static fields: one run at a time
 
     public static string OutputDir {
-      get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "RealmForge"); }
+      get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), Channel.FolderName); }
     }
 
     // Step 1: is the game running? Returns the process id (0 = not running) and the game version.
@@ -2447,14 +2482,14 @@ namespace RealmForge {
 
   public static class SyncClient {
     public const string Version = RFX.ExtractorVersion;
-    public const string UserAgent = "RealmForge-Extractor/" + Version;
+    public const string UserAgent = "Wardsage/" + Version;
     /// <summary>The game account last read (PlayerData m_Uid; 0 = not known yet): every request names it in X-RF-Player, so
     /// the site keeps two game accounts on one sync code apart.</summary>
     public static long Player;
     /// <summary>The desktop app's version (app/Program.cs), sent as X-RF-App so the site knows which build synced.</summary>
     public static string App;
     public static void AddPlayer(System.Net.HttpWebRequest req) { if (Player > 0) req.Headers["X-RF-Player"] = Player.ToString(System.Globalization.CultureInfo.InvariantCulture); }
-    public const string DefaultSite = "https://realmforge-wor.vercel.app";
+    public const string DefaultSite = Channel.DefaultSite;
     public static int TimeoutMs = 60000;   // per request; a field (not const) so tests can shorten it
     const int MaxReplyBytes = 1024 * 1024;
 
@@ -2993,6 +3028,7 @@ namespace RealmForge {
 namespace RealmForge {
   public sealed class AppConfig {
     public string Site = SyncClient.DefaultSite;
+    const string OldSite = "https://realmforge-wor.vercel.app";
     public string Code = "";
     public string Lang = SystemLang();   // until the player picks one: Windows's language (Russian for ru/uk/be/kk, else English)
     public bool SaveCopy;
@@ -3017,7 +3053,7 @@ namespace RealmForge {
     }
 
     public static string DefaultDir {
-      get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "RealmForge"); }
+      get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), Channel.FolderName); }
     }
     public static string DefaultPath { get { return Path.Combine(DefaultDir, "config.json"); } }
 
@@ -3070,6 +3106,10 @@ namespace RealmForge {
       if (d == null) return c;
       string site = MiniJson.GetString(d, "site");
       if (!string.IsNullOrEmpty(site)) c.Site = site;
+      // the site moved from realmforge-wor.vercel.app: an old saved address follows (written on the next Save)
+      string siteErr;
+      string norm = SyncClient.NormalizeSite(site, out siteErr);
+      if (norm != null && string.Equals(norm, OldSite, StringComparison.OrdinalIgnoreCase)) c.Site = SyncClient.DefaultSite;
       string lang = MiniJson.GetString(d, "lang");
       c.Lang = lang == "en" ? "en" : lang == "ru" ? "ru" : SystemLang();
       c.SaveCopy = MiniJson.GetBool(d, "saveCopy", false);
@@ -3100,7 +3140,7 @@ namespace RealmForge {
 }
 
 // ===== src/Strings.cs =====
-// RealmForge extractor - interface texts (Russian by default, English).
+// Wardsage extractor - interface texts (Russian by default, English).
 
 
 namespace RealmForge {
@@ -3112,8 +3152,8 @@ namespace RealmForge {
       { "subtitle",           new[] { "Экстрактор аккаунта · v" + RFX.ExtractorVersion, "Account extractor · v" + RFX.ExtractorVersion } },
       { "code_label",         new[] { "Код синхронизации", "Sync code" } },
       { "code_show",          new[] { "Показать", "Show" } },
-      { "code_hint",          new[] { "Код выдаёт сайт RealmForge: войдите и откройте раздел «Синхронизация». Без кода можно только сохранить файл.",
-                                      "Get the code on the RealmForge site: sign in and open the Sync section. Without a code you can only save the file." } },
+      { "code_hint",          new[] { "Код выдаёт сайт Wardsage: войдите и откройте раздел «Синхронизация». Без кода можно только сохранить файл.",
+                                      "Get the code on the Wardsage site: sign in and open the Sync section. Without a code you can only save the file." } },
       { "code_ok",            new[] { "✓ Код в порядке", "✓ The code looks right" } },
       { "code_bad",           new[] { "Код: rf_ и ещё 32 латинские буквы или цифры (сейчас символов: {0} из 35)",
                                       "A code is rf_ followed by 32 Latin letters or digits ({0} of 35 characters)" } },
@@ -3149,10 +3189,10 @@ namespace RealmForge {
       { "game_version",       new[] { "Версия игры: {0}", "Game version: {0}" } },
       { "err_not_running",    new[] { "Игра не запущена. Запустите Watcher of Realms, дождитесь главного экрана и нажмите ещё раз.",
                                       "The game is not running. Start Watcher of Realms, wait for the main screen and try again." } },
-      { "err_access",         new[] { "Нет прав на чтение памяти игры: она запущена от администратора. Перезапустите RealmForge от администратора (кнопка ниже или Run-RealmForge.bat).",
-                                      "No permission to read the game memory: the game runs as administrator. Restart RealmForge as administrator (button below or Run-RealmForge.bat)." } },
-      { "err_open",           new[] { "Не удалось открыть процесс игры (код Windows {0}). Попробуйте перезапустить игру и RealmForge.",
-                                      "Could not open the game process (Windows code {0}). Try restarting the game and RealmForge." } },
+      { "err_access",         new[] { "Нет прав на чтение памяти игры: она запущена от администратора. Перезапустите Wardsage от администратора (кнопка ниже или Run-RealmForge.bat).",
+                                      "No permission to read the game memory: the game runs as administrator. Restart Wardsage as administrator (button below or Run-RealmForge.bat)." } },
+      { "err_open",           new[] { "Не удалось открыть процесс игры (код Windows {0}). Попробуйте перезапустить игру и Wardsage.",
+                                      "Could not open the game process (Windows code {0}). Try restarting the game and Wardsage." } },
       { "err_no_data",        new[] { "Данные аккаунта не найдены в памяти. Войдите в игру до главного экрана (не экран загрузки) и повторите.",
                                       "No account data found in memory. Get into the game up to the main screen (not the loading screen) and try again." } },
       { "err_failed",         new[] { "Не удалось прочитать память игры: {0}", "Could not read the game memory: {0}" } },
@@ -3366,7 +3406,7 @@ namespace RealmForge {
       SuspendLayout();
       AutoScaleDimensions = new SizeF(96F, 96F);
       AutoScaleMode = AutoScaleMode.Dpi;
-      Text = "RealmForge";
+      Text = Channel.ProductName;
       BackColor = Theme.Bg;
       ForeColor = Theme.Text;
       Font = new Font("Segoe UI", 9.75F);
@@ -3391,7 +3431,7 @@ namespace RealmForge {
       header.Size = new Size(W, 40);
       header.Margin = new Padding(0);
       title = new Label();
-      title.Text = "REALMFORGE";
+      title.Text = "WARDSAGE";
       title.Font = new Font("Georgia", 20F, FontStyle.Bold);
       title.ForeColor = Theme.Gold;
       title.AutoSize = true;
@@ -3991,7 +4031,7 @@ namespace RealmForge {
 
     protected override void OnFormClosing(FormClosingEventArgs e) {
       if (busy && e.CloseReason == CloseReason.UserClosing &&
-          MessageBox.Show(this, Strings.Get("confirm_close"), "RealmForge", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) {
+          MessageBox.Show(this, Strings.Get("confirm_close"), Channel.ProductName, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) {
         e.Cancel = true;
         return;
       }
@@ -4057,7 +4097,7 @@ namespace RealmForge {
       SuspendLayout();
       AutoScaleDimensions = new SizeF(96F, 96F);
       AutoScaleMode = AutoScaleMode.Dpi;
-      Text = "RealmForge";
+      Text = Channel.ProductName;
       BackColor = Theme.Bg;
       ForeColor = Theme.Text;
       Font = new Font("Segoe UI", 9.75F);
@@ -4332,7 +4372,7 @@ namespace RealmForge {
       try { Application.SetCompatibleTextRenderingDefault(false); } catch (InvalidOperationException) { }
       Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
       Application.ThreadException += delegate(object s, ThreadExceptionEventArgs e) {
-        MessageBox.Show(Strings.Format("err_internal", e.Exception.Message), "RealmForge", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        MessageBox.Show(Strings.Format("err_internal", e.Exception.Message), Channel.ProductName, MessageBoxButtons.OK, MessageBoxIcon.Error);
       };
       using (var form = new MainForm(AppConfig.Load(), scriptPath)) Application.Run(form);
     }

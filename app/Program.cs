@@ -1,4 +1,4 @@
-// RealmForge.exe - entry point.
+// Wardsage.exe - entry point.
 //
 // A single executable: the interface (ui/*) and the WebView2 SDK (Microsoft.Web.WebView2.*.dll, WebView2Loader.dll)
 // are embedded as resources and unpacked on start to %LOCALAPPDATA%\RealmForge\app\<build>\. The page is rendered by
@@ -25,7 +25,7 @@ namespace RealmForge {
     [STAThread]
     static int Main(string[] args) {
       bool created;
-      single = new Mutex(true, "RealmForge.Desktop.SingleInstance", out created);
+      single = new Mutex(true, Channel.MutexName, out created);
       // already running (maybe hidden in the tray): ask it to show its window
       if (!created) { if (!ShowSignal.Send()) BringOtherToFront(); return 0; }
       startInTray = Array.IndexOf(args, Autostart.TrayArg) >= 0;
@@ -53,14 +53,15 @@ namespace RealmForge {
       string runtime = WebViewCheck.RuntimeVersion(AppDir);
       if (runtime == null) {
         var r = MessageBox.Show(
-          "Для работы RealmForge нужен компонент Microsoft Edge WebView2 Runtime (он есть в Windows 11 и в обновлённой Windows 10).\n\n" +
+          "Для работы Wardsage нужен компонент Microsoft Edge WebView2 Runtime (он есть в Windows 11 и в обновлённой Windows 10).\n\n" +
           "Открыть страницу загрузки Microsoft?\n\n" +
-          "RealmForge needs the Microsoft Edge WebView2 Runtime. Open the Microsoft download page?",
-          "RealmForge", MessageBoxButtons.YesNo, MessageBoxIcon.Information);
+          "Wardsage needs the Microsoft Edge WebView2 Runtime. Open the Microsoft download page?",
+          Channel.ProductName, MessageBoxButtons.YesNo, MessageBoxIcon.Information);
         if (r == DialogResult.Yes) Shell.OpenUrl("https://go.microsoft.com/fwlink/p/?LinkId=2124703");
         return 2;
       }
       Autostart.Refresh();
+      if (!Channel.IsTest) ThreadPool.QueueUserWorkItem(delegate { ShortcutMigration.Run(); });
       using (var w = new AppWindow(startInTray)) Application.Run(w);
       return 0;
     }
@@ -79,7 +80,7 @@ namespace RealmForge {
         sha.TransformFinalBlock(new byte[0], 0, 0);
         hash = BitConverter.ToString(sha.Hash, 0, 6).Replace("-", "").ToLowerInvariant();
       }
-      string root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "RealmForge");
+      string root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), Channel.FolderName);
       AppDir = Path.Combine(root, "app", Version + "-" + hash);
       UiDir = Path.Combine(AppDir, "ui");
       DataDir = Path.Combine(root, "WebView2");
@@ -130,8 +131,44 @@ namespace RealmForge {
       try { Log.Write("FATAL " + (e == null ? msg : e.ToString())); } catch (Exception) { }
       var fr = FatalReport;
       if (fr != null && e != null) try { fr(e); } catch (Exception) { }
-      MessageBox.Show("RealmForge: " + msg, "RealmForge", MessageBoxButtons.OK, MessageBoxIcon.Error);
+      MessageBox.Show(Channel.ProductName + ": " + msg, Channel.ProductName, MessageBoxButtons.OK, MessageBoxIcon.Error);
     }
+  }
+
+  /// <summary>An in-place updated install never reruns the installer and keeps its «RealmForge» shortcuts: the ones that
+  /// point at this exe are replaced by «Wardsage» ones (same target, arguments, folder, icon). Once, best effort, in the
+  /// background; late COM binding through reflection (no extra references).</summary>
+  static class ShortcutMigration {
+    public static void Run() {
+      try {
+        Type shellType = Type.GetTypeFromProgID("WScript.Shell");
+        if (shellType == null) return;
+        object shell = Activator.CreateInstance(shellType);
+        string exe = Application.ExecutablePath;
+        foreach (var folder in new[] { Environment.SpecialFolder.Programs, Environment.SpecialFolder.DesktopDirectory }) {
+          try {
+            string dir = Environment.GetFolderPath(folder);
+            string old = System.IO.Path.Combine(dir, "RealmForge.lnk"), now = System.IO.Path.Combine(dir, "Wardsage.lnk");
+            if (!File.Exists(old) || File.Exists(now)) continue;
+            object src = Call(shell, "CreateShortcut", old);
+            string target = Get(src, "TargetPath") as string;
+            if (target == null || !string.Equals(target, exe, StringComparison.OrdinalIgnoreCase)) continue;
+            object dst = Call(shell, "CreateShortcut", now);
+            foreach (var p in new[] { "TargetPath", "Arguments", "WorkingDirectory", "IconLocation", "Description", "WindowStyle" }) {
+              object v = Get(src, p);
+              if (v != null) Set(dst, p, v);
+            }
+            Call(dst, "Save");
+            if (File.Exists(now)) File.Delete(old);
+            Log.Write("shortcut renamed: " + now);
+          } catch (Exception e) { Log.Write("shortcut: " + e.Message); }
+        }
+      } catch (Exception e) { Log.Write("shortcut: " + e.Message); }
+    }
+
+    static object Call(object o, string name, params object[] args) { return o.GetType().InvokeMember(name, BindingFlags.InvokeMethod, null, o, args); }
+    static object Get(object o, string name) { return o.GetType().InvokeMember(name, BindingFlags.GetProperty, null, o, null); }
+    static void Set(object o, string name, object v) { o.GetType().InvokeMember(name, BindingFlags.SetProperty, null, o, new object[] { v }); }
   }
 
   static class Log {

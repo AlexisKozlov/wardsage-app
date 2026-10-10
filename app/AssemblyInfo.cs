@@ -2,10 +2,10 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 
-[assembly: AssemblyTitle("RealmForge")]
-[assembly: AssemblyDescription("RealmForge — account extractor for Watcher of Realms (read-only)")]
-[assembly: AssemblyProduct("RealmForge")]
-[assembly: AssemblyCompany("RealmForge (fan project)")]
+[assembly: AssemblyTitle("Wardsage")]
+[assembly: AssemblyDescription("Wardsage — account extractor for Watcher of Realms (read-only)")]
+[assembly: AssemblyProduct("Wardsage")]
+[assembly: AssemblyCompany("Wardsage (fan project)")]
 [assembly: AssemblyCopyright("MIT License")]
 [assembly: AssemblyVersion("1.6.54.0")]
 [assembly: AssemblyFileVersion("1.6.54.0")]

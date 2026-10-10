@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
-# Builds dist/RealmForge.exe: one Windows executable (.NET Framework 4.6.2+, x64) with the interface (ui/)
+# Builds dist/Wardsage.exe: one Windows executable (.NET Framework 4.6.2+, x64) with the interface (ui/)
 # and the WebView2 SDK embedded as resources. Runs on Linux with the .NET 8 SDK's Roslyn compiler and the
 # .NET Framework reference assemblies of Mono (no Windows, no NuGet needed).
 #
-#   tools/build-app.sh            -> dist/RealmForge.exe
+#   tools/build-app.sh            -> dist/Wardsage.exe
+#   tools/build-app.sh --test     -> dist/Wardsage-Test.exe (the test build: own folders, mutex, update feed, site; src/Channel.cs)
 set -euo pipefail
 cd "$(dirname "$0")/.."
+DEFS=(); EXE=Wardsage
+if [ "${1:-}" = "--test" ]; then DEFS=(-define:TESTBUILD); EXE=Wardsage-Test; fi
 
 # Linux: the .NET SDK's Roslyn + Mono's 4.6.2 reference assemblies. Windows (Git Bash): the installed .NET SDK's Roslyn +
 # the reference assemblies of the NuGet package Microsoft.NETFramework.ReferenceAssemblies.net462 (FX=... to point at them).
@@ -38,13 +41,13 @@ RES+=("-resource:app/res/boss_coach.json,overlay/boss_coach.json")
 RES+=("-resource:app/res/hero_tags.json,overlay/hero_tags.json")
 for f in Microsoft.Web.WebView2.Core.dll Microsoft.Web.WebView2.WinForms.dll WebView2Loader.dll; do RES+=("-resource:$WV/$f,bin/$f"); done
 
-CORE="src/MemoryReader.cs src/EquipScan.cs src/MiniJson.cs src/GameInfo.cs src/Extractor.cs src/SyncClient.cs src/PlansClient.cs src/SellClient.cs src/FightPlanClient.cs src/ErrorReport.cs src/BridgeClient.cs src/ListTracker.cs src/AutoPilot.cs src/FilterPilot.cs src/HeroPilot.cs src/LiveTables.cs src/BattleCapture.cs src/BattleClock.cs src/BattleTimeline.cs src/TimelineBuilder.cs src/ArenaOpponents.cs src/ArenaClient.cs src/TraceUpload.cs src/SellScan.cs src/SellPilot.cs src/Config.cs src/CodeProtector.cs"
+CORE="src/Channel.cs src/MemoryReader.cs src/EquipScan.cs src/MiniJson.cs src/GameInfo.cs src/Extractor.cs src/SyncClient.cs src/PlansClient.cs src/SellClient.cs src/FightPlanClient.cs src/ErrorReport.cs src/BridgeClient.cs src/ListTracker.cs src/AutoPilot.cs src/FilterPilot.cs src/HeroPilot.cs src/LiveTables.cs src/BattleCapture.cs src/BattleClock.cs src/BattleTimeline.cs src/TimelineBuilder.cs src/ArenaOpponents.cs src/ArenaClient.cs src/TraceUpload.cs src/SellScan.cs src/SellPilot.cs src/Config.cs src/CodeProtector.cs"
 APP="app/Program.cs app/AppWindow.cs app/HostBridge.cs app/Overlay.cs app/BattleCoach.cs app/ArenaWatch.cs app/HintGeometry.cs app/Updater.cs app/Tray.cs app/AssemblyInfo.cs"
 
 "${CSC[@]}" -langversion:7.3 -target:winexe -platform:x64 -optimize+ -deterministic -nostdlib -warnaserror -nowarn:1701,1702 \
   -r:$FX/mscorlib.dll -r:$FX/System.dll -r:$FX/System.Core.dll -r:$FX/System.Drawing.dll -r:$FX/System.Windows.Forms.dll \
   -r:$FX/System.Security.dll -r:$WV/Microsoft.Web.WebView2.Core.dll -r:$WV/Microsoft.Web.WebView2.WinForms.dll \
-  -win32icon:app/res/icon.ico -win32manifest:app/res/app.manifest \
-  "${RES[@]}" -out:dist/RealmForge.exe $CORE $APP
+  "${DEFS[@]}" -win32icon:app/res/icon.ico -win32manifest:app/res/app.manifest \
+  "${RES[@]}" -out:dist/$EXE.exe $CORE $APP
 
-ls -la dist/RealmForge.exe
+ls -la dist/$EXE.exe

@@ -72,7 +72,7 @@ namespace RealmForge {
     internal static readonly object Gate = new object();   // RFX keeps its state in static fields: one run at a time
 
     public static string OutputDir {
-      get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "RealmForge"); }
+      get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), Channel.FolderName); }
     }
 
     // Step 1: is the game running? Returns the process id (0 = not running) and the game version.

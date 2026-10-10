@@ -74,7 +74,7 @@ namespace RealmForge {
       bridgePoller = new BridgePoller(new BridgeClient(BridgeClient.DefaultUrl, BridgeClient.DefaultTokenPath),
                                       c => OnUi(() => OnBridgeCommand(c)), up => OnUi(() => OnBridgeConnected(up)));
       bridgePoller.Start();
-      Log.Write("RealmForge " + Program.Version + " started");
+      Log.Write(Channel.ProductName + " " + Program.Version + " started");
     }
 
     static string CancelText(string lang) { return lang == "en" ? "Cancel equipping" : "Отменить надевание"; }
@@ -82,7 +82,7 @@ namespace RealmForge {
     public void Dispose() {
       Program.FatalReport = null;
       bridgePoller.Dispose();   // the pending long poll is aborted: the thread ends at once
-      CloseBridgeCommands("cancelled", "RealmForge was closed.", true);
+      CloseBridgeCommands("cancelled", "Wardsage was closed.", true);
       gameTimer.Dispose(); liveTimer.Dispose(); autoTimer.Dispose(); updateTimer.Dispose(); overlay.Dispose();
     }
 
@@ -302,6 +302,7 @@ namespace RealmForge {
       var sb = new StringBuilder("{\"ev\":\"state\"");
       sb.Append(",\"lang\":").Append(S(cfg.Lang == "en" ? "en" : "ru"));
       sb.Append(",\"version\":").Append(S(Program.Version));
+      sb.Append(",\"channel\":").Append(S(Channel.IsTest ? "test" : "main"));
       sb.Append(",\"site\":").Append(S(cfg.Site));
       sb.Append(",\"defaultSite\":").Append(S(SyncClient.DefaultSite));
       bool has = SyncClient.IsValidCode(cfg.Code);
@@ -968,7 +969,7 @@ namespace RealmForge {
     // a plan from the site. The page answers with equip.finish (FinishPlan) when the items are on the hero or the player
     // removes the plan.
     void OnBridgeCommand(BridgeCommand c) {
-      if (c.Type != "equip") { ReportBridge(c.Id, "failed", "RealmForge " + Program.Version + " cannot run '" + c.Type + "' commands."); return; }
+      if (c.Type != "equip") { ReportBridge(c.Id, "failed", "Wardsage " + Program.Version + " cannot run '" + c.Type + "' commands."); return; }
       if (!gameRunning) { ReportBridge(c.Id, "failed", "The game is not running."); return; }
       if (bridgeOpen.ContainsKey(c.Id)) return;
       bridgeOpen[c.Id] = c;
@@ -987,8 +988,8 @@ namespace RealmForge {
 
     void FinishBridgeCommand(string id, bool done, bool taken) {
       if (!bridgeOpen.Remove(id)) return;
-      if (taken) ReportBridge(id, "failed", "An item is on another hero now; RealmForge does not take it off. Rebuild the plan.");
-      else ReportBridge(id, done ? "done" : "cancelled", done ? null : "Removed in RealmForge.");
+      if (taken) ReportBridge(id, "failed", "An item is on another hero now; Wardsage does not take it off. Rebuild the plan.");
+      else ReportBridge(id, done ? "done" : "cancelled", done ? null : "Removed in Wardsage.");
       if (done) RequestAutoSync(1);   // a fresh reading confirms the move to the bridge and the site
     }
 

@@ -45,7 +45,7 @@ namespace RealmForge {
       SuspendLayout();
       AutoScaleDimensions = new SizeF(96F, 96F);
       AutoScaleMode = AutoScaleMode.Dpi;
-      Text = "RealmForge";
+      Text = Channel.ProductName;
       BackColor = Theme.Bg;
       ForeColor = Theme.Text;
       Font = new Font("Segoe UI", 9.75F);

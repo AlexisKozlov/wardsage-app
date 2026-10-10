@@ -1,4 +1,4 @@
-// RealmForge desktop — interface. Talks to the host (RealmForge.exe) through WebView2 messages:
+// Wardsage desktop — interface. Talks to the host (Wardsage.exe) through WebView2 messages:
 //   UI → host: {cmd, ...}      host → UI: {ev, ...}      (protocol: see HostBridge.cs)
 (function () {
   'use strict';
@@ -10,7 +10,7 @@
 
   const CODE_RE = /^rf_[0-9A-Za-z]{32}$/;
   const S = {
-    ready: false, lang: 'ru', version: '', site: '', defaultSite: '', hasCode: false, codePrefix: '', saveCopy: false,
+    ready: false, lang: 'ru', version: '', channel: 'main', site: '', defaultSite: '', hasCode: false, codePrefix: '', saveCopy: false,
     game: { running: false, version: null }, last: null, page: 'sync', editCode: false,
     sync: { phase: 'idle', stage: null, seconds: 0, result: null, error: null },
     plans: { status: 'idle', list: [], err: null }, sel: 0,
@@ -92,7 +92,7 @@
     const nav = (id, icon, label, extra = '') =>
       `<button class="nav" data-act="nav" data-page="${id}" ${S.page === id ? 'aria-current="page"' : ''}>${icon}<span>${esc(label)}</span>${extra}</button>`;
     return `
-      <div class="brand"><div class="crest">R</div><div><b>REALMFORGE</b><small>${esc(t('tagline'))}</small></div></div>
+      <div class="brand"><div class="crest">W</div><div><b>WARDSAGE${S.channel === 'test' ? '<span class="test-badge">TEST</span>' : ''}</b><small>${esc(t('tagline'))}</small></div></div>
       ${nav('sync', I.sync, t('navSync'))}
       ${nav('equip', I.equip, t('navEquip'), pending ? `<span class="badge">${pending}</span>` : '')}
       ${nav('settings', I.gear, t('navSettings'))}
@@ -508,7 +508,7 @@
         ${row(t('setLog'), t('setLogP'), `<button class="btn-line" data-act="openLog">${esc(t('openLog'))}</button>`)}
         ${row(t('setDiag'), t('setDiagP'), `<button class="btn-line" data-act="diag">${esc(t('diagStart'))}</button>`)}
         ${row(t('setAbout'), '', `<p style="margin:0 0 10px;color:var(--muted)">${esc(t('aboutP', S.version))}</p>
-          <button class="btn-line" data-act="open" data-url="https://github.com/AlexisKozlov/realmforge-extractor">${I.ext}${esc(t('source'))}</button>`)}
+          <button class="btn-line" data-act="open" data-url="https://github.com/AlexisKozlov/wardsage-app">${I.ext}${esc(t('source'))}</button>`)}
       </dl></div>`;
   }
 
@@ -659,7 +659,7 @@
     if (!m || !m.ev) return;
     switch (m.ev) {
       case 'state':
-        Object.assign(S, { lang: m.lang, version: m.version, site: m.site, defaultSite: m.defaultSite, hasCode: m.hasCode, codePrefix: m.codePrefix, saveCopy: m.saveCopy, last: m.last || S.last });
+        Object.assign(S, { lang: m.lang, version: m.version, channel: m.channel || 'main', site: m.site, defaultSite: m.defaultSite, hasCode: m.hasCode, codePrefix: m.codePrefix, saveCopy: m.saveCopy, last: m.last || S.last });
         if (m.autoSync !== undefined) { S.autoSync = m.autoSync; S.autoClick = m.autoClick; S.autoConfirm = !!m.autoConfirm; S.errorReports = !!m.errorReports; S.autoUpdate = m.autoUpdate !== false; S.tray = m.tray !== false; S.autostart = !!m.autostart; }
         if (m.game) S.game = m.game;
         if (m.codeSaved) { S.editCode = false; toast(t('saved')); if (S.page === 'equip' || S.plans.status !== 'idle') loadPlans(); }
