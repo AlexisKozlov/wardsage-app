@@ -791,9 +791,15 @@
     S.stepAt = Date.now(); host.send({ cmd: 'log', text: 'step stands still: ' + S.stepKey + ' auto ' + S.auto }); host.send({ cmd: 'equip.rescan' });
   }, 2000);
 
-  // plans made on the site meanwhile: reload every 20 s while the helper is on screen and the game runs
-  // (every 8 s while the game runs, on every page: «Надеть в игре» on the site starts here within seconds)
-  setInterval(() => { if (S.hasCode && S.game.running && S.plans.status !== 'loading') loadPlans(); }, 8000);
+  // plans and sell lists made on the site meanwhile, while the game runs: every 8 s while the helper is on screen or
+  // working (a «Надеть в игре» starts here within seconds), else every 48 s — each poll is a call to the site, and
+  // thousands of them a day used up its server time
+  let pollTick = 0;
+  setInterval(() => {
+    if (!S.hasCode || !S.game.running || S.plans.status === 'loading') return;
+    const busy = S.page === 'equip' || !!S.run || S.queue.length > 0 || S.auto === 'work' || S.sell.run;
+    if (busy || ++pollTick % 6 === 0) loadPlans();
+  }, 8000);
 
   render();
   host.send({ cmd: 'init' });
