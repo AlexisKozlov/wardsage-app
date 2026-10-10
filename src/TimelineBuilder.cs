@@ -26,7 +26,7 @@
 // on the slower side's base (its HP drops between the other side's clear and its own whose size is one of the judge's
 // rates, % of max HP: 2/4/6, 3.5/5.5/7.5, 6/8/10, 8/10/12, 12/16/20).
 //
-// JSON: {"v":2,"frames":N,"frameSec":0.06591796875,"samples":K,["gridW":W,]
+// JSON: {"v":3,"frames":N,"frameSec":0.06591796875,"samples":K,["gridW":W,]
 //        "heroes":{"<key>":{"c":C,"uid":U,"unit":U,"squad":S,"leader":false,"placed":[[frame,x,y,face,exact]],"fell":[frame],
 //                  "retreat":[frame],"ult":[frame]}},
 //        "ops":[[frame,cmd,cuid,params…]], "boss":[[frame,hp‰]],
@@ -34,7 +34,17 @@
 //        "arena":{"rounds":[{"wave":W,"start":{"1":f,"2":f},"first":{..},"clear":{..},"won":1|2|0,
 //                            "judge":{"<side>":[[frame,‰ of max]]},"judgeLost":{"<side>":‰}}],
 //                 "bases":[{"unit":U,"side":S,"owner":O,"max":M,"hp":[[frame,hp]]}],
-//                 "raw":[[frame,ctl,wave,active,monsters,ignore,state]]}}
+//                 "raw":[[frame,ctl,wave,active,monsters,ignore,state]]},
+//        "dmgT":{"<controller>:<unit>":[[frame,damage,heal,taken]]},            (v3: the statistics about every second, on change)
+//        "units":{"<entity uid>":{"unit":U,"c":C,["tower":1,]"max":M,"pts":[[frame,x100,y100,z100,hp‰,face]],["gone":F]}},
+//        "unitsCut":{"units":N,"pts":M}}                                          (v3, arena only; what the caps cut)
+// v3 adds "dmgT" and "units" (and "unitsCut" when something was cut); every v2 field is as before. dmgT: per (controller,
+// unit) the cumulative damage / heal / taken (StatLine) at the frame of each reading, a point only when a value changed.
+// units: every unit with a position on the arena's field (heroes' towers, monsters, bases ...) about every 0.4 s: its unit
+// table id, its controller (OwnerRelation; what it reads for monsters), "max" = its first max HP, and "pts" = [frame, x, y,
+// z of PositionComponent.m_position * 100 (rounded), HP in ‰ of max, m_faceType], a point only when the position moved by more
+// than 0.05 or the HP‰ or the face changed (the first and the last sample are always kept); "gone" = the frame of the first
+// sample the entity was no longer listed in. At most MaxUnits (400) units and MaxPts (4000) points each.
 // exact = 1 for a placement from a command, 0 for a sampled one (tile from the map's tower grid, frame ≤ ~3 late).
 // v1 files (before 1.6.24) have no "c": every hero by uid, both arena sides merged.
 using System;
@@ -96,7 +106,16 @@ namespace RealmForge {
     public long Damage, ToBoss, Overflow; public int Heal, Taken;
   }
 
+  /// <summary>One unit with a position at one sample (arena trace).</summary>
+  public sealed class UnitSample {
+    public uint Uid; public int Unit; public uint Owner; public bool Tower;
+    public double X, Y, Z; public int Face; public double Hp, MaxHp;
+  }
+
   public sealed class TimelineBuilder {
+    public const int MaxUnits = 400, MaxPts = 4000;
+    /// <summary>A move of more than this (world units) makes a new point of a unit's trace.</summary>
+    public const double MoveEps = 0.05;
     public const int CmdPutTower = 1000, CmdRetreatTower = 1001, CmdPowerSkill = 2000;
     /// <summary>A sampled event this many frames (~3 s) after a command's frame is that command.</summary>
     public const int MatchFrames = 45;
@@ -200,6 +219,113 @@ namespace RealmForge {
 
     /// <summary>The heroes' statistics by controller (read again and again: the last reading is kept).</summary>
     public void SetStats(List<StatLine> list) { if (list != null && list.Count > 0) stats = list; }
+
+    // ------------------------------------------------------------------ damage curves and unit trace
+
+    readonly Dictionary<string, List<long[]>> dmgT = new Dictionary<string, List<long[]>>();
+    readonly List<string> dmgOrder = new List<string>();
+
+    /// <summary>The statistics at <paramref name="frame"/>: per (controller, unit) a point [frame, damage, heal, taken] when
+    /// a value changed since the last one.</summary>
+    public void AddStatSample(uint frame, IList<StatLine> list) {
+      if (list == null) return;
+      foreach (var s in list) {
+        string k = s.C + ":" + s.Unit;
+        List<long[]> pts;
+        if (!dmgT.TryGetValue(k, out pts)) { pts = new List<long[]>(); dmgT[k] = pts; dmgOrder.Add(k); }
+        if (pts.Count > 0) {
+          var l = pts[pts.Count - 1];
+          if (l[1] == s.Damage && l[2] == s.Heal && l[3] == s.Taken) continue;
+        }
+        pts.Add(new[] { (long)frame, s.Damage, (long)s.Heal, (long)s.Taken });
+      }
+    }
+
+    sealed class UnitTrack {
+      public uint Uid, C; public int Unit; public bool Tower; public double Max;
+      public List<long[]> Pts = new List<long[]>();
+      public double LX, LY, LZ; public long LHp, LFace;
+      public long[] Pending;   // the latest sample when it was not kept as a point
+      public long Gone = -1; public int Stamp;
+    }
+    readonly Dictionary<uint, UnitTrack> unitTracks = new Dictionary<uint, UnitTrack>();
+    readonly List<uint> unitOrder = new List<uint>();
+    readonly HashSet<uint> unitsCutSet = new HashSet<uint>();
+    int unitStamp, ptsCut;
+    public int UnitCount { get { return unitTracks.Count; } }
+    public int UnitsCut { get { return unitsCutSet.Count; } }
+    public int PointsCut { get { return ptsCut; } }
+
+    /// <summary>The units with a position at <paramref name="frame"/> (the arena's field).</summary>
+    public void AddUnitSample(uint frame, IList<UnitSample> list) {
+      if (list == null) return;
+      if (frame > Frames) Frames = frame;
+      unitStamp++;
+      foreach (var u in list) {
+        UnitTrack t;
+        if (!unitTracks.TryGetValue(u.Uid, out t)) {
+          if (unitTracks.Count >= MaxUnits) { unitsCutSet.Add(u.Uid); continue; }
+          t = new UnitTrack { Uid = u.Uid }; unitTracks[u.Uid] = t; unitOrder.Add(u.Uid);
+        }
+        t.Stamp = unitStamp; t.Gone = -1;
+        if (u.Unit != 0) t.Unit = u.Unit;
+        if (u.Owner != 0) t.C = u.Owner;
+        if (u.Tower) t.Tower = true;
+        if (t.Max <= 0 && u.MaxHp > 0) t.Max = u.MaxHp;
+        long hp = u.MaxHp > 0 ? (long)Math.Round(u.Hp * 1000.0 / u.MaxHp) : 0;
+        var row = new[] { (long)frame, (long)Math.Round(u.X * 100), (long)Math.Round(u.Y * 100), (long)Math.Round(u.Z * 100), hp, (long)u.Face };
+        double dx = u.X - t.LX, dy = u.Y - t.LY, dz = u.Z - t.LZ;
+        bool moved = t.Pts.Count == 0 || hp != t.LHp || u.Face != t.LFace || Math.Sqrt(dx * dx + dy * dy + dz * dz) > MoveEps;
+        if (moved && t.Pts.Count < MaxPts) {
+          t.Pts.Add(row); t.LX = u.X; t.LY = u.Y; t.LZ = u.Z; t.LHp = hp; t.LFace = u.Face; t.Pending = null;
+        } else {
+          if (moved) ptsCut++;
+          t.Pending = row;
+        }
+      }
+      foreach (var t in unitTracks.Values) if (t.Stamp != unitStamp && t.Gone < 0) t.Gone = frame;
+    }
+
+    void UnitsJson(StringBuilder sb) {
+      sb.Append(",\"units\":{");
+      bool first = true;
+      foreach (var uid in unitOrder) {
+        var t = unitTracks[uid];
+        if (!first) sb.Append(','); first = false;
+        sb.Append('"').Append(t.Uid).Append("\":{\"unit\":").Append(t.Unit).Append(",\"c\":").Append(t.C);
+        if (t.Tower) sb.Append(",\"tower\":1");
+        sb.Append(",\"max\":").Append(Math.Round(t.Max).ToString("0", CultureInfo.InvariantCulture)).Append(",\"pts\":[");
+        int n = t.Pts.Count + (t.Pending != null ? 1 : 0);
+        for (int i = 0; i < n; i++) {
+          var p = i < t.Pts.Count ? t.Pts[i] : t.Pending;
+          if (i > 0) sb.Append(',');
+          sb.Append('[');
+          for (int q = 0; q < p.Length; q++) { if (q > 0) sb.Append(','); sb.Append(p[q]); }
+          sb.Append(']');
+        }
+        sb.Append(']');
+        if (t.Gone >= 0) sb.Append(",\"gone\":").Append(t.Gone);
+        sb.Append('}');
+      }
+      sb.Append('}');
+      if (unitsCutSet.Count > 0 || ptsCut > 0) sb.Append(",\"unitsCut\":{\"units\":").Append(unitsCutSet.Count).Append(",\"pts\":").Append(ptsCut).Append('}');
+    }
+
+    /// <summary>The timeline's JSON without the v3 trace ("dmgT", "units", "unitsCut"): what goes to the site for now.</summary>
+    public static string StripTrace(string json) {
+      if (string.IsNullOrEmpty(json)) return json;
+      foreach (var key in new[] { ",\"dmgT\":{", ",\"units\":{", ",\"unitsCut\":{" }) {
+        int at = json.IndexOf(key, StringComparison.Ordinal);
+        if (at < 0) continue;
+        int depth = 0, i = at + key.Length - 1, end = -1;
+        for (; i < json.Length; i++) {
+          if (json[i] == '{') depth++;
+          else if (json[i] == '}' && --depth == 0) { end = i; break; }
+        }
+        if (end > 0) json = json.Substring(0, at) + json.Substring(end + 1);
+      }
+      return json;
+    }
 
     // ------------------------------------------------------------------ arena
 
@@ -368,7 +494,7 @@ namespace RealmForge {
     public string ToJson() {
       var sb = new StringBuilder();
       uint primary = Primary();
-      sb.Append("{\"v\":2,\"frames\":").Append(Frames).Append(",\"frameSec\":").Append(FrameSec.ToString("R", CultureInfo.InvariantCulture))
+      sb.Append("{\"v\":3,\"frames\":").Append(Frames).Append(",\"frameSec\":").Append(FrameSec.ToString("R", CultureInfo.InvariantCulture))
         .Append(",\"samples\":").Append(Samples);
       if (GridW > 0) sb.Append(",\"gridW\":").Append(GridW);
       sb.Append(",\"heroes\":{");
@@ -468,6 +594,21 @@ namespace RealmForge {
         sb.Append(']');
       }
       if (HasArena) ArenaJson(sb);
+      if (dmgOrder.Count > 0) {
+        sb.Append(",\"dmgT\":{");
+        for (int i = 0; i < dmgOrder.Count; i++) {
+          if (i > 0) sb.Append(',');
+          sb.Append('"').Append(dmgOrder[i]).Append("\":[");
+          var pts = dmgT[dmgOrder[i]];
+          for (int j = 0; j < pts.Count; j++) {
+            if (j > 0) sb.Append(',');
+            sb.Append('[').Append(pts[j][0]).Append(',').Append(pts[j][1]).Append(',').Append(pts[j][2]).Append(',').Append(pts[j][3]).Append(']');
+          }
+          sb.Append(']');
+        }
+        sb.Append('}');
+      }
+      if (unitTracks.Count > 0) UnitsJson(sb);
       return sb.Append('}').ToString();
     }
 

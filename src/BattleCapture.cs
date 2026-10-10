@@ -192,7 +192,7 @@ namespace RealmForge {
       return string.Join(",", parts.ToArray());
     }
 
-    /// <summary>The kept fights as a JSON array (for the account snapshot), newest last.</summary>
+    /// <summary>The kept fights as a JSON array (for the account snapshot), newest last; the timelines without their v3 trace.</summary>
     static string BattlesJson() {
       try {
         if (!Directory.Exists(BattlesDir)) return "[]";
@@ -201,7 +201,8 @@ namespace RealmForge {
         foreach (var f in files) {
           string s = File.ReadAllText(f, Encoding.UTF8).Trim();
           if (s.Length == 0 || s[0] != '{') continue;
-          if (!first) sb.Append(','); first = false; sb.Append(s);
+          if (!first) sb.Append(','); first = false;
+          sb.Append(TimelineBuilder.StripTrace(s));   // the local file keeps the v3 trace (dmgT, units); the upload copy does not, for now
         }
         return sb.Append(']').ToString();
       } catch (Exception) { return "[]"; }

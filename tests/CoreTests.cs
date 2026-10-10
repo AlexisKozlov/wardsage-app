@@ -656,6 +656,7 @@ static class CoreTests {
     Eq("[600]", Js(a2["fell"]), "sampled: a new tower after an unseen death = a fall");
     Eq(0.0, Convert.ToDouble(r2["samples"]) - 5, "sampled: 5 samples");
     ArenaTimelineTests();
+    TraceTests();
   }
 
   // The arena: both sides have Hassu (uid 203400000, unit 2034) — the player (controller 1) at 2,5 by command, the
@@ -729,6 +730,57 @@ static class CoreTests {
     t3.AddSample(5, new List<HeroSample> { Sa(1, H, 2034, 9, 4, 4, 0) });
     var r3 = MiniJson.Parse(t3.ToJson()) as Dictionary<string, object>;
     Check((r3["heroes"] as Dictionary<string, object>).ContainsKey(H.ToString()) && !r3.ContainsKey("arena") && !r3.ContainsKey("gridW"), "boss fight: heroes by uid, no arena part");
+  }
+
+  static UnitSample Us(uint uid, int unit, uint owner, double x, double z, double hp, int face = 0, double max = 1000) {
+    return new UnitSample { Uid = uid, Unit = unit, Owner = owner, X = x, Y = 0, Z = z, Hp = hp, MaxHp = max, Face = face };
+  }
+
+  // The v3 trace: damage curves (dedup) and the arena's unit trace (move threshold, gone frame, caps, JSON shape).
+  static void TraceTests() {
+    Func<object, string> Jss = o => { var l = o as List<object>; var sb = new StringBuilder("["); for (int i = 0; i < l.Count; i++) { if (i > 0) sb.Append(','); sb.Append(Js2(l[i])); } return sb.Append(']').ToString(); };
+    var tb = new TimelineBuilder();
+    Func<long, int, int, StatLine> St = (d, h, t) => new StatLine { C = 1, Unit = 2034, Damage = d, Heal = h, Taken = t };
+    tb.AddStatSample(10, new List<StatLine> { St(0, 0, 0) });
+    tb.AddStatSample(15, new List<StatLine> { St(0, 0, 0) });
+    tb.AddStatSample(20, new List<StatLine> { St(500, 0, 30) });
+    tb.AddStatSample(25, new List<StatLine> { St(500, 0, 30) });
+    tb.AddStatSample(30, new List<StatLine> { St(900, 7, 30), new StatLine { C = 2, Unit = 2034, Damage = 5 } });
+    tb.AddUnitSample(10, new List<UnitSample> { Us(7, 4301, 100, 1.0, 2.0, 1000), Us(8, 2034, 1, 0, 0, 800) });
+    tb.AddUnitSample(12, new List<UnitSample> { Us(7, 4301, 100, 1.03, 2.0, 1000), Us(8, 2034, 1, 0, 0, 800) });   // moved 0.03: no point
+    tb.AddUnitSample(14, new List<UnitSample> { Us(7, 4301, 100, 1.2, 2.0, 1000), Us(8, 2034, 1, 0, 0, 800) });   // moved 0.2: a point
+    tb.AddUnitSample(16, new List<UnitSample> { Us(7, 4301, 100, 1.2, 2.0, 500) });                                // hp changed; 8 gone
+    tb.AddUnitSample(18, new List<UnitSample> { Us(7, 4301, 100, 1.21, 2.0, 500) });                               // tiny move: only the last point
+    var r = MiniJson.Parse(tb.ToJson()) as Dictionary<string, object>;
+    Eq(3.0, Convert.ToDouble(r["v"]), "trace: json version 3");
+    var dt = r["dmgT"] as Dictionary<string, object>;
+    Eq("[[10,0,0,0],[20,500,0,30],[30,900,7,30]]", Jss(dt["1:2034"]), "dmgT: points only when a value changed");
+    Eq("[[30,5,0,0]]", Jss(dt["2:2034"]), "dmgT: each controller has its own curve");
+    var us = r["units"] as Dictionary<string, object>;
+    var u7 = us["7"] as Dictionary<string, object>;
+    Check(Convert.ToDouble(u7["unit"]) == 4301 && Convert.ToDouble(u7["c"]) == 100 && Convert.ToDouble(u7["max"]) == 1000 && !u7.ContainsKey("gone"), "units: unit, owner, first max, still listed");
+    Eq("[[10,100,0,200,1000,0],[14,120,0,200,1000,0],[16,120,0,200,500,0],[18,121,0,200,500,0]]", Jss(u7["pts"]), "units: moves under 0.05 skipped, hp change kept, the last sample always kept");
+    var u8 = us["8"] as Dictionary<string, object>;
+    Eq(16.0, Convert.ToDouble(u8["gone"]), "units: gone = the first sample it was not listed in");
+    Eq("[[10,0,0,0,800,0],[14,0,0,0,800,0]]", Jss(u8["pts"]), "units: a still unit keeps its first and its last sample");
+    Check(!r.ContainsKey("unitsCut"), "units: nothing cut, no unitsCut");
+    // the caps
+    var tc = new TimelineBuilder();
+    var many = new List<UnitSample>();
+    for (uint i = 1; i <= TimelineBuilder.MaxUnits + 5; i++) many.Add(Us(i, 1, 1, 0, 0, 10));
+    tc.AddUnitSample(1, many);
+    Eq(TimelineBuilder.MaxUnits, tc.UnitCount, "caps: 400 units kept");
+    Eq(5, tc.UnitsCut, "caps: the units cut are counted");
+    for (int k = 0; k < TimelineBuilder.MaxPts + 20; k++) tc.AddUnitSample((uint)(2 + k), new List<UnitSample> { Us(1, 1, 1, k, 0, 10) });
+    var rc = MiniJson.Parse(tc.ToJson()) as Dictionary<string, object>;
+    Eq(TimelineBuilder.MaxPts + 1, (((rc["units"] as Dictionary<string, object>)["1"] as Dictionary<string, object>)["pts"] as List<object>).Count, "caps: 4000 points and the last one");
+    var cut = rc["unitsCut"] as Dictionary<string, object>;
+    Check(Convert.ToDouble(cut["units"]) == 5 && Convert.ToDouble(cut["pts"]) == 20, "caps: unitsCut says what was cut");
+    // the upload copy: the trace stripped, the rest as it was
+    string full = "{\"battle\":1,\"timeline\":" + tb.ToJson() + ",\"after\":2}";
+    var stripped = MiniJson.Parse(TimelineBuilder.StripTrace(full)) as Dictionary<string, object>;
+    var stl = stripped["timeline"] as Dictionary<string, object>;
+    Check(!stl.ContainsKey("dmgT") && !stl.ContainsKey("units") && stl.ContainsKey("heroes") && Convert.ToDouble(stripped["after"]) == 2, "strip: dmgT and units removed from the upload copy, the rest kept");
   }
 
   static string Js2(object o) {

@@ -45,11 +45,14 @@
 //     reads them so). The bases: the units 4301–4306 / 4345–4350 (AttributeComponent m_tableData m_ID), their HP
 //     as the heroes' (BattleAttributeData <fHp> 0x238, m_fMaxHp 0x240), their side from their OwnerRelation cUid.
 //     Not verified on a live arena fight yet.
+//   Unit trace (arena, ReadUnits): every PositionComponent of the world -> _entity 0x18 -> Entity <m_uID> 0x10; once per
+//     entity: its AttributeComponent (m_tableData m_ID, m_battleAttr) and OwnerRelation cUid.
 //   .NET collections: Dictionary entries 0x18, count 0x20; Entry<int|uint, ref> = {hashCode, next, key, value@8}, 0x18
 //     bytes; Entry<uint, int> = {hashCode, next, key, value}, 0x10 bytes; List<T> _items 0x10, _size 0x18; arrays:
 //     max_length 0x18, data 0x20; T[,] bounds 0x10 ({length, lower} x 2).
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Text;
 using System.Threading;
 
@@ -342,6 +345,50 @@ namespace RealmForge {
       return res;
     }
 
+    /// <summary>What the unit trace keeps of an entity between passes (entity address -> this).</summary>
+    public sealed class UnitCache {
+      public uint Uid, Owner; public int Unit; public ulong Attr, Battle;
+      public bool Skip;   // no attribute / unit id: not a unit
+    }
+
+    /// <summary>The units with a position in the world (PositionComponent list): unit id, owner, position, face, HP. The
+    /// entity's components are read once (<paramref name="cache"/>, keyed by entity address and checked by uid); each pass
+    /// reads the position and the HP only. <paramref name="towers"/> (optional) marks the heroes' towers.</summary>
+    public static List<UnitSample> ReadUnits(ulong sim, Dictionary<ulong, UnitCache> cache, ICollection<uint> towers) {
+      var res = new List<UnitSample>();
+      ulong world = P64(sim + 0x28); if (world == 0) return res;
+      foreach (var pos in WorldComps(world, CT_Position, 4000)) {
+        var pb = Read(pos, 0x60); if (pb == null) continue;
+        ulong ent = BitConverter.ToUInt64(pb, 0x18); if (ent == 0) continue;
+        var ub = Read(ent + 0x10, 4); if (ub == null) continue;
+        uint uid = BitConverter.ToUInt32(ub, 0);
+        UnitCache c;
+        if (!cache.TryGetValue(ent, out c) || c.Uid != uid) {
+          c = new UnitCache { Uid = uid };
+          var nodes = CompNodes(ent);
+          ulong at = Comp(nodes, CT_Attribute);
+          var ab = at != 0 ? Read(at + 0x20, 16) : null;
+          ulong td = ab != null ? BitConverter.ToUInt64(ab, 0) : 0, ba = ab != null ? BitConverter.ToUInt64(ab, 8) : 0;
+          var ib = td != 0 ? Read(td + 0x14, 4) : null;
+          if (ib == null || ba == 0) c.Skip = true;
+          else { c.Attr = at; c.Battle = ba; c.Unit = BitConverter.ToInt32(ib, 0); c.Owner = OwnerOf(nodes); }
+          cache[ent] = c;
+        }
+        if (c.Skip) continue;
+        // the same attribute data (a dead unit's memory can be reused)
+        var cb = Read(c.Attr + 0x28, 8); if (cb == null || BitConverter.ToUInt64(cb, 0) != c.Battle) continue;
+        var hb = Read(c.Battle + 0x238, 16); if (hb == null) continue;
+        double hp = Fix(hb, 0), max = Fix(hb, 8);
+        double x = Fix(pb, 0x48), y = Fix(pb, 0x50), z = Fix(pb, 0x58);
+        if (!Sane(x) || !Sane(y) || !Sane(z)) continue;
+        if (max < 0 || max > 1e13 || hp < 0 || hp > max) continue;
+        res.Add(new UnitSample { Uid = uid, Unit = c.Unit, Owner = c.Owner, Tower = towers != null && towers.Contains(uid),
+                                 X = x, Y = y, Z = z, Face = BitConverter.ToInt32(pb, 0x30), Hp = hp, MaxHp = max });
+      }
+      return res;
+    }
+    static bool Sane(double v) { return !double.IsNaN(v) && !double.IsInfinity(v) && Math.Abs(v) < 1e4; }
+
     /// <summary>What the arena reader keeps between samples: the TDStateData, the bases' attribute data.</summary>
     public sealed class ArenaRefs {
       public ulong State;
@@ -466,6 +513,15 @@ namespace RealmForge {
         sb.Append("record: frames with commands ").Append(DictRefs(P64(rec + 0x10), 200000).Count)
           .Append(", executed ").Append(DictRefs(P64(rec + 0x18), 200000).Count).Append('\n');
       }
+      if (world != 0) {
+        var us = ReadUnits(sim, new Dictionary<ulong, UnitCache>(), null);
+        sb.Append("units with a position: ").Append(us.Count).Append('\n');
+        for (int i = 0; i < us.Count && i < 5; i++) {
+          var u = us[i];
+          sb.Append("  unit ").Append(u.Unit).Append(" uid ").Append(u.Uid).Append(" owner ").Append(u.Owner).Append(" world ").Append(u.X.ToString("0.00")).Append(',')
+            .Append(u.Y.ToString("0.00")).Append(',').Append(u.Z.ToString("0.00")).Append(" hp ").Append(u.Hp.ToString("0")).Append('/').Append(u.MaxHp.ToString("0")).Append('\n');
+        }
+      }
       sb.Append("klasses: card ").Append(Klass(RvaCard).ToString("X")).Append(", anger ").Append(Klass(RvaAnger).ToString("X"))
         .Append(", skill ").Append(Klass(RvaSkill).ToString("X")).Append(", command ").Append(Klass(RvaFrameIdxInfo).ToString("X"))
         .Append(", hero info ").Append(Klass(RvaHeroInfo).ToString("X")).Append(", owner ").Append(Klass(RvaOwner).ToString("X"))
@@ -512,6 +568,9 @@ namespace RealmForge {
     List<int[]> heroes;
     readonly Dictionary<ulong, uint> owners = new Dictionary<ulong, uint>();
     readonly RFX.ArenaRefs arenaRefs = new RFX.ArenaRefs();
+    readonly Dictionary<ulong, RFX.UnitCache> unitCache = new Dictionary<ulong, RFX.UnitCache>();
+    readonly HashSet<uint> towerSet = new HashSet<uint>();
+    long tracePassMs; int tracePasses;
     Thread th;
 
     public FightRecorder(ulong sim, int stage) { Sim = sim; Stage = stage; }
@@ -533,7 +592,19 @@ namespace RealmForge {
       var c = RFX.ReadFrameCommands(Sim, false);
       if (c.Count > 0) lock (gate) tl.AddCommands(c);
       var st = RFX.ReadStatsBySide(Sim);
-      if (st.Count > 0) lock (gate) tl.SetStats(st);
+      if (st.Count > 0) {
+        uint f; int cs;
+        lock (gate) { tl.SetStats(st); if (RFX.SimClock(Sim, out f, out cs)) tl.AddStatSample(f, st); }
+      }
+    }
+
+    /// <summary>One pass of the arena's unit trace (timed).</summary>
+    void UnitTrace(uint fr) {
+      var sw = Stopwatch.StartNew();
+      var us = RFX.ReadUnits(Sim, unitCache, towerSet);
+      sw.Stop();
+      tracePassMs += sw.ElapsedMilliseconds; tracePasses++;
+      lock (gate) tl.AddUnitSample(fr, us);
     }
 
     void Loop() {
@@ -552,6 +623,7 @@ namespace RealmForge {
               if (heroes.Count == 0) heroes = RFX.BattleHeroList(Sim);
               var hs = RFX.ReadHeroSamples(Sim, heroes, null, owners);
               if (hs != null) {
+                foreach (var h in hs) if (h.Tower != 0) towerSet.Add(h.Tower);
                 lock (gate) tl.AddSample(fr, hs);
                 var cb = OnSample; if (cb != null) cb(fr, hs);
               }
@@ -559,6 +631,7 @@ namespace RealmForge {
                 var a = RFX.ReadArena(Sim, arenaRefs, null);
                 lock (gate) { if (a != null) tl.AddArena(fr, a); if (tl.GridW == 0 && RFX.TowerGridW > 0) tl.GridW = RFX.TowerGridW; }
               }
+              if (Arena && n % 2 == 0) UnitTrace(fr);   // about every 0.4 s
               if (++n % 5 == 0) {   // about every second: the command record and the boss
                 Commands();
                 var towers = new List<uint>();
@@ -579,6 +652,8 @@ namespace RealmForge {
           lock (gate) { if (ef > tl.Frames) tl.Frames = ef; }
         }
         Commands();
+        if (tracePasses > 0) lock (gate) Say("unit trace: " + tl.UnitCount + " units, avg " + (tracePassMs / (double)tracePasses).ToString("0.0") + " ms, " + tracePasses + " passes"
+                                             + (tl.UnitsCut > 0 || tl.PointsCut > 0 ? ", cut " + tl.UnitsCut + " units / " + tl.PointsCut + " points" : ""));
         lock (gate) Say("fight recorder: ended at frame " + tl.Frames + ", " + tl.Samples + " samples, " + tl.Commands + " commands");
       } catch (Exception e) { Say("fight recorder: " + e.Message); }
       finally { running = false; EndedUtc = DateTime.UtcNow; done.Set(); }
