@@ -2,7 +2,7 @@
 window.RF_TEXTS = {
   ru: {
     tagline: 'Экстрактор аккаунта',
-    navSync: 'Синхронизация', navEquip: 'Переодевание', navSettings: 'Настройки',
+    navSync: 'Синхронизация', navEquip: 'Переодевание', navSettings: 'Настройки', navNews: 'Что нового', newsTitle: 'Что нового', newsLead: 'Изменения программы по версиям.', newsVer: 'Версия {0}', newsYours: 'у тебя',
     gameOn: 'Игра запущена', gameOff: 'Игра не запущена', gameVer: 'игра {0}', appVer: 'RealmForge {0}',
 
     syncTitle: 'Синхронизация', syncLead: 'Экстрактор читает героев и снаряжение из запущенной игры и отправляет снимок в твой профиль на сайте.',
@@ -17,7 +17,7 @@ window.RF_TEXTS = {
     heroes: 'героев', items: 'предметов', artifacts: 'артефактов',
     openSite: 'Открыть на сайте', openFolder: 'Открыть папку', again: 'Ещё раз',
     readonly: 'Программа читает память игры и ничего в ней не меняет. Помощник «Переодевание» может сам открыть слот и нажать вещь мышью. «Заменить» нажимаешь ты — или программа, если ты включил это в настройках.',
-    updReady: 'Обновление {0} готово', updKicker: 'Новая версия', updNext: 'Установится при следующем запуске программы.', updRestart: 'Обновить',
+    updReady: 'Обновление {0} готово', updKicker: 'Новая версия', updNext: 'Установится при следующем запуске программы.', updRestart: 'Обновить', updAvail: 'Обновление {0}', updLater: 'Позже', updHint: 'Программа перезапустится за пару секунд и откроется там же. Можно и позже — обновление поставится само в спокойный момент.',
     setAutoSync: 'Автосинхронизация', setAutoSyncP: 'Сама отправляет аккаунт на сайт после смены снаряжения и раз в 5 минут, пока игра запущена — сайт всегда знает, что на ком надето.',
     setAutoClick: 'Автонажатие', setAutoClickP: 'В «Переодевании» программа сама открывает нужный слот, прокручивает список и нажимает вещь (мышью, как игрок). «Заменить» нажимаешь ты, если не включено автоподтверждение ниже. Правила игры могут запрещать автоматизацию — решай сам.',
     setAutoConfirm: 'Автоматически подтверждать замену вещей', setAutoConfirmP: 'Программа сама нажимает «Заменить» и переходит к следующему слоту, пока вся сборка не будет надета. Нажимает, только когда по памяти игры выбрана именно нужная вещь, открыт нужный герой и вещь на нём ещё не надета; один раз на вещь. Это уже полная автоматизация действий в игре — правила игры могут её запрещать, риск блокировки аккаунта на тебе. По умолчанию выключено.',
@@ -114,7 +114,7 @@ window.RF_TEXTS = {
   },
   en: {
     tagline: 'Account extractor',
-    navSync: 'Sync', navEquip: 'Equip', navSettings: 'Settings',
+    navSync: 'Sync', navEquip: 'Equip', navSettings: 'Settings', navNews: "What's new", newsTitle: "What's new", newsLead: "The program's changes by version.", newsVer: 'Version {0}', newsYours: 'yours',
     gameOn: 'Game running', gameOff: 'Game not running', gameVer: 'game {0}', appVer: 'RealmForge {0}',
 
     syncTitle: 'Sync', syncLead: 'The extractor reads your heroes and gear from the running game and sends a snapshot to your profile on the site.',
@@ -129,7 +129,7 @@ window.RF_TEXTS = {
     heroes: 'heroes', items: 'items', artifacts: 'artifacts',
     openSite: 'Open on the site', openFolder: 'Open folder', again: 'Again',
     readonly: 'The program reads game memory and never changes anything in it. The equip helper can open the slot and click the item with the mouse. You press “Replace” — or the program, if you turned that on in the settings.',
-    updReady: 'Update {0} is ready', updKicker: 'New version', updNext: 'It installs the next time the program starts.', updRestart: 'Update',
+    updReady: 'Update {0} is ready', updKicker: 'New version', updNext: 'It installs the next time the program starts.', updRestart: 'Update', updAvail: 'Update {0}', updLater: 'Later', updHint: 'The program restarts in a couple of seconds and opens where it was. Or later — the update installs itself in a quiet moment.',
     setAutoSync: 'Auto sync', setAutoSyncP: 'Sends the account to the site by itself after gear changes and every 5 minutes while the game runs — the site always knows who wears what.',
     setAutoClick: 'Auto click', setAutoClickP: 'The equip helper opens the slot, scrolls the list and clicks the item by itself (with the mouse, like a player). You press “Replace” unless auto-confirm below is on. The game’s rules may forbid automation — your call.',
     setAutoConfirm: 'Confirm the replacement automatically', setAutoConfirmP: 'The program presses “Replace” itself and moves on to the next slot until the whole build is on. It presses only when the game’s memory shows exactly the right item selected, the right hero open and the item not on that hero yet; once per item. This is full automation of actions in the game — the game’s rules may forbid it, the risk of an account ban is yours. Off by default.',

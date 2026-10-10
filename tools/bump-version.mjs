@@ -24,3 +24,38 @@ a = a
 fs.writeFileSync(prog, p);
 fs.writeFileSync(info, a);
 console.log(`${cur[1]}.${cur[2]}.${cur[3]} -> ${next}`);
+
+// release notes: NEXT-RELEASE.md (## RU / ## EN bullets) -> ui/changelog.js + tools/.release-notes.json, then the list is emptied
+const notesFile = path.join(root, 'NEXT-RELEASE.md');
+if (fs.existsSync(notesFile)) {
+  const raw = fs.readFileSync(notesFile, 'utf8');
+  const crlf = raw.includes('\r\n');
+  const lines = raw.replace(/\r\n/g, '\n').split('\n');
+  const notes = { ru: [], en: [] };
+  let sec = null;
+  const kept = [];
+  for (const line of lines) {
+    const h = /^##\s+(RU|EN)\s*$/.exec(line);
+    if (h) { sec = h[1].toLowerCase(); kept.push(line); continue; }
+    if (sec && /^- /.test(line)) { notes[sec].push(line.slice(2).trim()); continue; }
+    if (sec && line.trim() === '') continue;
+    kept.push(line);
+  }
+  if (!notes.ru.length && !notes.en.length) {
+    console.warn('! NEXT-RELEASE.md has no bullets: ui/changelog.js and tools/.release-notes.json were not touched');
+  } else {
+    const clFile = path.join(root, 'ui', 'changelog.js');
+    const cl = fs.readFileSync(clFile, 'utf8');
+    const today = new Date().toISOString().slice(0, 10);
+    const entry = `  { v: ${JSON.stringify(next)}, date: ${JSON.stringify(today)}, ru: ${JSON.stringify(notes.ru)}, en: ${JSON.stringify(notes.en)} },\n`;
+    const marker = /window\.RF_CHANGELOG = \[\r?\n/.exec(cl);
+    if (!marker) throw new Error('ui/changelog.js: "window.RF_CHANGELOG = [" not found');
+    const at = marker.index + marker[0].length;
+    fs.writeFileSync(clFile, cl.slice(0, at) + entry + cl.slice(at));
+    const out = { ru: notes.ru.join(' '), en: notes.en.join(' ') };
+    fs.writeFileSync(path.join(root, 'tools', '.release-notes.json'), JSON.stringify(out, null, 1) + '\n');
+    console.log('release notes:', JSON.stringify(out));
+    let text = kept.join("\n").replace(/\n*$/, "\n").replace("## RU\n## EN", "## RU\n\n## EN");
+    fs.writeFileSync(notesFile, crlf ? text.replace(/\n/g, '\r\n') : text);
+  }
+}

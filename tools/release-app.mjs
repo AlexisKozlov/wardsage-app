@@ -1,7 +1,7 @@
 // Publishes a new version of RealmForge.exe to the site: signs it, builds the installer and writes what the site
 // serves. Run after tools/build-app.sh, then commit and push the site repo.
 //
-//   node tools/release-app.mjs --key <private key .pem> --web <realmforge-web checkout> --ru "что нового" --en "what's new"
+//   node tools/release-app.mjs --key <private key .pem> --web <realmforge-web checkout> [--ru "что нового" --en "what's new"]
 //
 // Writes into <web>/public/downloads/:
 //   update/RealmForge-<version>.exe   the exe the installed apps update to (older ones are removed)
@@ -28,6 +28,10 @@ const key = createPrivateKey(readFileSync(keyFile));
 const n = /KeyN = "([^"]+)"/.exec(readFileSync(join(root, 'app', 'Updater.cs'), 'utf8'))[1];
 if (createPublicKey(key).export({ format: 'jwk' }).n !== n) { console.error('this key is not the one in app/Updater.cs'); process.exit(1); }
 
+// notes: --ru / --en, else what tools/bump-version.mjs took from NEXT-RELEASE.md
+const notesFile = join(root, 'tools', '.release-notes.json');
+const saved = existsSync(notesFile) ? JSON.parse(readFileSync(notesFile, 'utf8')) : {};
+
 const sig = sign('sha256', exe, key);
 if (!verify('sha256', exe, createPublicKey(key), sig)) throw new Error('signature does not verify');
 const sha256 = createHash('sha256').update(exe).digest('hex');
@@ -44,7 +48,7 @@ const manifest = {
   size: exe.length,
   sha256,
   sig: sig.toString('base64'),
-  notes: { ru: arg('--ru') ?? '', en: arg('--en') ?? '' },
+  notes: { ru: arg('--ru') ?? saved.ru ?? '', en: arg('--en') ?? saved.en ?? '' },
 };
 writeFileSync(join(out, 'latest.json'), JSON.stringify(manifest, null, 1) + '\n');
 

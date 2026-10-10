@@ -4,3 +4,4 @@ dist/
 node_modules/
 bridge/bin/
 bridge/obj/
+tools/.release-notes.json

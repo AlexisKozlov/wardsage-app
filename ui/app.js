@@ -55,6 +55,7 @@
     reload: '<svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6"/></svg>',
     chest: '<svg viewBox="0 0 64 64"><path d="M10 26h44v26H10zM10 26l6-12h32l6 12M28 34h8v8h-8zM10 36h18M36 36h18"/></svg>',
     filter: '<svg viewBox="0 0 24 24"><path d="M4 5h16l-6 7.5V19l-4 1v-7.5z"/></svg>',
+    news: '<svg viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 12h7M9 15.5h7M9 19h4"/></svg>',
     folder: '<svg viewBox="0 0 24 24"><path d="M3 7a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/></svg>',
   };
 
@@ -65,7 +66,7 @@
   }
 
   // ---------------------------------------------------------------- shell
-  let lastRail = '', lastPage = '', lastView = '';
+  let lastRail = '', lastPage = '', lastView = '', lastModal = '';
   // Re-renders only what changed (the game is polled several times a second): no flicker, hover and focus survive.
   function render() {
     syncHighlight();
@@ -73,8 +74,10 @@
     document.body.classList.toggle('compact', S.compact);
     const r = rail();
     if (r !== lastRail) { $('#rail').innerHTML = r; lastRail = r; }
+    const md = modal();
+    if (md !== lastModal) { $('#modal').innerHTML = md; lastModal = md; }
     const view = S.compact ? 'compact' : S.page + (S.editCode || !S.hasCode ? ':code' : '');
-    const html = S.compact ? compactView() : S.page === 'equip' ? equipPage() : S.page === 'settings' ? settingsPage() : syncPage();
+    const html = S.compact ? compactView() : S.page === 'equip' ? equipPage() : S.page === 'settings' ? settingsPage() : S.page === 'news' ? newsPage() : syncPage();
     if (html === lastPage && view === lastView) return;
     const pg = $('#page');
     const keep = document.activeElement && document.activeElement.id === 'code' ? pg.querySelector('#code').value : null;
@@ -93,10 +96,9 @@
       ${nav('sync', I.sync, t('navSync'))}
       ${nav('equip', I.equip, t('navEquip'), pending ? `<span class="badge">${pending}</span>` : '')}
       ${nav('settings', I.gear, t('navSettings'))}
+      ${nav('news', I.news, t('navNews'), newsUnseen() ? '<span class="newdot"></span>' : '')}
       <div class="rail-foot">
-        ${S.update ? `<div class="upd" role="status"><div class="upd-head"><span class="upd-ico">${I.reload}</span><div><small>${esc(t('updKicker'))}</small><b>${esc(S.update.version)}</b></div></div>
-          <p>${esc(S.update[S.lang] || S.update.ru || t('updNext'))}</p>
-          <button class="btn-gold" data-act="updRestart">${esc(t('updRestart'))}</button></div>` : ''}
+        ${S.update && S.updDismissed ? `<button class="btn-line" data-act="updOpen">${I.reload}<span>${esc(t('updAvail', S.update.version))}</span></button>` : ''}
         <div class="game-state"><span class="dot ${S.game.running ? 'on' : ''}"></span><div>${esc(S.game.running ? t('gameOn') : t('gameOff'))}
           ${S.game.running && S.game.version ? `<small>${esc(t('gameVer', S.game.version))}</small>` : ''}${S.version ? `<small>${esc(t('appVer', S.version))}</small>` : ''}</div></div>
         <div class="langs">
@@ -104,6 +106,34 @@
           <button data-act="lang" data-lang="en" aria-pressed="${S.lang === 'en'}">EN</button>
         </div>
       </div>`;
+  }
+
+  // ---------------------------------------------------------------- update modal, news
+  function modal() {
+    if (!S.update || S.updDismissed) return '';
+    return `<div class="modal-back" data-act="updBack"><div class="modal card framed" role="dialog" aria-modal="true">
+      <small class="modal-kick">${esc(t('updKicker'))}</small><b class="modal-ver">${esc(S.update.version)}</b>
+      <p class="modal-notes">${esc(S.update[S.lang] || S.update.ru || t('updNext'))}</p>
+      <p class="modal-hint">${esc(t('updHint'))}</p>
+      <div class="modal-btns"><button class="btn-gold" data-act="updRestart">${esc(t('updRestart'))}</button><button class="btn-line" data-act="updLater">${esc(t('updLater'))}</button></div>
+    </div></div>`;
+  }
+  function newsUnseen() {
+    if (!S.version) return false;
+    try { return localStorage.getItem('rf.newsSeen') !== S.version; } catch (e) { return false; }
+  }
+  function newsSeen() { try { localStorage.setItem('rf.newsSeen', S.version); } catch (e) { /* ignore */ } }
+  function newsPage() {
+    const list = (window.RF_CHANGELOG || []).slice(0, 30);
+    const date = (d) => { const m = /^([0-9]{4})-([0-9]{2})-([0-9]{2})/.exec(d || ''); return m ? m[3] + '.' + m[2] + '.' + m[1] : d || ''; };
+    return `
+      <div class="head"><div><h1>${esc(t('newsTitle'))}</h1><p class="lead">${esc(t('newsLead'))}</p></div></div>
+      <div class="stack">${list.map((e) => {
+        const own = S.lang === 'en' ? e.en : e.ru, other = S.lang === 'en' ? e.ru : e.en;
+        const lines = own && own.length ? own : other || [];
+        return `<div class="card news"><div class="news-head"><b>${esc(t('newsVer', e.v))}</b><span>${esc(date(e.date))}</span>${e.v === S.version ? `<em>${esc(t('newsYours'))}</em>` : ''}</div>
+          <ul>${lines.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>`;
+      }).join('')}</div>`;
   }
 
   // ---------------------------------------------------------------- sync
@@ -549,6 +579,7 @@
     const a = el.dataset.act;
     if (a === 'nav') {
       S.page = el.dataset.page; S.editCode = false;
+      if (S.page === 'news') newsSeen();
       if (S.page === 'equip' && S.plans.status === 'idle') loadPlans();
       render();
     } else if (a === 'lang') { S.lang = el.dataset.lang; host.send({ cmd: 'setLang', lang: S.lang }); render(); }
@@ -580,6 +611,9 @@
     else if (a === 'resetSite') host.send({ cmd: 'setSite', site: S.defaultSite });
     else if (a === 'reload') loadPlans();
     else if (a === 'updRestart') host.send({ cmd: 'update.restart' });
+    else if (a === 'updLater') { S.updDismissed = true; render(); }
+    else if (a === 'updOpen') { S.updDismissed = false; render(); }
+    else if (a === 'updBack') { if (e.target === el) { S.updDismissed = true; render(); } }
     else if (a === 'rescan') scan();
     else if (a === 'pick') { S.sel = Number(el.dataset.i); render(); }
     else if (a === 'run') { const p = current(); if (!p || foreign(p)) return; startRun(p); if (!S.autoConfirm) toast(t('runNoConfirm'), 6000); render(); }
@@ -617,7 +651,7 @@
     }
   });
   document.addEventListener('input', (e) => { if (e.target.id === 'code') codeTyped(); });
-  document.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.id === 'code' && !$('#saveCode').disabled) $('#saveCode').click(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && S.update && !S.updDismissed) { S.updDismissed = true; render(); return; } if (e.key === 'Enter' && e.target.id === 'code' && !$('#saveCode').disabled) $('#saveCode').click(); });
 
   // ---------------------------------------------------------------- host events
   host.on((m) => {
@@ -698,7 +732,7 @@
         break;
       }
       case 'overlay': S.overlay = m.state; if (S.page === 'equip' || S.compact) render(); break;
-      case 'update': S.update = { version: m.version, ru: m.notesRu || '', en: m.notesEn || '' }; render(); break;
+      case 'update': if (!S.update || S.update.version !== m.version) S.updDismissed = false; S.update = { version: m.version, ru: m.notesRu || '', en: m.notesEn || '' }; render(); break;
       case 'auto': S.auto = m.state; if (S.page === 'equip' || S.compact) render(); break;
       case 'battle': toast(t(m.ok === false ? 'battleNone' : 'battleKept'), 6000); break;
       case 'cancelRun': {

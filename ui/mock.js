@@ -40,7 +40,7 @@
     on: (f) => { handler = f; },
     send: (m) => {
       if (m.cmd === 'init') {
-        emit({ ev: 'state', lang: s === 'en' ? 'en' : 'ru', version: '1.0', site, defaultSite: 'https://realmforge-wor.vercel.app', hasCode: s !== 'onboard',
+        emit({ ev: 'state', lang: s === 'en' ? 'en' : 'ru', version: '1.6.53', site, defaultSite: 'https://realmforge-wor.vercel.app', hasCode: s !== 'onboard',
           codePrefix: 'rf_VKSjw', saveCopy: false, game: { running: s !== 'error', version: '1.0.24' },
           last: { at: '2026-09-24T20:26:00Z', heroes: 128, items: 1109, artifacts: 380, top: [2085, 2016, 2025] } });
         if (q.get('upd')) emit({ ev: 'update', version: '1.6.47', notesRu: 'Чистка склада: если «Автонажатие» выключено, программа прямо об этом говорит и предлагает включить его одной кнопкой.', notesEn: 'Storage cleanup: with «Auto click» off the app now says so and offers to turn it on with one button.' });
