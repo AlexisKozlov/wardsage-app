@@ -62,11 +62,12 @@ namespace RealmForge {
     Rectangle normalBounds;
     FormWindowState normalState;
     bool compact;
-    // the tray (app/Tray.cs): minimizing hides the window there while TrayEnabled; a start with --tray begins hidden
+    // the tray (app/Tray.cs): the close button hides the window there while TrayEnabled (minimizing keeps it on the taskbar);
+    // a start with --tray begins hidden
     readonly NotifyIcon tray = new NotifyIcon();
     bool startHidden;
     FormWindowState shownState = FormWindowState.Normal;   // normal or maximized before it went to the tray
-    /// <summary>Minimize to the tray (the player's setting, AppConfig.Tray; set by HostBridge).</summary>
+    /// <summary>Close to the tray (the player's setting, AppConfig.Tray; set by HostBridge).</summary>
     public bool TrayEnabled = true;
     string trayOpen = "Открыть RealmForge", trayExit = "Выход";
     string trayHint = "RealmForge работает в трее. Выход — правой кнопкой по значку.";
@@ -132,7 +133,6 @@ namespace RealmForge {
     protected override void OnResize(EventArgs e) {
       base.OnResize(e);
       if (WindowState != FormWindowState.Minimized) shownState = WindowState;
-      if (TrayEnabled && WindowState == FormWindowState.Minimized && Visible) Hide();
     }
 
     protected override void OnHandleCreated(EventArgs e) { base.OnHandleCreated(e); Native.DarkFrame(Handle); }
