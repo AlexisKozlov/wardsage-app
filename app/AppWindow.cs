@@ -69,6 +69,10 @@ namespace RealmForge {
     /// <summary>Minimize to the tray (the player's setting, AppConfig.Tray; set by HostBridge).</summary>
     public bool TrayEnabled = true;
     string trayOpen = "Открыть RealmForge", trayExit = "Выход";
+    string trayHint = "RealmForge работает в трее. Выход — правой кнопкой по значку.";
+    // a real exit (the tray menu, a fatal error): the close button otherwise only hides the window in the tray
+    bool exiting;
+    bool hintShown;
 
     public AppWindow(bool hidden = false) {
       startHidden = hidden;
@@ -103,7 +107,7 @@ namespace RealmForge {
       var menu = new ContextMenuStrip();
       menu.Opening += (s, e) => { menu.Items[0].Text = trayOpen; menu.Items[1].Text = trayExit; };
       menu.Items.Add(trayOpen, null, (s, e) => ShowFromTray());
-      menu.Items.Add(trayExit, null, (s, e) => { tray.Visible = false; Close(); });
+      menu.Items.Add(trayExit, null, (s, e) => { exiting = true; tray.Visible = false; Close(); });
       tray.ContextMenuStrip = menu;
     }
 
@@ -112,6 +116,7 @@ namespace RealmForge {
       bool en = lang == "en";
       trayOpen = en ? "Open RealmForge" : "Открыть RealmForge";
       trayExit = en ? "Exit" : "Выход";
+      trayHint = en ? "RealmForge keeps running in the tray. Exit: right-click the icon." : "RealmForge работает в трее. Выход — правой кнопкой по значку.";
     }
 
     /// <summary>The window back from the tray (or to the front), as it was.</summary>
@@ -195,6 +200,7 @@ namespace RealmForge {
         core.Navigate("https://" + AppHost + "/index.html");
       } catch (Exception e) {
         Program.Fatal(e);
+        exiting = true;
         Close();
       }
     }
@@ -221,6 +227,21 @@ namespace RealmForge {
     }
 
     int Scale(int px) { using (var g = CreateGraphics()) return (int)Math.Round(px * g.DpiX / 96.0); }
+
+    // the close button (×): with the tray on, the window goes to the tray and the program keeps working (a player may only
+    // want it out of the way); a real exit is the tray menu's «Выход» or Windows shutting down
+    protected override void OnFormClosing(FormClosingEventArgs e) {
+      if (TrayEnabled && !exiting && e.CloseReason == CloseReason.UserClosing) {
+        e.Cancel = true;
+        Hide();
+        if (!hintShown) {
+          hintShown = true;
+          try { tray.ShowBalloonTip(4000, "RealmForge", trayHint, ToolTipIcon.Info); } catch (Exception) { }
+        }
+        return;
+      }
+      base.OnFormClosing(e);
+    }
 
     protected override void OnFormClosed(FormClosedEventArgs e) {
       tray.Visible = false;
