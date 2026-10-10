@@ -3,8 +3,8 @@
   python installer/make-art.py <realmforge-web checkout> <Cinzel Bold .ttf>
 
 back.png   the wizard pages' background: the game's town art, darkened so the white text stays readable
-side.png   the welcome / finish pages' picture: the game's battle art with a gold frame and REALMFORGE
-small.png  the top-right emblem: gold crest with R
+side.png   the welcome / finish pages' picture: the game's battle art with a gold frame and WARDSAGE
+small.png  the top-right emblem: gold crest with W
 Sizes are for 200 % DPI; Inno Setup scales them down.
 """
 import os
@@ -65,7 +65,7 @@ d.rectangle((6, 6, W - 7, H - 7), outline=(40, 30, 12), width=10)
 d.rectangle((10, 10, W - 11, H - 11), outline=GOLD, width=4)
 d.rectangle((18, 18, W - 19, H - 19), outline=(120, 96, 50), width=2)
 f = ImageFont.truetype(FONT, 58)
-t = 'REALMFORGE'
+t = 'WARDSAGE'
 tw = d.textlength(t, font=f)
 for dx, dy in ((0, 3), (2, 2), (-2, 2)):
     d.text(((W - tw) / 2 + dx, H - 190 + dy), t, font=f, fill=(0, 0, 0))
@@ -86,7 +86,25 @@ d.line(pts + [pts[0]], fill=GOLD, width=5)
 inner = [(x * 0.8 + S * 0.1, y * 0.8 + S * 0.1) for x, y in pts]
 d.line(inner + [inner[0]], fill=(150, 120, 60), width=2)
 f3 = ImageFont.truetype(FONT, 64)
-bb = d.textbbox((0, 0), 'R', font=f3)
-d.text(((S - (bb[2] - bb[0])) / 2 - bb[0], (S - (bb[3] - bb[1])) / 2 - bb[1]), 'R', font=f3, fill=GOLD_HI)
+bb = d.textbbox((0, 0), 'W', font=f3)
+d.text(((S - (bb[2] - bb[0])) / 2 - bb[0], (S - (bb[3] - bb[1])) / 2 - bb[1]), 'W', font=f3, fill=GOLD_HI)
 em.save(os.path.join(OUT, 'small.png'), optimize=True)
-print('installer art written to', OUT)
+# the app icon (app/res/icon.ico): dark rounded square, gold frame, W
+S = 256
+ic = Image.new('RGBA', (S, S), (0, 0, 0, 0))
+d = ImageDraw.Draw(ic)
+d.rounded_rectangle((4, 4, S - 5, S - 5), radius=34, fill=(13, 18, 30))
+d.rounded_rectangle((22, 22, S - 23, S - 23), radius=14, outline=(200, 164, 90), width=12)
+f4 = ImageFont.truetype(FONT, 150)
+bb = d.textbbox((0, 0), 'W', font=f4)
+tw, th = bb[2] - bb[0], bb[3] - bb[1]
+glyph = Image.new('L', (S, S), 0)
+ImageDraw.Draw(glyph).text(((S - tw) / 2 - bb[0], (S - th) / 2 - bb[1]), 'W', font=f4, fill=255)
+grad = Image.new('RGBA', (1, S))
+for y in range(S):
+    k = y / S
+    grad.putpixel((0, y), (int(240 - 40 * k), int(214 - 44 * k), int(160 - 70 * k), 255))
+ic.paste(grad.resize((S, S)), (0, 0), glyph)
+ico = os.path.join(os.path.dirname(OUT), '..', 'app', 'res', 'icon.ico')
+ic.save(ico, sizes=[(16, 16), (20, 20), (24, 24), (32, 32), (40, 40), (48, 48), (64, 64), (128, 128), (256, 256)])
+print('installer art written to', OUT, '; icon', os.path.abspath(ico))
