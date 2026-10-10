@@ -31,28 +31,31 @@ if (fs.existsSync(notesFile)) {
   const raw = fs.readFileSync(notesFile, 'utf8');
   const crlf = raw.includes('\r\n');
   const lines = raw.replace(/\r\n/g, '\n').split('\n');
-  const notes = { ru: [], en: [] };
+  const notes = { ru: [], en: [] };   // strings = bullets, { h } = "### heading"
+  const bullets = (a) => a.filter((x) => typeof x === 'string');
+  const structured = (a) => a.map((x, i) => typeof x === 'string' ? '• ' + x : (i ? '\n' : '') + x.h).join('\n');
   let sec = null;
   const kept = [];
   for (const line of lines) {
     const h = /^##\s+(RU|EN)\s*$/.exec(line);
     if (h) { sec = h[1].toLowerCase(); kept.push(line); continue; }
+    if (sec && /^### /.test(line)) { notes[sec].push({ h: line.slice(4).trim() }); continue; }
     if (sec && /^- /.test(line)) { notes[sec].push(line.slice(2).trim()); continue; }
     if (sec && line.trim() === '') continue;
     kept.push(line);
   }
-  if (!notes.ru.length && !notes.en.length) {
+  if (!bullets(notes.ru).length && !bullets(notes.en).length) {
     console.warn('! NEXT-RELEASE.md has no bullets: ui/changelog.js and tools/.release-notes.json were not touched');
   } else {
     const clFile = path.join(root, 'ui', 'changelog.js');
     const cl = fs.readFileSync(clFile, 'utf8');
     const today = new Date().toISOString().slice(0, 10);
-    const entry = `  { v: ${JSON.stringify(next)}, date: ${JSON.stringify(today)}, ru: ${JSON.stringify(notes.ru)}, en: ${JSON.stringify(notes.en)} },\n`;
+    const entry = `  { v: ${JSON.stringify(next)}, date: ${JSON.stringify(today)}, ru: ${JSON.stringify(bullets(notes.ru))}, en: ${JSON.stringify(bullets(notes.en))} },\n`;
     const marker = /window\.RF_CHANGELOG = \[\r?\n/.exec(cl);
     if (!marker) throw new Error('ui/changelog.js: "window.RF_CHANGELOG = [" not found');
     const at = marker.index + marker[0].length;
     fs.writeFileSync(clFile, cl.slice(0, at) + entry + cl.slice(at));
-    const out = { ru: notes.ru.join(' '), en: notes.en.join(' ') };
+    const out = { ru: structured(notes.ru), en: structured(notes.en) };
     fs.writeFileSync(path.join(root, 'tools', '.release-notes.json'), JSON.stringify(out, null, 1) + '\n');
     console.log('release notes:', JSON.stringify(out));
     let text = kept.join("\n").replace(/\n*$/, "\n").replace("## RU\n## EN", "## RU\n\n## EN");

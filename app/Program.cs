@@ -31,6 +31,8 @@ namespace RealmForge {
       startInTray = Array.IndexOf(args, Autostart.TrayArg) >= 0;
       // a downloaded, signed update waits: put it in place and start it (app/Updater.cs)
       if (Updater.ApplyAtStart(ReleaseSingle)) return 0;
+      // an install updated in place still runs as RealmForge.exe: becomes Wardsage.exe (once), the old file is removed later
+      if (!Channel.IsTest && ExeRename.Run(args, ReleaseSingle)) return 0;
 
       Application.EnableVisualStyles();
       Application.SetCompatibleTextRenderingDefault(false);
@@ -166,9 +168,98 @@ namespace RealmForge {
       } catch (Exception e) { Log.Write("shortcut: " + e.Message); }
     }
 
+    /// <summary>The exe was renamed: «RealmForge.lnk» / «Wardsage.lnk» in Programs and on the Desktop that point at the old
+    /// exe are recreated as «Wardsage.lnk» pointing at the new one (same arguments and folder, icon from the new exe).</summary>
+    public static void Retarget(string oldExe, string newExe) {
+      Type shellType = Type.GetTypeFromProgID("WScript.Shell");
+      if (shellType == null) return;
+      object shell = Activator.CreateInstance(shellType);
+      foreach (var folder in new[] { Environment.SpecialFolder.Programs, Environment.SpecialFolder.DesktopDirectory }) {
+        try {
+          string dir = Environment.GetFolderPath(folder);
+          string old = System.IO.Path.Combine(dir, "RealmForge.lnk"), now = System.IO.Path.Combine(dir, "Wardsage.lnk");
+          foreach (var lnk in new[] { old, now }) {
+            if (!File.Exists(lnk)) continue;
+            object src = Call(shell, "CreateShortcut", lnk);
+            string target = Get(src, "TargetPath") as string;
+            if (target == null || !string.Equals(target, oldExe, StringComparison.OrdinalIgnoreCase)) continue;
+            object args = Get(src, "Arguments"), wd = Get(src, "WorkingDirectory"), desc = Get(src, "Description"), ws = Get(src, "WindowStyle");
+            object dst = Call(shell, "CreateShortcut", now);
+            Set(dst, "TargetPath", newExe);
+            if (args != null) Set(dst, "Arguments", args);
+            if (wd != null) Set(dst, "WorkingDirectory", wd);
+            if (desc != null) Set(dst, "Description", desc);
+            if (ws != null) Set(dst, "WindowStyle", ws);
+            Set(dst, "IconLocation", newExe + ",0");
+            Call(dst, "Save");
+            if (File.Exists(now) && !string.Equals(lnk, now, StringComparison.OrdinalIgnoreCase)) File.Delete(lnk);
+            Log.Write("shortcut retargeted: " + now);
+            break;
+          }
+        } catch (Exception e) { Log.Write("shortcut: " + e.Message); }
+      }
+    }
+
     static object Call(object o, string name, params object[] args) { return o.GetType().InvokeMember(name, BindingFlags.InvokeMethod, null, o, args); }
     static object Get(object o, string name) { return o.GetType().InvokeMember(name, BindingFlags.GetProperty, null, o, null); }
     static void Set(object o, string name, object v) { o.GetType().InvokeMember(name, BindingFlags.SetProperty, null, o, new object[] { v }); }
+  }
+
+  /// <summary>One-time in-place rename of an install made under the old product name: RealmForge.exe is copied to
+  /// Wardsage.exe, the shortcuts, the autostart entry and the «Apps» entry of Windows follow, then Wardsage.exe starts
+  /// and this process exits. The install folder keeps its name (the player chose it; the uninstaller lives there).
+  /// Best effort: any failure leaves the install as it was.</summary>
+  static class ExeRename {
+    const string OldExe = "RealmForge.exe", NewExe = "Wardsage.exe";
+    const string UninstallKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\{8B7E4C5A-3F21-4D8E-9B61-5A2C7E0D4F13}_is1";
+
+    /// <summary>True = this process must exit now (the renamed copy was started).</summary>
+    public static bool Run(string[] args, Action beforeStart) {
+      string exe = Application.ExecutablePath;
+      try {
+        if (!string.Equals(Path.GetFileName(exe), OldExe, StringComparison.OrdinalIgnoreCase)) { CleanOld(Path.GetDirectoryName(exe)); return false; }
+        string dir = Path.GetDirectoryName(exe), fresh = Path.Combine(dir, NewExe);
+        File.Copy(exe, fresh, true);
+        try { ShortcutMigration.Retarget(exe, fresh); } catch (Exception e) { Log.Write("rename shortcuts: " + e.Message); }
+        try { Autostart.Retarget(exe, fresh); } catch (Exception e) { Log.Write("rename autostart: " + e.Message); }
+        try { UpdateUninstallEntry(dir); } catch (Exception e) { Log.Write("rename apps entry: " + e.Message); }
+        Log.Write("renamed in place: " + fresh);
+        var cmd = Environment.GetCommandLineArgs();
+        var parts = new List<string>();
+        for (int i = 1; i < cmd.Length; i++) parts.Add("\"" + cmd[i].Replace("\"", "\\\"") + "\"");
+        beforeStart();   // the new process must be able to take the single-instance lock
+        Process.Start(new ProcessStartInfo(fresh) { UseShellExecute = false, WorkingDirectory = dir, Arguments = string.Join(" ", parts.ToArray()) });
+        return true;
+      } catch (Exception e) { Log.Write("rename: " + e.Message); return false; }
+    }
+
+    static void UpdateUninstallEntry(string dir) {
+      using (var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(UninstallKey, true)) {
+        if (k == null) {
+          using (var m = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(UninstallKey, false)) if (m != null) Log.Write("rename: the Apps entry is machine-wide, left as is");
+          return;
+        }
+        k.SetValue("DisplayName", "Wardsage");
+        k.SetValue("DisplayIcon", Path.Combine(dir, NewExe));
+        k.SetValue("Publisher", "Wardsage (fan project)");
+        foreach (var n in new[] { "URLInfoAbout", "HelpLink" }) if (k.GetValue(n) != null) k.SetValue(n, "https://wardsage.com");
+      }
+    }
+
+    /// <summary>Started as Wardsage.exe: the old file next to it goes away (it may still be closing: retried in the background).</summary>
+    static void CleanOld(string dir) {
+      string old = Path.Combine(dir, OldExe);
+      if (!File.Exists(old) && !File.Exists(old + ".old")) return;
+      ThreadPool.QueueUserWorkItem(delegate {
+        try {
+          if (File.Exists(old + ".old")) try { File.Delete(old + ".old"); } catch (Exception) { }
+          for (int i = 0; i < 10 && File.Exists(old); i++) {
+            try { File.Delete(old); } catch (Exception) { Thread.Sleep(1000); }
+          }
+          if (File.Exists(old)) { try { File.Move(old, old + ".old"); } catch (Exception) { } }
+        } catch (Exception e) { Log.Write("rename cleanup: " + e.Message); }
+      });
+    }
   }
 
   static class Log {

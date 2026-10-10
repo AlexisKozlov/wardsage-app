@@ -396,9 +396,22 @@ body.compact .say p { font-size: 16px }
 .modal { width: 100%; max-width: 520px; padding: 22px 24px; animation: enter .3s var(--ease) }
 .modal-kick { display: block; font: 600 11px/1.3 var(--display); letter-spacing: 1.4px; text-transform: uppercase; color: var(--muted) }
 .modal-ver { display: block; margin: 4px 0 12px; font: 700 26px/1.1 var(--display); letter-spacing: .6px; color: var(--gold) }
-.modal-notes { margin: 0; padding-top: 12px; border-top: 1px solid var(--line); font-size: 14px; line-height: 1.5; color: var(--text); white-space: pre-wrap }
+.modal-notes { margin: 0; padding-top: 12px; border-top: 1px solid var(--line); font-size: 14px; line-height: 1.5; color: var(--text); white-space: pre-wrap;
+  max-height: 50vh; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--line2) transparent }
+.modal-notes.rich { white-space: normal }
+.modal-notes h4 { margin: 14px 0 6px; font: 600 11px/1.3 var(--display); letter-spacing: 1.4px; text-transform: uppercase; color: var(--gold) }
+.modal-notes h4:first-child { margin-top: 0 }
+.modal-notes ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px }
+.modal-notes li { position: relative; padding-left: 16px }
+.modal-notes li::before { content: ''; position: absolute; left: 3px; top: .55em; width: 6px; height: 6px; background: var(--gold); transform: rotate(45deg) }
+.modal-notes p { margin: 0 0 6px }
+.modal-notes .gap { height: 8px }
 .modal-hint { margin: 12px 0 0; font-size: 12px; line-height: 1.45; color: var(--muted) }
-.modal-btns { display: flex; gap: 12px; justify-content: flex-end; margin-top: 18px }
+.modal-btns { display: flex; gap: 12px; justify-content: flex-end; margin-top: 18px; align-items: stretch }
+.modal-btns .btn-gold, .modal-btns .btn-line { box-sizing: border-box; min-height: 56px; min-width: 130px; padding: 0 14px 4px; font: 700 13px/1 var(--display); letter-spacing: 1.4px; text-transform: uppercase }
+.modal-btns .btn-line { border: 14px solid transparent; border-image: url(img/btn_blue.webp) 22 26 fill / 14px 16px stretch; border-radius: 0; background: none; color: #e6edf8; text-shadow: 0 1px 0 rgba(0, 0, 0, .6); filter: drop-shadow(0 6px 14px rgba(60, 100, 190, .25)) }
+.modal-btns .btn-line:hover:not(:disabled) { background: none; color: #fff; filter: brightness(1.15) drop-shadow(0 8px 18px rgba(80, 130, 230, .4)) }
+.modal-btns .btn-line:active:not(:disabled) { transform: translateY(1px) }
 .rail-foot .btn-line { width: 100%; min-width: 0; padding: 0 8px; font-size: 11px; letter-spacing: 1px; white-space: nowrap }
 .nav .newdot { margin-left: auto; width: 9px; height: 9px; border-radius: 50%; background: var(--gold); box-shadow: 0 0 8px var(--gold) }
 

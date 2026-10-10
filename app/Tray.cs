@@ -39,6 +39,21 @@ namespace RealmForge {
       } catch (Exception e) { Log.Write("autostart: " + e.Message); }
     }
 
+    /// <summary>The exe was renamed in place: an autostart entry (new or old name) that pointed at the old exe now starts the new one, same arguments.</summary>
+    public static void Retarget(string oldExe, string newExe) {
+      using (var k = Registry.CurrentUser.CreateSubKey(RunKey)) {
+        if (k == null) return;
+        foreach (var n in new[] { Name, OldName }) {
+          var v = k.GetValue(n) as string;
+          int at = v == null ? -1 : v.IndexOf(oldExe, StringComparison.OrdinalIgnoreCase);
+          if (at < 0) continue;
+          k.SetValue(Name, v.Substring(0, at) + newExe + v.Substring(at + oldExe.Length));
+          if (n != Name) k.DeleteValue(n, false);
+          Log.Write("autostart: now starts " + newExe);
+        }
+      }
+    }
+
     /// <summary>The exe moved (an update in another folder): the autostart entry follows it.</summary>
     public static void Refresh() {
       try {

@@ -102,6 +102,7 @@ Filename: "{app}\{#ExeName}"; Description: "{cm:LaunchProgram,{#AppTitle}}"; Fla
 ; code (%APPDATA%\{#UserData}) stay, so a reinstall keeps the link to the site.
 Type: files; Name: "{app}\{#ExeName}.old"
 #ifndef TestBuild
+Type: files; Name: "{app}\RealmForge.exe"
 Type: files; Name: "{app}\RealmForge.exe.old"
 #endif
 Type: filesandordirs; Name: "{localappdata}\{#UserData}"

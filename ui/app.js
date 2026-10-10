@@ -109,11 +109,26 @@
   }
 
   // ---------------------------------------------------------------- update modal, news
+  // release notes: lines "• x" are list items, other lines headings, blank lines spacing; a single plain paragraph stays as is
+  function notesHtml(text) {
+    const lines = String(text || '').split(/\r?\n/);
+    if (lines.length < 2 && !/^\s*•/.test(lines[0] || '')) return `<p class="modal-notes">${esc(lines[0] || '')}</p>`;
+    let out = '', list = false;
+    const close = () => { if (list) { out += '</ul>'; list = false; } };
+    for (const raw of lines) {
+      const l = raw.trim();
+      if (!l) { close(); if (out) out += '<div class="gap"></div>'; continue; }
+      if (l.startsWith('•')) { if (!list) { out += '<ul>'; list = true; } out += `<li>${esc(l.replace(/^•\s*/, ''))}</li>`; continue; }
+      close(); out += `<h4>${esc(l)}</h4>`;
+    }
+    close();
+    return `<div class="modal-notes rich">${out}</div>`;
+  }
   function modal() {
     if (!S.update || S.updDismissed) return '';
     return `<div class="modal-back" data-act="updBack"><div class="modal card framed" role="dialog" aria-modal="true">
       <small class="modal-kick">${esc(t('updKicker'))}</small><b class="modal-ver">${esc(S.update.version)}</b>
-      <p class="modal-notes">${esc(S.update[S.lang] || S.update.ru || t('updNext'))}</p>
+      ${notesHtml(S.update[S.lang] || S.update.ru || t('updNext'))}
       <p class="modal-hint">${esc(t('updHint'))}</p>
       <div class="modal-btns"><button class="btn-gold" data-act="updRestart">${esc(t('updRestart'))}</button><button class="btn-line" data-act="updLater">${esc(t('updLater'))}</button></div>
     </div></div>`;
