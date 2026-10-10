@@ -483,6 +483,11 @@ static class CoreTests {
     Check(rec != null && (double)rec["level"] == 1700 && (double)rec["mySum"] == 151050 && (double)rec["myTop"] == 84241 && (double)rec["oppSum"] == 93829,
           "fight record: level and both sides power");
     Check(ArenaOpp.FightRecord("{\"stage\":6001631,\"lines\":[]}") == null, "a fight without arenaInfo is no record");
+    // the player's own switches: controller 1, the listed commands only, the controller dropped
+    string battleOps = battle.Substring(0, battle.Length - 1) + ",\"timeline\":{\"ops\":[[1,2015,1,3],[37,2001,1,1],[40,2001,2,1],[50,7,1],[140,2003,1,1]]}}";
+    var recOps = ArenaOpp.FightRecord(battleOps, true);
+    Check(recOps != null && recOps.Contains("\"myOps\":[[1,2015,3],[37,2001,1],[140,2003,1]]"), "fight record: myOps " + recOps);
+    Check(!ArenaOpp.FightRecord(battle, true).Contains("myOps"), "no ops, no myOps");
     Eq("{\"v\":1,\"fights\":[]}", ArenaClient.WithFights("{\"v\":1}", null), "fights added");
     string det;
     Eq(PlansStatus.Ok, ArenaClient.Interpret(200, "{\"ok\":true}", out det), "200 ok");

@@ -396,6 +396,21 @@ namespace RealmForge {
           mine.Append('}');
         }
         if (nm > 0) sb.Append(",\"mine\":[").Append(mine).Append(']');
+        // the player's own switches and placings as recorded ([frame, cmd, params…], controller 1): the auto battle replays them
+        var opsList = tl != null ? Get(tl, "ops") as List<object> : null;
+        if (opsList != null) {
+          var myOps = new StringBuilder(); int nOps = 0;
+          foreach (var x in opsList) {
+            var a = x as List<object>; if (a == null || a.Count < 3 || nOps >= 200) continue;
+            if (!(a[0] is double) || !(a[1] is double) || !(a[2] is double) || Num(a[2]) != 1) continue;
+            long cmd = Num(a[1]);
+            if (cmd != 1000 && cmd != 1001 && cmd != 2000 && cmd != 2001 && cmd != 2003 && cmd != 2011 && cmd != 2015) continue;
+            myOps.Append(nOps++ > 0 ? "," : "").Append('[').Append(Num(a[0]).ToString(CultureInfo.InvariantCulture)).Append(',').Append(cmd.ToString(CultureInfo.InvariantCulture));
+            for (int i = 3; i < a.Count; i++) myOps.Append(',').Append(Num(a[i]).ToString(CultureInfo.InvariantCulture));
+            myOps.Append(']');
+          }
+          if (nOps > 0) sb.Append(",\"myOps\":[").Append(myOps).Append(']');
+        }
         // the opponent's heroes' battle skills ([skill, level], their sets' and artifact's with their own: the opponents'
         // list never shows them) and the opponent's uid — a rematch counts them (the site: lib/arenaOpp/recSkills.ts)
         var raw = MiniJson.AsObject(Get(info, "oppRaw"));
