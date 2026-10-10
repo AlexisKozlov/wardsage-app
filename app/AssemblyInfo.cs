@@ -9,6 +9,6 @@ using System.Runtime.Versioning;
 [assembly: AssemblyCopyright("MIT License")]
 [assembly: AssemblyVersion("1.6.53.0")]
 [assembly: AssemblyFileVersion("1.6.53.0")]
-[assembly: AssemblyInformationalVersion("1.6.51")]
+[assembly: AssemblyInformationalVersion("1.6.53")]
 [assembly: ComVisible(false)]
 [assembly: TargetFramework(".NETFramework,Version=v4.6.2", FrameworkDisplayName = ".NET Framework 4.6.2")]
