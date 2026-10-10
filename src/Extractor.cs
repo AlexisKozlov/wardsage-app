@@ -9,6 +9,39 @@ using System.Text;
 namespace RealmForge {
   public enum ExtractError { None, GameNotRunning, AccessDenied, OpenFailed, NoAccountData, Failed }
 
+  /// <summary>What the host does with a finished reading.</summary>
+  public enum SyncKind { Ok, NotRunning, Access, NotReady, ReadFailed }
+
+  public static class SyncOutcome {
+    /// <summary>An automatic sync that finds no account yet is not a failure: the game is still loading or at the login
+    /// screen - no error card, no report, a later retry. A manual sync reports it.</summary>
+    public static SyncKind Classify(bool auto, ExtractError e) {
+      switch (e) {
+        case ExtractError.None: return SyncKind.Ok;
+        case ExtractError.GameNotRunning: return SyncKind.NotRunning;
+        case ExtractError.AccessDenied: return SyncKind.Access;
+        case ExtractError.NoAccountData: return auto ? SyncKind.NotReady : SyncKind.ReadFailed;
+        default: return SyncKind.ReadFailed;
+      }
+    }
+
+    /// <summary>The scan figures of the reader's log (regions / MB, strings, tables, heroes) on one line, so a real failure
+    /// can be told apart from a game that has not loaded the account.</summary>
+    public static string ScanStats(string log) {
+      if (string.IsNullOrEmpty(log)) return null;
+      var keep = new List<string>();
+      foreach (var raw in log.Split('\n')) {
+        var l = raw.Trim();
+        if (l.StartsWith("RW regions", StringComparison.Ordinal) || l.StartsWith("Strings found", StringComparison.Ordinal)
+            || l.StartsWith("item tables", StringComparison.Ordinal) || l.StartsWith("hero tables", StringComparison.Ordinal)
+            || l.StartsWith("live equipment map", StringComparison.Ordinal) || l.StartsWith("live hero map", StringComparison.Ordinal)
+            || l.StartsWith("equipment items", StringComparison.Ordinal) || l.StartsWith("heroes (owned)", StringComparison.Ordinal))
+          keep.Add(l);
+      }
+      return keep.Count == 0 ? null : string.Join("; ", keep.ToArray());
+    }
+  }
+
   public sealed class ExtractResult {
     public ExtractError Error;
     public string Detail;         // extra text for the error message (Win32 code, exception message)
@@ -74,7 +107,9 @@ namespace RealmForge {
         }
       }
       res.Seconds = (int)(DateTime.UtcNow - started).TotalSeconds;
-      return Check(json, res);
+      Check(json, res);
+      if (res.Error == ExtractError.NoAccountData && res.Detail == null) res.Detail = "no heroes or items; " + SyncOutcome.ScanStats(RFX.Log.ToString());
+      return res;
     }
 
     // Validates the produced JSON and counts what is in it.

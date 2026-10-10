@@ -154,6 +154,7 @@
           ${steps()}
           ${sy.phase === 'run' ? `<div class="bar"><i style="width:${progress()}%"></i></div><div class="status">${esc(sy.stage === 'read' ? t('readHint', sy.seconds) : sy.stage === 'send' ? t('sendHint') : '')}</div>` : ''}
           ${sy.phase === 'wait' ? `<div class="bar"><i style="width:92%"></i></div><div class="status">${esc(t('rateWait', Math.max(1, Math.ceil((sy.until - Date.now()) / 1000))))}</div>` : ''}
+          ${S.autoWaiting && sy.phase !== 'run' && sy.phase !== 'wait' ? `<div class="status">${esc(t('autoWaiting'))}</div>` : ''}
           ${sy.phase === 'done' ? result() : ''}
           ${sy.phase === 'error' ? errorBox() : ''}
           <div class="readonly" style="margin:0">${I.lock}<span>${esc(t('readonly'))}</span></div>
@@ -671,6 +672,8 @@
       }
       case 'paste': { const i = $('#code'); if (i) { i.value = m.text || ''; codeTyped(); } break; }
       case 'sync':
+        if (m.auto) S.autoWaiting = m.stage === 'waiting';
+        if (m.stage === 'waiting') { if (S.page === 'sync' && !S.compact) render(); break; }   // the game is still loading: not an error
         // a background sync while the sync page shows a run (the player pressed «sync» meanwhile): it is that run
         if (m.auto && S.sync.phase !== 'run') {
           if (m.stage === 'done') { if (m.last) S.last = m.last; S.autoAt = Date.now(); loadPlans(); }

@@ -153,6 +153,10 @@ static class CoreTests {
     string payload = realAccount != null ? File.ReadAllText(realAccount, Encoding.UTF8) : SyntheticAccount();
     var ex = Extractor.Check(payload, new ExtractResult());
     Check(ex.Error == ExtractError.None && ex.Heroes > 0 && ex.Items > 0, "payload counts: " + ex.Heroes + " heroes, " + ex.Items + " items, " + ex.Artifacts + " artifacts");
+    Check(SyncOutcome.Classify(true, ExtractError.NoAccountData) == SyncKind.NotReady, "auto sync, no account yet: not ready (no error)");
+    Check(SyncOutcome.Classify(false, ExtractError.NoAccountData) == SyncKind.ReadFailed, "manual sync, no account: a read error");
+    Check(SyncOutcome.Classify(true, ExtractError.Failed) == SyncKind.ReadFailed && SyncOutcome.Classify(true, ExtractError.None) == SyncKind.Ok, "other outcomes unchanged");
+    Eq("RW regions: 120, 293 MB; Strings found in 3 s; heroes (owned): 0", SyncOutcome.ScanStats("noise\nRW regions: 120, 293 MB\n  lua x\nStrings found in 3 s\n  heroes (owned): 0\n"), "scan stats from the log");
     Eq(ExtractError.NoAccountData, Extractor.Check("{\"equipment\":[],\"heroes\":[],\"campRewards\":null,\"artifacts\":null,\"meta\":{}}", new ExtractResult()).Error, "empty account -> NoAccountData");
     Eq(ExtractError.Failed, Extractor.Check("{\"equipment\":[", new ExtractResult()).Error, "broken JSON -> Failed");
 
@@ -1415,6 +1419,7 @@ static class CoreTests {
       if (!Open) { if (Near(x, y, 0.2185 * H, 0.9275 * H)) Open = true; return; }
       // the × drops the filter (the game applies it only while the pop-up is open)
       if (Near(x, y, g.X(g.MainCloseX, W, H), g.Y(g.CloseY, W, H))) { Open = Side = SetSide = SubSide = false; Suits.Clear(); Mains.Clear(); Subs.Clear(); return; }
+      if (Side && Near(x, y, g.X(g.SideCloseX, W, H), g.Y(g.CloseY, W, H))) { Side = SetSide = SubSide = false; return; }   // keeps the filter
       if (Near(x, y, g.X(g.ResetX, W, H), g.Y(g.ResetY, W, H))) { Suits.Clear(); Mains.Clear(); Subs.Clear(); return; }
       if (Near(x, y, g.X(g.SubArrowX, W, H), g.Y(g.SubArrowY, W, H))) { bool was = Side && SubSide; Side = SubSide = !was; SetSide = false; return; }
       if (Near(x, y, g.X(g.SetArrowX, W, H), g.Y(g.SetArrowY, W, H))) { bool was = Side && SetSide; Side = SetSide = !was; return; }   // the list stays scrolled
@@ -1505,6 +1510,28 @@ static class CoreTests {
     RunFilter(new FilterPilot(g), game, 721500, 13, false, true, new long[] { 24, 25 });
     game.Subs.Sort();
     Check(string.Join(",", game.Subs) == "24,25" && game.Mains.Count == 1, "an old sub stat is cleared first; main stat + sub stats");
+    // the side panel is still open after the last pick: closed (the filter stays) before the pilot says done
+    game = new FakeFilterGame(g, W, H) { SetList = sets, StatList = stats, SubList = subList };
+    var fpc = new FilterPilot(g);
+    RunFilter(fpc, game, 721500, 13, false, true, new long[] { 24, 25 });
+    Check(!game.Side && game.Open && game.Subs.Count == 2 && game.Suits.Count == 1 && fpc.State == "done", "sub stats picked: the side panel closed, the filter kept, then done (" + fpc.State + ")");
+    // a side panel that does not close: gives up with a note instead of done
+    game = new FakeFilterGame(g, W, H) { SetList = sets, StatList = stats, SubList = subList };
+    var fps = new FilterPilot(g);
+    for (long t = 0; t < 30000 && fps.State != "failed"; t += 100) {
+      bool sat = game.Suits.Contains(721500) && game.Mains.Contains(13);
+      var sv = new FilterView { NowMs = t, Foreground = true, W = W, H = H, Item = 5, Wanted = !sat, SetId = 721500, StatId = 13,
+        SetIndex = Array.IndexOf(sets, 721500L), StatIndex = Array.IndexOf(stats, 13L), Suits = game.Suits.ToArray(), MainAttrs = game.Mains.ToArray(),
+        SetOrder = sets, SubAttrs = new long[0], PanelOpen = game.Open, SidePanelOpen = game.Open && (game.Side || sat), SetPanelOpen = game.Open && game.Side && game.SetSide };
+      var sa = fps.Step(sv);
+      if (sa != null && sa.Kind == AutoKind.Click) game.Click(sa.X, sa.Y);
+    }
+    Check(fps.State == "failed" && fps.Note.Length > 0, "side panel stuck open: failed with a note, not done (" + fps.State + ")");
+    // the item pilot: a side panel open over the list is closed first, the click is not counted
+    var ap = new AutoPilot(new ListGeometry());
+    var av = new AutoView { NowMs = 0, Foreground = true, H = 1009, Target = 77, Row = 2, Col = 1, SideClose = new[] { 1640.0, 91.0 } };
+    var aa = ap.Step(av);
+    Check(aa.Kind == AutoKind.Click && Math.Abs(aa.X - 1640) < 1 && Math.Abs(aa.Y - 91) < 1, "item pilot: the open side panel is closed first");
     var longSets = new long[31]; for (int i = 0; i < longSets.Length; i++) longSets[i] = 730000 + i;
     int okDrag = 0;
     foreach (double gain in new[] { 0.7, 0.85, 1.0, 1.2, 1.4 })

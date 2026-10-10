@@ -544,6 +544,7 @@ namespace RealmForge {
       var fview = FilterViewNow(o, cr, now, v.Foreground, v.UserBusy);
       var fa = fpilot.Step(fview);
       LogFilter(fview);
+      if (fview.PanelOpen && fview.SidePanelOpen) v.SideClose = new[] { fg.X(fg.SideCloseX, cr.R, cr.B), fg.Y(fg.CloseY, cr.R, cr.B) };
       if (fpilot.State == "failed") {
         if (!filterFailSaid) { filterFailSaid = true; RaiseProblem("pilot.filter_failed", "filter failed: the game's gear filter could not be set for item " + fview.Item + " (kind " + filterKind + ")"); }
       } else filterFailSaid = false;
@@ -957,7 +958,7 @@ namespace RealmForge {
         + " stat=" + v.StatId + "@" + v.StatIndex + " subs=" + string.Join(",", v.SubIds ?? new long[0])
         + " now suits=" + string.Join(",", v.Suits ?? new long[0]) + " subs=" + string.Join(",", v.SubAttrs ?? new long[0])
         + " stats=" + string.Join(",", v.MainAttrs ?? new long[0]) + " hideEq=" + v.HideEquipped + " otherHero=" + v.OnOtherHero
-        + " panel=" + v.PanelOpen + "/" + v.SidePanelOpen + "/" + v.SetPanelOpen + " -> " + fpilot.State;
+        + " panel=" + v.PanelOpen + "/" + v.SidePanelOpen + "/" + v.SetPanelOpen + " -> " + fpilot.State + (string.IsNullOrEmpty(fpilot.Note) ? "" : " (" + fpilot.Note + ")");
       if (line == filterLogged) return;
       filterLogged = line;
       Log.Write(line);

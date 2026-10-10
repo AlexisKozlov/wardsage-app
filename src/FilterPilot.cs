@@ -63,7 +63,7 @@ namespace RealmForge {
     public const int MaxClicks = 26, AfterClickMs = 550, PartTries = 2, SetTries = 4, MaxSetDrags = 4, MaxSubs = 4;
     readonly FilterGeometry g;
     long item = -1, waitUntil;
-    int clicks, setTries, statTries, eqTries, closeTries, openTries, setDrags, subTries;
+    int clicks, setTries, statTries, eqTries, closeTries, openTries, setDrags, subTries, sideCloseTries;
     bool subSkipped; string side = "";   // the side panel this pilot opened last: "stat" or "sub" (both look alike)
     // the sets list scrolls (20+ sets, 9 rows fit): rows it is scrolled by (as far as known), the row on the screen
     // clicked last (a set clicked there that is not the wanted one tells the real scroll)
@@ -71,6 +71,8 @@ namespace RealmForge {
     bool setSkipped, statSkipped, eqSkipped, failed;
     /// <summary>idle | work | done | failed</summary>
     public string State = "idle";
+    /// <summary>Why the pilot gave up or what it is doing besides the filter (for the journal).</summary>
+    public string Note = "";
 
     public FilterPilot(FilterGeometry g) { this.g = g; }
 
@@ -81,7 +83,8 @@ namespace RealmForge {
     /// (the item pilot goes on).</summary>
     public AutoAction Step(FilterView v) {
       if (v.Item != item) {
-        item = v.Item; waitUntil = 0; clicks = setTries = statTries = eqTries = closeTries = openTries = setDrags = subTries = 0;
+        item = v.Item; waitUntil = 0; clicks = setTries = statTries = eqTries = closeTries = openTries = setDrags = subTries = sideCloseTries = 0;
+        Note = "";
         subSkipped = false; side = "";
         setClickRow = -1; setPending = false;   // setScroll stays: the game keeps the sets list scrolled
         setSkipped = statSkipped = eqSkipped = failed = false; State = "idle";
@@ -99,7 +102,21 @@ namespace RealmForge {
       bool clean = !v.Foreign && OnlyOrNone(v.Suits, v.SetId) && OnlyOrNone(v.MainAttrs, v.StatId) && (subsClean || subSkipped);
       bool satisfied = setOk && statOk && subOk && eqOk && clean;
       // set: leave the pop-up open (its × would drop the filter); the item pilot picks the item from the list beside it
-      if (satisfied) { if (State == "work") State = "done"; return null; }
+      // (the side panel of sets / stats stays open after the last pick and swallows the item list's clicks: closed first)
+      if (satisfied) {
+        if (v.PanelOpen && v.SidePanelOpen && (State == "work" || State == "done")) {
+          if (!v.Foreground || v.UserBusy) return AutoAction.Nothing;
+          if (v.NowMs < waitUntil) return AutoAction.Nothing;
+          if (sideCloseTries >= PartTries) {
+            failed = true; State = "failed"; Note = "the side panel stays open after " + sideCloseTries + " closing clicks";
+            return null;
+          }
+          sideCloseTries++; State = "work"; Note = "closing the side panel (" + sideCloseTries + ")";
+          return Click(v, g.X(g.SideCloseX, v.W, v.H), g.Y(g.CloseY, v.W, v.H));
+        }
+        if (State == "work") State = "done";
+        return null;
+      }
 
       if (!v.PanelOpen && (satisfied || failed || !v.Wanted)) { if (State == "work") State = "done"; return null; }
       // a panel the player opened himself is his: only a filter this pilot started is continued

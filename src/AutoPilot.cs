@@ -37,6 +37,7 @@ namespace RealmForge {
     public bool AnchorHas;         // the list position on the screen is known
     public double Row1Top;         // client px of row 1's top
     public int[] Types;            // list row kinds (ListGeometry)
+    public double[] SideClose;     // client px of the red x of the filter's side panel when it is open (it swallows clicks on the list); null = closed
     // auto-confirm: the setting is on and the guide shows the right item selected; the rest is read this tick
     public bool AutoConfirm;
     public int[] Button;           // the confirm button seen on the screen now, {x, y, w, h} client px: «Заменить» (two
@@ -113,6 +114,9 @@ namespace RealmForge {
       double H = v.H, cell = g.CellW * H, pitch = g.PitchY * H;
       double viewTop = g.ViewTop * H, viewBottom = g.ViewBottom * H, mid = (viewTop + viewBottom) / 2;
       double col1 = g.ColLeft(1) * H + cell / 2;
+
+      // the filter's side panel is open: clicks on the list would go into it - close it first (not counted as a try)
+      if (v.SideClose != null) { waitUntil = v.NowMs + AfterClickMs; return Click(v.SideClose[0], v.SideClose[1]); }
 
       // the re-anchoring click selected nothing new (a gap, a title row, the same item): once more, a row further
       if (calibPending) {

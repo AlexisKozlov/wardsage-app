@@ -37,7 +37,9 @@ namespace RealmForge {
     readonly System.Windows.Forms.Timer autoTimer = new System.Windows.Forms.Timer();
     DateTime lastSyncStart = DateTime.MinValue, autoDue = DateTime.MaxValue;
     Dictionary<long, long> lastOwners;
-    const int AutoEveryMin = 5, SyncGapSec = 31;   // the site takes one sync per code per 30 s
+    DateTime gameSeenAt = DateTime.MinValue;   // when the game process was first seen (this run / since it last started)
+    bool serverRetried;                        // the one quick retry after a 5xx is used up until a sync succeeds
+    const int AutoEveryMin = 5, SyncGapSec = 31, FirstSyncDelaySec = 60, NotReadyRetrySec = 45, ServerRetrySec = 60;   // the site takes one sync per code per 30 s
     // automatic updates (app/Updater.cs): first check shortly after start, then every 6 hours
     readonly System.Windows.Forms.Timer updateTimer = new System.Windows.Forms.Timer();
     string updateReady;   // JSON of the downloaded update for the page, or null
@@ -604,8 +606,11 @@ namespace RealmForge {
     }
 
     void AutoSyncTick() {
+      if (!gameRunning) gameSeenAt = DateTime.MinValue;
       if (!cfg.AutoSync || !gameRunning || !(SyncClient.IsValidCode(cfg.Code) || bridgePoller.Connected)) return;
       var now = DateTime.UtcNow;
+      if (gameSeenAt == DateTime.MinValue) gameSeenAt = now;
+      if (now - gameSeenAt < TimeSpan.FromSeconds(FirstSyncDelaySec)) return;   // the game is still loading / at the login screen
       if (now - lastSyncStart > TimeSpan.FromMinutes(AutoEveryMin)) RequestAutoSync(0);   // changes made without a plan
       if (syncing || now < autoDue || now - lastSyncStart < TimeSpan.FromSeconds(SyncGapSec)) return;
       autoDue = DateTime.MaxValue;
@@ -662,10 +667,14 @@ namespace RealmForge {
       try { ex = Extractor.Read(version, null); }
       finally { ticker.Dispose(); }
       Log.Write("read: " + ex.Error + " " + (ex.Detail ?? "") + "\n" + RFX.Log);
-      switch (ex.Error) {
-        case ExtractError.None: break;
-        case ExtractError.GameNotRunning: SyncError("not_running", null, 0); return;
-        case ExtractError.AccessDenied: SyncError("access", null, 0); return;
+      switch (SyncOutcome.Classify(isAuto, ex.Error)) {
+        case SyncKind.Ok: break;
+        case SyncKind.NotRunning: SyncError("not_running", null, 0); return;
+        case SyncKind.Access: SyncError("access", null, 0); return;
+        case SyncKind.NotReady:   // the game has not loaded the account yet: no error card, no report, look again soon
+          SyncEv("waiting", null);
+          win.BeginInvoke((Action)(() => RequestAutoSync(NotReadyRetrySec)));
+          return;
         default: SyncError("read", ex.Detail, 0); return;
       }
       int seconds = (int)(DateTime.UtcNow - started).TotalSeconds;
@@ -702,9 +711,12 @@ namespace RealmForge {
             SyncError("rate", null, after); return;
           }
           case SyncStatus.InvalidPayload: case SyncStatus.TooLarge: SyncError("payload", r.Details ?? r.Status.ToString(), 0); return;
-          case SyncStatus.ServerError: case SyncStatus.Unexpected: case SyncStatus.Redirect: SyncError("server", "HTTP " + r.HttpCode, 0); return;
+          case SyncStatus.ServerError: case SyncStatus.Unexpected: case SyncStatus.Redirect:
+            if (r.HttpCode >= 500 && !serverRetried) { serverRetried = true; win.BeginInvoke((Action)(() => RequestAutoSync(ServerRetrySec))); }   // one quick retry
+            SyncError("server", "HTTP " + r.HttpCode, 0); return;
           default: SyncError("net", r.Details, 0); return;
         }
+        serverRetried = false;
         if (r.Heroes >= 0) heroes = r.Heroes;
         if (r.Items >= 0) items = r.Items;
         if (r.Artifacts >= 0) arts = r.Artifacts;
