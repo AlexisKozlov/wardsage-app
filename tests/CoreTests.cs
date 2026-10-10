@@ -505,15 +505,21 @@ static class CoreTests {
 
   static void GuildTests() {
     Console.WriteLine("Guild table");
+    var fights = new List<object>();
+    for (int i = 1; i <= 8; i++) fights.Add(Lt("iDamageNum", i * 1000L, "vFightHero", LArr(
+      Lt("iHeroId", 2290L, "iLevel", 80L, "iStarLevel", 5L, "iDamageNum", i * 600L), Lt("iHeroId", 2301L, "iLevel", 79L, "iStarLevel", 4L, "iDamageNum", i * 400L), Lt("iHeroId", 0L))));
     var m1 = Lt("stPlayerIdType", Lt("iZoneId", 4L, "iUid", 111L), "iPostId", 1L, "iJoinTime", 1700000000L, "iSevenActive", 350L,
+                "vSevenActive", LArr(Lt("iTime", 1789990000L, "iActive", 10L), Lt("iTime", 1789900000L, "iActive", 20L), Lt("iTime", 1700000000L, "iActive", 999L)),
                 "stRoleSimpleInf", Lt("sName", "Лидер \"A\"", "iLevel", 80L, "iPower", 1234567L, "iLogoutTime", 0L),
-                "mWeekBossData", Lt("[2]", Lt("iDamageNum", "9007199254740993", "iPrevDamageNum", 5.5e9, "iFightNum", 3L, "iLastFightTime", 1790000000L),
+                "mWeekBossData", Lt("[2]", Lt("iDamageNum", "9007199254740993", "iPrevDamageNum", 5.5e9, "iFightNum", 3L, "iLastFightTime", 1790000000L, "vvFightData", LArr(fights.ToArray()),
+                                         "mBoss3FightData", Lt("[5002006]", Lt("iDamageNum", 77L, "vFightHero", LArr(Lt("iHeroId", 2290L, "iLevel", 80L, "iStarLevel", 5L, "iDamageNum", 77L))))),
                                     "[1]", Lt("iDamageNum", 100L, "iPrevDamageNum", 0L, "iFightNum", 0L, "iLastFightTime", 0L)),
-                "mBossData", Lt("[1]", Lt("iDamageNum", 77L, "iPrevDamageNum", 1L, "iUseItemNum", 2L, "iLastFightTime", 1790000100L)));
+                "mBossData", Lt("[1]", Lt("iDamageNum", 77L, "iPrevDamageNum", 1L, "iUseItemNum", 2L, "iLastFightTime", 1790000100L,
+                                    "vFightData", LArr(Lt("iHeroId", 3001L, "iLevel", 70L, "iStarLevel", 3L, "iDamageNum", 30L), Lt("iHeroId", 3002L, "iLevel", 71L, "iStarLevel", 2L, "iDamageNum", 47L)))));
     var m2 = Lt("stPlayerIdType", Lt("iZoneId", 4L, "iUid", 222L), "iPostId", 4L, "stRoleSimpleInf", Lt("sName", "Bob", "iLogoutTime", 1789990000L));
     var union = Lt("iUnionId", 55L, "iLevel", 7L, "stBaseAttr", Lt("sUnionName", "Стража"));
     long now = 1790000000L * 1000;
-    var week = LArr(Lt("iRefreshTime", 1790001800L, "iCurBossHp", "123"), Lt("iRefreshTime", 0L));
+    var week = LArr(Lt("iRefreshTime", 1790001800L, "iCurBossHp", "123", "iPrevBossHp", 500L, "bKill", false), Lt("iRefreshTime", 0L, "bKill", true));
     var classic = LArr(Lt("iRefreshTime", 1790900000L));
     bool soon; int cnt;
     string json = GuildPayload.Build(union, new List<Dictionary<string, object>> { m1, m2 }, week, classic, 111L, now, out soon, out cnt);
@@ -521,11 +527,16 @@ static class CoreTests {
     var o = MiniJson.AsObject(MiniJson.TryParse(json));
     Check(o != null && ArenaOpp.Num(o["zone"]) == 4 && ArenaOpp.Num(o["selfUid"]) == 111 && ArenaOpp.Num(o["at"]) == now, "zone/self/at");
     Check(json.Contains("\"union\":{\"id\":55,\"name\":\"Стража\",\"level\":7}"), "union: " + json);
-    Check(json.Contains("\"week\":[{\"id\":1,\"refresh\":1790001800},{\"id\":2,\"refresh\":null}]"), "week bosses: " + json);
+    Check(json.Contains("\"week\":[{\"id\":1,\"refresh\":1790001800,\"hp\":123,\"prevHp\":500,\"kill\":false},{\"id\":2,\"refresh\":null,\"kill\":true}]"), "week bosses: " + json);
     Check(json.Contains("\"classic\":[{\"id\":1,\"refresh\":1790900000}]"), "classic bosses");
     Check(soon, "a refresh within the hour is noticed");
-    Check(json.Contains("\"2\":{\"fights\":3,\"dmg\":9007199254740993,\"prevDmg\":5500000000,\"last\":1790000000}"), "string and float damage: " + json);
-    Check(json.Contains("\"classic\":{\"1\":{\"fights\":2,\"dmg\":77,\"prevDmg\":1,\"last\":1790000100}}"), "classic uses iUseItemNum");
+    Check(json.Contains("\"2\":{\"fights\":3,\"dmg\":9007199254740993,\"prevDmg\":5500000000,\"last\":1790000000,"), "string and float damage: " + json);
+    Check(json.Contains("\"classic\":{\"1\":{\"fights\":2,\"dmg\":77,\"prevDmg\":1,\"last\":1790000100,"), "classic uses iUseItemNum");
+    Check(json.Contains("\"activeWeek\":30,"), "activeWeek sums only the last 7 days: " + json);
+    Check(json.Contains("\"fightsDetail\":[{\"dmg\":4000,\"heroes\":[{\"id\":2290,\"lv\":80,\"star\":5,\"dmg\":2400},{\"id\":2301,\"lv\":79,\"star\":4,\"dmg\":1600}]}"), "week fights, last 6 of 9: " + json);
+    Check(!json.Contains("{\"dmg\":3000,\"heroes\"") && json.Contains("{\"dmg\":8000,\"heroes\"") && json.Contains("{\"stage\":5002006,\"dmg\":77,\"heroes\":[{\"id\":2290"), "oldest dropped, stage fight kept");
+    Check(json.Contains("\"fightsDetail\":[{\"dmg\":77,\"heroes\":[{\"id\":3001,\"lv\":70,\"star\":3,\"dmg\":30},{\"id\":3002,\"lv\":71,\"star\":2,\"dmg\":47}]}]"), "classic flat hero list: " + json);
+    Check(json.Contains("\"name\":\"Bob\"") && !json.Substring(json.IndexOf("\"Bob\"")).Contains("activeWeek") && !json.Substring(json.IndexOf("\"Bob\"")).Contains("fightsDetail"), "no lists, no extra fields");
     Check(json.Contains("\"logout\":0,") && json.Contains("\"logout\":1789990000,"), "online = 0");
     Check(json.Contains("\"level\":null,\"power\":null,\"post\":4,\"join\":null"), "missing numbers are null: " + json);
     bool s2; int c2;

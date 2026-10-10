@@ -83,7 +83,7 @@ namespace RealmForge {
       if (Field(guildTab, "m_vMembers", out v, out tt) && tt == T_TABLE)
         foreach (var e in IntEntries(v)) {
           if (e.Tt != T_TABLE || members.Count >= GuildPayload.MaxMembers) continue;
-          var md = ParseTable(e.Val, 5, new HashSet<ulong>());
+          var md = ParseTable(e.Val, 8, new HashSet<ulong>());
           if (md != null) members.Add(md);
         }
       return union != null;
@@ -153,27 +153,93 @@ namespace RealmForge {
       foreach (var kv in IntKeyed(bosses)) {
         var b = kv.Value as Dictionary<string, object>; if (b == null) continue;
         if (!first) sb.Append(','); first = false;
-        sb.Append("{\"id\":").Append(L(kv.Key)).Append(",\"refresh\":").Append(OrNull(b, "iRefreshTime", true)).Append('}');
+        sb.Append("{\"id\":").Append(L(kv.Key)).Append(",\"refresh\":").Append(OrNull(b, "iRefreshTime", true));
+        if (Has(b, "iCurBossHp")) sb.Append(",\"hp\":").Append(L(N(b, "iCurBossHp")));
+        if (Has(b, "iPrevBossHp")) sb.Append(",\"prevHp\":").Append(L(N(b, "iPrevBossHp")));
+        if (Get(b, "bKill") is bool) sb.Append(",\"kill\":").Append((bool)Get(b, "bKill") ? "true" : "false");
+        sb.Append('}');
         long r; if (Try(Get(b, "iRefreshTime"), out r) && r > nowSec && r - nowSec <= 3600) soon = true;
       }
       sb.Append(']');
     }
 
+    // the heroes of one attack: [{id, lv, star, dmg}] from a vector of {iHeroId, iLevel, iStarLevel, iDamageNum}; null when empty
+    static string Heroes(object vec, out long total) {
+      total = 0; var sb = new StringBuilder("["); int c = 0;
+      foreach (var kv in IntKeyed(vec)) {
+        var h = kv.Value as Dictionary<string, object>; if (h == null || N(h, "iHeroId") <= 0) continue;
+        if (c++ > 0) sb.Append(',');
+        total += N(h, "iDamageNum");
+        sb.Append("{\"id\":").Append(L(N(h, "iHeroId"))).Append(",\"lv\":").Append(L(N(h, "iLevel"))).Append(",\"star\":").Append(L(N(h, "iStarLevel")))
+          .Append(",\"dmg\":").Append(L(N(h, "iDamageNum"))).Append('}');
+      }
+      return c == 0 ? null : sb.Append(']').ToString();
+    }
+
+    // The most recent attacks of one boss record. Week: vvFightData = [{iDamageNum, vFightHero}], boss 3 also mBoss3FightData = {stage → same};
+    // classic: vFightData = the heroes of the last attack (a flat vector). Appends ,"fightsDetail":[…] (last <cap>) when there are any.
+    static void Fights(StringBuilder sb, Dictionary<string, object> b, string fightsKey, string stageKey, int cap) {
+      var list = new List<string>();
+      Action<object, long> add = (f, stage) => {
+        var fd = f as Dictionary<string, object>; if (fd == null || !fd.ContainsKey("vFightHero")) return;
+        long total; string heroes = Heroes(Get(fd, "vFightHero"), out total);
+        if (heroes == null) return;
+        long dmg = Has(fd, "iDamageNum") ? N(fd, "iDamageNum") : total;
+        list.Add("{" + (stage > 0 ? "\"stage\":" + L(stage) + "," : "") + "\"dmg\":" + L(dmg) + ",\"heroes\":" + heroes + "}");
+      };
+      var vec = Get(b, fightsKey);
+      var flat = IntKeyed(vec);
+      bool nested = false;
+      foreach (var kv in flat) { var d = kv.Value as Dictionary<string, object>; if (d != null && d.ContainsKey("vFightHero")) { nested = true; break; } }
+      if (nested) { foreach (var kv in flat) add(kv.Value, 0); }
+      else if (flat.Count > 0) {
+        long total; string heroes = Heroes(vec, out total);
+        if (heroes != null) list.Add("{\"dmg\":" + L(total) + ",\"heroes\":" + heroes + "}");
+      }
+      if (stageKey != null) foreach (var kv in IntKeyed(Get(b, stageKey))) add(kv.Value, kv.Key);
+      if (list.Count == 0 || cap <= 0) return;
+      int from = Math.Max(0, list.Count - cap);
+      sb.Append(",\"fightsDetail\":[");
+      for (int i = from; i < list.Count; i++) { if (i > from) sb.Append(','); sb.Append(list[i]); }
+      sb.Append(']');
+    }
+
+    // the member's daily activity summed over the last 7 days (vSevenActive = [{iTime, iActive}]); -1 = no such list
+    static long ActiveWeek(Dictionary<string, object> m, long nowSec) {
+      var v = Get(m, "vSevenActive"); if (!(v is Dictionary<string, object>)) return -1;
+      long sum = 0;
+      foreach (var kv in IntKeyed(v)) {
+        var e = kv.Value as Dictionary<string, object>; if (e == null) continue;
+        long t; if (Try(Get(e, "iTime"), out t) && nowSec - t < 604800 && nowSec - t > -86400) sum += N(e, "iActive");
+      }
+      return sum;
+    }
+
     // one member's damage map {boss id → {fights, dmg, prevDmg, last}}; fightKey = iFightNum (week) / iUseItemNum (classic)
-    static void Damage(StringBuilder sb, object map, string fightKey) {
+    static void Damage(StringBuilder sb, object map, string fightKey, string fightsKey, string stageKey, int cap) {
       sb.Append('{'); bool first = true;
       foreach (var kv in IntKeyed(map)) {
         var b = kv.Value as Dictionary<string, object>; if (b == null) continue;
         if (!first) sb.Append(','); first = false;
         sb.Append('"').Append(L(kv.Key)).Append("\":{\"fights\":").Append(L(N(b, fightKey))).Append(",\"dmg\":").Append(L(N(b, "iDamageNum")))
-          .Append(",\"prevDmg\":").Append(L(N(b, "iPrevDamageNum"))).Append(",\"last\":").Append(OrNull(b, "iLastFightTime", true)).Append('}');
+          .Append(",\"prevDmg\":").Append(L(N(b, "iPrevDamageNum"))).Append(",\"last\":").Append(OrNull(b, "iLastFightTime", true));
+        Fights(sb, b, fightsKey, stageKey, cap);
+        sb.Append('}');
       }
       sb.Append('}');
     }
 
     /// <summary>The site's payload; null when there is no guild (no id, or no members).</summary>
+    public const int MaxBytes = 200 * 1024;
     public static string Build(Dictionary<string, object> union, IList<Dictionary<string, object>> members, Dictionary<string, object> week,
                                Dictionary<string, object> classic, long selfUid, long atMs, out bool refreshSoon, out int memberCount) {
+      string r = BuildCap(union, members, week, classic, selfUid, atMs, 6, out refreshSoon, out memberCount);
+      if (r != null && Encoding.UTF8.GetByteCount(r) > MaxBytes) r = BuildCap(union, members, week, classic, selfUid, atMs, 3, out refreshSoon, out memberCount);
+      return r;
+    }
+
+    static string BuildCap(Dictionary<string, object> union, IList<Dictionary<string, object>> members, Dictionary<string, object> week,
+                           Dictionary<string, object> classic, long selfUid, long atMs, int cap, out bool refreshSoon, out int memberCount) {
       refreshSoon = false; memberCount = 0;
       long unionId = N(union, "iUnionId");
       if (unionId <= 0 || members == null || members.Count == 0) return null;
@@ -206,8 +272,9 @@ namespace RealmForge {
           .Append(",\"level\":").Append(OrNull(role, "iLevel", false)).Append(",\"power\":").Append(OrNull(role, "iPower", false))
           .Append(",\"post\":").Append(L(N(m, "iPostId"))).Append(",\"join\":").Append(OrNull(m, "iJoinTime", true))
           .Append(",\"logout\":").Append(OrNull(role, "iLogoutTime", false)).Append(",\"active7\":").Append(OrNull(m, "iSevenActive", false));
-        sb.Append(",\"week\":"); Damage(sb, Get(m, "mWeekBossData"), "iFightNum");
-        sb.Append(",\"classic\":"); Damage(sb, Get(m, "mBossData"), "iUseItemNum");
+        long aw = ActiveWeek(m, nowSec); if (aw >= 0) sb.Append(",\"activeWeek\":").Append(L(aw));
+        sb.Append(",\"week\":"); Damage(sb, Get(m, "mWeekBossData"), "iFightNum", "vvFightData", "mBoss3FightData", cap);
+        sb.Append(",\"classic\":"); Damage(sb, Get(m, "mBossData"), "iUseItemNum", "vFightData", null, cap);
         sb.Append('}');
       }
       sb.Append("]}");
