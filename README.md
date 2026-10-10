@@ -1,7 +1,7 @@
-# RealmForge Extractor
+# Wardsage (Windows app)
 
 Reads a Watcher of Realms account (heroes, gear, artifacts, faction rewards) from the memory of the
-running game and sends it to the RealmForge site. Windows only; the game's memory is only read (`ReadProcessMemory`).
+running game and sends it to the Wardsage site (https://wardsage.com). Windows only; the game's memory is only read (`ReadProcessMemory`).
 The desktop app's equip helper can also put a build on by itself with the mouse, as a player would (Settings →
 «Автонажатие», off by default — the player turns it on): for a build the player started («Надеть» in the app, «Надеть в игре» on the site a moment
 ago, or a bridge command) it brings up the hero on the hero screen (`src/HeroPilot.cs`: from the city, filtering the hero
@@ -20,7 +20,7 @@ Player instructions (RU/EN): [README.txt](README.txt).
 
 - **Reads, never writes.** Only `ReadProcessMemory` on the running game; nothing is written into the game's memory or
   files, no code is injected, nothing is sent to the game's servers.
-- **Sent to the RealmForge site** (with the player's sync code, over HTTPS): the account snapshot (heroes, gear,
+- **Sent to the Wardsage site** (with the player's sync code, over HTTPS): the account snapshot (heroes, gear,
   artifacts, resources, summon history, arena teams); while the arena screen is open, the opponents list the game shows
   (their names, power, heroes, defence records) and the player's own fight statistics after a fight — for the site's
   fight forecast; error reports only if the player turned them on (off by default).
@@ -29,7 +29,7 @@ Player instructions (RU/EN): [README.txt](README.txt).
 - **Updates** are downloaded from the site and applied only if signed with the project's key (`app/Updater.cs`).
 - **Input**: the equip helper's clicks (above) — only for a build the player started; nothing else is clicked.
 
-What players get (`dist/RealmForge.zip`): **`RealmForge.exe`** — one file (≈1.3 MB), .NET Framework 4.6.2+,
+What players get (`dist/Wardsage.zip`, installer `Wardsage-Setup.exe`): **`Wardsage.exe`** — one file (≈1.3 MB), .NET Framework 4.6.2+,
 x64, asks for administrator rights (the game runs elevated). The interface is HTML/CSS (`ui/`) rendered by the
 Microsoft Edge **WebView2** Runtime that ships with Windows 10/11; the WebView2 SDK (`vendor/webview2`, Microsoft-signed)
 and `ui/` are embedded and unpacked to `%LOCALAPPDATA%\RealmForge\app\<build>\` on start.
@@ -50,8 +50,8 @@ src/SyncClient.cs       POST {site}/api/sync (gzip, Bearer code, TLS 1.2, 60 s)
 src/PlansClient.cs      GET/POST {site}/api/extractor/plans (builds sent with «Надеть в игре»)
 src/BridgeClient.cs     local bridge (bridge/): snapshot upload, equip commands by long poll, answers
 src/Config.cs           %APPDATA%\RealmForge\config.json (+ last sync), CodeProtector.cs: DPAPI for the code
-tools/build-app.sh      -> dist/RealmForge.exe (Roslyn from the .NET 8 SDK + Mono's .NET Framework reference assemblies)
-tools/pack-app.sh       -> dist/RealmForge.zip (exe + README)
+tools/build-app.sh      -> dist/Wardsage.exe (`--test`: dist/Wardsage-Test.exe) (Roslyn from the .NET 8 SDK + Mono's .NET Framework reference assemblies)
+tools/pack-app.sh       -> dist/Wardsage.zip (exe + README)
 tests/                  C# core tests (.NET 8 + Mono), guide.test.mjs, mock server, compile checks
 ```
 
@@ -63,7 +63,7 @@ but no longer shipped.
 ## Sync contract
 
 `POST {site}/api/sync` with `Authorization: Bearer rf_<32 base62>`, `Content-Type: application/json`,
-`Content-Encoding: gzip`, `X-RF-Extractor: 0.5`, `User-Agent: RealmForge-Extractor/0.5`; body = gzip of the
+`Content-Encoding: gzip`, `X-RF-Extractor: 0.5`, `User-Agent: Wardsage/<version>`; body = gzip of the
 UTF-8 `account.json`. Replies: `200 {ok, snapshotId, heroes, items, artifacts, viewUrl}`, `401`, `413`, `415`,
 `422 {details}`, `429` (`Retry-After`), `5xx`. Redirects are not followed (a redirected POST loses its body).
 

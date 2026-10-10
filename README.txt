@@ -1,4 +1,4 @@
-RealmForge Extractor 0.6
+RealmForge Extractor 0.6 (old PowerShell version; the current app is Wardsage: https://wardsage.com)
 ========================
 
 (English below)
@@ -6,15 +6,15 @@ RealmForge Extractor 0.6
 ЧТО ЭТО
 -------
 Небольшая программа для Watcher of Realms (Windows). Она читает из памяти запущенной игры
-ваших героев, снаряжение, артефакты и награды фракций и отправляет их на сайт RealmForge
-(https://realmforge-wor.vercel.app), где их можно смотреть и подбирать снаряжение.
+ваших героев, снаряжение, артефакты и награды фракций и отправляет их на сайт Wardsage
+(https://wardsage.com), где их можно смотреть и подбирать снаряжение.
 
 ТОЛЬКО ЧТЕНИЕ
 -------------
 * Программа только ЧИТАЕТ память игры (функция Windows ReadProcessMemory). Она ничего не
   записывает в игру, не меняет файлы игры и не обращается к серверам игры.
 * Сетевые запросы — только на адрес сайта, указанный в окне (по умолчанию
-  https://realmforge-wor.vercel.app). Никакой телеметрии и сторонних сервисов.
+  https://wardsage.com). Никакой телеметрии и сторонних сервисов.
 * Исходный код открыт: RealmForge-Extractor.ps1 — обычный текстовый файл, его можно прочитать.
 
 ЗАЧЕМ ПРАВА АДМИНИСТРАТОРА
@@ -27,7 +27,7 @@ RealmForge Extractor 0.6
 ----------------
 1. Распакуйте архив целиком в любую папку.
 2. Запустите игру и дождитесь главного экрана (не экрана загрузки).
-3. На сайте RealmForge войдите в аккаунт и откройте раздел «Синхронизация» — там есть
+3. На сайте Wardsage войдите в аккаунт и откройте раздел «Синхронизация» — там есть
    код вида rf_XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX. Скопируйте его.
 4. Дважды щёлкните Run-RealmForge.bat, разрешите запрос администратора.
 5. Вставьте код в поле «Код синхронизации» и нажмите «Синхронизировать».
@@ -35,7 +35,7 @@ RealmForge Extractor 0.6
 
 Код запоминается (в %APPDATA%\RealmForge\config.json, в зашифрованном виде — Windows DPAPI,
 расшифровать его можно только под вашей учётной записью на этом ПК). Никому не показывайте
-код: с ним можно загрузить данные в ваш аккаунт RealmForge. Если код попал к кому-то —
+код: с ним можно загрузить данные в ваш аккаунт Wardsage. Если код попал к кому-то —
 получите новый на сайте.
 
 Без кода кнопка называется «Только сохранить файл»: данные сохраняются в
@@ -86,15 +86,15 @@ account.json» делает то же самое вместе с отправк�
 WHAT IT IS
 ----------
 A small tool for Watcher of Realms (Windows). It reads your heroes, gear, artifacts and faction
-rewards from the memory of the running game and sends them to the RealmForge site
-(https://realmforge-wor.vercel.app), where you can browse them and optimize your gear.
+rewards from the memory of the running game and sends them to the Wardsage site
+(https://wardsage.com), where you can browse them and optimize your gear.
 
 READ-ONLY
 ---------
 * The program only READS the game's memory (the Windows ReadProcessMemory function). It never
   writes to the game, never changes game files and never talks to the game servers.
 * Network requests go only to the site address shown in the window
-  (https://realmforge-wor.vercel.app by default). No telemetry, no third-party services.
+  (https://wardsage.com by default). No telemetry, no third-party services.
 * The code is open: RealmForge-Extractor.ps1 is a plain text file you can read.
 
 WHY ADMINISTRATOR RIGHTS
@@ -107,7 +107,7 @@ HOW TO USE
 ----------
 1. Unpack the whole archive into any folder.
 2. Start the game and wait for the main screen (not the loading screen).
-3. On the RealmForge site sign in and open the Sync section: it shows a code like
+3. On the Wardsage site sign in and open the Sync section: it shows a code like
    rf_XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX. Copy it.
 4. Double-click Run-RealmForge.bat and allow the administrator prompt.
 5. Switch the window to EN if you like (top right), paste the code into "Sync code" and press
@@ -115,7 +115,7 @@ HOW TO USE
 
 The code is remembered (in %APPDATA%\RealmForge\config.json, encrypted with Windows DPAPI: only
 your Windows account on this PC can decrypt it). Do not share the code: it allows uploading data
-to your RealmForge account. If it leaked, get a new one on the site.
+to your Wardsage account. If it leaked, get a new one on the site.
 
 Without a code the button says "Only save the file": the data is saved to
 Documents\RealmForge\account.json and not sent anywhere. The "Save a copy of account.json"
