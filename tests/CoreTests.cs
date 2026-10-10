@@ -406,6 +406,7 @@ static class CoreTests {
     }
 
     ArenaOppTests();
+    GuildTests();
 
     Console.WriteLine();
     Console.WriteLine(passed + " passed, " + failed + " failed");
@@ -500,6 +501,49 @@ static class CoreTests {
     Eq(PlansStatus.Ok, ArenaClient.Interpret(200, "{\"ok\":true}", out det), "200 ok");
     Eq(PlansStatus.InvalidToken, ArenaClient.Interpret(401, "{\"ok\":false,\"error\":\"invalid_token\"}", out det), "401");
     Check(ArenaClient.Interpret(422, "{\"ok\":false,\"error\":\"invalid_payload\",\"details\":[\"opponents: bad\"]}", out det) == PlansStatus.Unexpected && det != null && det.Contains("opponents: bad"), "422 details: " + det);
+  }
+
+  static void GuildTests() {
+    Console.WriteLine("Guild table");
+    var m1 = Lt("stPlayerIdType", Lt("iZoneId", 4L, "iUid", 111L), "iPostId", 1L, "iJoinTime", 1700000000L, "iSevenActive", 350L,
+                "stRoleSimpleInf", Lt("sName", "Лидер \"A\"", "iLevel", 80L, "iPower", 1234567L, "iLogoutTime", 0L),
+                "mWeekBossData", Lt("[2]", Lt("iDamageNum", "9007199254740993", "iPrevDamageNum", 5.5e9, "iFightNum", 3L, "iLastFightTime", 1790000000L),
+                                    "[1]", Lt("iDamageNum", 100L, "iPrevDamageNum", 0L, "iFightNum", 0L, "iLastFightTime", 0L)),
+                "mBossData", Lt("[1]", Lt("iDamageNum", 77L, "iPrevDamageNum", 1L, "iUseItemNum", 2L, "iLastFightTime", 1790000100L)));
+    var m2 = Lt("stPlayerIdType", Lt("iZoneId", 4L, "iUid", 222L), "iPostId", 4L, "stRoleSimpleInf", Lt("sName", "Bob", "iLogoutTime", 1789990000L));
+    var union = Lt("iUnionId", 55L, "iLevel", 7L, "stBaseAttr", Lt("sUnionName", "Стража"));
+    long now = 1790000000L * 1000;
+    var week = LArr(Lt("iRefreshTime", 1790001800L, "iCurBossHp", "123"), Lt("iRefreshTime", 0L));
+    var classic = LArr(Lt("iRefreshTime", 1790900000L));
+    bool soon; int cnt;
+    string json = GuildPayload.Build(union, new List<Dictionary<string, object>> { m1, m2 }, week, classic, 111L, now, out soon, out cnt);
+    Check(json != null && cnt == 2, "guild payload built");
+    var o = MiniJson.AsObject(MiniJson.TryParse(json));
+    Check(o != null && ArenaOpp.Num(o["zone"]) == 4 && ArenaOpp.Num(o["selfUid"]) == 111 && ArenaOpp.Num(o["at"]) == now, "zone/self/at");
+    Check(json.Contains("\"union\":{\"id\":55,\"name\":\"Стража\",\"level\":7}"), "union: " + json);
+    Check(json.Contains("\"week\":[{\"id\":1,\"refresh\":1790001800},{\"id\":2,\"refresh\":null}]"), "week bosses: " + json);
+    Check(json.Contains("\"classic\":[{\"id\":1,\"refresh\":1790900000}]"), "classic bosses");
+    Check(soon, "a refresh within the hour is noticed");
+    Check(json.Contains("\"2\":{\"fights\":3,\"dmg\":9007199254740993,\"prevDmg\":5500000000,\"last\":1790000000}"), "string and float damage: " + json);
+    Check(json.Contains("\"classic\":{\"1\":{\"fights\":2,\"dmg\":77,\"prevDmg\":1,\"last\":1790000100}}"), "classic uses iUseItemNum");
+    Check(json.Contains("\"logout\":0,") && json.Contains("\"logout\":1789990000,"), "online = 0");
+    Check(json.Contains("\"level\":null,\"power\":null,\"post\":4,\"join\":null"), "missing numbers are null: " + json);
+    bool s2; int c2;
+    Check(GuildPayload.Build(union, new List<Dictionary<string, object>>(), week, classic, 111L, now, out s2, out c2) == null, "no members, no payload");
+    Check(GuildPayload.Build(Lt(), new List<Dictionary<string, object>> { m1 }, week, classic, 111L, now, out s2, out c2) == null, "no union id, no payload");
+    // far refresh: not soon; the hash ignores "at"
+    string far = GuildPayload.Build(union, new List<Dictionary<string, object>> { m1, m2 }, LArr(Lt("iRefreshTime", 1790900000L)), classic, 111L, now, out s2, out c2);
+    Check(!s2, "refresh in 10 days is not soon");
+    string later = GuildPayload.Build(union, new List<Dictionary<string, object>> { m1, m2 }, LArr(Lt("iRefreshTime", 1790900000L)), classic, 111L, now + 600000, out s2, out c2);
+    string h1 = GuildPayload.Hash(far);
+    Check(far != later && h1 == GuildPayload.Hash(later), "the hash ignores at");
+    Check(!GuildPayload.ShouldSend(h1, h1, false), "unchanged and no reset near: not sent");
+    Check(GuildPayload.ShouldSend(h1, h1, true), "unchanged but the reset is near: sent");
+    Check(GuildPayload.ShouldSend(h1, null, false) && GuildPayload.ShouldSend(h1, "x", false), "first / changed: sent");
+    var t0 = new DateTime(2026, 10, 11, 12, 0, 0, DateTimeKind.Utc);
+    Check(GuildPayload.Due(true, t0, t0, 10) && !GuildPayload.Due(false, t0.AddMinutes(9), t0, 10) && GuildPayload.Due(false, t0.AddMinutes(10), t0, 10), "cadence");
+    long n;
+    Check(GuildPayload.Try("12", out n) && n == 12 && GuildPayload.Try(3.0e9, out n) && n == 3000000000L && !GuildPayload.Try("abc", out n) && !GuildPayload.Try(null, out n), "number parsing");
   }
 
   static void ErrorReportTests(string mock) {

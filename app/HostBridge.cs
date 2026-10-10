@@ -56,7 +56,8 @@ namespace RealmForge {
       TakeInstallLang();
       if (string.IsNullOrEmpty(cfg.Site)) cfg.Site = SyncClient.DefaultSite;
       arenaWatch = new ArenaWatch(() => cfg.Site, () => cfg.Code);
-      gameTimer.Interval = 2000; gameTimer.Tick += (s, e) => { CheckGame(false); WatchBattleEnd(); WatchStall(); arenaWatch.Tick(gameRunning); TraceStartTick(); TryAutoUpdate(); }; gameTimer.Start();
+      guildWatch = new GuildWatch(() => cfg.Site, () => cfg.Code);
+      gameTimer.Interval = 2000; gameTimer.Tick += (s, e) => { CheckGame(false); WatchBattleEnd(); WatchStall(); arenaWatch.Tick(gameRunning); guildWatch.Tick(gameRunning); TraceStartTick(); TryAutoUpdate(); }; gameTimer.Start();
       liveTimer.Interval = 400; liveTimer.Tick += (s, e) => PollLive();
       overlay = new OverlayController(st => Post("{\"ev\":\"overlay\",\"state\":" + S(st) + "}"),
                                       st => { Post("{\"ev\":\"auto\",\"state\":" + S(st) + "}"); OnAutoState(st); },
@@ -374,6 +375,7 @@ namespace RealmForge {
     // the arena's opponents to the site while the arena screen is open (app/ArenaWatch.cs); an arena fight's monster level
     // and opponent, read at its start (src/ArenaOpponents.cs) and kept with the fight as "arenaInfo"
     ArenaWatch arenaWatch;
+    GuildWatch guildWatch;   // the guild table to the site (app/GuildWatch.cs)
     volatile string arenaInfo; volatile int arenaInfoStage;
     FightRecorder arenaTaken;
     void WatchBattleEnd() {
@@ -680,6 +682,7 @@ namespace RealmForge {
       }
       int seconds = (int)(DateTime.UtcNow - started).TotalSeconds;
       lastAccount = ex.Json; lastAccountAt = DateTime.UtcNow;
+      guildWatch.AfterSync();
       { var bp = battleForAccount; if (bp != null) { battleForAccount = null; SaveBattleAccount(bp, ex.Json); } }
       {   // the heroes of the account in the game now: plans for heroes not on it (another account) are set aside
         var uids = Uids(ex.Json, "heroes", "iHeroId");

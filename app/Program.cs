@@ -24,6 +24,7 @@ namespace RealmForge {
 
     [STAThread]
     static int Main(string[] args) {
+      { int di = Array.IndexOf(args, "--dump-guild"); if (di >= 0 && di + 1 < args.Length) { RFX.DumpGuild(args[di + 1]); return 0; } }   // diagnostics: the guild payload to a file, nothing sent
       bool created;
       single = new Mutex(true, Channel.MutexName, out created);
       // already running (maybe hidden in the tray): ask it to show its window
