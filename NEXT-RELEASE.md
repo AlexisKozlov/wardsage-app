@@ -14,11 +14,11 @@ ProductVersion → `node tools/release-app.mjs --key D:/RealmForge/keys/realmfor
 - Раздел «Что нового»: изменения программы по версиям.
 - Новое обновление предлагается окном поверх программы (можно «Позже»).
 - Запуск вместе с Windows (в настройках, по умолчанию выключен): программа стартует сразу в трей и сама синхронизирует аккаунт, когда запущена игра.
-- Подробная запись боёв арены (урон героев по секундам, движение и здоровье монстров) — для точной симуляции на сайте; хранится на компьютере, на сайт не отправляется.
+- Подробная запись боёв арены (урон героев по секундам, движение и здоровье монстров) отправляется на сайт, чтобы симуляция арены совпадала с игрой точнее.
 
 ## EN
 - Minimize to the tray: the minimized window hides in the tray next to the clock and the program keeps working; click the icon to open it, right-click to exit (can be turned off in the settings).
 - A «What's new» page: the program's changes by version.
 - A new update is offered in a window over the program (you can choose «Later»).
 - Start with Windows (in the settings, off by default): the program starts straight in the tray and syncs the account by itself while the game runs.
-- A detailed record of arena fights (the heroes' damage second by second, the monsters' movement and health) for an exact simulation on the site; kept on the computer, not sent to the site.
+- A detailed record of arena fights (the heroes' damage second by second, the monsters' movement and health) is sent to the site so that the arena simulation matches the game more closely.

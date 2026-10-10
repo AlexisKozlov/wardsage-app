@@ -657,6 +657,7 @@ static class CoreTests {
     Eq(0.0, Convert.ToDouble(r2["samples"]) - 5, "sampled: 5 samples");
     ArenaTimelineTests();
     TraceTests();
+    TraceUploadTests();
   }
 
   // The arena: both sides have Hassu (uid 203400000, unit 2034) — the player (controller 1) at 2,5 by command, the
@@ -781,6 +782,47 @@ static class CoreTests {
     var stripped = MiniJson.Parse(TimelineBuilder.StripTrace(full)) as Dictionary<string, object>;
     var stl = stripped["timeline"] as Dictionary<string, object>;
     Check(!stl.ContainsKey("dmgT") && !stl.ContainsKey("units") && stl.ContainsKey("heroes") && Convert.ToDouble(stripped["after"]) == 2, "strip: dmgT and units removed from the upload copy, the rest kept");
+  }
+
+  // The arena fight trace upload (src/TraceUpload.cs): the payload (gzip + base64), what is skipped, the sent list, the pending files.
+  static void TraceUploadTests() {
+    string fight = "{\"stage\":6001631,\"at\":\"2026-10-10T11:50:00Z\",\"timeline\":{\"v\":3,\"dmgT\":{\"1:2\":[[10,5,0,0]]},\"units\":{\"7\":{\"unit\":1,\"c\":2,\"max\":9,\"pts\":[[10,100,200,0,1000,1]]}}}}";
+    string skip;
+    string body = TraceUpload.BuildPayload(fight, out skip);
+    Check(body != null && skip == null, "trace upload: an arena v3 fight gives a payload");
+    var o = MiniJson.Parse(body) as Dictionary<string, object>;
+    Check(Convert.ToInt32(o["v"]) == 1 && Convert.ToInt32(o["stage"]) == 6001631 && (string)o["at"] == "2026-10-10T11:50:00Z", "trace upload: v, stage and at");
+    byte[] gz = Convert.FromBase64String((string)o["data"]);
+    string back;
+    using (var gs = new GZipStream(new MemoryStream(gz), CompressionMode.Decompress)) using (var sr = new StreamReader(gs, Encoding.UTF8)) back = sr.ReadToEnd();
+    Eq(fight, back, "trace upload: data is the base64 of the gzipped file");
+    Check(TraceUpload.BuildPayload(fight.Replace("\"v\":3", "\"v\":2"), out skip) == null && skip == "no timeline v3", "trace upload: timeline v2 is not sent");
+    Check(TraceUpload.BuildPayload(fight.Replace("6001631", "5001631"), out skip) == null && skip == "not an arena fight", "trace upload: not an arena stage is not sent");
+    Check(TraceUpload.BuildPayload("{\"stage\":6002001,\"at\":\"2026-10-10T11:50:00Z\",\"timeline\":{\"v\":3,\"units\":{},\"dmgT\":{}}}", out skip) == null && skip == "no trace in the timeline", "trace upload: an empty trace is not sent");
+    var rnd = new Random(5); var noise = new byte[3 * 1024 * 1024]; rnd.NextBytes(noise);
+    string big = "{\"stage\":6001631,\"at\":\"2026-10-10T11:50:00Z\",\"junk\":\"" + Convert.ToBase64String(noise) + "\",\"timeline\":{\"v\":3,\"dmgT\":{\"1:2\":[[1,1,0,0]]}}}";
+    Check(TraceUpload.BuildPayload(big, out skip) == null && skip != null && skip.StartsWith("too large"), "trace upload: over 2 MB gzipped is skipped");
+
+    string dir = Path.Combine(Path.GetTempPath(), "rf-trace-test-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(dir);
+    try {
+      string sentPath = Path.Combine(dir, "trace-sent.txt");
+      var sent = new TraceSentList(sentPath);
+      DateTime now = new DateTime(2026, 10, 10, 12, 0, 0);
+      foreach (var n in new[] { "20261010-110000", "20261009-110000", "20261008-110000", "20261001-110000", "20261010-100000", "20261010-090000", "20261010-080000", "20261010-070000" })
+        File.WriteAllText(Path.Combine(dir, n + ".json"), "{}");
+      File.WriteAllText(Path.Combine(dir, "notes.json"), "{}");
+      Directory.CreateDirectory(Path.Combine(dir, "accounts")); File.WriteAllText(Path.Combine(dir, "accounts", "20261010-120000.json"), "{}");
+      var p = TraceUpload.Pending(dir, sent, now, 3, 5);
+      Eq(5, p.Count, "trace upload: at most 5 pending");
+      Eq("20261010-110000.json", Path.GetFileName(p[0]), "trace upload: newest first");
+      Check(!p.Exists(x => x.Contains("20261001") || x.Contains("notes")), "trace upload: older than 3 days and odd names are not pending");
+      sent.Add("20261010-110000.json");
+      Check(sent.Has("20261010-110000.json") && !sent.Has("20261009-110000.json"), "trace upload: the sent list remembers a name");
+      Check(new TraceSentList(sentPath).Has("20261010-110000.json"), "trace upload: the sent list is kept in its file");
+      p = TraceUpload.Pending(dir, sent, now, 3, 50);
+      Check(p.Count == 6 && !p.Exists(x => x.Contains("20261010-110000")), "trace upload: a sent fight is not pending again");
+    } finally { try { Directory.Delete(dir, true); } catch (Exception) { } }
   }
 
   static string Js2(object o) {

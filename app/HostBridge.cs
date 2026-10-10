@@ -54,7 +54,7 @@ namespace RealmForge {
       TakeInstallLang();
       if (string.IsNullOrEmpty(cfg.Site)) cfg.Site = SyncClient.DefaultSite;
       arenaWatch = new ArenaWatch(() => cfg.Site, () => cfg.Code);
-      gameTimer.Interval = 2000; gameTimer.Tick += (s, e) => { CheckGame(false); WatchBattleEnd(); WatchStall(); arenaWatch.Tick(gameRunning); TryAutoUpdate(); }; gameTimer.Start();
+      gameTimer.Interval = 2000; gameTimer.Tick += (s, e) => { CheckGame(false); WatchBattleEnd(); WatchStall(); arenaWatch.Tick(gameRunning); TraceStartTick(); TryAutoUpdate(); }; gameTimer.Start();
       liveTimer.Interval = 400; liveTimer.Tick += (s, e) => PollLive();
       overlay = new OverlayController(st => Post("{\"ev\":\"overlay\",\"state\":" + S(st) + "}"),
                                       st => { Post("{\"ev\":\"auto\",\"state\":" + S(st) + "}"); OnAutoState(st); },
@@ -502,6 +502,23 @@ namespace RealmForge {
       else Log.Write("fight plans: " + r.Status + (r.Details != null ? " " + r.Details : ""));
     }
 
+    // the arena fights' detailed record to the site (src/TraceUpload.cs): after each kept fight, and once per start as soon as the
+    // game account is known (unsent fights of the last 3 days); with the account sync's consent (AutoSync) and a sync code
+    readonly TraceSentList traceSent = new TraceSentList(TraceUpload.SentPath);
+    bool traceStartDone;
+
+    void UploadTraces() {
+      if (!cfg.AutoSync || !SyncClient.IsValidCode(cfg.Code)) return;
+      string site = cfg.Site, code = cfg.Code;
+      Task.Factory.StartNew(() => { try { TraceUpload.RunOnce(RFX.BattlesDir, traceSent, site, code, Log.Write); } catch (Exception e) { Log.Write("трасса боя: ошибка " + e.Message); } });
+    }
+
+    void TraceStartTick() {
+      if (traceStartDone || !gameRunning || SyncClient.Player <= 0) return;
+      traceStartDone = true;
+      UploadTraces();
+    }
+
     // the timeline of the fight going on (src/BattleTimeline.cs, read-only): every fight, not only the coach's bosses;
     // attached to the fight's record when its result screen comes
     volatile FightRecorder recorder;
@@ -564,6 +581,7 @@ namespace RealmForge {
           var acc = lastAccount;
           if (acc != null && (DateTime.UtcNow - lastAccountAt).TotalMinutes < 30) SaveBattleAccount(path, acc);
           battleForAccount = path;
+          UploadTraces();
           win.BeginInvoke((Action)(() => { Post("{\"ev\":\"battle\",\"ok\":true}"); RequestAutoSync(3); }));
         } catch (Exception e) {
           Log.Write("battle end: " + e.Message);
