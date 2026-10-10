@@ -15,7 +15,7 @@
     sync: { phase: 'idle', stage: null, seconds: 0, result: null, error: null },
     plans: { status: 'idle', list: [], err: null }, sel: 0,
     scan: { status: 'idle', panel: false }, live: null, reported: {}, compact: false, overlay: 'off', hl: '',
-    autoSync: true, autoClick: false, autoConfirm: false, errorReports: false, autoUpdate: true, auto: 'idle', autoAt: null,
+    autoSync: true, autoClick: false, autoConfirm: false, errorReports: false, autoUpdate: true, tray: true, autostart: false, auto: 'idle', autoAt: null,
     run: null, seen: null, runKey: '', queue: [], takeOver: {},
     // storage cleanup: the site's list, the pilot's state on the game's sell screen
     sell: { list: null, run: false, state: '', selected: 0, missing: 0, extra: 0, seen: {} },
@@ -471,6 +471,8 @@
         ${row(t('setSite'), t('setSiteP'), `<div class="row"><div class="input" style="flex:1;min-width:240px"><input id="site" value="${esc(S.site)}" spellcheck="false"></div>
           <button class="btn-line" data-act="saveSite">${esc(t('save'))}</button>${S.site !== S.defaultSite ? `<button class="btn-ghost" data-act="resetSite">${esc(t('reset'))}</button>` : ''}</div>`)}
         ${row(t('setAutoUpdate'), t('setAutoUpdateP'), `<button class="switch" role="switch" data-act="autoUpdate" aria-checked="${S.autoUpdate}"></button>`)}
+        ${row(t('setTray'), t('setTrayP'), `<button class="switch" role="switch" data-act="tray" aria-checked="${S.tray}"></button>`)}
+        ${row(t('setAutostart'), t('setAutostartP'), `<button class="switch" role="switch" data-act="autostart" aria-checked="${S.autostart}"></button>`)}
         ${row(t('setReports'), t('setReportsP'), `<button class="switch" role="switch" data-act="errorReports" aria-checked="${S.errorReports}"></button>`)}
         ${row(t('setLog'), t('setLogP'), `<button class="btn-line" data-act="openLog">${esc(t('openLog'))}</button>`)}
         ${row(t('setDiag'), t('setDiagP'), `<button class="btn-line" data-act="diag">${esc(t('diagStart'))}</button>`)}
@@ -563,6 +565,8 @@
     else if (a === 'saveCode') { const v = $('#code').value.trim(); if (CODE_RE.test(v)) host.send({ cmd: 'setCode', code: v }); }
     else if (a === 'unlink') host.send({ cmd: 'clearCode' });
     else if (a === 'copy') { S.saveCopy = !S.saveCopy; host.send({ cmd: 'setSaveCopy', on: S.saveCopy }); render(); }
+    else if (a === 'tray') { S.tray = !S.tray; host.send({ cmd: 'setTray', on: S.tray }); render(); }
+    else if (a === 'autostart') { S.autostart = !S.autostart; host.send({ cmd: 'setAutostart', on: S.autostart }); render(); }
     else if (a === 'autoUpdate') { S.autoUpdate = !S.autoUpdate; host.send({ cmd: 'setAutoUpdate', on: S.autoUpdate }); render(); }
     else if (a === 'errorReports') { S.errorReports = !S.errorReports; host.send({ cmd: 'setErrorReports', on: S.errorReports }); if (S.errorReports) toast(t(S.hasCode ? 'reportsOn' : 'reportsNoCode'), 6000); render(); }
     else if (a === 'autoSync') { S.autoSync = !S.autoSync; host.send({ cmd: 'setAutoSync', on: S.autoSync }); render(); }
@@ -621,7 +625,7 @@
     switch (m.ev) {
       case 'state':
         Object.assign(S, { lang: m.lang, version: m.version, site: m.site, defaultSite: m.defaultSite, hasCode: m.hasCode, codePrefix: m.codePrefix, saveCopy: m.saveCopy, last: m.last || S.last });
-        if (m.autoSync !== undefined) { S.autoSync = m.autoSync; S.autoClick = m.autoClick; S.autoConfirm = !!m.autoConfirm; S.errorReports = !!m.errorReports; S.autoUpdate = m.autoUpdate !== false; }
+        if (m.autoSync !== undefined) { S.autoSync = m.autoSync; S.autoClick = m.autoClick; S.autoConfirm = !!m.autoConfirm; S.errorReports = !!m.errorReports; S.autoUpdate = m.autoUpdate !== false; S.tray = m.tray !== false; S.autostart = !!m.autostart; }
         if (m.game) S.game = m.game;
         if (m.codeSaved) { S.editCode = false; toast(t('saved')); if (S.page === 'equip' || S.plans.status !== 'idle') loadPlans(); }
         if (m.siteSaved) toast(t('saved'));

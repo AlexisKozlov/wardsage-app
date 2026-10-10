@@ -62,8 +62,16 @@ namespace RealmForge {
     Rectangle normalBounds;
     FormWindowState normalState;
     bool compact;
+    // the tray (app/Tray.cs): minimizing hides the window there while TrayEnabled; a start with --tray begins hidden
+    readonly NotifyIcon tray = new NotifyIcon();
+    bool startHidden;
+    FormWindowState shownState = FormWindowState.Normal;   // normal or maximized before it went to the tray
+    /// <summary>Minimize to the tray (the player's setting, AppConfig.Tray; set by HostBridge).</summary>
+    public bool TrayEnabled = true;
+    string trayOpen = "Открыть RealmForge", trayExit = "Выход";
 
-    public AppWindow() {
+    public AppWindow(bool hidden = false) {
+      startHidden = hidden;
       Text = "RealmForge";
       BackColor = Color.FromArgb(11, 16, 27);
       AutoScaleMode = AutoScaleMode.Dpi;
@@ -76,6 +84,50 @@ namespace RealmForge {
       web.DefaultBackgroundColor = Color.FromArgb(11, 16, 27);
       Controls.Add(web);
       Load += async (s, e) => await Init();
+      SetupTray();
+      // hidden start: the window is made (WebView2, timers) but never seen — fully transparent and off the taskbar for
+      // the first show, then hidden
+      if (startHidden) {
+        Opacity = 0;
+        ShowInTaskbar = false;
+        Shown += (s, e) => { if (startHidden) { startHidden = false; Hide(); Opacity = 1; ShowInTaskbar = true; } };
+      }
+      ShowSignal.Listen(() => { try { BeginInvoke((Action)ShowFromTray); } catch (Exception) { } });
+    }
+
+    void SetupTray() {
+      try { tray.Icon = Icon ?? SystemIcons.Application; } catch (Exception) { tray.Icon = SystemIcons.Application; }
+      tray.Text = "RealmForge";
+      tray.Visible = true;
+      tray.MouseClick += (s, e) => { if (e.Button == MouseButtons.Left) ShowFromTray(); };
+      var menu = new ContextMenuStrip();
+      menu.Opening += (s, e) => { menu.Items[0].Text = trayOpen; menu.Items[1].Text = trayExit; };
+      menu.Items.Add(trayOpen, null, (s, e) => ShowFromTray());
+      menu.Items.Add(trayExit, null, (s, e) => { tray.Visible = false; Close(); });
+      tray.ContextMenuStrip = menu;
+    }
+
+    /// <summary>The tray menu's words in the app's language.</summary>
+    public void SetTrayLang(string lang) {
+      bool en = lang == "en";
+      trayOpen = en ? "Open RealmForge" : "Открыть RealmForge";
+      trayExit = en ? "Exit" : "Выход";
+    }
+
+    /// <summary>The window back from the tray (or to the front), as it was.</summary>
+    public void ShowFromTray() {
+      startHidden = false;
+      Opacity = 1;
+      ShowInTaskbar = true;
+      if (!Visible) Show();
+      if (WindowState == FormWindowState.Minimized) WindowState = shownState;
+      Activate();
+    }
+
+    protected override void OnResize(EventArgs e) {
+      base.OnResize(e);
+      if (WindowState != FormWindowState.Minimized) shownState = WindowState;
+      if (TrayEnabled && WindowState == FormWindowState.Minimized && Visible) Hide();
     }
 
     protected override void OnHandleCreated(EventArgs e) { base.OnHandleCreated(e); Native.DarkFrame(Handle); }
@@ -89,7 +141,7 @@ namespace RealmForge {
     public void SaveForRestart() {
       try {
         var b = WindowState == FormWindowState.Normal ? Bounds : RestoreBounds;
-        System.IO.File.WriteAllText(RestartFile, string.Join(",", new[] { b.X, b.Y, b.Width, b.Height, (int)WindowState, TopMost ? 1 : 0, Form.ActiveForm == this ? 1 : 0 }));
+        System.IO.File.WriteAllText(RestartFile, string.Join(",", new[] { b.X, b.Y, b.Width, b.Height, (int)WindowState, TopMost ? 1 : 0, Form.ActiveForm == this ? 1 : 0, Visible && !startHidden ? 1 : 0 }));
       } catch (Exception e) { Log.Write("restart state: " + e.Message); }
     }
 
@@ -107,6 +159,7 @@ namespace RealmForge {
         WindowState = (FormWindowState)n[4];
         TopMost = n[5] == 1;
         quiet = n[6] == 0;   // it was not the active window: do not take the focus
+        if (n.Length > 7 && n[7] == 0) { startHidden = true; WindowState = FormWindowState.Normal; }   // it was in the tray: back there
       } catch (Exception e) { Log.Write("restart state: " + e.Message); }
     }
 
@@ -170,6 +223,8 @@ namespace RealmForge {
     int Scale(int px) { using (var g = CreateGraphics()) return (int)Math.Round(px * g.DpiX / 96.0); }
 
     protected override void OnFormClosed(FormClosedEventArgs e) {
+      tray.Visible = false;
+      tray.Dispose();
       if (bridge != null) bridge.Dispose();
       base.OnFormClosed(e);
     }

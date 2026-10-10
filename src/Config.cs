@@ -19,6 +19,7 @@ namespace RealmForge {
     public bool AutoClick;          // equip helper: open the slot, scroll the list and click the item in the game (off by default: the player turns it on)
     public bool AutoConfirm;        // ...and press «Заменить» itself (off by default: the player's explicit choice)
     public bool ErrorReports;       // send failures to the site with the journal's last lines (src/ErrorReport.cs; off by default)
+    public bool Tray = true;        // minimizing hides the window in the tray (app/Tray.cs)
     public bool AutoUpdate = true;  // put a downloaded update in place by restarting in a quiet moment (HostBridge.TryAutoUpdate)
     // last successful sync (shown on the start screen; the busts of the strongest heroes decorate the banner)
     public string LastAt;                       // ISO 8601 UTC or null
@@ -68,6 +69,7 @@ namespace RealmForge {
       sb.Append(",\n  \"autoConfirm\": ").Append(AutoConfirm ? "true" : "false");
       sb.Append(",\n  \"errorReports\": ").Append(ErrorReports ? "true" : "false");
       sb.Append(",\n  \"autoUpdate\": ").Append(AutoUpdate ? "true" : "false");
+      sb.Append(",\n  \"tray\": ").Append(Tray ? "true" : "false");
       string code = string.IsNullOrEmpty(Code) ? "" : ProtectedPrefix + CodeProtector.Protect(Code);
       sb.Append(",\n  \"code\": ").Append(MiniJson.Quote(code));
       if (!string.IsNullOrEmpty(LastAt)) {
@@ -95,6 +97,7 @@ namespace RealmForge {
       c.AutoConfirm = MiniJson.GetBool(d, "autoConfirm", false);
       c.ErrorReports = MiniJson.GetBool(d, "errorReports", false);
       c.AutoUpdate = MiniJson.GetBool(d, "autoUpdate", true);
+      c.Tray = MiniJson.GetBool(d, "tray", true);
       object lv;
       var last = d.TryGetValue("last", out lv) ? MiniJson.AsObject(lv) : null;
       if (last != null && MiniJson.GetString(last, "at") != null) {

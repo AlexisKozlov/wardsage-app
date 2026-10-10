@@ -20,12 +20,15 @@ namespace RealmForge {
     internal static string UiDir;
     internal static string DataDir;         // WebView2 user data (cache, local storage)
     static Mutex single;
+    static bool startInTray;   // started by Windows (autostart, --tray): straight to the tray
 
     [STAThread]
     static int Main(string[] args) {
       bool created;
       single = new Mutex(true, "RealmForge.Desktop.SingleInstance", out created);
-      if (!created) { BringOtherToFront(); return 0; }
+      // already running (maybe hidden in the tray): ask it to show its window
+      if (!created) { if (!ShowSignal.Send()) BringOtherToFront(); return 0; }
+      startInTray = Array.IndexOf(args, Autostart.TrayArg) >= 0;
       // a downloaded, signed update waits: put it in place and start it (app/Updater.cs)
       if (Updater.ApplyAtStart(ReleaseSingle)) return 0;
 
@@ -57,7 +60,8 @@ namespace RealmForge {
         if (r == DialogResult.Yes) Shell.OpenUrl("https://go.microsoft.com/fwlink/p/?LinkId=2124703");
         return 2;
       }
-      using (var w = new AppWindow()) Application.Run(w);
+      Autostart.Refresh();
+      using (var w = new AppWindow(startInTray)) Application.Run(w);
       return 0;
     }
 
