@@ -112,6 +112,7 @@ namespace RealmForge {
       extra.TwoRefresh = SubTable(guildTwoTab, KTwoHeads, 2);
       extra.RankThis = RankList(guildDivTab, "m_ActiveValueRankList");
       extra.RankLast = RankList(guildDivTab, "m_ActiveValueRankListLastWeek");
+      try { extra.Gvg = ReadGvg(rescanMs); } catch (Exception) { extra.Gvg = null; }
       members = new List<Dictionary<string, object>>();
       ulong v; int tt;
       if (Field(guildTab, "m_vMembers", out v, out tt) && tt == T_TABLE)
@@ -147,6 +148,7 @@ namespace RealmForge {
   public class GuildExtra {
     public Dictionary<string, object> TwoHp, TwoRefresh;            // Two-Heads boss: {"[id]" -> hp}, {"[id]" -> period end}
     public List<Dictionary<string, object>> RankThis, RankLast;     // weekly activity ranking [{stRole, iActive}]; null = not loaded
+    public GvgInfo Gvg;                                             // the guild war (src/GvgData.cs); null = none
   }
 
   public static class GuildPayload {
@@ -407,6 +409,8 @@ namespace RealmForge {
         if (extra.RankLast != null && extra.RankLast.Count > 0) { if (!f) sb.Append(','); sb.Append("\"lastWeek\":"); Rank(sb, extra.RankLast); }
         sb.Append('}');
       }
+      string gvg = extra != null ? GvgPayload.Build(extra.Gvg) : null;
+      if (gvg != null) sb.Append(",\"gvg\":").Append(gvg);
       sb.Append('}');
       memberCount = n;
       return n == 0 ? null : sb.ToString();

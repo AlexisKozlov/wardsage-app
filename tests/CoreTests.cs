@@ -615,6 +615,39 @@ static class CoreTests {
     var m4 = Lt("stPlayerIdType", Lt("iZoneId", 4L, "iUid", 444L), "stRoleSimpleInf", Lt("sName", "Di"), "mTwoHeadsBossData", Lt());
     string j4 = GuildPayload.Build(union, new List<Dictionary<string, object>> { m4 }, week, classic, 444L, now, out soon, out cnt, new GuildExtra());
     Check(j4 != null && !j4.Contains("twoHeads") && !j4.Contains("activeRank") && !j4.Contains("activeDays") && !j4.Contains("activeTotal"), "empty extras add nothing: " + j4);
+    // the guild war block
+    Check(!j4.Contains("\"gvg\"") && !j3.Contains("\"gvg\""), "no war data, no gvg block");
+    var role1 = Lt("stRoleId", Lt("iZoneId", 4L, "iUid", 111L), "sName", new string('Z', 60), "iLevel", 80L, "iAttackedNum", 3L, "uiGVGPos", 1L,
+                   "stAttackerStatistic", Lt("iVictoryNum", 2L, "iDefeatNum", 1L, "iTotalVictoryNum", 20L, "iTotalDefeatNum", 5L),
+                   "stDefenderStatistic", Lt("iVictoryNum", 4L, "iDefeatNum", "6", "iTotalVictoryNum", 40L, "iTotalDefeatNum", 7L),
+                   "iAttackedOpponentHp", 1234L, "iTotalContribution", 999L);
+    var role2 = Lt("stRoleId", Lt("iZoneId", 4L, "iUid", 222L), "sName", "Bob");
+    var role0 = Lt("stRoleId", Lt("iZoneId", 4L, "iUid", 0L), "sName", "Nobody");
+    var gvgU = Lt("iIssueId", 12L, "iScore", 5000L, "iDivision", 3L, "iFightingRound", 2L, "iLastRank", 0L,
+                  "vGarrisonRole", LArr(role1, role2, role0),
+                  "vRoundInfo", LArr(Lt("iOpponentUnionId", 77L, "iWinState", 1L, "iDefeatNum", 0L), Lt("iOpponentUnionId", 78L, "iWinState", 0L, "iDefeatNum", 4L),
+                                     Lt("iOpponentUnionId", 79L, "iWinState", 2L), Lt("iOpponentUnionId", 80L, "iWinState", 1L, "uiFakeGuildId", 9L)));
+    var gvgG = Lt("iIssueId", 12L, "iPeriodType", 2L, "iNextChangeStateTime", 1790003600L, "iFightingRound", 2L);
+    string gv = GvgPayload.Build(new GvgInfo { Union = gvgU, Global = gvgG });
+    Check(gv != null && MiniJson.TryParse(gv) != null, "gvg: valid JSON " + gv);
+    Check(gv.StartsWith("{\"v\":1,\"issue\":12,\"round\":2,\"phase\":2,\"nextChange\":1790003600,\"score\":5000,\"division\":3,\"rank\":null,\"maxKeys\":null,\"cmdExtra\":null,\"rounds\":["), "gvg header: " + gv);
+    Check(gv.Contains("\"rounds\":[{\"round\":1,\"opp\":77,\"win\":1,\"defeatNum\":0},{\"round\":2,\"opp\":78,\"win\":0,\"defeatNum\":4},{\"round\":3,\"opp\":79,\"win\":null,\"defeatNum\":0},{\"round\":4,\"opp\":null,\"win\":1,\"defeatNum\":0}]"), "gvg rounds: " + gv);
+    Check(gv.Contains("{\"zone\":4,\"uid\":111,\"name\":\"" + new string('Z', 40) + "\",\"attacks\":3,\"cmd\":true,\"atkW\":2,\"atkL\":1,\"atkTotW\":20,\"atkTotL\":5,\"defW\":4,\"defL\":6,\"defTotW\":40,\"defTotL\":7,\"contrib\":999,\"oppHp\":1234}"), "gvg member, name cut to 40: " + gv);
+    Check(gv.Contains("\"uid\":222,\"name\":\"Bob\",\"attacks\":0,\"cmd\":false,\"atkW\":0") && !gv.Contains("Nobody"), "gvg: missing numbers are 0, uid 0 skipped");
+    string gv2 = GvgPayload.Build(new GvgInfo { Union = Lt("iScore", 1L, "iLastRank", 15L, "vGarrisonRole", LArr(role2)), MaxKeys = 15, CmdExtra = 3 });
+    Check(gv2 != null && gv2.Contains("\"rank\":15,\"maxKeys\":15,\"cmdExtra\":3,\"rounds\":[],") && gv2.Contains("\"phase\":null,\"nextChange\":null"), "gvg: limits, rank, no global: " + gv2);
+    Check(GvgPayload.Build(null) == null && GvgPayload.Build(new GvgInfo { Union = Lt("vGarrisonRole", LArr()) }) == null, "gvg: no table / no members, no block");
+    var bigRoles = new List<object>(); for (int i = 0; i < 250; i++) bigRoles.Add(Lt("stRoleId", Lt("iZoneId", 4L, "iUid", 5000L + i), "sName", "G" + i));
+    var bigRounds = new List<object>(); for (int i = 0; i < 80; i++) bigRounds.Add(Lt("iOpponentUnionId", 100L + i, "iWinState", 1L));
+    string gb = GvgPayload.Build(new GvgInfo { Union = Lt("vGarrisonRole", LArr(bigRoles.ToArray()), "vRoundInfo", LArr(bigRounds.ToArray())) });
+    var gbo = MiniJson.AsObject(MiniJson.TryParse(gb));
+    Check(gbo != null && ((List<object>)gbo["members"]).Count == 200 && ((List<object>)gbo["rounds"]).Count == 50, "gvg bounds: 200 members, 50 rounds");
+    var gx = new GuildExtra { Gvg = new GvgInfo { Union = gvgU, Global = gvgG } };
+    string jg = GuildPayload.Build(union, new List<Dictionary<string, object>> { m1, m2 }, week, classic, 111L, now, out soon, out cnt, gx);
+    Check(jg != null && jg.EndsWith(",\"gvg\":" + gv + "}") && MiniJson.TryParse(jg) != null, "gvg block is last in the guild payload");
+    gvgU["iScore"] = 5001L;
+    string jg2 = GuildPayload.Build(union, new List<Dictionary<string, object>> { m1, m2 }, week, classic, 111L, now + 1000, out soon, out cnt, gx);
+    Check(GuildPayload.Hash(jg) != GuildPayload.Hash(jg2), "the hash includes the gvg block");
     // the size cap: many members with many attacks stay under 200 KB (the fight details are cut)
     var many = new List<Dictionary<string, object>>();
     for (int i = 0; i < 100; i++) {
