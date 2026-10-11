@@ -9,7 +9,10 @@
 //     m_UnionInfo {iUnionId, iLevel, stBaseAttr {sUnionName}}. Found by the key m_vApplyUnionIdRecord.
 //   UnionWeekBossData — m_mWeekBossInfo[boss id] = {iRefreshTime (end of the current period, epoch s), …}; key m_SavedStageIdsBoss3.
 //   UnionBossData (the classic boss) — m_mBossInfo[boss id] = {iRefreshTime, …}; key m_mBossInfo.
-// The three tables are found together once per game session (two passes over the memory, a few seconds), then read directly.
+//   Two-Heads boss («Павший завет») — the members' mTwoHeadsBossData[boss id] = {ulDamageNum, ulPrevDamageNum, uiFightNum, vFightData = [{ulDamageNum,
+//     vFightData = [hero]}]}; the guild boss itself in m_BossInfoById[id] = hp, m_BossRefreshTimeById[id] = period end; key m_BossRefreshTimeById.
+//   Weekly activity ranking (only when the dividends screen has loaded it) — m_ActiveValueRankList / …LastWeek = [{stRole {iUid, iZoneId}, iActive}].
+// The tables are found together once per game session (two passes over the memory, a few seconds), then read directly.
 // Damage values may be integers, floats or numeric strings (the script wraps them in tonumber): all are accepted.
 using System;
 using System.Collections.Generic;
@@ -20,23 +23,24 @@ using System.Text;
 
 namespace RealmForge {
   public static partial class RFX {
-    const string KUnion = "m_vApplyUnionIdRecord", KWeekBoss = "m_SavedStageIdsBoss3", KClassicBoss = "m_mBossInfo";
-    static ulong guildTab, guildWeekTab, guildClassicTab; static int guildPid, guildLastFind;
+    const string KUnion = "m_vApplyUnionIdRecord", KWeekBoss = "m_SavedStageIdsBoss3", KClassicBoss = "m_mBossInfo",
+                 KTwoHeads = "m_BossRefreshTimeById", KDividend = "m_ActiveValueRankListLastWeek";
+    static ulong guildTab, guildWeekTab, guildClassicTab, guildTwoTab, guildDivTab; static int guildPid, guildLastFind;
 
     /// <summary>The guild tables found (not read yet): searched when not known, at most every <paramref name="rescanMs"/>.
     /// Call off the interface thread.</summary>
     static bool GuildTables(int rescanMs) {
       var ps = GameInfo.GameProcesses();
-      if (ps.Length == 0) { guildTab = guildWeekTab = guildClassicTab = 0; return false; }
-      if (ps[0].Id != guildPid) { guildTab = guildWeekTab = guildClassicTab = 0; guildPid = ps[0].Id; guildLastFind = 0; H = OpenProcess(0x0410, false, ps[0].Id); }
+      if (ps.Length == 0) { guildTab = guildWeekTab = guildClassicTab = guildTwoTab = guildDivTab = 0; return false; }
+      if (ps[0].Id != guildPid) { guildTab = guildWeekTab = guildClassicTab = guildTwoTab = guildDivTab = 0; guildPid = ps[0].Id; guildLastFind = 0; H = OpenProcess(0x0410, false, ps[0].Id); }
       if (H == IntPtr.Zero) H = OpenProcess(0x0410, false, ps[0].Id);
       if (H == IntPtr.Zero) return false;
       if (guildTab != 0 && HasTable(guildTab, "m_vMembers") && HasTable(guildTab, "m_UnionInfo")) return true;
-      guildTab = guildWeekTab = guildClassicTab = 0;
+      guildTab = guildWeekTab = guildClassicTab = guildTwoTab = guildDivTab = 0;
       if (guildLastFind != 0 && Environment.TickCount - guildLastFind < rescanMs) return false;
       guildLastFind = Environment.TickCount;
       regs = Regions();
-      var owners = OwnersOf(FindLuaStringsFast(new[] { KUnion, KWeekBoss, KClassicBoss }), 1024);
+      var owners = OwnersOf(FindLuaStringsFast(new[] { KUnion, KWeekBoss, KClassicBoss, KTwoHeads, KDividend }), 1024);
       List<ulong> l; int bestN = -1;
       if (owners.TryGetValue(KUnion, out l))
         foreach (var t in l) {
@@ -61,7 +65,33 @@ namespace RealmForge {
           int n = EntryCount(m);
           if (n > bestN) { bestN = n; guildClassicTab = t; }
         }
+      bestN = -1;
+      if (owners.TryGetValue(KTwoHeads, out l))
+        foreach (var t in l) {
+          if (!HasTable(t, "m_BossInfoById") || !HasTable(t, KTwoHeads)) continue;
+          int n = EntryCount(t);
+          if (n > bestN) { bestN = n; guildTwoTab = t; }
+        }
+      bestN = -1;
+      if (owners.TryGetValue(KDividend, out l))
+        foreach (var t in l) {
+          if (!HasTable(t, "m_ActiveValueRankList")) continue;
+          int n = EntryCount(t);
+          if (n > bestN) { bestN = n; guildDivTab = t; }
+        }
       return guildTab != 0;
+    }
+
+    static List<Dictionary<string, object>> RankList(ulong t, string key) {
+      ulong v; int tt;
+      if (t == 0 || !Field(t, key, out v, out tt) || tt != T_TABLE) return null;
+      var res = new List<Dictionary<string, object>>();
+      foreach (var e in IntEntries(v)) {
+        if (e.Tt != T_TABLE || res.Count >= GuildPayload.MaxMembers) continue;
+        var d = ParseTable(e.Val, 3, new HashSet<ulong>());
+        if (d != null) res.Add(d);
+      }
+      return res;
     }
 
     static Dictionary<string, object> SubTable(ulong t, string key, int depth) {
@@ -72,12 +102,16 @@ namespace RealmForge {
 
     /// <summary>The guild's tables, parsed (ParseTable-shaped) for GuildPayload.Build; false when not found yet.</summary>
     public static bool ReadGuild(int rescanMs, out Dictionary<string, object> union, out List<Dictionary<string, object>> members,
-                                 out Dictionary<string, object> week, out Dictionary<string, object> classic) {
-      union = null; members = null; week = null; classic = null;
+                                 out Dictionary<string, object> week, out Dictionary<string, object> classic, out GuildExtra extra) {
+      union = null; members = null; week = null; classic = null; extra = new GuildExtra();
       if (!GuildTables(rescanMs)) return false;
       union = SubTable(guildTab, "m_UnionInfo", 3);
       week = SubTable(guildWeekTab, "m_mWeekBossInfo", 2);
       classic = SubTable(guildClassicTab, KClassicBoss, 2);
+      extra.TwoHp = SubTable(guildTwoTab, "m_BossInfoById", 2);
+      extra.TwoRefresh = SubTable(guildTwoTab, KTwoHeads, 2);
+      extra.RankThis = RankList(guildDivTab, "m_ActiveValueRankList");
+      extra.RankLast = RankList(guildDivTab, "m_ActiveValueRankListLastWeek");
       members = new List<Dictionary<string, object>>();
       ulong v; int tt;
       if (Field(guildTab, "m_vMembers", out v, out tt) && tt == T_TABLE)
@@ -92,9 +126,9 @@ namespace RealmForge {
     /// <summary>The guild payload for the site (null: no guild / not found). <paramref name="selfUid"/> 0 = not known.</summary>
     public static string ReadGuildJson(int rescanMs, long selfUid, long atMs, out bool refreshSoon, out int memberCount) {
       refreshSoon = false; memberCount = 0;
-      Dictionary<string, object> union, week, classic; List<Dictionary<string, object>> members;
-      if (!ReadGuild(rescanMs, out union, out members, out week, out classic)) return null;
-      return GuildPayload.Build(union, members, week, classic, selfUid, atMs, out refreshSoon, out memberCount);
+      Dictionary<string, object> union, week, classic; List<Dictionary<string, object>> members; GuildExtra extra;
+      if (!ReadGuild(rescanMs, out union, out members, out week, out classic, out extra)) return null;
+      return GuildPayload.Build(union, members, week, classic, selfUid, atMs, out refreshSoon, out memberCount, extra);
     }
 
     /// <summary>Diagnostics (app --dump-guild file): the payload to a file, nothing is sent. Returns a short result line.</summary>
@@ -109,6 +143,12 @@ namespace RealmForge {
   }
 
   /// <summary>The pure part (tested without the game): script tables as ParseTable gives them → the site's JSON.</summary>
+  /// <summary>Optional extra tables for the payload (any may be null).</summary>
+  public class GuildExtra {
+    public Dictionary<string, object> TwoHp, TwoRefresh;            // Two-Heads boss: {"[id]" -> hp}, {"[id]" -> period end}
+    public List<Dictionary<string, object>> RankThis, RankLast;     // weekly activity ranking [{stRole, iActive}]; null = not loaded
+  }
+
   public static class GuildPayload {
     public const int Version = 1, MaxMembers = 120;
 
@@ -215,6 +255,58 @@ namespace RealmForge {
       return sum;
     }
 
+    // The Two-Heads boss squads of one member record: vFightData = [{ulDamageNum, vFightData = [hero]}]; the last <cap> as fightsDetail
+    static void TwoFights(StringBuilder sb, Dictionary<string, object> b, int cap) {
+      var list = new List<string>();
+      foreach (var kv in IntKeyed(Get(b, "vFightData"))) {
+        var sq = kv.Value as Dictionary<string, object>; if (sq == null) continue;
+        long total; string heroes = Heroes(Get(sq, "vFightData"), out total);
+        if (heroes == null) continue;
+        list.Add("{\"dmg\":" + L(Has(sq, "ulDamageNum") ? N(sq, "ulDamageNum") : total) + ",\"heroes\":" + heroes + "}");
+      }
+      if (list.Count == 0 || cap <= 0) return;
+      int from = Math.Max(0, list.Count - cap);
+      sb.Append(",\"fightsDetail\":[");
+      for (int i = from; i < list.Count; i++) { if (i > from) sb.Append(','); sb.Append(list[i]); }
+      sb.Append(']');
+    }
+
+    // a member's Two-Heads map {boss id -> {fights, dmg, prevDmg, fightsDetail}}; nothing appended when there is none
+    static void TwoHeads(StringBuilder sb, object map, int cap) {
+      var any = false; var tmp = new StringBuilder("{");
+      foreach (var kv in IntKeyed(map)) {
+        var b = kv.Value as Dictionary<string, object>; if (b == null) continue;
+        if (any) tmp.Append(','); any = true;
+        tmp.Append('"').Append(L(kv.Key)).Append("\":{\"fights\":").Append(L(N(b, "uiFightNum"))).Append(",\"dmg\":").Append(L(N(b, "ulDamageNum")))
+          .Append(",\"prevDmg\":").Append(L(N(b, "ulPrevDamageNum")));
+        TwoFights(tmp, b, cap);
+        tmp.Append('}');
+      }
+      if (any) sb.Append(",\"twoHeads\":").Append(tmp).Append('}');
+    }
+
+    // [{t, a}] of the member's daily activity (all entries, at most 14)
+    static void ActiveDays(StringBuilder sb, Dictionary<string, object> m) {
+      var v = Get(m, "vSevenActive"); if (!(v is Dictionary<string, object>)) return;
+      var tmp = new StringBuilder(); int c = 0;
+      foreach (var kv in IntKeyed(v)) {
+        var e = kv.Value as Dictionary<string, object>; if (e == null || c >= 14) continue;
+        if (c++ > 0) tmp.Append(',');
+        tmp.Append("{\"t\":").Append(L(N(e, "iTime"))).Append(",\"a\":").Append(L(N(e, "iActive"))).Append('}');
+      }
+      if (c > 0) sb.Append(",\"activeDays\":[").Append(tmp).Append(']');
+    }
+
+    static void Rank(StringBuilder sb, List<Dictionary<string, object>> list) {
+      sb.Append('['); int c = 0;
+      foreach (var e in list) {
+        var r = Obj(e, "stRole"); if (r == null || N(r, "iUid") <= 0 || c >= MaxMembers) continue;
+        if (c++ > 0) sb.Append(',');
+        sb.Append("{\"uid\":").Append(L(N(r, "iUid"))).Append(",\"zone\":").Append(L(N(r, "iZoneId"))).Append(",\"a\":").Append(L(N(e, "iActive"))).Append('}');
+      }
+      sb.Append(']');
+    }
+
     // one member's damage map {boss id → {fights, dmg, prevDmg, last}}; fightKey = iFightNum (week) / iUseItemNum (classic)
     static void Damage(StringBuilder sb, object map, string fightKey, string fightsKey, string stageKey, int cap) {
       sb.Append('{'); bool first = true;
@@ -232,14 +324,15 @@ namespace RealmForge {
     /// <summary>The site's payload; null when there is no guild (no id, or no members).</summary>
     public const int MaxBytes = 200 * 1024;
     public static string Build(Dictionary<string, object> union, IList<Dictionary<string, object>> members, Dictionary<string, object> week,
-                               Dictionary<string, object> classic, long selfUid, long atMs, out bool refreshSoon, out int memberCount) {
-      string r = BuildCap(union, members, week, classic, selfUid, atMs, 6, out refreshSoon, out memberCount);
-      if (r != null && Encoding.UTF8.GetByteCount(r) > MaxBytes) r = BuildCap(union, members, week, classic, selfUid, atMs, 3, out refreshSoon, out memberCount);
+                               Dictionary<string, object> classic, long selfUid, long atMs, out bool refreshSoon, out int memberCount, GuildExtra extra = null) {
+      string r = BuildCap(union, members, week, classic, selfUid, atMs, 6, extra, out refreshSoon, out memberCount);
+      if (r != null && Encoding.UTF8.GetByteCount(r) > MaxBytes) r = BuildCap(union, members, week, classic, selfUid, atMs, 3, extra, out refreshSoon, out memberCount);
+      if (r != null && Encoding.UTF8.GetByteCount(r) > MaxBytes) r = BuildCap(union, members, week, classic, selfUid, atMs, 0, extra, out refreshSoon, out memberCount);
       return r;
     }
 
     static string BuildCap(Dictionary<string, object> union, IList<Dictionary<string, object>> members, Dictionary<string, object> week,
-                           Dictionary<string, object> classic, long selfUid, long atMs, int cap, out bool refreshSoon, out int memberCount) {
+                           Dictionary<string, object> classic, long selfUid, long atMs, int cap, GuildExtra extra, out bool refreshSoon, out int memberCount) {
       refreshSoon = false; memberCount = 0;
       long unionId = N(union, "iUnionId");
       if (unionId <= 0 || members == null || members.Count == 0) return null;
@@ -257,9 +350,33 @@ namespace RealmForge {
       var attr = Obj(union, "stBaseAttr");
       string name = Get(attr, "sUnionName") as string ?? "";
       if (name.Length > 40) name = name.Substring(0, 40);
-      sb.Append(",\"union\":{\"id\":").Append(L(unionId)).Append(",\"name\":").Append(MiniJson.Quote(name)).Append(",\"level\":").Append(OrNull(union, "iLevel", false)).Append('}');
+      sb.Append(",\"union\":{\"id\":").Append(L(unionId)).Append(",\"name\":").Append(MiniJson.Quote(name)).Append(",\"level\":").Append(OrNull(union, "iLevel", false));
+      if (Has(union, "iWeekActive")) sb.Append(",\"weekActive\":").Append(L(N(union, "iWeekActive")));
+      if (Has(union, "iSevenTotalActive")) sb.Append(",\"sevenActive\":").Append(L(N(union, "iSevenTotalActive")));
+      if (Has(union, "iCurDayTotalActive")) sb.Append(",\"dayActive\":").Append(L(N(union, "iCurDayTotalActive")));
+      sb.Append('}');
       sb.Append(",\"bosses\":{\"week\":"); Bosses(sb, week, nowSec, ref refreshSoon);
       sb.Append(",\"classic\":"); Bosses(sb, classic, nowSec, ref refreshSoon);
+      if (extra != null && (extra.TwoHp != null || extra.TwoRefresh != null)) {
+        var hps = IntKeyed(extra.TwoHp); var rfs = IntKeyed(extra.TwoRefresh);
+        var ids = new SortedDictionary<long, bool>();
+        foreach (var k in hps.Keys) ids[k] = true;
+        foreach (var k in rfs.Keys) ids[k] = true;
+        if (ids.Count > 0) {
+          sb.Append(",\"twoHeads\":["); bool f = true;
+          foreach (var id in ids.Keys) {
+            if (!f) sb.Append(','); f = false;
+            object hp, rf; long r;
+            hps.TryGetValue(id, out hp); rfs.TryGetValue(id, out rf);
+            bool hasRf = Try(rf, out r) && r > 0; long rfv = hasRf ? r : 0;
+            sb.Append("{\"id\":").Append(L(id)).Append(",\"refresh\":").Append(hasRf ? L(rfv) : "null");
+            if (Try(hp, out r)) sb.Append(",\"hp\":").Append(L(r));
+            sb.Append('}');
+            if (hasRf && rfv > nowSec && rfv - nowSec <= 3600) refreshSoon = true;
+          }
+          sb.Append(']');
+        }
+      }
       sb.Append("},\"members\":[");
       int n = 0;
       foreach (var m in members) {
@@ -273,11 +390,22 @@ namespace RealmForge {
           .Append(",\"post\":").Append(L(N(m, "iPostId"))).Append(",\"join\":").Append(OrNull(m, "iJoinTime", true))
           .Append(",\"logout\":").Append(OrNull(role, "iLogoutTime", false)).Append(",\"active7\":").Append(OrNull(m, "iSevenActive", false));
         long aw = ActiveWeek(m, nowSec); if (aw >= 0) sb.Append(",\"activeWeek\":").Append(L(aw));
+        ActiveDays(sb, m);
+        if (Has(m, "iTotalHistoryActive")) sb.Append(",\"activeTotal\":").Append(L(N(m, "iTotalHistoryActive")));
+        TwoHeads(sb, Get(m, "mTwoHeadsBossData"), cap);
         sb.Append(",\"week\":"); Damage(sb, Get(m, "mWeekBossData"), "iFightNum", "vvFightData", "mBoss3FightData", cap);
         sb.Append(",\"classic\":"); Damage(sb, Get(m, "mBossData"), "iUseItemNum", "vFightData", null, cap);
         sb.Append('}');
       }
-      sb.Append("]}");
+      sb.Append(']');
+      if (extra != null && ((extra.RankThis != null && extra.RankThis.Count > 0) || (extra.RankLast != null && extra.RankLast.Count > 0))) {
+        sb.Append(",\"activeRank\":{");
+        bool f = true;
+        if (extra.RankThis != null && extra.RankThis.Count > 0) { sb.Append("\"thisWeek\":"); Rank(sb, extra.RankThis); f = false; }
+        if (extra.RankLast != null && extra.RankLast.Count > 0) { if (!f) sb.Append(','); sb.Append("\"lastWeek\":"); Rank(sb, extra.RankLast); }
+        sb.Append('}');
+      }
+      sb.Append('}');
       memberCount = n;
       return n == 0 ? null : sb.ToString();
     }

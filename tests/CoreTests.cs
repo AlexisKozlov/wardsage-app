@@ -539,6 +539,42 @@ static class CoreTests {
     Check(json.Contains("\"name\":\"Bob\"") && !json.Substring(json.IndexOf("\"Bob\"")).Contains("activeWeek") && !json.Substring(json.IndexOf("\"Bob\"")).Contains("fightsDetail"), "no lists, no extra fields");
     Check(json.Contains("\"logout\":0,") && json.Contains("\"logout\":1789990000,"), "online = 0");
     Check(json.Contains("\"level\":null,\"power\":null,\"post\":4,\"join\":null"), "missing numbers are null: " + json);
+    // activity, Two-Heads boss, the weekly activity ranking
+    Check(!json.Contains("twoHeads") && !json.Contains("activeRank") && !json.Contains("weekActive"), "no extras, no extra fields");
+    Check(json.Contains("\"activeDays\":[{\"t\":1789990000,\"a\":10},{\"t\":1789900000,\"a\":20},{\"t\":1700000000,\"a\":999}]"), "activeDays lists all entries: " + json);
+    var m3 = Lt("stPlayerIdType", Lt("iZoneId", 4L, "iUid", 333L), "iPostId", 4L, "iTotalHistoryActive", 4321L,
+                "vSevenActive", LArr(Lt("iTime", 1789900000L, "iActive", 20L), Lt("iTime", 1789990000L, "iActive", 10L)),
+                "stRoleSimpleInf", Lt("sName", "Cy"),
+                "mTwoHeadsBossData", Lt("[101]", Lt("ulDamageNum", "7000000000", "ulPrevDamageNum", 5L, "uiFightNum", 2L,
+                    "vFightData", LArr(Lt("ulDamageNum", 900L, "vFightData", LArr(Lt("iHeroId", 2290L, "iLevel", 80L, "iStarLevel", 5L, "iDamageNum", 500L), Lt("iHeroId", 2301L, "iLevel", 79L, "iStarLevel", 4L, "iDamageNum", 400L))),
+                                       Lt("ulDamageNum", 0L, "vFightData", LArr())))));
+    var union2 = Lt("iUnionId", 55L, "iLevel", 7L, "stBaseAttr", Lt("sUnionName", "S"), "iWeekActive", 900L, "iSevenTotalActive", 5000L, "iCurDayTotalActive", 120L);
+    var extra = new GuildExtra {
+      TwoHp = Lt("[101]", 8000000000L, "[102]", "5"), TwoRefresh = Lt("[101]", 1790001800L),
+      RankThis = new List<Dictionary<string, object>> { Lt("stRole", Lt("iUid", 333L, "iZoneId", 4L), "iActive", 77L), Lt("iActive", 5L) },
+      RankLast = new List<Dictionary<string, object>>()
+    };
+    string j3 = GuildPayload.Build(union2, new List<Dictionary<string, object>> { m3 }, week, classic, 333L, now, out soon, out cnt, extra);
+    Check(j3 != null && MiniJson.TryParse(j3) != null, "extras: valid JSON " + j3);
+    Check(j3.Contains("\"level\":7,\"weekActive\":900,\"sevenActive\":5000,\"dayActive\":120}"), "union activity: " + j3);
+    Check(j3.Contains("\"activeDays\":[{\"t\":1789900000,\"a\":20},{\"t\":1789990000,\"a\":10}],\"activeTotal\":4321,"), "member activity: " + j3);
+    Check(j3.Contains("\"twoHeads\":{\"101\":{\"fights\":2,\"dmg\":7000000000,\"prevDmg\":5,\"fightsDetail\":[{\"dmg\":900,\"heroes\":[{\"id\":2290,\"lv\":80,\"star\":5,\"dmg\":500},{\"id\":2301,\"lv\":79,\"star\":4,\"dmg\":400}]}]}}"), "member twoHeads: " + j3);
+    Check(j3.Contains("\"twoHeads\":[{\"id\":101,\"refresh\":1790001800,\"hp\":8000000000},{\"id\":102,\"refresh\":null,\"hp\":5}]"), "twoHeads bosses: " + j3);
+    Check(soon, "a Two-Heads refresh within the hour is noticed");
+    Check(j3.Contains("\"activeRank\":{\"thisWeek\":[{\"uid\":333,\"zone\":4,\"a\":77}]}"), "activeRank only for loaded lists: " + j3);
+    var m4 = Lt("stPlayerIdType", Lt("iZoneId", 4L, "iUid", 444L), "stRoleSimpleInf", Lt("sName", "Di"), "mTwoHeadsBossData", Lt());
+    string j4 = GuildPayload.Build(union, new List<Dictionary<string, object>> { m4 }, week, classic, 444L, now, out soon, out cnt, new GuildExtra());
+    Check(j4 != null && !j4.Contains("twoHeads") && !j4.Contains("activeRank") && !j4.Contains("activeDays") && !j4.Contains("activeTotal"), "empty extras add nothing: " + j4);
+    // the size cap: many members with many attacks stay under 200 KB (the fight details are cut)
+    var many = new List<Dictionary<string, object>>();
+    for (int i = 0; i < 100; i++) {
+      var sq = new List<object>();
+      for (int k = 0; k < 6; k++) sq.Add(Lt("ulDamageNum", 1000L, "vFightData", LArr(Lt("iHeroId", 2290L, "iLevel", 80L, "iStarLevel", 5L, "iDamageNum", 500L), Lt("iHeroId", 2301L, "iLevel", 79L, "iStarLevel", 4L, "iDamageNum", 400L), Lt("iHeroId", 2302L, "iLevel", 79L, "iStarLevel", 4L, "iDamageNum", 100L))));
+      many.Add(Lt("stPlayerIdType", Lt("iZoneId", 4L, "iUid", 1000L + i), "stRoleSimpleInf", Lt("sName", "M" + i),
+                  "mTwoHeadsBossData", Lt("[101]", Lt("ulDamageNum", 1L, "uiFightNum", 6L, "vFightData", LArr(sq.ToArray())), "[102]", Lt("ulDamageNum", 1L, "uiFightNum", 6L, "vFightData", LArr(sq.ToArray())))));
+    }
+    string jm = GuildPayload.Build(union, many, week, classic, 1000L, now, out soon, out cnt, extra);
+    Check(jm != null && Encoding.UTF8.GetByteCount(jm) <= GuildPayload.MaxBytes, "payload under the cap: " + (jm == null ? 0 : jm.Length));
     bool s2; int c2;
     Check(GuildPayload.Build(union, new List<Dictionary<string, object>>(), week, classic, 111L, now, out s2, out c2) == null, "no members, no payload");
     Check(GuildPayload.Build(Lt(), new List<Dictionary<string, object>> { m1 }, week, classic, 111L, now, out s2, out c2) == null, "no union id, no payload");
@@ -1606,6 +1642,25 @@ static class CoreTests {
       if (sa != null && sa.Kind == AutoKind.Click) game.Click(sa.X, sa.Y);
     }
     Check(fps.State == "failed" && fps.Note.Length > 0, "side panel stuck open: failed with a note, not done (" + fps.State + ")");
+    // the game drops a filter that was set (the hero screen opened again) for the same item: the second pass gets fresh
+    // tries (live 10.10: the sub stat and side panel tries left from the first pass made it give up after two sub stats)
+    game = new FakeFilterGame(g, W, H) { SetList = sets, StatList = stats, SubList = subList };
+    var fpr = new FilterPilot(g);
+    var subs4 = new long[] { 24, 25, 19, 29 };
+    RunFilter(fpr, game, 722800, 13, false, true, subs4);
+    game.Side = true;   // the side panel opened again over the done filter: closed once more
+    RunFilter(fpr, game, 722800, 13, false, true, subs4);
+    game.Open = game.Side = game.SetSide = game.SubSide = false; game.Suits.Clear(); game.Mains.Clear(); game.Subs.Clear();
+    RunFilter(fpr, game, 722800, 13, false, true, subs4);
+    game.Subs.Sort();
+    Check(fpr.State == "done" && game.Suits.Count == 1 && game.Mains.Count == 1 && string.Join(",", game.Subs) == "19,24,25,29" && !game.Side,
+          "filter dropped by the game after it was set: set again in full (" + fpr.State + ", subs " + string.Join(",", game.Subs) + ")");
+    // dropped again and again: gives up after a few passes instead of clicking forever
+    for (int k = 0; k < 4; k++) {
+      game.Open = game.Side = game.SetSide = game.SubSide = false; game.Suits.Clear(); game.Mains.Clear(); game.Subs.Clear();
+      RunFilter(fpr, game, 722800, 13, false, true, subs4);
+    }
+    Check(fpr.State == "failed", "filter dropped over and over: failed after " + FilterPilot.MaxPasses + " passes (" + fpr.State + ")");
     // the item pilot: a side panel open over the list is closed first, the click is not counted
     var ap = new AutoPilot(new ListGeometry());
     var av = new AutoView { NowMs = 0, Foreground = true, H = 1009, Target = 77, Row = 2, Col = 1, SideClose = new[] { 1640.0, 91.0 } };
