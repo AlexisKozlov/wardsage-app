@@ -16,6 +16,7 @@
     plans: { status: 'idle', list: [], err: null }, sel: 0,
     scan: { status: 'idle', panel: false }, live: null, reported: {}, compact: false, overlay: 'off', hl: '',
     more: {}, autoSync: true, autoClick: false, autoConfirm: false, errorReports: false, autoUpdate: true, tray: true, autostart: false, auto: 'idle', autoAt: null,
+    news: { status: 'idle', feed: null, filter: 'all', at: 0 },
     run: null, seen: null, runKey: '', queue: [], takeOver: {},
     // storage cleanup: the site's list, the pilot's state on the game's sell screen
     sell: { list: null, run: false, state: '', selected: 0, missing: 0, extra: 0, seen: {} },
@@ -133,22 +134,42 @@
       <div class="modal-btns"><button class="btn-gold" data-act="updRestart">${esc(t('updRestart'))}</button><button class="btn-line" data-act="updLater">${esc(t('updLater'))}</button></div>
     </div></div>`;
   }
+  const store = (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } };
   function newsUnseen() {
     if (!S.version) return false;
-    try { return localStorage.getItem('rf.newsSeen') !== S.version; } catch (e) { return false; }
+    if (store('rf.newsSeen') !== S.version) return true;
+    return window.RFNews.siteUnseen(S.news.feed, store('rf.newsSeenSite'));
   }
-  function newsSeen() { try { localStorage.setItem('rf.newsSeen', S.version); } catch (e) { /* ignore */ } }
+  function newsSeen() {
+    try {
+      localStorage.setItem('rf.newsSeen', S.version);
+      const n = window.RFNews.newest(S.news.feed);
+      if (n) localStorage.setItem('rf.newsSeenSite', String(n));
+    } catch (e) { /* ignore */ }
+  }
+  // the unified feed comes from the site through the host (the page itself may not fetch); at most every 10 minutes
+  function loadNews(force) {
+    const n = S.news;
+    if (n.status === 'loading' || (!force && n.status === 'ok' && Date.now() - n.at < 600000)) return;
+    n.status = 'loading'; host.send({ cmd: 'news.fetch', lang: S.lang });
+  }
   function newsPage() {
-    const list = (window.RF_CHANGELOG || []).slice(0, 30);
+    const N = window.RFNews, n = S.news;
+    const all = N.entries(n.feed, window.RF_CHANGELOG, S.lang);
+    const list = N.filter(all, n.filter).slice(0, 30);
+    const offline = n.status !== 'loading' && !n.feed;
     const date = (d) => { const m = /^([0-9]{4})-([0-9]{2})-([0-9]{2})/.exec(d || ''); return m ? m[3] + '.' + m[2] + '.' + m[1] : d || ''; };
+    const tag = (x) => x.kind === 'app' ? `<span class="ntag app">${esc(t('newsTagApp') + (x.appVersion ? ' ' + x.appVersion : ''))}</span>` : `<span class="ntag">${esc(t('newsTagSite'))}</span>`;
+    const flt = (k, label) => `<button data-act="newsFilter" data-kind="${k}" aria-pressed="${n.filter === k}">${esc(label)}</button>`;
     return `
       <div class="head"><div><h1>${esc(t('newsTitle'))}</h1><p class="lead">${esc(t('newsLead'))}</p></div></div>
+      <div class="newsFilter"><div class="langs" role="group">${flt('all', t('newsAll'))}${flt('app', t('newsApp'))}${flt('site', t('newsSite'))}</div></div>
+      ${offline ? `<p class="newsNote">${esc(t('newsOffline'))}</p>` : ''}
       <div class="stack">${list.map((e) => {
-        const own = S.lang === 'en' ? e.en : e.ru, other = S.lang === 'en' ? e.ru : e.en;
-        const lines = own && own.length ? own : other || [];
-        return `<div class="card news"><div class="news-head"><b>${esc(t('newsVer', e.v))}</b><span>${esc(date(e.date))}</span>${e.v === S.version ? `<em>${esc(t('newsYours'))}</em>` : ''}</div>
-          <ul>${lines.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></div>`;
-      }).join('')}</div>`;
+        const mine = e.src === 'app' && e.v === S.version;
+        return `<div class="card news"><div class="news-head"><b>${esc(e.src === 'site' ? t('newsSiteVer', e.v) : t('newsVer', e.v))}</b><span>${esc(date(e.date))}</span>${mine ? `<em>${esc(t('newsYours'))}</em>` : ''}</div>
+          <ul>${e.items.map((x) => `<li>${tag(x)}${esc(x.text)}</li>`).join('')}</ul></div>`;
+      }).join('')}${list.length ? '' : `<p class="newsNote">${esc(t('newsEmpty'))}</p>`}</div>`;
   }
 
   // ---------------------------------------------------------------- sync
@@ -610,10 +631,11 @@
     const a = el.dataset.act;
     if (a === 'nav') {
       S.page = el.dataset.page; S.editCode = false;
-      if (S.page === 'news') newsSeen();
+      if (S.page === 'news') { newsSeen(); loadNews(false); }
       if (S.page === 'equip' && S.plans.status === 'idle') loadPlans();
       render();
-    } else if (a === 'lang') { S.lang = el.dataset.lang; host.send({ cmd: 'setLang', lang: S.lang }); render(); }
+    } else if (a === 'lang') { S.lang = el.dataset.lang; host.send({ cmd: 'setLang', lang: S.lang }); loadNews(true); render(); }
+    else if (a === 'newsFilter') { S.news.filter = el.dataset.kind; render(); }
     else if (a === 'battleCapture') { host.send({ cmd: 'battle.capture' }); toast(t('battleReading'), 4000); }
     else if (a === 'sync') { S.sync = { phase: 'run', stage: 'find', seconds: 0 }; host.send({ cmd: 'sync' }); render(); }
     else if (a === 'saveOnly') { S.sync = { phase: 'run', stage: 'find', seconds: 0 }; host.send({ cmd: 'sync', saveOnly: true }); S.page = 'sync'; render(); }
@@ -695,7 +717,12 @@
         if (m.game) S.game = m.game;
         if (m.codeSaved) { S.editCode = false; toast(t('saved')); if (S.page === 'equip' || S.plans.status !== 'idle') loadPlans(); }
         if (m.siteSaved) toast(t('saved'));
-        S.ready = true; render(); break;
+        S.ready = true; loadNews(false); render(); break;
+      case 'news':
+        S.news.at = Date.now();
+        if (m.ok && Array.isArray(m.feed) && m.feed.length) { S.news.status = 'ok'; S.news.feed = m.feed; if (S.page === 'news') newsSeen(); }
+        else { S.news.status = 'error'; }
+        render(); break;
       case 'game': {
         const was = S.game.running; S.game = { running: m.running, version: m.version };
         render();

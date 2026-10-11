@@ -1300,6 +1300,9 @@ static class CoreTests {
     Check(p.Steps.Count == 3 && p.Steps[0].X == 0 && p.Steps[0].Dir == 1 && p.Steps[2].Bench && p.Steps[2].X == -1, "steps with tiles, reserve without");
     Check(p.Hold == 10 && p.HoldU.Contains(300) && p.Pts == 8726, "ultimate advice");
     Eq(PlansStatus.InvalidToken, FightPlanClient.Interpret(401, "{}").Status, "401");
+    var feedOk = "[{\"v\":132,\"date\":\"2026-10-11\",\"items\":[{\"text\":\"x\",\"kind\":\"site\"}]}]";
+    Check(NewsClient.Interpret(200, feedOk) == feedOk && NewsClient.Interpret(500, feedOk) == null && NewsClient.Interpret(200, "{}") == null
+      && NewsClient.Interpret(200, "[]") == null && NewsClient.Interpret(200, "[{\"v\":1}]") == null && NewsClient.Interpret(200, "<html>") == null, "news feed parsing");
     Check(FightPlanClient.For(r.Plans, 5001007, new HashSet<long> { 200 }) == p && FightPlanClient.For(r.Plans, 1, null) == null, "plan by stage");
 
     FightStep next, wrong; int wx, wy;

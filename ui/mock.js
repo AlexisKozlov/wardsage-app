@@ -1,6 +1,6 @@
 // Development only: a fake host for previewing the interface in a normal browser (no WebView2).
 // Inert inside Wardsage.exe (window.chrome.webview exists there). Scenario: index.html?s=<name>
-//   onboard | idle | reading | done | error | equip | pick | rel | selected | hidden | done-plan | compact | settings | en
+//   onboard | idle | reading | done | error | equip | pick | rel | selected | hidden | done-plan | compact | settings | news | newsoff | en
 (function () {
   if (window.chrome && window.chrome.webview) return;
   const q = new URLSearchParams(location.search);
@@ -51,6 +51,19 @@
           setTimeout(() => document.querySelector('[data-page=equip]').click(), 20);
         }
         if (s === 'settings') setTimeout(() => document.querySelector('[data-page=settings]').click(), 20);
+        if (s === 'news' || s === 'newsoff') setTimeout(() => document.querySelector('[data-page=news]').click(), 20);
+      } else if (m.cmd === 'news.fetch') {
+        // s=newsoff: the site cannot be reached (the built-in list shows)
+        if (s === 'newsoff') emit({ ev: 'news', ok: false });
+        else emit({ ev: 'news', ok: true, feed: [
+          { v: 132, date: '2026-10-11', items: [
+            { text: 'Гильдия (бета): кто ударил Матрицу и гильдейского босса на этой неделе, лучшие составы гильдии.', kind: 'site' },
+            { text: 'файл называется Wardsage.exe (переименуется сам вместе с ярлыками).', kind: 'app', appVersion: '1.6.56' },
+            { text: 'Мобильная шапка и меню стали компактнее.', kind: 'site' } ] },
+          { v: 131, date: '2026-10-10', items: [
+            { text: 'новое название Wardsage и адрес wardsage.com (обновление ставится само).', kind: 'app', appVersion: '1.6.55' },
+            { text: 'крестик прячет программу в трей, а сворачивание оставляет её на панели задач.', kind: 'app', appVersion: '1.6.55' } ] },
+          { v: 130, date: '2026-10-09', items: [{ text: 'Арена: подсказки по соперникам обновлены.', kind: 'site' }] } ] });
       } else if (m.cmd === 'plans.load') {
         emit({ ev: 'plans', status: 'ok', plans });
       } else if (m.cmd === 'equip.scan') {

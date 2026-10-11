@@ -437,6 +437,11 @@ body.compact .say p { font-size: 16px }
 .nav .newdot { margin-left: auto; width: 9px; height: 9px; border-radius: 50%; background: var(--gold); box-shadow: 0 0 8px var(--gold) }
 
 /* ---------- what's new ---------- */
+.newsFilter { margin: -4px 0 14px }
+.newsFilter .langs button { padding: 7px 16px; font-size: 13px }
+.newsNote { margin: 0 0 12px; color: var(--muted); font-size: 13px }
+.ntag { display: inline; white-space: nowrap; margin-right: 8px; padding: 2px 6px; border: 1px solid var(--line); border-radius: 3px; font: 700 10px var(--display); letter-spacing: 1px; text-transform: uppercase; color: var(--dim) }
+.ntag.app { border-color: var(--gold2); color: var(--gold) }
 .news-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 10px }
 .news-head b { font: 700 16px var(--display); color: var(--gold) }
 .news-head span { color: var(--muted); font-size: 13px }

@@ -2,7 +2,7 @@
 window.RF_TEXTS = {
   ru: {
     tagline: 'Помощник игрока',
-    navSync: 'Синхронизация', navEquip: 'Переодевание', navSettings: 'Настройки', navNews: 'Что нового', newsTitle: 'Что нового', newsLead: 'Изменения программы по версиям.', newsVer: 'Версия {0}', newsYours: 'у тебя',
+    navSync: 'Синхронизация', navEquip: 'Переодевание', navSettings: 'Настройки', navNews: 'Что нового', newsTitle: 'Что нового', newsLead: 'Изменения программы и сайта по версиям.', newsVer: 'Версия {0}', newsSiteVer: 'Сайт · версия {0}', newsAll: 'Всё', newsApp: 'Программа', newsSite: 'Сайт', newsTagApp: 'Программа', newsTagSite: 'Сайт', newsOffline: 'Нет связи с сайтом — показаны изменения программы.', newsEmpty: 'Здесь пока ничего нет.', newsYours: 'у тебя',
     gameOn: 'Игра запущена', gameOff: 'Игра не запущена', gameVer: 'игра {0}', appVer: 'Wardsage {0}',
 
     syncTitle: 'Синхронизация', syncLead: 'Программа читает героев и снаряжение из запущенной игры и отправляет снимок в твой профиль на сайте.',
@@ -124,7 +124,7 @@ window.RF_TEXTS = {
   },
   en: {
     tagline: 'Player companion',
-    navSync: 'Sync', navEquip: 'Equip', navSettings: 'Settings', navNews: "What's new", newsTitle: "What's new", newsLead: "The program's changes by version.", newsVer: 'Version {0}', newsYours: 'yours',
+    navSync: 'Sync', navEquip: 'Equip', navSettings: 'Settings', navNews: "What's new", newsTitle: "What's new", newsLead: "Changes of the program and the site, by version.", newsVer: 'Version {0}', newsSiteVer: 'Site · version {0}', newsAll: 'All', newsApp: 'App', newsSite: 'Site', newsTagApp: 'App', newsTagSite: 'Site', newsOffline: 'No connection to the site — showing the app’s changes.', newsEmpty: 'Nothing here yet.', newsYours: 'yours',
     gameOn: 'Game running', gameOff: 'Game not running', gameVer: 'game {0}', appVer: 'Wardsage {0}',
 
     syncTitle: 'Sync', syncLead: 'The app reads your heroes and gear from the running game and sends a snapshot to your profile on the site.',
