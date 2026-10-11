@@ -40,6 +40,8 @@ namespace RealmForge {
       Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
       Application.ThreadException += (s, e) => Fatal(e.Exception);
       AppDomain.CurrentDomain.UnhandledException += (s, e) => Fatal(e.ExceptionObject as Exception);
+      // a forgotten task that failed: never a box, never a crash - logged and reported
+      System.Threading.Tasks.TaskScheduler.UnobservedTaskException += (s, e) => { e.SetObserved(); Quiet(e.Exception); };
 
       try { Unpack(); }
       catch (Exception e) { Fatal(e); return 1; }
@@ -129,12 +131,25 @@ namespace RealmForge {
     /// <summary>Sends an unhandled exception to the site when the player turned the error reports on (set by HostBridge).</summary>
     internal static Action<Exception> FatalReport;
 
-    internal static void Fatal(Exception e) {
+    /// <summary>Logs and reports an error without a message box (the program goes on).</summary>
+    static void Quiet(Exception e) {
+      try { Log.Write("ERROR (no box) " + (e == null ? "unknown" : e.ToString())); } catch (Exception) { }
+      var fr = FatalReport;
+      if (fr != null && e != null) try { fr(e); } catch (Exception) { }
+    }
+
+    internal static void Fatal(Exception e) { Fatal(e, null); }
+
+    /// <summary>An unhandled error: logged, reported, and (unless it is only an aborted WebView2 call) shown to the player;
+    /// <paramref name="friendly"/> replaces the technical text of the box.</summary>
+    internal static void Fatal(Exception e, string friendly) {
+      // «Operation aborted» (E_ABORT) from a WebView2 call: the browser is restarting or closing - nothing to tell the player
+      if (friendly == null && e != null && WebViewRecovery.IsAbort(e)) { Quiet(e); return; }
       string msg = e == null ? "unknown error" : e.GetType().Name + ": " + e.Message;
       try { Log.Write("FATAL " + (e == null ? msg : e.ToString())); } catch (Exception) { }
       var fr = FatalReport;
       if (fr != null && e != null) try { fr(e); } catch (Exception) { }
-      MessageBox.Show(Channel.ProductName + ": " + msg, Channel.ProductName, MessageBoxButtons.OK, MessageBoxIcon.Error);
+      MessageBox.Show(friendly ?? (Channel.ProductName + ": " + msg), Channel.ProductName, MessageBoxButtons.OK, MessageBoxIcon.Error);
     }
   }
 

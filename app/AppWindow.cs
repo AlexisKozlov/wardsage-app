@@ -57,7 +57,8 @@ namespace RealmForge {
 
   sealed class AppWindow : Form {
     const string AppHost = "app.realmforge";
-    readonly WebView2 web = new WebView2();
+    WebView2 web = new WebView2();
+    readonly RecoveryLimiter recoveries = new RecoveryLimiter(5, TimeSpan.FromMinutes(10));
     HostBridge bridge;
     Rectangle normalBounds;
     FormWindowState normalState;
@@ -85,8 +86,7 @@ namespace RealmForge {
       StartPosition = FormStartPosition.CenterScreen;
       RestoreAfterUpdate();
       try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch (Exception) { }
-      web.Dock = DockStyle.Fill;
-      web.DefaultBackgroundColor = Color.FromArgb(11, 16, 27);
+      PrepareWeb(web);
       Controls.Add(web);
       Load += async (s, e) => await Init();
       SetupTray();
@@ -168,41 +168,109 @@ namespace RealmForge {
       } catch (Exception e) { Log.Write("restart state: " + e.Message); }
     }
 
-    async System.Threading.Tasks.Task Init() {
-      try {
-        var env = await CoreWebView2Environment.CreateAsync(null, Program.DataDir, null);
-        await web.EnsureCoreWebView2Async(env);
-        var core = web.CoreWebView2;
-        var st = core.Settings;
-        bool dev = Environment.GetEnvironmentVariable("REALMFORGE_DEVTOOLS") == "1";
-        st.AreDevToolsEnabled = dev;
-        st.AreDefaultContextMenusEnabled = dev;
-        st.IsZoomControlEnabled = false;
-        st.IsStatusBarEnabled = false;
-        st.AreBrowserAcceleratorKeysEnabled = dev;
-        st.IsGeneralAutofillEnabled = false;
-        st.IsPasswordAutosaveEnabled = false;
-        core.SetVirtualHostNameToFolderMapping(AppHost, Program.UiDir, CoreWebView2HostResourceAccessKind.Deny);
-        // only our own page may load in the window; links go to the user's browser
-        core.NavigationStarting += (s, e) => {
-          Uri u;
-          if (Uri.TryCreate(e.Uri, UriKind.Absolute, out u) && u.Host == AppHost) return;
-          e.Cancel = true;
-          Shell.OpenUrl(e.Uri);
-        };
-        core.NewWindowRequested += (s, e) => { e.Handled = true; Shell.OpenUrl(e.Uri); };
-        bridge = new HostBridge(this, core);
-        core.WebMessageReceived += (s, e) => {
-          string json = null;
-          try { json = e.WebMessageAsJson; } catch (Exception) { }
-          if (json != null) bridge.OnMessage(json);
-        };
-        core.Navigate("https://" + AppHost + "/index.html");
-      } catch (Exception e) {
-        Program.Fatal(e);
-        exiting = true;
-        Close();
+    static void PrepareWeb(WebView2 w) {
+      w.Dock = DockStyle.Fill;
+      w.DefaultBackgroundColor = Color.FromArgb(11, 16, 27);
+    }
+
+    // a fresh WebView2 control in place of the current one (a control whose start failed or whose browser died is not reused)
+    void ReplaceWeb() {
+      var old = web;
+      var w = new WebView2();
+      PrepareWeb(w);
+      Controls.Add(w);
+      web = w;
+      try { Controls.Remove(old); } catch (Exception) { }
+      try { old.Dispose(); } catch (Exception) { }
+    }
+
+    // The start of the built-in browser. Windows may start the program before it can run it (autostart after a reboot, a
+    // wake from sleep): the start then fails with «Operation aborted» (E_ABORT) and the like. Such errors are retried for
+    // about 10 minutes (2, 5, 15, 30 s, then every minute) with a fresh control; only then the player is told.
+    async System.Threading.Tasks.Task Init(bool fresh = false) {
+      Exception last = null;
+      for (int attempt = 1; ; attempt++) {
+        if (IsDisposed || exiting) return;
+        last = null;
+        try { await StartWeb(fresh || attempt > 1); return; }
+        catch (Exception e) { last = e; }
+        bool retry = WebViewRecovery.IsTransient(last) && attempt <= WebViewRecovery.MaxRetries;
+        Log.Write("WebView2 start " + attempt + " failed: " + last.GetType().Name + " " + WebViewRecovery.HResultHex(last) + " " + last.Message + (retry ? " - retrying" : " - giving up"));
+        if (!retry) break;
+        await System.Threading.Tasks.Task.Delay(WebViewRecovery.DelayMs(attempt));
       }
+      GiveUp(last);
+    }
+
+    void GiveUp(Exception e) {
+      Program.Fatal(e, WebViewRecovery.FriendlyMessage(AppConfig.Load().Lang, e));
+      exiting = true;
+      Close();
+    }
+
+    async System.Threading.Tasks.Task StartWeb(bool fresh) {
+      if (fresh) ReplaceWeb();
+      // WebView2 needs the control's window; a form that started hidden in the tray has it too, but make sure
+      if (!web.IsHandleCreated) { web.CreateControl(); var h = web.Handle; }
+      var env = await CoreWebView2Environment.CreateAsync(null, Program.DataDir, null);
+      await web.EnsureCoreWebView2Async(env);
+      var core = web.CoreWebView2;
+      var st = core.Settings;
+      bool dev = Environment.GetEnvironmentVariable("REALMFORGE_DEVTOOLS") == "1";
+      st.AreDevToolsEnabled = dev;
+      st.AreDefaultContextMenusEnabled = dev;
+      st.IsZoomControlEnabled = false;
+      st.IsStatusBarEnabled = false;
+      st.AreBrowserAcceleratorKeysEnabled = dev;
+      st.IsGeneralAutofillEnabled = false;
+      st.IsPasswordAutosaveEnabled = false;
+      core.SetVirtualHostNameToFolderMapping(AppHost, Program.UiDir, CoreWebView2HostResourceAccessKind.Deny);
+      // only our own page may load in the window; links go to the user's browser
+      core.NavigationStarting += (s, e) => {
+        Uri u;
+        if (Uri.TryCreate(e.Uri, UriKind.Absolute, out u) && u.Host == AppHost) return;
+        e.Cancel = true;
+        Shell.OpenUrl(e.Uri);
+      };
+      core.NewWindowRequested += (s, e) => { e.Handled = true; Shell.OpenUrl(e.Uri); };
+      if (bridge != null) { try { bridge.Dispose(); } catch (Exception) { } bridge = null; }
+      var br = new HostBridge(this, core);
+      bridge = br;
+      core.WebMessageReceived += (s, e) => {
+        string json = null;
+        try { json = e.WebMessageAsJson; } catch (Exception) { }
+        if (json != null) br.OnMessage(json);
+      };
+      core.ProcessFailed += (s, e) => OnProcessFailed(core, e);
+      core.Navigate("https://" + AppHost + "/index.html");
+    }
+
+    bool recovering;
+
+    // the browser's processes died: a page process is reloaded, the browser process is started anew (the control is replaced)
+    void OnProcessFailed(CoreWebView2 from, CoreWebView2ProcessFailedEventArgs e) {
+      var kind = e.ProcessFailedKind;
+      Log.Write("WebView2 process failed: " + kind + ", exit " + e.ExitCode);
+      if (exiting || IsDisposed || web == null || web.CoreWebView2 != from) return;   // or an older, already replaced browser
+      bool browser = kind == CoreWebView2ProcessFailedKind.BrowserProcessExited;
+      bool render = kind == CoreWebView2ProcessFailedKind.RenderProcessExited || kind == CoreWebView2ProcessFailedKind.RenderProcessUnresponsive
+                    || kind == CoreWebView2ProcessFailedKind.FrameRenderProcessExited;
+      if (!browser && !render) return;
+      if (recovering) return;
+      if (!recoveries.TryAcquire(DateTime.UtcNow)) {
+        Log.Write("WebView2: too many recoveries, giving up");
+        BeginInvoke((Action)(() => GiveUp(new InvalidOperationException("WebView2 process failed: " + kind))));
+        return;
+      }
+      if (render) {
+        try { from.Reload(); } catch (Exception ex) { Log.Write("WebView2 reload: " + ex.Message); }
+        return;
+      }
+      recovering = true;
+      BeginInvoke((Action)(async () => {
+        try { await Init(true); }
+        finally { recovering = false; }
+      }));
     }
 
     // «Поверх игры»: a small always-on-top window at the right edge of the screen, and back.

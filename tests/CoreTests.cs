@@ -409,6 +409,29 @@ static class CoreTests {
     GuildTests();
     GamePacksTests();
 
+    // ---- WebViewRecovery
+    Console.WriteLine("WebView2 recovery");
+    Eq(2000, WebViewRecovery.DelayMs(1), "first retry waits 2 s");
+    Eq(30000, WebViewRecovery.DelayMs(4), "fourth retry waits 30 s");
+    Eq(60000, WebViewRecovery.DelayMs(5), "then a minute");
+    Eq(60000, WebViewRecovery.DelayMs(99), "still a minute");
+    { long total = 0; for (int i = 1; i <= WebViewRecovery.MaxRetries; i++) total += WebViewRecovery.DelayMs(i); Check(total >= 540000 && total <= 660000, "the retries add up to about 10 minutes (" + total / 1000 + " s)"); }
+    var abort = new System.Runtime.InteropServices.COMException("Operation aborted", WebViewRecovery.E_ABORT);
+    Check(WebViewRecovery.IsTransient(abort), "E_ABORT is transient");
+    Check(WebViewRecovery.IsAbort(abort), "E_ABORT is an abort");
+    Check(WebViewRecovery.IsTransient(new System.Runtime.InteropServices.COMException("x", unchecked((int)0x80070005))), "another COMException is transient");
+    Check(WebViewRecovery.IsTransient(new InvalidOperationException("x")), "InvalidOperationException is transient");
+    Check(!WebViewRecovery.IsTransient(new ArgumentException("x")), "other errors are permanent");
+    Check(!WebViewRecovery.IsAbort(new System.Runtime.InteropServices.COMException("x", unchecked((int)0x80070005))), "another HRESULT is not an abort");
+    Check(WebViewRecovery.IsTransient(new AggregateException(abort)), "an AggregateException is unwrapped");
+    Eq("0x80004004", WebViewRecovery.HResultHex(abort), "HRESULT in hex");
+    Check(WebViewRecovery.FriendlyMessage("ru", abort).StartsWith("Не удалось") && WebViewRecovery.FriendlyMessage("en", abort).StartsWith("Could not"), "friendly message in both languages");
+    { var lim = new RecoveryLimiter(5, TimeSpan.FromMinutes(10)); var t0 = new DateTime(2026, 1, 1, 8, 0, 0); int ok = 0;
+      for (int i = 0; i < 7; i++) if (lim.TryAcquire(t0.AddSeconds(i))) ok++;
+      Eq(5, ok, "at most 5 recoveries in 10 minutes");
+      Check(!lim.TryAcquire(t0.AddMinutes(9)), "still blocked after 9 minutes");
+      Check(lim.TryAcquire(t0.AddMinutes(11)), "allowed again after the window passed"); }
+
     Console.WriteLine();
     Console.WriteLine(passed + " passed, " + failed + " failed");
     return failed == 0 ? 0 : 1;

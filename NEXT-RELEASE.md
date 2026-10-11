@@ -14,7 +14,9 @@ Optional `### Heading` lines inside a `## RU` / `## EN` section split the update
 ## RU
 
 - Программа сообщает сайту, какие обновления игры скачаны (только адреса файлов обновлений из журнала игры) — чтобы данные сайта обновлялись быстрее.
+- Окно программы больше не падает с ошибкой «Operation aborted», если Windows запустила программу после перезагрузки или сна: встроенный браузер перезапускается сам.
 
 ## EN
 
 - The app tells the site which game updates were downloaded (only the update file addresses from the game's log), so the site's data updates sooner.
+- The app window no longer fails with “Operation aborted” when Windows starts it after a reboot or sleep: the built-in browser restarts by itself.
