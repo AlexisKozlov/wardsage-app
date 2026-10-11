@@ -407,6 +407,7 @@ static class CoreTests {
 
     ArenaOppTests();
     GuildTests();
+    GamePacksTests();
 
     Console.WriteLine();
     Console.WriteLine(passed + " passed, " + failed + " failed");
@@ -501,6 +502,28 @@ static class CoreTests {
     Eq(PlansStatus.Ok, ArenaClient.Interpret(200, "{\"ok\":true}", out det), "200 ok");
     Eq(PlansStatus.InvalidToken, ArenaClient.Interpret(401, "{\"ok\":false,\"error\":\"invalid_token\"}", out det), "401");
     Check(ArenaClient.Interpret(422, "{\"ok\":false,\"error\":\"invalid_payload\",\"details\":[\"opponents: bad\"]}", out det) == PlansStatus.Unexpected && det != null && det.Contains("opponents: bad"), "422 details: " + det);
+  }
+
+  static void GamePacksTests() {
+    Console.WriteLine("Game packs");
+    string hot = "http://akmcdn.ztdheros.com/pc_res_hotfix5/829.1/zg_hotfix_2372_ziyi_20260914_1_hotfix.tgrp";
+    string lang = "http://akmcdn.ztdheros.com/pc_res_version5/out/829.1/zg_languages_20260911142512.tgrp";
+    string add = "http://alxcdn.ztdheros.com/pc_res_version5/out/829.1/zg_addres20260910132436464113_829.1.tgrp";
+    string log =
+      "I20261011 10:20:34.918098 24128 windows_platform.cpp:147] init TGRP. url = " + hot + ", time = 0, index = 0\n" +
+      "I20261011 10:20:35.000000 24128 windows_platform.cpp:147] init TGRP. url = " + lang + ", time = 0, index = 1\r\n" +
+      "I20261011 10:20:35.100000 24128 x.cpp:1] init TGRP. url = http://evil.example.com/pc_res_hotfix5/829.1/zg_a.tgrp, time = 0\n" +
+      "I20261011 10:20:35.200000 24128 x.cpp:1] url = http://akmcdn.ztdheros.com/other/829.1/zg_a.tgrp\n" +
+      "I20261011 10:20:35.300000 24128 x.cpp:1] init TGRP. url = " + hot + ", time = 0, index = 0\n" +
+      "I20261011 10:20:35.400000 24128 x.cpp:1] url = " + add + "\n";
+    var urls = GamePacks.ParseLog(log);
+    Eq(3, urls.Count, "game packs: three valid, distinct addresses");
+    Check(urls.Count == 3 && urls[0] == hot && urls[1] == lang && urls[2] == add, "game packs: first-seen order");
+    Eq(0, GamePacks.ParseLog("").Count, "game packs: empty log");
+    Eq(0, GamePacks.ParseLog(null).Count, "game packs: no log");
+    Eq("{\"v\":1,\"urls\":[\"" + hot + "\",\"" + lang + "\"]}", GamePacks.Json(new List<string> { hot, lang }), "game packs: json");
+    Eq("{\"v\":1,\"urls\":[]}", GamePacks.Json(new List<string>()), "game packs: empty json");
+    Check(GamePacks.ReadLogs() != null, "game packs: reading the logs never throws");
   }
 
   static void GuildTests() {

@@ -13,4 +13,8 @@ Optional `### Heading` lines inside a `## RU` / `## EN` section split the update
 
 ## RU
 
+- Программа сообщает сайту, какие обновления игры скачаны (только адреса файлов обновлений из журнала игры) — чтобы данные сайта обновлялись быстрее.
+
 ## EN
+
+- The app tells the site which game updates were downloaded (only the update file addresses from the game's log), so the site's data updates sooner.

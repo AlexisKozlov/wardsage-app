@@ -57,7 +57,8 @@ namespace RealmForge {
       if (string.IsNullOrEmpty(cfg.Site)) cfg.Site = SyncClient.DefaultSite;
       arenaWatch = new ArenaWatch(() => cfg.Site, () => cfg.Code);
       guildWatch = new GuildWatch(() => cfg.Site, () => cfg.Code);
-      gameTimer.Interval = 2000; gameTimer.Tick += (s, e) => { CheckGame(false); WatchBattleEnd(); WatchStall(); arenaWatch.Tick(gameRunning); guildWatch.Tick(gameRunning); TraceStartTick(); TryAutoUpdate(); }; gameTimer.Start();
+      packsWatch = new PacksWatch(() => cfg.Site, () => cfg.Code);
+      gameTimer.Interval = 2000; gameTimer.Tick += (s, e) => { CheckGame(false); WatchBattleEnd(); WatchStall(); arenaWatch.Tick(gameRunning); guildWatch.Tick(gameRunning); packsWatch.Tick(gameRunning); TraceStartTick(); TryAutoUpdate(); }; gameTimer.Start();
       liveTimer.Interval = 400; liveTimer.Tick += (s, e) => PollLive();
       overlay = new OverlayController(st => Post("{\"ev\":\"overlay\",\"state\":" + S(st) + "}"),
                                       st => { Post("{\"ev\":\"auto\",\"state\":" + S(st) + "}"); OnAutoState(st); },
@@ -377,6 +378,7 @@ namespace RealmForge {
     // and opponent, read at its start (src/ArenaOpponents.cs) and kept with the fight as "arenaInfo"
     ArenaWatch arenaWatch;
     GuildWatch guildWatch;   // the guild table to the site (app/GuildWatch.cs)
+    PacksWatch packsWatch;   // the downloaded game update packs' addresses to the site (app/PacksWatch.cs)
     volatile string arenaInfo; volatile int arenaInfoStage;
     FightRecorder arenaTaken;
     void WatchBattleEnd() {
