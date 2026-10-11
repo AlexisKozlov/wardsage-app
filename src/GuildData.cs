@@ -354,6 +354,8 @@ namespace RealmForge {
       if (Has(union, "iWeekActive")) sb.Append(",\"weekActive\":").Append(L(N(union, "iWeekActive")));
       if (Has(union, "iSevenTotalActive")) sb.Append(",\"sevenActive\":").Append(L(N(union, "iSevenTotalActive")));
       if (Has(union, "iCurDayTotalActive")) sb.Append(",\"dayActive\":").Append(L(N(union, "iCurDayTotalActive")));
+      if (N(attr, "iBannerId") > 0) sb.Append(",\"bannerId\":").Append(L(N(attr, "iBannerId")));
+      if (N(attr, "iBannerBgId") > 0) sb.Append(",\"bannerBgId\":").Append(L(N(attr, "iBannerBgId")));
       sb.Append('}');
       sb.Append(",\"bosses\":{\"week\":"); Bosses(sb, week, nowSec, ref refreshSoon);
       sb.Append(",\"classic\":"); Bosses(sb, classic, nowSec, ref refreshSoon);

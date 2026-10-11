@@ -560,6 +560,10 @@ static class CoreTests {
     Check(j3.Contains("\"activeDays\":[{\"t\":1789900000,\"a\":20},{\"t\":1789990000,\"a\":10}],\"activeTotal\":4321,"), "member activity: " + j3);
     Check(j3.Contains("\"twoHeads\":{\"101\":{\"fights\":2,\"dmg\":7000000000,\"prevDmg\":5,\"fightsDetail\":[{\"dmg\":900,\"heroes\":[{\"id\":2290,\"lv\":80,\"star\":5,\"dmg\":500},{\"id\":2301,\"lv\":79,\"star\":4,\"dmg\":400}]}]}}"), "member twoHeads: " + j3);
     Check(j3.Contains("\"twoHeads\":[{\"id\":101,\"refresh\":1790001800,\"hp\":8000000000},{\"id\":102,\"refresh\":null,\"hp\":5}]"), "twoHeads bosses: " + j3);
+    Check(!j3.Contains("bannerId") && !j3.Contains("bannerBgId"), "no banner when absent");
+    var union3 = Lt("iUnionId", 55L, "iLevel", 7L, "stBaseAttr", Lt("sUnionName", "S", "iBannerId", 12L, "iBannerBgId", 0L));
+    string jb = GuildPayload.Build(union3, new List<Dictionary<string, object>> { m3 }, week, classic, 333L, now, out soon, out cnt);
+    Check(jb != null && jb.Contains("\"level\":7,\"bannerId\":12}") && !jb.Contains("bannerBgId"), "banner id only when > 0: " + jb);
     Check(soon, "a Two-Heads refresh within the hour is noticed");
     Check(j3.Contains("\"activeRank\":{\"thisWeek\":[{\"uid\":333,\"zone\":4,\"a\":77}]}"), "activeRank only for loaded lists: " + j3);
     var m4 = Lt("stPlayerIdType", Lt("iZoneId", 4L, "iUid", 444L), "stRoleSimpleInf", Lt("sName", "Di"), "mTwoHeadsBossData", Lt());
