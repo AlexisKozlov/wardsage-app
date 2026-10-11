@@ -12,21 +12,5 @@ ProductVersion → `node tools/release-app.mjs --key D:/RealmForge/keys/realmfor
 Optional `### Heading` lines inside a `## RU` / `## EN` section split the update window's notes into titled groups (the headings are left out of the «What's new» page).
 
 ## RU
-- «Что нового» показывает изменения и программы, и сайта в одном списке, с фильтром.
-- Настройки разложены по разделам, подробности — по «Подробнее».
-- Окно новой версии: список изменений по пунктам, кнопки в стиле игры.
-- Программа сама переименовывает файл в Wardsage.exe и обновляет название в списке приложений Windows, ярлыки и автозапуск.
-- Программа отправляет на сайт таблицу гильдии: атаки и урон участников по Матрице и гильдейскому боссу, здоровье босса и составы атак, активность участников и «Павший завет» (для страницы «Гильдия»).
-- Запись боёв арены: время зачистки раунда больше не отмечается раньше времени, когда враги в волне выходят пачками.
-- Помощник с экипировкой: если игра сбросила уже выставленный фильтр (например, после повторного открытия героя), фильтр выставляется заново полностью, а не обрывается на середине с ошибкой.
-- Новый логотип Wardsage — сова.
 
 ## EN
-- “What’s new” shows the changes of both the app and the site in one list, with a filter.
-- Settings are split into sections, the details are under “More”.
-- The new version window: changes as a list, buttons in the game's style.
-- The app renames its file to Wardsage.exe by itself and updates its name in the Windows apps list, the shortcuts and autostart.
-- The app sends the guild table to the site: members' attacks and damage on the Matrix and the guild boss, the boss health and attack line-ups (for the «Guild» page).
-- Arena fight recording: a round's clear time is no longer marked too early when the enemies of a wave come in packs.
-- Equip helper: when the game drops a gear filter that was already set (e.g. after the hero is opened again), the filter is set again in full instead of stopping halfway with an error.
-- The new Wardsage logo: an owl.
