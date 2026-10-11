@@ -60,10 +60,13 @@ namespace RealmForge {
   }
 
   public sealed class FilterPilot {
-    public const int MaxClicks = 26, AfterClickMs = 550, PartTries = 2, SetTries = 4, MaxSetDrags = 4, MaxSubs = 4;
+    public const int MaxClicks = 26, AfterClickMs = 550, PartTries = 2, SetTries = 4, MaxSetDrags = 4, MaxSubs = 4, MaxPasses = 3;
     readonly FilterGeometry g;
     long item = -1, waitUntil;
     int clicks, setTries, statTries, eqTries, closeTries, openTries, setDrags, subTries, sideCloseTries;
+    // the filter was complete once for this item (wasSet); the game may drop it afterwards (the hero screen opened again):
+    // the next pass starts its tries over, a few passes at most
+    int passes; bool wasSet;
     bool subSkipped; string side = "";   // the side panel this pilot opened last: "stat" or "sub" (both look alike)
     // the sets list scrolls (20+ sets, 9 rows fit): rows it is scrolled by (as far as known), the row on the screen
     // clicked last (a set clicked there that is not the wanted one tells the real scroll)
@@ -83,11 +86,8 @@ namespace RealmForge {
     /// (the item pilot goes on).</summary>
     public AutoAction Step(FilterView v) {
       if (v.Item != item) {
-        item = v.Item; waitUntil = 0; clicks = setTries = statTries = eqTries = closeTries = openTries = setDrags = subTries = sideCloseTries = 0;
-        Note = "";
-        subSkipped = false; side = "";
-        setClickRow = -1; setPending = false;   // setScroll stays: the game keeps the sets list scrolled
-        setSkipped = statSkipped = eqSkipped = failed = false; State = "idle";
+        item = v.Item; waitUntil = 0; passes = 0; failed = false; State = "idle";
+        NewPass();
       }
       if (v.Item <= 0 || v.Suits == null || v.MainAttrs == null) { State = "idle"; return null; }
 
@@ -104,6 +104,7 @@ namespace RealmForge {
       // set: leave the pop-up open (its × would drop the filter); the item pilot picks the item from the list beside it
       // (the side panel of sets / stats stays open after the last pick and swallows the item list's clicks: closed first)
       if (satisfied) {
+        wasSet = true;
         if (v.PanelOpen && v.SidePanelOpen && (State == "work" || State == "done")) {
           if (!v.Foreground || v.UserBusy) return AutoAction.Nothing;
           if (v.NowMs < waitUntil) return AutoAction.Nothing;
@@ -124,6 +125,12 @@ namespace RealmForge {
       if (State == "failed") return null;
       if (!v.Foreground || v.UserBusy) return AutoAction.Nothing;
       if (v.NowMs < waitUntil) return AutoAction.Nothing;
+      // the filter was set for this item and is gone now (the game dropped it): set it again with fresh tries
+      // (the tries left from the first pass made the second give up halfway - live 10.10)
+      if (State != "work" && wasSet) {
+        if (++passes >= MaxPasses) { failed = true; State = "failed"; Note = "the filter was dropped " + passes + " times"; return null; }
+        NewPass();
+      }
       State = "work";
       if (clicks >= MaxClicks) failed = true;
 
@@ -192,6 +199,15 @@ namespace RealmForge {
       if (eqTries >= PartTries) { eqSkipped = true; return AutoAction.Nothing; }
       eqTries++;
       return Click(v, g.X(g.HideEquippedX, W, H), g.Y(g.HideEquippedY, W, H));
+    }
+
+    // the tries of one pass (setScroll stays: the game keeps the sets list scrolled)
+    void NewPass() {
+      clicks = setTries = statTries = eqTries = closeTries = openTries = setDrags = subTries = sideCloseTries = 0;
+      Note = ""; wasSet = false;
+      subSkipped = false; side = "";
+      setClickRow = -1; setPending = false;
+      setSkipped = statSkipped = eqSkipped = false;
     }
 
     AutoAction Click(FilterView v, double x, double y) {
