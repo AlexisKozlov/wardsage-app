@@ -254,10 +254,31 @@ h2 { margin: 0 0 12px; font: 700 13px/1.2 var(--display); letter-spacing: 2px; c
 .readonly svg { width: 16px; height: 16px; stroke: var(--dim); fill: none; stroke-width: 1.8; flex: none }
 
 /* ---------- settings ---------- */
-.set { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 18px; align-items: start; padding: 16px 0; border-bottom: 1px solid var(--line2) }
-.set:last-child { border-bottom: 0 }
-.set dt { font-weight: 500 } .set dt small { display: block; color: var(--dim); font-weight: 400; font-size: 13px; margin-top: 2px }
-.set dd { margin: 0 }
+.setcols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; align-items: start }
+.setcol { display: grid; gap: 18px; min-width: 0 }
+.sec { padding: 16px 20px 6px }
+.sec h2 { margin: 0 0 4px; padding-bottom: 10px; border-bottom: 1px solid var(--line) }
+.srow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 16px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--line2) }
+.srow:last-child { border-bottom: 0 }
+.stx b { display: block; font-weight: 500 }
+.stx small { display: block; color: var(--dim); font-size: 13px; line-height: 1.3; margin-top: 2px }
+.stx .more { display: inline-block; margin-top: 4px; font-size: 13px }
+.sct { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap }
+.sdet { grid-column: 1 / -1; margin: 4px 0 0; padding: 10px 12px; font-size: 13.5px; line-height: 1.45; color: var(--muted); background: rgba(11, 16, 27, .45); border-left: 2px solid var(--golddim) }
+.srow.wide { grid-template-columns: minmax(0, 1fr) }
+.srow.wide .sct { justify-content: flex-start }
+.srow.wide .input { flex: 1 1 180px; min-width: 0 }
+.srow.dep { margin-left: 18px; padding-left: 14px; border-left: 1px solid var(--golddim) }
+.srow.off .stx b { color: var(--dim) }
+.srow.off .switch { opacity: .4; cursor: default }
+.code { font-family: Consolas, monospace; color: var(--gold) }
+.advbtn { all: unset; cursor: pointer; display: flex; align-items: center; gap: 8px; width: 100%; font: inherit; letter-spacing: inherit; text-transform: inherit; color: inherit }
+.advbtn::after { content: ''; margin-left: auto; width: 7px; height: 7px; border: solid var(--gold2); border-width: 0 2px 2px 0; transform: rotate(45deg) translateY(-2px); transition: transform .2s var(--ease) }
+.advbtn[aria-expanded=true]::after { transform: rotate(225deg) }
+.sec.adv h2 { margin-bottom: 0 } .sec.adv h2:has(.advbtn[aria-expanded=false]) { border-bottom: 0; padding-bottom: 12px }
+.setfoot { margin: 18px 0 0; color: var(--dim); font-size: 13px }
+.setfoot .btn-ghost { font-size: 13px }
+@media (max-width: 960px) { .setcols { grid-template-columns: minmax(0, 1fr) } }
 .switch { all: unset; cursor: pointer; width: 42px; height: 24px; border-radius: 12px; background: var(--line2); position: relative; transition: background .2s }
 .switch::after { content: ''; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: var(--muted); transition: transform .2s var(--ease), background .2s }
 .switch[aria-checked=true] { background: var(--gold2) } .switch[aria-checked=true]::after { transform: translateX(18px); background: #fff5da }

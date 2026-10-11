@@ -15,7 +15,7 @@
     sync: { phase: 'idle', stage: null, seconds: 0, result: null, error: null },
     plans: { status: 'idle', list: [], err: null }, sel: 0,
     scan: { status: 'idle', panel: false }, live: null, reported: {}, compact: false, overlay: 'off', hl: '',
-    autoSync: true, autoClick: false, autoConfirm: false, errorReports: false, autoUpdate: true, tray: true, autostart: false, auto: 'idle', autoAt: null,
+    more: {}, autoSync: true, autoClick: false, autoConfirm: false, errorReports: false, autoUpdate: true, tray: true, autostart: false, auto: 'idle', autoAt: null,
     run: null, seen: null, runKey: '', queue: [], takeOver: {},
     // storage cleanup: the site's list, the pilot's state on the game's sell screen
     sell: { list: null, run: false, state: '', selected: 0, missing: 0, extra: 0, seen: {} },
@@ -500,31 +500,46 @@
 
   // ---------------------------------------------------------------- settings
   function settingsPage() {
-    const row = (title, sub, body) => `<div class="set"><dt>${esc(title)}${sub ? `<small>${esc(sub)}</small>` : ''}</dt><dd>${body}</dd></div>`;
+    // a row: title + one short line on the left, the control on the right; the long text hides under «Подробнее»
+    const row = (title, sub, ctl, o = {}) => {
+      const open = !!(o.more && S.more[o.key]);
+      return `<div class="srow${o.dep ? ' dep' : ''}${o.off ? ' off' : ''}${o.wide ? ' wide' : ''}">
+        <div class="stx"><b>${esc(title)}</b>${sub ? `<small>${esc(sub)}</small>` : ''}${o.more ? `<button class="btn-ghost more" data-act="more" data-k="${o.key}" aria-expanded="${open}">${esc(t(open ? 'setLess' : 'setMore'))}</button>` : ''}</div>
+        <div class="sct">${ctl}</div>${open ? `<p class="sdet">${esc(t(o.more))}</p>` : ''}</div>`;
+    };
+    const sw = (act, on, dis) => `<button class="switch" role="switch" data-act="${act}" aria-checked="${on}" ${dis ? 'disabled' : ''}></button>`;
+    const sec = (title, body) => `<section class="card sec"><h2>${esc(title)}</h2>${body}</section>`;
+    const adv = !!S.more.adv;
+    const left = [
+      sec(t('secAccount'),
+        row(t('setCode'), t('setCodeP'), S.hasCode
+          ? `<span class="num code">${esc(S.codePrefix)}…</span><button class="btn-line" data-act="editCode">${esc(t('change'))}</button><button class="btn-ghost" data-act="unlink">${esc(t('unlink'))}</button>`
+          : `<button class="btn-line" data-act="editCode">${esc(t('save'))}</button>`, { wide: true })
+        + row(t('setLang'), '', `<div class="langs"><button data-act="lang" data-lang="ru" aria-pressed="${S.lang === 'ru'}">РУССКИЙ</button><button data-act="lang" data-lang="en" aria-pressed="${S.lang === 'en'}">ENGLISH</button></div>`)),
+      sec(t('secSync'),
+        row(t('setAutoSync'), t('setAutoSyncS'), sw('autoSync', S.autoSync), { more: 'setAutoSyncP', key: 'autoSync' })
+        + row(t('setCopy'), t('setCopyP'), sw('copy', S.saveCopy))),
+      sec(t('secEquip'),
+        row(t('setAutoClick'), t('setAutoClickS'), sw('autoClick', S.autoClick), { more: 'setAutoClickP', key: 'autoClick' })
+        + row(t('setAutoConfirm'), t(S.autoClick ? 'setAutoConfirmS' : 'setAutoConfirmOff'), sw('autoConfirm', S.autoConfirm, !S.autoClick),
+          { more: 'setAutoConfirmP', key: 'autoConfirm', dep: true, off: !S.autoClick }))].join('');
+    const right = [
+      sec(t('secApp'),
+        row(t('setAutoUpdate'), t('setAutoUpdateS'), sw('autoUpdate', S.autoUpdate), { more: 'setAutoUpdateP', key: 'autoUpdate' })
+        + row(t('setTray'), t('setTrayS'), sw('tray', S.tray), { more: 'setTrayP', key: 'tray' })
+        + row(t('setAutostart'), t('setAutostartS'), sw('autostart', S.autostart), { more: 'setAutostartP', key: 'autostart' })),
+      sec(t('secHelp'),
+        row(t('setHelp'), t('setHelpS'), `<button class="btn-line" data-act="open" data-url="${DISCORD}">${I.ext}${esc(t('openDiscord'))}</button>`, { more: 'setHelpP', key: 'help' })
+        + row(t('setReports'), t('setReportsS'), sw('errorReports', S.errorReports), { more: 'setReportsP', key: 'reports' })
+        + row(t('setLog'), t('setLogP'), `<button class="btn-line" data-act="openLog">${esc(t('openLog'))}</button>`)),
+      `<section class="card sec adv"><h2><button class="advbtn" data-act="more" data-k="adv" aria-expanded="${adv}">${esc(t('secAdv'))}</button></h2>${adv ?
+        row(t('setSite'), t('setSiteP'), `<div class="input"><input id="site" value="${esc(S.site)}" spellcheck="false"></div>
+          <button class="btn-line" data-act="saveSite">${esc(t('save'))}</button>${S.site !== S.defaultSite ? `<button class="btn-ghost" data-act="resetSite">${esc(t('reset'))}</button>` : ''}`, { wide: true })
+        + row(t('setDiag'), t('setDiagP'), `<button class="btn-line" data-act="diag">${esc(t('diagStart'))}</button>`) : ''}</section>`].join('');
     return `
       <div class="head"><div><h1>${esc(t('setTitle'))}</h1></div></div>
-      <div class="card"><dl style="margin:0">
-        ${row(t('setCode'), t('setCodeP'), S.hasCode
-          ? `<div class="row"><span class="num" style="font-family:Consolas,monospace;color:var(--gold)">${esc(S.codePrefix)}…</span>
-             <button class="btn-line" data-act="editCode">${esc(t('change'))}</button><button class="btn-ghost" data-act="unlink">${esc(t('unlink'))}</button></div>`
-          : `<button class="btn-line" data-act="editCode">${esc(t('save'))}</button>`)}
-        ${row(t('setHelp'), t('setHelpP'), `<button class="btn-line" data-act="open" data-url="${DISCORD}">${I.ext}${esc(t('openDiscord'))}</button>`)}
-        ${row(t('setLang'), '', `<div class="langs"><button data-act="lang" data-lang="ru" aria-pressed="${S.lang === 'ru'}">РУССКИЙ</button><button data-act="lang" data-lang="en" aria-pressed="${S.lang === 'en'}">ENGLISH</button></div>`)}
-        ${row(t('setAutoSync'), t('setAutoSyncP'), `<button class="switch" role="switch" data-act="autoSync" aria-checked="${S.autoSync}"></button>`)}
-        ${row(t('setAutoClick'), t('setAutoClickP'), `<button class="switch" role="switch" data-act="autoClick" aria-checked="${S.autoClick}"></button>`)}
-        ${row(t('setAutoConfirm'), t(S.autoClick ? 'setAutoConfirmP' : 'setAutoConfirmOff'), `<button class="switch" role="switch" data-act="autoConfirm" aria-checked="${S.autoConfirm}" ${S.autoClick ? '' : 'disabled'}></button>`)}
-        ${row(t('setCopy'), t('setCopyP'), `<button class="switch" role="switch" data-act="copy" aria-checked="${S.saveCopy}"></button>`)}
-        ${row(t('setSite'), t('setSiteP'), `<div class="row"><div class="input" style="flex:1;min-width:240px"><input id="site" value="${esc(S.site)}" spellcheck="false"></div>
-          <button class="btn-line" data-act="saveSite">${esc(t('save'))}</button>${S.site !== S.defaultSite ? `<button class="btn-ghost" data-act="resetSite">${esc(t('reset'))}</button>` : ''}</div>`)}
-        ${row(t('setAutoUpdate'), t('setAutoUpdateP'), `<button class="switch" role="switch" data-act="autoUpdate" aria-checked="${S.autoUpdate}"></button>`)}
-        ${row(t('setTray'), t('setTrayP'), `<button class="switch" role="switch" data-act="tray" aria-checked="${S.tray}"></button>`)}
-        ${row(t('setAutostart'), t('setAutostartP'), `<button class="switch" role="switch" data-act="autostart" aria-checked="${S.autostart}"></button>`)}
-        ${row(t('setReports'), t('setReportsP'), `<button class="switch" role="switch" data-act="errorReports" aria-checked="${S.errorReports}"></button>`)}
-        ${row(t('setLog'), t('setLogP'), `<button class="btn-line" data-act="openLog">${esc(t('openLog'))}</button>`)}
-        ${row(t('setDiag'), t('setDiagP'), `<button class="btn-line" data-act="diag">${esc(t('diagStart'))}</button>`)}
-        ${row(t('setAbout'), '', `<p style="margin:0 0 10px;color:var(--muted)">${esc(t('aboutP', S.version))}</p>
-          <button class="btn-line" data-act="open" data-url="https://github.com/AlexisKozlov/wardsage-app">${I.ext}${esc(t('source'))}</button>`)}
-      </dl></div>`;
+      <div class="setcols"><div class="setcol">${left}</div><div class="setcol">${right}</div></div>
+      <p class="setfoot">${esc(t('aboutP', S.version))} · <button class="btn-ghost" data-act="open" data-url="https://github.com/AlexisKozlov/wardsage-app">${esc(t('source'))}</button></p>`;
   }
 
   // ---------------------------------------------------------------- actions
@@ -603,6 +618,7 @@
     else if (a === 'sync') { S.sync = { phase: 'run', stage: 'find', seconds: 0 }; host.send({ cmd: 'sync' }); render(); }
     else if (a === 'saveOnly') { S.sync = { phase: 'run', stage: 'find', seconds: 0 }; host.send({ cmd: 'sync', saveOnly: true }); S.page = 'sync'; render(); }
     else if (a === 'open') host.send({ cmd: 'open', url: el.dataset.url });
+    else if (a === 'more') { S.more[el.dataset.k] = !S.more[el.dataset.k]; render(); }
     else if (a === 'openLog') host.send({ cmd: 'openLog' });
     else if (a === 'diag') { host.send({ cmd: 'diag' }); el.textContent = t('diagOn'); el.disabled = true; }
     else if (a === 'openFolder') host.send({ cmd: 'openFolder' });

@@ -12,6 +12,7 @@ ProductVersion → `node tools/release-app.mjs --key D:/RealmForge/keys/realmfor
 Optional `### Heading` lines inside a `## RU` / `## EN` section split the update window's notes into titled groups (the headings are left out of the «What's new» page).
 
 ## RU
+- Настройки разложены по разделам, подробности — по «Подробнее».
 - Окно новой версии: список изменений по пунктам, кнопки в стиле игры.
 - Программа сама переименовывает файл в Wardsage.exe и обновляет название в списке приложений Windows, ярлыки и автозапуск.
 - Программа отправляет на сайт таблицу гильдии: атаки и урон участников по Матрице и гильдейскому боссу, здоровье босса и составы атак, активность участников и «Павший завет» (для страницы «Гильдия»).
@@ -19,6 +20,7 @@ Optional `### Heading` lines inside a `## RU` / `## EN` section split the update
 - Помощник с экипировкой: если игра сбросила уже выставленный фильтр (например, после повторного открытия героя), фильтр выставляется заново полностью, а не обрывается на середине с ошибкой.
 
 ## EN
+- Settings are split into sections, the details are under “More”.
 - The new version window: changes as a list, buttons in the game's style.
 - The app renames its file to Wardsage.exe by itself and updates its name in the Windows apps list, the shortcuts and autostart.
 - The app sends the guild table to the site: members' attacks and damage on the Matrix and the guild boss, the boss health and attack line-ups (for the «Guild» page).
