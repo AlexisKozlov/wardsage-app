@@ -3,6 +3,7 @@
 # The key is decrypted into /dev/shm (RAM) only for the run and shredded after.
 # Usage: tools/release-signed.sh [--test] [--ru text] [--en text] [...]
 # All arguments are passed through to release-app.mjs.
+# The installer is built with Inno Setup under Wine (tools/iscc-wine.sh); a caller --iscc overrides it.
 set -euo pipefail
 
 ENC="${WARDSAGE_KEY_ENC:-$HOME/wardsage/keys/update-key.pem.enc}"
@@ -43,5 +44,5 @@ fi
 
 cd "$APP"
 rc=0
-node tools/release-app.mjs --key "$KEY" --web "$WEB" "$@" || rc=$?
+node tools/release-app.mjs --key "$KEY" --web "$WEB" "$@" --iscc "$APP/tools/iscc-wine.sh" || rc=$?
 exit "$rc"
