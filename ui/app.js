@@ -159,7 +159,13 @@
     const list = N.filter(all, n.filter).slice(0, 30);
     const offline = n.status !== 'loading' && !n.feed;
     const date = (d) => { const m = /^([0-9]{4})-([0-9]{2})-([0-9]{2})/.exec(d || ''); return m ? m[3] + '.' + m[2] + '.' + m[1] : d || ''; };
-    const tag = (x) => x.kind === 'app' ? `<span class="ntag app">${esc(t('newsTagApp') + (x.appVersion ? ' ' + x.appVersion : ''))}</span>` : `<span class="ntag">${esc(t('newsTagSite'))}</span>`;
+    // inside a version: the site's changes first, then the app's (grouped by app version), each under its own small heading
+    const groups = (items) => {
+      const site = items.filter((x) => x.kind !== 'app'), apps = {};
+      items.filter((x) => x.kind === 'app').forEach((x) => { (apps[x.appVersion] = apps[x.appVersion] || []).push(x); });
+      const block = (title, xs) => `<div class="news-grp"><h4>${esc(title)}</h4><ul>${xs.map((x) => `<li>${esc(x.text)}</li>`).join('')}</ul></div>`;
+      return (site.length ? block(t('newsTagSite'), site) : '') + Object.keys(apps).map((v) => block(t('newsTagApp') + (v ? ' ' + v : ''), apps[v])).join('');
+    };
     const flt = (k, label) => `<button data-act="newsFilter" data-kind="${k}" aria-pressed="${n.filter === k}">${esc(label)}</button>`;
     return `
       <div class="head"><div><h1>${esc(t('newsTitle'))}</h1><p class="lead">${esc(t('newsLead'))}</p></div></div>
@@ -168,7 +174,7 @@
       <div class="stack">${list.map((e) => {
         const mine = e.src === 'app' && e.v === S.version;
         return `<div class="card news"><div class="news-head"><b>${esc(e.src === 'site' ? t('newsSiteVer', e.v) : t('newsVer', e.v))}</b><span>${esc(date(e.date))}</span>${mine ? `<em>${esc(t('newsYours'))}</em>` : ''}</div>
-          <ul>${e.items.map((x) => `<li>${tag(x)}${esc(x.text)}</li>`).join('')}</ul></div>`;
+          ${groups(e.items)}</div>`;
       }).join('')}${list.length ? '' : `<p class="newsNote">${esc(t('newsEmpty'))}</p>`}</div>`;
   }
 

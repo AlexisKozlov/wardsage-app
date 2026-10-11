@@ -4,11 +4,13 @@
 // builtin: ui/changelog.js [{v:'1.6.55', date, ru:[], en:[]}] - the app's own changes, used when the site cannot be reached
 (function (root) {
   // Entries to show: [{kind:'site'|'app', v, date, items:[{text, kind, appVersion}]}]; the feed (if valid) else the built-in list.
+  const cap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+
   function entries(feed, builtin, lang) {
     if (Array.isArray(feed) && feed.length) {
       return feed.filter((e) => e && typeof e.v === 'number' && Array.isArray(e.items)).map((e) => ({
         src: 'site', v: e.v, date: e.date || '',
-        items: e.items.filter((x) => x && typeof x.text === 'string').map((x) => ({ text: x.text, kind: x.kind === 'app' ? 'app' : 'site', appVersion: x.appVersion || '' })),
+        items: e.items.filter((x) => x && typeof x.text === 'string').map((x) => ({ text: cap(x.text), kind: x.kind === 'app' ? 'app' : 'site', appVersion: x.appVersion || '' })),
       }));
     }
     return (builtin || []).map((e) => {

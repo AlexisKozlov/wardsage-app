@@ -448,3 +448,5 @@ body.compact .say p { font-size: 16px }
 .news-head em { margin-left: auto; align-self: center; padding: 2px 8px; border: 1px solid var(--gold2); border-radius: 3px; font: 600 10px/1.4 var(--display); font-style: normal; letter-spacing: 1px; text-transform: uppercase; color: var(--gold) }
 .news ul { margin: 0; padding-left: 20px; display: grid; gap: 6px; line-height: 1.55; color: var(--text); font-size: 14px }
 .news li::marker { color: var(--gold2) }
+.news-grp + .news-grp { margin-top: 12px }
+.news-grp h4 { margin: 0 0 6px; font: 700 11px var(--display); letter-spacing: 1.5px; text-transform: uppercase; color: var(--gold) }
