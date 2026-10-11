@@ -93,7 +93,7 @@
     const nav = (id, icon, label, extra = '') =>
       `<button class="nav" data-act="nav" data-page="${id}" ${S.page === id ? 'aria-current="page"' : ''}>${icon}<span>${esc(label)}</span>${extra}</button>`;
     return `
-      <div class="brand"><div class="crest">W</div><div><b>WARDSAGE${S.channel === 'test' ? '<span class="test-badge">TEST</span>' : ''}</b><small>${esc(t('tagline'))}</small></div></div>
+      <div class="brand"><div class="crest" role="img" aria-label="Wardsage"></div><div><b>WARDSAGE${S.channel === 'test' ? '<span class="test-badge">TEST</span>' : ''}</b><small>${esc(t('tagline'))}</small></div></div>
       ${nav('sync', I.sync, t('navSync'))}
       ${nav('equip', I.equip, t('navEquip'), pending ? `<span class="badge">${pending}</span>` : '')}
       ${nav('settings', I.gear, t('navSettings'))}
