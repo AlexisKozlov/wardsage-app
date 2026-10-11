@@ -793,6 +793,27 @@ static class CoreTests {
     Eq(2, sides.Count, "stats: two statistic objects by side");
     Eq("{\"c\":2,\"at\":\"239871EF8C0\",\"iBaseID\":2034}", TimelineBuilder.MarkSide("{\"at\":\"239871EF8C0\",\"iBaseID\":2034}", sides), "stats: a result line marked with its side");
     Eq("{\"at\":\"1\",\"iBaseID\":2034}", TimelineBuilder.MarkSide("{\"at\":\"1\",\"iBaseID\":2034}", sides), "stats: an unknown line left as it is");
+    // a pack gap inside a wave: the clear is the LAST zero before the next wave / the end of the fight
+    var tg = new TimelineBuilder();
+    Action<uint, ArenaSide, ArenaSide> Ag = (f, s1, s2) => { var a = new ArenaSample(); a.Sides.Add(s1); a.Sides.Add(s2); tg.AddArena(f, a); };
+    Ag(10, Sd(100, 1, 1, 3, 0), Sd(101, 1, 1, 3, 0));
+    Ag(50, Sd(100, 1, 0, 0, 0), Sd(101, 1, 0, 0, 0));     // gap between packs (both sides 0)
+    Ag(80, Sd(100, 1, 0, 2, 0), Sd(101, 1, 0, 0, 0));     // side 1: the next pack; side 2 stays cleared
+    Ag(120, Sd(100, 1, 0, 0, 0), Sd(101, 1, 0, 0, 0));    // side 1 really cleared
+    Ag(200, Sd(100, 2, 1, 4, 0), Sd(101, 2, 1, 4, 0));    // round 2 starts
+    Ag(230, Sd(100, 2, 0, 0, 0), Sd(101, 2, 0, 2, 0));    // side 1 clears round 2; side 2 not
+    Ag(260, Sd(100, 2, 0, 0, 0), Sd(101, 2, 0, 0, 0));    // side 2 clears at the very end (fight ends mid-wave 2)
+    var rg = ((MiniJson.Parse(tg.ToJson()) as Dictionary<string, object>)["arena"] as Dictionary<string, object>)["rounds"] as List<object>;
+    var g1 = (rg[0] as Dictionary<string, object>)["clear"] as Dictionary<string, object>;
+    var g2 = (rg[1] as Dictionary<string, object>)["clear"] as Dictionary<string, object>;
+    Eq(120.0, Convert.ToDouble(g1["1"]), "clear: a pack gap inside the wave — side 1 clears at the last zero (120, not 50)");
+    Eq(50.0, Convert.ToDouble(g1["2"]), "clear: a normal wave — side 2 unchanged (50)");
+    Eq(230.0, Convert.ToDouble(g2["1"]), "clear: the fight ends mid-wave — side 1's pending clear is kept (230)");
+    Eq(260.0, Convert.ToDouble(g2["2"]), "clear: side 2's clear after its extra pack (260)");
+    // ToJson twice with more samples between: the pending clear is not frozen
+    Ag(300, Sd(100, 2, 0, 1, 0), Sd(101, 2, 0, 0, 0));
+    var rg2 = ((MiniJson.Parse(tg.ToJson()) as Dictionary<string, object>)["arena"] as Dictionary<string, object>)["rounds"] as List<object>;
+    Check(!((rg2[1] as Dictionary<string, object>)["clear"] as Dictionary<string, object>).ContainsKey("1"), "clear: a new pack after a pending clear cancels it");
     // a boss fight (no controller known, or only 1): the old keys
     var t3 = new TimelineBuilder();
     t3.AddSample(5, new List<HeroSample> { Sa(1, H, 2034, 9, 4, 4, 0) });

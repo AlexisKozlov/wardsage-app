@@ -329,7 +329,7 @@ namespace RealmForge {
 
     // ------------------------------------------------------------------ arena
 
-    sealed class SideTrack { public int Wave = int.MinValue; public bool Seen, Cleared; public string Last; }
+    sealed class SideTrack { public int Wave = int.MinValue; public bool Seen, InClear; public int ClearAt; public string Last; }
     sealed class Round { public int Wave; public Dictionary<int, int> Start = new Dictionary<int, int>(), First = new Dictionary<int, int>(), Clear = new Dictionary<int, int>(); }
     sealed class BaseTrack { public int Unit; public uint Owner; public double Max; public List<long[]> Hp = new List<long[]>(); public long Last = long.MinValue; }
     readonly Dictionary<uint, SideTrack> sideTracks = new Dictionary<uint, SideTrack>();
@@ -362,7 +362,8 @@ namespace RealmForge {
         Round r;
         if (!rounds.TryGetValue(s.Wave, out r)) { r = new Round { Wave = s.Wave }; rounds[s.Wave] = r; }
         if (s.Wave != t.Wave) {
-          t.Wave = s.Wave; t.Seen = false; t.Cleared = false;
+          CommitClear(s.Ctl, t);
+          t.Wave = s.Wave; t.Seen = false; t.InClear = false;
           if (!r.Start.ContainsKey(side)) r.Start[side] = (int)frame;
         }
         int ign = Math.Max(0, s.Ignore);
@@ -372,10 +373,11 @@ namespace RealmForge {
         }
         // cleared: as WaveControllerNode.DoAdvanceCellNode tests it (nothing left to spawn, no counted monster alive) —
         // after the wave's monsters were seen (a wave that has not spawned yet is not cleared)
-        if (!t.Cleared && t.Seen && s.Monsters >= 0 && s.Monsters <= ign && s.Active < 1) {
-          t.Cleared = true;
-          if (!r.Clear.ContainsKey(side)) r.Clear[side] = (int)frame;
-        }
+        // the clear time is the LAST moment the count went to 0 in the wave (a gap between enemy packs briefly shows 0):
+        // remembered while it holds, written to the round when the side's next wave starts or the fight ends (CommitClear)
+        bool zero = t.Seen && s.Monsters >= 0 && s.Monsters <= ign && s.Active < 1;
+        if (zero && !t.InClear) { t.InClear = true; t.ClearAt = (int)frame; }
+        else if (!zero) t.InClear = false;
       }
       foreach (var b in a.Bases) {
         BaseTrack bt;
@@ -384,6 +386,13 @@ namespace RealmForge {
         long hp = (long)Math.Round(b.Hp);
         if (hp != bt.Last) { bt.Hp.Add(new[] { (long)frame, hp }); bt.Last = hp; }
       }
+    }
+
+    /// <summary>Writes the side's pending clear (it is still at 0 monsters) into its wave's round.</summary>
+    void CommitClear(uint ctl, SideTrack t) {
+      if (!t.InClear || t.Wave < 0) return;
+      Round r;
+      if (rounds.TryGetValue(t.Wave, out r)) r.Clear[SideOfCtl(ctl)] = t.ClearAt;
     }
 
     static int Get(Dictionary<int, int> d, int k) { int v; return d.TryGetValue(k, out v) ? v : -1; }
@@ -405,6 +414,20 @@ namespace RealmForge {
     }
 
     void ArenaJson(StringBuilder sb) {
+      // the fight ends here: the pending clears count, but only for this output (more samples may follow)
+      var provisional = new List<KeyValuePair<Round, int>>();
+      foreach (var kv in sideTracks) {
+        var t = kv.Value; Round pr;
+        if (!t.InClear || t.Wave < 0 || !rounds.TryGetValue(t.Wave, out pr)) continue;
+        int side = SideOfCtl(kv.Key);
+        if (pr.Clear.ContainsKey(side)) continue;
+        pr.Clear[side] = t.ClearAt; provisional.Add(new KeyValuePair<Round, int>(pr, side));
+      }
+      try { ArenaJson2(sb); }
+      finally { foreach (var p in provisional) p.Key.Clear.Remove(p.Value); }
+    }
+
+    void ArenaJson2(StringBuilder sb) {
       sb.Append(",\"arena\":{\"rounds\":[");
       var list = new List<Round>(rounds.Values);
       bool first = true;
