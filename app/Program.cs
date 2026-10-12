@@ -15,7 +15,7 @@ using System.Windows.Forms;
 
 namespace RealmForge {
   static class Program {
-    public const string Version = "1.6.57";
+    public const string Version = "1.6.58";
     internal static string AppDir;          // unpacked resources of this build
     internal static string UiDir;
     internal static string DataDir;         // WebView2 user data (cache, local storage)

@@ -32,8 +32,4 @@ Optional `### Heading` lines inside a `## RU` / `## EN` section split the update
 
 ## RU
 
-- Гильдия: исправлена отправка неполного списка участников (после обновления игры гильдия могла не обновляться на сайте или терять часть игроков). Список без тебя или короче, чем в гильдии, больше не отправляется: программа подскажет открыть в игре список участников гильдии.
-
 ## EN
-
-- Guild: fixed an incomplete member list being sent (after the game update the guild could stop updating on the site or lose some players). A list without you, or shorter than the guild, is no longer sent: the app asks you to open the guild member list in the game.
