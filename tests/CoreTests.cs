@@ -653,8 +653,34 @@ static class CoreTests {
     Check(gv.Contains("{\"zone\":4,\"uid\":111,\"name\":\"" + new string('Z', 40) + "\",\"attacks\":3,\"cmd\":true,\"atkW\":2,\"atkL\":1,\"atkTotW\":20,\"atkTotL\":5,\"defW\":4,\"defL\":6,\"defTotW\":40,\"defTotL\":7,\"contrib\":999,\"oppHp\":1234}"), "gvg member, name cut to 40: " + gv);
     Check(gv.Contains("\"uid\":222,\"name\":\"Bob\",\"attacks\":0,\"cmd\":false,\"atkW\":0") && !gv.Contains("Nobody"), "gvg: missing numbers are 0, uid 0 skipped");
     string gv2 = GvgPayload.Build(new GvgInfo { Union = Lt("iScore", 1L, "iLastRank", 15L, "vGarrisonRole", LArr(role2)), MaxKeys = 15, CmdExtra = 3 });
-    Check(gv2 != null && gv2.Contains("\"rank\":15,\"maxKeys\":15,\"cmdExtra\":3,\"rounds\":[],") && gv2.Contains("\"phase\":null,\"nextChange\":null"), "gvg: limits, rank, no global: " + gv2);
-    Check(GvgPayload.Build(null) == null && GvgPayload.Build(new GvgInfo { Union = Lt("vGarrisonRole", LArr()) }) == null, "gvg: no table / no members, no block");
+    Check(gv2 != null && gv2.Contains("\"rank\":15,\"maxKeys\":15,\"cmdExtra\":3,\"rounds\":[],") && gv2.Contains("\"phase\":0,\"nextChange\":null"), "gvg: limits, rank, no global: " + gv2);
+    string gvE = GvgPayload.Build(new GvgInfo { Union = Lt("iIssueId", 9L, "vGarrisonRole", LArr()) });
+    Check(GvgPayload.Build(null) == null && gvE != null && gvE.Contains("\"issue\":9") && gvE.EndsWith("\"members\":[]}"), "gvg: no table = no block, no members = the season still goes: " + gvE);
+    // the shape of a real client: no vGarrisonRole, the players sit in m_vGarrisons[..].vSub[..].Role (fake ids)
+    Func<long, long, string, long, long, Dictionary<string, object>> post = (zone, uid, nm, att, contrib) => Lt("Side", 1L, "status", 2L, "Role",
+      Lt("stRoleId", Lt("iZoneId", zone, "iUid", uid), "sName", nm, "iLevel", 90L, "iAttackedNum", att, "iTotalContribution", contrib, "uiGVGPos", 0L,
+         "stAttackerStatistic", Lt("iVictoryNum", 1L, "iDefeatNum", 0L, "iTotalVictoryNum", 3L, "iTotalDefeatNum", 1L), "stDefenderStatistic", Lt("iTotalVictoryNum", 2L),
+         "vTeams", "<table>", "vAttackedBuildHp", "<table>"));
+    var emptyPost = Lt("Side", 1L, "status", 1L, "m_HP", 5L);
+    var realU = Lt("iIssueId", 1016L, "iUnionId", 31L, "iScore", 1199L, "iDivision", 2003L, "iLastRank", 1071L, "iFightingRound", 16L, "iPeriodType", 3L,
+      "vGarrisons", LArr(Lt("stRoleId", Lt("iZoneId", 7001L, "iUid", 9001L), "iId", 1001L, "iSubId", 2001L), Lt("stRoleId", Lt("iZoneId", 7002L, "iUid", 9002L), "iId", 1001L, "iSubId", 2002L),
+                         Lt("stRoleId", Lt("iZoneId", 7003L, "iUid", 9003L), "iId", 1002L, "iSubId", 2003L), Lt("stRoleId", Lt("iZoneId", 0L, "iUid", 0L), "iId", 1002L, "iSubId", 2004L),
+                         Lt("stRoleId", Lt("iZoneId", 4294967295L, "iUid", 5L), "iId", 1002L, "iSubId", 2005L)),
+      "m_vGarrisons", Lt("[1001]", Lt("Side", 1L, "vSub", Lt("[2001]", post(7001L, 9001L, "Ann", 2L, 960L), "[2002]", post(7002L, 9002L, "Bo", 0L, 100L), "[2003]", emptyPost)),
+                         "[1002]", Lt("Side", 1L, "vSub", Lt("[2001]", post(7003L, 9003L, "Cy", 1L, 0L), "[2002]", post(7001L, 9001L, "Ann again", 2L, 960L),
+                                                              "[2003]", post(4294967295L, 5L, "Robot", 0L, 0L), "[2004]", post(7009L, 9009L, "Enemy", 0L, 0L)))),
+      "vRoundInfo", LArr(Lt("iOpponentUnionId", 41L, "iWinState", 1L, "iDefeatNum", 3L, "uiFakeGuildId", 0L), Lt("iOpponentUnionId", 42L, "iWinState", 0L, "uiFakeGuildId", 0L)),
+      "vGarrisonRole", Lt(), "vGarrisonRobot", Lt(), "vReport", Lt());
+    var realG = Lt("iIssueId", 1016L, "iPeriodType", 3L, "iFightingRound", 16L, "iNextChangeStateTime", 1791792000L);
+    string gr = GvgPayload.Build(new GvgInfo { Union = realU, Global = realG });
+    var gro = MiniJson.AsObject(MiniJson.TryParse(gr));
+    Check(gro != null && ((List<object>)gro["members"]).Count == 3 && ((List<object>)gro["rounds"]).Count == 2, "gvg real shape: 3 own players (robot, empty, other guild and duplicate skipped): " + gr);
+    Check(gr.StartsWith("{\"v\":1,\"issue\":1016,\"round\":16,\"phase\":3,\"nextChange\":1791792000,\"score\":1199,\"division\":2003,\"rank\":1071,"), "gvg real header: " + gr);
+    Check(gr.Contains("{\"zone\":7001,\"uid\":9001,\"name\":\"Ann\",\"attacks\":2,\"cmd\":false,\"atkW\":1,\"atkL\":0,\"atkTotW\":3,\"atkTotL\":1,\"defW\":0,\"defL\":0,\"defTotW\":2,\"defTotL\":0,\"contrib\":960,\"oppHp\":0}"), "gvg real member: " + gr);
+    Check(!gr.Contains("Robot") && !gr.Contains("Enemy") && !gr.Contains("Ann again"), "gvg real: only the guild's own players");
+    // without the post list the lowest side is taken
+    string gr2 = GvgPayload.Build(new GvgInfo { Union = Lt("iIssueId", 1L, "m_vGarrisons", Lt("[1]", Lt("vSub", Lt("[1]", post(7001L, 9001L, "Ann", 1L, 1L), "[2]", Lt("Side", 2L, "Role", Lt("stRoleId", Lt("iZoneId", 7L, "iUid", 8L), "sName", "Other")))))) });
+    Check(gr2.Contains("Ann") && !gr2.Contains("Other"), "gvg: no post list, the own side only: " + gr2);
     var bigRoles = new List<object>(); for (int i = 0; i < 250; i++) bigRoles.Add(Lt("stRoleId", Lt("iZoneId", 4L, "iUid", 5000L + i), "sName", "G" + i));
     var bigRounds = new List<object>(); for (int i = 0; i < 80; i++) bigRounds.Add(Lt("iOpponentUnionId", 100L + i, "iWinState", 1L));
     string gb = GvgPayload.Build(new GvgInfo { Union = Lt("vGarrisonRole", LArr(bigRoles.ToArray()), "vRoundInfo", LArr(bigRounds.ToArray())) });

@@ -5,8 +5,11 @@
 //   a singleton table with m_GVGBriefData, m_GVGSoldierFightTime, m_GVGUnionInfo and m_GVGGlobalData (found by the key m_GVGBriefData;
 //   the other war mode has m_GVGUnionInfo too but not the brief data).
 //   m_GVGUnionInfo {iIssueId, iScore, iDivision, iFightingRound, iUnionId, iLastRank, uiMatchGrade,
-//     vGarrisonRole = [{stRoleId {iZoneId, iUid}, sName, iLevel, iAttackedNum, stAttackerStatistic / stDefenderStatistic
-//       {iVictoryNum, iDefeatNum, iTotalVictoryNum, iTotalDefeatNum}, iAttackedOpponentHp, iTotalContribution, uiGVGPos (>0 = commander)}],
+//     vGarrisons = [{stRoleId {iZoneId, iUid}, iId, iSubId}] (the guild's posts; uid 0 = empty, zone 4294967295 = a robot),
+//     m_vGarrisons = {[iId]: {Side, status, vSub = {[iSubId]: {Side, status, Role}}}}  (Role is set when the post is taken),
+//       Role = {stRoleId {iZoneId, iUid}, sName, iLevel, iAttackedNum, stAttackerStatistic / stDefenderStatistic
+//       {iVictoryNum, iDefeatNum, iTotalVictoryNum, iTotalDefeatNum}, iAttackedOpponentHp, iTotalContribution, uiGVGPos (>0 = commander)},
+//     vGarrisonRole = the same Role records as a plain list (empty in current clients),
 //     vRoundInfo = [{iOpponentUnionId, iWinState, iDefeatNum, uiFakeGuildId}]}
 //   m_GVGGlobalData {iIssueId, iPeriodType, iNextChangeTime (field iNextChangeStateTime), iFightingRound}
 using System;
@@ -53,7 +56,7 @@ namespace RealmForge {
     public static GvgInfo ReadGvg(int rescanMs) {
       if (!GvgTable(rescanMs)) return null;
       var g = new GvgInfo();
-      g.Union = SubTable(gvgTab, "m_GVGUnionInfo", 5);
+      g.Union = SubTable(gvgTab, "m_GVGUnionInfo", 6);
       g.Global = SubTable(gvgTab, "m_GVGGlobalData", 2);
       return g.Union == null ? null : g;
     }
@@ -83,7 +86,7 @@ namespace RealmForge {
         string p = GvgPayload.Build(g);
         sb.Append(p ?? "null").Append('}');
         File.WriteAllText(path, sb.ToString(), new UTF8Encoding(false));
-        return p == null ? "no members" : "ok";
+        return p == null ? "no guild war data" : "ok";
       } catch (Exception e) { try { File.WriteAllText(path, "error: " + e); } catch (Exception) { } return "error " + e.Message; }
     }
   }
@@ -100,6 +103,8 @@ namespace RealmForge {
       long n; if (!GuildPayload.Try(Get(d, k), out n) || (positiveOnly && n <= 0)) return "null";
       return L(n);
     }
+    // the site wants a number 0..4 here (0 = not known)
+    static string Phase(Dictionary<string, object> gl) { long n; return GuildPayload.Try(Get(gl, "iPeriodType"), out n) && n >= 0 && n <= 4 ? L(n) : "0"; }
     static SortedDictionary<long, object> Items(object t) {
       var res = new SortedDictionary<long, object>();
       var d = t as Dictionary<string, object>; if (d == null) return res;
@@ -111,16 +116,57 @@ namespace RealmForge {
       return res;
     }
 
-    /// <summary>The "gvg" object; null when there is no war table or no members in it.</summary>
+    static bool Real(Dictionary<string, object> id, out long zone, out long uid) {
+      zone = N(id, "iZoneId"); uid = N(id, "iUid");
+      return uid > 0 && zone >= 0 && zone < 2000000000L;
+    }
+
+    /// <summary>The guild's own players with their war records: the Role of every taken post of its side (deduped by zone and uid),
+    /// plus the plain vGarrisonRole list of older clients. Robots and empty posts are skipped.</summary>
+    static List<Dictionary<string, object>> Roles(Dictionary<string, object> u) {
+      var res = new List<Dictionary<string, object>>(); var seen = new HashSet<string>();
+      Action<Dictionary<string, object>> add = r => {
+        long z, id; var rid = Obj(r, "stRoleId");
+        if (rid == null || !Real(rid, out z, out id) || !seen.Add(L(z) + ":" + L(id))) return;
+        res.Add(r);
+      };
+      foreach (var kv in Items(Get(u, "vGarrisonRole"))) { var r = kv.Value as Dictionary<string, object>; if (r != null) add(r); }
+      // the posts listed for the guild itself tell which players are its own; without that list the lowest side seen is taken
+      var own = new HashSet<string>();
+      foreach (var kv in Items(Get(u, "vGarrisons"))) {
+        var gr = kv.Value as Dictionary<string, object>; long z, id;
+        if (gr != null && Obj(gr, "stRoleId") != null && Real(Obj(gr, "stRoleId"), out z, out id)) own.Add(L(z) + ":" + L(id));
+      }
+      var subs = new List<KeyValuePair<long, Dictionary<string, object>>>(); long minSide = long.MaxValue;
+      var mg = Get(u, "m_vGarrisons") as Dictionary<string, object>;
+      if (mg != null)
+        foreach (var gk in Items(mg)) {
+          var g = gk.Value as Dictionary<string, object>; if (g == null) continue;
+          foreach (var sk in Items(Get(g, "vSub"))) {
+            var s = sk.Value as Dictionary<string, object>; var r = s == null ? null : Obj(s, "Role"); if (r == null) continue;
+            long side = Get(s, "Side") == null ? Get(g, "Side") == null ? 0 : N(g, "Side") : N(s, "Side");
+            if (side < minSide) minSide = side;
+            subs.Add(new KeyValuePair<long, Dictionary<string, object>>(side, r));
+          }
+        }
+      foreach (var p in subs) {
+        var rid = Obj(p.Value, "stRoleId"); long z, id;
+        if (rid == null || !Real(rid, out z, out id)) continue;
+        if (own.Count > 0 ? !own.Contains(L(z) + ":" + L(id)) : p.Key != minSide) continue;
+        add(p.Value);
+      }
+      return res;
+    }
+
+    /// <summary>The "gvg" object; null only when there is no war table at all. Members are optional: without them the season, rounds and score are still sent.</summary>
     public static string Build(GvgInfo g) {
       if (g == null || g.Union == null) return null;
       var u = g.Union;
       var sb = new StringBuilder();
       int n = 0;
-      foreach (var kv in Items(Get(u, "vGarrisonRole"))) {
-        var m = kv.Value as Dictionary<string, object>; if (m == null || n >= MaxMembers) continue;
+      foreach (var m in Roles(u)) {
+        if (n >= MaxMembers) break;
         var id = Obj(m, "stRoleId");
-        if (id == null || N(id, "iUid") <= 0) continue;
         string nm = Get(m, "sName") as string ?? "";
         if (nm.Length > 40) nm = nm.Substring(0, 40);
         var a = Obj(m, "stAttackerStatistic"); var d = Obj(m, "stDefenderStatistic");
@@ -133,7 +179,6 @@ namespace RealmForge {
           .Append(",\"defTotW\":").Append(L(N(d, "iTotalVictoryNum"))).Append(",\"defTotL\":").Append(L(N(d, "iTotalDefeatNum")))
           .Append(",\"contrib\":").Append(L(N(m, "iTotalContribution"))).Append(",\"oppHp\":").Append(L(N(m, "iAttackedOpponentHp"))).Append('}');
       }
-      if (n == 0) return null;
       var rs = new StringBuilder(); int rc = 0;
       foreach (var kv in Items(Get(u, "vRoundInfo"))) {
         var r = kv.Value as Dictionary<string, object>; if (r == null) continue;
@@ -148,7 +193,7 @@ namespace RealmForge {
       long issue = N(u, "iIssueId"); if (issue <= 0) issue = N(gl, "iIssueId");
       long round = N(u, "iFightingRound"); if (round <= 0) round = N(gl, "iFightingRound");
       var o = new StringBuilder("{\"v\":1,\"issue\":").Append(L(issue)).Append(",\"round\":").Append(L(round))
-        .Append(",\"phase\":").Append(NumOrNull(gl, "iPeriodType", false)).Append(",\"nextChange\":").Append(NumOrNull(gl, "iNextChangeStateTime", true))
+        .Append(",\"phase\":").Append(Phase(gl)).Append(",\"nextChange\":").Append(NumOrNull(gl, "iNextChangeStateTime", true))
         .Append(",\"score\":").Append(L(N(u, "iScore"))).Append(",\"division\":").Append(L(N(u, "iDivision")))
         .Append(",\"rank\":").Append(NumOrNull(u, "iLastRank", true))
         .Append(",\"maxKeys\":").Append(g.MaxKeys.HasValue ? L(g.MaxKeys.Value) : "null")
