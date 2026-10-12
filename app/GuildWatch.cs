@@ -1,8 +1,8 @@
 // Wardsage — the guild table to the site (src/GuildData.cs reads it, read-only; GuildClient sends it). Ticked by HostBridge's
 // game timer (every 2 s): looks right after each account sync and otherwise at most every 10 minutes while the game runs; sends
 // when the payload changed (the hash without "at") or when a boss period ends within the hour. Failures are silent: the next
-// look retries. A member list without the player is not sent (it is not the whole guild): one log line and one hint for the page
-// ("guild" event, state "noSelf"; "ok" once a list is sent again).
+// look retries. A member list that is not whole (without the player, or short of the guild's stated count) is not sent: one log
+// line and one hint for the page ("guild" event, state "noSelf" / "short"; "ok" once a list is sent again).
 using System;
 using System.Threading.Tasks;
 
@@ -12,7 +12,7 @@ namespace RealmForge {
     readonly Func<string> site, code;
     readonly Action<string> hint;   // the page's guild hint: "noSelf" / "ok"; may be null
     volatile bool busy, afterSync;
-    string lastHash; DateTime lastTry = DateTime.MinValue; DateTime pauseUntil = DateTime.MinValue; bool missLogged, noSelfShown;
+    string lastHash; DateTime lastTry = DateTime.MinValue; DateTime pauseUntil = DateTime.MinValue; bool missLogged; string skipShown;
 
     public GuildWatch(Func<string> site, Func<string> code, Action<string> hint = null) { this.site = site; this.code = code; this.hint = hint; }
 
@@ -32,13 +32,15 @@ namespace RealmForge {
       Task.Factory.StartNew(() => {
         try {
           long at = (long)(DateTime.UtcNow - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalMilliseconds;
-          bool soon, selfMissing; int count;
-          string json = RFX.ReadGuildJson(30000, self, at, out soon, out count, out selfMissing);
-          if (selfMissing) {
-            if (!noSelfShown) {
-              noSelfShown = true;
-              Log.Write("guild: не отправлена: игрока нет среди " + count + " прочитанных участников (неполный список); открой в игре список участников гильдии");
-              Hint("noSelf");
+          bool soon; int count; string skip;
+          string json = RFX.ReadGuildJson(30000, self, at, out soon, out count, out skip);
+          if (skip != null) {
+            if (skipShown != skip) {
+              skipShown = skip;
+              Log.Write("guild: не отправлена: " + (skip == "short" ? "прочитано " + count + " участников, меньше, чем в гильдии (список ещё не загружен)"
+                                                                     : "игрока нет среди " + count + " прочитанных участников (неполный список)")
+                        + "; открой в игре список участников гильдии");
+              Hint(skip);
             }
             return;
           }
@@ -52,7 +54,7 @@ namespace RealmForge {
           string details;
           var st = GuildClient.Send(s, c, json, out details);
           Log.Write("guild: " + count + " участников (" + json.Length + " байт) -> сайт " + st + (details != null ? " " + details : ""));
-          if (st == PlansStatus.Ok) { lastHash = hash; if (noSelfShown) { noSelfShown = false; Hint("ok"); } }
+          if (st == PlansStatus.Ok) { lastHash = hash; if (skipShown != null) { skipShown = null; Hint("ok"); } }
           else if (st == PlansStatus.InvalidToken) pauseUntil = DateTime.UtcNow.AddMinutes(5);
         } catch (Exception e) { Log.Write("guild: " + e.Message); }
         finally { busy = false; }

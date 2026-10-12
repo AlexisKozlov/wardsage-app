@@ -715,6 +715,16 @@ static class CoreTests {
     var gxBad = new GuildExtra { Gvg = new GvgInfo { Union = Lt("vRoundInfo", "<table>", "m_vGarrisons", Lt("[1]", "x")) } };
     string jgb = GuildPayload.Build(union, pair, week, classic, 111L, now, out s2, out c2, gxBad);
     Check(jgb != null && c2 == 2 && MiniJson.TryParse(jgb) != null, "odd guild war data leaves the members as they are");
+    // a list short of the guild's stated member count (an old copy in memory) is not sent; a couple missing is the usual drift
+    var unionN = Lt("iUnionId", 55L, "iLevel", 7L, "iMemberNum", 29L, "stBaseAttr", Lt("sUnionName", "S"));
+    Check(GuildPayload.Incomplete(unionN, pair, 111L) == "short" && GuildPayload.Build(unionN, pair, week, classic, 111L, now, out s2, out c2) == null, "short list: not sent");
+    Check(GuildPayload.Incomplete(unionN, pair, 999L) == "noSelf", "the player missing is told first");
+    Check(GuildPayload.Incomplete(union, pair, 111L) == null && GuildPayload.Incomplete(unionN, new List<Dictionary<string, object>>(), 111L) == null, "no stated count / no members: not 'incomplete'");
+    Check(GuildPayload.ListShort(26, 29) && !GuildPayload.ListShort(27, 29) && !GuildPayload.ListShort(30, 29) && !GuildPayload.ListShort(5, 0), "ListShort slack of 2");
+    var unionS = Lt("iUnionId", 55L, "iLevel", 7L, "iMemberNum", 4L, "stBaseAttr", Lt("sUnionName", "S"));
+    string jn = GuildPayload.Build(unionS, pair, week, classic, 111L, now, out s2, out c2);
+    Check(jn != null && jn.Contains("\"level\":7,\"memberNum\":4}"), "stated count within the slack: sent with memberNum: " + jn);
+    Check(json != null && !json.Contains("memberNum"), "no stated count, no memberNum");
     // far refresh: not soon; the hash ignores "at"
     string far = GuildPayload.Build(union, new List<Dictionary<string, object>> { m1, m2 }, LArr(Lt("iRefreshTime", 1790900000L)), classic, 111L, now, out s2, out c2);
     Check(!s2, "refresh in 10 days is not soon");

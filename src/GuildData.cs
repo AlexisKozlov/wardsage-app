@@ -6,7 +6,8 @@
 //     4 member), iJoinTime, iTotalHistoryActive, iSevenActive, stRoleSimpleInf {sName, iLevel, iPower, iLogoutTime (0 = online)},
 //     mWeekBossData {boss id → {iDamageNum, iPrevDamageNum, iFightNum, iLastFightTime}},
 //     mBossData {boss id → {iDamageNum, iPrevDamageNum, iUseItemNum, iLastFightTime}}}],
-//     m_UnionInfo {iUnionId, iLevel, stBaseAttr {sUnionName}}. Found by the key m_vApplyUnionIdRecord.
+//     m_UnionInfo {iUnionId, iLevel, iMemberNum (the member count the server sent with the guild), stBaseAttr {sUnionName}}.
+//     Found by the key m_vApplyUnionIdRecord.
 //   UnionWeekBossData — m_mWeekBossInfo[boss id] = {iRefreshTime (end of the current period, epoch s), …}; key m_SavedStageIdsBoss3.
 //   UnionBossData (the classic boss) — m_mBossInfo[boss id] = {iRefreshTime, …}; key m_mBossInfo.
 //   Two-Heads boss («Павший завет») — the members' mTwoHeadsBossData[boss id] = {ulDamageNum, ulPrevDamageNum, uiFightNum, vFightData = [{ulDamageNum,
@@ -14,7 +15,8 @@
 //   Weekly activity ranking (only when the dividends screen has loaded it) — m_ActiveValueRankList / …LastWeek = [{stRole {iUid, iZoneId}, iActive}].
 // The tables are found together (two passes over the memory, a few seconds), then read directly. Memory can hold more than one
 // table with these keys (an older copy that is no longer used), so the guild table is the one whose member list holds the player,
-// the largest such one; it is looked for again when the player is no longer in it, and every 30 minutes.
+// the largest such one whose list is not short of its iMemberNum; it is looked for again when the player is no longer in it, when
+// the list is short, and every 30 minutes.
 // Damage values may be integers, floats or numeric strings (the script wraps them in tonumber): all are accepted.
 using System;
 using System.Collections.Generic;
@@ -47,6 +49,12 @@ namespace RealmForge {
       return n;
     }
 
+    /// <summary>The member count a guild table states in m_UnionInfo.iMemberNum; 0 = not known.</summary>
+    static long GuildStated(ulong t) {
+      ulong ui, v; int ut, vt; long n;
+      return t != 0 && Field(t, "m_UnionInfo", out ui, out ut) && ut == T_TABLE && Field(ui, "iMemberNum", out v, out vt) && AsLong(v, vt, out n) && n > 0 ? n : 0;
+    }
+
     /// <summary>Forget the chosen guild table: it is looked for again at the next read (not sooner than the rescan delay).</summary>
     static void ForgetGuildTable() { guildTab = 0; }
 
@@ -59,21 +67,23 @@ namespace RealmForge {
       if (H == IntPtr.Zero) H = OpenProcess(0x0410, false, ps[0].Id);
       if (H == IntPtr.Zero) return false;
       bool self;
-      if (guildTab != 0 && HasTable(guildTab, "m_UnionInfo") && GuildMembers(guildTab, selfUid, out self) >= 0 && (self || selfUid <= 0)
-          && Environment.TickCount - guildFoundAt < GuildRepickMs) return true;
+      int cn;
+      if (guildTab != 0 && HasTable(guildTab, "m_UnionInfo") && (cn = GuildMembers(guildTab, selfUid, out self)) >= 0 && (self || selfUid <= 0)
+          && !GuildPayload.ListShort(cn, GuildStated(guildTab)) && Environment.TickCount - guildFoundAt < GuildRepickMs) return true;
       guildTab = guildWeekTab = guildClassicTab = guildTwoTab = guildDivTab = 0;
       if (guildLastFind != 0 && Environment.TickCount - guildLastFind < rescanMs) return false;
       guildLastFind = Environment.TickCount;
       regs = Regions();
       var owners = OwnersOf(FindLuaStringsFast(new[] { KUnion, KWeekBoss, KClassicBoss, KTwoHeads, KDividend }), 1024);
-      List<ulong> l; int bestN = -1; bool bestSelf = false;
+      List<ulong> l; int bestN = -1; bool bestSelf = false, bestFull = false;
       if (owners.TryGetValue(KUnion, out l))
         foreach (var t in l) {
           if (!HasTable(t, "m_UnionInfo")) continue;
           int n = GuildMembers(t, selfUid, out self);
           if (n < 0) continue;
-          // the table that lists the player wins over any other; among equals the larger member list
-          if ((self && !bestSelf) || (self == bestSelf && n > bestN)) { bestN = n; bestSelf = self; guildTab = t; }
+          // the table that lists the player wins over any other, then one whose list is not short; among equals the larger list
+          bool full = !GuildPayload.ListShort(n, GuildStated(t));
+          if ((self && !bestSelf) || (self == bestSelf && ((full && !bestFull) || (full == bestFull && n > bestN)))) { bestN = n; bestSelf = self; bestFull = full; guildTab = t; }
         }
       guildFoundAt = Environment.TickCount;
       bestN = -1;
@@ -154,23 +164,32 @@ namespace RealmForge {
     }
 
     /// <summary>The guild payload for the site (null: no guild / not found / not complete). <paramref name="selfUid"/> 0 = not known.
-    /// <paramref name="selfMissing"/>: members were read but the player is not among them (an incomplete list): nothing to send,
-    /// and the table is looked for again at the next read.</summary>
-    public static string ReadGuildJson(int rescanMs, long selfUid, long atMs, out bool refreshSoon, out int memberCount, out bool selfMissing) {
-      refreshSoon = false; memberCount = 0; selfMissing = false;
+    /// <paramref name="skip"/> when members were read but the list is not whole: "noSelf" (the player is not in it) or "short"
+    /// (fewer than the guild's stated count). The memory is then searched once more right away; if the list is still not whole
+    /// nothing is sent and the table is looked for again at the next read.</summary>
+    public static string ReadGuildJson(int rescanMs, long selfUid, long atMs, out bool refreshSoon, out int memberCount, out string skip) {
+      refreshSoon = false; memberCount = 0; skip = null;
       Dictionary<string, object> union, week, classic; List<Dictionary<string, object>> members; GuildExtra extra;
-      if (!ReadGuild(rescanMs, selfUid, out union, out members, out week, out classic, out extra)) return null;
-      if (GuildPayload.SelfMissing(members, selfUid)) { selfMissing = true; memberCount = members.Count; ForgetGuildTable(); return null; }
+      for (int attempt = 0; ; attempt++) {
+        int foundBefore = guildFoundAt; bool searchedBefore = guildLastFind != 0;
+        if (!ReadGuild(attempt == 0 ? rescanMs : 0, selfUid, out union, out members, out week, out classic, out extra)) return null;
+        bool fresh = !searchedBefore || guildFoundAt != foundBefore;   // the memory was searched in this read
+        skip = GuildPayload.Incomplete(union, members, selfUid);
+        if (skip == null) break;
+        memberCount = members.Count;
+        ForgetGuildTable();
+        if (fresh || attempt > 0) return null;
+      }
       return GuildPayload.Build(union, members, week, classic, selfUid, atMs, out refreshSoon, out memberCount, extra);
     }
 
     /// <summary>Diagnostics (app --dump-guild file): the payload to a file, nothing is sent. Returns a short result line.</summary>
     public static string DumpGuild(string path) {
       try {
-        bool soon, miss; int n;
-        string json = ReadGuildJson(0, 0, (long)(DateTime.UtcNow - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalMilliseconds, out soon, out n, out miss);
+        bool soon; int n; string skip;
+        string json = ReadGuildJson(0, 0, (long)(DateTime.UtcNow - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalMilliseconds, out soon, out n, out skip);
         File.WriteAllText(path, json ?? "null", new UTF8Encoding(false));
-        return json == null ? "no guild data found" : "members " + n;
+        return json == null ? (skip != null ? "not whole (" + skip + "), members " + n : "no guild data found") : "members " + n;
       } catch (Exception e) { try { File.WriteAllText(path, "error: " + e); } catch (Exception) { } return "error " + e.Message; }
     }
   }
@@ -339,6 +358,22 @@ namespace RealmForge {
       return true;
     }
 
+    /// <summary>How many members a list may lack against the guild's stated count before it counts as short: the stated count is
+    /// sent with the guild once and is not lowered when someone leaves later in the session.</summary>
+    public const int ShortSlack = 2;
+
+    /// <summary>True when <paramref name="read"/> members are fewer than the stated count (0 = not known) by more than ShortSlack.</summary>
+    public static bool ListShort(long read, long stated) { return stated > 0 && read + ShortSlack < stated; }
+
+    /// <summary>Why a read member list is not sent (null: it is whole): "noSelf" (the player is not in it), "short" (fewer members
+    /// than m_UnionInfo.iMemberNum says). No members at all is not this case (no guild).</summary>
+    public static string Incomplete(Dictionary<string, object> union, IList<Dictionary<string, object>> members, long selfUid) {
+      if (members == null || members.Count == 0) return null;
+      if (SelfMissing(members, selfUid)) return "noSelf";
+      if (ListShort(members.Count, N(union, "iMemberNum"))) return "short";
+      return null;
+    }
+
     static void Rank(StringBuilder sb, List<Dictionary<string, object>> list) {
       sb.Append('['); int c = 0;
       foreach (var e in list) {
@@ -377,7 +412,7 @@ namespace RealmForge {
                            Dictionary<string, object> classic, long selfUid, long atMs, int cap, GuildExtra extra, out bool refreshSoon, out int memberCount) {
       refreshSoon = false; memberCount = 0;
       long unionId = N(union, "iUnionId");
-      if (unionId <= 0 || members == null || members.Count == 0 || SelfMissing(members, selfUid)) return null;
+      if (unionId <= 0 || members == null || members.Count == 0 || Incomplete(union, members, selfUid) != null) return null;
       // the player's zone: that of the own member row; else the commonest zone among the members
       long zone = 0; var zones = new Dictionary<long, int>(); int bestZ = 0;
       foreach (var m in members) {
@@ -393,6 +428,7 @@ namespace RealmForge {
       string name = Get(attr, "sUnionName") as string ?? "";
       if (name.Length > 40) name = name.Substring(0, 40);
       sb.Append(",\"union\":{\"id\":").Append(L(unionId)).Append(",\"name\":").Append(MiniJson.Quote(name)).Append(",\"level\":").Append(OrNull(union, "iLevel", false));
+      if (N(union, "iMemberNum") > 0) sb.Append(",\"memberNum\":").Append(L(N(union, "iMemberNum")));
       if (Has(union, "iWeekActive")) sb.Append(",\"weekActive\":").Append(L(N(union, "iWeekActive")));
       if (Has(union, "iSevenTotalActive")) sb.Append(",\"sevenActive\":").Append(L(N(union, "iSevenTotalActive")));
       if (Has(union, "iCurDayTotalActive")) sb.Append(",\"dayActive\":").Append(L(N(union, "iCurDayTotalActive")));
