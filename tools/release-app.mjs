@@ -2,6 +2,7 @@
 // serves. Run after tools/build-app.sh, then commit and push the site repo.
 //
 //   node tools/release-app.mjs --key <private key .pem> --web <realmforge-web checkout> [--ru "что нового" --en "what's new"]
+//   --version 1.6.58.123 overrides the version read from app/Program.cs (build it with APP_VERSION=... tools/build-app.sh)
 //   node tools/release-app.mjs --test --key <pem> --web <checkout>     the test build (tools/build-app.sh --test) -> <web>/public/downloads/test/
 //
 // Writes into <web>/public/downloads/:
@@ -12,7 +13,7 @@
 //   Wardsage.zip, RealmForge.zip      the exe + README.txt, for old links to the archive
 // With --test the same goes to downloads/test/ with the names Wardsage-Test-<version>.exe and Wardsage-Test-Setup.exe
 // (no old-name copies, no zip).
-// The signature is RSA PKCS#1 v1.5 over SHA-256 of the whole exe; app/Updater.cs holds the public key.
+// The signature is RSA PKCS#1 v1.5 over SHA-256 of the whole exe; src/UpdateKeys.cs holds the public keys.
 import { createHash, createPrivateKey, createPublicKey, sign, verify } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -23,16 +24,19 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const arg = (n) => { const i = process.argv.indexOf(n); return i > 0 ? process.argv[i + 1] : undefined; };
 const test = process.argv.includes('--test');
 const keyFile = arg('--key'), web = arg('--web');
-if (!keyFile || !web) { console.error('usage: node tools/release-app.mjs [--test] --key <pem> --web <realmforge-web> [--ru text] [--en text] [--iscc path]'); process.exit(2); }
+if (!keyFile || !web) { console.error('usage: node tools/release-app.mjs [--test] --key <pem> --web <realmforge-web> [--version x.y.z[.n]] [--ru text] [--en text] [--iscc path]'); process.exit(2); }
 
 const product = test ? 'Wardsage-Test' : 'Wardsage';
-const version = /Version = "([\d.]+)"/.exec(readFileSync(join(root, 'app', 'Program.cs'), 'utf8'))[1];
+const version = arg('--version') ?? /Version = "([\d.]+)"/.exec(readFileSync(join(root, 'app', 'Program.cs'), 'utf8'))[1];
+if (!/^\d+(\.\d+){2,3}$/.test(version)) { console.error('bad version: ' + version); process.exit(2); }
 const exe = readFileSync(join(root, 'dist', `${product}.exe`));
 const key = createPrivateKey(readFileSync(keyFile));
 
-// the key must be the one the app trusts
-const n = /KeyN = "([^"]+)"/.exec(readFileSync(join(root, 'app', 'Updater.cs'), 'utf8'))[1];
-if (createPublicKey(key).export({ format: 'jwk' }).n !== n) { console.error('this key is not the one in app/Updater.cs'); process.exit(1); }
+// the key must be one the app trusts: the main key; with --test also the test-builds key (src/UpdateKeys.cs)
+const keys = readFileSync(join(root, 'src', 'UpdateKeys.cs'), 'utf8');
+const mainN = /KeyN = "([^"]+)"/.exec(keys)[1], testN = /TestKeyN = "([^"]+)"/.exec(keys)[1];
+const keyN = createPublicKey(key).export({ format: 'jwk' }).n;
+if (keyN !== mainN && !(test && keyN === testN)) { console.error('this key is not one the app trusts' + (test ? '' : ' (the test key is for --test only)')); process.exit(1); }
 
 // notes: --ru / --en, else what tools/bump-version.mjs took from NEXT-RELEASE.md
 const notesFile = join(root, 'tools', '.release-notes.json');

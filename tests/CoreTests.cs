@@ -409,6 +409,7 @@ static class CoreTests {
     ArenaOppTests();
     GuildTests();
     GamePacksTests();
+    UpdateKeysTests();
 
     // ---- WebViewRecovery
     Console.WriteLine("WebView2 recovery");
@@ -448,6 +449,22 @@ static class CoreTests {
     var d = new Dictionary<string, object>();
     for (int i = 0; i < xs.Length; i++) d["[" + (i + 1) + "]"] = xs[i];
     return d;
+  }
+
+  static void UpdateKeysTests() {
+    Console.WriteLine("UpdateKeys");
+    var testKey = RSA.Create(); testKey.KeySize = 2048;
+    var other = RSA.Create(); other.KeySize = 2048;
+    string n = Convert.ToBase64String(testKey.ExportParameters(false).Modulus).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+    var data = Encoding.UTF8.GetBytes("build");
+    byte[] sig = testKey.SignData(data, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+    Check(UpdateKeys.VerifyAny(data, sig, new[] { n }), "a signature verifies with its key");
+    Check(!UpdateKeys.VerifyAny(data, other.SignData(data, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1), new[] { n }), "another key's signature is rejected");
+    Check(!UpdateKeys.VerifyAny(Encoding.UTF8.GetBytes("changed"), sig, new[] { n }), "a changed file is rejected");
+    Check(Array.IndexOf(UpdateKeys.Accepted(false), UpdateKeys.TestKeyN) < 0, "the normal build does not trust the test key");
+    Check(Array.IndexOf(UpdateKeys.Accepted(false), UpdateKeys.KeyN) >= 0 && UpdateKeys.Accepted(false).Length == 1, "the normal build trusts the main key only");
+    Check(Array.IndexOf(UpdateKeys.Accepted(true), UpdateKeys.TestKeyN) >= 0 && Array.IndexOf(UpdateKeys.Accepted(true), UpdateKeys.KeyN) >= 0, "the test build trusts the main and the test key");
+    Check(UpdateKeys.KeyN != UpdateKeys.TestKeyN, "the two keys differ");
   }
 
   static void ArenaOppTests() {

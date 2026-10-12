@@ -24,9 +24,7 @@ namespace RealmForge {
   }
 
   static class Updater {
-    // public half of the update key (base64url), from tools/update-keygen.mjs
-    const string KeyN = "6MiNF84wJ_zDGNfzUv5x11fzdDrgLEBJsZUvjuhpFYv90wVNCUbKTU7FkmGcFFz-n0SUx6n1dkVwkc98JB8qzA_2SLTBtX_WqdqFBOzm4dQubRzxkPjOWVP0i2OYZYou2G4txHDNcOi66yZXfVw1-HhtjB7osxEAKR62O2gVBx3_GKUQs_Pq08PPDx-jBvaBqt4Yrr5UoMPypU7OZKQzVv_NQ3aOV9s_8_bn5TWygaez5hgAGipdciZZ91FTOStk_yLF0RanB2CFbGQIhZckGI0HefEy7aw_LlsOkWcFOYG4QRDMgWfW1kNGrqOCETfBwXPM0Krb3jT4mXTO4pL2kbC_MYXo2vwcyi8BPZZfOtNu4DCJ0D0GXpTy4zYk8cvBhTHoY9-_xKMfoI3eMLW5WOUFzBrzNiz-oLfPsGsntbZmo1FgJDUyKI21FIc0wVCjVCZ-GkstjizfzxIeMoQMFEh3tSHn7bPmeE2L5zmDHuGIm2JgTRzfmy4DcPZQV0Zj";
-    const string KeyE = "AQAB";
+    // public keys: src/UpdateKeys.cs (the test build also trusts the key of the automatic test builds)
     const long MaxSize = 64L << 20;
 
     static string Dir { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), Channel.FolderName, "update"); } }
@@ -50,12 +48,6 @@ namespace RealmForge {
       return r;
     }
 
-    static byte[] B64Url(string s) {
-      s = s.Replace('-', '+').Replace('_', '/');
-      while (s.Length % 4 != 0) s += "=";
-      return Convert.FromBase64String(s);
-    }
-
     /// <summary>Is <paramref name="file"/> exactly the build the manifest describes, signed with the update key?</summary>
     public static bool Verify(byte[] file, UpdateInfo u) {
       if (file == null || u == null || file.LongLength != u.Size || string.IsNullOrEmpty(u.Sig)) return false;
@@ -64,10 +56,7 @@ namespace RealmForge {
         if (hex != (u.Sha256 ?? "").ToLowerInvariant()) return false;
       }
       try {
-        using (var rsa = new RSACng()) {
-          rsa.ImportParameters(new RSAParameters { Modulus = B64Url(KeyN), Exponent = B64Url(KeyE) });
-          return rsa.VerifyData(file, Convert.FromBase64String(u.Sig), HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
-        }
+        return UpdateKeys.VerifyAny(file, Convert.FromBase64String(u.Sig), UpdateKeys.Accepted(Channel.IsTest));
       } catch (Exception e) { Log.Write("update: verify " + e.Message); return false; }
     }
 

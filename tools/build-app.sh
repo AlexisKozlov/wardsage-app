@@ -5,6 +5,7 @@
 #
 #   tools/build-app.sh            -> dist/Wardsage.exe
 #   tools/build-app.sh --test     -> dist/Wardsage-Test.exe (the test build: own folders, mutex, update feed, site; src/Channel.cs)
+#   APP_VERSION=1.6.58.123 tools/build-app.sh --test   builds with that version (patched in a copy of app/Program.cs; the source is untouched)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 DEFS=(); EXE=Wardsage
@@ -41,8 +42,16 @@ RES+=("-resource:app/res/boss_coach.json,overlay/boss_coach.json")
 RES+=("-resource:app/res/hero_tags.json,overlay/hero_tags.json")
 for f in Microsoft.Web.WebView2.Core.dll Microsoft.Web.WebView2.WinForms.dll WebView2Loader.dll; do RES+=("-resource:$WV/$f,bin/$f"); done
 
-CORE="src/Channel.cs src/MemoryReader.cs src/EquipScan.cs src/MiniJson.cs src/GameInfo.cs src/Extractor.cs src/SyncClient.cs src/PlansClient.cs src/NewsClient.cs src/SellClient.cs src/FightPlanClient.cs src/ErrorReport.cs src/BridgeClient.cs src/ListTracker.cs src/AutoPilot.cs src/FilterPilot.cs src/HeroPilot.cs src/LiveTables.cs src/BattleCapture.cs src/BattleClock.cs src/BattleTimeline.cs src/TimelineBuilder.cs src/ArenaOpponents.cs src/ArenaClient.cs src/GuildData.cs src/GvgData.cs src/GamePacks.cs src/TraceUpload.cs src/SellScan.cs src/RecastScan.cs src/LocateClient.cs src/LocateGuide.cs src/SellPilot.cs src/Config.cs src/WebViewRecovery.cs src/CodeProtector.cs"
+CORE="src/Channel.cs src/UpdateKeys.cs src/MemoryReader.cs src/EquipScan.cs src/MiniJson.cs src/GameInfo.cs src/Extractor.cs src/SyncClient.cs src/PlansClient.cs src/NewsClient.cs src/SellClient.cs src/FightPlanClient.cs src/ErrorReport.cs src/BridgeClient.cs src/ListTracker.cs src/AutoPilot.cs src/FilterPilot.cs src/HeroPilot.cs src/LiveTables.cs src/BattleCapture.cs src/BattleClock.cs src/BattleTimeline.cs src/TimelineBuilder.cs src/ArenaOpponents.cs src/ArenaClient.cs src/GuildData.cs src/GvgData.cs src/GamePacks.cs src/TraceUpload.cs src/SellScan.cs src/RecastScan.cs src/LocateClient.cs src/LocateGuide.cs src/SellPilot.cs src/Config.cs src/WebViewRecovery.cs src/CodeProtector.cs"
 APP="app/Program.cs app/AppWindow.cs app/HostBridge.cs app/Overlay.cs app/BattleCoach.cs app/ArenaWatch.cs app/GuildWatch.cs app/PacksWatch.cs app/HintGeometry.cs app/Updater.cs app/Tray.cs app/AssemblyInfo.cs"
+
+if [ -n "${APP_VERSION:-}" ]; then
+  [[ "$APP_VERSION" =~ ^[0-9]+(\.[0-9]+){2,3}$ ]] || { echo "bad APP_VERSION: $APP_VERSION" >&2; exit 1; }
+  mkdir -p "$OUT/src"
+  sed -E "s/(public const string Version = \")[0-9.]+(\")/\1$APP_VERSION\2/" app/Program.cs > "$OUT/src/Program.cs"
+  grep -q "Version = \"$APP_VERSION\"" "$OUT/src/Program.cs" || { echo "could not set the version" >&2; exit 1; }
+  APP="${APP/app\/Program.cs/$OUT/src/Program.cs}"
+fi
 
 "${CSC[@]}" -langversion:7.3 -target:winexe -platform:x64 -optimize+ -deterministic -nostdlib -warnaserror -nowarn:1701,1702 \
   -r:$FX/mscorlib.dll -r:$FX/System.dll -r:$FX/System.Core.dll -r:$FX/System.Drawing.dll -r:$FX/System.Windows.Forms.dll \
