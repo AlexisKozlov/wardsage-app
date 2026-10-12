@@ -1213,17 +1213,17 @@ namespace RealmForge {
 // the fight's length. Kept in %APPDATA%\RealmForge\battles (the last 30) and sent with the account snapshot.
 //
 // The game keeps its open windows in UIStatic's UIInstance: a script table form id -> form, the id being the hash of the
-// form's name (str_hash, as the language keys: «Form_CharactorMain» = 0). The table is found once (from a
+// form's name (str_hash, as the language keys: «Form_CharactorMain» = the id the layout data names). The table is found once (from a
 // node of a known form), then read every poll: a few kilobytes.
 
 namespace RealmForge {
   public static partial class RFX {
     // the result screens: the guild dragon, the weekly guild boss, the rest, the arena (CHAPTERTYPE.Pvp ->
     // Form_PvpBattleEnd) and the friendly arena fight (Form_SparringPvpBattleEnd); ids = UIDefines (str_hash of the name)
-    static readonly long[] EndFormIds = { 0, 0, 0, 0, 0 };
+    static readonly long[] EndFormIds = new long[0];
     static readonly string[] EndFormNames = { "Form_UnionBossBattleEnd", "Form_UnionWeekBossBattleEnd", "Form_BattleEnd", "Form_PvpBattleEnd", "Form_SparringPvpBattleEnd" };
     // forms whose node leads to UIInstance: the hero screen, the inventory, the battle screen, the result screens
-    static readonly long[] UiAnchorIds = { FormCharactorMainId, FormBackpackId, 0, 0, 0, 0, 0, 0 };
+    static readonly long[] UiAnchorIds = { FormCharactorMainId, FormBackpackId };
     static ulong uiTable; static int uiLastFind;
 
     static bool SameId(long key, long id) { return key == id || (id < 0 && key == (long)(uint)id); }
@@ -1351,7 +1351,7 @@ namespace RealmForge {
         long k = BitConverter.ToInt64(nb, o + 16);
         string name = k == FormCharactorMainId ? "Form_CharactorMain" : k == FormBackpackId ? "Form_BackpackIntegration" : "";
         for (int e = 0; e < EndFormIds.Length; e++) if (SameId(k, EndFormIds[e])) name = EndFormNames[e];
-        if (SameId(k, 0)) name = "Form_Battle";
+        
         sb.Append(k).Append(' ').Append(BitConverter.ToInt32(nb, o + 8) == T_TABLE ? "table " : "other ").Append(name).Append('\n');
       }
       List<string> marks; BattleEndForms(out marks); sb.Append("battle end marks: ").Append(string.Join(" ", marks.ToArray())).Append('\n');
@@ -1436,23 +1436,23 @@ namespace RealmForge {
     // recognised by its name on the objects read and then remembered.
     const string NsBattle = "CSharpBattle.Battle.";
     static readonly Dictionary<string, ulong[]> ClassRvas = new Dictionary<string, ulong[]> {
-      { NsBattle + "GameSimulation", new ulong[] { 0, 0 } },
-      { NsBattle + "TDGameSimulation", new ulong[] { 0, 0 } },
-      { NsBattle + "TCGameSimulation", new ulong[] { 0, 0 } },
-      { NsBattle + "PAGameSimulation", new ulong[] { 0 } },
-      { "BattleView.BattleManager", new ulong[] { 0, 0 } },
-      { NsBattle + "CardComponent", new ulong[] { 0 } },
-      { NsBattle + "AngerComponent", new ulong[] { 0 } },
-      { NsBattle + "SkillComponent", new ulong[] { 0 } },
-      { NsBattle + "FrameIdxInfo", new ulong[] { 0, 0 } },
-      { NsBattle + "BattleHeroInfo", new ulong[] { 0, 0 } },
-      { NsBattle + "OwnerRelationComponent", new ulong[] { 0, 0 } },
-      { NsBattle + "StatisticsComponent", new ulong[] { 0 } },
-      { NsBattle + "DamageStatisticsData", new ulong[] { 0, 0 } },
-      { NsBattle + "TDStateData", new ulong[] { 0 } },
-      { NsBattle + "WaveSystem", new ulong[] { 0, 0 } },
-      { NsBattle + "WaveControllerNode", new ulong[] { 0, 0 } },
-      { NsBattle + "AttributeComponent", new ulong[] { 0, 0 } },
+      { NsBattle + "GameSimulation", new ulong[0] },
+      { NsBattle + "TDGameSimulation", new ulong[0] },
+      { NsBattle + "TCGameSimulation", new ulong[0] },
+      { NsBattle + "PAGameSimulation", new ulong[0] },
+      { "BattleView.BattleManager", new ulong[0] },
+      { NsBattle + "CardComponent", new ulong[0] },
+      { NsBattle + "AngerComponent", new ulong[0] },
+      { NsBattle + "SkillComponent", new ulong[0] },
+      { NsBattle + "FrameIdxInfo", new ulong[0] },
+      { NsBattle + "BattleHeroInfo", new ulong[0] },
+      { NsBattle + "OwnerRelationComponent", new ulong[0] },
+      { NsBattle + "StatisticsComponent", new ulong[0] },
+      { NsBattle + "DamageStatisticsData", new ulong[0] },
+      { NsBattle + "TDStateData", new ulong[0] },
+      { NsBattle + "WaveSystem", new ulong[0] },
+      { NsBattle + "WaveControllerNode", new ulong[0] },
+      { NsBattle + "AttributeComponent", new ulong[0] },
     };
     static readonly string[] SimClasses = { NsBattle + "GameSimulation", NsBattle + "TDGameSimulation", NsBattle + "TCGameSimulation", NsBattle + "PAGameSimulation" };
     static readonly Dictionary<string, ulong> klassCache = new Dictionary<string, ulong>();
