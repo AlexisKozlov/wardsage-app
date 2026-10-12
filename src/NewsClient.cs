@@ -46,5 +46,23 @@ namespace RealmForge {
       }
       return body;
     }
+
+    /// <summary>The community's new replies for this sync code: GET {site}/api/extractor/forum-unread (Bearer code).
+    /// Always a JSON object text: the site's reply when ok, else {"ok":false,"error":"no_code"|"invalid_token"|"error"}.</summary>
+    public static string Unread(string site, string code) {
+      if (!SyncClient.IsValidCode(code)) return "{\"ok\":false,\"error\":\"no_code\"}";
+      int http; string text, err;
+      if (!PlansClient.Send("GET", site.TrimEnd('/') + "/api/extractor/forum-unread", code, null, out http, out text, out err)) return "{\"ok\":false,\"error\":\"error\"}";
+      return InterpretUnread(http, text);
+    }
+
+    /// <summary>Pure part of Unread (tested without a network).</summary>
+    public static string InterpretUnread(int http, string body) {
+      if (http == 401) return "{\"ok\":false,\"error\":\"invalid_token\"}";
+      if (http < 200 || http >= 300 || string.IsNullOrEmpty(body) || body.Length > MaxBytes) return "{\"ok\":false,\"error\":\"error\"}";
+      var o = MiniJson.AsObject(MiniJson.TryParse(body)); object ok, topics;
+      if (o == null || !o.TryGetValue("ok", out ok) || !(ok is bool) || !(bool)ok || !o.TryGetValue("topics", out topics) || !(topics is System.Collections.Generic.List<object>)) return "{\"ok\":false,\"error\":\"error\"}";
+      return body;
+    }
   }
 }

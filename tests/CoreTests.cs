@@ -1382,6 +1382,10 @@ static class CoreTests {
     var feedOk = "[{\"v\":132,\"date\":\"2026-10-11\",\"items\":[{\"text\":\"x\",\"kind\":\"site\"}]}]";
     Check(NewsClient.Interpret(200, feedOk) == feedOk && NewsClient.Interpret(500, feedOk) == null && NewsClient.Interpret(200, "{}") == null
       && NewsClient.Interpret(200, "[]") == null && NewsClient.Interpret(200, "[{\"v\":1}]") == null && NewsClient.Interpret(200, "<html>") == null, "news feed parsing");
+    var unreadOk = "{\"ok\":true,\"total\":2,\"topics\":[],\"newTopicUrl\":\"https://x/community/new?kind=bug&area=app\"}";
+    Check(NewsClient.InterpretUnread(200, unreadOk) == unreadOk && NewsClient.InterpretUnread(401, "{}").Contains("invalid_token")
+      && NewsClient.InterpretUnread(500, unreadOk).Contains("\"error\":\"error\"") && NewsClient.InterpretUnread(200, "<html>").Contains("\"ok\":false")
+      && NewsClient.Unread("https://x", "").Contains("no_code"), "forum unread parsing");
     Check(FightPlanClient.For(r.Plans, 5001007, new HashSet<long> { 200 }) == p && FightPlanClient.For(r.Plans, 1, null) == null, "plan by stage");
 
     FightStep next, wrong; int wx, wy;

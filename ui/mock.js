@@ -51,6 +51,7 @@
           setTimeout(() => document.querySelector('[data-page=equip]').click(), 20);
         }
         if (s === 'settings') setTimeout(() => document.querySelector('[data-page=settings]').click(), 20);
+        if (s === 'community' || s === 'forum0' || s === 'onboard') setTimeout(() => document.querySelector('[data-page=community]').click(), 20);
         if (s === 'news' || s === 'newsoff') setTimeout(() => document.querySelector('[data-page=news]').click(), 20);
       } else if (m.cmd === 'news.fetch') {
         // s=newsoff: the site cannot be reached (the built-in list shows)
@@ -64,6 +65,11 @@
             { text: 'новое название Wardsage и адрес wardsage.com (обновление ставится само).', kind: 'app', appVersion: '1.6.55' },
             { text: 'крестик прячет программу в трей, а сворачивание оставляет её на панели задач.', kind: 'app', appVersion: '1.6.55' } ] },
           { v: 130, date: '2026-10-09', items: [{ text: 'Арена: подсказки по соперникам обновлены.', kind: 'site' }] } ] });
+      } else if (m.cmd === 'forum.unread') {
+        // s=onboard: no code, the page shows the note; s=forum0: nothing new
+        emit({ ev: 'forum', r: s === 'forum0' ? { ok: true, total: 0, topics: [], newTopicUrl: site + '/community/new?kind=bug&area=app' } : { ok: true, total: 3, newTopicUrl: site + '/community/new?kind=bug&area=app', topics: [
+          { id: 't1', title: 'Не снимается экипировка у Сунь Укуна', kind: 'bug', status: 'in_progress', newCount: 2, lastAt: '2026-10-12T08:10:00Z', url: 'https://wardsage.com/community/t1' },
+          { id: 't2', title: 'Подсказки по арене на втором экране', kind: 'idea', status: 'accepted', newCount: 1, lastAt: '2026-10-11T19:00:00Z', url: 'https://wardsage.com/community/t2' } ] } });
       } else if (m.cmd === 'plans.load') {
         emit({ ev: 'plans', status: 'ok', plans });
       } else if (m.cmd === 'equip.scan') {

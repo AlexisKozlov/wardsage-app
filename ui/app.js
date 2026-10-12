@@ -17,6 +17,7 @@
     scan: { status: 'idle', panel: false }, live: null, reported: {}, compact: false, overlay: 'off', hl: '',
     more: {}, autoSync: true, autoClick: false, autoConfirm: false, errorReports: false, autoUpdate: true, tray: true, autostart: false, auto: 'idle', autoAt: null,
     news: { status: 'idle', feed: null, filter: 'all', at: 0 },
+    forum: { status: 'idle', reply: null, at: 0 },
     run: null, seen: null, runKey: '', queue: [], takeOver: {},
     // storage cleanup: the site's list, the pilot's state on the game's sell screen
     sell: { list: null, run: false, state: '', selected: 0, missing: 0, extra: 0, seen: {} },
@@ -57,6 +58,7 @@
     chest: '<svg viewBox="0 0 64 64"><path d="M10 26h44v26H10zM10 26l6-12h32l6 12M28 34h8v8h-8zM10 36h18M36 36h18"/></svg>',
     filter: '<svg viewBox="0 0 24 24"><path d="M4 5h16l-6 7.5V19l-4 1v-7.5z"/></svg>',
     news: '<svg viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 12h7M9 15.5h7M9 19h4"/></svg>',
+    chat: '<svg viewBox="0 0 24 24"><path d="M4 5h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1h-8l-5 4v-4H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/><path d="M8 10h8M8 13h5"/></svg>',
     folder: '<svg viewBox="0 0 24 24"><path d="M3 7a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/></svg>',
   };
 
@@ -78,7 +80,7 @@
     const md = modal();
     if (md !== lastModal) { $('#modal').innerHTML = md; lastModal = md; }
     const view = S.compact ? 'compact' : S.page + (S.editCode || !S.hasCode ? ':code' : '');
-    const html = S.compact ? compactView() : S.page === 'equip' ? equipPage() : S.page === 'settings' ? settingsPage() : S.page === 'news' ? newsPage() : syncPage();
+    const html = S.compact ? compactView() : S.page === 'equip' ? equipPage() : S.page === 'settings' ? settingsPage() : S.page === 'news' ? newsPage() : S.page === 'community' ? communityPage() : syncPage();
     if (html === lastPage && view === lastView) return;
     const pg = $('#page');
     const keep = document.activeElement && document.activeElement.id === 'code' ? pg.querySelector('#code').value : null;
@@ -96,6 +98,7 @@
       <div class="brand"><div class="crest" role="img" aria-label="Wardsage"></div><div><b>WARDSAGE${S.channel === 'test' ? '<span class="test-badge">TEST</span>' : ''}</b><small>${esc(t('tagline'))}</small></div></div>
       ${nav('sync', I.sync, t('navSync'))}
       ${nav('equip', I.equip, t('navEquip'), pending ? `<span class="badge">${pending}</span>` : '')}
+      ${nav('community', I.chat, t('navCommunity'), forumTotal() ? `<span class="badge red">${esc(window.RFForum.badge(forumTotal()))}</span>` : '')}
       ${nav('settings', I.gear, t('navSettings'))}
       ${nav('news', I.news, t('navNews'), newsUnseen() ? '<span class="newdot"></span>' : '')}
       <div class="rail-foot">
@@ -152,6 +155,36 @@
     const n = S.news;
     if (n.status === 'loading' || (!force && n.status === 'ok' && Date.now() - n.at < 600000)) return;
     n.status = 'loading'; host.send({ cmd: 'news.fetch', lang: S.lang });
+  }
+  // ---------------------------------------------------------------- community (replies in the player's topics, «Report a bug»)
+  const forumTotal = () => (S.hasCode && S.forum.reply && S.forum.reply.ok ? Math.max(0, Math.floor(S.forum.reply.total) || 0) : 0);
+  // the site answers through the host (the sync code never reaches the page); not while no code is linked
+  function loadForum(force) {
+    const f = S.forum;
+    if (!S.hasCode) { if (f.reply) { f.reply = null; f.status = 'idle'; } return; }
+    if (f.status === 'loading' && Date.now() - f.at < 60000) return;
+    if (!force && f.status === 'ok' && Date.now() - f.at < 30000) return;
+    f.status = 'loading'; f.at = Date.now(); host.send({ cmd: 'forum.unread' });
+  }
+  function communityPage() {
+    const F = window.RFForum, f = S.forum, r = f.reply;
+    const unlinked = !S.hasCode || (r && !r.ok && r.error === 'invalid_token');
+    const list = F.topics(r);
+    const card = (x) => {
+      const n = Math.max(0, Math.floor(x.newCount) || 0);
+      const st = T[S.lang]['forumSt_' + x.status] ? t('forumSt_' + x.status) : '';
+      return `<button class="card topic" data-act="open" data-url="${esc(x.url)}"><b>${esc(x.title)}</b>
+        <span class="topic-meta">${n ? `<em>${esc(t(F.countKey(n, S.lang), n))}</em>` : ''}${st ? `<span>${esc(st)}</span>` : ''}</span></button>`;
+    };
+    const body = unlinked ? `<p class="newsNote">${esc(t('forumUnlinked'))}</p>`
+      : f.status === 'error' || (r && !r.ok) ? `<p class="newsNote">${esc(t('forumOffline'))}</p>`
+      : list.length ? `<div class="stack">${list.map(card).join('')}</div>`
+      : f.status === 'ok' ? `<p class="newsNote">${esc(t('forumEmpty'))}</p>` : '';
+    return `
+      <div class="head"><div><h1>${esc(t('forumTitle'))}</h1><p class="lead">${esc(t('forumLead'))}</p></div></div>
+      ${body}
+      <div class="forum-foot"><button class="btn-gold" data-act="open" data-url="${esc(F.reportUrl(unlinked ? null : r, S.site, S.version))}">${esc(t('forumReport'))}</button>
+        <button class="btn-ghost" data-act="open" data-url="${esc(F.listUrl(S.site))}">${esc(t('forumAll'))} ›</button></div>`;
   }
   function newsPage() {
     const N = window.RFNews, n = S.news;
@@ -638,6 +671,7 @@
     if (a === 'nav') {
       S.page = el.dataset.page; S.editCode = false;
       if (S.page === 'news') { newsSeen(); loadNews(false); }
+      if (S.page === 'community') loadForum(true);
       if (S.page === 'equip' && S.plans.status === 'idle') loadPlans();
       render();
     } else if (a === 'lang') { S.lang = el.dataset.lang; host.send({ cmd: 'setLang', lang: S.lang }); loadNews(true); render(); }
@@ -723,7 +757,13 @@
         if (m.game) S.game = m.game;
         if (m.codeSaved) { S.editCode = false; toast(t('saved')); if (S.page === 'equip' || S.plans.status !== 'idle') loadPlans(); }
         if (m.siteSaved) toast(t('saved'));
-        S.ready = true; loadNews(false); render(); break;
+        S.ready = true; loadNews(false); loadForum(!!m.codeSaved); render(); break;
+      case 'forum':
+        S.forum.at = Date.now();
+        if (m.r && m.r.ok) { S.forum.status = 'ok'; S.forum.reply = m.r; }
+        else if (m.r && m.r.error === 'invalid_token') { S.forum.status = 'ok'; S.forum.reply = m.r; }
+        else S.forum.status = 'error';
+        render(); break;
       case 'news':
         S.news.at = Date.now();
         if (m.ok && Array.isArray(m.feed) && m.feed.length) { S.news.status = 'ok'; S.news.feed = m.feed; if (S.page === 'news') newsSeen(); }
@@ -740,11 +780,11 @@
         if (m.stage === 'waiting') { if (S.page === 'sync' && !S.compact) render(); break; }   // the game is still loading: not an error
         // a background sync while the sync page shows a run (the player pressed «sync» meanwhile): it is that run
         if (m.auto && S.sync.phase !== 'run') {
-          if (m.stage === 'done') { if (m.last) S.last = m.last; S.autoAt = Date.now(); loadPlans(); }
+          if (m.stage === 'done') { if (m.last) S.last = m.last; S.autoAt = Date.now(); loadPlans(); loadForum(true); }
           if (S.page === 'equip' || S.compact || S.page === 'sync') render();
           break;
         }
-        if (m.stage === 'done') { S.sync = { phase: 'done', result: m.result }; if (m.last) S.last = m.last; }
+        if (m.stage === 'done') { S.sync = { phase: 'done', result: m.result }; if (m.last) S.last = m.last; loadForum(true); }
         else if (m.stage === 'error' && m.error && m.error.kind === 'rate') {
           // the site takes one sync in 30 s: not an error — wait it out and send by itself
           const until = Date.now() + ((m.error.retryAfter || 30) + 1) * 1000;
@@ -905,6 +945,9 @@
     const busy = S.page === 'equip' || !!S.run || S.queue.length > 0 || S.auto === 'work' || S.sell.run;
     if (busy || ++pollTick % 6 === 0) loadPlans();
   }, 8000);
+
+  // new replies in the player's community topics: every 10 minutes
+  setInterval(() => loadForum(true), 600000);
 
   render();
   host.send({ cmd: 'init' });

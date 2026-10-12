@@ -449,3 +449,14 @@ body.compact .say p { font-size: 16px }
 .news li::marker { color: var(--gold2) }
 .news-grp + .news-grp { margin-top: 12px }
 .news-grp h4 { margin: 0 0 6px; font: 700 11px var(--display); letter-spacing: 1.5px; text-transform: uppercase; color: var(--gold) }
+.nav .badge.red { background: #c0392b; color: #fff }
+button.topic { all: unset; box-sizing: border-box; display: grid; gap: 8px; cursor: pointer; padding: 16px 22px;
+  background: linear-gradient(180deg, rgba(24, 34, 58, .88), rgba(18, 26, 43, .92)); border: 1px solid var(--line2); border-radius: 4px; box-shadow: 0 12px 32px rgba(0, 0, 0, .28), inset 0 1px 0 rgba(255, 255, 255, .03) }
+button.topic:hover { border-color: var(--gold2) }
+button.topic:focus-visible { outline: 1px solid var(--gold) }
+.topic b { font-size: 15px; line-height: 1.4; color: var(--text) }
+.topic-meta { display: flex; gap: 14px; align-items: baseline; font-size: 13px; color: var(--muted) }
+.topic-meta em { font-style: normal; font-weight: 600; color: var(--gold) }
+.forum-foot { display: flex; align-items: center; gap: 24px; margin-top: 22px; flex-wrap: wrap }
+.stack + .forum-foot { margin-top: 22px }
+

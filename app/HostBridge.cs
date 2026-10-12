@@ -1,7 +1,7 @@
 // RealmForge.exe - messages between the page (ui/app.js) and the program.
 //
 // page -> host  {cmd:"init"|"setLang"|"setCode"|"clearCode"|"setSaveCopy"|"setErrorReports"|"setSite"|"paste"|"sync"|"open"|"openLog"|
-//                    "openFolder"|"plans.load"|"news.fetch"|"equip.scan"|"equip.watch"|"equip.finish"|"highlight"|"compact", ...}
+//                    "openFolder"|"plans.load"|"news.fetch"|"forum.unread"|"equip.scan"|"equip.watch"|"equip.finish"|"highlight"|"compact", ...}
 // host -> page  {ev:"state"|"game"|"paste"|"sync"|"plans"|"equip.scan"|"equip.live"|"overlay"|"bridge.equip"|"bridge.drop", ...}
 // The local bridge (bridge/, optional): every reading of the game also goes to it, and its equip commands become
 // plans on the page (id "bridge:<command id>") that the same guide walks through; equip.finish answers the bridge.
@@ -173,6 +173,7 @@ namespace RealmForge {
           case "openFolder": Shell.OpenFolder(lastSavedPath ?? Extractor.OutputDir); break;
           case "plans.load": LoadPlans(MiniJson.GetString(m, "lang")); break;
           case "news.fetch": LoadNews(MiniJson.GetString(m, "lang")); break;
+          case "forum.unread": LoadForum(); break;
           case "sell.load": LoadSell(MiniJson.GetString(m, "lang")); break;
           case "sell.run": {
             // storage cleanup: select the list's items on the game's sell screen (from the gear list of the hero the game
@@ -781,6 +782,12 @@ namespace RealmForge {
         var feed = NewsClient.Fetch(site, lang);
         Post(feed == null ? "{\"ev\":\"news\",\"ok\":false}" : "{\"ev\":\"news\",\"ok\":true,\"feed\":" + feed + "}");
       });
+    }
+
+    // new replies in the player's community topics; the page never sees the sync code
+    void LoadForum() {
+      string site = cfg.Site, code = cfg.Code;
+      Task.Factory.StartNew(() => { Post("{\"ev\":\"forum\",\"r\":" + NewsClient.Unread(site, code) + "}"); });
     }
 
     void LoadPlans(string lang) {
