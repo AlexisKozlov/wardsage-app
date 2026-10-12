@@ -43,6 +43,7 @@ namespace RealmForge {
     // automatic updates (app/Updater.cs): first check shortly after start, then every 6 hours
     readonly System.Windows.Forms.Timer updateTimer = new System.Windows.Forms.Timer();
     string updateReady;   // JSON of the downloaded update for the page, or null
+    string updateReadyVersion;   // its version
     // local bridge (src/BridgeClient.cs): the poller has its own client (aborted on exit); this one sends snapshots and answers
     const string BridgePlanPrefix = "bridge:";
     readonly BridgeClient bridgeApi = new BridgeClient(BridgeClient.DefaultUrl, BridgeClient.DefaultTokenPath);
@@ -73,7 +74,7 @@ namespace RealmForge {
       overlay.Problem += (kind, message) => Report(kind, message, null);
       Program.FatalReport = ReportFatal;
       autoTimer.Interval = 1000; autoTimer.Tick += (s, e) => AutoSyncTick(); autoTimer.Start();
-      updateTimer.Interval = 20000; updateTimer.Tick += (s, e) => { updateTimer.Interval = 5 * 60 * 1000; if (updateReady == null) CheckUpdate(); }; updateTimer.Start();
+      updateTimer.Interval = 20000; updateTimer.Tick += (s, e) => { updateTimer.Interval = (Channel.IsTest ? 2 : 5) * 60 * 1000; if (updateReady == null || Channel.IsTest) CheckUpdate(); }; updateTimer.Start();
       bridgePoller = new BridgePoller(new BridgeClient(BridgeClient.DefaultUrl, BridgeClient.DefaultTokenPath),
                                       c => OnUi(() => OnBridgeCommand(c)), up => OnUi(() => OnBridgeConnected(up)));
       bridgePoller.Start();
@@ -111,6 +112,8 @@ namespace RealmForge {
       Task.Factory.StartNew(() => {
         var u = Updater.CheckAndDownload(site);
         if (u == null) return;
+        if (updateReady != null && !Updater.Newer(u.Version, updateReadyVersion)) return;   // test builds keep looking: only a newer one replaces the downloaded one
+        updateReadyVersion = u.Version;
         updateReady = "{\"ev\":\"update\",\"version\":" + S(u.Version) + ",\"notesRu\":" + S(u.NotesRu) + ",\"notesEn\":" + S(u.NotesEn) + "}";   // the page shows the one of its language
         Post(updateReady);
       });
