@@ -60,7 +60,7 @@ namespace RealmForge {
       if (ps[0].Id != pvpPid) { pvpData = 0; pvpPid = ps[0].Id; pvpLastFind = 0; H = OpenProcess(0x0410, false, ps[0].Id); }
       if (H == IntPtr.Zero) H = OpenProcess(0x0410, false, ps[0].Id);
       if (H == IntPtr.Zero) return 0;
-      if (pvpData != 0 && HasTable(pvpData, "m_Opponents") && HasNum(pvpData, KPvp)) return pvpData;
+      if (pvpData != 0 && HasTable(pvpData, "m_Opponents") && HasNum(pvpData, KPvp) && InCurrentState(pvpData)) return pvpData;
       pvpData = 0;
       if (pvpLastFind != 0 && Environment.TickCount - pvpLastFind < rescanMs) return 0;
       pvpLastFind = Environment.TickCount;
@@ -68,7 +68,7 @@ namespace RealmForge {
       var owners = OwnersOf(FindLuaStringsFast(new[] { KPvp }), 1024);
       List<ulong> l; ulong best = 0; int bestN = -1;
       if (owners.TryGetValue(KPvp, out l))
-        foreach (var t in l) {
+        foreach (var t in InState(l, CurrentState())) {   // a copy of an earlier login: never taken while the running one is known
           ulong m; int mt;
           if (!HasNum(t, KPvp) || !Field(t, "m_Opponents", out m, out mt) || mt != T_TABLE) continue;
           int n = EntryCount(m) * 10 + (HasNum(t, "m_iScore") ? 1 : 0);   // a lingering old copy: fewer opponents, no score
@@ -120,7 +120,7 @@ namespace RealmForge {
     /// <summary>The player's saved teams for the arena's stages (6001000–6002999) as JSON {stage: [hero uid…]}; "{}" when
     /// none / not found.</summary>
     static string ArenaTeams(int rescanMs) {
-      if (heroData == 0 || !HasTable(heroData, KTeams)) {
+      if (heroData == 0 || !HasTable(heroData, KTeams) || !InCurrentState(heroData)) {
         heroData = 0;
         if (heroLastFind != 0 && Environment.TickCount - heroLastFind < rescanMs) return "{}";
         heroLastFind = Environment.TickCount;
@@ -128,7 +128,7 @@ namespace RealmForge {
         var owners = OwnersOf(FindLuaStringsFast(new[] { KTeams }), 1024);
         List<ulong> l; int bestN = -1;
         if (owners.TryGetValue(KTeams, out l))
-          foreach (var t in l) {
+          foreach (var t in InState(l, CurrentState())) {
             ulong m; int mt;
             if (!Field(t, KTeams, out m, out mt) || mt != T_TABLE) continue;
             int n = 0; foreach (var e in IntEntries(m)) if (e.Tt == T_TABLE) n++;

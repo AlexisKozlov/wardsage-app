@@ -22,6 +22,10 @@ namespace RealmForge {
     public ulong EquipData, HeroData, CampOwner, ArtOwner, BeastOwner, ActOwner, Form, Panel;
     public ulong ItemData, PlayerData;   // the bag (ItemData) and the currencies (PlayerData): "resources"
     public ulong UnionWeekBoss;          // UnionWeekBossData: the gear saved with the Zerbus teams (m_SavedTeamEquipsInfo)
+    public ulong GameData;               // GameData: its frame counter (m_Knock) moves while the game runs
+    public ulong State;                  // the script state (login) the tables belong to: the address of its instance id key; 0 = not known
+    public bool Ambiguous;               // memory holds the tables of several logins and the running one could not be told
+    public string Note;                  // how the state was chosen (for the log)
   }
 
   public static partial class RFX {
@@ -35,19 +39,179 @@ namespace RealmForge {
     /// (again). <paramref name="needForm"/>: also the hero screen (created when the player first opens it).</summary>
     /// <summary>The live tables are searched again on the next use (the helper's plan stood still: an item put on was not
     /// seen until the app was restarted, live 27.09).</summary>
-    public static void ForgetLive() { live = null; }
+    public static void ForgetLive() { live = null; keyText.Clear(); }
 
     internal static LiveTables EnsureLive(int pid, bool needForm) {
-      var lt = live;
+      var lt = live; LastFindFresh = false;
       if (lt != null && lt.Pid == pid && HasTable(lt.EquipData, "equips") && HasTable(lt.HeroData, KHeroes)
-          && (!needForm || Layout.Current == null || (HasTable(lt.Form, "m_InfinityGridProxy") && LiveForm() == lt.Form))) return lt;
+          && (!needForm || Layout.Current == null || (HasTable(lt.Form, "m_InfinityGridProxy") && LiveForm() == lt.Form))) {
+        string why = StateGone(lt);
+        if (why == null) return lt;
+        ForgetKeys(why);
+      }
       var sw = Stopwatch.StartNew();
+      var before = lt != null && lt.Pid == pid ? lt.State : 0;
       lt = FindLive(pid);
       L("Live tables found in " + sw.Elapsed.TotalSeconds.ToString("0.0") + " s: equip " + (lt.EquipData != 0) + ", heroes " + (lt.HeroData != 0)
         + ", artifacts " + (lt.ArtOwner != 0) + ", rewards " + (lt.CampOwner != 0) + ", hero screen " + (lt.Form != 0)
         + ", bag " + (lt.ItemData != 0) + ", player " + (lt.PlayerData != 0));
-      live = lt;
+      L("Script state: " + lt.Note + (before != 0 && lt.State != 0 && lt.State != before ? "; a new login since the last search" : ""));
+      if (before != 0 && lt.State != before) subValues = null;   // the server copies of another login: collected again
+      live = lt; LastFindFresh = true;
       return lt;
+    }
+
+    /// <summary>The last EnsureLive searched the tables (they were not the ones found before).</summary>
+    [ThreadStatic] static bool LastFindFresh;
+
+    // ------------------------------------------------------------------ the script state (login) the tables belong to
+    //
+    // The game builds its whole script state again at a re-login or an account switch, and memory can hold the tables of the
+    // earlier state for a long time. Every object the game's classes make carries the key ____instanceId, and a key's string
+    // object is one per state: the address of that key string tells which state a table belongs to. GameData (the owner of
+    // m_bInitElva) adds the time of each frame to m_Knock, so the state whose GameData's m_Knock moves is the one the game
+    // runs. All the tables of a reading come from that one state.
+    const string KGameData = "m_bInitElva", KInst = "____instanceId", KKnock = "m_Knock";
+    const int KnockWaitMs = 1000, KnockStepMs = 20;
+
+    /// <summary>The script state a table belongs to (the address of its ____instanceId key string), 0 = not an instance.</summary>
+    static ulong StateKey(ulong t) { ulong v, k; int tt; return t != 0 && FieldKey(t, KInst, out v, out tt, out k) ? k : 0; }
+
+    static string KnockSample(ulong gd) { ulong v; int tt; return Field(gd, KKnock, out v, out tt) && (tt == T_FLT || tt == T_INT) ? tt + ":" + v : null; }
+
+    /// <summary>Of the GameData tables, the ones whose frame counter moves within <paramref name="maxMs"/> (once one has moved,
+    /// the others get as long again).</summary>
+    static HashSet<ulong> Moving(IList<ulong> gds, int maxMs) {
+      var first = new Dictionary<ulong, string>(); var moved = new HashSet<ulong>();
+      foreach (var g in gds) { var s0 = KnockSample(g); if (s0 != null) first[g] = s0; }
+      var sw = Stopwatch.StartNew(); long movedAt = -1;
+      while (moved.Count < first.Count && sw.ElapsedMilliseconds < maxMs) {
+        Thread.Sleep(KnockStepMs);
+        foreach (var kv in first) if (!moved.Contains(kv.Key)) { var s1 = KnockSample(kv.Key); if (s1 != null && s1 != kv.Value) moved.Add(kv.Key); }
+        if (moved.Count > 0 && movedAt < 0) movedAt = sw.ElapsedMilliseconds;
+        if (movedAt >= 0 && sw.ElapsedMilliseconds >= 2 * movedAt + KnockStepMs) break;
+      }
+      return moved;
+    }
+
+    /// <summary>Why the live tables found before may no longer be the game's (null: they are).</summary>
+    static string StateGone(LiveTables lt) {
+      if (lt.Ambiguous) return "the login of the tables found before was not known";
+      if (lt.State == 0) return null;   // the game's objects carry no state mark: checked as before (tables still there)
+      foreach (var t in new[] { lt.GameData, lt.EquipData, lt.HeroData, lt.PlayerData })
+        if (t != 0 && StateKey(t) != lt.State) return "a live table no longer belongs to the login it was found in";
+      if (lt.GameData != 0 && Moving(new[] { lt.GameData }, KnockWaitMs).Count == 0) return "the game showed no frames: another login may have replaced the tables";
+      return null;
+    }
+
+    /// <summary>The tables of the state (state 0: all); tables without a state mark are kept after them.</summary>
+    static List<ulong> InState(List<ulong> l, ulong state) {
+      if (state == 0 || l == null) return l;
+      var r = new List<ulong>(); var unmarked = new List<ulong>();
+      foreach (var t in l) { ulong st = StateKey(t); if (st == state) r.Add(t); else if (st == 0) unmarked.Add(t); }
+      r.AddRange(unmarked);
+      return r;
+    }
+
+    /// <summary>Chooses the script state of the reading (sets State, GameData, Ambiguous, Note) and keeps only its tables in
+    /// <paramref name="owners"/>.</summary>
+    static void ChooseState(Dictionary<string, List<ulong>> owners, LiveTables lt) {
+      var byState = new Dictionary<ulong, ulong>();   // state -> its GameData
+      List<ulong> gds;
+      if (owners.TryGetValue(KGameData, out gds))
+        foreach (var g in gds) { if (!HasNum(g, KKnock)) continue; ulong st = StateKey(g); if (st != 0 && !byState.ContainsKey(st)) byState[st] = g; }
+      if (byState.Count > 0) {
+        var moving = Moving(new List<ulong>(byState.Values), KnockWaitMs);
+        var runs = new List<ulong>(); foreach (var kv in byState) if (moving.Contains(kv.Value)) runs.Add(kv.Key);
+        if (byState.Count > 1 && runs.Count == 1) { lt.State = runs[0]; lt.Note = "the running one of " + byState.Count; }
+        else if (byState.Count == 1) { foreach (var k in byState.Keys) lt.State = k; lt.Note = "the only one (" + (runs.Count == 1 ? "running" : "no frames seen") + ")"; }
+        else { lt.Ambiguous = true; lt.Note = byState.Count + " logins in memory, " + (runs.Count == 0 ? "none seen running (the game showed no frames)" : runs.Count + " seen running"); }
+        if (lt.State != 0) lt.GameData = byState[lt.State];
+      } else {
+        // no frame counter (another game version): several states of the hero table cannot be told apart
+        var heroStates = new HashSet<ulong>(); List<ulong> hl;
+        if (owners.TryGetValue(KHeroes, out hl)) foreach (var t in hl) { ulong st = StateKey(t); if (st != 0) heroStates.Add(st); }
+        if (heroStates.Count > 1) { lt.Ambiguous = true; lt.Note = heroStates.Count + " logins in memory, no frame counter found"; }
+        else lt.Note = "no frame counter found; " + (heroStates.Count == 1 ? "one login in memory" : "no login marks");
+      }
+      // without a running state known: the state of the largest hero table, so that the reading at least never mixes logins
+      if (lt.State == 0) {
+        ulong hd = Largest(owners, KHeroes); lt.State = StateKey(hd);
+        ulong g; if (lt.State != 0 && byState.TryGetValue(lt.State, out g)) lt.GameData = g;
+      }
+      if (lt.State == 0) return;
+      foreach (var key in new List<string>(owners.Keys)) owners[key] = InState(owners[key], lt.State);
+    }
+
+    /// <summary>A table of the reading that belongs to another script state than the reading (null: none).</summary>
+    static string MixedState(LiveTables lt) {
+      if (lt.State == 0) return null;
+      string[] names = { "equipment", "heroes", "player", "bag", "rewards", "artifacts", "beasts", "activities", "zerbus" };
+      ulong[] ts = { lt.EquipData, lt.HeroData, lt.PlayerData, lt.ItemData, lt.CampOwner, lt.ArtOwner, lt.BeastOwner, lt.ActOwner, lt.UnionWeekBoss };
+      for (int i = 0; i < ts.Length; i++) { ulong st = StateKey(ts[i]); if (st != 0 && st != lt.State) return "the " + names[i] + " table belongs to another login"; }
+      return null;
+    }
+
+    static int stateCheckedAt; static ulong stateChecked; static bool stateCheckedLive;
+
+    /// <summary>The script state the game runs now: the live tables' one while its frame counter moves (checked at most every
+    /// 5 s); 0 = not known (then the readers choose as before).</summary>
+    internal static ulong CurrentState() {
+      var lt = live; if (lt == null || lt.State == 0 || lt.GameData == 0 || lt.Ambiguous) return 0;
+      if (stateCheckedAt != 0 && Environment.TickCount - stateCheckedAt < 5000 && stateChecked == lt.State) return stateCheckedLive ? lt.State : 0;
+      stateCheckedLive = StateKey(lt.GameData) == lt.State && Moving(new[] { lt.GameData }, KnockWaitMs).Count > 0;
+      stateChecked = lt.State; stateCheckedAt = Environment.TickCount;
+      return stateCheckedLive ? lt.State : 0;
+    }
+
+    /// <summary>A table found earlier still belongs to the state the game runs (or no state is known).</summary>
+    static bool InCurrentState(ulong t) { ulong st = CurrentState(); if (st == 0) return true; ulong k = StateKey(t); return k == 0 || k == st; }
+
+    static long lastUid; static int lastUidPid;
+    /// <summary>Why the last reading gave no account (with LastError "not_ready").</summary>
+    public static string LastDetail;
+
+    static long PlayerUid(LiveTables lt) {
+      ulong pv; int pt; long uid;
+      return lt.PlayerData != 0 && Field(lt.PlayerData, "m_Uid", out pv, out pt) && AsLong(pv, pt, out uid) && uid > 0 ? uid : 0;
+    }
+
+    /// <summary>account.json from the live tables of the game process <paramref name="pid"/>. Null when they are not all
+    /// found (the caller does the full scan) or, with LastError "not_ready", when it is not known which login they belong to.</summary>
+    public static string ReadLiveAccount(int pid) { return ReadLiveAccount(pid, Stopwatch.StartNew()); }
+
+    static string ReadLiveAccount(int pid, Stopwatch sw) {
+      LastDetail = null;
+      var lt = EnsureLive(pid, false); bool fresh = LastFindFresh;
+      if (lt.EquipData == 0 || lt.HeroData == 0) return null;
+      long uid = PlayerUid(lt);
+      // another player than at the last reading of this game session, from tables found earlier: they are looked for again
+      if (!fresh && uid > 0 && lastUidPid == pid && lastUid > 0 && uid != lastUid) {
+        L("Player " + uid + " is not the player of the last reading (" + lastUid + "): the live tables are looked for again");
+        ForgetLive(); ForgetKeys("the player changed");
+        lt = EnsureLive(pid, false); fresh = true;
+        if (lt.EquipData == 0 || lt.HeroData == 0) return null;
+        uid = PlayerUid(lt);
+      }
+      string mixed = lt.Ambiguous ? lt.Note : MixedState(lt);
+      if (mixed != null && !fresh) {
+        ForgetLive(); ForgetKeys(mixed);
+        lt = EnsureLive(pid, false);
+        if (lt.EquipData == 0 || lt.HeroData == 0) return null;
+        uid = PlayerUid(lt);
+        mixed = lt.Ambiguous ? lt.Note : MixedState(lt);
+      }
+      if (mixed != null) {
+        LastError = "not_ready"; LastDetail = "the game's tables of more than one login are in memory (" + mixed + ")";
+        L("Not sent: " + LastDetail);
+        return null;
+      }
+      var json = AccountFromLive(lt, sw, uid);
+      if (json != null && uid > 0) {
+        if (lastUidPid == pid && lastUid != uid) L("Player of this reading: " + uid + (lastUid > 0 ? " (was " + lastUid + ")" : ""));
+        lastUid = uid; lastUidPid = pid;
+      }
+      return json;
     }
 
     // ------------------------------------------------------------------ the live hero screen
@@ -166,12 +330,13 @@ namespace RealmForge {
 
     static LiveTables FindLive(int pid) {
       regs = Regions();
-      string[] anchors = { KEquipData, KHero, KHeroes, KCamp, KArts, KBeasts, KAct, KGrid, KPanel, KItems, KPlayer, KZerbus };
+      string[] anchors = { KEquipData, KHero, KHeroes, KCamp, KArts, KBeasts, KAct, KGrid, KPanel, KItems, KPlayer, KZerbus, KGameData };
       var tstr = FindLuaStringsFast(anchors);
       var found = new List<string>(); foreach (var kv in tstr) found.Add(kv.Value + "@" + kv.Key.ToString("X"));
       L("Strings found: " + string.Join(", ", found.ToArray()));
       var owners = OwnersOf(tstr);
       var lt = new LiveTables { Pid = pid };
+      ChooseState(owners, lt);   // only the tables of the login the game runs
       List<ulong> l;
       // EquipData: the owner of suitId2EquipIdExt (set in EquipData:ctor) with the item map. m_CurrentSelectHeroUid and
       // m_EquipFilterConfigs are set only once the gear screen was opened (and the first is nil again outside it: the key
@@ -235,8 +400,8 @@ namespace RealmForge {
       Parallel.ForEach(chunks, new ParallelOptions { MaxDegreeOfParallelism = Math.Max(2, Environment.ProcessorCount) },
         () => new byte[CH],
         (c, state, buf) => {
-          IntPtr rd;
-          if (ReadProcessMemory(H, (IntPtr)(long)c.Key, buf, (IntPtr)c.Value, out rd) && (long)rd > 0) f(c.Key, buf, (int)(long)rd);
+          int rd;
+          if (Rpm(c.Key, buf, c.Value, out rd) && rd > 0) f(c.Key, buf, rd);
           return buf;
         },
         buf => { });
@@ -489,7 +654,7 @@ namespace RealmForge {
     // ------------------------------------------------------------------ the account from the live tables
 
     /// <summary>account.json from the live tables; null when they are not all there (the caller then does the full scan).</summary>
-    static string AccountFromLive(LiveTables lt, Stopwatch sw) {
+    static string AccountFromLive(LiveTables lt, Stopwatch sw, long puid) {
       ulong equips, heroes; int t1, t2;
       if (!Field(lt.EquipData, "equips", out equips, out t1) || t1 != T_TABLE) return null;
       if (!Field(lt.HeroData, KHeroes, out heroes, out t2) || t2 != T_TABLE) return null;
@@ -561,11 +726,12 @@ namespace RealmForge {
       sb.Append("\n,\"meta\":{\"extractor\":\"" + ExtractorVersion + "\"");
       if (GameVersion != null) { sb.Append(",\"gameVersion\":"); J(sb, GameVersion); }
       // the game account (PlayerData m_Uid / m_Name): one site account may get two game accounts
+      // (puid: read once by the caller, from the same script state as the heroes and items above)
       if (lt.PlayerData != 0) {
-        ulong pv; int pt; long puid;
-        if (Field(lt.PlayerData, "m_Uid", out pv, out pt) && AsLong(pv, pt, out puid) && puid > 0) { sb.Append(",\"player\":" + puid); SyncClient.Player = puid; }
+        ulong pv; int pt; long lvl;
+        if (puid > 0) { sb.Append(",\"player\":" + puid); SyncClient.Player = puid; }
         if (Field(lt.PlayerData, "m_Name", out pv, out pt) && (pt == T_SSTR || pt == T_LSTR)) { sb.Append(",\"playerName\":"); J(sb, ReadLuaString(pv)); }
-        if (Field(lt.PlayerData, "m_Level", out pv, out pt) && AsLong(pv, pt, out puid)) sb.Append(",\"playerLevel\":" + puid);
+        if (Field(lt.PlayerData, "m_Level", out pv, out pt) && AsLong(pv, pt, out lvl)) sb.Append(",\"playerLevel\":" + lvl);
       }
       sb.Append(",\"seconds\":" + (int)sw.Elapsed.TotalSeconds + ",\"equipment\":" + ne + ",\"heroes\":" + nh + ",\"live\":true}\n}\n");
       L("Done in " + sw.Elapsed.TotalSeconds.ToString("0.0") + " s");

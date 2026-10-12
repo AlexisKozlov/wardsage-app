@@ -102,6 +102,7 @@ namespace RealmForge {
           if (RFX.LastError == "not_running") res.Error = ExtractError.GameNotRunning;
           else if (RFX.LastError == "open_failed" && RFX.LastOpenError == 5) res.Error = ExtractError.AccessDenied;
           else if (RFX.LastError == "open_failed") { res.Error = ExtractError.OpenFailed; res.Detail = RFX.LastOpenError.ToString(); }
+          else if (RFX.LastError == "not_ready") { res.Error = ExtractError.NoAccountData; res.Detail = RFX.LastDetail; }   // looked at again soon
           else res.Error = ExtractError.Failed;
           return res;
         }

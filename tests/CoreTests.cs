@@ -410,6 +410,7 @@ static class CoreTests {
 
     ArenaOppTests();
     GuildTests();
+    LiveStateTests();
     GamePacksTests();
     UpdateKeysTests();
 
@@ -974,6 +975,161 @@ static class CoreTests {
     Check(GuildPayload.Due(true, t0, t0, 10) && !GuildPayload.Due(false, t0.AddMinutes(9), t0, 10) && GuildPayload.Due(false, t0.AddMinutes(10), t0, 10), "cadence");
     long n;
     Check(GuildPayload.Try("12", out n) && n == 12 && GuildPayload.Try(3.0e9, out n) && n == 3000000000L && !GuildPayload.Try("abc", out n) && !GuildPayload.Try(null, out n), "number parsing");
+  }
+
+// ------------------------------------------------------------------ the live tables of more than one login in memory
+
+  /// <summary>A stand-in game memory holding script tables (strings, tables, nodes laid out as the reader expects).</summary>
+  sealed class FakeLua : RFX.IGameMemory {
+    public const ulong Base = 0x20000000;
+    public readonly byte[] Mem;
+    int top = 64;
+    public ulong Knock;   // the value of the running GameData's m_Knock: moves on every read (0 = the game shows no frames)
+    public FakeLua(int size) { Mem = new byte[size]; }
+    public IList<ulong[]> Writable() { return new[] { new ulong[] { Base, (ulong)Mem.Length } }; }
+    public bool Read(ulong addr, byte[] buf, int n, out int got) {
+      got = 0;
+      if (addr < Base || addr + (ulong)n > Base + (ulong)Mem.Length) return false;
+      if (Knock != 0 && Knock >= addr && Knock < addr + (ulong)n) {
+        int ko = (int)(Knock - Base); double d = BitConverter.ToDouble(Mem, ko) + 0.016; if (d > 1) d -= 1;
+        Array.Copy(BitConverter.GetBytes(d), 0, Mem, ko, 8);
+      }
+      Buffer.BlockCopy(Mem, (int)(addr - Base), buf, 0, n); got = n; return true;
+    }
+    public ulong Alloc(int n) { top = (top + 15) & ~15; ulong a = Base + (ulong)top; top += n; return a; }
+    public void W64(ulong a, ulong v) { Array.Copy(BitConverter.GetBytes(v), 0, Mem, (int)(a - Base), 8); }
+    public void W32(ulong a, int v) { Array.Copy(BitConverter.GetBytes(v), 0, Mem, (int)(a - Base), 4); }
+    public ulong R64(ulong a) { return BitConverter.ToUInt64(Mem, (int)(a - Base)); }
+    public ulong Str(string s) {
+      var b = Encoding.ASCII.GetBytes(s); ulong a = Alloc(24 + b.Length + 1);
+      Mem[a - Base + 8] = 4; Mem[a - Base + 11] = (byte)b.Length; Array.Copy(b, 0, Mem, (int)(a - Base) + 24, b.Length);
+      return a;
+    }
+  }
+  struct FTab { public ulong A; public FTab(ulong a) { A = a; } }
+
+  /// <summary>One script state of the stand-in game: its own key strings (one string object per text).</summary>
+  sealed class FakeState {
+    public readonly FakeLua M; readonly Dictionary<string, ulong> strs = new Dictionary<string, ulong>();
+    public FakeState(FakeLua m) { M = m; }
+    public ulong S(string s) { ulong a; if (!strs.TryGetValue(s, out a)) strs[s] = a = M.Str(s); return a; }
+    public FTab T(params object[] kv) {
+      int n = kv.Length / 2, lsize = 0; while ((1 << lsize) < n) lsize++;
+      ulong t = M.Alloc(56), np = M.Alloc(32 << lsize);
+      M.Mem[t - FakeLua.Base + 8] = 5; M.Mem[t - FakeLua.Base + 11] = (byte)lsize; M.W64(t + 24, np);
+      for (int i = 0; i < n; i++) {
+        ulong nd = np + (ulong)(32 * i); object k = kv[2 * i], v = kv[2 * i + 1];
+        if (k is string) { M.W64(nd + 16, S((string)k)); M.W32(nd + 24, 0x44); } else { M.W64(nd + 16, (ulong)(long)k); M.W32(nd + 24, 0x13); }
+        if (v is long) { M.W64(nd, (ulong)(long)v); M.W32(nd + 8, 0x13); }
+        else if (v is double) { M.W64(nd, (ulong)BitConverter.DoubleToInt64Bits((double)v)); M.W32(nd + 8, 3); }
+        else if (v is bool) { M.W64(nd, (bool)v ? 1UL : 0UL); M.W32(nd + 8, 1); }
+        else if (v is string) { M.W64(nd, S((string)v)); M.W32(nd + 8, 0x44); }
+        else { M.W64(nd, ((FTab)v).A); M.W32(nd + 8, 0x45); }
+      }
+      return new FTab(t);
+    }
+    /// <summary>The address of the value of a field (its node).</summary>
+    public ulong ValueAt(FTab t, string key) {
+      ulong np = M.R64(t.A + 24); int nn = 1 << M.Mem[t.A - FakeLua.Base + 11];
+      for (int i = 0; i < nn; i++) { ulong nd = np + (ulong)(32 * i); if (M.R64(nd + 16) == S(key)) return nd; }
+      return 0;
+    }
+  }
+
+  /// <summary>One login's tables: GameData (with its frame counter) unless <paramref name="gameData"/> is false, EquipData,
+  /// HeroData, PlayerData. Returns the state; <paramref name="knock"/> = GameData's m_Knock value, <paramref name="uidAt"/> =
+  /// PlayerData's m_Uid value.</summary>
+  static FakeState FakeLogin(FakeLua m, long uid, long[] heroes, long[] items, bool gameData, out ulong knock, out ulong uidAt) {
+    var st = new FakeState(m); long inst = 20001;
+    knock = 0;
+    if (gameData) { var gd = st.T("m_bInitElva", false, "m_Knock", 0.25, "class", st.T("__cname", "GameData"), "____instanceId", inst++); knock = st.ValueAt(gd, "m_Knock"); }
+    var eq = new List<object>();
+    for (int i = 0; i < items.Length; i++)
+      eq.AddRange(new object[] { items[i], st.T("iItemUid", items[i], "iItemId", 1001L, "iStarLvl", 5L, "iHeroId", heroes[i % heroes.Length], "iIntensifyLvl", 12L,
+        "bLocked", false, "vConfig", st.T("m_ID", 1001L), "vMasterAttrList", st.T(), "vViceAttrList", st.T()) });
+    st.T("suitId2EquipIdExt", st.T(), "equips", st.T(eq.ToArray()), "class", st.T("__cname", "EquipData"), "____instanceId", inst++);
+    var hs = new List<object>();
+    foreach (var h in heroes) hs.AddRange(new object[] { h, st.T("iHeroId", h, "iBaseId", h / 100000, "iLevel", 60L, "vEquipSlot", st.T()) });
+    st.T("m_CharactorDatas", st.T(hs.ToArray()), "m_CampHeroPerfectReward", st.T(), "class", st.T("__cname", "HeroData"), "____instanceId", inst++);
+    var pd = st.T("m_mNegSpecialItem", st.T(), "m_Uid", uid, "m_Name", "P" + uid, "m_Level", 50L, "m_Coin", 1000L, "m_AllBeastInfo", st.T(),
+                  "class", st.T("__cname", "PlayerData"), "____instanceId", inst++);
+    uidAt = st.ValueAt(pd, "m_Uid");
+    return st;
+  }
+
+  static List<long> AccUids(string json, string list, string key) {
+    var r = new List<long>(); var o = MiniJson.AsObject(MiniJson.TryParse(json));
+    object l; if (o == null || !o.TryGetValue(list, out l) || !(l is List<object>)) return r;
+    foreach (var e in (List<object>)l) { var d = MiniJson.AsObject(e); if (d != null) r.Add(ArenaOpp.Num(d[key])); }
+    return r;
+  }
+  static long AccPlayer(string json) { var o = MiniJson.AsObject(MiniJson.TryParse(json)); var meta = o != null ? MiniJson.AsObject(o["meta"]) : null; object p; return meta != null && meta.TryGetValue("player", out p) ? ArenaOpp.Num(p) : 0; }
+
+  static void LiveStateTests() {
+    Console.WriteLine("Live tables: re-login and account switch");
+    try {
+      // login A, the game running
+      var m = new FakeLua(4 << 20); RFX.TestMemory = m; RFX.ForgetLive();
+      ulong knockA, knockB, uidA, uidB;
+      FakeLogin(m, 111, new long[] { 203400001, 209700001, 210000001 }, new long[] { 900000001, 900000002, 900000003 }, true, out knockA, out uidA);
+      m.Knock = knockA;
+      RFX.Log.Length = 0;
+      string a = RFX.ReadLiveAccount(41);
+      Check(a != null && AccPlayer(a) == 111 && AccUids(a, "heroes", "iHeroId").Count == 3 && AccUids(a, "equipment", "iItemUid").Count == 3, "login A read: player 111, 3 heroes, 3 items");
+      Check(RFX.Log.ToString().Contains("Script state: the only one (running)"), "login A: one login in memory, seen running");
+      // the game logs in again as B: A's tables stay in memory with the same key texts in other string objects; the reader
+      // remembers A's tables and key addresses (the old copy). A's frame counter stops, B's runs.
+      FakeLogin(m, 222, new long[] { 205000002, 206000002 }, new long[] { 900000101, 900000102 }, true, out knockB, out uidB);
+      m.Knock = knockB;
+      RFX.Log.Length = 0;
+      string b = RFX.ReadLiveAccount(41);
+      string lg = RFX.Log.ToString();
+      var bh = AccUids(b, "heroes", "iHeroId"); var bi = AccUids(b, "equipment", "iItemUid");
+      Check(b != null && AccPlayer(b) == 222, "after the switch: player 222 (" + (b == null ? "null" : AccPlayer(b).ToString()) + ")");
+      Check(bh.Count == 2 && bh.Contains(205000002) && !bh.Contains(203400001), "after the switch: only B's heroes " + string.Join(",", bh));
+      Check(bi.Count == 2 && bi.Contains(900000101) && !bi.Contains(900000001), "after the switch: only B's items, never A's with B's player " + string.Join(",", bi));
+      Check(lg.Contains("Key names forgotten: the game showed no frames"), "the invalidation is logged with its reason");
+      Check(lg.Contains("Script state: the running one of 2; a new login since the last search"), "the running login chosen of two");
+      Check(lg.Contains("Player of this reading: 222 (was 111)"), "the player change is logged");
+      // the next reading keeps B without a search
+      RFX.Log.Length = 0;
+      string b2 = RFX.ReadLiveAccount(41);
+      Check(b2 != null && AccPlayer(b2) == 222 && !RFX.Log.ToString().Contains("Live tables found"), "B again: no new search");
+      // neither login shows frames (the game paused): which one is live is not known, nothing is sent
+      m.Knock = 0; RFX.ForgetLive();
+      RFX.Log.Length = 0; RFX.LastError = null;
+      string c = RFX.ReadLiveAccount(41);
+      Check(c == null && RFX.LastError == "not_ready" && RFX.LastDetail != null && RFX.LastDetail.Contains("more than one login"), "two logins, none running: not sent (" + RFX.LastError + ": " + RFX.LastDetail + ")");
+      Check(SyncOutcome.Classify(true, ExtractError.NoAccountData) == SyncKind.NotReady, "an automatic sync then waits and looks again");
+
+      // a game without the frame counter: the player read differs from the last reading's, the tables are looked for again
+      var m2 = new FakeLua(4 << 20); RFX.TestMemory = m2; RFX.ForgetLive();
+      ulong k0, u0;
+      FakeLogin(m2, 333, new long[] { 203400003 }, new long[] { 900000201 }, false, out k0, out u0);
+      string d1 = RFX.ReadLiveAccount(42);
+      Check(d1 != null && AccPlayer(d1) == 333, "no frame counter, one login: read as before");
+      m2.W64(u0, 444);   // the same tables now say another player
+      RFX.Log.Length = 0;
+      string d2 = RFX.ReadLiveAccount(42);
+      Check(d2 != null && AccPlayer(d2) == 444 && RFX.Log.ToString().Contains("Player 444 is not the player of the last reading (333): the live tables are looked for again")
+            && RFX.Log.ToString().Contains("Live tables found"), "another player than the last reading: a full search before sending");
+      // two logins and no frame counter: not sent
+      FakeLogin(m2, 555, new long[] { 203400005, 203400006 }, new long[] { 900000301 }, false, out k0, out u0);
+      RFX.ForgetLive(); RFX.LastError = null;
+      string d3 = RFX.ReadLiveAccount(42);
+      Check(d3 == null && RFX.LastError == "not_ready", "two logins, no frame counter: not sent");
+
+      // speed: a big account read from the live tables found before
+      var mb = new FakeLua(32 << 20); RFX.TestMemory = mb; RFX.ForgetLive();
+      var hb = new long[600]; for (int i = 0; i < hb.Length; i++) hb[i] = (2000 + i) * 100000L + 1;
+      var ib = new long[3000]; for (int i = 0; i < ib.Length; i++) ib[i] = 910000000 + i;
+      ulong kb, ub; FakeLogin(mb, 777, hb, ib, true, out kb, out ub); mb.Knock = kb;
+      string w = RFX.ReadLiveAccount(43);
+      var sw = System.Diagnostics.Stopwatch.StartNew(); long r0 = RFX.Reads; int runs = 5;
+      for (int i = 0; i < runs; i++) w = RFX.ReadLiveAccount(43);
+      Console.WriteLine("  bench: account of 600 heroes / 3000 items from the live tables: " + (sw.ElapsedMilliseconds / runs) + " ms, " + ((RFX.Reads - r0) / runs) + " memory reads per reading");
+      Check(w != null && AccUids(w, "heroes", "iHeroId").Count == 600 && AccUids(w, "equipment", "iItemUid").Count == 3000, "bench reading complete");
+    } finally { RFX.TestMemory = null; RFX.ForgetLive(); }
   }
 
   static void ErrorReportTests(string mock) {

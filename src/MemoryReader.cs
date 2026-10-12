@@ -34,7 +34,28 @@ namespace RealmForge {
     class Region { public ulong Base; public ulong Size; public uint Protect; }
     static List<Region> regs;
 
+    /// <summary>The memory of a stand-in game (tests): read instead of the game process when set.</summary>
+    public interface IGameMemory {
+      /// <summary>Copies <paramref name="n"/> bytes at <paramref name="addr"/>; <paramref name="got"/> = bytes copied.</summary>
+      bool Read(ulong addr, byte[] buf, int n, out int got);
+      /// <summary>The writable regions: {base, size} each.</summary>
+      IList<ulong[]> Writable();
+    }
+    public static IGameMemory TestMemory;
+    /// <summary>Memory reads made so far (for measuring).</summary>
+    public static long Reads;
+
+    static bool Rpm(ulong addr, byte[] buf, int n, out int got) {
+      System.Threading.Interlocked.Increment(ref Reads);
+      var m = TestMemory;
+      if (m != null) return m.Read(addr, buf, n, out got);
+      IntPtr rd; bool ok = ReadProcessMemory(H, (IntPtr)(long)addr, buf, (IntPtr)n, out rd);
+      got = (int)(long)rd; return ok;
+    }
+
     static List<Region> Regions() {
+      var tm = TestMemory;
+      if (tm != null) { var tr = new List<Region>(); foreach (var w in tm.Writable()) tr.Add(new Region { Base = w[0], Size = w[1], Protect = 4 }); return tr; }
       var r = new List<Region>(); ulong a = 0; MBI m;
       while (a < 0x7FFFFFFFFFFFUL) {
         if (VirtualQueryEx(H, (IntPtr)(long)a, out m, (IntPtr)Marshal.SizeOf(typeof(MBI))) == IntPtr.Zero) break;
@@ -46,8 +67,8 @@ namespace RealmForge {
     }
     static byte[] Read(ulong addr, int n) {
       if (n <= 0 || n > 64 * 1024 * 1024) return null;
-      var b = new byte[n]; IntPtr rd;
-      if (!ReadProcessMemory(H, (IntPtr)(long)addr, b, (IntPtr)n, out rd) || (long)rd != n) return null;
+      var b = new byte[n]; int rd;
+      if (!Rpm(addr, b, n, out rd) || rd != n) return null;
       return b;
     }
     delegate void ChunkFn(ulong baseAddr, byte[] buf, int len);
@@ -56,9 +77,9 @@ namespace RealmForge {
       foreach (var r in regs)
         for (ulong off = 0; off < r.Size; off += CH) {
           int n = (int)Math.Min((ulong)CH, r.Size - off);
-          var b = new byte[n]; IntPtr rd;
-          if (!ReadProcessMemory(H, (IntPtr)(long)(r.Base + off), b, (IntPtr)n, out rd)) continue;
-          f(r.Base + off, b, (int)(long)rd);
+          var b = new byte[n]; int rd;
+          if (!Rpm(r.Base + off, b, n, out rd)) continue;
+          f(r.Base + off, b, rd);
         }
     }
 
@@ -132,27 +153,65 @@ namespace RealmForge {
     }
 
     // Return raw TValue (value, tt) of a string-keyed field in a script table.
-    // Short strings are interned in the script runtime (one TString per content), so once a key's TString is known the nodes are
-    // matched by pointer: one read of the node array instead of one per key - big UI tables have hundreds of fields.
-    static readonly Dictionary<string, ulong> keyTs = new Dictionary<string, ulong>();
-    static IntPtr keyTsFor;
-    static bool Field(ulong t, string key, out ulong val, out int tt) {
-      val = 0; tt = 0;
+    // Keys are matched by their TEXT. A key's string object belongs to one script state: when the game builds its state again
+    // (re-login, account switch) memory can still hold tables of the earlier one, whose keys are other objects with the same
+    // texts, so a key address remembered from one table says nothing about another (a remembered address made the readers
+    // miss the live tables and take the old copies). The text of each key address is remembered (keyText), checked again
+    // whenever it matches, and forgotten when the game process or the script state changes.
+    static readonly System.Collections.Concurrent.ConcurrentDictionary<ulong, string> keyText = new System.Collections.Concurrent.ConcurrentDictionary<ulong, string>();
+    static IntPtr keyTextFor;
+    static readonly object keyTextGate = new object();
+
+    /// <summary>Forgets the remembered key texts (the script state changed); logs why.</summary>
+    static void ForgetKeys(string why) {
+      keyText.Clear();
+      if (why != null) L("Key names forgotten: " + why);
+    }
+
+    // The text of a short script string (null when the address holds none). Reads the header and the text in one go.
+    static string ShortText(ulong ts) {
+      var b = Read(ts, 64);
+      if (b == null) { var hb = Read(ts, 24); if (hb == null || hb[8] != 4 || hb[11] > 40) return null; var tb = Read(ts + 24, hb[11]); if (tb == null) return null; return Encoding.UTF8.GetString(tb); }
+      if (b[8] != 4 || b[11] > 40) return null;
+      return Encoding.UTF8.GetString(b, 24, b[11]);
+    }
+
+    // The remembered text of a key address (read now when not known: fresh = true); "" = not a short string.
+    static string KeyText(ulong k, out bool fresh) {
+      fresh = false;
+      if (keyTextFor != H) lock (keyTextGate) if (keyTextFor != H) { keyText.Clear(); keyTextFor = H; }
+      string s;
+      if (keyText.TryGetValue(k, out s)) return s;
+      fresh = true;
+      s = ShortText(k) ?? "";
+      if (keyText.Count > 400000) keyText.Clear();
+      keyText[k] = s;
+      return s;
+    }
+
+    // The key address still holds that text (a remembered address may since hold another string).
+    static bool HoldsText(ulong k, string key) {
+      var b = Read(k, 24 + key.Length); if (b == null || b[8] != 4 || b[11] != key.Length) return false;
+      for (int j = 0; j < key.Length; j++) if (b[24 + j] != (byte)key[j]) return false;
+      return true;
+    }
+
+    static bool Field(ulong t, string key, out ulong val, out int tt) { ulong k; return FieldKey(t, key, out val, out tt, out k); }
+
+    /// <summary>A field by its key text, with the address of its key string (<paramref name="keyAt"/>).</summary>
+    static bool FieldKey(ulong t, string key, out ulong val, out int tt, out ulong keyAt) {
+      val = 0; tt = 0; keyAt = 0;
       var h = Read(t, 56); if (h == null || h[8] != 5) return false;
       int lsize = h[11]; if (lsize > 20) return false;
       ulong node = BitConverter.ToUInt64(h, 24); int nn = 1 << lsize; var nb = Read(node, nn * 32); if (nb == null) return false;
-      ulong ts;
-      lock (keyTs) {
-        if (keyTsFor != H) { keyTs.Clear(); keyTsFor = H; }
-        if (!keyTs.TryGetValue(key, out ts)) ts = 0;
-      }
       for (int i = 0; i < nn; i++) {
         int o = i * 32; int ktt = BitConverter.ToInt32(nb, o + 24);
         if (ktt != T_SSTR) continue;
         ulong k = BitConverter.ToUInt64(nb, o + 16);
-        if (ts != 0 ? k != ts : ReadLuaString(k) != key) continue;
-        if (ts == 0 && key.Length <= 40) lock (keyTs) keyTs[key] = k;
-        val = BitConverter.ToUInt64(nb, o); tt = BitConverter.ToInt32(nb, o + 8); return true;
+        bool fresh; string s = KeyText(k, out fresh);
+        if (s.Length != key.Length || s != key) continue;
+        if (!fresh && !HoldsText(k, key)) { string gone; keyText.TryRemove(k, out gone); if (ShortText(k) != key) continue; }
+        val = BitConverter.ToUInt64(nb, o); tt = BitConverter.ToInt32(nb, o + 8); keyAt = k; return true;
       }
       return false;
     }
@@ -295,8 +354,9 @@ namespace RealmForge {
       var sw = Stopwatch.StartNew();
       // the game's live tables: found once per game session, then read directly (src/LiveTables.cs)
       try {
-        var lt = EnsureLive(ps[0].Id, false);
-        if (lt.EquipData != 0 && lt.HeroData != 0) { var fast = AccountFromLive(lt, sw); if (fast != null) return fast; }
+        var fast = ReadLiveAccount(ps[0].Id, sw);
+        if (fast != null) return fast;
+        if (LastError == "not_ready") return null;   // the live tables are there but which login they belong to is not known
         L("Live tables incomplete: the full scan follows");
       } catch (Exception e) { L("Live tables: " + e.Message + " - the full scan follows"); }
       regs = Regions(); ulong total = 0; foreach (var r in regs) total += r.Size;
