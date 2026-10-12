@@ -393,17 +393,13 @@ namespace RealmForge {
           + ",\"overflow\":" + BitConverter.ToInt64(b, 0x58) + "}";
         if (seen.Add(line.Substring(line.IndexOf("\"iBaseID\"")))) sb.Append(line).Append('\n');
       }
-      // the simulations still in memory: CSharpBattle.Battle.GameSimulation and its kinds (class addresses of this game
-      // build: <CurrentFrameIdx> 0xC4, m_state 0xA4
+      // the simulations still in memory: CSharpBattle.Battle.GameSimulation and its kinds (class addresses per game
+      // build: ClassRvas in src/BattleClock.cs): <CurrentFrameIdx> 0xC4, m_state 0xA4
       ulong ga = 0;
       try { foreach (ProcessModule m in ps[0].Modules) if (string.Equals(m.ModuleName, "GameAssembly.dll", StringComparison.OrdinalIgnoreCase)) ga = (ulong)(long)m.BaseAddress; } catch (Exception) { }
       if (ga != 0) {
-        var klass = new Dictionary<ulong, string>();
-        foreach (var t in new[] { new KeyValuePair<string, ulong>("GameSimulation", 0), new KeyValuePair<string, ulong>("TDGameSimulation", 0),
-                                  new KeyValuePair<string, ulong>("TCGameSimulation", 0), new KeyValuePair<string, ulong>("PAGameSimulation", 0) }) {
-          var kb = Read(ga + t.Value, 8); ulong k = kb != null ? BitConverter.ToUInt64(kb, 0) : 0;
-          if (k != 0) klass[k] = t.Key;
-        }
+        ForgetClasses();
+        var klass = SimKlasses(ga);
         var sims = new List<ulong>();
         ScanParallel((b0, buf, len) => {
           for (int i = 0; i + 0xC8 <= len; i += 8) if (klass.ContainsKey(BitConverter.ToUInt64(buf, i))) lock (sims) sims.Add(b0 + (ulong)i);

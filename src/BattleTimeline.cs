@@ -60,11 +60,12 @@ namespace RealmForge {
   public static partial class RFX {
     const int CT_Dead = 2, CT_Attribute = 5, CT_Skill = 8, CT_Position = 19, CT_Anger = 35, CT_Card = 42, CT_Owner = 62, CT_WaveInfo = 67,
               CT_Map = 69, CT_Statistics = 71;
-    // class addresses: CardComponent, AngerComponent, SkillComponent, FrameIdxInfo, BattleHeroInfo
-    const ulong RvaCard = 0, RvaAnger = 0, RvaSkill = 0, RvaFrameIdxInfo = 0, RvaHeroInfo = 0;
-    // OwnerRelationComponent, StatisticsComponent, DamageStatisticsData, TDStateData, WaveSystem, WaveControllerNode, AttributeComponent
-    const ulong RvaOwner = 0, RvaStats = 0, RvaDmgStat = 0, RvaTDState = 0, RvaWaveSystem = 0,
-                RvaWaveCtl = 0, RvaAttr = 0;
+    // the classes checked on the objects read (addresses per game build: ClassRvas in src/BattleClock.cs)
+    const string ClsCard = NsBattle + "CardComponent", ClsAnger = NsBattle + "AngerComponent", ClsSkill = NsBattle + "SkillComponent",
+                 ClsFrameIdxInfo = NsBattle + "FrameIdxInfo", ClsHeroInfo = NsBattle + "BattleHeroInfo";
+    const string ClsOwner = NsBattle + "OwnerRelationComponent", ClsStats = NsBattle + "StatisticsComponent",
+                 ClsDmgStat = NsBattle + "DamageStatisticsData", ClsTDState = NsBattle + "TDStateData", ClsWaveSystem = NsBattle + "WaveSystem",
+                 ClsWaveCtl = NsBattle + "WaveControllerNode", ClsAttr = NsBattle + "AttributeComponent";
 
     static ulong P64(ulong a) { var b = a != 0 ? Read(a, 8) : null; return b != null ? BitConverter.ToUInt64(b, 0) : 0; }
     static double Fix(byte[] b, int o) { return BitConverter.ToInt64(b, o) / 4096.0; }
@@ -111,9 +112,8 @@ namespace RealmForge {
       return r;
     }
 
-    /// <summary>The class of a class address (0 when GameAssembly's base is not known).</summary>
-    static ulong Klass(ulong rva) { return simGa != 0 ? P64(simGa + rva) : 0; }
-    static bool IsA(ulong obj, ulong klass) { return klass == 0 || (obj != 0 && P64(obj) == klass); }
+    /// <summary>A class of the current game process (0 when not known yet), see ClassAt.</summary>
+    static ulong Klass(string cls) { return ClassAt(simGa, cls); }
 
     /// <summary>A Dictionary&lt;int|uint, reference&gt;'s entries (key, value).</summary>
     static List<KeyValuePair<uint, ulong>> DictRefs(ulong dict, int max) {
@@ -170,7 +170,6 @@ namespace RealmForge {
     public static List<int[]> BattleHeroList(ulong sim) {
       var res = new List<int[]>();
       ulong mgr = P64(sim + 0x50); if (mgr == 0) return res;
-      ulong kh = Klass(RvaHeroInfo);
       foreach (var pl in DictRefs(P64(mgr + 0x20), 16)) {
         var pb = Read(pl.Value, 0x30); if (pb == null) continue;
         uint cuid = BitConverter.ToUInt32(pb, 0x10);
@@ -179,7 +178,7 @@ namespace RealmForge {
         var items = Read(BitConverter.ToUInt64(lb, 0x10) + 0x20, n * 8); if (items == null) continue;
         for (int i = 0; i < n; i++) {
           ulong hi = BitConverter.ToUInt64(items, i * 8);
-          if (!IsA(hi, kh)) continue;
+          if (!IsA(hi, ClsHeroInfo)) continue;
           var hb = Read(hi + 0x220, 0x14); if (hb == null) continue;
           uint uid = BitConverter.ToUInt32(hb, 0);
           if (uid != 0) res.Add(new[] { (int)uid, BitConverter.ToInt32(hb, 4), (int)BitConverter.ToUInt32(hb, 8), (int)BitConverter.ToUInt32(hb, 12), (int)cuid });
@@ -194,7 +193,7 @@ namespace RealmForge {
     /// <summary>An entity's controller (its OwnerRelationComponent cUid; 0 = none).</summary>
     static uint OwnerOf(List<KeyValuePair<uint, ulong>> nodes) {
       ulong o = Comp(nodes, CT_Owner);
-      if (o == 0 || !IsA(o, Klass(RvaOwner))) return 0;
+      if (o == 0 || !IsA(o, ClsOwner)) return 0;
       var b = Read(o + 0x20, 4);
       return b != null ? BitConverter.ToUInt32(b, 0) : 0;
     }
@@ -235,12 +234,11 @@ namespace RealmForge {
       ulong world = P64(sim + 0x28); if (world == 0) return null;
       var res = new List<HeroSample>();
       var cards = WorldComps(world, CT_Card, 128);
-      ulong kc = Klass(RvaCard), ka = Klass(RvaAnger), ks = Klass(RvaSkill);
       Dictionary<uint, ulong> ents = null; Dictionary<uint, int[]> tiles = null;
-      if (diag != null) diag.Append("cards ").Append(cards.Count).Append(", card klass ").Append(kc.ToString("X")).Append('\n');
+      if (diag != null) diag.Append("cards ").Append(cards.Count).Append(", card klass ").Append(Klass(ClsCard).ToString("X")).Append('\n');
       foreach (var card in cards) {
         var cb = Read(card, 0x58); if (cb == null) continue;
-        if (kc != 0 && BitConverter.ToUInt64(cb, 0) != kc) { if (diag != null) diag.Append("  not a card: ").Append(card.ToString("X")).Append('\n'); continue; }
+        if (!IsKlass(BitConverter.ToUInt64(cb, 0), ClsCard)) { if (diag != null) diag.Append("  not a card: ").Append(card.ToString("X")).Append('\n'); continue; }
         if (BitConverter.ToInt32(cb, 0x50) != 0) continue;   // a soldier card
         var s = new HeroSample {
           Uid = BitConverter.ToUInt32(cb, 0x20), CardState = BitConverter.ToInt32(cb, 0x24), RebornLeft = BitConverter.ToInt32(cb, 0x28),
@@ -269,10 +267,10 @@ namespace RealmForge {
             ulong dead = Comp(nodes, CT_Dead);
             if (dead != 0) { var db = Read(dead + 0x20, 8); s.Dead = true; s.DeadType = db != null ? BitConverter.ToInt32(db, 4) : -1; }
             ulong ang = Comp(nodes, CT_Anger);
-            var ab = ang != 0 && IsA(ang, ka) ? Read(ang, 0x40) : null;
+            var ab = ang != 0 && IsA(ang, ClsAnger) ? Read(ang, 0x40) : null;
             if (ab != null) { s.AngerState = BitConverter.ToInt32(ab, 0x20); s.Anger = Fix(ab, 0x30); s.MaxAnger = Fix(ab, 0x38); }
             ulong sk = Comp(nodes, CT_Skill);
-            var sb = sk != 0 && IsA(sk, ks) ? Read(sk + 0xB0, 8) : null;
+            var sb = sk != 0 && IsA(sk, ClsSkill) ? Read(sk + 0xB0, 8) : null;
             if (sb != null) s.UltFrame = BitConverter.ToUInt32(sb, 4);
             ulong at = Comp(nodes, CT_Attribute);
             ulong ba = at != 0 ? P64(at + 0x28) : 0;
@@ -332,11 +330,10 @@ namespace RealmForge {
       var res = new List<StatLine>();
       ulong world = P64(sim + 0x28); if (world == 0) return res;
       ulong st = Comp(CompNodes(P64(world + 0x58)), CT_Statistics);
-      if (st == 0 || !IsA(st, Klass(RvaStats))) return res;
-      ulong kd = Klass(RvaDmgStat);
+      if (st == 0 || !IsA(st, ClsStats)) return res;
       foreach (var side in DictRefs(P64(st + 0x20), 16))
         foreach (var u in DictRefs(side.Value, 128)) {
-          if (!IsA(u.Value, kd)) continue;
+          if (!IsA(u.Value, ClsDmgStat)) continue;
           var b = Read(u.Value, 0x68); if (b == null) continue;
           res.Add(new StatLine { C = side.Key, Unit = (int)u.Key, At = u.Value, Hero = BitConverter.ToUInt32(b, 0x14), Power = BitConverter.ToUInt32(b, 0x18),
                                  Damage = BitConverter.ToInt64(b, 0x28), ToBoss = BitConverter.ToInt64(b, 0x30), Heal = BitConverter.ToInt32(b, 0x38),
@@ -404,13 +401,10 @@ namespace RealmForge {
       var a = new ArenaSample();
       // TDStateData: the monsters alive per wave controller
       if (refs.State == 0) {
-        ulong kt = Klass(RvaTDState);
-        if (kt != 0) {
-          ulong list = P64(sim + 0x98); var seen = new HashSet<ulong>();
-          for (ulong n = P64(list + 0x10); n != 0 && seen.Count < 64 && seen.Add(n); n = P64(n + 0x28)) {
-            ulong d = P64(n + 0x18);
-            if (d != 0 && P64(d) == kt) { refs.State = d; break; }
-          }
+        ulong list = P64(sim + 0x98); var seen = new HashSet<ulong>();
+        for (ulong n = P64(list + 0x10); n != 0 && seen.Count < 64 && seen.Add(n); n = P64(n + 0x28)) {
+          ulong d = P64(n + 0x18);
+          if (IsA(d, ClsTDState)) { refs.State = d; break; }
         }
         if (diag != null) diag.Append("TDStateData ").Append(refs.State.ToString("X")).Append('\n');
       }
@@ -419,10 +413,9 @@ namespace RealmForge {
       // the wave controllers
       ulong wi = Comp(CompNodes(P64(world + 0x58)), CT_WaveInfo);
       ulong ws = wi != 0 ? P64(wi + 0x28) : 0;
-      if (ws == 0 || !IsA(ws, Klass(RvaWaveSystem))) { if (diag != null) diag.Append("no wave system (wave info ").Append(wi.ToString("X")).Append(")\n"); return null; }
-      ulong kc = Klass(RvaWaveCtl);
+      if (ws == 0 || !IsA(ws, ClsWaveSystem)) { if (diag != null) diag.Append("no wave system (wave info ").Append(wi.ToString("X")).Append(")\n"); return null; }
       foreach (var kv in DictRefs(P64(ws + 0x50), 16)) {
-        if (!IsA(kv.Value, kc)) continue;
+        if (!IsA(kv.Value, ClsWaveCtl)) continue;
         var b = Read(kv.Value, 0x68); if (b == null) continue;
         var s = new ArenaSide { Ctl = kv.Key, Active = BitConverter.ToInt32(b, 0x40), State = BitConverter.ToInt32(b, 0x44),
                                 MaxWave = BitConverter.ToInt32(b, 0x5C), Wave = BitConverter.ToInt32(b, 0x60) };
@@ -436,10 +429,9 @@ namespace RealmForge {
       }
       // the bases: looked for (every 5th sample) until two are found, then read directly
       if (refs.Bases.Count < 2 && refs.Looks++ % 5 == 0) {
-        ulong ka = Klass(RvaAttr);
         foreach (var at in WorldComps(world, CT_Attribute, 4000)) {
           var ab = Read(at, 0x30); if (ab == null) continue;
-          if (ka != 0 && BitConverter.ToUInt64(ab, 0) != ka) continue;
+          if (!IsKlass(BitConverter.ToUInt64(ab, 0), ClsAttr)) continue;
           ulong ent = BitConverter.ToUInt64(ab, 0x18), td = BitConverter.ToUInt64(ab, 0x20), ba = BitConverter.ToUInt64(ab, 0x28);
           var ib = td != 0 ? Read(td + 0x14, 4) : null; if (ib == null || ba == 0) continue;
           int id = BitConverter.ToInt32(ib, 0);
@@ -466,7 +458,6 @@ namespace RealmForge {
     public static List<FrameCmd> ReadFrameCommands(ulong sim, bool all) {
       var res = new List<FrameCmd>();
       ulong rec = P64(P64(sim + 0x38) + 0x30); if (rec == 0) return res;
-      ulong kf = Klass(RvaFrameIdxInfo);
       foreach (var kv in DictRefs(P64(rec + (all ? 0x10UL : 0x18UL)), 200000)) {
         var lb = Read(kv.Value, 0x20); if (lb == null) continue;
         int n = BitConverter.ToInt32(lb, 0x18); if (n <= 0 || n > 1000) continue;
@@ -474,7 +465,7 @@ namespace RealmForge {
         for (int i = 0; i < n; i++) {
           ulong f = BitConverter.ToUInt64(items, i * 8);
           var fb = f != 0 ? Read(f, 0x28) : null; if (fb == null) continue;
-          if (kf != 0 && BitConverter.ToUInt64(fb, 0) != kf) continue;
+          if (!IsKlass(BitConverter.ToUInt64(fb, 0), ClsFrameIdxInfo)) continue;
           var c = new FrameCmd { Frame = BitConverter.ToUInt32(fb, 0x10), Cmd = BitConverter.ToUInt16(fb, 0x14), CUid = BitConverter.ToUInt32(fb, 0x18) };
           ulong pa = BitConverter.ToUInt64(fb, 0x20);
           var ph = pa != 0 ? Read(pa + 0x18, 8) : null;
@@ -522,12 +513,12 @@ namespace RealmForge {
             .Append(u.Y.ToString("0.00")).Append(',').Append(u.Z.ToString("0.00")).Append(" hp ").Append(u.Hp.ToString("0")).Append('/').Append(u.MaxHp.ToString("0")).Append('\n');
         }
       }
-      sb.Append("klasses: card ").Append(Klass(RvaCard).ToString("X")).Append(", anger ").Append(Klass(RvaAnger).ToString("X"))
-        .Append(", skill ").Append(Klass(RvaSkill).ToString("X")).Append(", command ").Append(Klass(RvaFrameIdxInfo).ToString("X"))
-        .Append(", hero info ").Append(Klass(RvaHeroInfo).ToString("X")).Append(", owner ").Append(Klass(RvaOwner).ToString("X"))
-        .Append(", statistics ").Append(Klass(RvaStats).ToString("X")).Append(", stat line ").Append(Klass(RvaDmgStat).ToString("X"))
-        .Append(", TDStateData ").Append(Klass(RvaTDState).ToString("X")).Append(", wave system ").Append(Klass(RvaWaveSystem).ToString("X"))
-        .Append(", wave controller ").Append(Klass(RvaWaveCtl).ToString("X")).Append(", attribute ").Append(Klass(RvaAttr).ToString("X")).Append('\n');
+      sb.Append("klasses: card ").Append(Klass(ClsCard).ToString("X")).Append(", anger ").Append(Klass(ClsAnger).ToString("X"))
+        .Append(", skill ").Append(Klass(ClsSkill).ToString("X")).Append(", command ").Append(Klass(ClsFrameIdxInfo).ToString("X"))
+        .Append(", hero info ").Append(Klass(ClsHeroInfo).ToString("X")).Append(", owner ").Append(Klass(ClsOwner).ToString("X"))
+        .Append(", statistics ").Append(Klass(ClsStats).ToString("X")).Append(", stat line ").Append(Klass(ClsDmgStat).ToString("X"))
+        .Append(", TDStateData ").Append(Klass(ClsTDState).ToString("X")).Append(", wave system ").Append(Klass(ClsWaveSystem).ToString("X"))
+        .Append(", wave controller ").Append(Klass(ClsWaveCtl).ToString("X")).Append(", attribute ").Append(Klass(ClsAttr).ToString("X")).Append('\n');
       return sb.ToString();
     }
 

@@ -35,6 +35,7 @@ Optional `### Heading` lines inside a `## RU` / `## EN` section split the update
 - Окно программы больше не падает с ошибкой «Operation aborted», если Windows запустила программу после перезагрузки или сна: встроенный браузер перезапускается сам.
 - Данные гильдии для сайта теперь включают войну гильдий: атаки, победы и защиту каждого участника, а также раунды войны.
 - Сообщество в программе: новые ответы в ваших темах со счётчиком и кнопка «Сообщить об ошибке».
+- Работает с игрой 1.6.39: запись боя снова работает после обновления игры.
 
 ## EN
 
@@ -43,3 +44,4 @@ Optional `### Heading` lines inside a `## RU` / `## EN` section split the update
 - The app window no longer fails with “Operation aborted” when Windows starts it after a reboot or sleep: the built-in browser restarts by itself.
 - The guild data sent to the site now includes the guild war: each member's attacks, wins and defense, plus the war rounds.
 - Community in the app: new replies in your topics with a counter, and a “Report a bug” button.
+- Works with game version 1.6.39: fight recording works again after the game update.
