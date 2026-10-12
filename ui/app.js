@@ -173,7 +173,7 @@
     const card = (x) => {
       const n = Math.max(0, Math.floor(x.newCount) || 0);
       const st = T[S.lang]['forumSt_' + x.status] ? t('forumSt_' + x.status) : '';
-      return `<button class="card topic" data-act="open" data-url="${esc(x.url)}"><b>${esc(x.title)}</b>
+      return `<button class="card topic" data-act="open" data-url="${esc(F.onSite(x.url, S.site))}"><b>${esc(x.title)}</b>
         <span class="topic-meta">${n ? `<em>${esc(t(F.countKey(n, S.lang), n))}</em>` : ''}${st ? `<span>${esc(st)}</span>` : ''}</span></button>`;
     };
     const body = unlinked ? `<p class="newsNote">${esc(t('forumUnlinked'))}</p>`

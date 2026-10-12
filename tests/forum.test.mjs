@@ -15,4 +15,10 @@ ok(F.reportUrl(null, 'https://wardsage.com', '') === 'https://wardsage.com/commu
 ok(F.reportUrl({ ok: true, newTopicUrl: 'javascript:1' }, 'https://s.test', '1.0.0').startsWith('https://s.test/'), 'foreign scheme ignored');
 ok(F.listUrl('https://wardsage.com/') === 'https://wardsage.com/community', 'list url');
 ok(F.topics(null).length === 0 && F.topics({ ok: false }).length === 0 && F.topics({ ok: true, topics: [{ title: 'a', url: 'https://x/1' }, { title: 'b' }, null] }).length === 1, 'topics filter');
+ok(F.onSite('https://wardsage.com/community/t/5?a=1#c', 'https://test.wardsage.com') === 'https://test.wardsage.com/community/t/5?a=1#c', 'rebased to staging');
+ok(F.onSite('https://www.wardsage.com/community/t/5', 'https://test.wardsage.com/') === 'https://test.wardsage.com/community/t/5', 'www rebased');
+ok(F.onSite('https://wardsage.com/community/t/5', 'https://wardsage.com') === 'https://wardsage.com/community/t/5', 'unchanged on prod');
+ok(F.onSite('https://example.com/x', 'https://test.wardsage.com') === 'https://example.com/x', 'foreign host unchanged');
+ok(F.onSite('https://wardsage.com/x', 'ftp://bad') === 'https://wardsage.com/x' && F.onSite('https://wardsage.com/x', '') === 'https://wardsage.com/x', 'bad site unchanged');
+ok(F.reportUrl(reply, 'https://test.wardsage.com', '1.6.57') === 'https://test.wardsage.com/community/new?kind=bug&area=app&v=1.6.57', 'reportUrl on staging');
 console.log('forum.test: ' + n + ' checks ok');

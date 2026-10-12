@@ -14,10 +14,21 @@
     return a > 10 && a < 20 ? 'forumNew5' : b === 1 ? 'forumNew1' : b >= 2 && b <= 4 ? 'forumNew2' : 'forumNew5';
   }
 
+  // The site always builds links on wardsage.com; a test-channel app opens them on its own site.
+  function onSite(url, site) {
+    try {
+      const u = new URL(String(url)), s = new URL(String(site));
+      if (!/^https?:$/.test(u.protocol) || !/^https?:$/.test(s.protocol)) return url;
+      if (u.hostname !== 'wardsage.com' && u.hostname !== 'www.wardsage.com') return url;
+      if (s.host === u.host || s.hostname === 'wardsage.com' || s.hostname === 'www.wardsage.com') return url;
+      return s.origin + u.pathname + u.search + u.hash;
+    } catch (e) { return url; }
+  }
+
   // «Report a bug» address: the site's own (with kind=bug&area=app) plus the app version.
   function reportUrl(reply, site, version) {
     let u = reply && reply.ok && typeof reply.newTopicUrl === 'string' && /^https?:\/\//.test(reply.newTopicUrl)
-      ? reply.newTopicUrl : String(site || '').replace(/\/+$/, '') + '/community/new?kind=bug&area=app';
+      ? onSite(reply.newTopicUrl, site) : String(site || '').replace(/\/+$/, '') + '/community/new?kind=bug&area=app';
     if (version) u += (u.indexOf('?') < 0 ? '?' : '&') + 'v=' + encodeURIComponent(version);
     return u;
   }
@@ -30,7 +41,7 @@
       ? reply.topics.filter((x) => x && typeof x.title === 'string' && typeof x.url === 'string' && /^https?:\/\//.test(x.url)) : [];
   }
 
-  const api = { badge, countKey, reportUrl, listUrl, topics };
+  const api = { badge, countKey, reportUrl, listUrl, topics, onSite };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.RFForum = api;
 })(typeof window !== 'undefined' ? window : globalThis);
