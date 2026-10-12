@@ -725,6 +725,22 @@ static class CoreTests {
     string jn = GuildPayload.Build(unionS, pair, week, classic, 111L, now, out s2, out c2);
     Check(jn != null && jn.Contains("\"level\":7,\"memberNum\":4}"), "stated count within the slack: sent with memberNum: " + jn);
     Check(json != null && !json.Contains("memberNum"), "no stated count, no memberNum");
+    // a member record shaped like the game's (fake values): the app's own check agrees with the site's (selfUid among members[].uid)
+    Func<long, long, Dictionary<string, object>> real = (zone, uid) => Lt("stPlayerIdType", Lt("iZoneId", zone, "iUid", uid), "iPostId", 4L, "iJoinTime", 1760000000L,
+      "iTotalHistoryActive", 52000L, "iSevenActive", 1400L, "vSevenActive", LArr(Lt("iTime", 1789990000L, "iActive", 200L)),
+      "stRoleSimpleInf", Lt("stRoleId", Lt("iZoneId", zone, "iUid", uid), "sName", "Fake" + uid, "iLevel", 100L, "iPower", 9000000L, "iLogoutTime", 1789995000L, "iHeadId", 1L),
+      "mWeekBossData", Lt("[1]", Lt("iDamageNum", "123456789", "iPrevDamageNum", 0L, "iFightNum", 2L, "iLastFightTime", 1789990000L)), "mBossData", Lt());
+    var realList = new List<Dictionary<string, object>>();
+    for (int i = 0; i < 29; i++) realList.Add(real(50100L + i, 12000000L + i * 7));
+    var unionR = Lt("iUnionId", 68000L, "iLevel", 12L, "iMemberNum", 29L, "stBaseAttr", Lt("sUnionName", "Fake"));
+    string jr = GuildPayload.Build(unionR, realList, week, classic, 0L, now, out s2, out c2);
+    var uids = new HashSet<long>();
+    foreach (var mo in (List<object>)MiniJson.AsObject(MiniJson.TryParse(jr))["members"]) uids.Add(ArenaOpp.Num(MiniJson.AsObject(mo)["uid"]));
+    foreach (long probe in new[] { 12000000L, 12000000L + 28 * 7, 12000001L, 50100L, 99L }) {
+      Check(GuildPayload.SelfMissing(realList, probe) == !uids.Contains(probe), "the app's self check matches the site's for " + probe);
+      Check((GuildPayload.Build(unionR, realList, week, classic, probe, now, out s2, out c2) != null) == uids.Contains(probe), "sent exactly when the site would accept the player " + probe);
+    }
+    Check(GuildPayload.Incomplete(unionR, realList, 12000000L + 14 * 7) == null, "a whole real-shaped list with the player is sent");
     // far refresh: not soon; the hash ignores "at"
     string far = GuildPayload.Build(union, new List<Dictionary<string, object>> { m1, m2 }, LArr(Lt("iRefreshTime", 1790900000L)), classic, 111L, now, out s2, out c2);
     Check(!s2, "refresh in 10 days is not soon");

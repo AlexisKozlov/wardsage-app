@@ -32,18 +32,41 @@ namespace RealmForge {
     static ulong guildTab, guildWeekTab, guildClassicTab, guildTwoTab, guildDivTab; static int guildPid, guildLastFind, guildFoundAt;
     const int GuildRepickMs = 30 * 60 * 1000;
 
+    // Key lookups of the guild (and guild war) code compare the key text itself instead of the shared key-pointer cache of Field:
+    // a key's string object is per script state, and memory can still hold tables of an earlier state (an earlier login) whose
+    // keys are other objects with the same text. With a pointer taken from such a table, Field missed the live guild table and only
+    // the old copies matched (a partial or another account's member list).
+    static bool FieldX(ulong t, string key, out ulong val, out int tt) {
+      val = 0; tt = 0;
+      var h = Read(t, 56); if (h == null || h[8] != 5) return false;
+      int lsize = h[11]; if (lsize > 20) return false;
+      int nn = 1 << lsize; var nb = Read(BitConverter.ToUInt64(h, 24), nn * 32); if (nb == null) return false;
+      var kb = Encoding.UTF8.GetBytes(key);
+      for (int i = 0; i < nn; i++) {
+        int o = i * 32;
+        if (BitConverter.ToInt32(nb, o + 24) != T_SSTR) continue;
+        var sb = Read(BitConverter.ToUInt64(nb, o + 16), 24 + kb.Length);
+        if (sb == null || sb[8] != 4 || sb[11] != kb.Length) continue;
+        bool eq = true; for (int j = 0; j < kb.Length; j++) if (sb[24 + j] != kb[j]) { eq = false; break; }
+        if (!eq) continue;
+        val = BitConverter.ToUInt64(nb, o); tt = BitConverter.ToInt32(nb, o + 8); return true;
+      }
+      return false;
+    }
+    static bool HasTableX(ulong t, string key) { ulong v; int tt; return t != 0 && FieldX(t, key, out v, out tt) && tt == T_TABLE; }
+
     /// <summary>The number of member records in a guild table's m_vMembers (-1: none) and whether one of them is the player.</summary>
     static int GuildMembers(ulong t, long selfUid, out bool hasSelf) {
       hasSelf = false;
       ulong m; int mt;
-      if (t == 0 || !Field(t, "m_vMembers", out m, out mt) || mt != T_TABLE) return -1;
+      if (t == 0 || !FieldX(t, "m_vMembers", out m, out mt) || mt != T_TABLE) return -1;
       int n = 0;
       foreach (var e in IntEntries(m)) {
         if (e.Tt != T_TABLE) continue;
         n++;
         if (hasSelf || selfUid <= 0) continue;
         ulong id, u; int it, ut; long uid;
-        if (Field(e.Val, "stPlayerIdType", out id, out it) && it == T_TABLE && Field(id, "iUid", out u, out ut) && AsLong(u, ut, out uid) && uid == selfUid)
+        if (FieldX(e.Val, "stPlayerIdType", out id, out it) && it == T_TABLE && FieldX(id, "iUid", out u, out ut) && AsLong(u, ut, out uid) && uid == selfUid)
           hasSelf = true;
       }
       return n;
@@ -52,7 +75,7 @@ namespace RealmForge {
     /// <summary>The member count a guild table states in m_UnionInfo.iMemberNum; 0 = not known.</summary>
     static long GuildStated(ulong t) {
       ulong ui, v; int ut, vt; long n;
-      return t != 0 && Field(t, "m_UnionInfo", out ui, out ut) && ut == T_TABLE && Field(ui, "iMemberNum", out v, out vt) && AsLong(v, vt, out n) && n > 0 ? n : 0;
+      return t != 0 && FieldX(t, "m_UnionInfo", out ui, out ut) && ut == T_TABLE && FieldX(ui, "iMemberNum", out v, out vt) && AsLong(v, vt, out n) && n > 0 ? n : 0;
     }
 
     /// <summary>Forget the chosen guild table: it is looked for again at the next read (not sooner than the rescan delay).</summary>
@@ -68,7 +91,7 @@ namespace RealmForge {
       if (H == IntPtr.Zero) return false;
       bool self;
       int cn;
-      if (guildTab != 0 && HasTable(guildTab, "m_UnionInfo") && (cn = GuildMembers(guildTab, selfUid, out self)) >= 0 && (self || selfUid <= 0)
+      if (guildTab != 0 && HasTableX(guildTab, "m_UnionInfo") && (cn = GuildMembers(guildTab, selfUid, out self)) >= 0 && (self || selfUid <= 0)
           && !GuildPayload.ListShort(cn, GuildStated(guildTab)) && Environment.TickCount - guildFoundAt < GuildRepickMs) return true;
       guildTab = guildWeekTab = guildClassicTab = guildTwoTab = guildDivTab = 0;
       if (guildLastFind != 0 && Environment.TickCount - guildLastFind < rescanMs) return false;
@@ -78,7 +101,7 @@ namespace RealmForge {
       List<ulong> l; int bestN = -1; bool bestSelf = false, bestFull = false;
       if (owners.TryGetValue(KUnion, out l))
         foreach (var t in l) {
-          if (!HasTable(t, "m_UnionInfo")) continue;
+          if (!HasTableX(t, "m_UnionInfo")) continue;
           int n = GuildMembers(t, selfUid, out self);
           if (n < 0) continue;
           // the table that lists the player wins over any other, then one whose list is not short; among equals the larger list
@@ -90,7 +113,7 @@ namespace RealmForge {
       if (owners.TryGetValue(KWeekBoss, out l))
         foreach (var t in l) {
           ulong m; int mt;
-          if (!Field(t, "m_mWeekBossInfo", out m, out mt) || mt != T_TABLE) continue;
+          if (!FieldX(t, "m_mWeekBossInfo", out m, out mt) || mt != T_TABLE) continue;
           int n = EntryCount(m);
           if (n > bestN) { bestN = n; guildWeekTab = t; }
         }
@@ -98,21 +121,21 @@ namespace RealmForge {
       if (owners.TryGetValue(KClassicBoss, out l))
         foreach (var t in l) {
           ulong m; int mt;
-          if (!Field(t, KClassicBoss, out m, out mt) || mt != T_TABLE) continue;
+          if (!FieldX(t, KClassicBoss, out m, out mt) || mt != T_TABLE) continue;
           int n = EntryCount(m);
           if (n > bestN) { bestN = n; guildClassicTab = t; }
         }
       bestN = -1;
       if (owners.TryGetValue(KTwoHeads, out l))
         foreach (var t in l) {
-          if (!HasTable(t, "m_BossInfoById") || !HasTable(t, KTwoHeads)) continue;
+          if (!HasTableX(t, "m_BossInfoById") || !HasTableX(t, KTwoHeads)) continue;
           int n = EntryCount(t);
           if (n > bestN) { bestN = n; guildTwoTab = t; }
         }
       bestN = -1;
       if (owners.TryGetValue(KDividend, out l))
         foreach (var t in l) {
-          if (!HasTable(t, "m_ActiveValueRankList")) continue;
+          if (!HasTableX(t, "m_ActiveValueRankList")) continue;
           int n = EntryCount(t);
           if (n > bestN) { bestN = n; guildDivTab = t; }
         }
@@ -121,7 +144,7 @@ namespace RealmForge {
 
     static List<Dictionary<string, object>> RankList(ulong t, string key) {
       ulong v; int tt;
-      if (t == 0 || !Field(t, key, out v, out tt) || tt != T_TABLE) return null;
+      if (t == 0 || !FieldX(t, key, out v, out tt) || tt != T_TABLE) return null;
       var res = new List<Dictionary<string, object>>();
       foreach (var e in IntEntries(v)) {
         if (e.Tt != T_TABLE || res.Count >= GuildPayload.MaxMembers) continue;
@@ -133,7 +156,7 @@ namespace RealmForge {
 
     static Dictionary<string, object> SubTable(ulong t, string key, int depth) {
       ulong v; int tt;
-      if (t == 0 || !Field(t, key, out v, out tt) || tt != T_TABLE) return null;
+      if (t == 0 || !FieldX(t, key, out v, out tt) || tt != T_TABLE) return null;
       return ParseTable(v, depth, new HashSet<ulong>());
     }
 
@@ -145,7 +168,7 @@ namespace RealmForge {
       // the members first: nothing read after them (the extras, the guild war) can change them
       members = new List<Dictionary<string, object>>();
       ulong v; int tt;
-      if (Field(guildTab, "m_vMembers", out v, out tt) && tt == T_TABLE)
+      if (FieldX(guildTab, "m_vMembers", out v, out tt) && tt == T_TABLE)
         foreach (var e in IntEntries(v)) {
           if (e.Tt != T_TABLE || members.Count >= GuildPayload.MaxMembers) continue;
           var md = ParseTable(e.Val, 8, new HashSet<ulong>());

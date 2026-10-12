@@ -36,7 +36,7 @@ namespace RealmForge {
       if (ps[0].Id != gvgPid) { gvgTab = 0; gvgPid = ps[0].Id; gvgLastFind = 0; H = OpenProcess(0x0410, false, ps[0].Id); }
       if (H == IntPtr.Zero) H = OpenProcess(0x0410, false, ps[0].Id);
       if (H == IntPtr.Zero) return false;
-      if (gvgTab != 0 && HasTable(gvgTab, "m_GVGUnionInfo")) return true;
+      if (gvgTab != 0 && HasTableX(gvgTab, "m_GVGUnionInfo")) return true;
       gvgTab = 0;
       if (gvgLastFind != 0 && Environment.TickCount - gvgLastFind < rescanMs) return false;
       gvgLastFind = Environment.TickCount;
@@ -46,7 +46,7 @@ namespace RealmForge {
       if (owners.TryGetValue(KGvg, out l))
         foreach (var t in l) {
           ulong m; int mt;
-          if (!Field(t, KGvg, out m, out mt) || mt != T_TABLE || !HasTable(t, "m_GVGUnionInfo")) continue;
+          if (!FieldX(t, KGvg, out m, out mt) || mt != T_TABLE || !HasTableX(t, "m_GVGUnionInfo")) continue;
           int n = EntryCount(t);
           if (n > bestN) { bestN = n; gvgTab = t; }
         }
