@@ -21,4 +21,5 @@ ok(F.onSite('https://wardsage.com/community/t/5', 'https://wardsage.com') === 'h
 ok(F.onSite('https://example.com/x', 'https://test.wardsage.com') === 'https://example.com/x', 'foreign host unchanged');
 ok(F.onSite('https://wardsage.com/x', 'ftp://bad') === 'https://wardsage.com/x' && F.onSite('https://wardsage.com/x', '') === 'https://wardsage.com/x', 'bad site unchanged');
 ok(F.reportUrl(reply, 'https://test.wardsage.com', '1.6.57') === 'https://test.wardsage.com/community/new?kind=bug&area=app&v=1.6.57', 'reportUrl on staging');
+ok(F.topics({ ok: true, topics: [{ title: 'a', url: 'https://x/1', newCount: 0 }, { title: 'b', url: 'https://x/2', newCount: 2 }, { title: 'c', url: 'https://x/3', newCount: 0 }] }).map((x) => x.title).join() === 'b,a,c', 'unread first, rest keep order');
 console.log('forum.test: ' + n + ' checks ok');

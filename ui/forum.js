@@ -35,10 +35,11 @@
 
   function listUrl(site) { return String(site || '').replace(/\/+$/, '') + '/community'; }
 
-  // Topics worth showing: those with a title and an address, newest first as the site sent them.
+  // Topics worth showing: those with a title and an address; ones with new replies first, the rest in the order the site sent them.
   function topics(reply) {
     return reply && reply.ok && Array.isArray(reply.topics)
-      ? reply.topics.filter((x) => x && typeof x.title === 'string' && typeof x.url === 'string' && /^https?:\/\//.test(x.url)) : [];
+      ? reply.topics.filter((x) => x && typeof x.title === 'string' && typeof x.url === 'string' && /^https?:\/\//.test(x.url))
+        .map((x, i) => ({ x, i, u: Number(x.newCount) > 0 ? 1 : 0 })).sort((a, b) => b.u - a.u || a.i - b.i).map((o) => o.x) : [];
   }
 
   const api = { badge, countKey, reportUrl, listUrl, topics, onSite };
