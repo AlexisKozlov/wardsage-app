@@ -10,7 +10,8 @@
 //       Role = {stRoleId {iZoneId, iUid}, sName, iLevel, iAttackedNum, stAttackerStatistic / stDefenderStatistic
 //       {iVictoryNum, iDefeatNum, iTotalVictoryNum, iTotalDefeatNum}, iAttackedOpponentHp, iTotalContribution, uiGVGPos (>0 = commander)},
 //     vGarrisonRole = the same Role records as a plain list (empty in current clients),
-//     vRoundInfo = [{iOpponentUnionId, iWinState, iDefeatNum, uiFakeGuildId}]}
+//     vRoundInfo = [{iOpponentUnionId, iWinState (3 = won, 1 = lost, 0 or missing = not decided yet), iStartScore (the guild score at the round start),
+//       iDefeatNum, uiFakeGuildId (!= 0 = the opponent was a bot guild)}]}
 //   m_GVGGlobalData {iIssueId, iPeriodType, iNextChangeTime (field iNextChangeStateTime), iFightingRound}
 using System;
 using System.Collections.Generic;
@@ -183,11 +184,12 @@ namespace RealmForge {
       foreach (var kv in Items(Get(u, "vRoundInfo"))) {
         var r = kv.Value as Dictionary<string, object>; if (r == null) continue;
         if (rc >= MaxRounds) break;
-        long ws; string win = GuildPayload.Try(Get(r, "iWinState"), out ws) && (ws == 0 || ws == 1) ? L(ws) : "null";
-        bool fake = N(r, "uiFakeGuildId") > 0;
+        long ws; string win = GuildPayload.Try(Get(r, "iWinState"), out ws) && (ws == 3 || ws == 1) ? (ws == 3 ? "1" : "0") : "null";
+        bool fake = N(r, "uiFakeGuildId") != 0;
         if (rc++ > 0) rs.Append(',');
         rs.Append("{\"round\":").Append(L(rc)).Append(",\"opp\":").Append(fake ? "null" : NumOrNull(r, "iOpponentUnionId", true))
-          .Append(",\"win\":").Append(win).Append(",\"defeatNum\":").Append(L(N(r, "iDefeatNum"))).Append('}');
+          .Append(",\"win\":").Append(win).Append(",\"defeatNum\":").Append(L(N(r, "iDefeatNum")))
+          .Append(",\"startScore\":").Append(NumOrNull(r, "iStartScore", false)).Append(fake ? ",\"bot\":true" : "").Append('}');
       }
       var gl = g.Global;
       long issue = N(u, "iIssueId"); if (issue <= 0) issue = N(gl, "iIssueId");
