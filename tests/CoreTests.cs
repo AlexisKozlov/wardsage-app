@@ -705,6 +705,16 @@ static class CoreTests {
     bool s2; int c2;
     Check(GuildPayload.Build(union, new List<Dictionary<string, object>>(), week, classic, 111L, now, out s2, out c2) == null, "no members, no payload");
     Check(GuildPayload.Build(Lt(), new List<Dictionary<string, object>> { m1 }, week, classic, 111L, now, out s2, out c2) == null, "no union id, no payload");
+    // a member list without the player is not the whole guild: not sent; the player not known (0) is not checked
+    var pair = new List<Dictionary<string, object>> { m1, m2 };
+    Check(GuildPayload.Build(union, pair, week, classic, 999L, now, out s2, out c2) == null && c2 == 0, "player not among the members, no payload");
+    Check(GuildPayload.SelfMissing(pair, 999L) && !GuildPayload.SelfMissing(pair, 222L) && !GuildPayload.SelfMissing(pair, 0L), "SelfMissing: missing / present / not known");
+    Check(!GuildPayload.SelfMissing(new List<Dictionary<string, object>>(), 999L) && !GuildPayload.SelfMissing(null, 999L), "SelfMissing: no members is not 'missing'");
+    Check(GuildPayload.SelfMissing(new List<Dictionary<string, object>> { Lt("iPostId", 4L), m2 }, 111L), "SelfMissing: a record without an id does not count");
+    Check(GuildPayload.Build(union, pair, week, classic, 0L, now, out s2, out c2) != null && c2 == 2, "player not known: sent as before");
+    var gxBad = new GuildExtra { Gvg = new GvgInfo { Union = Lt("vRoundInfo", "<table>", "m_vGarrisons", Lt("[1]", "x")) } };
+    string jgb = GuildPayload.Build(union, pair, week, classic, 111L, now, out s2, out c2, gxBad);
+    Check(jgb != null && c2 == 2 && MiniJson.TryParse(jgb) != null, "odd guild war data leaves the members as they are");
     // far refresh: not soon; the hash ignores "at"
     string far = GuildPayload.Build(union, new List<Dictionary<string, object>> { m1, m2 }, LArr(Lt("iRefreshTime", 1790900000L)), classic, 111L, now, out s2, out c2);
     Check(!s2, "refresh in 10 days is not soon");
