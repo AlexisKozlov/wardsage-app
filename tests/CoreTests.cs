@@ -741,6 +741,23 @@ static class CoreTests {
       Check((GuildPayload.Build(unionR, realList, week, classic, probe, now, out s2, out c2) != null) == uids.Contains(probe), "sent exactly when the site would accept the player " + probe);
     }
     Check(GuildPayload.Incomplete(unionR, realList, 12000000L + 14 * 7) == null, "a whole real-shaped list with the player is sent");
+    // the player's id in other forms: a numeric string, a float, only under the role info's stRoleId
+    var strSelf = Lt("stPlayerIdType", Lt("iZoneId", "50167", "iUid", "12538984"), "iPostId", 4L, "stRoleSimpleInf", Lt("sName", "S"));
+    var fltSelf = Lt("stPlayerIdType", Lt("iZoneId", 50167.0, "iUid", 12538984.0), "iPostId", 4L, "stRoleSimpleInf", Lt("sName", "S"));
+    var roleSelf = Lt("iPostId", 4L, "stRoleSimpleInf", Lt("stRoleId", Lt("iZoneId", 50167L, "iUid", 12538984L), "sName", "S"));
+    foreach (var sm in new[] { strSelf, fltSelf, roleSelf }) {
+      var lst = new List<Dictionary<string, object>>(realList); lst.Add(sm);
+      long z; Check(GuildPayload.MemberUid(sm, out z) == 12538984L && z == 50167L, "MemberUid reads the id form");
+      Check(!GuildPayload.SelfMissing(lst, 12538984L), "the player found in that form");
+      string js = GuildPayload.Build(unionR, lst, week, classic, 12538984L, now, out s2, out c2);
+      Check(js != null && c2 == 30 && js.Contains("\"zone\":50167,\"selfUid\":12538984") && js.Contains("{\"uid\":12538984,\"zone\":50167,"), "payload with the player in that form: " + (js == null ? "null" : js.Substring(0, 60)));
+    }
+    // the diagnostics run without a game: a file with valid JSON, no exception
+    string dumpPath = Path.Combine(Path.GetTempPath(), "rf-dump-guild-test.json");
+    string dumpRes = RFX.DumpGuild(dumpPath, "test");
+    var dumpObj = MiniJson.AsObject(MiniJson.TryParse(File.ReadAllText(dumpPath)));
+    Check(dumpRes != null && dumpObj != null && (string)dumpObj["app"] == "test", "dump-guild without a game: " + dumpRes);
+    try { File.Delete(dumpPath); } catch (Exception) { }
     // far refresh: not soon; the hash ignores "at"
     string far = GuildPayload.Build(union, new List<Dictionary<string, object>> { m1, m2 }, LArr(Lt("iRefreshTime", 1790900000L)), classic, 111L, now, out s2, out c2);
     Check(!s2, "refresh in 10 days is not soon");

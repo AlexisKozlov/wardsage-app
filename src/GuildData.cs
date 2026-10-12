@@ -171,13 +171,46 @@ namespace RealmForge {
       return guildTab != 0;
     }
 
+    // The guild tables are parsed as a tree: a sub-table met twice inside one record (the game shares some, e.g. an id table) is
+    // parsed both times; only a real cycle is cut. ParseTable keeps one "seen" set for the whole walk, so the second place of a
+    // shared table came out empty (a member record could lose its stPlayerIdType that way).
+    static object TVTree(byte[] b, int o, int depth, HashSet<ulong> path) {
+      if (BitConverter.ToInt32(b, o + 8) == T_TABLE) return depth > 0 ? (object)ParseTree(BitConverter.ToUInt64(b, o), depth - 1, path) : "<table>";
+      return TV(b, o, 0, path);
+    }
+    static Dictionary<string, object> ParseTree(ulong t, int depth, HashSet<ulong> path) {
+      if (!path.Add(t)) return null;
+      try {
+        var h = Read(t, 56); if (h == null || h[8] != 5) return null;
+        int lsize = h[11]; uint sizearray = BitConverter.ToUInt32(h, 12);
+        ulong arr = BitConverter.ToUInt64(h, 16), node = BitConverter.ToUInt64(h, 24);
+        if (lsize > 16 || sizearray > 100000) return null;
+        var d = new Dictionary<string, object>();
+        if (sizearray > 0) {
+          var ab = Read(arr, (int)sizearray * 16);
+          if (ab != null) for (int i = 0; i < sizearray; i++) { var x = TVTree(ab, i * 16, depth, path); if (x != null) d["[" + (i + 1) + "]"] = x; }
+        }
+        int nn = 1 << lsize; var nb = Read(node, nn * 32);
+        if (nb != null) for (int i = 0; i < nn; i++) {
+          int o = i * 32; int ktt = BitConverter.ToInt32(nb, o + 24); if (ktt == T_NIL) continue;
+          string key;
+          if (ktt == T_SSTR || ktt == T_LSTR) key = ReadLuaString(BitConverter.ToUInt64(nb, o + 16));
+          else if (ktt == T_INT) key = "[" + BitConverter.ToInt64(nb, o + 16) + "]";
+          else continue;
+          if (key == null) continue;
+          var x = TVTree(nb, o, depth, path); if (x != null) d[key] = x;
+        }
+        return d;
+      } finally { path.Remove(t); }
+    }
+
     static List<Dictionary<string, object>> RankList(ulong t, string key) {
       ulong v; int tt;
       if (t == 0 || !FieldX(t, key, out v, out tt) || tt != T_TABLE) return null;
       var res = new List<Dictionary<string, object>>();
       foreach (var e in IntEntries(v)) {
         if (e.Tt != T_TABLE || res.Count >= GuildPayload.MaxMembers) continue;
-        var d = ParseTable(e.Val, 3, new HashSet<ulong>());
+        var d = ParseTree(e.Val, 3, new HashSet<ulong>());
         if (d != null) res.Add(d);
       }
       return res;
@@ -186,7 +219,7 @@ namespace RealmForge {
     static Dictionary<string, object> SubTable(ulong t, string key, int depth) {
       ulong v; int tt;
       if (t == 0 || !FieldX(t, key, out v, out tt) || tt != T_TABLE) return null;
-      return ParseTable(v, depth, new HashSet<ulong>());
+      return ParseTree(v, depth, new HashSet<ulong>());
     }
 
     /// <summary>The guild's tables, parsed (ParseTable-shaped) for GuildPayload.Build; false when not found yet.</summary>
@@ -200,7 +233,7 @@ namespace RealmForge {
       if (FieldX(guildTab, "m_vMembers", out v, out tt) && tt == T_TABLE)
         foreach (var e in IntEntries(v)) {
           if (e.Tt != T_TABLE || members.Count >= GuildPayload.MaxMembers) continue;
-          var md = ParseTable(e.Val, 8, new HashSet<ulong>());
+          var md = ParseTree(e.Val, 8, new HashSet<ulong>());
           if (md != null) members.Add(md);
         }
       union = SubTable(guildTab, "m_UnionInfo", 3);
@@ -302,7 +335,7 @@ namespace RealmForge {
               ulong ui = TabAt(t, "m_UnionInfo"), su = TabAt(t, "m_SelfUnionInfo"), ba = TabAt(ui, "stBaseAttr");
               ulong nm; int nt; string name = ba != 0 && FieldX(ba, "sUnionName", out nm, out nt) && (nt == T_SSTR || nt == T_LSTR) ? ReadLuaString(nm) : null;
               sb.Append("],\"unionId\":" + NumAt(ui, "iUnionId") + ",\"name\":" + MiniJson.Quote(name ?? "") + ",\"memberNum\":" + NumAt(ui, "iMemberNum")
-                        + ",\"selfUnionId\":" + NumAt(su, "iUnionId") + ",\"members\":" + c.N + ",\"hasSelf\":" + JBool(c.Self) + ",\"short\":" + JBool(c.UnionInfo && !c.Full) + ",\"firstUids\":[");
+                        + ",\"selfPost\":" + NumAt(su, "iPostId") + ",\"members\":" + c.N + ",\"hasSelf\":" + JBool(c.Self) + ",\"short\":" + JBool(c.UnionInfo && !c.Full) + ",\"firstUids\":[");
               ulong mv = TabAt(t, "m_vMembers"); int u = 0;
               if (mv != 0) foreach (var e in IntEntries(mv)) {
                 if (e.Tt != T_TABLE || u >= 3) continue;
@@ -314,6 +347,31 @@ namespace RealmForge {
           }
         sb.Append("],\"wouldChoose\":" + (best != null ? Hex(best.T) : "null") + ",\"why\":" + MiniJson.Quote(best == null ? "no usable candidate (needs m_UnionInfo and m_vMembers)"
                   : (best.Self ? "lists the player" : "no candidate lists the player") + ", " + (best.Full ? "not short" : "short of memberNum") + ", " + best.N + " members") + "}");
+      });
+      // the parsed member records (what the payload is built from): the player's one as parsed
+      part("parsed", () => {
+        guildTab = 0; guildLastFind = 0;
+        Dictionary<string, object> union, week, classic; List<Dictionary<string, object>> members; GuildExtra extra;
+        bool ok = ReadGuild(0, self, out union, out members, out week, out classic, out extra);
+        sb.Append(",\"parsed\":{\"ok\":" + JBool(ok) + ",\"members\":" + (members != null ? members.Count : -1));
+        if (members != null) {
+          int withUid = 0, selfAt = -1;
+          for (int i = 0; i < members.Count; i++) { long z, u = GuildPayload.MemberUid(members[i], out z); if (u > 0) withUid++; if (u == self && selfAt < 0) selfAt = i; }
+          sb.Append(",\"withUid\":" + withUid + ",\"selfAt\":" + selfAt + ",\"selfMissing\":" + JBool(GuildPayload.SelfMissing(members, self)));
+          // the record at the player's place in the game's list
+          int nat = -1, idx = 0; ulong mv = TabAt(guildTab, "m_vMembers");
+          if (mv != 0) foreach (var e in IntEntries(mv)) { if (e.Tt != T_TABLE) continue; if (nat < 0 && NumAt(TabAt(e.Val, "stPlayerIdType"), "iUid") == self) nat = idx; idx++; }
+          sb.Append(",\"selfAtInGame\":" + nat);
+          if (nat >= 0 && nat < members.Count) {
+            sb.Append(",\"selfRecordKeys\":[");
+            int k = 0; foreach (var key in members[nat].Keys) { if (k++ > 0) sb.Append(','); sb.Append(MiniJson.Quote(key)); }
+            object pid; members[nat].TryGetValue("stPlayerIdType", out pid);
+            sb.Append("],\"selfPlayerIdType\":"); Raw(sb, pid);
+          }
+        }
+        sb.Append(",\"unionKeys\":[");
+        if (union != null) { int k = 0; foreach (var key in union.Keys) { if (k++ > 0) sb.Append(','); sb.Append(MiniJson.Quote(key)); } }
+        sb.Append("]}");
       });
       // the real read as the app does it (search, choice, payload)
       part("read", () => {
@@ -490,8 +548,19 @@ namespace RealmForge {
     /// guild (or not the player's guild), so it is not sent. False when the player is not known or there are no members at all.</summary>
     public static bool SelfMissing(IList<Dictionary<string, object>> members, long selfUid) {
       if (selfUid <= 0 || members == null || members.Count == 0) return false;
-      foreach (var m in members) { var id = Obj(m, "stPlayerIdType"); if (id != null && N(id, "iUid") == selfUid) return false; }
+      foreach (var m in members) { long z; if (MemberUid(m, out z) == selfUid) return false; }
       return true;
+    }
+
+    /// <summary>A member record's player id as the payload writes it: stPlayerIdType {iUid, iZoneId}, else the role info's stRoleId;
+    /// numbers, floats and numeric strings are accepted. 0 = none.</summary>
+    public static long MemberUid(Dictionary<string, object> m, out long zone) {
+      zone = 0;
+      foreach (var id in new[] { Obj(m, "stPlayerIdType"), Obj(Obj(m, "stRoleSimpleInf"), "stRoleId") }) {
+        if (id == null || N(id, "iUid") <= 0) continue;
+        zone = N(id, "iZoneId"); return N(id, "iUid");
+      }
+      return 0;
     }
 
     /// <summary>How many members a list may lack against the guild's stated count before it counts as short: the stated count is
@@ -552,9 +621,8 @@ namespace RealmForge {
       // the player's zone: that of the own member row; else the commonest zone among the members
       long zone = 0; var zones = new Dictionary<long, int>(); int bestZ = 0;
       foreach (var m in members) {
-        var id = Obj(m, "stPlayerIdType"); if (id == null) continue;
-        long z = N(id, "iZoneId");
-        if (selfUid > 0 && N(id, "iUid") == selfUid) { zone = z; bestZ = int.MaxValue; break; }
+        long z, u = MemberUid(m, out z); if (u <= 0) continue;
+        if (selfUid > 0 && u == selfUid) { zone = z; bestZ = int.MaxValue; break; }
         int c; zones.TryGetValue(z, out c); zones[z] = ++c;
         if (c > bestZ) { bestZ = c; zone = z; }
       }
@@ -596,12 +664,12 @@ namespace RealmForge {
       sb.Append("},\"members\":[");
       int n = 0;
       foreach (var m in members) {
-        var id = Obj(m, "stPlayerIdType"); if (id == null || N(id, "iUid") <= 0 || n >= MaxMembers) continue;
+        long mz, mu = MemberUid(m, out mz); if (mu <= 0 || n >= MaxMembers) continue;
         var role = Obj(m, "stRoleSimpleInf");
         string nm = Get(role, "sName") as string ?? "";
         if (nm.Length > 40) nm = nm.Substring(0, 40);
         if (n++ > 0) sb.Append(',');
-        sb.Append("{\"uid\":").Append(L(N(id, "iUid"))).Append(",\"zone\":").Append(L(N(id, "iZoneId"))).Append(",\"name\":").Append(MiniJson.Quote(nm))
+        sb.Append("{\"uid\":").Append(L(mu)).Append(",\"zone\":").Append(L(mz)).Append(",\"name\":").Append(MiniJson.Quote(nm))
           .Append(",\"level\":").Append(OrNull(role, "iLevel", false)).Append(",\"power\":").Append(OrNull(role, "iPower", false))
           .Append(",\"post\":").Append(L(N(m, "iPostId"))).Append(",\"join\":").Append(OrNull(m, "iJoinTime", true))
           .Append(",\"logout\":").Append(OrNull(role, "iLogoutTime", false)).Append(",\"active7\":").Append(OrNull(m, "iSevenActive", false));
