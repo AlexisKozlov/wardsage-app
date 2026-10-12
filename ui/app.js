@@ -1015,6 +1015,9 @@
     const hero = p ? p.heroUid : 0;
     // the item the guide is at and its verdict: the host sets the game's filter when the item is far down or hidden
     const item = g && g.item ? g.item.uid : 0, kind = g ? g.kind || '' : '';
+    // the log follows what the guide asks for (once per change)
+    const gk = p ? [p.heroName + ' (' + p.heroUid + ')', kind || '-', g && g.item ? 'slot ' + g.item.slot : '', 'game hero ' + (S.live ? S.live.heroUid : '-')].join(' ') : '-';
+    if (gk !== S.guideLog) { S.guideLog = gk; host.send({ cmd: 'log', text: 'guide ' + gk }); }
     const key = [uid, hint, slot, line1, line2, hero, item, kind].join('|');
     if (key !== S.hl) { S.hl = key; host.send({ cmd: 'highlight', uid, hint, slot, line1, line2, hero, item, kind }); }
     // the started plan's hero (0 = none): the host brings it up on the hero screen

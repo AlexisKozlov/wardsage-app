@@ -941,6 +941,7 @@ namespace RealmForge {
       Task.Factory.StartNew(() => { Post("{\"ev\":\"forum\",\"r\":" + NewsClient.Unread(site, code) + "}"); });
     }
 
+    volatile string plansLogged;
     void LoadPlans(string lang) {
       string site = cfg.Site, code = cfg.Code;
       if (!SyncClient.IsValidCode(code)) { Post("{\"ev\":\"plans\",\"status\":\"invalid_token\"}"); return; }
@@ -952,6 +953,11 @@ namespace RealmForge {
           foreach (var p in r.Plans) foreach (var it in p.Items)
             info.Add(new[] { it.Uid, it.SetId, it.Main.Count > 0 && it.Main[0].Stat > 0 ? it.Main[0].Stat : 0 });
           win.BeginInvoke((Action)(() => { foreach (var x in info) overlay.SetItemInfo(x[0], x[1], x[2]); }));
+          // the log names the plans the app holds (once per change: the list is asked for every few seconds)
+          var pk = new StringBuilder();
+          foreach (var p in r.Plans) pk.Append(pk.Length > 0 ? ", " : "").Append(p.HeroName).Append(" (").Append(p.HeroUid).Append(") ").Append(p.Items.Count).Append(" items");
+          string plansNow = r.Plans.Count + (r.Plans.Count > 0 ? ": " + pk : "");
+          if (plansNow != plansLogged) { plansLogged = plansNow; Log.Write("equip plans " + plansNow); }
         }
         if (r.Status != PlansStatus.Ok) {
           Post("{\"ev\":\"plans\",\"status\":" + S(r.Status == PlansStatus.InvalidToken ? "invalid_token" : "error") + ",\"detail\":" + S(r.Details ?? ("HTTP " + r.HttpCode)) + "}");

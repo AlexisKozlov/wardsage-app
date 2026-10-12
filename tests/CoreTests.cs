@@ -533,7 +533,68 @@ static class CoreTests {
       }
       Check(n > 0, "the site has layout files");
     } else Console.WriteLine("  (no ../wardsage-web: the site's layout files not checked)");
+    LayoutMatchesOldLiterals();
     SourceLiteralTests();
+  }
+
+  // The site's data for game 1.6.39.829.1 holds exactly the values the app had in its code before they moved to the
+  // layout data (commit 261184c~1): every class address, const, size, offset and form id, and nothing else.
+  static void LayoutMatchesOldLiterals() {
+    const string game = "1.6.39.829.1";
+    string path = null;
+    foreach (var repo in new[] { "wardsage-web", "realmforge-web" }) {
+      string p = Path.Combine("..", repo, "data", "app-layout", game + ".json");
+      if (File.Exists(p)) { path = p; break; }
+    }
+    if (path == null) { Console.WriteLine("  (no site layout file for " + game + ": the pre-move values not checked)"); return; }
+    var l = GameLayout.Parse(File.ReadAllText(path, Encoding.UTF8), game);
+    Check(l != null, "the layout data for " + game + " parses");
+    if (l == null) return;
+    var rva = new Dictionary<string, ulong> {
+      { "CSharpBattle.Battle.GameSimulation", 0 }, { "CSharpBattle.Battle.TDGameSimulation", 0 },
+      { "CSharpBattle.Battle.TCGameSimulation", 0 }, { "BattleView.BattleManager", 0 },
+      { "CSharpBattle.Battle.FrameIdxInfo", 0 }, { "CSharpBattle.Battle.BattleHeroInfo", 0 },
+      { "CSharpBattle.Battle.OwnerRelationComponent", 0 }, { "CSharpBattle.Battle.DamageStatisticsData", 0 },
+      { "CSharpBattle.Battle.WaveSystem", 0 }, { "CSharpBattle.Battle.WaveControllerNode", 0 },
+      { "CSharpBattle.Battle.AttributeComponent", 0 },
+      // these had addresses for an older build only: recognised by their names, as before
+      { "CSharpBattle.Battle.PAGameSimulation", 0 }, { "CSharpBattle.Battle.CardComponent", 0 }, { "CSharpBattle.Battle.AngerComponent", 0 },
+      { "CSharpBattle.Battle.SkillComponent", 0 }, { "CSharpBattle.Battle.StatisticsComponent", 0 }, { "CSharpBattle.Battle.TDStateData", 0 } };
+    foreach (var kv in rva) Eq(kv.Value, l.Rva(kv.Key), "pre-move rva " + kv.Key);
+    var cons = new Dictionary<string, int> {
+      { "EComponentType.Dead", 2 }, { "EComponentType.Attribute", 5 }, { "EComponentType.Skill", 8 }, { "EComponentType.Position", 19 },
+      { "EComponentType.Anger", 35 }, { "EComponentType.Card", 42 }, { "EComponentType.OwnerRelation", 62 }, { "EComponentType.WaveInfo", 67 },
+      { "EComponentType.Map", 69 }, { "EComponentType.Statistics", 71 },
+      { "ESimulationStatus.Runing", 1 }, { "ESimulationStatus.End", 2 }, { "Fix64.ONE", 4096 },
+      { "ECardEntityType.Normal", 0 }, { "ECardStatus.Reborn", 2 }, { "EAngerStatus.Up", 0 }, { "EAngerStatus.Down", 1 },
+      { "EDeadType.BeKilled", 0 }, { "EDeadType.Retreat", 2 }, { "EDeadType.ForceRetreat", 6 },
+      { "FrameCommand.SYNC_PUT_TOWER", 1000 }, { "FrameCommand.SYNC_RETREAT_TOWER", 1001 }, { "FrameCommand.SYNC_USE_POWERSKILL", 2000 } };
+    foreach (var kv in cons) Eq(kv.Value, l.Const(kv.Key), "pre-move const " + kv.Key);
+    var span = new Dictionary<string, int> {
+      { "GameSimulation", 0xC8 }, { "DLNode", 0x30 }, { "BattlePlayerInfo", 0x30 }, { "MapMarker", 0x28 }, { "CardComponent", 0x58 },
+      { "AngerComponent", 0x40 }, { "FrameIdxInfo", 0x28 }, { "DamageStatisticsData", 0x68 }, { "CmdHeroFight", 0x78 } };
+    foreach (var kv in span) Eq(kv.Value, l.Span(kv.Key), "pre-move span " + kv.Key);
+    var size = new Dictionary<string, int> { { "FixVector3", 0x18 }, { "SdpPair", 8 }, { "DictEntryRef", 0x18 }, { "DictEntryInt", 0x10 } };
+    foreach (var kv in size) Eq(kv.Value, l.Size(kv.Key), "pre-move size " + kv.Key);
+    var hdr = new Dictionary<string, int> {
+      { "arrBounds", 0x10 }, { "arrLen", 0x18 }, { "arrData", 0x20 }, { "boundsLen", 0 }, { "boundsStride", 0x10 }, { "klass", 0 }, { "ptr", 8 }, { "objHeader", 0x10 } };
+    foreach (var kv in hdr) Eq(kv.Value, l.Hdr(kv.Key), "pre-move hdr " + kv.Key);
+    var form = new Dictionary<string, long> {
+      { "ID_FORM_CHARACTORMAIN", 0 }, { "ID_FORM_BACKPACKINTEGRATION", 0 }, { "ID_FORM_EQUIPSUBLIMING", 0 },
+      { "ID_FORM_EQUIPGEMMAIN", 0 }, { "ID_FORM_PVPMAIN", 0 }, { "ID_FORM_BATTLE", 0 },
+      { "ID_FORM_UNIONBOSSBATTLEEND", 0 }, { "ID_FORM_UNIONWEEKBOSSBATTLEEND", 0 }, { "ID_FORM_BATTLEEND", 0 },
+      { "ID_FORM_PVPBATTLEEND", 0 }, { "ID_FORM_SPARRINGPVPBATTLEEND", 0 } };
+    foreach (var kv in form) Eq(kv.Value, l.Form(kv.Key), "pre-move form id " + kv.Key);
+    // nothing in the file that the list above does not pin (a value added later gets its pre-move literal here too)
+    var o = MiniJson.AsObject(MiniJson.TryParse(File.ReadAllText(path, Encoding.UTF8)));
+    var known = new Dictionary<string, ICollection<string>> {
+      { "rva", rva.Keys }, { "const", cons.Keys }, { "span", span.Keys }, { "size", size.Keys }, { "hdr", hdr.Keys },
+      { "form", form.Keys } };
+    foreach (var sec in known) {
+      object v; var s = o != null && o.TryGetValue(sec.Key, out v) ? MiniJson.AsObject(v) : null;
+      if (s == null) { Check(false, "layout section " + sec.Key); continue; }
+      foreach (var k in s.Keys) Check(sec.Value.Contains(k), "layout " + sec.Key + " " + k + " has a pre-move value in the test");
+    }
   }
 
   // The app's code holds no game-build values: they come with the layout data. Every name the code looks up is one the
