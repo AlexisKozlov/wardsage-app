@@ -522,9 +522,13 @@
           if (hs) return sayBox('warn', I.warn, t(hs, p.heroName), t(hs + 'P')) + findCard(it, g, S.compact);
           return sayBox('', I.hand, S.auto === 'paused' || S.auto === 'background' ? autoHead() : t('hWork', p.heroName), '') + findCard(it, g, S.compact);
         }
-        return sayBox('', I.hand, t('gOpenHero', p.heroName), S.autoClick ? t('gOpenHeroP') : '') + findCard(it, g, S.compact);
+        // another hero is open in the game: say so; without the auto click the whole way (hero, gear, slot) is named
+        const sub = S.autoClick ? t('gOpenHeroP') : '';
+        if (S.live && S.live.heroUid > 0) return sayBox('', I.hand, t('gOtherHero', p.heroName), sub) + findCard(it, g, S.compact);
+        const head = !S.autoClick && it ? t('gOpenHeroSlot', p.heroName, it.slotName || t('slot' + it.slot)) : t('gOpenHero', p.heroName);
+        return sayBox('', I.hand, head, sub) + findCard(it, g, S.compact);
       }
-      case 'slot': return sayBox('', I.hand, autoHead() || t('gOpenSlot', it.slotName || t('slot' + it.slot)), autoSub()) + findCard(it, g, S.compact);
+      case 'slot': return sayBox('', I.hand, autoHead() || t('gOpenSlot', it.slotName || t('slot' + it.slot)), S.autoClick ? autoSub() : t('gOpenSlotLit')) + findCard(it, g, S.compact);
       case 'pick': {
         // what to do right now, by what the frame over the game is doing
         const head = autoHead() || { on: t('fOn'), below: t('fBelow'), above: t('fAbove'), need_click: t('fNeedClick') }[S.overlay] || t('fLook');
