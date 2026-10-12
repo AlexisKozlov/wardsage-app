@@ -49,6 +49,9 @@ namespace RealmForge {
     readonly BridgeClient bridgeApi = new BridgeClient(BridgeClient.DefaultUrl, BridgeClient.DefaultTokenPath);
     readonly BridgePoller bridgePoller;
     readonly Dictionary<string, BridgeCommand> bridgeOpen = new Dictionary<string, BridgeCommand>();   // UI thread only
+    // the site's switches (src/RemoteConfig.cs): asked at start and every 10 min (test build 2); the saved copy until then
+    RemoteSwitches remote = RemoteSwitches.LoadCache(RemoteSwitches.CachePath) ?? RemoteSwitches.Permissive();
+    readonly System.Windows.Forms.Timer remoteTimer = new System.Windows.Forms.Timer();
 
     public HostBridge(AppWindow win, CoreWebView2 core) {
       this.win = win; this.core = core;
@@ -59,12 +62,19 @@ namespace RealmForge {
       arenaWatch = new ArenaWatch(() => cfg.Site, () => cfg.Code);
       guildWatch = new GuildWatch(() => cfg.Site, () => cfg.Code, st => Post("{\"ev\":\"guild\",\"state\":" + S(st) + "}"));
       packsWatch = new PacksWatch(() => cfg.Site, () => cfg.Code);
-      gameTimer.Interval = 2000; gameTimer.Tick += (s, e) => { CheckGame(false); WatchBattleEnd(); WatchStall(); arenaWatch.Tick(gameRunning); guildWatch.Tick(gameRunning); packsWatch.Tick(gameRunning); TraceStartTick(); TryAutoUpdate(); }; gameTimer.Start();
+      gameTimer.Interval = 2000; gameTimer.Tick += (s, e) => {
+        CheckGame(false);
+        if (remote.Allows("battle")) WatchBattleEnd();
+        WatchStall();
+        arenaWatch.Tick(gameRunning && remote.Allows("battle")); guildWatch.Tick(gameRunning && remote.Allows("guild")); packsWatch.Tick(gameRunning);
+        TraceStartTick(); TryAutoUpdate();
+      }; gameTimer.Start();
       liveTimer.Interval = 400; liveTimer.Tick += (s, e) => PollLive();
       overlay = new OverlayController(st => Post("{\"ev\":\"overlay\",\"state\":" + S(st) + "}"),
                                       st => { Post("{\"ev\":\"auto\",\"state\":" + S(st) + "}"); OnAutoState(st); },
                                       (p, st) => Post("{\"ev\":\"sell.state\",\"state\":" + S(st) + ",\"selected\":" + p.Selected + ",\"missing\":" + p.Missing + ",\"extra\":" + p.Extra + "}"));
-      overlay.AutoEnabled = cfg.AutoClick;
+      overlay.AutoEnabled = AutoClickOn();
+      RFX.SkipGvg = !remote.Allows("gvg");
       overlay.AutoConfirm = cfg.AutoConfirm;
       overlay.CancelText = CancelText(cfg.Lang);
       coach.Lang = cfg.Lang;
@@ -78,7 +88,52 @@ namespace RealmForge {
       bridgePoller = new BridgePoller(new BridgeClient(BridgeClient.DefaultUrl, BridgeClient.DefaultTokenPath),
                                       c => OnUi(() => OnBridgeCommand(c)), up => OnUi(() => OnBridgeConnected(up)));
       bridgePoller.Start();
+      remoteTimer.Interval = 3000; remoteTimer.Tick += (s, e) => { remoteTimer.Interval = RemoteSwitches.EveryMinutes(Channel.IsTest) * 60 * 1000; FetchRemote(); }; remoteTimer.Start();
       Log.Write(Channel.ProductName + " " + Program.Version + " started");
+      Log.Write("switches (saved copy or defaults): " + remote.ToJson());
+    }
+
+    // ------------------------------------------------------------------ the site's switches
+
+    /// <summary>The app's own clicks: the player's setting and the site's "autoclick" switch.</summary>
+    bool AutoClickOn() { return cfg.AutoClick && remote.Allows("autoclick"); }
+
+    void FetchRemote() {
+      string site = cfg.Site;
+      Task.Factory.StartNew(() => {
+        var r = RemoteSwitches.Fetch(site);
+        if (r == null) return;   // no reply: the switches held stay
+        r.SaveCache(RemoteSwitches.CachePath);
+        OnUi(() => {
+          bool changed = !r.SameAs(remote);
+          remote = r;
+          if (changed) { Log.Write("switches changed: " + r.ToJson()); ApplyRemote(); }
+        });
+      });
+    }
+
+    /// <summary>Puts the switches in force at once: what is off stops now, not at its next start.</summary>
+    void ApplyRemote() {
+      overlay.AutoEnabled = AutoClickOn();
+      RFX.SkipGvg = !remote.Allows("gvg");
+      if (!remote.Allows("locate")) overlay.SetLocate(null);
+      if (!remote.Allows("equip")) { overlay.SetRun(0); overlay.SetTarget(0); overlay.SetHint("", -1, new string[0], 0); }
+      if (!remote.Allows("battle")) {
+        if (coach.Running) coach.Stop();
+        var rec = recorder; if (rec != null) { rec.Stop(); recorder = null; }
+      }
+      if (!remote.ReadEnabled) {
+        overlay.SetSell(null, null, null, 0);
+        liveTimer.Stop(); addrs = null; overlay.SetAddrs(null); lastLive = null;
+      }
+      PostRemote();
+    }
+
+    void PostRemote() {
+      var sb = new StringBuilder("{\"ev\":\"remote\",\"readEnabled\":").Append(B(remote.ReadEnabled)).Append(",\"off\":[");
+      var off = remote.Off();
+      for (int i = 0; i < off.Count; i++) { if (i > 0) sb.Append(','); sb.Append(S(off[i])); }
+      Post(sb.Append("]}").ToString());
     }
 
     static string CancelText(string lang) { return lang == "en" ? "Cancel equipping" : "Отменить надевание"; }
@@ -87,7 +142,7 @@ namespace RealmForge {
       Program.FatalReport = null;
       bridgePoller.Dispose();   // the pending long poll is aborted: the thread ends at once
       CloseBridgeCommands("cancelled", "Wardsage was closed.", true);
-      gameTimer.Dispose(); liveTimer.Dispose(); autoTimer.Dispose(); updateTimer.Dispose(); overlay.Dispose();
+      gameTimer.Dispose(); liveTimer.Dispose(); autoTimer.Dispose(); updateTimer.Dispose(); remoteTimer.Dispose(); overlay.Dispose();
     }
 
     // «Обновлять автоматически» (on by default): a downloaded update is put in place by restarting in a quiet moment — no
@@ -143,7 +198,7 @@ namespace RealmForge {
       if (cmd != "init" && cmd != "log") lastUi = DateTime.UtcNow;
       try {
         switch (cmd) {
-          case "init": SendState(null); CheckGame(true); if (updateReady != null) Post(updateReady); break;
+          case "init": SendState(null); CheckGame(true); PostRemote(); if (updateReady != null) Post(updateReady); break;
           case "setLang": cfg.Lang = MiniJson.GetString(m, "lang") == "en" ? "en" : "ru"; overlay.CancelText = CancelText(cfg.Lang); coach.Lang = cfg.Lang; Save(); break;
           case "setCode": {
             string code = SyncClient.ExtractCode(MiniJson.GetString(m, "code") ?? "");
@@ -153,7 +208,7 @@ namespace RealmForge {
           case "clearCode": cfg.Code = ""; Save(); SendState(null); break;
           case "setSaveCopy": cfg.SaveCopy = MiniJson.GetBool(m, "on", false); Save(); break;
           case "setAutoSync": cfg.AutoSync = MiniJson.GetBool(m, "on", true); Save(); if (cfg.AutoSync) RequestAutoSync(0); break;
-          case "setAutoClick": cfg.AutoClick = MiniJson.GetBool(m, "on", true); overlay.AutoEnabled = cfg.AutoClick; Save(); break;
+          case "setAutoClick": cfg.AutoClick = MiniJson.GetBool(m, "on", true); overlay.AutoEnabled = AutoClickOn(); Save(); break;
           case "setAutoConfirm": cfg.AutoConfirm = MiniJson.GetBool(m, "on", false); overlay.AutoConfirm = cfg.AutoConfirm; Save(); break;
           case "setAutoUpdate": cfg.AutoUpdate = MiniJson.GetBool(m, "on", true); Save(); break;
           case "setTray": cfg.Tray = MiniJson.GetBool(m, "on", true); win.TrayEnabled = cfg.Tray; Save(); break;
@@ -180,6 +235,7 @@ namespace RealmForge {
           case "forum.unread": LoadForum(); break;
           case "locate.show": {
             // «Найти в игре»: the overlay shows hints for the request the last plans reply carried (the page names it by id)
+            if (!remote.Allows("locate")) break;
             var lr = lastLocate; string lid = MiniJson.GetString(m, "id");
             if (lr != null && lr.Item != null && lr.Id == lid) { overlay.SetLocate(lr); Log.Write("locate: show item " + lr.Item.Uid); }
             break;
@@ -197,6 +253,7 @@ namespace RealmForge {
           case "sell.run": {
             // storage cleanup: select the list's items on the game's sell screen (from the gear list of the hero the game
             // showed last, else of any hero); the game comes forward as for «Надеть»
+            if (!remote.ReadEnabled) { Log.Write("sell: game reading is off by the site's switch"); break; }
             var uids = Uids(m);
             var parts = new List<int>(); object pv;
             var pl = m.TryGetValue("slots", out pv) ? pv as List<object> : null;
@@ -208,12 +265,31 @@ namespace RealmForge {
             long hero = addrs != null ? RFX.ReadHero(addrs) : 0; if (hero <= 0) hero = RFX.AnyHeroUid();
             overlay.SetSell(uids, parts, levels.Count == uids.Count ? levels : null, hero);
             Log.Write("sell: run " + uids.Count + " items, hero " + hero);
-            if (!cfg.AutoClick) Log.Write("sell: waiting - auto click is off");
-            if (addrs == null && !scanning && cfg.AutoClick) StartScan(watch, true);   // the pilot needs the game's screens found
+            if (!AutoClickOn()) Log.Write("sell: waiting - auto click is off" + (cfg.AutoClick ? " (the site's switch)" : ""));
+            if (addrs == null && !scanning && AutoClickOn()) StartScan(watch, true);   // the pilot needs the game's screens found
             break;
           }
           case "sell.stop": overlay.SetSell(null, null, null, 0); break;
           case "sell.finish": FinishSell(MiniJson.GetString(m, "id"), MiniJson.GetBool(m, "done", false)); break;
+          case "equip.scan": case "equip.watch": case "equip.run": case "equip.rescan": case "highlight":
+            if (!remote.Allows("equip")) break;   // the site's switch: the equip helper is off
+            OnEquip(cmd, m); break;
+          case "log": Log.Write("ui: " + (MiniJson.GetString(m, "text") ?? "")); break;
+          case "equip.finish": FinishPlan(MiniJson.GetString(m, "id"), MiniJson.GetBool(m, "done", false), MiniJson.GetBool(m, "taken", false)); break;
+          case "diag": overlay.StartDiag(5); break;
+          case "battle.capture": if (remote.Allows("battle")) CaptureNow(-1, 0, 0); break;
+          case "compact": win.SetCompact(MiniJson.GetBool(m, "on", false)); break;
+          case "update.restart": Program.RestartForUpdate(); break;
+        }
+      } catch (Exception e) {
+        Log.Write("message " + cmd + ": " + e);
+        Report("unhandled", "message " + cmd + ": " + e.GetType().Name + ": " + e.Message, Ctx("exception", e.ToString()));
+      }
+    }
+
+    // the equip helper's messages (only while the site's "equip" switch is on)
+    void OnEquip(string cmd, Dictionary<string, object> m) {
+        switch (cmd) {
           case "equip.scan": if (scanning) watch = Uids(m); else StartScan(Uids(m)); break;   // (the scan ahead is running: its result serves these items too)
           case "equip.watch": Watch(Uids(m)); break;
           case "equip.run": {
@@ -223,7 +299,6 @@ namespace RealmForge {
             if (MiniJson.GetBool(m, "restart", false)) overlay.RestartPilots();
             break;
           }
-          case "log": Log.Write("ui: " + (MiniJson.GetString(m, "text") ?? "")); break;
           case "equip.rescan":
             // the page's plan stands still: the game's tables are read again (at most every 20 s)
             if (addrs != null && !scanning && DateTime.UtcNow > rescanAfter) {
@@ -231,7 +306,6 @@ namespace RealmForge {
               StartScan(watch, false, true); overlay.RestartPilots();
             }
             break;
-          case "equip.finish": FinishPlan(MiniJson.GetString(m, "id"), MiniJson.GetBool(m, "done", false), MiniJson.GetBool(m, "taken", false)); break;
           case "highlight": {
             object v; double u = m.TryGetValue("uid", out v) && v is double ? (double)v : 0;
             overlay.SetTarget(u > 0 && u < 9e15 && watch.Contains((long)u) ? (long)u : 0);
@@ -251,15 +325,7 @@ namespace RealmForge {
             overlay.SetHint(hint, slot >= 0 && slot <= 4 ? (int)slot : -1, lines.ToArray(), hero > 0 && hero < 9e15 ? (long)hero : 0);
             break;
           }
-          case "diag": overlay.StartDiag(5); break;
-          case "battle.capture": CaptureNow(-1, 0, 0); break;
-          case "compact": win.SetCompact(MiniJson.GetBool(m, "on", false)); break;
-          case "update.restart": Program.RestartForUpdate(); break;
         }
-      } catch (Exception e) {
-        Log.Write("message " + cmd + ": " + e);
-        Report("unhandled", "message " + cmd + ": " + e.GetType().Name + ": " + e.Message, Ctx("exception", e.ToString()));
-      }
     }
 
     void Save() { try { cfg.Save(); } catch (Exception e) { Log.Write("config save: " + e.Message); } }
@@ -381,7 +447,7 @@ namespace RealmForge {
       if (!running) CloseBridgeCommands("failed", "The game was closed.", false);
       // the game's screens are found in memory at once (tens of seconds), not when the first «Надеть» comes: then the
       // equip starts right away
-      if (running && addrs == null && !scanning && cfg.AutoClick) StartScan(watch, true);
+      if (running && addrs == null && !scanning && AutoClickOn()) StartScan(watch, true);
     }
 
     // ------------------------------------------------------------------ boss fights
@@ -536,7 +602,7 @@ namespace RealmForge {
     bool traceStartDone;
 
     void UploadTraces() {
-      if (!cfg.AutoSync || !SyncClient.IsValidCode(cfg.Code)) return;
+      if (!cfg.AutoSync || !SyncClient.IsValidCode(cfg.Code) || !remote.Allows("battle")) return;
       string site = cfg.Site, code = cfg.Code;
       Task.Factory.StartNew(() => { try { TraceUpload.RunOnce(RFX.BattlesDir, traceSent, site, code, Log.Write); } catch (Exception e) { Log.Write("трасса боя: ошибка " + e.Message); } });
     }
@@ -633,7 +699,7 @@ namespace RealmForge {
 
     void AutoSyncTick() {
       if (!gameRunning) gameSeenAt = DateTime.MinValue;
-      if (!cfg.AutoSync || !gameRunning || !(SyncClient.IsValidCode(cfg.Code) || bridgePoller.Connected)) return;
+      if (!cfg.AutoSync || !gameRunning || !remote.ReadEnabled || !(SyncClient.IsValidCode(cfg.Code) || bridgePoller.Connected)) return;
       var now = DateTime.UtcNow;
       if (gameSeenAt == DateTime.MinValue) gameSeenAt = now;
       if (now - gameSeenAt < TimeSpan.FromSeconds(FirstSyncDelaySec)) return;   // the game is still loading / at the login screen
@@ -655,6 +721,7 @@ namespace RealmForge {
 
     void StartSync(bool saveOnly, bool auto) {
       if (syncing) return;
+      if (!remote.ReadEnabled) { if (!auto) SyncError("paused", null, 0); return; }   // the site's switch: no game reading
       bool upload = !saveOnly && SyncClient.IsValidCode(cfg.Code), toBridge = bridgePoller.Connected;
       if (auto && !upload && !toBridge) return;
       string code = cfg.Code, site = cfg.Site; bool copy = !auto && (cfg.SaveCopy || !upload);
@@ -673,7 +740,7 @@ namespace RealmForge {
       SyncEv("error", ",\"error\":{\"kind\":\"" + kind + "\",\"detail\":" + S(detail) + ",\"retryAfter\":" + N(retryAfter) + "}");
       // reported: reading and sending failures. Not: the site's rate limit, the game not running (the player's state) and
       // a rejected code (the report would be rejected the same way)
-      if (kind != "rate" && kind != "not_running" && kind != "token")
+      if (kind != "rate" && kind != "not_running" && kind != "token" && kind != "paused")
         Report("sync." + kind, "sync: " + kind + (string.IsNullOrEmpty(detail) ? "" : ": " + detail), Ctx("auto", autoRun ? "true" : "false"));
     }
 
@@ -912,7 +979,7 @@ namespace RealmForge {
 
     /// <param name="fresh">the live tables searched again too (not the ones found earlier this game session)</param>
     void StartScan(List<long> uids, bool ahead = false, bool fresh = false) {
-      if (scanning || (uids.Count == 0 && !ahead)) return;
+      if (scanning || (uids.Count == 0 && !ahead) || !remote.ReadEnabled) return;
       scanning = true; watch = uids; liveTimer.Stop(); lastLive = null;
       Task.Factory.StartNew(() => {
         EquipAddrs a = null;
@@ -952,7 +1019,7 @@ namespace RealmForge {
     }
 
     void PollLive() {
-      if (addrs == null || scanning) return;
+      if (addrs == null || scanning || !remote.ReadEnabled) return;
       EquipLive s;
       try { s = RFX.Poll(addrs, watch); }
       catch (Exception e) {

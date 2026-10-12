@@ -32,4 +32,8 @@ Optional `### Heading` lines inside a `## RU` / `## EN` section split the update
 
 ## RU
 
+- Если после обновления игры что-то перестанет работать правильно, мы сможем временно приостановить часть функций программы или чтение игры целиком, не дожидаясь новой версии. Программа спокойно сообщит об этом, а синхронизация героев и снаряжения продолжит работать, если её это не касается. Когда всё проверено, функции включатся сами.
+
 ## EN
+
+- If something stops working right after a game update, we can now pause some of the app's features, or game reading as a whole, without waiting for a new version. The app tells you so calmly, and hero and gear sync keeps working when it is not affected. Once everything is checked, the features come back by themselves.

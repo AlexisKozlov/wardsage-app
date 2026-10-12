@@ -24,6 +24,8 @@
     sell: { list: null, run: false, state: '', selected: 0, missing: 0, extra: 0, seen: {} },
     // «Найти в игре»: the request from the site (with its item card) and what the program reports about the game's screens
     locate: { req: null, step: null, tipKey: '', doneTimer: 0 }, locateEnded: {},
+    // the site's switches: reading as a whole, and the features switched off
+    remote: { readEnabled: true, off: [] },
   };
 
   // ---------------------------------------------------------------- helpers
@@ -226,6 +228,15 @@
   }
 
   // ---------------------------------------------------------------- sync
+  // the Wardsage team switched game reading (or some features) off for a while: a calm note, not an error
+  function remoteNote(only) {
+    const r = S.remote;
+    if (!r.readEnabled) return `<div class="remote-note" role="status">${I.clock}<div><b>${esc(t('remoteOff'))}</b><p>${esc(t('remoteOffP'))}</p></div></div>`;
+    const off = only ? r.off.filter((f) => only.includes(f)) : r.off;
+    if (!off.length) return '';
+    return `<div class="remote-note" role="status">${I.clock}<div><b>${esc(t('remoteSome'))}</b><p>${esc(off.map((f) => t('remoteF_' + f)).join(' · '))}</p></div></div>`;
+  }
+
   function syncPage() {
     if (!S.hasCode || S.editCode) return onboarding();
     const sy = S.sync;
@@ -236,6 +247,7 @@
       `<div class="card tile ${ok === true ? 'ok' : ok === false ? 'bad' : ''}"><span class="ico">${icon}</span><div><b>${esc(title)}</b><span>${esc(sub)}</span>${extra}</div></div>`;
     return `
       <div class="head"><div><h1>${esc(t('syncTitle'))}</h1><p class="lead">${esc(t('syncLead'))}</p></div></div>
+      ${remoteNote()}
       <div class="card framed banner ${tops.length ? 'has-collage' : ''}">
         ${tops.length ? `<div class="collage">${tops.map((id) => `<img src="${esc(S.site)}/art/heroes/HeroBust_${Number(id)}.webp" alt="" onerror="this.remove()">`).join('')}</div>` : ''}
         <div class="inner">
@@ -301,7 +313,7 @@
     const map = {
       not_running: ['errNotRunning', 'errNotRunningP'], access: ['errAccess', 'errAccessP'], read: ['errRead', 'errReadP'],
       token: ['errToken', 'errTokenP'], rate: ['errRate', 'errRateP'], net: ['errNet', 'errNetP'], server: ['errServer', 'errServerP'],
-      payload: ['errPayload', 'errPayloadP'],
+      payload: ['errPayload', 'errPayloadP'], paused: ['remoteOff', 'remoteOffP'],
     };
     const [h, p] = map[e.kind] || ['errRead', 'errReadP'];
     const arg = e.kind === 'rate' ? (e.retryAfter || 30) : e.detail || '';
@@ -355,6 +367,7 @@
     else body = `<div class="stack"><div class="plans">${P.list.map(planCard).join('')}</div>${guideCard()}</div>`;
     if (S.sell.list) body = sellCard() + body;
     if (S.locate.req) body = locateCard() + body;
+    body = remoteNote(['equip', 'autoclick', 'locate']) + body;
     return `
       <div class="head"><div><h1>${esc(t('equipTitle'))}</h1><p class="lead">${esc(t('equipLead'))}</p></div>
         <div class="row">
@@ -560,7 +573,7 @@
     if (!p) return `<div class="compact-view">${S.locate.req ? locateCard(true) : ''}<div class="row" style="justify-content:space-between"><b>${esc(t('plansNone'))}</b>
       <button class="icon-btn" data-act="compact" title="${esc(t('expand'))}">${I.expand}</button></div></div>`;
     const g = G.next(p, S.live);
-    return `<div class="compact-view">${S.locate.req ? locateCard(true) : ''}
+    return `<div class="compact-view">${remoteNote(['equip', 'autoclick'])}${S.locate.req ? locateCard(true) : ''}
       <div class="compact-top">${bust(p)}<div><b>${esc(p.heroName)}</b><span>${esc(t('itemsOn', g.done, p.items.length))}</span>
         <div class="mini-bar"><i style="width:${Math.round((g.done / p.items.length) * 100)}%"></i></div></div>
         <button class="icon-btn" data-act="compact" title="${esc(t('expand'))}">${I.expand}</button></div>
@@ -885,6 +898,7 @@
       case 'update': if (!S.update || S.update.version !== m.version) S.updDismissed = false; S.update = { version: m.version, ru: m.notesRu || '', en: m.notesEn || '' }; render(); break;
       case 'auto': S.auto = m.state; if (S.page === 'equip' || S.compact) render(); break;
       case 'guild': if (m.state === 'noSelf' || m.state === 'short') toast(t(m.state === 'short' ? 'guildShort' : 'guildNoSelf'), 12000); break;
+      case 'remote': S.remote = { readEnabled: m.readEnabled !== false, off: Array.isArray(m.off) ? m.off : [] }; render(); break;
       case 'battle': toast(t(m.ok === false ? 'battleNone' : 'battleKept'), 6000); break;
       case 'cancelRun': {
         // «Отменить надевание» over the game: the running build is dropped (as «Отменить» here) and the queue stops

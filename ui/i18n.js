@@ -45,6 +45,8 @@ window.RF_TEXTS = {
     errNet: 'Сайт недоступен', errNetP: 'Проверь интернет и попробуй ещё раз. {0}',
     errServer: 'Ошибка на сайте', errServerP: 'Сайт ответил ошибкой ({0}). Попробуй чуть позже.',
     errPayload: 'Сайт не принял данные', errPayloadP: '{0}',
+    remoteOff: 'Чтение игры временно отключено командой Wardsage', remoteOffP: 'Программа сейчас не читает игру: синхронизация, гильдия, бои и переодевание подождут. Ничего делать не нужно — всё включится само, когда команда вернёт чтение.',
+    remoteSome: 'Часть функций временно отключена командой Wardsage', remoteF_guild: 'гильдия', remoteF_gvg: 'война гильдий', remoteF_battle: 'запись боёв', remoteF_autoclick: 'автонажатие (остаются подсказки)', remoteF_equip: 'переодевание', remoteF_locate: '«Найти в игре»',
     retry: 'Повторить', showLog: 'Журнал', newCode: 'Новый код',
 
     obTitle: 'Привяжи аккаунт', obLead: 'Один раз: код связывает программу с твоим профилем на сайте. Пароль от игры не нужен.',
@@ -188,6 +190,8 @@ window.RF_TEXTS = {
     errNet: 'The site is unreachable', errNetP: 'Check your connection and retry. {0}',
     errServer: 'Site error', errServerP: 'The site answered with an error ({0}). Try again later.',
     errPayload: 'The site rejected the data', errPayloadP: '{0}',
+    remoteOff: 'Game reading is temporarily turned off by the Wardsage team', remoteOffP: 'The app is not reading the game right now: sync, guild, fights and the equip helper will wait. Nothing to do — it all comes back by itself when the team turns reading on again.',
+    remoteSome: 'Some features are temporarily turned off by the Wardsage team', remoteF_guild: 'guild', remoteF_gvg: 'guild war', remoteF_battle: 'fight recording', remoteF_autoclick: 'auto click (hints stay)', remoteF_equip: 'equip helper', remoteF_locate: '«Find in game»',
     retry: 'Retry', showLog: 'Log', newCode: 'New code',
 
     obTitle: 'Link your account', obLead: 'Once: the code links the app to your profile on the site. Your game password is not needed.',

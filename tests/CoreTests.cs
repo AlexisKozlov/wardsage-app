@@ -434,9 +434,45 @@ static class CoreTests {
       Check(!lim.TryAcquire(t0.AddMinutes(9)), "still blocked after 9 minutes");
       Check(lim.TryAcquire(t0.AddMinutes(11)), "allowed again after the window passed"); }
 
+    RemoteSwitchesTests();
+
     Console.WriteLine();
     Console.WriteLine(passed + " passed, " + failed + " failed");
     return failed == 0 ? 0 : 1;
+  }
+
+  // the site's switches (src/RemoteConfig.cs)
+  static void RemoteSwitchesTests() {
+    Console.WriteLine("Remote switches");
+    var d = RemoteSwitches.Permissive();
+    Check(d.ReadEnabled && d.Allows("guild") && d.Allows("locate") && d.Off().Count == 0, "defaults: everything on");
+    Check(!d.Allows("arena") && !d.Allows(null), "an unknown feature is never allowed");
+    var r = RemoteSwitches.Interpret(200, "{\"readEnabled\":true,\"features\":{\"guild\":false,\"gvg\":true,\"battle\":false,\"autoclick\":true,\"equip\":true,\"locate\":true},\"at\":\"2026-10-12T10:00:00.000Z\"}");
+    Check(r != null && r.ReadEnabled && !r.Allows("guild") && !r.Allows("battle") && r.Allows("gvg") && r.Allows("equip"), "features off as sent");
+    Eq("guild,battle", r == null ? "" : string.Join(",", r.Off().ToArray()), "the features off, in order");
+    Eq("2026-10-12T10:00:00.000Z", r == null ? null : r.At, "reply time kept");
+    var m = RemoteSwitches.Parse("{\"readEnabled\":false,\"features\":{\"guild\":true}}");
+    Check(m != null && !m.ReadEnabled && !m.Allows("guild") && !m.Allows("equip") && m.Off().Count == 0, "reading off: nothing is allowed, the notice covers all");
+    var junk = RemoteSwitches.Parse("{\"readEnabled\":\"false\",\"features\":{\"equip\":0,\"locate\":null},\"extra\":1}");
+    Check(junk != null && junk.ReadEnabled && junk.Allows("equip") && junk.Allows("locate"), "odd values read as on");
+    Check(RemoteSwitches.Parse("{}") != null && RemoteSwitches.Parse("{}").Allows("battle"), "missing fields are on");
+    Check(RemoteSwitches.Interpret(500, "{\"readEnabled\":false}") == null, "a 5xx is no reply (the held switches stay)");
+    Check(RemoteSwitches.Interpret(200, "<html>") == null && RemoteSwitches.Interpret(200, "[1]") == null && RemoteSwitches.Interpret(200, null) == null, "not a JSON object: no reply");
+    Check(RemoteSwitches.Interpret(200, "{\"a\":\"" + new string('x', 20000) + "\"}") == null, "an oversized reply is refused");
+    var back = RemoteSwitches.Parse(r.ToJson());
+    Check(back != null && back.SameAs(r) && back.At == r.At, "the saved copy reads back the same");
+    Check(!back.SameAs(m) && !back.SameAs(null), "SameAs tells switches apart");
+    Eq(2, RemoteSwitches.EveryMinutes(true), "test build asks every 2 minutes");
+    Eq(10, RemoteSwitches.EveryMinutes(false), "release build asks every 10 minutes");
+    string dir = Path.Combine(Path.GetTempPath(), "rf-remote-" + Guid.NewGuid().ToString("N"));
+    string path = Path.Combine(dir, "app-config.json");
+    Check(RemoteSwitches.LoadCache(path) == null, "no saved copy: null (the caller uses the defaults)");
+    m.SaveCache(path);
+    var c = RemoteSwitches.LoadCache(path);
+    Check(c != null && !c.ReadEnabled, "the saved copy is used while the site cannot be reached");
+    File.WriteAllText(path, "{broken");
+    Check(RemoteSwitches.LoadCache(path) == null, "a broken copy: null");
+    try { Directory.Delete(dir, true); } catch (Exception) { }
   }
 
   // ParseTable-shaped script tables (arrays "[1]".., numbers long) for the arena opponents (src/ArenaOpponents.cs)

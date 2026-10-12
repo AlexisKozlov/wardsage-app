@@ -153,6 +153,11 @@ h2 { margin: 0 0 12px; font: 700 13px/1.2 var(--display); letter-spacing: 2px; c
 .result .title { display: flex; align-items: center; gap: 10px; color: var(--ok); font-weight: 500 }
 .result .title svg { width: 22px; height: 22px; stroke: var(--ok); fill: none; stroke-width: 2.2 }
 
+.remote-note { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 12px; padding: 12px 16px; margin: 0 0 14px; border: 1px solid var(--line); border-radius: 3px;
+  background: linear-gradient(180deg, rgba(232, 207, 142, .07), rgba(232, 207, 142, .02)) }
+.remote-note svg { width: 22px; height: 22px; stroke: var(--gold2); fill: none; stroke-width: 2 }
+.remote-note b { display: block; color: var(--gold); font-weight: 500 }
+.remote-note p { margin: 2px 0 0; color: var(--muted); font-size: 14px }
 .alert { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 12px; padding: 14px 16px; border-radius: 3px; border: 1px solid rgba(240, 160, 140, .4); background: var(--errbg) }
 .alert svg { width: 22px; height: 22px; stroke: var(--err); fill: none; stroke-width: 2 }
 .alert b { display: block; color: var(--err); font-weight: 500 }

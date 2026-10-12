@@ -31,6 +31,8 @@ namespace RealmForge {
                  KTwoHeads = "m_BossRefreshTimeById", KDividend = "m_ActiveValueRankListLastWeek";
     static ulong guildTab, guildWeekTab, guildClassicTab, guildTwoTab, guildDivTab; static int guildPid, guildLastFind, guildFoundAt;
     const int GuildRepickMs = 30 * 60 * 1000;
+    /// <summary>The guild war block is left out (the site's switch "gvg" is off; src/RemoteConfig.cs).</summary>
+    public static volatile bool SkipGvg;
 
     // Key lookups of the guild (and guild war) code compare the key text itself instead of the shared key-pointer cache of Field:
     // a key's string object is per script state, and memory can still hold tables of an earlier state (an earlier login) whose
@@ -244,7 +246,7 @@ namespace RealmForge {
       extra.RankThis = RankList(guildDivTab, "m_ActiveValueRankList");
       extra.RankLast = RankList(guildDivTab, "m_ActiveValueRankListLastWeek");
       // the guild war is optional: any failure there leaves it out and nothing else
-      try { extra.Gvg = ReadGvg(rescanMs); } catch (Exception) { extra.Gvg = null; }
+      if (!SkipGvg) { try { extra.Gvg = ReadGvg(rescanMs); } catch (Exception) { extra.Gvg = null; } }
       return union != null;
     }
 
