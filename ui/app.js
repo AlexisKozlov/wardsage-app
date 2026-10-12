@@ -173,21 +173,32 @@
     const F = window.RFForum, f = S.forum, r = f.reply;
     const unlinked = !S.hasCode || (r && !r.ok && r.error === 'invalid_token');
     const list = F.topics(r);
-    const card = (x) => {
-      const n = Math.max(0, Math.floor(x.newCount) || 0);
-      const st = T[S.lang]['forumSt_' + x.status] ? t('forumSt_' + x.status) : '';
-      return `<button class="card topic" data-act="open" data-url="${esc(F.onSite(x.url, S.site))}"><b>${esc(x.title)}</b>
-        <span class="topic-meta">${n ? `<em>${esc(t(F.countKey(n, S.lang), n))}</em>` : ''}${st ? `<span>${esc(st)}</span>` : ''}</span></button>`;
+    const glyph = (k) => ['bug', 'idea', 'question'].indexOf(k) >= 0 ? `<img class="tp-kind" src="img/kind_${k}.webp" alt="" title="${esc(t('forumKind_' + k))}">` : '<span class="tp-kind"></span>';
+    const row = (x) => {
+      const n = Math.max(0, Math.floor(x.newCount) || 0), c = Math.max(0, Math.floor(x.comments) || 0);
+      const st = T[S.lang]['forumSt_' + x.status] ? `<span class="badge s_${esc(x.status)}">${esc(t('forumSt_' + x.status))}</span>` : '';
+      const meta = [];
+      if (x.area && T[S.lang]['forumArea_' + x.area]) meta.push(t('forumArea_' + x.area));
+      if (c) {
+        meta.push(t(F.repliesKey(c, S.lang), c));
+        const a = F.ago(x.lastAt);
+        if (a) meta.push(t('forumLast', t(a.key, a.n)));
+      }
+      return `<button class="tp${n ? ' new' : ''}" data-act="open" data-url="${esc(F.onSite(x.url, S.site))}">${glyph(x.kind)}
+        <span class="tp-main"><span class="tp-title">${esc(x.title)}</span>${meta.length ? `<span class="tp-meta">${meta.map(esc).join('<i>·</i>')}</span>` : ''}</span>
+        ${st}${n ? `<span class="tp-new">${esc(t(F.countKey(n, S.lang), n))}</span>` : ''}</button>`;
     };
-    const body = unlinked ? `<p class="newsNote">${esc(t('forumUnlinked'))}</p>`
-      : f.status === 'error' || (r && !r.ok) ? `<p class="newsNote">${esc(t('forumOffline'))}</p>`
-      : list.length ? `<div class="stack">${list.map(card).join('')}</div>`
-      : f.status === 'ok' ? `<p class="newsNote">${esc(t('forumEmpty'))}</p>` : '';
+    const report = `<button class="btn-gold" data-act="open" data-url="${esc(F.reportUrl(unlinked ? null : r, S.site, S.version))}">${esc(t('forumReport'))}</button>`;
+    const note = (txt) => `<div class="card framed tp-empty"><img src="img/kind_question.webp" alt=""><b>${esc(txt)}</b></div>`;
+    const body = unlinked ? note(t('forumUnlinked'))
+      : f.status === 'error' || (r && !r.ok) ? note(t('forumOffline'))
+      : list.length ? `<div class="card framed tp-list">${list.map(row).join('')}</div>
+        <div class="tp-foot"><button class="btn-ghost" data-act="open" data-url="${esc(F.listUrl(S.site))}">${esc(t('forumAll'))} ›</button></div>`
+      : f.status === 'ok' ? `<div class="card framed tp-empty"><img src="img/kind_bug.webp" alt=""><b>${esc(t('forumEmpty'))}</b><p>${esc(t('forumEmptyLead'))}</p>${report}</div>
+        <div class="tp-foot"><button class="btn-ghost" data-act="open" data-url="${esc(F.listUrl(S.site))}">${esc(t('forumAll'))} ›</button></div>` : '';
     return `
-      <div class="head"><div><h1>${esc(t('forumTitle'))}</h1><p class="lead">${esc(t('forumLead'))}</p></div></div>
-      ${body}
-      <div class="forum-foot"><button class="btn-gold" data-act="open" data-url="${esc(F.reportUrl(unlinked ? null : r, S.site, S.version))}">${esc(t('forumReport'))}</button>
-        <button class="btn-ghost" data-act="open" data-url="${esc(F.listUrl(S.site))}">${esc(t('forumAll'))} ›</button></div>`;
+      <div class="head"><div><h1>${esc(t('forumTitle'))}</h1><p class="lead">${esc(t('forumLead'))}</p></div>${list.length || unlinked || f.status !== 'ok' ? report : ''}</div>
+      ${body}`;
   }
   function newsPage() {
     const N = window.RFNews, n = S.news;

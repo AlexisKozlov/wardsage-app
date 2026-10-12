@@ -450,15 +450,28 @@ body.compact .say p { font-size: 16px }
 .news-grp + .news-grp { margin-top: 12px }
 .news-grp h4 { margin: 0 0 6px; font: 700 11px var(--display); letter-spacing: 1.5px; text-transform: uppercase; color: var(--gold) }
 .nav .badge.red { background: #c0392b; color: #fff }
-button.topic { all: unset; box-sizing: border-box; display: grid; gap: 8px; cursor: pointer; padding: 16px 22px;
-  background: linear-gradient(180deg, rgba(24, 34, 58, .88), rgba(18, 26, 43, .92)); border: 1px solid var(--line2); border-radius: 4px; box-shadow: 0 12px 32px rgba(0, 0, 0, .28), inset 0 1px 0 rgba(255, 255, 255, .03) }
-button.topic:hover { border-color: var(--gold2) }
-button.topic:focus-visible { outline: 1px solid var(--gold) }
-.topic b { font-size: 15px; line-height: 1.4; color: var(--text) }
-.topic-meta { display: flex; gap: 14px; align-items: baseline; font-size: 13px; color: var(--muted) }
-.topic-meta em { font-style: normal; font-weight: 600; color: var(--gold) }
-.forum-foot { display: flex; align-items: center; gap: 24px; margin-top: 22px; flex-wrap: wrap }
-.stack + .forum-foot { margin-top: 22px }
+.tp-list { padding: 4px 0; overflow: hidden }
+.tp { all: unset; box-sizing: border-box; position: relative; display: grid; grid-template-columns: 28px minmax(0, 1fr) auto auto; align-items: center; gap: 14px; width: 100%; cursor: pointer; padding: 11px 20px 11px 22px; transition: background .15s }
+.tp + .tp { border-top: 1px solid var(--line2) }
+.tp:hover { background: linear-gradient(90deg, rgba(232, 207, 142, .09), rgba(232, 207, 142, .02)) }
+.tp:hover .tp-title { color: var(--goldhi) }
+.tp:focus-visible { outline: 1px solid var(--gold); outline-offset: -2px }
+.tp.new { background: linear-gradient(90deg, rgba(232, 207, 142, .11), rgba(232, 207, 142, .02) 70%) }
+.tp.new::before { content: ''; position: absolute; left: 0; top: 6px; bottom: 6px; width: 3px; background: var(--gold); box-shadow: 0 0 10px rgba(232, 207, 142, .55) }
+.tp-kind { width: 28px; height: 28px; object-fit: contain; display: block }
+.tp-main { min-width: 0; display: grid; gap: 3px }
+.tp-title { font-size: 15px; font-weight: 500; line-height: 1.3; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.tp-meta { font-size: 12.5px; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.tp-meta i { font-style: normal; margin: 0 7px; color: var(--golddim) }
+.tp .badge[class*="s_"] { display: inline-block; min-width: 88px; text-align: center; box-sizing: border-box; padding: 0 8px; font-size: 11.5px; line-height: 1.6; letter-spacing: .04em; white-space: nowrap; font-weight: 600; color: var(--c); border: 1px solid color-mix(in srgb, var(--c) 55%, transparent); background: color-mix(in srgb, var(--c) 12%, transparent); border-radius: 0 }
+.s_new { --c: #5b9be0 } .s_accepted { --c: #a57fe0 } .s_in_progress { --c: #e0a43a } .s_done { --c: #6fae7c } .s_answered { --c: #5fbeaa } .s_wont { --c: #e07f6e } .s_duplicate { --c: #9aa4b8 }
+.tp-new { min-width: 20px; height: 22px; padding: 0 10px; display: inline-flex; align-items: center; border-radius: 11px; background: linear-gradient(180deg, #f1dca1, #c9a45c); color: #1a1408; font: 700 12px/1 var(--display); letter-spacing: .3px; white-space: nowrap; box-shadow: 0 2px 8px rgba(201, 164, 92, .3) }
+.tp-foot { margin-top: 14px; text-align: right }
+.tp-empty { display: grid; justify-items: center; gap: 10px; padding: 38px 22px 34px; text-align: center }
+.tp-empty img { width: 48px; height: 48px; opacity: .9 }
+.tp-empty b { font: 700 17px/1.3 var(--display); letter-spacing: .6px; color: var(--gold) }
+.tp-empty p { margin: 0 0 8px; color: var(--muted); max-width: 420px }
+.head .btn-gold { flex: none }
 
 
 /* «Найти в игре» */

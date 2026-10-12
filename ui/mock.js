@@ -54,7 +54,7 @@
           setTimeout(() => document.querySelector('[data-page=equip]').click(), 20);
         }
         if (s === 'settings') setTimeout(() => document.querySelector('[data-page=settings]').click(), 20);
-        if (s === 'community' || s === 'forum0' || s === 'forum00' || s === 'onboard') setTimeout(() => document.querySelector('[data-page=community]').click(), 20);
+        if (s === 'community' || s === 'forum' || s === 'forum0' || s === 'forum00' || s === 'onboard') setTimeout(() => document.querySelector('[data-page=community]').click(), 20);
         if (s === 'news' || s === 'newsoff') setTimeout(() => document.querySelector('[data-page=news]').click(), 20);
       } else if (m.cmd === 'news.fetch') {
         // s=newsoff: the site cannot be reached (the built-in list shows)
@@ -69,12 +69,18 @@
             { text: 'крестик прячет программу в трей, а сворачивание оставляет её на панели задач.', kind: 'app', appVersion: '1.6.55' } ] },
           { v: 130, date: '2026-10-09', items: [{ text: 'Арена: подсказки по соперникам обновлены.', kind: 'site' }] } ] });
       } else if (m.cmd === 'forum.unread') {
-        // s=onboard: no code, the page shows the note; s=forum0: no unread but 2 open topics; s=forum00: no topics
-        emit({ ev: 'forum', r: s === 'forum00' ? { ok: true, total: 0, topics: [], newTopicUrl: site + '/community/new?kind=bug&area=app' } : s === 'forum0' ? { ok: true, total: 0, newTopicUrl: site + '/community/new?kind=bug&area=app', topics: [
-          { id: 't3', title: 'Не снимается экипировка у Сунь Укуна', kind: 'bug', status: 'in_progress', newCount: 0, lastAt: '2026-10-12T08:10:00Z', url: 'https://wardsage.com/community/t3' },
-          { id: 't4', title: 'Подсказки по арене на втором экране', kind: 'idea', status: 'accepted', newCount: 0, lastAt: '2026-10-11T19:00:00Z', url: 'https://wardsage.com/community/t4' } ] } : { ok: true, total: 3, newTopicUrl: site + '/community/new?kind=bug&area=app', topics: [
-          { id: 't1', title: 'Не снимается экипировка у Сунь Укуна', kind: 'bug', status: 'in_progress', newCount: 2, lastAt: '2026-10-12T08:10:00Z', url: 'https://wardsage.com/community/t1' },
-          { id: 't2', title: 'Подсказки по арене на втором экране', kind: 'idea', status: 'accepted', newCount: 1, lastAt: '2026-10-11T19:00:00Z', url: 'https://wardsage.com/community/t2' } ] } });
+        // s=onboard: no code, the page shows the note; s=forum0: no unread but open topics; s=forum00: no topics; otherwise some with new replies
+        const nt = site + '/community/new?kind=bug&area=app', u = (id) => 'https://wardsage.com/community/' + id, ago = (h) => new Date(Date.now() - h * 3600000).toISOString();
+        const calm = [
+          { id: 't3', title: 'Не снимается экипировка у Сунь Укуна', kind: 'bug', status: 'in_progress', area: 'app', comments: 4, newCount: 0, lastAt: ago(5), url: u('t3') },
+          { id: 't4', title: 'Подсказки по арене на втором экране', kind: 'idea', status: 'accepted', area: 'optimizer', comments: 2, newCount: 0, lastAt: ago(30), url: u('t4') },
+          { id: 't5', title: 'Как понять, какой набор брать на героя в рейд?', kind: 'question', status: 'new', area: null, comments: 0, newCount: 0, lastAt: ago(52), url: u('t5') } ];
+        const busy = [
+          { id: 't1', title: 'Не снимается экипировка у Сунь Укуна', kind: 'bug', status: 'in_progress', area: 'app', comments: 6, newCount: 2, lastAt: ago(2), url: u('t1') },
+          { id: 't2', title: 'Подсказки по арене на втором экране', kind: 'idea', status: 'accepted', area: 'optimizer', comments: 3, newCount: 1, lastAt: ago(0.3), url: u('t2') },
+          { id: 't6', title: 'Программа зависает на этапе чтения снаряжения, если игра свёрнута в трей и открыто окно настроек', kind: 'bug', status: 'answered', area: 'app', comments: 1, newCount: 0, lastAt: ago(27), url: u('t6') },
+          { id: 't7', title: 'Как понять, какой набор брать на героя в рейд?', kind: 'question', status: 'new', area: null, comments: 0, newCount: 0, lastAt: ago(52), url: u('t7') } ];
+        emit({ ev: 'forum', r: { ok: true, total: s === 'forum00' ? 0 : s === 'forum0' ? 0 : 3, newTopicUrl: nt, topics: s === 'forum00' ? [] : s === 'forum0' ? calm : busy } });
       } else if (m.cmd === 'plans.load') {
         emit({ ev: 'plans', status: 'ok', plans });
         if (s.indexOf('locate') === 0) emit({ ev: 'locate', req: s === 'locate-gone' ? { id: 'l1', purpose: 'recast', createdAt: '2026-10-12T10:00:00Z', heroUid: 0, heroName: null, item: null } : locateReq });

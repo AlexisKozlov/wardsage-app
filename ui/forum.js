@@ -14,6 +14,24 @@
     return a > 10 && a < 20 ? 'forumNew5' : b === 1 ? 'forumNew1' : b >= 2 && b <= 4 ? 'forumNew2' : 'forumNew5';
   }
 
+  // i18n key for «N replies».
+  function repliesKey(n, lang) {
+    const a = Math.abs(n) % 100, b = a % 10;
+    if (lang === 'en') return n === 1 ? 'forumRep1' : 'forumRep5';
+    return a > 10 && a < 20 ? 'forumRep5' : b === 1 ? 'forumRep1' : b >= 2 && b <= 4 ? 'forumRep2' : 'forumRep5';
+  }
+
+  // «2 h ago»: {key, n} for the i18n keys forumAgoNow / forumAgoMin / forumAgoH / forumAgoD, or null for a bad date.
+  function ago(iso, now) {
+    const t = Date.parse(iso);
+    if (!isFinite(t)) return null;
+    const m = Math.floor(((now === undefined ? Date.now() : now) - t) / 60000);
+    if (m < 1) return { key: 'forumAgoNow', n: 0 };
+    if (m < 60) return { key: 'forumAgoMin', n: m };
+    if (m < 1440) return { key: 'forumAgoH', n: Math.floor(m / 60) };
+    return { key: 'forumAgoD', n: Math.floor(m / 1440) };
+  }
+
   // The site always builds links on wardsage.com; a test-channel app opens them on its own site.
   function onSite(url, site) {
     try {
@@ -42,7 +60,7 @@
         .map((x, i) => ({ x, i, u: Number(x.newCount) > 0 ? 1 : 0 })).sort((a, b) => b.u - a.u || a.i - b.i).map((o) => o.x) : [];
   }
 
-  const api = { badge, countKey, reportUrl, listUrl, topics, onSite };
+  const api = { badge, countKey, repliesKey, ago, reportUrl, listUrl, topics, onSite };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.RFForum = api;
 })(typeof window !== 'undefined' ? window : globalThis);

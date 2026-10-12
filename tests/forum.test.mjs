@@ -22,4 +22,8 @@ ok(F.onSite('https://example.com/x', 'https://test.wardsage.com') === 'https://e
 ok(F.onSite('https://wardsage.com/x', 'ftp://bad') === 'https://wardsage.com/x' && F.onSite('https://wardsage.com/x', '') === 'https://wardsage.com/x', 'bad site unchanged');
 ok(F.reportUrl(reply, 'https://test.wardsage.com', '1.6.57') === 'https://test.wardsage.com/community/new?kind=bug&area=app&v=1.6.57', 'reportUrl on staging');
 ok(F.topics({ ok: true, topics: [{ title: 'a', url: 'https://x/1', newCount: 0 }, { title: 'b', url: 'https://x/2', newCount: 2 }, { title: 'c', url: 'https://x/3', newCount: 0 }] }).map((x) => x.title).join() === 'b,a,c', 'unread first, rest keep order');
+ok([1, 2, 5, 11, 21].map((x) => F.repliesKey(x, 'ru')).join() === 'forumRep1,forumRep2,forumRep5,forumRep5,forumRep1' && F.repliesKey(1, 'en') === 'forumRep1' && F.repliesKey(2, 'en') === 'forumRep5', 'replies keys');
+const T0 = Date.parse('2026-10-12T12:00:00Z');
+ok(JSON.stringify(F.ago('2026-10-12T11:59:40Z', T0)) === '{"key":"forumAgoNow","n":0}' && F.ago('2026-10-12T11:15:00Z', T0).key === 'forumAgoMin' && F.ago('2026-10-12T11:15:00Z', T0).n === 45
+  && F.ago('2026-10-12T09:00:00Z', T0).n === 3 && F.ago('2026-10-12T09:00:00Z', T0).key === 'forumAgoH' && F.ago('2026-10-09T12:00:00Z', T0).key === 'forumAgoD' && F.ago('2026-10-09T12:00:00Z', T0).n === 3 && F.ago('x', T0) === null, 'ago');
 console.log('forum.test: ' + n + ' checks ok');
