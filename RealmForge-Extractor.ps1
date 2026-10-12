@@ -515,7 +515,7 @@ namespace RealmForge {
     internal static LiveTables EnsureLive(int pid, bool needForm) {
       var lt = live;
       if (lt != null && lt.Pid == pid && HasTable(lt.EquipData, "equips") && HasTable(lt.HeroData, KHeroes)
-          && (!needForm || (HasTable(lt.Form, "m_InfinityGridProxy") && LiveForm() == lt.Form))) return lt;
+          && (!needForm || Layout.Current == null || (HasTable(lt.Form, "m_InfinityGridProxy") && LiveForm() == lt.Form))) return lt;
       var sw = Stopwatch.StartNew();
       lt = FindLive(pid);
       L("Live tables found in " + sw.Elapsed.TotalSeconds.ToString("0.0") + " s: equip " + (lt.EquipData != 0) + ", heroes " + (lt.HeroData != 0)
@@ -530,16 +530,19 @@ namespace RealmForge {
     // The game keeps its open windows in UIStatic's UIInstance (form id -> form). After a scene change (a battle) it
     // builds the hero screen again, and the old table stays in memory for a while - with the same fields and even the
     // same ____instanceId - so a table found by its keys can be the dead copy. The node of UIInstance keyed by the hero
-    // screen's id always holds the live one: found once, then read on every poll (8 bytes).
-    const long FormCharactorMainId = 0;   // UIDefines.ID_FORM_CHARACTORMAIN
-    internal const long FormBackpackId = 0; // UIDefines.ID_FORM_BACKPACKINTEGRATION («Инвентарь»)
-    internal const long FormRecastId = 0;   // the foundry (Литейная): its «Преобразовать» tab
-    internal const long FormGemId = 0;      // the gem screen: reached from the item card, also holds the recast functions
+    // screen's id always holds the live one: found once, then read on every poll (8 bytes). The form ids come with the
+    // layout data from the server (src/Layout.cs); without it no form is found this way (0).
+    /// <summary>A form id (UIDefines) from the layout data; 0 when there is none.</summary>
+    internal static long FormId(string name) { var ly = Layout.Current; return ly != null ? ly.Form(name) : 0; }
+    static long FormCharactorMainId { get { return FormId("ID_FORM_CHARACTORMAIN"); } }
+    internal static long FormBackpackId { get { return FormId("ID_FORM_BACKPACKINTEGRATION"); } }   // «Инвентарь»
+    internal static long FormRecastId { get { return FormId("ID_FORM_EQUIPSUBLIMING"); } }          // the foundry (Литейная): its «Преобразовать» tab
+    internal static long FormGemId { get { return FormId("ID_FORM_EQUIPGEMMAIN"); } }               // the gem screen: reached from the item card, also holds the recast functions
     static ulong formNode, invNode, subNode, gemNode;
 
     // the value of a UIInstance node keyed by the form id, when it is still that node and holds a table with the key
     static ulong NodeValue(ulong n, long id, string key) {
-      var b = n != 0 ? Read(n, 32) : null; if (b == null) return 0;
+      var b = n != 0 && id != 0 ? Read(n, 32) : null; if (b == null) return 0;
       if (BitConverter.ToInt64(b, 16) != id || BitConverter.ToInt32(b, 24) != T_INT || BitConverter.ToInt32(b, 8) != T_TABLE) return 0;
       ulong f = BitConverter.ToUInt64(b, 0);
       return HasTable(f, key) ? f : 0;
@@ -556,7 +559,7 @@ namespace RealmForge {
     /// false when it is too soon (then <paramref name="form"/> is not known).</summary>
     internal static bool RescanForm(int ms, out ulong form) {
       form = 0;
-      if (regs == null) return false;
+      if (regs == null || Layout.Current == null) return false;
       if (lastNodeScan != 0 && Environment.TickCount - lastNodeScan < ms) return false;
       lastNodeScan = Environment.TickCount;
       form = FindFormNode();
@@ -566,7 +569,7 @@ namespace RealmForge {
 
     // the table of a UIInstance node keyed by the form id, when it is still that node
     static ulong NodeTable(ulong n, long id) {
-      var b = n != 0 ? Read(n, 32) : null; if (b == null) return 0;
+      var b = n != 0 && id != 0 ? Read(n, 32) : null; if (b == null) return 0;
       if (BitConverter.ToInt64(b, 16) != id || BitConverter.ToInt32(b, 24) != T_INT || BitConverter.ToInt32(b, 8) != T_TABLE) return 0;
       return BitConverter.ToUInt64(b, 0);
     }
@@ -574,16 +577,19 @@ namespace RealmForge {
     /// <summary>Searches UIInstance's nodes of the hero screen, the inventory and the two recast screens (one pass; a
     /// form the player has not opened yet has none); returns the live hero screen (0 = none).</summary>
     static ulong FindFormNode() {
+      formNode = invNode = subNode = gemNode = 0;
+      if (Layout.Current == null) return 0;   // no form ids: the hero screen is found by its keys
+      long idMain = FormCharactorMainId, idInv = FormBackpackId, idRecast = FormRecastId, idGem = FormGemId;
       var hits = new List<ulong>();
       ScanParallel((b0, buf, len) => {
         for (int i = 0; i + 32 <= len; i += 8) {
           long k = BitConverter.ToInt64(buf, i + 16);
-          if (k != FormCharactorMainId && k != FormBackpackId && k != FormRecastId && k != FormGemId) continue;
+          if (k != idMain && k != idInv && k != idRecast && k != idGem) continue;
           if (BitConverter.ToInt32(buf, i + 24) != T_INT || BitConverter.ToInt32(buf, i + 8) != T_TABLE) continue;
           lock (hits) hits.Add(b0 + (ulong)i);
         }
       });
-      ulong form = 0; formNode = invNode = subNode = gemNode = 0;
+      ulong form = 0;
       foreach (var n in hits) {
         ulong f;
         if (formNode == 0 && (f = NodeForm(n)) != 0) { formNode = n; form = f; }
@@ -836,8 +842,11 @@ namespace RealmForge {
     /// <summary>Battle study: the battle statistics of heroes still in memory (CSharpBattle.Battle.DamageStatisticsData:
     /// iBaseID 0x10, iHeroID 0x14, iPower 0x18, fDamageAmount 0x28 (all enemies), fDamageAmountToBoss 0x30,
     /// fTreatmentAmount 0x38, fAcceptDamageAmount 0x3C, iStarLevel 0x40, iSublimLevel 0x44), and the battle-end screen's
-    /// frame count (Form_BattleEnd.m_FightFramIdx; one logic frame = 270/4096 s). JSON lines, read-only.</summary>
+    /// frame count (Form_BattleEnd.m_FightFramIdx; one logic frame = 270/4096 s). JSON lines, read-only. Null without
+    /// layout data (src/Layout.cs).</summary>
     public static string DumpBattleStats() {
+      var ly = Layout.Current; if (ly == null) return null;
+      int ds = ly.Span("DamageStatisticsData"), gs = ly.Span("GameSimulation"), ko = ly.Hdr("klass");
       var ps = GameInfo.GameProcesses();
       if (ps.Length == 0) return null;
       H = OpenProcess(0x0410, false, ps[0].Id);
@@ -846,7 +855,7 @@ namespace RealmForge {
       var sb = new StringBuilder(); var seen = new HashSet<string>();
       var hits = new List<ulong>();
       ScanParallel((b0, buf, len) => {
-        for (int i = 0; i + 0x68 <= len; i += 8) {
+        for (int i = 0; i + ds <= len; i += 8) {
           int bid = BitConverter.ToInt32(buf, i + 0x10);
           if (bid < 1000 || bid > 9999) continue;
           uint uid = BitConverter.ToUInt32(buf, i + 0x14);
@@ -854,13 +863,13 @@ namespace RealmForge {
           int star = BitConverter.ToInt32(buf, i + 0x40), sub = BitConverter.ToInt32(buf, i + 0x44);
           long dmg = BitConverter.ToInt64(buf, i + 0x28);
           if (star < 1 || star > 8 || sub < 0 || sub > 12 || dmg < 0 || dmg > 1000000000000L) continue;
-          if (BitConverter.ToUInt64(buf, i) == 0) continue;
+          if (BitConverter.ToUInt64(buf, i + ko) == 0) continue;
           lock (hits) hits.Add(b0 + (ulong)i);
         }
       });
       foreach (var o in hits) {
-        var b = Read(o, 0x68); if (b == null) continue;
-        string line = "{\"at\":\"" + o.ToString("X") + "\",\"klass\":\"" + BitConverter.ToUInt64(b, 0).ToString("X") + "\",\"iBaseID\":" + BitConverter.ToInt32(b, 0x10)
+        var b = Read(o, ds); if (b == null) continue;
+        string line = "{\"at\":\"" + o.ToString("X") + "\",\"klass\":\"" + BitConverter.ToUInt64(b, ko).ToString("X") + "\",\"iBaseID\":" + BitConverter.ToInt32(b, 0x10)
           + ",\"iHeroID\":" + BitConverter.ToUInt32(b, 0x14) + ",\"iPower\":" + BitConverter.ToUInt32(b, 0x18)
           + ",\"damage\":" + BitConverter.ToInt64(b, 0x28) + ",\"toBoss\":" + BitConverter.ToInt64(b, 0x30)
           + ",\"heal\":" + BitConverter.ToInt32(b, 0x38) + ",\"taken\":" + BitConverter.ToInt32(b, 0x3C)
@@ -868,8 +877,8 @@ namespace RealmForge {
           + ",\"overflow\":" + BitConverter.ToInt64(b, 0x58) + "}";
         if (seen.Add(line.Substring(line.IndexOf("\"iBaseID\"")))) sb.Append(line).Append('\n');
       }
-      // the simulations still in memory: CSharpBattle.Battle.GameSimulation and its kinds (class addresses per game
-      // build: ClassRvas in src/BattleClock.cs): <CurrentFrameIdx> 0xC4, m_state 0xA4
+      // the simulations still in memory: CSharpBattle.Battle.GameSimulation and its kinds (their classes: layout data
+      // from the server): <CurrentFrameIdx> 0xC4, m_state 0xA4
       ulong ga = 0;
       try { foreach (ProcessModule m in ps[0].Modules) if (string.Equals(m.ModuleName, "GameAssembly.dll", StringComparison.OrdinalIgnoreCase)) ga = (ulong)(long)m.BaseAddress; } catch (Exception) { }
       if (ga != 0) {
@@ -877,13 +886,13 @@ namespace RealmForge {
         var klass = SimKlasses(ga);
         var sims = new List<ulong>();
         ScanParallel((b0, buf, len) => {
-          for (int i = 0; i + 0xC8 <= len; i += 8) if (klass.ContainsKey(BitConverter.ToUInt64(buf, i))) lock (sims) sims.Add(b0 + (ulong)i);
+          for (int i = 0; i + gs <= len; i += 8) if (klass.ContainsKey(BitConverter.ToUInt64(buf, i + ko))) lock (sims) sims.Add(b0 + (ulong)i);
         });
         foreach (var o in sims) {
-          var b = Read(o, 0xC8); if (b == null) continue;
-          uint frames = BitConverter.ToUInt32(b, 0xC4); int state = BitConverter.ToInt32(b, 0xA4);
-          if (state < 1 || state > 2 || frames == 0 || frames > 200000) continue;   // ESimulationStatus Runing / End; a class pointer elsewhere is no object
-          sb.Append("{\"sim\":\"" + klass[BitConverter.ToUInt64(b, 0)] + "\",\"at\":\"" + o.ToString("X") + "\",\"state\":" + BitConverter.ToInt32(b, 0xA4)
+          var b = Read(o, gs); if (b == null) continue;
+          uint frames = BitConverter.ToUInt32(b, 0xC4); int state = SimState(ly, BitConverter.ToInt32(b, 0xA4));
+          if (state == SimOther || frames == 0 || frames > 200000) continue;   // running / ended; a class pointer elsewhere is no object
+          sb.Append("{\"sim\":\"" + klass[BitConverter.ToUInt64(b, ko)] + "\",\"at\":\"" + o.ToString("X") + "\",\"state\":" + BitConverter.ToInt32(b, 0xA4)
             + ",\"frames\":" + frames + ",\"seconds\":" + (frames * 270 / 4096.0).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + "}\n");
         }
       }
@@ -896,6 +905,8 @@ namespace RealmForge {
     }
 
     public static string DumpHeroFights() {
+      var ly = Layout.Current; if (ly == null) return null;
+      int hs = ly.Span("CmdHeroFight"), ko = ly.Hdr("klass"), ad = ly.Hdr("arrData"), kv = ly.Size("SdpPair");
       var ps = GameInfo.GameProcesses();
       if (ps.Length == 0) return null;
       H = OpenProcess(0x0410, false, ps[0].Id);
@@ -914,25 +925,25 @@ namespace RealmForge {
         }
       // the battle's own heroes come in a C# message (CmdStartChallengeInfo), not through the scripts: MTTDProto.CmdHeroFight
       // objects - iHeroId 0x10, iBaseId 0x14, iLevel 0x18, iStarLevel 0x30, iSublimLevel 0x34, mAttr 0x48 (XDictionary:
-      // VersionedList<KeyValuePair<SdpUInt, SdpUInt>> - _items 0x10, _size 0x18; array data at 0x20), iPower 0x68
+      // VersionedList<KeyValuePair<SdpUInt, SdpUInt>> - _items 0x10, _size 0x18), iPower 0x68
       var hits = new List<ulong>();
       ScanParallel((b0, buf, len) => {
-        for (int i = 0; i + 0x78 <= len; i += 8) {
+        for (int i = 0; i + hs <= len; i += 8) {
           uint bid = BitConverter.ToUInt32(buf, i + 0x14);
           if (bid < 1000 || bid > 9999) continue;
           uint uid = BitConverter.ToUInt32(buf, i + 0x10);
           if (uid < bid * 100000u || uid >= bid * 100000u + 100) continue;
           uint lv = BitConverter.ToUInt32(buf, i + 0x18), star = BitConverter.ToUInt32(buf, i + 0x30), pw = BitConverter.ToUInt32(buf, i + 0x68);
           if (lv < 1 || lv > 100 || star < 1 || star > 8 || pw == 0 || pw > 10000000) continue;
-          if (BitConverter.ToUInt64(buf, i) == 0 || BitConverter.ToUInt64(buf, i + 0x48) == 0) continue;
+          if (BitConverter.ToUInt64(buf, i + ko) == 0 || BitConverter.ToUInt64(buf, i + 0x48) == 0) continue;
           lock (hits) hits.Add(b0 + (ulong)i);
         }
       });
       foreach (var o in hits) {
-        var b = Read(o, 0x78); if (b == null) continue;
+        var b = Read(o, hs); if (b == null) continue;
         var lst = Read(BitConverter.ToUInt64(b, 0x48), 0x20); if (lst == null) continue;
         int n = BitConverter.ToInt32(lst, 0x18); if (n <= 0 || n > 200) continue;
-        var arr = Read(BitConverter.ToUInt64(lst, 0x10) + 0x20, n * 8); if (arr == null) continue;
+        var arr = Read(BitConverter.ToUInt64(lst, 0x10) + (ulong)ad, n * kv); if (arr == null) continue;
         var one = new StringBuilder();
         one.Append("{\"src\":\"cs\",\"iHeroId\":").Append(BitConverter.ToUInt32(b, 0x10)).Append(",\"iBaseId\":").Append(BitConverter.ToUInt32(b, 0x14))
            .Append(",\"iLevel\":").Append(BitConverter.ToUInt32(b, 0x18)).Append(",\"iStarLevel\":").Append(BitConverter.ToUInt32(b, 0x30))
@@ -941,7 +952,7 @@ namespace RealmForge {
            .Append(",\"iPower\":").Append(BitConverter.ToUInt32(b, 0x68)).Append(",\"mAttr\":{");
         for (int k = 0; k < n; k++) {
           if (k > 0) one.Append(',');
-          one.Append("\"[").Append(BitConverter.ToUInt32(arr, k * 8)).Append("]\":").Append(BitConverter.ToInt32(arr, k * 8 + 4));
+          one.Append("\"[").Append(BitConverter.ToUInt32(arr, k * kv)).Append("]\":").Append(BitConverter.ToInt32(arr, k * kv + 4));
         }
         one.Append("}}");
         if (seen.Add(one.ToString())) sb.Append(one).Append('\n');
@@ -1213,17 +1224,26 @@ namespace RealmForge {
 // the fight's length. Kept in %APPDATA%\RealmForge\battles (the last 30) and sent with the account snapshot.
 //
 // The game keeps its open windows in UIStatic's UIInstance: a script table form id -> form, the id being the hash of the
-// form's name (str_hash, as the language keys: «Form_CharactorMain» = the id the layout data names). The table is found once (from a
-// node of a known form), then read every poll: a few kilobytes.
+// form's name (str_hash, as the language keys; the ids come with the layout data from the server, src/Layout.cs). The
+// table is found once (from a node of a known form), then read every poll: a few kilobytes.
 
 namespace RealmForge {
   public static partial class RFX {
     // the result screens: the guild dragon, the weekly guild boss, the rest, the arena (CHAPTERTYPE.Pvp ->
     // Form_PvpBattleEnd) and the friendly arena fight (Form_SparringPvpBattleEnd); ids = UIDefines (str_hash of the name)
-    static readonly long[] EndFormIds = new long[0];
+    static readonly string[] EndFormKeys = { "ID_FORM_UNIONBOSSBATTLEEND", "ID_FORM_UNIONWEEKBOSSBATTLEEND", "ID_FORM_BATTLEEND", "ID_FORM_PVPBATTLEEND", "ID_FORM_SPARRINGPVPBATTLEEND" };
     static readonly string[] EndFormNames = { "Form_UnionBossBattleEnd", "Form_UnionWeekBossBattleEnd", "Form_BattleEnd", "Form_PvpBattleEnd", "Form_SparringPvpBattleEnd" };
     // forms whose node leads to UIInstance: the hero screen, the inventory, the battle screen, the result screens
-    static readonly long[] UiAnchorIds = { FormCharactorMainId, FormBackpackId };
+    static readonly string[] UiAnchorKeys = { "ID_FORM_CHARACTORMAIN", "ID_FORM_BACKPACKINTEGRATION", "ID_FORM_BATTLE", "ID_FORM_UNIONBOSSBATTLEEND",
+      "ID_FORM_UNIONWEEKBOSSBATTLEEND", "ID_FORM_BATTLEEND", "ID_FORM_PVPBATTLEEND", "ID_FORM_SPARRINGPVPBATTLEEND" };
+
+    /// <summary>The ids of these forms from the layout data; empty without it.</summary>
+    static long[] FormIds(string[] keys) {
+      var ly = Layout.Current; if (ly == null) return new long[0];
+      var r = new long[keys.Length];
+      for (int i = 0; i < keys.Length; i++) r[i] = ly.Form(keys[i]);
+      return r;
+    }
     static ulong uiTable; static int uiLastFind;
 
     static bool SameId(long key, long id) { return key == id || (id < 0 && key == (long)(uint)id); }
@@ -1234,6 +1254,8 @@ namespace RealmForge {
       uiTable = 0;
       if (uiLastFind != 0 && Environment.TickCount - uiLastFind < rescanMs) return 0;
       uiLastFind = Environment.TickCount;
+      var anchors = FormIds(UiAnchorKeys);
+      if (anchors.Length == 0) return 0;   // no layout data: the game's windows are not looked for
       // its own look at the game: the handle and the memory regions of now (no equip scan may have run since the start,
       // and the regions change as the game allocates)
       var ps = GameInfo.GameProcesses();
@@ -1247,7 +1269,7 @@ namespace RealmForge {
         for (int i = 0; i + 32 <= len; i += 8) {
           if (BitConverter.ToInt32(buf, i + 24) != T_INT || BitConverter.ToInt32(buf, i + 8) != T_TABLE) continue;
           long k = BitConverter.ToInt64(buf, i + 16);
-          foreach (var id in UiAnchorIds) if (SameId(k, id)) { lock (nodes) nodes.Add(b0 + (ulong)i); break; }
+          foreach (var id in anchors) if (SameId(k, id)) { lock (nodes) nodes.Add(b0 + (ulong)i); break; }
         }
       });
       if (nodes.Count == 0) return 0;
@@ -1285,14 +1307,15 @@ namespace RealmForge {
     public static List<KeyValuePair<int, ulong>> BattleEndForms(out List<string> marks) {
       var res = new List<KeyValuePair<int, ulong>>(); marks = new List<string>();
       ulong t = UiKnown ? uiTable : 0; if (t == 0) return res;
+      var endIds = FormIds(EndFormKeys); if (endIds.Length == 0) return res;
       var h = Read(t, 56); if (h == null) return res;
       int nn = 1 << h[11]; var nb = Read(BitConverter.ToUInt64(h, 24), nn * 32); if (nb == null) return res;
       for (int i = 0; i < nn; i++) {
         int o = i * 32;
         if (BitConverter.ToInt32(nb, o + 24) != T_INT || BitConverter.ToInt32(nb, o + 8) != T_TABLE) continue;
         long k = BitConverter.ToInt64(nb, o + 16);
-        for (int e = 0; e < EndFormIds.Length; e++) {
-          if (!SameId(k, EndFormIds[e])) continue;
+        for (int e = 0; e < endIds.Length; e++) {
+          if (!SameId(k, endIds[e])) continue;
           ulong f = BitConverter.ToUInt64(nb, o), v; int tt;
           long inst = Field(f, "____instanceId", out v, out tt) && tt == T_INT ? (long)v : 0;
           long frames = Field(f, "m_FightFramIdx", out v, out tt) && tt == T_INT ? (long)v : 0;
@@ -1345,13 +1368,14 @@ namespace RealmForge {
       var sb = new StringBuilder("ui table " + uiTable.ToString("X") + "\n");
       if (uiTable == 0) return sb.ToString();
       var h = Read(uiTable, 56); int nn = 1 << h[11]; var nb = Read(BitConverter.ToUInt64(h, 24), nn * 32);
+      var ends = FormIds(EndFormKeys); long battleId = FormId("ID_FORM_BATTLE"), mainId = FormCharactorMainId, invId = FormBackpackId;
       for (int i = 0; i < nn; i++) {
         int o = i * 32;
         if (BitConverter.ToInt32(nb, o + 24) != T_INT) continue;
         long k = BitConverter.ToInt64(nb, o + 16);
-        string name = k == FormCharactorMainId ? "Form_CharactorMain" : k == FormBackpackId ? "Form_BackpackIntegration" : "";
-        for (int e = 0; e < EndFormIds.Length; e++) if (SameId(k, EndFormIds[e])) name = EndFormNames[e];
-        
+        string name = mainId != 0 && k == mainId ? "Form_CharactorMain" : invId != 0 && k == invId ? "Form_BackpackIntegration" : "";
+        for (int e = 0; e < ends.Length; e++) if (SameId(k, ends[e])) name = EndFormNames[e];
+        if (battleId != 0 && SameId(k, battleId)) name = "Form_Battle";
         sb.Append(k).Append(' ').Append(BitConverter.ToInt32(nb, o + 8) == T_TABLE ? "table " : "other ").Append(name).Append('\n');
       }
       List<string> marks; BattleEndForms(out marks); sb.Append("battle end marks: ").Append(string.Join(" ", marks.ToArray())).Append('\n');
@@ -1419,10 +1443,10 @@ namespace RealmForge {
 // ===== src/BattleClock.cs =====
 // RealmForge — the clock of the fight going on, for the boss coach over the game (read-only).
 //
-// CSharpBattle.Battle.GameSimulation (and its kinds; class addresses per game build in ClassRvas):
-// m_state 0xA4 (ESimulationStatus: 1 running, 2 ended), <CurrentFrameIdx> 0xC4 (one logic frame = 270/4096 s),
-// _BattleData 0x48 -> BattleData.<iStageID> 0x18. The running one is the battle view's (BattleManager.instance), read
-// every couple of seconds; then two fields are read every tick.
+// CSharpBattle.Battle.GameSimulation (and its kinds): m_state 0xA4 (ESimulationStatus), <CurrentFrameIdx> 0xC4 (one
+// logic frame = 270/4096 s), _BattleData 0x48 -> BattleData.<iStageID> 0x18. The running one is the battle view's
+// (BattleManager.instance), read every couple of seconds; then two fields are read every tick. The classes and the
+// status values come with the layout data from the server (src/Layout.cs): without it nothing here runs.
 
 namespace RealmForge {
   public static partial class RFX {
@@ -1430,30 +1454,12 @@ namespace RealmForge {
     // classes with it)
     static ulong simGa; static int simPid;
 
-    // Class addresses (in GameAssembly.dll) per game build, newest first: 1.6.39, 1.6.38. An address counts only when
-    // the class found there has the expected name (Il2CppClass: name 0x10, namespaze 0x18), so the app works with
-    // either build. A class with no address in a build (1.6.39: the components, TDStateData, PAGameSimulation) is
-    // recognised by its name on the objects read and then remembered.
+    // A class counts only when the class found at its address (layout data from the server) has the expected name
+    // (Il2CppClass: name 0x10, namespaze 0x18). A class the data has no address for is recognised by its name on the
+    // objects read and then remembered.
     const string NsBattle = "CSharpBattle.Battle.";
-    static readonly Dictionary<string, ulong[]> ClassRvas = new Dictionary<string, ulong[]> {
-      { NsBattle + "GameSimulation", new ulong[0] },
-      { NsBattle + "TDGameSimulation", new ulong[0] },
-      { NsBattle + "TCGameSimulation", new ulong[0] },
-      { NsBattle + "PAGameSimulation", new ulong[0] },
-      { "BattleView.BattleManager", new ulong[0] },
-      { NsBattle + "CardComponent", new ulong[0] },
-      { NsBattle + "AngerComponent", new ulong[0] },
-      { NsBattle + "SkillComponent", new ulong[0] },
-      { NsBattle + "FrameIdxInfo", new ulong[0] },
-      { NsBattle + "BattleHeroInfo", new ulong[0] },
-      { NsBattle + "OwnerRelationComponent", new ulong[0] },
-      { NsBattle + "StatisticsComponent", new ulong[0] },
-      { NsBattle + "DamageStatisticsData", new ulong[0] },
-      { NsBattle + "TDStateData", new ulong[0] },
-      { NsBattle + "WaveSystem", new ulong[0] },
-      { NsBattle + "WaveControllerNode", new ulong[0] },
-      { NsBattle + "AttributeComponent", new ulong[0] },
-    };
+    /// <summary>The simulation states as the app uses them (SimClock maps the game's values to these).</summary>
+    public const int SimOther = 0, SimRunning = 1, SimEnded = 2;
     static readonly string[] SimClasses = { NsBattle + "GameSimulation", NsBattle + "TDGameSimulation", NsBattle + "TCGameSimulation", NsBattle + "PAGameSimulation" };
     static readonly Dictionary<string, ulong> klassCache = new Dictionary<string, ulong>();
     static ulong klassGa;
@@ -1486,9 +1492,9 @@ namespace RealmForge {
         if (klassCache.TryGetValue(cls, out k)) return k;
       }
       k = 0;
-      ulong[] rvas;
-      if (ClassRvas.TryGetValue(cls, out rvas))
-        foreach (var rva in rvas) { ulong c = Ptr(ga + rva); if (c != 0 && ClassName(c) == cls) { k = c; break; } }
+      var ly = Layout.Current;
+      ulong rva = ly != null ? ly.Rva(cls) : 0;
+      if (rva != 0) { ulong c = Ptr(ga + rva); if (c != 0 && ClassName(c) == cls) k = c; }
       // not cached when not found: the address is filled in once the game first uses the class
       if (k != 0) lock (klassCache) { if (ga == klassGa) klassCache[cls] = k; }
       return k;
@@ -1508,7 +1514,7 @@ namespace RealmForge {
     }
 
     /// <summary>Is the object at <paramref name="obj"/> of the class <paramref name="cls"/>?</summary>
-    static bool IsA(ulong obj, string cls) { return obj != 0 && IsKlass(Ptr(obj), cls); }
+    static bool IsA(ulong obj, string cls) { return obj != 0 && IsKlass(Ptr(obj + (ulong)Layout.Current.Hdr("klass")), cls); }
 
     /// <summary>The simulations' classes (class -> short name): by address, plus the class of the battle view's
     /// simulation when it is another kind of GameSimulation.</summary>
@@ -1536,6 +1542,8 @@ namespace RealmForge {
     /// simulation and stage id (false = none running).</summary>
     public static bool FindRunningSim(out ulong sim, out int stage) {
       sim = 0; stage = 0;
+      var ly = Layout.Current; if (ly == null) return false;
+      int span = ly.Span("GameSimulation"), running = ly.Const("ESimulationStatus.Runing"), ko = ly.Hdr("klass");
       var ps = GameInfo.GameProcesses();
       if (ps.Length == 0) return false;
       if (H == IntPtr.Zero) H = OpenProcess(0x0410, false, ps[0].Id);
@@ -1550,20 +1558,20 @@ namespace RealmForge {
       regs = Regions();
       var found = new List<ulong>();
       ScanParallel((b0, buf, len) => {
-        for (int i = 0; i + 0xC8 <= len; i += 8) {
-          if (!klass.Contains(BitConverter.ToUInt64(buf, i))) continue;
-          if (BitConverter.ToInt32(buf, i + 0xA4) != 1) continue;   // running
+        for (int i = 0; i + span <= len; i += 8) {
+          if (!klass.Contains(BitConverter.ToUInt64(buf, i + ko))) continue;
+          if (BitConverter.ToInt32(buf, i + 0xA4) != running) continue;
           uint fr = BitConverter.ToUInt32(buf, i + 0xC4); if (fr == 0 || fr > 200000) continue;
           lock (found) found.Add(b0 + (ulong)i);
         }
       });
       // several running (a replay kept?): the one whose clock moves; else the first
       ulong best = 0; uint bestFr = 0;
-      foreach (var s in found) { uint fr; int st; if (SimClock(s, out fr, out st) && st == 1 && fr >= bestFr) { best = s; bestFr = fr; } }
+      foreach (var s in found) { uint fr; int st; if (SimClock(s, out fr, out st) && st == SimRunning && fr >= bestFr) { best = s; bestFr = fr; } }
       if (best == 0) return false;
       if (found.Count > 1) {
         System.Threading.Thread.Sleep(300);
-        foreach (var s in found) { uint fr; int st; if (s != best && SimClock(s, out fr, out st) && st == 1 && fr > bestFr) { best = s; bestFr = fr; } }
+        foreach (var s in found) { uint fr; int st; if (s != best && SimClock(s, out fr, out st) && st == SimRunning && fr > bestFr) { best = s; bestFr = fr; } }
       }
       sim = best;
       var bd = Read(sim + 0x48, 8); ulong data = bd != null ? BitConverter.ToUInt64(bd, 0) : 0;
@@ -1578,6 +1586,7 @@ namespace RealmForge {
     /// <summary>The simulation the battle view holds now (BattleManager.instance.m_simulation), or 0. Cheap: four
     /// pointer reads, no scan. The game keeps the last one after a fight ends, so check SimClock's state.</summary>
     public static ulong CurrentSim() {
+      if (Layout.Current == null) return 0;
       var ps = GameInfo.GameProcesses();
       if (ps.Length == 0) { simPid = 0; return 0; }
       if (ps[0].Id != simPid || simGa == 0 || H == IntPtr.Zero) {
@@ -1601,14 +1610,20 @@ namespace RealmForge {
 
     static ulong Ptr(ulong at) { var b = at != 0 ? Read(at, 8) : null; return b != null ? BitConverter.ToUInt64(b, 0) : 0; }
 
-    /// <summary>The simulation's frame count and state (1 running, 2 ended). Cheap.</summary>
+    /// <summary>The simulation's frame count and state (SimRunning, SimEnded, SimOther). Cheap.</summary>
     public static bool SimClock(ulong sim, out uint frames, out int state) {
-      frames = 0; state = 0;
-      var b = sim != 0 ? Read(sim + 0xA4, 0x24) : null;
+      frames = 0; state = SimOther;
+      var ly = Layout.Current;
+      var b = sim != 0 && ly != null ? Read(sim + 0xA4, 0x24) : null;
       if (b == null) return false;
-      state = BitConverter.ToInt32(b, 0);
+      state = SimState(ly, BitConverter.ToInt32(b, 0));
       frames = BitConverter.ToUInt32(b, 0x20);
       return true;
+    }
+
+    /// <summary>The game's simulation status as SimRunning / SimEnded / SimOther.</summary>
+    static int SimState(GameLayout ly, int raw) {
+      return raw == ly.Const("ESimulationStatus.Runing") ? SimRunning : raw == ly.Const("ESimulationStatus.End") ? SimEnded : SimOther;
     }
 
     /// <summary>Seconds of a frame count (one logic frame = 270/4096 s).</summary>
