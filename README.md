@@ -78,3 +78,7 @@ node tests/mock-server.mjs # the mock /api/sync on :3999, for manual runs
 
 Requires the .NET 8 SDK (its Roslyn `csc.dll` is used directly, no NuGet) and, for the .NET Framework
 reference assemblies and the second test run, Mono (`mono-devel libmono-system-windows-forms4.0-cil`).
+
+## License
+
+The source is published so anyone can read it and check what the app does. It is not open source: copying, redistribution, reuse in other projects and building bots or cheats from it are not allowed. See [LICENSE](LICENSE). Wardsage is an unofficial fan project, not affiliated with the developers of Watcher of Realms.
