@@ -58,7 +58,9 @@ namespace RealmForge {
     // screen's id always holds the live one: found once, then read on every poll (8 bytes).
     const long FormCharactorMainId = 0;   // UIDefines.ID_FORM_CHARACTORMAIN
     internal const long FormBackpackId = 0; // UIDefines.ID_FORM_BACKPACKINTEGRATION («Инвентарь»)
-    static ulong formNode, invNode;
+    internal const long FormRecastId = 0;   // the foundry (Литейная): its «Преобразовать» tab
+    internal const long FormGemId = 0;      // the gem screen: reached from the item card, also holds the recast functions
+    static ulong formNode, invNode, subNode, gemNode;
 
     // the value of a UIInstance node keyed by the form id, when it is still that node and holds a table with the key
     static ulong NodeValue(ulong n, long id, string key) {
@@ -87,23 +89,32 @@ namespace RealmForge {
     }
     static ulong NodeInv(ulong n) { return NodeValue(n, FormBackpackId, "m_CachedContentPanels"); }
 
-    /// <summary>Searches UIInstance's nodes of the hero screen and the inventory (one pass; a form the player has not
-    /// opened yet has none); returns the live hero screen (0 = none).</summary>
+    // the table of a UIInstance node keyed by the form id, when it is still that node
+    static ulong NodeTable(ulong n, long id) {
+      var b = n != 0 ? Read(n, 32) : null; if (b == null) return 0;
+      if (BitConverter.ToInt64(b, 16) != id || BitConverter.ToInt32(b, 24) != T_INT || BitConverter.ToInt32(b, 8) != T_TABLE) return 0;
+      return BitConverter.ToUInt64(b, 0);
+    }
+
+    /// <summary>Searches UIInstance's nodes of the hero screen, the inventory and the two recast screens (one pass; a
+    /// form the player has not opened yet has none); returns the live hero screen (0 = none).</summary>
     static ulong FindFormNode() {
       var hits = new List<ulong>();
       ScanParallel((b0, buf, len) => {
         for (int i = 0; i + 32 <= len; i += 8) {
           long k = BitConverter.ToInt64(buf, i + 16);
-          if (k != FormCharactorMainId && k != FormBackpackId) continue;
+          if (k != FormCharactorMainId && k != FormBackpackId && k != FormRecastId && k != FormGemId) continue;
           if (BitConverter.ToInt32(buf, i + 24) != T_INT || BitConverter.ToInt32(buf, i + 8) != T_TABLE) continue;
           lock (hits) hits.Add(b0 + (ulong)i);
         }
       });
-      ulong form = 0; formNode = invNode = 0;
+      ulong form = 0; formNode = invNode = subNode = gemNode = 0;
       foreach (var n in hits) {
         ulong f;
         if (formNode == 0 && (f = NodeForm(n)) != 0) { formNode = n; form = f; }
         else if (invNode == 0 && NodeInv(n) != 0) invNode = n;
+        else if (subNode == 0 && NodeTable(n, FormRecastId) != 0) subNode = n;
+        else if (gemNode == 0 && NodeTable(n, FormGemId) != 0) gemNode = n;
       }
       return form;
     }
@@ -124,6 +135,18 @@ namespace RealmForge {
       return NodeInv(invNode);
     }
     static int lastNodeScan;
+
+    /// <summary>The foundry's form (<paramref name="gem"/> false) or the gem screen (true) the game holds now; searched
+    /// again like the inventory. 0 = never opened.</summary>
+    internal static ulong LiveRecastForm(bool gem, int rescanMs) {
+      ulong f = NodeTable(gem ? gemNode : subNode, gem ? FormGemId : FormRecastId);
+      if (f != 0 || rescanMs < 0) return f;
+      if (Environment.TickCount - lastNodeScan < rescanMs && lastNodeScan != 0) return 0;
+      lastNodeScan = Environment.TickCount;
+      if (regs == null) return 0;
+      FindFormNode();
+      return NodeTable(gem ? gemNode : subNode, gem ? FormGemId : FormRecastId);
+    }
 
     /// <summary>Some hero of the account (the storage cleanup opens the sell screen from a hero's gear list), 0 = none.</summary>
     public static long AnyHeroUid() {

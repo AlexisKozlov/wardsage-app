@@ -460,3 +460,17 @@ button.topic:focus-visible { outline: 1px solid var(--gold) }
 .forum-foot { display: flex; align-items: center; gap: 24px; margin-top: 22px; flex-wrap: wrap }
 .stack + .forum-foot { margin-top: 22px }
 
+
+/* «Найти в игре» */
+.loc { margin-bottom: 12px }
+.loc.done { border-color: rgba(169, 214, 143, .5) }
+.loc.warn { border-color: rgba(240, 160, 140, .5) }
+.loc-say { margin-top: 10px; display: grid; gap: 4px }
+.loc-say b { font: 600 15px/1.3 var(--body); color: var(--goldhi) }
+.loc-say p { margin: 0; color: var(--dim, #cdbf9a); font-size: 13px; line-height: 1.4 }
+.loc.warn .loc-say b { color: #ffd9cf }
+.loc-subs { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 4px; font-size: 13px }
+.loc-subs li { display: flex; align-items: center; gap: 8px; color: var(--dim, #cdbf9a) }
+.loc-subs .st { width: 16px; height: 16px; display: inline-flex; opacity: .25 }
+.loc-subs .st svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 2.4 }
+.loc-subs li.ok { color: var(--ok) } .loc-subs li.ok .st { opacity: 1 }

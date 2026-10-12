@@ -4,6 +4,7 @@
   'use strict';
   const T = window.RF_TEXTS;
   const G = window.RFGuide;
+  const LC = window.RFLocate;
   const host = window.chrome && window.chrome.webview
     ? { send: (m) => window.chrome.webview.postMessage(m), on: (f) => window.chrome.webview.addEventListener('message', (e) => f(e.data)) }
     : window.RFMock;
@@ -21,6 +22,8 @@
     run: null, seen: null, runKey: '', queue: [], takeOver: {},
     // storage cleanup: the site's list, the pilot's state on the game's sell screen
     sell: { list: null, run: false, state: '', selected: 0, missing: 0, extra: 0, seen: {} },
+    // «Найти в игре»: the request from the site (with its item card) and what the program reports about the game's screens
+    locate: { req: null, step: null, tipKey: '', doneTimer: 0 }, locateEnded: {},
   };
 
   // ---------------------------------------------------------------- helpers
@@ -340,6 +343,7 @@
     else if (!P.list.length) body = emptyBox(t('plansNone'), t('plansNoneP'), `<button class="btn-line" data-act="open" data-url="${esc(S.site + '/app/optimizer')}">${I.ext}${esc(t('openOptimizer'))}</button>`);
     else body = `<div class="stack"><div class="plans">${P.list.map(planCard).join('')}</div>${guideCard()}</div>`;
     if (S.sell.list) body = sellCard() + body;
+    if (S.locate.req) body = locateCard() + body;
     return `
       <div class="head"><div><h1>${esc(t('equipTitle'))}</h1><p class="lead">${esc(t('equipLead'))}</p></div>
         <div class="row">
@@ -365,6 +369,32 @@
       ${S.autoClick ? '' : `<p class="warn">${esc(t('sellNeedAuto'))}</p>`}
       ${st ? `<p><b>${esc(st)}</b></p>` : ''}${warn ? `<p class="warn">${esc(warn)}</p>` : ''}</div>`;
   }
+  // «Найти в игре»: the item's card, the step the game is at and what to press; the program only shows hints
+  function locateCard(compact) {
+    const L = S.locate, r = L.req, d = LC.describe(r, L.step, t);
+    const subs = r.item ? LC.subRows(r, L.step, t) : [];
+    const checked = L.step && L.step.subs && (L.step.step === 'selected' || L.step.step === 'done' || L.step.step === 'recastPick' || L.step.step === 'inList');
+    return `<div class="card loc ${d.tone}">
+      <div class="row" style="justify-content:space-between;align-items:flex-start">
+        <div><h3>${esc(t('locTitle'))}</h3><div class="meta">${esc(t('locLead'))}</div></div>
+        <div class="row">${r.item ? `<button class="btn-line" data-act="locFound">${esc(t('locFound'))}</button>` : ''}
+          <button class="btn-line" data-act="locCancel">${esc(t('locCancel'))}</button></div></div>
+      ${r.item ? findCard(r.item, { row: 0, col: 0 }, compact) : ''}
+      <div class="loc-say"><b>${esc(d.head)}</b>${d.lines.map((x) => `<p>${esc(x)}</p>`).join('')}</div>
+      ${checked && subs.length ? `<ul class="loc-subs">${subs.map((x) => `<li class="${x.ok ? 'ok' : ''}"><span class="st">${I.check}</span>${esc(x.text)}</li>`).join('')}</ul>` : ''}
+      ${checked && L.step.changed ? `<p class="warn">${esc(t('locChanged'))}</p>` : ''}</div>`;
+  }
+  // the request ended (found, cancelled here or on the site): the overlay stops, the page forgets it
+  function locateEnd(done, quiet) {
+    const L = S.locate; if (!L.req) return;
+    clearTimeout(L.doneTimer);
+    S.locateEnded[L.req.id] = true;   // the next poll may still list it until the site has closed it
+    if (!quiet) host.send({ cmd: 'locate.finish', id: L.req.id, done }); else host.send({ cmd: 'locate.stop' });
+    S.locate = { req: null, step: null, tipKey: '', doneTimer: 0 };
+    if (done) toast(t('locDoneToast'));
+    render();
+  }
+
   function sellStart() {
     const L = S.sell; if (!L.list) return;
     L.run = true; L.state = 'work';
@@ -516,10 +546,10 @@
 
   function compactView() {
     const p = current();
-    if (!p) return `<div class="compact-view"><div class="row" style="justify-content:space-between"><b>${esc(t('plansNone'))}</b>
+    if (!p) return `<div class="compact-view">${S.locate.req ? locateCard(true) : ''}<div class="row" style="justify-content:space-between"><b>${esc(t('plansNone'))}</b>
       <button class="icon-btn" data-act="compact" title="${esc(t('expand'))}">${I.expand}</button></div></div>`;
     const g = G.next(p, S.live);
-    return `<div class="compact-view">
+    return `<div class="compact-view">${S.locate.req ? locateCard(true) : ''}
       <div class="compact-top">${bust(p)}<div><b>${esc(p.heroName)}</b><span>${esc(t('itemsOn', g.done, p.items.length))}</span>
         <div class="mini-bar"><i style="width:${Math.round((g.done / p.items.length) * 100)}%"></i></div></div>
         <button class="icon-btn" data-act="compact" title="${esc(t('expand'))}">${I.expand}</button></div>
@@ -711,6 +741,8 @@
     else if (a === 'rescan') scan();
     else if (a === 'pick') { S.sel = Number(el.dataset.i); render(); }
     else if (a === 'run') { const p = current(); if (!p || foreign(p)) return; startRun(p); if (!S.autoConfirm) toast(t('runNoConfirm'), 6000); render(); }
+    else if (a === 'locFound') locateEnd(true, false);
+    else if (a === 'locCancel') locateEnd(false, false);
     else if (a === 'sellRun') sellStart();
     // storage cleanup clicks in the game: it needs «Автонажатие» (off by default) — this button is the player's explicit choice
     else if (a === 'sellAuto') { S.autoClick = true; host.send({ cmd: 'setAutoClick', on: true }); sellStart(); }
@@ -854,6 +886,30 @@
         }
         syncHighlight(); render(); break;
       }
+      case 'locate': {
+        // the site's «Найти в игре» request (it rides on the plans reply): new -> the overlay starts showing it
+        const L = S.locate, r = m.req;
+        if (!r) { if (L.req) locateEnd(false, true); break; }
+        if (S.locateEnded[r.id]) break;
+        if (!L.req || L.req.id !== r.id) {
+          clearTimeout(L.doneTimer);
+          S.locate = { req: r, step: null, tipKey: '', doneTimer: 0 };
+          if (r.item) host.send({ cmd: 'locate.show', id: r.id });
+          if (!S.compact) S.page = 'equip';
+        } else L.req = r;
+        render(); break;
+      }
+      case 'locate.state': {
+        const L = S.locate; if (!L.req) break;
+        L.step = m;
+        const d = LC.describe(L.req, m, t), key = (d ? d.tip.join('|') : '');
+        if (key !== L.tipKey) { L.tipKey = key; host.send({ cmd: 'locate.tip', lines: d ? d.tip : [] }); }
+        // the recast screen has the item: the request closes after a moment (the player may still look)
+        clearTimeout(L.doneTimer);
+        if (m.step === 'done') { const id = L.req.id; L.doneTimer = setTimeout(() => { if (S.locate.req && S.locate.req.id === id && S.locate.step && S.locate.step.step === 'done') locateEnd(true, false); }, 3000); }
+        if (S.page === 'equip' || S.compact) render();
+        break;
+      }
       case 'sell': {
         if (m.status !== 'ok') break;
         const L = S.sell, was = L.list && L.list.id;
@@ -942,7 +998,7 @@
   let pollTick = 0;
   setInterval(() => {
     if (!S.hasCode || !S.game.running || S.plans.status === 'loading') return;
-    const busy = S.page === 'equip' || !!S.run || S.queue.length > 0 || S.auto === 'work' || S.sell.run;
+    const busy = S.page === 'equip' || !!S.run || S.queue.length > 0 || S.auto === 'work' || S.sell.run || !!S.locate.req;
     if (busy || ++pollTick % 6 === 0) loadPlans();
   }, 8000);
 

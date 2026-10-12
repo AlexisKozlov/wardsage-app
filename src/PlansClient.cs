@@ -8,6 +8,8 @@
 //        401 invalid_token
 //   POST {site}/api/extractor/plans/{id}                body {"status":"done"|"cancelled"}
 //        200 {ok:true} | 401 | 404 not_found
+// The same reply may carry  locate: {id, purpose:"recast", createdAt, item:{...a plan item, heroUid, heroName}|null}|null  -
+// a «Найти в игре» request from the site (src/LocateGuide.cs); older sites omit it.
 // The site only stores builds; the extractor reads the game (read-only) and shows hints. Nothing is sent to the game.
 
 using System;
@@ -67,12 +69,21 @@ namespace RealmForge {
     public List<PlanItem> Items = new List<PlanItem>();
   }
 
+  /// <summary>A «Найти в игре» request: the item to show the player in the game (Item null: not in the site's last snapshot).</summary>
+  public sealed class LocateRequest {
+    public string Id, Purpose, CreatedAt;
+    public PlanItem Item;
+    public long HeroUid;
+    public string HeroName;
+  }
+
   public enum PlansStatus { Ok, InvalidToken, NotFound, ServerError, Unreachable, Unexpected }
 
   public sealed class PlansResult {
     public PlansStatus Status;
     public int HttpCode;
     public List<Plan> Plans = new List<Plan>();
+    public LocateRequest Locate;   // null: no pending request
     public string Details;
   }
 
@@ -150,6 +161,7 @@ namespace RealmForge {
         if (parsePlans) {
           object v; var list = obj.TryGetValue("plans", out v) ? v as List<object> : null;
           if (list != null) foreach (var p in list) { var plan = ParsePlan(MiniJson.AsObject(p)); if (plan != null) r.Plans.Add(plan); }
+          object lv; if (obj.TryGetValue("locate", out lv)) r.Locate = ParseLocate(MiniJson.AsObject(lv));
         }
         return r;
       }
@@ -211,11 +223,37 @@ namespace RealmForge {
       if (string.IsNullOrEmpty(p.Id) || p.HeroUid <= 0) return null;
       object v; var items = o.TryGetValue("items", out v) ? v as List<object> : null;
       if (items != null) foreach (var x in items) {
-        var d = MiniJson.AsObject(x); if (d == null) continue;
+        var it = ParseItem(MiniJson.AsObject(x));
+        if (it != null) p.Items.Add(it);
+      }
+      p.Items.Sort((a, b) => a.Slot.CompareTo(b.Slot));
+      return p.Items.Count > 0 ? p : null;
+    }
+
+    static LocateRequest ParseLocate(Dictionary<string, object> o) {
+      if (o == null) return null;
+      string id = MiniJson.GetString(o, "id");
+      if (string.IsNullOrEmpty(id) || id.Length > 64) return null;
+      string purpose = MiniJson.GetString(o, "purpose") ?? "recast";
+      if (purpose != "recast") return null;
+      var r = new LocateRequest { Id = id, Purpose = purpose, CreatedAt = Clip(MiniJson.GetString(o, "createdAt"), 40) };
+      object iv;
+      var d = o.TryGetValue("item", out iv) ? MiniJson.AsObject(iv) : null;
+      r.Item = ParseItem(d);
+      if (r.Item != null) {
+        r.HeroUid = Num(d, "heroUid");
+        r.HeroName = Clip(MiniJson.GetString(d, "heroName"), 100);
+      }
+      return r;
+    }
+
+    static PlanItem ParseItem(Dictionary<string, object> d) {
+      {
+        if (d == null) return null;
         var it = new PlanItem();
         it.Slot = (int)Num(d, "slot");
         it.Uid = Num(d, "uid");
-        if (it.Uid <= 0 || it.Slot < 0 || it.Slot > 4) continue;
+        if (it.Uid <= 0 || it.Slot < 0 || it.Slot > 4) return null;
         it.SlotName = MiniJson.GetString(d, "slotName") ?? ("#" + it.Slot);
         it.Name = MiniJson.GetString(d, "name") ?? ("#" + it.Uid);
         it.SetName = MiniJson.GetString(d, "setName");
@@ -237,10 +275,8 @@ namespace RealmForge {
         it.Subs = Lines(d, "subs", "text", "rolls");
         Card(d, out it.Main, out it.Quality, out it.QualityName);
         it.SetBonus = Lines(d, "setBonus", "text", "pieces");
-        p.Items.Add(it);
+        return it;
       }
-      p.Items.Sort((a, b) => a.Slot.CompareTo(b.Slot));
-      return p.Items.Count > 0 ? p : null;
     }
   }
 }

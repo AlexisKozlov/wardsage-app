@@ -6,6 +6,7 @@
 //   form.m_CachedContentPanels[-9998]      the equipment panel (Panel_BackpackEquipPanel):
 //     m_CurrentBottomButtonState           2 = «Массовая продажа» (BulkSales)
 //     m_FilterAndSortEquipUidList          the items in list order, one per cell, rows of the grid's column count
+//     m_CurrentSelectEquipUid              the item selected now (its card is open at the right); 0 = none
 //     m_StateDataMap                       selected item uid -> its place in m_StateDataList (the keys are the choice)
 // In bulk sale a click on an item only toggles it (no card, no pop-up); equipped items are not listed, locked ones do not
 // toggle. A filter or tab change clears the choice.
@@ -31,6 +32,7 @@ namespace RealmForge {
     public ulong ListPtr;
     public List<long> Uids = new List<long>();          // list order
     public HashSet<long> Selected = new HashSet<long>();
+    public long Current;       // the item selected in the normal mode (the one whose card is open), 0 = none
 
     /// <summary>The list as the sell pilot sees it: rows of <paramref name="cols"/> items.</summary>
     public SellScreen AsSell(int cols) {
@@ -59,6 +61,7 @@ namespace RealmForge {
       ulong panels, panel; int pt, pnt;
       if (!Field(f, "m_CachedContentPanels", out panels, out pt) || pt != T_TABLE || !IntKey(panels, EquipTabId, out panel, out pnt) || pnt != T_TABLE) return s;
       s.Bulk = Field(panel, "m_CurrentBottomButtonState", out v, out tt) && tt == T_INT && (long)v == BulkSales;
+      if (Field(panel, KSel, out v, out tt) && tt == T_INT && (long)v > 0) s.Current = (long)v;
       ulong list; int lt;
       if (Field(panel, "m_FilterAndSortEquipUidList", out list, out lt) && lt == T_TABLE) {
         s.ListPtr = list;

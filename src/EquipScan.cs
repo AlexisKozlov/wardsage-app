@@ -384,6 +384,40 @@ namespace RealmForge {
       return r.ToArray();
     }
 
+    /// <summary>An item's sub stats with their values: {stat id, iValue} pairs (EquipData.equips[uid].vViceAttrList; the value
+    /// is 0 while the stat is still hidden). Null when unreadable.</summary>
+    public static long[][] ReadItemSubs(EquipAddrs a, long uid) {
+      if (a == null || a.EquipData == 0) return null;
+      return ItemSubs(a.EquipData, uid);
+    }
+
+    static long[][] ItemSubs(ulong equipData, long uid) {
+      ulong eqs, it, vl; int ett, itt, vt;
+      if (equipData == 0 || !Field(equipData, "equips", out eqs, out ett) || ett != T_TABLE) return null;
+      if (!IntKey(eqs, uid, out it, out itt) || itt != T_TABLE) return null;
+      if (!Field(it, "vViceAttrList", out vl, out vt) || vt != T_TABLE) return null;
+      var r = new List<long[]>();
+      for (int i = 1; i <= 8; i++) {
+        ulong e, v, x; int et, tt, xt;
+        if (!IntKey(vl, i, out e, out et) || et != T_TABLE) break;
+        if (!Field(e, "iAttrId", out v, out tt) || tt != T_INT) continue;
+        long val = Field(e, "iValue", out x, out xt) && xt == T_INT ? (long)x : 0;
+        r.Add(new[] { (long)v, val });
+      }
+      return r.ToArray();
+    }
+
+    /// <summary>Is the item on the game's account now: 1 = yes, 0 = no (another account is in the game, or it was sold),
+    /// -1 = unknown (the item table is not found yet).</summary>
+    public static int ItemOnAccount(long uid) {
+      var lt = live; ulong eqs, it; int ett, itt;
+      if (lt == null || lt.EquipData == 0 || !Field(lt.EquipData, "equips", out eqs, out ett) || ett != T_TABLE) return -1;
+      return IntKey(eqs, uid, out it, out itt) && itt == T_TABLE ? 1 : 0;
+    }
+
+    /// <summary>Same as <see cref="ReadItemSubs"/>, from the live tables when the equip scan has not run.</summary>
+    public static long[][] ReadLiveItemSubs(long uid) { var lt = live; return lt == null ? null : ItemSubs(lt.EquipData, uid); }
+
     static long[] IntArray(ulong t) {
       var r = new List<long>();
       for (int i = 1; i <= 500; i++) { ulong v; int tt; if (!IntKey(t, i, out v, out tt) || tt != T_INT) break; r.Add((long)v); }

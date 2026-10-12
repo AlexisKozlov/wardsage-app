@@ -91,6 +91,7 @@ step "7. Desktop interface: equip helper logic, script syntax"
 node tests/guide.test.mjs
 node tests/news.test.mjs
 node tests/forum.test.mjs
+node tests/locate.test.mjs
 for f in ui/*.js; do node --check "$f"; done && echo "ui scripts: syntax ok"
 
 step "8. Wardsage.exe builds (C# 7.3, .NET Framework 4.6.2, WebView2 SDK checksums)"

@@ -380,6 +380,7 @@ static class CoreTests {
     HeroPilotTests();
     SellPilotTests();
     FightPlanTests();
+    LocateTests();
 
     Console.WriteLine("Fight timeline (src/TimelineBuilder.cs: samples of the running fight + its command record):");
     TimelineTests();
@@ -1400,6 +1401,148 @@ static class CoreTests {
     hs[1] = new HeroSample { Uid = 300, OnField = false, CardState = 2 };
     FightPlanClient.State(p, hs, out next, out wrong, out wx, out wy);
     Check(next == p.Steps[2], "a hero fell: the reserve is next");
+  }
+
+  static PlanItem LocItem(long uid, int slot, long setId, int main, params int[] subs) {
+    var it = new PlanItem { Uid = uid, Slot = slot, SetId = setId };
+    if (main > 0) it.Main.Add(new SubStat { Text = "m", Stat = main });
+    foreach (var x in subs) it.Subs.Add(new SubStat { Text = "s", Stat = x });
+    return it;
+  }
+
+  static void LocateTests() {
+    Console.WriteLine("Locate (\u00abНайти в игре\u00bb: request parsing, steps, list place):");
+    string body = "{\"ok\":true,\"plans\":[],\"locate\":{\"id\":\"l1\",\"purpose\":\"recast\",\"createdAt\":\"2026-10-12T10:00:00Z\",\"item\":{\"slot\":4,\"uid\":777,\"slotName\":\"Кольцо\"," +
+      "\"name\":\"Кольцо\",\"setId\":720100,\"setName\":\"Проклятие\",\"level\":16,\"stars\":6,\"icon\":\"Item_1\",\"heroUid\":214700000,\"heroName\":\"Байек\"," +
+      "\"main\":[{\"name\":\"Крит\",\"value\":\"64%\",\"stat\":12}],\"subs\":[{\"text\":\"АТК\",\"rolls\":2,\"stat\":5},{\"text\":\"СКР\",\"rolls\":1,\"stat\":7}]}}}";
+    var lr = PlansClient.Interpret(200, body, true);
+    Check(lr.Status == PlansStatus.Ok && lr.Locate != null && lr.Locate.Id == "l1" && lr.Locate.Purpose == "recast", "locate parsed");
+    Check(lr.Locate.Item != null && lr.Locate.Item.Uid == 777 && lr.Locate.Item.Slot == 4 && lr.Locate.Item.SetId == 720100, "locate item");
+    Check(lr.Locate.HeroUid == 214700000 && lr.Locate.HeroName == "Байек", "locate hero");
+    Check(lr.Locate.Item.Main.Count == 1 && lr.Locate.Item.Main[0].Stat == 12 && lr.Locate.Item.Subs.Count == 2 && lr.Locate.Item.Subs[1].Stat == 7, "locate stats");
+    Check(PlansClient.Interpret(200, "{\"ok\":true,\"plans\":[]}", true).Locate == null, "no locate field");
+    Check(PlansClient.Interpret(200, "{\"ok\":true,\"locate\":null}", true).Locate == null, "locate null");
+    Check(PlansClient.Interpret(200, "{\"ok\":true,\"locate\":{\"id\":\"\",\"item\":null}}", true).Locate == null, "locate without id dropped");
+    Check(PlansClient.Interpret(200, "{\"ok\":true,\"locate\":{\"id\":\"x\",\"purpose\":\"other\",\"item\":null}}", true).Locate == null, "unknown purpose dropped");
+    var noItem = PlansClient.Interpret(200, "{\"ok\":true,\"locate\":{\"id\":\"x\",\"purpose\":\"recast\",\"item\":null}}", true).Locate;
+    Check(noItem != null && noItem.Item == null, "item gone from the snapshot: request kept, item null");
+    var badItem = PlansClient.Interpret(200, "{\"ok\":true,\"locate\":{\"id\":\"x\",\"item\":{\"slot\":9,\"uid\":5}}}", true).Locate;
+    Check(badItem != null && badItem.Item == null, "bad slot: item dropped");
+    Check(PlansClient.Interpret(200, "{\"ok\":true,\"locate\":{\"id\":\"x\",\"item\":{\"slot\":1,\"uid\":-3}}}", true).Locate.Item == null, "uid <= 0 dropped");
+    Check(PlansClient.Interpret(200, "{\"ok\":true,\"locate\":{\"id\":\"x\",\"item\":{\"slot\":1,\"uid\":3,\"icon\":\"../a\"}}}", true).Locate.Item.Icon == "", "locate icon name sanitised");
+    Check(LocateClient.Finish("http://x", "c", "", true).Status == PlansStatus.NotFound, "finish: empty id");
+
+    // Position
+    var l9 = new long[] { 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20 };
+    int[] ps = LocateGuide.Position(l9, 19, 9);
+    Check(ps != null && ps[0] == 10 && ps[1] == 2 && ps[2] == 1, "position 10th of 9 columns: row 2, place 1");
+    ps = LocateGuide.Position(l9, 15, 6); Check(ps[1] == 1 && ps[2] == 6, "6th of 6 columns: row 1, place 6");
+    ps = LocateGuide.Position(l9, 17, 6); Check(ps[1] == 2 && ps[2] == 2, "8th of 6 columns: row 2, place 2");
+    ps = LocateGuide.Position(l9, 20, 8); Check(ps[0] == 11 && ps[1] == 2 && ps[2] == 3, "11th of 8 columns: row 2, place 3");
+    Check(LocateGuide.Position(l9, 99, 8) == null && LocateGuide.Position(null, 1, 8) == null && LocateGuide.Position(l9, 0, 8) == null, "position: absent");
+    ps = LocateGuide.Position(l9, 12, 0); Check(ps[1] == 3, "position: zero columns count as one");
+
+    // steps
+    var item = LocItem(777, 4, 720100, 12, 5, 7, 9, 3);
+    var req = new LocateRequest { Id = "l1", Purpose = "recast", Item = item, HeroUid = 200 };
+    Func<InventoryScreen> inv = () => new InventoryScreen { Open = true, EquipTab = true, Uids = new List<long>(new long[] { 1, 2, 3, 4, 5, 6, 7, 8, 9, 777 }) };
+    Eq(LocateKind.None, LocateGuide.Next(null, null, null, null, 8, -1).Kind, "step: no request");
+    Eq(LocateKind.NoItem, LocateGuide.Next(new LocateRequest { Id = "x" }, null, null, null, 8, -1).Kind, "step: item gone from the snapshot");
+    Eq(LocateKind.OtherAccount, LocateGuide.Next(req, inv(), null, null, 8, 0).Kind, "step: another account in the game");
+    var st = LocateGuide.Next(req, null, null, null, 8, 1);
+    Check(st.Kind == LocateKind.OpenInventory && !st.OnHero, "step: nothing open -> open the inventory");
+    st = LocateGuide.Next(req, new InventoryScreen { Open = false }, null, new HeroScreen { Hero = 200, Tab = 3 }, 8, 1);
+    Check(st.Kind == LocateKind.OpenInventory && st.OnHero, "step: the item's hero is open -> press the slot there");
+    st = LocateGuide.Next(req, new InventoryScreen { Open = false }, null, new HeroScreen { Hero = 300, Tab = 3 }, 8, 1);
+    Check(!st.OnHero, "step: another hero is open");
+    Eq(LocateKind.OpenEquipTab, LocateGuide.Next(req, new InventoryScreen { Open = true, EquipTab = false }, null, null, 8, 1).Kind, "step: inventory on another tab");
+    st = LocateGuide.Next(req, inv(), null, null, 8, 1);
+    Check(st.Kind == LocateKind.InList && st.Pos == 10 && st.Row == 2 && st.Col == 2 && st.Count == 10, "step: in the list, row 2 place 2");
+    var iv = inv(); iv.Uids.Remove(777);
+    Eq(LocateKind.HiddenFilter, LocateGuide.Next(req, iv, null, null, 8, 1).Kind, "step: not in the list but on the account -> a filter hides it");
+    Eq(LocateKind.HiddenFilter, LocateGuide.Next(req, iv, null, null, 8, -1).Kind, "step: not in the list, account unknown");
+    iv = inv(); iv.Current = 777;
+    Eq(LocateKind.Selected, LocateGuide.Next(req, iv, null, null, 8, 1).Kind, "step: selected in the inventory");
+    iv.Current = 5;
+    Eq(LocateKind.InList, LocateGuide.Next(req, iv, null, null, 8, 1).Kind, "step: another item selected -> still in the list");
+
+    // the foundry
+    Func<RecastScreen> fr = () => new RecastScreen { SublimingOpen = true, PanelShown = true, CurType = 3 };
+    var rs = fr(); rs.CurType = 2;
+    Eq(LocateKind.OpenRecastTab, LocateGuide.Next(req, null, rs, null, 8, 1).Kind, "step: foundry on another tab");
+    rs = fr(); rs.Equips = new long[40]; for (int i = 0; i < 40; i++) rs.Equips[i] = 100 + i; rs.Equips[30] = 777;
+    st = LocateGuide.Next(req, null, rs, null, 8, 1);
+    Check(st.Kind == LocateKind.RecastFilter && st.Missing.Length == 4 && st.Missing[0] == "slot" && st.Missing[3] == "subs" && st.Pos == 31 && st.Count == 40, "step: long list, nothing set -> filter (all four parts missing)");
+    rs.SelectParts = new[] { 4 }; rs.Suits = new long[] { 720100 }; rs.MainAttrs = new long[] { 12 }; rs.SubAttrs = new long[] { 5, 7 };
+    st = LocateGuide.Next(req, null, rs, null, 8, 1);
+    Check(st.Kind == LocateKind.RecastFilter && st.Missing.Length == 1 && st.Missing[0] == "subs", "step: only the sub stats missing (the other parts are marked done)");
+    rs.SubAttrs = new long[] { 5, 7, 9, 3 };
+    Eq(LocateKind.RecastPick, LocateGuide.Next(req, null, rs, null, 8, 1).Kind, "step: filter complete, long list -> pick");
+    rs.Equips = new long[] { 100, 777 };
+    st = LocateGuide.Next(req, null, rs, null, 8, 1);
+    Check(st.Kind == LocateKind.RecastPick && st.Pos == 2 && st.Count == 2, "step: short list -> position 2 of 2");
+    rs.Equips = new long[] { 100, 101 };
+    Eq(LocateKind.RecastNotInList, LocateGuide.Next(req, null, rs, null, 8, 1).Kind, "step: filter set but the item is not in the list");
+    rs.SubAttrs = new long[] { 5 }; rs.Equips = new long[] { 777, 100 };
+    Eq(LocateKind.RecastPick, LocateGuide.Next(req, null, rs, null, 8, 1).Kind, "step: short list with an incomplete filter -> pick");
+    rs.Equips = new long[] { 100, 101 };
+    Eq(LocateKind.RecastFilter, LocateGuide.Next(req, null, rs, null, 8, 1).Kind, "step: not in the list and filter incomplete -> filter");
+    rs.ChoosePending = true;
+    Eq(LocateKind.ChoosePending, LocateGuide.Next(req, null, rs, null, 8, 1).Kind, "step: a recast result waits for the choice");
+    rs = fr(); rs.Sel = 777; rs.Equips = new long[] { 777 };
+    Eq(LocateKind.Done, LocateGuide.Next(req, null, rs, null, 8, 1).Kind, "step: the foundry has the item selected -> done");
+    rs.Sel = 5; rs.Equips = new long[] { 777, 5 };
+    Eq(LocateKind.RecastPick, LocateGuide.Next(req, null, rs, null, 8, 1).Kind, "step: another item selected in the foundry");
+    rs = fr(); rs.PanelShown = false;
+    Eq(LocateKind.OpenInventory, LocateGuide.Next(req, null, rs, null, 8, 1).Kind, "step: foundry form without its panel on screen is not the recast screen");
+
+    // the gem screen
+    var gm = new RecastScreen { GemOpen = true, GemFunc = 7, GemSel = 5, GemList = new long[] { 5, 6, 777 } };
+    st = LocateGuide.Next(req, inv(), gm, null, 8, 1);
+    Check(st.Kind == LocateKind.GemPick && st.Pos == 3 && st.Count == 3, "step: gem screen, other item selected -> pick it in the pop-up");
+    gm.GemSel = 777; Eq(LocateKind.Done, LocateGuide.Next(req, inv(), gm, null, 8, 1).Kind, "step: gem screen with the item -> done");
+    gm.GemSel = 5; gm.GemFunc = 8; gm.GemList = new long[] { 5, 6 };
+    Eq(LocateKind.RecastNotInList, LocateGuide.Next(req, inv(), gm, null, 8, 1).Kind, "step: gem screen, the item is not in the pop-up's list");
+    gm.GemFunc = 3; gm.GemSel = 777;
+    Eq(LocateKind.InList, LocateGuide.Next(req, inv(), gm, null, 8, 1).Kind, "step: another gem function -> the inventory's step");
+    Eq("inList", LocateGuide.Next(req, inv(), null, null, 8, 1).Key, "step key");
+    Eq("openRecastTab", new LocateStep { Kind = LocateKind.OpenRecastTab }.Key, "step key camel case");
+
+    // sub stats against the game's
+    var chk = LocateGuide.CheckSubs(item, new[] { new long[] { 5, 10 }, new long[] { 7, 0 }, new long[] { 9, 0 }, new long[] { 3, 0 } });
+    Check(chk.Match.Length == 4 && chk.Match[0] && chk.Match[3] && !chk.Changed, "sub check: same four stats");
+    chk = LocateGuide.CheckSubs(item, new[] { new long[] { 5, 10 }, new long[] { 7, 0 }, new long[] { 9, 0 }, new long[] { 8, 0 } });
+    Check(chk.Match[2] && !chk.Match[3] && chk.Changed, "sub check: a stat changed after the snapshot");
+    Check(LocateGuide.CheckSubs(item, null).Match.Length == 0, "sub check: unreadable");
+
+    // the inventory's grid: row positions from the stat bars
+    {
+      double W = 1920, H = 1009, U = Ui.Unit(W, H);
+      var g = SellGeometry.Inventory(W, U, 8);
+      var grid = new LocateGrid();
+      double top = g.ViewTopPx(U) + g.TopPad * U, pitch = g.PitchY * U;
+      Check(grid.FromTop(g, top, U, 5), "grid: bars at the top -> anchored");
+      Check(Math.Abs(grid.Row1 - top) < 0.01 && grid.ListPtr == 5, "grid: row 1 at the top");
+      var mk = grid.Place(g, 1, 3, W, H, U);
+      Check(mk.Kind == "box" && mk.X == (int)g.X(g.X0 + 2 * g.PitchX, W, U) && mk.Y == (int)top, "grid: box around row 1, place 3");
+      mk = grid.Place(g, 30, 1, W, H, U);
+      Check(mk.Kind == "down" && mk.Rows >= 20, "grid: far down -> arrow with the rows to scroll (" + mk.Rows + ")");
+      var g2 = new LocateGrid(); g2.FromTop(g, top, U, 1);
+      g2.Row1 -= 10 * pitch;   // scrolled 10 rows
+      mk = g2.Place(g, 2, 1, W, H, U);
+      Check(mk.Kind == "up" && mk.Rows == 9, "grid: scrolled past -> arrow up (" + mk.Rows + ")");
+      Check(!new LocateGrid().FromTop(g, top + pitch * 0.4, U, 1), "grid: bars not where the top would put them -> no anchor");
+      var g3 = new LocateGrid(); g3.FromTop(g, top, U, 1);
+      g3.Row1 -= 3 * pitch + 7;   // the list moved by 3 rows and a bit; the bars say where
+      int rr = g3.VisibleRow(g, 20, W, H, U);
+      Check(rr > 0, "grid: a visible row to take the phase from");
+      double truth = top - 3 * pitch;   // the real position (an estimate off by 7 px)
+      g3.Track(g, rr, ((truth % pitch) + pitch) % pitch, U);
+      Check(Math.Abs(g3.Row1 - truth) < 0.5, "grid: the bars' phase corrects the estimate (" + g3.Row1.ToString("0.0") + " vs " + truth.ToString("0.0") + ")");
+      var g4 = new LocateGrid(); g4.FromClick(g, 4, 500, U, 9);
+      Check(g4.Has && g4.ListPtr == 9 && Math.Abs(g4.RowTop(g, 4, U) - (500 - g.BarBottom * U / 2)) < 0.01, "grid: a click on row 4 anchors the list");
+      g4.Reset(); Check(!g4.Has, "grid: reset");
+    }
   }
 
   static void SellPilotTests() {

@@ -69,6 +69,7 @@ namespace RealmForge {
       coach.Lang = cfg.Lang;
       // «Отменить надевание» over the game: the interface drops the running build (as its own «Отменить»)
       overlay.CancelPressed += () => { Log.Write("cancel pressed over the game"); Post("{\"ev\":\"cancelRun\"}"); };
+      overlay.LocateChanged += (step, subs) => PostLocateState(step, subs);
       overlay.Problem += (kind, message) => Report(kind, message, null);
       Program.FatalReport = ReportFatal;
       autoTimer.Interval = 1000; autoTimer.Tick += (s, e) => AutoSyncTick(); autoTimer.Start();
@@ -174,6 +175,21 @@ namespace RealmForge {
           case "plans.load": LoadPlans(MiniJson.GetString(m, "lang")); break;
           case "news.fetch": LoadNews(MiniJson.GetString(m, "lang")); break;
           case "forum.unread": LoadForum(); break;
+          case "locate.show": {
+            // «Найти в игре»: the overlay shows hints for the request the last plans reply carried (the page names it by id)
+            var lr = lastLocate; string lid = MiniJson.GetString(m, "id");
+            if (lr != null && lr.Item != null && lr.Id == lid) { overlay.SetLocate(lr); Log.Write("locate: show item " + lr.Item.Uid); }
+            break;
+          }
+          case "locate.tip": {
+            var lines = new List<string>(); object lv2;
+            var ll2 = m.TryGetValue("lines", out lv2) ? lv2 as List<object> : null;
+            if (ll2 != null) foreach (var x in ll2) if (x is string && lines.Count < 4) lines.Add(((string)x).Length > 120 ? ((string)x).Substring(0, 120) : (string)x);
+            overlay.SetLocateTip(lines.ToArray());
+            break;
+          }
+          case "locate.stop": overlay.SetLocate(null); break;
+          case "locate.finish": FinishLocate(MiniJson.GetString(m, "id"), MiniJson.GetBool(m, "done", false)); break;
           case "sell.load": LoadSell(MiniJson.GetString(m, "lang")); break;
           case "sell.run": {
             // storage cleanup: select the list's items on the game's sell screen (from the gear list of the hero the game
@@ -813,23 +829,67 @@ namespace RealmForge {
             .Append(",\"createdAt\":").Append(S(p.CreatedAt)).Append(",\"items\":[");
           for (int j = 0; j < p.Items.Count; j++) {
             var it = p.Items[j]; if (j > 0) sb.Append(',');
-            sb.Append("{\"slot\":").Append(N(it.Slot)).Append(",\"uid\":").Append(N(it.Uid)).Append(",\"slotName\":").Append(S(it.SlotName))
-              .Append(",\"name\":").Append(S(it.Name)).Append(",\"setName\":").Append(S(it.SetName)).Append(",\"level\":").Append(N(it.Level))
-              .Append(",\"stars\":").Append(N(it.Stars)).Append(",\"mainStat\":").Append(S(it.MainStat)).Append(",\"fromHeroUid\":").Append(N(it.FromHeroUid))
-              .Append(",\"fromHeroName\":").Append(S(it.FromHeroName)).Append(",\"icon\":").Append(S(it.Icon)).Append(",\"setIcon\":").Append(S(it.SetIcon))
-              .Append(",\"subs\":").Append(LinesJson(it.Subs, "rolls")).Append(",\"setBonus\":").Append(LinesJson(it.SetBonus, "pieces"))
-              .Append(",\"main\":").Append(LinesJson(it.Main, "rolls")).Append(",\"quality\":").Append(N(it.Quality)).Append(",\"qualityName\":").Append(S(it.QualityName));
-            if (it.CurKnown && it.Cur == null) sb.Append(",\"cur\":null");
-            else if (it.CurKnown) sb.Append(",\"cur\":{\"uid\":").Append(N(it.Cur.Uid)).Append(",\"name\":").Append(S(it.Cur.Name)).Append(",\"level\":").Append(N(it.Cur.Level))
-                   .Append(",\"stars\":").Append(N(it.Cur.Stars)).Append(",\"icon\":").Append(S(it.Cur.Icon))
-                   .Append(",\"mainStat\":").Append(S(it.Cur.MainStat)).Append(",\"subs\":").Append(LinesJson(it.Cur.Subs, "rolls"))
-                   .Append(",\"main\":").Append(LinesJson(it.Cur.Main, "rolls")).Append(",\"quality\":").Append(N(it.Cur.Quality))
-                   .Append(",\"qualityName\":").Append(S(it.Cur.QualityName)).Append('}');
-            sb.Append('}');
+            ItemJson(sb, it, true);
           }
           sb.Append("]}");
         }
         Post(sb.Append("]}").ToString());
+        // a «Найти в игре» request from the site rides on the same reply
+        var lq = r.Locate; lastLocate = lq;
+        var lb = new StringBuilder("{\"ev\":\"locate\",\"req\":");
+        if (lq == null) lb.Append("null");
+        else {
+          lb.Append("{\"id\":").Append(S(lq.Id)).Append(",\"purpose\":").Append(S(lq.Purpose)).Append(",\"createdAt\":").Append(S(lq.CreatedAt))
+            .Append(",\"heroUid\":").Append(N(lq.HeroUid)).Append(",\"heroName\":").Append(S(lq.HeroName)).Append(",\"item\":");
+          if (lq.Item == null) lb.Append("null"); else ItemJson(lb, lq.Item, false);
+          lb.Append('}');
+        }
+        Post(lb.Append('}').ToString());
+      });
+    }
+
+    volatile LocateRequest lastLocate;
+
+    // one plan item as the page's card shows it
+    static void ItemJson(StringBuilder sb, PlanItem it, bool withCur) {
+      sb.Append("{\"slot\":").Append(N(it.Slot)).Append(",\"uid\":").Append(N(it.Uid)).Append(",\"slotName\":").Append(S(it.SlotName))
+        .Append(",\"name\":").Append(S(it.Name)).Append(",\"setName\":").Append(S(it.SetName)).Append(",\"level\":").Append(N(it.Level))
+        .Append(",\"stars\":").Append(N(it.Stars)).Append(",\"mainStat\":").Append(S(it.MainStat)).Append(",\"fromHeroUid\":").Append(N(it.FromHeroUid))
+        .Append(",\"fromHeroName\":").Append(S(it.FromHeroName)).Append(",\"icon\":").Append(S(it.Icon)).Append(",\"setIcon\":").Append(S(it.SetIcon))
+        .Append(",\"setId\":").Append(N(it.SetId))
+        .Append(",\"subs\":").Append(LinesJson(it.Subs, "rolls")).Append(",\"setBonus\":").Append(LinesJson(it.SetBonus, "pieces"))
+        .Append(",\"main\":").Append(LinesJson(it.Main, "rolls")).Append(",\"quality\":").Append(N(it.Quality)).Append(",\"qualityName\":").Append(S(it.QualityName));
+      if (withCur) {
+        if (it.CurKnown && it.Cur == null) sb.Append(",\"cur\":null");
+        else if (it.CurKnown) sb.Append(",\"cur\":{\"uid\":").Append(N(it.Cur.Uid)).Append(",\"name\":").Append(S(it.Cur.Name)).Append(",\"level\":").Append(N(it.Cur.Level))
+               .Append(",\"stars\":").Append(N(it.Cur.Stars)).Append(",\"icon\":").Append(S(it.Cur.Icon))
+               .Append(",\"mainStat\":").Append(S(it.Cur.MainStat)).Append(",\"subs\":").Append(LinesJson(it.Cur.Subs, "rolls"))
+               .Append(",\"main\":").Append(LinesJson(it.Cur.Main, "rolls")).Append(",\"quality\":").Append(N(it.Cur.Quality))
+               .Append(",\"qualityName\":").Append(S(it.Cur.QualityName)).Append('}');
+      }
+      sb.Append('}');
+    }
+
+    // «Найти в игре»: the overlay's step for the page (it composes the texts)
+    void PostLocateState(LocateStep st, SubCheck subs) {
+      var sb = new StringBuilder("{\"ev\":\"locate.state\",\"step\":").Append(S(st.Key)).Append(",\"pos\":").Append(N(st.Pos)).Append(",\"row\":").Append(N(st.Row))
+        .Append(",\"col\":").Append(N(st.Col)).Append(",\"count\":").Append(N(st.Count)).Append(",\"onHero\":").Append(B(st.OnHero))
+        .Append(",\"needClick\":").Append(B(st.NeedClick)).Append(",\"missing\":[");
+      for (int i = 0; i < st.Missing.Length; i++) { if (i > 0) sb.Append(','); sb.Append(S(st.Missing[i])); }
+      sb.Append("],\"subs\":");
+      if (subs == null) sb.Append("null");
+      else { sb.Append('['); for (int i = 0; i < subs.Match.Length; i++) { if (i > 0) sb.Append(','); sb.Append(B(subs.Match[i])); } sb.Append(']'); }
+      sb.Append(",\"changed\":").Append(B(subs != null && subs.Changed)).Append('}');
+      Post(sb.ToString());
+    }
+
+    void FinishLocate(string id, bool done) {
+      string site = cfg.Site, code = cfg.Code;
+      overlay.SetLocate(null);
+      if (string.IsNullOrEmpty(id) || !SyncClient.IsValidCode(code)) return;
+      Task.Factory.StartNew(() => {
+        var r = LocateClient.Finish(site, code, id, done);
+        Log.Write("locate " + id + " " + (done ? "done" : "cancelled") + ": " + r.Status);
       });
     }
 

@@ -1,0 +1,73 @@
+// Wardsage desktop — «Найти в игре»: the text for each step the host reports. Pure logic (tests: tests/locate.test.mjs).
+//
+// req:  {id, purpose, createdAt, heroUid, heroName, item|null}  (item: a plan item with slotName, setName, main[], subs[])
+// step: {step, pos, row, col, count, missing:[…], onHero, needClick, subs:[bool]|null, changed}  (host, src/LocateGuide.cs)
+// t(key, …args) is the interface's text lookup.
+(function (root) {
+  const KINDS = ['noItem', 'otherAccount', 'openInventory', 'openEquipTab', 'inList', 'hiddenFilter', 'selected', 'openRecastTab',
+    'recastFilter', 'recastPick', 'recastNotInList', 'choosePending', 'gemPick', 'done'];
+
+  function names(list) { return (list || []).map((x) => x.name || x.text).filter(Boolean); }
+
+  // one line per filter part still to set (the foundry's filter keeps only items with all the chosen sub stats)
+  function filterLines(req, st, t) {
+    const it = req.item, out = [];
+    const miss = st.missing || [];
+    if (miss.indexOf('slot') >= 0) out.push(t('locFSlot', it.slotName || ''));
+    if (miss.indexOf('suit') >= 0 && it.setName) out.push(t('locFSuit', it.setName));
+    if (miss.indexOf('main') >= 0) { const m = names(it.main)[0] || it.mainStat; if (m) out.push(t('locFMain', m)); }
+    if (miss.indexOf('subs') >= 0) { const s = names(it.subs); if (s.length) out.push(t('locFSubs', s.join(', '))); }
+    return out;
+  }
+
+  // -> {tone: 'info'|'warn'|'done', head, lines:[…], tip:[…] (the plate over the game, ≤ 3 short lines)}
+  function describe(req, st, t) {
+    if (!req) return null;
+    if (!req.item) return { tone: 'warn', head: t('locNoItem'), lines: [t('locNoItemP')], tip: [] };
+    if (!st || KINDS.indexOf(st.step) < 0) return { tone: 'info', head: t('locOpenInventory'), lines: [], tip: [t('locOpenInventory')] };
+    const it = req.item, pos = t('locPos', st.pos, st.count);
+    let r;
+    switch (st.step) {
+      case 'noItem': r = { tone: 'warn', head: t('locNoItem'), lines: [t('locNoItemP')] }; break;
+      case 'otherAccount': r = { tone: 'warn', head: t('locOther'), lines: [t('locOtherP')] }; break;
+      case 'openInventory':
+        r = st.onHero ? { tone: 'info', head: t('locOnHero', it.slotName || '', req.heroName || ''), lines: [t('locOnHeroP')] }
+                      : { tone: 'info', head: t('locOpenInventory'), lines: [t('locOpenInventoryP')] };
+        break;
+      case 'openEquipTab': r = { tone: 'info', head: t('locEquipTab'), lines: [] }; break;
+      case 'inList':
+        r = st.needClick ? { tone: 'info', head: t('locNeedClick'), lines: [t('locNeedClickP', st.row, st.col)] }
+                         : { tone: 'info', head: t('locInList', st.row, st.col), lines: [t('locInListP')] };
+        break;
+      case 'hiddenFilter': r = { tone: 'warn', head: t('locHidden'), lines: [t('locHiddenP')] }; break;
+      case 'selected': r = { tone: 'done', head: t('locSelected'), lines: [t('locSelectedP')] }; break;
+      case 'openRecastTab': r = { tone: 'info', head: t('locRecastTab'), lines: [] }; break;
+      case 'recastFilter': {
+        const l = filterLines(req, st, t);
+        r = { tone: 'info', head: t('locFilter'), lines: l.concat(st.pos > 0 ? [pos] : []) };
+        break;
+      }
+      case 'recastPick': r = { tone: 'info', head: t('locPick', st.pos, st.count), lines: [] }; break;
+      case 'recastNotInList': r = { tone: 'warn', head: t('locNotInList'), lines: [t('locNotInListP')] }; break;
+      case 'choosePending': r = { tone: 'warn', head: t('locPending'), lines: [t('locPendingP')] }; break;
+      case 'gemPick': r = st.pos > 0 ? { tone: 'info', head: t('locPick', st.pos, st.count), lines: [] } : { tone: 'info', head: t('locGemOpen'), lines: [] }; break;
+      default: r = { tone: 'done', head: t('locDone'), lines: [t('locDoneP')] };
+    }
+    // the plate over the game: the head and the first lines, short
+    r.tip = [r.head].concat(r.lines.slice(0, 2)).map((x) => (x.length > 90 ? x.slice(0, 89) + '…' : x));
+    return r;
+  }
+
+  // the card's sub stats against the game's: [{text, ok}] (ok only when the game's reading is there)
+  function subRows(req, st, t) {
+    if (!req || !req.item) return [];
+    return (req.item.subs || []).map((x, i) => ({
+      text: [x.name || x.text, x.value].filter(Boolean).join(' '),
+      ok: !!(st && st.subs && st.subs[i]),
+    }));
+  }
+
+  const api = { KINDS, describe, subRows, filterLines };
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  else root.RFLocate = api;
+})(typeof window !== 'undefined' ? window : globalThis);

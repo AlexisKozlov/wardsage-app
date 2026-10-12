@@ -268,8 +268,20 @@ namespace RealmForge {
       Run();
     }
 
+    /// <summary>«Найти в игре»: show where this item is (null = stop). Hints only: the frame in the inventory's list and a
+    /// text plate; nothing is clicked. While it runs the build's frame is not shown (one target at a time).</summary>
+    public void SetLocate(LocateRequest r) {
+      locateReq = r != null && r.Item != null ? r : null;
+      locateStep = null; locateSubs = null; locateKey = ""; locateReadAt = 0; locateLastCur = -1; locateSubsAt = 0; lgrid.Reset();
+      Hide("off"); HideTip();
+      Run();
+    }
+
+    /// <summary>The text plate for the current step (composed by the page in the interface language).</summary>
+    public void SetLocateTip(string[] lines) { locateLines = lines ?? new string[0]; HideTip(); }
+
     void Run() {
-      if (target != 0 || filterItem != 0 || hintKind != "" || runHero != 0 || sellWanted != null || DateTime.Now < diagUntil) { timer.Start(); return; }
+      if (target != 0 || locateReq != null || filterItem != 0 || hintKind != "" || runHero != 0 || sellWanted != null || DateTime.Now < diagUntil) { timer.Start(); return; }
       timer.Stop(); HideTip(); if (cancelWin.Visible) cancelWin.Hide();
     }
 
@@ -285,6 +297,7 @@ namespace RealmForge {
 
     void Tick() {
       curRow = curCol = 0; curSel = 0;
+      if (locateReq != null) { TickLocate(); TickCancel(); return; }
       TickFrame();
       TickAuto();
       TickCancel();
@@ -425,9 +438,9 @@ namespace RealmForge {
     }
 
     /// <summary>A pulsing gold frame around a button of the game (x, y, w, h: screen px) with a text plate above it.</summary>
-    void DrawTip(int x, int y, int w, int h, string[] lines, double H) {
+    void DrawTip(int x, int y, int w, int h, string[] lines, double H, bool plateOnly = false) {
       float pulse = (float)(0.6 + 0.4 * Math.Sin(frame * 0.45));
-      string key = x + ":" + y + ":" + w + ":" + h + ":" + string.Join("|", lines) + ":" + (int)(pulse * 10);
+      string key = x + ":" + y + ":" + w + ":" + h + ":" + string.Join("|", lines) + ":" + (plateOnly ? 0 : (int)(pulse * 10));
       if (key == tipKey) return;
       tipKey = key;
       float fs = (float)Math.Max(13.0, H * 0.022);
@@ -440,10 +453,12 @@ namespace RealmForge {
           using (var gr = Graphics.FromImage(bmp)) {
             gr.SmoothingMode = SmoothingMode.AntiAlias; gr.TextRenderingHint = TextRenderingHint.AntiAliasGridFit; gr.Clear(Color.Transparent);
             int fx = 26, fy = bh - h - 26;
-            for (int i = 24; i >= 2; i -= 2)
-              using (var pen = new Pen(Color.FromArgb((int)(140 * pulse * (1 - i / 26f)), 255, 190, 60), 3f)) gr.DrawPath(pen, Round(fx - i, fy - i, w + 2 * i, h + 2 * i, 6 + i));
-            using (var pen = new Pen(Color.FromArgb(220, 30, 18, 4), 8f)) gr.DrawPath(pen, Round(fx - 2, fy - 2, w + 4, h + 4, 8));
-            using (var pen = new Pen(Color.FromArgb(255, 255, 214, 110), 4f)) gr.DrawPath(pen, Round(fx - 2, fy - 2, w + 4, h + 4, 8));
+            if (!plateOnly) {
+              for (int i = 24; i >= 2; i -= 2)
+                using (var pen = new Pen(Color.FromArgb((int)(140 * pulse * (1 - i / 26f)), 255, 190, 60), 3f)) gr.DrawPath(pen, Round(fx - i, fy - i, w + 2 * i, h + 2 * i, 6 + i));
+              using (var pen = new Pen(Color.FromArgb(220, 30, 18, 4), 8f)) gr.DrawPath(pen, Round(fx - 2, fy - 2, w + 4, h + 4, 8));
+              using (var pen = new Pen(Color.FromArgb(255, 255, 214, 110), 4f)) gr.DrawPath(pen, Round(fx - 2, fy - 2, w + 4, h + 4, 8));
+            }
             if (ph > 0) {
               var rc = new RectangleF(0, 0, pw, ph);
               using (var bg = new SolidBrush(Color.FromArgb(235, 16, 12, 8))) gr.FillPath(bg, Round(rc.X + 1, rc.Y + 1, rc.Width - 2, rc.Height - 2, 6));
@@ -451,7 +466,7 @@ namespace RealmForge {
               using (var fg = new SolidBrush(Color.FromArgb(255, 255, 236, 180))) for (int i = 0; i < lines.Length; i++) gr.DrawString(lines[i], f, fg, 14, 8 + i * lh);
               float ax = Math.Min(pw - 20, fx + w / 2f);
               var tri = new[] { new PointF(ax - 9, ph - 1), new PointF(ax + 9, ph - 1), new PointF(ax, ph + 11) };
-              using (var br = new SolidBrush(Color.FromArgb(240, 232, 190, 110))) gr.FillPolygon(br, tri);
+              if (!plateOnly) using (var br = new SolidBrush(Color.FromArgb(240, 232, 190, 110))) gr.FillPolygon(br, tri);
             }
           }
           tip.Put(bmp, x - 26, y - (bh - h - 26));
@@ -627,12 +642,96 @@ namespace RealmForge {
       SellSay("no_city");
     }
 
+    // ---------------------------------------------------------------- «Найти в игре»
+
+    LocateRequest locateReq; string[] locateLines = new string[0];
+    readonly LocateGrid lgrid = new LocateGrid();
+    LocateStep locateStep; SubCheck locateSubs; string locateKey = "";
+    long locateReadAt, locateLastCur = -1, locateSubsAt; int locateCols = 8, locateGeoCols; double locateGeoW, locateGeoH;
+    SellGeometry locateGeo; InventoryScreen locateInv; bool locateNeedClick;
+    /// <summary>The step changed (or its list place / sub stat check): the page shows it and answers with the text plate.</summary>
+    public event Action<LocateStep, SubCheck> LocateChanged;
+
+    void LocateHide() { if (glow.Visible) glow.Hide(); drawnKey = null; HideTip(); }
+
+    void TickLocate() {
+      var req = locateReq;
+      IntPtr hwnd = GameWindow();
+      W32.RECT cr = new W32.RECT();
+      if (hwnd == IntPtr.Zero || W32.IsIconic(hwnd) || !W32.GetClientRect(hwnd, out cr) || cr.B < 200) { LocateHide(); return; }
+      bool front = IsForeground(hwnd);
+      var o = new W32.POINT(0, 0); W32.ClientToScreen(hwnd, ref o);
+      double W = cr.R, H = cr.B, U = Ui.Unit(W, H);
+      long now = NowMs();
+      long uid = req.Item.Uid;
+      // the game's screens, read a few times a second (a form the game never built is searched for at most every 8 s)
+      if (locateStep == null || Math.Abs(now - locateReadAt) >= 300) {
+        locateReadAt = now;
+        int rescan = front ? 8000 : -1;
+        locateInv = RFX.ReadInventory(rescan);
+        var rs = RFX.ReadRecastScreen(rescan);
+        if (front && locateInv != null && locateInv.Open && locateInv.EquipTab) { int c = InvColumns(o, cr, U); if (c > 0) locateCols = c; }
+        heroScreen = RFX.ReadHeroScreen(addrs, heroScreen);
+        var st = LocateGuide.Next(req, locateInv, rs, heroScreen, locateCols, RFX.ItemOnAccount(uid));
+        if (Math.Abs(now - locateSubsAt) >= 1500 && (st.Kind == LocateKind.Selected || st.Kind == LocateKind.Done || st.Kind == LocateKind.RecastPick || st.Kind == LocateKind.InList)) {
+          locateSubsAt = now;
+          var live = RFX.ReadLiveItemSubs(uid);
+          locateSubs = live != null ? LocateGuide.CheckSubs(req.Item, live) : null;
+        }
+        st.NeedClick = locateNeedClick;
+        locateStep = st;
+      }
+      var step = locateStep;
+      // the inventory's list: where the item's cell is on the screen
+      locateNeedClick = false;
+      if (front && step.Kind == LocateKind.InList && locateInv != null) {
+        var inv = locateInv;
+        if (locateGeo == null || locateGeoW != W || locateGeoH != H || locateGeoCols != locateCols) {
+          locateGeoW = W; locateGeoH = H; locateGeoCols = locateCols; locateGeo = SellGeometry.Inventory(W, U, locateCols);
+          lgrid.Reset();
+        }
+        if (lgrid.ListPtr != inv.ListPtr) lgrid.Reset();
+        // the player clicked a cell: the pointer shows where its row is
+        if (inv.Current != locateLastCur) {
+          if (locateLastCur != -1 && inv.Current > 0) {
+            var p = LocateGuide.Position(inv.Uids.ToArray(), inv.Current, locateCols);
+            W32.POINT c;
+            if (p != null && W32.GetCursorPos(out c) && c.Y - o.Y >= locateGeo.ViewTopPx(U) && c.Y - o.Y <= locateGeo.ViewBottomPx(H, U)) lgrid.FromClick(locateGeo, p[1], c.Y - o.Y, U, inv.ListPtr);
+          }
+          locateLastCur = inv.Current;
+        }
+        double phase = PhaseOf(locateGeo, o, cr, U);
+        bool hasPhase = !double.IsNaN(phase);
+        if (!lgrid.Has && hasPhase) lgrid.FromTop(locateGeo, phase, U, inv.ListPtr);
+        if (lgrid.Has && hasPhase) lgrid.Track(locateGeo, lgrid.VisibleRow(locateGeo, (inv.Uids.Count + locateCols - 1) / locateCols, W, H, U), phase, U);
+        locateNeedClick = !lgrid.Has;
+        if (lgrid.Has) {
+          var mk = lgrid.Place(locateGeo, step.Row, step.Col, W, H, U);
+          frame++;
+          HideTip();
+          Draw(mk.Kind, o.X + mk.X, o.Y + mk.Y, mk.W, mk.H, mk.Rows);
+        } else LocateHide();
+      } else if (!front) { LocateHide(); }
+      else { if (glow.Visible) glow.Hide(); drawnKey = null; }
+      if (locateInv != null && step.Kind != LocateKind.InList) locateLastCur = locateInv.Current;
+      step.NeedClick = locateNeedClick;
+      // a plate with the step's text (the page composes it): in the list's top-left corner, no frame
+      if (front && locateLines.Length > 0 && (step.Kind != LocateKind.InList || locateNeedClick)) {
+        frame++;
+        DrawTip(o.X + (int)(0.23 * U), o.Y + (int)(0.19 * U) + 150, 4, 0, locateLines, H, true);
+      } else if (!front || locateLines.Length == 0 || step.Kind == LocateKind.InList) HideTip();
+      string key = step.Key + "|" + step.Pos + "|" + step.Row + "|" + step.Col + "|" + step.Count + "|" + string.Join(",", step.Missing) + "|" + step.OnHero + "|" + step.NeedClick
+        + "|" + (locateSubs != null ? string.Join(",", Array.ConvertAll(locateSubs.Match, x => x ? "1" : "0")) + locateSubs.Changed : "");
+      if (key != locateKey) { locateKey = key; var h = LocateChanged; if (h != null) h(step, locateSubs); }
+    }
+
     const double InvBtnDX = 0.5222 + 0.9316;   // «Инвентарь»: 0.9316 left of «Герои» in the city's bottom bar
     int sellCols = 8, sellGeoCols; double sellGeoW, sellGeoH; bool sellScanOnce;
 
     // the rows' phase on the screen: the stat bars under the cells (client px mod the row step), NaN = unclear
-    double SellPhase(W32.POINT o, W32.RECT cr, double U) {
-      var sg = spilot.Geometry;
+    double SellPhase(W32.POINT o, W32.RECT cr, double U) { return PhaseOf(spilot.Geometry, o, cr, U); }
+
+    double PhaseOf(SellGeometry sg, W32.POINT o, W32.RECT cr, double U) {
       int x0 = (int)Math.Round(sg.X(sg.X0, cr.R, U)), x1 = (int)Math.Round(sg.X(sg.X0 + (sg.Columns - 1) * sg.PitchX + sg.CellW, cr.R, U));
       int y0 = (int)Math.Round(sg.ViewTopPx(U)), y1 = (int)Math.Round(sg.ViewBottomPx(cr.B, U));
       if (x0 < 0 || x1 > cr.R || y1 - y0 < 100) return double.NaN;
@@ -1078,7 +1177,7 @@ namespace RealmForge {
       const int M = 34;
       float pulse = (float)(0.6 + 0.4 * Math.Sin(frame * 0.45));
       string key = kind + x + ":" + y + ":" + w + ":" + h + ":" + rows + ":" + (int)(pulse * 10);
-      Say(kind == "box" ? "on" : kind == "up" ? "above" : "below");
+      if (locateReq == null) Say(kind == "box" ? "on" : kind == "up" ? "above" : "below");   // the plan's state; «Найти в игре» has its own
       if (key == drawnKey) return;
       drawnKey = key;
       if (kind == "box") {

@@ -1,5 +1,6 @@
 // Development only: a fake host for previewing the interface in a normal browser (no WebView2).
 // Inert inside Wardsage.exe (window.chrome.webview exists there). Scenario: index.html?s=<name>
+//   locate | locate-select | locate-filter | locate-gone (a «Найти в игре» request)
 //   onboard | idle | reading | done | error | equip | pick | rel | selected | hidden | done-plan | compact | settings | news | newsoff | en
 (function () {
   if (window.chrome && window.chrome.webview) return;
@@ -27,6 +28,8 @@
   const plans = [plan,
     { id: 'p2', heroUid: 200100000, heroName: 'Байек', items: plan.items.slice(0, 3).map((i, n) => ({ ...i, uid: 900 + n })) },
     { id: 'p3', heroUid: 202400000, heroName: 'Элизия', items: plan.items.slice(0, 5).map((i, n) => ({ ...i, uid: 800 + n })) }];
+  const locateReq = { id: 'l1', purpose: 'recast', createdAt: '2026-10-12T10:00:00Z', heroUid: 200100000, heroName: 'Байек', item: {
+    ...plan.items[2], uid: 7001, slot: 4, slotName: 'Кольцо', name: 'Кольцо бесстрашия', heroUid: 200100000, heroName: 'Байек' } };
   const live = { gameRunning: true, heroUid: 214700000, panelOk: true, part: 2, hideEquipped: false, hideEnhanced: false, filterActive: false,
     rows: { 6423: [7, 2] }, owner: { 11: 214700000, 12: 214700000, 6423: 200100000, 14: 0, 15: 0 } };
   if (s === 'pick') live.rows[6423] = [2, 2];
@@ -72,6 +75,15 @@
           { id: 't2', title: 'Подсказки по арене на втором экране', kind: 'idea', status: 'accepted', newCount: 1, lastAt: '2026-10-11T19:00:00Z', url: 'https://wardsage.com/community/t2' } ] } });
       } else if (m.cmd === 'plans.load') {
         emit({ ev: 'plans', status: 'ok', plans });
+        if (s.indexOf('locate') === 0) emit({ ev: 'locate', req: s === 'locate-gone' ? { id: 'l1', purpose: 'recast', createdAt: '2026-10-12T10:00:00Z', heroUid: 0, heroName: null, item: null } : locateReq });
+      } else if (m.cmd === 'locate.show') {
+        // the program's steps for the scenario
+        const st = { ev: 'locate.state', step: 'inList', pos: 14, row: 2, col: 6, count: 60, onHero: false, needClick: false, missing: [], subs: null, changed: false };
+        if (s === 'locate-select') { st.step = 'selected'; st.subs = [true, true, true, false]; st.changed = true; }
+        if (s === 'locate-filter') { st.step = 'recastFilter'; st.missing = ['slot', 'suit', 'main', 'subs']; st.pos = 31; st.count = 40; }
+        emit(st);
+      } else if (m.cmd === 'locate.tip' || m.cmd === 'locate.finish' || m.cmd === 'locate.stop') {
+        console.log('[mock host]', JSON.stringify(m));
       } else if (m.cmd === 'equip.scan') {
         emit({ ev: 'equip.scan', status: 'ok', panel: true });
         emit({ ev: 'equip.live', live });
