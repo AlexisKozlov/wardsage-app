@@ -533,7 +533,9 @@ namespace RealmForge {
     // screen's id always holds the live one: found once, then read on every poll (8 bytes).
     const long FormCharactorMainId = 0;   // UIDefines.ID_FORM_CHARACTORMAIN
     internal const long FormBackpackId = 0; // UIDefines.ID_FORM_BACKPACKINTEGRATION («Инвентарь»)
-    static ulong formNode, invNode;
+    internal const long FormRecastId = 0;   // the foundry (Литейная): its «Преобразовать» tab
+    internal const long FormGemId = 0;      // the gem screen: reached from the item card, also holds the recast functions
+    static ulong formNode, invNode, subNode, gemNode;
 
     // the value of a UIInstance node keyed by the form id, when it is still that node and holds a table with the key
     static ulong NodeValue(ulong n, long id, string key) {
@@ -562,23 +564,32 @@ namespace RealmForge {
     }
     static ulong NodeInv(ulong n) { return NodeValue(n, FormBackpackId, "m_CachedContentPanels"); }
 
-    /// <summary>Searches UIInstance's nodes of the hero screen and the inventory (one pass; a form the player has not
-    /// opened yet has none); returns the live hero screen (0 = none).</summary>
+    // the table of a UIInstance node keyed by the form id, when it is still that node
+    static ulong NodeTable(ulong n, long id) {
+      var b = n != 0 ? Read(n, 32) : null; if (b == null) return 0;
+      if (BitConverter.ToInt64(b, 16) != id || BitConverter.ToInt32(b, 24) != T_INT || BitConverter.ToInt32(b, 8) != T_TABLE) return 0;
+      return BitConverter.ToUInt64(b, 0);
+    }
+
+    /// <summary>Searches UIInstance's nodes of the hero screen, the inventory and the two recast screens (one pass; a
+    /// form the player has not opened yet has none); returns the live hero screen (0 = none).</summary>
     static ulong FindFormNode() {
       var hits = new List<ulong>();
       ScanParallel((b0, buf, len) => {
         for (int i = 0; i + 32 <= len; i += 8) {
           long k = BitConverter.ToInt64(buf, i + 16);
-          if (k != FormCharactorMainId && k != FormBackpackId) continue;
+          if (k != FormCharactorMainId && k != FormBackpackId && k != FormRecastId && k != FormGemId) continue;
           if (BitConverter.ToInt32(buf, i + 24) != T_INT || BitConverter.ToInt32(buf, i + 8) != T_TABLE) continue;
           lock (hits) hits.Add(b0 + (ulong)i);
         }
       });
-      ulong form = 0; formNode = invNode = 0;
+      ulong form = 0; formNode = invNode = subNode = gemNode = 0;
       foreach (var n in hits) {
         ulong f;
         if (formNode == 0 && (f = NodeForm(n)) != 0) { formNode = n; form = f; }
         else if (invNode == 0 && NodeInv(n) != 0) invNode = n;
+        else if (subNode == 0 && NodeTable(n, FormRecastId) != 0) subNode = n;
+        else if (gemNode == 0 && NodeTable(n, FormGemId) != 0) gemNode = n;
       }
       return form;
     }
@@ -599,6 +610,18 @@ namespace RealmForge {
       return NodeInv(invNode);
     }
     static int lastNodeScan;
+
+    /// <summary>The foundry's form (<paramref name="gem"/> false) or the gem screen (true) the game holds now; searched
+    /// again like the inventory. 0 = never opened.</summary>
+    internal static ulong LiveRecastForm(bool gem, int rescanMs) {
+      ulong f = NodeTable(gem ? gemNode : subNode, gem ? FormGemId : FormRecastId);
+      if (f != 0 || rescanMs < 0) return f;
+      if (Environment.TickCount - lastNodeScan < rescanMs && lastNodeScan != 0) return 0;
+      lastNodeScan = Environment.TickCount;
+      if (regs == null) return 0;
+      FindFormNode();
+      return NodeTable(gem ? gemNode : subNode, gem ? FormGemId : FormRecastId);
+    }
 
     /// <summary>Some hero of the account (the storage cleanup opens the sell screen from a hero's gear list), 0 = none.</summary>
     public static long AnyHeroUid() {
@@ -845,17 +868,13 @@ namespace RealmForge {
           + ",\"overflow\":" + BitConverter.ToInt64(b, 0x58) + "}";
         if (seen.Add(line.Substring(line.IndexOf("\"iBaseID\"")))) sb.Append(line).Append('\n');
       }
-      // the simulations still in memory: CSharpBattle.Battle.GameSimulation and its kinds (class addresses of this game
-      // build: <CurrentFrameIdx> 0xC4, m_state 0xA4
+      // the simulations still in memory: CSharpBattle.Battle.GameSimulation and its kinds (class addresses per game
+      // build: ClassRvas in src/BattleClock.cs): <CurrentFrameIdx> 0xC4, m_state 0xA4
       ulong ga = 0;
       try { foreach (ProcessModule m in ps[0].Modules) if (string.Equals(m.ModuleName, "GameAssembly.dll", StringComparison.OrdinalIgnoreCase)) ga = (ulong)(long)m.BaseAddress; } catch (Exception) { }
       if (ga != 0) {
-        var klass = new Dictionary<ulong, string>();
-        foreach (var t in new[] { new KeyValuePair<string, ulong>("GameSimulation", 0), new KeyValuePair<string, ulong>("TDGameSimulation", 0),
-                                  new KeyValuePair<string, ulong>("TCGameSimulation", 0), new KeyValuePair<string, ulong>("PAGameSimulation", 0) }) {
-          var kb = Read(ga + t.Value, 8); ulong k = kb != null ? BitConverter.ToUInt64(kb, 0) : 0;
-          if (k != 0) klass[k] = t.Key;
-        }
+        ForgetClasses();
+        var klass = SimKlasses(ga);
         var sims = new List<ulong>();
         ScanParallel((b0, buf, len) => {
           for (int i = 0; i + 0xC8 <= len; i += 8) if (klass.ContainsKey(BitConverter.ToUInt64(buf, i))) lock (sims) sims.Add(b0 + (ulong)i);
@@ -1400,7 +1419,7 @@ namespace RealmForge {
 // ===== src/BattleClock.cs =====
 // RealmForge — the clock of the fight going on, for the boss coach over the game (read-only).
 //
-// CSharpBattle.Battle.GameSimulation (and its kinds; class addresses of this game build):
+// CSharpBattle.Battle.GameSimulation (and its kinds; class addresses per game build in ClassRvas):
 // m_state 0xA4 (ESimulationStatus: 1 running, 2 ended), <CurrentFrameIdx> 0xC4 (one logic frame = 270/4096 s),
 // _BattleData 0x48 -> BattleData.<iStageID> 0x18. The running one is the battle view's (BattleManager.instance), read
 // every couple of seconds; then two fields are read every tick.
@@ -1410,6 +1429,108 @@ namespace RealmForge {
     // GameAssembly.dll's base in the game process (set by CurrentSim / FindRunningSim; src/BattleTimeline.cs checks
     // classes with it)
     static ulong simGa; static int simPid;
+
+    // Class addresses (in GameAssembly.dll) per game build, newest first: 1.6.39, 1.6.38. An address counts only when
+    // the class found there has the expected name (Il2CppClass: name 0x10, namespaze 0x18), so the app works with
+    // either build. A class with no address in a build (1.6.39: the components, TDStateData, PAGameSimulation) is
+    // recognised by its name on the objects read and then remembered.
+    const string NsBattle = "CSharpBattle.Battle.";
+    static readonly Dictionary<string, ulong[]> ClassRvas = new Dictionary<string, ulong[]> {
+      { NsBattle + "GameSimulation", new ulong[] { 0, 0 } },
+      { NsBattle + "TDGameSimulation", new ulong[] { 0, 0 } },
+      { NsBattle + "TCGameSimulation", new ulong[] { 0, 0 } },
+      { NsBattle + "PAGameSimulation", new ulong[] { 0 } },
+      { "BattleView.BattleManager", new ulong[] { 0, 0 } },
+      { NsBattle + "CardComponent", new ulong[] { 0 } },
+      { NsBattle + "AngerComponent", new ulong[] { 0 } },
+      { NsBattle + "SkillComponent", new ulong[] { 0 } },
+      { NsBattle + "FrameIdxInfo", new ulong[] { 0, 0 } },
+      { NsBattle + "BattleHeroInfo", new ulong[] { 0, 0 } },
+      { NsBattle + "OwnerRelationComponent", new ulong[] { 0, 0 } },
+      { NsBattle + "StatisticsComponent", new ulong[] { 0 } },
+      { NsBattle + "DamageStatisticsData", new ulong[] { 0, 0 } },
+      { NsBattle + "TDStateData", new ulong[] { 0 } },
+      { NsBattle + "WaveSystem", new ulong[] { 0, 0 } },
+      { NsBattle + "WaveControllerNode", new ulong[] { 0, 0 } },
+      { NsBattle + "AttributeComponent", new ulong[] { 0, 0 } },
+    };
+    static readonly string[] SimClasses = { NsBattle + "GameSimulation", NsBattle + "TDGameSimulation", NsBattle + "TCGameSimulation", NsBattle + "PAGameSimulation" };
+    static readonly Dictionary<string, ulong> klassCache = new Dictionary<string, ulong>();
+    static ulong klassGa;
+
+    /// <summary>A NUL-terminated ASCII string in the game's memory (read within its page), null when unreadable.</summary>
+    static string CStr(ulong p) {
+      if (p == 0) return null;
+      int n = (int)Math.Min(96UL, 0x1000UL - (p & 0xFFF));
+      var b = Read(p, n); if (b == null) return null;
+      int len = Array.IndexOf(b, (byte)0);
+      if (len < 0) return null;
+      return System.Text.Encoding.ASCII.GetString(b, 0, len);
+    }
+
+    /// <summary>The full name ("Namespace.Class") of a class, null when <paramref name="k"/> is not readable as one.</summary>
+    static string ClassName(ulong k) {
+      var b = k != 0 ? Read(k + 0x10, 16) : null; if (b == null) return null;
+      string name = CStr(BitConverter.ToUInt64(b, 0)); if (string.IsNullOrEmpty(name)) return null;
+      string ns = CStr(BitConverter.ToUInt64(b, 8)); if (ns == null) return null;
+      return ns.Length > 0 ? ns + "." + name : name;
+    }
+
+    /// <summary>The class <paramref name="cls"/> of the game whose GameAssembly.dll is at <paramref name="ga"/>: from its
+    /// address in this build (checked by name) or as recognised on an object; 0 when not known (yet).</summary>
+    static ulong ClassAt(ulong ga, string cls) {
+      if (ga == 0) return 0;
+      ulong k;
+      lock (klassCache) {
+        if (ga != klassGa) { klassCache.Clear(); klassGa = ga; }
+        if (klassCache.TryGetValue(cls, out k)) return k;
+      }
+      k = 0;
+      ulong[] rvas;
+      if (ClassRvas.TryGetValue(cls, out rvas))
+        foreach (var rva in rvas) { ulong c = Ptr(ga + rva); if (c != 0 && ClassName(c) == cls) { k = c; break; } }
+      // not cached when not found: the address is filled in once the game first uses the class
+      if (k != 0) lock (klassCache) { if (ga == klassGa) klassCache[cls] = k; }
+      return k;
+    }
+
+    /// <summary>Forget the classes found (the game restarted).</summary>
+    static void ForgetClasses() { lock (klassCache) { klassCache.Clear(); klassGa = 0; } }
+
+    /// <summary>Is <paramref name="k"/> the class <paramref name="cls"/> of the current game process?</summary>
+    static bool IsKlass(ulong k, string cls) {
+      if (k == 0) return false;
+      ulong want = ClassAt(simGa, cls);
+      if (want != 0) return k == want;
+      if (ClassName(k) != cls) return false;
+      if (simGa != 0) lock (klassCache) { if (simGa == klassGa) klassCache[cls] = k; }
+      return true;
+    }
+
+    /// <summary>Is the object at <paramref name="obj"/> of the class <paramref name="cls"/>?</summary>
+    static bool IsA(ulong obj, string cls) { return obj != 0 && IsKlass(Ptr(obj), cls); }
+
+    /// <summary>The simulations' classes (class -> short name): by address, plus the class of the battle view's
+    /// simulation when it is another kind of GameSimulation.</summary>
+    static Dictionary<ulong, string> SimKlasses(ulong ga) {
+      var res = new Dictionary<ulong, string>();
+      foreach (var c in SimClasses) { ulong k = ClassAt(ga, c); if (k != 0) res[k] = c.Substring(NsBattle.Length); }
+      ulong cur = ViewSim(ga), ck = Ptr(cur);
+      if (ck != 0 && !res.ContainsKey(ck)) {
+        string n = ClassName(ck);
+        if (n != null && n.StartsWith(NsBattle, StringComparison.Ordinal) && n.EndsWith("GameSimulation", StringComparison.Ordinal))
+          res[ck] = n.Substring(NsBattle.Length);
+      }
+      return res;
+    }
+
+    /// <summary>BattleManager.instance.m_simulation of the game whose GameAssembly.dll is at <paramref name="ga"/>, or 0.</summary>
+    static ulong ViewSim(ulong ga) {
+      ulong k = ClassAt(ga, "BattleView.BattleManager"); if (k == 0) return 0;
+      ulong sf = Ptr(k + 0xB8); if (sf == 0) return 0;
+      ulong bm = Ptr(sf); if (bm == 0) return 0;
+      return Ptr(bm + 0x10);
+    }
 
     /// <summary>The fight going on now, by a full memory pass (about a second; CurrentSim is the cheap way): its
     /// simulation and stage id (false = none running).</summary>
@@ -1422,12 +1543,9 @@ namespace RealmForge {
       ulong ga = 0;
       try { foreach (ProcessModule m in ps[0].Modules) if (string.Equals(m.ModuleName, "GameAssembly.dll", StringComparison.OrdinalIgnoreCase)) ga = (ulong)(long)m.BaseAddress; } catch (Exception) { }
       if (ga == 0) return false;
+      if (ga != simGa || ps[0].Id != simPid) ForgetClasses();
       simGa = ga;
-      var klass = new HashSet<ulong>();
-      foreach (var rva in new ulong[] { 0, 0, 0, 0 }) {
-        var kb = Read(ga + rva, 8); ulong k = kb != null ? BitConverter.ToUInt64(kb, 0) : 0;
-        if (k != 0) klass.Add(k);
-      }
+      var klass = new HashSet<ulong>(SimKlasses(ga).Keys);
       if (klass.Count == 0) return false;
       regs = Regions();
       var found = new List<ulong>();
@@ -1454,9 +1572,8 @@ namespace RealmForge {
       return true;
     }
 
-    // BattleView.BattleManager: class address, static `instance` at static_fields + 0x0, `m_simulation` 0x10;
-    // the class's static fields at 0xB8
-    const ulong BattleManagerRva = 0;
+    // BattleView.BattleManager (ViewSim): static `instance` at static_fields + 0x0, `m_simulation` 0x10; the class's
+    // static fields at 0xB8
 
     /// <summary>The simulation the battle view holds now (BattleManager.instance.m_simulation), or 0. Cheap: four
     /// pointer reads, no scan. The game keeps the last one after a fight ends, so check SimClock's state.</summary>
@@ -1467,15 +1584,12 @@ namespace RealmForge {
         // the game (re)started: its handle and GameAssembly's base anew
         if (ps[0].Id != simPid || H == IntPtr.Zero) H = OpenProcess(0x0410, false, ps[0].Id);
         if (H == IntPtr.Zero) return 0;
-        simGa = 0;
+        simGa = 0; ForgetClasses();
         try { foreach (ProcessModule m in ps[0].Modules) if (string.Equals(m.ModuleName, "GameAssembly.dll", StringComparison.OrdinalIgnoreCase)) simGa = (ulong)(long)m.BaseAddress; } catch (Exception) { }
         if (simGa == 0) return 0;
         simPid = ps[0].Id;
       }
-      ulong k = Ptr(simGa + BattleManagerRva); if (k == 0) return 0;
-      ulong sf = Ptr(k + 0xB8); if (sf == 0) return 0;
-      ulong bm = Ptr(sf); if (bm == 0) return 0;
-      return Ptr(bm + 0x10);
+      return ViewSim(simGa);
     }
 
     /// <summary>The stage id of a simulation (_BattleData.iStageID), 0 if unknown.</summary>
@@ -1883,6 +1997,40 @@ namespace RealmForge {
       }
       return r.ToArray();
     }
+
+    /// <summary>An item's sub stats with their values: {stat id, iValue} pairs (EquipData.equips[uid].vViceAttrList; the value
+    /// is 0 while the stat is still hidden). Null when unreadable.</summary>
+    public static long[][] ReadItemSubs(EquipAddrs a, long uid) {
+      if (a == null || a.EquipData == 0) return null;
+      return ItemSubs(a.EquipData, uid);
+    }
+
+    static long[][] ItemSubs(ulong equipData, long uid) {
+      ulong eqs, it, vl; int ett, itt, vt;
+      if (equipData == 0 || !Field(equipData, "equips", out eqs, out ett) || ett != T_TABLE) return null;
+      if (!IntKey(eqs, uid, out it, out itt) || itt != T_TABLE) return null;
+      if (!Field(it, "vViceAttrList", out vl, out vt) || vt != T_TABLE) return null;
+      var r = new List<long[]>();
+      for (int i = 1; i <= 8; i++) {
+        ulong e, v, x; int et, tt, xt;
+        if (!IntKey(vl, i, out e, out et) || et != T_TABLE) break;
+        if (!Field(e, "iAttrId", out v, out tt) || tt != T_INT) continue;
+        long val = Field(e, "iValue", out x, out xt) && xt == T_INT ? (long)x : 0;
+        r.Add(new[] { (long)v, val });
+      }
+      return r.ToArray();
+    }
+
+    /// <summary>Is the item on the game's account now: 1 = yes, 0 = no (another account is in the game, or it was sold),
+    /// -1 = unknown (the item table is not found yet).</summary>
+    public static int ItemOnAccount(long uid) {
+      var lt = live; ulong eqs, it; int ett, itt;
+      if (lt == null || lt.EquipData == 0 || !Field(lt.EquipData, "equips", out eqs, out ett) || ett != T_TABLE) return -1;
+      return IntKey(eqs, uid, out it, out itt) && itt == T_TABLE ? 1 : 0;
+    }
+
+    /// <summary>Same as <see cref="ReadItemSubs"/>, from the live tables when the equip scan has not run.</summary>
+    public static long[][] ReadLiveItemSubs(long uid) { var lt = live; return lt == null ? null : ItemSubs(lt.EquipData, uid); }
 
     static long[] IntArray(ulong t) {
       var r = new List<long>();
@@ -2680,6 +2828,8 @@ namespace RealmForge {
 //        401 invalid_token
 //   POST {site}/api/extractor/plans/{id}                body {"status":"done"|"cancelled"}
 //        200 {ok:true} | 401 | 404 not_found
+// The same reply may carry  locate: {id, purpose:"recast", createdAt, item:{...a plan item, heroUid, heroName}|null}|null  -
+// a «Найти в игре» request from the site (src/LocateGuide.cs); older sites omit it.
 // The site only stores builds; the extractor reads the game (read-only) and shows hints. Nothing is sent to the game.
 
 
@@ -2734,12 +2884,21 @@ namespace RealmForge {
     public List<PlanItem> Items = new List<PlanItem>();
   }
 
+  /// <summary>A «Найти в игре» request: the item to show the player in the game (Item null: not in the site's last snapshot).</summary>
+  public sealed class LocateRequest {
+    public string Id, Purpose, CreatedAt;
+    public PlanItem Item;
+    public long HeroUid;
+    public string HeroName;
+  }
+
   public enum PlansStatus { Ok, InvalidToken, NotFound, ServerError, Unreachable, Unexpected }
 
   public sealed class PlansResult {
     public PlansStatus Status;
     public int HttpCode;
     public List<Plan> Plans = new List<Plan>();
+    public LocateRequest Locate;   // null: no pending request
     public string Details;
   }
 
@@ -2817,6 +2976,7 @@ namespace RealmForge {
         if (parsePlans) {
           object v; var list = obj.TryGetValue("plans", out v) ? v as List<object> : null;
           if (list != null) foreach (var p in list) { var plan = ParsePlan(MiniJson.AsObject(p)); if (plan != null) r.Plans.Add(plan); }
+          object lv; if (obj.TryGetValue("locate", out lv)) r.Locate = ParseLocate(MiniJson.AsObject(lv));
         }
         return r;
       }
@@ -2878,11 +3038,37 @@ namespace RealmForge {
       if (string.IsNullOrEmpty(p.Id) || p.HeroUid <= 0) return null;
       object v; var items = o.TryGetValue("items", out v) ? v as List<object> : null;
       if (items != null) foreach (var x in items) {
-        var d = MiniJson.AsObject(x); if (d == null) continue;
+        var it = ParseItem(MiniJson.AsObject(x));
+        if (it != null) p.Items.Add(it);
+      }
+      p.Items.Sort((a, b) => a.Slot.CompareTo(b.Slot));
+      return p.Items.Count > 0 ? p : null;
+    }
+
+    static LocateRequest ParseLocate(Dictionary<string, object> o) {
+      if (o == null) return null;
+      string id = MiniJson.GetString(o, "id");
+      if (string.IsNullOrEmpty(id) || id.Length > 64) return null;
+      string purpose = MiniJson.GetString(o, "purpose") ?? "recast";
+      if (purpose != "recast") return null;
+      var r = new LocateRequest { Id = id, Purpose = purpose, CreatedAt = Clip(MiniJson.GetString(o, "createdAt"), 40) };
+      object iv;
+      var d = o.TryGetValue("item", out iv) ? MiniJson.AsObject(iv) : null;
+      r.Item = ParseItem(d);
+      if (r.Item != null) {
+        r.HeroUid = Num(d, "heroUid");
+        r.HeroName = Clip(MiniJson.GetString(d, "heroName"), 100);
+      }
+      return r;
+    }
+
+    static PlanItem ParseItem(Dictionary<string, object> d) {
+      {
+        if (d == null) return null;
         var it = new PlanItem();
         it.Slot = (int)Num(d, "slot");
         it.Uid = Num(d, "uid");
-        if (it.Uid <= 0 || it.Slot < 0 || it.Slot > 4) continue;
+        if (it.Uid <= 0 || it.Slot < 0 || it.Slot > 4) return null;
         it.SlotName = MiniJson.GetString(d, "slotName") ?? ("#" + it.Slot);
         it.Name = MiniJson.GetString(d, "name") ?? ("#" + it.Uid);
         it.SetName = MiniJson.GetString(d, "setName");
@@ -2904,10 +3090,8 @@ namespace RealmForge {
         it.Subs = Lines(d, "subs", "text", "rolls");
         Card(d, out it.Main, out it.Quality, out it.QualityName);
         it.SetBonus = Lines(d, "setBonus", "text", "pieces");
-        p.Items.Add(it);
+        return it;
       }
-      p.Items.Sort((a, b) => a.Slot.CompareTo(b.Slot));
-      return p.Items.Count > 0 ? p : null;
     }
   }
 }

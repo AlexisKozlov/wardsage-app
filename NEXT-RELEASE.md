@@ -11,7 +11,9 @@ ProductVersion → `node tools/release-app.mjs --key D:/RealmForge/keys/realmfor
 
 Optional `### Heading` lines inside a `## RU` / `## EN` section split the update window's notes into titled groups (the headings are left out of the «What's new» page).
 
-## Проверить в игре (до выпуска 1.6.57)
+## Проверить в игре (до выпуска «Найти в игре», следующая версия)
+
+Заметка для следующей версии (вернуть в RU/EN, когда сайт включит кнопку): «Найти в игре» для Преобразования: нажми кнопку на сайте, и программа обведёт вещь рамкой в Инвентаре и подскажет, как открыть её в Литейной. Программа только показывает, нажимаешь ты сам.
 
 «Найти в игре» (Преобразование) сделано только на чтении и подсказках, ни одного клика. Не проверяется без живой игры (не превращать эти пункты
 в строки заметок; список ниже без «-», чтобы bump-version.mjs не взял их в заметки):
@@ -30,18 +32,4 @@ Optional `### Heading` lines inside a `## RU` / `## EN` section split the update
 
 ## RU
 
-- «Найти в игре» для Преобразования: нажми кнопку на сайте, и программа обведёт вещь рамкой в Инвентаре и подскажет, как открыть её в Литейной. Программа только показывает, нажимаешь ты сам.
-- Программа сообщает сайту, какие обновления игры скачаны (только адреса файлов обновлений из журнала игры) — чтобы данные сайта обновлялись быстрее.
-- Окно программы больше не падает с ошибкой «Operation aborted», если Windows запустила программу после перезагрузки или сна: встроенный браузер перезапускается сам.
-- Данные гильдии для сайта теперь включают войну гильдий: атаки, победы и защиту каждого участника, а также раунды войны.
-- Сообщество в программе: новые ответы в ваших темах со счётчиком и кнопка «Сообщить об ошибке».
-- Работает с игрой 1.6.39: запись боя снова работает после обновления игры.
-
 ## EN
-
-- «Find in game» for Recast: press the button on the site and the program frames the item in the Inventory and tells how to open it in the Foundry. It only shows hints; you do the clicks.
-- The app tells the site which game updates were downloaded (only the update file addresses from the game's log), so the site's data updates sooner.
-- The app window no longer fails with “Operation aborted” when Windows starts it after a reboot or sleep: the built-in browser restarts by itself.
-- The guild data sent to the site now includes the guild war: each member's attacks, wins and defense, plus the war rounds.
-- Community in the app: new replies in your topics with a counter, and a “Report a bug” button.
-- Works with game version 1.6.39: fight recording works again after the game update.
