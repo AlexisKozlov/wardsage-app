@@ -24,7 +24,7 @@ namespace RealmForge {
 
     [STAThread]
     static int Main(string[] args) {
-      { int di = Array.IndexOf(args, "--dump-guild"); if (di >= 0 && di + 1 < args.Length) { RFX.DumpGuild(args[di + 1]); return 0; } }   // diagnostics: the guild payload to a file, nothing sent
+      { int di = Array.IndexOf(args, "--dump-guild"); if (di >= 0 && di + 1 < args.Length) { RFX.DumpGuild(args[di + 1], Version); return 0; } }   // diagnostics: the guild payload to a file, nothing sent
       { int dg = Array.IndexOf(args, "--dump-gvg"); if (dg >= 0 && dg + 1 < args.Length) { RFX.DumpGvg(args[dg + 1]); return 0; } }   // diagnostics: the guild war data to a file, nothing sent
       bool created;
       single = new Mutex(true, Channel.MutexName, out created);

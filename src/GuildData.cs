@@ -78,6 +78,32 @@ namespace RealmForge {
       return t != 0 && FieldX(t, "m_UnionInfo", out ui, out ut) && ut == T_TABLE && FieldX(ui, "iMemberNum", out v, out vt) && AsLong(v, vt, out n) && n > 0 ? n : 0;
     }
 
+    /// <summary>One candidate guild table as the search sees it.</summary>
+    class GuildCand { public ulong T; public bool UnionInfo; public int N = -1; public bool Self, Full; public long Stated; }
+
+    static GuildCand ProbeGuild(ulong t, long selfUid) {
+      var c = new GuildCand { T = t, UnionInfo = HasTableX(t, "m_UnionInfo") };
+      if (!c.UnionInfo) return c;
+      c.N = GuildMembers(t, selfUid, out c.Self);
+      c.Stated = GuildStated(t);
+      c.Full = !GuildPayload.ListShort(c.N, c.Stated);
+      return c;
+    }
+
+    // usable: has m_UnionInfo and a member list. The one that lists the player wins over any other, then one whose list is not
+    // short; among equals the larger list
+    static bool GuildUsable(GuildCand c) { return c.UnionInfo && c.N >= 0; }
+    static bool GuildBetter(GuildCand c, GuildCand best) {
+      if (!GuildUsable(c)) return false;
+      if (best == null) return true;
+      if (c.Self != best.Self) return c.Self;
+      if (c.Full != best.Full) return c.Full;
+      return c.N > best.N;
+    }
+
+    /// <summary>What the last guild search found (for the log line when no table is chosen).</summary>
+    public static string GuildFindNote = "not searched yet";
+
     /// <summary>Forget the chosen guild table: it is looked for again at the next read (not sooner than the rescan delay).</summary>
     static void ForgetGuildTable() { guildTab = 0; }
 
@@ -89,25 +115,28 @@ namespace RealmForge {
       if (ps[0].Id != guildPid) { guildTab = guildWeekTab = guildClassicTab = guildTwoTab = guildDivTab = 0; guildPid = ps[0].Id; guildLastFind = 0; H = OpenProcess(0x0410, false, ps[0].Id); }
       if (H == IntPtr.Zero) H = OpenProcess(0x0410, false, ps[0].Id);
       if (H == IntPtr.Zero) return false;
-      bool self;
-      int cn;
+      bool self; int cn;
       if (guildTab != 0 && HasTableX(guildTab, "m_UnionInfo") && (cn = GuildMembers(guildTab, selfUid, out self)) >= 0 && (self || selfUid <= 0)
           && !GuildPayload.ListShort(cn, GuildStated(guildTab)) && Environment.TickCount - guildFoundAt < GuildRepickMs) return true;
       guildTab = guildWeekTab = guildClassicTab = guildTwoTab = guildDivTab = 0;
-      if (guildLastFind != 0 && Environment.TickCount - guildLastFind < rescanMs) return false;
+      if (guildLastFind != 0 && Environment.TickCount - guildLastFind < rescanMs) {
+        GuildFindNote = "searched " + ((Environment.TickCount - guildLastFind) / 1000) + " s ago, next search in " + ((rescanMs - (Environment.TickCount - guildLastFind)) / 1000) + " s";
+        return false;
+      }
       guildLastFind = Environment.TickCount;
       regs = Regions();
       var owners = OwnersOf(FindLuaStringsFast(new[] { KUnion, KWeekBoss, KClassicBoss, KTwoHeads, KDividend }), 1024);
-      List<ulong> l; int bestN = -1; bool bestSelf = false, bestFull = false;
+      List<ulong> l; int bestN = -1, cands = 0, usable = 0, withSelf = 0; GuildCand best = null;
       if (owners.TryGetValue(KUnion, out l))
         foreach (var t in l) {
-          if (!HasTableX(t, "m_UnionInfo")) continue;
-          int n = GuildMembers(t, selfUid, out self);
-          if (n < 0) continue;
-          // the table that lists the player wins over any other, then one whose list is not short; among equals the larger list
-          bool full = !GuildPayload.ListShort(n, GuildStated(t));
-          if ((self && !bestSelf) || (self == bestSelf && ((full && !bestFull) || (full == bestFull && n > bestN)))) { bestN = n; bestSelf = self; bestFull = full; guildTab = t; }
+          cands++;
+          var c = ProbeGuild(t, selfUid);
+          if (GuildUsable(c)) { usable++; if (c.Self) withSelf++; }
+          if (GuildBetter(c, best)) best = c;
         }
+      if (best != null) guildTab = best.T;
+      GuildFindNote = "candidates " + cands + ", usable " + usable + ", with the player " + withSelf
+                      + (best != null ? ", chosen " + best.N + " members" : "");
       guildFoundAt = Environment.TickCount;
       bestN = -1;
       if (owners.TryGetValue(KWeekBoss, out l))
@@ -206,14 +235,98 @@ namespace RealmForge {
       return GuildPayload.Build(union, members, week, classic, selfUid, atMs, out refreshSoon, out memberCount, extra);
     }
 
-    /// <summary>Diagnostics (app --dump-guild file): the payload to a file, nothing is sent. Returns a short result line.</summary>
-    public static string DumpGuild(string path) {
-      try {
+    public static string DumpGuild(string path) { return DumpGuild(path, null); }
+
+    static string Hex(ulong a) { return "\"0x" + a.ToString("x") + "\""; }
+    static string JBool(bool b) { return b ? "true" : "false"; }
+    static long NumAt(ulong t, string key) { ulong v; int tt; long n; return t != 0 && FieldX(t, key, out v, out tt) && AsLong(v, tt, out n) ? n : 0; }
+    static ulong TabAt(ulong t, string key) { ulong v; int tt; return t != 0 && FieldX(t, key, out v, out tt) && tt == T_TABLE ? v : 0; }
+
+    /// <summary>Diagnostics (app --dump-guild file; read-only, nothing is sent): the player id, every candidate guild table the
+    /// search finds and which one is chosen, and the payload that would be built. Never throws; returns a short result line.</summary>
+    public static string DumpGuild(string path, string appVersion) {
+      var sb = new StringBuilder("{\"app\":" + MiniJson.Quote(appVersion ?? SyncClient.Version) + ",\"at\":" + MiniJson.Quote(DateTime.UtcNow.ToString("o")));
+      string result = "ok";
+      Action<string, Action> part = (name, body) => {
+        int mark = sb.Length;
+        try { body(); }
+        catch (Exception e) { sb.Length = mark; sb.Append(",\"" + name + "Error\":" + MiniJson.Quote(e.GetType().Name + ": " + e.Message)); result = "error in " + name; }
+      };
+      long self = 0;
+      part("process", () => {
+        var ps = GameInfo.GameProcesses();
+        sb.Append(",\"gameRunning\":" + JBool(ps.Length > 0));
+        if (ps.Length == 0) return;
+        H = OpenProcess(0x0410, false, ps[0].Id);
+        sb.Append(",\"pid\":" + ps[0].Id + ",\"opened\":" + JBool(H != IntPtr.Zero));
+        if (H != IntPtr.Zero) regs = Regions();
+      });
+      if (H == IntPtr.Zero || regs == null) { sb.Append('}'); try { File.WriteAllText(path, sb.ToString(), new UTF8Encoding(false)); } catch (Exception) { } return "game not open"; }
+      // the player id: the account sync takes PlayerData's m_Uid (the table owning m_mNegSpecialItem with the largest such field)
+      part("player", () => {
+        sb.Append(",\"player\":{\"syncClientPlayer\":" + SyncClient.Player + ",\"source\":\"PlayerData.m_Uid (owner of m_mNegSpecialItem, largest; this process has not synced)\",\"candidates\":[");
+        var owners = OwnersOf(FindLuaStringsFast(new[] { "m_mNegSpecialItem" }), 4096);
+        List<ulong> l; int i = 0; ulong largest = 0; int bestN = -1;
+        if (owners.TryGetValue("m_mNegSpecialItem", out l))
+          foreach (var t in l) {
+            ulong v, pv; int tt, pt; long uidCached = 0, uidText = NumAt(t, "m_Uid");
+            if (Field(t, "m_Uid", out pv, out pt)) AsLong(pv, pt, out uidCached);
+            int n = Field(t, "m_mNegSpecialItem", out v, out tt) && tt == T_TABLE ? EntryCount(v) : -1;
+            if (n > bestN) { bestN = n; largest = t; }
+            if (i++ > 0) sb.Append(',');
+            sb.Append("{\"t\":" + Hex(t) + ",\"uid\":" + uidText + ",\"uidByFieldCache\":" + uidCached + ",\"negSpecialItems\":" + n + ",\"hasCoin\":" + JBool(HasNum(t, "m_Coin")) + "}");
+          }
+        self = NumAt(largest, "m_Uid");
+        sb.Append("],\"chosen\":" + (largest != 0 ? Hex(largest) : "null") + ",\"selfUid\":" + self + "}");
+      });
+      // every table owning the key m_vApplyUnionIdRecord
+      part("guild", () => {
+        var tstr = FindLuaStringsFast(new[] { KUnion });
+        sb.Append(",\"guild\":{\"keyStrings\":" + tstr.Count + ",\"candidates\":[");
+        var owners = OwnersOf(tstr, 1024);
+        List<ulong> l; int i = 0; GuildCand best = null;
+        string[] keys = { "m_UnionInfo", "m_vMembers", "m_SelfUnionInfo", "m_MasterInf", "m_vApplyUnionIdRecord", "m_vApplyList" };
+        if (owners.TryGetValue(KUnion, out l))
+          foreach (var t in l) {
+            if (i++ > 0) sb.Append(',');
+            int mark = sb.Length;
+            try {
+              var c = ProbeGuild(t, self);
+              if (GuildBetter(c, best)) best = c;
+              sb.Append("{\"t\":" + Hex(t) + ",\"keys\":[");
+              int k = 0;
+              foreach (var key in keys) { ulong v; int tt; if (FieldX(t, key, out v, out tt)) { if (k++ > 0) sb.Append(','); sb.Append(MiniJson.Quote(key)); } }
+              sb.Append("],\"keysByFieldCache\":[");
+              k = 0;
+              foreach (var key in keys) { ulong v; int tt; if (Field(t, key, out v, out tt)) { if (k++ > 0) sb.Append(','); sb.Append(MiniJson.Quote(key)); } }
+              ulong ui = TabAt(t, "m_UnionInfo"), su = TabAt(t, "m_SelfUnionInfo"), ba = TabAt(ui, "stBaseAttr");
+              ulong nm; int nt; string name = ba != 0 && FieldX(ba, "sUnionName", out nm, out nt) && (nt == T_SSTR || nt == T_LSTR) ? ReadLuaString(nm) : null;
+              sb.Append("],\"unionId\":" + NumAt(ui, "iUnionId") + ",\"name\":" + MiniJson.Quote(name ?? "") + ",\"memberNum\":" + NumAt(ui, "iMemberNum")
+                        + ",\"selfUnionId\":" + NumAt(su, "iUnionId") + ",\"members\":" + c.N + ",\"hasSelf\":" + JBool(c.Self) + ",\"short\":" + JBool(c.UnionInfo && !c.Full) + ",\"firstUids\":[");
+              ulong mv = TabAt(t, "m_vMembers"); int u = 0;
+              if (mv != 0) foreach (var e in IntEntries(mv)) {
+                if (e.Tt != T_TABLE || u >= 3) continue;
+                if (u++ > 0) sb.Append(',');
+                sb.Append(NumAt(TabAt(e.Val, "stPlayerIdType"), "iUid"));
+              }
+              sb.Append("]}");
+            } catch (Exception e) { sb.Length = mark; sb.Append("{\"t\":" + Hex(t) + ",\"error\":" + MiniJson.Quote(e.Message) + "}"); }
+          }
+        sb.Append("],\"wouldChoose\":" + (best != null ? Hex(best.T) : "null") + ",\"why\":" + MiniJson.Quote(best == null ? "no usable candidate (needs m_UnionInfo and m_vMembers)"
+                  : (best.Self ? "lists the player" : "no candidate lists the player") + ", " + (best.Full ? "not short" : "short of memberNum") + ", " + best.N + " members") + "}");
+      });
+      // the real read as the app does it (search, choice, payload)
+      part("read", () => {
+        guildTab = 0; guildLastFind = 0;
         bool soon; int n; string skip;
-        string json = ReadGuildJson(0, 0, (long)(DateTime.UtcNow - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalMilliseconds, out soon, out n, out skip);
-        File.WriteAllText(path, json ?? "null", new UTF8Encoding(false));
-        return json == null ? (skip != null ? "not whole (" + skip + "), members " + n : "no guild data found") : "members " + n;
-      } catch (Exception e) { try { File.WriteAllText(path, "error: " + e); } catch (Exception) { } return "error " + e.Message; }
+        string json = ReadGuildJson(0, self, (long)(DateTime.UtcNow - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalMilliseconds, out soon, out n, out skip);
+        sb.Append(",\"read\":{\"chosen\":" + (guildTab != 0 ? Hex(guildTab) : "null") + ",\"note\":" + MiniJson.Quote(GuildFindNote) + ",\"skip\":" + (skip != null ? MiniJson.Quote(skip) : "null")
+                  + ",\"members\":" + n + ",\"payloadBytes\":" + (json != null ? json.Length : 0) + "}");
+        if (result == "ok") result = json != null ? "members " + n : skip != null ? "not whole (" + skip + "), members " + n : "no guild data found";
+      });
+      sb.Append('}');
+      try { File.WriteAllText(path, sb.ToString(), new UTF8Encoding(false)); } catch (Exception e) { return "error writing " + e.Message; }
+      return result;
     }
   }
 

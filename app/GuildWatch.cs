@@ -45,7 +45,7 @@ namespace RealmForge {
             return;
           }
           if (json == null) {
-            if (!missLogged) { missLogged = true; Log.Write("guild: no guild table (no guild, or the data is not found yet)"); }
+            if (!missLogged) { missLogged = true; Log.Write("guild: no guild table (no guild, or the data is not found yet): " + RFX.GuildFindNote); }
             return;
           }
           missLogged = false;
