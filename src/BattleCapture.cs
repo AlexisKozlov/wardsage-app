@@ -3,8 +3,8 @@
 // the fight's length. Kept in %APPDATA%\RealmForge\battles (the last 30) and sent with the account snapshot.
 //
 // The game keeps its open windows in UIStatic's UIInstance: a script table form id -> form, the id being the hash of the
-// form's name (str_hash, as the language keys: «Form_CharactorMain» = 0). The table is found once (from a
-// node of a known form), then read every poll: a few kilobytes.
+// form's name (str_hash, as the language keys; the ids come with the layout data from the server, src/Layout.cs). The
+// table is found once (from a node of a known form), then read every poll: a few kilobytes.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -14,10 +14,19 @@ namespace RealmForge {
   public static partial class RFX {
     // the result screens: the guild dragon, the weekly guild boss, the rest, the arena (CHAPTERTYPE.Pvp ->
     // Form_PvpBattleEnd) and the friendly arena fight (Form_SparringPvpBattleEnd); ids = UIDefines (str_hash of the name)
-    static readonly long[] EndFormIds = { 0, 0, 0, 0, 0 };
+    static readonly string[] EndFormKeys = { "ID_FORM_UNIONBOSSBATTLEEND", "ID_FORM_UNIONWEEKBOSSBATTLEEND", "ID_FORM_BATTLEEND", "ID_FORM_PVPBATTLEEND", "ID_FORM_SPARRINGPVPBATTLEEND" };
     static readonly string[] EndFormNames = { "Form_UnionBossBattleEnd", "Form_UnionWeekBossBattleEnd", "Form_BattleEnd", "Form_PvpBattleEnd", "Form_SparringPvpBattleEnd" };
     // forms whose node leads to UIInstance: the hero screen, the inventory, the battle screen, the result screens
-    static readonly long[] UiAnchorIds = { FormCharactorMainId, FormBackpackId, 0, 0, 0, 0, 0, 0 };
+    static readonly string[] UiAnchorKeys = { "ID_FORM_CHARACTORMAIN", "ID_FORM_BACKPACKINTEGRATION", "ID_FORM_BATTLE", "ID_FORM_UNIONBOSSBATTLEEND",
+      "ID_FORM_UNIONWEEKBOSSBATTLEEND", "ID_FORM_BATTLEEND", "ID_FORM_PVPBATTLEEND", "ID_FORM_SPARRINGPVPBATTLEEND" };
+
+    /// <summary>The ids of these forms from the layout data; empty without it.</summary>
+    static long[] FormIds(string[] keys) {
+      var ly = Layout.Current; if (ly == null) return new long[0];
+      var r = new long[keys.Length];
+      for (int i = 0; i < keys.Length; i++) r[i] = ly.Form(keys[i]);
+      return r;
+    }
     static ulong uiTable; static int uiLastFind;
 
     static bool SameId(long key, long id) { return key == id || (id < 0 && key == (long)(uint)id); }
@@ -28,6 +37,8 @@ namespace RealmForge {
       uiTable = 0;
       if (uiLastFind != 0 && Environment.TickCount - uiLastFind < rescanMs) return 0;
       uiLastFind = Environment.TickCount;
+      var anchors = FormIds(UiAnchorKeys);
+      if (anchors.Length == 0) return 0;   // no layout data: the game's windows are not looked for
       // its own look at the game: the handle and the memory regions of now (no equip scan may have run since the start,
       // and the regions change as the game allocates)
       var ps = GameInfo.GameProcesses();
@@ -41,7 +52,7 @@ namespace RealmForge {
         for (int i = 0; i + 32 <= len; i += 8) {
           if (BitConverter.ToInt32(buf, i + 24) != T_INT || BitConverter.ToInt32(buf, i + 8) != T_TABLE) continue;
           long k = BitConverter.ToInt64(buf, i + 16);
-          foreach (var id in UiAnchorIds) if (SameId(k, id)) { lock (nodes) nodes.Add(b0 + (ulong)i); break; }
+          foreach (var id in anchors) if (SameId(k, id)) { lock (nodes) nodes.Add(b0 + (ulong)i); break; }
         }
       });
       if (nodes.Count == 0) return 0;
@@ -79,14 +90,15 @@ namespace RealmForge {
     public static List<KeyValuePair<int, ulong>> BattleEndForms(out List<string> marks) {
       var res = new List<KeyValuePair<int, ulong>>(); marks = new List<string>();
       ulong t = UiKnown ? uiTable : 0; if (t == 0) return res;
+      var endIds = FormIds(EndFormKeys); if (endIds.Length == 0) return res;
       var h = Read(t, 56); if (h == null) return res;
       int nn = 1 << h[11]; var nb = Read(BitConverter.ToUInt64(h, 24), nn * 32); if (nb == null) return res;
       for (int i = 0; i < nn; i++) {
         int o = i * 32;
         if (BitConverter.ToInt32(nb, o + 24) != T_INT || BitConverter.ToInt32(nb, o + 8) != T_TABLE) continue;
         long k = BitConverter.ToInt64(nb, o + 16);
-        for (int e = 0; e < EndFormIds.Length; e++) {
-          if (!SameId(k, EndFormIds[e])) continue;
+        for (int e = 0; e < endIds.Length; e++) {
+          if (!SameId(k, endIds[e])) continue;
           ulong f = BitConverter.ToUInt64(nb, o), v; int tt;
           long inst = Field(f, "____instanceId", out v, out tt) && tt == T_INT ? (long)v : 0;
           long frames = Field(f, "m_FightFramIdx", out v, out tt) && tt == T_INT ? (long)v : 0;
@@ -139,13 +151,14 @@ namespace RealmForge {
       var sb = new StringBuilder("ui table " + uiTable.ToString("X") + "\n");
       if (uiTable == 0) return sb.ToString();
       var h = Read(uiTable, 56); int nn = 1 << h[11]; var nb = Read(BitConverter.ToUInt64(h, 24), nn * 32);
+      var ends = FormIds(EndFormKeys); long battleId = FormId("ID_FORM_BATTLE"), mainId = FormCharactorMainId, invId = FormBackpackId;
       for (int i = 0; i < nn; i++) {
         int o = i * 32;
         if (BitConverter.ToInt32(nb, o + 24) != T_INT) continue;
         long k = BitConverter.ToInt64(nb, o + 16);
-        string name = k == FormCharactorMainId ? "Form_CharactorMain" : k == FormBackpackId ? "Form_BackpackIntegration" : "";
-        for (int e = 0; e < EndFormIds.Length; e++) if (SameId(k, EndFormIds[e])) name = EndFormNames[e];
-        if (SameId(k, 0)) name = "Form_Battle";
+        string name = mainId != 0 && k == mainId ? "Form_CharactorMain" : invId != 0 && k == invId ? "Form_BackpackIntegration" : "";
+        for (int e = 0; e < ends.Length; e++) if (SameId(k, ends[e])) name = EndFormNames[e];
+        if (battleId != 0 && SameId(k, battleId)) name = "Form_Battle";
         sb.Append(k).Append(' ').Append(BitConverter.ToInt32(nb, o + 8) == T_TABLE ? "table " : "other ").Append(name).Append('\n');
       }
       List<string> marks; BattleEndForms(out marks); sb.Append("battle end marks: ").Append(string.Join(" ", marks.ToArray())).Append('\n');

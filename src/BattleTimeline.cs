@@ -2,20 +2,20 @@
 // went off, sampled from the running simulation, plus the simulation's own record of the player's commands. The pure
 // part (events from samples, merging, JSON) is src/TimelineBuilder.cs. Only ReadProcessMemory: nothing is written.
 //
-// Offsets of this game build. objects: class pointer at 0x0.
+// Offsets of this game build; the classes, the type and status values and the read sizes come with the layout data
+// from the server (src/Layout.cs).
 //   CSharpBattle.Battle.GameSimulation: _EntityWorld 0x28, _FrameDataManager 0x38, _BattleData 0x48,
 //     _BattlePlayerManager 0x50, m_state 0xA4, <CurrentFrameIdx> 0xC4 (see src/BattleClock.cs).
 //   EntityWorld: _idEntities 0x20 (Dictionary<uint, IEntity>), _lTypeComponents 0x28 (Dictionary<int,
 //     DLRecordList<uint, IComponent>>, key = EComponentType), <SingleEntity> 0x58 (the world's single components).
 //   Entity: <m_uID> 0x10, _componentQuerys 0x20 (Dictionary<int, DLNode<int, IComponent>>, key = EComponentType).
 //   DLList/DLRecordList: _FirstNode 0x10; DLNode: iIndex 0x10, _data 0x18, _prev 0x20, _next 0x28.
-//   AbstractComponent: IsEnable 0x10, _entity 0x18. EComponentType: Dead 2, Attribute 5, Skill 8, Position 19, Anger 35,
-//     Card 42, OwnerRelation 62, Map 69.
-//   CardComponent (one per hero of the deck): iUid 0x20 (= hero uid), eState 0x24 (ECardStatus 0 running, 1 frozen,
-//     2 reborn, 3 delete), iCurRebornTime 0x28, iMaxRebornTime 0x2C, ePlaceFace 0x3C, iTowerUid 0x4C (the hero's entity
-//     on the field), eCardType 0x50 (0 hero, 1 soldier).
-//   DeadComponent: bTrigger 0x20, m_deadType 0x24 (EDeadType 0 killed, 2 retreat, 6 forced retreat).
-//   AngerComponent (rage): curState 0x20 (EAngerStatus 0 up, 1 down), fAnger 0x30, fMaxAnger 0x38 (Fix64: raw / 4096).
+//   AbstractComponent: IsEnable 0x10, _entity 0x18. EComponentType: the key of the component lists.
+//   CardComponent (one per hero of the deck): iUid 0x20 (= hero uid), eState 0x24 (ECardStatus), iCurRebornTime 0x28,
+//     iMaxRebornTime 0x2C, ePlaceFace 0x3C, iTowerUid 0x4C (the hero's entity on the field), eCardType 0x50 (heroes and
+//     soldiers).
+//   DeadComponent: bTrigger 0x20, m_deadType 0x24 (EDeadType: killed, retreat, forced retreat).
+//   AngerComponent (rage): curState 0x20 (EAngerStatus), fAnger 0x30, fMaxAnger 0x38 (Fix64).
 //   SkillComponent: bNextUseSuperManualSkill 0xB0, iUseSuperManualSkillFrameIdx 0xB4 (frame of the last ultimate).
 //   AttributeComponent: m_tableData 0x20 (CData_Unit_Element: m_ID 0x14), m_battleAttr 0x28 (BattleAttributeData:
 //     <fHp> 0x238, m_fMaxHp 0x240, Fix64).
@@ -27,16 +27,16 @@
 //     iLordPosition 0x22C (1 = the squad's lord), iLordFaction 0x230.
 //   FrameDataManager: _FrameRecord 0x30 -> FrameDataRecord: _vFrames 0x10, _vSuccessFrames 0x18 (Dictionary<uint frame,
 //     List<FrameIdxInfo>>); FrameIdxInfo: Idx 0x10, Cmd 0x14 (ushort), iUid 0x18 (the controller), Params 0x20 (int[]).
-//     SYNC_PUT_TOWER 1000 [unitId, x, y, face], SYNC_USE_POWERSKILL 2000 [unitId, x, y].
+//     SYNC_PUT_TOWER [unitId, x, y, face], SYNC_USE_POWERSKILL [unitId, x, y].
 //   OwnerRelationComponent (on every card entity, EntitySpawn.CreateCardEntity: AddComponent<OwnerRelation> then
 //     cUid = the card's controller; also on the towers): cUid 0x20, iSquadID 0x24, iLordPosition 0x28.
 //   Sides (the arena): heroes of controller 1 (the player) and 2 (the opponent's recorded defence) share one world and
 //     often the same uid, so a hero is (controller, uid); the controller of a card = its entity's OwnerRelation cUid.
-//   StatisticsComponent (world single, EComponentType Statistics 71): m_vDamageStatistics 0x20 (Dictionary<uint cUid,
+//   StatisticsComponent (world single): m_vDamageStatistics 0x20 (Dictionary<uint cUid,
 //     Dictionary<int unit, DamageStatisticsData>>); DamageStatisticsData: iBaseID 0x10, iHeroID 0x14, iPower 0x18,
 //     fDamageAmount 0x28 (long), fDamageAmountToBoss 0x30, fTreatmentAmount 0x38 (int), fAcceptDamageAmount 0x3C,
 //     fDamageOverflowAmount 0x58 — the objects the result's statistic lines (src/LiveTables.cs DumpBattleStats) are.
-//   Arena waves: WaveInfoComponent (world single, type 67): cWaveSysytem 0x28 -> WaveSystem: m_vActiveController 0x50
+//   Arena waves: WaveInfoComponent (world single): cWaveSysytem 0x28 -> WaveSystem: m_vActiveController 0x50
 //     (Dictionary<uint ctl, WaveControllerNode>; 100 = side 1's waves, 101 = side 2's) -> WaveControllerNode: cUid 0x10,
 //     m_NodeData 0x28 (stWaveNodeData: iMinFrame 0, iMaxFrame 4, iRemainCount 8, iMaxCount 0xC, iRemainPopulation 0x10,
 //     iMaxPopulation 0x14, iActiveNode 0x18 -> 0x40 in the node), eState 0x44, iTimeDeviation 0x50, iMaxWaveCount 0x5C,
@@ -47,9 +47,8 @@
 //     Not verified on a live arena fight yet.
 //   Unit trace (arena, ReadUnits): every PositionComponent of the world -> _entity 0x18 -> Entity <m_uID> 0x10; once per
 //     entity: its AttributeComponent (m_tableData m_ID, m_battleAttr) and OwnerRelation cUid.
-//   .NET collections: Dictionary entries 0x18, count 0x20; Entry<int|uint, ref> = {hashCode, next, key, value@8}, 0x18
-//     bytes; Entry<uint, int> = {hashCode, next, key, value}, 0x10 bytes; List<T> _items 0x10, _size 0x18; arrays:
-//     max_length 0x18, data 0x20; T[,] bounds 0x10 ({length, lower} x 2).
+//   .NET collections: Dictionary entries 0x18, count 0x20; Entry<int|uint, ref> = {hashCode, next, key, value@8};
+//     Entry<uint, int> = {hashCode, next, key, value}; List<T> _items 0x10, _size 0x18.
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -58,9 +57,11 @@ using System.Threading;
 
 namespace RealmForge {
   public static partial class RFX {
-    const int CT_Dead = 2, CT_Attribute = 5, CT_Skill = 8, CT_Position = 19, CT_Anger = 35, CT_Card = 42, CT_Owner = 62, CT_WaveInfo = 67,
-              CT_Map = 69, CT_Statistics = 71;
-    // the classes checked on the objects read (addresses per game build: ClassRvas in src/BattleClock.cs)
+    /// <summary>A component type (EComponentType) from the layout data.</summary>
+    static int CT(string name) { return Layout.Current.Const("EComponentType." + name); }
+    static int Hdr(string name) { return Layout.Current.Hdr(name); }
+    static int Span(string name) { return Layout.Current.Span(name); }
+    // the classes checked on the objects read (their addresses: layout data from the server)
     const string ClsCard = NsBattle + "CardComponent", ClsAnger = NsBattle + "AngerComponent", ClsSkill = NsBattle + "SkillComponent",
                  ClsFrameIdxInfo = NsBattle + "FrameIdxInfo", ClsHeroInfo = NsBattle + "BattleHeroInfo";
     const string ClsOwner = NsBattle + "OwnerRelationComponent", ClsStats = NsBattle + "StatisticsComponent",
@@ -68,11 +69,11 @@ namespace RealmForge {
                  ClsWaveCtl = NsBattle + "WaveControllerNode", ClsAttr = NsBattle + "AttributeComponent";
 
     static ulong P64(ulong a) { var b = a != 0 ? Read(a, 8) : null; return b != null ? BitConverter.ToUInt64(b, 0) : 0; }
-    static double Fix(byte[] b, int o) { return BitConverter.ToInt64(b, o) / 4096.0; }
+    static double Fix(byte[] b, int o) { return BitConverter.ToInt64(b, o) / (double)Layout.Current.Const("Fix64.ONE"); }
 
     /// <summary>A sample wants a hero's battle stats (set by the recorder: only until it has them).</summary>
     public static Func<HeroSample, bool> wantBase;
-    /// <summary>BattleAttributeData.m_attr (stBattleBaseAttr at +0x10, Fix64 = raw / 4096; percent stats in percent units)
+    /// <summary>BattleAttributeData.m_attr (stBattleBaseAttr at +0x10, Fix64; percent stats in percent units)
     /// by SoldierAttribute id as BattleAttributeData.GetOriAttr maps them, and its iPower.</summary>
     static readonly int[] BaseMap = {
       1, 0x88, 2, 0x00, 3, 0x08, 4, 0x18, 5, 0x40, 6, 0x38, 8, 0x80, 10, 0x78, 11, 0x28, 12, 0x58, 13, 0x30, 14, 0x90, 15, 0x10,
@@ -98,14 +99,14 @@ namespace RealmForge {
       return d.ContainsKey(2) && d[2] > 0 ? d : null;
     }
 
-    /// <summary>An int[] (max_length 0x18, data 0x20), null when unreadable or longer than max.</summary>
+    /// <summary>An int[], null when unreadable or longer than max.</summary>
     static int[] IntArray(ulong arr, int max) {
-      var h = arr != 0 ? Read(arr + 0x18, 8) : null;
+      var h = arr != 0 ? Read(arr + (ulong)Hdr("arrLen"), 8) : null;
       if (h == null) return null;
       long n = BitConverter.ToInt64(h, 0);
       if (n < 0 || n > max) return null;
       if (n == 0) return new int[0];
-      var b = Read(arr + 0x20, (int)n * 4);
+      var b = Read(arr + (ulong)Hdr("arrData"), (int)n * 4);
       if (b == null) return null;
       var r = new int[n];
       for (int i = 0; i < n; i++) r[i] = BitConverter.ToInt32(b, i * 4);
@@ -121,10 +122,11 @@ namespace RealmForge {
       var h = dict != 0 ? Read(dict, 0x28) : null; if (h == null) return res;
       ulong ent = BitConverter.ToUInt64(h, 0x18); int count = BitConverter.ToInt32(h, 0x20);
       if (ent == 0 || count <= 0 || count > max) return res;
-      var e = Read(ent + 0x18, 8 + count * 0x18); if (e == null) return res;
+      int al = Hdr("arrLen"), d0 = Hdr("arrData") - al, es = Layout.Current.Size("DictEntryRef");
+      var e = Read(ent + (ulong)al, d0 + count * es); if (e == null) return res;
       if (BitConverter.ToInt64(e, 0) < count) return res;
       for (int i = 0; i < count; i++) {
-        int o = 8 + i * 0x18;
+        int o = d0 + i * es;
         if (BitConverter.ToInt32(e, o) < 0) continue;   // a free entry
         res.Add(new KeyValuePair<uint, ulong>(BitConverter.ToUInt32(e, o + 8), BitConverter.ToUInt64(e, o + 0x10)));
       }
@@ -146,7 +148,7 @@ namespace RealmForge {
       if (list == 0) return res;
       var seen = new HashSet<ulong>();
       for (ulong n = P64(list + 0x10); n != 0 && res.Count < max && seen.Add(n); ) {
-        var b = Read(n, 0x30); if (b == null) break;
+        var b = Read(n, Span("DLNode")); if (b == null) break;
         ulong d = BitConverter.ToUInt64(b, 0x18); if (d != 0) res.Add(d);
         n = BitConverter.ToUInt64(b, 0x28);
       }
@@ -171,11 +173,11 @@ namespace RealmForge {
       var res = new List<int[]>();
       ulong mgr = P64(sim + 0x50); if (mgr == 0) return res;
       foreach (var pl in DictRefs(P64(mgr + 0x20), 16)) {
-        var pb = Read(pl.Value, 0x30); if (pb == null) continue;
+        var pb = Read(pl.Value, Span("BattlePlayerInfo")); if (pb == null) continue;
         uint cuid = BitConverter.ToUInt32(pb, 0x10);
         var lb = Read(BitConverter.ToUInt64(pb, 0x28), 0x20); if (lb == null) continue;
         int n = BitConverter.ToInt32(lb, 0x18); if (n <= 0 || n > 64) continue;
-        var items = Read(BitConverter.ToUInt64(lb, 0x10) + 0x20, n * 8); if (items == null) continue;
+        var items = Read(BitConverter.ToUInt64(lb, 0x10) + (ulong)Hdr("arrData"), n * 8); if (items == null) continue;
         for (int i = 0; i < n; i++) {
           ulong hi = BitConverter.ToUInt64(items, i * 8);
           if (!IsA(hi, ClsHeroInfo)) continue;
@@ -192,7 +194,7 @@ namespace RealmForge {
 
     /// <summary>An entity's controller (its OwnerRelationComponent cUid; 0 = none).</summary>
     static uint OwnerOf(List<KeyValuePair<uint, ulong>> nodes) {
-      ulong o = Comp(nodes, CT_Owner);
+      ulong o = Comp(nodes, CT("OwnerRelation"));
       if (o == 0 || !IsA(o, ClsOwner)) return 0;
       var b = Read(o + 0x20, 4);
       return b != null ? BitConverter.ToUInt32(b, 0) : 0;
@@ -202,13 +204,14 @@ namespace RealmForge {
     static Dictionary<uint, int[]> TowerTiles(ulong world, StringBuilder diag) {
       var res = new Dictionary<uint, int[]>();
       ulong single = P64(world + 0x58); if (single == 0) return res;
-      ulong map = Comp(CompNodes(single), CT_Map); if (map == 0) return res;
+      ulong map = Comp(CompNodes(single), CT("Map")); if (map == 0) return res;
       ulong marker = P64(map + 0x40); if (marker == 0) return res;
-      var mb = Read(marker, 0x28); if (mb == null) return res;
+      var mb = Read(marker, Span("MapMarker")); if (mb == null) return res;
       ulong arr = BitConverter.ToUInt64(mb, 0x20); if (arr == 0) return res;
-      var ah = Read(arr, 0x20); if (ah == null) return res;
-      var bb = Read(BitConverter.ToUInt64(ah, 0x10), 0x20); if (bb == null) return res;
-      long d0 = BitConverter.ToInt64(bb, 0), d1 = BitConverter.ToInt64(bb, 0x10);
+      ulong bp = P64(arr + (ulong)Hdr("arrBounds")); if (bp == 0) return res;
+      int bl = Hdr("boundsLen"), bs = Hdr("boundsStride");
+      var bb = Read(bp, 2 * bs); if (bb == null) return res;
+      long d0 = BitConverter.ToInt64(bb, bl), d1 = BitConverter.ToInt64(bb, bs + bl);
       if (diag != null) {
         var ms = Read(map + 0x20, 8);
         diag.Append("map size ").Append(ms != null ? BitConverter.ToInt32(ms, 0) + "x" + BitConverter.ToInt32(ms, 4) : "?")
@@ -217,7 +220,7 @@ namespace RealmForge {
       }
       if (d0 <= 0 || d1 <= 0 || d0 > 256 || d1 > 256) return res;
       TowerGridW = (int)d0;
-      var data = Read(arr + 0x20, (int)(d0 * d1 * 4)); if (data == null) return res;
+      var data = Read(arr + (ulong)Hdr("arrData"), (int)(d0 * d1 * 4)); if (data == null) return res;
       for (int i = 0; i < d0; i++)
         for (int j = 0; j < d1; j++) {
           uint t = BitConverter.ToUInt32(data, (int)((i * d1 + j) * 4));
@@ -233,13 +236,13 @@ namespace RealmForge {
     public static List<HeroSample> ReadHeroSamples(ulong sim, List<int[]> heroes, StringBuilder diag, Dictionary<ulong, uint> owners) {
       ulong world = P64(sim + 0x28); if (world == 0) return null;
       var res = new List<HeroSample>();
-      var cards = WorldComps(world, CT_Card, 128);
+      var cards = WorldComps(world, CT("Card"), 128);
       Dictionary<uint, ulong> ents = null; Dictionary<uint, int[]> tiles = null;
       if (diag != null) diag.Append("cards ").Append(cards.Count).Append(", card klass ").Append(Klass(ClsCard).ToString("X")).Append('\n');
       foreach (var card in cards) {
-        var cb = Read(card, 0x58); if (cb == null) continue;
-        if (!IsKlass(BitConverter.ToUInt64(cb, 0), ClsCard)) { if (diag != null) diag.Append("  not a card: ").Append(card.ToString("X")).Append('\n'); continue; }
-        if (BitConverter.ToInt32(cb, 0x50) != 0) continue;   // a soldier card
+        var cb = Read(card, Span("CardComponent")); if (cb == null) continue;
+        if (!IsKlass(BitConverter.ToUInt64(cb, Hdr("klass")), ClsCard)) { if (diag != null) diag.Append("  not a card: ").Append(card.ToString("X")).Append('\n'); continue; }
+        if (BitConverter.ToInt32(cb, 0x50) != Layout.Current.Const("ECardEntityType.Normal")) continue;   // a soldier card
         var s = new HeroSample {
           Uid = BitConverter.ToUInt32(cb, 0x20), CardState = BitConverter.ToInt32(cb, 0x24), RebornLeft = BitConverter.ToInt32(cb, 0x28),
           Tower = BitConverter.ToUInt32(cb, 0x4C), Face = BitConverter.ToInt32(cb, 0x3C)
@@ -264,28 +267,28 @@ namespace RealmForge {
             s.OnField = true;
             var nodes = CompNodes(te);
             if (s.C == 0) s.C = OwnerOf(nodes);   // the tower's controller when the card's is not known
-            ulong dead = Comp(nodes, CT_Dead);
+            ulong dead = Comp(nodes, CT("Dead"));
             if (dead != 0) { var db = Read(dead + 0x20, 8); s.Dead = true; s.DeadType = db != null ? BitConverter.ToInt32(db, 4) : -1; }
-            ulong ang = Comp(nodes, CT_Anger);
-            var ab = ang != 0 && IsA(ang, ClsAnger) ? Read(ang, 0x40) : null;
+            ulong ang = Comp(nodes, CT("Anger"));
+            var ab = ang != 0 && IsA(ang, ClsAnger) ? Read(ang, Span("AngerComponent")) : null;
             if (ab != null) { s.AngerState = BitConverter.ToInt32(ab, 0x20); s.Anger = Fix(ab, 0x30); s.MaxAnger = Fix(ab, 0x38); }
-            ulong sk = Comp(nodes, CT_Skill);
+            ulong sk = Comp(nodes, CT("Skill"));
             var sb = sk != 0 && IsA(sk, ClsSkill) ? Read(sk + 0xB0, 8) : null;
             if (sb != null) s.UltFrame = BitConverter.ToUInt32(sb, 4);
-            ulong at = Comp(nodes, CT_Attribute);
+            ulong at = Comp(nodes, CT("Attribute"));
             ulong ba = at != 0 ? P64(at + 0x28) : 0;
             var hb = ba != 0 ? Read(ba + 0x238, 16) : null;
             if (hb != null) { s.Hp = Fix(hb, 0); s.MaxHp = Fix(hb, 8); }
             // the battle stats it entered with (m_attr, stBattleBaseAttr): read once, while the builder has none for it
             if (ba != 0 && (wantBase == null || wantBase(s))) s.Base = BaseAttrs(ba);
-            ulong pos = Comp(nodes, CT_Position);
+            ulong pos = Comp(nodes, CT("Position"));
             var pb = pos != 0 ? Read(pos + 0x30, 4) : null;
             if (pb != null) s.Face = BitConverter.ToInt32(pb, 0);
             if (tiles == null) tiles = TowerTiles(world, diag);
             int[] xy;
             if (tiles.TryGetValue(s.Tower, out xy)) { s.X = xy[0]; s.Y = xy[1]; }
             if (diag != null && pos != 0) {
-              var wp = Read(pos + 0x48, 0x18);
+              var wp = Read(pos + 0x48, Layout.Current.Size("FixVector3"));
               if (wp != null) diag.Append("  tower ").Append(s.Tower).Append(" world ").Append(Fix(wp, 0).ToString("0.00")).Append(',')
                                   .Append(Fix(wp, 8).ToString("0.00")).Append(',').Append(Fix(wp, 0x10).ToString("0.00")).Append('\n');
             }
@@ -315,10 +318,11 @@ namespace RealmForge {
       var h = dict != 0 ? Read(dict, 0x28) : null; if (h == null) return res;
       ulong ent = BitConverter.ToUInt64(h, 0x18); int count = BitConverter.ToInt32(h, 0x20);
       if (ent == 0 || count <= 0 || count > max) return res;
-      var e = Read(ent + 0x18, 8 + count * 0x10); if (e == null) return res;
+      int al = Hdr("arrLen"), d0 = Hdr("arrData") - al, es = Layout.Current.Size("DictEntryInt");
+      var e = Read(ent + (ulong)al, d0 + count * es); if (e == null) return res;
       if (BitConverter.ToInt64(e, 0) < count) return res;
       for (int i = 0; i < count; i++) {
-        int o = 8 + i * 0x10;
+        int o = d0 + i * es;
         if (BitConverter.ToInt32(e, o) < 0) continue;
         res[BitConverter.ToUInt32(e, o + 8)] = BitConverter.ToInt32(e, o + 12);
       }
@@ -329,12 +333,12 @@ namespace RealmForge {
     public static List<StatLine> ReadStatsBySide(ulong sim) {
       var res = new List<StatLine>();
       ulong world = P64(sim + 0x28); if (world == 0) return res;
-      ulong st = Comp(CompNodes(P64(world + 0x58)), CT_Statistics);
+      ulong st = Comp(CompNodes(P64(world + 0x58)), CT("Statistics"));
       if (st == 0 || !IsA(st, ClsStats)) return res;
       foreach (var side in DictRefs(P64(st + 0x20), 16))
         foreach (var u in DictRefs(side.Value, 128)) {
           if (!IsA(u.Value, ClsDmgStat)) continue;
-          var b = Read(u.Value, 0x68); if (b == null) continue;
+          var b = Read(u.Value, Span("DamageStatisticsData")); if (b == null) continue;
           res.Add(new StatLine { C = side.Key, Unit = (int)u.Key, At = u.Value, Hero = BitConverter.ToUInt32(b, 0x14), Power = BitConverter.ToUInt32(b, 0x18),
                                  Damage = BitConverter.ToInt64(b, 0x28), ToBoss = BitConverter.ToInt64(b, 0x30), Heal = BitConverter.ToInt32(b, 0x38),
                                  Taken = BitConverter.ToInt32(b, 0x3C), Overflow = BitConverter.ToInt64(b, 0x58) });
@@ -354,7 +358,7 @@ namespace RealmForge {
     public static List<UnitSample> ReadUnits(ulong sim, Dictionary<ulong, UnitCache> cache, ICollection<uint> towers) {
       var res = new List<UnitSample>();
       ulong world = P64(sim + 0x28); if (world == 0) return res;
-      foreach (var pos in WorldComps(world, CT_Position, 4000)) {
+      foreach (var pos in WorldComps(world, CT("Position"), 4000)) {
         var pb = Read(pos, 0x60); if (pb == null) continue;
         ulong ent = BitConverter.ToUInt64(pb, 0x18); if (ent == 0) continue;
         var ub = Read(ent + 0x10, 4); if (ub == null) continue;
@@ -363,7 +367,7 @@ namespace RealmForge {
         if (!cache.TryGetValue(ent, out c) || c.Uid != uid) {
           c = new UnitCache { Uid = uid };
           var nodes = CompNodes(ent);
-          ulong at = Comp(nodes, CT_Attribute);
+          ulong at = Comp(nodes, CT("Attribute"));
           var ab = at != 0 ? Read(at + 0x20, 16) : null;
           ulong td = ab != null ? BitConverter.ToUInt64(ab, 0) : 0, ba = ab != null ? BitConverter.ToUInt64(ab, 8) : 0;
           var ib = td != 0 ? Read(td + 0x14, 4) : null;
@@ -411,7 +415,7 @@ namespace RealmForge {
       Dictionary<uint, int> mon = null, ign = null;
       if (refs.State != 0) { mon = DictInts(P64(refs.State + 0x58), 64); ign = DictInts(P64(refs.State + 0x60), 64); }
       // the wave controllers
-      ulong wi = Comp(CompNodes(P64(world + 0x58)), CT_WaveInfo);
+      ulong wi = Comp(CompNodes(P64(world + 0x58)), CT("WaveInfo"));
       ulong ws = wi != 0 ? P64(wi + 0x28) : 0;
       if (ws == 0 || !IsA(ws, ClsWaveSystem)) { if (diag != null) diag.Append("no wave system (wave info ").Append(wi.ToString("X")).Append(")\n"); return null; }
       foreach (var kv in DictRefs(P64(ws + 0x50), 16)) {
@@ -429,9 +433,9 @@ namespace RealmForge {
       }
       // the bases: looked for (every 5th sample) until two are found, then read directly
       if (refs.Bases.Count < 2 && refs.Looks++ % 5 == 0) {
-        foreach (var at in WorldComps(world, CT_Attribute, 4000)) {
+        foreach (var at in WorldComps(world, CT("Attribute"), 4000)) {
           var ab = Read(at, 0x30); if (ab == null) continue;
-          if (!IsKlass(BitConverter.ToUInt64(ab, 0), ClsAttr)) continue;
+          if (!IsKlass(BitConverter.ToUInt64(ab, Hdr("klass")), ClsAttr)) continue;
           ulong ent = BitConverter.ToUInt64(ab, 0x18), td = BitConverter.ToUInt64(ab, 0x20), ba = BitConverter.ToUInt64(ab, 0x28);
           var ib = td != 0 ? Read(td + 0x14, 4) : null; if (ib == null || ba == 0) continue;
           int id = BitConverter.ToInt32(ib, 0);
@@ -461,17 +465,17 @@ namespace RealmForge {
       foreach (var kv in DictRefs(P64(rec + (all ? 0x10UL : 0x18UL)), 200000)) {
         var lb = Read(kv.Value, 0x20); if (lb == null) continue;
         int n = BitConverter.ToInt32(lb, 0x18); if (n <= 0 || n > 1000) continue;
-        var items = Read(BitConverter.ToUInt64(lb, 0x10) + 0x20, n * 8); if (items == null) continue;
+        var items = Read(BitConverter.ToUInt64(lb, 0x10) + (ulong)Hdr("arrData"), n * 8); if (items == null) continue;
         for (int i = 0; i < n; i++) {
           ulong f = BitConverter.ToUInt64(items, i * 8);
-          var fb = f != 0 ? Read(f, 0x28) : null; if (fb == null) continue;
-          if (!IsKlass(BitConverter.ToUInt64(fb, 0), ClsFrameIdxInfo)) continue;
+          var fb = f != 0 ? Read(f, Span("FrameIdxInfo")) : null; if (fb == null) continue;
+          if (!IsKlass(BitConverter.ToUInt64(fb, Hdr("klass")), ClsFrameIdxInfo)) continue;
           var c = new FrameCmd { Frame = BitConverter.ToUInt32(fb, 0x10), Cmd = BitConverter.ToUInt16(fb, 0x14), CUid = BitConverter.ToUInt32(fb, 0x18) };
           ulong pa = BitConverter.ToUInt64(fb, 0x20);
-          var ph = pa != 0 ? Read(pa + 0x18, 8) : null;
+          var ph = pa != 0 ? Read(pa + (ulong)Hdr("arrLen"), 8) : null;
           long pn = ph != null ? BitConverter.ToInt64(ph, 0) : 0;
           if (pn > 0 && pn <= 32) {
-            var pd = Read(pa + 0x20, (int)pn * 4);
+            var pd = Read(pa + (ulong)Hdr("arrData"), (int)pn * 4);
             if (pd != null) { c.Params = new int[pn]; for (int k = 0; k < pn; k++) c.Params[k] = BitConverter.ToInt32(pd, k * 4); }
           }
           res.Add(c);
@@ -531,7 +535,7 @@ namespace RealmForge {
       hpOut = 0; maxOut = 0;
       ulong world = P64(sim + 0x28); if (world == 0) return -1;
       double best = 0, hp = 0;
-      foreach (var at in WorldComps(world, CT_Attribute, 2000)) {
+      foreach (var at in WorldComps(world, CT("Attribute"), 2000)) {
         var ab = Read(at + 0x18, 0x18); if (ab == null) continue;
         ulong ent = BitConverter.ToUInt64(ab, 0), ba = BitConverter.ToUInt64(ab, 0x10);
         if (ba == 0) continue;
@@ -605,7 +609,7 @@ namespace RealmForge {
         Say("fight recorder: " + heroes.Count + " heroes, stage " + Stage);
         while (!stop) {
           uint fr; int st;
-          if (!RFX.SimClock(Sim, out fr, out st) || st != 1) break;   // ended (2) or gone
+          if (!RFX.SimClock(Sim, out fr, out st) || st != RFX.SimRunning) break;   // ended or gone
           // the clock going back or a fight of hours: the memory is no longer this fight's simulation
           if (fr < lastFrame || (DateTime.UtcNow - StartedUtc).TotalMinutes > 40) break;
           if (fr != lastFrame) {
@@ -637,7 +641,7 @@ namespace RealmForge {
         }
         // the end: the final frame count and the whole record (the simulation stays in memory at the result screen)
         uint ef; int es;
-        if (RFX.SimClock(Sim, out ef, out es) && (es == 1 || es == 2)) {
+        if (RFX.SimClock(Sim, out ef, out es) && (es == RFX.SimRunning || es == RFX.SimEnded)) {
           // the last look at the arena (the round's end and the bases as the fight ended)
           if (Arena) { var a = RFX.ReadArena(Sim, arenaRefs, null); if (a != null) lock (gate) tl.AddArena(ef, a); }
           lock (gate) { if (ef > tl.Frames) tl.Frames = ef; }

@@ -20,7 +20,7 @@
 // The table is found once per game session by a key only it has (m_iFreeRefreshOpponentMaxNum, set in PVPData:ctor) —
 // two passes over the memory, a few seconds — then read directly (a few KB).
 //
-// The arena screen (Form_PVPMain, UIDefines.ID_FORM_PVPMAIN 0) is open while its node in UIInstance holds a
+// The arena screen (Form_PVPMain, UIDefines.ID_FORM_PVPMAIN; the id from the layout data) is open while its node in UIInstance holds a
 // table whose m_LuaLogicActive is true (UIBase:OnActive sets it, OnPreInactive clears it).
 //
 // An arena fight's monster level: BattleData.<iStageLevel> 0x24 (GameSimulation._BattleData 0x48; the server's
@@ -33,19 +33,19 @@ using System.Text;
 
 namespace RealmForge {
   public static partial class RFX {
-    internal const long FormPvpMainId = 0;   // UIDefines.ID_FORM_PVPMAIN
     const string KPvp = "m_iFreeRefreshOpponentMaxNum";
     static ulong pvpData; static int pvpPid, pvpLastFind;
 
     /// <summary>The arena screen is open now: true / false; null = not known (UIInstance not found yet). Cheap.</summary>
     public static bool? PvpScreenOpen() {
       ulong t = UiKnown ? uiTable : 0; if (t == 0) return null;
+      long pvpId = FormId("ID_FORM_PVPMAIN"); if (pvpId == 0) return null;
       var h = Read(t, 56); if (h == null) return null;
       int nn = 1 << h[11]; var nb = Read(BitConverter.ToUInt64(h, 24), nn * 32); if (nb == null) return null;
       for (int i = 0; i < nn; i++) {
         int o = i * 32;
         if (BitConverter.ToInt32(nb, o + 24) != T_INT || BitConverter.ToInt32(nb, o + 8) != T_TABLE) continue;
-        if (!SameId(BitConverter.ToInt64(nb, o + 16), FormPvpMainId)) continue;
+        if (!SameId(BitConverter.ToInt64(nb, o + 16), pvpId)) continue;
         ulong f = BitConverter.ToUInt64(nb, o), v; int tt;
         return Field(f, "m_LuaLogicActive", out v, out tt) && tt == T_BOOL && v != 0;
       }

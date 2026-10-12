@@ -1,9 +1,9 @@
 // RealmForge — the clock of the fight going on, for the boss coach over the game (read-only).
 //
-// CSharpBattle.Battle.GameSimulation (and its kinds; class addresses per game build in ClassRvas):
-// m_state 0xA4 (ESimulationStatus: 1 running, 2 ended), <CurrentFrameIdx> 0xC4 (one logic frame = 270/4096 s),
-// _BattleData 0x48 -> BattleData.<iStageID> 0x18. The running one is the battle view's (BattleManager.instance), read
-// every couple of seconds; then two fields are read every tick.
+// CSharpBattle.Battle.GameSimulation (and its kinds): m_state 0xA4 (ESimulationStatus), <CurrentFrameIdx> 0xC4 (one
+// logic frame = 270/4096 s), _BattleData 0x48 -> BattleData.<iStageID> 0x18. The running one is the battle view's
+// (BattleManager.instance), read every couple of seconds; then two fields are read every tick. The classes and the
+// status values come with the layout data from the server (src/Layout.cs): without it nothing here runs.
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -14,30 +14,12 @@ namespace RealmForge {
     // classes with it)
     static ulong simGa; static int simPid;
 
-    // Class addresses (in GameAssembly.dll) per game build, newest first: 1.6.39, 1.6.38. An address counts only when
-    // the class found there has the expected name (Il2CppClass: name 0x10, namespaze 0x18), so the app works with
-    // either build. A class with no address in a build (1.6.39: the components, TDStateData, PAGameSimulation) is
-    // recognised by its name on the objects read and then remembered.
+    // A class counts only when the class found at its address (layout data from the server) has the expected name
+    // (Il2CppClass: name 0x10, namespaze 0x18). A class the data has no address for is recognised by its name on the
+    // objects read and then remembered.
     const string NsBattle = "CSharpBattle.Battle.";
-    static readonly Dictionary<string, ulong[]> ClassRvas = new Dictionary<string, ulong[]> {
-      { NsBattle + "GameSimulation", new ulong[] { 0, 0 } },
-      { NsBattle + "TDGameSimulation", new ulong[] { 0, 0 } },
-      { NsBattle + "TCGameSimulation", new ulong[] { 0, 0 } },
-      { NsBattle + "PAGameSimulation", new ulong[] { 0 } },
-      { "BattleView.BattleManager", new ulong[] { 0, 0 } },
-      { NsBattle + "CardComponent", new ulong[] { 0 } },
-      { NsBattle + "AngerComponent", new ulong[] { 0 } },
-      { NsBattle + "SkillComponent", new ulong[] { 0 } },
-      { NsBattle + "FrameIdxInfo", new ulong[] { 0, 0 } },
-      { NsBattle + "BattleHeroInfo", new ulong[] { 0, 0 } },
-      { NsBattle + "OwnerRelationComponent", new ulong[] { 0, 0 } },
-      { NsBattle + "StatisticsComponent", new ulong[] { 0 } },
-      { NsBattle + "DamageStatisticsData", new ulong[] { 0, 0 } },
-      { NsBattle + "TDStateData", new ulong[] { 0 } },
-      { NsBattle + "WaveSystem", new ulong[] { 0, 0 } },
-      { NsBattle + "WaveControllerNode", new ulong[] { 0, 0 } },
-      { NsBattle + "AttributeComponent", new ulong[] { 0, 0 } },
-    };
+    /// <summary>The simulation states as the app uses them (SimClock maps the game's values to these).</summary>
+    public const int SimOther = 0, SimRunning = 1, SimEnded = 2;
     static readonly string[] SimClasses = { NsBattle + "GameSimulation", NsBattle + "TDGameSimulation", NsBattle + "TCGameSimulation", NsBattle + "PAGameSimulation" };
     static readonly Dictionary<string, ulong> klassCache = new Dictionary<string, ulong>();
     static ulong klassGa;
@@ -70,9 +52,9 @@ namespace RealmForge {
         if (klassCache.TryGetValue(cls, out k)) return k;
       }
       k = 0;
-      ulong[] rvas;
-      if (ClassRvas.TryGetValue(cls, out rvas))
-        foreach (var rva in rvas) { ulong c = Ptr(ga + rva); if (c != 0 && ClassName(c) == cls) { k = c; break; } }
+      var ly = Layout.Current;
+      ulong rva = ly != null ? ly.Rva(cls) : 0;
+      if (rva != 0) { ulong c = Ptr(ga + rva); if (c != 0 && ClassName(c) == cls) k = c; }
       // not cached when not found: the address is filled in once the game first uses the class
       if (k != 0) lock (klassCache) { if (ga == klassGa) klassCache[cls] = k; }
       return k;
@@ -92,7 +74,7 @@ namespace RealmForge {
     }
 
     /// <summary>Is the object at <paramref name="obj"/> of the class <paramref name="cls"/>?</summary>
-    static bool IsA(ulong obj, string cls) { return obj != 0 && IsKlass(Ptr(obj), cls); }
+    static bool IsA(ulong obj, string cls) { return obj != 0 && IsKlass(Ptr(obj + (ulong)Layout.Current.Hdr("klass")), cls); }
 
     /// <summary>The simulations' classes (class -> short name): by address, plus the class of the battle view's
     /// simulation when it is another kind of GameSimulation.</summary>
@@ -120,6 +102,8 @@ namespace RealmForge {
     /// simulation and stage id (false = none running).</summary>
     public static bool FindRunningSim(out ulong sim, out int stage) {
       sim = 0; stage = 0;
+      var ly = Layout.Current; if (ly == null) return false;
+      int span = ly.Span("GameSimulation"), running = ly.Const("ESimulationStatus.Runing"), ko = ly.Hdr("klass");
       var ps = GameInfo.GameProcesses();
       if (ps.Length == 0) return false;
       if (H == IntPtr.Zero) H = OpenProcess(0x0410, false, ps[0].Id);
@@ -134,20 +118,20 @@ namespace RealmForge {
       regs = Regions();
       var found = new List<ulong>();
       ScanParallel((b0, buf, len) => {
-        for (int i = 0; i + 0xC8 <= len; i += 8) {
-          if (!klass.Contains(BitConverter.ToUInt64(buf, i))) continue;
-          if (BitConverter.ToInt32(buf, i + 0xA4) != 1) continue;   // running
+        for (int i = 0; i + span <= len; i += 8) {
+          if (!klass.Contains(BitConverter.ToUInt64(buf, i + ko))) continue;
+          if (BitConverter.ToInt32(buf, i + 0xA4) != running) continue;
           uint fr = BitConverter.ToUInt32(buf, i + 0xC4); if (fr == 0 || fr > 200000) continue;
           lock (found) found.Add(b0 + (ulong)i);
         }
       });
       // several running (a replay kept?): the one whose clock moves; else the first
       ulong best = 0; uint bestFr = 0;
-      foreach (var s in found) { uint fr; int st; if (SimClock(s, out fr, out st) && st == 1 && fr >= bestFr) { best = s; bestFr = fr; } }
+      foreach (var s in found) { uint fr; int st; if (SimClock(s, out fr, out st) && st == SimRunning && fr >= bestFr) { best = s; bestFr = fr; } }
       if (best == 0) return false;
       if (found.Count > 1) {
         System.Threading.Thread.Sleep(300);
-        foreach (var s in found) { uint fr; int st; if (s != best && SimClock(s, out fr, out st) && st == 1 && fr > bestFr) { best = s; bestFr = fr; } }
+        foreach (var s in found) { uint fr; int st; if (s != best && SimClock(s, out fr, out st) && st == SimRunning && fr > bestFr) { best = s; bestFr = fr; } }
       }
       sim = best;
       var bd = Read(sim + 0x48, 8); ulong data = bd != null ? BitConverter.ToUInt64(bd, 0) : 0;
@@ -162,6 +146,7 @@ namespace RealmForge {
     /// <summary>The simulation the battle view holds now (BattleManager.instance.m_simulation), or 0. Cheap: four
     /// pointer reads, no scan. The game keeps the last one after a fight ends, so check SimClock's state.</summary>
     public static ulong CurrentSim() {
+      if (Layout.Current == null) return 0;
       var ps = GameInfo.GameProcesses();
       if (ps.Length == 0) { simPid = 0; return 0; }
       if (ps[0].Id != simPid || simGa == 0 || H == IntPtr.Zero) {
@@ -185,14 +170,20 @@ namespace RealmForge {
 
     static ulong Ptr(ulong at) { var b = at != 0 ? Read(at, 8) : null; return b != null ? BitConverter.ToUInt64(b, 0) : 0; }
 
-    /// <summary>The simulation's frame count and state (1 running, 2 ended). Cheap.</summary>
+    /// <summary>The simulation's frame count and state (SimRunning, SimEnded, SimOther). Cheap.</summary>
     public static bool SimClock(ulong sim, out uint frames, out int state) {
-      frames = 0; state = 0;
-      var b = sim != 0 ? Read(sim + 0xA4, 0x24) : null;
+      frames = 0; state = SimOther;
+      var ly = Layout.Current;
+      var b = sim != 0 && ly != null ? Read(sim + 0xA4, 0x24) : null;
       if (b == null) return false;
-      state = BitConverter.ToInt32(b, 0);
+      state = SimState(ly, BitConverter.ToInt32(b, 0));
       frames = BitConverter.ToUInt32(b, 0x20);
       return true;
+    }
+
+    /// <summary>The game's simulation status as SimRunning / SimEnded / SimOther.</summary>
+    static int SimState(GameLayout ly, int raw) {
+      return raw == ly.Const("ESimulationStatus.Runing") ? SimRunning : raw == ly.Const("ESimulationStatus.End") ? SimEnded : SimOther;
     }
 
     /// <summary>Seconds of a frame count (one logic frame = 270/4096 s).</summary>

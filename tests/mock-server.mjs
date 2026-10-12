@@ -17,6 +17,7 @@
 import http from 'node:http';
 import zlib from 'node:zlib';
 import crypto from 'node:crypto';
+import { readFileSync } from 'node:fs';
 
 const port = Number(process.argv[2] ?? 3999);
 const MAX_GZIP = 5 * 1024 * 1024;
@@ -65,6 +66,15 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && req.url === '/__last') return send(res, 200, last ?? {});
   if (req.method === 'GET' && req.url === '/__lastReport') return send(res, 200, lastReport ?? {});
   if (req.url === '/api/report' && req.method === 'POST') return report(req, res);
+  // the app's layout data (src/Layout.cs): the fixture for its version, 404 for any other, 500 for "5.0.0"
+  if (req.method === 'GET' && req.url.startsWith('/api/extractor/app-layout?')) {
+    const game = new URL(req.url, 'http://x').searchParams.get('game');
+    if (game === '5.0.0') return send(res, 500, { error: 'boom' });
+    const fx = readFileSync(new URL('./layout-fixture.json', import.meta.url), 'utf8');
+    if (game !== JSON.parse(fx).game) return send(res, 404, { error: 'unknown_version' });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(fx);
+  }
   if (req.url !== '/api/sync') return send(res, 404, { ok: false, error: 'not_found' });
   if (req.method !== 'POST') return send(res, 405, { ok: false, error: 'method_not_allowed' });
 

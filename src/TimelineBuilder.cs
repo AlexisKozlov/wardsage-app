@@ -4,8 +4,8 @@
 // player's commands, both read by src/BattleTimeline.cs (read-only). No memory reading here, so it is unit-tested.
 //
 // Two sources, merged when the JSON is made:
-//   * commands (FrameDataRecord, exact frames): SYNC_PUT_TOWER 1000 [unit, x, y, face], SYNC_RETREAT_TOWER 1001,
-//     SYNC_USE_POWERSKILL 2000 [unit, x, y] — only what the player did by hand (the game's own auto placement and
+//   * commands (FrameDataRecord, exact frames): SYNC_PUT_TOWER [unit, x, y, face], SYNC_RETREAT_TOWER,
+//     SYNC_USE_POWERSKILL [unit, x, y] — only what the player did by hand (the game's own auto placement and
 //     auto ultimates call the simulation directly and leave no command);
 //   * samples (~every 200 ms = ~3 frames): each hero card's state, its tower on the field (tile, dead flag), rage and
 //     the frame of its last ultimate (SkillComponent.iUseSuperManualSkillFrameIdx, exact).
@@ -15,8 +15,8 @@
 // on the arena 2 = the opponent's recorded defence, both on one field and often with the same heroes (the same uid), so
 // a hero is (controller, uid). Its key: "<uid>" for the player's heroes (the lowest controller seen, or unknown), as
 // before; "<controller>:<uid>" for the others. Every hero has "c". The commands' tiles are each side's own: the
-// opponent's defence was recorded on the left half and the game mirrors it (the real fight 20261003-134630: its command
-// [601,1000,2,2034,3,5,270] stood on the map tile 11,5 = 14 − 3). Tiles in "placed" are each side's own (local) tiles:
+// opponent's defence was recorded on the left half and the game mirrors it (the real fight 20261003-134630: its tower
+// command for tile 3,5 stood on the map tile 11,5 = 14 − 3). Tiles in "placed" are each side's own (local) tiles:
 // a sampled tile of a non-player side is mirrored back, x = gridW − 1 − x, face 0 <-> 180, when gridW is set (arena).
 //
 // Arena (AddArena, stages 6001xxx/6002xxx): the wave controllers (WaveSystem m_vActiveController: 100 = side 1's waves,
@@ -59,14 +59,14 @@ namespace RealmForge {
     public uint C;                   // its controller (the card's OwnerRelation cUid = BattlePlayerInfo cUid), 0 = not known
     public int Unit;                 // unit table id (BattleHeroInfo.iUnitID; the commands name heroes by it)
     public int Squad; public bool Leader;
-    public int CardState;            // ECardStatus: 0 running, 1 frozen, 2 reborn (after a death), 3 deleted
+    public int CardState;            // ECardStatus (reborn after a death)
     public int RebornLeft;           // CardComponent.iCurRebornTime
     public uint Tower;               // the hero's entity on the field (CardComponent.iTowerUid), 0 = none
     public bool OnField;             // that entity exists
-    public bool Dead; public int DeadType = -1;   // it has a DeadComponent (EDeadType: 0 killed, 2 retreat, 6 forced retreat)
+    public bool Dead; public int DeadType = -1;   // it has a DeadComponent (EDeadType: killed, retreat, forced retreat)
     public int X = -1, Y = -1;       // its tile (MapMarker tower grid), -1 = not known
     public int Face = -1;
-    public double Anger, MaxAnger; public int AngerState = -1;   // EAngerStatus 0 up, 1 down (after an ultimate)
+    public double Anger, MaxAnger; public int AngerState = -1;   // EAngerStatus (down after an ultimate)
     public uint UltFrame;            // frame of its last ultimate, 0 = none yet
     public double Hp, MaxHp;
     public Dictionary<int, double> Base;   // its battle stats as it entered (m_attr by SoldierAttribute id; -1 iPower), null = not read
@@ -116,7 +116,8 @@ namespace RealmForge {
     public const int MaxUnits = 400, MaxPts = 4000;
     /// <summary>A move of more than this (world units) makes a new point of a unit's trace.</summary>
     public const double MoveEps = 0.05;
-    public const int CmdPutTower = 1000, CmdRetreatTower = 1001, CmdPowerSkill = 2000;
+    // the game's command ids and card / death / rage values (layout data from the server, src/Layout.cs)
+    readonly int CmdPutTower, CmdRetreatTower, CmdPowerSkill, DeadRetreat, DeadForceRetreat, CardReborn, AngerUp, AngerDown;
     /// <summary>A sampled event this many frames (~3 s) after a command's frame is that command.</summary>
     public const int MatchFrames = 45;
     public const double FrameSec = 270.0 / 4096.0;
@@ -145,7 +146,17 @@ namespace RealmForge {
     public int Commands { get { return cmds.Count; } }
 
     static ulong HeroKey(uint c, uint uid) { return ((ulong)c << 32) | uid; }
-    static bool IsRetreat(int deadType) { return deadType == 2 || deadType == 6; }
+    /// <summary>A builder for the layout data in force (src/Layout.cs; there is none: nothing records a fight).</summary>
+    public TimelineBuilder() : this(Layout.Current) { }
+    public TimelineBuilder(GameLayout ly) {
+      if (ly == null) throw new InvalidOperationException("no layout data for this game version");
+      CmdPutTower = ly.Const("FrameCommand.SYNC_PUT_TOWER"); CmdRetreatTower = ly.Const("FrameCommand.SYNC_RETREAT_TOWER");
+      CmdPowerSkill = ly.Const("FrameCommand.SYNC_USE_POWERSKILL");
+      DeadRetreat = ly.Const("EDeadType.Retreat"); DeadForceRetreat = ly.Const("EDeadType.ForceRetreat"); CardReborn = ly.Const("ECardStatus.Reborn");
+      AngerUp = ly.Const("EAngerStatus.Up"); AngerDown = ly.Const("EAngerStatus.Down");
+    }
+
+    bool IsRetreat(int deadType) { return deadType == DeadRetreat || deadType == DeadForceRetreat; }
 
     /// <summary>One sample of all heroes at <paramref name="frame"/>.</summary>
     public void AddSample(uint frame, IList<HeroSample> list) {
@@ -165,7 +176,7 @@ namespace RealmForge {
           bool retreat;
           if (s.OnField && s.Dead && s.Tower == h.Tower) retreat = IsRetreat(s.DeadType);
           else if (h.Prev != null && h.Prev.Dead && h.Prev.Tower == h.Tower) retreat = IsRetreat(h.Prev.DeadType);
-          else retreat = s.CardState != 2;   // a death puts the card into its reborn countdown
+          else retreat = s.CardState != CardReborn;   // a death puts the card into its reborn countdown
           (retreat ? h.Retreat : h.Fell).Add(frame);
           h.On = false;
         }
@@ -187,7 +198,7 @@ namespace RealmForge {
         }
         var p = h.Prev;
         if (p != null && alive && p.OnField && !p.Dead && p.Tower == s.Tower) {
-          bool drop = (p.AngerState == 0 && s.AngerState == 1)
+          bool drop = (p.AngerState == AngerUp && s.AngerState == AngerDown)
                    || (p.MaxAnger > 0 && p.Anger >= p.MaxAnger * 0.95 && s.Anger <= p.Anger * 0.5);
           if (drop) h.UltGuess.Add(frame);
         }

@@ -64,17 +64,17 @@ namespace RealmForge {
       packsWatch = new PacksWatch(() => cfg.Site, () => cfg.Code);
       gameTimer.Interval = 2000; gameTimer.Tick += (s, e) => {
         CheckGame(false);
-        if (remote.Allows("battle")) WatchBattleEnd();
+        if (On("battle")) WatchBattleEnd();
         WatchStall();
-        arenaWatch.Tick(gameRunning && remote.Allows("battle")); guildWatch.Tick(gameRunning && remote.Allows("guild")); packsWatch.Tick(gameRunning);
-        TraceStartTick(); TryAutoUpdate();
+        arenaWatch.Tick(gameRunning && On("battle")); guildWatch.Tick(gameRunning && On("guild")); packsWatch.Tick(gameRunning);
+        TraceStartTick(); TryAutoUpdate(); LayoutTick();
       }; gameTimer.Start();
       liveTimer.Interval = 400; liveTimer.Tick += (s, e) => PollLive();
       overlay = new OverlayController(st => Post("{\"ev\":\"overlay\",\"state\":" + S(st) + "}"),
                                       st => { Post("{\"ev\":\"auto\",\"state\":" + S(st) + "}"); OnAutoState(st); },
                                       (p, st) => Post("{\"ev\":\"sell.state\",\"state\":" + S(st) + ",\"selected\":" + p.Selected + ",\"missing\":" + p.Missing + ",\"extra\":" + p.Extra + "}"));
       overlay.AutoEnabled = AutoClickOn();
-      RFX.SkipGvg = !remote.Allows("gvg");
+      RFX.SkipGvg = !On("gvg");
       overlay.AutoConfirm = cfg.AutoConfirm;
       overlay.CancelText = CancelText(cfg.Lang);
       coach.Lang = cfg.Lang;
@@ -96,7 +96,13 @@ namespace RealmForge {
     // ------------------------------------------------------------------ the site's switches
 
     /// <summary>The app's own clicks: the player's setting and the site's "autoclick" switch.</summary>
-    bool AutoClickOn() { return cfg.AutoClick && remote.Allows("autoclick"); }
+    bool AutoClickOn() { return cfg.AutoClick && On("autoclick"); }
+
+    // the features that read the game's screens and fights need the layout data for the running game version
+    // (src/Layout.cs); the account sync, the guild and the update packs do not
+    static readonly HashSet<string> NeedsLayout = new HashSet<string> { "battle", "equip", "locate", "autoclick" };
+    /// <summary>A feature may run: the site's switch is on and, when it needs it, the layout data is there.</summary>
+    bool On(string feature) { return remote.Allows(feature) && (!NeedsLayout.Contains(feature) || Layout.Current != null); }
 
     void FetchRemote() {
       string site = cfg.Site;
@@ -115,15 +121,15 @@ namespace RealmForge {
     /// <summary>Puts the switches in force at once: what is off stops now, not at its next start.</summary>
     void ApplyRemote() {
       overlay.AutoEnabled = AutoClickOn();
-      RFX.SkipGvg = !remote.Allows("gvg");
-      if (!remote.Allows("locate")) overlay.SetLocate(null);
-      if (!remote.Allows("equip")) { overlay.SetRun(0); overlay.SetTarget(0); overlay.SetHint("", -1, new string[0], 0); }
-      if (!remote.Allows("battle")) {
+      RFX.SkipGvg = !On("gvg");
+      if (!On("locate")) overlay.SetLocate(null);
+      if (!On("equip")) { overlay.SetRun(0); overlay.SetTarget(0); overlay.SetHint("", -1, new string[0], 0); }
+      if (!On("battle")) {
         if (coach.Running) coach.Stop();
         var rec = recorder; if (rec != null) { rec.Stop(); recorder = null; }
       }
+      if (!remote.ReadEnabled || Layout.Current == null) overlay.SetSell(null, null, null, 0);
       if (!remote.ReadEnabled) {
-        overlay.SetSell(null, null, null, 0);
         liveTimer.Stop(); addrs = null; overlay.SetAddrs(null); lastLive = null;
       }
       PostRemote();
@@ -134,6 +140,62 @@ namespace RealmForge {
       var off = remote.Off();
       for (int i = 0; i < off.Count; i++) { if (i > 0) sb.Append(','); sb.Append(S(off[i])); }
       Post(sb.Append("]}").ToString());
+    }
+
+    // ------------------------------------------------------------------ layout data for the running game version
+
+    string layoutFor;                                 // the game version the data in force (or awaited) is for
+    DateTime layoutRetryAt = DateTime.MaxValue;       // the next ask while there is none
+    bool layoutFetching, layoutNoneLogged;
+
+    /// <summary>The game (re)started with version <paramref name="v"/>: its saved copy now, the site asked at once (a saved
+    /// copy is refreshed once per game start).</summary>
+    void SelectLayout(string v) {
+      var had = Layout.Current;
+      var cached = GameLayout.IsVersion(v) ? Layout.LoadCache(Layout.CacheDir, v) : null;
+      Layout.Use(cached);
+      layoutFor = v; layoutNoneLogged = false;
+      Log.Write("layout data for game version " + (v ?? "?") + ": " + (cached != null ? "saved copy" : "none yet"));
+      if (had != cached) ApplyRemote();
+      PostLayout();
+      FetchLayout(v);
+    }
+
+    void LayoutTick() {
+      if (gameRunning && Layout.Current == null && !layoutFetching && DateTime.UtcNow >= layoutRetryAt) FetchLayout(layoutFor);
+    }
+
+    void FetchLayout(string v) {
+      if (!GameLayout.IsVersion(v) || layoutFetching) return;
+      layoutFetching = true;
+      layoutRetryAt = DateTime.UtcNow.AddMinutes(Layout.RetryMinutes(Channel.IsTest));
+      string site = cfg.Site;
+      Task.Factory.StartNew(() => {
+        GameLayout l = null; string json = null; var r = Layout.Reply.NoReply;
+        try { r = Layout.Fetch(site, v, out l, out json); } catch (Exception) { r = Layout.Reply.NoReply; }
+        if (r == Layout.Reply.Got) Layout.SaveCache(Layout.CacheDir, v, json);
+        OnUi(() => {
+          layoutFetching = false;
+          if (v != layoutFor) return;   // another game version meanwhile
+          if (r == Layout.Reply.Got) {
+            bool was = Layout.Current != null;
+            Layout.Use(l);
+            Log.Write("layout data for game version " + v + ": from the site");
+            ApplyRemote();
+            PostLayout();
+            // the game's screens found in memory now (as at the game's start)
+            if (!was && gameRunning && addrs == null && !scanning && AutoClickOn()) StartScan(watch, true);
+          } else if (Layout.Current == null && !layoutNoneLogged) {
+            layoutNoneLogged = true;
+            Log.Write("layout data for game version " + v + ": " + (r == Layout.Reply.None ? "not on the site yet" : "the site did not answer") + "; asked again every " + Layout.RetryMinutes(Channel.IsTest) + " min");
+          }
+        });
+      });
+    }
+
+    /// <summary>The page's note: the running game has no layout data (yet), some features wait for it.</summary>
+    void PostLayout() {
+      Post("{\"ev\":\"layout\",\"missing\":" + B(gameRunning && Layout.Current == null) + ",\"game\":" + S(gameVersion) + "}");
     }
 
     static string CancelText(string lang) { return lang == "en" ? "Cancel equipping" : "Отменить надевание"; }
@@ -198,7 +260,7 @@ namespace RealmForge {
       if (cmd != "init" && cmd != "log") lastUi = DateTime.UtcNow;
       try {
         switch (cmd) {
-          case "init": SendState(null); CheckGame(true); PostRemote(); if (updateReady != null) Post(updateReady); break;
+          case "init": SendState(null); CheckGame(true); PostRemote(); PostLayout(); if (updateReady != null) Post(updateReady); break;
           case "setLang": cfg.Lang = MiniJson.GetString(m, "lang") == "en" ? "en" : "ru"; overlay.CancelText = CancelText(cfg.Lang); coach.Lang = cfg.Lang; Save(); break;
           case "setCode": {
             string code = SyncClient.ExtractCode(MiniJson.GetString(m, "code") ?? "");
@@ -235,7 +297,7 @@ namespace RealmForge {
           case "forum.unread": LoadForum(); break;
           case "locate.show": {
             // «Найти в игре»: the overlay shows hints for the request the last plans reply carried (the page names it by id)
-            if (!remote.Allows("locate")) break;
+            if (!On("locate")) break;
             var lr = lastLocate; string lid = MiniJson.GetString(m, "id");
             if (lr != null && lr.Item != null && lr.Id == lid) { overlay.SetLocate(lr); Log.Write("locate: show item " + lr.Item.Uid); }
             break;
@@ -254,6 +316,7 @@ namespace RealmForge {
             // storage cleanup: select the list's items on the game's sell screen (from the gear list of the hero the game
             // showed last, else of any hero); the game comes forward as for «Надеть»
             if (!remote.ReadEnabled) { Log.Write("sell: game reading is off by the site's switch"); break; }
+            if (Layout.Current == null) { Log.Write("sell: no layout data for game version " + (gameVersion ?? "?")); PostLayout(); break; }
             var uids = Uids(m);
             var parts = new List<int>(); object pv;
             var pl = m.TryGetValue("slots", out pv) ? pv as List<object> : null;
@@ -272,12 +335,12 @@ namespace RealmForge {
           case "sell.stop": overlay.SetSell(null, null, null, 0); break;
           case "sell.finish": FinishSell(MiniJson.GetString(m, "id"), MiniJson.GetBool(m, "done", false)); break;
           case "equip.scan": case "equip.watch": case "equip.run": case "equip.rescan": case "highlight":
-            if (!remote.Allows("equip")) break;   // the site's switch: the equip helper is off
+            if (!On("equip")) break;   // the site's switch: the equip helper is off
             OnEquip(cmd, m); break;
           case "log": Log.Write("ui: " + (MiniJson.GetString(m, "text") ?? "")); break;
           case "equip.finish": FinishPlan(MiniJson.GetString(m, "id"), MiniJson.GetBool(m, "done", false), MiniJson.GetBool(m, "taken", false)); break;
           case "diag": overlay.StartDiag(5); break;
-          case "battle.capture": if (remote.Allows("battle")) CaptureNow(-1, 0, 0); break;
+          case "battle.capture": if (On("battle")) CaptureNow(-1, 0, 0); break;
           case "compact": win.SetCompact(MiniJson.GetBool(m, "on", false)); break;
           case "update.restart": Program.RestartForUpdate(); break;
         }
@@ -438,11 +501,13 @@ namespace RealmForge {
         gamePid = pid;
         gameVersion = pid != 0 ? GameInfo.TryReadVersion(GameInfo.TryGetExePath(pid)) : null;
         Log.Write(pid != 0 ? "game found: #" + pid + " " + (GameInfo.TryGetExePath(pid) ?? "?") + ", version " + (gameVersion ?? "?") : "game closed");
+        if (pid != 0 && gameVersion != layoutFor) SelectLayout(gameVersion);
       }
       bool running = pid != 0;
       if (!force && gameSent && running == gameRunning) return;
       gameSent = true; gameRunning = running;
       Post("{\"ev\":\"game\",\"running\":" + B(running) + ",\"version\":" + S(gameVersion) + "}");
+      PostLayout();
       if (!running && addrs != null) { addrs = null; overlay.SetAddrs(null); liveTimer.Stop(); lastLive = null; }
       if (!running) CloseBridgeCommands("failed", "The game was closed.", false);
       // the game's screens are found in memory at once (tens of seconds), not when the first «Надеть» comes: then the
@@ -524,7 +589,7 @@ namespace RealmForge {
       // once: the battle view found (or still not, when the game's windows already are)
       if (!simLogged && (sim != 0 || RFX.UiKnown)) { simLogged = true; Log.Write("battle watch: battle view " + (sim != 0 ? sim.ToString("X") + " state " + st + " frames " + fr : "not found yet")); }
       if (sim == 0) return;
-      bool fresh = st == 1 && (sim != simSeen || fr + 15 < simFrames);
+      bool fresh = st == RFX.SimRunning && (sim != simSeen || fr + 15 < simFrames);
       bool wasSeen = simSeen != 0;
       simSeen = sim; simFrames = fr;
       if (!fresh) return;
@@ -602,7 +667,7 @@ namespace RealmForge {
     bool traceStartDone;
 
     void UploadTraces() {
-      if (!cfg.AutoSync || !SyncClient.IsValidCode(cfg.Code) || !remote.Allows("battle")) return;
+      if (!cfg.AutoSync || !SyncClient.IsValidCode(cfg.Code) || !On("battle")) return;
       string site = cfg.Site, code = cfg.Code;
       Task.Factory.StartNew(() => { try { TraceUpload.RunOnce(RFX.BattlesDir, traceSent, site, code, Log.Write); } catch (Exception e) { Log.Write("трасса боя: ошибка " + e.Message); } });
     }

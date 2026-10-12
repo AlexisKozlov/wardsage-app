@@ -1,0 +1,21 @@
+{
+ "game": "9.8.7.6.5",
+ "v": 1,
+ "rva": { "CSharpBattle.Battle.GameSimulation": 4096, "BattleView.BattleManager": 8192 },
+ "const": {
+  "ESimulationStatus.Runing": 11, "ESimulationStatus.End": 12,
+  "EComponentType.Dead": 901, "EComponentType.Attribute": 902, "EComponentType.Skill": 903, "EComponentType.Position": 904,
+  "EComponentType.Anger": 905, "EComponentType.Card": 906, "EComponentType.OwnerRelation": 907, "EComponentType.WaveInfo": 908,
+  "EComponentType.Map": 909, "EComponentType.Statistics": 910,
+  "Fix64.ONE": 1024, "ECardEntityType.Normal": 7,
+  "ECardStatus.Reborn": 2, "EAngerStatus.Up": 0, "EAngerStatus.Down": 1, "EDeadType.Retreat": 2, "EDeadType.ForceRetreat": 6,
+  "FrameCommand.SYNC_PUT_TOWER": 1000, "FrameCommand.SYNC_RETREAT_TOWER": 1001, "FrameCommand.SYNC_USE_POWERSKILL": 2000
+ },
+ "span": { "GameSimulation": 256, "DLNode": 64, "BattlePlayerInfo": 64, "MapMarker": 64, "CardComponent": 128, "AngerComponent": 64,
+           "FrameIdxInfo": 64, "DamageStatisticsData": 128, "CmdHeroFight": 128 },
+ "size": { "FixVector3": 32, "SdpPair": 8, "DictEntryRef": 32, "DictEntryInt": 16 },
+ "hdr": { "arrBounds": 8, "arrLen": 16, "arrData": 24, "boundsLen": 0, "boundsStride": 8, "klass": 0, "ptr": 8 },
+ "form": { "ID_FORM_BATTLE": 101, "ID_FORM_CHARACTORMAIN": 102, "ID_FORM_BACKPACKINTEGRATION": 103, "ID_FORM_EQUIPSUBLIMING": 104,
+           "ID_FORM_EQUIPGEMMAIN": 105, "ID_FORM_PVPMAIN": 106, "ID_FORM_UNIONBOSSBATTLEEND": 107, "ID_FORM_UNIONWEEKBOSSBATTLEEND": -108,
+           "ID_FORM_BATTLEEND": 109, "ID_FORM_PVPBATTLEEND": 110, "ID_FORM_SPARRINGPVPBATTLEEND": 111 }
+}

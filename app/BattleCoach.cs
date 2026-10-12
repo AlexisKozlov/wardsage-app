@@ -80,7 +80,7 @@ namespace RealmForge {
 
     void Tick() {
       uint frames; int state;
-      if ((cur == null && plan == null) || !RFX.SimClock(sim, out frames, out state) || state != 1) { Stop(); return; }
+      if ((cur == null && plan == null) || !RFX.SimClock(sim, out frames, out state) || state != RFX.SimRunning) { Stop(); return; }
       var ps = GameInfo.GameProcesses();
       IntPtr hwnd = ps.Length > 0 ? ps[0].MainWindowHandle : IntPtr.Zero;
       int fp = 0, gp = 0;

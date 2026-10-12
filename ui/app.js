@@ -26,6 +26,8 @@
     locate: { req: null, step: null, tipKey: '', doneTimer: 0 }, locateEnded: {},
     // the site's switches: reading as a whole, and the features switched off
     remote: { readEnabled: true, off: [] },
+    // the running game version has no layout data from the server (yet): fights, the equip helper's screens, «Найти в игре» wait
+    layout: { missing: false, game: '' },
   };
 
   // ---------------------------------------------------------------- helpers
@@ -231,6 +233,12 @@
   // the Wardsage team switched game reading (or some features) off for a while: a calm note, not an error
   function remoteNote(only) {
     const r = S.remote;
+    const lay = S.layout.missing && r.readEnabled
+      ? `<div class="remote-note" role="status">${I.clock}<div><b>${esc(t('layoutWait', S.layout.game || t('layoutGameUnknown')))}</b><p>${esc(t('layoutWaitP'))}</p></div></div>`
+      : '';
+    return remoteSwitchNote(r, only) + lay;
+  }
+  function remoteSwitchNote(r, only) {
     if (!r.readEnabled) return `<div class="remote-note" role="status">${I.clock}<div><b>${esc(t('remoteOff'))}</b><p>${esc(t('remoteOffP'))}</p></div></div>`;
     const off = only ? r.off.filter((f) => only.includes(f)) : r.off;
     if (!off.length) return '';
@@ -899,6 +907,11 @@
       case 'auto': S.auto = m.state; if (S.page === 'equip' || S.compact) render(); break;
       case 'guild': if (m.state === 'noSelf' || m.state === 'short') toast(t(m.state === 'short' ? 'guildShort' : 'guildNoSelf'), 12000); break;
       case 'remote': S.remote = { readEnabled: m.readEnabled !== false, off: Array.isArray(m.off) ? m.off : [] }; render(); break;
+      case 'layout': {
+        const l = { missing: m.missing === true, game: typeof m.game === 'string' ? m.game : '' };
+        if (l.missing !== S.layout.missing || l.game !== S.layout.game) { S.layout = l; render(); }
+        break;
+      }
       case 'battle': toast(t(m.ok === false ? 'battleNone' : 'battleKept'), 6000); break;
       case 'cancelRun': {
         // «Отменить надевание» over the game: the running build is dropped (as «Отменить» here) and the queue stops

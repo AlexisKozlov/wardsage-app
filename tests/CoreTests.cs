@@ -58,6 +58,8 @@ static class CoreTests {
   static int Main(string[] args) {
     string mock = args.Length > 0 ? args[0] : "http://localhost:3999";
     string realAccount = args.Length > 1 ? args[1] : null;
+    // the fight timeline and the battle reading take their game values from the layout data (src/Layout.cs): a test copy
+    Layout.Use(TestLayout());
 
     Console.WriteLine("MiniJson");
     var o = (Dictionary<string, object>)MiniJson.Parse("\uFEFF {\"a\":[1,2.5,-3e2,true,false,null],\"s\":\"x\\\"\\u0416\\n\",\"o\":{}} ");
@@ -435,10 +437,137 @@ static class CoreTests {
       Check(lim.TryAcquire(t0.AddMinutes(11)), "allowed again after the window passed"); }
 
     RemoteSwitchesTests();
+    LayoutTests(mock);
 
     Console.WriteLine();
     Console.WriteLine(passed + " passed, " + failed + " failed");
     return failed == 0 ? 0 : 1;
+  }
+
+  // ------------------------------------------------------------------ layout data from the server (src/Layout.cs)
+  const string FixtureGame = "9.8.7.6.5";
+  static string FixtureJson() { return File.ReadAllText(Path.Combine("tests", "layout-fixture.json"), Encoding.UTF8); }
+  static GameLayout TestLayout() {
+    var l = GameLayout.Parse(FixtureJson(), FixtureGame);
+    if (l == null) throw new Exception("tests/layout-fixture.json does not parse");
+    return l;
+  }
+  static string Without(string json, string key) {
+    // the fixture with one "key": value pair dropped (keys are unique in it)
+    int i = json.IndexOf("\"" + key + "\"", StringComparison.Ordinal); if (i < 0) throw new Exception("no " + key);
+    int j = json.IndexOfAny(new[] { ',', '}' }, i);
+    return json.Substring(0, i) + json.Substring(json[j] == ',' ? j + 1 : j);
+  }
+
+  static void LayoutTests(string mock) {
+    Console.WriteLine("Layout data");
+    string fx = FixtureJson();
+    var l = GameLayout.Parse(fx, FixtureGame);
+    Check(l != null && l.Game == FixtureGame, "the fixture parses for its version");
+    Eq(4096UL, l.Rva("CSharpBattle.Battle.GameSimulation"), "a class address");
+    Eq(0UL, l.Rva("CSharpBattle.Battle.CardComponent"), "a class without an address: 0 (recognised by name)");
+    Eq(906, l.Const("EComponentType.Card"), "a const");
+    Eq(-108L, l.Form("ID_FORM_UNIONWEEKBOSSBATTLEEND"), "a negative form id");
+    bool threw = false; try { l.Const("Nope.Nope"); } catch (KeyNotFoundException) { threw = true; }
+    Check(threw, "an unknown key throws");
+    Check(GameLayout.Parse(fx, "9.8.7.6.4") == null, "data for another version is not used");
+    Check(GameLayout.Parse(fx.Replace("\"v\": 1", "\"v\": 2"), FixtureGame) == null, "another format is not used");
+    foreach (var k in new[] { "EComponentType.Card", "DLNode", "SdpPair", "arrData", "ID_FORM_BATTLE" })
+      Check(GameLayout.Parse(Without(fx, k), FixtureGame) == null, "a reply without " + k + " is not used");
+    Check(GameLayout.Parse(Without(fx, "CSharpBattle.Battle.GameSimulation"), FixtureGame) != null, "a class may be missing");
+    Check(GameLayout.Parse(fx.Replace("\"DLNode\": 64", "\"DLNode\": \"64\""), FixtureGame) == null, "a string value is refused");
+    Check(GameLayout.Parse(fx.Replace("\"DLNode\": 64", "\"DLNode\": 1.5"), FixtureGame) == null, "a fraction is refused");
+    Check(GameLayout.Parse(fx.Replace("\"DLNode\": 64", "\"DLNode\": -64"), FixtureGame) == null, "a negative size is refused");
+    Check(GameLayout.Parse("[1]", FixtureGame) == null && GameLayout.Parse("<html>", FixtureGame) == null && GameLayout.Parse(null, FixtureGame) == null, "not an object: null");
+    Check(GameLayout.Parse(fx.Replace("\"game\"", "\"pad\": \"" + new string('x', 70000) + "\", \"game\""), FixtureGame) == null, "an oversized reply is refused");
+    Check(GameLayout.IsVersion("1.6.39.829.1") && GameLayout.IsVersion("1.2") && !GameLayout.IsVersion("1") && !GameLayout.IsVersion("../1.2")
+          && !GameLayout.IsVersion("1.2.3.4.5.6.7") && !GameLayout.IsVersion(null), "game versions: digits and dots only");
+    GameLayout got;
+    Eq(Layout.Reply.Got, Layout.Interpret(200, fx, FixtureGame, out got), "200 with the data: got");
+    Check(got != null, "  ... and parsed");
+    Eq(Layout.Reply.None, Layout.Interpret(404, "{\"error\":\"unknown_version\"}", FixtureGame, out got), "404: none for this version");
+    Eq(Layout.Reply.NoReply, Layout.Interpret(500, fx, FixtureGame, out got), "5xx: no reply (what is held stays)");
+    Eq(Layout.Reply.NoReply, Layout.Interpret(200, "{}", FixtureGame, out got), "200 with junk: no reply");
+    Eq(2, Layout.RetryMinutes(true), "test build asks again every 2 minutes");
+    Eq(10, Layout.RetryMinutes(false), "release build asks again every 10 minutes");
+    // the saved copies, per version
+    string dir = Path.Combine(Path.GetTempPath(), "rf-layout-" + Guid.NewGuid().ToString("N"));
+    Check(Layout.LoadCache(dir, FixtureGame) == null, "no saved copy: null");
+    Layout.SaveCache(dir, FixtureGame, fx);
+    var c = Layout.LoadCache(dir, FixtureGame);
+    Check(c != null && c.Const("EComponentType.Map") == 909, "the saved copy is used offline");
+    Check(Layout.LoadCache(dir, "9.8.7.6.4") == null, "no copy for another version");
+    Layout.SaveCache(dir, "1.1.1", fx);
+    Check(Layout.LoadCache(dir, "1.1.1") == null, "a copy whose data names another version is not used");
+    File.WriteAllText(Path.Combine(dir, FixtureGame + ".json"), "{broken");
+    Check(Layout.LoadCache(dir, FixtureGame) == null, "a broken copy: null");
+    Layout.SaveCache(dir, "../x", fx);
+    Check(!File.Exists(Path.Combine(dir, "..", "x.json")), "a bad version is never a path");
+    try { Directory.Delete(dir, true); } catch (Exception) { }
+    // the site (tests/mock-server.mjs)
+    string json;
+    Eq(Layout.Reply.Got, Layout.Fetch(mock, FixtureGame, out got, out json), "fetch: the data for the version");
+    Check(got != null && json != null && json.Contains(FixtureGame), "  ... with the text to keep");
+    Eq(Layout.Reply.None, Layout.Fetch(mock, "1.2.3", out got, out json), "fetch: an unknown version is none");
+    Eq(Layout.Reply.NoReply, Layout.Fetch(mock, "5.0.0", out got, out json), "fetch: a server error is no reply");
+    Eq(Layout.Reply.NoReply, Layout.Fetch("http://127.0.0.1:1", FixtureGame, out got, out json), "fetch: no connection is no reply");
+    Eq(Layout.Reply.NoReply, Layout.Fetch(mock, "../../x", out got, out json), "fetch: a bad version is not asked for");
+    // without data the features that need it are off; the timeline builder refuses to start
+    var held = Layout.Current;
+    Layout.Use(null);
+    uint fr; int st;
+    Check(!RFX.SimClock(0x10000, out fr, out st) && st == RFX.SimOther, "no data: no fight clock");
+    Eq(0UL, RFX.CurrentSim(), "no data: no fight");
+    Check(RFX.DumpBattleStats() == null && RFX.DumpHeroFights() == null, "no data: no battle study");
+    threw = false; try { new TimelineBuilder(); } catch (InvalidOperationException) { threw = true; }
+    Check(threw, "no data: no fight timeline");
+    Layout.Use(held);
+    // the layout files the site serves (the web repo next to this one, when it is there): each is complete for the app
+    string web = Path.Combine("..", "wardsage-web", "data", "app-layout");
+    if (Directory.Exists(web)) {
+      int n = 0;
+      foreach (var p in Directory.GetFiles(web, "*.json")) {
+        string v = Path.GetFileNameWithoutExtension(p);
+        Check(GameLayout.Parse(File.ReadAllText(p, Encoding.UTF8), v) != null, "the site's layout file " + v + " has everything the app reads");
+        n++;
+      }
+      Check(n > 0, "the site has layout files");
+    } else Console.WriteLine("  (no ../wardsage-web: the site's layout files not checked)");
+    SourceLiteralTests();
+  }
+
+  // The app's code holds no game-build values: they come with the layout data. Every name the code looks up is one the
+  // data must have; no long number literal (a class address or a form id) is in src/ or app/.
+  static void SourceLiteralTests() {
+    var files = new List<string>();
+    foreach (var d in new[] { "src", "app" }) if (Directory.Exists(d)) files.AddRange(Directory.GetFiles(d, "*.cs", SearchOption.AllDirectories));
+    Check(files.Count > 20, "the app's sources found (" + files.Count + ")");
+    var need = new HashSet<string>();
+    foreach (var a in new[] { GameLayout.NeedConst, GameLayout.NeedSpan, GameLayout.NeedSize, GameLayout.NeedHdr, GameLayout.NeedForm }) foreach (var k in a) need.Add(k);
+    // numbers that are not game-build values (limits, a date in a comment)
+    var allowed = new HashSet<string> { "4294967295", "2000000000", "1000000000000", "10000000", "20261003" };
+    var bad = new List<string>(); var unknown = new List<string>(); int lookups = 0;
+    var big = new System.Text.RegularExpressions.Regex(@"(?<![0-9A-Za-z_.""])-?([0-9]{8,})(?![0-9])");
+    var look = new System.Text.RegularExpressions.Regex(@"\.(Const|Span|Size|Hdr|Form)\(""([^""]+)""\)|\b(CT|Span|Hdr|FormId)\(""([^""]+)""\)");
+    var consts = new System.Text.RegularExpressions.Regex(@"\bClassRvas\b|\bconst\s+int\s+CT_\w+\s*=\s*\d|\bCmd(PutTower|RetreatTower|PowerSkill)\s*=\s*\d|\bForm\w*Id\s*=\s*-?\d");
+    foreach (var f in files) {
+      if (Path.GetFileName(f) == "Layout.cs") continue;
+      string[] lines = File.ReadAllLines(f, Encoding.UTF8);
+      for (int i = 0; i < lines.Length; i++) {
+        foreach (System.Text.RegularExpressions.Match m in big.Matches(lines[i]))
+          if (!allowed.Contains(m.Groups[1].Value)) bad.Add(f + ":" + (i + 1) + " " + m.Value);
+        if (consts.IsMatch(lines[i])) bad.Add(f + ":" + (i + 1) + " " + lines[i].Trim());
+        foreach (System.Text.RegularExpressions.Match m in look.Matches(lines[i])) {
+          lookups++;
+          string k = m.Groups[2].Success ? m.Groups[2].Value : m.Groups[4].Value;
+          if (m.Groups[3].Value == "CT") k = "EComponentType." + k;
+          if (!need.Contains(k)) unknown.Add(f + ":" + (i + 1) + " " + k);
+        }
+      }
+    }
+    Check(bad.Count == 0, "no game-build numbers in src/ app/" + (bad.Count > 0 ? ": " + string.Join("; ", bad.ToArray()) : ""));
+    Check(lookups > 40, "the code reads its game values by name (" + lookups + " lookups)");
+    Check(unknown.Count == 0, "every name the code looks up is one the layout data must have" + (unknown.Count > 0 ? ": " + string.Join("; ", unknown.ToArray()) : ""));
   }
 
   // the site's switches (src/RemoteConfig.cs)

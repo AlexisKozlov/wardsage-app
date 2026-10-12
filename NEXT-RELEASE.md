@@ -30,10 +30,21 @@ Optional `### Heading` lines inside a `## RU` / `## EN` section split the update
 * Задержка: заявка обновляется с опросом планов (8 с, пока она открыта); экраны ищутся не чаще раза в 8 с.
 * Английские названия кнопок игры (Литейная, Преобразовать, Фильтр) в ui/i18n.js взяты по смыслу: сверить с английским клиентом.
 
+## Проверить в игре (данные для версии игры с сайта)
+
+* Тестовая сборка с игрой 1.6.39.829.1: в журнале «layout data for game version 1.6.39.829.1: from the site», затем начало боя
+  («battle start»), запись боя и итог боя (статистика героев), тренер боссов, арена (соперники, запись боя).
+* Переодевание: экран героя находится («hero screen»), «Надеть» и подсказки работают; «Найти в игре» и чистка склада: Инвентарь находится.
+* Без сети после первого запуска: данные берутся из сохранённой копии (папка layout рядом с config.json).
+* После следующего обновления игры, пока данных для новой версии нет: заметка «Часть функций недоступна…», синхронизация аккаунта
+  работает; не позже 15 минут после появления данных на сайте заметка уходит сама.
+
 ## RU
 
 - Если после обновления игры что-то перестанет работать правильно, мы сможем временно приостановить часть функций программы или чтение игры целиком, не дожидаясь новой версии. Программа спокойно сообщит об этом, а синхронизация героев и снаряжения продолжит работать, если её это не касается. Когда всё проверено, функции включатся сами.
+- После обновления игры программа сама получает с сайта данные для новой версии: запись боёв, переодевание и «Найти в игре» снова работают без выпуска новой программы. Пока данных нет, программа спокойно об этом сообщит, синхронизация аккаунта работает всегда.
 
 ## EN
 
 - If something stops working right after a game update, we can now pause some of the app's features, or game reading as a whole, without waiting for a new version. The app tells you so calmly, and hero and gear sync keeps working when it is not affected. Once everything is checked, the features come back by themselves.
+- After a game update the app gets the data for the new game version from the site by itself: fight recording, the equip helper and «Find in game» work again without a new app release. Until the data is there the app says so calmly; account sync always works.

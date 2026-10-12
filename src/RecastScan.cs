@@ -1,7 +1,7 @@
 // RealmForge — the game's recast screens, read from memory (READ-ONLY): the foundry's «Преобразовать» tab and the gem
 // screen's recast functions. The «Найти в игре» helper (src/LocateGuide.cs) tells the player where an item is; nothing is
 // written to the game and nothing is clicked.
-//   foundry form (id 0):
+//   foundry form (UIDefines.ID_FORM_EQUIPSUBLIMING):
 //     m_LuaLogicActive            true while the form is shown
 //     m_curType                   3 = the «Преобразовать» tab
 //     m_PanelEquipRecast          the tab's panel:
@@ -10,7 +10,7 @@
 //       m_EquipId                 the item selected now
 //       m_SelectParts             the slot switches on the left
 //       m_FilterConfig            Suits, MainAttrs, SubAttrs / vSubAttrs (the set, main and sub stat ids chosen)
-//   gem screen (id 0):
+//   gem screen (UIDefines.ID_FORM_EQUIPGEMMAIN):
 //     m_CurrentEquipSelectedUid   the item selected now
 //     m_CurrentEquipGemSelectedUid the function selected (7, 8 = recast)
 //     m_Panel_EquipFilter.m_AllEquips the item pop-up's list

@@ -46,6 +46,8 @@ window.RF_TEXTS = {
     errServer: 'Ошибка на сайте', errServerP: 'Сайт ответил ошибкой ({0}). Попробуй чуть позже.',
     errPayload: 'Сайт не принял данные', errPayloadP: '{0}',
     remoteOff: 'Чтение игры временно отключено командой Wardsage', remoteOffP: 'Программа сейчас не читает игру: синхронизация, гильдия, бои и переодевание подождут. Ничего делать не нужно — всё включится само, когда команда вернёт чтение.',
+    layoutWait: 'Часть функций недоступна: ждём данные для версии игры {0}', layoutGameUnknown: '(версия не определена)',
+    layoutWaitP: 'Синхронизация аккаунта работает. Запись боёв, переодевание, «Найти в игре» и чистка склада включатся сами, как только данные появятся. Ничего делать не нужно.',
     remoteSome: 'Часть функций временно отключена командой Wardsage', remoteF_guild: 'гильдия', remoteF_gvg: 'война гильдий', remoteF_battle: 'запись боёв', remoteF_autoclick: 'автонажатие (остаются подсказки)', remoteF_equip: 'переодевание', remoteF_locate: '«Найти в игре»',
     retry: 'Повторить', showLog: 'Журнал', newCode: 'Новый код',
 
@@ -191,6 +193,8 @@ window.RF_TEXTS = {
     errServer: 'Site error', errServerP: 'The site answered with an error ({0}). Try again later.',
     errPayload: 'The site rejected the data', errPayloadP: '{0}',
     remoteOff: 'Game reading is temporarily turned off by the Wardsage team', remoteOffP: 'The app is not reading the game right now: sync, guild, fights and the equip helper will wait. Nothing to do — it all comes back by itself when the team turns reading on again.',
+    layoutWait: 'Some features are unavailable: waiting for data for game version {0}', layoutGameUnknown: '(version unknown)',
+    layoutWaitP: 'Account sync works. Fight recording, the equip helper, «Find in game» and the storage cleanup come back by themselves as soon as the data is there. Nothing to do.',
     remoteSome: 'Some features are temporarily turned off by the Wardsage team', remoteF_guild: 'guild', remoteF_gvg: 'guild war', remoteF_battle: 'fight recording', remoteF_autoclick: 'auto click (hints stay)', remoteF_equip: 'equip helper', remoteF_locate: '«Find in game»',
     retry: 'Retry', showLog: 'Log', newCode: 'New code',
 
