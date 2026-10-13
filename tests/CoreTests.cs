@@ -439,6 +439,7 @@ static class CoreTests {
 
     RemoteSwitchesTests();
     LayoutTests(mock);
+    TestLogTests(mock);
 
     Console.WriteLine();
     Console.WriteLine(passed + " passed, " + failed + " failed");
@@ -458,6 +459,38 @@ static class CoreTests {
     int i = json.IndexOf("\"" + key + "\"", StringComparison.Ordinal); if (i < 0) throw new Exception("no " + key);
     int j = json.IndexOfAny(new[] { ',', '}' }, i);
     return json.Substring(0, i) + json.Substring(json[j] == ',' ? j + 1 : j);
+  }
+
+  static void TestLogTests(string mock) {
+    Console.WriteLine("Test-build log (src/TestLog.cs: bounded queue, send to the site):");
+    var q = new TestLogQueue();
+    for (int i = 0; i < 3005; i++) q.Add("l" + i);
+    Eq(3000, q.Count, "queue: at most 3000 lines");
+    var t = q.Take(500, 1000000);
+    Eq(500, t.Count, "queue: Take limited by count");
+    Eq("l5", t[0], "queue: the oldest 5 were dropped, Take starts at the oldest kept");
+    Eq(2500, q.Count, "queue: taken lines are removed");
+    q.Return(t);
+    Eq(3000, q.Count, "queue: Return puts them back");
+    var t2 = q.Take(3, 1000000);
+    Eq("l5,l6,l7", string.Join(",", t2.ToArray()), "queue: Return keeps the order at the front");
+    var q2 = new TestLogQueue();
+    q2.Add(new string('x', 5000)); q2.Add("b"); q2.Add("c");
+    var t3 = q2.Take(10, 100);
+    Eq(1, t3.Count, "queue: Take limited by bytes (a first long line still goes alone)");
+    Eq(2000, t3[0].Length, "queue: a line is cut to 2000 characters");
+    var q3 = new TestLogQueue();
+    q3.Add("a"); q3.Add("b"); q3.Add("c");
+    q3.Return(new List<string> { "x", "y" });
+    Eq("x,y,a", string.Join(",", q3.Take(3, 1000).ToArray()), "queue: Return goes before the waiting lines");
+    var lines = new List<string> { "one \"q\"\n", "two" };
+    string TlCode = "rf_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    Eq("{\"v\":1,\"app\":\"1.0\",\"lines\":[\"one \\\"q\\\"\\n\",\"two\"]}", TestLogClient.BuildJson("1.0", lines), "json: escaped");
+    Eq(TestLogClient.Result.Ok, TestLogClient.Send(mock, TlCode, "1.0", lines), "send: ok");
+    Eq(TestLogClient.Result.Off, TestLogClient.Send(mock, TlCode, "off", lines), "send: 404 is off");
+    Eq(TestLogClient.Result.Later, TestLogClient.Send(mock, "rf_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", "1.0", lines), "send: 401 is later");
+    Eq(TestLogClient.Result.Later, TestLogClient.Send(mock, "", "1.0", lines), "send: no code is later");
+    Eq(TestLogClient.Result.Later, TestLogClient.Send("http://127.0.0.1:1", TlCode, "1.0", lines), "send: no connection is later");
   }
 
   static void LayoutTests(string mock) {

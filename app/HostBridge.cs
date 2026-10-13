@@ -52,6 +52,8 @@ namespace RealmForge {
     // the site's switches (src/RemoteConfig.cs): asked at start and every 10 min (test build 2); the saved copy until then
     RemoteSwitches remote = RemoteSwitches.LoadCache(RemoteSwitches.CachePath) ?? RemoteSwitches.Permissive();
     readonly System.Windows.Forms.Timer remoteTimer = new System.Windows.Forms.Timer();
+    readonly System.Windows.Forms.Timer testLogTimer = new System.Windows.Forms.Timer();   // TEST build only: log lines to the site
+    bool testLogSending;
 
     public HostBridge(AppWindow win, CoreWebView2 core) {
       this.win = win; this.core = core;
@@ -89,6 +91,7 @@ namespace RealmForge {
                                       c => OnUi(() => OnBridgeCommand(c)), up => OnUi(() => OnBridgeConnected(up)));
       bridgePoller.Start();
       remoteTimer.Interval = 3000; remoteTimer.Tick += (s, e) => { remoteTimer.Interval = RemoteSwitches.EveryMinutes(Channel.IsTest) * 60 * 1000; FetchRemote(); }; remoteTimer.Start();
+      if (Channel.IsTest) { testLogTimer.Interval = 30000; testLogTimer.Tick += (s, e) => { testLogTimer.Interval = 120000; SendTestLog(); }; testLogTimer.Start(); }
       Log.Write(Channel.ProductName + " " + Program.Version + " started");
       Log.Write("switches (saved copy or defaults): " + remote.ToJson());
     }
@@ -207,7 +210,7 @@ namespace RealmForge {
       Program.FatalReport = null;
       bridgePoller.Dispose();   // the pending long poll is aborted: the thread ends at once
       CloseBridgeCommands("cancelled", "Wardsage was closed.", true);
-      gameTimer.Dispose(); liveTimer.Dispose(); autoTimer.Dispose(); updateTimer.Dispose(); remoteTimer.Dispose(); overlay.Dispose();
+      gameTimer.Dispose(); liveTimer.Dispose(); autoTimer.Dispose(); updateTimer.Dispose(); remoteTimer.Dispose(); testLogTimer.Dispose(); overlay.Dispose();
     }
 
     // «Обновлять автоматически» (on by default): a downloaded update is put in place by restarting in a quiet moment — no
@@ -225,6 +228,24 @@ namespace RealmForge {
       Log.Write("update: restarting by itself in a quiet moment");
       win.SaveForRestart();
       Program.RestartForUpdate();
+    }
+
+    // TEST build: send the waiting log lines (never logs about itself: that would feed the queue)
+    void SendTestLog() {
+      if (testLogSending || !SyncClient.IsValidCode(cfg.Code)) return;
+      var lines = Log.TestQueue.Take(500, 200 * 1024);
+      if (lines.Count == 0) return;
+      testLogSending = true;
+      string site = cfg.Site, code = cfg.Code;
+      Task.Factory.StartNew(() => {
+        var r = TestLogClient.Result.Later;
+        try { r = TestLogClient.Send(site, code, Program.Version, lines); } catch (Exception) { }
+        if (r != TestLogClient.Result.Ok) Log.TestQueue.Return(lines);
+        testLogSending = false;
+        if (r == TestLogClient.Result.Off) {
+          try { win.BeginInvoke((Action)(() => testLogTimer.Stop())); } catch (Exception) { }
+        }
+      });
     }
 
     void CheckUpdate() {

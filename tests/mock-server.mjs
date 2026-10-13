@@ -66,6 +66,15 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && req.url === '/__last') return send(res, 200, last ?? {});
   if (req.method === 'GET' && req.url === '/__lastReport') return send(res, 200, lastReport ?? {});
   if (req.url === '/api/report' && req.method === 'POST') return report(req, res);
+  // the test build's log lines (src/TestLog.cs): "A" -> 200, app "off" -> 404, other codes -> 401
+  if (req.method === 'POST' && req.url === '/api/extractor/test-log') {
+    if (req.headers.authorization !== 'Bearer rf_' + 'A'.repeat(32)) return send(res, 401, { error: 'invalid_token' });
+    let b; try { b = JSON.parse((await readBody(req, 262144)).toString('utf8')); } catch { return send(res, 422, { error: 'invalid_payload' }); }
+    if (b.app === 'off') return send(res, 404, { error: 'not_found' });
+    if (b.v !== 1 || !Array.isArray(b.lines) || b.lines.length < 1 || b.lines.length > 500 || b.lines.some((l) => typeof l !== 'string' || l.length > 2000))
+      return send(res, 422, { error: 'invalid_payload' });
+    return send(res, 200, { ok: true });
+  }
   // the app's layout data (src/Layout.cs): the fixture for its version, 404 for any other, 500 for "5.0.0"
   if (req.method === 'GET' && req.url.startsWith('/api/extractor/app-layout?')) {
     const game = new URL(req.url, 'http://x').searchParams.get('game');

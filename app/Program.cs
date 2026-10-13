@@ -282,13 +282,17 @@ namespace RealmForge {
   static class Log {
     public static string Path { get { return System.IO.Path.Combine(AppConfig.DefaultDir, "realmforge.log"); } }
     static readonly object gate = new object();
+    /// <summary>TEST build only: the lines waiting to go to the site (src/TestLog.cs). Release builds never fill it.</summary>
+    public static readonly TestLogQueue TestQueue = new TestLogQueue();
     public static void Write(string line) {
       lock (gate) {
         try {
           Directory.CreateDirectory(AppConfig.DefaultDir);
           var fi = new FileInfo(Path);
           if (fi.Exists && fi.Length > 2 * 1024 * 1024) fi.Delete();
-          File.AppendAllText(Path, DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "  " + line + Environment.NewLine);
+          string stamped = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "  " + line;
+          File.AppendAllText(Path, stamped + Environment.NewLine);
+          if (Channel.IsTest) TestQueue.Add(stamped);
         } catch (Exception) { }
       }
     }
