@@ -22,9 +22,29 @@ namespace RealmForge {
     Stage cur; ulong sim; string drawn; Bitmap bmp;
     /// <summary>Interface language (ru / en).</summary>
     public string Lang = "ru";
+    /// <summary>Where the player put the panel (Ctrl + drag): its centre across and its top down the game's window, in
+    /// fractions of it; -1 = the default place, at the top in the middle (it may cover the boss's cast bar).</summary>
+    public double PlaceX = -1, PlaceY = -1;
+    /// <summary>The player moved the panel or sent it back (-1, -1): to be saved.</summary>
+    public Action<double, double> PlaceChanged;
+    // the game window's client area on screen at the last tick (to turn a dragged place into fractions)
+    W32.POINT lastO; W32.RECT lastCr;
 
     public BattleCoach() {
       timer.Tick += (s, e) => { try { Tick(); } catch (Exception ex) { Log.Write("coach: " + ex.Message); Stop(); } };
+      win.Moved += () => {
+        W32.RECT wr;
+        if (lastCr.R <= 0 || lastCr.B <= 0 || !W32.GetWindowRect(win.Handle, out wr)) return;
+        PlaceX = Math.Max(0, Math.Min(1, ((wr.L + wr.R) / 2.0 - lastO.X) / lastCr.R));
+        PlaceY = Math.Max(0, Math.Min(1, (wr.T - lastO.Y) / (double)lastCr.B));
+        Log.Write("coach: panel moved to " + PlaceX.ToString("0.00") + ", " + PlaceY.ToString("0.00"));
+        var pc = PlaceChanged; if (pc != null) pc(PlaceX, PlaceY);
+      };
+      win.ResetPlace += () => {
+        PlaceX = PlaceY = -1; drawn = null;
+        Log.Write("coach: panel back to its place");
+        var pc = PlaceChanged; if (pc != null) pc(-1, -1);
+      };
       try {
         using (var s = typeof(BattleCoach).Assembly.GetManifestResourceStream("overlay/boss_coach.json"))
         using (var r = new StreamReader(s)) {
@@ -74,7 +94,7 @@ namespace RealmForge {
     /// <summary>The heroes of the fight as the recorder saw them (any thread).</summary>
     public void Feed(List<HeroSample> hs) { if (sim != 0) seen = hs; }
 
-    public void Stop() { timer.Stop(); cur = null; plan = null; sim = 0; seen = null; if (win.Visible) win.Hide(); if (mapWin.Visible) mapWin.Hide(); }
+    public void Stop() { timer.Stop(); cur = null; plan = null; sim = 0; seen = null; win.Movable = false; if (win.Visible) win.Hide(); if (mapWin.Visible) mapWin.Hide(); }
 
     public void Dispose() { timer.Dispose(); win.Dispose(); mapWin.Dispose(); if (bmp != null) bmp.Dispose(); if (mapBmp != null) mapBmp.Dispose(); }
 
@@ -84,17 +104,31 @@ namespace RealmForge {
       var ps = GameInfo.GameProcesses();
       IntPtr hwnd = ps.Length > 0 ? ps[0].MainWindowHandle : IntPtr.Zero;
       int fp = 0, gp = 0;
-      if (hwnd != IntPtr.Zero) { W32.GetWindowThreadProcessId(W32.GetForegroundWindow(), out fp); W32.GetWindowThreadProcessId(hwnd, out gp); }
+      if (hwnd != IntPtr.Zero) {
+        IntPtr fg = W32.GetForegroundWindow();
+        W32.GetWindowThreadProcessId(fg, out fp); W32.GetWindowThreadProcessId(hwnd, out gp);
+        if (win.IsHandleCreated && fg == win.Handle) fp = gp;   // a click on the panel being moved still counts as the game
+      }
+      // while the panel is being dragged the game stays where it was: leave the panel be
+      if (win.Dragging) return;
       W32.RECT cr;
-      if (hwnd == IntPtr.Zero || W32.IsIconic(hwnd) || fp != gp || !W32.GetClientRect(hwnd, out cr) || cr.B < 200) { if (win.Visible) win.Hide(); if (mapWin.Visible) mapWin.Hide(); return; }
+      if (hwnd == IntPtr.Zero || W32.IsIconic(hwnd) || fp != gp || !W32.GetClientRect(hwnd, out cr) || cr.B < 200) { win.Movable = false; if (win.Visible) win.Hide(); if (mapWin.Visible) mapWin.Hide(); return; }
+      // Ctrl held: the panel takes the mouse and can be dragged out of the way (a right click puts it back); otherwise
+      // the clicks go through to the game
+      bool move = (W32.GetAsyncKeyState(0x11) & 0x8000) != 0;
+      win.Movable = move;
       double t = RFX.FrameSeconds(frames);
       string title, main, next; Lines(t, out title, out main, out next, out bool alarm);
       double U = Ui.Unit(cr.R, cr.B);
       int w = (int)(0.62 * U), h = (int)(0.118 * U);
-      string key = title + "|" + main + "|" + next + "|" + alarm + "|" + w;
-      if (key != drawn || bmp == null) { if (bmp != null) bmp.Dispose(); bmp = Render(w, h, title, main, next, alarm); drawn = key; }
+      string key = title + "|" + main + "|" + next + "|" + alarm + "|" + w + "|" + move;
+      if (key != drawn || bmp == null) { if (bmp != null) bmp.Dispose(); bmp = Render(w, h, title, main, next, alarm, move); drawn = key; }
       var o = new W32.POINT(0, 0); W32.ClientToScreen(hwnd, ref o);
-      win.Put(bmp, o.X + cr.R / 2 - w / 2, o.Y + (int)(0.08 * U));
+      lastO = o; lastCr = cr;
+      int px = PlaceX >= 0 ? (int)(PlaceX * cr.R) - w / 2 : cr.R / 2 - w / 2;
+      int py = PlaceY >= 0 ? (int)(PlaceY * cr.B) : (int)(0.08 * U);
+      px = Math.Max(0, Math.Min(cr.R - w, px)); py = Math.Max(0, Math.Min(cr.B - h, py));   // always inside the game
+      win.Put(bmp, o.X + px, o.Y + py);
       if (plan != null) PlanTick(U, o, cr);
     }
 
@@ -302,17 +336,18 @@ namespace RealmForge {
       return bmp;
     }
 
-    // the panel: a dark plate with the game's gold edges; the alarm (shield) glows red
-    internal static Bitmap Render(int w, int h, string title, string main, string next, bool alarm) {
+    // the panel: a see-through dark plate with the game's gold edges (what is under it, the boss's cast bar, shows);
+    // the alarm (shield) glows red; held to be moved, the edge glows brighter
+    internal static Bitmap Render(int w, int h, string title, string main, string next, bool alarm, bool moving = false) {
       var bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb);
       using (var g = Graphics.FromImage(bmp)) {
         g.SmoothingMode = SmoothingMode.AntiAlias; g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
         var r = new Rectangle(2, 2, w - 5, h - 5);
         using (var path = Round(r, h / 6))
-        using (var fill = new LinearGradientBrush(r, Color.FromArgb(235, 14, 18, 28), Color.FromArgb(235, 26, 20, 12), LinearGradientMode.Vertical)) {
+        using (var fill = new LinearGradientBrush(r, Color.FromArgb(150, 14, 18, 28), Color.FromArgb(150, 26, 20, 12), LinearGradientMode.Vertical)) {
           g.FillPath(fill, path);
           if (alarm) using (var red = new SolidBrush(Color.FromArgb(70, 200, 40, 30))) g.FillPath(red, path);
-          using (var edge = new Pen(Color.FromArgb(230, 212, 170, 90), 2f)) g.DrawPath(edge, path);
+          using (var edge = moving ? new Pen(Color.FromArgb(255, 255, 226, 150), 3f) : new Pen(Color.FromArgb(230, 212, 170, 90), 2f)) g.DrawPath(edge, path);
           using (var inner = new Pen(Color.FromArgb(90, 255, 230, 170), 1f)) { var r2 = Rectangle.Inflate(r, -4, -4); using (var p2 = Round(r2, h / 7)) g.DrawPath(inner, p2); }
         }
         float fs = h * 0.19f;

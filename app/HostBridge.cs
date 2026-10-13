@@ -80,6 +80,8 @@ namespace RealmForge {
       overlay.AutoConfirm = cfg.AutoConfirm;
       overlay.CancelText = CancelText(cfg.Lang);
       coach.Lang = cfg.Lang;
+      coach.PlaceX = cfg.CoachX; coach.PlaceY = cfg.CoachY;
+      coach.PlaceChanged = (x, y) => { cfg.CoachX = x; cfg.CoachY = y; Save(); };
       // «Отменить надевание» over the game: the interface drops the running build (as its own «Отменить»)
       overlay.CancelPressed += () => { Log.Write("cancel pressed over the game"); Post("{\"ev\":\"cancelRun\"}"); };
       overlay.LocateChanged += (step, subs) => PostLocateState(step, subs);

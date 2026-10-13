@@ -41,4 +41,8 @@ Optional `### Heading` lines inside a `## RU` / `## EN` section split the update
 
 ## RU
 
+- Подсказки по боссу стали полупрозрачными, а саму плашку можно отодвинуть: зажми Ctrl и перетащи её мышью, место запомнится. Ctrl и правый клик вернут её на место.
+
 ## EN
+
+- The boss hints panel is now see-through, and you can move it out of the way: hold Ctrl and drag it with the mouse, and it stays there. Ctrl and a right click put it back.

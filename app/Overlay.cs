@@ -34,6 +34,7 @@ namespace RealmForge {
     [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr h, int cmd);
     [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
     [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr h, int index);
+    [DllImport("user32.dll")] public static extern int SetWindowLong(IntPtr h, int index, int value);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
     [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
     [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p);
@@ -72,7 +73,7 @@ namespace RealmForge {
         var cp = base.CreateParams;
         // LAYERED | TRANSPARENT (clicks go through) | TOOLWINDOW (no taskbar / Alt+Tab) | NOACTIVATE | TOPMOST
         cp.ExStyle |= 0x00080000 | 0x00000080 | 0x08000000 | 0x00000008;
-        if (!clickable) cp.ExStyle |= 0x00000020;
+        if (!clickable && !movable) cp.ExStyle |= 0x00000020;
         return cp;
       }
     }
@@ -80,7 +81,32 @@ namespace RealmForge {
       base.OnHandleCreated(e);
       try { W32.SetWindowDisplayAffinity(Handle, 0x11); } catch (Exception) { }   // keep it out of our own screenshots
     }
+    // a panel the player may move (the boss coach): while it is movable it takes the mouse and drags like a title bar
+    bool movable;
+    /// <summary>The player is dragging it now.</summary>
+    public bool Dragging { get; private set; }
+    /// <summary>A drag ended (the window is at its new place).</summary>
+    public event Action Moved;
+    /// <summary>A right click on a movable window: back to the default place.</summary>
+    public event Action ResetPlace;
+    /// <summary>Takes the mouse (to be dragged) instead of letting the clicks through.</summary>
+    public bool Movable {
+      get { return movable; }
+      set {
+        if (movable == value || clickable) return;
+        movable = value;
+        if (IsHandleCreated) { int ex = W32.GetWindowLong(Handle, -20); W32.SetWindowLong(Handle, -20, value ? ex & ~0x20 : ex | 0x20); }   // GWL_EXSTYLE, WS_EX_TRANSPARENT
+      }
+    }
     protected override void WndProc(ref Message m) {
+      if (movable) {
+        if (m.Msg == 0x0084) { m.Result = (IntPtr)2; return; }                 // WM_NCHITTEST -> HTCAPTION: Windows drags it
+        if (m.Msg == 0x0021) { m.Result = (IntPtr)3; return; }                 // WM_MOUSEACTIVATE -> MA_NOACTIVATE
+        if (m.Msg == 0x00A5) { var r = ResetPlace; if (r != null) r(); return; }   // WM_NCRBUTTONUP
+        if (m.Msg == 0x00A4 || m.Msg == 0x00A6 || m.Msg == 0x007B) return;      // no system menu on a right click
+      }
+      if (m.Msg == 0x0231) Dragging = true;                                     // WM_ENTERSIZEMOVE
+      if (m.Msg == 0x0232) { Dragging = false; var mv = Moved; if (mv != null) mv(); }   // WM_EXITSIZEMOVE
       if (!clickable && m.Msg == 0x0084) { m.Result = (IntPtr)(-1); return; }   // WM_NCHITTEST -> HTTRANSPARENT
       if (clickable && m.Msg == 0x0021) { m.Result = (IntPtr)3; return; }     // WM_MOUSEACTIVATE -> MA_NOACTIVATE
       if (clickable && m.Msg == 0x0202) { var p = Pressed; if (p != null) p(); return; }   // WM_LBUTTONUP

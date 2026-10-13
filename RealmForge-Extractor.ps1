@@ -3464,6 +3464,9 @@ namespace RealmForge {
     public bool ErrorReports;       // send failures to the site with the journal's last lines (src/ErrorReport.cs; off by default)
     public bool Tray = true;        // minimizing hides the window in the tray (app/Tray.cs)
     public bool AutoUpdate = true;  // put a downloaded update in place by restarting in a quiet moment (HostBridge.TryAutoUpdate)
+    // where the player dragged the boss coach's panel (Ctrl + drag): its centre across and its top down the game's
+    // window, in fractions of it; -1 = the default place (app/BattleCoach.cs)
+    public double CoachX = -1, CoachY = -1;
     // last successful sync (shown on the start screen; the busts of the strongest heroes decorate the banner)
     public string LastAt;                       // ISO 8601 UTC or null
     public int LastHeroes = -1, LastItems = -1, LastArtifacts = -1;
@@ -3513,6 +3516,9 @@ namespace RealmForge {
       sb.Append(",\n  \"errorReports\": ").Append(ErrorReports ? "true" : "false");
       sb.Append(",\n  \"autoUpdate\": ").Append(AutoUpdate ? "true" : "false");
       sb.Append(",\n  \"tray\": ").Append(Tray ? "true" : "false");
+      if (CoachX >= 0 && CoachY >= 0)
+        sb.Append(",\n  \"coach\": [").Append(CoachX.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture))
+          .Append(", ").Append(CoachY.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture)).Append("]");
       string code = string.IsNullOrEmpty(Code) ? "" : ProtectedPrefix + CodeProtector.Protect(Code);
       sb.Append(",\n  \"code\": ").Append(MiniJson.Quote(code));
       if (!string.IsNullOrEmpty(LastAt)) {
@@ -3546,6 +3552,11 @@ namespace RealmForge {
       c.AutoUpdate = MiniJson.GetBool(d, "autoUpdate", true);
       c.Tray = MiniJson.GetBool(d, "tray", true);
       object lv;
+      var co = d.TryGetValue("coach", out lv) ? lv as List<object> : null;
+      if (co != null && co.Count == 2 && co[0] is double && co[1] is double) {
+        double x = (double)co[0], y = (double)co[1];
+        if (x >= 0 && x <= 1 && y >= 0 && y <= 1) { c.CoachX = x; c.CoachY = y; }
+      }
       var last = d.TryGetValue("last", out lv) ? MiniJson.AsObject(lv) : null;
       if (last != null && MiniJson.GetString(last, "at") != null) {
         c.LastAt = MiniJson.GetString(last, "at");
