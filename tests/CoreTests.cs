@@ -179,6 +179,7 @@ static class CoreTests {
     Check(Math.Abs(cc2.CoachX - 0.25) < 1e-6 && Math.Abs(cc2.CoachY - 0.4) < 1e-6, "coach panel place round-trips");
     Check(AppConfig.FromJson("{}").CoachX < 0 && !new AppConfig().ToJson().Contains("coach"), "coach panel: default place unless moved");
     Check(AppConfig.FromJson("{\"coach\":[3,0.5]}").CoachX < 0, "coach panel: a place off the window is ignored");
+    Check(AppConfig.FromJson("{}").BossHints && !AppConfig.FromJson(new AppConfig { BossHints = false }.ToJson()).BossHints, "boss hints: on by default, off round-trips");
     var def = AppConfig.FromJson("not json");
     Check(def.Site == SyncClient.DefaultSite && def.Lang == AppConfig.SystemLang() && def.Code == "" && !def.SaveCopy, "broken config -> defaults");
     Eq("", AppConfig.FromJson("{\"code\":\"" + Tok('A') + "\"}").Code, "plain-text code in config is ignored");

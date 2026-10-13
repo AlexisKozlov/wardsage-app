@@ -3467,6 +3467,7 @@ namespace RealmForge {
     // where the player dragged the boss coach's panel (Ctrl + drag): its centre across and its top down the game's
     // window, in fractions of it; -1 = the default place (app/BattleCoach.cs)
     public double CoachX = -1, CoachY = -1;
+    public bool BossHints = true;   // the boss coach's panel over the game during boss fights (app/BattleCoach.cs)
     // last successful sync (shown on the start screen; the busts of the strongest heroes decorate the banner)
     public string LastAt;                       // ISO 8601 UTC or null
     public int LastHeroes = -1, LastItems = -1, LastArtifacts = -1;
@@ -3516,6 +3517,7 @@ namespace RealmForge {
       sb.Append(",\n  \"errorReports\": ").Append(ErrorReports ? "true" : "false");
       sb.Append(",\n  \"autoUpdate\": ").Append(AutoUpdate ? "true" : "false");
       sb.Append(",\n  \"tray\": ").Append(Tray ? "true" : "false");
+      sb.Append(",\n  \"bossHints\": ").Append(BossHints ? "true" : "false");
       if (CoachX >= 0 && CoachY >= 0)
         sb.Append(",\n  \"coach\": [").Append(CoachX.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture))
           .Append(", ").Append(CoachY.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture)).Append("]");
@@ -3551,6 +3553,7 @@ namespace RealmForge {
       c.ErrorReports = MiniJson.GetBool(d, "errorReports", false);
       c.AutoUpdate = MiniJson.GetBool(d, "autoUpdate", true);
       c.Tray = MiniJson.GetBool(d, "tray", true);
+      c.BossHints = MiniJson.GetBool(d, "bossHints", true);
       object lv;
       var co = d.TryGetValue("coach", out lv) ? lv as List<object> : null;
       if (co != null && co.Count == 2 && co[0] is double && co[1] is double) {

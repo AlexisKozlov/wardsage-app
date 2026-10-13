@@ -302,6 +302,7 @@ namespace RealmForge {
           case "setAutoClick": cfg.AutoClick = MiniJson.GetBool(m, "on", true); overlay.AutoEnabled = AutoClickOn(); Save(); break;
           case "setAutoConfirm": cfg.AutoConfirm = MiniJson.GetBool(m, "on", false); overlay.AutoConfirm = cfg.AutoConfirm; Save(); break;
           case "setAutoUpdate": cfg.AutoUpdate = MiniJson.GetBool(m, "on", true); Save(); break;
+          case "setBossHints": cfg.BossHints = MiniJson.GetBool(m, "on", true); if (!cfg.BossHints && coach.Running) coach.Stop(); Save(); break;
           case "setTray": cfg.Tray = MiniJson.GetBool(m, "on", true); win.TrayEnabled = cfg.Tray; Save(); break;
           case "setAutostart": Autostart.Set(MiniJson.GetBool(m, "on", false)); SendState(null); break;
           case "setErrorReports": cfg.ErrorReports = MiniJson.GetBool(m, "on", false); Save(); Log.Write("error reports " + (cfg.ErrorReports ? "on" : "off")); break;
@@ -492,7 +493,7 @@ namespace RealmForge {
       sb.Append(",\"saveCopy\":").Append(B(cfg.SaveCopy));
       sb.Append(",\"autoSync\":").Append(B(cfg.AutoSync)).Append(",\"autoClick\":").Append(B(cfg.AutoClick))
         .Append(",\"autoConfirm\":").Append(B(cfg.AutoConfirm)).Append(",\"errorReports\":").Append(B(cfg.ErrorReports)).Append(",\"autoUpdate\":").Append(B(cfg.AutoUpdate))
-        .Append(",\"tray\":").Append(B(cfg.Tray)).Append(",\"autostart\":").Append(B(Autostart.IsOn()));
+        .Append(",\"tray\":").Append(B(cfg.Tray)).Append(",\"bossHints\":").Append(B(cfg.BossHints)).Append(",\"autostart\":").Append(B(Autostart.IsOn()));
       win.TrayEnabled = cfg.Tray;
       win.SetTrayLang(cfg.Lang);
       sb.Append(",\"last\":").Append(LastJson());
@@ -644,7 +645,7 @@ namespace RealmForge {
           plan = FightPlanClient.For(fightPlans, stage, heroes);
           if (plan != null) Log.Write("battle start: plan for " + plan.Boss + ", " + plan.Steps.Count + " heroes (" + heroes.Count + " in the fight)");
         } catch (Exception e) { Log.Write("fight plans: " + e.Message); }
-        win.BeginInvoke((Action)(() => { if (simSeen == sim && (plan != null || coach.Knows(stage))) coach.Start(sim, stage, plan); }));
+        win.BeginInvoke((Action)(() => { if (simSeen == sim && cfg.BossHints && (plan != null || coach.Knows(stage))) coach.Start(sim, stage, plan); }));
       });
     }
 
