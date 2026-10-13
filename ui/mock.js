@@ -1,7 +1,7 @@
 // Development only: a fake host for previewing the interface in a normal browser (no WebView2).
 // Inert inside Wardsage.exe (window.chrome.webview exists there). Scenario: index.html?s=<name>
 //   locate | locate-select | locate-filter | locate-gone (a «Найти в игре» request)
-//   remote-off | remote-some (the site's switches; &page=equip) | remote-layout (no layout data for the game version)
+//   remote-off | remote-some (the site's switches; &page=equip) | remote-layout (no layout data for the game version) | remote-layout-code (no data: no valid sync code)
 //   onboard | idle | reading | done | error | equip | pick | rel | selected | hidden | done-plan | compact | settings | news | newsoff | en
 (function () {
   if (window.chrome && window.chrome.webview) return;
@@ -52,6 +52,7 @@
         if (s === 'remote-off') emit({ ev: 'remote', readEnabled: false, off: [] });
         if (s === 'remote-some') emit({ ev: 'remote', readEnabled: true, off: ['guild', 'autoclick', 'locate'] });
         if (s === 'remote-layout') emit({ ev: 'layout', missing: true, game: '1.6.40.830.1' });
+        if (s === 'remote-layout-code') emit({ ev: 'layout', missing: true, noCode: true, game: '1.6.40.830.1' });
         if (s.startsWith('remote') && q.get('page') === 'equip') setTimeout(() => document.querySelector('[data-page=equip]').click(), 20);
         if (s === 'reading') emit({ ev: 'sync', stage: 'read', seconds: 17 });
         if (s === 'done') emit({ ev: 'sync', stage: 'done', result: { seconds: 41, heroes: 128, items: 1109, artifacts: 380, viewUrl: site + '/app/heroes' } });

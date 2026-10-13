@@ -513,8 +513,9 @@ static class CoreTests {
     Eq(Layout.Reply.NoReply, Layout.Fetch(mock, LayoutCode, "5.0.0", out got, out json), "fetch: a server error is no reply");
     Eq(Layout.Reply.NoReply, Layout.Fetch("http://127.0.0.1:1", LayoutCode, FixtureGame, out got, out json), "fetch: no connection is no reply");
     Eq(Layout.Reply.NoReply, Layout.Fetch(mock, LayoutCode, "../../x", out got, out json), "fetch: a bad version is not asked for");
-    Eq(Layout.Reply.NoReply, Layout.Fetch(mock, "", FixtureGame, out got, out json), "fetch: without a sync code nothing is asked");
-    Eq(Layout.Reply.NoReply, Layout.Fetch(mock, "rf_" + new string('Z', 32), FixtureGame, out got, out json), "fetch: a code the site refuses (401) is no reply");
+    Eq(Layout.Reply.Denied, Layout.Fetch(mock, "", FixtureGame, out got, out json), "fetch: without a sync code nothing is asked (denied)");
+    Eq(Layout.Reply.Denied, Layout.Fetch(mock, "rf_" + new string('Z', 32), FixtureGame, out got, out json), "fetch: a code the site refuses (401) is denied");
+    Eq(Layout.Reply.Denied, Layout.Interpret(403, "{\"error\":\"banned\"}", FixtureGame, out got), "403: denied");
     // without data the features that need it are off; the timeline builder refuses to start
     var held = Layout.Current;
     Layout.Use(null);

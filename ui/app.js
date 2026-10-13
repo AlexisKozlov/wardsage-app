@@ -27,7 +27,7 @@
     // the site's switches: reading as a whole, and the features switched off
     remote: { readEnabled: true, off: [] },
     // the running game version has no layout data from the server (yet): fights, the equip helper's screens, «Найти в игре» wait
-    layout: { missing: false, game: '' },
+    layout: { missing: false, noCode: false, game: '' },
   };
 
   // ---------------------------------------------------------------- helpers
@@ -234,7 +234,7 @@
   function remoteNote(only) {
     const r = S.remote;
     const lay = S.layout.missing && r.readEnabled
-      ? `<div class="remote-note" role="status">${I.clock}<div><b>${esc(t('layoutWait', S.layout.game || t('layoutGameUnknown')))}</b><p>${esc(t('layoutWaitP'))}</p></div></div>`
+      ? `<div class="remote-note" role="status">${I.clock}<div><b>${esc(t(S.layout.noCode ? 'layoutCode' : 'layoutWait', S.layout.game || t('layoutGameUnknown')))}</b><p>${esc(t(S.layout.noCode ? 'layoutCodeP' : 'layoutWaitP'))}</p></div></div>`
       : '';
     return remoteSwitchNote(r, only) + lay;
   }
@@ -912,8 +912,8 @@
       case 'guild': if (m.state === 'noSelf' || m.state === 'short') toast(t(m.state === 'short' ? 'guildShort' : 'guildNoSelf'), 12000); break;
       case 'remote': S.remote = { readEnabled: m.readEnabled !== false, off: Array.isArray(m.off) ? m.off : [] }; render(); break;
       case 'layout': {
-        const l = { missing: m.missing === true, game: typeof m.game === 'string' ? m.game : '' };
-        if (l.missing !== S.layout.missing || l.game !== S.layout.game) { S.layout = l; render(); }
+        const l = { missing: m.missing === true, noCode: m.noCode === true, game: typeof m.game === 'string' ? m.game : '' };
+        if (l.missing !== S.layout.missing || l.noCode !== S.layout.noCode || l.game !== S.layout.game) { S.layout = l; render(); }
         break;
       }
       case 'battle': toast(t(m.ok === false ? 'battleNone' : 'battleKept'), 6000); break;

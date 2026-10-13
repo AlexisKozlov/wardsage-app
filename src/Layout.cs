@@ -126,13 +126,15 @@ namespace RealmForge {
       } catch (Exception) { }
     }
 
-    /// <summary>What a reply means: Got (the data, in <paramref name="layout"/>), None (the site has none for this version)
-    /// or NoReply (no connection, an error, something odd: what is held stays).</summary>
-    public enum Reply { Got, None, NoReply }
+    /// <summary>What a reply means: Got (the data, in <paramref name="layout"/>), None (the site has none for this version),
+    /// Denied (no valid sync code: none entered, or the site refused it with 401/403) or NoReply (no connection, an error,
+    /// something odd: what is held stays).</summary>
+    public enum Reply { Got, None, Denied, NoReply }
 
     public static Reply Interpret(int code, string body, string game, out GameLayout layout) {
       layout = null;
       if (code == 404) return Reply.None;
+      if (code == 401 || code == 403) return Reply.Denied;
       if (code < 200 || code >= 300) return Reply.NoReply;
       layout = GameLayout.Parse(body, game);
       return layout != null ? Reply.Got : Reply.NoReply;
@@ -142,7 +144,8 @@ namespace RealmForge {
     /// text when it is Got.</summary>
     public static Reply Fetch(string site, string code, string game, out GameLayout layout, out string json) {
       layout = null; json = null;
-      if (!GameLayout.IsVersion(game) || string.IsNullOrEmpty(site) || !SyncClient.IsValidCode(code)) return Reply.NoReply;
+      if (!GameLayout.IsVersion(game) || string.IsNullOrEmpty(site)) return Reply.NoReply;
+      if (!SyncClient.IsValidCode(code)) return Reply.Denied;
       try {
         SyncClient.EnableTls12();
         var req = (HttpWebRequest)WebRequest.Create(site.TrimEnd('/') + "/api/extractor/app-layout?game=" + Uri.EscapeDataString(game));

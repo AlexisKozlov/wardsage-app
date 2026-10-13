@@ -146,7 +146,7 @@ namespace RealmForge {
 
     string layoutFor;                                 // the game version the data in force (or awaited) is for
     DateTime layoutRetryAt = DateTime.MaxValue;       // the next ask while there is none
-    bool layoutFetching, layoutNoneLogged;
+    bool layoutFetching, layoutNoneLogged, layoutDenied;   // layoutDenied: no valid sync code, the site gives no data
 
     /// <summary>The game (re)started with version <paramref name="v"/>: its saved copy now, the site asked at once (a saved
     /// copy is refreshed once per game start).</summary>
@@ -166,7 +166,8 @@ namespace RealmForge {
     }
 
     void FetchLayout(string v) {
-      if (!GameLayout.IsVersion(v) || layoutFetching || !SyncClient.IsValidCode(cfg.Code)) return;
+      if (!GameLayout.IsVersion(v) || layoutFetching) return;
+      if (!SyncClient.IsValidCode(cfg.Code)) { if (!layoutDenied) { layoutDenied = true; PostLayout(); } return; }
       layoutFetching = true;
       layoutRetryAt = DateTime.UtcNow.AddMinutes(Layout.RetryMinutes(Channel.IsTest));
       string site = cfg.Site, code = cfg.Code;
@@ -177,6 +178,8 @@ namespace RealmForge {
         OnUi(() => {
           layoutFetching = false;
           if (v != layoutFor) return;   // another game version meanwhile
+          bool denied = r == Layout.Reply.Denied;
+          if (denied != layoutDenied) { layoutDenied = denied; PostLayout(); }
           if (r == Layout.Reply.Got) {
             bool was = Layout.Current != null;
             Layout.Use(l);
@@ -187,7 +190,7 @@ namespace RealmForge {
             if (!was && gameRunning && addrs == null && !scanning && AutoClickOn()) StartScan(watch, true);
           } else if (Layout.Current == null && !layoutNoneLogged) {
             layoutNoneLogged = true;
-            Log.Write("layout data for game version " + v + ": " + (r == Layout.Reply.None ? "not on the site yet" : "the site did not answer") + "; asked again every " + Layout.RetryMinutes(Channel.IsTest) + " min");
+            Log.Write("layout data for game version " + v + ": " + (r == Layout.Reply.None ? "not on the site yet" : r == Layout.Reply.Denied ? "no valid sync code" : "the site did not answer") + "; asked again every " + Layout.RetryMinutes(Channel.IsTest) + " min");
           }
         });
       });
@@ -195,7 +198,7 @@ namespace RealmForge {
 
     /// <summary>The page's note: the running game has no layout data (yet), some features wait for it.</summary>
     void PostLayout() {
-      Post("{\"ev\":\"layout\",\"missing\":" + B(gameRunning && Layout.Current == null) + ",\"game\":" + S(gameVersion) + "}");
+      Post("{\"ev\":\"layout\",\"missing\":" + B(gameRunning && Layout.Current == null) + ",\"noCode\":" + B(layoutDenied) + ",\"game\":" + S(gameVersion) + "}");
     }
 
     static string CancelText(string lang) { return lang == "en" ? "Cancel equipping" : "Отменить надевание"; }
