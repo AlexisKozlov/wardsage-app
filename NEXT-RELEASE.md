@@ -41,12 +41,4 @@ Optional `### Heading` lines inside a `## RU` / `## EN` section split the update
 
 ## RU
 
-- Если после обновления игры что-то перестанет работать правильно, мы сможем временно приостановить часть функций программы или чтение игры целиком, не дожидаясь новой версии. Программа спокойно сообщит об этом, а синхронизация героев и снаряжения продолжит работать, если её это не касается. Когда всё проверено, функции включатся сами.
-- После обновления игры программа сама получает с сайта данные для новой версии: запись боёв, переодевание и «Найти в игре» снова работают без выпуска новой программы. Пока данных нет, программа спокойно об этом сообщит, синхронизация аккаунта работает всегда.
-- Синхронизация после дневного сброса, повторного входа или смены аккаунта больше не может отправить устаревшие данные или смешать героев и снаряжение двух аккаунтов. Если игра свёрнута и не понятно, какой вход сейчас открыт, программа подождёт и прочитает аккаунт, когда игра снова будет на экране.
-
 ## EN
-
-- If something stops working right after a game update, we can now pause some of the app's features, or game reading as a whole, without waiting for a new version. The app tells you so calmly, and hero and gear sync keeps working when it is not affected. Once everything is checked, the features come back by themselves.
-- After a game update the app gets the data for the new game version from the site by itself: fight recording, the equip helper and «Find in game» work again without a new app release. Until the data is there the app says so calmly; account sync always works.
-- Sync after the daily reset, a re-login or an account switch can no longer send outdated data or mix the heroes and gear of two accounts. If the game is minimized and it is not clear which login is open, the app waits and reads the account once the game is on screen again.
