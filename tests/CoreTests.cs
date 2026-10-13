@@ -506,13 +506,15 @@ static class CoreTests {
     Check(!File.Exists(Path.Combine(dir, "..", "x.json")), "a bad version is never a path");
     try { Directory.Delete(dir, true); } catch (Exception) { }
     // the site (tests/mock-server.mjs)
-    string json;
-    Eq(Layout.Reply.Got, Layout.Fetch(mock, FixtureGame, out got, out json), "fetch: the data for the version");
+    string json; const string LayoutCode = "rf_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    Eq(Layout.Reply.Got, Layout.Fetch(mock, LayoutCode, FixtureGame, out got, out json), "fetch: the data for the version");
     Check(got != null && json != null && json.Contains(FixtureGame), "  ... with the text to keep");
-    Eq(Layout.Reply.None, Layout.Fetch(mock, "1.2.3", out got, out json), "fetch: an unknown version is none");
-    Eq(Layout.Reply.NoReply, Layout.Fetch(mock, "5.0.0", out got, out json), "fetch: a server error is no reply");
-    Eq(Layout.Reply.NoReply, Layout.Fetch("http://127.0.0.1:1", FixtureGame, out got, out json), "fetch: no connection is no reply");
-    Eq(Layout.Reply.NoReply, Layout.Fetch(mock, "../../x", out got, out json), "fetch: a bad version is not asked for");
+    Eq(Layout.Reply.None, Layout.Fetch(mock, LayoutCode, "1.2.3", out got, out json), "fetch: an unknown version is none");
+    Eq(Layout.Reply.NoReply, Layout.Fetch(mock, LayoutCode, "5.0.0", out got, out json), "fetch: a server error is no reply");
+    Eq(Layout.Reply.NoReply, Layout.Fetch("http://127.0.0.1:1", LayoutCode, FixtureGame, out got, out json), "fetch: no connection is no reply");
+    Eq(Layout.Reply.NoReply, Layout.Fetch(mock, LayoutCode, "../../x", out got, out json), "fetch: a bad version is not asked for");
+    Eq(Layout.Reply.NoReply, Layout.Fetch(mock, "", FixtureGame, out got, out json), "fetch: without a sync code nothing is asked");
+    Eq(Layout.Reply.NoReply, Layout.Fetch(mock, "rf_" + new string('Z', 32), FixtureGame, out got, out json), "fetch: a code the site refuses (401) is no reply");
     // without data the features that need it are off; the timeline builder refuses to start
     var held = Layout.Current;
     Layout.Use(null);

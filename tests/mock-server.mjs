@@ -69,6 +69,7 @@ const server = http.createServer(async (req, res) => {
   // the app's layout data (src/Layout.cs): the fixture for its version, 404 for any other, 500 for "5.0.0"
   if (req.method === 'GET' && req.url.startsWith('/api/extractor/app-layout?')) {
     const game = new URL(req.url, 'http://x').searchParams.get('game');
+    if (req.headers.authorization !== 'Bearer rf_' + 'A'.repeat(32)) return send(res, 401, { error: 'invalid_token' });
     if (game === '5.0.0') return send(res, 500, { error: 'boom' });
     const fx = readFileSync(new URL('./layout-fixture.json', import.meta.url), 'utf8');
     if (game !== JSON.parse(fx).game) return send(res, 404, { error: 'unknown_version' });

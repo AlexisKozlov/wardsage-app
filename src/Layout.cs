@@ -1,6 +1,7 @@
-// Wardsage - layout data from the server for the running game version: GET {site}/api/extractor/app-layout?game=<version>.
+// Wardsage - layout data from the server for the running game version: GET {site}/api/extractor/app-layout?game=<version>
+// with Authorization: Bearer <sync code> (without a code nothing is asked).
 //   200 {"game":"<version>","v":1,"rva":{class: n},"const":{name: n},"span":{name: n},"size":{name: n},"hdr":{name: n},"form":{name: n}}
-//   404 = no data for that version (yet).
+//   404 = no data for that version (yet); 401/403 = the code is not (or no longer) valid: asked again later.
 // The reply is kept per game version in the app's data folder (layout\<version>.json) and used while the site cannot be
 // reached. Without data for the running game version the features that need it stay off: fight recording and the boss
 // coach, the arena watch, the game's screens for the equip helper, «Найти в игре», the storage cleanup and the recast
@@ -137,16 +138,18 @@ namespace RealmForge {
       return layout != null ? Reply.Got : Reply.NoReply;
     }
 
-    /// <summary>Asks the site for <paramref name="game"/>'s data; <paramref name="json"/> = the reply's text when it is Got.</summary>
-    public static Reply Fetch(string site, string game, out GameLayout layout, out string json) {
+    /// <summary>Asks the site for <paramref name="game"/>'s data with the sync code; <paramref name="json"/> = the reply's
+    /// text when it is Got.</summary>
+    public static Reply Fetch(string site, string code, string game, out GameLayout layout, out string json) {
       layout = null; json = null;
-      if (!GameLayout.IsVersion(game) || string.IsNullOrEmpty(site)) return Reply.NoReply;
+      if (!GameLayout.IsVersion(game) || string.IsNullOrEmpty(site) || !SyncClient.IsValidCode(code)) return Reply.NoReply;
       try {
         SyncClient.EnableTls12();
         var req = (HttpWebRequest)WebRequest.Create(site.TrimEnd('/') + "/api/extractor/app-layout?game=" + Uri.EscapeDataString(game));
         req.Method = "GET";
         req.Accept = "application/json";
         req.UserAgent = SyncClient.UserAgent;
+        req.Headers["Authorization"] = "Bearer " + code;
         req.Timeout = 10000;
         req.ReadWriteTimeout = 10000;
         req.AllowAutoRedirect = false;

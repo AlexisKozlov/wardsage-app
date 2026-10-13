@@ -166,13 +166,13 @@ namespace RealmForge {
     }
 
     void FetchLayout(string v) {
-      if (!GameLayout.IsVersion(v) || layoutFetching) return;
+      if (!GameLayout.IsVersion(v) || layoutFetching || !SyncClient.IsValidCode(cfg.Code)) return;
       layoutFetching = true;
       layoutRetryAt = DateTime.UtcNow.AddMinutes(Layout.RetryMinutes(Channel.IsTest));
-      string site = cfg.Site;
+      string site = cfg.Site, code = cfg.Code;
       Task.Factory.StartNew(() => {
         GameLayout l = null; string json = null; var r = Layout.Reply.NoReply;
-        try { r = Layout.Fetch(site, v, out l, out json); } catch (Exception) { r = Layout.Reply.NoReply; }
+        try { r = Layout.Fetch(site, code, v, out l, out json); } catch (Exception) { r = Layout.Reply.NoReply; }
         if (r == Layout.Reply.Got) Layout.SaveCache(Layout.CacheDir, v, json);
         OnUi(() => {
           layoutFetching = false;
@@ -264,7 +264,10 @@ namespace RealmForge {
           case "setLang": cfg.Lang = MiniJson.GetString(m, "lang") == "en" ? "en" : "ru"; overlay.CancelText = CancelText(cfg.Lang); coach.Lang = cfg.Lang; Save(); break;
           case "setCode": {
             string code = SyncClient.ExtractCode(MiniJson.GetString(m, "code") ?? "");
-            if (SyncClient.IsValidCode(code)) { cfg.Code = code; Save(); SendState("codeSaved"); }
+            if (SyncClient.IsValidCode(code)) {
+              cfg.Code = code; Save(); SendState("codeSaved");
+              if (gameRunning && Layout.Current == null) FetchLayout(layoutFor);   // the layout data is given with a code only
+            }
             break;
           }
           case "clearCode": cfg.Code = ""; Save(); SendState(null); break;
