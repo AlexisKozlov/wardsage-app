@@ -159,6 +159,9 @@ static class CoreTests {
     Check(SyncOutcome.Classify(false, ExtractError.NoAccountData) == SyncKind.ReadFailed, "manual sync, no account: a read error");
     Check(SyncOutcome.Classify(true, ExtractError.Failed) == SyncKind.ReadFailed && SyncOutcome.Classify(true, ExtractError.None) == SyncKind.Ok, "other outcomes unchanged");
     Eq("RW regions: 120, 293 MB; Strings found in 3 s; heroes (owned): 0", SyncOutcome.ScanStats("noise\nRW regions: 120, 293 MB\n  lua x\nStrings found in 3 s\n  heroes (owned): 0\n"), "scan stats from the log");
+    Check(SyncOutcome.AccountNotLoaded("Strings found: \n  nodes: 0\nEquipment tables...\n  nodes keyed 'iStarLvl': 0\n  tables: 0\nHero tables...\n  nodes keyed 'vEquipSlot': 0\n"), "no account keys at all: the game has not loaded the account");
+    Check(!SyncOutcome.AccountNotLoaded("  lua string 'iStarLvl' @ 0x1\n  nodes keyed 'iStarLvl': 5\n  item tables: 0\n  nodes keyed 'vEquipSlot': 0\n"), "keys found but no tables: a real reading failure");
+    Check(!SyncOutcome.AccountNotLoaded("") && !SyncOutcome.AccountNotLoaded("Done in 3 s"), "no scan lines: not told apart");
     Eq(ExtractError.NoAccountData, Extractor.Check("{\"equipment\":[],\"heroes\":[],\"campRewards\":null,\"artifacts\":null,\"meta\":{}}", new ExtractResult()).Error, "empty account -> NoAccountData");
     Eq(ExtractError.Failed, Extractor.Check("{\"equipment\":[", new ExtractResult()).Error, "broken JSON -> Failed");
 

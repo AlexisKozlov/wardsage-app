@@ -831,11 +831,11 @@ namespace RealmForge {
       t.Start();
     }
 
-    void SyncError(string kind, string detail, int retryAfter) {
+    void SyncError(string kind, string detail, int retryAfter, bool report = true) {
       SyncEv("error", ",\"error\":{\"kind\":\"" + kind + "\",\"detail\":" + S(detail) + ",\"retryAfter\":" + N(retryAfter) + "}");
       // reported: reading and sending failures. Not: the site's rate limit, the game not running (the player's state) and
       // a rejected code (the report would be rejected the same way)
-      if (kind != "rate" && kind != "not_running" && kind != "token" && kind != "paused")
+      if (report && kind != "rate" && kind != "not_running" && kind != "token" && kind != "paused")
         Report("sync." + kind, "sync: " + kind + (string.IsNullOrEmpty(detail) ? "" : ": " + detail), Ctx("auto", autoRun ? "true" : "false"));
     }
 
@@ -863,7 +863,8 @@ namespace RealmForge {
           SyncEv("waiting", null);
           win.BeginInvoke((Action)(() => RequestAutoSync(NotReadyRetrySec)));
           return;
-        default: SyncError("read", ex.Detail, 0); return;
+        default:   // a manual sync before the game has loaded the account: the card asks to enter the game, no report
+          SyncError("read", ex.Detail, 0, !(ex.Error == ExtractError.NoAccountData && SyncOutcome.AccountNotLoaded(RFX.Log.ToString()))); return;
       }
       int seconds = (int)(DateTime.UtcNow - started).TotalSeconds;
       lastAccount = ex.Json; lastAccountAt = DateTime.UtcNow;

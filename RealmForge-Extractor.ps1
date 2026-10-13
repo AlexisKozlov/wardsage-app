@@ -2739,6 +2739,22 @@ namespace RealmForge {
       }
       return keep.Count == 0 ? null : string.Join("; ", keep.ToArray());
     }
+
+    /// <summary>The reader found none of the account's keys at all (every "nodes keyed" count is 0): the game is at the
+    /// login or loading screen, not a reading failure. The player is still told to enter the game; no error report goes.</summary>
+    public static bool AccountNotLoaded(string log) {
+      if (string.IsNullOrEmpty(log)) return false;
+      bool any = false;
+      foreach (var raw in log.Split('\n')) {
+        var l = raw.Trim();
+        if (!l.StartsWith("nodes keyed", StringComparison.Ordinal)) continue;
+        any = true;
+        int c = l.LastIndexOf(':');
+        int n;
+        if (c < 0 || !int.TryParse(l.Substring(c + 1).Trim(), out n) || n != 0) return false;
+      }
+      return any;
+    }
   }
 
   public sealed class ExtractResult {
