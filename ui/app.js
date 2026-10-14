@@ -438,7 +438,7 @@
 
   // where the app needs a sync code: enter it here (the code screen) or get one on the site
   function codeBtns() {
-    return `<button class="btn-gold" data-act="editCode">${esc(t('enterCode'))}</button><button class="btn-line" data-act="open" data-url="${esc(S.site + '/app/settings')}">${I.ext}${esc(t('getCode'))}</button>`;
+    return `<button class="btn-line sm" data-act="editCode">${esc(t('enterCode'))}</button><button class="btn-line sm" data-act="open" data-url="${esc(S.site + '/app/settings')}">${I.ext}${esc(t('getCode'))}</button>`;
   }
   function emptyBox(title, text, actions) {
     return `<div class="card empty">${I.chest}<b>${esc(title)}</b><p>${esc(text)}</p><div class="row" style="justify-content:center">${actions}</div></div>`;
@@ -642,12 +642,12 @@
     const sw = (act, on, dis) => `<button class="switch" role="switch" data-act="${act}" aria-checked="${on}" ${dis ? 'disabled' : ''}></button>`;
     const sec = (title, body) => `<section class="card sec"><h2>${esc(title)}</h2>${body}</section>`;
     const adv = !!S.more.adv;
+    // the account on a line of its own across both columns: the sync code on the left, the language on the right
+    const account = `<section class="card sec acct"><h2>${esc(t('secAccount'))}</h2><div class="acct-cols">${
+      row(t('setCode'), t('setCodeP'), S.hasCode
+        ? `<span class="num code">${esc(S.codePrefix)}…</span><button class="btn-line sm" data-act="editCode">${esc(t('change'))}</button><button class="btn-ghost" data-act="unlink">${esc(t('unlink'))}</button>`
+        : codeBtns(), { wide: true })}${row(t('setLang'), '', `<div class="langs"><button data-act="lang" data-lang="ru" aria-pressed="${S.lang === 'ru'}">РУССКИЙ</button><button data-act="lang" data-lang="en" aria-pressed="${S.lang === 'en'}">ENGLISH</button></div>`)}</div></section>`;
     const left = [
-      sec(t('secAccount'),
-        row(t('setCode'), t('setCodeP'), S.hasCode
-          ? `<div class="codebox"><span class="num code">${esc(S.codePrefix)}…</span><em>${esc(t('codeLinked'))}</em></div><button class="btn-line" data-act="editCode">${esc(t('change'))}</button><button class="btn-ghost" data-act="unlink">${esc(t('unlink'))}</button>`
-          : `<div class="codebox none">${esc(t('needCode'))}</div>${codeBtns()}`, { wide: true })
-        + row(t('setLang'), '', `<div class="langs"><button data-act="lang" data-lang="ru" aria-pressed="${S.lang === 'ru'}">РУССКИЙ</button><button data-act="lang" data-lang="en" aria-pressed="${S.lang === 'en'}">ENGLISH</button></div>`)),
       sec(t('secSync'),
         row(t('setAutoSync'), t('setAutoSyncS'), sw('autoSync', S.autoSync), { more: 'setAutoSyncP', key: 'autoSync' })
         + row(t('setCopy'), t('setCopyP'), sw('copy', S.saveCopy))),
@@ -671,6 +671,7 @@
         + row(t('setDiag'), t('setDiagP'), `<button class="btn-line" data-act="diag">${esc(t('diagStart'))}</button>`) : ''}</section>`].join('');
     return `
       <div class="head"><div><h1>${esc(t('setTitle'))}</h1></div></div>
+      ${account}
       <div class="setcols"><div class="setcol">${left}</div><div class="setcol">${right}</div></div>
       <p class="setfoot">${esc(t('aboutP', shownVer(S.version)))} · <button class="btn-ghost" data-act="open" data-url="https://github.com/AlexisKozlov/wardsage-app">${esc(t('source'))}</button></p>`;
   }
