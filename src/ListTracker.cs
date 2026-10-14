@@ -544,7 +544,7 @@ namespace RealmForge {
   /// 55.6 / 55.7 / 56.0 / 56.3 with the scroll value unchanged). So the offset is learned once and moved only when the phase
   /// disagrees by more than 2 px for 3 looks in a row, then by half the difference (no jump).</summary>
   public sealed class ScrollOffset {
-    public double Offset; public bool Known; int misses; double unit;
+    public double Offset; public bool Known; int misses; double unit, lastWant;
 
     /// <summary>Row 1's top for the value-based position <paramref name="raw"/>; <paramref name="phaseY"/> = a row top seen on
     /// the screen (NaN = none this look); <paramref name="unit"/>: the window's UI unit (another size = learn anew).</summary>
@@ -554,7 +554,9 @@ namespace RealmForge {
         double want = ListTracker.Snap(raw + Offset, phaseY, pitch) - (raw + Offset);
         if (Math.Abs(want) <= 0.1 * pitch) {
           if (!Known) { Offset += want; Known = true; misses = 0; }
-          else if (Math.Abs(want) > 2) { if (++misses >= 3) { Offset += want / 2; misses = 0; } }
+          // the scroll value is exact; the screen only fixes a constant. A noisy look (the cards' own glow / animation moving the
+          // phase a few px back and forth) must not move the frame: only the same disagreement five looks in a row does
+          else if (Math.Abs(want) > 2) { misses = misses > 0 && Math.Abs(want - lastWant) <= 2 ? misses + 1 : 1; lastWant = want; if (misses >= 5) { Offset += want; misses = 0; } }
           else misses = 0;
         }
       }

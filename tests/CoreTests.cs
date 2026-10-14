@@ -458,9 +458,12 @@ static class CoreTests {
         bool steady = true;
         foreach (double phy in new[] { 119.9, 120.3, 119.1, 120.6, 119.5 }) steady &= Math.Abs(so.Place(rawTop, phy, sp, 705) - 119.5) < 0.01;
         Check(steady, "the phase wandering by a pixel does not move the rows");
-        so.Place(rawTop, 124.5, sp, 705); so.Place(rawTop, 124.5, sp, 705); got = so.Place(rawTop, 124.5, sp, 705);
-        Check(Math.Abs(got - 122.0) < 0.01, "a lasting 5 px difference: eased by half after 3 looks (" + got.ToString("0.0") + ")");
-        Check(Math.Abs(so.Place(rawTop - 300, double.NaN, sp, 705) - (122.0 - 300)) < 0.01, "scrolling: the rows move with the value");
+        steady = true;
+        foreach (double phy in new[] { 129.5, 119.5, 127.0, 121.0, 129.5, 119.5 }) steady &= Math.Abs(so.Place(rawTop, phy, sp, 705) - 119.5) < 0.01;
+        Check(steady, "a phase jumping back and forth by 10 px (card glow) does not move the rows");
+        for (int n = 0; n < 4; n++) so.Place(rawTop, 124.5, sp, 705);
+        Check(Math.Abs(so.Place(rawTop, 124.5, sp, 705) - 124.5) < 0.01, "the same 5 px difference five looks in a row: moved");
+        Check(Math.Abs(so.Place(rawTop - 300, double.NaN, sp, 705) - (124.5 - 300)) < 0.01, "scrolling: the rows move with the value");
       }
       // the hints' plate beside its target, kept in the window
       {
