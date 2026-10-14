@@ -151,6 +151,28 @@ namespace RealmForge {
       return best >= 0.15;
     }
 
+    /// <summary>Vertical phase of a grid of cards with dark gaps between the rows (the hero list): the card top modulo the
+    /// pitch (strip lines) where the cards are brightest against the gaps; prof = mean brightness of every line over the
+    /// cards. conf: card minus gap brightness (40–50 on the live hero list at 1920×1009, about −5 at other phases).</summary>
+    public static bool CardPhase(double[] prof, double pitch, double card, out double phase, out double conf) {
+      phase = 0; conf = 0;
+      int h = prof.Length;
+      if (pitch < 8 || card >= pitch || h < pitch * 1.5) return false;
+      int steps = (int)Math.Ceiling(pitch); double best = double.MinValue; int bp = 0;
+      for (int p = 0; p < steps; p++) {
+        double a = 0, b = 0; int na = 0, nb = 0;
+        for (int y = 0; y < h; y++) {
+          double t = (y - p) % pitch; if (t < 0) t += pitch;
+          if (t >= 3 && t < card - 3) { a += prof[y]; na++; }
+          else if (t >= card + 2 && t < pitch - 2) { b += prof[y]; nb++; }
+        }
+        double s = (na > 0 ? a / na : 0) - (nb > 0 ? b / nb : 0);
+        if (s > best) { best = s; bp = p; }
+      }
+      phase = bp; conf = best;
+      return best >= 15;
+    }
+
     /// <summary>How many columns a grid of cells with stat bars fills the strip with (pixels row by row, width w): the
     /// bars' horizontal profile repeats with the column step, so the count whose step correlates best wins (of nearly
     /// equal ones the larger: half the count correlates at twice the step too). 0 = no bars seen. Checked on the
@@ -231,36 +253,136 @@ namespace RealmForge {
     /// MinOverlap of the strip). False when that is not clear: nothing fits (the list moved further than the strip, something
     /// covers it, another screen) or a shift half a row or more away fits nearly as well (rows of alike items).</summary>
     public static bool Register(float[] a, float[] b, int n, double pitch, out double shift, out double diff, out double second) {
-      shift = 0; diff = double.MaxValue; second = double.MaxValue;
-      if (a == null || b == null || n <= 0 || a.Length != b.Length || a.Length % n != 0) return false;
+      var m = Match(a, b, n, pitch);
+      shift = m.Shift; diff = m.Diff; second = m.Second;
+      return m.Ok;
+    }
+
+    /// <summary>The shifts that fit two strip pictures (see Register): <see cref="ShiftMatch.Shifts"/> are the ones nearly as
+    /// good as the best (more than one: rows of alike items, which one is right only the speed of the list can tell), best
+    /// first; Ok = exactly one, clearly.</summary>
+    public static ShiftMatch Match(float[] a, float[] b, int n, double pitch) {
+      var m = new ShiftMatch();
+      if (a == null || b == null || n <= 0 || a.Length != b.Length || a.Length % n != 0) return m;
       int h = a.Length / n;
-      if (h < 8) return false;
+      if (h < 8) return m;
       // a still list (most ticks): the same picture
       double d0 = SigDiff(a, b, n, h, 0);
-      if (d0 <= StillDiff) { diff = d0; return true; }
-      // every shift on pictures F times shorter (a 1000 px high window: 4 lines in one), then the best one and the best other
-      // one (half a row or more away: a row of alike items) on the full pictures, to half a pixel
-      int F = Math.Max(1, h / 150);
+      if (d0 <= StillDiff) { m.Ok = m.Still = true; m.Diff = d0; m.Shifts = new[] { 0.0 }; m.Diffs = new[] { d0 }; return m; }
+      // every shift on pictures F times shorter (a 1000 px high window: 6 lines in one), then the good ones on the full
+      // pictures, to half a pixel
+      int F = Math.Max(1, h / 120);
       float[] ca = F > 1 ? Shrink(a, n, h, F) : a, cb = F > 1 ? Shrink(b, n, h, F) : b;
       int ch = ca.Length / n, maxS = (int)(ch * (1 - MinOverlap));
       var d = new double[2 * maxS + 1];
-      int cBest = 0; double cbv = double.MaxValue;
+      double cbv = double.MaxValue;
+      for (int s = -maxS; s <= maxS; s++) { double v = SigDiff(ca, cb, n, ch, s); d[s + maxS] = v; if (v < cbv) cbv = v; }
+      // local minima nearly as good as the best (the coarse pictures blur a little: some slack), half a row apart at least
+      var cand = new System.Collections.Generic.List<int>();
       for (int s = -maxS; s <= maxS; s++) {
-        double v = SigDiff(ca, cb, n, ch, s); d[s + maxS] = v;
-        if (v < cbv) { cbv = v; cBest = s; }
+        double v = d[s + maxS];
+        if (v > cbv * 1.5 + 3) continue;
+        if (s > -maxS && d[s + maxS - 1] < v) continue;
+        if (s < maxS && d[s + maxS + 1] <= v) continue;
+        cand.Add(s);
       }
-      int cOther = int.MinValue; double cov = double.MaxValue;
-      for (int s = -maxS; s <= maxS; s++) if (Math.Abs(s - cBest) * F >= pitch / 2 && d[s + maxS] < cov) { cov = d[s + maxS]; cOther = s; }
-      int best; double bv = Around(a, b, n, h, cBest * F, F, out best);
-      int other = int.MinValue; double ov = double.MaxValue;
-      if (cOther != int.MinValue) ov = Around(a, b, n, h, cOther * F, F, out other);
-      double bs = best;
-      double l = HalfDiff(a, b, n, h, best - 1), r = HalfDiff(a, b, n, h, best);
-      if (l < bv) { bv = l; bs = best - 0.5; }
-      if (r < bv) { bv = r; bs = best + 0.5; }
-      if (other != int.MinValue) ov = Math.Min(ov, Math.Min(HalfDiff(a, b, n, h, other - 1), HalfDiff(a, b, n, h, other)));
-      shift = bs; diff = bv; second = ov;
-      return bv <= MatchDiff && ov >= bv * 1.5 + 2;
+      var shifts = new System.Collections.Generic.List<double>(); var diffs = new System.Collections.Generic.List<double>();
+      foreach (int cs in cand) {
+        int t; double v = Around(a, b, n, h, cs * F, F, out t), sh = t;
+        double l = HalfDiff(a, b, n, h, t - 1), r = HalfDiff(a, b, n, h, t);
+        if (l < v) { v = l; sh = t - 0.5; }
+        if (r < v) { v = r; sh = t + 0.5; }
+        bool near = false;
+        for (int i = 0; i < shifts.Count; i++)
+          if (Math.Abs(shifts[i] - sh) < pitch / 2) { near = true; if (v < diffs[i]) { shifts[i] = sh; diffs[i] = v; } }
+        if (!near) { shifts.Add(sh); diffs.Add(v); }
+      }
+      if (shifts.Count == 0) return m;
+      // best first
+      var order = new int[shifts.Count]; for (int i = 0; i < order.Length; i++) order[i] = i;
+      Array.Sort(order, (x, y) => diffs[x].CompareTo(diffs[y]));
+      double bv = diffs[order[0]];
+      // the best other shift half a row or more away, from every shift (not only the minima): how clear the best one is
+      double best = shifts[order[0]], sv = double.MaxValue, cov = double.MaxValue; int cOther = int.MinValue;
+      for (int s = -maxS; s <= maxS; s++) if (Math.Abs(s * F - best) >= pitch / 2 + F && d[s + maxS] < cov) { cov = d[s + maxS]; cOther = s; }
+      if (cOther != int.MinValue) {
+        int t; sv = Around(a, b, n, h, cOther * F, F, out t);
+        sv = Math.Min(sv, Math.Min(HalfDiff(a, b, n, h, t - 1), HalfDiff(a, b, n, h, t)));
+      }
+      for (int i = 1; i < order.Length; i++) sv = Math.Min(sv, diffs[order[i]]);
+      var gs = new System.Collections.Generic.List<double>(); var gd = new System.Collections.Generic.List<double>();
+      foreach (int i in order) if (diffs[i] <= MatchDiff && diffs[i] < bv * 1.5 + 2) { gs.Add(shifts[i]); gd.Add(diffs[i]); }
+      m.Shifts = gs.ToArray(); m.Diffs = gd.ToArray();
+      m.Shift = best; m.Diff = bv; m.Second = sv;
+      m.Ok = bv <= MatchDiff && sv >= bv * 1.5 + 2;
+      return m;
+    }
+
+    /// <summary>Is there an item cell in a column at each row slot of the strip (pixels row by row, width w)? Slot k's top is
+    /// at phase + k·pitch (strip px); a cell is coloured (its rarity background, the item), the list's background behind
+    /// the cells is the dark game scene. 1 = a cell, 0 = none, -1 = too little of the slot on the screen or not clear
+    /// (measured on live screenshots: 0.26–0.57 of a cell's pixels are coloured, 0.00 of an empty slot).</summary>
+    public static int[] SlotCells(int[] px, int w, int h, int x0, int x1, double phase, double pitch, double cell, out double[] tops) {
+      var st = new System.Collections.Generic.List<int>(); var tp = new System.Collections.Generic.List<double>();
+      x0 = Math.Max(0, x0); x1 = Math.Min(w, x1);
+      for (int k = -2; phase + k * pitch < h; k++) {
+        double y = phase + k * pitch, a = Math.Max(0, y + cell * 0.05), b = Math.Min(h, y + cell * 0.95);
+        if (b - a < cell * 0.25 || x1 <= x0) continue;
+        int n = 0, c = 0;
+        for (int yy = (int)Math.Ceiling(a); yy < b; yy++)
+          for (int x = x0; x < x1; x++) {
+            int p = px[yy * w + x], r = (p >> 16) & 255, g = (p >> 8) & 255, bl = p & 255;
+            int mx = Math.Max(r, Math.Max(g, bl)), mn = Math.Min(r, Math.Min(g, bl));
+            n++; if (mx - mn >= 50 && mx >= 110) c++;
+          }
+        double share = n > 0 ? c / (double)n : 0;
+        st.Add(share >= 0.15 ? 1 : share <= 0.03 ? 0 : -1); tp.Add(y);
+      }
+      tops = tp.ToArray();
+      return st.ToArray();
+    }
+
+    /// <summary>An end of the list on the screen (SlotCells of the first column, which every row fills): +1 = the bottom end
+    /// (cells, then empty slots: <paramref name="top"/> = the last row's top), -1 = the top end (empty slots above the
+    /// first row: the game lets the list be pulled past its ends for a moment; <paramref name="top"/> = row 1's top),
+    /// 0 = no end seen or not clear.</summary>
+    public static int ListEdge(int[] cells, double[] tops, out double top) {
+      top = 0;
+      if (cells == null || cells.Length < 2) return 0;
+      foreach (int c in cells) if (c < 0) return 0;
+      int changes = 0, at = -1;
+      for (int i = 1; i < cells.Length; i++) if (cells[i] != cells[i - 1]) { changes++; at = i; }
+      if (changes != 1) return 0;
+      if (cells[at - 1] == 1) { top = tops[at - 1]; return 1; }
+      top = tops[at]; return -1;
+    }
+
+    /// <summary>The game's «selected» glow around a cell: a gold glow in the gaps left and right of the cell (lx: the cell's
+    /// left edge, rx: its right edge, strip px; pixels row by row, width w). The glow's lines [y0, y1], false when there is
+    /// not exactly one clear run of it at least <paramref name="minLen"/> long (or reaching the strip's edge).</summary>
+    public static bool GlowRun(int[] px, int w, int h, int lx, int rx, double minLen, out int y0, out int y1) {
+      y0 = y1 = -1;
+      var xs = new[] { lx - 6, lx - 5, lx - 4, lx - 3, rx + 2, rx + 3, rx + 4, rx + 5 };
+      int runs = 0, start = -1, gap = 0, last = -1;
+      for (int y = 0; y <= h; y++) {
+        bool on = false;
+        if (y < h) {
+          int n = 0, c = 0;
+          foreach (int x in xs) {
+            if (x < 0 || x >= w) continue;
+            int p = px[y * w + x], r = (p >> 16) & 255, g = (p >> 8) & 255, b = p & 255;
+            n++; if (r >= 90 && r - b >= 35 && g >= 0.55 * r) c++;
+          }
+          on = n > 0 && c >= 0.4 * n;
+        }
+        if (on) { if (start < 0) start = y; last = y; gap = 0; continue; }
+        if (start >= 0 && (++gap > 6 || y == h)) {
+          bool edge = start == 0 || last >= h - 1;
+          if (last - start + 1 >= minLen || (edge && last - start + 1 >= minLen * 0.3)) { runs++; y0 = start; y1 = last; }
+          start = -1; gap = 0;
+        }
+      }
+      return runs == 1;
     }
 
     // the picture with every F lines averaged into one
@@ -308,52 +430,102 @@ namespace RealmForge {
     }
   }
 
+  /// <summary>What two strip pictures say about the list's move (ListTracker.Match).</summary>
+  public sealed class ShiftMatch {
+    public bool Ok, Still;
+    public double Shift, Diff, Second = double.MaxValue;
+    public double[] Shifts = new double[0], Diffs = new double[0];   // the shifts that fit nearly as well as the best, best first
+  }
+
   /// <summary>Keeps the anchor on the list while it scrolls. The stat bars' phase alone repeats every row, so a scroll of more
-  /// than half a row between two ticks (a quick wheel turn, a flick) was taken for a small one the other way and the anchor
-  /// stayed behind (live test 2026-10-14: 600×340 window, rows 54 px, the list moved 60+ px a tick). Here the strip picture of
-  /// the last tick the anchor was sure of is compared with the new one: the shift that fits says how far the list went, the
-  /// bar phase then puts it on the pixel. When no shift fits clearly, the anchor is "unsure" (no frame) until a picture fits
-  /// again, the list comes back to the top, or the player clicks an item.</summary>
+  /// than half a row between two looks was taken for a small one the other way (live 2026-10-14, 600×340 window). The strip
+  /// picture of the last look the anchor was sure of is compared with the new one: the shift that fits says how far the list
+  /// went, the bar phase then puts it on the pixel. Lists of alike items repeat: a picture can fit at several shifts, and a
+  /// list flicked further than the strip in one look fits somewhere wrong (live 2026-10-14, 1920×1009: 25 rows off after a
+  /// flick through rows of the same chest pieces). So the list's speed is kept: of several fitting shifts the one the speed
+  /// predicts is taken, a shift far from it while the list is fast is not trusted, and once unsure the old picture is not
+  /// matched again after a moment (the list has gone an unknown way): the anchor waits for something that says where the
+  /// rows are (a click, the selected item's glow, an end of the list, the list back at its top).</summary>
   public sealed class ScrollFollow {
-    public float[] Last;          // the strip at the last tick the anchor was sure of
+    public float[] Last;          // the strip at the last look the anchor was sure of, and when that was
+    public long LastMs;
+    public double Speed;          // px per ms at the last sure look (content down = positive)
     public float[] Top;           // the strip with the list at the very top, and row 1's top then
     public double TopRow1;
     public bool Unsure;
-    public string Note = "";      // how this tick went (diagnostics): still / track / top / lost
-    public double Shift, Diff, Second;
+    public long LostMs;
+    public string Note = "";      // how this look went (diagnostics): first / still / track / top / lost / gone
+    public double Shift, Diff, Second, Pred;
+    /// <summary>How long after the anchor became unsure the last sure picture may still be matched (the list moved less
+    /// than a strip meanwhile only for so long).</summary>
+    public const long RetryMs = 250;
 
-    public void Reset() { Last = null; Top = null; Unsure = false; Note = ""; Shift = 0; Diff = Second = 0; }
+    public void Reset() { Last = null; Top = null; Unsure = false; Note = ""; Shift = 0; Diff = Second = Pred = 0; Speed = 0; LastMs = 0; }
 
-    /// <summary>The anchor was just set (list top or a click) on this picture.</summary>
-    public void Anchored(float[] sig) { Last = sig; Unsure = false; }
+    /// <summary>The anchor was just set (list top, a click, other evidence) on this picture (null = take the next one).</summary>
+    public void Anchored(float[] sig, long nowMs) { Last = sig; LastMs = nowMs; Unsure = false; Speed = 0; }
 
     /// <summary>Moves the anchor by how far the list went since the last sure picture. True = the anchor is sure now.</summary>
-    public bool Follow(ScrollAnchor a, float[] sig, int n, double pitch) {
+    public bool Follow(ScrollAnchor a, float[] sig, int n, double pitch, long nowMs) {
       if (!a.Has) { Note = "none"; return false; }
-      if (Last == null) { Last = sig; Note = "first"; return !Unsure; }
-      double s, d, sec;
-      if (ListTracker.Register(Last, sig, n, pitch, out s, out d, out sec)) {
-        a.Row1Top += s; Last = sig; Unsure = false; Note = s == 0 ? "still" : "track";
-        Shift = s; Diff = d; Second = sec;
+      if (Last == null || sig == null || Last.Length != sig.Length) {
+        if (Last != null && sig != null) { Unsure = true; LostMs = nowMs; Note = "gone"; return false; }   // the window was resized
+        if (sig != null) { Last = sig; LastMs = nowMs; }
+        Note = "first"; return !Unsure;
+      }
+      if (Unsure && nowMs - LostMs > RetryMs) { Note = "gone"; return TopMatch(a, sig, n, pitch, nowMs); }
+      double dt = Math.Max(1, nowMs - LastMs);
+      Pred = Speed * dt;
+      var m = ListTracker.Match(Last, sig, n, pitch);
+      Shift = m.Shift; Diff = m.Diff; Second = m.Second;
+      double s;
+      if (Choose(m, Pred, dt, pitch, sig.Length / n, out s)) {
+        a.Row1Top += s; Speed = s / dt; Last = sig; LastMs = nowMs; Unsure = false; Shift = s;
+        Note = m.Still ? "still" : "track";
         return true;
       }
-      Shift = s; Diff = d; Second = sec;
-      // the list may be back at the top: that picture is known (only within a row of it: further down, rows of alike items
-      // elsewhere in a long list could pass for the top ones)
-      if (Top != null && ListTracker.Register(Top, sig, n, pitch, out s, out d, out sec) && Math.Abs(s) <= pitch) {
-        a.Row1Top = TopRow1 + s; Last = sig; Unsure = false; Note = "top";
-        Shift = s; Diff = d; Second = sec;
-        return true;
-      }
-      Unsure = true; Note = "lost";
+      if (TopMatch(a, sig, n, pitch, nowMs)) return true;
+      if (!Unsure) { Unsure = true; LostMs = nowMs; }
+      Note = "lost";
       return false;
+    }
+
+    // which fitting shift is the move: the only one, unless the list is fast and it is far from where the speed says the
+    // list is; of several (alike rows) the one the speed predicts, when exactly one is near it and the look came soon
+    // enough after the last one for the speed to tell (a list cannot change its speed by a row in 70 ms)
+    static bool Choose(ShiftMatch m, double pred, double dt, double pitch, int h, out double s) {
+      s = 0;
+      if (m.Still) return true;
+      var c = m.Shifts;
+      if (c == null || c.Length == 0) return false;
+      double tol = Math.Max(0.5 * pitch, 0.35 * Math.Abs(pred));
+      if (c.Length == 1 && m.Ok) {
+        s = c[0];
+        bool fast = Math.Abs(pred) >= pitch / 2 || Math.Abs(s) >= 0.4 * h;
+        return !fast || Math.Abs(s - pred) <= tol;
+      }
+      if (dt > 70) return false;
+      int near = 0, far = 0;
+      foreach (double x in c) { double e = Math.Abs(x - pred); if (e <= 0.3 * pitch) { near++; s = x; } else if (e >= 0.7 * pitch) far++; }
+      return near == 1 && near + far == c.Length;
+    }
+
+    // the list back at its top: that picture is known (only within half a row of it - further down, rows of alike items
+    // elsewhere in a long list could pass for the top ones)
+    bool TopMatch(ScrollAnchor a, float[] sig, int n, double pitch, long nowMs) {
+      if (Top == null || Top.Length != sig.Length) return false;
+      var m = ListTracker.Match(Top, sig, n, pitch);
+      if (!m.Ok || Math.Abs(m.Shift) > pitch / 2) return false;
+      a.Row1Top = TopRow1 + m.Shift; Last = sig; LastMs = nowMs; Speed = 0; Unsure = false; Note = "top";
+      Shift = m.Shift; Diff = m.Diff; Second = m.Second;
+      return true;
     }
 
     /// <summary>After the phase snap: a sure anchor with the list at the top (row 1 within a few px of
     /// <paramref name="topRow1"/>) keeps this picture as the list-top one.</summary>
     public void Settled(ScrollAnchor a, float[] sig, double topRow1, double pitch) {
       if (Unsure || !a.Has || sig == null) return;
-      if (Math.Abs(a.Row1Top - topRow1) <= pitch * 0.12) { Top = sig; TopRow1 = a.Row1Top; }
+      if (Math.Abs(a.Row1Top - topRow1) <= Math.Max(3.5, pitch * 0.06)) { Top = sig; TopRow1 = a.Row1Top; }
     }
   }
 
@@ -387,7 +559,9 @@ namespace RealmForge {
       if (types != null) { first = 0; for (int r = 1; r < types.Length; r++) if (types[r] == 1) { first = r; break; } if (first == 0) return false; }
       double itemTop = top + g.RowOffset(types, first) * H;
       double d = (phaseY - itemTop) % pitch; if (d < 0) d += pitch; if (d > pitch / 2) d -= pitch;
-      if (Math.Abs(d) > pitch * 0.12) return false;
+      // (tight: the game does not always open a list at its top - it may keep the scroll of the last slot's list - and a
+      // looser match took a list scrolled by some rows and 18 px for the top, live 2026-10-14)
+      if (Math.Abs(d) > Math.Max(3.5, pitch * 0.06)) return false;
       Row1Top = top + d; Has = true; ListPtr = listPtr;
       return true;
     }

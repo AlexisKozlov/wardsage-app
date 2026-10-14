@@ -41,8 +41,8 @@ Optional `### Heading` lines inside a `## RU` / `## EN` section split the update
 
 ## RU
 
-- Подсказка при переодевании: если в игре открыт фильтр, программа сначала просит его закрыть, а не рисует рамку поверх него; стрелка и число рядов следят за прокруткой без лишних нажатий; если вещь далеко в списке, программа советует выбрать в фильтре её комплект или главный стат.
+- Подсказка при переодевании: если в игре открыт фильтр, программа сначала просит его закрыть, а не рисует рамку поверх него; стрелка и число рядов следят за прокруткой без лишних нажатий; если вещь далеко в списке, программа советует выбрать в фильтре её комплект или главный стат. Если фильтр открыт по совету, программа подсвечивает, что в нём выбрать. Герой из сборки подсвечивается и в списке героев.
 
 ## EN
 
-- Equip helper: with the game's filter open the app asks to close it first instead of drawing the frame over it; the arrow and the row count follow the scrolling without extra clicks; when the item is far down the list the app suggests filtering by its set or main stat.
+- Equip helper: with the game's filter open the app asks to close it first instead of drawing the frame over it; the arrow and the row count follow the scrolling without extra clicks; when the item is far down the list the app suggests filtering by its set or main stat. With the filter opened on that tip, the app lights what to pick in it. The build's hero is pointed at in the hero list too.

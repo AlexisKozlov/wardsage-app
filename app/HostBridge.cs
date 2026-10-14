@@ -404,7 +404,7 @@ namespace RealmForge {
             overlay.SetTarget(u > 0 && u < 9e15 && watch.Contains((long)u) ? (long)u : 0);
             // hint on the game's own buttons: filter / «Заменить» / next slot, with up to two short lines
             string hint = MiniJson.GetString(m, "hint") ?? "";
-            if (hint != "filter" && hint != "replace" && hint != "slot") hint = "";
+            if (hint != "filter" && hint != "replace" && hint != "slot" && hint != "hero") hint = "";
             double slot = m.TryGetValue("slot", out v) && v is double ? (double)v : -1;
             var lines = new List<string>();
             foreach (var k in new[] { "line1", "line2" }) {
@@ -418,11 +418,20 @@ namespace RealmForge {
             // the tip at the game filter's × while it covers the list (the page's text in the interface language)
             string closeTip = MiniJson.GetString(m, "closeTip") ?? "";
             overlay.CloseFilterText = closeTip.Length > 80 ? closeTip.Substring(0, 80) : closeTip;
+            // the filter guide's texts (the item's set and main stat) and the hero hint's (pick, find, up, down, «Герои», back)
+            overlay.FilterSetText = Cut(MiniJson.GetString(m, "setTip"));
+            overlay.FilterStatText = Cut(MiniJson.GetString(m, "statTip"));
+            var heroTips = new List<string>();
+            object ht; var htl = m.TryGetValue("heroTips", out ht) ? ht as List<object> : null;
+            if (htl != null) foreach (var x in htl) { if (heroTips.Count >= 6) break; heroTips.Add(Cut(x as string)); }
+            overlay.HeroTips = heroTips.ToArray();
             overlay.SetHint(hint, slot >= 0 && slot <= 4 ? (int)slot : -1, lines.ToArray(), hero > 0 && hero < 9e15 ? (long)hero : 0);
             break;
           }
         }
     }
+
+    static string Cut(string s) { s = s ?? ""; return s.Length > 80 ? s.Substring(0, 80) : s; }
 
     void Save() { try { cfg.Save(); } catch (Exception e) { Log.Write("config save: " + e.Message); } }
 

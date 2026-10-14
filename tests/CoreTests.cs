@@ -55,7 +55,7 @@ static class CoreTests {
 
   // a list strip drawn from list coordinates (row 1's top 6 px below the strip's top at scroll 0), so a scroll is an exact
   // shift; every item its own colours and icon spot, or (alike) every item the same
-  static int[] FakeRows(ListGeometry geo, double H, int scroll, bool alike, out int w, out int h) {
+  static int[] FakeRows(ListGeometry geo, double H, int scroll, bool alike, out int w, out int h, int rows = int.MaxValue) {
     w = (int)((geo.StripRight - geo.StripLeft) * H); h = (int)((geo.ViewBottom - geo.ViewTop) * H);
     var px = new int[w * h]; double pitch = geo.PitchY * H; int cw = (int)(geo.CellW * H);
     for (int y = 0; y < h; y++) {
@@ -64,7 +64,7 @@ static class CoreTests {
       for (int x = 0; x < w; x++) {
         int v = Argb(20, 28, 45), c = 0, l = 0;
         for (int k = 1; k <= 3; k++) { int lk = (int)((geo.ColLeft(k) - geo.StripLeft) * H); if (x >= lk && x < lk + cw) { c = k; l = lk; } }
-        if (c > 0 && r >= 0 && t < geo.BarBottom * H) {
+        if (c > 0 && r >= 0 && r < rows && t < geo.BarBottom * H) {
           int id = alike ? 1 : (int)(((((uint)r * 2654435761u) ^ ((uint)c * 40503u)) >> 11) % 23);   // no repeating pattern
           if (t >= geo.BarTop * H) v = Argb(80, 96, 130);
           else {
@@ -403,22 +403,65 @@ static class CoreTests {
       Check(!ListTracker.Register(pic(100, false), new float[12], 12, pitch, out sh, out sd, out ss), "another picture size: not clear");
 
       var fa = new ScrollAnchor { Has = true, Row1Top = top1 }; var fl = new ScrollFollow();
-      double topRow1 = top1;
-      fl.Anchored(pic(0, false));
-      Check(fl.Follow(fa, pic(0, false), 12, pitch) && fl.Note == "still", "anchored at the top, still");
+      double topRow1 = top1; long now = 0;
+      fl.Anchored(pic(0, false), now);
+      Check(fl.Follow(fa, pic(0, false), 12, pitch, now += 30) && fl.Note == "still", "anchored at the top, still");
       fl.Settled(fa, pic(0, false), topRow1, pitch);
       bool ok = true;
-      for (int s = 150; s <= 1050; s += 150) ok &= fl.Follow(fa, pic(s, false), 12, pitch);
-      Check(ok && Math.Abs(fa.Row1Top - (top1 - 1050)) < 0.001, "followed down 150 px a tick (row 1 at " + fa.Row1Top.ToString("0.0") + ", want " + (top1 - 1050).ToString("0.0") + ")");
-      Check(!fl.Follow(fa, pic(4000, false), 12, pitch) && fl.Unsure && fl.Note == "lost", "a jump further than the strip: unsure (no frame) (" + fl.Note + " " + fl.Shift + " " + fl.Diff.ToString("0.0") + "/" + fl.Second.ToString("0.0") + ")");
-      Check(!fl.Follow(fa, pic(3800, false), 12, pitch) && fl.Unsure, "stays unsure while no known picture fits");
-      Check(fl.Follow(fa, pic(30, false), 12, pitch) && !fl.Unsure && fl.Note == "top" && Math.Abs(fa.Row1Top - (top1 - 30)) < 0.001,
+      for (int s = 150; s <= 1050; s += 150) ok &= fl.Follow(fa, pic(s, false), 12, pitch, now += 30);
+      Check(ok && Math.Abs(fa.Row1Top - (top1 - 1050)) < 0.001, "followed down 150 px a look (row 1 at " + fa.Row1Top.ToString("0.0") + ", want " + (top1 - 1050).ToString("0.0") + ")");
+      Check(!fl.Follow(fa, pic(1500, false), 12, pitch, now += 30) && fl.Unsure && fl.Note == "lost" && Math.Abs(fa.Row1Top - (top1 - 1050)) < 0.001,
+            "a jump of 450 px while the list went 150 a look: not trusted (" + fl.Note + " " + fl.Shift + " pred " + fl.Pred + ")");
+      Check(!fl.Follow(fa, pic(4000, false), 12, pitch, now += 30) && fl.Unsure, "a jump further than the strip: unsure (no frame)");
+      now += ScrollFollow.RetryMs + 1;
+      Check(!fl.Follow(fa, pic(1500, false), 12, pitch, now) && fl.Unsure && fl.Note == "gone", "after a moment unsure the old picture is not matched again");
+      Check(fl.Follow(fa, pic(30, false), 12, pitch, now += 30) && !fl.Unsure && fl.Note == "top" && Math.Abs(fa.Row1Top - (top1 - 30)) < 0.001,
             "back near the top: anchored by the list-top picture (row 1 at " + fa.Row1Top.ToString("0.0") + ")");
-      var fb = new ScrollAnchor { Has = true, Row1Top = top1 - 600 }; var fl2 = new ScrollFollow();
-      fl2.Anchored(pic(600, true));
-      Check(!fl2.Follow(fb, pic(720, true), 12, pitch) && fl2.Unsure && fb.Row1Top == top1 - 600, "alike rows: the anchor is not moved by a guess");
-      fl2.Anchored(null); fb.Row1Top = top1 - 720;   // the player clicked an item
-      Check(fl2.Follow(fb, pic(720, true), 12, pitch) && !fl2.Unsure && fl2.Note == "first", "a click makes it sure again");
+
+      var fb = new ScrollAnchor { Has = true, Row1Top = top1 - 600 }; var fl2 = new ScrollFollow(); now = 0;
+      fl2.Anchored(pic(600, true), now);
+      Check(fl2.Follow(fb, pic(620, true), 12, pitch, now += 30) && Math.Abs(fb.Row1Top - (top1 - 620)) < 0.6,
+            "alike rows, a slow move: the shift the speed predicts (row 1 at " + fb.Row1Top.ToString("0.0") + ")");
+      Check(fl2.Follow(fb, pic(645, true), 12, pitch, now += 30) && Math.Abs(fb.Row1Top - (top1 - 645)) < 0.6, "alike rows: followed on");
+      Check(!fl2.Follow(fb, pic(800, true), 12, pitch, now += 200) && fl2.Unsure && Math.Abs(fb.Row1Top - (top1 - 645)) < 0.6,
+            "alike rows, a look long after the last: the anchor is not moved by a guess");
+      fl2.Anchored(null, now); fb.Row1Top = top1 - 800;   // the player clicked an item
+      Check(fl2.Follow(fb, pic(800, true), 12, pitch, now += 30) && !fl2.Unsure && fl2.Note == "first", "a click makes it sure again");
+
+      // the ends of a 20-row list: pulled past its end / its top for a moment
+      {
+        int fw, fh; double cellPx = geo.CellW * HH; double[] tops; double et;
+        int x0 = (int)(cellPx * 0.1), x1 = (int)(cellPx * 0.9);
+        int sEnd = (int)(20 * pitch - 300);
+        int[] img = FakeRows(geo, HH, sEnd, false, out fw, out fh, 20);
+        double ph = ((6 - sEnd) % pitch + pitch) % pitch;
+        int e = ListTracker.ListEdge(ListTracker.SlotCells(img, fw, fh, x0, x1, ph, pitch, cellPx, out tops), tops, out et);
+        Check(e == 1 && Math.Abs(et - (6 - sEnd + 19 * pitch)) < 0.001, "the list's end on the screen: the last row's top (" + e + ", " + et.ToString("0.0") + ")");
+        img = FakeRows(geo, HH, -100, false, out fw, out fh, 20);
+        ph = (106 % pitch + pitch) % pitch;
+        e = ListTracker.ListEdge(ListTracker.SlotCells(img, fw, fh, x0, x1, ph, pitch, cellPx, out tops), tops, out et);
+        Check(e == -1 && Math.Abs(et - 106) < 0.001, "the list pulled past its top: row 1's top (" + e + ", " + et.ToString("0.0") + ")");
+        img = FakeRows(geo, HH, 900, false, out fw, out fh, 20);
+        ph = ((6 - 900) % pitch + pitch) % pitch;
+        Check(ListTracker.ListEdge(ListTracker.SlotCells(img, fw, fh, x0, x1, ph, pitch, cellPx, out tops), tops, out et) == 0, "the middle of the list: no end");
+      }
+      // the hero list: cards with dark gaps between the rows
+      {
+        double hp = 187.3, hc = 164; var hprof = new double[700];
+        for (int y = 0; y < hprof.Length; y++) { double tt = ((y - 41.0) % hp + hp) % hp; hprof[y] = tt < hc ? 90 + (y * 37 % 50) : 25; }
+        double hph, hcf;
+        Check(ListTracker.CardPhase(hprof, hp, hc, out hph, out hcf) && Math.Abs(hph - 41) <= 3, "hero list: the cards' row phase (" + hph + ", " + hcf.ToString("0") + ")");
+        Check(!ListTracker.CardPhase(new double[700], hp, hc, out hph, out hcf), "hero list: no cards, no phase");
+      }
+      // the game's «selected» glow around a cell
+      {
+        int gw = 120, gh = 400; var gimg = new int[gw * gh];
+        for (int i = 0; i < gimg.Length; i++) gimg[i] = Argb(20, 26, 40);
+        for (int y = 100; y < 260; y++) for (int x = 13; x < 47; x++) if (x < 18 || x > 41) gimg[y * gw + x] = Argb(150, 110, 60);
+        int y0, y1;
+        Check(ListTracker.GlowRun(gimg, gw, gh, 20, 40, 90, out y0, out y1) && y0 == 100 && y1 == 259, "selected glow: its lines (" + y0 + "-" + y1 + ")");
+        Check(!ListTracker.GlowRun(gimg, gw, gh, 80, 100, 90, out y0, out y1), "no glow at another cell");
+      }
     }
 
     Console.WriteLine("Bridge: reply parsing");

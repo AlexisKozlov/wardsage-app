@@ -134,6 +134,7 @@ namespace RealmForge {
   /// <summary>Finds the target item on the screen and keeps the frame on it (10 times a second while the gear list is open).</summary>
   sealed class OverlayController : IDisposable {
     readonly Timer timer = new Timer();
+    readonly Timer lookTimer = new Timer();   // quick looks at the gear list between the ticks (LookFast)
     readonly GlowWindow glow = new GlowWindow();
     readonly GlowWindow tip = new GlowWindow();     // hint on the game's own buttons (filter, «Заменить», next slot)
     // «Отменить надевание» over the game while a build is being put on: the player's clicks in the game send our
@@ -212,10 +213,14 @@ namespace RealmForge {
           Hide("off");
         }
       };
+      lookTimer.Interval = 30; lookTimer.Tick += (s, e) => {
+        try { LookFast(); }
+        catch (Exception ex) { string m = "look: " + ex.GetType().Name + ": " + ex.Message; if (m != tickError) { tickError = m; Log.Write("overlay: " + ex); } }
+      };
       cancelWin.Pressed += () => { cancelWin.Hide(); var c = CancelPressed; if (c != null) c(); };
     }
 
-    public void Dispose() { timer.Dispose(); glow.Dispose(); tip.Dispose(); cancelWin.Dispose(); }
+    public void Dispose() { timer.Dispose(); lookTimer.Dispose(); glow.Dispose(); tip.Dispose(); cancelWin.Dispose(); }
 
     public void StartDiag(int minutes) {
       // one folder per run: a second run must not overwrite the first one's files
@@ -350,8 +355,8 @@ namespace RealmForge {
     public void SetLocateTip(string[] lines) { locateLines = lines ?? new string[0]; HideTip(); }
 
     void Run() {
-      if (target != 0 || locateReq != null || filterItem != 0 || hintKind != "" || runHero != 0 || sellWanted != null || DateTime.Now < diagUntil) { timer.Start(); return; }
-      timer.Stop(); HideTip(); if (cancelWin.Visible) cancelWin.Hide();
+      if (target != 0 || locateReq != null || filterItem != 0 || hintKind != "" || runHero != 0 || sellWanted != null || DateTime.Now < diagUntil) { timer.Start(); if (target != 0) lookTimer.Start(); else lookTimer.Stop(); return; }
+      timer.Stop(); lookTimer.Stop(); HideTip(); if (cancelWin.Visible) cancelWin.Hide();
     }
 
     void HideTip() { if (tip.Visible) tip.Hide(); tipKey = null; }
@@ -368,6 +373,7 @@ namespace RealmForge {
     bool saidFar;
     void Say(string st, int rows = 0) {
       bool far = rows > 3 * g.VisibleRows;
+      if (far && target != 0) farFor = target;
       if (st == state && far == saidFar) return;
       state = st; saidFar = far;
       report(st, far);
@@ -449,7 +455,7 @@ namespace RealmForge {
           diagInfo = (dKind == "" ? "-" : dKind) + " rect=" + dX + "," + dY + "," + dW + "x" + dH + " anchor=" + anchor.Has
             + " src=" + (anchorSrc == "" ? "-" : anchorSrc) + " follow=" + (follow.Note == "" ? "-" : follow.Note)
             + (follow.Note == "still" || follow.Note == "track" || follow.Note == "top" || follow.Note == "lost"
-               ? " shift=" + Num(follow.Shift) + " diff=" + Num(follow.Diff) + "/" + Num(follow.Second) : "")
+               ? " shift=" + Num(follow.Shift) + " pred=" + Num(follow.Pred) + " diff=" + Num(follow.Diff) + "/" + Num(follow.Second) : "")
             + " refRow=" + dRefRow + " filter=" + (filterOpen ? "open" : "closed") + " | " + diagInfo;
           DiagTick(dh, dp, dr, diagInfo);
         }
@@ -465,7 +471,7 @@ namespace RealmForge {
       int col; ulong list;
       int row = RFX.RowOfUid(addrs, target, out col, out list);
       if (row <= 0 || col <= 0 || list == 0) { Hide("off"); return; }
-      curRow = row; curCol = col;
+      curRow = row; curCol = col; frameRow = row; frameCol = col;
 
       IntPtr hwnd = GameWindow();
       if (hwnd == IntPtr.Zero || W32.IsIconic(hwnd)) { Hide("off"); return; }
@@ -478,21 +484,25 @@ namespace RealmForge {
         types = RFX.RowTypes(list, 5000); typesPtr = list;
         int n = types.Length - 1; while (n > 0 && types[n] == 0) n--;
         Array.Resize(ref types, n + 1);
-        anchor.Has = false; follow.Reset(); anchorSrc = "";
+        anchor.Has = false; follow.Reset(); anchorSrc = ""; rebuiltMs = 0;
       }
       dU = H;
 
       // the player clicked an item: the cursor shows where its row is on the screen
       long sel = RFX.ReadSel(addrs);
+      selRow = selCol = 0;
+      if (sel > 0) {
+        int scol; ulong sl; int srow = RFX.RowOfUid(addrs, sel, out scol, out sl);
+        if (srow > 0 && sl == list) { selRow = srow; selCol = scol; }
+      }
       if (sel != lastSel) {
-        if (lastSel != -1 && sel > 0) {
-          int scol; ulong sl; int srow = RFX.RowOfUid(addrs, sel, out scol, out sl);
+        if (lastSel != -1 && sel > 0 && selRow > 0) {
           W32.POINT c;
-          if (srow > 0 && sl == list && W32.GetCursorPos(out c)) {
+          if (W32.GetCursorPos(out c)) {
             double cx = (c.X - o.X) / H, cy = (c.Y - o.Y) / H;
-            if (cy >= g.ViewTop && cy <= g.ViewBottom && g.ColumnAt(cx) == scol) {
-              anchor.FromClick(g, types, srow, c.Y - o.Y, H, list);
-              follow.Anchored(null);   // the next strip picture is taken as it is
+            if (cy >= g.ViewTop && cy <= g.ViewBottom && g.ColumnAt(cx) == selCol) {
+              anchor.FromClick(g, types, selRow, c.Y - o.Y, H, list);
+              follow.Anchored(null, NowMs());   // the next strip picture is taken as it is
               anchorSrc = "click";
             }
           }
@@ -501,33 +511,34 @@ namespace RealmForge {
       }
       curSel = sel;
       diagInfo = "H=" + H.ToString("0.0") + " target=" + row + "/" + col + " sel=" + sel + " state=" + state;
+      lookOk = false;
       if (!IsForeground(hwnd)) { Hide(anchor.Has ? "background" : "need_click"); return; }
       // the game's filter pop-up is over the list: a frame at the item's spot would sit on the pop-up. The list is not
       // followed meanwhile (the pop-up hides part of it); the last sure picture waits until it closes
-      if (filterOpen) { Hide("filter_open"); return; }
+      if (filterState != "") { Hide(filterState); return; }
 
-      int sx = (int)(g.StripLeft * H), sy = (int)(g.ViewTop * H), sw = (int)((g.StripRight - g.StripLeft) * H), sh = (int)((g.ViewBottom - g.ViewTop) * H);
-      double ph, conf; float[] sig;
-      bool hasPhase = Phase(o.X + sx, o.Y + sy, sw, sh, H, out ph, out conf, out sig);
+      bool sure = LookAtList(o, H, NowMs());
+      diagInfo += " phase=" + (lookPhase ? lookPhaseY.ToString("0.0") : "none") + " conf=" + lookConf.ToString("0.00") + " row1=" + anchor.Row1Top.ToString("0.0");
+      // (between these ticks the list is looked at more often: LookFast)
+      lookO = o; lookH = H; lookList = list; lookTarget = target; lookOk = true;
+      if (!anchor.Has || !sure) { Hide("need_click"); return; }
+      PlaceFrame(o, H);
+    }
+
+    // the last frame tick's game window (for the quick looks between ticks), the list it saw
+    W32.POINT lookO; double lookH; ulong lookList; long lookTarget; bool lookOk;
+    // this look: the bars' phase (client px), how clear it was
+    bool lookPhase; double lookPhaseY, lookConf;
+    long rebuiltMs;
+    int selRow, selCol;   // the selected item's place in the list (0 = none / another list)
+
+    /// <summary>The frame (or the arrow) for the target at the anchor's rows.</summary>
+    void PlaceFrame(W32.POINT o, double H) {
+      int row = curRow > 0 ? curRow : frameRow, col = curCol > 0 ? curCol : frameCol;
+      if (row <= 0 || col <= 0) return;
+      frameRow = row; frameCol = col;
       double pitch = g.PitchY * H;
-      // a fresh list opens at the top: anchor right away when the bars on the screen agree (no click needed)
-      // (also later: a short filtered list cannot scroll, it stays at the top; a wrong guess is corrected by the next click)
-      if (!anchor.Has && hasPhase && anchor.FromTop(g, types, sy + ph, H, list)) { follow.Reset(); follow.Anchored(sig); anchorSrc = "top"; }
-      diagInfo += " phase=" + (hasPhase ? (sy + ph).ToString("0.0") : "none") + " conf=" + conf.ToString("0.00");
-      if (!anchor.Has) { Hide("need_click"); return; }
-
-      // how far the list went since the last tick (its strip picture), then on the pixel by the stat bars' phase; when the
-      // move is not clear, no frame until it is again (the player is asked to click an item, as before the first anchor)
-      bool sure = sig != null ? follow.Follow(anchor, sig, SigN, pitch) : !follow.Unsure;
-      diagInfo += " row1=" + anchor.Row1Top.ToString("0.0");
-      if (!sure) { Hide("need_click"); return; }
-      if (hasPhase) {
-        int refRow = anchor.VisibleRow(g, types, H);
-        if (refRow > 0) anchor.Track(g, types, refRow, sy + ph, H);
-        dRefRow = refRow;
-      }
-      follow.Settled(anchor, sig, ScrollAnchor.TopRow1(g, H), pitch);
-
+      int sy = (int)(g.ViewTop * H), sh = (int)((g.ViewBottom - g.ViewTop) * H);
       double top = anchor.RowTop(g, types, row, H), left = g.ColLeft(col) * H;
       double cell = g.CellW * H, full = g.BarBottom * H, mid = top + cell / 2;
       frame++;
@@ -536,24 +547,128 @@ namespace RealmForge {
       else Draw("box", o.X + (int)left, o.Y + (int)top, (int)cell, (int)full, 0);
       dX -= o.X; dY -= o.Y;   // (Draw keeps screen px)
     }
+    int frameRow, frameCol;
+
+    // A quick look between the frame ticks (every 30 ms): a list flicked by the player moves up to a few thousand px a
+    // second - in 100 ms further than the strip is high, and then its picture fits nowhere or somewhere wrong.
+    void LookFast() {
+      if (locateReq != null || target == 0 || target != lookTarget || addrs == null || types == null || !lookOk || !anchor.Has || filterState != "" || typesPtr != lookList) return;
+      IntPtr hwnd = GameWindow();
+      if (hwnd == IntPtr.Zero || !IsForeground(hwnd)) return;
+      bool sure = LookAtList(lookO, lookH, NowMs());
+      if (sure) PlaceFrame(lookO, lookH); else Hide("need_click");
+    }
+
+    /// <summary>One look at the list strip: the bars' phase, its picture, and what says where the rows are - the list just
+    /// built at its top, the move since the last look, the selected item's glow, an end of the list. Moves the anchor; true =
+    /// sure of it.</summary>
+    bool LookAtList(W32.POINT o, double H, long now) {
+      const int M = 8;   // the strip with the gaps left and right of it (the selected item's glow)
+      int sx = (int)(g.StripLeft * H), sy = (int)(g.ViewTop * H), sw = (int)((g.StripRight - g.StripLeft) * H), sh = (int)((g.ViewBottom - g.ViewTop) * H);
+      double pitch = g.PitchY * H;
+      lookPhase = false; lookConf = 0;
+      if (sw < 20 || sh < 40) return false;
+      int w = sw + 2 * M;
+      int[] px = Grab(o.X + sx - M, o.Y + sy, w, sh);
+      if (px == null) return false;
+      var xs = new int[ListGeometry.Columns * 2];
+      for (int c = 1; c <= ListGeometry.Columns; c++) {
+        double l = (g.ColLeft(c) - g.StripLeft) * H + M;
+        xs[(c - 1) * 2] = (int)(l + g.CellW * H * 0.12); xs[(c - 1) * 2 + 1] = (int)(l + g.CellW * H * 0.88);
+      }
+      float[] sig = ListTracker.LineSig(px, w, sh, xs, SigSegs);
+      double ph, conf;
+      bool hasPhase = ListTracker.FindPhase(ListTracker.BarProfile(px, w, sh, xs), pitch, g.BarTop * H, g.BarBottom * H, out ph, out conf);
+      lookPhase = hasPhase; lookPhaseY = sy + ph; lookConf = conf;
+      // a list just built opens at its top - mostly (the game may keep the last list's scroll): only a tight match, in the
+      // first moments it is looked at (it may have been built under the filter pop-up)
+      if (rebuiltMs == 0) rebuiltMs = now;
+      if (!anchor.Has && hasPhase && now - rebuiltMs < 1500 && anchor.FromTop(g, types, sy + ph, H, typesPtr)) {
+        follow.Reset(); follow.Anchored(sig, now); anchorSrc = "top";
+      }
+      bool sure = anchor.Has && follow.Follow(anchor, sig, SigN, pitch, now);
+      // the selected item's glow or an end of the list say where the rows are, whatever the following thinks
+      double ev; string src;
+      if (hasPhase && Evidence(px, w, sh, M, H, ph, out ev, out src)) {
+        if (!anchor.Has || !sure || Math.Abs(ev - anchor.Row1Top) > pitch / 2) {
+          if (anchor.Has && sure) Log.Write("frame: " + src + " moves the anchor by " + (ev - anchor.Row1Top).ToString("0") + " px");
+          anchor.Row1Top = ev; anchor.Has = true; anchor.ListPtr = typesPtr;
+          follow.Anchored(sig, now); follow.Note = src; anchorSrc = src; sure = true;
+        }
+      }
+      if (sure && hasPhase) {
+        int refRow = anchor.VisibleRow(g, types, H);
+        if (refRow > 0) anchor.Track(g, types, refRow, sy + ph, H);
+        dRefRow = refRow;
+      }
+      // where the list can be: from its top to its end (pulled a little past them for a moment)
+      if (sure) {
+        double topRow1 = ScrollAnchor.TopRow1(g, H), endRow1 = Math.Min(topRow1, g.ViewBottom * H - ListGeometry.TopPad * H - g.RowOffset(types, types.Length) * H);
+        double slack = 0.5 * (g.ViewBottom - g.ViewTop) * H;
+        if (anchor.Row1Top > topRow1 + slack || anchor.Row1Top < endRow1 - slack) { follow.Unsure = true; follow.LostMs = now - ScrollFollow.RetryMs - 1; follow.Note = "bounds"; sure = false; }
+      }
+      if (sure) follow.Settled(anchor, sig, ScrollAnchor.TopRow1(g, H), pitch);
+      return sure;
+    }
+
+    /// <summary>Where row 1 is (client px) by what the strip shows on its own: the selected item's glow (its row is known),
+    /// or an end of the list (the slots past the last row or before the first one empty). ph: the bars' phase (strip px).</summary>
+    bool Evidence(int[] px, int w, int h, int M, double H, double ph, out double row1, out string src) {
+      row1 = 0; src = "";
+      double pitch = g.PitchY * H, sy = (int)(g.ViewTop * H);
+      if (selRow > 0 && selCol > 0 && selRow < types.Length) {
+        int lx = (int)((g.ColLeft(selCol) - g.StripLeft) * H) + M, rx = lx + (int)(g.CellW * H);
+        int y0, y1;
+        if (ListTracker.GlowRun(px, w, h, lx, rx, g.BarBottom * H * 0.6, out y0, out y1)) {
+          // the glow reaches about 1.2 % of the height above and below the cell and its bar
+          double t = y0 > 0 ? y0 + 0.012 * H : y1 - g.BarBottom * H - 0.012 * H, s = ListTracker.Snap(t, ph, pitch);
+          if (Math.Abs(s - t) <= pitch * 0.3) { row1 = sy + s - g.RowOffset(types, selRow) * H; src = "selected"; return true; }
+        }
+      }
+      // the ends: only for a list of item rows (section titles have another height and no cells)
+      for (int r = 1; r < types.Length; r++) if (types[r] != 1 && types[r] != 0) return false;
+      if (types.Length < 2) return false;
+      double[] tops; double top;
+      int[] cells = ListTracker.SlotCells(px, w, h, M + (int)(g.CellW * H * 0.1), M + (int)(g.CellW * H * 0.9), ph, pitch, g.CellW * H, out tops);
+      int e = ListTracker.ListEdge(cells, tops, out top);
+      if (e == 1) { row1 = sy + top - g.RowOffset(types, types.Length - 1) * H; src = "end"; return true; }
+      if (e == -1) { row1 = sy + top; src = "start"; return true; }
+      return false;
+    }
 
     void TickHint() {
-      confirmBtn = null; filterOpen = false;
+      confirmBtn = null; filterOpen = false; filterState = "";
       if ((hintKind == "" && target == 0) || addrs == null) { HideTip(); return; }
       IntPtr hwnd = GameWindow();
       if (hwnd == IntPtr.Zero || W32.IsIconic(hwnd) || !IsForeground(hwnd)) { HideTip(); return; }
       W32.RECT cr; if (!W32.GetClientRect(hwnd, out cr) || cr.B < 200) { HideTip(); return; }
       var o = new W32.POINT(0, 0); W32.ClientToScreen(hwnd, ref o);
       double H = cr.B, W = cr.R, U = Ui.Unit(W, H);
-      // the gear filter pop-up (its red ×) while an item is to be framed: the tip points at the × instead (not while the
-      // player is asked to set the filter, nor while the filter pilot sets it)
+      if (hintKind == "hero") { TickHeroHint(o, W, H); return; }
+      // the gear filter pop-up (its red ×) while an item is to be framed
       if (target != 0) {
         double fx = fg.X(fg.MainCloseX, W, H), fy = fg.Y(fg.CloseY, W, H);
         filterOpen = Mark(o, fx, fy, U, ButtonCheck.IsCloseRed);
-        if (filterOpen && hintKind != "filter" && !(AutoEnabled && fpilot.State == "work")) {
-          int rr = Math.Max(8, (int)(0.028 * U));
-          DrawTip(o.X + (int)fx - rr, o.Y + (int)fy - rr, 2 * rr, 2 * rr, string.IsNullOrEmpty(CloseFilterText) ? new string[0] : new[] { CloseFilterText }, H, false, true, true);
-          return;
+        if (filterOpen) {
+          bool pilot = AutoEnabled && fpilot.State == "work";
+          // the plan wants the filter (its filter step, or the item far down - the page's «faster» tip): what to pick in it
+          // is lit; once it is set the frame goes on in the list beside the pop-up (its × would drop the filter again)
+          if (hintKind == "filter" || (farFor != 0 && farFor == target)) {
+            int[] gr; string[] gl;
+            if (pilot) { filterState = "filter_guide"; HideTip(); return; }
+            if (FilterGuideTip(o, cr, hintKind == "filter", out gr, out gl)) {
+              filterState = "filter_guide";
+              DrawTip(o.X + gr[0], o.Y + gr[1], gr[2], gr[3], gl, H, false, gr[1] < 0.3 * H, gr[0] > W / 2);
+              return;
+            }
+            filterOpen = false;   // set as wanted: the list beside the pop-up is followed and framed as usual
+          } else if (!pilot) {
+            // a filter the plan does not need over the list: the tip points at its ×
+            filterState = "filter_open";
+            int rr = Math.Max(8, (int)(0.028 * U));
+            DrawTip(o.X + (int)fx - rr, o.Y + (int)fy - rr, 2 * rr, 2 * rr, string.IsNullOrEmpty(CloseFilterText) ? new string[0] : new[] { CloseFilterText }, H, false, true, true);
+            return;
+          } else filterState = "filter_open";
         }
       }
       if (hintKind == "") { HideTip(); return; }
@@ -561,6 +676,142 @@ namespace RealmForge {
       int[] r = hintKind == "filter" ? hg.Filter(W, H) : hintKind == "replace" ? confirmBtn ?? hg.Replace(W, H) : hintKind == "slot" ? hg.Slot(hintSlot, W, H) : null;
       if (r == null) HideTip(); else DrawTip(o.X + r[0], o.Y + r[1], r[2], r[3], hintLines, H);
     }
+
+    // the frame's state while the filter pop-up is open: "" (none, or set as wanted), filter_open (not needed: close it),
+    // filter_guide (the plan wants it: what to pick is lit)
+    string filterState = "";
+    // the item the frame said was far down (more than three screens): the page offers the filter for it
+    long farFor;
+    /// <summary>The page's texts for the filter guide: the item's set and its main stat («Фильтр → Комплект: …»).</summary>
+    public string FilterSetText = "", FilterStatText = "";
+    string guideSide = "";   // the side panel the guide pointed at last ("set" / "stat")
+
+    /// <summary>Where in the open filter pop-up the next pick is (client px rect) and its text; false = nothing to pick (the
+    /// filter has the item's set / main stat - both for the plan's filter step, either for the «faster» tip - or they are
+    /// not known).</summary>
+    bool FilterGuideTip(W32.POINT o, W32.RECT cr, bool both, out int[] rect, out string[] lines) {
+      rect = null; lines = new string[0];
+      var fv = FilterViewNow(o, cr, NowMs(), true, false);
+      if (fv.Item <= 0 || fv.Suits == null || fv.MainAttrs == null) return false;
+      double W = cr.R, H = cr.B, U = Ui.Unit(W, H);
+      int setCount = fv.SetOrder != null ? fv.SetOrder.Length : 2 * FilterGeometry.SetRows;
+      bool setWanted = fv.SetId > 0 && fv.SetIndex >= 0 && fv.SetIndex < setCount;
+      bool statWanted = fv.StatId > 0 && fv.StatIndex >= 0 && fv.StatIndex < 2 * FilterGeometry.StatRows;
+      bool setOn = fv.SetId > 0 && Array.IndexOf(fv.Suits, fv.SetId) >= 0, statOn = fv.StatId > 0 && Array.IndexOf(fv.MainAttrs, fv.StatId) >= 0;
+      bool done = both ? (setOn || !setWanted) && (statOn || !statWanted) : setOn || statOn || (!setWanted && !statWanted);
+      if (done) { guideSide = ""; return false; }
+      int s = Math.Max(10, (int)(0.03 * U)), cw = (int)(0.2 * U), ch = (int)(0.055 * U);
+      Func<double, double, int[]> spot = (x, y) => new[] { (int)x - s, (int)y - s, 2 * s, 2 * s };
+      Func<double[], int[]> cell = (c) => new[] { (int)c[0] - cw / 2, (int)c[1] - ch / 2, cw, ch };
+      if (setWanted && !setOn) {
+        lines = string.IsNullOrEmpty(FilterSetText) ? new string[0] : new[] { FilterSetText };
+        if (fv.SetPanelOpen) {
+          // the sets list shows 10 rows; further down it has to be scrolled (where it is scrolled is not known: the row is
+          // lit as if it were not, the text names the set)
+          int row = Math.Min(fv.SetIndex / 2, FilterGeometry.SetRows - 1);
+          rect = cell(fg.SetCell(row * 2 + fv.SetIndex % 2, W, H)); guideSide = "set";
+        } else rect = spot(fg.X(fg.SetArrowX, W, H), fg.Y(fg.SetArrowY, W, H));
+        return true;
+      }
+      lines = string.IsNullOrEmpty(FilterStatText) ? new string[0] : new[] { FilterStatText };
+      // the main stats' side panel looks like the sub stats' one: its cell is lit only after the guide pointed at its arrow
+      if (fv.SidePanelOpen && !fv.SetPanelOpen && guideSide == "stat") rect = cell(fg.StatCell(fv.StatIndex, W, H));
+      else { rect = spot(fg.X(fg.StatArrowX, W, H), fg.Y(fg.StatArrowY, W, H)); guideSide = "stat"; }
+      return true;
+    }
+
+    // ---------------------------------------------------------------- the plan's hero on the hero screen (no auto-pilot)
+
+    /// <summary>The page's texts for the hero hint: pick (the frame on the hero's card), find (where the list is is not known
+    /// yet), up, down (the hero above / below the visible list), the city's «Герои», the back arrow.</summary>
+    public string[] HeroTips = new string[0];
+    readonly ScrollAnchor heroAnchor = new ScrollAnchor();
+    readonly ScrollFollow heroFollow = new ScrollFollow();
+    long heroReadAt, heroShownWas = -1, heroFreshMs; ulong heroGridWas; bool heroSmallWas;
+
+    string[] HeroTip(int i) { return HeroTips != null && i < HeroTips.Length && !string.IsNullOrEmpty(HeroTips[i]) ? new[] { HeroTips[i] } : new string[0]; }
+
+    /// <summary>Points at the plan's hero: the city's «Герои», the back arrow over another hero's gear list, the hero's card
+    /// in the hero list (where the list is scrolled is found like in the gear list: a fresh list at its top, a click on a
+    /// hero, the cards' row phase and the list's picture between looks).</summary>
+    void TickHeroHint(W32.POINT o, double W, double H) {
+      if (AutoEnabled && runHero > 0) { HideTip(); return; }   // the auto-pilot brings the hero up itself
+      long now = NowMs();
+      if (heroScreen == null || now - heroReadAt >= 250 || now < heroReadAt) { heroScreen = RFX.ReadHeroScreen(addrs, heroScreen); heroReadAt = now; }
+      var hs = heroScreen; double U = Ui.Unit(W, H);
+      if (hs == null || hs.Hero == 0) {
+        heroShownWas = 0; heroAnchor.Has = false;
+        if (HeroesButtonSeen(o, W, H)) {
+          int s = (int)(0.1 * U);
+          DrawTip(o.X + (int)(W - hg2.HeroesBtnDX * U) - s / 2, o.Y + (int)(H - 0.1156 * U) - s / 2, s, s, HeroTip(4), H, false, false, true);
+        } else HideTip();
+        return;
+      }
+      if (hs.Hero == hintHero || hs.Heroes == null) { heroShownWas = hs.Hero; HideTip(); return; }
+      if (hs.Part >= 0) {   // another hero's gear list covers the hero list: back
+        heroShownWas = hs.Hero; heroAnchor.Has = false;
+        int s = (int)(0.07 * U);
+        DrawTip(o.X + (int)(hg2.BackX * U) - s / 2, o.Y + (int)(hg2.BackY * U) - s / 2, s, s, HeroTip(5), H, false, true);
+        return;
+      }
+      int t = Array.IndexOf(hs.Heroes, hintHero);
+      if (t < 0) { heroShownWas = hs.Hero; HideTip(); return; }
+      double pitch = (hs.SmallCards ? hg2.SmallPitchY : hg2.PitchY) * U, card = (hs.SmallCards ? hg2.SmallCardH : hg2.CardH) * U;
+      int vt = (int)(hg2.ViewTop * U), vb = (int)(H - (1 - hg2.ViewBottom) * U);
+      int x0 = (int)((hg2.Col1X - 0.06) * U), x1 = (int)((hg2.Col1X + 2 * hg2.PitchX + 0.06) * U), w = x1 - x0, h = vb - vt;
+      int[] px = h > 40 && w > 20 ? Grab(o.X + x0, o.Y + vt, w, h) : null;
+      if (px == null) { HideTip(); return; }
+      var xs = new int[6];
+      for (int c = 0; c < 3; c++) { double cx = hg2.ColX(c) * U - x0; xs[2 * c] = (int)(cx - 0.045 * U); xs[2 * c + 1] = (int)(cx + 0.045 * U); }
+      var prof = new double[h];
+      for (int y = 0; y < h; y++) {
+        double sum = 0; int n = 0;
+        for (int k = 0; k < 6; k += 2) for (int x = Math.Max(0, xs[k]); x < Math.Min(w, xs[k + 1]); x++) { int p = px[y * w + x]; sum += ((p >> 16) & 255) + ((p >> 8) & 255) + (p & 255); n++; }
+        prof[y] = n > 0 ? sum / (3.0 * n) : 0;
+      }
+      double ph, conf;
+      bool hasPhase = ListTracker.CardPhase(prof, pitch, card, out ph, out conf);
+      float[] sig = ListTracker.LineSig(px, w, h, xs, SigSegs);
+      double top0 = hg2.Row1Top * U;
+      int rowsN = (hs.Heroes.Length + HeroGeometry.Columns - 1) / HeroGeometry.Columns;
+      // sorted / filtered again, other cards, or the hero screen just opened: the game shows the list from its top
+      bool opened = heroShownWas == 0;
+      if (hs.GridPtr != heroGridWas || hs.SmallCards != heroSmallWas || opened) { heroAnchor.Has = false; heroFollow.Reset(); heroFreshMs = now; }
+      bool freshOk = (hs.GridPtr != heroGridWas && heroGridWas != 0) || (opened && hs.Heroes.Length > 0 && hs.Hero == hs.Heroes[0]);
+      if (hs.GridPtr != heroGridWas || hs.SmallCards != heroSmallWas || opened) heroFreshTop = freshOk;
+      heroGridWas = hs.GridPtr; heroSmallWas = hs.SmallCards;
+      // the player clicked a hero: the cursor was on its card (its row's top between the cursor and a card above it)
+      if (heroShownWas > 0 && hs.Hero != heroShownWas && hasPhase) {
+        int i = Array.IndexOf(hs.Heroes, hs.Hero); W32.POINT c;
+        if (i >= 0 && W32.GetCursorPos(out c) && Math.Abs(c.X - o.X - hg2.ColX(i % HeroGeometry.Columns) * U) < 0.06 * U) {
+          double off = (i / HeroGeometry.Columns) * pitch, cy = c.Y - o.Y, lo = cy - card - off, hi = cy - off;
+          double s = ListTracker.Snap((lo + hi) / 2 - vt, ph, pitch) + vt;
+          if (s >= lo - 4 && s <= hi + 4) { heroAnchor.Row1Top = s; heroAnchor.Has = true; heroFollow.Anchored(null, now); }
+        }
+      }
+      heroShownWas = hs.Hero;
+      // at the top: a fresh list (a tight phase match only) or one that fits on the screen
+      if (!heroAnchor.Has && hasPhase) {
+        double d = ((vt + ph - top0) % pitch + pitch) % pitch; if (d > pitch / 2) d -= pitch;
+        bool fits = top0 + rowsN * pitch <= vb + (pitch - card);
+        if ((fits || (heroFreshTop && now - heroFreshMs < 1500)) && Math.Abs(d) <= Math.Max(3.5, 0.06 * pitch)) {
+          heroAnchor.Row1Top = top0 + d; heroAnchor.Has = true; heroFollow.Reset(); heroFollow.Anchored(sig, now);
+        }
+      }
+      bool sure = heroAnchor.Has && heroFollow.Follow(heroAnchor, sig, SigN, pitch, now);
+      if (sure && hasPhase) heroAnchor.Row1Top = ListTracker.Snap(heroAnchor.Row1Top - vt, ph, pitch) + vt;
+      if (sure) {
+        double end = Math.Min(top0, vb - rowsN * pitch), slack = 0.5 * h;
+        if (heroAnchor.Row1Top > top0 + slack || heroAnchor.Row1Top < end - slack) { heroAnchor.Has = false; sure = false; }
+      }
+      if (sure) heroFollow.Settled(heroAnchor, sig, top0, pitch);
+      if (!sure) { DrawTip(o.X + x0 + 8, o.Y + vt + 8, 4, 0, HeroTip(1), H, true, true); return; }
+      double ctop = heroAnchor.Row1Top + (t / HeroGeometry.Columns) * pitch, ccx = hg2.ColX(t % HeroGeometry.Columns) * U, cwid = 0.115 * U;
+      if (ctop + card / 2 < vt) DrawTip(o.X + x0 + 8, o.Y + vt + 8, 4, 0, HeroTip(2), H, true, true);
+      else if (ctop + card / 2 > vb) DrawTip(o.X + x0 + 8, o.Y + vb - 8, 4, 0, HeroTip(3), H, true);
+      else DrawTip(o.X + (int)(ccx - cwid / 2), o.Y + (int)ctop, (int)cwid, (int)card, HeroTip(0), H, false, ctop < 0.35 * H);
+    }
+    bool heroFreshTop;
 
     /// <summary>A pulsing gold frame around a button of the game (x, y, w, h: screen px) with a text plate above it.</summary>
     // (below: the plate under the button, for buttons at the top of the window; right: the plate's right edge at the button's,
@@ -1275,24 +1526,6 @@ namespace RealmForge {
 
     // values per line of the strip picture (ListTracker.LineSig): 4 parts of each of the 3 columns
     const int SigSegs = 4, SigN = ListGeometry.Columns * SigSegs;
-
-    bool Phase(int x, int y, int w, int h, double H, out double phase, out double conf, out float[] sig) {
-      phase = 0; conf = 0; sig = null;
-      if (w < 20 || h < 40) return false;
-      int[] px = Grab(x, y, w, h);
-      if (px == null) return false;
-      {
-        // inner part of every column's cell, in strip pixels
-        var xs = new int[ListGeometry.Columns * 2];
-        for (int c = 1; c <= ListGeometry.Columns; c++) {
-          double l = (g.ColLeft(c) - g.StripLeft) * H;
-          xs[(c - 1) * 2] = (int)(l + g.CellW * H * 0.12); xs[(c - 1) * 2 + 1] = (int)(l + g.CellW * H * 0.88);
-        }
-        sig = ListTracker.LineSig(px, w, h, xs, SigSegs);
-        var prof = ListTracker.BarProfile(px, w, h, xs);
-        return ListTracker.FindPhase(prof, g.PitchY * H, g.BarTop * H, g.BarBottom * H, out phase, out conf);
-      }
-    }
 
     // ---------------------------------------------------------------- drawing
 

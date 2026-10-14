@@ -537,7 +537,7 @@
       case 'slot': return sayBox('', I.hand, autoHead() || t('gOpenSlot', it.slotName || t('slot' + it.slot)), S.autoClick ? autoSub() : t('gOpenSlotLit')) + findCard(it, g, S.compact);
       case 'pick': {
         // what to do right now, by what the frame over the game is doing
-        const head = autoHead() || { on: t('fOn'), below: t('fBelow'), above: t('fAbove'), need_click: t('fNeedClick'), filter_open: t('fFilterOpen') }[S.overlay] || t('fLook');
+        const head = autoHead() || { on: t('fOn'), below: t('fBelow'), above: t('fAbove'), need_click: t('fNeedClick'), filter_open: t('fFilterOpen'), filter_guide: t('fGuide') }[S.overlay] || t('fLook');
         return sayBox('', I.hand, head, autoSub(), faster(it)) + findCard(it, g, S.compact);
       }
       case 'filter':
@@ -550,6 +550,8 @@
         const head = g.dr === 0 ? t('gRelSame', col) : t(g.dr > 0 ? 'gRelDown' : 'gRelUp', rows, col);
         // the filter pop-up hides the list: closing it comes first, the way to the item after
         if (S.overlay === 'filter_open' && !autoHead()) return sayBox('', I.hand, t('fFilterOpen'), head) + findCard(it, g, S.compact);
+        // the filter is wanted (the «faster» tip): what to pick in it comes first
+        if (S.overlay === 'filter_guide' && !autoHead()) return sayBox('', I.hand, t('fGuide'), head) + findCard(it, g, S.compact);
         return sayBox('', I.hand, autoHead() || head, autoHead() ? autoSub() : ovText(), faster(it)) + findCard(it, g, S.compact);
       }
       case 'hiddenEq': return sayBox('warn', I.warn, t('gHiddenEq', g.other || t('otherHero')), t('gHiddenEqP'));
@@ -570,7 +572,7 @@
   }
 
   function ovText() {
-    return { need_click: t('ovNeedClick'), on: t('ovOn'), above: t('ovAbove'), below: t('ovBelow'), filter_open: t('fFilterOpen') }[S.overlay] || '';
+    return { need_click: t('ovNeedClick'), on: t('ovOn'), above: t('ovAbove'), below: t('ovBelow'), filter_open: t('fFilterOpen'), filter_guide: t('fGuide') }[S.overlay] || '';
   }
   // the item is more than three screens of the list away (the frame's arrow) and the list is not filtered: the game's filter
   // is quicker than scrolling. Weapons and chest armour have one main stat each: only the set narrows those
@@ -1028,13 +1030,22 @@
     // hints on the game's own buttons: the filter to set, «Заменить», the next slot
     let hint = '', slot = -1, line1 = '', line2 = '';
     const closeTip = t('hCloseFilter');   // the tip at the game filter's × while it covers the list
+    // the filter guide (the open pop-up: what to pick) and the hero hint (the plan's hero on the hero screen)
+    let setTip = '', statTip = '', heroTips = [];
+    if (g && g.item) {
+      setTip = g.item.setName ? t('hSet', g.item.setName) : '';
+      const st = g.item.slot > 1 ? G.statOf(g.item.mainStat) : ''; statTip = st ? t('hStat', st) : '';
+    }
     if (g && g.item) {
       if (g.kind === 'filter') {
         hint = 'filter';
         line1 = g.item.setName ? t('hSet', g.item.setName) : '';
         const st = G.statOf(g.item.mainStat); line2 = st ? t('hStat', st) : '';
       } else if (g.kind === 'selected') hint = 'replace';
-      else if (g.kind === 'slot' && S.live && (S.live.panelOk || S.live.form) && !(S.live.tab >= 0 && S.live.tab !== 3)) { hint = 'slot'; slot = g.item.slot; line1 = t('hSlot', g.item.slotName || t('slot' + g.item.slot)); }
+      else if (g.kind === 'hero' && !(S.run === p.id && S.autoClick)) {
+        hint = 'hero';
+        heroTips = [t('hHeroPick', p.heroName), t('hHeroFind', p.heroName), t('hHeroUp', p.heroName), t('hHeroDown', p.heroName), t('hHeroesBtn'), t('hHeroBack')];
+      } else if (g.kind === 'slot' && S.live && (S.live.panelOk || S.live.form) && !(S.live.tab >= 0 && S.live.tab !== 3)) { hint = 'slot'; slot = g.item.slot; line1 = t('hSlot', g.item.slotName || t('slot' + g.item.slot)); }
     }
     const hero = p ? p.heroUid : 0;
     // the item the guide is at and its verdict: the host sets the game's filter when the item is far down or hidden
@@ -1042,8 +1053,8 @@
     // the log follows what the guide asks for (once per change)
     const gk = p ? [p.heroName + ' (' + p.heroUid + ')', kind || '-', g && g.item ? 'slot ' + g.item.slot : '', 'game hero ' + (S.live ? S.live.heroUid : '-')].join(' ') : '-';
     if (gk !== S.guideLog) { S.guideLog = gk; host.send({ cmd: 'log', text: 'guide ' + gk }); }
-    const key = [uid, hint, slot, line1, line2, hero, item, kind, closeTip].join('|');
-    if (key !== S.hl) { S.hl = key; host.send({ cmd: 'highlight', uid, hint, slot, line1, line2, hero, item, kind, closeTip }); }
+    const key = [uid, hint, slot, line1, line2, hero, item, kind, closeTip, setTip, statTip, heroTips.join('/')].join('|');
+    if (key !== S.hl) { S.hl = key; host.send({ cmd: 'highlight', uid, hint, slot, line1, line2, hero, item, kind, closeTip, setTip, statTip, heroTips }); }
     // the started plan's hero (0 = none): the host brings it up on the hero screen
     const run = p && S.run === p.id && S.autoClick ? String(p.heroUid) : '0';
     if (run !== S.runKey) { S.runKey = run; host.send({ cmd: 'equip.run', hero: Number(run) }); }
