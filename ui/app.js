@@ -31,6 +31,8 @@
   };
 
   // ---------------------------------------------------------------- helpers
+  // the version players see: inside the app counts 1.6.N (an update must have a higher number), in beta it shows as 0.N
+  const shownVer = (v) => { const m = /^1\.6\.(\d+)((?:\.\d+)?)$/.exec(String(v || '')); return m ? '0.' + m[1] + m[2] : String(v || ''); };
   const t = (k, ...a) => {
     let s = (T[S.lang] && T[S.lang][k]) || T.ru[k] || k;
     a.forEach((v, i) => { s = s.split('{' + i + '}').join(v); });
@@ -109,9 +111,9 @@
       ${nav('settings', I.gear, t('navSettings'))}
       ${nav('news', I.news, t('navNews'), newsUnseen() ? '<span class="newdot"></span>' : '')}
       <div class="rail-foot">
-        ${S.update && S.updDismissed ? `<button class="btn-line" data-act="updOpen">${I.reload}<span>${esc(t('updAvail', S.update.version))}</span></button>` : ''}
+        ${S.update && S.updDismissed ? `<button class="btn-line" data-act="updOpen">${I.reload}<span>${esc(t('updAvail', shownVer(S.update.version)))}</span></button>` : ''}
         <div class="game-state"><span class="dot ${S.game.running ? 'on' : ''}"></span><div>${esc(S.game.running ? t('gameOn') : t('gameOff'))}
-          ${S.game.running && S.game.version ? `<small>${esc(t('gameVer', S.game.version))}</small>` : ''}${S.version ? `<small>${esc(t('appVer', S.version))}</small>` : ''}</div></div>
+          ${S.game.running && S.game.version ? `<small>${esc(t('gameVer', S.game.version))}</small>` : ''}${S.version ? `<small>${esc(t('appVer', shownVer(S.version)))}</small>` : ''}</div></div>
         <div class="langs">
           <button data-act="lang" data-lang="ru" aria-pressed="${S.lang === 'ru'}">RU</button>
           <button data-act="lang" data-lang="en" aria-pressed="${S.lang === 'en'}">EN</button>
@@ -138,7 +140,7 @@
   function modal() {
     if (!S.update || S.updDismissed) return '';
     return `<div class="modal-back" data-act="updBack"><div class="modal card framed" role="dialog" aria-modal="true">
-      <small class="modal-kick">${esc(t('updKicker'))}</small><b class="modal-ver">${esc(S.update.version)}</b>
+      <small class="modal-kick">${esc(t('updKicker'))}</small><b class="modal-ver">${esc(shownVer(S.update.version))}</b>
       ${notesHtml(S.update[S.lang] || S.update.ru || t('updNext'))}
       <p class="modal-hint">${esc(t('updHint'))}</p>
       <div class="modal-btns"><button class="btn-gold" data-act="updRestart">${esc(t('updRestart'))}</button><button class="btn-line" data-act="updLater">${esc(t('updLater'))}</button></div>
@@ -215,7 +217,7 @@
       const site = items.filter((x) => x.kind !== 'app'), apps = {};
       items.filter((x) => x.kind === 'app').forEach((x) => { (apps[x.appVersion] = apps[x.appVersion] || []).push(x); });
       const block = (title, xs) => `<div class="news-grp"><h4>${esc(title)}</h4><ul>${xs.map((x) => `<li>${esc(x.text)}</li>`).join('')}</ul></div>`;
-      return (site.length ? block(t('newsTagSite'), site) : '') + Object.keys(apps).map((v) => block(t('newsTagApp') + (v ? ' ' + v : ''), apps[v])).join('');
+      return (site.length ? block(t('newsTagSite'), site) : '') + Object.keys(apps).map((v) => block(t('newsTagApp') + (v ? ' ' + shownVer(v) : ''), apps[v])).join('');
     };
     const flt = (k, label) => `<button data-act="newsFilter" data-kind="${k}" aria-pressed="${n.filter === k}">${esc(label)}</button>`;
     return `
@@ -224,7 +226,7 @@
       ${offline ? `<p class="newsNote">${esc(t('newsOffline'))}</p>` : ''}
       <div class="stack">${list.map((e) => {
         const mine = e.src === 'app' && e.v === S.version;
-        return `<div class="card news"><div class="news-head"><b>${esc(e.src === 'site' ? t('newsSiteVer', e.v) : t('newsVer', e.v))}</b><span>${esc(date(e.date))}</span>${mine ? `<em>${esc(t('newsYours'))}</em>` : ''}</div>
+        return `<div class="card news"><div class="news-head"><b>${esc(e.src === 'site' ? t('newsSiteVer', e.v) : t('newsVer', shownVer(e.v)))}</b><span>${esc(date(e.date))}</span>${mine ? `<em>${esc(t('newsYours'))}</em>` : ''}</div>
           ${groups(e.items)}</div>`;
       }).join('')}${list.length ? '' : `<p class="newsNote">${esc(t('newsEmpty'))}</p>`}</div>`;
   }
@@ -666,7 +668,7 @@
     return `
       <div class="head"><div><h1>${esc(t('setTitle'))}</h1></div></div>
       <div class="setcols"><div class="setcol">${left}</div><div class="setcol">${right}</div></div>
-      <p class="setfoot">${esc(t('aboutP', S.version))} · <button class="btn-ghost" data-act="open" data-url="https://github.com/AlexisKozlov/wardsage-app">${esc(t('source'))}</button></p>`;
+      <p class="setfoot">${esc(t('aboutP', shownVer(S.version)))} · <button class="btn-ghost" data-act="open" data-url="https://github.com/AlexisKozlov/wardsage-app">${esc(t('source'))}</button></p>`;
   }
 
   // ---------------------------------------------------------------- actions
