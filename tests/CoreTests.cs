@@ -441,9 +441,26 @@ static class CoreTests {
         ph = (106 % pitch + pitch) % pitch;
         e = ListTracker.ListEdge(ListTracker.SlotCells(img, fw, fh, x0, x1, ph, pitch, cellPx, out tops), tops, out et);
         Check(e == -1 && Math.Abs(et - 106) < 0.001, "the list pulled past its top: row 1's top (" + e + ", " + et.ToString("0.0") + ")");
+        // our own plate masked over the last visible row of the list at its top: not an end
+        img = FakeRows(geo, HH, 0, false, out fw, out fh, 40);
+        for (int y = fh - 140; y < fh; y++) for (int x = 0; x < fw; x++) img[y * fw + x] = ListTracker.Masked;
+        ph = ((6 - 0) % pitch + pitch) % pitch;
+        Check(ListTracker.ListEdge(ListTracker.SlotCells(img, fw, fh, x0, x1, ph, pitch, cellPx, out tops), tops, out et) == 0, "a row under our own (masked) plate is not the list's end");
         img = FakeRows(geo, HH, 900, false, out fw, out fh, 20);
         ph = ((6 - 900) % pitch + pitch) % pitch;
         Check(ListTracker.ListEdge(ListTracker.SlotCells(img, fw, fh, x0, x1, ph, pitch, cellPx, out tops), tops, out et) == 0, "the middle of the list: no end");
+      }
+      // the rows from the scroll value: a steady offset, not re-snapped to the wandering phase every look
+      {
+        var so = new ScrollOffset(); double sp = 110.76, rawTop = 116.5, got;
+        got = so.Place(rawTop, 119.5, sp, 705);
+        Check(Math.Abs(got - 119.5) < 0.01, "first look: the offset from the bars' phase");
+        bool steady = true;
+        foreach (double phy in new[] { 119.9, 120.3, 119.1, 120.6, 119.5 }) steady &= Math.Abs(so.Place(rawTop, phy, sp, 705) - 119.5) < 0.01;
+        Check(steady, "the phase wandering by a pixel does not move the rows");
+        so.Place(rawTop, 124.5, sp, 705); so.Place(rawTop, 124.5, sp, 705); got = so.Place(rawTop, 124.5, sp, 705);
+        Check(Math.Abs(got - 122.0) < 0.01, "a lasting 5 px difference: eased by half after 3 looks (" + got.ToString("0.0") + ")");
+        Check(Math.Abs(so.Place(rawTop - 300, double.NaN, sp, 705) - (122.0 - 300)) < 0.01, "scrolling: the rows move with the value");
       }
       // the hints' plate beside its target, kept in the window
       {

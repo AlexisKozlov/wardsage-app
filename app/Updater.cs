@@ -97,7 +97,11 @@ namespace RealmForge {
 
     /// <summary>Checks the site; a newer signed build is downloaded and kept for the next start. Returns it, or null
     /// (no update, or it could not be fetched / verified — logged).</summary>
+    /// <summary>The last check failed on the network (the feed or the file could not be fetched): try again soon.</summary>
+    public static bool LastFailed;
+
     public static UpdateInfo CheckAndDownload(string site) {
+      LastFailed = false;
       try {
         Uri baseUri; if (!Uri.TryCreate(site, UriKind.Absolute, out baseUri)) return null;
         var u = FromJson(Encoding.UTF8.GetString(Fetch(site.TrimEnd('/') + Channel.FeedPath, 64 * 1024)));
@@ -112,7 +116,7 @@ namespace RealmForge {
         File.WriteAllText(StagedMeta(u.Version), ToJson(u), new UTF8Encoding(false));
         Log.Write("update " + u.Version + ": downloaded and verified");
         return u;
-      } catch (Exception e) { Log.Write("update check: " + e.Message); return null; }
+      } catch (Exception e) { Log.Write("update check: " + e.Message); LastFailed = true; return null; }
     }
 
     /// <summary>A downloaded, verified build of that version waiting to be put in place, or null.</summary>

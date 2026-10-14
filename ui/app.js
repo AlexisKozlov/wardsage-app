@@ -1050,8 +1050,8 @@
         heroTips = [t('hHeroPick', p.heroName), t('hHeroFind', p.heroName), t('hHeroUp', p.heroName), t('hHeroDown', p.heroName), t('hHeroesBtn'), t('hHeroBack')];
       } else if (g.kind === 'slot' && S.live && (S.live.panelOk || S.live.form)) {
         // the hero shown on another tab: its «Снаряжение» tab first, then the slot
-        if (S.live.tab >= 0 && S.live.tab !== 3) { hint = 'geartab'; line1 = t('hGearTab'); }
-        else { hint = 'slot'; slot = g.item.slot; line1 = t('hSlot', g.item.slotName || t('slot' + g.item.slot)); }
+        if (S.live.tab >= 0 && S.live.tab !== 3) { hint = 'geartab'; line1 = t('hGearTab'); line2 = t('hGearTabSub'); }
+        else { hint = 'slot'; slot = g.item.slot; line1 = t('hSlot', g.item.slotName || t('slot' + g.item.slot)); line2 = t('hSlotSub'); }
       }
     }
     const hero = p ? p.heroUid : 0;
@@ -1067,7 +1067,8 @@
       texts.caps = t('pCaps', Math.min(g.done + 1, p.items.length), p.items.length, where);
       if (it) { texts.pick = t('pPick', it.name + (it.level ? ' +' + it.level : '')); texts.wrongSub = t('pWrongSub', it.name + (it.level ? ' +' + it.level : '')); }
       Object.assign(texts, { then: t('pThen'), pillDown: t('pPillDown'), pillUp: t('pPillUp'), rows1: t('pRows1'), rows2: t('pRows2'), rows5: t('pRows5'),
-        unknown: t('pUnknown'), unknownSub: t('pUnknownSub'), done: t('pDone'), wrong: t('hWrong') });
+        unknown: t('pUnknown'), unknownSub: t('pUnknownSub'), done: t('pDone'), wrong: t('hWrong'),
+        slotInFilter: t('pSlotInFilter'), filterCovered: t('pFilterCovered') });
     }
     const wrong = !!(g && g.wrong);
     const key = [uid, hint, slot, line1, line2, hero, item, kind, closeTip, setTip, statTip, heroTips.join('/'), JSON.stringify(texts), wrong].join('|');

@@ -542,6 +542,7 @@ namespace RealmForge {
     // this look: the bars' phase (client px), how clear it was
     /// <summary>The gear list's row height in its own units (the content position is in them).</summary>
     public const double ListRowUnits = 100;
+    readonly ScrollOffset listOff = new ScrollOffset(), heroOff = new ScrollOffset();
     bool lookPhase; double lookPhaseY, lookConf, lookScroll = double.NaN; string lookCheck = "";
     long rebuiltMs;
     int selRow, selCol;   // the selected item's place in the list (0 = none / another list)
@@ -606,8 +607,7 @@ namespace RealmForge {
         lookScroll = scrollY;
         // (in the list's own units: an item row is 100 of them - the grid scales its rows to fit, 106 UI units each - so
         // a UI-unit conversion drifted one row behind over 16 rows, live 2026-10-14)
-        double r1 = ScrollAnchor.TopRow1(g, H) - scrollY * pitch / ListRowUnits;
-        if (hasPhase) { double s = ListTracker.Snap(r1 - sy, ph, pitch) + sy; if (Math.Abs(s - r1) <= 0.1 * pitch) r1 = s; }
+        double r1 = listOff.Place(ScrollAnchor.TopRow1(g, H) - scrollY * pitch / ListRowUnits, hasPhase ? sy + ph : double.NaN, pitch, H);
         anchor.Row1Top = r1; anchor.Has = true; anchor.ListPtr = typesPtr;
         follow.Anchored(sig, now); follow.Note = "scroll"; anchorSrc = "scroll"; dRefRow = 0;
         // (diagnostics: what the pixels say - the selected item's glow, an end of the list - against it, in rows)
@@ -705,26 +705,57 @@ namespace RealmForge {
               DrawTip(o.X + gr[0], o.Y + gr[1], gr[2], gr[3], gl, H, false, gr[1] < 0.3 * H, gr[0] > W / 2);
               return;
             }
-            filterOpen = false;   // set as wanted: the list beside the pop-up is followed and framed as usual
+            // set as wanted: the list beside the pop-up is followed and framed as usual - unless the pop-up covers the item
+            if (!CoveredByFilter(o, cr, U)) filterOpen = false;
+            else { CloseFilterTip(o, fx, fy, U, H, Tx("filterCovered")); return; }
           } else if (FilterHasChoice()) {
-            // the filter narrows the list now: its × would drop that again (live 2026-10-14: closed, the item went back from
-            // row 4 to row 18) - the list beside the pop-up is framed as usual
-            filterOpen = false;
+            // the filter narrows the list now: closing the pop-up drops that again (live 2026-10-14, twice: the set went
+            // from the filter and the item back from row 4 to row 18) - the list beside the pop-up is framed as usual,
+            // unless the pop-up covers the item
+            if (!CoveredByFilter(o, cr, U)) filterOpen = false;
+            else { CloseFilterTip(o, fx, fy, U, H, Tx("filterCovered")); return; }
           } else if (!pilot) {
             // a filter the plan does not need over the list: the tip points at its ×
-            filterState = "filter_open";
-            int rr = Math.Max(8, (int)(0.028 * U));
-            DrawTip(o.X + (int)fx - rr, o.Y + (int)fy - rr, 2 * rr, 2 * rr, string.IsNullOrEmpty(CloseFilterText) ? new string[0] : new[] { CloseFilterText }, H, false, true, true);
+            CloseFilterTip(o, fx, fy, U, H, CloseFilterText);
             return;
           } else filterState = "filter_open";
         }
       }
       if (hintKind == "") { HideTip(); return; }
+      // the next slot with the filter pop-up open: the pop-up covers the hero's slots, but its own row «Выбрать часть» switches
+      // the list to that slot (the icons in slot order, measured at 1366x705 and 1920x1009)
+      if (hintKind == "slot" && hintSlot >= 0 && hintSlot < PartIconX.Length && Mark(o, fg.X(fg.MainCloseX, W, H), fg.Y(fg.CloseY, W, H), U, ButtonCheck.IsCloseRed)) {
+        int s = (int)(0.1 * U), cx = (int)fg.X(PartIconX[hintSlot], W, H), cy = (int)fg.Y(PartIconY, W, H);
+        var pl = new System.Collections.Generic.List<string>(hintLines); if (pl.Count > 1) pl.RemoveAt(1); if (Tx("slotInFilter") != "") pl.Add(Tx("slotInFilter"));
+        DrawTip(o.X + cx - s / 2, o.Y + cy - s / 2, s, s, pl.ToArray(), H);
+        return;
+      }
       if (hintKind == "replace") confirmBtn = ConfirmButton(o, W, H);
       int[] r = hintKind == "filter" ? hg.Filter(W, H) : hintKind == "replace" ? confirmBtn ?? hg.Replace(W, H) : hintKind == "slot" ? hg.Slot(hintSlot, W, H) : null;
       // the hero is open on another tab: its «Снаряжение» tab (right edge)
       if (hintKind == "geartab") { int s = (int)(0.1 * U); r = new[] { (int)(W - hg2.GearTabDX * U) - s / 2, (int)(hg2.GearTabY * U) - s / 2, s, s }; }
       if (r == null) HideTip(); else DrawTip(o.X + r[0], o.Y + r[1], r[2], r[3], hintLines, H, false, false, hintKind == "geartab");
+    }
+
+    // the filter pop-up's «Выбрать часть» icons: x of their middles from the window centre and y (in the pop-up's terms)
+    static readonly double[] PartIconX = { -0.368, -0.2345, -0.0418, 0.0915, 0.2265 };
+    const double PartIconY = 0.206;
+
+    /// <summary>The frame's item cell (by the anchor) lies under the filter pop-up (the side panel included when open).</summary>
+    bool CoveredByFilter(W32.POINT o, W32.RECT cr, double U) {
+      if (!anchor.Has || types == null || frameRow <= 0 || frameCol <= 0) return false;
+      double W = cr.R, H = cr.B, top = anchor.RowTop(g, types, frameRow, U), left = g.ColLeft(frameCol) * U, w = g.CellW * U;
+      if (top + w < g.ViewTop * U || top > g.ViewBottom * U) return false;   // not in view anyway
+      bool side = Mark(o, fg.X(fg.SideCloseX, W, H), fg.Y(fg.CloseY, W, H), U, ButtonCheck.IsCloseRed);
+      double x0 = W / 2 - 0.452 * U, x1 = W / 2 + (side ? 0.87 : 0.335) * U;
+      return left + w > x0 && left < x1;
+    }
+
+    // the tip at the filter pop-up's ×
+    void CloseFilterTip(W32.POINT o, double fx, double fy, double U, double H, string text) {
+      filterState = "filter_open";
+      int rr = Math.Max(8, (int)(0.028 * U));
+      DrawTip(o.X + (int)fx - rr, o.Y + (int)fy - rr, 2 * rr, 2 * rr, string.IsNullOrEmpty(text) ? new string[0] : new[] { text }, H);
     }
 
     /// <summary>The game's gear filter has a set or a main stat chosen now.</summary>
@@ -866,8 +897,7 @@ namespace RealmForge {
       // where the game says the hero list is scrolled: exact
       double heroY; bool exact = RFX.ReadScrollY(addrs, true, out heroY);
       if (exact) {
-        double r1 = top0 - heroY * pitch / (hs.SmallCards ? 85.0 : 125.0);   // a card row is 125 (small: 85) of the list's units
-        if (hasPhase) { double s = ListTracker.Snap(r1 - vt, ph, pitch) + vt; if (Math.Abs(s - r1) <= 0.1 * pitch) r1 = s; }
+        double r1 = heroOff.Place(top0 - heroY * pitch / (hs.SmallCards ? 85.0 : 125.0), hasPhase ? vt + ph : double.NaN, pitch, U);   // a card row is 125 (small: 85) of the list's units
         heroAnchor.Row1Top = r1; heroAnchor.Has = true; heroFollow.Anchored(sig, now);
       }
       // at the top: a fresh list (a tight phase match only) or one that fits on the screen
@@ -998,7 +1028,7 @@ namespace RealmForge {
         if (!win.Excluded && win.Visible)
           foreach (var r in win.Parts) {
             int ax = Math.Max(x, r[0]), ay = Math.Max(y, r[1]), bx = Math.Min(x + w, r[0] + r[2]), by = Math.Min(y + h, r[1] + r[3]);
-            for (int yy = ay; yy < by; yy++) for (int xx = ax; xx < bx; xx++) px[(yy - y) * w + (xx - x)] = unchecked((int)0xFF10141C);
+            for (int yy = ay; yy < by; yy++) for (int xx = ax; xx < bx; xx++) px[(yy - y) * w + (xx - x)] = ListTracker.Masked;
           }
     }
 

@@ -254,6 +254,8 @@ namespace RealmForge {
       string site = cfg.Site;
       Task.Factory.StartNew(() => {
         var u = Updater.CheckAndDownload(site);
+        // a dropped connection: look again in 20 s instead of waiting for the next round
+        if (Updater.LastFailed) { OnUi(() => { updateTimer.Stop(); updateTimer.Interval = 20000; updateTimer.Start(); }); return; }
         if (u == null) return;
         if (updateReady != null && !Updater.Newer(u.Version, updateReadyVersion)) return;   // test builds keep looking: only a newer one replaces the downloaded one
         updateReadyVersion = u.Version;

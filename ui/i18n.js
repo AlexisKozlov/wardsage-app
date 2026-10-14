@@ -88,7 +88,7 @@ window.RF_TEXTS = {
     gFilterNoSet: 'Сузь список: «Фильтр» → главный стат «{0}»',
 
     setDiag: 'Диагностика рамки', setDiagP: '5 минут: снимки окна игры и данные списка сохраняются в папку debug рядом с программой. Никуда не отправляются.', diagStart: 'Включить', diagOn: 'Включено на 5 минут',
-    hSet: 'Фильтр → Комплект: {0}', hStat: 'Главный стат: {0}', hSlot: 'Дальше: {0}',
+    hSet: 'Фильтр → Комплект: {0}', hStat: 'Главный стат: {0}', hSlot: 'Открой слот «{0}»', hSlotSub: 'откроется список вещей', hGearTabSub: 'там слоты героя', pSlotInFilter: 'прямо в окне фильтра: «Выбрать часть»', pFilterCovered: 'Окно фильтра закрывает вещь — закрой его (выбор в нём сбросится)',
     fStep1: '«Фильтр» внизу списка', fStep2: 'Комплект:', fStep3: 'Главный стат:',
     fFilterHead: 'Включи фильтр в игре — вещь окажется в первых рядах', fFilterP: 'Сейчас она далеко — в ряду {0}. После фильтра рамка появится сама.',
     fOn: 'Нажми вещь в золотой рамке, затем «Заменить»', fBelow: 'Крути список вниз — вещь ниже (стрелка в игре)', fAbove: 'Крути список вверх — вещь выше (стрелка в игре)',
@@ -248,7 +248,7 @@ window.RF_TEXTS = {
     gFilterNoSet: 'Narrow the list: “Filter” → main stat “{0}”',
 
     setDiag: 'Frame diagnostics', setDiagP: '5 minutes: screenshots of the game window and list data are saved to the debug folder next to the program. Nothing is sent.', diagStart: 'Turn on', diagOn: 'On for 5 minutes',
-    hSet: 'Filter → Set: {0}', hStat: 'Main stat: {0}', hSlot: 'Next: {0}',
+    hSet: 'Filter → Set: {0}', hStat: 'Main stat: {0}', hSlot: 'Open the “{0}” slot', hSlotSub: 'its list of items opens', hGearTabSub: 'the hero’s slots are there', pSlotInFilter: 'right in the filter: “Select part”', pFilterCovered: 'The filter window covers the item — close it (its choice is reset)',
     fStep1: '“Filter” under the list', fStep2: 'Set:', fStep3: 'Main stat:',
     fFilterHead: 'Turn on the game’s filter — the item will be in the first rows', fFilterP: 'Now it is far down — row {0}. After the filter the frame shows up by itself.',
     fOn: 'Press the item in the gold frame, then “Replace”', fBelow: 'Scroll the list down — the item is below (arrow in the game)', fAbove: 'Scroll the list up — the item is above (arrow in the game)',

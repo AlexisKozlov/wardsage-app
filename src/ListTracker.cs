@@ -319,6 +319,9 @@ namespace RealmForge {
       return m;
     }
 
+    /// <summary>The colour our own drawings are masked with in a screen look (never a game pixel: alpha 0xFF, an odd dark blue).</summary>
+    public const int Masked = unchecked((int)0xFF10141D);
+
     /// <summary>Is there an item cell in a column at each row slot of the strip (pixels row by row, width w)? Slot k's top is
     /// at phase + k·pitch (strip px); a cell is coloured (its rarity background, the item), the list's background behind
     /// the cells is the dark game scene. 1 = a cell, 0 = none, -1 = too little of the slot on the screen or not clear
@@ -329,15 +332,20 @@ namespace RealmForge {
       for (int k = -2; phase + k * pitch < h; k++) {
         double y = phase + k * pitch, a = Math.Max(0, y + cell * 0.05), b = Math.Min(h, y + cell * 0.95);
         if (b - a < cell * 0.25 || x1 <= x0) continue;
-        int n = 0, c = 0;
+        int n = 0, c = 0, hidden = 0;
         for (int yy = (int)Math.Ceiling(a); yy < b; yy++)
           for (int x = x0; x < x1; x++) {
-            int p = px[yy * w + x], r = (p >> 16) & 255, g = (p >> 8) & 255, bl = p & 255;
+            int p = px[yy * w + x];
+            if (p == Masked) { hidden++; continue; }
+            int r = (p >> 16) & 255, g = (p >> 8) & 255, bl = p & 255;
             int mx = Math.Max(r, Math.Max(g, bl)), mn = Math.Min(r, Math.Min(g, bl));
             n++; if (mx - mn >= 50 && mx >= 110) c++;
           }
         double share = n > 0 ? c / (double)n : 0;
-        st.Add(share >= 0.15 ? 1 : share <= 0.03 ? 0 : -1); tp.Add(y);
+        // a slot partly under something we drew ourselves is not known: dark there is our mask, not an empty slot
+        // (live 2026-10-14: a plate over the last visible row read as the list's end, 23-33 rows off)
+        bool covered = hidden > 0.2 * (hidden + n);
+        st.Add(covered ? -1 : share >= 0.15 ? 1 : share <= 0.03 ? 0 : -1); tp.Add(y);
       }
       tops = tp.ToArray();
       return st.ToArray();
@@ -527,6 +535,30 @@ namespace RealmForge {
     public void Settled(ScrollAnchor a, float[] sig, double topRow1, double pitch) {
       if (Unsure || !a.Has || sig == null) return;
       if (Math.Abs(a.Row1Top - topRow1) <= Math.Max(3.5, pitch * 0.06)) { Top = sig; TopRow1 = a.Row1Top; }
+    }
+  }
+
+  /// <summary>Puts a list's rows on the screen from the game's scroll value, steady. The value gives the rows exactly up to
+  /// a few pixels of constant offset (the list's padding); the stat bars' phase knows that offset, but measured anew every look
+  /// it wanders by a pixel or two - re-snapping to it each look made a still frame jitter (live 2026-10-14: row 1 at
+  /// 55.6 / 55.7 / 56.0 / 56.3 with the scroll value unchanged). So the offset is learned once and moved only when the phase
+  /// disagrees by more than 2 px for 3 looks in a row, then by half the difference (no jump).</summary>
+  public sealed class ScrollOffset {
+    public double Offset; public bool Known; int misses; double unit;
+
+    /// <summary>Row 1's top for the value-based position <paramref name="raw"/>; <paramref name="phaseY"/> = a row top seen on
+    /// the screen (NaN = none this look); <paramref name="unit"/>: the window's UI unit (another size = learn anew).</summary>
+    public double Place(double raw, double phaseY, double pitch, double unit) {
+      if (unit != this.unit) { this.unit = unit; Known = false; Offset = 0; misses = 0; }
+      if (!double.IsNaN(phaseY)) {
+        double want = ListTracker.Snap(raw + Offset, phaseY, pitch) - (raw + Offset);
+        if (Math.Abs(want) <= 0.1 * pitch) {
+          if (!Known) { Offset += want; Known = true; misses = 0; }
+          else if (Math.Abs(want) > 2) { if (++misses >= 3) { Offset += want / 2; misses = 0; } }
+          else misses = 0;
+        }
+      }
+      return raw + Offset;
     }
   }
 
