@@ -44,11 +44,11 @@ Optional `### Heading` lines inside a `## RU` / `## EN` section split the update
 - Подсказки по боссу стали полупрозрачными, а саму плашку можно отодвинуть: зажми Ctrl и перетащи её мышью, место запомнится. Ctrl и правый клик вернут её на место. Если плашка не нужна, её можно выключить в настройках: «Подсказки по боссу».
 - Номер версии теперь показывается как бета: 0.60 вместо 1.6.60.
 - Кнопки программы теперь такие же, как на сайте.
-- Раздел «Аккаунт» в настройках теперь во всю ширину. Там, где программа просит код синхронизации, теперь есть кнопка «Ввести код», а не только ссылка на сайт.
+- В настройках выбор языка переехал наверх, а у кода синхронизации теперь своя строка. Там, где программа просит код синхронизации, теперь есть кнопка «Ввести код», а не только ссылка на сайт.
 
 ## EN
 
 - The boss hints panel is now see-through, and you can move it out of the way: hold Ctrl and drag it with the mouse, and it stays there. Ctrl and a right click put it back. If you don’t need the panel, turn it off in the settings: «Boss hints».
 - The version number is now shown as a beta: 0.60 instead of 1.6.60.
 - The app’s buttons now look the same as on the site.
-- The «Account» section of the settings now spans the full width. Wherever the app asks for the sync code there is now an «Enter the code» button, not only a link to the site.
+- In the settings the language choice moved to the top, and the sync code has a line of its own. Wherever the app asks for the sync code there is now an «Enter the code» button, not only a link to the site.
