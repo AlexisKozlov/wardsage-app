@@ -52,7 +52,7 @@ window.RF_TEXTS = {
     layoutCodeP: 'Данные для версии игры приходят с сайта только по коду. Пока его нет, запись боёв, переодевание, «Найти в игре» и чистка склада ждут. Выпусти код в настройках сайта и вставь его в программу — всё включится сразу.',
     layoutWaitP: 'Синхронизация аккаунта работает. Запись боёв, переодевание, «Найти в игре» и чистка склада включатся сами, как только данные появятся. Ничего делать не нужно.',
     remoteSome: 'Часть функций временно отключена командой Wardsage', remoteF_guild: 'гильдия', remoteF_gvg: 'война гильдий', remoteF_battle: 'запись боёв', remoteF_autoclick: 'автонажатие (остаются подсказки)', remoteF_equip: 'переодевание', remoteF_locate: '«Найти в игре»',
-    retry: 'Повторить', showLog: 'Журнал', newCode: 'Новый код',
+    retry: 'Повторить', showLog: 'Журнал', newCode: 'Новый код', enterCode: 'Ввести код', getCode: 'Получить код на сайте', codeLinked: 'привязан',
 
     obTitle: 'Привяжи аккаунт', obLead: 'Один раз: код связывает программу с твоим профилем на сайте. Пароль от игры не нужен.',
     ob1: 'Войди на сайт', ob1p: 'По почте и паролю или через Google/Discord.', ob2: 'Получи код', ob2p: 'Настройки → «Код синхронизации».', ob3: 'Вставь его ниже', ob3p: 'Код хранится зашифрованным.',
@@ -206,7 +206,7 @@ window.RF_TEXTS = {
     layoutCodeP: 'The data for the game version comes from the site only with the code. Until then fight recording, the equip helper, «Find in game» and the storage cleanup wait. Issue a code in the site settings and paste it into the app — everything turns on at once.',
     layoutWaitP: 'Account sync works. Fight recording, the equip helper, «Find in game» and the storage cleanup come back by themselves as soon as the data is there. Nothing to do.',
     remoteSome: 'Some features are temporarily turned off by the Wardsage team', remoteF_guild: 'guild', remoteF_gvg: 'guild war', remoteF_battle: 'fight recording', remoteF_autoclick: 'auto click (hints stay)', remoteF_equip: 'equip helper', remoteF_locate: '«Find in game»',
-    retry: 'Retry', showLog: 'Log', newCode: 'New code',
+    retry: 'Retry', showLog: 'Log', newCode: 'New code', enterCode: 'Enter the code', getCode: 'Get a code on the site', codeLinked: 'linked',
 
     obTitle: 'Link your account', obLead: 'Once: the code links the app to your profile on the site. Your game password is not needed.',
     ob1: 'Sign in on the site', ob1p: 'With e-mail and password, or Google/Discord.', ob2: 'Get the code', ob2p: 'Settings → “Sync code”.', ob3: 'Paste it below', ob3p: 'It is stored encrypted.',

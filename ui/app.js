@@ -195,8 +195,8 @@
         ${st}${n ? `<span class="tp-new">${esc(t(F.countKey(n, S.lang), n))}</span>` : ''}</button>`;
     };
     const report = `<button class="btn-gold" data-act="open" data-url="${esc(F.reportUrl(unlinked ? null : r, S.site, S.version))}">${esc(t('forumReport'))}</button>`;
-    const note = (txt) => `<div class="card framed tp-empty"><img src="img/kind_question.webp" alt=""><b>${esc(txt)}</b></div>`;
-    const body = unlinked ? note(t('forumUnlinked'))
+    const note = (txt, act) => `<div class="card framed tp-empty"><img src="img/kind_question.webp" alt=""><b>${esc(txt)}</b>${act ? `<div class="row" style="justify-content:center">${act}</div>` : ''}</div>`;
+    const body = unlinked ? note(t('forumUnlinked'), codeBtns())
       : f.status === 'error' || (r && !r.ok) ? note(t('forumOffline'))
       : list.length ? `<div class="card framed tp-list">${list.map(row).join('')}</div>
         <div class="tp-foot"><button class="btn-ghost" data-act="open" data-url="${esc(F.listUrl(S.site))}">${esc(t('forumAll'))} ›</button></div>`
@@ -236,7 +236,7 @@
   function remoteNote(only) {
     const r = S.remote;
     const lay = S.layout.missing && r.readEnabled
-      ? `<div class="remote-note" role="status">${I.clock}<div><b>${esc(t(S.layout.noCode ? 'layoutCode' : 'layoutWait', S.layout.game || t('layoutGameUnknown')))}</b><p>${esc(t(S.layout.noCode ? 'layoutCodeP' : 'layoutWaitP'))}</p></div></div>`
+      ? `<div class="remote-note" role="status">${I.clock}<div><b>${esc(t(S.layout.noCode ? 'layoutCode' : 'layoutWait', S.layout.game || t('layoutGameUnknown')))}</b><p>${esc(t(S.layout.noCode ? 'layoutCodeP' : 'layoutWaitP'))}</p>${S.layout.noCode ? `<div class="row">${codeBtns()}</div>` : ''}</div></div>`
       : '';
     return remoteSwitchNote(r, only) + lay;
   }
@@ -328,7 +328,7 @@
     const [h, p] = map[e.kind] || ['errRead', 'errReadP'];
     const arg = e.kind === 'rate' ? (e.retryAfter || 30) : e.detail || '';
     return `<div class="alert">${I.warn}<div><b>${esc(t(h))}</b><p>${esc(t(p, arg))}</p><div class="row">
-      ${e.kind === 'token' ? `<button class="btn-line" data-act="open" data-url="${esc(S.site + '/app/settings')}">${I.ext}${esc(t('newCode'))}</button>` : ''}
+      ${e.kind === 'token' ? codeBtns() : ''}
       <button class="btn-line" data-act="openLog">${esc(t('showLog'))}</button>
       <button class="btn-line" data-act="open" data-url="${DISCORD}">${I.ext}${esc(t('reportBug'))}</button></div></div></div>`;
   }
@@ -370,9 +370,9 @@
   function equipPage() {
     const P = S.plans;
     let body;
-    if (!S.hasCode && !P.list.length) body = emptyBox(t('needCode'), '', `<button class="btn-line" data-act="nav" data-page="sync">${esc(t('navSync'))}</button>`);
+    if (!S.hasCode && !P.list.length) body = emptyBox(t('needCode'), '', codeBtns());
     else if (P.status === 'loading' && !P.list.length) body = `<div class="card"><div class="scan"><span class="spinner"></span>${esc(t('plansLoading'))}</div></div>`;
-    else if (P.status === 'error') body = emptyBox(t('plansErr'), P.err === 'token' ? t('plansErrToken') : P.err || '', `<button class="btn-line" data-act="reload">${I.reload}${esc(t('reload'))}</button>`);
+    else if (P.status === 'error') body = emptyBox(t('plansErr'), P.err === 'token' ? t('plansErrToken') : P.err || '', P.err === 'token' ? codeBtns() : `<button class="btn-line" data-act="reload">${I.reload}${esc(t('reload'))}</button>`);
     else if (!P.list.length) body = emptyBox(t('plansNone'), t('plansNoneP'), `<button class="btn-line" data-act="open" data-url="${esc(S.site + '/app/optimizer')}">${I.ext}${esc(t('openOptimizer'))}</button>`);
     else body = `<div class="stack"><div class="plans">${P.list.map(planCard).join('')}</div>${guideCard()}</div>`;
     if (S.sell.list) body = sellCard() + body;
@@ -436,6 +436,10 @@
     render();
   }
 
+  // where the app needs a sync code: enter it here (the code screen) or get one on the site
+  function codeBtns() {
+    return `<button class="btn-gold" data-act="editCode">${esc(t('enterCode'))}</button><button class="btn-line" data-act="open" data-url="${esc(S.site + '/app/settings')}">${I.ext}${esc(t('getCode'))}</button>`;
+  }
   function emptyBox(title, text, actions) {
     return `<div class="card empty">${I.chest}<b>${esc(title)}</b><p>${esc(text)}</p><div class="row" style="justify-content:center">${actions}</div></div>`;
   }
@@ -641,8 +645,8 @@
     const left = [
       sec(t('secAccount'),
         row(t('setCode'), t('setCodeP'), S.hasCode
-          ? `<span class="num code">${esc(S.codePrefix)}…</span><button class="btn-line" data-act="editCode">${esc(t('change'))}</button><button class="btn-ghost" data-act="unlink">${esc(t('unlink'))}</button>`
-          : `<button class="btn-line" data-act="editCode">${esc(t('save'))}</button>`, { wide: true })
+          ? `<div class="codebox"><span class="num code">${esc(S.codePrefix)}…</span><em>${esc(t('codeLinked'))}</em></div><button class="btn-line" data-act="editCode">${esc(t('change'))}</button><button class="btn-ghost" data-act="unlink">${esc(t('unlink'))}</button>`
+          : `<div class="codebox none">${esc(t('needCode'))}</div>${codeBtns()}`, { wide: true })
         + row(t('setLang'), '', `<div class="langs"><button data-act="lang" data-lang="ru" aria-pressed="${S.lang === 'ru'}">РУССКИЙ</button><button data-act="lang" data-lang="en" aria-pressed="${S.lang === 'en'}">ENGLISH</button></div>`)),
       sec(t('secSync'),
         row(t('setAutoSync'), t('setAutoSyncS'), sw('autoSync', S.autoSync), { more: 'setAutoSyncP', key: 'autoSync' })
