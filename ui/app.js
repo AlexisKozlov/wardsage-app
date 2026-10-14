@@ -15,7 +15,7 @@
     game: { running: false, version: null }, last: null, page: 'sync', editCode: false,
     sync: { phase: 'idle', stage: null, seconds: 0, result: null, error: null },
     plans: { status: 'idle', list: [], err: null }, sel: 0,
-    scan: { status: 'idle', panel: false }, live: null, reported: {}, compact: false, overlay: 'off', hl: '',
+    scan: { status: 'idle', panel: false }, live: null, reported: {}, compact: false, overlay: 'off', ovFar: false, hl: '',
     more: {}, autoSync: true, autoClick: false, autoConfirm: false, errorReports: false, autoUpdate: true, bossHints: true, tray: true, autostart: false, auto: 'idle', autoAt: null,
     news: { status: 'idle', feed: null, filter: 'all', at: 0 },
     forum: { status: 'idle', reply: null, at: 0 },
@@ -537,8 +537,8 @@
       case 'slot': return sayBox('', I.hand, autoHead() || t('gOpenSlot', it.slotName || t('slot' + it.slot)), S.autoClick ? autoSub() : t('gOpenSlotLit')) + findCard(it, g, S.compact);
       case 'pick': {
         // what to do right now, by what the frame over the game is doing
-        const head = autoHead() || { on: t('fOn'), below: t('fBelow'), above: t('fAbove'), need_click: t('fNeedClick') }[S.overlay] || t('fLook');
-        return sayBox('', I.hand, head, autoSub()) + findCard(it, g, S.compact);
+        const head = autoHead() || { on: t('fOn'), below: t('fBelow'), above: t('fAbove'), need_click: t('fNeedClick'), filter_open: t('fFilterOpen') }[S.overlay] || t('fLook');
+        return sayBox('', I.hand, head, autoSub(), faster(it)) + findCard(it, g, S.compact);
       }
       case 'filter':
         if (autoHead()) return sayBox('', I.hand, autoHead(), autoSub()) + findCard(it, g, S.compact);
@@ -548,7 +548,9 @@
         const n = Math.abs(g.dr), col = g.col || 1;
         const rows = S.lang === 'en' ? `${n} row${n === 1 ? '' : 's'}` : `${n} ${G.plural(n, 'ряд', 'ряда', 'рядов')}`;
         const head = g.dr === 0 ? t('gRelSame', col) : t(g.dr > 0 ? 'gRelDown' : 'gRelUp', rows, col);
-        return sayBox('', I.hand, autoHead() || head, autoHead() ? autoSub() : ovText()) + findCard(it, g, S.compact);
+        // the filter pop-up hides the list: closing it comes first, the way to the item after
+        if (S.overlay === 'filter_open' && !autoHead()) return sayBox('', I.hand, t('fFilterOpen'), head) + findCard(it, g, S.compact);
+        return sayBox('', I.hand, autoHead() || head, autoHead() ? autoSub() : ovText(), faster(it)) + findCard(it, g, S.compact);
       }
       case 'hiddenEq': return sayBox('warn', I.warn, t('gHiddenEq', g.other || t('otherHero')), t('gHiddenEqP'));
       case 'hiddenEnh': return sayBox('warn', I.warn, t('gHiddenEnh'), t('gHiddenEnhP'));
@@ -568,7 +570,15 @@
   }
 
   function ovText() {
-    return { need_click: t('ovNeedClick'), on: t('ovOn'), above: t('ovAbove'), below: t('ovBelow') }[S.overlay] || '';
+    return { need_click: t('ovNeedClick'), on: t('ovOn'), above: t('ovAbove'), below: t('ovBelow'), filter_open: t('fFilterOpen') }[S.overlay] || '';
+  }
+  // the item is more than three screens of the list away (the frame's arrow) and the list is not filtered: the game's filter
+  // is quicker than scrolling. Weapons and chest armour have one main stat each: only the set narrows those
+  function faster(it) {
+    if (!it || !S.ovFar || (S.overlay !== 'above' && S.overlay !== 'below') || autoHead() || (S.live && S.live.filterActive)) return '';
+    const set = it.setName || '', stat = it.slot > 1 ? G.statOf(it.mainStat) : '';
+    const text = set && stat ? t('fFaster', set, stat) : set ? t('fFasterSet', set) : stat ? t('fFasterStat', stat) : '';
+    return text ? `<small class="faster">${I.filter}<span>${esc(text)}</span></small>` : '';
   }
   const rescanBtn = () => `<div class="row" style="margin-top:10px"><button class="btn-line" data-act="rescan">${I.reload}${esc(t('rescan'))}</button></div>`;
   const sayBox = (cls, icon, head, sub, extra = '') =>
@@ -915,7 +925,7 @@
         if (S.page === 'equip' || S.compact) render(); else syncHighlight();
         break;
       }
-      case 'overlay': S.overlay = m.state; if (S.page === 'equip' || S.compact) render(); break;
+      case 'overlay': S.overlay = m.state; S.ovFar = !!m.far; if (S.page === 'equip' || S.compact) render(); break;
       case 'update': if (!S.update || S.update.version !== m.version) S.updDismissed = false; S.update = { version: m.version, ru: m.notesRu || '', en: m.notesEn || '' }; render(); break;
       case 'auto': S.auto = m.state; if (S.page === 'equip' || S.compact) render(); break;
       case 'guild': if (m.state === 'noSelf' || m.state === 'short') toast(t(m.state === 'short' ? 'guildShort' : 'guildNoSelf'), 12000); break;
@@ -1017,6 +1027,7 @@
     const uid = g ? G.highlightUid(g) : 0;
     // hints on the game's own buttons: the filter to set, «Заменить», the next slot
     let hint = '', slot = -1, line1 = '', line2 = '';
+    const closeTip = t('hCloseFilter');   // the tip at the game filter's × while it covers the list
     if (g && g.item) {
       if (g.kind === 'filter') {
         hint = 'filter';
@@ -1031,8 +1042,8 @@
     // the log follows what the guide asks for (once per change)
     const gk = p ? [p.heroName + ' (' + p.heroUid + ')', kind || '-', g && g.item ? 'slot ' + g.item.slot : '', 'game hero ' + (S.live ? S.live.heroUid : '-')].join(' ') : '-';
     if (gk !== S.guideLog) { S.guideLog = gk; host.send({ cmd: 'log', text: 'guide ' + gk }); }
-    const key = [uid, hint, slot, line1, line2, hero, item, kind].join('|');
-    if (key !== S.hl) { S.hl = key; host.send({ cmd: 'highlight', uid, hint, slot, line1, line2, hero, item, kind }); }
+    const key = [uid, hint, slot, line1, line2, hero, item, kind, closeTip].join('|');
+    if (key !== S.hl) { S.hl = key; host.send({ cmd: 'highlight', uid, hint, slot, line1, line2, hero, item, kind, closeTip }); }
     // the started plan's hero (0 = none): the host brings it up on the hero screen
     const run = p && S.run === p.id && S.autoClick ? String(p.heroUid) : '0';
     if (run !== S.runKey) { S.runKey = run; host.send({ cmd: 'equip.run', hero: Number(run) }); }

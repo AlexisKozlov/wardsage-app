@@ -3,6 +3,7 @@
 //   locate | locate-select | locate-filter | locate-gone (a «Найти в игре» request)
 //   remote-off | remote-some (the site's switches; &page=equip) | remote-layout (no layout data for the game version) | remote-layout-code (no data: no valid sync code)
 //   onboard | idle | reading | done | error | equip | pick | rel | selected | hidden | done-plan | compact | settings | news | newsoff | en
+//   filter-open (the game's filter pop-up over the list) | far (the item more than three screens down: the filter tip)
 (function () {
   if (window.chrome && window.chrome.webview) return;
   const q = new URLSearchParams(location.search);
@@ -34,7 +35,7 @@
   const live = { gameRunning: true, heroUid: 214700000, panelOk: true, part: 2, hideEquipped: false, hideEnhanced: false, filterActive: false,
     rows: { 6423: [7, 2] }, owner: { 11: 214700000, 12: 214700000, 6423: 200100000, 14: 0, 15: 0 } };
   if (s === 'pick') live.rows[6423] = [2, 2];
-  if (s === 'rel') { live.selUid = 77; live.selRow = 5; }
+  if (s === 'rel' || s === 'filter-open' || s === 'far') { live.selUid = 77; live.selRow = 5; }
   if (s === 'selected') { live.rows[6423] = [2, 2]; live.selUid = 6423; live.selRow = 2; }
   if (s === 'hidden') { delete live.rows[6423]; live.hideEquipped = true; }
   if (s === 'done-plan') plan.items.forEach((i) => { live.owner[i.uid] = plan.heroUid; });
@@ -57,7 +58,7 @@
         if (s === 'reading') emit({ ev: 'sync', stage: 'read', seconds: 17 });
         if (s === 'done') emit({ ev: 'sync', stage: 'done', result: { seconds: 41, heroes: 128, items: 1109, artifacts: 380, viewUrl: site + '/app/heroes' } });
         if (s === 'error') emit({ ev: 'sync', stage: 'error', error: { kind: 'not_running' } });
-        if (['equip', 'pick', 'rel', 'selected', 'hidden', 'done-plan', 'compact'].includes(s)) {
+        if (['equip', 'pick', 'rel', 'selected', 'hidden', 'done-plan', 'compact', 'filter-open', 'far'].includes(s)) {
           setTimeout(() => document.querySelector('[data-page=equip]').click(), 20);
         }
         if (s === 'settings') setTimeout(() => document.querySelector('[data-page=settings]').click(), 20);
@@ -104,7 +105,7 @@
         emit({ ev: 'equip.live', live });
         if (s === 'compact') setTimeout(() => document.querySelector('[data-act=compact]').click(), 30);
       } else if (m.cmd === 'highlight') {
-        emit({ ev: 'overlay', state: !m.uid ? 'off' : s === 'pick' ? 'need_click' : 'on' });
+        emit({ ev: 'overlay', state: !m.uid ? 'off' : s === 'pick' ? 'need_click' : s === 'filter-open' ? 'filter_open' : s === 'far' ? 'below' : 'on', far: s === 'far' });
       } else if (m.cmd === 'sync') {
         emit({ ev: 'sync', stage: 'find' });
         let sec = 0;

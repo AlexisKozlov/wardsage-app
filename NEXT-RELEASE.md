@@ -41,4 +41,8 @@ Optional `### Heading` lines inside a `## RU` / `## EN` section split the update
 
 ## RU
 
+- Подсказка при переодевании: если в игре открыт фильтр, программа сначала просит его закрыть, а не рисует рамку поверх него; стрелка и число рядов следят за прокруткой без лишних нажатий; если вещь далеко в списке, программа советует выбрать в фильтре её комплект или главный стат.
+
 ## EN
+
+- Equip helper: with the game's filter open the app asks to close it first instead of drawing the frame over it; the arrow and the row count follow the scrolling without extra clicks; when the item is far down the list the app suggests filtering by its set or main stat.

@@ -72,7 +72,7 @@ namespace RealmForge {
         TraceStartTick(); TryAutoUpdate(); LayoutTick();
       }; gameTimer.Start();
       liveTimer.Interval = 400; liveTimer.Tick += (s, e) => PollLive();
-      overlay = new OverlayController(st => Post("{\"ev\":\"overlay\",\"state\":" + S(st) + "}"),
+      overlay = new OverlayController((st, far) => Post("{\"ev\":\"overlay\",\"state\":" + S(st) + ",\"far\":" + (far ? "true" : "false") + "}"),
                                       st => { Post("{\"ev\":\"auto\",\"state\":" + S(st) + "}"); OnAutoState(st); },
                                       (p, st) => Post("{\"ev\":\"sell.state\",\"state\":" + S(st) + ",\"selected\":" + p.Selected + ",\"missing\":" + p.Missing + ",\"extra\":" + p.Extra + "}"));
       overlay.AutoEnabled = AutoClickOn();
@@ -415,6 +415,9 @@ namespace RealmForge {
             double item = m.TryGetValue("item", out v) && v is double ? (double)v : 0;
             string kind = MiniJson.GetString(m, "kind") ?? "";
             overlay.SetFilterGoal(item > 0 && item < 9e15 && watch.Contains((long)item) ? (long)item : 0, kind.Length <= 20 ? kind : "");
+            // the tip at the game filter's × while it covers the list (the page's text in the interface language)
+            string closeTip = MiniJson.GetString(m, "closeTip") ?? "";
+            overlay.CloseFilterText = closeTip.Length > 80 ? closeTip.Substring(0, 80) : closeTip;
             overlay.SetHint(hint, slot >= 0 && slot <= 4 ? (int)slot : -1, lines.ToArray(), hero > 0 && hero < 9e15 ? (long)hero : 0);
             break;
           }

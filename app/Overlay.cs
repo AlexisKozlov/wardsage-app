@@ -147,7 +147,12 @@ namespace RealmForge {
     readonly ListGeometry g = new ListGeometry();
     readonly HintGeometry hg = new HintGeometry();
     readonly ScrollAnchor anchor = new ScrollAnchor();
-    readonly Action<string> report;
+    readonly ScrollFollow follow = new ScrollFollow();
+    string anchorSrc = "";   // what set the anchor: top (the list opened at the top) / click (the player's click)
+    bool filterOpen;          // the game's gear filter pop-up is over the list this tick (its red ×)
+    /// <summary>The text of the tip at the filter's × (in the interface language, from the page).</summary>
+    public string CloseFilterText = "";
+    readonly Action<string, bool> report;
     readonly Action<string> autoReport;
     readonly AutoPilot pilot;
     readonly FilterGeometry fg = new FilterGeometry();
@@ -192,7 +197,7 @@ namespace RealmForge {
     void RaiseProblem(string kind, string message) { var p = Problem; if (p != null) try { p(kind, message); } catch (Exception) { } }
     bool filterFailSaid; string tickError;
 
-    public OverlayController(Action<string> report, Action<string> autoReport, Action<SellPilot, string> sellReport) {
+    public OverlayController(Action<string, bool> report, Action<string> autoReport, Action<SellPilot, string> sellReport) {
       this.report = report; this.autoReport = autoReport; this.sellReport = sellReport;
       spilot = new SellPilot(SellGeometry.Inventory(1920, 1009, 8));
       pilot = new AutoPilot(g);
@@ -238,14 +243,52 @@ namespace RealmForge {
       shotN++;
       try {
         using (var bmp = new Bitmap(cr.R, cr.B, PixelFormat.Format32bppArgb)) {
-          using (var gr = Graphics.FromImage(bmp)) gr.CopyFromScreen(o.X, o.Y, 0, 0, new Size(cr.R, cr.B), CopyPixelOperation.SourceCopy);
+          using (var gr = Graphics.FromImage(bmp)) {
+            gr.CopyFromScreen(o.X, o.Y, 0, 0, new Size(cr.R, cr.B), CopyPixelOperation.SourceCopy);
+            DiagMarks(gr);   // (the screen copy does not show our own windows: where they would be is drawn in)
+          }
           bmp.Save(Path.Combine(diagDir, "screen_" + shotN.ToString("00") + ".png"), ImageFormat.Png);
         }
         DiagLog("  screen_" + shotN.ToString("00") + ".png");
       } catch (Exception e) { DiagLog("  shot failed: " + e.Message); }
     }
 
-    public void SetAddrs(EquipAddrs a) { if (a != addrs) { addrs = a; anchor.Has = false; types = null; lastSel = -1; suitOrder.Clear(); statOrder.Clear(); subOrder.Clear(); } }
+    // on a diagnostics screenshot: the frame (or the arrow's spot) the tick computed in red, and the rows the anchor puts in
+    // the visible list (a tick and the row number at every row top), with the decision on top
+    void DiagMarks(Graphics gr) {
+      using (var red = new Pen(Color.FromArgb(255, 255, 40, 40), 2f))
+      using (var f = new Font("Segoe UI", 11f, FontStyle.Bold, GraphicsUnit.Pixel))
+      using (var bg = new SolidBrush(Color.FromArgb(200, 0, 0, 0)))
+      using (var txt = new SolidBrush(Color.FromArgb(255, 255, 90, 90))) {
+        if (dKind.StartsWith("box")) gr.DrawRectangle(red, dX, dY, Math.Max(2, dW), Math.Max(2, dH));
+        else if (dKind.StartsWith("up") || dKind.StartsWith("down")) {
+          gr.DrawLine(red, dX, dY, dX + dW, dY);
+          float cx = dX + dW / 2f, d = dKind.StartsWith("up") ? 10 : -10;
+          gr.DrawLine(red, cx, dY + d, cx - 8, dY + 2 * d); gr.DrawLine(red, cx, dY + d, cx + 8, dY + 2 * d);
+        }
+        string vis = "";
+        double H = dU;
+        if (H > 0 && anchor.Has && types != null) {
+          double vt = g.ViewTop * H, vb = g.ViewBottom * H, x0 = g.StripLeft * H, x1 = g.StripRight * H;
+          int first = 0, last = 0;
+          for (int r = 1; r < types.Length; r++) {
+            double t = anchor.RowTop(g, types, r, H);
+            if (t < vt - g.PitchY * H || t > vb) continue;
+            if (t + g.CellW * H / 2 >= vt && t + g.CellW * H / 2 <= vb && (types[r] == 1 || types[r] == 0)) { if (first == 0) first = r; last = r; }
+            if (t < vt || t > vb) continue;
+            gr.DrawLine(red, (float)x0 - 2, (float)t, (float)x1 + 2, (float)t);
+            gr.DrawString(r.ToString(), f, txt, (float)x1 + 3, (float)t);
+          }
+          vis = " rows " + first + "-" + last + (follow.Unsure ? " (unsure)" : "");
+        }
+        string line = dKind + vis + " src=" + anchorSrc + " follow=" + follow.Note + (filterOpen ? " filter open" : "");
+        var sz = gr.MeasureString(line, f);
+        gr.FillRectangle(bg, 2, 2, sz.Width + 6, sz.Height + 2);
+        gr.DrawString(line, f, txt, 5, 3);
+      }
+    }
+
+    public void SetAddrs(EquipAddrs a) { if (a != addrs) { addrs = a; anchor.Has = false; follow.Reset(); types = null; lastSel = -1; suitOrder.Clear(); statOrder.Clear(); subOrder.Clear(); } }
 
     /// <summary>The item the guide is at and its verdict ("filter": far down, "hiddenEq" / "hiddenFilter" / "notIn": not in
     /// the list, ...): the filter pilot sets the game's filter for it when that helps.</summary>
@@ -316,10 +359,19 @@ namespace RealmForge {
     void Hide(string st) {
       if (glow.Visible) glow.Hide();
       drawnKey = null;
+      dKind = "hidden:" + st;
       Say(st);
     }
 
-    void Say(string st) { if (st != state) { state = st; report(st); } }
+    // the frame's state for the page, and for «above» / «below» whether the item is far (more than three screens of the list
+    // to scroll: the game's filter is quicker then)
+    bool saidFar;
+    void Say(string st, int rows = 0) {
+      bool far = rows > 3 * g.VisibleRows;
+      if (st == state && far == saidFar) return;
+      state = st; saidFar = far;
+      report(st, far);
+    }
 
     void Tick() {
       curRow = curCol = 0; curSel = 0;
@@ -383,11 +435,31 @@ namespace RealmForge {
       return bmp;
     }
 
+    // what the frame tick decided (diagnostics): box / up / down / hidden:<state>, the frame or arrow spot in client px, the
+    // row it took the bar phase from, the UI unit
+    string dKind = ""; int dX, dY, dW, dH, dRefRow; double dU;
+
     void TickFrame() {
+      dKind = ""; dX = dY = dW = dH = 0; dRefRow = 0; dU = 0;
+      FrameStep();
       if (DateTime.Now < diagUntil) {   // also before the gear screen was scanned: the filter panel is often opened first
         IntPtr dh = GameWindow(); var dp = new W32.POINT(0, 0); W32.RECT dr;
-        if (dh != IntPtr.Zero && W32.GetClientRect(dh, out dr)) { W32.ClientToScreen(dh, ref dp); DiagTick(dh, dp, dr, diagInfo); }
+        if (dh != IntPtr.Zero && W32.GetClientRect(dh, out dr)) {
+          W32.ClientToScreen(dh, ref dp);
+          diagInfo = (dKind == "" ? "-" : dKind) + " rect=" + dX + "," + dY + "," + dW + "x" + dH + " anchor=" + anchor.Has
+            + " src=" + (anchorSrc == "" ? "-" : anchorSrc) + " follow=" + (follow.Note == "" ? "-" : follow.Note)
+            + (follow.Note == "still" || follow.Note == "track" || follow.Note == "top" || follow.Note == "lost"
+               ? " shift=" + Num(follow.Shift) + " diff=" + Num(follow.Diff) + "/" + Num(follow.Second) : "")
+            + " refRow=" + dRefRow + " filter=" + (filterOpen ? "open" : "closed") + " | " + diagInfo;
+          DiagTick(dh, dp, dr, diagInfo);
+        }
       }
+    }
+
+    static string Num(double v) { return v >= 1e9 ? "-" : v.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture); }
+
+    void FrameStep() {
+      diagInfo = "";
       TickHint();
       if (target == 0 || addrs == null) { Hide("off"); return; }
       int col; ulong list;
@@ -406,8 +478,9 @@ namespace RealmForge {
         types = RFX.RowTypes(list, 5000); typesPtr = list;
         int n = types.Length - 1; while (n > 0 && types[n] == 0) n--;
         Array.Resize(ref types, n + 1);
-        anchor.Has = false;
+        anchor.Has = false; follow.Reset(); anchorSrc = "";
       }
+      dU = H;
 
       // the player clicked an item: the cursor shows where its row is on the screen
       long sel = RFX.ReadSel(addrs);
@@ -417,56 +490,84 @@ namespace RealmForge {
           W32.POINT c;
           if (srow > 0 && sl == list && W32.GetCursorPos(out c)) {
             double cx = (c.X - o.X) / H, cy = (c.Y - o.Y) / H;
-            if (cy >= g.ViewTop && cy <= g.ViewBottom && g.ColumnAt(cx) == scol) anchor.FromClick(g, types, srow, c.Y - o.Y, H, list);
+            if (cy >= g.ViewTop && cy <= g.ViewBottom && g.ColumnAt(cx) == scol) {
+              anchor.FromClick(g, types, srow, c.Y - o.Y, H, list);
+              follow.Anchored(null);   // the next strip picture is taken as it is
+              anchorSrc = "click";
+            }
           }
         }
         lastSel = sel;
       }
       curSel = sel;
+      diagInfo = "H=" + H.ToString("0.0") + " target=" + row + "/" + col + " sel=" + sel + " state=" + state;
       if (!IsForeground(hwnd)) { Hide(anchor.Has ? "background" : "need_click"); return; }
+      // the game's filter pop-up is over the list: a frame at the item's spot would sit on the pop-up. The list is not
+      // followed meanwhile (the pop-up hides part of it); the last sure picture waits until it closes
+      if (filterOpen) { Hide("filter_open"); return; }
 
       int sx = (int)(g.StripLeft * H), sy = (int)(g.ViewTop * H), sw = (int)((g.StripRight - g.StripLeft) * H), sh = (int)((g.ViewBottom - g.ViewTop) * H);
-      double ph, conf;
-      bool hasPhase = Phase(o.X + sx, o.Y + sy, sw, sh, H, out ph, out conf);
+      double ph, conf; float[] sig;
+      bool hasPhase = Phase(o.X + sx, o.Y + sy, sw, sh, H, out ph, out conf, out sig);
+      double pitch = g.PitchY * H;
       // a fresh list opens at the top: anchor right away when the bars on the screen agree (no click needed)
       // (also later: a short filtered list cannot scroll, it stays at the top; a wrong guess is corrected by the next click)
-      if (!anchor.Has && hasPhase) anchor.FromTop(g, types, sy + ph, H, list);
+      if (!anchor.Has && hasPhase && anchor.FromTop(g, types, sy + ph, H, list)) { follow.Reset(); follow.Anchored(sig); anchorSrc = "top"; }
+      diagInfo += " phase=" + (hasPhase ? (sy + ph).ToString("0.0") : "none") + " conf=" + conf.ToString("0.00");
       if (!anchor.Has) { Hide("need_click"); return; }
-      diagInfo = "H=" + H + " phase=" + (hasPhase ? (sy + ph).ToString("0.0") : "none") + " conf=" + conf.ToString("0.00")
-        + " row1=" + anchor.Row1Top.ToString("0.0") + " target=" + row + "/" + col + " sel=" + sel + " state=" + state;
 
-      // follow the scrolling by the stat bars' phase
+      // how far the list went since the last tick (its strip picture), then on the pixel by the stat bars' phase; when the
+      // move is not clear, no frame until it is again (the player is asked to click an item, as before the first anchor)
+      bool sure = sig != null ? follow.Follow(anchor, sig, SigN, pitch) : !follow.Unsure;
+      diagInfo += " row1=" + anchor.Row1Top.ToString("0.0");
+      if (!sure) { Hide("need_click"); return; }
       if (hasPhase) {
         int refRow = anchor.VisibleRow(g, types, H);
         if (refRow > 0) anchor.Track(g, types, refRow, sy + ph, H);
+        dRefRow = refRow;
       }
+      follow.Settled(anchor, sig, ScrollAnchor.TopRow1(g, H), pitch);
 
       double top = anchor.RowTop(g, types, row, H), left = g.ColLeft(col) * H;
       double cell = g.CellW * H, full = g.BarBottom * H, mid = top + cell / 2;
       frame++;
-      double pitch = g.PitchY * H;
       if (mid < g.ViewTop * H) Draw("up", o.X + (int)left, o.Y + sy, (int)cell, 0, (int)Math.Ceiling((g.ViewTop * H - top) / pitch));
       else if (mid > g.ViewBottom * H) Draw("down", o.X + (int)left, o.Y + sy + sh, (int)cell, 0, (int)Math.Ceiling((top + full - g.ViewBottom * H) / pitch));
       else Draw("box", o.X + (int)left, o.Y + (int)top, (int)cell, (int)full, 0);
+      dX -= o.X; dY -= o.Y;   // (Draw keeps screen px)
     }
 
     void TickHint() {
-      confirmBtn = null;
-      if (hintKind == "" || addrs == null) { HideTip(); return; }
+      confirmBtn = null; filterOpen = false;
+      if ((hintKind == "" && target == 0) || addrs == null) { HideTip(); return; }
       IntPtr hwnd = GameWindow();
       if (hwnd == IntPtr.Zero || W32.IsIconic(hwnd) || !IsForeground(hwnd)) { HideTip(); return; }
       W32.RECT cr; if (!W32.GetClientRect(hwnd, out cr) || cr.B < 200) { HideTip(); return; }
       var o = new W32.POINT(0, 0); W32.ClientToScreen(hwnd, ref o);
-      double H = cr.B, W = cr.R;
+      double H = cr.B, W = cr.R, U = Ui.Unit(W, H);
+      // the gear filter pop-up (its red ×) while an item is to be framed: the tip points at the × instead (not while the
+      // player is asked to set the filter, nor while the filter pilot sets it)
+      if (target != 0) {
+        double fx = fg.X(fg.MainCloseX, W, H), fy = fg.Y(fg.CloseY, W, H);
+        filterOpen = Mark(o, fx, fy, U, ButtonCheck.IsCloseRed);
+        if (filterOpen && hintKind != "filter" && !(AutoEnabled && fpilot.State == "work")) {
+          int rr = Math.Max(8, (int)(0.028 * U));
+          DrawTip(o.X + (int)fx - rr, o.Y + (int)fy - rr, 2 * rr, 2 * rr, string.IsNullOrEmpty(CloseFilterText) ? new string[0] : new[] { CloseFilterText }, H, false, true, true);
+          return;
+        }
+      }
+      if (hintKind == "") { HideTip(); return; }
       if (hintKind == "replace") confirmBtn = ConfirmButton(o, W, H);
       int[] r = hintKind == "filter" ? hg.Filter(W, H) : hintKind == "replace" ? confirmBtn ?? hg.Replace(W, H) : hintKind == "slot" ? hg.Slot(hintSlot, W, H) : null;
       if (r == null) HideTip(); else DrawTip(o.X + r[0], o.Y + r[1], r[2], r[3], hintLines, H);
     }
 
     /// <summary>A pulsing gold frame around a button of the game (x, y, w, h: screen px) with a text plate above it.</summary>
-    void DrawTip(int x, int y, int w, int h, string[] lines, double H, bool plateOnly = false) {
+    // (below: the plate under the button, for buttons at the top of the window; right: the plate's right edge at the button's,
+    // for buttons right of the middle)
+    void DrawTip(int x, int y, int w, int h, string[] lines, double H, bool plateOnly = false, bool below = false, bool right = false) {
       float pulse = (float)(0.6 + 0.4 * Math.Sin(frame * 0.45));
-      string key = x + ":" + y + ":" + w + ":" + h + ":" + string.Join("|", lines) + ":" + (plateOnly ? 0 : (int)(pulse * 10));
+      string key = x + ":" + y + ":" + w + ":" + h + ":" + string.Join("|", lines) + ":" + (plateOnly ? 0 : (int)(pulse * 10)) + (below ? "b" : "") + (right ? "r" : "");
       if (key == tipKey) return;
       tipKey = key;
       float fs = (float)Math.Max(13.0, H * 0.022);
@@ -475,10 +576,11 @@ namespace RealmForge {
         using (var probe = new Bitmap(1, 1)) using (var pg = Graphics.FromImage(probe)) foreach (var l in lines) tw = Math.Max(tw, pg.MeasureString(l, f).Width);
         int pw = lines.Length > 0 ? (int)tw + 28 : 0, ph = lines.Length > 0 ? (int)(lh * lines.Length) + 16 : 0;
         int bw = Math.Max(w + 52, pw + 8), bh = h + 52 + (ph > 0 ? ph + 14 : 0);
+        int fx = right ? bw - w - 26 : 26, fy = below ? 26 : bh - h - 26;
+        int px0 = right ? bw - pw : 0, py0 = below ? bh - ph : 0;
         using (var bmp = new Bitmap(bw, bh, PixelFormat.Format32bppArgb)) {
           using (var gr = Graphics.FromImage(bmp)) {
             gr.SmoothingMode = SmoothingMode.AntiAlias; gr.TextRenderingHint = TextRenderingHint.AntiAliasGridFit; gr.Clear(Color.Transparent);
-            int fx = 26, fy = bh - h - 26;
             if (!plateOnly) {
               for (int i = 24; i >= 2; i -= 2)
                 using (var pen = new Pen(Color.FromArgb((int)(140 * pulse * (1 - i / 26f)), 255, 190, 60), 3f)) gr.DrawPath(pen, Round(fx - i, fy - i, w + 2 * i, h + 2 * i, 6 + i));
@@ -486,16 +588,17 @@ namespace RealmForge {
               using (var pen = new Pen(Color.FromArgb(255, 255, 214, 110), 4f)) gr.DrawPath(pen, Round(fx - 2, fy - 2, w + 4, h + 4, 8));
             }
             if (ph > 0) {
-              var rc = new RectangleF(0, 0, pw, ph);
+              var rc = new RectangleF(px0, py0, pw, ph);
               using (var bg = new SolidBrush(Color.FromArgb(235, 16, 12, 8))) gr.FillPath(bg, Round(rc.X + 1, rc.Y + 1, rc.Width - 2, rc.Height - 2, 6));
               using (var pen = new Pen(Color.FromArgb(240, 232, 190, 110), 2f)) gr.DrawPath(pen, Round(rc.X + 1, rc.Y + 1, rc.Width - 2, rc.Height - 2, 6));
-              using (var fg = new SolidBrush(Color.FromArgb(255, 255, 236, 180))) for (int i = 0; i < lines.Length; i++) gr.DrawString(lines[i], f, fg, 14, 8 + i * lh);
-              float ax = Math.Min(pw - 20, fx + w / 2f);
-              var tri = new[] { new PointF(ax - 9, ph - 1), new PointF(ax + 9, ph - 1), new PointF(ax, ph + 11) };
+              using (var fg = new SolidBrush(Color.FromArgb(255, 255, 236, 180))) for (int i = 0; i < lines.Length; i++) gr.DrawString(lines[i], f, fg, px0 + 14, py0 + 8 + i * lh);
+              float ax = Math.Max(px0 + 20, Math.Min(px0 + pw - 20, fx + w / 2f));
+              var tri = below ? new[] { new PointF(ax - 9, py0 + 1), new PointF(ax + 9, py0 + 1), new PointF(ax, py0 - 11) }
+                              : new[] { new PointF(ax - 9, ph - 1), new PointF(ax + 9, ph - 1), new PointF(ax, ph + 11) };
               if (!plateOnly) using (var br = new SolidBrush(Color.FromArgb(240, 232, 190, 110))) gr.FillPolygon(br, tri);
             }
           }
-          tip.Put(bmp, x - 26, y - (bh - h - 26));
+          tip.Put(bmp, x - fx, y - fy);
         }
       }
     }
@@ -543,7 +646,7 @@ namespace RealmForge {
         NowMs = now, Foreground = fp == gp, UserBusy = down || now - lastMoveMs < 700, UserClicked = userClick, H = Ui.Unit(cr.R, cr.B),
         Slot = hintKind == "slot" ? hg.Slot(hintSlot, cr.R, cr.B) : null,
         Target = target, Row = curRow, Col = curCol, Sel = curSel,
-        AnchorHas = anchor.Has && types != null && typesPtr != 0, Row1Top = anchor.Row1Top, Types = types,
+        AnchorHas = anchor.Has && !follow.Unsure && types != null && typesPtr != 0, Row1Top = anchor.Row1Top, Types = types,
         AutoConfirm = confirm, Button = confirm ? confirmBtn : null, Hero = hintHero,
         ScreenHero = confirm ? RFX.ReadHero(addrs) : 0, Owner = confirm ? RFX.ReadOwner(addrs, target) : -1
       };
@@ -1170,10 +1273,14 @@ namespace RealmForge {
       return fp == gp || fp == SelfPid;   // the game, or our compact window over it
     }
 
-    bool Phase(int x, int y, int w, int h, double H, out double phase, out double conf) {
-      phase = 0; conf = 0;
+    // values per line of the strip picture (ListTracker.LineSig): 4 parts of each of the 3 columns
+    const int SigSegs = 4, SigN = ListGeometry.Columns * SigSegs;
+
+    bool Phase(int x, int y, int w, int h, double H, out double phase, out double conf, out float[] sig) {
+      phase = 0; conf = 0; sig = null;
       if (w < 20 || h < 40) return false;
       int[] px = Grab(x, y, w, h);
+      if (px == null) return false;
       {
         // inner part of every column's cell, in strip pixels
         var xs = new int[ListGeometry.Columns * 2];
@@ -1181,6 +1288,7 @@ namespace RealmForge {
           double l = (g.ColLeft(c) - g.StripLeft) * H;
           xs[(c - 1) * 2] = (int)(l + g.CellW * H * 0.12); xs[(c - 1) * 2 + 1] = (int)(l + g.CellW * H * 0.88);
         }
+        sig = ListTracker.LineSig(px, w, h, xs, SigSegs);
         var prof = ListTracker.BarProfile(px, w, h, xs);
         return ListTracker.FindPhase(prof, g.PitchY * H, g.BarTop * H, g.BarBottom * H, out phase, out conf);
       }
@@ -1203,7 +1311,8 @@ namespace RealmForge {
       const int M = 34;
       float pulse = (float)(0.6 + 0.4 * Math.Sin(frame * 0.45));
       string key = kind + x + ":" + y + ":" + w + ":" + h + ":" + rows + ":" + (int)(pulse * 10);
-      if (locateReq == null) Say(kind == "box" ? "on" : kind == "up" ? "above" : "below");   // the plan's state; «Найти в игре» has its own
+      if (locateReq == null) Say(kind == "box" ? "on" : kind == "up" ? "above" : "below", rows);   // the plan's state; «Найти в игре» has its own
+      dKind = kind + (rows > 0 ? ":" + rows : ""); dX = x; dY = y; dW = w; dH = h;
       if (key == drawnKey) return;
       drawnKey = key;
       if (kind == "box") {

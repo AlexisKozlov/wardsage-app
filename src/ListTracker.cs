@@ -7,7 +7,9 @@
 //   * anchor: when the player clicks an item, the game stores its uid (and we know its row from the script list);
 //     the mouse cursor is on that item at that moment, which gives its row on the screen;
 //   * tracking: every item cell has a stat bar under it (slate-blue band with the main stat); the bars repeat with
-//     the row pitch, so their vertical phase on a screenshot shows how far the list has moved since the anchor.
+//     the row pitch, so their vertical phase on a screenshot shows how far the list has moved since the anchor;
+//   * whole rows: the phase repeats every row, so the strip picture of the last tick is compared with the new one
+//     (ScrollFollow) to tell how many rows the list went.
 using System;
 using System.Collections.Generic;
 
@@ -36,6 +38,9 @@ namespace RealmForge {
     public const double TitleRow = 0.44, EmptyRow = 0.60;
     public const double TopPad = 0.0135;   // gap between the list's top edge and row 1 at scroll 0 (measured on the game screen)  // other row kinds, relative to an item row (44 / 60 vs 100)
     public const int Columns = 3;
+
+    /// <summary>Item rows the visible part of the list shows (about 4.6).</summary>
+    public double VisibleRows { get { return (ViewBottom - ViewTop) / PitchY; } }
 
     public double RowHeight(int type) { return type == 2 ? PitchY * TitleRow : type == 3 ? PitchY * EmptyRow : PitchY; }
 
@@ -183,6 +188,172 @@ namespace RealmForge {
       if (d > pitch / 2) d -= pitch;
       if (d <= -pitch / 2) d += pitch;
       return y + d;
+    }
+
+    /// <summary>A picture of the list strip to follow its movement with: for every line, the mean brightness of
+    /// <paramref name="segs"/> equal parts of every cell column (xs: [from, to) pairs in strip pixels), smoothed over 5 lines
+    /// (a list at a fraction of a pixel then still matches). Lines × (columns · segs).</summary>
+    public static float[] LineSig(int[] px, int w, int h, int[] xs, int segs) {
+      int cols = xs.Length / 2, n = cols * segs;
+      var raw = new float[h * n];
+      for (int y = 0; y < h; y++) {
+        int k = 0, row = y * w;
+        for (int c = 0; c < cols; c++) {
+          int a = Math.Max(0, xs[2 * c]), b = Math.Min(w, xs[2 * c + 1]);
+          for (int s = 0; s < segs; s++, k++) {
+            int x0 = a + (b - a) * s / segs, x1 = a + (b - a) * (s + 1) / segs;
+            double sum = 0;
+            for (int x = x0; x < x1; x++) { int p = px[row + x]; sum += ((p >> 16) & 255) + ((p >> 8) & 255) + (p & 255); }
+            raw[y * n + k] = x1 > x0 ? (float)(sum / (3.0 * (x1 - x0))) : 0f;
+          }
+        }
+      }
+      const int R = 2;
+      var sig = new float[h * n];
+      for (int y = 0; y < h; y++) {
+        int y0 = Math.Max(0, y - R), y1 = Math.Min(h - 1, y + R);
+        for (int k = 0; k < n; k++) {
+          double sum = 0;
+          for (int yy = y0; yy <= y1; yy++) sum += raw[yy * n + k];
+          sig[y * n + k] = (float)(sum / (y1 - y0 + 1));
+        }
+      }
+      return sig;
+    }
+
+    // what counts as the same picture (mean brightness difference of the smoothed pictures, 0..255). Measured on live
+    // screenshots of a 600×340 window (the hardest case: small cells, sharp edges): a still list 0–1.6 apart, the right shift
+    // of a moved list 2–2.6 (a fraction of a pixel off), a shift a row off 8.4+ even on a list of alike amulets
+    public const double StillDiff = 1.0, MatchDiff = 6.0, MinOverlap = 0.4;
+
+    /// <summary>How far the list moved between two strip pictures (LineSig, <paramref name="n"/> values per line), in px to
+    /// half a pixel, positive = the content went down. The shift with the smallest mean difference over the overlap (at least
+    /// MinOverlap of the strip). False when that is not clear: nothing fits (the list moved further than the strip, something
+    /// covers it, another screen) or a shift half a row or more away fits nearly as well (rows of alike items).</summary>
+    public static bool Register(float[] a, float[] b, int n, double pitch, out double shift, out double diff, out double second) {
+      shift = 0; diff = double.MaxValue; second = double.MaxValue;
+      if (a == null || b == null || n <= 0 || a.Length != b.Length || a.Length % n != 0) return false;
+      int h = a.Length / n;
+      if (h < 8) return false;
+      // a still list (most ticks): the same picture
+      double d0 = SigDiff(a, b, n, h, 0);
+      if (d0 <= StillDiff) { diff = d0; return true; }
+      // every shift on pictures F times shorter (a 1000 px high window: 4 lines in one), then the best one and the best other
+      // one (half a row or more away: a row of alike items) on the full pictures, to half a pixel
+      int F = Math.Max(1, h / 150);
+      float[] ca = F > 1 ? Shrink(a, n, h, F) : a, cb = F > 1 ? Shrink(b, n, h, F) : b;
+      int ch = ca.Length / n, maxS = (int)(ch * (1 - MinOverlap));
+      var d = new double[2 * maxS + 1];
+      int cBest = 0; double cbv = double.MaxValue;
+      for (int s = -maxS; s <= maxS; s++) {
+        double v = SigDiff(ca, cb, n, ch, s); d[s + maxS] = v;
+        if (v < cbv) { cbv = v; cBest = s; }
+      }
+      int cOther = int.MinValue; double cov = double.MaxValue;
+      for (int s = -maxS; s <= maxS; s++) if (Math.Abs(s - cBest) * F >= pitch / 2 && d[s + maxS] < cov) { cov = d[s + maxS]; cOther = s; }
+      int best; double bv = Around(a, b, n, h, cBest * F, F, out best);
+      int other = int.MinValue; double ov = double.MaxValue;
+      if (cOther != int.MinValue) ov = Around(a, b, n, h, cOther * F, F, out other);
+      double bs = best;
+      double l = HalfDiff(a, b, n, h, best - 1), r = HalfDiff(a, b, n, h, best);
+      if (l < bv) { bv = l; bs = best - 0.5; }
+      if (r < bv) { bv = r; bs = best + 0.5; }
+      if (other != int.MinValue) ov = Math.Min(ov, Math.Min(HalfDiff(a, b, n, h, other - 1), HalfDiff(a, b, n, h, other)));
+      shift = bs; diff = bv; second = ov;
+      return bv <= MatchDiff && ov >= bv * 1.5 + 2;
+    }
+
+    // the picture with every F lines averaged into one
+    static float[] Shrink(float[] a, int n, int h, int F) {
+      int ch = h / F;
+      var c = new float[ch * n];
+      for (int y = 0; y < ch; y++)
+        for (int k = 0; k < n; k++) {
+          double sum = 0;
+          for (int i = 0; i < F; i++) sum += a[(y * F + i) * n + k];
+          c[y * n + k] = (float)(sum / F);
+        }
+      return c;
+    }
+
+    // the best whole-pixel shift within F of s on the full pictures
+    static double Around(float[] a, float[] b, int n, int h, int s, int F, out int best) {
+      best = s; double bv = double.MaxValue;
+      for (int t = s - F; t <= s + F; t++) { double v = SigDiff(a, b, n, h, t); if (v < bv) { bv = v; best = t; } }
+      return bv;
+    }
+
+    // mean |a[y] - b[y + s]| over the lines both pictures have
+    static double SigDiff(float[] a, float[] b, int n, int h, int s) {
+      int y0 = Math.Max(0, -s), y1 = Math.Min(h, h - s);
+      if (y1 - y0 <= 0) return double.MaxValue;
+      double sum = 0;
+      for (int y = y0; y < y1; y++) {
+        int ia = y * n, ib = (y + s) * n;
+        for (int k = 0; k < n; k++) { double v = a[ia + k] - b[ib + k]; sum += v < 0 ? -v : v; }
+      }
+      return sum / ((y1 - y0) * (double)n);
+    }
+
+    // the same for the shift s + 0.5 (b between its lines y + s and y + s + 1)
+    static double HalfDiff(float[] a, float[] b, int n, int h, int s) {
+      int y0 = Math.Max(0, -s), y1 = Math.Min(h, h - s - 1);
+      if (y1 - y0 <= 0) return double.MaxValue;
+      double sum = 0;
+      for (int y = y0; y < y1; y++) {
+        int ia = y * n, ib = (y + s) * n;
+        for (int k = 0; k < n; k++) { double v = a[ia + k] - 0.5 * (b[ib + k] + b[ib + n + k]); sum += v < 0 ? -v : v; }
+      }
+      return sum / ((y1 - y0) * (double)n);
+    }
+  }
+
+  /// <summary>Keeps the anchor on the list while it scrolls. The stat bars' phase alone repeats every row, so a scroll of more
+  /// than half a row between two ticks (a quick wheel turn, a flick) was taken for a small one the other way and the anchor
+  /// stayed behind (live test 2026-10-14: 600×340 window, rows 54 px, the list moved 60+ px a tick). Here the strip picture of
+  /// the last tick the anchor was sure of is compared with the new one: the shift that fits says how far the list went, the
+  /// bar phase then puts it on the pixel. When no shift fits clearly, the anchor is "unsure" (no frame) until a picture fits
+  /// again, the list comes back to the top, or the player clicks an item.</summary>
+  public sealed class ScrollFollow {
+    public float[] Last;          // the strip at the last tick the anchor was sure of
+    public float[] Top;           // the strip with the list at the very top, and row 1's top then
+    public double TopRow1;
+    public bool Unsure;
+    public string Note = "";      // how this tick went (diagnostics): still / track / top / lost
+    public double Shift, Diff, Second;
+
+    public void Reset() { Last = null; Top = null; Unsure = false; Note = ""; Shift = 0; Diff = Second = 0; }
+
+    /// <summary>The anchor was just set (list top or a click) on this picture.</summary>
+    public void Anchored(float[] sig) { Last = sig; Unsure = false; }
+
+    /// <summary>Moves the anchor by how far the list went since the last sure picture. True = the anchor is sure now.</summary>
+    public bool Follow(ScrollAnchor a, float[] sig, int n, double pitch) {
+      if (!a.Has) { Note = "none"; return false; }
+      if (Last == null) { Last = sig; Note = "first"; return !Unsure; }
+      double s, d, sec;
+      if (ListTracker.Register(Last, sig, n, pitch, out s, out d, out sec)) {
+        a.Row1Top += s; Last = sig; Unsure = false; Note = s == 0 ? "still" : "track";
+        Shift = s; Diff = d; Second = sec;
+        return true;
+      }
+      Shift = s; Diff = d; Second = sec;
+      // the list may be back at the top: that picture is known (only within a row of it: further down, rows of alike items
+      // elsewhere in a long list could pass for the top ones)
+      if (Top != null && ListTracker.Register(Top, sig, n, pitch, out s, out d, out sec) && Math.Abs(s) <= pitch) {
+        a.Row1Top = TopRow1 + s; Last = sig; Unsure = false; Note = "top";
+        Shift = s; Diff = d; Second = sec;
+        return true;
+      }
+      Unsure = true; Note = "lost";
+      return false;
+    }
+
+    /// <summary>After the phase snap: a sure anchor with the list at the top (row 1 within a few px of
+    /// <paramref name="topRow1"/>) keeps this picture as the list-top one.</summary>
+    public void Settled(ScrollAnchor a, float[] sig, double topRow1, double pitch) {
+      if (Unsure || !a.Has || sig == null) return;
+      if (Math.Abs(a.Row1Top - topRow1) <= pitch * 0.12) { Top = sig; TopRow1 = a.Row1Top; }
     }
   }
 
