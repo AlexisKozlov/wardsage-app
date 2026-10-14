@@ -88,7 +88,7 @@ namespace RealmForge {
     internal static readonly object Gate = new object();   // RFX keeps its state in static fields: one run at a time
 
     public static string OutputDir {
-      get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), Channel.FolderName); }
+      get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), Channel.DocsFolderName); }
     }
 
     // Step 1: is the game running? Returns the process id (0 = not running) and the game version.
@@ -143,7 +143,7 @@ namespace RealmForge {
       return res;
     }
 
-    // Writes account.json and extract_log.txt to Documents\RealmForge. Returns the account.json path.
+    // Writes account.json and extract_log.txt to Documents\Wardsage. Returns the account.json path.
     public static string SaveCopy(string json, string log) {
       string dir = OutputDir;
       Directory.CreateDirectory(dir);

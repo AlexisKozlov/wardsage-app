@@ -17,7 +17,7 @@ namespace RealmForge {
       { "code_ok",            new[] { "✓ Код в порядке", "✓ The code looks right" } },
       { "code_bad",           new[] { "Код: rf_ и ещё 32 латинские буквы или цифры (сейчас символов: {0} из 35)",
                                       "A code is rf_ followed by 32 Latin letters or digits ({0} of 35 characters)" } },
-      { "save_copy",          new[] { "Сохранить копию account.json (Документы\\RealmForge)", "Save a copy of account.json (Documents\\RealmForge)" } },
+      { "save_copy",          new[] { "Сохранить копию account.json (Документы\\Wardsage)", "Save a copy of account.json (Documents\\Wardsage)" } },
       { "advanced",           new[] { "Дополнительно", "Advanced" } },
       { "site_label",         new[] { "Адрес сайта", "Site address" } },
       { "site_reset",         new[] { "По умолчанию", "Default" } },

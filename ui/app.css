@@ -155,11 +155,11 @@ h2 { margin: 0 0 12px; font: 700 13px/1.2 var(--display); letter-spacing: 2px; c
 
 .remote-note { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 12px; padding: 12px 16px; margin: 0 0 14px; border: 1px solid var(--line); border-radius: 3px;
   background: linear-gradient(180deg, rgba(232, 207, 142, .07), rgba(232, 207, 142, .02)) }
-.remote-note svg { width: 22px; height: 22px; stroke: var(--gold2); fill: none; stroke-width: 2 }
+.remote-note > svg { width: 22px; height: 22px; stroke: var(--gold2); fill: none; stroke-width: 2 }
 .remote-note b { display: block; color: var(--gold); font-weight: 500 }
 .remote-note p { margin: 2px 0 0; color: var(--muted); font-size: 14px }
 .alert { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 12px; padding: 14px 16px; border-radius: 3px; border: 1px solid rgba(240, 160, 140, .4); background: var(--errbg) }
-.alert svg { width: 22px; height: 22px; stroke: var(--err); fill: none; stroke-width: 2 }
+.alert > svg { width: 22px; height: 22px; stroke: var(--err); fill: none; stroke-width: 2 }
 .alert b { display: block; color: var(--err); font-weight: 500 }
 .alert p { margin: 3px 0 10px; color: var(--muted); font-size: 14px }
 
@@ -249,7 +249,7 @@ h2 { margin: 0 0 12px; font: 700 13px/1.2 var(--display); letter-spacing: 2px; c
 .pos b { display: inline-grid; place-items: center; min-width: 30px; height: 28px; padding: 0 6px; border-radius: 3px; background: var(--gold); color: var(--bg); font: 700 15px/1 var(--display) }
 
 .empty { text-align: center; padding: 44px 20px; color: var(--muted) }
-.empty svg { width: 54px; height: 54px; stroke: var(--golddim); fill: none; stroke-width: 1.2; margin-bottom: 10px }
+.empty > svg { width: 54px; height: 54px; stroke: var(--golddim); fill: none; stroke-width: 1.2; margin-bottom: 10px }
 .empty b { display: block; color: var(--text); font: 700 17px/1.3 var(--display); letter-spacing: .5px; margin-bottom: 6px }
 .scan { display: flex; align-items: center; gap: 14px; color: var(--muted) }
 .spinner { width: 28px; height: 28px; border-radius: 50%; border: 2px solid var(--line2); border-top-color: var(--gold); animation: spin .9s linear infinite; flex: none }

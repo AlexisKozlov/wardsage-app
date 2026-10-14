@@ -280,7 +280,7 @@ namespace RealmForge {
   }
 
   static class Log {
-    public static string Path { get { return System.IO.Path.Combine(AppConfig.DefaultDir, "realmforge.log"); } }
+    public static string Path { get { return System.IO.Path.Combine(AppConfig.DefaultDir, "wardsage.log"); } }
     static readonly object gate = new object();
     /// <summary>TEST build only: the lines waiting to go to the site (src/TestLog.cs). Release builds never fill it.</summary>
     public static readonly TestLogQueue TestQueue = new TestLogQueue();

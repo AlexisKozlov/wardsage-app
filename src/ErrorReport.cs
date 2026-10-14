@@ -7,7 +7,7 @@
 //   200 {ok:true, id} | 401 invalid_token | 413 | 422 invalid_payload | 429 rate_limited (20 per hour) | 500
 //
 // What is sent: the kind of failure, a short message, the app and game versions, a few facts (context) and the last
-// ~300 lines of the journal (realmforge.log: hero / item ids, the game's screens and the program's steps). The sync code
+// ~300 lines of the journal (wardsage.log: hero / item ids, the game's screens and the program's steps). The sync code
 // is never in the journal; it goes only in the Authorization header, as for every request to the site. Before sending,
 // anything that looks like a code or a bearer token is masked and the Windows user folder is replaced with
 // %USERPROFILE% (the journal names saved files).

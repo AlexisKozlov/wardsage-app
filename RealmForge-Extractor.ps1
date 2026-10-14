@@ -63,6 +63,7 @@ namespace RealmForge {
     public const string WindowTitle = "Wardsage TEST";
     public const string DefaultSite = "https://test.wardsage.com";
     public const string FolderName = "WardsageTest";
+    public const string DocsFolderName = "WardsageTest";
     public const string MutexName = "Wardsage.Test.SingleInstance";
     public const string EventName = "Wardsage.Test.Show";
     public const string AutostartName = "Wardsage Test";
@@ -76,6 +77,8 @@ namespace RealmForge {
     public const string DefaultSite = "https://wardsage.com";
     // the folders keep their old name: existing installs keep their settings, sync code and downloaded updates
     public const string FolderName = "RealmForge";
+    // the account.json copies (Documents) only hold what the player saved on purpose: they can take the new name at once
+    public const string DocsFolderName = "Wardsage";
     public const string MutexName = "RealmForge.Desktop.SingleInstance";
     public const string EventName = "RealmForge.Desktop.Show";
     public const string AutostartName = "Wardsage";
@@ -2787,7 +2790,7 @@ namespace RealmForge {
     internal static readonly object Gate = new object();   // RFX keeps its state in static fields: one run at a time
 
     public static string OutputDir {
-      get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), Channel.FolderName); }
+      get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), Channel.DocsFolderName); }
     }
 
     // Step 1: is the game running? Returns the process id (0 = not running) and the game version.
@@ -2842,7 +2845,7 @@ namespace RealmForge {
       return res;
     }
 
-    // Writes account.json and extract_log.txt to Documents\RealmForge. Returns the account.json path.
+    // Writes account.json and extract_log.txt to Documents\Wardsage. Returns the account.json path.
     public static string SaveCopy(string json, string log) {
       string dir = OutputDir;
       Directory.CreateDirectory(dir);
@@ -3613,7 +3616,7 @@ namespace RealmForge {
       { "code_ok",            new[] { "✓ Код в порядке", "✓ The code looks right" } },
       { "code_bad",           new[] { "Код: rf_ и ещё 32 латинские буквы или цифры (сейчас символов: {0} из 35)",
                                       "A code is rf_ followed by 32 Latin letters or digits ({0} of 35 characters)" } },
-      { "save_copy",          new[] { "Сохранить копию account.json (Документы\\RealmForge)", "Save a copy of account.json (Documents\\RealmForge)" } },
+      { "save_copy",          new[] { "Сохранить копию account.json (Документы\\Wardsage)", "Save a copy of account.json (Documents\\Wardsage)" } },
       { "advanced",           new[] { "Дополнительно", "Advanced" } },
       { "site_label",         new[] { "Адрес сайта", "Site address" } },
       { "site_reset",         new[] { "По умолчанию", "Default" } },
