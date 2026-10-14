@@ -518,7 +518,7 @@ namespace RealmForge {
       if (filterState != "") { Hide(filterState); return; }
 
       bool sure = LookAtList(o, H, NowMs());
-      diagInfo += " phase=" + (lookPhase ? lookPhaseY.ToString("0.0") : "none") + " conf=" + lookConf.ToString("0.00") + " row1=" + anchor.Row1Top.ToString("0.0");
+      diagInfo += " phase=" + (lookPhase ? lookPhaseY.ToString("0.0") : "none") + " conf=" + lookConf.ToString("0.00") + (double.IsNaN(lookScroll) ? " scroll=none" : " scroll=" + lookScroll.ToString("0.0") + (lookCheck != "" ? " check=" + lookCheck : "")) + " row1=" + anchor.Row1Top.ToString("0.0");
       // (between these ticks the list is looked at more often: LookFast)
       lookO = o; lookH = H; lookList = list; lookTarget = target; lookOk = true;
       if (!anchor.Has || !sure) { Hide("need_click"); return; }
@@ -528,7 +528,7 @@ namespace RealmForge {
     // the last frame tick's game window (for the quick looks between ticks), the list it saw
     W32.POINT lookO; double lookH; ulong lookList; long lookTarget; bool lookOk;
     // this look: the bars' phase (client px), how clear it was
-    bool lookPhase; double lookPhaseY, lookConf;
+    bool lookPhase; double lookPhaseY, lookConf, lookScroll = double.NaN; string lookCheck = "";
     long rebuiltMs;
     int selRow, selCol;   // the selected item's place in the list (0 = none / another list)
 
@@ -580,6 +580,20 @@ namespace RealmForge {
       double ph, conf;
       bool hasPhase = ListTracker.FindPhase(ListTracker.BarProfile(px, w, sh, xs), pitch, g.BarTop * H, g.BarBottom * H, out ph, out conf);
       lookPhase = hasPhase; lookPhaseY = sy + ph; lookConf = conf;
+      // where the game says its list is scrolled: exact, whatever the pixels show (they only put it on the pixel)
+      double scrollY;
+      lookScroll = double.NaN; lookCheck = "";
+      if (RFX.ReadScrollY(addrs, false, out scrollY)) {
+        lookScroll = scrollY;
+        double r1 = ScrollAnchor.TopRow1(g, H) - scrollY * H / 675.0;
+        if (hasPhase) { double s = ListTracker.Snap(r1 - sy, ph, pitch) + sy; if (Math.Abs(s - r1) <= 0.1 * pitch) r1 = s; }
+        anchor.Row1Top = r1; anchor.Has = true; anchor.ListPtr = typesPtr;
+        follow.Anchored(sig, now); follow.Note = "scroll"; anchorSrc = "scroll"; dRefRow = 0;
+        // (diagnostics: what the pixels say - the selected item's glow, an end of the list - against it, in rows)
+        double cev; string evs;
+        lookCheck = hasPhase && Evidence(px, w, sh, M, H, ph, out cev, out evs) ? evs + ":" + Math.Round((cev - r1) / pitch).ToString("+0;-0;0") : "";
+        return true;
+      }
       // a list just built opens at its top - mostly (the game may keep the last list's scroll): only a tight match, in the
       // first moments it is looked at (it may have been built under the filter pop-up)
       if (rebuiltMs == 0) rebuiltMs = now;
@@ -653,10 +667,12 @@ namespace RealmForge {
           bool pilot = AutoEnabled && fpilot.State == "work";
           // the plan wants the filter (its filter step, or the item far down - the page's «faster» tip): what to pick in it
           // is lit; once it is set the frame goes on in the list beside the pop-up (its × would drop the filter again)
-          if (hintKind == "filter" || (farFor != 0 && farFor == target)) {
-            int[] gr; string[] gl;
+          // (far: reported by the frame, or the item's row alone - the frame may not know where the list is yet)
+          bool far = (farFor != 0 && farFor == target) || frameRow > 3 * g.VisibleRows;
+          int[] gr = null; string[] gl = null; int guide = hintKind == "filter" || far ? FilterGuideTip(o, cr, hintKind == "filter", out gr, out gl) : -1;
+          if (guide >= 0) {
             if (pilot) { filterState = "filter_guide"; HideTip(); return; }
-            if (FilterGuideTip(o, cr, hintKind == "filter", out gr, out gl)) {
+            if (guide == 1) {
               filterState = "filter_guide";
               DrawTip(o.X + gr[0], o.Y + gr[1], gr[2], gr[3], gl, H, false, gr[1] < 0.3 * H, gr[0] > W / 2);
               return;
@@ -674,7 +690,9 @@ namespace RealmForge {
       if (hintKind == "") { HideTip(); return; }
       if (hintKind == "replace") confirmBtn = ConfirmButton(o, W, H);
       int[] r = hintKind == "filter" ? hg.Filter(W, H) : hintKind == "replace" ? confirmBtn ?? hg.Replace(W, H) : hintKind == "slot" ? hg.Slot(hintSlot, W, H) : null;
-      if (r == null) HideTip(); else DrawTip(o.X + r[0], o.Y + r[1], r[2], r[3], hintLines, H);
+      // the hero is open on another tab: its «Снаряжение» tab (right edge)
+      if (hintKind == "geartab") { int s = (int)(0.1 * U); r = new[] { (int)(W - hg2.GearTabDX * U) - s / 2, (int)(hg2.GearTabY * U) - s / 2, s, s }; }
+      if (r == null) HideTip(); else DrawTip(o.X + r[0], o.Y + r[1], r[2], r[3], hintLines, H, false, false, hintKind == "geartab");
     }
 
     // the frame's state while the filter pop-up is open: "" (none, or set as wanted), filter_open (not needed: close it),
@@ -689,17 +707,18 @@ namespace RealmForge {
     /// <summary>Where in the open filter pop-up the next pick is (client px rect) and its text; false = nothing to pick (the
     /// filter has the item's set / main stat - both for the plan's filter step, either for the «faster» tip - or they are
     /// not known).</summary>
-    bool FilterGuideTip(W32.POINT o, W32.RECT cr, bool both, out int[] rect, out string[] lines) {
+    int FilterGuideTip(W32.POINT o, W32.RECT cr, bool both, out int[] rect, out string[] lines) {
       rect = null; lines = new string[0];
       var fv = FilterViewNow(o, cr, NowMs(), true, false);
-      if (fv.Item <= 0 || fv.Suits == null || fv.MainAttrs == null) return false;
+      if (fv.Item <= 0 || fv.Suits == null || fv.MainAttrs == null) return -1;
       double W = cr.R, H = cr.B, U = Ui.Unit(W, H);
       int setCount = fv.SetOrder != null ? fv.SetOrder.Length : 2 * FilterGeometry.SetRows;
       bool setWanted = fv.SetId > 0 && fv.SetIndex >= 0 && fv.SetIndex < setCount;
       bool statWanted = fv.StatId > 0 && fv.StatIndex >= 0 && fv.StatIndex < 2 * FilterGeometry.StatRows;
       bool setOn = fv.SetId > 0 && Array.IndexOf(fv.Suits, fv.SetId) >= 0, statOn = fv.StatId > 0 && Array.IndexOf(fv.MainAttrs, fv.StatId) >= 0;
-      bool done = both ? (setOn || !setWanted) && (statOn || !statWanted) : setOn || statOn || (!setWanted && !statWanted);
-      if (done) { guideSide = ""; return false; }
+      if (!setWanted && !statWanted) return -1;   // nothing known to pick: the filter does not help
+      bool done = both ? (setOn || !setWanted) && (statOn || !statWanted) : setOn || statOn;
+      if (done) { guideSide = ""; return 0; }
       int s = Math.Max(10, (int)(0.03 * U)), cw = (int)(0.2 * U), ch = (int)(0.055 * U);
       Func<double, double, int[]> spot = (x, y) => new[] { (int)x - s, (int)y - s, 2 * s, 2 * s };
       Func<double[], int[]> cell = (c) => new[] { (int)c[0] - cw / 2, (int)c[1] - ch / 2, cw, ch };
@@ -711,13 +730,13 @@ namespace RealmForge {
           int row = Math.Min(fv.SetIndex / 2, FilterGeometry.SetRows - 1);
           rect = cell(fg.SetCell(row * 2 + fv.SetIndex % 2, W, H)); guideSide = "set";
         } else rect = spot(fg.X(fg.SetArrowX, W, H), fg.Y(fg.SetArrowY, W, H));
-        return true;
+        return 1;
       }
       lines = string.IsNullOrEmpty(FilterStatText) ? new string[0] : new[] { FilterStatText };
       // the main stats' side panel looks like the sub stats' one: its cell is lit only after the guide pointed at its arrow
       if (fv.SidePanelOpen && !fv.SetPanelOpen && guideSide == "stat") rect = cell(fg.StatCell(fv.StatIndex, W, H));
       else { rect = spot(fg.X(fg.StatArrowX, W, H), fg.Y(fg.StatArrowY, W, H)); guideSide = "stat"; }
-      return true;
+      return 1;
     }
 
     // ---------------------------------------------------------------- the plan's hero on the hero screen (no auto-pilot)
@@ -790,17 +809,24 @@ namespace RealmForge {
         }
       }
       heroShownWas = hs.Hero;
+      // where the game says the hero list is scrolled: exact
+      double heroY; bool exact = RFX.ReadScrollY(addrs, true, out heroY);
+      if (exact) {
+        double r1 = top0 - heroY * U / 675.0;
+        if (hasPhase) { double s = ListTracker.Snap(r1 - vt, ph, pitch) + vt; if (Math.Abs(s - r1) <= 0.1 * pitch) r1 = s; }
+        heroAnchor.Row1Top = r1; heroAnchor.Has = true; heroFollow.Anchored(sig, now);
+      }
       // at the top: a fresh list (a tight phase match only) or one that fits on the screen
-      if (!heroAnchor.Has && hasPhase) {
+      if (!exact && !heroAnchor.Has && hasPhase) {
         double d = ((vt + ph - top0) % pitch + pitch) % pitch; if (d > pitch / 2) d -= pitch;
         bool fits = top0 + rowsN * pitch <= vb + (pitch - card);
         if ((fits || (heroFreshTop && now - heroFreshMs < 1500)) && Math.Abs(d) <= Math.Max(3.5, 0.06 * pitch)) {
           heroAnchor.Row1Top = top0 + d; heroAnchor.Has = true; heroFollow.Reset(); heroFollow.Anchored(sig, now);
         }
       }
-      bool sure = heroAnchor.Has && heroFollow.Follow(heroAnchor, sig, SigN, pitch, now);
-      if (sure && hasPhase) heroAnchor.Row1Top = ListTracker.Snap(heroAnchor.Row1Top - vt, ph, pitch) + vt;
-      if (sure) {
+      bool sure = exact || (heroAnchor.Has && heroFollow.Follow(heroAnchor, sig, SigN, pitch, now));
+      if (!exact && sure && hasPhase) heroAnchor.Row1Top = ListTracker.Snap(heroAnchor.Row1Top - vt, ph, pitch) + vt;
+      if (sure && !exact) {
         double end = Math.Min(top0, vb - rowsN * pitch), slack = 0.5 * h;
         if (heroAnchor.Row1Top > top0 + slack || heroAnchor.Row1Top < end - slack) { heroAnchor.Has = false; sure = false; }
       }

@@ -404,7 +404,7 @@ namespace RealmForge {
             overlay.SetTarget(u > 0 && u < 9e15 && watch.Contains((long)u) ? (long)u : 0);
             // hint on the game's own buttons: filter / «Заменить» / next slot, with up to two short lines
             string hint = MiniJson.GetString(m, "hint") ?? "";
-            if (hint != "filter" && hint != "replace" && hint != "slot" && hint != "hero") hint = "";
+            if (hint != "filter" && hint != "replace" && hint != "slot" && hint != "hero" && hint != "geartab") hint = "";
             double slot = m.TryGetValue("slot", out v) && v is double ? (double)v : -1;
             var lines = new List<string>();
             foreach (var k in new[] { "line1", "line2" }) {

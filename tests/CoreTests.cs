@@ -711,8 +711,8 @@ static class CoreTests {
 
   static void LayoutChecksums() {
     var sums = new Dictionary<string, string> {
-      { "1.6.38.829.1", "b6bdcae76a32041b6e269db15a5f8534c71015f8c37feaf16eefca8a2b884f24" },
-      { "1.6.39.829.1", "36bb4874a503e7e6a8925d6f3317586ccba849c7422dfaa9ad93d59cd843f038" } };
+      { "1.6.38.829.1", "87d1958cc51af52fc9b18d44638b06d0919c6f0904f3e3b9016f96a679e06d4d" },
+      { "1.6.39.829.1", "69a997918084cbc8446ecbaa36bbbfffa59160b691eea1e0059c2412f37130fd" } };
     foreach (var kv in sums) {
       string path = null;
       foreach (var repo in new[] { "wardsage-web", "realmforge-web" }) {

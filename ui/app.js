@@ -534,7 +534,7 @@
         const head = !S.autoClick && it ? t('gOpenHeroSlot', p.heroName, it.slotName || t('slot' + it.slot)) : t('gOpenHero', p.heroName);
         return sayBox('', I.hand, head, sub) + findCard(it, g, S.compact);
       }
-      case 'slot': return sayBox('', I.hand, autoHead() || t('gOpenSlot', it.slotName || t('slot' + it.slot)), S.autoClick ? autoSub() : t('gOpenSlotLit')) + findCard(it, g, S.compact);
+      case 'slot': return sayBox('', I.hand, autoHead() || (S.live && S.live.tab >= 0 && S.live.tab !== 3 ? t('hGearTab') : t('gOpenSlot', it.slotName || t('slot' + it.slot))), S.autoClick ? autoSub() : t('gOpenSlotLit')) + findCard(it, g, S.compact);
       case 'pick': {
         // what to do right now, by what the frame over the game is doing
         const head = autoHead() || { on: t('fOn'), below: t('fBelow'), above: t('fAbove'), need_click: t('fNeedClick'), filter_open: t('fFilterOpen'), filter_guide: t('fGuide') }[S.overlay] || t('fLook');
@@ -1045,7 +1045,11 @@
       else if (g.kind === 'hero' && !(S.run === p.id && S.autoClick)) {
         hint = 'hero';
         heroTips = [t('hHeroPick', p.heroName), t('hHeroFind', p.heroName), t('hHeroUp', p.heroName), t('hHeroDown', p.heroName), t('hHeroesBtn'), t('hHeroBack')];
-      } else if (g.kind === 'slot' && S.live && (S.live.panelOk || S.live.form) && !(S.live.tab >= 0 && S.live.tab !== 3)) { hint = 'slot'; slot = g.item.slot; line1 = t('hSlot', g.item.slotName || t('slot' + g.item.slot)); }
+      } else if (g.kind === 'slot' && S.live && (S.live.panelOk || S.live.form)) {
+        // the hero shown on another tab: its «Снаряжение» tab first, then the slot
+        if (S.live.tab >= 0 && S.live.tab !== 3) { hint = 'geartab'; line1 = t('hGearTab'); }
+        else { hint = 'slot'; slot = g.item.slot; line1 = t('hSlot', g.item.slotName || t('slot' + g.item.slot)); }
+      }
     }
     const hero = p ? p.heroUid : 0;
     // the item the guide is at and its verdict: the host sets the game's filter when the item is far down or hidden

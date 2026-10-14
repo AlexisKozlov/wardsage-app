@@ -478,6 +478,61 @@ namespace RealmForge {
       return (int)r;
     }
 
+    // ---- how far a list of the game's screen is scrolled: the scroll component of the list (the panel table holds a handle
+    // to it, an index into the game's table of the objects its scripts hold) keeps where the list's content was in the last
+    // frame (its anchored position, in the game's 1200x675 UI units: y = how far the list is scrolled down)
+    static int scrollPid; static ulong scrollGa;
+
+    /// <summary>The content position of the gear list (<paramref name="heroList"/> false) or of the hero list, in UI units;
+    /// false when it cannot be read (no layout data for it, another screen, the game changed).</summary>
+    public static bool ReadScrollY(EquipAddrs a, bool heroList, out double y) {
+      y = 0;
+      var ly = Layout.Current;
+      if (a == null || ly == null) return false;
+      ulong t = heroList ? a.Form : a.Panel;
+      if (t == 0) return false;
+      ulong ud; int tt;
+      if (!Field(t, heroList ? "m_CharactorGrid_ScrollRect" : "m_EquipList_ScrollRect", out ud, out tt) || (tt & 0x0F) != 7 || ud == 0) return false;
+      var ib = Read(ud + 40, 4);   // the handle: an int after the handle object's 40-byte header
+      if (ib == null) return false;
+      int idx = BitConverter.ToInt32(ib, 0);
+      ulong slots = ScriptObjects(a.Pid);
+      if (slots == 0 || idx < 0) return false;
+      var lb = Read(slots + (ulong)ly.Hdr("arrLen"), 8);
+      if (lb == null || idx >= BitConverter.ToInt64(lb, 0)) return false;
+      ulong obj = Ptr(slots + (ulong)ly.Hdr("arrData") + (ulong)idx * 16 + 8);   // slot {int next; object obj}
+      if (!IsA(obj, "UnityEngine.UI.ScrollRect")) return false;
+      var pb = Read(obj + 0xBC, 8);   // m_PrevPosition (Vector2)
+      if (pb == null) return false;
+      float py = BitConverter.ToSingle(pb, 4);
+      if (float.IsNaN(py) || float.IsInfinity(py) || Math.Abs(py) > 1e6) return false;
+      y = py;
+      return true;
+    }
+
+    // the slots of the pool of objects the game's scripts hold (its object pool's list), 0 = unknown
+    static ulong ScriptObjects(int pid) {
+      ulong ga = GameAssemblyOf(pid);
+      if (ga == 0) return 0;
+      ulong k = ClassAt(ga, "XLua.InternalGlobals");
+      if (k == 0) return 0;
+      ulong sf = Ptr(k + 0xB8), pool = sf != 0 ? Ptr(sf + 0x10) : 0, tr = pool != 0 ? Ptr(pool + 0x20) : 0;
+      if (!IsA(tr, "XLua.ObjectTranslator")) return 0;
+      ulong objects = Ptr(tr + 0xC8);
+      return objects != 0 ? Ptr(objects + 0x10) : 0;
+    }
+
+    static ulong GameAssemblyOf(int pid) {
+      if (pid == scrollPid && scrollGa != 0) return scrollGa;
+      scrollPid = pid; scrollGa = 0;
+      try {
+        using (var p = Process.GetProcessById(pid))
+          foreach (ProcessModule m in p.Modules)
+            if (string.Equals(m.ModuleName, "GameAssembly.dll", StringComparison.OrdinalIgnoreCase)) { scrollGa = (ulong)(long)m.BaseAddress; break; }
+      } catch (Exception) { }
+      return scrollGa;
+    }
+
     /// <summary>Row kinds of the list, rows 1..count (index 0 unused): 1 items, 2 section title, 3 empty-section row, 0 unknown.
     /// The game gives them different heights (100 / 44 / 60), needed to turn a row number into a screen position.</summary>
     public static int[] RowTypes(ulong list, int count) {
