@@ -45,7 +45,7 @@ Optional `### Heading` lines inside a `## RU` / `## EN` section split the update
 - Номер версии теперь показывается как бета: 0.60 вместо 1.6.60.
 - Кнопки программы теперь такие же, как на сайте.
 - В настройках выбор языка переехал наверх, а у кода синхронизации теперь своя строка. Там, где программа просит код синхронизации, теперь есть кнопка «Ввести код», а не только ссылка на сайт.
-- Журнал программы теперь называется wardsage.log, а копии account.json сохраняются в «Документы\\Wardsage».
+- Журнал программы теперь называется wardsage.log, а копии account.json сохраняются в «Документы\Wardsage».
 
 ## EN
 
@@ -53,4 +53,4 @@ Optional `### Heading` lines inside a `## RU` / `## EN` section split the update
 - The version number is now shown as a beta: 0.60 instead of 1.6.60.
 - The app’s buttons now look the same as on the site.
 - In the settings the language choice moved to the top, and the sync code has a line of its own. Wherever the app asks for the sync code there is now an «Enter the code» button, not only a link to the site.
-- The app’s log is now called wardsage.log, and account.json copies are saved to Documents\\Wardsage.
+- The app’s log is now called wardsage.log, and account.json copies are saved to Documents\Wardsage.
