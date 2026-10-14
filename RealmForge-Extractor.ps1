@@ -1902,6 +1902,7 @@ namespace RealmForge {
     public Dictionary<long, long> Owner = new Dictionary<long, long>();  // plan item uid -> hero uid wearing it (0 = bag)
     public long SelUid;                         // item the player selected in the list (m_CurrentSelectEquipUid), 0 = none
     public int SelRow, SelCol;                  // its 1-based row / position in the row, 0 = not in the list
+    public long SelOwner = -1;                  // the hero wearing it (0 = nobody, -1 = unknown)
     public ulong ListPtr;                       // m_EquipListRealData table: a new one on every list rebuild
   }
 
@@ -2041,6 +2042,7 @@ namespace RealmForge {
       if (Field(a.Panel, KSel, out v, out tt) && tt == T_INT && (long)v > 0) {
         s.SelUid = (long)v; int c;
         s.SelRow = RowOf(idx, list, s.SelUid, out c); s.SelCol = c;
+        s.SelOwner = ReadOwner(a, s.SelUid);
       }
 
       foreach (var uid in itemUids) {

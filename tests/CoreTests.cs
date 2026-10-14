@@ -445,10 +445,32 @@ static class CoreTests {
         ph = ((6 - 900) % pitch + pitch) % pitch;
         Check(ListTracker.ListEdge(ListTracker.SlotCells(img, fw, fh, x0, x1, ph, pitch, cellPx, out tops), tops, out et) == 0, "the middle of the list: no end");
       }
+      // the hints' plate beside its target, kept in the window
+      {
+        char side;
+        int[] pl = HintLayout.Plate(new[] { 100, 300, 80, 100 }, 300, 90, 1366, 705, out side);
+        Check(side == 'r' && pl[0] == 100 + 80 + HintLayout.Gap && pl[1] == 300 + 50 - 45, "plate right of the item (" + side + " " + pl[0] + "," + pl[1] + ")");
+        pl = HintLayout.Plate(new[] { 1200, 300, 80, 100 }, 300, 90, 1366, 705, out side);
+        Check(side == 'l' && pl[0] + 300 + HintLayout.Gap == 1200, "no room on the right: left of it");
+        pl = HintLayout.Plate(new[] { 500, 400, 400, 60 }, 700, 90, 1366, 705, out side);
+        Check(side == 't' && pl[1] + 90 + HintLayout.Gap == 400 && pl[0] >= HintLayout.Margin && pl[0] + 700 <= 1366 - HintLayout.Margin, "no room beside: above, inside the window");
+        pl = HintLayout.Plate(new[] { 500, 20, 400, 60 }, 700, 90, 1366, 705, out side);
+        Check(side == 'b' && pl[1] == 20 + 60 + HintLayout.Gap, "at the top: below");
+        pl = HintLayout.Plate(new[] { 100, 690, 80, 100 }, 300, 90, 1366, 705, out side);
+        Check(pl[1] + 90 <= 705 - HintLayout.Margin, "kept inside the window at the bottom");
+        pl = HintLayout.Plate(new[] { 670, 870, 200, 60 }, 300, 70, 1920, 1009, out side);
+        Check(side == 't' && pl[1] + 70 + HintLayout.Gap == 870, "a wide button: the plate above it, not over its neighbours");
+        var ptr = HintLayout.Pointer(new[] { 194, 305 }, 300, 90, 'r', new[] { 100, 300, 80, 100 }, 8);
+        Check(ptr[4] < 194 && Math.Abs(ptr[5] - 350) < 0.01, "the pointer points left at the item's middle");
+        double dot, sb0, sb1;
+        HintLayout.Strip(100, 500, 4000, 1000, 3000, out dot, out sb0, out sb1);
+        Check(Math.Abs(dot - 400) < 0.01 && Math.Abs(sb0 - 200) < 0.01 && Math.Abs(sb1 - 240) < 0.01, "scroll strip: the dot and the visible part");
+        Eq(0, HintLayout.Plural(21, true), "21 ряд"); Eq(1, HintLayout.Plural(3, true), "3 ряда"); Eq(2, HintLayout.Plural(12, true), "12 рядов"); Eq(2, HintLayout.Plural(2, false), "2 rows");
+      }
       // the hero list: cards with dark gaps between the rows
       {
         double hp = 187.3, hc = 164; var hprof = new double[700];
-        for (int y = 0; y < hprof.Length; y++) { double tt = ((y - 41.0) % hp + hp) % hp; hprof[y] = tt < hc ? 90 + (y * 37 % 50) : 25; }
+        for (int y = 0; y < hprof.Length; y++) { double tt = ((y - 41.0) % hp + hp) % hp; hprof[y] = tt < hc ? 0.1 + (y * 37 % 50) / 500.0 : 0.01; }
         double hph, hcf;
         Check(ListTracker.CardPhase(hprof, hp, hc, out hph, out hcf) && Math.Abs(hph - 41) <= 3, "hero list: the cards' row phase (" + hph + ", " + hcf.ToString("0") + ")");
         Check(!ListTracker.CardPhase(new double[700], hp, hc, out hph, out hcf), "hero list: no cards, no phase");

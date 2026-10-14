@@ -151,9 +151,10 @@ namespace RealmForge {
       return best >= 0.15;
     }
 
-    /// <summary>Vertical phase of a grid of cards with dark gaps between the rows (the hero list): the card top modulo the
-    /// pitch (strip lines) where the cards are brightest against the gaps; prof = mean brightness of every line over the
-    /// cards. conf: card minus gap brightness (40–50 on the live hero list at 1920×1009, about −5 at other phases).</summary>
+    /// <summary>Vertical phase of a grid of cards with gaps between the rows (the hero list): the card top modulo the pitch
+    /// (strip lines) where the cards' gold side borders are against the gaps; prof = share of gold pixels on every line at
+    /// the cards' left and right edges. conf: card minus gap share (0.06–0.15 on live hero lists at 1366×705 and
+    /// 1920×1009; the card art's own brightness misled a brightness profile at 1366×705, live 2026-10-14).</summary>
     public static bool CardPhase(double[] prof, double pitch, double card, out double phase, out double conf) {
       phase = 0; conf = 0;
       int h = prof.Length;
@@ -163,14 +164,14 @@ namespace RealmForge {
         double a = 0, b = 0; int na = 0, nb = 0;
         for (int y = 0; y < h; y++) {
           double t = (y - p) % pitch; if (t < 0) t += pitch;
-          if (t >= 3 && t < card - 3) { a += prof[y]; na++; }
-          else if (t >= card + 2 && t < pitch - 2) { b += prof[y]; nb++; }
+          if (t >= 0.05 * card && t < 0.95 * card) { a += prof[y]; na++; }
+          else if (t >= card + 1 && t < pitch - 1) { b += prof[y]; nb++; }
         }
         double s = (na > 0 ? a / na : 0) - (nb > 0 ? b / nb : 0);
         if (s > best) { best = s; bp = p; }
       }
       phase = bp; conf = best;
-      return best >= 15;
+      return best >= 0.05;
     }
 
     /// <summary>How many columns a grid of cells with stat bars fills the strip with (pixels row by row, width w): the

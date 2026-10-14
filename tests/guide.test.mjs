@@ -38,6 +38,8 @@ ok(G.headUrl('https://x', 214700001) === 'https://x/art/heads/HeroHead_2147.webp
 ok(G.itemUrl('https://x', 'Item_101403') === 'https://x/art/items/Item_101403.webp' && G.itemUrl('https://x', '../a') === '' && G.itemUrl('https://x', '') === '', 'item icon url');
 ok(G.rankOf(6) === 6 && G.rankOf(9) === 6 && G.rankOf(0) === 0 && G.rankOf(1) === 1, 'rarity by stars');
 // selection in the game list
+ok(G.next(plan, live({ rows: { 6423: [5, 3] }, selUid: 77, selRow: 4, selOwner: 214700000 })).wrong === true, 'another item put on: the build item is still to find');
+ok(G.next(plan, live({ rows: { 6423: [5, 3] }, selUid: 77, selRow: 4, selOwner: 0 })).wrong === false, 'another item only selected: not a wrong one');
 g = G.next(plan, live({ rows: { 6423: [3, 2] }, selUid: 6423, selRow: 3 }));
 ok(g.kind === 'selected', 'the right item is selected');
 g = G.next(plan, live({ rows: { 6423: [5, 3] }, selUid: 77, selRow: 2 }));

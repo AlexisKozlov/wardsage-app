@@ -517,6 +517,8 @@
     if (S.scan.status === 'ok' && !S.scan.panel && g.kind !== 'done' && g.kind !== 'hero') return sayBox('', I.hand, t('noPanel'), '', rescanBtn());
     const it = g.item;
     const itemText = it ? `${it.name}${it.level ? ' +' + it.level : ''}${it.mainStat ? ' · ' + it.mainStat : ''}` : '';
+    // another item than the build's was put on: say so, the build's item is still the one to find
+    if (g.wrong && (g.kind === 'pick' || g.kind === 'rel' || g.kind === 'filter')) return sayBox('warn', I.warn, t('gWrong'), t('gWrongP', it.name)) + findCard(it, g, S.compact);
     switch (g.kind) {
       case 'closed': return sayBox('warn', I.game, t('gClosed'), t('gClosedP'));
       case 'done': return sayBox('done', I.check, t('gDone'), t('gDoneP'));
@@ -1041,7 +1043,8 @@
         hint = 'filter';
         line1 = g.item.setName ? t('hSet', g.item.setName) : '';
         const st = G.statOf(g.item.mainStat); line2 = st ? t('hStat', st) : '';
-      } else if (g.kind === 'selected') hint = 'replace';
+      } else if (g.kind === 'selected') { hint = 'replace'; line1 = t('pReplace'); }
+      else if (g.kind === 'done') { hint = 'done'; }
       else if (g.kind === 'hero' && !(S.run === p.id && S.autoClick)) {
         hint = 'hero';
         heroTips = [t('hHeroPick', p.heroName), t('hHeroFind', p.heroName), t('hHeroUp', p.heroName), t('hHeroDown', p.heroName), t('hHeroesBtn'), t('hHeroBack')];
@@ -1057,8 +1060,18 @@
     // the log follows what the guide asks for (once per change)
     const gk = p ? [p.heroName + ' (' + p.heroUid + ')', kind || '-', g && g.item ? 'slot ' + g.item.slot : '', 'game hero ' + (S.live ? S.live.heroUid : '-')].join(' ') : '-';
     if (gk !== S.guideLog) { S.guideLog = gk; host.send({ cmd: 'log', text: 'guide ' + gk }); }
-    const key = [uid, hint, slot, line1, line2, hero, item, kind, closeTip, setTip, statTip, heroTips.join('/')].join('|');
-    if (key !== S.hl) { S.hl = key; host.send({ cmd: 'highlight', uid, hint, slot, line1, line2, hero, item, kind, closeTip, setTip, statTip, heroTips }); }
+    // the plates over the game: the step, what to press, the strip's pill, and a wrong item put on
+    const it = g && g.item, texts = { lang: S.lang === 'en' ? 'en' : 'ru' };
+    if (p && g) {
+      const where = g.kind === 'hero' ? p.heroName : it ? (it.slotName || t('slot' + it.slot)) : '';
+      texts.caps = t('pCaps', Math.min(g.done + 1, p.items.length), p.items.length, where);
+      if (it) { texts.pick = t('pPick', it.name + (it.level ? ' +' + it.level : '')); texts.wrongSub = t('pWrongSub', it.name + (it.level ? ' +' + it.level : '')); }
+      Object.assign(texts, { then: t('pThen'), pillDown: t('pPillDown'), pillUp: t('pPillUp'), rows1: t('pRows1'), rows2: t('pRows2'), rows5: t('pRows5'),
+        unknown: t('pUnknown'), unknownSub: t('pUnknownSub'), done: t('pDone'), wrong: t('hWrong') });
+    }
+    const wrong = !!(g && g.wrong);
+    const key = [uid, hint, slot, line1, line2, hero, item, kind, closeTip, setTip, statTip, heroTips.join('/'), JSON.stringify(texts), wrong].join('|');
+    if (key !== S.hl) { S.hl = key; host.send({ cmd: 'highlight', uid, hint, slot, line1, line2, hero, item, kind, closeTip, setTip, statTip, heroTips, texts, wrong }); }
     // the started plan's hero (0 = none): the host brings it up on the hero screen
     const run = p && S.run === p.id && S.autoClick ? String(p.heroUid) : '0';
     if (run !== S.runKey) { S.runKey = run; host.send({ cmd: 'equip.run', hero: Number(run) }); }

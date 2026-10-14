@@ -404,7 +404,7 @@ namespace RealmForge {
             overlay.SetTarget(u > 0 && u < 9e15 && watch.Contains((long)u) ? (long)u : 0);
             // hint on the game's own buttons: filter / «Заменить» / next slot, with up to two short lines
             string hint = MiniJson.GetString(m, "hint") ?? "";
-            if (hint != "filter" && hint != "replace" && hint != "slot" && hint != "hero" && hint != "geartab") hint = "";
+            if (hint != "filter" && hint != "replace" && hint != "slot" && hint != "hero" && hint != "geartab" && hint != "done") hint = "";
             double slot = m.TryGetValue("slot", out v) && v is double ? (double)v : -1;
             var lines = new List<string>();
             foreach (var k in new[] { "line1", "line2" }) {
@@ -425,6 +425,12 @@ namespace RealmForge {
             object ht; var htl = m.TryGetValue("heroTips", out ht) ? ht as List<object> : null;
             if (htl != null) foreach (var x in htl) { if (heroTips.Count >= 6) break; heroTips.Add(Cut(x as string)); }
             overlay.HeroTips = heroTips.ToArray();
+            // the plates' texts (step caps, what to press, the strip's pill, ...) and a wrong item put on
+            object tx; var txd = m.TryGetValue("texts", out tx) ? tx as Dictionary<string, object> : null;
+            var texts = new Dictionary<string, string>();
+            if (txd != null) foreach (var kv in txd) { var sv = kv.Value as string; if (sv != null && texts.Count < 40) texts[kv.Key] = Cut(sv); }
+            overlay.Texts = texts;
+            overlay.WrongItem = MiniJson.GetBool(m, "wrong", false);
             overlay.SetHint(hint, slot >= 0 && slot <= 4 ? (int)slot : -1, lines.ToArray(), hero > 0 && hero < 9e15 ? (long)hero : 0);
             break;
           }
@@ -1153,7 +1159,7 @@ namespace RealmForge {
         .Append(",\"form\":").Append(B(s.FormOk)).Append(",\"tab\":").Append(N(s.Tab))
         .Append(",\"part\":").Append(N(s.Part)).Append(",\"hideEquipped\":").Append(B(s.HideEquipped)).Append(",\"hideEnhanced\":").Append(B(s.HideEnhanced))
         .Append(",\"filterActive\":").Append(B(s.FilterActive)).Append(",\"selUid\":").Append(N(s.SelUid)).Append(",\"selRow\":").Append(N(s.SelRow))
-        .Append(",\"selCol\":").Append(N(s.SelCol)).Append(",\"rows\":{");
+        .Append(",\"selCol\":").Append(N(s.SelCol)).Append(",\"selOwner\":").Append(N(s.SelOwner)).Append(",\"rows\":{");
       bool first = true;
       foreach (var kv in s.Row) {
         int col; s.Col.TryGetValue(kv.Key, out col);

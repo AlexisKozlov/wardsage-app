@@ -35,6 +35,7 @@ sed -i '/mock.js/d' "$OUT/ui/index.html"
 RES=()
 while IFS= read -r f; do RES+=("-resource:$f,ui/${f#$OUT/ui/}"); done < <(find "$OUT/ui" -type f | sort)
 RES+=("-resource:app/res/frame.png,overlay/frame.png")
+RES+=("-resource:app/res/owl.png,overlay/owl.png")
 RES+=("-resource:app/res/heroes_btn.png,overlay/heroes_btn.png")
 RES+=("-resource:app/res/inventory_btn.png,overlay/inventory_btn.png")
 RES+=("-resource:app/res/btn_blue.png,overlay/btn_blue.png")
@@ -42,7 +43,7 @@ RES+=("-resource:app/res/boss_coach.json,overlay/boss_coach.json")
 RES+=("-resource:app/res/hero_tags.json,overlay/hero_tags.json")
 for f in Microsoft.Web.WebView2.Core.dll Microsoft.Web.WebView2.WinForms.dll WebView2Loader.dll; do RES+=("-resource:$WV/$f,bin/$f"); done
 
-CORE="src/Channel.cs src/UpdateKeys.cs src/MemoryReader.cs src/EquipScan.cs src/MiniJson.cs src/GameInfo.cs src/Extractor.cs src/SyncClient.cs src/PlansClient.cs src/NewsClient.cs src/SellClient.cs src/FightPlanClient.cs src/ErrorReport.cs src/BridgeClient.cs src/ListTracker.cs src/AutoPilot.cs src/FilterPilot.cs src/HeroPilot.cs src/LiveTables.cs src/BattleCapture.cs src/BattleClock.cs src/BattleTimeline.cs src/TimelineBuilder.cs src/ArenaOpponents.cs src/ArenaClient.cs src/GuildData.cs src/GvgData.cs src/GamePacks.cs src/TestLog.cs src/TraceUpload.cs src/SellScan.cs src/RecastScan.cs src/LocateClient.cs src/LocateGuide.cs src/SellPilot.cs src/Config.cs src/RemoteConfig.cs src/Layout.cs src/WebViewRecovery.cs src/CodeProtector.cs"
+CORE="src/Channel.cs src/UpdateKeys.cs src/MemoryReader.cs src/EquipScan.cs src/MiniJson.cs src/GameInfo.cs src/Extractor.cs src/SyncClient.cs src/PlansClient.cs src/NewsClient.cs src/SellClient.cs src/FightPlanClient.cs src/ErrorReport.cs src/BridgeClient.cs src/ListTracker.cs src/HintLayout.cs src/AutoPilot.cs src/FilterPilot.cs src/HeroPilot.cs src/LiveTables.cs src/BattleCapture.cs src/BattleClock.cs src/BattleTimeline.cs src/TimelineBuilder.cs src/ArenaOpponents.cs src/ArenaClient.cs src/GuildData.cs src/GvgData.cs src/GamePacks.cs src/TestLog.cs src/TraceUpload.cs src/SellScan.cs src/RecastScan.cs src/LocateClient.cs src/LocateGuide.cs src/SellPilot.cs src/Config.cs src/RemoteConfig.cs src/Layout.cs src/WebViewRecovery.cs src/CodeProtector.cs"
 APP="app/Program.cs app/AppWindow.cs app/HostBridge.cs app/Overlay.cs app/BattleCoach.cs app/ArenaWatch.cs app/GuildWatch.cs app/PacksWatch.cs app/HintGeometry.cs app/Updater.cs app/Tray.cs app/AssemblyInfo.cs"
 
 if [ -n "${APP_VERSION:-}" ]; then

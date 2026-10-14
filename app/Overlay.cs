@@ -79,7 +79,11 @@ namespace RealmForge {
     }
     protected override void OnHandleCreated(EventArgs e) {
       base.OnHandleCreated(e);
-      try { W32.SetWindowDisplayAffinity(Handle, 0x11); } catch (Exception) { }   // keep it out of our own screenshots
+      // kept out of screen captures - our own looks at the list included. Older Windows (before 10 2004) cannot: then the
+      // looks see our drawings (live 2026-10-14, a 1366x705 laptop: the plates were on the diagnostics screenshots) and
+      // mask the parts we drew (Parts) themselves
+      try { Excluded = W32.SetWindowDisplayAffinity(Handle, 0x11); } catch (Exception) { Excluded = false; }
+      if (!Excluded) Log.Write("overlay: the hint windows cannot be hidden from screen captures on this Windows: the screen looks mask them");
     }
     // a panel the player may move (the boss coach): while it is movable it takes the mouse and drags like a title bar
     bool movable;
@@ -112,6 +116,12 @@ namespace RealmForge {
       if (clickable && m.Msg == 0x0202) { var p = Pressed; if (p != null) p(); return; }   // WM_LBUTTONUP
       base.WndProc(ref m);
     }
+
+    /// <summary>Hidden from screen captures (false: the screen looks see what this window shows).</summary>
+    public bool Excluded = true;
+    /// <summary>What it shows now: its parts in screen px {x, y, w, h} (empty when hidden).</summary>
+    public System.Collections.Generic.List<int[]> Parts = new System.Collections.Generic.List<int[]>();
+    protected override void OnVisibleChanged(EventArgs e) { base.OnVisibleChanged(e); if (!Visible) Parts.Clear(); }
 
     /// <summary>Shows the bitmap (32-bit ARGB) at the screen position, in physical pixels.</summary>
     public void Put(Bitmap bmp, int x, int y) {
@@ -328,6 +338,7 @@ namespace RealmForge {
     public void SetHint(string kind, int slot, string[] lines, long hero) {
       kind = kind ?? ""; lines = lines ?? new string[0];
       if (kind == hintKind && slot == hintSlot && hero == hintHero && string.Join("\n", lines) == string.Join("\n", hintLines)) return;
+      if (kind != hintKind) doneSince = 0;
       hintKind = kind; hintSlot = slot; hintLines = lines; hintHero = hero;
       HideTip(); Run();
     }
@@ -456,7 +467,7 @@ namespace RealmForge {
             + " src=" + (anchorSrc == "" ? "-" : anchorSrc) + " follow=" + (follow.Note == "" ? "-" : follow.Note)
             + (follow.Note == "still" || follow.Note == "track" || follow.Note == "top" || follow.Note == "lost"
                ? " shift=" + Num(follow.Shift) + " pred=" + Num(follow.Pred) + " diff=" + Num(follow.Diff) + "/" + Num(follow.Second) : "")
-            + " refRow=" + dRefRow + " filter=" + (filterOpen ? "open" : "closed") + " | " + diagInfo;
+            + " refRow=" + dRefRow + " filter=" + (filterOpen ? "open" : "closed") + (hintKind == "hero" ? " hero: " + heroDiag : "") + " | " + diagInfo;
           DiagTick(dh, dp, dr, diagInfo);
         }
       }
@@ -478,6 +489,7 @@ namespace RealmForge {
       W32.RECT cr; if (!W32.GetClientRect(hwnd, out cr) || cr.B < 200) { Hide("off"); return; }
       var o = new W32.POINT(0, 0); W32.ClientToScreen(hwnd, ref o);
       double H = Ui.Unit(cr.R, cr.B);   // the list is anchored to the top left: everything scales with the UI unit
+      SceneArea(o, cr);
 
       // the list was rebuilt (filter, slot, item put on): row kinds and the anchor are stale
       if (types == null || typesPtr != list) {
@@ -521,13 +533,15 @@ namespace RealmForge {
       diagInfo += " phase=" + (lookPhase ? lookPhaseY.ToString("0.0") : "none") + " conf=" + lookConf.ToString("0.00") + (double.IsNaN(lookScroll) ? " scroll=none" : " scroll=" + lookScroll.ToString("0.0") + (lookCheck != "" ? " check=" + lookCheck : "")) + " row1=" + anchor.Row1Top.ToString("0.0");
       // (between these ticks the list is looked at more often: LookFast)
       lookO = o; lookH = H; lookList = list; lookTarget = target; lookOk = true;
-      if (!anchor.Has || !sure) { Hide("need_click"); return; }
+      if (!anchor.Has || !sure) { NeedClick(); return; }
       PlaceFrame(o, H);
     }
 
     // the last frame tick's game window (for the quick looks between ticks), the list it saw
     W32.POINT lookO; double lookH; ulong lookList; long lookTarget; bool lookOk;
     // this look: the bars' phase (client px), how clear it was
+    /// <summary>The gear list's row height in its own units (the content position is in them).</summary>
+    public const double ListRowUnits = 100;
     bool lookPhase; double lookPhaseY, lookConf, lookScroll = double.NaN; string lookCheck = "";
     long rebuiltMs;
     int selRow, selCol;   // the selected item's place in the list (0 = none / another list)
@@ -542,8 +556,12 @@ namespace RealmForge {
       double top = anchor.RowTop(g, types, row, H), left = g.ColLeft(col) * H;
       double cell = g.CellW * H, full = g.BarBottom * H, mid = top + cell / 2;
       frame++;
-      if (mid < g.ViewTop * H) Draw("up", o.X + (int)left, o.Y + sy, (int)cell, 0, (int)Math.Ceiling((g.ViewTop * H - top) / pitch));
-      else if (mid > g.ViewBottom * H) Draw("down", o.X + (int)left, o.Y + sy + sh, (int)cell, 0, (int)Math.Ceiling((top + full - g.ViewBottom * H) / pitch));
+      // the scroll strip along the list's right edge: the whole list against the visible part, the item's dot
+      double contentH = g.RowOffset(types, types.Length) * H + 2 * ListGeometry.TopPad * H, dotY, b0, b1;
+      HintLayout.Strip(g.ViewTop * H, g.ViewBottom * H, contentH, ScrollAnchor.TopRow1(g, H) - anchor.Row1Top, (ListGeometry.TopPad + g.RowOffset(types, row)) * H + cell / 2, out dotY, out b0, out b1);
+      var strip = new[] { o.X + g.StripRight * H + 0.012 * H, o.Y + g.ViewTop * H, o.Y + g.ViewBottom * H, o.Y + dotY, o.Y + b0, o.Y + b1 };
+      if (mid < g.ViewTop * H) Draw("up", o.X + (int)left, o.Y + sy, (int)cell, 0, (int)Math.Ceiling((g.ViewTop * H - top) / pitch), strip);
+      else if (mid > g.ViewBottom * H) Draw("down", o.X + (int)left, o.Y + sy + sh, (int)cell, 0, (int)Math.Ceiling((top + full - g.ViewBottom * H) / pitch), strip);
       else Draw("box", o.X + (int)left, o.Y + (int)top, (int)cell, (int)full, 0);
       dX -= o.X; dY -= o.Y;   // (Draw keeps screen px)
     }
@@ -556,7 +574,7 @@ namespace RealmForge {
       IntPtr hwnd = GameWindow();
       if (hwnd == IntPtr.Zero || !IsForeground(hwnd)) return;
       bool sure = LookAtList(lookO, lookH, NowMs());
-      if (sure) PlaceFrame(lookO, lookH); else Hide("need_click");
+      if (sure) PlaceFrame(lookO, lookH); else NeedClick();
     }
 
     /// <summary>One look at the list strip: the bars' phase, its picture, and what says where the rows are - the list just
@@ -571,6 +589,7 @@ namespace RealmForge {
       int w = sw + 2 * M;
       int[] px = Grab(o.X + sx - M, o.Y + sy, w, sh);
       if (px == null) return false;
+      MaskOwn(px, o.X + sx - M, o.Y + sy, w, sh);
       var xs = new int[ListGeometry.Columns * 2];
       for (int c = 1; c <= ListGeometry.Columns; c++) {
         double l = (g.ColLeft(c) - g.StripLeft) * H + M;
@@ -585,7 +604,9 @@ namespace RealmForge {
       lookScroll = double.NaN; lookCheck = "";
       if (RFX.ReadScrollY(addrs, false, out scrollY)) {
         lookScroll = scrollY;
-        double r1 = ScrollAnchor.TopRow1(g, H) - scrollY * H / 675.0;
+        // (in the list's own units: an item row is 100 of them - the grid scales its rows to fit, 106 UI units each - so
+        // a UI-unit conversion drifted one row behind over 16 rows, live 2026-10-14)
+        double r1 = ScrollAnchor.TopRow1(g, H) - scrollY * pitch / ListRowUnits;
         if (hasPhase) { double s = ListTracker.Snap(r1 - sy, ph, pitch) + sy; if (Math.Abs(s - r1) <= 0.1 * pitch) r1 = s; }
         anchor.Row1Top = r1; anchor.Has = true; anchor.ListPtr = typesPtr;
         follow.Anchored(sig, now); follow.Note = "scroll"; anchorSrc = "scroll"; dRefRow = 0;
@@ -658,6 +679,13 @@ namespace RealmForge {
       W32.RECT cr; if (!W32.GetClientRect(hwnd, out cr) || cr.B < 200) { HideTip(); return; }
       var o = new W32.POINT(0, 0); W32.ClientToScreen(hwnd, ref o);
       double H = cr.B, W = cr.R, U = Ui.Unit(W, H);
+      SceneArea(o, cr);
+      // the build is on: «Готово» for a moment
+      if (hintKind == "done") {
+        long nd = NowMs(); if (doneSince == 0) doneSince = nd;
+        if (nd - doneSince > 2000 || Tx("done") == "") HideTip(); else Scene(tip, ref tipKey, null, new Plate { Main = Tx("done") }, null, null);
+        return;
+      }
       if (hintKind == "hero") { TickHeroHint(o, W, H); return; }
       // the gear filter pop-up (its red ×) while an item is to be framed
       if (target != 0) {
@@ -678,6 +706,10 @@ namespace RealmForge {
               return;
             }
             filterOpen = false;   // set as wanted: the list beside the pop-up is followed and framed as usual
+          } else if (FilterHasChoice()) {
+            // the filter narrows the list now: its × would drop that again (live 2026-10-14: closed, the item went back from
+            // row 4 to row 18) - the list beside the pop-up is framed as usual
+            filterOpen = false;
           } else if (!pilot) {
             // a filter the plan does not need over the list: the tip points at its ×
             filterState = "filter_open";
@@ -695,9 +727,17 @@ namespace RealmForge {
       if (r == null) HideTip(); else DrawTip(o.X + r[0], o.Y + r[1], r[2], r[3], hintLines, H, false, false, hintKind == "geartab");
     }
 
+    /// <summary>The game's gear filter has a set or a main stat chosen now.</summary>
+    bool FilterHasChoice() {
+      long[] suits, mains, subs; int part; bool foreign, hideEq;
+      return RFX.ReadFilter(addrs, out suits, out mains, out subs, out part, out foreign, out hideEq)
+        && ((suits != null && suits.Length > 0) || (mains != null && mains.Length > 0));
+    }
+
     // the frame's state while the filter pop-up is open: "" (none, or set as wanted), filter_open (not needed: close it),
     // filter_guide (the plan wants it: what to pick is lit)
     string filterState = "";
+    long doneSince;
     // the item the frame said was far down (more than three screens): the page offers the filter for it
     long farFor;
     /// <summary>The page's texts for the filter guide: the item's set and its main stat («Фильтр → Комплект: …»).</summary>
@@ -759,14 +799,17 @@ namespace RealmForge {
       if (heroScreen == null || now - heroReadAt >= 250 || now < heroReadAt) { heroScreen = RFX.ReadHeroScreen(addrs, heroScreen); heroReadAt = now; }
       var hs = heroScreen; double U = Ui.Unit(W, H);
       if (hs == null || hs.Hero == 0) {
-        heroShownWas = 0; heroAnchor.Has = false;
+        heroShownWas = 0; heroAnchor.Has = false; heroDiag = "screen closed";
         if (HeroesButtonSeen(o, W, H)) {
           int s = (int)(0.1 * U);
           DrawTip(o.X + (int)(W - hg2.HeroesBtnDX * U) - s / 2, o.Y + (int)(H - 0.1156 * U) - s / 2, s, s, HeroTip(4), H, false, false, true);
         } else HideTip();
         return;
       }
-      if (hs.Hero == hintHero || hs.Heroes == null) { heroShownWas = hs.Hero; HideTip(); return; }
+      if (hs.Hero == hintHero) { heroShownWas = hs.Hero; heroDiag = "shown"; HideTip(); return; }
+      // the list not readable now: the plate still says whom to press, beside the hero list
+      int lx0 = (int)((hg2.Col1X - 0.06) * U), lvt = (int)(hg2.ViewTop * U), lw = (int)((2 * hg2.PitchX + 0.12) * U), lh = (int)(H - (1 - hg2.ViewBottom) * U) - lvt;
+      if (hs.Heroes == null) { heroShownWas = hs.Hero; heroDiag = "no list"; DrawTip(o.X + lx0, o.Y + lvt, lw, lh, HeroTip(1), H, true); return; }
       if (hs.Part >= 0) {   // another hero's gear list covers the hero list: back
         heroShownWas = hs.Hero; heroAnchor.Has = false;
         int s = (int)(0.07 * U);
@@ -774,19 +817,30 @@ namespace RealmForge {
         return;
       }
       int t = Array.IndexOf(hs.Heroes, hintHero);
-      if (t < 0) { heroShownWas = hs.Hero; HideTip(); return; }
+      if (t < 0) { heroShownWas = hs.Hero; heroDiag = "not in the list"; DrawTip(o.X + lx0, o.Y + lvt, lw, lh, HeroTip(1), H, true); return; }
       double pitch = (hs.SmallCards ? hg2.SmallPitchY : hg2.PitchY) * U, card = (hs.SmallCards ? hg2.SmallCardH : hg2.CardH) * U;
       int vt = (int)(hg2.ViewTop * U), vb = (int)(H - (1 - hg2.ViewBottom) * U);
       int x0 = (int)((hg2.Col1X - 0.06) * U), x1 = (int)((hg2.Col1X + 2 * hg2.PitchX + 0.06) * U), w = x1 - x0, h = vb - vt;
       int[] px = h > 40 && w > 20 ? Grab(o.X + x0, o.Y + vt, w, h) : null;
+      MaskOwn(px, o.X + x0, o.Y + vt, w, h);
       if (px == null) { HideTip(); return; }
       var xs = new int[6];
       for (int c = 0; c < 3; c++) { double cx = hg2.ColX(c) * U - x0; xs[2 * c] = (int)(cx - 0.045 * U); xs[2 * c + 1] = (int)(cx + 0.045 * U); }
+      // the cards' gold side borders, line by line
       var prof = new double[h];
+      int bw = Math.Max(1, (int)(0.012 * U));
       for (int y = 0; y < h; y++) {
-        double sum = 0; int n = 0;
-        for (int k = 0; k < 6; k += 2) for (int x = Math.Max(0, xs[k]); x < Math.Min(w, xs[k + 1]); x++) { int p = px[y * w + x]; sum += ((p >> 16) & 255) + ((p >> 8) & 255) + (p & 255); n++; }
-        prof[y] = n > 0 ? sum / (3.0 * n) : 0;
+        int n = 0, c = 0;
+        for (int k = 0; k < 3; k++) {
+          double cx = hg2.ColX(k) * U - x0;
+          foreach (double e in new[] { cx - 0.057 * U, cx + 0.057 * U })
+            for (int x = (int)(e - bw); x <= (int)(e + bw); x++) {
+              if (x < 0 || x >= w) continue;
+              int p = px[y * w + x], pr = (p >> 16) & 255, pg = (p >> 8) & 255, pb = p & 255;
+              n++; if (pr >= 150 && pg >= 100 && pr >= pb + 50 && pg >= pb + 20) c++;
+            }
+        }
+        prof[y] = n > 0 ? c / (double)n : 0;
       }
       double ph, conf;
       bool hasPhase = ListTracker.CardPhase(prof, pitch, card, out ph, out conf);
@@ -812,7 +866,7 @@ namespace RealmForge {
       // where the game says the hero list is scrolled: exact
       double heroY; bool exact = RFX.ReadScrollY(addrs, true, out heroY);
       if (exact) {
-        double r1 = top0 - heroY * U / 675.0;
+        double r1 = top0 - heroY * pitch / (hs.SmallCards ? 85.0 : 125.0);   // a card row is 125 (small: 85) of the list's units
         if (hasPhase) { double s = ListTracker.Snap(r1 - vt, ph, pitch) + vt; if (Math.Abs(s - r1) <= 0.1 * pitch) r1 = s; }
         heroAnchor.Row1Top = r1; heroAnchor.Has = true; heroFollow.Anchored(sig, now);
       }
@@ -831,53 +885,190 @@ namespace RealmForge {
         if (heroAnchor.Row1Top > top0 + slack || heroAnchor.Row1Top < end - slack) { heroAnchor.Has = false; sure = false; }
       }
       if (sure) heroFollow.Settled(heroAnchor, sig, top0, pitch);
-      if (!sure) { DrawTip(o.X + x0 + 8, o.Y + vt + 8, 4, 0, HeroTip(1), H, true, true); return; }
+      heroDiag = (exact ? "scroll=" + heroY.ToString("0") : "pixels") + " phase=" + (hasPhase ? (vt + ph).ToString("0") : "none") + " row1=" + (heroAnchor.Has ? heroAnchor.Row1Top.ToString("0") : "-") + " sure=" + sure + " index=" + t;
+      if (!sure) { DrawTip(o.X + lx0, o.Y + lvt, lw, lh, HeroTip(1), H, true); return; }
       double ctop = heroAnchor.Row1Top + (t / HeroGeometry.Columns) * pitch, ccx = hg2.ColX(t % HeroGeometry.Columns) * U, cwid = 0.115 * U;
-      if (ctop + card / 2 < vt) DrawTip(o.X + x0 + 8, o.Y + vt + 8, 4, 0, HeroTip(2), H, true, true);
-      else if (ctop + card / 2 > vb) DrawTip(o.X + x0 + 8, o.Y + vb - 8, 4, 0, HeroTip(3), H, true);
+      if (ctop + card / 2 < vt) DrawTip(o.X + lx0, o.Y + lvt, lw, 4, HeroTip(2), H, true);
+      else if (ctop + card / 2 > vb) DrawTip(o.X + lx0, o.Y + lvt + lh - 4, lw, 4, HeroTip(3), H, true);
       else DrawTip(o.X + (int)(ccx - cwid / 2), o.Y + (int)ctop, (int)cwid, (int)card, HeroTip(0), H, false, ctop < 0.35 * H);
     }
     bool heroFreshTop;
+    string heroDiag = "";
 
-    /// <summary>A pulsing gold frame around a button of the game (x, y, w, h: screen px) with a text plate above it.</summary>
-    // (below: the plate under the button, for buttons at the top of the window; right: the plate's right edge at the button's,
-    // for buttons right of the middle)
+    // ---------------------------------------------------------------- the hints' look: the game's gold frame around what to
+    // press and a rectangular step plate beside it (the owl and «Шаг N из M · slot», the action in big white letters, what
+    // comes next), a gold scroll strip with a pill when the item is out of view (src/HintLayout.cs places them)
+
+    /// <summary>The page's texts for the plates (in the interface language): caps, pick, then, replace, pillDown, pillUp,
+    /// rows1 / rows2 / rows5, unknown, unknownSub, done, wrong, wrongSub.</summary>
+    public System.Collections.Generic.Dictionary<string, string> Texts = new System.Collections.Generic.Dictionary<string, string>();
+    /// <summary>The player put on another item than the build's (the plate says so at the frame).</summary>
+    public bool WrongItem;
+    string Tx(string k) { string v; return Texts != null && Texts.TryGetValue(k, out v) && v != null ? v : ""; }
+
+    sealed class Plate { public string Caps = "", Main = "", Sub = ""; public bool Pill; }
+    // the game window's client area on the screen for the scene being drawn (plates are kept inside it)
+    int sceneX, sceneY, sceneW, sceneH;
+    void SceneArea(W32.POINT o, W32.RECT cr) { sceneX = o.X; sceneY = o.Y; sceneW = cr.R; sceneH = cr.B; }
+
+    /// <summary>A pulsing gold frame around a button of the game (x, y, w, h: screen px) with the step plate beside it
+    /// (plateOnly: the plate alone, beside that spot). below / right: kept for the callers, the plate finds its own side.</summary>
     void DrawTip(int x, int y, int w, int h, string[] lines, double H, bool plateOnly = false, bool below = false, bool right = false) {
+      var p = lines != null && lines.Length > 0 ? new Plate { Caps = Tx("caps"), Main = lines[0], Sub = lines.Length > 1 ? lines[1] : "" } : null;
+      Scene(tip, ref tipKey, plateOnly ? null : new[] { x, y, w, h }, p, new[] { x, y, w, h }, null);
+    }
+
+    /// <summary>Draws one hint into <paramref name="win"/>: <paramref name="frameR"/> (screen px, null = no frame), the plate
+    /// beside <paramref name="target"/>, and the scroll strip (null = none: {x, viewTop, viewBottom, dotY, b0, b1}, screen px)
+    /// with the plate as a pill at its dot. <paramref name="key"/>: what is drawn now (unchanged = nothing to do).</summary>
+    void Scene(GlowWindow win, ref string key, int[] frameR, Plate p, int[] target, double[] strip) {
       float pulse = (float)(0.6 + 0.4 * Math.Sin(frame * 0.45));
-      string key = x + ":" + y + ":" + w + ":" + h + ":" + string.Join("|", lines) + ":" + (plateOnly ? 0 : (int)(pulse * 10)) + (below ? "b" : "") + (right ? "r" : "");
-      if (key == tipKey) return;
-      tipKey = key;
-      float fs = (float)Math.Max(13.0, H * 0.022);
-      using (var f = new Font("Segoe UI", fs, FontStyle.Bold, GraphicsUnit.Pixel)) {
-        float tw = 0, lh = fs * 1.35f;
-        using (var probe = new Bitmap(1, 1)) using (var pg = Graphics.FromImage(probe)) foreach (var l in lines) tw = Math.Max(tw, pg.MeasureString(l, f).Width);
-        int pw = lines.Length > 0 ? (int)tw + 28 : 0, ph = lines.Length > 0 ? (int)(lh * lines.Length) + 16 : 0;
-        int bw = Math.Max(w + 52, pw + 8), bh = h + 52 + (ph > 0 ? ph + 14 : 0);
-        int fx = right ? bw - w - 26 : 26, fy = below ? 26 : bh - h - 26;
-        int px0 = right ? bw - pw : 0, py0 = below ? bh - ph : 0;
+      string k = (frameR != null ? string.Join(",", frameR) : "-") + "|" + (target != null ? string.Join(",", target) : "-") + "|"
+        + (p != null ? p.Caps + "/" + p.Main + "/" + p.Sub + "/" + p.Pill : "-") + "|" + (strip != null ? string.Join(",", Array.ConvertAll(strip, v => ((int)v).ToString())) : "-")
+        + "|" + (frameR != null || strip != null ? (int)(pulse * 10) : 0) + "|" + sceneW + "x" + sceneH;
+      if (k == key) return;
+      key = k;
+      double U = Ui.Unit(Math.Max(1, sceneW), Math.Max(1, sceneH));
+      float pad = (float)Math.Max(8, 0.012 * U);
+      using (var fCaps = new Font("Segoe UI", (float)Math.Max(10, 0.0155 * U), FontStyle.Bold, GraphicsUnit.Pixel))
+      using (var fMain = new Font("Segoe UI", (float)Math.Max(14, (p != null && p.Pill ? 0.019 : 0.026) * U), FontStyle.Bold, GraphicsUnit.Pixel))
+      using (var fSub = new Font("Segoe UI", (float)Math.Max(11, 0.018 * U), FontStyle.Regular, GraphicsUnit.Pixel)) {
+        // the plate's size
+        int pw = 0, ph = 0; float owl = fCaps.Height * 1.5f, capsH = 0, mainH = 0, subH = 0;
+        if (p != null) {
+          using (var probe = new Bitmap(1, 1)) using (var pg = Graphics.FromImage(probe)) {
+            float cw = p.Caps != "" ? owl + 6 + pg.MeasureString(p.Caps.ToUpperInvariant(), fCaps).Width : 0;
+            float mw = p.Main != "" ? pg.MeasureString(p.Main, fMain).Width : 0, sw = p.Sub != "" ? pg.MeasureString(p.Sub, fSub).Width : 0;
+            capsH = p.Caps != "" ? Math.Max(owl, fCaps.Height) : 0; mainH = p.Main != "" ? fMain.Height : 0; subH = p.Sub != "" ? fSub.Height : 0;
+            pw = (int)(Math.Max(cw, Math.Max(mw, sw)) + 2 * pad);
+            ph = (int)(pad * (p.Pill ? 1.0f : 2f) + capsH + mainH + subH + (capsH > 0 ? 2 : 0) + (subH > 0 ? 2 : 0));
+          }
+        }
+        // where the plate goes (client px), and the pointer toward the target
+        int[] pos = null; char side = 'r'; double[] ptr = null;
+        if (p != null) {
+          if (strip != null) {   // a pill at the strip's dot, right of the strip (left when there is no room)
+            int px = (int)strip[0] + 12 - sceneX, py = (int)(strip[3] - ph / 2.0) - sceneY;
+            if (px + pw > sceneW - HintLayout.Margin) px = (int)strip[0] - 12 - pw - sceneX;
+            pos = new[] { px, Math.Max(HintLayout.Margin, Math.Min(sceneH - ph - HintLayout.Margin, py)) };
+          } else {
+            var tc = target != null ? new[] { target[0] - sceneX, target[1] - sceneY, target[2], target[3] } : new[] { sceneW / 2, (int)(0.3 * sceneH), 0, 0 };
+            if (target == null) pos = new[] { sceneW / 2 - pw / 2, (int)(0.3 * sceneH) };
+            else {
+              pos = HintLayout.Plate(tc, pw, ph, sceneW, sceneH, out side);
+              if (frameR != null || tc[2] > 0) ptr = HintLayout.Pointer(pos, pw, ph, side, tc, Math.Max(7, 0.01 * U));
+            }
+          }
+        }
+        // the bitmap covers everything: the frame with its glow, the plate, the strip
+        int G = (int)Math.Max(14, 0.022 * U);
+        int x0 = int.MaxValue, y0 = int.MaxValue, x1 = int.MinValue, y1 = int.MinValue;
+        Action<int, int, int, int> grow = (a, b, c, d) => { x0 = Math.Min(x0, a); y0 = Math.Min(y0, b); x1 = Math.Max(x1, c); y1 = Math.Max(y1, d); };
+        int fm = frameR != null ? Math.Max(G, (int)(0.21 * Math.Max(frameR[2], frameR[3])) + 2) : 0;
+        if (frameR != null) grow(frameR[0] - fm, frameR[1] - fm, frameR[0] + frameR[2] + fm, frameR[1] + frameR[3] + fm);
+        if (pos != null) grow(sceneX + pos[0] - 16, sceneY + pos[1] - 16, sceneX + pos[0] + pw + 16, sceneY + pos[1] + ph + 16);
+        if (strip != null) grow((int)strip[0] - 12, (int)strip[1] - 12, (int)strip[0] + 12, (int)strip[2] + 12);
+        if (x0 == int.MaxValue) { win.Hide(); return; }
+        int bw = Math.Max(1, x1 - x0), bh = Math.Max(1, y1 - y0);
         using (var bmp = new Bitmap(bw, bh, PixelFormat.Format32bppArgb)) {
           using (var gr = Graphics.FromImage(bmp)) {
             gr.SmoothingMode = SmoothingMode.AntiAlias; gr.TextRenderingHint = TextRenderingHint.AntiAliasGridFit; gr.Clear(Color.Transparent);
-            if (!plateOnly) {
-              for (int i = 24; i >= 2; i -= 2)
-                using (var pen = new Pen(Color.FromArgb((int)(140 * pulse * (1 - i / 26f)), 255, 190, 60), 3f)) gr.DrawPath(pen, Round(fx - i, fy - i, w + 2 * i, h + 2 * i, 6 + i));
-              using (var pen = new Pen(Color.FromArgb(220, 30, 18, 4), 8f)) gr.DrawPath(pen, Round(fx - 2, fy - 2, w + 4, h + 4, 8));
-              using (var pen = new Pen(Color.FromArgb(255, 255, 214, 110), 4f)) gr.DrawPath(pen, Round(fx - 2, fy - 2, w + 4, h + 4, 8));
-            }
-            if (ph > 0) {
-              var rc = new RectangleF(px0, py0, pw, ph);
-              using (var bg = new SolidBrush(Color.FromArgb(235, 16, 12, 8))) gr.FillPath(bg, Round(rc.X + 1, rc.Y + 1, rc.Width - 2, rc.Height - 2, 6));
-              using (var pen = new Pen(Color.FromArgb(240, 232, 190, 110), 2f)) gr.DrawPath(pen, Round(rc.X + 1, rc.Y + 1, rc.Width - 2, rc.Height - 2, 6));
-              using (var fg = new SolidBrush(Color.FromArgb(255, 255, 236, 180))) for (int i = 0; i < lines.Length; i++) gr.DrawString(lines[i], f, fg, px0 + 14, py0 + 8 + i * lh);
-              float ax = Math.Max(px0 + 20, Math.Min(px0 + pw - 20, fx + w / 2f));
-              var tri = below ? new[] { new PointF(ax - 9, py0 + 1), new PointF(ax + 9, py0 + 1), new PointF(ax, py0 - 11) }
-                              : new[] { new PointF(ax - 9, ph - 1), new PointF(ax + 9, ph - 1), new PointF(ax, ph + 11) };
-              if (!plateOnly) using (var br = new SolidBrush(Color.FromArgb(240, 232, 190, 110))) gr.FillPolygon(br, tri);
+            gr.InterpolationMode = InterpolationMode.HighQualityBicubic;
+            if (frameR != null) PaintFrame(gr, frameR[0] - x0, frameR[1] - y0, frameR[2], frameR[3], pulse, G);
+            if (strip != null) PaintStrip(gr, strip, x0, y0, pulse, U);
+            if (p != null) {
+              float px = sceneX + pos[0] - x0, py = sceneY + pos[1] - y0;
+              PaintPlate(gr, px, py, pw, ph, p, fCaps, fMain, fSub, owl, capsH, mainH, pad, ptr, sceneX - x0, sceneY - y0);
             }
           }
-          tip.Put(bmp, x - fx, y - fy);
+          win.Put(bmp, x0, y0);
+          win.Parts.Clear();
+          if (frameR != null) win.Parts.Add(new[] { frameR[0] - fm, frameR[1] - fm, frameR[2] + 2 * fm, frameR[3] + 2 * fm });
+          if (pos != null) win.Parts.Add(new[] { sceneX + pos[0] - 4, sceneY + pos[1] - 4, pw + 20, ph + 20 });
+          if (strip != null) win.Parts.Add(new[] { (int)strip[0] - 14, (int)strip[1] - 14, 28, (int)(strip[2] - strip[1]) + 28 });
         }
       }
+    }
+
+    /// <summary>Where our own windows showed something that a screen look sees (only when they cannot be hidden from
+    /// captures): those pixels of a grab at (x, y) w × h are set to the dark background, so they are no bars, no glow, no cells.</summary>
+    void MaskOwn(int[] px, int x, int y, int w, int h) {
+      if (px == null) return;
+      foreach (var win in new[] { glow, tip })
+        if (!win.Excluded && win.Visible)
+          foreach (var r in win.Parts) {
+            int ax = Math.Max(x, r[0]), ay = Math.Max(y, r[1]), bx = Math.Min(x + w, r[0] + r[2]), by = Math.Min(y + h, r[1] + r[3]);
+            for (int yy = ay; yy < by; yy++) for (int xx = ax; xx < bx; xx++) px[(yy - y) * w + (xx - x)] = unchecked((int)0xFF10141C);
+          }
+    }
+
+    // the game's gold frame (its texture), bolder: drawn twice over the cell with its glow, a gold line on the edge
+    void PaintFrame(Graphics gr, float x, float y, float w, float h, float pulse, int G) {
+      var tex = FrameTex();
+      for (int i = G; i >= 4; i -= 3)
+        using (var pen = new Pen(Color.FromArgb((int)(110 * pulse * (1 - i / (float)(G + 2))), 255, 190, 60), 3f)) gr.DrawPath(pen, Round(x - i, y - i, w + 2 * i, h + 2 * i, 6 + i));
+      if (tex != null) {
+        // the texture's gold line runs 14.5 % inside its picture: stretched so that line lies on the cell's edge
+        float mx = w * 0.204f, my = h * 0.204f;
+        var r = new RectangleF(x - mx, y - my, w + 2 * mx, h + 2 * my);
+        gr.DrawImage(tex, r); gr.DrawImage(tex, r);
+      }
+      using (var pen = new Pen(Color.FromArgb(230, 40, 22, 4), 6f)) gr.DrawPath(pen, Round(x - 2, y - 2, w + 4, h + 4, 7));
+      using (var pen = new Pen(Color.FromArgb(255, 255, 214, 110), 3.5f)) gr.DrawPath(pen, Round(x - 2, y - 2, w + 4, h + 4, 7));
+    }
+
+    // the step plate: strictly rectangular, dark, a thin bronze border with a gold line inside; the owl and the caps line,
+    // the action in white, the next step smaller; a pill (the strip's «Вещь здесь») has rounded ends and one line
+    void PaintPlate(Graphics gr, float x, float y, int w, int h, Plate p, Font fCaps, Font fMain, Font fSub, float owl, float capsH, float mainH, float pad, double[] ptr, int ox, int oy) {
+      using (var shadow = new SolidBrush(Color.FromArgb(110, 0, 0, 0))) gr.FillRectangle(shadow, x + 3, y + 5, w, h);
+      if (p.Pill) {
+        var path = Round(x, y, w, h, h / 2f - 0.5f);
+        using (var bg = new SolidBrush(Color.FromArgb(240, 18, 16, 12))) gr.FillPath(bg, path);
+        using (var pen = new Pen(Color.FromArgb(255, 224, 182, 96), 2f)) gr.DrawPath(pen, path);
+      } else {
+        using (var bg = new SolidBrush(Color.FromArgb(242, 16, 18, 26))) gr.FillRectangle(bg, x, y, w, h);
+        using (var pen = new Pen(Color.FromArgb(255, 122, 92, 46), 2f)) gr.DrawRectangle(pen, x + 1, y + 1, w - 2, h - 2);
+        using (var pen = new Pen(Color.FromArgb(170, 224, 182, 96), 1f)) gr.DrawRectangle(pen, x + 3.5f, y + 3.5f, w - 7, h - 7);
+      }
+      if (ptr != null) {
+        var tri = new[] { new PointF((float)ptr[0] + ox, (float)ptr[1] + oy), new PointF((float)ptr[2] + ox, (float)ptr[3] + oy), new PointF((float)ptr[4] + ox, (float)ptr[5] + oy) };
+        using (var br = new SolidBrush(Color.FromArgb(255, 224, 182, 96))) gr.FillPolygon(br, tri);
+      }
+      float ty = y + (p.Pill ? pad / 2 : pad), tx = x + pad;
+      if (p.Caps != "") {
+        var owlImg = OwlTex();
+        if (owlImg != null) gr.DrawImage(owlImg, tx, ty, owl, owl);
+        using (var gold = new SolidBrush(Color.FromArgb(255, 216, 176, 96)))
+          gr.DrawString(p.Caps.ToUpperInvariant(), fCaps, gold, tx + owl + 6, ty + (owl - fCaps.Height) / 2);
+        ty += capsH + 2;
+      }
+      if (p.Main != "") {
+        using (var sh = new SolidBrush(Color.FromArgb(200, 0, 0, 0))) gr.DrawString(p.Main, fMain, sh, tx + 1, ty + 1.5f);
+        using (var white = new SolidBrush(p.Pill ? Color.FromArgb(255, 255, 222, 150) : Color.White)) gr.DrawString(p.Main, fMain, white, tx, ty);
+        ty += mainH + 2;
+      }
+      if (p.Sub != "") using (var muted = new SolidBrush(Color.FromArgb(255, 207, 198, 176))) gr.DrawString(p.Sub, fSub, muted, tx, ty);
+    }
+
+    // the scroll strip along the list: a thin gold line over the visible part, a bracket for where the view is in the whole
+    // list and a gold dot where the item is
+    void PaintStrip(Graphics gr, double[] s, int ox, int oy, float pulse, double U) {
+      float x = (float)s[0] - ox, top = (float)s[1] - oy, bottom = (float)s[2] - oy, dot = (float)s[3] - oy, b0 = (float)s[4] - oy, b1 = (float)s[5] - oy;
+      using (var line = new Pen(Color.FromArgb(150, 224, 182, 96), 2f)) gr.DrawLine(line, x, top, x, bottom);
+      using (var br = new Pen(Color.FromArgb(255, 240, 200, 110), 2f)) gr.DrawPath(br, Round(x - 4, b0, 8, Math.Max(8, b1 - b0), 4));
+      float r = (float)Math.Max(5, 0.008 * U);
+      for (int i = 3; i >= 1; i--) using (var glowB = new SolidBrush(Color.FromArgb((int)(60 * pulse), 255, 190, 60))) gr.FillEllipse(glowB, x - r - 2 * i, dot - r - 2 * i, 2 * (r + 2 * i), 2 * (r + 2 * i));
+      using (var g2 = new SolidBrush(Color.FromArgb(255, 255, 214, 110))) gr.FillEllipse(g2, x - r, dot - r, 2 * r, 2 * r);
+      using (var pen = new Pen(Color.FromArgb(230, 60, 36, 6), 1.5f)) gr.DrawEllipse(pen, x - r, dot - r, 2 * r, 2 * r);
+    }
+
+    static Image owlTex;
+    static Image OwlTex() {
+      if (owlTex == null) {
+        try { using (var s = typeof(OverlayController).Assembly.GetManifestResourceStream("overlay/owl.png")) if (s != null) owlTex = new Bitmap(Image.FromStream(s)); }
+        catch (Exception) { }
+      }
+      return owlTex;
     }
 
     // ---------------------------------------------------------------- auto-pilot
@@ -1068,6 +1259,7 @@ namespace RealmForge {
       bool front = IsForeground(hwnd);
       var o = new W32.POINT(0, 0); W32.ClientToScreen(hwnd, ref o);
       double W = cr.R, H = cr.B, U = Ui.Unit(W, H);
+      SceneArea(o, cr);
       long now = NowMs();
       long uid = req.Item.Uid;
       // the game's screens, read a few times a second (a form the game never built is searched for at most every 8 s)
@@ -1565,66 +1757,41 @@ namespace RealmForge {
       return frameTex;
     }
 
-    /// <param name="rows">For the arrows: how many rows to scroll (shown next to the arrow).</param>
-    void Draw(string kind, int x, int y, int w, int h, int rows) {
-      const int M = 34;
-      float pulse = (float)(0.6 + 0.4 * Math.Sin(frame * 0.45));
-      string key = kind + x + ":" + y + ":" + w + ":" + h + ":" + rows + ":" + (int)(pulse * 10);
+    // the item's frame with the step plate beside it, or (above / below the visible list) the gold scroll strip with a pill
+    // «Вещь здесь ↓ N рядов» at the item's dot (strip: {x, viewTop, viewBottom, dotY, b0, b1}, screen px; null = a pill
+    // beside the spot alone)
+    void Draw(string kind, int x, int y, int w, int h, int rows, double[] strip = null) {
       if (locateReq == null) Say(kind == "box" ? "on" : kind == "up" ? "above" : "below", rows);   // the plan's state; «Найти в игре» has its own
       dKind = kind + (rows > 0 ? ":" + rows : ""); dX = x; dY = y; dW = w; dH = h;
-      if (key == drawnKey) return;
-      drawnKey = key;
       if (kind == "box") {
-        using (var bmp = new Bitmap(w + 2 * M, h + 2 * M, PixelFormat.Format32bppArgb)) {
-          using (var gr = Graphics.FromImage(bmp)) {
-            gr.SmoothingMode = SmoothingMode.AntiAlias; gr.Clear(Color.Transparent);
-            // wide pulsing glow
-            for (int i = M - 2; i >= 2; i -= 2) {
-              int a = (int)(150 * pulse * (1 - i / (float)M));
-              using (var pen = new Pen(Color.FromArgb(a, 255, 190, 60), 3f)) gr.DrawPath(pen, Round(M - i, M - i, w + 2 * i, h + 2 * i, 8 + i));
-            }
-            // dark outline so the frame shows on bright cells too, then a thick gold border
-            using (var pen = new Pen(Color.FromArgb(220, 30, 18, 4), 10f)) gr.DrawPath(pen, Round(M - 3, M - 3, w + 6, h + 6, 10));
-            using (var pen = new Pen(Color.FromArgb(255, 255, 214, 110), 6f)) gr.DrawPath(pen, Round(M - 3, M - 3, w + 6, h + 6, 10));
-            // corner arrows pointing at the item
-            using (var br = new SolidBrush(Color.FromArgb(255, 255, 220, 120)))
-            using (var pen = new Pen(Color.FromArgb(230, 40, 22, 4), 2f)) {
-              float cx = M + w / 2f;
-              var tri = new[] { new PointF(cx - 14, 2), new PointF(cx + 14, 2), new PointF(cx, M - 8) };
-              gr.FillPolygon(br, tri); gr.DrawPolygon(pen, tri);
-            }
-          }
-          glow.Put(bmp, x - M, y - M);
-        }
-      } else {
-        // the item is above / below the visible list: a pulsing arrow at the list edge in its column
-        int aw = Math.Max(28, w / 2), ah = aw * 2 / 3, lh = Math.Max(22, w / 4);
-        using (var bmp = new Bitmap(w, ah + 2 * M + lh, PixelFormat.Format32bppArgb)) {
-          using (var gr = Graphics.FromImage(bmp)) {
-            gr.SmoothingMode = SmoothingMode.AntiAlias; gr.Clear(Color.Transparent);
-            float cx = w / 2f, t = M + (kind == "up" ? 0 : lh), b = t + ah;
-            PointF[] tri = kind == "up" ? new[] { new PointF(cx, t), new PointF(cx - aw / 2f, b), new PointF(cx + aw / 2f, b) }
-                                        : new[] { new PointF(cx, b), new PointF(cx - aw / 2f, t), new PointF(cx + aw / 2f, t) };
-            for (int i = 6; i >= 1; i--) using (var pen = new Pen(Color.FromArgb((int)(40 * pulse), 255, 205, 90), i * 3f) { LineJoin = LineJoin.Round }) gr.DrawPolygon(pen, tri);
-            using (var br = new SolidBrush(Color.FromArgb((int)(230 * (0.7 + 0.3 * pulse)), 255, 220, 120))) gr.FillPolygon(br, tri);
-            using (var pen = new Pen(Color.FromArgb(220, 90, 60, 20), 2f)) gr.DrawPolygon(pen, tri);
-            // «↓ 3»: rows left to scroll, on a dark plate next to the arrow
-            if (rows > 0) {
-              string txt = (kind == "up" ? "\u2191 " : "\u2193 ") + rows;
-              using (var f = new Font("Segoe UI", lh * 0.62f, FontStyle.Bold, GraphicsUnit.Pixel))
-              using (var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center }) {
-                float ly = kind == "up" ? b + 6 : t - lh - 6;
-                var sz = gr.MeasureString(txt, f);
-                var rc = new RectangleF(cx - sz.Width / 2 - 8, ly, sz.Width + 16, lh);
-                using (var bg = new SolidBrush(Color.FromArgb(215, 20, 12, 4))) gr.FillPath(bg, Round(rc.X, rc.Y, rc.Width, rc.Height, lh / 2f - 1));
-                using (var pen = new Pen(Color.FromArgb(230, 255, 210, 110), 1.5f)) gr.DrawPath(pen, Round(rc.X, rc.Y, rc.Width, rc.Height, lh / 2f - 1));
-                using (var fg = new SolidBrush(Color.FromArgb(255, 255, 236, 180))) gr.DrawString(txt, f, fg, rc, sf);
-              }
-            }
-          }
-          glow.Put(bmp, x, kind == "up" ? y + 4 : y - ah - 2 * M - lh - 4);
-        }
+        Plate p = null;
+        if (locateReq == null && Tx("pick") != "")
+          p = WrongItem ? new Plate { Caps = Tx("caps"), Main = Tx("wrong"), Sub = Tx("wrongSub") } : new Plate { Caps = Tx("caps"), Main = Tx("pick"), Sub = Tx("then") };
+        Scene(glow, ref drawnKey, new[] { x, y, w, h }, p, new[] { x, y, w, h }, null);
+        return;
       }
+      string tpl = Tx(kind == "up" ? "pillUp" : "pillDown");
+      string text = tpl != "" ? tpl.Replace("{0}", RowsText(rows)) : (kind == "up" ? "↑ " : "↓ ") + rows;
+      var pill = new Plate { Pill = true, Main = text };
+      if (strip != null) Scene(glow, ref drawnKey, null, pill, null, strip);
+      else Scene(glow, ref drawnKey, null, pill, new[] { x, kind == "up" ? y : y - 2, w, 2 }, null);
+    }
+
+    // «6 рядов» in the page's language (rows1 / rows2 / rows5 hold «{0} ряд» / «{0} ряда» / «{0} рядов»)
+    string RowsText(int n) {
+      string[] forms = { Tx("rows1"), Tx("rows2"), Tx("rows5") };
+      string f = forms[HintLayout.Plural(n, Tx("lang") != "en")];
+      return f != "" ? f.Replace("{0}", n.ToString()) : n.ToString();
+    }
+
+    // where the list is not known: the plate beside the list asks for a click on any item (no frame)
+    void NeedClick() {
+      Say("need_click"); dKind = "hidden:need_click";
+      string m = Tx("unknown");
+      if (m == "" || sceneW <= 0) { if (glow.Visible) glow.Hide(); drawnKey = null; return; }
+      double U = Ui.Unit(sceneW, sceneH);
+      var list = new[] { sceneX + (int)(g.StripLeft * U), sceneY + (int)(g.ViewTop * U), (int)((g.StripRight - g.StripLeft) * U), (int)((g.ViewBottom - g.ViewTop) * U) };
+      Scene(glow, ref drawnKey, null, new Plate { Caps = Tx("caps"), Main = m, Sub = Tx("unknownSub") }, list, null);
     }
 
     static GraphicsPath Round(float x, float y, float w, float h, float r) {

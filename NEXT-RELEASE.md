@@ -41,8 +41,8 @@ Optional `### Heading` lines inside a `## RU` / `## EN` section split the update
 
 ## RU
 
-- Подсказка при переодевании: если в игре открыт фильтр, программа сначала просит его закрыть, а не рисует рамку поверх него; стрелка и число рядов следят за прокруткой без лишних нажатий; если вещь далеко в списке, программа советует выбрать в фильтре её комплект или главный стат. Если фильтр открыт по совету, программа подсвечивает, что в нём выбрать. Герой из сборки подсвечивается и в списке героев.
+- Подсказка при переодевании: если в игре открыт фильтр, программа сначала просит его закрыть, а не рисует рамку поверх него; стрелка и число рядов следят за прокруткой без лишних нажатий; если вещь далеко в списке, программа советует выбрать в фильтре её комплект или главный стат. Если фильтр открыт по совету, программа подсвечивает, что в нём выбрать. Герой из сборки подсвечивается и в списке героев. Рамка стоит точно на нужной вещи; подсказки выглядят по-новому: золотая рамка и табличка с шагом, а если вещь за краем списка — золотая полоса с отметкой, где она. Если надета не та вещь из сборки, программа об этом скажет.
 
 ## EN
 
-- Equip helper: with the game's filter open the app asks to close it first instead of drawing the frame over it; the arrow and the row count follow the scrolling without extra clicks; when the item is far down the list the app suggests filtering by its set or main stat. With the filter opened on that tip, the app lights what to pick in it. The build's hero is pointed at in the hero list too.
+- Equip helper: with the game's filter open the app asks to close it first instead of drawing the frame over it; the arrow and the row count follow the scrolling without extra clicks; when the item is far down the list the app suggests filtering by its set or main stat. With the filter opened on that tip, the app lights what to pick in it. The build's hero is pointed at in the hero list too. The frame lands exactly on the item; the hints have a new look: a gold frame with a step plate, and a gold strip with a mark when the item is off screen. If an item not from the build is put on, the app says so.

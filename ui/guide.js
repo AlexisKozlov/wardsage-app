@@ -29,6 +29,10 @@
     g.item = cur;
     if (live.heroUid !== plan.heroUid) { g.kind = 'hero'; return g; }
     if (!live.panelOk || live.part !== cur.slot) { g.kind = 'slot'; return g; }
+    // the player put on another item than the build's (it is still selected, and the hero wears it now): the build's item
+    // stays the one to find - the page says so instead of just pointing again
+    const was = cur.cur && cur.cur.uid;
+    g.wrong = live.selUid > 0 && live.selUid !== cur.uid && live.selOwner === plan.heroUid && live.selUid !== was;
     const pos = live.rows && live.rows[cur.uid];
     if (pos) {
       g.row = pos[0]; g.col = pos[1] || 0;
