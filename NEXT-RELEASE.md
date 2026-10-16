@@ -41,4 +41,8 @@ Optional `### Heading` lines inside a `## RU` / `## EN` section split the update
 
 ## RU
 
+- Каталог снаряжения больше не теряет вещи в хвосте таблицы Lua 5.4: читается весь массив, а не только записанный лимит.
+
 ## EN
+
+- The gear catalog no longer drops items that sit in the tail of a Lua 5.4 table: the whole array is read, not only the stored limit.
