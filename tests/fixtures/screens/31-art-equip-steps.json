@@ -1,0 +1,20 @@
+{ "name": "Equip plan with an artifact, hints only (artAuto off): tab, list button, the cell, «Заменить», the pop-up, done; nothing is clicked",
+  "request": {"purpose":"artEquip","hero":214700000,"uid":9004,"artAuto":false,"autoConfirm":false},
+  "frames": [
+  {"t":0,"hero":{"hero":214700000,"form":true,"tab":3,"art":{"read":true,"owner":200100000,"worn":9001}},"expect":{"screen":"HeroScreen","artEqStep":"ArtTab","artEqTodo":"Tab","artEqFrame":true,"modal":false}},
+  {"t":300,"hero":{"hero":214700000,"form":true,"tab":7,"art":{"read":true,"owner":200100000,"worn":9001}},"expect":{"artEqStep":"OpenList:worn","artEqTodo":"OpenList","artEqFrame":true}},
+  {"t":600,"hero":{"hero":214700000,"form":true,"tab":7,"art":{"read":true,"owner":200100000,"worn":0}},"expect":{"artEqStep":"OpenList:empty","artEqTodo":"OpenList","artEqFrame":true}},
+  {"t":900,"hero":{"hero":214700000,"form":true,"tab":7,"art":{"read":true,"owner":200100000,"worn":9001,"open":true,"uids":[9001,9002,9003,9004,9005],"list":{"scrollY":0,"cols":3,"rowUnits":116}}},"expect":{"artEqStep":"PickCell:4","artEqTodo":"Cell","artEqFrame":true}},
+  {"t":1200,"hero":{"hero":214700000,"form":true,"tab":7,"art":{"read":true,"owner":200100000,"worn":9001,"open":true,"uids":[9001,9002,9003,9004,9005],"list":null}},"expect":{"artEqStep":"PickCell:4","artEqTodo":"Hint","artEqFrame":false}},
+  {"t":1500,"hero":{"hero":214700000,"form":true,"tab":7,"art":{"read":true,"owner":200100000,"worn":9001,"open":true,"uids":[9001,9002],"list":{"scrollY":0,"cols":3,"rowUnits":116}}},"expect":{"artEqStep":"NotInList","artEqTodo":"Hint","artEqFrame":false}},
+  {"t":1800,"hero":{"hero":214700000,"form":true,"tab":7,"art":{"read":true,"owner":200100000,"worn":9001,"open":true,"sel":9004,"uids":[9001,9002,9003,9004,9005],"list":{"scrollY":0,"cols":3,"rowUnits":116}}},"expect":{"artEqStep":"PressReplace:worn","artEqTodo":"Hint","artEqFrame":true}},
+  {"t":2100,"hero":{"hero":214700000,"form":true,"tab":7,"art":{"read":true,"owner":200100000,"worn":0,"open":true,"sel":9004,"uids":[9001,9002,9003,9004,9005],"list":{"scrollY":0,"cols":3,"rowUnits":116}}},"expect":{"artEqStep":"PressReplace:empty","artEqFrame":true}},
+  {"t":2400,"hero":{"hero":214700000,"form":true,"tab":7,"art":{"read":true,"owner":200100000,"worn":9001,"open":true,"sel":9004,"uids":[9001,9002,9003,9004,9005],"list":{"scrollY":0,"cols":3,"rowUnits":116}}},"popup":true,"expect":{"modal":true,"artEqStep":"ConfirmTakeOver","artEqTodo":"Hint","artEqFrame":true}},
+  {"t":2700,"hero":{"hero":214700000,"form":true,"tab":7,"art":{"read":true,"owner":200100000,"worn":9001,"open":true,"sel":9001,"uids":[9001,9002,9003,9004,9005],"list":{"scrollY":0,"cols":3,"rowUnits":116}}},"popup":true,"expect":{"modal":true,"artEqStep":"Wait","artEqFrame":false}},
+  {"t":3000,"hero":{"hero":214700000,"form":true,"tab":7,"art":{"read":true,"owner":214700000,"worn":9001,"open":true,"sel":9004,"uids":[9001,9002,9003,9004,9005],"list":{"scrollY":0,"cols":3,"rowUnits":116}}},"expect":{"artEqStep":"Done","artEqFrame":false}},
+  {"t":3300,"hero":{"hero":214700000,"form":true,"tab":3,"art":{"read":true,"owner":214700000,"worn":9001}},"expect":{"artEqStep":"Done"}},
+  {"t":3600,"hero":{"hero":5,"form":true,"tab":3},"expect":{"artEqStep":"Hero"}},
+  {"t":3900,"hero":{"hero":214700000,"form":true,"tab":3,"art":{"read":true,"owner":200100000,"worn":9001}},"expect":{"halt":""},"clicks":[{"owner":"Equip","target":"ArtHeroTab","auto":true,"front":true,"expect":{"verdict":"Deny","reason":"artifact"}}]},
+  {"t":4000,"hero":{"hero":214700000,"form":true,"tab":3,"art":{"read":true,"owner":200100000,"worn":9001}},"expect":{"halt":"Equip:artifact"}}
+  ]
+}

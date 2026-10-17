@@ -657,6 +657,7 @@ static class CoreTests {
     ArtifactSellTests();
     ArtPromoteTests();
     ArtAutoTests();
+    ArtEquipTests();
 
     Console.WriteLine("Fight timeline (src/TimelineBuilder.cs: samples of the running fight + its command record):");
     TimelineTests();
@@ -3329,7 +3330,7 @@ static class CoreTests {
       gate = new ClickGate();
       res = gate.Check(new ClickRequest { Owner = ClickOwner.Sell, Target = ClickTarget.InvEquipTab, AutoOn = true, Front = true }, scrN, 0);
       Check(res.Allowed, "art gate: a gear cleanup (not an artifact run) may still go from the artifact tab back to «Снаряжение»");
-      Check(!ClickGate.WhitelistText(ClickOwner.Equip).Contains("Art"), "art gate: the equip helper has no artifact target on its whitelist (the others have theirs, behind ArtSellAuto / ArtLocateAuto: see the artAuto tests)");
+      Check(!ClickGate.WhitelistText(ClickOwner.Equip).Contains("ArtTab") && !ClickGate.WhitelistText(ClickOwner.Equip).Contains("ArtBulk") && !ClickGate.WhitelistText(ClickOwner.Equip).Contains("ArtCell") && !ClickGate.WhitelistText(ClickOwner.Equip).Contains("ArtWorkshop") && !ClickGate.WhitelistText(ClickOwner.Equip).Contains("ArtMat") && !ClickGate.WhitelistText(ClickOwner.Equip).Contains("ArtPromote") && !ClickGate.WhitelistText(ClickOwner.Equip).Contains("ArtListDrag"), "art gate: the equip helper has none of the inventory / workshop artifact targets on its whitelist (only its own hero-screen ones, see ArtEquipTests; the others have theirs, behind ArtSellAuto / ArtLocateAuto)");
     }
 
     // --- the steps
@@ -3590,11 +3591,299 @@ static class CoreTests {
       gate = new ClickGate();
       res = gate.Check(new ClickRequest { Owner = ClickOwner.Locate, Target = ClickTarget.InvEquipTab, AutoOn = true, Front = true }, scrI, 0);
       Check(gate.HaltReason(ClickOwner.Locate) != "artifact", "art gate: a normal request is not stopped by the artifact rule");
-      Check(!ClickGate.WhitelistText(ClickOwner.Equip).Contains("Art"), "art gate: the equip helper has no artifact target on its whitelist (the others have theirs, behind ArtSellAuto / ArtLocateAuto: see the artAuto tests)");
+      Check(!ClickGate.WhitelistText(ClickOwner.Equip).Contains("ArtTab") && !ClickGate.WhitelistText(ClickOwner.Equip).Contains("ArtBulk") && !ClickGate.WhitelistText(ClickOwner.Equip).Contains("ArtCell") && !ClickGate.WhitelistText(ClickOwner.Equip).Contains("ArtWorkshop") && !ClickGate.WhitelistText(ClickOwner.Equip).Contains("ArtMat") && !ClickGate.WhitelistText(ClickOwner.Equip).Contains("ArtPromote") && !ClickGate.WhitelistText(ClickOwner.Equip).Contains("ArtListDrag"), "art gate: the equip helper has none of the inventory / workshop artifact targets on its whitelist (only its own hero-screen ones, see ArtEquipTests; the others have theirs, behind ArtSellAuto / ArtLocateAuto)");
     }
   }
 
   // The artifact flows with auto click (the site's artAuto switch): the gate's whitelist checks, the switch gating, the pilots' decisions
+  // «Надеть в игре» with an artifact: the plan's artifact, the hero screen's artifact fields on fake tables, the steps, the frames, the pilot and the gate (src/ArtEquip.cs)
+  static void ArtEquipTests() {
+    Console.WriteLine("Equip plan with an artifact (plan reader, hero screen fields, steps, frames, pilot, gate)");
+    // --- the plan: the artifact rides on the reply (the site sends it only to an app that asked with art=1)
+    string pj = "{\"ok\":true,\"plans\":[{\"id\":\"p1\",\"heroUid\":214700000,\"heroName\":\"Hero\",\"createdAt\":\"2026-10-17T10:00:00Z\",\"items\":[{\"slot\":0,\"uid\":11,\"name\":\"Sword\"}]ART}]}";
+    var pr = PlansClient.Interpret(200, pj.Replace("ART", ",\"artifact\":{\"uid\":9005,\"id\":3012}"), true);
+    Check(pr.Status == PlansStatus.Ok && pr.Plans.Count == 1 && pr.Plans[0].Artifact != null && pr.Plans[0].Artifact.Uid == 9005 && pr.Plans[0].Artifact.Id == 3012 && pr.Plans[0].Artifact.Name == "", "art plan: {uid, id} of the artifact is read");
+    pr = PlansClient.Interpret(200, pj.Replace("ART", ",\"artifact\":{\"uid\":9005,\"id\":3012,\"name\":\"Ring\"}"), true);
+    Check(pr.Plans[0].Artifact != null && pr.Plans[0].Artifact.Name == "Ring", "art plan: an optional name is kept");
+    pr = PlansClient.Interpret(200, pj.Replace("ART", ""), true);
+    Check(pr.Plans.Count == 1 && pr.Plans[0].Artifact == null, "art plan: no artifact -> none (a plan of an older site)");
+    foreach (var bad in new[] { ",\"artifact\":{\"uid\":0,\"id\":1}", ",\"artifact\":{\"uid\":\"x\",\"id\":1}", ",\"artifact\":7", ",\"artifact\":null", ",\"artifact\":{\"uid\":-5,\"id\":1}" }) {
+      pr = PlansClient.Interpret(200, pj.Replace("ART", bad), true);
+      Check(pr.Plans.Count == 1 && pr.Plans[0].Artifact == null, "art plan: an odd artifact " + bad + " is ignored, the gear plan stays");
+    }
+    string src = File.ReadAllText(Path.Combine("src", "PlansClient.cs"));
+    Check(src.Contains("&art=1"), "art plan: the app asks the site with art=1");
+
+    // --- the hero screen's artifact fields on fake script tables
+    var m = new FakeLua(1 << 20); RFX.TestMemory = m; RFX.ForgetLive(); RFX.ArtScanMs = 0;
+    const long hero = 214700000, other = 200100000;
+    try {
+      var st = new FakeState(m);
+      Func<long, long, FTab> art = (uid, owner) => st.T("iItemUid", uid, "iItemId", 3000L + uid % 7, "iHeroId", owner);
+      Func<long[], long[], FTab> artsOf = (uids, owners) => {
+        var kv = new List<object>(); for (int i = 0; i < uids.Length; i++) { kv.Add(uids[i]); kv.Add(art(uids[i], owners[i])); }
+        return st.T("m_vArtifacts", st.T(kv.ToArray()), "class", st.T("__cname", "ArtifactData"));
+      };
+      var arts = artsOf(new long[] { 9001, 9002, 9003, 9004 }, new long[] { 0, other, hero, 0 });
+      var artsNone = artsOf(new long[] { 9001, 9002, 9004 }, new long[] { 0, other, 0 });
+      Func<object, object, FTab, FTab> form = (open, sel, rows) => {
+        var pd = new List<object> { 3L, 5L };
+        if (open != null) { pd.Add(10L); pd.Add(open); }
+        if (sel != null) { pd.Add(11L); pd.Add(sel); }
+        return st.T("m_PanelDatas", st.T(pd.ToArray()), "m_Panels", st.T("EquipArtifact", st.T("m_InfinityGridProxy", st.T("m_Data", rows))));
+      };
+      var rows = st.T(1L, art(9004, 0), 2L, art(9002, other), 3L, art(9001, 0), 4L, art(9003, hero));   // the list in screen order
+      var h = new HeroScreen { Hero = hero, FormOk = true, Tab = 7 };
+      RFX.ReadHeroArt(form(true, null, rows).A, arts.A, hero, 9002, h, null);
+      Check(h.ArtRead && h.ArtListOpen && h.ArtSel == 0, "art fields: [10] true = the list is open, [11] nil = nothing selected");
+      Eq("9004,9002,9001,9003", string.Join(",", h.ArtUids), "art fields: the list in screen order (m_Data)");
+      Check(h.ArtTargetOwner == other && h.ArtWorn == 9003, "art fields: the goal is worn by another hero (" + h.ArtTargetOwner + "), the hero wears 9003 (" + h.ArtWorn + ")");
+      h = new HeroScreen { Hero = hero, FormOk = true, Tab = 7 };
+      RFX.ReadHeroArt(form(true, 9002L, rows).A, arts.A, hero, 9002, h, null);
+      Check(h.ArtSel == 9002, "art fields: [11] = the selected artifact's uid");
+      h = new HeroScreen { Hero = hero, FormOk = true, Tab = 7 };
+      RFX.ReadHeroArt(form(true, 9002.0, rows).A, arts.A, hero, 9002, h, null);
+      Check(h.ArtSel == 9002, "art fields: a whole float uid is read");
+      // the list closed: nothing of the list is read, the owner comes from the account's table
+      h = new HeroScreen { Hero = hero, FormOk = true, Tab = 7 };
+      RFX.ReadHeroArt(form(null, null, rows).A, arts.A, hero, 9002, h, null);
+      Check(h.ArtRead && !h.ArtListOpen && h.ArtUids.Count == 0 && h.ArtTargetOwner == other && h.ArtWorn == 9003, "art fields: list closed -> no rows; owner and worn artifact from m_vArtifacts");
+      h = new HeroScreen { Hero = hero, FormOk = true, Tab = 7 };
+      RFX.ReadHeroArt(form(false, null, rows).A, arts.A, hero, 9002, h, null);
+      Check(!h.ArtListOpen, "art fields: [10] false = closed");
+      h = new HeroScreen { Hero = hero, FormOk = true, Tab = 7 };
+      RFX.ReadHeroArt(form(null, null, rows).A, artsNone.A, hero, 9002, h, null);
+      Check(h.ArtRead && h.ArtWorn == 0 && h.ArtTargetOwner == other, "art fields: the hero wears nothing -> worn 0 (the empty slot)");
+      // the goal worn by the hero: the owner is the hero (the step machine skips it)
+      h = new HeroScreen { Hero = hero, FormOk = true, Tab = 7 };
+      RFX.ReadHeroArt(form(null, null, rows).A, arts.A, hero, 9003, h, null);
+      Check(h.ArtTargetOwner == hero && h.ArtWorn == 9003, "art fields: the goal on the hero -> owner = hero");
+      // an artifact the account does not hold: unreadable, not 'free'
+      h = new HeroScreen { Hero = hero, FormOk = true, Tab = 7 };
+      RFX.ReadHeroArt(form(null, null, rows).A, arts.A, hero, 7777, h, null);
+      Check(!h.ArtRead && h.ArtTargetOwner == -1, "art fields: the goal is not in the account's table -> not read");
+      h = new HeroScreen { Hero = hero, FormOk = true, Tab = 3 };
+      RFX.ReadHeroArt(form(null, null, rows).A, arts.A, hero, 9002, h, null);
+      Check(h.ArtRead && h.ArtWorn == -1 && h.ArtTargetOwner == other, "art fields: on the gear tab the worn artifact is not looked for");
+      // a later read with the list open carries the worn artifact over and keeps the rows while the goal's row holds
+      var prev = new HeroScreen { Hero = hero, FormOk = true, Tab = 7, ArtWorn = 9003 };
+      h = new HeroScreen { Hero = hero, FormOk = true, Tab = 7 };
+      RFX.ReadHeroArt(form(true, null, rows).A, arts.A, hero, 9002, h, prev);
+      Check(h.ArtWorn == 9003, "art fields: the worn artifact is carried over while the list is open");
+      var prevRows = new HeroScreen(); prevRows.ArtListPtr = h.ArtListPtr; prevRows.ArtRows = h.ArtRows; prevRows.ArtUids.AddRange(h.ArtUids);
+      var h2 = new HeroScreen { Hero = hero, FormOk = true, Tab = 7 };
+      RFX.ReadHeroArt(form(true, null, rows).A, arts.A, hero, 9002, h2, prevRows);
+      Eq("9004,9002,9001,9003", string.Join(",", h2.ArtUids), "art fields: the same table and the goal's row verified -> the rows are reused");
+      var stale = new HeroScreen(); stale.ArtListPtr = prevRows.ArtListPtr; stale.ArtRows = prevRows.ArtRows; stale.ArtUids.AddRange(new long[] { 9002, 9004, 9001, 9003 });   // the goal moved
+      // a cache of the SAME table object is refused when the goal's row differs (the list was sorted)
+      stale.ArtListPtr = h.ArtListPtr;
+      var h4 = new HeroScreen { Hero = hero, FormOk = true, Tab = 7 };
+      RFX.ReadHeroArt(form(true, null, rows).A, arts.A, hero, 9002, h4, stale);
+      Eq("9004,9002,9001,9003", string.Join(",", h4.ArtUids), "art fields: the goal moved in the list -> the rows are read again");
+    } finally { RFX.TestMemory = null; RFX.ForgetLive(); RFX.ArtScanMs = 800; }
+
+    // --- the steps
+    var list = new RFX.ListRead { ScrollY = 0, Cols = 3, RowUnits = 116 };
+    Func<int, bool, long, long, long, long[], HeroScreen> HS = (tab, open, sel, owner, worn, uids) => {
+      var x = new HeroScreen { Hero = hero, FormOk = true, Tab = tab, ArtRead = true, ArtListOpen = open, ArtSel = sel, ArtTargetOwner = owner, ArtWorn = worn, ArtList = list };
+      if (uids != null) x.ArtUids.AddRange(uids);
+      return x;
+    };
+    var u5 = new long[] { 9001, 9002, 9003, 9004, 9005 };
+    Func<HeroScreen, bool, ArtEquipStep> N = (hs, popup) => ArtEquipGuide.Next(hero, 9004, hs, popup);
+    Check(N(null, false).Kind == ArtEquipKind.Hero && N(new HeroScreen { FormOk = false, Hero = hero }, false).Kind == ArtEquipKind.Hero, "art steps: no hero screen -> open the hero");
+    Check(N(new HeroScreen { FormOk = true, Hero = 5 }, false).Kind == ArtEquipKind.Hero, "art steps: another hero is open -> open the hero");
+    Check(N(HS(3, false, 0, hero, 9004, null), false).Kind == ArtEquipKind.Done && N(HS(7, true, 0, hero, 9004, u5), false).Kind == ArtEquipKind.Done, "art steps: the artifact is on the hero -> done, whatever the tab (skipped when it was there before)");
+    Check(N(new HeroScreen { Hero = hero, FormOk = true, Tab = 3, ArtRead = false }, false).Kind == ArtEquipKind.Wait, "art steps: the artifact data not read -> wait");
+    Check(N(HS(3, false, 0, 0, 9001, null), false).Kind == ArtEquipKind.ArtTab, "art steps: the gear tab -> the «Артефакт» tab");
+    var s1 = N(HS(7, false, 0, 0, 9001, null), false);
+    Check(s1.Kind == ArtEquipKind.OpenList && s1.HasWorn && s1.Name == "open", "art steps: the tab is on, the hero wears one -> the worn card's button");
+    var s2 = N(HS(7, false, 0, 0, 0, null), false);
+    Check(s2.Kind == ArtEquipKind.OpenList && !s2.HasWorn && s2.Name == "openAdd", "art steps: an empty slot -> the «+»");
+    Check(N(HS(7, false, 0, 0, -1, null), false).Kind == ArtEquipKind.Wait, "art steps: the worn artifact unknown -> wait (no guess between the two buttons)");
+    var s3 = N(HS(7, true, 0, other, 9001, u5), false);
+    Check(s3.Kind == ArtEquipKind.PickCell && s3.Pos == 4 && s3.Key == "PickCell:4", "art steps: the list is open -> the artifact's cell, place 4");
+    Check(N(HS(7, true, 9001, other, 9001, u5), false).Kind == ArtEquipKind.PickCell, "art steps: another artifact selected -> pick the right one");
+    var s4 = N(HS(7, true, 9004, other, 9001, u5), false);
+    Check(s4.Kind == ArtEquipKind.PressReplace && s4.HasWorn && s4.Name == "replace", "art steps: its card is open -> «Заменить»");
+    Check(N(HS(7, true, 9004, other, 0, u5), false).Name == "equip", "art steps: the hero wears none -> «Надеть»");
+    Check(N(HS(7, true, 9004, other, 9001, u5), true).Kind == ArtEquipKind.ConfirmTakeOver, "art steps: the pop-up with the artifact selected -> its «Заменить»");
+    Check(N(HS(7, true, 9001, other, 9001, u5), true).Kind == ArtEquipKind.Wait, "art steps: a pop-up with another artifact selected -> wait (not ours)");
+    Check(N(HS(7, true, 0, other, 9001, new long[] { 9001, 9002 }), false).Kind == ArtEquipKind.NotInList, "art steps: the list has no such artifact -> the player's filter");
+    Check(N(HS(7, true, 0, other, 9001, new long[0]), false).Kind == ArtEquipKind.Wait, "art steps: the list is still empty -> wait (it fills after the panel slides in)");
+
+    // --- the frames: the built-in numbers (no geometry) and the site's file
+    double Wd = 1136, Hd = 640, U = Ui.Unit(Wd, Hd);
+    var tabF = ArtEquipFrames.For(N(HS(3, false, 0, 0, 9001, null), false), null, null, Wd, Hd, U);
+    Check(tabF != null && Math.Abs(tabF.Mark.X - 1030) <= 1.5 && Math.Abs(tabF.Mark.Y - 478) <= 1.5 && Math.Abs(tabF.Mark.W - 106) <= 1.5 && Math.Abs(tabF.Mark.H - 80) <= 1.5, "art frames: the «Артефакт» tab 1030..1136 x 478..558");
+    var openF = ArtEquipFrames.For(s1, null, null, Wd, Hd, U); var addF = ArtEquipFrames.For(s2, null, null, Wd, Hd, U);
+    Check(openF != null && Math.Abs(openF.Mark.X - 1072) <= 1.5 && Math.Abs(openF.Mark.Y - 126) <= 1.5 && Math.Abs(openF.Mark.W - 43) <= 1.5, "art frames: the worn card's button 1072..1115 x 126..168");
+    Check(addF != null && Math.Abs(addF.Mark.X - 939) <= 1.5 && Math.Abs(addF.Mark.Y - 64) <= 1.5 && Math.Abs(addF.Mark.W - 78) <= 1.5 && Math.Abs(addF.Mark.H - 104) <= 1.5, "art frames: the empty slot's «+» 939..1017 x 64..169");
+    var repF = ArtEquipFrames.For(s4, null, null, Wd, Hd, U);
+    Check(repF != null && Math.Abs(repF.Mark.X - 450) <= 1.5 && Math.Abs(repF.Mark.Y - 549.6) <= 1.5 && Math.Abs(repF.Mark.W - 142) <= 1.5 && Math.Abs(repF.Mark.H - 53) <= 1.5, "art frames: the card's «Заменить» 450..592 x 549.6..602.6");
+    var popF = ArtEquipFrames.For(N(HS(7, true, 9004, other, 9001, u5), true), null, null, Wd, Hd, U);
+    Check(popF != null && Math.Abs(popF.Mark.X - 570) <= 1.5 && Math.Abs(popF.Mark.Y - 356) <= 1.5 && Math.Abs(popF.Mark.W - 231) <= 1.5 && Math.Abs(popF.Mark.H - 76) <= 1.5, "art frames: the pop-up's «Заменить» 570..801 x 356..432");
+    var cellF = ArtEquipFrames.For(s3, HS(7, true, 0, other, 9001, u5), null, Wd, Hd, U);
+    double slotW = 245.0 / 3;   // the list's viewport 18.5..263.5
+    Check(cellF != null && cellF.Mark.Kind == "box" && Math.Abs(cellF.Mark.X - (18.5 + (slotW - 80) / 2)) <= 1.5 && Math.Abs(cellF.Mark.Y - (103 + 116 + 3)) <= 1.5, "art frames: place 4 is column 1 of row 2");
+    var cell1 = ArtEquipFrames.For(new ArtEquipStep { Kind = ArtEquipKind.PickCell, Pos = 1 }, HS(7, true, 0, other, 9001, u5), null, Wd, Hd, U);
+    var cell5 = ArtEquipFrames.For(new ArtEquipStep { Kind = ArtEquipKind.PickCell, Pos = 5 }, HS(7, true, 0, other, 9001, u5), null, Wd, Hd, U);
+    Check(cell1 != null && cell5 != null && cell1.Mark.Kind == "box" && Math.Abs(cell1.Mark.X - (18.5 + (slotW - 80) / 2)) <= 1.5 && Math.Abs(cell1.Mark.Y - (103 + 3)) <= 1.5, "art frames: place 1 is column 1, row 1 of the list viewport");
+    Check(cell5 != null && Math.Abs(cell5.Mark.X - (18.5 + slotW + (slotW - 80) / 2)) <= 1.5 && Math.Abs(cell5.Mark.Y - (103 + 116 + 3)) <= 1.5, "art frames: place 5 is column 2, row 2 (3 columns, 116 per row)");
+    var scrolled = HS(7, true, 0, other, 9001, u5); scrolled.ArtList = new RFX.ListRead { ScrollY = 116, Cols = 3, RowUnits = 116 };
+    var cellS = ArtEquipFrames.For(new ArtEquipStep { Kind = ArtEquipKind.PickCell, Pos = 5 }, scrolled, null, Wd, Hd, U);
+    Check(cellS != null && Math.Abs((cell5.Mark.Y - cellS.Mark.Y) - 116) <= 1.01, "art frames: the cell follows the list's scroll exactly");
+    var far = new long[60]; for (int i = 0; i < far.Length; i++) far[i] = 8000 + i;
+    var farH = HS(7, true, 0, other, 9001, far);
+    var farF = ArtEquipFrames.For(new ArtEquipStep { Kind = ArtEquipKind.PickCell, Pos = 55 }, farH, null, Wd, Hd, U);
+    Check(farF != null && farF.Mark.Kind == "down" && farF.Mark.Rows >= 1 && farF.ScrollPx < 0, "art frames: a cell far below -> the pill at the list's edge, the list is to be dragged up");
+    var noScroll = HS(7, true, 0, other, 9001, u5); noScroll.ArtList = null;
+    Check(ArtEquipFrames.For(s3, noScroll, null, Wd, Hd, U) == null, "art frames: the list's scroll unreadable -> no cell frame (the plate stays)");
+    string webGeo = Path.Combine("..", "wardsage-web", "data", "app-geometry", "1.6.39.829.1.json");
+    if (File.Exists(webGeo)) {
+      var rg = GameGeometry.Parse(File.ReadAllText(webGeo, Encoding.UTF8), "1.6.39.829.1");
+      Check(rg != null && rg.Has("hero.artifactTab") && rg.Has("hero.artOpenList") && rg.Has("hero.artAdd") && rg.Has("hero.artList") && rg.Has("hero.artReplace") && rg.Has("popup.equipReplace") && rg.Has("hero.artSell") && rg.Has("hero.artQuickEquip"), "art frames: the site's geometry file has every key");
+      if (rg != null) {
+        Check(rg.Grid("hero.artList") != null && rg.Grid("hero.artList").Cols == 3 && Math.Abs(rg.Grid("hero.artList").LineSize - 116) < 0.01, "art frames: the file's list grid is 3 x 116");
+        foreach (var kv in new[] { ArtEquipFrames.KeyTab, ArtEquipFrames.KeyOpenList, ArtEquipFrames.KeyAdd, ArtEquipFrames.KeyList, ArtEquipFrames.KeyReplace, ArtEquipFrames.KeyPopup, ArtEquipFrames.KeySell, ArtEquipFrames.KeyQuick }) {
+          var a = rg.Rect(kv, Wd, Hd, U); var b = ArtFrames.Rect(null, kv, Wd, Hd, U);
+          Check(a != null && b != null && Math.Abs(a.X - b.X) <= 0.6 && Math.Abs(a.Y - b.Y) <= 0.6 && Math.Abs(a.W - b.W) <= 0.6 && Math.Abs(a.H - b.H) <= 0.6, "art frames: " + kv + " in the file = the built-in numbers");
+        }
+        var fr2 = ArtEquipFrames.For(s4, null, rg, Wd, Hd, U);
+        Check(fr2 != null && Math.Abs(fr2.Mark.X - repF.Mark.X) <= 1, "art frames: «Заменить» from the file");
+      }
+    }
+    // the buttons never pressed
+    Check(ArtEquipFrames.OnNeverButton(null, 596, 188, Wd, Hd, U) && ArtEquipFrames.OnNeverButton(null, 900, 600, Wd, Hd, U), "art never: the card's sell icon and «Быстро надеть» are never pressed");
+    Check(!ArtEquipFrames.OnNeverButton(null, 521, 576, Wd, Hd, U) && !ArtEquipFrames.OnNeverButton(null, 1093, 147, Wd, Hd, U) && !ArtEquipFrames.OnNeverButton(null, 1083, 518, Wd, Hd, U), "art never: «Заменить», the list button and the tab are not on them");
+    foreach (var step in new[] { s1, s2, s4, N(HS(7, true, 9004, other, 9001, u5), true), N(HS(3, false, 0, 0, 9001, null), false) }) {
+      var fr = ArtEquipFrames.For(step, null, null, Wd, Hd, U);
+      Check(fr != null && !ArtEquipFrames.OnNeverButton(null, fr.Mark.X + fr.Mark.W / 2.0, fr.Mark.Y + fr.Mark.H / 2.0, Wd, Hd, U), "art never: the centre of the " + step.Kind + " frame is not on a never-pressed button");
+    }
+
+    // --- the pilot
+    Func<ArtEquipStep, HeroScreen, bool, bool, long, ArtEquipView> V = (step, hs, autoConfirm, btnSeen, now) => new ArtEquipView { NowMs = now, Foreground = true, W = Wd, H = Hd, U = U, Step = step, Hero = hs, AutoConfirm = autoConfirm, ReplaceBtnSeen = btnSeen };
+    var hTab = HS(3, false, 0, 0, 9001, null);
+    var p1 = new ArtEquipPilot(); var m1 = p1.Step(V(N(hTab, false), hTab, false, false, 0));
+    Check(m1.State == "work" && m1.Todo == ArtEquipTodo.Tab && m1.Action.Kind == AutoKind.Click && Math.Abs(m1.Action.X - 1083) <= 1.5 && Math.Abs(m1.Action.Y - 518) <= 1.5, "art pilot: the tab -> a click on the tab's centre");
+    Check(p1.Step(V(N(hTab, false), hTab, false, false, 100)).Action.Kind == AutoKind.None, "art pilot: a second click waits for the first one's effect");
+    var hOpen = HS(7, false, 0, 0, 9001, null);
+    var p2 = new ArtEquipPilot(); var m2 = p2.Step(V(N(hOpen, false), hOpen, false, false, 0));
+    Check(m2.Todo == ArtEquipTodo.OpenList && Math.Abs(m2.Action.X - 1093.5) <= 1.5 && Math.Abs(m2.Action.Y - 147) <= 1.5, "art pilot: the worn card's button (centre 1093.5, 147)");
+    var hEmpty = HS(7, false, 0, 0, 0, null);
+    var p2b = new ArtEquipPilot(); var m2b = p2b.Step(V(N(hEmpty, false), hEmpty, false, false, 0));
+    Check(m2b.Todo == ArtEquipTodo.OpenList && Math.Abs(m2b.Action.X - 978) <= 1.5 && Math.Abs(m2b.Action.Y - 116.5) <= 1.5, "art pilot: the empty slot's «+» (centre 978, 116.5)");
+    var hPick = HS(7, true, 0, other, 9001, u5);
+    var p3 = new ArtEquipPilot(); var m3 = p3.Step(V(N(hPick, false), hPick, false, false, 0));
+    var f4 = ArtEquipFrames.For(N(hPick, false), hPick, null, Wd, Hd, U);
+    Check(m3.Todo == ArtEquipTodo.Cell && m3.Action.Kind == AutoKind.Click && Math.Abs(m3.Action.X - (f4.Mark.X + f4.Mark.W / 2.0)) <= 1 && Math.Abs(m3.Action.Y - (f4.Mark.Y + f4.Mark.H / 2.0)) <= 1, "art pilot: the artifact's cell in view -> a click on its centre");
+    var hFar = HS(7, true, 0, other, 9001, far); var sFar = new ArtEquipStep { Kind = ArtEquipKind.PickCell, Pos = 55 };
+    var p4 = new ArtEquipPilot(); var m4 = p4.Step(V(sFar, hFar, false, false, 0));
+    Check(m4.Todo == ArtEquipTodo.Cell && m4.Action.Kind == AutoKind.Drag && m4.Action.DY < 0 && m4.Action.X > 18 && m4.Action.X < 264, "art pilot: a cell far below -> a drag up inside the list (" + m4.Action.DY + ")");
+    // a list that does not move on two drags -> stop
+    var p4b = new ArtEquipPilot(); long tt = 0; ArtEquipMove last = null;
+    for (int i = 0; i < 6 && !p4b.Stopped; i++) { last = p4b.Step(V(sFar, hFar, false, false, tt)); tt += 2500; }
+    Check(p4b.Stopped && p4b.Reason == "lost", "art pilot: the list does not move on the drags -> stop 'lost'");
+    var hRep = HS(7, true, 9004, other, 9001, u5); var sRep = N(hRep, false);
+    var p5 = new ArtEquipPilot(); var m5 = p5.Step(V(sRep, hRep, false, true, 0));
+    Check(m5.State == "hint" && m5.Why == "player" && m5.Action.Kind == AutoKind.None, "art pilot: «Заменить» without the player's auto confirm is the player's");
+    var m5b = p5.Step(V(sRep, hRep, true, false, 10)); Check(m5b.State == "hint" && m5b.Why == "button", "art pilot: «Заменить» not seen as the game's blue button -> no click");
+    var m5c = p5.Step(V(sRep, hRep, true, true, 20));
+    Check(m5c.Todo == ArtEquipTodo.Replace && Math.Abs(m5c.Action.X - 521) <= 1.5 && Math.Abs(m5c.Action.Y - 576.1) <= 1.5, "art pilot: with the auto confirm and the button seen -> «Заменить» (centre 521, 576)");
+    var hPop = HS(7, true, 9004, other, 9001, u5); var sPop = N(hPop, true);
+    var p6 = new ArtEquipPilot(); var m6 = p6.Step(V(sPop, hPop, false, false, 0));
+    Check(m6.State == "hint" && m6.Why == "player", "art pilot: the pop-up's «Заменить» without the auto confirm is the player's");
+    var m6b = p6.Step(V(sPop, hPop, true, false, 10));
+    Check(m6b.Todo == ArtEquipTodo.Confirm && Math.Abs(m6b.Action.X - 685.5) <= 1.5 && Math.Abs(m6b.Action.Y - 394) <= 1.5, "art pilot: the pop-up's «Заменить» (centre 685.5, 394)");
+    Check(new ArtEquipPilot().Step(V(N(HS(7, true, 0, other, 9001, new long[] { 9001 }), false), HS(7, true, 0, other, 9001, new long[] { 9001 }), true, true, 0)).State == "hint", "art pilot: the artifact not in the list -> hints only");
+    var pb = new ArtEquipPilot(); var vb = V(N(hTab, false), hTab, false, false, 0); vb.Foreground = false;
+    Check(pb.Step(vb).State == "background", "art pilot: the game is not in front -> waits");
+    var pu = new ArtEquipPilot(); var vu = V(N(hTab, false), hTab, false, false, 0); vu.UserBusy = true;
+    Check(pu.Step(vu).State == "paused", "art pilot: the player moves the mouse -> waits");
+    var ps = new ArtEquipPilot(); long ts = 0; int n = 0;
+    while (!ps.Stopped && n++ < 20) { ps.Step(V(N(hTab, false), hTab, false, false, ts)); ts += 2000; }
+    Check(ps.Stopped && ps.Reason == "stuck", "art pilot: the same step again and again -> stop 'stuck'");
+    ps.Reset(); Check(!ps.Stopped, "art pilot: a new run starts again");
+
+    // --- the gate: the Equip owner's artifact targets
+    Func<HeroScreen, bool, ScreenState> SC = (hs, popup) => ScreenState.Classify(new ScreenInputs { Hero = hs, ModalExtra = popup, ModalExtraWhy = popup ? ClickGate.ModalEquipPopup : "" }, 0);
+    Func<ClickTarget, ClickRequest> RQ = tg => new ClickRequest { Owner = ClickOwner.Equip, Target = tg, AutoOn = true, Front = true, Hero = hero, ArtUid = 9004, CellOk = new HashSet<long> { 9004 } };
+    Func<ClickGate> GOn = () => new ClickGate { ArtEquipAuto = true };
+    var gOff = new ClickGate(); var rOff = gOff.Check(RQ(ClickTarget.ArtHeroTab), SC(hTab, false), 0);
+    Check(!rOff.Allowed && gOff.HaltReason(ClickOwner.Equip) == "artifact", "art gate: the switch / the auto click off -> hints only (" + rOff.Reason + ")");
+    Check(GOn().Check(RQ(ClickTarget.ArtHeroTab), SC(hTab, false), 0).Allowed, "art gate: the tab from the gear tab -> allowed");
+    var g = GOn(); var r = g.Check(RQ(ClickTarget.ArtHeroTab), SC(hOpen, false), 0);
+    Check(!r.Allowed && r.Reason == "screen", "art gate: the tab while on it already -> stop");
+    g = GOn(); r = g.Check(RQ(ClickTarget.ArtHeroTab), SC(HS(3, false, 0, hero, 9004, null), false), 0);
+    Check(!r.Allowed && r.Reason == "screen", "art gate: the artifact is on the hero already -> stop");
+    g = GOn(); var rr0 = RQ(ClickTarget.ArtHeroTab); rr0.Hero = 5;
+    r = g.Check(rr0, SC(hTab, false), 0); Check(!r.Allowed && r.Reason == "screen", "art gate: the screen shows another hero -> stop");
+    g = GOn(); r = g.Check(RQ(ClickTarget.ArtHeroTab), SC(new HeroScreen { Hero = hero, FormOk = true, Tab = 3, ArtRead = false }, false), 0);
+    Check(r.Verdict == GateVerdict.Wait, "art gate: the artifact fields unreadable -> waited for");
+    Check(GOn().Check(RQ(ClickTarget.ArtOpenList), SC(hOpen, false), 0).Allowed, "art gate: the list button on the artifact tab with the list closed -> allowed");
+    g = GOn(); r = g.Check(RQ(ClickTarget.ArtOpenList), SC(hTab, false), 0); Check(!r.Allowed && r.Reason == "screen", "art gate: the list button on the gear tab -> stop");
+    g = GOn(); r = g.Check(RQ(ClickTarget.ArtOpenList), SC(hPick, false), 0); Check(!r.Allowed && r.Reason == "screen", "art gate: the list button with the list open -> stop");
+    // the cell: the uid under the click is the plan's
+    Func<long, ClickRequest> CellQ = uid => { var q = RQ(ClickTarget.ArtHeroCell); q.CellUid = uid; return q; };
+    Check(GOn().Check(CellQ(9004), SC(hPick, false), 0).Allowed, "art gate: the cell of the plan's artifact -> allowed");
+    g = GOn(); r = g.Check(CellQ(9003), SC(hPick, false), 0); Check(!r.Allowed && r.Reason == "cell", "art gate: a neighbour's cell -> stop");
+    g = GOn(); r = g.Check(CellQ(0), SC(hPick, false), 0); Check(!r.Allowed && r.Reason == "cell", "art gate: the cell under the click not worked out -> stop");
+    g = GOn(); r = g.Check(CellQ(9004), SC(hOpen, false), 0); Check(!r.Allowed && r.Reason == "screen", "art gate: a cell click with the list closed -> stop");
+    g = GOn(); r = g.Check(CellQ(9004), SC(HS(7, true, 9004, other, 9001, u5), false), 0); Check(r.Verdict == GateVerdict.Wait, "art gate: the artifact is selected already -> nothing to click");
+    Check(GOn().Check(RQ(ClickTarget.ArtHeroDrag), SC(hPick, false), 0).Allowed, "art gate: scrolling the open list -> allowed");
+    g = GOn(); r = g.Check(RQ(ClickTarget.ArtHeroDrag), SC(hOpen, false), 0); Check(!r.Allowed && r.Reason == "screen", "art gate: scrolling with the list closed -> stop");
+    // «Заменить» of the card: the plan's artifact selected
+    Check(GOn().Check(RQ(ClickTarget.ArtReplace), SC(hRep, false), 0).Allowed, "art gate: «Заменить» with the plan's artifact selected -> allowed");
+    g = GOn(); r = g.Check(RQ(ClickTarget.ArtReplace), SC(HS(7, true, 9001, other, 9001, u5), false), 0); Check(!r.Allowed && r.Reason == "cell", "art gate: «Заменить» of another artifact's card -> stop");
+    g = GOn(); r = g.Check(RQ(ClickTarget.ArtReplace), SC(hPick, false), 0); Check(!r.Allowed && r.Reason == "cell", "art gate: «Заменить» with nothing selected -> stop");
+    g = GOn(); r = g.Check(RQ(ClickTarget.ArtReplace), SC(hRep, true), 0); Check(!r.Allowed && r.Reason == "modal", "art gate: «Заменить» of the card under the pop-up -> stop");
+    // the pop-up's «Заменить»
+    Check(GOn().Check(RQ(ClickTarget.ArtTakeOverConfirm), SC(hRep, true), 0).Allowed, "art gate: the pop-up of the plan's artifact (worn by another hero) -> its «Заменить» allowed");
+    g = GOn(); r = g.Check(RQ(ClickTarget.ArtTakeOverConfirm), SC(hRep, false), 0); Check(!r.Allowed && r.Reason == "modal", "art gate: no pop-up -> stop");
+    g = GOn(); r = g.Check(RQ(ClickTarget.ArtTakeOverConfirm), SC(HS(7, true, 9001, other, 9001, u5), true), 0); Check(!r.Allowed && r.Reason == "cell", "art gate: a pop-up while another artifact is selected -> stop");
+    g = GOn(); r = g.Check(RQ(ClickTarget.ArtTakeOverConfirm), SC(HS(7, true, 9004, 0, 9001, u5), true), 0); Check(!r.Allowed && r.Reason == "cell", "art gate: a pop-up for an artifact worn by nobody is not the expected one -> stop");
+    g = GOn(); r = g.Check(RQ(ClickTarget.ArtTakeOverConfirm), SC(new HeroScreen { Hero = hero, FormOk = true, Tab = 7, FilterOpen = true, ArtRead = true, ArtListOpen = true, ArtSel = 9004, ArtTargetOwner = other, ArtWorn = 9001 }, false), 0);
+    Check(!r.Allowed, "art gate: another pop-up (the hero filter) is not the artifact's");
+    // the other owners never click them
+    foreach (var tg in new[] { ClickTarget.ArtHeroTab, ClickTarget.ArtOpenList, ClickTarget.ArtHeroCell, ClickTarget.ArtHeroDrag, ClickTarget.ArtReplace, ClickTarget.ArtTakeOverConfirm }) {
+      foreach (var ow in new[] { ClickOwner.Locate, ClickOwner.Sell }) {
+        g = new ClickGate { ArtEquipAuto = true, ArtLocateAuto = true, ArtSellAuto = true };
+        var q = RQ(tg); q.Owner = ow; q.CellUid = 9004;
+        Check(!g.Check(q, SC(hRep, true), 0).Allowed, "art gate: " + ow + " never clicks " + tg);
+      }
+    }
+    // the effects
+    {
+      var rq = RQ(ClickTarget.ArtHeroTab); var gE = GOn();
+      gE.Arm(ClickOwner.Equip, ClickTarget.ArtHeroTab, ClickGate.Expect(rq, SC(hTab, false)), 0);
+      gE.Observe(SC(hTab, false), ClickGate.EffectMs + 20);
+      Check(gE.HaltReason(ClickOwner.Equip) == "nochange", "art gate: the tab does not switch within the time -> stop");
+      gE = GOn(); gE.Arm(ClickOwner.Equip, ClickTarget.ArtHeroTab, ClickGate.Expect(rq, SC(hTab, false)), 0); gE.Observe(SC(hOpen, false), 500);
+      Check(!gE.Pending(ClickOwner.Equip) && !gE.Halted(ClickOwner.Equip), "art gate: the tab is on -> done");
+      rq = RQ(ClickTarget.ArtOpenList); gE = GOn(); gE.Arm(ClickOwner.Equip, ClickTarget.ArtOpenList, ClickGate.Expect(rq, SC(hOpen, false)), 0); gE.Observe(SC(hPick, false), 600);
+      Check(!gE.Pending(ClickOwner.Equip), "art gate: the list opened -> done");
+      rq = CellQ(9004); gE = GOn(); gE.Arm(ClickOwner.Equip, ClickTarget.ArtHeroCell, ClickGate.Expect(rq, SC(hPick, false)), 0);
+      gE.Observe(SC(HS(7, true, 9003, other, 9001, u5), false), 500);
+      Check(gE.Pending(ClickOwner.Equip), "art gate: a neighbour got selected -> not the effect");
+      gE.Observe(SC(hRep, false), 900); Check(!gE.Pending(ClickOwner.Equip), "art gate: the plan's artifact selected -> done");
+      // «Заменить»: the pop-up appears (worn by another hero) or the artifact is on the hero
+      rq = RQ(ClickTarget.ArtReplace); gE = GOn(); gE.Arm(ClickOwner.Equip, ClickTarget.ArtReplace, ClickGate.Expect(rq, SC(hRep, false)), 0); gE.Observe(SC(hRep, true), 400);
+      Check(!gE.Pending(ClickOwner.Equip) && !gE.Halted(ClickOwner.Equip), "art gate: «Заменить» -> the pop-up opened -> done");
+      gE = GOn(); gE.Arm(ClickOwner.Equip, ClickTarget.ArtReplace, ClickGate.Expect(rq, SC(HS(7, true, 9004, 0, 9001, u5), false)), 0); gE.Observe(SC(HS(7, true, 9004, hero, 9004, u5), false), 400);
+      Check(!gE.Pending(ClickOwner.Equip), "art gate: «Заменить» of a free artifact -> on the hero -> done");
+      gE = GOn(); gE.Arm(ClickOwner.Equip, ClickTarget.ArtReplace, ClickGate.Expect(rq, SC(hRep, false)), 0); gE.Observe(SC(hRep, false), ClickGate.SlowEffectMs + 20);
+      Check(gE.HaltReason(ClickOwner.Equip) == "nochange", "art gate: «Заменить» changes nothing within the time -> stop");
+      rq = RQ(ClickTarget.ArtTakeOverConfirm); gE = GOn(); gE.Arm(ClickOwner.Equip, ClickTarget.ArtTakeOverConfirm, ClickGate.Expect(rq, SC(hRep, true)), 0);
+      gE.Observe(SC(HS(7, true, 9004, hero, 9004, u5), false), 1500);
+      Check(!gE.Pending(ClickOwner.Equip), "art gate: the pop-up's «Заменить» -> the artifact on the hero -> done");
+      gE = GOn(); gE.Arm(ClickOwner.Equip, ClickTarget.ArtTakeOverConfirm, ClickGate.Expect(rq, SC(hRep, true)), 0); gE.Observe(SC(hRep, true), ClickGate.SlowEffectMs + 20);
+      Check(gE.HaltReason(ClickOwner.Equip) == "nochange", "art gate: the pop-up stays -> stop");
+    }
+    string wl = ClickGate.WhitelistText(ClickOwner.Equip);
+    Check(wl.Contains("ArtHeroTab@HeroScreen") && wl.Contains("ArtTakeOverConfirm@HeroScreen") && !wl.Contains("ArtBulk") && !wl.Contains("ArtWorkshop"), "art gate: the equip owner's whitelist has the hero-screen artifact targets only");
+    foreach (var oo in new[] { ClickOwner.Locate, ClickOwner.Sell }) { string w2 = ClickGate.WhitelistText(oo); Check(!w2.Contains("ArtHero") && !w2.Contains("ArtOpenList") && !w2.Contains("ArtReplace") && !w2.Contains("ArtTakeOver"), oo + ": none of the equip owner's artifact targets"); }
+  }
+
   static void ArtAutoTests() {
     Console.WriteLine("Artifact flows with auto click (switch artAuto, gate whitelist, pilots)");
     // --- the switch: off until the site says true

@@ -2121,6 +2121,15 @@ namespace RealmForge {
     public int ClassCount;       // entries of its class column («Все» included), 0 = unknown
     public long[] ChosenCamps;   // factions the grid is filtered by now (empty = all)
     public bool ClassChosen;     // the grid is filtered by a class now (which one is not readable: game config objects)
+    // the «Артефакт» tab (read only while the host guides an artifact: RFX.SetArtGoal, src/ArtEquip.cs)
+    public bool ArtRead;         // the artifact fields below were read
+    public bool ArtListOpen;     // m_PanelDatas[10]: the artifact list is open
+    public long ArtSel;          // m_PanelDatas[11]: the artifact selected in the list (0 = none)
+    public List<long> ArtUids = new List<long>();   // the list in screen order
+    public ulong ArtListPtr; public uint ArtRows;    // the list's table and its length
+    public RFX.ListRead ArtList; // the list's scroll and grid (null = unreadable)
+    public long ArtTargetOwner = -1;   // iHeroId of the goal artifact (-1 = unknown)
+    public long ArtWorn = -1;    // the uid of the artifact the hero wears (0 = none, -1 = not read)
   }
 
   public static partial class RFX {
@@ -2351,6 +2360,8 @@ namespace RealmForge {
       h.SmallCards = Field(a.Form, "m_IsUseSmallCard", out v, out tt) && tt == T_BOOL && v != 0;
       ulong pd; int pdt;
       if (Field(a.Form, "m_PanelDatas", out pd, out pdt) && pdt == T_TABLE && IntKey(pd, 3, out v, out tt) && tt == T_INT) h.Part = (int)(long)v;
+      long artGoal = ArtGoalUid;
+      if (artGoal > 0) { var lt0 = live; ReadHeroArt(a.Form, lt0 != null ? lt0.ArtOwner : 0, ArtGoalHero, artGoal, h, prev); }
       ulong proxy, data; int t1, t2;
       if (!Field(a.Form, "m_InfinityGridProxy", out proxy, out t1) || t1 != T_TABLE || !Field(proxy, "m_Data", out data, out t2) || t2 != T_TABLE) return h;
       h.GridPtr = data;
@@ -2727,6 +2738,149 @@ namespace RealmForge {
         val = BitConverter.ToUInt64(nb, o); tt = BitConverter.ToInt32(nb, o + 8);
         return tt != T_NIL;
       }
+      return false;
+    }
+
+    // ---- the hero screen's «Артефакт» tab (READ ONLY; src/ArtEquip.cs holds the steps)
+    /// <summary>Form_CharactorMain.m_LastType of the «Артефакт» tab (gear is 3).</summary>
+    public const int HeroArtTab = 7;
+
+    /// <summary>The artifact the host guides (0 = none): the hero screen's artifact fields are read only while it is set.</summary>
+    public static volatile bool ArtGoalOn;
+    static long artGoalUid, artGoalHero;
+    public static long ArtGoalUid { get { return System.Threading.Interlocked.Read(ref artGoalUid); } }
+    public static long ArtGoalHero { get { return System.Threading.Interlocked.Read(ref artGoalHero); } }
+    public static void SetArtGoal(long hero, long uid) {
+      System.Threading.Interlocked.Exchange(ref artGoalHero, uid > 0 ? hero : 0);
+      System.Threading.Interlocked.Exchange(ref artGoalUid, uid > 0 && hero > 0 ? uid : 0);
+      ArtGoalOn = uid > 0 && hero > 0;
+    }
+
+    /// <summary>How long a scan of the account's artifacts (who wears what) is reused; tests set 0.</summary>
+    public static int ArtScanMs = 800;
+    static long artScanHero, artScanGoal, artScanWorn = -1, artScanOwner = -1; static int artScanAt; static bool artScanNeed;
+
+    /// <summary>The hero screen's artifact fields (READ ONLY) into <paramref name="h"/>: <paramref name="form"/> = Form_CharactorMain, <paramref name="arts"/> = the table that owns
+    /// m_vArtifacts (ArtifactData). Public for the tests (fake tables).
+    ///   form.m_PanelDatas[10]   the artifact list is open (true / the list)       [11]  the uid of the artifact selected in the list
+    ///   form.m_Panels.EquipArtifact.m_InfinityGridProxy.m_Data   the list in screen order (1-based tables with iItemUid / iHeroId)
+    ///   ArtifactData.m_vArtifacts   every artifact: iItemUid, iHeroId (the hero wearing it, 0 = free)</summary>
+    public static void ReadHeroArt(ulong form, ulong arts, long hero, long goal, HeroScreen h, HeroScreen prev) {
+      h.ArtRead = false; h.ArtListOpen = false; h.ArtSel = 0; h.ArtTargetOwner = -1; h.ArtWorn = -1;
+      ulong pd, v; int tt, pdt;
+      bool haveData = Field(form, "m_PanelDatas", out pd, out pdt) && pdt == T_TABLE;
+      if (haveData) {
+        if (IntKey(pd, 10, out v, out tt)) h.ArtListOpen = tt == T_TABLE || (tt == T_BOOL ? (v & 0xFFFFFFFF) != 0 : tt != T_NIL);
+        if (IntKey(pd, 11, out v, out tt)) {
+          if (tt == T_INT) h.ArtSel = (long)v;
+          else if (tt == T_FLT) { double d = BitConverter.Int64BitsToDouble((long)v); if (d == Math.Floor(d) && d > 0 && d < 9e15) h.ArtSel = (long)d; }
+          if (h.ArtSel < 0) h.ArtSel = 0;
+        }
+      }
+      long rowOwner = -1;
+      if (h.ArtListOpen) {
+        ulong panels, p, proxy, data; int t1, t2, t3, t4;
+        if (Field(form, "m_Panels", out panels, out t1) && t1 == T_TABLE && Field(panels, "EquipArtifact", out p, out t2) && t2 == T_TABLE) {
+          h.ArtList = ReadHeroArtList(p);
+          if (Field(p, "m_InfinityGridProxy", out proxy, out t3) && t3 == T_TABLE && Field(proxy, "m_Data", out data, out t4) && t4 == T_TABLE) {
+            h.ArtListPtr = data;
+            ReadHeroArtRows(data, goal, h, prev, out rowOwner);
+          }
+        }
+      }
+      // who wears the goal artifact now, and what the hero wears: the account's artifact table (a full pass only while the list is closed, throttled)
+      long owner = rowOwner, worn = -1;
+      // the worn artifact is looked for when the tab is on and the list is closed (which button opens it), and once with the list open; later it is carried over
+      bool needWorn = h.Tab == HeroArtTab && (!h.ArtListOpen || prev == null || prev.ArtWorn < 0 || prev.Hero != h.Hero);
+      if (!needWorn && prev != null && prev.Hero == h.Hero) worn = prev.ArtWorn;
+      if (arts != 0) {
+        ulong all; int at;
+        if (Field(arts, "m_vArtifacts", out all, out at) && at == T_TABLE) {
+          if (owner < 0) { ulong row; int rt; long ow; if (IntKey(all, goal, out row, out rt) && rt == T_TABLE && ArtInt(row, "iHeroId", out ow)) owner = ow; }
+          if (needWorn || owner < 0) { long sw; ScanArts(all, hero, goal, needWorn, ref owner, out sw); if (needWorn) worn = sw; }
+        }
+      }
+      h.ArtTargetOwner = owner;
+      h.ArtWorn = worn;
+      h.ArtRead = haveData && owner >= 0;
+    }
+
+    // the hero's worn artifact (the entry with iHeroId == hero) and, when the direct lookup failed, the goal's owner
+    static void ScanArts(ulong all, long hero, long goal, bool needWorn, ref long owner, out long worn) {
+      worn = -1;
+      int now = Environment.TickCount;
+      if (ArtScanMs > 0 && artScanHero == hero && artScanGoal == goal && artScanNeed == needWorn && now - artScanAt < ArtScanMs && now >= artScanAt) {
+        worn = artScanWorn; if (owner < 0) owner = artScanOwner;
+        return;
+      }
+      long w = needWorn ? 0 : -1, o = owner;
+      int n = 0;
+      foreach (var t in TableValues(all)) {
+        if (++n > 5000) break;
+        long hid, uid;
+        if (!ArtInt(t, "iHeroId", out hid)) continue;
+        if (!ArtInt(t, "iItemUid", out uid)) continue;
+        if (needWorn && hid == hero && w == 0 && uid > 0) w = uid;
+        if (o < 0 && uid == goal) o = hid;
+      }
+      worn = w; owner = o;
+      artScanHero = hero; artScanGoal = goal; artScanNeed = needWorn; artScanWorn = w; artScanOwner = o; artScanAt = now;
+    }
+
+    // the list's rows in screen order (uids). The same table object is reused while the list is unchanged: the previous reading is kept when the row count and
+    // the goal's row still hold (a sorted list moves the goal's row)
+    static void ReadHeroArtRows(ulong data, long goal, HeroScreen h, HeroScreen prev, out long goalOwner) {
+      goalOwner = -1;
+      var hd = Read(data, 56);
+      uint sizearray = hd != null && hd[8] == 5 ? BitConverter.ToUInt32(hd, 12) : 0;
+      if (prev != null && prev.ArtListPtr == data && prev.ArtRows == sizearray && prev.ArtUids.Count > 0) {
+        int gi = prev.ArtUids.IndexOf(goal);
+        bool ok = true;
+        if (gi >= 0) {
+          ulong row; int rt; long uid;
+          ok = IntKey(data, gi + 1, out row, out rt) && rt == T_TABLE && ArtInt(row, "iItemUid", out uid) && uid == goal;
+        }
+        if (ok) { h.ArtUids.AddRange(prev.ArtUids); h.ArtRows = prev.ArtRows; if (gi >= 0) goalOwner = GoalRowOwner(data, gi + 1); return; }
+      }
+      h.ArtRows = sizearray;
+      for (int i = 1; i <= 800; i++) {
+        ulong row; int rt; long uid;
+        if (!IntKey(data, i, out row, out rt) || rt != T_TABLE) break;
+        if (!ArtInt(row, "iItemUid", out uid)) uid = 0;
+        h.ArtUids.Add(uid);
+        if (uid == goal && uid > 0) { long ow; goalOwner = ArtInt(row, "iHeroId", out ow) ? ow : -1; }
+      }
+    }
+
+    static long GoalRowOwner(ulong data, int index) {
+      ulong row; int rt; long ow;
+      return IntKey(data, index, out row, out rt) && rt == T_TABLE && ArtInt(row, "iHeroId", out ow) ? ow : -1;
+    }
+
+    // the field names the list's scroll may be held under (the first that reads is kept)
+    static readonly string[] HeroArtScrollFields = { "m_List_ScrollRect", "m_ListArtifact_ScrollRect", "m_List_ScrollView", "m_List_Scroll", "m_ListArtifact_ScrollView" };
+    static readonly string[] HeroArtGridFields = { "m_List_InfinityGrid", "m_ListArtifact_InfinityGrid" };
+    static string heroArtScroll, heroArtGrid; static bool heroArtSaid;
+
+    /// <summary>The hero screen's artifact list (the panel's own scroll and grid); null when it cannot be read.</summary>
+    public static ListRead ReadHeroArtList(ulong panel) {
+      int pid = ListPid(); if (pid == 0) return null;
+      if (heroArtScroll != null) return ReadList(panel, heroArtScroll, heroArtGrid, pid);
+      foreach (var g in HeroArtGridFields)
+        foreach (var name in HeroArtScrollFields) {
+          var r = ReadList(panel, name, g, pid);
+          if (r != null) { heroArtScroll = name; heroArtGrid = g; L("hero artifact list: the scroll is bound as " + name + ", the grid as " + g); return r; }
+        }
+      if (!heroArtSaid) { heroArtSaid = true; L("hero artifact list: no scroll field read (tried " + string.Join(", ", HeroArtScrollFields) + ") - no frames on the cells"); }
+      return null;
+    }
+
+    // an integer field of a script table (an integer, or a float with a whole value)
+    static bool ArtInt(ulong t, string key, out long val) {
+      ulong v; int tt; val = 0;
+      if (!Field(t, key, out v, out tt)) return false;
+      if (tt == T_INT) { val = (long)v; return true; }
+      if (tt == T_FLT) { double d = BitConverter.Int64BitsToDouble((long)v); if (d == Math.Floor(d) && Math.Abs(d) < 1e15) { val = (long)d; return true; } }
       return false;
     }
   }
@@ -3445,6 +3599,7 @@ namespace RealmForge {
 // Contract (implemented by the site, lib/plans/handler.ts):
 //   GET  {site}/api/extractor/plans?lang=ru|en&artifacts=1        Authorization: Bearer <sync code>
 //        "artifacts=1" tells the site this app can guide an artifact promotion request (purpose "artPromote"); an older app never sends it and never gets one.
+//        "art=1" tells the site this app can also put an artifact on the hero: a plan may then carry  artifact:{uid, id[, name]}  (the artifact to wear after the 5 gear items).
 //        200 {ok:true, plans:[{id, heroUid, heroName, createdAt,
 //              items:[{slot, uid, slotName, name, setName, setId?, level, stars, mainStat, fromHeroUid, fromHeroName, icon,
 //                     cur:{uid, name, level, stars, icon}|null}]}]}
@@ -3499,12 +3654,20 @@ namespace RealmForge {
     public double Bar = -1;
   }
 
+  /// <summary>The artifact a plan also puts on the hero (site: "artifact":{uid, id}); the app guides it after the gear (src/ArtEquip.cs).</summary>
+  public sealed class PlanArtifact {
+    public long Uid;
+    public int Id;
+    public string Name = "";   // optional (the site may not send one)
+  }
+
   public sealed class Plan {
     public string Id;
     public long HeroUid;
     public string HeroName;
     public string CreatedAt;
     public List<PlanItem> Items = new List<PlanItem>();
+    public PlanArtifact Artifact;   // null: the plan has no artifact
   }
 
   /// <summary>The artifact of a "artPromote" request: what the app guides the player to (Inventory → «Артефакт» → the artifact → «Мастерская» → «Продвинуть» → the copy).</summary>
@@ -3547,7 +3710,7 @@ namespace RealmForge {
     const int MaxReplyBytes = 1024 * 1024;
 
     public static PlansResult List(string site, string code, string lang) {
-      return Request("GET", site + "/api/extractor/plans?lang=" + (lang == "en" ? "en" : "ru") + "&artifacts=1", code, null, true);
+      return Request("GET", site + "/api/extractor/plans?lang=" + (lang == "en" ? "en" : "ru") + "&artifacts=1&art=1", code, null, true);
     }
 
     public static PlansResult Finish(string site, string code, string planId, bool done) {
@@ -3683,6 +3846,11 @@ namespace RealmForge {
         if (it != null) p.Items.Add(it);
       }
       p.Items.Sort((a, b) => a.Slot.CompareTo(b.Slot));
+      object av;
+      if (o.TryGetValue("artifact", out av)) {
+        var ao = MiniJson.AsObject(av);
+        if (ao != null && Num(ao, "uid") > 0) p.Artifact = new PlanArtifact { Uid = Num(ao, "uid"), Id = (int)Math.Min(int.MaxValue, Num(ao, "id")), Name = Clip(MiniJson.GetString(ao, "name"), 100) ?? "" };
+      }
       return p.Items.Count > 0 ? p : null;
     }
 

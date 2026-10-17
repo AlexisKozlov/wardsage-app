@@ -11,6 +11,9 @@
 //   inv "artMode" / "artSel" (normal mode of the artifact tab); expect "artStep" (the guide's step key), "artFrame" (a frame for it exists), "artTodo" (what the promotion pilot decides: Hint | ArtTab | Cell | Workshop | PromoteTab | MatCell);
 //   the gate lets the Locate owner click only the Art* targets and only with "artAuto": true (the site's artAuto switch with the auto click on); "sell": {"artAuto": true} is the same for the cleanup.
 //   click cell kinds: "artbulk" (a card of the artifact tab's bulk-sale list; "untick": true takes a tick off), "artlist" (a card of the normal list), "mat" (an entry of the workshop's copy list; "itemOk": [...] = essence item ids)
+//   equip plan with an artifact ("request": {"purpose":"artEquip","hero","uid","artAuto","autoConfirm"}): hero.art = {"read","open","sel","uids","owner","worn","list"}, frame "popup": true = Form_EquipPopUp seen;
+//   expect "artEqStep" (ArtEquipStep.Key), "artEqTodo" (what the pilot decides, "btn": false = «Заменить» not seen as the blue button), "artEqFrame"; click cell kind "heroart" (a card of the hero screen's artifact list).
+//   "artAuto": true = the site's switch with the player's auto click (the gate lets the Equip owner click the hero-screen artifact targets).
 // Fixture: {"name", "request": {"purpose","uid","slot","hero"}, "cols", "frames": [{"t", "inv", "rs", "hero", "city", "expect", "clicks"}]}
 //   inv/rs/hero null or missing = that read failed. expect: screen, held, bulk, artBulk, brief (a substring of the screen's brief), sellStep (the storage
 //   cleanup's step key; needs "sell"), tab, modal, step, todo, why, halt (owner:reason), frame (a frame for the step exists). Optional "sell":
@@ -73,11 +76,18 @@ static class ScreenReplay {
 
   static HeroScreen HeroOf(Dictionary<string, object> d) {
     if (d == null) return null;
-    return new HeroScreen { Hero = (long)Num(d, "hero", 0), FormOk = Bool(d, "form", true), Tab = (int)Num(d, "tab", -1), Part = (int)Num(d, "part", -1), FilterOpen = Bool(d, "filter", false) };
+    var h = new HeroScreen { Hero = (long)Num(d, "hero", 0), FormOk = Bool(d, "form", true), Tab = (int)Num(d, "tab", -1), Part = (int)Num(d, "part", -1), FilterOpen = Bool(d, "filter", false) };
+    var a = O(Get(d, "art"));
+    if (a != null) {
+      h.ArtRead = Bool(a, "read", true); h.ArtListOpen = Bool(a, "open", false); h.ArtSel = (long)Num(a, "sel", 0); h.ArtUids.AddRange(Longs(Get(a, "uids")));
+      h.ArtTargetOwner = (long)Num(a, "owner", -1); h.ArtWorn = (long)Num(a, "worn", -1); h.ArtList = ListOf(O(Get(a, "list"))); h.ArtListPtr = 1;
+    }
+    return h;
   }
 
   static ScreenInputs InputsOf(Dictionary<string, object> f) {
-    return new ScreenInputs { Inv = InvOf(O(Get(f, "inv"))), Rs = RsOf(O(Get(f, "rs"))), Hero = HeroOf(O(Get(f, "hero"))), ArtWs = ArtWsOf(O(Get(f, "artWs"))), CitySeen = Bool(f, "city", false), CityForm = Get(f, "cityForm") is bool ? (bool?)Bool(f, "cityForm", false) : null };
+    return new ScreenInputs { Inv = InvOf(O(Get(f, "inv"))), Rs = RsOf(O(Get(f, "rs"))), Hero = HeroOf(O(Get(f, "hero"))), ArtWs = ArtWsOf(O(Get(f, "artWs"))), CitySeen = Bool(f, "city", false), CityForm = Get(f, "cityForm") is bool ? (bool?)Bool(f, "cityForm", false) : null,
+      ModalExtra = Bool(f, "popup", false), ModalExtraWhy = Bool(f, "popup", false) ? ClickGate.ModalEquipPopup : "" };
   }
 
   static string Verdict(GateResult r) { return r.Verdict + (r.Reason != "" && r.Reason != "ok" ? ":" + r.Reason : ""); }
@@ -91,13 +101,16 @@ static class ScreenReplay {
     var gate = new ClickGate { Sink = delegate (string s) { logs.Add(s); } };
     LocateRequest req = null; PlanItem item = null;
     var rq = O(Get(fx, "request"));
-    ArtPromoteInfo artReq = null;
+    ArtPromoteInfo artReq = null; long eqHero = 0, eqUid = 0; bool eqAutoConfirm = false;
     if (rq != null && Str(rq, "purpose") == "artPromote") {
       artReq = new ArtPromoteInfo { Uid = (long)Num(rq, "uid", 0), Need = (int)Num(rq, "need", 1), Cap = (int)Num(rq, "cap", 0), Level = (int)Num(rq, "level", 0), Via = Str(rq, "via") ?? "none" };
       artReq.Copies.AddRange(Longs(Get(rq, "copies")));
       req = new LocateRequest { Id = "r", Purpose = "artPromote", Art = artReq };
       bool artAutoOn = Bool(rq, "artAuto", false);
       gate.NoLocateClicks = !artAutoOn; gate.ArtLocateAuto = artAutoOn;
+    } else if (rq != null && Str(rq, "purpose") == "artEquip") {
+      eqHero = (long)Num(rq, "hero", 0); eqUid = (long)Num(rq, "uid", 0); eqAutoConfirm = Bool(rq, "autoConfirm", false);
+      gate.ArtEquipAuto = Bool(rq, "artAuto", false);
     } else if (rq != null) {
       item = new PlanItem { Uid = (long)Num(rq, "uid", 0), Slot = (int)Num(rq, "slot", 0), Quality = (int)Num(rq, "quality", 0) };
       req = new LocateRequest { Id = "r", Purpose = Str(rq, "purpose") ?? "recast", Item = item, HeroUid = (long)Num(rq, "hero", 0) };
@@ -150,6 +163,18 @@ static class ScreenReplay {
           var fr = ArtFrames.For(step, tracker.Inv, tracker.ArtWs, geo, W, H, U);
           Check((fr != null) == (bool)Get(ex, "artFrame"), at + ": art frame " + ((bool)Get(ex, "artFrame") ? "exists" : "is absent"));
         }
+      } else if (eqUid > 0) {
+        var es = ArtEquipGuide.Next(eqHero, eqUid, tracker.Hero, st.ModalOpen && st.ModalWhy == ClickGate.ModalEquipPopup);
+        string e;
+        if (ex != null && (e = Str(ex, "artEqStep")) != null) Check(es.Key == e, at + ": art equip step " + e + (es.Key == e ? "" : " (got " + es.Key + ")"));
+        if (ex != null && (e = Str(ex, "artEqTodo")) != null) {
+          var av = new ArtEquipView { NowMs = t, Foreground = true, W = W, H = H, U = U, Step = es, Hero = tracker.Hero, Geometry = geo, AutoConfirm = eqAutoConfirm, ReplaceBtnSeen = Bool(ex, "btn", true) };
+          string awhy; var atodo = ArtEquipPilot.Decide(av, out awhy);
+          Check(atodo.ToString() == e, at + ": art equip pilot decides " + e + (atodo.ToString() == e ? "" : " (got " + atodo + " " + awhy + ")"));
+          var am = new ArtEquipPilot().Step(av);
+          if (am.Action.Kind != AutoKind.None) Check(!ArtEquipFrames.OnNeverButton(geo, am.Action.X, am.Action.Y, W, H, U), at + ": the pilot's action is not on the sell icon / «Быстро надеть»");
+        }
+        if (ex != null && Get(ex, "artEqFrame") is bool) Check((ArtEquipFrames.For(es, tracker.Hero, geo, W, H, U) != null) == (bool)Get(ex, "artEqFrame"), at + ": art equip frame " + ((bool)Get(ex, "artEqFrame") ? "exists" : "is absent"));
       } else if (req != null) {
         step = LocateGuide.Next(req, tracker.Inv, tracker.Rs, tracker.Hero, cols, 1);
         var view = new LocateView { NowMs = t, Foreground = true, W = W, H = H, U = U, Step = step, Inv = tracker.Inv, Cols = cols,
@@ -178,6 +203,8 @@ static class ScreenReplay {
         var cr = new ClickRequest { Owner = owner, Target = target, AutoOn = Bool(c, "auto", true), Front = Bool(c, "front", true) };
         var ok = new HashSet<long>(); var okl = Longs(Get(c, "ok")); foreach (var u in okl) ok.Add(u);
         if (okl.Length == 0 && item != null) ok.Add(item.Uid);
+        if (okl.Length == 0 && eqUid > 0) ok.Add(eqUid);
+        cr.Hero = eqHero; cr.ArtUid = eqUid;
         cr.CellOk = ok; cr.Func = (int)Num(c, "func", 0); cr.Untick = Bool(c, "untick", false);
         var itemOk = new HashSet<int>(); foreach (var x in Ints(Get(c, "itemOk"))) itemOk.Add(x); cr.ItemOk = itemOk;
         if (Get(c, "cellIndex") is double) {
@@ -204,6 +231,11 @@ static class ScreenReplay {
             int ci = ClickGate.ListCardIndexAt(geo, "artifact.matList", fresh.ArtWs.MatList, 3, 114, cr.X, cr.Y, W, H, U);
             cr.MatIndex = ci >= 0 && ci < fresh.ArtWs.Mats.Count ? ci + 1 : 0;
             cr.CellUid = cr.MatIndex > 0 ? fresh.ArtWs.Mats[ci] : 0;
+          } else if (kind == "heroart" && fresh.HeroScr != null) {
+            var fr = ArtFrames.Cell(geo, "hero.artList", fresh.HeroScr.ArtList, idx, 3, 116, W, H, U);
+            cr.X = fr.Mark.X + fr.Mark.W / 2.0; cr.Y = fr.Mark.Y + fr.Mark.H / 2.0;
+            int ci = ClickGate.ListCardIndexAt(geo, "hero.artList", fresh.HeroScr.ArtList, 3, 116, cr.X, cr.Y, W, H, U);
+            cr.CellUid = ci >= 0 && ci < fresh.HeroScr.ArtUids.Count ? fresh.HeroScr.ArtUids[ci] : 0;
           } else if (kind == "ascend" && fresh.Rs != null) {
             var fr = FoundryPlace.Cell(geo, "ascend", fresh.Rs.AscendList, idx, W, H, U);
             cr.X = fr.Mark.X + fr.Mark.W / 2.0; cr.Y = fr.Mark.Y + fr.Mark.H / 2.0;
@@ -225,9 +257,9 @@ static class ScreenReplay {
   // ---- checks that need no fixture
   static void Static() {
     Console.WriteLine("whitelist");
-    // never a target: the game's final buttons and confirmations (the equip helper's «Заменить» is the one confirm, opt-in)
+    // never a target: the game's final buttons and confirmations (the equip helper's «Заменить» and the artifact steps' pop-up «Заменить» are the only confirms, opt-in)
     foreach (string nm in Enum.GetNames(typeof(ClickTarget))) {
-      bool bad = nm.Contains("Ascend") && nm.Contains("Button") || nm.Contains("Recast") || nm.Contains("Enhance") || nm.Contains("Sell") && !nm.Contains("Bulk") || nm.Contains("Confirm") && nm != "EquipConfirm" || nm.Contains("Upgrade");
+      bool bad = nm.Contains("Ascend") && nm.Contains("Button") || nm.Contains("Recast") || nm.Contains("Enhance") || nm.Contains("Sell") && !nm.Contains("Bulk") || nm.Contains("Confirm") && nm != "EquipConfirm" && nm != "ArtTakeOverConfirm" || nm.Contains("Upgrade");
       Check(!bad, "no target named " + nm + " is a final button");
     }
     foreach (ClickOwner o in Enum.GetValues(typeof(ClickOwner))) {
@@ -352,8 +384,9 @@ static class ScreenReplay {
       foreach (ClickTarget tg in Enum.GetValues(typeof(ClickTarget))) Check(ClickGate.KeyOf(tg) != key, "no target is placed by the never-pressed button " + key + " (" + tg + ")");
       foreach (ClickOwner o in Enum.GetValues(typeof(ClickOwner))) Check(!ClickGate.WhitelistText(o).Contains(key) && !ClickGate.WhitelistText(o).Contains("PromoteBtn"), o + " whitelist: " + key + " is in no whitelist");
     }
-    Check(!ClickGate.WhitelistText(ClickOwner.Locate).Contains("ArtBulk") && !ClickGate.WhitelistText(ClickOwner.Sell).Contains("ArtCell") && !ClickGate.WhitelistText(ClickOwner.Sell).Contains("ArtMat") && !ClickGate.WhitelistText(ClickOwner.Sell).Contains("ArtWorkshop") && !ClickGate.WhitelistText(ClickOwner.Equip).Contains("Art"),
-      "each owner has only its own artifact targets (the promotion no bulk sale, the cleanup no normal-list cell / workshop)");
+    Check(!ClickGate.WhitelistText(ClickOwner.Locate).Contains("ArtBulk") && !ClickGate.WhitelistText(ClickOwner.Sell).Contains("ArtCell") && !ClickGate.WhitelistText(ClickOwner.Sell).Contains("ArtMat") && !ClickGate.WhitelistText(ClickOwner.Sell).Contains("ArtWorkshop") && !ClickGate.WhitelistText(ClickOwner.Equip).Contains("ArtTab") && !ClickGate.WhitelistText(ClickOwner.Equip).Contains("ArtBulk") && !ClickGate.WhitelistText(ClickOwner.Equip).Contains("ArtCell") && !ClickGate.WhitelistText(ClickOwner.Equip).Contains("ArtMat") && !ClickGate.WhitelistText(ClickOwner.Equip).Contains("ArtWorkshop") && !ClickGate.WhitelistText(ClickOwner.Equip).Contains("ArtPromote"),
+      "each owner has only its own artifact targets (the promotion no bulk sale, the cleanup no normal-list cell / workshop, the equip helper only the hero screen's)");
+    Check(ClickGate.WhitelistText(ClickOwner.Equip).Contains("ArtTakeOverConfirm") && !ClickGate.WhitelistText(ClickOwner.Locate).Contains("ArtTakeOverConfirm") && !ClickGate.WhitelistText(ClickOwner.Sell).Contains("ArtReplace"), "the pop-up's «Заменить» of an artifact is the equip helper's alone");
   }
 
   static int Main(string[] args) {

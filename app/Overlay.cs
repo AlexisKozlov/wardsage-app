@@ -425,6 +425,30 @@ namespace RealmForge {
     /// <summary>The started plan's hero (0 = none): the pilot opens that hero's gear on the hero screen.</summary>
     public void SetRun(long hero) { if (hero == runHero) return; if (hero > 0) ResumeClicks(ClickOwner.Equip); bool was = PlanOn; runHero = hero; PlanStamp(was); Run(); }
 
+    // ---- «Надеть в игре» with an artifact (src/ArtEquip.cs): after the gear the guide puts the plan's artifact on the hero (hint kind "art")
+    long artHero, artUid;
+    readonly ArtEquipPilot artEq = new ArtEquipPilot();
+    ArtEquipStep artEqStep; string artEqSaid = "", artEqAutoSaid = "";
+    /// <summary>The artifact steps are on: the gear of the plan is done and the page asks for the artifact (hint "art" with the hero and the artifact).</summary>
+    bool ArtPhase { get { return hintKind == "art" && artUid != 0 && artHero != 0; } }
+
+    /// <summary>The plan's artifact the guide puts on <paramref name="hero"/> (uid 0 = none). The page sends it with the hint "art".</summary>
+    public void SetArtGoal(long hero, long uid) {
+      if (uid <= 0 || hero <= 0) { hero = 0; uid = 0; }
+      if (hero == artHero && uid == artUid) return;
+      artHero = hero; artUid = uid;
+      RFX.SetArtGoal(hero, uid);
+      artEq.Reset(); artEqStep = null; artEqSaid = ""; artEqAutoSaid = "";
+      Log.Write(uid != 0 ? "art equip: goal artifact " + uid + " for hero " + hero : "art equip: no goal");
+    }
+
+    /// <summary>The artifact step for the page's live event (JSON: uid, step name, done, owner); null = no goal.</summary>
+    public string ArtLive() {
+      var st = artEqStep;
+      if (!ArtPhase || st == null) return null;
+      return "{\"uid\":" + artUid + ",\"step\":\"" + st.Name + "\",\"done\":" + (st.Kind == ArtEquipKind.Done ? "true" : "false") + ",\"owner\":" + st.Owner + "}";
+    }
+
     /// <summary>Every pilot starts over (a new «Надеть»: after a failure the player may have fixed the game's screen).</summary>
     /// <summary>What the helper is at while a started plan runs (null = no plan, or a pilot is clicking / waiting for the
     /// player): the same key for long means the plan stands still.</summary>
@@ -433,10 +457,10 @@ namespace RealmForge {
 
     public string StallKey() {
       if (runHero <= 0 || autoSaid == "work" || autoSaid == "paused" || autoSaid == "background") return null;
-      return runHero + "|" + target + "|" + filterItem + "|" + filterKind + "|" + hintKind + "|" + autoSaid;
+      return runHero + "|" + target + "|" + filterItem + "|" + filterKind + "|" + hintKind + "|" + autoSaid + (ArtPhase && artEqStep != null ? "|" + artEqStep.Key : "");
     }
 
-    public void RestartPilots() { pilot.Reset(); fpilot.Reset(); hpilot.Reset(); ResumeClicks(ClickOwner.Equip); }
+    public void RestartPilots() { pilot.Reset(); fpilot.Reset(); hpilot.Reset(); artEq.Reset(); ResumeClicks(ClickOwner.Equip); }
 
     /// <summary>Item to highlight (0 = none).</summary>
     public void SetTarget(long uid) {
@@ -579,6 +603,7 @@ namespace RealmForge {
       if (timer.Interval != wantInterval) timer.Interval = wantInterval;
       ApplyArtGate();
       ReadScreens(NowMs());   // the game's screen, once per tick: every feature below takes it from here
+      UpdateArtStep();
       // the game is minimized / covered / alt-tabbed: nothing of ours stays over the desktop (the features go on reading)
       if (!GameDrawable()) { if (glow.Visible) glow.Hide(); HideTip(); drawnKey = null; }
       if (LocateWins) { TickLocate(); TickCancel(); return; }
@@ -602,6 +627,7 @@ namespace RealmForge {
       bool on = ArtAutoOn, artReq = locateReq != null && locateReq.Purpose == "artPromote";
       gate.NoSellClicks = sellArt && !on; gate.ArtSellAuto = sellArt && on;
       gate.NoLocateClicks = artReq && !on; gate.ArtLocateAuto = artReq && on;
+      gate.ArtEquipAuto = ArtPhase && on;
     }
 
     /// <summary>«Показать в игре» with auto click enabled for it: the stop button shows during the WHOLE run (not only while a click is being made),
@@ -960,6 +986,7 @@ namespace RealmForge {
         return;
       }
       if (hintKind == "hero") { TickHeroHint(o, W, H); return; }
+      if (hintKind == "art") { TickArtHint(o, W, H); return; }
       // the gear filter pop-up (its red ×) while an item is to be framed
       if (target != 0) {
         double fx = fg.X(fg.MainCloseX, W, H), fy = fg.Y(fg.CloseY, W, H);
@@ -1545,7 +1572,7 @@ namespace RealmForge {
         }
         var hv = new HeroView {
           NowMs = now, Foreground = v.Foreground, UserBusy = v.UserBusy, UserClicked = v.UserClicked, W = cr.R, H = Ui.Unit(cr.R, cr.B), ClientH = cr.B,
-          Plan = runHero, Hero = heroScreen.FormOk ? heroScreen.Hero : 0, Tab = heroScreen.Tab, Part = heroScreen.Part, SmallCards = heroScreen.SmallCards,
+          Plan = runHero, Hero = heroScreen.FormOk ? heroScreen.Hero : 0, Tab = ArtPhase ? HeroGeometry.GearTab : heroScreen.Tab, Part = heroScreen.Part, SmallCards = heroScreen.SmallCards,
           Heroes = heroScreen.Heroes,
           HeroesButton = heroScreen.Hero == 0 && v.Foreground && HeroesButtonSeen(o, cr.R, cr.B),
           FilterOpen = v.Foreground && HeroFilterSeen(o, cr.R, cr.B), ClassChosen = heroScreen.ClassChosen, FactionList = heroScreen.FactionList,
@@ -1565,6 +1592,8 @@ namespace RealmForge {
           return;
         }
       }
+      // the plan's gear is on: the artifact steps (the gear pilots below stay idle)
+      if (ArtPhase) { TickArtEquip(o, cr, v); return; }
       var fview = FilterViewNow(o, cr, now, v.Foreground, v.UserBusy);
       var fa = fpilot.Step(fview);
       LogFilter(fview);
@@ -2022,6 +2051,113 @@ namespace RealmForge {
       if (key != artKey) { artKey = key; var h = LocateChanged; if (h != null) h(step, null); }
     }
 
+    // ---- «Надеть в игре» with an artifact (src/ArtEquip.cs) ----
+
+    /// <summary>The step of this tick from the hero screen the readers gave (hint kind "art" only).</summary>
+    void UpdateArtStep() {
+      if (!ArtPhase) { artEqStep = null; return; }
+      var st = screens.Current;
+      bool popup = st != null && st.ModalOpen && st.ModalWhy == ClickGate.ModalEquipPopup;
+      var step = ArtEquipGuide.Next(artHero, artUid, screens.Hero, popup);
+      artEqStep = step;
+      var hs = screens.Hero;
+      string sig = step.Key + "|" + step.Why + "|" + step.Owner;
+      if (sig != artEqSaid) {
+        artEqSaid = sig;
+        Log.Write("art equip: step " + step.Key + (step.Why != "" ? " (" + step.Why + ")" : "") + " owner " + step.Owner + (hs != null ? " tab " + hs.Tab + " list " + hs.ArtListOpen + " sel " + hs.ArtSel + " rows " + hs.ArtUids.Count + " worn " + hs.ArtWorn + " scroll " + (hs.ArtList != null ? hs.ArtList.ToString() : "none") : " (no hero screen)") + (popup ? " POPUP" : ""));
+      }
+    }
+
+    /// <summary>Form_EquipPopUp («<artifact> в ячейке героя: <имя>», «Отмена» blue left, «Заменить» gold right) seen on the picture, only asked for while the artifact's card is open.</summary>
+    void FillArtPopup(ScreenInputs inp, IntPtr hwnd) {
+      var hs = inp.Hero;
+      if (!ArtPhase || hs == null || !hs.FormOk || hs.Tab != RFX.HeroArtTab || !hs.ArtListOpen || hs.ArtSel != artUid) return;
+      if (ArtPopupSeen(hwnd)) { inp.ModalExtra = true; inp.ModalExtraWhy = ClickGate.ModalEquipPopup; }
+    }
+
+    bool ArtPopupSeen(IntPtr hwnd) {
+      W32.RECT cr;
+      if (hwnd == IntPtr.Zero || !W32.GetClientRect(hwnd, out cr) || cr.B < 200) return false;
+      var o = new W32.POINT(0, 0); W32.ClientToScreen(hwnd, ref o);
+      double W = cr.R, H = cr.B, U = Ui.Unit(W, H);
+      var rr = ArtFrames.Rect(Geo.Current, ArtEquipFrames.KeyPopup, W, H, U);
+      if (rr == null) return false;
+      int x = (int)(rr.X + rr.W * 0.06), w = (int)(rr.W * 0.88), y = (int)(rr.Y + rr.H * 0.12), h = (int)(rr.H * 0.55);
+      int mx = (int)(W - x - w);   // the left button is the right one mirrored about the box's centre
+      var gold = Grab(o.X + x, o.Y + y, w, h); var blue = Grab(o.X + mx, o.Y + y, w, h);
+      return gold != null && blue != null && ButtonCheck.Share(gold, ButtonCheck.IsGold) >= ButtonCheck.MinShare && ButtonCheck.BlueShare(blue) >= ButtonCheck.MinShare;
+    }
+
+    Hl HlArtEq(LocateFrame lf, ArtEquipStep st, W32.POINT o) {
+      var g = Geo.Current;
+      if (lf.Target == "cell") return HlRound(o.X + lf.Mark.X, o.Y + lf.Mark.Y, lf.Mark.W, lf.Mark.H, true);
+      var ins = g != null ? g.Inset(lf.Target) : null; var sh = g != null ? g.Shape(lf.Target) : null;
+      var r = ins != null && lf.Raw != null ? new GeoRect { X = o.X + lf.Raw.X, Y = o.Y + lf.Raw.Y, W = lf.Raw.W, H = lf.Raw.H } : new GeoRect { X = o.X + lf.Mark.X, Y = o.Y + lf.Mark.Y, W = lf.Mark.W, H = lf.Mark.H };
+      return new Hl { Rect = r, Shape = sh, Inset = ins, Important = st.Kind == ArtEquipKind.PressReplace || st.Kind == ArtEquipKind.ConfirmTakeOver };
+    }
+
+    // the plate and the frame of the artifact step: the tab, the list button, the artifact's cell (a pill at the list's edge when it is off screen), «Заменить», the pop-up's «Заменить»
+    void TickArtHint(W32.POINT o, double W, double H) {
+      double U = Ui.Unit(W, H);
+      var st = artEqStep; var hs = screens.Hero;
+      if (st == null || st.Kind == ArtEquipKind.Done) { if (glow.Visible) glow.Hide(); drawnKey = null; HideTip(); return; }
+      string main = Tx("art_" + st.Name), caps = Tx("art_caps");
+      var lines = main != "" ? new[] { main } : new string[0];
+      var lf = ArtEquipFrames.For(st, hs, Geo.Current, W, H, U);
+      frame++;
+      if (lf != null && lf.Mark.Kind != "box") {   // the cell is off the screen: the pill at the list's edge
+        Draw(lf.Mark.Kind, o.X + lf.Mark.X, o.Y + lf.Mark.Y, lf.Mark.W, lf.Mark.H, lf.Mark.Rows);
+        if (lines.Length > 0) DrawTipTop(lines, caps != "" ? caps : null); else HideTip();
+        return;
+      }
+      if (glow.Visible) glow.Hide(); drawnKey = null;
+      if (lf != null) DrawTip(o.X + lf.Mark.X, o.Y + lf.Mark.Y, lf.Mark.W, lf.Mark.H, lines, H, false, false, false, caps != "" ? caps : null, false, HlArtEq(lf, st, o));
+      else if (lines.Length > 0) DrawTipTop(lines, caps != "" ? caps : null);
+      else HideTip();
+    }
+
+    // the auto click for the artifact steps (src/ArtEquip.cs ArtEquipPilot): only with ArtAutoOn; «Заменить» of the card and of the pop-up also need the player's auto confirm.
+    void TickArtEquip(W32.POINT o, W32.RECT cr, AutoView v) {
+      var step = artEqStep;
+      if (step == null || !ArtAutoOn) { artEqAutoSaid = ""; return; }
+      double W = cr.R, H = cr.B, U = Ui.Unit(W, H);
+      if (v.Foreground && !v.UserBusy) {
+        var pre = gate.Preflight(ClickOwner.Equip, screens.Current, v.NowMs);
+        AnnounceHalts();
+        if (artEq.Stopped || pre.Verdict != GateVerdict.Allow) return;   // the last click's effect is awaited / the screen is not recognised yet
+      }
+      bool btnSeen = false;
+      if (step.Kind == ArtEquipKind.PressReplace && v.Foreground) {
+        var rr = ArtFrames.Rect(Geo.Current, ArtEquipFrames.KeyReplace, W, H, U);
+        btnSeen = rr != null && IsBlueButton(o, new[] { (int)rr.X, (int)rr.Y, (int)rr.W, (int)rr.H });
+      }
+      var view = new ArtEquipView { NowMs = v.NowMs, Foreground = v.Foreground, UserBusy = v.UserBusy, UserClicked = v.UserClicked, W = W, H = H, U = U, Step = step, Hero = screens.Hero,
+                                    Geometry = Geo.Current, AutoConfirm = AutoConfirm, ReplaceBtnSeen = btnSeen };
+      var mv = artEq.Step(view);
+      if (artEq.Trace != "") { Log.Write("art equip auto: " + artEq.Trace); artEq.Trace = ""; }
+      string said = mv.State + "|" + mv.Why + "|" + step.Key;
+      if (said != artEqAutoSaid) { artEqAutoSaid = said; Log.Write("art equip auto: " + mv.State + (mv.Why != "" ? " (" + mv.Why + ")" : "") + " at step " + step.Key); AutoSay(mv.State == "stopped" ? "failed" : mv.State == "hint" ? "idle" : mv.State); }
+      if (mv.Action.Kind == AutoKind.None) return;
+      long hero = artHero, uid = artUid; bool drag = mv.Drag; var geo = Geo.Current;
+      ClickTarget tg;
+      switch (mv.Todo) {
+        case ArtEquipTodo.Tab: tg = ClickTarget.ArtHeroTab; break;
+        case ArtEquipTodo.OpenList: tg = ClickTarget.ArtOpenList; break;
+        case ArtEquipTodo.Cell: tg = drag ? ClickTarget.ArtHeroDrag : ClickTarget.ArtHeroCell; break;
+        case ArtEquipTodo.Replace: tg = ClickTarget.ArtReplace; break;
+        case ArtEquipTodo.Confirm: tg = ClickTarget.ArtTakeOverConfirm; break;
+        default: return;
+      }
+      if ((tg == ClickTarget.ArtReplace || tg == ClickTarget.ArtTakeOverConfirm) && !AutoConfirm) { gate.Halt(ClickOwner.Equip, "target", "«Заменить» without the player's auto confirm"); AnnounceHalts(); return; }
+      SendInside(mv.Action, o, cr, ClickOwner.Equip, tg, v.Foreground, (rq, fr) => {
+        rq.Hero = hero; rq.ArtUid = uid; rq.CellOk = new[] { uid };
+        if (tg == ClickTarget.ArtHeroCell) {
+          int i = fr.HeroScr != null ? ClickGate.ListCardIndexAt(geo, ArtEquipFrames.KeyList, fr.HeroScr.ArtList, 3, 116, rq.X, rq.Y, W, H, U) : -1;
+          rq.CellUid = i >= 0 && fr.HeroScr != null && i < fr.HeroScr.ArtUids.Count ? fr.HeroScr.ArtUids[i] : 0;
+        }
+      });
+    }
+
     // ---- auto click for the artifact promotion (src/LocatePilot.cs ArtPilot): only with ArtAutoOn. The pilot opens the «Артефакт» tab, selects the artifact's cell,
     // «Мастерская», the «Продвинуть» tab and the planned copy; the final «Продвинуть» (and «Улучшить») is the player's. Every click goes through the gate.
     readonly ArtPilot artPilot = new ArtPilot();
@@ -2141,6 +2277,7 @@ namespace RealmForge {
       if ((sellScanOnce || now - sellBtnAt < 8000) && front && RFX.InvFormMissing()) RFX.RequestFormSearch("storage run, inventory not built", 1500);
       sellScanOnce = false;
       var inp = new ScreenInputs { Inv = RFX.ReadInventory(-1), Rs = RFX.ReadRecastScreenSafe(-1), Hero = RFX.ReadHeroScreen(addrs, screens.Hero) };
+      if (front) FillArtPopup(inp, hwnd);
       bool artGuide = locateReq != null && locateReq.Purpose == "artPromote";
       if (artGuide) inp.ArtWs = RFX.ReadArtWorkshop();   // only while an artifact request is guided
       inp.CityForm = RFX.CityShown();
@@ -2176,6 +2313,7 @@ namespace RealmForge {
     ScreenState FreshScreen(bool wantCity) {
       long now = NowMs();
       var inp = new ScreenInputs { Inv = RFX.ReadInventory(-1), Rs = RFX.ReadRecastScreenSafe(-1), Hero = RFX.ReadHeroScreen(addrs, screens.Hero), CityForm = RFX.CityShown() };
+      { IntPtr gw = GameWindow(); if (gw != IntPtr.Zero && !W32.IsIconic(gw) && IsForeground(gw)) FillArtPopup(inp, gw); }
       if (locateReq != null && locateReq.Purpose == "artPromote") inp.ArtWs = RFX.ReadArtWorkshop();   // the artifact guide's clicks are judged by the workshop too
       var st = ScreenState.Classify(inp, now);
       // a click on a city button also needs the picture of the bar (the form alone is not enough for a click)
@@ -2198,7 +2336,7 @@ namespace RealmForge {
         Log.Write("auto click stopped (" + o + "): " + why);
         if (o == ClickOwner.Locate) { lpilot.Halt(why); artPilot.Halt(why); }
         else if (o == ClickOwner.Sell) { if (!sellArt) SellSay("gate_" + why); }   // (the artifact cleanup is a hint run for the page: the stop is in the log only)
-        else AutoSay("gate_" + why);
+        else { artEq.Halt(why); AutoSay("gate_" + why); }
       }
     }
 
@@ -2481,6 +2619,13 @@ namespace RealmForge {
         double aw = cr.R, ah = cr.B, au = Ui.Unit(aw, ah);
         if (ClickGate.OnNeverButton(Geo.Current, a.X, a.Y, aw, ah, au) || (a.Kind == AutoKind.Drag && ClickGate.OnNeverButton(Geo.Current, a.X, a.Y + a.DY, aw, ah, au))) {
           gate.Halt(owner, "target", target + " @" + (int)a.X + "," + (int)a.Y + " lies on a button the artifact flows never press"); AnnounceHalts(); return false;
+        }
+      }
+      // the artifact steps of the hero screen never press the card's sell icon or «Быстро надеть»
+      if (ClickGate.IsHeroArtTarget(target)) {
+        double aw = cr.R, ah = cr.B, au = Ui.Unit(aw, ah);
+        if (ArtEquipFrames.OnNeverButton(Geo.Current, a.X, a.Y, aw, ah, au) || (a.Kind == AutoKind.Drag && ArtEquipFrames.OnNeverButton(Geo.Current, a.X, a.Y + a.DY, aw, ah, au))) {
+          gate.Halt(owner, "target", target + " @" + (int)a.X + "," + (int)a.Y + " lies on a button the artifact steps never press"); AnnounceHalts(); return false;
         }
       }
       var fresh = FreshScreen(target == ClickTarget.CityInventory);

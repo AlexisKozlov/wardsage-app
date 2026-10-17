@@ -1,0 +1,12 @@
+{ "name": "Equip plan with an artifact, artAuto on: tab, list button, the plan's cell (the uid under the click), «Заменить», the pop-up's «Заменить»; each click shows its effect",
+  "request": {"purpose":"artEquip","hero":214700000,"uid":9004,"artAuto":true,"autoConfirm":true},
+  "frames": [
+  {"t":0,"hero":{"hero":214700000,"form":true,"tab":3,"art":{"read":true,"owner":200100000,"worn":9001}},"expect":{"artEqStep":"ArtTab","halt":""},"clicks":[{"owner":"Equip","target":"ArtHeroTab","auto":true,"front":true}]},
+  {"t":400,"hero":{"hero":214700000,"form":true,"tab":7,"art":{"read":true,"owner":200100000,"worn":9001}},"expect":{"artEqStep":"OpenList:worn","halt":""},"clicks":[{"owner":"Equip","target":"ArtOpenList","auto":true,"front":true}]},
+  {"t":800,"hero":{"hero":214700000,"form":true,"tab":7,"art":{"read":true,"owner":200100000,"worn":9001,"open":true,"uids":[9001,9002,9003,9004,9005],"list":{"scrollY":0,"cols":3,"rowUnits":116}}},"expect":{"artEqStep":"PickCell:4","artEqTodo":"Cell","halt":""},"clicks":[{"owner":"Equip","target":"ArtHeroDrag","auto":true,"front":true}]},
+  {"t":1200,"hero":{"hero":214700000,"form":true,"tab":7,"art":{"read":true,"owner":200100000,"worn":9001,"open":true,"uids":[9001,9002,9003,9004,9005],"list":{"scrollY":0,"cols":3,"rowUnits":116}}},"expect":{"halt":""},"clicks":[{"owner":"Equip","target":"ArtHeroCell","auto":true,"front":true,"cellIndex":3,"cellKind":"heroart"}]},
+  {"t":1600,"hero":{"hero":214700000,"form":true,"tab":7,"art":{"read":true,"owner":200100000,"worn":9001,"open":true,"sel":9004,"uids":[9001,9002,9003,9004,9005],"list":{"scrollY":0,"cols":3,"rowUnits":116}}},"expect":{"artEqStep":"PressReplace:worn","artEqTodo":"Replace","halt":""},"clicks":[{"owner":"Equip","target":"ArtReplace","auto":true,"front":true}]},
+  {"t":2000,"hero":{"hero":214700000,"form":true,"tab":7,"art":{"read":true,"owner":200100000,"worn":9001,"open":true,"sel":9004,"uids":[9001,9002,9003,9004,9005],"list":{"scrollY":0,"cols":3,"rowUnits":116}}},"popup":true,"expect":{"modal":true,"artEqStep":"ConfirmTakeOver","artEqTodo":"Confirm","halt":""},"clicks":[{"owner":"Equip","target":"ArtTakeOverConfirm","auto":true,"front":true}]},
+  {"t":2600,"hero":{"hero":214700000,"form":true,"tab":7,"art":{"read":true,"owner":214700000,"worn":9001,"open":true,"sel":9004,"uids":[9001,9002,9003,9004,9005],"list":{"scrollY":0,"cols":3,"rowUnits":116}}},"expect":{"modal":false,"artEqStep":"Done","halt":""}}
+  ]
+}

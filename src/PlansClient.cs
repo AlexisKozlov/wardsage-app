@@ -3,6 +3,7 @@
 // Contract (implemented by the site, lib/plans/handler.ts):
 //   GET  {site}/api/extractor/plans?lang=ru|en&artifacts=1        Authorization: Bearer <sync code>
 //        "artifacts=1" tells the site this app can guide an artifact promotion request (purpose "artPromote"); an older app never sends it and never gets one.
+//        "art=1" tells the site this app can also put an artifact on the hero: a plan may then carry  artifact:{uid, id[, name]}  (the artifact to wear after the 5 gear items).
 //        200 {ok:true, plans:[{id, heroUid, heroName, createdAt,
 //              items:[{slot, uid, slotName, name, setName, setId?, level, stars, mainStat, fromHeroUid, fromHeroName, icon,
 //                     cur:{uid, name, level, stars, icon}|null}]}]}
@@ -62,12 +63,20 @@ namespace RealmForge {
     public double Bar = -1;
   }
 
+  /// <summary>The artifact a plan also puts on the hero (site: "artifact":{uid, id}); the app guides it after the gear (src/ArtEquip.cs).</summary>
+  public sealed class PlanArtifact {
+    public long Uid;
+    public int Id;
+    public string Name = "";   // optional (the site may not send one)
+  }
+
   public sealed class Plan {
     public string Id;
     public long HeroUid;
     public string HeroName;
     public string CreatedAt;
     public List<PlanItem> Items = new List<PlanItem>();
+    public PlanArtifact Artifact;   // null: the plan has no artifact
   }
 
   /// <summary>The artifact of a "artPromote" request: what the app guides the player to (Inventory → «Артефакт» → the artifact → «Мастерская» → «Продвинуть» → the copy).</summary>
@@ -110,7 +119,7 @@ namespace RealmForge {
     const int MaxReplyBytes = 1024 * 1024;
 
     public static PlansResult List(string site, string code, string lang) {
-      return Request("GET", site + "/api/extractor/plans?lang=" + (lang == "en" ? "en" : "ru") + "&artifacts=1", code, null, true);
+      return Request("GET", site + "/api/extractor/plans?lang=" + (lang == "en" ? "en" : "ru") + "&artifacts=1&art=1", code, null, true);
     }
 
     public static PlansResult Finish(string site, string code, string planId, bool done) {
@@ -246,6 +255,11 @@ namespace RealmForge {
         if (it != null) p.Items.Add(it);
       }
       p.Items.Sort((a, b) => a.Slot.CompareTo(b.Slot));
+      object av;
+      if (o.TryGetValue("artifact", out av)) {
+        var ao = MiniJson.AsObject(av);
+        if (ao != null && Num(ao, "uid") > 0) p.Artifact = new PlanArtifact { Uid = Num(ao, "uid"), Id = (int)Math.Min(int.MaxValue, Num(ao, "id")), Name = Clip(MiniJson.GetString(ao, "name"), 100) ?? "" };
+      }
       return p.Items.Count > 0 ? p : null;
     }
 

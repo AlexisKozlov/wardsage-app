@@ -108,4 +108,35 @@ ok(G.next(plan, live({ owner: { 6423: 0 } })).item.uid === 6423, 'in the bag: wa
   ok(bp.items[0].fromHeroUid === 5 && G.next(bp, lv({ owner: { 321: 5 } })).kind !== 'taken', 'taken from hero 5 on purpose');
   ok(G.next(bp, lv({ owner: { 321: 9 } })).kind === 'taken', 'on another hero afterwards: taken, not taken off');
 }
+// the plan's artifact comes after the gear: the host's step (live.art) decides; done when it is on the hero
+{
+  const p = { id: 'art', heroUid: 7, artifact: { uid: 9004, id: 3012 }, items: [{ slot: 0, uid: 11, fromHeroUid: 0 }] };
+  const lv = (o) => live({ heroUid: 7, owner: { 11: 7 }, ...o });
+  ok(G.next(p, lv({ owner: { 11: 0 } })).kind !== 'art', 'the artifact waits for the gear: the gear step comes first');
+  let g = G.next(p, lv());
+  ok(g.kind === 'art' && G.artStep(g) === 'wait' && g.done === 1 && !g.artDone, 'gear on, no word from the host yet: the artifact step, waiting');
+  g = G.next(p, lv({ art: { uid: 9004, step: 'pick', done: false, owner: 5 } }));
+  ok(g.kind === 'art' && G.artStep(g) === 'pick', 'the host says pick');
+  for (const st of ['hero', 'tab', 'open', 'openAdd', 'missing', 'replace', 'equip', 'confirm']) ok(G.artStep(G.next(p, lv({ art: { uid: 9004, step: st } }))) === st, 'step ' + st + ' passes through');
+  ok(G.artStep(G.next(p, lv({ art: { uid: 9004, step: 'bogus' } }))) === 'wait', 'an unknown step is waiting');
+  ok(G.next(p, lv({ art: { uid: 1234, step: 'done', done: true } })).kind === 'art', "another artifact's report does not count");
+  g = G.next(p, lv({ art: { uid: 9004, step: 'done', done: true, owner: 7 } }));
+  ok(g.kind === 'done' && g.artDone, 'on the hero: done');
+  ok(G.next({ ...p, artifact: undefined }, lv()).kind === 'done', 'a plan without an artifact is done with the gear');
+  ok(G.next(p, lv({ gameRunning: false })).kind === 'closed', 'the game closed: closed');
+  ok(G.next(p, lv({ owner: { 11: 5 } })).kind === 'taken', 'the gear taken by another hero: taken, no artifact step');
+  ok(G.highlightUid(G.next(p, lv())) === 0, 'no gear item is framed during the artifact step');
+  ok(G.nextQueued(['art'], [p], lv()) === p && G.nextQueued(['art'], [p], lv({ art: { uid: 9004, step: 'done', done: true } })) === null, 'the queue keeps the build until the artifact is on');
+}
+// the artifact step's texts exist in both languages, one per step, short enough for the plates
+{
+  globalThis.window = globalThis;
+  await import('../ui/i18n.js');
+  const tt = globalThis.RF_TEXTS;
+  ok(tt && tt.ru && tt.en, 'the texts are loaded');
+  const ks = (l) => Object.keys(tt[l]).filter((k) => /^art(S_|Sub_|Slot|FromSite|DoneRow|Head|Caps)/.test(k)).sort();
+  ok(ks('ru').join() === ks('en').join() && ks('ru').length >= 15, 'artifact texts: the same keys in Russian and English');
+  for (const st of ['hero', 'wait', 'tab', 'open', 'openAdd', 'pick', 'pickAny', 'missing', 'replace', 'equip', 'confirm', 'done'])
+    for (const l of ['ru', 'en']) ok(typeof tt[l]['artS_' + st] === 'string' && tt[l]['artS_' + st].length > 3 && tt[l]['artS_' + st].replace('{0}', 'Хххххххххххх').length <= 80, 'artS_' + st + ' (' + l + ') fits a plate');
+}
 console.log(`guide: ${n} passed`);

@@ -1,0 +1,6 @@
+{ "name": "Equip plan with an artifact, artAuto on: the player's auto click off -> off; the game behind another window -> waits (no stop)",
+  "request": {"purpose":"artEquip","hero":214700000,"uid":9004,"artAuto":true,"autoConfirm":true},
+  "frames": [
+  {"t":0,"hero":{"hero":214700000,"form":true,"tab":3,"art":{"read":true,"owner":200100000,"worn":9001}},"expect":{"halt":""},"clicks":[{"owner":"Equip","target":"ArtHeroTab","auto":false,"front":true,"expect":{"verdict":"Deny","reason":"off"}},{"owner":"Equip","target":"ArtHeroTab","auto":true,"front":false,"expect":{"verdict":"Wait","reason":"background"}}]}
+  ]
+}

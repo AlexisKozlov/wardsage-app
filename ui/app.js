@@ -521,7 +521,16 @@
         <span class="info"><span class="slot">${esc(it.slotName || t('slot' + it.slot))}</span>
           <span class="name">${esc(it.name)}${it.setName ? `<em> · ${esc(it.setName)}</em>` : ''}</span>
           <span class="sub">${esc([it.mainStat, from || curText].filter(Boolean).join(' · '))}</span></span></li>`;
-    }).join('')}</ul>`;
+    }).join('')}${artRow(p, g)}</ul>`;
+  }
+
+  // the plan's artifact as the last row of the list
+  function artRow(p, g) {
+    if (!p.artifact) return '';
+    const st = g.artDone ? 'done' : g.kind === 'art' ? 'now' : 'wait';
+    return `<li class="${st}"><span class="st">${I.check}</span><span class="swap"></span>
+      <span class="info"><span class="slot">${esc(t('artSlot'))}</span><span class="name">${esc(p.artifact.name || t('artFromSite'))}</span>
+        <span class="sub">${esc(g.artDone ? t('artDoneRow') : g.kind === 'art' ? artText(p, g) : '')}</span></span></li>`;
   }
 
   // «what to look for»: the cell as it looks in the game, its set and main stat with the game's icons, where it is
@@ -554,13 +563,14 @@
   function say(p, g) {
     if (S.scan.status === 'scanning') return sayBox('', `<span class="spinner"></span>`, t('scanning'), t('scanningP'));
     if (S.scan.status === 'fail') return sayBox('warn', I.warn, t('scanFail'), t('scanFailP'), rescanBtn());
-    if (S.scan.status === 'ok' && !S.scan.panel && g.kind !== 'done' && g.kind !== 'hero') return sayBox('', I.hand, t('noPanel'), '', rescanBtn());
+    if (S.scan.status === 'ok' && !S.scan.panel && g.kind !== 'done' && g.kind !== 'hero' && g.kind !== 'art') return sayBox('', I.hand, t('noPanel'), '', rescanBtn());
     const it = g.item;
     const itemText = it ? `${it.name}${it.level ? ' +' + it.level : ''}${it.mainStat ? ' · ' + it.mainStat : ''}` : '';
     // another item than the build's was put on: say so, the build's item is still the one to find
     if (g.wrong && (g.kind === 'pick' || g.kind === 'rel' || g.kind === 'filter')) return sayBox('warn', I.warn, t('gWrong'), t('gWrongP', it.name)) + findCard(it, g, S.compact);
     switch (g.kind) {
       case 'closed': return sayBox('warn', I.game, t('gClosed'), t('gClosedP'));
+      case 'art': return artSay(p, g);
       case 'bulk': return sayBox('warn', I.warn, t('gBulk'), t('gBulkP')) + findCard(it, g, S.compact);
       case 'done': return sayBox('done', I.check, t('gDone'), t('gDoneP'));
       case 'taken': return sayBox('warn', I.warn, t('gTaken', g.taken), t(p.bridge ? 'gTakenBridge' : 'gTakenP'),
@@ -602,6 +612,18 @@
       case 'hiddenFilter': return sayBox('warn', I.warn, t('gHiddenFilter'), t('gHiddenFilterP'));
       default: return sayBox('warn', I.warn, t('gNotIn'), t('gNotInP'), rescanBtn());
     }
+  }
+  // the plan's artifact (after the gear): the step the host reads from the game, in the plates' words
+  function artText(p, g) {
+    const s = G.artStep(g);
+    if (s === 'hero') return t('artS_hero', p.heroName);
+    if (s === 'pick') return p.artifact && p.artifact.name ? t('artS_pick', p.artifact.name) : t('artS_pickAny');
+    return t('artS_' + s);
+  }
+  function artSay(p, g) {
+    const s = G.artStep(g), sk = 'artSub_' + s, sub = t(sk) !== sk ? t(sk) : '';
+    const auto = S.run === p.id && S.autoClick ? autoHead() : '';
+    return sayBox(s === 'missing' ? 'warn' : '', s === 'missing' ? I.warn : I.hand, auto || artText(p, g), auto ? autoSub() : sub);
   }
   // what the frame over the game is doing (host «overlay» events)
   // what the auto-pilot (the app opening the slot and clicking the item) is doing; '' = it is off or idle
@@ -1160,9 +1182,18 @@
         unknown: t('pUnknown'), unknownSub: t('pUnknownSub'), done: t('pDone'), wrong: t('hWrong'),
         slotInFilter: t('pSlotInFilter'), filterCovered: t('pFilterCovered'), bulkExit: t('gBulk') });
     }
+    // the gear is on, the plan's artifact is next: the host guides it on the hero screen (its step comes back as live.art)
+    let artUid = 0;
+    if (g && g.kind === 'art' && p.artifact) {
+      hint = 'art'; artUid = p.artifact.uid;
+      texts.art_caps = t('artCaps', p.heroName);
+      ['hero', 'wait', 'tab', 'open', 'openAdd', 'missing', 'replace', 'equip', 'confirm'].forEach((k) => { texts['art_' + k] = k === 'hero' ? t('artS_hero', p.heroName) : t('artS_' + k); });
+      texts.art_pick = p.artifact.name ? t('artS_pick', p.artifact.name) : t('artS_pickAny');
+      line1 = texts['art_' + G.artStep(g)] || '';
+    }
     const wrong = !!(g && g.wrong);
-    const key = [uid, hint, slot, line1, line2, hero, item, kind, closeTip, setTip, statTip, heroTips.join('/'), JSON.stringify(texts), wrong].join('|');
-    if (key !== S.hl) { S.hl = key; host.send({ cmd: 'highlight', uid, hint, slot, line1, line2, hero, item, kind, closeTip, setTip, statTip, heroTips, texts, wrong }); }
+    const key = [uid, hint, slot, line1, line2, hero, item, kind, closeTip, setTip, statTip, heroTips.join('/'), JSON.stringify(texts), wrong, artUid].join('|');
+    if (key !== S.hl) { S.hl = key; host.send({ cmd: 'highlight', uid, hint, slot, line1, line2, hero, item, kind, closeTip, setTip, statTip, heroTips, texts, wrong, artUid }); }
     // the started plan's hero (0 = none): the host brings it up on the hero screen
     const run = p && S.run === p.id && S.autoClick ? String(p.heroUid) : '0';
     if (run !== S.runKey) { S.runKey = run; host.send({ cmd: 'equip.run', hero: Number(run) }); }

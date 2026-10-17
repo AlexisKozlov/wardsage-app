@@ -11,7 +11,8 @@
 // only the hints. An unreadable screen is first waited for (reads fail for a moment now and then), then it is a stop.
 //
 // What is NEVER a target: «Вознести», «Преобразовать», «Улучшить», «Продать», «Продвинуть», the item card's button and every confirmation
-// dialog of the game (except «Заменить» of the equip helper, and only with the player's own auto confirm setting).
+// dialog of the game (except «Заменить» of the equip helper - the gear card's and, for a plan with an artifact, the artifact card's and its "worn by another hero" pop-up's -
+// and only with the player's own auto confirm setting).
 //
 // The two artifact flows (the storage cleanup of the «Артефакт» tab, «Показать в игре» for a promotion) click only with the site's "artAuto"
 // switch AND the player's auto click (ArtSellAuto / ArtLocateAuto below); with it off they are hints only, as before. Their targets are the Art*
@@ -54,7 +55,14 @@ namespace RealmForge {
     ArtWorkshop,      // the artifact card's «Мастерская» (opens the workshop form)
     ArtPromoteTab,    // the workshop's right tab «Продвинуть»
     ArtMatCell,       // the workshop's «Продвинуть» panel: the planned copy / essence in the left list (chooses it)
-    ArtMatDrag        // a drag that scrolls that list
+    ArtMatDrag,       // a drag that scrolls that list
+    // «Надеть в игре» with an artifact (the Equip owner, only with the site's "artAuto" switch AND the player's auto click; src/ArtEquip.cs). Never the sell icon of the card, «Быстро надеть», «Снять», «Улучшить».
+    ArtHeroTab,       // the hero screen's right tab «Артефакт»
+    ArtOpenList,      // the worn artifact's list button / the empty slot's «+» (opens the artifact list)
+    ArtHeroCell,      // the plan's artifact in the hero screen's artifact list (selects it, opens its card)
+    ArtHeroDrag,      // a drag that scrolls that list
+    ArtReplace,       // the selected artifact card's «Заменить» / «Надеть» (the player's auto confirm too)
+    ArtTakeOverConfirm // the pop-up «<artifact> в ячейке героя: <имя>» (the artifact is worn by another hero): its «Заменить» (the player's auto confirm too)
   }
 
   public enum GateVerdict { Allow, Wait, Deny }
@@ -88,6 +96,8 @@ namespace RealmForge {
     /// <summary>ArtMatCell: the 1-based entry of the workshop's m_vMatData under the click (0 = none), and the essence item ids the pilot may choose (CellOk holds the copies' uids).</summary>
     public int MatIndex;
     public ICollection<int> ItemOk;
+    /// <summary>The hero artifact targets: the plan's hero and the artifact (iItemUid) the steps are about.</summary>
+    public long Hero, ArtUid;
   }
 
   public sealed class ClickGate {
@@ -109,6 +119,8 @@ namespace RealmForge {
     public volatile bool ArtSellAuto;
     /// <summary>The artifact promotion guide may click (the Art* targets of the Locate owner): the same condition. Set by the host.</summary>
     public volatile bool ArtLocateAuto;
+    /// <summary>The artifact steps of «Надеть в игре» may click (the ArtHero* / ArtReplace / ArtTakeOverConfirm targets of the Equip owner): the site's "artAuto" switch and the player's auto click are both on. Set by the host.</summary>
+    public volatile bool ArtEquipAuto;
 
     /// <summary>Geometry keys of the buttons the artifact flows never click (the workshop's «Продвинуть» and «Улучшить» buttons); no click point may lie inside them
     /// (ArtAuto.OnNeverButton, checked by the host before every artifact click) and no Art* target is placed by them.</summary>
@@ -124,8 +136,13 @@ namespace RealmForge {
       }
     }
     public static bool IsArtTarget(ClickTarget t) { return t >= ClickTarget.ArtTab; }
+    /// <summary>The targets of the hero screen's artifact steps (the Equip owner's).</summary>
+    public static bool IsHeroArtTarget(ClickTarget t) { return t >= ClickTarget.ArtHeroTab; }
     /// <summary>The target acts on the artifact workshop, the screen that has the «Продвинуть» / «Улучшить» buttons (NeverKeys): no point of it may lie inside them.</summary>
     public static bool IsWorkshopTarget(ClickTarget t) { return t == ClickTarget.ArtPromoteTab || t == ClickTarget.ArtMatCell || t == ClickTarget.ArtMatDrag; }
+
+    /// <summary>ScreenState.ModalWhy of Form_EquipPopUp (the "worn by another hero" question), seen on the picture.</summary>
+    public const string ModalEquipPopup = "equipPopup";
 
     sealed class Rule {
       public ScreenKind[] Kinds;
@@ -146,6 +163,7 @@ namespace RealmForge {
       public bool WsUid;            // the workshop must hold one of the items meant
       public bool MatCell;          // the workshop's list entry under the click must be a planned one and not chosen yet
       public bool ArtTick;          // artifact bulk sale: the cell under the click is a wanted one that is not ticked (tick), or a ticked one that is not wanted (Untick)
+      public int HeroArt;           // hero screen artifact steps: 1 not on the artifact tab  2 tab, list closed  3 tab, list open  4 + the plan's artifact selected (its card)  5 + the "worn by another hero" pop-up
     }
 
     static ScreenKind[] K(params ScreenKind[] k) { return k; }
@@ -198,6 +216,13 @@ namespace RealmForge {
             case ClickTarget.EquipNav: return new Rule { Kinds = K(ScreenKind.City, ScreenKind.HeroScreen), AllowModal = true };
             case ClickTarget.EquipFilter: case ClickTarget.EquipClosePopup: case ClickTarget.EquipConfirm:
               return new Rule { Kinds = K(ScreenKind.HeroScreen), AllowModal = true };
+            // the artifact steps after the gear; `Cell` = the artifact under the click is the plan's
+            case ClickTarget.ArtHeroTab: return new Rule { Kinds = K(ScreenKind.HeroScreen), HeroArt = 1 };
+            case ClickTarget.ArtOpenList: return new Rule { Kinds = K(ScreenKind.HeroScreen), HeroArt = 2 };
+            case ClickTarget.ArtHeroCell: return new Rule { Kinds = K(ScreenKind.HeroScreen), HeroArt = 3, Cell = true };
+            case ClickTarget.ArtHeroDrag: return new Rule { Kinds = K(ScreenKind.HeroScreen), HeroArt = 3 };
+            case ClickTarget.ArtReplace: return new Rule { Kinds = K(ScreenKind.HeroScreen), HeroArt = 4 };
+            case ClickTarget.ArtTakeOverConfirm: return new Rule { Kinds = K(ScreenKind.HeroScreen), HeroArt = 5, AllowModal = true };
           }
           return null;
       }
@@ -211,7 +236,7 @@ namespace RealmForge {
         var r = RuleOf(o, t);
         if (r == null) continue;
         var ks = new List<string>(); foreach (var k in r.Kinds) ks.Add(k.ToString());
-        string cond = r.InvNormalEquip ? " normal-equip" : r.InvBulkEquip ? " bulk-sale" : r.InvOtherTab ? " other-tab" : r.InvArt == 1 ? " art-normal" : r.InvArt == 2 ? " art-bulk-sale" : r.InvArt == 3 ? " other-tab" : "";
+        string cond = r.InvNormalEquip ? " normal-equip" : r.InvBulkEquip ? " bulk-sale" : r.InvOtherTab ? " other-tab" : r.InvArt == 1 ? " art-normal" : r.InvArt == 2 ? " art-bulk-sale" : r.InvArt == 3 ? " other-tab" : r.HeroArt != 0 ? " hero-art" + r.HeroArt : "";
         parts.Add(t + "@" + string.Join("/", ks.ToArray()) + cond);
       }
       return string.Join(", ", parts.ToArray());
@@ -252,7 +277,7 @@ namespace RealmForge {
     public void Arm(ClickOwner o, ClickTarget t, Func<ScreenState, bool> done, long now) {
       clickedAt[o] = now;
       if (done == null) { watches.Remove(o); return; }
-      int ms = t == ClickTarget.CityInventory || t == ClickTarget.FoundryButton || t == ClickTarget.ArtWorkshop ? SlowEffectMs : t == ClickTarget.InvCardGem || t == ClickTarget.GemFuncRow || t == ClickTarget.ArtMatCell ? GemEffectMs : t == ClickTarget.ArtBulkCell ? ArtTickMs : EffectMs;
+      int ms = t == ClickTarget.CityInventory || t == ClickTarget.FoundryButton || t == ClickTarget.ArtWorkshop || t == ClickTarget.ArtReplace || t == ClickTarget.ArtTakeOverConfirm ? SlowEffectMs : t == ClickTarget.InvCardGem || t == ClickTarget.GemFuncRow || t == ClickTarget.ArtMatCell ? GemEffectMs : t == ClickTarget.ArtBulkCell ? ArtTickMs : EffectMs;
       watches[o] = new Watch { Done = done, Deadline = now + ms, What = t.ToString() };
     }
 
@@ -280,6 +305,12 @@ namespace RealmForge {
         case ClickTarget.ArtWorkshop: return s => s.Kind == ScreenKind.ArtWorkshop;
         case ClickTarget.ArtPromoteTab: return s => s.Kind == ScreenKind.ArtWorkshop && s.ArtWsTab == 2;
         case ClickTarget.ArtMatCell: { int mi = r.MatIndex; return s => s.Kind == ScreenKind.ArtWorkshop && s.ArtWs != null && s.ArtWs.MatSel.Contains(mi); }
+        // the hero screen's artifact steps: the tab, the open list, the selected artifact, «Заменить» (the pop-up, or the artifact on the hero), the pop-up's «Заменить» (on the hero)
+        case ClickTarget.ArtHeroTab: return s => s.Kind == ScreenKind.HeroScreen && s.HeroTab == RFX.HeroArtTab;
+        case ClickTarget.ArtOpenList: return s => s.Kind == ScreenKind.HeroScreen && s.HeroScr != null && s.HeroScr.ArtListOpen;
+        case ClickTarget.ArtHeroCell: { long au = r.ArtUid; return s => s.Kind == ScreenKind.HeroScreen && s.HeroScr != null && s.HeroScr.ArtSel == au; }
+        case ClickTarget.ArtReplace: { long hh = r.Hero; return s => s.Kind == ScreenKind.HeroScreen && s.HeroScr != null && (s.HeroScr.ArtTargetOwner == hh || (s.ModalOpen && s.ModalWhy == ModalEquipPopup)); }
+        case ClickTarget.ArtTakeOverConfirm: { long hh = r.Hero; return s => s.Kind == ScreenKind.HeroScreen && s.HeroScr != null && s.HeroScr.ArtTargetOwner == hh; }
       }
       return null;
     }
@@ -332,12 +363,33 @@ namespace RealmForge {
       bool artT = IsArtTarget(r.Target);
       if (r.Owner == ClickOwner.Sell && (NoSellClicks || (artT && !ArtSellAuto) || (ArtSellAuto && !artT) || (f != null && f.Kind == ScreenKind.Inventory && f.InvArtTab && r.Target != ClickTarget.InvEquipTab && !artT))) return Halt(r.Owner, "artifact", tag + ": " + (NoSellClicks || !ArtSellAuto ? "the artifact cleanup is hints only" : "not a target of the artifact cleanup"));
       if (r.Owner == ClickOwner.Locate && (NoLocateClicks || (artT && !ArtLocateAuto) || (ArtLocateAuto && !artT))) return Halt(r.Owner, "artifact", tag + ": " + (NoLocateClicks || !ArtLocateAuto ? "the artifact guide is hints only" : "not a target of the artifact guide"));
-      if (artT && r.Owner == ClickOwner.Equip) return Halt(r.Owner, "target", tag + " is not a target Equip may click");
+      bool heroArt = IsHeroArtTarget(r.Target);
+      if (artT && r.Owner == ClickOwner.Equip && !heroArt) return Halt(r.Owner, "target", tag + " is not a target Equip may click");
+      if (heroArt && r.Owner == ClickOwner.Equip && !ArtEquipAuto) return Halt(r.Owner, "artifact", tag + ": the artifact steps are hints only");
       var rule = RuleOf(r.Owner, r.Target);
       if (rule == null) return Halt(r.Owner, "target", tag + " is not a target " + r.Owner + " may click");
       if (f == null || f.Kind == ScreenKind.Unknown) return UnknownWait(r, now, tag + ": the screen is not recognised");
       if (Array.IndexOf(rule.Kinds, f.Kind) < 0) return Halt(r.Owner, "screen", tag + " needs " + string.Join("/", Names(rule.Kinds)) + ", the game shows " + f.Brief);
       if (f.ModalOpen && !rule.AllowModal) return Halt(r.Owner, "modal", tag + ": " + f.ModalWhy + " is open (" + f.Brief + ")");
+      if (rule.HeroArt != 0) {
+        var hs = f.HeroScr;
+        if (hs == null || r.Hero <= 0 || r.ArtUid <= 0) return Halt(r.Owner, "target", tag + ": no hero / artifact named");
+        if (f.Hero != r.Hero) return Halt(r.Owner, "screen", tag + ": the hero screen shows hero " + f.Hero + ", not " + r.Hero);
+        if (!hs.ArtRead) return UnknownWait(r, now, tag + ": the artifact fields of the hero screen are not readable");
+        if (hs.ArtTargetOwner == r.Hero) return Halt(r.Owner, "screen", tag + ": the artifact " + r.ArtUid + " is on the hero already");
+        if (rule.HeroArt == 1) { if (hs.Tab == RFX.HeroArtTab) return Halt(r.Owner, "screen", tag + ": already on the artifact tab"); }
+        else {
+          if (hs.Tab != RFX.HeroArtTab) return Halt(r.Owner, "screen", tag + ": the hero screen is on tab " + hs.Tab + ", not the artifact tab");
+          if (rule.HeroArt == 2 && hs.ArtListOpen) return Halt(r.Owner, "screen", tag + ": the artifact list is open already");
+          if (rule.HeroArt >= 3 && !hs.ArtListOpen) return Halt(r.Owner, "screen", tag + ": the artifact list is not open");
+          if (rule.HeroArt == 3 && hs.ArtSel == r.ArtUid) return GateResult.Wait("screen", tag + ": the artifact is selected already");
+          if (rule.HeroArt >= 4 && hs.ArtSel != r.ArtUid) return Halt(r.Owner, "cell", tag + ": the card open is artifact " + hs.ArtSel + ", not " + r.ArtUid);
+          if (rule.HeroArt == 5) {
+            if (!f.ModalOpen || f.ModalWhy != ModalEquipPopup) return Halt(r.Owner, "modal", tag + ": the pop-up of the artifact is not open (" + f.Brief + ")");
+            if (hs.ArtTargetOwner <= 0) return Halt(r.Owner, "cell", tag + ": the artifact is worn by nobody - no pop-up expected");
+          } else if (f.ModalOpen) return Halt(r.Owner, "modal", tag + ": " + f.ModalWhy + " is open (" + f.Brief + ")");
+        }
+      }
 
       if (f.Kind == ScreenKind.Inventory) {
         bool needMode = rule.InvNormalEquip || rule.InvBulkEquip;

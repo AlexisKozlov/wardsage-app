@@ -1,0 +1,6 @@
+{ "name": "Equip plan with an artifact, artAuto on: a pop-up for an artifact nobody wears is not the expected one -> stop",
+  "request": {"purpose":"artEquip","hero":214700000,"uid":9004,"artAuto":true,"autoConfirm":true},
+  "frames": [
+  {"t":0,"hero":{"hero":214700000,"form":true,"tab":7,"art":{"read":true,"owner":0,"worn":9001,"open":true,"sel":9004,"uids":[9001,9002,9003,9004,9005],"list":{"scrollY":0,"cols":3,"rowUnits":116}}},"popup":true,"expect":{"modal":true,"halt":""},"clicks":[{"owner":"Equip","target":"ArtTakeOverConfirm","auto":true,"front":true,"expect":{"verdict":"Deny","reason":"cell"}}]}
+  ]
+}

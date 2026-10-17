@@ -1,0 +1,8 @@
+{ "name": "Equip plan with an artifact, artAuto on: the tab click changes nothing (the artifact tab is locked for the hero) -> stop (nochange)",
+  "request": {"purpose":"artEquip","hero":214700000,"uid":9004,"artAuto":true,"autoConfirm":true},
+  "frames": [
+  {"t":0,"hero":{"hero":214700000,"form":true,"tab":3,"art":{"read":true,"owner":200100000,"worn":9001}},"expect":{"halt":""},"clicks":[{"owner":"Equip","target":"ArtHeroTab","auto":true,"front":true}]},
+  {"t":3000,"hero":{"hero":214700000,"form":true,"tab":3,"art":{"read":true,"owner":200100000,"worn":9001}},"expect":{"halt":""}},
+  {"t":4000,"hero":{"hero":214700000,"form":true,"tab":3,"art":{"read":true,"owner":200100000,"worn":9001}},"expect":{"halt":"Equip:nochange"}}
+  ]
+}

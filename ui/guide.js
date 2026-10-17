@@ -3,7 +3,9 @@
 // plan: {id, heroUid, heroName, items:[{slot, uid, slotName, name, setName, level, mainStat, fromHeroUid, fromHeroName}]}
 //   from the site, or {…, bridge: true} from the local bridge (bridgePlan)
 // live (from the host, read-only memory reads): {gameRunning, heroUid, panelOk, part, hideEquipped, hideEnhanced,
-//   filterActive, bulk (the Inventory is in «Массовая продажа»), screen, rows:{uid:[row, col]}, owner:{uid: heroUid}}
+//   filterActive, bulk (the Inventory is in «Массовая продажа»), screen, rows:{uid:[row, col]}, owner:{uid: heroUid},
+//   art: {uid, step, done, owner} (only while the plan's artifact is guided: the host's step for it)}
+// plan.artifact {uid, id[, name]}: the artifact to wear after the gear (the site sends it for an app that asks with art=1)
 (function (root) {
   // rows of the gear list visible without scrolling in the game (1080p: about 4.5)
   const VISIBLE_ROWS = 4;
@@ -25,7 +27,13 @@
     }
     if (cur) g.states[cur.uid] = 'now';
     if (!live || live.gameRunning === false) { g.kind = 'closed'; return g; }
-    if (!cur) { g.kind = g.taken ? 'taken' : 'done'; return g; }
+    if (!cur) {
+      // the plan's artifact comes after the gear; the host says where the game is (live.art for this artifact), 'done' when it is on the hero
+      const a = plan.artifact, la = a && live.art && live.art.uid === a.uid ? live.art : null;
+      g.artDone = !!(la && la.done);
+      if (a && !g.taken && !g.artDone) { g.kind = 'art'; g.art = { step: (la && la.step) || 'wait' }; return g; }
+      g.kind = g.taken ? 'taken' : 'done'; return g;
+    }
     g.item = cur;
     // the Inventory is in «Массовая продажа» (the host's screen): the hero and the items are not on screen, the player leaves it first
     if (live.bulk) { g.kind = 'bulk'; return g; }
@@ -181,6 +189,10 @@
 
   // Item to frame in the game (0 = none): only while the list with it is on the screen.
   const HIGHLIGHT = { pick: 1, filter: 1, rel: 1, selected: 1 };
+
+  // The artifact step's text key (i18n artS_<step>) and its line for the plates: pick names the artifact when the site sent a name.
+  const ART_STEPS = { hero: 1, wait: 1, tab: 1, open: 1, openAdd: 1, pick: 1, missing: 1, replace: 1, equip: 1, confirm: 1, done: 1 };
+  function artStep(g) { const s = g && g.art && g.art.step; return ART_STEPS[s] ? s : 'wait'; }
   function highlightUid(g) { return g && g.item && HIGHLIGHT[g.kind] ? g.item.uid : 0; }
 
   // Russian plural: 1 ряд, 2 ряда, 5 рядов.
@@ -189,7 +201,7 @@
     return a > 10 && a < 20 ? many : b === 1 ? one : b >= 2 && b <= 4 ? few : many;
   }
 
-  const api = { next, pickPlan, bridgePlan, mergePlans, freshPlan, freshPlans, nextQueued, adoptOwners, takeOver, highlightUid, plural, bustUrl, headUrl, itemUrl, setUrl, rankOf, statOf, statId, statUrl, VISIBLE_ROWS };
+  const api = { next, artStep, pickPlan, bridgePlan, mergePlans, freshPlan, freshPlans, nextQueued, adoptOwners, takeOver, highlightUid, plural, bustUrl, headUrl, itemUrl, setUrl, rankOf, statOf, statId, statUrl, VISIBLE_ROWS };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.RFGuide = api;
 })(typeof window !== 'undefined' ? window : globalThis);

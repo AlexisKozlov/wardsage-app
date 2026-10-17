@@ -518,7 +518,7 @@ namespace RealmForge {
             overlay.SetTarget(u > 0 && u < 9e15 && watch.Contains((long)u) ? (long)u : 0);
             // hint on the game's own buttons: filter / «Заменить» / next slot, with up to two short lines
             string hint = MiniJson.GetString(m, "hint") ?? "";
-            if (hint != "filter" && hint != "replace" && hint != "slot" && hint != "hero" && hint != "geartab" && hint != "done") hint = "";
+            if (hint != "filter" && hint != "replace" && hint != "slot" && hint != "hero" && hint != "geartab" && hint != "done" && hint != "art") hint = "";
             double slot = m.TryGetValue("slot", out v) && v is double ? (double)v : -1;
             var lines = new List<string>();
             foreach (var k in new[] { "line1", "line2" }) {
@@ -545,6 +545,10 @@ namespace RealmForge {
             if (txd != null) foreach (var kv in txd) { var sv = kv.Value as string; if (sv != null && texts.Count < 40) texts[kv.Key] = Cut(sv); }
             overlay.Texts = texts;
             overlay.WrongItem = MiniJson.GetBool(m, "wrong", false);
+            // the plan's artifact (hint "art": the gear is on, the artifact is next): the hero and the artifact's uid
+            double artUid = m.TryGetValue("artUid", out v) && v is double ? (double)v : 0;
+            bool artOk = hint == "art" && artUid > 0 && artUid < 9e15 && hero > 0 && hero < 9e15;
+            overlay.SetArtGoal(artOk ? (long)hero : 0, artOk ? (long)artUid : 0);
             overlay.SetHint(hint, slot >= 0 && slot <= 4 ? (int)slot : -1, lines.ToArray(), hero > 0 && hero < 9e15 ? (long)hero : 0);
             break;
           }
@@ -1137,7 +1141,9 @@ namespace RealmForge {
             var it = p.Items[j]; if (j > 0) sb.Append(',');
             ItemJson(sb, it, true);
           }
-          sb.Append("]}");
+          sb.Append(']');
+          if (p.Artifact != null) sb.Append(",\"artifact\":{\"uid\":").Append(N(p.Artifact.Uid)).Append(",\"id\":").Append(N(p.Artifact.Id)).Append(",\"name\":").Append(S(p.Artifact.Name ?? "")).Append('}');
+          sb.Append('}');
         }
         Post(sb.Append("]}").ToString());
         // a «Найти в игре» request from the site rides on the same reply
@@ -1328,7 +1334,10 @@ namespace RealmForge {
       }
       sb.Append("},\"owner\":{"); first = true;
       foreach (var kv in s.Owner) { if (!first) sb.Append(','); first = false; sb.Append('"').Append(N(kv.Key)).Append("\":").Append(N(kv.Value)); }
-      sb.Append("}}}");
+      sb.Append('}');
+      string artLive = overlay.ArtLive();   // the artifact step of a plan with an artifact (src/ArtEquip.cs)
+      if (artLive != null) sb.Append(",\"art\":").Append(artLive);
+      sb.Append("}}");
       NoteOwners(s.Owner);
       {   // the journal: who wears the plan items (on every change), the hero and the open slot
         var ob = new StringBuilder("live: hero " + s.HeroUid + " part " + s.Part + " sel " + s.SelUid + " owners");
