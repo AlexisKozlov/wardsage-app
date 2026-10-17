@@ -993,8 +993,8 @@
       case 'locate.state': {
         const L = S.locate; if (!L.req) break;
         L.step = m;
-        const d = LC.describe(L.req, m, t), key = (d ? d.tip.join('|') : '');
-        if (key !== L.tipKey) { L.tipKey = key; host.send({ cmd: 'locate.tip', lines: d ? d.tip : [] }); }
+        const d = LC.describe(L.req, m, t), cp = LC.caps(L.req, m, t), key = (d ? d.tip.join('|') : '') + '||' + cp;
+        if (key !== L.tipKey) { L.tipKey = key; host.send({ cmd: 'locate.tip', lines: d ? d.tip : [], caps: cp }); }
         // the recast screen has the item: the request closes after a moment (the player may still look)
         clearTimeout(L.doneTimer);
         if (m.step === 'done') { const id = L.req.id; L.doneTimer = setTimeout(() => { if (S.locate.req && S.locate.req.id === id && S.locate.step && S.locate.step.step === 'done') locateEnd(true, false); }, 3000); }

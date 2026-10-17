@@ -89,6 +89,7 @@ Optional `### Heading` lines inside a `## RU` / `## EN` section split the update
 - Переодевание: программа узнаёт открытого героя и тогда, когда экран героя открыт после инвентаря или другого героя, и при входе долгим нажатием с экрана команды (боссы, рейды, арена), и сама перепроверяет игру, если шаг «открой героя» не проходит, — перезапуск программы больше не нужен.
 - При первом запуске программа показывает короткое приветствие с Пользовательским соглашением; нужно один раз нажать «Принимаю».
 - Подсказки поверх игры больше не остаются на экране, когда ты ушёл с экрана героя или Инвентаря.
+- Подсказки поверх игры показываются только когда игра открыта и на переднем плане; рамки в «Массовой продаже» держатся на вещах при прокрутке.
 - Папки настроек программы теперь называются Wardsage; всё переносится само.
 - Установщик: можно сразу выбрать, запускать ли программу вместе с Windows и отправлять ли отчёты об ошибках.
 - Показать в игре: нажми кнопку на сайте во вкладке «Вознесение» или «Преобразование», и программа подскажет путь в игре. Для «Преобразования» вещь обводится рамкой в Инвентаре, и рамка точно идёт за прокруткой списка, без лишнего клика. Для «Вознесения» программа ведёт в Литейную (из Инвентаря или с экрана героя), а вещь ищет в списке самой Литейной. Без автонажатия программа только показывает, нажимаешь ты сам. С автонажатием программа сама откроет Инвентарь, вкладку «Снаряжение» и нужную вещь, а дальше подскажет, что нажать.
@@ -100,6 +101,7 @@ Optional `### Heading` lines inside a `## RU` / `## EN` section split the update
 - Equipping: the app now recognises the open hero even when the hero screen was opened after the inventory or another hero, and when opened by a long press from a team screen (bosses, raids, arena), and re-checks the game by itself when the «open the hero» step does not clear, so restarting the app is no longer needed.
 - On the first start the app shows a short welcome card with the Terms of Use; press «I accept» once.
 - Hints over the game no longer stay on screen after you leave the hero screen or the Inventory.
+- Hints over the game are shown only while the game is open and in front; the frames in «Bulk sell» stay on the items while you scroll.
 - The app's settings folders are now named Wardsage; everything moves over by itself.
 - Installer: you can now choose right away whether the app starts with Windows and whether it sends error reports.
 - Show in game: press the button on the site in the «Ascension» or «Recast» tab, and the app shows the way in the game. For «Recast» the item gets a frame in the Inventory, and the frame follows the list's scrolling exactly, with no extra click. For «Ascension» the app leads you to the Foundry (from the Inventory or the hero screen) and looks for the item in the Foundry's own list. Without auto click the app only shows, you press yourself. With auto click on, the app opens the Inventory, the «Equipment» tab and the item by itself, then shows what to press next.

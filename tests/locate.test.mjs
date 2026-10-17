@@ -41,7 +41,22 @@ for (const lang of ['ru', 'en']) {
   // Ascension: the way to the Foundry from the screen the player is on, then the Foundry's own list; recast texts stay as they were
   const areq = { ...req, purpose: 'ascend' };
   ok(L.describe(areq, st({ step: 'openFoundry' }), t).head === T[lang].locFoundryInv && L.describe(areq, st({ step: 'openFoundry', onGear: true }), t).head === T[lang].locFoundryHero, lang + ': Foundry button of the inventory / of the hero screen');
-  ok(L.describe(req, st({ step: 'selected' }), t).lines[0] === T[lang].locSelectedP, lang + ': recast selected text unchanged');
+  // recast: item selected -> card button «Улучшение самоцветами» -> gem screen function -> «Улучшить»; never the Foundry / the card's other buttons
+  const sel = L.describe(req, st({ step: 'selected' }), t);
+  ok(sel.lines[0] === T[lang].locSelectedP && !/Литейн|Foundry|Преобразовать|Recast/.test(sel.lines[0]), lang + ': recast selected -> the gem button of the card, no Foundry');
+  ok(sel.lines[0].includes(lang === 'ru' ? 'Улучшение самоцветами' : 'Gem Enhancement'), lang + ': the game\'s name of the card button');
+  ok(L.describe(req, st({ step: 'gemFunction' }), t).head.includes(lang === 'ru' ? 'Преобразование' : 'Recast'), lang + ': gem function head');
+  ok(L.describe(req, st({ step: 'done', onGem: true }), t).lines[0] === T[lang].locDoneGemP && L.describe(req, st({ step: 'done' }), t).lines[0] === T[lang].locDoneP, lang + ': done on the gem screen -> «Улучшить»');
+  // ascend: no step talks about the item card's buttons ("Gem Enhancement" / "Remove"); the way is Foundry -> «Ascend» tab -> list
+  for (const k of ['openInventory', 'openEquipTab', 'openFoundry', 'openAscendTab', 'ascendFilter', 'ascendPick', 'ascendNotInList', 'ascendReady', 'selected']) {
+    const d = L.describe({ ...req, purpose: 'ascend' }, st({ step: k, missing: ['slot'] }), t), all = [d.head].concat(d.lines).join(' ');
+    ok(!/самоцвет|Gem Enh|Снять|Unequip|Remove/.test(all), lang + ': ascend ' + k + ' does not mention the card buttons');
+  }
+  // the locate plate has its own header and counter
+  const c1 = L.caps({ ...req, purpose: 'recast', item: { ...item, name: 'Амулет Бури' } }, st({ step: 'selected' }), t);
+  ok(c1.includes('Амулет Бури') && c1.includes('4') && c1.includes('6') && c1.toLowerCase().startsWith(lang === 'ru' ? 'показать в игре' : 'show in game') && !/Шаг 4 из 5|АМУЛЕТ/.test(c1), lang + ': locate caps: own header, item name, step 4 of 6');
+  ok(!L.caps({ ...req, item: { ...item, name: 'X' } }, st({ step: 'recastPick' }), t).includes(' шаг ') || lang === 'en', lang + ': off-path step has no counter');
+  ok(L.stepNo({ ...req, purpose: 'ascend' }, st({ step: 'ascendReady' })).n === 6 && L.stepNo(req, st({ step: 'noItem' })) === null, 'step numbers');
   const af = L.describe(areq, st({ step: 'ascendFilter', missing: ['slot', 'main'], pos: 0 }), t);
   ok(af.head === T[lang].locFilterA && af.lines.length === 2 && af.lines[0].includes('Кольцо') && af.lines[1].includes('Крит. УРН'), lang + ': ascend filter lines: slot, main');
   ok(L.describe(areq, st({ step: 'ascendPick', pos: 40, count: 90, scroll: 'below', scrollRows: 3 }), t).lines[0].includes('3'), lang + ': ascend pick: rows below');

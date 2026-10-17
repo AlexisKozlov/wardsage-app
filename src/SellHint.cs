@@ -39,7 +39,46 @@ namespace RealmForge {
     public string FullKey { get { return StateKey + "|" + Below + "|" + Above; } }
   }
 
+  /// <summary>The one rule for everything the overlay draws over the game (equip helper, locate, storage cleanup, plates):
+  /// only while the game window exists, is visible, is not minimized and is in front (or our own always-on-top window over it).
+  /// Pure, so the host applies it centrally and the tests pin it down.</summary>
+  public static class OverlayGate {
+    /// <param name="hasWindow">the game window is known</param>
+    /// <param name="visible">it is shown (IsWindowVisible)</param>
+    /// <param name="minimized">it is minimized (IsIconic)</param>
+    /// <param name="inFront">the foreground window is the game's, or our always-on-top window over the game</param>
+    /// <param name="screenActive">the game screen the drawing belongs to is the active one (true when it has no own screen)</param>
+    public static bool CanDraw(bool hasWindow, bool visible, bool minimized, bool inFront, bool screenActive) {
+      return hasWindow && visible && !minimized && inFront && screenActive;
+    }
+
+    /// <summary>Is the foreground window "the game in front"? <paramref name="foregroundIsGame"/>: it belongs to the game's
+    /// process; <paramref name="foregroundIsOwn"/> / <paramref name="ownTopmost"/>: it is a window of ours and an always-on-top one
+    /// (the compact always-on-top window; the normal app window never counts, it is not a part of the game's picture).</summary>
+    public static bool InFront(bool foregroundIsGame, bool foregroundIsOwn, bool ownTopmost) {
+      return foregroundIsGame || (foregroundIsOwn && ownTopmost);
+    }
+
+    /// <summary>Clips a rectangle (x, y, w, h) to the game's client rect (x, y, w, h, same px); false = nothing of it is inside.</summary>
+    public static bool Clip(int[] r, int cx, int cy, int cw, int ch, out int[] res) {
+      int x0 = Math.Max(r[0], cx), y0 = Math.Max(r[1], cy), x1 = Math.Min(r[0] + r[2], cx + cw), y1 = Math.Min(r[1] + r[3], cy + ch);
+      res = x1 > x0 && y1 > y0 ? new[] { x0, y0, x1 - x0, y1 - y0 } : null;
+      return res != null;
+    }
+  }
+
   public static class SellHint {
+    /// <summary>The step with frames placed from the game's own scroll: <paramref name="row1"/> = client y of row 1's top from
+    /// InvScroll.Row1 (the exact scroll of the list, read every tick), NaN = the exact read is not available - then there are
+    /// NO frames at all (the step keeps its counts: the text plate "marked X of N" is all that is shown), never guessed ones.</summary>
+    public static SellHintStep BuildExact(InventoryScreen inv, ICollection<long> wanted, int cols, double row1, SellGeometry g, double W, double H, double U) {
+      var st = Classify(inv, wanted);
+      if (st.Kind != SellHintKind.Select || double.IsNaN(row1) || g == null) return st;
+      var grid = new LocateGrid();
+      grid.FromScroll(row1, inv.ListPtr);
+      return Build(inv, wanted, cols, grid, g, W, H, U);
+    }
+
     /// <summary>The step from what the inventory shows, without the rows' place on the screen (so never NeedPosition).</summary>
     public static SellHintStep Classify(InventoryScreen inv, ICollection<long> wanted) {
       var st = new SellHintStep();

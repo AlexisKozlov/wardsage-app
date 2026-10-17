@@ -55,6 +55,16 @@ namespace RealmForge {
     const long EquipTabId = -9998;   // BackpackMainTabType.Equip
     const int BulkSales = 2;         // Panel_BackpackEquipPanel.EquipBottomButtonState.BulkSales
 
+    /// <summary>The cheap per-tick look for the overlay: is the inventory form on screen now (m_LuaLogicActive) and, if so, its list's exact
+    /// scroll (null = unreadable). Reads two fields, no list parsing, so it can run every tick.</summary>
+    public static ListRead ReadInventoryLive(out bool active) {
+      active = false;
+      ulong f = LiveInvForm(-1);
+      if (f == 0 || !FormActive(f)) return null;
+      active = true;
+      return ReadInventoryList(f);
+    }
+
     /// <summary>The inventory now; null when the game has none (never opened) or it cannot be read.</summary>
     public static InventoryScreen ReadInventory(int rescanMs) {
       ulong f = LiveInvForm(rescanMs);

@@ -208,9 +208,10 @@ namespace RealmForge {
     // storage cleanup without auto click («Подсказать в игре»): the same list, but the program only reads the inventory and
     // draws frames on the cells to select; every click is the player's
     bool sellHint;
+    string shFrameSaid = "";
     string[] sellHintLines = new string[0]; string sellPillUp = "", sellPillDown = "";
     readonly LocateGrid sgrid = new LocateGrid();
-    InventoryScreen shInv; bool shHave; HashSet<long> shRawSel; ulong shRawPtr; string shReadSig = ""; long shReadAt;
+    InventoryScreen shInv; bool shHave; string shReadSig = ""; long shReadAt;
     int shCols = 8, shGeoCols; double shGeoW, shGeoH; SellGeometry shGeo;
     List<SellFrame> shFrames; string shKey = "";
     /// <summary>The hint's step changed (kind, counts, rows out of view): the page shows it and answers with the plate texts.</summary>
@@ -243,7 +244,7 @@ namespace RealmForge {
       };
       cancelWin.Pressed += () => {
         cancelWin.Hide();
-        if (locateReq != null && runHero <= 0) { lpilot.Cancel(); Log.Write("locate auto: stopped over the game"); return; }   // «Показать в игре»: only the clicks stop
+        if (LocateWins && runHero <= 0) { lpilot.Cancel(); Log.Write("locate auto: stopped over the game"); return; }   // «Показать в игре»: only the clicks stop
         var c = CancelPressed; if (c != null) c();
       };
     }
@@ -325,13 +326,21 @@ namespace RealmForge {
 
     /// <summary>The item the guide is at and its verdict ("filter": far down, "hiddenEq" / "hiddenFilter" / "notIn": not in
     /// the list, ...): the filter pilot sets the game's filter for it when that helps.</summary>
-    public void SetFilterGoal(long item, string kind) { filterItem = item; filterKind = kind ?? ""; if (item != 0) Run(); }
+    public void SetFilterGoal(long item, string kind) { bool was = PlanOn; filterItem = item; filterKind = kind ?? ""; PlanStamp(was); if (item != 0) Run(); }
+
+    // Overlay owner when an equip plan and a locate request are both on: the one started later (OverlayPriority).
+    long planSince, locateSince;
+    bool PlanOn { get { return runHero != 0 || target != 0 || hintKind != ""; } }
+    void PlanStamp(bool was) { if (!was && PlanOn) planSince = Stamp(); }
+    static long Stamp() { return DateTime.UtcNow.Ticks / 10000; }
+    /// <summary>«Показать в игре» owns the overlay now (its request is on and no later plan took it over).</summary>
+    bool LocateWins { get { return locateReq != null && OverlayPriority.Winner(PlanOn, planSince, true, locateSince) == OverlayPriority.Locate; } }
 
     /// <summary>An item's set and main stat (from the plan), for the game's filter.</summary>
     public void SetItemInfo(long uid, long setId, long statId) { if (uid > 0 && (setId > 0 || statId > 0)) itemInfo[uid] = new[] { setId, statId }; }
 
     /// <summary>The started plan's hero (0 = none): the pilot opens that hero's gear on the hero screen.</summary>
-    public void SetRun(long hero) { if (hero == runHero) return; runHero = hero; Run(); }
+    public void SetRun(long hero) { if (hero == runHero) return; bool was = PlanOn; runHero = hero; PlanStamp(was); Run(); }
 
     /// <summary>Every pilot starts over (a new «Надеть»: after a failure the player may have fixed the game's screen).</summary>
     /// <summary>What the helper is at while a started plan runs (null = no plan, or a pilot is clicking / waiting for the
@@ -349,7 +358,8 @@ namespace RealmForge {
     /// <summary>Item to highlight (0 = none).</summary>
     public void SetTarget(long uid) {
       if (uid == target) return;
-      target = uid;
+      bool was = PlanOn;
+      target = uid; PlanStamp(was);
       if (uid == 0) Hide("off");
       Run();
     }
@@ -360,7 +370,9 @@ namespace RealmForge {
       kind = kind ?? ""; lines = lines ?? new string[0];
       if (kind == hintKind && slot == hintSlot && hero == hintHero && string.Join("\n", lines) == string.Join("\n", hintLines)) return;
       if (kind != hintKind) doneSince = 0;
+      bool was = PlanOn;
       hintKind = kind; hintSlot = slot; hintLines = lines; hintHero = hero;
+      PlanStamp(was);
       HideTip(); Run();
     }
 
@@ -371,7 +383,7 @@ namespace RealmForge {
       sellHint = hintOnly && uids != null && uids.Count > 0;
       if (wasHint || sellHint) {
         // a hint run starts (or ends) clean: no frames, no plate, the rows' place unknown
-        sgrid.Reset(); shInv = null; shHave = false; shRawSel = null; shRawPtr = 0; shReadSig = ""; shReadAt = 0; shFrames = null; shKey = "";
+        sgrid.Reset(); shInv = null; shHave = false; shReadSig = ""; shReadAt = 0; shFrames = null; shKey = "";
         sellHintLines = new string[0]; sellPillUp = sellPillDown = "";
         Hide("off"); HideTip();
       }
@@ -386,6 +398,7 @@ namespace RealmForge {
     /// text plate; nothing is clicked. While it runs the build's frame is not shown (one target at a time).</summary>
     public void SetLocate(LocateRequest r) {
       locateReq = r != null && r.Item != null ? r : null;
+      locateSince = Stamp(); locateCaps = ""; locateLines = new string[0];
       locateStep = null; locateSubs = null; locateKey = ""; locateReadAt = 0; locateLastCur = -1; locateSubsAt = 0; lgrid.Reset();
       lpilot.Reset(); lpilot.ItemUid = locateReq != null ? locateReq.Item.Uid : 0; locateDriving = false; locateAutoSaid = "";
       Hide("off"); HideTip();
@@ -400,7 +413,8 @@ namespace RealmForge {
     }
 
     /// <summary>The text plate for the current step (composed by the page in the interface language).</summary>
-    public void SetLocateTip(string[] lines) { locateLines = lines ?? new string[0]; HideTip(); }
+    /// <param name="caps">the plate's header line («Показать в игре · вещь · шаг N из M»); its own, never the equip plan's.</param>
+    public void SetLocateTip(string[] lines, string caps) { locateLines = lines ?? new string[0]; locateCaps = caps ?? ""; HideTip(); }
 
     void Run() {
       if (target != 0 || locateReq != null || filterItem != 0 || hintKind != "" || runHero != 0 || sellWanted != null || DateTime.Now < diagUntil) { timer.Start(); if (target != 0) lookTimer.Start(); else lookTimer.Stop(); return; }
@@ -429,7 +443,9 @@ namespace RealmForge {
 
     void Tick() {
       curRow = curCol = 0; curSel = 0;
-      if (locateReq != null) { TickLocate(); TickCancel(); return; }
+      // the game is minimized / covered / alt-tabbed: nothing of ours stays over the desktop (the features go on reading)
+      if (!GameDrawable()) { if (glow.Visible) glow.Hide(); HideTip(); drawnKey = null; }
+      if (LocateWins) { TickLocate(); TickCancel(); return; }
       if (sellHint && sellWanted != null) { TickSellHint(); TickCancel(); return; }
       TickFrame();
       TickAuto();
@@ -443,7 +459,7 @@ namespace RealmForge {
       int fp = 0, gp = 0;
       if (hwnd != IntPtr.Zero) { W32.GetWindowThreadProcessId(W32.GetForegroundWindow(), out fp); W32.GetWindowThreadProcessId(hwnd, out gp); }
       W32.RECT cr;
-      if ((runHero <= 0 && !(locateReq != null && locateDriving)) || !AutoEnabled || hwnd == IntPtr.Zero || W32.IsIconic(hwnd) || fp != gp || !W32.GetClientRect(hwnd, out cr) || cr.B < 200) {
+      if ((runHero <= 0 && !(LocateWins && locateDriving)) || !AutoEnabled || hwnd == IntPtr.Zero || W32.IsIconic(hwnd) || fp != gp || !W32.GetClientRect(hwnd, out cr) || cr.B < 200) {
         if (cancelWin.Visible) cancelWin.Hide();
         return;
       }
@@ -610,7 +626,7 @@ namespace RealmForge {
     // A quick look between the frame ticks (every 30 ms): a list flicked by the player moves up to a few thousand px a
     // second - in 100 ms further than the strip is high, and then its picture fits nowhere or somewhere wrong.
     void LookFast() {
-      if (locateReq != null || target == 0 || target != lookTarget || addrs == null || types == null || !lookOk || !anchor.Has || filterState != "" || typesPtr != lookList) return;
+      if (LocateWins || target == 0 || target != lookTarget || addrs == null || types == null || !lookOk || !anchor.Has || filterState != "" || typesPtr != lookList) return;
       IntPtr hwnd = GameWindow();
       if (hwnd == IntPtr.Zero || !IsForeground(hwnd)) return;
       bool sure = LookAtList(lookO, lookH, NowMs());
@@ -982,8 +998,8 @@ namespace RealmForge {
 
     /// <summary>A pulsing gold frame around a button of the game (x, y, w, h: screen px) with the step plate beside it
     /// (plateOnly: the plate alone, beside that spot). below / right: kept for the callers, the plate finds its own side.</summary>
-    void DrawTip(int x, int y, int w, int h, string[] lines, double H, bool plateOnly = false, bool below = false, bool right = false) {
-      var p = lines != null && lines.Length > 0 ? new Plate { Caps = Tx("caps"), Main = lines[0], Sub = lines.Length > 1 ? lines[1] : "" } : null;
+    void DrawTip(int x, int y, int w, int h, string[] lines, double H, bool plateOnly = false, bool below = false, bool right = false, string caps = null) {
+      var p = lines != null && lines.Length > 0 ? new Plate { Caps = caps ?? Tx("caps"), Main = lines[0], Sub = lines.Length > 1 ? lines[1] : "" } : null;
       Scene(tip, ref tipKey, plateOnly ? null : new[] { x, y, w, h }, p, new[] { x, y, w, h }, null);
     }
 
@@ -991,6 +1007,7 @@ namespace RealmForge {
     /// beside <paramref name="target"/>, and the scroll strip (null = none: {x, viewTop, viewBottom, dotY, b0, b1}, screen px)
     /// with the plate as a pill at its dot. <paramref name="key"/>: what is drawn now (unchanged = nothing to do).</summary>
     void Scene(GlowWindow win, ref string key, int[] frameR, Plate p, int[] target, double[] strip, List<int[]> marks = null) {
+      if (!GameDrawable()) { if (win.Visible) win.Hide(); key = null; return; }
       float pulse = (float)(0.6 + 0.4 * Math.Sin(frame * 0.45));
       string k = (frameR != null ? string.Join(",", frameR) : "-") + "|" + (target != null ? string.Join(",", target) : "-") + "|"
         + (p != null ? p.Caps + "/" + p.Main + "/" + p.Sub + "/" + p.Pill : "-") + "|" + (strip != null ? string.Join(",", Array.ConvertAll(strip, v => ((int)v).ToString())) : "-")
@@ -1041,6 +1058,11 @@ namespace RealmForge {
         int Gm = (int)Math.Max(6, 0.008 * U);   // the glow of a cell frame among many: small, the neighbours are close
         if (marks != null) foreach (var m in marks) grow(m[0] - Gm - 4, m[1] - Gm - 4, m[0] + m[2] + Gm + 4, m[1] + m[3] + Gm + 4);
         if (x0 == int.MaxValue) { win.Hide(); return; }
+        // clipped to the game's client rect: nothing is drawn outside the window
+        if (sceneW > 0 && sceneH > 0) {
+          x0 = Math.Max(x0, sceneX); y0 = Math.Max(y0, sceneY); x1 = Math.Min(x1, sceneX + sceneW); y1 = Math.Min(y1, sceneY + sceneH);
+          if (x1 <= x0 || y1 <= y0) { win.Hide(); return; }
+        }
         int bw = Math.Max(1, x1 - x0), bh = Math.Max(1, y1 - y0);
         using (var bmp = new Bitmap(bw, bh, PixelFormat.Format32bppArgb)) {
           using (var gr = Graphics.FromImage(bmp)) {
@@ -1352,6 +1374,10 @@ namespace RealmForge {
       double W = cr.R, H = cr.B, U = Ui.Unit(W, H);
       SceneArea(o, cr);
       long now = NowMs();
+      // the game's own reading of the inventory form, EVERY tick (not the 200 ms full read): is the screen on now, and the exact
+      // scroll / columns of its list. The frames are placed from this alone; no picture decides where an item is.
+      bool formActive; var live = RFX.ReadInventoryLive(out formActive);
+      if (live != null && live.Cols > 0 && live.Cols != shCols) shCols = live.Cols;
       if (shGeo == null || shGeoW != W || shGeoH != H || shGeoCols != shCols) {
         shGeoW = W; shGeoH = H; shGeoCols = shCols; shGeo = SellGeometry.Inventory(W, U, shCols);
         sgrid.Reset();
@@ -1368,40 +1394,32 @@ namespace RealmForge {
           int c = raw.List != null && raw.List.Cols > 0 ? raw.List.Cols : front ? InvColumns(o, cr, U) : 0;
           if (c > 0 && c != shCols) { shCols = c; shGeoCols = -1; }
         }
-        if (bulk) {
-          if (sgrid.ListPtr != raw.ListPtr) sgrid.Reset();
-          // the player toggled one cell: the pointer says where its row is (only while the rows' place is not known)
-          if (!sgrid.Has && shRawSel != null && shRawPtr == raw.ListPtr && shGeo != null) {
-            long one = SellHint.OneChange(shRawSel, raw.Selected);
-            var cell = one != 0 ? SellHint.Cell(raw, one, shCols) : null;
-            W32.POINT cp;
-            if (cell != null && W32.GetCursorPos(out cp) && cp.Y - o.Y >= shGeo.ViewTopPx(U) && cp.Y - o.Y <= shGeo.ViewBottomPx(H, U)) sgrid.FromClick(shGeo, cell[0], cp.Y - o.Y, U, raw.ListPtr);
-          }
-          shRawSel = new HashSet<long>(raw.Selected); shRawPtr = raw.ListPtr;
-        } else { shRawSel = null; shRawPtr = 0; }
+        if (bulk && sgrid.ListPtr != raw.ListPtr) sgrid.Reset();
         string sig = SellHint.Classify(raw, sellWanted).StateKey;
         if (!shHave || sig == shReadSig) { shInv = raw; shHave = true; }
         shReadSig = sig;
       }
-      var inv = shInv;
+      // a screen the game no longer shows is not read from the old reading: the step falls back to «open the inventory»
+      var inv = formActive ? shInv : null;
       bool inBulk = inv != null && inv.Open && inv.EquipTab && inv.Bulk;
       if (inBulk && sgrid.ListPtr != inv.ListPtr) sgrid.Reset();
-      // the rows' place: the list opens at the top; the stat bars under the cells follow the scrolling
-      if (inBulk && front && shGeo != null) {
-        if (!FollowInventoryGrid(sgrid, sellScroll, shGeo, inv, o, cr, U, now, "sell")) {   // last resort: the stat bars on the screen
-          double phase = PhaseOf(shGeo, o, cr, U);
-          if (!double.IsNaN(phase)) {
-            if (!sgrid.Has) sgrid.FromTop(shGeo, phase, U, inv.ListPtr);
-            if (sgrid.Has) sgrid.Track(shGeo, sgrid.VisibleRow(shGeo, (inv.Uids.Count + shCols - 1) / shCols, W, H, U), phase, U);
-          }
-        }
+      // row 1's place: the game's exact scroll, nothing else. Unreadable = no item frames at all (the text plate and the counts
+      // stay), never guessed ones
+      double row1 = double.NaN;
+      if (inBulk && front && shGeo != null && live != null && live.Has) {
+        inv.List = live;
+        if (FollowInventoryGrid(sgrid, sellScroll, shGeo, inv, o, cr, U, now, "sell")) row1 = sgrid.Row1;
       }
-      var step = SellHint.Build(inv, sellWanted, shCols, inBulk && sgrid.Has ? sgrid : null, shGeo, W, H, U);
-      step.Frames = shFrames = SellHint.Stabilize(shFrames, step.Frames, 3);
+      if (inBulk && front) {
+        string why = !double.IsNaN(row1) ? "exact" : "none";
+        if (why != shFrameSaid) { shFrameSaid = why; if (why == "none") Log.Write("sell hint: the list's exact scroll cannot be read - no item frames, only the text plate"); }
+      }
+      var step = SellHint.BuildExact(inv, sellWanted, shCols, row1, shGeo, W, H, U);
+      shFrames = step.Frames;
       string key = step.FullKey;
       if (key != shKey) { shKey = key; var h = SellHintChanged; if (h != null) h(step); }
 
-      if (!front) { SellHintHide(); return; }
+      if (!GameDrawable(true)) { SellHintHide(); return; }
       bool haveText = sellHintLines.Length > 0;
       double vt = shGeo.ViewTopPx(U), vb = shGeo.ViewBottomPx(H, U);
       int gx = (int)shGeo.X(shGeo.X0, W, U), gw = (int)(shGeo.PitchX * (shCols - 1) * U + shGeo.CellW * U);
@@ -1429,12 +1447,18 @@ namespace RealmForge {
         return;
       }
       if (step.Kind == SellHintKind.NeedPosition) { DrawTip(o.X + gx, o.Y + (int)vt - 2, gw, 2, sellHintLines, H, true); return; }
+      int[] cityBtn;
+      if (step.Kind == SellHintKind.OpenInventory && CityInventoryButton(o, W, H, U, out cityBtn)) {   // the city: frame the bar's «Инвентарь»
+        frame++;
+        DrawTip(cityBtn[0], cityBtn[1], cityBtn[2], cityBtn[3], sellHintLines, H);
+        return;
+      }
       DrawTip(o.X + (int)(0.23 * U), o.Y + (int)(0.19 * U) + 150, 4, 0, sellHintLines, H, true);
     }
 
     // ---------------------------------------------------------------- «Найти в игре»
 
-    LocateRequest locateReq; string[] locateLines = new string[0];
+    LocateRequest locateReq; string[] locateLines = new string[0]; string locateCaps = "";
     readonly LocateGrid lgrid = new LocateGrid();
     LocateStep locateStep; SubCheck locateSubs; string locateKey = "";
     long locateReadAt, locateLastCur = -1, locateSubsAt; int locateCols = 8, locateGeoCols; double locateGeoW, locateGeoH;
@@ -1518,9 +1542,13 @@ namespace RealmForge {
       if (locateInv != null && step.Kind != LocateKind.InList) locateLastCur = locateInv.Current;
       step.NeedClick = locateNeedClick;
       // a plate with the step's text (the page composes it): in the list's top-left corner, no frame
-      if (front && locateLines.Length > 0 && (step.Kind != LocateKind.InList || locateNeedClick)) {
+      int[] cityBtn;
+      if (front && locateLines.Length > 0 && step.Kind == LocateKind.OpenInventory && !step.OnHero && CityInventoryButton(o, W, H, U, out cityBtn)) {
+        frame++;   // the city: frame the bar's «Инвентарь» (where the auto mode clicks) with the step's plate beside it
+        DrawTip(cityBtn[0], cityBtn[1], cityBtn[2], cityBtn[3], locateLines, H, false, false, false, locateCaps);
+      } else if (front && locateLines.Length > 0 && (step.Kind != LocateKind.InList || locateNeedClick)) {
         frame++;
-        DrawTip(o.X + (int)(0.23 * U), o.Y + (int)(0.19 * U) + 150, 4, 0, locateLines, H, true);
+        DrawTip(o.X + (int)(0.23 * U), o.Y + (int)(0.19 * U) + 150, 4, 0, locateLines, H, true, false, false, locateCaps);   // its own header, not the plan's «Шаг N из M»
       } else if (!front || locateLines.Length == 0 || step.Kind == LocateKind.InList) HideTip();
       string key = step.Key + "|" + step.Pos + "|" + step.Row + "|" + step.Col + "|" + step.Count + "|" + string.Join(",", step.Missing) + "|" + step.OnHero + "|" + step.NeedClick
         + "|" + (locateSubs != null ? string.Join(",", Array.ConvertAll(locateSubs.Match, x => x ? "1" : "0")) + locateSubs.Changed : "") + "|" + step.Auto + "|" + step.AutoWhy;
@@ -1921,6 +1949,17 @@ namespace RealmForge {
       return true;
     }
 
+    // the city's «Инвентарь» button in the bottom bar (where the auto mode clicks): its frame (client px -> screen px), seen by its
+    // picture (looked at most every 0.4 s); false = the city bar is not on the screen
+    long cityInvAt; bool cityInvSeen;
+    bool CityInventoryButton(W32.POINT o, double W, double H, double U, out int[] r) {
+      long now = NowMs();
+      if (now - cityInvAt >= 400) { cityInvAt = now; cityInvSeen = InventoryButtonSeen(o, W, H); }
+      double cx = W - invDX * U, cy = H - hg2.HeroesBtnDY * U, bw = 0.11 * U, bh = 0.13 * U;
+      r = new[] { o.X + (int)(cx - bw / 2), o.Y + (int)(cy - bh / 2), (int)bw, (int)bh };
+      return cityInvSeen;
+    }
+
     string heroLogged;
     /// <summary>One journal line whenever the hero pilot's view or state changes.</summary>
     void LogHero(HeroView v) {
@@ -2025,7 +2064,17 @@ namespace RealmForge {
     static bool IsForeground(IntPtr game) {
       IntPtr f = W32.GetForegroundWindow(); if (f == game) return true;
       int fp, gp; W32.GetWindowThreadProcessId(f, out fp); W32.GetWindowThreadProcessId(game, out gp);
-      return fp == gp || fp == SelfPid;   // the game, or our compact window over it
+      // the game, or our always-on-top compact window over it (OverlayGate.InFront); our normal app window never counts
+      bool own = fp == SelfPid, top = own && (W32.GetWindowLong(f, -20) & 0x00000008) != 0;   // GWL_EXSTYLE, WS_EX_TOPMOST
+      return OverlayGate.InFront(fp == gp, own, top);
+    }
+
+    /// <summary>The central rule for every overlay drawing (OverlayGate.CanDraw): the game window is visible, not minimized and in
+    /// front. Applied in Tick (everything is hidden at once) and in Scene (nothing is painted); the features do not repeat it.</summary>
+    bool GameDrawable(bool screenActive = true) {
+      IntPtr hwnd = GameWindow();
+      bool has = hwnd != IntPtr.Zero;
+      return OverlayGate.CanDraw(has, has && W32.IsWindowVisible(hwnd), has && W32.IsIconic(hwnd), has && IsForeground(hwnd), screenActive);
     }
 
     // values per line of the strip picture (ListTracker.LineSig): 4 parts of each of the 3 columns
@@ -2047,11 +2096,11 @@ namespace RealmForge {
     // «Вещь здесь ↓ N рядов» at the item's dot (strip: {x, viewTop, viewBottom, dotY, b0, b1}, screen px; null = a pill
     // beside the spot alone)
     void Draw(string kind, int x, int y, int w, int h, int rows, double[] strip = null) {
-      if (locateReq == null) Say(kind == "box" ? "on" : kind == "up" ? "above" : "below", rows);   // the plan's state; «Найти в игре» has its own
+      if (!LocateWins) Say(kind == "box" ? "on" : kind == "up" ? "above" : "below", rows);   // the plan's state; «Найти в игре» has its own
       dKind = kind + (rows > 0 ? ":" + rows : ""); dX = x; dY = y; dW = w; dH = h;
       if (kind == "box") {
         Plate p = null;
-        if (locateReq == null && Tx("pick") != "")
+        if (!LocateWins && Tx("pick") != "")
           p = WrongItem ? new Plate { Caps = Tx("caps"), Main = Tx("wrong"), Sub = Tx("wrongSub") } : new Plate { Caps = Tx("caps"), Main = Tx("pick"), Sub = Tx("then") };
         Scene(glow, ref drawnKey, new[] { x, y, w, h }, p, new[] { x, y, w, h }, null);
         return;

@@ -37,6 +37,7 @@ namespace RealmForge {
     public string[] Missing = new string[0];        // foundry filter parts not set yet: slot, suit, main, subs
     public bool OnGear;                             // the foundry's button is on the hero's gear screen (not the inventory)
     public bool OnHero;                             // the item's hero is open: the slot can be pressed there
+    public bool OnGem;                              // recast: the item is on the gem screen (Done there = press «Улучшить», not the foundry's button)
     public string Scroll = "";                      // where the item is in the foundry's list by the game's own reading: visible | above | below ("" = unknown)
     public int ScrollRows;                          // rows to scroll for above / below
     public bool NeedClick;                          // the inventory's list position is not known yet: the player is asked to click a cell
@@ -87,7 +88,7 @@ namespace RealmForge {
         if (!invOpen && hero != null && hero.Hero > 0 && hero.Tab == 3) { st.Kind = LocateKind.OpenFoundry; st.OnGear = true; return st; }
         return NextInInventory(req, inv, hero, cols, st, true);
       }
-      if (rs != null && ((rs.OnRecast && rs.Sel == uid) || (rs.OnGemRecast && rs.GemSel == uid))) { st.Kind = LocateKind.Done; return st; }
+      if (rs != null && ((rs.OnRecast && rs.Sel == uid) || (rs.OnGemRecast && rs.GemSel == uid))) { st.Kind = LocateKind.Done; st.OnGem = rs.OnGemRecast && rs.GemSel == uid && !(rs.OnRecast && rs.Sel == uid); return st; }
       if (onAccount == 0) { st.Kind = LocateKind.OtherAccount; return st; }
 
       if (rs != null && rs.SublimingOpen && rs.CurType >= 0 && rs.CurType != 3) { st.Kind = LocateKind.OpenRecastTab; return st; }
@@ -110,7 +111,8 @@ namespace RealmForge {
         return st;
       }
       if (rs != null && rs.GemOpen && rs.GemSel == uid) { st.Kind = LocateKind.GemFunction; return st; }
-      // the recast path stays through the inventory (item card -> gems -> recast); a worn item: its hero's slot (OnHero)
+      // the recast path stays through the inventory: item selected -> card button «Улучшение самоцветами» -> the gem screen's
+      // «Преобразование» -> the item -> «Улучшить». The Foundry is only for Ascension. A worn item: its hero's slot (OnHero)
       return NextInInventory(req, inv, hero, cols, st);
     }
 
@@ -270,6 +272,19 @@ namespace RealmForge {
       double units = l.RowUnits > 0 ? l.RowUnits : FallbackRowUnits, pitch = g.PitchY * U;
       double raw = g.ViewTopPx(U) + g.TopPad * U - l.ScrollY * pitch / units;
       return off.Place(raw, phaseY, pitch, U);
+    }
+  }
+
+  /// <summary>Which feature owns the overlay when both an equip plan and a locate request are active: the one started most
+  /// recently wins, the other waits (the app window shows both).</summary>
+  public static class OverlayPriority {
+    public const string None = "none", Plan = "plan", Locate = "locate";
+    /// <param name="planSince">when the plan became active (ms, the same clock as locateSince)</param>
+    public static string Winner(bool planActive, long planSince, bool locateActive, long locateSince) {
+      if (planActive && locateActive) return locateSince >= planSince ? Locate : Plan;
+      if (locateActive) return Locate;
+      if (planActive) return Plan;
+      return None;
     }
   }
 

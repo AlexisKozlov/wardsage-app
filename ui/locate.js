@@ -56,9 +56,10 @@
                          : { tone: 'info', head: t('locInList', st.row, st.col), lines: [t('locInListP')] };
         break;
       case 'hiddenFilter': r = { tone: 'warn', head: t('locHidden'), lines: [t('locHiddenP')] }; break;
-      case 'selected': r = { tone: 'done', head: t('locSelected'), lines: [t('locSelectedP')] }; break;
+      // recast goes through the gem screen (the Foundry is for Ascension only): card button, then the function, then «Улучшить»
+      case 'selected': r = { tone: 'done', head: t('locSelected'), lines: [t(req.purpose === 'ascend' ? 'locSelectedAscP' : 'locSelectedP')] }; break;
       case 'openFoundry': r = st.onGear ? { tone: 'info', head: t('locFoundryHero'), lines: [t('locFoundryP')] } : { tone: 'info', head: t('locFoundryInv'), lines: [t('locFoundryP')] }; break;
-      case 'gemFunction': r = { tone: 'info', head: t('locGemFunc'), lines: [] }; break;
+      case 'gemFunction': r = { tone: 'info', head: t('locGemFunc'), lines: [t('locGemFuncP')] }; break;
       case 'ascendFilter': {
         const l = filterLines(req, st, t);
         r = { tone: 'info', head: t('locFilterA'), lines: l.concat(st.pos > 0 ? [pos] : []) };
@@ -78,7 +79,7 @@
       case 'ascendPick': r = { tone: 'info', head: t('locPick', st.pos, st.count), lines: [scrollLine(st, t)].filter(Boolean) }; break;
       case 'ascendNotInList': r = { tone: 'warn', head: t('locAscNotInList'), lines: [t('locAscNotInListP')] }; break;
       case 'ascendReady': r = { tone: 'done', head: t('locAscendReady'), lines: [t('locAscendReadyP')] }; break;
-      default: r = { tone: 'done', head: t('locDone'), lines: [t('locDoneP')] };
+      default: r = { tone: 'done', head: t('locDone'), lines: [t(st.onGem ? 'locDoneGemP' : 'locDoneP')] };
     }
     // auto click: the app is doing this step itself, or it gave up (and says why; the step's own text follows)
     if (st.auto === 'stopped') r = { tone: st.autoWhy === 'cancelled' ? 'info' : 'warn', head: t('locAutoStop'), lines: [t(AUTO_WHY[st.autoWhy] || 'locAutoLost'), r.head].concat(r.lines) };
@@ -86,6 +87,24 @@
     // the plate over the game: the head and the first lines, short
     r.tip = [r.head].concat(r.lines.slice(0, 2)).map((x) => (x.length > 90 ? x.slice(0, 89) + '…' : x));
     return r;
+  }
+
+  // the user-facing step number of a request: {n, total} or null (a step off the main path has no number)
+  const PATH = {
+    recast: { openInventory: 1, openEquipTab: 2, inList: 3, hiddenFilter: 3, selected: 4, gemFunction: 5, gemPick: 5, done: 6, total: 6 },
+    ascend: { openInventory: 1, openEquipTab: 2, openFoundry: 3, openAscendTab: 4, ascendFilter: 5, ascendPick: 5, ascendNotInList: 5, ascendReady: 6, total: 6 },
+  };
+  function stepNo(req, st) {
+    if (!req || !st) return null;
+    const p = PATH[req.purpose === 'ascend' ? 'ascend' : 'recast'], n = p[st.step];
+    return n ? { n, total: p.total } : null;
+  }
+
+  // the locate plate's own header line: «Показать в игре · <вещь> · шаг N из M» (never the equip helper's «Шаг N из M · слот»)
+  function caps(req, st, t) {
+    if (!req || !req.item) return '';
+    const name = req.item.name || req.item.slotName || '', s = stepNo(req, st);
+    return s ? t('locCapsN', name, s.n, s.total) : t('locCaps', name);
   }
 
   // the card's sub stats against the game's: [{text, ok}] (ok only when the game's reading is there)
@@ -97,7 +116,7 @@
     }));
   }
 
-  const api = { KINDS, describe, subRows, filterLines, AUTO_STEPS };
+  const api = { KINDS, describe, caps, stepNo, subRows, filterLines, AUTO_STEPS };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.RFLocate = api;
 })(typeof window !== 'undefined' ? window : globalThis);

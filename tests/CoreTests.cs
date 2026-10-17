@@ -2312,6 +2312,24 @@ static class CoreTests {
     iv.Current = 5;
     Eq(LocateKind.InList, LocateGuide.Next(req, iv, null, null, 8, 1).Kind, "step: another item selected -> still in the list");
 
+    // the overlay's owner when a plan and a locate request are both on: the later one wins
+    Eq("none", OverlayPriority.Winner(false, 0, false, 0), "priority: nothing on");
+    Eq("plan", OverlayPriority.Winner(true, 5, false, 0), "priority: only a plan");
+    Eq("locate", OverlayPriority.Winner(false, 0, true, 5), "priority: only a locate request");
+    Eq("locate", OverlayPriority.Winner(true, 100, true, 200), "priority: locate started after the plan -> locate");
+    Eq("plan", OverlayPriority.Winner(true, 300, true, 200), "priority: plan started after locate -> plan");
+    Eq("locate", OverlayPriority.Winner(true, 200, true, 200), "priority: same moment -> locate");
+
+    // recast path: the gem screen holds the item, its function is still to choose; the card's button comes first
+    var gs = new RecastScreen { GemOpen = true, GemSel = 777, GemFunc = 1 };
+    Eq(LocateKind.GemFunction, LocateGuide.Next(req, null, gs, null, 8, 1).Kind, "step: gem screen with the item, function not chosen -> choose «Преобразование»");
+    gs.GemFunc = 7;
+    st = LocateGuide.Next(req, null, gs, null, 8, 1);
+    Check(st.Kind == LocateKind.Done && st.OnGem, "step: gem screen with Recast chosen and the item -> done (press «Улучшить»)");
+    var arq = new LocateRequest { Id = "a", Purpose = "ascend", Item = req.Item };
+    iv = inv(); iv.Current = 777;
+    Eq(LocateKind.OpenFoundry, LocateGuide.Next(arq, iv, null, null, 8, 1).Kind, "step: ascend with the item selected in the inventory -> the Foundry button (never the card's buttons)");
+
     // the foundry
     Func<RecastScreen> fr = () => new RecastScreen { SublimingOpen = true, PanelShown = true, CurType = 3 };
     var rs = fr(); rs.CurType = 2;
@@ -2563,6 +2581,34 @@ static class CoreTests {
     Eq(0L, SellHint.OneChange(new HashSet<long> { 1 }, new HashSet<long> { 1 }), "hint: no change -> none");
     var cell = SellHint.Cell(bulk(), 1012, 8);
     Check(cell != null && cell[0] == 2 && cell[1] == 4 && SellHint.Cell(bulk(), 5, 8) == null, "hint: the cell of an item (row 2, place 4)");
+
+    // the exact scroll: frames sit on the cells and move with ScrollY, by the scroll's units exactly
+    var scr = new InvScroll();
+    Func<double, double> row1At = y => scr.Row1(g, new RFX.ListRead { ScrollY = y, Cols = 8, RowUnits = 118 }, double.NaN, U);
+    var ex0 = SellHint.BuildExact(bulk(), wanted, 8, row1At(0), g, W, H, U);
+    var ex1 = SellHint.BuildExact(bulk(), wanted, 8, row1At(59), g, W, H, U);   // half a row down
+    Check(ex0.Kind == SellHintKind.Select && ex0.Frames.Count == 3 && ex1.Frames.Count >= 1, "hint exact: frames from the exact read");
+    double half = g.PitchY * U * 59 / 118;
+    Func<SellHintStep, long, SellFrame> frameOf = (stp, u) => stp.Frames.Find(fr => fr.Uid == u);
+    Check(frameOf(ex0, 1012) != null && frameOf(ex1, 1012) != null && Math.Abs((frameOf(ex0, 1012).Y - frameOf(ex1, 1012).Y) - half) <= 1.01, "hint exact: a frame moves with ScrollY exactly (half a row = half the pitch)");
+    var ex2 = SellHint.BuildExact(bulk(), wanted, 8, row1At(118 * 100), g, W, H, U);   // far down: everything above the view
+    Check(ex2.Frames.Count == 0 && ex2.Above > 0, "hint exact: scrolled far away -> no frames, the pill counts rows above");
+    var nx = SellHint.BuildExact(bulk(), wanted, 8, double.NaN, g, W, H, U);
+    Check(nx.Kind == SellHintKind.Select && nx.Frames.Count == 0 && nx.Total == 4 && nx.Selected == 0 && nx.Below == 0, "hint exact: no exact read -> no frames at all, the counts stay");
+    Check(double.IsNaN(scr.Row1(g, new RFX.ListRead(), double.NaN, U)), "hint exact: an unreadable list gives NaN");
+
+    // the visibility rule for everything the overlay draws
+    Check(OverlayGate.CanDraw(true, true, false, true, true), "gate: game visible and in front -> draw");
+    Check(!OverlayGate.CanDraw(false, false, false, false, true), "gate: no game window -> nothing");
+    Check(!OverlayGate.CanDraw(true, true, true, true, true), "gate: game minimized -> nothing");
+    Check(!OverlayGate.CanDraw(true, false, false, true, true), "gate: game window hidden -> nothing");
+    Check(!OverlayGate.CanDraw(true, true, false, false, true), "gate: another window in front -> nothing");
+    Check(!OverlayGate.CanDraw(true, true, false, true, false), "gate: the game screen is not active -> nothing");
+    Check(OverlayGate.InFront(true, false, false) && !OverlayGate.InFront(false, false, false), "gate: the game in front counts, a stranger does not");
+    Check(OverlayGate.InFront(false, true, true) && !OverlayGate.InFront(false, true, false), "gate: our always-on-top window counts, our normal app window does not");
+    int[] clip;
+    Check(OverlayGate.Clip(new[] { -20, 10, 100, 50 }, 0, 0, 1920, 1009, out clip) && clip[0] == 0 && clip[2] == 80, "gate: a frame is clipped to the game's client rect");
+    Check(!OverlayGate.Clip(new[] { 1925, 10, 100, 50 }, 0, 0, 1920, 1009, out clip), "gate: a frame outside the client rect is dropped");
   }
 
   static void SellPilotTests() {
