@@ -1,6 +1,6 @@
 // Wardsage - layout data from the server for the running game version: GET {site}/api/extractor/app-layout?game=<version>
 // with Authorization: Bearer <sync code> (without a code nothing is asked).
-//   200 {"game":"<version>","v":1,"rva":{class: n},"const":{name: n},"span":{name: n},"size":{name: n},"hdr":{name: n},"form":{name: n}}
+//   200 {"game":"<version>","v":1,"rva":{class: n},"const":{name: n},"span":{name: n},"size":{name: n},"hdr":{name: n},"form":{name: n},"field":{name: n}}
 //   404 = no data for that version (yet); 401/403 = the code is not (or no longer) valid: asked again later.
 // The reply is kept per game version in the app's data folder (layout\<version>.json) and used while the site cannot be
 // reached. Without data for the running game version the features that need it stay off: fight recording and the boss
@@ -38,10 +38,16 @@ namespace RealmForge {
       "ID_FORM_PVPMAIN", "ID_FORM_UNIONBOSSBATTLEEND", "ID_FORM_UNIONWEEKBOSSBATTLEEND", "ID_FORM_BATTLEEND", "ID_FORM_PVPBATTLEEND",
       "ID_FORM_SPARRINGPVPBATTLEEND" };
 
+    /// <summary>Field offsets the app reads when the data has them (the "field" section, optional: without one the feature that
+    /// needs it falls back to the picture). The list grid's fields: columns, row size, the cells the grid has on the screen.</summary>
+    public static readonly string[] FieldKeys = {
+      "InfinityGrid.CellPerLine", "InfinityGrid.LineSize", "InfinityGrid.m_finalLineSize",
+      "InfinityGrid.m_crtFirstInstanceIndex", "InfinityGrid.m_crtLastInstanceIndex", "InfinityGrid.m_fitScale" };
+
     public string Game { get; private set; }
     readonly Dictionary<string, long> rva = new Dictionary<string, long>(), cons = new Dictionary<string, long>(),
       span = new Dictionary<string, long>(), size = new Dictionary<string, long>(), hdr = new Dictionary<string, long>(),
-      form = new Dictionary<string, long>();
+      form = new Dictionary<string, long>(), field = new Dictionary<string, long>();
 
     GameLayout() { }
 
@@ -60,10 +66,12 @@ namespace RealmForge {
       var l = new GameLayout { Game = game };
       if (!Section(o, "rva", l.rva) || !Section(o, "const", l.cons) || !Section(o, "span", l.span) || !Section(o, "size", l.size)
           || !Section(o, "hdr", l.hdr) || !Section(o, "form", l.form)) return null;
+      if (o.ContainsKey("field") && !Section(o, "field", l.field)) return null;
       if (!Has(l.cons, NeedConst) || !Has(l.span, NeedSpan) || !Has(l.size, NeedSize) || !Has(l.hdr, NeedHdr) || !Has(l.form, NeedForm)) return null;
       foreach (var kv in l.span) if (kv.Value <= 0 || kv.Value > 0x10000) return null;
       foreach (var kv in l.size) if (kv.Value <= 0 || kv.Value > 0x1000) return null;
       foreach (var kv in l.hdr) if (kv.Value < 0 || kv.Value > 0x100) return null;
+      foreach (var kv in l.field) if (kv.Value < 0 || kv.Value > 0x1000) return null;
       foreach (var kv in l.rva) if (kv.Value <= 0 || kv.Value > 0x40000000) return null;
       return l;
     }
@@ -95,6 +103,8 @@ namespace RealmForge {
     public int Size(string key) { return (int)Get(size, "size", key); }
     public int Hdr(string key) { return (int)Get(hdr, "hdr", key); }
     public long Form(string key) { return Get(form, "form", key); }
+    /// <summary>A field offset from the optional "field" section; -1 = the data has none (the feature then falls back).</summary>
+    public int FieldOffset(string key) { long v; return field.TryGetValue(key, out v) ? (int)v : -1; }
   }
 
   /// <summary>The layout data in force (the running game version's), fetched from the site and kept on disk.</summary>

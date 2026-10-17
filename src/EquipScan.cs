@@ -525,22 +525,89 @@ namespace RealmForge {
     /// false when it cannot be read (no layout data for it, another screen, the game changed).</summary>
     public static bool ReadScrollY(EquipAddrs a, bool heroList, out double y) {
       y = 0;
-      var ly = Layout.Current;
-      if (a == null || ly == null) return false;
+      if (a == null) return false;
       ulong t = heroList ? a.Form : a.Panel;
       if (t == 0) return false;
+      ulong rect = ScriptObject(t, heroList ? "m_CharactorGrid_ScrollRect" : "m_EquipList_ScrollRect", "UnityEngine.UI.ScrollRect", a.Pid);
+      return rect != 0 && ScrollPos(rect, out y);
+    }
+
+    /// <summary>A list of the game's screen as the game itself holds it: how far it is scrolled, its columns and the height
+    /// of one row in the scroll's own units. Nothing here comes from the picture.</summary>
+    public sealed class ListRead {
+      public double ScrollY = double.NaN;   // the content position (units; y = how far the list is scrolled down), NaN = unreadable
+      public int Cols;                      // cells per row (the grid's CellPerLine), 0 = unreadable
+      public double RowUnits;               // one row in the scroll's units (the grid's LineSize), 0 = unreadable
+      public int First = -1, Last = -1;     // the first / last cell (0-based index) the grid has on the screen now (its created cells), -1 = unreadable
+      public double FinalRowUnits, FitScale; // (diagnostics) the line size the grid really lays out with, its fit scale
+      public bool Has { get { return !double.IsNaN(ScrollY); } }
+      public override string ToString() { return Has ? "scroll=" + ScrollY.ToString("0.0") + " cols=" + Cols + " row=" + RowUnits.ToString("0.#") + " final=" + FinalRowUnits.ToString("0.#") + " fit=" + FitScale.ToString("0.###") + " cells=" + First + ".." + Last : "scroll=none"; }
+    }
+
+    static bool gridLayoutSaid;
+
+    /// <summary>Reads the scroll and the grid of a list whose owner table (a form or a panel) holds them under
+    /// <paramref name="scrollField"/> and <paramref name="gridField"/>; null when the scroll or the grid cannot be read, or the layout data has no grid fields for this game version.</summary>
+    public static ListRead ReadList(ulong owner, string scrollField, string gridField, int pid) {
+      if (owner == 0) return null;
+      // the grid's fields: their offsets come with the layout data of the game version (the "field" section); without them
+      // the list is not trusted (null): the caller falls back to the picture
+      var ly = Layout.Current;
+      int oCols = ly != null ? ly.FieldOffset("InfinityGrid.CellPerLine") : -1, oLine = ly != null ? ly.FieldOffset("InfinityGrid.LineSize") : -1;
+      if (oCols < 0 || oLine < 0) {
+        if (!gridLayoutSaid) { gridLayoutSaid = true; Log.AppendLine("list grid: the layout data has no grid fields for this game version - the picture is the fallback"); }
+        return null;
+      }
+      var r = new ListRead();
+      ulong rect = ScriptObject(owner, scrollField, "UnityEngine.UI.ScrollRect", pid);
+      double y;
+      if (rect == 0 || !ScrollPos(rect, out y)) return null;
+      r.ScrollY = y;
+      ulong grid = ScriptObject(owner, gridField, "UI.InfinityGrid", pid);
+      if (grid == 0) return null;
+      var b = Read(grid + (ulong)oCols, 4);
+      if (b != null) { int c = BitConverter.ToInt32(b, 0); if (c >= 1 && c <= 20) r.Cols = c; }
+      var l = Read(grid + (ulong)oLine, 4);
+      if (l != null) { float ls = BitConverter.ToSingle(l, 0); if (ls > 1 && ls < 2000) r.RowUnits = ls; }
+      if (r.Cols < 1 || r.RowUnits <= 0) return null;
+      int oFinal = ly.FieldOffset("InfinityGrid.m_finalLineSize"), oFirst = ly.FieldOffset("InfinityGrid.m_crtFirstInstanceIndex"),
+          oLast = ly.FieldOffset("InfinityGrid.m_crtLastInstanceIndex"), oFit = ly.FieldOffset("InfinityGrid.m_fitScale");
+      if (oFinal >= 0) { var fb = Read(grid + (ulong)oFinal, 4); if (fb != null) { float fl = BitConverter.ToSingle(fb, 0); if (fl > 1 && fl < 2000) r.FinalRowUnits = fl; } }
+      if (oFirst >= 0 && oLast >= 0) {
+        var fb = Read(grid + (ulong)oFirst, 4); var lb2 = Read(grid + (ulong)oLast, 4);
+        if (fb != null && lb2 != null) { int a = BitConverter.ToInt32(fb, 0), z = BitConverter.ToInt32(lb2, 0); if (a >= 0 && z >= a && z < 100000) { r.First = a; r.Last = z; } }
+      }
+      if (oFit >= 0) { var fb = Read(grid + (ulong)oFit, 4); if (fb != null) { float f = BitConverter.ToSingle(fb, 0); if (f > 0 && f < 100) r.FitScale = f; } }
+      return r;
+    }
+
+    /// <summary>The inventory's equipment grid (the form's content list); null when it cannot be read.</summary>
+    public static ListRead ReadInventoryList(ulong form) { return live == null ? null : ReadList(form, "m_Content_ScrollRect", "m_Content_InfinityGrid", live.Pid); }
+
+    /// <summary>The foundry's Ascension list (the panel's own list); null when it cannot be read.</summary>
+    public static ListRead ReadFoundryList(ulong panel) { return live == null ? null : ReadList(panel, "m_EquipList_ScrollRect", "m_EquipList_InfinityGrid", live.Pid); }
+
+    // an object the game's scripts hold in a field of a table (the field keeps a handle: an index into the script objects), 0 = none
+    static ulong ScriptObject(ulong t, string field, string cls, int pid) {
+      var ly = Layout.Current;
+      if (ly == null || t == 0) return 0;
       ulong ud; int tt;
-      if (!Field(t, heroList ? "m_CharactorGrid_ScrollRect" : "m_EquipList_ScrollRect", out ud, out tt) || (tt & 0x0F) != 7 || ud == 0) return false;
+      if (!Field(t, field, out ud, out tt) || (tt & 0x0F) != 7 || ud == 0) return 0;
       var ib = Read(ud + 40, 4);   // the handle: an int after the handle object's 40-byte header
-      if (ib == null) return false;
+      if (ib == null) return 0;
       int idx = BitConverter.ToInt32(ib, 0);
-      ulong slots = ScriptObjects(a.Pid);
-      if (slots == 0 || idx < 0) return false;
+      ulong slots = ScriptObjects(pid);
+      if (slots == 0 || idx < 0) return 0;
       var lb = Read(slots + (ulong)ly.Hdr("arrLen"), 8);
-      if (lb == null || idx >= BitConverter.ToInt64(lb, 0)) return false;
+      if (lb == null || idx >= BitConverter.ToInt64(lb, 0)) return 0;
       ulong obj = Ptr(slots + (ulong)ly.Hdr("arrData") + (ulong)idx * 16 + 8);   // slot {int next; object obj}
-      if (!IsA(obj, "UnityEngine.UI.ScrollRect")) return false;
-      var pb = Read(obj + 0xBC, 8);   // m_PrevPosition (Vector2)
+      return IsA(obj, cls) ? obj : 0;
+    }
+
+    // a scroll component's content position of the last frame (m_PrevPosition, Vector2)
+    static bool ScrollPos(ulong rect, out double y) {
+      y = 0;
+      var pb = Read(rect + 0xBC, 8);
       if (pb == null) return false;
       float py = BitConverter.ToSingle(pb, 4);
       if (float.IsNaN(py) || float.IsInfinity(py) || Math.Abs(py) > 1e6) return false;

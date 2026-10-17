@@ -1,12 +1,12 @@
 // Wardsage desktop — «Найти в игре»: the text for each step the host reports. Pure logic (tests: tests/locate.test.mjs).
 //
 // req:  {id, purpose, createdAt, heroUid, heroName, item|null}  (item: a plan item with slotName, setName, main[], subs[])
-// step: {step, pos, row, col, count, missing:[…], onHero, needClick, subs:[bool]|null, changed}  (host, src/LocateGuide.cs)
+// step: {step, pos, row, col, count, missing:[…], onHero, onGear, scroll, scrollRows, needClick, subs:[bool]|null, changed}  (host, src/LocateGuide.cs)
 // t(key, …args) is the interface's text lookup.
 (function (root) {
   const KINDS = ['noItem', 'otherAccount', 'openInventory', 'openEquipTab', 'inList', 'hiddenFilter', 'selected', 'openRecastTab',
     'recastFilter', 'recastPick', 'recastNotInList', 'choosePending', 'gemPick', 'done',
-    'openAscendTab', 'ascendPick', 'ascendNotInList', 'ascendReady'];
+    'openAscendTab', 'ascendPick', 'ascendNotInList', 'ascendReady', 'openFoundry', 'gemFunction', 'ascendFilter'];
 
   // auto click (host: src/LocatePilot.cs): st.auto = '' (off) | work | paused | background | hint | stopped, st.autoWhy = the reason when stopped.
   // The app clicks by itself only on these steps; the rest (the Foundry, the last button) stay the player's.
@@ -14,6 +14,14 @@
   const AUTO_WHY = { bulk: 'locAutoBulk', lost: 'locAutoLost', stuck: 'locAutoStuck', screen: 'locAutoScreen', cancelled: 'locAutoCancel' };
 
   function names(list) { return (list || []).map((x) => x.name || x.text).filter(Boolean); }
+
+  // where the game's own reading puts the item in the Foundry list ('' = unknown): one short line
+  function scrollLine(st, t) {
+    if (st.scroll === 'below') return t('locScrollDown', st.scrollRows);
+    if (st.scroll === 'above') return t('locScrollUp', st.scrollRows);
+    if (st.scroll === 'visible') return t('locVisible');
+    return '';
+  }
 
   // one line per filter part still to set (the foundry's filter keeps only items with all the chosen sub stats)
   function filterLines(req, st, t) {
@@ -33,14 +41,14 @@
     if (!st || KINDS.indexOf(st.step) < 0) return { tone: 'info', head: t('locOpenInventory'), lines: [], tip: [t('locOpenInventory')] };
     const it = req.item, pos = t('locPos', st.pos, st.count);
     let r;
-    const asc = req.purpose === 'ascend';   // Ascension (gear T1 -> T2): the same inventory steps, the foundry's «Ascend» tab at the end
+    // Ascension (gear T1 -> T2): the way to the Foundry (the Inventory's or the hero gear screen's «Foundry» button; nothing is chosen
+    // before it), then the Foundry's «Ascend» tab where the item is found in the tab's own list
     switch (st.step) {
       case 'noItem': r = { tone: 'warn', head: t('locNoItem'), lines: [t('locNoItemP')] }; break;
       case 'otherAccount': r = { tone: 'warn', head: t('locOther'), lines: [t('locOtherP')] }; break;
       case 'openInventory':
         r = st.onHero ? { tone: 'info', head: t('locOnHero', it.slotName || '', req.heroName || ''), lines: [t('locOnHeroP')] }
                       : { tone: 'info', head: t('locOpenInventory'), lines: [t('locOpenInventoryP')] };
-        if (st.onHero && asc) r.lines = [t('locOnHeroAP')];
         break;
       case 'openEquipTab': r = { tone: 'info', head: t('locEquipTab'), lines: [] }; break;
       case 'inList':
@@ -48,19 +56,26 @@
                          : { tone: 'info', head: t('locInList', st.row, st.col), lines: [t('locInListP')] };
         break;
       case 'hiddenFilter': r = { tone: 'warn', head: t('locHidden'), lines: [t('locHiddenP')] }; break;
-      case 'selected': r = asc ? { tone: 'done', head: t('locSelectedA'), lines: [t('locSelectedAP')] } : { tone: 'done', head: t('locSelected'), lines: [t('locSelectedP')] }; break;
+      case 'selected': r = { tone: 'done', head: t('locSelected'), lines: [t('locSelectedP')] }; break;
+      case 'openFoundry': r = st.onGear ? { tone: 'info', head: t('locFoundryHero'), lines: [t('locFoundryP')] } : { tone: 'info', head: t('locFoundryInv'), lines: [t('locFoundryP')] }; break;
+      case 'gemFunction': r = { tone: 'info', head: t('locGemFunc'), lines: [] }; break;
+      case 'ascendFilter': {
+        const l = filterLines(req, st, t);
+        r = { tone: 'info', head: t('locFilterA'), lines: l.concat(st.pos > 0 ? [pos] : []) };
+        break;
+      }
       case 'openRecastTab': r = { tone: 'info', head: t('locRecastTab'), lines: [] }; break;
       case 'recastFilter': {
         const l = filterLines(req, st, t);
         r = { tone: 'info', head: t('locFilter'), lines: l.concat(st.pos > 0 ? [pos] : []) };
         break;
       }
-      case 'recastPick': r = { tone: 'info', head: t('locPick', st.pos, st.count), lines: [] }; break;
+      case 'recastPick': r = { tone: 'info', head: t('locPick', st.pos, st.count), lines: [scrollLine(st, t)].filter(Boolean) }; break;
       case 'recastNotInList': r = { tone: 'warn', head: t('locNotInList'), lines: [t('locNotInListP')] }; break;
       case 'choosePending': r = { tone: 'warn', head: t('locPending'), lines: [t('locPendingP')] }; break;
       case 'gemPick': r = st.pos > 0 ? { tone: 'info', head: t('locPick', st.pos, st.count), lines: [] } : { tone: 'info', head: t('locGemOpen'), lines: [] }; break;
       case 'openAscendTab': r = { tone: 'info', head: t('locAscendTab'), lines: [] }; break;
-      case 'ascendPick': r = { tone: 'info', head: t('locPick', st.pos, st.count), lines: [] }; break;
+      case 'ascendPick': r = { tone: 'info', head: t('locPick', st.pos, st.count), lines: [scrollLine(st, t)].filter(Boolean) }; break;
       case 'ascendNotInList': r = { tone: 'warn', head: t('locAscNotInList'), lines: [t('locAscNotInListP')] }; break;
       case 'ascendReady': r = { tone: 'done', head: t('locAscendReady'), lines: [t('locAscendReadyP')] }; break;
       default: r = { tone: 'done', head: t('locDone'), lines: [t('locDoneP')] };

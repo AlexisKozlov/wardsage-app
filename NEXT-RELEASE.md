@@ -28,11 +28,20 @@ Optional `### Heading` lines inside a `## RU` / `## EN` section split the update
 * Признак «висит результат прошлого преобразования» пока не читается: сначала снять его живьём.
 * Иконки слотов слева и фильтр Литейной (поп-ап выравнивается по кнопке): читаются как список или набор, проверить.
 * Задержка: заявка обновляется с опросом планов (8 с, пока она открыта); экраны ищутся не чаще раза в 8 с.
-* Вознесение (purpose "ascend"): вкладка Литейной с m_curType = 2 и панель m_PanelEquipSubliming (поля m_IsShow / m_bActive, m_Equips,
-  m_EquipId) читаются как у Преобразования: проверить вживую, что список и выбранная вещь совпадают с экраном. Кнопки игры: на карточке вещи
-  «Вознесение» (EN «Ascend»), на вкладке Литейной «Вознесение» / «Ascend», кнопка действия «Вознести» / «Ascend»; в Инвентаре — «Литейная».
-  Проверить: вещь доступна для вознесения только при нужном комплекте и уровне +16, иначе её нет в списке (текст «Вещи нет в списке «Вознесения»»);
-  то же с экрана героя (карточка надетой вещи → «Вознесение»); при переключении вкладки подсказки не мигают.
+* Вознесение (purpose "ascend"): путь Инвентарь → «Снаряжение» → «Литейная» (или кнопка «Литейная» внизу экрана героя → вкладка «Снаряжение»), затем вкладка
+  «Вознесение» (m_curType = 2). Выбор вещи в Инвентаре в Литейную не переносится (Литейная открывается пустой), поэтому вещь ищется в списке самой Литейной
+  (m_PanelEquipSubliming: m_Equips, m_EquipId, фильтр m_SelectParts / m_FilterConfig). На карточке надетой вещи кнопки «Вознесение» нет. Проверить вживую:
+  список и выбранная вещь совпадают с экраном; в списке только вещи, которые можно вознести (редкость, уровень улучшения, есть вещь-цель),
+  надетые тоже; подсказка про слот / фильтр верна (у Литейной свои иконки слотов и свой фильтр, не как в Инвентаре); при смене вкладки подсказки не мигают.
+* Точное чтение прокрутки списков (вместо картинки): Инвентарь (m_Content_ScrollRect, m_Content_InfinityGrid: CellPerLine, LineSize), списки Литейной
+  «Вознесение» и «Преобразование» (m_EquipList_ScrollRect, m_EquipList_InfinityGrid; ячейки на экране m_crtFirstInstanceIndex / m_crtLastInstanceIndex).
+  В журнале строки «inventory grid from the game's scroll (scroll=… cols=… row=… final=… fit=… cells=…)» и «the foundry list's reading»:
+  сверить cols с экраном, row (LineSize) с высотой строки; если рамка в Инвентаре смещена на постоянную величину или на долю ряда, смотреть row / final / fit
+  (запасное значение 118 на ряд). Если чтение не получилось, в журнале «scroll cannot be read - the picture is the fallback» (рамка по полоскам статов).
+  Это же относится к чистке склада (подсказки и автонажатие): рамки и клики идут по точной прокрутке, проверить обе.
+* Смещения полей сетки списков приходят с данными раскладки сайта (раздел «field», необязательный). Без него для версии игры списки читаются по картинке,
+  в журнале «list grid: the layout data has no grid fields…». Перед выпуском на сайте должен лежать файл раскладки с этим разделом для текущей версии игры.
+* В списке Литейной рамки на ячейке пока нет (геометрия экрана не замерена): подсказка текстом — ряд, место и «ещё N рядов ниже / выше» по ячейкам, которые игра держит на экране.
 * Английские названия кнопок игры (Литейная, Преобразовать, Фильтр) в ui/i18n.js взяты по смыслу: сверить с английским клиентом.
 
 Автонажатие в «Показать в игре» (src/LocatePilot.cs; только с включённым «Автонажатием», без него всё как выше). Проверять вживую:
@@ -81,7 +90,7 @@ Optional `### Heading` lines inside a `## RU` / `## EN` section split the update
 - При первом запуске программа показывает короткое приветствие с Пользовательским соглашением; нужно один раз нажать «Принимаю».
 - Папки настроек программы теперь называются Wardsage; всё переносится само.
 - Установщик: можно сразу выбрать, запускать ли программу вместе с Windows и отправлять ли отчёты об ошибках.
-- Показать в игре: нажми кнопку на сайте во вкладке «Вознесение» или «Преобразование», и программа обведёт вещь рамкой в Инвентаре и подскажет, что нажать дальше. Без автонажатия программа только показывает, нажимаешь ты сам. С автонажатием программа сама откроет Инвентарь и выберет нужную вещь, а дальше подскажет, что нажать.
+- Показать в игре: нажми кнопку на сайте во вкладке «Вознесение» или «Преобразование», и программа подскажет путь в игре. Для «Преобразования» вещь обводится рамкой в Инвентаре, и рамка точно идёт за прокруткой списка, без лишнего клика. Для «Вознесения» программа ведёт в Литейную (из Инвентаря или с экрана героя), а вещь ищет в списке самой Литейной. Без автонажатия программа только показывает, нажимаешь ты сам. С автонажатием программа сама откроет Инвентарь, вкладку «Снаряжение» и нужную вещь, а дальше подскажет, что нажать.
 
 ## EN
 
@@ -91,4 +100,4 @@ Optional `### Heading` lines inside a `## RU` / `## EN` section split the update
 - On the first start the app shows a short welcome card with the Terms of Use; press «I accept» once.
 - The app's settings folders are now named Wardsage; everything moves over by itself.
 - Installer: you can now choose right away whether the app starts with Windows and whether it sends error reports.
-- Show in game: press the button on the site in the «Ascension» or «Recast» tab, and the app outlines the item with a frame in the Inventory and tells you what to press next. Without auto click the app only shows, you press yourself. With auto click on, the app opens the Inventory and selects the item by itself, then shows what to press next.
+- Show in game: press the button on the site in the «Ascension» or «Recast» tab, and the app shows the way in the game. For «Recast» the item gets a frame in the Inventory, and the frame follows the list's scrolling exactly, with no extra click. For «Ascension» the app leads you to the Foundry (from the Inventory or the hero screen) and looks for the item in the Foundry's own list. Without auto click the app only shows, you press yourself. With auto click on, the app opens the Inventory, the «Equipment» tab and the item by itself, then shows what to press next.

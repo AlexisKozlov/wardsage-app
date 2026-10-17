@@ -6,7 +6,8 @@
 //   - the hero screen's back arrow and the city's «Инвентарь» button (as the storage cleanup opens the inventory),
 //   - the inventory's left menu «Снаряжение» (the same spot the storage cleanup uses),
 //   - the item's cell in the inventory's list, scrolled to by dragging the list (SellPilot with the inventory's geometry,
-//     run on a normal-mode screen: a click only selects the item here, nothing is sold).
+//     run on a normal-mode screen: a click only selects the item here, nothing is sold). The list's position is the game's own
+//     scroll reading (InvScroll); the picture is only the fallback. Not for Ascension: the Foundry starts without the item.
 // What it does NOT click yet - these stay hints (the text for each step exists): the Foundry button in the inventory, the item
 // card's «Вознесение» / «Преобразование» button, the Foundry's tabs and its list. Their places on the screen are not measured,
 // and the card's left button changes its meaning with the item (Enhance / Ascend / Gems), so a guessed click could press the
@@ -44,6 +45,7 @@ namespace RealmForge {
     public bool OtherFormOpen;        // the Foundry or the gem screen is shown
     public bool CityButton;           // «Инвентарь» is seen in the city's bottom bar (looked for only when asked: see NeedsCityButton)
     public double InvDX = 0.5222 + 0.9316;   // its place from the right edge, UI units
+    public double Row1 = double.NaN;  // row 1's top from the game's own scroll reading (InvScroll), NaN = unreadable
     public double Phase = double.NaN; // row-top phase of the inventory's rows on the screen now (client px mod the row step)
   }
 
@@ -166,7 +168,7 @@ namespace RealmForge {
       scr.Open = true; scr.Current = v.Inv.Current;
       var wanted = new HashSet<long> { ItemUid };
       var a = list.Step(new SellView { NowMs = v.NowMs, Foreground = v.Foreground, UserBusy = v.UserBusy, UserClicked = false, W = v.W, H = v.H, U = v.U,
-                                       Screen = scr, Wanted = wanted, Phase = v.Phase });
+                                       Screen = scr, Wanted = wanted, Phase = v.Phase, Row1 = v.Row1 });
       if (list.Trace != "") { Say(list.Trace); list.Trace = ""; }
       if (list.State == "failed" || list.State == "done") return Abort(m, "lost");   // "done" without the item selected: it is out of reach
       if (a.Kind == AutoKind.None) return m;

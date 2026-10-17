@@ -38,10 +38,16 @@ for (const lang of ['ru', 'en']) {
   ok(L.describe(req, st({ step: 'recastPick', pos: 2, count: 2 }), t).head.includes('2'), lang + ': pick by place');
   ok(L.describe(req, st({ step: 'gemPick', pos: 0 }), t).head === T[lang].locGemOpen, lang + ': gem pop-up closed');
   ok(L.describe(req, st({ step: 'done' }), t).tone === 'done', lang + ': done');
-  // Ascension: the same inventory steps with its own button names; recast texts stay as they were
+  // Ascension: the way to the Foundry from the screen the player is on, then the Foundry's own list; recast texts stay as they were
   const areq = { ...req, purpose: 'ascend' };
-  ok(L.describe(areq, st({ step: 'selected' }), t).lines[0] === T[lang].locSelectedAP && L.describe(req, st({ step: 'selected' }), t).lines[0] === T[lang].locSelectedP, lang + ': ascend selected text, recast unchanged');
-  ok(L.describe(areq, st({ step: 'openInventory', onHero: true }), t).lines[0] === T[lang].locOnHeroAP, lang + ': ascend on the hero screen');
+  ok(L.describe(areq, st({ step: 'openFoundry' }), t).head === T[lang].locFoundryInv && L.describe(areq, st({ step: 'openFoundry', onGear: true }), t).head === T[lang].locFoundryHero, lang + ': Foundry button of the inventory / of the hero screen');
+  ok(L.describe(req, st({ step: 'selected' }), t).lines[0] === T[lang].locSelectedP, lang + ': recast selected text unchanged');
+  const af = L.describe(areq, st({ step: 'ascendFilter', missing: ['slot', 'main'], pos: 0 }), t);
+  ok(af.head === T[lang].locFilterA && af.lines.length === 2 && af.lines[0].includes('Кольцо') && af.lines[1].includes('Крит. УРН'), lang + ': ascend filter lines: slot, main');
+  ok(L.describe(areq, st({ step: 'ascendPick', pos: 40, count: 90, scroll: 'below', scrollRows: 3 }), t).lines[0].includes('3'), lang + ': ascend pick: rows below');
+  ok(L.describe(areq, st({ step: 'ascendPick', pos: 4, count: 90, scroll: 'above', scrollRows: 2 }), t).lines[0].includes('2'), lang + ': ascend pick: rows above');
+  ok(L.describe(areq, st({ step: 'ascendPick', pos: 4, count: 9, scroll: 'visible' }), t).lines[0] === T[lang].locVisible, lang + ': ascend pick: on the screen');
+  ok(L.describe(areq, st({ step: 'ascendPick', pos: 4, count: 9, scroll: '' }), t).lines.length === 0, lang + ': ascend pick: scroll unknown -> no line');
   ok(L.describe(areq, st({ step: 'ascendPick', pos: 3, count: 9 }), t).head.includes('3'), lang + ': ascend pick by place');
   ok(L.describe(areq, st({ step: 'ascendReady' }), t).tone === 'done' && L.describe(areq, st({ step: 'ascendNotInList' }), t).tone === 'warn', lang + ': ascend ready / not in list');
 }

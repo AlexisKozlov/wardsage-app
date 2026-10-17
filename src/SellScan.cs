@@ -7,6 +7,8 @@
 //     m_CurrentBottomButtonState           2 = «Массовая продажа» (BulkSales)
 //     m_FilterAndSortEquipUidList          the items in list order, one per cell, rows of the grid's column count
 //     m_CurrentSelectEquipUid              the item selected now (its card is open at the right); 0 = none
+//   form.m_Content_ScrollRect / m_Content_InfinityGrid   the grid's scroll position (the content's position in the last frame),
+//                                          its CellPerLine (columns) and LineSize (a row, in the scroll's units): RFX.ReadInventoryList
 //     m_StateDataMap                       selected item uid -> its place in m_StateDataList (the keys are the choice)
 // In bulk sale a click on an item only toggles it (no card, no pop-up); equipped items are not listed, locked ones do not
 // toggle. A filter or tab change clears the choice.
@@ -33,6 +35,9 @@ namespace RealmForge {
     public List<long> Uids = new List<long>();          // list order
     public HashSet<long> Selected = new HashSet<long>();
     public long Current;       // the item selected in the normal mode (the one whose card is open), 0 = none
+    /// <summary>How the game scrolls the grid: its exact position, columns and row height (RFX.ReadInventoryList); null = unreadable
+    /// (then the picture is the last resort).</summary>
+    public RFX.ListRead List;
 
     /// <summary>The list as the sell pilot sees it: rows of <paramref name="cols"/> items.</summary>
     public SellScreen AsSell(int cols) {
@@ -60,6 +65,7 @@ namespace RealmForge {
       s.EquipTab = Field(f, "m_CurrentMainTabId2", out v, out tt) && tt == T_INT && (long)v == EquipTabId;
       ulong panels, panel; int pt, pnt;
       if (!Field(f, "m_CachedContentPanels", out panels, out pt) || pt != T_TABLE || !IntKey(panels, EquipTabId, out panel, out pnt) || pnt != T_TABLE) return s;
+      if (s.Open && s.EquipTab) s.List = ReadInventoryList(f);
       s.Bulk = Field(panel, "m_CurrentBottomButtonState", out v, out tt) && tt == T_INT && (long)v == BulkSales;
       if (Field(panel, KSel, out v, out tt) && tt == T_INT && (long)v > 0) s.Current = (long)v;
       ulong list; int lt;

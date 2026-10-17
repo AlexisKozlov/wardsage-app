@@ -1299,14 +1299,19 @@ namespace RealmForge {
           SendInside(a0, o, cr);
           return;
         }
-        int cols = front && !busy ? InvColumns(o, cr, U) : 0;
+        int cols = inv.List != null && inv.List.Cols > 0 ? inv.List.Cols : front && !busy ? InvColumns(o, cr, U) : 0;
         if (cols > 0) sellCols = cols;
         if (sellGeoW != W || sellGeoH != H || sellGeoCols != sellCols) {
           sellGeoW = W; sellGeoH = H; sellGeoCols = sellCols;
           spilot.Geometry = SellGeometry.Inventory(W, U, sellCols);
         }
+        // the rows' place: the game's own scroll reading (the picture only learns its constant; it is the last resort without it)
+        double sph = front && !busy && sellScroll.WantPhase(now) ? SellPhase(o, cr, U) : double.NaN;
+        double srow1 = sellScroll.Row1(spilot.Geometry, inv.List, sph, U);
+        if (double.IsNaN(srow1)) { sph = front && !busy ? (double.IsNaN(sph) ? SellPhase(o, cr, U) : sph) : double.NaN; if (gridSaid != "sellpilot:px") { gridSaid = "sellpilot:px"; Log.Write("sell: the inventory's scroll cannot be read - the picture is the fallback"); } }
+        else sph = double.NaN;
         var a = spilot.Step(new SellView { NowMs = now, Foreground = front, UserBusy = busy, UserClicked = userClicked, W = W, H = H, U = U,
-                                           Screen = inv.AsSell(sellCols), Wanted = sellWanted, Phase = front && !busy ? SellPhase(o, cr, U) : double.NaN });
+                                           Screen = inv.AsSell(sellCols), Wanted = sellWanted, Phase = sph, Row1 = srow1 });
         SellSay(spilot.State);
         if (spilot.Trace != "") { Log.Write("sell: " + spilot.Trace); spilot.Trace = ""; }
         if (a.Kind != AutoKind.None) SendInside(a, o, cr);
@@ -1358,8 +1363,9 @@ namespace RealmForge {
         var raw = RFX.ReadInventory(sellScanOnce ? 1500 : front ? 8000 : -1);
         sellScanOnce = false;
         bool bulk = raw != null && raw.Open && raw.EquipTab && raw.Bulk;
-        if (front && bulk) {
-          int c = InvColumns(o, cr, U);
+        if (bulk) {
+          // the columns: the game's own grid says (the picture only when it cannot be read)
+          int c = raw.List != null && raw.List.Cols > 0 ? raw.List.Cols : front ? InvColumns(o, cr, U) : 0;
           if (c > 0 && c != shCols) { shCols = c; shGeoCols = -1; }
         }
         if (bulk) {
@@ -1382,10 +1388,12 @@ namespace RealmForge {
       if (inBulk && sgrid.ListPtr != inv.ListPtr) sgrid.Reset();
       // the rows' place: the list opens at the top; the stat bars under the cells follow the scrolling
       if (inBulk && front && shGeo != null) {
-        double phase = PhaseOf(shGeo, o, cr, U);
-        if (!double.IsNaN(phase)) {
-          if (!sgrid.Has) sgrid.FromTop(shGeo, phase, U, inv.ListPtr);
-          if (sgrid.Has) sgrid.Track(shGeo, sgrid.VisibleRow(shGeo, (inv.Uids.Count + shCols - 1) / shCols, W, H, U), phase, U);
+        if (!FollowInventoryGrid(sgrid, sellScroll, shGeo, inv, o, cr, U, now, "sell")) {   // last resort: the stat bars on the screen
+          double phase = PhaseOf(shGeo, o, cr, U);
+          if (!double.IsNaN(phase)) {
+            if (!sgrid.Has) sgrid.FromTop(shGeo, phase, U, inv.ListPtr);
+            if (sgrid.Has) sgrid.Track(shGeo, sgrid.VisibleRow(shGeo, (inv.Uids.Count + shCols - 1) / shCols, W, H, U), phase, U);
+          }
         }
       }
       var step = SellHint.Build(inv, sellWanted, shCols, inBulk && sgrid.Has ? sgrid : null, shGeo, W, H, U);
@@ -1454,9 +1462,14 @@ namespace RealmForge {
         locateInv = RFX.ReadInventory(rescan);
         var rs = RFX.ReadRecastScreen(rescan);
         locateRs = rs; locateOnAccount = RFX.ItemOnAccount(uid);
-        if (front && locateInv != null && locateInv.Open && locateInv.EquipTab) { int c = InvColumns(o, cr, U); if (c > 0) locateCols = c; }
+        // the columns: the game's own grid says (the picture only when it cannot be read)
+        if (locateInv != null && locateInv.Open && locateInv.EquipTab) {
+          if (locateInv.List != null && locateInv.List.Cols > 0) locateCols = locateInv.List.Cols;
+          else if (front) { int c = InvColumns(o, cr, U); if (c > 0) locateCols = c; }
+        }
         heroScreen = RFX.ReadHeroScreen(addrs, heroScreen);
         var st = LocateGuide.Next(req, locateInv, rs, heroScreen, locateCols, locateOnAccount);
+        LogListRead("foundry", rs != null && rs.OnAscend ? rs.AscendList : rs != null && rs.OnRecast ? rs.RecastList : null);
         if (Math.Abs(now - locateSubsAt) >= 1500 && (st.Kind == LocateKind.Selected || st.Kind == LocateKind.Done || st.Kind == LocateKind.RecastPick || st.Kind == LocateKind.AscendPick || st.Kind == LocateKind.AscendReady || st.Kind == LocateKind.InList)) {
           locateSubsAt = now;
           var live = RFX.ReadLiveItemSubs(uid);
@@ -1476,19 +1489,23 @@ namespace RealmForge {
           lgrid.Reset();
         }
         if (lgrid.ListPtr != inv.ListPtr) lgrid.Reset();
-        // the player clicked a cell: the pointer shows where its row is
+        // where the game says the list is scrolled: exact, no click needed
+        bool exactGrid = FollowInventoryGrid(lgrid, locateScroll, locateGeo, inv, o, cr, U, now, "locate");
         if (inv.Current != locateLastCur) {
-          if (locateLastCur != -1 && inv.Current > 0) {
+          // the player clicked a cell: the pointer shows where its row is (the last resort, when the game's scroll is unreadable)
+          if (!exactGrid && locateLastCur != -1 && inv.Current > 0) {
             var p = LocateGuide.Position(inv.Uids.ToArray(), inv.Current, locateCols);
             W32.POINT c;
             if (p != null && W32.GetCursorPos(out c) && c.Y - o.Y >= locateGeo.ViewTopPx(U) && c.Y - o.Y <= locateGeo.ViewBottomPx(H, U)) lgrid.FromClick(locateGeo, p[1], c.Y - o.Y, U, inv.ListPtr);
           }
           locateLastCur = inv.Current;
         }
-        double phase = PhaseOf(locateGeo, o, cr, U);
-        bool hasPhase = !double.IsNaN(phase);
-        if (!lgrid.Has && hasPhase) lgrid.FromTop(locateGeo, phase, U, inv.ListPtr);
-        if (lgrid.Has && hasPhase) lgrid.Track(locateGeo, lgrid.VisibleRow(locateGeo, (inv.Uids.Count + locateCols - 1) / locateCols, W, H, U), phase, U);
+        if (!exactGrid) {   // last resort: the stat bars on the screen
+          double phase = PhaseOf(locateGeo, o, cr, U);
+          bool hasPhase = !double.IsNaN(phase);
+          if (!lgrid.Has && hasPhase) lgrid.FromTop(locateGeo, phase, U, inv.ListPtr);
+          if (lgrid.Has && hasPhase) lgrid.Track(locateGeo, lgrid.VisibleRow(locateGeo, (inv.Uids.Count + locateCols - 1) / locateCols, W, H, U), phase, U);
+        }
         locateNeedClick = !lgrid.Has;
         if (lgrid.Has) {
           var mk = lgrid.Place(locateGeo, step.Row, step.Col, W, H, U);
@@ -1515,6 +1532,30 @@ namespace RealmForge {
     // game (and every confirmation) is the player's. Off without «Автонажатие».
     readonly LocatePilot lpilot = new LocatePilot();
     RecastScreen locateRs; int locateOnAccount = -1; bool locateDriving;
+    readonly InvScroll locateScroll = new InvScroll(), sellScroll = new InvScroll();
+    string gridSaid = "", listSaid = "";
+
+    /// <summary>The inventory grid's rows from the game's own scroll reading, for every user of the grid («Найти в игре», the
+    /// storage cleanup's hints). True = the grid is placed that way; false = the game's scroll is unreadable (said once in the
+    /// log): the caller falls back to the picture. The picture only fixes the constant offset (once, then now and then).</summary>
+    bool FollowInventoryGrid(LocateGrid grid, InvScroll sc, SellGeometry geo, InventoryScreen inv, W32.POINT o, W32.RECT cr, double U, long now, string who) {
+      if (inv == null || inv.List == null || !inv.List.Has) {
+        if (gridSaid != who + ":px") { gridSaid = who + ":px"; Log.Write(who + ": the inventory's scroll cannot be read (or the layout data has no grid fields) - the picture is the fallback"); }
+        return false;
+      }
+      double phase = sc.WantPhase(now) ? PhaseOf(geo, o, cr, U) : double.NaN;
+      double r1 = sc.Row1(geo, inv.List, phase, U);
+      if (double.IsNaN(r1)) return false;
+      grid.FromScroll(r1, inv.ListPtr);
+      if (gridSaid != who + ":scroll") { gridSaid = who + ":scroll"; Log.Write(who + ": the inventory grid from the game's scroll (" + inv.List + ")"); }
+      return true;
+    }
+
+    // a foundry list's reading, to the log when it changes kind (what the next live test needs to compare)
+    void LogListRead(string who, RFX.ListRead l) {
+      string t = who + ":" + (l == null ? "none" : l.Has ? "ok" : "unreadable");
+      if (t != listSaid) { listSaid = t; Log.Write("locate: the " + who + " list's reading: " + (l == null ? "none" : l.ToString())); }
+    }
     string locateMoveState = "", locateMoveWhy = "", locateAutoSaid = "";
 
     void TickLocateDrive(LocateStep step, LocateRequest req, IntPtr hwnd, W32.POINT o, W32.RECT cr, long now, double W, double H, double U) {
@@ -1546,7 +1587,11 @@ namespace RealmForge {
       var view = new LocateView { NowMs = now, Foreground = gameFront, UserBusy = busy, UserClicked = uc, W = W, H = H, U = U, Step = dstep, Inv = inv, Cols = locateCols,
         HeroScreenOpen = heroOpen, OtherFormOpen = formOpen, InvDX = invDX };
       if (gameFront && !busy && LocateAuto.NeedsCityButton(dstep, heroOpen, formOpen)) view.CityButton = InventoryButtonSeen(o, W, H);
-      if (gameFront && !busy && dstep.Kind == LocateKind.InList) view.Phase = PhaseOf(SellGeometry.Inventory(W, U, locateCols), o, cr, U);
+      if (gameFront && !busy && dstep.Kind == LocateKind.InList) {
+        var pg = SellGeometry.Inventory(W, U, locateCols);
+        view.Row1 = locateScroll.Row1(pg, inv != null ? inv.List : null, double.NaN, U);   // the game's scroll (the constant is learned by the frame)
+        if (double.IsNaN(view.Row1)) view.Phase = PhaseOf(pg, o, cr, U);                    // last resort
+      }
       var mv = lpilot.Step(view);
       if (lpilot.Trace != "") { Log.Write("locate auto: " + lpilot.Trace); lpilot.Trace = ""; }
       locateMoveState = mv.State; locateMoveWhy = mv.Why;

@@ -81,6 +81,7 @@ namespace RealmForge {
     public ICollection<int> Parts;      // gear parts of the list's items (the site's slots 0..4); null = unknown
     public IDictionary<long, int> Levels;   // the items' upgrade levels (below +16 «Быстрое улучшение» opens); null = unknown
     public double Phase = double.NaN;   // row-top phase of the item rows on the screen now (client px mod the row step), NaN = not seen
+    public double Row1 = double.NaN;    // client y of row 1's top from the game's own scroll reading (InvScroll), NaN = unreadable
   }
 
   public sealed class SellPilot {
@@ -131,6 +132,8 @@ namespace RealmForge {
       if (State == "failed" && undo == 0 && !checkClick) return AutoAction.Nothing;
       if (s.ListPtr != list) { list = s.ListPtr; row1 = g.ViewTopPx(v.U) + g.TopPad * v.U; exact = true; checkClick = false; undo = 0; measure = false; }
       // after a drag: the stat bars on the screen give the rows' exact phase (the drag's error is well under half a row)
+      // the game says where the list is scrolled: that is exact, whatever a drag did (the picture is the last resort)
+      if (!double.IsNaN(v.Row1)) { row1 = v.Row1; exact = true; phased = true; }
       if (!exact && !phased && !double.IsNaN(v.Phase)) Snap(v);
       if (v.UserClicked) pauseUntil = v.NowMs + UserPauseMs;
       bool failed = State == "failed";

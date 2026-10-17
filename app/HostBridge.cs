@@ -1084,7 +1084,7 @@ namespace RealmForge {
     // «Найти в игре»: the overlay's step for the page (it composes the texts)
     void PostLocateState(LocateStep st, SubCheck subs) {
       var sb = new StringBuilder("{\"ev\":\"locate.state\",\"step\":").Append(S(st.Key)).Append(",\"pos\":").Append(N(st.Pos)).Append(",\"row\":").Append(N(st.Row))
-        .Append(",\"col\":").Append(N(st.Col)).Append(",\"count\":").Append(N(st.Count)).Append(",\"onHero\":").Append(B(st.OnHero))
+        .Append(",\"col\":").Append(N(st.Col)).Append(",\"count\":").Append(N(st.Count)).Append(",\"onHero\":").Append(B(st.OnHero)).Append(",\"onGear\":").Append(B(st.OnGear)).Append(",\"scroll\":").Append(S(st.Scroll)).Append(",\"scrollRows\":").Append(N(st.ScrollRows))
         .Append(",\"needClick\":").Append(B(st.NeedClick)).Append(",\"auto\":").Append(S(st.Auto)).Append(",\"autoWhy\":").Append(S(st.AutoWhy)).Append(",\"missing\":[");
       for (int i = 0; i < st.Missing.Length; i++) { if (i > 0) sb.Append(','); sb.Append(S(st.Missing[i])); }
       sb.Append("],\"subs\":");

@@ -800,6 +800,23 @@ static class CoreTests {
       }
       Check(n > 0, "the site has layout files");
     } else Console.WriteLine("  (no ../wardsage-web: the site's layout files not checked)");
+    // the optional "field" section (the list grid's field offsets): data without it still parses, the lookup says "none" (-1)
+    string fxj = FixtureJson(); string withField = fxj.Substring(0, fxj.LastIndexOf('}')) + ",\"field\": { \"InfinityGrid.CellPerLine\": 48, \"InfinityGrid.LineSize\": 120 } }";
+    var lf = GameLayout.Parse(withField, FixtureGame);
+    Check(lf != null && lf.FieldOffset("InfinityGrid.CellPerLine") == 48 && lf.FieldOffset("InfinityGrid.LineSize") == 120 && lf.FieldOffset("InfinityGrid.m_fitScale") == -1, "layout: the field section is read, a key it lacks is -1");
+    Check(TestLayout().FieldOffset("InfinityGrid.LineSize") == -1, "layout: data without a field section parses, offsets are -1 (the picture is the fallback)");
+    Check(GameLayout.Parse(withField.Replace("\"InfinityGrid.LineSize\": 120", "\"InfinityGrid.LineSize\": 99999"), FixtureGame) == null, "layout: a field offset out of range is not used");
+    Check(GameLayout.Parse(withField.Replace("\"InfinityGrid.LineSize\": 120", "\"InfinityGrid.LineSize\": \"x\""), FixtureGame) == null, "layout: a field offset that is not a number is not used");
+    // no grid fields in the data: the list reading says "unreadable" and never throws
+    Layout.Use(TestLayout());
+    Check(RFX.ReadList(1, "m_Content_ScrollRect", "m_Content_InfinityGrid", 1) == null, "list grid: no grid fields in the layout -> unreadable");
+    Layout.Use(held);
+    string v39 = Path.Combine(web, "1.6.39.829.1.json");
+    if (File.Exists(v39)) {
+      var l39 = GameLayout.Parse(File.ReadAllText(v39, Encoding.UTF8), "1.6.39.829.1");
+      bool all = l39 != null; if (all) foreach (var k in GameLayout.FieldKeys) if (l39.FieldOffset(k) <= 0) all = false;
+      Check(all, "the site's layout file 1.6.39.829.1 has the list grid's field offsets");
+    }
     LayoutChecksums();
     SourceLiteralTests();
   }
@@ -827,7 +844,7 @@ static class CoreTests {
   static void LayoutChecksums() {
     var sums = new Dictionary<string, string> {
       { "1.6.38.829.1", "87d1958cc51af52fc9b18d44638b06d0919c6f0904f3e3b9016f96a679e06d4d" },
-      { "1.6.39.829.1", "69a997918084cbc8446ecbaa36bbbfffa59160b691eea1e0059c2412f37130fd" } };
+      { "1.6.39.829.1", "144f8260ec82567c445743c3379196c1974f75e6c44b206e362946604228e750" } };
     foreach (var kv in sums) {
       string path = null;
       foreach (var repo in new[] { "wardsage-web", "realmforge-web" }) {
@@ -851,9 +868,10 @@ static class CoreTests {
     foreach (var a in new[] { GameLayout.NeedConst, GameLayout.NeedSpan, GameLayout.NeedSize, GameLayout.NeedHdr, GameLayout.NeedForm }) foreach (var k in a) need.Add(k);
     // numbers that are not game-build values (limits, a date in a comment)
     var allowed = new HashSet<string> { "4294967295", "2000000000", "1000000000000", "10000000", "20261003" };
+    foreach (var k in GameLayout.FieldKeys) need.Add(k);   // (optional keys: a lookup must name one of these)
     var bad = new List<string>(); var unknown = new List<string>(); int lookups = 0;
     var big = new System.Text.RegularExpressions.Regex(@"(?<![0-9A-Za-z_.""])-?([0-9]{8,})(?![0-9])");
-    var look = new System.Text.RegularExpressions.Regex(@"\.(Const|Span|Size|Hdr|Form)\(""([^""]+)""\)|\b(CT|Span|Hdr|FormId)\(""([^""]+)""\)");
+    var look = new System.Text.RegularExpressions.Regex(@"\.(Const|Span|Size|Hdr|Form|FieldOffset)\(""([^""]+)""\)|\b(CT|Span|Hdr|FormId)\(""([^""]+)""\)");
     var consts = new System.Text.RegularExpressions.Regex(@"\bClassRvas\b|\bconst\s+int\s+CT_\w+\s*=\s*\d|\bCmd(PutTower|RetreatTower|PowerSkill)\s*=\s*\d|\bForm\w*Id\s*=\s*-?\d");
     foreach (var f in files) {
       if (Path.GetFileName(f) == "Layout.cs") continue;
@@ -2329,7 +2347,9 @@ static class CoreTests {
     gm.GemSel = 5; gm.GemFunc = 8; gm.GemList = new long[] { 5, 6 };
     Eq(LocateKind.RecastNotInList, LocateGuide.Next(req, inv(), gm, null, 8, 1).Kind, "step: gem screen, the item is not in the pop-up's list");
     gm.GemFunc = 3; gm.GemSel = 777;
-    Eq(LocateKind.InList, LocateGuide.Next(req, inv(), gm, null, 8, 1).Kind, "step: another gem function -> the inventory's step");
+    Eq(LocateKind.GemFunction, LocateGuide.Next(req, inv(), gm, null, 8, 1).Kind, "step: gem screen holds the item, another function -> choose the recast function");
+    gm.GemSel = 5;
+    Eq(LocateKind.InList, LocateGuide.Next(req, inv(), gm, null, 8, 1).Kind, "step: another gem function and another item -> the inventory's step");
     Eq("inList", LocateGuide.Next(req, inv(), null, null, 8, 1).Key, "step key");
     Eq("openRecastTab", new LocateStep { Kind = LocateKind.OpenRecastTab }.Key, "step key camel case");
 
@@ -2341,17 +2361,71 @@ static class CoreTests {
     Check(st.Kind == LocateKind.AscendPick && st.Pos == 2 && st.Count == 3, "ascend: item in the Ascension list -> pick");
     ars.AscendSel = 777; Eq(LocateKind.AscendReady, LocateGuide.Next(areq, null, ars, null, 8, 1).Kind, "ascend: selected -> press Ascend");
     ars.AscendSel = 5; ars.AscendEquips = new long[] { 100 };
-    Eq(LocateKind.AscendNotInList, LocateGuide.Next(areq, null, ars, null, 8, 1).Kind, "ascend: not in the list");
+    ars.AscendParts = new[] { 4 }; ars.AscendSuits = new long[] { 720100 }; ars.AscendMainAttrs = new long[] { 12 }; ars.AscendSubAttrs = new long[] { 5, 7, 9, 3 };
+    Eq(LocateKind.AscendNotInList, LocateGuide.Next(areq, null, ars, null, 8, 1).Kind, "ascend: not in the list (filter complete)");
     ars = ar(); ars.CurType = 3; ars.AscendShown = false;
     Eq(LocateKind.OpenAscendTab, LocateGuide.Next(areq, null, ars, null, 8, 1).Kind, "ascend: foundry on another tab");
     ars = ar(); ars.AscendShown = false;
-    Eq(LocateKind.OpenInventory, LocateGuide.Next(areq, null, ars, null, 8, 1).Kind, "ascend: tab switching, panel not on screen yet -> inventory step");
-    Eq(LocateKind.InList, LocateGuide.Next(areq, inv(), null, null, 8, 1).Kind, "ascend: inventory step is the same as recast's");
+    Eq(LocateKind.OpenAscendTab, LocateGuide.Next(areq, null, ars, null, 8, 1).Kind, "ascend: tab switching, panel not on screen yet -> tab step");
+    // the way to the foundry: nothing is chosen before it, the item is never framed in the inventory
+    Eq(LocateKind.OpenInventory, LocateGuide.Next(areq, null, null, null, 8, 1).Kind, "ascend: nothing open (item in the bag) -> open the inventory");
+    Eq(LocateKind.OpenFoundry, LocateGuide.Next(areq, inv(), null, null, 8, 1).Kind, "ascend: inventory on the equipment tab -> the Foundry button, not the item's cell");
     iv = inv(); iv.Current = 777;
-    Eq(LocateKind.Selected, LocateGuide.Next(areq, iv, null, null, 8, 1).Kind, "ascend: selected in the inventory");
+    Eq(LocateKind.OpenFoundry, LocateGuide.Next(areq, iv, null, null, 8, 1).Kind, "ascend: the item selected in the inventory does not matter (the foundry starts empty)");
+    iv = inv(); iv.EquipTab = false;
+    Eq(LocateKind.OpenEquipTab, LocateGuide.Next(areq, iv, null, null, 8, 1).Kind, "ascend: inventory on another tab -> the equipment tab");
+    var gearHero = new HeroScreen { Hero = 200, Tab = 3 };
+    st = LocateGuide.Next(areq, null, null, gearHero, 8, 1);
+    Check(st.Kind == LocateKind.OpenFoundry && st.OnGear && st.OnHero, "ascend: worn item, hero gear screen open -> the Foundry button there (the card has no Ascension button)");
+    Eq(LocateKind.OpenFoundry, LocateGuide.Next(areq, inv(), null, gearHero, 8, 1).Kind, "ascend: the inventory is open too -> its button (the screen the player is on)");
+    Eq(LocateKind.OpenInventory, LocateGuide.Next(areq, null, null, new HeroScreen { Hero = 200, Tab = 1 }, 8, 1).Kind, "ascend: hero screen on another tab -> back to the inventory way");
+    // the foundry's own list: columns, the game's rows on screen, the filter
+    ars = ar(); ars.AscendEquips = new long[] { 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 777 };
+    ars.AscendList = new RFX.ListRead { ScrollY = 0, Cols = 4, RowUnits = 100, First = 0, Last = 7 };
+    st = LocateGuide.Next(areq, null, ars, null, 8, 1);
+    Check(st.Kind == LocateKind.AscendFilter && st.Pos == 12 && st.Row == 3 && st.Col == 4 && st.Scroll == "below" && st.ScrollRows == 1, "ascend: long list, filter unset -> filter; item at row 3 place 4, one row below the cells on screen");
+    ars.AscendParts = new[] { 4 }; ars.AscendSuits = new long[] { 720100 }; ars.AscendMainAttrs = new long[] { 12 }; ars.AscendSubAttrs = new long[] { 5, 7, 9, 3 };
+    st = LocateGuide.Next(areq, null, ars, null, 8, 1);
+    Check(st.Kind == LocateKind.AscendPick && st.Scroll == "below" && st.ScrollRows == 1, "ascend: filter set -> pick, with the rows to scroll");
+    ars.AscendList = new RFX.ListRead { ScrollY = 200, Cols = 4, RowUnits = 100, First = 8, Last = 15 };
+    Eq("visible", LocateGuide.Next(areq, null, ars, null, 8, 1).Scroll, "ascend: item among the cells on screen");
+    ars.AscendList = new RFX.ListRead { ScrollY = 500, Cols = 4, RowUnits = 100, First = 20, Last = 27 };
+    st = LocateGuide.Next(areq, null, ars, null, 8, 1);
+    Check(st.Scroll == "above" && st.ScrollRows == 3, "ascend: item above the cells on screen -> rows to scroll up");
+    ars.AscendList = null;
+    st = LocateGuide.Next(areq, null, ars, null, 8, 1);
+    Check(st.Kind == LocateKind.AscendPick && st.Scroll == "" && st.Pos == 12 && st.Col == 1, "ascend: list not readable -> position only");
+    ars.AscendEquips = new long[] { 100, 101 };
+    Eq(LocateKind.AscendNotInList, LocateGuide.Next(areq, null, ars, null, 8, 1).Kind, "ascend: filter complete, item not in the list -> not ascendable / extra stat");
+    ars.AscendSubAttrs = new long[0];
+    Eq(LocateKind.AscendFilter, LocateGuide.Next(areq, null, ars, null, 8, 1).Kind, "ascend: not in the list and the filter incomplete -> filter hint");
+    // the list math with fake data
+    var wl = new LocateStep(); LocateGuide.Where(wl, new RFX.ListRead { Cols = 8, First = 16, Last = 40 }, 100);
+    Check(wl.Scroll == "below" && wl.ScrollRows == 7, "list math: index 100 of 8 columns = row 12, cells end at row 5 -> 7 rows below");
+    wl = new LocateStep(); LocateGuide.Where(wl, new RFX.ListRead { Cols = 8, First = -1, Last = -1 }, 3);
+    Eq("", wl.Scroll, "list math: cells unknown -> nothing said");
+    // the inventory grid's row 1 from the game's scroll (no picture): scrolled 2.5 rows of 118 units
+    var isg = SellGeometry.Inventory(1920, 1009, 8); var iscr = new InvScroll();
+    double r1 = iscr.Row1(isg, new RFX.ListRead { ScrollY = 295, Cols = 8, RowUnits = 118 }, double.NaN, 1009);
+    Check(Math.Abs(r1 - (isg.ViewTopPx(1009) + isg.TopPad * 1009 - 2.5 * isg.PitchY * 1009)) < 1e-6, "inventory scroll: row 1 = list top minus the scrolled rows");
+    Check(double.IsNaN(iscr.Row1(isg, null, double.NaN, 1009)) && double.IsNaN(iscr.Row1(isg, new RFX.ListRead(), double.NaN, 1009)), "inventory scroll: unreadable -> NaN (the picture is the fallback)");
+    double r1b = new InvScroll().Row1(isg, new RFX.ListRead { ScrollY = 118, Cols = 8 }, double.NaN, 1009);
+    Check(Math.Abs((isg.ViewTopPx(1009) + isg.TopPad * 1009 - r1b) - isg.PitchY * 1009) < 1e-6, "inventory scroll: row units unknown -> 118 per row");
+    var sv = new LocateGrid(); sv.FromScroll(-340.5, 42);
+    Check(sv.Has && sv.Exact && sv.Row1 == -340.5 && sv.ListPtr == 42, "grid: placed from the scroll"); sv.Reset(); Check(!sv.Has && !sv.Exact, "grid: reset");
+    // the exact row 1 drives the sell pilot: it clicks the item's cell with no drag when the scroll says it is in view
+    {
+      var gg = SellGeometry.Inventory(1920, 1009, 8); var sp2 = new SellPilot(gg);
+      var uidsL = new List<long>(); for (int k = 1; k <= 40; k++) uidsL.Add(9000 + k);
+      var scr2 = new InventoryScreen { Open = true, EquipTab = true, Bulk = true, ListPtr = 5 }; scr2.Uids.AddRange(uidsL);
+      double row1Want = gg.ViewTopPx(1009) + gg.TopPad * 1009 - 1.0 * gg.PitchY * 1009;   // scrolled one row down
+      var act = sp2.Step(new SellView { NowMs = 10000, Foreground = true, W = 1920, H = 1080, U = 1009, Screen = scr2.AsSell(8), Wanted = new HashSet<long> { 9020 }, Row1 = row1Want });
+      double wantY = row1Want + gg.RowOffset(null, 3) * 1009 + gg.CellHeight * 1009 / 2;
+      Check(act.Kind == AutoKind.Click && Math.Abs(act.Y - wantY) < 1, "sell pilot: with the game's scroll it clicks the item's row where the scroll puts it (no drag)");
+    }
     Eq(LocateKind.OtherAccount, LocateGuide.Next(areq, inv(), ar(), null, 8, 0).Kind, "ascend: another account");
     var gmA = new RecastScreen { GemOpen = true, GemFunc = 7, GemSel = 777, GemList = new long[] { 777 } };
-    Eq(LocateKind.InList, LocateGuide.Next(areq, inv(), gmA, null, 8, 1).Kind, "ascend: the gem screen is not part of it");
+    Eq(LocateKind.OpenFoundry, LocateGuide.Next(areq, inv(), gmA, null, 8, 1).Kind, "ascend: the gem screen is not part of it");
     Eq(LocateKind.AscendReady, LocateGuide.Next(areq, null, new RecastScreen { SublimingOpen = true, AscendShown = true, CurType = 2, AscendSel = 777 }, null, 8, 1).Kind, "ascend: ready needs no list");
     var aj = PlansClient.Interpret(200, "{\"ok\":true,\"locate\":{\"id\":\"a1\",\"purpose\":\"ascend\",\"item\":null}}", true).Locate;
     Check(aj != null && aj.Purpose == "ascend", "locate: purpose ascend accepted");

@@ -2,7 +2,8 @@
 // screen's recast functions. The «Найти в игре» helper (src/LocateGuide.cs) tells the player where an item is; nothing is
 // written to the game and nothing is clicked.
 //   foundry form (UIDefines.ID_FORM_EQUIPSUBLIMING):
-//     m_LuaLogicActive            true while the form is shown
+//     m_LuaLogicActive            true while the form is shown (m_PanelEquipSubliming = the «Вознесение» tab: the same list and filter
+//                                 fields as below, plus m_EquipList_ScrollRect / m_EquipList_InfinityGrid for the scroll: RFX.ReadFoundryList)
 //     m_curType                   3 = the «Преобразовать» tab
 //     m_PanelEquipRecast          the tab's panel:
 //       m_IsShow / m_bActive      the panel is on the screen
@@ -23,6 +24,7 @@ namespace RealmForge {
     public bool SublimingOpen;                 // the foundry form is shown
     public int CurType = -1;                   // its tab (3 = «Преобразовать»), -1 = unknown
     public bool PanelShown;                    // the recast panel is on the screen
+    public RFX.ListRead RecastList;            // how the game scrolls its list (null = unreadable)
     public long[] Equips = new long[0];        // its list in screen order
     public long Sel;                           // item selected there, 0 = none
     public int[] SelectParts = new int[0];     // slot switches on (0..4), empty = all
@@ -34,6 +36,9 @@ namespace RealmForge {
     public bool AscendShown;                   // the foundry's «Вознесение» panel (tab 2) is on the screen
     public long[] AscendEquips = new long[0];  // its list in screen order
     public long AscendSel;                     // item selected there, 0 = none
+    public int[] AscendParts = new int[0];     // its slot switches on (0..4), empty = all
+    public long[] AscendSuits = new long[0], AscendMainAttrs = new long[0], AscendSubAttrs = new long[0];   // its filter
+    public RFX.ListRead AscendList;            // how the game scrolls the list (null = unreadable)
     public bool ChoosePending;                 // a recast result waits for the choice (blocks selecting another item); not read yet
 
     public bool OnRecast { get { return SublimingOpen && PanelShown && CurType == 3; } }
@@ -57,6 +62,7 @@ namespace RealmForge {
           s.PanelShown = (Field(panel, "m_IsShow", out v, out tt) && tt == T_BOOL && (v & 0xFFFFFFFF) != 0)
                       || (Field(panel, "m_bActive", out v, out tt) && tt == T_BOOL && (v & 0xFFFFFFFF) != 0);
           ulong t;
+          if (s.PanelShown) s.RecastList = ReadFoundryList(panel);
           if (Field(panel, "m_Equips", out t, out tt) && tt == T_TABLE) s.Equips = OrderedInts(t);
           if (Field(panel, "m_EquipId", out v, out tt) && tt == T_INT && (long)v > 0) s.Sel = (long)v;
           if (Field(panel, "m_SelectParts", out t, out tt) && tt == T_TABLE) {
@@ -80,6 +86,18 @@ namespace RealmForge {
                        || (Field(ap, "m_bActive", out v, out tt) && tt == T_BOOL && (v & 0xFFFFFFFF) != 0);
           if (Field(ap, "m_Equips", out t, out tt) && tt == T_TABLE) s.AscendEquips = OrderedInts(t);
           if (Field(ap, "m_EquipId", out v, out tt) && tt == T_INT && (long)v > 0) s.AscendSel = (long)v;
+          if (Field(ap, "m_SelectParts", out t, out tt) && tt == T_TABLE) {
+            var parts = new List<int>(); foreach (var x in IntSet(t)) if (x >= 0 && x <= 4) parts.Add((int)x);
+            s.AscendParts = parts.ToArray();
+          }
+          ulong fc;
+          if (Field(ap, "m_FilterConfig", out fc, out tt) && tt == T_TABLE) {
+            if (Field(fc, "Suits", out t, out tt) && tt == T_TABLE) s.AscendSuits = IntSet(t);
+            if (Field(fc, "MainAttrs", out t, out tt) && tt == T_TABLE) s.AscendMainAttrs = IntSet(t);
+            if (Field(fc, "vSubAttrs", out t, out tt) && tt == T_TABLE) s.AscendSubAttrs = IntSet(t);
+            else if (Field(fc, "SubAttrs", out t, out tt) && tt == T_TABLE) s.AscendSubAttrs = IntSet(t);
+          }
+          if (s.AscendShown) s.AscendList = ReadFoundryList(ap);
         }
       }
       if (gf != 0) {
