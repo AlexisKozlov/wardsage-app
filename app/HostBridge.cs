@@ -117,13 +117,15 @@ namespace RealmForge {
     bool AutoClickOn() { return cfg.AutoClick && On("autoclick"); }
     /// <summary>«Показать в игре» clicks by itself only with its own switch on (off by default until the owner enables it), on top of the player's setting.</summary>
     bool LocateAutoOn() { return AutoClickOn() && On("locateAuto"); }
+    /// <summary>The artifact flows (storage cleanup, promotion) click by themselves only with the site's "artAuto" switch on (off by default), on top of the player's setting.</summary>
+    bool ArtAutoOn() { return AutoClickOn() && On("artAuto"); }
     /// <summary>The new button highlight: only the site's "guideStyle" switch.</summary>
     void ApplyGuideStyle() { overlay.GuideStyle = remote.Allows("guideStyle"); }
-    void ApplyAutoClick() { overlay.AutoEnabled = AutoClickOn(); overlay.LocateAutoEnabled = LocateAutoOn(); }
+    void ApplyAutoClick() { overlay.AutoEnabled = AutoClickOn(); overlay.LocateAutoEnabled = LocateAutoOn(); overlay.ArtAutoEnabled = ArtAutoOn(); }
 
     // the features that read the game's screens and fights need the layout data for the running game version
     // (src/Layout.cs); the account sync, the guild and the update packs do not
-    static readonly HashSet<string> NeedsLayout = new HashSet<string> { "battle", "equip", "locate", "autoclick", "locateAuto" };
+    static readonly HashSet<string> NeedsLayout = new HashSet<string> { "battle", "equip", "locate", "autoclick", "locateAuto", "artAuto" };
     /// <summary>A feature may run: the site's switch is on and, when it needs it, the layout data is there.</summary>
     bool On(string feature) { return remote.Allows(feature) && (!NeedsLayout.Contains(feature) || Layout.Current != null); }
 
@@ -415,7 +417,7 @@ namespace RealmForge {
             var lr = lastLocate; string lid = MiniJson.GetString(m, "id");
             if (lr != null && (lr.Item != null || lr.Art != null) && lr.Id == lid) {
               RFX.EnsureLiveForGuides();
-              overlay.SetLocate(lr); Log.Write("locate: show " + (lr.Item != null ? "item " + lr.Item.Uid : "artifact " + lr.Art.Uid + " (promotion, hints only)") + (LocateAutoOn() ? " (auto click on)" : AutoClickOn() ? " (auto click is on, but the site's locateAuto switch is off: hints only)" : ""));
+              overlay.SetLocate(lr); Log.Write("locate: show " + (lr.Item != null ? "item " + lr.Item.Uid : "artifact " + lr.Art.Uid + (ArtAutoOn() ? " (promotion, auto click for artifacts on)" : " (promotion, hints only)")) + (lr.Item == null ? "" : LocateAutoOn() ? " (auto click on)" : AutoClickOn() ? " (auto click is on, but the site's locateAuto switch is off: hints only)" : ""));
               if (addrs == null && !scanning && AutoClickOn()) StartScan(watch, true);   // the auto steps need the game's screens found
             }
             break;
@@ -451,12 +453,12 @@ namespace RealmForge {
             if (ll != null) for (int i = 0; i < ll.Count && i < uids.Count; i++) if (ll[i] is double) levels[uids[i]] = (int)Math.Max(0, Math.Min(99, (double)ll[i]));
             long hero = addrs != null ? RFX.ReadHero(addrs) : 0; if (hero <= 0) hero = RFX.AnyHeroUid();
             bool hintOnly = cmd == "sell.hint";
-            // an artifact list is only ever a hint run (frames on the artifact tab's «Массовая продажа»): never a click, even from "sell.run"
+            // an artifact list is always a hint run (frames on the artifact tab's «Массовая продажа»); the clicks come on top of it only with the player's auto click AND the site's "artAuto" switch (Overlay.TickArtSellAuto)
             bool artifact = MiniJson.GetString(m, "kind") == "artifact";
             if (artifact) hintOnly = true;
             RFX.EnsureLiveForGuides();
             overlay.SetSell(uids, parts, levels.Count == uids.Count ? levels : null, hero, hintOnly, artifact);
-            Log.Write((artifact ? "art sell: " : "sell: ") + (hintOnly ? "hint" : "run") + " " + uids.Count + " items, hero " + hero);
+            Log.Write((artifact ? "art sell: " : "sell: ") + (hintOnly ? "hint" : "run") + " " + uids.Count + " items, hero " + hero + (artifact ? (ArtAutoOn() ? " (auto click for artifacts on)" : AutoClickOn() ? " (auto click is on, but the site's artAuto switch is off: hints only)" : "") : ""));
             if (hintOnly) break;
             if (!AutoClickOn()) Log.Write("sell: waiting - auto click is off" + (cfg.AutoClick ? " (the site's switch)" : ""));
             if (addrs == null && !scanning && AutoClickOn()) StartScan(watch, true);   // the pilot needs the game's screens found

@@ -1,0 +1,3 @@
+{ "name": "Artifact promotion (artAuto on): in the bulk-sale mode the app clicks no cell (a click would tick it for sale), the pilot only hints", "cols": 7, "request": {"purpose":"artPromote","uid":5001,"need":1,"cap":10,"level":10,"via":"copy","copies":[5002],"artAuto":true}, "frames": [
+  { "t":0,"inv":{ "open":true,"equip":false,"known":false,"art":true,"artKnown":true,"artMode":2,"artSel":0,"uids":[5010,5001,5002],"list":{ "scrollY":0,"cols":7,"rowUnits":116 } },"expect":{ "artStep":"artExitMode","artTodo":"Hint" },"clicks":[{ "owner":"Locate","auto":true,"front":true,"target":"ArtCell","cellIndex":1,"cellKind":"artlist","ok":[5001],"expect":{ "verdict":"Deny","reason":"bulk" } }] } ]
+}

@@ -293,3 +293,180 @@ namespace RealmForge {
     void Say(string t) { Trace = Trace == "" ? t : Trace + "; " + t; }
   }
 }
+
+namespace RealmForge {
+  public enum ArtTodo {
+    Nothing,      // no request
+    Hint,         // the player's step (also a step the app never clicks: «Улучшить» first, the final «Продвинуть», a wrong copy chosen ...)
+    ArtTab,       // the inventory's left menu «Артефакт»
+    Cell,         // the artifact's cell in the normal list (selects it): the click or the drag that brings it into view
+    Workshop,     // the open card's «Мастерская»
+    PromoteTab,   // the workshop's tab «Продвинуть»
+    MatCell       // the planned copy / essence in the workshop's left list: the click or the drag that brings it into view
+  }
+
+  /// <summary>What the host sees this tick of an artifact promotion («Показать в игре», purpose artPromote).</summary>
+  public sealed class ArtView {
+    public long NowMs;
+    public bool Foreground, UserBusy, UserClicked;
+    public double W, H, U;
+    public LocateStep Step;             // LocateGuide.NextArt for this tick
+    public InventoryScreen Inv;         // the inventory as read now (null = not shown)
+    public ArtWorkshopScreen Ws;        // the workshop as read now (null = not shown)
+    public ArtPromoteInfo Art;
+    public GameGeometry Geometry;       // the site's screen geometry (null: the research numbers of ArtFrames)
+  }
+
+  public sealed class ArtMove {
+    public AutoAction Action = AutoAction.Nothing;
+    /// <summary>work | paused | background | hint | stopped</summary>
+    public string State = "hint";
+    public string Why = "";
+    public ArtTodo Todo = ArtTodo.Nothing;
+    /// <summary>MatCell: the 1-based entry of the workshop's list the click is for.</summary>
+    public int MatIndex;
+    /// <summary>The action is a drag that scrolls a list (the click gate target is the list's drag).</summary>
+    public bool Drag { get { return Action.Kind == AutoKind.Drag; } }
+  }
+
+  /// <summary>«Показать в игре» for an ARTIFACT promotion with the site's "artAuto" switch and the player's auto click on: the app opens the «Артефакт» tab, selects the
+  /// artifact's cell (scrolling the list), opens «Мастерская», the «Продвинуть» tab and chooses the planned copy / essence. It NEVER presses «Продвинуть» or «Улучшить»
+  /// (the last step is a hint; ClickGate.NeverKeys), the lock icons, or anything else. Pure decision logic (tests: tests/CoreTests.cs, tests/ScreenReplay.cs).</summary>
+  public static class ArtLocateAuto {
+    /// <summary>Is the entry (1-based) of the workshop's list one the plan meant: a planned copy, or an essence stub when the plan spends an essence.</summary>
+    public static bool Planned(ArtPromoteInfo art, ArtWorkshopScreen ws, int index) {
+      if (art == null || ws == null || index < 1 || index > ws.Mats.Count) return false;
+      long u = ws.Mats[index - 1];
+      if (u != 0) return art.Copies.Contains(u);
+      return art.Via == "essence" && index - 1 < ws.MatItemIds.Count && ws.MatItemIds[index - 1] > 0;
+    }
+
+    public static ArtTodo Decide(ArtView v, out string why) {
+      why = "";
+      var st = v.Step;
+      if (st == null || st.Kind == LocateKind.None) return ArtTodo.Nothing;
+      var inv = v.Inv; var ws = v.Ws;
+      switch (st.Kind) {
+        case LocateKind.ArtOpenTab:
+          if (inv == null || !inv.Open || inv.ArtTab) { why = "screen"; return ArtTodo.Hint; }
+          if (inv.EquipTab && !inv.BulkKnown) { why = "wait"; return ArtTodo.Hint; }
+          if (inv.EquipTab && inv.Bulk) { why = "bulk"; return ArtTodo.Hint; }   // leaving the equipment sale is the player's
+          return ArtTodo.ArtTab;
+        case LocateKind.ArtInList: {
+          if (inv == null || !inv.Open || !inv.ArtTab || !inv.ArtBulkKnown || inv.ArtBulk || inv.ArtMode != -1) { why = "screen"; return ArtTodo.Hint; }
+          var f = ArtFrames.For(st, inv, null, v.Geometry, v.W, v.H, v.U);
+          if (f == null) { why = "list"; return ArtTodo.Hint; }
+          return ArtTodo.Cell;
+        }
+        case LocateKind.ArtSelected:
+          if (inv == null || !inv.Open || !inv.ArtTab || !inv.ArtBulkKnown || inv.ArtBulk || inv.ArtMode != -1 || !inv.ArtSelKnown || inv.ArtSel != st.Pos) { why = "screen"; return ArtTodo.Hint; }
+          return ArtTodo.Workshop;
+        case LocateKind.ArtOpenPromote:
+          if (ws == null || !ws.Open || v.Art == null || ws.Uid != v.Art.Uid || ws.Tab == 2) { why = "screen"; return ArtTodo.Hint; }
+          return ArtTodo.PromoteTab;
+        case LocateKind.ArtMatPick: {
+          if (ws == null || !ws.Open || ws.Tab != 2 || !ws.PanelKnown || v.Art == null || ws.Uid != v.Art.Uid) { why = "screen"; return ArtTodo.Hint; }
+          if (st.MatWrong) { why = "wrong"; return ArtTodo.Hint; }                    // a wrong copy chosen: the player takes it off
+          if (!Planned(v.Art, ws, st.Pos)) { why = "plan"; return ArtTodo.Hint; }     // not a copy / essence the plan meant: the player picks
+          var f = ArtFrames.For(st, null, ws, v.Geometry, v.W, v.H, v.U);
+          if (f == null) { why = "list"; return ArtTodo.Hint; }
+          return ArtTodo.MatCell;
+        }
+        default:
+          why = "player"; return ArtTodo.Hint;   // «Улучшить» first, the final «Продвинуть», nothing to choose ...
+      }
+    }
+  }
+
+  public sealed class ArtPilot {
+    public const int UserPauseMs = 4000, AfterTabMs = 1500, AfterOpenMs = 2500, SettleMs = 700;
+    public const int MaxStepClicks = 4, MaxActions = 90, MaxClicks = 14, MaxDrags = 45, MaxWorkMs = 5 * 60 * 1000;
+    public const double MinDragPx = 24;
+
+    string latched = "";
+    long waitUntil, pauseUntil, workSince;
+    ArtTodo kind; int kindClicks, actions, clicks, drags, lastMat;
+    double dragFrom = double.NaN; int dragStill;
+    /// <summary>What the last step did and why (the app's log).</summary>
+    public string Trace = "";
+
+    public void Reset() { latched = ""; waitUntil = pauseUntil = workSince = 0; kind = ArtTodo.Nothing; kindClicks = actions = clicks = drags = lastMat = 0; dragFrom = double.NaN; dragStill = 0; Trace = ""; }
+    public void Cancel() { if (latched == "") latched = "cancelled"; }
+    public void Halt(string why) { if (latched == "") latched = why; }
+    public bool Stopped { get { return latched != ""; } }
+    public string Reason { get { return latched; } }
+
+    static AutoAction Center(GeoRect r) { return new AutoAction { Kind = AutoKind.Click, X = r.X + r.W / 2, Y = r.Y + r.H / 2 }; }
+
+    public ArtMove Step(ArtView v) {
+      var m = new ArtMove();
+      if (latched != "") { m.State = "stopped"; m.Why = latched; return m; }
+      string why;
+      var todo = ArtLocateAuto.Decide(v, out why);
+      if (todo == ArtTodo.Nothing || todo == ArtTodo.Hint) { m.State = "hint"; m.Why = why; kind = ArtTodo.Nothing; kindClicks = 0; return m; }
+      if (v.UserClicked) pauseUntil = v.NowMs + UserPauseMs;
+      if (!v.Foreground) { m.State = "background"; workSince = 0; return m; }
+      if (v.UserBusy || v.NowMs < pauseUntil) { m.State = "paused"; workSince = 0; return m; }
+      m.State = "work"; m.Todo = todo;
+      if (workSince == 0) workSince = v.NowMs;
+      if (v.NowMs - workSince > MaxWorkMs || actions >= MaxActions) return Abort(m, "stuck");
+      if (v.NowMs < waitUntil) return m;
+      if (todo != kind) { kind = todo; kindClicks = 0; }
+      switch (todo) {
+        case ArtTodo.ArtTab: case ArtTodo.Workshop: case ArtTodo.PromoteTab: {
+          if (++kindClicks > MaxStepClicks) return Abort(m, "stuck");
+          string key = todo == ArtTodo.ArtTab ? "inventory.leftTab.artifact" : todo == ArtTodo.Workshop ? "inventory.artWorkshop" : "artifact.tab.promote";
+          var r = ArtFrames.Rect(v.Geometry, key, v.W, v.H, v.U);
+          if (r == null) return Abort(m, "screen");
+          return Click(m, v, Center(r), todo == ArtTodo.Workshop ? AfterOpenMs : AfterTabMs, key);
+        }
+        default:
+          return Cell(m, v, todo == ArtTodo.MatCell);
+      }
+    }
+
+    // a card of a list the game scrolls: out of view (or cut by the edge) -> drag the list toward it, the game's own scroll reading says how far it still is;
+    // in view -> one click on its centre (it only selects / chooses). A list that does not move on drags (its end) stops the pilot.
+    ArtMove Cell(ArtMove m, ArtView v, bool mat) {
+      var f = mat ? ArtFrames.For(v.Step, null, v.Ws, v.Geometry, v.W, v.H, v.U) : ArtFrames.For(v.Step, v.Inv, null, v.Geometry, v.W, v.H, v.U);
+      var l = mat ? (v.Ws != null ? v.Ws.MatList : null) : (v.Inv != null ? v.Inv.List : null);
+      if (f == null || l == null || !l.Has || f.ViewH <= 0) return Abort(m, "screen");
+      double sy = l.ScrollY;
+      if (!double.IsNaN(dragFrom)) {
+        if (Math.Abs(sy - dragFrom) < 0.5) { if (++dragStill >= 2) return Abort(m, "lost"); } else dragStill = 0;
+        dragFrom = double.NaN;
+      }
+      double cardH = 110 * v.U / GameGeometry.CanvasH;
+      if (f.Mark.Kind == "box" && f.Mark.H >= 0.6 * cardH) {
+        if (mat && v.Step.Pos != lastMat) { lastMat = v.Step.Pos; kindClicks = 0; }
+        if (++kindClicks > MaxStepClicks) return Abort(m, "stuck");
+        if (++clicks > MaxClicks) return Abort(m, "lost");
+        m.MatIndex = mat ? v.Step.Pos : 0;
+        return Click(m, v, new AutoAction { Kind = AutoKind.Click, X = f.Mark.X + f.Mark.W / 2.0, Y = f.Mark.Y + f.Mark.H / 2.0 }, mat ? AfterTabMs : AfterOpenMs, mat ? "copy" : "artifact");
+      }
+      double dy = Math.Max(-0.8 * f.ViewH, Math.Min(0.8 * f.ViewH, f.ScrollPx));   // content follows the pointer: + = later rows move down
+      if (Math.Abs(dy) < MinDragPx) dy = dy < 0 ? -MinDragPx : MinDragPx;
+      if (++drags > MaxDrags) return Abort(m, "lost");
+      actions++; dragFrom = sy;
+      waitUntil = v.NowMs + SettleMs + 300;
+      Say("scroll " + (int)dy);
+      m.Action = new AutoAction { Kind = AutoKind.Drag, X = f.ViewX + f.ViewW / 2, Y = f.ViewY + f.ViewH / 2 - dy / 2, DY = dy };
+      return m;
+    }
+
+    ArtMove Click(ArtMove m, ArtView v, AutoAction a, int waitMs, string what) {
+      actions++; waitUntil = v.NowMs + waitMs;
+      Say(what + " " + (int)a.X + "," + (int)a.Y);
+      m.Action = a;
+      return m;
+    }
+
+    ArtMove Abort(ArtMove m, string why) {
+      latched = why; m.State = "stopped"; m.Why = why; m.Action = AutoAction.Nothing;
+      Say("stop: " + why);
+      return m;
+    }
+
+    void Say(string t) { Trace = Trace == "" ? t : Trace + "; " + t; }
+  }
+}

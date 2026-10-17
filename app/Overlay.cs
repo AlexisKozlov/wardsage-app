@@ -327,7 +327,7 @@ namespace RealmForge {
       cancelWin.Pressed += () => {
         cancelWin.Hide();
         if (SellClicking) { Log.Write("sell: cancelled over the game"); var sc = SellCancelPressed; if (sc != null) sc(); return; }   // storage cleanup: the whole run ends (clicks and hints), the page cancels the list
-        if (LocateWins && runHero <= 0) { lpilot.Cancel(); Log.Write("locate auto: stopped over the game"); return; }   // «Показать в игре»: only the clicks stop
+        if (LocateWins && runHero <= 0) { lpilot.Cancel(); artPilot.Cancel(); Log.Write("locate auto: stopped over the game"); return; }   // «Показать в игре»: only the clicks stop
         var c = CancelPressed; if (c != null) c();
       };
     }
@@ -461,16 +461,17 @@ namespace RealmForge {
 
     /// <summary>Storage cleanup: select these items on the game's sell screen (null = stop). The app opens the screen from
     /// the gear list of <paramref name="hero"/> (or of the hero the game shows); «Продать» is pressed by the player.</summary>
-    /// <param name="artifact">the list is artifacts (the artifact tab's «Массовая продажа»): always frames and plates only, whatever <paramref name="hintOnly"/> says</param>
+    /// <param name="artifact">the list is artifacts (the artifact tab's «Массовая продажа»): frames and plates whatever <paramref name="hintOnly"/> says; clicks only with ArtAutoOn (the site's artAuto switch and the player's auto click), see TickArtSellAuto</param>
     public void SetSell(System.Collections.Generic.ICollection<long> uids, System.Collections.Generic.ICollection<int> parts, System.Collections.Generic.Dictionary<long, int> levels, long hero, bool hintOnly = false, bool artifact = false) {
       bool wasHint = sellHint;
       bool run = uids != null && uids.Count > 0;
-      if (artifact) hintOnly = true;   // the artifact cleanup never clicks, even with the auto click on
+      if (artifact) hintOnly = true;   // the artifact cleanup is always a hint run (frames, plates); its clicks come on top of it, only with ArtAutoOn (TickArtSellAuto)
       sellHint = hintOnly && run;
       bool nowArt = artifact && run;
       if (nowArt != sellArt) { shCols = nowArt ? 7 : 8; shGeo = null; }   // the artifact list has 7 columns at the authored width, the gear list 8
       sellArt = nowArt;
-      gate.NoSellClicks = sellArt;
+      ApplyArtGate();
+      artSellBtnAt = 0; artSellSaid = "";
       if (wasHint || sellHint) {
         // a hint run starts (or ends) clean: no frames, no plate, the rows' place unknown
         sgrid.Reset(); shInv = null; shHave = false; shReadSig = ""; shReadAt = 0; shFrames = null; shKey = ""; shLast = null; shUnkSince = -1; shHold = false;
@@ -489,7 +490,8 @@ namespace RealmForge {
     public void SetLocate(LocateRequest r) {
       locateReq = r != null && (r.Item != null || (r.Purpose == "artPromote" && r.Art != null)) ? r : null;
       bool artReq = locateReq != null && locateReq.Purpose == "artPromote";
-      RFX.ArtListWanted = artReq; gate.NoLocateClicks = artReq;   // an artifact request is hints only: the gate never lets the Locate owner click
+      RFX.ArtListWanted = artReq; ApplyArtGate();   // an artifact request is hints only unless ArtAutoOn (the site's artAuto switch and the player's auto click): then only its Art* targets
+      artPilot.Reset(); artAutoSaid = "";
       artFin.Reset(); artStep = null; artKey = ""; artSaid = ""; artFormAskedAt = 0;
       locateDoneUntil = 0; locateLive = null; lfin.Reset();
       locateSince = Stamp(); locateCaps = ""; locateLines = new string[0];
@@ -575,11 +577,12 @@ namespace RealmForge {
       // (the scroll is read every frame we draw); everything else stays at the slow tick
       int wantInterval = LocateWins || (sellHint && sellWanted != null) ? 33 : 100;
       if (timer.Interval != wantInterval) timer.Interval = wantInterval;
+      ApplyArtGate();
       ReadScreens(NowMs());   // the game's screen, once per tick: every feature below takes it from here
       // the game is minimized / covered / alt-tabbed: nothing of ours stays over the desktop (the features go on reading)
       if (!GameDrawable()) { if (glow.Visible) glow.Hide(); HideTip(); drawnKey = null; }
       if (LocateWins) { TickLocate(); TickCancel(); return; }
-      if (sellHint && sellWanted != null) { TickSellHint(); TickCancel(); return; }
+      if (sellHint && sellWanted != null) { TickSellHint(); TickArtSellAuto(); TickCancel(); return; }
       TickFrame();
       TickAuto();
       TickCancel();
@@ -588,13 +591,30 @@ namespace RealmForge {
     // «Отменить надевание»: top centre of the game (free on the hero screen and in the gear list), only while a started
     // build is on and the game is in front
     /// <summary>The storage cleanup's auto click is running (not halted, not finished): the stop button is shown for it.</summary>
-    bool SellClicking { get { return sellWanted != null && !sellHint && runHero <= 0 && !LocateWins && !gate.Halted(ClickOwner.Sell) && spilot.State != "done" && spilot.State != "failed"; } }
+    bool SellClicking { get { return sellWanted != null && (!sellHint || (sellArt && ArtAutoOn)) && runHero <= 0 && !LocateWins && !gate.Halted(ClickOwner.Sell) && spilot.State != "done" && spilot.State != "failed"; } }
+
+    /// <summary>The artifact flows (storage cleanup, promotion) may click: the player's auto click AND the site's "artAuto" switch (off by default).</summary>
+    public bool ArtAutoEnabled;
+    bool ArtAutoOn { get { return AutoEnabled && ArtAutoEnabled; } }
+
+    /// <summary>The gate's artifact rules follow the switches at every tick (a switch turned off mid-run: hints only again, at once).</summary>
+    void ApplyArtGate() {
+      bool on = ArtAutoOn, artReq = locateReq != null && locateReq.Purpose == "artPromote";
+      gate.NoSellClicks = sellArt && !on; gate.ArtSellAuto = sellArt && on;
+      gate.NoLocateClicks = artReq && !on; gate.ArtLocateAuto = artReq && on;
+    }
 
     /// <summary>«Показать в игре» with auto click enabled for it: the stop button shows during the WHOLE run (not only while a click is being made),
     /// until the pilot stops (gate, cancel, stuck), the job is done or the last step (the player's own button) is reached.</summary>
     bool LocateClicking {
       get {
-        if (locateReq == null || locateReq.Purpose == "artPromote" || !AutoEnabled || !LocateAutoEnabled || lpilot.Stopped || gate.Halted(ClickOwner.Locate) || locateDoneUntil != 0) return false;
+        if (locateReq != null && locateReq.Purpose == "artPromote") {
+          // the artifact promotion: the stop button shows until the pilot stops, the job is done or the step is the player's own (the final «Продвинуть», «Улучшить» first ...)
+          if (!ArtAutoOn || artPilot.Stopped || gate.Halted(ClickOwner.Locate) || locateDoneUntil != 0) return false;
+          var ak = artStep != null ? artStep.Kind : LocateKind.None;
+          return ak != LocateKind.ArtPromote && ak != LocateKind.ArtLevelFirst && ak != LocateKind.ArtMatNone && ak != LocateKind.ArtWrongArtifact && ak != LocateKind.NoItem && ak != LocateKind.None;
+        }
+        if (locateReq == null || !AutoEnabled || !LocateAutoEnabled || lpilot.Stopped || gate.Halted(ClickOwner.Locate) || locateDoneUntil != 0) return false;
         var k = locateStep != null ? locateStep.Kind : LocateKind.None;
         return k != LocateKind.Done && k != LocateKind.AscendReady && k != LocateKind.NoItem && k != LocateKind.OtherAccount;
       }
@@ -1981,6 +2001,7 @@ namespace RealmForge {
       var step = artStep;
       if (step == null) { LocateHide(); return; }
       if (recB != null) recB.Step = step.Kind.ToString();
+      TickArtDrive(step, inv, ws, hold, hwnd, o, cr, now, W, H, U);
       LocateFrame lf = front && !hold ? ArtFrames.For(step, inv, ws, Geo.Current, W, H, U) : null;
       if (!front) { LocateHide(); }
       else if (lf != null && lf.Mark.Kind != "box") { frame++; Draw(lf.Mark.Kind, o.X + lf.Mark.X, o.Y + lf.Mark.Y, lf.Mark.W, lf.Mark.H, lf.Mark.Rows); }   // the cell is off the screen: the pill at the list's edge
@@ -1998,6 +2019,87 @@ namespace RealmForge {
       } else HideTip();
       string key = step.Key + "|" + step.Pos + "|" + step.Row + "|" + step.Col + "|" + step.Count + "|" + step.MatChosen + "|" + step.MatWrong + "|" + step.MatKind + "|" + step.ArtLevel + "|" + step.Scroll;
       if (key != artKey) { artKey = key; var h = LocateChanged; if (h != null) h(step, null); }
+    }
+
+    // ---- auto click for the artifact promotion (src/LocatePilot.cs ArtPilot): only with ArtAutoOn. The pilot opens the «Артефакт» tab, selects the artifact's cell,
+    // «Мастерская», the «Продвинуть» tab and the planned copy; the final «Продвинуть» (and «Улучшить») is the player's. Every click goes through the gate.
+    readonly ArtPilot artPilot = new ArtPilot();
+    string artAutoSaid = "";
+
+    void TickArtDrive(LocateStep step, InventoryScreen inv, ArtWorkshopScreen ws, bool hold, IntPtr hwnd, W32.POINT o, W32.RECT cr, long now, double W, double H, double U) {
+      step.Auto = ""; step.AutoWhy = "";
+      if (!ArtAutoOn || hold || locateReq == null || locateReq.Art == null) return;
+      if (sending) return;   // a click is on its way: the screens are read after it
+      W32.POINT c;
+      if (W32.GetCursorPos(out c)) {
+        if (seenSet && (c.X != seen.X || c.Y != seen.Y)) lastMoveMs = now;
+        seen = c; seenSet = true;
+      }
+      bool down = (W32.GetAsyncKeyState(0x01) & 0x8000) != 0 || (W32.GetAsyncKeyState(0x02) & 0x8000) != 0;
+      if (down && !btnWasDown) userClick = true;
+      btnWasDown = down;
+      if (artPilot.Stopped) { step.Auto = "stopped"; step.AutoWhy = artPilot.Reason; return; }
+      bool busy = down || now - lastMoveMs < 700, uc = userClick; userClick = false;
+      int fp, gp; W32.GetWindowThreadProcessId(W32.GetForegroundWindow(), out fp); W32.GetWindowThreadProcessId(hwnd, out gp);
+      bool gameFront = fp == gp;
+      var scr = screens.Current;
+      if (gameFront && !busy) {
+        var pre = gate.Preflight(ClickOwner.Locate, scr, now);
+        AnnounceHalts();
+        if (artPilot.Stopped) { step.Auto = "stopped"; step.AutoWhy = artPilot.Reason; return; }
+        if (pre.Verdict != GateVerdict.Allow) return;   // the last click's effect is awaited / the screen is not recognised yet
+      }
+      var req = locateReq;
+      var view = new ArtView { NowMs = now, Foreground = gameFront, UserBusy = busy, UserClicked = uc, W = W, H = H, U = U, Step = step, Inv = inv, Ws = ws, Art = req.Art, Geometry = Geo.Current };
+      var mv = artPilot.Step(view);
+      if (artPilot.Trace != "") { Log.Write("art promote auto: " + artPilot.Trace); artPilot.Trace = ""; }
+      string said = mv.State + "|" + mv.Why + "|" + step.Key;
+      if (said != artAutoSaid) { artAutoSaid = said; Log.Write("art promote auto: " + mv.State + (mv.Why != "" ? " (" + mv.Why + ")" : "") + " at step " + step.Key); }
+      if (mv.State == "background" && fp == SelfPid && now >= focusAfter) {   // started from our own window: the game comes forward
+        focusAfter = now + 3000;
+        if (W32.IsIconic(hwnd)) W32.ShowWindow(hwnd, 9);   // SW_RESTORE
+        W32.SetForegroundWindow(hwnd);
+      }
+      if (mv.Action.Kind != AutoKind.None) SendArt(mv, req, ws, o, cr, gameFront, W, H, U);
+      if (artPilot.Stopped) { step.Auto = "stopped"; step.AutoWhy = artPilot.Reason; }
+    }
+
+    // the artifact pilot's action -> the gate's target (and for a list cell the item that has to be under the click)
+    void SendArt(ArtMove mv, LocateRequest req, ArtWorkshopScreen ws, W32.POINT o, W32.RECT cr, bool front, double W, double H, double U) {
+      var art = req.Art; bool drag = mv.Drag;
+      ClickTarget tg = ClickTarget.None;
+      Action<ClickRequest, ScreenState> fill = null;
+      var geo = Geo.Current;
+      switch (mv.Todo) {
+        case ArtTodo.ArtTab: tg = ClickTarget.ArtTab; break;
+        case ArtTodo.Workshop: tg = ClickTarget.ArtWorkshop; fill = (rq, fr) => { rq.CellOk = new[] { art.Uid }; }; break;
+        case ArtTodo.PromoteTab: tg = ClickTarget.ArtPromoteTab; fill = (rq, fr) => { rq.CellOk = new[] { art.Uid }; }; break;
+        case ArtTodo.Cell:
+          tg = drag ? ClickTarget.ArtListDrag : ClickTarget.ArtCell;
+          fill = (rq, fr) => {
+            int i = fr.Inv != null ? ClickGate.ListCardIndexAt(geo, "inventory.artList", fr.Inv.List, LocateGuide.ArtInvCols, 116, rq.X, rq.Y, W, H, U) : -1;
+            rq.CellUid = i >= 0 && fr.Inv != null && i < fr.Inv.Uids.Count ? fr.Inv.Uids[i] : 0;
+            rq.CellOk = new[] { art.Uid };
+          };
+          break;
+        case ArtTodo.MatCell: {
+          tg = drag ? ClickTarget.ArtMatDrag : ClickTarget.ArtMatCell;
+          // the essence the pilot planned (its item id from the read it decided on); a copy is judged by its uid against the plan
+          var itemOk = new List<int>();
+          if (art.Via == "essence" && ws != null && mv.MatIndex >= 1 && mv.MatIndex <= ws.MatItemIds.Count && mv.MatIndex <= ws.Mats.Count && ws.Mats[mv.MatIndex - 1] == 0) itemOk.Add(ws.MatItemIds[mv.MatIndex - 1]);
+          fill = (rq, fr) => {
+            if (drag) { rq.CellOk = new[] { art.Uid }; return; }   // (the rule needs the open artifact only)
+            var w2 = fr.ArtWs;
+            int i = w2 != null ? ClickGate.ListCardIndexAt(geo, "artifact.matList", w2.MatList, LocateGuide.ArtMatCols, 114, rq.X, rq.Y, W, H, U) : -1;
+            rq.MatIndex = i >= 0 && w2 != null && i < w2.Mats.Count ? i + 1 : 0;
+            rq.CellUid = rq.MatIndex > 0 ? w2.Mats[i] : 0;
+            var copies = new List<long>(art.Copies); copies.Add(art.Uid);   // (CellOk also names the open artifact for the workshop check)
+            rq.CellOk = copies; rq.ItemOk = itemOk;
+          };
+          break;
+        }
+      }
+      SendInside(mv.Action, o, cr, ClickOwner.Locate, tg, front, fill);
     }
 
     // ---- auto click for «Показать в игре» (src/LocatePilot.cs): the app opens the Inventory, the «Снаряжение» tab and the item
@@ -2073,6 +2175,7 @@ namespace RealmForge {
     ScreenState FreshScreen(bool wantCity) {
       long now = NowMs();
       var inp = new ScreenInputs { Inv = RFX.ReadInventory(-1), Rs = RFX.ReadRecastScreenSafe(-1), Hero = RFX.ReadHeroScreen(addrs, screens.Hero), CityForm = RFX.CityShown() };
+      if (locateReq != null && locateReq.Purpose == "artPromote") inp.ArtWs = RFX.ReadArtWorkshop();   // the artifact guide's clicks are judged by the workshop too
       var st = ScreenState.Classify(inp, now);
       // a click on a city button also needs the picture of the bar (the form alone is not enough for a click)
       if (wantCity && (st.Kind == ScreenKind.City || (st.Kind == ScreenKind.Unknown && inp.CityForm == null))) {
@@ -2092,8 +2195,8 @@ namespace RealmForge {
         haltSaid[o] = why;
         if (why == "") continue;
         Log.Write("auto click stopped (" + o + "): " + why);
-        if (o == ClickOwner.Locate) lpilot.Halt(why);
-        else if (o == ClickOwner.Sell) SellSay("gate_" + why);
+        if (o == ClickOwner.Locate) { lpilot.Halt(why); artPilot.Halt(why); }
+        else if (o == ClickOwner.Sell) { if (!sellArt) SellSay("gate_" + why); }   // (the artifact cleanup is a hint run for the page: the stop is in the log only)
         else AutoSay("gate_" + why);
       }
     }
@@ -2291,13 +2394,96 @@ namespace RealmForge {
       Log.Write("sell: " + st + " selected " + spilot.Selected + "/" + (sellWanted != null ? sellWanted.Count : 0) + " missing " + spilot.Missing + " extra " + spilot.Extra);
     }
 
+    // ---- the artifact storage cleanup's clicks (only with ArtAutoOn; the frames and plates of TickSellHint go on). The pilot opens the «Артефакт» tab and
+    // «Массовая продажа», then SellPilot (with the artifact list's geometry) ticks the wanted cards, scrolling the list by dragging it, and takes a wrong tick off.
+    // Never «Продать», «Все» (select all), a lock icon or anything else; every cell click is judged by the gate on a fresh read (the card under the click is the
+    // one meant, and the game's choice must hold it within 1 s).
+    long artSellBtnAt; string artSellSaid = "";
+
+    void TickArtSellAuto() {
+      if (!sellArt || sellWanted == null || !ArtAutoOn || sending || runHero > 0) return;
+      long now = NowMs();
+      W32.POINT c;
+      if (W32.GetCursorPos(out c)) {
+        if (seenSet && (c.X != seen.X || c.Y != seen.Y)) lastMoveMs = now;
+        seen = c; seenSet = true;
+      }
+      bool down = (W32.GetAsyncKeyState(0x01) & 0x8000) != 0 || (W32.GetAsyncKeyState(0x02) & 0x8000) != 0;
+      if (down && !btnWasDown) userClick = true;
+      btnWasDown = down;
+      IntPtr hwnd = GameWindow();
+      int fp, gp;
+      if (hwnd == IntPtr.Zero) return;
+      W32.GetWindowThreadProcessId(W32.GetForegroundWindow(), out fp); W32.GetWindowThreadProcessId(hwnd, out gp);
+      // started from our own window: the game comes forward (and is restored), never over another program
+      if (fp == SelfPid && now >= focusAfter) { focusAfter = now + 3000; if (W32.IsIconic(hwnd)) W32.ShowWindow(hwnd, 9); W32.SetForegroundWindow(hwnd); return; }
+      if (W32.IsIconic(hwnd)) return;
+      W32.RECT cr; if (!W32.GetClientRect(hwnd, out cr) || cr.B < 200) return;
+      var o = new W32.POINT(0, 0); W32.ClientToScreen(hwnd, ref o);
+      double W = cr.R, H = cr.B, U = Ui.Unit(W, H);
+      bool front = fp == gp, busy = down || now - lastMoveMs < 700, uc = userClick; userClick = false;
+      if (gate.Halted(ClickOwner.Sell)) return;
+      var scr = screens.Current;
+      if (front && !busy) {
+        var pre = gate.Preflight(ClickOwner.Sell, scr, now);
+        AnnounceHalts();
+        if (pre.Verdict != GateVerdict.Allow) return;
+      }
+      if (scr == null || scr.Kind != ScreenKind.Inventory || screens.Inv == null) return;   // the player brings the Inventory up (the hint says so)
+      var inv = screens.Inv;
+      if (!front || busy) return;
+      if (!inv.ArtTab) {
+        if (inv.EquipTab && (!inv.BulkKnown || inv.Bulk)) return;   // the equipment sale is left by the player
+        if (now - artSellBtnAt < 2000) return;
+        artSellBtnAt = now;
+        var tr = ArtFrames.Rect(Geo.Current, "inventory.leftTab.artifact", W, H, U);
+        if (tr != null) SendInside(new AutoAction { Kind = AutoKind.Click, X = tr.CX, Y = tr.CY }, o, cr, ClickOwner.Sell, ClickTarget.ArtTab, front);
+        return;
+      }
+      if (!inv.ArtBulkKnown) return;
+      if (!inv.ArtBulk) {
+        if (inv.ArtMode != -1) return;   // «Масс. организовать»: the player leaves it
+        if (now - artSellBtnAt < 2000) return;
+        artSellBtnAt = now;
+        var pb = SellHint.ArtBulkRect(W, H, U);
+        SendInside(new AutoAction { Kind = AutoKind.Click, X = pb[0] + pb[2] / 2.0, Y = pb[1] + pb[3] / 2.0 }, o, cr, ClickOwner.Sell, ClickTarget.ArtBulkEnter, front);
+        return;
+      }
+      // «Массовая продажа» of the artifact tab: the geometry and the columns are the hint's (TickSellHint keeps them); no cell without the game's exact scroll
+      var geo = shGeo; int cols = shCols;
+      if (geo == null || shGeoW != W || shGeoH != H || shGeoCols != cols || inv.List == null || !inv.List.Has) return;
+      spilot.Geometry = geo;
+      double row1 = sellScroll.Row1(geo, inv.List, double.NaN, U, now);
+      if (double.IsNaN(row1)) return;
+      var a = spilot.Step(new SellView { NowMs = now, Foreground = front, UserBusy = busy, UserClicked = uc, W = W, H = H, U = U, Screen = inv.AsSellArt(cols), Wanted = sellWanted, Phase = double.NaN, Row1 = row1 });
+      if (spilot.Trace != "") { Log.Write("art sell auto: " + spilot.Trace); spilot.Trace = ""; }
+      string key = spilot.State + "|" + spilot.Selected + "|" + spilot.Missing + "|" + spilot.Extra;
+      if (key != artSellSaid) { artSellSaid = key; Log.Write("art sell auto: " + spilot.State + " selected " + spilot.Selected + "/" + sellWanted.Count + " missing " + spilot.Missing + " extra " + spilot.Extra); }
+      if (a.Kind == AutoKind.None) return;
+      var wanted = sellWanted;
+      SendInside(a, o, cr, ClickOwner.Sell, a.Kind == AutoKind.Drag ? ClickTarget.ArtListDrag : ClickTarget.ArtBulkCell, front, (rq, fr) => {
+        if (a.Kind == AutoKind.Drag) return;
+        rq.CellUid = ClickGate.InvCellUid(fr.Inv, geo, sellScroll.Row1(geo, fr.Inv != null ? fr.Inv.List : null, double.NaN, U, now), cols, rq.X, rq.Y, W, U);
+        rq.CellOk = wanted;
+        rq.Untick = rq.CellUid > 0 && !wanted.Contains(rq.CellUid);   // a ticked card that is not wanted comes off; the gate checks both ways
+      });
+    }
+
     // a pilot action at client px, never outside the game's client area
     // the click gate decides (src/ClickGate.cs): <paramref name="fill"/> adds what only the fresh read can say (the item under a cell click)
     bool SendInside(AutoAction a, W32.POINT o, W32.RECT cr, ClickOwner owner, ClickTarget target, bool front, Action<ClickRequest, ScreenState> fill = null) {
       int x = o.X + (int)Math.Round(a.X), y = o.Y + (int)Math.Round(a.Y), y2 = y + (int)Math.Round(a.DY);
       if (x < o.X || y < o.Y || x >= o.X + cr.R || y >= o.Y + cr.B || y2 < o.Y || y2 >= o.Y + cr.B) return false;
+      bool artT = ClickGate.IsArtTarget(target);
+      // an artifact flow never presses «Продвинуть» / «Улучшить»: on the workshop no click or drag point may lie inside those buttons
+      if (ClickGate.IsWorkshopTarget(target)) {
+        double aw = cr.R, ah = cr.B, au = Ui.Unit(aw, ah);
+        if (ClickGate.OnNeverButton(Geo.Current, a.X, a.Y, aw, ah, au) || (a.Kind == AutoKind.Drag && ClickGate.OnNeverButton(Geo.Current, a.X, a.Y + a.DY, aw, ah, au))) {
+          gate.Halt(owner, "target", target + " @" + (int)a.X + "," + (int)a.Y + " lies on a button the artifact flows never press"); AnnounceHalts(); return false;
+        }
+      }
       var fresh = FreshScreen(target == ClickTarget.CityInventory);
-      var req = new ClickRequest { Owner = owner, Target = target, AutoOn = owner == ClickOwner.Locate ? AutoEnabled && LocateAutoEnabled : AutoEnabled, Front = front, X = a.X, Y = a.Y };
+      var req = new ClickRequest { Owner = owner, Target = target, AutoOn = artT ? ArtAutoOn : owner == ClickOwner.Locate ? AutoEnabled && LocateAutoEnabled : AutoEnabled, Front = front, X = a.X, Y = a.Y };
       if (fill != null) fill(req, fresh);
       return GatedSend(req, fresh, a, x, y);
     }

@@ -1,0 +1,4 @@
+{ "name": "Artifact promotion (artAuto on): a gear target is never clicked, the final step is a hint", "cols": 7, "request": {"purpose":"artPromote","uid":5001,"need":1,"cap":10,"level":10,"via":"copy","copies":[5002],"artAuto":true}, "frames": [
+  { "t":0,"artWs":{ "open":true,"tab":2,"uid":5001,"level":10,"stage":0,"mats":[5003,5002,0],"matLevels":[7,1,-1],"matItemIds":[200088,200088,16100],"matSel":[2],"list":{ "scrollY":0,"cols":3,"rowUnits":114 } },"expect":{ "artStep":"artPromote","artTodo":"Hint" },"clicks":[{ "owner":"Locate","auto":true,"front":true,"target":"InvEquipTab","expect":{ "verdict":"Deny","reason":"artifact" } }] },
+  { "t":100,"artWs":{ "open":true,"tab":2,"uid":5001,"level":10,"stage":0,"mats":[5003,5002,0],"matLevels":[7,1,-1],"matItemIds":[200088,200088,16100],"matSel":[2],"list":{ "scrollY":0,"cols":3,"rowUnits":114 } },"expect":{ "halt":"Locate:artifact" },"clicks":[] } ]
+}

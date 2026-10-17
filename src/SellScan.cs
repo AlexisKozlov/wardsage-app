@@ -64,6 +64,13 @@ namespace RealmForge {
       foreach (var u in Selected) s.Selected.Add(u);
       return s;
     }
+
+    /// <summary>The artifact tab's «Массовая продажа» list as the sell pilot sees it: rows of <paramref name="cols"/> cards (the same pilot as the equipment list).</summary>
+    public SellScreen AsSellArt(int cols) {
+      var s = AsSell(cols);
+      s.Open = Open && ArtTab && ArtBulk;
+      return s;
+    }
   }
 
   /// <summary>The artifact workshop (Form_EquipArtifactIntensify): which artifact is open, on which tab and, on «Продвинуть», the copies to pick from.
@@ -76,6 +83,7 @@ namespace RealmForge {
     public bool PanelKnown;           // the «Продвинуть» panel's candidate list was read
     public List<long> Mats = new List<long>();    // m_vMatData in screen order: a copy's uid, 0 = an essence stub
     public List<int> MatLevels = new List<int>(); // per entry: the copy's iLevel (-1 = not read / an essence)
+    public List<int> MatItemIds = new List<int>();   // per entry: its iItemId (an essence stub's item; 0 = not read)
     public HashSet<int> MatSel = new HashSet<int>();   // 1-based indices of m_vMatData that are chosen
     public RFX.ListRead MatList;      // the copy list's scroll and grid (null = unreadable)
     public ulong ListPtr;
@@ -280,16 +288,17 @@ namespace RealmForge {
         s.ListPtr = list;
         var d = ParseTable(list, 1, new HashSet<ulong>());
         if (d != null) {
-          var byIndex = new SortedDictionary<int, KeyValuePair<long, int>>();
+          var byIndex = new SortedDictionary<int, long[]>();   // {uid, level, item id}
           foreach (var kv in d) {
-            int i; var row = kv.Value as Dictionary<string, object>; object u, lv;
+            int i; var row = kv.Value as Dictionary<string, object>; object u, lv, iid;
             if (row == null || kv.Key.Length <= 2 || !int.TryParse(kv.Key.Substring(1, kv.Key.Length - 2), out i)) continue;
             long uid = row.TryGetValue("iItemUid", out u) && u is long ? (long)u : 0;
-            int level = row.TryGetValue("iLevel", out lv) && lv is long ? (int)Math.Max(0, Math.Min(999, (long)lv)) : -1;
-            byIndex[i] = new KeyValuePair<long, int>(uid, level);
+            long level = row.TryGetValue("iLevel", out lv) && lv is long ? Math.Max(0, Math.Min(999, (long)lv)) : -1;
+            long itemId = row.TryGetValue("iItemId", out iid) && iid is long ? Math.Max(0, Math.Min((long)int.MaxValue, (long)iid)) : 0;
+            byIndex[i] = new[] { uid, level, itemId };
           }
           int expect = 1;
-          foreach (var kv in byIndex) { if (kv.Key != expect++) break; s.Mats.Add(kv.Value.Key); s.MatLevels.Add(kv.Value.Value); }   // a script array: 1..n
+          foreach (var kv in byIndex) { if (kv.Key != expect++) break; s.Mats.Add(kv.Value[0]); s.MatLevels.Add((int)kv.Value[1]); s.MatItemIds.Add((int)kv.Value[2]); }   // a script array: 1..n
           s.PanelKnown = true;
         }
       }

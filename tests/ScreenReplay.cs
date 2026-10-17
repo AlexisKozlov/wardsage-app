@@ -7,8 +7,10 @@
 //
 //   dotnet exec ... ScreenReplay.dll [fixtures dir]      exit code 0 = everything passed
 //
-//   artifact promotion ("request": {"purpose":"artPromote","uid","need","cap","level","via","copies":[...]}): inputs "artWs": {"open","tab","uid","level","stage","mats","matLevels","matSel","list"},
-//   inv "artMode" / "artSel" (normal mode of the artifact tab); expect "artStep" (the guide's step key), "artFrame" (a frame for it exists); the gate never lets the Locate owner click.
+//   artifact promotion ("request": {"purpose":"artPromote","uid","need","cap","level","via","copies":[...],"artAuto":false}): inputs "artWs": {"open","tab","uid","level","stage","mats","matLevels","matItemIds","matSel","list"},
+//   inv "artMode" / "artSel" (normal mode of the artifact tab); expect "artStep" (the guide's step key), "artFrame" (a frame for it exists), "artTodo" (what the promotion pilot decides: Hint | ArtTab | Cell | Workshop | PromoteTab | MatCell);
+//   the gate lets the Locate owner click only the Art* targets and only with "artAuto": true (the site's artAuto switch with the auto click on); "sell": {"artAuto": true} is the same for the cleanup.
+//   click cell kinds: "artbulk" (a card of the artifact tab's bulk-sale list; "untick": true takes a tick off), "artlist" (a card of the normal list), "mat" (an entry of the workshop's copy list; "itemOk": [...] = essence item ids)
 // Fixture: {"name", "request": {"purpose","uid","slot","hero"}, "cols", "frames": [{"t", "inv", "rs", "hero", "city", "expect", "clicks"}]}
 //   inv/rs/hero null or missing = that read failed. expect: screen, held, bulk, artBulk, brief (a substring of the screen's brief), sellStep (the storage
 //   cleanup's step key; needs "sell"), tab, modal, step, todo, why, halt (owner:reason), frame (a frame for the step exists). Optional "sell":
@@ -55,7 +57,7 @@ static class ScreenReplay {
     if (d == null) return null;
     var s = new ArtWorkshopScreen { Open = Bool(d, "open", true), Tab = (int)Num(d, "tab", 0), Uid = (long)Num(d, "uid", 0), Level = (int)Num(d, "level", -1), Stage = (int)Num(d, "stage", -1) };
     var mats = Get(d, "mats");
-    if (mats != null) { s.PanelKnown = true; s.Mats.AddRange(Longs(mats)); foreach (var x in Ints(Get(d, "matLevels"))) s.MatLevels.Add(x); foreach (var x in Ints(Get(d, "matSel"))) s.MatSel.Add(x); }
+    if (mats != null) { s.PanelKnown = true; s.Mats.AddRange(Longs(mats)); foreach (var x in Ints(Get(d, "matLevels"))) s.MatLevels.Add(x); foreach (var x in Ints(Get(d, "matSel"))) s.MatSel.Add(x); foreach (var x in Ints(Get(d, "matItemIds"))) s.MatItemIds.Add(x); }
     s.MatList = ListOf(O(Get(d, "list")));
     return s;
   }
@@ -94,14 +96,15 @@ static class ScreenReplay {
       artReq = new ArtPromoteInfo { Uid = (long)Num(rq, "uid", 0), Need = (int)Num(rq, "need", 1), Cap = (int)Num(rq, "cap", 0), Level = (int)Num(rq, "level", 0), Via = Str(rq, "via") ?? "none" };
       artReq.Copies.AddRange(Longs(Get(rq, "copies")));
       req = new LocateRequest { Id = "r", Purpose = "artPromote", Art = artReq };
-      gate.NoLocateClicks = true;
+      bool artAutoOn = Bool(rq, "artAuto", false);
+      gate.NoLocateClicks = !artAutoOn; gate.ArtLocateAuto = artAutoOn;
     } else if (rq != null) {
       item = new PlanItem { Uid = (long)Num(rq, "uid", 0), Slot = (int)Num(rq, "slot", 0), Quality = (int)Num(rq, "quality", 0) };
       req = new LocateRequest { Id = "r", Purpose = Str(rq, "purpose") ?? "recast", Item = item, HeroUid = (long)Num(rq, "hero", 0) };
     }
     int cols = (int)Num(fx, "cols", 8);
     var sellSpec = O(Get(fx, "sell")); var sellWanted = new HashSet<long>(); bool sellArt = false;
-    if (sellSpec != null) { foreach (var u in Longs(Get(sellSpec, "uids"))) sellWanted.Add(u); sellArt = Bool(sellSpec, "artifact", false); gate.NoSellClicks = sellArt; }
+    if (sellSpec != null) { foreach (var u in Longs(Get(sellSpec, "uids"))) sellWanted.Add(u); sellArt = Bool(sellSpec, "artifact", false); bool sellAuto = Bool(sellSpec, "artAuto", false); gate.NoSellClicks = sellArt && !sellAuto; gate.ArtSellAuto = sellArt && sellAuto; }
     double U = Ui.Unit(W, H);
     var inv0 = new InvScroll();
     int n = 0;
@@ -135,6 +138,14 @@ static class ScreenReplay {
         step = LocateGuide.NextArt(req, tracker.Inv, tracker.ArtWs);
         string e;
         if (ex != null && (e = Str(ex, "artStep")) != null) Check(step.Key == e, at + ": art step " + e + (step.Key == e ? "" : " (got " + step.Key + ")"));
+        if (ex != null && (e = Str(ex, "artTodo")) != null) {
+          var av = new ArtView { NowMs = t, Foreground = true, W = W, H = H, U = U, Step = step, Inv = tracker.Inv, Ws = tracker.ArtWs, Art = artReq, Geometry = geo };
+          string awhy; var atodo = ArtLocateAuto.Decide(av, out awhy);
+          Check(atodo.ToString() == e, at + ": art pilot decides " + e + (atodo.ToString() == e ? "" : " (got " + atodo + " " + awhy + ")"));
+          // whatever it decides, the action it would make is never on «Продвинуть» / «Улучшить»
+          var am = new ArtPilot().Step(av);
+          if (am.Action.Kind != AutoKind.None && (am.Todo == ArtTodo.PromoteTab || am.Todo == ArtTodo.MatCell)) Check(!ClickGate.OnNeverButton(geo, am.Action.X, am.Action.Y, W, H, U), at + ": the pilot's action is not on «Продвинуть» / «Улучшить»");
+        }
         if (ex != null && Get(ex, "artFrame") is bool) {
           var fr = ArtFrames.For(step, tracker.Inv, tracker.ArtWs, geo, W, H, U);
           Check((fr != null) == (bool)Get(ex, "artFrame"), at + ": art frame " + ((bool)Get(ex, "artFrame") ? "exists" : "is absent"));
@@ -167,7 +178,8 @@ static class ScreenReplay {
         var cr = new ClickRequest { Owner = owner, Target = target, AutoOn = Bool(c, "auto", true), Front = Bool(c, "front", true) };
         var ok = new HashSet<long>(); var okl = Longs(Get(c, "ok")); foreach (var u in okl) ok.Add(u);
         if (okl.Length == 0 && item != null) ok.Add(item.Uid);
-        cr.CellOk = ok; cr.Func = (int)Num(c, "func", 0);
+        cr.CellOk = ok; cr.Func = (int)Num(c, "func", 0); cr.Untick = Bool(c, "untick", false);
+        var itemOk = new HashSet<int>(); foreach (var x in Ints(Get(c, "itemOk"))) itemOk.Add(x); cr.ItemOk = itemOk;
         if (Get(c, "cellIndex") is double) {
           int idx = (int)(double)Get(c, "cellIndex");
           string kind = Str(c, "cellKind") ?? "inv";
@@ -176,6 +188,22 @@ static class ScreenReplay {
             double row1 = new InvScroll().Row1(g, fresh.Inv.List, double.NaN, U);
             cr.X = g.CellCentreX(idx % cols + 1, W, U); cr.Y = row1 + (idx / cols) * g.PitchY * U + g.CellHeight * U / 2;
             cr.CellUid = ClickGate.InvCellUid(fresh.Inv, g, row1, cols, cr.X, cr.Y, W, U);
+          } else if (kind == "artbulk" && fresh.Inv != null) {
+            var g = SellGeometry.Artifacts(W, H, U, 7, null);
+            double row1 = new InvScroll().Row1(g, fresh.Inv.List, double.NaN, U);
+            cr.X = g.CellCentreX(idx % 7 + 1, W, U); cr.Y = row1 + (idx / 7) * g.PitchY * U + g.CellHeight * U / 2;
+            cr.CellUid = ClickGate.InvCellUid(fresh.Inv, g, row1, 7, cr.X, cr.Y, W, U);
+          } else if (kind == "artlist" && fresh.Inv != null) {
+            var fr = ArtFrames.Cell(geo, "inventory.artList", fresh.Inv.List, idx, 7, 116, W, H, U);
+            cr.X = fr.Mark.X + fr.Mark.W / 2.0; cr.Y = fr.Mark.Y + fr.Mark.H / 2.0;
+            int ci = ClickGate.ListCardIndexAt(geo, "inventory.artList", fresh.Inv.List, 7, 116, cr.X, cr.Y, W, H, U);
+            cr.CellUid = ci >= 0 && ci < fresh.Inv.Uids.Count ? fresh.Inv.Uids[ci] : 0;
+          } else if (kind == "mat" && fresh.ArtWs != null) {
+            var fr = ArtFrames.Cell(geo, "artifact.matList", fresh.ArtWs.MatList, idx, 3, 114, W, H, U);
+            cr.X = fr.Mark.X + fr.Mark.W / 2.0; cr.Y = fr.Mark.Y + fr.Mark.H / 2.0;
+            int ci = ClickGate.ListCardIndexAt(geo, "artifact.matList", fresh.ArtWs.MatList, 3, 114, cr.X, cr.Y, W, H, U);
+            cr.MatIndex = ci >= 0 && ci < fresh.ArtWs.Mats.Count ? ci + 1 : 0;
+            cr.CellUid = cr.MatIndex > 0 ? fresh.ArtWs.Mats[ci] : 0;
           } else if (kind == "ascend" && fresh.Rs != null) {
             var fr = FoundryPlace.Cell(geo, "ascend", fresh.Rs.AscendList, idx, W, H, U);
             cr.X = fr.Mark.X + fr.Mark.W / 2.0; cr.Y = fr.Mark.Y + fr.Mark.H / 2.0;
@@ -316,6 +344,16 @@ static class ScreenReplay {
     Check(RemoteSwitches.Parse("{\"readEnabled\":true}").Off().Count == 0, "a feature that starts off is not listed as 'switched off'");
     var back = RemoteSwitches.Parse(RemoteSwitches.Parse("{\"features\":{\"locateAuto\":true}}").ToJson());
     Check(back.Allows("locateAuto"), "the saved copy keeps it");
+    Check(!sw.Allows("artAuto") && !RemoteSwitches.Parse("{}").Allows("artAuto") && !RemoteSwitches.Parse("{\"features\":{\"artAuto\":1}}").Allows("artAuto") && RemoteSwitches.Parse("{\"features\":{\"artAuto\":true}}").Allows("artAuto"), "artAuto (the artifact flows' clicks) is off by default and on only with a plain true");
+    Check(!RemoteSwitches.Parse("{\"features\":{\"artAuto\":true}}").Allows("locateAuto"), "artAuto does not switch locateAuto on");
+
+    Console.WriteLine("the artifact buttons that are never pressed");
+    foreach (string key in ClickGate.NeverKeys) {
+      foreach (ClickTarget tg in Enum.GetValues(typeof(ClickTarget))) Check(ClickGate.KeyOf(tg) != key, "no target is placed by the never-pressed button " + key + " (" + tg + ")");
+      foreach (ClickOwner o in Enum.GetValues(typeof(ClickOwner))) Check(!ClickGate.WhitelistText(o).Contains(key) && !ClickGate.WhitelistText(o).Contains("PromoteBtn"), o + " whitelist: " + key + " is in no whitelist");
+    }
+    Check(!ClickGate.WhitelistText(ClickOwner.Locate).Contains("ArtBulk") && !ClickGate.WhitelistText(ClickOwner.Sell).Contains("ArtCell") && !ClickGate.WhitelistText(ClickOwner.Sell).Contains("ArtMat") && !ClickGate.WhitelistText(ClickOwner.Sell).Contains("ArtWorkshop") && !ClickGate.WhitelistText(ClickOwner.Equip).Contains("Art"),
+      "each owner has only its own artifact targets (the promotion no bulk sale, the cleanup no normal-list cell / workshop)");
   }
 
   static int Main(string[] args) {

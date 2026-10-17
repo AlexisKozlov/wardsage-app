@@ -656,6 +656,7 @@ static class CoreTests {
     SellHintTests();
     ArtifactSellTests();
     ArtPromoteTests();
+    ArtAutoTests();
 
     Console.WriteLine("Fight timeline (src/TimelineBuilder.cs: samples of the running fight + its command record):");
     TimelineTests();
@@ -3318,7 +3319,7 @@ static class CoreTests {
       gate = new ClickGate();
       res = gate.Check(new ClickRequest { Owner = ClickOwner.Sell, Target = ClickTarget.InvEquipTab, AutoOn = true, Front = true }, scrN, 0);
       Check(res.Allowed, "art gate: a gear cleanup (not an artifact run) may still go from the artifact tab back to «Снаряжение»");
-      foreach (ClickOwner ow in Enum.GetValues(typeof(ClickOwner))) Check(!ClickGate.WhitelistText(ow).Contains("Art"), "art gate: " + ow + " has no artifact target on its whitelist");
+      Check(!ClickGate.WhitelistText(ClickOwner.Equip).Contains("Art"), "art gate: the equip helper has no artifact target on its whitelist (the others have theirs, behind ArtSellAuto / ArtLocateAuto: see the artAuto tests)");
     }
 
     // --- the steps
@@ -3446,6 +3447,7 @@ static class CoreTests {
       Check(ws.Open && ws.Tab == 2 && ws.Uid == 5001 && ws.Level == 10 && ws.Stage == 0 && ws.ItemId == 200088, "art workshop reader: tab, artifact, level and stage");
       Eq("5002,5003,0", string.Join(",", ws.Mats), "art workshop reader: copies first, an essence stub has no uid");
       Eq("1,7,-1", string.Join(",", ws.MatLevels), "art workshop reader: the copies' levels");
+      Eq("200088,200088,16100", string.Join(",", ws.MatItemIds), "art workshop reader: every entry's item id (an essence stub has only that)");
       Eq("2,3", string.Join(",", new SortedSet<int>(ws.MatSel)), "art workshop reader: only the true entries of m_vMatSelect (indices)");
       var wsT = new ArtWorkshopScreen();
       RFX.ReadArtWorkshopForm(formOf(true, 1, 5001, 8, 0, 0, brk0).A, wsT);
@@ -3574,8 +3576,295 @@ static class CoreTests {
       gate = new ClickGate();
       res = gate.Check(new ClickRequest { Owner = ClickOwner.Locate, Target = ClickTarget.InvEquipTab, AutoOn = true, Front = true }, scrI, 0);
       Check(gate.HaltReason(ClickOwner.Locate) != "artifact", "art gate: a normal request is not stopped by the artifact rule");
-      foreach (ClickOwner ow in Enum.GetValues(typeof(ClickOwner))) Check(!ClickGate.WhitelistText(ow).Contains("Art"), "art gate: " + ow + " has no artifact target on its whitelist");
+      Check(!ClickGate.WhitelistText(ClickOwner.Equip).Contains("Art"), "art gate: the equip helper has no artifact target on its whitelist (the others have theirs, behind ArtSellAuto / ArtLocateAuto: see the artAuto tests)");
     }
+  }
+
+  // The artifact flows with auto click (the site's artAuto switch): the gate's whitelist checks, the switch gating, the pilots' decisions
+  static void ArtAutoTests() {
+    Console.WriteLine("Artifact flows with auto click (switch artAuto, gate whitelist, pilots)");
+    // --- the switch: off until the site says true
+    var sw = RemoteSwitches.Permissive();
+    Check(!sw.Allows("artAuto") && sw.Allows("autoclick"), "artAuto: off by default, the others on");
+    Check(!RemoteSwitches.Parse("{}").Allows("artAuto") && !RemoteSwitches.Parse("{\"features\":{\"artAuto\":\"yes\"}}").Allows("artAuto"), "artAuto: a missing or odd value is off");
+    Check(RemoteSwitches.Parse("{\"features\":{\"artAuto\":true}}").Allows("artAuto") && RemoteSwitches.Parse(RemoteSwitches.Parse("{\"features\":{\"artAuto\":true}}").ToJson()).Allows("artAuto"), "artAuto: only a plain true switches it on, the saved copy keeps it");
+    Check(RemoteSwitches.Parse("{\"features\":{\"artAuto\":true},\"readEnabled\":false}").Allows("artAuto") == false, "artAuto: reading off switches it off too");
+    Check(RemoteSwitches.Parse("{\"readEnabled\":true}").Off().Count == 0, "artAuto: starting off is not listed as 'switched off'");
+
+    double W = 1136, H = 640, U = Ui.Unit(W, H);
+    Func<InventoryScreen, ScreenState> S = i => ScreenState.Classify(new ScreenInputs { Inv = i }, 0);
+    var uids = new List<long>(); for (long i = 1; i <= 56; i++) uids.Add(9000 + i);   // 8 rows of 7
+    Func<bool, List<long>, InventoryScreen> artBulk = (ticked, sel) => { var v = new InventoryScreen { Open = true, ArtTab = true, ArtBulk = true, ArtBulkKnown = true, ArtMode = 2, ListPtr = 7, Uids = new List<long>(uids) }; foreach (var u in sel) v.Selected.Add(u); return v; };
+    var bulkNone = S(artBulk(false, new List<long>()));
+    var bulkTicked = S(artBulk(true, new List<long> { 9001, 9002 }));
+    var artNormal = S(new InventoryScreen { Open = true, ArtTab = true, ArtBulkKnown = true, ArtMode = -1, Uids = new List<long>(uids) });
+    var artOrganize = S(new InventoryScreen { Open = true, ArtTab = true, ArtBulkKnown = true, ArtMode = 1, Uids = new List<long>(uids) });
+    var artModeUnknown = S(new InventoryScreen { Open = true, ArtTab = true, ArtBulkKnown = false });
+    var equipNormal = S(new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true });
+    var equipBulk = S(new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true, Bulk = true });
+    var otherTab = S(new InventoryScreen { Open = true, BulkKnown = true });
+
+    // --- the cleanup (Sell owner)
+    Func<ClickTarget, ClickRequest> R = tg => new ClickRequest { Owner = ClickOwner.Sell, Target = tg, AutoOn = true, Front = true };
+    Func<ClickTarget, long, bool, ClickRequest> Cell = (tg, uid, untick) => { var q = R(tg); q.CellUid = uid; q.CellOk = new HashSet<long> { 9003, 9004 }; q.Untick = untick; return q; };
+    Func<ClickGate> Off = () => new ClickGate { NoSellClicks = true };
+    Func<ClickGate> On = () => new ClickGate { ArtSellAuto = true };
+    foreach (var tg in new[] { ClickTarget.ArtTab, ClickTarget.ArtBulkEnter, ClickTarget.ArtBulkCell, ClickTarget.ArtListDrag }) {
+      var g0 = Off(); var r0 = g0.Check(Cell(tg, 9003, false), bulkNone, 0);
+      Check(!r0.Allowed && g0.HaltReason(ClickOwner.Sell) == "artifact", "art auto: switch off -> " + tg + " is never clicked (" + r0.Reason + ")");
+      var g1 = new ClickGate(); var r1 = g1.Check(Cell(tg, 9003, false), bulkNone, 0);
+      Check(!r1.Allowed && g1.HaltReason(ClickOwner.Sell) == "artifact", "art auto: a run that is not an auto artifact run never clicks " + tg);
+    }
+    var gT = On();
+    Check(gT.Check(R(ClickTarget.ArtTab), equipNormal, 0).Allowed, "art auto: «Артефакт» tab from the equipment tab -> allowed");
+    gT = On(); Check(gT.Check(R(ClickTarget.ArtTab), otherTab, 0).Allowed, "art auto: «Артефакт» tab from another tab -> allowed");
+    gT = On(); var rb = gT.Check(R(ClickTarget.ArtTab), equipBulk, 0); Check(!rb.Allowed && rb.Reason == "bulk", "art auto: the equipment tab in bulk sale is not left by the app");
+    gT = On(); rb = gT.Check(R(ClickTarget.ArtTab), artNormal, 0); Check(!rb.Allowed && rb.Reason == "screen", "art auto: already on the artifact tab -> stop");
+    gT = On(); Check(gT.Check(R(ClickTarget.ArtBulkEnter), artNormal, 0).Allowed, "art auto: «Массовая продажа» in the artifact tab's normal mode -> allowed");
+    gT = On(); rb = gT.Check(R(ClickTarget.ArtBulkEnter), bulkNone, 0); Check(!rb.Allowed && rb.Reason == "bulk", "art auto: «Массовая продажа» while it is on already -> stop");
+    gT = On(); rb = gT.Check(R(ClickTarget.ArtBulkEnter), artOrganize, 0); Check(!rb.Allowed && rb.Reason == "bulk", "art auto: the arrange mode is not left by the app");
+    gT = On(); rb = gT.Check(R(ClickTarget.ArtBulkEnter), equipNormal, 0); Check(!rb.Allowed && rb.Reason == "screen", "art auto: «Массовая продажа» on the equipment tab -> stop");
+    gT = On(); rb = gT.Check(R(ClickTarget.ArtBulkEnter), artModeUnknown, 0); Check(rb.Verdict == GateVerdict.Wait, "art auto: the artifact tab's mode unreadable -> waited for");
+    gT = On(); Check(gT.Check(Cell(ClickTarget.ArtBulkCell, 9003, false), bulkNone, 0).Allowed, "art auto: a wanted, unticked card -> tick it");
+    gT = On(); rb = gT.Check(Cell(ClickTarget.ArtBulkCell, 9005, false), bulkNone, 0); Check(!rb.Allowed && rb.Reason == "cell", "art auto: a card that is not wanted is never ticked");
+    gT = On(); rb = gT.Check(Cell(ClickTarget.ArtBulkCell, 0, false), bulkNone, 0); Check(!rb.Allowed && rb.Reason == "cell", "art auto: the card under the click not worked out (no exact scroll) -> stop");
+    var bulkWantedTicked = S(artBulk(true, new List<long> { 9003 }));
+    gT = On(); rb = gT.Check(Cell(ClickTarget.ArtBulkCell, 9003, false), bulkWantedTicked, 0); Check(!rb.Allowed && rb.Reason == "cell", "art auto: a wanted card that is ticked already would be taken off -> stop");
+    gT = On(); Check(gT.Check(Cell(ClickTarget.ArtBulkCell, 9001, true), bulkTicked, 0).Allowed, "art auto: a ticked card that is not wanted -> taken off");
+    gT = On(); rb = gT.Check(Cell(ClickTarget.ArtBulkCell, 9003, true), bulkWantedTicked, 0); Check(!rb.Allowed && rb.Reason == "cell", "art auto: a wanted card is never taken off");
+    gT = On(); rb = gT.Check(Cell(ClickTarget.ArtBulkCell, 9005, true), bulkNone, 0); Check(!rb.Allowed && rb.Reason == "cell", "art auto: 'untick' of a card that is not ticked -> stop");
+    gT = On(); rb = gT.Check(Cell(ClickTarget.ArtBulkCell, 9003, false), artNormal, 0); Check(!rb.Allowed && rb.Reason == "screen", "art auto: a cell click outside the bulk-sale mode -> stop");
+    gT = On(); rb = gT.Check(R(ClickTarget.ArtListDrag), bulkNone, 0); Check(rb.Allowed, "art auto: scrolling the list in bulk sale -> allowed");
+    gT = On(); rb = gT.Check(R(ClickTarget.ArtListDrag), artNormal, 0); Check(!rb.Allowed, "art auto: scrolling in the normal mode is not the cleanup's");
+    // nothing else on the artifact run: the gear targets, the equipment cell, and the equip helper's
+    foreach (var tg in new[] { ClickTarget.InvBulkCell, ClickTarget.InvBulkEnter, ClickTarget.InvEquipTab, ClickTarget.InvListCell, ClickTarget.CityInventory, ClickTarget.FoundryButton }) {
+      gT = On(); rb = gT.Check(Cell(tg, 9003, false), bulkNone, 0);
+      Check(!rb.Allowed && gT.HaltReason(ClickOwner.Sell) == "artifact", "art auto: the artifact cleanup clicks no " + tg);
+    }
+    var gE = new ClickGate { ArtSellAuto = true, ArtLocateAuto = true }; var re = gE.Check(new ClickRequest { Owner = ClickOwner.Equip, Target = ClickTarget.ArtTab, AutoOn = true, Front = true }, otherTab, 0);
+    Check(!re.Allowed && gE.HaltReason(ClickOwner.Equip) == "target", "art auto: the equip helper has no artifact target");
+    gT = On(); rb = gT.Check(new ClickRequest { Owner = ClickOwner.Sell, Target = ClickTarget.ArtTab, AutoOn = false, Front = true }, otherTab, 0); Check(!rb.Allowed && rb.Reason == "off" && !gT.Halted(ClickOwner.Sell), "art auto: the player's auto click off -> no click, not a stop");
+    // the effect: the game's choice holds the card within 1 s, else stop
+    {
+      var q = Cell(ClickTarget.ArtBulkCell, 9003, false);
+      var after = S(artBulk(true, new List<long> { 9003 }));
+      var g2 = On(); g2.Arm(ClickOwner.Sell, ClickTarget.ArtBulkCell, ClickGate.Expect(q, bulkNone), 0);
+      g2.Observe(bulkNone, ClickGate.ArtTickMs + 20);
+      Check(g2.HaltReason(ClickOwner.Sell) == "nochange", "art auto: the tick does not show in the game's choice within 1 s -> stop");
+      g2 = On(); g2.Arm(ClickOwner.Sell, ClickTarget.ArtBulkCell, ClickGate.Expect(q, bulkNone), 0);
+      g2.Observe(S(artBulk(true, new List<long> { 9004 })), 500);
+      Check(g2.Pending(ClickOwner.Sell), "art auto: another card ticked (a neighbour was hit) is not the effect");
+      g2.Observe(S(artBulk(true, new List<long> { 9004 })), ClickGate.ArtTickMs + 20);
+      Check(g2.HaltReason(ClickOwner.Sell) == "nochange", "art auto: ... and stops the run after the second");
+      g2 = On(); g2.Arm(ClickOwner.Sell, ClickTarget.ArtBulkCell, ClickGate.Expect(q, bulkNone), 0); g2.Observe(after, 300);
+      Check(!g2.Pending(ClickOwner.Sell) && !g2.Halted(ClickOwner.Sell), "art auto: the card is in the choice -> done");
+      var qu = Cell(ClickTarget.ArtBulkCell, 9001, true);
+      g2 = On(); g2.Arm(ClickOwner.Sell, ClickTarget.ArtBulkCell, ClickGate.Expect(qu, bulkTicked), 0); g2.Observe(bulkTicked, 300);
+      Check(g2.Pending(ClickOwner.Sell), "art auto: a tick that is still there is not the effect of an untick");
+      g2.Observe(S(artBulk(true, new List<long> { 9002 })), 400);
+      Check(!g2.Pending(ClickOwner.Sell), "art auto: the tick gone -> done");
+    }
+
+    // --- the cleanup pilot ticks the cards it means (the card under its click point is the one meant)
+    {
+      var g = SellGeometry.Artifacts(W, H, U, 7);
+      var wanted = new HashSet<long> { 9001, 9010, 9043 };
+      var inv = artBulk(true, new List<long>());
+      var p = new SellPilot(g); long t = 1000;
+      double row1 = g.ViewTopPx(U) + g.TopPad * U;
+      var a = p.Step(new SellView { NowMs = t, Foreground = true, W = W, H = H, U = U, Screen = inv.AsSellArt(7), Wanted = wanted, Row1 = row1 });
+      long under = a.Kind == AutoKind.Click ? ClickGate.InvCellUid(inv, g, row1, 7, a.X, a.Y, W, U) : -1;
+      Check(a.Kind == AutoKind.Click && under == 9001, "art pilot: the first click lands on the first wanted card (card under it: " + under + ")");
+      inv.Selected.Add(9001); t += 400;
+      a = p.Step(new SellView { NowMs = t, Foreground = true, W = W, H = H, U = U, Screen = inv.AsSellArt(7), Wanted = wanted, Row1 = row1 });
+      under = a.Kind == AutoKind.Click ? ClickGate.InvCellUid(inv, g, row1, 7, a.X, a.Y, W, U) : -1;
+      Check(a.Kind == AutoKind.Click && under == 9010, "art pilot: then the next one (card under the click: " + under + ")");
+      inv.Selected.Add(9010); t += 400;
+      a = p.Step(new SellView { NowMs = t, Foreground = true, W = W, H = H, U = U, Screen = inv.AsSellArt(7), Wanted = wanted, Row1 = row1 });
+      Check(a.Kind == AutoKind.Drag, "art pilot: a card below the view -> the list is dragged first");
+      Check(!inv.AsSellArt(7).Open == false && !new InventoryScreen { Open = true, ArtTab = true, ArtBulk = false }.AsSellArt(7).Open && !new InventoryScreen { Open = true, EquipTab = true, Bulk = true }.AsSellArt(7).Open, "art pilot: the list is open only in the artifact tab's bulk sale");
+      // a ticked card that is not wanted comes off
+      var inv2 = artBulk(true, new List<long> { 9001, 9002 }); var p2 = new SellPilot(g);
+      var wanted2 = new HashSet<long> { 9001 };
+      a = p2.Step(new SellView { NowMs = 1000, Foreground = true, W = W, H = H, U = U, Screen = inv2.AsSellArt(7), Wanted = wanted2, Row1 = row1 });
+      Check(a.Kind == AutoKind.None, "art pilot: nothing wanted left to tick (done or waiting)");
+    }
+
+    // --- the promotion (Locate owner)
+    var art = new ArtPromoteInfo { Uid = 5001, Need = 2, Cap = 10, Via = "copy", Copy = 5002 }; art.Copies.AddRange(new long[] { 5002, 5003 });
+    var req = new LocateRequest { Id = "r", Purpose = "artPromote", Art = art };
+    Func<ClickTarget, ClickRequest> L = tg => new ClickRequest { Owner = ClickOwner.Locate, Target = tg, AutoOn = true, Front = true, CellOk = new HashSet<long> { 5001 } };
+    Func<ClickGate> LOn = () => new ClickGate { ArtLocateAuto = true };
+    var u3 = new long[] { 5010, 5001, 5002 };
+    Func<int, InventoryScreen> artSel = sel => { var i = new InventoryScreen { Open = true, ArtTab = true, ArtBulkKnown = true, ArtMode = -1, ArtSelKnown = true, ArtSel = sel, ListPtr = 7, List = new RFX.ListRead { ScrollY = 0, Cols = 7, RowUnits = 116, First = 0, Last = 27 } }; i.Uids.AddRange(u3); return i; };
+    foreach (var tg in new[] { ClickTarget.ArtTab, ClickTarget.ArtCell, ClickTarget.ArtWorkshop, ClickTarget.ArtPromoteTab, ClickTarget.ArtMatCell, ClickTarget.ArtListDrag, ClickTarget.ArtMatDrag }) {
+      var g0 = new ClickGate { NoLocateClicks = true }; var r0 = g0.Check(L(tg), S(artSel(2)), 0);
+      Check(!r0.Allowed && g0.HaltReason(ClickOwner.Locate) == "artifact", "art auto: switch off -> " + tg + " is never clicked on the promotion (" + r0.Reason + ")");
+      var g1 = new ClickGate(); r0 = g1.Check(L(tg), S(artSel(2)), 0);
+      Check(!r0.Allowed && g1.HaltReason(ClickOwner.Locate) == "artifact", "art auto: a request that is not an auto artifact one never clicks " + tg);
+    }
+    var gL = LOn(); var rl = gL.Check(L(ClickTarget.InvEquipTab), S(artSel(2)), 0); Check(!rl.Allowed && gL.HaltReason(ClickOwner.Locate) == "artifact", "art auto: the promotion clicks no gear target");
+    gL = LOn(); Check(gL.Check(L(ClickTarget.ArtTab), equipNormal, 0).Allowed, "art auto: promotion: «Артефакт» tab -> allowed");
+    gL = LOn(); rl = gL.Check(L(ClickTarget.ArtTab), equipBulk, 0); Check(!rl.Allowed && rl.Reason == "bulk", "art auto: promotion: the equipment sale is not left by the app");
+    var cellReq = L(ClickTarget.ArtCell); cellReq.CellUid = 5001;
+    gL = LOn(); Check(gL.Check(cellReq, S(artSel(0)), 0).Allowed, "art auto: promotion: the artifact's cell in the normal list -> allowed");
+    cellReq = L(ClickTarget.ArtCell); cellReq.CellUid = 5002;
+    gL = LOn(); rl = gL.Check(cellReq, S(artSel(0)), 0); Check(!rl.Allowed && rl.Reason == "cell", "art auto: promotion: a neighbour's cell -> stop");
+    cellReq = L(ClickTarget.ArtCell); cellReq.CellUid = 0;
+    gL = LOn(); rl = gL.Check(cellReq, S(artSel(0)), 0); Check(!rl.Allowed && rl.Reason == "cell", "art auto: promotion: a cell not worked out -> stop");
+    cellReq = L(ClickTarget.ArtCell); cellReq.CellUid = 5001;
+    gL = LOn(); rl = gL.Check(cellReq, bulkNone, 0); Check(!rl.Allowed && rl.Reason == "bulk", "art auto: promotion: never a cell in the bulk-sale mode (" + rl.Reason + ")");
+    gL = LOn(); Check(gL.Check(L(ClickTarget.ArtWorkshop), S(artSel(2)), 0).Allowed, "art auto: «Мастерская» with the artifact's card open -> allowed");
+    gL = LOn(); rl = gL.Check(L(ClickTarget.ArtWorkshop), S(artSel(3)), 0); Check(!rl.Allowed && rl.Reason == "cell", "art auto: «Мастерская» with another card open -> stop");
+    gL = LOn(); rl = gL.Check(L(ClickTarget.ArtWorkshop), S(artSel(0)), 0); Check(!rl.Allowed && rl.Reason == "cell", "art auto: «Мастерская» with no card open -> stop");
+    Func<long, int, long[], long[], int[], int[], ArtWorkshopScreen> Wk = (uid, tab, mats, lv, sel, itemIds) => { var w = new ArtWorkshopScreen { Open = true, Tab = tab, Uid = uid, Level = 10, Stage = 0, PanelKnown = mats != null };
+      if (mats != null) { w.Mats.AddRange(mats); foreach (var l in lv) w.MatLevels.Add((int)l); foreach (var x in sel) w.MatSel.Add(x); foreach (var x in itemIds) w.MatItemIds.Add(x); w.MatList = new RFX.ListRead { ScrollY = 0, Cols = 3, RowUnits = 114, First = 0, Last = 8 }; } return w; };
+    Func<ArtWorkshopScreen, ScreenState> SW = w => ScreenState.Classify(new ScreenInputs { ArtWs = w, Inv = artSel(2) }, 0);
+    var matsA = new long[] { 5003, 5002, 0 }; var lvA = new long[] { 7, 1, -1 }; var idsA = new[] { 200088, 200088, 16100 };
+    gL = LOn(); Check(gL.Check(L(ClickTarget.ArtPromoteTab), SW(Wk(5001, 1, null, null, null, null)), 0).Allowed, "art auto: the «Продвинуть» tab from «Улучшить» -> allowed");
+    gL = LOn(); rl = gL.Check(L(ClickTarget.ArtPromoteTab), SW(Wk(5001, 2, matsA, lvA, new int[0], idsA)), 0); Check(!rl.Allowed && rl.Reason == "screen", "art auto: already on the «Продвинуть» tab -> stop");
+    gL = LOn(); rl = gL.Check(L(ClickTarget.ArtPromoteTab), SW(Wk(9999, 1, null, null, null, null)), 0); Check(!rl.Allowed && rl.Reason == "cell", "art auto: the workshop holds another artifact -> stop");
+    gL = LOn(); rl = gL.Check(L(ClickTarget.ArtPromoteTab), artNormal, 0); Check(!rl.Allowed && rl.Reason == "screen", "art auto: «Продвинуть» tab on the inventory -> stop");
+    Func<int, long, ICollection<int>, ClickRequest> MatReq = (idx, uid, items) => { var q = L(ClickTarget.ArtMatCell); q.MatIndex = idx; q.CellUid = uid; q.CellOk = new HashSet<long> { 5001, 5002, 5003 }; q.ItemOk = items; return q; };
+    var wsP = Wk(5001, 2, matsA, lvA, new int[0], idsA);
+    gL = LOn(); Check(gL.Check(MatReq(2, 5002, null), SW(wsP), 0).Allowed, "art auto: the planned copy (entry 2) -> allowed");
+    gL = LOn(); Check(gL.Check(MatReq(1, 5003, null), SW(wsP), 0).Allowed, "art auto: the other planned copy (entry 1) -> allowed");
+    var art2 = Wk(5001, 2, new long[] { 5003, 5002, 5099 }, new long[] { 7, 1, 1 }, new int[0], idsA);
+    gL = LOn(); rl = gL.Check(MatReq(3, 5099, null), SW(art2), 0); Check(!rl.Allowed && rl.Reason == "cell", "art auto: a copy the plan did not name -> stop");
+    gL = LOn(); rl = gL.Check(MatReq(2, 5003, null), SW(wsP), 0); Check(!rl.Allowed && rl.Reason == "cell", "art auto: the click's uid must be the entry's own -> stop");
+    gL = LOn(); rl = gL.Check(MatReq(0, 0, null), SW(wsP), 0); Check(!rl.Allowed && rl.Reason == "cell", "art auto: no entry under the click -> stop");
+    gL = LOn(); rl = gL.Check(MatReq(4, 0, null), SW(wsP), 0); Check(!rl.Allowed && rl.Reason == "cell", "art auto: an entry past the list -> stop");
+    gL = LOn(); rl = gL.Check(MatReq(2, 5002, null), SW(Wk(5001, 2, matsA, lvA, new[] { 2 }, idsA)), 0); Check(!rl.Allowed && rl.Reason == "cell", "art auto: a copy that is chosen already would be taken off -> stop");
+    gL = LOn(); rl = gL.Check(MatReq(3, 0, null), SW(wsP), 0); Check(!rl.Allowed && rl.Reason == "cell", "art auto: an essence the plan did not name (no item id given) -> stop");
+    gL = LOn(); rl = gL.Check(MatReq(3, 0, new HashSet<int> { 16100 }), SW(wsP), 0); Check(rl.Allowed, "art auto: the planned essence (its item id) -> allowed");
+    gL = LOn(); rl = gL.Check(MatReq(3, 0, new HashSet<int> { 16101 }), SW(wsP), 0); Check(!rl.Allowed && rl.Reason == "cell", "art auto: another essence item -> stop");
+    gL = LOn(); rl = gL.Check(MatReq(1, 5003, null), SW(Wk(5001, 1, null, null, null, null)), 0); Check(!rl.Allowed && rl.Reason == "screen", "art auto: a copy click on the «Улучшить» tab -> stop");
+    gL = LOn(); rl = gL.Check(MatReq(1, 5001, null), SW(Wk(5001, 2, new long[] { 5001 }, new long[] { 3 }, new int[0], new[] { 1 })), 0); Check(!rl.Allowed && rl.Reason == "cell", "art auto: the open artifact itself is never a copy");
+    // the effects
+    {
+      var g2 = LOn(); var q = MatReq(2, 5002, null);
+      g2.Arm(ClickOwner.Locate, ClickTarget.ArtMatCell, ClickGate.Expect(q, SW(wsP)), 0);
+      g2.Observe(SW(wsP), ClickGate.GemEffectMs + 10);
+      Check(g2.HaltReason(ClickOwner.Locate) == "nochange", "art auto: the copy does not get chosen -> stop");
+      g2 = LOn(); g2.Arm(ClickOwner.Locate, ClickTarget.ArtMatCell, ClickGate.Expect(q, SW(wsP)), 0);
+      g2.Observe(SW(Wk(5001, 2, matsA, lvA, new[] { 2 }, idsA)), 500);
+      Check(!g2.Pending(ClickOwner.Locate) && !g2.Halted(ClickOwner.Locate), "art auto: m_vMatSelect holds the copy -> done");
+      g2 = LOn(); var qc = cellReq; g2.Arm(ClickOwner.Locate, ClickTarget.ArtCell, ClickGate.Expect(qc, S(artSel(0))), 0);
+      g2.Observe(S(artSel(2)), 300);
+      Check(!g2.Pending(ClickOwner.Locate), "art auto: the artifact's card opens -> done");
+      g2 = LOn(); g2.Arm(ClickOwner.Locate, ClickTarget.ArtWorkshop, ClickGate.Expect(L(ClickTarget.ArtWorkshop), S(artSel(2))), 0);
+      g2.Observe(S(artSel(2)), ClickGate.EffectMs + 100);
+      Check(!g2.Halted(ClickOwner.Locate), "art auto: the workshop may take a moment to open (slow effect window)");
+      g2.Observe(S(artSel(2)), ClickGate.SlowEffectMs + 100);
+      Check(g2.HaltReason(ClickOwner.Locate) == "nochange", "art auto: ... but not forever");
+    }
+
+    // --- the promotion pilot: what it decides, and never the last button
+    var geo = (GameGeometry)null;
+    Func<LocateStep, InventoryScreen, ArtWorkshopScreen, ArtView> V = (st, iv, ws) => new ArtView { NowMs = 10000, Foreground = true, W = W, H = H, U = U, Step = st, Inv = iv, Ws = ws, Art = art, Geometry = geo };
+    string why;
+    Func<InventoryScreen, ArtWorkshopScreen, ArtView> VN = (iv, ws) => V(LocateGuide.NextArt(req, iv, ws), iv, ws);
+    Eq(ArtTodo.ArtTab, ArtLocateAuto.Decide(VN(new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true }, null), out why), "art pilot: the equipment tab -> «Артефакт»");
+    Eq(ArtTodo.Hint, ArtLocateAuto.Decide(VN(new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true, Bulk = true }, null), out why), "art pilot: the equipment sale -> the player leaves it"); Eq("bulk", why, "art pilot: ... because of the bulk sale");
+    Eq(ArtTodo.Hint, ArtLocateAuto.Decide(VN(new InventoryScreen { Open = true, EquipTab = true }, null), out why), "art pilot: the equipment mode unreadable -> no click");
+    Eq(ArtTodo.Hint, ArtLocateAuto.Decide(VN(null, null), out why), "art pilot: nothing open -> a hint (the player opens the Inventory)");
+    Eq(ArtTodo.Hint, ArtLocateAuto.Decide(VN(new InventoryScreen { Open = true, ArtTab = true, ArtBulkKnown = true, ArtMode = 2, ArtBulk = true, Uids = { 5001 } }, null), out why), "art pilot: the artifact tab's bulk sale -> a hint");
+    Eq(ArtTodo.Cell, ArtLocateAuto.Decide(VN(artSel(0), null), out why), "art pilot: the artifact in the list -> its cell");
+    Eq(ArtTodo.Workshop, ArtLocateAuto.Decide(VN(artSel(2), null), out why), "art pilot: its card open -> «Мастерская»");
+    Eq(ArtTodo.Cell, ArtLocateAuto.Decide(VN(artSel(3), null), out why), "art pilot: another card open -> the artifact's cell again, no «Мастерская»");
+    Eq(ArtTodo.PromoteTab, ArtLocateAuto.Decide(VN(null, Wk(5001, 1, null, null, null, null)), out why), "art pilot: the workshop on «Улучшить» -> «Продвинуть» tab");
+    Eq(ArtTodo.Hint, ArtLocateAuto.Decide(VN(null, new ArtWorkshopScreen { Open = true, Tab = 1, Uid = 5001, Level = 8 }), out why), "art pilot: below the cap -> «Улучшить» first is the player's");
+    Eq(ArtTodo.Hint, ArtLocateAuto.Decide(VN(null, Wk(9999, 2, matsA, lvA, new int[0], idsA)), out why), "art pilot: the workshop holds another artifact -> a hint");
+    var pk = VN(null, wsP);
+    Eq(ArtTodo.MatCell, ArtLocateAuto.Decide(pk, out why), "art pilot: «Продвинуть» panel -> the planned copy"); Eq(2, pk.Step.Pos, "art pilot: ... place 2");
+    Eq(ArtTodo.Hint, ArtLocateAuto.Decide(VN(null, Wk(5001, 2, matsA, lvA, new[] { 2, 1 }, idsA)), out why), "art pilot: all chosen -> «Продвинуть» is the player's"); Eq("player", why, "art pilot: ... said so");
+    Eq(ArtTodo.Hint, ArtLocateAuto.Decide(VN(null, Wk(5001, 2, matsA, lvA, new[] { 2, 3 }, idsA)), out why), "art pilot: a wrong essence chosen -> the player takes it off"); Eq("wrong", why, "art pilot: ... wrong");
+    var artNoPlan = new ArtPromoteInfo { Uid = 5001, Need = 1, Cap = 10, Via = "none" };
+    var reqNo = new LocateRequest { Id = "r", Purpose = "artPromote", Art = artNoPlan };
+    var vNo = new ArtView { NowMs = 10000, Foreground = true, W = W, H = H, U = U, Step = LocateGuide.NextArt(reqNo, null, wsP), Ws = wsP, Art = artNoPlan };
+    Eq(ArtTodo.Hint, ArtLocateAuto.Decide(vNo, out why), "art pilot: no plan -> a copy of the game's own order is the player's to pick"); Eq("plan", why, "art pilot: ... not planned");
+    var artEss = new ArtPromoteInfo { Uid = 5001, Need = 1, Cap = 10, Via = "essence" };
+    var vEss = new ArtView { NowMs = 10000, Foreground = true, W = W, H = H, U = U, Step = LocateGuide.NextArt(new LocateRequest { Id = "r", Purpose = "artPromote", Art = artEss }, null, wsP), Ws = wsP, Art = artEss };
+    Eq(ArtTodo.MatCell, ArtLocateAuto.Decide(vEss, out why), "art pilot: the plan spends an essence -> the essence stub is clicked");
+    var artEss2 = new ArtPromoteInfo { Uid = 5001, Need = 1, Cap = 10, Via = "copy" };
+    var vEss2 = new ArtView { NowMs = 10000, Foreground = true, W = W, H = H, U = U, Step = new LocateStep { Kind = LocateKind.ArtMatPick, Pos = 3 }, Ws = wsP, Art = artEss2 };
+    Eq(ArtTodo.Hint, ArtLocateAuto.Decide(vEss2, out why), "art pilot: an essence with a copy plan -> a hint");
+
+    // the pilot's actions: a click at the card's centre, a drag when it is off screen, the buttons' centres; never the last button
+    {
+      var p = new ArtPilot();
+      var mv = p.Step(VN(new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true }, null));
+      var tabRect = ArtFrames.Rect(geo, "inventory.leftTab.artifact", W, H, U);
+      Check(mv.State == "work" && mv.Todo == ArtTodo.ArtTab && mv.Action.Kind == AutoKind.Click && Math.Abs(mv.Action.X - tabRect.CX) < 1 && Math.Abs(mv.Action.Y - tabRect.CY) < 1, "art pilot: the tab click is at the middle of the «Артефакт» button");
+      p = new ArtPilot(); mv = p.Step(VN(artSel(0), null));
+      var iv = artSel(0); var stIn = LocateGuide.NextArt(req, iv, null);
+      int ci = ClickGate.ListCardIndexAt(geo, "inventory.artList", iv.List, 7, 116, mv.Action.X, mv.Action.Y, W, H, U);
+      Check(mv.Todo == ArtTodo.Cell && mv.Action.Kind == AutoKind.Click && ci == 1 && iv.Uids[ci] == 5001, "art pilot: the cell click lands on the artifact's own card (index " + ci + ")");
+      var far = new long[60]; for (int i = 0; i < 60; i++) far[i] = 6000 + i; far[50] = 5001;
+      var ivF = new InventoryScreen { Open = true, ArtTab = true, ArtBulkKnown = true, ArtMode = -1, ArtSelKnown = true, ArtSel = 1, Uids = new List<long>(far), List = new RFX.ListRead { ScrollY = 0, Cols = 7, RowUnits = 116, First = 0, Last = 27 } };
+      p = new ArtPilot(); mv = p.Step(VN(ivF, null));
+      Check(mv.Todo == ArtTodo.Cell && mv.Action.Kind == AutoKind.Drag && mv.Action.DY < 0 && mv.Drag, "art pilot: a card far down the list -> the list is dragged up");
+      var wsRect = ArtFrames.Rect(geo, "inventory.artWorkshop", W, H, U);
+      p = new ArtPilot(); mv = p.Step(VN(artSel(2), null));
+      Check(mv.Todo == ArtTodo.Workshop && Math.Abs(mv.Action.X - wsRect.CX) < 1 && Math.Abs(mv.Action.Y - wsRect.CY) < 1, "art pilot: «Мастерская» at the middle of its button");
+      var ptRect = ArtFrames.Rect(geo, "artifact.tab.promote", W, H, U);
+      p = new ArtPilot(); mv = p.Step(VN(null, Wk(5001, 1, null, null, null, null)));
+      Check(mv.Todo == ArtTodo.PromoteTab && Math.Abs(mv.Action.X - ptRect.CX) < 1 && Math.Abs(mv.Action.Y - ptRect.CY) < 1, "art pilot: the «Продвинуть» tab at the middle of its button");
+      p = new ArtPilot(); mv = p.Step(VN(null, wsP));
+      int mi = ClickGate.ListCardIndexAt(geo, "artifact.matList", wsP.MatList, 3, 114, mv.Action.X, mv.Action.Y, W, H, U);
+      Check(mv.Todo == ArtTodo.MatCell && mv.Action.Kind == AutoKind.Click && mi == 1 && wsP.Mats[mi] == 5002 && mv.MatIndex == 2, "art pilot: the copy click lands on the planned copy's card (index " + mi + ")");
+      // user busy / background / paused: no action
+      p = new ArtPilot(); var vb = VN(artSel(2), null); vb.UserBusy = true; mv = p.Step(vb);
+      Check(mv.State == "paused" && mv.Action.Kind == AutoKind.None, "art pilot: the player uses the mouse -> it waits");
+      p = new ArtPilot(); vb = VN(artSel(2), null); vb.Foreground = false; mv = p.Step(vb);
+      Check(mv.State == "background" && mv.Action.Kind == AutoKind.None, "art pilot: the game is not in front -> it waits");
+      // the same click again and again stops it
+      p = new ArtPilot(); int made = 0; bool stuck = false;
+      for (int i = 0; i < 12 && !stuck; i++) { var v = VN(new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true }, null); v.NowMs = 10000 + i * 4000; mv = p.Step(v); if (mv.Action.Kind == AutoKind.Click) made++; if (mv.State == "stopped") stuck = true; }
+      Check(stuck && made == ArtPilot.MaxStepClicks && p.Stopped && p.Reason == "stuck", "art pilot: a click that changes nothing is repeated only " + ArtPilot.MaxStepClicks + " times, then it stops (" + made + ")");
+      // whatever the screen says, no action of the pilot is on a button it never presses
+      var screens = new List<ArtView>();
+      var kinds = new[] { null, new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true }, artSel(0), artSel(2), artSel(3), ivF, new InventoryScreen { Open = true, ArtTab = true, ArtBulkKnown = true, ArtMode = 2, ArtBulk = true } };
+      var wss = new ArtWorkshopScreen[] { null, Wk(5001, 1, null, null, null, null), Wk(5001, 2, matsA, lvA, new int[0], idsA), Wk(5001, 2, matsA, lvA, new[] { 2 }, idsA), Wk(5001, 2, matsA, lvA, new[] { 2, 1 }, idsA), Wk(5001, 2, matsA, lvA, new[] { 2, 3 }, idsA),
+        new ArtWorkshopScreen { Open = true, Tab = 1, Uid = 5001, Level = 5 }, Wk(9999, 2, matsA, lvA, new int[0], idsA) };
+      int acts = 0, bad = 0;
+      foreach (var ik in kinds) foreach (var wk in wss) {
+        var v = VN(ik, wk); var pp = new ArtPilot(); mv = pp.Step(v);
+        if (mv.Action.Kind == AutoKind.None) continue;
+        acts++;
+        bool onWs = mv.Todo == ArtTodo.PromoteTab || mv.Todo == ArtTodo.MatCell;   // the workshop is where those buttons are
+        if (onWs && (ClickGate.OnNeverButton(geo, mv.Action.X, mv.Action.Y, W, H, U) || (mv.Action.Kind == AutoKind.Drag && ClickGate.OnNeverButton(geo, mv.Action.X, mv.Action.Y + mv.Action.DY, W, H, U)))) bad++;
+      }
+      Check(acts >= 6 && bad == 0, "art pilot: of " + acts + " actions over every screen, none lies on «Продвинуть» / «Улучшить» (" + bad + ")");
+    }
+
+    // --- the buttons never pressed: in no whitelist, and no click point of the artifact flows is inside them
+    foreach (string nm in Enum.GetNames(typeof(ClickTarget))) Check(!(nm.Contains("PromoteBtn") || nm.Contains("PromoteButton") || nm.Contains("Upgrade") || nm.Contains("Enhance") || nm.Contains("SellButton") || nm.Contains("SelectAll") || nm.Contains("Lock") || nm.EndsWith("Break")), "art gate: no target named " + nm + " is a final button, «Все» or a lock");
+    foreach (var nk in ClickGate.NeverKeys) {
+      bool placed = false;
+      foreach (ClickTarget tg in Enum.GetValues(typeof(ClickTarget))) if (ClickGate.KeyOf(tg) == nk) placed = true;
+      Check(!placed, "art gate: the button key " + nk + " places no target");
+      foreach (ClickOwner ow in Enum.GetValues(typeof(ClickOwner))) Check(!ClickGate.WhitelistText(ow).Contains(nk) && !ClickGate.WhitelistText(ow).Contains("PromoteBtn"), "art gate: " + ow + " whitelist does not name " + nk);
+    }
+    foreach (ClickTarget tg in Enum.GetValues(typeof(ClickTarget))) {
+      string key = ClickGate.KeyOf(tg); if (key == "") continue;
+      var rc = key == "inventory.artBulkSell" ? null : ArtFrames.Rect(null, key, W, H, U);
+      double cx, cy;
+      if (rc != null) { cx = rc.CX; cy = rc.CY; } else { var pb = SellHint.ArtBulkRect(W, H, U); cx = pb[0] + pb[2] / 2.0; cy = pb[1] + pb[3] / 2.0; }
+      Check(!ClickGate.OnNeverButton(null, cx, cy, W, H, U), "art gate: the middle of " + tg + " (" + key + ") is not on «Продвинуть» / «Улучшить»");
+    }
+    var pbtn = ArtFrames.Rect(null, "artifact.promoteBtn", W, H, U);
+    Check(ClickGate.OnNeverButton(null, pbtn.CX, pbtn.CY, W, H, U) && !ClickGate.OnNeverButton(null, 5, 5, W, H, U), "art gate: the guard knows «Продвинуть» (research numbers) and lets the rest of the screen be");
+    string rw = Path.Combine("..", "wardsage-web", "data", "app-geometry", "1.6.39.829.1.json");
+    if (File.Exists(rw)) {
+      var rg = GameGeometry.Parse(File.ReadAllText(rw, Encoding.UTF8), "1.6.39.829.1");
+      var pb2 = rg != null ? ArtFrames.Rect(rg, "artifact.promoteBtn", W, H, U) : null;
+      Check(pb2 != null && ClickGate.OnNeverButton(rg, pb2.CX, pb2.CY, W, H, U), "art gate: the guard knows «Продвинуть» by the site's geometry too");
+      bool ok = true;
+      foreach (ClickTarget tg in Enum.GetValues(typeof(ClickTarget))) { string key = ClickGate.KeyOf(tg); if (key == "" || key == "inventory.artBulkSell") continue; var rc = ArtFrames.Rect(rg, key, W, H, U); if (rc == null || ClickGate.OnNeverButton(rg, rc.CX, rc.CY, W, H, U)) ok = false; }
+      Check(ok, "art gate: with the site's geometry no artifact button's middle is on «Продвинуть» / «Улучшить»");
+    }
+    var wsEss = new ArtWorkshopScreen(); Check(wsEss.MatItemIds.Count == 0, "art workshop: item ids start empty");
   }
 
   // Storage cleanup without auto click (src/SellHint.cs): the step and the frames from what the inventory shows

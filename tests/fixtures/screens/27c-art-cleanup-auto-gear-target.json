@@ -1,0 +1,4 @@
+{ "name": "Artifact storage cleanup (artAuto on): a gear target (the equipment's «Массовая продажа») is never clicked", "cols": 7, "sell": {"uids":[9002,9005],"artifact":true,"artAuto":true}, "frames": [
+  { "t":0,"inv":{ "open":true,"equip":false,"known":false,"art":true,"artKnown":true,"artMode":-1,"uids":[9001,9002,9003,9004,9005,9006,9007,9008,9009,9010,9011,9012,9013,9014],"selected":[],"list":{ "scrollY":0,"cols":7,"rowUnits":116 } },"clicks":[{ "owner":"Sell","target":"InvBulkEnter","auto":true,"front":true,"expect":{ "verdict":"Deny","reason":"artifact" } }] },
+  { "t":100,"inv":{ "open":true,"equip":false,"known":false,"art":true,"artKnown":true,"artMode":-1,"uids":[9001,9002,9003,9004,9005,9006,9007,9008,9009,9010,9011,9012,9013,9014],"selected":[],"list":{ "scrollY":0,"cols":7,"rowUnits":116 } },"expect":{ "halt":"Sell:artifact" },"clicks":[] } ]
+}

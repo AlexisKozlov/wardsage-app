@@ -1,0 +1,4 @@
+{ "name": "Artifact promotion (artAuto on): an essence stub of an item the pilot did not plan is never clicked", "cols": 7, "request": {"purpose":"artPromote","uid":5001,"need":1,"cap":10,"level":10,"via":"essence","copies":[],"artAuto":true}, "frames": [
+  { "t":0,"artWs":{ "open":true,"tab":2,"uid":5001,"level":10,"stage":0,"mats":[5003,5002,0],"matLevels":[7,1,-1],"matItemIds":[200088,200088,16100],"matSel":[],"list":{ "scrollY":0,"cols":3,"rowUnits":114 } },"clicks":[{ "owner":"Locate","auto":true,"front":true,"target":"ArtMatCell","cellIndex":2,"cellKind":"mat","ok":[5001],"itemOk":[16101],"expect":{ "verdict":"Deny","reason":"cell" } }] },
+  { "t":100,"artWs":{ "open":true,"tab":2,"uid":5001,"level":10,"stage":0,"mats":[5003,5002,0],"matLevels":[7,1,-1],"matItemIds":[200088,200088,16100],"matSel":[],"list":{ "scrollY":0,"cols":3,"rowUnits":114 } },"expect":{ "halt":"Locate:cell" },"clicks":[] } ]
+}
