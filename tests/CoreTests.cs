@@ -2426,6 +2426,44 @@ static class CoreTests {
     p = new LocatePilot(); v = V(LocateKind.Done); m = p.Step(v);
     Check(m.State == "hint" && m.Action.Kind == AutoKind.None && m.Why == "foundry", "auto: the final step: a hint, no click");
 
+    // recast: the item is selected -> the card's gem button; the gem screen holds it -> the wanted function's row; Done -> nothing
+    {
+      var gg = GameGeometry.Parse(GeoJson(), GeoGame);
+      var recastItem = LocItem(777, 4, 0, 0); recastItem.Quality = 8;
+      Func<LocateKind, LocateView> RV = k => { var x = V(k); x.Geometry = gg; x.Item = recastItem; x.Purpose = "recast"; return x; };
+      v = RV(LocateKind.Selected); v.Step.Worn = true; v.Inv = inv(); v.Inv.Current = 777;
+      Eq(LocateTodo.CardGem, LocateAuto.Decide(v, out why), "auto: recast, item selected -> the card's gem button");
+      p = new LocatePilot(); m = p.Step(v); var cardF = LocateFrames.For(v.Step, recastItem, null, null, gg, W, H, U);
+      Check(m.State == "work" && m.Todo == LocateTodo.CardGem && m.Action.Kind == AutoKind.Click && Math.Abs(m.Action.X - cardF.ClickX) < 1 && Math.Abs(m.Action.Y - cardF.ClickY) < 1, "auto: ... clicks the frame's rect (cardLeft for a worn item)");
+      v.NowMs = 100; Eq(AutoKind.None, p.Step(v).Action.Kind, "auto: ... and waits for the gem screen");
+      v = RV(LocateKind.Selected); v.Inv = inv(); v.Inv.Current = 777; p = new LocatePilot(); m = p.Step(v);
+      Check(m.Action.Kind == AutoKind.Click && Math.Abs(m.Action.X - LocateFrames.For(v.Step, recastItem, null, null, gg, W, H, U).ClickX) < 1 && LocateFrames.For(v.Step, recastItem, null, null, gg, W, H, U).Target == "inventory.cardSolo", "auto: not worn -> the lone gem button (cardSolo)");
+      v = RV(LocateKind.Selected); v.Purpose = "ascend"; v.Inv = inv(); v.Inv.Current = 777; Eq(LocateTodo.Hint, LocateAuto.Decide(v, out why), "auto: Ascension never clicks the card");
+      v = RV(LocateKind.Selected); v.Inv = inv(); v.Inv.Current = 778; Eq(LocateTodo.Hint, LocateAuto.Decide(v, out why), "auto: another item selected -> no click");
+      v = RV(LocateKind.Selected); v.Inv = inv(); v.Inv.Current = 777; v.Inv.Bulk = true; Eq(LocateTodo.Hint, LocateAuto.Decide(v, out why), "auto: bulk sale -> no click on the card");
+      v = RV(LocateKind.Selected); v.Inv = inv(); v.Inv.Current = 777; v.Geometry = null; Eq(LocateTodo.Hint, LocateAuto.Decide(v, out why), "auto: no geometry -> hint");
+      v = RV(LocateKind.Selected); v.Inv = inv(); v.Inv.Current = 777; v.OtherFormOpen = true; Eq(LocateTodo.Hint, LocateAuto.Decide(v, out why), "auto: a form on top -> no click on the card");
+      // the gem screen
+      Func<int, RecastScreen> gemRs = fn => new RecastScreen { GemOpen = true, GemFunc = fn, GemSel = 777 };
+      v = RV(LocateKind.GemFunction); v.Step.Func = 8; v.Rs = gemRs(-1);
+      Eq(LocateTodo.GemFunc, LocateAuto.Decide(v, out why), "auto: gem screen with the item and no function -> the wanted row");
+      p = new LocatePilot(); m = p.Step(v); var rowF = LocateFrames.GemRow(gg, v.Rs, 8, W, H, U, true);
+      Check(m.Todo == LocateTodo.GemFunc && m.Action.Kind == AutoKind.Click && Math.Abs(m.Action.X - rowF.ClickX) < 1 && Math.Abs(m.Action.Y - rowF.ClickY) < 1, "auto: ... clicks the row of Advanced Recast (the frame's rect)");
+      v = RV(LocateKind.GemFunction); v.Step.Func = 7; v.Rs = gemRs(8); v.Step.WrongFunc = true; Eq(LocateTodo.GemFunc, LocateAuto.Decide(v, out why), "auto: the other recast function selected -> the wanted row");
+      p = new LocatePilot(); m = p.Step(v); Check(Math.Abs(m.Action.Y - LocateFrames.GemRow(gg, v.Rs, 7, W, H, U, true).ClickY) < 1 && m.Action.Y < rowF.ClickY, "auto: ... Recast is the row above Advanced Recast");
+      v = RV(LocateKind.GemFunction); v.Step.Func = 8; v.Rs = gemRs(8); Eq(LocateTodo.Hint, LocateAuto.Decide(v, out why), "auto: the wanted function is already selected -> nothing");
+      v = RV(LocateKind.GemFunction); v.Step.Func = 0; v.Rs = gemRs(-1); Eq(LocateTodo.Hint, LocateAuto.Decide(v, out why), "auto: quality unknown (no wanted function) -> hint, no guess");
+      v = RV(LocateKind.GemFunction); v.Step.Func = 8; v.Rs = gemRs(-1); v.Rs.GemSel = 5; Eq(LocateTodo.Hint, LocateAuto.Decide(v, out why), "auto: another item on the gem screen -> no click");
+      v = RV(LocateKind.GemFunction); v.Step.Func = 8; v.Rs = gemRs(-1); v.Rs.GemFuncList = new RFX.ListRead { ScrollY = 5000, Cols = 1, RowUnits = 110, First = 3, Last = 8 };
+      Eq(LocateTodo.Hint, LocateAuto.Decide(v, out why), "auto: the function list scrolled so the row is out of view -> hint");
+      // after the function is selected (step Done) and at the final steps: no click, whatever the screen
+      v = RV(LocateKind.Done); v.Rs = gemRs(8); v.Step.OnGem = true; p = new LocatePilot(); m = p.Step(v);
+      Check(m.State == "hint" && m.Action.Kind == AutoKind.None, "auto: the gem screen done -> the pilot stops clicking («Улучшить» is the player's)");
+      foreach (LocateKind k in new[] { LocateKind.Done, LocateKind.AscendReady }) { v = RV(k); v.Rs = gemRs(8); p = new LocatePilot(); Eq(AutoKind.None, p.Step(v).Action.Kind, "auto: final step " + k + " never clicks"); }
+      // the click targets of the pilot's moves are the recast ones only
+      Check(!Enum.IsDefined(typeof(LocateTodo), "GemButton") && !Enum.IsDefined(typeof(LocateTodo), "Upgrade") && !Enum.IsDefined(typeof(LocateTodo), "Recast") && !Enum.IsDefined(typeof(LocateTodo), "Ascend"), "auto: no todo names a final button");
+    }
+
     // the player and the game window come first
     p = new LocatePilot(); v = V(LocateKind.OpenEquipTab); v.Foreground = false; m = p.Step(v);
     Check(m.State == "background" && m.Action.Kind == AutoKind.None, "auto: the game is not in front -> nothing");
@@ -2492,8 +2530,12 @@ static class CoreTests {
       GeoBox("inventory.workshop", "R:-0.6565", "R:-0.5125", "B:-0.1205", "B:-0.0201", 0.144, 0.1004),
       GeoBox("hero.workshop", "R:-0.2515", "R:-0.1249", "M:0.2948", "M:0.4245", 0.1266, 0.1297),
       GeoBox("inventory.cardLeft", "R:-0.4797", "R:-0.2578", "T:0.8505", "T:0.9333", 0.2219, 0.0828),
+      GeoBox("inventory.cardSolo", "R:-0.3688", "R:-0.1469", "B:-0.103", "B:-0.0202", 0.2219, 0.0828),
+      GeoBox("gem.list", "C:-0.8438", "C:-0.0938", "M:-0.3312", "M:0.4003", 0.75, 0.7316),
+      GeoBox("gem.cell", "L:-0.7703", "L:-0.0422", "T:0.1094", "T:0.2687", 0.7281, 0.1594),
+      GeoBox("gem.button", "R:-0.3688", "R:-0.1469", "B:-0.103", "B:-0.0202", 0.2219, 0.0828),
       GeoBox("city.barButton", "L:0.0672", "L:0.2016", "B:0.3306", "B:0.465", 0.1344, 0.1344) };
-    return "{\"game\":\"" + game + "\",\"v\":" + v + ",\"rects\":{" + string.Join(",", b.ToArray()) + "},\"grids\":{\"ascend.list\":{\"cols\":5,\"lineSize\":108,\"padding\":[0,-10,0,0]}}}";
+    return "{\"game\":\"" + game + "\",\"v\":" + v + ",\"rects\":{" + string.Join(",", b.ToArray()) + "},\"grids\":{\"ascend.list\":{\"cols\":5,\"lineSize\":108,\"padding\":[0,-10,0,0]},\"gem.list\":{\"cols\":1,\"lineSize\":110,\"padding\":[0,0,0,0]}}}";
   }
 
   // ------------------------------------------------------------------ the outline of a button (src/GuideShape.cs)
@@ -2540,7 +2582,7 @@ static class CoreTests {
     Console.WriteLine("Screen geometry (the site's file per game version, frames and Foundry clicks)");
     const double W = 2000, H = 1000, U = 1000;
     var g = GameGeometry.Parse(GeoJson(), GeoGame);
-    Check(g != null && g.Game == GeoGame && g.Count == 10, "geometry: the fixture parses");
+    Check(g != null && g.Game == GeoGame && g.Count == 14, "geometry: the fixture parses");
     var r = g.Rect("ascend.button", W, H, U);
     Check(r != null && Math.Abs(r.X - (W / 2 + 0.1039 * U)) < 0.01 && Math.Abs(r.W - 0.3375 * U) < 0.01 && Math.Abs(r.Y - (H / 2 + 0.3488 * U)) < 0.01 && Math.Abs(r.H - 0.1093 * U) < 0.01, "geometry: C / M anchors from the centre");
     r = g.Rect("inventory.workshop", W, H, U);
@@ -2618,7 +2660,12 @@ static class CoreTests {
     f = LocateFrames.For(new LocateStep { Kind = LocateKind.AscendFilter, Missing = new[] { "slot", "main" } }, item, rs, null, g, W, H, U); Check(f != null && f.Clickable && f.Target == "ascend.slot.3", "frame: the item's slot tab first, clickable");
     f = LocateFrames.For(new LocateStep { Kind = LocateKind.AscendFilter, Missing = new[] { "main", "subs" } }, item, rs, null, g, W, H, U); Check(f != null && !f.Clickable && f.Target == "ascend.filter", "frame: the filter button is only pointed at");
     f = LocateFrames.For(S(LocateKind.AscendReady), item, rs, null, g, W, H, U); Check(f != null && !f.Clickable && f.Target == "ascend.button", "frame: «Вознести», never clickable");
-    f = LocateFrames.For(new LocateStep { Kind = LocateKind.Selected, Worn = true }, item, rs, null, g, W, H, U); Check(f != null && !f.Clickable && f.Target == "inventory.cardLeft", "frame: the card's button, never clickable");
+    f = LocateFrames.For(new LocateStep { Kind = LocateKind.Selected, Worn = true }, item, rs, null, g, W, H, U); Check(f != null && f.Clickable && f.Target == "inventory.cardLeft", "frame: the card's gem button (worn item), clickable for the recast path");
+    f = LocateFrames.For(new LocateStep { Kind = LocateKind.Selected }, item, rs, null, g, W, H, U); Check(f != null && f.Clickable && f.Target == "inventory.cardSolo", "frame: the card's gem button alone (not worn), clickable");
+    f = LocateFrames.For(new LocateStep { Kind = LocateKind.Done, OnGem = true }, item, rs, null, g, W, H, U); Check(f != null && !f.Clickable && f.Target == "gem.button", "frame: «Улучшить» on the gem screen, never clickable");
+    f = LocateFrames.For(new LocateStep { Kind = LocateKind.GemFunction, Func = 8 }, item, new RecastScreen { GemOpen = true }, null, g, W, H, U); Check(f != null && !f.Clickable, "frame: the gem function row as a hint, not clickable");
+    f = LocateFrames.GemRow(g, new RecastScreen { GemOpen = true }, 8, W, H, U, true); Check(f != null && f.Clickable && f.ClickY > 0, "frame: the gem function row, clickable when asked and in view");
+    f = LocateFrames.GemRow(g, new RecastScreen { GemOpen = true, GemFuncList = new RFX.ListRead { ScrollY = 5000, Cols = 1, RowUnits = 110, First = 3, Last = 8 } }, 8, W, H, U, true); Check(f != null && !f.Clickable, "frame: the gem function row scrolled out of the list is not clicked");
     f = LocateFrames.For(new LocateStep { Kind = LocateKind.AscendPick, Pos = 8 }, item, rs, null, g, W, H, U); Check(f != null && f.Clickable && f.ViewH > 0, "frame: the item's cell in the Ascension list, clickable");
     f = LocateFrames.For(new LocateStep { Kind = LocateKind.AscendPick, Pos = 8 }, item, new RecastScreen { SublimingOpen = true }, null, g, W, H, U); Check(f == null, "frame: the list is unreadable and the game's cell range is unknown -> none");
     f = LocateFrames.For(new LocateStep { Kind = LocateKind.AscendPick, Pos = 8, Scroll = "below", ScrollRows = 3 }, item, new RecastScreen { SublimingOpen = true }, null, g, W, H, U); Check(f != null && f.Mark.Kind == "down" && f.Mark.Rows == 3 && !f.Clickable, "frame: scroll not readable but the cell range says 'below' -> only the pill");

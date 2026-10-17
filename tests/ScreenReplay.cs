@@ -111,7 +111,7 @@ static class ScreenReplay {
         step = LocateGuide.Next(req, tracker.Inv, tracker.Rs, tracker.Hero, cols, 1);
         var view = new LocateView { NowMs = t, Foreground = true, W = W, H = H, U = U, Step = step, Inv = tracker.Inv, Cols = cols,
           HeroScreenOpen = st.Kind == ScreenKind.HeroScreen, OtherFormOpen = st.Kind == ScreenKind.Foundry || st.Kind == ScreenKind.Gem, CityButton = st.Kind == ScreenKind.City,
-          Geometry = geo, Rs = tracker.Rs, Item = item };
+          Geometry = geo, Rs = tracker.Rs, Item = item, Purpose = req.Purpose };
         if (ex != null) {
           string e;
           if ((e = Str(ex, "step")) != null) Check(step.Kind.ToString() == e, at + ": step " + e + (step.Kind.ToString() == e ? "" : " (got " + step.Kind + ")"));
@@ -135,7 +135,7 @@ static class ScreenReplay {
         var cr = new ClickRequest { Owner = owner, Target = target, AutoOn = Bool(c, "auto", true), Front = Bool(c, "front", true) };
         var ok = new HashSet<long>(); var okl = Longs(Get(c, "ok")); foreach (var u in okl) ok.Add(u);
         if (okl.Length == 0 && item != null) ok.Add(item.Uid);
-        cr.CellOk = ok;
+        cr.CellOk = ok; cr.Func = (int)Num(c, "func", 0);
         if (Get(c, "cellIndex") is double) {
           int idx = (int)(double)Get(c, "cellIndex");
           string kind = Str(c, "cellKind") ?? "inv";
@@ -174,6 +174,14 @@ static class ScreenReplay {
       string wl = ClickGate.WhitelistText(o);
       Check(wl != "", o + " whitelist: " + wl);
     }
+    // the recast path: the card's gem button and the gem list's row are on the list; the final buttons are in NO whitelist (not even as a name)
+    string lwl = ClickGate.WhitelistText(ClickOwner.Locate);
+    Check(lwl.Contains("InvCardGem@Inventory") && lwl.Contains("GemFuncRow@Gem"), "locate may click the card's gem button (Inventory) and the gem list's row (Gem)");
+    foreach (ClickOwner oo in Enum.GetValues(typeof(ClickOwner))) {
+      string w2 = ClickGate.WhitelistText(oo);
+      Check(!w2.Contains("GemButton") && !w2.Contains("RecastButton") && !w2.Contains("AscendButton") && !w2.Contains("Upgrade") && !w2.Contains("Improve"), oo + ": no gem / recast / ascend button on the whitelist");
+    }
+    Check(!ClickGate.WhitelistText(ClickOwner.Sell).Contains("Gem") && !ClickGate.WhitelistText(ClickOwner.Equip).Contains("Gem"), "the storage cleanup and the equip helper never click the gem button or the gem list");
     Check(!ClickGate.WhitelistText(ClickOwner.Locate).Contains("BulkCell") && !ClickGate.WhitelistText(ClickOwner.Locate).Contains("BulkEnter"), "locate never clicks in the bulk-sale mode or on its button");
     Check(!ClickGate.WhitelistText(ClickOwner.Sell).Contains("InvListCell") && !ClickGate.WhitelistText(ClickOwner.Sell).Contains("Ascend") && !ClickGate.WhitelistText(ClickOwner.Sell).Contains("Foundry"), "the storage cleanup clicks no normal-mode cell and nothing of the Foundry");
     Check(!ClickGate.WhitelistText(ClickOwner.Equip).Contains("Inv") && !ClickGate.WhitelistText(ClickOwner.Equip).Contains("Foundry"), "the equip helper clicks only the city and the hero screen");
@@ -191,6 +199,80 @@ static class ScreenReplay {
     var gate2 = new ClickGate();
     Check(gate2.Check(new ClickRequest { Owner = ClickOwner.Locate, Target = ClickTarget.HeroBack, AutoOn = false, Front = true }, unknown, 0).Reason == "off", "auto click off: no click");
     Check(!gate2.Halted(ClickOwner.Locate), "... and that is not a stop (the hints go on, the switch may come back)");
+
+    Console.WriteLine("recast clicks: the item must be the request's");
+    {
+      var g = new ClickGate();
+      var inv = new InventoryScreen { Open = true, EquipTab = true, Bulk = false, BulkKnown = true, Current = 1003 };
+      var invOther = new InventoryScreen { Open = true, EquipTab = true, Bulk = false, BulkKnown = true, Current = 1004 };
+      var invBulk = new InventoryScreen { Open = true, EquipTab = true, Bulk = true, BulkKnown = true, Current = 1003 };
+      var ok1 = new HashSet<long> { 1003 };
+      Func<ClickTarget, HashSet<long>, int, ClickRequest> R = (tg, ok, fn) => new ClickRequest { Owner = ClickOwner.Locate, Target = tg, AutoOn = true, Front = true, CellOk = ok, Func = fn };
+      Check(new ClickGate().Check(R(ClickTarget.InvCardGem, ok1, 0), ScreenState.Classify(new ScreenInputs { Inv = inv }, 0), 0).Allowed, "card gem button: the request's item is selected -> allowed");
+      var r2 = new ClickGate().Check(R(ClickTarget.InvCardGem, ok1, 0), ScreenState.Classify(new ScreenInputs { Inv = invOther }, 0), 0);
+      Check(r2.Verdict == GateVerdict.Deny && r2.Reason == "cell", "card gem button: another item selected -> stop");
+      r2 = new ClickGate().Check(R(ClickTarget.InvCardGem, ok1, 0), ScreenState.Classify(new ScreenInputs { Inv = invBulk }, 0), 0);
+      Check(r2.Verdict == GateVerdict.Deny && r2.Reason == "bulk", "card gem button: bulk-sale mode -> stop");
+      var gem = new RecastScreen { GemOpen = true, GemFunc = -1, GemSel = 1003 };
+      var gemOther = new RecastScreen { GemOpen = true, GemFunc = -1, GemSel = 1004 };
+      var gemNone = new RecastScreen { GemOpen = true, GemFunc = -1, GemSel = 0 };
+      Check(new ClickGate().Check(R(ClickTarget.GemFuncRow, ok1, 7), ScreenState.Classify(new ScreenInputs { Rs = gem }, 0), 0).Allowed, "gem row: the request's item is on the gem screen -> allowed");
+      r2 = new ClickGate().Check(R(ClickTarget.GemFuncRow, ok1, 7), ScreenState.Classify(new ScreenInputs { Rs = gemOther }, 0), 0);
+      Check(r2.Verdict == GateVerdict.Deny && r2.Reason == "cell", "gem row: another item on the gem screen -> stop");
+      r2 = new ClickGate().Check(R(ClickTarget.GemFuncRow, ok1, 7), ScreenState.Classify(new ScreenInputs { Rs = gemNone }, 0), 0);
+      Check(r2.Verdict == GateVerdict.Deny && r2.Reason == "cell", "gem row: no item on the gem screen -> stop");
+      foreach (int bad in new[] { 0, 5, 6, 11 }) {
+        r2 = new ClickGate().Check(R(ClickTarget.GemFuncRow, ok1, bad), ScreenState.Classify(new ScreenInputs { Rs = gem }, 0), 0);
+        Check(r2.Verdict == GateVerdict.Deny && r2.Reason == "target", "gem row: function " + bad + " is not a recast function -> stop");
+      }
+      r2 = new ClickGate().Check(R(ClickTarget.GemFuncRow, ok1, 7), ScreenState.Classify(new ScreenInputs { Inv = inv }, 0), 0);
+      Check(r2.Verdict == GateVerdict.Deny && r2.Reason == "screen", "gem row: on the inventory -> stop");
+      // the expected effect: the gem screen within 2 s, the wanted function selected within 2 s
+      var g2 = new ClickGate(); var rq = R(ClickTarget.InvCardGem, ok1, 0); var before = ScreenState.Classify(new ScreenInputs { Inv = inv }, 0);
+      g2.Arm(ClickOwner.Locate, ClickTarget.InvCardGem, ClickGate.Expect(rq, before), 0);
+      g2.Observe(before, ClickGate.GemEffectMs + 10);
+      Check(g2.HaltReason(ClickOwner.Locate) == "nochange", "card gem button: the gem screen does not open within 2 s -> stop");
+      g2 = new ClickGate(); g2.Arm(ClickOwner.Locate, ClickTarget.InvCardGem, ClickGate.Expect(rq, before), 0);
+      g2.Observe(ScreenState.Classify(new ScreenInputs { Rs = gem }, 900), 900);
+      Check(!g2.Halted(ClickOwner.Locate) && !g2.Pending(ClickOwner.Locate), "card gem button: the gem screen opened -> done");
+      var rr = R(ClickTarget.GemFuncRow, ok1, 7); var gemAfter = new RecastScreen { GemOpen = true, GemFunc = 8, GemSel = 1003 };
+      g2 = new ClickGate(); g2.Arm(ClickOwner.Locate, ClickTarget.GemFuncRow, ClickGate.Expect(rr, ScreenState.Classify(new ScreenInputs { Rs = gem }, 0)), 0);
+      g2.Observe(ScreenState.Classify(new ScreenInputs { Rs = gemAfter }, 500), 500);
+      Check(g2.Pending(ClickOwner.Locate), "gem row: another function selected -> not the effect yet");
+      g2.Observe(ScreenState.Classify(new ScreenInputs { Rs = new RecastScreen { GemOpen = true, GemFunc = 7, GemSel = 1003 } }, 900), 900);
+      Check(!g2.Pending(ClickOwner.Locate) && !g2.Halted(ClickOwner.Locate), "gem row: the wanted function selected -> done");
+    }
+
+    Console.WriteLine("an unrecognised screen halts only the pilot's own click");
+    {
+      var g = new ClickGate();
+      var unk = ScreenState.Classify(new ScreenInputs(), 0);
+      var inv = ScreenState.Classify(new ScreenInputs { Inv = new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true } }, 0);
+      Check(g.Preflight(ClickOwner.Locate, unk, 0).Verdict == GateVerdict.Wait, "no click yet: an unknown screen is waited for");
+      var rq = new ClickRequest { Owner = ClickOwner.Locate, Target = ClickTarget.InvEquipTab, AutoOn = true, Front = true };
+      g.Arm(ClickOwner.Locate, ClickTarget.InvEquipTab, s => s.Kind == ScreenKind.Inventory, 1000);
+      // 1) the click's effect is seen, then the screen goes unknown at once (the click's own doing, within the window) -> stop
+      g.Observe(inv, 1200);
+      Check(g.Preflight(ClickOwner.Locate, unk, 1300).Verdict == GateVerdict.Deny && g.HaltReason(ClickOwner.Locate) == "unknown", "unknown right after the pilot's own click -> stop");
+      // 2) the same later (the player clicked something, the game switches forms) -> wait, no stop, and it goes on when the screen is known
+      g = new ClickGate();
+      g.Arm(ClickOwner.Locate, ClickTarget.InvEquipTab, s => s.Kind == ScreenKind.Inventory, 1000);
+      g.Observe(inv, 1200);
+      var pre = g.Preflight(ClickOwner.Locate, unk, 1000 + ClickGate.OwnClickWindowMs + 1);
+      Check(pre.Verdict == GateVerdict.Wait && pre.Reason == "unknown" && !g.Halted(ClickOwner.Locate), "unknown long after the pilot's click -> only waited for");
+      pre = g.Preflight(ClickOwner.Locate, unk, 60000);
+      Check(pre.Verdict == GateVerdict.Wait && !g.Halted(ClickOwner.Locate), "... however long it lasts");
+      Check(g.Preflight(ClickOwner.Locate, inv, 61000).Allowed, "... and the pilot goes on when the screen is known again");
+      // a click is still never made on an unknown screen
+      Check(g.Check(rq, unk, 61500).Verdict == GateVerdict.Wait && !g.Halted(ClickOwner.Locate), "no click while the screen is unknown (the gate waits)");
+      Check(g.Check(rq, unk, 61500 + ClickGate.UnknownGraceMs + 10).Verdict == GateVerdict.Deny, "... and an unknown screen at the moment of a click for too long still stops it");
+      // a mode that cannot be read behaves the same way
+      var modeUnk = ScreenState.Classify(new ScreenInputs { Inv = new InventoryScreen { Open = true, EquipTab = true, BulkKnown = false } }, 0);
+      g = new ClickGate(); g.Arm(ClickOwner.Locate, ClickTarget.InvEquipTab, null, 0);
+      Check(g.Preflight(ClickOwner.Locate, modeUnk, 20000).Verdict == GateVerdict.Wait && !g.Halted(ClickOwner.Locate), "the inventory's mode unreadable long after a click -> waited for");
+      g = new ClickGate(); g.Arm(ClickOwner.Locate, ClickTarget.InvEquipTab, null, 20000);
+      Check(g.Preflight(ClickOwner.Locate, modeUnk, 20500).Verdict == GateVerdict.Deny, "... right after a click -> stop");
+    }
 
     Console.WriteLine("remote switch");
     var sw = RemoteSwitches.Permissive();

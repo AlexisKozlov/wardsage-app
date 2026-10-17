@@ -576,12 +576,22 @@ namespace RealmForge {
     /// <summary>The storage cleanup's auto click is running (not halted, not finished): the stop button is shown for it.</summary>
     bool SellClicking { get { return sellWanted != null && !sellHint && runHero <= 0 && !LocateWins && !gate.Halted(ClickOwner.Sell) && spilot.State != "done" && spilot.State != "failed"; } }
 
+    /// <summary>«Показать в игре» with auto click enabled for it: the stop button shows during the WHOLE run (not only while a click is being made),
+    /// until the pilot stops (gate, cancel, stuck), the job is done or the last step (the player's own button) is reached.</summary>
+    bool LocateClicking {
+      get {
+        if (locateReq == null || !AutoEnabled || !LocateAutoEnabled || lpilot.Stopped || gate.Halted(ClickOwner.Locate) || locateDoneUntil != 0) return false;
+        var k = locateStep != null ? locateStep.Kind : LocateKind.None;
+        return k != LocateKind.Done && k != LocateKind.AscendReady && k != LocateKind.NoItem && k != LocateKind.OtherAccount;
+      }
+    }
+
     void TickCancel() {
       IntPtr hwnd = GameWindow();
       int fp = 0, gp = 0;
       if (hwnd != IntPtr.Zero) { W32.GetWindowThreadProcessId(W32.GetForegroundWindow(), out fp); W32.GetWindowThreadProcessId(hwnd, out gp); }
       W32.RECT cr;
-      if ((runHero <= 0 && !(LocateWins && locateDriving) && !SellClicking) || !AutoEnabled || hwnd == IntPtr.Zero || W32.IsIconic(hwnd) || fp != gp || !W32.GetClientRect(hwnd, out cr) || cr.B < 200) {
+      if ((runHero <= 0 && !(LocateWins && LocateClicking) && !SellClicking) || !AutoEnabled || hwnd == IntPtr.Zero || W32.IsIconic(hwnd) || fp != gp || !W32.GetClientRect(hwnd, out cr) || cr.B < 200) {
         if (cancelWin.Visible) cancelWin.Hide();
         return;
       }
@@ -2095,7 +2105,7 @@ namespace RealmForge {
       bool formOpen = scr != null && (scr.Kind == ScreenKind.Foundry || scr.Kind == ScreenKind.Gem);
       var dstep = LocateGuide.Next(req, inv, locateRs, heroScreen, locateCols, locateOnAccount);
       var view = new LocateView { NowMs = now, Foreground = gameFront, UserBusy = busy, UserClicked = uc, W = W, H = H, U = U, Step = dstep, Inv = inv, Cols = locateCols,
-        HeroScreenOpen = heroOpen, OtherFormOpen = formOpen, InvDX = invDX, Geometry = Geo.Current, Rs = locateRs, Item = req.Item };
+        HeroScreenOpen = heroOpen, OtherFormOpen = formOpen, InvDX = invDX, Geometry = Geo.Current, Rs = locateRs, Item = req.Item, Purpose = req.Purpose };
       if (gameFront && !busy && LocateAuto.NeedsCityButton(dstep, heroOpen, formOpen)) view.CityButton = InventoryButtonSeen(o, W, H);
       if (gameFront && !busy && dstep.Kind == LocateKind.InList) {
         var pg = SellGeometry.Inventory(W, U, locateCols);
@@ -2191,6 +2201,12 @@ namespace RealmForge {
         case LocateTodo.FoundryButton: tg = ClickTarget.FoundryButton; break;
         case LocateTodo.AscendTab: tg = ClickTarget.AscendTab; break;
         case LocateTodo.SlotTab: tg = ClickTarget.SlotTab; break;
+        case LocateTodo.CardGem: case LocateTodo.GemFunc: {
+          bool gemBtn = mv.Todo == LocateTodo.CardGem;
+          tg = gemBtn ? ClickTarget.InvCardGem : ClickTarget.GemFuncRow;
+          fill = (rq, fr) => { rq.CellOk = new[] { req.Item.Uid }; rq.Func = GemRows.FuncOfQuality(req.Item.Quality); };   // the screen's selected item has to be this one
+          break;
+        }
         case LocateTodo.PickItem:
           tg = drag ? ClickTarget.InvListDrag : ClickTarget.InvListCell;
           fill = (rq, fr) => {
@@ -2605,8 +2621,8 @@ namespace RealmForge {
     // ---------------------------------------------------------------- drawing
 
     // ---------------------------------------------------------------- the new button highlight (site switch guideStyle, test build: Settings)
-    // A (normal steps): the client dimmed (black 55 %) with a hole in the button's shape (+5 px), a 2 px warm-gold edge with a soft glow pulsing
-    // 0.65..1.0 every 1.2 s, and the guide hand above the button bobbing 4 px. B (the player's own final press, list cells): the edge and glow only.
+    // A (normal steps): the client dimmed (black 59 %) with a hole in the button's shape (+8 px), a warm-gold edge (max(4, 0.006*U) px) with a soft glow (max(18, 0.022*U) px, a wider faint halo) pulsing
+    // 0.45..1.0 every 1.2 s, and the guide hand above the button bobbing 4 px. B (the player's own final press, list cells): the edge and glow only.
     /// <summary>The new highlight is on (the site's guideStyle switch, or the test build's own setting).</summary>
     public bool GuideStyle;
     /// <summary>The site's address (the hand picture is fetched from it once).</summary>
@@ -2636,27 +2652,32 @@ namespace RealmForge {
 
     // draws the highlight into the bitmap (its origin on the screen: ox, oy); marksBox: a cell given in bitmap px already (storage cleanup marks)
     void PaintGuide(Graphics gr, Hl hl, int ox, int oy, int bw, int bh, bool dim, int G, Image hand, int bob, double U, GeoRect marksBox = null) {
-      float a = 0.65f + 0.35f * guideLvl / 5f;
+      float a = 0.45f + 0.55f * guideLvl / 5f;
       var box = marksBox ?? new GeoRect { X = hl.Rect.X - ox, Y = hl.Rect.Y - oy, W = hl.Rect.W, H = hl.Rect.H };
       var art = GuideShape.ArtBox(box, marksBox != null ? null : hl.Inset);
-      var pts = GuideShape.Outline(GuideShape.Grow(art, dim ? 5 : 2), hl.Shape, null);
+      var pts = GuideShape.Outline(GuideShape.Grow(art, dim ? 8 : 2), hl.Shape, null);
       if (pts.Count < 3) return;
       var poly = new PointF[pts.Count];
       for (int i = 0; i < poly.Length; i++) poly[i] = new PointF((float)pts[i].X, (float)pts[i].Y);
       using (var path = new GraphicsPath()) {
         path.AddPolygon(poly);
         if (dim) {
-          using (var br = new SolidBrush(Color.FromArgb(140, 0, 0, 0))) gr.FillRectangle(br, 0, 0, bw, bh);
+          using (var br = new SolidBrush(Color.FromArgb(150, 0, 0, 0))) gr.FillRectangle(br, 0, 0, bw, bh);
           gr.CompositingMode = CompositingMode.SourceCopy;
           using (var hole = new SolidBrush(Color.FromArgb(0, 0, 0, 0))) gr.FillPath(hole, path);
           gr.CompositingMode = CompositingMode.SourceOver;
         }
-        int glow = Math.Max(4, Math.Min(dim ? 12 : 14, G));
+        int glow = (int)Math.Max(18, 0.022 * U);
+        float edge = (float)Math.Max(4, 0.006 * U);
         gr.SetClip(path, CombineMode.Exclude);   // the glow lies outside the hole only
+        for (int i = glow + 10; i > glow; i -= 4)   // the second, wider faint halo
+          using (var pen = new Pen(Color.FromArgb((int)(14 * a), 232, 196, 106), 2f * i) { LineJoin = LineJoin.Round }) gr.DrawPath(pen, path);
         for (int i = glow; i >= 2; i -= 3)
           using (var pen = new Pen(Color.FromArgb((int)(34 * a), 232, 196, 106), 2f * i) { LineJoin = LineJoin.Round }) gr.DrawPath(pen, path);
+        for (int i = 6; i >= 2; i -= 2)   // the inner glow: next to the edge at 0.85 of its alpha
+          using (var pen = new Pen(Color.FromArgb((int)(255 * a * 0.85f), 232, 196, 106), 2f * i) { LineJoin = LineJoin.Round }) gr.DrawPath(pen, path);
         gr.ResetClip();
-        using (var pen = new Pen(Color.FromArgb((int)(255 * a), 232, 196, 106), 2f) { LineJoin = LineJoin.Round }) gr.DrawPath(pen, path);
+        using (var pen = new Pen(Color.FromArgb((int)(255 * a), 232, 196, 106), edge) { LineJoin = LineJoin.Round }) gr.DrawPath(pen, path);
       }
       if (hand != null && hl != null) {
         double hh = 0.14 * U, hw = hh * hand.Width / hand.Height;

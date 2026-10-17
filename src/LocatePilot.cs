@@ -11,8 +11,10 @@
 // With the screen geometry from the site (src/Geometry.cs, placed by src/LocateFrames.cs) it also clicks «Литейная» (the
 // inventory's or the hero gear screen's), the Foundry's «Вознесение» tab, the slot tab of the Ascension list and the item's cell
 // there (scrolling the list by dragging, the exact place from the game's own scroll reading). Without the geometry these stay hints.
-// What it NEVER clicks: «Вознести», «Преобразовать», «Улучшить» (and the item card's button, whose meaning changes with the item),
-// any confirmation, and the filter (it is only pointed at, the player sets it).
+// Recast: with the item selected in the Inventory it clicks the card's gem button («Улучшение самоцветами»; the rect is the frame's), and on the
+// gem screen the list row of the wanted recast function; then it stops - «Улучшить» is the player's.
+// What it NEVER clicks: «Вознести», «Преобразовать», «Улучшить» (the card's other buttons too: only the gem button is clicked, and only on the
+// recast path), any confirmation, and the filter (it is only pointed at, the player sets it).
 //
 // Safety: it stops (State "stopped", and says why) on anything unexpected - the bulk-sale mode (a click there would toggle a
 // sale), a list it cannot get to the item in, a step that does not move on; it steps back while the player uses the mouse
@@ -34,6 +36,8 @@ namespace RealmForge {
     FoundryButton,     // «Литейная» (the inventory's or the hero gear screen's)
     AscendTab,         // the Foundry is open on another tab: «Вознесение»
     SlotTab,           // the Ascension list: the item's slot tab (the filter itself is never touched)
+    CardGem,           // recast: the selected item's card, the gem button («Улучшение самоцветами»)
+    GemFunc,           // recast: the gem screen's list row of the wanted function («Преобразование» / «Продв. преобразование»)
     AscendCell,        // the item is in the Ascension list: scroll to it and click its cell (selecting only)
     Stop               // cannot go on alone
   }
@@ -55,6 +59,7 @@ namespace RealmForge {
     public GameGeometry Geometry;          // the screens' geometry for the game version, null = none (the Foundry steps stay hints)
     public RecastScreen Rs;           // the Foundry, read now
     public PlanItem Item;             // the item looked for
+    public string Purpose = "";       // the request's purpose: recast | ascend
     public bool[] FoundryTabs;        // which of the Foundry's tabs are shown (null = all assumed)
   }
 
@@ -123,16 +128,31 @@ namespace RealmForge {
           if (v.Rs.AscendList == null || !v.Rs.AscendList.Has) { why = "foundry"; return LocateTodo.Hint; }
           return LocateTodo.AscendCell;
         }
+        case LocateKind.Selected: {
+          // recast only (Ascension never gets here: the Foundry starts without the item); the card's gem button, never its other button
+          if (v.Purpose == "ascend") { why = "foundry"; return LocateTodo.Hint; }
+          if (v.OtherFormOpen) { why = "form"; return LocateTodo.Hint; }
+          if (v.Inv == null || !v.Inv.Open || !v.Inv.EquipTab || v.Inv.Bulk || v.Item == null || v.Inv.Current != v.Item.Uid) { why = "screen"; return LocateTodo.Hint; }
+          var f = LocateFrames.For(st, v.Item, v.Rs, v.FoundryTabs, v.Geometry, v.W, v.H, v.U);
+          if (f == null || !f.Clickable) { why = "foundry"; return LocateTodo.Hint; }
+          return LocateTodo.CardGem;
+        }
+        case LocateKind.GemFunction: {
+          // the gem screen holds the item and the wanted recast function is not selected: its list row (the function is known from the item's quality)
+          if (v.Purpose == "ascend" || st.Func == 0 || v.Rs == null || !v.Rs.GemOpen || v.Item == null || v.Rs.GemSel != v.Item.Uid || v.Rs.GemFunc == st.Func) { why = "foundry"; return LocateTodo.Hint; }
+          var f = LocateFrames.GemRow(v.Geometry, v.Rs, st.Func, v.W, v.H, v.U, true);
+          if (f == null || !f.Clickable) { why = "foundry"; return LocateTodo.Hint; }
+          return LocateTodo.GemFunc;
+        }
         default:
-          // Selected (the Foundry button / the card's button), the Foundry's tabs and lists, the gem screen, the end:
-          // the places are not measured, or it is the player's last press
+          // the Foundry's tabs and lists, the gem screen's item pop-up, the end: the places are not measured, or it is the player's last press
           why = "foundry"; return LocateTodo.Hint;
       }
     }
   }
 
   public sealed class LocatePilot {
-    public const int UserPauseMs = 4000, AfterBackMs = 1800, AfterButtonMs = 2500, AfterTabMs = 1500, SettleMs = 700;
+    public const int UserPauseMs = 4000, AfterBackMs = 1800, AfterButtonMs = 2500, AfterTabMs = 1500, AfterGemMs = 1500, SettleMs = 700;
     public const int MaxStepClicks = 4, MaxActions = 90, MaxClicks = 14, MaxDrags = 45, MaxWorkMs = 5 * 60 * 1000;
     public const double MinDragPx = 24;
 
@@ -196,6 +216,13 @@ namespace RealmForge {
           var f = LocateFrames.For(todo == LocateTodo.SlotTab ? LocateFrames.SlotOnly(v.Step) : v.Step, v.Item, v.Rs, v.FoundryTabs, v.Geometry, v.W, v.H, v.U);
           if (f == null || !f.Clickable) return Abort(m, "screen");
           return Click(m, v, f.ClickX, f.ClickY, todo == LocateTodo.FoundryButton ? AfterButtonMs : AfterTabMs, todo == LocateTodo.FoundryButton ? "foundry" : todo == LocateTodo.AscendTab ? "ascend tab" : "slot tab");
+        }
+        case LocateTodo.CardGem: case LocateTodo.GemFunc: {
+          if (++kindClicks > MaxStepClicks) return Abort(m, "stuck");
+          var f = todo == LocateTodo.CardGem ? LocateFrames.For(v.Step, v.Item, v.Rs, v.FoundryTabs, v.Geometry, v.W, v.H, v.U)
+                                             : LocateFrames.GemRow(v.Geometry, v.Rs, v.Step.Func, v.W, v.H, v.U, true);
+          if (f == null || !f.Clickable) return Abort(m, "screen");
+          return Click(m, v, f.ClickX, f.ClickY, AfterGemMs, todo == LocateTodo.CardGem ? "gem button" : "gem function");
         }
         case LocateTodo.AscendCell:
           return AscendCell(m, v);

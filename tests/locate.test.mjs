@@ -85,6 +85,15 @@ for (const lang of ['ru', 'en']) {
   ok(work.head === T[lang].locAutoWork && work.lines[0] === plain.head, lang + ': auto at work on the list: the program is opening it');
   ok(L.describe(req, st({ step: 'openInventory', auto: 'work' }), t).head === T[lang].locAutoWork, lang + ': auto opens the inventory');
   ok(L.describe(req, st({ step: 'selected', auto: 'hint' }), t).head === T[lang].locSelected, lang + ': the last steps stay the player\'s');
+  // recast: the plate says what the program presses / chooses (the last button, «Улучшить», is never announced as a program action)
+  const aGem = L.describe({ ...req, purpose: 'recast' }, st({ step: 'selected', auto: 'work' }), t);
+  ok(aGem.head === T[lang].locAutoGem && aGem.head.includes(lang === 'ru' ? 'Улучшение самоцветами' : 'Gem Enhancement') && aGem.lines[0] === T[lang].locSelected, lang + ': auto at the card: names the gem button');
+  ok(L.describe({ ...req, purpose: 'ascend' }, st({ step: 'selected', auto: 'work' }), t).head === T[lang].locSelected, lang + ': ascend: no gem button announcement');
+  const aRec = L.describe(req, st({ step: 'gemFunction', func: 7, auto: 'work' }), t), aAdv = L.describe(req, st({ step: 'gemFunction', func: 8, auto: 'work' }), t);
+  ok(aRec.head === T[lang].locAutoFuncRec && aRec.head.includes(lang === 'ru' ? '«Преобразование»' : '«Recast»') && aAdv.head === T[lang].locAutoFuncAdv && aAdv.head.includes(lang === 'ru' ? 'Продв.' : 'Advanced'), lang + ': auto at the gem list: names the function');
+  ok(L.describe(req, st({ step: 'gemFunction', func: 0, auto: 'work' }), t).head !== T[lang].locAutoFuncRec, lang + ': unknown function: nothing is announced');
+  ok(L.describe(req, st({ step: 'done', onGem: true, auto: 'work' }), t).head === T[lang].locDone, lang + ': the final step is never "auto work"');
+  ok([aGem, aRec, aAdv].every((d) => d.tip.length <= 3 && d.tip.every((x) => x.length <= 90)), lang + ': auto plates are short');
   ok(L.describe(req, st({ step: 'recastPick', auto: 'work' }), t).head !== T[lang].locAutoWork, lang + ': the Foundry steps are never "auto work"');
   ok(L.describe(req, st({ step: 'inList', auto: 'paused' }), t).head === plain.head, lang + ': paused: the normal hint');
   // the click gate's stops (src/ClickGate.cs): «Автонажатие остановлено: <причина>», the step's own hint after it

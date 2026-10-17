@@ -107,6 +107,9 @@
     // auto click: the app is doing this step itself, or it gave up (and says why; the step's own text follows)
     if (st.auto === 'stopped' && GATE_WHY[st.autoWhy]) r = { tone: 'warn', head: t('gateStop', t(GATE_WHY[st.autoWhy])), lines: [t('locAutoRest'), r.head].concat(r.lines) };
     else if (st.auto === 'stopped') r = { tone: st.autoWhy === 'cancelled' ? 'info' : 'warn', head: t('locAutoStop'), lines: [t(AUTO_WHY[st.autoWhy] || 'locAutoLost'), r.head].concat(r.lines) };
+    // recast: the app presses the card's gem button / selects the recast function itself, and says which (the last button stays the player's)
+    else if (st.auto === 'work' && st.step === 'selected' && req.purpose !== 'ascend') r = { tone: r.tone, head: t('locAutoGem'), lines: [r.head] };
+    else if (st.auto === 'work' && st.step === 'gemFunction' && (st.func === 7 || st.func === 8)) r = { tone: r.tone, head: t(st.func === 8 ? 'locAutoFuncAdv' : 'locAutoFuncRec'), lines: [r.head] };
     else if (st.auto === 'work' && AUTO_STEPS.indexOf(st.step) >= 0) r = { tone: r.tone, head: t('locAutoWork'), lines: [r.head] };
     // the plate over the game: the head and the first lines, short
     r.tip = [r.head].concat(r.lines.slice(0, 2)).map((x) => (x.length > 90 ? x.slice(0, 89) + '…' : x));

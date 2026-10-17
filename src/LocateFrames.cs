@@ -165,8 +165,8 @@ namespace RealmForge {
     }
 
     /// <summary>The frame of the step; null = none (no geometry, no such rectangle, not placeable). Clickable only for what the auto
-    /// mode may press: «Литейная», the «Вознесение» tab, the slot tab and the item's cell of the Ascension list. The final
-    /// buttons («Вознести», «Преобразовать», the card's button) and the filter are never clickable.</summary>
+    /// mode may press: «Литейная», the «Вознесение» tab, the slot tab, the item's cell of the Ascension list and the item card's gem button
+    /// («Улучшение самоцветами», recast path). The final buttons («Вознести», «Преобразовать», «Улучшить») and the filter are never clickable.</summary>
     public static LocateFrame For(LocateStep st, PlanItem item, RecastScreen rs, bool[] tabs, GameGeometry g, double W, double H, double U) {
       if (st == null || g == null || !Framed(st.Kind)) return null;
       GeoRect r = null; string key = "";
@@ -202,7 +202,7 @@ namespace RealmForge {
         case LocateKind.ExitBulk: key = "inventory.bulkBack"; break;   // pointed at only: the app never clicks in the bulk-sale mode
         case LocateKind.Done: key = st.OnGem ? "gem.button" : "recast.button"; break;
         case LocateKind.GemFunction: return GemRow(g, rs, st.Func != 0 ? st.Func : GemRows.Recast, W, H, U);
-        case LocateKind.Selected: key = st.Worn ? "inventory.cardLeft" : "inventory.cardSolo"; break;   // a worn item: Gems | Remove; otherwise the gem button is alone, centred
+        case LocateKind.Selected: key = st.Worn ? "inventory.cardLeft" : "inventory.cardSolo"; click = true; break;   // a worn item: Gems | Remove; otherwise the gem button is alone, centred (the recast path clicks it; the pilot checks the purpose)
       }
       if (r == null && key != "" && key != "foundry.tab.ascend" && key != "foundry.tab.recast") r = g.Rect(key, W, H, U);
       if (r == null) return null;
@@ -216,16 +216,17 @@ namespace RealmForge {
       return res;
     }
 
-    /// <summary>The gem screen's list row of a recast function (a hint only: the player picks it). The game's own reading of the list places it;
-    /// when that is unreadable the list is taken at the top (it opens there). Null = no geometry, or the function is not in the list.</summary>
-    public static LocateFrame GemRow(GameGeometry g, RecastScreen rs, int func, double W, double H, double U) {
+    /// <summary>The gem screen's list row of a recast function (a hint; clickable only when asked: the recast path selects the row, never the
+    /// «Улучшить» button). The game's own reading of the list places it; when that is unreadable the list is taken at the top (it opens there).
+    /// Null = no geometry, or the function is not in the list.</summary>
+    public static LocateFrame GemRow(GameGeometry g, RecastScreen rs, int func, double W, double H, double U, bool click = false) {
       int row = GemRows.Index(func);
       var grid = g != null ? g.Grid("gem.list") : null;
       if (row < 0 || grid == null) return null;
       var l = rs != null ? rs.GemFuncList : null;
       if (l == null || !l.Has) l = new RFX.ListRead { ScrollY = 0, Cols = 1, RowUnits = grid.LineSize };
       var f = FoundryPlace.Cell(g, "gem", l, row, W, H, U);
-      if (f != null) f.Clickable = false;
+      if (f != null && !click) f.Clickable = false;   // Cell: clickable only when the row is fully in the list's viewport
       return f;
     }
 

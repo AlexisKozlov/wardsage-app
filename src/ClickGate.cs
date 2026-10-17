@@ -34,6 +34,8 @@ namespace RealmForge {
     SlotTab,          // the Ascension list's slot tab
     AscendCell,       // an item's cell in the Ascension list (selects it)
     AscendDrag,       // a drag that scrolls the Ascension list
+    InvCardGem,       // the selected item's card, its «Улучшение самоцветами» button (normal mode; opens the gem screen; «Показать в игре» recast)
+    GemFuncRow,       // the gem screen's function list: the row of the wanted recast function (selects it only; «Показать в игре» recast)
     EquipNav,         // equip helper: the city's «Герои», a hero's card, the gear tab, the back arrow, a slot, a gear list item, a list drag
     EquipFilter,      // equip helper: the controls of the game's gear / hero filter pop-up
     EquipClosePopup,  // equip helper: the red × of a pop-up left over the list
@@ -64,13 +66,17 @@ namespace RealmForge {
     public ICollection<long> CellOk;
     /// <summary>The click point (client px), for the log.</summary>
     public double X, Y;
+    /// <summary>InvCardGem / GemFuncRow: the item the screen has to hold selected is one of CellOk. GemFuncRow: the function the click selects (7 / 8).</summary>
+    public int Func;
   }
 
   public sealed class ClickGate {
     /// <summary>How long an unreadable screen is waited for before the pilot stops.</summary>
     public const int UnknownGraceMs = ScreenTracker.HoldMs;
     /// <summary>How long a click has to show its effect (a screen that opens may take a moment).</summary>
-    public const int EffectMs = 3500, SlowEffectMs = 6000;
+    public const int EffectMs = 3500, SlowEffectMs = 6000, GemEffectMs = 2000;
+    /// <summary>An unrecognised screen stops the pilot only this long after the pilot's OWN last click (the screen it caused); later it is waited for.</summary>
+    public const int OwnClickWindowMs = 2500;
     /// <summary>The log (the host's journal); null = none. A line only when an owner's verdict changes.</summary>
     public Action<string> Sink;
 
@@ -82,6 +88,8 @@ namespace RealmForge {
       public int FoundryTab = -2;   // -2 any, else the tab it must be on
       public int FoundryNotTab = -2;// -2 none, else the tab it must not be on
       public int HeroTab = -1;      // on the hero screen: the tab it must be on (3 = gear), -1 any
+      public bool SelItem;          // the item selected on the screen (inventory card / gem screen) must be one of the items meant
+      public bool GemFuncWanted;    // gem screen: the click selects the wanted function, which must not be the selected one yet
       public bool Cell;             // a list cell: the item under the click must be one of the items meant
       public bool AllowModal;       // the pop-up itself is the target (or the equip helper, which works with the game's filter pop-ups)
     }
@@ -103,6 +111,9 @@ namespace RealmForge {
             case ClickTarget.SlotTab: return new Rule { Kinds = K(ScreenKind.Foundry), FoundryTab = 2 };
             case ClickTarget.AscendCell: return new Rule { Kinds = K(ScreenKind.Foundry), FoundryTab = 2, Cell = true };
             case ClickTarget.AscendDrag: return new Rule { Kinds = K(ScreenKind.Foundry), FoundryTab = 2 };
+            // the recast path; the gem screen's «Улучшить», the Foundry's «Преобразовать» and «Вознести» are in NO whitelist
+            case ClickTarget.InvCardGem: return new Rule { Kinds = K(ScreenKind.Inventory), InvNormalEquip = true, SelItem = true };
+            case ClickTarget.GemFuncRow: return new Rule { Kinds = K(ScreenKind.Gem), SelItem = true, GemFuncWanted = true };
           }
           return null;
         case ClickOwner.Sell:
@@ -145,7 +156,7 @@ namespace RealmForge {
     readonly Dictionary<ClickOwner, Watch> watches = new Dictionary<ClickOwner, Watch>();
     readonly Dictionary<ClickOwner, long> unknownSince = new Dictionary<ClickOwner, long>();
     readonly Dictionary<ClickOwner, string> noted = new Dictionary<ClickOwner, string>();
-    readonly HashSet<ClickOwner> clicked = new HashSet<ClickOwner>();   // the owner has sent a click in this request
+    readonly Dictionary<ClickOwner, long> clickedAt = new Dictionary<ClickOwner, long>();   // when the owner sent its last click in this request
 
     void Note(ClickOwner o, string key, string text) {
       string was; if (noted.TryGetValue(o, out was) && was == key) return;
@@ -161,7 +172,7 @@ namespace RealmForge {
 
     /// <summary>A new request (or the player started it again): the owner may click again.</summary>
     public void Resume(ClickOwner o) {
-      halted.Remove(o); watches.Remove(o); unknownSince.Remove(o); noted.Remove(o); clicked.Remove(o);
+      halted.Remove(o); watches.Remove(o); unknownSince.Remove(o); noted.Remove(o); clickedAt.Remove(o);
     }
 
     /// <summary>The pilot stops (also used by the host for its own reasons, e.g. the player's cancel).</summary>
@@ -172,9 +183,10 @@ namespace RealmForge {
 
     /// <summary>(e) A click was sent: what has to happen next (null = nothing is checked, e.g. a drag).</summary>
     public void Arm(ClickOwner o, ClickTarget t, Func<ScreenState, bool> done, long now) {
-      clicked.Add(o);
+      clickedAt[o] = now;
       if (done == null) { watches.Remove(o); return; }
-      watches[o] = new Watch { Done = done, Deadline = now + (t == ClickTarget.CityInventory || t == ClickTarget.FoundryButton ? SlowEffectMs : EffectMs), What = t.ToString() };
+      int ms = t == ClickTarget.CityInventory || t == ClickTarget.FoundryButton ? SlowEffectMs : t == ClickTarget.InvCardGem || t == ClickTarget.GemFuncRow ? GemEffectMs : EffectMs;
+      watches[o] = new Watch { Done = done, Deadline = now + ms, What = t.ToString() };
     }
 
     /// <summary>What a click is expected to change, judged on the state before it (null = nothing to check).</summary>
@@ -191,6 +203,8 @@ namespace RealmForge {
         case ClickTarget.AscendTab: return s => s.Kind == ScreenKind.Foundry && s.FoundryTab == 2;
         case ClickTarget.SlotTab: return s => s.Kind == ScreenKind.Foundry && s.FoundryKey != fkey;
         case ClickTarget.AscendCell: return s => s.Kind == ScreenKind.Foundry && s.FoundrySel == uid;
+        case ClickTarget.InvCardGem: return s => s.Kind == ScreenKind.Gem;
+        case ClickTarget.GemFuncRow: { int fn = r.Func; return s => s.Kind == ScreenKind.Gem && s.GemFunc == fn; }
       }
       return null;
     }
@@ -207,8 +221,9 @@ namespace RealmForge {
     }
 
     /// <summary>Before the pilot decides anything this tick: may it go on? Deny = it is stopped; Wait = not now (a click is still on its way,
-    /// or the screen is not recognised yet - before the first click that only means the player is somewhere else, and it is waited for;
-    /// after a click an unrecognised screen stops the pilot: the tracker has held the last screen for its 1.5 s already).</summary>
+    /// or the screen is not recognised yet). An unrecognised screen right after the pilot's OWN click (within OwnClickWindowMs; the tracker has
+    /// held the last screen for its 1.5 s already) stops the pilot; at any other time (the player clicked something, the game is switching
+    /// forms) it is only waited for: no click while it lasts, the pilot goes on when the screen is known again.</summary>
     public GateResult Preflight(ClickOwner o, ScreenState s, long now) {
       string h;
       if (halted.TryGetValue(o, out h)) return GateResult.Deny("halted", h);
@@ -218,7 +233,8 @@ namespace RealmForge {
       bool modeUnknown = s != null && s.Kind == ScreenKind.Inventory && s.InvEquipTab && !s.InvBulkKnown;
       if (s == null || s.Kind == ScreenKind.Unknown || modeUnknown) {
         string d = modeUnknown ? "the inventory's mode is not readable" : "the screen is not recognised";
-        if (clicked.Contains(o)) return Halt(o, "unknown", d + " after a click");
+        long at;
+        if (clickedAt.TryGetValue(o, out at) && now - at <= OwnClickWindowMs) return Halt(o, "unknown", d + " after the pilot's own click");
         return GateResult.Wait("unknown", d);
       }
       unknownSince.Remove(o);
@@ -258,6 +274,14 @@ namespace RealmForge {
       if (f.Kind == ScreenKind.Foundry) {
         if (rule.FoundryTab != -2 && f.FoundryTab != rule.FoundryTab) return Halt(r.Owner, "screen", tag + ": the Foundry is on " + f.FoundryTabName);
         if (rule.FoundryNotTab != -2 && f.FoundryTab == rule.FoundryNotTab) return Halt(r.Owner, "screen", tag + ": the Foundry is already on " + f.FoundryTabName);
+      }
+      if (rule.SelItem) {
+        long sel = f.Kind == ScreenKind.Gem ? f.GemSel : f.InvSelected;
+        if (sel <= 0 || r.CellOk == null || !r.CellOk.Contains(sel)) return Halt(r.Owner, "cell", tag + ": the screen holds item " + sel + ", not one of the items meant");
+      }
+      if (rule.GemFuncWanted) {
+        if (r.Func != GemRows.Recast && r.Func != GemRows.AdvancedRecast) return Halt(r.Owner, "target", tag + ": " + r.Func + " is not a recast function");
+        if (f.GemFunc == r.Func) return GateResult.Wait("screen", tag + ": the function is already selected");
       }
       if (rule.Cell) {
         if (r.CellUid <= 0) return Halt(r.Owner, "cell", tag + ": the item under the click could not be worked out (the list's exact scroll is needed)");

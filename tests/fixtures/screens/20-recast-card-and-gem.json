@@ -1,0 +1,10 @@
+{ "name": "Recast path: the card's gem button, then the wanted function's row on the gem screen, then nothing (the final button is the player's)", "request": { "purpose": "recast", "uid": 1003, "slot": 1, "hero": 0, "quality": 8 }, "cols": 8, "frames": [
+  { "t": 0, "inv": { "open": true, "equip": true, "bulk": false, "known": true, "current": 1003, "uids": [ 1001, 1002, 1003, 1004, 1005, 1006, 1007, 1008 ], "selected": [], "list": { "scrollY": 0, "cols": 8, "rowUnits": 118 } }, "expect": { "screen": "Inventory", "step": "Selected", "todo": "CardGem", "frame": true }, "clicks": [
+    { "owner": "Locate", "target": "InvCardGem" },
+    { "owner": "Locate", "target": "InvCardGem", "expect": { "verdict": "Wait", "reason": "pending" } } ] },
+  { "t": 600, "rs": { "gem": true, "gemFunc": -1, "gemSel": 1003, "gemFuncList": { "scrollY": 0, "cols": 1, "rowUnits": 110, "first": 0, "last": 5 } }, "expect": { "screen": "Gem", "step": "GemFunction", "todo": "GemFunc", "halt": "" }, "clicks": [
+    { "owner": "Locate", "target": "GemFuncRow", "func": 8 } ] },
+  { "t": 1200, "rs": { "gem": true, "gemFunc": 8, "gemSel": 1003, "gemFuncList": { "scrollY": 0, "cols": 1, "rowUnits": 110, "first": 0, "last": 5 } }, "expect": { "screen": "Gem", "step": "Done", "todo": "Hint", "halt": "" }, "clicks": [
+    { "owner": "Locate", "target": "GemFuncRow", "func": 8, "expect": { "verdict": "Wait", "reason": "screen" } },
+    { "owner": "Locate", "target": "InvCardGem", "expect": { "verdict": "Deny", "reason": "screen" } } ] } ]
+}
