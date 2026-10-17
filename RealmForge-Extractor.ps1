@@ -807,6 +807,15 @@ namespace RealmForge {
     /// on the wrong heroes, «slot does not open»).</summary>
     internal static bool FormAlive(ulong f) { ulong v; int tt; return f != 0 && Field(f, KGrid, out v, out tt) && tt != T_NIL; }
 
+    /// <summary>The form is on screen right now: UIBase:OnActive sets m_LuaLogicActive = true, OnPreInactive clears it (nil)
+    /// (UI/Common/UIBase.lua:350 / :418). A hidden form stays in memory with all its fields (m_SelectHeroData too), so
+    /// FormAlive alone does not mean «shown».</summary>
+    internal static bool FormActive(ulong f) { ulong v; int tt; return FormAlive(f) && Field(f, "m_LuaLogicActive", out v, out tt) && tt == T_BOOL && (v & 0xFFFFFFFF) != 0; }
+
+    /// <summary>The hero of the hero screen, or 0 when the form is known but hidden (the player left the screen): stale
+    /// fields of a hidden form and EquipData's old selection must not count as «the hero screen is open».</summary>
+    public static long GateHero(bool formKnown, bool formActive, long hero) { return formKnown && !formActive ? 0 : hero; }
+
     /// <summary>The live hero screen searched again (a full pass, about a second), at most every <paramref name="ms"/>;
     /// false when it is too soon (then <paramref name="form"/> is not known).</summary>
     internal static bool RescanForm(int ms, out ulong form) {
@@ -2042,7 +2051,7 @@ namespace RealmForge {
       // the hero screen: which slot's gear list is open (m_PanelDatas[3]; nil = the hero grid shows). The list panel keeps
       // its last slot in m_FilterConfig after it is closed, so with the form known only this says the list is on screen.
       int listPart = -1;
-      if (a.Form != 0) {
+      if (a.Form != 0 && FormActive(a.Form)) {
         s.FormOk = true;
         ulong pd; int pdt;
         if (Field(a.Form, "m_PanelDatas", out pd, out pdt) && pdt == T_TABLE && IntKey(pd, 3, out v, out tt) && tt == T_INT) listPart = (int)(long)v;
@@ -2115,7 +2124,10 @@ namespace RealmForge {
         }
         if (formHero <= 0 && selected <= 0 && Field(a.Form, "m_LastPlayuSoundId", out v, out tt) && tt == T_INT && (long)v > 0) sound = (long)v;
       }
-      return PickHero(alive, formHero, add, selected, sound, out source);
+      bool active = alive && FormActive(a.Form);
+      long picked = PickHero(alive, formHero, add, selected, sound, out source);
+      if (a.Form != 0 && !active) source = HeroSrcNone;
+      return GateHero(a.Form != 0, active, picked);
     }
 
     // the hero screen is open (EquipData known from before and its hero set): then the scan must find the form too
@@ -2172,7 +2184,7 @@ namespace RealmForge {
       ulong v; int tt;
       int hsrc; long hsel;
       h.Hero = HeroShown(a, out hsrc, out hsel);
-      if (a.Form == 0) return h;
+      if (a.Form == 0 || !FormActive(a.Form)) return h;   // no form, or hidden (the player left the screen)
       h.FormOk = true;
       if (Field(a.Form, "m_LastType", out v, out tt) && tt == T_INT) h.Tab = (int)(long)v;
       h.SmallCards = Field(a.Form, "m_IsUseSmallCard", out v, out tt) && tt == T_BOOL && v != 0;

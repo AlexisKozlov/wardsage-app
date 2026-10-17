@@ -1595,6 +1595,9 @@ static class CoreTests {
     Eq(0L, RFX.PickHero(true, 0, true, 5, 6, out s), "an add slot shown: no hero"); Eq(RFX.HeroSrcNone, s, "  source: none");
     Eq(5L, RFX.PickHero(false, 7, false, 5, 6, out s), "form not alive: EquipData only"); Eq(RFX.HeroSrcSelected, s, "  source: selected");
     Eq(0L, RFX.PickHero(false, 7, false, 0, 6, out s), "form not alive, nothing selected: unknown");
+    Eq(0L, RFX.GateHero(true, false, 7), "hero form present but hidden: no hero screen");
+    Eq(7L, RFX.GateHero(true, true, 7), "hero form active: the hero as before");
+    Eq(5L, RFX.GateHero(false, false, 5), "no form known: EquipData only, as before");
   }
 
   // The arena: both sides have Hassu (uid 203400000, unit 2034) — the player (controller 1) at 2,5 by command, the
