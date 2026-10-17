@@ -44,12 +44,13 @@ namespace RealmForge {
     /// <summary>Where the list item at the 0-based <paramref name="index"/> is: the cell on the list's viewport from the geometry
     /// (<paramref name="prefix"/> "ascend" or "recast"), placed from the game's scroll reading <paramref name="l"/>. Null = it cannot be
     /// placed (no geometry or no reading).</summary>
-    public static LocateFrame Cell(GameGeometry g, string prefix, RFX.ListRead l, int index, double W, double H, double U) {
+    public static LocateFrame Cell(GameGeometry g, string prefix, RFX.ListRead l, int index, double W, double H, double U, double dx = 0) {
       if (g == null || l == null || !l.Has || index < 0) return null;
       var view = g.Rect(prefix + ".list", W, H, U);
       var cell = g.Rect(prefix + ".cell", W, H, U);
       var grid = g.Grid(prefix + ".list");
       if (view == null || cell == null || grid == null || view.W <= 0 || view.H <= 0) return null;
+      view.X += dx;
       int cols = l.Cols >= 1 ? l.Cols : grid.Cols;
       double line = l.RowUnits > 0 ? l.RowUnits : grid.LineSize;
       double k = U / GameGeometry.CanvasH, pitch = line * k;
@@ -84,6 +85,67 @@ namespace RealmForge {
   }
 
   public static class LocateFrames {
+    /// <summary>The visible part of a button's picture inside its image rectangle, as insets {left, top, right, bottom} in canvas units
+    /// (640 = one U): the picture has an empty margin (mostly below), the frame hugs the visible part.</summary>
+    static readonly System.Collections.Generic.Dictionary<string, double[]> ArtInset = new System.Collections.Generic.Dictionary<string, double[]> {
+      { "ascend.button", new[] { 10.0, 3.7, 11.0, 12.9 } }
+    };
+
+    /// <summary>The same step cut to its slot part only (what the auto mode may click while the item is in the list but off screen).</summary>
+    public static LocateStep SlotOnly(LocateStep st) {
+      return new LocateStep { Kind = LocateKind.AscendFilter, Missing = new[] { "slot" } };
+    }
+
+    /// <summary>How far the filter pop-up sits from the authored place: the game puts its left edge at the filter button's right edge.
+    /// NaN = no geometry for it.</summary>
+    public static double PopupShift(GameGeometry g, double W, double H, double U) {
+      var btn = g.Rect("ascend.filter", W, H, U); var root = g.Rect("filter.root", W, H, U);
+      return btn == null || root == null ? double.NaN : btn.Right - root.X;
+    }
+
+    static LocateFrame PopupFrame(LocateStep st, RecastScreen rs, GameGeometry g, double W, double H, double U) {
+      double dx = PopupShift(g, W, H, U);
+      if (double.IsNaN(dx)) return null;
+      string key = "";
+      switch (st.FilterGo) {
+        case "reset": key = "filter.reset"; break;
+        case "suitRow": key = "filter.suitOpen"; break;
+        case "mainRow": key = "filter.mainOpen"; break;
+        case "subRow": key = "filter.subOpen"; break;
+        case "suitTab": key = "filter.suit.tab." + st.SuitTab; break;
+        case "suitCell": {
+          if (rs == null || st.SuitIndex < 0) return null;
+          var f = FoundryPlace.Cell(g, "filter.suit", rs.FilterSuitGrid, st.SuitIndex, W, H, U, dx);
+          var vw = g.Rect("filter.suit.list", W, H, U);
+          if (f != null) f.Clickable = false;   // the filter is the player's
+          if (f != null && vw != null) { f.ViewX = vw.X + dx; f.ViewY = vw.Y; f.ViewW = vw.W; f.ViewH = vw.H; }
+          return f;
+        }
+        default: return null;
+      }
+      var r = g.Rect(key, W, H, U);
+      if (r == null) return null;
+      r.X += dx;
+      return Box(key, r, false);
+    }
+
+    static LocateFrame Box(string key, GeoRect r, bool click) {
+      var fr = new LocateFrame { Target = key, Clickable = click, ClickX = r.CX, ClickY = r.CY };
+      fr.Mark = new LocateMark { Kind = "box", X = (int)Math.Round(r.X), Y = (int)Math.Round(r.Y), W = (int)Math.Round(r.W), H = (int)Math.Round(r.H) };
+      return fr;
+    }
+
+    /// <summary>The inputs a list cell is placed from, one log line (what the next live test compares with the screen).</summary>
+    public static string PlacementInputs(LocateStep st, RecastScreen rs, GameGeometry g, double W, double H, double U) {
+      if (st == null || rs == null || g == null) return "placement: no data";
+      var l = rs.AscendList;
+      var view = g.Rect("ascend.list", W, H, U); var cell = g.Rect("ascend.cell", W, H, U); var grid = g.Grid("ascend.list");
+      return "placement: index=" + (st.Pos - 1) + " listLen=" + rs.AscendEquips.Length + " cols=" + (l != null ? l.Cols : 0) + " scrollY=" + (l != null && l.Has ? l.ScrollY.ToString("0.#") : "none")
+        + " lineSize=" + (l != null ? l.RowUnits.ToString("0.#") : "0") + " (geometry " + (grid != null ? grid.LineSize.ToString("0.#") + "/" + grid.Cols + "/" + grid.PadTop.ToString("0.#") : "none") + ")"
+        + " view=" + (view != null ? (int)view.X + "," + (int)view.Y + "," + (int)view.W + "," + (int)view.H : "none")
+        + " cell=" + (cell != null ? (int)cell.W + "x" + (int)cell.H : "none") + " window=" + (int)W + "x" + (int)H;
+    }
+
     /// <summary>The slot toggle the step wants, or -1.</summary>
     static int SlotOf(LocateStep st, PlanItem item) {
       return st.Missing != null && Array.IndexOf(st.Missing, "slot") >= 0 && item != null && item.Slot >= 0 && item.Slot <= 4 ? item.Slot : -1;
@@ -94,7 +156,7 @@ namespace RealmForge {
       switch (k) {
         case LocateKind.OpenFoundry: case LocateKind.OpenAscendTab: case LocateKind.OpenRecastTab:
         case LocateKind.AscendFilter: case LocateKind.RecastFilter: case LocateKind.AscendPick: case LocateKind.RecastPick:
-        case LocateKind.AscendReady: case LocateKind.Done: case LocateKind.Selected:
+        case LocateKind.AscendReady: case LocateKind.Done: case LocateKind.Selected: case LocateKind.GemFunction:
           return true;
         default: return false;
       }
@@ -117,7 +179,9 @@ namespace RealmForge {
         case LocateKind.AscendFilter: case LocateKind.RecastFilter: {
           string p = st.Kind == LocateKind.AscendFilter ? "ascend" : "recast";
           int slot = SlotOf(st, item);
-          if (slot >= 0) { key = p + ".slot." + slot; click = p == "ascend"; } else key = p + ".filter";   // the filter itself is the player's
+          if (slot >= 0) { key = p + ".slot." + slot; click = p == "ascend"; }
+          else if (st.Kind == LocateKind.AscendFilter && st.FilterGo != "") { var pf = PopupFrame(st, rs, g, W, H, U); if (pf != null) return pf; key = p + ".filter"; }
+          else key = p + ".filter";   // the filter itself is the player's
           break;
         }
         case LocateKind.AscendPick: case LocateKind.RecastPick: {
@@ -133,14 +197,47 @@ namespace RealmForge {
           return f;
         }
         case LocateKind.AscendReady: key = "ascend.button"; break;
-        case LocateKind.Done: if (st.OnGem) return null; key = "recast.button"; break;
-        case LocateKind.Selected: key = "inventory.cardLeft"; break;
+        case LocateKind.Done: key = st.OnGem ? "gem.button" : "recast.button"; break;
+        case LocateKind.GemFunction: return GemRow(g, rs, st.Func != 0 ? st.Func : GemRows.Recast, W, H, U);
+        case LocateKind.Selected: key = st.Worn ? "inventory.cardLeft" : "inventory.cardSolo"; break;   // a worn item: Gems | Remove; otherwise the gem button is alone, centred
       }
       if (r == null && key != "" && key != "foundry.tab.ascend" && key != "foundry.tab.recast") r = g.Rect(key, W, H, U);
       if (r == null) return null;
-      var fr = new LocateFrame { Target = key, Clickable = click, ClickX = r.CX, ClickY = r.CY };
-      fr.Mark = new LocateMark { Kind = "box", X = (int)Math.Round(r.X), Y = (int)Math.Round(r.Y), W = (int)Math.Round(r.W), H = (int)Math.Round(r.H) };
-      return fr;
+      double[] ins;
+      if (ArtInset.TryGetValue(key, out ins)) {
+        double k = U / GameGeometry.CanvasH;
+        r = new GeoRect { X = r.X + ins[0] * k, Y = r.Y + ins[1] * k, W = r.W - (ins[0] + ins[2]) * k, H = r.H - (ins[1] + ins[3]) * k };
+      }
+      return Box(key, r, click);
+    }
+
+    /// <summary>The gem screen's list row of a recast function (a hint only: the player picks it). The game's own reading of the list places it;
+    /// when that is unreadable the list is taken at the top (it opens there). Null = no geometry, or the function is not in the list.</summary>
+    public static LocateFrame GemRow(GameGeometry g, RecastScreen rs, int func, double W, double H, double U) {
+      int row = GemRows.Index(func);
+      var grid = g != null ? g.Grid("gem.list") : null;
+      if (row < 0 || grid == null) return null;
+      var l = rs != null ? rs.GemFuncList : null;
+      if (l == null || !l.Has) l = new RFX.ListRead { ScrollY = 0, Cols = 1, RowUnits = grid.LineSize };
+      var f = FoundryPlace.Cell(g, "gem", l, row, W, H, U);
+      if (f != null) f.Clickable = false;
+      return f;
+    }
+
+    /// <summary>The item's mark on the inventory list's scroll bar: {x, track top, track bottom, dot y, bracket top, bracket bottom} in client px
+    /// (the same strip the plan's hints draw), from the list's first row (<paramref name="row1"/>, client y of its top) and the list's own
+    /// numbers: <paramref name="viewTop"/> and <paramref name="topPad"/> as the grid lays out, <paramref name="pitch"/> one row, all px.
+    /// Null = no geometry for the bar, or the row is not in the list.</summary>
+    public static double[] ListMarker(GameGeometry g, double row1, double viewTop, double topPad, double pitch, int rows, int row, double W, double H, double U) {
+      var bar = g != null ? g.Rect("inventory.scrollbar", W, H, U) : null;
+      var view = g != null ? g.Rect("inventory.listView", W, H, U) : null;
+      if (bar == null || bar.H <= 0 || rows < 1 || row < 1 || row > rows || pitch <= 0) return null;
+      double total = Math.Max(rows * pitch + 2 * topPad, 1), viewLen = view != null && view.H > 0 ? view.H : bar.H;
+      double scroll = viewTop - (row1 - topPad), itemY = topPad + (row - 0.5) * pitch;   // from the content's top
+      Func<double, double> at = v => bar.Y + bar.H * Math.Max(0, Math.Min(1, v / total));
+      double b0 = at(scroll), b1 = at(scroll + viewLen);
+      if (b1 - b0 < 6) b1 = Math.Min(bar.Bottom, b0 + 6);
+      return new[] { bar.CX, bar.Y, bar.Bottom, at(itemY), b0, b1 };
     }
 
     // the exact scroll is unreadable but the game's own cell range says the item is above / below: only the pill, at the viewport edge

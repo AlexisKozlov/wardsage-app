@@ -539,6 +539,27 @@ static class CoreTests {
       // the hints' plate beside its target, kept in the window
       {
         char side;
+        // a plate with no target on screen: top centre of the window, 0.12 U down, inside it
+        {
+          double Ut = Ui.Unit(1366, 705);
+          int[] tp = HintLayout.TopPlate(300, 90, 1366, 705, Ut);
+          Check(tp[0] == 1366 / 2 - 150 && tp[1] == (int)(0.12 * Ut), "no target: the plate at the top centre (" + tp[0] + "," + tp[1] + ")");
+          tp = HintLayout.TopPlate(2000, 90, 1366, 705, Ut);
+          Check(tp[0] >= 0 && tp[1] + 90 <= 705, "no target, a wide plate: still inside the window");
+        }
+        // the Inventory form (Form_BackpackIntegration: equipment panel inside, NO hero-screen grid field) counts as shown while
+        // m_LuaLogicActive is set; the hero screen's FormActive must not decide it (live 0.61.193 regression)
+        {
+          var mi = new FakeLua(1 << 20); RFX.TestMemory = mi;
+          try {
+            var si = new FakeState(mi);
+            var panel = si.T("m_CurrentBottomButtonState", 2L);
+            var shown = si.T("m_LuaLogicActive", true, "m_CurrentMainTabId2", -9998L, "m_CachedContentPanels", si.T(-9998L, panel));
+            var hidden = si.T("m_CurrentMainTabId2", -9998L, "m_CachedContentPanels", si.T(-9998L, panel));
+            Check(RFX.InvFormShown(shown.A), "inventory form with m_LuaLogicActive: shown");
+            Check(!RFX.InvFormShown(hidden.A) && !RFX.InvFormShown(0), "inventory form without it, or none: not shown");
+          } finally { RFX.TestMemory = null; RFX.ForgetLive(); }
+        }
         int[] pl = HintLayout.Plate(new[] { 100, 300, 80, 100 }, 300, 90, 1366, 705, out side);
         Check(side == 'r' && pl[0] == 100 + 80 + HintLayout.Gap && pl[1] == 300 + 50 - 45, "plate right of the item (" + side + " " + pl[0] + "," + pl[1] + ")");
         pl = HintLayout.Plate(new[] { 1200, 300, 80, 100 }, 300, 90, 1366, 705, out side);
@@ -614,6 +635,7 @@ static class CoreTests {
     LocatePilotTests();
     GeometryTests();
     LocateFoundryPilotTests();
+    LocateGemAndListTests();
     SellHintTests();
 
     Console.WriteLine("Fight timeline (src/TimelineBuilder.cs: samples of the running fight + its command record):");
@@ -2362,7 +2384,7 @@ static class CoreTests {
     f = LocateFrames.For(new LocateStep { Kind = LocateKind.AscendFilter, Missing = new[] { "slot", "main" } }, item, rs, null, g, W, H, U); Check(f != null && f.Clickable && f.Target == "ascend.slot.3", "frame: the item's slot tab first, clickable");
     f = LocateFrames.For(new LocateStep { Kind = LocateKind.AscendFilter, Missing = new[] { "main", "subs" } }, item, rs, null, g, W, H, U); Check(f != null && !f.Clickable && f.Target == "ascend.filter", "frame: the filter button is only pointed at");
     f = LocateFrames.For(S(LocateKind.AscendReady), item, rs, null, g, W, H, U); Check(f != null && !f.Clickable && f.Target == "ascend.button", "frame: «Вознести», never clickable");
-    f = LocateFrames.For(S(LocateKind.Selected), item, rs, null, g, W, H, U); Check(f != null && !f.Clickable && f.Target == "inventory.cardLeft", "frame: the card's button, never clickable");
+    f = LocateFrames.For(new LocateStep { Kind = LocateKind.Selected, Worn = true }, item, rs, null, g, W, H, U); Check(f != null && !f.Clickable && f.Target == "inventory.cardLeft", "frame: the card's button, never clickable");
     f = LocateFrames.For(new LocateStep { Kind = LocateKind.AscendPick, Pos = 8 }, item, rs, null, g, W, H, U); Check(f != null && f.Clickable && f.ViewH > 0, "frame: the item's cell in the Ascension list, clickable");
     f = LocateFrames.For(new LocateStep { Kind = LocateKind.AscendPick, Pos = 8 }, item, new RecastScreen { SublimingOpen = true }, null, g, W, H, U); Check(f == null, "frame: the list is unreadable and the game's cell range is unknown -> none");
     f = LocateFrames.For(new LocateStep { Kind = LocateKind.AscendPick, Pos = 8, Scroll = "below", ScrollRows = 3 }, item, new RecastScreen { SublimingOpen = true }, null, g, W, H, U); Check(f != null && f.Mark.Kind == "down" && f.Mark.Rows == 3 && !f.Clickable, "frame: scroll not readable but the cell range says 'below' -> only the pill");
@@ -2389,10 +2411,134 @@ static class CoreTests {
         Check(il != null && Math.Abs(il.Y / 1009 - 0.190) < 0.003, "the site's geometry file " + v + ": the inventory list top agrees with the app's constant (" + (il != null ? (il.Y / 1009).ToString("0.0000") : "-") + ")");
         var cell = FoundryPlace.Cell(rg, "ascend", L(0), 0, 1920, 1009, 1009); var vw = rg.Rect("ascend.list", 1920, 1009, 1009);
         Check(cell != null && cell.Mark.Kind == "box" && cell.Mark.X >= vw.X - 1 && cell.Mark.X + cell.Mark.W <= vw.Right + 1 && cell.Mark.Y >= vw.Y - 1, "the site's geometry file " + v + ": the first Ascension cell sits inside the list");
+        // the filter pop-up: its frames sit to the right of the filter button, the set cell inside the set grid
+        if (rg.Has("filter.root")) {
+          var fbtn = rg.Rect("ascend.filter", 1920, 1009, 1009);
+          var pstep = new LocateStep { Kind = LocateKind.AscendFilter, Missing = new[] { "suit" }, FilterGo = "suitRow" };
+          var pf = LocateFrames.For(pstep, item, null, null, rg, 1920, 1009, 1009);
+          Check(pf != null && pf.Target == "filter.suitOpen" && !pf.Clickable && pf.Mark.X >= fbtn.Right - 1 && pf.Mark.Y > 0, "pop-up: the set row's button sits right of the filter button, never clickable");
+          pstep.FilterGo = "reset"; pf = LocateFrames.For(pstep, item, null, null, rg, 1920, 1009, 1009); Check(pf != null && pf.Target == "filter.reset" && pf.Mark.X >= fbtn.Right - 1, "pop-up: «Сбросить» frame");
+          pstep.FilterGo = "suitTab"; pstep.SuitTab = 1; var tab1 = LocateFrames.For(pstep, item, null, null, rg, 1920, 1009, 1009); pstep.SuitTab = 0; var tab0 = LocateFrames.For(pstep, item, null, null, rg, 1920, 1009, 1009);
+          Check(tab0 != null && tab1 != null && tab1.Mark.X > tab0.Mark.X && tab1.Mark.Y == tab0.Mark.Y, "pop-up: the 3-piece tab is right of the 2-piece tab");
+          var prs = new RecastScreen { FilterSuitGrid = new RFX.ListRead { ScrollY = 0, Cols = 2, RowUnits = 42, First = 0, Last = 17 } };
+          pstep.FilterGo = "suitCell"; pstep.SuitIndex = 0; var c0 = LocateFrames.For(pstep, item, prs, null, rg, 1920, 1009, 1009);
+          pstep.SuitIndex = 3; var c3 = LocateFrames.For(pstep, item, prs, null, rg, 1920, 1009, 1009);
+          Check(c0 != null && c3 != null && !c0.Clickable && c3.Mark.X > c0.Mark.X && c3.Mark.Y > c0.Mark.Y, "pop-up: set cells fill the grid two per row (index 3 = second row, right column)");
+          prs.FilterSuitGrid = null; pstep.SuitIndex = 3; var fb = LocateFrames.For(pstep, item, prs, null, rg, 1920, 1009, 1009); Check(fb != null && fb.Target == "ascend.filter", "pop-up: set grid unreadable -> only the filter button is pointed at");
+        }
+        var ab = LocateFrames.For(new LocateStep { Kind = LocateKind.AscendReady }, item, null, null, rg, 1920, 1009, 1009); var abr = rg.Rect("ascend.button", 1920, 1009, 1009);
+        Check(ab != null && ab.Mark.H < abr.H - 5 && ab.Mark.Y > abr.Y && ab.Mark.Y + ab.Mark.H < abr.Bottom, "«Вознести»: the frame hugs the visible picture, inside the image rectangle");
         var t3 = FoundryPlace.Tab(rg, "ascend", null, 1920, 1009, 1009); Check(t3 != null && t3.X > 1920 / 2 && t3.Right <= 1920 + 10, "the site's geometry file " + v + ": the Ascension tab is at the right edge");
       }
       Check(n > 0, "the site has geometry files");
     } else Console.WriteLine("  (no ../wardsage-web: the site's geometry files not checked)");
+  }
+
+  // the recast path through the card's gem button, the gem screen's function list, the item's mark on the inventory's scroll bar
+  static void LocateGemAndListTests() {
+    Console.WriteLine("Locate: card button, gem function rows and steps, the list's scroll bar mark");
+    // function rows: the config order, locked functions drop out
+    Eq(0, GemRows.Index(7), "gem rows: Recast is the first row");
+    Eq(1, GemRows.Index(8), "gem rows: Advanced Recast the second");
+    Eq(2, GemRows.Index(5), "gem rows: Refine the third");
+    Eq(8, GemRows.Index(4), "gem rows: the last function is the ninth row");
+    Eq(-1, GemRows.Index(99), "gem rows: an unknown function is not in the list");
+    Eq(0, GemRows.Index(8, new[] { 7 }), "gem rows: Recast locked -> Advanced Recast moves up to the first row");
+    Eq(-1, GemRows.Index(7, new[] { 7 }), "gem rows: a locked function has no row");
+    Eq(7, GemRows.FuncOfQuality(6), "gem func: mythic -> Recast"); Eq(7, GemRows.FuncOfQuality(10), "gem func: variant of mythic's table row (10) -> Recast");
+    Eq(8, GemRows.FuncOfQuality(8), "gem func: ancient mythic -> Advanced Recast"); Eq(8, GemRows.FuncOfQuality(11), "gem func: 11 -> Advanced Recast");
+    Eq(8, GemRows.FuncOfQuality(12), "gem func: 12 -> Advanced Recast"); Eq(8, GemRows.FuncOfQuality(13), "gem func: 13 -> Advanced Recast");
+    Eq(0, GemRows.FuncOfQuality(0), "gem func: quality unknown -> either function"); Eq(0, GemRows.FuncOfQuality(3), "gem func: a lower quality has no recast");
+
+    // steps on the gem screen: the function the item needs; done as soon as it is chosen (no press of «Улучшить» waited for)
+    var mythic = LocItem(777, 4, 720100, 12, 5, 7, 9, 3); mythic.Quality = 6;
+    var ancient = LocItem(778, 4, 720100, 12, 5, 7, 9, 3); ancient.Quality = 8;
+    var rq = new LocateRequest { Id = "g1", Purpose = "recast", Item = mythic, HeroUid = 0 };
+    var ra = new LocateRequest { Id = "g2", Purpose = "recast", Item = ancient, HeroUid = 0 };
+    var gm = new RecastScreen { GemOpen = true, GemSel = 777, GemFunc = -1 };
+    var st = LocateGuide.Next(rq, null, gm, null, 8, 1);
+    Check(st.Kind == LocateKind.GemFunction && st.Func == 7 && !st.WrongFunc, "gem step: mythic, no function chosen -> «Преобразование»");
+    gm.GemFunc = 8; st = LocateGuide.Next(rq, null, gm, null, 8, 1);
+    Check(st.Kind == LocateKind.GemFunction && st.Func == 7 && st.WrongFunc, "gem step: mythic with Advanced Recast chosen -> still choosing, the other function is named");
+    gm.GemFunc = 7; st = LocateGuide.Next(rq, null, gm, null, 8, 1);
+    Check(st.Kind == LocateKind.Done && st.OnGem && st.Func == 7, "gem step: mythic with Recast chosen -> done at once");
+    gm.GemSel = 778; gm.GemFunc = 7; st = LocateGuide.Next(ra, null, gm, null, 8, 1);
+    Check(st.Kind == LocateKind.GemFunction && st.Func == 8 && st.WrongFunc, "gem step: ancient mythic with Recast chosen -> not done, «Продв. преобразование» is named");
+    gm.GemFunc = 8; st = LocateGuide.Next(ra, null, gm, null, 8, 1);
+    Check(st.Kind == LocateKind.Done && st.OnGem && st.Func == 8, "gem step: ancient mythic with Advanced Recast chosen -> done at once");
+    gm.GemFunc = 1; st = LocateGuide.Next(ra, null, gm, null, 8, 1);
+    Check(st.Kind == LocateKind.GemFunction && !st.WrongFunc, "gem step: a gem enhancement chosen -> choose the recast (not 'the other recast')");
+    gm.GemFunc = 8; gm.GemSel = 5; gm.GemList = new long[] { 5, 778 }; st = LocateGuide.Next(ra, null, gm, null, 8, 1);
+    Check(st.Kind == LocateKind.GemPick && st.Pos == 2, "gem step: the function is chosen but another item is on the screen -> pick the item in the pop-up");
+    // the card: both buttons for a worn item, the gem button alone otherwise
+    var invS = new InventoryScreen { Open = true, EquipTab = true, Uids = new List<long>(new long[] { 777 }), Current = 777 };
+    st = LocateGuide.Next(rq, invS, null, null, 8, 1); Check(st.Kind == LocateKind.Selected && !st.Worn, "card step: an item that is not worn -> the gem button is alone");
+    st = LocateGuide.Next(new LocateRequest { Id = "g3", Purpose = "recast", Item = mythic, HeroUid = 200 }, invS, null, null, 8, 1); Check(st.Kind == LocateKind.Selected && st.Worn, "card step: a worn item -> both buttons");
+
+    // frames on a fixture: the gem rows and the button
+    const double W = 2000, H = 1000, U = 1000;
+    var j = "{\"game\":\"" + GeoGame + "\",\"v\":1,\"rects\":{" + string.Join(",", new[] {
+      GeoBox("gem.list", "L:0.1", "L:0.58", "T:0.2", "T:0.7", 0.48, 0.5), GeoBox("gem.cell", "L:0", "L:0.45", "T:0.3", "T:0.4", 0.45, 0.1),
+      GeoBox("gem.button", "C:-0.17", "C:0.17", "M:0.345", "M:0.455", 0.34, 0.11),
+      GeoBox("inventory.cardLeft", "R:-0.48", "R:-0.26", "B:-0.1", "B:-0.02", 0.22, 0.08), GeoBox("inventory.cardSolo", "R:-0.37", "R:-0.15", "B:-0.1", "B:-0.02", 0.22, 0.08),
+      GeoBox("inventory.scrollbar", "L:0.8", "L:0.815", "T:0.2", "T:0.8", 0.015, 0.6), GeoBox("inventory.listView", "L:0.1", "L:0.8", "T:0.2", "T:0.75", 0.7, 0.55) })
+      + "},\"grids\":{\"gem.list\":{\"cols\":1,\"lineSize\":110,\"padding\":[0,0,0,0]}}}";
+    var g = GameGeometry.Parse(j, GeoGame);
+    var f7 = LocateFrames.For(new LocateStep { Kind = LocateKind.GemFunction, Func = 7 }, mythic, new RecastScreen { GemOpen = true }, null, g, W, H, U);
+    var f8 = LocateFrames.For(new LocateStep { Kind = LocateKind.GemFunction, Func = 8 }, ancient, new RecastScreen { GemOpen = true }, null, g, W, H, U);
+    double pitch = 110.0 / 640 * U;
+    Check(f7 != null && f8 != null && f7.Mark.Kind == "box" && !f7.Clickable, "gem frame: the function's row is framed, a hint only");
+    Check(Math.Abs((f7.Mark.Y) - (200 + (pitch - 100) / 2)) <= 1 && Math.Abs(f8.Mark.Y - f7.Mark.Y - pitch) <= 1 && f7.Mark.H == 100, "gem frame: the rows follow each other by the list's line size (Recast row 1, Advanced Recast row 2)");
+    Check(Math.Abs(f7.Mark.X - (100 + (480 - 450) / 2.0)) <= 1 && f7.Mark.W == 450, "gem frame: the row sits centred in the list's width");
+    var scr = new RecastScreen { GemOpen = true, GemFuncList = new RFX.ListRead { ScrollY = 220, Cols = 1, RowUnits = 110, First = 2, Last = 6 } };
+    var f7s = LocateFrames.For(new LocateStep { Kind = LocateKind.GemFunction, Func = 7 }, mythic, scr, null, g, W, H, U);
+    Check(f7s != null && f7s.Mark.Kind == "up" && f7s.Mark.Rows >= 1, "gem frame: the list scrolled past the row -> the pill says which way");
+    scr.GemFuncList.ScrollY = 110; var f8s = LocateFrames.For(new LocateStep { Kind = LocateKind.GemFunction, Func = 8 }, ancient, scr, null, g, W, H, U);
+    Check(f8s != null && Math.Abs(f8s.Mark.Y - (200 + (pitch - 100) / 2)) <= 1, "gem frame: the list's own scroll moves the rows (one row down = the second function is where the first was)");
+    Check(LocateFrames.For(new LocateStep { Kind = LocateKind.GemFunction, Func = 7 }, mythic, null, null, null, W, H, U) == null, "gem frame: no geometry -> none");
+    var fb = LocateFrames.For(new LocateStep { Kind = LocateKind.Done, OnGem = true, Func = 7 }, mythic, new RecastScreen(), null, g, W, H, U);
+    var br = g.Rect("gem.button", W, H, U);
+    Check(fb != null && fb.Target == "gem.button" && !fb.Clickable && fb.Mark.X == (int)Math.Round(br.X) && fb.Mark.W == (int)Math.Round(br.W), "gem frame: done -> «Улучшить» is framed, never clicked");
+    var fw = LocateFrames.For(new LocateStep { Kind = LocateKind.Selected, Worn = true }, mythic, null, null, g, W, H, U);
+    var fs2 = LocateFrames.For(new LocateStep { Kind = LocateKind.Selected, Worn = false }, mythic, null, null, g, W, H, U);
+    Check(fw != null && fs2 != null && fw.Target == "inventory.cardLeft" && fs2.Target == "inventory.cardSolo" && fs2.Mark.X > fw.Mark.X, "card frame: worn = left of the row, not worn = the centred button");
+    Check(fw.Mark.Y + fw.Mark.H == (int)Math.Round(H - 0.02 * U) || Math.Abs(fw.Mark.Y + fw.Mark.H - (H - 0.02 * U)) <= 1, "card frame: it sits on the card's bottom edge");
+
+    // the item's mark on the list's scroll bar: the bar is 600 px, the content 20 rows of 100 + 12 padding twice
+    double pad = 12, vt = 200, p100 = 100;
+    var mk = LocateFrames.ListMarker(g, vt + pad, vt, pad, p100, 20, 20, W, H, U);   // scrolled to the top, the item in the last row
+    double total = 20 * p100 + 2 * pad;
+    Check(mk != null && Math.Abs(mk[0] - (0.8 + 0.0075) * U) < 1 && mk[1] == 200 && mk[2] == 800, "list mark: on the bar's middle line, over the bar's whole height");
+    Check(Math.Abs(mk[3] - (200 + 600 * (pad + 19.5 * p100) / total)) < 0.5, "list mark: the dot at the item's share of the whole list (" + (mk != null ? mk[3].ToString("0.0") : "-") + ")");
+    Check(Math.Abs(mk[4] - 200) < 0.5 && Math.Abs(mk[5] - (200 + 600 * 550 / total)) < 0.5, "list mark: the bracket shows the part on the screen (top of the list)");
+    var mk1 = LocateFrames.ListMarker(g, vt + pad, vt, pad, p100, 20, 1, W, H, U);
+    Check(mk1[3] < mk[3] && Math.Abs(mk1[3] - (200 + 600 * (pad + 0.5 * p100) / total)) < 0.5, "list mark: the first row's dot is near the top");
+    var mk2 = LocateFrames.ListMarker(g, vt + pad - 500, vt, pad, p100, 20, 20, W, H, U);   // scrolled down by 500 px
+    Check(Math.Abs(mk2[4] - (200 + 600 * 500 / total)) < 0.5 && Math.Abs(mk2[3] - mk[3]) < 0.01, "list mark: scrolling moves the bracket, not the item's dot");
+    Check(LocateFrames.ListMarker(g, vt + pad, vt, pad, p100, 20, 21, W, H, U) == null && LocateFrames.ListMarker(g, vt + pad, vt, pad, p100, 20, 0, W, H, U) == null, "list mark: a row outside the list -> none");
+    Check(LocateFrames.ListMarker(null, vt + pad, vt, pad, p100, 20, 5, W, H, U) == null, "list mark: no geometry -> none (only the pill)");
+
+    // the real file: the card's button sits on the card's bottom edge at any window height, the bar next to the list
+    string real = Path.Combine("..", "wardsage-web", "data", "app-geometry");
+    if (Directory.Exists(real)) foreach (var p in Directory.GetFiles(real, "*.json")) {
+      string v = Path.GetFileNameWithoutExtension(p);
+      var rg = GameGeometry.Parse(File.ReadAllText(p, Encoding.UTF8), v);
+      if (rg == null) continue;
+      bool all = true; foreach (var k in new[] { "inventory.cardSolo", "inventory.listView", "inventory.scrollbar", "gem.list", "gem.cell", "gem.button" }) if (!rg.Has(k)) { all = false; Console.WriteLine("    missing " + k); }
+      Check(all && rg.Grid("gem.list") != null, "the site's geometry file " + v + " has the card's solo button, the list's scroll bar and the gem screen");
+      foreach (var hh in new[] { 640.0, 1009.0, 1440.0 }) {
+        double ww = hh * 16 / 9, uu = hh;
+        var l = rg.Rect("inventory.cardLeft", ww, hh, uu); var r = rg.Rect("inventory.cardRight", ww, hh, uu); var so = rg.Rect("inventory.cardSolo", ww, hh, uu);
+        Check(Math.Abs(l.Bottom - (hh - 12.9 / 640 * uu)) < 1 && Math.Abs(so.CY - l.CY) < 0.5, "the site's geometry file " + v + ": the card's buttons sit on the card's bottom edge at " + hh + " px (" + l.Bottom.ToString("0.0") + ")");
+        Check(Math.Abs(so.CX - (l.X + r.Right) / 2) < 1.5, "the site's geometry file " + v + ": the lone button is in the middle of the pair's span");
+        var bar = rg.Rect("inventory.scrollbar", ww, hh, uu); var lv = rg.Rect("inventory.listView", ww, hh, uu);
+        Check(bar != null && lv != null && Math.Abs(bar.Y - lv.Y) < 1 && bar.X > lv.Right - 25 && bar.X < lv.Right + 25 && bar.Bottom > lv.Bottom - 5, "the site's geometry file " + v + ": the scroll bar runs beside the list at its right edge");
+        var gl = rg.Rect("gem.list", ww, hh, uu); var gb = rg.Rect("gem.button", ww, hh, uu);
+        Check(gl != null && gb != null && gb.CX > gl.CX && gb.Y > hh * 0.7 && gb.CX > ww * 0.4 && gb.CX < ww * 0.6, "the site's geometry file " + v + ": the function list is left of the bottom-centre «Улучшить»");
+        var gf = FoundryPlace.Cell(rg, "gem", new RFX.ListRead { ScrollY = 0, Cols = 1, RowUnits = 110 }, GemRows.Index(8), ww, hh, uu);
+        Check(gf != null && gf.Mark.Kind == "box" && gf.Mark.Y >= gl.Y && gf.Mark.Y + gf.Mark.H <= gl.Bottom + 1, "the site's geometry file " + v + ": the second function's row is inside the list at the top");
+      }
+    }
   }
 
   // the pilot's Foundry steps (src/LocatePilot.cs) on the fixture geometry
@@ -2461,6 +2607,18 @@ static class CoreTests {
     p = new LocatePilot(); { int still = 0; long t = 0; string last = "";
       for (int i = 0; i < 10; i++, t += 2500) { v = V(new LocateStep { Kind = LocateKind.AscendPick, Pos = 41 }, R(100)); v.NowMs = t; m = p.Step(v); last = m.State + "/" + m.Why; if (m.Action.Kind == AutoKind.Drag) still++; if (m.State == "stopped") break; }
       Check(p.Stopped && p.Reason == "lost" && still <= 3, "foundry auto: a list that does not move on drags stops the pilot (" + still + " drags, " + last + ")"); }
+    // the item is in the long all-slots list and off the screen: the slot tab first, then the scroll and the cell (the filter is never needed)
+    v = V(new LocateStep { Kind = LocateKind.AscendPick, Pos = 41, Scroll = "below", ScrollRows = 4, Missing = new[] { "slot" } }, R(0));
+    Eq(LocateTodo.SlotTab, LocateAuto.Decide(v, out why), "foundry auto: item in the list but off screen and the slot not set -> the slot tab first");
+    p = new LocatePilot(); m = p.Step(v);
+    Check(m.Action.Kind == AutoKind.Click && Math.Abs(m.Action.X - st3.CX) < 1 && Math.Abs(m.Action.Y - st3.CY) < 1, "foundry auto: ... the click is on the item's slot tab, not on the list");
+    v = V(new LocateStep { Kind = LocateKind.AscendPick, Pos = 8, Scroll = "visible", Missing = new[] { "slot" } }, R(0));
+    Eq(LocateTodo.AscendCell, LocateAuto.Decide(v, out why), "foundry auto: the item is on the screen already -> its cell, no slot tab");
+    v = V(new LocateStep { Kind = LocateKind.AscendPick, Pos = 41, Scroll = "below", ScrollRows = 4, Missing = new string[0] }, R(0));
+    Eq(LocateTodo.AscendCell, LocateAuto.Decide(v, out why), "foundry auto: the slot is set, the item is far below -> scroll to it");
+    v = V(new LocateStep { Kind = LocateKind.AscendLoading }, R(0)); Eq(LocateTodo.Hint, LocateAuto.Decide(v, out why), "foundry auto: the list is being read -> wait, no click");
+    v = V(new LocateStep { Kind = LocateKind.AscendFilter, Missing = new[] { "suit" }, FilterGo = "suitRow" }, R(0));
+    Eq(LocateTodo.Hint, LocateAuto.Decide(v, out why), "foundry auto: the pop-up's buttons are the player's");
     v = V(new LocateStep { Kind = LocateKind.AscendPick, Pos = 8 }, new RecastScreen { SublimingOpen = true, AscendShown = true, CurType = 2, AscendList = new RFX.ListRead() });
     Eq(LocateTodo.Hint, LocateAuto.Decide(v, out why), "foundry auto: the list's scroll is unreadable -> a hint");
 
@@ -2602,7 +2760,7 @@ static class CoreTests {
     st = LocateGuide.Next(areq, null, ars, null, 8, 1);
     Check(st.Kind == LocateKind.AscendPick && st.Pos == 2 && st.Count == 3, "ascend: item in the Ascension list -> pick");
     ars.AscendSel = 777; Eq(LocateKind.AscendReady, LocateGuide.Next(areq, null, ars, null, 8, 1).Kind, "ascend: selected -> press Ascend");
-    ars.AscendSel = 5; ars.AscendEquips = new long[] { 100 };
+    ars.AscendSel = 5; ars.AscendEquips = new long[] { 100 }; ars.AscendList = new RFX.ListRead { ScrollY = 0, Cols = 5, RowUnits = 108, First = 0, Last = 0 };
     ars.AscendParts = new[] { 4 }; ars.AscendSuits = new long[] { 720100 }; ars.AscendMainAttrs = new long[] { 12 }; ars.AscendSubAttrs = new long[] { 5, 7, 9, 3 };
     Eq(LocateKind.AscendNotInList, LocateGuide.Next(areq, null, ars, null, 8, 1).Kind, "ascend: not in the list (filter complete)");
     ars = ar(); ars.CurType = 3; ars.AscendShown = false;
@@ -2625,7 +2783,7 @@ static class CoreTests {
     ars = ar(); ars.AscendEquips = new long[] { 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 777 };
     ars.AscendList = new RFX.ListRead { ScrollY = 0, Cols = 4, RowUnits = 100, First = 0, Last = 7 };
     st = LocateGuide.Next(areq, null, ars, null, 8, 1);
-    Check(st.Kind == LocateKind.AscendFilter && st.Pos == 12 && st.Row == 3 && st.Col == 4 && st.Scroll == "below" && st.ScrollRows == 1, "ascend: long list, filter unset -> filter; item at row 3 place 4, one row below the cells on screen");
+    Check(st.Kind == LocateKind.AscendPick && st.Pos == 12 && st.Row == 3 && st.Col == 4 && st.Scroll == "below" && st.ScrollRows == 1 && st.Missing.Length > 0, "ascend: long list, item in it, filter unset -> pick anyway (not the filter); item at row 3 place 4, one row below the cells on screen");
     ars.AscendParts = new[] { 4 }; ars.AscendSuits = new long[] { 720100 }; ars.AscendMainAttrs = new long[] { 12 }; ars.AscendSubAttrs = new long[] { 5, 7, 9, 3 };
     st = LocateGuide.Next(areq, null, ars, null, 8, 1);
     Check(st.Kind == LocateKind.AscendPick && st.Scroll == "below" && st.ScrollRows == 1, "ascend: filter set -> pick, with the rows to scroll");
@@ -2638,9 +2796,38 @@ static class CoreTests {
     st = LocateGuide.Next(areq, null, ars, null, 8, 1);
     Check(st.Kind == LocateKind.AscendPick && st.Scroll == "" && st.Pos == 12 && st.Col == 1, "ascend: list not readable -> position only");
     ars.AscendEquips = new long[] { 100, 101 };
+    Eq(LocateKind.AscendLoading, LocateGuide.Next(areq, null, ars, null, 8, 1).Kind, "ascend: the list is not readable yet and the item is not in it -> wait, no filter advice");
+    ars.AscendList = new RFX.ListRead { ScrollY = 0, Cols = 4, RowUnits = 100, First = 0, Last = 1 };
     Eq(LocateKind.AscendNotInList, LocateGuide.Next(areq, null, ars, null, 8, 1).Kind, "ascend: filter complete, item not in the list -> not ascendable / extra stat");
     ars.AscendSubAttrs = new long[0];
     Eq(LocateKind.AscendFilter, LocateGuide.Next(areq, null, ars, null, 8, 1).Kind, "ascend: not in the list and the filter incomplete -> filter hint");
+    ars.AscendSel = 777; ars.AscendEquips = new long[] { 100 };
+    Check(LocateGuide.Next(areq, null, ars, null, 8, 1).Kind != LocateKind.AscendReady, "ascend: a stale selection that the list does not hold is not 'ready'");
+    // the filter pop-up: what to press (the filter is hints only)
+    {
+      var pr = ar(); pr.AscendEquips = new long[] { 100 }; pr.AscendList = new RFX.ListRead { ScrollY = 0, Cols = 5, RowUnits = 108, First = 0, Last = 0 };
+      pr.AscendParts = new[] { 4 }; pr.AscendMainAttrs = new long[] { 12 }; pr.AscendSubAttrs = new long[] { 5, 7, 9, 3 };
+      pr.FilterLeftSuits = new long[] { 720200 }; pr.FilterRightSuits = new long[] { 720100, 720101 }; pr.FilterShowSuits = new long[] { 720101, 720100 };
+      st = LocateGuide.Next(areq, null, pr, null, 8, 1);
+      Check(st.Kind == LocateKind.AscendFilter && st.FilterGo == "" && Array.IndexOf(st.Missing, "suit") >= 0, "pop-up closed: the filter step, nothing to press inside");
+      pr.AscendFilterOpen = true; pr.FilterPanel = 0;
+      Eq("suitRow", LocateGuide.Next(areq, null, pr, null, 8, 1).FilterGo, "pop-up open, set panel closed -> the set row");
+      pr.FilterPanel = 1; pr.FilterShowSuits = new long[] { 720200 };
+      st = LocateGuide.Next(areq, null, pr, null, 8, 1);
+      Check(st.FilterGo == "suitTab" && st.SuitTab == 1, "set panel shows the 2-piece tab, the item's set is 3-piece -> the 3-piece tab");
+      pr.FilterShowSuits = new long[] { 720101, 720100 };
+      st = LocateGuide.Next(areq, null, pr, null, 8, 1);
+      Check(st.FilterGo == "suitCell" && st.SuitTab == 1 && st.SuitIndex == 1, "right tab shown -> the set's cell, its place in the grid");
+      pr.AscendSuits = new long[] { 720100 }; pr.AscendSubAttrs = new long[] { 5, 7, 9, 3, 99 };
+      st = LocateGuide.Next(areq, null, pr, null, 8, 1);
+      Check(st.Kind == LocateKind.AscendFilter && st.FilterGo == "reset", "a sub stat the item lacks hides it -> «Сбросить»");
+      pr.AscendParts = new[] { 0 };
+      Eq("", LocateGuide.Next(areq, null, pr, null, 8, 1).FilterGo, "the slot is still wrong -> the slot first, nothing in the pop-up");
+      pr.AscendParts = new[] { 4 }; pr.AscendSubAttrs = new long[] { 5, 7, 9, 3 }; pr.AscendMainAttrs = new long[0];
+      Eq("mainRow", LocateGuide.Next(areq, null, pr, null, 8, 1).FilterGo, "set chosen, main stat missing -> the main stat row");
+      pr.AscendEquips = new long[] { 100, 777 };
+      Eq(LocateKind.AscendPick, LocateGuide.Next(areq, null, pr, null, 8, 1).Kind, "the item shows in the list -> pick, the pop-up is no longer needed");
+    }
     // the list math with fake data
     var wl = new LocateStep(); LocateGuide.Where(wl, new RFX.ListRead { Cols = 8, First = 16, Last = 40 }, 100);
     Check(wl.Scroll == "below" && wl.ScrollRows == 7, "list math: index 100 of 8 columns = row 12, cells end at row 5 -> 7 rows below");
@@ -2668,7 +2855,8 @@ static class CoreTests {
     Eq(LocateKind.OtherAccount, LocateGuide.Next(areq, inv(), ar(), null, 8, 0).Kind, "ascend: another account");
     var gmA = new RecastScreen { GemOpen = true, GemFunc = 7, GemSel = 777, GemList = new long[] { 777 } };
     Eq(LocateKind.OpenFoundry, LocateGuide.Next(areq, inv(), gmA, null, 8, 1).Kind, "ascend: the gem screen is not part of it");
-    Eq(LocateKind.AscendReady, LocateGuide.Next(areq, null, new RecastScreen { SublimingOpen = true, AscendShown = true, CurType = 2, AscendSel = 777 }, null, 8, 1).Kind, "ascend: ready needs no list");
+    Eq(LocateKind.AscendReady, LocateGuide.Next(areq, null, new RecastScreen { SublimingOpen = true, AscendShown = true, CurType = 2, AscendSel = 777, AscendEquips = new long[] { 777 } }, null, 8, 1).Kind, "ascend: ready needs the item selected and in the shown list");
+    Check(LocateGuide.Next(areq, null, new RecastScreen { SublimingOpen = true, AscendShown = true, CurType = 2, AscendSel = 777 }, null, 8, 1).Kind != LocateKind.AscendReady, "ascend: a selection the list does not hold (stale right after the tab opens) is not ready");
     var aj = PlansClient.Interpret(200, "{\"ok\":true,\"locate\":{\"id\":\"a1\",\"purpose\":\"ascend\",\"item\":null}}", true).Locate;
     Check(aj != null && aj.Purpose == "ascend", "locate: purpose ascend accepted");
     Eq("ascendReady", new LocateStep { Kind = LocateKind.AscendReady }.Key, "ascend: step key");

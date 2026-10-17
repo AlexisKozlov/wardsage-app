@@ -60,10 +60,14 @@ namespace RealmForge {
     public static ListRead ReadInventoryLive(out bool active) {
       active = false;
       ulong f = LiveInvForm(-1);
-      if (f == 0 || !FormActive(f)) return null;
+      if (!InvFormShown(f)) return null;
       active = true;
       return ReadInventoryList(f);
     }
+
+    /// <summary>The inventory form is on screen: m_LuaLogicActive (a Lua boolean fills 4 bytes). NOT FormActive: that also wants the hero
+    /// screen's grid field, which the inventory form never has (live 0.61.193: the hint stayed at «open the inventory»).</summary>
+    public static bool InvFormShown(ulong f) { ulong v; int tt; return f != 0 && Field(f, "m_LuaLogicActive", out v, out tt) && tt == T_BOOL && (v & 0xFFFFFFFF) != 0; }
 
     /// <summary>The inventory now; null when the game has none (never opened) or it cannot be read.</summary>
     public static InventoryScreen ReadInventory(int rescanMs) {

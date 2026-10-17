@@ -33,12 +33,18 @@ namespace RealmForge {
     public int GemFunc = -1;                   // its selected function (7, 8 = recast)
     public long GemSel;                        // item selected there, 0 = none
     public long[] GemList = new long[0];       // the item pop-up's list
+    public RFX.ListRead GemFuncList;           // how the gem screen scrolls its function list (null = unreadable)
     public bool AscendShown;                   // the foundry's «Вознесение» panel (tab 2) is on the screen
     public long[] AscendEquips = new long[0];  // its list in screen order
     public long AscendSel;                     // item selected there, 0 = none
     public int[] AscendParts = new int[0];     // its slot switches on (0..4), empty = all
     public long[] AscendSuits = new long[0], AscendMainAttrs = new long[0], AscendSubAttrs = new long[0];   // its filter
     public RFX.ListRead AscendList;            // how the game scrolls the list (null = unreadable)
+    // the Ascension list's filter pop-up (Form_EquipFilterWidget, held by the panel as m_FilterForm while m_FilterWidgetVisible)
+    public bool AscendFilterOpen;              // the pop-up is on the screen
+    public int FilterPanel;                    // its opened sub panel: 0 none, 1 set, 2 main stat, 3 sub stats (m_ButtonStates)
+    public long[] FilterShowSuits = new long[0], FilterLeftSuits = new long[0], FilterRightSuits = new long[0];   // the set grid's list now / the 2-piece / the 3-piece sets
+    public RFX.ListRead FilterSuitGrid;        // how the set grid scrolls (null = unreadable)
     public bool ChoosePending;                 // a recast result waits for the choice (blocks selecting another item); not read yet
 
     public bool OnRecast { get { return SublimingOpen && PanelShown && CurType == 3; } }
@@ -98,6 +104,7 @@ namespace RealmForge {
             else if (Field(fc, "SubAttrs", out t, out tt) && tt == T_TABLE) s.AscendSubAttrs = IntSet(t);
           }
           if (s.AscendShown) s.AscendList = ReadFoundryList(ap);
+          ReadFilterPopup(ap, s);
         }
       }
       if (gf != 0) {
@@ -106,8 +113,26 @@ namespace RealmForge {
         if (Field(gf, "m_CurrentEquipSelectedUid", out v, out tt) && tt == T_INT && (long)v > 0) s.GemSel = (long)v;
         ulong pop, t; int pt;
         if (Field(gf, "m_Panel_EquipFilter", out pop, out pt) && pt == T_TABLE && Field(pop, "m_AllEquips", out t, out tt) && tt == T_TABLE) s.GemList = OrderedInts(t);
+        if (s.GemOpen && live != null) s.GemFuncList = ReadList(gf, "m_GemInfinityGrid_ScrollRect", "m_GemInfinityGrid_InfinityGrid", live.Pid);
       }
       return s;
+    }
+
+    // the filter pop-up of the Ascension panel: open flag, the opened sub panel, the set lists and the set grid's scroll
+    static void ReadFilterPopup(ulong ap, RecastScreen s) {
+      ulong v, form, pw, t; int tt;
+      if (!Field(ap, "m_FilterWidgetVisible", out v, out tt) || tt != T_BOOL || (v & 0xFFFFFFFF) == 0) return;
+      if (!Field(ap, "m_FilterForm", out form, out tt) || tt != T_TABLE) return;
+      if (!Field(form, "m_PanelFilterWidget", out pw, out tt) || tt != T_TABLE) return;
+      s.AscendFilterOpen = true;
+      if (Field(pw, "m_ButtonStates", out t, out tt) && tt == T_TABLE) {
+        var st = OrderedInts(t);
+        for (int i = 0; i < st.Length; i++) if (st[i] == 1) { s.FilterPanel = i + 1; break; }
+      }
+      if (Field(pw, "m_ShowSuitIds", out t, out tt) && tt == T_TABLE) s.FilterShowSuits = OrderedInts(t);
+      if (Field(pw, "m_LeftSuitList", out t, out tt) && tt == T_TABLE) s.FilterLeftSuits = OrderedInts(t);
+      if (Field(pw, "m_RightSuitList", out t, out tt) && tt == T_TABLE) s.FilterRightSuits = OrderedInts(t);
+      if (s.FilterPanel == 1 && live != null) s.FilterSuitGrid = ReadList(pw, "m_SuitFilterGrid_ScrollRect", "m_SuitFilterGrid_InfinityGrid", live.Pid);
     }
 
     // an array of numbers (keys 1..n) in order

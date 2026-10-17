@@ -10,6 +10,11 @@ namespace RealmForge {
   public static class HintLayout {
     public const int Gap = 14, Margin = 6;
 
+    /// <summary>A plate with no target on screen: top centre of the window, 0.12 U from the top (below the title bar area), kept inside. Returns {x, y}.</summary>
+    public static int[] TopPlate(int w, int h, int W, int H, double U) {
+      return new[] { Clamp(W / 2 - w / 2, Margin, W - w - Margin), Clamp((int)(0.12 * U), Margin, H - h - Margin) };
+    }
+
     /// <summary>The plate (<paramref name="w"/> × <paramref name="h"/>) beside <paramref name="target"/> {x, y, w, h}:
     /// right of it, else left, else above, else below (a wide button: above first), always inside the W × H window. <paramref name="side"/> = where the
     /// plate is: 'r', 'l', 't' (above), 'b' (below). Returns {x, y}.</summary>

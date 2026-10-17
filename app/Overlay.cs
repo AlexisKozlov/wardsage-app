@@ -400,6 +400,7 @@ namespace RealmForge {
       locateReq = r != null && r.Item != null ? r : null;
       locateSince = Stamp(); locateCaps = ""; locateLines = new string[0];
       locateStep = null; locateSubs = null; locateKey = ""; locateReadAt = 0; locateLastCur = -1; locateSubsAt = 0; lgrid.Reset();
+      locateListSig = ""; locateDecisionSaid = ""; locatePlaceSaid = "";
       lpilot.Reset(); lpilot.ItemUid = locateReq != null ? locateReq.Item.Uid : 0; locateDriving = false; locateAutoSaid = "";
       Hide("off"); HideTip();
       Run();
@@ -414,7 +415,7 @@ namespace RealmForge {
 
     /// <summary>The text plate for the current step (composed by the page in the interface language).</summary>
     /// <param name="caps">the plate's header line («Показать в игре · вещь · шаг N из M»); its own, never the equip plan's.</param>
-    public void SetLocateTip(string[] lines, string caps) { locateLines = lines ?? new string[0]; locateCaps = caps ?? ""; HideTip(); }
+    public void SetLocateTip(string[] lines, string caps, Dictionary<string, string> texts = null) { locateLines = lines ?? new string[0]; locateCaps = caps ?? ""; if (texts != null) locateTexts = texts; HideTip(); }
 
     void Run() {
       if (target != 0 || locateReq != null || filterItem != 0 || hintKind != "" || runHero != 0 || sellWanted != null || DateTime.Now < diagUntil) { timer.Start(); if (target != 0) lookTimer.Start(); else lookTimer.Stop(); return; }
@@ -895,7 +896,7 @@ namespace RealmForge {
       if (hs.Hero == hintHero) { heroShownWas = hs.Hero; heroDiag = "shown"; HideTip(); return; }
       // the list not readable now: the plate still says whom to press, beside the hero list
       int lx0 = (int)((hg2.Col1X - 0.06) * U), lvt = (int)(hg2.ViewTop * U), lw = (int)((2 * hg2.PitchX + 0.12) * U), lh = (int)(H - (1 - hg2.ViewBottom) * U) - lvt;
-      if (hs.Heroes == null) { heroShownWas = hs.Hero; heroDiag = "no list"; DrawTip(o.X + lx0, o.Y + lvt, lw, lh, HeroTip(1), H, true); return; }
+      if (hs.Heroes == null) { heroShownWas = hs.Hero; heroDiag = "no list"; DrawTipTop(HeroTip(1)); return; }
       if (hs.Part >= 0) {   // another hero's gear list covers the hero list: back
         heroShownWas = hs.Hero; heroAnchor.Has = false;
         int s = (int)(0.07 * U);
@@ -903,7 +904,7 @@ namespace RealmForge {
         return;
       }
       int t = Array.IndexOf(hs.Heroes, hintHero);
-      if (t < 0) { heroShownWas = hs.Hero; heroDiag = "not in the list"; DrawTip(o.X + lx0, o.Y + lvt, lw, lh, HeroTip(1), H, true); return; }
+      if (t < 0) { heroShownWas = hs.Hero; heroDiag = "not in the list"; DrawTipTop(HeroTip(1)); return; }
       double pitch = (hs.SmallCards ? hg2.SmallPitchY : hg2.PitchY) * U, card = (hs.SmallCards ? hg2.SmallCardH : hg2.CardH) * U;
       int vt = (int)(hg2.ViewTop * U), vb = (int)(H - (1 - hg2.ViewBottom) * U);
       int x0 = (int)((hg2.Col1X - 0.06) * U), x1 = (int)((hg2.Col1X + 2 * hg2.PitchX + 0.06) * U), w = x1 - x0, h = vb - vt;
@@ -971,7 +972,7 @@ namespace RealmForge {
       }
       if (sure) heroFollow.Settled(heroAnchor, sig, top0, pitch);
       heroDiag = (exact ? "scroll=" + heroY.ToString("0") : "pixels") + " phase=" + (hasPhase ? (vt + ph).ToString("0") : "none") + " row1=" + (heroAnchor.Has ? heroAnchor.Row1Top.ToString("0") : "-") + " sure=" + sure + " index=" + t;
-      if (!sure) { DrawTip(o.X + lx0, o.Y + lvt, lw, lh, HeroTip(1), H, true); return; }
+      if (!sure) { DrawTipTop(HeroTip(1)); return; }
       double ctop = heroAnchor.Row1Top + (t / HeroGeometry.Columns) * pitch, ccx = hg2.ColX(t % HeroGeometry.Columns) * U, cwid = 0.115 * U;
       if (ctop + card / 2 < vt) DrawTip(o.X + lx0, o.Y + lvt, lw, 4, HeroTip(2), H, true);
       else if (ctop + card / 2 > vb) DrawTip(o.X + lx0, o.Y + lvt + lh - 4, lw, 4, HeroTip(3), H, true);
@@ -989,15 +990,23 @@ namespace RealmForge {
     public System.Collections.Generic.Dictionary<string, string> Texts = new System.Collections.Generic.Dictionary<string, string>();
     /// <summary>The player put on another item than the build's (the plate says so at the frame).</summary>
     public bool WrongItem;
-    string Tx(string k) { string v; return Texts != null && Texts.TryGetValue(k, out v) && v != null ? v : ""; }
+    string Tx(string k) { var d = LocateWins && locateTexts.Count > 0 ? locateTexts : Texts; string v; return d != null && d.TryGetValue(k, out v) && v != null ? v : ""; }
+    // «Показать в игре»: the page's texts for its pills (pillUp, pillDown, rows1 / rows2 / rows5, lang); the plan's Texts are not set while it runs
+    Dictionary<string, string> locateTexts = new Dictionary<string, string>();
 
-    sealed class Plate { public string Caps = "", Main = "", Sub = ""; public bool Pill; }
+    sealed class Plate { public string Caps = "", Main = "", Sub = ""; public bool Pill; public int Arrow; /* -1 = an up arrow before the main text, 1 = down */ }
     // the game window's client area on the screen for the scene being drawn (plates are kept inside it)
     int sceneX, sceneY, sceneW, sceneH;
     void SceneArea(W32.POINT o, W32.RECT cr) { sceneX = o.X; sceneY = o.Y; sceneW = cr.R; sceneH = cr.B; }
 
     /// <summary>A pulsing gold frame around a button of the game (x, y, w, h: screen px) with the step plate beside it
     /// (plateOnly: the plate alone, beside that spot). below / right: kept for the callers, the plate finds its own side.</summary>
+    /// <summary>A plate with no target on screen (nothing to frame): top centre of the game window, for every guide.</summary>
+    void DrawTipTop(string[] lines, string caps = null) {
+      if (lines == null || lines.Length == 0) { HideTip(); return; }
+      Scene(tip, ref tipKey, null, new Plate { Caps = caps ?? Tx("caps"), Main = lines[0], Sub = lines.Length > 1 ? lines[1] : "" }, null, null);
+    }
+
     void DrawTip(int x, int y, int w, int h, string[] lines, double H, bool plateOnly = false, bool below = false, bool right = false, string caps = null) {
       var p = lines != null && lines.Length > 0 ? new Plate { Caps = caps ?? Tx("caps"), Main = lines[0], Sub = lines.Length > 1 ? lines[1] : "" } : null;
       Scene(tip, ref tipKey, plateOnly ? null : new[] { x, y, w, h }, p, new[] { x, y, w, h }, null);
@@ -1027,6 +1036,7 @@ namespace RealmForge {
             float cw = p.Caps != "" ? owl + 6 + pg.MeasureString(p.Caps.ToUpperInvariant(), fCaps).Width : 0;
             float mw = p.Main != "" ? pg.MeasureString(p.Main, fMain).Width : 0, sw = p.Sub != "" ? pg.MeasureString(p.Sub, fSub).Width : 0;
             capsH = p.Caps != "" ? Math.Max(owl, fCaps.Height) : 0; mainH = p.Main != "" ? fMain.Height : 0; subH = p.Sub != "" ? fSub.Height : 0;
+            if (p.Arrow != 0 && p.Main != "") mw += fMain.Height * 0.8f + 10;   // the arrow before the text
             pw = (int)(Math.Max(cw, Math.Max(mw, sw)) + 2 * pad);
             ph = (int)(pad * (p.Pill ? 1.0f : 2f) + capsH + mainH + subH + (capsH > 0 ? 2 : 0) + (subH > 0 ? 2 : 0));
           }
@@ -1036,11 +1046,12 @@ namespace RealmForge {
         if (p != null) {
           if (strip != null) {   // a pill at the strip's dot, right of the strip (left when there is no room)
             int px = (int)strip[0] + 12 - sceneX, py = (int)(strip[3] - ph / 2.0) - sceneY;
-            if (px + pw > sceneW - HintLayout.Margin) px = (int)strip[0] - 12 - pw - sceneX;
+            if (strip.Length > 6 && strip[6] > 0) { px = (int)strip[0] - 12 - pw - sceneX; if (px < HintLayout.Margin) px = (int)strip[0] + 12 - sceneX; }   // «Показать в игре»: left of the scroll bar (the card is right of it)
+            else if (px + pw > sceneW - HintLayout.Margin) px = (int)strip[0] - 12 - pw - sceneX;
             pos = new[] { px, Math.Max(HintLayout.Margin, Math.Min(sceneH - ph - HintLayout.Margin, py)) };
           } else {
             var tc = target != null ? new[] { target[0] - sceneX, target[1] - sceneY, target[2], target[3] } : new[] { sceneW / 2, (int)(0.3 * sceneH), 0, 0 };
-            if (target == null) pos = new[] { sceneW / 2 - pw / 2, (int)(0.3 * sceneH) };
+            if (target == null) pos = HintLayout.TopPlate(pw, ph, sceneW, sceneH, U);   // no target: top centre
             else {
               pos = HintLayout.Plate(tc, pw, ph, sceneW, sceneH, out side);
               if (frameR != null || tc[2] > 0) ptr = HintLayout.Pointer(pos, pw, ph, side, tc, Math.Max(7, 0.01 * U));
@@ -1159,6 +1170,13 @@ namespace RealmForge {
         ty += capsH + 2;
       }
       if (p.Main != "") {
+        if (p.Arrow != 0) {   // the direction of the item: a gold arrow before the text
+          float aw = mainH * 0.8f, acx = tx + aw / 2, acy = ty + mainH / 2, ah = mainH * 0.6f, dir = p.Arrow < 0 ? -1 : 1;
+          var tri = new[] { new PointF(acx, acy + dir * ah / 2), new PointF(acx - aw / 2, acy - dir * ah / 2), new PointF(acx + aw / 2, acy - dir * ah / 2) };
+          using (var br = new SolidBrush(Color.FromArgb(255, 255, 214, 110))) gr.FillPolygon(br, tri);
+          using (var pen = new Pen(Color.FromArgb(230, 60, 36, 6), 1.5f)) gr.DrawPolygon(pen, tri);
+          tx += aw + 10;
+        }
         using (var sh = new SolidBrush(Color.FromArgb(200, 0, 0, 0))) gr.DrawString(p.Main, fMain, sh, tx + 1, ty + 1.5f);
         using (var white = new SolidBrush(p.Pill ? Color.FromArgb(255, 255, 222, 150) : Color.White)) gr.DrawString(p.Main, fMain, white, tx, ty);
         ty += mainH + 2;
@@ -1446,14 +1464,14 @@ namespace RealmForge {
         DrawTip(bx, by, bw, bh, sellHintLines, H);
         return;
       }
-      if (step.Kind == SellHintKind.NeedPosition) { DrawTip(o.X + gx, o.Y + (int)vt - 2, gw, 2, sellHintLines, H, true); return; }
+      if (step.Kind == SellHintKind.NeedPosition) { DrawTipTop(sellHintLines); return; }
       int[] cityBtn;
       if (step.Kind == SellHintKind.OpenInventory && CityInventoryButton(o, W, H, U, out cityBtn)) {   // the city: frame the bar's «Инвентарь»
         frame++;
         DrawTip(cityBtn[0], cityBtn[1], cityBtn[2], cityBtn[3], sellHintLines, H);
         return;
       }
-      DrawTip(o.X + (int)(0.23 * U), o.Y + (int)(0.19 * U) + 150, 4, 0, sellHintLines, H, true);
+      DrawTipTop(sellHintLines);   // no target on screen: the plate at the top centre
     }
 
     // ---------------------------------------------------------------- «Найти в игре»
@@ -1461,6 +1479,7 @@ namespace RealmForge {
     LocateRequest locateReq; string[] locateLines = new string[0]; string locateCaps = "";
     readonly LocateGrid lgrid = new LocateGrid();
     LocateStep locateStep; SubCheck locateSubs; string locateKey = "";
+    string locateListSig = "", locateDecisionSaid = "", locatePlaceSaid = ""; long locateListChangeAt;   // the Ascension list's shape (to wait after it changed), the log keys
     long locateReadAt, locateLastCur = -1, locateSubsAt; int locateCols = 8, locateGeoCols; double locateGeoW, locateGeoH;
     SellGeometry locateGeo; InventoryScreen locateInv; bool locateNeedClick;
     /// <summary>The step changed (or its list place / sub stat check): the page shows it and answers with the text plate.</summary>
@@ -1494,6 +1513,18 @@ namespace RealmForge {
         heroScreen = RFX.ReadHeroScreen(addrs, heroScreen);
         var st = LocateGuide.Next(req, locateInv, rs, heroScreen, locateCols, locateOnAccount);
         LogListRead("foundry", rs != null && rs.OnAscend ? rs.AscendList : rs != null && rs.OnRecast ? rs.RecastList : null);
+        // the Ascension list just changed (a slot tab was pressed, the tab opened): the game rebuilds it a moment later, so no filter advice yet
+        if (rs != null && rs.OnAscend) {
+          string sig = rs.AscendEquips.Length + "|" + string.Join(",", Array.ConvertAll(rs.AscendParts, x => x.ToString())) + "|" + (rs.AscendEquips.Length > 0 ? rs.AscendEquips[0].ToString() : "");
+          if (sig != locateListSig) { locateListSig = sig; locateListChangeAt = now; }
+          if ((st.Kind == LocateKind.AscendFilter || st.Kind == LocateKind.AscendNotInList) && now - locateListChangeAt < 1200) st.Kind = LocateKind.AscendLoading;
+          string dec = st.Kind + "|" + st.Pos + "|" + string.Join(",", st.Missing) + "|" + st.FilterGo + "|" + sig;
+          if (dec != locateDecisionSaid) {
+            locateDecisionSaid = dec;
+            Log.Write("locate decision: " + st.Kind + " inList=" + (st.Pos > 0) + " listLen=" + rs.AscendEquips.Length + " slotSel=[" + string.Join(",", Array.ConvertAll(rs.AscendParts, x => x.ToString())) + "] itemSlot=" + req.Item.Slot
+              + " missing=[" + string.Join(",", st.Missing) + "] popup=" + rs.AscendFilterOpen + "/" + rs.FilterPanel + " go=" + st.FilterGo + " list=" + (rs.AscendList != null && rs.AscendList.Has ? "ok" : "none"));
+          }
+        }
         if (Math.Abs(now - locateSubsAt) >= 1500 && (st.Kind == LocateKind.Selected || st.Kind == LocateKind.Done || st.Kind == LocateKind.RecastPick || st.Kind == LocateKind.AscendPick || st.Kind == LocateKind.AscendReady || st.Kind == LocateKind.InList)) {
           locateSubsAt = now;
           var live = RFX.ReadLiveItemSubs(uid);
@@ -1506,6 +1537,10 @@ namespace RealmForge {
       TickLocateDrive(step, req, hwnd, o, cr, now, W, H, U);   // auto click on: the app opens the item itself
       // the step's frame from the screen geometry (the site's file, src/LocateFrames.cs): «Литейная», the tabs, the slot, the list cell, the final button
       LocateFrame lf = front && step.Kind != LocateKind.InList ? LocateFrames.For(step, req.Item, locateRs, null, Geo.Current, W, H, U) : null;
+      if (step.Kind == LocateKind.AscendPick && locatePlaceSaid != step.Pos + "|" + (lf != null)) {
+        locatePlaceSaid = step.Pos + "|" + (lf != null);
+        Log.Write("locate " + LocateFrames.PlacementInputs(step, locateRs, Geo.Current, W, H, U) + " -> " + (lf == null ? "no frame" : lf.Mark.Kind + " " + lf.Mark.X + "," + lf.Mark.Y + " " + lf.Mark.W + "x" + lf.Mark.H));
+      }
       // the inventory's list: where the item's cell is on the screen
       locateNeedClick = false;
       if (front && step.Kind == LocateKind.InList && locateInv != null) {
@@ -1537,7 +1572,13 @@ namespace RealmForge {
           var mk = lgrid.Place(locateGeo, step.Row, step.Col, W, H, U);
           frame++;
           HideTip();
-          Draw(mk.Kind, o.X + mk.X, o.Y + mk.Y, mk.W, mk.H, mk.Rows);
+          // the item is off the screen: its place on the list's scroll bar too (the pill beside it says which way and how far)
+          double[] strip = null;
+          if (mk.Kind != "box") {
+            var mkr = LocateFrames.ListMarker(Geo.Current, lgrid.Row1, locateGeo.ViewTopPx(U), locateGeo.TopPad * U, locateGeo.PitchY * U, (inv.Uids.Count + locateCols - 1) / locateCols, step.Row, W, H, U);
+            if (mkr != null) strip = new[] { o.X + mkr[0], o.Y + mkr[1], o.Y + mkr[2], o.Y + mkr[3], o.Y + mkr[4], o.Y + mkr[5], 1 };
+          }
+          Draw(mk.Kind, o.X + mk.X, o.Y + mk.Y, mk.W, mk.H, mk.Rows, strip);
         } else LocateHide();
       } else if (!front) { LocateHide(); }
       else if (lf != null && lf.Mark.Kind != "box") { frame++; Draw(lf.Mark.Kind, o.X + lf.Mark.X, o.Y + lf.Mark.Y, lf.Mark.W, lf.Mark.H, lf.Mark.Rows); }   // the list cell is off the screen: the pill at the list's edge
@@ -1554,7 +1595,7 @@ namespace RealmForge {
         DrawTip(o.X + lf.Mark.X, o.Y + lf.Mark.Y, lf.Mark.W, lf.Mark.H, locateLines, H, false, false, false, locateCaps);
       } else if (front && locateLines.Length > 0 && (step.Kind != LocateKind.InList || locateNeedClick)) {
         frame++;
-        DrawTip(o.X + (int)(0.23 * U), o.Y + (int)(0.19 * U) + 150, 4, 0, locateLines, H, true, false, false, locateCaps);   // its own header, not the plan's «Шаг N из M»
+        DrawTipTop(locateLines, locateCaps);   // its own header, not the plan's «Шаг N из M»
       } else if (!front || locateLines.Length == 0 || step.Kind == LocateKind.InList) HideTip();
       string key = step.Key + "|" + step.Pos + "|" + step.Row + "|" + step.Col + "|" + step.Count + "|" + string.Join(",", step.Missing) + "|" + step.OnHero + "|" + step.NeedClick
         + "|" + (locateSubs != null ? string.Join(",", Array.ConvertAll(locateSubs.Match, x => x ? "1" : "0")) + locateSubs.Changed : "") + "|" + step.Auto + "|" + step.AutoWhy;
@@ -2118,7 +2159,7 @@ namespace RealmForge {
       }
       string tpl = Tx(kind == "up" ? "pillUp" : "pillDown");
       string text = tpl != "" ? tpl.Replace("{0}", RowsText(rows)) : (kind == "up" ? "↑ " : "↓ ") + rows;
-      var pill = new Plate { Pill = true, Main = text };
+      var pill = LocateWins ? new Plate { Main = text, Arrow = kind == "up" ? -1 : 1 } : new Plate { Pill = true, Main = text };   // «Показать в игре»: the step's plate with an arrow, bigger
       if (strip != null) Scene(glow, ref drawnKey, null, pill, null, strip);
       else Scene(glow, ref drawnKey, null, pill, new[] { x, kind == "up" ? y : y - 2, w, 2 }, null);
     }
@@ -2137,7 +2178,7 @@ namespace RealmForge {
       if (m == "" || sceneW <= 0) { if (glow.Visible) glow.Hide(); drawnKey = null; return; }
       double U = Ui.Unit(sceneW, sceneH);
       var list = new[] { sceneX + (int)(g.StripLeft * U), sceneY + (int)(g.ViewTop * U), (int)((g.StripRight - g.StripLeft) * U), (int)((g.ViewBottom - g.ViewTop) * U) };
-      Scene(glow, ref drawnKey, null, new Plate { Caps = Tx("caps"), Main = m, Sub = Tx("unknownSub") }, list, null);
+      Scene(glow, ref drawnKey, null, new Plate { Caps = Tx("caps"), Main = m, Sub = Tx("unknownSub") }, null, null);
     }
 
     static GraphicsPath Round(float x, float y, float w, float h, float r) {

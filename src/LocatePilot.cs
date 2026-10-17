@@ -110,6 +110,12 @@ namespace RealmForge {
           if (v.Rs == null || !v.Rs.SublimingOpen || f == null) { why = "foundry"; return LocateTodo.Hint; }
           if (st.Kind == LocateKind.OpenAscendTab) return f.Clickable ? LocateTodo.AscendTab : Hint(out why);
           if (st.Kind == LocateKind.AscendFilter) return f.Clickable ? LocateTodo.SlotTab : Hint(out why);   // not the slot: the filter is the player's
+          // the item is in the list but not on the screen and the list is not narrowed to its slot: the slot tab first (it is safe
+          // and shortens the list), then the scroll and the cell
+          if (st.Scroll != "visible" && Array.IndexOf(st.Missing, "slot") >= 0) {
+            var sf = LocateFrames.For(LocateFrames.SlotOnly(st), v.Item, v.Rs, v.FoundryTabs, v.Geometry, v.W, v.H, v.U);
+            if (sf != null && sf.Clickable) return LocateTodo.SlotTab;
+          }
           if (v.Rs.AscendList == null || !v.Rs.AscendList.Has) { why = "foundry"; return LocateTodo.Hint; }
           return LocateTodo.AscendCell;
         }
@@ -180,7 +186,7 @@ namespace RealmForge {
           return Click(m, v, 0.085 * v.U, 0.315 * v.U, AfterTabMs, "tab");   // the left menu's «Снаряжение» (the storage cleanup's spot)
         case LocateTodo.FoundryButton: case LocateTodo.AscendTab: case LocateTodo.SlotTab: {
           if (++kindClicks > MaxStepClicks) return Abort(m, "stuck");
-          var f = LocateFrames.For(v.Step, v.Item, v.Rs, v.FoundryTabs, v.Geometry, v.W, v.H, v.U);
+          var f = LocateFrames.For(todo == LocateTodo.SlotTab ? LocateFrames.SlotOnly(v.Step) : v.Step, v.Item, v.Rs, v.FoundryTabs, v.Geometry, v.W, v.H, v.U);
           if (f == null || !f.Clickable) return Abort(m, "screen");
           return Click(m, v, f.ClickX, f.ClickY, todo == LocateTodo.FoundryButton ? AfterButtonMs : AfterTabMs, todo == LocateTodo.FoundryButton ? "foundry" : todo == LocateTodo.AscendTab ? "ascend tab" : "slot tab");
         }

@@ -985,7 +985,7 @@
       case 'locate': {
         // the site's «Найти в игре» request (it rides on the plans reply): new -> the overlay starts showing it
         const L = S.locate, r = m.req;
-        if (!r) { if (L.req) locateEnd(false, true); break; }
+        if (!r) { if (L.req && !L.reported) locateEnd(false, true); break; }   // (a reported request keeps its hints on their own timer)
         if (S.locateEnded[r.id]) break;
         if (!L.req || L.req.id !== r.id) {
           clearTimeout(L.doneTimer);
@@ -999,7 +999,24 @@
         const L = S.locate; if (!L.req) break;
         L.step = m;
         const d = LC.describe(L.req, m, t), cp = LC.caps(L.req, m, t), key = (d ? d.tip.join('|') : '') + '||' + cp;
-        if (key !== L.tipKey) { L.tipKey = key; host.send({ cmd: 'locate.tip', lines: d ? d.tip : [], caps: cp }); }
+        if (key !== L.tipKey) { L.tipKey = key; host.send({ cmd: 'locate.tip', lines: d ? d.tip : [], caps: cp, texts: LC.pillTexts(t, S.lang) }); }
+        if (L.reported) { if (S.page === 'equip' || S.compact) render(); break; }
+        if (m.step === 'done' && m.onGem) {
+          // the gem screen has the item and the function it needs: the request is done right here, without waiting for «Улучшить»
+          // (the player presses it himself); the hints stay on the screen a while
+          const id = L.req.id;
+          clearTimeout(L.doneTimer);
+          S.locateEnded[id] = true; L.reported = true;
+          host.send({ cmd: 'locate.finish', id, done: true, keep: true });
+          toast(t('locDoneToast'));
+          L.doneTimer = setTimeout(() => {
+            if (!S.locate.req || S.locate.req.id !== id) return;
+            host.send({ cmd: 'locate.stop' });
+            S.locate = { req: null, step: null, tipKey: '', doneTimer: 0 }; render();
+          }, 20000);
+          if (S.page === 'equip' || S.compact) render();
+          break;
+        }
         // the recast screen has the item: the request closes after a moment (the player may still look)
         clearTimeout(L.doneTimer);
         if (m.step === 'done') { const id = L.req.id; L.doneTimer = setTimeout(() => { if (S.locate.req && S.locate.req.id === id && S.locate.step && S.locate.step.step === 'done') locateEnd(true, false); }, 3000); }

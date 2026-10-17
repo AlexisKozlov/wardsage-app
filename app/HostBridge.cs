@@ -383,11 +383,15 @@ namespace RealmForge {
             var ll2 = m.TryGetValue("lines", out lv2) ? lv2 as List<object> : null;
             if (ll2 != null) foreach (var x in ll2) if (x is string && lines.Count < 4) lines.Add(((string)x).Length > 120 ? ((string)x).Substring(0, 120) : (string)x);
             string lcaps = MiniJson.GetString(m, "caps") ?? ""; if (lcaps.Length > 120) lcaps = lcaps.Substring(0, 120);
-            overlay.SetLocateTip(lines.ToArray(), lcaps);
+            // the pills' texts (item above / below, row forms): short strings, the page's language
+            object ltx; var ltd = m.TryGetValue("texts", out ltx) ? ltx as Dictionary<string, object> : null;
+            Dictionary<string, string> ltexts = null;
+            if (ltd != null) { ltexts = new Dictionary<string, string>(); foreach (var kv in ltd) { var sv = kv.Value as string; if (sv != null && ltexts.Count < 12) ltexts[kv.Key] = Cut(sv); } }
+            overlay.SetLocateTip(lines.ToArray(), lcaps, ltexts);
             break;
           }
           case "locate.stop": overlay.SetLocate(null); break;
-          case "locate.finish": FinishLocate(MiniJson.GetString(m, "id"), MiniJson.GetBool(m, "done", false)); break;
+          case "locate.finish": FinishLocate(MiniJson.GetString(m, "id"), MiniJson.GetBool(m, "done", false), MiniJson.GetBool(m, "keep", false)); break;
           case "sell.load": LoadSell(MiniJson.GetString(m, "lang")); break;
           case "sell.run": case "sell.hint": {
             // storage cleanup: select the list's items on the game's sell screen (from the gear list of the hero the game
@@ -1123,7 +1127,8 @@ namespace RealmForge {
     // «Найти в игре»: the overlay's step for the page (it composes the texts)
     void PostLocateState(LocateStep st, SubCheck subs) {
       var sb = new StringBuilder("{\"ev\":\"locate.state\",\"step\":").Append(S(st.Key)).Append(",\"pos\":").Append(N(st.Pos)).Append(",\"row\":").Append(N(st.Row))
-        .Append(",\"col\":").Append(N(st.Col)).Append(",\"count\":").Append(N(st.Count)).Append(",\"onHero\":").Append(B(st.OnHero)).Append(",\"onGear\":").Append(B(st.OnGear)).Append(",\"onGem\":").Append(B(st.OnGem)).Append(",\"scroll\":").Append(S(st.Scroll)).Append(",\"scrollRows\":").Append(N(st.ScrollRows))
+        .Append(",\"col\":").Append(N(st.Col)).Append(",\"count\":").Append(N(st.Count)).Append(",\"onHero\":").Append(B(st.OnHero)).Append(",\"onGear\":").Append(B(st.OnGear)).Append(",\"onGem\":").Append(B(st.OnGem)).Append(",\"func\":").Append(N(st.Func)).Append(",\"wrongFunc\":").Append(B(st.WrongFunc)).Append(",\"worn\":").Append(B(st.Worn)).Append(",\"scroll\":").Append(S(st.Scroll)).Append(",\"scrollRows\":").Append(N(st.ScrollRows))
+        .Append(",\"filterGo\":").Append(S(st.FilterGo)).Append(",\"suitTab\":").Append(N(st.SuitTab))
         .Append(",\"needClick\":").Append(B(st.NeedClick)).Append(",\"auto\":").Append(S(st.Auto)).Append(",\"autoWhy\":").Append(S(st.AutoWhy)).Append(",\"missing\":[");
       for (int i = 0; i < st.Missing.Length; i++) { if (i > 0) sb.Append(','); sb.Append(S(st.Missing[i])); }
       sb.Append("],\"subs\":");
@@ -1139,9 +1144,10 @@ namespace RealmForge {
         + ",\"extra\":" + N(st.Extra) + ",\"below\":" + N(st.Below) + ",\"above\":" + N(st.Above) + "}");
     }
 
-    void FinishLocate(string id, bool done) {
+    // keep: the request is reported but its hints stay on the screen a little longer (the page stops them: locate.stop)
+    void FinishLocate(string id, bool done, bool keep = false) {
       string site = cfg.Site, code = cfg.Code;
-      overlay.SetLocate(null);
+      if (!keep) overlay.SetLocate(null);
       if (string.IsNullOrEmpty(id) || !SyncClient.IsValidCode(code)) return;
       Task.Factory.StartNew(() => {
         var r = LocateClient.Finish(site, code, id, done);

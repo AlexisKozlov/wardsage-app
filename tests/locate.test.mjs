@@ -46,6 +46,16 @@ for (const lang of ['ru', 'en']) {
   ok(sel.lines[0] === T[lang].locSelectedP && !/Литейн|Foundry|Преобразовать|Recast/.test(sel.lines[0]), lang + ': recast selected -> the gem button of the card, no Foundry');
   ok(sel.lines[0].includes(lang === 'ru' ? 'Улучшение самоцветами' : 'Gem Enhancement'), lang + ': the game\'s name of the card button');
   ok(L.describe(req, st({ step: 'gemFunction' }), t).head.includes(lang === 'ru' ? 'Преобразование' : 'Recast'), lang + ': gem function head');
+  // the gem screen names the one function the item needs, not both
+  const gRec = L.describe(req, st({ step: 'gemFunction', func: 7 }), t), gAdv = L.describe(req, st({ step: 'gemFunction', func: 8 }), t);
+  ok(gRec.head.includes(lang === 'ru' ? '«Преобразование»' : '«Recast»') && !gRec.head.includes(lang === 'ru' ? 'Продв.' : 'Advanced'), lang + ': mythic -> the plain recast only');
+  ok(gAdv.head.includes(lang === 'ru' ? 'Продв. преобразование' : 'Advanced Recast') && gAdv.lines.length === 1 && !/^loc[A-Z]/.test(gAdv.lines[0]), lang + ': ancient mythic -> the advanced recast only');
+  const gWrong = L.describe(req, st({ step: 'gemFunction', func: 8, wrongFunc: true }), t);
+  ok(gWrong.head !== gAdv.head && gWrong.head.includes(lang === 'ru' ? 'Продв. преобразование' : 'Advanced Recast') && !/^loc[A-Z]/.test(gWrong.head), lang + ': the other recast chosen -> says which one is needed');
+  const gDone = L.describe(req, st({ step: 'done', onGem: true, func: 7 }), t);
+  ok(gDone.tone === 'done' && gDone.head === T[lang].locDone && gDone.lines[0] === T[lang].locDoneGemP, lang + ': gem screen done -> press «Улучшить» yourself');
+  const pt = L.pillTexts(t, lang);
+  ok(pt.lang === lang && pt.pillDown.includes('{0}') && pt.pillUp.includes('{0}') && pt.rows1 && pt.rows2 && pt.rows5, lang + ': the pills over the game have texts and row forms');
   ok(L.describe(req, st({ step: 'done', onGem: true }), t).lines[0] === T[lang].locDoneGemP && L.describe(req, st({ step: 'done' }), t).lines[0] === T[lang].locDoneP, lang + ': done on the gem screen -> «Улучшить»');
   // ascend: no step talks about the item card's buttons ("Gem Enhancement" / "Remove"); the way is Foundry -> «Ascend» tab -> list
   for (const k of ['openInventory', 'openEquipTab', 'openFoundry', 'openAscendTab', 'ascendFilter', 'ascendPick', 'ascendNotInList', 'ascendReady', 'selected']) {

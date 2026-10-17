@@ -28,6 +28,7 @@ namespace RealmForge {
     OpenAscendTab,    // «Ascension»: the foundry is open on another tab
     AscendPick,       // the item is in the foundry's Ascension list: pick it
     AscendNotInList,  // the Ascension list does not hold the item (not ready for Ascension, or a filter hides it)
+    AscendLoading,    // the Ascension list is not readable yet / just changed (a slot tab was pressed): wait, no filter advice
     AscendReady       // the Ascension screen has the item selected: the player presses the Ascend button
   }
 
@@ -37,9 +38,14 @@ namespace RealmForge {
     public string[] Missing = new string[0];        // foundry filter parts not set yet: slot, suit, main, subs
     public bool OnGear;                             // the foundry's button is on the hero's gear screen (not the inventory)
     public bool OnHero;                             // the item's hero is open: the slot can be pressed there
+    public int Func;                                // recast on the gem screen: the function the item needs (7 = Recast, 8 = Advanced Recast; 0 = unknown)
+    public bool WrongFunc;                          // ... and the screen has the other recast function selected
+    public bool Worn;                               // the item is worn: its card in the inventory has both buttons (otherwise the gem button is alone)
     public bool OnGem;                              // recast: the item is on the gem screen (Done there = press «Улучшить», not the foundry's button)
     public string Scroll = "";                      // where the item is in the foundry's list by the game's own reading: visible | above | below ("" = unknown)
     public int ScrollRows;                          // rows to scroll for above / below
+    public string FilterGo = "";                    // the filter pop-up is open: what to press in it: reset | suitRow | suitTab | suitCell | mainRow | subRow ("" = nothing / closed)
+    public int SuitTab = -1, SuitIndex = -1;        // suitTab / suitCell: the set panel's tab (0 = 2 pieces, 1 = 3 pieces) and the set's place in the grid (0-based)
     public bool NeedClick;                          // the inventory's list position is not known yet: the player is asked to click a cell
     public string Auto = "", AutoWhy = "";          // auto click (src/LocatePilot.cs): "" = off, else work | paused | background | hint | stopped, and why
     /// <summary>The page's key of the step (ui/locate.js).</summary>
@@ -67,15 +73,18 @@ namespace RealmForge {
       bool asc = req.Purpose == "ascend";
       st.OnHero = hero != null && req.HeroUid > 0 && hero.Hero == req.HeroUid && hero.Tab >= 0;
       if (asc) {
-        if (rs != null && rs.OnAscend && rs.AscendSel == uid) { st.Kind = LocateKind.AscendReady; return st; }
+        if (rs != null && rs.OnAscend && rs.AscendSel == uid && Array.IndexOf(rs.AscendEquips, uid) >= 0) { st.Kind = LocateKind.AscendReady; return st; }
         if (onAccount == 0) { st.Kind = LocateKind.OtherAccount; return st; }
         if (rs != null && rs.OnAscend) {
           st.Count = rs.AscendEquips.Length;
           var ap = Position(rs.AscendEquips, uid, ColsOf(rs.AscendList));
           if (ap != null) { st.Pos = ap[0]; st.Row = ap[1]; st.Col = ap[2]; Where(st, rs.AscendList, ap[0] - 1); }
           st.Missing = MissingFilter(req.Item, rs.AscendParts, rs.AscendSuits, rs.AscendMainAttrs, rs.AscendSubAttrs);
-          if (st.Missing.Length > 0 && (ap == null || rs.AscendEquips.Length > ShortList)) st.Kind = LocateKind.AscendFilter;
-          else if (ap != null) st.Kind = LocateKind.AscendPick;
+          // the item is in the shown list (whatever its length): pick it; only an item the list does not hold needs the filter
+          bool extra = ExtraSubFilter(req.Item, rs.AscendSubAttrs);
+          if (ap != null) st.Kind = LocateKind.AscendPick;
+          else if (rs.AscendList == null || !rs.AscendList.Has) st.Kind = LocateKind.AscendLoading;   // not read yet: nothing is known about the list
+          else if (st.Missing.Length > 0 || extra) { st.Kind = LocateKind.AscendFilter; PopupStep(st, req.Item, rs, extra); }
           else st.Kind = LocateKind.AscendNotInList;
           return st;
         }
@@ -88,7 +97,10 @@ namespace RealmForge {
         if (!invOpen && hero != null && hero.Hero > 0 && hero.Tab == 3) { st.Kind = LocateKind.OpenFoundry; st.OnGear = true; return st; }
         return NextInInventory(req, inv, hero, cols, st, true);
       }
-      if (rs != null && ((rs.OnRecast && rs.Sel == uid) || (rs.OnGemRecast && rs.GemSel == uid))) { st.Kind = LocateKind.Done; st.OnGem = rs.OnGemRecast && rs.GemSel == uid && !(rs.OnRecast && rs.Sel == uid); return st; }
+      // the gem screen: the item is there and the function the item needs is selected = ready (the player presses «Улучшить» himself)
+      int want = req.Purpose == "ascend" ? 0 : GemRows.FuncOfQuality(req.Item.Quality);
+      bool gemOk = rs != null && rs.OnGemRecast && rs.GemSel == uid && (want == 0 || rs.GemFunc == want);
+      if (rs != null && ((rs.OnRecast && rs.Sel == uid) || gemOk)) { st.Kind = LocateKind.Done; st.Func = want; st.OnGem = gemOk && !(rs.OnRecast && rs.Sel == uid); return st; }
       if (onAccount == 0) { st.Kind = LocateKind.OtherAccount; return st; }
 
       if (rs != null && rs.SublimingOpen && rs.CurType >= 0 && rs.CurType != 3) { st.Kind = LocateKind.OpenRecastTab; return st; }
@@ -103,6 +115,8 @@ namespace RealmForge {
         else st.Kind = LocateKind.RecastNotInList;
         return st;
       }
+      // the gem screen holds the item but not the function it needs (none chosen, or the other recast one)
+      if (rs != null && rs.GemOpen && rs.GemSel == uid && !gemOk) { st.Kind = LocateKind.GemFunction; st.Func = want; st.WrongFunc = rs.OnGemRecast && want != 0 && rs.GemFunc != want; return st; }
       if (rs != null && rs.OnGemRecast) {
         st.Count = rs.GemList.Length;
         var p = Position(rs.GemList, uid, 1);
@@ -110,10 +124,39 @@ namespace RealmForge {
         else st.Kind = rs.GemList.Length == 0 ? LocateKind.GemPick : LocateKind.RecastNotInList;
         return st;
       }
-      if (rs != null && rs.GemOpen && rs.GemSel == uid) { st.Kind = LocateKind.GemFunction; return st; }
       // the recast path stays through the inventory: item selected -> card button «Улучшение самоцветами» -> the gem screen's
       // «Преобразование» -> the item -> «Улучшить». The Foundry is only for Ascension. A worn item: its hero's slot (OnHero)
       return NextInInventory(req, inv, hero, cols, st);
+    }
+
+    /// <summary>The filter keeps a sub stat the item does not have (the list holds only items with all the chosen sub stats).</summary>
+    public static bool ExtraSubFilter(PlanItem it, long[] subAttrs) {
+      if (it == null || subAttrs == null) return false;
+      foreach (var a in subAttrs) {
+        bool has = false;
+        foreach (var s in it.Subs) if (s.Stat == a) has = true;
+        if (!has) return true;
+      }
+      return false;
+    }
+
+    /// <summary>With the filter pop-up open: what to press in it (reset | suitRow | suitTab | suitCell | mainRow | subRow). The slot
+    /// switches are outside the pop-up and stay first (nothing here when the slot is still missing).</summary>
+    public static void PopupStep(LocateStep st, PlanItem it, RecastScreen rs, bool extra) {
+      st.FilterGo = ""; st.SuitTab = -1; st.SuitIndex = -1;
+      if (rs == null || !rs.AscendFilterOpen || it == null || Array.IndexOf(st.Missing, "slot") >= 0) return;
+      if (extra) { st.FilterGo = "reset"; return; }
+      if (Array.IndexOf(st.Missing, "suit") >= 0) {
+        if (rs.FilterPanel != 1) { st.FilterGo = "suitRow"; return; }
+        int tab = Array.IndexOf(rs.FilterLeftSuits, (long)it.SetId) >= 0 ? 0 : Array.IndexOf(rs.FilterRightSuits, (long)it.SetId) >= 0 ? 1 : -1;
+        if (tab < 0) return;   // the pop-up has no such set for the shown slots
+        int idx = Array.IndexOf(rs.FilterShowSuits, (long)it.SetId);
+        if (idx < 0) { st.FilterGo = "suitTab"; st.SuitTab = tab; return; }   // the other tab is shown
+        st.FilterGo = "suitCell"; st.SuitTab = tab; st.SuitIndex = idx;
+        return;
+      }
+      if (Array.IndexOf(st.Missing, "main") >= 0) { st.FilterGo = "mainRow"; return; }
+      if (Array.IndexOf(st.Missing, "subs") >= 0) st.FilterGo = "subRow";
     }
 
     /// <summary>Columns of a list as the game says (1 = unknown: then the list is laid out one cell per row).</summary>
@@ -136,7 +179,7 @@ namespace RealmForge {
       if (inv != null && inv.Open) {
         if (!inv.EquipTab) { st.Kind = LocateKind.OpenEquipTab; return st; }
         if (toFoundry) { st.Kind = LocateKind.OpenFoundry; return st; }
-        if (inv.Current == uid) { st.Kind = LocateKind.Selected; return st; }
+        if (inv.Current == uid) { st.Kind = LocateKind.Selected; st.Worn = req.HeroUid > 0; return st; }
         st.Count = inv.Uids.Count;
         var p = Position(inv.Uids.ToArray(), uid, cols);
         if (p == null) { st.Kind = LocateKind.HiddenFilter; return st; }
@@ -285,6 +328,36 @@ namespace RealmForge {
       if (locateActive) return Locate;
       if (planActive) return Plan;
       return None;
+    }
+  }
+
+  /// <summary>The gem screen's function list («Улучшение самоцветами»): the rows follow the game's config order (Recast, Advanced Recast,
+  /// Refine, Advanced Refine, then the gem enhancements); a function the account has not unlocked is not in the list. Pure helpers.</summary>
+  public static class GemRows {
+    public const int Recast = 7, AdvancedRecast = 8;
+    /// <summary>The functions in list order (config order).</summary>
+    public static readonly int[] Order = { 7, 8, 5, 6, 1, 11, 2, 3, 4 };
+
+    /// <summary>The recast function an item of this quality needs: mythic (6) and its variant (10) = Recast; ancient mythic (8) and the
+    /// higher / variant ones (11, 12, 13) = Advanced Recast; 0 = unknown quality (either will do).</summary>
+    public static int FuncOfQuality(int quality) {
+      switch (quality) {
+        case 6: case 10: return Recast;
+        case 8: case 11: case 12: case 13: return AdvancedRecast;
+        default: return 0;
+      }
+    }
+
+    /// <summary>The 0-based row of a function in the list; <paramref name="absent"/> = functions known to be missing (not unlocked);
+    /// -1 when the function is not in the list.</summary>
+    public static int Index(int func, int[] absent = null) {
+      int k = 0;
+      foreach (int f in Order) {
+        if (absent != null && Array.IndexOf(absent, f) >= 0) continue;
+        if (f == func) return k;
+        k++;
+      }
+      return -1;
     }
   }
 

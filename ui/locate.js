@@ -6,7 +6,7 @@
 (function (root) {
   const KINDS = ['noItem', 'otherAccount', 'openInventory', 'openEquipTab', 'inList', 'hiddenFilter', 'selected', 'openRecastTab',
     'recastFilter', 'recastPick', 'recastNotInList', 'choosePending', 'gemPick', 'done',
-    'openAscendTab', 'ascendPick', 'ascendNotInList', 'ascendReady', 'openFoundry', 'gemFunction', 'ascendFilter'];
+    'openAscendTab', 'ascendPick', 'ascendNotInList', 'ascendReady', 'openFoundry', 'gemFunction', 'ascendFilter', 'ascendLoading'];
 
   // auto click (host: src/LocatePilot.cs): st.auto = '' (off) | work | paused | background | hint | stopped, st.autoWhy = the reason when stopped.
   // The app clicks by itself only on these steps; the rest (the Foundry, the last button) stay the player's.
@@ -59,9 +59,22 @@
       // recast goes through the gem screen (the Foundry is for Ascension only): card button, then the function, then «Улучшить»
       case 'selected': r = { tone: 'done', head: t('locSelected'), lines: [t(req.purpose === 'ascend' ? 'locSelectedAscP' : 'locSelectedP')] }; break;
       case 'openFoundry': r = st.onGear ? { tone: 'info', head: t('locFoundryHero'), lines: [t('locFoundryP')] } : { tone: 'info', head: t('locFoundryInv'), lines: [t('locFoundryP')] }; break;
-      case 'gemFunction': r = { tone: 'info', head: t('locGemFunc'), lines: [t('locGemFuncP')] }; break;
+      case 'gemFunction': {
+        // the function the item needs (the host reads it from the item's quality): the hint names that one only
+        const k = st.func === 8 ? 'Adv' : st.func === 7 ? 'Rec' : '';
+        r = k ? { tone: 'info', head: t(st.wrongFunc ? 'locGemWrong' + k : 'locGemFunc' + k), lines: [t('locGemFunc' + k + 'P')] }
+              : { tone: 'info', head: t('locGemFunc'), lines: [t('locGemFuncP')] };
+        break;
+      }
+      case 'ascendLoading': r = { tone: 'info', head: t('locAscLoading'), lines: [] }; break;
       case 'ascendFilter': {
-        const l = filterLines(req, st, t);
+        let l = filterLines(req, st, t);
+        // the filter pop-up is open: the one thing to press in it
+        const go = st.filterGo, pop = {
+          reset: () => t('locPopReset'), suitRow: () => t('locPopSuitRow'), mainRow: () => t('locPopMainRow'), subRow: () => t('locPopSubRow'),
+          suitTab: () => t('locPopSuitTab', st.suitTab === 1 ? 3 : 2), suitCell: () => t('locPopSuitCell', it.setName || ''),
+        };
+        if (go && pop[go]) l = [pop[go]()];
         r = { tone: 'info', head: t('locFilterA'), lines: l.concat(st.pos > 0 ? [pos] : []) };
         break;
       }
@@ -76,10 +89,16 @@
       case 'choosePending': r = { tone: 'warn', head: t('locPending'), lines: [t('locPendingP')] }; break;
       case 'gemPick': r = st.pos > 0 ? { tone: 'info', head: t('locPick', st.pos, st.count), lines: [] } : { tone: 'info', head: t('locGemOpen'), lines: [] }; break;
       case 'openAscendTab': r = { tone: 'info', head: t('locAscendTab'), lines: [] }; break;
-      case 'ascendPick': r = { tone: 'info', head: t('locPick', st.pos, st.count), lines: [scrollLine(st, t)].filter(Boolean) }; break;
+      case 'ascendPick': {
+        const lines = [scrollLine(st, t)].filter(Boolean);
+        // the list is not narrowed to the item's slot and the item is off the screen: the slot icon shortens the way
+        if ((st.missing || []).indexOf('slot') >= 0 && st.scroll !== 'visible' && it.slotName) lines.push(t('locFSlot', it.slotName));
+        r = { tone: 'info', head: t('locPick', st.pos, st.count), lines };
+        break;
+      }
       case 'ascendNotInList': r = { tone: 'warn', head: t('locAscNotInList'), lines: [t('locAscNotInListP')] }; break;
       case 'ascendReady': r = { tone: 'done', head: t('locAscendReady'), lines: [t('locAscendReadyP')] }; break;
-      default: r = { tone: 'done', head: t('locDone'), lines: [t(st.onGem ? 'locDoneGemP' : 'locDoneP')] };
+      default: r = { tone: 'done', head: t('locDone'), lines: [t(st.onGem ? 'locDoneGemP' : 'locDoneP')] };   // on the gem screen the request counts as done right here (ui/app.js)
     }
     // auto click: the app is doing this step itself, or it gave up (and says why; the step's own text follows)
     if (st.auto === 'stopped') r = { tone: st.autoWhy === 'cancelled' ? 'info' : 'warn', head: t('locAutoStop'), lines: [t(AUTO_WHY[st.autoWhy] || 'locAutoLost'), r.head].concat(r.lines) };
@@ -92,7 +111,7 @@
   // the user-facing step number of a request: {n, total} or null (a step off the main path has no number)
   const PATH = {
     recast: { openInventory: 1, openEquipTab: 2, inList: 3, hiddenFilter: 3, selected: 4, gemFunction: 5, gemPick: 5, done: 6, total: 6 },
-    ascend: { openInventory: 1, openEquipTab: 2, openFoundry: 3, openAscendTab: 4, ascendFilter: 5, ascendPick: 5, ascendNotInList: 5, ascendReady: 6, total: 6 },
+    ascend: { openInventory: 1, openEquipTab: 2, openFoundry: 3, openAscendTab: 4, ascendFilter: 5, ascendLoading: 5, ascendPick: 5, ascendNotInList: 5, ascendReady: 6, total: 6 },
   };
   function stepNo(req, st) {
     if (!req || !st) return null;
@@ -116,7 +135,12 @@
     }));
   }
 
-  const api = { KINDS, describe, caps, stepNo, subRows, filterLines, AUTO_STEPS };
+  // the host's pills over the game for an item off the screen («Вещь ниже: ещё 3 ряда»): the texts and the row forms in the page's language
+  function pillTexts(t, lang) {
+    return { lang: lang === 'en' ? 'en' : 'ru', pillUp: t('locPillUp'), pillDown: t('locPillDown'), rows1: t('pRows1'), rows2: t('pRows2'), rows5: t('pRows5') };
+  }
+
+  const api = { KINDS, pillTexts, describe, caps, stepNo, subRows, filterLines, AUTO_STEPS };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.RFLocate = api;
 })(typeof window !== 'undefined' ? window : globalThis);
