@@ -1103,6 +1103,7 @@ namespace RealmForge {
       string site = cfg.Site, code = cfg.Code;
       if (!SyncClient.IsValidCode(code)) { Post("{\"ev\":\"plans\",\"status\":\"invalid_token\"}"); return; }
       Task.Factory.StartNew(() => {
+       try {
         var r = PlansClient.List(site, code, lang == "en" ? "en" : "ru");
         // set and main stat of every plan item: the auto-pilot sets the game's gear filter with them
         if (r.Status == PlansStatus.Ok) {
@@ -1143,6 +1144,11 @@ namespace RealmForge {
           lb.Append('}');
         }
         Post(lb.Append('}').ToString());
+       } catch (Exception e) {
+        // the page waits for this event («Загружаю сборки…»): a failure must still answer it
+        Log.Write("plans load failed: " + e.GetType().Name + ": " + e.Message);
+        Post("{\"ev\":\"plans\",\"status\":\"error\",\"detail\":" + S(e.Message) + "}");
+       }
       });
     }
 

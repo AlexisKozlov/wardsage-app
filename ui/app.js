@@ -731,7 +731,7 @@
 
   // ---------------------------------------------------------------- actions
   function allUids() { const s = new Set(); S.plans.list.forEach((p) => p.items.forEach((i) => s.add(i.uid))); return [...s]; }
-  function loadPlans() { if (!S.hasCode) return; S.plans.status = 'loading'; host.send({ cmd: 'plans.load', lang: S.lang }); host.send({ cmd: 'sell.load', lang: S.lang }); render(); }
+  function loadPlans() { if (!S.hasCode) return; S.plans.status = 'loading'; clearTimeout(S.plansWd); S.plansWd = setTimeout(() => { if (S.plans.status === 'loading') { S.plans = { status: 'error', list: S.plans.list, err: '' }; render(); } }, 40000); host.send({ cmd: 'plans.load', lang: S.lang }); host.send({ cmd: 'sell.load', lang: S.lang }); render(); }
   function scan() { if (!S.plans.list.length) return; S.scan = { status: 'scanning', panel: false }; host.send({ cmd: 'equip.scan', uids: allUids() }); render(); }
   // the game needs to know the new plan's items: a first scan, or just the new list of watched items
   // fresh: a new or re-sent plan - the host reads the game's tables again instead of trusting the earlier scan
@@ -936,6 +936,7 @@
         if (S.page === 'sync' && !S.compact) render();
         break;
       case 'plans':
+        clearTimeout(S.plansWd);
         if (m.status === 'ok') {
           const id = current() && current().id;
           S.plans = { status: 'ok', list: G.mergePlans(S.plans.list, m.plans, S.reported), err: null };
