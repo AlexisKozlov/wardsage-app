@@ -694,6 +694,7 @@ static class CoreTests {
     RemoteSwitchesTests();
     LayoutTests(mock);
     TestLogTests(mock);
+    ScreenRecorderTests();
 
     Console.WriteLine();
     Console.WriteLine(passed + " passed, " + failed + " failed");
@@ -745,6 +746,58 @@ static class CoreTests {
     Eq(TestLogClient.Result.Later, TestLogClient.Send(mock, "rf_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", "1.0", lines), "send: 401 is later");
     Eq(TestLogClient.Result.Later, TestLogClient.Send(mock, "", "1.0", lines), "send: no code is later");
     Eq(TestLogClient.Result.Later, TestLogClient.Send("http://127.0.0.1:1", TlCode, "1.0", lines), "send: no connection is later");
+  }
+
+  static void ScreenRecorderTests() {
+    Console.WriteLine("Test-build screen recorder (src/ScreenRecorder.cs: names, sizes, jsonl, zip parts, upload queue):");
+    string id = RecNames.NewId(new DateTime(2026, 10, 17, 9, 5, 7), new Random(1));
+    Check(System.Text.RegularExpressions.Regex.IsMatch(id, "^20261017-090507-[0-9a-f]{6}$") && RecNames.IsValidId(id), "rec id: yyyyMMdd-HHmmss-6 hex (" + id + ")");
+    Check(!RecNames.IsValidId("short") && !RecNames.IsValidId("has space 12345") && !RecNames.IsValidId(new string('a', 41)) && !RecNames.IsValidId(null), "rec id: the site's pattern");
+    Eq("part_000.zip", RecNames.PartFile(0), "part name 0"); Eq("part_119.zip", RecNames.PartFile(119), "part name 119");
+    Eq("frame_0001.jpg", RecNames.FrameFile(1), "frame name");
+    Eq(7, RecNames.PartOf("part_007.zip"), "part number from a name"); Eq(-1, RecNames.PartOf("part_7.zip.tmp"), "not a part name");
+    int nw, nh; double sc;
+    sc = RecSize.Fit(1920, 1080, 1280, out nw, out nh); Check(nw == 1280 && nh == 720 && Math.Abs(sc - 2.0 / 3) < 1e-9, "size: 1920x1080 -> 1280x720");
+    sc = RecSize.Fit(1366, 705, 1280, out nw, out nh); Check(nw == 1280 && nh == 661 && sc < 1, "size: 1366x705 -> 1280x661");
+    sc = RecSize.Fit(1280, 720, 1280, out nw, out nh); Check(nw == 1280 && nh == 720 && sc == 1.0, "size: already 1280 wide: unchanged");
+    sc = RecSize.Fit(800, 600, 1280, out nw, out nh); Check(nw == 800 && nh == 600 && sc == 1.0, "size: small is never enlarged");
+    var info = new RecInfo { Screen = "Inventory equip normal", Step = "InList", InvRaw = 120.5, InvRow1 = -33.126, FdRaw = double.NaN };
+    info.Frames.Add(new RecFrameRect { Kind = "frame", X = 10, Y = 20, W = 30, H = 40 });
+    string line = RecJson.Line(1250, 1920, 1080, 2.0 / 3, false, info, 640, 360);
+    Eq("{\"t\":1250,\"w\":1920,\"h\":1080,\"scale\":0.6667,\"screen\":\"Inventory equip normal\",\"step\":\"InList\",\"frames\":[{\"kind\":\"frame\",\"x\":10,\"y\":20,\"w\":30,\"h\":40}],\"scroll\":{\"invRaw\":120.5,\"invRow1\":-33.13,\"invSmooth\":null,\"fdRaw\":null,\"fdSmooth\":null},\"cursor\":[640,360]}", line, "jsonl line");
+    Eq("{\"t\":0,\"w\":10,\"h\":5,\"scale\":1,\"bg\":true,\"screen\":\"-\",\"step\":\"-\",\"frames\":[],\"scroll\":{\"invRaw\":null,\"invRow1\":null,\"invSmooth\":null,\"fdRaw\":null,\"fdSmooth\":null},\"cursor\":[-3,4]}", RecJson.Line(0, 10, 5, 1, true, null, -3, 4), "jsonl line: no info, background");
+    Check(MiniJson.Parse(line) != null, "jsonl line is valid json");
+    Eq("{\"ev\":\"rec\",\"on\":true,\"sec\":42,\"sent\":1,\"total\":4,\"why\":\"\"}", RecJson.State(true, 42, 1, 4, ""), "state event");
+    // a zip part: frames + frames.jsonl, whole only after Close
+    string dir = Path.Combine(Path.GetTempPath(), "rf-rec-test-" + Guid.NewGuid().ToString("N"));
+    try {
+      var w = new RecPartWriter(dir, 3);
+      w.Add(RecNames.FrameFile(1), new byte[] { 1, 2, 3 }, "{\"t\":0}"); w.Add(RecNames.FrameFile(2), new byte[] { 4, 5 }, "{\"t\":125}");
+      Check(!File.Exists(Path.Combine(dir, "part_003.zip")) && w.Frames == 2, "zip part: no part file before Close");
+      string p = w.Close();
+      Check(p != null && Path.GetFileName(p) == "part_003.zip" && File.Exists(p) && !File.Exists(p + ".tmp"), "zip part: closed to part_003.zip");
+      using (var z = ZipFile.OpenRead(p)) {
+        Eq(3, z.Entries.Count, "zip part: 2 frames + frames.jsonl");
+        string txt; using (var r = new StreamReader(z.GetEntry("frames.jsonl").Open())) txt = r.ReadToEnd();
+        Eq("{\"t\":0}\n{\"t\":125}\n", txt, "zip part: jsonl lines");
+        Check(z.GetEntry("frame_0002.jpg").Length == 2, "zip part: frame bytes");
+      }
+      Check(new RecPartWriter(dir, 4).Close() == null && !File.Exists(Path.Combine(dir, "part_004.zip")), "zip part: empty part leaves no file");
+      // the upload queue: a part that fails stays and goes again; 404 stops and keeps the files
+      var logs = new List<string>(); int calls = 0;
+      var up = new RecUploader(id, () => "http://x", () => "c", s => { lock (logs) logs.Add(s); }) { RetryMs = 50 };
+      up.Sender = (site, code, rec, part, file) => ++calls == 1 ? TestLogClient.Result.Later : TestLogClient.Result.Ok;
+      up.Add(3, p); up.Close();
+      for (int i = 0; i < 100 && !up.Idle; i++) System.Threading.Thread.Sleep(50);
+      Check(up.Idle && up.Sent == 1 && up.Total == 1 && calls == 2 && !File.Exists(p), "upload: retried after a failure, sent, the file removed (calls " + calls + ")");
+      lock (logs) Check(logs.Exists(x => x.StartsWith("recording " + id + ": part 3 sent (")), "upload: log line 'part N sent (bytes)'");
+      string p2 = Path.Combine(dir, "part_005.zip"); File.WriteAllBytes(p2, new byte[] { 1 });
+      var up2 = new RecUploader(id, () => "http://x", () => "c", null) { Sender = (a, b, c, d, e) => TestLogClient.Result.Off };
+      up2.Add(5, p2); up2.Close();
+      for (int i = 0; i < 100 && !up2.Off; i++) System.Threading.Thread.Sleep(50);
+      Check(up2.Off && File.Exists(p2), "upload: 404 stops and keeps the file");
+      Eq(TestLogClient.Result.Later, RecClient.Send("http://127.0.0.1:1", "rf_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", id, 0, p2), "send: no connection is later");
+    } finally { try { Directory.Delete(dir, true); } catch (Exception) { } }
   }
 
   static void LayoutTests(string mock) {

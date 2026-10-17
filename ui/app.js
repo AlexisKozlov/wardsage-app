@@ -12,7 +12,7 @@
 
   const CODE_RE = /^rf_[0-9A-Za-z]{32}$/;
   const S = {
-    ready: false, termsOk: true, lang: 'ru', version: '', channel: 'main', site: '', defaultSite: '', hasCode: false, codePrefix: '', saveCopy: false,
+    rec: { on: false, sec: 0, sent: 0, total: 0, why: '' }, ready: false, termsOk: true, lang: 'ru', version: '', channel: 'main', site: '', defaultSite: '', hasCode: false, codePrefix: '', saveCopy: false,
     game: { running: false, version: null }, last: null, page: 'sync', editCode: false,
     sync: { phase: 'idle', stage: null, seconds: 0, result: null, error: null },
     plans: { status: 'idle', list: [], err: null }, sel: 0,
@@ -675,6 +675,9 @@
   }
 
   // ---------------------------------------------------------------- settings
+  const recClock = (s) => Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+  const recLabel = () => S.rec.on ? t('recStop', recClock(S.rec.sec)) : t('recStart');
+  const recNote = () => (S.rec.why === 'off' ? t('recOff') : S.rec.why ? t('recLimit') + ' ' : '') + (S.rec.why === 'off' ? '' : t('recSent', S.rec.sent, S.rec.total));
   function settingsPage() {
     // a row: title + one short line on the left, the control on the right; the long text hides under «Подробнее»
     const row = (title, sub, ctl, o = {}) => {
@@ -695,10 +698,14 @@
       sec(t('secSync'),
         row(t('setAutoSync'), t('setAutoSyncS'), sw('autoSync', S.autoSync), { more: 'setAutoSyncP', key: 'autoSync' })
         + row(t('setCopy'), t('setCopyP'), sw('copy', S.saveCopy))),
+      rec,
       sec(t('secEquip'),
         row(t('setAutoClick'), t('setAutoClickS'), sw('autoClick', S.autoClick), { more: 'setAutoClickP', key: 'autoClick' })
         + row(t('setAutoConfirm'), t(S.autoClick ? 'setAutoConfirmS' : 'setAutoConfirmOff'), sw('autoConfirm', S.autoConfirm, !S.autoClick),
           { more: 'setAutoConfirmP', key: 'autoConfirm', dep: true, off: !S.autoClick }))].join('');
+    // TEST build only: the screen recorder for the developers (host: rec.start / rec.stop, event 'rec')
+    const rec = S.channel !== 'test' ? '' : sec(t('secRec'), row(t('setRec'), t('setRecP'), `<button class="btn-line" id="recBtn" data-act="rec">${esc(recLabel())}</button>`, { wide: true })
+      + (S.rec.sent || S.rec.total || S.rec.why ? `<p class="sdet" id="recInfo">${esc(recNote())}</p>` : ''));
     const right = [
       sec(t('secApp'),
         row(t('setAutoUpdate'), t('setAutoUpdateS'), sw('autoUpdate', S.autoUpdate), { more: 'setAutoUpdateP', key: 'autoUpdate' })
@@ -802,6 +809,7 @@
     else if (a === 'open') host.send({ cmd: 'open', url: el.dataset.url });
     else if (a === 'more') { S.more[el.dataset.k] = !S.more[el.dataset.k]; render(); }
     else if (a === 'openLog') host.send({ cmd: 'openLog' });
+    else if (a === 'rec') host.send({ cmd: S.rec.on ? 'rec.stop' : 'rec.start' });
     else if (a === 'diag') { host.send({ cmd: 'diag' }); el.textContent = t('diagOn'); el.disabled = true; }
     else if (a === 'openFolder') host.send({ cmd: 'openFolder' });
     else if (a === 'editCode') { S.editCode = true; S.page = 'sync'; render(); setTimeout(() => $('#code') && $('#code').focus(), 30); }
@@ -969,6 +977,15 @@
       case 'layout': {
         const l = { missing: m.missing === true, noCode: m.noCode === true, game: typeof m.game === 'string' ? m.game : '' };
         if (l.missing !== S.layout.missing || l.noCode !== S.layout.noCode || l.game !== S.layout.game) { S.layout = l; render(); }
+        break;
+      }
+      case 'rec': {
+        // the recorder's timer / upload count (the page is only redrawn when it starts, stops or the counts change)
+        const was = S.rec, now = { on: !!m.on, sec: m.sec | 0, sent: m.sent | 0, total: m.total | 0, why: m.why || '' };
+        S.rec = now;
+        const b = $('#recBtn');
+        if (b && was.on === now.on && was.sent === now.sent && was.total === now.total && was.why === now.why) b.textContent = recLabel();
+        else if (S.page === 'settings') render();
         break;
       }
       case 'battle': toast(t(m.ok === false ? 'battleNone' : 'battleKept'), 6000); break;

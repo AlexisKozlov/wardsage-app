@@ -83,8 +83,8 @@ namespace RealmForge {
       // kept out of screen captures - our own looks at the list included. Older Windows (before 10 2004) cannot: then the
       // looks see our drawings (live 2026-10-14, a 1366x705 laptop: the plates were on the diagnostics screenshots) and
       // mask the parts we drew (Parts) themselves
-      try { Excluded = W32.SetWindowDisplayAffinity(Handle, 0x11); } catch (Exception) { Excluded = false; }
-      if (!Excluded) Log.Write("overlay: the hint windows cannot be hidden from screen captures on this Windows: the screen looks mask them");
+      ApplyAffinity();
+      if (!Excluded && !Capturable) Log.Write("overlay: the hint windows cannot be hidden from screen captures on this Windows: the screen looks mask them");
     }
     // a panel the player may move (the boss coach): while it is movable it takes the mouse and drags like a title bar
     bool movable;
@@ -120,6 +120,11 @@ namespace RealmForge {
 
     /// <summary>Hidden from screen captures (false: the screen looks see what this window shows).</summary>
     public bool Excluded = true;
+    /// <summary>TEST build, while the screen recorder runs: the windows are left in screen captures (so the recording shows them).</summary>
+    public static bool Capturable;
+    public void ApplyAffinity() {
+      try { Excluded = W32.SetWindowDisplayAffinity(Handle, Capturable ? 0u : 0x11u) && !Capturable; } catch (Exception) { Excluded = false; }
+    }
     /// <summary>What it shows now: its parts in screen px {x, y, w, h} (empty when hidden).</summary>
     public System.Collections.Generic.List<int[]> Parts = new System.Collections.Generic.List<int[]>();
     protected override void OnVisibleChanged(EventArgs e) { base.OnVisibleChanged(e); if (!Visible) Parts.Clear(); }
@@ -419,7 +424,7 @@ namespace RealmForge {
     public void SetLocateTip(string[] lines, string caps, Dictionary<string, string> texts = null) { locateLines = lines ?? new string[0]; locateCaps = caps ?? ""; if (texts != null) locateTexts = texts; HideTip(); }
 
     void Run() {
-      if (target != 0 || locateReq != null || filterItem != 0 || hintKind != "" || runHero != 0 || sellWanted != null || DateTime.Now < diagUntil) { timer.Start(); if (target != 0) lookTimer.Start(); else lookTimer.Stop(); return; }
+      if (target != 0 || locateReq != null || filterItem != 0 || hintKind != "" || runHero != 0 || sellWanted != null || DateTime.Now < diagUntil || RecInfo.Active) { timer.Start(); if (target != 0) lookTimer.Start(); else lookTimer.Stop(); return; }
       timer.Stop(); lookTimer.Stop(); HideTip(); if (cancelWin.Visible) cancelWin.Hide();
     }
 
@@ -443,7 +448,24 @@ namespace RealmForge {
       report(st, far);
     }
 
+    // the screen recorder (TEST build): what this tick decided, collected while a recording runs and published at its end
+    RecInfo recB;
     void Tick() {
+      recB = RecInfo.Active ? new RecInfo() : null;
+      try { TickWork(); }
+      finally {
+        if (recB != null) { var b = recB; recB = null; b.Screen = screens.Current != null ? screens.Current.Brief : "-"; RecInfo.Publish(b); }
+      }
+    }
+
+    /// <summary>TEST build: the recorder starts / stops. Our windows stay in screen captures while it runs (then the screen looks mask them themselves).</summary>
+    public void SetRecording(bool on) {
+      RecInfo.Active = on; GlowWindow.Capturable = on;
+      foreach (var w in new[] { glow, tip, cancelWin }) if (w.IsHandleCreated) w.ApplyAffinity();
+      Run();
+    }
+
+    void TickWork() {
       curRow = curCol = 0; curSel = 0;
       // the frames over the inventory / Foundry lists follow a scroll the game renders at its own rate: those hints tick often
       // (the scroll is read every frame we draw); everything else stays at the slow tick
@@ -1031,8 +1053,17 @@ namespace RealmForge {
     /// <summary>Draws one hint into <paramref name="win"/>: <paramref name="frameR"/> (screen px, null = no frame), the plate
     /// beside <paramref name="target"/>, and the scroll strip (null = none: {x, viewTop, viewBottom, dotY, b0, b1}, screen px)
     /// with the plate as a pill at its dot. <paramref name="key"/>: what is drawn now (unchanged = nothing to do).</summary>
+    // the recorder: the frames of this tick's scene in client px (every tick, also when the picture is unchanged)
+    void RecScene(GlowWindow win, int[] frameR, double[] strip, List<int[]> marks) {
+      string pre = win == tip ? "tip-" : "";
+      if (frameR != null) recB.Frames.Add(new RecFrameRect { Kind = pre + "frame", X = frameR[0] - sceneX, Y = frameR[1] - sceneY, W = frameR[2], H = frameR[3] });
+      if (strip != null) recB.Frames.Add(new RecFrameRect { Kind = pre + "strip", X = (int)strip[0] - 12 - sceneX, Y = (int)strip[1] - sceneY, W = 24, H = (int)(strip[2] - strip[1]) });
+      if (marks != null) foreach (var m in marks) recB.Frames.Add(new RecFrameRect { Kind = pre + "mark" + (m.Length > 4 ? m[4].ToString() : ""), X = m[0] - sceneX, Y = m[1] - sceneY, W = m[2], H = m[3] });
+    }
+
     void Scene(GlowWindow win, ref string key, int[] frameR, Plate p, int[] target, double[] strip, List<int[]> marks = null) {
       if (!GameDrawable()) { if (win.Visible) win.Hide(); key = null; return; }
+      if (recB != null) RecScene(win, frameR, strip, marks);
       float pulse = (float)(0.6 + 0.4 * Math.Sin(frame * 0.45));
       string k = (frameR != null ? string.Join(",", frameR) : "-") + "|" + (target != null ? string.Join(",", target) : "-") + "|"
         + (p != null ? p.Caps + "/" + p.Main + "/" + p.Sub + "/" + p.Pill + "/" + p.Warn : "-") + "|" + (strip != null ? string.Join(",", Array.ConvertAll(strip, v => ((int)v).ToString())) : "-")
@@ -1478,6 +1509,7 @@ namespace RealmForge {
       }
       // the drawn row 1 eases toward the scroll's value (no jumping between old and new reads)
       row1 = shSmooth.Step(row1, now, 4 * shGeo.PitchY * U);
+      if (recB != null) recB.InvSmooth = row1;
       if (inBulk && front) {
         string why = !double.IsNaN(row1) ? "exact" : "none";
         if (why != shFrameSaid) { shFrameSaid = why; if (why == "none") Log.Write("sell hint: the list's exact scroll cannot be read - no item frames, only the text plate"); }
@@ -1589,6 +1621,7 @@ namespace RealmForge {
         locateStep = st;
       }
       var step = locateStep;
+      if (recB != null) recB.Step = step.Kind.ToString();
       TickLocateDrive(step, req, hwnd, o, cr, now, W, H, U);   // auto click on: the app opens the item itself
       FoundryScrollNow(step, now);
       // the step's frame from the screen geometry (the site's file, src/LocateFrames.cs): «Литейная», the tabs, the slot, the list cell, the final button
@@ -1614,7 +1647,7 @@ namespace RealmForge {
         bool liveShown; var liveList = RFX.ReadInventoryLive(out liveShown);
         if (liveList != null && liveList.Has) inv.List = liveList;
         bool exactGrid = FollowInventoryGrid(lgrid, locateScroll, locateGeo, inv, o, cr, U, now, "locate");
-        if (exactGrid) lgrid.Row1 = locSmooth.Step(lgrid.Row1, now, 4 * locateGeo.PitchY * U); else locSmooth.Reset();
+        if (exactGrid) { lgrid.Row1 = locSmooth.Step(lgrid.Row1, now, 4 * locateGeo.PitchY * U); if (recB != null) recB.InvSmooth = lgrid.Row1; } else locSmooth.Reset();
         if (inv.Current != locateLastCur) {
           // the player clicked a cell: the pointer shows where its row is (the last resort, when the game's scroll is unreadable)
           if (!exactGrid && locateLastCur != -1 && inv.Current > 0) {
@@ -1795,6 +1828,7 @@ namespace RealmForge {
       double phase = sc.WantPhase(now) ? PhaseOf(geo, o, cr, U) : double.NaN;
       double r1 = sc.Row1(geo, inv.List, phase, U, now);
       if (double.IsNaN(r1)) return false;
+      if (recB != null) { recB.InvRaw = inv.List.ScrollY; recB.InvRow1 = r1; }
       grid.FromScroll(r1, inv.ListPtr);
       if (gridSaid != who + ":scroll") { gridSaid = who + ":scroll"; Log.Write(who + ": the inventory grid from the game's scroll (" + inv.List + ")"); }
       return true;
@@ -1818,6 +1852,7 @@ namespace RealmForge {
       if (live != null && live.Has) l = live;
       if (l == null || !l.Has) { locListSmooth.Reset(); return; }
       double y = locListSmooth.Step(l.ScrollY, now, 4 * (l.RowUnits > 0 ? l.RowUnits : 120));
+      if (recB != null) { recB.FdRaw = l.ScrollY; recB.FdSmooth = y; }
       var sm = new RFX.ListRead { ScrollY = y, Cols = l.Cols, RowUnits = l.RowUnits, First = l.First, Last = l.Last, FinalRowUnits = l.FinalRowUnits, FitScale = l.FitScale };
       if (asc) rs.AscendList = sm; else rs.RecastList = sm;
     }
@@ -2349,7 +2384,7 @@ namespace RealmForge {
     }
 
     static readonly int SelfPid = Process.GetCurrentProcess().Id;
-    static bool IsForeground(IntPtr game) {
+    internal static bool IsForeground(IntPtr game) {
       IntPtr f = W32.GetForegroundWindow(); if (f == game) return true;
       int fp, gp; W32.GetWindowThreadProcessId(f, out fp); W32.GetWindowThreadProcessId(game, out gp);
       // the game, or our always-on-top compact window over it (OverlayGate.InFront); our normal app window never counts

@@ -47,8 +47,8 @@ RES+=("-resource:app/res/boss_coach.json,overlay/boss_coach.json")
 RES+=("-resource:app/res/hero_tags.json,overlay/hero_tags.json")
 for f in Microsoft.Web.WebView2.Core.dll Microsoft.Web.WebView2.WinForms.dll WebView2Loader.dll; do RES+=("-resource:$WV/$f,bin/$f"); done
 
-CORE="src/Channel.cs src/UpdateKeys.cs src/MemoryReader.cs src/EquipScan.cs src/MiniJson.cs src/GameInfo.cs src/Extractor.cs src/SyncClient.cs src/PlansClient.cs src/NewsClient.cs src/SellClient.cs src/FightPlanClient.cs src/ErrorReport.cs src/BridgeClient.cs src/ListTracker.cs src/HintLayout.cs src/AutoPilot.cs src/FilterPilot.cs src/HeroPilot.cs src/LiveTables.cs src/BattleCapture.cs src/BattleClock.cs src/BattleTimeline.cs src/TimelineBuilder.cs src/ArenaOpponents.cs src/ArenaClient.cs src/GuildData.cs src/GvgData.cs src/GamePacks.cs src/GameScreen.cs src/ClickGate.cs src/TestLog.cs src/TraceUpload.cs src/SellScan.cs src/RecastScan.cs src/LocateClient.cs src/LocateFrames.cs src/LocateGuide.cs src/LocatePilot.cs src/SellHint.cs src/SellPilot.cs src/Config.cs src/RemoteConfig.cs src/Geometry.cs src/Layout.cs src/WebViewRecovery.cs src/CodeProtector.cs src/FolderMigration.cs"
-APP="app/Program.cs app/AppWindow.cs app/HostBridge.cs app/Overlay.cs app/BattleCoach.cs app/ArenaWatch.cs app/GuildWatch.cs app/PacksWatch.cs app/HintGeometry.cs app/Updater.cs app/Tray.cs app/AssemblyInfo.cs"
+CORE="src/Channel.cs src/UpdateKeys.cs src/MemoryReader.cs src/EquipScan.cs src/MiniJson.cs src/GameInfo.cs src/Extractor.cs src/SyncClient.cs src/PlansClient.cs src/NewsClient.cs src/SellClient.cs src/FightPlanClient.cs src/ErrorReport.cs src/BridgeClient.cs src/ListTracker.cs src/HintLayout.cs src/AutoPilot.cs src/FilterPilot.cs src/HeroPilot.cs src/LiveTables.cs src/BattleCapture.cs src/BattleClock.cs src/BattleTimeline.cs src/TimelineBuilder.cs src/ArenaOpponents.cs src/ArenaClient.cs src/GuildData.cs src/GvgData.cs src/GamePacks.cs src/GameScreen.cs src/ClickGate.cs src/TestLog.cs src/TraceUpload.cs src/SellScan.cs src/RecastScan.cs src/LocateClient.cs src/LocateFrames.cs src/LocateGuide.cs src/LocatePilot.cs src/SellHint.cs src/SellPilot.cs src/Config.cs src/RemoteConfig.cs src/Geometry.cs src/Layout.cs src/WebViewRecovery.cs src/CodeProtector.cs src/FolderMigration.cs src/ScreenRecorder.cs"
+APP="app/Program.cs app/AppWindow.cs app/HostBridge.cs app/Overlay.cs app/BattleCoach.cs app/ArenaWatch.cs app/GuildWatch.cs app/PacksWatch.cs app/HintGeometry.cs app/Updater.cs app/RecCapture.cs app/Tray.cs app/AssemblyInfo.cs"
 
 if [ -n "${APP_VERSION:-}" ]; then
   [[ "$APP_VERSION" =~ ^[0-9]+(\.[0-9]+){2,3}$ ]] || { echo "bad APP_VERSION: $APP_VERSION" >&2; exit 1; }
@@ -60,7 +60,7 @@ fi
 
 "${CSC[@]}" -langversion:7.3 -target:winexe -platform:x64 -optimize+ -deterministic -nostdlib -warnaserror -nowarn:1701,1702 \
   -r:$FX/mscorlib.dll -r:$FX/System.dll -r:$FX/System.Core.dll -r:$FX/System.Drawing.dll -r:$FX/System.Windows.Forms.dll \
-  -r:$FX/System.Security.dll -r:$WV/Microsoft.Web.WebView2.Core.dll -r:$WV/Microsoft.Web.WebView2.WinForms.dll \
+  -r:$FX/System.Security.dll -r:$FX/System.IO.Compression.dll -r:$WV/Microsoft.Web.WebView2.Core.dll -r:$WV/Microsoft.Web.WebView2.WinForms.dll \
   "${DEFS[@]}" -win32icon:app/res/icon.ico -win32manifest:app/res/app.manifest \
   "${RES[@]}" -out:dist/$EXE.exe $CORE $APP
 

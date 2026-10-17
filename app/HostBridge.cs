@@ -54,6 +54,7 @@ namespace RealmForge {
     readonly System.Windows.Forms.Timer remoteTimer = new System.Windows.Forms.Timer();
     readonly System.Windows.Forms.Timer testLogTimer = new System.Windows.Forms.Timer();   // TEST build only: log lines to the site
     bool testLogSending;
+    ScreenRecorder testRec;   // TEST build only: the screen recorder (app/RecCapture.cs), made at the first «Записать»
 
     public HostBridge(AppWindow win, CoreWebView2 core) {
       this.win = win; this.core = core;
@@ -254,7 +255,7 @@ namespace RealmForge {
       Program.FatalReport = null;
       bridgePoller.Dispose();   // the pending long poll is aborted: the thread ends at once
       CloseBridgeCommands("cancelled", "Wardsage was closed.", true);
-      gameTimer.Dispose(); liveTimer.Dispose(); autoTimer.Dispose(); updateTimer.Dispose(); remoteTimer.Dispose(); testLogTimer.Dispose(); overlay.Dispose();
+      gameTimer.Dispose(); liveTimer.Dispose(); autoTimer.Dispose(); updateTimer.Dispose(); remoteTimer.Dispose(); testLogTimer.Dispose(); if (testRec != null) testRec.Stop(); overlay.Dispose();
     }
 
     // «Обновлять автоматически» (on by default): a downloaded update is put in place by restarting in a quiet moment — no
@@ -436,6 +437,11 @@ namespace RealmForge {
           case "log": Log.Write("ui: " + (MiniJson.GetString(m, "text") ?? "")); break;
           case "equip.finish": FinishPlan(MiniJson.GetString(m, "id"), MiniJson.GetBool(m, "done", false), MiniJson.GetBool(m, "taken", false)); break;
           case "diag": overlay.StartDiag(5); break;
+          case "rec.start":
+            if (!Channel.IsTest) break;   // the test build only
+            if (testRec == null) testRec = new ScreenRecorder(() => cfg.Site, () => cfg.Code, s => Log.Write(s), ev => Post(ev), on => OnUi(() => overlay.SetRecording(on)));
+            testRec.Start(); break;
+          case "rec.stop": if (testRec != null) testRec.Stop(); break;
           case "battle.capture": if (On("battle")) CaptureNow(-1, 0, 0); break;
           case "compact": win.SetCompact(MiniJson.GetBool(m, "on", false)); break;
           case "update.restart": Program.RestartForUpdate(); break;

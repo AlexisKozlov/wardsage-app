@@ -88,6 +88,8 @@ window.RF_TEXTS = {
     gFilter: 'Сузь список: «Фильтр» → комплект «{0}»', gFilterStat: 'и главный стат «{0}».', gFilterP: 'Так предмет окажется в первых рядах — сейчас он в ряду {0} из длинного списка.',
     gFilterNoSet: 'Сузь список: «Фильтр» → главный стат «{0}»',
 
+    secRec: 'Запись экрана для разработчиков', setRec: 'Запись экрана', setRecP: 'Записывает окно игры с подсказками программы, пока вы не нажмёте «Стоп» (не дольше 5 минут), и отправляет запись разработчикам. Только тестовая версия.',
+    recStart: 'Записать', recStop: 'Стоп · {0}', recSent: 'Отправлено {0} из {1}.', recLimit: 'Запись остановилась сама: предел достигнут.', recOff: 'Сайт не принимает записи, файлы остались на компьютере.',
     setDiag: 'Диагностика рамки', setDiagP: '5 минут: снимки окна игры и данные списка сохраняются в папку debug рядом с программой. Никуда не отправляются.', diagStart: 'Включить', diagOn: 'Включено на 5 минут',
     hSet: 'Фильтр → Комплект: {0}', hStat: 'Главный стат: {0}', hSlot: 'Открой слот «{0}»', hSlotSub: 'откроется список вещей', hGearTabSub: 'там слоты героя', pSlotInFilter: 'прямо в окне фильтра: «Выбрать часть»', pFilterCovered: 'Окно фильтра закрывает вещь — закрой его (выбор в нём сбросится)',
     fStep1: '«Фильтр» внизу списка', fStep2: 'Комплект:', fStep3: 'Главный стат:',
@@ -283,6 +285,8 @@ window.RF_TEXTS = {
     gFilter: 'Narrow the list: “Filter” → set “{0}”', gFilterStat: 'and main stat “{0}”.', gFilterP: 'Then the item is in the first rows; now it is in row {0} of a long list.',
     gFilterNoSet: 'Narrow the list: “Filter” → main stat “{0}”',
 
+    secRec: 'Screen recording for the developers', setRec: 'Screen recording', setRecP: 'Records the game window with the program\'s hints until you press "Stop" (5 minutes at most) and sends the recording to the developers. Test version only.',
+    recStart: 'Record', recStop: 'Stop · {0}', recSent: 'Sent {0} of {1}.', recLimit: 'The recording stopped by itself: the limit was reached.', recOff: 'The site does not take recordings; the files stay on this PC.',
     setDiag: 'Frame diagnostics', setDiagP: '5 minutes: screenshots of the game window and list data are saved to the debug folder next to the program. Nothing is sent.', diagStart: 'Turn on', diagOn: 'On for 5 minutes',
     hSet: 'Filter → Set: {0}', hStat: 'Main stat: {0}', hSlot: 'Open the “{0}” slot', hSlotSub: 'its list of items opens', hGearTabSub: 'the hero’s slots are there', pSlotInFilter: 'right in the filter: “Select part”', pFilterCovered: 'The filter window covers the item — close it (its choice is reset)',
     fStep1: '“Filter” under the list', fStep2: 'Set:', fStep3: 'Main stat:',
