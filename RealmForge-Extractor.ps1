@@ -1922,7 +1922,8 @@ namespace RealmForge {
     public bool FormOk;                         // the hero screen's form is known (see Part)
     public int Tab = -1;                        // the hero screen's right-hand tab (3 = gear), -1 = unknown
     public long HeroUid;                        // 0 = unknown
-    public bool HeroFromForm;                   // HeroUid is the hero screen's own hero (the selected hero was empty)
+    public bool HeroFromForm;                   // HeroUid comes from the hero screen itself (its displayed hero or last voiced one), not from EquipData
+    public long HeroSelUid;                     // EquipData's selected hero (0 = empty), for the log
     public int Part = -1;                       // slot shown in the list, -1 = none (the list is closed: the hero grid shows)
     public int ListCount = -1;                  // items in the list
     public bool HideEquipped, HideEnhanced, HideLocked, FilterActive;
@@ -2017,7 +2018,8 @@ namespace RealmForge {
 
       ulong v; int tt;
       CheckForm(a);
-      s.HeroUid = HeroShown(a, out s.HeroFromForm);
+      int hsrc; s.HeroUid = HeroShown(a, out hsrc, out s.HeroSelUid);
+      s.HeroFromForm = (hsrc == HeroSrcForm && s.HeroSelUid != s.HeroUid) || hsrc == HeroSrcSound;
 
       // Who wears each plan item. The game REPLACES an item's table when it changes (EquipData.equips[uid] = new table,
       // e.g. right after the player puts it on), so the current table is looked up in EquipData.equips every time;
@@ -2081,16 +2083,39 @@ namespace RealmForge {
       return s;
     }
 
-    /// <summary>The hero whose screen is open: EquipData's selected hero; EquipData forgets it after the inventory (the key
-    /// goes, 27.09), then the open hero screen's own last voiced hero is the one shown. 0 = unknown / no hero screen.</summary>
-    static long HeroShown(EquipAddrs a, out bool fromForm) {
-      fromForm = false; ulong v; int tt;
-      long hero = 0;
-      if (a.EquipData != 0 && Field(a.EquipData, KHero, out v, out tt) && tt == T_INT) hero = (long)v;
-      if (hero <= 0 && a.Form != 0 && FormAlive(a.Form) && Field(a.Form, "m_LastPlayuSoundId", out v, out tt) && tt == T_INT && (long)v > 0) {
-        hero = (long)v; fromForm = true;
+    public const int HeroSrcNone = 0, HeroSrcForm = 1, HeroSrcSelected = 2, HeroSrcSound = 3;
+
+    /// <summary>Picks the hero whose screen is open from the candidates, best first: the form's own displayed hero
+    /// (m_SelectHeroData.iHeroId; it follows every swipe and every way in, e.g. a long press on a team screen), then
+    /// EquipData's selected hero (can be stale or nil: other forms write it too), then the form's last voiced hero (set
+    /// only after the 3D model loads). An «add» slot shown on the form = no hero. Without a live form only EquipData counts.</summary>
+    public static long PickHero(bool formAlive, long formHero, bool formAdd, long equipSel, long sound, out int source) {
+      source = HeroSrcNone;
+      if (formAlive) {
+        if (formHero > 0) { source = HeroSrcForm; return formHero; }
+        if (formAdd) return 0;
       }
-      return hero;
+      if (equipSel > 0) { source = HeroSrcSelected; return equipSel; }
+      if (formAlive && sound > 0) { source = HeroSrcSound; return sound; }
+      return 0;
+    }
+
+    /// <summary>The hero whose screen is open (see PickHero); selected = EquipData's value (0 = empty). 0 = unknown / no hero screen.</summary>
+    static long HeroShown(EquipAddrs a, out int source, out long selected) {
+      ulong v; int tt;
+      selected = 0;
+      if (a.EquipData != 0 && Field(a.EquipData, KHero, out v, out tt) && tt == T_INT && (long)v > 0) selected = (long)v;
+      bool alive = a.Form != 0 && FormAlive(a.Form);
+      long formHero = 0, sound = 0; bool add = false;
+      if (alive) {
+        ulong sd;
+        if (Field(a.Form, "m_SelectHeroData", out sd, out tt) && tt == T_TABLE) {
+          if (Field(sd, "iHeroId", out v, out tt) && tt == T_INT && (long)v > 0) formHero = (long)v;
+          else if (Field(sd, "add", out v, out tt) && tt != T_NIL) add = true;
+        }
+        if (formHero <= 0 && selected <= 0 && Field(a.Form, "m_LastPlayuSoundId", out v, out tt) && tt == T_INT && (long)v > 0) sound = (long)v;
+      }
+      return PickHero(alive, formHero, add, selected, sound, out source);
     }
 
     // the hero screen is open (EquipData known from before and its hero set): then the scan must find the form too
@@ -2145,8 +2170,8 @@ namespace RealmForge {
       var h = new HeroScreen();
       if (a == null || a.EquipData == 0) return h;
       ulong v; int tt;
-      bool fromForm;
-      h.Hero = HeroShown(a, out fromForm);
+      int hsrc; long hsel;
+      h.Hero = HeroShown(a, out hsrc, out hsel);
       if (a.Form == 0) return h;
       h.FormOk = true;
       if (Field(a.Form, "m_LastType", out v, out tt) && tt == T_INT) h.Tab = (int)(long)v;

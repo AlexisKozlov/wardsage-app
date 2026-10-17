@@ -42,7 +42,7 @@ Optional `### Heading` lines inside a `## RU` / `## EN` section split the update
 ## RU
 
 - Герои, которых ты ещё ни разу не прокачивал и не одевал, теперь тоже попадают на сайт — раньше программа их пропускала, и на сайте героев было меньше, чем в игре.
-- Переодевание: программа узнаёт открытого героя и тогда, когда экран героя открыт после инвентаря или другого героя, и сама перепроверяет игру, если шаг «открой героя» не проходит, — перезапуск программы больше не нужен.
+- Переодевание: программа узнаёт открытого героя и тогда, когда экран героя открыт после инвентаря или другого героя, и при входе долгим нажатием с экрана команды (боссы, рейды, арена), и сама перепроверяет игру, если шаг «открой героя» не проходит, — перезапуск программы больше не нужен.
 - При первом запуске программа показывает короткое приветствие с Пользовательским соглашением; нужно один раз нажать «Принимаю».
 - Папки настроек программы теперь называются Wardsage; всё переносится само.
 - Установщик: можно сразу выбрать, запускать ли программу вместе с Windows и отправлять ли отчёты об ошибках.
@@ -50,7 +50,7 @@ Optional `### Heading` lines inside a `## RU` / `## EN` section split the update
 ## EN
 
 - Heroes you have never levelled or equipped now reach the site too: the app used to skip them, so the site showed fewer heroes than the game.
-- Equipping: the app now recognises the open hero even when the hero screen was opened after the inventory or another hero, and re-checks the game by itself when the «open the hero» step does not clear, so restarting the app is no longer needed.
+- Equipping: the app now recognises the open hero even when the hero screen was opened after the inventory or another hero, and when opened by a long press from a team screen (bosses, raids, arena), and re-checks the game by itself when the «open the hero» step does not clear, so restarting the app is no longer needed.
 - On the first start the app shows a short welcome card with the Terms of Use; press «I accept» once.
 - The app's settings folders are now named Wardsage; everything moves over by itself.
 - Installer: you can now choose right away whether the app starts with Windows and whether it sends error reports.

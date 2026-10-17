@@ -1178,7 +1178,7 @@ namespace RealmForge {
         rescanAfter = DateTime.UtcNow.AddSeconds(60); Log.Write("equip scan again: the hero screen is open now"); StartScan(watch); return;
       }
       if (HeroStepStuck(s)) { StartScan(watch, false, true); return; }
-      if (s.HeroFromForm) { if (heroFromFormLogged != s.HeroUid) { heroFromFormLogged = s.HeroUid; Log.Write("live: hero " + s.HeroUid + " from the hero screen (selected hero empty)"); } }
+      if (s.HeroFromForm) { if (heroFromFormLogged != s.HeroUid) { heroFromFormLogged = s.HeroUid; Log.Write("live: hero " + s.HeroUid + " from the hero screen (selected hero: " + (s.HeroSelUid > 0 ? s.HeroSelUid.ToString() : "none") + ")"); } }
       else heroFromFormLogged = 0;
       var sb = new StringBuilder("{\"ev\":\"equip.live\",\"live\":{");
       sb.Append("\"gameRunning\":").Append(B(s.GameRunning)).Append(",\"heroUid\":").Append(N(s.HeroUid)).Append(",\"panelOk\":").Append(B(s.PanelOk))

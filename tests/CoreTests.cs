@@ -1564,6 +1564,17 @@ static class CoreTests {
     ArenaTimelineTests();
     TraceTests();
     TraceUploadTests();
+    PickHeroTests();
+  }
+
+  static void PickHeroTests() {
+    int s;
+    Eq(7L, RFX.PickHero(true, 7, false, 5, 6, out s), "hero screen: the form's displayed hero beats the selected one"); Eq(RFX.HeroSrcForm, s, "  source: form");
+    Eq(5L, RFX.PickHero(true, 0, false, 5, 6, out s), "hero screen: no displayed hero, the selected one"); Eq(RFX.HeroSrcSelected, s, "  source: selected");
+    Eq(6L, RFX.PickHero(true, 0, false, 0, 6, out s), "hero screen: last voiced hero as the last resort"); Eq(RFX.HeroSrcSound, s, "  source: sound");
+    Eq(0L, RFX.PickHero(true, 0, true, 5, 6, out s), "an add slot shown: no hero"); Eq(RFX.HeroSrcNone, s, "  source: none");
+    Eq(5L, RFX.PickHero(false, 7, false, 5, 6, out s), "form not alive: EquipData only"); Eq(RFX.HeroSrcSelected, s, "  source: selected");
+    Eq(0L, RFX.PickHero(false, 7, false, 0, 6, out s), "form not alive, nothing selected: unknown");
   }
 
   // The arena: both sides have Hassu (uid 203400000, unit 2034) — the player (controller 1) at 2,5 by command, the
