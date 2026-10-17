@@ -1223,6 +1223,8 @@ namespace RealmForge {
       float pulse = (float)(0.6 + 0.4 * Math.Sin(frame * 0.45));
       // the new highlight (switch guideStyle): a frame with a Hl is drawn by PaintGuide; off = the old frame, nothing below changes
       bool ng = GuideStyle && hl != null && frameR != null, dim = ng && !hl.Important;
+      // the old frame (guideStyle off) follows a round / bevelled button's outline; rect shapes and targets without geometry keep the rectangle
+      bool oldShape = !GuideStyle && hl != null && frameR != null && GuideShape.FrameOutline(hl.Rect, hl.Shape, hl.Inset, 2) != null;
       long tms = (uint)Environment.TickCount;
       guideLvl = (int)Math.Round(5 * (0.5 + 0.5 * Math.Sin(2 * Math.PI * (tms % 1200) / 1200.0)));   // the pulse, 1.2 s, in 6 steps
       int bob = dim ? (int)Math.Round(2 + 2 * Math.Sin(2 * Math.PI * (tms % 1600) / 1600.0)) : 0;   // the hand's bob, 4 px
@@ -1231,6 +1233,7 @@ namespace RealmForge {
         + (p != null ? p.Caps + "/" + p.Main + "/" + p.Sub + "/" + p.Pill + "/" + p.Warn : "-") + "|" + (strip != null ? string.Join(",", Array.ConvertAll(strip, v => ((int)v).ToString())) : "-")
         + "|" + (frameR != null || strip != null ? (ng ? 0 : (int)(pulse * 10)) : 0) + "|" + sceneW + "x" + sceneH
         + (ng ? "|g" + guideLvl + "," + bob + (hand != null ? "h" : "") + (hl.Important ? "i" : "") + (hl.Shape != null ? hl.Shape.K : "") : GuideStyle && marks != null && marks.Count > 0 ? "|g" + guideLvl : "")
+        + (oldShape ? "|o" + hl.Shape.K + (int)hl.Rect.X + "," + (int)hl.Rect.Y + "," + (int)hl.Rect.W + "," + (int)hl.Rect.H : "")
         + (marks != null && marks.Count > 0 ? "|m" + string.Join(";", marks.ConvertAll(m => string.Join(",", m))) : "");
       if (k == key) return;
       key = k;
@@ -1291,6 +1294,7 @@ namespace RealmForge {
             gr.SmoothingMode = SmoothingMode.AntiAlias; gr.TextRenderingHint = TextRenderingHint.AntiAliasGridFit; gr.Clear(Color.Transparent);
             gr.InterpolationMode = InterpolationMode.HighQualityBicubic;
             if (ng) PaintGuide(gr, hl, x0, y0, bw, bh, dim, G, hand, bob, U);
+            else if (oldShape) PaintFrameShape(gr, hl, x0, y0, pulse, G);
             else if (frameR != null) PaintFrame(gr, frameR[0] - x0, frameR[1] - y0, frameR[2], frameR[3], pulse, G);
             if (strip != null) PaintStrip(gr, strip, x0, y0, pulse, U);
             if (marks != null) foreach (var m in marks) PaintMark(gr, m[0] - x0, m[1] - y0, m[2], m[3], m[4], Gm);
@@ -1335,6 +1339,26 @@ namespace RealmForge {
       }
       using (var pen = new Pen(Color.FromArgb(230, 40, 22, 4), 6f)) gr.DrawPath(pen, Round(x - 2, y - 2, w + 4, h + 4, 7));
       using (var pen = new Pen(Color.FromArgb(255, 255, 214, 110), 3.5f)) gr.DrawPath(pen, Round(x - 2, y - 2, w + 4, h + 4, 7));
+    }
+
+    // the old frame along a button's outline (circle / bevel / round): the same glow rings, dark underline and gold line as PaintFrame, same widths and pulse, on the art's polygon
+    void PaintFrameShape(Graphics gr, Hl hl, int ox, int oy, float pulse, int G) {
+      Func<double, GraphicsPath> poly = m => {
+        var pts = GuideShape.FrameOutline(hl.Rect, hl.Shape, hl.Inset, m);
+        var path = new GraphicsPath();
+        if (pts == null) return path;
+        var pf = new PointF[pts.Count];
+        for (int i = 0; i < pf.Length; i++) pf[i] = new PointF((float)(pts[i].X - ox), (float)(pts[i].Y - oy));
+        path.AddPolygon(pf);
+        return path;
+      };
+      for (int i = G; i >= 4; i -= 3)
+        using (var pen = new Pen(Color.FromArgb((int)(110 * pulse * (1 - i / (float)(G + 2))), 255, 190, 60), 3f) { LineJoin = LineJoin.Round })
+        using (var path = poly(i)) gr.DrawPath(pen, path);
+      using (var path = poly(2)) {
+        using (var pen = new Pen(Color.FromArgb(230, 40, 22, 4), 6f) { LineJoin = LineJoin.Round }) gr.DrawPath(pen, path);
+        using (var pen = new Pen(Color.FromArgb(255, 255, 214, 110), 3.5f) { LineJoin = LineJoin.Round }) gr.DrawPath(pen, path);
+      }
     }
 
     // a cell frame among many (the storage cleanup): style 0 = to select (the game's gold frame, steady), 1 = selected (a thin
@@ -1727,7 +1751,7 @@ namespace RealmForge {
       int[] cityBtn;
       if (step.Kind == SellHintKind.OpenInventory && CityInventoryButton(o, W, H, U, out cityBtn)) {   // the city: frame the bar's «Инвентарь»
         frame++;
-        DrawTip(cityBtn[0], cityBtn[1], cityBtn[2], cityBtn[3], sellHintLines, H);
+        DrawTip(cityBtn[0], cityBtn[1], cityBtn[2], cityBtn[3], sellHintLines, H, false, false, false, null, false, GuideStyle ? null : HlCity(cityBtn));
         return;
       }
       DrawTipTop(sellHintLines);   // no target on screen: the plate at the top centre
@@ -1895,10 +1919,10 @@ namespace RealmForge {
       int[] cityBtn;
       if (front && !hold && locateLines.Length > 0 && step.Kind == LocateKind.OpenInventory && !step.OnHero && CityInventoryButton(o, W, H, U, out cityBtn)) {
         frame++;   // the city: frame the bar's «Инвентарь» (where the auto mode clicks) with the step's plate beside it
-        DrawTip(cityBtn[0], cityBtn[1], cityBtn[2], cityBtn[3], locateLines, H, false, false, false, locateCaps);
+        DrawTip(cityBtn[0], cityBtn[1], cityBtn[2], cityBtn[3], locateLines, H, false, false, false, locateCaps, false, GuideStyle ? null : HlCity(cityBtn));
       } else if (front && locateLines.Length > 0 && lf != null && lf.Mark.Kind == "box") {
         frame++;   // the button / tab / cell: its frame with the step's plate beside it
-        DrawTip(o.X + lf.Mark.X, o.Y + lf.Mark.Y, lf.Mark.W, lf.Mark.H, locateLines, H, false, false, false, locateCaps, false, GuideStyle ? HlLocate(lf, step, o) : null);
+        DrawTip(o.X + lf.Mark.X, o.Y + lf.Mark.Y, lf.Mark.W, lf.Mark.H, locateLines, H, false, false, false, locateCaps, false, HlLocate(lf, step, o));   // off: only the old frame's outline uses it
       } else if (front && locateLines.Length > 0 && (hold || step.Kind != LocateKind.InList || locateNeedClick)) {
         frame++;
         DrawTipTop(locateLines, locateCaps);   // its own header, not the plan's «Шаг N из M»
@@ -2637,6 +2661,12 @@ namespace RealmForge {
       return new Hl { Rect = new GeoRect { X = x, Y = y, W = w, H = h }, Shape = new GeoShape { K = "round", R = 0.08 }, Important = important };
     }
     Hl HlCell(double x, double y, double w, double h) { return HlRound(x, y, w, h, true); }
+
+    // the city bar's «Инвентарь» (screen px rect): its geometry shape for the old frame
+    Hl HlCity(int[] r) {
+      var g = Geo.Current;
+      return new Hl { Rect = new GeoRect { X = r[0], Y = r[1], W = r[2], H = r[3] }, Shape = g != null ? g.Shape("city.barButton") : null, Inset = g != null ? g.Inset("city.barButton") : null };
+    }
 
     // «Показать в игре»: the step's button with the geometry's shape; the final presses (Done, the Foundry's «Вознести») and list cells are B, the rest A
     Hl HlLocate(LocateFrame lf, LocateStep step, W32.POINT o) {

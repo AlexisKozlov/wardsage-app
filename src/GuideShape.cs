@@ -66,6 +66,13 @@ namespace RealmForge {
       return pts;
     }
 
+    /// <summary>The old frame along a button's shape: the outline of the art (inset applied) grown by <paramref name="margin"/> px, or null when the shape is a rectangle, missing or unknown (the old rectangle frame stays).</summary>
+    public static List<GuidePt> FrameOutline(GeoRect rect, GeoShape shape, GeoInset inset, double margin) {
+      if (rect == null || shape == null || (shape.K != "circle" && shape.K != "bevel" && shape.K != "round")) return null;
+      var pts = Outline(Grow(ArtBox(rect, inset), margin), shape, null);
+      return pts.Count >= 3 ? pts : null;
+    }
+
     static void Rect4(List<GuidePt> pts, double l, double t, double r, double b) {
       pts.Add(new GuidePt(l, t)); pts.Add(new GuidePt(r, t)); pts.Add(new GuidePt(r, b)); pts.Add(new GuidePt(l, b));
     }

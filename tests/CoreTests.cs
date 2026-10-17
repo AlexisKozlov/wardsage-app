@@ -2572,6 +2572,10 @@ static class CoreTests {
     Check(hp.X == 0 && hp.Y == 0, "hand: kept inside the client");
     var hp2 = GuideShape.HandPos(500, 300, 40, 60, 0.5, 0.9, 1000, 500);
     Check(Math.Abs(hp2.X - 480) < 1e-9 && Math.Abs(hp2.Y - 246) < 1e-9, "hand: the fingertip lands on the point");
+    Check(GuideShape.FrameOutline(rect, null, null, 2) == null && GuideShape.FrameOutline(rect, new GeoShape { K = "rect" }, null, 2) == null && GuideShape.FrameOutline(rect, new GeoShape { K = "blob" }, null, 2) == null, "old frame: a rect / missing / unknown shape keeps the rectangle (null)");
+    var fo = GuideShape.FrameOutline(rect, new GeoShape { K = "circle" }, new GeoInset { L = 0.25, T = 0, R = 0.25, B = 0 }, 2);
+    bool onFo = fo != null; if (onFo) foreach (var p in fo) onFo &= Math.Abs(Math.Sqrt((p.X - 200) * (p.X - 200) + (p.Y - 100) * (p.Y - 100)) - 52) < 1e-6;
+    Check(onFo, "old frame: the circle of the inset art, grown by the margin");
     var gr = GuideShape.Grow(rect, 5); Check(gr.X == 95 && gr.W == 210, "grown by a margin");
     var rs = RemoteSwitches.Parse("{\"features\":{\"guideStyle\":true}}");
     Check(rs.Allows("guideStyle") && !RemoteSwitches.Permissive().Allows("guideStyle") && !RemoteSwitches.Parse("{}").Allows("guideStyle"), "guideStyle: off until the site says true");
