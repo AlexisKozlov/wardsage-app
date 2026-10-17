@@ -1916,7 +1916,7 @@ namespace RealmForge {
         DrawTip(cityBtn[0], cityBtn[1], cityBtn[2], cityBtn[3], locateLines, H, false, false, false, locateCaps, false, GuideStyle ? null : HlCity(cityBtn));
       } else if (front && locateLines.Length > 0 && lf != null && lf.Mark.Kind == "box") {
         frame++;   // the button / tab / cell: its frame with the step's plate beside it
-        DrawTip(o.X + lf.Mark.X, o.Y + lf.Mark.Y, lf.Mark.W, lf.Mark.H, locateLines, H, false, false, false, locateCaps, false, HlLocate(lf, step, o));   // off: only the old frame's outline uses it
+        DrawTip(o.X + lf.Mark.X, o.Y + lf.Mark.Y, lf.Mark.W, lf.Mark.H, locateLines, H, false, false, false, locateCaps, false, lf.Target == "cell" && !GuideStyle ? null : HlLocate(lf, step, o));   // a list cell (off): the same PaintFrame as the inventory cell; other buttons: the old frame's outline
       } else if (front && locateLines.Length > 0 && (hold || step.Kind != LocateKind.InList || locateNeedClick)) {
         frame++;
         DrawTipTop(locateLines, locateCaps);   // its own header, not the plan's «Шаг N из M»

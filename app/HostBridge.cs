@@ -117,8 +117,8 @@ namespace RealmForge {
     bool AutoClickOn() { return cfg.AutoClick && On("autoclick"); }
     /// <summary>«Показать в игре» clicks by itself only with its own switch on (off by default until the owner enables it), on top of the player's setting.</summary>
     bool LocateAutoOn() { return AutoClickOn() && On("locateAuto"); }
-    /// <summary>The new button highlight: the site's "guideStyle" switch; the test build's own setting may force it on or off.</summary>
-    void ApplyGuideStyle() { overlay.GuideStyle = Channel.IsTest && cfg.GuideStyle != "auto" ? cfg.GuideStyle == "on" : remote.Allows("guideStyle"); }
+    /// <summary>The new button highlight: only the site's "guideStyle" switch.</summary>
+    void ApplyGuideStyle() { overlay.GuideStyle = remote.Allows("guideStyle"); }
     void ApplyAutoClick() { overlay.AutoEnabled = AutoClickOn(); overlay.LocateAutoEnabled = LocateAutoOn(); }
 
     // the features that read the game's screens and fights need the layout data for the running game version
@@ -478,7 +478,6 @@ namespace RealmForge {
           case "diag": overlay.StartDiag(5); break;
           case "rec.start": StartRec(); break;
           case "rec.stop": if (testRec != null) testRec.Stop(); break;
-          case "setGuideStyle": { string gv = MiniJson.GetString(m, "v"); cfg.GuideStyle = gv == "on" || gv == "off" ? gv : "auto"; ApplyGuideStyle(); Save(); break; }
           case "setRecButton": cfg.RecButton = MiniJson.GetBool(m, "on", true); overlay.RecButton = Channel.IsTest && cfg.RecButton; Save(); break;
           case "battle.capture": if (On("battle")) CaptureNow(-1, 0, 0); break;
           case "compact": win.SetCompact(MiniJson.GetBool(m, "on", false)); break;
