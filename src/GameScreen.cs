@@ -2,7 +2,7 @@
 //
 // Every feature that needs to know where the player is (the equip helper, «Показать в игре», the storage cleanup, and every
 // auto click) takes it from the ScreenState of the overlay's tick, not from a check of its own. The state is made of the
-// existing readers (the hero screen, the inventory incl. its bulk-sale mode, the Foundry and the gem screen, the city's bottom bar),
+// existing readers (the hero screen, the inventory incl. its bulk-sale mode, the Foundry and the gem screen, the city's form, else its bottom bar),
 // only the decision is central:
 //
 //   Screen = City | Inventory(tab, bulk, selected item) | HeroScreen(hero, tab, slot) | Foundry(tab, pop-up) | Gem(function) | Unknown
@@ -29,6 +29,8 @@ namespace RealmForge {
     public HeroScreen Hero;
     /// <summary>The city's bottom bar button was seen (a picture; looked for only when no form is open).</summary>
     public bool CitySeen;
+    /// <summary>The city's form is shown (read from memory like the other forms); null = unknown (no form id / node not found): the picture decides then.</summary>
+    public bool? CityForm;
     /// <summary>A pop-up found by the picture (the host fills it for a fresh read only), with its name.</summary>
     public bool ModalExtra;
     public string ModalExtraWhy = "";
@@ -113,7 +115,7 @@ namespace RealmForge {
       } else if (heroUp) {
         s.Kind = ScreenKind.HeroScreen; s.Hero = h.Hero; s.HeroTab = h.Tab; s.HeroSlot = h.Part;
         if (h.FilterOpen) { s.ModalOpen = true; s.ModalWhy = "heroFilter"; }
-      } else if (i.CitySeen) {
+      } else if (i.CityForm == true || i.CitySeen) {
         s.Kind = ScreenKind.City;
       }
       if (!s.ModalOpen && i.ModalExtra) { s.ModalOpen = true; s.ModalWhy = i.ModalExtraWhy; }
@@ -152,7 +154,7 @@ namespace RealmForge {
 
     public ScreenState Update(ScreenInputs raw, long now) {
       var failing = new List<string>();
-      var use = new ScreenInputs { CitySeen = raw.CitySeen, ModalExtra = raw.ModalExtra, ModalExtraWhy = raw.ModalExtraWhy };
+      var use = new ScreenInputs { CitySeen = raw.CitySeen, CityForm = raw.CityForm, ModalExtra = raw.ModalExtra, ModalExtraWhy = raw.ModalExtraWhy };
       long oldest = now;   // the oldest reading that stands in for a failed one
       use.Inv = Hold(raw.Inv, ref inv, ref invAt, now, "inventory", failing, ref oldest);
       use.Rs = Hold(raw.Rs, ref rs, ref rsAt, now, "foundry", failing, ref oldest);

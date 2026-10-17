@@ -103,6 +103,8 @@ namespace RealmForge {
     public int Size(string key) { return (int)Get(size, "size", key); }
     public int Hdr(string key) { return (int)Get(hdr, "hdr", key); }
     public long Form(string key) { return Get(form, "form", key); }
+    /// <summary>A form id the data may lack (older data): 0 = none.</summary>
+    public long FormOpt(string key) { long v; return form.TryGetValue(key, out v) ? v : 0; }
     /// <summary>A field offset from the optional "field" section; -1 = the data has none (the feature then falls back).</summary>
     public int FieldOffset(string key) { long v; return field.TryGetValue(key, out v) ? (int)v : -1; }
   }

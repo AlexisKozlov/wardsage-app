@@ -83,6 +83,11 @@ namespace RealmForge {
           st.Missing = MissingFilter(req.Item, rs.AscendParts, rs.AscendSuits, rs.AscendMainAttrs, rs.AscendSubAttrs);
           // the item is in the shown list (whatever its length): pick it; only an item the list does not hold needs the filter
           bool extra = ExtraSubFilter(req.Item, rs.AscendSubAttrs);
+          // a long list and the item off the screen: the slot tab, then the set, narrow it before any scrolling (main / sub stats are not asked here)
+          if (ap != null && LongOffScreen(st, rs.AscendList)) {
+            var pre = new List<string>(); foreach (var m in st.Missing) if (m == "slot" || m == "suit") pre.Add(m);
+            if (pre.Count > 0) { st.Missing = pre.ToArray(); st.Kind = LocateKind.AscendFilter; PopupStep(st, req.Item, rs, false); return st; }
+          }
           if (ap != null) st.Kind = LocateKind.AscendPick;
           else if (rs.AscendList == null || !rs.AscendList.Has) st.Kind = LocateKind.AscendLoading;   // not read yet: nothing is known about the list
           else if (st.Missing.Length > 0 || extra) { st.Kind = LocateKind.AscendFilter; PopupStep(st, req.Item, rs, extra); }
@@ -128,6 +133,12 @@ namespace RealmForge {
       // the recast path stays through the inventory: item selected -> card button «Улучшение самоцветами» -> the gem screen's
       // «Преобразование» -> the item -> «Улучшить». The Foundry is only for Ascension. A worn item: its hero's slot (OnHero)
       return NextInInventory(req, inv, hero, cols, st);
+    }
+
+    /// <summary>The item is known to be off the screen (above / below the game's cells) in a list longer than two screens of cells.</summary>
+    public static bool LongOffScreen(LocateStep st, RFX.ListRead l) {
+      if (l == null || l.First < 0 || l.Last < l.First || (st.Scroll != "above" && st.Scroll != "below")) return false;
+      return st.Count > 2 * (l.Last - l.First + 1);
     }
 
     /// <summary>The filter keeps a sub stat the item does not have (the list holds only items with all the chosen sub stats).</summary>

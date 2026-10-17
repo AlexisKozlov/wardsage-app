@@ -1,0 +1,9 @@
+{ "name": "The city is read from its form: the form says City without the picture, a hidden form is Unknown unless the picture sees the city, no form read = the picture decides", "cols": 8, "frames": [
+  { "t": 0, "cityForm": true, "city": false, "expect": { "screen": "City" } },
+  { "t": 1000, "cityForm": true, "city": false, "expect": { "screen": "City", "held": false } },
+  { "t": 2000, "cityForm": false, "city": true, "expect": { "screen": "City", "held": false } },
+  { "t": 4000, "cityForm": false, "city": true, "expect": { "screen": "City" } },
+  { "t": 5000, "city": true, "expect": { "screen": "City" } },
+  { "t": 6000, "city": false, "expect": { "screen": "City", "held": true } },
+  { "t": 7600, "city": false, "expect": { "screen": "Unknown" } } ]
+}

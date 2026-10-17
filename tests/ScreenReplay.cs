@@ -62,7 +62,7 @@ static class ScreenReplay {
   }
 
   static ScreenInputs InputsOf(Dictionary<string, object> f) {
-    return new ScreenInputs { Inv = InvOf(O(Get(f, "inv"))), Rs = RsOf(O(Get(f, "rs"))), Hero = HeroOf(O(Get(f, "hero"))), CitySeen = Bool(f, "city", false) };
+    return new ScreenInputs { Inv = InvOf(O(Get(f, "inv"))), Rs = RsOf(O(Get(f, "rs"))), Hero = HeroOf(O(Get(f, "hero"))), CitySeen = Bool(f, "city", false), CityForm = Get(f, "cityForm") is bool ? (bool?)Bool(f, "cityForm", false) : null };
   }
 
   static string Verdict(GateResult r) { return r.Verdict + (r.Reason != "" && r.Reason != "ok" ? ":" + r.Reason : ""); }

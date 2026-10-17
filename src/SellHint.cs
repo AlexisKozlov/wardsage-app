@@ -69,65 +69,64 @@ namespace RealmForge {
 
   /// <summary>Makes a drawn position (a list's row 1, client px) move smoothly: the game renders at its own rate and the overlay
   /// reads the scroll at another, so raw values arrive in steps and now and then a stale one. The drawn value follows the target
-  /// with a short ease (about 50 ms to arrive), a jump of many rows is taken at once, and a small step back right after a step
-  /// forward (or the reverse) within 100 ms is held - that is the shiver, not a scroll. Pure: the caller passes the clock.</summary>
+  /// with a short ease, a jump of many rows is taken at once, and a small step back right after a step forward (or the reverse)
+  /// within 100 ms is held - that is the shiver, not a scroll. While the list scrolls steadily the target is led by the scroll
+  /// velocity (smoothed over the last 3 changing reads) times LeadMs, never more than one row pitch, so the frame does not lag
+  /// behind the items; the lead is 0 after a reversal or 60 ms without a change. Pure: the caller passes the clock.</summary>
   public sealed class FrameSmoother {
-    /// <summary>Time constant of the ease (ms): ~95 % of a step is covered after 3x this, i.e. about 50 ms.</summary>
-    public const double TauMs = 16;
+    /// <summary>Time constant of the ease (ms): ~95 % of a step is covered after 3x this.</summary>
+    public const double TauMs = 10;
     /// <summary>A reversal within this time (ms) of the last move is held when it is small.</summary>
     public const long ReverseHoldMs = 100;
     /// <summary>... small = at most this many px.</summary>
     public const double ReverseSmallPx = 6;
     /// <summary>Below this distance (px) the drawn value stays (nobody sees it).</summary>
     public const double DeadPx = 0.5;
+    /// <summary>The overlay's read interval (ms): the drawn value leads the read by the velocity times this.</summary>
+    public const double LeadMs = 33;
+    /// <summary>No change in the reads for this long (ms): the list stands, no lead.</summary>
+    public const long StillMs = 60;
 
     public double Value; public bool Has;
-    long lastMs, lastMoveMs; int lastDir;
+    long lastMs, lastMoveMs, lastChangeMs; int lastDir;
+    double lastTarget;
+    readonly double[] dDelta = new double[3], dDt = new double[3]; int nDelta, iDelta;   // the last changing reads: the step (px) and the time it took (ms)
 
-    public void Reset() { Has = false; lastDir = 0; }
+    public void Reset() { Has = false; lastDir = 0; nDelta = 0; iDelta = 0; }
+
+    /// <summary>The scroll velocity (px/ms, signed) from the last changing reads; 0 until two same-direction steps were seen.</summary>
+    double Velocity(long nowMs) {
+      if (nDelta < 2 || nowMs - lastChangeMs >= StillMs) return 0;
+      double d = 0, t = 0; for (int i = 0; i < nDelta; i++) { d += dDelta[i]; t += dDt[i]; }
+      return t > 0 ? d / t : 0;
+    }
 
     /// <param name="target">the value the scroll says now (NaN = none: the smoother resets and returns NaN)</param>
-    /// <param name="snapPx">a distance (px) beyond which the value jumps (a new list, a filter change)</param>
+    /// <param name="snapPx">a distance (px) beyond which the value jumps (a new list, a filter change); a quarter of it is the row pitch that caps the lead</param>
     public double Step(double target, long nowMs, double snapPx) {
       if (double.IsNaN(target)) { Reset(); return double.NaN; }
-      if (!Has || Math.Abs(target - Value) > snapPx) { Value = target; Has = true; lastMs = nowMs; lastMoveMs = nowMs; lastDir = 0; return Value; }
+      if (!Has || Math.Abs(target - Value) > snapPx) { Value = target; Has = true; lastMs = nowMs; lastMoveMs = nowMs; lastDir = 0; lastTarget = target; lastChangeMs = nowMs; nDelta = 0; iDelta = 0; return Value; }
       long dt = Math.Max(0, Math.Min(250, nowMs - lastMs)); lastMs = nowMs;
-      double diff = target - Value;
+      // the velocity of the scroll: a changing read adds a step; the other direction starts it over (no lead for that read)
+      double delta = target - lastTarget;
+      if (Math.Abs(delta) > 1e-9) {
+        long span = Math.Max(1, nowMs - lastChangeMs);
+        if (span >= StillMs || (nDelta > 0 && dDelta[(iDelta + 2) % 3] * delta < 0)) nDelta = 0;   // after a stand or a reversal: start over, this step has no usable time
+        else { dDelta[iDelta] = delta; dDt[iDelta] = span; iDelta = (iDelta + 1) % 3; if (nDelta < 3) nDelta++; }
+        lastTarget = target; lastChangeMs = nowMs;
+      }
+      double lead = Velocity(nowMs) * LeadMs, cap = snapPx / 4;
+      if (lead > cap) lead = cap; else if (lead < -cap) lead = -cap;
+      double aim = target + lead;
+      double diff = aim - Value;
       if (Math.Abs(diff) < DeadPx) return Value;
       int dir = diff > 0 ? 1 : -1;
       if (lastDir != 0 && dir != lastDir && nowMs - lastMoveMs < ReverseHoldMs && Math.Abs(diff) <= ReverseSmallPx) return Value;
       double a = 1 - Math.Exp(-dt / TauMs);
       Value += diff * a;
-      if (Math.Abs(target - Value) < DeadPx) Value = target;
+      if (Math.Abs(aim - Value) < DeadPx) Value = aim;
       lastDir = dir; lastMoveMs = nowMs;
       return Value;
-    }
-  }
-
-  /// <summary>Hides the frames of a scrolling list while it moves: the frames fade out within ~80 ms of a scroll move and come
-  /// back (within ~100 ms) once the value has been still for 150 ms, exactly on the items. Fed with the RAW scroll value (before
-  /// FrameSmoother). Pure: the caller passes the clock.</summary>
-  public sealed class ScrollFade {
-    /// <summary>A change above this (px or list units) between two calls is a move.</summary>
-    public const double MovePx = 0.5;
-    /// <summary>The value must be still this long (ms) before the frames come back.</summary>
-    public const long StillMs = 150;
-    /// <summary>Time (ms) to go from fully shown to hidden / back.</summary>
-    public const double FallMs = 80, RiseMs = 100;
-
-    bool has; double last, op = 1; long lastMs, moveMs;
-
-    public void Reset() { has = false; op = 1; }
-
-    /// <returns>the opacity of the list's frames, 0..1 (NaN input: reset, 1)</returns>
-    public double Step(double scrollValue, long nowMs) {
-      if (double.IsNaN(scrollValue)) { Reset(); return 1; }
-      if (!has) { has = true; last = scrollValue; lastMs = nowMs; moveMs = long.MinValue / 2; op = 1; return 1; }
-      long dt = Math.Max(0, Math.Min(250, nowMs - lastMs)); lastMs = nowMs;
-      if (Math.Abs(scrollValue - last) > MovePx) { last = scrollValue; moveMs = nowMs; }
-      if (nowMs - moveMs < StillMs) op = Math.Max(0, op - dt / FallMs);
-      else op = Math.Min(1, op + dt / RiseMs);
-      return op;
     }
   }
 

@@ -868,7 +868,7 @@ static class CoreTests {
   static void LayoutChecksums() {
     var sums = new Dictionary<string, string> {
       { "1.6.38.829.1", "87d1958cc51af52fc9b18d44638b06d0919c6f0904f3e3b9016f96a679e06d4d" },
-      { "1.6.39.829.1", "144f8260ec82567c445743c3379196c1974f75e6c44b206e362946604228e750" } };
+      { "1.6.39.829.1", "d85787575eaaf98ad0690eef2a4c7ec0e43ab1a1c6f31011ec62c862799a99e6" } };
     foreach (var kv in sums) {
       string path = null;
       foreach (var repo in new[] { "wardsage-web", "realmforge-web" }) {
@@ -2534,7 +2534,7 @@ static class CoreTests {
         var bar = rg.Rect("inventory.scrollbar", ww, hh, uu); var lv = rg.Rect("inventory.listView", ww, hh, uu);
         Check(bar != null && lv != null && Math.Abs(bar.Y - lv.Y) < 1 && bar.X > lv.Right - 25 && bar.X < lv.Right + 25 && bar.Bottom > lv.Bottom - 5, "the site's geometry file " + v + ": the scroll bar runs beside the list at its right edge");
         var gl = rg.Rect("gem.list", ww, hh, uu); var gb = rg.Rect("gem.button", ww, hh, uu);
-        Check(gl != null && gb != null && gb.CX > gl.CX && gb.Y > hh * 0.7 && gb.CX > ww * 0.4 && gb.CX < ww * 0.6, "the site's geometry file " + v + ": the function list is left of the bottom-centre «Улучшить»");
+        Check(gl != null && gb != null && gb.CX > gl.CX && gb.Y > hh * 0.7 && gb.CX > ww * 0.5 && gb.CX < ww * 0.85, "the site's geometry file " + v + ": the function list is left of «Улучшить» (bottom right of the centre)");
         var gf = FoundryPlace.Cell(rg, "gem", new RFX.ListRead { ScrollY = 0, Cols = 1, RowUnits = 110 }, GemRows.Index(8), ww, hh, uu);
         Check(gf != null && gf.Mark.Kind == "box" && gf.Mark.Y >= gl.Y && gf.Mark.Y + gf.Mark.H <= gl.Bottom + 1, "the site's geometry file " + v + ": the second function's row is inside the list at the top");
       }
@@ -2805,6 +2805,22 @@ static class CoreTests {
     ars.AscendList = new RFX.ListRead { ScrollY = 500, Cols = 4, RowUnits = 100, First = 20, Last = 27 };
     st = LocateGuide.Next(areq, null, ars, null, 8, 1);
     Check(st.Scroll == "above" && st.ScrollRows == 3, "ascend: item above the cells on screen -> rows to scroll up");
+    {   // a long list (3+ screens), the item off the screen: slot tab, then the set, then the pick (never the scroll first)
+      var lg = ar(); var ids = new List<long>(); for (int q = 0; q < 112; q++) ids.Add(1000 + q); ids.Insert(90, 777); lg.AscendEquips = ids.ToArray();
+      lg.AscendList = new RFX.ListRead { ScrollY = 0, Cols = 5, RowUnits = 100, First = 0, Last = 14 };
+      lg.AscendParts = new int[0]; lg.AscendSuits = new long[0]; lg.AscendMainAttrs = new long[0]; lg.AscendSubAttrs = new long[0];
+      st = LocateGuide.Next(areq, null, lg, null, 8, 1);
+      Check(st.Kind == LocateKind.AscendFilter && st.Pos == 91 && st.Missing.Length == 2 && st.Missing[0] == "slot" && st.Missing[1] == "suit", "ascend: 113 items, item off the screen, nothing set -> the slot tab first (suit next; main / subs not asked)");
+      lg.AscendParts = new[] { item.Slot };
+      st = LocateGuide.Next(areq, null, lg, null, 8, 1);
+      Check(st.Kind == LocateKind.AscendFilter && st.Missing.Length == 1 && st.Missing[0] == "suit", "ascend: slot set, set missing -> the set filter");
+      lg.AscendSuits = new long[] { item.SetId };
+      Eq(LocateKind.AscendPick, LocateGuide.Next(areq, null, lg, null, 8, 1).Kind, "ascend: slot and set set -> pick (main / sub stats are not asked before the scroll)");
+      lg.AscendParts = new int[0]; lg.AscendSuits = new long[0]; lg.AscendList = new RFX.ListRead { ScrollY = 9000, Cols = 5, RowUnits = 100, First = 85, Last = 99 };
+      Eq(LocateKind.AscendPick, LocateGuide.Next(areq, null, lg, null, 8, 1).Kind, "ascend: the item is on the screen -> pick at once, no filters");
+      lg.AscendList = new RFX.ListRead { ScrollY = 0, Cols = 5, RowUnits = 100, First = 0, Last = 59 };
+      Eq(LocateKind.AscendPick, LocateGuide.Next(areq, null, lg, null, 8, 1).Kind, "ascend: the list is at most two screens -> pick (scroll)");
+    }
     ars.AscendList = null;
     st = LocateGuide.Next(areq, null, ars, null, 8, 1);
     Check(st.Kind == LocateKind.AscendPick && st.Scroll == "" && st.Pos == 12 && st.Col == 1, "ascend: list not readable -> position only");
@@ -3055,21 +3071,24 @@ static class CoreTests {
       Eq(10UL, RFX.PickNode(hits, n => false), "pick node: none shown -> the first");
       Eq(0UL, RFX.PickNode(new List<ulong>(), n => true), "pick node: no hits -> 0");
     }
-    // the list frames fade while the list scrolls and come back 150 ms after it stopped
+    // velocity prediction: the reads show the scroll one read interval late; the drawn value leads them by the smoothed velocity
     {
-      var sf = new ScrollFade();
-      Check(sf.Step(100, 0) == 1 && sf.Step(100, 50) == 1 && sf.Step(100, 100) == 1, "scroll fade: a still list keeps its frames (1)");
-      double o1 = sf.Step(130, 116);
-      Check(o1 < 1 && o1 > 0, "scroll fade: a move starts the fade (" + o1 + ")");
-      double o2 = 1; for (long t = 132; t <= 200; t += 16) o2 = sf.Step(130 + t, t);
-      Check(o2 == 0, "scroll fade: a moving list is hidden within 80 ms (" + o2 + ")");
-      sf = new ScrollFade(); sf.Step(0, 0); sf.Step(40, 16); sf.Step(80, 32); sf.Step(120, 64); sf.Step(160, 96);
-      double st1 = sf.Step(160, 200);
-      Check(st1 == 0, "scroll fade: 100 ms after the move still hidden (" + st1 + ")");
-      double st2 = 0; for (long t = 216; t <= 460; t += 16) st2 = sf.Step(160, t);
-      Check(st2 == 1, "scroll fade: back to 1 after 150 ms still and the rise (" + st2 + ")");
-      Check(sf.Step(double.NaN, 500) == 1 && sf.Step(5, 516) == 1, "scroll fade: NaN resets, the first value is 1");
-      Check(sf.Step(5.3, 532) == 1, "scroll fade: a change of 0.3 is not a move");
+      double snap = 400, vel = 0.5;   // px/ms (16.5 px per 33 ms read)
+      var sm = new FrameSmoother(); double drawn = 0, truth = 0; long t = 0; sm.Step(0, 0, snap);
+      for (int k = 1; k <= 5; k++) { t = 33L * k; truth = vel * t; drawn = sm.Step(vel * (t - 33), t, snap); }
+      Check(Math.Abs(drawn - truth) <= 3, "predict: constant speed, after 5 reads the drawn value is within 3 px of the true one (" + drawn + " vs " + truth + ")");
+      Check(Math.Abs(vel * (t - 33) - truth) > 3, "predict: the raw read of the same run lags by more than 3 px (" + (truth - vel * (t - 33)) + ")");
+      // a stop: the reads stop changing, the value settles exactly on the target
+      double fin = drawn; long tt = t; double last = vel * (t - 33);
+      for (int k = 1; k <= 6; k++) fin = sm.Step(last, tt += 33, snap);
+      Check(fin == last, "predict: a stop settles exactly on the target (" + fin + " vs " + last + ")");
+      // the lead never exceeds one row pitch (snap / 4)
+      sm = new FrameSmoother(); sm.Step(0, 0, 100); double fast = 0; for (int k = 1; k <= 8; k++) fast = sm.Step(200.0 * k, 33L * k, 400);
+      Check(fast - 1600 <= 100.01, "predict: the lead is capped at one row pitch (" + (fast - 1600) + ")");
+      // a reversal: no lead for the turning read
+      sm = new FrameSmoother(); sm.Step(0, 0, snap); for (int k = 1; k <= 4; k++) sm.Step(16.5 * k, 33L * k, snap);
+      double turned = sm.Step(66 - 40, 165 + 33, snap);
+      Check(turned <= 66 + 0.01 && turned >= 26 - 0.01, "predict: after a reversal the value does not run on ahead (" + turned + ")");
     }
     // the picture offset is not re-learned while the list moves; a learned one changes only after stillness and > 3 px
     {

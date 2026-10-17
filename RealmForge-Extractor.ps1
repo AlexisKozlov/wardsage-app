@@ -790,7 +790,8 @@ namespace RealmForge {
     internal static long FormBackpackId { get { return FormId("ID_FORM_BACKPACKINTEGRATION"); } }   // «Инвентарь»
     internal static long FormRecastId { get { return FormId("ID_FORM_EQUIPSUBLIMING"); } }          // the foundry (Литейная): its «Преобразовать» tab
     internal static long FormGemId { get { return FormId("ID_FORM_EQUIPGEMMAIN"); } }               // the gem screen: reached from the item card, also holds the recast functions
-    static ulong formNode, invNode, subNode, gemNode;
+    internal static long FormMainCityId { get { var ly = Layout.Current; return ly != null ? ly.FormOpt("ID_FORM_MAINCITY") : 0; } }   // the city (main screen); older layout data lacks it: 0
+    static ulong formNode, invNode, subNode, gemNode, cityNode;
 
     // the value of a UIInstance node keyed by the form id, when it is still that node and holds a table with the key
     static ulong NodeValue(ulong n, long id, string key) {
@@ -838,35 +839,38 @@ namespace RealmForge {
     /// <summary>Searches UIInstance's nodes of the hero screen, the inventory and the two recast screens (one pass; a
     /// form the player has not opened yet has none); returns the live hero screen (0 = none).</summary>
     static ulong FindFormNode() {
-      formNode = invNode = subNode = gemNode = 0;
+      formNode = invNode = subNode = gemNode = cityNode = 0;
       if (Layout.Current == null) return 0;   // no form ids: the hero screen is found by its keys
       int t0 = Environment.TickCount;
-      long idMain = FormCharactorMainId, idInv = FormBackpackId, idRecast = FormRecastId, idGem = FormGemId;
+      long idMain = FormCharactorMainId, idInv = FormBackpackId, idRecast = FormRecastId, idGem = FormGemId, idCity = FormMainCityId;
       var hits = new List<ulong>();
       ScanParallel((b0, buf, len) => {
         for (int i = 0; i + 32 <= len; i += 8) {
           long k = BitConverter.ToInt64(buf, i + 16);
-          if (k != idMain && k != idInv && k != idRecast && k != idGem) continue;
+          if (k != idMain && k != idInv && k != idRecast && k != idGem && (idCity == 0 || k != idCity)) continue;
           if (BitConverter.ToInt32(buf, i + 24) != T_INT || BitConverter.ToInt32(buf, i + 8) != T_TABLE) continue;
           lock (hits) hits.Add(b0 + (ulong)i);
         }
       });
       ulong form = 0;
-      var invHits = new List<ulong>(); var subHits = new List<ulong>(); var gemHits = new List<ulong>();
+      var invHits = new List<ulong>(); var subHits = new List<ulong>(); var gemHits = new List<ulong>(); var cityHits = new List<ulong>();
       foreach (var n in hits) {
         ulong f;
         if (formNode == 0 && (f = NodeForm(n)) != 0) { formNode = n; form = f; }
         else if (NodeInv(n) != 0) invHits.Add(n);
         else if (NodeTable(n, FormRecastId) != 0) subHits.Add(n);
         else if (NodeTable(n, FormGemId) != 0) gemHits.Add(n);
+        else if (idCity != 0 && NodeTable(n, idCity) != 0) cityHits.Add(n);
       }
       // several copies of one form can linger (an old node array after a rehash, the table of an earlier open): the one the game shows wins
       Func<ulong, bool> invShown = n => InvFormShown(NodeInv(n));
       Func<ulong, bool> subShown = n => InvFormShown(NodeTable(n, FormRecastId));
       Func<ulong, bool> gemShown = n => InvFormShown(NodeTable(n, FormGemId));
+      Func<ulong, bool> cityShown = n => InvFormShown(NodeTable(n, FormMainCityId));
+      cityNode = PickNode(cityHits, cityShown);
       invNode = PickNode(invHits, invShown); subNode = PickNode(subHits, subShown); gemNode = PickNode(gemHits, gemShown);
       int ki = CountWhere(invHits, invShown), ks = CountWhere(subHits, subShown), kg = CountWhere(gemHits, gemShown);
-      string line = "inventory " + invHits.Count + " (shown " + ki + "), foundry " + subHits.Count + " (shown " + ks + "), gem " + gemHits.Count + " (shown " + kg + ")";
+      string line = "inventory " + invHits.Count + " (shown " + ki + "), foundry " + subHits.Count + " (shown " + ks + "), gem " + gemHits.Count + " (shown " + kg + "), city " + cityHits.Count + " (shown " + CountWhere(cityHits, cityShown) + ")";
       if (line != formsScanSaid) { formsScanSaid = line; Log.AppendLine("forms: scan " + (Environment.TickCount - t0) + " ms, " + line); }
       return form;
     }
@@ -921,6 +925,17 @@ namespace RealmForge {
       if (regs == null) return 0;
       FindFormNode();
       return NodeTable(gem ? gemNode : subNode, gem ? FormGemId : FormRecastId);
+    }
+
+    /// <summary>The city form (the main screen) the game holds now; 0 = id unknown or its node never found. No rescan of its own
+    /// (the scans come from the inventory / foundry / gem paths and the overlay's stale-forms pass).</summary>
+    internal static ulong LiveCityForm() { return NodeTable(cityNode, FormMainCityId); }
+
+    /// <summary>Is the city on screen: true / false from its form's active flag; null = the form id is unknown or its node was never found.</summary>
+    public static bool? CityShown() {
+      if (FormMainCityId == 0) return null;
+      ulong f = LiveCityForm();
+      return f == 0 ? (bool?)null : InvFormShown(f);
     }
 
     /// <summary>Some hero of the account (the storage cleanup opens the sell screen from a hero's gear list), 0 = none.</summary>

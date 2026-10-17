@@ -1037,7 +1037,6 @@ namespace RealmForge {
       string k = (frameR != null ? string.Join(",", frameR) : "-") + "|" + (target != null ? string.Join(",", target) : "-") + "|"
         + (p != null ? p.Caps + "/" + p.Main + "/" + p.Sub + "/" + p.Pill + "/" + p.Warn : "-") + "|" + (strip != null ? string.Join(",", Array.ConvertAll(strip, v => ((int)v).ToString())) : "-")
         + "|" + (frameR != null || strip != null ? (int)(pulse * 10) : 0) + "|" + sceneW + "x" + sceneH
-        + "|f" + (int)(listFade * 20)
         + (marks != null && marks.Count > 0 ? "|m" + string.Join(";", marks.ConvertAll(m => string.Join(",", m))) : "");
       if (k == key) return;
       key = k;
@@ -1096,18 +1095,9 @@ namespace RealmForge {
           using (var gr = Graphics.FromImage(bmp)) {
             gr.SmoothingMode = SmoothingMode.AntiAlias; gr.TextRenderingHint = TextRenderingHint.AntiAliasGridFit; gr.Clear(Color.Transparent);
             gr.InterpolationMode = InterpolationMode.HighQualityBicubic;
-            // the cell frames of a scrolling list are painted on a layer drawn with the list's opacity (the plate and the strip are not faded)
-            Action<Action<Graphics>> framed = paint => {
-              if (listFade >= 0.995) { paint(gr); return; }
-              using (var layer = new Bitmap(bw, bh, PixelFormat.Format32bppArgb)) {
-                using (var lg = Graphics.FromImage(layer)) { lg.SmoothingMode = SmoothingMode.AntiAlias; lg.InterpolationMode = InterpolationMode.HighQualityBicubic; lg.Clear(Color.Transparent); paint(lg); }
-                var cm = new ColorMatrix(); cm.Matrix33 = (float)Math.Max(0, listFade);
-                using (var ia = new ImageAttributes()) { ia.SetColorMatrix(cm); gr.DrawImage(layer, new Rectangle(0, 0, bw, bh), 0, 0, bw, bh, GraphicsUnit.Pixel, ia); }
-              }
-            };
-            if (frameR != null) framed(g2 => PaintFrame(g2, frameR[0] - x0, frameR[1] - y0, frameR[2], frameR[3], pulse, G));
+            if (frameR != null) PaintFrame(gr, frameR[0] - x0, frameR[1] - y0, frameR[2], frameR[3], pulse, G);
             if (strip != null) PaintStrip(gr, strip, x0, y0, pulse, U);
-            if (marks != null && marks.Count > 0) framed(g2 => { foreach (var m in marks) PaintMark(g2, m[0] - x0, m[1] - y0, m[2], m[3], m[4], Gm); });
+            if (marks != null) foreach (var m in marks) PaintMark(gr, m[0] - x0, m[1] - y0, m[2], m[3], m[4], Gm);
             if (p != null) {
               float px = sceneX + pos[0] - x0, py = sceneY + pos[1] - y0;
               PaintPlate(gr, px, py, pw, ph, p, fCaps, fMain, fSub, owl, capsH, mainH, pad, ptr, sceneX - x0, sceneY - y0);
@@ -1441,8 +1431,6 @@ namespace RealmForge {
     void SellHintHide() { if (glow.Visible) glow.Hide(); drawnKey = null; HideTip(); }
 
     readonly FrameSmoother shSmooth = new FrameSmoother(), locSmooth = new FrameSmoother(), locListSmooth = new FrameSmoother();
-    readonly ScrollFade shFade = new ScrollFade(), locFade = new ScrollFade(), locListFade = new ScrollFade();
-    double listFade = 1;   // opacity of the cell frames of a scrolling list for the Scene being drawn (callers set it around their list draws)
 
     void TickSellHint() {
       IntPtr hwnd = GameWindow();
@@ -1489,7 +1477,6 @@ namespace RealmForge {
         if (FollowInventoryGrid(sgrid, sellScroll, shGeo, inv, o, cr, U, now, "sell")) row1 = sgrid.Row1;
       }
       // the drawn row 1 eases toward the scroll's value (no jumping between old and new reads)
-      double shOp = shFade.Step(row1, now);   // the raw scroll: the frames fade out while the list moves
       row1 = shSmooth.Step(row1, now, 4 * shGeo.PitchY * U);
       if (inBulk && front) {
         string why = !double.IsNaN(row1) ? "exact" : "none";
@@ -1512,10 +1499,7 @@ namespace RealmForge {
         Plate pill = null; int[] pt = null;
         if (step.Below > 0 && sellPillDown != "") { pill = new Plate { Pill = true, Main = sellPillDown }; pt = new[] { o.X + gx, o.Y + (int)vb - 2, (int)(shGeo.CellW * U), 2 }; }
         else if (step.Above > 0 && sellPillUp != "") { pill = new Plate { Pill = true, Main = sellPillUp }; pt = new[] { o.X + gx, o.Y + (int)vt, (int)(shGeo.CellW * U), 2 }; }
-        if (shOp <= 0.01) marks.Clear();   // the list is moving: no cell frames
-        listFade = shOp;
         Scene(glow, ref drawnKey, null, pill, pt, null, marks);
-        listFade = 1;
         // the step's plate above the list
         if (haveText) DrawTip(o.X + gx, o.Y + (int)vt - 2, gw, 2, sellHintLines, H, true, false, false, null, SellHint.Warn(step)); else HideTip();
         return;
@@ -1548,7 +1532,6 @@ namespace RealmForge {
     LocateStep locateStep; SubCheck locateSubs; string locateKey = "";
     string locateScreensSaid = "", locateMarkerSaid = "", locateCardSaid = "", locateListSig = "", locateDecisionSaid = "", locatePlaceSaid = ""; long locateListChangeAt;   // the Ascension list's shape (to wait after it changed), the log keys
     long locateReadAt, locateLastCur = -1, locateSubsAt; int locateCols = 8, locateGeoCols; double locateGeoW, locateGeoH;
-    double locOp = 1;
     SellGeometry locateGeo; InventoryScreen locateInv; bool locateNeedClick;
     /// <summary>The step changed (or its list place / sub stat check): the page shows it and answers with the text plate.</summary>
     public event Action<LocateStep, SubCheck> LocateChanged;
@@ -1631,8 +1614,6 @@ namespace RealmForge {
         bool liveShown; var liveList = RFX.ReadInventoryLive(out liveShown);
         if (liveList != null && liveList.Has) inv.List = liveList;
         bool exactGrid = FollowInventoryGrid(lgrid, locateScroll, locateGeo, inv, o, cr, U, now, "locate");
-        locOp = exactGrid ? locFade.Step(lgrid.Row1, now) : 1;
-        if (!exactGrid) locFade.Reset();
         if (exactGrid) lgrid.Row1 = locSmooth.Step(lgrid.Row1, now, 4 * locateGeo.PitchY * U); else locSmooth.Reset();
         if (inv.Current != locateLastCur) {
           // the player clicked a cell: the pointer shows where its row is (the last resort, when the game's scroll is unreadable)
@@ -1662,8 +1643,7 @@ namespace RealmForge {
             if (msig != locateMarkerSaid) { locateMarkerSaid = msig; Log.Write("locate marker: " + msig + " row=" + step.Row + " of " + ((inv.Uids.Count + locateCols - 1) / locateCols) + " row1=" + (int)lgrid.Row1 + " bar=" + (Geo.Current != null && Geo.Current.Rect("inventory.scrollbar", W, H, U) != null ? "geometry" : "no geometry")); }
             if (mkr != null) strip = new[] { o.X + mkr[0], o.Y + mkr[1], o.Y + mkr[2], o.Y + mkr[3], o.Y + mkr[4], o.Y + mkr[5], 1 };
           }
-          if (mk.Kind == "box" && locOp <= 0.01) LocateHide();   // the list is moving: no cell frame
-          else { listFade = mk.Kind == "box" ? locOp : 1; Draw(mk.Kind, o.X + mk.X, o.Y + mk.Y, mk.W, mk.H, mk.Rows, strip); listFade = 1; }
+          Draw(mk.Kind, o.X + mk.X, o.Y + mk.Y, mk.W, mk.H, mk.Rows, strip);
         } else LocateHide();
       } else if (!front) { LocateHide(); }
       else if (lf != null && lf.Mark.Kind != "box") { frame++; Draw(lf.Mark.Kind, o.X + lf.Mark.X, o.Y + lf.Mark.Y, lf.Mark.W, lf.Mark.H, lf.Mark.Rows); }   // the list cell is off the screen: the pill at the list's edge
@@ -1677,10 +1657,7 @@ namespace RealmForge {
         DrawTip(cityBtn[0], cityBtn[1], cityBtn[2], cityBtn[3], locateLines, H, false, false, false, locateCaps);
       } else if (front && locateLines.Length > 0 && lf != null && lf.Mark.Kind == "box") {
         frame++;   // the button / tab / cell: its frame with the step's plate beside it
-        bool cellFrame = step.Kind == LocateKind.AscendPick || step.Kind == LocateKind.RecastPick;   // a list cell: its frame fades while the list scrolls (the plate stays)
-        listFade = cellFrame ? locListOp : 1;
-        DrawTip(o.X + lf.Mark.X, o.Y + lf.Mark.Y, lf.Mark.W, lf.Mark.H, locateLines, H, cellFrame && locListOp <= 0.01, false, false, locateCaps);
-        listFade = 1;
+        DrawTip(o.X + lf.Mark.X, o.Y + lf.Mark.Y, lf.Mark.W, lf.Mark.H, locateLines, H, false, false, false, locateCaps);
       } else if (front && locateLines.Length > 0 && (step.Kind != LocateKind.InList || locateNeedClick)) {
         frame++;
         DrawTipTop(locateLines, locateCaps);   // its own header, not the plan's «Шаг N из M»
@@ -1709,7 +1686,7 @@ namespace RealmForge {
     }
     /// <summary>«Показать в игре» may click: the player's auto click and the site's "locateAuto" switch (off until the owner enables it).</summary>
     public bool LocateAutoEnabled;
-    long screenReadAt, cityAt; bool cityNow;
+    long screenReadAt, cityAt; bool cityNow; bool staleArmed; int staleTries;
     readonly Dictionary<ClickOwner, string> haltSaid = new Dictionary<ClickOwner, string>();
 
     bool ScreensWanted() { return target != 0 || locateReq != null || filterItem != 0 || hintKind != "" || runHero != 0 || sellWanted != null; }
@@ -1727,9 +1704,15 @@ namespace RealmForge {
       sellScanOnce = false;
       var inp = new ScreenInputs { Inv = RFX.ReadInventory(rescan), Rs = RFX.ReadRecastScreenSafe(rescan), Hero = RFX.ReadHeroScreen(addrs, screens.Hero) };
       // nothing recognised though a guide needs the screen: the remembered form nodes may be dead copies - search them again (at most every 2 s)
-      if (front && (locateReq != null || sellWanted != null) && ScreenState.Classify(inp, now).Kind == ScreenKind.Unknown && RFX.RescanFormsIfStale(2000))
-        inp = new ScreenInputs { Inv = RFX.ReadInventory(rescan), Rs = RFX.ReadRecastScreenSafe(rescan), Hero = RFX.ReadHeroScreen(addrs, screens.Hero) };
-      if (front && ScreenState.Classify(inp, now).Kind == ScreenKind.Unknown) {   // no form open: the city's bottom bar (a picture, at most every 400 ms)
+      // only after a known screen the player may have left into a form we do not know yet, at most 3 passes per such transition
+      inp.CityForm = RFX.CityShown();
+      var first = ScreenState.Classify(inp, now);
+      if (first.Kind != ScreenKind.Unknown) { staleArmed = first.Kind == ScreenKind.Inventory || first.Kind == ScreenKind.HeroScreen || first.Kind == ScreenKind.City; staleTries = 0; }
+      else if (front && staleArmed && staleTries < 3 && (locateReq != null || sellWanted != null) && RFX.RescanFormsIfStale(2000)) {
+        staleTries++;
+        inp = new ScreenInputs { Inv = RFX.ReadInventory(rescan), Rs = RFX.ReadRecastScreenSafe(rescan), Hero = RFX.ReadHeroScreen(addrs, screens.Hero), CityForm = RFX.CityShown() };
+      }
+      if (front && inp.CityForm != true && ScreenState.Classify(inp, now).Kind == ScreenKind.Unknown) {   // the city form is not readable or reads closed: the city's bottom bar (a picture, at most every 400 ms)
         if (now - cityAt >= 400) { cityAt = now; cityNow = CityVisible(hwnd); }
         inp.CitySeen = cityNow;
       } else cityNow = false;
@@ -1749,9 +1732,14 @@ namespace RealmForge {
     /// <summary>A fresh read for the click gate: not held, not throttled (the screen right before the click).</summary>
     ScreenState FreshScreen(bool wantCity) {
       long now = NowMs();
-      var inp = new ScreenInputs { Inv = RFX.ReadInventory(-1), Rs = RFX.ReadRecastScreenSafe(-1), Hero = RFX.ReadHeroScreen(addrs, screens.Hero) };
+      var inp = new ScreenInputs { Inv = RFX.ReadInventory(-1), Rs = RFX.ReadRecastScreenSafe(-1), Hero = RFX.ReadHeroScreen(addrs, screens.Hero), CityForm = RFX.CityShown() };
       var st = ScreenState.Classify(inp, now);
-      if (wantCity && st.Kind == ScreenKind.Unknown) { inp.CitySeen = CityVisible(GameWindow()); st = ScreenState.Classify(inp, now); }
+      // a click on a city button also needs the picture of the bar (the form alone is not enough for a click)
+      if (wantCity && (st.Kind == ScreenKind.City || (st.Kind == ScreenKind.Unknown && inp.CityForm == null))) {
+        bool seen = CityVisible(GameWindow());
+        if (inp.CityForm == true && !seen) inp.CityForm = false;
+        inp.CitySeen = seen; st = ScreenState.Classify(inp, now);
+      }
       return st;
     }
 
@@ -1821,16 +1809,14 @@ namespace RealmForge {
 
     /// <summary>The Foundry list's scroll read anew and eased, for the frame of a list cell (the screen look is only a few times
     /// a second): the cell's frame follows the list smoothly while it scrolls.</summary>
-    double locListOp = 1;
     void FoundryScrollNow(LocateStep step, long now) {
       var rs = locateRs;
       bool asc = step.Kind == LocateKind.AscendPick;
-      if (rs == null || (!asc && step.Kind != LocateKind.RecastPick)) { locListSmooth.Reset(); locListFade.Reset(); locListOp = 1; return; }
+      if (rs == null || (!asc && step.Kind != LocateKind.RecastPick)) { locListSmooth.Reset(); return; }
       var l = asc ? rs.AscendList : rs.RecastList;
       var live = RFX.ReadFoundryListLive(asc);
       if (live != null && live.Has) l = live;
-      if (l == null || !l.Has) { locListSmooth.Reset(); locListFade.Reset(); locListOp = 1; return; }
-      locListOp = locListFade.Step(l.ScrollY, now);
+      if (l == null || !l.Has) { locListSmooth.Reset(); return; }
       double y = locListSmooth.Step(l.ScrollY, now, 4 * (l.RowUnits > 0 ? l.RowUnits : 120));
       var sm = new RFX.ListRead { ScrollY = y, Cols = l.Cols, RowUnits = l.RowUnits, First = l.First, Last = l.Last, FinalRowUnits = l.FinalRowUnits, FitScale = l.FitScale };
       if (asc) rs.AscendList = sm; else rs.RecastList = sm;
