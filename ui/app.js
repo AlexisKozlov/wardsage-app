@@ -1018,6 +1018,14 @@
         } else L.req = r;
         render(); break;
       }
+      case 'locate.done': {
+        // the host saw the job done in the game, reported it to the site and shows its own plate: the page only forgets the request
+        const L = S.locate; if (!L.req || L.req.id !== m.id) break;
+        clearTimeout(L.doneTimer);
+        S.locateEnded[L.req.id] = true;
+        S.locate = { req: null, step: null, tipKey: '', doneTimer: 0 };
+        toast(t('locDoneToast')); render(); break;
+      }
       case 'locate.state': {
         const L = S.locate; if (!L.req) break;
         L.step = m;

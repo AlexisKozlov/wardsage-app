@@ -90,6 +90,11 @@ namespace RealmForge {
       // «Отменить надевание» over the game: the interface drops the running build (as its own «Отменить»)
       overlay.CancelPressed += () => { Log.Write("cancel pressed over the game"); Post("{\"ev\":\"cancelRun\"}"); };
       overlay.LocateChanged += (step, subs) => PostLocateState(step, subs);
+      overlay.LocateFinished += (id, what) => {
+        FinishLocate(id, true, true);   // reported done; the overlay shows its plate a few seconds and ends the hints itself
+        if (cfg.AutoSync) RequestAutoSync(1);   // the same sync as the automatic one (its own gap rule), without the 5 min wait: the site drops the item
+        Post("{\"ev\":\"locate.done\",\"id\":" + S(id) + ",\"what\":" + S(what) + "}");
+      };
       overlay.SellHintChanged += st => PostSellHint(st);
       overlay.Problem += (kind, message) => Report(kind, message, null);
       Program.FatalReport = ReportFatal;

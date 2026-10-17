@@ -142,7 +142,7 @@
 
   // the host's pills over the game for an item off the screen («Вещь ниже: ещё 3 ряда»): the texts and the row forms in the page's language
   function pillTexts(t, lang) {
-    return { lang: lang === 'en' ? 'en' : 'ru', pillUp: t('locPillUp'), pillDown: t('locPillDown'), rows1: t('pRows1'), rows2: t('pRows2'), rows5: t('pRows5') };
+    return { lang: lang === 'en' ? 'en' : 'ru', pillUp: t('locPillUp'), pillDown: t('locPillDown'), rows1: t('pRows1'), rows2: t('pRows2'), rows5: t('pRows5'), doneAscend: t('locJobAscend'), doneRecast: t('locJobRecast') };
   }
 
   const api = { KINDS, pillTexts, describe, caps, stepNo, subRows, filterLines, AUTO_STEPS };

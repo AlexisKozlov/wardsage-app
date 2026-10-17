@@ -103,6 +103,13 @@ namespace RealmForge {
         if (IsHandleCreated) { int ex = W32.GetWindowLong(Handle, -20); W32.SetWindowLong(Handle, -20, value ? ex & ~0x20 : ex | 0x20); }   // GWL_EXSTYLE, WS_EX_TRANSPARENT
       }
     }
+    bool downIn;
+    /// <summary>Width of the pressable square at the window's left (0 = the whole window is the button): the record button's timer plate beside it is not.</summary>
+    public int HitW;
+    bool Inside(IntPtr lParam) {
+      long l = lParam.ToInt64(); int x = (short)(l & 0xFFFF), y = (short)((l >> 16) & 0xFFFF);
+      return x >= 0 && y >= 0 && (HitW <= 0 ? x < Width && y < Height : x < HitW && y < Math.Min(HitW, Height));
+    }
     protected override void WndProc(ref Message m) {
       if (movable) {
         if (m.Msg == 0x0084) { m.Result = (IntPtr)2; return; }                 // WM_NCHITTEST -> HTCAPTION: Windows drags it
@@ -114,7 +121,9 @@ namespace RealmForge {
       if (m.Msg == 0x0232) { Dragging = false; var mv = Moved; if (mv != null) mv(); }   // WM_EXITSIZEMOVE
       if (!clickable && m.Msg == 0x0084) { m.Result = (IntPtr)(-1); return; }   // WM_NCHITTEST -> HTTRANSPARENT
       if (clickable && m.Msg == 0x0021) { m.Result = (IntPtr)3; return; }     // WM_MOUSEACTIVATE -> MA_NOACTIVATE
-      if (clickable && m.Msg == 0x0202) { var p = Pressed; if (p != null) p(); return; }   // WM_LBUTTONUP
+      if (clickable && m.Msg == 0x0201) { downIn = Inside(m.LParam); return; }   // WM_LBUTTONDOWN: only remembered, the press counts on the release
+      if (clickable && m.Msg == 0x0203) return;                                  // WM_LBUTTONDBLCLK: no second press
+      if (clickable && m.Msg == 0x0202) { bool ok = downIn && Inside(m.LParam); downIn = false; if (ok) { var p = Pressed; if (p != null) p(); } return; }   // WM_LBUTTONUP inside the button, after a press inside it
       base.WndProc(ref m);
     }
 
@@ -167,7 +176,7 @@ namespace RealmForge {
     readonly GlowWindow recWin = new GlowWindow(true);
     readonly Timer recBtnTimer = new Timer();
     readonly Stopwatch recSw = new Stopwatch();
-    string recDrawn; Bitmap recBmp; bool recOn;
+    string recDrawn; Bitmap recBmp; bool recOn; long recToggleAt;
     /// <summary>Settings → «Кнопка записи поверх игры» (the test build only).</summary>
     public bool RecButton;
     /// <summary>The player pressed the record button over the game: the host toggles the recorder.</summary>
@@ -258,13 +267,20 @@ namespace RealmForge {
         catch (Exception ex) { string m = "look: " + ex.GetType().Name + ": " + ex.Message; if (m != tickError) { tickError = m; Log.Write("overlay: " + ex); } }
       };
       recWin.Text = "Wardsage rec";
-      recWin.Pressed += () => { var r = RecPressed; if (r != null) r(); };
+      recWin.Pressed += () => {
+        long n = NowMs(); if (recToggleAt != 0 && Math.Abs(n - recToggleAt) < 1000) return;   // one toggle a second at most
+        recToggleAt = n;
+        recOn = !recOn; if (recOn) recSw.Restart(); else recSw.Reset();                       // shown at once; SetRecording(..) confirms
+        try { TickRecBtn(); } catch (Exception) { }
+        var r = RecPressed; if (r != null) r();
+      };
       recBtnTimer.Interval = 200; recBtnTimer.Tick += (s, e) => {
         try { TickRecBtn(); } catch (Exception ex) { if (recWin.Visible) recWin.Hide(); string m = "recbtn: " + ex.GetType().Name + ": " + ex.Message; if (m != tickError) { tickError = m; Log.Write("overlay: " + ex); } }
       };
       if (Channel.IsTest) recBtnTimer.Start();
       cancelWin.Pressed += () => {
         cancelWin.Hide();
+        if (SellClicking) { gate.Halt(ClickOwner.Sell, "player", "stopped by the player"); AnnounceHalts(); return; }   // storage cleanup: the clicks stop, the hints stay
         if (LocateWins && runHero <= 0) { lpilot.Cancel(); Log.Write("locate auto: stopped over the game"); return; }   // «Показать в игре»: only the clicks stop
         var c = CancelPressed; if (c != null) c();
       };
@@ -419,6 +435,7 @@ namespace RealmForge {
     /// text plate; nothing is clicked. While it runs the build's frame is not shown (one target at a time).</summary>
     public void SetLocate(LocateRequest r) {
       locateReq = r != null && r.Item != null ? r : null;
+      locateDoneUntil = 0; locateLive = null; lfin.Reset();
       locateSince = Stamp(); locateCaps = ""; locateLines = new string[0];
       locateStep = null; locateSubs = null; locateKey = ""; locateReadAt = 0; locateLastCur = -1; locateSubsAt = 0; lgrid.Reset();
       locateScreensSaid = ""; locateMarkerSaid = ""; locateCardSaid = ""; locateListSig = ""; locateDecisionSaid = ""; locatePlaceSaid = "";
@@ -514,19 +531,22 @@ namespace RealmForge {
 
     // «Отменить надевание»: top centre of the game (free on the hero screen and in the gear list), only while a started
     // build is on and the game is in front
+    /// <summary>The storage cleanup's auto click is running (not halted, not finished): the stop button is shown for it.</summary>
+    bool SellClicking { get { return sellWanted != null && !sellHint && runHero <= 0 && !LocateWins && !gate.Halted(ClickOwner.Sell) && spilot.State != "done" && spilot.State != "failed"; } }
+
     void TickCancel() {
       IntPtr hwnd = GameWindow();
       int fp = 0, gp = 0;
       if (hwnd != IntPtr.Zero) { W32.GetWindowThreadProcessId(W32.GetForegroundWindow(), out fp); W32.GetWindowThreadProcessId(hwnd, out gp); }
       W32.RECT cr;
-      if ((runHero <= 0 && !(LocateWins && locateDriving)) || !AutoEnabled || hwnd == IntPtr.Zero || W32.IsIconic(hwnd) || fp != gp || !W32.GetClientRect(hwnd, out cr) || cr.B < 200) {
+      if ((runHero <= 0 && !(LocateWins && locateDriving) && !SellClicking) || !AutoEnabled || hwnd == IntPtr.Zero || W32.IsIconic(hwnd) || fp != gp || !W32.GetClientRect(hwnd, out cr) || cr.B < 200) {
         if (cancelWin.Visible) cancelWin.Hide();
         return;
       }
       var o = new W32.POINT(0, 0); W32.ClientToScreen(hwnd, ref o);
       double U = Ui.Unit(cr.R, cr.B);
       int w = (int)(0.25 * U), h = (int)(0.058 * U);
-      string cancelText = runHero <= 0 ? LocateCancelText : CancelText;   // (here only for a build or for «Показать в игре»)
+      string cancelText = runHero <= 0 ? LocateCancelText : CancelText;   // (here only for a build, for «Показать в игре» or for the storage cleanup)
       string key = cancelText + "|" + w + "x" + h;
       if (key != cancelDrawn || cancelBmp == null) {
         if (cancelBmp != null) cancelBmp.Dispose();
@@ -550,6 +570,7 @@ namespace RealmForge {
         if (recBmp != null) recBmp.Dispose();
         recBmp = RecBtnBitmap(d, recOn, sec / 60 + ":" + (sec % 60).ToString("00")); recDrawn = key;
       }
+      recWin.HitW = recBmp.Height;
       recWin.Put(recBmp, o.X + inset, o.Y + inset);
       recWin.Parts.Clear(); recWin.Parts.Add(new[] { o.X + inset, o.Y + inset, recBmp.Width, recBmp.Height });
     }
@@ -1659,7 +1680,30 @@ namespace RealmForge {
 
     void LocateHide() { if (glow.Visible) glow.Hide(); drawnKey = null; HideTip(); }
 
+    // the job is done in the game (src/LocateGuide.cs LocateFinish): a short plate, the request is reported (LocateFinished), then the hints end
+    readonly LocateFinish lfin = new LocateFinish(); long[][] locateLive; long locateDoneUntil; string locateDoneWhat = "";
+    /// <summary>The job of the request is done in the game: request id and what ("ascend" | "recast").</summary>
+    public event Action<string, string> LocateFinished;
+
+    void FinishLocateJob(string what, long now) {
+      var req = locateReq; if (req == null) return;
+      Log.Write("locate: job done (" + what + ") for item " + req.Item.Uid);
+      locateDoneUntil = now + 4000; locateDoneWhat = what; locateDriving = false; lpilot.Cancel();
+      var h = LocateFinished; if (h != null) h(req.Id, what);
+    }
+
+    void TickLocateDone(string what) {
+      if (NowMs() >= locateDoneUntil) { SetLocate(null); return; }
+      IntPtr hwnd = GameWindow(); W32.RECT cr;
+      if (hwnd == IntPtr.Zero || W32.IsIconic(hwnd) || !IsForeground(hwnd) || !W32.GetClientRect(hwnd, out cr) || cr.B < 200) { LocateHide(); return; }
+      var o = new W32.POINT(0, 0); W32.ClientToScreen(hwnd, ref o); SceneArea(o, cr);
+      if (glow.Visible) glow.Hide(); drawnKey = null;
+      string txt = Tx(what == "ascend" ? "doneAscend" : "doneRecast");
+      DrawTipTop(new[] { txt != "" ? txt : (what == "ascend" ? "Готово: вещь вознесена" : "Готово: вещь преобразована") }, locateCaps);
+    }
+
     void TickLocate() {
+      if (locateDoneUntil != 0) { TickLocateDone(locateDoneWhat); return; }
       var req = locateReq;
       IntPtr hwnd = GameWindow();
       W32.RECT cr = new W32.RECT();
@@ -1705,11 +1749,15 @@ namespace RealmForge {
               + " missing=[" + string.Join(",", st.Missing) + "] popup=" + rs.AscendFilterOpen + "/" + rs.FilterPanel + " go=" + st.FilterGo + " list=" + (rs.AscendList != null && rs.AscendList.Has ? "ok" : "none"));
           }
         }
-        if (Math.Abs(now - locateSubsAt) >= 1500 && (st.Kind == LocateKind.Selected || st.Kind == LocateKind.Done || st.Kind == LocateKind.RecastPick || st.Kind == LocateKind.AscendPick || st.Kind == LocateKind.AscendReady || st.Kind == LocateKind.InList)) {
+        if (Math.Abs(now - locateSubsAt) >= 1500 && (st.Kind == LocateKind.Selected || st.Kind == LocateKind.Done || st.Kind == LocateKind.RecastPick || st.Kind == LocateKind.AscendPick || st.Kind == LocateKind.AscendReady || st.Kind == LocateKind.InList || lfin.DoneSeen)) {
           locateSubsAt = now;
           var live = RFX.ReadLiveItemSubs(uid);
+          locateLive = live;
           locateSubs = live != null ? LocateGuide.CheckSubs(req.Item, live) : null;
         }
+        // the job itself done (ascended: the item left the Ascension list; recast: its sub stats changed / a result waits): report it
+        string fin = lfin.Update(req.Purpose == "ascend", uid, st.Kind, rs, locateLive, now);
+        if (fin != "") { FinishLocateJob(fin, now); return; }
         st.NeedClick = locateNeedClick;
         locateStep = st;
       }

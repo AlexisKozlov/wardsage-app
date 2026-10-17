@@ -257,6 +257,50 @@ namespace RealmForge {
     }
   }
 
+  /// <summary>Has the job the request was about been done in the game? Fed once per screen read; keeps what it saw (pure, tests/CoreTests.cs).</summary>
+  public sealed class LocateFinish {
+    bool ready, doneSeen; int readyLen; string readyParts = "", baseline; long goneSince = -1;
+    public const int ConfirmMs = 250;   // the item must stay gone over two reads at least this far apart
+    /// <summary>The recast screen's «Улучшить» step was reached.</summary>
+    public bool DoneSeen { get { return doneSeen; } }
+    public void Reset() { ready = false; doneSeen = false; readyLen = 0; readyParts = ""; baseline = null; goneSince = -1; }
+    static string Ids(long[] a) { return a == null ? "" : string.Join(",", Array.ConvertAll(a, x => x.ToString())); }
+    static string FilterSig(RecastScreen rs) { return string.Join(",", Array.ConvertAll(rs.AscendParts, x => x.ToString())) + "|" + Ids(rs.AscendSuits) + "|" + Ids(rs.AscendMainAttrs) + "|" + Ids(rs.AscendSubAttrs); }
+
+    static string SubSig(long[][] live) {
+      if (live == null) return null;
+      var p = new List<string>(); foreach (var s in live) if (s != null && s.Length > 1) p.Add(s[0] + ":" + s[1]);
+      return string.Join(";", p.ToArray());
+    }
+
+    /// <summary>"" = not yet; "ascend" = the item left the Ascension list after it was ready; "recast" = the item's sub stats changed
+    /// or a recast result waits for the choice after the «Улучшить» step. <paramref name="kind"/> is the step LocateGuide.Next gave,
+    /// <paramref name="live"/> the item's sub stats read from the game now (null = not read).</summary>
+    public string Update(bool ascend, long uid, LocateKind kind, RecastScreen rs, long[][] live, long nowMs = 0) {
+      if (ascend) {
+        string parts = rs == null ? "" : FilterSig(rs);   // slot tab + set + main + sub filter
+        if (kind == LocateKind.AscendReady) { ready = true; readyLen = rs.AscendEquips.Length; readyParts = parts; goneSince = -1; return ""; }
+        if (!ready) return "";
+        if (rs == null || !rs.OnAscend || rs.AscendList == null || !rs.AscendList.Has) return "";   // not readable now: nothing is known
+        if (parts != readyParts) { ready = false; goneSince = -1; return ""; }                      // the player changed the slot tab / filter: the list changed, not the item
+        if (Array.IndexOf(rs.AscendEquips, uid) < 0 && rs.AscendEquips.Length < readyLen) {
+          if (goneSince < 0) { goneSince = nowMs; return ""; }                                      // first read: wait for a second one
+          if (nowMs - goneSince < ConfirmMs) return "";
+          ready = false; goneSince = -1; return "ascend";
+        }
+        goneSince = -1;
+        return "";
+      }
+      if (kind == LocateKind.Done) doneSeen = true;
+      if (!doneSeen) return "";
+      string sig = SubSig(live);
+      if (baseline == null) baseline = sig;
+      else if (sig != null && sig != baseline) return "recast";
+      if (rs != null && rs.ChoosePending) return "recast";
+      return "";
+    }
+  }
+
   /// <summary>Where the inventory's rows are on the screen, from the stat bars under the cells (see ScrollAnchor for the hero
   /// screen's list). Rows are all item rows of one step. Client pixels.</summary>
   public sealed class LocateGrid {

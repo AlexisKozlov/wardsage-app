@@ -2976,6 +2976,42 @@ static class CoreTests {
     // the way to the foundry: nothing is chosen before it, the item is never framed in the inventory
     Eq(LocateKind.OpenInventory, LocateGuide.Next(areq, null, null, null, 8, 1).Kind, "ascend: nothing open (item in the bag) -> open the inventory");
     Eq(LocateKind.OpenFoundry, LocateGuide.Next(areq, inv(), null, null, 8, 1).Kind, "ascend: inventory on the equipment tab -> the Foundry button, not the item's cell");
+    // the job done: Ascension (ready -> the item is gone from the shrunk list) and recast (sub stats changed / a result waits)
+    {
+      var flist = new RFX.ListRead { ScrollY = 0, Cols = 5, RowUnits = 108, First = 0, Last = 0 };
+      var fnz = new LocateFinish();
+      var fre = ar(); fre.AscendSel = 777; fre.AscendList = flist; fre.AscendParts = new[] { 4 };
+      Eq("", fnz.Update(true, 777, LocateKind.AscendReady, fre, null), "finish: ready is not done");
+      var gne = ar(); gne.AscendEquips = new long[] { 100, 101 }; gne.AscendList = flist; gne.AscendParts = new[] { 4 };
+      Eq("", fnz.Update(true, 777, LocateKind.AscendLoading, gne, null, 1000), "finish: gone on the first read only -> wait");
+      Eq("", fnz.Update(true, 777, LocateKind.AscendLoading, gne, null, 1100), "finish: gone, second read too close -> wait");
+      Eq("ascend", fnz.Update(true, 777, LocateKind.AscendLoading, gne, null, 1300), "finish: ready, then the item stays gone from the shorter list -> done");
+      fnz.Reset(); fnz.Update(true, 777, LocateKind.AscendReady, fre, null);
+      Eq("", fnz.Update(true, 777, LocateKind.AscendLoading, gne, null, 1000), "finish: blip start");
+      Eq("", fnz.Update(true, 777, LocateKind.AscendReady, fre, null, 1300), "finish: the item is back (one-read blip) -> not done");
+      Eq("", fnz.Update(true, 777, LocateKind.AscendLoading, gne, null, 1600), "finish: gone again, the clock starts over");
+      Eq("", fnz.Update(true, 777, LocateKind.AscendLoading, gne, null, 1700), "finish: ... still waiting");
+      fnz.Reset(); fnz.Update(true, 777, LocateKind.AscendReady, fre, null);
+      var fch = ar(); fch.AscendEquips = new long[] { 100, 101 }; fch.AscendList = flist; fch.AscendParts = new[] { 4 }; fch.AscendSuits = new long[] { 720100 };
+      fnz.Update(true, 777, LocateKind.AscendFilter, fch, null, 1000);
+      Eq("", fnz.Update(true, 777, LocateKind.AscendFilter, fch, null, 1400), "finish: the set filter changed -> not done");
+      fnz.Reset(); fnz.Update(true, 777, LocateKind.AscendReady, fre, null);
+      var tabx = ar(); tabx.AscendEquips = new long[] { 100 }; tabx.AscendList = flist; tabx.AscendParts = new[] { 2 };
+      Eq("", fnz.Update(true, 777, LocateKind.AscendNotInList, tabx, null), "finish: another slot tab (the list changed) is not done");
+      fnz.Reset();
+      Eq("", fnz.Update(true, 777, LocateKind.AscendFilter, gne, null), "finish: never ready -> not done");
+      fnz.Reset(); fnz.Update(true, 777, LocateKind.AscendReady, fre, null);
+      var unrd = ar(); unrd.AscendEquips = new long[0];
+      Eq("", fnz.Update(true, 777, LocateKind.AscendLoading, unrd, null), "finish: the list is not readable -> wait");
+      var rcf = new LocateFinish();
+      var subs0 = new[] { new long[] { 5, 10 }, new long[] { 7, 20 } };
+      Eq("", rcf.Update(false, 777, LocateKind.GemPick, null, subs0), "finish: recast, the Done step not reached yet");
+      Eq("", rcf.Update(false, 777, LocateKind.Done, null, subs0), "finish: Done reached, subs the same");
+      Eq("", rcf.Update(false, 777, LocateKind.RecastPick, null, subs0), "finish: left the Done step, subs the same -> wait");
+      Eq("recast", rcf.Update(false, 777, LocateKind.RecastPick, null, new[] { new long[] { 5, 10 }, new long[] { 9, 20 } }), "finish: sub stats differ -> done");
+      rcf.Reset(); rcf.Update(false, 777, LocateKind.Done, null, subs0);
+      Eq("recast", rcf.Update(false, 777, LocateKind.ChoosePending, new RecastScreen { ChoosePending = true }, subs0), "finish: a result waits for the choice -> done");
+    }
     iv = inv(); iv.Current = 777;
     Eq(LocateKind.OpenFoundry, LocateGuide.Next(areq, iv, null, null, 8, 1).Kind, "ascend: the item selected in the inventory does not matter (the foundry starts empty)");
     iv = inv(); iv.EquipTab = false;
