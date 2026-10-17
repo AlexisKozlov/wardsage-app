@@ -400,7 +400,7 @@ namespace RealmForge {
       locateReq = r != null && r.Item != null ? r : null;
       locateSince = Stamp(); locateCaps = ""; locateLines = new string[0];
       locateStep = null; locateSubs = null; locateKey = ""; locateReadAt = 0; locateLastCur = -1; locateSubsAt = 0; lgrid.Reset();
-      locateListSig = ""; locateDecisionSaid = ""; locatePlaceSaid = "";
+      locateScreensSaid = ""; locateMarkerSaid = ""; locateCardSaid = ""; locateListSig = ""; locateDecisionSaid = ""; locatePlaceSaid = "";
       lpilot.Reset(); lpilot.ItemUid = locateReq != null ? locateReq.Item.Uid : 0; locateDriving = false; locateAutoSaid = "";
       Hide("off"); HideTip();
       Run();
@@ -1479,7 +1479,7 @@ namespace RealmForge {
     LocateRequest locateReq; string[] locateLines = new string[0]; string locateCaps = "";
     readonly LocateGrid lgrid = new LocateGrid();
     LocateStep locateStep; SubCheck locateSubs; string locateKey = "";
-    string locateListSig = "", locateDecisionSaid = "", locatePlaceSaid = ""; long locateListChangeAt;   // the Ascension list's shape (to wait after it changed), the log keys
+    string locateScreensSaid = "", locateMarkerSaid = "", locateCardSaid = "", locateListSig = "", locateDecisionSaid = "", locatePlaceSaid = ""; long locateListChangeAt;   // the Ascension list's shape (to wait after it changed), the log keys
     long locateReadAt, locateLastCur = -1, locateSubsAt; int locateCols = 8, locateGeoCols; double locateGeoW, locateGeoH;
     SellGeometry locateGeo; InventoryScreen locateInv; bool locateNeedClick;
     /// <summary>The step changed (or its list place / sub stat check): the page shows it and answers with the text plate.</summary>
@@ -1503,8 +1503,13 @@ namespace RealmForge {
         locateReadAt = now;
         int rescan = front ? 8000 : -1;
         locateInv = RFX.ReadInventory(rescan);
-        var rs = RFX.ReadRecastScreen(rescan);
+        var rs = RFX.ReadRecastScreenSafe(rescan);
         locateRs = rs; locateOnAccount = RFX.ItemOnAccount(uid);
+        {   // which screens are seen, once per change within a request
+          string scr = "inv=" + (locateInv != null && locateInv.Open ? "open" : locateInv != null ? "closed" : "none") + " foundry=" + (rs == null ? "none" : rs.SublimingOpen ? "open(tab " + rs.CurType + ")" : "closed")
+            + " ascendTab=" + (rs != null && rs.OnAscend) + " gem=" + (rs == null ? "none" : rs.GemOpen ? "open(func " + rs.GemFunc + ")" : "closed");
+          if (scr != locateScreensSaid) { locateScreensSaid = scr; Log.Write("locate: screens " + scr); }
+        }
         // the columns: the game's own grid says (the picture only when it cannot be read)
         if (locateInv != null && locateInv.Open && locateInv.EquipTab) {
           if (locateInv.List != null && locateInv.List.Cols > 0) locateCols = locateInv.List.Cols;
@@ -1537,6 +1542,10 @@ namespace RealmForge {
       TickLocateDrive(step, req, hwnd, o, cr, now, W, H, U);   // auto click on: the app opens the item itself
       // the step's frame from the screen geometry (the site's file, src/LocateFrames.cs): «Литейная», the tabs, the slot, the list cell, the final button
       LocateFrame lf = front && step.Kind != LocateKind.InList ? LocateFrames.For(step, req.Item, locateRs, null, Geo.Current, W, H, U) : null;
+      if (lf != null && step.Kind == LocateKind.Selected) {   // the card button's rect, once per change (to measure against a frame diagnostics capture)
+        string csig = lf.Target + "|" + lf.Mark.X + "," + lf.Mark.Y + "," + lf.Mark.W + "," + lf.Mark.H;
+        if (csig != locateCardSaid) { locateCardSaid = csig; Log.Write("locate card frame: " + lf.Target + " rect=" + lf.Mark.X + "," + lf.Mark.Y + " " + lf.Mark.W + "x" + lf.Mark.H + " window=" + (int)W + "x" + (int)H + " U=" + (int)U + " worn=" + step.Worn); }
+      }
       if (step.Kind == LocateKind.AscendPick && locatePlaceSaid != step.Pos + "|" + (lf != null)) {
         locatePlaceSaid = step.Pos + "|" + (lf != null);
         Log.Write("locate " + LocateFrames.PlacementInputs(step, locateRs, Geo.Current, W, H, U) + " -> " + (lf == null ? "no frame" : lf.Mark.Kind + " " + lf.Mark.X + "," + lf.Mark.Y + " " + lf.Mark.W + "x" + lf.Mark.H));
@@ -1576,6 +1585,8 @@ namespace RealmForge {
           double[] strip = null;
           if (mk.Kind != "box") {
             var mkr = LocateFrames.ListMarker(Geo.Current, lgrid.Row1, locateGeo.ViewTopPx(U), locateGeo.TopPad * U, locateGeo.PitchY * U, (inv.Uids.Count + locateCols - 1) / locateCols, step.Row, W, H, U);
+            string msig = mkr == null ? "none" : string.Join(",", Array.ConvertAll(mkr, d => ((int)d).ToString()));
+            if (msig != locateMarkerSaid) { locateMarkerSaid = msig; Log.Write("locate marker: " + msig + " row=" + step.Row + " of " + ((inv.Uids.Count + locateCols - 1) / locateCols) + " row1=" + (int)lgrid.Row1 + " bar=" + (Geo.Current != null && Geo.Current.Rect("inventory.scrollbar", W, H, U) != null ? "geometry" : "no geometry")); }
             if (mkr != null) strip = new[] { o.X + mkr[0], o.Y + mkr[1], o.Y + mkr[2], o.Y + mkr[3], o.Y + mkr[4], o.Y + mkr[5], 1 };
           }
           Draw(mk.Kind, o.X + mk.X, o.Y + mk.Y, mk.W, mk.H, mk.Rows, strip);
@@ -1658,7 +1669,7 @@ namespace RealmForge {
       var inv = RFX.ReadInventory(-1);
       if (LocateFrames.Framed(step.Kind) && step.Kind != LocateKind.Selected && now - locateRsAt >= 150) {   // the Foundry's own state, fresh: the list scrolls under the pilot
         locateRsAt = now;
-        var fresh = RFX.ReadRecastScreen(-1); if (fresh != null) locateRs = fresh;
+        var fresh = RFX.ReadRecastScreenSafe(-1); if (fresh != null) locateRs = fresh;
       }
       bool heroOpen = heroScreen != null && heroScreen.Hero > 0 && heroScreen.Tab >= 0;
       bool formOpen = locateRs != null && (locateRs.SublimingOpen || locateRs.GemOpen);

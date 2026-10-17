@@ -2767,6 +2767,19 @@ static class CoreTests {
     Eq(LocateKind.OpenAscendTab, LocateGuide.Next(areq, null, ars, null, 8, 1).Kind, "ascend: foundry on another tab");
     ars = ar(); ars.AscendShown = false;
     Eq(LocateKind.OpenAscendTab, LocateGuide.Next(areq, null, ars, null, 8, 1).Kind, "ascend: tab switching, panel not on screen yet -> tab step");
+    // regression: the filter pop-up fields are all absent (pop-up closed, Forge tab): the foundry is still open, never the inventory step
+    ars = new RecastScreen { SublimingOpen = true, CurType = 3, PanelShown = true };   // Forge tab, defaults everywhere else
+    Check(!ars.AscendFilterOpen && ars.FilterPanel == 0 && ars.FilterShowSuits.Length == 0 && ars.AscendList == null && ars.GemFuncList == null, "foundry state: optional pop-up / gem fields default to empty");
+    Eq(LocateKind.OpenAscendTab, LocateGuide.Next(areq, null, ars, null, 8, 1).Kind, "ascend: Foundry on the Forge tab, no pop-up fields -> open the Ascension tab");
+    Eq(LocateKind.OpenAscendTab, LocateGuide.Next(areq, inv(), ars, null, 8, 1).Kind, "ascend: Foundry on the Forge tab with the inventory still open -> the tab step, not step 1");
+    ars = new RecastScreen { SublimingOpen = true, CurType = 2, AscendShown = true, AscendEquips = new long[] { 100, 777 } };   // Ascend tab, pop-up fields absent, list unread
+    Eq(LocateKind.AscendPick, LocateGuide.Next(areq, null, ars, null, 8, 1).Kind, "ascend: Ascension tab, pop-up fields absent, item in the list -> pick");
+    ars.AscendEquips = new long[] { 100 };
+    Eq(LocateKind.AscendLoading, LocateGuide.Next(areq, null, ars, null, 8, 1).Kind, "ascend: Ascension tab, pop-up fields absent, list not read -> loading");
+    // regression: the gem screen with its optional list fields absent still reads as the gem screen (never the inventory step)
+    var rreq = new LocateRequest { Id = "g1", Purpose = "recast", Item = item, HeroUid = 200 };
+    var gsOnly = new RecastScreen { GemOpen = true, GemFunc = -1, GemSel = 777 };
+    Eq(LocateKind.GemFunction, LocateGuide.Next(rreq, null, gsOnly, null, 8, 1).Kind, "recast: gem screen, function list fields absent, item selected -> choose the function");
     // the way to the foundry: nothing is chosen before it, the item is never framed in the inventory
     Eq(LocateKind.OpenInventory, LocateGuide.Next(areq, null, null, null, 8, 1).Kind, "ascend: nothing open (item in the bag) -> open the inventory");
     Eq(LocateKind.OpenFoundry, LocateGuide.Next(areq, inv(), null, null, 8, 1).Kind, "ascend: inventory on the equipment tab -> the Foundry button, not the item's cell");

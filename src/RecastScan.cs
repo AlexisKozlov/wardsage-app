@@ -55,6 +55,20 @@ namespace RealmForge {
   public static partial class RFX {
     /// <summary>The recast screens now; null when the game has neither (never opened) or they cannot be read. A form the
     /// game never built is searched for (a full pass, about a second) at most every <paramref name="rescanMs"/> (&lt; 0: not now).</summary>
+    static readonly HashSet<string> saidOnce = new HashSet<string>();
+    /// <summary>Logs a failed optional read once per kind and exception type: type, message, top stack frame.</summary>
+    public static void SayOnce(string what, Exception e) {
+      string top = ""; if (e.StackTrace != null) { var ls = e.StackTrace.Split('\n'); top = ls.Length > 0 ? ls[0].Trim() : ""; }
+      string key = what + "|" + e.GetType().Name;
+      lock (saidOnce) { if (!saidOnce.Add(key)) return; }
+      Log.AppendLine("locate: " + what + ": " + e.GetType().Name + ": " + e.Message + " at " + top);
+    }
+
+    /// <summary>ReadRecastScreen that never throws: a failure is logged once and reads as null (the screen is unknown).</summary>
+    public static RecastScreen ReadRecastScreenSafe(int rescanMs) {
+      try { return ReadRecastScreen(rescanMs); } catch (Exception e) { SayOnce("the foundry screen read failed", e); return null; }
+    }
+
     public static RecastScreen ReadRecastScreen(int rescanMs) {
       ulong sf = LiveRecastForm(false, rescanMs), gf = LiveRecastForm(true, rescanMs);
       if (sf == 0 && gf == 0) return null;
@@ -68,7 +82,7 @@ namespace RealmForge {
           s.PanelShown = (Field(panel, "m_IsShow", out v, out tt) && tt == T_BOOL && (v & 0xFFFFFFFF) != 0)
                       || (Field(panel, "m_bActive", out v, out tt) && tt == T_BOOL && (v & 0xFFFFFFFF) != 0);
           ulong t;
-          if (s.PanelShown) s.RecastList = ReadFoundryList(panel);
+          if (s.PanelShown) { try { s.RecastList = ReadFoundryList(panel); } catch (Exception e) { s.RecastList = null; SayOnce("the Foundry list read failed", e); } }
           if (Field(panel, "m_Equips", out t, out tt) && tt == T_TABLE) s.Equips = OrderedInts(t);
           if (Field(panel, "m_EquipId", out v, out tt) && tt == T_INT && (long)v > 0) s.Sel = (long)v;
           if (Field(panel, "m_SelectParts", out t, out tt) && tt == T_TABLE) {
@@ -103,8 +117,9 @@ namespace RealmForge {
             if (Field(fc, "vSubAttrs", out t, out tt) && tt == T_TABLE) s.AscendSubAttrs = IntSet(t);
             else if (Field(fc, "SubAttrs", out t, out tt) && tt == T_TABLE) s.AscendSubAttrs = IntSet(t);
           }
-          if (s.AscendShown) s.AscendList = ReadFoundryList(ap);
-          ReadFilterPopup(ap, s);
+          if (s.AscendShown) { try { s.AscendList = ReadFoundryList(ap); } catch (Exception e) { s.AscendList = null; SayOnce("the Ascension list read failed", e); } }
+          // optional: the pop-up's fields are absent while it is closed / on other tabs; whatever happens here never costs the foundry's state
+          try { ReadFilterPopup(ap, s); } catch (Exception e) { s.AscendFilterOpen = false; s.FilterPanel = 0; SayOnce("the filter pop-up read failed", e); }
         }
       }
       if (gf != 0) {
@@ -113,7 +128,8 @@ namespace RealmForge {
         if (Field(gf, "m_CurrentEquipSelectedUid", out v, out tt) && tt == T_INT && (long)v > 0) s.GemSel = (long)v;
         ulong pop, t; int pt;
         if (Field(gf, "m_Panel_EquipFilter", out pop, out pt) && pt == T_TABLE && Field(pop, "m_AllEquips", out t, out tt) && tt == T_TABLE) s.GemList = OrderedInts(t);
-        if (s.GemOpen && live != null) s.GemFuncList = ReadList(gf, "m_GemInfinityGrid_ScrollRect", "m_GemInfinityGrid_InfinityGrid", live.Pid);
+        // optional: the function list's scroll (unreadable = null); never makes the gem screen or the foundry unreadable
+        if (s.GemOpen && live != null) { try { s.GemFuncList = ReadList(gf, "m_GemInfinityGrid_ScrollRect", "m_GemInfinityGrid_InfinityGrid", live.Pid); } catch (Exception e) { s.GemFuncList = null; SayOnce("the gem function list read failed", e); } }
       }
       return s;
     }
