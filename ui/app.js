@@ -694,6 +694,9 @@
       row(t('setCode'), t('setCodeP'), S.hasCode
         ? `<span class="num code">${esc(S.codePrefix)}…</span><button class="btn-line sm" data-act="editCode">${esc(t('change'))}</button><button class="btn-ghost" data-act="unlink">${esc(t('unlink'))}</button>`
         : codeBtns())}</section>`;
+    // TEST build only: the screen recorder for the developers (host: rec.start / rec.stop, event 'rec')
+    const rec = S.channel !== 'test' ? '' : sec(t('secRec'), row(t('setRec'), t('setRecP'), `<button class="btn-line" id="recBtn" data-act="rec">${esc(recLabel())}</button>`, { wide: true })
+      + (S.rec.sent || S.rec.total || S.rec.why ? `<p class="sdet" id="recInfo">${esc(recNote())}</p>` : ''));
     const left = [
       sec(t('secSync'),
         row(t('setAutoSync'), t('setAutoSyncS'), sw('autoSync', S.autoSync), { more: 'setAutoSyncP', key: 'autoSync' })
@@ -703,9 +706,6 @@
         row(t('setAutoClick'), t('setAutoClickS'), sw('autoClick', S.autoClick), { more: 'setAutoClickP', key: 'autoClick' })
         + row(t('setAutoConfirm'), t(S.autoClick ? 'setAutoConfirmS' : 'setAutoConfirmOff'), sw('autoConfirm', S.autoConfirm, !S.autoClick),
           { more: 'setAutoConfirmP', key: 'autoConfirm', dep: true, off: !S.autoClick }))].join('');
-    // TEST build only: the screen recorder for the developers (host: rec.start / rec.stop, event 'rec')
-    const rec = S.channel !== 'test' ? '' : sec(t('secRec'), row(t('setRec'), t('setRecP'), `<button class="btn-line" id="recBtn" data-act="rec">${esc(recLabel())}</button>`, { wide: true })
-      + (S.rec.sent || S.rec.total || S.rec.why ? `<p class="sdet" id="recInfo">${esc(recNote())}</p>` : ''));
     const right = [
       sec(t('secApp'),
         row(t('setAutoUpdate'), t('setAutoUpdateS'), sw('autoUpdate', S.autoUpdate), { more: 'setAutoUpdateP', key: 'autoUpdate' })
