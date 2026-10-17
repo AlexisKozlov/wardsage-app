@@ -184,9 +184,10 @@ namespace RealmForge {
       if (!path.Add(t)) return null;
       try {
         var h = Read(t, 56); if (h == null || h[8] != 5) return null;
-        int lsize = h[11]; uint sizearray = BitConverter.ToUInt32(h, 12);
+        int lsize = h[11]; uint alimit = BitConverter.ToUInt32(h, 12);
         ulong arr = BitConverter.ToUInt64(h, 16), node = BitConverter.ToUInt64(h, 24);
-        if (lsize > 16 || sizearray > 100000) return null;
+        if (lsize > 16 || alimit > 100000) return null;
+        uint sizearray = RealArraySize(h[10], alimit, 100000);
         var d = new Dictionary<string, object>();
         if (sizearray > 0) {
           var ab = Read(arr, (int)sizearray * 16);

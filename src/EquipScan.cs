@@ -657,12 +657,15 @@ namespace RealmForge {
     static bool IntKey(ulong t, long key, out ulong val, out int tt) {
       val = 0; tt = 0;
       var h = Read(t, 56); if (h == null || h[8] != 5) return false;
-      int lsize = h[11]; uint sizearray = BitConverter.ToUInt32(h, 12);
-      if (lsize > 20 || sizearray > 1000000) return false;
+      int lsize = h[11]; uint alimit = BitConverter.ToUInt32(h, 12);
+      if (lsize > 20 || alimit > 1000000) return false;
+      uint sizearray = RealArraySize(h[10], alimit, 1000000);
       if (key >= 1 && key <= sizearray) {
         var b = Read(BitConverter.ToUInt64(h, 16) + (ulong)(key - 1) * 16, 16); if (b == null) return false;
         val = BitConverter.ToUInt64(b, 0); tt = BitConverter.ToInt32(b, 8);
-        return tt != T_NIL;
+        // Inside the stored limit a nil is absent. Past it, an empty slot can still
+        // belong to the hash (luaH_getint).
+        if (tt != T_NIL || key <= (long)alimit) return tt != T_NIL;
       }
       int nn = 1 << lsize; var nb = Read(BitConverter.ToUInt64(h, 24), nn * 32); if (nb == null) return false;
       for (int i = 0; i < nn; i++) {

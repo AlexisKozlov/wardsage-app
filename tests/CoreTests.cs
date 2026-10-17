@@ -682,6 +682,7 @@ static class CoreTests {
     ArenaOppTests();
     GuildTests();
     LiveStateTests();
+    ArrayTailTests();
     GamePacksTests();
     UpdateKeysTests();
 
@@ -1528,6 +1529,28 @@ static class CoreTests {
       }
       return new FTab(t);
     }
+    /// <summary>Integer keys 1..items.Length in the array part. When <paramref name="notReal"/> is set,
+    /// the header stores <paramref name="alimit"/> and Lua 5.4's BITRAS bit: the allocation is the next
+    /// power of two above that limit, and the tail is not in the hash.</summary>
+    public FTab Array(FTab[] items, uint alimit, bool notReal) {
+      uint real = alimit;
+      if (notReal) {
+        uint size = alimit;
+        size |= size >> 1; size |= size >> 2; size |= size >> 4; size |= size >> 8; size |= size >> 16;
+        real = size + 1;
+      }
+      if ((uint)items.Length > real) real = (uint)items.Length;
+      ulong t = M.Alloc(56), arr = M.Alloc(16 * (int)real), np = M.Alloc(32);
+      int o = (int)(t - FakeLua.Base);
+      M.Mem[o + 8] = 5;
+      if (notReal) M.Mem[o + 10] = 0x80;
+      M.Mem[o + 11] = 0;
+      M.W32(t + 12, (int)alimit);
+      M.W64(t + 16, arr);
+      M.W64(t + 24, np);
+      for (int i = 0; i < items.Length; i++) { M.W64(arr + (ulong)(i * 16), items[i].A); M.W32(arr + (ulong)(i * 16) + 8, 0x45); }
+      return new FTab(t);
+    }
     /// <summary>The address of the value of a field (its node).</summary>
     public ulong ValueAt(FTab t, string key) {
       ulong np = M.R64(t.A + 24); int nn = 1 << M.Mem[t.A - FakeLua.Base + 11];
@@ -1629,6 +1652,48 @@ static class CoreTests {
       for (int i = 0; i < runs; i++) w = RFX.ReadLiveAccount(43);
       Console.WriteLine("  bench: account of 600 heroes / 3000 items from the live tables: " + (sw.ElapsedMilliseconds / runs) + " ms, " + ((RFX.Reads - r0) / runs) + " memory reads per reading");
       Check(w != null && AccUids(w, "heroes", "iHeroId").Count == 600 && AccUids(w, "equipment", "iItemUid").Count == 3000, "bench reading complete");
+    } finally { RFX.TestMemory = null; RFX.ForgetLive(); }
+  }
+
+  static FakeState FakeArrayLogin(FakeLua m, long uid, int count, uint alimit, bool notReal, out ulong knock) {
+    var st = new FakeState(m); long inst = 20001;
+    var gd = st.T("m_bInitElva", false, "m_Knock", 0.25, "class", st.T("__cname", "GameData"), "____instanceId", inst++);
+    knock = st.ValueAt(gd, "m_Knock");
+    var tabs = new FTab[count];
+    for (int i = 0; i < count; i++)
+      tabs[i] = st.T("iItemUid", (long)(i + 1), "iItemId", 710101L, "iStarLvl", 4L, "iHeroId", 0L, "iIntensifyLvl", 0L,
+        "bLocked", false, "vConfig", st.T("m_ID", 710101L), "vMasterAttrList", st.T(), "vViceAttrList", st.T());
+    long hero = 203400001;
+    st.T("suitId2EquipIdExt", st.T(), "equips", st.Array(tabs, alimit, notReal), "class", st.T("__cname", "EquipData"), "____instanceId", inst++);
+    st.T("m_CharactorDatas", st.T(hero, st.T("iHeroId", hero, "iBaseId", hero / 100000, "iLevel", 60L, "vEquipSlot", st.T())),
+         "m_CampHeroPerfectReward", st.T(), "class", st.T("__cname", "HeroData"), "____instanceId", inst++);
+    st.T("m_mNegSpecialItem", st.T(), "m_Uid", uid, "m_Name", "P" + uid, "m_Level", 50L, "m_Coin", 1000L, "m_AllBeastInfo", st.T(),
+         "class", st.T("__cname", "PlayerData"), "____instanceId", inst++);
+    return st;
+  }
+
+  static void ArrayTailTests() {
+    Console.WriteLine("Lua 5.4 array tail (gear past the stored limit):");
+    Eq(271u, RFX.RealArraySize(0, 271, 100000), "Lua 5.3: the stored limit is the array");
+    Eq(512u, RFX.RealArraySize(0x80, 271, 100000), "Lua 5.4: 271 grows to 512");
+    Eq(512u, RFX.RealArraySize(0x80, 256, 100000), "a power-of-two limit still grows");
+    Eq(8u, RFX.RealArraySize(0x80, 5, 100000), "5 grows to 8");
+    Eq(1u, RFX.RealArraySize(0x80, 0, 100000), "a zero limit grows to 1");
+    Eq(90000u, RFX.RealArraySize(0x80, 90000, 100000), "past the reader cap the limit is kept");
+    try {
+      var cut = new FakeLua(8 << 20); RFX.TestMemory = cut; RFX.ForgetLive();
+      ulong knock;
+      FakeArrayLogin(cut, 16275333, 280, 271, false, out knock); cut.Knock = knock;
+      string shortJson = RFX.ReadLiveAccount(41);
+      var shortU = AccUids(shortJson, "equipment", "iItemUid");
+      Check(shortU.Count == 271 && !shortU.Contains(280), "without the flag the tail stays out (" + shortU.Count + ")");
+
+      var full = new FakeLua(8 << 20); RFX.TestMemory = full; RFX.ForgetLive();
+      FakeArrayLogin(full, 16275333, 280, 271, true, out knock); full.Knock = knock;
+      string json = RFX.ReadLiveAccount(41);
+      var uids = AccUids(json, "equipment", "iItemUid");
+      Check(uids.Count == 280 && uids.Contains(1) && uids.Contains(271) && uids.Contains(280),
+            "BITRAS tail is part of the catalog (" + uids.Count + ")");
     } finally { RFX.TestMemory = null; RFX.ForgetLive(); }
   }
 

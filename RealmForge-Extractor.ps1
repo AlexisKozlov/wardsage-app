@@ -174,6 +174,26 @@ namespace RealmForge {
     // ---- script table layout (64-bit) ----
     const int T_NIL = 0, T_BOOL = 1, T_FLT = 3, T_INT = 0x13, T_SSTR = 0x44, T_LSTR = 0x54, T_TABLE = 0x45;
 
+    /// <summary>Allocated length of a script table's array part.
+    /// The header stores a limit at +12. Lua 5.4 sets bit 7 of Table.flags (BITRAS) when that
+    /// limit is not the allocation: the array is the next power of two above the limit, and
+    /// integer keys in that tail are not copied into the hash (luaH_realasize). Lua 5.3 leaves
+    /// the bit clear, so the limit stays the length. <paramref name="cap"/> is this reader's
+    /// ceiling; a limit already past it is returned unchanged so a bad header cannot grow the read.</summary>
+    public static uint RealArraySize(byte flags, uint alimit, uint cap) {
+      if ((flags & 0x80) == 0) return alimit;
+      uint size = alimit;
+      size |= size >> 1;
+      size |= size >> 2;
+      size |= size >> 4;
+      size |= size >> 8;
+      size |= size >> 16;
+      if (size == 0xFFFFFFFFu) return alimit;
+      uint real = size + 1;
+      if (real < alimit || real > cap) return alimit;
+      return real;
+    }
+
     // Find TString objects (short strings) for given names. Content at TS+24, tt at TS+8 == 4, shrlen at TS+11.
     static Dictionary<ulong, string> FindLuaStrings(string[] names) {
       var res = new Dictionary<ulong, string>();
@@ -219,9 +239,10 @@ namespace RealmForge {
     static Dictionary<string, object> ParseTable(ulong t, int depth, HashSet<ulong> seen) {
       if (seen.Contains(t)) return null; seen.Add(t);
       var h = Read(t, 56); if (h == null || h[8] != 5) return null;
-      int lsize = h[11]; uint sizearray = BitConverter.ToUInt32(h, 12);
+      int lsize = h[11]; uint alimit = BitConverter.ToUInt32(h, 12);
       ulong arr = BitConverter.ToUInt64(h, 16), node = BitConverter.ToUInt64(h, 24);
-      if (lsize > 16 || sizearray > 100000) return null;
+      if (lsize > 16 || alimit > 100000) return null;
+      uint sizearray = RealArraySize(h[10], alimit, 100000);
       var d = new Dictionary<string, object>();
       if (sizearray > 0) {
         var ab = Read(arr, (int)sizearray * 16);
@@ -395,9 +416,10 @@ namespace RealmForge {
           if (buf[i + 8] != 5) continue;
           int lsize = buf[i + 11]; if (lsize > 20) continue;
           uint sa = BitConverter.ToUInt32(buf, i + 12); if (sa > 1000000) continue;
+          uint nsa = RealArraySize(buf[i + 10], sa, 1000000);
           ulong arr = BitConverter.ToUInt64(buf, i + 16), node = BitConverter.ToUInt64(buf, i + 24);
           List<ulong> got = null;
-          if (sa > 0) got = Collect(ha, hitAt, arr, arr + (ulong)sa * 16, 16, got);
+          if (nsa > 0) got = Collect(ha, hitAt, arr, arr + (ulong)nsa * 16, 16, got);
           got = Collect(ha, hitAt, node, node + ((ulong)32 << lsize), 32, got);
           if (got != null && got.Count >= minCount) res[b0 + (ulong)i] = got;
         }
@@ -444,8 +466,9 @@ namespace RealmForge {
     static List<ulong> TableValues(ulong t) {
       var r = new List<ulong>();
       var h = Read(t, 56); if (h == null || h[8] != 5) return r;
-      int lsize = h[11]; uint sizearray = BitConverter.ToUInt32(h, 12);
-      if (lsize > 20 || sizearray > 1000000) return r;
+      int lsize = h[11]; uint alimit = BitConverter.ToUInt32(h, 12);
+      if (lsize > 20 || alimit > 1000000) return r;
+      uint sizearray = RealArraySize(h[10], alimit, 1000000);
       if (sizearray > 0) {
         var ab = Read(BitConverter.ToUInt64(h, 16), (int)sizearray * 16);
         if (ab != null) for (int i = 0; i < sizearray; i++) if (BitConverter.ToInt32(ab, i * 16 + 8) == T_TABLE) r.Add(BitConverter.ToUInt64(ab, i * 16));
@@ -1100,8 +1123,9 @@ namespace RealmForge {
 
     static int EntryCount(ulong t) {
       var h = Read(t, 56); if (h == null || h[8] != 5) return 0;
-      int lsize = h[11]; uint sizearray = BitConverter.ToUInt32(h, 12);
-      if (lsize > 20 || sizearray > 1000000) return 0;
+      int lsize = h[11]; uint alimit = BitConverter.ToUInt32(h, 12);
+      if (lsize > 20 || alimit > 1000000) return 0;
+      uint sizearray = RealArraySize(h[10], alimit, 1000000);
       int n = 0;
       if (sizearray > 0) { var ab = Read(BitConverter.ToUInt64(h, 16), (int)sizearray * 16); if (ab != null) for (int i = 0; i < sizearray; i++) if (BitConverter.ToInt32(ab, i * 16 + 8) != T_NIL) n++; }
       int nn = 1 << lsize; var nb = Read(BitConverter.ToUInt64(h, 24), nn * 32);
@@ -1544,8 +1568,9 @@ namespace RealmForge {
     static List<IntEntry> IntEntries(ulong t) {
       var r = new List<IntEntry>();
       var h = Read(t, 56); if (h == null || h[8] != 5) return r;
-      int lsize = h[11]; uint sizearray = BitConverter.ToUInt32(h, 12);
-      if (lsize > 20 || sizearray > 1000000) return r;
+      int lsize = h[11]; uint alimit = BitConverter.ToUInt32(h, 12);
+      if (lsize > 20 || alimit > 1000000) return r;
+      uint sizearray = RealArraySize(h[10], alimit, 1000000);
       if (sizearray > 0) {
         var ab = Read(BitConverter.ToUInt64(h, 16), (int)sizearray * 16);
         if (ab != null) for (int i = 0; i < sizearray; i++) {
@@ -2700,12 +2725,15 @@ namespace RealmForge {
     static bool IntKey(ulong t, long key, out ulong val, out int tt) {
       val = 0; tt = 0;
       var h = Read(t, 56); if (h == null || h[8] != 5) return false;
-      int lsize = h[11]; uint sizearray = BitConverter.ToUInt32(h, 12);
-      if (lsize > 20 || sizearray > 1000000) return false;
+      int lsize = h[11]; uint alimit = BitConverter.ToUInt32(h, 12);
+      if (lsize > 20 || alimit > 1000000) return false;
+      uint sizearray = RealArraySize(h[10], alimit, 1000000);
       if (key >= 1 && key <= sizearray) {
         var b = Read(BitConverter.ToUInt64(h, 16) + (ulong)(key - 1) * 16, 16); if (b == null) return false;
         val = BitConverter.ToUInt64(b, 0); tt = BitConverter.ToInt32(b, 8);
-        return tt != T_NIL;
+        // Inside the stored limit a nil is absent. Past it, an empty slot can still
+        // belong to the hash (luaH_getint).
+        if (tt != T_NIL || key <= (long)alimit) return tt != T_NIL;
       }
       int nn = 1 << lsize; var nb = Read(BitConverter.ToUInt64(h, 24), nn * 32); if (nb == null) return false;
       for (int i = 0; i < nn; i++) {

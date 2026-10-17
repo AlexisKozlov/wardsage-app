@@ -537,8 +537,9 @@ namespace RealmForge {
 
     static int EntryCount(ulong t) {
       var h = Read(t, 56); if (h == null || h[8] != 5) return 0;
-      int lsize = h[11]; uint sizearray = BitConverter.ToUInt32(h, 12);
-      if (lsize > 20 || sizearray > 1000000) return 0;
+      int lsize = h[11]; uint alimit = BitConverter.ToUInt32(h, 12);
+      if (lsize > 20 || alimit > 1000000) return 0;
+      uint sizearray = RealArraySize(h[10], alimit, 1000000);
       int n = 0;
       if (sizearray > 0) { var ab = Read(BitConverter.ToUInt64(h, 16), (int)sizearray * 16); if (ab != null) for (int i = 0; i < sizearray; i++) if (BitConverter.ToInt32(ab, i * 16 + 8) != T_NIL) n++; }
       int nn = 1 << lsize; var nb = Read(BitConverter.ToUInt64(h, 24), nn * 32);
@@ -981,8 +982,9 @@ namespace RealmForge {
     static List<IntEntry> IntEntries(ulong t) {
       var r = new List<IntEntry>();
       var h = Read(t, 56); if (h == null || h[8] != 5) return r;
-      int lsize = h[11]; uint sizearray = BitConverter.ToUInt32(h, 12);
-      if (lsize > 20 || sizearray > 1000000) return r;
+      int lsize = h[11]; uint alimit = BitConverter.ToUInt32(h, 12);
+      if (lsize > 20 || alimit > 1000000) return r;
+      uint sizearray = RealArraySize(h[10], alimit, 1000000);
       if (sizearray > 0) {
         var ab = Read(BitConverter.ToUInt64(h, 16), (int)sizearray * 16);
         if (ab != null) for (int i = 0; i < sizearray; i++) {
