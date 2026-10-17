@@ -1060,7 +1060,8 @@
           L.seen[m.list.id] = true;
           if (L.run) host.send({ cmd: 'sell.stop' });
           L.run = false;
-          if (fresh && S.autoClick && S.game.running) { sellStart(); if (!S.compact) S.page = 'equip'; }
+          // a fresh list from the site opens the equip page and starts at once; clicks only with auto click on, and never for artifacts
+          if (fresh && S.game.running) { if (S.autoClick || m.list.kind === 'artifact') sellStart(); else sellHintStart(); if (!S.compact) S.page = 'equip'; }
         }
         render(); break;
       }
