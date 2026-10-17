@@ -351,7 +351,7 @@
         <div class="row" style="margin-bottom:20px"><button class="btn-line" data-act="open" data-url="${esc(S.site + '/app/settings')}">${I.ext}${esc(t('openSettings'))}</button></div>
         <div class="field">
           <label for="code">${esc(t('codeLabel'))}</label>
-          <div class="input"><input id="code" spellcheck="false" autocomplete="off" placeholder="rf_…" maxlength="200"><button data-act="paste">${esc(t('paste'))}</button></div>
+          <div class="input"><input id="code" spellcheck="false" autocomplete="off" placeholder="rf_…" maxlength="200"><button class="btn-line sm" data-act="paste">${esc(t('paste'))}</button></div>
           <div class="hint" id="codeHint">&nbsp;</div>
         </div>
         <div class="row" style="margin-top:14px">
@@ -406,7 +406,7 @@
     const warn = hd ? [hs && hs.missing ? t('sellMissing', hs.missing) : '', hs && hs.extra && hs.step !== 'select' ? t('sellExtra', hs.extra) : ''].filter(Boolean).join(' ')
       : [L.missing ? t('sellMissing', L.missing) : '', L.extra ? t('sellExtra', L.extra) : ''].filter(Boolean).join(' ');
     const runBtns = L.run ? `<button class="btn-line" data-act="sellStop">${esc(t('stopBtn'))}</button>`
-      : S.autoClick ? `<button class="btn" data-act="sellRun" ${S.game.running ? '' : 'disabled'}>${esc(t('sellRun'))}</button>`
+      : S.autoClick ? `<button class="btn-gold" data-act="sellRun" ${S.game.running ? '' : 'disabled'}>${esc(t('sellRun'))}</button>`
       : `<button class="btn-line" data-act="sellAuto" ${S.game.running ? '' : 'disabled'}>${esc(t('sellAutoRun'))}</button>`;
     return `<div class="card sell"><div class="row" style="justify-content:space-between;align-items:flex-start">
         <div><h3>${esc(t('sellTitle'))}</h3><div class="meta">${esc(t('sellCount', n))}</div></div>
@@ -706,7 +706,7 @@
     // TEST build only: the screen recorder for the developers (host: rec.start / rec.stop, event 'rec')
     const rec = S.channel !== 'test' ? '' : sec(t('secRec'), row(t('setRec'), t('setRecP'), `<button class="btn-line" id="recBtn" data-act="rec">${esc(recLabel())}</button>`, { wide: true })
       + row(t('setRecBtn'), t('setRecBtnP'), sw('recButton', S.recButton))
-      + row(t('setGuide'), t('setGuideP'), `<div class="langs">${['auto', 'on', 'off'].map(v => `<button data-act="guideStyle" data-v="${v}" aria-pressed="${S.guideStyle === v}">${esc(t('setGuide_' + v))}</button>`).join('')}</div>`)
+      + row(t('setGuide'), t('setGuideP'), `<div class="sct">${['auto', 'on', 'off'].map(v => `<button class="btn-line sm" data-act="guideStyle" data-v="${v}" aria-pressed="${S.guideStyle === v}">${esc(t('setGuide_' + v))}</button>`).join('')}</div>`, { wide: true })
       + (S.rec.sent || S.rec.total || S.rec.why ? `<p class="sdet" id="recInfo">${esc(recNote())}</p>` : ''));
     const left = [
       sec(t('secSync'),

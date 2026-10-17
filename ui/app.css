@@ -167,8 +167,8 @@ h2 { margin: 0 0 12px; font: 700 13px/1.2 var(--display); letter-spacing: 2px; c
 .input { display: flex; align-items: stretch; border: 1px solid var(--line); border-radius: 3px; background: var(--bg); transition: border-color .15s, box-shadow .15s }
 .input:focus-within { border-color: var(--gold2); box-shadow: 0 0 0 3px rgba(201, 164, 92, .15) }
 .input input { flex: 1; min-width: 0; border: 0; background: transparent; padding: 11px 14px; outline: none; font: 500 16px/1.2 Consolas, 'Cascadia Mono', monospace; letter-spacing: .5px; user-select: text }
-.input button { all: unset; cursor: pointer; padding: 0 14px; color: var(--gold2); font: 700 11px/1 var(--display); letter-spacing: 1.2px; border-left: 1px solid var(--line2) }
-.input button:hover { color: var(--gold) }
+.input { align-items: center; gap: 6px; padding-right: 5px }
+.input button { flex: none }
 .hint { font-size: 13px; color: var(--dim) } .hint.ok { color: var(--ok) } .hint.err { color: var(--err) }
 
 .onboard { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin: 18px 0 20px; padding: 0; list-style: none; counter-reset: o }
@@ -312,8 +312,9 @@ body.compact .slots li .st { width: 20px; height: 20px }
 body.compact .cell { width: 42px; height: 42px } body.compact .cell.old { width: 32px; height: 32px }
 body.compact .slots .arrow svg { width: 14px; height: 14px }
 body.compact .slots li .sub { font-size: 12px }
-.icon-btn { all: unset; cursor: pointer; width: 32px; height: 32px; display: grid; place-items: center; border: 1px solid var(--line2); border-radius: 3px; color: var(--muted) }
-.icon-btn:hover { color: var(--gold); border-color: var(--golddim) }
+.icon-btn { all: unset; cursor: pointer; box-sizing: border-box; width: 32px; height: 32px; display: grid; place-items: center; border: 1px solid var(--golddim); outline: 1px solid rgba(201, 164, 92, .25); outline-offset: -4px; border-radius: 2px; background: var(--bg); color: var(--gold2); transition: border-color .15s, box-shadow .15s, color .15s }
+.icon-btn:hover { color: var(--goldhi); border-color: var(--gold2); box-shadow: 0 0 8px rgba(201, 164, 92, .35) }
+.icon-btn:focus-visible { outline: 2px solid var(--goldhi); outline-offset: 2px }
 .icon-btn svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.8 }
 
 .toast { position: fixed; left: 50%; bottom: 20px; transform: translate(-50%, 20px); opacity: 0; padding: 10px 18px; border-radius: 3px; background: var(--panel3); border: 1px solid var(--line); color: var(--text); font-size: 14px; transition: opacity .25s, transform .25s var(--ease); pointer-events: none; z-index: 9 }

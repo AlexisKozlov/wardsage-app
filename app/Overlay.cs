@@ -602,10 +602,12 @@ namespace RealmForge {
       double U = Ui.Unit(cr.R, cr.B);
       int w = (int)(0.25 * U), h = (int)(0.058 * U);
       string cancelText = runHero <= 0 ? (SellClicking ? SellCancelText : LocateCancelText) : CancelText;   // (here only for a build, for «Показать в игре» or for the storage cleanup)
-      string key = cancelText + "|" + w + "x" + h;
+      var mp = Control.MousePosition; var cx = o.X + cr.R / 2 - w / 2; var cy = o.Y + (int)(0.012 * U);
+      bool hot = mp.X >= cx && mp.X < cx + w && mp.Y >= cy && mp.Y < cy + h, down = hot && (Control.MouseButtons & MouseButtons.Left) != 0;
+      string key = cancelText + "|" + w + "x" + h + "|" + (down ? "d" : hot ? "h" : "n");
       if (key != cancelDrawn || cancelBmp == null) {
         if (cancelBmp != null) cancelBmp.Dispose();
-        cancelBmp = CancelBitmap(w, h, cancelText); cancelDrawn = key;
+        cancelBmp = CancelBitmap(w, h, cancelText, hot, down); cancelDrawn = key;
       }
       cancelWin.Put(cancelBmp, o.X + cr.R / 2 - w / 2, o.Y + (int)(0.012 * U));
     }
@@ -663,33 +665,22 @@ namespace RealmForge {
       }
     }
 
-    static Bitmap blueTex;
-    /// <summary>The game's blue button (its texture, stretched by nine slices) with the text.</summary>
-    static Bitmap CancelBitmap(int w, int h, string text) {
-      if (blueTex == null)
-        try { using (var s = typeof(OverlayController).Assembly.GetManifestResourceStream("overlay/btn_blue.png")) if (s != null) blueTex = new Bitmap(Image.FromStream(s)); }
-        catch (Exception) { }
+    /// <summary>The cancel button in the plates' style: dark body, double gold frame, shadow, cream-gold text; hot = the mouse is over it (brighter inner line), down = pressed.</summary>
+    static Bitmap CancelBitmap(int w, int h, string text, bool hot, bool down) {
       var bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb);
       using (var gr = Graphics.FromImage(bmp)) {
-        gr.SmoothingMode = SmoothingMode.AntiAlias; gr.InterpolationMode = InterpolationMode.HighQualityBicubic;
-        gr.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
-        if (blueTex != null) {
-          // slices of the texture (as the site's border-image: 22 26): corners kept, edges and centre stretched
-          int sl = 26, st = 22, sw = blueTex.Width, sh = blueTex.Height;
-          int dl = Math.Min(w / 3, (int)(h * 0.42)), dt = Math.Min(h / 3, (int)(h * 0.36));
-          var ia = new ImageAttributes(); ia.SetWrapMode(System.Drawing.Drawing2D.WrapMode.TileFlipXY);
-          Action<int, int, int, int, int, int, int, int> part = (dx, dy, dw, dh, sx, sy, sww, shh) =>
-            gr.DrawImage(blueTex, new Rectangle(dx, dy, dw, dh), sx, sy, sww, shh, GraphicsUnit.Pixel, ia);
-          part(0, 0, dl, dt, 0, 0, sl, st); part(dl, 0, w - 2 * dl, dt, sl, 0, sw - 2 * sl, st); part(w - dl, 0, dl, dt, sw - sl, 0, sl, st);
-          part(0, dt, dl, h - 2 * dt, 0, st, sl, sh - 2 * st); part(dl, dt, w - 2 * dl, h - 2 * dt, sl, st, sw - 2 * sl, sh - 2 * st);
-          part(w - dl, dt, dl, h - 2 * dt, sw - sl, st, sl, sh - 2 * st);
-          part(0, h - dt, dl, dt, 0, sh - st, sl, st); part(dl, h - dt, w - 2 * dl, dt, sl, sh - st, sw - 2 * sl, st); part(w - dl, h - dt, dl, dt, sw - sl, sh - st, sl, st);
-        } else using (var b = new SolidBrush(Color.FromArgb(230, 40, 60, 130))) gr.FillRectangle(b, 0, 0, w, h);
-        using (var f = new Font("Segoe UI", Math.Max(9f, h * 0.30f), FontStyle.Bold, GraphicsUnit.Pixel))
+        gr.SmoothingMode = SmoothingMode.AntiAlias; gr.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit; gr.Clear(Color.Transparent);
+        int bw = w - 4, bh = h - 6;   // room for the shadow (3 right, 5 below, as the plates)
+        float x = 0, y = 0;
+        using (var shadow = new SolidBrush(Color.FromArgb(110, 0, 0, 0))) gr.FillRectangle(shadow, x + 3, y + 5, bw, bh);
+        using (var bg = new SolidBrush(down ? Color.FromArgb(246, 34, 30, 22) : hot ? Color.FromArgb(244, 26, 26, 34) : Color.FromArgb(242, 16, 18, 26))) gr.FillRectangle(bg, x, y, bw, bh);
+        using (var pen = new Pen(Color.FromArgb(255, hot || down ? 150 : 122, hot || down ? 114 : 92, hot || down ? 58 : 46), 2f)) gr.DrawRectangle(pen, x + 1, y + 1, bw - 2, bh - 2);
+        using (var pen = new Pen(hot || down ? Color.FromArgb(255, 255, 214, 110) : Color.FromArgb(170, 224, 182, 96), 1f)) gr.DrawRectangle(pen, x + 3.5f, y + 3.5f, bw - 7, bh - 7);
+        using (var f = new Font("Segoe UI", Math.Max(9f, bh * 0.34f), FontStyle.Bold, GraphicsUnit.Pixel))
         using (var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center }) {
-          var r = new RectangleF(0, -h * 0.13f, w, h);   // the texture's blue field sits above its middle
-          using (var sh = new SolidBrush(Color.FromArgb(170, 0, 0, 0))) gr.DrawString(text, f, sh, new RectangleF(r.X + 1, r.Y + 1.5f, r.Width, r.Height), sf);
-          gr.DrawString(text, f, Brushes.White, r, sf);
+          var r = new RectangleF(x, y + (down ? 1 : 0), bw, bh);
+          using (var sh = new SolidBrush(Color.FromArgb(200, 0, 0, 0))) gr.DrawString(text, f, sh, new RectangleF(r.X + 1, r.Y + 1.5f, r.Width, r.Height), sf);
+          using (var cream = new SolidBrush(hot || down ? Color.FromArgb(255, 255, 226, 160) : Color.FromArgb(255, 255, 222, 150))) gr.DrawString(text, f, cream, r, sf);
         }
       }
       return bmp;
