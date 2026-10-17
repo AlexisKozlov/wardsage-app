@@ -8,6 +8,11 @@
     'recastFilter', 'recastPick', 'recastNotInList', 'choosePending', 'gemPick', 'done',
     'openAscendTab', 'ascendPick', 'ascendNotInList', 'ascendReady'];
 
+  // auto click (host: src/LocatePilot.cs): st.auto = '' (off) | work | paused | background | hint | stopped, st.autoWhy = the reason when stopped.
+  // The app clicks by itself only on these steps; the rest (the Foundry, the last button) stay the player's.
+  const AUTO_STEPS = ['openInventory', 'openEquipTab', 'inList'];
+  const AUTO_WHY = { bulk: 'locAutoBulk', lost: 'locAutoLost', stuck: 'locAutoStuck', screen: 'locAutoScreen', cancelled: 'locAutoCancel' };
+
   function names(list) { return (list || []).map((x) => x.name || x.text).filter(Boolean); }
 
   // one line per filter part still to set (the foundry's filter keeps only items with all the chosen sub stats)
@@ -60,6 +65,9 @@
       case 'ascendReady': r = { tone: 'done', head: t('locAscendReady'), lines: [t('locAscendReadyP')] }; break;
       default: r = { tone: 'done', head: t('locDone'), lines: [t('locDoneP')] };
     }
+    // auto click: the app is doing this step itself, or it gave up (and says why; the step's own text follows)
+    if (st.auto === 'stopped') r = { tone: st.autoWhy === 'cancelled' ? 'info' : 'warn', head: t('locAutoStop'), lines: [t(AUTO_WHY[st.autoWhy] || 'locAutoLost'), r.head].concat(r.lines) };
+    else if (st.auto === 'work' && AUTO_STEPS.indexOf(st.step) >= 0) r = { tone: r.tone, head: t('locAutoWork'), lines: [r.head] };
     // the plate over the game: the head and the first lines, short
     r.tip = [r.head].concat(r.lines.slice(0, 2)).map((x) => (x.length > 90 ? x.slice(0, 89) + '…' : x));
     return r;
@@ -74,7 +82,7 @@
     }));
   }
 
-  const api = { KINDS, describe, subRows, filterLines };
+  const api = { KINDS, describe, subRows, filterLines, AUTO_STEPS };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.RFLocate = api;
 })(typeof window !== 'undefined' ? window : globalThis);

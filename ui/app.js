@@ -5,6 +5,7 @@
   const T = window.RF_TEXTS;
   const G = window.RFGuide;
   const LC = window.RFLocate;
+  const SH = window.RFSellHint;
   const host = window.chrome && window.chrome.webview
     ? { send: (m) => window.chrome.webview.postMessage(m), on: (f) => window.chrome.webview.addEventListener('message', (e) => f(e.data)) }
     : window.RFMock;
@@ -21,7 +22,7 @@
     forum: { status: 'idle', reply: null, at: 0 },
     run: null, seen: null, runKey: '', queue: [], takeOver: {},
     // storage cleanup: the site's list, the pilot's state on the game's sell screen
-    sell: { list: null, run: false, state: '', selected: 0, missing: 0, extra: 0, seen: {} },
+    sell: { list: null, run: false, hint: false, hs: null, tipKey: '', peakAll: false, state: '', selected: 0, missing: 0, extra: 0, seen: {} },
     // «Найти в игре»: the request from the site (with its item card) and what the program reports about the game's screens
     locate: { req: null, step: null, tipKey: '', doneTimer: 0 }, locateEnded: {},
     // the site's switches: reading as a whole, and the features switched off
@@ -397,16 +398,22 @@
   // «Чистка склада»: the list from the site; the app selects it on the game's sell screen, the player presses «Продать»
   function sellCard() {
     const L = S.sell, n = L.list.items.length;
-    const st = L.run ? (L.state === 'done' ? t('sellDone', L.selected) : L.state === 'failed' ? t('sellFailed') : L.state === 'no_city' ? t('sellNoCity')
+    const hintMode = L.run ? L.hint : !S.autoClick;   // auto click off: the program only shows frames, the player selects
+    const hd = L.run && L.hint ? SH.describe(L.hs, t) : null;
+    const st = hd ? [hd.head].concat(hd.lines).join(' · ') : L.run ? (L.state === 'done' ? t('sellDone', L.selected) : L.state === 'failed' ? t('sellFailed') : L.state === 'no_city' ? t('sellNoCity')
       : L.state === 'open' ? t('sellOpening') : L.state === 'background' ? t('sellBack') : L.state === 'paused' ? t('sellPaused') : t('sellWork', L.selected, n)) : '';
-    const warn = [L.missing ? t('sellMissing', L.missing) : '', L.extra ? t('sellExtra', L.extra) : ''].filter(Boolean).join(' ');
+    const hs = hd ? L.hs : null;
+    const warn = hd ? [hs && hs.missing ? t('sellMissing', hs.missing) : '', hs && hs.extra && hs.step !== 'select' ? t('sellExtra', hs.extra) : ''].filter(Boolean).join(' ')
+      : [L.missing ? t('sellMissing', L.missing) : '', L.extra ? t('sellExtra', L.extra) : ''].filter(Boolean).join(' ');
+    const runBtns = L.run ? `<button class="btn-line" data-act="sellStop">${esc(t('stopBtn'))}</button>`
+      : S.autoClick ? `<button class="btn" data-act="sellRun" ${S.game.running ? '' : 'disabled'}>${esc(t('sellRun'))}</button>`
+      : `<button class="btn" data-act="sellHint" ${S.game.running ? '' : 'disabled'}>${esc(t('sellHintRun'))}</button>
+          <button class="btn-line" data-act="sellAuto" ${S.game.running ? '' : 'disabled'}>${esc(t('sellAutoRun'))}</button>`;
     return `<div class="card sell"><div class="row" style="justify-content:space-between;align-items:flex-start">
         <div><h3>${esc(t('sellTitle'))}</h3><div class="meta">${esc(t('sellCount', n))}</div></div>
-        <div class="row">${L.run ? `<button class="btn-line" data-act="sellStop">${esc(t('stopBtn'))}</button>`
-          : `<button class="btn" data-act="${S.autoClick ? 'sellRun' : 'sellAuto'}" ${S.game.running ? '' : 'disabled'}>${esc(t(S.autoClick ? 'sellRun' : 'sellAutoRun'))}</button>`}
+        <div class="row">${runBtns}
           <button class="btn-line" data-act="sellCancel">${esc(t('sellCancel'))}</button></div></div>
-      <p class="lead">${esc(t('sellLead'))}</p>
-      ${S.autoClick ? '' : `<p class="warn">${esc(t('sellNeedAuto'))}</p>`}
+      <p class="lead">${esc(t(hintMode ? 'sellHintLead' : 'sellLead'))}</p>
       ${st ? `<p><b>${esc(st)}</b></p>` : ''}${warn ? `<p class="warn">${esc(warn)}</p>` : ''}</div>`;
   }
   // «Найти в игре»: the item's card, the step the game is at and what to press; the program only shows hints
@@ -416,7 +423,7 @@
     const checked = L.step && L.step.subs && (L.step.step === 'selected' || L.step.step === 'done' || L.step.step === 'recastPick' || L.step.step === 'inList');
     return `<div class="card loc ${d.tone}">
       <div class="row" style="justify-content:space-between;align-items:flex-start">
-        <div><h3>${esc(t('locTitle'))}</h3><div class="meta">${esc(t('locLead'))}</div></div>
+        <div><h3>${esc(t('locTitle'))}</h3><div class="meta">${esc(t(L.step && L.step.auto ? 'locLeadAuto' : 'locLead'))}</div></div>
         <div class="row">${r.item ? `<button class="btn-line" data-act="locFound">${esc(t('locFound'))}</button>` : ''}
           <button class="btn-line" data-act="locCancel">${esc(t('locCancel'))}</button></div></div>
       ${r.item ? findCard(r.item, { row: 0, col: 0 }, compact) : ''}
@@ -437,8 +444,17 @@
 
   function sellStart() {
     const L = S.sell; if (!L.list) return;
-    L.run = true; L.state = 'work';
+    L.run = true; L.hint = false; L.state = 'work';
     host.send({ cmd: 'sell.run', uids: L.list.items.map((x) => x.uid), slots: [...new Set(L.list.items.map((x) => x.slot))], levels: L.list.items.map((x) => x.level || 0) });
+    render();
+  }
+
+  // «Подсказать в игре»: the same list without any click of the program — frames on the cells to select
+  function sellHintStart() {
+    const L = S.sell; if (!L.list) return;
+    L.run = true; L.hint = true; L.hs = null; L.tipKey = ''; L.peakAll = false; L.state = '';
+    host.send({ cmd: 'sell.hint', uids: L.list.items.map((x) => x.uid), slots: [...new Set(L.list.items.map((x) => x.slot))], levels: L.list.items.map((x) => x.level || 0) });
+    host.send({ cmd: 'sell.tip', lines: [t('shOpenInv')], pillUp: '', pillDown: '' });
     render();
   }
 
@@ -811,6 +827,7 @@
     else if (a === 'locFound') locateEnd(true, false);
     else if (a === 'locCancel') locateEnd(false, false);
     else if (a === 'sellRun') sellStart();
+    else if (a === 'sellHint') sellHintStart();
     // storage cleanup clicks in the game: it needs «Автонажатие» (off by default) — this button is the player's explicit choice
     else if (a === 'sellAuto') { S.autoClick = true; host.send({ cmd: 'setAutoClick', on: true }); sellStart(); }
     else if (a === 'sellStop') { S.sell.run = false; host.send({ cmd: 'sell.stop' }); render(); }
@@ -998,6 +1015,20 @@
           if (fresh && S.autoClick && S.game.running) { sellStart(); if (!S.compact) S.page = 'equip'; }
         }
         render(); break;
+      }
+      case 'sell.hint': {
+        const L = S.sell; if (!L.run || !L.hint || !L.list) break;
+        L.hs = m;
+        if (m.step === 'allSelected') L.peakAll = true;
+        const d = SH.describe(m, t), key = d.tip.join('|') + '#' + d.pillUp + '#' + d.pillDown;
+        if (key !== L.tipKey) { L.tipKey = key; host.send({ cmd: 'sell.tip', lines: d.tip, pillUp: d.pillUp, pillDown: d.pillDown }); }
+        // sold: every item of the list was selected before, and none of them is in the game's list any more
+        if (L.peakAll && m.step === 'noneHere' && m.missing === L.list.items.length) {
+          host.send({ cmd: 'sell.stop' }); host.send({ cmd: 'sell.finish', id: L.list.id, done: true });
+          toast(t('sellSold')); L.list = null; L.run = false; L.hint = false;
+        }
+        if (S.page === 'equip' || S.compact) render();
+        break;
       }
       case 'sell.state': {
         const L = S.sell; L.state = m.state; L.selected = m.selected; L.missing = m.missing; L.extra = m.extra;

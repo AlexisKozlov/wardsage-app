@@ -611,6 +611,8 @@ static class CoreTests {
     SellPilotTests();
     FightPlanTests();
     LocateTests();
+    LocatePilotTests();
+    SellHintTests();
 
     Console.WriteLine("Fight timeline (src/TimelineBuilder.cs: samples of the running fight + its command record):");
     TimelineTests();
@@ -2140,6 +2142,99 @@ static class CoreTests {
     return it;
   }
 
+  // «Показать в игре» with auto click: which steps the app clicks itself, which stay hints, and the safety stops
+  static void LocatePilotTests() {
+    Console.WriteLine("Locate pilot (auto click up to the last button)");
+    const double W = 1920, H = 1009, U = 1009;
+    var item = LocItem(777, 4, 720100, 12, 5, 7, 9, 3);
+    Func<LocateKind, LocateView> V = k => new LocateView { NowMs = 0, Foreground = true, W = W, H = H, U = U, Step = new LocateStep { Kind = k }, Cols = 8 };
+    Func<InventoryScreen> inv = () => new InventoryScreen { Open = true, EquipTab = true, Uids = new List<long>(new long[] { 1, 2, 777 }) };
+    string why; LocateView v;
+
+    // the decision per step
+    v = V(LocateKind.None); Eq(LocateTodo.Nothing, LocateAuto.Decide(v, out why), "auto: no request -> nothing");
+    v = V(LocateKind.OpenInventory); v.CityButton = true; Eq(LocateTodo.InventoryButton, LocateAuto.Decide(v, out why), "auto: the city with its button -> press «Инвентарь»");
+    v = V(LocateKind.OpenInventory); v.HeroScreenOpen = true; Eq(LocateTodo.BackToCity, LocateAuto.Decide(v, out why), "auto: the hero screen -> back to the city");
+    v = V(LocateKind.OpenInventory); Eq(LocateTodo.Hint, LocateAuto.Decide(v, out why), "auto: not the city -> the player brings it up"); Eq("no_city", why, "auto: ... and why");
+    v = V(LocateKind.OpenInventory); v.CityButton = true; v.OtherFormOpen = true; Eq(LocateTodo.Hint, LocateAuto.Decide(v, out why), "auto: the Foundry is open -> no click");
+    v = V(LocateKind.OpenEquipTab); Eq(LocateTodo.EquipTab, LocateAuto.Decide(v, out why), "auto: the inventory on another tab -> «Снаряжение»");
+    v = V(LocateKind.OpenEquipTab); v.OtherFormOpen = true; Eq(LocateTodo.Hint, LocateAuto.Decide(v, out why), "auto: another tab behind the Foundry -> no click");
+    v = V(LocateKind.InList); v.Inv = inv(); Eq(LocateTodo.PickItem, LocateAuto.Decide(v, out why), "auto: item in the list -> pick it");
+    v = V(LocateKind.InList); v.Inv = inv(); v.Inv.Bulk = true; Eq(LocateTodo.Stop, LocateAuto.Decide(v, out why), "auto: bulk sale -> stop (a click toggles a sale)"); Eq("bulk", why, "auto: ... bulk");
+    v = V(LocateKind.InList); v.Inv = inv(); v.OtherFormOpen = true; Eq(LocateTodo.Hint, LocateAuto.Decide(v, out why), "auto: the list behind the Foundry is not clicked");
+    v = V(LocateKind.InList); v.Inv = null; Eq(LocateTodo.Stop, LocateAuto.Decide(v, out why), "auto: the inventory vanished -> stop");
+    v = V(LocateKind.InList); v.Inv = inv(); v.Inv.EquipTab = false; Eq(LocateTodo.Stop, LocateAuto.Decide(v, out why), "auto: not on the equipment tab -> stop");
+    // everything after the item is selected stays the player's: the Foundry button, tabs, lists, the final buttons, the pop-ups
+    foreach (LocateKind k in Enum.GetValues(typeof(LocateKind))) {
+      if (k == LocateKind.OpenInventory || k == LocateKind.OpenEquipTab || k == LocateKind.InList || k == LocateKind.None) continue;
+      v = V(k); v.Inv = inv(); v.HeroScreenOpen = true; v.CityButton = true;
+      var todo = LocateAuto.Decide(v, out why);
+      Check(todo == LocateTodo.Hint, "auto: step " + k + " is a hint, never a click (" + todo + ")");
+    }
+    Check(LocateAuto.NeedsCityButton(new LocateStep { Kind = LocateKind.OpenInventory }, false, false) && !LocateAuto.NeedsCityButton(new LocateStep { Kind = LocateKind.InList }, false, false)
+      && !LocateAuto.NeedsCityButton(new LocateStep { Kind = LocateKind.OpenInventory }, true, false), "auto: the city button is looked for only when needed");
+
+    // the clicks and their places
+    var hg = new HeroGeometry();
+    var p = new LocatePilot();
+    v = V(LocateKind.OpenEquipTab); var m = p.Step(v);
+    Check(m.State == "work" && m.Action.Kind == AutoKind.Click && Math.Abs(m.Action.X - 0.085 * U) < 1 && Math.Abs(m.Action.Y - 0.315 * U) < 1, "auto: «Снаряжение» at the storage cleanup's spot");
+    v = V(LocateKind.OpenEquipTab); v.NowMs = 100; Eq(AutoKind.None, p.Step(v).Action.Kind, "auto: waits for the game after a click");
+    p = new LocatePilot(); v = V(LocateKind.OpenInventory); v.CityButton = true; m = p.Step(v);
+    Check(m.Action.Kind == AutoKind.Click && Math.Abs(m.Action.X - (W - v.InvDX * U)) < 1 && Math.Abs(m.Action.Y - (H - hg.HeroesBtnDY * U)) < 1, "auto: «Инвентарь» in the city's bar");
+    p = new LocatePilot(); v = V(LocateKind.OpenInventory); v.HeroScreenOpen = true; m = p.Step(v);
+    Check(m.Action.Kind == AutoKind.Click && Math.Abs(m.Action.X - hg.BackX * U) < 1 && Math.Abs(m.Action.Y - hg.BackY * U) < 1, "auto: the back arrow of the hero screen");
+    p = new LocatePilot(); v = V(LocateKind.Done); m = p.Step(v);
+    Check(m.State == "hint" && m.Action.Kind == AutoKind.None && m.Why == "foundry", "auto: the final step: a hint, no click");
+
+    // the player and the game window come first
+    p = new LocatePilot(); v = V(LocateKind.OpenEquipTab); v.Foreground = false; m = p.Step(v);
+    Check(m.State == "background" && m.Action.Kind == AutoKind.None, "auto: the game is not in front -> nothing");
+    v = V(LocateKind.OpenEquipTab); v.UserBusy = true; m = p.Step(v);
+    Check(m.State == "paused" && m.Action.Kind == AutoKind.None, "auto: the player moves the mouse -> paused");
+    v = V(LocateKind.OpenEquipTab); v.NowMs = 1000; v.UserClicked = true; m = p.Step(v);
+    Check(m.State == "paused", "auto: the player clicked -> paused");
+    v = V(LocateKind.OpenEquipTab); v.NowMs = 4000; m = p.Step(v); Eq("paused", m.State, "auto: ... for a few seconds");
+    v = V(LocateKind.OpenEquipTab); v.NowMs = 5200; m = p.Step(v); Check(m.State == "work" && m.Action.Kind == AutoKind.Click, "auto: ... then goes on");
+
+    // a step that does not move on stops after a few clicks; cancel stops for good
+    p = new LocatePilot(); int n = 0; long t = 0;
+    for (int i = 0; i < 20; i++, t += 3000) { v = V(LocateKind.OpenEquipTab); v.NowMs = t; m = p.Step(v); if (m.Action.Kind == AutoKind.Click) n++; if (m.State == "stopped") break; }
+    Check(n == LocatePilot.MaxStepClicks && p.Stopped && p.Reason == "stuck", "auto: the tab never opens -> " + n + " clicks, then stop (" + p.Reason + ")");
+    v = V(LocateKind.OpenEquipTab); v.NowMs = t + 99999; m = p.Step(v);
+    Check(m.State == "stopped" && m.Action.Kind == AutoKind.None, "auto: stopped stays stopped");
+    p.Reset(); v = V(LocateKind.OpenEquipTab); v.NowMs = 0; Eq("work", p.Step(v).State, "auto: a new request starts again");
+    p.Cancel(); m = p.Step(V(LocateKind.OpenEquipTab));
+    Check(m.State == "stopped" && m.Why == "cancelled" && m.Action.Kind == AutoKind.None, "auto: the overlay's cancel stops the clicks");
+    p = new LocatePilot(); v = V(LocateKind.InList); v.Inv = inv(); v.Inv.Bulk = true; m = p.Step(v);
+    Check(m.State == "stopped" && m.Why == "bulk" && m.Action.Kind == AutoKind.None, "auto: bulk sale -> stopped without a click");
+
+    // the whole way in a fake inventory: the item deep in the list, the list scrolled a bit, then it is selected and the pilot stops clicking
+    foreach (double offset in new[] { 0.0, 0.6 }) {
+      var g = SellGeometry.Inventory(W, U, 8);
+      var game = new FakeSellGame(g, 60, 0, 8) { HasPopup = false }; game.Scroll = offset * g.PitchY * U;
+      long target = 5000 + 8 * 41 + 3;
+      var rq = new LocateRequest { Id = "x", Purpose = "recast", Item = new PlanItem { Uid = target, Slot = 1 } };
+      var lp = new LocatePilot { ItemUid = target };
+      var order = new List<KeyValuePair<long, int[]>>(game.Pos);
+      order.Sort((a, b) => a.Value[0] != b.Value[0] ? a.Value[0].CompareTo(b.Value[0]) : a.Value[1].CompareTo(b.Value[1]));
+      int acts = 0, afterSelected = 0, quiet = 0; bool selected = false; string last = "";
+      for (long now = 0; now < 600 * 100; now += 100) {
+        var iv = new InventoryScreen { Open = true, EquipTab = true, Current = game.Cur };
+        foreach (var kv in order) iv.Uids.Add(kv.Key);
+        var st = LocateGuide.Next(rq, iv, null, null, 8, 1);
+        var mv = lp.Step(new LocateView { NowMs = now, Foreground = true, W = W, H = H, U = U, Step = st, Inv = iv, Cols = 8, Phase = game.Phase() });
+        last = mv.State + "/" + mv.Why;
+        if (st.Kind == LocateKind.Selected) { selected = true; if (mv.Action.Kind != AutoKind.None) afterSelected++; if (++quiet > 30) break; continue; }
+        if (mv.State == "stopped") break;
+        if (mv.Action.Kind != AutoKind.None) acts++;
+        game.Act(mv.Action);
+      }
+      Check(selected && afterSelected == 0 && !lp.Stopped, "auto: the item (row 42 of 60, list offset " + offset + ") is selected by the pilot, then no more clicks (" + acts + " actions, " + game.Drags + " drags, " + last + ")");
+      Check(game.Drags >= 1 && acts < 60, "auto: ... scrolling by drags, a handful of actions (" + acts + ")");
+    }
+  }
+
   static void LocateTests() {
     Console.WriteLine("Locate (\u00abНайти в игре\u00bb: request parsing, steps, list place):");
     string body = "{\"ok\":true,\"plans\":[],\"locate\":{\"id\":\"l1\",\"purpose\":\"recast\",\"createdAt\":\"2026-10-12T10:00:00Z\",\"item\":{\"slot\":4,\"uid\":777,\"slotName\":\"Кольцо\"," +
@@ -2297,6 +2392,100 @@ static class CoreTests {
       Check(g4.Has && g4.ListPtr == 9 && Math.Abs(g4.RowTop(g, 4, U) - (500 - g.BarBottom * U / 2)) < 0.01, "grid: a click on row 4 anchors the list");
       g4.Reset(); Check(!g4.Has, "grid: reset");
     }
+  }
+
+  // Storage cleanup without auto click (src/SellHint.cs): the step and the frames from what the inventory shows
+  static void SellHintTests() {
+    Console.WriteLine("Sell hint (storage cleanup without auto click)");
+    double W = 1920, H = 1009, U = Ui.Unit(W, H);
+    var g = SellGeometry.Inventory(W, U, 8);
+    var uids = new List<long>(); for (long i = 1; i <= 80; i++) uids.Add(1000 + i);   // 10 rows of 8
+    Func<InventoryScreen> bulk = () => new InventoryScreen { Open = true, EquipTab = true, Bulk = true, ListPtr = 7, Uids = new List<long>(uids) };
+    var wanted = new HashSet<long> { 1001, 1003, 1012, 1075 };   // rows 1, 1, 2 and 10
+    Func<double, LocateGrid> gridAt = scrolledRows => {
+      var gr = new LocateGrid(); gr.FromTop(g, g.ViewTopPx(U) + g.TopPad * U, U, 7); gr.Row1 -= scrolledRows * g.PitchY * U; return gr;
+    };
+
+    Eq(SellHintKind.OpenInventory, SellHint.Build(null, wanted, 8, null, g, W, H, U).Kind, "hint: no inventory -> open it");
+    Eq(SellHintKind.OpenInventory, SellHint.Build(new InventoryScreen { Open = false }, wanted, 8, null, g, W, H, U).Kind, "hint: inventory closed -> open it");
+    Eq(SellHintKind.OpenEquipTab, SellHint.Build(new InventoryScreen { Open = true, EquipTab = false }, wanted, 8, null, g, W, H, U).Kind, "hint: another tab");
+    Eq(SellHintKind.PressBulk, SellHint.Build(new InventoryScreen { Open = true, EquipTab = true, Bulk = false }, wanted, 8, null, g, W, H, U).Kind, "hint: normal mode -> press «Массовая продажа»");
+
+    var inv = bulk();
+    var st = SellHint.Build(inv, wanted, 8, gridAt(0), g, W, H, U);
+    Check(st.Kind == SellHintKind.Select && st.Total == 4 && st.Selected == 0 && st.Missing == 0 && st.Extra == 0, "hint: nothing selected yet: 0 of 4");
+    Check(st.Frames.Count == 3 && st.Below == 1 && st.Above == 0, "hint: three list items in view framed, one below (" + st.Frames.Count + ", below " + st.Below + ")");
+    Check(st.Frames.TrueForAll(f => f.Style == "todo"), "hint: all frames gold");
+    var f1 = st.Frames.Find(f => f.Uid == 1003);
+    Check(f1 != null && f1.X == (int)g.X(g.X0 + 2 * g.PitchX, W, U) && f1.Y == (int)(g.ViewTopPx(U) + g.TopPad * U), "hint: the frame sits on row 1, place 3");
+    Check(st.Frames[0].Y <= st.Frames[st.Frames.Count - 1].Y, "hint: frames in reading order");
+
+    inv.Selected.Add(1003);
+    st = SellHint.Build(inv, wanted, 8, gridAt(0), g, W, H, U);
+    Check(st.Selected == 1 && st.Frames.Find(f => f.Uid == 1003).Style == "done" && st.Frames.Find(f => f.Uid == 1001).Style == "todo", "hint: a selected item gets the checked frame (1 of 4)");
+
+    inv.Selected.Add(1005);   // not on the list
+    st = SellHint.Build(inv, wanted, 8, gridAt(0), g, W, H, U);
+    Check(st.Extra == 1 && st.Frames.Find(f => f.Uid == 1005).Style == "extra" && st.Kind == SellHintKind.Select, "hint: a selected item that is not on the list: red frame");
+    inv.Selected.Remove(1005);
+
+    // scrolled down 8 rows: row 1 and 2 are above, row 10 in view
+    st = SellHint.Build(inv, wanted, 8, gridAt(8), g, W, H, U);
+    Check(st.Above == 2 && st.Below == 0 && st.Frames.Exists(f => f.Uid == 1075 && f.Style == "todo") && !st.Frames.Exists(f => f.Uid == 1001), "hint: scrolled down -> two list items above (the selected one is not counted), the last in view (above " + st.Above + ")");
+
+    // an extra item out of view gets no frame and no count of rows
+    var inv2 = bulk(); inv2.Selected.Add(1079);
+    st = SellHint.Build(inv2, wanted, 8, gridAt(0), g, W, H, U);
+    Check(st.Extra == 1 && !st.Frames.Exists(f => f.Uid == 1079) && st.Below == 1, "hint: an extra item out of view: counted, not framed");
+
+    // the rows' place unknown
+    st = SellHint.Build(inv, wanted, 8, null, g, W, H, U);
+    Check(st.Kind == SellHintKind.NeedPosition && st.Frames.Count == 0 && st.Total == 4 && st.Selected == 1, "hint: rows' place unknown -> ask to scroll to the top, counts kept");
+    st = SellHint.Build(inv, wanted, 8, new LocateGrid(), g, W, H, U);
+    Eq(SellHintKind.NeedPosition, st.Kind, "hint: a grid without an anchor is unknown too");
+
+    // all selected: no frames needed, the position does not matter
+    var all = bulk(); foreach (var u in wanted) all.Selected.Add(u);
+    st = SellHint.Build(all, wanted, 8, null, g, W, H, U);
+    Check(st.Kind == SellHintKind.AllSelected && st.Selected == 4 && st.Total == 4, "hint: all selected -> press «Продать»");
+    all.Selected.Add(1002);
+    Eq(SellHintKind.Select, SellHint.Classify(all, wanted).Kind, "hint: all selected but a stray one too -> not done");
+
+    // list items not in the grid (sold, hidden by the filter) are not counted in N
+    var some = bulk(); some.Uids.Remove(1075); some.Uids.Remove(1012);
+    st = SellHint.Classify(some, wanted);
+    Check(st.Total == 2 && st.Missing == 2, "hint: items missing from the grid: N counts only the present (" + st.Total + ", missing " + st.Missing + ")");
+    var none = bulk(); none.Uids.RemoveAll(u => wanted.Contains(u));
+    Eq(SellHintKind.NoneHere, SellHint.Classify(none, wanted).Kind, "hint: none of the list is in the grid");
+    none.Selected.Add(1002);
+    Eq(SellHintKind.Select, SellHint.Classify(none, wanted).Kind, "hint: none of the list here but a stray selected -> red frame step");
+
+    // keys: scrolling changes the full key only, not the state key (a selection read must repeat to be shown)
+    var a = SellHint.Build(bulk(), wanted, 8, gridAt(0), g, W, H, U); var b = SellHint.Build(bulk(), wanted, 8, gridAt(8), g, W, H, U);
+    Check(a.StateKey == b.StateKey && a.FullKey != b.FullKey, "hint: scrolling does not change the state key");
+    Eq("select", a.Key, "hint: page key");
+
+    // stable frames: sub-pixel / 2 px tracking noise does not move a frame; a real move does
+    var prev = SellHint.Build(bulk(), wanted, 8, gridAt(0), g, W, H, U).Frames;
+    var jit = SellHint.Build(bulk(), wanted, 8, gridAt(0), g, W, H, U).Frames;
+    foreach (var fr in jit) { fr.Y += 2; fr.X -= 1; }
+    SellHint.Stabilize(prev, jit, 3);
+    bool same = true; for (int i = 0; i < jit.Count; i++) same &= jit[i].Y == prev[i].Y && jit[i].X == prev[i].X;
+    Check(same, "hint: jitter within 3 px keeps the drawn frames");
+    var moved = SellHint.Build(bulk(), wanted, 8, gridAt(0.5), g, W, H, U).Frames;
+    int y0 = moved[0].Y; SellHint.Stabilize(prev, moved, 3);
+    Check(moved[0].Y == y0, "hint: a real move (half a row) is followed");
+    var sty = SellHint.Build(bulk(), wanted, 8, gridAt(0), g, W, H, U).Frames; sty[0].Style = "done"; int sy = sty[0].Y; sty[0].Y += 1;
+    SellHint.Stabilize(prev, sty, 3);
+    Check(sty[0].Y == sy + 1, "hint: a frame whose style changed is not held");
+
+    // the click that anchors the list
+    Eq(1003L, SellHint.OneChange(new HashSet<long>(), new HashSet<long> { 1003 }), "hint: one item selected -> its uid");
+    Eq(1003L, SellHint.OneChange(new HashSet<long> { 1003 }, new HashSet<long>()), "hint: one item unselected -> its uid");
+    Eq(0L, SellHint.OneChange(new HashSet<long> { 1 }, new HashSet<long> { 2 }), "hint: two changes -> none");
+    Eq(0L, SellHint.OneChange(new HashSet<long> { 1 }, new HashSet<long> { 1 }), "hint: no change -> none");
+    var cell = SellHint.Cell(bulk(), 1012, 8);
+    Check(cell != null && cell[0] == 2 && cell[1] == 4 && SellHint.Cell(bulk(), 5, 8) == null, "hint: the cell of an item (row 2, place 4)");
   }
 
   static void SellPilotTests() {

@@ -46,6 +46,26 @@ for (const lang of ['ru', 'en']) {
   ok(L.describe(areq, st({ step: 'ascendReady' }), t).tone === 'done' && L.describe(areq, st({ step: 'ascendNotInList' }), t).tone === 'warn', lang + ': ascend ready / not in list');
 }
 
+// auto click: the app works on the steps it clicks itself, says why it stopped, and leaves the other steps as they are
+for (const lang of ['ru', 'en']) {
+  const t = tr(lang);
+  const plain = L.describe(req, st({ step: 'inList' }), t);
+  const work = L.describe(req, st({ step: 'inList', auto: 'work' }), t);
+  ok(work.head === T[lang].locAutoWork && work.lines[0] === plain.head, lang + ': auto at work on the list: the program is opening it');
+  ok(L.describe(req, st({ step: 'openInventory', auto: 'work' }), t).head === T[lang].locAutoWork, lang + ': auto opens the inventory');
+  ok(L.describe(req, st({ step: 'selected', auto: 'hint' }), t).head === T[lang].locSelected, lang + ': the last steps stay the player\'s');
+  ok(L.describe(req, st({ step: 'recastPick', auto: 'work' }), t).head !== T[lang].locAutoWork, lang + ': the Foundry steps are never "auto work"');
+  ok(L.describe(req, st({ step: 'inList', auto: 'paused' }), t).head === plain.head, lang + ': paused: the normal hint');
+  for (const why of ['bulk', 'lost', 'stuck', 'screen', 'cancelled']) {
+    const d = L.describe(req, st({ step: 'inList', auto: 'stopped', autoWhy: why }), t);
+    ok(d.head === T[lang].locAutoStop && d.lines.length >= 2 && !/^loc[A-Z]/.test(d.lines[0]) && d.lines[1] === plain.head, lang + ': stopped (' + why + ') says why and keeps the hint');
+    ok(d.tip.length <= 3 && d.tip.every((x) => x.length <= 90), lang + ': stopped (' + why + ') plate is short');
+  }
+  ok(L.describe(req, st({ step: 'inList', auto: 'stopped', autoWhy: 'bulk' }), t).tone === 'warn' && L.describe(req, st({ step: 'inList', auto: 'stopped', autoWhy: 'cancelled' }), t).tone === 'info', lang + ': stop tones');
+  ok(T[lang].locLeadAuto && T[lang].locLeadAuto !== T[lang].locLead, lang + ': the lead changes with auto click');
+}
+ok(L.AUTO_STEPS.every((k) => L.KINDS.indexOf(k) >= 0), 'auto steps are known steps');
+
 // the text keys exist in both languages
 const locKeys = (l) => Object.keys(T[l]).filter((k) => k.startsWith('loc')).sort();
 ok(locKeys('ru').length > 30 && JSON.stringify(locKeys('ru')) === JSON.stringify(locKeys('en')), 'ru and en have the same locate keys');

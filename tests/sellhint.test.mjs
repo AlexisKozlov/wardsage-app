@@ -1,0 +1,43 @@
+// Storage cleanup hint texts of the desktop interface (ui/sellhint.js) against ui/i18n.js.
+import assert from 'node:assert/strict';
+globalThis.window = globalThis;   // i18n.js is a plain browser script
+await import('../ui/sellhint.js');
+await import('../ui/i18n.js');
+const SH = globalThis.RFSellHint;
+const T = globalThis.RF_TEXTS;
+let n = 0; const ok = (c, m) => { assert.ok(c, m); n++; };
+const tr = (lang) => (k, ...a) => { let s = (T[lang] && T[lang][k]) || k; a.forEach((v, i) => { s = s.split('{' + i + '}').join(v); }); return s; };
+const st = (o) => ({ step: 'select', selected: 3, total: 12, missing: 0, extra: 0, below: 0, above: 0, ...o });
+
+for (const lang of ['ru', 'en']) {
+  const t = tr(lang);
+  ok(SH.describe(null, t).head === T[lang].shOpenInv, lang + ': no state yet -> open the inventory');
+  ok(SH.describe({ step: 'bogus' }, t).tip[0] === T[lang].shOpenInv, lang + ': unknown step -> open the inventory');
+  // every step has a head and a short plate, and no key is left unresolved
+  for (const k of SH.KINDS) {
+    const d = SH.describe(st({ step: k }), t);
+    ok(d.head && !/^sh[A-Z]/.test(d.head) && d.lines.every((x) => !/^sh[A-Z]/.test(x)), lang + ': step ' + k + ' has texts');
+    ok(d.tip.length >= 1 && d.tip.length <= 2 && d.tip.every((x) => x.length <= 70), lang + ': step ' + k + ' plate is short');
+  }
+  const sel = SH.describe(st(), t);
+  ok(sel.lines[0].includes('3') && sel.lines[0].includes('12'), lang + ': the counter says 3 of 12');
+  ok(sel.head === T[lang].shSelect && sel.tone === 'info', lang + ': select step');
+  ok(SH.describe(st({ step: 'allSelected', selected: 12 }), t).tone === 'done', lang + ': all selected is done');
+  ok(SH.describe(st({ step: 'allSelected', selected: 12 }), t).head === T[lang].shAll, lang + ': all selected -> press Sell');
+  const ex = SH.describe(st({ extra: 1 }), t);
+  ok(ex.tone === 'warn' && ex.head === T[lang].shExtra, lang + ': a stray item -> warning');
+  // the scroll pills: only while items are left to select
+  const below = SH.describe(st({ below: 5 }), t), above = SH.describe(st({ above: 2 }), t);
+  ok(below.pillDown.includes('5') && below.pillUp === '' && above.pillUp.includes('2') && above.pillDown === '', lang + ': pills point the right way');
+  ok(SH.describe(st({ step: 'allSelected', below: 5 }), t).pillDown === '', lang + ': no pill when all are selected');
+  ok(SH.describe(st(), t).pillDown === '' && SH.describe(st(), t).pillUp === '', lang + ': no pill when everything is in view');
+  // the page's lines
+  for (const k of ['sellHintRun', 'sellHintLead']) ok(T[lang][k] && !/^sell/.test(T[lang][k]), lang + ': ' + k);
+}
+// the texts asked for
+ok(T.ru.sellHintLead === 'Программа покажет рамками, какие вещи отметить; отмечаешь ты сам.', 'ru: lead text');
+ok(T.ru.shAll === 'Все отмечены — нажми «Продать»' && T.ru.shExtra === 'Эта вещь не из списка', 'ru: step texts');
+// both languages have the same keys
+for (const k of Object.keys(T.ru).filter((x) => /^(sellHint|sh[A-Z])/.test(x))) ok(k in T.en, 'en has ' + k);
+for (const k of Object.keys(T.en).filter((x) => /^(sellHint|sh[A-Z])/.test(x))) ok(k in T.ru, 'ru has ' + k);
+console.log(n + ' sell hint checks ok');

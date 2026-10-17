@@ -1,6 +1,7 @@
 // RealmForge — «Найти в игре»: what to tell the player next, and where the frame goes in the inventory's list.
 // Pure decision logic, no Windows APIs and no clicks (tests: tests/CoreTests.cs); the host (app/Overlay.cs, app/HostBridge.cs)
-// reads the game's screens and draws the hints. The first version only shows hints: the player does every click himself.
+// reads the game's screens and draws the hints. Without auto click the player does every click himself; with it
+// src/LocatePilot.cs does the navigation up to the last button.
 using System;
 using System.Collections.Generic;
 
@@ -33,6 +34,7 @@ namespace RealmForge {
     public string[] Missing = new string[0];        // foundry filter parts not set yet: slot, suit, main, subs
     public bool OnHero;                             // the item's hero is open: the slot can be pressed there
     public bool NeedClick;                          // the inventory's list position is not known yet: the player is asked to click a cell
+    public string Auto = "", AutoWhy = "";          // auto click (src/LocatePilot.cs): "" = off, else work | paused | background | hint | stopped, and why
     /// <summary>The page's key of the step (ui/locate.js).</summary>
     public string Key { get { return Kind.ToString().Substring(0, 1).ToLowerInvariant() + Kind.ToString().Substring(1); } }
   }

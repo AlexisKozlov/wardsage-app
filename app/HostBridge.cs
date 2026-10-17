@@ -78,13 +78,14 @@ namespace RealmForge {
       overlay.AutoEnabled = AutoClickOn();
       RFX.SkipGvg = !On("gvg");
       overlay.AutoConfirm = cfg.AutoConfirm;
-      overlay.CancelText = CancelText(cfg.Lang);
+      overlay.CancelText = CancelText(cfg.Lang); overlay.LocateCancelText = LocateCancelText(cfg.Lang);
       coach.Lang = cfg.Lang;
       coach.PlaceX = cfg.CoachX; coach.PlaceY = cfg.CoachY;
       coach.PlaceChanged = (x, y) => { cfg.CoachX = x; cfg.CoachY = y; Save(); };
       // «Отменить надевание» over the game: the interface drops the running build (as its own «Отменить»)
       overlay.CancelPressed += () => { Log.Write("cancel pressed over the game"); Post("{\"ev\":\"cancelRun\"}"); };
       overlay.LocateChanged += (step, subs) => PostLocateState(step, subs);
+      overlay.SellHintChanged += st => PostSellHint(st);
       overlay.Problem += (kind, message) => Report(kind, message, null);
       Program.FatalReport = ReportFatal;
       autoTimer.Interval = 1000; autoTimer.Tick += (s, e) => AutoSyncTick(); autoTimer.Start();
@@ -207,6 +208,7 @@ namespace RealmForge {
     }
 
     static string CancelText(string lang) { return lang == "en" ? "Cancel equipping" : "Отменить надевание"; }
+    static string LocateCancelText(string lang) { return lang == "en" ? "Stop auto click" : "Остановить автонажатие"; }
 
     public void Dispose() {
       Program.FatalReport = null;
@@ -290,7 +292,7 @@ namespace RealmForge {
         switch (cmd) {
           case "init": SendState(null); CheckGame(true); PostRemote(); PostLayout(); if (updateReady != null) Post(updateReady); break;
           case "acceptTerms": cfg.TermsAccepted = AppConfig.TermsVersion; Save(); Log.Write("terms accepted: " + AppConfig.TermsVersion); break;
-          case "setLang": cfg.Lang = MiniJson.GetString(m, "lang") == "en" ? "en" : "ru"; overlay.CancelText = CancelText(cfg.Lang); coach.Lang = cfg.Lang; Save(); break;
+          case "setLang": cfg.Lang = MiniJson.GetString(m, "lang") == "en" ? "en" : "ru"; overlay.CancelText = CancelText(cfg.Lang); overlay.LocateCancelText = LocateCancelText(cfg.Lang); coach.Lang = cfg.Lang; Save(); break;
           case "setCode": {
             string code = SyncClient.ExtractCode(MiniJson.GetString(m, "code") ?? "");
             if (SyncClient.IsValidCode(code)) {
@@ -332,7 +334,10 @@ namespace RealmForge {
             // «Найти в игре»: the overlay shows hints for the request the last plans reply carried (the page names it by id)
             if (!On("locate")) break;
             var lr = lastLocate; string lid = MiniJson.GetString(m, "id");
-            if (lr != null && lr.Item != null && lr.Id == lid) { overlay.SetLocate(lr); Log.Write("locate: show item " + lr.Item.Uid); }
+            if (lr != null && lr.Item != null && lr.Id == lid) {
+              overlay.SetLocate(lr); Log.Write("locate: show item " + lr.Item.Uid + (AutoClickOn() ? " (auto click on)" : ""));
+              if (addrs == null && !scanning && AutoClickOn()) StartScan(watch, true);   // the auto steps need the game's screens found
+            }
             break;
           }
           case "locate.tip": {
@@ -345,9 +350,10 @@ namespace RealmForge {
           case "locate.stop": overlay.SetLocate(null); break;
           case "locate.finish": FinishLocate(MiniJson.GetString(m, "id"), MiniJson.GetBool(m, "done", false)); break;
           case "sell.load": LoadSell(MiniJson.GetString(m, "lang")); break;
-          case "sell.run": {
+          case "sell.run": case "sell.hint": {
             // storage cleanup: select the list's items on the game's sell screen (from the gear list of the hero the game
-            // showed last, else of any hero); the game comes forward as for «Надеть»
+            // showed last, else of any hero); the game comes forward as for «Надеть». "sell.hint": the same list, but only
+            // frames over the game (auto click off): nothing is clicked, nothing comes forward
             if (!remote.ReadEnabled) { Log.Write("sell: game reading is off by the site's switch"); break; }
             if (Layout.Current == null) { Log.Write("sell: no layout data for game version " + (gameVersion ?? "?")); PostLayout(); break; }
             var uids = Uids(m);
@@ -359,10 +365,21 @@ namespace RealmForge {
             var ll = m.TryGetValue("levels", out lv) ? lv as List<object> : null;
             if (ll != null) for (int i = 0; i < ll.Count && i < uids.Count; i++) if (ll[i] is double) levels[uids[i]] = (int)Math.Max(0, Math.Min(99, (double)ll[i]));
             long hero = addrs != null ? RFX.ReadHero(addrs) : 0; if (hero <= 0) hero = RFX.AnyHeroUid();
-            overlay.SetSell(uids, parts, levels.Count == uids.Count ? levels : null, hero);
-            Log.Write("sell: run " + uids.Count + " items, hero " + hero);
+            bool hintOnly = cmd == "sell.hint";
+            overlay.SetSell(uids, parts, levels.Count == uids.Count ? levels : null, hero, hintOnly);
+            Log.Write("sell: " + (hintOnly ? "hint" : "run") + " " + uids.Count + " items, hero " + hero);
+            if (hintOnly) break;
             if (!AutoClickOn()) Log.Write("sell: waiting - auto click is off" + (cfg.AutoClick ? " (the site's switch)" : ""));
             if (addrs == null && !scanning && AutoClickOn()) StartScan(watch, true);   // the pilot needs the game's screens found
+            break;
+          }
+          case "sell.tip": {
+            // the page's texts for the hint's plates: the step's lines and the pills for list items out of view
+            var tl = new List<string>(); object tv;
+            var tll = m.TryGetValue("lines", out tv) ? tv as List<object> : null;
+            if (tll != null) foreach (var x in tll) if (x is string && tl.Count < 4) tl.Add(((string)x).Length > 120 ? ((string)x).Substring(0, 120) : (string)x);
+            string pu = MiniJson.GetString(m, "pillUp") ?? "", pd = MiniJson.GetString(m, "pillDown") ?? "";
+            overlay.SetSellTip(tl.ToArray(), pu.Length > 80 ? pu.Substring(0, 80) : pu, pd.Length > 80 ? pd.Substring(0, 80) : pd);
             break;
           }
           case "sell.stop": overlay.SetSell(null, null, null, 0); break;
@@ -1068,13 +1085,19 @@ namespace RealmForge {
     void PostLocateState(LocateStep st, SubCheck subs) {
       var sb = new StringBuilder("{\"ev\":\"locate.state\",\"step\":").Append(S(st.Key)).Append(",\"pos\":").Append(N(st.Pos)).Append(",\"row\":").Append(N(st.Row))
         .Append(",\"col\":").Append(N(st.Col)).Append(",\"count\":").Append(N(st.Count)).Append(",\"onHero\":").Append(B(st.OnHero))
-        .Append(",\"needClick\":").Append(B(st.NeedClick)).Append(",\"missing\":[");
+        .Append(",\"needClick\":").Append(B(st.NeedClick)).Append(",\"auto\":").Append(S(st.Auto)).Append(",\"autoWhy\":").Append(S(st.AutoWhy)).Append(",\"missing\":[");
       for (int i = 0; i < st.Missing.Length; i++) { if (i > 0) sb.Append(','); sb.Append(S(st.Missing[i])); }
       sb.Append("],\"subs\":");
       if (subs == null) sb.Append("null");
       else { sb.Append('['); for (int i = 0; i < subs.Match.Length; i++) { if (i > 0) sb.Append(','); sb.Append(B(subs.Match[i])); } sb.Append(']'); }
       sb.Append(",\"changed\":").Append(B(subs != null && subs.Changed)).Append('}');
       Post(sb.ToString());
+    }
+
+    // storage cleanup without auto click: the hint's step for the page (it composes the texts)
+    void PostSellHint(SellHintStep st) {
+      Post("{\"ev\":\"sell.hint\",\"step\":" + S(st.Key) + ",\"selected\":" + N(st.Selected) + ",\"total\":" + N(st.Total) + ",\"missing\":" + N(st.Missing)
+        + ",\"extra\":" + N(st.Extra) + ",\"below\":" + N(st.Below) + ",\"above\":" + N(st.Above) + "}");
     }
 
     void FinishLocate(string id, bool done) {

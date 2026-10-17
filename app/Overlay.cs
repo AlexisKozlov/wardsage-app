@@ -8,6 +8,7 @@
 // «Заменить» only with Settings → «Автоматически подтверждать замену» (see src/AutoPilot.cs for the checks).
 // Nothing is written into the game.
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -154,6 +155,8 @@ namespace RealmForge {
     public event Action CancelPressed;
     /// <summary>The button's text in the interface language.</summary>
     public string CancelText = "Отменить надевание";
+    /// <summary>The same button while «Показать в игре» clicks by itself: it only stops that.</summary>
+    public string LocateCancelText = "Остановить автонажатие";
     string cancelDrawn; Bitmap cancelBmp;
     readonly ListGeometry g = new ListGeometry();
     readonly HintGeometry hg = new HintGeometry();
@@ -186,7 +189,7 @@ namespace RealmForge {
     /// <summary>Settings → «Автоматически подтверждать замену»: the pilot may also press «Заменить».</summary>
     public bool AutoConfirm;
     /// <summary>A build being put on or a sell run going: no restart for an update now.</summary>
-    public bool Busy { get { return runHero != 0 || target != 0 || sellWanted != null || sending; } }
+    public bool Busy { get { return runHero != 0 || target != 0 || (sellWanted != null && !sellHint) || sending; } }
     // what the frame tick found this tick (for the pilot)
     int curRow, curCol; long curSel;
     // player activity: the cursor moved by someone else than the pilot, or a mouse button went down
@@ -201,6 +204,17 @@ namespace RealmForge {
     readonly SellPilot spilot;
     readonly Action<SellPilot, string> sellReport;
     System.Collections.Generic.HashSet<long> sellWanted; System.Collections.Generic.HashSet<int> sellParts; System.Collections.Generic.Dictionary<long, int> sellLevels; long sellHero; long sellBtnAt; string sellSaid = "";
+
+    // storage cleanup without auto click («Подсказать в игре»): the same list, but the program only reads the inventory and
+    // draws frames on the cells to select; every click is the player's
+    bool sellHint;
+    string[] sellHintLines = new string[0]; string sellPillUp = "", sellPillDown = "";
+    readonly LocateGrid sgrid = new LocateGrid();
+    InventoryScreen shInv; bool shHave; HashSet<long> shRawSel; ulong shRawPtr; string shReadSig = ""; long shReadAt;
+    int shCols = 8, shGeoCols; double shGeoW, shGeoH; SellGeometry shGeo;
+    List<SellFrame> shFrames; string shKey = "";
+    /// <summary>The hint's step changed (kind, counts, rows out of view): the page shows it and answers with the plate texts.</summary>
+    public event Action<SellHintStep> SellHintChanged;
 
     /// <summary>A failure worth an error report (kind, message): the filter pilot gave up, «Заменить» not found with the
     /// auto-confirm on, an exception in the tick. HostBridge sends it when the player turned the reports on.</summary>
@@ -227,7 +241,11 @@ namespace RealmForge {
         try { LookFast(); }
         catch (Exception ex) { string m = "look: " + ex.GetType().Name + ": " + ex.Message; if (m != tickError) { tickError = m; Log.Write("overlay: " + ex); } }
       };
-      cancelWin.Pressed += () => { cancelWin.Hide(); var c = CancelPressed; if (c != null) c(); };
+      cancelWin.Pressed += () => {
+        cancelWin.Hide();
+        if (locateReq != null && runHero <= 0) { lpilot.Cancel(); Log.Write("locate auto: stopped over the game"); return; }   // «Показать в игре»: only the clicks stop
+        var c = CancelPressed; if (c != null) c();
+      };
     }
 
     public void Dispose() { timer.Dispose(); lookTimer.Dispose(); glow.Dispose(); tip.Dispose(); cancelWin.Dispose(); }
@@ -348,7 +366,15 @@ namespace RealmForge {
 
     /// <summary>Storage cleanup: select these items on the game's sell screen (null = stop). The app opens the screen from
     /// the gear list of <paramref name="hero"/> (or of the hero the game shows); «Продать» is pressed by the player.</summary>
-    public void SetSell(System.Collections.Generic.ICollection<long> uids, System.Collections.Generic.ICollection<int> parts, System.Collections.Generic.Dictionary<long, int> levels, long hero) {
+    public void SetSell(System.Collections.Generic.ICollection<long> uids, System.Collections.Generic.ICollection<int> parts, System.Collections.Generic.Dictionary<long, int> levels, long hero, bool hintOnly = false) {
+      bool wasHint = sellHint;
+      sellHint = hintOnly && uids != null && uids.Count > 0;
+      if (wasHint || sellHint) {
+        // a hint run starts (or ends) clean: no frames, no plate, the rows' place unknown
+        sgrid.Reset(); shInv = null; shHave = false; shRawSel = null; shRawPtr = 0; shReadSig = ""; shReadAt = 0; shFrames = null; shKey = "";
+        sellHintLines = new string[0]; sellPillUp = sellPillDown = "";
+        Hide("off"); HideTip();
+      }
       sellLevels = levels;
       sellWanted = uids != null && uids.Count > 0 ? new System.Collections.Generic.HashSet<long>(uids) : null;
       sellParts = parts != null && parts.Count > 0 ? new System.Collections.Generic.HashSet<int>(parts) : null;
@@ -361,8 +387,16 @@ namespace RealmForge {
     public void SetLocate(LocateRequest r) {
       locateReq = r != null && r.Item != null ? r : null;
       locateStep = null; locateSubs = null; locateKey = ""; locateReadAt = 0; locateLastCur = -1; locateSubsAt = 0; lgrid.Reset();
+      lpilot.Reset(); lpilot.ItemUid = locateReq != null ? locateReq.Item.Uid : 0; locateDriving = false; locateAutoSaid = "";
       Hide("off"); HideTip();
       Run();
+    }
+
+    /// <summary>The plates of the storage cleanup hint (composed by the page in the interface language): the step's lines and
+    /// the pills for the list items out of view.</summary>
+    public void SetSellTip(string[] lines, string pillUp, string pillDown) {
+      sellHintLines = lines ?? new string[0]; sellPillUp = pillUp ?? ""; sellPillDown = pillDown ?? "";
+      HideTip(); drawnKey = null;
     }
 
     /// <summary>The text plate for the current step (composed by the page in the interface language).</summary>
@@ -396,6 +430,7 @@ namespace RealmForge {
     void Tick() {
       curRow = curCol = 0; curSel = 0;
       if (locateReq != null) { TickLocate(); TickCancel(); return; }
+      if (sellHint && sellWanted != null) { TickSellHint(); TickCancel(); return; }
       TickFrame();
       TickAuto();
       TickCancel();
@@ -408,17 +443,18 @@ namespace RealmForge {
       int fp = 0, gp = 0;
       if (hwnd != IntPtr.Zero) { W32.GetWindowThreadProcessId(W32.GetForegroundWindow(), out fp); W32.GetWindowThreadProcessId(hwnd, out gp); }
       W32.RECT cr;
-      if (runHero <= 0 || !AutoEnabled || hwnd == IntPtr.Zero || W32.IsIconic(hwnd) || fp != gp || !W32.GetClientRect(hwnd, out cr) || cr.B < 200) {
+      if ((runHero <= 0 && !(locateReq != null && locateDriving)) || !AutoEnabled || hwnd == IntPtr.Zero || W32.IsIconic(hwnd) || fp != gp || !W32.GetClientRect(hwnd, out cr) || cr.B < 200) {
         if (cancelWin.Visible) cancelWin.Hide();
         return;
       }
       var o = new W32.POINT(0, 0); W32.ClientToScreen(hwnd, ref o);
       double U = Ui.Unit(cr.R, cr.B);
       int w = (int)(0.25 * U), h = (int)(0.058 * U);
-      string key = CancelText + "|" + w + "x" + h;
+      string cancelText = runHero <= 0 ? LocateCancelText : CancelText;   // (here only for a build or for «Показать в игре»)
+      string key = cancelText + "|" + w + "x" + h;
       if (key != cancelDrawn || cancelBmp == null) {
         if (cancelBmp != null) cancelBmp.Dispose();
-        cancelBmp = CancelBitmap(w, h, CancelText); cancelDrawn = key;
+        cancelBmp = CancelBitmap(w, h, cancelText); cancelDrawn = key;
       }
       cancelWin.Put(cancelBmp, o.X + cr.R / 2 - w / 2, o.Y + (int)(0.012 * U));
     }
@@ -954,11 +990,12 @@ namespace RealmForge {
     /// <summary>Draws one hint into <paramref name="win"/>: <paramref name="frameR"/> (screen px, null = no frame), the plate
     /// beside <paramref name="target"/>, and the scroll strip (null = none: {x, viewTop, viewBottom, dotY, b0, b1}, screen px)
     /// with the plate as a pill at its dot. <paramref name="key"/>: what is drawn now (unchanged = nothing to do).</summary>
-    void Scene(GlowWindow win, ref string key, int[] frameR, Plate p, int[] target, double[] strip) {
+    void Scene(GlowWindow win, ref string key, int[] frameR, Plate p, int[] target, double[] strip, List<int[]> marks = null) {
       float pulse = (float)(0.6 + 0.4 * Math.Sin(frame * 0.45));
       string k = (frameR != null ? string.Join(",", frameR) : "-") + "|" + (target != null ? string.Join(",", target) : "-") + "|"
         + (p != null ? p.Caps + "/" + p.Main + "/" + p.Sub + "/" + p.Pill : "-") + "|" + (strip != null ? string.Join(",", Array.ConvertAll(strip, v => ((int)v).ToString())) : "-")
-        + "|" + (frameR != null || strip != null ? (int)(pulse * 10) : 0) + "|" + sceneW + "x" + sceneH;
+        + "|" + (frameR != null || strip != null ? (int)(pulse * 10) : 0) + "|" + sceneW + "x" + sceneH
+        + (marks != null && marks.Count > 0 ? "|m" + string.Join(";", marks.ConvertAll(m => string.Join(",", m))) : "");
       if (k == key) return;
       key = k;
       double U = Ui.Unit(Math.Max(1, sceneW), Math.Max(1, sceneH));
@@ -1001,6 +1038,8 @@ namespace RealmForge {
         if (frameR != null) grow(frameR[0] - fm, frameR[1] - fm, frameR[0] + frameR[2] + fm, frameR[1] + frameR[3] + fm);
         if (pos != null) grow(sceneX + pos[0] - 16, sceneY + pos[1] - 16, sceneX + pos[0] + pw + 16, sceneY + pos[1] + ph + 16);
         if (strip != null) grow((int)strip[0] - 12, (int)strip[1] - 12, (int)strip[0] + 12, (int)strip[2] + 12);
+        int Gm = (int)Math.Max(6, 0.008 * U);   // the glow of a cell frame among many: small, the neighbours are close
+        if (marks != null) foreach (var m in marks) grow(m[0] - Gm - 4, m[1] - Gm - 4, m[0] + m[2] + Gm + 4, m[1] + m[3] + Gm + 4);
         if (x0 == int.MaxValue) { win.Hide(); return; }
         int bw = Math.Max(1, x1 - x0), bh = Math.Max(1, y1 - y0);
         using (var bmp = new Bitmap(bw, bh, PixelFormat.Format32bppArgb)) {
@@ -1009,6 +1048,7 @@ namespace RealmForge {
             gr.InterpolationMode = InterpolationMode.HighQualityBicubic;
             if (frameR != null) PaintFrame(gr, frameR[0] - x0, frameR[1] - y0, frameR[2], frameR[3], pulse, G);
             if (strip != null) PaintStrip(gr, strip, x0, y0, pulse, U);
+            if (marks != null) foreach (var m in marks) PaintMark(gr, m[0] - x0, m[1] - y0, m[2], m[3], m[4], Gm);
             if (p != null) {
               float px = sceneX + pos[0] - x0, py = sceneY + pos[1] - y0;
               PaintPlate(gr, px, py, pw, ph, p, fCaps, fMain, fSub, owl, capsH, mainH, pad, ptr, sceneX - x0, sceneY - y0);
@@ -1019,6 +1059,7 @@ namespace RealmForge {
           if (frameR != null) win.Parts.Add(new[] { frameR[0] - fm, frameR[1] - fm, frameR[2] + 2 * fm, frameR[3] + 2 * fm });
           if (pos != null) win.Parts.Add(new[] { sceneX + pos[0] - 4, sceneY + pos[1] - 4, pw + 20, ph + 20 });
           if (strip != null) win.Parts.Add(new[] { (int)strip[0] - 14, (int)strip[1] - 14, 28, (int)(strip[2] - strip[1]) + 28 });
+          if (marks != null) foreach (var m in marks) win.Parts.Add(new[] { m[0] - 4, m[1] - 4, m[2] + 8, m[3] + 8 });
         }
       }
     }
@@ -1048,6 +1089,26 @@ namespace RealmForge {
       }
       using (var pen = new Pen(Color.FromArgb(230, 40, 22, 4), 6f)) gr.DrawPath(pen, Round(x - 2, y - 2, w + 4, h + 4, 7));
       using (var pen = new Pen(Color.FromArgb(255, 255, 214, 110), 3.5f)) gr.DrawPath(pen, Round(x - 2, y - 2, w + 4, h + 4, 7));
+    }
+
+    // a cell frame among many (the storage cleanup): style 0 = to select (the game's gold frame, steady), 1 = selected (a thin
+    // dim gold line with a check mark), 2 = selected but not on the list (red)
+    void PaintMark(Graphics gr, float x, float y, float w, float h, int style, int G) {
+      if (style == 0) { PaintFrame(gr, x, y, w, h, 1f, G); return; }
+      if (style == 1) {
+        using (var pen = new Pen(Color.FromArgb(200, 150, 130, 84), 2.5f)) gr.DrawPath(pen, Round(x - 1, y - 1, w + 2, h + 2, 7));
+        float r = Math.Max(7f, Math.Min(w, h) * 0.12f), cx = x + w - r - 3, cy = y + r + 3;
+        using (var bg = new SolidBrush(Color.FromArgb(215, 36, 30, 16))) gr.FillEllipse(bg, cx - r, cy - r, 2 * r, 2 * r);
+        using (var pen = new Pen(Color.FromArgb(235, 214, 178, 98), 1.5f)) gr.DrawEllipse(pen, cx - r, cy - r, 2 * r, 2 * r);
+        using (var pen = new Pen(Color.FromArgb(255, 240, 206, 120), Math.Max(2f, r * 0.22f))) {
+          gr.DrawLines(pen, new[] { new PointF(cx - r * 0.5f, cy + r * 0.02f), new PointF(cx - r * 0.12f, cy + r * 0.4f), new PointF(cx + r * 0.52f, cy - r * 0.38f) });
+        }
+        return;
+      }
+      for (int i = G; i >= 2; i -= 3)
+        using (var pen = new Pen(Color.FromArgb((int)(120 * (1 - i / (float)(G + 2))), 255, 70, 50), 3f)) gr.DrawPath(pen, Round(x - i, y - i, w + 2 * i, h + 2 * i, 6 + i));
+      using (var pen = new Pen(Color.FromArgb(230, 40, 10, 6), 6f)) gr.DrawPath(pen, Round(x - 2, y - 2, w + 4, h + 4, 7));
+      using (var pen = new Pen(Color.FromArgb(255, 235, 64, 52), 3.5f)) gr.DrawPath(pen, Round(x - 2, y - 2, w + 4, h + 4, 7));
     }
 
     // the step plate: strictly rectangular, dark, a thin bronze border with a gold line inside; the owl and the caps line,
@@ -1272,6 +1333,97 @@ namespace RealmForge {
       SellSay("no_city");
     }
 
+    // Storage cleanup without auto click: nothing is clicked. The inventory's «Массовая продажа» grid is read (as the sell
+    // pilot reads it), the rows' place on the screen is followed like «Найти в игре» does, and every list item in view gets
+    // a gold frame; the ones already selected a dim checked one, a selected item that is not on the list a red one.
+    void SellHintHide() { if (glow.Visible) glow.Hide(); drawnKey = null; HideTip(); }
+
+    void TickSellHint() {
+      IntPtr hwnd = GameWindow();
+      W32.RECT cr = new W32.RECT();
+      if (hwnd == IntPtr.Zero || W32.IsIconic(hwnd) || !W32.GetClientRect(hwnd, out cr) || cr.B < 200) { SellHintHide(); return; }
+      bool front = IsForeground(hwnd);
+      var o = new W32.POINT(0, 0); W32.ClientToScreen(hwnd, ref o);
+      double W = cr.R, H = cr.B, U = Ui.Unit(W, H);
+      SceneArea(o, cr);
+      long now = NowMs();
+      if (shGeo == null || shGeoW != W || shGeoH != H || shGeoCols != shCols) {
+        shGeoW = W; shGeoH = H; shGeoCols = shCols; shGeo = SellGeometry.Inventory(W, U, shCols);
+        sgrid.Reset();
+      }
+      // the inventory, read a few times a second (the form the game never built is searched for at most every 8 s). A new
+      // reading is taken over when the next one says the same (a selection that flickers in one read does not show)
+      if (!shHave || Math.Abs(now - shReadAt) >= 200) {
+        shReadAt = now;
+        var raw = RFX.ReadInventory(sellScanOnce ? 1500 : front ? 8000 : -1);
+        sellScanOnce = false;
+        bool bulk = raw != null && raw.Open && raw.EquipTab && raw.Bulk;
+        if (front && bulk) {
+          int c = InvColumns(o, cr, U);
+          if (c > 0 && c != shCols) { shCols = c; shGeoCols = -1; }
+        }
+        if (bulk) {
+          if (sgrid.ListPtr != raw.ListPtr) sgrid.Reset();
+          // the player toggled one cell: the pointer says where its row is (only while the rows' place is not known)
+          if (!sgrid.Has && shRawSel != null && shRawPtr == raw.ListPtr && shGeo != null) {
+            long one = SellHint.OneChange(shRawSel, raw.Selected);
+            var cell = one != 0 ? SellHint.Cell(raw, one, shCols) : null;
+            W32.POINT cp;
+            if (cell != null && W32.GetCursorPos(out cp) && cp.Y - o.Y >= shGeo.ViewTopPx(U) && cp.Y - o.Y <= shGeo.ViewBottomPx(H, U)) sgrid.FromClick(shGeo, cell[0], cp.Y - o.Y, U, raw.ListPtr);
+          }
+          shRawSel = new HashSet<long>(raw.Selected); shRawPtr = raw.ListPtr;
+        } else { shRawSel = null; shRawPtr = 0; }
+        string sig = SellHint.Classify(raw, sellWanted).StateKey;
+        if (!shHave || sig == shReadSig) { shInv = raw; shHave = true; }
+        shReadSig = sig;
+      }
+      var inv = shInv;
+      bool inBulk = inv != null && inv.Open && inv.EquipTab && inv.Bulk;
+      if (inBulk && sgrid.ListPtr != inv.ListPtr) sgrid.Reset();
+      // the rows' place: the list opens at the top; the stat bars under the cells follow the scrolling
+      if (inBulk && front && shGeo != null) {
+        double phase = PhaseOf(shGeo, o, cr, U);
+        if (!double.IsNaN(phase)) {
+          if (!sgrid.Has) sgrid.FromTop(shGeo, phase, U, inv.ListPtr);
+          if (sgrid.Has) sgrid.Track(shGeo, sgrid.VisibleRow(shGeo, (inv.Uids.Count + shCols - 1) / shCols, W, H, U), phase, U);
+        }
+      }
+      var step = SellHint.Build(inv, sellWanted, shCols, inBulk && sgrid.Has ? sgrid : null, shGeo, W, H, U);
+      step.Frames = shFrames = SellHint.Stabilize(shFrames, step.Frames, 3);
+      string key = step.FullKey;
+      if (key != shKey) { shKey = key; var h = SellHintChanged; if (h != null) h(step); }
+
+      if (!front) { SellHintHide(); return; }
+      bool haveText = sellHintLines.Length > 0;
+      double vt = shGeo.ViewTopPx(U), vb = shGeo.ViewBottomPx(H, U);
+      int gx = (int)shGeo.X(shGeo.X0, W, U), gw = (int)(shGeo.PitchX * (shCols - 1) * U + shGeo.CellW * U);
+      if (step.Kind == SellHintKind.Select || step.Kind == SellHintKind.AllSelected) {
+        var marks = new List<int[]>();
+        foreach (var fr in step.Frames) marks.Add(new[] { o.X + fr.X, o.Y + fr.Y, fr.W, fr.H, fr.Style == "todo" ? 0 : fr.Style == "done" ? 1 : 2 });
+        // list items out of view: a pill with an arrow at the list's edge (as the equip helper's «Вещь здесь ↓»)
+        Plate pill = null; int[] pt = null;
+        if (step.Below > 0 && sellPillDown != "") { pill = new Plate { Pill = true, Main = sellPillDown }; pt = new[] { o.X + gx, o.Y + (int)vb - 2, (int)(shGeo.CellW * U), 2 }; }
+        else if (step.Above > 0 && sellPillUp != "") { pill = new Plate { Pill = true, Main = sellPillUp }; pt = new[] { o.X + gx, o.Y + (int)vt, (int)(shGeo.CellW * U), 2 }; }
+        Scene(glow, ref drawnKey, null, pill, pt, null, marks);
+        // the step's plate above the list
+        if (haveText) DrawTip(o.X + gx, o.Y + (int)vt - 2, gw, 2, sellHintLines, H, true); else HideTip();
+        return;
+      }
+      if (glow.Visible) glow.Hide();
+      drawnKey = null;
+      if (!haveText) { HideTip(); return; }
+      if (step.Kind == SellHintKind.PressBulk) {
+        // «Массовая продажа» under the list (bottom left): where the auto mode clicks
+        int bw = (int)(0.2 * U), bh = (int)(0.065 * U);
+        int bx = o.X + (int)(0.5867 * U) - bw / 2, by = o.Y + (int)(H - 0.0723 * U) - bh / 2;
+        frame++;
+        DrawTip(bx, by, bw, bh, sellHintLines, H);
+        return;
+      }
+      if (step.Kind == SellHintKind.NeedPosition) { DrawTip(o.X + gx, o.Y + (int)vt - 2, gw, 2, sellHintLines, H, true); return; }
+      DrawTip(o.X + (int)(0.23 * U), o.Y + (int)(0.19 * U) + 150, 4, 0, sellHintLines, H, true);
+    }
+
     // ---------------------------------------------------------------- «Найти в игре»
 
     LocateRequest locateReq; string[] locateLines = new string[0];
@@ -1301,9 +1453,10 @@ namespace RealmForge {
         int rescan = front ? 8000 : -1;
         locateInv = RFX.ReadInventory(rescan);
         var rs = RFX.ReadRecastScreen(rescan);
+        locateRs = rs; locateOnAccount = RFX.ItemOnAccount(uid);
         if (front && locateInv != null && locateInv.Open && locateInv.EquipTab) { int c = InvColumns(o, cr, U); if (c > 0) locateCols = c; }
         heroScreen = RFX.ReadHeroScreen(addrs, heroScreen);
-        var st = LocateGuide.Next(req, locateInv, rs, heroScreen, locateCols, RFX.ItemOnAccount(uid));
+        var st = LocateGuide.Next(req, locateInv, rs, heroScreen, locateCols, locateOnAccount);
         if (Math.Abs(now - locateSubsAt) >= 1500 && (st.Kind == LocateKind.Selected || st.Kind == LocateKind.Done || st.Kind == LocateKind.RecastPick || st.Kind == LocateKind.AscendPick || st.Kind == LocateKind.AscendReady || st.Kind == LocateKind.InList)) {
           locateSubsAt = now;
           var live = RFX.ReadLiveItemSubs(uid);
@@ -1313,6 +1466,7 @@ namespace RealmForge {
         locateStep = st;
       }
       var step = locateStep;
+      TickLocateDrive(step, req, hwnd, o, cr, now, W, H, U);   // auto click on: the app opens the item itself
       // the inventory's list: where the item's cell is on the screen
       locateNeedClick = false;
       if (front && step.Kind == LocateKind.InList && locateInv != null) {
@@ -1352,8 +1506,61 @@ namespace RealmForge {
         DrawTip(o.X + (int)(0.23 * U), o.Y + (int)(0.19 * U) + 150, 4, 0, locateLines, H, true);
       } else if (!front || locateLines.Length == 0 || step.Kind == LocateKind.InList) HideTip();
       string key = step.Key + "|" + step.Pos + "|" + step.Row + "|" + step.Col + "|" + step.Count + "|" + string.Join(",", step.Missing) + "|" + step.OnHero + "|" + step.NeedClick
-        + "|" + (locateSubs != null ? string.Join(",", Array.ConvertAll(locateSubs.Match, x => x ? "1" : "0")) + locateSubs.Changed : "");
+        + "|" + (locateSubs != null ? string.Join(",", Array.ConvertAll(locateSubs.Match, x => x ? "1" : "0")) + locateSubs.Changed : "") + "|" + step.Auto + "|" + step.AutoWhy;
       if (key != locateKey) { locateKey = key; var h = LocateChanged; if (h != null) h(step, locateSubs); }
+    }
+
+    // ---- auto click for «Показать в игре» (src/LocatePilot.cs): the app opens the Inventory, the «Снаряжение» tab and the item
+    // itself, and stops where the places of the next buttons are not known (those steps stay hints). The last button of the
+    // game (and every confirmation) is the player's. Off without «Автонажатие».
+    readonly LocatePilot lpilot = new LocatePilot();
+    RecastScreen locateRs; int locateOnAccount = -1; bool locateDriving;
+    string locateMoveState = "", locateMoveWhy = "", locateAutoSaid = "";
+
+    void TickLocateDrive(LocateStep step, LocateRequest req, IntPtr hwnd, W32.POINT o, W32.RECT cr, long now, double W, double H, double U) {
+      locateDriving = false;
+      if (!AutoEnabled) { step.Auto = ""; step.AutoWhy = ""; return; }
+      if (sending) {   // a click is on its way (its button press is not the player's): the screens are read after it
+        step.Auto = locateMoveState == "" ? "work" : locateMoveState; step.AutoWhy = locateMoveWhy; locateDriving = true;
+        return;
+      }
+      // the player's own mouse use (the pilot's moves are remembered in `seen`); the normal tick does not run during a request
+      W32.POINT c;
+      if (W32.GetCursorPos(out c)) {
+        if (seenSet && (c.X != seen.X || c.Y != seen.Y)) lastMoveMs = now;
+        seen = c; seenSet = true;
+      }
+      bool down = (W32.GetAsyncKeyState(0x01) & 0x8000) != 0 || (W32.GetAsyncKeyState(0x02) & 0x8000) != 0;
+      if (down && !btnWasDown) userClick = true;
+      btnWasDown = down;
+      if (lpilot.Stopped) { step.Auto = "stopped"; step.AutoWhy = lpilot.Reason; return; }
+      bool busy = down || now - lastMoveMs < 700, uc = userClick; userClick = false;
+      int fp, gp; W32.GetWindowThreadProcessId(W32.GetForegroundWindow(), out fp); W32.GetWindowThreadProcessId(hwnd, out gp);
+      bool gameFront = fp == gp;
+      // a fresh look at the inventory and the step it means: the pilot judges its last click by it, so a stale step
+      // must never get a second click on an item that is already selected
+      var inv = RFX.ReadInventory(-1);
+      bool heroOpen = heroScreen != null && heroScreen.Hero > 0 && heroScreen.Tab >= 0;
+      bool formOpen = locateRs != null && (locateRs.SublimingOpen || locateRs.GemOpen);
+      var dstep = LocateGuide.Next(req, inv, locateRs, heroScreen, locateCols, locateOnAccount);
+      var view = new LocateView { NowMs = now, Foreground = gameFront, UserBusy = busy, UserClicked = uc, W = W, H = H, U = U, Step = dstep, Inv = inv, Cols = locateCols,
+        HeroScreenOpen = heroOpen, OtherFormOpen = formOpen, InvDX = invDX };
+      if (gameFront && !busy && LocateAuto.NeedsCityButton(dstep, heroOpen, formOpen)) view.CityButton = InventoryButtonSeen(o, W, H);
+      if (gameFront && !busy && dstep.Kind == LocateKind.InList) view.Phase = PhaseOf(SellGeometry.Inventory(W, U, locateCols), o, cr, U);
+      var mv = lpilot.Step(view);
+      if (lpilot.Trace != "") { Log.Write("locate auto: " + lpilot.Trace); lpilot.Trace = ""; }
+      locateMoveState = mv.State; locateMoveWhy = mv.Why;
+      string said = mv.State + "|" + mv.Why + "|" + dstep.Key;
+      if (said != locateAutoSaid) { locateAutoSaid = said; Log.Write("locate auto: " + mv.State + (mv.Why != "" ? " (" + mv.Why + ")" : "") + " at step " + dstep.Key); }
+      // started from our own window: the game comes forward (and is restored), never over another program
+      if (mv.State == "background" && fp == SelfPid && now >= focusAfter) {
+        focusAfter = now + 3000;
+        if (W32.IsIconic(hwnd)) W32.ShowWindow(hwnd, 9);   // SW_RESTORE
+        W32.SetForegroundWindow(hwnd);
+      }
+      if (mv.Action.Kind != AutoKind.None) SendInside(mv.Action, o, cr);
+      step.Auto = mv.State; step.AutoWhy = mv.Why;
+      locateDriving = mv.State == "work" || mv.State == "paused" || mv.State == "background";
     }
 
     const double InvBtnDX = 0.5222 + 0.9316;   // «Инвентарь»: 0.9316 left of «Герои» in the city's bottom bar
@@ -1369,6 +1576,7 @@ namespace RealmForge {
       int w = x1 - x0, h = y1 - y0;
       int[] px = Grab(o.X + x0, o.Y + y0, w, h);
       if (px == null) return double.NaN;
+      MaskOwn(px, o.X + x0, o.Y + y0, w, h);
       var xs = new int[sg.Columns * 2];
       for (int c = 1; c <= sg.Columns; c++) {
         double l = (c - 1) * sg.PitchX * U;
