@@ -426,7 +426,8 @@ namespace RealmForge {
       L("  live hero map: " + (liveHeroes == null ? "not found" : liveHeroes.Count + " entries"));
       if (liveHeroes != null && liveHeroes.Count > 0) {
         foreach (var d in liveHeroes) {
-          object u; if (!d.TryGetValue("iHeroId", out u) || !(u is long) || (long)u <= 0 || !d.ContainsKey("iBaseId") || !d.ContainsKey("vEquipSlot")) continue;
+          // short-form heroes (never levelled or equipped) have only their ids: kept too, the site fills the defaults
+          object u; if (!d.TryGetValue("iHeroId", out u) || !(u is long) || (long)u <= 0 || !d.ContainsKey("iBaseId")) continue;
           if (!seenH.Add((long)u)) continue;
           if (nh++ > 0) sb.Append(",\n"); J(sb, d);
         }

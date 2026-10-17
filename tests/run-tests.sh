@@ -13,7 +13,7 @@ SDK_CSC=$(ls -d /usr/lib/dotnet/sdk/*/Roslyn/bincore/csc.dll | tail -1)
 CSC="dotnet $SDK_CSC -nologo -noconfig"
 NET8=$(ls -d /usr/lib/dotnet/packs/Microsoft.NETCore.App.Ref/*/ref/net8.0 | tail -1)
 NET8_RT=$(ls /usr/lib/dotnet/shared/Microsoft.NETCore.App/ | grep '^8\.' | tail -1)
-FX=/usr/lib/mono/4.5-api
+FX45=/usr/lib/mono/4.5-api   # Windows PowerShell 5.1 Add-Type level (not the exe build's FX: tools/build-app.sh picks its own)
 PORT=3999
 OUT=build
 mkdir -p "$OUT"
@@ -34,17 +34,17 @@ fi
 
 step "2. Embedded C# compiles as C# 5 against .NET Framework 4.5 (WinForms, DPAPI), warnings = errors"
 node tests/extract-csharp.mjs > "$OUT/embedded.cs"
-if [ -f "$FX/System.Windows.Forms.dll" ]; then
+if [ -f "$FX45/System.Windows.Forms.dll" ]; then
   # Exactly what Add-Type in Windows PowerShell 5.1 gives the compiler: mscorlib, System, System.Core
   # plus the three -ReferencedAssemblies of the script.
   $CSC -langversion:5 -nostdlib -target:library -warnaserror -warn:4 \
-    -r:$FX/mscorlib.dll -r:$FX/System.dll -r:$FX/System.Core.dll \
-    -r:$FX/System.Windows.Forms.dll -r:$FX/System.Drawing.dll -r:$FX/System.Security.dll \
+    -r:$FX45/mscorlib.dll -r:$FX45/System.dll -r:$FX45/System.Core.dll \
+    -r:$FX45/System.Windows.Forms.dll -r:$FX45/System.Drawing.dll -r:$FX45/System.Security.dll \
     -out:"$OUT/embedded-net45.dll" "$OUT/embedded.cs"
   echo "compiled: $OUT/embedded-net45.dll"
   # control: the same compiler really rejects C# 6 at -langversion:5
   printf 'class C { string s = $"{1}"; string T() => s; }\n' > "$OUT/cs6.cs"
-  if $CSC -langversion:5 -nostdlib -target:library -r:$FX/mscorlib.dll -out:"$OUT/cs6.dll" "$OUT/cs6.cs" >/dev/null 2>&1; then
+  if $CSC -langversion:5 -nostdlib -target:library -r:$FX45/mscorlib.dll -out:"$OUT/cs6.dll" "$OUT/cs6.cs" >/dev/null 2>&1; then
     echo "control FAILED: C# 6 code compiled at langversion 5"; exit 1
   else echo "control ok: C# 6 syntax is rejected at -langversion:5"; fi
   if command -v mcs >/dev/null; then
@@ -54,7 +54,7 @@ if [ -f "$FX/System.Windows.Forms.dll" ]; then
     echo "also compiled by Mono mcs (second, independent C# 5 compiler)"
   fi
 else
-  echo "SKIPPED: $FX not found (install mono-devel for the .NET Framework reference assemblies)"
+  echo "SKIPPED: $FX45 not found (install mono-devel for the .NET Framework reference assemblies)"
 fi
 
 CORE="src/ArenaClient.cs src/ArenaOpponents.cs src/AutoPilot.cs src/BattleCapture.cs src/BattleClock.cs src/BattleTimeline.cs src/BridgeClient.cs src/Channel.cs src/Config.cs src/EquipGuide.cs src/EquipScan.cs src/ErrorReport.cs src/Extractor.cs src/FightPlanClient.cs src/FilterPilot.cs src/GameInfo.cs src/GamePacks.cs src/GuildData.cs src/GvgData.cs src/HeroPilot.cs src/Layout.cs src/ListTracker.cs src/HintLayout.cs src/LiveTables.cs src/LocateClient.cs src/LocateGuide.cs src/MemoryReader.cs src/MiniJson.cs src/NewsClient.cs src/PlansClient.cs src/RecastScan.cs src/RemoteConfig.cs src/SellClient.cs src/SellPilot.cs src/SellScan.cs src/Strings.cs src/SyncClient.cs src/TimelineBuilder.cs src/TestLog.cs src/TraceUpload.cs src/UpdateKeys.cs src/WebViewRecovery.cs app/HintGeometry.cs"
@@ -79,10 +79,10 @@ for i in $(seq 1 50); do curl -s -o /dev/null "http://127.0.0.1:$PORT/__last" &&
 step "5. Tests on .NET 8"
 dotnet exec --runtimeconfig "$OUT/CoreTests.runtimeconfig.json" "$OUT/CoreTests.dll" "http://localhost:$PORT" $ACCOUNT
 
-if command -v mono >/dev/null && [ -f "$FX/System.dll" ]; then
+if command -v mono >/dev/null && [ -f "$FX45/System.dll" ]; then
   step "6. Same tests on Mono (.NET Framework 4.5 API, HttpWebRequest of the Framework family, real DPAPI class)"
   $CSC -langversion:5 -nostdlib -target:exe -warnaserror -nowarn:618 \
-    -r:$FX/mscorlib.dll -r:$FX/System.dll -r:$FX/System.Core.dll -r:$FX/System.Security.dll \
+    -r:$FX45/mscorlib.dll -r:$FX45/System.dll -r:$FX45/System.Core.dll -r:$FX45/System.Security.dll \
     -out:"$OUT/CoreTests-mono.exe" $CORE src/CodeProtector.cs tests/CoreTests.cs
   LANG=C.UTF-8 mono "$OUT/CoreTests-mono.exe" "http://localhost:$PORT" $ACCOUNT
 fi

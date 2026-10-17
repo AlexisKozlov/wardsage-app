@@ -15,7 +15,11 @@ if [ "${1:-}" = "--test" ]; then DEFS=(-define:TESTBUILD); EXE=Wardsage-Test; fi
 # the reference assemblies of the NuGet package Microsoft.NETFramework.ReferenceAssemblies.net462 (FX=... to point at them).
 if [ -d /usr/lib/dotnet/sdk ]; then
   SDK_CSC=$(ls -d /usr/lib/dotnet/sdk/*/Roslyn/bincore/csc.dll | tail -1)
-  FX=${FX:-/usr/lib/mono/4.6.2-api}
+  # Mono's reference assemblies, else the NuGet package's copy next to the repos (the VPS has no Mono)
+  if [ -z "${FX:-}" ]; then
+    FX=/usr/lib/mono/4.6.2-api
+    [ -f "$FX/mscorlib.dll" ] || FX="$(cd "$(dirname "$0")/../.." && pwd)/tools/net462/build/.NETFramework/v4.6.2"
+  fi
 else
   SDK_CSC=$(cygpath -w "$(ls -d "/c/Program Files/dotnet/sdk/"*/Roslyn/bincore/csc.dll | tail -1)")
   FX=${FX:-/d/RealmForge/work/tools/net462/build/.NETFramework/v4.6.2}

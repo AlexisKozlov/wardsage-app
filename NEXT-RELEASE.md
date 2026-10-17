@@ -41,4 +41,7 @@ Optional `### Heading` lines inside a `## RU` / `## EN` section split the update
 
 ## RU
 
+- Герои, которых ты ещё ни разу не прокачивал и не одевал, теперь тоже попадают на сайт — раньше программа их пропускала, и на сайте героев было меньше, чем в игре.
 ## EN
+
+- Heroes you have never levelled or equipped now reach the site too: the app used to skip them, so the site showed fewer heroes than the game.

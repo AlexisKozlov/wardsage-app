@@ -512,7 +512,8 @@ namespace RealmForge {
       L("  live hero map: " + (liveHeroes == null ? "not found" : liveHeroes.Count + " entries"));
       if (liveHeroes != null && liveHeroes.Count > 0) {
         foreach (var d in liveHeroes) {
-          object u; if (!d.TryGetValue("iHeroId", out u) || !(u is long) || (long)u <= 0 || !d.ContainsKey("iBaseId") || !d.ContainsKey("vEquipSlot")) continue;
+          // short-form heroes (never levelled or equipped) have only their ids: kept too, the site fills the defaults
+          object u; if (!d.TryGetValue("iHeroId", out u) || !(u is long) || (long)u <= 0 || !d.ContainsKey("iBaseId")) continue;
           if (!seenH.Add((long)u)) continue;
           if (nh++ > 0) sb.Append(",\n"); J(sb, d);
         }
@@ -1210,14 +1211,17 @@ namespace RealmForge {
       }
       L("  equipment items (owned): " + ne);
       sb.Append("\n],\n\"heroes\":[\n");
-      int nh = 0; var seenH = new HashSet<long>();
+      int nh = 0, nShort = 0; var seenH = new HashSet<long>();
       foreach (var v in TableValues(heroes)) {
         var d = ParseTable(v, 2, new HashSet<ulong>());
-        object u; if (d == null || !d.TryGetValue("iHeroId", out u) || !(u is long) || (long)u <= 0 || !d.ContainsKey("iBaseId") || !d.ContainsKey("vEquipSlot")) continue;
+        object u; if (d == null || !d.TryGetValue("iHeroId", out u) || !(u is long) || (long)u <= 0 || !d.ContainsKey("iBaseId")) continue;
         if (!seenH.Add((long)u)) continue;
+        // a hero never levelled or equipped is kept by the game in a short form (only its ids, the rest are the game's
+        // defaults): sent as it is, the site fills level 1, the stars of the hero's quality and its power
+        if (!d.ContainsKey("vEquipSlot")) nShort++;
         if (nh++ > 0) sb.Append(",\n"); J(sb, d);
       }
-      L("  heroes (owned): " + nh);
+      L("  heroes (owned): " + nh + (nShort > 0 ? " (" + nShort + " in the short form)" : ""));
       Dictionary<string, object> camp = null, arts = null;
       ulong cv, av; int ct, at;
       if (lt.CampOwner != 0 && Field(lt.CampOwner, KCamp, out cv, out ct) && ct == T_TABLE) camp = ParseTable(cv, 1, new HashSet<ulong>());
