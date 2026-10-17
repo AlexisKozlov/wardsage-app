@@ -83,7 +83,7 @@ namespace RealmForge {
       overlay.AutoConfirm = cfg.AutoConfirm;
       overlay.RecButton = Channel.IsTest && cfg.RecButton;
       overlay.RecPressed += () => { Log.Write("record button pressed over the game"); ToggleRec(); };
-      overlay.CancelText = CancelText(cfg.Lang); overlay.LocateCancelText = LocateCancelText(cfg.Lang);
+      overlay.CancelText = CancelText(cfg.Lang); overlay.LocateCancelText = LocateCancelText(cfg.Lang); overlay.SellCancelText = SellCancelText(cfg.Lang);
       coach.Lang = cfg.Lang;
       coach.PlaceX = cfg.CoachX; coach.PlaceY = cfg.CoachY;
       coach.PlaceChanged = (x, y) => { cfg.CoachX = x; cfg.CoachY = y; Save(); };
@@ -96,6 +96,8 @@ namespace RealmForge {
         Post("{\"ev\":\"locate.done\",\"id\":" + S(id) + ",\"what\":" + S(what) + "}");
       };
       overlay.SellHintChanged += st => PostSellHint(st);
+      // «Отменить чистку склада» over the game: the run ends at once here (clicks and hints), the page drops the list and tells the site in the background
+      overlay.SellCancelPressed += () => { overlay.SetSell(null, null, null, 0); Post("{\"ev\":\"sell.cancelRun\"}"); };
       overlay.Problem += (kind, message) => Report(kind, message, null);
       Program.FatalReport = ReportFatal;
       autoTimer.Interval = 1000; autoTimer.Tick += (s, e) => AutoSyncTick(); autoTimer.Start();
@@ -261,6 +263,7 @@ namespace RealmForge {
 
     static string CancelText(string lang) { return lang == "en" ? "Cancel equipping" : "Отменить надевание"; }
     static string LocateCancelText(string lang) { return lang == "en" ? "Stop auto click" : "Остановить автонажатие"; }
+    static string SellCancelText(string lang) { return lang == "en" ? "Cancel storage cleanup" : "Отменить чистку склада"; }
 
     public void Dispose() {
       Program.FatalReport = null;
@@ -367,7 +370,7 @@ namespace RealmForge {
         switch (cmd) {
           case "init": SendState(null); CheckGame(true); PostRemote(); PostLayout(); if (updateReady != null) Post(updateReady); break;
           case "acceptTerms": cfg.TermsAccepted = AppConfig.TermsVersion; Save(); Log.Write("terms accepted: " + AppConfig.TermsVersion); break;
-          case "setLang": cfg.Lang = MiniJson.GetString(m, "lang") == "en" ? "en" : "ru"; overlay.CancelText = CancelText(cfg.Lang); overlay.LocateCancelText = LocateCancelText(cfg.Lang); coach.Lang = cfg.Lang; Save(); break;
+          case "setLang": cfg.Lang = MiniJson.GetString(m, "lang") == "en" ? "en" : "ru"; overlay.CancelText = CancelText(cfg.Lang); overlay.LocateCancelText = LocateCancelText(cfg.Lang); overlay.SellCancelText = SellCancelText(cfg.Lang); coach.Lang = cfg.Lang; Save(); break;
           case "setCode": {
             string code = SyncClient.ExtractCode(MiniJson.GetString(m, "code") ?? "");
             if (SyncClient.IsValidCode(code)) {
@@ -1199,10 +1202,7 @@ namespace RealmForge {
       string site = cfg.Site, code = cfg.Code;
       if (!keep) overlay.SetLocate(null);
       if (string.IsNullOrEmpty(id) || !SyncClient.IsValidCode(code)) return;
-      Task.Factory.StartNew(() => {
-        var r = LocateClient.Finish(site, code, id, done);
-        Log.Write("locate " + id + " " + (done ? "done" : "cancelled") + ": " + r.Status);
-      });
+      Task.Factory.StartNew(() => FinishBackground("locate", id, done, () => LocateClient.Finish(site, code, id, done).Status));
     }
 
     static string LinesJson(List<SubStat> l, string numKey) {
@@ -1335,8 +1335,7 @@ namespace RealmForge {
       string site = cfg.Site, code = cfg.Code;
       if (string.IsNullOrEmpty(id) || !SyncClient.IsValidCode(code)) return;
       Task.Factory.StartNew(() => {
-        var r = PlansClient.Finish(site, code, id, done);
-        Log.Write("plan " + id + " " + (done ? "done" : "cancelled") + ": " + r.Status);
+        var st = FinishBackground("plan", id, done, () => PlansClient.Finish(site, code, id, done).Status);
         if (done) win.BeginInvoke((Action)(() => RequestAutoSync(1)));
       });
     }
@@ -1371,10 +1370,27 @@ namespace RealmForge {
       string site = cfg.Site, code = cfg.Code;
       if (string.IsNullOrEmpty(id) || !SyncClient.IsValidCode(code)) return;
       Task.Factory.StartNew(() => {
-        var r = SellClient.Finish(site, code, id, done);
-        Log.Write("sell list " + id + " " + (done ? "done" : "cancelled") + ": " + r.Status);
+        var st = FinishBackground("sell list", id, done, () => SellClient.Finish(site, code, id, done).Status);
         if (done) win.BeginInvoke((Action)(() => RequestAutoSync(1)));
       });
+    }
+
+    // Reports a finished / cancelled request to the site from a pool thread; never blocks the page or the next job. A «cancelled» that
+    // did not get through (site busy or unreachable) is repeated every 10 s for up to 5 min (a newer report of the same request replaces it).
+    readonly Dictionary<string, int> finishGen = new Dictionary<string, int>();
+    PlansStatus FinishBackground(string kind, string id, bool done, Func<PlansStatus> send) {
+      string key = kind + " " + id; int gen;
+      lock (finishGen) { finishGen.TryGetValue(key, out gen); finishGen[key] = ++gen; }
+      var sw = Stopwatch.StartNew(); int n = 0; PlansStatus st;
+      while (true) {
+        st = send(); n++;
+        Log.Write(key + " " + (done ? "done" : "cancelled") + ": " + st + (n > 1 ? " (try " + n + ")" : ""));
+        if (done || !PlansClient.RetryableCancel(st) || sw.ElapsedMilliseconds + PlansClient.CancelRetryMs > PlansClient.CancelRetryTotalMs) break;
+        Thread.Sleep(PlansClient.CancelRetryMs);
+        int cur; lock (finishGen) { if (!finishGen.TryGetValue(key, out cur) || cur != gen) return st; }   // superseded by a newer report
+      }
+      lock (finishGen) { int cur; if (finishGen.TryGetValue(key, out cur) && cur == gen) finishGen.Remove(key); }
+      return st;
     }
 
     // ------------------------------------------------------------------ local bridge

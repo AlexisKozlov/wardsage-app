@@ -88,6 +88,10 @@ namespace RealmForge {
   }
 
   public static class PlansClient {
+    /// <summary>A «cancelled» report that did not get through (site unreachable or busy) is worth repeating; any other answer is final.</summary>
+    public static bool RetryableCancel(PlansStatus s) { return s == PlansStatus.Unreachable || s == PlansStatus.ServerError; }
+    public const int CancelRetryMs = 10000, CancelRetryTotalMs = 5 * 60 * 1000;
+
     const int MaxReplyBytes = 1024 * 1024;
 
     public static PlansResult List(string site, string code, string lang) {

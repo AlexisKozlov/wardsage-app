@@ -375,6 +375,8 @@ static class CoreTests {
     Check(PlansClient.Interpret(404, "{}", false).Status == PlansStatus.NotFound, "404");
     Check(PlansClient.Interpret(200, "{\"ok\":false}", true).Status == PlansStatus.Unexpected, "ok:false");
     Check(PlansClient.Interpret(502, "<html>", true).Status == PlansStatus.ServerError, "502");
+    Check(PlansClient.RetryableCancel(PlansStatus.Unreachable) && PlansClient.RetryableCancel(PlansStatus.ServerError) && !PlansClient.RetryableCancel(PlansStatus.Ok) && !PlansClient.RetryableCancel(PlansStatus.NotFound) && !PlansClient.RetryableCancel(PlansStatus.InvalidToken), "a cancel to the site is repeated only when the site was not reached / was busy");
+    Check(PlansClient.CancelRetryMs == 10000 && PlansClient.CancelRetryTotalMs == 300000, "cancel retries: every 10 s for 5 min");
 
     // the long poll for new work (src/PlansWait.cs)
     var w1 = PlansWait.Interpret(200, "{\"changed\":true,\"at\":\"2026-10-17T12:00:01.250Z\"}");

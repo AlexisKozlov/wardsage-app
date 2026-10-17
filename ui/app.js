@@ -22,7 +22,7 @@
     forum: { status: 'idle', reply: null, at: 0 },
     run: null, seen: null, runKey: '', queue: [], takeOver: {},
     // storage cleanup: the site's list, the pilot's state on the game's sell screen
-    sell: { list: null, run: false, hint: false, hintFor: null, hs: null, tipKey: '', peakAll: false, state: '', selected: 0, missing: 0, extra: 0, seen: {} },
+    sell: { list: null, run: false, hint: false, hintFor: null, hs: null, tipKey: '', peakAll: false, state: '', selected: 0, missing: 0, extra: 0, seen: {}, dead: {} },
     // «Найти в игре»: the request from the site (with its item card) and what the program reports about the game's screens
     locate: { req: null, step: null, tipKey: '', doneTimer: 0 }, locateEnded: {},
     // the site's switches: reading as a whole, and the features switched off
@@ -448,6 +448,15 @@
     render();
   }
 
+  // «Отменить список» here or the on-screen «Отменить чистку склада»: the run ends at once, the site is told in the background (the app repeats it
+  // while the site is busy); the list stays hidden here even if the site still returns it meanwhile (dead)
+  function sellCancelList() {
+    const L = S.sell; if (!L.list) return;
+    L.dead[L.list.id] = true;
+    host.send({ cmd: 'sell.stop' }); host.send({ cmd: 'sell.finish', id: L.list.id, done: false });
+    L.list = null; L.run = false; L.hint = false; render();
+  }
+
   // auto click off: the same list is shown by itself — frames on the cells to select, nothing is clicked.
   // Sent once per list (hintFor): not again on every render, but again when a new list comes in.
   function sellAutoHint() {
@@ -850,11 +859,7 @@
     // storage cleanup clicks in the game: it needs «Автонажатие» (off by default) — this button is the player's explicit choice
     else if (a === 'sellAuto') { S.autoClick = true; host.send({ cmd: 'setAutoClick', on: true }); sellStart(); }
     else if (a === 'sellStop') { S.sell.run = false; host.send({ cmd: 'sell.stop' }); render(); }
-    else if (a === 'sellCancel') {
-      if (!S.sell.list) return;
-      host.send({ cmd: 'sell.stop' }); host.send({ cmd: 'sell.finish', id: S.sell.list.id, done: false });
-      S.sell.list = null; S.sell.run = false; render();
-    }
+    else if (a === 'sellCancel') sellCancelList();
     else if (a === 'takeOver') {
       // the player asked to take the items off the heroes wearing them now (only this plan)
       const p = current(); if (!p) return;
@@ -1045,6 +1050,7 @@
       case 'sell': {
         if (m.status !== 'ok') break;
         const L = S.sell, was = L.list && L.list.id;
+        if (m.list && L.dead[m.list.id]) m.list = null;   // cancelled here, the site has not closed it yet
         L.list = m.list;
         if (!m.list) { if (L.run) host.send({ cmd: 'sell.stop' }); L.run = false; }
         else if (m.list.id !== was) {
@@ -1057,6 +1063,7 @@
         }
         render(); break;
       }
+      case 'sell.cancelRun': sellCancelList(); break;   // «Отменить чистку склада» over the game
       case 'sell.hint': {
         const L = S.sell; if (!L.run || !L.hint || !L.list) break;
         L.hs = m;

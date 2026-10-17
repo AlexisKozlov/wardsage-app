@@ -213,6 +213,9 @@ namespace RealmForge {
     public string CancelText = "Отменить надевание";
     /// <summary>The same button while «Показать в игре» clicks by itself: it only stops that.</summary>
     public string LocateCancelText = "Остановить автонажатие";
+    public string SellCancelText = "Отменить чистку склада";
+    /// <summary>The on-screen button during the storage cleanup's auto click: the player ends the whole cleanup run (the page cancels the list).</summary>
+    public event Action SellCancelPressed;
     string cancelDrawn; Bitmap cancelBmp;
     // TEST build: the record button over the game (top left); a clickable window like cancelWin, drawn only while the central gate allows
     readonly GlowWindow recWin = new GlowWindow(true);
@@ -322,7 +325,7 @@ namespace RealmForge {
       if (Channel.IsTest) recBtnTimer.Start();
       cancelWin.Pressed += () => {
         cancelWin.Hide();
-        if (SellClicking) { gate.Halt(ClickOwner.Sell, "player", "stopped by the player"); AnnounceHalts(); return; }   // storage cleanup: the clicks stop, the hints stay
+        if (SellClicking) { Log.Write("sell: cancelled over the game"); var sc = SellCancelPressed; if (sc != null) sc(); return; }   // storage cleanup: the whole run ends (clicks and hints), the page cancels the list
         if (LocateWins && runHero <= 0) { lpilot.Cancel(); Log.Write("locate auto: stopped over the game"); return; }   // «Показать в игре»: only the clicks stop
         var c = CancelPressed; if (c != null) c();
       };
@@ -598,7 +601,7 @@ namespace RealmForge {
       var o = new W32.POINT(0, 0); W32.ClientToScreen(hwnd, ref o);
       double U = Ui.Unit(cr.R, cr.B);
       int w = (int)(0.25 * U), h = (int)(0.058 * U);
-      string cancelText = runHero <= 0 ? LocateCancelText : CancelText;   // (here only for a build, for «Показать в игре» or for the storage cleanup)
+      string cancelText = runHero <= 0 ? (SellClicking ? SellCancelText : LocateCancelText) : CancelText;   // (here only for a build, for «Показать в игре» or for the storage cleanup)
       string key = cancelText + "|" + w + "x" + h;
       if (key != cancelDrawn || cancelBmp == null) {
         if (cancelBmp != null) cancelBmp.Dispose();
