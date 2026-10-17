@@ -2238,6 +2238,30 @@ static class CoreTests {
     Eq("inList", LocateGuide.Next(req, inv(), null, null, 8, 1).Key, "step key");
     Eq("openRecastTab", new LocateStep { Kind = LocateKind.OpenRecastTab }.Key, "step key camel case");
 
+    // Ascension (purpose "ascend")
+    var areq = new LocateRequest { Id = "a1", Purpose = "ascend", Item = item, HeroUid = 200 };
+    Func<RecastScreen> ar = () => new RecastScreen { SublimingOpen = true, AscendShown = true, CurType = 2, AscendEquips = new long[] { 100, 777, 101 } };
+    var ars = ar();
+    st = LocateGuide.Next(areq, null, ars, null, 8, 1);
+    Check(st.Kind == LocateKind.AscendPick && st.Pos == 2 && st.Count == 3, "ascend: item in the Ascension list -> pick");
+    ars.AscendSel = 777; Eq(LocateKind.AscendReady, LocateGuide.Next(areq, null, ars, null, 8, 1).Kind, "ascend: selected -> press Ascend");
+    ars.AscendSel = 5; ars.AscendEquips = new long[] { 100 };
+    Eq(LocateKind.AscendNotInList, LocateGuide.Next(areq, null, ars, null, 8, 1).Kind, "ascend: not in the list");
+    ars = ar(); ars.CurType = 3; ars.AscendShown = false;
+    Eq(LocateKind.OpenAscendTab, LocateGuide.Next(areq, null, ars, null, 8, 1).Kind, "ascend: foundry on another tab");
+    ars = ar(); ars.AscendShown = false;
+    Eq(LocateKind.OpenInventory, LocateGuide.Next(areq, null, ars, null, 8, 1).Kind, "ascend: tab switching, panel not on screen yet -> inventory step");
+    Eq(LocateKind.InList, LocateGuide.Next(areq, inv(), null, null, 8, 1).Kind, "ascend: inventory step is the same as recast's");
+    iv = inv(); iv.Current = 777;
+    Eq(LocateKind.Selected, LocateGuide.Next(areq, iv, null, null, 8, 1).Kind, "ascend: selected in the inventory");
+    Eq(LocateKind.OtherAccount, LocateGuide.Next(areq, inv(), ar(), null, 8, 0).Kind, "ascend: another account");
+    var gmA = new RecastScreen { GemOpen = true, GemFunc = 7, GemSel = 777, GemList = new long[] { 777 } };
+    Eq(LocateKind.InList, LocateGuide.Next(areq, inv(), gmA, null, 8, 1).Kind, "ascend: the gem screen is not part of it");
+    Eq(LocateKind.AscendReady, LocateGuide.Next(areq, null, new RecastScreen { SublimingOpen = true, AscendShown = true, CurType = 2, AscendSel = 777 }, null, 8, 1).Kind, "ascend: ready needs no list");
+    var aj = PlansClient.Interpret(200, "{\"ok\":true,\"locate\":{\"id\":\"a1\",\"purpose\":\"ascend\",\"item\":null}}", true).Locate;
+    Check(aj != null && aj.Purpose == "ascend", "locate: purpose ascend accepted");
+    Eq("ascendReady", new LocateStep { Kind = LocateKind.AscendReady }.Key, "ascend: step key");
+
     // sub stats against the game's
     var chk = LocateGuide.CheckSubs(item, new[] { new long[] { 5, 10 }, new long[] { 7, 0 }, new long[] { 9, 0 }, new long[] { 3, 0 } });
     Check(chk.Match.Length == 4 && chk.Match[0] && chk.Match[3] && !chk.Changed, "sub check: same four stats");

@@ -31,9 +31,13 @@ namespace RealmForge {
     public int GemFunc = -1;                   // its selected function (7, 8 = recast)
     public long GemSel;                        // item selected there, 0 = none
     public long[] GemList = new long[0];       // the item pop-up's list
+    public bool AscendShown;                   // the foundry's «Вознесение» panel (tab 2) is on the screen
+    public long[] AscendEquips = new long[0];  // its list in screen order
+    public long AscendSel;                     // item selected there, 0 = none
     public bool ChoosePending;                 // a recast result waits for the choice (blocks selecting another item); not read yet
 
     public bool OnRecast { get { return SublimingOpen && PanelShown && CurType == 3; } }
+    public bool OnAscend { get { return SublimingOpen && AscendShown && CurType == 2; } }
     public bool OnGemRecast { get { return GemOpen && (GemFunc == 7 || GemFunc == 8); } }
   }
 
@@ -66,6 +70,16 @@ namespace RealmForge {
             if (Field(fc, "vSubAttrs", out t, out tt) && tt == T_TABLE) s.SubAttrs = IntSet(t);
             else if (Field(fc, "SubAttrs", out t, out tt) && tt == T_TABLE) s.SubAttrs = IntSet(t);
           }
+        }
+      }
+      if (sf != 0) {
+        // the «Вознесение» tab's panel has the same list fields as the recast panel (read-only, no filter is read)
+        ulong ap, t; int apt;
+        if (Field(sf, "m_PanelEquipSubliming", out ap, out apt) && apt == T_TABLE) {
+          s.AscendShown = (Field(ap, "m_IsShow", out v, out tt) && tt == T_BOOL && (v & 0xFFFFFFFF) != 0)
+                       || (Field(ap, "m_bActive", out v, out tt) && tt == T_BOOL && (v & 0xFFFFFFFF) != 0);
+          if (Field(ap, "m_Equips", out t, out tt) && tt == T_TABLE) s.AscendEquips = OrderedInts(t);
+          if (Field(ap, "m_EquipId", out v, out tt) && tt == T_INT && (long)v > 0) s.AscendSel = (long)v;
         }
       }
       if (gf != 0) {

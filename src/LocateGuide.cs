@@ -20,7 +20,11 @@ namespace RealmForge {
     RecastNotInList,  // the filter is set but the item is not in the list
     ChoosePending,    // a recast result waits for the choice
     GemPick,          // the gem screen: pick the item in its pop-up
-    Done              // the recast screen has the item selected
+    Done,             // the recast screen has the item selected
+    OpenAscendTab,    // «Ascension»: the foundry is open on another tab
+    AscendPick,       // the item is in the foundry's Ascension list: pick it
+    AscendNotInList,  // the Ascension list does not hold the item (not ready for Ascension, or a filter hides it)
+    AscendReady       // the Ascension screen has the item selected: the player presses the Ascend button
   }
 
   public sealed class LocateStep {
@@ -51,6 +55,20 @@ namespace RealmForge {
       if (req == null) { st.Kind = LocateKind.None; return st; }
       if (req.Item == null) { st.Kind = LocateKind.NoItem; return st; }
       long uid = req.Item.Uid;
+      bool asc = req.Purpose == "ascend";
+      if (asc) {
+        if (rs != null && rs.OnAscend && rs.AscendSel == uid) { st.Kind = LocateKind.AscendReady; return st; }
+        if (onAccount == 0) { st.Kind = LocateKind.OtherAccount; return st; }
+        if (rs != null && rs.OnAscend) {
+          st.Count = rs.AscendEquips.Length;
+          var ap = Position(rs.AscendEquips, uid, 1);
+          if (ap != null) { st.Pos = ap[0]; st.Row = ap[1]; st.Col = ap[2]; st.Kind = LocateKind.AscendPick; }
+          else st.Kind = LocateKind.AscendNotInList;
+          return st;
+        }
+        if (rs != null && rs.SublimingOpen && rs.CurType >= 0 && rs.CurType != 2) { st.Kind = LocateKind.OpenAscendTab; return st; }
+        return NextInInventory(req, inv, hero, cols, st);
+      }
       if (rs != null && ((rs.OnRecast && rs.Sel == uid) || (rs.OnGemRecast && rs.GemSel == uid))) { st.Kind = LocateKind.Done; return st; }
       if (onAccount == 0) { st.Kind = LocateKind.OtherAccount; return st; }
 
@@ -74,6 +92,12 @@ namespace RealmForge {
         return st;
       }
 
+      return NextInInventory(req, inv, hero, cols, st);
+    }
+
+    // the part both purposes share: find the item in the inventory (or on the hero's gear screen)
+    static LocateStep NextInInventory(LocateRequest req, InventoryScreen inv, HeroScreen hero, int cols, LocateStep st) {
+      long uid = req.Item.Uid;
       if (inv != null && inv.Open) {
         if (!inv.EquipTab) { st.Kind = LocateKind.OpenEquipTab; return st; }
         if (inv.Current == uid) { st.Kind = LocateKind.Selected; return st; }

@@ -5,7 +5,8 @@
 // t(key, …args) is the interface's text lookup.
 (function (root) {
   const KINDS = ['noItem', 'otherAccount', 'openInventory', 'openEquipTab', 'inList', 'hiddenFilter', 'selected', 'openRecastTab',
-    'recastFilter', 'recastPick', 'recastNotInList', 'choosePending', 'gemPick', 'done'];
+    'recastFilter', 'recastPick', 'recastNotInList', 'choosePending', 'gemPick', 'done',
+    'openAscendTab', 'ascendPick', 'ascendNotInList', 'ascendReady'];
 
   function names(list) { return (list || []).map((x) => x.name || x.text).filter(Boolean); }
 
@@ -27,12 +28,14 @@
     if (!st || KINDS.indexOf(st.step) < 0) return { tone: 'info', head: t('locOpenInventory'), lines: [], tip: [t('locOpenInventory')] };
     const it = req.item, pos = t('locPos', st.pos, st.count);
     let r;
+    const asc = req.purpose === 'ascend';   // Ascension (gear T1 -> T2): the same inventory steps, the foundry's «Ascend» tab at the end
     switch (st.step) {
       case 'noItem': r = { tone: 'warn', head: t('locNoItem'), lines: [t('locNoItemP')] }; break;
       case 'otherAccount': r = { tone: 'warn', head: t('locOther'), lines: [t('locOtherP')] }; break;
       case 'openInventory':
         r = st.onHero ? { tone: 'info', head: t('locOnHero', it.slotName || '', req.heroName || ''), lines: [t('locOnHeroP')] }
                       : { tone: 'info', head: t('locOpenInventory'), lines: [t('locOpenInventoryP')] };
+        if (st.onHero && asc) r.lines = [t('locOnHeroAP')];
         break;
       case 'openEquipTab': r = { tone: 'info', head: t('locEquipTab'), lines: [] }; break;
       case 'inList':
@@ -40,7 +43,7 @@
                          : { tone: 'info', head: t('locInList', st.row, st.col), lines: [t('locInListP')] };
         break;
       case 'hiddenFilter': r = { tone: 'warn', head: t('locHidden'), lines: [t('locHiddenP')] }; break;
-      case 'selected': r = { tone: 'done', head: t('locSelected'), lines: [t('locSelectedP')] }; break;
+      case 'selected': r = asc ? { tone: 'done', head: t('locSelectedA'), lines: [t('locSelectedAP')] } : { tone: 'done', head: t('locSelected'), lines: [t('locSelectedP')] }; break;
       case 'openRecastTab': r = { tone: 'info', head: t('locRecastTab'), lines: [] }; break;
       case 'recastFilter': {
         const l = filterLines(req, st, t);
@@ -51,6 +54,10 @@
       case 'recastNotInList': r = { tone: 'warn', head: t('locNotInList'), lines: [t('locNotInListP')] }; break;
       case 'choosePending': r = { tone: 'warn', head: t('locPending'), lines: [t('locPendingP')] }; break;
       case 'gemPick': r = st.pos > 0 ? { tone: 'info', head: t('locPick', st.pos, st.count), lines: [] } : { tone: 'info', head: t('locGemOpen'), lines: [] }; break;
+      case 'openAscendTab': r = { tone: 'info', head: t('locAscendTab'), lines: [] }; break;
+      case 'ascendPick': r = { tone: 'info', head: t('locPick', st.pos, st.count), lines: [] }; break;
+      case 'ascendNotInList': r = { tone: 'warn', head: t('locAscNotInList'), lines: [t('locAscNotInListP')] }; break;
+      case 'ascendReady': r = { tone: 'done', head: t('locAscendReady'), lines: [t('locAscendReadyP')] }; break;
       default: r = { tone: 'done', head: t('locDone'), lines: [t('locDoneP')] };
     }
     // the plate over the game: the head and the first lines, short

@@ -3210,7 +3210,7 @@ namespace RealmForge {
 //        401 invalid_token
 //   POST {site}/api/extractor/plans/{id}                body {"status":"done"|"cancelled"}
 //        200 {ok:true} | 401 | 404 not_found
-// The same reply may carry  locate: {id, purpose:"recast", createdAt, item:{...a plan item, heroUid, heroName}|null}|null  -
+// The same reply may carry  locate: {id, purpose:"recast"|"ascend", createdAt, item:{...a plan item, heroUid, heroName}|null}|null  -
 // a «Найти в игре» request from the site (src/LocateGuide.cs); older sites omit it.
 // The site only stores builds; the extractor reads the game (read-only) and shows hints. Nothing is sent to the game.
 
@@ -3432,7 +3432,7 @@ namespace RealmForge {
       string id = MiniJson.GetString(o, "id");
       if (string.IsNullOrEmpty(id) || id.Length > 64) return null;
       string purpose = MiniJson.GetString(o, "purpose") ?? "recast";
-      if (purpose != "recast") return null;
+      if (purpose != "recast" && purpose != "ascend") return null;
       var r = new LocateRequest { Id = id, Purpose = purpose, CreatedAt = Clip(MiniJson.GetString(o, "createdAt"), 40) };
       object iv;
       var d = o.TryGetValue("item", out iv) ? MiniJson.AsObject(iv) : null;

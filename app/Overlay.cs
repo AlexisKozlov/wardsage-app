@@ -1304,7 +1304,7 @@ namespace RealmForge {
         if (front && locateInv != null && locateInv.Open && locateInv.EquipTab) { int c = InvColumns(o, cr, U); if (c > 0) locateCols = c; }
         heroScreen = RFX.ReadHeroScreen(addrs, heroScreen);
         var st = LocateGuide.Next(req, locateInv, rs, heroScreen, locateCols, RFX.ItemOnAccount(uid));
-        if (Math.Abs(now - locateSubsAt) >= 1500 && (st.Kind == LocateKind.Selected || st.Kind == LocateKind.Done || st.Kind == LocateKind.RecastPick || st.Kind == LocateKind.InList)) {
+        if (Math.Abs(now - locateSubsAt) >= 1500 && (st.Kind == LocateKind.Selected || st.Kind == LocateKind.Done || st.Kind == LocateKind.RecastPick || st.Kind == LocateKind.AscendPick || st.Kind == LocateKind.AscendReady || st.Kind == LocateKind.InList)) {
           locateSubsAt = now;
           var live = RFX.ReadLiveItemSubs(uid);
           locateSubs = live != null ? LocateGuide.CheckSubs(req.Item, live) : null;
