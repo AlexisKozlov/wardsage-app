@@ -17,7 +17,7 @@
     sync: { phase: 'idle', stage: null, seconds: 0, result: null, error: null },
     plans: { status: 'idle', list: [], err: null }, sel: 0,
     scan: { status: 'idle', panel: false }, live: null, reported: {}, compact: false, overlay: 'off', ovFar: false, hl: '',
-    more: {}, autoSync: true, autoClick: false, autoConfirm: false, errorReports: false, autoUpdate: true, bossHints: true, recButton: true, plansWait: false, tray: true, autostart: false, auto: 'idle', autoAt: null,
+    more: {}, autoSync: true, autoClick: false, autoConfirm: false, errorReports: false, autoUpdate: true, bossHints: true, recButton: true, guideStyle: 'auto', plansWait: false, tray: true, autostart: false, auto: 'idle', autoAt: null,
     news: { status: 'idle', feed: null, filter: 'all', at: 0 },
     forum: { status: 'idle', reply: null, at: 0 },
     run: null, seen: null, runKey: '', queue: [], takeOver: {},
@@ -697,6 +697,7 @@
     // TEST build only: the screen recorder for the developers (host: rec.start / rec.stop, event 'rec')
     const rec = S.channel !== 'test' ? '' : sec(t('secRec'), row(t('setRec'), t('setRecP'), `<button class="btn-line" id="recBtn" data-act="rec">${esc(recLabel())}</button>`, { wide: true })
       + row(t('setRecBtn'), t('setRecBtnP'), sw('recButton', S.recButton))
+      + row(t('setGuide'), t('setGuideP'), `<div class="langs">${['auto', 'on', 'off'].map(v => `<button data-act="guideStyle" data-v="${v}" aria-pressed="${S.guideStyle === v}">${esc(t('setGuide_' + v))}</button>`).join('')}</div>`)
       + (S.rec.sent || S.rec.total || S.rec.why ? `<p class="sdet" id="recInfo">${esc(recNote())}</p>` : ''));
     const left = [
       sec(t('secSync'),
@@ -819,6 +820,7 @@
     else if (a === 'saveCode') { const v = $('#code').value.trim(); if (CODE_RE.test(v)) host.send({ cmd: 'setCode', code: v }); }
     else if (a === 'unlink') host.send({ cmd: 'clearCode' });
     else if (a === 'copy') { S.saveCopy = !S.saveCopy; host.send({ cmd: 'setSaveCopy', on: S.saveCopy }); render(); }
+    else if (a === 'guideStyle') { S.guideStyle = el.dataset.v; host.send({ cmd: 'setGuideStyle', v: S.guideStyle }); render(); }
     else if (a === 'recButton') { S.recButton = !S.recButton; host.send({ cmd: 'setRecButton', on: S.recButton }); render(); }
     else if (a === 'bossHints') { S.bossHints = !S.bossHints; host.send({ cmd: 'setBossHints', on: S.bossHints }); render(); }
     else if (a === 'tray') { S.tray = !S.tray; host.send({ cmd: 'setTray', on: S.tray }); render(); }
@@ -886,7 +888,7 @@
     switch (m.ev) {
       case 'state':
         Object.assign(S, { lang: m.lang, version: m.version, channel: m.channel || 'main', site: m.site, defaultSite: m.defaultSite, termsOk: m.termsOk !== false, hasCode: m.hasCode, codePrefix: m.codePrefix, saveCopy: m.saveCopy, last: m.last || S.last });
-        if (m.autoSync !== undefined) { S.autoSync = m.autoSync; S.autoClick = m.autoClick; S.autoConfirm = !!m.autoConfirm; S.errorReports = !!m.errorReports; S.autoUpdate = m.autoUpdate !== false; S.tray = m.tray !== false; S.bossHints = m.bossHints !== false; S.recButton = m.recButton !== false; S.autostart = !!m.autostart; }
+        if (m.autoSync !== undefined) { S.autoSync = m.autoSync; S.autoClick = m.autoClick; S.autoConfirm = !!m.autoConfirm; S.errorReports = !!m.errorReports; S.autoUpdate = m.autoUpdate !== false; S.tray = m.tray !== false; S.bossHints = m.bossHints !== false; S.recButton = m.recButton !== false; S.guideStyle = m.guideStyle || 'auto'; S.autostart = !!m.autostart; }
         if (m.game) S.game = m.game;
         if (m.codeSaved) { S.editCode = false; toast(t('saved')); if (S.page === 'equip' || S.plans.status !== 'idle') loadPlans(); }
         if (m.siteSaved) toast(t('saved'));

@@ -89,6 +89,7 @@ window.RF_TEXTS = {
     gFilterNoSet: 'Сузь список: «Фильтр» → главный стат «{0}»',
 
     secRec: 'Запись экрана для разработчиков', setRec: 'Запись экрана', setRecP: 'Записывает окно игры с подсказками программы, пока вы не нажмёте «Стоп» (не дольше 5 минут), и отправляет запись разработчикам. Только тестовая версия.',
+    setGuide: 'Новая подсветка кнопок', setGuideP: 'Затемнение с отверстием и рука у кнопки вместо прежней рамки. «Авто»: как решит сайт. Только тестовая версия.', setGuide_auto: 'АВТО', setGuide_on: 'ВКЛ', setGuide_off: 'ВЫКЛ',
     setRecBtn: 'Кнопка записи поверх игры', setRecBtnP: 'Маленькая круглая кнопка в левом верхнем углу игры: начать и остановить запись, не переключаясь в программу. Только тестовая версия.',
     recStart: 'Записать', recStop: 'Стоп · {0}', recSent: 'Отправлено {0} из {1}.', recLimit: 'Запись остановилась сама: предел достигнут.', recOff: 'Сайт не принимает записи, файлы остались на компьютере.',
     setDiag: 'Диагностика рамки', setDiagP: '5 минут: снимки окна игры и данные списка сохраняются в папку debug рядом с программой. Никуда не отправляются.', diagStart: 'Включить', diagOn: 'Включено на 5 минут',
@@ -287,6 +288,7 @@ window.RF_TEXTS = {
     gFilterNoSet: 'Narrow the list: “Filter” → main stat “{0}”',
 
     secRec: 'Screen recording for the developers', setRec: 'Screen recording', setRecP: 'Records the game window with the program\'s hints until you press "Stop" (5 minutes at most) and sends the recording to the developers. Test version only.',
+    setGuide: 'New button highlight', setGuideP: 'A dimmed screen with a hole and a hand at the button instead of the former frame. «Auto»: as the site decides. Test version only.', setGuide_auto: 'AUTO', setGuide_on: 'ON', setGuide_off: 'OFF',
     setRecBtn: 'Record button over the game', setRecBtnP: 'A small round button in the top left corner of the game: start and stop the recording without switching to the program. Test version only.',
     recStart: 'Record', recStop: 'Stop · {0}', recSent: 'Sent {0} of {1}.', recLimit: 'The recording stopped by itself: the limit was reached.', recOff: 'The site does not take recordings; the files stay on this PC.',
     setDiag: 'Frame diagnostics', setDiagP: '5 minutes: screenshots of the game window and list data are saved to the debug folder next to the program. Nothing is sent.', diagStart: 'Turn on', diagOn: 'On for 5 minutes',

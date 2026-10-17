@@ -156,6 +156,48 @@ namespace RealmForge {
     }
   }
 
+  /// <summary>The guide hand's picture ({site}/art/ui/guide-hand-down.png): fetched once into the app's data folder, then read from there;
+  /// not available = no hand is drawn (the highlight works without it).</summary>
+  static class GuideHand {
+    /// <summary>Where the fingertip is on the picture (fractions of its width and height).</summary>
+    public const double TipX = 0.36, TipY = 0.85;
+    static volatile Image img;
+    static int state;            // 0 = not tried, 1 = loading, 2 = done
+    static long retryAt;
+    static string Cache { get { return Path.Combine(AppConfig.DefaultDir, "art", "guide-hand-down.png"); } }
+
+    public static Image Get(string site) {
+      var i = img; if (i != null) return i;
+      if (string.IsNullOrEmpty(site)) return null;
+      long now = Environment.TickCount;
+      if (state == 1 || (state == 2 && now - retryAt < 0)) return null;
+      state = 1;
+      System.Threading.ThreadPool.QueueUserWorkItem(delegate {
+        try {
+          if (!File.Exists(Cache)) Download(site.TrimEnd('/') + "/art/ui/guide-hand-down.png");
+          using (var s = new MemoryStream(File.ReadAllBytes(Cache))) img = new Bitmap(Image.FromStream(s));
+        } catch (Exception) { try { if (File.Exists(Cache)) File.Delete(Cache); } catch (Exception) { } }
+        retryAt = Environment.TickCount + 10 * 60 * 1000; state = 2;   // a failed try is repeated after 10 minutes
+        if (img != null) state = 3;
+      });
+      return null;
+    }
+
+    static void Download(string url) {
+      SyncClient.EnableTls12();
+      var req = (System.Net.HttpWebRequest)System.Net.WebRequest.Create(url);
+      req.UserAgent = SyncClient.UserAgent; req.Timeout = 8000; req.ReadWriteTimeout = 8000; req.AllowAutoRedirect = false;
+      using (var resp = (System.Net.HttpWebResponse)req.GetResponse())
+      using (var s = resp.GetResponseStream())
+      using (var ms = new MemoryStream()) {
+        var buf = new byte[8192]; int n;
+        while ((n = s.Read(buf, 0, buf.Length)) > 0) { ms.Write(buf, 0, n); if (ms.Length > 2 * 1024 * 1024) throw new IOException("too big"); }
+        Directory.CreateDirectory(Path.GetDirectoryName(Cache));
+        File.WriteAllBytes(Cache, ms.ToArray());
+      }
+    }
+  }
+
   /// <summary>Finds the target item on the screen and keeps the frame on it (10 times a second while the gear list is open).</summary>
   sealed class OverlayController : IDisposable {
     readonly Timer timer = new Timer();
@@ -930,7 +972,7 @@ namespace RealmForge {
       int[] r = hintKind == "filter" ? hg.Filter(W, H) : hintKind == "replace" ? confirmBtn ?? hg.Replace(W, H) : hintKind == "slot" ? hg.Slot(hintSlot, W, H) : null;
       // the hero is open on another tab: its «Снаряжение» tab (right edge)
       if (hintKind == "geartab") { int s = (int)(0.1 * U); r = new[] { (int)(W - hg2.GearTabDX * U) - s / 2, (int)(hg2.GearTabY * U) - s / 2, s, s }; }
-      if (r == null) HideTip(); else DrawTip(o.X + r[0], o.Y + r[1], r[2], r[3], hintLines, H, false, false, hintKind == "geartab");
+      if (r == null) HideTip(); else DrawTip(o.X + r[0], o.Y + r[1], r[2], r[3], hintLines, H, false, false, hintKind == "geartab", null, false, GuideStyle && hintKind == "replace" ? HlRound(o.X + r[0], o.Y + r[1], r[2], r[3], true) : null);   // «Заменить»: the player's own press, the edge only
     }
 
     // the filter pop-up's «Выбрать часть» icons: x of their middles from the window centre and y (in the pop-up's terms)
@@ -1149,9 +1191,9 @@ namespace RealmForge {
       Scene(tip, ref tipKey, null, new Plate { Caps = caps ?? Tx("caps"), Main = lines[0], Sub = lines.Length > 1 ? lines[1] : "" }, null, null);
     }
 
-    void DrawTip(int x, int y, int w, int h, string[] lines, double H, bool plateOnly = false, bool below = false, bool right = false, string caps = null, bool warn = false) {
+    void DrawTip(int x, int y, int w, int h, string[] lines, double H, bool plateOnly = false, bool below = false, bool right = false, string caps = null, bool warn = false, Hl hl = null) {
       var p = lines != null && lines.Length > 0 ? new Plate { Caps = caps ?? Tx("caps"), Main = lines[0], Sub = lines.Length > 1 ? lines[1] : "", Warn = warn } : null;
-      Scene(tip, ref tipKey, plateOnly ? null : new[] { x, y, w, h }, p, new[] { x, y, w, h }, null);
+      Scene(tip, ref tipKey, plateOnly ? null : new[] { x, y, w, h }, p, new[] { x, y, w, h }, null, null, hl);
     }
 
     /// <summary>Draws one hint into <paramref name="win"/>: <paramref name="frameR"/> (screen px, null = no frame), the plate
@@ -1165,13 +1207,20 @@ namespace RealmForge {
       if (marks != null) foreach (var m in marks) recB.Frames.Add(new RecFrameRect { Kind = pre + "mark" + (m.Length > 4 ? m[4].ToString() : ""), X = m[0] - sceneX, Y = m[1] - sceneY, W = m[2], H = m[3] });
     }
 
-    void Scene(GlowWindow win, ref string key, int[] frameR, Plate p, int[] target, double[] strip, List<int[]> marks = null) {
+    void Scene(GlowWindow win, ref string key, int[] frameR, Plate p, int[] target, double[] strip, List<int[]> marks = null, Hl hl = null) {
       if (!GameDrawable()) { if (win.Visible) win.Hide(); key = null; return; }
       if (recB != null) RecScene(win, frameR, strip, marks);
       float pulse = (float)(0.6 + 0.4 * Math.Sin(frame * 0.45));
+      // the new highlight (switch guideStyle): a frame with a Hl is drawn by PaintGuide; off = the old frame, nothing below changes
+      bool ng = GuideStyle && hl != null && frameR != null, dim = ng && !hl.Important;
+      long tms = (uint)Environment.TickCount;
+      guideLvl = (int)Math.Round(5 * (0.5 + 0.5 * Math.Sin(2 * Math.PI * (tms % 1200) / 1200.0)));   // the pulse, 1.2 s, in 6 steps
+      int bob = dim ? (int)Math.Round(2 + 2 * Math.Sin(2 * Math.PI * (tms % 1600) / 1600.0)) : 0;   // the hand's bob, 4 px
+      Image hand = dim ? GuideHand.Get(GuideSite) : null;
       string k = (frameR != null ? string.Join(",", frameR) : "-") + "|" + (target != null ? string.Join(",", target) : "-") + "|"
         + (p != null ? p.Caps + "/" + p.Main + "/" + p.Sub + "/" + p.Pill + "/" + p.Warn : "-") + "|" + (strip != null ? string.Join(",", Array.ConvertAll(strip, v => ((int)v).ToString())) : "-")
-        + "|" + (frameR != null || strip != null ? (int)(pulse * 10) : 0) + "|" + sceneW + "x" + sceneH
+        + "|" + (frameR != null || strip != null ? (ng ? 0 : (int)(pulse * 10)) : 0) + "|" + sceneW + "x" + sceneH
+        + (ng ? "|g" + guideLvl + "," + bob + (hand != null ? "h" : "") + (hl.Important ? "i" : "") + (hl.Shape != null ? hl.Shape.K : "") : GuideStyle && marks != null && marks.Count > 0 ? "|g" + guideLvl : "")
         + (marks != null && marks.Count > 0 ? "|m" + string.Join(";", marks.ConvertAll(m => string.Join(",", m))) : "");
       if (k == key) return;
       key = k;
@@ -1215,6 +1264,7 @@ namespace RealmForge {
         Action<int, int, int, int> grow = (a, b, c, d) => { x0 = Math.Min(x0, a); y0 = Math.Min(y0, b); x1 = Math.Max(x1, c); y1 = Math.Max(y1, d); };
         int fm = frameR != null ? Math.Max(G, (int)(0.21 * Math.Max(frameR[2], frameR[3])) + 2) : 0;
         if (frameR != null) grow(frameR[0] - fm, frameR[1] - fm, frameR[0] + frameR[2] + fm, frameR[1] + frameR[3] + fm);
+        if (dim) grow(sceneX, sceneY, sceneX + sceneW, sceneY + sceneH);   // the dimming covers the whole client
         if (pos != null) grow(sceneX + pos[0] - 16, sceneY + pos[1] - 16, sceneX + pos[0] + pw + 16, sceneY + pos[1] + ph + 16);
         if (strip != null) grow((int)strip[0] - 12, (int)strip[1] - 12, (int)strip[0] + 12, (int)strip[2] + 12);
         int Gm = (int)Math.Max(6, 0.008 * U);   // the glow of a cell frame among many: small, the neighbours are close
@@ -1230,7 +1280,8 @@ namespace RealmForge {
           using (var gr = Graphics.FromImage(bmp)) {
             gr.SmoothingMode = SmoothingMode.AntiAlias; gr.TextRenderingHint = TextRenderingHint.AntiAliasGridFit; gr.Clear(Color.Transparent);
             gr.InterpolationMode = InterpolationMode.HighQualityBicubic;
-            if (frameR != null) PaintFrame(gr, frameR[0] - x0, frameR[1] - y0, frameR[2], frameR[3], pulse, G);
+            if (ng) PaintGuide(gr, hl, x0, y0, bw, bh, dim, G, hand, bob, U);
+            else if (frameR != null) PaintFrame(gr, frameR[0] - x0, frameR[1] - y0, frameR[2], frameR[3], pulse, G);
             if (strip != null) PaintStrip(gr, strip, x0, y0, pulse, U);
             if (marks != null) foreach (var m in marks) PaintMark(gr, m[0] - x0, m[1] - y0, m[2], m[3], m[4], Gm);
             if (p != null) {
@@ -1241,6 +1292,7 @@ namespace RealmForge {
           win.Put(bmp, x0, y0);
           win.Parts.Clear();
           if (frameR != null) win.Parts.Add(new[] { frameR[0] - fm, frameR[1] - fm, frameR[2] + 2 * fm, frameR[3] + 2 * fm });
+          if (dim) win.Parts.Add(new[] { sceneX, sceneY, sceneW, sceneH });
           if (pos != null) win.Parts.Add(new[] { sceneX + pos[0] - 4, sceneY + pos[1] - 4, pw + 20, ph + 20 });
           if (strip != null) win.Parts.Add(new[] { (int)strip[0] - 14, (int)strip[1] - 14, 28, (int)(strip[2] - strip[1]) + 28 });
           if (marks != null) foreach (var m in marks) win.Parts.Add(new[] { m[0] - 4, m[1] - 4, m[2] + 8, m[3] + 8 });
@@ -1278,7 +1330,11 @@ namespace RealmForge {
     // a cell frame among many (the storage cleanup): style 0 = to select (the game's gold frame, steady), 1 = selected (a thin
     // dim gold line with a check mark), 2 = selected but not on the list (red)
     void PaintMark(Graphics gr, float x, float y, float w, float h, int style, int G) {
-      if (style == 0) { PaintFrame(gr, x, y, w, h, 1f, G); return; }
+      if (style == 0) {
+        if (GuideStyle) PaintGuide(gr, HlCell(0, 0, 0, 0), 0, 0, 0, 0, false, G, null, 0, 0, new GeoRect { X = x, Y = y, W = w, H = h });   // storage cleanup: the gold edge of the new highlight
+        else PaintFrame(gr, x, y, w, h, 1f, G);
+        return;
+      }
       if (style == 1) {
         using (var pen = new Pen(Color.FromArgb(200, 150, 130, 84), 2.5f)) gr.DrawPath(pen, Round(x - 1, y - 1, w + 2, h + 2, 7));
         float r = Math.Max(7f, Math.Min(w, h) * 0.12f), cx = x + w - r - 3, cy = y + r + 3;
@@ -1832,7 +1888,7 @@ namespace RealmForge {
         DrawTip(cityBtn[0], cityBtn[1], cityBtn[2], cityBtn[3], locateLines, H, false, false, false, locateCaps);
       } else if (front && locateLines.Length > 0 && lf != null && lf.Mark.Kind == "box") {
         frame++;   // the button / tab / cell: its frame with the step's plate beside it
-        DrawTip(o.X + lf.Mark.X, o.Y + lf.Mark.Y, lf.Mark.W, lf.Mark.H, locateLines, H, false, false, false, locateCaps);
+        DrawTip(o.X + lf.Mark.X, o.Y + lf.Mark.Y, lf.Mark.W, lf.Mark.H, locateLines, H, false, false, false, locateCaps, false, GuideStyle ? HlLocate(lf, step, o) : null);
       } else if (front && locateLines.Length > 0 && (hold || step.Kind != LocateKind.InList || locateNeedClick)) {
         frame++;
         DrawTipTop(locateLines, locateCaps);   // its own header, not the plan's «Шаг N из M»
@@ -2548,6 +2604,68 @@ namespace RealmForge {
 
     // ---------------------------------------------------------------- drawing
 
+    // ---------------------------------------------------------------- the new button highlight (site switch guideStyle, test build: Settings)
+    // A (normal steps): the client dimmed (black 55 %) with a hole in the button's shape (+5 px), a 2 px warm-gold edge with a soft glow pulsing
+    // 0.65..1.0 every 1.2 s, and the guide hand above the button bobbing 4 px. B (the player's own final press, list cells): the edge and glow only.
+    /// <summary>The new highlight is on (the site's guideStyle switch, or the test build's own setting).</summary>
+    public bool GuideStyle;
+    /// <summary>The site's address (the hand picture is fetched from it once).</summary>
+    public string GuideSite = "";
+    int guideLvl;   // the pulse of this draw, 0..5
+
+    /// <summary>What the new highlight outlines: the art's rectangle (screen px) with its shape and inset; Important = variant B.</summary>
+    sealed class Hl { public GeoRect Rect; public GeoShape Shape; public GeoInset Inset; public bool Important; }
+
+    // a rectangle with rounded corners (a list cell, a button of unknown shape)
+    Hl HlRound(double x, double y, double w, double h, bool important) {
+      return new Hl { Rect = new GeoRect { X = x, Y = y, W = w, H = h }, Shape = new GeoShape { K = "round", R = 0.08 }, Important = important };
+    }
+    Hl HlCell(double x, double y, double w, double h) { return HlRound(x, y, w, h, true); }
+
+    // «Показать в игре»: the step's button with the geometry's shape; the final presses (Done, the Foundry's «Вознести») and list cells are B, the rest A
+    Hl HlLocate(LocateFrame lf, LocateStep step, W32.POINT o) {
+      var g = Geo.Current;
+      bool important = step.Kind == LocateKind.Done || step.Kind == LocateKind.AscendReady || lf.Target == "cell";
+      var ins = g != null && lf.Target != "cell" ? g.Inset(lf.Target) : null;
+      var sh = g != null && lf.Target != "cell" ? g.Shape(lf.Target) : null;
+      if (lf.Target == "cell") return HlRound(o.X + lf.Mark.X, o.Y + lf.Mark.Y, lf.Mark.W, lf.Mark.H, true);
+      // with an inset from the geometry the outline starts from the raw rectangle, else from the frame's own (already trimmed) box
+      var r = ins != null && lf.Raw != null ? new GeoRect { X = o.X + lf.Raw.X, Y = o.Y + lf.Raw.Y, W = lf.Raw.W, H = lf.Raw.H } : new GeoRect { X = o.X + lf.Mark.X, Y = o.Y + lf.Mark.Y, W = lf.Mark.W, H = lf.Mark.H };
+      return new Hl { Rect = r, Shape = sh, Inset = ins, Important = important };
+    }
+
+    // draws the highlight into the bitmap (its origin on the screen: ox, oy); marksBox: a cell given in bitmap px already (storage cleanup marks)
+    void PaintGuide(Graphics gr, Hl hl, int ox, int oy, int bw, int bh, bool dim, int G, Image hand, int bob, double U, GeoRect marksBox = null) {
+      float a = 0.65f + 0.35f * guideLvl / 5f;
+      var box = marksBox ?? new GeoRect { X = hl.Rect.X - ox, Y = hl.Rect.Y - oy, W = hl.Rect.W, H = hl.Rect.H };
+      var art = GuideShape.ArtBox(box, marksBox != null ? null : hl.Inset);
+      var pts = GuideShape.Outline(GuideShape.Grow(art, dim ? 5 : 2), hl.Shape, null);
+      if (pts.Count < 3) return;
+      var poly = new PointF[pts.Count];
+      for (int i = 0; i < poly.Length; i++) poly[i] = new PointF((float)pts[i].X, (float)pts[i].Y);
+      using (var path = new GraphicsPath()) {
+        path.AddPolygon(poly);
+        if (dim) {
+          using (var br = new SolidBrush(Color.FromArgb(140, 0, 0, 0))) gr.FillRectangle(br, 0, 0, bw, bh);
+          gr.CompositingMode = CompositingMode.SourceCopy;
+          using (var hole = new SolidBrush(Color.FromArgb(0, 0, 0, 0))) gr.FillPath(hole, path);
+          gr.CompositingMode = CompositingMode.SourceOver;
+        }
+        int glow = Math.Max(4, Math.Min(dim ? 12 : 14, G));
+        gr.SetClip(path, CombineMode.Exclude);   // the glow lies outside the hole only
+        for (int i = glow; i >= 2; i -= 3)
+          using (var pen = new Pen(Color.FromArgb((int)(34 * a), 232, 196, 106), 2f * i) { LineJoin = LineJoin.Round }) gr.DrawPath(pen, path);
+        gr.ResetClip();
+        using (var pen = new Pen(Color.FromArgb((int)(255 * a), 232, 196, 106), 2f) { LineJoin = LineJoin.Round }) gr.DrawPath(pen, path);
+      }
+      if (hand != null && hl != null) {
+        double hh = 0.14 * U, hw = hh * hand.Width / hand.Height;
+        double tipX = hl.Rect.X + hl.Rect.W / 2 - ox, tipY = hl.Rect.Y + hl.Rect.H * 0.3 - oy + bob;   // the fingertip on the button's upper part (the label stays readable)
+        var hp = GuideShape.HandPos(tipX, tipY, hw, hh, GuideHand.TipX, GuideHand.TipY, bw, bh);
+        gr.DrawImage(hand, (float)hp.X, (float)hp.Y, (float)hw, (float)hh);
+      }
+    }
+
     // the game's own «selected» glow frame (common_frame_chosen_light), embedded in the exe
     static Image frameTex;
     static Image FrameTex() {
@@ -2561,14 +2679,14 @@ namespace RealmForge {
     // the item's frame with the step plate beside it, or (above / below the visible list) the gold scroll strip with a pill
     // «Вещь здесь ↓ N рядов» at the item's dot (strip: {x, viewTop, viewBottom, dotY, b0, b1}, screen px; null = a pill
     // beside the spot alone)
-    void Draw(string kind, int x, int y, int w, int h, int rows, double[] strip = null) {
+    void Draw(string kind, int x, int y, int w, int h, int rows, double[] strip = null) {   // a box here is a list cell: the new highlight's edge only (no dimming over lists)
       if (!LocateWins) Say(kind == "box" ? "on" : kind == "up" ? "above" : "below", rows);   // the plan's state; «Найти в игре» has its own
       dKind = kind + (rows > 0 ? ":" + rows : ""); dX = x; dY = y; dW = w; dH = h;
       if (kind == "box") {
         Plate p = null;
         if (!LocateWins && Tx("pick") != "")
           p = WrongItem ? new Plate { Caps = Tx("caps"), Main = Tx("wrong"), Sub = Tx("wrongSub") } : new Plate { Caps = Tx("caps"), Main = Tx("pick"), Sub = Tx("then") };
-        Scene(glow, ref drawnKey, new[] { x, y, w, h }, p, new[] { x, y, w, h }, null);
+        Scene(glow, ref drawnKey, new[] { x, y, w, h }, p, new[] { x, y, w, h }, null, null, GuideStyle ? HlCell(x, y, w, h) : null);
         return;
       }
       string tpl = Tx(kind == "up" ? "pillUp" : "pillDown");

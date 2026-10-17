@@ -3,6 +3,8 @@
 // the Inventory's buttons ...) in units of the game window's height, with edges as [anchor, offset]:
 //   200 {"game":"<version>","v":1,"rects":{key:{"x0":["L"|"C"|"R",n],"x1":[...],"y0":["T"|"M"|"B",n],"y1":[...],"w":n,"h":n}},"grids":{key:{"cols":n,"lineSize":n,"padding":[l,t,r,b]}}}
 //   404 = no data for that version (yet); 401/403 = the code is not (or no longer) valid: asked again later.
+// A rectangle may carry "shape" ({"k":"circle"} | {"k":"bevel","c","cx","cy"} | {"k":"round","r"}, fractions of the visible art's height) and "inset" {l,t,r,b}
+// (the visible art inside it, fractions of the sides, negative = sticks out); both optional (src/GuideShape.cs).
 // Kept per game version in the app's data folder (geometry\<version>.json) like the layout data (src/Layout.cs) and used while
 // the site cannot be reached. Without it «Показать в игре» keeps its text hints and the app clicks nothing in the Foundry:
 // a missing or broken file never stops anything.
@@ -37,7 +39,7 @@ namespace RealmForge {
     public const double CanvasH = 640.0;
 
     struct Edge { public char A; public double Off; }
-    sealed class Box { public Edge X0, X1, Y0, Y1; public double W, H; }
+    sealed class Box { public Edge X0, X1, Y0, Y1; public double W, H; public GeoShape Shape; public GeoInset Inset; }
 
     public string Game { get; private set; }
     readonly Dictionary<string, Box> rects = new Dictionary<string, Box>();
@@ -65,6 +67,7 @@ namespace RealmForge {
         var b = new Box();
         if (!ReadEdge(r, "x0", "LCR", out b.X0) || !ReadEdge(r, "x1", "LCR", out b.X1) || !ReadEdge(r, "y0", "TMB", out b.Y0) || !ReadEdge(r, "y1", "TMB", out b.Y1)) return null;
         if (!ReadNum(r, "w", out b.W) || !ReadNum(r, "h", out b.H)) return null;
+        b.Shape = ReadShape(r); b.Inset = ReadInset(r);   // both optional: missing or odd = a rectangle, no inset
         g.rects[kv.Key] = b;
       }
       object gv;
@@ -82,6 +85,29 @@ namespace RealmForge {
         }
       }
       return g;
+    }
+
+    static GeoShape ReadShape(Dictionary<string, object> r) {
+      object v;
+      var s = r.TryGetValue("shape", out v) ? MiniJson.AsObject(v) : null;
+      string k = s != null ? MiniJson.GetString(s, "k") : null;
+      if (k != "circle" && k != "bevel" && k != "round") return null;
+      var sh = new GeoShape { K = k };
+      double c = 0, d;
+      if (ReadNum(s, "c", out d)) c = d;
+      sh.CX = ReadNum(s, "cx", out d) ? d : c; sh.CY = ReadNum(s, "cy", out d) ? d : c;
+      if (ReadNum(s, "r", out d)) sh.R = d;
+      if (Math.Abs(sh.CX) > 1 || Math.Abs(sh.CY) > 1 || Math.Abs(sh.R) > 1) return null;
+      return sh;
+    }
+
+    static GeoInset ReadInset(Dictionary<string, object> r) {
+      object v;
+      var s = r.TryGetValue("inset", out v) ? MiniJson.AsObject(v) : null;
+      if (s == null) return null;
+      var i = new GeoInset();
+      if (!ReadNum(s, "l", out i.L) | !ReadNum(s, "t", out i.T) | !ReadNum(s, "r", out i.R) | !ReadNum(s, "b", out i.B)) return null;
+      return Math.Abs(i.L) > 1 || Math.Abs(i.T) > 1 || Math.Abs(i.R) > 1 || Math.Abs(i.B) > 1 || i.L + i.R >= 1 || i.T + i.B >= 1 ? null : i;
     }
 
     static bool ReadNum(Dictionary<string, object> r, string key, out double d) {
@@ -119,6 +145,11 @@ namespace RealmForge {
       Box b;
       return key != null && rects.TryGetValue(key, out b) ? new[] { b.W, b.H } : new double[] { 0, 0 };
     }
+
+    /// <summary>The form of the key's visible art (null = a rectangle).</summary>
+    public GeoShape Shape(string key) { Box b; return key != null && rects.TryGetValue(key, out b) ? b.Shape : null; }
+    /// <summary>The visible art inside the key's rectangle (null = all of it).</summary>
+    public GeoInset Inset(string key) { Box b; return key != null && rects.TryGetValue(key, out b) ? b.Inset : null; }
 
     public GeoGrid Grid(string key) { GeoGrid g; return key != null && grids.TryGetValue(key, out g) ? g : null; }
 

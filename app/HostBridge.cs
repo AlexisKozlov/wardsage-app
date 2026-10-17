@@ -78,7 +78,7 @@ namespace RealmForge {
       overlay = new OverlayController((st, far) => Post("{\"ev\":\"overlay\",\"state\":" + S(st) + ",\"far\":" + (far ? "true" : "false") + "}"),
                                       st => { Post("{\"ev\":\"auto\",\"state\":" + S(st) + "}"); OnAutoState(st); },
                                       (p, st) => Post("{\"ev\":\"sell.state\",\"state\":" + S(st) + ",\"selected\":" + p.Selected + ",\"missing\":" + p.Missing + ",\"extra\":" + p.Extra + "}"));
-      ApplyAutoClick();
+      ApplyAutoClick(); ApplyGuideStyle(); overlay.GuideSite = cfg.Site;
       RFX.SkipGvg = !On("gvg");
       overlay.AutoConfirm = cfg.AutoConfirm;
       overlay.RecButton = Channel.IsTest && cfg.RecButton;
@@ -115,6 +115,8 @@ namespace RealmForge {
     bool AutoClickOn() { return cfg.AutoClick && On("autoclick"); }
     /// <summary>«Показать в игре» clicks by itself only with its own switch on (off by default until the owner enables it), on top of the player's setting.</summary>
     bool LocateAutoOn() { return AutoClickOn() && On("locateAuto"); }
+    /// <summary>The new button highlight: the site's "guideStyle" switch; the test build's own setting may force it on or off.</summary>
+    void ApplyGuideStyle() { overlay.GuideStyle = Channel.IsTest && cfg.GuideStyle != "auto" ? cfg.GuideStyle == "on" : remote.Allows("guideStyle"); }
     void ApplyAutoClick() { overlay.AutoEnabled = AutoClickOn(); overlay.LocateAutoEnabled = LocateAutoOn(); }
 
     // the features that read the game's screens and fights need the layout data for the running game version
@@ -139,7 +141,7 @@ namespace RealmForge {
 
     /// <summary>Puts the switches in force at once: what is off stops now, not at its next start.</summary>
     void ApplyRemote() {
-      ApplyAutoClick();
+      ApplyAutoClick(); ApplyGuideStyle();
       RFX.SkipGvg = !On("gvg");
       if (!On("locate")) overlay.SetLocate(null);
       if (!On("equip")) { overlay.SetRun(0); overlay.SetTarget(0); overlay.SetHint("", -1, new string[0], 0); }
@@ -473,6 +475,7 @@ namespace RealmForge {
           case "diag": overlay.StartDiag(5); break;
           case "rec.start": StartRec(); break;
           case "rec.stop": if (testRec != null) testRec.Stop(); break;
+          case "setGuideStyle": { string gv = MiniJson.GetString(m, "v"); cfg.GuideStyle = gv == "on" || gv == "off" ? gv : "auto"; ApplyGuideStyle(); Save(); break; }
           case "setRecButton": cfg.RecButton = MiniJson.GetBool(m, "on", true); overlay.RecButton = Channel.IsTest && cfg.RecButton; Save(); break;
           case "battle.capture": if (On("battle")) CaptureNow(-1, 0, 0); break;
           case "compact": win.SetCompact(MiniJson.GetBool(m, "on", false)); break;
@@ -616,7 +619,7 @@ namespace RealmForge {
       sb.Append(",\"saveCopy\":").Append(B(cfg.SaveCopy));
       sb.Append(",\"autoSync\":").Append(B(cfg.AutoSync)).Append(",\"autoClick\":").Append(B(cfg.AutoClick))
         .Append(",\"autoConfirm\":").Append(B(cfg.AutoConfirm)).Append(",\"errorReports\":").Append(B(cfg.ErrorReports)).Append(",\"autoUpdate\":").Append(B(cfg.AutoUpdate))
-        .Append(",\"tray\":").Append(B(cfg.Tray)).Append(",\"bossHints\":").Append(B(cfg.BossHints)).Append(",\"recButton\":").Append(B(cfg.RecButton)).Append(",\"autostart\":").Append(B(Autostart.IsOn()));
+        .Append(",\"tray\":").Append(B(cfg.Tray)).Append(",\"bossHints\":").Append(B(cfg.BossHints)).Append(",\"recButton\":").Append(B(cfg.RecButton)).Append(",\"guideStyle\":").Append(S(cfg.GuideStyle)).Append(",\"autostart\":").Append(B(Autostart.IsOn()));
       win.TrayEnabled = cfg.Tray;
       win.SetTrayLang(cfg.Lang);
       sb.Append(",\"last\":").Append(LastJson());

@@ -648,6 +648,7 @@ static class CoreTests {
     LocateTests();
     LocatePilotTests();
     GeometryTests();
+    GuideShapeTests();
     LocateFoundryPilotTests();
     LocateGemAndListTests();
     SellHintTests();
@@ -2493,6 +2494,46 @@ static class CoreTests {
       GeoBox("inventory.cardLeft", "R:-0.4797", "R:-0.2578", "T:0.8505", "T:0.9333", 0.2219, 0.0828),
       GeoBox("city.barButton", "L:0.0672", "L:0.2016", "B:0.3306", "B:0.465", 0.1344, 0.1344) };
     return "{\"game\":\"" + game + "\",\"v\":" + v + ",\"rects\":{" + string.Join(",", b.ToArray()) + "},\"grids\":{\"ascend.list\":{\"cols\":5,\"lineSize\":108,\"padding\":[0,-10,0,0]}}}";
+  }
+
+  // ------------------------------------------------------------------ the outline of a button (src/GuideShape.cs)
+  static void GuideShapeTests() {
+    Console.WriteLine("Button outlines (shape + inset from the geometry)");
+    string extra = ",\"shape\":{\"k\":\"bevel\",\"c\":0.1,\"cy\":0.2},\"inset\":{\"l\":0.1,\"t\":0,\"r\":0.1,\"b\":0.2}";
+    string j = GeoJson().Replace("\"w\":0.3375,\"h\":0.1093}", "\"w\":0.3375,\"h\":0.1093" + extra + "}");
+    var g = GameGeometry.Parse(j, GeoGame);
+    var sh = g != null ? g.Shape("ascend.button") : null; var ins = g != null ? g.Inset("ascend.button") : null;
+    Check(sh != null && sh.K == "bevel" && Math.Abs(sh.CX - 0.1) < 1e-9 && Math.Abs(sh.CY - 0.2) < 1e-9, "shape parsed (cx falls back to c)");
+    Check(ins != null && Math.Abs(ins.L - 0.1) < 1e-9 && Math.Abs(ins.B - 0.2) < 1e-9, "inset parsed");
+    var plain = GameGeometry.Parse(GeoJson(), GeoGame);
+    Check(plain.Shape("ascend.button") == null && plain.Inset("ascend.button") == null && plain.Shape("nope") == null, "missing shape / inset: a rectangle, no inset");
+    Check(GameGeometry.Parse(GeoJson().Replace("\"h\":0.1093}", "\"h\":0.1093,\"shape\":{\"k\":\"blob\"},\"inset\":{\"l\":\"x\"}}"), GeoGame) != null, "an odd shape / inset does not refuse the file");
+    var rect = new GeoRect { X = 100, Y = 50, W = 200, H = 100 };
+    var o = GuideShape.Outline(rect, null, null);
+    Eq(4, o.Count, "rect: 4 points"); Check(o[0].X == 100 && o[0].Y == 50 && o[2].X == 300 && o[2].Y == 150, "rect: the corners");
+    var art = GuideShape.ArtBox(rect, new GeoInset { L = 0.1, T = 0, R = 0.1, B = 0.2 });
+    Check(Math.Abs(art.X - 120) < 1e-9 && Math.Abs(art.W - 160) < 1e-9 && Math.Abs(art.H - 80) < 1e-9, "inset: the art box");
+    var neg = GuideShape.ArtBox(rect, new GeoInset { L = -0.1, T = -0.1, R = -0.1, B = -0.1 });
+    Check(Math.Abs(neg.X - 80) < 1e-9 && Math.Abs(neg.Y - 40) < 1e-9 && Math.Abs(neg.W - 240) < 1e-9 && Math.Abs(neg.H - 120) < 1e-9, "negative inset: the art sticks out");
+    var c = GuideShape.Outline(rect, new GeoShape { K = "circle" }, null);
+    Eq(48, c.Count, "circle: 48 points");
+    bool onCircle = true; foreach (var p in c) onCircle &= Math.Abs(Math.Sqrt((p.X - 200) * (p.X - 200) + (p.Y - 100) * (p.Y - 100)) - 50) < 1e-6;
+    Check(onCircle, "circle: diameter = the shorter side, centred");
+    var b = GuideShape.Outline(rect, new GeoShape { K = "bevel", CX = 0.1, CY = 0.2 }, null);
+    Eq(8, b.Count, "bevel: an octagon"); Check(Math.Abs(b[0].X - 110) < 1e-9 && b[0].Y == 50 && b[2].X == 300 && Math.Abs(b[2].Y - 70) < 1e-9, "bevel: cuts cx*h across, cy*h down");
+    var rd = GuideShape.Outline(rect, new GeoShape { K = "round", R = 0.3 }, null);
+    Eq(4 * (GuideShape.CornerSteps + 1), rd.Count, "round: arcs at the four corners");
+    bool inside = true; foreach (var p in rd) inside &= p.X >= 100 - 1e-9 && p.X <= 300 + 1e-9 && p.Y >= 50 - 1e-9 && p.Y <= 150 + 1e-9;
+    Check(inside, "round: inside the rectangle");
+    Check(GuideShape.Outline(new GeoRect { X = 0, Y = 0, W = 0, H = 10 }, null, null).Count == 0, "an empty box: no outline");
+    var hp = GuideShape.HandPos(5, 10, 40, 60, 0.5, 0.9, 1000, 500);
+    Check(hp.X == 0 && hp.Y == 0, "hand: kept inside the client");
+    var hp2 = GuideShape.HandPos(500, 300, 40, 60, 0.5, 0.9, 1000, 500);
+    Check(Math.Abs(hp2.X - 480) < 1e-9 && Math.Abs(hp2.Y - 246) < 1e-9, "hand: the fingertip lands on the point");
+    var gr = GuideShape.Grow(rect, 5); Check(gr.X == 95 && gr.W == 210, "grown by a margin");
+    var rs = RemoteSwitches.Parse("{\"features\":{\"guideStyle\":true}}");
+    Check(rs.Allows("guideStyle") && !RemoteSwitches.Permissive().Allows("guideStyle") && !RemoteSwitches.Parse("{}").Allows("guideStyle"), "guideStyle: off until the site says true");
+    Check(AppConfig.FromJson("{\"guideStyle\":\"on\"}").GuideStyle == "on" && AppConfig.FromJson("{\"guideStyle\":\"x\"}").GuideStyle == "auto" && AppConfig.FromJson("{}").GuideStyle == "auto", "config: guideStyle auto / on / off");
   }
 
   static void GeometryTests() {

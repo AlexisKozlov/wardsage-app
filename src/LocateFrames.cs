@@ -80,6 +80,7 @@ namespace RealmForge {
     public LocateMark Mark = new LocateMark();   // box | up | down in client px (up / down: x, the edge and the cell's width)
     public bool Clickable;                // the auto mode may click it now (the rest are hints)
     public double ClickX, ClickY;         // client px
+    public GeoRect Raw;                   // the geometry's own rectangle (client px, before the legacy art inset), for the outline of the new highlight; null for a list cell
     public double ScrollPx;               // list cell: how far the content has to move to put the cell in the middle (+ = down)
     public double ViewX, ViewY, ViewW, ViewH;   // list cell: the viewport (client px), where a scrolling drag goes
   }
@@ -131,6 +132,7 @@ namespace RealmForge {
 
     static LocateFrame Box(string key, GeoRect r, bool click) {
       var fr = new LocateFrame { Target = key, Clickable = click, ClickX = r.CX, ClickY = r.CY };
+      fr.Raw = new GeoRect { X = r.X, Y = r.Y, W = r.W, H = r.H };
       fr.Mark = new LocateMark { Kind = "box", X = (int)Math.Round(r.X), Y = (int)Math.Round(r.Y), W = (int)Math.Round(r.W), H = (int)Math.Round(r.H) };
       return fr;
     }
@@ -204,12 +206,14 @@ namespace RealmForge {
       }
       if (r == null && key != "" && key != "foundry.tab.ascend" && key != "foundry.tab.recast") r = g.Rect(key, W, H, U);
       if (r == null) return null;
-      double[] ins;
+      double[] ins; var raw = r;
       if (ArtInset.TryGetValue(key, out ins)) {
         double k = U / GameGeometry.CanvasH;
         r = new GeoRect { X = r.X + ins[0] * k, Y = r.Y + ins[1] * k, W = r.W - (ins[0] + ins[2]) * k, H = r.H - (ins[1] + ins[3]) * k };
       }
-      return Box(key, r, click);
+      var res = Box(key, r, click);
+      res.Raw = raw;
+      return res;
     }
 
     /// <summary>The gem screen's list row of a recast function (a hint only: the player picks it). The game's own reading of the list places it;
