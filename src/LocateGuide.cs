@@ -161,8 +161,8 @@ namespace RealmForge {
       return NextInInventory(req, inv, hero, cols, st);
     }
 
-    /// <summary>Columns of the artifact tab's list when the game does not say (the authored width gives 7).</summary>
-    public const int ArtInvCols = 7;
+    /// <summary>Columns of the artifact tab's list when the game does not say (8 at a 1.9:1 window, 7 at the authored 1136x640).</summary>
+    public const int ArtInvCols = 8;
     /// <summary>Columns of the workshop's copy list when the game does not say.</summary>
     public const int ArtMatCols = 3;
 

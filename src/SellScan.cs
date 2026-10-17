@@ -17,9 +17,9 @@
 //   form.m_CachedContentPanels[-9997]      the artifact panel (Panel_ArtifactPanel):
 //     _isActive                            the panel is shown
 //     _btFlagBatch                         2 = «Массовая продажа» (-1 normal, 1 «Масс. организовать»)
-//     _listDataCur                         the artifacts in screen order, worn ones left out: tables with iItemUid
+//     _listDataCur                         the artifacts in screen order, worn ones left out: tables with iItemUid (an integer, or maybe a string: UidOf)
 //     _btDicSelected                       uid -> true / false (a deselected one stays with false: only true counts)
-//     m_ListArtifact_ScrollRect / m_ListArtifact_InfinityGrid   the list's scroll, columns (7 at the authored width) and row height (116)
+//     m_ListArtifact_ScrollRect / m_ListArtifact_InfinityGrid   the list's scroll, columns (floor((list width - 6) / 90): 7 at the authored 1136x640, 8 at a 1.9:1 window) and row height (116)
 using System;
 using System.Collections.Generic;
 
@@ -120,7 +120,11 @@ namespace RealmForge {
       s.ArtTab = Field(f, "m_CurrentMainTabId2", out v, out tt) && tt == T_INT && (long)v == ArtifactTabId;
       ulong panels, panel; int pt, pnt;
       if (s.ArtTab) {
-        if (s.Open && Field(f, "m_CachedContentPanels", out panels, out pt) && pt == T_TABLE) ReadArtifactPanel(panels, s);
+        if (s.Open && Field(f, "m_CachedContentPanels", out panels, out pt) && pt == T_TABLE) {
+          ReadArtifactPanel(panels, s);
+          bool tried = s.ArtBulk || (ArtListWanted && s.ArtBulkKnown);
+          if (tried && !artDiagSaid && (s.List == null || s.Uids.Count == 0)) ArtDiag(f, panels, s);
+        }
         return s;
       }
       if (!Field(f, "m_CachedContentPanels", out panels, out pt) || pt != T_TABLE || !IntKey(panels, EquipTabId, out panel, out pnt) || pnt != T_TABLE) return s;
@@ -169,7 +173,8 @@ namespace RealmForge {
           foreach (var kv in d) {
             int i; var row = kv.Value as Dictionary<string, object>; object u;
             if (row == null || kv.Key.Length <= 2 || !int.TryParse(kv.Key.Substring(1, kv.Key.Length - 2), out i)) continue;
-            if (row.TryGetValue("iItemUid", out u) && u is long) byIndex[i] = (long)u;
+            long uid;
+            if ((row.TryGetValue("iItemUid", out u) || row.TryGetValue("itemUid", out u)) && UidOf(u, out uid) && uid > 0) byIndex[i] = uid;
           }
           int expect = 1;
           foreach (var kv in byIndex) { if (kv.Key != expect++) break; s.Uids.Add(kv.Value); }   // a script array: 1..n
@@ -182,6 +187,89 @@ namespace RealmForge {
       }
       ulong map; int mt;
       if (Field(panel, "_btDicSelected", out map, out mt) && mt == T_TABLE) ReadTrueKeys(map, s.Selected);
+    }
+
+    // an artifact uid as the script may hold it: an integer, a whole float, or a number written as a string
+    static bool UidOf(object u, out long v) {
+      v = 0;
+      if (u is long) { v = (long)u; return true; }
+      if (u is double) { double d = (double)u; if (d == Math.Floor(d) && Math.Abs(d) < 9e15) { v = (long)d; return true; } return false; }
+      var str = u as string;
+      return str != null && long.TryParse(str, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out v);
+    }
+
+    static string LuaTypeName(int tt) {
+      switch (tt & 0x0F) { case 0: return "nil"; case 1: return "bool"; case 2: return "lud"; case 3: return "num"; case 4: return "str"; case 5: return "table"; case 6: return "fn"; case 7: return "ud"; default: return "t" + (tt & 0x0F); }
+    }
+
+    // the string-keyed fields of a script table: key -> {type tag, raw value}; the count of a table-valued entry comes from TableCount
+    static List<KeyValuePair<string, int[]>> TableFields(ulong t, out List<ulong> values) {
+      var res = new List<KeyValuePair<string, int[]>>(); values = new List<ulong>();
+      var h = Read(t, 56); if (h == null || h[8] != 5) return res;
+      int lsize = h[11]; if (lsize > 12) return res;
+      int nn = 1 << lsize; var nb = Read(BitConverter.ToUInt64(h, 24), nn * 32); if (nb == null) return res;
+      for (int i = 0; i < nn; i++) {
+        int o = i * 32; int ktt = BitConverter.ToInt32(nb, o + 24), vtt = BitConverter.ToInt32(nb, o + 8);
+        if ((ktt != T_SSTR && ktt != T_LSTR) || (vtt & 0x0F) == 0) continue;
+        string key = ReadLuaString(BitConverter.ToUInt64(nb, o + 16)); if (key == null) continue;
+        res.Add(new KeyValuePair<string, int[]>(key, new[] { vtt })); values.Add(BitConverter.ToUInt64(nb, o));
+      }
+      return res;
+    }
+
+    // the number of non-nil entries of a script table (array part + hash part); -1 = unreadable
+    static int TableCount(ulong t) {
+      var h = Read(t, 56); if (h == null || h[8] != 5) return -1;
+      int lsize = h[11]; uint sizearray = BitConverter.ToUInt32(h, 12);
+      if (lsize > 20 || sizearray > 1000000) return -1;
+      int n = 0;
+      if (sizearray > 0) { var ab = Read(BitConverter.ToUInt64(h, 16), (int)sizearray * 16); if (ab != null) for (int i = 0; i < sizearray; i++) if ((BitConverter.ToInt32(ab, i * 16 + 8) & 0x0F) != 0) n++; }
+      int nn = 1 << lsize; var nb = Read(BitConverter.ToUInt64(h, 24), nn * 32);
+      if (nb != null) for (int i = 0; i < nn; i++) if ((BitConverter.ToInt32(nb, i * 32 + 8) & 0x0F) != 0) n++;
+      return n;
+    }
+
+    // "key=type[count]" for the fields of a table whose names match <paramref name="re"/> (null = all), the matching ones first, at most <paramref name="max"/> chars
+    static string DescribeFields(ulong t, System.Text.RegularExpressions.Regex re, int max) {
+      List<ulong> vals; var fl = TableFields(t, out vals);
+      var hot = new List<string>(); var rest = new List<string>();
+      for (int i = 0; i < fl.Count; i++) {
+        int tt = fl[i].Value[0]; string d = fl[i].Key + "=" + LuaTypeName(tt);
+        if ((tt & 0x0F) == 5) d += "[" + TableCount(vals[i]) + "]";
+        if (re == null || re.IsMatch(fl[i].Key)) hot.Add(d); else rest.Add(d);
+      }
+      hot.Sort(StringComparer.Ordinal); rest.Sort(StringComparer.Ordinal);
+      hot.AddRange(re == null ? new List<string>() : rest);
+      var sb = new System.Text.StringBuilder();
+      foreach (var d in hot) { if (sb.Length + d.Length + 1 > max) { sb.Append(" ..."); break; } if (sb.Length > 0) sb.Append(' '); sb.Append(d); }
+      return sb.ToString();
+    }
+
+    static bool artDiagSaid;
+    static readonly System.Text.RegularExpressions.Regex ArtDiagKeys = new System.Text.RegularExpressions.Regex("list|scroll|grid|sel|batch|uid|sort|filter|count|content|data", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+    /// <summary>Once per run, when the artifact tab is open but its list cannot be read: the panel's field names with their script types (tables with their entry count),
+    /// the form's content / grid fields and the first row of the list, so the next recording shows the real names.</summary>
+    static void ArtDiag(ulong form, ulong panels, InventoryScreen s) {
+      string line = ArtDiagText(form, panels);
+      if (line == null) return;
+      artDiagSaid = true;
+      L(line);
+    }
+
+    /// <summary>The diagnostics line (see ArtDiag), null when the panel is not there. Public for the tests (fake tables).</summary>
+    public static string ArtDiagText(ulong form, ulong panels) {
+      ulong panel; int pnt;
+      if (!IntKey(panels, ArtifactTabId, out panel, out pnt) || pnt != T_TABLE) return null;
+      string line = "art panel fields: " + DescribeFields(panel, ArtDiagKeys, 900);
+      line += " | form: " + DescribeFields(form, new System.Text.RegularExpressions.Regex("content|scroll|grid|list", System.Text.RegularExpressions.RegexOptions.IgnoreCase), 300);
+      ulong list; int lt;
+      if (Field(panel, "_listDataCur", out list, out lt) && lt == T_TABLE) {
+        string row1 = "<none>"; ulong r1; int rt;
+        if (IntKey(list, 1, out r1, out rt)) row1 = rt == T_TABLE ? DescribeFields(r1, null, 200) : LuaTypeName(rt);
+        line += " | _listDataCur[1]: " + row1;
+      }
+      return line.Length > 1500 ? line.Substring(0, 1500) : line;
     }
 
     /// <summary>«Показать в игре» guides an artifact: the artifact tab's list and open card are read in its normal mode too (off otherwise).</summary>
@@ -199,8 +287,13 @@ namespace RealmForge {
       int nn = 1 << lsize; var nb = Read(BitConverter.ToUInt64(h, 24), nn * 32); if (nb == null) return;
       for (int i = 0; i < nn; i++) {
         int o = i * 32;
-        if (BitConverter.ToInt32(nb, o + 24) != T_INT || BitConverter.ToInt32(nb, o + 8) != T_BOOL || (BitConverter.ToUInt64(nb, o) & 0xFFFFFFFF) == 0) continue;
-        long k = BitConverter.ToInt64(nb, o + 16); if (k > 0) into.Add(k);
+        int ktt = BitConverter.ToInt32(nb, o + 24);
+        if (BitConverter.ToInt32(nb, o + 8) != T_BOOL || (BitConverter.ToUInt64(nb, o) & 0xFFFFFFFF) == 0) continue;
+        long k = 0;
+        if (ktt == T_INT) k = BitConverter.ToInt64(nb, o + 16);
+        else if (ktt == T_FLT) { double dk = BitConverter.Int64BitsToDouble(BitConverter.ToInt64(nb, o + 16)); if (dk == Math.Floor(dk) && Math.Abs(dk) < 9e15) k = (long)dk; }
+        else if (ktt == T_SSTR || ktt == T_LSTR) UidOf(ReadLuaString(BitConverter.ToUInt64(nb, o + 16)), out k);   // a uid written as a string
+        if (k > 0) into.Add(k);
       }
     }
 
@@ -225,6 +318,13 @@ namespace RealmForge {
       foreach (var name in ArtScrollFields) {
         var r = ReadList(panel, name, "m_ListArtifact_InfinityGrid", pid);
         if (r != null) { artScrollField = name; L("art list: the scroll is bound as " + name); return r; }
+      }
+      // the scroll bound under another name: any userdata field of the panel with "Scroll" in its name (the grid is the Lua's own)
+      List<ulong> vals; var fl = TableFields(panel, out vals);
+      foreach (var kv in fl) {
+        if ((kv.Value[0] & 0x0F) != 7 || kv.Key.IndexOf("Scroll", StringComparison.OrdinalIgnoreCase) < 0 || Array.IndexOf(ArtScrollFields, kv.Key) >= 0) continue;
+        var r = ReadList(panel, kv.Key, "m_ListArtifact_InfinityGrid", pid);
+        if (r != null) { artScrollField = kv.Key; L("art list: the scroll is bound as " + kv.Key); return r; }
       }
       if (!artScrollSaid) { artScrollSaid = true; L("art list: no scroll field read (tried " + string.Join(", ", ArtScrollFields) + ") - no frames on the cells"); }
       return null;

@@ -57,12 +57,12 @@ namespace RealmForge {
     }
 
     /// <summary>The artifact tab's list (Panel_ArtifactPanel, «Массовая продажа»): cells of the grid are <paramref name="cols"/> per row across the list's width
-    /// (left edge 0.1938 U from the left, right edge 0.4969 U from the right, top 0.1922 U, bottom 0.14 U above the window's bottom), a row is 116 of the canvas's
+    /// (left edge 0.195 U from the left, right edge 0.5231 U from the right, top 0.1922 U, bottom 0.14 U above the window's bottom), a row is 116 of the canvas's
     /// 640 units; the card in a cell is 80 x 110 units, centred. No part filter, no pop-up. <paramref name="list"/> = the list's rectangle from the site's
-    /// geometry file (inventory.artList, client px) or null (then the numbers above). Not measured on the live game.</summary>
+    /// geometry file (inventory.artList, client px) or null (then the numbers above). Measured on a live recording (test app 1.6.62, 1366x705 window): 8 columns at that width (the game takes floor((width - 6) / 90) of canvas units), a row 120 px = 116 units.</summary>
     public static SellGeometry Artifacts(double W, double H, double U, int cols, GeoRect list = null) {
       if (cols < 1) cols = 1;
-      double left = 0.1938, right = W / U - 0.4969, top = 0.1922, viewBottom = 0.86;   // ViewBottom: from the top edge's side, bottom edge = H - (1 - ViewBottom) U
+      double left = 0.195, right = W / U - 0.5231, top = 0.1922, viewBottom = 0.86;   // ViewBottom: from the top edge's side, bottom edge = H - (1 - ViewBottom) U
       if (list != null && list.W > 10 && list.H > 10) { left = list.X / U; right = list.Right / U; top = list.Y / U; viewBottom = 1 - (H - list.Bottom) / U; }
       double pitchX = (right - left) / cols, cardW = 80.0 / 640, cardH = 110.0 / 640, row = 116.0 / 640;
       return new SellGeometry {
@@ -71,6 +71,13 @@ namespace RealmForge {
         BarTop = 0, BarBottom = cardH,
         PartX0 = double.NaN, ResetX = double.NaN, PopupX0 = 1, PopupX1 = 0,
       };
+    }
+
+    /// <summary>Columns of the artifact list as the game counts them (Panel_ArtifactPanel: floor((list width in canvas units - 6) / 90)); <paramref name="fallback"/> when the rectangle is unknown.</summary>
+    public static int ArtCols(GeoRect list, double U, int fallback) {
+      if (list == null || list.W <= 10 || U <= 0) return fallback;
+      int c = (int)System.Math.Floor((list.W / U * 640 - 6) / 90);
+      return c < 1 || c > 20 ? fallback : c;
     }
 
     public double RowHeight(int type) { return type == 2 ? PitchY * TitleRow : type == 3 ? PitchY * EmptyRow : PitchY; }

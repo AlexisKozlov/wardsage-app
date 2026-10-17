@@ -292,7 +292,7 @@ namespace RealmForge {
     // key -> {x anchor, x0, x1, y anchor top, y0, y1 (anchors as the geometry file's: L C R / T M B)}; the bottom anchor is the 7th element
     static readonly System.Collections.Generic.Dictionary<string, object[]> Research = new System.Collections.Generic.Dictionary<string, object[]> {
       { "inventory.leftTab.artifact", new object[] { 'L', 0.0023, 'L', 0.1711, 'T', 0.4022, 'T', 0.5272 } },
-      { "inventory.artList",          new object[] { 'L', 0.1938, 'R', -0.4969, 'T', 0.1922, 'B', -0.14 } },
+      { "inventory.artList",          new object[] { 'L', 0.195, 'R', -0.5231, 'T', 0.1922, 'B', -0.14 } },
       { "inventory.artWorkshop",      new object[] { 'R', -0.2562, 'R', -0.0344, 'B', -0.1030, 'B', -0.0202 } },
       { "artifact.tab.promote",       new object[] { 'R', -0.1631, 'R', 0.0025, 'T', 0.125, 'T', 0.25 } },
       { "artifact.tab.enhance",       new object[] { 'R', -0.1631, 'R', 0.0025, 'T', 0.0, 'T', 0.125 } },

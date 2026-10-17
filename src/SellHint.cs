@@ -209,7 +209,7 @@ namespace RealmForge {
     public static int[] ArtBulkRect(double W, double H, double U) {
       var r = Geo.Rect("inventory.artBulkSell", W, H, U);
       if (r != null && r.W > 4 && r.H > 4) return new[] { (int)r.X, (int)r.Y, (int)r.W, (int)r.H };
-      return new[] { (int)(0.7428 * U), (int)(H - 0.1124 * U), (int)(0.2636 * U), (int)(0.0842 * U) };
+      return new[] { (int)(0.4728 * U), (int)(H - 0.0983 * U), (int)(0.2466 * U), (int)(0.0575 * U) };
     }
 
     /// <summary>The left menu's third toggle «Артефакт» (geometry key inventory.leftTab.artifact): {x, y, w, h} in client px.</summary>

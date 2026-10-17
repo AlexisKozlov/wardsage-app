@@ -3291,6 +3291,16 @@ static class CoreTests {
       s = new InventoryScreen { Open = true, ArtTab = true };
       RFX.ReadArtifactPanel(st.T(-9997L, panelOf(2, true, 7, st.T(1L, art(9001), 3L, art(9003)), st.T())).A, s);
       Eq("9001", string.Join(",", s.Uids), "art panel: a gap in the array ends the list");
+      // uids the script holds as strings or whole floats, a choice keyed by strings (the live list read nothing: the types are not known)
+      var artS = st.T("iItemUid", "9101", "iHeroId", 0L); var artF = st.T("iItemUid", 9102.0, "iHeroId", 0L);
+      s = new InventoryScreen { Open = true, ArtTab = true };
+      RFX.ReadArtifactPanel(st.T(-9997L, panelOf(2, true, 8, st.T(1L, artS, 2L, artF, 3L, art(9103)), st.T("9101", true, "9102", false, "9103", true))).A, s);
+      Eq("9101,9102,9103", string.Join(",", s.Uids), "art panel: string and float uids are read");
+      Eq("9101,9103", string.Join(",", new SortedSet<long>(s.Selected)), "art panel: a choice keyed by strings counts its true entries");
+      // the diagnostics line: the panel's fields with their types and the entry counts of tables
+      var diag = RFX.ArtDiagText(st.T("m_Content_InfinityGrid", 1L, "m_Other", 2L).A, st.T(-9997L, panelOf(2, true, 8, list3, sel)).A);
+      Check(diag != null && diag.StartsWith("art panel fields: ") && diag.Contains("_listDataCur=table[3]") && diag.Contains("_btFlagBatch=num") && diag.Contains("m_Content_InfinityGrid=num") && diag.Contains("_listDataCur[1]: ") && diag.Contains("iItemUid=num") && diag.Length <= 1500, "art diag: panel fields with type and count (" + diag + ")");
+      Check(RFX.ArtDiagText(0, st.T(-9998L, st.T("x", 1L)).A) == null, "art diag: no panel -> no line");
     } finally { RFX.TestMemory = null; RFX.ForgetLive(); }
 
     // --- the screen state
@@ -3334,14 +3344,14 @@ static class CoreTests {
     Eq(SellHintKind.OpenEquipTab, SellHint.Classify(new InventoryScreen { Open = true, ArtTab = true }, wanted).Kind, "gear hint is unchanged: the artifact tab is just another tab for it");
     Eq("openArtTab", SellHint.Classify(new InventoryScreen { Open = true }, wanted, true).Key, "art hint: page key of the tab step");
 
-    // frames: the cell geometry from the research numbers (1136 x 640: list 124..818 x 123..550.4, 7 columns, row 116, card 80 x 110 centred)
+    // frames: the cell geometry from the research numbers (1136 x 640: list 125..801 x 123..550.4, 7 columns, row 116, card 80 x 110 centred)
     var gr = new LocateGrid(); gr.FromScroll(g.ViewTopPx(U) + g.TopPad * U, 7);
     var step = SellHint.Build(bulk(), wanted, 7, gr, g, W, H, U, true);
     Check(step.Kind == SellHintKind.Select && step.Total == 4 && step.Selected == 0, "art hint: nothing ticked: 0 of 4");
     var f1 = step.Frames.Find(fr => fr.Uid == 9001); var f3 = step.Frames.Find(fr => fr.Uid == 9003);
-    double cellW = 694.0 / 7;
-    Check(f1 != null && Math.Abs(f1.X - (124 + (cellW - 80) / 2)) <= 1.5 && Math.Abs(f1.Y - 126) <= 1.5 && Math.Abs(f1.W - 80) <= 1.5 && Math.Abs(f1.H - 110) <= 1.5,
-          "art hint: the frame of cell 1 is the 80 x 110 card, centred in the 99 px cell (" + (f1 == null ? "none" : f1.X + "," + f1.Y + " " + f1.W + "x" + f1.H) + ")");
+    double cellW = (1136 - (0.5231 + 0.195) * 640) / 7;
+    Check(f1 != null && Math.Abs(f1.X - (124.8 + (cellW - 80) / 2)) <= 1.5 && Math.Abs(f1.Y - 126) <= 1.5 && Math.Abs(f1.W - 80) <= 1.5 && Math.Abs(f1.H - 110) <= 1.5,
+          "art hint: the frame of cell 1 is the 80 x 110 card, centred in the 97 px cell (" + (f1 == null ? "none" : f1.X + "," + f1.Y + " " + f1.W + "x" + f1.H) + ")");
     Check(f3 != null && Math.Abs(f3.X - f1.X - 2 * cellW) <= 1.5, "art hint: cell 3 is two cells to the right");
     var f9 = step.Frames.Find(fr => fr.Uid == 9009);
     Check(f9 != null && Math.Abs(f9.Y - f1.Y - 116) <= 1.5 && Math.Abs(f9.X - f1.X - 1 * cellW) <= 1.5, "art hint: item 9 is row 2, column 2 (one row = 116 units)");
@@ -3372,26 +3382,30 @@ static class CoreTests {
 
     // the rectangles: research numbers, or the site's geometry
     var tb = SellHint.ArtTabRect(W, H, U); var bb = SellHint.ArtBulkRect(W, H, U);
+    {
+      Check(SellGeometry.ArtCols(new GeoRect { X = 0.195 * 705, Y = 0, W = (1366.0 / 705 - 0.5231 - 0.195) * 705, H = 400 }, 705, 7) == 8 && SellGeometry.ArtCols(new GeoRect { X = 0.195 * U, Y = 0, W = (W / U - 0.5231 - 0.195) * U, H = 400 }, U, 8) == 7 && SellGeometry.ArtCols(null, U, 8) == 8,
+            "art hint: columns from the list's width: 8 at the live window, 7 at the authored one, the fallback without a rectangle");
+    }
     Check(Math.Abs(tb[0] - 0.0023 * U) <= 1.5 && Math.Abs(tb[1] - 0.4022 * U) <= 1.5 && Math.Abs(tb[2] - 0.1688 * U) <= 1.5 && Math.Abs(tb[3] - 0.125 * U) <= 1.5, "art hint: the «Артефакт» toggle (research numbers) " + string.Join(",", tb));
-    Check(Math.Abs(bb[0] - 0.7428 * U) <= 1.5 && Math.Abs(bb[1] - (H - 0.1124 * U)) <= 1.5 && Math.Abs(bb[2] - 0.2636 * U) <= 1.5 && Math.Abs(bb[3] - 0.0842 * U) <= 1.5, "art hint: «Массовая продажа» (research numbers) " + string.Join(",", bb));
+    Check(Math.Abs(bb[0] - 0.4728 * U) <= 1.5 && Math.Abs(bb[1] - (H - 0.0983 * U)) <= 1.5 && Math.Abs(bb[2] - 0.2466 * U) <= 1.5 && Math.Abs(bb[3] - 0.0575 * U) <= 1.5, "art hint: «Массовая продажа» (live recording numbers) " + string.Join(",", bb));
     string webGeo = Path.Combine("..", "wardsage-web", "data", "app-geometry", "1.6.39.829.1.json");
     if (File.Exists(webGeo)) {
       var rg = GameGeometry.Parse(File.ReadAllText(webGeo, Encoding.UTF8), "1.6.39.829.1");
-      Check(rg != null && rg.Has("inventory.leftTab.artifact") && rg.Has("inventory.artBulkSell") && rg.Has("inventory.artList") && rg.Grid("inventory.artList") != null && rg.Grid("inventory.artList").Cols == 7 && Math.Abs(rg.Grid("inventory.artList").LineSize - 116) < 0.01,
-            "art hint: the site's geometry file has the tab, the button, the list and the 7 x 116 grid");
+      Check(rg != null && rg.Has("inventory.leftTab.artifact") && rg.Has("inventory.artBulkSell") && rg.Has("inventory.artList") && rg.Grid("inventory.artList") != null && rg.Grid("inventory.artList").Cols == 8 && Math.Abs(rg.Grid("inventory.artList").LineSize - 116) < 0.01,
+            "art hint: the site's geometry file has the tab, the button, the list and the 8 x 116 grid");
       if (rg != null) {
         var lr = rg.Rect("inventory.artList", W, H, U); var tr2 = rg.Rect("inventory.leftTab.artifact", W, H, U); var br = rg.Rect("inventory.artBulkSell", W, H, U);
-        Check(Math.Abs(lr.X - 124) <= 1 && Math.Abs(lr.Y - 123) <= 1 && Math.Abs(lr.Right - 818) <= 1.5 && Math.Abs(lr.Bottom - 550.4) <= 1, "art hint: the list rectangle from the file (124..818 x 123..550)");
-        Check(Math.Abs(tr2.Y - 257.4) <= 1 && Math.Abs(br.X - 475.4) <= 1, "art hint: the tab and the button from the file");
+        Check(Math.Abs(lr.X - 124.8) <= 1 && Math.Abs(lr.Y - 123) <= 1 && Math.Abs(lr.Right - 801.2) <= 1.5 && Math.Abs(lr.Bottom - 550.4) <= 1, "art hint: the list rectangle from the file (125..801 x 123..550)");
+        Check(Math.Abs(tr2.Y - 257.4) <= 1 && Math.Abs(br.X - 302.6) <= 1, "art hint: the tab and the button from the file");
         var ga = SellGeometry.Artifacts(W, H, U, 7, lr);
         Check(Math.Abs(ga.PitchX - g.PitchX) < 0.002 && Math.Abs(ga.ViewTop - g.ViewTop) < 0.002 && Math.Abs(ga.ViewBottomPx(H, U) - g.ViewBottomPx(H, U)) < 1.5, "art hint: the geometry from the file agrees with the research numbers");
       }
     }
-    // other window shapes: the 7 columns stay inside the list at 16:9 and the list's right edge follows the window
-    foreach (var wh in new[] { new[] { 1920.0, 1009.0 }, new[] { 1600.0, 1000.0 } }) {
-      double u2 = Ui.Unit(wh[0], wh[1]); var g2 = SellGeometry.Artifacts(wh[0], wh[1], u2, 7);
-      double right = g2.X(g2.X0 + 6 * g2.PitchX + g2.CellW, wh[0], u2);
-      Check(right <= wh[0] - 0.4969 * u2 + 1 && g2.ViewTopPx(u2) > 0 && g2.ViewBottomPx(wh[1], u2) < wh[1], "art hint: " + wh[0] + "x" + wh[1] + ": the columns end inside the list");
+    // other window shapes: the game's 8 columns (floor((width - 6) / 90) of canvas units) stay inside the list and the list's right edge follows the window
+    foreach (var wh in new[] { new[] { 1920.0, 1009.0 }, new[] { 1366.0, 705.0 } }) {
+      double u2 = Ui.Unit(wh[0], wh[1]); var g2 = SellGeometry.Artifacts(wh[0], wh[1], u2, 8);
+      double right = g2.X(g2.X0 + 7 * g2.PitchX + g2.CellW, wh[0], u2);
+      Check(right <= wh[0] - 0.5231 * u2 + 1 && g2.ViewTopPx(u2) > 0 && g2.ViewBottomPx(wh[1], u2) < wh[1], "art hint: " + wh[0] + "x" + wh[1] + ": the columns end inside the list");
     }
   }
 
@@ -3534,8 +3548,8 @@ static class CoreTests {
     Check(fTab != null && Math.Abs(fTab.Mark.Y - 257.4) <= 1.5 && Math.Abs(fTab.Mark.X - 1.5) <= 1.5, "art frames: the «Артефакт» toggle (research numbers)");
     var iv = inv(u3, 1, -1, 0);
     var fCell = ArtFrames.For(stL, iv, null, null, Wd, Hd, U);
-    double cellW = 694.0 / 7;
-    Check(fCell != null && fCell.Mark.Kind == "box" && Math.Abs(fCell.Mark.X - (124 + cellW + (cellW - 80) / 2)) <= 1.5 && Math.Abs(fCell.Mark.Y - 126) <= 1.5 && Math.Abs(fCell.Mark.W - 80) <= 1.5 && Math.Abs(fCell.Mark.H - 110) <= 1.5,
+    double cellW = (1136 - (0.5231 + 0.195) * 640) / 7;
+    Check(fCell != null && fCell.Mark.Kind == "box" && Math.Abs(fCell.Mark.X - (124.8 + cellW + (cellW - 80) / 2)) <= 1.5 && Math.Abs(fCell.Mark.Y - 126) <= 1.5 && Math.Abs(fCell.Mark.W - 80) <= 1.5 && Math.Abs(fCell.Mark.H - 110) <= 1.5,
           "art frames: the cell of place 2 is the 80 x 110 card, centred in its column (" + (fCell == null ? "none" : fCell.Mark.X + "," + fCell.Mark.Y + " " + fCell.Mark.W + "x" + fCell.Mark.H) + ")");
     var ivS = inv(u3, 1, -1, 3);
     var fS = ArtFrames.For(stL, ivS, null, null, Wd, Hd, U);

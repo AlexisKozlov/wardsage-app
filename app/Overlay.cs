@@ -468,7 +468,7 @@ namespace RealmForge {
       if (artifact) hintOnly = true;   // the artifact cleanup is always a hint run (frames, plates); its clicks come on top of it, only with ArtAutoOn (TickArtSellAuto)
       sellHint = hintOnly && run;
       bool nowArt = artifact && run;
-      if (nowArt != sellArt) { shCols = nowArt ? 7 : 8; shGeo = null; }   // the artifact list has 7 columns at the authored width, the gear list 8
+      if (nowArt != sellArt) { shCols = 8; shGeo = null; }   // the artifact and the gear list have 8 columns at a 1.9:1 window (7 artifacts at the authored width: refined from the list's width at run time)
       sellArt = nowArt;
       ApplyArtGate();
       artSellBtnAt = 0; artSellSaid = "";
@@ -1696,6 +1696,7 @@ namespace RealmForge {
       bool art = sellArt;
       bool formActive; var live = art ? RFX.ReadArtifactLive(out formActive) : RFX.ReadInventoryLive(out formActive);
       if (live != null && live.Cols > 0 && live.Cols != shCols) shCols = live.Cols;
+      else if (art && (live == null || live.Cols <= 0)) { int ac = SellGeometry.ArtCols(Geo.Rect("inventory.artList", W, H, U), U, shCols); if (ac != shCols) shCols = ac; }   // not read: the game's own rule on the list's width
       if (shGeo == null || shGeoW != W || shGeoH != H || shGeoCols != shCols) {
         shGeoW = W; shGeoH = H; shGeoCols = shCols; shGeo = art ? SellGeometry.Artifacts(W, H, U, shCols, Geo.Rect("inventory.artList", W, H, U)) : SellGeometry.Inventory(W, U, shCols);
         sgrid.Reset();
