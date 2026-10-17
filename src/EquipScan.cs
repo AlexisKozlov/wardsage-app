@@ -36,6 +36,7 @@ namespace RealmForge {
     public bool FormOk;                         // the hero screen's form is known (see Part)
     public int Tab = -1;                        // the hero screen's right-hand tab (3 = gear), -1 = unknown
     public long HeroUid;                        // 0 = unknown
+    public bool HeroFromForm;                   // HeroUid is the hero screen's own hero (the selected hero was empty)
     public int Part = -1;                       // slot shown in the list, -1 = none (the list is closed: the hero grid shows)
     public int ListCount = -1;                  // items in the list
     public bool HideEquipped, HideEnhanced, HideLocked, FilterActive;
@@ -129,8 +130,8 @@ namespace RealmForge {
       catch (ArgumentException) { s.GameRunning = false; return s; }
 
       ulong v; int tt;
-      if (a.EquipData != 0 && Field(a.EquipData, KHero, out v, out tt) && tt == T_INT) s.HeroUid = (long)v;
       CheckForm(a);
+      s.HeroUid = HeroShown(a, out s.HeroFromForm);
 
       // Who wears each plan item. The game REPLACES an item's table when it changes (EquipData.equips[uid] = new table,
       // e.g. right after the player puts it on), so the current table is looked up in EquipData.equips every time;
@@ -194,6 +195,18 @@ namespace RealmForge {
       return s;
     }
 
+    /// <summary>The hero whose screen is open: EquipData's selected hero; EquipData forgets it after the inventory (the key
+    /// goes, 27.09), then the open hero screen's own last voiced hero is the one shown. 0 = unknown / no hero screen.</summary>
+    static long HeroShown(EquipAddrs a, out bool fromForm) {
+      fromForm = false; ulong v; int tt;
+      long hero = 0;
+      if (a.EquipData != 0 && Field(a.EquipData, KHero, out v, out tt) && tt == T_INT) hero = (long)v;
+      if (hero <= 0 && a.Form != 0 && FormAlive(a.Form) && Field(a.Form, "m_LastPlayuSoundId", out v, out tt) && tt == T_INT && (long)v > 0) {
+        hero = (long)v; fromForm = true;
+      }
+      return hero;
+    }
+
     // the hero screen is open (EquipData known from before and its hero set): then the scan must find the form too
     /// <summary>The game built the hero screen again (after a battle, say): follow it to the new one. When the window
     /// list's node has moved (the list grew), the form is dropped, so the host scans again.</summary>
@@ -246,12 +259,10 @@ namespace RealmForge {
       var h = new HeroScreen();
       if (a == null || a.EquipData == 0) return h;
       ulong v; int tt;
-      if (Field(a.EquipData, KHero, out v, out tt) && tt == T_INT) h.Hero = (long)v;
+      bool fromForm;
+      h.Hero = HeroShown(a, out fromForm);
       if (a.Form == 0) return h;
       h.FormOk = true;
-      // EquipData forgets the selected hero after the inventory (the key goes, 27.09): the hero screen's own last voiced
-      // hero is the one shown
-      if (h.Hero <= 0 && Field(a.Form, "m_LastPlayuSoundId", out v, out tt) && tt == T_INT && (long)v > 0) h.Hero = (long)v;
       if (Field(a.Form, "m_LastType", out v, out tt) && tt == T_INT) h.Tab = (int)(long)v;
       h.SmallCards = Field(a.Form, "m_IsUseSmallCard", out v, out tt) && tt == T_BOOL && v != 0;
       ulong pd; int pdt;

@@ -244,7 +244,9 @@ namespace RealmForge {
     // texts, so a key address remembered from one table says nothing about another (a remembered address made the readers
     // miss the live tables and take the old copies). The text of each key address is remembered (keyText), checked again
     // whenever it matches, and forgotten when the game process or the script state changes.
-    static readonly System.Collections.Concurrent.ConcurrentDictionary<ulong, string> keyText = new System.Collections.Concurrent.ConcurrentDictionary<ulong, string>();
+    // A remembered text that is NOT the wanted key is trusted for KeyNames.MissRetryMs only: the game builds some key strings
+    // again after a garbage collection, and the new copy can land at an address remembered as another text.
+    static readonly KeyNames keyText = new KeyNames();
     static IntPtr keyTextFor;
     static readonly object keyTextGate = new object();
 
@@ -263,19 +265,39 @@ namespace RealmForge {
     }
 
     // The remembered text of a key address (read now when not known: fresh = true); "" = not a short string.
-    static string KeyText(ulong k, out bool fresh) {
+    static string KeyText(ulong k, string want, out bool fresh) {
       fresh = false;
       if (keyTextFor != H) lock (keyTextGate) if (keyTextFor != H) { keyText.Clear(); keyTextFor = H; }
       string s;
-      if (keyText.TryGetValue(k, out s)) return s;
+      if (keyText.TryGet(k, want, Environment.TickCount, out s)) return s;
       fresh = true;
       s = ShortText(k) ?? "";
-      if (keyText.Count > 400000) keyText.Clear();
-      keyText[k] = s;
+      keyText.Set(k, s, Environment.TickCount);
       return s;
     }
 
     // The key address still holds that text (a remembered address may since hold another string).
+    /// <summary>Remembered texts of key addresses. A text equal to the wanted key is kept until it stops matching; any other
+    /// text is trusted for MissRetryMs and then read again.</summary>
+    public sealed class KeyNames {
+      public const int MissRetryMs = 10000;
+      struct Entry { public string Text; public int At; }
+      readonly System.Collections.Concurrent.ConcurrentDictionary<ulong, Entry> map = new System.Collections.Concurrent.ConcurrentDictionary<ulong, Entry>();
+      public void Clear() { map.Clear(); }
+      public void Remove(ulong k) { Entry e; map.TryRemove(k, out e); }
+      public void Set(ulong k, string text, int nowMs) {
+        if (map.Count > 400000) map.Clear();
+        map[k] = new Entry { Text = text, At = nowMs };
+      }
+      /// <returns>false = not known, or a miss older than MissRetryMs (read the address again)</returns>
+      public bool TryGet(ulong k, string want, int nowMs, out string text) {
+        Entry e; text = null;
+        if (!map.TryGetValue(k, out e)) return false;
+        if (e.Text != want && unchecked(nowMs - e.At) >= MissRetryMs) return false;
+        text = e.Text; return true;
+      }
+    }
+
     static bool HoldsText(ulong k, string key) {
       var b = Read(k, 24 + key.Length); if (b == null || b[8] != 4 || b[11] != key.Length) return false;
       for (int j = 0; j < key.Length; j++) if (b[24 + j] != (byte)key[j]) return false;
@@ -294,9 +316,9 @@ namespace RealmForge {
         int o = i * 32; int ktt = BitConverter.ToInt32(nb, o + 24);
         if (ktt != T_SSTR) continue;
         ulong k = BitConverter.ToUInt64(nb, o + 16);
-        bool fresh; string s = KeyText(k, out fresh);
+        bool fresh; string s = KeyText(k, key, out fresh);
         if (s.Length != key.Length || s != key) continue;
-        if (!fresh && !HoldsText(k, key)) { string gone; keyText.TryRemove(k, out gone); if (ShortText(k) != key) continue; }
+        if (!fresh && !HoldsText(k, key)) { keyText.Remove(k); if (ShortText(k) != key) continue; }
         val = BitConverter.ToUInt64(nb, o); tt = BitConverter.ToInt32(nb, o + 8); keyAt = k; return true;
       }
       return false;
@@ -1898,6 +1920,7 @@ namespace RealmForge {
     public bool FormOk;                         // the hero screen's form is known (see Part)
     public int Tab = -1;                        // the hero screen's right-hand tab (3 = gear), -1 = unknown
     public long HeroUid;                        // 0 = unknown
+    public bool HeroFromForm;                   // HeroUid is the hero screen's own hero (the selected hero was empty)
     public int Part = -1;                       // slot shown in the list, -1 = none (the list is closed: the hero grid shows)
     public int ListCount = -1;                  // items in the list
     public bool HideEquipped, HideEnhanced, HideLocked, FilterActive;
@@ -1991,8 +2014,8 @@ namespace RealmForge {
       catch (ArgumentException) { s.GameRunning = false; return s; }
 
       ulong v; int tt;
-      if (a.EquipData != 0 && Field(a.EquipData, KHero, out v, out tt) && tt == T_INT) s.HeroUid = (long)v;
       CheckForm(a);
+      s.HeroUid = HeroShown(a, out s.HeroFromForm);
 
       // Who wears each plan item. The game REPLACES an item's table when it changes (EquipData.equips[uid] = new table,
       // e.g. right after the player puts it on), so the current table is looked up in EquipData.equips every time;
@@ -2056,6 +2079,18 @@ namespace RealmForge {
       return s;
     }
 
+    /// <summary>The hero whose screen is open: EquipData's selected hero; EquipData forgets it after the inventory (the key
+    /// goes, 27.09), then the open hero screen's own last voiced hero is the one shown. 0 = unknown / no hero screen.</summary>
+    static long HeroShown(EquipAddrs a, out bool fromForm) {
+      fromForm = false; ulong v; int tt;
+      long hero = 0;
+      if (a.EquipData != 0 && Field(a.EquipData, KHero, out v, out tt) && tt == T_INT) hero = (long)v;
+      if (hero <= 0 && a.Form != 0 && FormAlive(a.Form) && Field(a.Form, "m_LastPlayuSoundId", out v, out tt) && tt == T_INT && (long)v > 0) {
+        hero = (long)v; fromForm = true;
+      }
+      return hero;
+    }
+
     // the hero screen is open (EquipData known from before and its hero set): then the scan must find the form too
     /// <summary>The game built the hero screen again (after a battle, say): follow it to the new one. When the window
     /// list's node has moved (the list grew), the form is dropped, so the host scans again.</summary>
@@ -2108,12 +2143,10 @@ namespace RealmForge {
       var h = new HeroScreen();
       if (a == null || a.EquipData == 0) return h;
       ulong v; int tt;
-      if (Field(a.EquipData, KHero, out v, out tt) && tt == T_INT) h.Hero = (long)v;
+      bool fromForm;
+      h.Hero = HeroShown(a, out fromForm);
       if (a.Form == 0) return h;
       h.FormOk = true;
-      // EquipData forgets the selected hero after the inventory (the key goes, 27.09): the hero screen's own last voiced
-      // hero is the one shown
-      if (h.Hero <= 0 && Field(a.Form, "m_LastPlayuSoundId", out v, out tt) && tt == T_INT && (long)v > 0) h.Hero = (long)v;
       if (Field(a.Form, "m_LastType", out v, out tt) && tt == T_INT) h.Tab = (int)(long)v;
       h.SmallCards = Field(a.Form, "m_IsUseSmallCard", out v, out tt) && tt == T_BOOL && v != 0;
       ulong pd; int pdt;

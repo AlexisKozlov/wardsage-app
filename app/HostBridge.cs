@@ -386,7 +386,7 @@ namespace RealmForge {
     void OnEquip(string cmd, Dictionary<string, object> m) {
         switch (cmd) {
           case "equip.scan": if (scanning) watch = Uids(m); else StartScan(Uids(m)); break;   // (the scan ahead is running: its result serves these items too)
-          case "equip.watch": Watch(Uids(m)); break;
+          case "equip.watch": Watch(Uids(m), MiniJson.GetBool(m, "fresh", false)); break;
           case "equip.run": {
             // the plan the player started («Надеть»): its hero is brought up on the hero screen
             object v; double h = m.TryGetValue("hero", out v) && v is double ? (double)v : 0;
@@ -1121,7 +1121,12 @@ namespace RealmForge {
       });
     }
 
-    void Watch(List<long> uids) {
+    void Watch(List<long> uids, bool fresh = false) {
+      // a new or re-sent plan: the game's tables are read again (the earlier scan may hold stale ones), at most every 20 s
+      if (fresh && addrs != null && !scanning && remote.ReadEnabled && DateTime.UtcNow > rescanAfter) {
+        rescanAfter = DateTime.UtcNow.AddSeconds(20); Log.Write("equip scan again: a new plan was received");
+        StartScan(uids, false, true); return;
+      }
       if (addrs == null) { if (scanning) watch = uids; else StartScan(uids); return; }
       // new plan items are found through EquipData.equips on the next poll; a full scan only without it
       if (addrs.EquipData == 0) foreach (var u in uids) if (!addrs.Items.ContainsKey(u)) { StartScan(uids); return; }
@@ -1140,6 +1145,20 @@ namespace RealmForge {
       StartScan(watch, false, true); overlay.RestartPilots();
     }
 
+    // The plan stands on «open the hero» while the game's hero screen is open (another hero, or none read): after 10 s the
+    // game's tables are read again, with or without the auto-click (live 1.6.61: the hero was not seen until a restart)
+    DateTime heroStepSince = DateTime.MinValue; long heroFromFormLogged;
+    bool HeroStepStuck(EquipLive s) {
+      long want = overlay.HeroStepHero();
+      if (want <= 0 || !s.GameRunning || !s.FormOk || s.HeroUid == want) { heroStepSince = DateTime.MinValue; return false; }
+      var now = DateTime.UtcNow;
+      if (heroStepSince == DateTime.MinValue) { heroStepSince = now; return false; }
+      if ((now - heroStepSince).TotalSeconds < 10 || now <= rescanAfter) return false;
+      heroStepSince = now; rescanAfter = now.AddSeconds(20);
+      Log.Write("equip scan again: hero step stands still (game hero " + s.HeroUid + ", plan hero " + want + ")");
+      return true;
+    }
+
     void PollLive() {
       if (addrs == null || scanning || !remote.ReadEnabled) return;
       EquipLive s;
@@ -1156,6 +1175,9 @@ namespace RealmForge {
       if (s.GameRunning && s.HeroUid > 0 && addrs.Form == 0 && DateTime.UtcNow > rescanAfter) {
         rescanAfter = DateTime.UtcNow.AddSeconds(60); Log.Write("equip scan again: the hero screen is open now"); StartScan(watch); return;
       }
+      if (HeroStepStuck(s)) { StartScan(watch, false, true); return; }
+      if (s.HeroFromForm) { if (heroFromFormLogged != s.HeroUid) { heroFromFormLogged = s.HeroUid; Log.Write("live: hero " + s.HeroUid + " from the hero screen (selected hero empty)"); } }
+      else heroFromFormLogged = 0;
       var sb = new StringBuilder("{\"ev\":\"equip.live\",\"live\":{");
       sb.Append("\"gameRunning\":").Append(B(s.GameRunning)).Append(",\"heroUid\":").Append(N(s.HeroUid)).Append(",\"panelOk\":").Append(B(s.PanelOk))
         .Append(",\"form\":").Append(B(s.FormOk)).Append(",\"tab\":").Append(N(s.Tab))

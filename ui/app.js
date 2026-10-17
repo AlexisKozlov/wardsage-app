@@ -641,7 +641,7 @@
   function startRun(p) {
     S.run = p.id; S.sel = S.plans.list.indexOf(p);
     host.send({ cmd: 'equip.run', hero: p.heroUid, restart: true }); S.runKey = String(p.heroUid);
-    watchPlans();
+    watchPlans(true);
   }
 
   // ---------------------------------------------------------------- settings
@@ -695,7 +695,8 @@
   function loadPlans() { if (!S.hasCode) return; S.plans.status = 'loading'; host.send({ cmd: 'plans.load', lang: S.lang }); host.send({ cmd: 'sell.load', lang: S.lang }); render(); }
   function scan() { if (!S.plans.list.length) return; S.scan = { status: 'scanning', panel: false }; host.send({ cmd: 'equip.scan', uids: allUids() }); render(); }
   // the game needs to know the new plan's items: a first scan, or just the new list of watched items
-  function watchPlans() { if (!S.plans.list.length) return; if (S.scan.status !== 'ok') scan(); else host.send({ cmd: 'equip.watch', uids: allUids() }); }
+  // fresh: a new or re-sent plan - the host reads the game's tables again instead of trusting the earlier scan
+  function watchPlans(fresh) { if (!S.plans.list.length) return; if (S.scan.status !== 'ok') scan(); else host.send({ cmd: 'equip.watch', uids: allUids(), fresh: !!fresh }); }
   function dropPlans(ids) {
     const id = current() && current().id;
     S.plans.list = S.plans.list.filter((p) => !ids.includes(p.id));
@@ -901,7 +902,7 @@
           const fresh = G.freshPlans(S.plans.list, S.seen, Date.now());
           S.seen = S.seen || {}; S.plans.list.forEach((p) => { S.seen[p.id] = true; });
           if (fresh.length && S.autoClick && S.game.running) { enqueue(fresh); if (!S.compact) S.page = 'equip'; }
-          watchPlans();
+          watchPlans(fresh.length > 0);
         } else S.plans = { status: 'error', list: S.plans.list, err: m.status === 'invalid_token' ? 'token' : m.detail || '' };
         render(); break;
       case 'equip.scan': S.scan = { status: m.status, panel: !!m.panel }; render(); break;
@@ -1017,7 +1018,7 @@
         S.sel = 0; S.page = 'equip'; S.editCode = false;
         if (S.hasCode && S.plans.status === 'idle') loadPlans();
         if (S.autoClick) enqueue([p]);
-        watchPlans(); render();
+        watchPlans(true); render();
         break;
       }
       case 'bridge.drop': dropPlans(m.ids || []); break;

@@ -87,6 +87,18 @@ static class CoreTests {
     // the fight timeline and the battle reading take their game values from the layout data (src/Layout.cs): a test copy
     Layout.Use(TestLayout());
 
+    Console.WriteLine("Key name cache");
+    {
+      var kn = new RFX.KeyNames(); string kt;
+      Check(!kn.TryGet(10, "m_Hero", 0, out kt), "unknown key address is read");
+      kn.Set(10, "other", 0);
+      Check(kn.TryGet(10, "m_Hero", 5000, out kt) && kt == "other", "a miss is trusted for a short time");
+      Check(!kn.TryGet(10, "m_Hero", RFX.KeyNames.MissRetryMs + 1, out kt), "a miss is read again after the retry time");
+      kn.Set(11, "m_Hero", 0);
+      Check(kn.TryGet(11, "m_Hero", 600000, out kt) && kt == "m_Hero", "a match stays cached");
+      kn.Remove(11); Check(!kn.TryGet(11, "m_Hero", 0, out kt), "removed entry is unknown");
+    }
+
     Console.WriteLine("MiniJson");
     var o = (Dictionary<string, object>)MiniJson.Parse("\uFEFF {\"a\":[1,2.5,-3e2,true,false,null],\"s\":\"x\\\"\\u0416\\n\",\"o\":{}} ");
     Eq(3, o.Count, "object keys");

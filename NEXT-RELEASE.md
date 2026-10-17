@@ -42,6 +42,9 @@ Optional `### Heading` lines inside a `## RU` / `## EN` section split the update
 ## RU
 
 - Герои, которых ты ещё ни разу не прокачивал и не одевал, теперь тоже попадают на сайт — раньше программа их пропускала, и на сайте героев было меньше, чем в игре.
+- Переодевание: программа узнаёт открытого героя и тогда, когда экран героя открыт после инвентаря или другого героя, и сама перепроверяет игру, если шаг «открой героя» не проходит, — перезапуск программы больше не нужен.
+
 ## EN
 
 - Heroes you have never levelled or equipped now reach the site too: the app used to skip them, so the site showed fewer heroes than the game.
+- Equipping: the app now recognises the open hero even when the hero screen was opened after the inventory or another hero, and re-checks the game by itself when the «open the hero» step does not clear, so restarting the app is no longer needed.

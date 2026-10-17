@@ -158,7 +158,9 @@ namespace RealmForge {
     // texts, so a key address remembered from one table says nothing about another (a remembered address made the readers
     // miss the live tables and take the old copies). The text of each key address is remembered (keyText), checked again
     // whenever it matches, and forgotten when the game process or the script state changes.
-    static readonly System.Collections.Concurrent.ConcurrentDictionary<ulong, string> keyText = new System.Collections.Concurrent.ConcurrentDictionary<ulong, string>();
+    // A remembered text that is NOT the wanted key is trusted for KeyNames.MissRetryMs only: the game builds some key strings
+    // again after a garbage collection, and the new copy can land at an address remembered as another text.
+    static readonly KeyNames keyText = new KeyNames();
     static IntPtr keyTextFor;
     static readonly object keyTextGate = new object();
 
@@ -177,19 +179,39 @@ namespace RealmForge {
     }
 
     // The remembered text of a key address (read now when not known: fresh = true); "" = not a short string.
-    static string KeyText(ulong k, out bool fresh) {
+    static string KeyText(ulong k, string want, out bool fresh) {
       fresh = false;
       if (keyTextFor != H) lock (keyTextGate) if (keyTextFor != H) { keyText.Clear(); keyTextFor = H; }
       string s;
-      if (keyText.TryGetValue(k, out s)) return s;
+      if (keyText.TryGet(k, want, Environment.TickCount, out s)) return s;
       fresh = true;
       s = ShortText(k) ?? "";
-      if (keyText.Count > 400000) keyText.Clear();
-      keyText[k] = s;
+      keyText.Set(k, s, Environment.TickCount);
       return s;
     }
 
     // The key address still holds that text (a remembered address may since hold another string).
+    /// <summary>Remembered texts of key addresses. A text equal to the wanted key is kept until it stops matching; any other
+    /// text is trusted for MissRetryMs and then read again.</summary>
+    public sealed class KeyNames {
+      public const int MissRetryMs = 10000;
+      struct Entry { public string Text; public int At; }
+      readonly System.Collections.Concurrent.ConcurrentDictionary<ulong, Entry> map = new System.Collections.Concurrent.ConcurrentDictionary<ulong, Entry>();
+      public void Clear() { map.Clear(); }
+      public void Remove(ulong k) { Entry e; map.TryRemove(k, out e); }
+      public void Set(ulong k, string text, int nowMs) {
+        if (map.Count > 400000) map.Clear();
+        map[k] = new Entry { Text = text, At = nowMs };
+      }
+      /// <returns>false = not known, or a miss older than MissRetryMs (read the address again)</returns>
+      public bool TryGet(ulong k, string want, int nowMs, out string text) {
+        Entry e; text = null;
+        if (!map.TryGetValue(k, out e)) return false;
+        if (e.Text != want && unchecked(nowMs - e.At) >= MissRetryMs) return false;
+        text = e.Text; return true;
+      }
+    }
+
     static bool HoldsText(ulong k, string key) {
       var b = Read(k, 24 + key.Length); if (b == null || b[8] != 4 || b[11] != key.Length) return false;
       for (int j = 0; j < key.Length; j++) if (b[24 + j] != (byte)key[j]) return false;
@@ -208,9 +230,9 @@ namespace RealmForge {
         int o = i * 32; int ktt = BitConverter.ToInt32(nb, o + 24);
         if (ktt != T_SSTR) continue;
         ulong k = BitConverter.ToUInt64(nb, o + 16);
-        bool fresh; string s = KeyText(k, out fresh);
+        bool fresh; string s = KeyText(k, key, out fresh);
         if (s.Length != key.Length || s != key) continue;
-        if (!fresh && !HoldsText(k, key)) { string gone; keyText.TryRemove(k, out gone); if (ShortText(k) != key) continue; }
+        if (!fresh && !HoldsText(k, key)) { keyText.Remove(k); if (ShortText(k) != key) continue; }
         val = BitConverter.ToUInt64(nb, o); tt = BitConverter.ToInt32(nb, o + 8); keyAt = k; return true;
       }
       return false;

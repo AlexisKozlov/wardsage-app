@@ -318,6 +318,9 @@ namespace RealmForge {
     /// <summary>Every pilot starts over (a new «Надеть»: after a failure the player may have fixed the game's screen).</summary>
     /// <summary>What the helper is at while a started plan runs (null = no plan, or a pilot is clicking / waiting for the
     /// player): the same key for long means the plan stands still.</summary>
+    /// <summary>The hero the plan wants opened while its step is «open the hero» (the hint, or the started plan); 0 = none.</summary>
+    public long HeroStepHero() { return hintKind == "hero" ? hintHero : (hintKind == "" ? runHero : 0); }
+
     public string StallKey() {
       if (runHero <= 0 || autoSaid == "work" || autoSaid == "paused" || autoSaid == "background") return null;
       return runHero + "|" + target + "|" + filterItem + "|" + filterKind + "|" + hintKind + "|" + autoSaid;
