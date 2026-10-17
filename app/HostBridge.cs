@@ -54,6 +54,7 @@ namespace RealmForge {
     readonly System.Windows.Forms.Timer remoteTimer = new System.Windows.Forms.Timer();
     readonly System.Windows.Forms.Timer testLogTimer = new System.Windows.Forms.Timer();   // TEST build only: log lines to the site
     bool testLogSending;
+    PlansWaiter plansWait; string plansWaitKey = "";   // the long poll for new work from the site (src/PlansWait.cs)
     ScreenRecorder testRec;   // TEST build only: the screen recorder (app/RecCapture.cs), made at the first «Записать»
 
     public HostBridge(AppWindow win, CoreWebView2 core) {
@@ -67,6 +68,7 @@ namespace RealmForge {
       packsWatch = new PacksWatch(() => cfg.Site, () => cfg.Code);
       gameTimer.Interval = 2000; gameTimer.Tick += (s, e) => {
         CheckGame(false);
+        SyncPlansWait();
         if (On("battle")) WatchBattleEnd();
         WatchStall();
         arenaWatch.Tick(gameRunning && On("battle")); guildWatch.Tick(gameRunning && On("guild")); packsWatch.Tick(gameRunning);
@@ -79,6 +81,8 @@ namespace RealmForge {
       ApplyAutoClick();
       RFX.SkipGvg = !On("gvg");
       overlay.AutoConfirm = cfg.AutoConfirm;
+      overlay.RecButton = Channel.IsTest && cfg.RecButton;
+      overlay.RecPressed += () => { Log.Write("record button pressed over the game"); ToggleRec(); };
       overlay.CancelText = CancelText(cfg.Lang); overlay.LocateCancelText = LocateCancelText(cfg.Lang);
       coach.Lang = cfg.Lang;
       coach.PlaceX = cfg.CoachX; coach.PlaceY = cfg.CoachY;
@@ -255,7 +259,7 @@ namespace RealmForge {
       Program.FatalReport = null;
       bridgePoller.Dispose();   // the pending long poll is aborted: the thread ends at once
       CloseBridgeCommands("cancelled", "Wardsage was closed.", true);
-      gameTimer.Dispose(); liveTimer.Dispose(); autoTimer.Dispose(); updateTimer.Dispose(); remoteTimer.Dispose(); testLogTimer.Dispose(); if (testRec != null) testRec.Stop(); overlay.Dispose();
+      gameTimer.Dispose(); liveTimer.Dispose(); autoTimer.Dispose(); updateTimer.Dispose(); remoteTimer.Dispose(); testLogTimer.Dispose(); if (testRec != null) testRec.Stop(); if (plansWait != null) plansWait.Stop(); overlay.Dispose();
     }
 
     // «Обновлять автоматически» (on by default): a downloaded update is put in place by restarting in a quiet moment — no
@@ -308,6 +312,29 @@ namespace RealmForge {
     }
 
     // ------------------------------------------------------------------ plumbing
+
+    // TEST build: the screen recorder starts / stops from Settings (rec.start / rec.stop) or from the button over the game (same code path)
+    void StartRec() {
+      if (!Channel.IsTest) return;
+      if (testRec == null) testRec = new ScreenRecorder(() => cfg.Site, () => cfg.Code, s => Log.Write(s), ev => Post(ev), on => OnUi(() => overlay.SetRecording(on)));
+      testRec.Start();
+    }
+    void ToggleRec() { if (testRec != null && testRec.On) testRec.Stop(); else StartRec(); }
+
+    // the long poll runs while the game runs and a valid code is set; a new site / code restarts it; the page learns whether it works
+    // (then its own polling slows down). A site without the endpoint (404) is left alone for this run
+    void SyncPlansWait() {
+      bool want = gameRunning && SyncClient.IsValidCode(cfg.Code);
+      string key = want ? cfg.Site + "|" + cfg.Code : "";
+      if (plansWait == null) plansWait = new PlansWaiter(() => cfg.Site, () => cfg.Code, () => Post("{\"ev\":\"plans.changed\"}"), ok => Post("{\"ev\":\"plansWait\",\"ok\":" + B(ok) + "}"), s => Log.Write(s));
+      if (key != plansWaitKey) {
+        bool dead = plansWait.Dead;
+        plansWait.Stop();
+        plansWaitKey = key;
+        if (dead) plansWait = new PlansWaiter(() => cfg.Site, () => cfg.Code, () => Post("{\"ev\":\"plans.changed\"}"), ok => Post("{\"ev\":\"plansWait\",\"ok\":" + B(ok) + "}"), s => Log.Write(s));
+      }
+      if (want) plansWait.Start();
+    }
 
     void Post(string json) {
       if (win.IsDisposed) return;
@@ -437,11 +464,9 @@ namespace RealmForge {
           case "log": Log.Write("ui: " + (MiniJson.GetString(m, "text") ?? "")); break;
           case "equip.finish": FinishPlan(MiniJson.GetString(m, "id"), MiniJson.GetBool(m, "done", false), MiniJson.GetBool(m, "taken", false)); break;
           case "diag": overlay.StartDiag(5); break;
-          case "rec.start":
-            if (!Channel.IsTest) break;   // the test build only
-            if (testRec == null) testRec = new ScreenRecorder(() => cfg.Site, () => cfg.Code, s => Log.Write(s), ev => Post(ev), on => OnUi(() => overlay.SetRecording(on)));
-            testRec.Start(); break;
+          case "rec.start": StartRec(); break;
           case "rec.stop": if (testRec != null) testRec.Stop(); break;
+          case "setRecButton": cfg.RecButton = MiniJson.GetBool(m, "on", true); overlay.RecButton = Channel.IsTest && cfg.RecButton; Save(); break;
           case "battle.capture": if (On("battle")) CaptureNow(-1, 0, 0); break;
           case "compact": win.SetCompact(MiniJson.GetBool(m, "on", false)); break;
           case "update.restart": Program.RestartForUpdate(); break;
@@ -584,7 +609,7 @@ namespace RealmForge {
       sb.Append(",\"saveCopy\":").Append(B(cfg.SaveCopy));
       sb.Append(",\"autoSync\":").Append(B(cfg.AutoSync)).Append(",\"autoClick\":").Append(B(cfg.AutoClick))
         .Append(",\"autoConfirm\":").Append(B(cfg.AutoConfirm)).Append(",\"errorReports\":").Append(B(cfg.ErrorReports)).Append(",\"autoUpdate\":").Append(B(cfg.AutoUpdate))
-        .Append(",\"tray\":").Append(B(cfg.Tray)).Append(",\"bossHints\":").Append(B(cfg.BossHints)).Append(",\"autostart\":").Append(B(Autostart.IsOn()));
+        .Append(",\"tray\":").Append(B(cfg.Tray)).Append(",\"bossHints\":").Append(B(cfg.BossHints)).Append(",\"recButton\":").Append(B(cfg.RecButton)).Append(",\"autostart\":").Append(B(Autostart.IsOn()));
       win.TrayEnabled = cfg.Tray;
       win.SetTrayLang(cfg.Lang);
       sb.Append(",\"last\":").Append(LastJson());

@@ -163,6 +163,15 @@ namespace RealmForge {
     /// <summary>The same button while «Показать в игре» clicks by itself: it only stops that.</summary>
     public string LocateCancelText = "Остановить автонажатие";
     string cancelDrawn; Bitmap cancelBmp;
+    // TEST build: the record button over the game (top left); a clickable window like cancelWin, drawn only while the central gate allows
+    readonly GlowWindow recWin = new GlowWindow(true);
+    readonly Timer recBtnTimer = new Timer();
+    readonly Stopwatch recSw = new Stopwatch();
+    string recDrawn; Bitmap recBmp; bool recOn;
+    /// <summary>Settings → «Кнопка записи поверх игры» (the test build only).</summary>
+    public bool RecButton;
+    /// <summary>The player pressed the record button over the game: the host toggles the recorder.</summary>
+    public event Action RecPressed;
     readonly ListGeometry g = new ListGeometry();
     readonly HintGeometry hg = new HintGeometry();
     readonly ScrollAnchor anchor = new ScrollAnchor();
@@ -248,6 +257,12 @@ namespace RealmForge {
         try { LookFast(); }
         catch (Exception ex) { string m = "look: " + ex.GetType().Name + ": " + ex.Message; if (m != tickError) { tickError = m; Log.Write("overlay: " + ex); } }
       };
+      recWin.Text = "Wardsage rec";
+      recWin.Pressed += () => { var r = RecPressed; if (r != null) r(); };
+      recBtnTimer.Interval = 200; recBtnTimer.Tick += (s, e) => {
+        try { TickRecBtn(); } catch (Exception ex) { if (recWin.Visible) recWin.Hide(); string m = "recbtn: " + ex.GetType().Name + ": " + ex.Message; if (m != tickError) { tickError = m; Log.Write("overlay: " + ex); } }
+      };
+      if (Channel.IsTest) recBtnTimer.Start();
       cancelWin.Pressed += () => {
         cancelWin.Hide();
         if (LocateWins && runHero <= 0) { lpilot.Cancel(); Log.Write("locate auto: stopped over the game"); return; }   // «Показать в игре»: only the clicks stop
@@ -255,7 +270,7 @@ namespace RealmForge {
       };
     }
 
-    public void Dispose() { timer.Dispose(); lookTimer.Dispose(); glow.Dispose(); tip.Dispose(); cancelWin.Dispose(); }
+    public void Dispose() { timer.Dispose(); lookTimer.Dispose(); glow.Dispose(); tip.Dispose(); cancelWin.Dispose(); recBtnTimer.Dispose(); recWin.Dispose(); }
 
     public void StartDiag(int minutes) {
       // one folder per run: a second run must not overwrite the first one's files
@@ -475,8 +490,9 @@ namespace RealmForge {
     /// <summary>TEST build: the recorder starts / stops. Our windows stay in screen captures while it runs (then the screen looks mask them themselves).</summary>
     public void SetRecording(bool on) {
       RecInfo.Active = on; GlowWindow.Capturable = on;
+      recOn = on; if (on) recSw.Restart(); else recSw.Reset();
       if (on) RecReads.Clear();
-      foreach (var w in new[] { glow, tip, cancelWin }) if (w.IsHandleCreated) w.ApplyAffinity();
+      foreach (var w in new[] { glow, tip, cancelWin, recWin }) if (w.IsHandleCreated) w.ApplyAffinity();
       Run();
     }
 
@@ -517,6 +533,58 @@ namespace RealmForge {
         cancelBmp = CancelBitmap(w, h, cancelText); cancelDrawn = key;
       }
       cancelWin.Put(cancelBmp, o.X + cr.R / 2 - w / 2, o.Y + (int)(0.012 * U));
+    }
+
+    // the record button (TEST build): a round gold-rimmed dark button at the game's top left (d = 0.055 U, inset 0.012 U): a red dot when idle,
+    // a red rounded square while recording, with a plate «0:42» beside it. The central gate (GameDrawable) decides, as for every overlay drawing
+    void TickRecBtn() {
+      IntPtr hwnd = GameWindow();
+      W32.RECT cr;
+      if (!Channel.IsTest || !RecButton || !GameDrawable() || !W32.GetClientRect(hwnd, out cr) || cr.B < 200) { if (recWin.Visible) recWin.Hide(); return; }
+      var o = new W32.POINT(0, 0); W32.ClientToScreen(hwnd, ref o);
+      double U = Ui.Unit(cr.R, cr.B);
+      int d = Math.Max(16, (int)(0.055 * U)), inset = Math.Max(2, (int)(0.012 * U));
+      int sec = recOn ? (int)(recSw.ElapsedMilliseconds / 1000) : 0;
+      string key = d + "|" + (recOn ? "r" + sec : "i");
+      if (key != recDrawn || recBmp == null) {
+        if (recBmp != null) recBmp.Dispose();
+        recBmp = RecBtnBitmap(d, recOn, sec / 60 + ":" + (sec % 60).ToString("00")); recDrawn = key;
+      }
+      recWin.Put(recBmp, o.X + inset, o.Y + inset);
+      recWin.Parts.Clear(); recWin.Parts.Add(new[] { o.X + inset, o.Y + inset, recBmp.Width, recBmp.Height });
+    }
+
+    static Bitmap RecBtnBitmap(int d, bool recording, string time) {
+      int pad = 3, gap = Math.Max(4, d / 6);
+      float fs = Math.Max(9f, d * 0.36f);
+      int pw = 0, ph = (int)(d * 0.72);
+      using (var f = new Font("Segoe UI", fs, FontStyle.Bold, GraphicsUnit.Pixel)) {
+        if (recording) using (var probe = new Bitmap(1, 1)) using (var g0 = Graphics.FromImage(probe)) pw = (int)g0.MeasureString(time, f).Width + (int)(d * 0.5);
+        int w = d + (recording ? gap + pw : 0) + pad, h = d + pad;
+        var bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb);
+        using (var gr = Graphics.FromImage(bmp)) {
+          gr.SmoothingMode = SmoothingMode.AntiAlias; gr.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit; gr.Clear(Color.Transparent);
+          using (var shadow = new SolidBrush(Color.FromArgb(110, 0, 0, 0))) gr.FillEllipse(shadow, 2, 3, d - 2, d - 2);
+          using (var bg = new SolidBrush(Color.FromArgb(242, 16, 18, 26))) gr.FillEllipse(bg, 1, 1, d - 3, d - 3);
+          using (var pen = new Pen(Color.FromArgb(255, 122, 92, 46), 2f)) gr.DrawEllipse(pen, 1.5f, 1.5f, d - 4, d - 4);
+          using (var pen = new Pen(Color.FromArgb(170, 224, 182, 96), 1f)) gr.DrawEllipse(pen, 4f, 4f, d - 9, d - 9);
+          var red = Color.FromArgb(255, 226, 52, 44); float c = d / 2f - 0.5f;
+          using (var br = new SolidBrush(red)) {
+            if (recording) { float q = d * 0.17f; using (var p = Round(c - q, c - q, q * 2, q * 2, q * 0.35f)) gr.FillPath(br, p); }
+            else { float r = d * 0.17f; gr.FillEllipse(br, c - r, c - r, r * 2, r * 2); }
+          }
+          if (recording) {
+            float px = d + gap, py = (d - ph) / 2f;
+            using (var shadow = new SolidBrush(Color.FromArgb(110, 0, 0, 0))) gr.FillRectangle(shadow, px + 2, py + 3, pw, ph);
+            using (var bg = new SolidBrush(Color.FromArgb(242, 16, 18, 26))) gr.FillRectangle(bg, px, py, pw, ph);
+            using (var pen = new Pen(Color.FromArgb(255, 122, 92, 46), 2f)) gr.DrawRectangle(pen, px + 1, py + 1, pw - 2, ph - 2);
+            using (var pen = new Pen(Color.FromArgb(170, 224, 182, 96), 1f)) gr.DrawRectangle(pen, px + 3.5f, py + 3.5f, pw - 7, ph - 7);
+            using (var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center })
+              gr.DrawString(time, f, Brushes.White, new RectangleF(px, py, pw, ph), sf);
+          }
+        }
+        return bmp;
+      }
     }
 
     static Bitmap blueTex;
@@ -1163,7 +1231,7 @@ namespace RealmForge {
     /// captures): those pixels of a grab at (x, y) w × h are set to the dark background, so they are no bars, no glow, no cells.</summary>
     void MaskOwn(int[] px, int x, int y, int w, int h) {
       if (px == null) return;
-      foreach (var win in new[] { glow, tip })
+      foreach (var win in new[] { glow, tip, recWin })
         if (!win.Excluded && win.Visible)
           foreach (var r in win.Parts) {
             int ax = Math.Max(x, r[0]), ay = Math.Max(y, r[1]), bx = Math.Min(x + w, r[0] + r[2]), by = Math.Min(y + h, r[1] + r[3]);

@@ -376,6 +376,20 @@ static class CoreTests {
     Check(PlansClient.Interpret(200, "{\"ok\":false}", true).Status == PlansStatus.Unexpected, "ok:false");
     Check(PlansClient.Interpret(502, "<html>", true).Status == PlansStatus.ServerError, "502");
 
+    // the long poll for new work (src/PlansWait.cs)
+    var w1 = PlansWait.Interpret(200, "{\"changed\":true,\"at\":\"2026-10-17T12:00:01.250Z\"}");
+    Check(w1.Kind == WaitKind.Ok && w1.Changed && w1.At == "2026-10-17T12:00:01.250Z", "wait: changed + at");
+    var w2 = PlansWait.Interpret(200, "{\"changed\":false,\"at\":\"not a date\"}");
+    Check(w2.Kind == WaitKind.Ok && !w2.Changed && w2.At == "", "wait: unchanged, bad at dropped");
+    Check(PlansWait.Interpret(200, "<html>").Kind == WaitKind.Error && PlansWait.Interpret(200, "").Kind == WaitKind.Error, "wait: junk body");
+    Check(PlansWait.Interpret(401, "{}").Kind == WaitKind.Unauthorized && PlansWait.Interpret(429, "{}").Kind == WaitKind.TooMany, "wait: 401 / 429");
+    Check(PlansWait.Interpret(404, "{}").Kind == WaitKind.NotDeployed && PlansWait.Interpret(502, "x").Kind == WaitKind.Error, "wait: 404 not deployed, 502 error");
+    Eq(0, PlansWait.Backoff(0), "backoff: none yet");
+    Check(PlansWait.Backoff(1) == 2000 && PlansWait.Backoff(2) == 4000 && PlansWait.Backoff(3) == 8000 && PlansWait.Backoff(5) == 32000, "backoff: 2 s, 4 s, 8 s ...");
+    Check(PlansWait.Backoff(6) == 60000 && PlansWait.Backoff(50) == 60000, "backoff: capped at 60 s");
+    Eq("2026-10-17T12:00:01.250Z", PlansWait.Since("2026-10-17T12:00:01.250Z", DateTime.UtcNow), "since: the server's last at");
+    Eq("2026-10-17T11:59:00.000Z", PlansWait.Since("", new DateTime(2026, 10, 17, 12, 0, 0, DateTimeKind.Utc)), "since: now - 60 s at first");
+
     Console.WriteLine("Equip guide");
     var lv = new EquipLive();
     Check(EquipGuide.Next(plan, lv).Kind == GuideKind.OpenHero, "other hero -> open hero");

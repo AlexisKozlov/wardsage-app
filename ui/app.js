@@ -17,7 +17,7 @@
     sync: { phase: 'idle', stage: null, seconds: 0, result: null, error: null },
     plans: { status: 'idle', list: [], err: null }, sel: 0,
     scan: { status: 'idle', panel: false }, live: null, reported: {}, compact: false, overlay: 'off', ovFar: false, hl: '',
-    more: {}, autoSync: true, autoClick: false, autoConfirm: false, errorReports: false, autoUpdate: true, bossHints: true, tray: true, autostart: false, auto: 'idle', autoAt: null,
+    more: {}, autoSync: true, autoClick: false, autoConfirm: false, errorReports: false, autoUpdate: true, bossHints: true, recButton: true, plansWait: false, tray: true, autostart: false, auto: 'idle', autoAt: null,
     news: { status: 'idle', feed: null, filter: 'all', at: 0 },
     forum: { status: 'idle', reply: null, at: 0 },
     run: null, seen: null, runKey: '', queue: [], takeOver: {},
@@ -696,6 +696,7 @@
         : codeBtns())}</section>`;
     // TEST build only: the screen recorder for the developers (host: rec.start / rec.stop, event 'rec')
     const rec = S.channel !== 'test' ? '' : sec(t('secRec'), row(t('setRec'), t('setRecP'), `<button class="btn-line" id="recBtn" data-act="rec">${esc(recLabel())}</button>`, { wide: true })
+      + row(t('setRecBtn'), t('setRecBtnP'), sw('recButton', S.recButton))
       + (S.rec.sent || S.rec.total || S.rec.why ? `<p class="sdet" id="recInfo">${esc(recNote())}</p>` : ''));
     const left = [
       sec(t('secSync'),
@@ -818,6 +819,7 @@
     else if (a === 'saveCode') { const v = $('#code').value.trim(); if (CODE_RE.test(v)) host.send({ cmd: 'setCode', code: v }); }
     else if (a === 'unlink') host.send({ cmd: 'clearCode' });
     else if (a === 'copy') { S.saveCopy = !S.saveCopy; host.send({ cmd: 'setSaveCopy', on: S.saveCopy }); render(); }
+    else if (a === 'recButton') { S.recButton = !S.recButton; host.send({ cmd: 'setRecButton', on: S.recButton }); render(); }
     else if (a === 'bossHints') { S.bossHints = !S.bossHints; host.send({ cmd: 'setBossHints', on: S.bossHints }); render(); }
     else if (a === 'tray') { S.tray = !S.tray; host.send({ cmd: 'setTray', on: S.tray }); render(); }
     else if (a === 'autostart') { S.autostart = !S.autostart; host.send({ cmd: 'setAutostart', on: S.autostart }); render(); }
@@ -884,7 +886,7 @@
     switch (m.ev) {
       case 'state':
         Object.assign(S, { lang: m.lang, version: m.version, channel: m.channel || 'main', site: m.site, defaultSite: m.defaultSite, termsOk: m.termsOk !== false, hasCode: m.hasCode, codePrefix: m.codePrefix, saveCopy: m.saveCopy, last: m.last || S.last });
-        if (m.autoSync !== undefined) { S.autoSync = m.autoSync; S.autoClick = m.autoClick; S.autoConfirm = !!m.autoConfirm; S.errorReports = !!m.errorReports; S.autoUpdate = m.autoUpdate !== false; S.tray = m.tray !== false; S.bossHints = m.bossHints !== false; S.autostart = !!m.autostart; }
+        if (m.autoSync !== undefined) { S.autoSync = m.autoSync; S.autoClick = m.autoClick; S.autoConfirm = !!m.autoConfirm; S.errorReports = !!m.errorReports; S.autoUpdate = m.autoUpdate !== false; S.tray = m.tray !== false; S.bossHints = m.bossHints !== false; S.recButton = m.recButton !== false; S.autostart = !!m.autostart; }
         if (m.game) S.game = m.game;
         if (m.codeSaved) { S.editCode = false; toast(t('saved')); if (S.page === 'equip' || S.plans.status !== 'idle') loadPlans(); }
         if (m.siteSaved) toast(t('saved'));
@@ -979,6 +981,8 @@
         if (l.missing !== S.layout.missing || l.noCode !== S.layout.noCode || l.game !== S.layout.game) { S.layout = l; render(); }
         break;
       }
+      case 'plans.changed': if (S.hasCode && S.plans.status !== 'loading') loadPlans(); break;   // the site has new work (long poll in the host)
+      case 'plansWait': S.plansWait = m.ok === true; break;   // while it works the timer below is only a fallback
       case 'rec': {
         // the recorder's timer / upload count (the page is only redrawn when it starts, stops or the counts change)
         const was = S.rec, now = { on: !!m.on, sec: m.sec | 0, sent: m.sent | 0, total: m.total | 0, why: m.why || '' };
@@ -1157,10 +1161,12 @@
   // working (a «Надеть в игре» starts here within seconds), else every 48 s — each poll is a call to the site, and
   // thousands of them a day used up its server time
   let pollTick = 0;
+  // with the host's long poll working (event plansWait) the timer is a fallback: every 30 s busy / 120 s idle
   setInterval(() => {
     if (!S.hasCode || !S.game.running || S.plans.status === 'loading') return;
     const busy = S.page === 'equip' || !!S.run || S.queue.length > 0 || S.auto === 'work' || S.sell.run || !!S.locate.req;
-    if (busy || ++pollTick % 6 === 0) loadPlans();
+    pollTick++;
+    if (S.plansWait ? pollTick % (busy ? 4 : 15) === 0 : (busy || pollTick % 6 === 0)) loadPlans();
   }, 8000);
 
   // new replies in the player's community topics: every 10 minutes
