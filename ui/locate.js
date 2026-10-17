@@ -10,7 +10,7 @@
 
   // auto click (host: src/LocatePilot.cs): st.auto = '' (off) | work | paused | background | hint | stopped, st.autoWhy = the reason when stopped.
   // The app clicks by itself only on these steps; the rest (the Foundry, the last button) stay the player's.
-  const AUTO_STEPS = ['openInventory', 'openEquipTab', 'inList'];
+  const AUTO_STEPS = ['openInventory', 'openEquipTab', 'inList', 'openFoundry', 'openAscendTab', 'ascendFilter', 'ascendPick'];
   const AUTO_WHY = { bulk: 'locAutoBulk', lost: 'locAutoLost', stuck: 'locAutoStuck', screen: 'locAutoScreen', cancelled: 'locAutoCancel' };
 
   function names(list) { return (list || []).map((x) => x.name || x.text).filter(Boolean); }

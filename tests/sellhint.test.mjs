@@ -32,7 +32,7 @@ for (const lang of ['ru', 'en']) {
   ok(SH.describe(st({ step: 'allSelected', below: 5 }), t).pillDown === '', lang + ': no pill when all are selected');
   ok(SH.describe(st(), t).pillDown === '' && SH.describe(st(), t).pillUp === '', lang + ': no pill when everything is in view');
   // the page's lines
-  for (const k of ['sellHintRun', 'sellHintLead']) ok(T[lang][k] && !/^sell/.test(T[lang][k]), lang + ': ' + k);
+  ok(T[lang].sellHintLead && !/^sell/.test(T[lang].sellHintLead), lang + ': sellHintLead');
 }
 // the texts asked for
 ok(T.ru.sellHintLead === 'Программа покажет рамками, какие вещи отметить; отмечаешь ты сам.', 'ru: lead text');

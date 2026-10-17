@@ -165,10 +165,47 @@ namespace RealmForge {
       if (had != cached) ApplyRemote();
       PostLayout();
       FetchLayout(v);
+      SelectGeometry(v);
     }
 
     void LayoutTick() {
       if (gameRunning && Layout.Current == null && !layoutFetching && DateTime.UtcNow >= layoutRetryAt) FetchLayout(layoutFor);
+      if (gameRunning && Geo.Current == null && !geoFetching && DateTime.UtcNow >= geoRetryAt) FetchGeometry(layoutFor);
+    }
+
+    // ------------------------------------------------------------------ screen geometry for the running game version (src/Geometry.cs)
+    // Frames and clicks in the Foundry come from it; none (no file on the site, offline without a saved copy) = text hints only.
+
+    DateTime geoRetryAt = DateTime.MaxValue;
+    bool geoFetching, geoNoneLogged;
+
+    void SelectGeometry(string v) {
+      var cached = GameLayout.IsVersion(v) ? Geo.LoadCache(Geo.CacheDir, v) : null;
+      Geo.Use(cached);
+      geoNoneLogged = false;
+      Log.Write("screen geometry for game version " + (v ?? "?") + ": " + (cached != null ? "saved copy" : "none yet"));
+      FetchGeometry(v);
+    }
+
+    void FetchGeometry(string v) {
+      if (!GameLayout.IsVersion(v) || geoFetching || !SyncClient.IsValidCode(cfg.Code)) return;
+      geoFetching = true;
+      geoRetryAt = DateTime.UtcNow.AddMinutes(Layout.RetryMinutes(Channel.IsTest));
+      string site = cfg.Site, code = cfg.Code;
+      Task.Factory.StartNew(() => {
+        GameGeometry g = null; string json = null; var r = Layout.Reply.NoReply;
+        try { r = Geo.Fetch(site, code, v, out g, out json); } catch (Exception) { r = Layout.Reply.NoReply; }
+        if (r == Layout.Reply.Got) Geo.SaveCache(Geo.CacheDir, v, json);
+        OnUi(() => {
+          geoFetching = false;
+          if (v != layoutFor) return;   // another game version meanwhile
+          if (r == Layout.Reply.Got) { Geo.Use(g); Log.Write("screen geometry for game version " + v + ": from the site"); }
+          else if (Geo.Current == null && !geoNoneLogged) {
+            geoNoneLogged = true;
+            Log.Write("screen geometry for game version " + v + ": " + (r == Layout.Reply.None ? "not on the site yet" : r == Layout.Reply.Denied ? "no valid sync code" : "the site did not answer") + "; the Foundry steps stay text hints");
+          }
+        });
+      });
     }
 
     void FetchLayout(string v) {
@@ -298,6 +335,7 @@ namespace RealmForge {
             if (SyncClient.IsValidCode(code)) {
               cfg.Code = code; Save(); SendState("codeSaved");
               if (gameRunning && Layout.Current == null) FetchLayout(layoutFor);   // the layout data is given with a code only
+              if (gameRunning && Geo.Current == null) FetchGeometry(layoutFor);
             }
             break;
           }

@@ -1504,6 +1504,8 @@ namespace RealmForge {
       }
       var step = locateStep;
       TickLocateDrive(step, req, hwnd, o, cr, now, W, H, U);   // auto click on: the app opens the item itself
+      // the step's frame from the screen geometry (the site's file, src/LocateFrames.cs): «Литейная», the tabs, the slot, the list cell, the final button
+      LocateFrame lf = front && step.Kind != LocateKind.InList ? LocateFrames.For(step, req.Item, locateRs, null, Geo.Current, W, H, U) : null;
       // the inventory's list: where the item's cell is on the screen
       locateNeedClick = false;
       if (front && step.Kind == LocateKind.InList && locateInv != null) {
@@ -1538,6 +1540,7 @@ namespace RealmForge {
           Draw(mk.Kind, o.X + mk.X, o.Y + mk.Y, mk.W, mk.H, mk.Rows);
         } else LocateHide();
       } else if (!front) { LocateHide(); }
+      else if (lf != null && lf.Mark.Kind != "box") { frame++; Draw(lf.Mark.Kind, o.X + lf.Mark.X, o.Y + lf.Mark.Y, lf.Mark.W, lf.Mark.H, lf.Mark.Rows); }   // the list cell is off the screen: the pill at the list's edge
       else { if (glow.Visible) glow.Hide(); drawnKey = null; }
       if (locateInv != null && step.Kind != LocateKind.InList) locateLastCur = locateInv.Current;
       step.NeedClick = locateNeedClick;
@@ -1546,6 +1549,9 @@ namespace RealmForge {
       if (front && locateLines.Length > 0 && step.Kind == LocateKind.OpenInventory && !step.OnHero && CityInventoryButton(o, W, H, U, out cityBtn)) {
         frame++;   // the city: frame the bar's «Инвентарь» (where the auto mode clicks) with the step's plate beside it
         DrawTip(cityBtn[0], cityBtn[1], cityBtn[2], cityBtn[3], locateLines, H, false, false, false, locateCaps);
+      } else if (front && locateLines.Length > 0 && lf != null && lf.Mark.Kind == "box") {
+        frame++;   // the button / tab / cell: its frame with the step's plate beside it
+        DrawTip(o.X + lf.Mark.X, o.Y + lf.Mark.Y, lf.Mark.W, lf.Mark.H, locateLines, H, false, false, false, locateCaps);
       } else if (front && locateLines.Length > 0 && (step.Kind != LocateKind.InList || locateNeedClick)) {
         frame++;
         DrawTip(o.X + (int)(0.23 * U), o.Y + (int)(0.19 * U) + 150, 4, 0, locateLines, H, true, false, false, locateCaps);   // its own header, not the plan's «Шаг N из M»
@@ -1559,7 +1565,7 @@ namespace RealmForge {
     // itself, and stops where the places of the next buttons are not known (those steps stay hints). The last button of the
     // game (and every confirmation) is the player's. Off without «Автонажатие».
     readonly LocatePilot lpilot = new LocatePilot();
-    RecastScreen locateRs; int locateOnAccount = -1; bool locateDriving;
+    RecastScreen locateRs; int locateOnAccount = -1; bool locateDriving; long locateRsAt;
     readonly InvScroll locateScroll = new InvScroll(), sellScroll = new InvScroll();
     string gridSaid = "", listSaid = "";
 
@@ -1609,11 +1615,15 @@ namespace RealmForge {
       // a fresh look at the inventory and the step it means: the pilot judges its last click by it, so a stale step
       // must never get a second click on an item that is already selected
       var inv = RFX.ReadInventory(-1);
+      if (LocateFrames.Framed(step.Kind) && step.Kind != LocateKind.Selected && now - locateRsAt >= 150) {   // the Foundry's own state, fresh: the list scrolls under the pilot
+        locateRsAt = now;
+        var fresh = RFX.ReadRecastScreen(-1); if (fresh != null) locateRs = fresh;
+      }
       bool heroOpen = heroScreen != null && heroScreen.Hero > 0 && heroScreen.Tab >= 0;
       bool formOpen = locateRs != null && (locateRs.SublimingOpen || locateRs.GemOpen);
       var dstep = LocateGuide.Next(req, inv, locateRs, heroScreen, locateCols, locateOnAccount);
       var view = new LocateView { NowMs = now, Foreground = gameFront, UserBusy = busy, UserClicked = uc, W = W, H = H, U = U, Step = dstep, Inv = inv, Cols = locateCols,
-        HeroScreenOpen = heroOpen, OtherFormOpen = formOpen, InvDX = invDX };
+        HeroScreenOpen = heroOpen, OtherFormOpen = formOpen, InvDX = invDX, Geometry = Geo.Current, Rs = locateRs, Item = req.Item };
       if (gameFront && !busy && LocateAuto.NeedsCityButton(dstep, heroOpen, formOpen)) view.CityButton = InventoryButtonSeen(o, W, H);
       if (gameFront && !busy && dstep.Kind == LocateKind.InList) {
         var pg = SellGeometry.Inventory(W, U, locateCols);
@@ -1955,7 +1965,8 @@ namespace RealmForge {
     bool CityInventoryButton(W32.POINT o, double W, double H, double U, out int[] r) {
       long now = NowMs();
       if (now - cityInvAt >= 400) { cityInvAt = now; cityInvSeen = InventoryButtonSeen(o, W, H); }
-      double cx = W - invDX * U, cy = H - hg2.HeroesBtnDY * U, bw = 0.11 * U, bh = 0.13 * U;
+      double cx = W - invDX * U, cy = H - hg2.HeroesBtnDY * U;
+      var bs = LocateFrames.CityButtonSize(Geo.Current, U); double bw = bs[0], bh = bs[1];   // the bar's button size from the geometry (else the estimate)
       r = new[] { o.X + (int)(cx - bw / 2), o.Y + (int)(cy - bh / 2), (int)bw, (int)bh };
       return cityInvSeen;
     }

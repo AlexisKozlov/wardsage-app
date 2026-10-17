@@ -612,6 +612,8 @@ static class CoreTests {
     FightPlanTests();
     LocateTests();
     LocatePilotTests();
+    GeometryTests();
+    LocateFoundryPilotTests();
     SellHintTests();
 
     Console.WriteLine("Fight timeline (src/TimelineBuilder.cs: samples of the running fight + its command record):");
@@ -2254,6 +2256,225 @@ static class CoreTests {
       Check(selected && afterSelected == 0 && !lp.Stopped, "auto: the item (row 42 of 60, list offset " + offset + ") is selected by the pilot, then no more clicks (" + acts + " actions, " + game.Drags + " drags, " + last + ")");
       Check(game.Drags >= 1 && acts < 60, "auto: ... scrolling by drags, a handful of actions (" + acts + ")");
     }
+  }
+
+  // ------------------------------------------------------------------ screen geometry (src/Geometry.cs) and the frames built on it (src/LocateFrames.cs)
+  static string GeoBox(string key, string x0, string x1, string y0, string y1, double w, double h) {
+    // "L:0.1" style edges
+    Func<string, string> e = s => "[\"" + s.Split(':')[0] + "\"," + s.Split(':')[1] + "]";
+    return "\"" + key + "\":{\"x0\":" + e(x0) + ",\"x1\":" + e(x1) + ",\"y0\":" + e(y0) + ",\"y1\":" + e(y1) + ",\"w\":" + w.ToString(System.Globalization.CultureInfo.InvariantCulture) + ",\"h\":" + h.ToString(System.Globalization.CultureInfo.InvariantCulture) + "}";
+  }
+  const string GeoGame = "9.8.7.6.5";
+  static string GeoJson(string game = GeoGame, int v = 1) {
+    var b = new List<string> {
+      GeoBox("foundry.tab.forge", "R:-0.159", "R:0.0066", "T:0.0328", "T:0.1578", 0.1656, 0.125),
+      GeoBox("ascend.slot.3", "L:0.443", "L:0.5695", "M:-0.3969", "M:-0.3312", 0.1266, 0.0656),
+      GeoBox("ascend.filter", "L:0.4531", "L:0.6969", "M:-0.3136", "M:-0.2573", 0.2438, 0.0563),
+      GeoBox("ascend.button", "C:0.1039", "C:0.4414", "M:0.3488", "M:0.4581", 0.3375, 0.1093),
+      GeoBox("ascend.list", "L:0.1", "L:0.6", "T:0.2", "T:0.7", 0.5, 0.5),
+      GeoBox("ascend.cell", "L:0.3", "L:0.4", "T:0.3", "T:0.4625", 0.1, 0.1625),
+      GeoBox("inventory.workshop", "R:-0.6565", "R:-0.5125", "B:-0.1205", "B:-0.0201", 0.144, 0.1004),
+      GeoBox("hero.workshop", "R:-0.2515", "R:-0.1249", "M:0.2948", "M:0.4245", 0.1266, 0.1297),
+      GeoBox("inventory.cardLeft", "R:-0.4797", "R:-0.2578", "T:0.8505", "T:0.9333", 0.2219, 0.0828),
+      GeoBox("city.barButton", "L:0.0672", "L:0.2016", "B:0.3306", "B:0.465", 0.1344, 0.1344) };
+    return "{\"game\":\"" + game + "\",\"v\":" + v + ",\"rects\":{" + string.Join(",", b.ToArray()) + "},\"grids\":{\"ascend.list\":{\"cols\":5,\"lineSize\":108,\"padding\":[0,-10,0,0]}}}";
+  }
+
+  static void GeometryTests() {
+    Console.WriteLine("Screen geometry (the site's file per game version, frames and Foundry clicks)");
+    const double W = 2000, H = 1000, U = 1000;
+    var g = GameGeometry.Parse(GeoJson(), GeoGame);
+    Check(g != null && g.Game == GeoGame && g.Count == 10, "geometry: the fixture parses");
+    var r = g.Rect("ascend.button", W, H, U);
+    Check(r != null && Math.Abs(r.X - (W / 2 + 0.1039 * U)) < 0.01 && Math.Abs(r.W - 0.3375 * U) < 0.01 && Math.Abs(r.Y - (H / 2 + 0.3488 * U)) < 0.01 && Math.Abs(r.H - 0.1093 * U) < 0.01, "geometry: C / M anchors from the centre");
+    r = g.Rect("inventory.workshop", W, H, U);
+    Check(Math.Abs(r.X - (W - 0.6565 * U)) < 0.01 && Math.Abs(r.Y - (H - 0.1205 * U)) < 0.01, "geometry: R / B anchors from the right and bottom edges");
+    r = g.Rect("ascend.list", W, H, U); Check(Math.Abs(r.X - 100) < 0.01 && Math.Abs(r.Y - 200) < 0.01 && Math.Abs(r.W - 500) < 0.01, "geometry: L / T anchors");
+    var r2 = g.Rect("ascend.list", 1000, 562, 562); Check(Math.Abs(r2.X - 56.2) < 0.01 && Math.Abs(r2.H - 281) < 0.01, "geometry: another window size scales with U");
+    Check(g.Rect("nope", W, H, U) == null && g.Rect(null, W, H, U) == null, "geometry: an unknown key -> null");
+    Eq(5, g.Grid("ascend.list").Cols, "geometry: the grid's columns"); Eq(-10.0, g.Grid("ascend.list").PadTop, "geometry: the grid's top padding"); Check(g.Grid("x") == null, "geometry: no such grid");
+    // parse refusals
+    Check(GameGeometry.Parse(GeoJson(), "9.8.7.6.4") == null, "geometry: another version is not used");
+    Check(GameGeometry.Parse(GeoJson(GeoGame, 2), GeoGame) == null, "geometry: another format is not used");
+    Check(GameGeometry.Parse(GeoJson().Replace("\"R\",-0.159", "\"Q\",-0.159"), GeoGame) == null, "geometry: an unknown anchor is refused");
+    Check(GameGeometry.Parse(GeoJson().Replace("\"w\":0.1656", "\"w\":\"x\""), GeoGame) == null, "geometry: a non-number size is refused");
+    Check(GameGeometry.Parse("{\"game\":\"" + GeoGame + "\",\"v\":1,\"rects\":{}}", GeoGame) == null, "geometry: no rectangles -> not used");
+    Check(GameGeometry.Parse("[1]", GeoGame) == null && GameGeometry.Parse("<html>", GeoGame) == null && GameGeometry.Parse(null, GeoGame) == null && GameGeometry.Parse("", GeoGame) == null, "geometry: not an object -> null");
+    Check(GameGeometry.Parse(GeoJson().Replace("\"game\"", "\"pad\":\"" + new string('x', 140000) + "\",\"game\""), GeoGame) == null, "geometry: an oversized reply is refused");
+    Check(GameGeometry.Parse(GeoJson().Replace("\"cols\":5", "\"cols\":0"), GeoGame).Grid("ascend.list") == null, "geometry: a bad grid is left out");
+    GameGeometry got;
+    Eq(Layout.Reply.Got, Geo.Interpret(200, GeoJson(), GeoGame, out got), "geometry reply 200: got"); Check(got != null, "  ... and parsed");
+    Eq(Layout.Reply.None, Geo.Interpret(404, "{}", GeoGame, out got), "geometry reply 404: none for this version");
+    Eq(Layout.Reply.Denied, Geo.Interpret(401, "{}", GeoGame, out got), "geometry reply 401: no valid code");
+    Eq(Layout.Reply.NoReply, Geo.Interpret(500, GeoJson(), GeoGame, out got), "geometry reply 5xx: no reply (what is held stays)");
+    Eq(Layout.Reply.NoReply, Geo.Interpret(200, "{}", GeoGame, out got), "geometry reply 200 with junk: no reply");
+    // the saved copies, per version
+    string dir = Path.Combine(Path.GetTempPath(), "rf-geo-" + Guid.NewGuid().ToString("N"));
+    Check(Geo.LoadCache(dir, GeoGame) == null, "geometry: no saved copy -> null");
+    Geo.SaveCache(dir, GeoGame, GeoJson());
+    Check(Geo.LoadCache(dir, GeoGame) != null, "geometry: the saved copy loads (offline use)");
+    Check(Geo.LoadCache(dir, "9.8.7.6.4") == null, "geometry: a copy of another version is not used");
+    File.WriteAllText(Path.Combine(dir, GeoGame + ".json"), "{broken");
+    Check(Geo.LoadCache(dir, GeoGame) == null, "geometry: a broken saved copy -> null, no crash");
+    Check(Geo.LoadCache(dir, "../x") == null, "geometry: a bad version is no path");
+    try { Directory.Delete(dir, true); } catch (Exception) { }
+    var heldGeo = Geo.Current;
+    Geo.Use(null); Check(Geo.Rect("ascend.list", W, H, U) == null, "geometry: none in force -> every rectangle is null (text hints)");
+    Geo.Use(g); Check(Geo.Rect("ascend.list", W, H, U) != null, "geometry: in force -> the accessor places it");
+    Geo.Use(heldGeo);
+
+    // tabs: the k-th shown tab sits k tab heights below the first position
+    Eq(2, FoundryPlace.TabIndex(null, "ascend"), "tabs: all shown -> Ascension is third");
+    Eq(1, FoundryPlace.TabIndex(new[] { true, false, true, true, true }, "ascend"), "tabs: Identify hidden -> Ascension moves up");
+    Eq(-1, FoundryPlace.TabIndex(new[] { true, true, false, true, true }, "ascend"), "tabs: Ascension hidden -> -1");
+    Eq(2, FoundryPlace.TabIndex(new[] { true, true, true, false, false }, "ascend"), "tabs: Recast / Reforge hidden do not move Ascension");
+    Eq(3, FoundryPlace.TabIndex(null, "recast"), "tabs: Recast is fourth");
+    Eq(-1, FoundryPlace.TabIndex(null, "nope"), "tabs: unknown name");
+    var tr = FoundryPlace.Tab(g, "ascend", null, W, H, U);
+    Check(tr != null && Math.Abs(tr.Y - (0.0328 + 2 * 0.125) * U) < 0.01 && Math.Abs(tr.X - (W - 0.159 * U)) < 0.01, "tabs: Ascension = the first position + 2 tab heights");
+    tr = FoundryPlace.Tab(g, "ascend", new[] { true, false, true, true, true }, W, H, U); Check(Math.Abs(tr.Y - (0.0328 + 0.125) * U) < 0.01, "tabs: one hidden before it -> one height");
+    Check(FoundryPlace.Tab(g, "ascend", new[] { true, true, false, true, true }, W, H, U) == null && FoundryPlace.Tab(null, "ascend", null, W, H, U) == null, "tabs: hidden or no geometry -> null");
+
+    // the list cell from the game's own scroll reading: 5 columns, row = 108 canvas units = 168.75 px at U 1000, the list at (100, 200) 500 x 500
+    Func<double, RFX.ListRead> L = s => new RFX.ListRead { ScrollY = s, Cols = 5, RowUnits = 108, First = 0, Last = 14 };
+    var c = FoundryPlace.Cell(g, "ascend", L(0), 7, W, H, U);   // row 1, column 2
+    Check(c != null && c.Mark.Kind == "box" && Math.Abs(c.Mark.X - 300) <= 1 && Math.Abs(c.Mark.Y - 387.5) <= 1 && c.Mark.W == 100 && Math.Abs(c.Mark.H - 162.5) <= 1, "cell: index 7 at scroll 0 -> column 2, row 2 (" + (c != null ? c.Mark.Kind + " " + c.Mark.X + "," + c.Mark.Y + " " + c.Mark.W + "x" + c.Mark.H : "null") + ")");
+    Check(c.Clickable && Math.Abs(c.ClickX - 350) <= 1 && Math.Abs(c.ClickY - (387.5 + 81.25)) <= 1, "cell: clickable at its centre");
+    c = FoundryPlace.Cell(g, "ascend", L(0), 0, W, H, U); Check(Math.Abs(c.Mark.X - 100) <= 1 && Math.Abs(c.Mark.Y - 218.75) <= 1, "cell: index 0 = the first cell, at the list's top + the padding");
+    c = FoundryPlace.Cell(g, "ascend", L(40), 7, W, H, U);   // scrolled by 40 units = 62.5 px: the frame moves exactly with the scrolling
+    Check(Math.Abs(c.Mark.Y - (387.5 - 62.5)) <= 1, "cell: the frame moves exactly with the scroll (" + c.Mark.Y + ")");
+    c = FoundryPlace.Cell(g, "ascend", L(640), 7, W, H, U); Check(c.Mark.Kind == "up" && c.Mark.Rows == 5 && c.ScrollPx > 0 && !c.Clickable, "cell: far above -> 'up', 5 rows, the content has to move down (" + c.Mark.Kind + " " + c.Mark.Rows + ")");
+    c = FoundryPlace.Cell(g, "ascend", L(0), 40, W, H, U); Check(c.Mark.Kind == "down" && c.Mark.Rows == 7 && c.ScrollPx < 0 && !c.Clickable, "cell: far below -> 'down', 7 rows, the content has to move up (" + c.Mark.Kind + " " + c.Mark.Rows + ")");
+    c = FoundryPlace.Cell(g, "ascend", L(0), 12, W, H, U);   // row 2: top at 215.6 + 337.5 = 553: bottom 715 is past the view's end (700): cut, not clickable
+    Check(c.Mark.Kind == "box" && !c.Clickable && c.Mark.Y + c.Mark.H <= 700, "cell: cut by the viewport edge -> clipped box, scrolled in before a click (" + c.Mark.H + ")");
+    var l2 = L(0); l2.Cols = 0; l2.RowUnits = 0; c = FoundryPlace.Cell(g, "ascend", l2, 7, W, H, U); Check(c != null && c.Mark.Kind == "box", "cell: columns / row size missing in the reading -> the authored numbers");
+    Check(FoundryPlace.Cell(g, "ascend", new RFX.ListRead(), 7, W, H, U) == null && FoundryPlace.Cell(g, "ascend", null, 7, W, H, U) == null && FoundryPlace.Cell(null, "ascend", L(0), 7, W, H, U) == null && FoundryPlace.Cell(g, "recast", L(0), 7, W, H, U) == null,
+      "cell: unreadable scroll / no geometry / no recast entry -> null");
+
+    // frames per step
+    var item = LocItem(777, 3, 720100, 12, 5, 7, 9, 3);
+    var rs = new RecastScreen { SublimingOpen = true, AscendShown = true, CurType = 2, AscendList = L(0) };
+    Func<LocateKind, LocateStep> S = k => new LocateStep { Kind = k };
+    var f = LocateFrames.For(S(LocateKind.OpenAscendTab), item, rs, null, g, W, H, U);
+    Check(f != null && f.Clickable && Math.Abs(f.ClickY - (0.0328 + 0.25 + 0.0625) * U) < 0.01, "frame: the «Вознесение» tab, clickable");
+    f = LocateFrames.For(new LocateStep { Kind = LocateKind.OpenFoundry }, item, rs, null, g, W, H, U); Check(f != null && f.Clickable && f.Target == "inventory.workshop", "frame: «Литейная» in the inventory, clickable");
+    f = LocateFrames.For(new LocateStep { Kind = LocateKind.OpenFoundry, OnGear = true }, item, rs, null, g, W, H, U); Check(f != null && f.Clickable && f.Target == "hero.workshop", "frame: «Литейная» on the hero's gear screen, clickable");
+    f = LocateFrames.For(new LocateStep { Kind = LocateKind.AscendFilter, Missing = new[] { "slot", "main" } }, item, rs, null, g, W, H, U); Check(f != null && f.Clickable && f.Target == "ascend.slot.3", "frame: the item's slot tab first, clickable");
+    f = LocateFrames.For(new LocateStep { Kind = LocateKind.AscendFilter, Missing = new[] { "main", "subs" } }, item, rs, null, g, W, H, U); Check(f != null && !f.Clickable && f.Target == "ascend.filter", "frame: the filter button is only pointed at");
+    f = LocateFrames.For(S(LocateKind.AscendReady), item, rs, null, g, W, H, U); Check(f != null && !f.Clickable && f.Target == "ascend.button", "frame: «Вознести», never clickable");
+    f = LocateFrames.For(S(LocateKind.Selected), item, rs, null, g, W, H, U); Check(f != null && !f.Clickable && f.Target == "inventory.cardLeft", "frame: the card's button, never clickable");
+    f = LocateFrames.For(new LocateStep { Kind = LocateKind.AscendPick, Pos = 8 }, item, rs, null, g, W, H, U); Check(f != null && f.Clickable && f.ViewH > 0, "frame: the item's cell in the Ascension list, clickable");
+    f = LocateFrames.For(new LocateStep { Kind = LocateKind.AscendPick, Pos = 8 }, item, new RecastScreen { SublimingOpen = true }, null, g, W, H, U); Check(f == null, "frame: the list is unreadable and the game's cell range is unknown -> none");
+    f = LocateFrames.For(new LocateStep { Kind = LocateKind.AscendPick, Pos = 8, Scroll = "below", ScrollRows = 3 }, item, new RecastScreen { SublimingOpen = true }, null, g, W, H, U); Check(f != null && f.Mark.Kind == "down" && f.Mark.Rows == 3 && !f.Clickable, "frame: scroll not readable but the cell range says 'below' -> only the pill");
+    f = LocateFrames.For(new LocateStep { Kind = LocateKind.RecastPick, Pos = 1 }, item, rs, null, g, W, H, U); Check(f == null, "frame: no recast rectangles in the data -> none");
+    f = LocateFrames.For(S(LocateKind.AscendReady), item, rs, null, null, W, H, U); Check(f == null, "frame: no geometry -> none (text hints)");
+    f = LocateFrames.For(S(LocateKind.InList), item, rs, null, g, W, H, U); Check(f == null, "frame: the inventory list keeps its own placement");
+    var cs = LocateFrames.CityButtonSize(g, U); Check(Math.Abs(cs[0] - 134.4) < 0.01 && Math.Abs(cs[1] - 134.4) < 0.01, "frame: the city button's size from the geometry");
+    cs = LocateFrames.CityButtonSize(null, U); Check(Math.Abs(cs[0] - 110) < 0.01 && Math.Abs(cs[1] - 130) < 0.01, "frame: ... else the old estimate");
+
+    // the real file the site serves (the web repo next to this one): everything the frames use is in it and sits where the app's older constants say
+    string real = Path.Combine("..", "wardsage-web", "data", "app-geometry");
+    if (Directory.Exists(real)) {
+      int n = 0;
+      foreach (var p in Directory.GetFiles(real, "*.json")) {
+        string v = Path.GetFileNameWithoutExtension(p);
+        var rg = GameGeometry.Parse(File.ReadAllText(p, Encoding.UTF8), v);
+        Check(rg != null, "the site's geometry file " + v + " parses");
+        if (rg == null) continue;
+        n++;
+        bool all = true; foreach (var k in new[] { "foundry.tab.forge", "ascend.list", "ascend.cell", "ascend.filter", "ascend.button", "ascend.slot.0", "ascend.slot.4", "recast.list", "recast.cell", "recast.button",
+                                                    "inventory.workshop", "hero.workshop", "inventory.cardLeft", "city.barButton" }) if (!rg.Has(k)) { all = false; Console.WriteLine("    missing " + k); }
+        Check(all && rg.Grid("ascend.list") != null && rg.Grid("recast.list") != null, "the site's geometry file " + v + " has every rectangle and grid the frames use");
+        var il = rg.Rect("inventory.list", 1920, 1009, 1009);
+        Check(il != null && Math.Abs(il.Y / 1009 - 0.190) < 0.003, "the site's geometry file " + v + ": the inventory list top agrees with the app's constant (" + (il != null ? (il.Y / 1009).ToString("0.0000") : "-") + ")");
+        var cell = FoundryPlace.Cell(rg, "ascend", L(0), 0, 1920, 1009, 1009); var vw = rg.Rect("ascend.list", 1920, 1009, 1009);
+        Check(cell != null && cell.Mark.Kind == "box" && cell.Mark.X >= vw.X - 1 && cell.Mark.X + cell.Mark.W <= vw.Right + 1 && cell.Mark.Y >= vw.Y - 1, "the site's geometry file " + v + ": the first Ascension cell sits inside the list");
+        var t3 = FoundryPlace.Tab(rg, "ascend", null, 1920, 1009, 1009); Check(t3 != null && t3.X > 1920 / 2 && t3.Right <= 1920 + 10, "the site's geometry file " + v + ": the Ascension tab is at the right edge");
+      }
+      Check(n > 0, "the site has geometry files");
+    } else Console.WriteLine("  (no ../wardsage-web: the site's geometry files not checked)");
+  }
+
+  // the pilot's Foundry steps (src/LocatePilot.cs) on the fixture geometry
+  static void LocateFoundryPilotTests() {
+    Console.WriteLine("Locate pilot in the Foundry (tabs, slot, list cell: clicks; the final buttons and the filter: never)");
+    const double W = 2000, H = 1000, U = 1000;
+    var g = GameGeometry.Parse(GeoJson(), GeoGame);
+    var item = LocItem(777, 3, 720100, 12, 5, 7, 9, 3);
+    Func<double, RFX.ListRead> L = s => new RFX.ListRead { ScrollY = s, Cols = 5, RowUnits = 108, First = 0, Last = 14 };
+    Func<double, RecastScreen> R = s => new RecastScreen { SublimingOpen = true, AscendShown = true, CurType = 2, AscendList = L(s) };
+    Func<LocateStep, RecastScreen, LocateView> V = (st, rs) => new LocateView { NowMs = 0, Foreground = true, W = W, H = H, U = U, Step = st, Cols = 8, Geometry = g, Rs = rs, Item = item,
+      Inv = new InventoryScreen { Open = true, EquipTab = true }, OtherFormOpen = rs != null && rs.SublimingOpen };
+    string why; LocateView v; LocatePilot p; LocateMove m;
+
+    // «Литейная»
+    v = V(new LocateStep { Kind = LocateKind.OpenFoundry }, null); v.OtherFormOpen = false;
+    Eq(LocateTodo.FoundryButton, LocateAuto.Decide(v, out why), "foundry auto: the inventory's «Литейная» -> click it");
+    p = new LocatePilot(); m = p.Step(v); var wk = g.Rect("inventory.workshop", W, H, U);
+    Check(m.State == "work" && m.Action.Kind == AutoKind.Click && Math.Abs(m.Action.X - wk.CX) < 1 && Math.Abs(m.Action.Y - wk.CY) < 1, "foundry auto: ... at the button's centre from the geometry");
+    v = V(new LocateStep { Kind = LocateKind.OpenFoundry, OnGear = true }, null); v.OtherFormOpen = false; v.HeroScreenOpen = true;
+    Eq(LocateTodo.FoundryButton, LocateAuto.Decide(v, out why), "foundry auto: the hero gear screen's «Литейная» -> click it");
+    p = new LocatePilot(); m = p.Step(v); wk = g.Rect("hero.workshop", W, H, U); Check(Math.Abs(m.Action.X - wk.CX) < 1 && Math.Abs(m.Action.Y - wk.CY) < 1, "foundry auto: ... at the hero screen's button");
+    v = V(new LocateStep { Kind = LocateKind.OpenFoundry }, null); v.OtherFormOpen = true; Eq(LocateTodo.Hint, LocateAuto.Decide(v, out why), "foundry auto: the gem screen on top -> no click");
+    v = V(new LocateStep { Kind = LocateKind.OpenFoundry }, null); v.OtherFormOpen = false; v.Geometry = null; Eq(LocateTodo.Hint, LocateAuto.Decide(v, out why), "foundry auto: no geometry -> a hint");
+    v = V(new LocateStep { Kind = LocateKind.OpenFoundry }, null); v.OtherFormOpen = false; v.Inv.EquipTab = false; Eq(LocateTodo.Stop, LocateAuto.Decide(v, out why), "foundry auto: «Литейная» is not on this inventory tab -> stop");
+
+    // the tab
+    v = V(new LocateStep { Kind = LocateKind.OpenAscendTab }, new RecastScreen { SublimingOpen = true, CurType = 0 });
+    Eq(LocateTodo.AscendTab, LocateAuto.Decide(v, out why), "foundry auto: the Foundry on another tab -> «Вознесение»");
+    p = new LocatePilot(); m = p.Step(v); var tab = FoundryPlace.Tab(g, "ascend", null, W, H, U);
+    Check(m.Action.Kind == AutoKind.Click && Math.Abs(m.Action.X - tab.CX) < 1 && Math.Abs(m.Action.Y - tab.CY) < 1, "foundry auto: ... at the third tab's centre");
+    v.FoundryTabs = new[] { true, false, true, true, true }; p = new LocatePilot(); m = p.Step(v); tab = FoundryPlace.Tab(g, "ascend", v.FoundryTabs, W, H, U);
+    Check(Math.Abs(m.Action.Y - tab.CY) < 1, "foundry auto: ... a hidden tab before it moves the click up");
+    v = V(new LocateStep { Kind = LocateKind.OpenAscendTab }, new RecastScreen { SublimingOpen = false }); Eq(LocateTodo.Hint, LocateAuto.Decide(v, out why), "foundry auto: the Foundry is not shown -> no click");
+
+    // the slot tab; the filter is never touched
+    v = V(new LocateStep { Kind = LocateKind.AscendFilter, Missing = new[] { "slot", "subs" } }, R(0));
+    Eq(LocateTodo.SlotTab, LocateAuto.Decide(v, out why), "foundry auto: the slot is not set -> the slot tab");
+    p = new LocatePilot(); m = p.Step(v); var st3 = g.Rect("ascend.slot.3", W, H, U); Check(Math.Abs(m.Action.X - st3.CX) < 1 && Math.Abs(m.Action.Y - st3.CY) < 1, "foundry auto: ... the item's slot (3)");
+    foreach (var miss in new[] { new[] { "suit" }, new[] { "main" }, new[] { "subs" }, new[] { "main", "subs" } }) {
+      v = V(new LocateStep { Kind = LocateKind.AscendFilter, Missing = miss }, R(0));
+      Eq(LocateTodo.Hint, LocateAuto.Decide(v, out why), "foundry auto: missing " + string.Join("+", miss) + " -> the filter is the player's, no click");
+    }
+
+    // the cell: click when in view, drag when not, stop when the list does not move
+    v = V(new LocateStep { Kind = LocateKind.AscendPick, Pos = 8 }, R(0));
+    Eq(LocateTodo.AscendCell, LocateAuto.Decide(v, out why), "foundry auto: the item in the Ascension list -> its cell");
+    p = new LocatePilot(); m = p.Step(v);
+    Check(m.Action.Kind == AutoKind.Click && Math.Abs(m.Action.X - 350) <= 1 && Math.Abs(m.Action.Y - (387.5 + 81.25)) <= 1, "foundry auto: ... in view: one click on the cell's centre");
+    v = V(new LocateStep { Kind = LocateKind.AscendPick, Pos = 41 }, R(0)); p = new LocatePilot(); m = p.Step(v);
+    Check(m.Action.Kind == AutoKind.Drag && m.Action.DY < 0 && m.Action.Y > 200 && m.Action.Y + m.Action.DY < 700 && m.Action.Y + m.Action.DY > 200, "foundry auto: ... far below: a drag up inside the list (later rows come in)");
+    v = V(new LocateStep { Kind = LocateKind.AscendPick, Pos = 8 }, R(640)); p = new LocatePilot(); m = p.Step(v);
+    Check(m.Action.Kind == AutoKind.Drag && m.Action.DY > 0, "foundry auto: ... far above: a drag down");
+    // a fake list: the pilot scrolls to the item, then clicks it once
+    {
+      double scroll = 0; int drags = 0, clicks = 0; bool clicked = false; p = new LocatePilot(); long t = 0; string trace = "";
+      for (int i = 0; i < 80 && !clicked; i++, t += 2500) {
+        v = V(new LocateStep { Kind = LocateKind.AscendPick, Pos = 43 }, R(scroll)); v.NowMs = t;
+        v.Step.Pos = 43; m = p.Step(v);
+        if (m.State == "stopped") { trace = m.Why; break; }
+        if (m.Action.Kind == AutoKind.Drag) { drags++; scroll = Math.Max(0, Math.Min(900, scroll - m.Action.DY * 640 / U * 0.9)); }   // the content follows the pointer (a bit less), the list ends at 900
+        else if (m.Action.Kind == AutoKind.Click) { clicks++; clicked = true; }
+      }
+      Check(clicked && clicks == 1 && drags >= 1 && drags < 12, "foundry auto: scrolls to the item by dragging (" + drags + " drags), then clicks it once (" + clicks + ", " + trace + ")");
+    }
+    p = new LocatePilot(); { int still = 0; long t = 0; string last = "";
+      for (int i = 0; i < 10; i++, t += 2500) { v = V(new LocateStep { Kind = LocateKind.AscendPick, Pos = 41 }, R(100)); v.NowMs = t; m = p.Step(v); last = m.State + "/" + m.Why; if (m.Action.Kind == AutoKind.Drag) still++; if (m.State == "stopped") break; }
+      Check(p.Stopped && p.Reason == "lost" && still <= 3, "foundry auto: a list that does not move on drags stops the pilot (" + still + " drags, " + last + ")"); }
+    v = V(new LocateStep { Kind = LocateKind.AscendPick, Pos = 8 }, new RecastScreen { SublimingOpen = true, AscendShown = true, CurType = 2, AscendList = new RFX.ListRead() });
+    Eq(LocateTodo.Hint, LocateAuto.Decide(v, out why), "foundry auto: the list's scroll is unreadable -> a hint");
+
+    // never clicked, whatever else is true: the final buttons, the card's button, the recast picks and every confirmation
+    foreach (LocateKind k in Enum.GetValues(typeof(LocateKind))) {
+      if (k == LocateKind.None || k == LocateKind.OpenInventory || k == LocateKind.OpenEquipTab || k == LocateKind.InList || k == LocateKind.OpenFoundry || k == LocateKind.OpenAscendTab || k == LocateKind.AscendPick) continue;
+      v = V(new LocateStep { Kind = k, Missing = new[] { "main" }, Pos = 8 }, R(0)); v.HeroScreenOpen = true; v.OtherFormOpen = false;
+      var todo = LocateAuto.Decide(v, out why);
+      Check(todo == LocateTodo.Hint, "foundry auto: step " + k + " stays a hint with the geometry (" + todo + ")");
+    }
+    // the player and the window come first
+    v = V(new LocateStep { Kind = LocateKind.OpenAscendTab }, new RecastScreen { SublimingOpen = true }); v.Foreground = false; p = new LocatePilot(); m = p.Step(v);
+    Check(m.State == "background" && m.Action.Kind == AutoKind.None, "foundry auto: the game is not in front -> no click");
+    v = V(new LocateStep { Kind = LocateKind.OpenAscendTab }, new RecastScreen { SublimingOpen = true }); v.UserBusy = true; m = p.Step(v); Check(m.State == "paused" && m.Action.Kind == AutoKind.None, "foundry auto: the player moves the mouse -> paused");
   }
 
   static void LocateTests() {

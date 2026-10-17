@@ -22,7 +22,7 @@
     forum: { status: 'idle', reply: null, at: 0 },
     run: null, seen: null, runKey: '', queue: [], takeOver: {},
     // storage cleanup: the site's list, the pilot's state on the game's sell screen
-    sell: { list: null, run: false, hint: false, hs: null, tipKey: '', peakAll: false, state: '', selected: 0, missing: 0, extra: 0, seen: {} },
+    sell: { list: null, run: false, hint: false, hintFor: null, hs: null, tipKey: '', peakAll: false, state: '', selected: 0, missing: 0, extra: 0, seen: {} },
     // «Найти в игре»: the request from the site (with its item card) and what the program reports about the game's screens
     locate: { req: null, step: null, tipKey: '', doneTimer: 0 }, locateEnded: {},
     // the site's switches: reading as a whole, and the features switched off
@@ -382,7 +382,7 @@
     else if (P.status === 'error') body = emptyBox(t('plansErr'), P.err === 'token' ? t('plansErrToken') : P.err || '', P.err === 'token' ? codeBtns() : `<button class="btn-line" data-act="reload">${I.reload}${esc(t('reload'))}</button>`);
     else if (!P.list.length) body = emptyBox(t('plansNone'), t('plansNoneP'), `<button class="btn-line" data-act="open" data-url="${esc(S.site + '/app/optimizer')}">${I.ext}${esc(t('openOptimizer'))}</button>`);
     else body = `<div class="stack"><div class="plans">${P.list.map(planCard).join('')}</div>${guideCard()}</div>`;
-    if (S.sell.list) body = sellCard() + body;
+    if (S.sell.list) { body = sellCard() + body; sellAutoHint(); }
     if (S.locate.req) body = locateCard() + body;
     body = remoteNote(['equip', 'autoclick', 'locate']) + body;
     return `
@@ -407,8 +407,7 @@
       : [L.missing ? t('sellMissing', L.missing) : '', L.extra ? t('sellExtra', L.extra) : ''].filter(Boolean).join(' ');
     const runBtns = L.run ? `<button class="btn-line" data-act="sellStop">${esc(t('stopBtn'))}</button>`
       : S.autoClick ? `<button class="btn" data-act="sellRun" ${S.game.running ? '' : 'disabled'}>${esc(t('sellRun'))}</button>`
-      : `<button class="btn" data-act="sellHint" ${S.game.running ? '' : 'disabled'}>${esc(t('sellHintRun'))}</button>
-          <button class="btn-line" data-act="sellAuto" ${S.game.running ? '' : 'disabled'}>${esc(t('sellAutoRun'))}</button>`;
+      : `<button class="btn-line" data-act="sellAuto" ${S.game.running ? '' : 'disabled'}>${esc(t('sellAutoRun'))}</button>`;
     return `<div class="card sell"><div class="row" style="justify-content:space-between;align-items:flex-start">
         <div><h3>${esc(t('sellTitle'))}</h3><div class="meta">${esc(t('sellCount', n))}</div></div>
         <div class="row">${runBtns}
@@ -449,10 +448,17 @@
     render();
   }
 
-  // «Подсказать в игре»: the same list without any click of the program — frames on the cells to select
+  // auto click off: the same list is shown by itself — frames on the cells to select, nothing is clicked.
+  // Sent once per list (hintFor): not again on every render, but again when a new list comes in.
+  function sellAutoHint() {
+    const L = S.sell;
+    if (!L.list || S.autoClick || !S.game.running) return;
+    if (L.run && L.hint && L.hintFor === L.list.id) return;
+    sellHintStart();
+  }
   function sellHintStart() {
     const L = S.sell; if (!L.list) return;
-    L.run = true; L.hint = true; L.hs = null; L.tipKey = ''; L.peakAll = false; L.state = '';
+    L.run = true; L.hint = true; L.hintFor = L.list.id; L.hs = null; L.tipKey = ''; L.peakAll = false; L.state = '';
     host.send({ cmd: 'sell.hint', uids: L.list.items.map((x) => x.uid), slots: [...new Set(L.list.items.map((x) => x.slot))], levels: L.list.items.map((x) => x.level || 0) });
     host.send({ cmd: 'sell.tip', lines: [t('shOpenInv')], pillUp: '', pillDown: '' });
     render();
@@ -827,7 +833,6 @@
     else if (a === 'locFound') locateEnd(true, false);
     else if (a === 'locCancel') locateEnd(false, false);
     else if (a === 'sellRun') sellStart();
-    else if (a === 'sellHint') sellHintStart();
     // storage cleanup clicks in the game: it needs «Автонажатие» (off by default) — this button is the player's explicit choice
     else if (a === 'sellAuto') { S.autoClick = true; host.send({ cmd: 'setAutoClick', on: true }); sellStart(); }
     else if (a === 'sellStop') { S.sell.run = false; host.send({ cmd: 'sell.stop' }); render(); }
