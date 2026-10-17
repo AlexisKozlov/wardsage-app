@@ -27,6 +27,11 @@ namespace RealmForge {
     public readonly List<RecFrameRect> Frames = new List<RecFrameRect>();
     public double InvRaw = double.NaN, InvRow1 = double.NaN, InvSmooth = double.NaN, FdRaw = double.NaN, FdSmooth = double.NaN;
     public long AtMs;
+    // the raw inputs of the tick (src/RecInputs.cs): the overlay clock, the last screen read before the tick ended, the context, the sell hint's inventory, the Foundry list as drawn, the row 1 the list cell was placed from
+    public long TickNow, ReadSeq;
+    public string Ctx, SInv, SInvList, Fd;
+    public double PlaceRow1 = double.NaN;
+    public InventoryScreen SellInv;
 
     /// <summary>Set while a recording runs: the overlay only collects then.</summary>
     public static volatile bool Active;
@@ -74,7 +79,10 @@ namespace RealmForge {
     static string N(double v) { return double.IsNaN(v) || double.IsInfinity(v) ? "null" : Math.Round(v, 2).ToString("0.##", CultureInfo.InvariantCulture); }
 
     /// <summary>One frames.jsonl line (no line break). <paramref name="info"/> null = nothing known (screen and step "-").</summary>
-    public static string Line(long t, int w, int h, double scale, bool bg, RecInfo info, int cx, int cy) {
+    public static string Line(long t, int w, int h, double scale, bool bg, RecInfo info, int cx, int cy) { return Line(t, w, h, scale, bg, info, cx, cy, null); }
+
+    /// <param name="inputs">the line's "in" object (src/RecInputs.cs, RecLineEncoder), null = none</param>
+    public static string Line(long t, int w, int h, double scale, bool bg, RecInfo info, int cx, int cy, string inputs) {
       var sb = new StringBuilder();
       sb.Append("{\"t\":").Append(t.ToString(CultureInfo.InvariantCulture))
         .Append(",\"w\":").Append(w.ToString(CultureInfo.InvariantCulture)).Append(",\"h\":").Append(h.ToString(CultureInfo.InvariantCulture))
@@ -94,8 +102,9 @@ namespace RealmForge {
       sb.Append("\"invRaw\":").Append(N(info != null ? info.InvRaw : double.NaN)).Append(",\"invRow1\":").Append(N(info != null ? info.InvRow1 : double.NaN))
         .Append(",\"invSmooth\":").Append(N(info != null ? info.InvSmooth : double.NaN))
         .Append(",\"fdRaw\":").Append(N(info != null ? info.FdRaw : double.NaN)).Append(",\"fdSmooth\":").Append(N(info != null ? info.FdSmooth : double.NaN));
-      sb.Append("},\"cursor\":[").Append(cx.ToString(CultureInfo.InvariantCulture)).Append(',').Append(cy.ToString(CultureInfo.InvariantCulture)).Append("]}");
-      return sb.ToString();
+      sb.Append("},\"cursor\":[").Append(cx.ToString(CultureInfo.InvariantCulture)).Append(',').Append(cy.ToString(CultureInfo.InvariantCulture)).Append(']');
+      if (inputs != null) sb.Append(",\"in\":").Append(inputs);
+      return sb.Append('}').ToString();
     }
 
     /// <summary>The state event for the interface: {"ev":"rec",...}.</summary>
@@ -128,6 +137,14 @@ namespace RealmForge {
       using (var s = e.Open()) s.Write(jpg, 0, jpg.Length);
       lines.Append(line).Append('\n');
       Frames++; Bytes += jpg.Length + line.Length + 1;
+    }
+
+    /// <summary>A small text file of the recording (layout.json, geometry.json), compressed.</summary>
+    public void AddText(string name, string text) {
+      var e = zip.CreateEntry(name, CompressionLevel.Optimal);
+      var b = new UTF8Encoding(false).GetBytes(text ?? "");
+      using (var s = e.Open()) s.Write(b, 0, b.Length);
+      Bytes += b.Length / 4;
     }
 
     /// <summary>Finishes the file; the path of the part, null when nothing was added (then no file is left).</summary>

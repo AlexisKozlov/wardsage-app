@@ -695,6 +695,7 @@ static class CoreTests {
     LayoutTests(mock);
     TestLogTests(mock);
     ScreenRecorderTests();
+    RecInputsTests();
 
     Console.WriteLine();
     Console.WriteLine(passed + " passed, " + failed + " failed");
@@ -746,6 +747,111 @@ static class CoreTests {
     Eq(TestLogClient.Result.Later, TestLogClient.Send(mock, "rf_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB", "1.0", lines), "send: 401 is later");
     Eq(TestLogClient.Result.Later, TestLogClient.Send(mock, "", "1.0", lines), "send: no code is later");
     Eq(TestLogClient.Result.Later, TestLogClient.Send("http://127.0.0.1:1", TlCode, "1.0", lines), "send: no connection is later");
+  }
+
+  // the raw inputs the recorder keeps next to every frame (src/RecInputs.cs): serialisation round trips, the per-line encoder, the scene rectangles
+  static Dictionary<string, object> RecSlotsParsed(Dictionary<string, string> s) {
+    var d = new Dictionary<string, object>();
+    foreach (var kv in s) d[kv.Key] = MiniJson.Parse(kv.Value);
+    return d;
+  }
+
+  static void RecInputsTests() {
+    Console.WriteLine("Recorder inputs (src/RecInputs.cs: json round trips, line encoder, scene rectangles):");
+    var inv = new InventoryScreen { Open = true, EquipTab = true, Bulk = true, BulkKnown = true, ListPtr = 18446744073709551000UL, Current = 5 };
+    inv.Uids.AddRange(new long[] { 11, 12, 13, 14 }); inv.Selected.Add(13); inv.Selected.Add(11);
+    inv.List = new RFX.ListRead { ScrollY = 123.456789012345, Cols = 8, RowUnits = 118, First = 2, Last = 20, FinalRowUnits = 117.5, FitScale = 0.9 };
+    var rs = new RecastScreen { SublimingOpen = true, CurType = 2, PanelShown = true, Equips = new long[] { 1, 2 }, Sel = 2, SelectParts = new[] { 0, 3 }, Suits = new long[] { 7 }, MainAttrs = new long[] { 8 }, SubAttrs = new long[] { 9, 10 },
+      GemOpen = true, GemFunc = 7, GemSel = 4, GemList = new long[] { 4, 5 }, AscendShown = true, AscendEquips = new long[] { 21, 22, 23 }, AscendSel = 22, AscendParts = new[] { 1 },
+      AscendSuits = new long[] { 3 }, AscendMainAttrs = new long[] { 6 }, AscendSubAttrs = new long[] { 2 }, AscendFilterOpen = true, FilterPanel = 1,
+      FilterShowSuits = new long[] { 5, 6 }, FilterLeftSuits = new long[] { 5 }, FilterRightSuits = new long[] { 6 }, ChoosePending = true,
+      AscendList = new RFX.ListRead { ScrollY = -3.5, Cols = 4, RowUnits = 140, First = 0, Last = 11 }, RecastList = null, GemFuncList = new RFX.ListRead { ScrollY = double.NaN, Cols = 1, RowUnits = 100 } };
+    var hero = new HeroScreen { Hero = 99, FormOk = true, Tab = 3, Part = 2, SmallCards = true, Heroes = new long[] { 9, 8 }, GridPtr = 42, FilterOpen = true, FactionList = null, ClassCount = 5, ChosenCamps = new long[] { 1 }, ClassChosen = true };
+    var inp = new ScreenInputs { Inv = inv, Rs = rs, Hero = hero, CitySeen = true, CityForm = false, ModalExtra = true, ModalExtraWhy = "pop \"up\"" };
+    var s1 = RecIn.ReadSlots(inp);
+    foreach (var kv in s1) Check(MiniJson.TryParse(kv.Value) != null || kv.Value == "null", "inputs json: slot " + kv.Key + " is valid json");
+    var back = RecIn.ParseInputs(RecSlotsParsed(s1));
+    var s2 = RecIn.ReadSlots(back);
+    foreach (var kv in s1) Eq(kv.Value, s2[kv.Key], "inputs round trip: " + kv.Key);
+    Check(back.Inv.ListPtr == inv.ListPtr && back.Inv.Selected.Contains(13) && back.Inv.Selected.Count == 2 && back.Inv.Uids.Count == 4 && back.Inv.Current == 5 && back.Inv.Bulk, "inputs round trip: the inventory's fields");
+    Check(Math.Abs(back.Inv.List.ScrollY - inv.List.ScrollY) < 1e-12 && back.Inv.List.Last == 20 && back.Inv.List.FitScale == 0.9, "inputs round trip: the list reading keeps full precision");
+    Check(back.Rs.AscendFilterOpen && back.Rs.AscendEquips.Length == 3 && back.Rs.AscendList.Cols == 4 && back.Rs.RecastList == null && !back.Rs.GemFuncList.Has && back.Rs.FilterRightSuits[0] == 6, "inputs round trip: the Foundry screen (a null list stays null, an unreadable one stays unreadable)");
+    Check(back.Hero.Hero == 99 && back.Hero.FactionList == null && back.Hero.Heroes.Length == 2 && back.Hero.GridPtr == 42 && back.CityForm == false && back.ModalExtraWhy == "pop \"up\"", "inputs round trip: the hero screen and the flags");
+    var none = RecIn.ParseInputs(RecSlotsParsed(RecIn.ReadSlots(new ScreenInputs())));
+    Check(none.Inv == null && none.Rs == null && none.Hero == null && none.CityForm == null && !none.CitySeen, "inputs round trip: failed reads stay failed");
+    Eq(ScreenState.Classify(inp, 5).Key, ScreenState.Classify(back, 5).Key, "inputs round trip: the screen state is the same");
+
+    var item = new PlanItem { Uid = 12, Slot = 3, Quality = 8, SetId = 77 };
+    item.Subs.Add(new SubStat { Stat = 24 }); item.Subs.Add(new SubStat { Stat = -1 }); item.Main.Add(new SubStat { Stat = 5 });
+    var req = new LocateRequest { Id = "abc", Purpose = "ascend", Item = item, HeroUid = 99 };
+    var rq2 = RecIn.ParseRequest(MiniJson.Parse(RecIn.Request(req)));
+    Eq(RecIn.Request(req), RecIn.Request(rq2), "request round trip");
+    Check(rq2.Item.Subs.Count == 2 && rq2.Item.Subs[1].Stat == -1 && rq2.Item.Main[0].Stat == 5 && rq2.Item.SetId == 77 && rq2.HeroUid == 99, "request round trip: the fields the guide reads");
+    Eq("null", RecIn.Request(null), "request: none");
+    var cx = new RecCtx { Mode = "sell", Front = true, Cols = 7, OnAccount = 1, Req = req, Lines = true, CityInvSeen = true, InvDX = 0.62, BtnDY = double.NaN, Want = new long[] { 3, 4 }, ShCols = 8, PillDown = true };
+    var cx2 = RecCtx.Parse(MiniJson.Parse(cx.ToJson()));
+    Eq(cx.ToJson(), cx2.ToJson(), "context round trip");
+    Check(double.IsNaN(cx2.BtnDY) && cx2.Want.Length == 2 && cx2.PillDown && !cx2.PillUp, "context round trip: fields");
+
+    // the guide on the rebuilt inputs gives the same answer as on the originals
+    var guideInv = new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true };
+    for (int i = 0; i < 30; i++) guideInv.Uids.Add(100 + i);
+    var greq = new LocateRequest { Id = "g", Purpose = "recast", Item = new PlanItem { Uid = 112, Slot = 1, Quality = 6 } };
+    var gin = new ScreenInputs { Inv = guideInv };
+    var gback = RecIn.ParseInputs(RecSlotsParsed(RecIn.ReadSlots(gin)));
+    var gs1 = LocateGuide.Next(greq, gin.Inv, null, null, 8, 1); var gs2 = LocateGuide.Next(greq, gback.Inv, null, null, 8, 1);
+    Check(gs1.Kind == LocateKind.InList && gs2.Kind == gs1.Kind && gs2.Row == gs1.Row && gs2.Col == gs1.Col && gs2.Pos == 13, "guide on rebuilt inputs: the same step and place");
+
+    // the line encoder: a slot is written once; a new part starts with everything again
+    RecReads.Clear();
+    var enc = new RecLineEncoder();
+    RecReads.Add(100, inp); RecReads.Add(220, inp);
+    var info = new RecInfo { Ctx = cx.ToJson(), TickNow = 230, ReadSeq = RecReads.Seq, PlaceRow1 = 12.5 };
+    string l1 = enc.EncodeInfo(info, "{\"U\":1}");
+    var j1 = MiniJson.AsObject(MiniJson.Parse(l1));
+    var reads1 = (List<object>)j1["reads"];
+    Eq(2, reads1.Count, "line encoder: both reads of the tick");
+    Check(MiniJson.AsObject(reads1[0]).ContainsKey("r.inv") && !MiniJson.AsObject(reads1[1]).ContainsKey("r.inv"), "line encoder: the second read repeats nothing");
+    Check(j1.ContainsKey("ctx") && j1.ContainsKey("env") && (double)j1["pr"] == 12.5 && !j1.ContainsKey("sr") && !j1.ContainsKey("fd"), "line encoder: context, environment, the placed row; no eased scroll");
+    RecReads.Add(340, inp);
+    info = new RecInfo { Ctx = cx.ToJson(), TickNow = 350, ReadSeq = RecReads.Seq };
+    var j2 = MiniJson.AsObject(MiniJson.Parse(enc.EncodeInfo(info, "{\"U\":1}")));
+    int keys2 = MiniJson.AsObject(((List<object>)j2["reads"])[0]).Count;
+    Check(!j2.ContainsKey("ctx") && !j2.ContainsKey("env") && keys2 == 1, "line encoder: an unchanged line is only the read's time (" + keys2 + " keys)");
+    // reads that came after the tick stay for the next line
+    RecReads.Add(400, inp); long seqNow = RecReads.Seq; RecReads.Add(520, inp);
+    info = new RecInfo { Ctx = cx.ToJson(), TickNow = 410, ReadSeq = seqNow };
+    Eq(1, ((List<object>)MiniJson.AsObject(MiniJson.Parse(enc.EncodeInfo(info, "{}")))["reads"]).Count, "line encoder: a read after the tick waits");
+    enc.Rebase();
+    info = new RecInfo { Ctx = cx.ToJson(), TickNow = 530, ReadSeq = RecReads.Seq };
+    var j3 = MiniJson.AsObject(MiniJson.Parse(enc.EncodeInfo(info, "{}")));
+    var r3 = (List<object>)j3["reads"];
+    Check(r3.Count == 2 && MiniJson.AsObject(r3[0]).ContainsKey("base") && MiniJson.AsObject(r3[0]).ContainsKey("r.inv") && j3.ContainsKey("ctx") && j3.ContainsKey("env"), "line encoder: a new part starts with the whole state");
+    string withIn = RecJson.Line(1, 10, 5, 1, false, info, 0, 0, l1);
+    Check(MiniJson.AsObject(MiniJson.Parse(withIn)).ContainsKey("in") && withIn.EndsWith(",\"in\":" + l1 + "}"), "jsonl line: the inputs go last");
+    RecReads.Clear();
+
+    // the scene rectangles: a cell of the inventory list, the bulk-sale frame
+    const double W = 1920, H = 1080; double U = Ui.Unit(W, H);
+    var lc = new RecCtx { Mode = "locate", Front = true, Cols = 8, Req = greq, Lines = true };
+    var lstep = LocateGuide.Next(greq, guideInv, null, null, 8, 1);
+    var sgeo = SellGeometry.Inventory(W, U, 8);
+    guideInv.List = new RFX.ListRead { ScrollY = 0, Cols = 8, RowUnits = 118, First = 0, Last = 15 };
+    double row1 = new InvScroll().Row1(sgeo, guideInv.List, double.NaN, U);
+    var rects = RecScenes.Locate(lc, lstep, greq.Item, null, guideInv, null, row1, W, H, U);
+    Check(rects.Count == 1 && rects[0].Kind == "frame" && rects[0].W == (int)(sgeo.CellW * U), "scene: the item's cell in the list is one frame (" + rects.Count + ")");
+    lc.Front = false;
+    Eq(0, RecScenes.Locate(lc, lstep, greq.Item, null, guideInv, null, row1, W, H, U).Count, "scene: nothing is drawn while the game is not in front");
+    Eq(0, RecScenes.Locate(new RecCtx { Mode = "locate", Front = true, Cols = 8, Req = greq }, lstep, greq.Item, null, guideInv, null, double.NaN, W, H, U).Count, "scene: a list with no place has no frame");
+    var bulk = new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true, Bulk = true }; bulk.Uids.AddRange(new long[] { 1, 2, 3 }); bulk.Selected.Add(2); bulk.Selected.Add(3);
+    var sc = new RecCtx { Mode = "sell", Front = true, Want = new long[] { 1, 2 }, ShCols = 8, Lines = true };
+    SellHintStep sstep;
+    double srow = new InvScroll().Row1(SellGeometry.Inventory(W, U, 8), new RFX.ListRead { ScrollY = 0, Cols = 8, RowUnits = 118 }, double.NaN, U);
+    var srects = RecScenes.Sell(sc, bulk, null, srow, W, H, U, out sstep);
+    Check(sstep.Kind == SellHintKind.Select && srects.Count == 3 && srects.Exists(x => x.Kind == "mark1") && srects.Exists(x => x.Kind == "mark0") && srects.Exists(x => x.Kind == "mark2"), "scene: the cleanup marks todo / done / extra cells (" + srects.Count + ")");
+    var pb = RecScenes.Sell(sc, new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true }, null, double.NaN, W, H, U, out sstep);
+    var pr = SellHint.PressBulkRect(W, H, U);
+    Check(sstep.Kind == SellHintKind.PressBulk && pb.Count == 1 && pb[0].Kind == "tip-frame" && pb[0].X == pr[0] && pb[0].W == pr[2], "scene: the bulk-sale button is framed where the auto mode clicks");
   }
 
   static void ScreenRecorderTests() {

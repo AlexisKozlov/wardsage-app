@@ -454,13 +454,28 @@ namespace RealmForge {
       recB = RecInfo.Active ? new RecInfo() : null;
       try { TickWork(); }
       finally {
-        if (recB != null) { var b = recB; recB = null; b.Screen = screens.Current != null ? screens.Current.Brief : "-"; RecInfo.Publish(b); }
+        if (recB != null) { var b = recB; recB = null; b.Screen = screens.Current != null ? screens.Current.Brief : "-"; RecInputs(b); RecInfo.Publish(b); }
       }
+    }
+
+    // the recorder's raw inputs of this tick (src/RecInputs.cs): the guides' arguments and what decides whether they draw; the screen reads are queued by ReadScreens
+    void RecInputs(RecInfo b) {
+      try {
+        IntPtr hwnd = GameWindow();
+        bool sell = !LocateWins && sellHint && sellWanted != null;
+        var want = new List<long>(sellWanted ?? new HashSet<long>()); want.Sort();
+        var c = new RecCtx { Mode = LocateWins ? "locate" : sell ? "sell" : "", Front = hwnd != IntPtr.Zero && IsForeground(hwnd), Cols = locateCols, OnAccount = locateOnAccount,
+          Req = LocateWins ? locateReq : null, Lines = LocateWins ? locateLines.Length > 0 : sellHintLines.Length > 0, CityInvSeen = cityInvSeen, InvDX = invDX, BtnDY = hg2.HeroesBtnDY,
+          Want = sell ? want.ToArray() : new long[0], ShCols = shCols, PillUp = sellPillUp != "", PillDown = sellPillDown != "" };
+        b.Ctx = c.ToJson(); b.TickNow = NowMs(); b.ReadSeq = RecReads.Seq;
+        if (sell) { b.SInv = RecIn.InvCore(b.SellInv); b.SInvList = RecIn.List(b.SellInv != null ? b.SellInv.List : null); }
+      } catch (Exception) { }
     }
 
     /// <summary>TEST build: the recorder starts / stops. Our windows stay in screen captures while it runs (then the screen looks mask them themselves).</summary>
     public void SetRecording(bool on) {
       RecInfo.Active = on; GlowWindow.Capturable = on;
+      if (on) RecReads.Clear();
       foreach (var w in new[] { glow, tip, cancelWin }) if (w.IsHandleCreated) w.ApplyAffinity();
       Run();
     }
@@ -1515,6 +1530,7 @@ namespace RealmForge {
         if (why != shFrameSaid) { shFrameSaid = why; if (why == "none") Log.Write("sell hint: the list's exact scroll cannot be read - no item frames, only the text plate"); }
       }
       var step = SellHint.BuildExact(inv, sellWanted, shCols, row1, shGeo, W, H, U);
+      if (recB != null) { recB.SellInv = inv; recB.Step = "Sell:" + step.Kind; }
       shFrames = step.Frames;
       string key = step.FullKey;
       if (key != shKey) { shKey = key; var h = SellHintChanged; if (h != null) h(step); }
@@ -1541,10 +1557,9 @@ namespace RealmForge {
       if (!haveText) { HideTip(); return; }
       if (step.Kind == SellHintKind.PressBulk) {
         // «Массовая продажа» under the list (bottom left): where the auto mode clicks
-        int bw = (int)(0.2 * U), bh = (int)(0.065 * U);
-        int bx = o.X + (int)(0.5867 * U) - bw / 2, by = o.Y + (int)(H - 0.0723 * U) - bh / 2;
+        var pb = SellHint.PressBulkRect(W, H, U);
         frame++;
-        DrawTip(bx, by, bw, bh, sellHintLines, H);
+        DrawTip(o.X + pb[0], o.Y + pb[1], pb[2], pb[3], sellHintLines, H);
         return;
       }
       if (step.Kind == SellHintKind.NeedPosition) { DrawTipTop(sellHintLines); return; }
@@ -1665,13 +1680,14 @@ namespace RealmForge {
         }
         locateNeedClick = !lgrid.Has;
         if (lgrid.Has) {
-          var mk = lgrid.Place(locateGeo, step.Row, step.Col, W, H, U);
+          if (recB != null) recB.PlaceRow1 = lgrid.Row1;
+          double[] mkr;
+          var mk = LocateFrames.ListScene(Geo.Current, lgrid, locateGeo, inv.Uids.Count, locateCols, step.Row, step.Col, W, H, U, out mkr);
           frame++;
           HideTip();
           // the item is off the screen: its place on the list's scroll bar too (the pill beside it says which way and how far)
           double[] strip = null;
           if (mk.Kind != "box") {
-            var mkr = LocateFrames.ListMarker(Geo.Current, lgrid.Row1, locateGeo.ViewTopPx(U), locateGeo.TopPad * U, locateGeo.PitchY * U, (inv.Uids.Count + locateCols - 1) / locateCols, step.Row, W, H, U);
             string msig = mkr == null ? "none" : string.Join(",", Array.ConvertAll(mkr, d => ((int)d).ToString()));
             if (msig != locateMarkerSaid) { locateMarkerSaid = msig; Log.Write("locate marker: " + msig + " row=" + step.Row + " of " + ((inv.Uids.Count + locateCols - 1) / locateCols) + " row1=" + (int)lgrid.Row1 + " bar=" + (Geo.Current != null && Geo.Current.Rect("inventory.scrollbar", W, H, U) != null ? "geometry" : "no geometry")); }
             if (mkr != null) strip = new[] { o.X + mkr[0], o.Y + mkr[1], o.Y + mkr[2], o.Y + mkr[3], o.Y + mkr[4], o.Y + mkr[5], 1 };
@@ -1749,6 +1765,7 @@ namespace RealmForge {
         if (now - cityAt >= 400) { cityAt = now; cityNow = CityVisible(hwnd); }
         inp.CitySeen = cityNow;
       } else cityNow = false;
+      if (RecInfo.Active) RecReads.Add(now, inp);   // the recorder: what the tracker is given (src/RecInputs.cs)
       var st = screens.Update(inp, now);
       if (screens.Hero != null) heroScreen = screens.Hero;
       gate.Observe(st, now);
@@ -1854,6 +1871,7 @@ namespace RealmForge {
       double y = locListSmooth.Step(l.ScrollY, now, 4 * (l.RowUnits > 0 ? l.RowUnits : 120));
       if (recB != null) { recB.FdRaw = l.ScrollY; recB.FdSmooth = y; }
       var sm = new RFX.ListRead { ScrollY = y, Cols = l.Cols, RowUnits = l.RowUnits, First = l.First, Last = l.Last, FinalRowUnits = l.FinalRowUnits, FitScale = l.FitScale };
+      if (recB != null) recB.Fd = "{\"asc\":" + (asc ? "true" : "false") + ",\"l\":" + RecIn.List(sm) + "}";
       if (asc) rs.AscendList = sm; else rs.RecastList = sm;
     }
 
@@ -2277,9 +2295,8 @@ namespace RealmForge {
     bool CityInventoryButton(W32.POINT o, double W, double H, double U, out int[] r) {
       long now = NowMs();
       if (now - cityInvAt >= 400) { cityInvAt = now; cityInvSeen = InventoryButtonSeen(o, W, H); }
-      double cx = W - invDX * U, cy = H - hg2.HeroesBtnDY * U;
-      var bs = LocateFrames.CityButtonSize(Geo.Current, U); double bw = bs[0], bh = bs[1];   // the bar's button size from the geometry (else the estimate)
-      r = new[] { o.X + (int)(cx - bw / 2), o.Y + (int)(cy - bh / 2), (int)bw, (int)bh };
+      var cb = LocateFrames.CityButton(Geo.Current, W, H, U, invDX, hg2.HeroesBtnDY);   // the bar's button size from the geometry (else the estimate)
+      r = new[] { o.X + cb[0], o.Y + cb[1], cb[2], cb[3] };
       return cityInvSeen;
     }
 

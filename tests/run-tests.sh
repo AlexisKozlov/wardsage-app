@@ -57,7 +57,7 @@ else
   echo "SKIPPED: $FX45 not found (install mono-devel for the .NET Framework reference assemblies)"
 fi
 
-CORE="src/ArenaClient.cs src/ArenaOpponents.cs src/AutoPilot.cs src/BattleCapture.cs src/BattleClock.cs src/BattleTimeline.cs src/BridgeClient.cs src/Channel.cs src/Config.cs src/EquipGuide.cs src/EquipScan.cs src/ErrorReport.cs src/Extractor.cs src/FolderMigration.cs src/ScreenRecorder.cs src/FightPlanClient.cs src/FilterPilot.cs src/GameInfo.cs src/GamePacks.cs src/GameScreen.cs src/ClickGate.cs src/GuildData.cs src/GvgData.cs src/HeroPilot.cs src/Geometry.cs src/Layout.cs src/ListTracker.cs src/HintLayout.cs src/LiveTables.cs src/LocateClient.cs src/LocateFrames.cs src/LocateGuide.cs src/LocatePilot.cs src/MemoryReader.cs src/MiniJson.cs src/NewsClient.cs src/PlansClient.cs src/RecastScan.cs src/RemoteConfig.cs src/SellClient.cs src/SellHint.cs src/SellPilot.cs src/SellScan.cs src/Strings.cs src/SyncClient.cs src/TimelineBuilder.cs src/TestLog.cs src/TraceUpload.cs src/UpdateKeys.cs src/WebViewRecovery.cs app/HintGeometry.cs"
+CORE="src/ArenaClient.cs src/ArenaOpponents.cs src/AutoPilot.cs src/BattleCapture.cs src/BattleClock.cs src/BattleTimeline.cs src/BridgeClient.cs src/Channel.cs src/Config.cs src/EquipGuide.cs src/EquipScan.cs src/ErrorReport.cs src/Extractor.cs src/FolderMigration.cs src/ScreenRecorder.cs src/RecInputs.cs src/FightPlanClient.cs src/FilterPilot.cs src/GameInfo.cs src/GamePacks.cs src/GameScreen.cs src/ClickGate.cs src/GuildData.cs src/GvgData.cs src/HeroPilot.cs src/Geometry.cs src/Layout.cs src/ListTracker.cs src/HintLayout.cs src/LiveTables.cs src/LocateClient.cs src/LocateFrames.cs src/LocateGuide.cs src/LocatePilot.cs src/MemoryReader.cs src/MiniJson.cs src/NewsClient.cs src/PlansClient.cs src/RecastScan.cs src/RemoteConfig.cs src/SellClient.cs src/SellHint.cs src/SellPilot.cs src/SellScan.cs src/Strings.cs src/SyncClient.cs src/TimelineBuilder.cs src/TestLog.cs src/TraceUpload.cs src/UpdateKeys.cs src/WebViewRecovery.cs app/HintGeometry.cs"
 
 step "3. Core (no WinForms) compiles as C# 5 for .NET 8; tests build"
 NET8_REFS=$(for f in "$NET8"/*.dll; do printf -- '-r:%s ' "$f"; done)
@@ -83,6 +83,18 @@ step "5b. Screen state + click gate: replay of recorded screens (tests/fixtures/
 $CSC -target:exe -nostdlib -nowarn:SYSLIB0014 $NET8_REFS -r:"$OUT/RealmForge.Core.dll" -out:"$OUT/ScreenReplay.dll" tests/ScreenReplay.cs
 cp "$OUT/CoreTests.runtimeconfig.json" "$OUT/ScreenReplay.runtimeconfig.json"
 dotnet exec --runtimeconfig "$OUT/ScreenReplay.runtimeconfig.json" "$OUT/ScreenReplay.dll" tests/fixtures/screens
+
+step "5c. Recording replay: a synthetic recording (tests/RecReplay.cs makes it with the recorder's own writers) is replayed, its drawing script runs"
+$CSC -target:exe -nostdlib -nowarn:SYSLIB0014 $NET8_REFS -r:"$OUT/RealmForge.Core.dll" -out:"$OUT/RecReplay.dll" tests/RecReplay.cs
+cp "$OUT/CoreTests.runtimeconfig.json" "$OUT/RecReplay.runtimeconfig.json"
+rm -rf "$OUT/rec-fixture" "$OUT/rec-out" "$OUT/rec-png"
+dotnet exec --runtimeconfig "$OUT/RecReplay.runtimeconfig.json" "$OUT/RecReplay.dll" --make-fixture "$OUT/rec-fixture" tests/fixtures/screens/_geometry.json
+dotnet exec --runtimeconfig "$OUT/RecReplay.runtimeconfig.json" "$OUT/RecReplay.dll" "$OUT/rec-fixture" "$OUT/rec-out" > /dev/null
+test -s "$OUT/rec-out/summary.txt" && test -s "$OUT/rec-out/frame_0001.json" || { echo "RecReplay wrote no summary"; exit 1; }
+grep -q "^mismatches: 1\$" "$OUT/rec-out/summary.txt" || { echo "RecReplay: expected exactly the one planted mismatch"; cat "$OUT/rec-out/summary.txt"; exit 1; }
+echo "replay ok (the planted mismatch found, the other frames agree)"
+SHARP=/home/dev/wardsage/wardsage-web/node_modules/sharp
+if [ -d "$SHARP" ]; then node tests/rec-draw.mjs "$OUT/rec-fixture" "$OUT/rec-out" "$OUT/rec-png" && test -s "$OUT/rec-png/frame_0001.png" && echo "rec-draw ok"; else echo "rec-draw SKIPPED (sharp not found)"; fi
 
 if command -v mono >/dev/null && [ -f "$FX45/System.dll" ]; then
   step "6. Same tests on Mono (.NET Framework 4.5 API, HttpWebRequest of the Framework family, real DPAPI class)"

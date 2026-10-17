@@ -191,6 +191,12 @@ namespace RealmForge {
       return st;
     }
 
+    /// <summary>The frame of «Массовая продажа» under the list (bottom left), where the auto mode clicks: {x, y, w, h} in client px.</summary>
+    public static int[] PressBulkRect(double W, double H, double U) {
+      int bw = (int)(0.2 * U), bh = (int)(0.065 * U);
+      return new[] { (int)(0.5867 * U) - bw / 2, (int)(H - 0.0723 * U) - bh / 2, bw, bh };
+    }
+
     /// <summary>Keeps the frames that did not really move: a frame within <paramref name="tol"/> px of the same cell's frame
     /// drawn before (same style) stays where it was, so the picture does not shiver while the rows are tracked.</summary>
     public static List<SellFrame> Stabilize(List<SellFrame> prev, List<SellFrame> cur, int tol) {

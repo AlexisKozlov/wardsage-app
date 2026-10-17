@@ -252,6 +252,27 @@ namespace RealmForge {
       return new LocateFrame { Target = "cell", Mark = m };
     }
 
+    /// <summary>The inventory list cell of a row/column for a grid whose row 1 is placed: the mark (box / up / down) and, for up / down, the item's mark on the
+    /// list's scroll bar (null for a box, or when there is no geometry for the bar). Client px; one place for the overlay and the recording replay.</summary>
+    public static LocateMark ListScene(GameGeometry g, LocateGrid grid, SellGeometry lg, int uidCount, int cols, int row, int col, double W, double H, double U, out double[] marker) {
+      var mk = grid.Place(lg, row, col, W, H, U);
+      marker = mk.Kind != "box" ? ListMarker(g, grid.Row1, lg.ViewTopPx(U), lg.TopPad * U, lg.PitchY * U, (uidCount + cols - 1) / cols, row, W, H, U) : null;
+      return mk;
+    }
+
+    public static LocateMark ListScene(GameGeometry g, double row1, SellGeometry lg, int uidCount, int cols, int row, int col, double W, double H, double U, out double[] marker) {
+      var grid = new LocateGrid(); grid.FromScroll(row1, 0);
+      return ListScene(g, grid, lg, uidCount, cols, row, col, W, H, U, out marker);
+    }
+
+    /// <summary>The frame around the city bar's «Инвентарь» button {x, y, w, h} in client px: its centre is <paramref name="invDX"/> U from the right and
+    /// <paramref name="btnDY"/> U from the bottom, its size from the geometry.</summary>
+    public static int[] CityButton(GameGeometry g, double W, double H, double U, double invDX, double btnDY) {
+      double cx = W - invDX * U, cy = H - btnDY * U;
+      var bs = CityButtonSize(g, U); double bw = bs[0], bh = bs[1];
+      return new[] { (int)(cx - bw / 2), (int)(cy - bh / 2), (int)bw, (int)bh };
+    }
+
     /// <summary>The city bar's button size in px (the frame around «Инвентарь» there): the geometry's hit area, else the old estimate.</summary>
     public static double[] CityButtonSize(GameGeometry g, double U) {
       var s = g != null ? g.Dims("city.barButton") : null;

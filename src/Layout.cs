@@ -127,6 +127,12 @@ namespace RealmForge {
       return null;
     }
 
+    /// <summary>The saved copy's text as it is (the recorder keeps it with a recording), null when there is none.</summary>
+    public static string RawCache(string game) {
+      if (!GameLayout.IsVersion(game)) return null;
+      try { string p = CachePath(CacheDir, game); return File.Exists(p) ? File.ReadAllText(p, Encoding.UTF8) : null; } catch (Exception) { return null; }
+    }
+
     public static void SaveCache(string dir, string game, string json) {
       if (!GameLayout.IsVersion(game)) return;
       try {

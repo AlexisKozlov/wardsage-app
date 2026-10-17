@@ -48,6 +48,23 @@ namespace RealmForge {
       return hwnd;
     }
 
+    // the raw inputs next to every frame (src/RecInputs.cs): a slot is written when it changed, every part starts with all of them
+    readonly RecLineEncoder enc = new RecLineEncoder();
+    GameLayout lyRef; GameGeometry geoRef; string lyHash = "", geoHash = "", env = "{}"; bool lyWritten, geoWritten; int envW, envH;
+
+    // the layout / geometry data in use are kept once per recording (layout.json, geometry.json in the first part), the lines only name them by hash
+    string Env(RecPartWriter w, int cw, int ch) {
+      var ly = Layout.Current; var gg = Geo.Current;
+      bool changed = false;
+      if (ly != lyRef) { lyRef = ly; string txt = ly != null ? Layout.RawCache(ly.Game) : null; lyHash = RecIn.Hash(txt); changed = true; if (txt != null && !lyWritten) { w.AddText("layout.json", txt); lyWritten = true; } }
+      if (gg != geoRef) { geoRef = gg; string txt = gg != null ? Geo.RawCache(gg.Game) : null; geoHash = RecIn.Hash(txt); changed = true; if (txt != null && !geoWritten) { w.AddText("geometry.json", txt); geoWritten = true; } }
+      if (changed || cw != envW || ch != envH) {
+        envW = cw; envH = ch;
+        env = "{\"U\":" + RecIn.D(Ui.Unit(cw, ch)) + ",\"ver\":" + MiniJson.Quote(ly != null ? ly.Game : gg != null ? gg.Game : "") + ",\"lh\":\"" + lyHash + "\",\"gh\":\"" + geoHash + "\",\"app\":" + MiniJson.Quote(Program.Version) + "}";
+      }
+      return env;
+    }
+
     static readonly ImageCodecInfo Jpeg = ImageCodecInfo.GetImageEncoders().FirstOrDefault(c => c.FormatID == ImageFormat.Jpeg.Guid);
 
     void Run() {
@@ -71,7 +88,7 @@ namespace RealmForge {
             bool fg = OverlayController.IsForeground(h);
             if (fg ? t >= nextFg : t >= nextBg) {
               if (fg) nextFg = t - nextFg < 2 * FgEveryMs ? nextFg + FgEveryMs : t + FgEveryMs; else nextBg = t + BgEveryMs;
-              if (w == null) { w = new RecPartWriter(dir, part); partStart = t; }
+              if (w == null) { w = new RecPartWriter(dir, part); partStart = t; enc.Rebase(); }
               try { Capture(h, t, !fg, w, ++frameNo); } catch (Exception e) { log("recording " + rec + ": frame failed: " + e.Message); }
             }
           }
@@ -133,7 +150,9 @@ namespace RealmForge {
       }
       var info = RecInfo.Take();
       if (info != null && RecInfo.NowMs() - info.AtMs > 1500) info = null;   // the overlay's tick is not running: nothing known
-      w.Add(RecNames.FrameFile(no), jpg, RecJson.Line(t, cr.R, cr.B, scale, bg, info, cx, cy));
+      string inputs = null;
+      try { if (info != null && info.Ctx != null) inputs = enc.EncodeInfo(info, Env(w, cr.R, cr.B)); } catch (Exception) { }
+      w.Add(RecNames.FrameFile(no), jpg, RecJson.Line(t, cr.R, cr.B, scale, bg, info, cx, cy, inputs));
     }
   }
 }
