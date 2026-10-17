@@ -64,6 +64,18 @@ namespace RealmForge {
       Log.AppendLine("locate: " + what + ": " + e.GetType().Name + ": " + e.Message + " at " + top);
     }
 
+    /// <summary>Only the scroll of the Foundry's Ascension (<paramref name="ascend"/>) or Recast list, cheap enough to read every overlay
+    /// frame (the full screen read is done a few times a second). Null = unreadable.</summary>
+    public static ListRead ReadFoundryListLive(bool ascend) {
+      try {
+        ulong sf = LiveRecastForm(false, -1);
+        if (sf == 0) return null;
+        ulong panel; int pt;
+        if (!Field(sf, ascend ? "m_PanelEquipSubliming" : "m_PanelEquipRecast", out panel, out pt) || pt != T_TABLE) return null;
+        return ReadFoundryList(panel);
+      } catch (Exception e) { SayOnce("the live list read failed", e); return null; }
+    }
+
     /// <summary>ReadRecastScreen that never throws: a failure is logged once and reads as null (the screen is unknown).</summary>
     public static RecastScreen ReadRecastScreenSafe(int rescanMs) {
       try { return ReadRecastScreen(rescanMs); } catch (Exception e) { SayOnce("the foundry screen read failed", e); return null; }

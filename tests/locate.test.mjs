@@ -87,12 +87,22 @@ for (const lang of ['ru', 'en']) {
   ok(L.describe(req, st({ step: 'selected', auto: 'hint' }), t).head === T[lang].locSelected, lang + ': the last steps stay the player\'s');
   ok(L.describe(req, st({ step: 'recastPick', auto: 'work' }), t).head !== T[lang].locAutoWork, lang + ': the Foundry steps are never "auto work"');
   ok(L.describe(req, st({ step: 'inList', auto: 'paused' }), t).head === plain.head, lang + ': paused: the normal hint');
-  for (const why of ['bulk', 'lost', 'stuck', 'screen', 'cancelled']) {
+  // the click gate's stops (src/ClickGate.cs): «Автонажатие остановлено: <причина>», the step's own hint after it
+  for (const why of ['unknown', 'screen', 'modal', 'bulk', 'cell', 'target', 'nochange']) {
+    const d = L.describe(req, st({ step: 'inList', auto: 'stopped', autoWhy: why }), t);
+    ok(d.head === t('gateStop', t('gateWhy_' + why)) && !/\{0\}|^gate/.test(d.head) && d.lines[0] === t('locAutoRest') && d.lines[1] === plain.head && d.tone === 'warn', lang + ': gate stop (' + why + ') says why and keeps the hint');
+    ok(d.tip.length <= 3 && d.tip.every((x) => x.length <= 90), lang + ': gate stop (' + why + ') plate is short');
+  }
+  // «Массовая продажа»: the step is to leave it, and the program clicks nothing
+  const eb = L.describe(req, st({ step: 'exitBulk', auto: 'hint', autoWhy: 'bulk' }), t);
+  ok(eb.head === T[lang].locExitBulk && eb.tone === 'warn' && eb.lines[0] === T[lang].locExitBulkP, lang + ': bulk sale: leave it');
+  ok(L.describe(req, st({ step: 'exitBulk', auto: 'work' }), t).head === T[lang].locExitBulk, lang + ': bulk sale is never "auto work"');
+  for (const why of ['lost', 'stuck', 'cancelled']) {
     const d = L.describe(req, st({ step: 'inList', auto: 'stopped', autoWhy: why }), t);
     ok(d.head === T[lang].locAutoStop && d.lines.length >= 2 && !/^loc[A-Z]/.test(d.lines[0]) && d.lines[1] === plain.head, lang + ': stopped (' + why + ') says why and keeps the hint');
     ok(d.tip.length <= 3 && d.tip.every((x) => x.length <= 90), lang + ': stopped (' + why + ') plate is short');
   }
-  ok(L.describe(req, st({ step: 'inList', auto: 'stopped', autoWhy: 'bulk' }), t).tone === 'warn' && L.describe(req, st({ step: 'inList', auto: 'stopped', autoWhy: 'cancelled' }), t).tone === 'info', lang + ': stop tones');
+  ok(L.describe(req, st({ step: 'inList', auto: 'stopped', autoWhy: 'lost' }), t).tone === 'warn' && L.describe(req, st({ step: 'inList', auto: 'stopped', autoWhy: 'cancelled' }), t).tone === 'info', lang + ': stop tones');
   ok(T[lang].locLeadAuto && T[lang].locLeadAuto !== T[lang].locLead, lang + ': the lead changes with auto click');
 }
 ok(L.AUTO_STEPS.every((k) => L.KINDS.indexOf(k) >= 0), 'auto steps are known steps');

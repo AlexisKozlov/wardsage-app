@@ -31,6 +31,7 @@ namespace RealmForge {
     public bool Open;          // the inventory is shown
     public bool EquipTab;      // on «Снаряжение»
     public bool Bulk;          // in «Массовая продажа»
+    public bool BulkKnown;     // the equipment panel's mode was read (false: a short read failure - the mode is NOT known, never assume "normal")
     public ulong ListPtr;
     public List<long> Uids = new List<long>();          // list order
     public HashSet<long> Selected = new HashSet<long>();
@@ -80,7 +81,8 @@ namespace RealmForge {
       ulong panels, panel; int pt, pnt;
       if (!Field(f, "m_CachedContentPanels", out panels, out pt) || pt != T_TABLE || !IntKey(panels, EquipTabId, out panel, out pnt) || pnt != T_TABLE) return s;
       if (s.Open && s.EquipTab) s.List = ReadInventoryList(f);
-      s.Bulk = Field(panel, "m_CurrentBottomButtonState", out v, out tt) && tt == T_INT && (long)v == BulkSales;
+      s.BulkKnown = Field(panel, "m_CurrentBottomButtonState", out v, out tt) && tt == T_INT;
+      s.Bulk = s.BulkKnown && (long)v == BulkSales;
       if (Field(panel, KSel, out v, out tt) && tt == T_INT && (long)v > 0) s.Current = (long)v;
       ulong list; int lt;
       if (Field(panel, "m_FilterAndSortEquipUidList", out list, out lt) && lt == T_TABLE) {

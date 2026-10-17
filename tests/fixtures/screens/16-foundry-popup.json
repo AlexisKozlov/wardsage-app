@@ -1,0 +1,4 @@
+{ "name": "The Ascension list's filter pop-up is open: a modal, no cell click", "request": { "purpose": "ascend", "uid": 1003, "slot": 1, "hero": 0 }, "cols": 8, "frames": [
+  { "t": 0, "rs": { "foundry": true, "tab": 2, "ascendShown": true, "ascendEquips": [ 1001, 1002, 1003, 1004, 1005, 1006, 1007, 1008, 1009, 1010 ], "ascendSel": 0, "ascendParts": [ 1 ], "ascendList": { "scrollY": 0, "cols": 5, "rowUnits": 108, "first": 0, "last": 9 }, "popup": true }, "expect": { "screen": "Foundry", "modal": true }, "clicks": [
+    { "owner": "Locate", "target": "AscendCell", "cellKind": "ascend", "cellIndex": 2, "expect": { "verdict": "Deny", "reason": "modal" } } ] } ]
+}

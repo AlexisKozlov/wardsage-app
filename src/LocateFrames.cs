@@ -156,7 +156,7 @@ namespace RealmForge {
       switch (k) {
         case LocateKind.OpenFoundry: case LocateKind.OpenAscendTab: case LocateKind.OpenRecastTab:
         case LocateKind.AscendFilter: case LocateKind.RecastFilter: case LocateKind.AscendPick: case LocateKind.RecastPick:
-        case LocateKind.AscendReady: case LocateKind.Done: case LocateKind.Selected: case LocateKind.GemFunction:
+        case LocateKind.AscendReady: case LocateKind.Done: case LocateKind.Selected: case LocateKind.GemFunction: case LocateKind.ExitBulk:
           return true;
         default: return false;
       }
@@ -197,6 +197,7 @@ namespace RealmForge {
           return f;
         }
         case LocateKind.AscendReady: key = "ascend.button"; break;
+        case LocateKind.ExitBulk: key = "inventory.bulkBack"; break;   // pointed at only: the app never clicks in the bulk-sale mode
         case LocateKind.Done: key = st.OnGem ? "gem.button" : "recast.button"; break;
         case LocateKind.GemFunction: return GemRow(g, rs, st.Func != 0 ? st.Func : GemRows.Recast, W, H, U);
         case LocateKind.Selected: key = st.Worn ? "inventory.cardLeft" : "inventory.cardSolo"; break;   // a worn item: Gems | Remove; otherwise the gem button is alone, centred

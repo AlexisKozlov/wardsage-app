@@ -1,0 +1,4 @@
+{ "name": "Ascension list: the cell under the click is the neighbour's - denied", "request": { "purpose": "ascend", "uid": 1003, "slot": 1, "hero": 0 }, "cols": 8, "frames": [
+  { "t": 0, "rs": { "foundry": true, "tab": 2, "ascendShown": true, "ascendEquips": [ 1001, 1002, 1003, 1004, 1005, 1006, 1007, 1008, 1009, 1010 ], "ascendSel": 0, "ascendParts": [ 1 ], "ascendList": { "scrollY": 0, "cols": 5, "rowUnits": 108, "first": 0, "last": 9 } }, "expect": { "step": "AscendPick" }, "clicks": [
+    { "owner": "Locate", "target": "AscendCell", "cellKind": "ascend", "cellIndex": 3, "expect": { "verdict": "Deny", "reason": "cell" } } ] } ]
+}

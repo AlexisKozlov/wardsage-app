@@ -545,18 +545,40 @@ namespace RealmForge {
   /// disagrees by more than 2 px for 3 looks in a row, then by half the difference (no jump).</summary>
   public sealed class ScrollOffset {
     public double Offset; public bool Known; int misses; double unit, lastWant;
+    double lastRaw = double.NaN; long movedAt = long.MinValue / 2;
+
+    /// <summary>The first learning waits for the list to stand still this long (ms) ...</summary>
+    public const long LearnStillMs = 150;
+    /// <summary>... a change of a learned offset for this long, and only when it is more than <see cref="RelearnPx"/>.</summary>
+    public const long RelearnStillMs = 500;
+    public const double RelearnPx = 3;
+
+    /// <summary>The list has not moved for <paramref name="ms"/> (by the scroll value seen in the last <c>Place</c> calls).</summary>
+    public bool StillFor(long nowMs, long ms) { return nowMs - movedAt >= ms; }
 
     /// <summary>Row 1's top for the value-based position <paramref name="raw"/>; <paramref name="phaseY"/> = a row top seen on
-    /// the screen (NaN = none this look); <paramref name="unit"/>: the window's UI unit (another size = learn anew).</summary>
-    public double Place(double raw, double phaseY, double pitch, double unit) {
+    /// the screen (NaN = none this look); <paramref name="unit"/>: the window's UI unit (another size = learn anew).
+    /// No clock: the offset is learned from any look (the equip helper's lists).</summary>
+    public double Place(double raw, double phaseY, double pitch, double unit) { return Place(raw, phaseY, pitch, unit, -1); }
+
+    /// <summary>The same with the clock (ms, <paramref name="nowMs"/> &gt;= 0): the picture is never used while the list moves
+    /// (its look lags the value, which made the frames shiver); the offset is learned after 150 ms of stillness and a learned
+    /// one changes only after 500 ms of stillness and when the picture disagrees by more than 3 px.</summary>
+    public double Place(double raw, double phaseY, double pitch, double unit, long nowMs) {
       if (unit != this.unit) { this.unit = unit; Known = false; Offset = 0; misses = 0; }
+      bool timed = nowMs >= 0;
+      if (timed && (double.IsNaN(lastRaw) || Math.Abs(raw - lastRaw) > 0.05)) movedAt = nowMs;
+      lastRaw = raw;
       if (!double.IsNaN(phaseY)) {
         double want = ListTracker.Snap(raw + Offset, phaseY, pitch) - (raw + Offset);
         if (Math.Abs(want) <= 0.1 * pitch) {
-          if (!Known) { Offset += want; Known = true; misses = 0; }
+          double limit = timed ? RelearnPx : 2;
+          bool still = !timed || StillFor(nowMs, Known ? RelearnStillMs : LearnStillMs);
+          if (!Known) { if (still) { Offset += want; Known = true; misses = 0; } }
           // the scroll value is exact; the screen only fixes a constant. A noisy look (the cards' own glow / animation moving the
           // phase a few px back and forth) must not move the frame: only the same disagreement five looks in a row does
-          else if (Math.Abs(want) > 2) { misses = misses > 0 && Math.Abs(want - lastWant) <= 2 ? misses + 1 : 1; lastWant = want; if (misses >= 5) { Offset += want; misses = 0; } }
+          else if (!still) misses = 0;
+          else if (Math.Abs(want) > limit) { misses = misses > 0 && Math.Abs(want - lastWant) <= 2 ? misses + 1 : 1; lastWant = want; if (misses >= (timed ? 3 : 5)) { Offset += want; misses = 0; } }
           else misses = 0;
         }
       }

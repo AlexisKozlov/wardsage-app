@@ -12,6 +12,8 @@ let n = 0; const ok = (c, m) => { assert.ok(c, m); n++; };
 ok(G.next(plan, null).kind === 'closed', 'no live -> closed');
 ok(G.next(plan, live({ gameRunning: false })).kind === 'closed', 'game exited');
 ok(G.next(plan, live({ heroUid: 1 })).kind === 'hero', 'other hero');
+ok(G.next(plan, live({ screen: 'inventory', bulk: true })).kind === 'bulk' && G.next(plan, live({ screen: 'inventory', bulk: true, heroUid: 1 })).kind === 'bulk', 'the Inventory in bulk sale: leave it first (before any hero or slot step)');
+ok(G.next(plan, live({ screen: 'inventory', bulk: false, heroUid: 1 })).kind === 'hero', 'the Inventory in the normal mode: the usual steps');
 ok(G.next(plan, live({ part: -1 })).kind === 'slot', 'no slot');
 ok(G.next(plan, live({ panelOk: false })).kind === 'slot', 'panel gone');
 let g = G.next(plan, live({ rows: { 6423: [3, 2] } }));

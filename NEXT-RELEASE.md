@@ -76,6 +76,18 @@ Optional `### Heading` lines inside a `## RU` / `## EN` section split the update
 * Предпочитаемый путь для следующего шага: кнопка на карточке вещи открывает Литейную сразу с вещью (ViewCharactorEquipTip), но левая кнопка карточки
   меняется (Улучшение / Вознесение / Самоцветы): замерять по состоянию вещи, не по одному месту.
 
+## Проверить в игре (экран и ворота нажатий)
+
+Экран определяется в одном месте (src/GameScreen.cs), каждое нажатие идёт через ворота (src/ClickGate.cs); у «Показать в игре» свой выключатель на сайте «locateAuto»
+(по умолчанию выключен: без него только подсказки). Проверять вживую (список без «-»):
+
+* «Массовая продажа» + запрос «Показать в игре» (автонажатие вкл., locateAuto вкл.): шаг «Выйди из «Массовой продажи»», рамка на кнопке «Назад» слева внизу
+  (геометрия inventory.bulkBack: проверить, что рамка на нужной кнопке), ни одного клика. Так же при запущенном «Переодевании»: шаг «Выйди из «Массовой продажи»».
+* Литейная на вкладке «Ковка» и запрос на Вознесение: программа сама нажимает «Вознесение», слот, ячейку; экран Литейной не «забывается» при коротком сбое чтения.
+* Остановки: в журнале строки «click gate Locate/Sell/Equip: allow … / STOP (причина)». Причины: unknown, screen, modal, bulk, cell, target, nochange.
+  Сверить, что ничего не останавливается зря: нажатие по ячейке Инвентаря без точной прокрутки списка больше не делается (стоп «cell»).
+* Чистка склада с автонажатием: клики по ячейкам только по вещам списка (или ранее отмеченным), и только в «Массовой продаже»; сначала «Снаряжение», потом «Массовая продажа».
+
 ## Проверить в игре (чистка склада без автонажатия)
 
 «Подсказать в игре» (список чистки, автонажатие выключено): программа только читает и рисует, ни одного клика. Не проверяется без живой игры
@@ -135,6 +147,8 @@ version …: from the site» или «saved copy»). Без файла оста�
 - Установщик: можно сразу выбрать, запускать ли программу вместе с Windows и отправлять ли отчёты об ошибках.
 - Показать в игре: рамки теперь стоят точно на нужных кнопках и вещи: на «Литейной», вкладке «Вознесение», вкладке слота и кнопке фильтра, на вещи в списке Литейной (рамка идёт за прокруткой, а когда вещь не видна, плашка скажет, сколько рядов прокрутить), на «Вознести». С автонажатием программа теперь сама нажмёт «Литейную», вкладку «Вознесение», вкладку слота и вещь в списке (прокрутит список); «Вознести», «Преобразовать», подтверждения и сам фильтр нажимаешь только ты.
 - Показать в игре: нажми кнопку на сайте во вкладке «Вознесение» или «Преобразование», и программа подскажет путь в игре. Для «Преобразования» вещь обводится рамкой в Инвентаре, и рамка точно идёт за прокруткой списка, без лишнего клика. Для «Вознесения» программа ведёт в Литейную (из Инвентаря или с экрана героя), а вещь ищет в списке самой Литейной. Без автонажатия программа только показывает, нажимаешь ты сам. С автонажатием программа сама откроет Инвентарь, вкладку «Снаряжение» и нужную вещь, а дальше подскажет, что нажать.
+- Автонажатие стало осторожнее: программа проверяет экран перед каждым нажатием и останавливается, если что-то не так; в «Массовой продаже» нажимает только чистка склада.
+- Показать в игре и Переодевание: если в Инвентаре включена «Массовая продажа», программа просит из неё выйти и подсказывает кнопку «Назад»; «Показать в игре» и подсказки больше не «забывают», где ты, из-за короткого сбоя чтения экрана.
 
 ## EN
 
@@ -148,3 +162,5 @@ version …: from the site» или «saved copy»). Без файла оста�
 - Installer: you can now choose right away whether the app starts with Windows and whether it sends error reports.
 - Show in game: the frames now sit exactly on the buttons and the item: on «Foundry», the «Ascension» tab, the slot tab and the filter button, on the item in the Foundry's list (the frame follows the scrolling, and when the item is out of view a pill tells how many rows to scroll), on «Ascend». With auto click on, the app now presses «Foundry», the «Ascension» tab, the slot tab and the item in the list by itself (scrolling the list); «Ascend», «Recast», confirmations and the filter itself are pressed only by you.
 - Show in game: press the button on the site in the «Ascension» or «Recast» tab, and the app shows the way in the game. For «Recast» the item gets a frame in the Inventory, and the frame follows the list's scrolling exactly, with no extra click. For «Ascension» the app leads you to the Foundry (from the Inventory or the hero screen) and looks for the item in the Foundry's own list. Without auto click the app only shows, you press yourself. With auto click on, the app opens the Inventory, the «Equipment» tab and the item by itself, then shows what to press next.
+- Auto click is more careful now: the app checks the screen before every click and stops if something is off; in «Bulk sell» only the storage cleanup clicks.
+- Show in game and Equipping: if the Inventory is in «Bulk sell», the app asks you to leave it and points at the «Back» button; Show in game and the hints no longer "forget" where you are after a short failure to read the screen.

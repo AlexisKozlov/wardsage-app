@@ -400,7 +400,7 @@
     const L = S.sell, n = L.list.items.length;
     const hintMode = L.run ? L.hint : !S.autoClick;   // auto click off: the program only shows frames, the player selects
     const hd = L.run && L.hint ? SH.describe(L.hs, t) : null;
-    const st = hd ? [hd.head].concat(hd.lines).join(' · ') : L.run ? (L.state === 'done' ? t('sellDone', L.selected) : L.state === 'failed' ? t('sellFailed') : L.state === 'no_city' ? t('sellNoCity')
+    const st = hd ? [hd.head].concat(hd.lines).join(' · ') : L.run ? (L.state === 'done' ? t('sellDone', L.selected) : L.state === 'failed' ? t('sellFailed') : (L.state || '').indexOf('gate_') === 0 ? t('gateStop', t('gateWhy_' + L.state.slice(5))) : L.state === 'no_city' ? t('sellNoCity')
       : L.state === 'open' ? t('sellOpening') : L.state === 'background' ? t('sellBack') : L.state === 'paused' ? t('sellPaused') : t('sellWork', L.selected, n)) : '';
     const hs = hd ? L.hs : null;
     const warn = hd ? [hs && hs.missing ? t('sellMissing', hs.missing) : '', hs && hs.extra && hs.step !== 'select' ? t('sellExtra', hs.extra) : ''].filter(Boolean).join(' ')
@@ -549,6 +549,7 @@
     if (g.wrong && (g.kind === 'pick' || g.kind === 'rel' || g.kind === 'filter')) return sayBox('warn', I.warn, t('gWrong'), t('gWrongP', it.name)) + findCard(it, g, S.compact);
     switch (g.kind) {
       case 'closed': return sayBox('warn', I.game, t('gClosed'), t('gClosedP'));
+      case 'bulk': return sayBox('warn', I.warn, t('gBulk'), t('gBulkP')) + findCard(it, g, S.compact);
       case 'done': return sayBox('done', I.check, t('gDone'), t('gDoneP'));
       case 'taken': return sayBox('warn', I.warn, t('gTaken', g.taken), t(p.bridge ? 'gTakenBridge' : 'gTakenP'),
         p.bridge ? '' : `<div class="row" style="margin-top:10px"><button class="btn-line" data-act="takeOver">${esc(t('takeOverBtn'))}</button></div>`);
@@ -594,6 +595,7 @@
   // what the auto-pilot (the app opening the slot and clicking the item) is doing; '' = it is off or idle
   function autoHead() {
     if (!S.autoClick) return '';
+    if (S.auto && S.auto.indexOf('gate_') === 0) return t('gateStop', t('gateWhy_' + S.auto.slice(5)));
     return { work: t('aWork'), paused: t('aPaused'), background: t('aBackground'), failed: t('aFailed'), slot_failed: t('aSlotFailed'), unconfirmed: t('aUnconfirmed') }[S.auto] || '';
   }
   function autoSub() {
@@ -1106,6 +1108,7 @@
         const st = G.statOf(g.item.mainStat); line2 = st ? t('hStat', st) : '';
       } else if (g.kind === 'selected') { hint = 'replace'; line1 = t('pReplace'); }
       else if (g.kind === 'done') { hint = 'done'; }
+      else if (g.kind === 'bulk') { hint = 'bulk'; }
       else if (g.kind === 'hero' && !(S.run === p.id && S.autoClick)) {
         hint = 'hero';
         heroTips = [t('hHeroPick', p.heroName), t('hHeroFind', p.heroName), t('hHeroUp', p.heroName), t('hHeroDown', p.heroName), t('hHeroesBtn'), t('hHeroBack')];
@@ -1129,7 +1132,7 @@
       if (it) { texts.pick = t('pPick', it.name + (it.level ? ' +' + it.level : '')); texts.wrongSub = t('pWrongSub', it.name + (it.level ? ' +' + it.level : '')); }
       Object.assign(texts, { then: t('pThen'), pillDown: t('pPillDown'), pillUp: t('pPillUp'), rows1: t('pRows1'), rows2: t('pRows2'), rows5: t('pRows5'),
         unknown: t('pUnknown'), unknownSub: t('pUnknownSub'), done: t('pDone'), wrong: t('hWrong'),
-        slotInFilter: t('pSlotInFilter'), filterCovered: t('pFilterCovered') });
+        slotInFilter: t('pSlotInFilter'), filterCovered: t('pFilterCovered'), bulkExit: t('gBulk') });
     }
     const wrong = !!(g && g.wrong);
     const key = [uid, hint, slot, line1, line2, hero, item, kind, closeTip, setTip, statTip, heroTips.join('/'), JSON.stringify(texts), wrong].join('|');

@@ -36,7 +36,7 @@ for (const lang of ['ru', 'en']) {
 }
 // the texts asked for
 ok(T.ru.sellHintLead === 'Программа покажет рамками, какие вещи отметить; отмечаешь ты сам.', 'ru: lead text');
-ok(T.ru.shAll === 'Все отмечены — нажми «Продать»' && T.ru.shExtra === 'Эта вещь не из списка', 'ru: step texts');
+ok(T.ru.shAll === 'Все отмечены — нажми «Продать»' && T.ru.shExtra === 'Эта вещь не из списка — сними с неё отметку' && T.en.shExtra === 'This item is not on the list — untick it', 'ru/en: step texts');
 // both languages have the same keys
 for (const k of Object.keys(T.ru).filter((x) => /^(sellHint|sh[A-Z])/.test(x))) ok(k in T.en, 'en has ' + k);
 for (const k of Object.keys(T.en).filter((x) => /^(sellHint|sh[A-Z])/.test(x))) ok(k in T.ru, 'ru has ' + k);

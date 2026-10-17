@@ -64,6 +64,8 @@ namespace RealmForge {
     public string State = "hint";
     /// <summary>Why: for "hint" the step's reason (foundry, form, no_city, hidden), for "stopped" the abort reason (bulk, lost, stuck, screen, cancelled).</summary>
     public string Why = "";
+    /// <summary>What the action is for (the host maps it to the click gate's target; Nothing when there is no action).</summary>
+    public LocateTodo Todo = LocateTodo.Nothing;
   }
 
   public static class LocateAuto {
@@ -80,6 +82,8 @@ namespace RealmForge {
       var st = v.Step;
       if (st == null || st.Kind == LocateKind.None) return LocateTodo.Nothing;
       switch (st.Kind) {
+        case LocateKind.ExitBulk:
+          why = "bulk"; return LocateTodo.Hint;   // «Массовая продажа»: the player leaves it, the app clicks nothing there
         case LocateKind.OpenInventory:
           if (v.OtherFormOpen) { why = "form"; return LocateTodo.Hint; }
           if (v.HeroScreenOpen) return LocateTodo.BackToCity;
@@ -153,6 +157,9 @@ namespace RealmForge {
     /// <summary>The overlay's cancel button: no more auto clicks for this request (the hints go on).</summary>
     public void Cancel() { if (latched == "") latched = "cancelled"; }
 
+    /// <summary>The click gate stopped the pilot (src/ClickGate.cs): no more auto clicks for this request, the hints go on.</summary>
+    public void Halt(string why) { if (latched == "") latched = why; }
+
     public bool Stopped { get { return latched != ""; } }
     /// <summary>Why it stopped ("" while it runs): bulk, lost, stuck, screen, cancelled.</summary>
     public string Reason { get { return latched; } }
@@ -168,7 +175,7 @@ namespace RealmForge {
       if (v.UserClicked) pauseUntil = v.NowMs + UserPauseMs;
       if (!v.Foreground) { m.State = "background"; workSince = 0; return m; }
       if (v.UserBusy || v.NowMs < pauseUntil) { m.State = "paused"; workSince = 0; return m; }
-      m.State = "work";
+      m.State = "work"; m.Todo = todo;
       if (workSince == 0) workSince = v.NowMs;
       if (v.NowMs - workSince > MaxWorkMs || actions >= MaxActions) return Abort(m, "stuck");
       if (v.NowMs < waitUntil) return m;

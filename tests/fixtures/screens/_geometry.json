@@ -1,0 +1,1357 @@
+{
+ "game": "1.6.39.829.1",
+ "v": 1,
+ "canvas": {
+  "w": 1136.0,
+  "h": 640.0
+ },
+ "unit": "U = canvas height (Ui.Unit)",
+ "edges": "x0/x1: [L|C|R, offset in U from the left edge / centre / right edge]; y0 (top) / y1 (bottom): [T|M|B, offset in U downwards from the top / middle / bottom]; w,h in U",
+ "rects": {
+  "foundry.tab.forge": {
+   "x0": [
+    "R",
+    -0.159
+   ],
+   "x1": [
+    "R",
+    0.0066
+   ],
+   "y0": [
+    "T",
+    0.0328
+   ],
+   "y1": [
+    "T",
+    0.1578
+   ],
+   "w": 0.1656,
+   "h": 0.125,
+   "path": "Form_EquipSubliming:Form_EquipSubliming/GameObject/m_RightTab/GameObject/m_ToggleBuilding"
+  },
+  "foundry.tab.identify": {
+   "x0": [
+    "R",
+    -0.159
+   ],
+   "x1": [
+    "R",
+    0.0066
+   ],
+   "y0": [
+    "T",
+    0.1578
+   ],
+   "y1": [
+    "T",
+    0.2828
+   ],
+   "w": 0.1656,
+   "h": 0.125,
+   "path": "Form_EquipSubliming:Form_EquipSubliming/GameObject/m_RightTab/GameObject/m_ToggleIdentify"
+  },
+  "foundry.tab.ascend": {
+   "x0": [
+    "R",
+    -0.159
+   ],
+   "x1": [
+    "R",
+    0.0066
+   ],
+   "y0": [
+    "T",
+    0.2828
+   ],
+   "y1": [
+    "T",
+    0.4078
+   ],
+   "w": 0.1656,
+   "h": 0.125,
+   "path": "Form_EquipSubliming:Form_EquipSubliming/GameObject/m_RightTab/GameObject/m_ToggleSubliming"
+  },
+  "foundry.tab.recast": {
+   "x0": [
+    "R",
+    -0.159
+   ],
+   "x1": [
+    "R",
+    0.0066
+   ],
+   "y0": [
+    "T",
+    0.4078
+   ],
+   "y1": [
+    "T",
+    0.5328
+   ],
+   "w": 0.1656,
+   "h": 0.125,
+   "path": "Form_EquipSubliming:Form_EquipSubliming/GameObject/m_RightTab/GameObject/m_ToggleRecast"
+  },
+  "foundry.tab.reforge": {
+   "x0": [
+    "R",
+    -0.159
+   ],
+   "x1": [
+    "R",
+    0.0066
+   ],
+   "y0": [
+    "T",
+    0.5328
+   ],
+   "y1": [
+    "T",
+    0.6578
+   ],
+   "w": 0.1656,
+   "h": 0.125,
+   "path": "Form_EquipSubliming:Form_EquipSubliming/GameObject/m_RightTab/GameObject/m_ToggleReforge"
+  },
+  "ascend.slot.0": {
+   "x0": [
+    "L",
+    0.0633
+   ],
+   "x1": [
+    "L",
+    0.1898
+   ],
+   "y0": [
+    "M",
+    -0.3969
+   ],
+   "y1": [
+    "M",
+    -0.3312
+   ],
+   "w": 0.1266,
+   "h": 0.0656,
+   "path": "Form_EquipSubliming:Form_EquipSubliming/m_ContentRoot/m_PanelEquipSublimingGo/Panel_Equip_Subliming/root/m_Left/EquipFilterContent/m_EquipToogle_0"
+  },
+  "ascend.slot.1": {
+   "x0": [
+    "L",
+    0.1898
+   ],
+   "x1": [
+    "L",
+    0.3164
+   ],
+   "y0": [
+    "M",
+    -0.3969
+   ],
+   "y1": [
+    "M",
+    -0.3312
+   ],
+   "w": 0.1266,
+   "h": 0.0656,
+   "path": "Form_EquipSubliming:Form_EquipSubliming/m_ContentRoot/m_PanelEquipSublimingGo/Panel_Equip_Subliming/root/m_Left/EquipFilterContent/m_EquipToogle_1"
+  },
+  "ascend.slot.2": {
+   "x0": [
+    "L",
+    0.3164
+   ],
+   "x1": [
+    "L",
+    0.443
+   ],
+   "y0": [
+    "M",
+    -0.3969
+   ],
+   "y1": [
+    "M",
+    -0.3312
+   ],
+   "w": 0.1266,
+   "h": 0.0656,
+   "path": "Form_EquipSubliming:Form_EquipSubliming/m_ContentRoot/m_PanelEquipSublimingGo/Panel_Equip_Subliming/root/m_Left/EquipFilterContent/m_EquipToogle_2"
+  },
+  "ascend.slot.3": {
+   "x0": [
+    "L",
+    0.443
+   ],
+   "x1": [
+    "L",
+    0.5695
+   ],
+   "y0": [
+    "M",
+    -0.3969
+   ],
+   "y1": [
+    "M",
+    -0.3312
+   ],
+   "w": 0.1266,
+   "h": 0.0656,
+   "path": "Form_EquipSubliming:Form_EquipSubliming/m_ContentRoot/m_PanelEquipSublimingGo/Panel_Equip_Subliming/root/m_Left/EquipFilterContent/m_EquipToogle_3"
+  },
+  "ascend.slot.4": {
+   "x0": [
+    "L",
+    0.5695
+   ],
+   "x1": [
+    "L",
+    0.6961
+   ],
+   "y0": [
+    "M",
+    -0.3969
+   ],
+   "y1": [
+    "M",
+    -0.3312
+   ],
+   "w": 0.1266,
+   "h": 0.0656,
+   "path": "Form_EquipSubliming:Form_EquipSubliming/m_ContentRoot/m_PanelEquipSublimingGo/Panel_Equip_Subliming/root/m_Left/EquipFilterContent/m_EquipToogle_4"
+  },
+  "ascend.filter": {
+   "x0": [
+    "L",
+    0.4531
+   ],
+   "x1": [
+    "L",
+    0.6969
+   ],
+   "y0": [
+    "M",
+    -0.3136
+   ],
+   "y1": [
+    "M",
+    -0.2573
+   ],
+   "w": 0.2437,
+   "h": 0.0563,
+   "path": "Form_EquipSubliming:Form_EquipSubliming/m_ContentRoot/m_PanelEquipSublimingGo/Panel_Equip_Subliming/root/m_Left/FilterContent/m_BtnFilter"
+  },
+  "ascend.list": {
+   "x0": [
+    "L",
+    0.0633
+   ],
+   "x1": [
+    "L",
+    0.6977
+   ],
+   "y0": [
+    "M",
+    -0.2516
+   ],
+   "y1": [
+    "M",
+    0.2734
+   ],
+   "w": 0.6344,
+   "h": 0.525,
+   "path": "Form_EquipSubliming:Form_EquipSubliming/m_ContentRoot/m_PanelEquipSublimingGo/Panel_Equip_Subliming/root/m_Left/m_EquipList/Viewport"
+  },
+  "ascend.cell": {
+   "x0": [
+    "L",
+    0.318
+   ],
+   "x1": [
+    "L",
+    0.443
+   ],
+   "y0": [
+    "M",
+    -0.0469
+   ],
+   "y1": [
+    "M",
+    0.1156
+   ],
+   "w": 0.125,
+   "h": 0.1625,
+   "path": "Form_EquipSubliming:Form_EquipSubliming/m_ContentRoot/m_PanelEquipSublimingGo/Panel_Equip_Subliming/root/m_Left/m_EquipItem"
+  },
+  "ascend.cellIcon": {
+   "x0": [
+    "L",
+    0.318
+   ],
+   "x1": [
+    "L",
+    0.443
+   ],
+   "y0": [
+    "M",
+    -0.0281
+   ],
+   "y1": [
+    "M",
+    0.0969
+   ],
+   "w": 0.125,
+   "h": 0.125,
+   "path": "Form_EquipSubliming:Form_EquipSubliming/m_ContentRoot/m_PanelEquipSublimingGo/Panel_Equip_Subliming/root/m_Left/m_EquipItem/EquipItem/c_EquipItem"
+  },
+  "ascend.materials": {
+   "x0": [
+    "L",
+    0.0641
+   ],
+   "x1": [
+    "L",
+    0.6953
+   ],
+   "y0": [
+    "M",
+    0.2734
+   ],
+   "y1": [
+    "M",
+    0.4672
+   ],
+   "w": 0.6312,
+   "h": 0.1938,
+   "path": "Form_EquipSubliming:Form_EquipSubliming/m_ContentRoot/m_PanelEquipSublimingGo/Panel_Equip_Subliming/root/m_Left/ItemCostContent"
+  },
+  "ascend.button": {
+   "x0": [
+    "C",
+    0.1039
+   ],
+   "x1": [
+    "C",
+    0.4414
+   ],
+   "y0": [
+    "M",
+    0.3488
+   ],
+   "y1": [
+    "M",
+    0.4581
+   ],
+   "w": 0.3375,
+   "h": 0.1094,
+   "path": "Form_EquipSubliming:Form_EquipSubliming/m_ContentRoot/m_PanelEquipSublimingGo/Panel_Equip_Subliming/root/m_Right/ButtonContent/m_BtnSubliming"
+  },
+  "ascend.source": {
+   "x0": [
+    "C",
+    -0.0164
+   ],
+   "x1": [
+    "C",
+    0.118
+   ],
+   "y0": [
+    "M",
+    -0.3375
+   ],
+   "y1": [
+    "M",
+    -0.2031
+   ],
+   "w": 0.1344,
+   "h": 0.1344,
+   "path": "Form_EquipSubliming:Form_EquipSubliming/m_ContentRoot/m_PanelEquipSublimingGo/Panel_Equip_Subliming/root/m_Right/m_EquipContent/m_SourceEquip/EquipContent/c_EquipItem"
+  },
+  "ascend.target": {
+   "x0": [
+    "C",
+    0.4298
+   ],
+   "x1": [
+    "C",
+    0.5642
+   ],
+   "y0": [
+    "M",
+    -0.3375
+   ],
+   "y1": [
+    "M",
+    -0.2031
+   ],
+   "w": 0.1344,
+   "h": 0.1344,
+   "path": "Form_EquipSubliming:Form_EquipSubliming/m_ContentRoot/m_PanelEquipSublimingGo/Panel_Equip_Subliming/root/m_Right/m_EquipContent/m_TargetEquip/EquipContent/c_EquipItem"
+  },
+  "recast.slot.0": {
+   "x0": [
+    "L",
+    0.0633
+   ],
+   "x1": [
+    "L",
+    0.1898
+   ],
+   "y0": [
+    "M",
+    -0.3969
+   ],
+   "y1": [
+    "M",
+    -0.3312
+   ],
+   "w": 0.1266,
+   "h": 0.0656,
+   "path": "Form_EquipSubliming:Form_EquipSubliming/m_ContentRoot/m_PanelEquipRecastGo/Panel_Equip_Recast/root/m_Left/EquipFilterContent/m_EquipToogle_0"
+  },
+  "recast.slot.1": {
+   "x0": [
+    "L",
+    0.1898
+   ],
+   "x1": [
+    "L",
+    0.3164
+   ],
+   "y0": [
+    "M",
+    -0.3969
+   ],
+   "y1": [
+    "M",
+    -0.3312
+   ],
+   "w": 0.1266,
+   "h": 0.0656,
+   "path": "Form_EquipSubliming:Form_EquipSubliming/m_ContentRoot/m_PanelEquipRecastGo/Panel_Equip_Recast/root/m_Left/EquipFilterContent/m_EquipToogle_1"
+  },
+  "recast.slot.2": {
+   "x0": [
+    "L",
+    0.3164
+   ],
+   "x1": [
+    "L",
+    0.443
+   ],
+   "y0": [
+    "M",
+    -0.3969
+   ],
+   "y1": [
+    "M",
+    -0.3312
+   ],
+   "w": 0.1266,
+   "h": 0.0656,
+   "path": "Form_EquipSubliming:Form_EquipSubliming/m_ContentRoot/m_PanelEquipRecastGo/Panel_Equip_Recast/root/m_Left/EquipFilterContent/m_EquipToogle_2"
+  },
+  "recast.slot.3": {
+   "x0": [
+    "L",
+    0.443
+   ],
+   "x1": [
+    "L",
+    0.5695
+   ],
+   "y0": [
+    "M",
+    -0.3969
+   ],
+   "y1": [
+    "M",
+    -0.3312
+   ],
+   "w": 0.1266,
+   "h": 0.0656,
+   "path": "Form_EquipSubliming:Form_EquipSubliming/m_ContentRoot/m_PanelEquipRecastGo/Panel_Equip_Recast/root/m_Left/EquipFilterContent/m_EquipToogle_3"
+  },
+  "recast.slot.4": {
+   "x0": [
+    "L",
+    0.5695
+   ],
+   "x1": [
+    "L",
+    0.6961
+   ],
+   "y0": [
+    "M",
+    -0.3969
+   ],
+   "y1": [
+    "M",
+    -0.3312
+   ],
+   "w": 0.1266,
+   "h": 0.0656,
+   "path": "Form_EquipSubliming:Form_EquipSubliming/m_ContentRoot/m_PanelEquipRecastGo/Panel_Equip_Recast/root/m_Left/EquipFilterContent/m_EquipToogle_4"
+  },
+  "recast.filter": {
+   "x0": [
+    "L",
+    0.4531
+   ],
+   "x1": [
+    "L",
+    0.6969
+   ],
+   "y0": [
+    "M",
+    -0.3136
+   ],
+   "y1": [
+    "M",
+    -0.2573
+   ],
+   "w": 0.2437,
+   "h": 0.0563,
+   "path": "Form_EquipSubliming:Form_EquipSubliming/m_ContentRoot/m_PanelEquipRecastGo/Panel_Equip_Recast/root/m_Left/FilterContent/m_BtnFilter"
+  },
+  "recast.list": {
+   "x0": [
+    "L",
+    0.0633
+   ],
+   "x1": [
+    "L",
+    0.6977
+   ],
+   "y0": [
+    "M",
+    -0.2453
+   ],
+   "y1": [
+    "M",
+    0.4672
+   ],
+   "w": 0.6344,
+   "h": 0.7125,
+   "path": "Form_EquipSubliming:Form_EquipSubliming/m_ContentRoot/m_PanelEquipRecastGo/Panel_Equip_Recast/root/m_Left/m_EquipList/Viewport"
+  },
+  "recast.cell": {
+   "x0": [
+    "L",
+    0.318
+   ],
+   "x1": [
+    "L",
+    0.443
+   ],
+   "y0": [
+    "M",
+    -0.0469
+   ],
+   "y1": [
+    "M",
+    0.1156
+   ],
+   "w": 0.125,
+   "h": 0.1625,
+   "path": "Form_EquipSubliming:Form_EquipSubliming/m_ContentRoot/m_PanelEquipRecastGo/Panel_Equip_Recast/root/m_Left/m_EquipItem"
+  },
+  "recast.button": {
+   "x0": [
+    "C",
+    0.1039
+   ],
+   "x1": [
+    "C",
+    0.4414
+   ],
+   "y0": [
+    "M",
+    0.3406
+   ],
+   "y1": [
+    "M",
+    0.45
+   ],
+   "w": 0.3375,
+   "h": 0.1094,
+   "path": "Form_EquipSubliming:Form_EquipSubliming/m_ContentRoot/m_PanelEquipRecastGo/Panel_Equip_Recast/root/m_Right/ButtonContent/m_RecastContent/m_BtnRecast"
+  },
+  "recast.chooseOld": {
+   "x0": [
+    "C",
+    -0.1095
+   ],
+   "x1": [
+    "C",
+    0.228
+   ],
+   "y0": [
+    "M",
+    0.2223
+   ],
+   "y1": [
+    "M",
+    0.3317
+   ],
+   "w": 0.3375,
+   "h": 0.1094,
+   "path": "Form_EquipSubliming:Form_EquipSubliming/m_ContentRoot/m_PanelEquipRecastGo/Panel_Equip_Recast/root/m_Right/ButtonContent/m_ChooseContent/m_BtnChooseOld"
+  },
+  "recast.chooseNew": {
+   "x0": [
+    "C",
+    0.3333
+   ],
+   "x1": [
+    "C",
+    0.6708
+   ],
+   "y0": [
+    "M",
+    0.2173
+   ],
+   "y1": [
+    "M",
+    0.3267
+   ],
+   "w": 0.3375,
+   "h": 0.1094,
+   "path": "Form_EquipSubliming:Form_EquipSubliming/m_ContentRoot/m_PanelEquipRecastGo/Panel_Equip_Recast/root/m_Right/ButtonContent/m_ChooseContent/m_BtnChooseNew"
+  },
+  "foundry.back": {
+   "x0": [
+    "L",
+    -0.0422
+   ],
+   "x1": [
+    "L",
+    0.1922
+   ],
+   "y0": [
+    "T",
+    -0.0
+   ],
+   "y1": [
+    "T",
+    0.0938
+   ],
+   "w": 0.2344,
+   "h": 0.0938,
+   "path": "Form_EquipSubliming:Form_EquipSubliming/GameObject/m_Back/Button_Back_New/Btn_Back"
+  },
+  "inventory.list": {
+   "x0": [
+    "L",
+    0.1969
+   ],
+   "x1": [
+    "R",
+    -0.0219
+   ],
+   "y0": [
+    "T",
+    0.1906
+   ],
+   "y1": [
+    "B",
+    -0.0203
+   ],
+   "w": 1.5562,
+   "h": 0.7891,
+   "path": "Form_BackpackIntegration:Form_BackpackIntegration/Main_Frame/ParentPanel"
+  },
+  "inventory.leftTab.first": {
+   "x0": [
+    "L",
+    0.0023
+   ],
+   "x1": [
+    "L",
+    0.1711
+   ],
+   "y0": [
+    "T",
+    0.1176
+   ],
+   "y1": [
+    "T",
+    0.2426
+   ],
+   "w": 0.1688,
+   "h": 0.125,
+   "path": "Form_BackpackIntegration:Form_BackpackIntegration/Main_Frame/m_ToggleLeftTabGroup/m_Toggle_Overview"
+  },
+  "inventory.workshop": {
+   "x0": [
+    "R",
+    -0.6565
+   ],
+   "x1": [
+    "R",
+    -0.5125
+   ],
+   "y0": [
+    "B",
+    -0.1205
+   ],
+   "y1": [
+    "B",
+    -0.0201
+   ],
+   "w": 0.144,
+   "h": 0.1004,
+   "path": "Form_BackpackIntegration:Form_BackpackIntegration/Main_Frame/m_ParentPanel/Panel_BackpackEquipPanel/Root/LeftBottomBtnGroup/Right/m_BtnWorkShop"
+  },
+  "inventory.gem": {
+   "x0": [
+    "R",
+    -0.8061
+   ],
+   "x1": [
+    "R",
+    -0.6659
+   ],
+   "y0": [
+    "B",
+    -0.1205
+   ],
+   "y1": [
+    "B",
+    -0.0201
+   ],
+   "w": 0.1402,
+   "h": 0.1004,
+   "path": "Form_BackpackIntegration:Form_BackpackIntegration/Main_Frame/m_ParentPanel/Panel_BackpackEquipPanel/Root/LeftBottomBtnGroup/Right/m_BtnGem"
+  },
+  "inventory.bulkSell": {
+   "x0": [
+    "L",
+    0.4698
+   ],
+   "x1": [
+    "L",
+    0.7334
+   ],
+   "y0": [
+    "B",
+    -0.1124
+   ],
+   "y1": [
+    "B",
+    -0.0282
+   ],
+   "w": 0.2636,
+   "h": 0.0842,
+   "path": "Form_BackpackIntegration:Form_BackpackIntegration/Main_Frame/m_ParentPanel/Panel_BackpackEquipPanel/Root/LeftBottomBtnGroup/Left/m_BtnBatchSell"
+  },
+  "inventory.infoPanel": {
+   "x0": [
+    "R",
+    -0.4891
+   ],
+   "x1": [
+    "R",
+    -0.0219
+   ],
+   "y0": [
+    "T",
+    0.1906
+   ],
+   "y1": [
+    "B",
+    -0.0288
+   ],
+   "w": 0.4672,
+   "h": 0.7806,
+   "path": "Form_BackpackIntegration:Form_BackpackIntegration/Main_Frame/m_ParentPanel/Panel_BackpackEquipPanel/Root/LeftLayout"
+  },
+  "inventory.cardLeft": {
+   "x0": [
+    "R",
+    -0.4797
+   ],
+   "x1": [
+    "R",
+    -0.2578
+   ],
+   "y0": [
+    "B",
+    -0.103
+   ],
+   "y1": [
+    "B",
+    -0.0202
+   ],
+   "w": 0.2219,
+   "h": 0.0828,
+   "path": "Form_BackpackIntegration:Form_BackpackIntegration/Main_Frame/m_ParentPanel/Panel_BackpackEquipPanel/Root/LeftLayout/m_Info/c_Button/c_LeftBtn"
+  },
+  "inventory.cardRight": {
+   "x0": [
+    "R",
+    -0.2578
+   ],
+   "x1": [
+    "R",
+    -0.0359
+   ],
+   "y0": [
+    "B",
+    -0.103
+   ],
+   "y1": [
+    "B",
+    -0.0202
+   ],
+   "w": 0.2219,
+   "h": 0.0828,
+   "path": "Form_BackpackIntegration:Form_BackpackIntegration/Main_Frame/m_ParentPanel/Panel_BackpackEquipPanel/Root/LeftLayout/m_Info/c_Button/c_RightBtn"
+  },
+  "inventory.listView": {
+   "x0": [
+    "L",
+    0.1969
+   ],
+   "x1": [
+    "R",
+    -0.5125
+   ],
+   "y0": [
+    "T",
+    0.1906
+   ],
+   "y1": [
+    "B",
+    -0.1453
+   ],
+   "w": 1.0656,
+   "h": 0.6641,
+   "path": "Form_BackpackIntegration:Form_BackpackIntegration/Main_Frame/ParentPanel/m_Content"
+  },
+  "inventory.scrollbar": {
+   "x0": [
+    "R",
+    -0.5231
+   ],
+   "x1": [
+    "R",
+    -0.5024
+   ],
+   "y0": [
+    "T",
+    0.1906
+   ],
+   "y1": [
+    "B",
+    -0.1405
+   ],
+   "w": 0.0208,
+   "h": 0.6689,
+   "path": "Form_BackpackIntegration:Form_BackpackIntegration/Main_Frame/ParentPanel/m_Content/Scrollbar Vertical"
+  },
+  "inventory.bulkBack": {
+   "x0": [
+    "L",
+    0.1969
+   ],
+   "x1": [
+    "L",
+    0.4605
+   ],
+   "y0": [
+    "B",
+    -0.1205
+   ],
+   "y1": [
+    "B",
+    -0.0201
+   ],
+   "w": 0.2636,
+   "h": 0.1004,
+   "path": "Form_BackpackIntegration:Form_BackpackIntegration/Main_Frame/m_ParentPanel/Panel_BackpackEquipPanel/Root/LeftBottomBtnGroup/Left/m_BtnBack"
+  },
+  "inventory.cardSolo": {
+   "x0": [
+    "R",
+    -0.3688
+   ],
+   "x1": [
+    "R",
+    -0.1469
+   ],
+   "y0": [
+    "B",
+    -0.103
+   ],
+   "y1": [
+    "B",
+    -0.0202
+   ],
+   "w": 0.2219,
+   "h": 0.0828,
+   "path": "Form_BackpackIntegration:Form_BackpackIntegration/Main_Frame/m_ParentPanel/Panel_BackpackEquipPanel/Root/LeftLayout/m_Info/c_Button/c_LeftBtn"
+  },
+  "gem.list": {
+   "x0": [
+    "C",
+    -0.8438
+   ],
+   "x1": [
+    "C",
+    -0.0938
+   ],
+   "y0": [
+    "M",
+    -0.3312
+   ],
+   "y1": [
+    "M",
+    0.4003
+   ],
+   "w": 0.75,
+   "h": 0.7316,
+   "path": "Form_EquipGemMain:Form_EquipGemMain/NormalNode/ContentFullRoot/m_GemInfinityGrid/ViewPort"
+  },
+  "gem.cell": {
+   "x0": [
+    "L",
+    -0.7703
+   ],
+   "x1": [
+    "L",
+    -0.0422
+   ],
+   "y0": [
+    "T",
+    0.1094
+   ],
+   "y1": [
+    "T",
+    0.2687
+   ],
+   "w": 0.7281,
+   "h": 0.1594,
+   "path": "Form_EquipGemMain:Form_EquipGemMain/NormalNode/ContentFullRoot/EquipGemItem/c_BgNormal"
+  },
+  "gem.button": {
+   "x0": [
+    "C",
+    -0.1688
+   ],
+   "x1": [
+    "C",
+    0.1688
+   ],
+   "y0": [
+    "M",
+    0.3453
+   ],
+   "y1": [
+    "M",
+    0.4547
+   ],
+   "w": 0.3375,
+   "h": 0.1094,
+   "path": "Form_EquipGemMain:Form_EquipGemMain/m_ContentRoot/m_PanelEquipRecast/Widget_EquipGem_Recast/c_GemBottom/EquipGemBottom/GameObject/c_BtnReforge"
+  },
+  "city.barButton": {
+   "x0": [
+    "L",
+    0.0672
+   ],
+   "x1": [
+    "L",
+    0.2016
+   ],
+   "y0": [
+    "B",
+    0.3306
+   ],
+   "y1": [
+    "B",
+    0.465
+   ],
+   "w": 0.1344,
+   "h": 0.1344,
+   "path": "Form_MainCity:Form_MainCity/BottomPanel/Image/GameObject_Layout/m_Button_Heros/BtnHitArea"
+  },
+  "filter.root": {
+   "x0": [
+    "C",
+    -0.2734
+   ],
+   "x1": [
+    "C",
+    0.2734
+   ],
+   "y0": [
+    "M",
+    -0.4172
+   ],
+   "y1": [
+    "M",
+    0.4781
+   ],
+   "w": 0.5469,
+   "h": 0.8953,
+   "path": "Form_EquipFilterWidget:Form_EquipFilterWidget/Root/m_Root"
+  },
+  "filter.suitOpen": {
+   "x0": [
+    "C",
+    0.1759
+   ],
+   "x1": [
+    "C",
+    0.2447
+   ],
+   "y0": [
+    "M",
+    -0.2905
+   ],
+   "y1": [
+    "M",
+    -0.2217
+   ],
+   "w": 0.0688,
+   "h": 0.0688,
+   "path": "Form_EquipFilterWidget:Form_EquipFilterWidget/Root/m_Root/m_Content/SuitContent/hero_grid_number/FilterBtn/m_BtnSuitOff"
+  },
+  "filter.mainOpen": {
+   "x0": [
+    "C",
+    0.1759
+   ],
+   "x1": [
+    "C",
+    0.2447
+   ],
+   "y0": [
+    "M",
+    -0.1647
+   ],
+   "y1": [
+    "M",
+    -0.0959
+   ],
+   "w": 0.0688,
+   "h": 0.0688,
+   "path": "Form_EquipFilterWidget:Form_EquipFilterWidget/Root/m_Root/m_Content/MainAttrContent/hero_grid_number/FilterBtn/m_BtnMainAttrOff"
+  },
+  "filter.subOpen": {
+   "x0": [
+    "C",
+    0.1759
+   ],
+   "x1": [
+    "C",
+    0.2447
+   ],
+   "y0": [
+    "M",
+    -0.0348
+   ],
+   "y1": [
+    "M",
+    0.0339
+   ],
+   "w": 0.0688,
+   "h": 0.0688,
+   "path": "Form_EquipFilterWidget:Form_EquipFilterWidget/Root/m_Root/m_Content/SubAttrContent/hero_grid_number/FilterBtn/m_BtnSubAttrOff"
+  },
+  "filter.reset": {
+   "x0": [
+    "C",
+    -0.2466
+   ],
+   "x1": [
+    "C",
+    -0.0059
+   ],
+   "y0": [
+    "M",
+    0.0556
+   ],
+   "y1": [
+    "M",
+    0.1244
+   ],
+   "w": 0.2406,
+   "h": 0.0688,
+   "path": "Form_EquipFilterWidget:Form_EquipFilterWidget/Root/m_Root/m_Content/ResetContent/m_BtnReset"
+  },
+  "filter.suit.tab.0": {
+   "x0": [
+    "C",
+    0.3011
+   ],
+   "x1": [
+    "C",
+    0.5355
+   ],
+   "y0": [
+    "M",
+    -0.2652
+   ],
+   "y1": [
+    "M",
+    -0.2027
+   ],
+   "w": 0.2344,
+   "h": 0.0625,
+   "path": "Form_EquipFilterWidget:Form_EquipFilterWidget/Root/m_Root/FilterFrame/RectMask/m_FilterContent/m_SuitFilter/ToggleContent/m_LeftSuitFilterToggle"
+  },
+  "filter.suit.tab.1": {
+   "x0": [
+    "C",
+    0.5347
+   ],
+   "x1": [
+    "C",
+    0.7691
+   ],
+   "y0": [
+    "M",
+    -0.2652
+   ],
+   "y1": [
+    "M",
+    -0.2027
+   ],
+   "w": 0.2344,
+   "h": 0.0625,
+   "path": "Form_EquipFilterWidget:Form_EquipFilterWidget/Root/m_Root/FilterFrame/RectMask/m_FilterContent/m_SuitFilter/ToggleContent/m_RightSuitFilterToggle"
+  },
+  "filter.suit.list": {
+   "x0": [
+    "C",
+    0.3003
+   ],
+   "x1": [
+    "C",
+    0.7691
+   ],
+   "y0": [
+    "M",
+    -0.1883
+   ],
+   "y1": [
+    "M",
+    0.3742
+   ],
+   "w": 0.4688,
+   "h": 0.5625,
+   "path": "Form_EquipFilterWidget:Form_EquipFilterWidget/Root/m_Root/FilterFrame/RectMask/m_FilterContent/m_SuitFilter/m_SuitFilterGrid/Viewport"
+  },
+  "filter.suit.cell": {
+   "x0": [
+    "C",
+    0.3008
+   ],
+   "x1": [
+    "C",
+    0.532
+   ],
+   "y0": [
+    "M",
+    -0.23
+   ],
+   "y1": [
+    "M",
+    -0.1644
+   ],
+   "w": 0.2313,
+   "h": 0.0656,
+   "path": "Form_EquipFilterWidget:Form_EquipFilterWidget/Root/m_Root/FilterFrame/RectMask/m_FilterContent/m_SuitFilter/SuitFilterGridItem/Content"
+  },
+  "hero.workshop": {
+   "x0": [
+    "R",
+    -0.2515
+   ],
+   "x1": [
+    "R",
+    -0.1249
+   ],
+   "y0": [
+    "M",
+    0.2948
+   ],
+   "y1": [
+    "M",
+    0.4245
+   ],
+   "w": 0.1266,
+   "h": 0.1297,
+   "path": "Form_CharactorMain:Form_CharactorMain/m_Main_Frame/m_Right/m_PanelContent/m_EquipPanel/EquipPanel/m_Right/Panel_Equip_Simple/Content/GameObject/m_BtnSubliming"
+  },
+  "hero.gem": {
+   "x0": [
+    "R",
+    -0.3906
+   ],
+   "x1": [
+    "R",
+    -0.264
+   ],
+   "y0": [
+    "M",
+    0.2948
+   ],
+   "y1": [
+    "M",
+    0.4245
+   ],
+   "w": 0.1266,
+   "h": 0.1297,
+   "path": "Form_CharactorMain:Form_CharactorMain/m_Main_Frame/m_Right/m_PanelContent/m_EquipPanel/EquipPanel/m_Right/Panel_Equip_Simple/Content/GameObject/m_BtnEquipGem"
+  },
+  "hero.switching": {
+   "x0": [
+    "R",
+    -0.1124
+   ],
+   "x1": [
+    "R",
+    0.0141
+   ],
+   "y0": [
+    "M",
+    0.2948
+   ],
+   "y1": [
+    "M",
+    0.4245
+   ],
+   "w": 0.1266,
+   "h": 0.1297,
+   "path": "Form_CharactorMain:Form_CharactorMain/m_Main_Frame/m_Right/m_PanelContent/m_EquipPanel/EquipPanel/m_Right/Panel_Equip_Simple/Content/GameObject/m_BtnSwitching"
+  },
+  "hero.slot.0": {
+   "x0": [
+    "C",
+    -0.4125
+   ],
+   "x1": [
+    "C",
+    -0.2969
+   ],
+   "y0": [
+    "M",
+    -0.0109
+   ],
+   "y1": [
+    "M",
+    0.1016
+   ],
+   "w": 0.1156,
+   "h": 0.1125,
+   "path": "Form_CharactorMain:Form_CharactorMain/m_Main_Frame/m_Right/m_PanelContent/m_EquipPanel/EquipPanel/m_EquipGrid/m_LeftGrid/m_EquipPart_0"
+  },
+  "hero.back": {
+   "x0": [
+    "L",
+    -0.0422
+   ],
+   "x1": [
+    "L",
+    0.1922
+   ],
+   "y0": [
+    "T",
+    -0.0
+   ],
+   "y1": [
+    "T",
+    0.0938
+   ],
+   "w": 0.2344,
+   "h": 0.0938,
+   "path": "Form_CharactorMain:Form_CharactorMain/m_Main_Frame/m_Back/Button_Back_New/Btn_Back"
+  }
+ },
+ "grids": {
+  "filter.suit.list": {
+   "cols": 2,
+   "lineSize": 42.0,
+   "padding": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "keepRatio": 1,
+   "sizeFit": 0.0,
+   "scaleFit": 0,
+   "oneByOne": 0,
+   "path": "Form_EquipFilterWidget/Root/m_Root/FilterFrame/RectMask/m_FilterContent/m_SuitFilter/m_SuitFilterGrid"
+  },
+  "ascend.list": {
+   "cols": 5,
+   "lineSize": 108.0,
+   "padding": [
+    0,
+    -10,
+    0,
+    0
+   ],
+   "keepRatio": 1,
+   "sizeFit": 0.0,
+   "scaleFit": 0,
+   "oneByOne": 1,
+   "path": "Form_EquipSubliming/m_ContentRoot/m_PanelEquipSublimingGo/Panel_Equip_Subliming/root/m_Left/m_EquipList"
+  },
+  "recast.list": {
+   "cols": 5,
+   "lineSize": 108.0,
+   "padding": [
+    0,
+    -15,
+    0,
+    0
+   ],
+   "keepRatio": 1,
+   "sizeFit": 0.0,
+   "scaleFit": 0,
+   "oneByOne": 1,
+   "path": "Form_EquipSubliming/m_ContentRoot/m_PanelEquipRecastGo/Panel_Equip_Recast/root/m_Left/m_EquipList"
+  },
+  "gem.list": {
+   "cols": 1,
+   "lineSize": 110.0,
+   "padding": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "keepRatio": 1,
+   "sizeFit": 0.0,
+   "scaleFit": 0,
+   "oneByOne": 0,
+   "path": "Form_EquipGemMain/NormalNode/ContentFullRoot/m_GemInfinityGrid"
+  },
+  "inventory.list": {
+   "cols": 1,
+   "lineSize": 118.0,
+   "padding": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "keepRatio": 1,
+   "sizeFit": 0.0,
+   "scaleFit": 0,
+   "oneByOne": 1,
+   "path": "Form_BackpackIntegration/Main_Frame/ParentPanel/m_Content"
+  }
+ },
+ "notes": {
+  "tabs": "Foundry right tabs (Form_EquipSubliming): order forge, identify, ascend, recast, reforge, each 0.125 U high, stacked down from y0=0.0328 U with no gap. The game hides tabs (Lua Form_EquipSubliming.OnActive): forge+identify need the Foundry function, ascend its function, recast and reforge only while the gem function is NOT unlocked; a hidden tab frees its slot (the layout group packs the visible ones from the top). Position of the k-th visible tab = foundry.tab.forge shifted down by k*0.125 U.",
+  "grid": "InfinityGrid: columns = grids[..].cols, column pitch = list width / cols, row pitch = lineSize / 640 U (the game reports the exact value at run time: InfinityGrid.LineSize / m_finalLineSize / m_fitScale, layout \"field\" offsets). The scroll position is read from the game; row 1 starts at the list top + padding[1]*(-1) at scroll 0 for a negative top padding (assumed, not yet checked live). The cell template (ascend.cell) is 0.125 x 0.1625 U (80 x 104 units, sits centred in its column slot and its line); the item picture square (ascend.cellIcon) is 0.125 U, 0.0188 U (12 units) below the cell top, the stat bar hangs under it.",
+  "card": "Inventory item card: the card fills the left layout and its bottom button row (c_Button) is the last child under a flexible attribute scroll, so inventory.cardLeft / cardRight sit on the card bottom whatever the number of attribute rows. A worn item shows both buttons (Gems / Remove); an item that is not worn only the left one, centred: inventory.cardSolo. inventory.listView = the equipment list viewport, inventory.scrollbar = its scroll bar (the track runs the whole height).",
+  "gem": "Gem screen: gem.list = the function list viewport (a one-column grid, gem.cell = a row), the rows follow the config order (Recast 7, Advanced Recast 8, Refine 5, Advanced Refine 6, Gem 1, 11, 2, 3, 4; locked functions drop out) - src/GemRows in the app. gem.button = «Улучшить» of the recast widget.",
+  "state": "Rects are for the layout the prefab gives with every authored child active, except: inventory = normal (not bulk) state with the Gem and Foundry buttons shown; hero = gear tab with Foundry/Gem/Switching shown. Hidden buttons shift the others.",
+  "cross-check": "Canvas height 640 = U (CanvasScaler reference 1136x640). Verified: inventory list top 0.1906 U vs SellGeometry.Inventory ViewTop 0.190; inventory row LineSize 118 = 0.1844 U vs PitchY 0.1846; hero slot 0 centre -0.3547 U from the centre vs HintGeometry.SlotLeftDx -0.356, y +0.0453 vs +0.0473; left menu 2nd tab centre y 0.305 U (inside 0.2426..0.3676) vs LocatePilot EquipTab click 0.315 U."
+ }
+}

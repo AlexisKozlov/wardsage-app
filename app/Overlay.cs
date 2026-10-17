@@ -226,6 +226,7 @@ namespace RealmForge {
     public OverlayController(Action<string, bool> report, Action<string> autoReport, Action<SellPilot, string> sellReport) {
       this.report = report; this.autoReport = autoReport; this.sellReport = sellReport;
       spilot = new SellPilot(SellGeometry.Inventory(1920, 1009, 8));
+      screens.Sink = s => Log.Write(s); gate.Sink = s => Log.Write(s);
       pilot = new AutoPilot(g);
       fpilot = new FilterPilot(fg);
       hpilot = new HeroPilot(heroG);
@@ -340,7 +341,7 @@ namespace RealmForge {
     public void SetItemInfo(long uid, long setId, long statId) { if (uid > 0 && (setId > 0 || statId > 0)) itemInfo[uid] = new[] { setId, statId }; }
 
     /// <summary>The started plan's hero (0 = none): the pilot opens that hero's gear on the hero screen.</summary>
-    public void SetRun(long hero) { if (hero == runHero) return; bool was = PlanOn; runHero = hero; PlanStamp(was); Run(); }
+    public void SetRun(long hero) { if (hero == runHero) return; if (hero > 0) ResumeClicks(ClickOwner.Equip); bool was = PlanOn; runHero = hero; PlanStamp(was); Run(); }
 
     /// <summary>Every pilot starts over (a new «Надеть»: after a failure the player may have fixed the game's screen).</summary>
     /// <summary>What the helper is at while a started plan runs (null = no plan, or a pilot is clicking / waiting for the
@@ -353,7 +354,7 @@ namespace RealmForge {
       return runHero + "|" + target + "|" + filterItem + "|" + filterKind + "|" + hintKind + "|" + autoSaid;
     }
 
-    public void RestartPilots() { pilot.Reset(); fpilot.Reset(); hpilot.Reset(); }
+    public void RestartPilots() { pilot.Reset(); fpilot.Reset(); hpilot.Reset(); ResumeClicks(ClickOwner.Equip); }
 
     /// <summary>Item to highlight (0 = none).</summary>
     public void SetTarget(long uid) {
@@ -390,7 +391,7 @@ namespace RealmForge {
       sellLevels = levels;
       sellWanted = uids != null && uids.Count > 0 ? new System.Collections.Generic.HashSet<long>(uids) : null;
       sellParts = parts != null && parts.Count > 0 ? new System.Collections.Generic.HashSet<int>(parts) : null;
-      sellHero = hero; sellSaid = ""; spilot.Reset(); hpilot.Reset(); sellBtnAt = 0; sellScanOnce = true;
+      sellHero = hero; sellSaid = ""; spilot.Reset(); hpilot.Reset(); ResumeClicks(ClickOwner.Sell); sellBtnAt = 0; sellScanOnce = true;
       Run();
     }
 
@@ -401,7 +402,7 @@ namespace RealmForge {
       locateSince = Stamp(); locateCaps = ""; locateLines = new string[0];
       locateStep = null; locateSubs = null; locateKey = ""; locateReadAt = 0; locateLastCur = -1; locateSubsAt = 0; lgrid.Reset();
       locateScreensSaid = ""; locateMarkerSaid = ""; locateCardSaid = ""; locateListSig = ""; locateDecisionSaid = ""; locatePlaceSaid = "";
-      lpilot.Reset(); lpilot.ItemUid = locateReq != null ? locateReq.Item.Uid : 0; locateDriving = false; locateAutoSaid = "";
+      lpilot.Reset(); ResumeClicks(ClickOwner.Locate); lpilot.ItemUid = locateReq != null ? locateReq.Item.Uid : 0; locateDriving = false; locateAutoSaid = "";
       Hide("off"); HideTip();
       Run();
     }
@@ -444,6 +445,11 @@ namespace RealmForge {
 
     void Tick() {
       curRow = curCol = 0; curSel = 0;
+      // the frames over the inventory / Foundry lists follow a scroll the game renders at its own rate: those hints tick often
+      // (the scroll is read every frame we draw); everything else stays at the slow tick
+      int wantInterval = LocateWins || (sellHint && sellWanted != null) ? 33 : 100;
+      if (timer.Interval != wantInterval) timer.Interval = wantInterval;
+      ReadScreens(NowMs());   // the game's screen, once per tick: every feature below takes it from here
       // the game is minimized / covered / alt-tabbed: nothing of ours stays over the desktop (the features go on reading)
       if (!GameDrawable()) { if (glow.Visible) glow.Hide(); HideTip(); drawnKey = null; }
       if (LocateWins) { TickLocate(); TickCancel(); return; }
@@ -736,6 +742,14 @@ namespace RealmForge {
       var o = new W32.POINT(0, 0); W32.ClientToScreen(hwnd, ref o);
       double H = cr.B, W = cr.R, U = Ui.Unit(W, H);
       SceneArea(o, cr);
+      // the Inventory is in «Массовая продажа»: the hero and the items are not on screen - the way out is framed (the app clicks nothing there)
+      var bs = screens.Current;
+      if (bs != null && bs.Kind == ScreenKind.Inventory && bs.InvEquipTab && bs.InvBulk && Tx("bulkExit") != "") {
+        var br = Geo.Current != null ? Geo.Current.Rect("inventory.bulkBack", W, H, U) : null;
+        if (br != null) DrawTip(o.X + (int)br.X, o.Y + (int)br.Y, (int)br.W, (int)br.H, new[] { Tx("bulkExit") }, H);
+        else DrawTipTop(new[] { Tx("bulkExit") });
+        return;
+      }
       // the build is on: «Готово» for a moment
       if (hintKind == "done") {
         long nd = NowMs(); if (doneSince == 0) doneSince = nd;
@@ -883,9 +897,11 @@ namespace RealmForge {
     void TickHeroHint(W32.POINT o, double W, double H) {
       if (AutoEnabled && runHero > 0) { HideTip(); return; }   // the auto-pilot brings the hero up itself
       long now = NowMs();
-      if (heroScreen == null || now - heroReadAt >= 250 || now < heroReadAt) { heroScreen = RFX.ReadHeroScreen(addrs, heroScreen); heroReadAt = now; }
+      if (screens.Hero != null) heroScreen = screens.Hero;   // the screen of this tick (ReadScreens)
+      else if (heroScreen == null || now - heroReadAt >= 250 || now < heroReadAt) { heroScreen = RFX.ReadHeroScreen(addrs, heroScreen); heroReadAt = now; }
       var hs = heroScreen; double U = Ui.Unit(W, H);
-      if (hs == null || hs.Hero == 0) {
+      // the hero screen hidden behind another one (the inventory ...) keeps its hero set: it is not on, no hero hints over that screen
+      if (hs == null || hs.Hero == 0 || !hs.FormOk) {
         heroShownWas = 0; heroAnchor.Has = false; heroDiag = "screen closed";
         if (HeroesButtonSeen(o, W, H)) {
           int s = (int)(0.1 * U);
@@ -994,7 +1010,7 @@ namespace RealmForge {
     // «Показать в игре»: the page's texts for its pills (pillUp, pillDown, rows1 / rows2 / rows5, lang); the plan's Texts are not set while it runs
     Dictionary<string, string> locateTexts = new Dictionary<string, string>();
 
-    sealed class Plate { public string Caps = "", Main = "", Sub = ""; public bool Pill; public int Arrow; /* -1 = an up arrow before the main text, 1 = down */ }
+    sealed class Plate { public string Caps = "", Main = "", Sub = ""; public bool Pill, Warn; public int Arrow; /* -1 = an up arrow before the main text, 1 = down */ }
     // the game window's client area on the screen for the scene being drawn (plates are kept inside it)
     int sceneX, sceneY, sceneW, sceneH;
     void SceneArea(W32.POINT o, W32.RECT cr) { sceneX = o.X; sceneY = o.Y; sceneW = cr.R; sceneH = cr.B; }
@@ -1007,8 +1023,8 @@ namespace RealmForge {
       Scene(tip, ref tipKey, null, new Plate { Caps = caps ?? Tx("caps"), Main = lines[0], Sub = lines.Length > 1 ? lines[1] : "" }, null, null);
     }
 
-    void DrawTip(int x, int y, int w, int h, string[] lines, double H, bool plateOnly = false, bool below = false, bool right = false, string caps = null) {
-      var p = lines != null && lines.Length > 0 ? new Plate { Caps = caps ?? Tx("caps"), Main = lines[0], Sub = lines.Length > 1 ? lines[1] : "" } : null;
+    void DrawTip(int x, int y, int w, int h, string[] lines, double H, bool plateOnly = false, bool below = false, bool right = false, string caps = null, bool warn = false) {
+      var p = lines != null && lines.Length > 0 ? new Plate { Caps = caps ?? Tx("caps"), Main = lines[0], Sub = lines.Length > 1 ? lines[1] : "", Warn = warn } : null;
       Scene(tip, ref tipKey, plateOnly ? null : new[] { x, y, w, h }, p, new[] { x, y, w, h }, null);
     }
 
@@ -1019,7 +1035,7 @@ namespace RealmForge {
       if (!GameDrawable()) { if (win.Visible) win.Hide(); key = null; return; }
       float pulse = (float)(0.6 + 0.4 * Math.Sin(frame * 0.45));
       string k = (frameR != null ? string.Join(",", frameR) : "-") + "|" + (target != null ? string.Join(",", target) : "-") + "|"
-        + (p != null ? p.Caps + "/" + p.Main + "/" + p.Sub + "/" + p.Pill : "-") + "|" + (strip != null ? string.Join(",", Array.ConvertAll(strip, v => ((int)v).ToString())) : "-")
+        + (p != null ? p.Caps + "/" + p.Main + "/" + p.Sub + "/" + p.Pill + "/" + p.Warn : "-") + "|" + (strip != null ? string.Join(",", Array.ConvertAll(strip, v => ((int)v).ToString())) : "-")
         + "|" + (frameR != null || strip != null ? (int)(pulse * 10) : 0) + "|" + sceneW + "x" + sceneH
         + (marks != null && marks.Count > 0 ? "|m" + string.Join(";", marks.ConvertAll(m => string.Join(",", m))) : "");
       if (k == key) return;
@@ -1138,10 +1154,19 @@ namespace RealmForge {
         }
         return;
       }
+      // style 2: unmistakable - a red tint over the whole cell, a thick red frame with a glow, a red cross badge in the corner
       for (int i = G; i >= 2; i -= 3)
-        using (var pen = new Pen(Color.FromArgb((int)(120 * (1 - i / (float)(G + 2))), 255, 70, 50), 3f)) gr.DrawPath(pen, Round(x - i, y - i, w + 2 * i, h + 2 * i, 6 + i));
-      using (var pen = new Pen(Color.FromArgb(230, 40, 10, 6), 6f)) gr.DrawPath(pen, Round(x - 2, y - 2, w + 4, h + 4, 7));
-      using (var pen = new Pen(Color.FromArgb(255, 235, 64, 52), 3.5f)) gr.DrawPath(pen, Round(x - 2, y - 2, w + 4, h + 4, 7));
+        using (var pen = new Pen(Color.FromArgb((int)(150 * (1 - i / (float)(G + 2))), 255, 70, 50), 3f)) gr.DrawPath(pen, Round(x - i, y - i, w + 2 * i, h + 2 * i, 6 + i));
+      using (var tint = new SolidBrush(Color.FromArgb(95, 230, 30, 24))) gr.FillPath(tint, Round(x - 2, y - 2, w + 4, h + 4, 7));
+      using (var pen = new Pen(Color.FromArgb(240, 40, 6, 4), 9f)) gr.DrawPath(pen, Round(x - 2, y - 2, w + 4, h + 4, 7));
+      using (var pen = new Pen(Color.FromArgb(255, 240, 56, 44), 6f)) gr.DrawPath(pen, Round(x - 2, y - 2, w + 4, h + 4, 7));
+      float br = Math.Max(10f, Math.Min(w, h) * 0.17f), bx = x + w - br - 2, by = y + br + 2;
+      using (var bg = new SolidBrush(Color.FromArgb(250, 190, 24, 20))) gr.FillEllipse(bg, bx - br, by - br, 2 * br, 2 * br);
+      using (var pen = new Pen(Color.FromArgb(255, 255, 214, 204), 2f)) gr.DrawEllipse(pen, bx - br, by - br, 2 * br, 2 * br);
+      using (var pen = new Pen(Color.White, Math.Max(2.5f, br * 0.24f)) { StartCap = LineCap.Round, EndCap = LineCap.Round }) {
+        float d = br * 0.42f;
+        gr.DrawLine(pen, bx - d, by - d, bx + d, by + d); gr.DrawLine(pen, bx + d, by - d, bx - d, by + d);
+      }
     }
 
     // the step plate: strictly rectangular, dark, a thin bronze border with a gold line inside; the owl and the caps line,
@@ -1153,9 +1178,10 @@ namespace RealmForge {
         using (var bg = new SolidBrush(Color.FromArgb(240, 18, 16, 12))) gr.FillPath(bg, path);
         using (var pen = new Pen(Color.FromArgb(255, 224, 182, 96), 2f)) gr.DrawPath(pen, path);
       } else {
-        using (var bg = new SolidBrush(Color.FromArgb(242, 16, 18, 26))) gr.FillRectangle(bg, x, y, w, h);
-        using (var pen = new Pen(Color.FromArgb(255, 122, 92, 46), 2f)) gr.DrawRectangle(pen, x + 1, y + 1, w - 2, h - 2);
-        using (var pen = new Pen(Color.FromArgb(170, 224, 182, 96), 1f)) gr.DrawRectangle(pen, x + 3.5f, y + 3.5f, w - 7, h - 7);
+        // a warning plate (a stray item is ticked) is red: dark red body, a bright red border
+        using (var bg = new SolidBrush(p.Warn ? Color.FromArgb(246, 52, 12, 12) : Color.FromArgb(242, 16, 18, 26))) gr.FillRectangle(bg, x, y, w, h);
+        using (var pen = new Pen(p.Warn ? Color.FromArgb(255, 214, 54, 44) : Color.FromArgb(255, 122, 92, 46), p.Warn ? 3f : 2f)) gr.DrawRectangle(pen, x + 1, y + 1, w - 2, h - 2);
+        using (var pen = new Pen(p.Warn ? Color.FromArgb(200, 255, 130, 110) : Color.FromArgb(170, 224, 182, 96), 1f)) gr.DrawRectangle(pen, x + 3.5f, y + 3.5f, w - 7, h - 7);
       }
       if (ptr != null) {
         var tri = new[] { new PointF((float)ptr[0] + ox, (float)ptr[1] + oy), new PointF((float)ptr[2] + ox, (float)ptr[3] + oy), new PointF((float)ptr[4] + ox, (float)ptr[5] + oy) };
@@ -1178,7 +1204,7 @@ namespace RealmForge {
           tx += aw + 10;
         }
         using (var sh = new SolidBrush(Color.FromArgb(200, 0, 0, 0))) gr.DrawString(p.Main, fMain, sh, tx + 1, ty + 1.5f);
-        using (var white = new SolidBrush(p.Pill ? Color.FromArgb(255, 255, 222, 150) : Color.White)) gr.DrawString(p.Main, fMain, white, tx, ty);
+        using (var white = new SolidBrush(p.Warn ? Color.FromArgb(255, 255, 196, 184) : p.Pill ? Color.FromArgb(255, 255, 222, 150) : Color.White)) gr.DrawString(p.Main, fMain, white, tx, ty);
         ty += mainH + 2;
       }
       if (p.Sub != "") using (var muted = new SolidBrush(Color.FromArgb(255, 207, 198, 176))) gr.DrawString(p.Sub, fSub, muted, tx, ty);
@@ -1240,6 +1266,8 @@ namespace RealmForge {
       var o = new W32.POINT(0, 0); W32.ClientToScreen(hwnd, ref o);
       int fp, gp; W32.GetWindowThreadProcessId(W32.GetForegroundWindow(), out fp); W32.GetWindowThreadProcessId(hwnd, out gp);
       if (sellWanted != null) { bool busy = down || now - lastMoveMs < 700; bool uc = userClick; userClick = false; TickSell(o, cr, now, fp == gp, busy, uc); return; }
+      // the click gate stopped the equip pilot (an unexpected screen, no effect of a click ...): hints only until the next «Надеть»
+      if (gate.Halted(ClickOwner.Equip)) { AutoSay("gate_" + gate.HaltReason(ClickOwner.Equip)); return; }
 
       // «Заменить»: the guide says the right item is selected; the pilot re-checks hero and owner in memory right now
       bool confirm = AutoConfirm && hintKind == "replace" && target > 0;
@@ -1256,18 +1284,18 @@ namespace RealmForge {
       // first the plan's hero on the hero screen (a started plan only), then the game's filter (the item far down or
       // hidden), then the item itself
       if (runHero > 0) {
-        heroScreen = RFX.ReadHeroScreen(addrs, heroScreen);
+        if (screens.Hero != null) heroScreen = screens.Hero;   // the screen of this tick (ReadScreens)
         // the gear filter pop-up left open (the last item's) stays over the hero grid and takes its clicks: closed first
-        if (heroScreen.Hero > 0 && heroScreen.Hero != runHero && v.Foreground && !v.UserBusy && now >= slotCloseAfter
+        if (heroScreen.FormOk && heroScreen.Hero > 0 && heroScreen.Hero != runHero && v.Foreground && !v.UserBusy && now >= slotCloseAfter
             && Mark(o, fg.X(fg.MainCloseX, cr.R, cr.B), fg.Y(fg.CloseY, cr.R, cr.B), Ui.Unit(cr.R, cr.B), ButtonCheck.IsCloseRed)) {
           slotCloseAfter = now + 900;
           Log.Write("hero: a pop-up (the gear filter or an item card) is over the grid - closing it");
-          Send(new AutoAction { Kind = AutoKind.Click }, o.X + (int)Math.Round(fg.X(fg.MainCloseX, cr.R, cr.B)), o.Y + (int)Math.Round(fg.Y(fg.CloseY, cr.R, cr.B)));
+          EquipSend(ClickTarget.EquipClosePopup, new AutoAction { Kind = AutoKind.Click }, o.X + (int)Math.Round(fg.X(fg.MainCloseX, cr.R, cr.B)), o.Y + (int)Math.Round(fg.Y(fg.CloseY, cr.R, cr.B)), o, v.Foreground);
           return;
         }
         var hv = new HeroView {
           NowMs = now, Foreground = v.Foreground, UserBusy = v.UserBusy, UserClicked = v.UserClicked, W = cr.R, H = Ui.Unit(cr.R, cr.B), ClientH = cr.B,
-          Plan = runHero, Hero = heroScreen.Hero, Tab = heroScreen.Tab, Part = heroScreen.Part, SmallCards = heroScreen.SmallCards,
+          Plan = runHero, Hero = heroScreen.FormOk ? heroScreen.Hero : 0, Tab = heroScreen.Tab, Part = heroScreen.Part, SmallCards = heroScreen.SmallCards,
           Heroes = heroScreen.Heroes,
           HeroesButton = heroScreen.Hero == 0 && v.Foreground && HeroesButtonSeen(o, cr.R, cr.B),
           FilterOpen = v.Foreground && HeroFilterSeen(o, cr.R, cr.B), ClassChosen = heroScreen.ClassChosen, FactionList = heroScreen.FactionList,
@@ -1283,7 +1311,7 @@ namespace RealmForge {
           if (ha.Kind == AutoKind.None) return;
           int hx = o.X + (int)Math.Round(ha.X), hy = o.Y + (int)Math.Round(ha.Y), hy2 = hy + (int)Math.Round(ha.DY);
           if (hx < o.X || hy < o.Y || hx >= o.X + cr.R || hy >= o.Y + cr.B || hy2 < o.Y || hy2 >= o.Y + cr.B) return;
-          Send(ha, hx, hy);
+          EquipSend(hv.FilterOpen ? ClickTarget.EquipFilter : ClickTarget.EquipNav, ha, hx, hy, o, v.Foreground);
           return;
         }
       }
@@ -1300,7 +1328,7 @@ namespace RealmForge {
         if (fa.Kind == AutoKind.None) return;
         int fx = o.X + (int)Math.Round(fa.X), fy = o.Y + (int)Math.Round(fa.Y);
         if (fx < o.X || fy < o.Y || fx >= o.X + cr.R || fy >= o.Y + cr.B) return;
-        Send(fa, fx, fy);
+        EquipSend(ClickTarget.EquipFilter, fa, fx, fy, o, v.Foreground);
         return;
       }
       // the next slot: an open filter pop-up covers the hero's slots - close it first (the filter was for the item that is
@@ -1309,7 +1337,7 @@ namespace RealmForge {
           && Mark(o, fg.X(fg.MainCloseX, cr.R, cr.B), fg.Y(fg.CloseY, cr.R, cr.B), Ui.Unit(cr.R, cr.B), ButtonCheck.IsCloseRed)) {
         slotCloseAfter = now + 900; pilot.Reset();
         int cx = o.X + (int)Math.Round(fg.X(fg.MainCloseX, cr.R, cr.B)), cy = o.Y + (int)Math.Round(fg.Y(fg.CloseY, cr.R, cr.B));
-        Send(new AutoAction { Kind = AutoKind.Click }, cx, cy);
+        EquipSend(ClickTarget.EquipClosePopup, new AutoAction { Kind = AutoKind.Click }, cx, cy, o, v.Foreground);
         return;
       }
       var a = pilot.Step(v);
@@ -1318,17 +1346,27 @@ namespace RealmForge {
       int x = o.X + (int)Math.Round(a.X), y = o.Y + (int)Math.Round(a.Y), y2 = y + (int)Math.Round(a.DY);
       if (x < o.X || y < o.Y || x >= o.X + cr.R || y >= o.Y + cr.B) return;   // never outside the game's client area
       if (y2 < o.Y || y2 >= o.Y + cr.B) return;
-      Send(a, x, y);
+      // «Заменить» (the player's auto confirm) is its own target; everything else of the item pilot is the gear list
+      bool onConfirm = confirmBtn != null && a.X >= confirmBtn[0] && a.X <= confirmBtn[0] + confirmBtn[2] && a.Y >= confirmBtn[1] && a.Y <= confirmBtn[1] + confirmBtn[3];
+      EquipSend(confirm && onConfirm ? ClickTarget.EquipConfirm : ClickTarget.EquipNav, a, x, y, o, v.Foreground);
     }
 
     // Storage cleanup, in the inventory: the city's «Инвентарь» → «Снаряжение» → «Массовая продажа», then the sell
     // pilot selects the items. Only known screens are clicked; elsewhere the player is asked to open the city.
     void TickSell(W32.POINT o, W32.RECT cr, long now, bool front, bool busy, bool userClicked) {
       double W = cr.R, H = cr.B, U = Ui.Unit(W, H);
-      // the inventory in the game's window list: searched (a full pass, ~1 s) at the start and after a click that opens it
-      var inv = RFX.ReadInventory(sellScanOnce || now - sellBtnAt < 8000 ? 1500 : -1);
-      sellScanOnce = false;
-      if (inv != null && inv.Open) {
+      // the screen of this tick (ReadScreens) and the click gate (src/ClickGate.cs): the pilot stops on anything unexpected and clicks
+      // only what the whitelist of the screen allows (in «Массовая продажа»: the list's cells the run is after, nothing else)
+      var scr = screens.Current;
+      if (gate.Halted(ClickOwner.Sell)) { SellSay("gate_" + gate.HaltReason(ClickOwner.Sell)); return; }
+      if (front && !busy) {
+        var pre = gate.Preflight(ClickOwner.Sell, scr, now);
+        AnnounceHalts();
+        if (pre.Verdict == GateVerdict.Deny) return;
+        if (pre.Verdict == GateVerdict.Wait) { if (pre.Reason == "unknown") SellSay("no_city"); return; }   // pending: the last click's effect is awaited
+      }
+      var inv = screens.Inv;
+      if (scr != null && scr.Kind == ScreenKind.Inventory && inv != null) {
         if (!inv.EquipTab || !inv.Bulk) {
           SellSay(front ? "open" : "background");
           if (!front || busy || now - sellBtnAt < 2000) return;
@@ -1336,7 +1374,7 @@ namespace RealmForge {
           // the left menu's «Снаряжение» (top left); «Массовая продажа» under the list (bottom left)
           var a0 = !inv.EquipTab ? new AutoAction { Kind = AutoKind.Click, X = 0.085 * U, Y = 0.315 * U }
                                  : new AutoAction { Kind = AutoKind.Click, X = 0.5867 * U, Y = H - 0.0723 * U };
-          SendInside(a0, o, cr);
+          SendInside(a0, o, cr, ClickOwner.Sell, !inv.EquipTab ? ClickTarget.InvEquipTab : ClickTarget.InvBulkEnter, front);
           return;
         }
         int cols = inv.List != null && inv.List.Cols > 0 ? inv.List.Cols : front && !busy ? InvColumns(o, cr, U) : 0;
@@ -1348,31 +1386,40 @@ namespace RealmForge {
         // the rows' place: the game's own scroll reading (the picture only learns its constant; it is the last resort without it)
         double sph = front && !busy && sellScroll.WantPhase(now) ? SellPhase(o, cr, U) : double.NaN;
         double srow1 = sellScroll.Row1(spilot.Geometry, inv.List, sph, U);
-        if (double.IsNaN(srow1)) { sph = front && !busy ? (double.IsNaN(sph) ? SellPhase(o, cr, U) : sph) : double.NaN; if (gridSaid != "sellpilot:px") { gridSaid = "sellpilot:px"; Log.Write("sell: the inventory's scroll cannot be read - the picture is the fallback"); } }
+        if (double.IsNaN(srow1)) { sph = front && !busy ? (double.IsNaN(sph) ? SellPhase(o, cr, U) : sph) : double.NaN; if (gridSaid != "sellpilot:px") { gridSaid = "sellpilot:px"; Log.Write("sell: the inventory's scroll cannot be read - the picture is the fallback (the gate will not let a cell be clicked without the exact scroll)"); } }
         else sph = double.NaN;
         var a = spilot.Step(new SellView { NowMs = now, Foreground = front, UserBusy = busy, UserClicked = userClicked, W = W, H = H, U = U,
                                            Screen = inv.AsSell(sellCols), Wanted = sellWanted, Phase = sph, Row1 = srow1 });
         SellSay(spilot.State);
         if (spilot.Trace != "") { Log.Write("sell: " + spilot.Trace); spilot.Trace = ""; }
-        if (a.Kind != AutoKind.None) SendInside(a, o, cr);
+        if (a.Kind != AutoKind.None) {
+          // a cell click must hit a cell of an item the run is after (or one it ticked, to take it off again): the item under the
+          // click point from the fresh list order and the game's exact scroll
+          int ccols = sellCols; var geo = spilot.Geometry;
+          SendInside(a, o, cr, ClickOwner.Sell, a.Kind == AutoKind.Drag ? ClickTarget.InvListDrag : ClickTarget.InvBulkCell, front, (rq, fr) => {
+            rq.CellUid = ClickGate.InvCellUid(fr.Inv, geo, sellScroll.Row1(geo, fr.Inv != null ? fr.Inv.List : null, double.NaN, U, now), ccols, rq.X, rq.Y, W, U);
+            var ok = new System.Collections.Generic.HashSet<long>(sellWanted);
+            if (fr.Inv != null) foreach (var u in fr.Inv.Selected) ok.Add(u);
+            rq.CellOk = ok;
+          });
+        }
         return;
       }
       if (!front || busy) { SellSay(front ? "paused" : "background"); return; }
       // the hero screen (the gear screen as well): back to the city with the arrow top left
-      heroScreen = RFX.ReadHeroScreen(addrs, heroScreen);
-      if (heroScreen.Hero > 0 && heroScreen.Tab >= 0) {
+      if (scr != null && scr.Kind == ScreenKind.HeroScreen) {
         SellSay("open");
         if (now - sellBtnAt < 2000) return;
         sellBtnAt = now;
-        SendInside(new AutoAction { Kind = AutoKind.Click, X = hg2.BackX * U, Y = hg2.BackY * U }, o, cr);
+        SendInside(new AutoAction { Kind = AutoKind.Click, X = hg2.BackX * U, Y = hg2.BackY * U }, o, cr, ClickOwner.Sell, ClickTarget.HeroBack, front);
         return;
       }
       // the city: «Инвентарь» in the bottom bar (found by its picture, as «Герои»)
-      if (InventoryButtonSeen(o, W, H)) {
+      if (scr != null && scr.Kind == ScreenKind.City && InventoryButtonSeen(o, W, H)) {
         SellSay("open");
         if (now - sellBtnAt < 2500) return;
         sellBtnAt = now;
-        SendInside(new AutoAction { Kind = AutoKind.Click, X = W - invDX * U, Y = H - hg2.HeroesBtnDY * U }, o, cr);
+        SendInside(new AutoAction { Kind = AutoKind.Click, X = W - invDX * U, Y = H - hg2.HeroesBtnDY * U }, o, cr, ClickOwner.Sell, ClickTarget.CityInventory, front);
         return;
       }
       SellSay("no_city");
@@ -1382,6 +1429,8 @@ namespace RealmForge {
     // pilot reads it), the rows' place on the screen is followed like «Найти в игре» does, and every list item in view gets
     // a gold frame; the ones already selected a dim checked one, a selected item that is not on the list a red one.
     void SellHintHide() { if (glow.Visible) glow.Hide(); drawnKey = null; HideTip(); }
+
+    readonly FrameSmoother shSmooth = new FrameSmoother(), locSmooth = new FrameSmoother(), locListSmooth = new FrameSmoother();
 
     void TickSellHint() {
       IntPtr hwnd = GameWindow();
@@ -1404,8 +1453,7 @@ namespace RealmForge {
       // reading is taken over when the next one says the same (a selection that flickers in one read does not show)
       if (!shHave || Math.Abs(now - shReadAt) >= 200) {
         shReadAt = now;
-        var raw = RFX.ReadInventory(sellScanOnce ? 1500 : front ? 8000 : -1);
-        sellScanOnce = false;
+        var raw = screens.Inv;   // the screen of this tick (ReadScreens)
         bool bulk = raw != null && raw.Open && raw.EquipTab && raw.Bulk;
         if (bulk) {
           // the columns: the game's own grid says (the picture only when it cannot be read)
@@ -1418,7 +1466,7 @@ namespace RealmForge {
         shReadSig = sig;
       }
       // a screen the game no longer shows is not read from the old reading: the step falls back to «open the inventory»
-      var inv = formActive ? shInv : null;
+      var inv = formActive && screens.Current != null && screens.Current.Kind == ScreenKind.Inventory ? shInv : null;
       bool inBulk = inv != null && inv.Open && inv.EquipTab && inv.Bulk;
       if (inBulk && sgrid.ListPtr != inv.ListPtr) sgrid.Reset();
       // row 1's place: the game's exact scroll, nothing else. Unreadable = no item frames at all (the text plate and the counts
@@ -1428,6 +1476,8 @@ namespace RealmForge {
         inv.List = live;
         if (FollowInventoryGrid(sgrid, sellScroll, shGeo, inv, o, cr, U, now, "sell")) row1 = sgrid.Row1;
       }
+      // the drawn row 1 eases toward the scroll's value (no jumping between old and new reads)
+      row1 = shSmooth.Step(row1, now, 4 * shGeo.PitchY * U);
       if (inBulk && front) {
         string why = !double.IsNaN(row1) ? "exact" : "none";
         if (why != shFrameSaid) { shFrameSaid = why; if (why == "none") Log.Write("sell hint: the list's exact scroll cannot be read - no item frames, only the text plate"); }
@@ -1444,13 +1494,14 @@ namespace RealmForge {
       if (step.Kind == SellHintKind.Select || step.Kind == SellHintKind.AllSelected) {
         var marks = new List<int[]>();
         foreach (var fr in step.Frames) marks.Add(new[] { o.X + fr.X, o.Y + fr.Y, fr.W, fr.H, fr.Style == "todo" ? 0 : fr.Style == "done" ? 1 : 2 });
+        marks.Sort((p, q) => p[4].CompareTo(q[4]));   // a stray (red) item is painted last, on top
         // list items out of view: a pill with an arrow at the list's edge (as the equip helper's «Вещь здесь ↓»)
         Plate pill = null; int[] pt = null;
         if (step.Below > 0 && sellPillDown != "") { pill = new Plate { Pill = true, Main = sellPillDown }; pt = new[] { o.X + gx, o.Y + (int)vb - 2, (int)(shGeo.CellW * U), 2 }; }
         else if (step.Above > 0 && sellPillUp != "") { pill = new Plate { Pill = true, Main = sellPillUp }; pt = new[] { o.X + gx, o.Y + (int)vt, (int)(shGeo.CellW * U), 2 }; }
         Scene(glow, ref drawnKey, null, pill, pt, null, marks);
         // the step's plate above the list
-        if (haveText) DrawTip(o.X + gx, o.Y + (int)vt - 2, gw, 2, sellHintLines, H, true); else HideTip();
+        if (haveText) DrawTip(o.X + gx, o.Y + (int)vt - 2, gw, 2, sellHintLines, H, true, false, false, null, SellHint.Warn(step)); else HideTip();
         return;
       }
       if (glow.Visible) glow.Hide();
@@ -1501,9 +1552,8 @@ namespace RealmForge {
       // the game's screens, read a few times a second (a form the game never built is searched for at most every 8 s)
       if (locateStep == null || Math.Abs(now - locateReadAt) >= 300) {
         locateReadAt = now;
-        int rescan = front ? 8000 : -1;
-        locateInv = RFX.ReadInventory(rescan);
-        var rs = RFX.ReadRecastScreenSafe(rescan);
+        locateInv = screens.Inv;   // the screens are read once per tick (ReadScreens), a short failure held for 1.5 s
+        var rs = screens.Rs;
         locateRs = rs; locateOnAccount = RFX.ItemOnAccount(uid);
         {   // which screens are seen, once per change within a request
           string scr = "inv=" + (locateInv != null && locateInv.Open ? "open" : locateInv != null ? "closed" : "none") + " foundry=" + (rs == null ? "none" : rs.SublimingOpen ? "open(tab " + rs.CurType + ")" : "closed")
@@ -1515,7 +1565,7 @@ namespace RealmForge {
           if (locateInv.List != null && locateInv.List.Cols > 0) locateCols = locateInv.List.Cols;
           else if (front) { int c = InvColumns(o, cr, U); if (c > 0) locateCols = c; }
         }
-        heroScreen = RFX.ReadHeroScreen(addrs, heroScreen);
+        if (screens.Hero != null) heroScreen = screens.Hero;
         var st = LocateGuide.Next(req, locateInv, rs, heroScreen, locateCols, locateOnAccount);
         LogListRead("foundry", rs != null && rs.OnAscend ? rs.AscendList : rs != null && rs.OnRecast ? rs.RecastList : null);
         // the Ascension list just changed (a slot tab was pressed, the tab opened): the game rebuilds it a moment later, so no filter advice yet
@@ -1540,6 +1590,7 @@ namespace RealmForge {
       }
       var step = locateStep;
       TickLocateDrive(step, req, hwnd, o, cr, now, W, H, U);   // auto click on: the app opens the item itself
+      FoundryScrollNow(step, now);
       // the step's frame from the screen geometry (the site's file, src/LocateFrames.cs): «Литейная», the tabs, the slot, the list cell, the final button
       LocateFrame lf = front && step.Kind != LocateKind.InList ? LocateFrames.For(step, req.Item, locateRs, null, Geo.Current, W, H, U) : null;
       if (lf != null && step.Kind == LocateKind.Selected) {   // the card button's rect, once per change (to measure against a frame diagnostics capture)
@@ -1559,8 +1610,11 @@ namespace RealmForge {
           lgrid.Reset();
         }
         if (lgrid.ListPtr != inv.ListPtr) lgrid.Reset();
-        // where the game says the list is scrolled: exact, no click needed
+        // where the game says the list is scrolled: exact, no click needed (read anew every frame we draw, not with the 300 ms look)
+        bool liveShown; var liveList = RFX.ReadInventoryLive(out liveShown);
+        if (liveList != null && liveList.Has) inv.List = liveList;
         bool exactGrid = FollowInventoryGrid(lgrid, locateScroll, locateGeo, inv, o, cr, U, now, "locate");
+        if (exactGrid) lgrid.Row1 = locSmooth.Step(lgrid.Row1, now, 4 * locateGeo.PitchY * U); else locSmooth.Reset();
         if (inv.Current != locateLastCur) {
           // the player clicked a cell: the pointer shows where its row is (the last resort, when the game's scroll is unreadable)
           if (!exactGrid && locateLastCur != -1 && inv.Current > 0) {
@@ -1571,7 +1625,7 @@ namespace RealmForge {
           locateLastCur = inv.Current;
         }
         if (!exactGrid) {   // last resort: the stat bars on the screen
-          double phase = PhaseOf(locateGeo, o, cr, U);
+          double phase = PhaseCached(locateGeo, o, cr, U, now);
           bool hasPhase = !double.IsNaN(phase);
           if (!lgrid.Has && hasPhase) lgrid.FromTop(locateGeo, phase, U, inv.ListPtr);
           if (lgrid.Has && hasPhase) lgrid.Track(locateGeo, lgrid.VisibleRow(locateGeo, (inv.Uids.Count + locateCols - 1) / locateCols, W, H, U), phase, U);
@@ -1617,7 +1671,102 @@ namespace RealmForge {
     // itself, and stops where the places of the next buttons are not known (those steps stay hints). The last button of the
     // game (and every confirmation) is the player's. Off without «Автонажатие».
     readonly LocatePilot lpilot = new LocatePilot();
-    RecastScreen locateRs; int locateOnAccount = -1; bool locateDriving; long locateRsAt;
+
+    // ---- the game's screen (src/GameScreen.cs) and the click gate (src/ClickGate.cs): ONE read per tick, ONE gate for every click
+    readonly ScreenTracker screens = new ScreenTracker();
+    readonly ClickGate gate = new ClickGate();
+    /// <summary>The screen as of this tick (null before the first read).</summary>
+    public ScreenState Screen { get { return screens.Current; } }
+    /// <summary>The name of the screen for the page (the equip helper's live event), "" when it was not read lately.</summary>
+    public string ScreenName(out bool bulk) {
+      var s = screens.Current; bulk = false;
+      if (s == null || NowMs() - s.ReadAtMs > 2000) return "";
+      bulk = s.Kind == ScreenKind.Inventory && s.InvEquipTab && s.InvBulk;
+      return s.Kind.ToString().ToLowerInvariant();
+    }
+    /// <summary>«Показать в игре» may click: the player's auto click and the site's "locateAuto" switch (off until the owner enables it).</summary>
+    public bool LocateAutoEnabled;
+    long screenReadAt, cityAt; bool cityNow;
+    readonly Dictionary<ClickOwner, string> haltSaid = new Dictionary<ClickOwner, string>();
+
+    bool ScreensWanted() { return target != 0 || locateReq != null || filterItem != 0 || hintKind != "" || runHero != 0 || sellWanted != null; }
+
+    /// <summary>THE read of the game's screens, once per tick (at most every 120 ms). The equip helper, «Показать в игре», the storage
+    /// cleanup and the click gate take the screen from here (a short read failure is held for 1.5 s, see ScreenTracker).</summary>
+    void ReadScreens(long now) {
+      if (!ScreensWanted()) return;
+      if (screens.Current != null && now >= screenReadAt && now - screenReadAt < 120) return;
+      screenReadAt = now;
+      IntPtr hwnd = GameWindow();
+      bool front = hwnd != IntPtr.Zero && !W32.IsIconic(hwnd) && IsForeground(hwnd);
+      // a form the game never built is searched for (a full pass, ~1 s) at the start of a storage run and after a click that opens it
+      int rescan = sellScanOnce || now - sellBtnAt < 8000 ? 1500 : front ? 8000 : -1;
+      sellScanOnce = false;
+      var inp = new ScreenInputs { Inv = RFX.ReadInventory(rescan), Rs = RFX.ReadRecastScreenSafe(rescan), Hero = RFX.ReadHeroScreen(addrs, screens.Hero) };
+      if (front && ScreenState.Classify(inp, now).Kind == ScreenKind.Unknown) {   // no form open: the city's bottom bar (a picture, at most every 400 ms)
+        if (now - cityAt >= 400) { cityAt = now; cityNow = CityVisible(hwnd); }
+        inp.CitySeen = cityNow;
+      } else cityNow = false;
+      var st = screens.Update(inp, now);
+      if (screens.Hero != null) heroScreen = screens.Hero;
+      gate.Observe(st, now);
+      AnnounceHalts();
+    }
+
+    bool CityVisible(IntPtr hwnd) {
+      W32.RECT cr;
+      if (hwnd == IntPtr.Zero || !W32.GetClientRect(hwnd, out cr) || cr.B < 200) return false;
+      var o = new W32.POINT(0, 0); W32.ClientToScreen(hwnd, ref o);
+      return InventoryButtonSeen(o, cr.R, cr.B) || HeroesButtonSeen(o, cr.R, cr.B);
+    }
+
+    /// <summary>A fresh read for the click gate: not held, not throttled (the screen right before the click).</summary>
+    ScreenState FreshScreen(bool wantCity) {
+      long now = NowMs();
+      var inp = new ScreenInputs { Inv = RFX.ReadInventory(-1), Rs = RFX.ReadRecastScreenSafe(-1), Hero = RFX.ReadHeroScreen(addrs, screens.Hero) };
+      var st = ScreenState.Classify(inp, now);
+      if (wantCity && st.Kind == ScreenKind.Unknown) { inp.CitySeen = CityVisible(GameWindow()); st = ScreenState.Classify(inp, now); }
+      return st;
+    }
+
+    /// <summary>A pilot was stopped by the gate (or by a click that changed nothing): each owner's pilot shows it once and goes on as hints only.</summary>
+    void AnnounceHalts() {
+      foreach (var o in new[] { ClickOwner.Locate, ClickOwner.Sell, ClickOwner.Equip }) {
+        string why = gate.HaltReason(o), said;
+        haltSaid.TryGetValue(o, out said);
+        if (why == (said ?? "")) continue;
+        haltSaid[o] = why;
+        if (why == "") continue;
+        Log.Write("auto click stopped (" + o + "): " + why);
+        if (o == ClickOwner.Locate) lpilot.Halt(why);
+        else if (o == ClickOwner.Sell) SellSay("gate_" + why);
+        else AutoSay("gate_" + why);
+      }
+    }
+
+    /// <summary>A new request / run of this owner: it may click again.</summary>
+    void ResumeClicks(ClickOwner o) { gate.Resume(o); haltSaid.Remove(o); }
+
+    /// <summary>THE way a click leaves the app: the gate says yes (the target is on the whitelist of the screen the game shows right now,
+    /// no pop-up, the cell is the item's, the last click showed its effect), then it is sent and its effect is awaited.</summary>
+    bool GatedSend(ClickRequest req, ScreenState fresh, AutoAction a, int sx, int sy) {
+      long now = NowMs();
+      var res = gate.Check(req, fresh, now);
+      AnnounceHalts();
+      if (!res.Allowed) return false;
+      gate.Arm(req.Owner, req.Target, ClickGate.Expect(req, fresh), now);
+      Send(a, sx, sy);
+      return true;
+    }
+
+    /// <summary>An equip helper click (screen px). Target: what it presses (city / hero / gear list = EquipNav, the filter pop-up, its ×, «Заменить»).</summary>
+    bool EquipSend(ClickTarget t, AutoAction a, int sx, int sy, W32.POINT o, bool front) {
+      if (t == ClickTarget.EquipConfirm && !AutoConfirm) { gate.Halt(ClickOwner.Equip, "target", "«Заменить» without the player's auto confirm"); AnnounceHalts(); return false; }
+      var fresh = FreshScreen(t == ClickTarget.EquipNav);
+      var req = new ClickRequest { Owner = ClickOwner.Equip, Target = t, AutoOn = AutoEnabled, Front = front, X = sx - o.X, Y = sy - o.Y };
+      return GatedSend(req, fresh, a, sx, sy);
+    }
+    RecastScreen locateRs; int locateOnAccount = -1; bool locateDriving;
     readonly InvScroll locateScroll = new InvScroll(), sellScroll = new InvScroll();
     string gridSaid = "", listSaid = "";
 
@@ -1630,7 +1779,7 @@ namespace RealmForge {
         return false;
       }
       double phase = sc.WantPhase(now) ? PhaseOf(geo, o, cr, U) : double.NaN;
-      double r1 = sc.Row1(geo, inv.List, phase, U);
+      double r1 = sc.Row1(geo, inv.List, phase, U, now);
       if (double.IsNaN(r1)) return false;
       grid.FromScroll(r1, inv.ListPtr);
       if (gridSaid != who + ":scroll") { gridSaid = who + ":scroll"; Log.Write(who + ": the inventory grid from the game's scroll (" + inv.List + ")"); }
@@ -1644,9 +1793,24 @@ namespace RealmForge {
     }
     string locateMoveState = "", locateMoveWhy = "", locateAutoSaid = "";
 
+    /// <summary>The Foundry list's scroll read anew and eased, for the frame of a list cell (the screen look is only a few times
+    /// a second): the cell's frame follows the list smoothly while it scrolls.</summary>
+    void FoundryScrollNow(LocateStep step, long now) {
+      var rs = locateRs;
+      bool asc = step.Kind == LocateKind.AscendPick;
+      if (rs == null || (!asc && step.Kind != LocateKind.RecastPick)) { locListSmooth.Reset(); return; }
+      var l = asc ? rs.AscendList : rs.RecastList;
+      var live = RFX.ReadFoundryListLive(asc);
+      if (live != null && live.Has) l = live;
+      if (l == null || !l.Has) { locListSmooth.Reset(); return; }
+      double y = locListSmooth.Step(l.ScrollY, now, 4 * (l.RowUnits > 0 ? l.RowUnits : 120));
+      var sm = new RFX.ListRead { ScrollY = y, Cols = l.Cols, RowUnits = l.RowUnits, First = l.First, Last = l.Last, FinalRowUnits = l.FinalRowUnits, FitScale = l.FitScale };
+      if (asc) rs.AscendList = sm; else rs.RecastList = sm;
+    }
+
     void TickLocateDrive(LocateStep step, LocateRequest req, IntPtr hwnd, W32.POINT o, W32.RECT cr, long now, double W, double H, double U) {
       locateDriving = false;
-      if (!AutoEnabled) { step.Auto = ""; step.AutoWhy = ""; return; }
+      if (!AutoEnabled || !LocateAutoEnabled) { step.Auto = ""; step.AutoWhy = ""; return; }   // hints only (the site's locateAuto switch is off by default)
       if (sending) {   // a click is on its way (its button press is not the player's): the screens are read after it
         step.Auto = locateMoveState == "" ? "work" : locateMoveState; step.AutoWhy = locateMoveWhy; locateDriving = true;
         return;
@@ -1664,23 +1828,30 @@ namespace RealmForge {
       bool busy = down || now - lastMoveMs < 700, uc = userClick; userClick = false;
       int fp, gp; W32.GetWindowThreadProcessId(W32.GetForegroundWindow(), out fp); W32.GetWindowThreadProcessId(hwnd, out gp);
       bool gameFront = fp == gp;
-      // a fresh look at the inventory and the step it means: the pilot judges its last click by it, so a stale step
-      // must never get a second click on an item that is already selected
-      var inv = RFX.ReadInventory(-1);
-      if (LocateFrames.Framed(step.Kind) && step.Kind != LocateKind.Selected && now - locateRsAt >= 150) {   // the Foundry's own state, fresh: the list scrolls under the pilot
-        locateRsAt = now;
-        var fresh = RFX.ReadRecastScreenSafe(-1); if (fresh != null) locateRs = fresh;
+      // the screen of this tick (ReadScreens); the click gate judges the pilot's last click and every new one by it
+      var scr = screens.Current;
+      var inv = screens.Inv;
+      if (screens.Rs != null) locateRs = screens.Rs;
+      if (gameFront && !busy) {
+        var pre = gate.Preflight(ClickOwner.Locate, scr, now);
+        AnnounceHalts();
+        if (lpilot.Stopped) { step.Auto = "stopped"; step.AutoWhy = lpilot.Reason; return; }
+        if (pre.Verdict == GateVerdict.Wait) {
+          if (pre.Reason == "pending") { step.Auto = "work"; step.AutoWhy = ""; locateDriving = true; }   // the last click's effect is awaited
+          else { step.Auto = "hint"; step.AutoWhy = "no_city"; }                                          // the screen is not recognised yet: hints only
+          return;
+        }
       }
-      bool heroOpen = heroScreen != null && heroScreen.Hero > 0 && heroScreen.Tab >= 0;
-      bool formOpen = locateRs != null && (locateRs.SublimingOpen || locateRs.GemOpen);
+      bool heroOpen = scr != null && scr.Kind == ScreenKind.HeroScreen;
+      bool formOpen = scr != null && (scr.Kind == ScreenKind.Foundry || scr.Kind == ScreenKind.Gem);
       var dstep = LocateGuide.Next(req, inv, locateRs, heroScreen, locateCols, locateOnAccount);
       var view = new LocateView { NowMs = now, Foreground = gameFront, UserBusy = busy, UserClicked = uc, W = W, H = H, U = U, Step = dstep, Inv = inv, Cols = locateCols,
         HeroScreenOpen = heroOpen, OtherFormOpen = formOpen, InvDX = invDX, Geometry = Geo.Current, Rs = locateRs, Item = req.Item };
       if (gameFront && !busy && LocateAuto.NeedsCityButton(dstep, heroOpen, formOpen)) view.CityButton = InventoryButtonSeen(o, W, H);
       if (gameFront && !busy && dstep.Kind == LocateKind.InList) {
         var pg = SellGeometry.Inventory(W, U, locateCols);
-        view.Row1 = locateScroll.Row1(pg, inv != null ? inv.List : null, double.NaN, U);   // the game's scroll (the constant is learned by the frame)
-        if (double.IsNaN(view.Row1)) view.Phase = PhaseOf(pg, o, cr, U);                    // last resort
+        view.Row1 = locateScroll.Row1(pg, inv != null ? inv.List : null, double.NaN, U, now);   // the game's scroll (the constant is learned by the frame)
+        if (double.IsNaN(view.Row1)) view.Phase = PhaseCached(pg, o, cr, U, now);                    // last resort
       }
       var mv = lpilot.Step(view);
       if (lpilot.Trace != "") { Log.Write("locate auto: " + lpilot.Trace); lpilot.Trace = ""; }
@@ -1693,7 +1864,8 @@ namespace RealmForge {
         if (W32.IsIconic(hwnd)) W32.ShowWindow(hwnd, 9);   // SW_RESTORE
         W32.SetForegroundWindow(hwnd);
       }
-      if (mv.Action.Kind != AutoKind.None) SendInside(mv.Action, o, cr);
+      if (mv.Action.Kind != AutoKind.None) SendLocate(mv, req, o, cr, gameFront, now, W, H, U);
+      if (lpilot.Stopped) { step.Auto = "stopped"; step.AutoWhy = lpilot.Reason; locateDriving = false; return; }
       step.Auto = mv.State; step.AutoWhy = mv.Why;
       locateDriving = mv.State == "work" || mv.State == "paused" || mv.State == "background";
     }
@@ -1702,6 +1874,13 @@ namespace RealmForge {
     int sellCols = 8, sellGeoCols; double sellGeoW, sellGeoH; bool sellScanOnce;
 
     // the rows' phase on the screen: the stat bars under the cells (client px mod the row step), NaN = unclear
+    long phaseAt; double phaseVal = double.NaN;
+    // the picture look (a screen grab) at most every 100 ms: the fallback must not grab at the fast tick
+    double PhaseCached(SellGeometry sg, W32.POINT o, W32.RECT cr, double U, long now) {
+      if (now - phaseAt >= 100 || phaseAt == 0) { phaseAt = now; phaseVal = PhaseOf(sg, o, cr, U); }
+      return phaseVal;
+    }
+
     double SellPhase(W32.POINT o, W32.RECT cr, double U) { return PhaseOf(spilot.Geometry, o, cr, U); }
 
     double PhaseOf(SellGeometry sg, W32.POINT o, W32.RECT cr, double U) {
@@ -1741,15 +1920,47 @@ namespace RealmForge {
     }
 
     // a pilot action at client px, never outside the game's client area
-    void SendInside(AutoAction a, W32.POINT o, W32.RECT cr) {
+    // the click gate decides (src/ClickGate.cs): <paramref name="fill"/> adds what only the fresh read can say (the item under a cell click)
+    bool SendInside(AutoAction a, W32.POINT o, W32.RECT cr, ClickOwner owner, ClickTarget target, bool front, Action<ClickRequest, ScreenState> fill = null) {
       int x = o.X + (int)Math.Round(a.X), y = o.Y + (int)Math.Round(a.Y), y2 = y + (int)Math.Round(a.DY);
-      if (x < o.X || y < o.Y || x >= o.X + cr.R || y >= o.Y + cr.B || y2 < o.Y || y2 >= o.Y + cr.B) return;
-      Send(a, x, y);
+      if (x < o.X || y < o.Y || x >= o.X + cr.R || y >= o.Y + cr.B || y2 < o.Y || y2 >= o.Y + cr.B) return false;
+      var fresh = FreshScreen(target == ClickTarget.CityInventory);
+      var req = new ClickRequest { Owner = owner, Target = target, AutoOn = owner == ClickOwner.Locate ? AutoEnabled && LocateAutoEnabled : AutoEnabled, Front = front, X = a.X, Y = a.Y };
+      if (fill != null) fill(req, fresh);
+      return GatedSend(req, fresh, a, x, y);
+    }
+
+    // «Показать в игре»: the pilot's action -> the gate's target (and for a list cell the item that has to be under the click)
+    void SendLocate(LocateMove mv, LocateRequest req, W32.POINT o, W32.RECT cr, bool front, long now, double W, double H, double U) {
+      bool drag = mv.Action.Kind == AutoKind.Drag;
+      ClickTarget tg = ClickTarget.None;
+      Action<ClickRequest, ScreenState> fill = null;
+      switch (mv.Todo) {
+        case LocateTodo.BackToCity: tg = ClickTarget.HeroBack; break;
+        case LocateTodo.InventoryButton: tg = ClickTarget.CityInventory; break;
+        case LocateTodo.EquipTab: tg = ClickTarget.InvEquipTab; break;
+        case LocateTodo.FoundryButton: tg = ClickTarget.FoundryButton; break;
+        case LocateTodo.AscendTab: tg = ClickTarget.AscendTab; break;
+        case LocateTodo.SlotTab: tg = ClickTarget.SlotTab; break;
+        case LocateTodo.PickItem:
+          tg = drag ? ClickTarget.InvListDrag : ClickTarget.InvListCell;
+          fill = (rq, fr) => {
+            var g2 = SellGeometry.Inventory(W, U, locateCols);
+            rq.CellUid = ClickGate.InvCellUid(fr.Inv, g2, locateScroll.Row1(g2, fr.Inv != null ? fr.Inv.List : null, double.NaN, U, now), locateCols, rq.X, rq.Y, W, U);
+            rq.CellOk = new[] { req.Item.Uid };
+          };
+          break;
+        case LocateTodo.AscendCell:
+          tg = drag ? ClickTarget.AscendDrag : ClickTarget.AscendCell;
+          fill = (rq, fr) => { rq.CellUid = ClickGate.AscendCellUid(Geo.Current, fr.Rs, rq.X, rq.Y, W, H, U); rq.CellOk = new[] { req.Item.Uid }; };
+          break;
+      }
+      SendInside(mv.Action, o, cr, ClickOwner.Locate, tg, front, fill);   // ClickTarget.None is on nobody's whitelist: stopped
     }
 
     /// <summary>Moves the cursor and clicks / drags there, off the UI thread (short pauses let the game see the pointer
     /// over the button first). A drag moves in small steps and rests before the release, so the list does not coast.</summary>
-    void Send(AutoAction a, int x, int y) {
+    void Send(AutoAction a, int x, int y) {   // ONLY called by GatedSend
       sending = true;
       seen = new W32.POINT(x, y); seenSet = true;
       // our own window (the compact one over the game) must not catch the click: for the moment it goes under the

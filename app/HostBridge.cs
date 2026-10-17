@@ -75,7 +75,7 @@ namespace RealmForge {
       overlay = new OverlayController((st, far) => Post("{\"ev\":\"overlay\",\"state\":" + S(st) + ",\"far\":" + (far ? "true" : "false") + "}"),
                                       st => { Post("{\"ev\":\"auto\",\"state\":" + S(st) + "}"); OnAutoState(st); },
                                       (p, st) => Post("{\"ev\":\"sell.state\",\"state\":" + S(st) + ",\"selected\":" + p.Selected + ",\"missing\":" + p.Missing + ",\"extra\":" + p.Extra + "}"));
-      overlay.AutoEnabled = AutoClickOn();
+      ApplyAutoClick();
       RFX.SkipGvg = !On("gvg");
       overlay.AutoConfirm = cfg.AutoConfirm;
       overlay.CancelText = CancelText(cfg.Lang); overlay.LocateCancelText = LocateCancelText(cfg.Lang);
@@ -103,10 +103,13 @@ namespace RealmForge {
 
     /// <summary>The app's own clicks: the player's setting and the site's "autoclick" switch.</summary>
     bool AutoClickOn() { return cfg.AutoClick && On("autoclick"); }
+    /// <summary>«Показать в игре» clicks by itself only with its own switch on (off by default until the owner enables it), on top of the player's setting.</summary>
+    bool LocateAutoOn() { return AutoClickOn() && On("locateAuto"); }
+    void ApplyAutoClick() { overlay.AutoEnabled = AutoClickOn(); overlay.LocateAutoEnabled = LocateAutoOn(); }
 
     // the features that read the game's screens and fights need the layout data for the running game version
     // (src/Layout.cs); the account sync, the guild and the update packs do not
-    static readonly HashSet<string> NeedsLayout = new HashSet<string> { "battle", "equip", "locate", "autoclick" };
+    static readonly HashSet<string> NeedsLayout = new HashSet<string> { "battle", "equip", "locate", "autoclick", "locateAuto" };
     /// <summary>A feature may run: the site's switch is on and, when it needs it, the layout data is there.</summary>
     bool On(string feature) { return remote.Allows(feature) && (!NeedsLayout.Contains(feature) || Layout.Current != null); }
 
@@ -126,7 +129,7 @@ namespace RealmForge {
 
     /// <summary>Puts the switches in force at once: what is off stops now, not at its next start.</summary>
     void ApplyRemote() {
-      overlay.AutoEnabled = AutoClickOn();
+      ApplyAutoClick();
       RFX.SkipGvg = !On("gvg");
       if (!On("locate")) overlay.SetLocate(null);
       if (!On("equip")) { overlay.SetRun(0); overlay.SetTarget(0); overlay.SetHint("", -1, new string[0], 0); }
@@ -342,7 +345,7 @@ namespace RealmForge {
           case "clearCode": cfg.Code = ""; Save(); SendState(null); break;
           case "setSaveCopy": cfg.SaveCopy = MiniJson.GetBool(m, "on", false); Save(); break;
           case "setAutoSync": cfg.AutoSync = MiniJson.GetBool(m, "on", true); Save(); if (cfg.AutoSync) RequestAutoSync(0); break;
-          case "setAutoClick": cfg.AutoClick = MiniJson.GetBool(m, "on", true); overlay.AutoEnabled = AutoClickOn(); Save(); break;
+          case "setAutoClick": cfg.AutoClick = MiniJson.GetBool(m, "on", true); ApplyAutoClick(); Save(); break;
           case "setAutoConfirm": cfg.AutoConfirm = MiniJson.GetBool(m, "on", false); overlay.AutoConfirm = cfg.AutoConfirm; Save(); break;
           case "setAutoUpdate": cfg.AutoUpdate = MiniJson.GetBool(m, "on", true); Save(); break;
           case "setBossHints": cfg.BossHints = MiniJson.GetBool(m, "on", true); if (!cfg.BossHints && coach.Running) coach.Stop(); Save(); break;
@@ -373,7 +376,7 @@ namespace RealmForge {
             if (!On("locate")) break;
             var lr = lastLocate; string lid = MiniJson.GetString(m, "id");
             if (lr != null && lr.Item != null && lr.Id == lid) {
-              overlay.SetLocate(lr); Log.Write("locate: show item " + lr.Item.Uid + (AutoClickOn() ? " (auto click on)" : ""));
+              overlay.SetLocate(lr); Log.Write("locate: show item " + lr.Item.Uid + (LocateAutoOn() ? " (auto click on)" : AutoClickOn() ? " (auto click is on, but the site's locateAuto switch is off: hints only)" : ""));
               if (addrs == null && !scanning && AutoClickOn()) StartScan(watch, true);   // the auto steps need the game's screens found
             }
             break;
@@ -1248,12 +1251,14 @@ namespace RealmForge {
       if (HeroStepStuck(s)) { StartScan(watch, false, true); return; }
       if (s.HeroFromForm) { if (heroFromFormLogged != s.HeroUid) { heroFromFormLogged = s.HeroUid; Log.Write("live: hero " + s.HeroUid + " from the hero screen (selected hero: " + (s.HeroSelUid > 0 ? s.HeroSelUid.ToString() : "none") + ")"); } }
       else heroFromFormLogged = 0;
+      bool inBulk; string scrName = overlay.ScreenName(out inBulk);   // the overlay's screen of this tick (src/GameScreen.cs)
       var sb = new StringBuilder("{\"ev\":\"equip.live\",\"live\":{");
       sb.Append("\"gameRunning\":").Append(B(s.GameRunning)).Append(",\"heroUid\":").Append(N(s.HeroUid)).Append(",\"panelOk\":").Append(B(s.PanelOk))
         .Append(",\"form\":").Append(B(s.FormOk)).Append(",\"tab\":").Append(N(s.Tab))
         .Append(",\"part\":").Append(N(s.Part)).Append(",\"hideEquipped\":").Append(B(s.HideEquipped)).Append(",\"hideEnhanced\":").Append(B(s.HideEnhanced))
         .Append(",\"filterActive\":").Append(B(s.FilterActive)).Append(",\"selUid\":").Append(N(s.SelUid)).Append(",\"selRow\":").Append(N(s.SelRow))
-        .Append(",\"selCol\":").Append(N(s.SelCol)).Append(",\"selOwner\":").Append(N(s.SelOwner)).Append(",\"rows\":{");
+        .Append(",\"selCol\":").Append(N(s.SelCol)).Append(",\"selOwner\":").Append(N(s.SelOwner))
+        .Append(",\"screen\":").Append(S(scrName)).Append(",\"bulk\":").Append(B(inBulk)).Append(",\"rows\":{");
       bool first = true;
       foreach (var kv in s.Row) {
         int col; s.Col.TryGetValue(kv.Key, out col);

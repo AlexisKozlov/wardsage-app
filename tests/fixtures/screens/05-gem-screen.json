@@ -1,0 +1,6 @@
+{ "name": "The gem screen with and without the function list: the screen is Gem, the step and its frame are the same, no click is on the whitelist", "request": { "purpose": "recast", "uid": 1003, "slot": 1, "hero": 0, "quality": 8 }, "cols": 8, "frames": [
+  { "t": 0, "rs": { "gem": true, "gemFunc": -1, "gemSel": 1003 }, "expect": { "screen": "Gem", "step": "GemFunction", "todo": "Hint", "frame": true }, "clicks": [
+    { "owner": "Locate", "target": "InvEquipTab", "expect": { "verdict": "Deny", "reason": "screen" } } ] },
+  { "t": 200, "rs": { "gem": true, "gemFunc": -1, "gemSel": 1003, "gemFuncList": { "scrollY": 0, "cols": 1, "rowUnits": 40, "first": 0, "last": 5 } }, "expect": { "screen": "Gem", "step": "GemFunction", "frame": true } },
+  { "t": 400, "rs": { "gem": true, "gemFunc": 8, "gemSel": 1003, "gemFuncList": { "scrollY": 0, "cols": 1, "rowUnits": 40, "first": 0, "last": 5 } }, "expect": { "screen": "Gem", "step": "Done", "todo": "Hint" } } ]
+}

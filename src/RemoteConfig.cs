@@ -1,7 +1,9 @@
 // Wardsage - the site's switches for the app: GET {site}/api/extractor/app-config (public, no code).
-//   200 {"readEnabled":true,"features":{"guild":true,"gvg":true,"battle":true,"autoclick":true,"equip":true,"locate":true},"at":"<ISO>"}
+//   200 {"readEnabled":true,"features":{"guild":true,"gvg":true,"battle":true,"autoclick":true,"equip":true,"locate":true,"locateAuto":false},"at":"<ISO>"}
 // Asked at start and every 10 minutes (the test build every 2). The last good reply is kept in app-config.json in the app's
-// data folder and used while the site cannot be reached; with no copy at all everything is on. A missing or odd field is on.
+// data folder and used while the site cannot be reached; with no copy at all everything is on, except the features that start OFF
+// (DefaultOff: "locateAuto", the auto clicks of «Показать в игре», until the owner switches them on). A missing or odd field is on,
+// and for a feature that starts off it is off (only a plain true switches it on).
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -10,16 +12,19 @@ using System.Text;
 
 namespace RealmForge {
   public sealed class RemoteSwitches {
-    public static readonly string[] Features = { "guild", "gvg", "battle", "autoclick", "equip", "locate" };
+    public static readonly string[] Features = { "guild", "gvg", "battle", "autoclick", "equip", "locate", "locateAuto" };
+    /// <summary>Features that are off until the site says true (a missing or odd value, no reply and no saved copy all mean off).</summary>
+    public static readonly string[] DefaultOff = { "locateAuto" };
+    public static bool StartsOff(string feature) { return Array.IndexOf(DefaultOff, feature) >= 0; }
     const int MaxBytes = 16 * 1024;
 
     public bool ReadEnabled = true;
     public readonly Dictionary<string, bool> Feature = new Dictionary<string, bool>();
     public string At;
 
-    public RemoteSwitches() { foreach (var f in Features) Feature[f] = true; }
+    public RemoteSwitches() { foreach (var f in Features) Feature[f] = !StartsOff(f); }
 
-    /// <summary>Everything on (no reply and no saved copy).</summary>
+    /// <summary>Everything on except the features that start off (no reply and no saved copy).</summary>
     public static RemoteSwitches Permissive() { return new RemoteSwitches(); }
 
     /// <summary>The feature may run: reading is on and the feature's switch is on. An unknown name is never allowed.</summary>
@@ -32,7 +37,7 @@ namespace RealmForge {
     public List<string> Off() {
       var r = new List<string>();
       if (!ReadEnabled) return r;
-      foreach (var f in Features) if (!Feature[f]) r.Add(f);
+      foreach (var f in Features) if (!Feature[f] && !StartsOff(f)) r.Add(f);   // a feature that starts off is not "switched off"
       return r;
     }
 
@@ -52,7 +57,11 @@ namespace RealmForge {
       object v;
       if (o.TryGetValue("readEnabled", out v) && v is bool && !(bool)v) r.ReadEnabled = false;
       var fo = o.TryGetValue("features", out v) ? MiniJson.AsObject(v) : null;
-      if (fo != null) foreach (var f in Features) if (fo.TryGetValue(f, out v) && v is bool && !(bool)v) r.Feature[f] = false;
+      if (fo != null) foreach (var f in Features) {
+        bool has = fo.TryGetValue(f, out v);
+        if (StartsOff(f)) r.Feature[f] = has && v is bool && (bool)v;
+        else if (has && v is bool && !(bool)v) r.Feature[f] = false;
+      }
       if (o.TryGetValue("at", out v) && v is string && ((string)v).Length <= 40) r.At = (string)v;
       return r;
     }

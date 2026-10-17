@@ -3019,6 +3019,67 @@ static class CoreTests {
     Check(nx.Kind == SellHintKind.Select && nx.Frames.Count == 0 && nx.Total == 4 && nx.Selected == 0 && nx.Below == 0, "hint exact: no exact read -> no frames at all, the counts stay");
     Check(double.IsNaN(scr.Row1(g, new RFX.ListRead(), double.NaN, U)), "hint exact: an unreadable list gives NaN");
 
+    // smooth motion: the drawn value eases, jumps for a new list, holds a small reversal within 100 ms
+    {
+      var sm = new FrameSmoother(); double snap = 400;
+      Check(double.IsNaN(sm.Step(double.NaN, 0, snap)) && !sm.Has, "smoother: no target -> NaN, nothing kept");
+      Check(sm.Step(100, 0, snap) == 100, "smoother: the first value is taken as is");
+      double v = sm.Step(130, 33, snap);
+      Check(v > 100 && v < 130, "smoother: a step is eased, not jumped (" + v + ")");
+      double v2 = sm.Step(130, 66, snap), v3 = sm.Step(130, 99, snap);
+      Check(v2 > v && v3 >= v2 && v3 > 125 && v3 <= 130, "smoother: arrives within about 50-70 ms and never overshoots (" + v3 + ")");
+      Check(sm.Step(130, 132, snap) == 130, "smoother: settled exactly on the target");
+      Check(sm.Step(1000, 165, snap) == 1000, "smoother: a jump beyond the snap distance is taken at once");
+      // the shiver: the target alternates by 2 px around a settled value - the drawn value does not go back and forth
+      sm = new FrameSmoother(); sm.Step(500, 0, snap);
+      double lo = 1e9, hi = -1e9; long t = 0;
+      sm.Step(502, t += 33, snap);
+      for (int k = 0; k < 12; k++) { double w = sm.Step(k % 2 == 0 ? 500 : 502, t += 33, snap); lo = Math.Min(lo, w); hi = Math.Max(hi, w); }
+      Check(hi - lo <= 2.01, "smoother: a 2 px alternating read does not make the frame travel (" + lo + ".." + hi + ")");
+      // a reversal within 100 ms is held, the same reversal after 100 ms (a real scroll turning) is followed
+      sm = new FrameSmoother(); sm.Step(0, 0, snap); sm.Step(40, 33, snap); double at = sm.Value;
+      Check(sm.Step(at - 3, 50, snap) == at, "smoother: a 3 px step back 17 ms after moving forward is held");
+      double back = sm.Step(at - 3, 140, snap);
+      Check(back < at, "smoother: after 100 ms the reversal is followed (" + back + ")");
+      sm = new FrameSmoother(); sm.Step(0, 0, snap); sm.Step(40, 33, snap); at = sm.Value;
+      Check(sm.Step(at - 30, 50, snap) < at, "smoother: a big reversal (a real scroll turn) is not held");
+      // steady scrolling: a stream of increasing values moves the value only forward
+      sm = new FrameSmoother(); sm.Step(0, 0, snap); bool mono = true; double prevV = 0;
+      for (int k = 1; k <= 30; k++) { double w = sm.Step(k * 12.0, k * 33L, snap); mono &= w >= prevV; prevV = w; }
+      Check(mono && prevV > 340, "smoother: steady scrolling moves only forward and follows (" + prevV + ")");
+    }
+    // the picture offset is not re-learned while the list moves; a learned one changes only after stillness and > 3 px
+    {
+      var so = new ScrollOffset(); double sp = 110.76, raw = 116.5;
+      so.Place(raw, double.NaN, sp, 705, 0);
+      Check(Math.Abs(so.Place(raw, 119.5, sp, 705, 50) - raw) < 0.01 && !so.Known, "offset: not learned before 150 ms of stillness");
+      Check(Math.Abs(so.Place(raw, 119.5, sp, 705, 200) - 119.5) < 0.01 && so.Known, "offset: learned once the list stood still");
+      double m = so.Place(raw - 40, 130, sp, 705, 300);   // moving: the picture is ignored
+      Check(Math.Abs(m - (119.5 - 40)) < 0.01, "offset: a moving list is placed by the value alone");
+      double w = 0; for (int k = 0; k < 8; k++) w = so.Place(raw - 40, 130, sp, 705, 400 + k * 100);
+      Check(Math.Abs(w - (119.5 - 40)) < 0.01 || !so.StillFor(1200, 500), "offset: still < 500 ms never relearns");
+      for (int k = 0; k < 6; k++) w = so.Place(raw, 121.5, sp, 705, 3000 + k * 1000);   // 2 px: below 3, ignored
+      Check(Math.Abs(w - 119.5) < 0.01, "offset: a 2 px disagreement is not followed");
+      for (int k = 0; k < 6; k++) w = so.Place(raw, 124.5, sp, 705, 10000 + k * 1000);
+      Check(Math.Abs(w - 124.5) < 0.01, "offset: a 5 px disagreement is followed after stillness");
+      var invS = new InvScroll(); var gq = SellGeometry.Inventory(1920, 1009, 8);
+      invS.Row1(gq, new RFX.ListRead { ScrollY = 0, Cols = 8, RowUnits = 118 }, double.NaN, 1009, 1000);
+      Check(!invS.WantPhase(1050) && invS.WantPhase(1200), "inventory scroll: the picture is wanted only after the list stood still");
+      invS.Row1(gq, new RFX.ListRead { ScrollY = 5, Cols = 8, RowUnits = 118 }, double.NaN, 1009, 1300);
+      Check(!invS.WantPhase(1400), "inventory scroll: not while it moves");
+    }
+    // the plate: a ticked item that is not on the list switches it to the red warning
+    {
+      var stw = SellHint.Classify(new InventoryScreen { Open = true, EquipTab = true, Bulk = true, Uids = { 1, 2 }, Selected = { 2 } }, new HashSet<long> { 1 });
+      Check(stw.Kind == SellHintKind.Select && stw.Extra == 1 && SellHint.Warn(stw), "plate: a stray ticked item -> the red warning");
+      var stn = SellHint.Classify(new InventoryScreen { Open = true, EquipTab = true, Bulk = true, Uids = { 1, 2 }, Selected = { 1 } }, new HashSet<long> { 1 });
+      Check(!SellHint.Warn(stn) && !SellHint.Warn(null), "plate: all ticks are on the list (or no step) -> the normal plate");
+      var stx = SellHint.Classify(new InventoryScreen { Open = true, EquipTab = true, Bulk = true, Uids = { 1, 2 }, Selected = { 1, 2 } }, new HashSet<long> { 1 });
+      Check(SellHint.Warn(stx), "plate: the warning stays while the stray item is ticked, even when the list's items are done");
+      stx = SellHint.Classify(new InventoryScreen { Open = true, EquipTab = true, Bulk = true, Uids = { 1, 2 }, Selected = { 1 } }, new HashSet<long> { 1 });
+      Check(!SellHint.Warn(stx) && stx.Kind == SellHintKind.AllSelected, "plate: unticked -> the warning is gone");
+    }
+
     // the visibility rule for everything the overlay draws
     Check(OverlayGate.CanDraw(true, true, false, true, true), "gate: game visible and in front -> draw");
     Check(!OverlayGate.CanDraw(false, false, false, false, true), "gate: no game window -> nothing");

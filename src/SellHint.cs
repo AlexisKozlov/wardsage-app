@@ -67,7 +67,48 @@ namespace RealmForge {
     }
   }
 
+  /// <summary>Makes a drawn position (a list's row 1, client px) move smoothly: the game renders at its own rate and the overlay
+  /// reads the scroll at another, so raw values arrive in steps and now and then a stale one. The drawn value follows the target
+  /// with a short ease (about 50 ms to arrive), a jump of many rows is taken at once, and a small step back right after a step
+  /// forward (or the reverse) within 100 ms is held - that is the shiver, not a scroll. Pure: the caller passes the clock.</summary>
+  public sealed class FrameSmoother {
+    /// <summary>Time constant of the ease (ms): ~95 % of a step is covered after 3x this, i.e. about 50 ms.</summary>
+    public const double TauMs = 16;
+    /// <summary>A reversal within this time (ms) of the last move is held when it is small.</summary>
+    public const long ReverseHoldMs = 100;
+    /// <summary>... small = at most this many px.</summary>
+    public const double ReverseSmallPx = 6;
+    /// <summary>Below this distance (px) the drawn value stays (nobody sees it).</summary>
+    public const double DeadPx = 0.5;
+
+    public double Value; public bool Has;
+    long lastMs, lastMoveMs; int lastDir;
+
+    public void Reset() { Has = false; lastDir = 0; }
+
+    /// <param name="target">the value the scroll says now (NaN = none: the smoother resets and returns NaN)</param>
+    /// <param name="snapPx">a distance (px) beyond which the value jumps (a new list, a filter change)</param>
+    public double Step(double target, long nowMs, double snapPx) {
+      if (double.IsNaN(target)) { Reset(); return double.NaN; }
+      if (!Has || Math.Abs(target - Value) > snapPx) { Value = target; Has = true; lastMs = nowMs; lastMoveMs = nowMs; lastDir = 0; return Value; }
+      long dt = Math.Max(0, Math.Min(250, nowMs - lastMs)); lastMs = nowMs;
+      double diff = target - Value;
+      if (Math.Abs(diff) < DeadPx) return Value;
+      int dir = diff > 0 ? 1 : -1;
+      if (lastDir != 0 && dir != lastDir && nowMs - lastMoveMs < ReverseHoldMs && Math.Abs(diff) <= ReverseSmallPx) return Value;
+      double a = 1 - Math.Exp(-dt / TauMs);
+      Value += diff * a;
+      if (Math.Abs(target - Value) < DeadPx) Value = target;
+      lastDir = dir; lastMoveMs = nowMs;
+      return Value;
+    }
+  }
+
   public static class SellHint {
+    /// <summary>The red warning plate (and the red cell frames) are wanted while a selected item is not on the list: the
+    /// player has to untick it before anything else.</summary>
+    public static bool Warn(SellHintStep st) { return st != null && st.Kind == SellHintKind.Select && st.Extra > 0; }
+
     /// <summary>The step with frames placed from the game's own scroll: <paramref name="row1"/> = client y of row 1's top from
     /// InvScroll.Row1 (the exact scroll of the list, read every tick), NaN = the exact read is not available - then there are
     /// NO frames at all (the step keeps its counts: the text plate "marked X of N" is all that is shown), never guessed ones.</summary>

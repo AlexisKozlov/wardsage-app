@@ -3,7 +3,7 @@
 // plan: {id, heroUid, heroName, items:[{slot, uid, slotName, name, setName, level, mainStat, fromHeroUid, fromHeroName}]}
 //   from the site, or {…, bridge: true} from the local bridge (bridgePlan)
 // live (from the host, read-only memory reads): {gameRunning, heroUid, panelOk, part, hideEquipped, hideEnhanced,
-//   filterActive, rows:{uid:[row, col]}, owner:{uid: heroUid}}
+//   filterActive, bulk (the Inventory is in «Массовая продажа»), screen, rows:{uid:[row, col]}, owner:{uid: heroUid}}
 (function (root) {
   // rows of the gear list visible without scrolling in the game (1080p: about 4.5)
   const VISIBLE_ROWS = 4;
@@ -27,6 +27,8 @@
     if (!live || live.gameRunning === false) { g.kind = 'closed'; return g; }
     if (!cur) { g.kind = g.taken ? 'taken' : 'done'; return g; }
     g.item = cur;
+    // the Inventory is in «Массовая продажа» (the host's screen): the hero and the items are not on screen, the player leaves it first
+    if (live.bulk) { g.kind = 'bulk'; return g; }
     if (live.heroUid !== plan.heroUid) { g.kind = 'hero'; return g; }
     if (!live.panelOk || live.part !== cur.slot) { g.kind = 'slot'; return g; }
     // the player put on another item than the build's (it is still selected, and the hero wears it now): the build's item

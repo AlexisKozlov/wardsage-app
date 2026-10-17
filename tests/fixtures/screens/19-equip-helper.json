@@ -1,0 +1,8 @@
+{ "name": "Equip helper: only the city and the hero screen; in the inventory nothing; 'Replace' only on the hero screen", "cols": 8, "frames": [
+  { "t": 0, "hero": { "hero": 100, "form": true, "tab": 3, "part": -1 }, "clicks": [
+    { "owner": "Equip", "target": "EquipNav", "expect": { "verdict": "Allow" } },
+    { "owner": "Equip", "target": "EquipConfirm", "expect": { "verdict": "Allow" } } ] },
+  { "t": 100, "inv": { "open": true, "equip": true, "bulk": false, "known": true, "current": 0, "uids": [ 1001, 1002, 1003, 1004, 1005, 1006, 1007, 1008, 1009, 1010, 1011, 1012, 1013, 1014, 1015, 1016 ], "selected": [], "list": { "scrollY": 0, "cols": 8, "rowUnits": 118 } }, "hero": { "hero": 100, "form": false, "tab": -1, "part": -1 }, "clicks": [
+    { "owner": "Equip", "target": "EquipNav", "expect": { "verdict": "Deny", "reason": "screen" } } ] },
+  { "t": 200, "inv": { "open": true, "equip": true, "bulk": false, "known": true, "current": 0, "uids": [ 1001, 1002, 1003, 1004, 1005, 1006, 1007, 1008, 1009, 1010, 1011, 1012, 1013, 1014, 1015, 1016 ], "selected": [], "list": { "scrollY": 0, "cols": 8, "rowUnits": 118 } }, "expect": { "halt": "Equip:screen" } } ]
+}

@@ -29,7 +29,8 @@ namespace RealmForge {
     AscendPick,       // the item is in the foundry's Ascension list: pick it
     AscendNotInList,  // the Ascension list does not hold the item (not ready for Ascension, or a filter hides it)
     AscendLoading,    // the Ascension list is not readable yet / just changed (a slot tab was pressed): wait, no filter advice
-    AscendReady       // the Ascension screen has the item selected: the player presses the Ascend button
+    AscendReady,      // the Ascension screen has the item selected: the player presses the Ascend button
+    ExitBulk          // the inventory is in «Массовая продажа»: leave it first (the app clicks nothing there)
   }
 
   public sealed class LocateStep {
@@ -177,6 +178,7 @@ namespace RealmForge {
     static LocateStep NextInInventory(LocateRequest req, InventoryScreen inv, HeroScreen hero, int cols, LocateStep st, bool toFoundry = false) {
       long uid = req.Item.Uid;
       if (inv != null && inv.Open) {
+        if (inv.EquipTab && inv.Bulk) { st.Kind = LocateKind.ExitBulk; return st; }   // a click on a cell here would tick it for sale
         if (!inv.EquipTab) { st.Kind = LocateKind.OpenEquipTab; return st; }
         if (toFoundry) { st.Kind = LocateKind.OpenFoundry; return st; }
         if (inv.Current == uid) { st.Kind = LocateKind.Selected; st.Worn = req.HeroUid > 0; return st; }
@@ -306,15 +308,21 @@ namespace RealmForge {
     long phaseAt;
 
     /// <summary>The picture is wanted (to learn the constant): not learned yet, or now and then to check it.</summary>
-    public bool WantPhase(long nowMs) { if (!off.Known || nowMs - phaseAt >= 1000) { phaseAt = nowMs; return true; } return false; }
+    public bool WantPhase(long nowMs) {
+      // never while the list moves (the picture lags the scroll value); a learned offset is checked once a second at most
+      if (!off.StillFor(nowMs, off.Known ? ScrollOffset.RelearnStillMs : ScrollOffset.LearnStillMs)) return false;
+      if (!off.Known ? nowMs - phaseAt >= 200 : nowMs - phaseAt >= 1000) { phaseAt = nowMs; return true; }
+      return false;
+    }
 
     /// <summary>Client y of row 1's top (can be far above the window); NaN = the scroll is not readable. <paramref name="phaseY"/>:
-    /// a row top seen on the screen (NaN = none this look).</summary>
-    public double Row1(SellGeometry g, RFX.ListRead l, double phaseY, double U) {
+    /// a row top seen on the screen (NaN = none this look). <paramref name="nowMs"/>: the clock (ms) - then the picture offset is
+    /// only learned while the list stands still; -1 = no clock.</summary>
+    public double Row1(SellGeometry g, RFX.ListRead l, double phaseY, double U, long nowMs = -1) {
       if (l == null || !l.Has) return double.NaN;
       double units = l.RowUnits > 0 ? l.RowUnits : FallbackRowUnits, pitch = g.PitchY * U;
       double raw = g.ViewTopPx(U) + g.TopPad * U - l.ScrollY * pitch / units;
-      return off.Place(raw, phaseY, pitch, U);
+      return off.Place(raw, phaseY, pitch, U, nowMs);
     }
   }
 

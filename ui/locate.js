@@ -6,11 +6,13 @@
 (function (root) {
   const KINDS = ['noItem', 'otherAccount', 'openInventory', 'openEquipTab', 'inList', 'hiddenFilter', 'selected', 'openRecastTab',
     'recastFilter', 'recastPick', 'recastNotInList', 'choosePending', 'gemPick', 'done',
-    'openAscendTab', 'ascendPick', 'ascendNotInList', 'ascendReady', 'openFoundry', 'gemFunction', 'ascendFilter', 'ascendLoading'];
+    'openAscendTab', 'ascendPick', 'ascendNotInList', 'ascendReady', 'openFoundry', 'gemFunction', 'ascendFilter', 'ascendLoading', 'exitBulk'];
 
   // auto click (host: src/LocatePilot.cs): st.auto = '' (off) | work | paused | background | hint | stopped, st.autoWhy = the reason when stopped.
   // The app clicks by itself only on these steps; the rest (the Foundry, the last button) stay the player's.
   const AUTO_STEPS = ['openInventory', 'openEquipTab', 'inList', 'openFoundry', 'openAscendTab', 'ascendFilter', 'ascendPick'];
+  // why the click gate stopped the pilot (host: src/ClickGate.cs)
+  const GATE_WHY = { unknown: 'gateWhy_unknown', screen: 'gateWhy_screen', modal: 'gateWhy_modal', bulk: 'gateWhy_bulk', cell: 'gateWhy_cell', target: 'gateWhy_target', nochange: 'gateWhy_nochange' };
   const AUTO_WHY = { bulk: 'locAutoBulk', lost: 'locAutoLost', stuck: 'locAutoStuck', screen: 'locAutoScreen', cancelled: 'locAutoCancel' };
 
   function names(list) { return (list || []).map((x) => x.name || x.text).filter(Boolean); }
@@ -56,6 +58,8 @@
                          : { tone: 'info', head: t('locInList', st.row, st.col), lines: [t('locInListP')] };
         break;
       case 'hiddenFilter': r = { tone: 'warn', head: t('locHidden'), lines: [t('locHiddenP')] }; break;
+      // the inventory is in «Массовая продажа»: leave it first (the app clicks nothing there)
+      case 'exitBulk': r = { tone: 'warn', head: t('locExitBulk'), lines: [t('locExitBulkP')] }; break;
       // recast goes through the gem screen (the Foundry is for Ascension only): card button, then the function, then «Улучшить»
       case 'selected': r = { tone: 'done', head: t('locSelected'), lines: [t(req.purpose === 'ascend' ? 'locSelectedAscP' : 'locSelectedP')] }; break;
       case 'openFoundry': r = st.onGear ? { tone: 'info', head: t('locFoundryHero'), lines: [t('locFoundryP')] } : { tone: 'info', head: t('locFoundryInv'), lines: [t('locFoundryP')] }; break;
@@ -101,7 +105,8 @@
       default: r = { tone: 'done', head: t('locDone'), lines: [t(st.onGem ? 'locDoneGemP' : 'locDoneP')] };   // on the gem screen the request counts as done right here (ui/app.js)
     }
     // auto click: the app is doing this step itself, or it gave up (and says why; the step's own text follows)
-    if (st.auto === 'stopped') r = { tone: st.autoWhy === 'cancelled' ? 'info' : 'warn', head: t('locAutoStop'), lines: [t(AUTO_WHY[st.autoWhy] || 'locAutoLost'), r.head].concat(r.lines) };
+    if (st.auto === 'stopped' && GATE_WHY[st.autoWhy]) r = { tone: 'warn', head: t('gateStop', t(GATE_WHY[st.autoWhy])), lines: [t('locAutoRest'), r.head].concat(r.lines) };
+    else if (st.auto === 'stopped') r = { tone: st.autoWhy === 'cancelled' ? 'info' : 'warn', head: t('locAutoStop'), lines: [t(AUTO_WHY[st.autoWhy] || 'locAutoLost'), r.head].concat(r.lines) };
     else if (st.auto === 'work' && AUTO_STEPS.indexOf(st.step) >= 0) r = { tone: r.tone, head: t('locAutoWork'), lines: [r.head] };
     // the plate over the game: the head and the first lines, short
     r.tip = [r.head].concat(r.lines.slice(0, 2)).map((x) => (x.length > 90 ? x.slice(0, 89) + '…' : x));
