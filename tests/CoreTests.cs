@@ -1807,6 +1807,10 @@ static class CoreTests {
     Eq(6L, RFX.PickHero(true, 0, false, 0, 6, out s), "hero screen: last voiced hero as the last resort"); Eq(RFX.HeroSrcSound, s, "  source: sound");
     Eq(0L, RFX.PickHero(true, 0, true, 5, 6, out s), "an add slot shown: no hero"); Eq(RFX.HeroSrcNone, s, "  source: none");
     Eq(5L, RFX.PickHero(false, 7, false, 5, 6, out s), "form not alive: EquipData only"); Eq(RFX.HeroSrcSelected, s, "  source: selected");
+    Check(RFX.GuideTryDue(0, 5000, 3000), "hints' live tables: the first try is always due");
+    Check(!RFX.GuideTryDue(1000, 3999, 3000), "hints' live tables: no retry before 3 s");
+    Check(RFX.GuideTryDue(1000, 4000, 3000), "hints' live tables: retry after 3 s");
+    Check(RFX.GuideTryDue(int.MaxValue - 100, int.MinValue + 3000, 3000), "hints' live tables: the tick counter wrapping round");
     Eq(0L, RFX.PickHero(false, 7, false, 0, 6, out s), "form not alive, nothing selected: unknown");
     Eq(0L, RFX.GateHero(true, false, 7), "hero form present but hidden: no hero screen");
     Eq(7L, RFX.GateHero(true, true, 7), "hero form active: the hero as before");

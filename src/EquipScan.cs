@@ -585,10 +585,10 @@ namespace RealmForge {
     }
 
     /// <summary>The inventory's equipment grid (the form's content list); null when it cannot be read.</summary>
-    public static ListRead ReadInventoryList(ulong form) { return live == null ? null : ReadList(form, "m_Content_ScrollRect", "m_Content_InfinityGrid", live.Pid); }
+    public static ListRead ReadInventoryList(ulong form) { int pid = ListPid(); return pid == 0 ? null : ReadList(form, "m_Content_ScrollRect", "m_Content_InfinityGrid", pid); }
 
     /// <summary>The foundry's Ascension list (the panel's own list); null when it cannot be read.</summary>
-    public static ListRead ReadFoundryList(ulong panel) { return live == null ? null : ReadList(panel, "m_EquipList_ScrollRect", "m_EquipList_InfinityGrid", live.Pid); }
+    public static ListRead ReadFoundryList(ulong panel) { int pid = ListPid(); return pid == 0 ? null : ReadList(panel, "m_EquipList_ScrollRect", "m_EquipList_InfinityGrid", pid); }
 
     // an object the game's scripts hold in a field of a table (the field keeps a handle: an index into the script objects), 0 = none
     static ulong ScriptObject(ulong t, string field, string cls, int pid) {

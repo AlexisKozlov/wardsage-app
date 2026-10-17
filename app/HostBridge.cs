@@ -404,6 +404,7 @@ namespace RealmForge {
             if (!On("locate")) break;
             var lr = lastLocate; string lid = MiniJson.GetString(m, "id");
             if (lr != null && lr.Item != null && lr.Id == lid) {
+              RFX.EnsureLiveForGuides();
               overlay.SetLocate(lr); Log.Write("locate: show item " + lr.Item.Uid + (LocateAutoOn() ? " (auto click on)" : AutoClickOn() ? " (auto click is on, but the site's locateAuto switch is off: hints only)" : ""));
               if (addrs == null && !scanning && AutoClickOn()) StartScan(watch, true);   // the auto steps need the game's screens found
             }
@@ -440,6 +441,7 @@ namespace RealmForge {
             if (ll != null) for (int i = 0; i < ll.Count && i < uids.Count; i++) if (ll[i] is double) levels[uids[i]] = (int)Math.Max(0, Math.Min(99, (double)ll[i]));
             long hero = addrs != null ? RFX.ReadHero(addrs) : 0; if (hero <= 0) hero = RFX.AnyHeroUid();
             bool hintOnly = cmd == "sell.hint";
+            RFX.EnsureLiveForGuides();
             overlay.SetSell(uids, parts, levels.Count == uids.Count ? levels : null, hero, hintOnly);
             Log.Write("sell: " + (hintOnly ? "hint" : "run") + " " + uids.Count + " items, hero " + hero);
             if (hintOnly) break;
@@ -1231,6 +1233,7 @@ namespace RealmForge {
         rescanAfter = DateTime.UtcNow.AddSeconds(20); Log.Write("equip scan again: a new plan was received");
         StartScan(uids, false, true); return;
       }
+      RFX.EnsureLiveForGuides();
       if (addrs == null) { if (scanning) watch = uids; else StartScan(uids); return; }
       // new plan items are found through EquipData.equips on the next poll; a full scan only without it
       if (addrs.EquipData == 0) foreach (var u in uids) if (!addrs.Items.ContainsKey(u)) { StartScan(uids); return; }

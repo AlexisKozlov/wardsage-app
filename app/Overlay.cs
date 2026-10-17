@@ -1822,6 +1822,7 @@ namespace RealmForge {
     /// cleanup and the click gate take the screen from here (a short read failure is held for 1.5 s, see ScreenTracker).</summary>
     void ReadScreens(long now) {
       if (!ScreensWanted()) return;
+      RFX.EnsureLiveForGuides();   // the readers' basis (handle, regions, live tables) without waiting for the first account read; throttled and off-thread
       if (screens.Current != null && now >= screenReadAt && now - screenReadAt < 120) return;
       screenReadAt = now;
       IntPtr hwnd = GameWindow();

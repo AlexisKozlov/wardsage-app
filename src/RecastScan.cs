@@ -141,7 +141,7 @@ namespace RealmForge {
         ulong pop, t; int pt;
         if (Field(gf, "m_Panel_EquipFilter", out pop, out pt) && pt == T_TABLE && Field(pop, "m_AllEquips", out t, out tt) && tt == T_TABLE) s.GemList = OrderedInts(t);
         // optional: the function list's scroll (unreadable = null); never makes the gem screen or the foundry unreadable
-        if (s.GemOpen && live != null) { try { s.GemFuncList = ReadList(gf, "m_GemInfinityGrid_ScrollRect", "m_GemInfinityGrid_InfinityGrid", live.Pid); } catch (Exception e) { s.GemFuncList = null; SayOnce("the gem function list read failed", e); } }
+        if (s.GemOpen && ListPid() != 0) { try { s.GemFuncList = ReadList(gf, "m_GemInfinityGrid_ScrollRect", "m_GemInfinityGrid_InfinityGrid", ListPid()); } catch (Exception e) { s.GemFuncList = null; SayOnce("the gem function list read failed", e); } }
       }
       return s;
     }
@@ -160,7 +160,7 @@ namespace RealmForge {
       if (Field(pw, "m_ShowSuitIds", out t, out tt) && tt == T_TABLE) s.FilterShowSuits = OrderedInts(t);
       if (Field(pw, "m_LeftSuitList", out t, out tt) && tt == T_TABLE) s.FilterLeftSuits = OrderedInts(t);
       if (Field(pw, "m_RightSuitList", out t, out tt) && tt == T_TABLE) s.FilterRightSuits = OrderedInts(t);
-      if (s.FilterPanel == 1 && live != null) s.FilterSuitGrid = ReadList(pw, "m_SuitFilterGrid_ScrollRect", "m_SuitFilterGrid_InfinityGrid", live.Pid);
+      if (s.FilterPanel == 1 && ListPid() != 0) s.FilterSuitGrid = ReadList(pw, "m_SuitFilterGrid_ScrollRect", "m_SuitFilterGrid_InfinityGrid", ListPid());
     }
 
     // an array of numbers (keys 1..n) in order

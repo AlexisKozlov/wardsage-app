@@ -41,8 +41,63 @@ namespace RealmForge {
     /// seen until the app was restarted, live 27.09).</summary>
     public static void ForgetLive() { live = null; keyText.Clear(); }
 
+    // ------------------------------------------------------------------ the tables for the on-screen hints, without an account read
+    // The screen readers (lists, forms) need the process handle H, the memory regions (regs) and the live tables (their pid
+    // reaches the script-object pool); the first account read sets them up about a minute after the app starts. A hint asked
+    // for earlier found them missing for the whole session. This does just that discovery (no account read, no upload).
+    static int guideTryAt, guideBusy, readerPid, guidePid; static string guideWhy;
+
+    /// <summary>The retry gate: true when no try was made yet (lastTick 0) or at least <paramref name="gapMs"/> passed since it.</summary>
+    public static bool GuideTryDue(int lastTick, int nowTick, int gapMs) { return lastTick == 0 || unchecked(nowTick - lastTick) >= gapMs; }
+
+    /// <summary>The handle, the regions and the live tables are all there (nothing to find for the hints).</summary>
+    static bool LiveReady() { var lt = live; return H != IntPtr.Zero && regs != null && lt != null && (lt.EquipData != 0 || lt.HeroData != 0); }
+
+    /// <summary>Non-blocking: when the readers' basis is missing, ONE background job finds it (skipped while an account read or
+    /// another scan holds Extractor.Gate; tried again at most every 3 s). Logs the result.</summary>
+    public static void EnsureLiveForGuides() {
+      if (LiveReady()) return;
+      int now = Environment.TickCount; if (now == 0) now = 1;
+      if (!GuideTryDue(guideTryAt, now, 3000)) return;
+      if (Interlocked.CompareExchange(ref guideBusy, 1, 0) != 0) return;
+      guideTryAt = now;
+      Task.Factory.StartNew(() => {
+        try { GuideDiscovery(); }
+        catch (Exception e) { L("live: not found (" + e.GetType().Name + ": " + e.Message + ")"); }
+        finally { guideBusy = 0; }
+      });
+    }
+
+    static void GuideDiscovery() {
+      if (!Monitor.TryEnter(Extractor.Gate)) return;   // an account read / scan runs: it sets the same things up
+      try {
+        if (LiveReady()) return;
+        var sw = Stopwatch.StartNew();
+        string why = null;
+        int pid = GameInfo.FindGameProcess();
+        if (pid == 0) why = "the game is not running";
+        else if (Layout.Current == null) why = "no layout data yet";
+        else {
+          if (H == IntPtr.Zero || guidePid != pid) { H = OpenProcess(0x0410, false, pid); guidePid = pid; }
+          if (H == IntPtr.Zero) why = "cannot open the game process";
+          else {
+            readerPid = pid;
+            var lt = EnsureLive(pid, false);
+            if (lt.EquipData == 0 && lt.HeroData == 0) why = "the account tables are not in memory yet";
+          }
+        }
+        string said = why == null ? "ok" : why;
+        if (why == null) L("live: found for the hints in " + sw.ElapsedMilliseconds + " ms");
+        else if (said != guideWhy) L("live: not found (" + why + ")");
+        guideWhy = said;
+      } finally { Monitor.Exit(Extractor.Gate); }
+    }
+
+    /// <summary>The game pid the list readers use: the live tables' one, else the one the readers' handle was opened for.</summary>
+    static int ListPid() { var lt = live; return lt != null ? lt.Pid : readerPid; }
+
     internal static LiveTables EnsureLive(int pid, bool needForm) {
-      var lt = live; LastFindFresh = false;
+      var lt = live; LastFindFresh = false; readerPid = pid;
       if (lt != null && lt.Pid == pid && HasTable(lt.EquipData, "equips") && HasTable(lt.HeroData, KHeroes)
           && (!needForm || Layout.Current == null || (HasTable(lt.Form, "m_InfinityGridProxy") && LiveForm() == lt.Form))) {
         string why = StateGone(lt);
