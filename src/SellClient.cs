@@ -1,8 +1,9 @@
 // RealmForge extractor - storage cleanup («Очистить склад») from the RealmForge site.
 //
 // Contract (implemented by the site, lib/sell/handler.ts):
-//   GET  {site}/api/extractor/sell?lang=ru|en      Authorization: Bearer <sync code>
-//        200 {ok:true, list:{id, createdAt, items:[{uid, slot, name, setName, level, stars}]} | null}
+//   GET  {site}/api/extractor/sell?lang=ru|en&artifacts=1      Authorization: Bearer <sync code>
+//        200 {ok:true, list:{id, kind:"equip"|"artifact", createdAt, items:[{uid, slot, name, setName, level, stars}]} | null}
+//        "artifacts=1" tells the site this app can show an artifact list (the artifact tab's bulk sale); an older app never sends it and never gets one.
 //        401 invalid_token
 //   POST {site}/api/extractor/sell/{id}            body {"status":"done"|"cancelled"}
 //        200 {ok:true} | 401 | 404 not_found
@@ -17,6 +18,8 @@ namespace RealmForge {
 
   public sealed class SellList {
     public string Id, CreatedAt;
+    /// <summary>"equip" (gear items) or "artifact" (artifact uids: framed in the artifact tab's «Массовая продажа», never clicked).</summary>
+    public string Kind = "equip";
     public List<SellItem> Items = new List<SellItem>();
   }
 
@@ -30,7 +33,7 @@ namespace RealmForge {
 
     public static SellResult Get(string site, string code, string lang) {
       int http; string text, err;
-      if (!PlansClient.Send("GET", site + "/api/extractor/sell?lang=" + (lang == "en" ? "en" : "ru"), code, null, out http, out text, out err))
+      if (!PlansClient.Send("GET", site + "/api/extractor/sell?lang=" + (lang == "en" ? "en" : "ru") + "&artifacts=1", code, null, out http, out text, out err))
         return new SellResult { Status = PlansStatus.Unreachable, Details = err };
       return Interpret(http, text);
     }
@@ -54,7 +57,7 @@ namespace RealmForge {
         if (l != null) {
           string id = MiniJson.GetString(l, "id");
           if (!string.IsNullOrEmpty(id) && id.Length <= 64) {
-            var list = new SellList { Id = id, CreatedAt = Clip(MiniJson.GetString(l, "createdAt"), 40) };
+            var list = new SellList { Id = id, CreatedAt = Clip(MiniJson.GetString(l, "createdAt"), 40), Kind = MiniJson.GetString(l, "kind") == "artifact" ? "artifact" : "equip" };
             object iv; var items = l.TryGetValue("items", out iv) ? iv as List<object> : null;
             if (items != null) foreach (var x in items) {
               var o = MiniJson.AsObject(x); if (o == null || list.Items.Count >= MaxItems) continue;

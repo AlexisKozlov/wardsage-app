@@ -1,0 +1,5 @@
+{ "name": "Artifact storage cleanup never clicks a cell, even with the auto click on and a cell of its own list under the pointer", "cols": 7, "sell": { "uids": [ 9002, 9005 ], "artifact": true }, "frames": [
+  { "t": 0, "inv": { "open": true, "equip": false, "known": false, "art": true, "artKnown": true, "artBulk": true, "uids": [ 9001, 9002, 9003, 9004, 9005, 9006, 9007, 9008, 9009, 9010, 9011, 9012, 9013, 9014 ], "selected": [], "list": { "scrollY": 0, "cols": 7, "rowUnits": 116 } }, "expect": { "artBulk": true }, "clicks": [
+    { "owner": "Sell", "target": "InvBulkCell", "cellIndex": 1, "ok": [ 9002, 9005 ], "auto": true, "front": true, "expect": { "verdict": "Deny", "reason": "artifact" } } ] },
+  { "t": 100, "inv": { "open": true, "equip": false, "known": false, "art": true, "artKnown": true, "artBulk": true, "uids": [ 9001, 9002, 9003, 9004, 9005, 9006, 9007, 9008, 9009, 9010, 9011, 9012, 9013, 9014 ], "selected": [], "list": { "scrollY": 0, "cols": 7, "rowUnits": 116 } }, "expect": { "halt": "Sell:artifact" } } ]
+}

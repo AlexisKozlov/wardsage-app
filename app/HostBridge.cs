@@ -451,9 +451,12 @@ namespace RealmForge {
             if (ll != null) for (int i = 0; i < ll.Count && i < uids.Count; i++) if (ll[i] is double) levels[uids[i]] = (int)Math.Max(0, Math.Min(99, (double)ll[i]));
             long hero = addrs != null ? RFX.ReadHero(addrs) : 0; if (hero <= 0) hero = RFX.AnyHeroUid();
             bool hintOnly = cmd == "sell.hint";
+            // an artifact list is only ever a hint run (frames on the artifact tab's «Массовая продажа»): never a click, even from "sell.run"
+            bool artifact = MiniJson.GetString(m, "kind") == "artifact";
+            if (artifact) hintOnly = true;
             RFX.EnsureLiveForGuides();
-            overlay.SetSell(uids, parts, levels.Count == uids.Count ? levels : null, hero, hintOnly);
-            Log.Write("sell: " + (hintOnly ? "hint" : "run") + " " + uids.Count + " items, hero " + hero);
+            overlay.SetSell(uids, parts, levels.Count == uids.Count ? levels : null, hero, hintOnly, artifact);
+            Log.Write((artifact ? "art sell: " : "sell: ") + (hintOnly ? "hint" : "run") + " " + uids.Count + " items, hero " + hero);
             if (hintOnly) break;
             if (!AutoClickOn()) Log.Write("sell: waiting - auto click is off" + (cfg.AutoClick ? " (the site's switch)" : ""));
             if (addrs == null && !scanning && AutoClickOn()) StartScan(watch, true);   // the pilot needs the game's screens found
@@ -1353,7 +1356,7 @@ namespace RealmForge {
         var sb = new StringBuilder("{\"ev\":\"sell\",\"status\":\"ok\",\"list\":");
         if (r.List == null) sb.Append("null");
         else {
-          sb.Append("{\"id\":").Append(S(r.List.Id)).Append(",\"createdAt\":").Append(S(r.List.CreatedAt)).Append(",\"items\":[");
+          sb.Append("{\"id\":").Append(S(r.List.Id)).Append(",\"kind\":").Append(S(r.List.Kind)).Append(",\"createdAt\":").Append(S(r.List.CreatedAt)).Append(",\"items\":[");
           for (int i = 0; i < r.List.Items.Count; i++) {
             var it = r.List.Items[i]; if (i > 0) sb.Append(',');
             sb.Append("{\"uid\":").Append(N(it.Uid)).Append(",\"slot\":").Append(N(it.Slot)).Append(",\"name\":").Append(S(it.Name))

@@ -1,0 +1,4 @@
+{ "name": "Artifact storage cleanup never presses «Массовая продажа» or a tab by itself (not even when the gate's artifact switch is off)", "cols": 7, "frames": [
+  { "t": 0, "inv": { "open": true, "equip": false, "known": false, "art": true, "artKnown": true, "artBulk": false, "uids": [] }, "expect": { "screen": "Inventory", "artBulk": false }, "clicks": [
+    { "owner": "Sell", "target": "InvBulkEnter", "auto": true, "front": true, "expect": { "verdict": "Deny", "reason": "artifact" } } ] } ]
+}

@@ -276,6 +276,7 @@ namespace RealmForge {
     // storage cleanup without auto click («Подсказать в игре»): the same list, but the program only reads the inventory and
     // draws frames on the cells to select; every click is the player's
     bool sellHint;
+    bool sellArt;   // the list holds ARTIFACTS: a hint run on the artifact tab, nothing is ever clicked
     string shFrameSaid = "";
     string[] sellHintLines = new string[0]; string sellPillUp = "", sellPillDown = "";
     readonly LocateGrid sgrid = new LocateGrid();
@@ -460,9 +461,16 @@ namespace RealmForge {
 
     /// <summary>Storage cleanup: select these items on the game's sell screen (null = stop). The app opens the screen from
     /// the gear list of <paramref name="hero"/> (or of the hero the game shows); «Продать» is pressed by the player.</summary>
-    public void SetSell(System.Collections.Generic.ICollection<long> uids, System.Collections.Generic.ICollection<int> parts, System.Collections.Generic.Dictionary<long, int> levels, long hero, bool hintOnly = false) {
+    /// <param name="artifact">the list is artifacts (the artifact tab's «Массовая продажа»): always frames and plates only, whatever <paramref name="hintOnly"/> says</param>
+    public void SetSell(System.Collections.Generic.ICollection<long> uids, System.Collections.Generic.ICollection<int> parts, System.Collections.Generic.Dictionary<long, int> levels, long hero, bool hintOnly = false, bool artifact = false) {
       bool wasHint = sellHint;
-      sellHint = hintOnly && uids != null && uids.Count > 0;
+      bool run = uids != null && uids.Count > 0;
+      if (artifact) hintOnly = true;   // the artifact cleanup never clicks, even with the auto click on
+      sellHint = hintOnly && run;
+      bool nowArt = artifact && run;
+      if (nowArt != sellArt) { shCols = nowArt ? 7 : 8; shGeo = null; }   // the artifact list has 7 columns at the authored width, the gear list 8
+      sellArt = nowArt;
+      gate.NoSellClicks = sellArt;
       if (wasHint || sellHint) {
         // a hint run starts (or ends) clean: no frames, no plate, the rows' place unknown
         sgrid.Reset(); shInv = null; shHave = false; shReadSig = ""; shReadAt = 0; shFrames = null; shKey = ""; shLast = null; shUnkSince = -1; shHold = false;
@@ -1662,10 +1670,11 @@ namespace RealmForge {
       long now = NowMs();
       // the game's own reading of the inventory form, EVERY tick (not the 200 ms full read): is the screen on now, and the exact
       // scroll / columns of its list. The frames are placed from this alone; no picture decides where an item is.
-      bool formActive; var live = RFX.ReadInventoryLive(out formActive);
+      bool art = sellArt;
+      bool formActive; var live = art ? RFX.ReadArtifactLive(out formActive) : RFX.ReadInventoryLive(out formActive);
       if (live != null && live.Cols > 0 && live.Cols != shCols) shCols = live.Cols;
       if (shGeo == null || shGeoW != W || shGeoH != H || shGeoCols != shCols) {
-        shGeoW = W; shGeoH = H; shGeoCols = shCols; shGeo = SellGeometry.Inventory(W, U, shCols);
+        shGeoW = W; shGeoH = H; shGeoCols = shCols; shGeo = art ? SellGeometry.Artifacts(W, H, U, shCols, Geo.Rect("inventory.artList", W, H, U)) : SellGeometry.Inventory(W, U, shCols);
         sgrid.Reset();
       }
       // the inventory, read a few times a second (the form the game never built is searched for at most every 8 s). A new
@@ -1673,36 +1682,37 @@ namespace RealmForge {
       if (!shHave || Math.Abs(now - shReadAt) >= 200) {
         shReadAt = now;
         var raw = screens.Inv;   // the screen of this tick (ReadScreens)
-        bool bulk = raw != null && raw.Open && raw.EquipTab && raw.Bulk;
+        bool bulk = raw != null && raw.Open && (art ? raw.ArtTab && raw.ArtBulk : raw.EquipTab && raw.Bulk);
         if (bulk) {
-          // the columns: the game's own grid says (the picture only when it cannot be read)
-          int c = raw.List != null && raw.List.Cols > 0 ? raw.List.Cols : front ? InvColumns(o, cr, U) : 0;
+          // the columns: the game's own grid says (the picture only when it cannot be read; never for the artifact list: its columns come from the grid)
+          int c = raw.List != null && raw.List.Cols > 0 ? raw.List.Cols : front && !art ? InvColumns(o, cr, U) : 0;
           if (c > 0 && c != shCols) { shCols = c; shGeoCols = -1; }
         }
         if (bulk && sgrid.ListPtr != raw.ListPtr) sgrid.Reset();
-        string sig = SellHint.Classify(raw, sellWanted).StateKey;
+        string sig = SellHint.Classify(raw, sellWanted, art).StateKey;
         if (!shHave || sig == shReadSig) { shInv = raw; shHave = true; }
         shReadSig = sig;
       }
       // a screen the game no longer shows is not read from the old reading: the step falls back to «open the inventory»
       var inv = formActive && screens.Current != null && screens.Current.Kind == ScreenKind.Inventory ? shInv : null;
-      bool inBulk = inv != null && inv.Open && inv.EquipTab && inv.Bulk;
+      bool inBulk = inv != null && inv.Open && (art ? inv.ArtTab && inv.ArtBulk : inv.EquipTab && inv.Bulk);
       if (inBulk && sgrid.ListPtr != inv.ListPtr) sgrid.Reset();
       // row 1's place: the game's exact scroll, nothing else. Unreadable = no item frames at all (the text plate and the counts
       // stay), never guessed ones
       double row1 = double.NaN;
       if (inBulk && front && shGeo != null && live != null && live.Has) {
         inv.List = live;
-        if (FollowInventoryGrid(sgrid, sellScroll, shGeo, inv, o, cr, U, now, "sell")) row1 = sgrid.Row1;
+        if (art ? FollowArtifactGrid(sgrid, shGeo, inv, U, now) : FollowInventoryGrid(sgrid, sellScroll, shGeo, inv, o, cr, U, now, "sell")) row1 = sgrid.Row1;
       }
       // the drawn row 1 eases toward the scroll's value (no jumping between old and new reads)
       row1 = shSmooth.Step(row1, now, 4 * shGeo.PitchY * U);
       if (recB != null) recB.InvSmooth = row1;
       if (inBulk && front) {
         string why = !double.IsNaN(row1) ? "exact" : "none";
-        if (why != shFrameSaid) { shFrameSaid = why; if (why == "none") Log.Write("sell hint: the list's exact scroll cannot be read - no item frames, only the text plate"); }
+        if (why != shFrameSaid) { shFrameSaid = why; if (why == "none") Log.Write((art ? "art sell hint" : "sell hint") + ": the list's exact scroll cannot be read - no item frames, only the text plate"); }
       }
-      var step = SellHint.BuildExact(inv, sellWanted, shCols, row1, shGeo, W, H, U);
+      var step = SellHint.BuildExact(inv, sellWanted, shCols, row1, shGeo, W, H, U, art);
+      if (art) { string ak = step.StateKey; if (ak != artStepSaid) { artStepSaid = ak; Log.Write("art sell hint: step " + step.Key + " selected " + step.Selected + "/" + step.Total + " missing " + step.Missing + " extra " + step.Extra + " cols " + shCols + (double.IsNaN(row1) ? " row1 none" : " row1 " + row1.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture))); } }
       // the screen is Unknown (a form is being searched for): the last step and its plate stay for up to 15 s, without frames
       var scrS = screens.Current;
       if (scrS != null && scrS.Kind == ScreenKind.Unknown) { if (shUnkSince < 0) shUnkSince = now; } else shUnkSince = -1;
@@ -1736,9 +1746,16 @@ namespace RealmForge {
       if (shHold) { DrawTipTop(sellHintLines); return; }   // held: the plate only
       if (step.Kind == SellHintKind.PressBulk) {
         // «Массовая продажа» under the list (bottom left): where the auto mode clicks
-        var pb = SellHint.PressBulkRect(W, H, U);
+        var pb = art ? SellHint.ArtBulkRect(W, H, U) : SellHint.PressBulkRect(W, H, U);
         frame++;
         DrawTip(o.X + pb[0], o.Y + pb[1], pb[2], pb[3], sellHintLines, H);
+        return;
+      }
+      if (step.Kind == SellHintKind.OpenArtTab) {
+        // the left menu's third toggle «Артефакт»
+        var tb = SellHint.ArtTabRect(W, H, U);
+        frame++;
+        DrawTip(o.X + tb[0], o.Y + tb[1], tb[2], tb[3], sellHintLines, H);
         return;
       }
       if (step.Kind == SellHintKind.NeedPosition) { DrawTipTop(sellHintLines); return; }
@@ -2058,6 +2075,21 @@ namespace RealmForge {
       if (recB != null) { recB.InvRaw = inv.List.ScrollY; recB.InvRow1 = r1; }
       grid.FromScroll(r1, inv.ListPtr);
       if (gridSaid != who + ":scroll") { gridSaid = who + ":scroll"; Log.Write(who + ": the inventory grid from the game's scroll (" + inv.List + ")"); }
+      return true;
+    }
+
+    string artStepSaid = "";
+    /// <summary>The artifact list's rows from the game's own scroll alone (no picture: the stat bars are the gear list's). True = placed.</summary>
+    bool FollowArtifactGrid(LocateGrid grid, SellGeometry geo, InventoryScreen inv, double U, long now) {
+      if (inv == null || inv.List == null || !inv.List.Has) {
+        if (gridSaid != "art:none") { gridSaid = "art:none"; Log.Write("art sell hint: the artifact list's scroll cannot be read (or the layout data has no grid fields)"); }
+        return false;
+      }
+      double r1 = sellScroll.Row1(geo, inv.List, double.NaN, U, now);
+      if (double.IsNaN(r1)) return false;
+      if (recB != null) { recB.InvRaw = inv.List.ScrollY; recB.InvRow1 = r1; }
+      grid.FromScroll(r1, inv.ListPtr);
+      if (gridSaid != "art:scroll") { gridSaid = "art:scroll"; Log.Write("art sell hint: the artifact grid from the game's scroll (" + inv.List + ")"); }
       return true;
     }
 

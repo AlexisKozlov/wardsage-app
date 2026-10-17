@@ -8,8 +8,9 @@
 //   dotnet exec ... ScreenReplay.dll [fixtures dir]      exit code 0 = everything passed
 //
 // Fixture: {"name", "request": {"purpose","uid","slot","hero"}, "cols", "frames": [{"t", "inv", "rs", "hero", "city", "expect", "clicks"}]}
-//   inv/rs/hero null or missing = that read failed. expect: screen, held, bulk, tab, modal, step, todo, why, halt (owner:reason),
-//   frame (a frame for the step exists). clicks: {"owner","target","auto","front","cellIndex","cellKind","ok","expect":{"verdict","reason"}}
+//   inv/rs/hero null or missing = that read failed. expect: screen, held, bulk, artBulk, brief (a substring of the screen's brief), sellStep (the storage
+//   cleanup's step key; needs "sell"), tab, modal, step, todo, why, halt (owner:reason), frame (a frame for the step exists). Optional "sell":
+//   {"uids": [...], "artifact": true} = a storage cleanup list (an artifact list also switches the gate's artifact no-click rule on). clicks: {"owner","target","auto","front","cellIndex","cellKind","ok","expect":{"verdict","reason"}}
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -40,7 +41,8 @@ static class ScreenReplay {
 
   static InventoryScreen InvOf(Dictionary<string, object> d) {
     if (d == null) return null;
-    var s = new InventoryScreen { Open = Bool(d, "open", true), EquipTab = Bool(d, "equip", true), Bulk = Bool(d, "bulk", false), BulkKnown = Bool(d, "known", true), Current = (long)Num(d, "current", 0) };
+    var s = new InventoryScreen { Open = Bool(d, "open", true), EquipTab = Bool(d, "equip", true), Bulk = Bool(d, "bulk", false), BulkKnown = Bool(d, "known", true), Current = (long)Num(d, "current", 0),
+      ArtTab = Bool(d, "art", false), ArtBulk = Bool(d, "artBulk", false), ArtBulkKnown = Bool(d, "artKnown", false) };
     s.Uids.AddRange(Longs(Get(d, "uids"))); foreach (var u in Longs(Get(d, "selected"))) s.Selected.Add(u);
     s.List = ListOf(O(Get(d, "list")));
     s.ListPtr = 1;
@@ -81,6 +83,8 @@ static class ScreenReplay {
       req = new LocateRequest { Id = "r", Purpose = Str(rq, "purpose") ?? "recast", Item = item, HeroUid = (long)Num(rq, "hero", 0) };
     }
     int cols = (int)Num(fx, "cols", 8);
+    var sellSpec = O(Get(fx, "sell")); var sellWanted = new HashSet<long>(); bool sellArt = false;
+    if (sellSpec != null) { foreach (var u in Longs(Get(sellSpec, "uids"))) sellWanted.Add(u); sellArt = Bool(sellSpec, "artifact", false); gate.NoSellClicks = sellArt; }
     double U = Ui.Unit(W, H);
     var inv0 = new InvScroll();
     int n = 0;
@@ -97,6 +101,9 @@ static class ScreenReplay {
         if ((e = Str(ex, "screen")) != null) Check(st.Kind.ToString() == e, at + ": screen " + e + (st.Kind.ToString() == e ? "" : " (got " + st.Brief + ")"));
         if (Get(ex, "held") is bool) Check(st.Held == (bool)Get(ex, "held"), at + ": held=" + st.Held);
         if (Get(ex, "bulk") is bool) Check((st.Kind == ScreenKind.Inventory && st.InvBulk) == (bool)Get(ex, "bulk"), at + ": bulk=" + st.InvBulk);
+        if (Get(ex, "artBulk") is bool) Check((st.Kind == ScreenKind.Inventory && st.InvArtBulk) == (bool)Get(ex, "artBulk"), at + ": artBulk=" + st.InvArtBulk);
+        if ((e = Str(ex, "brief")) != null) Check(st.Brief.Contains(e), at + ": brief has '" + e + "' (got " + st.Brief + ")");
+        if ((e = Str(ex, "sellStep")) != null) Check(SellHint.Classify(tracker.Inv, sellWanted, sellArt).Key == e, at + ": storage cleanup step " + e + " (got " + SellHint.Classify(tracker.Inv, sellWanted, sellArt).Key + ")");
         if ((e = Str(ex, "tab")) != null) Check(st.FoundryTabName == e, at + ": foundry tab " + e + " (got " + st.FoundryTabName + ")");
         if (Get(ex, "modal") is bool) Check(st.ModalOpen == (bool)Get(ex, "modal"), at + ": modal=" + st.ModalOpen);
         if (Str(ex, "halt") == "") { foreach (ClickOwner ow0 in Enum.GetValues(typeof(ClickOwner))) Check(!gate.Halted(ow0), at + ": " + ow0 + " not halted"); }

@@ -13,7 +13,8 @@ namespace RealmForge {
     NeedPosition,    // in the grid, but the rows' place on the screen is not known yet (the list was scrolled)
     Select,          // items of the list are still to select (and/or a stray one is selected)
     AllSelected,     // every item of the list that is in the grid is selected: press «Продать»
-    NoneHere         // none of the list's items is in the grid (sold, worn or hidden by the inventory's filter)
+    NoneHere,        // none of the list's items is in the grid (sold, worn or hidden by the inventory's filter)
+    OpenArtTab       // artifact list: the inventory is on another tab than «Артефакт»
   }
 
   /// <summary>A frame on a cell: "todo" (list item, not selected), "done" (list item, selected), "extra" (selected, not in
@@ -138,20 +139,26 @@ namespace RealmForge {
     /// <summary>The step with frames placed from the game's own scroll: <paramref name="row1"/> = client y of row 1's top from
     /// InvScroll.Row1 (the exact scroll of the list, read every tick), NaN = the exact read is not available - then there are
     /// NO frames at all (the step keeps its counts: the text plate "marked X of N" is all that is shown), never guessed ones.</summary>
-    public static SellHintStep BuildExact(InventoryScreen inv, ICollection<long> wanted, int cols, double row1, SellGeometry g, double W, double H, double U) {
-      var st = Classify(inv, wanted);
+    public static SellHintStep BuildExact(InventoryScreen inv, ICollection<long> wanted, int cols, double row1, SellGeometry g, double W, double H, double U, bool artifact = false) {
+      var st = Classify(inv, wanted, artifact);
       if (st.Kind != SellHintKind.Select || double.IsNaN(row1) || g == null) return st;
       var grid = new LocateGrid();
       grid.FromScroll(row1, inv.ListPtr);
-      return Build(inv, wanted, cols, grid, g, W, H, U);
+      return Build(inv, wanted, cols, grid, g, W, H, U, artifact);
     }
 
     /// <summary>The step from what the inventory shows, without the rows' place on the screen (so never NeedPosition).</summary>
-    public static SellHintStep Classify(InventoryScreen inv, ICollection<long> wanted) {
+    /// <param name="artifact">the list holds artifacts: the tab is «Артефакт» and its own bulk-sale mode (inv.ArtTab / ArtBulk)</param>
+    public static SellHintStep Classify(InventoryScreen inv, ICollection<long> wanted, bool artifact = false) {
       var st = new SellHintStep();
       if (inv == null || !inv.Open) { st.Kind = SellHintKind.OpenInventory; return st; }
-      if (!inv.EquipTab) { st.Kind = SellHintKind.OpenEquipTab; return st; }
-      if (!inv.Bulk) { st.Kind = SellHintKind.PressBulk; return st; }
+      if (artifact) {
+        if (!inv.ArtTab) { st.Kind = SellHintKind.OpenArtTab; return st; }
+        if (!inv.ArtBulk) { st.Kind = SellHintKind.PressBulk; return st; }
+      } else {
+        if (!inv.EquipTab) { st.Kind = SellHintKind.OpenEquipTab; return st; }
+        if (!inv.Bulk) { st.Kind = SellHintKind.PressBulk; return st; }
+      }
       var inList = new HashSet<long>(inv.Uids);
       var want = wanted as HashSet<long> ?? new HashSet<long>(wanted ?? new long[0]);
       foreach (var u in want) {
@@ -167,8 +174,8 @@ namespace RealmForge {
 
     /// <summary>The step with the frames of the cells in view. <paramref name="grid"/>: where the rows are on the screen
     /// (null or without a place = unknown: "NeedPosition", no frames).</summary>
-    public static SellHintStep Build(InventoryScreen inv, ICollection<long> wanted, int cols, LocateGrid grid, SellGeometry g, double W, double H, double U) {
-      var st = Classify(inv, wanted);
+    public static SellHintStep Build(InventoryScreen inv, ICollection<long> wanted, int cols, LocateGrid grid, SellGeometry g, double W, double H, double U, bool artifact = false) {
+      var st = Classify(inv, wanted, artifact);
       if (st.Kind != SellHintKind.Select) return st;
       if (grid == null || !grid.Has || g == null) { st.Kind = SellHintKind.NeedPosition; return st; }
       if (cols < 1) cols = 1;
@@ -195,6 +202,21 @@ namespace RealmForge {
     public static int[] PressBulkRect(double W, double H, double U) {
       int bw = (int)(0.2 * U), bh = (int)(0.065 * U);
       return new[] { (int)(0.5867 * U) - bw / 2, (int)(H - 0.0723 * U) - bh / 2, bw, bh };
+    }
+
+    /// <summary>The artifact tab's «Массовая продажа» (bottom left, geometry key inventory.artBulkSell; research numbers when the site's file has none):
+    /// {x, y, w, h} in client px.</summary>
+    public static int[] ArtBulkRect(double W, double H, double U) {
+      var r = Geo.Rect("inventory.artBulkSell", W, H, U);
+      if (r != null && r.W > 4 && r.H > 4) return new[] { (int)r.X, (int)r.Y, (int)r.W, (int)r.H };
+      return new[] { (int)(0.7428 * U), (int)(H - 0.1124 * U), (int)(0.2636 * U), (int)(0.0842 * U) };
+    }
+
+    /// <summary>The left menu's third toggle «Артефакт» (geometry key inventory.leftTab.artifact): {x, y, w, h} in client px.</summary>
+    public static int[] ArtTabRect(double W, double H, double U) {
+      var r = Geo.Rect("inventory.leftTab.artifact", W, H, U);
+      if (r != null && r.W > 4 && r.H > 4) return new[] { (int)r.X, (int)r.Y, (int)r.W, (int)r.H };
+      return new[] { (int)(0.0023 * U), (int)(0.4022 * U), (int)(0.1688 * U), (int)(0.125 * U) };
     }
 
     /// <summary>Keeps the frames that did not really move: a frame within <paramref name="tol"/> px of the same cell's frame

@@ -34,6 +34,25 @@ for (const lang of ['ru', 'en']) {
   // the page's lines
   ok(T[lang].sellHintLead && !/^sell/.test(T[lang].sellHintLead), lang + ': sellHintLead');
 }
+// artifact lists: their own words for the tab, the items and the stray one; the same steps otherwise
+for (const lang of ['ru', 'en']) {
+  const t = tr(lang);
+  ok(SH.KINDS.includes('openArtTab'), lang + ': the artifact tab step exists');
+  const tab = SH.describe(st({ step: 'openArtTab' }), t, 'artifact');
+  ok(tab.head === T[lang].shArtTab && tab.tone === 'info' && tab.tip.length === 1, lang + ': open the artifact tab');
+  ok(SH.describe(st({ step: 'pressBulk' }), t, 'artifact').head === T[lang].shBulk, lang + ': press bulk sell (same words)');
+  ok(SH.describe(st(), t, 'artifact').head === T[lang].shSelectArt, lang + ': tick the framed artifacts');
+  ok(SH.describe(st({ extra: 1 }), t, 'artifact').head === T[lang].shExtraArt && SH.describe(st({ extra: 1 }), t, 'artifact').tone === 'warn', lang + ': a stray artifact -> warning');
+  ok(SH.describe(st({ step: 'noneHere' }), t, 'artifact').head === T[lang].shNoneArt, lang + ': none here');
+  ok(SH.describe(st({ step: 'allSelected', selected: 3 }), t, 'artifact').head === T[lang].shAll, lang + ': all ticked -> press Sell (same words)');
+  ok(SH.describe(st({ below: 4 }), t, 'artifact').pillDown.includes('4'), lang + ': the scroll pill for artifacts');
+  ok(SH.describe(st(), t).head === T[lang].shSelect && SH.describe(st({ step: 'noneHere' }), t, 'equip').head === T[lang].shNone, lang + ': gear words unchanged');
+  for (const k of SH.KINDS) {
+    const d = SH.describe(st({ step: k, extra: 0 }), t, 'artifact');
+    ok(d.tip.every((x) => x.length <= 70) && !/^sh[A-Z]/.test(d.head), lang + ': artifact step ' + k + ' text is short and resolved');
+  }
+  ok(T[lang].sellTitleArt && T[lang].sellHintLeadArt && T[lang].sellShowArt && !/ты сам.*автонажат/i.test(T[lang].sellHintLeadArt), lang + ': artifact card texts');
+}
 // the texts asked for
 ok(T.ru.sellHintLead === 'Программа покажет рамками, какие вещи отметить; отмечаешь ты сам.', 'ru: lead text');
 ok(T.ru.shAll === 'Все отмечены — нажми «Продать»' && T.ru.shExtra === 'Эта вещь не из списка — сними с неё отметку' && T.en.shExtra === 'This item is not on the list — untick it', 'ru/en: step texts');

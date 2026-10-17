@@ -398,21 +398,23 @@
   // «Чистка склада»: the list from the site; the app selects it on the game's sell screen, the player presses «Продать»
   function sellCard() {
     const L = S.sell, n = L.list.items.length;
-    const hintMode = L.run ? L.hint : !S.autoClick;   // auto click off: the program only shows frames, the player selects
-    const hd = L.run && L.hint ? SH.describe(L.hs, t) : null;
+    const art = L.list.kind === 'artifact';   // artifacts: frames only, whatever the auto click setting says
+    const hintMode = art || (L.run ? L.hint : !S.autoClick);   // auto click off: the program only shows frames, the player selects
+    const hd = L.run && L.hint ? SH.describe(L.hs, t, art ? 'artifact' : 'equip') : null;
     const st = hd ? [hd.head].concat(hd.lines).join(' · ') : L.run ? (L.state === 'done' ? t('sellDone', L.selected) : L.state === 'failed' ? t('sellFailed') : (L.state || '').indexOf('gate_') === 0 ? t('gateStop', t('gateWhy_' + L.state.slice(5))) : L.state === 'no_city' ? t('sellNoCity')
       : L.state === 'open' ? t('sellOpening') : L.state === 'background' ? t('sellBack') : L.state === 'paused' ? t('sellPaused') : t('sellWork', L.selected, n)) : '';
     const hs = hd ? L.hs : null;
     const warn = hd ? [hs && hs.missing ? t('sellMissing', hs.missing) : '', hs && hs.extra && hs.step !== 'select' ? t('sellExtra', hs.extra) : ''].filter(Boolean).join(' ')
       : [L.missing ? t('sellMissing', L.missing) : '', L.extra ? t('sellExtra', L.extra) : ''].filter(Boolean).join(' ');
     const runBtns = L.run ? `<button class="btn-line" data-act="sellStop">${esc(t('stopBtn'))}</button>`
+      : art ? `<button class="btn-gold" data-act="sellRun" ${S.game.running ? '' : 'disabled'}>${esc(t('sellShowArt'))}</button>`
       : S.autoClick ? `<button class="btn-gold" data-act="sellRun" ${S.game.running ? '' : 'disabled'}>${esc(t('sellRun'))}</button>`
       : `<button class="btn-line" data-act="sellAuto" ${S.game.running ? '' : 'disabled'}>${esc(t('sellAutoRun'))}</button>`;
     return `<div class="card sell"><div class="row" style="justify-content:space-between;align-items:flex-start">
-        <div><h3>${esc(t('sellTitle'))}</h3><div class="meta">${esc(t('sellCount', n))}</div></div>
+        <div><h3>${esc(t(art ? 'sellTitleArt' : 'sellTitle'))}</h3><div class="meta">${esc(t('sellCount', n))}</div></div>
         <div class="row">${runBtns}
           <button class="btn-line" data-act="sellCancel">${esc(t('sellCancel'))}</button></div></div>
-      <p class="lead">${esc(t(hintMode ? 'sellHintLead' : 'sellLead'))}</p>
+      <p class="lead">${esc(t(art ? 'sellHintLeadArt' : hintMode ? 'sellHintLead' : 'sellLead'))}</p>
       ${st ? `<p><b>${esc(st)}</b></p>` : ''}${warn ? `<p class="warn">${esc(warn)}</p>` : ''}</div>`;
   }
   // «Найти в игре»: the item's card, the step the game is at and what to press; the program only shows hints
@@ -443,6 +445,7 @@
 
   function sellStart() {
     const L = S.sell; if (!L.list) return;
+    if (L.list.kind === 'artifact') { sellHintStart(); return; }   // an artifact list is never run with clicks
     L.run = true; L.hint = false; L.state = 'work';
     host.send({ cmd: 'sell.run', uids: L.list.items.map((x) => x.uid), slots: [...new Set(L.list.items.map((x) => x.slot))], levels: L.list.items.map((x) => x.level || 0) });
     render();
@@ -461,14 +464,14 @@
   // Sent once per list (hintFor): not again on every render, but again when a new list comes in.
   function sellAutoHint() {
     const L = S.sell;
-    if (!L.list || S.autoClick || !S.game.running) return;
+    if (!L.list || (S.autoClick && L.list.kind !== 'artifact') || !S.game.running) return;
     if (L.run && L.hint && L.hintFor === L.list.id) return;
     sellHintStart();
   }
   function sellHintStart() {
     const L = S.sell; if (!L.list) return;
     L.run = true; L.hint = true; L.hintFor = L.list.id; L.hs = null; L.tipKey = ''; L.peakAll = false; L.state = '';
-    host.send({ cmd: 'sell.hint', uids: L.list.items.map((x) => x.uid), slots: [...new Set(L.list.items.map((x) => x.slot))], levels: L.list.items.map((x) => x.level || 0) });
+    host.send({ cmd: 'sell.hint', kind: L.list.kind === 'artifact' ? 'artifact' : 'equip', uids: L.list.items.map((x) => x.uid), slots: [...new Set(L.list.items.map((x) => x.slot))], levels: L.list.items.map((x) => x.level || 0) });
     host.send({ cmd: 'sell.tip', lines: [t('shOpenInv')], pillUp: '', pillDown: '' });
     render();
   }
@@ -1066,7 +1069,7 @@
         const L = S.sell; if (!L.run || !L.hint || !L.list) break;
         L.hs = m;
         if (m.step === 'allSelected') L.peakAll = true;
-        const d = SH.describe(m, t), key = d.tip.join('|') + '#' + d.pillUp + '#' + d.pillDown;
+        const d = SH.describe(m, t, L.list.kind === 'artifact' ? 'artifact' : 'equip'), key = d.tip.join('|') + '#' + d.pillUp + '#' + d.pillDown;
         if (key !== L.tipKey) { L.tipKey = key; host.send({ cmd: 'sell.tip', lines: d.tip, pillUp: d.pillUp, pillDown: d.pillDown }); }
         // sold: every item of the list was selected before, and none of them is in the game's list any more
         if (L.peakAll && m.step === 'noneHere' && m.missing === L.list.items.length) {

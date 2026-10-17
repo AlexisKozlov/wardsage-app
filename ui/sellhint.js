@@ -4,21 +4,24 @@
 // st: {step, selected, total, missing, extra, below, above}   (total = list items in the inventory's grid now)
 // t(key, …args) is the interface's text lookup.
 (function (root) {
-  const KINDS = ['openInventory', 'openEquipTab', 'pressBulk', 'needPosition', 'select', 'allSelected', 'noneHere'];
+  const KINDS = ['openInventory', 'openEquipTab', 'pressBulk', 'needPosition', 'select', 'allSelected', 'noneHere', 'openArtTab'];
 
   // -> {tone: 'info'|'warn'|'done', head, lines:[…], tip:[…] (the plate over the game, ≤ 2 short lines), pillUp, pillDown}
-  function describe(st, t) {
+  // kind: 'equip' (default) or 'artifact' (the artifact tab's bulk sale: its own words for the tab, the items and the stray one)
+  function describe(st, t, kind) {
+    const art = kind === 'artifact';
     if (!st || KINDS.indexOf(st.step) < 0) return { tone: 'info', head: t('shOpenInv'), lines: [], tip: [t('shOpenInv')], pillUp: '', pillDown: '' };
     const count = t('shCount', st.selected || 0, st.total || 0);
     let r;
     switch (st.step) {
       case 'openInventory': r = { tone: 'info', head: t('shOpenInv'), lines: [] }; break;
       case 'openEquipTab': r = { tone: 'info', head: t('shEquipTab'), lines: [] }; break;
+      case 'openArtTab': r = { tone: 'info', head: t('shArtTab'), lines: [] }; break;
       case 'pressBulk': r = { tone: 'info', head: t('shBulk'), lines: [] }; break;
       case 'needPosition': r = { tone: 'info', head: t('shScrollTop'), lines: [count] }; break;
       case 'allSelected': r = { tone: 'done', head: t('shAll'), lines: [count] }; break;
-      case 'noneHere': r = { tone: 'warn', head: t('shNone'), lines: [] }; break;
-      default: r = st.extra > 0 ? { tone: 'warn', head: t('shExtra'), lines: [count] } : { tone: 'info', head: t('shSelect'), lines: [count] };
+      case 'noneHere': r = { tone: 'warn', head: t(art ? 'shNoneArt' : 'shNone'), lines: [] }; break;
+      default: r = st.extra > 0 ? { tone: 'warn', head: t(art ? 'shExtraArt' : 'shExtra'), lines: [count] } : { tone: 'info', head: t(art ? 'shSelectArt' : 'shSelect'), lines: [count] };
     }
     r.tip = [r.head].concat(r.lines.slice(0, 1));
     const sel = st.step === 'select';

@@ -68,12 +68,12 @@ namespace RealmForge {
     public static string InvCore(InventoryScreen s) {
       if (s == null) return "null";
       var sel = new List<long>(s.Selected); sel.Sort();
-      return "{\"open\":" + B(s.Open) + ",\"eq\":" + B(s.EquipTab) + ",\"bulk\":" + B(s.Bulk) + ",\"known\":" + B(s.BulkKnown) + ",\"ptr\":\"" + s.ListPtr.ToString(Inv) + "\",\"cur\":" + L(s.Current)
+      return "{\"open\":" + B(s.Open) + ",\"eq\":" + B(s.EquipTab) + ",\"bulk\":" + B(s.Bulk) + ",\"known\":" + B(s.BulkKnown) + ",\"art\":" + B(s.ArtTab) + ",\"abulk\":" + B(s.ArtBulk) + ",\"aknown\":" + B(s.ArtBulkKnown) + ",\"ptr\":\"" + s.ListPtr.ToString(Inv) + "\",\"cur\":" + L(s.Current)
         + ",\"uids\":" + Arr(s.Uids) + ",\"sel\":" + Arr(sel) + "}";
     }
     public static InventoryScreen ParseInv(object core, object list) {
       var d = O(core); if (d == null) return null;
-      var s = new InventoryScreen { Open = Bool(d, "open", false), EquipTab = Bool(d, "eq", false), Bulk = Bool(d, "bulk", false), BulkKnown = Bool(d, "known", false), ListPtr = Ptr(d, "ptr"), Current = (long)Num(d, "cur", 0) };
+      var s = new InventoryScreen { Open = Bool(d, "open", false), EquipTab = Bool(d, "eq", false), Bulk = Bool(d, "bulk", false), BulkKnown = Bool(d, "known", false), ArtTab = Bool(d, "art", false), ArtBulk = Bool(d, "abulk", false), ArtBulkKnown = Bool(d, "aknown", false), ListPtr = Ptr(d, "ptr"), Current = (long)Num(d, "cur", 0) };
       s.Uids.AddRange(Longs(Get(d, "uids"), false));
       foreach (var u in Longs(Get(d, "sel"), false)) s.Selected.Add(u);
       s.List = ParseList(list);

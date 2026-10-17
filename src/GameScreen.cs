@@ -40,6 +40,7 @@ namespace RealmForge {
     public ScreenKind Kind = ScreenKind.Unknown;
     // Inventory
     public bool InvEquipTab, InvBulk, InvBulkKnown;
+    public bool InvArtTab, InvArtBulk, InvArtBulkKnown;   // on «Артефакт» (then InvEquipTab is false): its «Массовая продажа» and whether the mode was read
     public long InvSelected;          // the item whose card is open (normal mode), 0 = none
     public string InvSelKey = "";     // the bulk-sale choice (count:sum of uids), to see a click change it
     // HeroScreen
@@ -76,7 +77,10 @@ namespace RealmForge {
       get {
         var sb = new StringBuilder(Kind.ToString());
         switch (Kind) {
-          case ScreenKind.Inventory: sb.Append(InvEquipTab ? " equip" : " other-tab").Append(!InvBulkKnown ? " bulk?" : InvBulk ? " BULK-SALE" : " normal"); break;
+          case ScreenKind.Inventory:
+            if (InvArtTab) sb.Append(" artifact").Append(!InvArtBulkKnown ? " bulk?" : InvArtBulk ? " ART-BULK-SALE" : " normal");
+            else sb.Append(InvEquipTab ? " equip" : " other-tab").Append(!InvBulkKnown ? " bulk?" : InvBulk ? " BULK-SALE" : " normal");
+            break;
           case ScreenKind.HeroScreen: sb.Append(" hero ").Append(Hero).Append(" tab ").Append(HeroTab).Append(" slot ").Append(HeroSlot); break;
           case ScreenKind.Foundry: sb.Append(' ').Append(FoundryTabName).Append(FoundryPopup ? " popup" : ""); break;
           case ScreenKind.Gem: sb.Append(" func ").Append(GemFunc); break;
@@ -109,6 +113,7 @@ namespace RealmForge {
       } else if (inv != null && inv.Open) {
         s.Kind = ScreenKind.Inventory;
         s.InvEquipTab = inv.EquipTab; s.InvBulk = inv.Bulk; s.InvBulkKnown = inv.BulkKnown;
+        s.InvArtTab = inv.ArtTab; s.InvArtBulk = inv.ArtBulk; s.InvArtBulkKnown = inv.ArtBulkKnown;
         s.InvSelected = inv.Current;
         long sum = 0; foreach (var u in inv.Selected) sum = unchecked(sum + u);
         s.InvSelKey = inv.Selected.Count + ":" + sum;
@@ -184,7 +189,7 @@ namespace RealmForge {
 
     static ScreenState ShallowCopy(ScreenState s) {
       var c = new ScreenState();
-      c.Kind = s.Kind; c.InvEquipTab = s.InvEquipTab; c.InvBulk = s.InvBulk; c.InvBulkKnown = s.InvBulkKnown; c.InvSelected = s.InvSelected; c.InvSelKey = s.InvSelKey;
+      c.Kind = s.Kind; c.InvEquipTab = s.InvEquipTab; c.InvBulk = s.InvBulk; c.InvBulkKnown = s.InvBulkKnown; c.InvArtTab = s.InvArtTab; c.InvArtBulk = s.InvArtBulk; c.InvArtBulkKnown = s.InvArtBulkKnown; c.InvSelected = s.InvSelected; c.InvSelKey = s.InvSelKey;
       c.Hero = s.Hero; c.HeroTab = s.HeroTab; c.HeroSlot = s.HeroSlot;
       c.FoundryTab = s.FoundryTab; c.FoundryPopup = s.FoundryPopup; c.FoundrySel = s.FoundrySel; c.FoundryKey = s.FoundryKey;
       c.GemFunc = s.GemFunc; c.GemSel = s.GemSel; c.ModalOpen = s.ModalOpen; c.ModalWhy = s.ModalWhy;

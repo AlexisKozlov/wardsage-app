@@ -56,6 +56,23 @@ namespace RealmForge {
       };
     }
 
+    /// <summary>The artifact tab's list (Panel_ArtifactPanel, «Массовая продажа»): cells of the grid are <paramref name="cols"/> per row across the list's width
+    /// (left edge 0.1938 U from the left, right edge 0.4969 U from the right, top 0.1922 U, bottom 0.14 U above the window's bottom), a row is 116 of the canvas's
+    /// 640 units; the card in a cell is 80 x 110 units, centred. No part filter, no pop-up. <paramref name="list"/> = the list's rectangle from the site's
+    /// geometry file (inventory.artList, client px) or null (then the numbers above). Not measured on the live game.</summary>
+    public static SellGeometry Artifacts(double W, double H, double U, int cols, GeoRect list = null) {
+      if (cols < 1) cols = 1;
+      double left = 0.1938, right = W / U - 0.4969, top = 0.1922, viewBottom = 0.86;   // ViewBottom: from the top edge's side, bottom edge = H - (1 - ViewBottom) U
+      if (list != null && list.W > 10 && list.H > 10) { left = list.X / U; right = list.Right / U; top = list.Y / U; viewBottom = 1 - (H - list.Bottom) / U; }
+      double pitchX = (right - left) / cols, cardW = 80.0 / 640, cardH = 110.0 / 640, row = 116.0 / 640;
+      return new SellGeometry {
+        X0 = left - W / (2 * U) + (pitchX - cardW) / 2, PitchX = pitchX, CellW = cardW, CellH = cardH, Columns = cols,
+        PitchY = row, TitleRow = 1, ViewTop = top, TopPad = (row - cardH) / 2, ViewBottom = viewBottom,
+        BarTop = 0, BarBottom = cardH,
+        PartX0 = double.NaN, ResetX = double.NaN, PopupX0 = 1, PopupX1 = 0,
+      };
+    }
+
     public double RowHeight(int type) { return type == 2 ? PitchY * TitleRow : type == 3 ? PitchY * EmptyRow : PitchY; }
     public double RowOffset(int[] types, int row) {
       double y = 0;

@@ -654,6 +654,7 @@ static class CoreTests {
     LocateFoundryPilotTests();
     LocateGemAndListTests();
     SellHintTests();
+    ArtifactSellTests();
 
     Console.WriteLine("Fight timeline (src/TimelineBuilder.cs: samples of the running fight + its command record):");
     TimelineTests();
@@ -3247,6 +3248,148 @@ static class CoreTests {
       var g4 = new LocateGrid(); g4.FromClick(g, 4, 500, U, 9);
       Check(g4.Has && g4.ListPtr == 9 && Math.Abs(g4.RowTop(g, 4, U) - (500 - g.BarBottom * U / 2)) < 0.01, "grid: a click on row 4 anchors the list");
       g4.Reset(); Check(!g4.Has, "grid: reset");
+    }
+  }
+
+  // Storage cleanup of ARTIFACTS (the artifact tab's «Массовая продажа»): the panel reader on fake tables, the screen state, the steps and frames, no clicks
+  static void ArtifactSellTests() {
+    Console.WriteLine("Artifact storage cleanup (hints only)");
+    // --- the panel reader (READ ONLY) on fake script tables
+    var m = new FakeLua(1 << 20); RFX.TestMemory = m; RFX.ForgetLive();
+    try {
+      var st = new FakeState(m);
+      Func<long, FTab> art = uid => st.T("iItemUid", uid, "iItemId", 100L + uid % 7, "iLevel", 1L, "iStageLvl", 0L, "iHeroId", 0L, "m_AfCfg", st.T("m_Id", 5L));
+      Func<long, bool, long, FTab, FTab, FTab> panelOf = (flag, active, cols, list, sel) => st.T("_isInited", true, "_isActive", active, "_btFlagBatch", flag, "_countCol", cols, "_listDataCur", list, "_btDicSelected", sel);
+      var list3 = st.T(1L, art(9001), 2L, art(9002), 3L, art(9003));
+      var sel = st.T(9002L, true, 9001L, false, 9003L, true);   // a deselected artifact stays with false
+      var panels = st.T(-9998L, st.T("m_CurrentBottomButtonState", 1L), -9997L, panelOf(2, true, 7, list3, sel));
+      var s = new InventoryScreen { Open = true, ArtTab = true };
+      RFX.ReadArtifactPanel(panels.A, s);
+      Check(s.ArtBulkKnown && s.ArtBulk, "art panel: _btFlagBatch 2 = bulk sale");
+      Eq("9001,9002,9003", string.Join(",", s.Uids), "art panel: the list in screen order (iItemUid of _listDataCur)");
+      Eq("9002,9003", string.Join(",", new SortedSet<long>(s.Selected)), "art panel: only the true entries of _btDicSelected are selected");
+      Check(s.ListPtr == list3.A && !s.EquipTab && !s.Bulk, "art panel: the list table is the list pointer; the gear fields stay off");
+      // normal mode: known, not bulk, no list read
+      s = new InventoryScreen { Open = true, ArtTab = true };
+      RFX.ReadArtifactPanel(st.T(-9997L, panelOf(-1, true, 7, list3, sel)).A, s);
+      Check(s.ArtBulkKnown && !s.ArtBulk && s.Uids.Count == 0 && s.Selected.Count == 0, "art panel: normal mode (-1): not bulk, nothing read");
+      // arrange mode (1) is not bulk sale
+      s = new InventoryScreen { Open = true, ArtTab = true };
+      RFX.ReadArtifactPanel(st.T(-9997L, panelOf(1, true, 7, list3, sel)).A, s);
+      Check(s.ArtBulkKnown && !s.ArtBulk, "art panel: «Масс. организовать» (1) is not the sale mode");
+      // a panel that is not shown yet: the mode is not known (never assumed)
+      s = new InventoryScreen { Open = true, ArtTab = true };
+      RFX.ReadArtifactPanel(st.T(-9997L, panelOf(2, false, 7, list3, sel)).A, s);
+      Check(!s.ArtBulkKnown && !s.ArtBulk && s.Uids.Count == 0, "art panel: _isActive false -> mode unknown, no list");
+      // no panel for the tab: nothing changes
+      s = new InventoryScreen { Open = true, ArtTab = true };
+      RFX.ReadArtifactPanel(st.T(-9998L, st.T("x", 1L)).A, s);
+      Check(!s.ArtBulkKnown && !s.ArtBulk && s.Uids.Count == 0, "art panel: no panel for -9997 -> nothing read");
+      // a hole in the array ends the list (a script array is 1..n)
+      s = new InventoryScreen { Open = true, ArtTab = true };
+      RFX.ReadArtifactPanel(st.T(-9997L, panelOf(2, true, 7, st.T(1L, art(9001), 3L, art(9003)), st.T())).A, s);
+      Eq("9001", string.Join(",", s.Uids), "art panel: a gap in the array ends the list");
+    } finally { RFX.TestMemory = null; RFX.ForgetLive(); }
+
+    // --- the screen state
+    var artInv = new InventoryScreen { Open = true, ArtTab = true, ArtBulk = true, ArtBulkKnown = true, ListPtr = 5 }; artInv.Uids.AddRange(new long[] { 1, 2, 3 }); artInv.Selected.Add(2);
+    var scr = ScreenState.Classify(new ScreenInputs { Inv = artInv }, 0);
+    Check(scr.Kind == ScreenKind.Inventory && scr.InvArtTab && scr.InvArtBulk && scr.InvArtBulkKnown && !scr.InvEquipTab && !scr.InvBulk, "art screen: the inventory on the artifact tab, bulk sale");
+    Check(scr.Brief.Contains("artifact") && scr.Brief.Contains("ART-BULK-SALE") && !scr.Brief.Contains(" BULK-SALE") && scr.InvSelKey == "1:2", "art screen: brief says artifact bulk sale, the choice key counts the selection (" + scr.Brief + ")");
+    var scrN = ScreenState.Classify(new ScreenInputs { Inv = new InventoryScreen { Open = true, ArtTab = true, ArtBulkKnown = true } }, 0);
+    Check(scrN.Brief.Contains("artifact normal") && scrN.Key != scr.Key, "art screen: normal mode has its own key");
+    var tr = new ScreenTracker(); tr.Update(new ScreenInputs { Inv = artInv }, 0);
+    var held = tr.Update(new ScreenInputs(), 500);
+    Check(held.Held && held.InvArtTab && held.InvArtBulk, "art screen: a short read failure keeps the artifact tab");
+
+    // --- no clicks, whatever the auto click says
+    {
+      var gate = new ClickGate();
+      Func<ClickTarget, ClickRequest> R = tg => new ClickRequest { Owner = ClickOwner.Sell, Target = tg, AutoOn = true, Front = true, CellUid = 2, CellOk = new HashSet<long> { 2 } };
+      var res = gate.Check(R(ClickTarget.InvBulkCell), scr, 0);
+      Check(!res.Allowed && gate.HaltReason(ClickOwner.Sell) == "artifact", "art gate: a cell click on the artifact tab is stopped even with the auto click on (" + res.Reason + ")");
+      gate = new ClickGate(); res = gate.Check(R(ClickTarget.InvBulkEnter), scrN, 0);
+      Check(!res.Allowed && gate.HaltReason(ClickOwner.Sell) == "artifact", "art gate: «Массовая продажа» is never pressed on the artifact tab");
+      gate = new ClickGate(); gate.NoSellClicks = true;
+      var eq = ScreenState.Classify(new ScreenInputs { Inv = new InventoryScreen { Open = true, EquipTab = true, Bulk = true, BulkKnown = true } }, 0);
+      res = gate.Check(R(ClickTarget.InvBulkCell), eq, 0);
+      Check(!res.Allowed && gate.HaltReason(ClickOwner.Sell) == "artifact", "art gate: while an artifact cleanup runs the Sell owner never clicks, on any screen");
+      gate = new ClickGate();
+      res = gate.Check(new ClickRequest { Owner = ClickOwner.Sell, Target = ClickTarget.InvEquipTab, AutoOn = true, Front = true }, scrN, 0);
+      Check(res.Allowed, "art gate: a gear cleanup (not an artifact run) may still go from the artifact tab back to «Снаряжение»");
+      foreach (ClickOwner ow in Enum.GetValues(typeof(ClickOwner))) Check(!ClickGate.WhitelistText(ow).Contains("Art"), "art gate: " + ow + " has no artifact target on its whitelist");
+    }
+
+    // --- the steps
+    double W = 1136, H = 640, U = Ui.Unit(W, H);
+    var g = SellGeometry.Artifacts(W, H, U, 7);
+    var uids = new List<long>(); for (long i = 1; i <= 56; i++) uids.Add(9000 + i);   // 8 rows of 7
+    Func<InventoryScreen> bulk = () => new InventoryScreen { Open = true, ArtTab = true, ArtBulk = true, ArtBulkKnown = true, ListPtr = 7, Uids = new List<long>(uids) };
+    var wanted = new HashSet<long> { 9001, 9003, 9009, 9050 };   // rows 1, 1, 2, 8
+    Eq(SellHintKind.OpenInventory, SellHint.Classify(null, wanted, true).Kind, "art hint: no inventory -> open it");
+    Eq(SellHintKind.OpenArtTab, SellHint.Classify(new InventoryScreen { Open = true, EquipTab = true, Bulk = true }, wanted, true).Kind, "art hint: the gear tab (even in its bulk sale) -> open the «Артефакт» tab");
+    Eq(SellHintKind.PressBulk, SellHint.Classify(new InventoryScreen { Open = true, ArtTab = true }, wanted, true).Kind, "art hint: artifact tab, normal mode -> press «Массовая продажа»");
+    Eq(SellHintKind.OpenEquipTab, SellHint.Classify(new InventoryScreen { Open = true, ArtTab = true }, wanted).Kind, "gear hint is unchanged: the artifact tab is just another tab for it");
+    Eq("openArtTab", SellHint.Classify(new InventoryScreen { Open = true }, wanted, true).Key, "art hint: page key of the tab step");
+
+    // frames: the cell geometry from the research numbers (1136 x 640: list 124..818 x 123..550.4, 7 columns, row 116, card 80 x 110 centred)
+    var gr = new LocateGrid(); gr.FromScroll(g.ViewTopPx(U) + g.TopPad * U, 7);
+    var step = SellHint.Build(bulk(), wanted, 7, gr, g, W, H, U, true);
+    Check(step.Kind == SellHintKind.Select && step.Total == 4 && step.Selected == 0, "art hint: nothing ticked: 0 of 4");
+    var f1 = step.Frames.Find(fr => fr.Uid == 9001); var f3 = step.Frames.Find(fr => fr.Uid == 9003);
+    double cellW = 694.0 / 7;
+    Check(f1 != null && Math.Abs(f1.X - (124 + (cellW - 80) / 2)) <= 1.5 && Math.Abs(f1.Y - 126) <= 1.5 && Math.Abs(f1.W - 80) <= 1.5 && Math.Abs(f1.H - 110) <= 1.5,
+          "art hint: the frame of cell 1 is the 80 x 110 card, centred in the 99 px cell (" + (f1 == null ? "none" : f1.X + "," + f1.Y + " " + f1.W + "x" + f1.H) + ")");
+    Check(f3 != null && Math.Abs(f3.X - f1.X - 2 * cellW) <= 1.5, "art hint: cell 3 is two cells to the right");
+    var f9 = step.Frames.Find(fr => fr.Uid == 9009);
+    Check(f9 != null && Math.Abs(f9.Y - f1.Y - 116) <= 1.5 && Math.Abs(f9.X - f1.X - 1 * cellW) <= 1.5, "art hint: item 9 is row 2, column 2 (one row = 116 units)");
+    Check(step.Frames.Count == 3 && step.Below == 1, "art hint: three in view, one below (frames " + step.Frames.Count + ", below " + step.Below + ")");
+    // scrolled: the content moved up by 3 rows (ScrollY = 3 x 116 canvas units)
+    var scroll = new InvScroll();
+    double row1 = scroll.Row1(g, new RFX.ListRead { ScrollY = 3 * 116, Cols = 7, RowUnits = 116 }, double.NaN, U);
+    var stS = SellHint.BuildExact(bulk(), wanted, 7, row1, g, W, H, U, true);
+    Check(stS.Above == 3 && stS.Below == 1 && stS.Frames.Count == 0, "art hint: scrolled down 3 rows -> the first three are above, the last one still below (above " + stS.Above + ", below " + stS.Below + ")");
+    double row1b = scroll.Row1(g, new RFX.ListRead { ScrollY = 58, Cols = 7, RowUnits = 116 }, double.NaN, U);
+    var stH = SellHint.BuildExact(bulk(), wanted, 7, row1b, g, W, H, U, true);
+    var f1h = stH.Frames.Find(fr => fr.Uid == 9001);
+    Check(f1h != null && Math.Abs((f1.Y - f1h.Y) - 58 * U / 640) <= 1.01, "art hint: the frame moves with ScrollY exactly (58 units = 58 px at 640)");
+    var nx = SellHint.BuildExact(bulk(), wanted, 7, double.NaN, g, W, H, U, true);
+    Check(nx.Kind == SellHintKind.Select && nx.Frames.Count == 0 && nx.Total == 4, "art hint: no exact scroll -> no frames, the counts stay");
+
+    // ticks and strays
+    var inv = bulk(); inv.Selected.Add(9003);
+    step = SellHint.Build(inv, wanted, 7, gr, g, W, H, U, true);
+    Check(step.Selected == 1 && step.Frames.Find(fr => fr.Uid == 9003).Style == "done" && step.Frames.Find(fr => fr.Uid == 9001).Style == "todo", "art hint: a ticked artifact gets the checked frame (1 of 4)");
+    inv.Selected.Add(9002);   // not on the list
+    step = SellHint.Build(inv, wanted, 7, gr, g, W, H, U, true);
+    Check(step.Extra == 1 && step.Frames.Find(fr => fr.Uid == 9002).Style == "extra" && SellHint.Warn(step), "art hint: a wrongly ticked artifact: red frame and the warning");
+    var allT = bulk(); foreach (var u in wanted) allT.Selected.Add(u);
+    Eq(SellHintKind.AllSelected, SellHint.Classify(allT, wanted, true).Kind, "art hint: all ticked -> press «Продать»");
+    var noneT = bulk(); noneT.Uids.RemoveAll(u => wanted.Contains(u));
+    Eq(SellHintKind.NoneHere, SellHint.Classify(noneT, wanted, true).Kind, "art hint: none of the list in the storage list");
+
+    // the rectangles: research numbers, or the site's geometry
+    var tb = SellHint.ArtTabRect(W, H, U); var bb = SellHint.ArtBulkRect(W, H, U);
+    Check(Math.Abs(tb[0] - 0.0023 * U) <= 1.5 && Math.Abs(tb[1] - 0.4022 * U) <= 1.5 && Math.Abs(tb[2] - 0.1688 * U) <= 1.5 && Math.Abs(tb[3] - 0.125 * U) <= 1.5, "art hint: the «Артефакт» toggle (research numbers) " + string.Join(",", tb));
+    Check(Math.Abs(bb[0] - 0.7428 * U) <= 1.5 && Math.Abs(bb[1] - (H - 0.1124 * U)) <= 1.5 && Math.Abs(bb[2] - 0.2636 * U) <= 1.5 && Math.Abs(bb[3] - 0.0842 * U) <= 1.5, "art hint: «Массовая продажа» (research numbers) " + string.Join(",", bb));
+    string webGeo = Path.Combine("..", "wardsage-web", "data", "app-geometry", "1.6.39.829.1.json");
+    if (File.Exists(webGeo)) {
+      var rg = GameGeometry.Parse(File.ReadAllText(webGeo, Encoding.UTF8), "1.6.39.829.1");
+      Check(rg != null && rg.Has("inventory.leftTab.artifact") && rg.Has("inventory.artBulkSell") && rg.Has("inventory.artList") && rg.Grid("inventory.artList") != null && rg.Grid("inventory.artList").Cols == 7 && Math.Abs(rg.Grid("inventory.artList").LineSize - 116) < 0.01,
+            "art hint: the site's geometry file has the tab, the button, the list and the 7 x 116 grid");
+      if (rg != null) {
+        var lr = rg.Rect("inventory.artList", W, H, U); var tr2 = rg.Rect("inventory.leftTab.artifact", W, H, U); var br = rg.Rect("inventory.artBulkSell", W, H, U);
+        Check(Math.Abs(lr.X - 124) <= 1 && Math.Abs(lr.Y - 123) <= 1 && Math.Abs(lr.Right - 818) <= 1.5 && Math.Abs(lr.Bottom - 550.4) <= 1, "art hint: the list rectangle from the file (124..818 x 123..550)");
+        Check(Math.Abs(tr2.Y - 257.4) <= 1 && Math.Abs(br.X - 475.4) <= 1, "art hint: the tab and the button from the file");
+        var ga = SellGeometry.Artifacts(W, H, U, 7, lr);
+        Check(Math.Abs(ga.PitchX - g.PitchX) < 0.002 && Math.Abs(ga.ViewTop - g.ViewTop) < 0.002 && Math.Abs(ga.ViewBottomPx(H, U) - g.ViewBottomPx(H, U)) < 1.5, "art hint: the geometry from the file agrees with the research numbers");
+      }
+    }
+    // other window shapes: the 7 columns stay inside the list at 16:9 and the list's right edge follows the window
+    foreach (var wh in new[] { new[] { 1920.0, 1009.0 }, new[] { 1600.0, 1000.0 } }) {
+      double u2 = Ui.Unit(wh[0], wh[1]); var g2 = SellGeometry.Artifacts(wh[0], wh[1], u2, 7);
+      double right = g2.X(g2.X0 + 6 * g2.PitchX + g2.CellW, wh[0], u2);
+      Check(right <= wh[0] - 0.4969 * u2 + 1 && g2.ViewTopPx(u2) > 0 && g2.ViewBottomPx(wh[1], u2) < wh[1], "art hint: " + wh[0] + "x" + wh[1] + ": the columns end inside the list");
     }
   }
 

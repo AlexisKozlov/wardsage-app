@@ -79,6 +79,8 @@ namespace RealmForge {
     public const int OwnClickWindowMs = 2500;
     /// <summary>The log (the host's journal); null = none. A line only when an owner's verdict changes.</summary>
     public Action<string> Sink;
+    /// <summary>The storage cleanup of ARTIFACTS is a hint run: the Sell owner never clicks while it runs (set by the host with the run).</summary>
+    public volatile bool NoSellClicks;
 
     sealed class Rule {
       public ScreenKind[] Kinds;
@@ -252,6 +254,8 @@ namespace RealmForge {
       if (watches.ContainsKey(r.Owner)) return GateResult.Wait("pending", "the previous click has not shown its effect yet");
 
       string tag = r.Target + " @" + (int)r.X + "," + (int)r.Y;
+      // the artifact cleanup never clicks, whatever the auto click setting says; nothing of the artifact tab is on any whitelist either
+      if (r.Owner == ClickOwner.Sell && (NoSellClicks || (f != null && f.Kind == ScreenKind.Inventory && f.InvArtTab && r.Target != ClickTarget.InvEquipTab))) return Halt(r.Owner, "artifact", tag + ": the artifact cleanup is hints only");
       var rule = RuleOf(r.Owner, r.Target);
       if (rule == null) return Halt(r.Owner, "target", tag + " is not a target " + r.Owner + " may click");
       if (f == null || f.Kind == ScreenKind.Unknown) return UnknownWait(r, now, tag + ": the screen is not recognised");
