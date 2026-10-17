@@ -42,9 +42,7 @@ Optional `### Heading` lines inside a `## RU` / `## EN` section split the update
 ## RU
 
 - Каталог снаряжения больше не теряет вещи в хвосте таблицы Lua 5.4: читается весь массив, а не только записанный лимит.
-- `RealmForge-Extractor.ps1 -Dump <файл>` пишет account.json, не открывает окно и не обращается к сайту.
 
 ## EN
 
 - The gear catalog no longer drops items that sit in the tail of a Lua 5.4 table: the whole array is read, not only the stored limit.
-- `RealmForge-Extractor.ps1 -Dump <file>` writes account.json and does not open the window or contact the site.

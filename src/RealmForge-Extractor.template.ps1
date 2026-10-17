@@ -14,7 +14,7 @@
   Requirements: Windows 10/11, Windows PowerShell 5.1, .NET Framework 4.5+ (all built in).
 #>
 #Requires -Version 5.1
-param([switch]$NoElevate, [string]$Dump)
+param([switch]$NoElevate)
 $ErrorActionPreference = 'Stop'
 
 # --- administrator rights -----------------------------------------------------------------
@@ -22,10 +22,8 @@ $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $isAdmin = ([Security.Principal.WindowsPrincipal]$identity).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin -and -not $NoElevate) {
   try {
-    $elevate = @(
-      '-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', $PSCommandPath)
-    if ($Dump) { $elevate += @('-Dump', $Dump) }
-    Start-Process -FilePath 'powershell.exe' -Verb RunAs -WindowStyle Hidden -ArgumentList $elevate
+    Start-Process -FilePath 'powershell.exe' -Verb RunAs -WindowStyle Hidden -ArgumentList @(
+      '-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', ('"{0}"' -f $PSCommandPath))
     exit 0
   } catch {
     # The UAC prompt was declined: open the window anyway, it explains what is missing
@@ -49,26 +47,11 @@ try {
     Add-Type @addType
   }
 } catch {
-  if ($Dump) { Write-Error $_.Exception.Message; exit 1 }
   Add-Type -AssemblyName System.Windows.Forms
   [void][System.Windows.Forms.MessageBox]::Show(
     "RealmForge не запустился / could not start:`n`n" + $_.Exception.Message,
     'RealmForge', 'OK', 'Error')
   exit 1
-}
-
-# -Dump writes account.json and stops. No window, no request to the site.
-if ($Dump) {
-  $json = [RealmForge.RFX]::Run()
-  if (-not $json) {
-    Write-Error ("read failed: " + [RealmForge.RFX]::LastError + " win32=" + [RealmForge.RFX]::LastOpenError)
-    exit 2
-  }
-  $folder = Split-Path -Parent $Dump
-  if ($folder -and -not (Test-Path -LiteralPath $folder)) { New-Item -ItemType Directory -Force -Path $folder | Out-Null }
-  [System.IO.File]::WriteAllText($Dump, $json, (New-Object System.Text.UTF8Encoding $false))
-  Write-Output ("DUMP_OK bytes=" + $json.Length)
-  exit 0
 }
 
 [RealmForge.App]::Run($PSCommandPath)
