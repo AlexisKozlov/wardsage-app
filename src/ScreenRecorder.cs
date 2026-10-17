@@ -58,7 +58,7 @@ namespace RealmForge {
     public static string FrameFile(int n) { return "frame_" + n.ToString("0000", CultureInfo.InvariantCulture) + ".jpg"; }
     /// <summary>The part number of a part file name, -1 when it is not one.</summary>
     public static int PartOf(string file) {
-      var m = Regex.Match(file ?? "", "^part_([0-9]{3})\\.zip$");
+      var m = Regex.Match(file ?? "", "^(?:part_)?([0-9]{3})\\.zip$");
       return m.Success ? int.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture) : -1;
     }
   }

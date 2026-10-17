@@ -68,9 +68,9 @@ static class RecReplay {
     if (args.Length < 2) { Console.WriteLine("usage: RecReplay.dll <recording dir with part_*.zip> <out dir>"); return 2; }
     string dir = args[0], outDir = args[1];
     var parts = new List<string>();
-    if (Directory.Exists(dir)) foreach (var f in Directory.GetFiles(dir, "part_*.zip")) if (RecNames.PartOf(Path.GetFileName(f)) >= 0) parts.Add(f);
+    if (Directory.Exists(dir)) foreach (var f in Directory.GetFiles(dir, "*.zip")) if (RecNames.PartOf(Path.GetFileName(f)) >= 0) parts.Add(f);
     parts.Sort(StringComparer.Ordinal);
-    if (parts.Count == 0) { Console.WriteLine("no part_*.zip in " + dir); return 2; }
+    if (parts.Count == 0) { Console.WriteLine("no part_NNN.zip / NNN.zip in " + dir); return 2; }
     Directory.CreateDirectory(outDir);
 
     // ---- read every part: the frames' names with their lines, the data files

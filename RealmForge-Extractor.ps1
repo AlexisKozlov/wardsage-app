@@ -839,8 +839,14 @@ namespace RealmForge {
     /// <summary>Searches UIInstance's nodes of the hero screen, the inventory and the two recast screens (one pass; a
     /// form the player has not opened yet has none); returns the live hero screen (0 = none).</summary>
     static ulong FindFormNode() {
-      formNode = invNode = subNode = gemNode = cityNode = 0;
-      if (Layout.Current == null) return 0;   // no form ids: the hero screen is found by its keys
+      lock (formScanLock) { return FindFormNodeLocked(); }
+    }
+    static readonly object formScanLock = new object();
+
+    // the new values are built into locals and published at the end: a reader never sees a 0 from the middle of a scan
+    static ulong FindFormNodeLocked() {
+      ulong nForm = 0, nInv = 0, nSub = 0, nGem = 0, nCity = 0;
+      if (Layout.Current == null) { formNode = invNode = subNode = gemNode = cityNode = 0; return 0; }   // no form ids: the hero screen is found by its keys
       int t0 = Environment.TickCount;
       long idMain = FormCharactorMainId, idInv = FormBackpackId, idRecast = FormRecastId, idGem = FormGemId, idCity = FormMainCityId;
       var hits = new List<ulong>();
@@ -856,7 +862,7 @@ namespace RealmForge {
       var invHits = new List<ulong>(); var subHits = new List<ulong>(); var gemHits = new List<ulong>(); var cityHits = new List<ulong>();
       foreach (var n in hits) {
         ulong f;
-        if (formNode == 0 && (f = NodeForm(n)) != 0) { formNode = n; form = f; }
+        if (nForm == 0 && (f = NodeForm(n)) != 0) { nForm = n; form = f; }
         else if (NodeInv(n) != 0) invHits.Add(n);
         else if (NodeTable(n, FormRecastId) != 0) subHits.Add(n);
         else if (NodeTable(n, FormGemId) != 0) gemHits.Add(n);
@@ -867,8 +873,9 @@ namespace RealmForge {
       Func<ulong, bool> subShown = n => InvFormShown(NodeTable(n, FormRecastId));
       Func<ulong, bool> gemShown = n => InvFormShown(NodeTable(n, FormGemId));
       Func<ulong, bool> cityShown = n => InvFormShown(NodeTable(n, FormMainCityId));
-      cityNode = PickNode(cityHits, cityShown);
-      invNode = PickNode(invHits, invShown); subNode = PickNode(subHits, subShown); gemNode = PickNode(gemHits, gemShown);
+      nCity = PickNode(cityHits, cityShown);
+      nInv = PickNode(invHits, invShown); nSub = PickNode(subHits, subShown); nGem = PickNode(gemHits, gemShown);
+      formNode = nForm; invNode = nInv; subNode = nSub; gemNode = nGem; cityNode = nCity;
       int ki = CountWhere(invHits, invShown), ks = CountWhere(subHits, subShown), kg = CountWhere(gemHits, gemShown);
       string line = "inventory " + invHits.Count + " (shown " + ki + "), foundry " + subHits.Count + " (shown " + ks + "), gem " + gemHits.Count + " (shown " + kg + "), city " + cityHits.Count + " (shown " + CountWhere(cityHits, cityShown) + ")";
       if (line != formsScanSaid) { formsScanSaid = line; Log.AppendLine("forms: scan " + (Environment.TickCount - t0) + " ms, " + line); }
@@ -885,6 +892,42 @@ namespace RealmForge {
       return hits[0];
     }
 
+    // ---- the background search: one at a time, off the UI thread; the readers use the nodes it publishes on later ticks
+    static int formSearchBusy, lastFormSearchAt; static string formSearchSaid = "";
+    static int lostBits; static bool invOk, subOk, gemOk, cityOk, heroOk;
+    static readonly string[] lostNames = { "inventory", "foundry", "gem", "city", "hero" };
+
+    /// <summary>A form node that read fine on the last call reads 0 now (the game moved it): remembered for the overlay (TakeFormsLost).</summary>
+    static void Watch(ref bool ok, ulong value, ulong node, int bit) {
+      if (value != 0) ok = true;
+      else if (ok && node != 0) { ok = false; { int o; do o = lostBits; while (Interlocked.CompareExchange(ref lostBits, o | (1 << bit), o) != o); } }
+    }
+    /// <summary>The forms that were readable and are not now, since the last call ("inventory, foundry"); null = none.</summary>
+    public static string TakeFormsLost() {
+      int b = Interlocked.Exchange(ref lostBits, 0); if (b == 0) return null;
+      var l = new List<string>(); for (int i = 0; i < lostNames.Length; i++) if ((b & (1 << i)) != 0) l.Add(lostNames[i]);
+      return string.Join(", ", l.ToArray());
+    }
+    /// <summary>The inventory's node is not known (the storage start asks for a search while the form is not built yet).</summary>
+    public static bool InvFormMissing() { return NodeInv(invNode) == 0; }
+
+    /// <summary>Starts a search of the forms on a worker thread (never two at once, at least <paramref name="minGapMs"/> after the last start); false = not started.
+    /// Does not block.</summary>
+    public static bool RequestFormSearch(string reason, int minGapMs) {
+      if (regs == null || Layout.Current == null) return false;
+      int now = Environment.TickCount;
+      if (lastFormSearchAt != 0 && now - lastFormSearchAt < minGapMs) return false;
+      if (Interlocked.CompareExchange(ref formSearchBusy, 1, 0) != 0) return false;
+      lastFormSearchAt = now == 0 ? 1 : now;
+      if (reason != formSearchSaid) { formSearchSaid = reason; Log.AppendLine("forms: search (" + reason + ")"); }
+      ThreadPool.QueueUserWorkItem(_ => {
+        try { FindFormNode(); } catch (Exception e) { SayOnce("the forms search failed", e); }
+        finally { Interlocked.Exchange(ref formSearchBusy, 0); }
+      });
+      return true;
+    }
+    static bool FormSearchRunning { get { return Volatile.Read(ref formSearchBusy) != 0; } }
+
     static int lastFormsRescan;
     /// <summary>The forms searched again (a full pass, about a second) when at least <paramref name="minGapMs"/> passed since the last
     /// call of this one (its own clock); the known live hero screen is kept if the pass does not find it again.</summary>
@@ -899,14 +942,15 @@ namespace RealmForge {
     }
 
     /// <summary>The hero screen the game holds now (0 = unknown: the node moved or was never found).</summary>
-    internal static ulong LiveForm() { return NodeForm(formNode); }
+    internal static ulong LiveForm() { ulong f = NodeForm(formNode); Watch(ref heroOk, f, formNode, 4); return f; }
 
     /// <summary>The inventory (Form_BackpackIntegration) the game holds now; searched again (a full pass, about a second)
     /// when its node is not known or has moved, at most every <paramref name="rescanMs"/> (&lt; 0: not now). 0 = the
     /// player never opened it.</summary>
     internal static ulong LiveInvForm(int rescanMs) {
       ulong f = NodeInv(invNode);
-      if (f != 0 || rescanMs < 0) return f;
+      Watch(ref invOk, f, invNode, 0);
+      if (f != 0 || rescanMs < 0 || FormSearchRunning) return f;
       if (Environment.TickCount - lastNodeScan < rescanMs && lastNodeScan != 0) return 0;
       lastNodeScan = Environment.TickCount;
       if (regs == null) return 0;
@@ -919,7 +963,8 @@ namespace RealmForge {
     /// again like the inventory. 0 = never opened.</summary>
     internal static ulong LiveRecastForm(bool gem, int rescanMs) {
       ulong f = NodeTable(gem ? gemNode : subNode, gem ? FormGemId : FormRecastId);
-      if (f != 0 || rescanMs < 0) return f;
+      if (gem) Watch(ref gemOk, f, gemNode, 2); else Watch(ref subOk, f, subNode, 1);
+      if (f != 0 || rescanMs < 0 || FormSearchRunning) return f;
       if (Environment.TickCount - lastNodeScan < rescanMs && lastNodeScan != 0) return 0;
       lastNodeScan = Environment.TickCount;
       if (regs == null) return 0;
@@ -929,7 +974,7 @@ namespace RealmForge {
 
     /// <summary>The city form (the main screen) the game holds now; 0 = id unknown or its node never found. No rescan of its own
     /// (the scans come from the inventory / foundry / gem paths and the overlay's stale-forms pass).</summary>
-    internal static ulong LiveCityForm() { return NodeTable(cityNode, FormMainCityId); }
+    internal static ulong LiveCityForm() { ulong f = NodeTable(cityNode, FormMainCityId); Watch(ref cityOk, f, cityNode, 3); return f; }
 
     /// <summary>Is the city on screen: true / false from its form's active flag; null = the form id is unknown or its node was never found.</summary>
     public static bool? CityShown() {

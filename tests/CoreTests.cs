@@ -862,6 +862,22 @@ static class CoreTests {
     Eq("part_000.zip", RecNames.PartFile(0), "part name 0"); Eq("part_119.zip", RecNames.PartFile(119), "part name 119");
     Eq("frame_0001.jpg", RecNames.FrameFile(1), "frame name");
     Eq(7, RecNames.PartOf("part_007.zip"), "part number from a name"); Eq(-1, RecNames.PartOf("part_7.zip.tmp"), "not a part name");
+    Eq(12, RecNames.PartOf("012.zip"), "part number from the server's name (NNN.zip)");
+    {   // the layout / geometry text is kept in memory, so the recorder has it without a saved file
+      string gv = "1.6.39.829.1";
+      Layout.Keep(gv, "{\"k\":1}"); Geo.Keep(gv, "{\"g\":2}");
+      Eq("{\"k\":1}", Layout.RawCache(gv), "layout raw text: from memory"); Eq("{\"g\":2}", Geo.RawCache(gv), "geometry raw text: from memory");
+    }
+    {   // the locate guide keeps its last step while the screen is Unknown, for 15 s
+      var prev = new LocateStep { Kind = LocateKind.OpenFoundry };
+      Check(LocateGuide.HoldOnUnknown(prev, ScreenKind.Unknown, 1000, 1500), "hold: Unknown for 0.5 s keeps the step");
+      Check(LocateGuide.HoldOnUnknown(prev, ScreenKind.Unknown, 1000, 15999), "hold: still kept just before 15 s");
+      Check(!LocateGuide.HoldOnUnknown(prev, ScreenKind.Unknown, 1000, 16000), "hold: after 15 s the step is recomputed");
+      Check(!LocateGuide.HoldOnUnknown(prev, ScreenKind.Inventory, 1000, 1500), "hold: a known screen never holds");
+      Check(!LocateGuide.HoldOnUnknown(prev, ScreenKind.Unknown, -1, 1500), "hold: not Unknown (since < 0) -> no hold");
+      Check(!LocateGuide.HoldOnUnknown(null, ScreenKind.Unknown, 1000, 1500), "hold: no previous step -> nothing to hold");
+      Check(!LocateGuide.HoldOnUnknown(new LocateStep { Kind = LocateKind.None }, ScreenKind.Unknown, 1000, 1500), "hold: an empty step is not held");
+    }
     int nw, nh; double sc;
     sc = RecSize.Fit(1920, 1080, 1280, out nw, out nh); Check(nw == 1280 && nh == 720 && Math.Abs(sc - 2.0 / 3) < 1e-9, "size: 1920x1080 -> 1280x720");
     sc = RecSize.Fit(1366, 705, 1280, out nw, out nh); Check(nw == 1280 && nh == 661 && sc < 1, "size: 1366x705 -> 1280x661");

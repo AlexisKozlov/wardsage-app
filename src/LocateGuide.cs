@@ -64,6 +64,14 @@ namespace RealmForge {
     /// <summary>Foundry lists up to this long are picked from directly; longer ones are filtered first.</summary>
     public const int ShortList = 8;
 
+    /// <summary>How long the overlay keeps the last step while the screen reads Unknown (the form is being searched for).</summary>
+    public const int HoldUnknownMs = 15000;
+
+    /// <summary>Keep the previous step (no recompute, no frames) while the screen is Unknown for less than HoldUnknownMs; unknownSinceMs &lt; 0 = not Unknown.</summary>
+    public static bool HoldOnUnknown(LocateStep prevStep, ScreenKind screenKind, long unknownSinceMs, long now) {
+      return prevStep != null && prevStep.Kind != LocateKind.None && screenKind == ScreenKind.Unknown && unknownSinceMs >= 0 && now - unknownSinceMs < HoldUnknownMs;
+    }
+
     /// <param name="onAccount">1 = the item is on the game's account, 0 = it is not, -1 = unknown (RFX.ItemOnAccount)</param>
     /// <param name="cols">columns of the inventory's grid</param>
     public static LocateStep Next(LocateRequest req, InventoryScreen inv, RecastScreen rs, HeroScreen hero, int cols, int onAccount) {

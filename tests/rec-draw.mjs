@@ -45,7 +45,7 @@ function zipEntries(buf) {
 }
 
 const pictures = new Map();   // frame name -> () => jpeg bytes
-for (const f of readdirSync(recDir).filter(f => /^part_\d{3}\.zip$/.test(f)).sort()) {
+for (const f of readdirSync(recDir).filter(f => /^(part_)?\d{3}\.zip$/.test(f)).sort()) {
   for (const [name, get] of zipEntries(readFileSync(join(recDir, f)))) {
     const m = /^(frame_\d+)\.jpg$/.exec(name);
     if (m) pictures.set(m[1], get);

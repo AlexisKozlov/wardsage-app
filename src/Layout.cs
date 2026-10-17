@@ -123,13 +123,22 @@ namespace RealmForge {
     /// <summary>The saved copy for <paramref name="game"/>, or null (none, unreadable, not valid).</summary>
     public static GameLayout LoadCache(string dir, string game) {
       if (!GameLayout.IsVersion(game)) return null;
-      try { string p = CachePath(dir, game); if (File.Exists(p)) return GameLayout.Parse(File.ReadAllText(p, Encoding.UTF8), game); } catch (Exception) { }
+      try {
+        string p = CachePath(dir, game);
+        if (File.Exists(p)) { string txt = File.ReadAllText(p, Encoding.UTF8); var r = GameLayout.Parse(txt, game); if (r != null) Keep(game, txt); return r; }
+      } catch (Exception) { }
       return null;
     }
+
+    // the raw text of the data loaded from the site or the saved copy, kept in memory (the recorder needs it even when the file is not there)
+    static readonly Dictionary<string, string> keptText = new Dictionary<string, string>();
+    public static void Keep(string game, string json) { if (game == null || string.IsNullOrEmpty(json)) return; lock (keptText) keptText[game] = json; }
+    static string Kept(string game) { string s; lock (keptText) return game != null && keptText.TryGetValue(game, out s) ? s : null; }
 
     /// <summary>The saved copy's text as it is (the recorder keeps it with a recording), null when there is none.</summary>
     public static string RawCache(string game) {
       if (!GameLayout.IsVersion(game)) return null;
+      string kept = Kept(game); if (kept != null) return kept;
       try { string p = CachePath(CacheDir, game); return File.Exists(p) ? File.ReadAllText(p, Encoding.UTF8) : null; } catch (Exception) { return null; }
     }
 
@@ -155,6 +164,7 @@ namespace RealmForge {
       if (code == 401 || code == 403) return Reply.Denied;
       if (code < 200 || code >= 300) return Reply.NoReply;
       layout = GameLayout.Parse(body, game);
+      if (layout != null) Keep(game, body);
       return layout != null ? Reply.Got : Reply.NoReply;
     }
 

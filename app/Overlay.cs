@@ -389,7 +389,7 @@ namespace RealmForge {
       sellHint = hintOnly && uids != null && uids.Count > 0;
       if (wasHint || sellHint) {
         // a hint run starts (or ends) clean: no frames, no plate, the rows' place unknown
-        sgrid.Reset(); shInv = null; shHave = false; shReadSig = ""; shReadAt = 0; shFrames = null; shKey = "";
+        sgrid.Reset(); shInv = null; shHave = false; shReadSig = ""; shReadAt = 0; shFrames = null; shKey = ""; shLast = null; shUnkSince = -1; shHold = false;
         sellHintLines = new string[0]; sellPillUp = sellPillDown = "";
         Hide("off"); HideTip();
       }
@@ -1530,8 +1530,13 @@ namespace RealmForge {
         if (why != shFrameSaid) { shFrameSaid = why; if (why == "none") Log.Write("sell hint: the list's exact scroll cannot be read - no item frames, only the text plate"); }
       }
       var step = SellHint.BuildExact(inv, sellWanted, shCols, row1, shGeo, W, H, U);
+      // the screen is Unknown (a form is being searched for): the last step and its plate stay for up to 15 s, without frames
+      var scrS = screens.Current;
+      if (scrS != null && scrS.Kind == ScreenKind.Unknown) { if (shUnkSince < 0) shUnkSince = now; } else shUnkSince = -1;
+      shHold = shLast != null && scrS != null && scrS.Kind == ScreenKind.Unknown && shUnkSince >= 0 && now - shUnkSince < LocateGuide.HoldUnknownMs;
+      if (shHold) step = shLast; else shLast = step;
       if (recB != null) { recB.SellInv = inv; recB.Step = "Sell:" + step.Kind; }
-      shFrames = step.Frames;
+      shFrames = shHold ? new List<SellFrame>() : step.Frames;
       string key = step.FullKey;
       if (key != shKey) { shKey = key; var h = SellHintChanged; if (h != null) h(step); }
 
@@ -1539,7 +1544,7 @@ namespace RealmForge {
       bool haveText = sellHintLines.Length > 0;
       double vt = shGeo.ViewTopPx(U), vb = shGeo.ViewBottomPx(H, U);
       int gx = (int)shGeo.X(shGeo.X0, W, U), gw = (int)(shGeo.PitchX * (shCols - 1) * U + shGeo.CellW * U);
-      if (step.Kind == SellHintKind.Select || step.Kind == SellHintKind.AllSelected) {
+      if (!shHold && (step.Kind == SellHintKind.Select || step.Kind == SellHintKind.AllSelected)) {
         var marks = new List<int[]>();
         foreach (var fr in step.Frames) marks.Add(new[] { o.X + fr.X, o.Y + fr.Y, fr.W, fr.H, fr.Style == "todo" ? 0 : fr.Style == "done" ? 1 : 2 });
         marks.Sort((p, q) => p[4].CompareTo(q[4]));   // a stray (red) item is painted last, on top
@@ -1555,6 +1560,7 @@ namespace RealmForge {
       if (glow.Visible) glow.Hide();
       drawnKey = null;
       if (!haveText) { HideTip(); return; }
+      if (shHold) { DrawTipTop(sellHintLines); return; }   // held: the plate only
       if (step.Kind == SellHintKind.PressBulk) {
         // «Массовая продажа» under the list (bottom left): where the auto mode clicks
         var pb = SellHint.PressBulkRect(W, H, U);
@@ -1596,8 +1602,12 @@ namespace RealmForge {
       SceneArea(o, cr);
       long now = NowMs();
       long uid = req.Item.Uid;
-      // the game's screens, read a few times a second (a form the game never built is searched for at most every 8 s)
-      if (locateStep == null || Math.Abs(now - locateReadAt) >= 300) {
+      // the screen is Unknown (a form is being searched for): the last step and its plate stay for up to 15 s, no frames (the positions are unknown)
+      var scrNow = screens.Current;
+      if (scrNow != null && scrNow.Kind == ScreenKind.Unknown) { if (locUnkSince < 0) locUnkSince = now; } else locUnkSince = -1;
+      bool hold = LocateGuide.HoldOnUnknown(locateStep, scrNow != null ? scrNow.Kind : ScreenKind.City, locUnkSince, now);
+      // the game's screens, read a few times a second (the forms are searched for off this thread, see ReadScreens)
+      if (!hold && (locateStep == null || Math.Abs(now - locateReadAt) >= 300)) {
         locateReadAt = now;
         locateInv = screens.Inv;   // the screens are read once per tick (ReadScreens), a short failure held for 1.5 s
         var rs = screens.Rs;
@@ -1640,7 +1650,7 @@ namespace RealmForge {
       TickLocateDrive(step, req, hwnd, o, cr, now, W, H, U);   // auto click on: the app opens the item itself
       FoundryScrollNow(step, now);
       // the step's frame from the screen geometry (the site's file, src/LocateFrames.cs): «Литейная», the tabs, the slot, the list cell, the final button
-      LocateFrame lf = front && step.Kind != LocateKind.InList ? LocateFrames.For(step, req.Item, locateRs, null, Geo.Current, W, H, U) : null;
+      LocateFrame lf = front && !hold && step.Kind != LocateKind.InList ? LocateFrames.For(step, req.Item, locateRs, null, Geo.Current, W, H, U) : null;
       if (lf != null && step.Kind == LocateKind.Selected) {   // the card button's rect, once per change (to measure against a frame diagnostics capture)
         string csig = lf.Target + "|" + lf.Mark.X + "," + lf.Mark.Y + "," + lf.Mark.W + "," + lf.Mark.H;
         if (csig != locateCardSaid) { locateCardSaid = csig; Log.Write("locate card frame: " + lf.Target + " rect=" + lf.Mark.X + "," + lf.Mark.Y + " " + lf.Mark.W + "x" + lf.Mark.H + " window=" + (int)W + "x" + (int)H + " U=" + (int)U + " worn=" + step.Worn); }
@@ -1651,7 +1661,7 @@ namespace RealmForge {
       }
       // the inventory's list: where the item's cell is on the screen
       locateNeedClick = false;
-      if (front && step.Kind == LocateKind.InList && locateInv != null) {
+      if (front && !hold && step.Kind == LocateKind.InList && locateInv != null) {
         var inv = locateInv;
         if (locateGeo == null || locateGeoW != W || locateGeoH != H || locateGeoCols != locateCols) {
           locateGeoW = W; locateGeoH = H; locateGeoCols = locateCols; locateGeo = SellGeometry.Inventory(W, U, locateCols);
@@ -1701,16 +1711,16 @@ namespace RealmForge {
       step.NeedClick = locateNeedClick;
       // a plate with the step's text (the page composes it): in the list's top-left corner, no frame
       int[] cityBtn;
-      if (front && locateLines.Length > 0 && step.Kind == LocateKind.OpenInventory && !step.OnHero && CityInventoryButton(o, W, H, U, out cityBtn)) {
+      if (front && !hold && locateLines.Length > 0 && step.Kind == LocateKind.OpenInventory && !step.OnHero && CityInventoryButton(o, W, H, U, out cityBtn)) {
         frame++;   // the city: frame the bar's «Инвентарь» (where the auto mode clicks) with the step's plate beside it
         DrawTip(cityBtn[0], cityBtn[1], cityBtn[2], cityBtn[3], locateLines, H, false, false, false, locateCaps);
       } else if (front && locateLines.Length > 0 && lf != null && lf.Mark.Kind == "box") {
         frame++;   // the button / tab / cell: its frame with the step's plate beside it
         DrawTip(o.X + lf.Mark.X, o.Y + lf.Mark.Y, lf.Mark.W, lf.Mark.H, locateLines, H, false, false, false, locateCaps);
-      } else if (front && locateLines.Length > 0 && (step.Kind != LocateKind.InList || locateNeedClick)) {
+      } else if (front && locateLines.Length > 0 && (hold || step.Kind != LocateKind.InList || locateNeedClick)) {
         frame++;
         DrawTipTop(locateLines, locateCaps);   // its own header, not the plan's «Шаг N из M»
-      } else if (!front || locateLines.Length == 0 || step.Kind == LocateKind.InList) HideTip();
+      } else if (!front || locateLines.Length == 0 || (!hold && step.Kind == LocateKind.InList)) HideTip();
       string key = step.Key + "|" + step.Pos + "|" + step.Row + "|" + step.Col + "|" + step.Count + "|" + string.Join(",", step.Missing) + "|" + step.OnHero + "|" + step.NeedClick
         + "|" + (locateSubs != null ? string.Join(",", Array.ConvertAll(locateSubs.Match, x => x ? "1" : "0")) + locateSubs.Changed : "") + "|" + step.Auto + "|" + step.AutoWhy;
       if (key != locateKey) { locateKey = key; var h = LocateChanged; if (h != null) h(step, locateSubs); }
@@ -1735,7 +1745,7 @@ namespace RealmForge {
     }
     /// <summary>«Показать в игре» may click: the player's auto click and the site's "locateAuto" switch (off until the owner enables it).</summary>
     public bool LocateAutoEnabled;
-    long screenReadAt, cityAt; bool cityNow; bool staleArmed; int staleTries;
+    long screenReadAt, cityAt; bool cityNow; long locUnkSince = -1, shUnkSince = -1; SellHintStep shLast; bool shHold;
     readonly Dictionary<ClickOwner, string> haltSaid = new Dictionary<ClickOwner, string>();
 
     bool ScreensWanted() { return target != 0 || locateReq != null || filterItem != 0 || hintKind != "" || runHero != 0 || sellWanted != null; }
@@ -1748,25 +1758,24 @@ namespace RealmForge {
       screenReadAt = now;
       IntPtr hwnd = GameWindow();
       bool front = hwnd != IntPtr.Zero && !W32.IsIconic(hwnd) && IsForeground(hwnd);
-      // a form the game never built is searched for (a full pass, ~1 s) at the start of a storage run and after a click that opens it
-      int rescan = sellScanOnce || now - sellBtnAt < 8000 ? 1500 : front ? 8000 : -1;
+      // the form searches (a full pass, ~1 s) run on a worker thread, never here: the readers below only use the nodes found so far.
+      // A form the game never built is searched for at the start of a storage run and after a click that opens it
+      if ((sellScanOnce || now - sellBtnAt < 8000) && front && RFX.InvFormMissing()) RFX.RequestFormSearch("storage run, inventory not built", 1500);
       sellScanOnce = false;
-      var inp = new ScreenInputs { Inv = RFX.ReadInventory(rescan), Rs = RFX.ReadRecastScreenSafe(rescan), Hero = RFX.ReadHeroScreen(addrs, screens.Hero) };
-      // nothing recognised though a guide needs the screen: the remembered form nodes may be dead copies - search them again (at most every 2 s)
-      // only after a known screen the player may have left into a form we do not know yet, at most 3 passes per such transition
+      var inp = new ScreenInputs { Inv = RFX.ReadInventory(-1), Rs = RFX.ReadRecastScreenSafe(-1), Hero = RFX.ReadHeroScreen(addrs, screens.Hero) };
       inp.CityForm = RFX.CityShown();
-      var first = ScreenState.Classify(inp, now);
-      if (first.Kind != ScreenKind.Unknown) { staleArmed = first.Kind == ScreenKind.Inventory || first.Kind == ScreenKind.HeroScreen || first.Kind == ScreenKind.City; staleTries = 0; }
-      else if (front && staleArmed && staleTries < 3 && (locateReq != null || sellWanted != null) && RFX.RescanFormsIfStale(2000)) {
-        staleTries++;
-        inp = new ScreenInputs { Inv = RFX.ReadInventory(rescan), Rs = RFX.ReadRecastScreenSafe(rescan), Hero = RFX.ReadHeroScreen(addrs, screens.Hero), CityForm = RFX.CityShown() };
-      }
       if (front && inp.CityForm != true && ScreenState.Classify(inp, now).Kind == ScreenKind.Unknown) {   // the city form is not readable or reads closed: the city's bottom bar (a picture, at most every 400 ms)
         if (now - cityAt >= 400) { cityAt = now; cityNow = CityVisible(hwnd); }
         inp.CitySeen = cityNow;
       } else cityNow = false;
       if (RecInfo.Active) RecReads.Add(now, inp);   // the recorder: what the tracker is given (src/RecInputs.cs)
       var st = screens.Update(inp, now);
+      // search policy: a form that read fine last tick and reads 0 now = the game moved it (soon, at most every 0.5 s); an Unknown screen = look every 2 s, no count limit
+      if (front) {
+        string lost = RFX.TakeFormsLost();
+        if (lost != null) RFX.RequestFormSearch("lost: " + lost, 500);
+        else if (st.Kind == ScreenKind.Unknown) RFX.RequestFormSearch("screen unknown", 2000);
+      }
       if (screens.Hero != null) heroScreen = screens.Hero;
       gate.Observe(st, now);
       AnnounceHalts();

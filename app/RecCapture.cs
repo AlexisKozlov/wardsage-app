@@ -56,8 +56,9 @@ namespace RealmForge {
     string Env(RecPartWriter w, int cw, int ch) {
       var ly = Layout.Current; var gg = Geo.Current;
       bool changed = false;
-      if (ly != lyRef) { lyRef = ly; string txt = ly != null ? Layout.RawCache(ly.Game) : null; lyHash = RecIn.Hash(txt); changed = true; if (txt != null && !lyWritten) { w.AddText("layout.json", txt); lyWritten = true; } }
-      if (gg != geoRef) { geoRef = gg; string txt = gg != null ? Geo.RawCache(gg.Game) : null; geoHash = RecIn.Hash(txt); changed = true; if (txt != null && !geoWritten) { w.AddText("geometry.json", txt); geoWritten = true; } }
+      // the text may come later than the object (retried each call until it is there), and is written into the first part that has it
+      if (ly != lyRef || (ly != null && !lyWritten)) { string txt = ly != null ? Layout.RawCache(ly.Game) : null; if (ly != lyRef || txt != null) { lyRef = ly; lyHash = RecIn.Hash(txt); changed = true; if (txt != null && !lyWritten) { w.AddText("layout.json", txt); lyWritten = true; } } }
+      if (gg != geoRef || (gg != null && !geoWritten)) { string txt = gg != null ? Geo.RawCache(gg.Game) : null; if (gg != geoRef || txt != null) { geoRef = gg; geoHash = RecIn.Hash(txt); changed = true; if (txt != null && !geoWritten) { w.AddText("geometry.json", txt); geoWritten = true; } } }
       if (changed || cw != envW || ch != envH) {
         envW = cw; envH = ch;
         env = "{\"U\":" + RecIn.D(Ui.Unit(cw, ch)) + ",\"ver\":" + MiniJson.Quote(ly != null ? ly.Game : gg != null ? gg.Game : "") + ",\"lh\":\"" + lyHash + "\",\"gh\":\"" + geoHash + "\",\"app\":" + MiniJson.Quote(Program.Version) + "}";
