@@ -104,6 +104,33 @@ namespace RealmForge {
     }
   }
 
+  /// <summary>Hides the frames of a scrolling list while it moves: the frames fade out within ~80 ms of a scroll move and come
+  /// back (within ~100 ms) once the value has been still for 150 ms, exactly on the items. Fed with the RAW scroll value (before
+  /// FrameSmoother). Pure: the caller passes the clock.</summary>
+  public sealed class ScrollFade {
+    /// <summary>A change above this (px or list units) between two calls is a move.</summary>
+    public const double MovePx = 0.5;
+    /// <summary>The value must be still this long (ms) before the frames come back.</summary>
+    public const long StillMs = 150;
+    /// <summary>Time (ms) to go from fully shown to hidden / back.</summary>
+    public const double FallMs = 80, RiseMs = 100;
+
+    bool has; double last, op = 1; long lastMs, moveMs;
+
+    public void Reset() { has = false; op = 1; }
+
+    /// <returns>the opacity of the list's frames, 0..1 (NaN input: reset, 1)</returns>
+    public double Step(double scrollValue, long nowMs) {
+      if (double.IsNaN(scrollValue)) { Reset(); return 1; }
+      if (!has) { has = true; last = scrollValue; lastMs = nowMs; moveMs = long.MinValue / 2; op = 1; return 1; }
+      long dt = Math.Max(0, Math.Min(250, nowMs - lastMs)); lastMs = nowMs;
+      if (Math.Abs(scrollValue - last) > MovePx) { last = scrollValue; moveMs = nowMs; }
+      if (nowMs - moveMs < StillMs) op = Math.Max(0, op - dt / FallMs);
+      else op = Math.Min(1, op + dt / RiseMs);
+      return op;
+    }
+  }
+
   public static class SellHint {
     /// <summary>The red warning plate (and the red cell frames) are wanted while a selected item is not on the list: the
     /// player has to untick it before anything else.</summary>

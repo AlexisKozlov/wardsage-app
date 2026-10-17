@@ -3048,6 +3048,29 @@ static class CoreTests {
       for (int k = 1; k <= 30; k++) { double w = sm.Step(k * 12.0, k * 33L, snap); mono &= w >= prevV; prevV = w; }
       Check(mono && prevV > 340, "smoother: steady scrolling moves only forward and follows (" + prevV + ")");
     }
+    // the form node pick: a shown copy beats an earlier dead one
+    {
+      var hits = new List<ulong> { 10, 20, 30 };
+      Eq(20UL, RFX.PickNode(hits, n => n == 20), "pick node: the shown hit wins over an earlier dead one");
+      Eq(10UL, RFX.PickNode(hits, n => false), "pick node: none shown -> the first");
+      Eq(0UL, RFX.PickNode(new List<ulong>(), n => true), "pick node: no hits -> 0");
+    }
+    // the list frames fade while the list scrolls and come back 150 ms after it stopped
+    {
+      var sf = new ScrollFade();
+      Check(sf.Step(100, 0) == 1 && sf.Step(100, 50) == 1 && sf.Step(100, 100) == 1, "scroll fade: a still list keeps its frames (1)");
+      double o1 = sf.Step(130, 116);
+      Check(o1 < 1 && o1 > 0, "scroll fade: a move starts the fade (" + o1 + ")");
+      double o2 = 1; for (long t = 132; t <= 200; t += 16) o2 = sf.Step(130 + t, t);
+      Check(o2 == 0, "scroll fade: a moving list is hidden within 80 ms (" + o2 + ")");
+      sf = new ScrollFade(); sf.Step(0, 0); sf.Step(40, 16); sf.Step(80, 32); sf.Step(120, 64); sf.Step(160, 96);
+      double st1 = sf.Step(160, 200);
+      Check(st1 == 0, "scroll fade: 100 ms after the move still hidden (" + st1 + ")");
+      double st2 = 0; for (long t = 216; t <= 460; t += 16) st2 = sf.Step(160, t);
+      Check(st2 == 1, "scroll fade: back to 1 after 150 ms still and the rise (" + st2 + ")");
+      Check(sf.Step(double.NaN, 500) == 1 && sf.Step(5, 516) == 1, "scroll fade: NaN resets, the first value is 1");
+      Check(sf.Step(5.3, 532) == 1, "scroll fade: a change of 0.3 is not a move");
+    }
     // the picture offset is not re-learned while the list moves; a learned one changes only after stillness and > 3 px
     {
       var so = new ScrollOffset(); double sp = 110.76, raw = 116.5;

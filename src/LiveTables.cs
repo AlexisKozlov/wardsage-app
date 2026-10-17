@@ -277,6 +277,7 @@ namespace RealmForge {
     static ulong FindFormNode() {
       formNode = invNode = subNode = gemNode = 0;
       if (Layout.Current == null) return 0;   // no form ids: the hero screen is found by its keys
+      int t0 = Environment.TickCount;
       long idMain = FormCharactorMainId, idInv = FormBackpackId, idRecast = FormRecastId, idGem = FormGemId;
       var hits = new List<ulong>();
       ScanParallel((b0, buf, len) => {
@@ -288,14 +289,46 @@ namespace RealmForge {
         }
       });
       ulong form = 0;
+      var invHits = new List<ulong>(); var subHits = new List<ulong>(); var gemHits = new List<ulong>();
       foreach (var n in hits) {
         ulong f;
         if (formNode == 0 && (f = NodeForm(n)) != 0) { formNode = n; form = f; }
-        else if (invNode == 0 && NodeInv(n) != 0) invNode = n;
-        else if (subNode == 0 && NodeTable(n, FormRecastId) != 0) subNode = n;
-        else if (gemNode == 0 && NodeTable(n, FormGemId) != 0) gemNode = n;
+        else if (NodeInv(n) != 0) invHits.Add(n);
+        else if (NodeTable(n, FormRecastId) != 0) subHits.Add(n);
+        else if (NodeTable(n, FormGemId) != 0) gemHits.Add(n);
       }
+      // several copies of one form can linger (an old node array after a rehash, the table of an earlier open): the one the game shows wins
+      Func<ulong, bool> invShown = n => InvFormShown(NodeInv(n));
+      Func<ulong, bool> subShown = n => InvFormShown(NodeTable(n, FormRecastId));
+      Func<ulong, bool> gemShown = n => InvFormShown(NodeTable(n, FormGemId));
+      invNode = PickNode(invHits, invShown); subNode = PickNode(subHits, subShown); gemNode = PickNode(gemHits, gemShown);
+      int ki = CountWhere(invHits, invShown), ks = CountWhere(subHits, subShown), kg = CountWhere(gemHits, gemShown);
+      string line = "inventory " + invHits.Count + " (shown " + ki + "), foundry " + subHits.Count + " (shown " + ks + "), gem " + gemHits.Count + " (shown " + kg + ")";
+      if (line != formsScanSaid) { formsScanSaid = line; Log.AppendLine("forms: scan " + (Environment.TickCount - t0) + " ms, " + line); }
       return form;
+    }
+    static string formsScanSaid = "";
+
+    static int CountWhere(IList<ulong> l, Func<ulong, bool> p) { int n = 0; foreach (var x in l) if (p(x)) n++; return n; }
+
+    /// <summary>Of the nodes found for one form id the one whose table is shown; none shown = the first; none = 0.</summary>
+    public static ulong PickNode(IList<ulong> hits, Func<ulong, bool> shown) {
+      if (hits == null || hits.Count == 0) return 0;
+      foreach (var n in hits) if (shown(n)) return n;
+      return hits[0];
+    }
+
+    static int lastFormsRescan;
+    /// <summary>The forms searched again (a full pass, about a second) when at least <paramref name="minGapMs"/> passed since the last
+    /// call of this one (its own clock); the known live hero screen is kept if the pass does not find it again.</summary>
+    public static bool RescanFormsIfStale(int minGapMs) {
+      if (regs == null || Layout.Current == null) return false;
+      if (lastFormsRescan != 0 && Environment.TickCount - lastFormsRescan < minGapMs) return false;
+      lastFormsRescan = Environment.TickCount; if (lastFormsRescan == 0) lastFormsRescan = 1;
+      ulong oldForm = formNode;
+      ulong f = FindFormNode();
+      if (f == 0 && oldForm != 0 && NodeForm(oldForm) != 0) formNode = oldForm;
+      return true;
     }
 
     /// <summary>The hero screen the game holds now (0 = unknown: the node moved or was never found).</summary>
