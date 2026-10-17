@@ -11,7 +11,7 @@
 
   const CODE_RE = /^rf_[0-9A-Za-z]{32}$/;
   const S = {
-    ready: false, lang: 'ru', version: '', channel: 'main', site: '', defaultSite: '', hasCode: false, codePrefix: '', saveCopy: false,
+    ready: false, termsOk: true, lang: 'ru', version: '', channel: 'main', site: '', defaultSite: '', hasCode: false, codePrefix: '', saveCopy: false,
     game: { running: false, version: null }, last: null, page: 'sync', editCode: false,
     sync: { phase: 'idle', stage: null, seconds: 0, result: null, error: null },
     plans: { status: 'idle', list: [], err: null }, sel: 0,
@@ -86,7 +86,8 @@
     document.body.classList.toggle('compact', S.compact);
     const r = rail();
     if (r !== lastRail) { $('#rail').innerHTML = r; lastRail = r; }
-    const md = modal();
+    const md = termsModal() || modal();
+    const appEl = document.querySelector('.app'); if (appEl) appEl.inert = !S.termsOk;   // the first-run card blocks the window behind it
     if (md !== lastModal) { $('#modal').innerHTML = md; lastModal = md; }
     const view = S.compact ? 'compact' : S.page + (S.editCode || !S.hasCode ? ':code' : '');
     const html = S.compact ? compactView() : S.page === 'equip' ? equipPage() : S.page === 'settings' ? settingsPage() : S.page === 'news' ? newsPage() : S.page === 'community' ? communityPage() : syncPage();
@@ -114,10 +115,6 @@
         ${S.update && S.updDismissed ? `<button class="btn-line" data-act="updOpen">${I.reload}<span>${esc(t('updAvail', shownVer(S.update.version)))}</span></button>` : ''}
         <div class="game-state"><span class="dot ${S.game.running ? 'on' : ''}"></span><div>${esc(S.game.running ? t('gameOn') : t('gameOff'))}
           ${S.game.running && S.game.version ? `<small>${esc(t('gameVer', S.game.version))}</small>` : ''}${S.version ? `<small>${esc(t('appVer', shownVer(S.version)))}</small>` : ''}</div></div>
-        <div class="langs">
-          <button data-act="lang" data-lang="ru" aria-pressed="${S.lang === 'ru'}">RU</button>
-          <button data-act="lang" data-lang="en" aria-pressed="${S.lang === 'en'}">EN</button>
-        </div>
       </div>`;
   }
 
@@ -136,6 +133,16 @@
     }
     close();
     return `<div class="modal-notes rich">${out}</div>`;
+  }
+  // First-run card: the Terms of Use must be accepted once per terms version (Config.TermsVersion on the host side).
+  function termsModal() {
+    if (!S.ready || S.termsOk) return '';
+    const link = `<button class="termsLink" data-act="open" data-url="https://wardsage.com/terms">${esc(t('termsLink'))}</button>`;
+    const text = esc(t('termsText')).replace('{link}', link);
+    return `<div class="modal-back terms-back"><div class="modal card framed terms" role="dialog" aria-modal="true" aria-labelledby="termsTitle">
+      <h2 id="termsTitle" class="termsTitle">${esc(t('termsTitle'))}</h2>
+      <p class="termsText">${text}</p>
+      <div class="modal-btns terms-btns"><button class="btn-gold" data-act="termsAccept">${esc(t('termsOk'))}</button></div></div></div>`;
   }
   function modal() {
     if (!S.update || S.updDismissed) return '';
@@ -337,7 +344,6 @@
     return `
       <div class="head"><div><h1>${esc(t('obTitle'))}</h1><p class="lead">${esc(t('obLead'))}</p></div></div>
       <div class="card framed">
-        ${S.hasCode ? '' : `<div class="obLang"><span>Язык · Language</span><div class="langs"><button data-act="lang" data-lang="ru" aria-pressed="${S.lang === 'ru'}">РУССКИЙ</button><button data-act="lang" data-lang="en" aria-pressed="${S.lang === 'en'}">ENGLISH</button></div></div>`}
         <ol class="onboard">
           <li><b>${esc(t('ob1'))}</b>${esc(t('ob1p'))}</li><li><b>${esc(t('ob2'))}</b>${esc(t('ob2p'))}</li><li><b>${esc(t('ob3'))}</b>${esc(t('ob3p'))}</li>
         </ol>
@@ -768,6 +774,7 @@
     else if (a === 'battleCapture') { host.send({ cmd: 'battle.capture' }); toast(t('battleReading'), 4000); }
     else if (a === 'sync') { S.sync = { phase: 'run', stage: 'find', seconds: 0 }; host.send({ cmd: 'sync' }); render(); }
     else if (a === 'saveOnly') { S.sync = { phase: 'run', stage: 'find', seconds: 0 }; host.send({ cmd: 'sync', saveOnly: true }); S.page = 'sync'; render(); }
+    else if (a === 'termsAccept') { S.termsOk = true; host.send({ cmd: 'acceptTerms' }); render(); }
     else if (a === 'open') host.send({ cmd: 'open', url: el.dataset.url });
     else if (a === 'more') { S.more[el.dataset.k] = !S.more[el.dataset.k]; render(); }
     else if (a === 'openLog') host.send({ cmd: 'openLog' });
@@ -844,7 +851,7 @@
     if (!m || !m.ev) return;
     switch (m.ev) {
       case 'state':
-        Object.assign(S, { lang: m.lang, version: m.version, channel: m.channel || 'main', site: m.site, defaultSite: m.defaultSite, hasCode: m.hasCode, codePrefix: m.codePrefix, saveCopy: m.saveCopy, last: m.last || S.last });
+        Object.assign(S, { lang: m.lang, version: m.version, channel: m.channel || 'main', site: m.site, defaultSite: m.defaultSite, termsOk: m.termsOk !== false, hasCode: m.hasCode, codePrefix: m.codePrefix, saveCopy: m.saveCopy, last: m.last || S.last });
         if (m.autoSync !== undefined) { S.autoSync = m.autoSync; S.autoClick = m.autoClick; S.autoConfirm = !!m.autoConfirm; S.errorReports = !!m.errorReports; S.autoUpdate = m.autoUpdate !== false; S.tray = m.tray !== false; S.bossHints = m.bossHints !== false; S.autostart = !!m.autostart; }
         if (m.game) S.game = m.game;
         if (m.codeSaved) { S.editCode = false; toast(t('saved')); if (S.page === 'equip' || S.plans.status !== 'idle') loadPlans(); }

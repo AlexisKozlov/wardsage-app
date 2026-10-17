@@ -2,7 +2,7 @@
 // Inert inside Wardsage.exe (window.chrome.webview exists there). Scenario: index.html?s=<name>
 //   locate | locate-select | locate-filter | locate-gone (a «Найти в игре» request)
 //   remote-off | remote-some (the site's switches; &page=equip) | remote-layout (no layout data for the game version) | remote-layout-code (no data: no valid sync code)
-//   onboard | idle | reading | done | error | equip | pick | rel | selected | hidden | done-plan | compact | settings | news | newsoff | en
+//   terms (the first-run Terms of Use card; also &terms=1 with any scenario) | onboard | idle | reading | done | error | equip | pick | rel | selected | hidden | done-plan | compact | settings | news | newsoff | en
 //   filter-open (the game's filter pop-up over the list) | filter-guide (the pop-up open for the «faster» tip: what to pick is lit) | far (the item more than three screens down: the filter tip)
 (function () {
   if (window.chrome && window.chrome.webview) return;
@@ -45,7 +45,7 @@
     on: (f) => { handler = f; },
     send: (m) => {
       if (m.cmd === 'init') {
-        emit({ ev: 'state', lang: (s === 'en' || q.get('lang') === 'en') ? 'en' : 'ru', version: '1.6.53', site, defaultSite: 'https://wardsage.com', hasCode: s !== 'onboard',
+        emit({ ev: 'state', lang: (s === 'en' || q.get('lang') === 'en') ? 'en' : 'ru', version: '1.6.53', site, defaultSite: 'https://wardsage.com', hasCode: s !== 'onboard', termsOk: !(s === 'terms' || q.get('terms')) || sessionStorage.getItem('rfTerms') === '1',
           codePrefix: 'rf_VKSjw', saveCopy: false, game: { running: s !== 'error', version: '1.0.24' },
           last: { at: '2026-09-24T20:26:00Z', heroes: 128, items: 1109, artifacts: 380, top: [2085, 2016, 2025] } });
         if (q.get('upd')) emit({ ev: 'update', version: '1.6.47', notesRu: 'Чистка склада: если «Автонажатие» выключено, программа прямо об этом говорит и предлагает включить его одной кнопкой.', notesEn: 'Storage cleanup: with «Auto click» off the app now says so and offers to turn it on with one button.' });
@@ -64,6 +64,9 @@
         if (s === 'settings') setTimeout(() => document.querySelector('[data-page=settings]').click(), 20);
         if (s === 'community' || s === 'forum' || s === 'forum0' || s === 'forum00' || s === 'onboard') setTimeout(() => document.querySelector('[data-page=community]').click(), 20);
         if (s === 'news' || s === 'newsoff') setTimeout(() => document.querySelector('[data-page=news]').click(), 20);
+      } else if (m.cmd === 'acceptTerms') {
+        try { sessionStorage.setItem('rfTerms', '1'); } catch (e) { /* preview only */ }
+        console.log('[mock host]', JSON.stringify(m));
       } else if (m.cmd === 'news.fetch') {
         // s=newsoff: the site cannot be reached (the built-in list shows)
         if (s === 'newsoff') emit({ ev: 'news', ok: false });

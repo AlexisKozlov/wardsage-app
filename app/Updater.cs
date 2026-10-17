@@ -1,7 +1,7 @@
 // Wardsage.exe — automatic updates.
 //
 // The site publishes /downloads/latest.json: {version, url, size, sha256, sig, notes:{ru,en}}. The app checks it at
-// start and every few hours, downloads a newer RealmForge.exe in the background into %LOCALAPPDATA%\RealmForge\update\
+// start and every few hours, downloads a newer RealmForge.exe in the background into %LOCALAPPDATA%\Wardsage\update\
 // and puts it in place at the next start (or when the player presses «Перезапустить»): the running exe is renamed to
 // *.old (Windows allows that), the new one is copied to its name and started.
 //

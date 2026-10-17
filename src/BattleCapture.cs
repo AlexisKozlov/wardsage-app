@@ -1,6 +1,6 @@
 // RealmForge — the result of a boss fight, read from the game's memory when its result screen opens (read-only), for
 // comparing the site's battle simulation with real fights: each hero's damage to the boss, healing, damage taken, and
-// the fight's length. Kept in %APPDATA%\RealmForge\battles (the last 30) and sent with the account snapshot.
+// the fight's length. Kept in %APPDATA%\Wardsage\battles (the last 30) and sent with the account snapshot.
 //
 // The game keeps its open windows in UIStatic's UIInstance: a script table form id -> form, the id being the hash of the
 // form's name (str_hash, as the language keys; the ids come with the layout data from the server, src/Layout.cs). The

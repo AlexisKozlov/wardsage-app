@@ -219,6 +219,65 @@ static class CoreTests {
     var cc2 = AppConfig.FromJson(cc.ToJson());
     Check(Math.Abs(cc2.CoachX - 0.25) < 1e-6 && Math.Abs(cc2.CoachY - 0.4) < 1e-6, "coach panel place round-trips");
     Check(AppConfig.FromJson("{}").CoachX < 0 && !new AppConfig().ToJson().Contains("coach"), "coach panel: default place unless moved");
+    {
+      var tc = new AppConfig(); Check(tc.TermsAccepted == "" && AppConfig.FromJson("{}").TermsAccepted != AppConfig.TermsVersion, "terms: not accepted by default");
+      tc.TermsAccepted = AppConfig.TermsVersion;
+      Check(AppConfig.FromJson(tc.ToJson()).TermsAccepted == AppConfig.TermsVersion, "terms: acceptance survives save and load");
+      // settings folder move (src/FolderMigration.cs)
+      string root = Path.Combine(Path.GetTempPath(), "rf-mig-" + Guid.NewGuid().ToString("N"));
+      try {
+        var logs = new List<string>(); Action<string> lg = delegate(string l) { logs.Add(l); };
+        string o1 = Path.Combine(root, "a", "old"), n1 = Path.Combine(root, "a", "new");
+        Directory.CreateDirectory(Path.Combine(o1, "WebView2", "Default")); Directory.CreateDirectory(Path.Combine(o1, "update")); Directory.CreateDirectory(Path.Combine(o1, "app", "x"));
+        File.WriteAllText(Path.Combine(o1, "config.json"), "{\"lang\":\"en\"}");
+        File.WriteAllText(Path.Combine(o1, "WebView2", "Default", "d.txt"), "d");
+        File.WriteAllText(Path.Combine(o1, "update", "RealmForge-9.exe"), "x");
+        File.WriteAllText(Path.Combine(o1, "app", "x", "y.dll"), "y");
+        Check(FolderMigration.Run(o1, n1, lg), "folder move: copies when only the old folder exists");
+        Check(File.ReadAllText(Path.Combine(n1, "config.json")) == "{\"lang\":\"en\"}" && File.Exists(Path.Combine(n1, "WebView2", "Default", "d.txt")), "folder move: files and subfolders copied");
+        Check(!Directory.Exists(Path.Combine(n1, "update")) && !Directory.Exists(Path.Combine(n1, "app")), "folder move: staged updates and unpacked pages are not copied");
+        Check(File.Exists(Path.Combine(n1, FolderMigration.MarkerName)), "folder move: marker written");
+        Check(File.Exists(Path.Combine(o1, "config.json")) && File.Exists(Path.Combine(o1, "update", "RealmForge-9.exe")), "folder move: old folder left untouched");
+        File.WriteAllText(Path.Combine(n1, "config.json"), "{\"lang\":\"ru\"}");
+        Check(!FolderMigration.Run(o1, n1, lg) && File.ReadAllText(Path.Combine(n1, "config.json")) == "{\"lang\":\"ru\"}", "folder move: does not run twice or overwrite");
+        string o2 = Path.Combine(root, "b", "old"), n2 = Path.Combine(root, "b", "new");
+        Directory.CreateDirectory(o2); Directory.CreateDirectory(n2);
+        File.WriteAllText(Path.Combine(o2, "config.json"), "old"); File.WriteAllText(Path.Combine(n2, "config.json"), "new");
+        Check(!FolderMigration.Run(o2, n2, lg) && File.ReadAllText(Path.Combine(n2, "config.json")) == "new" && !File.Exists(Path.Combine(n2, FolderMigration.MarkerName)), "folder move: both exist, the new one is used as it is");
+        string n3 = Path.Combine(root, "c", "new");
+        Check(!FolderMigration.Run(Path.Combine(root, "c", "old"), n3, lg) && !Directory.Exists(n3), "folder move: no old folder, nothing created");
+        string o4 = Path.Combine(root, "d", "old"), n4 = Path.Combine(root, "d", "new");
+        Directory.CreateDirectory(o4); Directory.CreateDirectory(n4); File.WriteAllText(Path.Combine(o4, "config.json"), "old"); File.WriteAllText(Path.Combine(n4, "wardsage.log"), "log");
+        Check(FolderMigration.Run(o4, n4, lg) && File.ReadAllText(Path.Combine(n4, "config.json")) == "old", "folder move: a new folder with only a log still receives the old settings");
+        Check(logs.Count > 0, "folder move: steps are logged");
+      } finally { try { Directory.Delete(root, true); } catch (Exception) { } }
+    }
+    {
+      // choices of the installer (AppConfig.ApplyInstallerOptions)
+      string io = Path.Combine(Path.GetTempPath(), "rf-inst-" + Guid.NewGuid().ToString("N"));
+      try {
+        var il = new List<string>(); Action<string> ilog = delegate(string l) { il.Add(l); };
+        string optf = Path.Combine(io, AppConfig.InstallerOptionsName), cfgf = Path.Combine(io, "config.json");
+        Directory.CreateDirectory(io);
+        Check(!AppConfig.ApplyInstallerOptions(io, ilog) && !File.Exists(cfgf) && il.Count == 0, "installer options: no file, nothing happens");
+        File.WriteAllText(optf, "{\"errorReports\": true, \"autostart\": false}");
+        Check(AppConfig.ApplyInstallerOptions(io, ilog), "installer options: applied");
+        Check(AppConfig.Load(cfgf).ErrorReports && !File.Exists(optf) && il.Count == 1, "installer options: error reports on, file deleted, logged");
+        File.WriteAllText(optf, "{\"errorReports\":false,\"autostart\":true}");
+        Check(AppConfig.ApplyInstallerOptions(io, ilog) && !AppConfig.Load(cfgf).ErrorReports && !File.Exists(optf), "installer options: switched off again, other settings kept");
+        File.WriteAllText(optf, "{\"errorReports\":true,\"lang\":\"en\"}");
+        Check(AppConfig.ApplyInstallerOptions(io, ilog) && AppConfig.Load(cfgf).Lang == "en" && AppConfig.Load(cfgf).ErrorReports && !File.Exists(optf), "installer options: language applied");
+        File.WriteAllText(optf, "{\"lang\":\"ru\"}");
+        Check(AppConfig.ApplyInstallerOptions(io, ilog) && AppConfig.Load(cfgf).Lang == "ru" && AppConfig.Load(cfgf).ErrorReports, "installer options: language alone applied, error reports kept");
+        File.WriteAllText(optf, "{\"errorReports\":false,\"lang\":\"xx\"}");
+        Check(AppConfig.ApplyInstallerOptions(io, ilog) && AppConfig.Load(cfgf).Lang == "ru" && !AppConfig.Load(cfgf).ErrorReports, "installer options: unknown language ignored");
+        File.WriteAllText(optf, "{ not json");
+        int before = il.Count;
+        Check(!AppConfig.ApplyInstallerOptions(io, ilog) && !File.Exists(optf) && il.Count == before + 1 && !AppConfig.Load(cfgf).ErrorReports, "installer options: malformed file ignored, deleted, logged");
+        File.WriteAllText(optf, "{\"autostart\":true}");
+        Check(!AppConfig.ApplyInstallerOptions(io, ilog) && !File.Exists(optf), "installer options: no errorReports key, ignored and deleted");
+      } finally { try { Directory.Delete(io, true); } catch (Exception) { } }
+    }
     Check(AppConfig.FromJson("{\"coach\":[3,0.5]}").CoachX < 0, "coach panel: a place off the window is ignored");
     Check(AppConfig.FromJson("{}").BossHints && !AppConfig.FromJson(new AppConfig { BossHints = false }.ToJson()).BossHints, "boss hints: on by default, off round-trips");
     var def = AppConfig.FromJson("not json");

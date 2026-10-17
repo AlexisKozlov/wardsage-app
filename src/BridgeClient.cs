@@ -1,7 +1,7 @@
 // Wardsage extractor - link to the local bridge (bridge/, a .NET 8 service on http://127.0.0.1:5055).
 //
 // Contract (bridge/Host/HostEndpoints.cs); every request carries X-RealmForge-Token, which the bridge writes to
-// %LOCALAPPDATA%\RealmForge\bridge-token.txt on its first start (the same Windows user runs both):
+// %LOCALAPPDATA%\Wardsage\bridge-token.txt on its first start (the same Windows user runs both):
 //   PUT  /api/host/snapshot               body: account.json as Extractor.Read made it;
 //                                         X-Captured-At: when the reading STARTED (ISO 8601 UTC), X-Game-Version
 //        200 {version, heroes, items} | 409 the reading started before the last equip done through the bridge

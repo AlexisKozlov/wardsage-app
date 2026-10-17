@@ -10,6 +10,7 @@ namespace RealmForge {
     public const string WindowTitle = "Wardsage TEST";
     public const string DefaultSite = "https://test.wardsage.com";
     public const string FolderName = "WardsageTest";
+    public const string OldFolderName = "";   // the test build never had another name
     public const string DocsFolderName = "WardsageTest";
     public const string MutexName = "Wardsage.Test.SingleInstance";
     public const string EventName = "Wardsage.Test.Show";
@@ -22,8 +23,9 @@ namespace RealmForge {
     public const string ProductName = "Wardsage";
     public const string WindowTitle = "Wardsage";
     public const string DefaultSite = "https://wardsage.com";
-    // the folders keep their old name: existing installs keep their settings, sync code and downloaded updates
-    public const string FolderName = "RealmForge";
+    // settings (%APPDATA%) and local data (%LOCALAPPDATA%); copied once from OldFolderName at start (src/FolderMigration.cs)
+    public const string FolderName = "Wardsage";
+    public const string OldFolderName = "RealmForge";
     // the account.json copies (Documents) only hold what the player saved on purpose: they can take the new name at once
     public const string DocsFolderName = "Wardsage";
     public const string MutexName = "RealmForge.Desktop.SingleInstance";

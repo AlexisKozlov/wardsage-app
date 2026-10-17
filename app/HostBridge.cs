@@ -289,6 +289,7 @@ namespace RealmForge {
       try {
         switch (cmd) {
           case "init": SendState(null); CheckGame(true); PostRemote(); PostLayout(); if (updateReady != null) Post(updateReady); break;
+          case "acceptTerms": cfg.TermsAccepted = AppConfig.TermsVersion; Save(); Log.Write("terms accepted: " + AppConfig.TermsVersion); break;
           case "setLang": cfg.Lang = MiniJson.GetString(m, "lang") == "en" ? "en" : "ru"; overlay.CancelText = CancelText(cfg.Lang); coach.Lang = cfg.Lang; Save(); break;
           case "setCode": {
             string code = SyncClient.ExtractCode(MiniJson.GetString(m, "code") ?? "");
@@ -495,7 +496,7 @@ namespace RealmForge {
     void OpenAllowed(string url) {
       Uri u, site;
       if (url == null || !Uri.TryCreate(url, UriKind.Absolute, out u) || u.Scheme != Uri.UriSchemeHttps && !(u.Scheme == Uri.UriSchemeHttp && u.IsLoopback)) return;
-      bool ok = u.Host == "github.com" || u.Host == "go.microsoft.com" || u.Host == "discord.gg" || u.Host == "discord.com";
+      bool ok = u.Host == "github.com" || u.Host == "go.microsoft.com" || u.Host == "discord.gg" || u.Host == "discord.com" || u.Host == "wardsage.com" || u.Host == "www.wardsage.com";
       if (Uri.TryCreate(cfg.Site, UriKind.Absolute, out site) && u.Host == site.Host) ok = true;
       if (ok) Shell.OpenUrl(u.AbsoluteUri);
     }
@@ -508,6 +509,7 @@ namespace RealmForge {
       sb.Append(",\"site\":").Append(S(cfg.Site));
       sb.Append(",\"defaultSite\":").Append(S(SyncClient.DefaultSite));
       bool has = SyncClient.IsValidCode(cfg.Code);
+      sb.Append(",\"termsOk\":").Append(B(cfg.TermsAccepted == AppConfig.TermsVersion));
       sb.Append(",\"hasCode\":").Append(B(has));
       sb.Append(",\"codePrefix\":").Append(S(has ? cfg.Code.Substring(0, 8) : ""));
       sb.Append(",\"saveCopy\":").Append(B(cfg.SaveCopy));

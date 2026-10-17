@@ -19,15 +19,20 @@
 #endif
 
 #ifdef TestBuild
+  #define AutostartName "Wardsage Test"
   #define AppTitle "Wardsage Test"
   #define ExeName "Wardsage-Test.exe"
   #define SetupName "Wardsage-Test-Setup"
   #define UserData "WardsageTest"
+  #define OptionsDir "WardsageTest"
 #else
+  #define AutostartName "Wardsage"
   #define AppTitle "Wardsage"
   #define ExeName "Wardsage.exe"
   #define SetupName "Wardsage-Setup"
   #define UserData "RealmForge"
+  ; OptionsDir: the app's settings folder (Channel.FolderName); the app copies the old RealmForge one into it
+  #define OptionsDir "Wardsage"
 #endif
 
 [Setup]
@@ -73,8 +78,28 @@ ShowLanguageDialog=yes
 Name: "ru"; MessagesFile: "compiler:Languages\Russian.isl"
 Name: "en"; MessagesFile: "compiler:Default.isl"
 
+[CustomMessages]
+ru.TaskAutostart=Запускать вместе с Windows
+en.TaskAutostart=Start with Windows
+ru.TaskErrorReports=Отправлять отчёты об ошибках
+en.TaskErrorReports=Send error reports
+ru.TasksOptions=Параметры программы (можно изменить позже в настройках):
+en.TasksOptions=App options (can be changed later in the settings):
+
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
+; both on by default; the choice is applied below ([Registry], installer-options.json)
+Name: "autostart"; Description: "{cm:TaskAutostart}"; GroupDescription: "{cm:TasksOptions}"
+Name: "errorreports"; Description: "{cm:TaskErrorReports}"; GroupDescription: "{cm:TasksOptions}"
+
+[Registry]
+; the start with Windows exactly as the app writes it itself (app/Tray.cs Autostart): the value "<exe>" --tray
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "{#AutostartName}"; ValueData: """{app}\{#ExeName}"" --tray"; Tasks: autostart; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueName: "{#AutostartName}"; Tasks: not autostart; Flags: deletevalue dontcreatekey
+#ifndef TestBuild
+; the entry of the old name (RealmForge.exe is replaced by Wardsage.exe)
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueName: "RealmForge"; Flags: deletevalue dontcreatekey
+#endif
 
 [Files]
 Source: "..\dist\{#ExeName}"; DestDir: "{app}"; Flags: ignoreversion
@@ -105,11 +130,37 @@ Type: files; Name: "{app}\{#ExeName}.old"
 Type: files; Name: "{app}\RealmForge.exe"
 Type: files; Name: "{app}\RealmForge.exe.old"
 #endif
-Type: filesandordirs; Name: "{localappdata}\{#UserData}"
+#ifndef TestBuild
+Type: filesandordirs; Name: "{localappdata}\RealmForge"
+#endif
+Type: filesandordirs; Name: "{localappdata}\{#OptionsDir}"
 
 [Code]
+function JsonBool(B: Boolean): String;
+begin
+  if B then Result := 'true' else Result := 'false';
+end;
+
+// The choices for the app: it reads this file once at its start, applies "errorReports" to its config.json and deletes it
+// (the installer never edits config.json). "autostart" is informational: the Run value is written by [Registry].
+procedure WriteOptions;
+var
+  Dir, Lang: String;
+begin
+  if ActiveLanguage = 'ru' then Lang := 'ru' else Lang := 'en';
+  Dir := ExpandConstant('{userappdata}\{#OptionsDir}');
+  ForceDirectories(Dir);
+  SaveStringToFile(Dir + '\installer-options.json',
+    '{"errorReports": ' + JsonBool(WizardIsTaskSelected('errorreports')) +
+    ', "autostart": ' + JsonBool(WizardIsTaskSelected('autostart')) +
+    ', "lang": "' + Lang + '"}', False);
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
+  begin
     SaveStringToFile(ExpandConstant('{app}\install-lang.txt'), ActiveLanguage, False);
+    WriteOptions;
+  end;
 end;

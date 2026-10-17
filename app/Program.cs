@@ -1,7 +1,7 @@
 // Wardsage.exe - entry point.
 //
 // A single executable: the interface (ui/*) and the WebView2 SDK (Microsoft.Web.WebView2.*.dll, WebView2Loader.dll)
-// are embedded as resources and unpacked on start to %LOCALAPPDATA%\RealmForge\app\<build>\. The page is rendered by
+// are embedded as resources and unpacked on start to %LOCALAPPDATA%\Wardsage\app\<build>\. The page is rendered by
 // the WebView2 Runtime that ships with Windows 10/11 (Microsoft Edge). The account reader is the same read-only code
 // as before (src/*.cs): OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ) + ReadProcessMemory.
 using System;
@@ -31,6 +31,10 @@ namespace RealmForge {
       // already running (maybe hidden in the tray): ask it to show its window
       if (!created) { if (!ShowSignal.Send()) BringOtherToFront(); return 0; }
       startInTray = Array.IndexOf(args, Autostart.TrayArg) >= 0;
+      // settings folders of the old product name: copied once, before anything reads the config or opens WebView2
+      MigrateFolders();
+      // choices made in the installer (installer-options.json): applied to config.json once, the file is removed
+      AppConfig.ApplyInstallerOptions(AppConfig.DefaultDir, Log.Write);
       // a downloaded, signed update waits: put it in place and start it (app/Updater.cs)
       if (Updater.ApplyAtStart(ReleaseSingle)) return 0;
       // an install updated in place still runs as RealmForge.exe: becomes Wardsage.exe (once), the old file is removed later
@@ -52,6 +56,17 @@ namespace RealmForge {
         return File.Exists(path) ? Assembly.LoadFrom(path) : null;
       };
       return Run();
+    }
+
+    // %APPDATA%\RealmForge -> Wardsage and %LOCALAPPDATA%\RealmForge -> Wardsage (copy; the old folders stay as they were)
+    static void MigrateFolders() {
+      try {
+        if (string.IsNullOrEmpty(Channel.OldFolderName)) return;
+        string roam = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        string local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        FolderMigration.Run(Path.Combine(roam, Channel.OldFolderName), Path.Combine(roam, Channel.FolderName), Log.Write);
+        FolderMigration.Run(Path.Combine(local, Channel.OldFolderName), Path.Combine(local, Channel.FolderName), Log.Write);
+      } catch (Exception e) { Log.Write("folders: " + e.Message); }
     }
 
     // Separate method: the WebView2 types are touched only after AssemblyResolve is installed.

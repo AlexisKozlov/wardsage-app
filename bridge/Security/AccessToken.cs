@@ -18,7 +18,7 @@ public sealed class AccessToken
     public AccessToken(BridgeOptions options)
     {
         FilePath = options.TokenFile ?? Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "RealmForge", "bridge-token.txt");
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Wardsage", "bridge-token.txt");
 
         string token = File.Exists(FilePath) ? File.ReadAllText(FilePath).Trim() : "";
         if (token.Length < 32)

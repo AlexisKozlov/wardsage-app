@@ -63,6 +63,7 @@ namespace RealmForge {
     public const string WindowTitle = "Wardsage TEST";
     public const string DefaultSite = "https://test.wardsage.com";
     public const string FolderName = "WardsageTest";
+    public const string OldFolderName = "";   // the test build never had another name
     public const string DocsFolderName = "WardsageTest";
     public const string MutexName = "Wardsage.Test.SingleInstance";
     public const string EventName = "Wardsage.Test.Show";
@@ -75,8 +76,9 @@ namespace RealmForge {
     public const string ProductName = "Wardsage";
     public const string WindowTitle = "Wardsage";
     public const string DefaultSite = "https://wardsage.com";
-    // the folders keep their old name: existing installs keep their settings, sync code and downloaded updates
-    public const string FolderName = "RealmForge";
+    // settings (%APPDATA%) and local data (%LOCALAPPDATA%); copied once from OldFolderName at start (src/FolderMigration.cs)
+    public const string FolderName = "Wardsage";
+    public const string OldFolderName = "RealmForge";
     // the account.json copies (Documents) only hold what the player saved on purpose: they can take the new name at once
     public const string DocsFolderName = "Wardsage";
     public const string MutexName = "RealmForge.Desktop.SingleInstance";
@@ -1476,7 +1478,7 @@ namespace RealmForge {
 // ===== src/BattleCapture.cs =====
 // RealmForge — the result of a boss fight, read from the game's memory when its result screen opens (read-only), for
 // comparing the site's battle simulation with real fights: each hero's damage to the boss, healing, damage taken, and
-// the fight's length. Kept in %APPDATA%\RealmForge\battles (the last 30) and sent with the account snapshot.
+// the fight's length. Kept in %APPDATA%\Wardsage\battles (the last 30) and sent with the account snapshot.
 //
 // The game keeps its open windows in UIStatic's UIInstance: a script table form id -> form, the id being the hash of the
 // form's name (str_hash, as the language keys; the ids come with the layout data from the server, src/Layout.cs). The
@@ -3557,7 +3559,7 @@ namespace RealmForge {
 }
 
 // ===== src/Config.cs =====
-// RealmForge extractor - settings in %APPDATA%\RealmForge\config.json.
+// RealmForge extractor - settings in %APPDATA%\Wardsage\config.json.
 //
 // {"site":"https://realmforge-wor.vercel.app","lang":"ru","saveCopy":false,"code":"dpapi:<base64>"}
 // The sync code is never stored in plain text: it is encrypted with Windows DPAPI for the current
@@ -3580,6 +3582,8 @@ namespace RealmForge {
     // where the player dragged the boss coach's panel (Ctrl + drag): its centre across and its top down the game's
     // window, in fractions of it; -1 = the default place (app/BattleCoach.cs)
     public double CoachX = -1, CoachY = -1;
+    public string TermsAccepted = "";   // version of the Terms of Use the player accepted on the first-run card (Config.TermsVersion)
+    public const string TermsVersion = "2026-10-17";
     public bool BossHints = true;   // the boss coach's panel over the game during boss fights (app/BattleCoach.cs)
     // last successful sync (shown on the start screen; the busts of the strongest heroes decorate the banner)
     public string LastAt;                       // ISO 8601 UTC or null
@@ -3611,6 +3615,35 @@ namespace RealmForge {
 
     public void Save() { Save(DefaultPath); }
 
+    public const string InstallerOptionsName = "installer-options.json";
+
+    /// <summary>The installer leaves {"errorReports":bool,"autostart":bool,"lang":"ru"|"en"} in the settings folder (the installer never edits config.json).
+    /// Read once: errorReports goes into config.json, the file is deleted whatever it held (a broken one is only logged).
+    /// "autostart" is applied by the installer itself (the Run registry value), here it is only logged. Returns true when a setting was applied.</summary>
+    public static bool ApplyInstallerOptions(string dir, Action<string> log) {
+      if (log == null) log = delegate { };
+      string f = Path.Combine(dir, InstallerOptionsName);
+      try {
+        if (!File.Exists(f)) return false;
+        string text = null;
+        try { text = File.ReadAllText(f, Encoding.UTF8); } catch (Exception e) { log("installer options: unreadable (" + e.Message + ")"); }
+        try { File.Delete(f); } catch (Exception e) { log("installer options: cannot delete the file (" + e.Message + ")"); }
+        var d = text == null ? null : MiniJson.AsObject(MiniJson.TryParse(text));
+        object v;
+        bool hasEr = d != null && d.TryGetValue("errorReports", out v) && v is bool;
+        string lang = d == null ? null : MiniJson.GetString(d, "lang");
+        bool hasLang = lang == "ru" || lang == "en";
+        if (!hasEr && !hasLang) { log("installer options: malformed file ignored"); return false; }
+        var c = Load(Path.Combine(dir, "config.json"));
+        if (hasEr) c.ErrorReports = MiniJson.GetBool(d, "errorReports", false);
+        if (hasLang) c.Lang = lang;   // the same field the language switch of the settings writes
+        c.Save(Path.Combine(dir, "config.json"));
+        object a;
+        log("installer options: error reports " + (c.ErrorReports ? "on" : "off") + ", language " + (hasLang ? lang : "unchanged") + ", autostart " + (d.TryGetValue("autostart", out a) && a is bool ? ((bool)a ? "on" : "off") : "?") + " (chosen in the installer)");
+        return true;
+      } catch (Exception e) { log("installer options: " + e.Message); return false; }
+    }
+
     public void Save(string path) {
       Directory.CreateDirectory(Path.GetDirectoryName(path));
       string tmp = path + ".tmp";
@@ -3630,6 +3663,7 @@ namespace RealmForge {
       sb.Append(",\n  \"errorReports\": ").Append(ErrorReports ? "true" : "false");
       sb.Append(",\n  \"autoUpdate\": ").Append(AutoUpdate ? "true" : "false");
       sb.Append(",\n  \"tray\": ").Append(Tray ? "true" : "false");
+      sb.Append(",\n  \"termsAccepted\": ").Append(MiniJson.Quote(TermsAccepted ?? ""));
       sb.Append(",\n  \"bossHints\": ").Append(BossHints ? "true" : "false");
       if (CoachX >= 0 && CoachY >= 0)
         sb.Append(",\n  \"coach\": [").Append(CoachX.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture))
@@ -3667,6 +3701,7 @@ namespace RealmForge {
       c.AutoUpdate = MiniJson.GetBool(d, "autoUpdate", true);
       c.Tray = MiniJson.GetBool(d, "tray", true);
       c.BossHints = MiniJson.GetBool(d, "bossHints", true);
+      c.TermsAccepted = MiniJson.GetString(d, "termsAccepted") ?? "";
       object lv;
       var co = d.TryGetValue("coach", out lv) ? lv as List<object> : null;
       if (co != null && co.Count == 2 && co[0] is double && co[1] is double) {
