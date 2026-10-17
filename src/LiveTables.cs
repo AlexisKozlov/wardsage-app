@@ -283,7 +283,9 @@ namespace RealmForge {
     internal static long FormRecastId { get { return FormId("ID_FORM_EQUIPSUBLIMING"); } }          // the foundry (Литейная): its «Преобразовать» tab
     internal static long FormGemId { get { return FormId("ID_FORM_EQUIPGEMMAIN"); } }               // the gem screen: reached from the item card, also holds the recast functions
     internal static long FormMainCityId { get { var ly = Layout.Current; return ly != null ? ly.FormOpt("ID_FORM_MAINCITY") : 0; } }   // the city (main screen); older layout data lacks it: 0
-    static ulong formNode, invNode, subNode, gemNode, cityNode;
+    /// <summary>The artifact workshop («Мастерская»: Form_EquipArtifactIntensify); older layout data lacks it: 0 (the workshop is then not read).</summary>
+    internal static long FormArtId { get { var ly = Layout.Current; return ly != null ? ly.FormOpt("ID_FORM_EQUIPARTIFACTINTENSIFY") : 0; } }
+    static ulong formNode, invNode, subNode, gemNode, cityNode, artNode;
 
     // the value of a UIInstance node keyed by the form id, when it is still that node and holds a table with the key
     static ulong NodeValue(ulong n, long id, string key) {
@@ -337,21 +339,21 @@ namespace RealmForge {
 
     // the new values are built into locals and published at the end: a reader never sees a 0 from the middle of a scan
     static ulong FindFormNodeLocked() {
-      ulong nForm = 0, nInv = 0, nSub = 0, nGem = 0, nCity = 0;
-      if (Layout.Current == null) { formNode = invNode = subNode = gemNode = cityNode = 0; return 0; }   // no form ids: the hero screen is found by its keys
+      ulong nForm = 0, nInv = 0, nSub = 0, nGem = 0, nCity = 0, nArt = 0;
+      if (Layout.Current == null) { formNode = invNode = subNode = gemNode = cityNode = artNode = 0; return 0; }   // no form ids: the hero screen is found by its keys
       int t0 = Environment.TickCount;
-      long idMain = FormCharactorMainId, idInv = FormBackpackId, idRecast = FormRecastId, idGem = FormGemId, idCity = FormMainCityId;
+      long idMain = FormCharactorMainId, idInv = FormBackpackId, idRecast = FormRecastId, idGem = FormGemId, idCity = FormMainCityId, idArt = FormArtId;
       var hits = new List<ulong>();
       ScanParallel((b0, buf, len) => {
         for (int i = 0; i + 32 <= len; i += 8) {
           long k = BitConverter.ToInt64(buf, i + 16);
-          if (k != idMain && k != idInv && k != idRecast && k != idGem && (idCity == 0 || k != idCity)) continue;
+          if (k != idMain && k != idInv && k != idRecast && k != idGem && (idCity == 0 || k != idCity) && (idArt == 0 || k != idArt)) continue;
           if (BitConverter.ToInt32(buf, i + 24) != T_INT || BitConverter.ToInt32(buf, i + 8) != T_TABLE) continue;
           lock (hits) hits.Add(b0 + (ulong)i);
         }
       });
       ulong form = 0;
-      var invHits = new List<ulong>(); var subHits = new List<ulong>(); var gemHits = new List<ulong>(); var cityHits = new List<ulong>();
+      var invHits = new List<ulong>(); var subHits = new List<ulong>(); var gemHits = new List<ulong>(); var cityHits = new List<ulong>(); var artHits = new List<ulong>();
       foreach (var n in hits) {
         ulong f;
         if (nForm == 0 && (f = NodeForm(n)) != 0) { nForm = n; form = f; }
@@ -359,6 +361,7 @@ namespace RealmForge {
         else if (NodeTable(n, FormRecastId) != 0) subHits.Add(n);
         else if (NodeTable(n, FormGemId) != 0) gemHits.Add(n);
         else if (idCity != 0 && NodeTable(n, idCity) != 0) cityHits.Add(n);
+        else if (idArt != 0 && NodeTable(n, idArt) != 0) artHits.Add(n);
       }
       // several copies of one form can linger (an old node array after a rehash, the table of an earlier open): the one the game shows wins
       Func<ulong, bool> invShown = n => InvFormShown(NodeInv(n));
@@ -366,10 +369,11 @@ namespace RealmForge {
       Func<ulong, bool> gemShown = n => InvFormShown(NodeTable(n, FormGemId));
       Func<ulong, bool> cityShown = n => InvFormShown(NodeTable(n, FormMainCityId));
       nCity = PickNode(cityHits, cityShown);
+      nArt = PickNode(artHits, n => InvFormShown(NodeTable(n, FormArtId)));
       nInv = PickNode(invHits, invShown); nSub = PickNode(subHits, subShown); nGem = PickNode(gemHits, gemShown);
-      formNode = nForm; invNode = nInv; subNode = nSub; gemNode = nGem; cityNode = nCity;
+      formNode = nForm; invNode = nInv; subNode = nSub; gemNode = nGem; cityNode = nCity; artNode = nArt;
       int ki = CountWhere(invHits, invShown), ks = CountWhere(subHits, subShown), kg = CountWhere(gemHits, gemShown);
-      string line = "inventory " + invHits.Count + " (shown " + ki + "), foundry " + subHits.Count + " (shown " + ks + "), gem " + gemHits.Count + " (shown " + kg + "), city " + cityHits.Count + " (shown " + CountWhere(cityHits, cityShown) + ")";
+      string line = "inventory " + invHits.Count + " (shown " + ki + "), foundry " + subHits.Count + " (shown " + ks + "), gem " + gemHits.Count + " (shown " + kg + "), city " + cityHits.Count + " (shown " + CountWhere(cityHits, cityShown) + ")" + (idArt != 0 ? ", art workshop " + artHits.Count : "");
       if (line != formsScanSaid) { formsScanSaid = line; Log.AppendLine("forms: scan " + (Environment.TickCount - t0) + " ms, " + line); }
       return form;
     }
@@ -386,8 +390,8 @@ namespace RealmForge {
 
     // ---- the background search: one at a time, off the UI thread; the readers use the nodes it publishes on later ticks
     static int formSearchBusy, lastFormSearchAt; static string formSearchSaid = "";
-    static int lostBits; static bool invOk, subOk, gemOk, cityOk, heroOk;
-    static readonly string[] lostNames = { "inventory", "foundry", "gem", "city", "hero" };
+    static int lostBits; static bool invOk, subOk, gemOk, cityOk, heroOk, artOk;
+    static readonly string[] lostNames = { "inventory", "foundry", "gem", "city", "hero", "art workshop" };
 
     /// <summary>A form node that read fine on the last call reads 0 now (the game moved it): remembered for the overlay (TakeFormsLost).</summary>
     static void Watch(ref bool ok, ulong value, ulong node, int bit) {
@@ -467,6 +471,15 @@ namespace RealmForge {
     /// <summary>The city form (the main screen) the game holds now; 0 = id unknown or its node never found. No rescan of its own
     /// (the scans come from the inventory / foundry / gem paths and the overlay's stale-forms pass).</summary>
     internal static ulong LiveCityForm() { ulong f = NodeTable(cityNode, FormMainCityId); Watch(ref cityOk, f, cityNode, 3); return f; }
+
+    /// <summary>The artifact workshop's form the game holds now; 0 = the layout has no id for it, or its node was never found (the scans come from the other form paths and the stale-forms pass; the overlay asks for one while an artifact request waits).</summary>
+    internal static ulong LiveArtForm() { ulong f = NodeTable(artNode, FormArtId); Watch(ref artOk, f, artNode, 5); return f; }
+
+    /// <summary>The workshop's form is not known yet (its id is in the layout data, but no live node was found).</summary>
+    public static bool ArtFormMissing() { return FormArtId != 0 && NodeTable(artNode, FormArtId) == 0; }
+
+    /// <summary>The layout data names the workshop's form (without it the workshop cannot be read).</summary>
+    public static bool ArtFormKnown { get { return FormArtId != 0; } }
 
     /// <summary>Is the city on screen: true / false from its form's active flag; null = the form id is unknown or its node was never found.</summary>
     public static bool? CityShown() {

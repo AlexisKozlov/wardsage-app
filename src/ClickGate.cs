@@ -81,6 +81,8 @@ namespace RealmForge {
     public Action<string> Sink;
     /// <summary>The storage cleanup of ARTIFACTS is a hint run: the Sell owner never clicks while it runs (set by the host with the run).</summary>
     public volatile bool NoSellClicks;
+    /// <summary>«Показать в игре» for an ARTIFACT (promotion) is hints only: the Locate owner never clicks while it runs (set by the host with the request).</summary>
+    public volatile bool NoLocateClicks;
 
     sealed class Rule {
       public ScreenKind[] Kinds;
@@ -256,6 +258,7 @@ namespace RealmForge {
       string tag = r.Target + " @" + (int)r.X + "," + (int)r.Y;
       // the artifact cleanup never clicks, whatever the auto click setting says; nothing of the artifact tab is on any whitelist either
       if (r.Owner == ClickOwner.Sell && (NoSellClicks || (f != null && f.Kind == ScreenKind.Inventory && f.InvArtTab && r.Target != ClickTarget.InvEquipTab))) return Halt(r.Owner, "artifact", tag + ": the artifact cleanup is hints only");
+      if (r.Owner == ClickOwner.Locate && NoLocateClicks) return Halt(r.Owner, "artifact", tag + ": the artifact guide is hints only");
       var rule = RuleOf(r.Owner, r.Target);
       if (rule == null) return Halt(r.Owner, "target", tag + " is not a target " + r.Owner + " may click");
       if (f == null || f.Kind == ScreenKind.Unknown) return UnknownWait(r, now, tag + ": the screen is not recognised");

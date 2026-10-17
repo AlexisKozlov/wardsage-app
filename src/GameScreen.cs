@@ -5,7 +5,7 @@
 // existing readers (the hero screen, the inventory incl. its bulk-sale mode, the Foundry and the gem screen, the city's form, else its bottom bar),
 // only the decision is central:
 //
-//   Screen = City | Inventory(tab, bulk, selected item) | HeroScreen(hero, tab, slot) | Foundry(tab, pop-up) | Gem(function) | Unknown
+//   Screen = City | Inventory(tab, bulk, selected item) | HeroScreen(hero, tab, slot) | Foundry(tab, pop-up) | Gem(function) | ArtWorkshop(tab, artifact) | Unknown
 //   plus ModalOpen (a pop-up or a pending choice the app can detect) and the times.
 //
 // A short read failure must not flip the screen: the readers give null now and then (the form is rebuilt, a table is mid-write).
@@ -20,13 +20,15 @@ using System.Collections.Generic;
 using System.Text;
 
 namespace RealmForge {
-  public enum ScreenKind { Unknown, City, Inventory, HeroScreen, Foundry, Gem }
+  public enum ScreenKind { Unknown, City, Inventory, HeroScreen, Foundry, Gem, ArtWorkshop }
 
   /// <summary>What the readers gave this tick. A null reader = the read failed (or the form was never built).</summary>
   public sealed class ScreenInputs {
     public InventoryScreen Inv;
     public RecastScreen Rs;
     public HeroScreen Hero;
+    /// <summary>The artifact workshop («Мастерская»); null = not read (only read while an artifact request is guided).</summary>
+    public ArtWorkshopScreen ArtWs;
     /// <summary>The city's bottom bar button was seen (a picture; looked for only when no form is open).</summary>
     public bool CitySeen;
     /// <summary>The city's form is shown (read from memory like the other forms); null = unknown (no form id / node not found): the picture decides then.</summary>
@@ -42,6 +44,8 @@ namespace RealmForge {
     public bool InvEquipTab, InvBulk, InvBulkKnown;
     public bool InvArtTab, InvArtBulk, InvArtBulkKnown;   // on «Артефакт» (then InvEquipTab is false): its «Массовая продажа» and whether the mode was read
     public long InvSelected;          // the item whose card is open (normal mode), 0 = none
+    public int InvArtMode;            // the artifact tab's mode (-1 normal, 1 arrange, 2 bulk sale, 0 = unread)
+    public long InvArtSelected;       // the artifact whose card is open (normal mode; read only while an artifact request is guided), 0 = none / unread
     public string InvSelKey = "";     // the bulk-sale choice (count:sum of uids), to see a click change it
     // HeroScreen
     public long Hero;
@@ -54,6 +58,10 @@ namespace RealmForge {
     // Gem
     public int GemFunc = -1;
     public long GemSel;
+    // ArtWorkshop (ArtWsTab: 1 enhance, 2 promote, 5 refine, 0 unread)
+    public int ArtWsTab;
+    public long ArtWsUid;
+    public string ArtWsKey = "";      // the chosen copies (a click on the list changes it)
     // any pop-up / pending choice the app can detect
     public bool ModalOpen;
     public string ModalWhy = "";
@@ -65,6 +73,7 @@ namespace RealmForge {
     public InventoryScreen Inv;
     public RecastScreen Rs;
     public HeroScreen HeroScr;
+    public ArtWorkshopScreen ArtWs;
 
     public static readonly string[] FoundryTabNames = { "forge", "identify", "ascend", "recast", "reforge" };
     public string FoundryTabName { get { return FoundryTab >= 0 && FoundryTab < FoundryTabNames.Length ? FoundryTabNames[FoundryTab] : "unknown"; } }
@@ -84,6 +93,7 @@ namespace RealmForge {
           case ScreenKind.HeroScreen: sb.Append(" hero ").Append(Hero).Append(" tab ").Append(HeroTab).Append(" slot ").Append(HeroSlot); break;
           case ScreenKind.Foundry: sb.Append(' ').Append(FoundryTabName).Append(FoundryPopup ? " popup" : ""); break;
           case ScreenKind.Gem: sb.Append(" func ").Append(GemFunc); break;
+          case ScreenKind.ArtWorkshop: sb.Append(" tab ").Append(ArtWsTab); break;
         }
         if (ModalOpen) sb.Append(" modal(").Append(ModalWhy).Append(')');
         return sb.ToString();
@@ -91,15 +101,19 @@ namespace RealmForge {
     }
 
     /// <summary>Everything that can change a decision (the brief plus the selections).</summary>
-    public string Key { get { return Brief + "|" + InvSelected + "|" + InvSelKey + "|" + FoundrySel + "|" + FoundryKey + "|" + GemSel; } }
+    public string Key { get { return Brief + "|" + InvSelected + "|" + InvSelKey + "|" + FoundrySel + "|" + FoundryKey + "|" + GemSel + "|" + InvArtSelected + "|" + ArtWsUid + "|" + ArtWsKey; } }
 
     /// <summary>The screen from one set of readings, no memory of earlier ones (the click gate uses this on a fresh read).
     /// Order: the Foundry and the gem screen open from the inventory / the hero's gear screen and sit above them.</summary>
     public static ScreenState Classify(ScreenInputs i, long now) {
-      var s = new ScreenState { ReadAtMs = now, ConfirmedAtMs = now, SinceMs = now, Inv = i.Inv, Rs = i.Rs, HeroScr = i.Hero };
-      var rs = i.Rs; var inv = i.Inv; var h = i.Hero;
+      var s = new ScreenState { ReadAtMs = now, ConfirmedAtMs = now, SinceMs = now, Inv = i.Inv, Rs = i.Rs, HeroScr = i.Hero, ArtWs = i.ArtWs };
+      var rs = i.Rs; var inv = i.Inv; var h = i.Hero; var aw = i.ArtWs;
       bool heroUp = h != null && h.FormOk && h.Hero > 0;   // Hero alone stays set while the form is hidden behind another screen (FormOk = the form is on)
-      if (rs != null && rs.SublimingOpen) {
+      if (aw != null && aw.Open) {
+        // a full-screen form that opens from the inventory's artifact card or the hero's artifact tab: it sits above them
+        s.Kind = ScreenKind.ArtWorkshop; s.ArtWsTab = aw.Tab; s.ArtWsUid = aw.Uid;
+        s.ArtWsKey = aw.Stage + "/" + string.Join(",", new List<int>(aw.MatSel).ConvertAll(x => x.ToString()).ToArray());
+      } else if (rs != null && rs.SublimingOpen) {
         s.Kind = ScreenKind.Foundry;
         s.FoundryTab = rs.CurType;
         s.FoundryPopup = rs.AscendFilterOpen;
@@ -113,7 +127,8 @@ namespace RealmForge {
       } else if (inv != null && inv.Open) {
         s.Kind = ScreenKind.Inventory;
         s.InvEquipTab = inv.EquipTab; s.InvBulk = inv.Bulk; s.InvBulkKnown = inv.BulkKnown;
-        s.InvArtTab = inv.ArtTab; s.InvArtBulk = inv.ArtBulk; s.InvArtBulkKnown = inv.ArtBulkKnown;
+        s.InvArtTab = inv.ArtTab; s.InvArtBulk = inv.ArtBulk; s.InvArtBulkKnown = inv.ArtBulkKnown; s.InvArtMode = inv.ArtMode;
+        s.InvArtSelected = inv.ArtSel >= 1 && inv.ArtSel <= inv.Uids.Count ? inv.Uids[inv.ArtSel - 1] : 0;
         s.InvSelected = inv.Current;
         long sum = 0; foreach (var u in inv.Selected) sum = unchecked(sum + u);
         s.InvSelKey = inv.Selected.Count + ":" + sum;
@@ -136,8 +151,8 @@ namespace RealmForge {
     /// <summary>The log (the host's journal); null = none.</summary>
     public Action<string> Sink;
 
-    InventoryScreen inv; RecastScreen rs; HeroScreen hero;
-    long invAt, rsAt, heroAt;
+    InventoryScreen inv; RecastScreen rs; HeroScreen hero; ArtWorkshopScreen artWs;
+    long invAt, rsAt, heroAt, artWsAt;
     ScreenState last;
     string briefSaid = "", holdSaid = "", failSaid = "";
 
@@ -147,6 +162,7 @@ namespace RealmForge {
     public InventoryScreen Inv { get { return inv; } }
     public RecastScreen Rs { get { return rs; } }
     public HeroScreen Hero { get { return hero; } }
+    public ArtWorkshopScreen ArtWs { get { return artWs; } }
 
     void Say(string t) { var s = Sink; if (s != null) s(t); }
 
@@ -164,6 +180,12 @@ namespace RealmForge {
       use.Inv = Hold(raw.Inv, ref inv, ref invAt, now, "inventory", failing, ref oldest);
       use.Rs = Hold(raw.Rs, ref rs, ref rsAt, now, "foundry", failing, ref oldest);
       use.Hero = Hold(raw.Hero, ref hero, ref heroAt, now, "hero", failing, ref oldest);
+      // the workshop is read only while an artifact request is guided and is null while its form was never found: only a reading that
+      // existed is held (a short failure), a missing one is not a failure
+      if (raw.ArtWs != null) { artWs = raw.ArtWs; artWsAt = now; }
+      else if (artWs != null && now - artWsAt > HoldMs) artWs = null;
+      else if (artWs != null) { failing.Add("artWorkshop"); if (artWsAt < oldest) oldest = artWsAt; }
+      use.ArtWs = artWs;
       var cand = ScreenState.Classify(use, now);
       if (oldest < now) { cand.Held = true; cand.ConfirmedAtMs = oldest; }   // made from readings that stand in for failed ones
       // the whole screen unknown for a moment while it was a known one: keep it (a flicker is not a screen change)
@@ -189,12 +211,12 @@ namespace RealmForge {
 
     static ScreenState ShallowCopy(ScreenState s) {
       var c = new ScreenState();
-      c.Kind = s.Kind; c.InvEquipTab = s.InvEquipTab; c.InvBulk = s.InvBulk; c.InvBulkKnown = s.InvBulkKnown; c.InvArtTab = s.InvArtTab; c.InvArtBulk = s.InvArtBulk; c.InvArtBulkKnown = s.InvArtBulkKnown; c.InvSelected = s.InvSelected; c.InvSelKey = s.InvSelKey;
+      c.Kind = s.Kind; c.InvEquipTab = s.InvEquipTab; c.InvBulk = s.InvBulk; c.InvBulkKnown = s.InvBulkKnown; c.InvArtTab = s.InvArtTab; c.InvArtBulk = s.InvArtBulk; c.InvArtBulkKnown = s.InvArtBulkKnown; c.InvArtMode = s.InvArtMode; c.InvArtSelected = s.InvArtSelected; c.ArtWsTab = s.ArtWsTab; c.ArtWsUid = s.ArtWsUid; c.ArtWsKey = s.ArtWsKey; c.InvSelected = s.InvSelected; c.InvSelKey = s.InvSelKey;
       c.Hero = s.Hero; c.HeroTab = s.HeroTab; c.HeroSlot = s.HeroSlot;
       c.FoundryTab = s.FoundryTab; c.FoundryPopup = s.FoundryPopup; c.FoundrySel = s.FoundrySel; c.FoundryKey = s.FoundryKey;
       c.GemFunc = s.GemFunc; c.GemSel = s.GemSel; c.ModalOpen = s.ModalOpen; c.ModalWhy = s.ModalWhy;
       c.ReadAtMs = s.ReadAtMs; c.ConfirmedAtMs = s.ConfirmedAtMs; c.SinceMs = s.SinceMs; c.Held = s.Held;
-      c.Inv = s.Inv; c.Rs = s.Rs; c.HeroScr = s.HeroScr;
+      c.Inv = s.Inv; c.Rs = s.Rs; c.HeroScr = s.HeroScr; c.ArtWs = s.ArtWs;
       return c;
     }
   }

@@ -30,7 +30,21 @@ namespace RealmForge {
     AscendNotInList,  // the Ascension list does not hold the item (not ready for Ascension, or a filter hides it)
     AscendLoading,    // the Ascension list is not readable yet / just changed (a slot tab was pressed): wait, no filter advice
     AscendReady,      // the Ascension screen has the item selected: the player presses the Ascend button
-    ExitBulk          // the inventory is in «Массовая продажа»: leave it first (the app clicks nothing there)
+    ExitBulk,         // the inventory is in «Массовая продажа»: leave it first (the app clicks nothing there)
+    // «Продвинуть» an artifact (purpose artPromote; hints only, the app never clicks for it)
+    ArtOpenTab,       // the inventory is open on another tab: «Артефакт»
+    ArtExitMode,      // the artifact tab is in «Массовая продажа» / «Масс. организовать»: leave it first
+    ArtListLoading,   // the artifact list is not readable (yet)
+    ArtNotInList,     // the artifact is not in the tab's list (a filter hides it)
+    ArtInList,        // the artifact is in the list: frame on its cell
+    ArtSelected,      // its card is open: «Мастерская»
+    ArtWrongArtifact, // the workshop holds another artifact
+    ArtLevelFirst,    // the artifact is below its level cap: «Улучшить» first
+    ArtOpenPromote,   // the workshop is on another tab: «Продвинуть»
+    ArtMatLoading,    // the workshop's copy list is not readable (yet)
+    ArtMatPick,       // pick a copy (or an essence) in the left list; MatWrong: a wrong one is chosen
+    ArtMatNone,       // the list has no copy and no essence
+    ArtPromote        // the material is chosen: «Продвинуть» is the player's
   }
 
   public sealed class LocateStep {
@@ -47,6 +61,10 @@ namespace RealmForge {
     public int ScrollRows;                          // rows to scroll for above / below
     public string FilterGo = "";                    // the filter pop-up is open: what to press in it: reset | suitRow | suitTab | suitCell | mainRow | subRow ("" = nothing / closed)
     public int SuitTab = -1, SuitIndex = -1;        // suitTab / suitCell: the set panel's tab (0 = 2 pieces, 1 = 3 pieces) and the set's place in the grid (0-based)
+    public int ArtCap, ArtLevel;                    // artPromote: the level cap of the stage and the level now (the workshop's own reading when it is open)
+    public int MatNeed, MatChosen;                  // artPromote: copies the promotion takes, chosen now
+    public string MatKind = "";                     // artPromote, ArtMatPick: what to pick: copy | essence
+    public bool MatWrong;                           // artPromote, ArtMatPick: Pos is a chosen copy that should not be used (unchoose it)
     public bool NeedClick;                          // the inventory's list position is not known yet: the player is asked to click a cell
     public string Auto = "", AutoWhy = "";          // auto click (src/LocatePilot.cs): "" = off, else work | paused | background | hint | stopped, and why
     /// <summary>The page's key of the step (ui/locate.js).</summary>
@@ -141,6 +159,79 @@ namespace RealmForge {
       // the recast path stays through the inventory: item selected -> card button «Улучшение самоцветами» -> the gem screen's
       // «Преобразование» -> the item -> «Улучшить». The Foundry is only for Ascension. A worn item: its hero's slot (OnHero)
       return NextInInventory(req, inv, hero, cols, st);
+    }
+
+    /// <summary>Columns of the artifact tab's list when the game does not say (the authored width gives 7).</summary>
+    public const int ArtInvCols = 7;
+    /// <summary>Columns of the workshop's copy list when the game does not say.</summary>
+    public const int ArtMatCols = 3;
+
+    /// <summary>«Продвинуть» an artifact (purpose artPromote), hints only: Inventory → «Артефакт» → the artifact's cell → «Мастерская» →
+    /// «Продвинуть» tab → the copy / essence → the button (the player's). <paramref name="ws"/> = the workshop form (null = never read / not built).</summary>
+    public static LocateStep NextArt(LocateRequest req, InventoryScreen inv, ArtWorkshopScreen ws) {
+      var st = new LocateStep();
+      var art = req == null ? null : req.Art;
+      if (art == null) { st.Kind = LocateKind.NoItem; return st; }
+      st.ArtCap = art.Cap; st.ArtLevel = art.Level;
+      if (ws != null && ws.Open) {
+        if (ws.Uid > 0 && ws.Uid != art.Uid) { st.Kind = LocateKind.ArtWrongArtifact; return st; }
+        if (ws.Uid == 0) { st.Kind = LocateKind.ArtMatLoading; return st; }
+        if (ws.Level >= 0) st.ArtLevel = ws.Level;
+        if (ws.Level >= 0 && art.Cap > 0 && ws.Level < art.Cap) { st.Kind = LocateKind.ArtLevelFirst; return st; }
+        if (ws.Tab != 2) { st.Kind = LocateKind.ArtOpenPromote; return st; }
+        return NextMat(art, ws, st);
+      }
+      if (inv == null || !inv.Open) { st.Kind = LocateKind.OpenInventory; return st; }
+      if (!inv.ArtTab) { st.Kind = LocateKind.ArtOpenTab; return st; }
+      if (inv.ArtBulk || (inv.ArtMode != 0 && inv.ArtMode != -1)) { st.Kind = LocateKind.ArtExitMode; return st; }
+      if (inv.Uids.Count == 0) { st.Kind = LocateKind.ArtListLoading; return st; }
+      int cols = inv.List != null && inv.List.Cols >= 1 ? inv.List.Cols : ArtInvCols;
+      var p = Position(inv.Uids.ToArray(), art.Uid, cols);
+      if (p == null) { st.Kind = LocateKind.ArtNotInList; st.Count = inv.Uids.Count; return st; }
+      st.Count = inv.Uids.Count; st.Pos = p[0]; st.Row = p[1]; st.Col = p[2];
+      Where(st, inv.List, p[0] - 1);
+      st.Kind = inv.ArtSelKnown && inv.ArtSel == p[0] ? LocateKind.ArtSelected : LocateKind.ArtInList;
+      return st;
+    }
+
+    // the «Продвинуть» panel: which entry of the copy list to choose next
+    static LocateStep NextMat(ArtPromoteInfo art, ArtWorkshopScreen ws, LocateStep st) {
+      if (!ws.PanelKnown) { st.Kind = LocateKind.ArtMatLoading; return st; }
+      int n = ws.Mats.Count, need = Math.Max(1, art.Need);
+      st.MatNeed = need; st.Count = n;
+      int cols = ws.MatList != null && ws.MatList.Cols >= 1 ? ws.MatList.Cols : ArtMatCols;
+      // the entries to choose, in order: the copies the site planned, then (the plan spends an essence: essences, else copies) the rest in the game's order,
+      // a copy that was never levelled before one that was
+      var want = new List<int>();
+      foreach (long c in art.Copies) { int i = c != 0 ? ws.Mats.IndexOf(c) : -1; if (i >= 0 && !want.Contains(i + 1)) want.Add(i + 1); }
+      bool essFirst = art.Via == "essence";
+      for (int pass = 0; pass < 3 && want.Count < need; pass++) {
+        for (int i = 0; i < n && want.Count < need; i++) {
+          bool stub = ws.Mats[i] == 0, level1 = i < ws.MatLevels.Count && ws.MatLevels[i] <= 1;
+          bool take = pass == 0 ? (essFirst ? stub : (!stub && level1)) : pass == 1 ? (essFirst ? (!stub && level1) : stub) : true;
+          if (take && !want.Contains(i + 1)) want.Add(i + 1);
+        }
+      }
+      var chosen = new List<int>(); foreach (int i in ws.MatSel) if (i >= 1 && i <= n) chosen.Add(i);
+      chosen.Sort();
+      st.MatChosen = chosen.Count;
+      // a chosen copy that was levelled (or is not the planned one when the site planned some): it would be spent
+      foreach (int i in chosen) {
+        bool invested = i - 1 < ws.MatLevels.Count && ws.MatLevels[i - 1] > 1 && ws.Mats[i - 1] != 0;
+        bool off = !want.Contains(i) && art.Copies.Count > 0;
+        if (invested && !want.Contains(i) || off) { SetMat(st, i, cols, ws, LocateKind.ArtMatPick); st.MatWrong = true; return st; }
+      }
+      if (chosen.Count >= need) { st.Kind = LocateKind.ArtPromote; return st; }
+      int next = 0; foreach (int i in want) if (!chosen.Contains(i)) { next = i; break; }
+      if (next == 0) { st.Kind = LocateKind.ArtMatNone; return st; }
+      SetMat(st, next, cols, ws, LocateKind.ArtMatPick);
+      return st;
+    }
+
+    static void SetMat(LocateStep st, int index1, int cols, ArtWorkshopScreen ws, LocateKind kind) {
+      st.Kind = kind; st.Pos = index1; st.Row = (index1 - 1) / cols + 1; st.Col = (index1 - 1) % cols + 1;
+      st.MatKind = ws.Mats[index1 - 1] == 0 ? "essence" : "copy";
+      Where(st, ws.MatList, index1 - 1);
     }
 
     /// <summary>The item is known to be off the screen (above / below the game's cells) in a list longer than two screens of cells.</summary>
@@ -298,6 +389,21 @@ namespace RealmForge {
       else if (sig != null && sig != baseline) return "recast";
       if (rs != null && rs.ChoosePending) return "recast";
       return "";
+    }
+  }
+
+  /// <summary>Is the promotion done? The workshop's own reading of the artifact (m_ArtifactData is read again from the game's data after a
+  /// success): its stage rose above the first one seen for this artifact, over two reads at least ConfirmMs apart (pure, tests/CoreTests.cs).</summary>
+  public sealed class ArtFinish {
+    public const int ConfirmMs = 250;
+    long uid; int baseStage = -1; long upSince = -1;
+    public void Reset() { uid = 0; baseStage = -1; upSince = -1; }
+    public bool Update(long artUid, ArtWorkshopScreen ws, long nowMs) {
+      if (ws == null || !ws.Open || ws.Uid != artUid || ws.Stage < 0) return false;   // not readable now: nothing is known
+      if (uid != artUid || baseStage < 0) { uid = artUid; baseStage = ws.Stage; upSince = -1; return false; }
+      if (ws.Stage <= baseStage) { upSince = -1; return false; }
+      if (upSince < 0) { upSince = nowMs; return false; }
+      return nowMs - upSince >= ConfirmMs;
     }
   }
 

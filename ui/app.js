@@ -425,9 +425,9 @@
     return `<div class="card loc ${d.tone}">
       <div class="row" style="justify-content:space-between;align-items:flex-start">
         <div><h3>${esc(t('locTitle'))}</h3><div class="meta">${esc(t(L.step && L.step.auto ? 'locLeadAuto' : 'locLead'))}</div></div>
-        <div class="row">${r.item ? `<button class="btn-line" data-act="locFound">${esc(t('locFound'))}</button>` : ''}
+        <div class="row">${r.item || r.art ? `<button class="btn-line" data-act="locFound">${esc(t('locFound'))}</button>` : ''}
           <button class="btn-line" data-act="locCancel">${esc(t('locCancel'))}</button></div></div>
-      ${r.item ? findCard(r.item, { row: 0, col: 0 }, compact) : ''}
+      ${r.item ? findCard(r.item, { row: 0, col: 0 }, compact) : r.art ? `<div class="meta"><b>${esc(r.art.name || '')}</b></div>` : ''}
       <div class="loc-say"><b>${esc(d.head)}</b>${d.lines.map((x) => `<p>${esc(x)}</p>`).join('')}</div>
       ${checked && subs.length ? `<ul class="loc-subs">${subs.map((x) => `<li class="${x.ok ? 'ok' : ''}"><span class="st">${I.check}</span>${esc(x.text)}</li>`).join('')}</ul>` : ''}
       ${checked && L.step.changed ? `<p class="warn">${esc(t('locChanged'))}</p>` : ''}</div>`;
@@ -1022,7 +1022,7 @@
         if (!L.req || L.req.id !== r.id) {
           clearTimeout(L.doneTimer);
           S.locate = { req: r, step: null, tipKey: '', doneTimer: 0 };
-          if (r.item) host.send({ cmd: 'locate.show', id: r.id });
+          if (r.item || r.art) host.send({ cmd: 'locate.show', id: r.id });
           if (!S.compact) S.page = 'equip';
         } else L.req = r;
         render(); break;

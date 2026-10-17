@@ -7,6 +7,8 @@
 //
 //   dotnet exec ... ScreenReplay.dll [fixtures dir]      exit code 0 = everything passed
 //
+//   artifact promotion ("request": {"purpose":"artPromote","uid","need","cap","level","via","copies":[...]}): inputs "artWs": {"open","tab","uid","level","stage","mats","matLevels","matSel","list"},
+//   inv "artMode" / "artSel" (normal mode of the artifact tab); expect "artStep" (the guide's step key), "artFrame" (a frame for it exists); the gate never lets the Locate owner click.
 // Fixture: {"name", "request": {"purpose","uid","slot","hero"}, "cols", "frames": [{"t", "inv", "rs", "hero", "city", "expect", "clicks"}]}
 //   inv/rs/hero null or missing = that read failed. expect: screen, held, bulk, artBulk, brief (a substring of the screen's brief), sellStep (the storage
 //   cleanup's step key; needs "sell"), tab, modal, step, todo, why, halt (owner:reason), frame (a frame for the step exists). Optional "sell":
@@ -42,10 +44,19 @@ static class ScreenReplay {
   static InventoryScreen InvOf(Dictionary<string, object> d) {
     if (d == null) return null;
     var s = new InventoryScreen { Open = Bool(d, "open", true), EquipTab = Bool(d, "equip", true), Bulk = Bool(d, "bulk", false), BulkKnown = Bool(d, "known", true), Current = (long)Num(d, "current", 0),
-      ArtTab = Bool(d, "art", false), ArtBulk = Bool(d, "artBulk", false), ArtBulkKnown = Bool(d, "artKnown", false) };
+      ArtTab = Bool(d, "art", false), ArtBulk = Bool(d, "artBulk", false), ArtBulkKnown = Bool(d, "artKnown", false), ArtMode = (int)Num(d, "artMode", 0), ArtSel = (int)Num(d, "artSel", 0), ArtSelKnown = Get(d, "artSel") != null };
     s.Uids.AddRange(Longs(Get(d, "uids"))); foreach (var u in Longs(Get(d, "selected"))) s.Selected.Add(u);
     s.List = ListOf(O(Get(d, "list")));
     s.ListPtr = 1;
+    return s;
+  }
+
+  static ArtWorkshopScreen ArtWsOf(Dictionary<string, object> d) {
+    if (d == null) return null;
+    var s = new ArtWorkshopScreen { Open = Bool(d, "open", true), Tab = (int)Num(d, "tab", 0), Uid = (long)Num(d, "uid", 0), Level = (int)Num(d, "level", -1), Stage = (int)Num(d, "stage", -1) };
+    var mats = Get(d, "mats");
+    if (mats != null) { s.PanelKnown = true; s.Mats.AddRange(Longs(mats)); foreach (var x in Ints(Get(d, "matLevels"))) s.MatLevels.Add(x); foreach (var x in Ints(Get(d, "matSel"))) s.MatSel.Add(x); }
+    s.MatList = ListOf(O(Get(d, "list")));
     return s;
   }
 
@@ -64,7 +75,7 @@ static class ScreenReplay {
   }
 
   static ScreenInputs InputsOf(Dictionary<string, object> f) {
-    return new ScreenInputs { Inv = InvOf(O(Get(f, "inv"))), Rs = RsOf(O(Get(f, "rs"))), Hero = HeroOf(O(Get(f, "hero"))), CitySeen = Bool(f, "city", false), CityForm = Get(f, "cityForm") is bool ? (bool?)Bool(f, "cityForm", false) : null };
+    return new ScreenInputs { Inv = InvOf(O(Get(f, "inv"))), Rs = RsOf(O(Get(f, "rs"))), Hero = HeroOf(O(Get(f, "hero"))), ArtWs = ArtWsOf(O(Get(f, "artWs"))), CitySeen = Bool(f, "city", false), CityForm = Get(f, "cityForm") is bool ? (bool?)Bool(f, "cityForm", false) : null };
   }
 
   static string Verdict(GateResult r) { return r.Verdict + (r.Reason != "" && r.Reason != "ok" ? ":" + r.Reason : ""); }
@@ -78,7 +89,13 @@ static class ScreenReplay {
     var gate = new ClickGate { Sink = delegate (string s) { logs.Add(s); } };
     LocateRequest req = null; PlanItem item = null;
     var rq = O(Get(fx, "request"));
-    if (rq != null) {
+    ArtPromoteInfo artReq = null;
+    if (rq != null && Str(rq, "purpose") == "artPromote") {
+      artReq = new ArtPromoteInfo { Uid = (long)Num(rq, "uid", 0), Need = (int)Num(rq, "need", 1), Cap = (int)Num(rq, "cap", 0), Level = (int)Num(rq, "level", 0), Via = Str(rq, "via") ?? "none" };
+      artReq.Copies.AddRange(Longs(Get(rq, "copies")));
+      req = new LocateRequest { Id = "r", Purpose = "artPromote", Art = artReq };
+      gate.NoLocateClicks = true;
+    } else if (rq != null) {
       item = new PlanItem { Uid = (long)Num(rq, "uid", 0), Slot = (int)Num(rq, "slot", 0), Quality = (int)Num(rq, "quality", 0) };
       req = new LocateRequest { Id = "r", Purpose = Str(rq, "purpose") ?? "recast", Item = item, HeroUid = (long)Num(rq, "hero", 0) };
     }
@@ -114,7 +131,15 @@ static class ScreenReplay {
         if (Get(ex, "logged") is string) { string needle = (string)Get(ex, "logged"); bool has = logs.Exists(l => l.Contains(needle)); Check(has, at + ": logged '" + needle + "'"); }
       }
       LocateStep step = null;
-      if (req != null) {
+      if (artReq != null) {
+        step = LocateGuide.NextArt(req, tracker.Inv, tracker.ArtWs);
+        string e;
+        if (ex != null && (e = Str(ex, "artStep")) != null) Check(step.Key == e, at + ": art step " + e + (step.Key == e ? "" : " (got " + step.Key + ")"));
+        if (ex != null && Get(ex, "artFrame") is bool) {
+          var fr = ArtFrames.For(step, tracker.Inv, tracker.ArtWs, geo, W, H, U);
+          Check((fr != null) == (bool)Get(ex, "artFrame"), at + ": art frame " + ((bool)Get(ex, "artFrame") ? "exists" : "is absent"));
+        }
+      } else if (req != null) {
         step = LocateGuide.Next(req, tracker.Inv, tracker.Rs, tracker.Hero, cols, 1);
         var view = new LocateView { NowMs = t, Foreground = true, W = W, H = H, U = U, Step = step, Inv = tracker.Inv, Cols = cols,
           HeroScreenOpen = st.Kind == ScreenKind.HeroScreen, OtherFormOpen = st.Kind == ScreenKind.Foundry || st.Kind == ScreenKind.Gem, CityButton = st.Kind == ScreenKind.City,

@@ -42,6 +42,9 @@ namespace RealmForge {
     public bool ArtTab;        // on «Артефакт» (then EquipTab is false and Bulk / BulkKnown are not used: the Art* fields tell the mode)
     public bool ArtBulk;       // the artifact tab is in «Массовая продажа» (its panel is shown)
     public bool ArtBulkKnown;  // the artifact panel's mode was read
+    public int ArtMode;        // the artifact panel's _btFlagBatch: -1 normal, 1 «Масс. организовать», 2 «Массовая продажа»; 0 = not read
+    public int ArtSel;         // normal mode (read only for «Показать в игре»): the 1-based place in Uids of the card whose info is open (_selectedIndexMain), 0 = none / unreadable
+    public bool ArtSelKnown;   // ... and the field was read
     public bool BulkKnown;     // the equipment panel's mode was read (false: a short read failure - the mode is NOT known, never assume "normal")
     public ulong ListPtr;
     public List<long> Uids = new List<long>();          // list order
@@ -61,6 +64,21 @@ namespace RealmForge {
       foreach (var u in Selected) s.Selected.Add(u);
       return s;
     }
+  }
+
+  /// <summary>The artifact workshop (Form_EquipArtifactIntensify): which artifact is open, on which tab and, on «Продвинуть», the copies to pick from.
+  /// Read only (RFX.ReadArtWorkshop).</summary>
+  public sealed class ArtWorkshopScreen {
+    public bool Open;                 // the form is shown
+    public int Tab;                   // m_iItemType: 1 «Улучшить», 2 «Продвинуть», 5 «Доработка», 0 = not read
+    public long Uid;                  // the open artifact (m_ArtifactData.iItemUid), 0 = not read
+    public int ItemId, Level = -1, Stage = -1;   // its type, level and promotion stage now (-1 = not read)
+    public bool PanelKnown;           // the «Продвинуть» panel's candidate list was read
+    public List<long> Mats = new List<long>();    // m_vMatData in screen order: a copy's uid, 0 = an essence stub
+    public List<int> MatLevels = new List<int>(); // per entry: the copy's iLevel (-1 = not read / an essence)
+    public HashSet<int> MatSel = new HashSet<int>();   // 1-based indices of m_vMatData that are chosen
+    public RFX.ListRead MatList;      // the copy list's scroll and grid (null = unreadable)
+    public ulong ListPtr;
   }
 
   public static partial class RFX {
@@ -130,7 +148,9 @@ namespace RealmForge {
       bool flagOk = Field(panel, "_btFlagBatch", out v, out tt) && tt == T_INT;
       s.ArtBulkKnown = active && flagOk;
       s.ArtBulk = s.ArtBulkKnown && (long)v == ArtBatchSell;
-      if (!s.ArtBulk) return;
+      if (s.ArtBulkKnown) s.ArtMode = (int)Math.Max(-9, Math.Min(9, (long)v));
+      // outside the bulk sale the list and the open card are read only while «Показать в игре» guides an artifact (ArtListWanted)
+      if (!s.ArtBulk && !(ArtListWanted && s.ArtBulkKnown)) return;
       s.List = ReadArtifactList(panel);
       ulong list; int lt;
       if (Field(panel, "_listDataCur", out list, out lt) && lt == T_TABLE) {
@@ -147,9 +167,17 @@ namespace RealmForge {
           foreach (var kv in byIndex) { if (kv.Key != expect++) break; s.Uids.Add(kv.Value); }   // a script array: 1..n
         }
       }
+      if (!s.ArtBulk) {
+        s.ArtSelKnown = Field(panel, "_selectedIndexMain", out v, out tt) && tt == T_INT;
+        if (s.ArtSelKnown && (long)v >= 1 && (long)v <= s.Uids.Count) s.ArtSel = (int)(long)v;
+        return;
+      }
       ulong map; int mt;
       if (Field(panel, "_btDicSelected", out map, out mt) && mt == T_TABLE) ReadTrueKeys(map, s.Selected);
     }
+
+    /// <summary>«Показать в игре» guides an artifact: the artifact tab's list and open card are read in its normal mode too (off otherwise).</summary>
+    public static volatile bool ArtListWanted;
 
     // the integer keys of a script table whose value is true (a deselected entry stays with false)
     static void ReadTrueKeys(ulong t, HashSet<long> into) {
@@ -167,6 +195,16 @@ namespace RealmForge {
         long k = BitConverter.ToInt64(nb, o + 16); if (k > 0) into.Add(k);
       }
     }
+
+    // ---- the artifact workshop (Form_EquipArtifactIntensify, «Мастерская»): READ ONLY, for «Показать в игре» -> «Продвинуть»
+    //   form.m_LuaLogicActive            shown
+    //   form.m_iItemType                 the right tab: 1 «Улучшить», 2 «Продвинуть», 5 «Доработка»
+    //   form.m_ArtifactData              the open artifact: iItemUid, iItemId, iLevel, iStageLvl (read again from the game's data after each success)
+    //   form.m_PanelEquipBreak           the «Продвинуть» panel (a table):
+    //     m_vMatData                     the candidates in screen order: free copies (iItemUid) first, then artifact-essence stubs ({iItemId}, no uid)
+    //     m_vMatSelect                   chosen: index in m_vMatData -> true
+    //     m_List_ScrollRect / m_List_InfinityGrid   the copy list's scroll and grid (3 columns, row 114)
+    // Not verified on the live game.
 
     // the field names the artifact list's ScrollRect may be bound under (the Lua only uses the grid's; the first that reads is kept)
     static readonly string[] ArtScrollFields = { "m_ListArtifact_ScrollRect", "m_ListArtifact_ScrollView", "m_ListArtifact_Scroll" };
@@ -195,6 +233,92 @@ namespace RealmForge {
       if (!Field(f, "m_CurrentMainTabId2", out v, out tt) || tt != T_INT || (long)v != ArtifactTabId) return null;
       if (!Field(f, "m_CachedContentPanels", out panels, out pt) || pt != T_TABLE || !IntKey(panels, ArtifactTabId, out panel, out pnt) || pnt != T_TABLE) return null;
       return ReadArtifactList(panel);
+    }
+
+    /// <summary>An integer field of a script table (an integer, or a float with a whole value).</summary>
+    static bool IntField(ulong t, string key, out long val) {
+      ulong v; int tt; val = 0;
+      if (!Field(t, key, out v, out tt)) return false;
+      if (tt == T_INT) { val = (long)v; return true; }
+      if (tt == T_FLT) { double d = BitConverter.Int64BitsToDouble((long)v); if (d == Math.Floor(d) && Math.Abs(d) < 1e15) { val = (long)d; return true; } }
+      return false;
+    }
+
+    // the field names the copy list's ScrollRect may be bound under (the Lua only uses the grid's; the first that reads is kept)
+    static readonly string[] MatScrollFields = { "m_List_ScrollRect", "m_List_ScrollView", "m_List_Scroll" };
+    static string matScrollField; static bool matScrollSaid;
+
+    /// <summary>The «Продвинуть» panel's copy list (its own scroll and grid); null when it cannot be read.</summary>
+    public static ListRead ReadMatList(ulong panel) {
+      int pid = ListPid(); if (pid == 0) return null;
+      if (matScrollField != null) return ReadList(panel, matScrollField, "m_List_InfinityGrid", pid);
+      foreach (var name in MatScrollFields) {
+        var r = ReadList(panel, name, "m_List_InfinityGrid", pid);
+        if (r != null) { matScrollField = name; L("art workshop: the copy list's scroll is bound as " + name); return r; }
+      }
+      if (!matScrollSaid) { matScrollSaid = true; L("art workshop: no scroll field read for the copy list (tried " + string.Join(", ", MatScrollFields) + ") - no frames on the copies"); }
+      return null;
+    }
+
+    /// <summary>The workshop form's fields into <paramref name="s"/> (READ ONLY); <paramref name="f"/> = the form table. Public for the tests (fake tables).</summary>
+    public static void ReadArtWorkshopForm(ulong f, ArtWorkshopScreen s) {
+      int tt; long n;
+      s.Open = InvFormShown(f);
+      if (!s.Open) return;
+      if (IntField(f, "m_iItemType", out n)) s.Tab = (int)Math.Max(0, Math.Min(99, n));
+      ulong ad;
+      if (Field(f, "m_ArtifactData", out ad, out tt) && tt == T_TABLE) {
+        if (IntField(ad, "iItemUid", out n)) s.Uid = n;
+        if (IntField(ad, "iItemId", out n)) s.ItemId = (int)n;
+        if (IntField(ad, "iLevel", out n)) s.Level = (int)Math.Max(0, Math.Min(999, n));
+        if (IntField(ad, "iStageLvl", out n)) s.Stage = (int)Math.Max(0, Math.Min(99, n));
+      }
+      ulong panel;
+      if (s.Tab != 2 || !Field(f, "m_PanelEquipBreak", out panel, out tt) || tt != T_TABLE) return;
+      ulong list;
+      if (Field(panel, "m_vMatData", out list, out tt) && tt == T_TABLE) {
+        s.ListPtr = list;
+        var d = ParseTable(list, 1, new HashSet<ulong>());
+        if (d != null) {
+          var byIndex = new SortedDictionary<int, KeyValuePair<long, int>>();
+          foreach (var kv in d) {
+            int i; var row = kv.Value as Dictionary<string, object>; object u, lv;
+            if (row == null || kv.Key.Length <= 2 || !int.TryParse(kv.Key.Substring(1, kv.Key.Length - 2), out i)) continue;
+            long uid = row.TryGetValue("iItemUid", out u) && u is long ? (long)u : 0;
+            int level = row.TryGetValue("iLevel", out lv) && lv is long ? (int)Math.Max(0, Math.Min(999, (long)lv)) : -1;
+            byIndex[i] = new KeyValuePair<long, int>(uid, level);
+          }
+          int expect = 1;
+          foreach (var kv in byIndex) { if (kv.Key != expect++) break; s.Mats.Add(kv.Value.Key); s.MatLevels.Add(kv.Value.Value); }   // a script array: 1..n
+          s.PanelKnown = true;
+        }
+      }
+      ulong map;
+      if (Field(panel, "m_vMatSelect", out map, out tt) && tt == T_TABLE) {
+        var sel = new HashSet<long>(); ReadTrueKeys(map, sel);
+        foreach (var k in sel) if (k >= 1 && k <= 100000) s.MatSel.Add((int)k);
+      }
+      s.MatList = ReadMatList(panel);
+    }
+
+    /// <summary>The cheap per-tick look at the workshop's copy list: is the form on screen, and the list's exact scroll (null = unreadable).</summary>
+    public static ListRead ReadArtMatLive(out bool active) {
+      active = false;
+      ulong f = LiveArtForm();
+      if (!InvFormShown(f)) return null;
+      active = true;
+      ulong panel; int tt;
+      if (!Field(f, "m_PanelEquipBreak", out panel, out tt) || tt != T_TABLE) return null;
+      return ReadMatList(panel);
+    }
+
+    /// <summary>The artifact workshop now; null when the game has none (never opened, or the layout data has no form id for it) or it cannot be read.</summary>
+    public static ArtWorkshopScreen ReadArtWorkshop() {
+      ulong f = LiveArtForm();
+      if (f == 0) return null;
+      var s = new ArtWorkshopScreen();
+      ReadArtWorkshopForm(f, s);
+      return s;
     }
   }
 }

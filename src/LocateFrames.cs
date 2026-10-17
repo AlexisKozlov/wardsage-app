@@ -284,4 +284,95 @@ namespace RealmForge {
       return s != null && s[0] > 0 && s[1] > 0 ? new[] { s[0] * U, s[1] * U } : new[] { 0.11 * U, 0.13 * U };
     }
   }
+  /// <summary>«Продвинуть» an artifact (purpose artPromote): the frames of its steps - the inventory's «Артефакт» toggle, the artifact's cell in the tab's
+  /// list, «Мастерская», the workshop's «Продвинуть» tab, the copy in its list, the «Продвинуть» button. Frames and pills only: nothing here is ever
+  /// clickable (the app does not click for this request). The site's geometry file gives the rectangles; where its copy lacks a key the research numbers
+  /// (work/artifact-screens.md, prefab measurements in U) stand in. Pure placement math (tests/CoreTests.cs).</summary>
+  public static class ArtFrames {
+    // key -> {x anchor, x0, x1, y anchor top, y0, y1 (anchors as the geometry file's: L C R / T M B)}; the bottom anchor is the 7th element
+    static readonly System.Collections.Generic.Dictionary<string, object[]> Research = new System.Collections.Generic.Dictionary<string, object[]> {
+      { "inventory.leftTab.artifact", new object[] { 'L', 0.0023, 'L', 0.1711, 'T', 0.4022, 'T', 0.5272 } },
+      { "inventory.artList",          new object[] { 'L', 0.1938, 'R', -0.4969, 'T', 0.1922, 'B', -0.14 } },
+      { "inventory.artWorkshop",      new object[] { 'R', -0.2562, 'R', -0.0344, 'B', -0.1030, 'B', -0.0202 } },
+      { "artifact.tab.promote",       new object[] { 'R', -0.1631, 'R', 0.0025, 'T', 0.125, 'T', 0.25 } },
+      { "artifact.tab.enhance",       new object[] { 'R', -0.1631, 'R', 0.0025, 'T', 0.0, 'T', 0.125 } },
+      { "artifact.matList",           new object[] { 'L', 0.0289, 'L', 0.4117, 'T', 0.1141, 'B', -0.0876 } },
+      { "artifact.promoteBtn",        new object[] { 'C', -0.3109, 'C', 0.05, 'M', 0.2812, 'M', 0.4 } },
+    };
+
+    static double X(char a, double off, double W, double U) { return (a == 'L' ? 0 : a == 'C' ? W / 2 : W) + off * U; }
+    static double Y(char a, double off, double H, double U) { return (a == 'T' ? 0 : a == 'M' ? H / 2 : H) + off * U; }
+
+    /// <summary>The rectangle of a key: the geometry file's, else the research numbers; null = neither.</summary>
+    public static GeoRect Rect(GameGeometry g, string key, double W, double H, double U) {
+      var r = g != null ? g.Rect(key, W, H, U) : null;
+      if (r != null && r.W > 2 && r.H > 2) return r;
+      object[] f;
+      if (!Research.TryGetValue(key, out f)) return null;
+      double x0 = X((char)f[0], (double)f[1], W, U), x1 = X((char)f[2], (double)f[3], W, U), y0 = Y((char)f[4], (double)f[5], H, U), y1 = Y((char)f[6], (double)f[7], H, U);
+      return new GeoRect { X = Math.Min(x0, x1), Y = Math.Min(y0, y1), W = Math.Abs(x1 - x0), H = Math.Abs(y1 - y0) };
+    }
+
+    /// <summary>Whether a frame is drawn for this kind of step.</summary>
+    public static bool Framed(LocateKind k) {
+      switch (k) {
+        case LocateKind.ArtOpenTab: case LocateKind.ArtInList: case LocateKind.ArtSelected: case LocateKind.ArtOpenPromote:
+        case LocateKind.ArtMatPick: case LocateKind.ArtPromote: case LocateKind.ArtLevelFirst:
+          return true;
+        default: return false;
+      }
+    }
+
+    /// <summary>The frame of the step; null = none (no rectangle, or the cell cannot be placed because the list is unreadable).</summary>
+    public static LocateFrame For(LocateStep st, InventoryScreen inv, ArtWorkshopScreen ws, GameGeometry g, double W, double H, double U) {
+      if (st == null || !Framed(st.Kind)) return null;
+      string key = "";
+      switch (st.Kind) {
+        case LocateKind.ArtOpenTab: key = "inventory.leftTab.artifact"; break;
+        case LocateKind.ArtSelected: key = "inventory.artWorkshop"; break;
+        case LocateKind.ArtOpenPromote: key = "artifact.tab.promote"; break;
+        case LocateKind.ArtLevelFirst: key = ws != null && ws.Tab == 1 ? "" : "artifact.tab.enhance"; break;   // on the «Улучшить» tab itself: the plate only
+        case LocateKind.ArtPromote: key = "artifact.promoteBtn"; break;
+        case LocateKind.ArtInList:
+          return st.Pos > 0 && inv != null ? Cell(g, "inventory.artList", inv.List, st.Pos - 1, LocateGuide.ArtInvCols, 116, W, H, U) : null;
+        case LocateKind.ArtMatPick:
+          return st.Pos > 0 && ws != null ? Cell(g, "artifact.matList", ws.MatList, st.Pos - 1, LocateGuide.ArtMatCols, 114, W, H, U) : null;
+      }
+      if (key == "") return null;
+      var r = Rect(g, key, W, H, U);
+      if (r == null) return null;
+      var fr = new LocateFrame { Target = key, Raw = new GeoRect { X = r.X, Y = r.Y, W = r.W, H = r.H } };
+      fr.Mark = new LocateMark { Kind = "box", X = (int)Math.Round(r.X), Y = (int)Math.Round(r.Y), W = (int)Math.Round(r.W), H = (int)Math.Round(r.H) };
+      return fr;
+    }
+
+    /// <summary>The card (80 x 110 canvas units, centred in its cell) at the 0-based list <paramref name="index"/> of the list in <paramref name="rectKey"/>,
+    /// placed from the game's own scroll reading <paramref name="l"/> (exact, nothing from the picture): a box, or an "up" / "down" pill at the list's edge.
+    /// Null = the list cannot be read or has no rectangle.</summary>
+    public static LocateFrame Cell(GameGeometry g, string rectKey, RFX.ListRead l, int index, int fallbackCols, double fallbackLine, double W, double H, double U) {
+      if (l == null || !l.Has || index < 0) return null;
+      var view = Rect(g, rectKey, W, H, U);
+      if (view == null || view.W <= 0 || view.H <= 0) return null;
+      var grid = g != null ? g.Grid(rectKey) : null;
+      int cols = l.Cols >= 1 ? l.Cols : grid != null ? grid.Cols : fallbackCols;
+      double line = l.RowUnits > 0 ? l.RowUnits : grid != null && grid.LineSize > 0 ? grid.LineSize : fallbackLine;
+      double padTop = grid != null ? grid.PadTop : 0;
+      double k = U / GameGeometry.CanvasH, pitch = line * k, cardW = 80 * k, cardH = 110 * k;
+      int row = index / cols, col = index % cols;
+      double rowTop = view.Y + FoundryPlace.PadSign * padTop * k + row * pitch - l.ScrollY * k;
+      double slotW = view.W / cols;
+      double cx = view.X + col * slotW + (slotW - cardW) / 2, cy = rowTop + (pitch - cardH) / 2;
+      double mid = cy + cardH / 2;
+      var f = new LocateFrame { Target = "cell", ScrollPx = view.Y + view.H / 2 - mid };
+      var m = new LocateMark { X = (int)Math.Round(cx), W = (int)Math.Round(cardW) };
+      if (mid < view.Y) { m.Kind = "up"; m.Y = (int)Math.Round(view.Y); m.Rows = Math.Max(1, (int)Math.Ceiling((view.Y - rowTop) / pitch)); }
+      else if (mid > view.Bottom) { m.Kind = "down"; m.Y = (int)Math.Round(view.Bottom); m.Rows = Math.Max(1, (int)Math.Ceiling((rowTop + pitch - view.Bottom) / pitch)); }
+      else {
+        double t = Math.Max(cy, view.Y), b = Math.Min(cy + cardH, view.Bottom);   // clipped to the viewport
+        m.Kind = "box"; m.Y = (int)Math.Round(t); m.H = (int)Math.Round(b - t);
+      }
+      f.Mark = m; f.ViewX = view.X; f.ViewY = view.Y; f.ViewW = view.W; f.ViewH = view.H;
+      return f;
+    }
+  }
 }

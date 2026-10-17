@@ -487,12 +487,15 @@ namespace RealmForge {
     /// <summary>«Найти в игре»: show where this item is (null = stop). Hints only: the frame in the inventory's list and a
     /// text plate; nothing is clicked. While it runs the build's frame is not shown (one target at a time).</summary>
     public void SetLocate(LocateRequest r) {
-      locateReq = r != null && r.Item != null ? r : null;
+      locateReq = r != null && (r.Item != null || (r.Purpose == "artPromote" && r.Art != null)) ? r : null;
+      bool artReq = locateReq != null && locateReq.Purpose == "artPromote";
+      RFX.ArtListWanted = artReq; gate.NoLocateClicks = artReq;   // an artifact request is hints only: the gate never lets the Locate owner click
+      artFin.Reset(); artStep = null; artKey = ""; artSaid = ""; artFormAskedAt = 0;
       locateDoneUntil = 0; locateLive = null; lfin.Reset();
       locateSince = Stamp(); locateCaps = ""; locateLines = new string[0];
       locateStep = null; locateSubs = null; locateKey = ""; locateReadAt = 0; locateLastCur = -1; locateSubsAt = 0; lgrid.Reset();
       locateScreensSaid = ""; locateMarkerSaid = ""; locateCardSaid = ""; locateListSig = ""; locateDecisionSaid = ""; locatePlaceSaid = "";
-      lpilot.Reset(); ResumeClicks(ClickOwner.Locate); lpilot.ItemUid = locateReq != null ? locateReq.Item.Uid : 0; locateDriving = false; locateAutoSaid = "";
+      lpilot.Reset(); ResumeClicks(ClickOwner.Locate); lpilot.ItemUid = locateReq != null ? (artReq ? locateReq.Art.Uid : locateReq.Item.Uid) : 0; locateDriving = false; locateAutoSaid = "";
       Hide("off"); HideTip();
       Run();
     }
@@ -550,7 +553,7 @@ namespace RealmForge {
         bool sell = !LocateWins && sellHint && sellWanted != null;
         var want = new List<long>(sellWanted ?? new HashSet<long>()); want.Sort();
         var c = new RecCtx { Mode = LocateWins ? "locate" : sell ? "sell" : "", Front = hwnd != IntPtr.Zero && IsForeground(hwnd), Cols = locateCols, OnAccount = locateOnAccount,
-          Req = LocateWins ? locateReq : null, Lines = LocateWins ? locateLines.Length > 0 : sellHintLines.Length > 0, CityInvSeen = cityInvSeen, InvDX = invDX, BtnDY = hg2.HeroesBtnDY,
+          Req = LocateWins && locateReq.Item != null ? locateReq : null, Lines = LocateWins ? locateLines.Length > 0 : sellHintLines.Length > 0, CityInvSeen = cityInvSeen, InvDX = invDX, BtnDY = hg2.HeroesBtnDY,
           Want = sell ? want.ToArray() : new long[0], ShCols = shCols, PillUp = sellPillUp != "", PillDown = sellPillDown != "" };
         b.Ctx = c.ToJson(); b.TickNow = NowMs(); b.ReadSeq = RecReads.Seq;
         if (sell) { b.SInv = RecIn.InvCore(b.SellInv); b.SInvList = RecIn.List(b.SellInv != null ? b.SellInv.List : null); }
@@ -591,7 +594,7 @@ namespace RealmForge {
     /// until the pilot stops (gate, cancel, stuck), the job is done or the last step (the player's own button) is reached.</summary>
     bool LocateClicking {
       get {
-        if (locateReq == null || !AutoEnabled || !LocateAutoEnabled || lpilot.Stopped || gate.Halted(ClickOwner.Locate) || locateDoneUntil != 0) return false;
+        if (locateReq == null || locateReq.Purpose == "artPromote" || !AutoEnabled || !LocateAutoEnabled || lpilot.Stopped || gate.Halted(ClickOwner.Locate) || locateDoneUntil != 0) return false;
         var k = locateStep != null ? locateStep.Kind : LocateKind.None;
         return k != LocateKind.Done && k != LocateKind.AscendReady && k != LocateKind.NoItem && k != LocateKind.OtherAccount;
       }
@@ -1788,7 +1791,7 @@ namespace RealmForge {
 
     void FinishLocateJob(string what, long now) {
       var req = locateReq; if (req == null) return;
-      Log.Write("locate: job done (" + what + ") for item " + req.Item.Uid);
+      Log.Write("locate: job done (" + what + ") for " + (req.Item != null ? "item " + req.Item.Uid : "artifact " + (req.Art != null ? req.Art.Uid : 0)));
       locateDoneUntil = now + 4000; locateDoneWhat = what; locateDriving = false; lpilot.Cancel();
       var h = LocateFinished; if (h != null) h(req.Id, what);
     }
@@ -1799,13 +1802,14 @@ namespace RealmForge {
       if (hwnd == IntPtr.Zero || W32.IsIconic(hwnd) || !IsForeground(hwnd) || !W32.GetClientRect(hwnd, out cr) || cr.B < 200) { LocateHide(); return; }
       var o = new W32.POINT(0, 0); W32.ClientToScreen(hwnd, ref o); SceneArea(o, cr);
       if (glow.Visible) glow.Hide(); drawnKey = null;
-      string txt = Tx(what == "ascend" ? "doneAscend" : "doneRecast");
-      DrawTipTop(new[] { txt != "" ? txt : (what == "ascend" ? "Готово: вещь вознесена" : "Готово: вещь преобразована") }, locateCaps);
+      string txt = Tx(what == "artPromote" ? "doneArtPromote" : what == "ascend" ? "doneAscend" : "doneRecast");
+      DrawTipTop(new[] { txt != "" ? txt : (what == "artPromote" ? "Готово: артефакт продвинут" : what == "ascend" ? "Готово: вещь вознесена" : "Готово: вещь преобразована") }, locateCaps);
     }
 
     void TickLocate() {
       if (locateDoneUntil != 0) { TickLocateDone(locateDoneWhat); return; }
       var req = locateReq;
+      if (req.Purpose == "artPromote") { TickArtPromote(); return; }
       IntPtr hwnd = GameWindow();
       W32.RECT cr = new W32.RECT();
       if (hwnd == IntPtr.Zero || W32.IsIconic(hwnd) || !W32.GetClientRect(hwnd, out cr) || cr.B < 200) { LocateHide(); return; }
@@ -1943,6 +1947,59 @@ namespace RealmForge {
       if (key != locateKey) { locateKey = key; var h = LocateChanged; if (h != null) h(step, locateSubs); }
     }
 
+    // ---- «Показать в игре» for an ARTIFACT promotion (purpose artPromote): hints only, nothing is ever clicked (the gate's NoLocateClicks).
+    // Inventory -> «Артефакт» -> the artifact's cell -> «Мастерская» -> «Продвинуть» tab -> the copy -> the button (the player's); src/LocateGuide.cs NextArt, src/LocateFrames.cs ArtFrames.
+    readonly ArtFinish artFin = new ArtFinish();
+    LocateStep artStep; string artKey = "", artSaid = ""; long artFormAskedAt;
+
+    void TickArtPromote() {
+      var req = locateReq; var art = req.Art;
+      IntPtr hwnd = GameWindow();
+      W32.RECT cr = new W32.RECT();
+      if (hwnd == IntPtr.Zero || W32.IsIconic(hwnd) || !W32.GetClientRect(hwnd, out cr) || cr.B < 200) { LocateHide(); return; }
+      bool front = IsForeground(hwnd);
+      var o = new W32.POINT(0, 0); W32.ClientToScreen(hwnd, ref o);
+      double W = cr.R, H = cr.B, U = Ui.Unit(W, H);
+      SceneArea(o, cr);
+      long now = NowMs();
+      var scr = screens.Current;
+      if (scr != null && scr.Kind == ScreenKind.Unknown) { if (locUnkSince < 0) locUnkSince = now; } else locUnkSince = -1;
+      bool hold = LocateGuide.HoldOnUnknown(artStep, scr != null ? scr.Kind : ScreenKind.City, locUnkSince, now);
+      InventoryScreen inv = null; ArtWorkshopScreen ws = null;
+      if (!hold) {
+        inv = scr != null && scr.Kind == ScreenKind.Inventory ? screens.Inv : null;
+        ws = scr != null && scr.Kind == ScreenKind.ArtWorkshop ? screens.ArtWs : null;
+        // the lists' exact scroll, read every tick we draw (the frames follow a scroll the game renders at its own rate)
+        if (inv != null && inv.ArtTab) { bool fa; var live = RFX.ReadArtifactLive(out fa); if (live != null && live.Has) inv.List = live; }
+        if (ws != null && ws.Tab == 2) { bool wa; var ml = RFX.ReadArtMatLive(out wa); if (ml != null && ml.Has) ws.MatList = ml; }
+        var st = LocateGuide.NextArt(req, inv, ws);
+        if (artFin.Update(art.Uid, ws, now)) { FinishLocateJob("artPromote", now); return; }
+        artStep = st;
+        string sig = st.Key + "|" + st.Pos + "|" + st.MatChosen + "|" + st.MatWrong + "|" + st.MatKind;
+        if (sig != artSaid) { artSaid = sig; Log.Write("art promote: step " + st.Key + " pos " + st.Pos + " of " + st.Count + " scroll " + st.Scroll + " chosen " + st.MatChosen + "/" + st.MatNeed + (st.MatWrong ? " WRONG" : "") + " level " + st.ArtLevel + "/" + st.ArtCap + " screen " + (scr != null ? scr.Brief : "?")); }
+      }
+      var step = artStep;
+      if (step == null) { LocateHide(); return; }
+      if (recB != null) recB.Step = step.Kind.ToString();
+      LocateFrame lf = front && !hold ? ArtFrames.For(step, inv, ws, Geo.Current, W, H, U) : null;
+      if (!front) { LocateHide(); }
+      else if (lf != null && lf.Mark.Kind != "box") { frame++; Draw(lf.Mark.Kind, o.X + lf.Mark.X, o.Y + lf.Mark.Y, lf.Mark.W, lf.Mark.H, lf.Mark.Rows); }   // the cell is off the screen: the pill at the list's edge
+      else { if (glow.Visible) glow.Hide(); drawnKey = null; }
+      int[] cityBtn;
+      if (front && !hold && locateLines.Length > 0 && step.Kind == LocateKind.OpenInventory && CityInventoryButton(o, W, H, U, out cityBtn)) {
+        frame++;   // the city: frame the bar's «Инвентарь» with the step's plate beside it
+        DrawTip(cityBtn[0], cityBtn[1], cityBtn[2], cityBtn[3], locateLines, H, false, false, false, locateCaps, false, GuideStyle ? null : HlCity(cityBtn));
+      } else if (front && locateLines.Length > 0 && lf != null && lf.Mark.Kind == "box") {
+        frame++;
+        DrawTip(o.X + lf.Mark.X, o.Y + lf.Mark.Y, lf.Mark.W, lf.Mark.H, locateLines, H, false, false, false, locateCaps, false, lf.Target == "cell" && !GuideStyle ? null : HlLocate(lf, step, o));
+      } else if (front && locateLines.Length > 0) {
+        frame++;
+        DrawTipTop(locateLines, locateCaps);
+      } else HideTip();
+      string key = step.Key + "|" + step.Pos + "|" + step.Row + "|" + step.Col + "|" + step.Count + "|" + step.MatChosen + "|" + step.MatWrong + "|" + step.MatKind + "|" + step.ArtLevel + "|" + step.Scroll;
+      if (key != artKey) { artKey = key; var h = LocateChanged; if (h != null) h(step, null); }
+    }
+
     // ---- auto click for «Показать в игре» (src/LocatePilot.cs): the app opens the Inventory, the «Снаряжение» tab and the item
     // itself, and stops where the places of the next buttons are not known (those steps stay hints). The last button of the
     // game (and every confirmation) is the player's. Off without «Автонажатие».
@@ -1981,6 +2038,8 @@ namespace RealmForge {
       if ((sellScanOnce || now - sellBtnAt < 8000) && front && RFX.InvFormMissing()) RFX.RequestFormSearch("storage run, inventory not built", 1500);
       sellScanOnce = false;
       var inp = new ScreenInputs { Inv = RFX.ReadInventory(-1), Rs = RFX.ReadRecastScreenSafe(-1), Hero = RFX.ReadHeroScreen(addrs, screens.Hero) };
+      bool artGuide = locateReq != null && locateReq.Purpose == "artPromote";
+      if (artGuide) inp.ArtWs = RFX.ReadArtWorkshop();   // only while an artifact request is guided
       inp.CityForm = RFX.CityShown();
       if (front && inp.CityForm != true && ScreenState.Classify(inp, now).Kind == ScreenKind.Unknown) {   // the city form is not readable or reads closed: the city's bottom bar (a picture, at most every 400 ms)
         if (now - cityAt >= 400) { cityAt = now; cityNow = CityVisible(hwnd); }
@@ -1993,6 +2052,10 @@ namespace RealmForge {
         string lost = RFX.TakeFormsLost();
         if (lost != null) RFX.RequestFormSearch("lost: " + lost, 500);
         else if (st.Kind == ScreenKind.Unknown) RFX.RequestFormSearch("screen unknown", 2000);
+        // the workshop's form exists once the game has built it (the first open): with the artifact's card open, look for it every 2.5 s until found
+        else if (artGuide && RFX.ArtFormMissing() && st.Kind == ScreenKind.Inventory && st.InvArtTab && st.InvArtSelected == locateReq.Art.Uid && now - artFormAskedAt >= 2500) {
+          artFormAskedAt = now; RFX.RequestFormSearch("art workshop not built", 500);
+        }
       }
       if (screens.Hero != null) heroScreen = screens.Hero;
       gate.Observe(st, now);
@@ -2697,7 +2760,7 @@ namespace RealmForge {
     // «Показать в игре»: the step's button with the geometry's shape; the final presses (Done, the Foundry's «Вознести») and list cells are B, the rest A
     Hl HlLocate(LocateFrame lf, LocateStep step, W32.POINT o) {
       var g = Geo.Current;
-      bool important = step.Kind == LocateKind.Done || step.Kind == LocateKind.AscendReady || lf.Target == "cell";
+      bool important = step.Kind == LocateKind.Done || step.Kind == LocateKind.AscendReady || step.Kind == LocateKind.ArtPromote || lf.Target == "cell";
       var ins = g != null && lf.Target != "cell" ? g.Inset(lf.Target) : null;
       var sh = g != null && lf.Target != "cell" ? g.Shape(lf.Target) : null;
       if (lf.Target == "cell") return HlRound(o.X + lf.Mark.X, o.Y + lf.Mark.Y, lf.Mark.W, lf.Mark.H, true);

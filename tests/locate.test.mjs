@@ -114,6 +114,24 @@ for (const lang of ['ru', 'en']) {
   ok(L.describe(req, st({ step: 'inList', auto: 'stopped', autoWhy: 'lost' }), t).tone === 'warn' && L.describe(req, st({ step: 'inList', auto: 'stopped', autoWhy: 'cancelled' }), t).tone === 'info', lang + ': stop tones');
   ok(T[lang].locLeadAuto && T[lang].locLeadAuto !== T[lang].locLead, lang + ': the lead changes with auto click');
 }
+// «Продвинуть» артефакт: every step has texts and a short plate, in both languages; the artifact's name rides on the plate's header
+const areq = { id: 'a1', purpose: 'artPromote', item: null, art: { uid: 5001, id: 200088, name: 'Клинок', lv: 10, cap: 10, st: 0, need: 2, via: 'copy' } };
+for (const lang of ['ru', 'en']) {
+  const t = tr(lang);
+  for (const k of L.ART_KINDS) {
+    const d = L.describe(areq, { step: k, row: 2, col: 3, count: 20, artCap: 10, artLevel: 7, matKind: 'copy', matNeed: 2, matChosen: 1 }, t);
+    ok(d && d.head && !/^loc[A-Z]/.test(d.head) && d.lines.every((x) => !/^loc[A-Z]/.test(x)), lang + ': art step ' + k + ' has texts');
+    ok(d.tip.length >= 1 && d.tip.length <= 3 && d.tip.every((x) => x.length <= 90), lang + ': art step ' + k + ' plate is short');
+  }
+  ok(L.describe({ id: 'a2', purpose: 'artPromote', item: null, art: null }, null, t).head === T[lang].locNoItem, lang + ': art not in the snapshot');
+  ok(L.describe(areq, null, t).head === T[lang].locArtInventory, lang + ': art, no state yet -> open the inventory');
+  ok(L.describe(areq, { step: 'artMatPick', matKind: 'essence' }, t).head === T[lang].locArtMatEssence, lang + ': an essence is ticked as an essence');
+  ok(L.describe(areq, { step: 'artMatPick', matWrong: true }, t).tone === 'warn', lang + ': a wrong copy is a warning');
+  ok(L.describe(areq, { step: 'artMatPick', matKind: 'copy', matNeed: 2, matChosen: 1 }, t).lines.some((x) => /1/.test(x) && /2/.test(x)), lang + ': several copies: how many are chosen');
+  ok(L.describe(areq, { step: 'artLevelFirst', artCap: 13, artLevel: 10 }, t).head.includes('13'), lang + ': level first names the cap');
+  ok(L.caps(areq, { step: 'artPromote' }, t).includes('Клинок') && L.stepNo(areq, { step: 'artPromote' }).n === 7, lang + ': plate header names the artifact, the button is step 7');
+  ok(L.pillTexts(t, lang).doneArtPromote === T[lang].locJobArtPromote, lang + ': the done plate text');
+}
 ok(L.AUTO_STEPS.every((k) => L.KINDS.indexOf(k) >= 0), 'auto steps are known steps');
 
 // the text keys exist in both languages

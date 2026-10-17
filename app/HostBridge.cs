@@ -413,9 +413,9 @@ namespace RealmForge {
             // «Найти в игре»: the overlay shows hints for the request the last plans reply carried (the page names it by id)
             if (!On("locate")) break;
             var lr = lastLocate; string lid = MiniJson.GetString(m, "id");
-            if (lr != null && lr.Item != null && lr.Id == lid) {
+            if (lr != null && (lr.Item != null || lr.Art != null) && lr.Id == lid) {
               RFX.EnsureLiveForGuides();
-              overlay.SetLocate(lr); Log.Write("locate: show item " + lr.Item.Uid + (LocateAutoOn() ? " (auto click on)" : AutoClickOn() ? " (auto click is on, but the site's locateAuto switch is off: hints only)" : ""));
+              overlay.SetLocate(lr); Log.Write("locate: show " + (lr.Item != null ? "item " + lr.Item.Uid : "artifact " + lr.Art.Uid + " (promotion, hints only)") + (LocateAutoOn() ? " (auto click on)" : AutoClickOn() ? " (auto click is on, but the site's locateAuto switch is off: hints only)" : ""));
               if (addrs == null && !scanning && AutoClickOn()) StartScan(watch, true);   // the auto steps need the game's screens found
             }
             break;
@@ -1146,6 +1146,13 @@ namespace RealmForge {
           lb.Append("{\"id\":").Append(S(lq.Id)).Append(",\"purpose\":").Append(S(lq.Purpose)).Append(",\"createdAt\":").Append(S(lq.CreatedAt))
             .Append(",\"heroUid\":").Append(N(lq.HeroUid)).Append(",\"heroName\":").Append(S(lq.HeroName)).Append(",\"item\":");
           if (lq.Item == null) lb.Append("null"); else ItemJson(lb, lq.Item, false);
+          if (lq.Purpose == "artPromote") {
+            lb.Append(",\"art\":");
+            var aq = lq.Art;
+            if (aq == null) lb.Append("null");
+            else lb.Append("{\"uid\":").Append(N(aq.Uid)).Append(",\"id\":").Append(N(aq.Id)).Append(",\"name\":").Append(S(aq.Name)).Append(",\"lv\":").Append(N(aq.Level))
+              .Append(",\"cap\":").Append(N(aq.Cap)).Append(",\"st\":").Append(N(aq.Stage)).Append(",\"need\":").Append(N(aq.Need)).Append(",\"via\":").Append(S(aq.Via)).Append('}');
+          }
           lb.Append('}');
         }
         Post(lb.Append('}').ToString());
@@ -1184,6 +1191,8 @@ namespace RealmForge {
       var sb = new StringBuilder("{\"ev\":\"locate.state\",\"step\":").Append(S(st.Key)).Append(",\"pos\":").Append(N(st.Pos)).Append(",\"row\":").Append(N(st.Row))
         .Append(",\"col\":").Append(N(st.Col)).Append(",\"count\":").Append(N(st.Count)).Append(",\"onHero\":").Append(B(st.OnHero)).Append(",\"onGear\":").Append(B(st.OnGear)).Append(",\"onGem\":").Append(B(st.OnGem)).Append(",\"func\":").Append(N(st.Func)).Append(",\"wrongFunc\":").Append(B(st.WrongFunc)).Append(",\"worn\":").Append(B(st.Worn)).Append(",\"scroll\":").Append(S(st.Scroll)).Append(",\"scrollRows\":").Append(N(st.ScrollRows))
         .Append(",\"filterGo\":").Append(S(st.FilterGo)).Append(",\"suitTab\":").Append(N(st.SuitTab))
+        .Append(",\"artCap\":").Append(N(st.ArtCap)).Append(",\"artLevel\":").Append(N(st.ArtLevel)).Append(",\"matNeed\":").Append(N(st.MatNeed)).Append(",\"matChosen\":").Append(N(st.MatChosen))
+        .Append(",\"matKind\":").Append(S(st.MatKind)).Append(",\"matWrong\":").Append(B(st.MatWrong))
         .Append(",\"needClick\":").Append(B(st.NeedClick)).Append(",\"auto\":").Append(S(st.Auto)).Append(",\"autoWhy\":").Append(S(st.AutoWhy)).Append(",\"missing\":[");
       for (int i = 0; i < st.Missing.Length; i++) { if (i > 0) sb.Append(','); sb.Append(S(st.Missing[i])); }
       sb.Append("],\"subs\":");

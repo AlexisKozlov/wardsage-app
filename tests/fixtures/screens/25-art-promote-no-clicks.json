@@ -1,0 +1,6 @@
+{ "name": "Artifact promotion never clicks, even with the auto click on and the site's locateAuto switch on", "cols": 7,
+  "request": { "purpose": "artPromote", "uid": 5001, "need": 1, "cap": 10, "level": 10, "via": "copy", "copies": [ 5002 ] }, "frames": [
+  { "t": 0, "inv": { "open": true, "equip": false, "known": false, "art": true, "artKnown": true, "artMode": -1, "artSel": 1, "uids": [ 5010, 5001, 5002 ], "list": { "scrollY": 0, "cols": 7, "rowUnits": 116 } }, "expect": { "artStep": "artInList" }, "clicks": [
+    { "owner": "Locate", "target": "InvEquipTab", "auto": true, "front": true, "expect": { "verdict": "Deny", "reason": "artifact" } } ] },
+  { "t": 100, "inv": { "open": true, "equip": false, "known": false, "art": true, "artKnown": true, "artMode": -1, "artSel": 1, "uids": [ 5010, 5001, 5002 ], "list": { "scrollY": 0, "cols": 7, "rowUnits": 116 } }, "expect": { "halt": "Locate:artifact" } } ]
+}

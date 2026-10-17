@@ -7,6 +7,9 @@
   const KINDS = ['noItem', 'otherAccount', 'openInventory', 'openEquipTab', 'inList', 'hiddenFilter', 'selected', 'openRecastTab',
     'recastFilter', 'recastPick', 'recastNotInList', 'choosePending', 'gemPick', 'done',
     'openAscendTab', 'ascendPick', 'ascendNotInList', 'ascendReady', 'openFoundry', 'gemFunction', 'ascendFilter', 'ascendLoading', 'exitBulk'];
+  // «Продвинуть» артефакт (purpose artPromote): req.art = {uid, id, name, lv, cap, st, need, via}; the host never clicks for it
+  const ART_KINDS = ['openInventory', 'artOpenTab', 'artExitMode', 'artListLoading', 'artNotInList', 'artInList', 'artSelected', 'artWrongArtifact', 'artLevelFirst',
+    'artOpenPromote', 'artMatLoading', 'artMatPick', 'artMatNone', 'artPromote'];
 
   // auto click (host: src/LocatePilot.cs): st.auto = '' (off) | work | paused | background | hint | stopped, st.autoWhy = the reason when stopped.
   // The app clicks by itself only on these steps; the rest (the Foundry, the last button) stay the player's.
@@ -36,9 +39,40 @@
     return out;
   }
 
+  // the artifact promotion's step -> {tone, head, lines}
+  function describeArt(req, st, t) {
+    const a = req.art, s = st || {};
+    switch (s.step) {
+      case 'artOpenTab': return { tone: 'info', head: t('locArtOpenTab'), lines: [] };
+      case 'artExitMode': return { tone: 'warn', head: t('locArtExit'), lines: [t('locArtExitP')] };
+      case 'artListLoading': return { tone: 'info', head: t('locArtLoading'), lines: [] };
+      case 'artNotInList': return { tone: 'warn', head: t('locArtNotInList'), lines: [t('locArtNotInListP')] };
+      case 'artInList': return { tone: 'info', head: t('locArtInList'), lines: [scrollLine(s, t) || t('locArtInListP', s.row, s.col)] };
+      case 'artSelected': return { tone: 'info', head: t('locArtSelected'), lines: [t('locArtSelectedP')] };
+      case 'artWrongArtifact': return { tone: 'warn', head: t('locArtWrong'), lines: [t('locArtWrongP', a.name || '')] };
+      case 'artLevelFirst': return { tone: 'warn', head: t('locArtLevelFirst', s.artCap || a.cap), lines: [t('locArtLevelFirstP', s.artLevel || a.lv)] };
+      case 'artOpenPromote': return { tone: 'info', head: t('locArtOpenPromote'), lines: [] };
+      case 'artMatLoading': return { tone: 'info', head: t('locArtMatLoading'), lines: [] };
+      case 'artMatPick': {
+        if (s.matWrong) return { tone: 'warn', head: t('locArtMatWrong'), lines: [t('locArtMatWrongP')] };
+        const lines = [scrollLine(s, t)].filter(Boolean);
+        if ((s.matNeed || 1) > 1) lines.push(t('locArtMatCount', s.matChosen || 0, s.matNeed));
+        return { tone: 'info', head: t(s.matKind === 'essence' ? 'locArtMatEssence' : 'locArtMatCopy'), lines };
+      }
+      case 'artMatNone': return { tone: 'warn', head: t('locArtMatNone'), lines: [t('locArtMatNoneP')] };
+      case 'artPromote': return { tone: 'done', head: t('locArtPromote'), lines: [t('locArtPromoteP')] };
+      default: return { tone: 'info', head: t('locArtInventory'), lines: [t('locArtInventoryP')] };   // openInventory / no state yet
+    }
+  }
+
   // -> {tone: 'info'|'warn'|'done', head, lines:[…], tip:[…] (the plate over the game, ≤ 3 short lines)}
   function describe(req, st, t) {
     if (!req) return null;
+    if (req.purpose === 'artPromote') {
+      const r0 = req.art ? describeArt(req, st, t) : { tone: 'warn', head: t('locNoItem'), lines: [t('locNoItemP')] };
+      r0.tip = [r0.head].concat(r0.lines.slice(0, 2)).map((x) => (x.length > 90 ? x.slice(0, 89) + '…' : x));
+      return r0;
+    }
     if (!req.item) return { tone: 'warn', head: t('locNoItem'), lines: [t('locNoItemP')], tip: [] };
     if (!st || KINDS.indexOf(st.step) < 0) return { tone: 'info', head: t('locOpenInventory'), lines: [], tip: [t('locOpenInventory')] };
     const it = req.item, pos = t('locPos', st.pos, st.count);
@@ -119,18 +153,19 @@
   // the user-facing step number of a request: {n, total} or null (a step off the main path has no number)
   const PATH = {
     recast: { openInventory: 1, openEquipTab: 2, inList: 3, hiddenFilter: 3, selected: 4, gemFunction: 5, gemPick: 5, done: 6, total: 6 },
+    artPromote: { openInventory: 1, artOpenTab: 2, artExitMode: 2, artListLoading: 3, artNotInList: 3, artInList: 3, artSelected: 4, artWrongArtifact: 4, artLevelFirst: 5, artOpenPromote: 5, artMatLoading: 6, artMatPick: 6, artMatNone: 6, artPromote: 7, total: 7 },
     ascend: { openInventory: 1, openEquipTab: 2, openFoundry: 3, openAscendTab: 4, ascendFilter: 5, ascendLoading: 5, ascendPick: 5, ascendNotInList: 5, ascendReady: 6, total: 6 },
   };
   function stepNo(req, st) {
     if (!req || !st) return null;
-    const p = PATH[req.purpose === 'ascend' ? 'ascend' : 'recast'], n = p[st.step];
+    const p = PATH[req.purpose === 'ascend' ? 'ascend' : req.purpose === 'artPromote' ? 'artPromote' : 'recast'], n = p[st.step];
     return n ? { n, total: p.total } : null;
   }
 
   // the locate plate's own header line: «Показать в игре · <вещь> · шаг N из M» (never the equip helper's «Шаг N из M · слот»)
   function caps(req, st, t) {
-    if (!req || !req.item) return '';
-    const name = req.item.name || req.item.slotName || '', s = stepNo(req, st);
+    if (!req || (!req.item && !req.art)) return '';
+    const name = req.art ? req.art.name || '' : req.item.name || req.item.slotName || '', s = stepNo(req, st);
     return s ? t('locCapsN', name, s.n, s.total) : t('locCaps', name);
   }
 
@@ -145,10 +180,10 @@
 
   // the host's pills over the game for an item off the screen («Вещь ниже: ещё 3 ряда»): the texts and the row forms in the page's language
   function pillTexts(t, lang) {
-    return { lang: lang === 'en' ? 'en' : 'ru', pillUp: t('locPillUp'), pillDown: t('locPillDown'), rows1: t('pRows1'), rows2: t('pRows2'), rows5: t('pRows5'), doneAscend: t('locJobAscend'), doneRecast: t('locJobRecast') };
+    return { lang: lang === 'en' ? 'en' : 'ru', pillUp: t('locPillUp'), pillDown: t('locPillDown'), rows1: t('pRows1'), rows2: t('pRows2'), rows5: t('pRows5'), doneAscend: t('locJobAscend'), doneRecast: t('locJobRecast'), doneArtPromote: t('locJobArtPromote') };
   }
 
-  const api = { KINDS, pillTexts, describe, caps, stepNo, subRows, filterLines, AUTO_STEPS };
+  const api = { KINDS, ART_KINDS, pillTexts, describe, caps, stepNo, subRows, filterLines, AUTO_STEPS };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.RFLocate = api;
 })(typeof window !== 'undefined' ? window : globalThis);

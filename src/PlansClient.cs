@@ -1,7 +1,8 @@
 // RealmForge extractor - equip plans («Надеть в игре») from the RealmForge site.
 //
 // Contract (implemented by the site, lib/plans/handler.ts):
-//   GET  {site}/api/extractor/plans?lang=ru|en        Authorization: Bearer <sync code>
+//   GET  {site}/api/extractor/plans?lang=ru|en&artifacts=1        Authorization: Bearer <sync code>
+//        "artifacts=1" tells the site this app can guide an artifact promotion request (purpose "artPromote"); an older app never sends it and never gets one.
 //        200 {ok:true, plans:[{id, heroUid, heroName, createdAt,
 //              items:[{slot, uid, slotName, name, setName, setId?, level, stars, mainStat, fromHeroUid, fromHeroName, icon,
 //                     cur:{uid, name, level, stars, icon}|null}]}]}
@@ -69,10 +70,24 @@ namespace RealmForge {
     public List<PlanItem> Items = new List<PlanItem>();
   }
 
-  /// <summary>A «Найти в игре» request: the item to show the player in the game (Item null: not in the site's last snapshot).</summary>
+  /// <summary>The artifact of a "artPromote" request: what the app guides the player to (Inventory → «Артефакт» → the artifact → «Мастерская» → «Продвинуть» → the copy).</summary>
+  public sealed class ArtPromoteInfo {
+    public long Uid;                 // the artifact (iItemUid)
+    public int Id;                   // its type (iItemId)
+    public string Name = "";
+    public int Level, Cap, Stage;    // level now, the level cap of the stage, the stage when the site looked
+    public int Need = 1;             // copies the promotion takes
+    public string Via = "none";      // what the plan spends: copy | essence | none
+    public long Copy;                // the planned spare copy (uid), 0 = none
+    public List<long> Copies = new List<long>();   // the copies to pick, in order (the planned one first)
+  }
+
+  /// <summary>A «Найти в игре» request: the item to show the player in the game (Item null: not in the site's last snapshot).
+  /// Purpose "artPromote": Art is the artifact (Art null: it is not in the snapshot), Item is always null.</summary>
   public sealed class LocateRequest {
     public string Id, Purpose, CreatedAt;
     public PlanItem Item;
+    public ArtPromoteInfo Art;
     public long HeroUid;
     public string HeroName;
   }
@@ -95,7 +110,7 @@ namespace RealmForge {
     const int MaxReplyBytes = 1024 * 1024;
 
     public static PlansResult List(string site, string code, string lang) {
-      return Request("GET", site + "/api/extractor/plans?lang=" + (lang == "en" ? "en" : "ru"), code, null, true);
+      return Request("GET", site + "/api/extractor/plans?lang=" + (lang == "en" ? "en" : "ru") + "&artifacts=1", code, null, true);
     }
 
     public static PlansResult Finish(string site, string code, string planId, bool done) {
@@ -239,9 +254,10 @@ namespace RealmForge {
       string id = MiniJson.GetString(o, "id");
       if (string.IsNullOrEmpty(id) || id.Length > 64) return null;
       string purpose = MiniJson.GetString(o, "purpose") ?? "recast";
-      if (purpose != "recast" && purpose != "ascend") return null;
+      if (purpose != "recast" && purpose != "ascend" && purpose != "artPromote") return null;
       var r = new LocateRequest { Id = id, Purpose = purpose, CreatedAt = Clip(MiniJson.GetString(o, "createdAt"), 40) };
       object iv;
+      if (purpose == "artPromote") { r.Art = ParseArt(o.TryGetValue("art", out iv) ? MiniJson.AsObject(iv) : null); return r; }
       var d = o.TryGetValue("item", out iv) ? MiniJson.AsObject(iv) : null;
       r.Item = ParseItem(d);
       if (r.Item != null) {
@@ -249,6 +265,20 @@ namespace RealmForge {
         r.HeroName = Clip(MiniJson.GetString(d, "heroName"), 100);
       }
       return r;
+    }
+
+    static ArtPromoteInfo ParseArt(Dictionary<string, object> d) {
+      if (d == null) return null;
+      var a = new ArtPromoteInfo { Uid = Num(d, "uid") };
+      if (a.Uid <= 0) return null;
+      a.Id = (int)Num(d, "id"); a.Name = Clip(MiniJson.GetString(d, "name"), 100) ?? "";
+      a.Level = (int)Math.Max(0, Math.Min(99, Num(d, "lv"))); a.Cap = (int)Math.Max(0, Math.Min(99, Num(d, "cap"))); a.Stage = (int)Math.Max(0, Math.Min(9, Num(d, "st")));
+      a.Need = (int)Math.Max(1, Math.Min(20, Num(d, "need")));
+      string via = MiniJson.GetString(d, "via"); a.Via = via == "copy" || via == "essence" ? via : "none";
+      a.Copy = Num(d, "copy");
+      object cv; var cl = d.TryGetValue("copies", out cv) ? cv as List<object> : null;
+      if (cl != null) foreach (var x in cl) if (x is double && (double)x > 0 && a.Copies.Count < 20) a.Copies.Add((long)(double)x);
+      return a;
     }
 
     static PlanItem ParseItem(Dictionary<string, object> d) {

@@ -655,6 +655,7 @@ static class CoreTests {
     LocateGemAndListTests();
     SellHintTests();
     ArtifactSellTests();
+    ArtPromoteTests();
 
     Console.WriteLine("Fight timeline (src/TimelineBuilder.cs: samples of the running fight + its command record):");
     TimelineTests();
@@ -1061,7 +1062,7 @@ static class CoreTests {
   static void LayoutChecksums() {
     var sums = new Dictionary<string, string> {
       { "1.6.38.829.1", "87d1958cc51af52fc9b18d44638b06d0919c6f0904f3e3b9016f96a679e06d4d" },
-      { "1.6.39.829.1", "d85787575eaaf98ad0690eef2a4c7ec0e43ab1a1c6f31011ec62c862799a99e6" } };
+      { "1.6.39.829.1", "8bd54be762d440a7c7d6d2a5083afe7edf71144fdfec30d88bb5f0f6e52a5f1f" } };
     foreach (var kv in sums) {
       string path = null;
       foreach (var repo in new[] { "wardsage-web", "realmforge-web" }) {
@@ -3390,6 +3391,190 @@ static class CoreTests {
       double u2 = Ui.Unit(wh[0], wh[1]); var g2 = SellGeometry.Artifacts(wh[0], wh[1], u2, 7);
       double right = g2.X(g2.X0 + 6 * g2.PitchX + g2.CellW, wh[0], u2);
       Check(right <= wh[0] - 0.4969 * u2 + 1 && g2.ViewTopPx(u2) > 0 && g2.ViewBottomPx(wh[1], u2) < wh[1], "art hint: " + wh[0] + "x" + wh[1] + ": the columns end inside the list");
+    }
+  }
+
+  // «Показать в игре» for an ARTIFACT promotion (purpose artPromote): the request, the readers on fake tables, the screen, the steps, the frames, the finish; never a click
+  static void ArtPromoteTests() {
+    Console.WriteLine("Artifact promotion guide (hints only)");
+    // --- the request from the site
+    var body = "{\"ok\":true,\"plans\":[],\"locate\":{\"id\":\"r1\",\"purpose\":\"artPromote\",\"createdAt\":\"2026-10-18T10:00:00Z\",\"item\":null,\"art\":{\"uid\":5001,\"id\":200088,\"name\":\"Клинок\",\"lv\":10,\"cap\":10,\"st\":0,\"need\":2,\"via\":\"copy\",\"copy\":5002,\"copies\":[5002,5003]}}}";
+    var pr = PlansClient.Interpret(200, body, true);
+    Check(pr.Locate != null && pr.Locate.Purpose == "artPromote" && pr.Locate.Item == null && pr.Locate.Art != null && pr.Locate.Art.Uid == 5001 && pr.Locate.Art.Need == 2 && pr.Locate.Art.Cap == 10
+          && pr.Locate.Art.Copy == 5002 && pr.Locate.Art.Copies.Count == 2 && pr.Locate.Art.Via == "copy" && pr.Locate.Art.Name == "Клинок", "art request: parsed with its copies");
+    var none = PlansClient.Interpret(200, "{\"ok\":true,\"plans\":[],\"locate\":{\"id\":\"r2\",\"purpose\":\"artPromote\",\"item\":null,\"art\":null}}", true);
+    Check(none.Locate != null && none.Locate.Art == null && none.Locate.Item == null, "art request: an artifact the snapshot lacks stays a request without a card");
+    Check(PlansClient.Interpret(200, "{\"ok\":true,\"plans\":[],\"locate\":{\"id\":\"r3\",\"purpose\":\"mystery\"}}", true).Locate == null, "art request: an unknown purpose is dropped");
+    var req = pr.Locate;
+
+    // --- the readers on fake tables
+    var m = new FakeLua(1 << 20); RFX.TestMemory = m; RFX.ForgetLive();
+    try {
+      var st = new FakeState(m);
+      Func<long, long, FTab> art = (uid, lv) => st.T("iItemUid", uid, "iItemId", 200088L, "iLevel", lv, "iStageLvl", 0L, "iHeroId", 0L);
+      Func<long, bool, long, long, FTab, FTab, FTab> panelOf = (flag, active, sel, cols, list, dic) => st.T("_isInited", true, "_isActive", active, "_btFlagBatch", flag, "_selectedIndexMain", sel, "_countCol", cols, "_listDataCur", list, "_btDicSelected", dic);
+      var list3 = st.T(1L, art(5001, 10), 2L, art(5002, 1), 3L, art(5003, 1));
+      // normal mode is not read unless a guide wants it
+      RFX.ArtListWanted = false;
+      var s0 = new InventoryScreen { Open = true, ArtTab = true };
+      RFX.ReadArtifactPanel(st.T(-9997L, panelOf(-1, true, 2, 7, list3, st.T())).A, s0);
+      Check(s0.ArtBulkKnown && s0.ArtMode == -1 && s0.Uids.Count == 0 && s0.ArtSel == 0, "art guide reader: normal mode, nothing read while no guide wants it");
+      RFX.ArtListWanted = true;
+      try {
+        var s1 = new InventoryScreen { Open = true, ArtTab = true };
+        RFX.ReadArtifactPanel(st.T(-9997L, panelOf(-1, true, 2, 7, list3, st.T())).A, s1);
+        Eq("5001,5002,5003", string.Join(",", s1.Uids), "art guide reader: the list in screen order in normal mode");
+        Check(s1.ArtSelKnown && s1.ArtSel == 2 && !s1.ArtBulk && s1.ArtMode == -1, "art guide reader: _selectedIndexMain = the open card's place");
+        var s2 = new InventoryScreen { Open = true, ArtTab = true };
+        RFX.ReadArtifactPanel(st.T(-9997L, panelOf(1, true, 1, 7, list3, st.T())).A, s2);
+        Check(s2.ArtMode == 1 && !s2.ArtBulk && s2.Uids.Count == 3, "art guide reader: «Масс. организовать» is mode 1");
+        var s3 = new InventoryScreen { Open = true, ArtTab = true };
+        RFX.ReadArtifactPanel(st.T(-9997L, panelOf(-1, true, 9, 7, list3, st.T())).A, s3);
+        Check(s3.ArtSelKnown && s3.ArtSel == 0, "art guide reader: a selected index outside the list is no selection");
+        var s4 = new InventoryScreen { Open = true, ArtTab = true };
+        RFX.ReadArtifactPanel(st.T(-9997L, panelOf(-1, false, 2, 7, list3, st.T())).A, s4);
+        Check(!s4.ArtBulkKnown && s4.Uids.Count == 0, "art guide reader: a panel that is not shown reads nothing");
+      } finally { RFX.ArtListWanted = false; }
+
+      // the workshop form
+      Func<bool, long, long, long, long, long, FTab, FTab> formOf = (active, tab, uid, lv, stage, x, brk) => st.T("m_LuaLogicActive", active, "m_iItemType", tab,
+        "m_ArtifactData", st.T("iItemUid", uid, "iItemId", 200088L, "iLevel", lv, "iStageLvl", stage), "m_PanelEquipBreak", brk);
+      var mats = st.T(1L, st.T("iItemUid", 5002L, "iItemId", 200088L, "iLevel", 1L), 2L, st.T("iItemUid", 5003L, "iItemId", 200088L, "iLevel", 7L), 3L, st.T("iItemId", 16100L));
+      var brk0 = st.T("m_vMatData", mats, "m_vMatSelect", st.T(2L, true, 1L, false, 3L, true));
+      var ws = new ArtWorkshopScreen();
+      RFX.ReadArtWorkshopForm(formOf(true, 2, 5001, 10, 0, 0, brk0).A, ws);
+      Check(ws.Open && ws.Tab == 2 && ws.Uid == 5001 && ws.Level == 10 && ws.Stage == 0 && ws.ItemId == 200088, "art workshop reader: tab, artifact, level and stage");
+      Eq("5002,5003,0", string.Join(",", ws.Mats), "art workshop reader: copies first, an essence stub has no uid");
+      Eq("1,7,-1", string.Join(",", ws.MatLevels), "art workshop reader: the copies' levels");
+      Eq("2,3", string.Join(",", new SortedSet<int>(ws.MatSel)), "art workshop reader: only the true entries of m_vMatSelect (indices)");
+      var wsT = new ArtWorkshopScreen();
+      RFX.ReadArtWorkshopForm(formOf(true, 1, 5001, 8, 0, 0, brk0).A, wsT);
+      Check(wsT.Tab == 1 && wsT.Mats.Count == 0 && !wsT.PanelKnown, "art workshop reader: the promote panel is read on its own tab only");
+      var wsC = new ArtWorkshopScreen();
+      RFX.ReadArtWorkshopForm(formOf(false, 2, 5001, 10, 0, 0, brk0).A, wsC);
+      Check(!wsC.Open && wsC.Uid == 0 && wsC.Mats.Count == 0, "art workshop reader: a form that is not shown reads nothing");
+    } finally { RFX.TestMemory = null; RFX.ForgetLive(); }
+
+    // --- the screen state
+    var wsOpen = new ArtWorkshopScreen { Open = true, Tab = 2, Uid = 5001, Level = 10, Stage = 0 };
+    var scr = ScreenState.Classify(new ScreenInputs { ArtWs = wsOpen, Inv = new InventoryScreen { Open = true, ArtTab = true, ArtBulkKnown = true, ArtMode = -1 } }, 0);
+    Check(scr.Kind == ScreenKind.ArtWorkshop && scr.ArtWsTab == 2 && scr.ArtWsUid == 5001 && scr.Brief.Contains("ArtWorkshop tab 2"), "art screen: the workshop sits above the inventory (" + scr.Brief + ")");
+    var invN = new InventoryScreen { Open = true, ArtTab = true, ArtBulkKnown = true, ArtMode = -1, ArtSelKnown = true, ArtSel = 2 }; invN.Uids.AddRange(new long[] { 5001, 5002, 5003 });
+    var scrI = ScreenState.Classify(new ScreenInputs { Inv = invN, ArtWs = new ArtWorkshopScreen { Open = false } }, 0);
+    Check(scrI.Kind == ScreenKind.Inventory && scrI.InvArtSelected == 5002 && scrI.InvArtMode == -1, "art screen: a closed workshop leaves the inventory; the open card's uid");
+    var tr = new ScreenTracker(); tr.Update(new ScreenInputs { ArtWs = wsOpen }, 0);
+    var held = tr.Update(new ScreenInputs(), 500);
+    Check(held.Kind == ScreenKind.ArtWorkshop && tr.ArtWs != null, "art screen: a short read failure keeps the workshop");
+    var gone = tr.Update(new ScreenInputs(), 5000);
+    Check(gone.Kind == ScreenKind.Unknown && tr.ArtWs == null, "art screen: gone for good after the hold");
+
+    // --- the steps
+    Func<long[], int, int, int, InventoryScreen> inv = (uids, sel, mode, scroll) => { var i = new InventoryScreen { Open = true, ArtTab = true, ArtBulkKnown = true, ArtMode = mode, ArtBulk = mode == 2, ArtSelKnown = true, ArtSel = sel, ListPtr = 7,
+      List = new RFX.ListRead { ScrollY = scroll, Cols = 7, RowUnits = 116, First = 0, Last = 27 } }; i.Uids.AddRange(uids); return i; };
+    var u3 = new long[] { 5010, 5001, 5002 };
+    Eq(LocateKind.NoItem, LocateGuide.NextArt(new LocateRequest { Purpose = "artPromote" }, null, null).Kind, "art guide: an artifact the snapshot lacks");
+    Eq(LocateKind.OpenInventory, LocateGuide.NextArt(req, null, null).Kind, "art guide: nothing open -> open the inventory");
+    Eq(LocateKind.OpenInventory, LocateGuide.NextArt(req, new InventoryScreen { Open = false }, null).Kind, "art guide: inventory closed -> open it");
+    Eq(LocateKind.ArtOpenTab, LocateGuide.NextArt(req, new InventoryScreen { Open = true, EquipTab = true }, null).Kind, "art guide: the gear tab -> «Артефакт»");
+    Eq(LocateKind.ArtExitMode, LocateGuide.NextArt(req, inv(u3, 0, 2, 0), null).Kind, "art guide: bulk sale -> leave it");
+    Eq(LocateKind.ArtExitMode, LocateGuide.NextArt(req, inv(u3, 0, 1, 0), null).Kind, "art guide: arrange mode -> leave it");
+    Eq(LocateKind.ArtListLoading, LocateGuide.NextArt(req, inv(new long[0], 0, -1, 0), null).Kind, "art guide: an empty read is a list not read yet");
+    Eq(LocateKind.ArtNotInList, LocateGuide.NextArt(req, inv(new long[] { 5010, 5011 }, 0, -1, 0), null).Kind, "art guide: not in the tab's list (a filter hides it)");
+    var stL = LocateGuide.NextArt(req, inv(u3, 1, -1, 0), null);
+    Check(stL.Kind == LocateKind.ArtInList && stL.Pos == 2 && stL.Row == 1 && stL.Col == 2 && stL.Scroll == "visible", "art guide: in the list -> its cell (place 2, row 1, column 2)");
+    Eq(LocateKind.ArtSelected, LocateGuide.NextArt(req, inv(u3, 2, -1, 0), null).Kind, "art guide: its card is open -> «Мастерская»");
+    var far = new long[60]; for (int i = 0; i < 60; i++) far[i] = 6000 + i; far[50] = 5001;
+    var stF = LocateGuide.NextArt(req, new InventoryScreen { Open = true, ArtTab = true, ArtBulkKnown = true, ArtMode = -1, ArtSelKnown = true, ArtSel = 1, Uids = new List<long>(far), List = new RFX.ListRead { ScrollY = 0, Cols = 7, RowUnits = 116, First = 0, Last = 27 } }, null);
+    Check(stF.Kind == LocateKind.ArtInList && stF.Scroll == "below" && stF.ScrollRows >= 1 && stF.Row == 8, "art guide: far down the list -> scroll below (" + stF.Scroll + " " + stF.ScrollRows + ")");
+
+    Func<long, int, int, int, long[], long[], int[], ArtWorkshopScreen> W = (uid, tab, lv, stage, mats, levels, sel) => { var w = new ArtWorkshopScreen { Open = true, Tab = tab, Uid = uid, Level = lv, Stage = stage, PanelKnown = mats != null };
+      if (mats != null) { w.Mats.AddRange(mats); foreach (var l in levels) w.MatLevels.Add((int)l); foreach (var x in sel) w.MatSel.Add(x); w.MatList = new RFX.ListRead { ScrollY = 0, Cols = 3, RowUnits = 114, First = 0, Last = 8 }; } return w; };
+    var matsA = new long[] { 5003, 5002, 0 }; var lvA = new long[] { 7, 1, -1 };
+    Eq(LocateKind.ArtWrongArtifact, LocateGuide.NextArt(req, null, W(9999, 2, 10, 0, matsA, lvA, new int[0])).Kind, "art guide: the workshop holds another artifact");
+    var stLv = LocateGuide.NextArt(req, null, W(5001, 1, 8, 0, null, null, null));
+    Check(stLv.Kind == LocateKind.ArtLevelFirst && stLv.ArtCap == 10 && stLv.ArtLevel == 8, "art guide: below the cap -> level it first (cap 10, now 8)");
+    Eq(LocateKind.ArtOpenPromote, LocateGuide.NextArt(req, null, W(5001, 1, 10, 0, null, null, null)).Kind, "art guide: at the cap on «Улучшить» -> open «Продвинуть»");
+    Eq(LocateKind.ArtMatLoading, LocateGuide.NextArt(req, null, W(5001, 2, 10, 0, null, null, null)).Kind, "art guide: the copy list not read yet");
+    // need 2: the planned copies are 5002 (place 2) and 5003 (place 1), in that order
+    var p1 = LocateGuide.NextArt(req, null, W(5001, 2, 10, 0, matsA, lvA, new int[0]));
+    Check(p1.Kind == LocateKind.ArtMatPick && p1.Pos == 2 && p1.MatKind == "copy" && p1.MatNeed == 2 && p1.MatChosen == 0 && !p1.MatWrong && p1.Row == 1 && p1.Col == 2, "art guide: the planned copy first (place 2), 2 needed");
+    var p2 = LocateGuide.NextArt(req, null, W(5001, 2, 10, 0, matsA, lvA, new[] { 2 }));
+    Check(p2.Kind == LocateKind.ArtMatPick && p2.Pos == 1 && p2.MatChosen == 1, "art guide: then the next planned copy");
+    Eq(LocateKind.ArtPromote, LocateGuide.NextArt(req, null, W(5001, 2, 10, 0, matsA, lvA, new[] { 2, 1 })).Kind, "art guide: all chosen -> «Продвинуть» is the player's");
+    var pw = LocateGuide.NextArt(req, null, W(5001, 2, 10, 0, matsA, lvA, new[] { 2, 3 }));
+    Check(pw.Kind == LocateKind.ArtMatPick && pw.MatWrong && pw.Pos == 3 && pw.MatKind == "essence", "art guide: an essence ticked while copies were planned -> untick it");
+    var reqOne = new LocateRequest { Id = "r", Purpose = "artPromote", Art = new ArtPromoteInfo { Uid = 5001, Need = 1, Cap = 10, Via = "copy", Copy = 5002, Copies = { 5002 } } };
+    var pl = LocateGuide.NextArt(reqOne, null, W(5001, 2, 10, 0, matsA, lvA, new[] { 1 }));
+    Check(pl.Kind == LocateKind.ArtMatPick && pl.MatWrong && pl.Pos == 1, "art guide: a levelled copy ticked instead of the planned one -> untick it");
+    var reqEss = new LocateRequest { Id = "r", Purpose = "artPromote", Art = new ArtPromoteInfo { Uid = 5001, Need = 1, Cap = 10, Via = "essence" } };
+    var pe = LocateGuide.NextArt(reqEss, null, W(5001, 2, 10, 0, matsA, lvA, new int[0]));
+    Check(pe.Kind == LocateKind.ArtMatPick && pe.Pos == 3 && pe.MatKind == "essence", "art guide: the plan spends an essence -> the essence stub");
+    var reqNo = new LocateRequest { Id = "r", Purpose = "artPromote", Art = new ArtPromoteInfo { Uid = 5001, Need = 1, Cap = 10, Via = "none" } };
+    Eq(LocateKind.ArtMatNone, LocateGuide.NextArt(reqNo, null, W(5001, 2, 10, 0, new long[0], new long[0], new int[0])).Kind, "art guide: no copy and no essence in the list");
+    var pAny = LocateGuide.NextArt(reqNo, null, W(5001, 2, 10, 0, matsA, lvA, new int[0]));
+    Check(pAny.Kind == LocateKind.ArtMatPick && pAny.Pos == 2, "art guide: no plan -> the first copy that was never levelled");
+    Eq("artMatPick", p1.Key, "art guide: page key of the pick step");
+    Eq("artOpenTab", LocateGuide.NextArt(req, new InventoryScreen { Open = true, EquipTab = true }, null).Key, "art guide: page key of the tab step");
+
+    // --- the job is done when the stage rises (over two reads)
+    var fin = new ArtFinish();
+    Check(!fin.Update(5001, W(5001, 2, 10, 0, matsA, lvA, new[] { 2, 1 }), 0), "art finish: the first reading is the baseline");
+    Check(!fin.Update(5001, W(5001, 2, 10, 0, matsA, lvA, new[] { 2, 1 }), 100), "art finish: the same stage is not done");
+    Check(!fin.Update(5001, W(5001, 2, 10, 1, matsA, lvA, new int[0]), 200), "art finish: a first read of a higher stage waits for a second");
+    Check(!fin.Update(5001, new ArtWorkshopScreen { Open = false }, 300), "art finish: not readable now -> nothing is known");
+    Check(fin.Update(5001, W(5001, 2, 10, 1, matsA, lvA, new int[0]), 500), "art finish: the stage rose over two reads -> done");
+    var fin2 = new ArtFinish(); fin2.Update(5001, W(5001, 2, 10, 3, matsA, lvA, new int[0]), 0);
+    Check(!fin2.Update(5001, W(9999, 2, 10, 5, matsA, lvA, new int[0]), 400) && !fin2.Update(5001, W(5001, 2, 10, 3, matsA, lvA, new int[0]), 800), "art finish: another artifact's stage does not count, a stale site stage is no baseline");
+
+    // --- the frames: the research numbers stand in when the site's file lacks the keys; the cells follow the game's scroll
+    double Wd = 1136, Hd = 640, U = Ui.Unit(Wd, Hd);
+    var fTab = ArtFrames.For(LocateGuide.NextArt(req, new InventoryScreen { Open = true, EquipTab = true }, null), null, null, null, Wd, Hd, U);
+    Check(fTab != null && Math.Abs(fTab.Mark.Y - 257.4) <= 1.5 && Math.Abs(fTab.Mark.X - 1.5) <= 1.5, "art frames: the «Артефакт» toggle (research numbers)");
+    var iv = inv(u3, 1, -1, 0);
+    var fCell = ArtFrames.For(stL, iv, null, null, Wd, Hd, U);
+    double cellW = 694.0 / 7;
+    Check(fCell != null && fCell.Mark.Kind == "box" && Math.Abs(fCell.Mark.X - (124 + cellW + (cellW - 80) / 2)) <= 1.5 && Math.Abs(fCell.Mark.Y - 126) <= 1.5 && Math.Abs(fCell.Mark.W - 80) <= 1.5 && Math.Abs(fCell.Mark.H - 110) <= 1.5,
+          "art frames: the cell of place 2 is the 80 x 110 card, centred in its column (" + (fCell == null ? "none" : fCell.Mark.X + "," + fCell.Mark.Y + " " + fCell.Mark.W + "x" + fCell.Mark.H) + ")");
+    var ivS = inv(u3, 1, -1, 3);
+    var fS = ArtFrames.For(stL, ivS, null, null, Wd, Hd, U);
+    Check(fS != null && Math.Abs((fCell.Mark.Y - fS.Mark.Y) - 3) <= 1.01 && !fCell.Clickable, "art frames: the frame moves with ScrollY exactly, and is never clickable");
+    var stFar = LocateGuide.NextArt(req, new InventoryScreen { Open = true, ArtTab = true, ArtBulkKnown = true, ArtMode = -1, Uids = new List<long>(far), List = new RFX.ListRead { ScrollY = 0, Cols = 7, RowUnits = 116 } }, null);
+    var fFar = ArtFrames.For(stFar, new InventoryScreen { List = new RFX.ListRead { ScrollY = 0, Cols = 7, RowUnits = 116 } }, null, null, Wd, Hd, U);
+    Check(fFar != null && fFar.Mark.Kind == "down" && fFar.Mark.Rows >= 1, "art frames: a cell below the list -> the pill at its edge");
+    Check(ArtFrames.For(stL, new InventoryScreen { List = null }, null, null, Wd, Hd, U) == null, "art frames: the list's scroll unreadable -> no cell frame (the plate stays)");
+    var fWs = ArtFrames.For(LocateGuide.NextArt(req, iv = inv(u3, 2, -1, 0), null), iv, null, null, Wd, Hd, U);
+    Check(fWs != null && Math.Abs(fWs.Mark.X - 972) <= 1.5 && Math.Abs(fWs.Mark.Y - 574.1) <= 1.5, "art frames: «Мастерская» (972, 574)");
+    var fPt = ArtFrames.For(LocateGuide.NextArt(req, null, W(5001, 1, 10, 0, null, null, null)), null, W(5001, 1, 10, 0, null, null, null), null, Wd, Hd, U);
+    Check(fPt != null && Math.Abs(fPt.Mark.X - 1030.6) <= 2 && Math.Abs(fPt.Mark.Y - 80) <= 1.5, "art frames: the «Продвинуть» tab (right strip, second)");
+    var wsP = W(5001, 2, 10, 0, matsA, lvA, new[] { 2, 1 });
+    var fBt = ArtFrames.For(LocateGuide.NextArt(req, null, wsP), null, wsP, null, Wd, Hd, U);
+    Check(fBt != null && Math.Abs(fBt.Mark.X - 369) <= 1.5 && Math.Abs(fBt.Mark.W - 231) <= 1.5, "art frames: «Продвинуть» (369..600)");
+    var wsM = W(5001, 2, 10, 0, matsA, lvA, new int[0]);
+    var fMat = ArtFrames.For(LocateGuide.NextArt(req, null, wsM), null, wsM, null, Wd, Hd, U);
+    double slotW = 245.0 / 3;
+    Check(fMat != null && fMat.Mark.Kind == "box" && Math.Abs(fMat.Mark.X - (18.5 + slotW + (slotW - 80) / 2)) <= 1.5 && Math.Abs(fMat.Mark.Y - (73 + 2)) <= 1.5, "art frames: place 2 of the copy list: column 2, row 1 (" + (fMat == null ? "none" : fMat.Mark.X + "," + fMat.Mark.Y) + ")");
+    string webGeo = Path.Combine("..", "wardsage-web", "data", "app-geometry", "1.6.39.829.1.json");
+    if (File.Exists(webGeo)) {
+      var rg = GameGeometry.Parse(File.ReadAllText(webGeo, Encoding.UTF8), "1.6.39.829.1");
+      Check(rg != null && rg.Has("inventory.artWorkshop") && rg.Has("artifact.tab.promote") && rg.Has("artifact.promoteBtn") && rg.Has("artifact.matList") && rg.Grid("artifact.matList") != null && rg.Grid("artifact.matList").Cols == 3 && Math.Abs(rg.Grid("artifact.matList").LineSize - 114) < 0.01,
+            "art frames: the site's geometry file has the workshop button, the promote tab and button, the 3 x 114 copy list");
+      if (rg != null) {
+        var a1 = ArtFrames.Rect(rg, "inventory.artWorkshop", Wd, Hd, U); var a2 = ArtFrames.Rect(null, "inventory.artWorkshop", Wd, Hd, U);
+        var b1 = ArtFrames.Rect(rg, "artifact.promoteBtn", Wd, Hd, U); var b2 = ArtFrames.Rect(null, "artifact.promoteBtn", Wd, Hd, U);
+        var c1 = ArtFrames.Rect(rg, "artifact.matList", Wd, Hd, U); var c2 = ArtFrames.Rect(null, "artifact.matList", Wd, Hd, U);
+        Check(Math.Abs(a1.X - a2.X) <= 1 && Math.Abs(a1.Y - a2.Y) <= 1 && Math.Abs(b1.X - b2.X) <= 1 && Math.Abs(b1.W - b2.W) <= 1 && Math.Abs(c1.X - c2.X) <= 1 && Math.Abs(c1.H - c2.H) <= 1, "art frames: the file and the research numbers agree");
+      }
+    }
+
+    // --- no clicks, whatever the auto click says
+    {
+      var gate = new ClickGate(); gate.NoLocateClicks = true;
+      var res = gate.Check(new ClickRequest { Owner = ClickOwner.Locate, Target = ClickTarget.InvEquipTab, AutoOn = true, Front = true }, scrI, 0);
+      Check(!res.Allowed && gate.HaltReason(ClickOwner.Locate) == "artifact", "art gate: the Locate owner never clicks while an artifact request runs (" + res.Reason + ")");
+      gate = new ClickGate();
+      res = gate.Check(new ClickRequest { Owner = ClickOwner.Locate, Target = ClickTarget.InvEquipTab, AutoOn = true, Front = true }, scrI, 0);
+      Check(gate.HaltReason(ClickOwner.Locate) != "artifact", "art gate: a normal request is not stopped by the artifact rule");
+      foreach (ClickOwner ow in Enum.GetValues(typeof(ClickOwner))) Check(!ClickGate.WhitelistText(ow).Contains("Art"), "art gate: " + ow + " has no artifact target on its whitelist");
     }
   }
 

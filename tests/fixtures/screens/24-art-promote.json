@@ -1,0 +1,14 @@
+{ "name": "Artifact promotion guide: city -> Inventory -> Artifact tab -> the card -> Workshop -> Promote tab -> the copy -> the button (hints only)", "cols": 7,
+  "request": { "purpose": "artPromote", "uid": 5001, "need": 1, "cap": 10, "level": 10, "via": "copy", "copies": [ 5002 ] }, "frames": [
+  { "t": 0, "city": true, "expect": { "screen": "City", "artStep": "openInventory" } },
+  { "t": 200, "inv": { "open": true, "equip": true, "bulk": false, "known": true, "uids": [] }, "expect": { "screen": "Inventory", "artStep": "artOpenTab", "artFrame": true } },
+  { "t": 400, "inv": { "open": true, "equip": false, "known": false, "art": true, "artKnown": true, "artMode": 2, "artBulk": true, "uids": [ 5010, 5001, 5002 ], "list": { "scrollY": 0, "cols": 7, "rowUnits": 116 } }, "expect": { "artStep": "artExitMode" } },
+  { "t": 600, "inv": { "open": true, "equip": false, "known": false, "art": true, "artKnown": true, "artMode": -1, "artSel": 1, "uids": [ 5010, 5001, 5002 ], "list": { "scrollY": 0, "cols": 7, "rowUnits": 116 } }, "expect": { "artStep": "artInList", "artFrame": true } },
+  { "t": 800, "inv": { "open": true, "equip": false, "known": false, "art": true, "artKnown": true, "artMode": -1, "artSel": 2, "uids": [ 5010, 5001, 5002 ], "list": { "scrollY": 0, "cols": 7, "rowUnits": 116 } }, "expect": { "artStep": "artSelected", "artFrame": true } },
+  { "t": 1000, "artWs": { "open": true, "tab": 1, "uid": 5001, "level": 10, "stage": 0 }, "expect": { "screen": "ArtWorkshop", "artStep": "artOpenPromote", "artFrame": true } },
+  { "t": 1200, "artWs": { "open": true, "tab": 2, "uid": 5001, "level": 10, "stage": 0, "mats": [ 5003, 5002, 0 ], "matLevels": [ 7, 1, -1 ], "matSel": [], "list": { "scrollY": 0, "cols": 3, "rowUnits": 114 } }, "expect": { "artStep": "artMatPick", "artFrame": true } },
+  { "t": 1400, "artWs": { "open": true, "tab": 2, "uid": 5001, "level": 10, "stage": 0, "mats": [ 5003, 5002, 0 ], "matLevels": [ 7, 1, -1 ], "matSel": [ 1 ], "list": { "scrollY": 0, "cols": 3, "rowUnits": 114 } }, "expect": { "artStep": "artMatPick" } },
+  { "t": 1600, "artWs": { "open": true, "tab": 2, "uid": 5001, "level": 10, "stage": 0, "mats": [ 5003, 5002, 0 ], "matLevels": [ 7, 1, -1 ], "matSel": [ 2 ], "list": { "scrollY": 0, "cols": 3, "rowUnits": 114 } }, "expect": { "artStep": "artPromote", "artFrame": true } },
+  { "t": 1800, "inv": null, "artWs": null, "expect": { "screen": "ArtWorkshop", "held": true } },
+  { "t": 1900, "artWs": { "open": true, "tab": 2, "uid": 9999, "level": 10, "stage": 0 }, "expect": { "artStep": "artWrongArtifact" } } ]
+}
