@@ -213,16 +213,4 @@ version …: from the site» или «saved copy»). Без файла оста�
 
 ## RU
 
-- Объявления с сайта (например, о перезапуске сервера) показываются в программе и остаются видны, даже если сайт временно недоступен; без связи с сайтом программа пишет об этом.
-- Чистка хранилища артефактов: программа обводит рамками артефакты на продажу в «Массовой продаже» — отмечаешь ты сам.
-- Показать в игре для продвижения артефактов: программа ведёт Инвентарь → «Артефакт» → артефакт → «Мастерская» → «Продвинуть» и подсказывает, какую копию выбрать; «Продвинуть» нажимаешь ты.
-- С автонажатием программа сама отмечает артефакты в «Массовой продаже» и выбирает копию для продвижения; «Продать» и «Продвинуть» нажимаешь ты (включается с сайта позже).
-- «Надеть в игре» меняет и артефакт героя, если на сайте отмечено «и артефакт».
-
 ## EN
-
-- Site announcements (for example, about a server restart) are shown in the app and stay visible even when the site is temporarily unavailable; without a connection to the site the app says so.
-- Artifact storage cleanup: the app outlines the artifacts to sell with frames in «Bulk sell» — you tick them yourself.
-- Show in game for artifact promotion: the app leads you through Inventory → «Artifact» → the artifact → «Workshop» → «Promote» and shows which copy to pick; you press «Promote» yourself.
-- With auto click the app ticks the artifacts in «Bulk sell» itself and picks the copy for promotion; you press «Sell» and «Promote» (switched on from the site later).
-- «Equip in game» also swaps the hero's artifact when «and the artifact» is ticked on the site.
