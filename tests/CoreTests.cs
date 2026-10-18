@@ -639,6 +639,7 @@ static class CoreTests {
 
     Console.WriteLine("AutoPilot (open the slot, scroll, click the item):");
     AutoPilotTests(geo, HH);
+    AutoPilotGroupedListTests(geo, HH);
 
     Console.WriteLine("FilterPilot (the game's gear filter: set + main stat):");
     FilterPilotTests();
@@ -2049,6 +2050,65 @@ static class CoreTests {
     var l = o as List<object>; var sb = new StringBuilder("[");
     for (int i = 0; i < l.Count; i++) { if (i > 0) sb.Append(','); sb.Append(Convert.ToDouble(l[i]).ToString(System.Globalization.CultureInfo.InvariantCulture)); }
     return sb.Append(']').ToString();
+  }
+
+  // A grouped, short gear list (the sub stats filter: a section title, then item rows; live report 2026-10-18, Guan Yu, row 6 of 6):
+  // a drag moves the list with the pointer but not past its ends; a click on an item selects it, on the selected one again clears the
+  // selection, on nothing changes nothing. The host re-anchors only from a newly selected item (no scroll reading).
+  static string GroupedListRun(ListGeometry geo, double H, int[] types, int targetRow, int targetCol, bool barHit, double gain, bool exactScroll, out int drags, out int clicks) {
+    int n = types.Length - 1;
+    double pitch = geo.PitchY * H, cell = geo.CellW * H, bar = geo.BarBottom * H;
+    double topMax = ScrollAnchor.TopRow1(geo, H);
+    double topMin = Math.Min(topMax, geo.ViewBottom * H - ListGeometry.TopPad * H - geo.RowOffset(types, types.Length) * H);
+    double top = topMax;
+    long target = 9000 + targetRow * 10 + targetCol;
+    Func<double, double, long> itemAt = (x, y) => {
+      int col = geo.ColumnAt(x / H); if (col == 0) return 0;
+      if (y < geo.ViewTop * H || y > geo.ViewBottom * H) return 0;
+      for (int r = 1; r <= n; r++) {
+        if (types[r] != 1) continue;
+        double rt = top + geo.RowOffset(types, r) * H;
+        if (y >= rt && y <= rt + (barHit ? bar : cell)) return 9000 + r * 10 + col;
+      }
+      return 0;
+    };
+    var p = new AutoPilot(geo); var anchor = new ScrollAnchor(); long sel = 0; long now = 0; drags = clicks = 0;
+    for (int tick = 0; tick < 600 && sel != target && p.State != "failed"; tick++, now += 100) {
+      if (exactScroll) { anchor.Row1Top = top; anchor.Has = true; }
+      var a = p.Step(new AutoView { NowMs = now, Foreground = true, H = H, Target = target, Row = targetRow, Col = targetCol, Sel = sel,
+                                    AnchorHas = anchor.Has, Row1Top = anchor.Row1Top, Types = types });
+      if (a.Kind == AutoKind.Click) {
+        clicks++;
+        long hit = itemAt(a.X, a.Y);
+        if (hit != 0 && hit == sel) sel = 0;
+        else if (hit != 0) {
+          sel = hit; int row = (int)((hit - 9000) / 10);
+          anchor.FromClick(geo, types, row, a.Y, H, 1);
+          anchor.Track(geo, types, row, top + geo.RowOffset(types, row) * H, H);
+        }
+      } else if (a.Kind == AutoKind.Drag) {
+        drags++;
+        top = Math.Max(topMin, Math.Min(topMax, top + a.DY * gain));
+      }
+    }
+    p.Step(new AutoView { NowMs = now, Foreground = true, H = H, Target = target, Row = targetRow, Col = targetCol, Sel = sel, AnchorHas = anchor.Has, Row1Top = anchor.Row1Top, Types = types });
+    return sel == target ? "ok" : p.State;
+  }
+
+  static void AutoPilotGroupedListTests(ListGeometry geo, double H) {
+    foreach (int rows in new[] { 6, 7, 8, 10 }) {
+      foreach (bool barHit in new[] { false, true }) foreach (bool exact in new[] { false, true }) foreach (double gain in new[] { 0.93, 1.0 }) {
+        var types = new int[rows + 1]; types[1] = 2; for (int i = 2; i <= rows; i++) types[i] = 1;
+        int d, c; string r = GroupedListRun(geo, H, types, rows, 2, barHit, gain, exact, out d, out c);
+        Check(r == "ok", "grouped list, " + rows + " rows, target in the last row, bar " + barHit + ", exact scroll " + exact + ", gain " + gain + ": " + r + " (" + d + " drags, " + c + " clicks)");
+      }
+    }
+    // two sections (full / partial match) with an empty-section row between, the item in the last row
+    var sec = new[] { 0, 2, 1, 1, 2, 1, 1, 1, 3, 2, 1, 1 };
+    foreach (bool barHit in new[] { false, true }) foreach (bool exact in new[] { false, true }) {
+      int d, c; string r = GroupedListRun(geo, H, sec, 11, 2, barHit, 0.93, exact, out d, out c);
+      Check(r == "ok", "grouped list with three sections, target in the last row, bar " + barHit + ", exact scroll " + exact + ": " + r + " (" + d + " drags, " + c + " clicks)");
+    }
   }
 
   // A simulated game list: 40 item rows; a drag moves it with the pointer (gain 0.93); clicking a cell selects the item there.
@@ -4686,6 +4746,28 @@ static class CoreTests {
         if (a.Kind == AutoKind.Click) gb.Click(a.X, a.Y); else if (a.Kind == AutoKind.Drag) gb.Drag(a.DY);
       }
       Check(sawFail && stb == "done" && gb.Shown == heroes[5], "blocked grid: failed, retried after the pause -> " + stb);
+    }
+
+    {   // live 2026-10-18 (1.6.62): 720 heroes in the grid, the plan's hero (Count Dracula) at place 4, the grid left scrolled at place ~233
+        // by the last hero; the game's grid follows the pointer about twice as far as it is dragged
+      var big = new long[720]; for (int i = 0; i < big.Length; i++) big[i] = (200100 + i) * 100000L;
+      foreach (double gn in new[] { 0.4, 0.5, 0.7, 1.0, 2.0 }) {
+        var gb = new FakeHeroGame(g, W, H) { Heroes = big, Shown = big[233], Gain = gn };
+        gb.Scroll = Math.Min(gb.MaxScroll, (233 / 3) * g.PitchY * H - g.ViewTop * H * 2);
+        string sb2 = RunHero(new HeroPilot(g), gb, big[4], 3000, out lv);
+        Check(sb2 == "done" && gb.Shown == big[4], "720 heroes, the plan's hero at place 4, the grid left at place 233, no tags, drag gain " + gn + ": " + sb2 + " (" + gb.Clicks + " clicks, " + gb.Drags + " drags)");
+      }
+      // with the hero's class and faction known: the grid is filtered first (the hero is near the top of the grid, but the view is far from it)
+      var tagsBig = new Dictionary<long, long[]>(); var rb = new Random(3);
+      foreach (var u in big) tagsBig[u] = new long[] { HeroGeometry.ClassOrder[rb.Next(6)], FakeHeroGame.FactionList[1 + rb.Next(10)] };
+      var gf = new FakeHeroGame(g, W, H) { All = big, Tags = tagsBig, Gain = 1 }; gf.Refilter();
+      gf.Shown = big[233]; gf.Scroll = Math.Min(gf.MaxScroll, (233 / 3) * g.PitchY * H - g.ViewTop * H * 2);
+      string sf2 = RunHero(new HeroPilot(g), gf, big[4], 3000, out lv, tagsBig[big[4]]);
+      Check(sf2 == "done" && gf.Shown == big[4] && gf.Class == tagsBig[big[4]][0] && gf.Drags <= 2, "720 heroes, the plan's hero at place 4, the grid left at place 233, tags known: filtered first (" + sf2 + ", " + gf.Clicks + " clicks, " + gf.Drags + " drags)");
+      // the same hero with the view at the top: no filter, it is right there
+      var gn2 = new FakeHeroGame(g, W, H) { All = big, Tags = tagsBig, Gain = 1 }; gn2.Refilter(); gn2.Shown = big[8];
+      string sn2 = RunHero(new HeroPilot(g), gn2, big[4], 3000, out lv, tagsBig[big[4]]);
+      Check(sn2 == "done" && gn2.Shown == big[4] && gn2.Class == 0 && gn2.Camps.Count == 0, "the plan's hero a few rows from the view: no filter (" + sn2 + ")");
     }
 
     var game = new FakeHeroGame(g, W, H) { Heroes = heroes, Shown = heroes[4], Part = 2 };

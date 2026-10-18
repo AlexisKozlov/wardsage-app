@@ -121,7 +121,8 @@ namespace RealmForge {
       // the re-anchoring click selected nothing new (a gap, a title row, the same item): once more, a row further
       if (calibPending) {
         calibPending = false;
-        if (v.Sel == selAtCalib && calibMiss < 3) { calibMiss++; needCalib = true; }
+        // (also a selection that went away: the click hit the selected item again, which clears it - nothing new to anchor by)
+        if ((v.Sel == selAtCalib || v.Sel <= 0) && calibMiss < 3) { calibMiss++; needCalib = true; }
         else calibMiss = 0;
       }
       // no idea where the rows are: click an item in the middle, the game says which one it is
@@ -130,7 +131,8 @@ namespace RealmForge {
         calibs++; needCalib = false; calibPending = true; selAtCalib = v.Sel; waitUntil = v.NowMs + AfterClickMs;
         // where the list should be now: moved with the drag since the last anchor, else as last known, else at the top
         // (a short filtered list is; its middle can be a title or «nothing found» - no item to click there)
-        double est = measure && v.AnchorHas ? beforeDrag + lastDrag * GainOr1 : v.AnchorHas ? v.Row1Top : ScrollAnchor.TopRow1(g, H);
+        // (the list stops at its ends: a drag longer than the way left moved it only that far - see Clamp)
+        double est = measure && v.AnchorHas ? Clamp(beforeDrag + lastDrag * GainOr1, v.Types, H) : v.AnchorHas ? v.Row1Top : ScrollAnchor.TopRow1(g, H);
         double shift = (calibMiss % 3 == 1 ? 1 : calibMiss % 3 == 2 ? -1 : 0) * pitch;
         return Click(col1, double.IsNaN(est) || v.Types == null ? mid + shift * 0.3 : NearestCellCentre(est, v.Types, H, mid + shift));
       }
@@ -151,7 +153,10 @@ namespace RealmForge {
       if (drags >= DragTries) return Fail();
       double dist = cy - mid;                                          // > 0: the item is below: drag the list up
       double span = viewBottom - viewTop - cell;                       // the longest drag that stays over the list
-      double dy = Math.Max(-span, Math.Min(span, -dist / GainOr1));
+      // only as far as the list can go: a short list (a few rows under the sub stats filter) ends before the item reaches the middle;
+      // a longer drag would move it to its end only, and the position after it would be guessed a screen too far (live 2026-10-18)
+      double move = Clamp(v.Row1Top - dist, v.Types, H) - v.Row1Top;
+      double dy = Math.Max(-span, Math.Min(span, (Math.Abs(move) >= 1 ? move : -dist) / GainOr1));
       if (Math.Abs(dy) < MinDragPx) dy = dy < 0 ? -MinDragPx : MinDragPx;
       double y0 = dy < 0 ? viewBottom - cell / 2 : viewTop + cell / 2;   // start at the far end so the whole move fits
       drags++; beforeDrag = v.Row1Top; lastDrag = dy; needCalib = true; measure = true;
@@ -160,6 +165,14 @@ namespace RealmForge {
     }
 
     double GainOr1 { get { return Gain > 0.2 ? Gain : 1; } }
+
+    /// <summary>Row 1's top kept inside the places the list can be: from its top (scroll 0) to where the last row ends at the bottom of the view.</summary>
+    double Clamp(double row1, int[] types, double H) {
+      double top = ScrollAnchor.TopRow1(g, H);
+      if (types == null || types.Length < 2) return Math.Min(top, row1);
+      double end = Math.Min(top, g.ViewBottom * H - ListGeometry.TopPad * H - g.RowOffset(types, types.Length) * H);
+      return Math.Max(end, Math.Min(top, row1));
+    }
 
     /// <summary>Centre (client px) of the item cell whose centre is closest to <paramref name="y"/>, with row 1 at <paramref name="row1"/>.</summary>
     double NearestCellCentre(double row1, int[] types, double H, double y) {

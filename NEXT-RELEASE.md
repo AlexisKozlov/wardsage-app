@@ -213,4 +213,10 @@ version …: from the site» или «saved copy»). Без файла оста�
 
 ## RU
 
+- «Надеть в игре»: в коротком списке под фильтром по доп. характеристикам программа больше не сдаётся на последней вещи: прокрутка не дальше конца списка, а нажатие вслед за ней не снимает выбор.
+- «Надеть в игре»: до героя в длинном списке программа теперь доходит: если список остался далеко от героя, сначала включает игровой фильтр, а попытки считаются только без продвижения к герою.
+
 ## EN
+
+- «Equip in game»: in a short list under the sub stats filter the app no longer gives up on the last item: it scrolls no further than the end of the list, and the click after the scroll no longer clears the selection.
+- «Equip in game»: the app now gets to a hero far down the hero list: when the list is left far from the hero it sets the game's filter first, and tries are counted only while the hero is not getting closer.

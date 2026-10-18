@@ -61,7 +61,9 @@ namespace RealmForge {
   }
 
   public sealed class HeroPilot {
-    public const int MaxClicks = 24, MaxDrags = 30, MaxBack = 3, MaxTab = 3, MaxCity = 2;
+    // MaxClicks / MaxDrags count the tries WITHOUT progress (every click that brings the plan's hero closer starts them anew, a long
+    // grid takes dozens of drags); MaxTotal is the hard stop
+    public const int MaxClicks = 24, MaxDrags = 30, MaxTotal = 240, MaxBack = 3, MaxTab = 3, MaxCity = 2;
     // a failed hero is tried again after a pause (something may have been over the grid meanwhile), this many times
     public const int RetryMs = 6000, MaxRetries = 2;
     public const int FarRows = 5;   // the hero further down than this: filter the grid first
@@ -71,7 +73,7 @@ namespace RealmForge {
     readonly HeroGeometry g;
     long plan = -1, waitUntil, pauseUntil, failedAt;
     int retries;
-    int clicks, drags, backs, tabs, misses, city;
+    int clicks, drags, backs, tabs, misses, city, total, bestDist = int.MaxValue;
     // the grid filter: 0 not started, 1 filtering, 2 done (or given up); clearing a filter that hides the hero
     int filterPhase, funnelTries, factionTries, clearTries, classResets; bool classClicked, factionDone, classDone;
     ulong lastGrid;
@@ -148,7 +150,7 @@ namespace RealmForge {
       double ch = v.ClientH > 0 ? v.ClientH : H;
       double pitch = pitchF * H, card = cardF * H, top = g.ViewTop * H, bottom = ch - (1 - g.ViewBottom) * H, mid = (top + bottom) / 2;
       if (!has) {                                     // nothing known: a card near the middle tells where the rows are
-        if (clicks >= MaxClicks) return Fail();
+        if (clicks >= MaxClicks || total >= MaxTotal) return Fail();
         double y = mid + (misses % 3 == 1 ? 0.5 : misses % 3 == 2 ? -0.5 : 0) * pitch;
         // not the shown hero's column: a click on its own card changes nothing (live 27.09: Элизия in the middle column
         // at the middle of the grid took all 24 clicks)
@@ -157,17 +159,17 @@ namespace RealmForge {
       }
       double row1 = (lo + hi) / 2, cy = row1 + (t / HeroGeometry.Columns) * pitch + card / 2;
       if (cy >= top + card * 0.3 && cy <= bottom - card * 0.3) {
-        if (clicks >= MaxClicks) return Fail();
+        if (clicks >= MaxClicks || total >= MaxTotal) return Fail();
         return Pick(v, g.ColX(t % HeroGeometry.Columns) * H, cy);
       }
       // out of view: drag the grid so the row comes to the middle (the content follows the pointer)
-      if (drags >= MaxDrags) return Fail();
+      if (drags >= MaxDrags || total >= MaxTotal) return Fail();
       // the pointer may leave the grid while dragging (the game keeps following it): up to near the window's edge
       double maxUp = bottom - card * 0.3 - 0.03 * H, maxDown = ch - 0.03 * H - (top + card * 0.3);
       double dy = Math.Max(-maxUp, Math.Min(maxDown, mid - cy));
       if (Math.Abs(dy) < MinDragPx) dy = dy < 0 ? -MinDragPx : MinDragPx;
       double y0 = dy < 0 ? bottom - card * 0.3 : top + card * 0.3;
-      drags++; waitUntil = v.NowMs + AfterDragMs;
+      drags++; total++; waitUntil = v.NowMs + AfterDragMs;
       // the grid moved by about dy; the ends of the grid stop it, so the next click checks
       lo += dy; hi += dy; double slack = Math.Abs(dy) * 0.08 + 6; lo -= slack; hi += slack;
       if (hi - lo > 2.5 * card) has = false;
@@ -191,7 +193,7 @@ namespace RealmForge {
       }
       if (t < 0 || filterPhase == 2) return null;
       bool known = v.HeroClass > 0 || (v.HeroCamps != null && v.HeroCamps.Length > 0);
-      if (filterPhase == 0 && (!known || t / HeroGeometry.Columns < FarRows)) return null;
+      if (filterPhase == 0 && (!known || !FarFromView(v, t))) return null;
       filterPhase = 1;
       if (!v.FilterOpen) {
         if (++funnelTries > 3) { filterPhase = 2; return null; }
@@ -212,6 +214,15 @@ namespace RealmForge {
       }
       filterPhase = 2; waitUntil = v.NowMs + AfterClickMs + 700;   // it fades out: no grid click through it meanwhile
       return Funnel(v, H);                                         // close the pop-up: the grid is filtered
+    }
+
+    // The hero is far from where the grid is scrolled now. The game keeps the grid's scroll when the gear list closes, so the
+    // hero shown (the last plan's) says where the view is: hero 5 of 720 is far from a grid left at place 233, not near
+    // (live 1.6.62: dozens of drags did not get there). Without the shown hero in the grid the view is taken at the top.
+    static bool FarFromView(HeroView v, int t) {
+      int j = v.Hero > 0 ? Array.IndexOf(v.Heroes, v.Hero) : -1;
+      int from = j >= 0 ? j / HeroGeometry.Columns : 0;
+      return Math.Abs(t / HeroGeometry.Columns - from) >= FarRows;
     }
 
     int FactionRow(HeroView v) {
@@ -242,6 +253,12 @@ namespace RealmForge {
       if (v.Heroes == null || v.Hero == heroBefore) { if (++misses >= 2) has = false; return; }
       int i = Array.IndexOf(v.Heroes, v.Hero); if (i < 0) return;
       misses = 0;
+      // closer to the plan's hero than any click before: the way is being made, the tries start anew
+      int pi = Array.IndexOf(v.Heroes, v.Plan);
+      if (pi >= 0) {
+        int dist = Math.Abs(i / HeroGeometry.Columns - pi / HeroGeometry.Columns);
+        if (dist < bestDist) { bestDist = dist; clicks = 0; drags = 0; }
+      }
       double pitch = pitchF * v.H, card = cardF * v.H, off = (i / HeroGeometry.Columns) * pitch;
       double nlo = clickY - card - off, nhi = clickY - off;
       if (has && Math.Max(lo, nlo) <= Math.Min(hi, nhi)) { lo = Math.Max(lo, nlo); hi = Math.Min(hi, nhi); }
@@ -249,12 +266,12 @@ namespace RealmForge {
     }
 
     AutoAction Pick(HeroView v, double x, double y) {
-      clicks++; pending = true; clickY = y; heroBefore = v.Hero; waitUntil = v.NowMs + AfterClickMs;
+      clicks++; total++; pending = true; clickY = y; heroBefore = v.Hero; waitUntil = v.NowMs + AfterClickMs;
       return Click(x, y);
     }
 
     void Restart() {
-      waitUntil = pauseUntil = failedAt = 0; clicks = drags = backs = tabs = misses = city = 0; has = pending = false; State = "idle";
+      waitUntil = pauseUntil = failedAt = 0; clicks = drags = backs = tabs = misses = city = total = 0; bestDist = int.MaxValue; has = pending = false; State = "idle";
       filterPhase = funnelTries = factionTries = clearTries = classResets = 0; classClicked = factionDone = classDone = false; lastGrid = 0;
     }
 
