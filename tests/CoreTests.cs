@@ -3935,6 +3935,15 @@ static class CoreTests {
       Check(fr != null && !ArtEquipFrames.OnNeverButton(null, fr.Mark.X + fr.Mark.W / 2.0, fr.Mark.Y + fr.Mark.H / 2.0, Wd, Hd, U), "art never: the centre of the " + step.Kind + " frame is not on a never-pressed button");
     }
 
+    // --- Done is final for the goal (the page re-sends the "art" hint while the plan stays open)
+    var latch = new ArtGoalLatch();
+    Check(!latch.Ignores(231, 9004), "art latch: before Done the goal is taken");
+    latch.MarkDone(231, 9004);
+    Check(latch.Ignores(231, 9004) && latch.Ignores(0, 0) && latch.Ignores(231, 9004), "art latch: after Done the same goal and its clearing are ignored");
+    Check(!latch.Ignores(231, 9005) && !latch.IsDone, "art latch: another artifact opens it");
+    latch.MarkDone(231, 9004); latch.NewPlan();
+    Check(!latch.Ignores(231, 9004), "art latch: a new plan takes the same artifact again");
+
     // --- the pilot
     Func<ArtEquipStep, HeroScreen, bool, bool, long, ArtEquipView> V = (step, hs, autoConfirm, btnSeen, now) => new ArtEquipView { NowMs = now, Foreground = true, W = Wd, H = Hd, U = U, Step = step, Hero = hs, AutoConfirm = autoConfirm, ReplaceBtnSeen = btnSeen };
     var hTab = HS(3, false, 0, 0, 9001, null);

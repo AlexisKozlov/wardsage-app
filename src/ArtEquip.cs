@@ -152,6 +152,21 @@ namespace RealmForge {
     }
   }
 
+  /// <summary>Done is final for a goal: the page keeps the plan open until the site resolves it and re-sends the "art" hint, which must not re-arm the same artifact.</summary>
+  public sealed class ArtGoalLatch {
+    long doneHero, doneUid;
+    public bool IsDone { get; private set; }
+    public void MarkDone(long hero, long uid) { IsDone = true; doneHero = hero; doneUid = uid; }
+    /// <summary>A new started plan: the latch opens.</summary>
+    public void NewPlan() { IsDone = false; doneHero = 0; doneUid = 0; }
+    /// <summary>The page sends goal (hero, uid) (uid 0 = none): true = ignore it (the done goal again, or the clearing of it); a different goal opens the latch.</summary>
+    public bool Ignores(long hero, long uid) {
+      if (!IsDone) return false;
+      if (uid <= 0 || hero <= 0 || (hero == doneHero && uid == doneUid)) return true;
+      NewPlan(); return false;
+    }
+  }
+
   public enum ArtEquipTodo {
     Nothing,      // no goal
     Hint,         // the player's step (or one the app does not click)

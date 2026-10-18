@@ -424,18 +424,20 @@ namespace RealmForge {
     public void SetItemInfo(long uid, long setId, long statId) { if (uid > 0 && (setId > 0 || statId > 0)) itemInfo[uid] = new[] { setId, statId }; }
 
     /// <summary>The started plan's hero (0 = none): the pilot opens that hero's gear on the hero screen.</summary>
-    public void SetRun(long hero) { if (hero == runHero) return; if (hero > 0) ResumeClicks(ClickOwner.Equip); bool was = PlanOn; runHero = hero; PlanStamp(was); Run(); }
+    public void SetRun(long hero) { if (hero == runHero) return; if (hero > 0) ResumeClicks(ClickOwner.Equip); bool was = PlanOn; if (hero > 0) artLatch.NewPlan(); runHero = hero; PlanStamp(was); Run(); }
 
     // ---- «Надеть в игре» with an artifact (src/ArtEquip.cs): after the gear the guide puts the plan's artifact on the hero (hint kind "art")
     long artHero, artUid;
     readonly ArtEquipPilot artEq = new ArtEquipPilot();
     ArtEquipStep artEqStep; long artWaitSince; string artEqSaid = "", artEqAutoSaid = "";
     /// <summary>The artifact steps are on: the gear of the plan is done and the page asks for the artifact (hint "art" with the hero and the artifact).</summary>
-    bool ArtPhase { get { return hintKind == "art" && artUid != 0 && artHero != 0; } }
+    bool ArtPhase { get { return hintKind == "art" && artUid != 0 && artHero != 0 && !artLatch.IsDone; } }
+    readonly ArtGoalLatch artLatch = new ArtGoalLatch();
 
     /// <summary>The plan's artifact the guide puts on <paramref name="hero"/> (uid 0 = none). The page sends it with the hint "art".</summary>
     public void SetArtGoal(long hero, long uid) {
       if (uid <= 0 || hero <= 0) { hero = 0; uid = 0; }
+      if (artLatch.Ignores(hero, uid)) return;   // Done is final for this artifact: the page's repeated hint does not re-arm it
       if (hero == artHero && uid == artUid) return;
       artHero = hero; artUid = uid;
       RFX.SetArtGoal(hero, uid);
@@ -446,7 +448,7 @@ namespace RealmForge {
     /// <summary>The artifact step for the page's live event (JSON: uid, step name, done, owner); null = no goal.</summary>
     public string ArtLive() {
       var st = artEqStep;
-      if (!ArtPhase || st == null) return null;
+      if (st == null || !(ArtPhase || (artLatch.IsDone && hintKind == "art"))) return null;
       return "{\"uid\":" + artUid + ",\"step\":\"" + st.Name + "\",\"done\":" + (st.Kind == ArtEquipKind.Done ? "true" : "false") + ",\"owner\":" + st.Owner + "}";
     }
 
@@ -2074,6 +2076,7 @@ namespace RealmForge {
 
     /// <summary>The step of this tick from the hero screen the readers gave (hint kind "art" only).</summary>
     void UpdateArtStep() {
+      if (artLatch.IsDone && hintKind == "art") return;   // finished: the last step stays for the page's live event
       if (!ArtPhase) { artEqStep = null; return; }
       var st = screens.Current;
       bool popup = st != null && st.ModalOpen && st.ModalWhy == ClickGate.ModalEquipPopup;
@@ -2089,6 +2092,11 @@ namespace RealmForge {
       } else artWaitSince = 0;
       artEqStep = step;
       var hs = screens.Hero;
+      if (step.Kind == ArtEquipKind.Done) {
+        Log.Write("art equip: step " + step.Key + " owner " + step.Owner + " - done for artifact " + artUid + ", not armed again");
+        artLatch.MarkDone(artHero, artUid); artEq.Reset(); RFX.SetArtGoal(0, 0);
+        return;
+      }
       string sig = step.Key + "|" + step.Why + "|" + step.Owner;
       if (sig != artEqSaid) {
         artEqSaid = sig;
