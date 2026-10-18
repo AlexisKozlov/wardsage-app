@@ -254,7 +254,7 @@ namespace RealmForge {
       string line = ArtDiagText(form, panels);
       if (line == null) return;
       artDiagSaid = true;
-      L(line);
+      LL(line);
     }
 
     /// <summary>The diagnostics line (see ArtDiag), null when the panel is not there. Public for the tests (fake tables).</summary>
@@ -309,24 +309,26 @@ namespace RealmForge {
 
     // the field names the artifact list's ScrollRect may be bound under (the Lua only uses the grid's; the first that reads is kept)
     static readonly string[] ArtScrollFields = { "m_ListArtifact_ScrollRect", "m_ListArtifact_ScrollView", "m_ListArtifact_Scroll" };
-    static string artScrollField; static bool artScrollSaid;
+    static string artScrollField; static bool artScrollSaid, artScrollViaGrid;
 
     /// <summary>The artifact tab's list (the panel's own scroll and grid); null when it cannot be read.</summary>
     public static ListRead ReadArtifactList(ulong panel) {
       int pid = ListPid(); if (pid == 0) return null;
-      if (artScrollField != null) return ReadList(panel, artScrollField, "m_ListArtifact_InfinityGrid", pid);
+      if (artScrollField != null || artScrollViaGrid) return ReadList(panel, artScrollField, "m_ListArtifact_InfinityGrid", pid);
       foreach (var name in ArtScrollFields) {
         var r = ReadList(panel, name, "m_ListArtifact_InfinityGrid", pid);
-        if (r != null) { artScrollField = name; L("art list: the scroll is bound as " + name); return r; }
+        if (r != null) { artScrollField = name; LL("art list: the scroll is bound as " + name + ", the grid as m_ListArtifact_InfinityGrid"); return r; }
       }
       // the scroll bound under another name: any userdata field of the panel with "Scroll" in its name (the grid is the Lua's own)
       List<ulong> vals; var fl = TableFields(panel, out vals);
       foreach (var kv in fl) {
         if ((kv.Value[0] & 0x0F) != 7 || kv.Key.IndexOf("Scroll", StringComparison.OrdinalIgnoreCase) < 0 || Array.IndexOf(ArtScrollFields, kv.Key) >= 0) continue;
         var r = ReadList(panel, kv.Key, "m_ListArtifact_InfinityGrid", pid);
-        if (r != null) { artScrollField = kv.Key; L("art list: the scroll is bound as " + kv.Key); return r; }
+        if (r != null) { artScrollField = kv.Key; LL("art list: the scroll is bound as " + kv.Key + ", the grid as m_ListArtifact_InfinityGrid"); return r; }
       }
-      if (!artScrollSaid) { artScrollSaid = true; L("art list: no scroll field read (tried " + string.Join(", ", ArtScrollFields) + ") - no frames on the cells"); }
+      // the panel's script binds only the grid: the scroll component is the one the grid itself holds
+      { var r = ReadList(panel, null, "m_ListArtifact_InfinityGrid", pid); if (r != null) { artScrollViaGrid = true; LL("art list: the scroll is the one the grid m_ListArtifact_InfinityGrid holds (no panel field for it: tried " + string.Join(", ", ArtScrollFields) + ")"); return r; } }
+      if (!artScrollSaid) { artScrollSaid = true; LL("art list: no scroll read (tried " + string.Join(", ", ArtScrollFields) + " and the grid's own) - the picture is the fallback"); }
       return null;
     }
 
@@ -354,17 +356,18 @@ namespace RealmForge {
 
     // the field names the copy list's ScrollRect may be bound under (the Lua only uses the grid's; the first that reads is kept)
     static readonly string[] MatScrollFields = { "m_List_ScrollRect", "m_List_ScrollView", "m_List_Scroll" };
-    static string matScrollField; static bool matScrollSaid;
+    static string matScrollField; static bool matScrollSaid, matScrollViaGrid;
 
     /// <summary>The «Продвинуть» panel's copy list (its own scroll and grid); null when it cannot be read.</summary>
     public static ListRead ReadMatList(ulong panel) {
       int pid = ListPid(); if (pid == 0) return null;
-      if (matScrollField != null) return ReadList(panel, matScrollField, "m_List_InfinityGrid", pid);
+      if (matScrollField != null || matScrollViaGrid) return ReadList(panel, matScrollField, "m_List_InfinityGrid", pid);
       foreach (var name in MatScrollFields) {
         var r = ReadList(panel, name, "m_List_InfinityGrid", pid);
-        if (r != null) { matScrollField = name; L("art workshop: the copy list's scroll is bound as " + name); return r; }
+        if (r != null) { matScrollField = name; LL("art workshop: the copy list's scroll is bound as " + name); return r; }
       }
-      if (!matScrollSaid) { matScrollSaid = true; L("art workshop: no scroll field read for the copy list (tried " + string.Join(", ", MatScrollFields) + ") - no frames on the copies"); }
+      { var r = ReadList(panel, null, "m_List_InfinityGrid", pid); if (r != null) { matScrollViaGrid = true; LL("art workshop: the copy list's scroll is the one its grid holds"); return r; } }
+      if (!matScrollSaid) { matScrollSaid = true; LL("art workshop: no scroll read for the copy list (tried " + string.Join(", ", MatScrollFields) + " and the grid's own) - no frames on the copies"); }
       return null;
     }
 

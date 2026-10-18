@@ -189,13 +189,14 @@ namespace RealmForge {
     public double InvDX = double.NaN, BtnDY = double.NaN;   // where that button is (U from the right / from the bottom)
     public long[] Want = new long[0];          // the storage cleanup's list
     public int ShCols = 6;                     // its columns
+    public bool Art;                           // the storage cleanup of the artifact tab
     public bool PillUp, PillDown;              // the page gave the pills' texts
 
     public string ToJson() {
       return "{\"mode\":" + MiniJson.Quote(Mode) + ",\"front\":" + (Front ? "true" : "false") + ",\"cols\":" + Cols.ToString(CultureInfo.InvariantCulture) + ",\"onAcc\":" + OnAccount.ToString(CultureInfo.InvariantCulture)
         + ",\"req\":" + RecIn.Request(Req) + ",\"lines\":" + (Lines ? "true" : "false") + ",\"city\":" + (CityInvSeen ? "true" : "false")
         + ",\"invDX\":" + RecIn.D(InvDX) + ",\"btnDY\":" + RecIn.D(BtnDY) + ",\"want\":" + ArrOf(Want) + ",\"shCols\":" + ShCols.ToString(CultureInfo.InvariantCulture)
-        + ",\"pu\":" + (PillUp ? "true" : "false") + ",\"pd\":" + (PillDown ? "true" : "false") + "}";
+        + ",\"art\":" + (Art ? "true" : "false") + ",\"pu\":" + (PillUp ? "true" : "false") + ",\"pd\":" + (PillDown ? "true" : "false") + "}";
     }
     static string ArrOf(long[] a) { var sb = new StringBuilder("["); for (int i = 0; i < a.Length; i++) { if (i > 0) sb.Append(','); sb.Append(a[i].ToString(CultureInfo.InvariantCulture)); } return sb.Append(']').ToString(); }
 
@@ -203,7 +204,7 @@ namespace RealmForge {
       var d = RecIn.O(o); if (d == null) return null;
       var c = new RecCtx { Mode = RecIn.Str(d, "mode") ?? "", Front = RecIn.Bool(d, "front", false), Cols = (int)RecIn.Num(d, "cols", 8), OnAccount = (int)RecIn.Num(d, "onAcc", -1),
         Lines = RecIn.Bool(d, "lines", false), CityInvSeen = RecIn.Bool(d, "city", false), InvDX = Get(d, "invDX"), BtnDY = Get(d, "btnDY"), ShCols = (int)RecIn.Num(d, "shCols", 6),
-        PillUp = RecIn.Bool(d, "pu", false), PillDown = RecIn.Bool(d, "pd", false) };
+        PillUp = RecIn.Bool(d, "pu", false), PillDown = RecIn.Bool(d, "pd", false), Art = RecIn.Bool(d, "art", false) };
       object r; if (d.TryGetValue("req", out r)) c.Req = RecIn.ParseRequest(r);
       var w = new List<long>(); object wv; if (d.TryGetValue("want", out wv) && wv is List<object>) foreach (var x in (List<object>)wv) if (x is double) w.Add((long)(double)x);
       c.Want = w.ToArray();
@@ -335,8 +336,10 @@ namespace RealmForge {
     /// <summary>The storage cleanup's step and its rectangles. <paramref name="row1"/>: the drawn row 1 (NaN = none).</summary>
     public static List<RecFrameRect> Sell(RecCtx c, InventoryScreen inv, GameGeometry g, double row1, double W, double H, double U, out SellHintStep step) {
       var r = new List<RecFrameRect>();
-      var sg = SellGeometry.Inventory(W, U, c.ShCols);
-      step = SellHint.BuildExact(inv, c.Want, c.ShCols, row1, sg, W, H, U);
+      // the artifact tab's list has its own geometry (the overlay's shGeo): the list's rectangle from the geometry file
+      bool art = c.Art || (inv != null && inv.ArtTab && !inv.EquipTab);
+      var sg = art ? SellGeometry.Artifacts(W, H, U, c.ShCols, g != null ? g.Rect("inventory.artList", W, H, U) : null) : SellGeometry.Inventory(W, U, c.ShCols);
+      step = SellHint.BuildExact(inv, c.Want, c.ShCols, row1, sg, W, H, U, art);
       if (!c.Front) return r;
       if (step.Kind == SellHintKind.Select || step.Kind == SellHintKind.AllSelected) {
         var marks = new List<SellFrame>(step.Frames);

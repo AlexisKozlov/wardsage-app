@@ -2,6 +2,10 @@
 //
 //   dotnet exec ... RecReplay.dll <recording dir with part_*.zip> <out dir>
 //   dotnet exec ... RecReplay.dll --make-fixture <dir> <geometry.json>      (a tiny synthetic recording for the test run)
+//   ... RecReplay.dll <recording dir> <out dir> --pixels <dir with frame_NNNN.bgra> [--art-pos N]
+//        the artifact list's rows from the PICTURE (src/ArtGridPicture.cs: the fallback of the game's own scroll): frames the recording has no scroll for are
+//        replayed with the rows the picture gives (tests/rec-pixels.mjs writes the .bgra files: the recorded frames at the client size, B G R A bytes).
+//        --art-pos N: the «Показать в игре» artifact step (recorded step ArtInList) is replayed with the artifact at list position N (1-based).
 //
 // For every frame line the raw inputs recorded with it are rebuilt, ScreenTracker.Update / LocateGuide.Next (or the storage cleanup's
 // SellHint.BuildExact) and the scene rectangles (RecScenes) are run on them, and out/<frame>.json is written:
@@ -63,10 +67,34 @@ static class RecReplay {
     return true;
   }
 
+  static SellGeometry ArtGeo(GameGeometry geo, int w, int h, double U, int cols) {
+    var rc = geo != null ? geo.Rect("inventory.artList", w, h, U) : null;
+    return SellGeometry.Artifacts(w, h, U, SellGeometry.ArtCols(rc, U, cols), rc);
+  }
+
+  // row 1's top from the picture (the frame's full-size B G R A bytes in <dir>/<frame>.bgra), NaN = unsure / no picture
+  static double PicRow1(ArtGridPicture pic, string dir, string frame, InventoryScreen inv, GameGeometry geo, int cols, int w, int h, double U, long t, int clickRow = -1, double cursorY = double.NaN) {
+    string path = Path.Combine(dir, frame + ".bgra");
+    if (!File.Exists(path)) return double.NaN;
+    var bytes = File.ReadAllBytes(path);
+    if (bytes.Length != w * h * 4) return double.NaN;
+    var g = ArtGeo(geo, w, h, U, cols);
+    int sx, sy, sw, sh;
+    if (!ArtGridPicture.Strip(g, w, h, U, out sx, out sy, out sw, out sh)) return double.NaN;
+    var px = new int[sw * sh];
+    for (int y = 0; y < sh; y++) for (int x = 0; x < sw; x++) px[y * sw + x] = BitConverter.ToInt32(bytes, ((sy + y) * w + sx + x) * 4);
+    double r; int rows = (inv.Uids.Count + g.Columns - 1) / g.Columns;
+    bool ok = pic.Update(px, sw, sh, sx, sy, g, w, U, rows, inv.ListPtr, t, out r, clickRow, cursorY);
+    if (Environment.GetEnvironmentVariable("ARTPIC_DEBUG") != null) Console.Error.WriteLine(frame + " t=" + t + " " + pic.Note);
+    return ok ? r : double.NaN;
+  }
+
   static int Main(string[] args) {
     if (args.Length >= 3 && args[0] == "--make-fixture") return Fixture.Make(args[1], args[2]);
     if (args.Length < 2) { Console.WriteLine("usage: RecReplay.dll <recording dir with part_*.zip> <out dir>"); return 2; }
-    string dir = args[0], outDir = args[1];
+    string dir = args[0], outDir = args[1], pixDir = null; int artPos = 0;
+    for (int ai = 2; ai + 1 < args.Length; ai++) { if (args[ai] == "--pixels") pixDir = args[ai + 1]; else if (args[ai] == "--art-pos") int.TryParse(args[ai + 1], out artPos); }
+    var artPic = new ArtGridPicture(); int nPic = 0, nPicOk = 0; HashSet<long> prevSel = null;
     var parts = new List<string>();
     if (Directory.Exists(dir)) foreach (var f in Directory.GetFiles(dir, "*.zip")) if (RecNames.PartOf(Path.GetFileName(f)) >= 0) parts.Add(f);
     parts.Sort(StringComparer.Ordinal);
@@ -155,10 +183,33 @@ static class RecReplay {
           repRects = RecScenes.Locate(ctx, step, req.Item, rs, tracker.Inv, geo, pr, w, h, U);
         } else if (ctx != null && mode == "sell") {
           var inv = RecIn.ParseInv(Get(tickSlots, "sinv"), Get(tickSlots, "sinvList"));
+          if (!ctx.Art && inv != null && (inv.ArtTab || stepRec == "Sell:OpenArtTab")) ctx.Art = true;   // a recording made before the context said it
           double sr = Get(inn, "sr") is double ? Num(inn, "sr", double.NaN) : double.NaN;
+          if (pixDir != null && double.IsNaN(sr) && inv != null && inv.ArtTab && inv.ArtBulk && ctx.Front) {   // the rows from the picture
+            nPic++;
+            // the player ticked one card: its row and the pointer (the recorder keeps the pointer in client px)
+            int clickRow = -1; double cursorY = double.NaN; var cur = Get(j, "cursor") as List<object>;
+            long one = prevSel != null ? SellHint.OneChange(prevSel, inv.Selected) : 0;
+            if (one != 0 && cur != null && cur.Count >= 2 && cur[1] is double) { int ix = inv.Uids.IndexOf(one); if (ix >= 0) { clickRow = ix / Math.Max(1, ctx.ShCols); cursorY = (double)cur[1]; } }
+            double pr1 = PicRow1(artPic, pixDir, fr.Name, inv, geo, ctx.ShCols, w, h, U, t, clickRow, cursorY);
+            if (!double.IsNaN(pr1)) { sr = pr1; nPicOk++; }
+          } else if (pixDir != null && !(inv != null && inv.ArtTab && inv.ArtBulk)) artPic.Reset();
+          prevSel = inv != null ? new HashSet<long>(inv.Selected) : null;
           SellHintStep ss;
           repRects = RecScenes.Sell(ctx, inv, geo, sr, w, h, U, out ss);
           stepRep = "Sell:" + ss.Kind;
+        } else if (pixDir != null && artPos > 0 && stepRec == "ArtInList" && tracker.Inv != null && tracker.Inv.ArtTab) {   // the promotion guide's list step
+          var inv = tracker.Inv; nPic++;
+          double pr1 = PicRow1(artPic, pixDir, fr.Name, inv, geo, 8, w, h, U, t);
+          stepRep = stepRec; mode = "promote";
+          repRects = new List<RecFrameRect>();
+          if (!double.IsNaN(pr1)) {
+            nPicOk++;
+            var ag = ArtGeo(geo, w, h, U, 8);
+            inv.List = ArtGridPicture.ToListRead(ag, U, pr1);
+            var lf = ArtFrames.For(new LocateStep { Kind = LocateKind.ArtInList, Pos = artPos, Count = inv.Uids.Count }, inv, null, geo, w, h, U);
+            if (lf != null && lf.Mark != null) { var m = lf.Mark; repRects.Add(new RecFrameRect { Kind = m.Kind == "box" ? "tip-frame" : "tip-" + m.Kind, X = m.X, Y = m.Y, W = Math.Max(m.W, 4), H = Math.Max(m.H, 4) }); }
+          }
         }
       }
       // ---- compare
@@ -208,6 +259,7 @@ static class RecReplay {
     s.AppendLine("steps checked: " + nReplayedStep + ", mismatches " + nStep);
     s.AppendLine("rectangle sets checked: " + nReplayedRect + ", mismatches " + nRect);
     s.AppendLine("mismatches: " + mismatches.Count);
+    if (pixDir != null) s.AppendLine("rows from the picture: " + nPicOk + " of " + nPic + " frames placed");
     File.WriteAllText(Path.Combine(outDir, "summary.txt"), s.ToString(), new UTF8Encoding(false));
     Console.Write(s.ToString());
     return 0;

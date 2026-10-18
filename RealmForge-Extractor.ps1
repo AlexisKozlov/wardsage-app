@@ -119,6 +119,10 @@ namespace RealmForge {
     public static string LastError;            // "not_running" | "open_failed" | null
     public static int LastOpenError;           // GetLastWin32Error() of OpenProcess (5 = access denied)
     static void L(string s) { Log.AppendLine(s); Console.WriteLine(s); var h = OnLog; if (h != null) h(s); }
+    /// <summary>The app's own log file (the live reads run outside an extraction, so L() lines never reach it): set by the overlay.</summary>
+    public static Action<string> LiveLog;
+    /// <summary>A line of the live reads (the lists' scroll binding, the artifact panel's fields): L() and the app's log file.</summary>
+    static void LL(string s) { L(s); var h = LiveLog; if (h != null) h(s); }
     class Region { public ulong Base; public ulong Size; public uint Protect; }
     static List<Region> regs;
 
@@ -2617,7 +2621,8 @@ namespace RealmForge {
     static bool gridLayoutSaid;
 
     /// <summary>Reads the scroll and the grid of a list whose owner table (a form or a panel) holds them under
-    /// <paramref name="scrollField"/> and <paramref name="gridField"/>; null when the scroll or the grid cannot be read, or the layout data has no grid fields for this game version.</summary>
+    /// <paramref name="scrollField"/> and <paramref name="gridField"/>; null when the scroll or the grid cannot be read, or the layout data has no grid fields for this game version.
+    /// <paramref name="scrollField"/> null = the scroll component the grid itself holds (a panel whose script binds only the grid, as the artifact panel does).</summary>
     public static ListRead ReadList(ulong owner, string scrollField, string gridField, int pid) {
       if (owner == 0) return null;
       // the grid's fields: their offsets come with the layout data of the game version (the "field" section); without them
@@ -2625,16 +2630,16 @@ namespace RealmForge {
       var ly = Layout.Current;
       int oCols = ly != null ? ly.FieldOffset("InfinityGrid.CellPerLine") : -1, oLine = ly != null ? ly.FieldOffset("InfinityGrid.LineSize") : -1;
       if (oCols < 0 || oLine < 0) {
-        if (!gridLayoutSaid) { gridLayoutSaid = true; Log.AppendLine("list grid: the layout data has no grid fields for this game version - the picture is the fallback"); }
+        if (!gridLayoutSaid) { gridLayoutSaid = true; LL("list grid: the layout data has no grid fields for this game version - the picture is the fallback"); }
         return null;
       }
       var r = new ListRead();
-      ulong rect = ScriptObject(owner, scrollField, "UnityEngine.UI.ScrollRect", pid);
+      ulong grid = ScriptObject(owner, gridField, "UI.InfinityGrid", pid);
+      if (grid == 0) return null;
+      ulong rect = scrollField != null ? ScriptObject(owner, scrollField, "UnityEngine.UI.ScrollRect", pid) : GridScrollRect(grid, ly);
       double y;
       if (rect == 0 || !ScrollPos(rect, out y)) return null;
       r.ScrollY = y;
-      ulong grid = ScriptObject(owner, gridField, "UI.InfinityGrid", pid);
-      if (grid == 0) return null;
       var b = Read(grid + (ulong)oCols, 4);
       if (b != null) { int c = BitConverter.ToInt32(b, 0); if (c >= 1 && c <= 20) r.Cols = c; }
       var l = Read(grid + (ulong)oLine, 4);
@@ -2649,6 +2654,14 @@ namespace RealmForge {
       }
       if (oFit >= 0) { var fb = Read(grid + (ulong)oFit, 4); if (fb != null) { float f = BitConverter.ToSingle(fb, 0); if (f > 0 && f < 100) r.FitScale = f; } }
       return r;
+    }
+
+    // the InfinityGrid's own scroll component (its private "scrollRect" field, 0xB8: the grid scrolls it). Not in the layout data (that is checked against a
+    // checksum): a wrong offset on another game build reads no ScrollRect, the class check below refuses it and the caller falls back to the picture
+    const int GridScrollRectOffset = 0xB8;
+    static ulong GridScrollRect(ulong grid, GameLayout ly) {
+      ulong rect = Ptr(grid + (ulong)GridScrollRectOffset);
+      return IsA(rect, "UnityEngine.UI.ScrollRect") ? rect : 0;
     }
 
     /// <summary>The inventory's equipment grid (the form's content list); null when it cannot be read.</summary>
@@ -2873,18 +2886,22 @@ namespace RealmForge {
     // the field names the list's scroll may be held under (the first that reads is kept)
     static readonly string[] HeroArtScrollFields = { "m_List_ScrollRect", "m_ListArtifact_ScrollRect", "m_List_ScrollView", "m_List_Scroll", "m_ListArtifact_ScrollView" };
     static readonly string[] HeroArtGridFields = { "m_List_InfinityGrid", "m_ListArtifact_InfinityGrid" };
-    static string heroArtScroll, heroArtGrid; static bool heroArtSaid;
+    static string heroArtScroll, heroArtGrid; static bool heroArtSaid, heroArtViaGrid;
 
     /// <summary>The hero screen's artifact list (the panel's own scroll and grid); null when it cannot be read.</summary>
     public static ListRead ReadHeroArtList(ulong panel) {
       int pid = ListPid(); if (pid == 0) return null;
-      if (heroArtScroll != null) return ReadList(panel, heroArtScroll, heroArtGrid, pid);
+      if (heroArtScroll != null || heroArtViaGrid) return ReadList(panel, heroArtScroll, heroArtGrid, pid);
       foreach (var g in HeroArtGridFields)
         foreach (var name in HeroArtScrollFields) {
           var r = ReadList(panel, name, g, pid);
-          if (r != null) { heroArtScroll = name; heroArtGrid = g; L("hero artifact list: the scroll is bound as " + name + ", the grid as " + g); return r; }
+          if (r != null) { heroArtScroll = name; heroArtGrid = g; LL("hero artifact list: the scroll is bound as " + name + ", the grid as " + g); return r; }
         }
-      if (!heroArtSaid) { heroArtSaid = true; L("hero artifact list: no scroll field read (tried " + string.Join(", ", HeroArtScrollFields) + ") - no frames on the cells"); }
+      foreach (var g in HeroArtGridFields) {
+        var r = ReadList(panel, null, g, pid);
+        if (r != null) { heroArtScroll = null; heroArtGrid = g; heroArtViaGrid = true; LL("hero artifact list: the scroll is the one the grid " + g + " holds"); return r; }
+      }
+      if (!heroArtSaid) { heroArtSaid = true; LL("hero artifact list: no scroll field read (tried " + string.Join(", ", HeroArtScrollFields) + " and the grid's own) - no frames on the cells"); }
       return null;
     }
 

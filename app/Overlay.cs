@@ -296,6 +296,7 @@ namespace RealmForge {
       this.report = report; this.autoReport = autoReport; this.sellReport = sellReport;
       spilot = new SellPilot(SellGeometry.Inventory(1920, 1009, 8));
       screens.Sink = s => Log.Write(s); gate.Sink = s => Log.Write(s);
+      RFX.LiveLog = s => Log.Write(s);   // the live reads' lines (the lists' scroll binding ...) reach the app's log
       pilot = new AutoPilot(g);
       fpilot = new FilterPilot(fg);
       hpilot = new HeroPilot(heroG);
@@ -580,7 +581,7 @@ namespace RealmForge {
         var want = new List<long>(sellWanted ?? new HashSet<long>()); want.Sort();
         var c = new RecCtx { Mode = LocateWins ? "locate" : sell ? "sell" : "", Front = hwnd != IntPtr.Zero && IsForeground(hwnd), Cols = locateCols, OnAccount = locateOnAccount,
           Req = LocateWins && locateReq.Item != null ? locateReq : null, Lines = LocateWins ? locateLines.Length > 0 : sellHintLines.Length > 0, CityInvSeen = cityInvSeen, InvDX = invDX, BtnDY = hg2.HeroesBtnDY,
-          Want = sell ? want.ToArray() : new long[0], ShCols = shCols, PillUp = sellPillUp != "", PillDown = sellPillDown != "" };
+          Want = sell ? want.ToArray() : new long[0], ShCols = shCols, Art = sell && sellArt, PillUp = sellPillUp != "", PillDown = sellPillDown != "" };
         b.Ctx = c.ToJson(); b.TickNow = NowMs(); b.ReadSeq = RecReads.Seq;
         if (sell) { b.SInv = RecIn.InvCore(b.SellInv); b.SInvList = RecIn.List(b.SellInv != null ? b.SellInv.List : null); }
       } catch (Exception) { }
@@ -1757,12 +1758,16 @@ namespace RealmForge {
         inv.List = live;
         if (art ? FollowArtifactGrid(sgrid, shGeo, inv, U, now) : FollowInventoryGrid(sgrid, sellScroll, shGeo, inv, o, cr, U, now, "sell")) row1 = sgrid.Row1;
       }
+      // the artifact list's own scroll cannot be read: its rows from the picture (the cards' borders and the list's movement), never no frames at all
+      bool picRows = false;
+      if (art && inBulk && front && shGeo != null && double.IsNaN(row1)) { row1 = ArtPicRow1(shGeo, inv, o, cr, U, now); picRows = !double.IsNaN(row1); }
+      else if (art && !inBulk) artPic.Reset();
       // the drawn row 1 eases toward the scroll's value (no jumping between old and new reads)
       row1 = shSmooth.Step(row1, now, 4 * shGeo.PitchY * U);
       if (recB != null) recB.InvSmooth = row1;
       if (inBulk && front) {
-        string why = !double.IsNaN(row1) ? "exact" : "none";
-        if (why != shFrameSaid) { shFrameSaid = why; if (why == "none") Log.Write((art ? "art sell hint" : "sell hint") + ": the list's exact scroll cannot be read - no item frames, only the text plate"); }
+        string why = !double.IsNaN(row1) ? (picRows ? "picture" : "exact") : "none";
+        if (why != shFrameSaid) { shFrameSaid = why; if (why == "none") Log.Write((art ? "art sell hint" : "sell hint") + ": the list's exact scroll cannot be read - no item frames, only the text plate"); else if (why == "picture") Log.Write("art sell hint: the game's own scroll is not available - the list's rows are followed from the picture"); }
       }
       var step = SellHint.BuildExact(inv, sellWanted, shCols, row1, shGeo, W, H, U, art);
       if (art) { string ak = step.StateKey; if (ak != artStepSaid) { artStepSaid = ak; Log.Write("art sell hint: step " + step.Key + " selected " + step.Selected + "/" + step.Total + " missing " + step.Missing + " extra " + step.Extra + " cols " + shCols + (double.IsNaN(row1) ? " row1 none" : " row1 " + row1.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture))); } }
@@ -2020,7 +2025,15 @@ namespace RealmForge {
         inv = scr != null && scr.Kind == ScreenKind.Inventory ? screens.Inv : null;
         ws = scr != null && scr.Kind == ScreenKind.ArtWorkshop ? screens.ArtWs : null;
         // the lists' exact scroll, read every tick we draw (the frames follow a scroll the game renders at its own rate)
-        if (inv != null && inv.ArtTab) { bool fa; var live = RFX.ReadArtifactLive(out fa); if (live != null && live.Has) inv.List = live; }
+        if (inv != null && inv.ArtTab) {
+          bool fa; var live = RFX.ReadArtifactLive(out fa); if (live != null && live.Has) inv.List = live;
+          // no exact scroll: the rows from the picture (the same list ListRead the frame is placed from)
+          if ((inv.List == null || !inv.List.Has) && front && inv.Uids.Count > 0) {
+            var ag = ArtGeo(W, H, U);
+            double pr1 = ArtPicRow1(ag, inv, o, cr, U, now);
+            if (!double.IsNaN(pr1)) inv.List = ArtGridPicture.ToListRead(ag, U, pr1);
+          }
+        } else artPic.Reset();
         if (ws != null && ws.Tab == 2) { bool wa; var ml = RFX.ReadArtMatLive(out wa); if (ml != null && ml.Has) ws.MatList = ml; }
         var st = LocateGuide.NextArt(req, inv, ws);
         if (artFin.Update(art.Uid, ws, now)) { FinishLocateJob("artPromote", now); return; }
@@ -2395,6 +2408,43 @@ namespace RealmForge {
     }
 
     string artStepSaid = "";
+
+    // ---- the artifact list's rows from the picture: the fallback of the exact scroll (src/ArtGridPicture.cs)
+    readonly ArtGridPicture artPic = new ArtGridPicture();
+    long artPicAt; double artPicRow1 = double.NaN; string artPicSaid = "";
+    HashSet<long> artPicSel; int artPicArtSel, artPicClickRow = -1; double artPicCursorY; long artPicClickAt;
+    SellGeometry artGeo; double artGeoW, artGeoH;
+    SellGeometry ArtGeo(double W, double H, double U) {
+      if (artGeo == null || artGeoW != W || artGeoH != H) {
+        var rc = Geo.Rect("inventory.artList", W, H, U);
+        artGeo = SellGeometry.Artifacts(W, H, U, SellGeometry.ArtCols(rc, U, 8), rc); artGeoW = W; artGeoH = H;
+      }
+      return artGeo;
+    }
+    double ArtPicRow1(SellGeometry g, InventoryScreen inv, W32.POINT o, W32.RECT cr, double U, long now) {
+      if (inv == null || g == null) return double.NaN;
+      // the player's own click tells where the list is when the picture lost it: a card ticked (the cleanup) or chosen (the list's open card) under the pointer
+      int cr0 = -1;
+      long one = artPicSel != null ? SellHint.OneChange(artPicSel, inv.Selected) : 0;
+      if (one != 0) { int ix = inv.Uids.IndexOf(one); if (ix >= 0) cr0 = ix / g.Columns; }
+      else if (inv.ArtSelKnown && inv.ArtSel > 0 && inv.ArtSel != artPicArtSel && artPicArtSel != 0) cr0 = (inv.ArtSel - 1) / g.Columns;
+      artPicSel = new HashSet<long>(inv.Selected); artPicArtSel = inv.ArtSelKnown ? inv.ArtSel : 0;
+      W32.POINT cp;
+      if (cr0 >= 0 && W32.GetCursorPos(out cp)) { artPicClickRow = cr0; artPicCursorY = cp.Y - o.Y; artPicClickAt = now; }
+      if (artPicAt != 0 && now >= artPicAt && now - artPicAt < 50) return artPicRow1;   // the picture look at most every 50 ms
+      artPicAt = now;
+      int clickRow = artPicClickRow >= 0 && now - artPicClickAt < 400 ? artPicClickRow : -1; artPicClickRow = -1;
+      int sx, sy, sw, sh; artPicRow1 = double.NaN;
+      if (!ArtGridPicture.Strip(g, cr.R, cr.B, U, out sx, out sy, out sw, out sh)) return double.NaN;
+      int[] px = Grab(o.X + sx, o.Y + sy, sw, sh);
+      if (px == null) return double.NaN;
+      MaskOwn(px, o.X + sx, o.Y + sy, sw, sh);
+      double r; int rows = (inv.Uids.Count + g.Columns - 1) / g.Columns;
+      if (artPic.Update(px, sw, sh, sx, sy, g, cr.R, U, rows, inv.ListPtr, now, out r, clickRow, artPicCursorY)) artPicRow1 = r;
+      string st = double.IsNaN(artPicRow1) ? "unsure" : "ok";
+      if (st != artPicSaid) { artPicSaid = st; Log.Write("art list: rows from the picture (" + st + "): " + artPic.Note); }
+      return artPicRow1;
+    }
     /// <summary>The artifact list's rows from the game's own scroll alone (no picture: the stat bars are the gear list's). True = placed.</summary>
     bool FollowArtifactGrid(LocateGrid grid, SellGeometry geo, InventoryScreen inv, double U, long now) {
       if (inv == null || inv.List == null || !inv.List.Has) {

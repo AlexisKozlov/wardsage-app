@@ -31,6 +31,10 @@ namespace RealmForge {
     public static string LastError;            // "not_running" | "open_failed" | null
     public static int LastOpenError;           // GetLastWin32Error() of OpenProcess (5 = access denied)
     static void L(string s) { Log.AppendLine(s); Console.WriteLine(s); var h = OnLog; if (h != null) h(s); }
+    /// <summary>The app's own log file (the live reads run outside an extraction, so L() lines never reach it): set by the overlay.</summary>
+    public static Action<string> LiveLog;
+    /// <summary>A line of the live reads (the lists' scroll binding, the artifact panel's fields): L() and the app's log file.</summary>
+    static void LL(string s) { L(s); var h = LiveLog; if (h != null) h(s); }
     class Region { public ulong Base; public ulong Size; public uint Protect; }
     static List<Region> regs;
 

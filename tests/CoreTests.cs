@@ -655,6 +655,7 @@ static class CoreTests {
     LocateGemAndListTests();
     SellHintTests();
     ArtifactSellTests();
+    ArtGridPictureTests();
     ArtPromoteTests();
     ArtAutoTests();
     ArtEquipTests();
@@ -3408,6 +3409,64 @@ static class CoreTests {
       double right = g2.X(g2.X0 + 7 * g2.PitchX + g2.CellW, wh[0], u2);
       Check(right <= wh[0] - 0.5231 * u2 + 1 && g2.ViewTopPx(u2) > 0 && g2.ViewBottomPx(wh[1], u2) < wh[1], "art hint: " + wh[0] + "x" + wh[1] + ": the columns end inside the list");
     }
+  }
+
+  // the artifact list's rows from the picture (the fallback of the game's own scroll): a drawn list at 1920 x 1009 (dark background, a dark gap of 6 canvas units between
+  // the rows, a card = a red body under a bright crest line), looked at as the overlay does (the strip of the list's viewport)
+  static int[] ArtListPicture(SellGeometry g, double W, double H, double U, double row1, int rowsN, out int sx, out int sy, out int sw, out int sh) {
+    ArtGridPicture.Strip(g, W, H, U, out sx, out sy, out sw, out sh);
+    var px = new int[sw * sh];
+    int bg = (33 << 16) | (36 << 8) | 43, body = (120 << 16) | (50 << 8) | 45, crest = (215 << 16) | (185 << 8) | 110;
+    for (int i = 0; i < px.Length; i++) px[i] = bg;
+    double pitch = g.PitchY * U, card = g.CellHeight * U, cardW = g.CellW * U;
+    for (int r = 0; r < rowsN; r++) {
+      double top = row1 + r * pitch;
+      for (int c = 0; c < g.Columns; c++) {
+        double left = g.X(g.X0 + c * g.PitchX, W, U) - sx;
+        for (int y = (int)Math.Round(top) - sy; y < (int)Math.Round(top + card) - sy; y++) {
+          if (y < 0 || y >= sh) continue;
+          int col = y < (int)Math.Round(top) - sy + 5 ? crest : body;
+          for (int x = (int)left; x < (int)(left + cardW); x++) if (x >= 0 && x < sw) px[y * sw + x] = col;
+        }
+      }
+    }
+    return px;
+  }
+
+  static void ArtGridPictureTests() {
+    double W = 1920, H = 1009, U = Ui.Unit(W, H);
+    var g = SellGeometry.Artifacts(W, H, U, 8);
+    double top0 = g.ViewTopPx(U) + g.TopPad * U, pitch = g.PitchY * U; int rowsN = 40;
+    int sx, sy, sw, sh;
+    var pic = new ArtGridPicture(); double r1;
+    // a list just built is at its top: row 1 where the geometry says, to a pixel
+    var px = ArtListPicture(g, W, H, U, top0, rowsN, out sx, out sy, out sw, out sh);
+    Check(pic.Update(px, sw, sh, sx, sy, g, W, U, rowsN, 7, 1000, out r1) && Math.Abs(r1 - top0) <= 1.5, "art picture: a new list is placed at its top (" + r1.ToString("0.0") + " of " + top0.ToString("0.0") + "; " + pic.Note + ")");
+    // the list moves by 41 px, then by 60: followed (the rows' phase gives the exact place)
+    px = ArtListPicture(g, W, H, U, top0 - 41, rowsN, out sx, out sy, out sw, out sh);
+    Check(pic.Update(px, sw, sh, sx, sy, g, W, U, rowsN, 7, 1030, out r1) && Math.Abs(r1 - (top0 - 41)) <= 1.5, "art picture: followed after a move of 41 px (" + r1.ToString("0.0") + "; " + pic.Note + ")");
+    px = ArtListPicture(g, W, H, U, top0 - 101, rowsN, out sx, out sy, out sw, out sh);
+    Check(pic.Update(px, sw, sh, sx, sy, g, W, U, rowsN, 7, 1060, out r1) && Math.Abs(r1 - (top0 - 101)) <= 1.5, "art picture: followed after another 60 px (" + r1.ToString("0.0") + "; " + pic.Note + ")");
+    // the same list opened already scrolled (no top seen): no place from the picture alone ...
+    var pic2 = new ArtGridPicture();
+    double far = top0 - 7 * pitch - 23;
+    px = ArtListPicture(g, W, H, U, far, rowsN, out sx, out sy, out sw, out sh);
+    Check(!pic2.Update(px, sw, sh, sx, sy, g, W, U, rowsN, 8, 3000, out r1) && double.IsNaN(r1), "art picture: a list first seen scrolled far down has no place by itself");
+    // ... until the player ticks a card: row 10 (0-based 9) under the pointer
+    int clickRow = 9; double rowTop = far + clickRow * pitch, cursorY = rowTop + 60;
+    Check(pic2.Update(px, sw, sh, sx, sy, g, W, U, rowsN, 8, 3100, out r1, clickRow, cursorY) && Math.Abs(r1 - far) <= 1.5, "art picture: the player's tick of row 10 places the list (" + r1.ToString("0.0") + " of " + far.ToString("0.0") + ")");
+    // the picture's list reading drives the same card frames as the game's: ScrollY from row 1
+    var lr = ArtGridPicture.ToListRead(g, U, far);
+    Check(Math.Abs(lr.ScrollY * U / 640 - (top0 - far)) <= 0.01 && lr.Cols == 8 && Math.Abs(lr.RowUnits - 116) <= 0.01, "art picture: ToListRead gives the scroll in canvas units (" + lr.ScrollY.ToString("0.0") + ")");
+    // nothing but background (another screen): no place
+    var pic3 = new ArtGridPicture(); var blank = new int[sw * sh]; for (int i = 0; i < blank.Length; i++) blank[i] = (33 << 16) | (36 << 8) | 43;
+    Check(!pic3.Update(blank, sw, sh, sx, sy, g, W, U, rowsN, 9, 5000, out r1), "art picture: an empty list strip gives no place");
+    // the recorder's replay draws the artifact cleanup with the artifact list's geometry (ctx.Art), cards 80 x 110 units
+    var rinv = new InventoryScreen { Open = true, ArtTab = true, ArtBulk = true, ArtBulkKnown = true, ListPtr = 5 }; for (long i = 1; i <= 16; i++) rinv.Uids.Add(500 + i);
+    var rctx = new RecCtx { Mode = "sell", Front = true, ShCols = 8, Art = true, Want = new long[] { 501, 509 } };
+    SellHintStep rstep; var rrects = RecScenes.Sell(rctx, rinv, null, top0, W, H, U, out rstep);
+    Check(rstep.Kind == SellHintKind.Select && rrects.Count == 2 && Math.Abs(rrects[0].H - 110.0 / 640 * U) <= 2 && Math.Abs(rrects[1].Y - rrects[0].Y - pitch) <= 2, "replay: the artifact cleanup's frames use the artifact list's geometry (" + rrects.Count + " frames)");
+    Check(RecCtx.Parse(MiniJson.Parse(rctx.ToJson())).Art, "replay: the context keeps the artifact flag");
   }
 
   // «Показать в игре» for an ARTIFACT promotion (purpose artPromote): the request, the readers on fake tables, the screen, the steps, the frames, the finish; never a click
