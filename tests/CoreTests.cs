@@ -3551,6 +3551,22 @@ static class CoreTests {
       var wsC = new ArtWorkshopScreen();
       RFX.ReadArtWorkshopForm(formOf(false, 2, 5001, 10, 0, 0, brk0).A, wsC);
       Check(!wsC.Open && wsC.Uid == 0 && wsC.Mats.Count == 0, "art workshop reader: a form that is not shown reads nothing");
+      Check(ws.Diag.Contains("m_PanelEquipBreak=table") && ws.Diag.Contains("m_vMatData=3 entries") && ws.Diag.Contains("2 copies, 1 essences") && ws.Diag.Contains("m_vMatSelect=2 chosen") && ws.Diag.Contains("m_ArtifactData.iItemUid=read"), "art workshop reader: the diagnostics line names the bound fields and counts (" + ws.Diag + ")");
+      // uids the script holds as strings: the open artifact and the copies are still read
+      var matsS = st.T(1L, st.T("iItemUid", "5002", "iItemId", 200088L, "iLevel", 1L), 2L, st.T("iItemId", 16100L));
+      var wsS = new ArtWorkshopScreen();
+      RFX.ReadArtWorkshopForm(st.T("m_LuaLogicActive", true, "m_iItemType", 2L, "m_ArtifactData", st.T("iItemUid", "5001", "iLevel", 10L), "m_PanelEquipBreak", st.T("m_vMatData", matsS, "m_vMatSelect", st.T())).A, wsS);
+      Check(wsS.Uid == 5001 && wsS.PanelKnown && string.Join(",", wsS.Mats) == "5002,0", "art workshop reader: uids written as strings are read (" + wsS.Diag + ")");
+      // the promote panel not built yet / its list under another name: nothing to read, the line says what the form holds
+      var wsNoPanel = new ArtWorkshopScreen();
+      RFX.ReadArtWorkshopForm(st.T("m_LuaLogicActive", true, "m_iItemType", 2L, "m_ArtifactData", st.T("iItemUid", 5001L, "iLevel", 10L), "m_PanelEquipEnhanced", st.T("x", 1L)).A, wsNoPanel);
+      Check(wsNoPanel.Open && wsNoPanel.Tab == 2 && !wsNoPanel.PanelKnown && wsNoPanel.Diag.Contains("m_PanelEquipBreak=missing") && wsNoPanel.Diag.Contains("m_PanelEquipEnhanced:table"), "art workshop reader: no promote panel yet -> the line lists the form's panels (" + wsNoPanel.Diag + ")");
+      var wsN = new ArtWorkshopScreen();
+      RFX.ReadArtWorkshopForm(st.T("m_LuaLogicActive", true, "m_iItemType", 2L, "m_ArtifactData", st.T("iItemUid", 5001L), "m_PanelEquipBreak", st.T("m_vOtherData", mats, "m_vMatSelect", st.T())).A, wsN);
+      Check(!wsN.PanelKnown && wsN.Diag.Contains("m_vMatData=missing") && wsN.Diag.Contains("m_vOtherData"), "art workshop reader: the list under another name is named in the line (" + wsN.Diag + ")");
+      var wsU = new ArtWorkshopScreen();
+      RFX.ReadArtWorkshopForm(st.T("m_LuaLogicActive", true, "m_iItemType", 2L, "m_PanelEquipBreak", brk0).A, wsU);
+      Check(wsU.Uid == 0 && wsU.PanelKnown && wsU.Mats.Count == 3 && wsU.Diag.Contains("m_ArtifactData=missing"), "art workshop reader: no artifact data on the form, the list is still read");
     } finally { RFX.TestMemory = null; RFX.ForgetLive(); }
 
     // --- the screen state
@@ -3612,6 +3628,20 @@ static class CoreTests {
     var pAny = LocateGuide.NextArt(reqNo, null, W(5001, 2, 10, 0, matsA, lvA, new int[0]));
     Check(pAny.Kind == LocateKind.ArtMatPick && pAny.Pos == 2, "art guide: no plan -> the first copy that was never levelled");
     Eq("artMatPick", p1.Key, "art guide: page key of the pick step");
+    // the form's artifact uid unreadable (0) on the promote tab: the list still decides, the request's artifact is the target
+    var pNoUid = LocateGuide.NextArt(req, null, W(0, 2, 10, 0, matsA, lvA, new int[0]));
+    Check(pNoUid.Kind == LocateKind.ArtMatPick && pNoUid.Pos == 2, "art guide: workshop uid unreadable but the list read -> the planned copy (" + pNoUid.Key + ")");
+    Eq(LocateKind.ArtMatLoading, LocateGuide.NextArt(req, null, W(0, 0, -1, -1, null, null, null)).Kind, "art guide: tab and uid unreadable -> loading");
+    // the unreadable workshop: after the wait the list's area is framed (no cell), the plate says to pick the copy / essence
+    var wsWait = W(5001, 2, 10, 0, null, null, null);
+    var stWait = LocateGuide.NextArt(req, null, wsWait);
+    Check(LocateGuide.ArtWsWaiting(stWait, wsWait) && !LocateGuide.ArtWsWaiting(p1, W(5001, 2, 10, 0, matsA, lvA, new int[0])) && !LocateGuide.ArtWsWaiting(stWait, null), "art guide: only an open workshop with no list waits");
+    var stGuess = LocateGuide.ArtWsGuess(stWait, wsWait);
+    Eq("artMatGuess", stGuess.Key, "art guide: the geometry hint after the wait");
+    Eq(LocateKind.ArtOpenPromote, LocateGuide.ArtWsGuess(new LocateStep { Kind = LocateKind.ArtMatLoading }, W(5001, 1, 10, 0, null, null, null)).Kind, "art guide: the geometry hint on another tab asks for «Продвинуть»");
+    Eq(LocateKind.ArtMatGuess, LocateGuide.ArtWsGuess(new LocateStep { Kind = LocateKind.ArtMatLoading }, W(0, 0, -1, -1, null, null, null)).Kind, "art guide: tab not read -> the list's area");
+    var gfr = ArtFrames.For(stGuess, null, wsWait, null, 1136, 640, Ui.Unit(1136, 640));
+    Check(gfr != null && gfr.Mark.Kind == "box" && gfr.Mark.W > 100 && gfr.Mark.H > 100 && gfr.Target == "artifact.matList", "art frames: the guess frames the whole copy list area");
     Eq("artOpenTab", LocateGuide.NextArt(req, new InventoryScreen { Open = true, EquipTab = true }, null).Key, "art guide: page key of the tab step");
 
     // --- the job is done when the stage rises (over two reads)

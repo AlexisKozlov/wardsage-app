@@ -326,7 +326,7 @@ namespace RealmForge {
     public static bool Framed(LocateKind k) {
       switch (k) {
         case LocateKind.ArtOpenTab: case LocateKind.ArtInList: case LocateKind.ArtSelected: case LocateKind.ArtOpenPromote:
-        case LocateKind.ArtMatPick: case LocateKind.ArtPromote: case LocateKind.ArtLevelFirst:
+        case LocateKind.ArtMatPick: case LocateKind.ArtPromote: case LocateKind.ArtLevelFirst: case LocateKind.ArtMatGuess:
           return true;
         default: return false;
       }
@@ -342,6 +342,7 @@ namespace RealmForge {
         case LocateKind.ArtOpenPromote: key = "artifact.tab.promote"; break;
         case LocateKind.ArtLevelFirst: key = ws != null && ws.Tab == 1 ? "" : "artifact.tab.enhance"; break;   // on the «Улучшить» tab itself: the plate only
         case LocateKind.ArtPromote: key = "artifact.promoteBtn"; break;
+        case LocateKind.ArtMatGuess: key = "artifact.matList"; break;   // the whole list area: the cells cannot be placed without the game's scroll
         case LocateKind.ArtInList:
           return st.Pos > 0 && inv != null ? Cell(g, "inventory.artList", inv.List, st.Pos - 1, LocateGuide.ArtInvCols, 116, W, H, U) : null;
         case LocateKind.ArtMatPick:

@@ -42,6 +42,7 @@ namespace RealmForge {
     ArtLevelFirst,    // the artifact is below its level cap: «Улучшить» first
     ArtOpenPromote,   // the workshop is on another tab: «Продвинуть»
     ArtMatLoading,    // the workshop's copy list is not readable (yet)
+    ArtMatGuess,      // the copy list cannot be read for a while: the list's area is framed, the player picks a copy or an essence himself (never a cell, never a click)
     ArtMatPick,       // pick a copy (or an essence) in the left list; MatWrong: a wrong one is chosen
     ArtMatNone,       // the list has no copy and no essence
     ArtPromote        // the material is chosen: «Продвинуть» is the player's
@@ -175,7 +176,8 @@ namespace RealmForge {
       st.ArtCap = art.Cap; st.ArtLevel = art.Level;
       if (ws != null && ws.Open) {
         if (ws.Uid > 0 && ws.Uid != art.Uid) { st.Kind = LocateKind.ArtWrongArtifact; return st; }
-        if (ws.Uid == 0) { st.Kind = LocateKind.ArtMatLoading; return st; }
+        // the form's artifact uid may be unreadable (a field the build does not expose): the tab and the list decide then, the target is the request's
+        if (ws.Uid == 0 && ws.Tab == 0) { st.Kind = LocateKind.ArtMatLoading; return st; }
         if (ws.Level >= 0) st.ArtLevel = ws.Level;
         if (ws.Level >= 0 && art.Cap > 0 && ws.Level < art.Cap) { st.Kind = LocateKind.ArtLevelFirst; return st; }
         if (ws.Tab != 2) { st.Kind = LocateKind.ArtOpenPromote; return st; }
@@ -191,6 +193,23 @@ namespace RealmForge {
       st.Count = inv.Uids.Count; st.Pos = p[0]; st.Row = p[1]; st.Col = p[2];
       Where(st, inv.List, p[0] - 1);
       st.Kind = inv.ArtSelKnown && inv.ArtSel == p[0] ? LocateKind.ArtSelected : LocateKind.ArtInList;
+      return st;
+    }
+
+    /// <summary>How long the workshop's unreadable copy list is waited for before the geometry hint stands in.</summary>
+    public const int ArtWsWaitMs = 2000;
+
+    /// <summary>The workshop is open but the step only waits for its data (the form's tab or the copy list could not be read).</summary>
+    public static bool ArtWsWaiting(LocateStep st, ArtWorkshopScreen ws) {
+      return st != null && st.Kind == LocateKind.ArtMatLoading && ws != null && ws.Open;
+    }
+
+    /// <summary>The step after <see cref="ArtWsWaitMs"/> of unreadable workshop data: the copy list's area (the tab is known to be «Продвинуть», or not read at all),
+    /// else the tab; no cell frame, the plate says to choose the copy / essence.</summary>
+    public static LocateStep ArtWsGuess(LocateStep waiting, ArtWorkshopScreen ws) {
+      var st = new LocateStep { ArtCap = waiting.ArtCap, ArtLevel = waiting.ArtLevel };
+      if (ws != null && ws.Tab != 0 && ws.Tab != 2) st.Kind = LocateKind.ArtOpenPromote;
+      else st.Kind = LocateKind.ArtMatGuess;
       return st;
     }
 

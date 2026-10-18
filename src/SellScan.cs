@@ -22,6 +22,7 @@
 //     m_ListArtifact_ScrollRect / m_ListArtifact_InfinityGrid   the list's scroll, columns (floor((list width - 6) / 90): 7 at the authored 1136x640, 8 at a 1.9:1 window) and row height (116)
 using System;
 using System.Collections.Generic;
+using System.Text;
 
 namespace RealmForge {
   public sealed class SellScreen {
@@ -87,6 +88,7 @@ namespace RealmForge {
     public HashSet<int> MatSel = new HashSet<int>();   // 1-based indices of m_vMatData that are chosen
     public RFX.ListRead MatList;      // the copy list's scroll and grid (null = unreadable)
     public ulong ListPtr;
+    public string Diag = "";          // which fields were bound and the counts, for one log line (RFX.ReadArtWorkshopForm)
   }
 
   public static partial class RFX {
@@ -346,6 +348,16 @@ namespace RealmForge {
     }
 
     /// <summary>An integer field of a script table (an integer, or a float with a whole value).</summary>
+    /// <summary>A uid field: an integer, a whole float, or a number written as a string.</summary>
+    static bool UidField(ulong t, string key, out long val) {
+      ulong v; int tt; val = 0;
+      if (!Field(t, key, out v, out tt)) return false;
+      if (tt == T_INT) { val = (long)v; return true; }
+      if (tt == T_FLT) return UidOf(BitConverter.Int64BitsToDouble((long)v), out val);
+      if (tt == T_SSTR || tt == T_LSTR) return UidOf(ReadLuaString(v), out val);
+      return false;
+    }
+
     static bool IntField(ulong t, string key, out long val) {
       ulong v; int tt; val = 0;
       if (!Field(t, key, out v, out tt)) return false;
@@ -376,26 +388,38 @@ namespace RealmForge {
       int tt; long n;
       s.Open = InvFormShown(f);
       if (!s.Open) return;
+      var dg = new StringBuilder();
       if (IntField(f, "m_iItemType", out n)) s.Tab = (int)Math.Max(0, Math.Min(99, n));
+      dg.Append("m_iItemType=").Append(s.Tab);
       ulong ad;
       if (Field(f, "m_ArtifactData", out ad, out tt) && tt == T_TABLE) {
-        if (IntField(ad, "iItemUid", out n)) s.Uid = n;
+        if (UidField(ad, "iItemUid", out n)) s.Uid = n;
+        dg.Append(" m_ArtifactData.iItemUid=").Append(s.Uid > 0 ? "read" : "unreadable");
         if (IntField(ad, "iItemId", out n)) s.ItemId = (int)n;
         if (IntField(ad, "iLevel", out n)) s.Level = (int)Math.Max(0, Math.Min(999, n));
         if (IntField(ad, "iStageLvl", out n)) s.Stage = (int)Math.Max(0, Math.Min(99, n));
       }
+      else dg.Append(" m_ArtifactData=missing");
       ulong panel;
-      if (s.Tab != 2 || !Field(f, "m_PanelEquipBreak", out panel, out tt) || tt != T_TABLE) return;
+      if (s.Tab != 2) { s.Diag = dg.ToString(); return; }
+      if (!Field(f, "m_PanelEquipBreak", out panel, out tt) || tt != T_TABLE) {
+        List<ulong> fv; var names = new List<string>();
+        foreach (var kv in TableFields(f, out fv)) if (kv.Key.IndexOf("Panel", StringComparison.OrdinalIgnoreCase) >= 0) names.Add(kv.Key + ":" + LuaTypeName(kv.Value[0]));
+        s.Diag = dg + " m_PanelEquipBreak=" + (tt == 0 ? "missing" : LuaTypeName(tt)) + " form panels [" + string.Join(",", names) + "]";
+        return;
+      }
+      dg.Append(" m_PanelEquipBreak=table");
       ulong list;
       if (Field(panel, "m_vMatData", out list, out tt) && tt == T_TABLE) {
         s.ListPtr = list;
         var d = ParseTable(list, 1, new HashSet<ulong>());
+        dg.Append(" m_vMatData=").Append(d == null ? "unparsed" : d.Count + " entries");
         if (d != null) {
           var byIndex = new SortedDictionary<int, long[]>();   // {uid, level, item id}
           foreach (var kv in d) {
             int i; var row = kv.Value as Dictionary<string, object>; object u, lv, iid;
             if (row == null || kv.Key.Length <= 2 || !int.TryParse(kv.Key.Substring(1, kv.Key.Length - 2), out i)) continue;
-            long uid = row.TryGetValue("iItemUid", out u) && u is long ? (long)u : 0;
+            long uid = 0; if (row.TryGetValue("iItemUid", out u)) UidOf(u, out uid);
             long level = row.TryGetValue("iLevel", out lv) && lv is long ? Math.Max(0, Math.Min(999, (long)lv)) : -1;
             long itemId = row.TryGetValue("iItemId", out iid) && iid is long ? Math.Max(0, Math.Min((long)int.MaxValue, (long)iid)) : 0;
             byIndex[i] = new[] { uid, level, itemId };
@@ -403,14 +427,23 @@ namespace RealmForge {
           int expect = 1;
           foreach (var kv in byIndex) { if (kv.Key != expect++) break; s.Mats.Add(kv.Value[0]); s.MatLevels.Add((int)kv.Value[1]); s.MatItemIds.Add((int)kv.Value[2]); }   // a script array: 1..n
           s.PanelKnown = true;
+          int stubs = 0; foreach (long mu in s.Mats) if (mu == 0) stubs++;
+          dg.Append(" -> ").Append(s.Mats.Count).Append(" in order (").Append(s.Mats.Count - stubs).Append(" copies, ").Append(stubs).Append(" essences)");
         }
+      } else {
+        List<ulong> pv; var names = new List<string>();
+        foreach (var kv in TableFields(panel, out pv)) if ((kv.Value[0] & 0x0F) == 5 && kv.Key.StartsWith("m_v", StringComparison.Ordinal)) names.Add(kv.Key);
+        dg.Append(" m_vMatData=").Append(tt == 0 ? "missing" : LuaTypeName(tt)).Append(" panel tables [").Append(string.Join(",", names)).Append("]");
       }
       ulong map;
       if (Field(panel, "m_vMatSelect", out map, out tt) && tt == T_TABLE) {
         var sel = new HashSet<long>(); ReadTrueKeys(map, sel);
         foreach (var k in sel) if (k >= 1 && k <= 100000) s.MatSel.Add((int)k);
-      }
+        dg.Append(" m_vMatSelect=").Append(s.MatSel.Count).Append(" chosen");
+      } else dg.Append(" m_vMatSelect=").Append(tt == 0 ? "missing" : LuaTypeName(tt));
       s.MatList = ReadMatList(panel);
+      dg.Append(" list scroll ").Append(s.MatList != null && s.MatList.Has ? "read" : "unreadable");
+      s.Diag = dg.ToString();
     }
 
     /// <summary>The cheap per-tick look at the workshop's copy list: is the form on screen, and the list's exact scroll (null = unreadable).</summary>

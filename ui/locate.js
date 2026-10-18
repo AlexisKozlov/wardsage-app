@@ -9,7 +9,7 @@
     'openAscendTab', 'ascendPick', 'ascendNotInList', 'ascendReady', 'openFoundry', 'gemFunction', 'ascendFilter', 'ascendLoading', 'exitBulk'];
   // «Продвинуть» артефакт (purpose artPromote): req.art = {uid, id, name, lv, cap, st, need, via}; the host never clicks for it
   const ART_KINDS = ['openInventory', 'artOpenTab', 'artExitMode', 'artListLoading', 'artNotInList', 'artInList', 'artSelected', 'artWrongArtifact', 'artLevelFirst',
-    'artOpenPromote', 'artMatLoading', 'artMatPick', 'artMatNone', 'artPromote'];
+    'artOpenPromote', 'artMatLoading', 'artMatGuess', 'artMatPick', 'artMatNone', 'artPromote'];
 
   // auto click (host: src/LocatePilot.cs): st.auto = '' (off) | work | paused | background | hint | stopped, st.autoWhy = the reason when stopped.
   // The app clicks by itself only on these steps; the rest (the Foundry, the last button) stay the player's.
@@ -53,6 +53,7 @@
       case 'artLevelFirst': return { tone: 'warn', head: t('locArtLevelFirst', s.artCap || a.cap), lines: [t('locArtLevelFirstP', s.artLevel || a.lv)] };
       case 'artOpenPromote': return { tone: 'info', head: t('locArtOpenPromote'), lines: [] };
       case 'artMatLoading': return { tone: 'info', head: t('locArtMatLoading'), lines: [] };
+      case 'artMatGuess': return { tone: 'info', head: t('locArtMatGuess', a.name || ''), lines: [t('locArtMatGuessP', a.need || 1)] };
       case 'artMatPick': {
         if (s.matWrong) return { tone: 'warn', head: t('locArtMatWrong'), lines: [t('locArtMatWrongP')] };
         const lines = [scrollLine(s, t)].filter(Boolean);
@@ -153,7 +154,7 @@
   // the user-facing step number of a request: {n, total} or null (a step off the main path has no number)
   const PATH = {
     recast: { openInventory: 1, openEquipTab: 2, inList: 3, hiddenFilter: 3, selected: 4, gemFunction: 5, gemPick: 5, done: 6, total: 6 },
-    artPromote: { openInventory: 1, artOpenTab: 2, artExitMode: 2, artListLoading: 3, artNotInList: 3, artInList: 3, artSelected: 4, artWrongArtifact: 4, artLevelFirst: 5, artOpenPromote: 5, artMatLoading: 6, artMatPick: 6, artMatNone: 6, artPromote: 7, total: 7 },
+    artPromote: { openInventory: 1, artOpenTab: 2, artExitMode: 2, artListLoading: 3, artNotInList: 3, artInList: 3, artSelected: 4, artWrongArtifact: 4, artLevelFirst: 5, artOpenPromote: 5, artMatLoading: 6, artMatGuess: 6, artMatPick: 6, artMatNone: 6, artPromote: 7, total: 7 },
     ascend: { openInventory: 1, openEquipTab: 2, openFoundry: 3, openAscendTab: 4, ascendFilter: 5, ascendLoading: 5, ascendPick: 5, ascendNotInList: 5, ascendReady: 6, total: 6 },
   };
   function stepNo(req, st) {

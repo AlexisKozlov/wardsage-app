@@ -128,6 +128,7 @@ for (const lang of ['ru', 'en']) {
   ok(L.describe(areq, { step: 'artMatPick', matKind: 'essence' }, t).head === T[lang].locArtMatEssence, lang + ': an essence is ticked as an essence');
   ok(L.describe(areq, { step: 'artMatPick', matWrong: true }, t).tone === 'warn', lang + ': a wrong copy is a warning');
   ok(L.describe(areq, { step: 'artMatPick', matKind: 'copy', matNeed: 2, matChosen: 1 }, t).lines.some((x) => /1/.test(x) && /2/.test(x)), lang + ': several copies: how many are chosen');
+  ok(L.describe(areq, { step: 'artMatGuess' }, t).head.includes('Клинок') && L.stepNo(areq, { step: 'artMatGuess' }).n === 6, lang + ': the geometry hint names the artifact, step 6');
   ok(L.describe(areq, { step: 'artLevelFirst', artCap: 13, artLevel: 10 }, t).head.includes('13'), lang + ': level first names the cap');
   ok(L.caps(areq, { step: 'artPromote' }, t).includes('Клинок') && L.stepNo(areq, { step: 'artPromote' }).n === 7, lang + ': plate header names the artifact, the button is step 7');
   ok(L.pillTexts(t, lang).doneArtPromote === T[lang].locJobArtPromote, lang + ': the done plate text');

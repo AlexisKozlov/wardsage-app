@@ -639,7 +639,7 @@ namespace RealmForge {
           // the artifact promotion: the stop button shows until the pilot stops, the job is done or the step is the player's own (the final «Продвинуть», «Улучшить» first ...)
           if (!ArtAutoOn || artPilot.Stopped || gate.Halted(ClickOwner.Locate) || locateDoneUntil != 0) return false;
           var ak = artStep != null ? artStep.Kind : LocateKind.None;
-          return ak != LocateKind.ArtPromote && ak != LocateKind.ArtLevelFirst && ak != LocateKind.ArtMatNone && ak != LocateKind.ArtWrongArtifact && ak != LocateKind.NoItem && ak != LocateKind.None;
+          return ak != LocateKind.ArtPromote && ak != LocateKind.ArtLevelFirst && ak != LocateKind.ArtMatNone && ak != LocateKind.ArtMatGuess && ak != LocateKind.ArtWrongArtifact && ak != LocateKind.NoItem && ak != LocateKind.None;
         }
         if (locateReq == null || !AutoEnabled || !LocateAutoEnabled || lpilot.Stopped || gate.Halted(ClickOwner.Locate) || locateDoneUntil != 0) return false;
         var k = locateStep != null ? locateStep.Kind : LocateKind.None;
@@ -2005,7 +2005,7 @@ namespace RealmForge {
     // ---- «Показать в игре» for an ARTIFACT promotion (purpose artPromote): hints only, nothing is ever clicked (the gate's NoLocateClicks).
     // Inventory -> «Артефакт» -> the artifact's cell -> «Мастерская» -> «Продвинуть» tab -> the copy -> the button (the player's); src/LocateGuide.cs NextArt, src/LocateFrames.cs ArtFrames.
     readonly ArtFinish artFin = new ArtFinish();
-    LocateStep artStep; string artKey = "", artSaid = ""; long artFormAskedAt;
+    LocateStep artStep; string artKey = "", artSaid = "", artWsDiagSaid = ""; long artFormAskedAt, artWsWaitSince;
 
     void TickArtPromote() {
       var req = locateReq; var art = req.Art;
@@ -2036,6 +2036,12 @@ namespace RealmForge {
         } else artPic.Reset();
         if (ws != null && ws.Tab == 2) { bool wa; var ml = RFX.ReadArtMatLive(out wa); if (ml != null && ml.Has) ws.MatList = ml; }
         var st = LocateGuide.NextArt(req, inv, ws);
+        // the workshop's data cannot be read: after a moment the screen's own geometry gives the hint (never a click), so the player always sees a frame
+        if (LocateGuide.ArtWsWaiting(st, ws)) {
+          if (artWsWaitSince == 0 || now < artWsWaitSince) artWsWaitSince = now;
+          if (now - artWsWaitSince >= LocateGuide.ArtWsWaitMs) st = LocateGuide.ArtWsGuess(st, ws);
+        } else artWsWaitSince = 0;
+        if (ws != null && ws.Diag != null && ws.Diag != "" && ws.Diag != artWsDiagSaid) { artWsDiagSaid = ws.Diag; Log.Write("art workshop: " + ws.Diag); }
         if (artFin.Update(art.Uid, ws, now)) { FinishLocateJob("artPromote", now); return; }
         artStep = st;
         string sig = st.Key + "|" + st.Pos + "|" + st.MatChosen + "|" + st.MatWrong + "|" + st.MatKind;
