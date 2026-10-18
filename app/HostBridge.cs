@@ -1048,7 +1048,12 @@ namespace RealmForge {
           }
           case SyncStatus.InvalidPayload: case SyncStatus.TooLarge: SyncError("payload", r.Details ?? r.Status.ToString(), 0); return;
           case SyncStatus.ServerError: case SyncStatus.Unexpected: case SyncStatus.Redirect:
-            if (r.HttpCode >= 500 && !serverRetried) { serverRetried = true; win.BeginInvoke((Action)(() => RequestAutoSync(ServerRetrySec))); }   // one quick retry
+            if (r.HttpCode >= 500 && !serverRetried) {
+              // one quick retry; a 5xx is mostly the site restarting (a deploy), so it is reported only when the retry fails too
+              serverRetried = true;
+              win.BeginInvoke((Action)(() => RequestAutoSync(ServerRetrySec)));
+              SyncError("server", "HTTP " + r.HttpCode, 0, report: false); return;
+            }
             SyncError("server", "HTTP " + r.HttpCode, 0); return;
           default: SyncError("net", r.Details, 0); return;
         }
