@@ -12,7 +12,7 @@
 
   const CODE_RE = /^rf_[0-9A-Za-z]{32}$/;
   const S = {
-    rec: { on: false, sec: 0, sent: 0, total: 0, why: '' }, ready: false, termsOk: true, lang: 'ru', version: '', channel: 'main', site: '', defaultSite: '', hasCode: false, codePrefix: '', saveCopy: false,
+    notice: null, offline: false, down: {}, rec: { on: false, sec: 0, sent: 0, total: 0, why: '' }, ready: false, termsOk: true, lang: 'ru', version: '', channel: 'main', site: '', defaultSite: '', hasCode: false, codePrefix: '', saveCopy: false,
     game: { running: false, version: null }, last: null, page: 'sync', editCode: false,
     sync: { phase: 'idle', stage: null, seconds: 0, result: null, error: null },
     plans: { status: 'idle', list: [], err: null }, sel: 0,
@@ -87,6 +87,8 @@
     document.body.classList.toggle('compact', S.compact);
     const r = rail();
     if (r !== lastRail) { $('#rail').innerHTML = r; lastRail = r; }
+    const nt = notices();
+    if (nt !== lastNotices) { $('#notices').innerHTML = nt; lastNotices = nt; }
     const md = termsModal() || modal();
     const appEl = document.querySelector('.app'); if (appEl) appEl.inert = !S.termsOk;   // the first-run card blocks the window behind it
     if (md !== lastModal) { $('#modal').innerHTML = md; lastModal = md; }
@@ -99,6 +101,26 @@
     if (keep != null && pg.querySelector('#code')) { pg.querySelector('#code').value = keep; pg.querySelector('#code').focus(); codeTyped(); }
     if (view !== lastView) { pg.className = ''; void pg.offsetWidth; pg.className = 'page'; }
     lastPage = html; lastView = view;
+  }
+
+  // the site's announcement and the "no connection" note, above every page (text is escaped, never HTML)
+  let lastNotices = '', downTimers = {};
+  function noticeText() { const n = S.notice; return n ? (n[S.lang] || n.ru || n.en || '').trim() : ''; }
+  function notices() {
+    let h = '';
+    const txt = noticeText();
+    if (S.offline) h += `<div class="remote-note site-note" role="status">${I.clock}<div><b>${esc(t('siteOffline'))}</b></div></div>`;
+    if (txt && store('rf.noticeOff') !== txt) {
+      const n = S.notice, lk = n.link && n.link.href ? `<button class="termsLink" data-act="open" data-url="${esc(window.RFForum.onSite(n.link.href, S.site))}">${esc(n.link[S.lang] || n.link.ru || n.link.en || '')}</button>` : '';
+      h += `<div class="remote-note site-note${n.tone === 'warn' ? ' warn' : ''}" role="status">${I.clock}<div><b>${esc(txt)}</b>${lk}</div><button class="note-x" data-act="noticeX" aria-label="${esc(t('noticeClose'))}">${I.x}</button></div>`;
+    }
+    return h;
+  }
+  // the site is "down" after 20 s in a row without an answer (the config ask or the plans long poll); the first success clears it
+  function siteState(src, ok) {
+    clearTimeout(downTimers[src]); downTimers[src] = null;
+    if (!ok) downTimers[src] = setTimeout(() => { S.down[src] = true; S.offline = true; render(); }, 20000);
+    else { S.down[src] = false; S.offline = !!(S.down.cfg || S.down.plans); render(); }
   }
 
   function rail() {
@@ -870,6 +892,7 @@
     else if (a === 'resetSite') host.send({ cmd: 'setSite', site: S.defaultSite });
     else if (a === 'reload') loadPlans();
     else if (a === 'updRestart') host.send({ cmd: 'update.restart' });
+    else if (a === 'noticeX') { try { localStorage.setItem('rf.noticeOff', noticeText()); } catch (e) { } render(); }
     else if (a === 'updLater') { S.updDismissed = true; render(); }
     else if (a === 'updOpen') { S.updDismissed = false; render(); }
     else if (a === 'updBack') { if (e.target === el) { S.updDismissed = true; render(); } }
@@ -1006,14 +1029,15 @@
       case 'update': if (!S.update || S.update.version !== m.version) S.updDismissed = false; S.update = { version: m.version, ru: m.notesRu || '', en: m.notesEn || '' }; render(); break;
       case 'auto': S.auto = m.state; if (S.page === 'equip' || S.compact) render(); break;
       case 'guild': if (m.state === 'noSelf' || m.state === 'short') toast(t(m.state === 'short' ? 'guildShort' : 'guildNoSelf'), 12000); break;
-      case 'remote': S.remote = { readEnabled: m.readEnabled !== false, off: Array.isArray(m.off) ? m.off : [] }; render(); break;
+      case 'remote': S.remote = { readEnabled: m.readEnabled !== false, off: Array.isArray(m.off) ? m.off : [] }; S.notice = m.announcement && typeof m.announcement === 'object' ? m.announcement : null; render(); break;
+      case 'site': siteState('cfg', m.ok === true); break;
       case 'layout': {
         const l = { missing: m.missing === true, noCode: m.noCode === true, game: typeof m.game === 'string' ? m.game : '' };
         if (l.missing !== S.layout.missing || l.noCode !== S.layout.noCode || l.game !== S.layout.game) { S.layout = l; render(); }
         break;
       }
       case 'plans.changed': if (S.hasCode && S.plans.status !== 'loading') loadPlans(); break;   // the site has new work (long poll in the host)
-      case 'plansWait': S.plansWait = m.ok === true; break;   // while it works the timer below is only a fallback
+      case 'plansWait': S.plansWait = m.ok === true; siteState('plans', m.ok === true); break;   // while it works the timer below is only a fallback
       case 'rec': {
         // the recorder's timer / upload count (the page is only redrawn when it starts, stops or the counts change)
         const was = S.rec, now = { on: !!m.on, sec: m.sec | 0, sent: m.sent | 0, total: m.total | 0, why: m.why || '' };

@@ -133,12 +133,18 @@ namespace RealmForge {
       string site = cfg.Site;
       Task.Factory.StartNew(() => {
         var r = RemoteSwitches.Fetch(site);
-        if (r == null) return;   // no reply: the switches held stay
+        if (r == null) {   // no reply: the switches held (and the saved announcement) stay; ask again soon, the page says "no connection"
+          OnUi(() => { remoteTimer.Interval = 20000; Post("{\"ev\":\"site\",\"ok\":false}"); });
+          return;
+        }
         r.SaveCache(RemoteSwitches.CachePath);
         OnUi(() => {
+          remoteTimer.Interval = RemoteSwitches.EveryMinutes(Channel.IsTest) * 60 * 1000;
+          Post("{\"ev\":\"site\",\"ok\":true}");
           bool changed = !r.SameAs(remote);
           remote = r;
           if (changed) { Log.Write("switches changed: " + r.ToJson()); ApplyRemote(); }
+          else PostRemote();   // the announcement may have run out
         });
       });
     }
@@ -164,7 +170,10 @@ namespace RealmForge {
       var sb = new StringBuilder("{\"ev\":\"remote\",\"readEnabled\":").Append(B(remote.ReadEnabled)).Append(",\"off\":[");
       var off = remote.Off();
       for (int i = 0; i < off.Count; i++) { if (i > 0) sb.Append(','); sb.Append(S(off[i])); }
-      Post(sb.Append("]}").ToString());
+      sb.Append("],\"announcement\":");
+      var nt = remote.Notice;
+      sb.Append(nt != null && nt.Live(DateTime.UtcNow) ? nt.ToJson() : "null");
+      Post(sb.Append('}').ToString());
     }
 
     // ------------------------------------------------------------------ layout data for the running game version

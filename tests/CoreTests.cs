@@ -1167,6 +1167,18 @@ static class CoreTests {
     Check(c != null && !c.ReadEnabled, "the saved copy is used while the site cannot be reached");
     File.WriteAllText(path, "{broken");
     Check(RemoteSwitches.LoadCache(path) == null, "a broken copy: null");
+    // the site's announcement: parsed, kept in the saved copy, cleared when the site sends null
+    var an = RemoteSwitches.Parse("{\"readEnabled\":true,\"features\":{},\"announcement\":{\"id\":\"a1\",\"ru\":\"Рестарт <b>сервера</b>\",\"en\":\"Restart\",\"tone\":\"warn\",\"until\":\"2099-01-01T00:00:00.000Z\",\"audience\":\"all\",\"link\":{\"href\":\"/news\",\"ru\":\"Подробнее\",\"en\":\"More\"}}}");
+    Check(an != null && an.Notice != null && an.Notice.Ru == "Рестарт <b>сервера</b>" && an.Notice.En == "Restart" && an.Notice.Tone == "warn" && an.Notice.LinkHref == "/news" && an.Notice.Live(DateTime.UtcNow), "announcement parsed");
+    Check(!an.Notice.Live(new DateTime(2100, 1, 1, 0, 0, 0, DateTimeKind.Utc)), "an expired announcement is not live");
+    Check(RemoteSwitches.Parse("{\"announcement\":null}").Notice == null && RemoteSwitches.Parse("{}").Notice == null && RemoteSwitches.Parse("{\"announcement\":{\"ru\":\" \",\"en\":\"\"}}").Notice == null, "no announcement: null");
+    string dir2 = Path.Combine(Path.GetTempPath(), "rf-remote-" + Guid.NewGuid().ToString("N"));
+    string path2 = Path.Combine(dir2, "app-config.json");
+    an.SaveCache(path2);
+    var an2 = RemoteSwitches.LoadCache(path2);
+    Check(an2 != null && an2.Notice != null && an2.Notice.SameAs(an.Notice) && an2.Notice.LinkRu == "Подробнее" && an2.SameAs(an), "the announcement survives the saved copy (restart, site down)");
+    Check(!an.SameAs(RemoteSwitches.Parse("{\"readEnabled\":true,\"features\":{}}")), "a cleared announcement is a change");
+    try { Directory.Delete(dir2, true); } catch (Exception) { }
     try { Directory.Delete(dir, true); } catch (Exception) { }
   }
 

@@ -153,6 +153,13 @@ h2 { margin: 0 0 12px; font: 700 13px/1.2 var(--display); letter-spacing: 2px; c
 
 .remote-note { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 12px; padding: 12px 16px; margin: 0 0 14px; border: 1px solid var(--line); border-radius: 3px;
   background: linear-gradient(180deg, rgba(232, 207, 142, .07), rgba(232, 207, 142, .02)) }
+.site-note { margin: 14px 24px 0; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: start }
+.site-note.warn { border-color: var(--gold2) }
+.site-note b { white-space: pre-wrap; overflow-wrap: anywhere }
+.site-note .termsLink { margin-top: 4px }
+.note-x { background: none; border: 0; padding: 2px; cursor: pointer; color: var(--muted) }
+.note-x:hover { color: var(--goldhi) }
+.note-x svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 2 }
 .remote-note > svg { width: 22px; height: 22px; stroke: var(--gold2); fill: none; stroke-width: 2 }
 .remote-note b { display: block; color: var(--gold); font-weight: 500 }
 .remote-note p { margin: 2px 0 0; color: var(--muted); font-size: 14px }
