@@ -730,15 +730,17 @@ namespace RealmForge {
         if (IntKey(pd, 11, out v, out tt)) {
           if (tt == T_INT) h.ArtSel = (long)v;
           else if (tt == T_FLT) { double d = BitConverter.Int64BitsToDouble((long)v); if (d == Math.Floor(d) && d > 0 && d < 9e15) h.ArtSel = (long)d; }
+          else if (tt == T_SSTR || tt == T_LSTR) { long sv; if (LuaIntText(ReadLuaString(v), out sv)) h.ArtSel = sv; }   // the game compares these uids as text (tostring)
           if (h.ArtSel < 0) h.ArtSel = 0;
         }
       }
       long rowOwner = -1;
       if (h.ArtListOpen) {
-        ulong panels, p, proxy, data; int t1, t2, t3, t4;
+        ulong panels, p; int t1, t2;
         if (Field(form, "m_Panels", out panels, out t1) && t1 == T_TABLE && Field(panels, "EquipArtifact", out p, out t2) && t2 == T_TABLE) {
           h.ArtList = ReadHeroArtList(p);
-          if (Field(p, "m_InfinityGridProxy", out proxy, out t3) && t3 == T_TABLE && Field(proxy, "m_Data", out data, out t4) && t4 == T_TABLE) {
+          ulong data = FindHeroArtRows(p);
+          if (data != 0) {
             h.ArtListPtr = data;
             ReadHeroArtRows(data, goal, h, prev, out rowOwner);
           }
@@ -747,6 +749,7 @@ namespace RealmForge {
       // who wears the goal artifact now, and what the hero wears: the account's artifact table (a full pass only while the list is closed, throttled)
       long owner = rowOwner, worn = -1;
       int allType = -1; bool direct = false;
+      if (arts == 0) arts = ArtOwnerNow();   // the table that owns m_vArtifacts was not found with the live tables: searched in the background
       // the worn artifact is looked for when the tab is on and the list is closed (which button opens it), and once with the list open; later it is carried over
       bool needWorn = h.Tab == HeroArtTab && (!h.ArtListOpen || prev == null || prev.ArtWorn < 0 || prev.Hero != h.Hero);
       if (!needWorn && prev != null && prev.Hero == h.Hero) worn = prev.ArtWorn;
@@ -762,14 +765,18 @@ namespace RealmForge {
       h.ArtTargetOwner = owner;
       h.ArtWorn = worn;
       h.ArtRead = haveData && owner >= 0;
+      DumpHeroArtStructure(form, arts, goal);
       // one line when the reading changes: which of the fields could be bound (the guide waits for ArtRead)
       string diag = "hero artifact fields: m_PanelDatas " + (haveData ? "ok" : "missing") + ", [10] type " + t10 + ", [11] type " + t11
         + ", m_Panels.EquipArtifact list " + (h.ArtList != null ? "read" : "not read") + ", rows " + h.ArtUids.Count
         + ", m_vArtifacts " + (arts == 0 ? "no owner table" : "type " + allType) + ", goal owner " + owner + (owner >= 0 ? (rowOwner >= 0 ? " (list row)" : direct ? " (direct)" : " (scan)") : " (not found)")
-        + ", worn " + worn + ", tab " + h.Tab;
-      if (diag != heroArtDiag) { heroArtDiag = diag; L(diag); }
+        + ", worn " + worn + ", tab " + h.Tab
+        + (arts != 0 ? ", account scan: " + scanSeen + " entries, " + scanUidOk + " with a uid, " + scanHeroOk + " with a hero" : "")
+        + (h.ArtListOpen && h.ArtUids.Count > 0 ? ", list holds goal " + (h.ArtUids.IndexOf(goal) >= 0) : "");
+      if (diag != heroArtDiag) { heroArtDiag = diag; LL(diag); }
     }
     static string heroArtDiag = "";
+    static int scanSeen, scanUidOk, scanHeroOk;
 
     // the hero's worn artifact (the entry with iHeroId == hero) and, when the direct lookup failed, the goal's owner
     static void ScanArts(ulong all, long hero, long goal, bool needWorn, ref long owner, out long worn) {
@@ -780,16 +787,19 @@ namespace RealmForge {
         return;
       }
       long w = needWorn ? 0 : -1, o = owner;
-      int n = 0;
+      int n = 0, uidOk = 0, heroOk = 0;
       foreach (var t in TableValues(all)) {
         if (++n > 5000) break;
         long hid, uid;
         if (!ArtInt(t, "iItemUid", out uid)) continue;
+        uidOk++;
         if (!ArtHeroOf(t, out hid)) continue;
+        heroOk++;
         if (needWorn && hid == hero && w == 0 && uid > 0) w = uid;
         if (o < 0 && uid == goal) o = hid;
       }
       worn = w; owner = o;
+      scanSeen = n; scanUidOk = uidOk; scanHeroOk = heroOk;
       artScanHero = hero; artScanGoal = goal; artScanNeed = needWorn; artScanWorn = w; artScanOwner = o; artScanAt = now;
     }
 
@@ -816,6 +826,67 @@ namespace RealmForge {
         h.ArtUids.Add(uid);
         if (uid == goal && uid > 0) { long ow; goalOwner = ArtHeroOf(row, out ow) ? ow : -1; }
       }
+    }
+
+    // the list's data: the grid proxy's m_Data (Panel_Equip_Artifact.m_InfinityGridProxy). When that is missing or empty, the panel's (and its proxy's) own table fields are searched for an
+    // array of artifact entries (rows with an iItemUid): the largest one is the list; the way it was found is logged once
+    static ulong heroArtAltRows; static string heroArtAltName; static int heroArtAltAt;
+    static ulong FindHeroArtRows(ulong p) {
+      ulong proxy, data; int xt, dt; ulong std = 0;
+      bool haveProxy = Field(p, "m_InfinityGridProxy", out proxy, out xt) && xt == T_TABLE;
+      if (haveProxy && Field(proxy, "m_Data", out data, out dt) && dt == T_TABLE) {
+        std = data;
+        if (IntKey(data, 1, out data, out dt)) return std;   // filled
+      }
+      int now = Environment.TickCount;
+      if (heroArtAltRows != 0 && now - heroArtAltAt < 1500 && now >= heroArtAltAt) return heroArtAltRows;
+      heroArtAltAt = now;
+      ulong best = 0; string bestName = null; uint bestN = 0;
+      var owners = new List<KeyValuePair<string, ulong>>();
+      owners.Add(new KeyValuePair<string, ulong>("panel", p));
+      if (haveProxy) owners.Add(new KeyValuePair<string, ulong>("proxy", proxy));
+      int seen = 0;
+      for (int pass = 0; pass < owners.Count && pass < 40; pass++) {
+        foreach (var kv in TextKeyTables(owners[pass].Value)) {
+          if (++seen > 300) break;
+          string path = owners[pass].Key + "." + kv.Key;
+          uint n = ArtRowsCount(kv.Value);
+          if (n > bestN) { bestN = n; best = kv.Value; bestName = path; }
+          else if (owners[pass].Key.IndexOf('.') < 0 && owners.Count < 40 && kv.Key != "m_Form" && kv.Key != "m_RootGo") owners.Add(new KeyValuePair<string, ulong>(path, kv.Value));   // one level down (m_Filiter ...)
+        }
+      }
+      if (best != 0 && best != heroArtAltRows) { LL("hero artifact list: the rows are not in the grid proxy's m_Data; " + bestN + " artifact entries found in " + bestName); }
+      heroArtAltRows = best; heroArtAltName = bestName;
+      return best != 0 ? best : std;
+    }
+
+    // the table-valued text-key fields of a script table
+    static List<KeyValuePair<string, ulong>> TextKeyTables(ulong t) {
+      var r = new List<KeyValuePair<string, ulong>>();
+      var h = Read(t, 56); if (h == null || h[8] != 5) return r;
+      int lsize = h[11]; if (lsize > 12) return r;
+      int nn = 1 << lsize; var nb = Read(BitConverter.ToUInt64(h, 24), nn * 32); if (nb == null) return r;
+      for (int i = 0; i < nn; i++) {
+        int o = i * 32;
+        if (BitConverter.ToInt32(nb, o + 8) != T_TABLE) continue;
+        int ktt = BitConverter.ToInt32(nb, o + 24); if (ktt != T_SSTR && ktt != T_LSTR) continue;
+        var k = ReadLuaString(BitConverter.ToUInt64(nb, o + 16)); if (k == null) continue;
+        r.Add(new KeyValuePair<string, ulong>(k, BitConverter.ToUInt64(nb, o)));
+      }
+      return r;
+    }
+
+    // the length of an array of artifact entries (first entry has an iItemUid); 0 = not such a table
+    static uint ArtRowsCount(ulong t) {
+      var hd = Read(t, 56); if (hd == null || hd[8] != 5) return 0;
+      uint sizearray = BitConverter.ToUInt32(hd, 12);
+      if (sizearray > 100000) return 0;
+      ulong row; int rt; long uid;
+      if (!(IntKey(t, 1, out row, out rt) && rt == T_TABLE && ArtInt(row, "iItemUid", out uid))) return 0;
+      if (sizearray > 0) return sizearray;
+      uint n = 1;   // a short list can sit in the hash part (a table filled by table.insert)
+      while (n < 64 && IntKey(t, n + 1, out row, out rt) && rt == T_TABLE) n++;
+      return n;
     }
 
     static long GoalRowOwner(ulong data, int index) {
@@ -864,7 +935,96 @@ namespace RealmForge {
       if (!Field(t, key, out v, out tt)) return false;
       if (tt == T_INT) { val = (long)v; return true; }
       if (tt == T_FLT) { double d = BitConverter.Int64BitsToDouble((long)v); if (d == Math.Floor(d) && Math.Abs(d) < 1e15) { val = (long)d; return true; } }
+      if (tt == T_SSTR || tt == T_LSTR) return LuaIntText(ReadLuaString(v), out val);   // a uid written as text (the game compares them with tostring)
       return false;
+    }
+
+    /// <summary>A whole number written as text (a script value of type string).</summary>
+    public static bool LuaIntText(string s, out long val) {
+      val = 0;
+      if (s == null) return false;
+      return long.TryParse(s.Trim(), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out val);
+    }
+
+    // ---- the one-time dump of the artifact panels' structure (field names and Lua types, never values): the next live test shows what the game really holds
+    static readonly HashSet<string> artDumped = new HashSet<string>();
+    static int artDumpLines;
+
+    static string LuaTypeTag(int tt) {
+      switch (tt) {
+        case T_NIL: return "nil"; case T_BOOL: return "bool"; case T_FLT: return "flt"; case T_INT: return "int";
+        case T_SSTR: case T_LSTR: return "str"; case T_TABLE: return "tbl";
+        default: return (tt & 0x0F) == 7 ? "ud" : "t" + tt.ToString("x");
+      }
+    }
+
+    /// <summary>The keys of a script table with their value types: "name:type" for text keys, "[n]:type" for integer keys (at most <paramref name="max"/>), "#n" = the array part's size.</summary>
+    public static string KeysOf(ulong t, int max) {
+      var h = Read(t, 56); if (h == null || h[8] != 5) return "(not a table)";
+      int lsize = h[11]; uint sizearray = BitConverter.ToUInt32(h, 12);
+      if (lsize > 20 || sizearray > 1000000) return "(unreadable)";
+      var names = new List<string>(); int ints = 0;
+      if (sizearray > 0) {
+        var ab = Read(BitConverter.ToUInt64(h, 16), (int)Math.Min(sizearray, 64u) * 16);
+        string first = null;
+        if (ab != null) for (int i = 0; i < ab.Length / 16; i++) { int tt = BitConverter.ToInt32(ab, i * 16 + 8); if (tt != T_NIL) { first = LuaTypeTag(tt); break; } }
+        names.Add("#" + sizearray + (first != null ? " of " + first : ""));
+      }
+      int nn = 1 << lsize; var nb = Read(BitConverter.ToUInt64(h, 24), nn * 32);
+      if (nb != null) for (int i = 0; i < nn; i++) {
+        int o = i * 32; int ktt = BitConverter.ToInt32(nb, o + 24), vtt = BitConverter.ToInt32(nb, o + 8);
+        if (ktt == T_NIL || vtt == T_NIL) continue;
+        if (ktt == T_SSTR || ktt == T_LSTR) { var k = ReadLuaString(BitConverter.ToUInt64(nb, o + 16)); if (k != null) names.Add(k + ":" + LuaTypeTag(vtt)); }
+        else if (ktt == T_INT) { ints++; if (ints <= 12) names.Add("[" + BitConverter.ToInt64(nb, o + 16) + "]:" + LuaTypeTag(vtt)); }
+      }
+      names.Sort(StringComparer.Ordinal);
+      if (names.Count > max) { int n = names.Count; names = names.GetRange(0, max); names.Add("... " + n + " keys"); }
+      return string.Join(" ", names.ToArray());
+    }
+
+    static void DumpTable(string label, ulong t, int max) {
+      if (t == 0 || artDumpLines >= 60) return;
+      string key = label + "@" + t.ToString("X");
+      if (!artDumped.Add(key)) return;
+      artDumpLines++;
+      LL("hero artifact structure: " + label + " (" + t.ToString("X") + "): " + KeysOf(t, max));
+    }
+
+    /// <summary>Logs (once per table) the keys of the hero screen's artifact panels: m_PanelDatas, m_Panels, EquipArtifact (+ its grid proxy and the first row), EquipArtifactInfoTip,
+    /// EquipArtifactInfo, ArtifactPanel, the account's artifact owner and its first entry. Field names and types only.</summary>
+    static void DumpHeroArtStructure(ulong form, ulong arts, long goal) {
+      if (artDumpLines >= 60) return;
+      ulong pd, panels; int pdt, t1;
+      if (Field(form, "m_PanelDatas", out pd, out pdt) && pdt == T_TABLE) DumpTable("m_PanelDatas", pd, 40);
+      if (Field(form, "m_Panels", out panels, out t1) && t1 == T_TABLE) {
+        DumpTable("m_Panels", panels, 80);
+        foreach (var name in new[] { "EquipArtifact", "EquipArtifactInfoTip", "EquipArtifactInfo", "ArtifactPanel" }) {
+          ulong p; int pt;
+          if (!Field(panels, name, out p, out pt) || pt != T_TABLE) continue;
+          DumpTable("m_Panels." + name, p, 120);
+          ulong proxy, data; int xt, dt;
+          if (name == "EquipArtifact" && Field(p, "m_InfinityGridProxy", out proxy, out xt) && xt == T_TABLE) {
+            DumpTable("EquipArtifact.m_InfinityGridProxy", proxy, 60);
+            if (Field(proxy, "m_Data", out data, out dt) && dt == T_TABLE) {
+              DumpTable("EquipArtifact.m_InfinityGridProxy.m_Data", data, 8);
+              ulong row; int rt; if (IntKey(data, 1, out row, out rt) && rt == T_TABLE) DumpTable("EquipArtifact list row 1", row, 60);
+            }
+          }
+          ulong cur; int ct;
+          if (name == "EquipArtifactInfoTip" && Field(p, "m_curArtifact", out cur, out ct) && ct == T_TABLE) DumpTable("EquipArtifactInfoTip.m_curArtifact", cur, 60);
+        }
+      }
+      if (arts != 0) {
+        DumpTable("account artifact owner", arts, 40);
+        ulong all; int at;
+        if (Field(arts, "m_vArtifacts", out all, out at) && at == T_TABLE) {
+          DumpTable("m_vArtifacts", all, 8);
+          foreach (var row in TableValues(all)) { DumpTable("m_vArtifacts entry 1", row, 60); break; }
+        } else {
+          string k = "m_vArtifacts type " + at + "@" + arts.ToString("X");
+          if (artDumped.Add(k)) { artDumpLines++; LL("hero artifact structure: account artifact owner has m_vArtifacts of type " + LuaTypeTag(at)); }
+        }
+      }
     }
   }
 }

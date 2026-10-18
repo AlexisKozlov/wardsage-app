@@ -298,14 +298,15 @@ namespace RealmForge {
       { "artifact.tab.enhance",       new object[] { 'R', -0.1631, 'R', 0.0025, 'T', 0.0, 'T', 0.125 } },
       { "artifact.matList",           new object[] { 'L', 0.0289, 'L', 0.4117, 'T', 0.1141, 'B', -0.0876 } },
       { "artifact.promoteBtn",        new object[] { 'C', -0.3109, 'C', 0.05, 'M', 0.2812, 'M', 0.4 } },
-      // the hero screen's artifact steps of «Надеть в игре» (src/ArtEquip.cs); measured on the screen layout
+      // the hero screen's artifact steps of «Надеть в игре» (src/ArtEquip.cs): the prefab rectangles in the shown state of the sliding panels (tools/ui-geometry.py ART_SHOW;
+      // the file adds the shape and the inset of the visible art). The right panel's x is 442 units (0.6906 U) left of its authored (hidden) place.
       { "hero.artifactTab",           new object[] { 'R', -0.1656, 'R', 0.0, 'T', 0.7469, 'T', 0.8719 } },
-      { "hero.artOpenList",           new object[] { 'R', -0.2905, 'R', -0.2300, 'T', 0.2007, 'T', 0.2607 } },   // the card's swap icon (BtnDecompose), measured on a live 1920x1009 recording
-      { "hero.artAdd",                new object[] { 'R', -0.3081, 'R', -0.1856, 'M', -0.3993, 'M', -0.2366 } },
+      { "hero.artOpenList",           new object[] { 'R', -0.2953, 'R', -0.2281, 'T', 0.1969, 'T', 0.2625 } },   // the card's swap icon (BtnDecompose, a circle); its art matches a live 1920x1009 recording
+      { "hero.artAdd",                new object[] { 'R', -0.5034, 'R', -0.3809, 'M', -0.3993, 'M', -0.2366 } },
       { "hero.artList",               new object[] { 'L', 0.0289, 'L', 0.4117, 'T', 0.1609, 'B', -0.1906 } },
       { "hero.artReplace",            new object[] { 'L', 0.7031, 'L', 0.925, 'B', -0.1413, 'B', -0.0584 } },
-      { "hero.artSell",               new object[] { 'L', 0.8969, 'L', 0.9672, 'T', 0.2594, 'T', 0.3297 } },
-      { "hero.artQuickEquip",         new object[] { 'R', -0.4734, 'R', -0.2516, 'B', -0.1008, 'B', -0.018 } },
+      { "hero.artSell",               new object[] { 'L', 0.8969, 'L', 0.9672, 'T', 0.2591, 'T', 0.3294 } },
+      { "hero.artQuickEquip",         new object[] { 'R', -0.6687, 'R', -0.4469, 'B', -0.1008, 'B', -0.018 } },
       { "popup.equipReplace",         new object[] { 'C', 0.0031, 'C', 0.3641, 'M', 0.0563, 'M', 0.175 } },
     };
 

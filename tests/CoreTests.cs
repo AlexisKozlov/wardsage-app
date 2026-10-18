@@ -3804,6 +3804,26 @@ static class CoreTests {
       var h4 = new HeroScreen { Hero = hero, FormOk = true, Tab = 7 };
       RFX.ReadHeroArt(form(true, null, rows).A, arts.A, hero, 9002, h4, stale);
       Eq("9004,9002,9001,9003", string.Join(",", h4.ArtUids), "art fields: the goal moved in the list -> the rows are read again");
+      // uids written as text (the game compares them with tostring): the account's entries and the selected uid
+      Func<string, long, FTab> artT = (uid, owner) => st.T("iItemUid", uid, "iItemId", 3001L, "iHeroId", owner);
+      var artsText = st.T("m_vArtifacts", st.T(1L, artT("9001", 0), 2L, artT("9002", other), 3L, artT("9004", 0)));
+      h = new HeroScreen { Hero = hero, FormOk = true, Tab = 7 };
+      RFX.ReadHeroArt(form(null, null, rows).A, artsText.A, hero, 9002, h, null);
+      Check(h.ArtRead && h.ArtTargetOwner == other, "art fields: entries with a text iItemUid are found by the scan");
+      h = new HeroScreen { Hero = hero, FormOk = true, Tab = 7 };
+      RFX.ReadHeroArt(form(true, "9004", rows).A, arts.A, hero, 9004, h, null);
+      Check(h.ArtSel == 9004, "art fields: the selected uid written as text is read");
+      // the list's rows are not in the grid proxy's m_Data: an array of artifact entries in another field of the panel is found
+      var panelAlt = st.T("m_Other", st.T("m_Output", rows), "m_InfinityGridProxy", st.T("m_Data", st.T()));
+      var formAlt = st.T("m_PanelDatas", st.T(3L, 5L, 10L, true), "m_Panels", st.T("EquipArtifact", panelAlt));
+      h = new HeroScreen { Hero = hero, FormOk = true, Tab = 7 };
+      RFX.ReadHeroArt(formAlt.A, arts.A, hero, 9002, h, null);
+      Eq("9004,9002,9001,9003", string.Join(",", h.ArtUids), "art fields: the rows are found in another table field when the proxy's m_Data is empty");
+      Check(h.ArtTargetOwner == other, "art fields: and the goal's owner is read from them");
+      // the structure dump: field names with value types, no values
+      string keys = RFX.KeysOf(art(9002, other).A, 20);
+      Check(keys.Contains("iItemUid:int") && keys.Contains("iHeroId:int") && !keys.Contains("9002"), "art dump: keys with Lua types, no values (" + keys + ")");
+      long tv; Check(RFX.LuaIntText(" 1284195435405 ", out tv) && tv == 1284195435405L && !RFX.LuaIntText("x1", out tv) && !RFX.LuaIntText("", out tv), "art fields: a uid written as text is a number");
     } finally { RFX.TestMemory = null; RFX.ForgetLive(); RFX.ArtScanMs = 800; }
 
     // --- the steps
@@ -3844,7 +3864,7 @@ static class CoreTests {
     var g2 = ArtEquipFallback.Guess(9004, new HeroScreen { Hero = hero, FormOk = true, Tab = 7, ArtRead = false, ArtWorn = -1 }, wt);
     Check(g2.Kind == ArtEquipKind.OpenList && g2.HasWorn && g2.Name == "open", "art guess: the tab is on, list closed -> the worn card's button");
     var g3 = ArtEquipFallback.Guess(9004, new HeroScreen { Hero = hero, FormOk = true, Tab = 7, ArtListOpen = true, ArtSel = 0 }, wt);
-    Check(g3.Kind == ArtEquipKind.PickCell && g3.Pos == 0 && ArtEquipFrames.For(g3, new HeroScreen(), null, 1136, 640, Ui.Unit(1136, 640)) == null, "art guess: the list is open -> pick it, no frame for a cell it cannot place");
+    Check(g3.Kind == ArtEquipKind.PickCell && g3.Pos == 0 && ArtEquipFrames.For(g3, new HeroScreen(), null, 1136, 640, Ui.Unit(1136, 640)) != null && ArtEquipFrames.For(g3, new HeroScreen(), null, 1136, 640, Ui.Unit(1136, 640)).Target == ArtEquipFrames.KeyList, "art guess: the list is open -> pick it, the list's area is framed for a cell it cannot place");
     var g4 = ArtEquipFallback.Guess(9004, new HeroScreen { Hero = hero, FormOk = true, Tab = 7, ArtListOpen = true, ArtSel = 9004 }, wt);
     Check(g4.Kind == ArtEquipKind.PressReplace, "art guess: its card is selected -> «Заменить»");
     var gf = ArtEquipFrames.For(g1, null, null, 1136, 640, Ui.Unit(1136, 640));
@@ -3858,9 +3878,9 @@ static class CoreTests {
     var tabF = ArtEquipFrames.For(N(HS(3, false, 0, 0, 9001, null), false), null, null, Wd, Hd, U);
     Check(tabF != null && Math.Abs(tabF.Mark.X - 1030) <= 1.5 && Math.Abs(tabF.Mark.Y - 478) <= 1.5 && Math.Abs(tabF.Mark.W - 106) <= 1.5 && Math.Abs(tabF.Mark.H - 80) <= 1.5, "art frames: the «Артефакт» tab 1030..1136 x 478..558");
     var openF = ArtEquipFrames.For(s1, null, null, Wd, Hd, U); var addF = ArtEquipFrames.For(s2, null, null, Wd, Hd, U);
-    Check(openF != null && Math.Abs(openF.Mark.X - 950) <= 1.5 && Math.Abs(openF.Mark.Y - 128) <= 1.5 && Math.Abs(openF.Mark.W - 39) <= 1.5, "art frames: the worn card's swap icon 950..989 x 128..167 (live recording 1920x1009: x 1629..1687, y 202..262)");
+    Check(openF != null && Math.Abs(openF.Mark.X - 947) <= 1.5 && Math.Abs(openF.Mark.Y - 126) <= 1.5 && Math.Abs(openF.Mark.W - 43) <= 1.5, "art frames: the worn card's swap icon 947..990 x 126..168 (the art inside it matches the live recording 1920x1009: x 1629..1687, y 202..262)");
     { var of2 = ArtEquipFrames.For(s1, null, null, 1920, 1009, Ui.Unit(1920, 1009)); Check(of2 != null && Math.Abs(of2.Mark.X + of2.Mark.W / 2 - 1658) <= 4 && Math.Abs(of2.Mark.Y + of2.Mark.H / 2 - 232) <= 4, "art frames: at 1920x1009 the swap icon is where the live screen has it (1658,232)"); }
-    Check(addF != null && Math.Abs(addF.Mark.X - 939) <= 1.5 && Math.Abs(addF.Mark.Y - 64) <= 1.5 && Math.Abs(addF.Mark.W - 78) <= 1.5 && Math.Abs(addF.Mark.H - 104) <= 1.5, "art frames: the empty slot's «+» 939..1017 x 64..169");
+    Check(addF != null && Math.Abs(addF.Mark.X - 814) <= 1.5 && Math.Abs(addF.Mark.Y - 64) <= 1.5 && Math.Abs(addF.Mark.W - 78) <= 1.5 && Math.Abs(addF.Mark.H - 104) <= 1.5, "art frames: the empty slot's «+» 814..892 x 64..169 (beside the shown panel's right edge 1011)");
     var repF = ArtEquipFrames.For(s4, null, null, Wd, Hd, U);
     Check(repF != null && Math.Abs(repF.Mark.X - 450) <= 1.5 && Math.Abs(repF.Mark.Y - 549.6) <= 1.5 && Math.Abs(repF.Mark.W - 142) <= 1.5 && Math.Abs(repF.Mark.H - 53) <= 1.5, "art frames: the card's «Заменить» 450..592 x 549.6..602.6");
     var popF = ArtEquipFrames.For(N(HS(7, true, 9004, other, 9001, u5), true), null, null, Wd, Hd, U);
@@ -3896,7 +3916,7 @@ static class CoreTests {
       }
     }
     // the buttons never pressed
-    Check(ArtEquipFrames.OnNeverButton(null, 596, 188, Wd, Hd, U) && ArtEquipFrames.OnNeverButton(null, 900, 600, Wd, Hd, U), "art never: the card's sell icon and «Быстро надеть» are never pressed");
+    Check(ArtEquipFrames.OnNeverButton(null, 596, 188, Wd, Hd, U) && ArtEquipFrames.OnNeverButton(null, 780, 600, Wd, Hd, U), "art never: the card's sell icon and «Быстро надеть» are never pressed");
     Check(!ArtEquipFrames.OnNeverButton(null, 521, 576, Wd, Hd, U) && !ArtEquipFrames.OnNeverButton(null, 969, 147, Wd, Hd, U) && !ArtEquipFrames.OnNeverButton(null, 1083, 518, Wd, Hd, U), "art never: «Заменить», the list button and the tab are not on them");
     foreach (var step in new[] { s1, s2, s4, N(HS(7, true, 9004, other, 9001, u5), true), N(HS(3, false, 0, 0, 9001, null), false) }) {
       var fr = ArtEquipFrames.For(step, null, null, Wd, Hd, U);
@@ -3914,7 +3934,7 @@ static class CoreTests {
     Check(m2.Todo == ArtEquipTodo.OpenList && Math.Abs(m2.Action.X - 969.4) <= 1.5 && Math.Abs(m2.Action.Y - 147.6) <= 1.5, "art pilot: the worn card's swap icon (centre 969.4, 147.6)");
     var hEmpty = HS(7, false, 0, 0, 0, null);
     var p2b = new ArtEquipPilot(); var m2b = p2b.Step(V(N(hEmpty, false), hEmpty, false, false, 0));
-    Check(m2b.Todo == ArtEquipTodo.OpenList && Math.Abs(m2b.Action.X - 978) <= 1.5 && Math.Abs(m2b.Action.Y - 116.5) <= 1.5, "art pilot: the empty slot's «+» (centre 978, 116.5)");
+    Check(m2b.Todo == ArtEquipTodo.OpenList && Math.Abs(m2b.Action.X - 853) <= 1.5 && Math.Abs(m2b.Action.Y - 116.5) <= 1.5, "art pilot: the empty slot's «+» (centre 853, 116.5)");
     var hPick = HS(7, true, 0, other, 9001, u5);
     var p3 = new ArtEquipPilot(); var m3 = p3.Step(V(N(hPick, false), hPick, false, false, 0));
     var f4 = ArtEquipFrames.For(N(hPick, false), hPick, null, Wd, Hd, U);

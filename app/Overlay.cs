@@ -2118,7 +2118,13 @@ namespace RealmForge {
 
     Hl HlArtEq(LocateFrame lf, ArtEquipStep st, W32.POINT o) {
       var g = Geo.Current;
-      if (lf.Target == "cell") return HlRound(o.X + lf.Mark.X, o.Y + lf.Mark.Y, lf.Mark.W, lf.Mark.H, true);
+      if (lf.Target == "cell") {
+        // the card's own outline (a rounded card) from the geometry file when the whole card is on the screen; a card cut by the list's edge keeps the plain rounded box
+        var cs = g != null ? g.Shape("hero.artCell") : null; var ci = g != null ? g.Inset("hero.artCell") : null;
+        bool whole = cs != null && lf.Mark.H >= lf.Mark.W * 110.0 / 80.0 * 0.98;
+        if (!whole) return HlRound(o.X + lf.Mark.X, o.Y + lf.Mark.Y, lf.Mark.W, lf.Mark.H, true);
+        return new Hl { Rect = new GeoRect { X = o.X + lf.Mark.X, Y = o.Y + lf.Mark.Y, W = lf.Mark.W, H = lf.Mark.H }, Shape = cs, Inset = ci, Important = true };
+      }
       var ins = g != null ? g.Inset(lf.Target) : null; var sh = g != null ? g.Shape(lf.Target) : null;
       var r = ins != null && lf.Raw != null ? new GeoRect { X = o.X + lf.Raw.X, Y = o.Y + lf.Raw.Y, W = lf.Raw.W, H = lf.Raw.H } : new GeoRect { X = o.X + lf.Mark.X, Y = o.Y + lf.Mark.Y, W = lf.Mark.W, H = lf.Mark.H };
       return new Hl { Rect = r, Shape = sh, Inset = ins, Important = st.Kind == ArtEquipKind.PressReplace || st.Kind == ArtEquipKind.ConfirmTakeOver };

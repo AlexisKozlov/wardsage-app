@@ -93,6 +93,36 @@ namespace RealmForge {
       } finally { Monitor.Exit(Extractor.Gate); }
     }
 
+    static int artFindAt, artFindBusy;
+
+    /// <summary>The table that owns m_vArtifacts (ArtifactData) of the live tables; 0 when it was not found with them: then ONE background search for it starts (at most every 10 s,
+    /// skipped while an account read holds Extractor.Gate) and its result is kept in the live tables for the next call.</summary>
+    internal static ulong ArtOwnerNow() {
+      var lt = live; if (lt == null) return 0;
+      ulong v; int tt;
+      if (lt.ArtOwner != 0) { if (Field(lt.ArtOwner, KArts, out v, out tt) && tt == T_TABLE) return lt.ArtOwner; }
+      int now = Environment.TickCount; if (now == 0) now = 1;
+      if (!GuideTryDue(artFindAt, now, 10000)) return 0;
+      if (Interlocked.CompareExchange(ref artFindBusy, 1, 0) != 0) return 0;
+      artFindAt = now;
+      Task.Factory.StartNew(() => {
+        try {
+          if (!Monitor.TryEnter(Extractor.Gate)) return;
+          try {
+            var sw = Stopwatch.StartNew();
+            var tstr = FindLuaStringsFast(new[] { KArts });
+            var owners = OwnersOf(tstr);
+            if (lt.State != 0) foreach (var key in new List<string>(owners.Keys)) owners[key] = InState(owners[key], lt.State);
+            ulong o = Largest(owners, KArts);
+            if (o != 0) lt.ArtOwner = o;
+            LL("live: the artifact table " + (o != 0 ? "found" : "not found") + " in " + sw.ElapsedMilliseconds + " ms");
+          } finally { Monitor.Exit(Extractor.Gate); }
+        } catch (Exception e) { LL("live: the artifact table search failed (" + e.GetType().Name + ": " + e.Message + ")"); }
+        finally { artFindBusy = 0; }
+      });
+      return 0;
+    }
+
     /// <summary>The game pid the list readers use: the live tables' one, else the one the readers' handle was opened for.</summary>
     static int ListPid() { var lt = live; return lt != null ? lt.Pid : readerPid; }
 

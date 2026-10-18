@@ -130,9 +130,10 @@ namespace RealmForge {
     /// <summary>The frame of the step; null = none (no rectangle, or the cell cannot be placed because the list is unreadable).</summary>
     public static LocateFrame For(ArtEquipStep st, HeroScreen h, GameGeometry g, double W, double H, double U) {
       if (st == null) return null;
-      if (st.Kind == ArtEquipKind.PickCell)
-        return h != null && st.Pos > 0 ? ArtFrames.Cell(g, KeyList, h.ArtList, st.Pos - 1, 3, 116, W, H, U) : null;
-      string key = KeyOf(st.Kind, st.HasWorn);
+      if (st.Kind == ArtEquipKind.PickCell && st.Pos > 0)
+        return h != null ? ArtFrames.Cell(g, KeyList, h.ArtList, st.Pos - 1, 3, 116, W, H, U) : null;
+      string key = st.Kind == ArtEquipKind.PickCell ? KeyList : KeyOf(st.Kind, st.HasWorn);   // a cell that cannot be placed (the list's rows are unreadable): the list's area, with the plate
+      if (st.Kind == ArtEquipKind.PickCell && st.Pos <= 0 && !st.Guess) return null;
       if (key == "") return null;
       var r = ArtFrames.Rect(g, key, W, H, U);
       if (r == null) return null;
