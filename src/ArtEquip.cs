@@ -28,8 +28,10 @@ namespace RealmForge {
     public bool HasWorn;         // the hero wears an artifact now (the card says «Заменить», not «Надеть»)
     public long Owner = -1;      // iHeroId of the artifact now (-1 = unknown)
     public string Why = "";
+    /// <summary>A hint worked out from the screen's geometry alone: the artifact data could not be read (the app never clicks on a guess).</summary>
+    public bool Guess;
     public string Key {
-      get { return Kind + (Kind == ArtEquipKind.PickCell ? ":" + Pos : "") + (Kind == ArtEquipKind.OpenList || Kind == ArtEquipKind.PressReplace ? (HasWorn ? ":worn" : ":empty") : ""); }
+      get { return (Guess ? "guess:" : "") + Kind + (Kind == ArtEquipKind.PickCell ? ":" + Pos : "") + (Kind == ArtEquipKind.OpenList || Kind == ArtEquipKind.PressReplace ? (HasWorn ? ":worn" : ":empty") : ""); }
     }
     /// <summary>The step name the page gets (live.art.step).</summary>
     public string Name {
@@ -79,6 +81,31 @@ namespace RealmForge {
         return s;
       }
       s.Kind = ArtEquipKind.PickCell; s.Pos = i + 1;
+      return s;
+    }
+  }
+
+  public static class ArtEquipFallback {
+    /// <summary>How long the guide waits for unreadable artifact data before it shows the geometry-based hint.</summary>
+    public const int WaitMs = 2000;
+
+    /// <summary>The waits that come from unreadable data (not from the game: a pop-up of another kind, the list still filling).</summary>
+    public static bool Waiting(ArtEquipStep s) {
+      return s != null && s.Kind == ArtEquipKind.Wait && (s.Why == "artifact data" || s.Why == "worn artifact unknown" || s.Why == "list loading");
+    }
+
+    /// <summary>The step to show after <see cref="WaitMs"/> of waiting: what the screen itself says (the tab, the list being open, the card's selection) without the
+    /// artifact data. The tab -> the list button -> the list -> «Заменить»; the list's cells cannot be placed then (no frame, the plate only).</summary>
+    public static ArtEquipStep Guess(long goal, HeroScreen h, ArtEquipStep waiting) {
+      var s = new ArtEquipStep { Guess = true, Owner = waiting != null ? waiting.Owner : -1, Why = "geometry" };
+      if (h == null || !h.FormOk) { s.Kind = ArtEquipKind.Wait; s.Why = "screen"; return s; }
+      s.HasWorn = h.ArtWorn != 0;   // unknown (-1) -> the worn card's button; the empty slot's «+» only when the hero is known to wear nothing
+      if (h.Tab != ArtEquipGuide.ArtTabType) { s.Kind = ArtEquipKind.ArtTab; return s; }
+      if (!h.ArtListOpen) { s.Kind = ArtEquipKind.OpenList; return s; }
+      if (h.ArtSel == goal && goal > 0) { s.Kind = ArtEquipKind.PressReplace; return s; }
+      int i = h.ArtUids.IndexOf(goal);
+      if (i >= 0) { s.Kind = ArtEquipKind.PickCell; s.Pos = i + 1; return s; }
+      s.Kind = ArtEquipKind.PickCell; s.Pos = 0;   // the list is open: "pick it" without a frame
       return s;
     }
   }
@@ -180,6 +207,7 @@ namespace RealmForge {
       why = "";
       var st = v.Step;
       if (st == null) return ArtEquipTodo.Nothing;
+      if (st.Guess) { why = "guess"; return ArtEquipTodo.Hint; }
       var h = v.Hero;
       if (h == null || !h.FormOk) { why = "screen"; return ArtEquipTodo.Hint; }
       switch (st.Kind) {

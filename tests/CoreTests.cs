@@ -3662,6 +3662,19 @@ static class CoreTests {
       h = new HeroScreen { Hero = hero, FormOk = true, Tab = 7 };
       RFX.ReadHeroArt(form(null, null, rows).A, arts.A, hero, 7777, h, null);
       Check(!h.ArtRead && h.ArtTargetOwner == -1, "art fields: the goal is not in the account's table -> not read");
+      // live 2026-10-18: the server leaves iHeroId out of a FREE artifact (the script reads the default 0): that is "free", not "unreadable"
+      var freeArt = st.T("iItemUid", 9010L, "iItemId", 3001L);
+      var artsFree = st.T("m_vArtifacts", st.T(1L, art(9001, 0), 2L, freeArt, 3L, art(9003, hero)), "class", st.T("__cname", "ArtifactData"));   // an array, as the game keeps it
+      h = new HeroScreen { Hero = hero, FormOk = true, Tab = 3 };
+      RFX.ReadHeroArt(form(null, null, rows).A, artsFree.A, hero, 9010, h, null);
+      Check(h.ArtRead && h.ArtTargetOwner == 0, "art fields: an artifact with no iHeroId key is free (owner 0), the data is read (" + h.ArtTargetOwner + ")");
+      h = new HeroScreen { Hero = hero, FormOk = true, Tab = 7 };
+      RFX.ReadHeroArt(form(null, null, rows).A, artsFree.A, hero, 9010, h, null);
+      Check(h.ArtRead && h.ArtTargetOwner == 0 && h.ArtWorn == 9003, "art fields: the free artifact is found by the scan and the hero's worn artifact too");
+      var rowsFree = st.T(1L, art(9004, 0), 2L, freeArt);
+      h = new HeroScreen { Hero = hero, FormOk = true, Tab = 7 };
+      RFX.ReadHeroArt(form(true, null, rowsFree).A, artsFree.A, hero, 9010, h, null);
+      Check(h.ArtRead && h.ArtTargetOwner == 0 && h.ArtUids.Count == 2, "art fields: a free goal's list row without iHeroId is owner 0");
       h = new HeroScreen { Hero = hero, FormOk = true, Tab = 3 };
       RFX.ReadHeroArt(form(null, null, rows).A, arts.A, hero, 9002, h, null);
       Check(h.ArtRead && h.ArtWorn == -1 && h.ArtTargetOwner == other, "art fields: on the gear tab the worn artifact is not looked for");
@@ -3712,12 +3725,30 @@ static class CoreTests {
     Check(N(HS(7, true, 0, other, 9001, new long[] { 9001, 9002 }), false).Kind == ArtEquipKind.NotInList, "art steps: the list has no such artifact -> the player's filter");
     Check(N(HS(7, true, 0, other, 9001, new long[0]), false).Kind == ArtEquipKind.Wait, "art steps: the list is still empty -> wait (it fills after the panel slides in)");
 
+    // --- unreadable artifact data: after the wait the screen's geometry gives the hint, never a click
+    var wt = N(new HeroScreen { Hero = hero, FormOk = true, Tab = 3, ArtRead = false }, false);
+    Check(ArtEquipFallback.Waiting(wt) && !ArtEquipFallback.Waiting(N(HS(7, true, 9001, other, 9001, u5), true)), "art guess: only data waits are guessed (a foreign pop-up is not)");
+    var g1 = ArtEquipFallback.Guess(9004, new HeroScreen { Hero = hero, FormOk = true, Tab = 3, ArtRead = false, ArtWorn = -1 }, wt);
+    Check(g1.Guess && g1.Kind == ArtEquipKind.ArtTab && g1.Name == "tab" && g1.Key.StartsWith("guess:"), "art guess: another tab -> the «Артефакт» tab");
+    var g2 = ArtEquipFallback.Guess(9004, new HeroScreen { Hero = hero, FormOk = true, Tab = 7, ArtRead = false, ArtWorn = -1 }, wt);
+    Check(g2.Kind == ArtEquipKind.OpenList && g2.HasWorn && g2.Name == "open", "art guess: the tab is on, list closed -> the worn card's button");
+    var g3 = ArtEquipFallback.Guess(9004, new HeroScreen { Hero = hero, FormOk = true, Tab = 7, ArtListOpen = true, ArtSel = 0 }, wt);
+    Check(g3.Kind == ArtEquipKind.PickCell && g3.Pos == 0 && ArtEquipFrames.For(g3, new HeroScreen(), null, 1136, 640, Ui.Unit(1136, 640)) == null, "art guess: the list is open -> pick it, no frame for a cell it cannot place");
+    var g4 = ArtEquipFallback.Guess(9004, new HeroScreen { Hero = hero, FormOk = true, Tab = 7, ArtListOpen = true, ArtSel = 9004 }, wt);
+    Check(g4.Kind == ArtEquipKind.PressReplace, "art guess: its card is selected -> «Заменить»");
+    var gf = ArtEquipFrames.For(g1, null, null, 1136, 640, Ui.Unit(1136, 640));
+    Check(gf != null && gf.Mark.Kind == "box", "art guess: the tab step has its frame");
+    string gwhy;
+    Check(ArtEquipPilot.Decide(new ArtEquipView { Step = g1, Hero = new HeroScreen { Hero = hero, FormOk = true } }, out gwhy) == ArtEquipTodo.Hint && gwhy == "guess", "art guess: the pilot never clicks on a guess");
+    Check(ArtEquipFallback.Guess(9004, null, wt).Kind == ArtEquipKind.Wait, "art guess: no hero screen -> still waiting");
+
     // --- the frames: the built-in numbers (no geometry) and the site's file
     double Wd = 1136, Hd = 640, U = Ui.Unit(Wd, Hd);
     var tabF = ArtEquipFrames.For(N(HS(3, false, 0, 0, 9001, null), false), null, null, Wd, Hd, U);
     Check(tabF != null && Math.Abs(tabF.Mark.X - 1030) <= 1.5 && Math.Abs(tabF.Mark.Y - 478) <= 1.5 && Math.Abs(tabF.Mark.W - 106) <= 1.5 && Math.Abs(tabF.Mark.H - 80) <= 1.5, "art frames: the «Артефакт» tab 1030..1136 x 478..558");
     var openF = ArtEquipFrames.For(s1, null, null, Wd, Hd, U); var addF = ArtEquipFrames.For(s2, null, null, Wd, Hd, U);
-    Check(openF != null && Math.Abs(openF.Mark.X - 1072) <= 1.5 && Math.Abs(openF.Mark.Y - 126) <= 1.5 && Math.Abs(openF.Mark.W - 43) <= 1.5, "art frames: the worn card's button 1072..1115 x 126..168");
+    Check(openF != null && Math.Abs(openF.Mark.X - 950) <= 1.5 && Math.Abs(openF.Mark.Y - 128) <= 1.5 && Math.Abs(openF.Mark.W - 39) <= 1.5, "art frames: the worn card's swap icon 950..989 x 128..167 (live recording 1920x1009: x 1629..1687, y 202..262)");
+    { var of2 = ArtEquipFrames.For(s1, null, null, 1920, 1009, Ui.Unit(1920, 1009)); Check(of2 != null && Math.Abs(of2.Mark.X + of2.Mark.W / 2 - 1658) <= 4 && Math.Abs(of2.Mark.Y + of2.Mark.H / 2 - 232) <= 4, "art frames: at 1920x1009 the swap icon is where the live screen has it (1658,232)"); }
     Check(addF != null && Math.Abs(addF.Mark.X - 939) <= 1.5 && Math.Abs(addF.Mark.Y - 64) <= 1.5 && Math.Abs(addF.Mark.W - 78) <= 1.5 && Math.Abs(addF.Mark.H - 104) <= 1.5, "art frames: the empty slot's «+» 939..1017 x 64..169");
     var repF = ArtEquipFrames.For(s4, null, null, Wd, Hd, U);
     Check(repF != null && Math.Abs(repF.Mark.X - 450) <= 1.5 && Math.Abs(repF.Mark.Y - 549.6) <= 1.5 && Math.Abs(repF.Mark.W - 142) <= 1.5 && Math.Abs(repF.Mark.H - 53) <= 1.5, "art frames: the card's «Заменить» 450..592 x 549.6..602.6");
@@ -3755,7 +3786,7 @@ static class CoreTests {
     }
     // the buttons never pressed
     Check(ArtEquipFrames.OnNeverButton(null, 596, 188, Wd, Hd, U) && ArtEquipFrames.OnNeverButton(null, 900, 600, Wd, Hd, U), "art never: the card's sell icon and «Быстро надеть» are never pressed");
-    Check(!ArtEquipFrames.OnNeverButton(null, 521, 576, Wd, Hd, U) && !ArtEquipFrames.OnNeverButton(null, 1093, 147, Wd, Hd, U) && !ArtEquipFrames.OnNeverButton(null, 1083, 518, Wd, Hd, U), "art never: «Заменить», the list button and the tab are not on them");
+    Check(!ArtEquipFrames.OnNeverButton(null, 521, 576, Wd, Hd, U) && !ArtEquipFrames.OnNeverButton(null, 969, 147, Wd, Hd, U) && !ArtEquipFrames.OnNeverButton(null, 1083, 518, Wd, Hd, U), "art never: «Заменить», the list button and the tab are not on them");
     foreach (var step in new[] { s1, s2, s4, N(HS(7, true, 9004, other, 9001, u5), true), N(HS(3, false, 0, 0, 9001, null), false) }) {
       var fr = ArtEquipFrames.For(step, null, null, Wd, Hd, U);
       Check(fr != null && !ArtEquipFrames.OnNeverButton(null, fr.Mark.X + fr.Mark.W / 2.0, fr.Mark.Y + fr.Mark.H / 2.0, Wd, Hd, U), "art never: the centre of the " + step.Kind + " frame is not on a never-pressed button");
@@ -3769,7 +3800,7 @@ static class CoreTests {
     Check(p1.Step(V(N(hTab, false), hTab, false, false, 100)).Action.Kind == AutoKind.None, "art pilot: a second click waits for the first one's effect");
     var hOpen = HS(7, false, 0, 0, 9001, null);
     var p2 = new ArtEquipPilot(); var m2 = p2.Step(V(N(hOpen, false), hOpen, false, false, 0));
-    Check(m2.Todo == ArtEquipTodo.OpenList && Math.Abs(m2.Action.X - 1093.5) <= 1.5 && Math.Abs(m2.Action.Y - 147) <= 1.5, "art pilot: the worn card's button (centre 1093.5, 147)");
+    Check(m2.Todo == ArtEquipTodo.OpenList && Math.Abs(m2.Action.X - 969.4) <= 1.5 && Math.Abs(m2.Action.Y - 147.6) <= 1.5, "art pilot: the worn card's swap icon (centre 969.4, 147.6)");
     var hEmpty = HS(7, false, 0, 0, 0, null);
     var p2b = new ArtEquipPilot(); var m2b = p2b.Step(V(N(hEmpty, false), hEmpty, false, false, 0));
     Check(m2b.Todo == ArtEquipTodo.OpenList && Math.Abs(m2b.Action.X - 978) <= 1.5 && Math.Abs(m2b.Action.Y - 116.5) <= 1.5, "art pilot: the empty slot's «+» (centre 978, 116.5)");

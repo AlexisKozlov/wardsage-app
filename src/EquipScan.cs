@@ -713,7 +713,10 @@ namespace RealmForge {
       h.ArtRead = false; h.ArtListOpen = false; h.ArtSel = 0; h.ArtTargetOwner = -1; h.ArtWorn = -1;
       ulong pd, v; int tt, pdt;
       bool haveData = Field(form, "m_PanelDatas", out pd, out pdt) && pdt == T_TABLE;
+      int t10 = -1, t11 = -1;
       if (haveData) {
+        if (IntKey(pd, 10, out v, out tt)) t10 = tt;
+        if (IntKey(pd, 11, out v, out tt)) t11 = tt;
         if (IntKey(pd, 10, out v, out tt)) h.ArtListOpen = tt == T_TABLE || (tt == T_BOOL ? (v & 0xFFFFFFFF) != 0 : tt != T_NIL);
         if (IntKey(pd, 11, out v, out tt)) {
           if (tt == T_INT) h.ArtSel = (long)v;
@@ -734,20 +737,30 @@ namespace RealmForge {
       }
       // who wears the goal artifact now, and what the hero wears: the account's artifact table (a full pass only while the list is closed, throttled)
       long owner = rowOwner, worn = -1;
+      int allType = -1; bool direct = false;
       // the worn artifact is looked for when the tab is on and the list is closed (which button opens it), and once with the list open; later it is carried over
       bool needWorn = h.Tab == HeroArtTab && (!h.ArtListOpen || prev == null || prev.ArtWorn < 0 || prev.Hero != h.Hero);
       if (!needWorn && prev != null && prev.Hero == h.Hero) worn = prev.ArtWorn;
       if (arts != 0) {
         ulong all; int at;
+        if (Field(arts, "m_vArtifacts", out all, out at)) allType = at;
         if (Field(arts, "m_vArtifacts", out all, out at) && at == T_TABLE) {
-          if (owner < 0) { ulong row; int rt; long ow; if (IntKey(all, goal, out row, out rt) && rt == T_TABLE && ArtInt(row, "iHeroId", out ow)) owner = ow; }
+          direct = owner >= 0;
+          if (owner < 0) { ulong row; int rt; long ow; if (IntKey(all, goal, out row, out rt) && rt == T_TABLE && ArtHeroOf(row, out ow)) owner = ow; }
           if (needWorn || owner < 0) { long sw; ScanArts(all, hero, goal, needWorn, ref owner, out sw); if (needWorn) worn = sw; }
         }
       }
       h.ArtTargetOwner = owner;
       h.ArtWorn = worn;
       h.ArtRead = haveData && owner >= 0;
+      // one line when the reading changes: which of the fields could be bound (the guide waits for ArtRead)
+      string diag = "hero artifact fields: m_PanelDatas " + (haveData ? "ok" : "missing") + ", [10] type " + t10 + ", [11] type " + t11
+        + ", m_Panels.EquipArtifact list " + (h.ArtList != null ? "read" : "not read") + ", rows " + h.ArtUids.Count
+        + ", m_vArtifacts " + (arts == 0 ? "no owner table" : "type " + allType) + ", goal owner " + owner + (owner >= 0 ? (rowOwner >= 0 ? " (list row)" : direct ? " (direct)" : " (scan)") : " (not found)")
+        + ", worn " + worn + ", tab " + h.Tab;
+      if (diag != heroArtDiag) { heroArtDiag = diag; L(diag); }
     }
+    static string heroArtDiag = "";
 
     // the hero's worn artifact (the entry with iHeroId == hero) and, when the direct lookup failed, the goal's owner
     static void ScanArts(ulong all, long hero, long goal, bool needWorn, ref long owner, out long worn) {
@@ -762,8 +775,8 @@ namespace RealmForge {
       foreach (var t in TableValues(all)) {
         if (++n > 5000) break;
         long hid, uid;
-        if (!ArtInt(t, "iHeroId", out hid)) continue;
         if (!ArtInt(t, "iItemUid", out uid)) continue;
+        if (!ArtHeroOf(t, out hid)) continue;
         if (needWorn && hid == hero && w == 0 && uid > 0) w = uid;
         if (o < 0 && uid == goal) o = hid;
       }
@@ -792,13 +805,13 @@ namespace RealmForge {
         if (!IntKey(data, i, out row, out rt) || rt != T_TABLE) break;
         if (!ArtInt(row, "iItemUid", out uid)) uid = 0;
         h.ArtUids.Add(uid);
-        if (uid == goal && uid > 0) { long ow; goalOwner = ArtInt(row, "iHeroId", out ow) ? ow : -1; }
+        if (uid == goal && uid > 0) { long ow; goalOwner = ArtHeroOf(row, out ow) ? ow : -1; }
       }
     }
 
     static long GoalRowOwner(ulong data, int index) {
       ulong row; int rt; long ow;
-      return IntKey(data, index, out row, out rt) && rt == T_TABLE && ArtInt(row, "iHeroId", out ow) ? ow : -1;
+      return IntKey(data, index, out row, out rt) && rt == T_TABLE && ArtHeroOf(row, out ow) ? ow : -1;
     }
 
     // the field names the list's scroll may be held under (the first that reads is kept)
@@ -817,6 +830,19 @@ namespace RealmForge {
         }
       if (!heroArtSaid) { heroArtSaid = true; L("hero artifact list: no scroll field read (tried " + string.Join(", ", HeroArtScrollFields) + ") - no frames on the cells"); }
       return null;
+    }
+
+    // the hero wearing an artifact entry. The server leaves iHeroId out of an artifact nobody wears (the script reads the default 0), so an entry
+    // with an iItemUid and no iHeroId key is FREE (0); only an iHeroId of an odd type is unreadable. (Live 2026-10-18: the planned artifact was
+    // free, its owner stayed -1 and the guide waited for ever.)
+    static bool ArtHeroOf(ulong row, out long hero) {
+      hero = 0;
+      ulong v; int tt;
+      if (!Field(row, "iHeroId", out v, out tt) || tt == T_NIL) {
+        long uid;
+        return ArtInt(row, "iItemUid", out uid) && uid > 0;
+      }
+      return ArtInt(row, "iHeroId", out hero);
     }
 
     // an integer field of a script table (an integer, or a float with a whole value)

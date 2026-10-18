@@ -428,7 +428,7 @@ namespace RealmForge {
     // ---- «Надеть в игре» with an artifact (src/ArtEquip.cs): after the gear the guide puts the plan's artifact on the hero (hint kind "art")
     long artHero, artUid;
     readonly ArtEquipPilot artEq = new ArtEquipPilot();
-    ArtEquipStep artEqStep; string artEqSaid = "", artEqAutoSaid = "";
+    ArtEquipStep artEqStep; long artWaitSince; string artEqSaid = "", artEqAutoSaid = "";
     /// <summary>The artifact steps are on: the gear of the plan is done and the page asks for the artifact (hint "art" with the hero and the artifact).</summary>
     bool ArtPhase { get { return hintKind == "art" && artUid != 0 && artHero != 0; } }
 
@@ -2059,6 +2059,15 @@ namespace RealmForge {
       var st = screens.Current;
       bool popup = st != null && st.ModalOpen && st.ModalWhy == ClickGate.ModalEquipPopup;
       var step = ArtEquipGuide.Next(artHero, artUid, screens.Hero, popup);
+      // the artifact data cannot be read: after a moment the screen's own geometry gives the hint (never a click), so the player always sees a frame
+      if (ArtEquipFallback.Waiting(step)) {
+        long wn = NowMs();
+        if (artWaitSince == 0 || wn < artWaitSince) artWaitSince = wn;
+        if (wn - artWaitSince >= ArtEquipFallback.WaitMs) {
+          var gs = ArtEquipFallback.Guess(artUid, screens.Hero, step);
+          if (gs.Kind != ArtEquipKind.Wait) step = gs;
+        }
+      } else artWaitSince = 0;
       artEqStep = step;
       var hs = screens.Hero;
       string sig = step.Key + "|" + step.Why + "|" + step.Owner;
@@ -2100,6 +2109,8 @@ namespace RealmForge {
     void TickArtHint(W32.POINT o, double W, double H) {
       double U = Ui.Unit(W, H);
       var st = artEqStep; var hs = screens.Hero;
+      // the hero is not open: the same way in as the gear steps (the «Герои» button, the hero list with the plan's hero framed, back out of a gear list)
+      if (st != null && st.Kind == ArtEquipKind.Hero) { TickHeroHint(o, W, H); return; }
       if (st == null || st.Kind == ArtEquipKind.Done) { if (glow.Visible) glow.Hide(); drawnKey = null; HideTip(); return; }
       string main = Tx("art_" + st.Name), caps = Tx("art_caps");
       var lines = main != "" ? new[] { main } : new string[0];
