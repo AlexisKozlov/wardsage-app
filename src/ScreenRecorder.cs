@@ -4,7 +4,8 @@
 // Contract (implemented by the site, staging only):
 //   POST {site}/api/extractor/test-recording?rec=<id>&part=<n>   Authorization: Bearer <sync code>, X-RF-Player (as test-log)
 //        body application/zip <= 8 MB (frame_0001.jpg ... and frames.jsonl); rec [A-Za-z0-9-]{8,40}, part 0..119
-//        200 ok | 404 (the endpoint is off: stop uploading, keep the files) | 401/429/5xx/no connection: keep the part, retry later
+//        200 ok | 404 (the endpoint is off: stop uploading, keep the files) | 413 (part over the limit: drop that part, log it)
+//        | 429 (quota: stop uploading this recording, keep the files) | 401/5xx/no connection: keep the part, retry later
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -143,8 +144,10 @@ namespace RealmForge {
     public void AddText(string name, string text) {
       var e = zip.CreateEntry(name, CompressionLevel.Optimal);
       var b = new UTF8Encoding(false).GetBytes(text ?? "");
+      long before = 0; try { before = fs.Position; } catch (Exception) { }
       using (var s = e.Open()) s.Write(b, 0, b.Length);
-      Bytes += b.Length / 4;
+      long grew = 0; try { grew = fs.Position - before; } catch (Exception) { }
+      Bytes += Math.Max(grew, b.Length / 4);
     }
 
     /// <summary>Finishes the file; the path of the part, null when nothing was added (then no file is left).</summary>
@@ -164,10 +167,16 @@ namespace RealmForge {
   }
 
   public static class RecClient {
+    /// <summary>What the last Send on this thread ended with: the HTTP status (0 = none, no answer) and a short kind ("ok", "http 413", "timeout",
+    /// "no connection", "bad input" ...), for the log line.</summary>
+    [ThreadStatic] public static int LastStatus;
+    [ThreadStatic] public static string LastKind;
+
     /// <summary>Sends one part. Never throws. Ok = delivered; Off = the site has no such endpoint (stop); Later = keep the part.</summary>
     public static TestLogClient.Result Send(string site, string code, string rec, int part, string file) {
       try {
-        if (string.IsNullOrEmpty(site) || !SyncClient.IsValidCode(code) || !RecNames.IsValidId(rec) || part < 0 || part > RecNames.MaxPart) return TestLogClient.Result.Later;
+        LastStatus = 0; LastKind = "";
+        if (string.IsNullOrEmpty(site) || !SyncClient.IsValidCode(code) || !RecNames.IsValidId(rec) || part < 0 || part > RecNames.MaxPart) { LastKind = "bad input"; return TestLogClient.Result.Later; }
         byte[] body = File.ReadAllBytes(file);
         SyncClient.EnableTls12();
         var req = (HttpWebRequest)WebRequest.Create(site.TrimEnd('/') + "/api/extractor/test-recording?rec=" + rec + "&part=" + part.ToString(CultureInfo.InvariantCulture));
@@ -186,15 +195,17 @@ namespace RealmForge {
         try { resp = (HttpWebResponse)req.GetResponse(); }
         catch (WebException e) {
           resp = e.Response as HttpWebResponse;
-          if (resp == null) return TestLogClient.Result.Later;
+          if (resp == null) { LastKind = e.Status == WebExceptionStatus.Timeout ? "timeout" : "no answer (" + e.Status + ")"; return TestLogClient.Result.Later; }
         }
         using (resp) {
           int c = (int)resp.StatusCode;
+          LastStatus = c; LastKind = c == 200 ? "ok" : "http " + c;
           if (c == 200) return TestLogClient.Result.Ok;
           if (c == 404) return TestLogClient.Result.Off;
           return TestLogClient.Result.Later;
         }
-      } catch (Exception) { return TestLogClient.Result.Later; }
+      } catch (WebException e) { LastKind = e.Status == WebExceptionStatus.Timeout ? "timeout" : "no answer (" + e.Status + ")"; return TestLogClient.Result.Later; }
+      catch (Exception e) { LastKind = "error " + e.GetType().Name; return TestLogClient.Result.Later; }
     }
   }
 
@@ -208,8 +219,8 @@ namespace RealmForge {
     readonly object gate = new object();
     readonly List<Item> queue = new List<Item>();
     readonly AutoResetEvent wake = new AutoResetEvent(false);
-    bool closed, started, off;
-    int sent, total;
+    bool closed, started, off, limited;
+    int sent, total, dropped;
     Thread th;
     /// <summary>The wait after a failed send (ms); a field so a test can shorten it.</summary>
     public int RetryMs = 30000;
@@ -221,6 +232,10 @@ namespace RealmForge {
     public int Sent { get { lock (gate) return sent; } }
     public int Total { get { lock (gate) return total; } }
     public bool Off { get { lock (gate) return off; } }
+    /// <summary>Stopped because of the site's quota (429), not because the endpoint is missing.</summary>
+    public bool Limited { get { lock (gate) return limited; } }
+    /// <summary>Parts the site refused as too large.</summary>
+    public int Dropped { get { lock (gate) return dropped; } }
     public bool Idle { get { lock (gate) return queue.Count == 0 && closed; } }
 
     public void Add(int part, string path) {
@@ -247,8 +262,19 @@ namespace RealmForge {
         long now = RecInfo.NowMs();
         if (it == null || now < retryAt) { wake.WaitOne(it == null ? 1000 : (int)Math.Max(50, Math.Min(1000, retryAt - now))); continue; }
         long size = 0; try { size = new FileInfo(it.Path).Length; } catch (Exception) { }
+        RecClient.LastStatus = 0; RecClient.LastKind = "";
         var r = Sender(site(), code(), rec, it.Part, it.Path);
-        if (r == TestLogClient.Result.Ok) {
+        int status = RecClient.LastStatus; string kind = RecClient.LastKind;
+        if (r == TestLogClient.Result.Later && status == 413) {
+          // over the server's limit: it will never be accepted, so do not retry it forever
+          lock (gate) { queue.Remove(it); dropped++; }
+          log("recording " + rec + ": part " + it.Part + " dropped, the site refused it as too large (http 413, " + size + " bytes)");
+        } else if (r == TestLogClient.Result.Later && status == 429) {
+          // the quota: more tries only add load; the files stay on disk
+          lock (gate) { off = true; limited = true; queue.Clear(); }
+          log("recording " + rec + ": the site's upload quota is reached (http 429, part " + it.Part + ", " + size + " bytes), no more parts of this recording are sent, the files stay in " + Path.GetDirectoryName(it.Path));
+          return;
+        } else if (r == TestLogClient.Result.Ok) {
           lock (gate) { queue.Remove(it); sent++; }
           try { File.Delete(it.Path); } catch (Exception) { }
           log("recording " + rec + ": part " + it.Part + " sent (" + size + ")");
@@ -258,7 +284,7 @@ namespace RealmForge {
           return;
         } else {
           retryAt = RecInfo.NowMs() + RetryMs;
-          log("recording " + rec + ": part " + it.Part + " not sent, will retry");
+          log("recording " + rec + ": part " + it.Part + " not sent (" + (string.IsNullOrEmpty(kind) ? "no detail" : kind) + ", " + size + " bytes), will retry");
         }
       }
     }

@@ -941,6 +941,28 @@ static class CoreTests {
       for (int i = 0; i < 100 && !up2.Off; i++) System.Threading.Thread.Sleep(50);
       Check(up2.Off && File.Exists(p2), "upload: 404 stops and keeps the file");
       Eq(TestLogClient.Result.Later, RecClient.Send("http://127.0.0.1:1", "rf_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", id, 0, p2), "send: no connection is later");
+      // 413: the part is dropped with a log line (no endless retry); 429: the recording stops uploading, files stay
+      string p3 = Path.Combine(dir, "part_006.zip"); File.WriteAllBytes(p3, new byte[] { 1, 2 });
+      var logs3 = new List<string>(); int calls3 = 0;
+      var up3 = new RecUploader(id, () => "http://x", () => "c", s => { lock (logs3) logs3.Add(s); }) { RetryMs = 50 };
+      up3.Sender = (x1, x2, x3, x4, x5) => { calls3++; RecClient.LastStatus = 413; RecClient.LastKind = "http 413"; return TestLogClient.Result.Later; };
+      up3.Add(6, p3); up3.Close();
+      for (int i = 0; i < 100 && !up3.Idle; i++) System.Threading.Thread.Sleep(50);
+      Check(up3.Idle && up3.Dropped == 1 && calls3 == 1, "upload: 413 drops the part, no retry (calls " + calls3 + ")");
+      lock (logs3) Check(logs3.Exists(x => x.Contains("part 6 dropped") && x.Contains("413")), "upload: 413 log line");
+      var logs4 = new List<string>(); int calls4 = 0;
+      var up4 = new RecUploader(id, () => "http://x", () => "c", s => { lock (logs4) logs4.Add(s); }) { RetryMs = 50 };
+      up4.Sender = (x1, x2, x3, x4, x5) => { calls4++; RecClient.LastStatus = 429; RecClient.LastKind = "http 429"; return TestLogClient.Result.Later; };
+      up4.Add(6, p3); up4.Add(7, p3); up4.Close();
+      for (int i = 0; i < 100 && !up4.Off; i++) System.Threading.Thread.Sleep(50);
+      Check(up4.Off && up4.Limited && calls4 == 1 && File.Exists(p3), "upload: 429 stops the recording, keeps the file (calls " + calls4 + ")");
+      lock (logs4) Check(logs4.Exists(x => x.Contains("quota") && x.Contains("429")), "upload: 429 log line");
+      var logs5 = new List<string>(); int calls5 = 0;
+      var up5 = new RecUploader(id, () => "http://x", () => "c", s => { lock (logs5) logs5.Add(s); }) { RetryMs = 50 };
+      up5.Sender = (x1, x2, x3, x4, x5) => { if (++calls5 == 1) { RecClient.LastStatus = 401; RecClient.LastKind = "http 401"; return TestLogClient.Result.Later; } return TestLogClient.Result.Ok; };
+      up5.Add(6, p3); up5.Close();
+      for (int i = 0; i < 100 && !up5.Idle; i++) System.Threading.Thread.Sleep(50);
+      lock (logs5) Check(logs5.Exists(x => x.Contains("not sent (http 401, 2 bytes)")), "upload: not-sent line has the status and the size");
     } finally { try { Directory.Delete(dir, true); } catch (Exception) { } }
   }
 
