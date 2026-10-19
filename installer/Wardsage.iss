@@ -85,6 +85,8 @@ ru.TaskErrorReports=Отправлять отчёты об ошибках
 en.TaskErrorReports=Send error reports
 ru.TasksOptions=Параметры программы (можно изменить позже в настройках):
 en.TasksOptions=App options (can be changed later in the settings):
+ru.WebViewInstalling=Устанавливается компонент Microsoft Edge WebView2 (нужен для окна программы)...
+en.WebViewInstalling=Installing Microsoft Edge WebView2 (the app's window needs it)...
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
@@ -156,11 +158,76 @@ begin
     ', "lang": "' + Lang + '"}', False);
 end;
 
+// The app's window is a WebView2: without its runtime the app only offers Microsoft's download page and quits
+// (app/Program.cs). Windows 11 and an updated Windows 10 have it; stripped-down ones (LTSC, «lite» builds) may not.
+// Then the installer downloads Microsoft's bootstrapper on «Install» and runs it after the files are in place: per user
+// without administrator rights, for the whole PC when the installer runs elevated. A failed download or install does not
+// stop the setup: the app still explains it at its start.
+const
+  WebViewClient = 'Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}';
+  WebViewSetup = 'MicrosoftEdgeWebview2Setup.exe';
+
+var
+  DownloadPage: TDownloadWizardPage;
+  WebViewReady: Boolean;
+
+// Microsoft's documented check: the client's «pv» value, set and not 0.0.0.0, machine-wide (32-bit view) or per user
+function WebViewKey(RootKey: Integer; SubKey: String): Boolean;
+var
+  V: String;
+begin
+  Result := RegQueryStringValue(RootKey, SubKey, 'pv', V) and (V <> '') and (V <> '0.0.0.0');
+end;
+
+function WebViewInstalled: Boolean;
+begin
+  Result := WebViewKey(HKLM32, 'SOFTWARE\' + WebViewClient) or WebViewKey(HKCU, 'Software\' + WebViewClient);
+end;
+
+procedure InitializeWizard;
+begin
+  DownloadPage := CreateDownloadPage(SetupMessage(msgWizardPreparing), SetupMessage(msgPreparingDesc), nil);
+  DownloadPage.ShowBaseNameInsteadOfUrl := True;
+end;
+
+function NextButtonClick(CurPageID: Integer): Boolean;
+begin
+  Result := True;
+  if (CurPageID <> wpReady) or WebViewInstalled then Exit;
+  DownloadPage.Clear;
+  // the Evergreen bootstrapper (~2 MB, signed by Microsoft; it fetches the runtime itself)
+  DownloadPage.Add('https://go.microsoft.com/fwlink/p/?LinkId=2124703', WebViewSetup, '');
+  DownloadPage.Show;
+  try
+    try
+      DownloadPage.Download;
+      WebViewReady := True;
+    except
+      Log('WebView2 bootstrapper download failed: ' + GetExceptionMessage);
+    end;
+  finally
+    DownloadPage.Hide;
+  end;
+end;
+
+procedure InstallWebView;
+var
+  Code: Integer;
+begin
+  if not WebViewReady or WebViewInstalled then Exit;
+  WizardForm.StatusLabel.Caption := CustomMessage('WebViewInstalling');
+  if Exec(ExpandConstant('{tmp}\' + WebViewSetup), '/silent /install', '', SW_HIDE, ewWaitUntilTerminated, Code) then
+    Log('WebView2 bootstrapper exit code ' + IntToStr(Code))
+  else
+    Log('WebView2 bootstrapper did not start: ' + SysErrorMessage(Code));
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
   begin
     SaveStringToFile(ExpandConstant('{app}\install-lang.txt'), ActiveLanguage, False);
     WriteOptions;
+    InstallWebView;
   end;
 end;
