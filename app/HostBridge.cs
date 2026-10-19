@@ -66,12 +66,13 @@ namespace RealmForge {
       arenaWatch = new ArenaWatch(() => cfg.Site, () => cfg.Code);
       guildWatch = new GuildWatch(() => cfg.Site, () => cfg.Code, st => Post("{\"ev\":\"guild\",\"state\":" + S(st) + "}"));
       packsWatch = new PacksWatch(() => cfg.Site, () => cfg.Code);
+      codeWatch = new CodeWatch();
       gameTimer.Interval = 2000; gameTimer.Tick += (s, e) => {
         CheckGame(false);
         SyncPlansWait();
         if (On("battle")) WatchBattleEnd();
         WatchStall();
-        arenaWatch.Tick(gameRunning && On("battle")); guildWatch.Tick(gameRunning && On("guild")); packsWatch.Tick(gameRunning);
+        arenaWatch.Tick(gameRunning && On("battle")); guildWatch.Tick(gameRunning && On("guild")); packsWatch.Tick(gameRunning); codeWatch.Tick(gameRunning);
         TraceStartTick(); TryAutoUpdate(); LayoutTick();
       }; gameTimer.Start();
       liveTimer.Interval = 400; liveTimer.Tick += (s, e) => PollLive();
@@ -714,6 +715,7 @@ namespace RealmForge {
     // and opponent, read at its start (src/ArenaOpponents.cs) and kept with the fight as "arenaInfo"
     ArenaWatch arenaWatch;
     GuildWatch guildWatch;   // the guild table to the site (app/GuildWatch.cs)
+    CodeWatch codeWatch;     // test build: the code-redeem window to the log (app/CodeWatch.cs)
     PacksWatch packsWatch;   // the downloaded game update packs' addresses to the site (app/PacksWatch.cs)
     volatile string arenaInfo; volatile int arenaInfoStage;
     FightRecorder arenaTaken;

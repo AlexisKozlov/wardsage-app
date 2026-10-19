@@ -43,7 +43,9 @@ namespace RealmForge {
     /// needs it falls back to the picture). The list grid's fields: columns, row size, the cells the grid has on the screen.</summary>
     public static readonly string[] FieldKeys = {
       "InfinityGrid.CellPerLine", "InfinityGrid.LineSize", "InfinityGrid.m_finalLineSize",
-      "InfinityGrid.m_crtFirstInstanceIndex", "InfinityGrid.m_crtLastInstanceIndex", "InfinityGrid.m_fitScale" };
+      "InfinityGrid.m_crtFirstInstanceIndex", "InfinityGrid.m_crtLastInstanceIndex", "InfinityGrid.m_fitScale",
+      // the code-redeem window's input text and the tip form's lists (src/CodeWatch.cs, test build)
+      "InputField.m_Text", "Form_CommonTips.m_MoveTips", "Form_CommonTips.m_ShowTips", "Form_CommonTips.m_DisappearTips", "Form_CommonTips.CommonData.str" };
 
     public string Game { get; private set; }
     readonly Dictionary<string, long> rva = new Dictionary<string, long>(), cons = new Dictionary<string, long>(),

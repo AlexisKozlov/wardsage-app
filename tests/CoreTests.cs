@@ -689,6 +689,7 @@ static class CoreTests {
     GuildTests();
     LiveStateTests();
     GamePacksTests();
+    CodeTextTests();
     UpdateKeysTests();
 
     // ---- WebViewRecovery
@@ -1116,7 +1117,7 @@ static class CoreTests {
   static void LayoutChecksums() {
     var sums = new Dictionary<string, string> {
       { "1.6.38.829.1", "87d1958cc51af52fc9b18d44638b06d0919c6f0904f3e3b9016f96a679e06d4d" },
-      { "1.6.39.829.1", "8bd54be762d440a7c7d6d2a5083afe7edf71144fdfec30d88bb5f0f6e52a5f1f" } };
+      { "1.6.39.829.1", "e80ebe2420d62e993a2fae927d85b8fe9a6ac9d449f5aa17c9c3e0ab561ba8d5" } };
     foreach (var kv in sums) {
       string path = null;
       foreach (var repo in new[] { "wardsage-web", "realmforge-web" }) {
@@ -1315,6 +1316,16 @@ static class CoreTests {
     Eq(PlansStatus.Ok, ArenaClient.Interpret(200, "{\"ok\":true}", out det), "200 ok");
     Eq(PlansStatus.InvalidToken, ArenaClient.Interpret(401, "{\"ok\":false,\"error\":\"invalid_token\"}", out det), "401");
     Check(ArenaClient.Interpret(422, "{\"ok\":false,\"error\":\"invalid_payload\",\"details\":[\"opponents: bad\"]}", out det) == PlansStatus.Unexpected && det != null && det.Contains("opponents: bad"), "422 details: " + det);
+  }
+
+  static void CodeTextTests() {
+    Check(CodeText.Looks("ABCD") && CodeText.Looks("wardsage2026") && CodeText.Looks("a1B2c3D4e5F6g7H8i9J0k1L2"), "promo code: letters and digits, 4 to 24, look like a code");
+    Check(CodeText.Looks("  Gift2026 "), "promo code: spaces around it are ignored");
+    Check(!CodeText.Looks("ABC") && !CodeText.Looks("a1B2c3D4e5F6g7H8i9J0k1L2M"), "promo code: too short / too long");
+    Check(!CodeText.Looks("AB CD") && !CodeText.Looks("AB-CD") && !CodeText.Looks("code!") && !CodeText.Looks("\u043a\u043e\u0434\u043a\u043e\u0434"), "promo code: no spaces inside, no symbols, no other alphabets");
+    Check(!CodeText.Looks("") && !CodeText.Looks(null) && !CodeText.Looks("   "), "promo code: empty is not one");
+    Eq("a b c", CodeText.ForLog("a\nb\"c"), "promo code: a game message in one line, no quotes");
+    Eq(160, CodeText.ForLog(new string('x', 500)).Length, "promo code: a game message is cut at 160");
   }
 
   static void GamePacksTests() {
