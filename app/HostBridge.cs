@@ -38,7 +38,7 @@ namespace RealmForge {
     DateTime lastSyncStart = DateTime.MinValue, autoDue = DateTime.MaxValue;
     Dictionary<long, long> lastOwners;
     DateTime gameSeenAt = DateTime.MinValue;   // when the game process was first seen (this run / since it last started)
-    bool serverRetried;                        // the one quick retry after a 5xx is used up until a sync succeeds
+    bool serverRetried;                        // the one quick retry after a 5xx or a dropped connection is used up until a sync succeeds
     const int AutoEveryMin = 5, SyncGapSec = 31, FirstSyncDelaySec = 60, NotReadyRetrySec = 45, ServerRetrySec = 60;   // the site takes one sync per code per 30 s
     // automatic updates (app/Updater.cs): first check shortly after start, then every 6 hours
     readonly System.Windows.Forms.Timer updateTimer = new System.Windows.Forms.Timer();
@@ -1055,7 +1055,13 @@ namespace RealmForge {
               SyncError("server", "HTTP " + r.HttpCode, 0, report: false); return;
             }
             SyncError("server", "HTTP " + r.HttpCode, 0); return;
-          default: SyncError("net", r.Details, 0); return;
+          default:
+            if (!serverRetried) {   // the connection dropped: one quick retry, reported only when the retry fails too
+              serverRetried = true;
+              win.BeginInvoke((Action)(() => RequestAutoSync(ServerRetrySec)));
+              SyncError("net", r.Details, 0, report: false); return;
+            }
+            SyncError("net", r.Details, 0); return;
         }
         serverRetried = false;
         if (r.Heroes >= 0) heroes = r.Heroes;
