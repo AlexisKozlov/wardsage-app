@@ -156,7 +156,11 @@ namespace RealmForge {
     }
 
     /// <summary>The site's switches, or null (no connection, not a 2xx, not JSON).</summary>
-    public static RemoteSwitches Fetch(string site) {
+    public static RemoteSwitches Fetch(string site) { bool reached; return Fetch(site, out reached); }
+
+    /// <summary>As above; `reached` is false only when the site gave no answer or a 5xx (a 4xx means it is up).</summary>
+    public static RemoteSwitches Fetch(string site, out bool reached) {
+      reached = false;
       try {
         SyncClient.EnableTls12();
         var req = (HttpWebRequest)WebRequest.Create(site.TrimEnd('/') + "/api/extractor/app-config");
@@ -169,6 +173,7 @@ namespace RealmForge {
         using (var resp = (HttpWebResponse)req.GetResponse())
         using (var s = resp.GetResponseStream())
         using (var ms = new MemoryStream()) {
+          reached = (int)resp.StatusCode < 500;
           var buf = new byte[4096]; int n;
           while ((n = s.Read(buf, 0, buf.Length)) > 0) {
             ms.Write(buf, 0, n);
@@ -176,6 +181,10 @@ namespace RealmForge {
           }
           return Interpret((int)resp.StatusCode, Encoding.UTF8.GetString(ms.ToArray()));
         }
+      } catch (WebException e) {
+        var resp = e.Response as HttpWebResponse;
+        if (resp != null) { reached = (int)resp.StatusCode < 500; resp.Close(); }
+        return null;
       } catch (Exception) { return null; }
     }
   }

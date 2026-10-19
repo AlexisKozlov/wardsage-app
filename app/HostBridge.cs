@@ -132,9 +132,10 @@ namespace RealmForge {
     void FetchRemote() {
       string site = cfg.Site;
       Task.Factory.StartNew(() => {
-        var r = RemoteSwitches.Fetch(site);
-        if (r == null) {   // no reply: the switches held (and the saved announcement) stay; ask again soon, the page says "no connection"
-          OnUi(() => { remoteTimer.Interval = 20000; Post("{\"ev\":\"site\",\"ok\":false}"); });
+        bool reached;
+        var r = RemoteSwitches.Fetch(site, out reached);
+        if (r == null) {   // no usable reply: the switches held (and the saved announcement) stay; ask again soon; the page says "no connection" only when the site was not reached
+          OnUi(() => { remoteTimer.Interval = 20000; Post("{\"ev\":\"site\",\"ok\":" + B(reached) + "}"); });
           return;
         }
         r.SaveCache(RemoteSwitches.CachePath);
@@ -347,12 +348,12 @@ namespace RealmForge {
     void SyncPlansWait() {
       bool want = gameRunning && SyncClient.IsValidCode(cfg.Code);
       string key = want ? cfg.Site + "|" + cfg.Code : "";
-      if (plansWait == null) plansWait = new PlansWaiter(() => cfg.Site, () => cfg.Code, () => Post("{\"ev\":\"plans.changed\"}"), ok => Post("{\"ev\":\"plansWait\",\"ok\":" + B(ok) + "}"), s => Log.Write(s));
+      if (plansWait == null) plansWait = new PlansWaiter(() => cfg.Site, () => cfg.Code, () => Post("{\"ev\":\"plans.changed\"}"), (ok, reach) => Post("{\"ev\":\"plansWait\",\"ok\":" + B(ok) + ",\"reach\":" + B(reach) + "}"), s => Log.Write(s));
       if (key != plansWaitKey) {
         bool dead = plansWait.Dead;
         plansWait.Stop();
         plansWaitKey = key;
-        if (dead) plansWait = new PlansWaiter(() => cfg.Site, () => cfg.Code, () => Post("{\"ev\":\"plans.changed\"}"), ok => Post("{\"ev\":\"plansWait\",\"ok\":" + B(ok) + "}"), s => Log.Write(s));
+        if (dead) plansWait = new PlansWaiter(() => cfg.Site, () => cfg.Code, () => Post("{\"ev\":\"plans.changed\"}"), (ok, reach) => Post("{\"ev\":\"plansWait\",\"ok\":" + B(ok) + ",\"reach\":" + B(reach) + "}"), s => Log.Write(s));
       }
       if (want) plansWait.Start();
     }

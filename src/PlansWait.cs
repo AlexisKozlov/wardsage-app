@@ -80,12 +80,12 @@ namespace RealmForge {
   public sealed class PlansWaiter {
     readonly Func<string> site, code;
     readonly Action changed;        // new work on the site (any thread)
-    readonly Action<bool> state;    // the long poll works / does not (any thread)
+    readonly Action<bool, bool> state;    // the long poll works / does not, the site was reached / not (any thread)
     readonly Action<string> log;
     Thread th; volatile int gen; volatile bool on; volatile HttpWebRequest pending;
     public bool Dead { get; private set; }   // the site has no such endpoint: not for this run
 
-    public PlansWaiter(Func<string> site, Func<string> code, Action changed, Action<bool> state, Action<string> log) {
+    public PlansWaiter(Func<string> site, Func<string> code, Action changed, Action<bool, bool> state, Action<string> log) {
       this.site = site; this.code = code; this.changed = changed; this.state = state; this.log = log;
     }
 
@@ -102,24 +102,25 @@ namespace RealmForge {
     public void Stop() {
       on = false; gen++;
       var p = pending; if (p != null) try { p.Abort(); } catch (Exception) { }
-      state(false);
+      state(false, false);
     }
 
     void Run(int my) {
       string since = "", s0 = site(), c0 = code();
-      int fails = 0; bool ok = false;
+      int fails = 0; bool ok = false, lastUp = true;
       while (my == gen) {
         int http; string text;
         bool reached = PlansWait.Request(s0, c0, PlansWait.Since(since, DateTime.UtcNow), r0 => { pending = r0; if (my != gen) try { r0.Abort(); } catch (Exception) { } }, out http, out text);
         if (my != gen) return;
         var r = reached ? PlansWait.Interpret(http, text) : new WaitReply { Kind = WaitKind.Error };
         if (r.Kind == WaitKind.Ok) {
-          fails = 0; if (!ok) { ok = true; state(true); }
+          fails = 0; if (!ok) { ok = true; state(true, true); }
           if (r.At != "") since = r.At;
           if (r.Changed) { try { changed(); } catch (Exception) { } }
           continue;
         }
-        if (ok) { ok = false; state(false); }
+        bool up = reached && http < 500;   // a 4xx (bad code ...) means the site is up
+        if (ok || up != lastUp) { ok = false; lastUp = up; state(false, up); }
         if (r.Kind == WaitKind.NotDeployed) { Dead = true; on = false; log("plans wait: the site has no long poll, the timer polling stays"); return; }
         fails++;
         int wait = PlansWait.Backoff(fails);

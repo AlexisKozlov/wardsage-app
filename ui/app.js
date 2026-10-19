@@ -1037,7 +1037,7 @@
         break;
       }
       case 'plans.changed': if (S.hasCode && S.plans.status !== 'loading') loadPlans(); break;   // the site has new work (long poll in the host)
-      case 'plansWait': S.plansWait = m.ok === true; siteState('plans', m.ok === true); break;   // while it works the timer below is only a fallback
+      case 'plansWait': S.plansWait = m.ok === true; siteState('plans', (m.reach === undefined ? m.ok : m.reach) === true); break;   // while it works the timer below is only a fallback
       case 'rec': {
         // the recorder's timer / upload count (the page is only redrawn when it starts, stops or the counts change)
         const was = S.rec, now = { on: !!m.on, sec: m.sec | 0, sent: m.sent | 0, total: m.total | 0, why: m.why || '' };
