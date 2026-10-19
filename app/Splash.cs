@@ -34,7 +34,10 @@ namespace RealmForge {
 
     static Image Owl() {
       if (owl == null) {
-        try { using (var s = typeof(Splash).Assembly.GetManifestResourceStream("overlay/owl.png")) if (s != null) owl = new Bitmap(Image.FromStream(s)); }
+        try {
+          using (var s = typeof(Splash).Assembly.GetManifestResourceStream("splash/owl256.png")) if (s != null) owl = new Bitmap(Image.FromStream(s));
+          if (owl == null) using (var s = typeof(Splash).Assembly.GetManifestResourceStream("overlay/owl.png")) if (s != null) owl = new Bitmap(Image.FromStream(s));
+        }
         catch (Exception) { }
       }
       return owl;
