@@ -237,12 +237,6 @@ namespace RealmForge {
 
     async System.Threading.Tasks.Task StartWeb(bool fresh) {
       if (fresh) ReplaceWeb();
-      // it must never stick: a page that fails or stays silent still gets shown after 20 s
-      splashGuard.Stop();
-      splashGuard.Interval = 20000;
-      splashGuard.Tick -= OnSplashGuard;
-      splashGuard.Tick += OnSplashGuard;
-      splashGuard.Start();
       // WebView2 needs the control's window; a form that started hidden in the tray has it too, but make sure
       if (!web.IsHandleCreated) { web.CreateControl(); var h = web.Handle; }
       var env = await CoreWebView2Environment.CreateAsync(null, Program.DataDir, null);
@@ -276,6 +270,12 @@ namespace RealmForge {
       };
       core.NavigationCompleted += (s, e) => { if (!e.IsSuccess) HideSplash(); };
       core.ProcessFailed += (s, e) => OnProcessFailed(core, e);
+      // it must never stick: a page that fails or stays silent still gets shown 20 s after navigation (not before: a start that waits for Windows retries for minutes)
+      splashGuard.Stop();
+      splashGuard.Interval = 20000;
+      splashGuard.Tick -= OnSplashGuard;
+      splashGuard.Tick += OnSplashGuard;
+      splashGuard.Start();
       core.Navigate("https://" + AppHost + "/index.html");
     }
 
