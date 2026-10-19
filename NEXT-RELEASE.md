@@ -213,4 +213,8 @@ version …: from the site» или «saved copy»). Без файла оста�
 
 ## RU
 
+- Записи боёв с боссами сохраняют и здоровье босса по ходу боя — это уточняет расчёт.
+
 ## EN
+
+- Boss-fight records also keep the boss's HP over the fight, which makes the battle calculation more accurate.
