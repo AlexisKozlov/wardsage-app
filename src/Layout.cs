@@ -1,9 +1,10 @@
 // Wardsage - layout data from the server for the running game version: GET {site}/api/extractor/app-layout?game=<version>
 // with Authorization: Bearer <sync code> (without a code nothing is asked).
-//   200 {"game":"<version>","v":1,"rva":{class: n},"const":{name: n},"span":{name: n},"size":{name: n},"hdr":{name: n},"form":{name: n},"field":{name: n}}
+//   200 {"game":"<version>","v":1,"asm":"<sha-256 of the GameAssembly.dll the data was made from, optional>","rva":{class: n},"const":{name: n},"span":{name: n},"size":{name: n},"hdr":{name: n},"form":{name: n},"field":{name: n}}
 //   404 = no data for that version (yet); 401/403 = the code is not (or no longer) valid: asked again later.
 // The reply is kept per game version in the app's data folder (layout\<version>.json) and used while the site cannot be
-// reached. Without data for the running game version the features that need it stay off: fight recording and the boss
+// reached. The request carries &asm=<sha-256 of the running game's GameAssembly.dll>; data with an "asm" that differs
+// from the local one is for another build of the game and is treated as absent. Without data for the running game version the features that need it stay off: fight recording and the boss
 // coach, the arena watch, the game's screens for the equip helper, «Найти в игре», the storage cleanup and the recast
 // screens. The account sync does not need it (it finds the game's tables by their key names).
 using System;
@@ -56,7 +57,12 @@ namespace RealmForge {
 
     /// <summary>The data from the site's reply or the saved copy; null when it is not for <paramref name="game"/>, not
     /// this format, or lacks something the app reads.</summary>
-    public static GameLayout Parse(string json, string game) {
+    public static GameLayout Parse(string json, string game) { return Parse(json, game, null); }
+
+    /// <summary>As above, and also null when the data carries an "asm" fingerprint that differs from <paramref name="localAsm"/>
+    /// (the hex SHA-256 of the running game's GameAssembly.dll; null = not known: nothing to compare).</summary>
+    public static GameLayout Parse(string json, string game, string localAsm) {
+      if (IsOtherBuild(json, localAsm)) return null;
       if (string.IsNullOrEmpty(json) || json.Length > MaxBytes || !IsVersion(game)) return null;
       var o = MiniJson.AsObject(MiniJson.TryParse(json));
       if (o == null) return null;
@@ -74,6 +80,17 @@ namespace RealmForge {
       foreach (var kv in l.field) if (kv.Value < 0 || kv.Value > 0x1000) return null;
       foreach (var kv in l.rva) if (kv.Value <= 0 || kv.Value > 0x40000000) return null;
       return l;
+    }
+
+    /// <summary>The data is for another build of the game: it has an "asm" that is not the local one. No "asm" in the data,
+    /// or no local hash, = not another build (accepted as before).</summary>
+    public static bool IsOtherBuild(string json, string localAsm) {
+      if (string.IsNullOrEmpty(json) || json.Length > MaxBytes || string.IsNullOrEmpty(localAsm)) return false;
+      var o = MiniJson.AsObject(MiniJson.TryParse(json));
+      object v;
+      if (o == null || !o.TryGetValue("asm", out v)) return false;
+      var s = v as string;
+      return s == null || !string.Equals(s, localAsm, StringComparison.OrdinalIgnoreCase);
     }
 
     static bool Section(Dictionary<string, object> o, string name, Dictionary<string, long> into) {
@@ -115,23 +132,29 @@ namespace RealmForge {
 
     /// <summary>The data for the running game version, null = none (the features that need it are off).</summary>
     public static GameLayout Current { get { return current; } }
+
+    /// <summary>The hex SHA-256 of the running game's GameAssembly.dll (set once per game process), null = not known.</summary>
+    public static volatile string LocalAsm;
     public static void Use(GameLayout l) { current = l; }
 
     public static string CacheDir { get { return Path.Combine(AppConfig.DefaultDir, "layout"); } }
     static string CachePath(string dir, string game) { return Path.Combine(dir, game + ".json"); }
 
     /// <summary>The saved copy for <paramref name="game"/>, or null (none, unreadable, not valid).</summary>
-    public static GameLayout LoadCache(string dir, string game) {
+    public static GameLayout LoadCache(string dir, string game) { return LoadCache(dir, game, LocalAsm); }
+    public static GameLayout LoadCache(string dir, string game, string asm) {
       if (!GameLayout.IsVersion(game)) return null;
       try {
         string p = CachePath(dir, game);
-        if (File.Exists(p)) { string txt = File.ReadAllText(p, Encoding.UTF8); var r = GameLayout.Parse(txt, game); if (r != null) Keep(game, txt); return r; }
+        if (File.Exists(p)) { string txt = File.ReadAllText(p, Encoding.UTF8); var r = GameLayout.Parse(txt, game, asm); if (r != null) Keep(game, txt); return r; }
       } catch (Exception) { }
       return null;
     }
 
     // the raw text of the data loaded from the site or the saved copy, kept in memory (the recorder needs it even when the file is not there)
     static readonly Dictionary<string, string> keptText = new Dictionary<string, string>();
+    /// <summary>Forgets the kept texts (the game restarted: it may be another build of the same version).</summary>
+    public static void Forget() { lock (keptText) keptText.Clear(); }
     public static void Keep(string game, string json) { if (game == null || string.IsNullOrEmpty(json)) return; lock (keptText) keptText[game] = json; }
     static string Kept(string game) { string s; lock (keptText) return game != null && keptText.TryGetValue(game, out s) ? s : null; }
 
@@ -139,8 +162,14 @@ namespace RealmForge {
     public static string RawCache(string game) {
       if (!GameLayout.IsVersion(game)) return null;
       string kept = Kept(game); if (kept != null) return kept;
-      try { string p = CachePath(CacheDir, game); return File.Exists(p) ? File.ReadAllText(p, Encoding.UTF8) : null; } catch (Exception) { return null; }
+      try { string p = CachePath(CacheDir, game); if (!File.Exists(p)) return null; string txt = File.ReadAllText(p, Encoding.UTF8); return IsOtherBuildText(txt) ? null : txt; } catch (Exception) { return null; }
     }
+
+    /// <summary>The saved copy for <paramref name="game"/> is for another build of the game than the running one.</summary>
+    public static bool CacheIsOtherBuild(string dir, string game) {
+      try { string p = GameLayout.IsVersion(game) ? CachePath(dir, game) : null; return p != null && File.Exists(p) && GameLayout.IsOtherBuild(File.ReadAllText(p, Encoding.UTF8), LocalAsm); } catch (Exception) { return false; }
+    }
+    static bool IsOtherBuildText(string txt) { return GameLayout.IsOtherBuild(txt, LocalAsm); }
 
     public static void SaveCache(string dir, string game, string json) {
       if (!GameLayout.IsVersion(game)) return;
@@ -156,27 +185,30 @@ namespace RealmForge {
     /// <summary>What a reply means: Got (the data, in <paramref name="layout"/>), None (the site has none for this version),
     /// Denied (no valid sync code: none entered, or the site refused it with 401/403) or NoReply (no connection, an error,
     /// something odd: what is held stays).</summary>
-    public enum Reply { Got, None, Denied, NoReply }
+    public enum Reply { Got, None, Denied, NoReply, OtherBuild }
 
-    public static Reply Interpret(int code, string body, string game, out GameLayout layout) {
+    public static Reply Interpret(int code, string body, string game, out GameLayout layout) { return Interpret(code, body, game, LocalAsm, out layout); }
+    public static Reply Interpret(int code, string body, string game, string asm, out GameLayout layout) {
       layout = null;
       if (code == 404) return Reply.None;
       if (code == 401 || code == 403) return Reply.Denied;
       if (code < 200 || code >= 300) return Reply.NoReply;
-      layout = GameLayout.Parse(body, game);
-      if (layout != null) Keep(game, body);
-      return layout != null ? Reply.Got : Reply.NoReply;
+      layout = GameLayout.Parse(body, game, asm);
+      if (layout != null) { Keep(game, body); return Reply.Got; }
+      return GameLayout.IsOtherBuild(body, asm) ? Reply.OtherBuild : Reply.NoReply;
     }
 
     /// <summary>Asks the site for <paramref name="game"/>'s data with the sync code; <paramref name="json"/> = the reply's
     /// text when it is Got.</summary>
-    public static Reply Fetch(string site, string code, string game, out GameLayout layout, out string json) {
+    public static Reply Fetch(string site, string code, string game, out GameLayout layout, out string json) { return Fetch(site, code, game, LocalAsm, out layout, out json); }
+    public static Reply Fetch(string site, string code, string game, string asm, out GameLayout layout, out string json) {
       layout = null; json = null;
       if (!GameLayout.IsVersion(game) || string.IsNullOrEmpty(site)) return Reply.NoReply;
       if (!SyncClient.IsValidCode(code)) return Reply.Denied;
       try {
         SyncClient.EnableTls12();
-        var req = (HttpWebRequest)WebRequest.Create(site.TrimEnd('/') + "/api/extractor/app-layout?game=" + Uri.EscapeDataString(game));
+        var req = (HttpWebRequest)WebRequest.Create(site.TrimEnd('/') + "/api/extractor/app-layout?game=" + Uri.EscapeDataString(game)
+          + (!string.IsNullOrEmpty(asm) && Regex.IsMatch(asm, "^[0-9a-fA-F]{64}$") ? "&asm=" + asm.ToLowerInvariant() : ""));
         req.Method = "GET";
         req.Accept = "application/json";
         req.UserAgent = SyncClient.UserAgent;
@@ -199,7 +231,7 @@ namespace RealmForge {
             if (ms.Length > 64 * 1024) return Reply.NoReply;
           }
           string body = Encoding.UTF8.GetString(ms.ToArray());
-          var r = Interpret((int)resp.StatusCode, body, game, out layout);
+          var r = Interpret((int)resp.StatusCode, body, game, asm, out layout);
           if (r == Reply.Got) json = body;
           return r;
         }

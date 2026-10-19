@@ -179,7 +179,7 @@ namespace RealmForge {
 
     // ------------------------------------------------------------------ layout data for the running game version
 
-    string layoutFor;                                 // the game version the data in force (or awaited) is for
+    string layoutFor, layoutAsm;                                 // the game version the data in force (or awaited) is for
     DateTime layoutRetryAt = DateTime.MaxValue;       // the next ask while there is none
     bool layoutFetching, layoutNoneLogged, layoutDenied;   // layoutDenied: no valid sync code, the site gives no data
 
@@ -187,10 +187,12 @@ namespace RealmForge {
     /// copy is refreshed once per game start).</summary>
     void SelectLayout(string v) {
       var had = Layout.Current;
+      Layout.Forget();
       var cached = GameLayout.IsVersion(v) ? Layout.LoadCache(Layout.CacheDir, v) : null;
       Layout.Use(cached);
-      layoutFor = v; layoutNoneLogged = false;
-      Log.Write("layout data for game version " + (v ?? "?") + ": " + (cached != null ? "saved copy" : "none yet"));
+      layoutFor = v; layoutAsm = Layout.LocalAsm; layoutNoneLogged = false;
+      bool otherBuild = cached == null && Layout.CacheIsOtherBuild(Layout.CacheDir, v);
+      Log.Write("layout data for game version " + (v ?? "?") + ": " + (cached != null ? "saved copy" : otherBuild ? "layout data is for a different build of the game (saved copy not used)" : "none yet"));
       if (had != cached) ApplyRemote();
       PostLayout();
       FetchLayout(v);
@@ -262,7 +264,8 @@ namespace RealmForge {
             if (!was && gameRunning && addrs == null && !scanning && AutoClickOn()) StartScan(watch, true);
           } else if (Layout.Current == null && !layoutNoneLogged) {
             layoutNoneLogged = true;
-            Log.Write("layout data for game version " + v + ": " + (r == Layout.Reply.None ? "not on the site yet" : r == Layout.Reply.Denied ? "no valid sync code" : "the site did not answer") + "; asked again every " + Layout.RetryMinutes(Channel.IsTest) + " min");
+            if (r == Layout.Reply.OtherBuild) Log.Write("layout data for game version " + v + ": layout data is for a different build of the game; the features that need it stay off");
+            else Log.Write("layout data for game version " + v + ": " + (r == Layout.Reply.None ? "not on the site yet" : r == Layout.Reply.Denied ? "no valid sync code" : "the site did not answer") + "; asked again every " + Layout.RetryMinutes(Channel.IsTest) + " min");
           }
         });
       });
@@ -672,13 +675,18 @@ namespace RealmForge {
     // ------------------------------------------------------------------ game status
 
     void CheckGame(bool force) {
+      GamePacks.Note = s => Log.Write(s);
       int pid = 0;
       try { pid = GameInfo.FindGameProcess(); } catch (Exception) { }
       if (pid != gamePid) {
         gamePid = pid;
         gameVersion = pid != 0 ? GameInfo.TryReadVersion(GameInfo.TryGetExePath(pid)) : null;
+        string exe = pid != 0 ? GameInfo.TryGetExePath(pid) : null;
+        GameInfo.KnownExe = exe ?? GameInfo.KnownExe;
+        Layout.LocalAsm = pid != 0 ? GameInfo.TryHashAssembly(exe) : null;
+        if (pid != 0) Log.Write("game build fingerprint (GameAssembly.dll sha256): " + (Layout.LocalAsm ?? "unknown"));
         Log.Write(pid != 0 ? "game found: #" + pid + " " + (GameInfo.TryGetExePath(pid) ?? "?") + ", version " + (gameVersion ?? "?") : "game closed");
-        if (pid != 0 && gameVersion != layoutFor) SelectLayout(gameVersion);
+        if (pid != 0 && (gameVersion != layoutFor || Layout.LocalAsm != layoutAsm)) SelectLayout(gameVersion);
       }
       bool running = pid != 0;
       if (!force && gameSent && running == gameRunning) return;

@@ -32,8 +32,60 @@ namespace RealmForge {
       return res;
     }
 
+    /// <summary>Where the app writes its notes (set by the host; the core has no log).</summary>
+    public static Action<string> Note;
+    static string foundDir;   // the log folder found by the search (another build's company / product names)
+
+    static string LowRoot() { return Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData) + "Low"; }
+
+    /// <summary>The game's log folder: the usual one when it has a Player.log, else a folder found by <see cref="FindLogDir"/>, else the usual one.</summary>
     public static string LogDir() {
-      return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData) + "Low", "Watcher of Realms", "Watcher of Realms");
+      string usual = Path.Combine(LowRoot(), "Watcher of Realms", "Watcher of Realms");
+      if (File.Exists(Path.Combine(usual, "Player.log"))) return usual;
+      string f = foundDir;
+      if (f != null && File.Exists(Path.Combine(f, "Player.log"))) return f;
+      f = FindLogDir(LowRoot(), GameInfo.KnownExe);
+      if (f != null) { foundDir = f; var n = Note; if (n != null) n("game log folder: " + f); return f; }
+      return usual;
+    }
+
+    /// <summary>Searches <paramref name="root"/>\*\*\Player.log (two levels, at most 200 and 100 folders) for a log that mentions
+    /// the game (its name or the folder of <paramref name="exe"/>); null when none.</summary>
+    public static string FindLogDir(string root, string exe) {
+      try {
+        if (!Directory.Exists(root)) return null;
+        string exeDir = null;
+        try { exeDir = string.IsNullOrEmpty(exe) ? null : Path.GetDirectoryName(exe); } catch (Exception) { }
+        int a = 0;
+        foreach (string company in Directory.GetDirectories(root)) {
+          if (++a > 200) break;
+          int b = 0;
+          string[] products;
+          try { products = Directory.GetDirectories(company); } catch (Exception) { continue; }
+          foreach (string product in products) {
+            if (++b > 100) break;
+            string log = Path.Combine(product, "Player.log");
+            if (!File.Exists(log)) continue;
+            string head = Head(log);
+            if (head == null) continue;
+            if (head.IndexOf("Watcher of Realms", StringComparison.OrdinalIgnoreCase) >= 0
+                || (exeDir != null && head.IndexOf(exeDir, StringComparison.OrdinalIgnoreCase) >= 0)
+                || (exeDir != null && head.IndexOf(exeDir.Replace('\\', '/'), StringComparison.OrdinalIgnoreCase) >= 0)) return product;
+          }
+        }
+      } catch (Exception) { }
+      return null;
+    }
+
+    /// <summary>The first 64 KB of a file the game may keep open; null when it cannot be read.</summary>
+    static string Head(string path) {
+      try {
+        using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete)) {
+          var buf = new byte[(int)Math.Min(fs.Length, 65536)]; int got = 0;
+          while (got < buf.Length) { int n = fs.Read(buf, got, buf.Length - got); if (n <= 0) break; got += n; }
+          return Encoding.UTF8.GetString(buf, 0, got);
+        }
+      } catch (Exception) { return null; }
     }
 
     /// <summary>The last 4 MB of a file the game may keep open; null when it cannot be read.</summary>

@@ -212,5 +212,7 @@ version …: from the site» или «saved copy»). Без файла оста�
 * Название артефакта сайт не присылает: подсказка «Выбери артефакт в золотой рамке».
 
 ## RU
+- Программа надёжнее находит игру и её журнал на других сборках игры (например, региональных), а данные для подсказок в игре проверяет по сборке и не использует чужие.
 
 ## EN
+- The app finds the game and its log more reliably on other builds of the game (e.g. regional ones), and checks the in-game data layout against the build so it never uses one made for another build.

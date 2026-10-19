@@ -988,6 +988,34 @@ static class CoreTests {
     Check(GameLayout.Parse(fx.Replace("\"DLNode\": 64", "\"DLNode\": -64"), FixtureGame) == null, "a negative size is refused");
     Check(GameLayout.Parse("[1]", FixtureGame) == null && GameLayout.Parse("<html>", FixtureGame) == null && GameLayout.Parse(null, FixtureGame) == null, "not an object: null");
     Check(GameLayout.Parse(fx.Replace("\"game\"", "\"pad\": \"" + new string('x', 70000) + "\", \"game\""), FixtureGame) == null, "an oversized reply is refused");
+    // the build fingerprint: data made for another GameAssembly.dll is not used
+    string asmA = new string('a', 64), asmB = new string('b', 64);
+    string fxAsm = fx.Replace("\"v\": 1", "\"v\": 1, \"asm\": \"" + asmA + "\"");
+    Check(GameLayout.Parse(fxAsm, FixtureGame, asmA) != null, "asm: the same build is accepted");
+    Check(GameLayout.Parse(fxAsm, FixtureGame, asmA.ToUpperInvariant()) != null, "asm: letter case does not matter");
+    Check(GameLayout.Parse(fxAsm, FixtureGame, asmB) == null, "asm: another build is refused");
+    Check(GameLayout.Parse(fx, FixtureGame, asmB) != null, "asm: data without one is accepted for any build");
+    Check(GameLayout.Parse(fxAsm, FixtureGame, null) != null, "asm: no local hash, nothing to compare: accepted");
+    Check(GameLayout.Parse(fxAsm.Replace(asmA, "7"), FixtureGame, asmB) == null, "asm: a malformed fingerprint is refused");
+    GameLayout gotA;
+    Eq(Layout.Reply.Got, Layout.Interpret(200, fxAsm, FixtureGame, asmA, out gotA), "asm: reply for this build: got");
+    Eq(Layout.Reply.OtherBuild, Layout.Interpret(200, fxAsm, FixtureGame, asmB, out gotA), "asm: reply for another build: other build");
+    Check(gotA == null, "  ... and no data");
+    string asmDir = Path.Combine(Path.GetTempPath(), "rf-layout-asm-" + Guid.NewGuid().ToString("N"));
+    Layout.SaveCache(asmDir, FixtureGame, fxAsm);
+    Check(Layout.LoadCache(asmDir, FixtureGame, asmA) != null, "asm: the saved copy of this build is used");
+    Check(Layout.LoadCache(asmDir, FixtureGame, asmB) == null, "asm: the saved copy of another build is not handed back");
+    Check(Layout.CacheIsOtherBuild(asmDir, FixtureGame) == (Layout.LocalAsm != null), "asm: the cache is seen as another build only with a different local hash");
+    try { Directory.Delete(asmDir, true); } catch (Exception) { }
+    Check(GameInfo.TitleIsGame("Watcher of Realms") && GameInfo.TitleIsGame("Watcher of Realms - US") && GameInfo.TitleIsGame("[Store] Watcher of Realms")
+          && GameInfo.TitleIsGame("워처 오브 렐름") && !GameInfo.TitleIsGame("Watcher") && !GameInfo.TitleIsGame(""), "window title: the name anywhere, or the Korean one");
+    string lowDir = Path.Combine(Path.GetTempPath(), "rf-low-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(Path.Combine(lowDir, "Other Co", "Other Game")); Directory.CreateDirectory(Path.Combine(lowDir, "Pub", "Watcher of Realms US"));
+    File.WriteAllText(Path.Combine(lowDir, "Other Co", "Other Game", "Player.log"), "Initialize engine version\nsomething else", Encoding.UTF8);
+    File.WriteAllText(Path.Combine(lowDir, "Pub", "Watcher of Realms US", "Player.log"), "Initialize engine version\nD:/Games/Watcher of Realms_Data", Encoding.UTF8);
+    Eq(Path.Combine(lowDir, "Pub", "Watcher of Realms US"), GamePacks.FindLogDir(lowDir, null), "log folder: found by the game's name in the log");
+    Check(GamePacks.FindLogDir(Path.Combine(lowDir, "Other Co"), null) == null, "log folder: none when no log mentions the game");
+    try { Directory.Delete(lowDir, true); } catch (Exception) { }
     Check(GameLayout.IsVersion("1.6.39.829.1") && GameLayout.IsVersion("1.2") && !GameLayout.IsVersion("1") && !GameLayout.IsVersion("../1.2")
           && !GameLayout.IsVersion("1.2.3.4.5.6.7") && !GameLayout.IsVersion(null), "game versions: digits and dots only");
     GameLayout got;

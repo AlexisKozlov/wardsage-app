@@ -3311,6 +3311,32 @@ namespace RealmForge {
   public static class GameInfo {
     public const string ProcessName = "Watcher of Realms";
     const string WindowTitle = "Watcher of Realms";   // other regions' builds: «Watcher of Realms - US», ...
+    const string WindowTitleKo = "워처 오브 렐름";      // the Korean title
+
+    /// <summary>The exe of the running game as last found (for the log folder search and the build fingerprint); null = none yet.</summary>
+    public static volatile string KnownExe;
+
+    /// <summary>A window title of the game: the name anywhere in it (a region or store may put it after a prefix), or the Korean name.</summary>
+    public static bool TitleIsGame(string title) {
+      if (string.IsNullOrEmpty(title)) return false;
+      return title.IndexOf(WindowTitle, StringComparison.OrdinalIgnoreCase) >= 0 || title.IndexOf(WindowTitleKo, StringComparison.Ordinal) >= 0;
+    }
+
+    /// <summary>The hex SHA-256 of the GameAssembly.dll next to the exe (null when there is none or it cannot be read).</summary>
+    public static string TryHashAssembly(string exePath) {
+      try {
+        if (string.IsNullOrEmpty(exePath)) return null;
+        string p = Path.Combine(Path.GetDirectoryName(exePath), "GameAssembly.dll");
+        if (!File.Exists(p)) return null;
+        using (var fs = new FileStream(p, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+        using (var sha = SHA256.Create()) {
+          var h = sha.ComputeHash(fs);
+          var sb = new StringBuilder(64);
+          foreach (byte b in h) sb.Append(b.ToString("x2"));
+          return sb.ToString();
+        }
+      } catch (Exception) { return null; }
+    }
 
     // <game folder>\<exe name>_Data\StreamingAssets\version\windows\realversion.xml
     static readonly string[] VersionFile = { "StreamingAssets", "version", "windows", "realversion.xml" };
@@ -3346,7 +3372,7 @@ namespace RealmForge {
       try {
         if (p.ProcessName.IndexOf("launcher", StringComparison.OrdinalIgnoreCase) >= 0) return false;
         string title = p.MainWindowTitle;
-        if (string.IsNullOrEmpty(title) || !title.StartsWith(WindowTitle, StringComparison.OrdinalIgnoreCase)) return false;
+        if (!TitleIsGame(title)) return false;
         string exe = TryGetExePath(p.Id);
         if (string.IsNullOrEmpty(exe)) return false;
         string dir = Path.GetDirectoryName(exe);
@@ -3362,7 +3388,7 @@ namespace RealmForge {
           string name = p.ProcessName, title = "";
           try { title = p.MainWindowTitle ?? ""; } catch (Exception) { }
           if (name.IndexOf("watcher", StringComparison.OrdinalIgnoreCase) < 0 && name.IndexOf("realms", StringComparison.OrdinalIgnoreCase) < 0
-              && title.IndexOf("Watcher of Realms", StringComparison.OrdinalIgnoreCase) < 0) continue;
+              && !TitleIsGame(title)) continue;
           if (sb.Length > 0) sb.Append("; ");
           sb.Append(name).Append(" #").Append(p.Id);
           if (title.Length > 0) sb.Append(" «").Append(title).Append("»");
