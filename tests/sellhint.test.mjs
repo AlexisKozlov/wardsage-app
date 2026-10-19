@@ -51,11 +51,11 @@ for (const lang of ['ru', 'en']) {
     const d = SH.describe(st({ step: k, extra: 0 }), t, 'artifact');
     ok(d.tip.every((x) => x.length <= 70) && !/^sh[A-Z]/.test(d.head), lang + ': artifact step ' + k + ' text is short and resolved');
   }
-  ok(T[lang].sellTitleArt && T[lang].sellHintLeadArt && T[lang].sellShowArt && !/ты сам.*автонажат/i.test(T[lang].sellHintLeadArt), lang + ': artifact card texts');
+  ok(T[lang].sellTitleArt && T[lang].sellHintLeadArt && T[lang].sellShowArt && !/вы сами.*автонажат/i.test(T[lang].sellHintLeadArt), lang + ': artifact card texts');
 }
 // the texts asked for
-ok(T.ru.sellHintLead === 'Программа покажет рамками, какие вещи отметить; отмечаешь ты сам.', 'ru: lead text');
-ok(T.ru.shAll === 'Все отмечены — нажми «Продать»' && T.ru.shExtra === 'Эта вещь не из списка — сними с неё отметку' && T.en.shExtra === 'This item is not on the list — untick it', 'ru/en: step texts');
+ok(T.ru.sellHintLead === 'Программа покажет рамками, какие вещи отметить; отмечаете вы сами.', 'ru: lead text');
+ok(T.ru.shAll === 'Все отмечены — нажмите «Продать»' && T.ru.shExtra === 'Эта вещь не из списка — снимите с неё отметку' && T.en.shExtra === 'This item is not on the list — untick it', 'ru/en: step texts');
 // both languages have the same keys
 for (const k of Object.keys(T.ru).filter((x) => /^(sellHint|sh[A-Z])/.test(x))) ok(k in T.en, 'en has ' + k);
 for (const k of Object.keys(T.en).filter((x) => /^(sellHint|sh[A-Z])/.test(x))) ok(k in T.ru, 'ru has ' + k);

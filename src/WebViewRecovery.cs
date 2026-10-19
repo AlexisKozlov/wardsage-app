@@ -51,7 +51,7 @@ namespace RealmForge {
       string tech = e == null ? "" : "\n\n(" + Inner(e).GetType().Name + " " + HResultHex(e) + ")";
       if (lang == "en")
         return "Could not open the program window (the browser built into Windows did not start). Restart Wardsage; if it keeps happening, restart the computer." + tech;
-      return "Не удалось открыть окно программы (встроенный браузер Windows не запустился). Перезапусти Wardsage; если повторяется — перезагрузи компьютер." + tech;
+      return "Не удалось открыть окно программы (встроенный браузер Windows не запустился). Перезапустите Wardsage; если повторяется — перезагрузите компьютер." + tech;
     }
   }
 
