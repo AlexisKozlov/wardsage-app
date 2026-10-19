@@ -75,6 +75,9 @@ namespace RealmForge {
     // a real exit (the tray menu, a fatal error): the close button otherwise only hides the window in the tray
     bool exiting;
     bool hintShown;
+    // the startup splash over the WebView until the page says «init» (HideSplash)
+    Splash splash;
+    readonly System.Windows.Forms.Timer splashGuard = new System.Windows.Forms.Timer();
 
     public AppWindow(bool hidden = false) {
       startHidden = hidden;
@@ -88,6 +91,9 @@ namespace RealmForge {
       try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch (Exception) { }
       PrepareWeb(web);
       Controls.Add(web);
+      splash = new Splash();
+      Controls.Add(splash);
+      splash.BringToFront();
       Load += async (s, e) => await Init();
       SetupTray();
       // hidden start: the window is made (WebView2, timers) but never seen — fully transparent and off the taskbar for
@@ -98,6 +104,25 @@ namespace RealmForge {
         Shown += (s, e) => { if (startHidden) { startHidden = false; Hide(); Opacity = 1; ShowInTaskbar = true; } };
       }
       ShowSignal.Listen(() => { try { BeginInvoke((Action)ShowFromTray); } catch (Exception) { } });
+    }
+
+    /// <summary>Removes the startup splash (any thread; safe to call again).</summary>
+    public void HideSplash() {
+      if (IsDisposed) return;
+      if (InvokeRequired) { try { BeginInvoke((Action)HideSplash); } catch (Exception) { } return; }
+      splashGuard.Stop();
+      var sp = splash;
+      if (sp == null) return;
+      splash = null;
+      try { sp.Hide(); Controls.Remove(sp); sp.Dispose(); } catch (Exception) { }
+    }
+
+    /// <summary>The splash again (a recovery restart with a fresh control).</summary>
+    public void ShowSplash() {
+      if (IsDisposed) return;
+      if (splash == null || splash.IsDisposed) { splash = new Splash(); Controls.Add(splash); }
+      splash.Show();
+      splash.BringToFront();
     }
 
     void SetupTray() {
@@ -179,6 +204,7 @@ namespace RealmForge {
       var w = new WebView2();
       PrepareWeb(w);
       Controls.Add(w);
+      if (splash != null && !splash.IsDisposed) splash.BringToFront();
       web = w;
       try { Controls.Remove(old); } catch (Exception) { }
       try { old.Dispose(); } catch (Exception) { }
@@ -197,6 +223,7 @@ namespace RealmForge {
         bool retry = WebViewRecovery.IsTransient(last) && attempt <= WebViewRecovery.MaxRetries;
         Log.Write("WebView2 start " + attempt + " failed: " + last.GetType().Name + " " + WebViewRecovery.HResultHex(last) + " " + last.Message + (retry ? " - retrying" : " - giving up"));
         if (!retry) break;
+        if (splash != null) splash.SetStatus("Жду, пока Windows будет готова…", "Waiting for Windows to be ready…");
         await System.Threading.Tasks.Task.Delay(WebViewRecovery.DelayMs(attempt));
       }
       GiveUp(last);
@@ -210,6 +237,12 @@ namespace RealmForge {
 
     async System.Threading.Tasks.Task StartWeb(bool fresh) {
       if (fresh) ReplaceWeb();
+      // it must never stick: a page that fails or stays silent still gets shown after 20 s
+      splashGuard.Stop();
+      splashGuard.Interval = 20000;
+      splashGuard.Tick -= OnSplashGuard;
+      splashGuard.Tick += OnSplashGuard;
+      splashGuard.Start();
       // WebView2 needs the control's window; a form that started hidden in the tray has it too, but make sure
       if (!web.IsHandleCreated) { web.CreateControl(); var h = web.Handle; }
       var env = await CoreWebView2Environment.CreateAsync(null, Program.DataDir, null);
@@ -241,9 +274,12 @@ namespace RealmForge {
         try { json = e.WebMessageAsJson; } catch (Exception) { }
         if (json != null) br.OnMessage(json);
       };
+      core.NavigationCompleted += (s, e) => { if (!e.IsSuccess) HideSplash(); };
       core.ProcessFailed += (s, e) => OnProcessFailed(core, e);
       core.Navigate("https://" + AppHost + "/index.html");
     }
+
+    void OnSplashGuard(object s, EventArgs e) { HideSplash(); }
 
     bool recovering;
 
@@ -268,7 +304,7 @@ namespace RealmForge {
       }
       recovering = true;
       BeginInvoke((Action)(async () => {
-        try { await Init(true); }
+        try { ShowSplash(); await Init(true); }
         finally { recovering = false; }
       }));
     }

@@ -217,6 +217,7 @@ version …: from the site» или «saved copy»). Без файла оста�
 - «Надеть в игре»: до героя в длинном списке программа теперь доходит: если список остался далеко от героя, сначала включает игровой фильтр, а попытки считаются только без продвижения к герою.
 - Смена артефакта после «Готово» больше не начинается заново.
 - Синхронизация: при обрыве связи программа один раз сама повторяет отправку и сообщает об ошибке, только если не вышло и со второго раза.
+- При запуске вместо чёрного окна видна заставка с загрузкой.
 
 ## EN
 
@@ -224,3 +225,4 @@ version …: from the site» или «saved copy»). Без файла оста�
 - «Equip in game»: the app now gets to a hero far down the hero list: when the list is left far from the hero it sets the game's filter first, and tries are counted only while the hero is not getting closer.
 - An artifact swap no longer starts again after «Done».
 - Sync: when the connection drops, the app retries the upload once by itself and reports an error only if the second try fails too.
+- On launch a loading screen shows instead of a black window.

@@ -379,7 +379,7 @@ namespace RealmForge {
       if (cmd != "init" && cmd != "log") lastUi = DateTime.UtcNow;
       try {
         switch (cmd) {
-          case "init": SendState(null); CheckGame(true); PostRemote(); PostLayout(); if (updateReady != null) Post(updateReady); break;
+          case "init": win.HideSplash(); SendState(null); CheckGame(true); PostRemote(); PostLayout(); if (updateReady != null) Post(updateReady); break;
           case "acceptTerms": cfg.TermsAccepted = AppConfig.TermsVersion; Save(); Log.Write("terms accepted: " + AppConfig.TermsVersion); break;
           case "setLang": cfg.Lang = MiniJson.GetString(m, "lang") == "en" ? "en" : "ru"; overlay.CancelText = CancelText(cfg.Lang); overlay.LocateCancelText = LocateCancelText(cfg.Lang); overlay.SellCancelText = SellCancelText(cfg.Lang); coach.Lang = cfg.Lang; Save(); break;
           case "setCode": {
