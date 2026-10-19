@@ -394,7 +394,7 @@ namespace RealmForge {
           case "clearCode": cfg.Code = ""; Save(); SendState(null); break;
           case "setSaveCopy": cfg.SaveCopy = MiniJson.GetBool(m, "on", false); Save(); break;
           case "setAutoSync": cfg.AutoSync = MiniJson.GetBool(m, "on", true); Save(); if (cfg.AutoSync) RequestAutoSync(0); break;
-          case "setAutoClick": cfg.AutoClick = MiniJson.GetBool(m, "on", true); ApplyAutoClick(); Save(); break;
+          case "setAutoClick": cfg.AutoClick = MiniJson.GetBool(m, "on", true); ApplyAutoClick(); if (AutoClickOn() && overlay.HasJob && addrs == null && !scanning) StartScan(watch, true); Save(); break;   // (switched on mid-job: the pilots need the game found)
           case "setAutoConfirm": cfg.AutoConfirm = MiniJson.GetBool(m, "on", false); overlay.AutoConfirm = cfg.AutoConfirm; Save(); break;
           case "setAutoUpdate": cfg.AutoUpdate = MiniJson.GetBool(m, "on", true); Save(); break;
           case "setBossHints": cfg.BossHints = MiniJson.GetBool(m, "on", true); if (!cfg.BossHints && coach.Running) coach.Stop(); Save(); break;

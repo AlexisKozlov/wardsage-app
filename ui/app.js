@@ -882,7 +882,7 @@
     else if (a === 'autoUpdate') { S.autoUpdate = !S.autoUpdate; host.send({ cmd: 'setAutoUpdate', on: S.autoUpdate }); render(); }
     else if (a === 'errorReports') { S.errorReports = !S.errorReports; host.send({ cmd: 'setErrorReports', on: S.errorReports }); if (S.errorReports) toast(t(S.hasCode ? 'reportsOn' : 'reportsNoCode'), 6000); render(); }
     else if (a === 'autoSync') { S.autoSync = !S.autoSync; host.send({ cmd: 'setAutoSync', on: S.autoSync }); render(); }
-    else if (a === 'autoClick') { S.autoClick = !S.autoClick; host.send({ cmd: 'setAutoClick', on: S.autoClick }); render(); }
+    else if (a === 'autoClick') { S.autoClick = !S.autoClick; host.send({ cmd: 'setAutoClick', on: S.autoClick }); syncHighlight(); render(); }
     else if (a === 'autoConfirm') {
       S.autoConfirm = !S.autoConfirm; host.send({ cmd: 'setAutoConfirm', on: S.autoConfirm });
       if (S.autoConfirm) toast(t('autoConfirmOn'));
@@ -1050,7 +1050,7 @@
       case 'battle': toast(t(m.ok === false ? 'battleNone' : 'battleKept'), 6000); break;
       case 'cancelRun': {
         // «Отменить надевание» over the game: the running build is dropped (as «Отменить» here) and the queue stops
-        const p = S.run ? S.plans.list.find((x) => x.id === S.run) : null;
+        const p = (S.run ? S.plans.list.find((x) => x.id === S.run) : null) || (S.autoClick ? current() : null);   // (auto click switched on mid-job: the build the player is shown)
         S.run = null; S.queue = [];
         if (p) {
           host.send({ cmd: 'equip.finish', id: p.id, done: false });

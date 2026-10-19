@@ -218,6 +218,7 @@ version …: from the site» или «saved copy»). Без файла оста�
 - Смена артефакта после «Готово» больше не начинается заново.
 - Синхронизация: при обрыве связи программа один раз сама повторяет отправку и сообщает об ошибке, только если не вышло и со второго раза.
 - При запуске вместо чёрного окна видна заставка с загрузкой.
+- Если включить автонажатие, когда задание уже идёт, кнопка остановки поверх игры тоже появляется.
 
 ## EN
 
@@ -226,3 +227,4 @@ version …: from the site» или «saved copy»). Без файла оста�
 - An artifact swap no longer starts again after «Done».
 - Sync: when the connection drops, the app retries the upload once by itself and reports an error only if the second try fails too.
 - On launch a loading screen shows instead of a black window.
+- Turning auto click on while a job is already running now shows the stop button over the game too.

@@ -649,19 +649,26 @@ namespace RealmForge {
       }
     }
 
+    /// <summary>The equip pilots may click: a started build, or (auto click switched on while the job was already shown) the hint of a build with the game scanned.
+    /// Follows AutoEnabled at every tick, so the stop button shows when auto click is switched on mid-job and hides when it is switched off.</summary>
+    bool EquipClicking { get { return AutoEnabled && (runHero > 0 || (addrs != null && !LocateWins && sellWanted == null && (target != 0 || (hintKind != "" && hintKind != "done")))); } }
+
+    /// <summary>Something is shown or running that auto click could take over (the host starts the game scan for it when auto click is switched on).</summary>
+    public bool HasJob { get { return PlanOn || locateReq != null || sellWanted != null; } }
+
     void TickCancel() {
       IntPtr hwnd = GameWindow();
       int fp = 0, gp = 0;
       if (hwnd != IntPtr.Zero) { W32.GetWindowThreadProcessId(W32.GetForegroundWindow(), out fp); W32.GetWindowThreadProcessId(hwnd, out gp); }
       W32.RECT cr;
-      if ((runHero <= 0 && !(LocateWins && LocateClicking) && !SellClicking) || !AutoEnabled || hwnd == IntPtr.Zero || W32.IsIconic(hwnd) || fp != gp || !W32.GetClientRect(hwnd, out cr) || cr.B < 200) {
+      if (!(EquipClicking || (LocateWins && LocateClicking) || SellClicking) || !AutoEnabled || hwnd == IntPtr.Zero || W32.IsIconic(hwnd) || fp != gp || !W32.GetClientRect(hwnd, out cr) || cr.B < 200) {
         if (cancelWin.Visible) cancelWin.Hide();
         return;
       }
       var o = new W32.POINT(0, 0); W32.ClientToScreen(hwnd, ref o);
       double U = Ui.Unit(cr.R, cr.B);
       int w = (int)(0.25 * U), h = (int)(0.058 * U);
-      string cancelText = runHero <= 0 ? (SellClicking ? SellCancelText : LocateCancelText) : CancelText;   // (here only for a build, for «Показать в игре» or for the storage cleanup)
+      string cancelText = runHero > 0 ? CancelText : SellClicking ? SellCancelText : LocateWins && LocateClicking ? LocateCancelText : CancelText;   // (here only for a build, for «Показать в игре» or for the storage cleanup)
       var mp = Control.MousePosition; var cx = o.X + cr.R / 2 - w / 2; var cy = o.Y + (int)(0.012 * U);
       bool hot = mp.X >= cx && mp.X < cx + w && mp.Y >= cy && mp.Y < cy + h, down = hot && (Control.MouseButtons & MouseButtons.Left) != 0;
       string key = cancelText + "|" + w + "x" + h + "|" + (down ? "d" : hot ? "h" : "n");
