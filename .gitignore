@@ -2,6 +2,4 @@ build/
 dist/
 *.tmp
 node_modules/
-bridge/bin/
-bridge/obj/
 tools/.release-notes.json

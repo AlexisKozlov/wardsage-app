@@ -52,14 +52,6 @@ ok(G.next(plan, live({ rows: { 6423: [103, 1] }, selUid: 77, selRow: 101 })).kin
 ok(G.highlightUid(G.next(plan, live({ rows: { 6423: [3, 2] } }))) === 6423, 'frame the item while it is in the list');
 ok(G.highlightUid(G.next(plan, live({ part: -1 }))) === 0 && G.highlightUid(G.next(plan, null)) === 0, 'no frame otherwise');
 ok(G.plural(1, 'ряд', 'ряда', 'рядов') === 'ряд' && G.plural(3, 'ряд', 'ряда', 'рядов') === 'ряда' && G.plural(12, 'ряд', 'ряда', 'рядов') === 'рядов' && G.plural(22, 'ряд', 'ряда', 'рядов') === 'ряда', 'plural');
-// plans from the local bridge
-const bp = G.bridgePlan({ id: 'bridge:c1', heroUid: 214700000, heroName: 'Сунь Укун', items: [{ slot: 0, uid: 42 }, { slot: 2, uid: 6423 }] }, (u) => 'Item #' + u);
-ok(bp.bridge && bp.id === 'bridge:c1' && bp.items.length === 2 && bp.items[0].name === 'Item #42' && bp.items[1].slot === 2, 'bridge plan');
-ok(G.next(bp, live({ part: 0, rows: { 42: [2, 1] } })).kind === 'pick', 'bridge plan: the guide works without the site fields');
-ok(G.next(bp, live({ owner: { 42: 214700000, 6423: 214700000 } })).kind === 'done', 'bridge plan: done when the hero wears both');
-const merged = G.mergePlans([bp, plan, { ...bp, id: 'bridge:c2' }], [{ id: 's1', items: [] }], { 'bridge:c2': true });
-ok(merged.map((p) => p.id).join() === 'bridge:c1,s1', 'reload keeps unfinished bridge plans first, drops old site plans and finished bridge plans');
-ok(G.mergePlans(null, null, null).length === 0, 'merge of nothing');
 // an item put on another hero after the plan was made is never taken away from them
 g = G.next(plan, live({ owner: { 6423: 999900000 } }));
 ok(g.states[6423] === 'taken' && g.item.uid === 33 && g.taken === 1, 'item on an unexpected hero: skipped, the next one is current');
@@ -74,7 +66,6 @@ ok(G.next(plan, live({ owner: { 6423: 0 } })).item.uid === 6423, 'in the bag: wa
   ok(G.freshPlan([mk('a', 1)], {}, now).id === 'a', 'a plan made a minute ago, not seen before: started');
   ok(G.freshPlan([mk('a', 1)], { a: true }, now) === null, 'seen before: not started again');
   ok(G.freshPlan([mk('b', 10)], {}, now) === null, 'made 10 minutes ago: waits for «Надеть»');
-  ok(G.freshPlan([{ ...mk('c', 1), bridge: true }], {}, now) === null, 'bridge plans start on their own');
 }
 // several builds started at once on the site: all of them, in order; the queue skips what is done or gone
 {
@@ -95,18 +86,6 @@ ok(G.next(plan, live({ owner: { 6423: 0 } })).item.uid === 6423, 'in the bag: wa
   ok(G.next(p, lv).kind === 'taken', 'not asked: still taken');
   G.takeOver([p], lv.owner, { t: true });
   ok(p.items[0].fromHeroUid === 5 && G.next(p, lv).states[11] === 'now', 'asked: taken from the hero wearing it now');
-  const b = { id: 'b', bridge: true, heroUid: 1, items: [{ slot: 0, uid: 11, fromHeroUid: 0 }] };
-  G.takeOver([b], lv.owner, { b: true });
-  ok(b.items[0].fromHeroUid === 0, 'bridge commands: never (the dashboard decides)');
-}
-// a bridge command names only the items: the owner when it arrives is the hero it is taken from on purpose
-{
-  const bp = G.bridgePlan({ id: 'bridge:1', heroUid: 7, heroName: 'X', items: [{ slot: 0, uid: 321 }] }, (u) => '#' + u);
-  const lv = (o) => live({ heroUid: 7, part: 0, ...o });
-  ok(G.next(bp, lv({ owner: { 321: 5 } })).kind !== 'taken', 'owner not adopted yet: not taken');
-  G.adoptOwners([bp], { 321: 5 });
-  ok(bp.items[0].fromHeroUid === 5 && G.next(bp, lv({ owner: { 321: 5 } })).kind !== 'taken', 'taken from hero 5 on purpose');
-  ok(G.next(bp, lv({ owner: { 321: 9 } })).kind === 'taken', 'on another hero afterwards: taken, not taken off');
 }
 // the plan's artifact comes after the gear: the host's step (live.art) decides; done when it is on the hero
 {

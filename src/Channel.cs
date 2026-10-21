@@ -1,5 +1,5 @@
 // The build channel: the normal build and the test build (tools/build-app.sh --test defines TESTBUILD) coexist on one PC
-// and one site account, so everything that must not be shared lives here: names, folders, mutex, feed, bridge port.
+// and one site account, so everything that must not be shared lives here: names, folders, mutex, feed.
 using System;
 
 namespace RealmForge {
@@ -16,7 +16,6 @@ namespace RealmForge {
     public const string EventName = "Wardsage.Test.Show";
     public const string AutostartName = "Wardsage Test";
     public const string FeedPath = "/downloads/test/latest.json";
-    public const string BridgePort = "5056";   // a string: used in a const URL
     public const string StagedPrefix = "Wardsage-Test-";
 #else
     public static readonly bool IsTest = false;   // readonly, not const: no "unreachable code" warnings
@@ -32,7 +31,6 @@ namespace RealmForge {
     public const string EventName = "RealmForge.Desktop.Show";
     public const string AutostartName = "Wardsage";
     public const string FeedPath = "/downloads/latest.json";
-    public const string BridgePort = "5055";   // a string: used in a const URL
     public const string StagedPrefix = "RealmForge-";
 #endif
   }

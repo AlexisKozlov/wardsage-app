@@ -4,7 +4,7 @@ Reads a Watcher of Realms account (heroes, gear, artifacts, faction rewards) fro
 running game and sends it to the Wardsage site (https://wardsage.com). Windows only; the game's memory is only read (`ReadProcessMemory`).
 The desktop app's equip helper can also put a build on by itself with the mouse, as a player would (Settings →
 «Автонажатие», off by default — the player turns it on): for a build the player started («Надеть» in the app, «Надеть в игре» on the site a moment
-ago, or a bridge command) it brings up the hero on the hero screen (`src/HeroPilot.cs`: from the city, filtering the hero
+ago) it brings up the hero on the hero screen (`src/HeroPilot.cs`: from the city, filtering the hero
 grid by the hero's faction and class — `app/res/hero_tags.json`, rebuilt with `node tools/hero-tags.mjs` after a game
 patch — so it is in the first rows), opens the slot, sets the game's
 gear filter to the item's set, main stat and sub stats so it is in the first row (`src/FilterPilot.cs`), clicks it
@@ -48,7 +48,6 @@ src/GameInfo.cs         game process, exe path, version from realversion.xml
 src/Extractor.cs        pipeline: find game -> read -> validate/count -> save copy
 src/SyncClient.cs       POST {site}/api/sync (gzip, Bearer code, TLS 1.2, 60 s)
 src/PlansClient.cs      GET/POST {site}/api/extractor/plans (builds sent with «Надеть в игре»)
-src/BridgeClient.cs     local bridge (bridge/): snapshot upload, equip commands by long poll, answers
 src/Config.cs           %APPDATA%\RealmForge\config.json (+ last sync), CodeProtector.cs: DPAPI for the code
 tools/build-app.sh      -> dist/Wardsage.exe (`--test`: dist/Wardsage-Test.exe) (Roslyn from the .NET 8 SDK + Mono's .NET Framework reference assemblies)
 tools/pack-app.sh       -> dist/Wardsage.zip (exe + README)

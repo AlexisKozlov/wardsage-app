@@ -1,7 +1,7 @@
 // RealmForge desktop — equip helper: what to tell the player next. Pure logic (tests: tests/guide.test.mjs).
 //
 // plan: {id, heroUid, heroName, items:[{slot, uid, slotName, name, setName, level, mainStat, fromHeroUid, fromHeroName}]}
-//   from the site, or {…, bridge: true} from the local bridge (bridgePlan)
+//   from the site
 // live (from the host, read-only memory reads): {gameRunning, heroUid, panelOk, part, hideEquipped, hideEnhanced,
 //   filterActive, bulk (the Inventory is in «Массовая продажа»), screen, rows:{uid:[row, col]}, owner:{uid: heroUid},
 //   art: {uid, step, done, owner} (only while the plan's artifact is guided: the host's step for it)}
@@ -18,7 +18,7 @@
       const own = owner[it.uid];
       const on = own === plan.heroUid;
       // on a hero the plan did not count on (put on someone after the plan was made): never taken away from them.
-      // fromHeroUid null: not known yet (a bridge plan before the first reading, see adoptOwners)
+      // fromHeroUid null: not known yet
       const taken = !on && own > 0 && it.fromHeroUid != null && own !== it.fromHeroUid;
       if (on) g.done++;
       if (taken) g.taken++;
@@ -77,24 +77,12 @@
     return current >= 0 && current < plans.length ? current : 0;
   }
 
-  // A plan from the local bridge ({id: "bridge:…", heroUid, heroName, items: [{slot, uid}]}). The bridge says only what
-  // goes where; the fields a site plan fills (names, level, icons, the card) get neutral values.
-  function bridgePlan(raw, itemName) {
-    return {
-      id: raw.id, heroUid: raw.heroUid, heroName: raw.heroName, createdAt: null, bridge: true,
-      items: (raw.items || []).map((it) => ({
-        slot: it.slot, uid: it.uid, name: itemName(it.uid), slotName: '', setName: '', level: 0, stars: 0, mainStat: '',
-        fromHeroUid: null, fromHeroName: null, icon: '', setIcon: '', subs: [], setBonus: [], main: [],
-      })),
-    };
-  }
-
   // A plan made on the site within the last 3 minutes that this app has not listed before: the player pressed «Надеть в
   // игре» just now, so it starts by itself. The first listing after the app starts only marks what is there.
   const FRESH_MS = 3 * 60 * 1000;
   function freshPlans(plans, seen, now) {
     if (!seen) return [];
-    return (plans || []).filter((p) => !p.bridge && !seen[p.id] && p.createdAt && now - Date.parse(p.createdAt) < FRESH_MS
+    return (plans || []).filter((p) => !seen[p.id] && p.createdAt && now - Date.parse(p.createdAt) < FRESH_MS
       && now - Date.parse(p.createdAt) > -FRESH_MS);
   }
   function freshPlan(plans, seen, now) { return freshPlans(plans, seen, now)[0] || null; }
@@ -111,33 +99,18 @@
     return null;
   }
 
-  // A bridge command names only the items: whoever wears an item when the command arrives is the hero it is taken from
-  // on purpose (the dashboard checked it against the same snapshot). Later changes of owner count as «taken».
-  function adoptOwners(plans, owner) {
-    if (!owner) return;
-    for (const p of plans || []) {
-      if (!p.bridge) continue;
-      for (const it of p.items) if (it.fromHeroUid == null && owner[it.uid] !== undefined) it.fromHeroUid = owner[it.uid] || 0;
-    }
-  }
-
   // «Снять с других героев» pressed for a plan (ids: plan id -> true): its items someone else put on after the plan
   // was made are taken from whoever wears them now, like the items the optimizer took from other heroes. Applied after
   // every reading and reload (plans from the site come as new objects).
   function takeOver(plans, owner, ids) {
     if (!owner || !ids) return;
     for (const p of plans || []) {
-      if (!ids[p.id] || p.bridge) continue;
+      if (!ids[p.id]) continue;
       for (const it of p.items) {
         const own = owner[it.uid];
         if (own > 0 && own !== p.heroUid && it.fromHeroUid != null && own !== it.fromHeroUid) { it.fromHeroUid = own; it.fromHeroName = null; }
       }
     }
-  }
-
-  // Plans after a reload from the site: the bridge's plans still in progress stay (first), the site's list follows.
-  function mergePlans(current, site, reported) {
-    return (current || []).filter((p) => p.bridge && !(reported && reported[p.id])).concat(site || []);
   }
 
   // Stat name of a main-stat text such as «ОЗ 750» / «Крит. УРН 80%» (for the filter hint).
@@ -201,7 +174,7 @@
     return a > 10 && a < 20 ? many : b === 1 ? one : b >= 2 && b <= 4 ? few : many;
   }
 
-  const api = { next, artStep, pickPlan, bridgePlan, mergePlans, freshPlan, freshPlans, nextQueued, adoptOwners, takeOver, highlightUid, plural, bustUrl, headUrl, itemUrl, setUrl, rankOf, statOf, statId, statUrl, VISIBLE_ROWS };
+  const api = { next, artStep, pickPlan, freshPlan, freshPlans, nextQueued, takeOver, highlightUid, plural, bustUrl, headUrl, itemUrl, setUrl, rankOf, statOf, statId, statUrl, VISIBLE_ROWS };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.RFGuide = api;
 })(typeof window !== 'undefined' ? window : globalThis);

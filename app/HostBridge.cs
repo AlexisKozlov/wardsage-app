@@ -2,9 +2,7 @@
 //
 // page -> host  {cmd:"init"|"setLang"|"setCode"|"clearCode"|"setSaveCopy"|"setErrorReports"|"setSite"|"paste"|"sync"|"open"|"openLog"|
 //                    "openFolder"|"plans.load"|"news.fetch"|"forum.unread"|"equip.scan"|"equip.watch"|"equip.finish"|"highlight"|"compact", ...}
-// host -> page  {ev:"state"|"game"|"paste"|"sync"|"plans"|"equip.scan"|"equip.live"|"overlay"|"bridge.equip"|"bridge.drop", ...}
-// The local bridge (bridge/, optional): every reading of the game also goes to it, and its equip commands become
-// plans on the page (id "bridge:<command id>") that the same guide walks through; equip.finish answers the bridge.
+// host -> page  {ev:"state"|"game"|"paste"|"sync"|"plans"|"equip.scan"|"equip.live"|"overlay", ...}
 // The page is trusted content from our own folder, but every argument is still validated here: codes by format,
 // URLs by scheme and host, item uids as numbers. Nothing here writes to the game.
 using System;
@@ -44,11 +42,6 @@ namespace RealmForge {
     readonly System.Windows.Forms.Timer updateTimer = new System.Windows.Forms.Timer();
     string updateReady;   // JSON of the downloaded update for the page, or null
     string updateReadyVersion;   // its version
-    // local bridge (src/BridgeClient.cs): the poller has its own client (aborted on exit); this one sends snapshots and answers
-    const string BridgePlanPrefix = "bridge:";
-    readonly BridgeClient bridgeApi = new BridgeClient(BridgeClient.DefaultUrl, BridgeClient.DefaultTokenPath);
-    readonly BridgePoller bridgePoller;
-    readonly Dictionary<string, BridgeCommand> bridgeOpen = new Dictionary<string, BridgeCommand>();   // UI thread only
     // the site's switches (src/RemoteConfig.cs): asked at start and every 10 min (test build 2); the saved copy until then
     RemoteSwitches remote = RemoteSwitches.LoadCache(RemoteSwitches.CachePath) ?? RemoteSwitches.Permissive();
     readonly System.Windows.Forms.Timer remoteTimer = new System.Windows.Forms.Timer();
@@ -103,9 +96,6 @@ namespace RealmForge {
       Program.FatalReport = ReportFatal;
       autoTimer.Interval = 1000; autoTimer.Tick += (s, e) => AutoSyncTick(); autoTimer.Start();
       updateTimer.Interval = 20000; updateTimer.Tick += (s, e) => { updateTimer.Interval = (Channel.IsTest ? 2 : 5) * 60 * 1000; if (updateReady == null || Channel.IsTest) CheckUpdate(); }; updateTimer.Start();
-      bridgePoller = new BridgePoller(new BridgeClient(BridgeClient.DefaultUrl, BridgeClient.DefaultTokenPath),
-                                      c => OnUi(() => OnBridgeCommand(c)), up => OnUi(() => OnBridgeConnected(up)));
-      bridgePoller.Start();
       remoteTimer.Interval = 3000; remoteTimer.Tick += (s, e) => { remoteTimer.Interval = RemoteSwitches.EveryMinutes(Channel.IsTest) * 60 * 1000; FetchRemote(); }; remoteTimer.Start();
       if (Channel.IsTest) { testLogTimer.Interval = 30000; testLogTimer.Tick += (s, e) => { testLogTimer.Interval = 120000; SendTestLog(); }; testLogTimer.Start(); }
       Log.Write(Channel.ProductName + " " + Program.Version + " started");
@@ -283,8 +273,6 @@ namespace RealmForge {
 
     public void Dispose() {
       Program.FatalReport = null;
-      bridgePoller.Dispose();   // the pending long poll is aborted: the thread ends at once
-      CloseBridgeCommands("cancelled", "Wardsage was closed.", true);
       gameTimer.Dispose(); liveTimer.Dispose(); autoTimer.Dispose(); updateTimer.Dispose(); remoteTimer.Dispose(); testLogTimer.Dispose(); if (testRec != null) testRec.Stop(); if (plansWait != null) plansWait.Stop(); overlay.Dispose();
     }
 
@@ -295,7 +283,7 @@ namespace RealmForge {
     bool restarting;
     void TryAutoUpdate() {
       if (updateReady == null || restarting || !cfg.AutoUpdate) return;
-      if (syncing || scanning || capturing || bridgeOpen.Count > 0 || overlay.Busy) return;
+      if (syncing || scanning || capturing || overlay.Busy) return;
       var rec = recorder;
       if (rec != null && rec.Running) return;
       if ((DateTime.UtcNow - lastUi).TotalMinutes < 2) return;
@@ -695,7 +683,6 @@ namespace RealmForge {
       Post("{\"ev\":\"game\",\"running\":" + B(running) + ",\"version\":" + S(gameVersion) + "}");
       PostLayout();
       if (!running && addrs != null) { addrs = null; overlay.SetAddrs(null); liveTimer.Stop(); lastLive = null; }
-      if (!running) CloseBridgeCommands("failed", "The game was closed.", false);
       // the game's screens are found in memory at once (tens of seconds), not when the first «Надеть» comes: then the
       // equip starts right away
       if (running && addrs == null && !scanning && AutoClickOn()) StartScan(watch, true);
@@ -951,7 +938,7 @@ namespace RealmForge {
 
     void AutoSyncTick() {
       if (!gameRunning) gameSeenAt = DateTime.MinValue;
-      if (!cfg.AutoSync || !gameRunning || !remote.ReadEnabled || !(SyncClient.IsValidCode(cfg.Code) || bridgePoller.Connected)) return;
+      if (!cfg.AutoSync || !gameRunning || !remote.ReadEnabled || !(SyncClient.IsValidCode(cfg.Code))) return;
       var now = DateTime.UtcNow;
       if (gameSeenAt == DateTime.MinValue) gameSeenAt = now;
       if (now - gameSeenAt < TimeSpan.FromSeconds(FirstSyncDelaySec)) return;   // the game is still loading / at the login screen
@@ -974,13 +961,13 @@ namespace RealmForge {
     void StartSync(bool saveOnly, bool auto) {
       if (syncing) return;
       if (!remote.ReadEnabled) { if (!auto) SyncError("paused", null, 0); return; }   // the site's switch: no game reading
-      bool upload = !saveOnly && SyncClient.IsValidCode(cfg.Code), toBridge = bridgePoller.Connected;
-      if (auto && !upload && !toBridge) return;
+      bool upload = !saveOnly && SyncClient.IsValidCode(cfg.Code);
+      if (auto && !upload) return;
       string code = cfg.Code, site = cfg.Site; bool copy = !auto && (cfg.SaveCopy || !upload);
       syncing = true; lastSyncStart = DateTime.UtcNow;
       var t = new Thread(() => {
         autoRun = auto;
-        try { RunSync(upload, copy, site, code, toBridge); }
+        try { RunSync(upload, copy, site, code); }
         catch (Exception e) { Log.Write("sync: " + e); SyncError("read", e.GetType().Name + ": " + e.Message, 0); }
         finally { syncing = false; }
       });
@@ -996,7 +983,7 @@ namespace RealmForge {
         Report("sync." + kind, "sync: " + kind + (string.IsNullOrEmpty(detail) ? "" : ": " + detail), Ctx("auto", autoRun ? "true" : "false"));
     }
 
-    void RunSync(bool upload, bool copy, string site, string code, bool toBridge) {
+    void RunSync(bool upload, bool copy, string site, string code) {
       bool isAuto = autoRun;
       SyncEv("find", null);
       string version;
@@ -1037,12 +1024,6 @@ namespace RealmForge {
       }
       string saved = null;
       if (copy) { try { saved = Extractor.SaveCopy(ex.Json, RFX.Log.ToString()); lastSavedPath = saved; } catch (Exception e) { Log.Write("save: " + e.Message); } }
-      if (toBridge) {
-        string detail;
-        var b = bridgeApi.PushSnapshot(ex.Json, version, started, out detail);
-        Log.Write("bridge snapshot: " + b + (detail != null ? " " + detail : ""));
-      }
-      if (isAuto && !upload) return;   // a reading only for the bridge: nothing changed on the site, nothing to show
       int heroes = ex.Heroes, items = ex.Items, arts = ex.Artifacts;
       string viewUrl = null;
       if (upload) {
@@ -1384,7 +1365,6 @@ namespace RealmForge {
     }
 
     void FinishPlan(string id, bool done, bool taken) {
-      if (id != null && id.StartsWith(BridgePlanPrefix, StringComparison.Ordinal)) { FinishBridgeCommand(id.Substring(BridgePlanPrefix.Length), done, taken); return; }
       string site = cfg.Site, code = cfg.Code;
       if (string.IsNullOrEmpty(id) || !SyncClient.IsValidCode(code)) return;
       Task.Factory.StartNew(() => {
@@ -1444,65 +1424,6 @@ namespace RealmForge {
       }
       lock (finishGen) { int cur; if (finishGen.TryGetValue(key, out cur) && cur == gen) finishGen.Remove(key); }
       return st;
-    }
-
-    // ------------------------------------------------------------------ local bridge
-
-    void OnBridgeConnected(bool up) {
-      Log.Write("bridge " + (up ? "connected" : "gone"));
-      if (up && gameRunning) RequestAutoSync(0);   // the bridge needs a snapshot before it can accept equip commands
-    }
-
-    // An equip command from the bridge becomes a plan on the page; the guide, the frame and the auto click work as for
-    // a plan from the site. The page answers with equip.finish (FinishPlan) when the items are on the hero or the player
-    // removes the plan.
-    void OnBridgeCommand(BridgeCommand c) {
-      if (c.Type != "equip") { ReportBridge(c.Id, "failed", "Wardsage " + Program.Version + " cannot run '" + c.Type + "' commands."); return; }
-      if (!gameRunning) { ReportBridge(c.Id, "failed", "The game is not running."); return; }
-      if (bridgeOpen.ContainsKey(c.Id)) return;
-      bridgeOpen[c.Id] = c;
-      foreach (var s in c.Slots) overlay.SetItemInfo(s.ItemUid, s.SetId, s.MainStatId);   // for the game's filter
-      Log.Write("bridge equip " + c.Id + " (" + (c.CommandId ?? "") + "): hero " + N(c.HeroUid) + ", " + c.Slots.Count + " item(s)");
-
-      var sb = new StringBuilder("{\"ev\":\"bridge.equip\",\"plan\":{\"id\":").Append(S(BridgePlanPrefix + c.Id))
-        .Append(",\"heroUid\":").Append(N(c.HeroUid)).Append(",\"heroName\":").Append(S(c.HeroName ?? "#" + N(c.HeroUid)))
-        .Append(",\"items\":[");
-      for (int i = 0; i < c.Slots.Count; i++) {
-        if (i > 0) sb.Append(',');
-        sb.Append("{\"slot\":").Append(N(c.Slots[i].Slot)).Append(",\"uid\":").Append(N(c.Slots[i].ItemUid)).Append('}');
-      }
-      Post(sb.Append("]}}").ToString());
-    }
-
-    void FinishBridgeCommand(string id, bool done, bool taken) {
-      if (!bridgeOpen.Remove(id)) return;
-      if (taken) ReportBridge(id, "failed", "An item is on another hero now; Wardsage does not take it off. Rebuild the plan.");
-      else ReportBridge(id, done ? "done" : "cancelled", done ? null : "Removed in Wardsage.");
-      if (done) RequestAutoSync(1);   // a fresh reading confirms the move to the bridge and the site
-    }
-
-    /// <summary>Answers every open command (game closed, program closing) and takes their plans off the page.
-    /// <paramref name="wait"/>: answer on this thread, briefly - the program is about to exit.</summary>
-    void CloseBridgeCommands(string status, string message, bool wait) {
-      if (bridgeOpen.Count == 0) return;
-      var ids = new List<string>(bridgeOpen.Keys);
-      bridgeOpen.Clear();
-      foreach (var id in ids) {
-        if (wait) { try { bridgeApi.Report(id, status, message, 1500); } catch (Exception) { } }
-        else ReportBridge(id, status, message);
-      }
-      if (!wait) {
-        var sb = new StringBuilder("{\"ev\":\"bridge.drop\",\"ids\":[");
-        for (int i = 0; i < ids.Count; i++) { if (i > 0) sb.Append(','); sb.Append(S(BridgePlanPrefix + ids[i])); }
-        Post(sb.Append("]}").ToString());
-      }
-    }
-
-    void ReportBridge(string id, string status, string message) {
-      Task.Factory.StartNew(() => {
-        var r = bridgeApi.Report(id, status, message, 10000);
-        Log.Write("bridge result " + id + " " + status + ": " + r);
-      });
     }
   }
 }

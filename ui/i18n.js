@@ -205,9 +205,8 @@ window.RF_TEXTS = {
     gateWhy_bulk: 'включена «Массовая продажа»', gateWhy_cell: 'под нажатием не та вещь', gateWhy_target: 'это нажатие не разрешено',
     gateWhy_nochange: 'после нажатия ничего не изменилось', gateWhy_player: 'вы остановили автонажатие',
     gBulk: 'Выйдите из «Массовой продажи»', gBulkP: 'Пока она включена, программа ничего не нажимает, а нужная вещь не видна.',
-    gTakenBridge: 'Их программа не снимает — дашборд получит отказ по этой команде.', eqTaken: 'уже на другом герое — пропущена',
+    eqTaken: 'уже на другом герое — пропущена',
     slot0: 'Оружие', slot1: 'Нагрудник', slot2: 'Браслет', slot3: 'Амулет', slot4: 'Кольцо',
-    bridgeItem: 'Предмет #{0}',
 
     secAccount: 'Аккаунт', secSync: 'Синхронизация', secEquip: 'Помощник «Надеть»', secApp: 'Программа', secHelp: 'Помощь', secAdv: 'Дополнительно', setMore: 'Подробнее', setLess: 'Свернуть',
     setAutoSyncS: 'Отправляет аккаунт на сайт после смены снаряжения и раз в 5 минут.',
@@ -431,9 +430,8 @@ window.RF_TEXTS = {
     gateWhy_bulk: '«Bulk sale» is on', gateWhy_cell: 'the click would hit another item', gateWhy_target: 'that click is not allowed',
     gateWhy_nochange: 'nothing changed after the click', gateWhy_player: 'you stopped the auto click',
     gBulk: 'Leave «Bulk sale»', gBulkP: 'While it is on, the program clicks nothing, and the item you need is not shown.',
-    gTakenBridge: 'The program does not take them off — the dashboard gets a refusal for this command.', eqTaken: 'on another hero now — skipped',
+    eqTaken: 'on another hero now — skipped',
     slot0: 'Weapon', slot1: 'Armor', slot2: 'Bracer', slot3: 'Amulet', slot4: 'Ring',
-    bridgeItem: 'Item #{0}',
 
     secAccount: 'Account', secSync: 'Sync', secEquip: 'Equip helper', secApp: 'Program', secHelp: 'Help', secAdv: 'Advanced', setMore: 'More', setLess: 'Less',
     setAutoSyncS: 'Sends the account to the site after gear changes and every 5 minutes.',

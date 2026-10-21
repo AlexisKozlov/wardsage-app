@@ -1539,7 +1539,7 @@ namespace RealmForge {
       btnWasDown = down;
 
       IntPtr hwnd = GameWindow();
-      // a started plan («Надеть» here, on the site, from the bridge): the player's click left our window in front, so
+      // a started plan («Надеть» here or on the site): the player's click left our window in front, so
       // the game is brought forward (and restored) - only from our own window, never over another program
       int fp0; W32.GetWindowThreadProcessId(W32.GetForegroundWindow(), out fp0);
       if ((runHero > 0 || sellWanted != null) && hwnd != IntPtr.Zero && fp0 == SelfPid && now >= focusAfter) {

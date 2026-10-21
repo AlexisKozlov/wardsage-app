@@ -595,8 +595,8 @@
       case 'art': return artSay(p, g);
       case 'bulk': return sayBox('warn', I.warn, t('gBulk'), t('gBulkP')) + findCard(it, g, S.compact);
       case 'done': return sayBox('done', I.check, t('gDone'), t('gDoneP'));
-      case 'taken': return sayBox('warn', I.warn, t('gTaken', g.taken), t(p.bridge ? 'gTakenBridge' : 'gTakenP'),
-        p.bridge ? '' : `<div class="row" style="margin-top:10px"><button class="btn-line" data-act="takeOver">${esc(t('takeOverBtn'))}</button></div>`);
+      case 'taken': return sayBox('warn', I.warn, t('gTaken', g.taken), t('gTakenP'),
+        `<div class="row" style="margin-top:10px"><button class="btn-line" data-act="takeOver">${esc(t('takeOverBtn'))}</button></div>`);
       case 'hero': {
         if (S.run === p.id && S.autoClick) {
           const hs = S.auto && S.auto.indexOf('hero_') === 0 ? S.auto : '';
@@ -716,7 +716,7 @@
   }
   // a plan for a hero not on the account in the game now (the player switched accounts): never run, marked in the list
   // (hero uids repeat across accounts - base id × 100000 + n - so the plan's items decide: none of them on this account)
-  const foreign = (p) => !!(S.accHeroes && p && !p.bridge && (!S.accHeroes.has(p.heroUid)
+  const foreign = (p) => !!(S.accHeroes && p && (!S.accHeroes.has(p.heroUid)
     || (S.accItems && S.accItems.size && p.items.length && !p.items.some((it) => S.accItems.has(it.uid)))));
   function runNext() {
     const p = G.nextQueued(S.queue.filter((id) => !foreign(S.plans.list.find((x) => x.id === id))), S.plans.list, S.live);
@@ -990,7 +990,7 @@
         clearTimeout(S.plansWd);
         if (m.status === 'ok') {
           const id = current() && current().id;
-          S.plans = { status: 'ok', list: G.mergePlans(S.plans.list, m.plans, S.reported), err: null };
+          S.plans = { status: 'ok', list: (m.plans || []), err: null };
           const i = S.plans.list.findIndex((p) => p.id === id); S.sel = i >= 0 ? i : 0;
           // «Надеть в игре» pressed on the site a moment ago: start it (older plans wait for «Надеть» here)
           // (several heroes at once: they queue up and go one after another)
@@ -1003,7 +1003,6 @@
       case 'equip.scan': S.scan = { status: m.status, panel: !!m.panel }; render(); break;
       case 'equip.live': {
         S.live = m.live;
-        G.adoptOwners(S.plans.list, S.live.owner);
         G.takeOver(S.plans.list, S.live.owner, S.takeOver);
         const ri = S.run ? S.plans.list.findIndex((x) => x.id === S.run) : -1;
         if (S.run && ri < 0) S.run = null;
@@ -1016,11 +1015,6 @@
         }
         if (p && !S.reported[p.id] && gk === 'done') {
           S.reported[p.id] = true; host.send({ cmd: 'equip.finish', id: p.id, done: true });
-          if (p.bridge) setTimeout(() => dropPlans([p.id]), 4000);   // «done» stays on screen a moment; the site does not list it
-        } else if (p && p.bridge && !S.reported[p.id] && gk === 'taken') {
-          // the dashboard learns at once that the build cannot go on as it is
-          S.reported[p.id] = true; host.send({ cmd: 'equip.finish', id: p.id, done: false, taken: true });
-          setTimeout(() => dropPlans([p.id]), 6000);
         }
         if (S.page === 'equip' || S.compact) render(); else syncHighlight();
         break;
@@ -1145,24 +1139,13 @@
         if (S.page === 'equip' || S.compact) render();
         break;
       }
-      // an equip command from the local bridge: a plan like the site's, walked through by the same guide
-      case 'bridge.equip': {
-        const p = G.bridgePlan(m.plan, (uid) => t('bridgeItem', uid));
-        S.plans.list = [p].concat(S.plans.list.filter((x) => x.id !== p.id));
-        S.sel = 0; S.page = 'equip'; S.editCode = false;
-        if (S.hasCode && S.plans.status === 'idle') loadPlans();
-        if (S.autoClick) enqueue([p]);
-        watchPlans(true); render();
-        break;
-      }
-      case 'bridge.drop': dropPlans(m.ids || []); break;
     }
   });
 
   // tell the host which item to frame in the game
   function syncHighlight() {
     const p = current();
-    const g = p && (S.hasCode || p.bridge) ? G.next(p, S.live) : null;
+    const g = p && S.hasCode ? G.next(p, S.live) : null;
     const uid = g ? G.highlightUid(g) : 0;
     // hints on the game's own buttons: the filter to set, «Заменить», the next slot
     let hint = '', slot = -1, line1 = '', line2 = '';
