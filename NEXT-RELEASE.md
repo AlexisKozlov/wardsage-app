@@ -213,6 +213,8 @@ version …: from the site» или «saved copy»). Без файла оста�
 
 ## RU
 - Программа надёжнее находит игру и её журнал на других сборках игры (например, региональных), а данные для подсказок в игре проверяет по сборке и не использует чужие.
+- Программа теперь собрана под .NET Framework 4.8 — он уже есть в Windows 10 и 11, ничего ставить не нужно.
 
 ## EN
 - The app finds the game and its log more reliably on other builds of the game (e.g. regional ones), and checks the in-game data layout against the build so it never uses one made for another build.
+- The app is now built for .NET Framework 4.8, which Windows 10 and 11 already include, so there is nothing to install.

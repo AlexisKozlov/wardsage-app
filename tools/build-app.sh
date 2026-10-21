@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds dist/Wardsage.exe: one Windows executable (.NET Framework 4.6.2+, x64) with the interface (ui/)
+# Builds dist/Wardsage.exe: one Windows executable (.NET Framework 4.8, x64) with the interface (ui/)
 # and the WebView2 SDK embedded as resources. Runs on Linux with the .NET 8 SDK's Roslyn compiler and the
 # .NET Framework reference assemblies of Mono (no Windows, no NuGet needed).
 #
@@ -11,18 +11,15 @@ cd "$(dirname "$0")/.."
 DEFS=(); EXE=Wardsage
 if [ "${1:-}" = "--test" ]; then DEFS=(-define:TESTBUILD); EXE=Wardsage-Test; fi
 
-# Linux: the .NET SDK's Roslyn + Mono's 4.6.2 reference assemblies. Windows (Git Bash): the installed .NET SDK's Roslyn +
-# the reference assemblies of the NuGet package Microsoft.NETFramework.ReferenceAssemblies.net462 (FX=... to point at them).
+# Linux: the .NET SDK's Roslyn + the NuGet package's 4.8 reference assemblies. Windows (Git Bash): the installed .NET SDK's Roslyn +
+# the reference assemblies of the NuGet package Microsoft.NETFramework.ReferenceAssemblies.net48 (FX=... to point at them).
 if [ -d /usr/lib/dotnet/sdk ]; then
   SDK_CSC=$(ls -d /usr/lib/dotnet/sdk/*/Roslyn/bincore/csc.dll | tail -1)
-  # Mono's reference assemblies, else the NuGet package's copy next to the repos (the VPS has no Mono)
-  if [ -z "${FX:-}" ]; then
-    FX=/usr/lib/mono/4.6.2-api
-    [ -f "$FX/mscorlib.dll" ] || FX="$(cd "$(dirname "$0")/../.." && pwd)/tools/net462/build/.NETFramework/v4.6.2"
-  fi
+  # the NuGet package copy next to the repos (outside this repo)
+  FX=${FX:-"$(cd "$(dirname "$0")/../.." && pwd)/tools/net48/build/.NETFramework/v4.8"}
 else
   SDK_CSC=$(cygpath -w "$(ls -d "/c/Program Files/dotnet/sdk/"*/Roslyn/bincore/csc.dll | tail -1)")
-  FX=${FX:-/d/RealmForge/work/tools/net462/build/.NETFramework/v4.6.2}
+  FX=${FX:-/d/RealmForge/work/tools/net48/build/.NETFramework/v4.8}
 fi
 CSC=(dotnet "$SDK_CSC" -nologo -noconfig)
 WV=vendor/webview2

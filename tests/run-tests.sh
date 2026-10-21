@@ -112,7 +112,7 @@ node tests/locate.test.mjs
 node tests/sellhint.test.mjs
 for f in ui/*.js; do node --check "$f"; done && echo "ui scripts: syntax ok"
 
-step "8. Wardsage.exe builds (C# 7.3, .NET Framework 4.6.2, WebView2 SDK checksums)"
+step "8. Wardsage.exe builds (C# 7.3, .NET Framework 4.8, WebView2 SDK checksums)"
 bash tools/build-app.sh
 
 echo

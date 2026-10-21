@@ -11,4 +11,4 @@ using System.Runtime.Versioning;
 [assembly: AssemblyFileVersion("1.6.64.0")]
 [assembly: AssemblyInformationalVersion("1.6.64")]
 [assembly: ComVisible(false)]
-[assembly: TargetFramework(".NETFramework,Version=v4.6.2", FrameworkDisplayName = ".NET Framework 4.6.2")]
+[assembly: TargetFramework(".NETFramework,Version=v4.8", FrameworkDisplayName = ".NET Framework 4.8")]

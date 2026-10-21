@@ -29,7 +29,7 @@ Player instructions (RU/EN): [README.txt](README.txt).
 - **Updates** are downloaded from the site and applied only if signed with the project's key (`app/Updater.cs`).
 - **Input**: the equip helper's clicks (above) — only for a build the player started; nothing else is clicked.
 
-What players get (`dist/Wardsage.zip`, installer `Wardsage-Setup.exe`): **`Wardsage.exe`** — one file (≈1.3 MB), .NET Framework 4.6.2+,
+What players get (`dist/Wardsage.zip`, installer `Wardsage-Setup.exe`): **`Wardsage.exe`** — one file (≈1.3 MB), .NET Framework 4.8,
 x64, asks for administrator rights (the game runs elevated). The interface is HTML/CSS (`ui/`) rendered by the
 Microsoft Edge **WebView2** Runtime that ships with Windows 10/11; the WebView2 SDK (`vendor/webview2`, Microsoft-signed)
 and `ui/` are embedded and unpacked to `%LOCALAPPDATA%\RealmForge\app\<build>\` on start.
