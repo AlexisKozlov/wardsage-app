@@ -5009,6 +5009,21 @@ static class CoreTests {
       RunFilter(fpr, game, 722800, 13, false, true, subs4);
     }
     Check(fpr.State == "failed", "filter dropped over and over: failed after " + FilterPilot.MaxPasses + " passes (" + fpr.State + ")");
+    // the panel closes before anything is applied (nothing opens it for good): it is opened again, not given up at once
+    {
+      var fpo = new FilterPilot(g);
+      int opens = 0; bool failedEarly = false, failedAtEnd = false;
+      for (long t = 0; t < 60000; t += 100) {
+        var v = new FilterView { NowMs = t, Foreground = true, W = 1920, H = 1009, Item = 9, Wanted = true, SetId = 722800, StatId = 13,
+          SetIndex = Array.IndexOf(sets, 722800L), StatIndex = Array.IndexOf(stats, 13L), SetOrder = sets,
+          Suits = new long[0], MainAttrs = new long[0], SubAttrs = new long[0], PanelOpen = false };
+        var a = fpo.Step(v);
+        if (a != null && a.Kind == AutoKind.Click) { opens++; if (opens <= 2 * (1 + FilterPilot.MaxReopens) && fpo.State == "failed") failedEarly = true; }
+        if (fpo.State == "failed") { failedAtEnd = true; break; }
+      }
+      Check(!failedEarly && opens > 2, "panel closed without settings: opened again, not failed after " + FilterPilot.PartTries + " tries (" + opens + " clicks)");
+      Check(failedAtEnd && opens == 2 * (1 + FilterPilot.MaxReopens), "panel never stays open: failed after " + FilterPilot.MaxReopens + " retries (" + opens + " clicks, " + fpo.State + ")");
+    }
     // the item pilot: a side panel open over the list is closed first, the click is not counted
     var ap = new AutoPilot(new ListGeometry());
     var av = new AutoView { NowMs = 0, Foreground = true, H = 1009, Target = 77, Row = 2, Col = 1, SideClose = new[] { 1640.0, 91.0 } };

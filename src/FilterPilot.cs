@@ -60,13 +60,16 @@ namespace RealmForge {
   }
 
   public sealed class FilterPilot {
-    public const int MaxClicks = 26, AfterClickMs = 550, PartTries = 2, SetTries = 4, MaxSetDrags = 4, MaxSubs = 4, MaxPasses = 3;
+    public const int MaxClicks = 26, AfterClickMs = 550, PartTries = 2, SetTries = 4, MaxSetDrags = 4, MaxSubs = 4, MaxPasses = 3, MaxReopens = 3;
     readonly FilterGeometry g;
     long item = -1, waitUntil;
     int clicks, setTries, statTries, eqTries, closeTries, openTries, setDrags, subTries, sideCloseTries;
     // the filter was complete once for this item (wasSet); the game may drop it afterwards (the hero screen opened again):
     // the next pass starts its tries over, a few passes at most
     int passes; bool wasSet;
+    // the panel closed before anything was applied (a screen read failed, the game hiccuped): it is opened again, a few
+    // times per item, before the pilot gives up
+    int reopens;
     bool subSkipped; string side = "";   // the side panel this pilot opened last: "stat" or "sub" (both look alike)
     // the sets list scrolls (20+ sets, 9 rows fit): rows it is scrolled by (as far as known), the row on the screen
     // clicked last (a set clicked there that is not the wanted one tells the real scroll)
@@ -86,7 +89,7 @@ namespace RealmForge {
     /// (the item pilot goes on).</summary>
     public AutoAction Step(FilterView v) {
       if (v.Item != item) {
-        item = v.Item; waitUntil = 0; passes = 0; failed = false; State = "idle";
+        item = v.Item; waitUntil = 0; passes = 0; reopens = 0; failed = false; State = "idle";
         NewPass();
       }
       if (v.Item <= 0 || v.Suits == null || v.MainAttrs == null) { State = "idle"; return null; }
@@ -136,7 +139,10 @@ namespace RealmForge {
 
       double W = v.W, H = v.H;
       if (!v.PanelOpen) {
-        if (++openTries > PartTries) { failed = true; State = "failed"; return null; }
+        if (++openTries > PartTries) {
+          if (reopens >= MaxReopens) { failed = true; State = "failed"; Note = "the filter panel does not stay open (" + reopens + " retries)"; return null; }
+          reopens++; NewPass(); openTries = 1; Note = "the panel closed without a filter: opening it again (" + reopens + ")";
+        }
         // the «Фильтр» bar under the list (HintGeometry.Filter): left edge, bottom
         return Click(v, (0.029 + 0.379 / 2) * Ui.Unit(W, H), Ui.FromBottom(0.9275, W, H));
       }
