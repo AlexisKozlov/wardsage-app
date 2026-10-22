@@ -41,6 +41,7 @@ window.RF_TEXTS = {
 
     errNotRunning: 'Игра не найдена', errNotRunningP: 'Запустите Watcher of Realms, дождитесь главного экрана и нажмите «Синхронизировать» ещё раз.',
     errAccess: 'Нет прав на чтение памяти игры', errAccessP: 'Игра запущена от администратора. Перезапустите Wardsage и нажмите «Да» в окне Windows.',
+    errLoading: 'Игра ещё загружается', errLoadingP: 'Игра ещё загружается — войдите в игру и нажмите «Синхронизировать» через полминуты.',
     errRead: 'Не удалось прочитать данные', errReadP: 'Зайдите в игру до главного экрана (не экран загрузки) и попробуйте снова. Если повторяется — откройте журнал.',
     errToken: 'Код не принят сайтом', errTokenP: 'Код отозван или неверен. Выпустите новый в настройках сайта и вставьте его сюда.',
     otherAccount: 'другой аккаунт — не надевается', rateWait: 'Сайт принимает данные раз в 30 секунд — отправлю сам через {0} с.', errRate: 'Слишком часто', errRateP: 'Синхронизировать можно раз в 30 секунд. Подождите {0} с.',
@@ -266,6 +267,7 @@ window.RF_TEXTS = {
 
     errNotRunning: 'Game not found', errNotRunningP: 'Start Watcher of Realms, wait for the main screen and press “Sync” again.',
     errAccess: 'No permission to read the game', errAccessP: 'The game runs as administrator. Restart Wardsage and press “Yes” in the Windows prompt.',
+    errLoading: 'The game is still loading', errLoadingP: 'The game is still loading — enter the game and press «Sync» again in half a minute.',
     errRead: 'Could not read the data', errReadP: 'Get to the main screen (not the loading screen) and retry. If it repeats, open the log.',
     errToken: 'The site rejected the code', errTokenP: 'The code was revoked or is wrong. Issue a new one in the site settings and paste it here.',
     otherAccount: 'another account — not put on', rateWait: 'The site takes data once every 30 seconds — sending by itself in {0} s.', errRate: 'Too often', errRateP: 'You can sync once every 30 seconds. Wait {0} s.',

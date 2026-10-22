@@ -1007,8 +1007,9 @@ namespace RealmForge {
           SyncEv("waiting", null);
           win.BeginInvoke((Action)(() => RequestAutoSync(NotReadyRetrySec)));
           return;
-        default:   // a manual sync before the game has loaded the account: the card asks to enter the game, no report
-          SyncError("read", ex.Detail, 0, !(ex.Error == ExtractError.NoAccountData && SyncOutcome.AccountNotLoaded(RFX.Log.ToString()))); return;
+        default:   // a manual sync before the game has loaded the account (no heroes and no items): a calm "still loading" card, no report
+          if (ex.Error == ExtractError.NoAccountData) { SyncError("loading", null, 0, false); return; }
+          SyncError("read", ex.Detail, 0); return;
       }
       int seconds = (int)(DateTime.UtcNow - started).TotalSeconds;
       lastAccount = ex.Json; lastAccountAt = DateTime.UtcNow;

@@ -351,7 +351,7 @@
   function errorBox() {
     const e = S.sync.error || {};
     const map = {
-      not_running: ['errNotRunning', 'errNotRunningP'], access: ['errAccess', 'errAccessP'], read: ['errRead', 'errReadP'],
+      not_running: ['errNotRunning', 'errNotRunningP'], access: ['errAccess', 'errAccessP'], read: ['errRead', 'errReadP'], loading: ['errLoading', 'errLoadingP'],
       token: ['errToken', 'errTokenP'], rate: ['errRate', 'errRateP'], net: ['errNet', 'errNetP'], server: ['errServer', 'errServerP'],
       payload: ['errPayload', 'errPayloadP'], paused: ['remoteOff', 'remoteOffP'],
     };
