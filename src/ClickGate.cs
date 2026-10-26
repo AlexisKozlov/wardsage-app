@@ -87,6 +87,8 @@ namespace RealmForge {
     /// <summary>(d) for a cell target: the item under the click point (0 = could not be worked out) and the items the pilot may click.</summary>
     public long CellUid;
     public ICollection<long> CellOk;
+    /// <summary>InvListDrag: the list's exact scroll cannot be read (the layout data of this game version has no list fields), so no cell could be told later: the run stops before it scrolls.</summary>
+    public bool NoScroll;
     /// <summary>The click point (client px), for the log.</summary>
     public double X, Y;
     /// <summary>InvCardGem / GemFuncRow: the item the screen has to hold selected is one of CellOk. GemFuncRow: the function the click selects (7 / 8).</summary>
@@ -154,6 +156,7 @@ namespace RealmForge {
       public int HeroTab = -1;      // on the hero screen: the tab it must be on (3 = gear), -1 any
       public bool SelItem;          // the item selected on the screen (inventory card / gem screen) must be one of the items meant
       public bool GemFuncWanted;    // gem screen: the click selects the wanted function, which must not be the selected one yet
+      public bool NeedScroll;       // a list drag that only makes sense when a cell click can follow: the exact scroll must be readable
       public bool Cell;             // a list cell: the item under the click must be one of the items meant
       public bool AllowModal;       // the pop-up itself is the target (or the equip helper, which works with the game's filter pop-ups)
       public int InvArt;            // on the Inventory, the artifact flows: 1 = artifact tab, normal mode  2 = artifact tab, bulk sale  3 = NOT the artifact tab (and no equipment bulk sale)
@@ -203,7 +206,7 @@ namespace RealmForge {
             case ClickTarget.InvEquipTab: return new Rule { Kinds = K(ScreenKind.Inventory), InvOtherTab = true };
             case ClickTarget.InvBulkEnter: return new Rule { Kinds = K(ScreenKind.Inventory), InvNormalEquip = true };
             case ClickTarget.InvBulkCell: return new Rule { Kinds = K(ScreenKind.Inventory), InvBulkEquip = true, Cell = true };
-            case ClickTarget.InvListDrag: return new Rule { Kinds = K(ScreenKind.Inventory), InvBulkEquip = true };
+            case ClickTarget.InvListDrag: return new Rule { Kinds = K(ScreenKind.Inventory), InvBulkEquip = true, NeedScroll = true };
             // the artifact cleanup; «Продать», «Все» and the lock icons are in NO whitelist
             case ClickTarget.ArtTab: return new Rule { Kinds = K(ScreenKind.Inventory), InvArt = 3 };
             case ClickTarget.ArtBulkEnter: return new Rule { Kinds = K(ScreenKind.Inventory), InvArt = 1 };
@@ -460,6 +463,7 @@ namespace RealmForge {
         if (r.Func != GemRows.Recast && r.Func != GemRows.AdvancedRecast) return Halt(r.Owner, "target", tag + ": " + r.Func + " is not a recast function");
         if (f.GemFunc == r.Func) return GateResult.Wait("screen", tag + ": the function is already selected");
       }
+      if (rule.NeedScroll && r.NoScroll) return Halt(r.Owner, "scroll", tag + ": the list's exact scroll cannot be read for this game version, so no cell could be clicked safely (nothing was scrolled)");
       if (rule.Cell) {
         if (r.CellUid <= 0) return Halt(r.Owner, "cell", tag + ": the item under the click could not be worked out (the list's exact scroll is needed)");
         if (r.CellOk == null || !r.CellOk.Contains(r.CellUid)) return Halt(r.Owner, "cell", tag + ": the cell under the click holds item " + r.CellUid + ", not one of the items meant");

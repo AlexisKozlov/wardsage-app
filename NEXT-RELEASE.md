@@ -216,9 +216,11 @@ version …: from the site» или «saved copy»). Без файла оста�
 - Программа теперь собрана под .NET Framework 4.8 — он уже есть в Windows 10 и 11, ничего ставить не нужно.
 - Синхронизация во время загрузки игры больше не считается ошибкой: программа просит войти в игру и повторить.
 - «Надеть в игре»: если фильтр снаряжения закрылся, не успев примениться, программа открывает его снова, а не сдаётся.
+- «Надеть в игре»: если «Заменить» нажата, а вещь не надета, программа нажимает ещё раз. Если для версии игры нельзя прочитать положение списка вещей, автопродажа сразу останавливается с понятной причиной, а не листает список впустую.
 
 ## EN
 - The app finds the game and its log more reliably on other builds of the game (e.g. regional ones), and checks the in-game data layout against the build so it never uses one made for another build.
 - The app is now built for .NET Framework 4.8, which Windows 10 and 11 already include, so there is nothing to install.
 - Sync while the game is still loading is no longer treated as an error: the app asks you to enter the game and try again.
 - Equip in game: if the gear filter closed before it was applied, the app opens it again instead of giving up.
+- Equip in game: if «Replace» was pressed but the item did not go on, the app presses it once more. If the position of the gear list cannot be read for your game version, auto sell now stops at once with a clear reason instead of scrolling the list for nothing.

@@ -15,7 +15,7 @@
   // The app clicks by itself only on these steps; the rest (the Foundry, the last button) stay the player's.
   const AUTO_STEPS = ['openInventory', 'openEquipTab', 'inList', 'openFoundry', 'openAscendTab', 'ascendFilter', 'ascendPick'];
   // why the click gate stopped the pilot (host: src/ClickGate.cs)
-  const GATE_WHY = { unknown: 'gateWhy_unknown', screen: 'gateWhy_screen', modal: 'gateWhy_modal', bulk: 'gateWhy_bulk', cell: 'gateWhy_cell', target: 'gateWhy_target', nochange: 'gateWhy_nochange' };
+  const GATE_WHY = { unknown: 'gateWhy_unknown', screen: 'gateWhy_screen', modal: 'gateWhy_modal', bulk: 'gateWhy_bulk', cell: 'gateWhy_cell', scroll: 'gateWhy_scroll', target: 'gateWhy_target', nochange: 'gateWhy_nochange' };
   const AUTO_WHY = { bulk: 'locAutoBulk', lost: 'locAutoLost', stuck: 'locAutoStuck', screen: 'locAutoScreen', cancelled: 'locAutoCancel' };
 
   function names(list) { return (list || []).map((x) => x.name || x.text).filter(Boolean); }

@@ -60,7 +60,11 @@ namespace RealmForge {
     bool needCalib, measure, calibPending;
     long selAtCalib;
     double beforeDrag, lastDrag;
-    long selSince; bool confirmed;
+    long selSince; bool confirmed; int confirmRetries;
+    /// <summary>What the last step did (the app's log), empty when nothing new.</summary>
+    public string Trace = "";
+    /// <summary>How many times «Заменить» is pressed again for one item when the first press left it off the hero.</summary>
+    public const int ConfirmRetries = 1;
     /// <summary>List move per px of pointer drag (0 = not measured yet, 1 assumed); kept for the next items.</summary>
     public double Gain;
     /// <summary>idle | work | done | paused | background | failed | slot_failed (the slot does not open) | unconfirmed
@@ -76,7 +80,7 @@ namespace RealmForge {
       string key = v.Slot != null ? "slot:" + v.Slot[0] + ":" + v.Slot[1] : v.Target > 0 && v.Row > 0 ? "item:" + v.Target : "";
       if (key != goal) {
         goal = key; waitUntil = 0; clicks = drags = calibs = stuck = calibMiss = 0; needCalib = measure = calibPending = false;
-        selSince = 0; confirmed = false; State = "idle";
+        selSince = 0; confirmed = false; confirmRetries = 0; State = "idle";
       }
       if (key == "") { State = "idle"; return AutoAction.Nothing; }
       bool selected = v.Slot == null && v.Sel == v.Target;
@@ -96,10 +100,15 @@ namespace RealmForge {
     // «Заменить» once: the game shows the plan's hero and the item is not on that hero yet (else the button there is
     // «Снять»). When the item has not gone on after the server's time, stop - the player looks at the game.
     AutoAction ConfirmStep(AutoView v) {
-      if (confirmed) { State = "unconfirmed"; return AutoAction.Nothing; }
+      if (confirmed) {
+        // the first press left the item off the hero and it is selected again (the card was not settled, or the press missed): once more, never more
+        if (confirmRetries >= ConfirmRetries) { State = "unconfirmed"; return AutoAction.Nothing; }
+        confirmRetries++; confirmed = false; Trace = "confirm again for item " + v.Target + " (owner " + v.Owner + ", hero " + v.Hero + ")";
+      }
       if (v.Hero <= 0 || v.ScreenHero != v.Hero || v.Owner < 0) return AutoAction.Nothing;   // not sure yet: wait
       if (v.Button == null || v.NowMs - selSince < ConfirmSettleMs) return AutoAction.Nothing;  // the item card is opening
       confirmed = true; waitUntil = v.NowMs + AfterConfirmMs;
+      Trace = "confirm press for item " + v.Target + " at " + (int)(v.Button[0] + v.Button[2] / 2.0) + "," + (int)(v.Button[1] + v.Button[3] / 2.0) + " button " + v.Button[2] + "x" + v.Button[3] + " owner " + v.Owner + " hero " + v.Hero + " card settled " + (v.NowMs - selSince) + " ms";
       return Click(v.Button[0] + v.Button[2] / 2.0, v.Button[1] + v.Button[3] / 2.0);
     }
 

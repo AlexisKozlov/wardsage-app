@@ -2235,8 +2235,9 @@ static class CoreTests {
       if (a.Kind == AutoKind.Click) { presses++; if (first == null) { first = a; Check(t >= AutoPilot.ConfirmSettleMs, "waits for the item card (" + t + " ms)"); } }
     }
     Check(first != null && first.X == 1040 && first.Y == 620, "presses the centre of «Заменить»");
-    Eq(1, presses, "one press per item, even when it did not go on");
-    Eq("unconfirmed", c1.State, "did not go on -> unconfirmed, the player looks");
+    Eq(1 + AutoPilot.ConfirmRetries, presses, "one press per item, one more when it did not go on, then it stops");
+    Eq("unconfirmed", c1.State, "did not go on twice -> unconfirmed, the player looks");
+    Check(c1.Trace.StartsWith("confirm "), "the confirm press is traced for the journal (" + c1.Trace + ")");
 
     var c2 = new AutoPilot(geo); int p2 = 0;
     for (long t = 0; t < 3000; t += 100) if (c2.Step(cv(t, 77, 77, rep)).Kind != AutoKind.None) p2++;
@@ -3438,6 +3439,12 @@ static class CoreTests {
       var eq = ScreenState.Classify(new ScreenInputs { Inv = new InventoryScreen { Open = true, EquipTab = true, Bulk = true, BulkKnown = true } }, 0);
       res = gate.Check(R(ClickTarget.InvBulkCell), eq, 0);
       Check(!res.Allowed && gate.HaltReason(ClickOwner.Sell) == "artifact", "art gate: while an artifact cleanup runs the Sell owner never clicks, on any screen");
+      // the list's exact scroll cannot be read (the layout data has no list fields): the drag is refused before anything is scrolled, with its own reason
+      var eqBulk = ScreenState.Classify(new ScreenInputs { Inv = new InventoryScreen { Open = true, EquipTab = true, Bulk = true, BulkKnown = true } }, 0);
+      gate = new ClickGate(); res = gate.Check(new ClickRequest { Owner = ClickOwner.Sell, Target = ClickTarget.InvListDrag, AutoOn = true, Front = true, NoScroll = true }, eqBulk, 0);
+      Check(!res.Allowed && gate.HaltReason(ClickOwner.Sell) == "scroll", "sell gate: a list drag without a readable scroll stops the run as 'scroll' (" + res.Reason + ")");
+      gate = new ClickGate(); res = gate.Check(new ClickRequest { Owner = ClickOwner.Sell, Target = ClickTarget.InvListDrag, AutoOn = true, Front = true }, eqBulk, 0);
+      Check(res.Allowed, "sell gate: a list drag with a readable scroll is allowed (" + res.Reason + ")");
       gate = new ClickGate();
       res = gate.Check(new ClickRequest { Owner = ClickOwner.Sell, Target = ClickTarget.InvEquipTab, AutoOn = true, Front = true }, scrN, 0);
       Check(res.Allowed, "art gate: a gear cleanup (not an artifact run) may still go from the artifact tab back to «Снаряжение»");

@@ -1631,6 +1631,7 @@ namespace RealmForge {
       }
       var a = pilot.Step(v);
       AutoSay(pilot.State);
+      if (pilot.Trace != "") { Log.Write("auto: " + pilot.Trace); pilot.Trace = ""; }
       if (a.Kind == AutoKind.None) return;
       int x = o.X + (int)Math.Round(a.X), y = o.Y + (int)Math.Round(a.Y), y2 = y + (int)Math.Round(a.DY);
       if (x < o.X || y < o.Y || x >= o.X + cr.R || y >= o.Y + cr.B) return;   // never outside the game's client area
@@ -1690,6 +1691,7 @@ namespace RealmForge {
             var ok = new System.Collections.Generic.HashSet<long>(sellWanted);
             if (fr.Inv != null) foreach (var u in fr.Inv.Selected) ok.Add(u);
             rq.CellOk = ok;
+            rq.NoScroll = fr.Inv == null || fr.Inv.List == null;
           });
         }
         return;
