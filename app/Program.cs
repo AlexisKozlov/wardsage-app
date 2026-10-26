@@ -147,8 +147,17 @@ namespace RealmForge {
     /// <summary>Sends an unhandled exception to the site when the player turned the error reports on (set by HostBridge).</summary>
     internal static Action<Exception> FatalReport;
 
+    static bool uiaSaid;
+    /// <summary>UI Automation is missing on this system: one journal line, no box, no report; the app keeps running without accessibility events.</summary>
+    static bool UiaMissing(Exception e) {
+      if (!WebViewRecovery.IsUiaMissing(e)) return false;
+      if (!uiaSaid) { uiaSaid = true; try { Log.Write("UI Automation (UIAutomationCore.dll) is not available on this system - accessibility events are off, the app keeps running"); } catch (Exception) { } }
+      return true;
+    }
+
     /// <summary>Logs and reports an error without a message box (the program goes on).</summary>
     static void Quiet(Exception e) {
+      if (UiaMissing(e)) return;
       try { Log.Write("ERROR (no box) " + (e == null ? "unknown" : e.ToString())); } catch (Exception) { }
       var fr = FatalReport;
       if (fr != null && e != null) try { fr(e); } catch (Exception) { }
@@ -161,6 +170,7 @@ namespace RealmForge {
     internal static void Fatal(Exception e, string friendly) {
       // «Operation aborted» (E_ABORT) from a WebView2 call: the browser is restarting or closing - nothing to tell the player
       if (friendly == null && e != null && WebViewRecovery.IsAbort(e)) { Quiet(e); return; }
+      if (UiaMissing(e)) return;
       string msg = e == null ? "unknown error" : e.GetType().Name + ": " + e.Message;
       try { Log.Write("FATAL " + (e == null ? msg : e.ToString())); } catch (Exception) { }
       var fr = FatalReport;

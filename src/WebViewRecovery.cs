@@ -41,6 +41,16 @@ namespace RealmForge {
       return ce != null && ce.HResult == E_ABORT;
     }
 
+    /// <summary>The system has no UIAutomationCore.dll (Wine / Proton, a stripped Windows): the menus raise accessibility events through it and
+    /// fail with DllNotFoundException. Harmless: the menu works without them.</summary>
+    public static bool IsUiaMissing(Exception e) {
+      for (int i = 0; e != null && i < 8; i++, e = e.InnerException) {
+        var d = e as DllNotFoundException;
+        if (d != null && (d.Message ?? "").IndexOf("UIAutomationCore", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+      }
+      return false;
+    }
+
     public static string HResultHex(Exception e) {
       e = Inner(e);
       return e == null ? "" : "0x" + unchecked((uint)e.HResult).ToString("X8");
