@@ -1030,7 +1030,7 @@ namespace RealmForge {
       if (upload) {
         SyncEv("send", null);
         var r = SyncClient.Send(site, code, ex.Json);
-        Log.Write("send: " + r.Status + " " + r.HttpCode + " " + (r.Details ?? ""));
+        Log.Write("send: " + r.Status + " " + r.HttpCode + " " + (r.Details ?? "") + (r.Retried ? " (sent again on a fresh connection after the first was closed)" : ""));
         switch (r.Status) {
           case SyncStatus.Ok: break;
           case SyncStatus.InvalidToken: SyncError("token", null, 0); return;

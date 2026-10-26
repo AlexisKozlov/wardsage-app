@@ -218,6 +218,7 @@ version …: from the site» или «saved copy»). Без файла оста�
 - «Надеть в игре»: если фильтр снаряжения закрылся, не успев примениться, программа открывает его снова, а не сдаётся.
 - «Надеть в игре»: если «Заменить» нажата, а вещь не надета, программа нажимает ещё раз. Если для версии игры нельзя прочитать положение списка вещей, автопродажа сразу останавливается с понятной причиной, а не листает список впустую.
 - Если в системе нет UIAutomationCore.dll (например, Wine или Proton), программа больше не падает при наведении на меню в трее, а продолжает работу.
+- Синхронизация: если сервер закрыл простаивающее соединение, программа отправляет данные ещё раз по новому соединению и не показывает ошибку.
 
 ## EN
 - The app finds the game and its log more reliably on other builds of the game (e.g. regional ones), and checks the in-game data layout against the build so it never uses one made for another build.
@@ -226,3 +227,4 @@ version …: from the site» или «saved copy»). Без файла оста�
 - Equip in game: if the gear filter closed before it was applied, the app opens it again instead of giving up.
 - Equip in game: if «Replace» was pressed but the item did not go on, the app presses it once more. If the position of the gear list cannot be read for your game version, auto sell now stops at once with a clear reason instead of scrolling the list for nothing.
 - If the system has no UIAutomationCore.dll (for example Wine or Proton), the app no longer crashes when you hover the tray menu and keeps running.
+- Sync: if the server closed an idle connection, the app sends again on a fresh one and shows no error.

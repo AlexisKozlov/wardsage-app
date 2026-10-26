@@ -2236,6 +2236,12 @@ static class CoreTests {
     }
     Check(first != null && first.X == 1040 && first.Y == 620, "presses the centre of «Заменить»");
     Check(WebViewRecovery.IsUiaMissing(new DllNotFoundException("UIAutomationCore.dll assembly:<unknown assembly> type:<unknown type> member:(null)")) && WebViewRecovery.IsUiaMissing(new AggregateException(new InvalidOperationException("x", new DllNotFoundException("Unable to load UIAutomationCore.dll")))) && !WebViewRecovery.IsUiaMissing(new DllNotFoundException("WebView2Loader.dll")) && !WebViewRecovery.IsUiaMissing(new InvalidOperationException("UIAutomationCore")) && !WebViewRecovery.IsUiaMissing(null), "a missing UIAutomationCore.dll is recognised (only that one)");
+    Check(SyncClient.IsConnectionClosed(new WebException("x", WebExceptionStatus.KeepAliveFailure)) && SyncClient.IsConnectionClosed(new WebException("Базовое соединение закрыто", WebExceptionStatus.ConnectionClosed))
+          && SyncClient.IsConnectionClosed(new Exception("outer", new WebException("y", WebExceptionStatus.KeepAliveFailure)))
+          && SyncClient.IsConnectionClosed(new System.IO.IOException("reset", new System.Net.Sockets.SocketException((int)System.Net.Sockets.SocketError.ConnectionReset)))
+          && !SyncClient.IsConnectionClosed(new WebException("t", WebExceptionStatus.Timeout)) && !SyncClient.IsConnectionClosed(new WebException("n", WebExceptionStatus.NameResolutionFailure))
+          && !SyncClient.IsConnectionClosed(new WebException("The underlying connection was closed", WebExceptionStatus.TrustFailure)) && !SyncClient.IsConnectionClosed(new Exception("kept alive")) && !SyncClient.IsConnectionClosed(null),
+          "sync: a closed idle connection is told by the status (not the localized text) and retried; timeouts and other failures are not");
     Eq(1 + AutoPilot.ConfirmRetries, presses, "one press per item, one more when it did not go on, then it stops");
     Eq("unconfirmed", c1.State, "did not go on twice -> unconfirmed, the player looks");
     Check(c1.Trace.StartsWith("confirm "), "the confirm press is traced for the journal (" + c1.Trace + ")");
