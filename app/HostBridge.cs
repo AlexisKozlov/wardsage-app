@@ -60,12 +60,13 @@ namespace RealmForge {
       guildWatch = new GuildWatch(() => cfg.Site, () => cfg.Code, st => Post("{\"ev\":\"guild\",\"state\":" + S(st) + "}"));
       packsWatch = new PacksWatch(() => cfg.Site, () => cfg.Code);
       codeWatch = new CodeWatch(() => cfg.SendCodes, () => cfg.Site, () => cfg.Code);
+      gradeWatch = new GradeWatch(() => cfg.Code);
       gameTimer.Interval = 2000; gameTimer.Tick += (s, e) => {
         CheckGame(false);
         SyncPlansWait();
         if (On("battle")) WatchBattleEnd();
         WatchStall();
-        arenaWatch.Tick(gameRunning && On("battle")); guildWatch.Tick(gameRunning && On("guild")); packsWatch.Tick(gameRunning); codeWatch.Tick(gameRunning);
+        arenaWatch.Tick(gameRunning && On("battle")); guildWatch.Tick(gameRunning && On("guild")); packsWatch.Tick(gameRunning); codeWatch.Tick(gameRunning); gradeWatch.Tick(gameRunning);
         TraceStartTick(); TryAutoUpdate(); LayoutTick();
       }; gameTimer.Start();
       liveTimer.Interval = 400; liveTimer.Tick += (s, e) => PollLive();
@@ -703,6 +704,7 @@ namespace RealmForge {
     // and opponent, read at its start (src/ArenaOpponents.cs) and kept with the fight as "arenaInfo"
     ArenaWatch arenaWatch;
     GuildWatch guildWatch;   // the guild table to the site (app/GuildWatch.cs)
+    GradeWatch gradeWatch;   // the hero rating screen: the rows shown go to the site with the next sync (app/GradeWatch.cs)
     CodeWatch codeWatch;     // the code-redeem window: the game's answer to a code goes to the site if the setting is on (app/CodeWatch.cs)
     PacksWatch packsWatch;   // the downloaded game update packs' addresses to the site (app/PacksWatch.cs)
     volatile string arenaInfo; volatile int arenaInfoStage;
@@ -1067,6 +1069,7 @@ namespace RealmForge {
             SyncError("net", r.Details, 0); return;
         }
         serverRetried = false;
+        gradeWatch.Flush(site, code);
         if (r.Heroes >= 0) heroes = r.Heroes;
         if (r.Items >= 0) items = r.Items;
         if (r.Artifacts >= 0) arts = r.Artifacts;
