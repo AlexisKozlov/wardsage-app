@@ -30,7 +30,7 @@
 //        "heroes":{"<key>":{"c":C,"uid":U,"unit":U,"squad":S,"leader":false,"placed":[[frame,x,y,face,exact]],"fell":[frame],
 //                  "retreat":[frame],"ult":[frame]}},
 //        "ops":[[frame,cmd,cuid,params…]], "boss":[[frame,hp‰]],
-//        "stats":[{"c":C,"unit":U,"hero":H,"at":"<hex>","power":P,"damage":D,"toBoss":B,"heal":H,"taken":T,"overflow":O}],
+//        "stats":[{"c":C,"unit":U,"hero":H,"at":"<hex>","power":P,"damage":D,"toBoss":B,"heal":H,"taken":T,"overflow":O,["skSum":S,"skills":{"<skill id>":amount}]}],
 //        "arena":{"rounds":[{"wave":W,"start":{"1":f,"2":f},"first":{..},"clear":{..},"won":1|2|0,
 //                            "judge":{"<side>":[[frame,‰ of max]]},"judgeLost":{"<side>":‰}}],
 //                 "bases":[{"unit":U,"side":S,"owner":O,"max":M,"hp":[[frame,hp]]}],
@@ -104,6 +104,7 @@ namespace RealmForge {
   public sealed class StatLine {
     public uint C; public int Unit; public uint Hero, Power; public ulong At;
     public long Damage, ToBoss, Overflow; public int Heal, Taken;
+    public Dictionary<int, long> Skills;   // per-skill amounts at the fight's end (null: not read)
   }
 
   /// <summary>One unit with a position at one sample (arena trace).</summary>
@@ -230,6 +231,21 @@ namespace RealmForge {
 
     /// <summary>The heroes' statistics by controller (read again and again: the last reading is kept).</summary>
     public void SetStats(List<StatLine> list) { if (list != null && list.Count > 0) stats = list; }
+
+    /// <summary>Attaches the per-skill amounts ("controller:unit" -> skill -> amount) to the kept statistics; returns how many heroes got
+    /// some and whether each one's sum equals its damage.</summary>
+    public int SetSkills(Dictionary<string, Dictionary<int, long>> sk, out bool sumOk) {
+      sumOk = true; int n = 0;
+      if (stats == null || sk == null) return 0;
+      foreach (var s in stats) {
+        Dictionary<int, long> d;
+        if (!sk.TryGetValue(s.C + ":" + s.Unit, out d) || d.Count == 0) continue;
+        s.Skills = d; n++;
+        if (SkillSum(d) != s.Damage) sumOk = false;
+      }
+      return n;
+    }
+    static long SkillSum(Dictionary<int, long> d) { long t = 0; foreach (var v in d.Values) t += v; return t; }
 
     // ------------------------------------------------------------------ damage curves and unit trace
 
@@ -623,7 +639,14 @@ namespace RealmForge {
           if (i > 0) sb.Append(',');
           sb.Append("{\"c\":").Append(s.C).Append(",\"unit\":").Append(s.Unit).Append(",\"hero\":").Append(s.Hero).Append(",\"at\":\"").Append(s.At.ToString("X"))
             .Append("\",\"power\":").Append(s.Power).Append(",\"damage\":").Append(s.Damage).Append(",\"toBoss\":").Append(s.ToBoss)
-            .Append(",\"heal\":").Append(s.Heal).Append(",\"taken\":").Append(s.Taken).Append(",\"overflow\":").Append(s.Overflow).Append('}');
+            .Append(",\"heal\":").Append(s.Heal).Append(",\"taken\":").Append(s.Taken).Append(",\"overflow\":").Append(s.Overflow);
+          if (s.Skills != null && s.Skills.Count > 0) {
+            sb.Append(",\"skSum\":").Append(SkillSum(s.Skills)).Append(",\"skills\":{");
+            bool f1 = true;
+            foreach (var kv in s.Skills) { if (!f1) sb.Append(','); f1 = false; sb.Append('"').Append(kv.Key).Append("\":").Append(kv.Value); }
+            sb.Append('}');
+          }
+          sb.Append('}');
         }
         sb.Append(']');
       }

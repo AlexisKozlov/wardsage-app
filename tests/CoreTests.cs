@@ -87,6 +87,42 @@ static class CoreTests {
     // the fight timeline and the battle reading take their game values from the layout data (src/Layout.cs): a test copy
     Layout.Use(TestLayout());
 
+    Console.WriteLine("Per-skill battle statistics (m_vSkillDamage reader, fake memory):");
+    {
+      var fm = new FakeLua(1 << 16); RFX.TestMemory = fm;
+      try {
+        // Dictionary header: entries 0x18, count 0x20; entry arrays: length at +16, items at +24
+        Func<int, int, ulong> MkDict = (stride, n) => {
+          ulong d = fm.Alloc(0x30), arr = fm.Alloc(24 + stride * n + 8);
+          fm.W64(d + 0x18, arr); fm.W32(d + 0x20, n); fm.W64(arr + 16, (ulong)n); return d;
+        };
+        Action<ulong, int, int, int, ulong, long> Ent = (d, stride, i, key, rv, lv) => {
+          ulong arr = fm.R64(d + 0x18), e = arr + 24 + (ulong)(stride * i);
+          fm.W32(e, 1); fm.W32(e + 4, -1); fm.W32(e + 8, key);
+          if (stride == 0x18) { Array.Copy(BitConverter.GetBytes(lv), 0, fm.Mem, (int)(e + 16 - FakeLua.Base), 8); } else fm.W64(e + 16, rv);
+        };
+        ulong skills = MkDict(0x18, 2); Ent(skills, 0x18, 0, 101, 0, 700L); Ent(skills, 0x18, 1, 205, 0, 300L);
+        ulong obj = fm.Alloc(0x40); fm.W64(obj + 0x10, skills);
+        ulong inner = MkDict(32, 1); Ent(inner, 32, 0, 2034, obj, 0);
+        ulong outer = MkDict(32, 1); Ent(outer, 32, 0, 1, inner, 0);
+        ulong st = fm.Alloc(0x90); fm.W64(st + 0x78, outer);
+        var skr = RFX.ReadSkillStatsAt(st, 0x78, 0x10);
+        Check(skr != null && skr.ContainsKey("1:2034") && skr["1:2034"][101] == 700 && skr["1:2034"][205] == 300 && skr["1:2034"].Count == 2, "skill stats read: controller 1, unit 2034, two skills");
+        var sl = new StatLine { C = 1, Unit = 2034, Damage = 1000 };
+        var tb0 = new TimelineBuilder(); tb0.SetStats(new List<StatLine> { sl });
+        bool sok; Eq(1, tb0.SetSkills(skr, out sok), "skills attached to one hero"); Check(sok, "sum check ok when skills add up to damage");
+        string js = tb0.ToJson();
+        Check(js != null && js.Contains("\"skSum\":1000,\"skills\":{\"101\":700,\"205\":300}"), "json has skills");
+        sl.Damage = 999; tb0.SetSkills(skr, out sok); Check(!sok, "sum check mismatch is seen");
+        fm.W64(st + 0x78, 0x1234);   // a bad pointer: nothing, no throw
+        var bad = RFX.ReadSkillStatsAt(st, 0x78, 0x10);
+        Check(bad == null || bad.Count == 0, "bad pointer: nothing read");
+        fm.W32(skills + 0x20, 100000); fm.W64(st + 0x78, outer);
+        var big = RFX.ReadSkillStatsAt(st, 0x78, 0x10);
+        Check(big == null || big.Count == 0, "too many skills: nothing read");
+      } finally { RFX.TestMemory = null; RFX.ForgetLive(); }
+    }
+
     Console.WriteLine("Key name cache");
     {
       var kn = new RFX.KeyNames(); string kt;
@@ -1064,7 +1100,7 @@ static class CoreTests {
     string v39 = Path.Combine(web, "1.6.39.829.1.json");
     if (File.Exists(v39)) {
       var l39 = GameLayout.Parse(File.ReadAllText(v39, Encoding.UTF8), "1.6.39.829.1");
-      bool all = l39 != null; if (all) foreach (var k in GameLayout.FieldKeys) if (l39.FieldOffset(k) <= 0) all = false;
+      bool all = l39 != null; if (all) foreach (var k in GameLayout.FieldKeys) if (!k.StartsWith("StatisticsComponent.") && !k.StartsWith("SkillDamage") && l39.FieldOffset(k) <= 0) all = false;
       Check(all, "the site's layout file 1.6.39.829.1 has the list grid's field offsets");
     }
     LayoutChecksums();

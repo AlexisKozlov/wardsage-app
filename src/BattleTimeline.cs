@@ -35,7 +35,8 @@
 //   StatisticsComponent (world single): m_vDamageStatistics 0x20 (Dictionary<uint cUid,
 //     Dictionary<int unit, DamageStatisticsData>>); DamageStatisticsData: iBaseID 0x10, iHeroID 0x14, iPower 0x18,
 //     fDamageAmount 0x28 (long), fDamageAmountToBoss 0x30, fTreatmentAmount 0x38 (int), fAcceptDamageAmount 0x3C,
-//     fDamageOverflowAmount 0x58 — the objects the result's statistic lines (src/LiveTables.cs DumpBattleStats) are.
+//     fDamageOverflowAmount 0x58; m_vSkillDamage 0x78 (Dictionary<uint, Dictionary<int, SkillDamageStatisticsData>>, one field
+//     vDamageAmount 0x10: Dictionary<int skill, long>; build 1.6.46 only, else from the layout's fields) — the objects the result's statistic lines (src/LiveTables.cs DumpBattleStats) are.
 //   Arena waves: WaveInfoComponent (world single): cWaveSysytem 0x28 -> WaveSystem: m_vActiveController 0x50
 //     (Dictionary<uint ctl, WaveControllerNode>; 100 = side 1's waves, 101 = side 2's) -> WaveControllerNode: cUid 0x10,
 //     m_NodeData 0x28 (stWaveNodeData: iMinFrame 0, iMaxFrame 4, iRemainCount 8, iMaxCount 0xC, iRemainPopulation 0x10,
@@ -346,6 +347,63 @@ namespace RealmForge {
       return res;
     }
 
+    /// <summary>A Dictionary&lt;int, long&gt;'s entries (Entry: hashCode 0, next 4, key 8, value 0x10, stride 0x18); empty on any doubt
+    /// (more than <paramref name="max"/> entries, a bad array, a negative value).</summary>
+    static Dictionary<int, long> DictLongs(ulong dict, int max) {
+      var res = new Dictionary<int, long>();
+      try {
+        var h = dict != 0 ? Read(dict, 0x28) : null; if (h == null) return res;
+        ulong ent = BitConverter.ToUInt64(h, 0x18); int count = BitConverter.ToInt32(h, 0x20);
+        if (ent == 0 || count <= 0 || count > max) return res;
+        int al = Hdr("arrLen"), d0 = Hdr("arrData") - al; const int es = 0x18;
+        var e = Read(ent + (ulong)al, d0 + count * es); if (e == null) return res;
+        if (BitConverter.ToInt64(e, 0) < count) return res;
+        var tmp = new Dictionary<int, long>();
+        for (int i = 0; i < count; i++) {
+          int o = d0 + i * es;
+          if (BitConverter.ToInt32(e, o) < 0) continue;
+          int k = BitConverter.ToInt32(e, o + 8); long v = BitConverter.ToInt64(e, o + 0x10);
+          if (k <= 0 || v < 0) return res;
+          tmp[k] = v;
+        }
+        return tmp;
+      } catch (Exception) { return new Dictionary<int, long>(); }
+    }
+
+    public const string SkillGame = "1.6.46.841.1";
+
+    /// <summary>The per-skill battle statistics: "controller:unit" -> {skill id: amount} (StatisticsComponent.m_vSkillDamage). Offsets
+    /// come from the layout's optional fields, or the built-in ones for game <see cref="SkillGame"/> only; null when unknown.</summary>
+    public static Dictionary<string, Dictionary<int, long>> ReadSkillStats(ulong sim) {
+      try {
+        var ly = Layout.Current; if (ly == null) return null;
+        int oSk = ly.FieldOffset("StatisticsComponent.m_vSkillDamage"), oDa = ly.FieldOffset("SkillDamageStatisticsData.vDamageAmount");
+        if ((oSk < 0 || oDa < 0) && ly.Game == SkillGame) { oSk = 0x78; oDa = 0x10; }
+        if (oSk < 0 || oDa < 0) return null;
+        ulong world = P64(sim + 0x28); if (world == 0) return null;
+        ulong st = Comp(CompNodes(P64(world + 0x58)), CT("Statistics"));
+        if (st == 0 || !IsA(st, ClsStats)) return null;
+        return ReadSkillStatsAt(st, oSk, oDa);
+      } catch (Exception) { return null; }
+    }
+
+    /// <summary>The reader behind <see cref="ReadSkillStats"/>, for a known statistics object and offsets: at most 64 heroes and 64
+    /// skills each; null (nothing) on any doubt.</summary>
+    public static Dictionary<string, Dictionary<int, long>> ReadSkillStatsAt(ulong st, int oSk, int oDa) {
+      try {
+        var res = new Dictionary<string, Dictionary<int, long>>();
+        int heroes = 0;
+        foreach (var side in DictRefs(P64(st + (ulong)oSk), 16))
+          foreach (var u in DictRefs(side.Value, 64)) {
+            if (u.Value == 0) continue;
+            if (++heroes > 64) return null;
+            var sk = DictLongs(P64(u.Value + (ulong)oDa), 64);
+            if (sk.Count > 0) res[side.Key + ":" + (int)u.Key] = sk;
+          }
+        return res;
+      } catch (Exception) { return null; }
+    }
+
     /// <summary>What the unit trace keeps of an entity between passes (entity address -> this).</summary>
     public sealed class UnitCache {
       public uint Uid, Owner; public int Unit; public ulong Attr, Battle;
@@ -647,6 +705,13 @@ namespace RealmForge {
           lock (gate) { if (ef > tl.Frames) tl.Frames = ef; }
         }
         Commands();
+        try {
+          var sk = RFX.ReadSkillStats(Sim);
+          if (sk != null) lock (gate) {
+            bool ok; int n2 = tl.SetSkills(sk, out ok);
+            Say("battle stats: " + n2 + " heroes with per-skill data, sum check " + (n2 == 0 ? "n/a" : ok ? "ok" : "mismatch"));
+          }
+        } catch (Exception) { }
         if (tracePasses > 0) lock (gate) Say("unit trace: " + tl.UnitCount + " units, avg " + (tracePassMs / (double)tracePasses).ToString("0.0") + " ms, " + tracePasses + " passes"
                                              + (tl.UnitsCut > 0 || tl.PointsCut > 0 ? ", cut " + tl.UnitsCut + " units / " + tl.PointsCut + " points" : ""));
         lock (gate) Say("fight recorder: ended at frame " + tl.Frames + ", " + tl.Samples + " samples, " + tl.Commands + " commands");

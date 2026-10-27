@@ -69,7 +69,7 @@ namespace RealmForge {
       if (stage / 1000 != 6001 && stage / 1000 != 6002) { skip = "not an arena fight"; return null; }
       var tl = Obj(o, "timeline");
       if (tl == null || Count(tl, "v") < 3) { skip = "no timeline v3"; return null; }
-      if (!HasEntries(tl, "units") && !HasEntries(tl, "dmgT")) { skip = "no trace in the timeline"; return null; }
+      if (!HasEntries(tl, "units") && !HasEntries(tl, "dmgT") && !HasSkills(tl)) { skip = "no trace in the timeline"; return null; }
       string at = MiniJson.GetString(o, "at");
       DateTime t;
       if (string.IsNullOrEmpty(at) || !DateTime.TryParse(at, CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out t)) { skip = "no time"; return null; }
@@ -88,6 +88,12 @@ namespace RealmForge {
 
     static Dictionary<string, object> Obj(Dictionary<string, object> o, string key) { object v; return o.TryGetValue(key, out v) ? MiniJson.AsObject(v) : null; }
     static int Count(Dictionary<string, object> o, string key) { object v; if (!o.TryGetValue(key, out v) || v == null) return 0; try { return (int)Convert.ToDouble(v, CultureInfo.InvariantCulture); } catch (Exception) { return 0; } }
+    static bool HasSkills(Dictionary<string, object> tl) {
+      var arr = tl.ContainsKey("stats") ? tl["stats"] as System.Collections.IList : null;
+      if (arr == null) return false;
+      foreach (var x in arr) { var o = MiniJson.AsObject(x); if (o != null && HasEntries(o, "skills")) return true; }
+      return false;
+    }
     static bool HasEntries(Dictionary<string, object> o, string key) { var d = Obj(o, key); return d != null && d.Count > 0; }
 
     /// <summary>The kept fight files not sent yet and not older than <paramref name="maxAgeDays"/> (by the file name's time,
