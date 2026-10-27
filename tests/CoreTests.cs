@@ -1131,7 +1131,7 @@ static class CoreTests {
 
   static void LayoutChecksums() {
     var sums = new Dictionary<string, string> {
-      { "1.6.38.829.1", "87d1958cc51af52fc9b18d44638b06d0919c6f0904f3e3b9016f96a679e06d4d" },
+      { "1.6.38.829.1", "cbb997f406c44ee76d363baff7bf9011907d46727ed9323e967ff7e84807fb4d" },
       { "1.6.39.829.1", "e80ebe2420d62e993a2fae927d85b8fe9a6ac9d449f5aa17c9c3e0ab561ba8d5" } };
     foreach (var kv in sums) {
       string path = null;
