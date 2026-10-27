@@ -18,13 +18,13 @@
 //   AngerComponent (rage): curState 0x20 (EAngerStatus), fAnger 0x30, fMaxAnger 0x38 (Fix64).
 //   SkillComponent: bNextUseSuperManualSkill 0xB0, iUseSuperManualSkillFrameIdx 0xB4 (frame of the last ultimate).
 //   AttributeComponent: m_tableData 0x20 (CData_Unit_Element: m_ID 0x14), m_battleAttr 0x28 (BattleAttributeData:
-//     <fHp> 0x238, m_fMaxHp 0x240, Fix64).
+//     <fHp> 0x248, m_fMaxHp 0x250, Fix64).
 //   PositionComponent: m_faceType 0x30 (FaceType 0 right, 90 down, 180 left, 270 up), m_position 0x48 (FixVector3).
 //   MapComponent: iMapSize 0x20, cMapMarker 0x40 -> MapMarker: m_iPosMapSize 0x18, m_vUidTowerExist 0x20 (uint[,]:
 //     the tower entity on each tile, [x, y] as MapMarker.GetTowerIdInGrid(x, y)).
 //   BattlePlayerDataManager: _vPlayers 0x20 (Dictionary<uint, BattlePlayerInfo>); BattlePlayerInfo: <cUid> 0x10,
-//     m_lHeros 0x28 (List<BattleHeroInfo>); BattleHeroInfo: iUid 0x220, iUnitID 0x224, iSquadID 0x228,
-//     iLordPosition 0x22C (1 = the squad's lord), iLordFaction 0x230.
+//     m_lHeros 0x28 (List<BattleHeroInfo>); BattleHeroInfo: iUid 0x230, iUnitID 0x234, iSquadID 0x238,
+//     iLordPosition 0x23C (1 = the squad's lord), iLordFaction 0x240.
 //   FrameDataManager: _FrameRecord 0x30 -> FrameDataRecord: _vFrames 0x10, _vSuccessFrames 0x18 (Dictionary<uint frame,
 //     List<FrameIdxInfo>>); FrameIdxInfo: Idx 0x10, Cmd 0x14 (ushort), iUid 0x18 (the controller), Params 0x20 (int[]).
 //     SYNC_PUT_TOWER [unitId, x, y, face], SYNC_USE_POWERSKILL [unitId, x, y].
@@ -43,7 +43,7 @@
 //     iCurWaveCount 0x60. TDStateData (GameSimulation._lIndependentDatas 0x98, a DLList of IIndependentData; found by its
 //     class): vMonsterCount 0x58, vMonsterAdvanceIgnoreCount 0x60 (Dictionary<uint, int>; WaveSystem.CanAdvanceUidCellNode
 //     reads them so). The bases: the units 4301–4306 / 4345–4350 (AttributeComponent m_tableData m_ID), their HP
-//     as the heroes' (BattleAttributeData <fHp> 0x238, m_fMaxHp 0x240), their side from their OwnerRelation cUid.
+//     as the heroes' (BattleAttributeData <fHp> 0x248, m_fMaxHp 0x250), their side from their OwnerRelation cUid.
 //     Not verified on a live arena fight yet.
 //   Unit trace (arena, ReadUnits): every PositionComponent of the world -> _entity 0x18 -> Entity <m_uID> 0x10; once per
 //     entity: its AttributeComponent (m_tableData m_ID, m_battleAttr) and OwnerRelation cUid.
@@ -181,7 +181,7 @@ namespace RealmForge {
         for (int i = 0; i < n; i++) {
           ulong hi = BitConverter.ToUInt64(items, i * 8);
           if (!IsA(hi, ClsHeroInfo)) continue;
-          var hb = Read(hi + 0x220, 0x14); if (hb == null) continue;
+          var hb = Read(hi + 0x230, 0x14); if (hb == null) continue;
           uint uid = BitConverter.ToUInt32(hb, 0);
           if (uid != 0) res.Add(new[] { (int)uid, BitConverter.ToInt32(hb, 4), (int)BitConverter.ToUInt32(hb, 8), (int)BitConverter.ToUInt32(hb, 12), (int)cuid });
         }
@@ -277,7 +277,7 @@ namespace RealmForge {
             if (sb != null) s.UltFrame = BitConverter.ToUInt32(sb, 4);
             ulong at = Comp(nodes, CT("Attribute"));
             ulong ba = at != 0 ? P64(at + 0x28) : 0;
-            var hb = ba != 0 ? Read(ba + 0x238, 16) : null;
+            var hb = ba != 0 ? Read(ba + 0x248, 16) : null;
             if (hb != null) { s.Hp = Fix(hb, 0); s.MaxHp = Fix(hb, 8); }
             // the battle stats it entered with (m_attr, stBattleBaseAttr): read once, while the builder has none for it
             if (ba != 0 && (wantBase == null || wantBase(s))) s.Base = BaseAttrs(ba);
@@ -378,7 +378,7 @@ namespace RealmForge {
         if (c.Skip) continue;
         // the same attribute data (a dead unit's memory can be reused)
         var cb = Read(c.Attr + 0x28, 8); if (cb == null || BitConverter.ToUInt64(cb, 0) != c.Battle) continue;
-        var hb = Read(c.Battle + 0x238, 16); if (hb == null) continue;
+        var hb = Read(c.Battle + 0x248, 16); if (hb == null) continue;
         double hp = Fix(hb, 0), max = Fix(hb, 8);
         double x = Fix(pb, 0x48), y = Fix(pb, 0x50), z = Fix(pb, 0x58);
         if (!Sane(x) || !Sane(y) || !Sane(z)) continue;
@@ -449,7 +449,7 @@ namespace RealmForge {
       foreach (var x in refs.Bases) {
         // still the same component with the same attributes (a dead unit's memory can be reused)
         var cb = Read(x[0] + 0x28, 8); if (cb == null || BitConverter.ToUInt64(cb, 0) != x[1]) continue;
-        var hb = Read(x[1] + 0x238, 16); if (hb == null) continue;
+        var hb = Read(x[1] + 0x248, 16); if (hb == null) continue;
         double hp = Fix(hb, 0), max = Fix(hb, 8);
         if (max <= 0 || max > 1e13 || hp < 0 || hp > max) continue;
         a.Bases.Add(new ArenaBase { Unit = (int)x[2], Owner = (uint)x[3], Hp = hp, MaxHp = max });
@@ -540,7 +540,7 @@ namespace RealmForge {
         ulong ent = BitConverter.ToUInt64(ab, 0), ba = BitConverter.ToUInt64(ab, 0x10);
         if (ba == 0) continue;
         if (towers != null && ent != 0) { var ib = Read(ent + 0x10, 4); if (ib != null && towers.Contains(BitConverter.ToUInt32(ib, 0))) continue; }
-        var hb = Read(ba + 0x238, 16); if (hb == null) continue;
+        var hb = Read(ba + 0x248, 16); if (hb == null) continue;
         double h = Fix(hb, 0), m = Fix(hb, 8);
         if (m > best && m < 1e13 && h >= 0 && h <= m) { best = m; hp = h; }
       }
