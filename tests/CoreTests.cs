@@ -1356,6 +1356,19 @@ static class CoreTests {
     Check(CodeReportClient.BuildBody("bad code!", CodeResult.Ok, "x", null) == null, "promo body: not a code, nothing to send");
     string longBody = CodeReportClient.BuildBody("ABCD", CodeResult.Unknown, new string('x', 500), null);
     Check(longBody.Length < 300 && !longBody.Contains("player") && !longBody.Contains("uid"), "promo body: text cut at 160, nothing about the player");
+    var raw = new List<KeyValuePair<long, long>> {
+      new KeyValuePair<long, long>(900, 5), new KeyValuePair<long, long>(12, 1), new KeyValuePair<long, long>(900, 2),
+      new KeyValuePair<long, long>(0, 4), new KeyValuePair<long, long>(7, 0), new KeyValuePair<long, long>(-3, 1), new KeyValuePair<long, long>(5000000000L, 1) };
+    var rw = CodeRewards.Normalize(raw);
+    Eq("[{\"id\":12,\"n\":1},{\"id\":900,\"n\":7}]", CodeRewards.Json(rw), "promo rewards: one entry per id, summed, sorted, bad entries dropped");
+    Check(CodeRewards.Normalize(null) == null && CodeRewards.Normalize(new List<KeyValuePair<long, long>>()) == null && CodeRewards.Normalize(new[] { new KeyValuePair<long, long>(0, 1) }) == null, "promo rewards: nothing usable is none");
+    var many = new List<KeyValuePair<long, long>>(); for (int i = 1; i <= 21; i++) many.Add(new KeyValuePair<long, long>(i, 1));
+    Check(CodeRewards.Normalize(many) == null, "promo rewards: more than 20 ids is none (a cut list would mislead)");
+    many.RemoveAt(20);
+    Eq(20, CodeRewards.Normalize(many).Count, "promo rewards: 20 ids are kept");
+    Check(CodeRewards.Same(rw, CodeRewards.Normalize(raw)) && !CodeRewards.Same(rw, CodeRewards.Normalize(many)) && !CodeRewards.Same(rw, null), "promo rewards: set comparison");
+    Eq("{\"code\":\"Gift2026\",\"result\":\"ok\",\"toast\":\"Success\",\"region\":\"en\",\"gameVersion\":\"1.6.46.841.1\",\"rewards\":[{\"id\":12,\"n\":1},{\"id\":900,\"n\":7}]}", CodeReportClient.BuildBody("Gift2026", CodeResult.Ok, "Success", "1.6.46.841.1", rw), "promo body: the rewards of an accepted code");
+    Check(!CodeReportClient.BuildBody("Gift2026", CodeResult.Used, "Used", null, rw).Contains("rewards") && !CodeReportClient.BuildBody("Gift2026", CodeResult.Ok, "Success", null, null).Contains("rewards"), "promo body: no rewards unless accepted and read");
     Check(AppConfig.FromJson("{}").SendCodes, "promo setting: on for a config without the key");
     Check(AppConfig.FromJson("{\"autoSync\":true}").SendCodes && new AppConfig().SendCodes, "promo setting: on by default");
     Check(!AppConfig.FromJson(new AppConfig { SendCodes = false }.ToJson()).SendCodes, "promo setting: off round-trips");

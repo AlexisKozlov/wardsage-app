@@ -1,7 +1,8 @@
 // Wardsage - promo codes: the game's answer to a code the player entered is classified and, when the setting
 // "Send promo codes to the site" is on (default), reported as {code, result, toast, region, gameVersion}: nothing else.
 // The sync code goes as Authorization: Bearer (the site keeps only a keyed hash, to count distinct reporters); no player name, uid or X-RF-Player. Contract (site: POST /api/codes/report, lib/codes/handler.ts):
-//   body {code: 4..24 letters/digits, result: ok|invalid|expired|used|limit|notstarted|unknown, toast?: <=200, region?: <=32, gameVersion?: <=64}
+//   body {code: 4..24 letters/digits, result: ok|invalid|expired|used|limit|notstarted|unknown, toast?: <=200, region?: <=32, gameVersion?: <=64,
+//         rewards?: [{id, n}] (what the game's rewards window showed after an accepted code: at most 20, positive whole numbers)}
 //   200 {ok:true}   401 invalid_token   413/415/422 refused   429 rate_limited
 using System;
 using System.Collections.Generic;
@@ -65,11 +66,53 @@ namespace RealmForge {
     }
   }
 
+  /// <summary>The reward list of an accepted code: item id and amount, as the rewards window shows them.</summary>
+  public static class CodeRewards {
+    public const int MaxEntries = 20;
+    const long MaxValue = 2000000000;
+
+    /// <summary>The (id, amount) pairs as the list the site takes: one entry per id (amounts summed), sorted by id, whole
+    /// positive numbers only (others are dropped). Null when nothing is left or there are more than 20 different ids (such a list would
+    /// be cut and mislead).</summary>
+    public static List<KeyValuePair<long, long>> Normalize(IEnumerable<KeyValuePair<long, long>> raw) {
+      if (raw == null) return null;
+      var sum = new SortedDictionary<long, long>();
+      foreach (var kv in raw) {
+        if (kv.Key < 1 || kv.Key > MaxValue || kv.Value < 1 || kv.Value > MaxValue) continue;
+        long cur; sum.TryGetValue(kv.Key, out cur);
+        sum[kv.Key] = Math.Min(MaxValue, cur + kv.Value);
+      }
+      if (sum.Count == 0 || sum.Count > MaxEntries) return null;
+      return new List<KeyValuePair<long, long>>(sum);
+    }
+
+    /// <summary>[{"id":1,"n":2},...] for a normalized list.</summary>
+    public static string Json(List<KeyValuePair<long, long>> list) {
+      var sb = new StringBuilder("[");
+      for (int i = 0; i < list.Count; i++) {
+        if (i > 0) sb.Append(',');
+        sb.Append("{\"id\":").Append(list[i].Key.ToString(CultureInfo.InvariantCulture)).Append(",\"n\":").Append(list[i].Value.ToString(CultureInfo.InvariantCulture)).Append('}');
+      }
+      return sb.Append(']').ToString();
+    }
+
+    /// <summary>The same set of rewards (both normalized).</summary>
+    public static bool Same(List<KeyValuePair<long, long>> a, List<KeyValuePair<long, long>> b) {
+      if (a == null || b == null) return a == b;
+      if (a.Count != b.Count) return false;
+      for (int i = 0; i < a.Count; i++) if (a[i].Key != b[i].Key || a[i].Value != b[i].Value) return false;
+      return true;
+    }
+  }
+
   public static class CodeReportClient {
     public const int MaxToast = 160;
 
     /// <summary>The request body; null when the code does not look like one. Only these fields, nothing about the player.</summary>
-    public static string BuildBody(string code, string result, string message, string gameVersion) {
+    public static string BuildBody(string code, string result, string message, string gameVersion) { return BuildBody(code, result, message, gameVersion, null); }
+
+    /// <summary>As above, with the rewards of an accepted code (normalized by <see cref="CodeRewards.Normalize"/>; sent only for «ok»).</summary>
+    public static string BuildBody(string code, string result, string message, string gameVersion, List<KeyValuePair<long, long>> rewards) {
       if (!CodeText.Looks(code)) return null;
       code = code.Trim();
       string toast = CodeText.ForLog(message);
@@ -79,6 +122,7 @@ namespace RealmForge {
       string lang = CodeResult.LanguageOf(toast);
       if (lang != null) sb.Append(",\"region\":").Append(MiniJson.Quote(lang));
       if (!string.IsNullOrEmpty(gameVersion) && gameVersion.Length <= 64) sb.Append(",\"gameVersion\":").Append(MiniJson.Quote(gameVersion));
+      if (rewards != null && rewards.Count > 0 && rewards.Count <= CodeRewards.MaxEntries && result == CodeResult.Ok) sb.Append(",\"rewards\":").Append(CodeRewards.Json(rewards));
       return sb.Append("}").ToString();
     }
 
