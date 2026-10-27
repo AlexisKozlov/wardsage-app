@@ -45,7 +45,9 @@ namespace RealmForge {
       "InfinityGrid.CellPerLine", "InfinityGrid.LineSize", "InfinityGrid.m_finalLineSize",
       "InfinityGrid.m_crtFirstInstanceIndex", "InfinityGrid.m_crtLastInstanceIndex", "InfinityGrid.m_fitScale",
       // the code-redeem window's input text and the tip form's lists (src/CodeWatch.cs, test build)
-      "InputField.m_Text", "Form_CommonTips.m_MoveTips", "Form_CommonTips.m_ShowTips", "Form_CommonTips.m_DisappearTips", "Form_CommonTips.CommonData.str" };
+      "InputField.m_Text", "Form_CommonTips.m_MoveTips", "Form_CommonTips.m_ShowTips", "Form_CommonTips.m_DisappearTips", "Form_CommonTips.CommonData.str",
+      // per-skill battle statistics (src/BattleTimeline.cs ReadSkillStats; test build)
+      "StatisticsComponent.m_vSkillDamage", "SkillDamageStatisticsData.vDamageAmount" };
 
     public string Game { get; private set; }
     readonly Dictionary<string, long> rva = new Dictionary<string, long>(), cons = new Dictionary<string, long>(),
