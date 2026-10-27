@@ -1,12 +1,12 @@
-// RealmForge — the arena fights' detailed record (the v3 timeline: "dmgT", "units", src/TimelineBuilder.cs) to the site, once
+// RealmForge — the arena and boss fights' detailed record (the v3 timeline: "dmgT", "units", src/TimelineBuilder.cs) to the site, once
 // per fight. The snapshot upload strips the trace (BattleCapture.BattlesJson); here the whole kept fight file goes, gzipped.
 //
 // Contract (implemented by the site, lib/battleTrace/handler.ts):
 //   POST {site}/api/extractor/trace      Authorization: Bearer <sync code>, X-RF-Player
-//        body {v:1, at:"ISO time of the fight", stage:6001xxx|6002xxx, data:"<base64 of the gzipped fight file>"}
+//        body {v:1, at:"ISO time of the fight", stage:<7-digit stage id>, data:"<base64 of the gzipped fight file>"}
 //        200 {ok:true, stored:true|false}   401 invalid_token   422 invalid_payload   429 too_many (300 a day per account)
-// Fights already sent are listed by file name in trace-sent.txt (the app's data dir); unsent arena v3 fights of the last
-// 3 days are retried (at most 5 per run). Nothing here may throw into the recorder: every failure is logged and left.
+// Fights already sent are listed by file name in trace-sent.txt (the app's data dir); unsent arena and boss v3 fights of the last
+// 3 days are retried (at most 8 per run). Nothing here may throw into the recorder: every failure is logged and left.
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -54,19 +54,30 @@ namespace RealmForge {
   public static class TraceUpload {
     /// <summary>The site takes at most 2 MB of the decoded (gzipped) data.</summary>
     public const int MaxGzBytes = 2 * 1024 * 1024;
-    public const int MaxPerRun = 5, MaxAgeDays = 3;
+    public const int MaxPerRun = 8, MaxAgeDays = 3;   // 8: arena and boss fights share the run; the site takes 300 a day
     static int running;
 
     public static string SentPath { get { return Path.Combine(AppConfig.DefaultDir, "trace-sent.txt"); } }
 
-    /// <summary>The request body for a kept fight file's JSON, or null with the reason: not an arena fight (stage 6001xxx /
-    /// 6002xxx), no timeline v3 with a trace ("units" or "dmgT"), or over the size limit.</summary>
+    /// <summary>An arena stage (attack 6001xxx, the defence run 6002xxx).</summary>
+    public static bool IsArenaStage(int stage) { return stage / 1000 == 6001 || stage / 1000 == 6002; }
+
+    /// <summary>A boss fight: the guild boss result screens (the classic and the weekly boss), or a known boss stage
+    /// (5001xxx / 5002xxx / 5201xxx guild bosses, 4601xxx the two-headed boss).</summary>
+    public static bool IsBossFight(int stage, string screen) {
+      if (screen == "Form_UnionBossBattleEnd" || screen == "Form_UnionWeekBossBattleEnd") return true;
+      int g = stage / 1000;
+      return g == 5001 || g == 5002 || g == 5201 || g == 4601;
+    }
+
+    /// <summary>The request body for a kept fight file's JSON, or null with the reason: neither an arena nor a boss fight
+    /// (no stage, or another stage), no timeline v3 with a trace ("units", "dmgT" or the heroes' skill damage), or over the size limit.</summary>
     public static string BuildPayload(string fileJson, out string skip) {
       skip = null;
       var o = MiniJson.AsObject(MiniJson.TryParse(fileJson));
       if (o == null) { skip = "not a fight file"; return null; }
       int stage = Count(o, "stage");
-      if (stage / 1000 != 6001 && stage / 1000 != 6002) { skip = "not an arena fight"; return null; }
+      if (stage < 1000000 || stage > 9999999 || (!IsArenaStage(stage) && !IsBossFight(stage, MiniJson.GetString(o, "screen")))) { skip = "not an arena or boss fight"; return null; }
       var tl = Obj(o, "timeline");
       if (tl == null || Count(tl, "v") < 3) { skip = "no timeline v3"; return null; }
       if (!HasEntries(tl, "units") && !HasEntries(tl, "dmgT") && !HasSkills(tl)) { skip = "no trace in the timeline"; return null; }
@@ -114,7 +125,7 @@ namespace RealmForge {
       return res;
     }
 
-    /// <summary>One run: sends the unsent arena v3 fights of the last 3 days (at most 5). Safe to call from any thread; a
+    /// <summary>One run: sends the unsent arena and boss v3 fights of the last 3 days (at most 8). Safe to call from any thread; a
     /// second call while one runs does nothing. Returns how many fights were stored. <paramref name="log"/> gets a line per fight.</summary>
     public static int RunOnce(string dir, TraceSentList sent, string site, string code, Action<string> log) {
       if (Interlocked.CompareExchange(ref running, 1, 0) != 0) return 0;
@@ -127,8 +138,8 @@ namespace RealmForge {
             string skip;
             string body = BuildPayload(File.ReadAllText(f, Encoding.UTF8), out skip);
             if (body == null) {
-              // not an arena v3 fight, or too large: nothing to send now or later
-              if (skip != "not an arena fight" && skip != "no timeline v3" && skip != "no trace in the timeline") log("трасса боя не отправлена (" + name + "): " + skip);
+              // not an arena or boss v3 fight, or too large: nothing to send now or later
+              if (skip != "not an arena or boss fight" && skip != "no timeline v3" && skip != "no trace in the timeline") log("трасса боя не отправлена (" + name + "): " + skip);
               sent.Add(name);
               continue;
             }

@@ -220,6 +220,7 @@ version …: from the site» или «saved copy»). Без файла оста�
 - Если в системе нет UIAutomationCore.dll (например, Wine или Proton), программа больше не падает при наведении на меню в трее, а продолжает работу.
 - Синхронизация: если сервер закрыл простаивающее соединение, программа отправляет данные ещё раз по новому соединению и не показывает ошибку.
 - Поддержка обновления игры 1.6.46: запись боя (состав и здоровье героев) снова читает данные правильно.
+- Подробная запись боя (урон по умениям) теперь отправляется на сайт и для боёв с боссами гильдии, не только для арены.
 
 ## EN
 - The app finds the game and its log more reliably on other builds of the game (e.g. regional ones), and checks the in-game data layout against the build so it never uses one made for another build.
@@ -230,3 +231,4 @@ version …: from the site» или «saved copy»). Без файла оста�
 - If the system has no UIAutomationCore.dll (for example Wine or Proton), the app no longer crashes when you hover the tray menu and keeps running.
 - Sync: if the server closed an idle connection, the app sends again on a fresh one and shows no error.
 - Support for game update 1.6.46: fight recording (heroes and their health) reads its data correctly again.
+- The detailed fight record (damage per skill) is now also sent to the site for guild boss fights, not only for the arena.
