@@ -140,6 +140,28 @@ namespace RealmForge {
       return sb.ToString();
     }
 
+    /// <summary>The stage the result screen itself names (Form_BattleEnd.m_StageId, a plain value of the screen kept in the
+    /// fight's "end"), or 0 when the fight has none or it is out of the 7-digit range.</summary>
+    public static int StageFromEnd(string fightJson) {
+      var o = MiniJson.AsObject(MiniJson.TryParse(fightJson));
+      var e = o != null && o.ContainsKey("end") ? o["end"] as Dictionary<string, object> : null;
+      object v; if (e == null || !e.TryGetValue("m_StageId", out v) || !(v is double)) return 0;
+      double x = (double)v;
+      return x >= 1000000 && x <= 9999999 && Math.Floor(x) == x ? (int)x : 0;
+    }
+
+    /// <summary>The stage id a captured fight gets. Sources, best first: the result screen's own stage (formStage);
+    /// the stage of the fight's start (lastStage, when it is not older than 20 minutes and the simulation it was read from
+    /// is the one the battle view holds now, or no simulation is known); the simulation's stage read at the result screen
+    /// (simStage: _BattleData.iStageID of the battle view's last simulation, which stays in memory after the fight). A
+    /// start that was missed leaves an older fight's stage: then the simulation's, being another object, wins.</summary>
+    public static int PickStage(int formStage, int simStage, bool simIsNew, int lastStage, double lastAgeMin) {
+      if (formStage > 0) return formStage;
+      bool lastOk = lastStage > 0 && lastAgeMin < 20;
+      if (simStage > 0 && (simIsNew || !lastOk)) return simStage;
+      return lastOk ? lastStage : 0;
+    }
+
     /// <summary>Diagnostics: finds UIInstance and lists its forms (id, and the name when known).</summary>
     public static string DiagUi() {
       var ps = GameInfo.GameProcesses();
