@@ -707,8 +707,9 @@ namespace RealmForge {
     volatile string arenaInfo; volatile int arenaInfoStage;
     FightRecorder arenaTaken;
     void WatchBattleEnd() {
-      if (!gameRunning || capturing) return;
-      WatchBattleStart();
+      if (!gameRunning) return;
+      WatchBattleStart();   // also while a result is being captured: the next fight may already be starting
+      if (capturing) return;
       if (!RFX.UiKnown) {
         if (!uiFinding) {
           uiFinding = true;
@@ -751,7 +752,7 @@ namespace RealmForge {
 
     // a new fight: its stage; the recorder follows it, and a known boss -> the coach follows its clock
     // the stage of the fight that started last: the recorded fight names it (the site knows the boss from it)
-    volatile int lastStage; DateTime lastStageAt;
+    volatile int lastStage; DateTime lastStageAt; ulong lastStageSim;
 
     // The battle view's simulation (BattleManager.instance.m_simulation, four pointer reads): a fight starts when it is
     // running and is another object than the last one seen, or its clock went back (the game reused it).
@@ -769,7 +770,7 @@ namespace RealmForge {
       if (!fresh) return;
       int stage = RFX.SimStage(sim);
       Log.Write("battle start: stage " + stage + " at " + RFX.FrameSeconds(fr).ToString("0") + " s" + (coach.Knows(stage) ? " (coach)" : "") + (wasSeen ? "" : " (first look)"));
-      lastStage = stage; lastStageAt = DateTime.UtcNow;
+      lastStage = stage; lastStageAt = DateTime.UtcNow; lastStageSim = sim;
       StartRecorder(sim, stage);
       if (stage / 1000 == 6001) {
         ShootField(stage);
@@ -902,8 +903,16 @@ namespace RealmForge {
             win.BeginInvoke((Action)(() => Post("{\"ev\":\"battle\",\"ok\":false}")));
             return;
           }
-          int st = lastStage;
-          if (st > 0 && (DateTime.UtcNow - lastStageAt).TotalMinutes < 20 && json.StartsWith("{", StringComparison.Ordinal))
+          // the stage: the result screen's own, else the fight's start, else the battle view's simulation (read-only)
+          int formSt = json.StartsWith("{", StringComparison.Ordinal) ? RFX.StageFromEnd(json) : 0;
+          int simSt = 0; bool simNew = false;
+          if (formSt <= 0) {
+            try { ulong cs = RFX.CurrentSim(); if (cs != 0) { simSt = RFX.SimStage(cs); simNew = cs != lastStageSim; } } catch (Exception) { }
+          }
+          int st = RFX.PickStage(formSt, simSt, simNew, lastStage, (DateTime.UtcNow - lastStageAt).TotalMinutes);
+          if (st > 0 && st != lastStage) Log.Write("battle end: stage " + st + " from " + (formSt > 0 ? "the result screen" : "the battle simulation") + (lastStage > 0 ? " (the start gave " + lastStage + ")" : ""));
+          if (st <= 0) Log.Write("battle end: stage unknown (screen " + kind + ")");
+          if (st > 0 && json.StartsWith("{", StringComparison.Ordinal))
             json = "{\"stage\":" + st + "," + json.Substring(1);
           { var ai = arenaInfo; if (ai != null && st == arenaInfoStage && json.StartsWith("{", StringComparison.Ordinal)) { json = "{\"arenaInfo\":" + ai + "," + json.Substring(1); arenaInfo = null; } }
           string path = RFX.SaveBattle(json);

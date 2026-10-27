@@ -1892,6 +1892,7 @@ static class CoreTests {
     ArenaTimelineTests();
     TraceTests();
     TraceUploadTests();
+    BattleStageTests();
     PickHeroTests();
   }
 
@@ -2055,6 +2056,20 @@ static class CoreTests {
     var stripped = MiniJson.Parse(TimelineBuilder.StripTrace(full)) as Dictionary<string, object>;
     var stl = stripped["timeline"] as Dictionary<string, object>;
     Check(!stl.ContainsKey("dmgT") && !stl.ContainsKey("units") && stl.ContainsKey("heroes") && Convert.ToDouble(stripped["after"]) == 2, "strip: dmgT and units removed from the upload copy, the rest kept");
+  }
+
+  // The stage of a captured fight (src/BattleCapture.cs): the result screen's own, the start's, the simulation's.
+  static void BattleStageTests() {
+    Check(RFX.StageFromEnd("{\"end\":{\"m_StageId\":4809001,\"m_Score\":3},\"lines\":[]}") == 4809001, "stage: read from the result screen's m_StageId");
+    Check(RFX.StageFromEnd("{\"end\":{\"____instanceId\":24104},\"lines\":[]}") == 0, "stage: a blank result screen names none");
+    Check(RFX.StageFromEnd("{\"end\":{\"m_StageId\":0}}") == 0 && RFX.StageFromEnd("{\"lines\":[]}") == 0 && RFX.StageFromEnd("nope") == 0, "stage: 0, none and bad json give 0");
+    Check(RFX.PickStage(4809001, 1001001, true, 1001001, 1) == 4809001, "stage: the result screen wins");
+    Check(RFX.PickStage(0, 4809001, false, 4809001, 5) == 4809001, "stage: the start's stage is kept");
+    Check(RFX.PickStage(0, 0, false, 4809001, 5) == 4809001, "stage: the start's stage without a simulation");
+    Check(RFX.PickStage(0, 4809002, true, 4809001, 5) == 4809002, "stage: a missed start - the new simulation's stage wins over the old one");
+    Check(RFX.PickStage(0, 4809002, false, 4809001, 30) == 4809002, "stage: an old start - the simulation's stage is used");
+    Check(RFX.PickStage(0, 4809002, false, 0, 99) == 4809002, "stage: no start seen - the simulation's stage");
+    Check(RFX.PickStage(0, 0, false, 4809001, 30) == 0 && RFX.PickStage(0, 0, false, 0, 0) == 0, "stage: nothing known gives 0");
   }
 
   // The arena fight trace upload (src/TraceUpload.cs): the payload (gzip + base64), what is skipped, the sent list, the pending files.
