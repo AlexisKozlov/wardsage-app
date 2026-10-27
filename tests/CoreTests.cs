@@ -1347,7 +1347,7 @@ static class CoreTests {
       // the game keeps the stars' sum: an average a little under the shown (rounded up) value
       double sum = g[1] >= 5.0 ? g[1] * g[2] : Math.Round((g[1] - 0.03) * g[2]), shown;
       Check(HeroGrades.Shown(sum, g[2], out shown) && Math.Abs(shown - g[1]) < 1e-9, "mode " + g[0] + ": shown " + g[1].ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + " for " + g[2] + " voters");
-      rows.Add(new HeroGradeRow { Mode = (int)g[0], Score = shown, Voters = (int)g[2] });
+      rows.Add(new HeroGradeRow { Mode = (int)g[0], Score = shown, Voters = (int)g[2], Sum = (long)sum });
     }
     double sc;
     Check(!HeroGrades.Shown(10, 0, out sc), "no voters: no score");
@@ -1378,10 +1378,13 @@ static class CoreTests {
 
     var b22 = q.Take(22);
     string body = HeroGrades.BuildBody(b22, new DateTime(2026, 10, 27, 12, 0, 0, DateTimeKind.Utc), "1.6.46.841.1");
-    Check(body != null && body.StartsWith("{\"v\":1,\"at\":\"2026-10-27T12:00:00Z\",\"gameVersion\":\"1.6.46.841.1\",\"rows\":[{\"heroId\":2282,\"modeId\":15,\"score\":5.0,\"voters\":3061},"), "body: version, time and the first row");
-    Check(body.Contains("{\"heroId\":2282,\"modeId\":22,\"score\":4.5,\"voters\":85}]}"), "body: the last row");
+    Check(body != null && body.StartsWith("{\"v\":1,\"at\":\"2026-10-27T12:00:00Z\",\"gameVersion\":\"1.6.46.841.1\",\"rows\":[{\"heroId\":2282,\"modeId\":15,\"score\":5.0,\"voters\":3061,\"sum\":15305},"), "body: version, time and the first row");
+    Check(body.Contains("{\"heroId\":2282,\"modeId\":22,\"score\":4.5,\"voters\":85,\"sum\":380}]}"), "body: the last row");
     var parsed = MiniJson.AsObject(MiniJson.TryParse(body));
     Check(parsed != null && ((List<object>)parsed["rows"]).Count == 22, "body is valid JSON with 22 rows");
+    var odd = new List<KeyValuePair<int, HeroGradeRow>> { new KeyValuePair<int, HeroGradeRow>(2282, new HeroGradeRow { Mode = 4, Score = 5, Voters = 10, Sum = 51 }), new KeyValuePair<int, HeroGradeRow>(2282, new HeroGradeRow { Mode = 5, Score = 5, Voters = 10 }) };
+    string ob = HeroGrades.BuildBody(odd, DateTime.UtcNow, null);
+    Check(!ob.Contains("sum"), "a sum over voters*5 or an unknown sum is left out of the row");
     Check(HeroGrades.BuildBody(new List<KeyValuePair<int, HeroGradeRow>>(), DateTime.UtcNow, null) == null, "no rows: no body");
   }
 

@@ -4,7 +4,7 @@
 //
 // Contract (implemented by the site, lib/heroGrades/handler.ts):
 //   POST {site}/api/extractor/hero-grades      Authorization: Bearer <sync code>, X-RF-Player
-//        body {v:1, at:"ISO time of the look", gameVersion?:"1.6.46.841.1", rows:[{heroId, modeId, score, voters}]}   (at most 64 rows)
+//        body {v:1, at:"ISO time of the look", gameVersion?:"1.6.46.841.1", rows:[{heroId, modeId, score, voters, sum?}]}   (sum = the stars' sum, only when at most voters * 5)   (at most 64 rows)
 //        200 {ok:true, stored:n}   401 invalid_token   422 invalid_payload{details}   429 rate_limited
 // A row is taken once per hero and mode and game session; the queue is bounded (MaxQueue rows, the oldest are dropped).
 using System;
@@ -16,6 +16,8 @@ namespace RealmForge {
   /// <summary>One row of a hero's rating screen: the mode, the score as the screen shows it (0.1 steps, at most 5), the voters.</summary>
   public sealed class HeroGradeRow {
     public int Mode, Voters; public double Score;
+    /// <summary>The stars' sum the game holds (the exact average = Sum / Voters); -1 = not known.</summary>
+    public long Sum = -1;
   }
 
   /// <summary>One look at the rating screen (<see cref="RFX.ReadHeroGrades"/>).</summary>
@@ -61,7 +63,9 @@ namespace RealmForge {
         sb.Append("{\"heroId\":").Append(kv.Key.ToString(CultureInfo.InvariantCulture))
           .Append(",\"modeId\":").Append(kv.Value.Mode.ToString(CultureInfo.InvariantCulture))
           .Append(",\"score\":").Append(kv.Value.Score.ToString("0.0", CultureInfo.InvariantCulture))
-          .Append(",\"voters\":").Append(kv.Value.Voters.ToString(CultureInfo.InvariantCulture)).Append('}');
+          .Append(",\"voters\":").Append(kv.Value.Voters.ToString(CultureInfo.InvariantCulture));
+        if (kv.Value.Sum >= 0 && kv.Value.Sum <= (long)kv.Value.Voters * 5) sb.Append(",\"sum\":").Append(kv.Value.Sum.ToString(CultureInfo.InvariantCulture));
+        sb.Append('}');
       }
       return sb.Append("]}").ToString();
     }
@@ -162,7 +166,7 @@ namespace RealmForge {
             if (!Field(row.Val, "iScore", out a, out at) || !AsLong(a, at, out sum)) continue;
             if (!Field(row.Val, "iMarkNum", out a, out at) || !AsLong(a, at, out voters)) continue;
             if (!HeroGrades.Shown(sum, voters, out score)) continue;
-            r.Rows.Add(new HeroGradeRow { Mode = (int)mode, Score = score, Voters = (int)voters });
+            r.Rows.Add(new HeroGradeRow { Mode = (int)mode, Score = score, Voters = (int)voters, Sum = sum });
           }
           break;
         }
