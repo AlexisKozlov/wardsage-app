@@ -2070,7 +2070,14 @@ static class CoreTests {
     using (var gs = new GZipStream(new MemoryStream(gz), CompressionMode.Decompress)) using (var sr = new StreamReader(gs, Encoding.UTF8)) back = sr.ReadToEnd();
     Eq(fight, back, "trace upload: data is the base64 of the gzipped file");
     Check(TraceUpload.BuildPayload(fight.Replace("\"v\":3", "\"v\":2"), out skip) == null && skip == "no timeline v3", "trace upload: timeline v2 is not sent");
-    Check(TraceUpload.BuildPayload(fight.Replace("6001631", "5001631"), out skip) == null && skip == "not an arena fight", "trace upload: not an arena stage is not sent");
+    Check(TraceUpload.BuildPayload(fight.Replace("6001631", "1001631"), out skip) == null && skip == "not an arena or boss fight", "trace upload: another stage is not sent");
+    Check(TraceUpload.BuildPayload(fight.Replace("\"stage\":6001631,", ""), out skip) == null && skip == "not an arena or boss fight", "trace upload: a fight without a stage is not sent");
+    // a boss fight: by stage or by result screen; no units / arenaInfo, only the heroes' skill damage
+    string boss = "{\"stage\":5002005,\"at\":\"2026-10-10T11:50:00Z\",\"screen\":\"Form_UnionWeekBossBattleEnd\",\"timeline\":{\"v\":3,\"stats\":[{\"c\":1,\"unit\":7,\"damage\":9,\"skills\":{\"101\":9}}]}}";
+    Check(TraceUpload.BuildPayload(boss, out skip) != null, "trace upload: a boss fight with skill damage only gives a payload");
+    Check(TraceUpload.BuildPayload(boss.Replace("5002005", "5201001").Replace("Form_UnionWeekBossBattleEnd", "Form_BattleEnd"), out skip) != null, "trace upload: a boss stage is sent");
+    Check(TraceUpload.BuildPayload(boss.Replace("5002005", "1500100"), out skip) != null, "trace upload: a guild boss result screen is sent");
+    Check(TraceUpload.BuildPayload(boss.Replace("5002005", "1500100").Replace("Form_UnionWeekBossBattleEnd", "Form_BattleEnd"), out skip) == null, "trace upload: a plain fight is not sent");
     Check(TraceUpload.BuildPayload("{\"stage\":6002001,\"at\":\"2026-10-10T11:50:00Z\",\"timeline\":{\"v\":3,\"units\":{},\"dmgT\":{}}}", out skip) == null && skip == "no trace in the timeline", "trace upload: an empty trace is not sent");
     var rnd = new Random(5); var noise = new byte[3 * 1024 * 1024]; rnd.NextBytes(noise);
     string big = "{\"stage\":6001631,\"at\":\"2026-10-10T11:50:00Z\",\"junk\":\"" + Convert.ToBase64String(noise) + "\",\"timeline\":{\"v\":3,\"dmgT\":{\"1:2\":[[1,1,0,0]]}}}";
@@ -2087,7 +2094,8 @@ static class CoreTests {
       File.WriteAllText(Path.Combine(dir, "notes.json"), "{}");
       Directory.CreateDirectory(Path.Combine(dir, "accounts")); File.WriteAllText(Path.Combine(dir, "accounts", "20261010-120000.json"), "{}");
       var p = TraceUpload.Pending(dir, sent, now, 3, 5);
-      Eq(5, p.Count, "trace upload: at most 5 pending");
+      Eq(5, TraceUpload.Pending(dir, sent, now, 3, 5).Count, "trace upload: pending is capped by max");
+      Eq(TraceUpload.MaxPerRun, 8, "trace upload: 8 per run");
       Eq("20261010-110000.json", Path.GetFileName(p[0]), "trace upload: newest first");
       Check(!p.Exists(x => x.Contains("20261001") || x.Contains("notes")), "trace upload: older than 3 days and odd names are not pending");
       sent.Add("20261010-110000.json");
