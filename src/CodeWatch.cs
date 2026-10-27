@@ -1,4 +1,4 @@
-// Wardsage - test build only: a read-only look at the game's code-redeem window (diagnostics for the promo-code feature).
+// Wardsage - a read-only look at the game's code-redeem window (for the promo-code setting, app/CodeWatch.cs).
 // While the window is open the app reads the text in its input field and the short messages ("tips") the game shows,
 // and notes which other windows open right after; app/CodeWatch.cs logs it. Nothing is written to the game, nothing is clicked.
 // Reads go by the layout data of the running game version (src/Layout.cs: the form id, the "field" offsets); without them

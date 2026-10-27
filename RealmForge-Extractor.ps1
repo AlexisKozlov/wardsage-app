@@ -3659,6 +3659,8 @@ namespace RealmForge {
     public string ViewUrl;            // absolute http(s) URL or null
     public string Details;            // 422 details / network error text / redirect target
     public int RetryAfterSeconds = -1;
+    /// <summary>The try failed because the connection was closed under it (see SyncClient.IsConnectionClosed); Retried = it was sent once more.</summary>
+    public bool Closed, Retried;
   }
 
   public static class SyncClient {
@@ -3727,6 +3729,27 @@ namespace RealmForge {
 
     // Sends account.json. site must come from NormalizeSite. Never throws.
     public static SyncResult Send(string site, string code, string json) {
+      // an idle keep-alive connection the server or a proxy closed: the first try fails before anything was processed - once more on a fresh connection
+      // (the sync replaces the account's data, so a repeated send is harmless); a failure that succeeded on the retry is no failure
+      var r = SendOnce(site, code, json, false);
+      if (r.Status != SyncStatus.Ok && r.Closed) { r = SendOnce(site, code, json, true); r.Retried = true; }
+      return r;
+    }
+
+    /// <summary>The connection was closed under the request (an idle keep-alive connection the server dropped), by the status, never the localized text.</summary>
+    public static bool IsConnectionClosed(Exception e) {
+      for (int i = 0; e != null && i < 6; i++, e = e.InnerException) {
+        var we = e as WebException;
+        if (we != null && (we.Status == WebExceptionStatus.KeepAliveFailure || we.Status == WebExceptionStatus.ConnectionClosed)) return true;
+        if (e is IOException && !(e is FileNotFoundException) && !(e is DirectoryNotFoundException) && e.InnerException is System.Net.Sockets.SocketException) {
+          var se = (System.Net.Sockets.SocketException)e.InnerException;
+          if (se.SocketErrorCode == System.Net.Sockets.SocketError.ConnectionReset || se.SocketErrorCode == System.Net.Sockets.SocketError.ConnectionAborted) return true;
+        }
+      }
+      return false;
+    }
+
+    static SyncResult SendOnce(string site, string code, string json, bool fresh) {
       try {
         EnableTls12();
         ServicePointManager.Expect100Continue = false;
@@ -3743,6 +3766,7 @@ namespace RealmForge {
         AddPlayer(req);
         req.Timeout = TimeoutMs;
         req.ReadWriteTimeout = TimeoutMs;
+        if (fresh) { req.KeepAlive = false; req.ConnectionGroupName = "fresh-" + Guid.NewGuid().ToString("N"); }   // never an old pooled connection
         req.AllowAutoRedirect = false;   // a redirected POST would turn into a GET and lose the body
         req.AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate;
         req.ContentLength = body.Length;
@@ -3754,11 +3778,13 @@ namespace RealmForge {
         var r = new SyncResult();
         r.Status = e.Status == WebExceptionStatus.Timeout ? SyncStatus.Timeout : SyncStatus.Unreachable;
         r.Details = e.Message;
+        r.Closed = IsConnectionClosed(e);
         return r;
       } catch (Exception e) {
         var r = new SyncResult();
         r.Status = SyncStatus.Unreachable;
         r.Details = e.Message;
+        r.Closed = IsConnectionClosed(e);
         return r;
       }
     }
@@ -4310,6 +4336,7 @@ namespace RealmForge {
     public const string TermsVersion = "2026-10-17";
     public string GuideStyle = "auto";   // TEST build: the new button highlight, "auto" (the site's switch) | "on" | "off"
     public bool RecButton = true;   // TEST build: the record button over the game (app/Overlay.cs)
+    public bool SendCodes = true;   // promo codes the player enters in the game, with the game's answer, go to the site (app/CodeWatch.cs; the player can turn it off)
     public bool BossHints = true;   // the boss coach's panel over the game during boss fights (app/BattleCoach.cs)
     // last successful sync (shown on the start screen; the busts of the strongest heroes decorate the banner)
     public string LastAt;                       // ISO 8601 UTC or null
@@ -4392,6 +4419,7 @@ namespace RealmForge {
       sb.Append(",\n  \"termsAccepted\": ").Append(MiniJson.Quote(TermsAccepted ?? ""));
       sb.Append(",\n  \"guideStyle\": ").Append(MiniJson.Quote(GuideStyle));
       sb.Append(",\n  \"recButton\": ").Append(RecButton ? "true" : "false");
+      sb.Append(",\n  \"sendCodes\": ").Append(SendCodes ? "true" : "false");
       sb.Append(",\n  \"bossHints\": ").Append(BossHints ? "true" : "false");
       if (CoachX >= 0 && CoachY >= 0)
         sb.Append(",\n  \"coach\": [").Append(CoachX.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture))
@@ -4429,6 +4457,7 @@ namespace RealmForge {
       c.AutoUpdate = MiniJson.GetBool(d, "autoUpdate", true);
       c.Tray = MiniJson.GetBool(d, "tray", true);
       c.BossHints = MiniJson.GetBool(d, "bossHints", true);
+      c.SendCodes = MiniJson.GetBool(d, "sendCodes", true);
       c.RecButton = MiniJson.GetBool(d, "recButton", true);
       string gs = MiniJson.GetString(d, "guideStyle"); c.GuideStyle = gs == "on" || gs == "off" ? gs : "auto";
       c.TermsAccepted = MiniJson.GetString(d, "termsAccepted") ?? "";

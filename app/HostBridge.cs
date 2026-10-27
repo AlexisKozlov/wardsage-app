@@ -59,7 +59,7 @@ namespace RealmForge {
       arenaWatch = new ArenaWatch(() => cfg.Site, () => cfg.Code);
       guildWatch = new GuildWatch(() => cfg.Site, () => cfg.Code, st => Post("{\"ev\":\"guild\",\"state\":" + S(st) + "}"));
       packsWatch = new PacksWatch(() => cfg.Site, () => cfg.Code);
-      codeWatch = new CodeWatch();
+      codeWatch = new CodeWatch(() => cfg.SendCodes, () => cfg.Site, () => cfg.Code);
       gameTimer.Interval = 2000; gameTimer.Tick += (s, e) => {
         CheckGame(false);
         SyncPlansWait();
@@ -390,6 +390,7 @@ namespace RealmForge {
           case "setAutoClick": cfg.AutoClick = MiniJson.GetBool(m, "on", true); ApplyAutoClick(); if (AutoClickOn() && overlay.HasJob && addrs == null && !scanning) StartScan(watch, true); Save(); break;   // (switched on mid-job: the pilots need the game found)
           case "setAutoConfirm": cfg.AutoConfirm = MiniJson.GetBool(m, "on", false); overlay.AutoConfirm = cfg.AutoConfirm; Save(); break;
           case "setAutoUpdate": cfg.AutoUpdate = MiniJson.GetBool(m, "on", true); Save(); break;
+          case "setSendCodes": cfg.SendCodes = MiniJson.GetBool(m, "on", true); Save(); break;
           case "setBossHints": cfg.BossHints = MiniJson.GetBool(m, "on", true); if (!cfg.BossHints && coach.Running) coach.Stop(); Save(); break;
           case "setTray": cfg.Tray = MiniJson.GetBool(m, "on", true); win.TrayEnabled = cfg.Tray; Save(); break;
           case "setAutostart": Autostart.Set(MiniJson.GetBool(m, "on", false)); SendState(null); break;
@@ -632,7 +633,7 @@ namespace RealmForge {
       sb.Append(",\"saveCopy\":").Append(B(cfg.SaveCopy));
       sb.Append(",\"autoSync\":").Append(B(cfg.AutoSync)).Append(",\"autoClick\":").Append(B(cfg.AutoClick))
         .Append(",\"autoConfirm\":").Append(B(cfg.AutoConfirm)).Append(",\"errorReports\":").Append(B(cfg.ErrorReports)).Append(",\"autoUpdate\":").Append(B(cfg.AutoUpdate))
-        .Append(",\"tray\":").Append(B(cfg.Tray)).Append(",\"bossHints\":").Append(B(cfg.BossHints)).Append(",\"recButton\":").Append(B(cfg.RecButton)).Append(",\"guideStyle\":").Append(S(cfg.GuideStyle)).Append(",\"autostart\":").Append(B(Autostart.IsOn()));
+        .Append(",\"tray\":").Append(B(cfg.Tray)).Append(",\"bossHints\":").Append(B(cfg.BossHints)).Append(",\"sendCodes\":").Append(B(cfg.SendCodes)).Append(",\"recButton\":").Append(B(cfg.RecButton)).Append(",\"guideStyle\":").Append(S(cfg.GuideStyle)).Append(",\"autostart\":").Append(B(Autostart.IsOn()));
       win.TrayEnabled = cfg.Tray;
       win.SetTrayLang(cfg.Lang);
       sb.Append(",\"last\":").Append(LastJson());
@@ -702,7 +703,7 @@ namespace RealmForge {
     // and opponent, read at its start (src/ArenaOpponents.cs) and kept with the fight as "arenaInfo"
     ArenaWatch arenaWatch;
     GuildWatch guildWatch;   // the guild table to the site (app/GuildWatch.cs)
-    CodeWatch codeWatch;     // test build: the code-redeem window to the log (app/CodeWatch.cs)
+    CodeWatch codeWatch;     // the code-redeem window: the game's answer to a code goes to the site if the setting is on (app/CodeWatch.cs)
     PacksWatch packsWatch;   // the downloaded game update packs' addresses to the site (app/PacksWatch.cs)
     volatile string arenaInfo; volatile int arenaInfoStage;
     FightRecorder arenaTaken;
