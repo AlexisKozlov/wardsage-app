@@ -704,6 +704,7 @@ static class CoreTests {
     GamePacksTests();
     CodeTextTests();
     CodeReportTests();
+    HeroGradeTests();
     UpdateKeysTests();
 
     // ---- WebViewRecovery
@@ -1330,6 +1331,58 @@ static class CoreTests {
     Eq(PlansStatus.Ok, ArenaClient.Interpret(200, "{\"ok\":true}", out det), "200 ok");
     Eq(PlansStatus.InvalidToken, ArenaClient.Interpret(401, "{\"ok\":false,\"error\":\"invalid_token\"}", out det), "401");
     Check(ArenaClient.Interpret(422, "{\"ok\":false,\"error\":\"invalid_payload\",\"details\":[\"opponents: bad\"]}", out det) == PlansStatus.Unexpected && det != null && det.Contains("opponents: bad"), "422 details: " + det);
+  }
+
+  // the rating screen of one hero (Pretus, 22 modes): mode id, the score the screen shows, the voters
+  static readonly double[][] PretusGrades = {
+    new[] { 15, 5.0, 3061 }, new[] { 14, 5.0, 3032 }, new[] { 19, 5.0, 2340 }, new[] { 16, 5.0, 2314 }, new[] { 9, 5.0, 2450 }, new[] { 4, 5.0, 2713 },
+    new[] { 5, 5.0, 2414 }, new[] { 11, 5.0, 2113 }, new[] { 2, 5.0, 2133 }, new[] { 12, 5.0, 2042 }, new[] { 1, 4.9, 1988 }, new[] { 8, 4.9, 1807 },
+    new[] { 17, 4.9, 1604 }, new[] { 7, 4.9, 1738 }, new[] { 10, 4.9, 1668 }, new[] { 6, 4.9, 1717 }, new[] { 18, 4.8, 1434 }, new[] { 20, 4.8, 349 },
+    new[] { 21, 4.8, 360 }, new[] { 3, 4.8, 1620 }, new[] { 23, 4.7, 28 }, new[] { 22, 4.5, 85 } };
+
+  static void HeroGradeTests() {
+    Console.WriteLine("Hero ratings");
+    var rows = new List<HeroGradeRow>();
+    foreach (var g in PretusGrades) {
+      // the game keeps the stars' sum: an average a little under the shown (rounded up) value
+      double sum = g[1] >= 5.0 ? g[1] * g[2] : Math.Round((g[1] - 0.03) * g[2]), shown;
+      Check(HeroGrades.Shown(sum, g[2], out shown) && Math.Abs(shown - g[1]) < 1e-9, "mode " + g[0] + ": shown " + g[1].ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + " for " + g[2] + " voters");
+      rows.Add(new HeroGradeRow { Mode = (int)g[0], Score = shown, Voters = (int)g[2] });
+    }
+    double sc;
+    Check(!HeroGrades.Shown(10, 0, out sc), "no voters: no score");
+    Check(!HeroGrades.Shown(7000, 1000, out sc), "an average over 6 is not a star score");
+    Check(HeroGrades.Shown(5400, 1000, out sc) && sc == 5.0, "an average a little over 5 shows 5.0");
+    Check(HeroGrades.Shown(4001, 1000, out sc) && sc == 4.1, "rounded up to 0.1");
+    Check(HeroGrades.Shown(4000, 1000, out sc) && sc == 4.0, "exact tenth stays");
+
+    var q = new HeroGradeQueue();
+    Eq(22, q.Offer(2282, rows), "22 modes of a hero queued");
+    Eq(0, q.Offer(2282, rows), "the same hero and modes again this session: nothing new");
+    Eq(1, q.Offer(2283, new List<HeroGradeRow> { rows[0] }), "another hero, same mode: new");
+    q.NewSession();
+    Eq(22, q.Offer(2282, rows), "a new game session takes the rows again");
+    Eq(45, q.Count, "queue holds 22 + 1 + 22");
+    Eq(0, new HeroGradeQueue().Offer(999, rows) + new HeroGradeQueue().Offer(10000, rows), "hero id outside the range: nothing");
+    Eq(0, new HeroGradeQueue().Offer(2282, new List<HeroGradeRow> { new HeroGradeRow { Mode = 0, Score = 5, Voters = 5 }, new HeroGradeRow { Mode = 65, Score = 5, Voters = 5 },
+      new HeroGradeRow { Mode = 4, Score = 5, Voters = 0 }, new HeroGradeRow { Mode = 4, Score = 5.5, Voters = 3 }, null }), "bad mode, no voters, score over 5: nothing");
+
+    var big = new HeroGradeQueue(); int total = 0;
+    for (int h = 2001; h < 2001 + 120; h++) total += big.Offer(h, rows);
+    Eq(22 * 120, total, "every hero's rows are taken");
+    Eq(HeroGrades.MaxQueue, big.Count, "the queue is bounded");
+    var batch = big.Take(64);
+    Eq(64, batch.Count, "a request takes 64 rows");
+    big.Return(batch);
+    Eq(HeroGrades.MaxQueue, big.Count, "rows put back keep the bound");
+
+    var b22 = q.Take(22);
+    string body = HeroGrades.BuildBody(b22, new DateTime(2026, 10, 27, 12, 0, 0, DateTimeKind.Utc), "1.6.46.841.1");
+    Check(body != null && body.StartsWith("{\"v\":1,\"at\":\"2026-10-27T12:00:00Z\",\"gameVersion\":\"1.6.46.841.1\",\"rows\":[{\"heroId\":2282,\"modeId\":15,\"score\":5.0,\"voters\":3061},"), "body: version, time and the first row");
+    Check(body.Contains("{\"heroId\":2282,\"modeId\":22,\"score\":4.5,\"voters\":85}]}"), "body: the last row");
+    var parsed = MiniJson.AsObject(MiniJson.TryParse(body));
+    Check(parsed != null && ((List<object>)parsed["rows"]).Count == 22, "body is valid JSON with 22 rows");
+    Check(HeroGrades.BuildBody(new List<KeyValuePair<int, HeroGradeRow>>(), DateTime.UtcNow, null) == null, "no rows: no body");
   }
 
   static void CodeReportTests() {

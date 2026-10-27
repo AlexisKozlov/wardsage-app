@@ -222,6 +222,7 @@ version …: from the site» или «saved copy»). Без файла оста�
 - Поддержка обновления игры 1.6.46: запись боя (состав и здоровье героев) снова читает данные правильно.
 - Подробная запись боя (урон по умениям) теперь отправляется на сайт и для боёв с боссами гильдии, не только для арены.
 - Новая настройка «Отправлять промокоды на сайт» (включена по умолчанию, её можно выключить): когда вы вводите промокод в игре, программа отправляет на сайт сам код и ответ игры (принят, неверный, истёк). Отчёт привязан к вашему аккаунту на сайте, чтобы его нельзя было накрутить; имя в игре и данные аккаунта игры не отправляются. Так сайт собирает список рабочих кодов. Если выключить, программа не смотрит на окно ввода кода.
+- Программа запоминает оценки героев из игры, когда вы открываете экран оценки героя («Режимы»), и отправляет их на сайт вместе с очередной синхронизацией. Отправляются только оценка и число проголосовавших по каждому режиму, без данных вашего аккаунта; без кода синхронизации программа ничего не читает.
 
 ## EN
 - The app finds the game and its log more reliably on other builds of the game (e.g. regional ones), and checks the in-game data layout against the build so it never uses one made for another build.
@@ -234,3 +235,4 @@ version …: from the site» или «saved copy»). Без файла оста�
 - Support for game update 1.6.46: fight recording (heroes and their health) reads its data correctly again.
 - The detailed fight record (damage per skill) is now also sent to the site for guild boss fights, not only for the arena.
 - New setting «Send promo codes to the site» (on by default, you can turn it off): when you enter a promo code in the game, the app sends the site the code itself and the game's answer (accepted, invalid, expired). The report is tied to your account on the site so it cannot be inflated; your in-game name and game account data are not sent. This is how the site builds a list of working codes. When it is off, the app does not look at the code window.
+- The app remembers the hero ratings shown in the game when you open a hero's rating screen («Modes») and sends them to the site with the next sync. Only the score and the number of voters per mode are sent, with no account data; without a sync code the app reads nothing.
