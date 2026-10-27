@@ -29,6 +29,7 @@ namespace RealmForge {
     public const string TermsVersion = "2026-10-17";
     public string GuideStyle = "auto";   // TEST build: the new button highlight, "auto" (the site's switch) | "on" | "off"
     public bool RecButton = true;   // TEST build: the record button over the game (app/Overlay.cs)
+    public bool SendCodes = true;   // promo codes the player enters in the game, with the game's answer, go to the site (app/CodeWatch.cs; the player can turn it off)
     public bool BossHints = true;   // the boss coach's panel over the game during boss fights (app/BattleCoach.cs)
     // last successful sync (shown on the start screen; the busts of the strongest heroes decorate the banner)
     public string LastAt;                       // ISO 8601 UTC or null
@@ -111,6 +112,7 @@ namespace RealmForge {
       sb.Append(",\n  \"termsAccepted\": ").Append(MiniJson.Quote(TermsAccepted ?? ""));
       sb.Append(",\n  \"guideStyle\": ").Append(MiniJson.Quote(GuideStyle));
       sb.Append(",\n  \"recButton\": ").Append(RecButton ? "true" : "false");
+      sb.Append(",\n  \"sendCodes\": ").Append(SendCodes ? "true" : "false");
       sb.Append(",\n  \"bossHints\": ").Append(BossHints ? "true" : "false");
       if (CoachX >= 0 && CoachY >= 0)
         sb.Append(",\n  \"coach\": [").Append(CoachX.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture))
@@ -148,6 +150,7 @@ namespace RealmForge {
       c.AutoUpdate = MiniJson.GetBool(d, "autoUpdate", true);
       c.Tray = MiniJson.GetBool(d, "tray", true);
       c.BossHints = MiniJson.GetBool(d, "bossHints", true);
+      c.SendCodes = MiniJson.GetBool(d, "sendCodes", true);
       c.RecButton = MiniJson.GetBool(d, "recButton", true);
       string gs = MiniJson.GetString(d, "guideStyle"); c.GuideStyle = gs == "on" || gs == "off" ? gs : "auto";
       c.TermsAccepted = MiniJson.GetString(d, "termsAccepted") ?? "";

@@ -1,6 +1,8 @@
-// Wardsage - test build only: logs what the game's code-redeem window shows (src/CodeWatch.cs reads it, read-only), as
-// "cdk:" lines: the window opening and closing, the code in its input field, the game's messages, and the windows that open
-// within 5 s after. A look every 300 ms while the game runs; nothing is sent anywhere but the test log.
+// Wardsage - promo codes: a read-only look at the game's code-redeem window (src/CodeWatch.cs reads it). When a code was
+// entered and the game answered, the answer is classified (src/CodeReport.cs) and the code with that answer is sent to the site,
+// once per code and answer per 10 minutes. Only while the setting "Send promo codes to the site" is on (default); when it is off
+// nothing is read and nothing is sent. The window, the input and the messages are also noted in the journal ("cdk:" lines).
+// A look every 300 ms while the game runs. Nothing is written to the game, nothing is clicked.
 using System;
 using System.Collections.Generic;
 using System.Threading;
@@ -15,13 +17,18 @@ namespace RealmForge {
     string typed, loggedInput; DateTime typedAt, watchUntil = DateTime.MinValue;
     HashSet<int> active; HashSet<string> tips = new HashSet<string>();
     string lastWhy;
+    readonly Func<bool> enabled; readonly Func<string> site;
+    readonly CodeReportGate gate = new CodeReportGate();
+    bool sentWarned;
 
-    /// <summary>Called by the game timer: only the test build watches.</summary>
+    public CodeWatch(Func<bool> enabled, Func<string> site) { this.enabled = enabled; this.site = site; }
+
+    /// <summary>Called by the game timer: watches only while the setting is on.</summary>
     public void Tick(bool gameRunning) {
-      if (!Channel.IsTest) return;
+      if (!enabled()) gameRunning = false;
       running = gameRunning;
       if (timer == null) timer = new Timer(s => Look(), null, 1000, 300);
-      if (!gameRunning) { wasOpen = false; whySaid = false; active = null; }
+      if (!gameRunning) { wasOpen = false; whySaid = false; active = null; typed = null; loggedInput = null; tips.Clear(); }
     }
 
     void Look() {
@@ -65,6 +72,7 @@ namespace RealmForge {
           LogInput(now);   // the code the toast is about
           Say("toast \"" + CodeText.ForLog(t) + "\"");
           watchUntil = now + After;
+          Report(typed, t, now);
         }
         if (r.Active != null) {
           if (active != null && now < watchUntil + TimeSpan.FromSeconds(1))
@@ -80,6 +88,27 @@ namespace RealmForge {
       }
       // the toasts forgotten once nothing is going on, so the same message shows again next time
       if (!wasOpen && now >= watchUntil) { tips.Clear(); active = null; }
+    }
+
+    // the game answered for the code in the input field: classify and send it (off the look thread; never throws)
+    void Report(string code, string message, DateTime now) {
+      if (!enabled() || !CodeText.Looks(code)) return;
+      code = code.Trim();
+      string result = CodeResult.Classify(message);
+      if (!gate.ShouldSend(code, result, now)) return;
+      var ly = Layout.Current;
+      string body = CodeReportClient.BuildBody(code, result, message, ly != null ? ly.Game : null), url = site();
+      if (body == null || string.IsNullOrEmpty(url)) return;
+      Say("report " + result);
+      Task.Factory.StartNew(() => {
+        try {
+          string err; int http = CodeReportClient.Send(url, body, out err);
+          if (http >= 200 && http < 300) return;
+          if (http == 401 && sentWarned) return;
+          if (http == 401) sentWarned = true;
+          Say("report not accepted: " + (http == 0 ? err : "HTTP " + http));
+        } catch (Exception) { }
+      });
     }
 
     // the code in the input field: a pasted or finished one stays still for a moment, a half-typed one is replaced

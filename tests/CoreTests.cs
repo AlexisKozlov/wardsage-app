@@ -703,6 +703,7 @@ static class CoreTests {
     LiveStateTests();
     GamePacksTests();
     CodeTextTests();
+    CodeReportTests();
     UpdateKeysTests();
 
     // ---- WebViewRecovery
@@ -1329,6 +1330,34 @@ static class CoreTests {
     Eq(PlansStatus.Ok, ArenaClient.Interpret(200, "{\"ok\":true}", out det), "200 ok");
     Eq(PlansStatus.InvalidToken, ArenaClient.Interpret(401, "{\"ok\":false,\"error\":\"invalid_token\"}", out det), "401");
     Check(ArenaClient.Interpret(422, "{\"ok\":false,\"error\":\"invalid_payload\",\"details\":[\"opponents: bad\"]}", out det) == PlansStatus.Unexpected && det != null && det.Contains("opponents: bad"), "422 details: " + det);
+  }
+
+  static void CodeReportTests() {
+    Eq(CodeResult.Ok, CodeResult.Classify("Successful redemption"), "promo result: success");
+    Eq(CodeResult.Ok, CodeResult.Classify("\u041f\u0440\u043e\u043c\u043e\u043a\u043e\u0434 \u0443\u0441\u043f\u0435\u0448\u043d\u043e \u0430\u043a\u0442\u0438\u0432\u0438\u0440\u043e\u0432\u0430\u043d"), "promo result: success in Russian");
+    Eq(CodeResult.Invalid, CodeResult.Classify("Invalid code"), "promo result: invalid");
+    Eq(CodeResult.Invalid, CodeResult.Classify("\u041d\u0435\u0432\u0435\u0440\u043d\u044b\u0439 \u043a\u043e\u0434"), "promo result: invalid in Russian");
+    Eq(CodeResult.Expired, CodeResult.Classify("This code has expired"), "promo result: expired");
+    Eq(CodeResult.Expired, CodeResult.Classify("\u0421\u0440\u043e\u043a \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u044f \u043a\u043e\u0434\u0430 \u0438\u0441\u0442\u0451\u043a"), "promo result: expired in Russian");
+    Eq(CodeResult.Used, CodeResult.Classify("Code already redeemed"), "promo result: already used wins over success");
+    Eq(CodeResult.Used, CodeResult.Classify("\u041a\u043e\u0434 \u0443\u0436\u0435 \u0438\u0441\u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u043d"), "promo result: already used in Russian");
+    Eq(CodeResult.Limit, CodeResult.Classify("Redemption limit reached"), "promo result: limit");
+    Eq(CodeResult.Unknown, CodeResult.Classify("Network busy"), "promo result: unknown stays unknown");
+    Eq(CodeResult.Unknown, CodeResult.Classify(null), "promo result: no message is unknown");
+    Eq("ru", CodeResult.LanguageOf("\u041d\u0435\u0432\u0435\u0440\u043d\u044b\u0439 \u043a\u043e\u0434"), "promo language: Russian");
+    Eq("en", CodeResult.LanguageOf("Invalid code"), "promo language: English");
+    var g = new CodeReportGate(); var t0 = new DateTime(2026, 10, 27, 12, 0, 0, DateTimeKind.Utc);
+    Check(g.ShouldSend("Gift2026", CodeResult.Ok, t0), "promo debounce: the first report goes");
+    Check(!g.ShouldSend("gift2026", CodeResult.Ok, t0.AddMinutes(9)), "promo debounce: same code and result within 10 minutes is dropped (case ignored)");
+    Check(g.ShouldSend("Gift2026", CodeResult.Invalid, t0.AddMinutes(1)), "promo debounce: another result goes");
+    Check(g.ShouldSend("Gift2026", CodeResult.Ok, t0.AddMinutes(10)), "promo debounce: after 10 minutes it goes again");
+    Eq("{\"code\":\"Gift2026\",\"result\":\"invalid\",\"toast\":\"Invalid code\",\"region\":\"en\",\"gameVersion\":\"1.6.46.841.1\"}", CodeReportClient.BuildBody(" Gift2026 ", CodeResult.Invalid, "Invalid code", "1.6.46.841.1"), "promo body: only code, result, text, language, game version");
+    Check(CodeReportClient.BuildBody("bad code!", CodeResult.Ok, "x", null) == null, "promo body: not a code, nothing to send");
+    string longBody = CodeReportClient.BuildBody("ABCD", CodeResult.Unknown, new string('x', 500), null);
+    Check(longBody.Length < 300 && !longBody.Contains("player") && !longBody.Contains("uid"), "promo body: text cut at 160, nothing about the player");
+    Check(AppConfig.FromJson("{}").SendCodes, "promo setting: on for a config without the key");
+    Check(AppConfig.FromJson("{\"autoSync\":true}").SendCodes && new AppConfig().SendCodes, "promo setting: on by default");
+    Check(!AppConfig.FromJson(new AppConfig { SendCodes = false }.ToJson()).SendCodes, "promo setting: off round-trips");
   }
 
   static void CodeTextTests() {
