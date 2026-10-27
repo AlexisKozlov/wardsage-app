@@ -221,7 +221,7 @@ version …: from the site» или «saved copy»). Без файла оста�
 - Синхронизация: если сервер закрыл простаивающее соединение, программа отправляет данные ещё раз по новому соединению и не показывает ошибку.
 - Поддержка обновления игры 1.6.46: запись боя (состав и здоровье героев) снова читает данные правильно.
 - Подробная запись боя (урон по умениям) теперь отправляется на сайт и для боёв с боссами гильдии, не только для арены.
-- Новая настройка «Отправлять промокоды на сайт» (включена по умолчанию, её можно выключить): когда вы вводите промокод в игре, программа отправляет на сайт только сам код и ответ игры (принят, неверный, истёк). Так сайт собирает список рабочих кодов. Имя и аккаунт не отправляются; если выключить, программа не смотрит на окно ввода кода.
+- Новая настройка «Отправлять промокоды на сайт» (включена по умолчанию, её можно выключить): когда вы вводите промокод в игре, программа отправляет на сайт сам код и ответ игры (принят, неверный, истёк). Отчёт привязан к вашему аккаунту на сайте, чтобы его нельзя было накрутить; имя в игре и данные аккаунта игры не отправляются. Так сайт собирает список рабочих кодов. Если выключить, программа не смотрит на окно ввода кода.
 
 ## EN
 - The app finds the game and its log more reliably on other builds of the game (e.g. regional ones), and checks the in-game data layout against the build so it never uses one made for another build.
@@ -233,4 +233,4 @@ version …: from the site» или «saved copy»). Без файла оста�
 - Sync: if the server closed an idle connection, the app sends again on a fresh one and shows no error.
 - Support for game update 1.6.46: fight recording (heroes and their health) reads its data correctly again.
 - The detailed fight record (damage per skill) is now also sent to the site for guild boss fights, not only for the arena.
-- New setting «Send promo codes to the site» (on by default, you can turn it off): when you enter a promo code in the game, the app sends the site only the code itself and the game's answer (accepted, invalid, expired). This is how the site builds a list of working codes. Your name and account are not sent; when it is off, the app does not look at the code window.
+- New setting «Send promo codes to the site» (on by default, you can turn it off): when you enter a promo code in the game, the app sends the site the code itself and the game's answer (accepted, invalid, expired). The report is tied to your account on the site so it cannot be inflated; your in-game name and game account data are not sent. This is how the site builds a list of working codes. When it is off, the app does not look at the code window.

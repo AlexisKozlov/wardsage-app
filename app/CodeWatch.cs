@@ -1,5 +1,5 @@
 // Wardsage - promo codes: a read-only look at the game's code-redeem window (src/CodeWatch.cs reads it). When a code was
-// entered and the game answered, the answer is classified (src/CodeReport.cs) and the code with that answer is sent to the site,
+// entered and the game answered, the answer is classified (src/CodeReport.cs) and the code with that answer is sent to the site (with the sync code; without one nothing is sent),
 // once per code and answer per 10 minutes. Only while the setting "Send promo codes to the site" is on (default); when it is off
 // nothing is read and nothing is sent. The window, the input and the messages are also noted in the journal ("cdk:" lines).
 // A look every 300 ms while the game runs. Nothing is written to the game, nothing is clicked.
@@ -17,11 +17,11 @@ namespace RealmForge {
     string typed, loggedInput; DateTime typedAt, watchUntil = DateTime.MinValue;
     HashSet<int> active; HashSet<string> tips = new HashSet<string>();
     string lastWhy;
-    readonly Func<bool> enabled; readonly Func<string> site;
+    readonly Func<bool> enabled; readonly Func<string> site, syncCode;
     readonly CodeReportGate gate = new CodeReportGate();
-    bool sentWarned;
+    bool sentWarned, noKeySaid;
 
-    public CodeWatch(Func<bool> enabled, Func<string> site) { this.enabled = enabled; this.site = site; }
+    public CodeWatch(Func<bool> enabled, Func<string> site, Func<string> syncCode) { this.enabled = enabled; this.site = site; this.syncCode = syncCode; }
 
     /// <summary>Called by the game timer: watches only while the setting is on.</summary>
     public void Tick(bool gameRunning) {
@@ -96,13 +96,15 @@ namespace RealmForge {
       code = code.Trim();
       string result = CodeResult.Classify(message);
       if (!gate.ShouldSend(code, result, now)) return;
+      string key = syncCode();
+      if (!SyncClient.IsValidCode(key)) { if (!noKeySaid) { noKeySaid = true; Log.Write("promo codes: no sync key"); } return; }
       var ly = Layout.Current;
       string body = CodeReportClient.BuildBody(code, result, message, ly != null ? ly.Game : null), url = site();
       if (body == null || string.IsNullOrEmpty(url)) return;
       Say("report " + result);
       Task.Factory.StartNew(() => {
         try {
-          string err; int http = CodeReportClient.Send(url, body, out err);
+          string err; int http = CodeReportClient.Send(url, key, body, out err);
           if (http >= 200 && http < 300) return;
           if (http == 401 && sentWarned) return;
           if (http == 401) sentWarned = true;

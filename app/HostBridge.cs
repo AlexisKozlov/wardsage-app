@@ -59,7 +59,7 @@ namespace RealmForge {
       arenaWatch = new ArenaWatch(() => cfg.Site, () => cfg.Code);
       guildWatch = new GuildWatch(() => cfg.Site, () => cfg.Code, st => Post("{\"ev\":\"guild\",\"state\":" + S(st) + "}"));
       packsWatch = new PacksWatch(() => cfg.Site, () => cfg.Code);
-      codeWatch = new CodeWatch(() => cfg.SendCodes, () => cfg.Site);
+      codeWatch = new CodeWatch(() => cfg.SendCodes, () => cfg.Site, () => cfg.Code);
       gameTimer.Interval = 2000; gameTimer.Tick += (s, e) => {
         CheckGame(false);
         SyncPlansWait();

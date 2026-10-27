@@ -1,6 +1,6 @@
 // Wardsage - promo codes: the game's answer to a code the player entered is classified and, when the setting
 // "Send promo codes to the site" is on (default), reported as {code, result, toast, region, gameVersion}: nothing else.
-// No account, name, uid or sync-code header goes with it. Contract (site: POST /api/codes/report, lib/codes/handler.ts):
+// The sync code goes as Authorization: Bearer (the site keeps only a keyed hash, to count distinct reporters); no player name, uid or X-RF-Player. Contract (site: POST /api/codes/report, lib/codes/handler.ts):
 //   body {code: 4..24 letters/digits, result: ok|invalid|expired|used|limit|notstarted|unknown, toast?: <=200, region?: <=32, gameVersion?: <=64}
 //   200 {ok:true}   401 invalid_token   413/415/422 refused   429 rate_limited
 using System;
@@ -82,8 +82,10 @@ namespace RealmForge {
       return sb.Append("}").ToString();
     }
 
-    /// <summary>POSTs the body to {site}/api/codes/report. No Authorization, no player header (anonymous). Returns the HTTP status (0 = no answer).</summary>
-    public static int Send(string site, string body, out string err) {
+    /// <summary>POSTs the body to {site}/api/codes/report with the sync code as Bearer; no player header. Returns the HTTP status (0 = no answer).</summary>
+    public static string AuthHeader(string syncCode) { return "Bearer " + syncCode; }
+
+    public static int Send(string site, string syncCode, string body, out string err) {
       err = null;
       try {
         SyncClient.EnableTls12();
@@ -92,6 +94,7 @@ namespace RealmForge {
         req.Method = "POST";
         req.Accept = "application/json";
         req.UserAgent = SyncClient.UserAgent;
+        req.Headers["Authorization"] = AuthHeader(syncCode);
         req.Timeout = 20000; req.ReadWriteTimeout = 20000;
         req.AllowAutoRedirect = false;
         byte[] b = new UTF8Encoding(false).GetBytes(body);

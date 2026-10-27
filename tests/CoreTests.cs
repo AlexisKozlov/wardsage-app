@@ -1352,6 +1352,7 @@ static class CoreTests {
     Check(g.ShouldSend("Gift2026", CodeResult.Invalid, t0.AddMinutes(1)), "promo debounce: another result goes");
     Check(g.ShouldSend("Gift2026", CodeResult.Ok, t0.AddMinutes(10)), "promo debounce: after 10 minutes it goes again");
     Eq("{\"code\":\"Gift2026\",\"result\":\"invalid\",\"toast\":\"Invalid code\",\"region\":\"en\",\"gameVersion\":\"1.6.46.841.1\"}", CodeReportClient.BuildBody(" Gift2026 ", CodeResult.Invalid, "Invalid code", "1.6.46.841.1"), "promo body: only code, result, text, language, game version");
+    Eq("Bearer rf_abc", CodeReportClient.AuthHeader("rf_abc"), "promo request: the sync code goes as Bearer");
     Check(CodeReportClient.BuildBody("bad code!", CodeResult.Ok, "x", null) == null, "promo body: not a code, nothing to send");
     string longBody = CodeReportClient.BuildBody("ABCD", CodeResult.Unknown, new string('x', 500), null);
     Check(longBody.Length < 300 && !longBody.Contains("player") && !longBody.Contains("uid"), "promo body: text cut at 160, nothing about the player");
