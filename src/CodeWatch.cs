@@ -82,6 +82,47 @@ namespace RealmForge {
       return r;
     }
 
+    /// <summary>The rewards window (the list of obtained items) as it is shown now: item id and amount, from its own list
+    /// (<c>m_ItemList</c>) and, while the window still has it, the list of new heroes (<c>m_HeroList</c>, one each). Null = the window is not
+    /// open / not readable / holds nothing usable. Read-only, bounded (at most 40 entries per list), never throws.</summary>
+    public static List<KeyValuePair<long, long>> ReadRewardWindow() {
+      try {
+        var ly = Layout.Current;
+        long id = ly != null ? ly.FormOpt("ID_FORM_ITEMREWARD") : 0;
+        ulong t = UiKnown ? uiTable : 0;
+        if (id == 0 || t == 0) return null;
+        var h = Read(t, 56); if (h == null || h[8] != 5 || h[11] > 12) return null;
+        int nn = 1 << h[11]; var nb = Read(BitConverter.ToUInt64(h, 24), nn * 32); if (nb == null) return null;
+        ulong form = 0;
+        for (int i = 0; i < nn; i++) {
+          int o = i * 32;
+          if (BitConverter.ToInt32(nb, o + 24) != T_INT || BitConverter.ToInt32(nb, o + 8) != T_TABLE) continue;
+          if (SameId(BitConverter.ToInt64(nb, o + 16), id)) { form = BitConverter.ToUInt64(nb, o); break; }
+        }
+        ulong v; int tt;
+        if (form == 0 || !Field(form, "m_LuaLogicActive", out v, out tt) || tt != T_BOOL || v == 0) return null;
+        var res = new List<KeyValuePair<long, long>>();
+        if (Field(form, "m_ItemList", out v, out tt) && tt == T_TABLE) {
+          int seen = 0;
+          foreach (var e in IntEntries(v)) {
+            if (++seen > 40) break;
+            long iid, num;
+            if (e.Tt == T_TABLE && ArtInt(e.Val, "iID", out iid) && ArtInt(e.Val, "iNum", out num)) res.Add(new KeyValuePair<long, long>(iid, num));
+          }
+        }
+        if (Field(form, "m_HeroList", out v, out tt) && tt == T_TABLE) {
+          int seen = 0;
+          foreach (var e in IntEntries(v)) {
+            if (++seen > 40) break;
+            long iid;
+            if ((e.Tt == T_INT || e.Tt == T_FLT) && AsLong(e.Val, e.Tt, out iid)) res.Add(new KeyValuePair<long, long>(iid, 1));
+            else if (e.Tt == T_TABLE && ArtInt(e.Val, "iID", out iid)) res.Add(new KeyValuePair<long, long>(iid, 1));
+          }
+        }
+        return res.Count > 0 ? res : null;
+      } catch (Exception) { return null; }
+    }
+
     /// <summary>The messages shown by the game's tip form now (its lists of tips on the screen).</summary>
     static void ReadTips(GameLayout ly, int pid, List<string> into) {
       int oMove = ly.FieldOffset("Form_CommonTips.m_MoveTips"), oShow = ly.FieldOffset("Form_CommonTips.m_ShowTips"),

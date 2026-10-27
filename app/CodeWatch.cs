@@ -2,7 +2,8 @@
 // entered and the game answered, the answer is classified (src/CodeReport.cs) and the code with that answer is sent to the site (with the sync code; without one nothing is sent),
 // once per code and answer per 10 minutes. Only while the setting "Send promo codes to the site" is on (default); when it is off
 // nothing is read and nothing is sent. The window, the input and the messages are also noted in the journal ("cdk:" lines).
-// A look every 300 ms while the game runs. Nothing is written to the game, nothing is clicked.
+// For an accepted code the report also carries what the game's rewards window showed (item id and amount; up to 10 s are
+// waited for it, without it the report goes as before). A look every 300 ms while the game runs. Nothing is written to the game, nothing is clicked.
 using System;
 using System.Collections.Generic;
 using System.Threading;
@@ -20,6 +21,12 @@ namespace RealmForge {
     readonly Func<bool> enabled; readonly Func<string> site, syncCode;
     readonly CodeReportGate gate = new CodeReportGate();
     bool sentWarned, noKeySaid;
+    // an accepted code waiting for its rewards: the report goes when the list is read or at the deadline
+    sealed class Pending { public string Code, Result, Message; public DateTime At, Deadline; }
+    static readonly TimeSpan RewardWait = TimeSpan.FromSeconds(10), RewardBefore = TimeSpan.FromSeconds(3);
+    readonly object pendLock = new object();
+    Pending pend;
+    List<KeyValuePair<long, long>> rewBase, rewSeen; DateTime rewSeenAt;
 
     public CodeWatch(Func<bool> enabled, Func<string> site, Func<string> syncCode) { this.enabled = enabled; this.site = site; this.syncCode = syncCode; }
 
@@ -28,6 +35,7 @@ namespace RealmForge {
       if (!enabled()) gameRunning = false;
       running = gameRunning;
       if (timer == null) timer = new Timer(s => Look(), null, 1000, 300);
+      if (!gameRunning) { FlushPending(null); rewBase = null; rewSeen = null; }
       if (!gameRunning) { wasOpen = false; whySaid = false; active = null; typed = null; loggedInput = null; tips.Clear(); }
     }
 
@@ -57,6 +65,7 @@ namespace RealmForge {
       if (r.Open && !wasOpen) {
         wasOpen = true; typed = null; loggedInput = null; tips.Clear(); active = null;
         Say("window open");
+        rewBase = CodeRewards.Normalize(RFX.ReadRewardWindow()); rewSeen = null;
         // the baseline for "windows opened after": read at once (deeper look from now on)
         var d = RFX.ReadCdk(true);
         if (d.Known) { active = d.Active; foreach (var t in d.Tips) tips.Add(t); r = d; }
@@ -80,6 +89,8 @@ namespace RealmForge {
           active = r.Active;
         }
       }
+      if (wasOpen || pend != null) PollRewards(now);
+      if (pend != null) CheckPending(now);
       if (!r.Open && wasOpen) {
         LogInput(now);
         wasOpen = false; whySaid = false;
@@ -98,8 +109,44 @@ namespace RealmForge {
       if (!gate.ShouldSend(code, result, now)) return;
       string key = syncCode();
       if (!SyncClient.IsValidCode(key)) { if (!noKeySaid) { noKeySaid = true; Log.Write("promo codes: no sync key"); } return; }
+      if (result == CodeResult.Ok) {
+        // the rewards window follows (before or after the message): wait for it, at most RewardWait
+        FlushPending(null);
+        lock (pendLock) pend = new Pending { Code = code, Result = result, Message = message, At = now, Deadline = now + RewardWait };
+        return;
+      }
+      Send(code, result, message, null);
+    }
+
+    // the rewards window while it is open: a list that differs from what was shown before is a new one
+    void PollRewards(DateTime now) {
+      var cur = CodeRewards.Normalize(RFX.ReadRewardWindow());
+      if (cur == null) { rewBase = null; return; }
+      if (CodeRewards.Same(cur, rewBase)) return;
+      rewBase = cur; rewSeen = cur; rewSeenAt = now;
+    }
+
+    void CheckPending(DateTime now) {
+      var p = pend; if (p == null) return;
+      if (rewSeen != null && rewSeenAt >= p.At - RewardBefore) { var rw = rewSeen; rewSeen = null; FlushPending(rw); }
+      else if (now >= p.Deadline) FlushPending(null);
+    }
+
+    void FlushPending(List<KeyValuePair<long, long>> rewards) {
+      Pending p;
+      lock (pendLock) { p = pend; pend = null; }
+      if (p == null) return;
+      if (rewards != null) Say("rewards " + rewards.Count + " item(s)"); else Say("rewards not read");
+      Send(p.Code, p.Result, p.Message, rewards);
+    }
+
+    // build and send the report (off the look thread; never throws)
+    void Send(string code, string result, string message, List<KeyValuePair<long, long>> rewards) {
+      if (!enabled()) return;
+      string key = syncCode();
+      if (!SyncClient.IsValidCode(key)) { if (!noKeySaid) { noKeySaid = true; Log.Write("promo codes: no sync key"); } return; }
       var ly = Layout.Current;
-      string body = CodeReportClient.BuildBody(code, result, message, ly != null ? ly.Game : null), url = site();
+      string body = CodeReportClient.BuildBody(code, result, message, ly != null ? ly.Game : null, rewards), url = site();
       if (body == null || string.IsNullOrEmpty(url)) return;
       Say("report " + result);
       Task.Factory.StartNew(() => {
