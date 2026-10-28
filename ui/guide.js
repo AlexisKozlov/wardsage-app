@@ -91,6 +91,14 @@
     return (plans || []).filter((p) => !(seen && seen[p.id]) && p.createdAt && now - Date.parse(p.createdAt) < FRESH_MS
       && now - Date.parse(p.createdAt) > -FRESH_MS && (seen || Date.parse(p.createdAt) >= since));
   }
+  // A storage cleanup list from the site: started by itself only when made within 10 minutes, after the app started, and not listed before.
+  // (A list paused shortly before an update must not start clicking after the restart.)
+  const SELL_FRESH_MS = 10 * 60 * 1000;
+  function freshSell(list, seen, now, bootAt) {
+    if (!list || !list.createdAt || (seen && seen[list.id])) return false;
+    const at = Date.parse(list.createdAt);
+    return now - at < SELL_FRESH_MS && at >= bootAt;
+  }
   function freshPlan(plans, seen, now) { return freshPlans(plans, seen, now)[0] || null; }
 
   // The started plans queue up («Надеть» on the site for several heroes, «Надеть все» here): the next one still to do,
@@ -180,7 +188,7 @@
     return a > 10 && a < 20 ? many : b === 1 ? one : b >= 2 && b <= 4 ? few : many;
   }
 
-  const api = { next, artStep, pickPlan, freshPlan, freshPlans, nextQueued, takeOver, highlightUid, plural, bustUrl, headUrl, itemUrl, setUrl, rankOf, statOf, statId, statUrl, VISIBLE_ROWS };
+  const api = { next, artStep, pickPlan, freshPlan, freshPlans, freshSell, nextQueued, takeOver, highlightUid, plural, bustUrl, headUrl, itemUrl, setUrl, rankOf, statOf, statId, statUrl, VISIBLE_ROWS };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.RFGuide = api;
 })(typeof window !== 'undefined' ? window : globalThis);

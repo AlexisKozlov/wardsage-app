@@ -71,6 +71,15 @@ ok(G.next(plan, live({ owner: { 6423: 0 } })).item.uid === 6423, 'in the bag: wa
   ok(G.freshPlans([mk('a', 2)], null, now, now - 30000).length === 0, 'first listing, plan made before the app started: waits for «Надеть»');
   ok(G.freshPlans([mk('a', 1)], null, now).length === 0, 'first listing without the start time: nothing started');
 }
+// storage cleanup list: started only when made after the app started, within 10 minutes
+{
+  const now = Date.parse('2026-09-26T10:00:00Z'), boot = now - 60000;
+  const mk = (min) => ({ id: 's', createdAt: new Date(now - min * 60000).toISOString() });
+  ok(G.freshSell(mk(25), {}, now, boot) === false, 'sell list made 25 minutes before the start: not fresh');
+  ok(G.freshSell(mk(6), {}, now, boot) === false, 'sell list made 5 minutes before the start: not fresh');
+  ok(G.freshSell(mk(0.5), {}, now, boot) === true, 'sell list made after the start: fresh');
+  ok(G.freshSell(mk(0.5), { s: true }, now, boot) === false, 'sell list seen before: not fresh');
+}
 // several builds started at once on the site: all of them, in order; the queue skips what is done or gone
 {
   const now = Date.parse('2026-09-26T10:00:00Z');

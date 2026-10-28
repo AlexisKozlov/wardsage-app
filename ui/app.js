@@ -22,7 +22,7 @@
     forum: { status: 'idle', reply: null, at: 0 },
     run: null, seen: null, bootAt: Date.now(), bootLoad: false, runKey: '', queue: [], takeOver: {},
     // storage cleanup: the site's list, the pilot's state on the game's sell screen
-    sell: { list: null, run: false, hint: false, hintFor: null, hs: null, tipKey: '', peakAll: false, state: '', selected: 0, missing: 0, extra: 0, seen: {}, dead: {} },
+    sell: { loaded: false, list: null, run: false, hint: false, hintFor: null, hs: null, tipKey: '', peakAll: false, state: '', selected: 0, missing: 0, extra: 0, seen: {}, dead: {} },
     // «Найти в игре»: the request from the site (with its item card) and what the program reports about the game's screens
     locate: { req: null, step: null, tipKey: '', doneTimer: 0 }, locateEnded: {},
     // the site's switches: reading as a whole, and the features switched off
@@ -124,7 +124,7 @@
   }
 
   function rail() {
-    const pending = S.plans.list.length;
+    const pending = S.plans.list.length + (S.sell.list ? 1 : 0);
     const nav = (id, icon, label, extra = '') =>
       `<button class="nav" data-act="nav" data-page="${id}" ${S.page === id ? 'aria-current="page"' : ''}>${icon}<span>${esc(label)}</span>${extra}</button>`;
     return `
@@ -688,10 +688,11 @@
 
   function compactView() {
     const p = current();
-    if (!p) return `<div class="compact-view">${S.locate.req ? locateCard(true) : ''}<div class="row" style="justify-content:space-between"><b>${esc(t('plansNone'))}</b>
+    const sc = S.sell.list ? sellCard() : '';
+    if (!p) return `<div class="compact-view">${S.locate.req ? locateCard(true) : ''}${sc}<div class="row" style="justify-content:space-between"><b>${esc(t('plansNone'))}</b>
       <button class="icon-btn" data-act="compact" title="${esc(t('expand'))}">${I.expand}</button></div></div>`;
     const g = G.next(p, S.live);
-    return `<div class="compact-view">${remoteNote(['equip', 'autoclick'])}${S.locate.req ? locateCard(true) : ''}
+    return `<div class="compact-view">${remoteNote(['equip', 'autoclick'])}${S.locate.req ? locateCard(true) : ''}${sc}
       <div class="compact-top">${bust(p)}<div><b>${esc(p.heroName)}</b><span>${esc(t('itemsOn', g.done, p.items.length))}</span>
         <div class="mini-bar"><i style="width:${Math.round((g.done / p.items.length) * 100)}%"></i></div></div>
         <button class="icon-btn" data-act="compact" title="${esc(t('expand'))}">${I.expand}</button></div>
@@ -1093,18 +1094,21 @@
       }
       case 'sell': {
         if (m.status !== 'ok') break;
-        const L = S.sell, was = L.list && L.list.id;
+        const L = S.sell, was = L.list && L.list.id, first = !L.loaded;
+        L.loaded = true;
         if (m.list && L.dead[m.list.id]) m.list = null;   // cancelled here, the site has not closed it yet
         L.list = m.list;
         if (!m.list) { if (L.run) host.send({ cmd: 'sell.stop' }); L.run = false; }
         else if (m.list.id !== was) {
           // «Очистить в игре» on the site a moment ago: start at once (an older list waits for «Выделить в игре»)
-          const fresh = !L.seen[m.list.id] && Date.now() - Date.parse(m.list.createdAt || '') < 10 * 60 * 1000;
+          const fresh = G.freshSell(m.list, L.seen, Date.now(), S.bootAt);
           L.seen[m.list.id] = true;
           if (L.run) host.send({ cmd: 'sell.stop' });
           L.run = false;
           // a fresh list from the site opens the equip page and starts at once; clicks only with auto click on, and never for artifacts
           if (fresh && S.game.running) { if (S.autoClick || m.list.kind === 'artifact') sellStart(); else sellHintStart(); if (!S.compact) S.page = 'equip'; }
+          // an older list on the first load after the start is not started, but shown: the equip page is where it is
+          else if (first && !S.compact) S.page = 'equip';
         }
         render(); break;
       }
