@@ -123,8 +123,8 @@ namespace RealmForge {
         Directory.CreateDirectory(Path.GetDirectoryName(p));
         string tmp = p + ".tmp";
         File.WriteAllText(tmp, sb.ToString(), new UTF8Encoding(false));
-        if (File.Exists(p)) File.Delete(p);
-        File.Move(tmp, p);
+        if (File.Exists(p)) File.Replace(tmp, p, null);
+        else File.Move(tmp, p);
         return true;
       } catch (Exception) { return false; }
     }

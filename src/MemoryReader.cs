@@ -19,6 +19,7 @@ using System.Globalization;
 namespace RealmForge {
   public static partial class RFX {
     [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr OpenProcess(int a, bool b, int pid);
+    [DllImport("kernel32.dll")] static extern uint GetProcessId(IntPtr h);
     [DllImport("kernel32.dll")] static extern bool ReadProcessMemory(IntPtr h, IntPtr addr, byte[] buf, IntPtr size, out IntPtr read);
     [DllImport("kernel32.dll")] static extern IntPtr VirtualQueryEx(IntPtr h, IntPtr addr, out MBI m, IntPtr len);
     [StructLayout(LayoutKind.Sequential)] public struct MBI { public ulong Base; public ulong AllocBase; public uint AllocProt; public uint pad1; public ulong Size; public uint State; public uint Protect; public uint Type; public uint pad2; }

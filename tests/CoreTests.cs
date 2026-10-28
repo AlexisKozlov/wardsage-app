@@ -789,6 +789,14 @@ static class CoreTests {
     int calls = 0; bool stop = false;
     res = KlassScan.Find(new[] { new KlassSection { Base = 0x7000, Bytes = Slots(many) } }, heap, ks => { calls++; stop = true; return namesOf(ks); }, want, () => stop, null, out to);
     Check(to && calls == 1 && res.ContainsKey("A.One"), "the deadline in the second pass: the first batch's hits are kept (partial)");
+    // a timed-out scan: the hits are merged in memory, but nothing is saved to disk
+    string tdir = Path.Combine(Path.GetTempPath(), "rf-klasst-" + Guid.NewGuid().ToString("N")), tasm = new string('d', 64);
+    var saveKd = RFX.KlassDir; RFX.KlassDir = tdir;
+    try {
+      var one = new Dictionary<string, ulong> { { "A.One", 0x2040 } };
+      Check(!RFX.SaveSlots(tasm, one, true) && KlassScan.Load(tdir, tasm) == null, "a scan that timed out: its slots are not saved");
+      Check(RFX.SaveSlots(tasm, one, false) && KlassScan.Load(tdir, tasm) != null, "  ... a complete scan's are");
+    } finally { RFX.KlassDir = saveKd; try { Directory.Delete(tdir, true); } catch (Exception) { } }
     // the cache file
     string asm = new string('c', 64), dir = Path.Combine(Path.GetTempPath(), "rf-klass-" + Guid.NewGuid().ToString("N"));
     try {
@@ -822,6 +830,11 @@ static class CoreTests {
       ulong imgSize; int nsec; List<KlassSection> gs = RFX.GaSections(ga, out imgSize, out nsec);
       Check(gs.Count == 1 && nsec == 1 && gs[0].Base == data && gs[0].Bytes.Length == 0x2000 && imgSize == 0x10000, "GaSections: only the writable, non-executable section; image size read");
       Check(RFX.GaSections(m.Alloc(0x1000), out imgSize, out nsec).Count == 0, "GaSections: no MZ: nothing");
+      { // a garbage e_lfanew (near 2^32) does not wrap
+        ulong gh = m.Alloc(0x1000); m.Mem[(int)(gh - FakeLua.Base)] = (byte)'M'; m.Mem[(int)(gh - FakeLua.Base) + 1] = (byte)'Z';
+        m.W32(gh + 0x3C, -8);
+        Check(RFX.GaSections(gh, out imgSize, out nsec).Count == 0 && imgSize == 0, "GaSections: a huge e_lfanew: nothing, no exception");
+      }
       var nm = RFX.KlassNames(new[] { kBm, kSim, kTip, kTip + 0x30000 });
       Check(nm[0] == "BattleView.BattleManager" && nm[1] == "CSharpBattle.Battle.GameSimulation" && nm[2] == "Form_CommonTips" && nm[3] == null, "KlassNames: namespace.name, no namespace, unreadable = null");
       var heapOk = RFX.HeapTest(ga, 0x10000);
@@ -834,6 +847,16 @@ static class CoreTests {
       Eq(kBm, RFX.ClassAt(ga, "BattleView.BattleManager"), "ClassAt: found by the scan");
       Eq(kSim, RFX.ClassAt(ga, "CSharpBattle.Battle.GameSimulation"), "  ... the simulation class");
       Check(RFX.ScanIdle(3000), "  ... the scan ends");
+      { // a matching layout with the class's address set but the slot not filled yet (an odd value): no scan asked for
+        var saveLy = Layout.Current; var lyOk = TestLayout();
+        Check(lyOk.Rva("BattleView.BattleManager") == 0x2000, "  (a layout with an address for BattleManager)");
+        Layout.Use(lyOk); RFX.ForgetClasses(); Layout.LocalAsm = null;
+        ulong slot0 = m.R64(ga + 0x2000); m.W64(ga + 0x2000, 0x1235);   // not filled: a metadata token
+        int rq = RFX.scanRequests;
+        Check(RFX.ClassAt(ga, "BattleView.BattleManager") == 0 && RFX.scanRequests == rq, "ClassAt: this build's address, slot not filled yet: 0, no scan asked for");
+        Check(RFX.ClassAt(ga, "Form_CommonTips") == 0 && RFX.scanRequests == rq + 1, "  ... a class without an address: a scan is asked for");
+        RFX.ScanIdle(3000); m.W64(ga + 0x2000, slot0); Layout.Use(saveLy); Layout.LocalAsm = new string('e', 64); RFX.ForgetClasses();
+      }
       var disk = KlassScan.Load(kd, Layout.LocalAsm);
       Check(disk != null && disk["BattleView.BattleManager"] == 0x2040 && disk["CSharpBattle.Battle.GameSimulation"] == 0x2108 && disk["Form_CommonTips"] == 0x2200, "the slots are kept on disk as rvas");
       // a restart: the slots from disk, no scan

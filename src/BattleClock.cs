@@ -67,7 +67,7 @@ namespace RealmForge {
       if (k == 0) k = DiskSlotClass(ga, cls);
       // not cached when not found: the address is filled in once the game first uses the class
       if (k != 0) lock (klassCache) { if (ga == klassGa) klassCache[cls] = k; }
-      else { lock (scanLock) { if (missed.Count < 64) missed.Add(cls); } RequestScan(ga); }
+      else if (ly == null || ly.RvaDropped || rva == 0) { RequestScan(ga, cls); }   // an address of this build that is not filled yet is waited for, not scanned for
       return k;
     }
 
@@ -210,6 +210,8 @@ namespace RealmForge {
     static readonly object scanLock = new object();
     static int scanBusy;                       // 1 while a scan runs
     static readonly HashSet<string> missed = new HashSet<string>(StringComparer.Ordinal);   // classes asked for and not found
+    /// <summary>Scans asked for so far (tests).</summary>
+    public static int scanRequests;
     static ulong scanGa; static int scanPid, scanTries, scanFailTick; static bool scanFailed;   // per (pid, ga), under scanLock
     static string diskAsm; static Dictionary<string, ulong> diskSlots;     // the saved slots of the local build, under scanLock
     static readonly HashSet<string> diskOk = new HashSet<string>(), diskStale = new HashSet<string>();   // under scanLock
@@ -300,7 +302,7 @@ namespace RealmForge {
       var h = ga != 0 ? Read(ga, 0x1000) : null;
       if (h == null || h[0] != (byte)'M' || h[1] != (byte)'Z') return res;
       uint lf = BitConverter.ToUInt32(h, 0x3C);
-      if (lf < 0x40 || lf + 24 + 60 > 0x1000 || h[lf] != (byte)'P' || h[lf + 1] != (byte)'E' || h[lf + 2] != 0 || h[lf + 3] != 0) return res;
+      if (lf < 0x40 || (long)lf + 24 + 60 > 0x1000 || h[lf] != (byte)'P' || h[lf + 1] != (byte)'E' || h[lf + 2] != 0 || h[lf + 3] != 0) return res;
       int ns = BitConverter.ToUInt16(h, (int)lf + 6), opt = BitConverter.ToUInt16(h, (int)lf + 20);
       imageSize = BitConverter.ToUInt32(h, (int)lf + 24 + 56);
       long tab = lf + 24 + opt, got = 0;
@@ -338,13 +340,16 @@ namespace RealmForge {
     /// <summary>Asks for a scan of GameAssembly.dll at <paramref name="ga"/> for the classes wanted, in the background: one at a
     /// time, not again within 30 s of a scan that missed a class asked for, at most 20 per game process (the slots fill in
     /// lazily, so early misses are normal).</summary>
-    static void RequestScan(ulong ga) {
+    static void RequestScan(ulong ga, string cls) {
+      Interlocked.Increment(ref scanRequests);
       if (ga == 0 || (TestMemory == null && H == IntPtr.Zero)) return;
       if (Interlocked.CompareExchange(ref scanBusy, 1, 0) != 0) return;
       int gen; IntPtr h = H; string asm = Layout.LocalAsm; var want = new HashSet<string>(ScanWanted, StringComparer.Ordinal); var asked = new List<string>();
       try {
         lock (scanLock) {
-          if (ga != scanGa || simPid != scanPid) { scanGa = ga; scanPid = simPid; scanTries = 0; scanFailed = false; }
+          int hp = HandlePid(h);
+          if (ga != scanGa || hp != scanPid) { scanGa = ga; scanPid = hp; scanTries = 0; scanFailed = false; missed.Clear(); }
+          if (cls != null && missed.Count < 64) missed.Add(cls);
           if (scanTries >= ScanMaxTries || (scanFailed && unchecked(Environment.TickCount - scanFailTick) < ScanRetryMs)) { Interlocked.Exchange(ref scanBusy, 0); return; }
           scanTries++;
           asked.AddRange(missed);
@@ -391,14 +396,33 @@ namespace RealmForge {
           if (diskSlots != null && string.Equals(diskAsm, asm, StringComparison.OrdinalIgnoreCase)) foreach (var kv in slots) diskSlots[kv.Key] = kv.Value;
         }
         // the slots kept for the next start (outside the locks)
+        if (!timedOut) SaveSlots(asm, slots);
+      } catch (Exception e) { LL("class scan failed: " + e.Message); }
+      finally { Interlocked.Exchange(ref scanBusy, 0); }
+    }
+
+    /// <summary>Keeps the slots found for the next start; never after a scan that timed out (a name not seen twice by a cut-short
+    /// scan may be ambiguous). True when the file was written.</summary>
+    public static bool SaveSlots(string asm, IDictionary<string, ulong> slots, bool timedOut) {
+      if (timedOut) return false;
+      return SaveSlots(asm, slots);
+    }
+    static bool SaveSlots(string asm, IDictionary<string, ulong> slots) {
+      try {
         if (asm != null && slots.Count > 0 && KlassScan.CacheFile(KlassDirNow(), asm) != null) {
           var all = KlassScan.Load(KlassDirNow(), asm) ?? new Dictionary<string, ulong>(StringComparer.Ordinal);
           bool changed = false;
           foreach (var kv in slots) { ulong old; if (!all.TryGetValue(kv.Key, out old) || old != kv.Value) { all[kv.Key] = kv.Value; changed = true; } }
-          if (changed) KlassScan.Save(KlassDirNow(), asm, all);
+          if (changed) return KlassScan.Save(KlassDirNow(), asm, all);
         }
-      } catch (Exception e) { LL("class scan failed: " + e.Message); }
-      finally { Interlocked.Exchange(ref scanBusy, 0); }
+      } catch (Exception e) { LL("class slots not saved: " + e.Message); }
+      return false;
+    }
+
+    /// <summary>The process id the handle <paramref name="h"/> belongs to; 0 when none (or no handle).</summary>
+    static int HandlePid(IntPtr h) {
+      if (h == IntPtr.Zero || TestMemory != null) return 0;
+      try { return (int)GetProcessId(h); } catch (Exception) { return 0; }
     }
 
     /// <summary>Waits up to <paramref name="waitMs"/> ms for a running scan to end; true when none is running.</summary>
