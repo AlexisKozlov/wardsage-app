@@ -47,6 +47,7 @@ namespace RealmForge {
     public long ScreenHero;        // hero whose gear screen the game shows
     public long Owner = -1;        // hero wearing Target now: 0 = in the bag, -1 = unknown
     public bool SlotOpen;          // the screen read shows the gear list of Slot's part open
+    public bool PanelNone;         // no gear list panel exists yet (it is created when a slot is first opened): click the slot
     public bool PanelOk = true;    // the game's panel table is readable (false while the addresses are scanned again)
   }
 
@@ -136,7 +137,7 @@ namespace RealmForge {
     AutoAction SlotStep(AutoView v) {
       // the slot does not open: the game keeps bracer / amulet / ring closed until a story stage (EquipData:IsSlotUnLock)
       // (the screen read shows it open, or the panel table is being read again: not the game's fault, no try is spent)
-      if (v.SlotOpen || !v.PanelOk) {
+      if (v.SlotOpen || (!v.PanelOk && !v.PanelNone)) {
         if (++slotWaits > SlotWaits) { State = "slot_failed"; Why = "the slot is shown open for " + slotWaits + " ticks, memory disagrees (panel ok " + v.PanelOk + ")"; Trace = "slot failed: " + Why; }
         waitUntil = v.NowMs + AfterSlotMs; return AutoAction.Nothing;
       }

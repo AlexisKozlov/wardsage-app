@@ -851,6 +851,8 @@ static class CoreTests {
       // the slots in the data section
       m.W64(data + 0x40, kBm); m.W64(data + 0x108, kSim); m.W64(data + 0x200, kTip);
       Layout.LocalAsm = new string('e', 64); RFX.KlassDir = kd;
+      // the scans below are asked for by a layout of another build (RvaDropped)
+      Layout.Use(GameLayout.Parse(FixtureJson().Replace("\"v\": 1", "\"v\": 1, \"asm\": \"" + new string('a', 64) + "\""), FixtureGame, new string('b', 64)));
       Check(RFX.ClassAt(ga, "BattleView.BattleManager") == 0, "ClassAt: no layout address, no disk slot: 0 at once (scan asked for)");
       Check(RFX.EnsureClasses(ga, 5000), "EnsureClasses: the scan finds the simulation class");
       Eq(kBm, RFX.ClassAt(ga, "BattleView.BattleManager"), "ClassAt: found by the scan");
@@ -863,7 +865,9 @@ static class CoreTests {
         ulong slot0 = m.R64(ga + 0x2000); m.W64(ga + 0x2000, 0x1235);   // not filled: a metadata token
         int rq = RFX.scanRequests;
         Check(RFX.ClassAt(ga, "BattleView.BattleManager") == 0 && RFX.scanRequests == rq, "ClassAt: this build's address, slot not filled yet: 0, no scan asked for");
-        Check(RFX.ClassAt(ga, "Form_CommonTips") == 0 && RFX.scanRequests == rq + 1, "  ... a class without an address: a scan is asked for");
+        Check(RFX.ClassAt(ga, "Form_CommonTips") == 0 && RFX.scanRequests == rq, "  ... a class without an address in the matching layout: no scan asked for");
+        var lyDrop = GameLayout.Parse(FixtureJson().Replace("\"v\": 1", "\"v\": 1, \"asm\": \"" + new string('a', 64) + "\""), FixtureGame, new string('b', 64)); Layout.Use(lyDrop); RFX.ForgetClasses();
+        Check(lyDrop.RvaDropped && RFX.ClassAt(ga, "Form_CommonTips") == 0 && RFX.scanRequests == rq + 1, "  ... a layout of another build (RvaDropped): a scan is asked for");
         RFX.ScanIdle(3000); m.W64(ga + 0x2000, slot0); Layout.Use(saveLy); Layout.LocalAsm = new string('e', 64); RFX.ForgetClasses();
       }
       var disk = KlassScan.Load(kd, Layout.LocalAsm);
@@ -891,6 +895,7 @@ static class CoreTests {
       Eq(s1, RFX.ClassAt(ga2, "CSharpBattle.Battle.GameSimulation"), "  ... the unique one is");
     } finally {
       RFX.ScanIdle(3000);
+      Layout.Use(TestLayout());
       RFX.TestMemory = null; RFX.ForgetLive(); RFX.ForgetClasses(); Layout.LocalAsm = saveAsm; RFX.KlassDir = saveDir;
       try { Directory.Delete(kd, true); } catch (Exception) { }
     }
@@ -2694,6 +2699,14 @@ static class CoreTests {
     for (; st1 < 30000; st1 += 100) if (s1.Step(new AutoView { NowMs = st1, Foreground = true, H = H, Slot = new[] { 100, 200, 60, 60 } }).Kind == AutoKind.Click) s1Clicks++;
     Eq(AutoPilot.SlotTries, s1Clicks, "slot: the tries start when it is not shown open");
     Eq("slot_failed", s1.State, "slot that stays closed -> slot_failed");
+    {   // no panel yet (the game creates it when a slot is first opened): the slot is clicked; a panel known but stale: waits
+      var sn = new AutoPilot(geo); bool clickedNone = false;
+      for (long t = 0; t < 1000 && !clickedNone; t += 100) if (sn.Step(new AutoView { NowMs = t, Foreground = true, H = H, Slot = new[] { 100, 200, 60, 60 }, PanelOk = false, PanelNone = true }).Kind == AutoKind.Click) clickedNone = true;
+      Check(clickedNone, "no panel yet (PanelOk false, PanelNone true): the slot is clicked within 1 s");
+      var sw = new AutoPilot(geo); int swClicks = 0;
+      for (long t = 0; t < 3000; t += 100) if (sw.Step(new AutoView { NowMs = t, Foreground = true, H = H, Slot = new[] { 100, 200, 60, 60 }, PanelOk = false, PanelNone = false }).Kind == AutoKind.Click) swClicks++;
+      Check(swClicks == 0 && sw.State == "work", "a panel known but stale (PanelOk false, PanelNone false): waits, no click");
+    }
 
     Console.WriteLine("Blue button test (measured on the live game)");
     int blue = unchecked((int)0xFF5160B3), dark = unchecked((int)0xFF49423F), gold = unchecked((int)0xFFC98F3A), white = unchecked((int)0xFFF0F0F0);
@@ -5194,6 +5207,18 @@ static class CoreTests {
 
   static void HeroPilotTests() {
     var g = new HeroGeometry(); double W = 1920, H = 1009;
+    {   // noscreen does not stick: the city count starts again once the hero screen was reached; the game behind: waits
+      var hc = new HeroPilot(g); long plan = 200100 * 100000L;
+      Func<long, long, bool, bool, HeroView> hv = (t, hero, btn, fg) => new HeroView { NowMs = t, Foreground = fg, W = W, H = H, ClientH = H, Plan = plan, Hero = hero, HeroesButton = btn };
+      int cityClicks = 0; long ct = 0;
+      for (int i = 0; i < 2; i++) { ct += 4000; if (hc.Step(hv(ct, 0, true, true)).Kind == AutoKind.Click) cityClicks++; }
+      Check(cityClicks == 2, "hero pilot: two «Герои» clicks");
+      ct += 4000; hc.Step(hv(ct, 1, false, true));   // the hero screen was reached
+      ct += 4000; var ha = hc.Step(hv(ct, 0, true, true));
+      Check(hc.State == "work" && ha != null && ha.Kind == AutoKind.Click, "hero pilot: city again after the hero screen: work + click, not noscreen (" + hc.State + ")");
+      var hb = new HeroPilot(g); var hba = hb.Step(hv(1000, 0, false, false));
+      Check(hb.State == "background" && hba != null && hba.Kind != AutoKind.Click, "hero pilot: game not in front: background, not noscreen (" + hb.State + ")");
+    }
     var heroes = new long[130]; for (int i = 0; i < heroes.Length; i++) heroes[i] = (200100 + i) * 100000L;
     HeroView lv;
 

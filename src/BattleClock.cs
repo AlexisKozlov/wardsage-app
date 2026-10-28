@@ -67,7 +67,7 @@ namespace RealmForge {
       if (k == 0) k = DiskSlotClass(ga, cls);
       // not cached when not found: the address is filled in once the game first uses the class
       if (k != 0) lock (klassCache) { if (ga == klassGa) klassCache[cls] = k; }
-      else if (ly == null || ly.RvaDropped || rva == 0) { RequestScan(ga, cls); }   // an address of this build that is not filled yet is waited for, not scanned for
+      else if (ly != null && ly.RvaDropped) { RequestScan(ga, cls); }   // an address of this build that is not filled yet is waited for, not scanned for
       return k;
     }
 

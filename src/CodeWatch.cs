@@ -137,7 +137,7 @@ namespace RealmForge {
     static void ReadTips(GameLayout ly, int pid, List<string> into) {
       int oMove = ly.FieldOffset("Form_CommonTips.m_MoveTips"), oShow = ly.FieldOffset("Form_CommonTips.m_ShowTips"),
           oGone = ly.FieldOffset("Form_CommonTips.m_DisappearTips"), oStr = ly.FieldOffset("Form_CommonTips.CommonData.str");
-      if (oMove < 0 || oShow < 0 || oGone < 0 || oStr < 0) return;
+      if (oMove < 0 || oShow < 0 || oGone < 0 || oStr < 0 || (!ly.RvaDropped && ly.Rva("Form_CommonTips") == 0)) return;
       if (pid != tipsPid) { tipsPid = pid; tipForms = new ulong[0]; tipsScanAt = 0; }
       ulong ga = GameAssemblyOf(pid), klass = ClassAt(ga, "Form_CommonTips");
       if (klass == 0) return;

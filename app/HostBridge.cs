@@ -1347,7 +1347,7 @@ namespace RealmForge {
         return;
       }
       pollError = null;
-      overlay.PanelOk = s.PanelOk;
+      overlay.PanelOk = s.PanelOk; overlay.PanelNone = s.PanelNone;
       // the hero screen is open, but the scan ran before the game built it (the player was in the city): scan again, at
       // most once a minute - without the form the hero cannot be brought up and the gear list is not known to be open
       if (s.GameRunning && s.HeroUid > 0 && addrs.Form == 0 && DateTime.UtcNow > rescanAfter) {

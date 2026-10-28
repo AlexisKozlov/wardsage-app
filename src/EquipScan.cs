@@ -32,6 +32,7 @@ namespace RealmForge {
 
   public sealed class EquipLive {
     public bool GameRunning = true;
+    public bool PanelNone;                      // no gear list panel yet (the game creates it when a slot is first opened)
     public bool PanelOk;                        // the panel table is still readable
     public bool FormOk;                         // the hero screen's form is known (see Part)
     public int Tab = -1;                        // the hero screen's right-hand tab (3 = gear), -1 = unknown
@@ -171,6 +172,7 @@ namespace RealmForge {
         if (Field(a.Form, "m_PanelDatas", out pd, out pdt) && pdt == T_TABLE && IntKey(pd, 3, out v, out tt) && tt == T_INT) listPart = (int)(long)v;
         if (Field(a.Form, "m_LastType", out v, out tt) && tt == T_INT) s.Tab = (int)(long)v;
       }
+      s.PanelNone = a.Panel == 0;
       if (a.Panel == 0) return s;
       ulong idx, list, filter; int t1, t2, t3;
       if (!Field(a.Panel, KPanel, out idx, out t1) || t1 != T_TABLE || !Field(a.Panel, KList, out list, out t2) || t2 != T_TABLE) return s;

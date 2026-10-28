@@ -108,9 +108,10 @@ namespace RealmForge {
       if (State == "failed" || State == "notfound" || State == "small") return AutoAction.Nothing;
       // the hero screen is closed: from the main city its «Герои» button opens it (only when the button is seen with
       // nothing over it - a pop-up over the city dims it); elsewhere the player is asked
-      if (v.Hero == 0 && (!v.HeroesButton || city >= MaxCity)) { State = "noscreen"; return AutoAction.Nothing; }
+      if (v.Hero != 0) city = 0;   // the hero screen was reached: the next time in the city starts afresh
       if (v.UserClicked) pauseUntil = v.NowMs + UserPauseMs;
-      if (!v.Foreground) { State = "background"; return AutoAction.Nothing; }
+      if (!v.Foreground) { State = "background"; return AutoAction.Nothing; }   // (the «Герои» button is seen only with the game in front)
+      if (v.Hero == 0 && (!v.HeroesButton || city >= MaxCity)) { State = "noscreen"; return AutoAction.Nothing; }
       if (v.UserBusy || v.NowMs < pauseUntil) { State = "paused"; return AutoAction.Nothing; }
       State = "work";
       if (v.NowMs < waitUntil) return AutoAction.Nothing;

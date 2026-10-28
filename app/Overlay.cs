@@ -264,6 +264,8 @@ namespace RealmForge {
     AutoView lastAutoView; FilterView lastFilterView; string lastPilotTrace = ""; int lastClientW, lastClientH;
     /// <summary>Public to the host: set PanelOk from the live poll (the game's panel table is readable).</summary>
     public bool PanelOk = true;
+    /// <summary>Public to the host: no gear list panel yet (the game creates it when a slot is first opened).</summary>
+    public bool PanelNone;
     /// <summary>What the report of a pilot failure says about it (no account or user data): filled when the state changes to a failure.</summary>
     public System.Collections.Generic.Dictionary<string, string> AutoDetail = new System.Collections.Generic.Dictionary<string, string>();
     // player activity: the cursor moved by someone else than the pilot, or a mouse button went down
@@ -1586,7 +1588,7 @@ namespace RealmForge {
         Slot = hintKind == "slot" ? hg.Slot(hintSlot, cr.R, cr.B) : null,
         Target = target, Row = curRow, Col = curCol, Sel = curSel, SelRow = selRow, SelCol = selCol,
         SlotOpen = hintKind == "slot" && screens.Hero != null && screens.Hero.FormOk && screens.Hero.Tab == HeroGeometry.GearTab && screens.Hero.Part == hintSlot,
-        PanelOk = PanelOk,
+        PanelOk = PanelOk, PanelNone = PanelNone,
         AnchorHas = anchor.Has && !follow.Unsure && types != null && typesPtr != 0, Row1Top = anchor.Row1Top, Types = types,
         AutoConfirm = confirm, Button = confirm ? confirmBtn : null, Hero = hintHero,
         ScreenHero = confirm ? RFX.ReadHero(addrs) : 0, Owner = AutoConfirm && target > 0 ? RFX.ReadOwner(addrs, target) : -1
