@@ -1399,6 +1399,19 @@ static class CoreTests {
     Eq(CodeResult.Used, CodeResult.Classify("\u041a\u043e\u0434 \u0443\u0436\u0435 \u0438\u0441\u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u043d"), "promo result: already used in Russian");
     Eq(CodeResult.Limit, CodeResult.Classify("Redemption limit reached"), "promo result: limit");
     Eq(CodeResult.Unknown, CodeResult.Classify("Network busy"), "promo result: unknown stays unknown");
+    // the game's own texts for the code errors 1601-1604, 1606, 1610, 1611 (the popup's m_strContent), English and Russian
+    var real = new[] {
+      new[] { CodeResult.Invalid, "The Redeem Code does not exist.", "\u0422\u0430\u043a\u043e\u0433\u043e \u043a\u043e\u0434\u0430 \u0432\u044b\u043a\u0443\u043f\u0430 \u043d\u0435 \u0441\u0443\u0449\u0435\u0441\u0442\u0432\u0443\u0435\u0442." },
+      new[] { CodeResult.Expired, "The Redeem Code has expired.", "\u0421\u0440\u043e\u043a \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u044f \u043a\u043e\u0434\u0430 \u0432\u044b\u043a\u0443\u043f\u0430 \u0438\u0441\u0442\u0435\u043a." },
+      new[] { CodeResult.Invalid, "The Redeem Code is invalid.", "\u041d\u0435\u0432\u0435\u0440\u043d\u044b\u0439 \u043a\u043e\u0434 \u0432\u044b\u043a\u0443\u043f\u0430." },
+      new[] { CodeResult.Used, "This Redeem Code has already been used.", "\u042d\u0442\u043e\u0442 \u043a\u043e\u0434 \u0432\u044b\u043a\u0443\u043f\u0430 \u0443\u0436\u0435 \u0438\u0441\u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u043d." },
+      new[] { CodeResult.Limit, "Redemption limit reached.", "\u0414\u043e\u0441\u0442\u0438\u0433\u043d\u0443\u0442 \u043b\u0438\u043c\u0438\u0442 \u0432\u044b\u043a\u0443\u043f\u0430." },
+      new[] { CodeResult.NotStarted, "Redemption hasn't started yet.", "\u0412\u044b\u043a\u0443\u043f \u0435\u0449\u0435 \u043d\u0435 \u043d\u0430\u0447\u0430\u043b\u0441\u044f." },
+      new[] { CodeResult.Limit, "The redemption quota has been reached.", "\u0414\u043e\u0441\u0442\u0438\u0433\u043d\u0443\u0442\u0430 \u043a\u0432\u043e\u0442\u0430 \u043d\u0430 \u0432\u044b\u043a\u0443\u043f." } };
+    foreach (var rt in real) {
+      Eq(rt[0], CodeResult.Classify(rt[1]), "promo result: game text \"" + rt[1] + "\" is " + rt[0]);
+      Eq(rt[0], CodeResult.Classify(rt[2]), "promo result: game text in Russian is " + rt[0]);
+    }
     Eq(CodeResult.Unknown, CodeResult.Classify(null), "promo result: no message is unknown");
     Eq("ru", CodeResult.LanguageOf("\u041d\u0435\u0432\u0435\u0440\u043d\u044b\u0439 \u043a\u043e\u0434"), "promo language: Russian");
     Eq("en", CodeResult.LanguageOf("Invalid code"), "promo language: English");

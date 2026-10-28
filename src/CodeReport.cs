@@ -22,8 +22,8 @@ namespace RealmForge {
     static readonly KeyValuePair<string, Regex>[] Rules = {
       new KeyValuePair<string, Regex>(Expired, R(@"expired|out of date|no longer valid|истек|истёк|просроч|срок.{0,20}(действ|вышел|истек|истёк)|expir|abgelaufen|caduc|vencid|süresi|kedaluwarsa|hết hạn")),
       new KeyValuePair<string, Regex>(Used, R(@"already (been )?(used|redeemed|claimed|exchanged)|has been (used|redeemed|claimed|exchanged)|been (used|redeemed)|уже (был|использ|активир|получ|обмен)|использован|bereits|déjà|ya (fue|ha sido|se)|já foi|zaten|sudah digunakan|đã được")),
-      new KeyValuePair<string, Regex>(Limit, R(@"limit|too many|maximum|exceed|лимит|превыш|слишком много|максимум")),
-      new KeyValuePair<string, Regex>(NotStarted, R(@"not (yet )?(open|started|begun|available|active)|has not started|ещё не|еще не|не начал|не открыт")),
+      new KeyValuePair<string, Regex>(Limit, R(@"limit|too many|maximum|exceed|лимит|превыш|слишком много|максимум|quota|квот")),
+      new KeyValuePair<string, Regex>(NotStarted, R(@"not (yet )?(open|started|begun|available|active)|has not started|hasn.?t (yet )?(open|started|begun)|ещё не|еще не|не начал|не открыт")),
       new KeyValuePair<string, Regex>(Invalid, R(@"invalid|incorrect|wrong|not exist|doesn.?t exist|does not exist|not found|unknown (code|key)|неверн|недействител|не существует|не найден|ошибочн|ungültig|invalide|inválid|geçersiz|tidak valid|không hợp lệ")),
       new KeyValuePair<string, Regex>(Ok, R(@"success|redeemed|congratulations|reward|получен|успешн|поздравл|награда|erfolg|réussi|éxito|exitos|sucesso|başarı|berhasil|thành công")),
     };

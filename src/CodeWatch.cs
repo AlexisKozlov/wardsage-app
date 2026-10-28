@@ -48,6 +48,8 @@ namespace RealmForge {
       var r = new CdkRead();
       var ly = Layout.Current;
       long id = ly != null ? ly.FormOpt("ID_FORM_PLAYERCDK") : 0;
+      long popId = ly != null ? ly.FormOpt("ID_FORM_COMMONPOPUP") : 0;   // the game's answer to a refused code (expired, invalid, used); older layout data lacks it
+      var popups = new List<ulong>();
       if (id == 0) { r.Why = "the layout data has no code window"; return r; }
       ulong t = UiKnown ? uiTable : 0;
       if (t == 0) { r.Why = "the game's windows are not found yet"; return r; }
@@ -63,10 +65,12 @@ namespace RealmForge {
         ulong f = BitConverter.ToUInt64(nb, o), v; int tt;
         bool isCdk = SameId(k, id);
         if (isCdk) cdk = f;
+        bool isPop = deep && popId != 0 && SameId(k, popId);
         if (!isCdk && !deep) continue;
         bool active = Field(f, "m_LuaLogicActive", out v, out tt) && tt == T_BOOL && v != 0;
         if (isCdk) r.Open = active;
         if (deep && active) r.Active.Add(unchecked((int)k));
+        if (isPop && active) popups.Add(f);
       }
       if (!deep && (cdk == 0 || !r.Open)) return r;
       var ps = GameInfo.GameProcesses();
@@ -79,6 +83,12 @@ namespace RealmForge {
         if (input != 0) r.Input = ManagedString(Ptr(input + (ulong)oText));
       }
       if (deep) ReadTips(ly, pid, r.Tips);
+      foreach (var pf in popups) {
+        ulong pv; int ptt;
+        if (!Field(pf, "m_strContent", out pv, out ptt) || (ptt != T_SSTR && ptt != T_LSTR)) continue;
+        string text = ReadLuaString(pv);
+        if (!string.IsNullOrEmpty(text) && !r.Tips.Contains(text)) r.Tips.Add(text);
+      }
       return r;
     }
 
