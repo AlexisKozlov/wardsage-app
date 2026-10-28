@@ -39,6 +39,11 @@ namespace RealmForge {
   }
 
   public sealed class ScreenState {
+    /// <summary>Is the picture of the city's bottom bar needed to judge the screen? Yes for City, and for Unknown unless the city form reads open.</summary>
+    public static bool NeedsCityPicture(ScreenKind kind, bool? cityForm) {
+      return kind == ScreenKind.City || (kind == ScreenKind.Unknown && cityForm != true);
+    }
+
     public ScreenKind Kind = ScreenKind.Unknown;
     // Inventory
     public bool InvEquipTab, InvBulk, InvBulkKnown;

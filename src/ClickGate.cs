@@ -249,7 +249,7 @@ namespace RealmForge {
 
     readonly Dictionary<ClickOwner, string> halted = new Dictionary<ClickOwner, string>();
     readonly Dictionary<ClickOwner, Watch> watches = new Dictionary<ClickOwner, Watch>();
-    readonly Dictionary<ClickOwner, long> unknownSince = new Dictionary<ClickOwner, long>();
+    readonly Dictionary<ClickOwner, long> unknownSince = new Dictionary<ClickOwner, long>();   // Check's own timer: Preflight never touches it
     readonly Dictionary<ClickOwner, string> noted = new Dictionary<ClickOwner, string>();
     readonly Dictionary<ClickOwner, long> clickedAt = new Dictionary<ClickOwner, long>();   // when the owner sent its last click in this request
 
@@ -346,7 +346,6 @@ namespace RealmForge {
         if (clickedAt.TryGetValue(o, out at) && now - at <= OwnClickWindowMs) return Halt(o, "unknown", d + " after the pilot's own click");
         return GateResult.Wait("unknown", d);
       }
-      unknownSince.Remove(o);
       return GateResult.Allow(s.Brief);
     }
 
@@ -371,14 +370,14 @@ namespace RealmForge {
       if (heroArt && r.Owner == ClickOwner.Equip && !ArtEquipAuto) return Halt(r.Owner, "artifact", tag + ": the artifact steps are hints only");
       var rule = RuleOf(r.Owner, r.Target);
       if (rule == null) return Halt(r.Owner, "target", tag + " is not a target " + r.Owner + " may click");
-      if (f == null || f.Kind == ScreenKind.Unknown) return UnknownWait(r, now, tag + ": the screen is not recognised");
+      if (f == null || f.Kind == ScreenKind.Unknown) return UnknownWait(r, f, now, tag + ": the screen is not recognised");
       if (Array.IndexOf(rule.Kinds, f.Kind) < 0) return Halt(r.Owner, "screen", tag + " needs " + string.Join("/", Names(rule.Kinds)) + ", the game shows " + f.Brief);
       if (f.ModalOpen && !rule.AllowModal) return Halt(r.Owner, "modal", tag + ": " + f.ModalWhy + " is open (" + f.Brief + ")");
       if (rule.HeroArt != 0) {
         var hs = f.HeroScr;
         if (hs == null || r.Hero <= 0 || r.ArtUid <= 0) return Halt(r.Owner, "target", tag + ": no hero / artifact named");
         if (f.Hero != r.Hero) return Halt(r.Owner, "screen", tag + ": the hero screen shows hero " + f.Hero + ", not " + r.Hero);
-        if (!hs.ArtRead) return UnknownWait(r, now, tag + ": the artifact fields of the hero screen are not readable");
+        if (!hs.ArtRead) return UnknownWait(r, f, now, tag + ": the artifact fields of the hero screen are not readable");
         if (hs.ArtTargetOwner == r.Hero) return Halt(r.Owner, "screen", tag + ": the artifact " + r.ArtUid + " is on the hero already");
         if (rule.HeroArt == 1) { if (hs.Tab == RFX.HeroArtTab) return Halt(r.Owner, "screen", tag + ": already on the artifact tab"); }
         else {
@@ -396,7 +395,7 @@ namespace RealmForge {
 
       if (f.Kind == ScreenKind.Inventory) {
         bool needMode = rule.InvNormalEquip || rule.InvBulkEquip;
-        if (needMode && !f.InvBulkKnown) return UnknownWait(r, now, tag + ": the inventory's mode is not readable");
+        if (needMode && !f.InvBulkKnown) return UnknownWait(r, f, now, tag + ": the inventory's mode is not readable");
         if (rule.InvNormalEquip) {
           if (f.InvBulk) return Halt(r.Owner, "bulk", tag + ": the inventory is in bulk-sale mode");
           if (!f.InvEquipTab) return Halt(r.Owner, "screen", tag + ": not on the equipment tab");
@@ -410,12 +409,12 @@ namespace RealmForge {
         if (rule.InvArt == 3) {
           if (f.InvArtTab) return Halt(r.Owner, "screen", tag + ": already on the artifact tab");
           if (f.InvEquipTab) {
-            if (!f.InvBulkKnown) return UnknownWait(r, now, tag + ": the inventory's mode is not readable");
+            if (!f.InvBulkKnown) return UnknownWait(r, f, now, tag + ": the inventory's mode is not readable");
             if (f.InvBulk) return Halt(r.Owner, "bulk", tag + ": the equipment tab is in bulk-sale mode (leaving it is the player's)");
           }
         } else {
           if (!f.InvArtTab) return Halt(r.Owner, "screen", tag + ": not on the artifact tab");
-          if (!f.InvArtBulkKnown) return UnknownWait(r, now, tag + ": the artifact tab's mode is not readable");
+          if (!f.InvArtBulkKnown) return UnknownWait(r, f, now, tag + ": the artifact tab's mode is not readable");
           if (rule.InvArt == 1 && f.InvArtMode != -1) return Halt(r.Owner, "bulk", tag + ": the artifact tab is not in its normal mode (mode " + f.InvArtMode + ")");
           if (rule.InvArt == 2 && !f.InvArtBulk) return Halt(r.Owner, "screen", tag + ": the artifact tab is not in bulk-sale mode");
         }
@@ -475,10 +474,11 @@ namespace RealmForge {
       return res;
     }
 
-    GateResult UnknownWait(ClickRequest r, long now, string detail) {
+    GateResult UnknownWait(ClickRequest r, ScreenState f, long now, string detail) {
       long since;
       if (!unknownSince.TryGetValue(r.Owner, out since)) { since = now; unknownSince[r.Owner] = now; }
       if (now - since > UnknownGraceMs) return Halt(r.Owner, "unknown", detail + " for " + (now - since) + " ms");
+      Note(r.Owner, "wait-unknown:" + r.Target + ":" + (f == null ? "none" : f.Brief), "wait (unknown) " + r.Target + " on " + (f == null ? "no screen" : f.Brief));
       return GateResult.Wait("unknown", detail);
     }
 

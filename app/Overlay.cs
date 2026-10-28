@@ -2362,7 +2362,7 @@ namespace RealmForge {
       bool artGuide = locateReq != null && locateReq.Purpose == "artPromote";
       if (artGuide) inp.ArtWs = RFX.ReadArtWorkshop();   // only while an artifact request is guided
       inp.CityForm = RFX.CityShown();
-      if (front && inp.CityForm != true && ScreenState.Classify(inp, now).Kind == ScreenKind.Unknown) {   // the city form is not readable or reads closed: the city's bottom bar (a picture, at most every 400 ms)
+      if (front && inp.CityForm != true && ScreenState.NeedsCityPicture(ScreenState.Classify(inp, now).Kind, inp.CityForm)) {   // the city form is not readable or reads closed: the city's bottom bar (a picture, at most every 400 ms)
         if (now - cityAt >= 400) { cityAt = now; cityNow = CityVisible(hwnd); }
         inp.CitySeen = cityNow;
       } else cityNow = false;
@@ -2398,7 +2398,7 @@ namespace RealmForge {
       if (locateReq != null && locateReq.Purpose == "artPromote") inp.ArtWs = RFX.ReadArtWorkshop();   // the artifact guide's clicks are judged by the workshop too
       var st = ScreenState.Classify(inp, now);
       // a click on a city button also needs the picture of the bar (the form alone is not enough for a click)
-      if (wantCity && (st.Kind == ScreenKind.City || (st.Kind == ScreenKind.Unknown && inp.CityForm == null))) {
+      if (wantCity && ScreenState.NeedsCityPicture(st.Kind, inp.CityForm)) {
         bool seen = CityVisible(GameWindow());
         if (inp.CityForm == true && !seen) inp.CityForm = false;
         inp.CitySeen = seen; st = ScreenState.Classify(inp, now);
