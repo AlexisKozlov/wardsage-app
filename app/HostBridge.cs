@@ -184,7 +184,8 @@ namespace RealmForge {
       Layout.Use(cached);
       layoutFor = v; layoutAsm = Layout.LocalAsm; layoutNoneLogged = false;
       bool otherBuild = cached == null && Layout.CacheIsOtherBuild(Layout.CacheDir, v);
-      Log.Write("layout data for game version " + (v ?? "?") + ": " + (cached != null ? "saved copy" : otherBuild ? "layout data is for a different build of the game (saved copy not used)" : "none yet"));
+      Log.Write("layout data for game version " + (v ?? "?") + ": " + (cached != null ? "saved copy" : otherBuild ? "layout data is for a different build of the game (saved copy not usable)" : "none yet"));
+      if (cached != null && cached.RvaDropped) LogOtherBuild(v, cached);
       if (had != cached) ApplyRemote();
       PostLayout();
       FetchLayout(v);
@@ -250,17 +251,23 @@ namespace RealmForge {
             bool was = Layout.Current != null;
             Layout.Use(l);
             Log.Write("layout data for game version " + v + ": from the site");
+            if (l != null && l.RvaDropped) LogOtherBuild(v, l);
             ApplyRemote();
             PostLayout();
             // the game's screens found in memory now (as at the game's start)
             if (!was && gameRunning && addrs == null && !scanning && AutoClickOn()) StartScan(watch, true);
           } else if (Layout.Current == null && !layoutNoneLogged) {
             layoutNoneLogged = true;
-            if (r == Layout.Reply.OtherBuild) Log.Write("layout data for game version " + v + ": layout data is for a different build of the game; the features that need it stay off");
+            if (r == Layout.Reply.OtherBuild) Log.Write("layout data for game version " + v + ": the build fingerprint in the layout data is malformed; the data is not used");
             else Log.Write("layout data for game version " + v + ": " + (r == Layout.Reply.None ? "not on the site yet" : r == Layout.Reply.Denied ? "no valid sync code" : "the site did not answer") + "; asked again every " + Layout.RetryMinutes(Channel.IsTest) + " min");
           }
         });
       });
+    }
+
+    static string Short(string asm) { return asm == null ? "?" : asm.Length > 12 ? asm.Substring(0, 12) : asm; }
+    static void LogOtherBuild(string v, GameLayout l) {
+      Log.Write("layout data for game version " + v + ": for another build (asm " + Short(l.Asm) + ", local " + Short(Layout.LocalAsm) + "): rva ignored, classes found by scan");
     }
 
     /// <summary>The page's note: the running game has no layout data (yet), some features wait for it.</summary>

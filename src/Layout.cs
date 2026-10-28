@@ -4,7 +4,8 @@
 //   404 = no data for that version (yet); 401/403 = the code is not (or no longer) valid: asked again later.
 // The reply is kept per game version in the app's data folder (layout\<version>.json) and used while the site cannot be
 // reached. The request carries &asm=<sha-256 of the running game's GameAssembly.dll>; data with an "asm" that differs
-// from the local one is for another build of the game and is treated as absent. Without data for the running game version the features that need it stay off: fight recording and the boss
+// from the local one is for another build of the game: it is used with its "rva" dropped (the classes are then found by a
+// scan of GameAssembly.dll's memory, src/KlassScan.cs); a malformed "asm" refuses the whole reply. Without data for the running game version the features that need it stay off: fight recording and the boss
 // coach, the arena watch, the game's screens for the equip helper, «Найти в игре», the storage cleanup and the recast
 // screens. The account sync does not need it (it finds the game's tables by their key names).
 using System;
@@ -50,6 +51,10 @@ namespace RealmForge {
       "StatisticsComponent.m_vSkillDamage", "SkillDamageStatisticsData.vDamageAmount" };
 
     public string Game { get; private set; }
+    /// <summary>The data's "asm" fingerprint (null = none).</summary>
+    public string Asm { get; private set; }
+    /// <summary>The data is for another build of the game than the local one: its class addresses were dropped.</summary>
+    public bool RvaDropped { get; private set; }
     readonly Dictionary<string, long> rva = new Dictionary<string, long>(), cons = new Dictionary<string, long>(),
       span = new Dictionary<string, long>(), size = new Dictionary<string, long>(), hdr = new Dictionary<string, long>(),
       form = new Dictionary<string, long>(), field = new Dictionary<string, long>();
@@ -63,17 +68,19 @@ namespace RealmForge {
     /// this format, or lacks something the app reads.</summary>
     public static GameLayout Parse(string json, string game) { return Parse(json, game, null); }
 
-    /// <summary>As above, and also null when the data carries an "asm" fingerprint that differs from <paramref name="localAsm"/>
-    /// (the hex SHA-256 of the running game's GameAssembly.dll; null = not known: nothing to compare).</summary>
+    /// <summary>As above; null also when the data carries a malformed "asm" fingerprint. When it differs from <paramref name="localAsm"/>
+    /// (the hex SHA-256 of the running game's GameAssembly.dll; null = not known: nothing to compare) the data is for another
+    /// build: everything but the class addresses is used (RvaDropped).</summary>
     public static GameLayout Parse(string json, string game, string localAsm) {
-      if (IsOtherBuild(json, localAsm)) return null;
+      var build = BuildOf(json, localAsm);
+      if (build == Build.Malformed) return null;
       if (string.IsNullOrEmpty(json) || json.Length > MaxBytes || !IsVersion(game)) return null;
       var o = MiniJson.AsObject(MiniJson.TryParse(json));
       if (o == null) return null;
       object v;
       if (!o.TryGetValue("game", out v) || !(v is string) || (string)v != game) return null;
       if (!o.TryGetValue("v", out v) || !(v is double) || (double)v != Format) return null;
-      var l = new GameLayout { Game = game };
+      var l = new GameLayout { Game = game, Asm = o.TryGetValue("asm", out v) ? v as string : null };
       if (!Section(o, "rva", l.rva) || !Section(o, "const", l.cons) || !Section(o, "span", l.span) || !Section(o, "size", l.size)
           || !Section(o, "hdr", l.hdr) || !Section(o, "form", l.form)) return null;
       if (o.ContainsKey("field") && !Section(o, "field", l.field)) return null;
@@ -83,19 +90,27 @@ namespace RealmForge {
       foreach (var kv in l.hdr) if (kv.Value < 0 || kv.Value > 0x100) return null;
       foreach (var kv in l.field) if (kv.Value < 0 || kv.Value > 0x1000) return null;
       foreach (var kv in l.rva) if (kv.Value <= 0 || kv.Value > 0x40000000) return null;
+      if (build == Build.Other) { l.rva.Clear(); l.RvaDropped = true; }
       return l;
     }
 
-    /// <summary>The data is for another build of the game: it has an "asm" that is not the local one. No "asm" in the data,
-    /// or no local hash, = not another build (accepted as before).</summary>
-    public static bool IsOtherBuild(string json, string localAsm) {
-      if (string.IsNullOrEmpty(json) || json.Length > MaxBytes || string.IsNullOrEmpty(localAsm)) return false;
+    /// <summary>How the data's "asm" compares to the local one.</summary>
+    public enum Build { Same, Other, Malformed }
+
+    /// <summary>Same = no "asm" in the data, no local hash, or equal; Other = a different hash; Malformed = an "asm" that is not
+    /// a SHA-256 in hex (with a local hash to compare to).</summary>
+    public static Build BuildOf(string json, string localAsm) {
+      if (string.IsNullOrEmpty(json) || json.Length > MaxBytes || string.IsNullOrEmpty(localAsm)) return Build.Same;
       var o = MiniJson.AsObject(MiniJson.TryParse(json));
       object v;
-      if (o == null || !o.TryGetValue("asm", out v)) return false;
+      if (o == null || !o.TryGetValue("asm", out v)) return Build.Same;
       var s = v as string;
-      return s == null || !string.Equals(s, localAsm, StringComparison.OrdinalIgnoreCase);
+      if (s == null || !Regex.IsMatch(s, "^[0-9a-fA-F]{64}$")) return Build.Malformed;
+      return string.Equals(s, localAsm, StringComparison.OrdinalIgnoreCase) ? Build.Same : Build.Other;
     }
+
+    /// <summary>The data is for another build of the game: it has a well-formed "asm" that is not the local one.</summary>
+    public static bool IsOtherBuild(string json, string localAsm) { return BuildOf(json, localAsm) == Build.Other; }
 
     static bool Section(Dictionary<string, object> o, string name, Dictionary<string, long> into) {
       object v;
@@ -166,14 +181,13 @@ namespace RealmForge {
     public static string RawCache(string game) {
       if (!GameLayout.IsVersion(game)) return null;
       string kept = Kept(game); if (kept != null) return kept;
-      try { string p = CachePath(CacheDir, game); if (!File.Exists(p)) return null; string txt = File.ReadAllText(p, Encoding.UTF8); return IsOtherBuildText(txt) ? null : txt; } catch (Exception) { return null; }
+      try { string p = CachePath(CacheDir, game); if (!File.Exists(p)) return null; string txt = File.ReadAllText(p, Encoding.UTF8); return txt; } catch (Exception) { return null; }
     }
 
-    /// <summary>The saved copy for <paramref name="game"/> is for another build of the game than the running one.</summary>
+    /// <summary>The saved copy for <paramref name="game"/> is for another build of the game than the running one (for the log: it is still used, without its class addresses).</summary>
     public static bool CacheIsOtherBuild(string dir, string game) {
       try { string p = GameLayout.IsVersion(game) ? CachePath(dir, game) : null; return p != null && File.Exists(p) && GameLayout.IsOtherBuild(File.ReadAllText(p, Encoding.UTF8), LocalAsm); } catch (Exception) { return false; }
     }
-    static bool IsOtherBuildText(string txt) { return GameLayout.IsOtherBuild(txt, LocalAsm); }
 
     public static void SaveCache(string dir, string game, string json) {
       if (!GameLayout.IsVersion(game)) return;
@@ -188,7 +202,8 @@ namespace RealmForge {
 
     /// <summary>What a reply means: Got (the data, in <paramref name="layout"/>), None (the site has none for this version),
     /// Denied (no valid sync code: none entered, or the site refused it with 401/403) or NoReply (no connection, an error,
-    /// something odd: what is held stays).</summary>
+    /// something odd: what is held stays). OtherBuild = the data's build fingerprint is malformed (data for another build
+    /// is Got, without its class addresses).</summary>
     public enum Reply { Got, None, Denied, NoReply, OtherBuild }
 
     public static Reply Interpret(int code, string body, string game, out GameLayout layout) { return Interpret(code, body, game, LocalAsm, out layout); }
@@ -199,7 +214,7 @@ namespace RealmForge {
       if (code < 200 || code >= 300) return Reply.NoReply;
       layout = GameLayout.Parse(body, game, asm);
       if (layout != null) { Keep(game, body); return Reply.Got; }
-      return GameLayout.IsOtherBuild(body, asm) ? Reply.OtherBuild : Reply.NoReply;
+      return GameLayout.BuildOf(body, asm) == GameLayout.Build.Malformed ? Reply.OtherBuild : Reply.NoReply;
     }
 
     /// <summary>Asks the site for <paramref name="game"/>'s data with the sync code; <paramref name="json"/> = the reply's
