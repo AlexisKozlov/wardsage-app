@@ -20,7 +20,7 @@
     more: {}, autoSync: true, autoClick: false, autoConfirm: false, errorReports: false, autoUpdate: true, bossHints: true, sendCodes: true, recButton: true, plansWait: false, tray: true, autostart: false, auto: 'idle', autoAt: null,
     news: { status: 'idle', feed: null, filter: 'all', at: 0 },
     forum: { status: 'idle', reply: null, at: 0 },
-    run: null, seen: null, runKey: '', queue: [], takeOver: {},
+    run: null, seen: null, bootAt: Date.now(), bootLoad: false, runKey: '', queue: [], takeOver: {},
     // storage cleanup: the site's list, the pilot's state on the game's sell screen
     sell: { list: null, run: false, hint: false, hintFor: null, hs: null, tipKey: '', peakAll: false, state: '', selected: 0, missing: 0, extra: 0, seen: {}, dead: {} },
     // «Найти в игре»: the request from the site (with its item card) and what the program reports about the game's screens
@@ -945,6 +945,7 @@
         if (m.game) S.game = m.game;
         if (m.codeSaved) { S.editCode = false; toast(t('saved')); if (S.page === 'equip' || S.plans.status !== 'idle') loadPlans(); }
         if (m.siteSaved) toast(t('saved'));
+        if (S.hasCode && !S.bootLoad && S.plans.status === 'idle') { S.bootLoad = true; loadPlans(); }   // the first listing must not wait for the slow poll
         S.ready = true; loadNews(false); loadForum(!!m.codeSaved); render(); break;
       case 'forum':
         S.forum.at = Date.now();
@@ -996,7 +997,7 @@
           const i = S.plans.list.findIndex((p) => p.id === id); S.sel = i >= 0 ? i : 0;
           // «Надеть в игре» pressed on the site a moment ago: start it (older plans wait for «Надеть» here)
           // (several heroes at once: they queue up and go one after another)
-          const fresh = G.freshPlans(S.plans.list, S.seen, Date.now());
+          const fresh = G.freshPlans(S.plans.list, S.seen, Date.now(), S.bootAt);
           S.seen = S.seen || {}; S.plans.list.forEach((p) => { S.seen[p.id] = true; });
           if (fresh.length && S.autoClick && S.game.running) { enqueue(fresh); if (!S.compact) S.page = 'equip'; }
           watchPlans(fresh.length > 0);

@@ -85,10 +85,11 @@
   // A plan made on the site within the last 3 minutes that this app has not listed before: the player pressed «Надеть в
   // игре» just now, so it starts by itself. The first listing after the app starts only marks what is there.
   const FRESH_MS = 3 * 60 * 1000;
-  function freshPlans(plans, seen, now) {
-    if (!seen) return [];
-    return (plans || []).filter((p) => !seen[p.id] && p.createdAt && now - Date.parse(p.createdAt) < FRESH_MS
-      && now - Date.parse(p.createdAt) > -FRESH_MS);
+  // `since` (when the app started): the first listing still starts the plans made after that moment.
+  function freshPlans(plans, seen, now, since) {
+    if (!seen && !(since > 0)) return [];
+    return (plans || []).filter((p) => !(seen && seen[p.id]) && p.createdAt && now - Date.parse(p.createdAt) < FRESH_MS
+      && now - Date.parse(p.createdAt) > -FRESH_MS && (seen || Date.parse(p.createdAt) >= since));
   }
   function freshPlan(plans, seen, now) { return freshPlans(plans, seen, now)[0] || null; }
 

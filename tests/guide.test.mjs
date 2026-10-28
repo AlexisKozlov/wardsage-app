@@ -66,6 +66,10 @@ ok(G.next(plan, live({ owner: { 6423: 0 } })).item.uid === 6423, 'in the bag: wa
   ok(G.freshPlan([mk('a', 1)], {}, now).id === 'a', 'a plan made a minute ago, not seen before: started');
   ok(G.freshPlan([mk('a', 1)], { a: true }, now) === null, 'seen before: not started again');
   ok(G.freshPlan([mk('b', 10)], {}, now) === null, 'made 10 minutes ago: waits for «Надеть»');
+  const boot = now - 90000;
+  ok(G.freshPlans([mk('a', 1)], null, now, boot).map((p) => p.id).join() === 'a', 'first listing, plan made after the app started: started');
+  ok(G.freshPlans([mk('a', 2)], null, now, now - 30000).length === 0, 'first listing, plan made before the app started: waits for «Надеть»');
+  ok(G.freshPlans([mk('a', 1)], null, now).length === 0, 'first listing without the start time: nothing started');
 }
 // several builds started at once on the site: all of them, in order; the queue skips what is done or gone
 {
