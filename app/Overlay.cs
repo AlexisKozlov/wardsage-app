@@ -454,7 +454,7 @@ namespace RealmForge {
     /// <summary>The artifact step for the page's live event (JSON: uid, step name, done, owner); null = no goal.</summary>
     public string ArtLive() {
       var st = artEqStep;
-      if (st == null || !(ArtPhase || (artLatch.IsDone && hintKind == "art"))) return null;
+      if (st == null || !ArtGoalLatch.LiveShown(ArtPhase, artLatch.IsDone)) return null;
       return "{\"uid\":" + artUid + ",\"step\":\"" + st.Name + "\",\"done\":" + (st.Kind == ArtEquipKind.Done ? "true" : "false") + ",\"owner\":" + st.Owner + "}";
     }
 

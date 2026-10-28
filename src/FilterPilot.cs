@@ -55,14 +55,16 @@ namespace RealmForge {
     public long[] SubAttrs;         // sub stats chosen in the filter now (null = none)
     public long[] Suits, MainAttrs; // the filter now; null = unreadable
     public bool Foreign;            // other filters are on (level, sub stats): they could hide the item
+    public bool ItemListed;         // the guide sees the item in the game's list (its verdict is not «hidden by worn»): the game applied the untick even if the read is stale
     public bool HideEquipped, OnOtherHero;   // OnOtherHero: the plan takes it from that hero on purpose (the guide skips others)
     public bool PanelOpen, SidePanelOpen, SetPanelOpen;   // from the screen
   }
 
   public sealed class FilterPilot {
-    public const int MaxClicks = 26, AfterClickMs = 550, PartTries = 2, SetTries = 4, MaxSetDrags = 4, MaxSubs = 4, MaxPasses = 3, MaxReopens = 3;
+    public const int MaxClicks = 26, AfterClickMs = 550, PartTries = 2, EqConfirmMs = 2000, SetTries = 4, MaxSetDrags = 4, MaxSubs = 4, MaxPasses = 3, MaxReopens = 3;
     readonly FilterGeometry g;
     long item = -1, waitUntil;
+    long eqClickAt;
     int clicks, setTries, statTries, eqTries, closeTries, openTries, setDrags, subTries, sideCloseTries;
     // the filter was complete once for this item (wasSet); the game may drop it afterwards (the hero screen opened again):
     // the next pass starts its tries over, a few passes at most
@@ -96,7 +98,11 @@ namespace RealmForge {
 
       bool setOk = v.SetId <= 0 || setSkipped || Only(v.Suits, v.SetId);
       bool statOk = v.StatId <= 0 || statSkipped || Only(v.MainAttrs, v.StatId);
-      bool eqOk = !(v.OnOtherHero && v.HideEquipped);
+      // the read of «Скрыть надетое» is stale while the panel is open: one click per pass, never again for an unconfirmed read
+      if (eqTries > 0 && v.OnOtherHero && v.HideEquipped && !v.ItemListed && v.NowMs - eqClickAt > EqConfirmMs) {
+        failed = true; State = "failed"; Note = "«Скрыть надетое» did not switch off"; return null;
+      }
+      bool eqOk = !(v.OnOtherHero && v.HideEquipped) || (eqTries > 0 && (v.ItemListed || v.NowMs - eqClickAt > EqConfirmMs));
       // the item's sub stats (up to 4): the game lists the items with all of them first
       var subs = WantedSubs(v); var chosen = v.SubAttrs ?? new long[0];
       long missing = 0; foreach (var s in subs) if (Array.IndexOf(chosen, s) < 0) { missing = s; break; }
@@ -208,8 +214,8 @@ namespace RealmForge {
         sideCloseTries++; Note = "closing the side panel (" + sideCloseTries + ")";
         return Click(v, g.X(g.SideCloseX, W, H), g.Y(g.CloseY, W, H));
       }
-      if (eqTries >= PartTries) { failed = true; State = "failed"; Note = "«Скрыть надетое» stays on after " + eqTries + " clicks"; return null; }
-      eqTries++;
+      if (eqTries > 0) return AutoAction.Nothing;   // clicked once: waits for the game, never toggles back
+      eqTries++; eqClickAt = v.NowMs;
       return Click(v, g.X(g.HideEquippedX, W, H), g.Y(g.HideEquippedY, W, H));
     }
 
