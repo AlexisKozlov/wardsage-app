@@ -10,6 +10,9 @@
   // rows of the gear list visible without scrolling in the game (1080p: about 4.5)
   const VISIBLE_ROWS = 4;
 
+  // plans whose artifact was seen on the hero: a later live event without `art` (the host drops it once the page says done) does not undo it
+  const artSeen = {};
+
   function next(plan, live) {
     const g = { kind: null, item: null, row: 0, col: 0, other: null, states: {}, done: 0, taken: 0 };
     const owner = (live && live.owner) || {};
@@ -30,7 +33,9 @@
     if (!cur) {
       // the plan's artifact comes after the gear; the host says where the game is (live.art for this artifact), 'done' when it is on the hero
       const a = plan.artifact, la = a && live.art && live.art.uid === a.uid ? live.art : null;
-      g.artDone = !!(la && la.done);
+      const mk = plan.id + ':' + (a && a.uid);
+      if (la && la.done && plan.id != null) artSeen[mk] = true;
+      g.artDone = !!(la && la.done) || !!(a && plan.id != null && artSeen[mk]);
       if (a && !g.taken && !g.artDone) { g.kind = 'art'; g.art = { step: (la && la.step) || 'wait' }; return g; }
       g.kind = g.taken ? 'taken' : 'done'; return g;
     }

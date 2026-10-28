@@ -156,6 +156,8 @@ namespace RealmForge {
   public sealed class ArtGoalLatch {
     long doneHero, doneUid;
     public bool IsDone { get; private set; }
+    /// <summary>The page's live event carries the step while the goal runs and after it is done, whatever hint the page sends then ("done" too).</summary>
+    public static bool LiveShown(bool artPhase, bool latched) { return artPhase || latched; }
     public void MarkDone(long hero, long uid) { IsDone = true; doneHero = hero; doneUid = uid; }
     /// <summary>A new started plan: the latch opens.</summary>
     public void NewPlan() { IsDone = false; doneHero = 0; doneUid = 0; }

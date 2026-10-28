@@ -4245,6 +4245,7 @@ static class CoreTests {
     latch.MarkDone(231, 9004);
     Check(latch.Ignores(231, 9004) && latch.Ignores(0, 0) && latch.Ignores(231, 9004), "art latch: after Done the same goal and its clearing are ignored");
     Check(!latch.Ignores(231, 9005) && !latch.IsDone, "art latch: another artifact opens it");
+    Check(ArtGoalLatch.LiveShown(false, true) && ArtGoalLatch.LiveShown(true, false) && !ArtGoalLatch.LiveShown(false, false), "art latch: the live step shows while the goal runs and after it is latched, whatever the hint (art or done)");
     latch.MarkDone(231, 9004); latch.NewPlan();
     Check(!latch.Ignores(231, 9004), "art latch: a new plan takes the same artifact again");
 
@@ -5224,16 +5225,24 @@ static class CoreTests {
       if (a.Kind == AutoKind.Click) { if (game.Side && Math.Abs(a.X - hx) < 12 && Math.Abs(a.Y - hy) < 12) swallowed++; game.Click(a.X, a.Y); }
     }
     Check(swallowed == 0 && !game.HideEq, "side panel open: it is closed before «Скрыть надетое» is clicked (" + swallowed + " clicks into the panel)");
-    // the click never takes effect: the filter is not reported done while the item stays hidden
-    game = new FakeFilterGame(g, W, H) { SetList = sets, StatList = stats, HideEq = true, Open = true };
-    var fpn = new FilterPilot(g); bool doneEarly = false;
-    for (long t = 0; t < 20000; t += 100) {
-      var v = new FilterView { NowMs = t, Foreground = true, W = W, H = H, Item = 5, Wanted = true, Suits = new long[0], MainAttrs = new long[0],
-        HideEquipped = true, OnOtherHero = true, SetOrder = game.SetList, SubOrder = game.SubList, SubAttrs = new long[0], PanelOpen = true };
-      fpn.Step(v);
-      if (fpn.State == "done") doneEarly = true;
+    // the read of «Скрыть надетое» is stale (always "hidden") while the game already applied the untick: ONE click, never a second one
+    foreach (bool listed in new[] { false, true }) {
+      game = new FakeFilterGame(g, W, H) { SetList = sets, StatList = stats, HideEq = true, Open = true };
+      var fpst = new FilterPilot(g); int hideClicks = 0, hideClicksAfterOn = 0; bool doneStale = false, itemShown = false;
+      for (long t = 0; t < 20000; t += 100) {
+        var v = new FilterView { NowMs = t, Foreground = true, W = W, H = H, Item = 5, Wanted = true, Suits = new long[0], MainAttrs = new long[0],
+          HideEquipped = true, OnOtherHero = true, ItemListed = listed && itemShown, SetOrder = game.SetList, SubOrder = game.SubList, SubAttrs = new long[0], PanelOpen = true };
+        var a = fpst.Step(v);
+        if (fpst.State == "done") doneStale = true;
+        if (a != null && a.Kind == AutoKind.Click) {
+          if (Math.Abs(a.X - g.X(g.HideEquippedX, W, H)) < 12 && Math.Abs(a.Y - g.Y(g.HideEquippedY, W, H)) < 12) { hideClicks++; if (!game.HideEq) hideClicksAfterOn++; }
+          game.Click(a.X, a.Y); if (!game.HideEq) itemShown = true;
+        }
+      }
+      Check(hideClicks == 1 && hideClicksAfterOn == 0 && !game.HideEq, "stale hide-worn read (item listed turns " + listed + "): exactly one click, the game's toggle stays off (" + hideClicks + " clicks)");
+      if (listed) Check(doneStale && fpst.State == "done", "stale hide-worn read, item listed after the click: the filter finishes (" + fpst.State + ")");
+      else Check(!doneStale && fpst.State == "failed" && fpst.Note.Contains("did not switch off"), "stale read and the item never listed: failed after 2 s with a note, no second click (" + fpst.State + ": " + fpst.Note + ")");
     }
-    Check(!doneEarly && fpn.State == "failed" && fpn.Note != "", "«Скрыть надетое» stays on: failed with a note, never done (" + fpn.State + ": " + fpn.Note + ")");
 
     game = new FakeFilterGame(g, W, H) { SetList = sets, StatList = stats, Open = true };
     int m = RunFilter(new FilterPilot(g), game, 721500, 13, false, false);

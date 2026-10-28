@@ -99,8 +99,14 @@ ok(G.next(plan, live({ owner: { 6423: 0 } })).item.uid === 6423, 'in the bag: wa
   for (const st of ['hero', 'tab', 'open', 'openAdd', 'missing', 'replace', 'equip', 'confirm']) ok(G.artStep(G.next(p, lv({ art: { uid: 9004, step: st } }))) === st, 'step ' + st + ' passes through');
   ok(G.artStep(G.next(p, lv({ art: { uid: 9004, step: 'bogus' } }))) === 'wait', 'an unknown step is waiting');
   ok(G.next(p, lv({ art: { uid: 1234, step: 'done', done: true } })).kind === 'art', "another artifact's report does not count");
-  g = G.next(p, lv({ art: { uid: 9004, step: 'done', done: true, owner: 7 } }));
+  g = G.next({ ...p, id: 'art1' }, lv({ art: { uid: 9004, step: 'done', done: true, owner: 7 } }));
   ok(g.kind === 'done' && g.artDone, 'on the hero: done');
+  const p2 = { ...p, id: 'art2' };
+  G.next(p2, lv({ art: { uid: 9004, step: 'done', done: true, owner: 7 } }));
+  g = G.next(p2, lv());
+  ok(g.kind === 'done' && g.artDone, 'a later live without art stays done (the page remembers it)');
+  g = G.next(p2, lv({ art: { uid: 9004, step: 'wait', done: false } }));
+  ok(g.kind === 'done' && g.artDone, 'a later live with art not done stays done too');
   ok(G.next({ ...p, artifact: undefined }, lv()).kind === 'done', 'a plan without an artifact is done with the gear');
   ok(G.next(p, lv({ gameRunning: false })).kind === 'closed', 'the game closed: closed');
   ok(G.next(p, lv({ owner: { 11: 5 } })).kind === 'taken', 'the gear taken by another hero: taken, no artifact step');

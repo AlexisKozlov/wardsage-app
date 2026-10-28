@@ -2109,7 +2109,7 @@ namespace RealmForge {
 
     /// <summary>The step of this tick from the hero screen the readers gave (hint kind "art" only).</summary>
     void UpdateArtStep() {
-      if (artLatch.IsDone && hintKind == "art") return;   // finished: the last step stays for the page's live event
+      if (artLatch.IsDone) return;   // finished: the last step stays for the page's live event
       if (!ArtPhase) { artEqStep = null; return; }
       var st = screens.Current;
       bool popup = st != null && st.ModalOpen && st.ModalWhy == ClickGate.ModalEquipPopup;
@@ -2860,7 +2860,7 @@ namespace RealmForge {
       if (filterItem <= 0 || addrs == null) return fv;
       long[] suits, mains, subAttrs; int part; bool foreign, hideEq;
       if (!RFX.ReadFilter(addrs, out suits, out mains, out subAttrs, out part, out foreign, out hideEq)) return fv;
-      fv.Item = filterItem; fv.Suits = suits; fv.MainAttrs = mains; fv.SubAttrs = subAttrs; fv.Foreign = foreign; fv.HideEquipped = hideEq;
+      fv.Item = filterItem; fv.Suits = suits; fv.MainAttrs = mains; fv.SubAttrs = subAttrs; fv.Foreign = foreign; fv.HideEquipped = hideEq; fv.ItemListed = filterKind != "hiddenEq";
       // the item is not on the screen: the filter (set + main stat) brings it to the first rows at once. Scrolling a long
       // list back from wherever the last item left it took the pilot up to a minute (live test 2026-09-26)
       bool onScreen = state == "on";
