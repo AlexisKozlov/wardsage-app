@@ -287,7 +287,7 @@ namespace RealmForge {
 
 namespace RealmForge {
   /// <summary>The hero grid's filter pop-up on a grabbed frame: a dark strip left of the class check boxes, the Faction|Filter
-  /// divider, and a second mark that grid lines cannot fake: the blue selected «Все» cell of the class column (row 0) or,
+  /// divider, and a second mark that grid lines cannot fake: a blue selected cell of the class / faction columns or,
   /// on older layouts, the Class|Faction divider. Pure: the pixels come from <c>grab(x, y, w, h)</c> in client px.</summary>
   public static class HeroFilterLook {
     public static bool IsBlueRow(int c) {
@@ -313,13 +313,20 @@ namespace RealmForge {
       return BlueCellSeen(grab, U) || DividerSeen(grab, (int)(0.2557 * U), (int)(0.16 * U), (int)(0.87 * U));
     }
 
-    // the selected «Все» cell: between its check box and its text, a box of the cell's blue
+    // a selected cell: a box of the cell's blue between its check box and its text, in any row of the class or faction column
+    // («Все» when nothing is chosen, the chosen class / faction otherwise). Calibrated on the 1.6.46 recording at 526×296: the
+    // pop-up open 0.87 and more, the closed grid 0.51 at most
     public static bool BlueCellSeen(Func<int, int, int, int, int[]> grab, double U) {
-      int x0 = (int)(0.12 * U), x1 = (int)(0.17 * U), yc = (int)(0.2379 * U), hh = (int)(0.03 * U);
-      int[] px = grab(x0, yc - hh, x1 - x0, 2 * hh);
-      if (px == null || px.Length == 0) return false;
-      int n = 0; foreach (int c in px) if (IsBlueRow(c)) n++;
-      return n >= 0.6 * px.Length;
+      foreach (double[] col in new[] { new[] { 0.12, 0.17 }, new[] { 0.35, 0.385 } }) {
+        for (int r = 0; r < 7; r++) {
+          int x0 = (int)(col[0] * U), x1 = (int)(col[1] * U), yc = (int)((0.2379 + r * 0.1004) * U), hh = (int)(0.03 * U);
+          int[] px = grab(x0, yc - hh, x1 - x0, 2 * hh);
+          if (px == null || px.Length == 0) continue;
+          int n = 0; foreach (int c in px) if (IsBlueRow(c)) n++;
+          if (n >= 0.7 * px.Length) return true;
+        }
+      }
+      return false;
     }
 
     // a thin vertical line brighter than the pop-up around it, near x (a few pixels of play for rounding)

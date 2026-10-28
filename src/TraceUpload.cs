@@ -70,14 +70,18 @@ namespace RealmForge {
       return g == 5001 || g == 5002 || g == 5201 || g == 4601;
     }
 
-    /// <summary>The request body for a kept fight file's JSON, or null with the reason: neither an arena nor a boss fight
+    /// <summary>Malric's Halls of Illusion (4809xxx: the 25 stages 4809001-4809025 of the game's stage table; the owner's auto-battle
+    /// on 1.6.46 was 4809017).</summary>
+    public static bool IsMalrikStage(int stage) { return stage / 1000 == 4809; }
+
+    /// <summary>The request body for a kept fight file's JSON, or null with the reason: neither an arena, a boss nor a Malric fight
     /// (no stage, or another stage), no timeline v3 with a trace ("units", "dmgT" or the heroes' skill damage), or over the size limit.</summary>
     public static string BuildPayload(string fileJson, out string skip) {
       skip = null;
       var o = MiniJson.AsObject(MiniJson.TryParse(fileJson));
       if (o == null) { skip = "not a fight file"; return null; }
       int stage = Count(o, "stage");
-      if (stage < 1000000 || stage > 9999999 || (!IsArenaStage(stage) && !IsBossFight(stage, MiniJson.GetString(o, "screen")))) { skip = "not an arena or boss fight"; return null; }
+      if (stage < 1000000 || stage > 9999999 || (!IsArenaStage(stage) && !IsMalrikStage(stage) && !IsBossFight(stage, MiniJson.GetString(o, "screen")))) { skip = "not an arena, boss or Malric fight"; return null; }
       var tl = Obj(o, "timeline");
       if (tl == null || Count(tl, "v") < 3) { skip = "no timeline v3"; return null; }
       if (!HasEntries(tl, "units") && !HasEntries(tl, "dmgT") && !HasSkills(tl)) { skip = "no trace in the timeline"; return null; }

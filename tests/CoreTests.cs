@@ -2197,12 +2197,14 @@ static class CoreTests {
     using (var gs = new GZipStream(new MemoryStream(gz), CompressionMode.Decompress)) using (var sr = new StreamReader(gs, Encoding.UTF8)) back = sr.ReadToEnd();
     Eq(fight, back, "trace upload: data is the base64 of the gzipped file");
     Check(TraceUpload.BuildPayload(fight.Replace("\"v\":3", "\"v\":2"), out skip) == null && skip == "no timeline v3", "trace upload: timeline v2 is not sent");
-    Check(TraceUpload.BuildPayload(fight.Replace("6001631", "1001631"), out skip) == null && skip == "not an arena or boss fight", "trace upload: another stage is not sent");
-    Check(TraceUpload.BuildPayload(fight.Replace("\"stage\":6001631,", ""), out skip) == null && skip == "not an arena or boss fight", "trace upload: a fight without a stage is not sent");
+    Check(TraceUpload.BuildPayload(fight.Replace("6001631", "1001631"), out skip) == null && skip == "not an arena, boss or Malric fight", "trace upload: another stage is not sent");
+    Check(TraceUpload.BuildPayload(fight.Replace("\"stage\":6001631,", ""), out skip) == null && skip == "not an arena, boss or Malric fight", "trace upload: a fight without a stage is not sent");
     // a boss fight: by stage or by result screen; no units / arenaInfo, only the heroes' skill damage
     string boss = "{\"stage\":5002005,\"at\":\"2026-10-10T11:50:00Z\",\"screen\":\"Form_UnionWeekBossBattleEnd\",\"timeline\":{\"v\":3,\"stats\":[{\"c\":1,\"unit\":7,\"damage\":9,\"skills\":{\"101\":9}}]}}";
     Check(TraceUpload.BuildPayload(boss, out skip) != null, "trace upload: a boss fight with skill damage only gives a payload");
     Check(TraceUpload.BuildPayload(boss.Replace("5002005", "5201001").Replace("Form_UnionWeekBossBattleEnd", "Form_BattleEnd"), out skip) != null, "trace upload: a boss stage is sent");
+    Check(TraceUpload.BuildPayload(boss.Replace("5002005", "4809017").Replace("Form_UnionWeekBossBattleEnd", "Form_BattleEnd"), out skip) != null, "trace upload: a Malric's halls stage is sent");
+    Check(TraceUpload.IsMalrikStage(4809001) && TraceUpload.IsMalrikStage(4809025) && !TraceUpload.IsMalrikStage(4819001) && !TraceUpload.IsMalrikStage(4709001), "trace upload: Malric's stages are 4809xxx");
     Check(TraceUpload.BuildPayload(boss.Replace("5002005", "1500100"), out skip) != null, "trace upload: a guild boss result screen is sent");
     Check(TraceUpload.BuildPayload(boss.Replace("5002005", "1500100").Replace("Form_UnionWeekBossBattleEnd", "Form_BattleEnd"), out skip) == null, "trace upload: a plain fight is not sent");
     Check(TraceUpload.BuildPayload("{\"stage\":6002001,\"at\":\"2026-10-10T11:50:00Z\",\"timeline\":{\"v\":3,\"units\":{},\"dmgT\":{}}}", out skip) == null && skip == "no trace in the timeline", "trace upload: an empty trace is not sent");
@@ -5025,18 +5027,21 @@ static class CoreTests {
     Check(s4 == "failed" && fg4.Clicks == 3 && inPop == 0 && hp4.Why != "", "pop-up never recognised: 3 funnel clicks, then a stop, no click inside the pop-up area (" + s4 + ", " + fg4.Clicks + " clicks, " + inPop + " inside)");
     {   // HeroFilterLook: 1.6.46 at 526×296 - no Class|Faction divider, a blue «Все» cell in the class column
       double U = 295.875;
-      Func<bool, bool, bool, bool, Func<int, int, int, int, int[]>> frame = (strip, filterDiv, blueCell, classDiv) => (gx, gy, gw, gh) => {
+      Func<bool, bool, bool, bool, double, double, Func<int, int, int, int, int[]>> frame2 = (strip, filterDiv, blueCell, classDiv, blueX0, blueRow) => (gx, gy, gw, gh) => {
         var a = new int[gw * gh];
         for (int j = 0; j < gh; j++) for (int i = 0; i < gw; i++) {
           int x = gx + i, y = gy + j, c = (30 << 16) | (30 << 8) | 40;
           if (!strip) c = (120 << 16) | (110 << 8) | 100;   // hero cards instead of the dark pop-up
           if (filterDiv && Math.Abs(x - (int)(0.4836 * U)) <= 1 && y > 0.16 * U && y < 0.87 * U) c = (130 << 16) | (130 << 8) | 130;
           if (classDiv && Math.Abs(x - (int)(0.2557 * U)) <= 1 && y > 0.16 * U && y < 0.87 * U) c = (130 << 16) | (130 << 8) | 130;
-          if (blueCell && x > 0.04 * U && x < 0.25 * U && Math.Abs(y - 0.2379 * U) < 0.05 * U) c = (30 << 16) | (90 << 8) | 170;
+          if (blueCell && x > blueX0 * U && x < blueX0 * U + 0.2 * U && Math.Abs(y - (0.2379 + blueRow * 0.1004) * U) < 0.05 * U) c = (30 << 16) | (90 << 8) | 170;
           a[j * gw + i] = c;
         }
         return a;
       };
+      Func<bool, bool, bool, bool, Func<int, int, int, int, int[]>> frame = (a1, a2, a3, a4) => frame2(a1, a2, a3, a4, 0.04, 0);
+      Check(HeroFilterLook.Seen(frame2(true, true, true, false, 0.04, 3), U), "filter pop-up seen: a class chosen (row 3 blue, «Все» not), no Класс|Фракция divider");
+      Check(HeroFilterLook.Seen(frame2(true, true, true, false, 0.30, 0), U), "filter pop-up seen: only the faction column's «Все» is blue");
       Check(HeroFilterLook.Seen(frame(true, true, true, false), U), "filter pop-up seen: dark strip + Фракция|Фильтр divider + blue «Все» cell, no Класс|Фракция divider (1.6.46)");
       Check(HeroFilterLook.Seen(frame(true, true, false, true), U), "filter pop-up seen: older layout (both dividers, no blue cell)");
       Check(!HeroFilterLook.Seen(frame(true, false, false, false), U), "dark filtered grid without the Фильтр divider: not the pop-up");
