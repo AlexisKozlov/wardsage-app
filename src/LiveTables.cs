@@ -374,14 +374,21 @@ namespace RealmForge {
       int t0 = Environment.TickCount;
       long idMain = FormCharactorMainId, idInv = FormBackpackId, idRecast = FormRecastId, idGem = FormGemId, idCity = FormMainCityId, idArt = FormArtId;
       var hits = new List<ulong>();
-      ScanParallel((b0, buf, len) => {
-        for (int i = 0; i + 32 <= len; i += 8) {
-          long k = BitConverter.ToInt64(buf, i + 16);
-          if (k != idMain && k != idInv && k != idRecast && k != idGem && (idCity == 0 || k != idCity) && (idArt == 0 || k != idArt)) continue;
-          if (BitConverter.ToInt32(buf, i + 24) != T_INT || BitConverter.ToInt32(buf, i + 8) != T_TABLE) continue;
-          lock (hits) hits.Add(b0 + (ulong)i);
-        }
-      });
+      // first the game's own window table (UIInstance): a form is there as soon as it is created, wherever it lies in memory
+      FormsFromUiTable(new[] { idMain, idInv, idRecast, idGem, idCity, idArt }, hits);
+      formsVia = hits.Count > 0 ? "ui table" : "scan";
+      if (hits.Count == 0) {
+        // the memory regions change as the game allocates: a form made after the last refresh can lie outside the cached ones
+        var fresh = Regions(); if (fresh != null && fresh.Count > 0) regs = fresh;
+        ScanParallel((b0, buf, len) => {
+          for (int i = 0; i + 32 <= len; i += 8) {
+            long k = BitConverter.ToInt64(buf, i + 16);
+            if (k != idMain && k != idInv && k != idRecast && k != idGem && (idCity == 0 || k != idCity) && (idArt == 0 || k != idArt)) continue;
+            if (BitConverter.ToInt32(buf, i + 24) != T_INT || BitConverter.ToInt32(buf, i + 8) != T_TABLE) continue;
+            lock (hits) hits.Add(b0 + (ulong)i);
+          }
+        });
+      }
       ulong form = 0;
       var invHits = new List<ulong>(); var subHits = new List<ulong>(); var gemHits = new List<ulong>(); var cityHits = new List<ulong>(); var artHits = new List<ulong>();
       foreach (var n in hits) {
@@ -407,7 +414,27 @@ namespace RealmForge {
       if (line != formsScanSaid) { formsScanSaid = line; Log.AppendLine("forms: scan " + (Environment.TickCount - t0) + " ms, " + line); }
       return form;
     }
-    static string formsScanSaid = "";
+    static string formsScanSaid = "", formsVia = "scan";
+
+    /// <summary>The nodes of UIInstance (the game's window table) keyed by one of <paramref name="ids"/> and holding a table, added to
+    /// <paramref name="hits"/> as node addresses (what the scan finds too). Nothing when the table is not known.</summary>
+    static void FormsFromUiTable(long[] ids, List<ulong> hits) {
+      if (!UiKnown) return;
+      ulong t = uiTable;
+      var h = Read(t, 56); if (h == null || h[8] != 5) return;
+      int lsize = h[11]; if (lsize > 20) return;
+      int nn = 1 << lsize; ulong np = BitConverter.ToUInt64(h, 24);
+      var nb = Read(np, nn * 32); if (nb == null) return;
+      for (int i = 0; i < nn; i++) {
+        int o = i * 32;
+        if (BitConverter.ToInt32(nb, o + 24) != T_INT || BitConverter.ToInt32(nb, o + 8) != T_TABLE) continue;
+        long k = BitConverter.ToInt64(nb, o + 16);
+        foreach (var id in ids) if (id != 0 && k == id) { hits.Add(np + (ulong)o); break; }
+      }
+    }
+
+    /// <summary>For the tests: sets / clears the window table (UIInstance) without a scan.</summary>
+    public static void SetUiTableForTest(ulong t) { uiTable = t; }
 
     static int CountWhere(IList<ulong> l, Func<ulong, bool> p) { int n = 0; foreach (var x in l) if (p(x)) n++; return n; }
 
@@ -438,21 +465,56 @@ namespace RealmForge {
     public static bool InvFormMissing() { return NodeInv(invNode) == 0; }
 
     /// <summary>Starts a search of the forms on a worker thread (never two at once, at least <paramref name="minGapMs"/> after the last start); false = not started.
-    /// Does not block.</summary>
+    /// A search that has been busy for more than 30 s is given up on (a new one may start). Does not block.</summary>
     public static bool RequestFormSearch(string reason, int minGapMs) {
       if (regs == null || Layout.Current == null) return false;
       int now = Environment.TickCount;
       if (lastFormSearchAt != 0 && now - lastFormSearchAt < minGapMs) return false;
-      if (Interlocked.CompareExchange(ref formSearchBusy, 1, 0) != 0) return false;
+      if (Interlocked.CompareExchange(ref formSearchBusy, 1, 0) != 0) {
+        int started = Volatile.Read(ref formSearchStart);
+        if (started == 0 || unchecked(now - started) <= FormSearchWatchdogMs) return false;
+        LL("forms: a search was busy for " + (unchecked(now - started) / 1000) + " s - allowing a new one");
+      }
+      int gen = Interlocked.Increment(ref formSearchGen);
+      formSearchStart = now == 0 ? 1 : now;
       lastFormSearchAt = now == 0 ? 1 : now;
       if (reason != formSearchSaid) { formSearchSaid = reason; Log.AppendLine("forms: search (" + reason + ")"); }
-      ThreadPool.QueueUserWorkItem(_ => {
-        try { FindFormNode(); } catch (Exception e) { SayOnce("the forms search failed", e); }
-        finally { Interlocked.Exchange(ref formSearchBusy, 0); }
-      });
+      try {
+        ThreadPool.QueueUserWorkItem(_ => {
+          try {
+            var hook = TestSearchHook; if (hook != null) hook();
+            int t0 = Environment.TickCount;
+            FindFormNode();
+            SayFormsResult(unchecked(Environment.TickCount - t0));
+          } catch (Exception e) { SayOnce("the forms search failed", e); }
+          finally { if (Volatile.Read(ref formSearchGen) == gen) { formSearchStart = 0; Interlocked.Exchange(ref formSearchBusy, 0); } }
+        });
+      } catch (Exception e) {
+        SayOnce("the forms search could not start", e);
+        if (Volatile.Read(ref formSearchGen) == gen) { formSearchStart = 0; Interlocked.Exchange(ref formSearchBusy, 0); }
+        return false;
+      }
       return true;
     }
-    static bool FormSearchRunning { get { return Volatile.Read(ref formSearchBusy) != 0; } }
+    public static bool FormSearchRunning { get { return Volatile.Read(ref formSearchBusy) != 0; } }
+    const int FormSearchWatchdogMs = 30000;
+    static int formSearchStart, formSearchGen;
+    /// <summary>For the tests: called inside the search worker before the search (may throw).</summary>
+    public static Action TestSearchHook;
+
+    static string formsResultKey = "";
+    /// <summary>One line per change of a search's result, in the app's log: inventory found (and how long the search took) or not (regions, MB).</summary>
+    static void SayFormsResult(int ms) {
+      var rg = regs; int n = 0; ulong bytes = 0;
+      if (rg != null) foreach (var r in rg) { n++; bytes += r.Size; }
+      long mb = (long)(bytes >> 20);
+      string others = "foundry " + (subNode != 0 ? "yes" : "no") + ", gem " + (gemNode != 0 ? "yes" : "no") + ", city " + (cityNode != 0 ? "yes" : "no") + ", via " + formsVia;
+      string key = invNode != 0 ? "found|" + others : "missing|" + n + "|" + mb + "|" + others;
+      if (key == formsResultKey) return;
+      formsResultKey = key;
+      LL(invNode != 0 ? "forms: inventory found after " + (ms / 1000.0).ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + " s (" + others + ")"
+                      : "forms: inventory not found (" + n + " regions, " + mb + " MB; " + others + ")");
+    }
 
     static int lastFormsRescan;
     /// <summary>The forms searched again (a full pass, about a second) when at least <paramref name="minGapMs"/> passed since the last

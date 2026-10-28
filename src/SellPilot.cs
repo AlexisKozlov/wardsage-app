@@ -153,18 +153,20 @@ namespace RealmForge {
 
     public AutoAction Step(SellView v) {
       var s = v.Screen;
-      if (s == null || !s.Open || s.Types == null || v.Wanted == null) { State = "idle"; return AutoAction.Nothing; }
+      if (s == null || !s.Open || s.Types == null || v.Wanted == null) { State = "idle"; noScrollSince = -1; return AutoAction.Nothing; }
       Count(v);
       // a new list (the screen was opened, the filter changed, a sale went through): it is at the top again
       // stopped: nothing more, but a stray item it selected is still taken back (below)
       if (State == "failed" && undo == 0 && !checkClick) return AutoAction.Nothing;
-      if (s.ListPtr != list) { list = s.ListPtr; row1 = g.ViewTopPx(v.U) + g.TopPad * v.U; exact = true; checkClick = false; undo = 0; measure = false; }
+      if (s.ListPtr != list) { noScrollSince = -1; list = s.ListPtr; row1 = g.ViewTopPx(v.U) + g.TopPad * v.U; exact = true; checkClick = false; undo = 0; measure = false; }
       // after a drag: the stat bars on the screen give the rows' exact phase (the drag's error is well under half a row)
       // the game says where the list is scrolled: that is exact, whatever a drag did (the picture is the last resort)
       if (!double.IsNaN(v.Row1)) { row1 = v.Row1; exact = true; phased = true; noScrollSince = -1; }
-      else if (noScrollSince < 0) noScrollSince = v.NowMs;
       if (!exact && !phased && !double.IsNaN(v.Phase)) Snap(v);
       if (v.UserClicked) pauseUntil = v.NowMs + UserPauseMs;
+      // the unreadable-scroll clock runs only while the pilot works: a pause, the background or a screen change starts it over
+      if (!v.Foreground || v.UserBusy || v.NowMs < pauseUntil) noScrollSince = -1;
+      else if (double.IsNaN(v.Row1) && noScrollSince < 0) noScrollSince = v.NowMs;
       bool failed = State == "failed";
       if (!v.Foreground) { if (!failed) State = "background"; return AutoAction.Nothing; }
       if (v.UserBusy || v.NowMs < pauseUntil) { if (!failed) State = "paused"; checkClick = false; return AutoAction.Nothing; }

@@ -701,6 +701,7 @@ static class CoreTests {
     ArenaOppTests();
     GuildTests();
     LiveStateTests();
+    FormSearchTests();
     GamePacksTests();
     CodeTextTests();
     CodeReportTests();
@@ -1898,9 +1899,13 @@ static class CoreTests {
     public const ulong Base = 0x20000000;
     public readonly byte[] Mem;
     int top = 64;
+    /// <summary>The bytes of the memory the regions report as writable (-1 = all of it): a region the game allocates later is "not visible" yet.</summary>
+    public int Visible = -1;
+    /// <summary>The next allocation's offset (to place a table in the hidden part).</summary>
+    public int Top { get { return top; } set { top = value; } }
     public ulong Knock;   // the value of the running GameData's m_Knock: moves on every read (0 = the game shows no frames)
     public FakeLua(int size) { Mem = new byte[size]; }
-    public IList<ulong[]> Writable() { return new[] { new ulong[] { Base, (ulong)Mem.Length } }; }
+    public IList<ulong[]> Writable() { return new[] { new ulong[] { Base, (ulong)(Visible >= 0 ? Visible : Mem.Length) } }; }
     public bool Read(ulong addr, byte[] buf, int n, out int got) {
       got = 0;
       if (addr < Base || addr + (ulong)n > Base + (ulong)Mem.Length) return false;
@@ -1978,6 +1983,69 @@ static class CoreTests {
     return r;
   }
   static long AccPlayer(string json) { var o = MiniJson.AsObject(MiniJson.TryParse(json)); var meta = o != null ? MiniJson.AsObject(o["meta"]) : null; object p; return meta != null && meta.TryGetValue("player", out p) ? ArenaOpp.Num(p) : 0; }
+
+  static bool WaitFormSearch() { for (int i = 0; i < 200 && RFX.FormSearchRunning; i++) System.Threading.Thread.Sleep(25); return !RFX.FormSearchRunning; }
+
+  // a form the game creates after the account read: it can lie outside the regions the read cached
+  static void FormSearchTests() {
+    Console.WriteLine("Forms found late (inventory opened after the account read)");
+    var lines = new List<string>(); var saveLog = RFX.LiveLog; RFX.LiveLog = l => { lock (lines) lines.Add(l); };
+    var heroes = new long[] { 203400001, 209700001 }; var items = new long[] { 900000001, 900000002 };
+    Func<FakeLua, int, FTab> makeInv = (mm, at) => {
+      mm.Top = at; var si = new FakeState(mm);
+      var panel = si.T("m_CurrentBottomButtonState", 2L);
+      var inv = si.T("m_LuaLogicActive", true, "m_CurrentMainTabId2", -9998L, "m_CachedContentPanels", si.T(-9998L, panel));
+      return si.T(103L, inv);   // the node: ID_FORM_BACKPACKINTEGRATION -> the form
+    };
+    try {
+      // A: the background search
+      var m = new FakeLua(4 << 20); RFX.TestMemory = m; RFX.ForgetLive();
+      ulong knock, uid; FakeLogin(m, 111, heroes, items, true, out knock, out uid); m.Knock = knock;
+      m.Visible = 2 << 20;
+      Check(RFX.ReadLiveAccount(61) != null, "forms: the account read with half the memory visible");
+      makeInv(m, 3 << 20);
+      Check(RFX.ReadInventory(-1) == null, "forms: the inventory in the hidden half is not known");
+      Check(RFX.RequestFormSearch("test a", 0) && WaitFormSearch(), "forms: a search runs and ends");
+      Check(RFX.RequestFormSearch("test b", 0) && WaitFormSearch(), "forms: a second search runs");
+      int nf; lock (lines) nf = lines.FindAll(x => x.StartsWith("forms: inventory not found")).Count;
+      Check(nf == 1 && RFX.ReadInventory(-1) == null, "forms: two misses, one app-log line (" + nf + ")");
+      m.Visible = 4 << 20;   // the game's memory grew
+      Check(RFX.RequestFormSearch("test c", 0) && WaitFormSearch(), "forms: the search after the growth runs");
+      var sa = RFX.ReadInventory(-1);
+      Check(sa != null && sa.Open, "forms: the search refreshes the regions and finds the inventory");
+      lock (lines) Check(lines.Exists(x => x.StartsWith("forms: inventory found after ")), "forms: the find is in the app log");
+      // B: a rescan from the reader
+      var m2 = new FakeLua(4 << 20); RFX.TestMemory = m2; RFX.ForgetLive();
+      FakeLogin(m2, 112, heroes, items, true, out knock, out uid); m2.Knock = knock; m2.Visible = 2 << 20;
+      Check(RFX.ReadLiveAccount(62) != null, "forms: second account read");
+      makeInv(m2, (3 << 20) + (512 << 10));
+      Check(RFX.ReadInventory(0) == null, "forms: hidden: not found");
+      m2.Visible = 4 << 20;
+      var sb = RFX.ReadInventory(0);
+      Check(sb != null && sb.Open, "forms: LiveInvForm(0) finds it after the memory grew");
+      // C: the window table gives it without a scan
+      var m3 = new FakeLua(4 << 20); RFX.TestMemory = m3; RFX.ForgetLive();
+      FakeLogin(m3, 113, heroes, items, true, out knock, out uid); m3.Knock = knock; m3.Visible = 2 << 20;
+      Check(RFX.ReadLiveAccount(63) != null, "forms: third account read");
+      var node = makeInv(m3, 3 << 20);
+      Check(RFX.ReadInventory(0) == null, "forms: hidden, no window table: not found");
+      // the window table: a table whose node 103 holds the form table (the form is in the hidden half; the scan cannot see it)
+      ulong formAt = m3.R64(m3.R64(node.A + 24));
+      m3.Top = 1 << 20; var ui2 = new FakeState(m3).T(103L, new FTab(formAt));
+      RFX.SetUiTableForTest(ui2.A);
+      try {
+        var sc = RFX.ReadInventory(0);
+        Check(sc != null && sc.Open, "forms: the window table lookup finds the form without a scan");
+      } finally { RFX.SetUiTableForTest(0); }
+      // D: the busy flag after a failed search
+      RFX.TestSearchHook = () => { throw new InvalidOperationException("boom"); };
+      try {
+        Check(RFX.RequestFormSearch("boom", 0), "forms: a search that throws starts");
+        Check(WaitFormSearch(), "forms: the busy flag is reset after the exception");
+        Check(RFX.RequestFormSearch("boom again", 0) && WaitFormSearch(), "forms: a new search can start after it");
+      } finally { RFX.TestSearchHook = null; }
+    } finally { RFX.LiveLog = saveLog; RFX.TestMemory = null; RFX.ForgetLive(); }
+  }
 
   static void LiveStateTests() {
     Console.WriteLine("Live tables: re-login and account switch");
@@ -3909,6 +3977,20 @@ static class CoreTests {
         var al = pl.Step(new SellView { NowMs = 0, Foreground = true, W = fg.W, H = fg.H, U = fg.U, Screen = fe.Screen(), Wanted = ws, Phase = double.NaN, NeedExact = true });
         al = pl.Step(new SellView { NowMs = 800, Foreground = true, W = fg.W, H = fg.H, U = fg.U, Screen = fe.Screen(), Wanted = ws, Phase = double.NaN, Row1 = gs.ViewTopPx(fe.U) + gs.TopPad * fe.U, NeedExact = true });
         Check(al.Kind == AutoKind.Click && pl.FailWhy == "", "sell pilot: a scroll read that comes back within the wait lets the click go (" + al.Kind + ")");
+      }
+      // a pause in the middle of the scroll wait: the wait starts over, no instant "scroll" fail
+      {
+        var gs = new SellGeometry(); var fg = new FakeSellGame(gs, 40, 0); var ws = new HashSet<long> { 5000, 5001, 5002 };
+        var pp = new SellPilot(gs); long tp = 0;
+        Func<bool, bool, SellView> vw = (busy, front) => new SellView { NowMs = tp, Foreground = front, UserBusy = busy, W = fg.W, H = fg.H, U = fg.U, Screen = fg.Screen(), Wanted = ws, Phase = fg.Phase(), NeedExact = true };
+        for (int i = 0; i < 8; i++, tp += 100) fg.Act(pp.Step(vw(false, true)));
+        Check(pp.State != "failed", "sell pilot: waiting for the scroll, not failed yet");
+        for (int i = 0; i < 60; i++, tp += 100) pp.Step(vw(true, true));   // the player works for 6 s
+        pp.Step(vw(false, false)); tp += 100;                                // then the window is in the background
+        pp.Step(vw(false, true));
+        Check(pp.State != "failed" && pp.FailWhy == "", "sell pilot: after a pause the scroll wait starts over (" + pp.State + "/" + pp.FailWhy + ")");
+        for (int i = 0; i < 100 && pp.State != "failed"; i++, tp += 100) fg.Act(pp.Step(vw(false, true)));
+        Check(pp.State == "failed" && pp.FailWhy == "scroll", "sell pilot: an unreadable scroll still ends 'scroll' after a full wait");
       }
       gate = new ClickGate();
       res = gate.Check(new ClickRequest { Owner = ClickOwner.Sell, Target = ClickTarget.InvEquipTab, AutoOn = true, Front = true }, scrN, 0);
