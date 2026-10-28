@@ -736,15 +736,15 @@ namespace RealmForge {
         if (changed && !first) { kind = k; form = forms[i].Value; }
       }
       if (kind < 0) {
-        // an arena fight: its result screen is reused and has no fight frame, so its mark never changes — the recorder saw
+        // an arena or Malric fight: its result screen is reused or not seen and has no fight frame, so its mark never changes — the recorder saw
         // the fight end (the simulation's state 2): a few seconds later (the screen's numbers filled) it is captured
         var rec = recorder;
-        if (rec == null || rec == arenaTaken || rec.Running || rec.Stage / 1000 != 6001 && rec.Stage / 1000 != 6002) return;
+        if (rec == null || rec == arenaTaken || rec.Running || !TraceUpload.EndedByRecorder(rec.Stage)) return;
         double after = (DateTime.UtcNow - rec.EndedUtc).TotalSeconds;
         if (after < 4 || after > 300) return;
-        int pi = forms.FindIndex(x => x.Key == 3 || x.Key == 4);
+        int pi = forms.FindIndex(x => x.Key == 3 || x.Key == 4 || x.Key == 5);
         kind = pi >= 0 ? forms[pi].Key : -1; form = pi >= 0 ? forms[pi].Value : 0;
-        Log.Write("battle end (arena, by the recorder): stage " + rec.Stage + " " + string.Join(" ", marks.ToArray()));
+        Log.Write("battle end (arena or Malric, by the recorder): stage " + rec.Stage + " " + string.Join(" ", marks.ToArray()));
         arenaTaken = rec;   // once per fight, also when no result screen is held (kind −1 keeps the recorder)
         CaptureNow(kind, form, 0);
         return;

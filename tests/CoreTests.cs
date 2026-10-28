@@ -2204,7 +2204,10 @@ static class CoreTests {
     Check(TraceUpload.BuildPayload(boss, out skip) != null, "trace upload: a boss fight with skill damage only gives a payload");
     Check(TraceUpload.BuildPayload(boss.Replace("5002005", "5201001").Replace("Form_UnionWeekBossBattleEnd", "Form_BattleEnd"), out skip) != null, "trace upload: a boss stage is sent");
     Check(TraceUpload.BuildPayload(boss.Replace("5002005", "4809017").Replace("Form_UnionWeekBossBattleEnd", "Form_BattleEnd"), out skip) != null, "trace upload: a Malric's halls stage is sent");
-    Check(TraceUpload.IsMalrikStage(4809001) && TraceUpload.IsMalrikStage(4809025) && !TraceUpload.IsMalrikStage(4819001) && !TraceUpload.IsMalrikStage(4709001), "trace upload: Malric's stages are 4809xxx");
+    Check(TraceUpload.IsMalrikStage(4809001) && TraceUpload.IsMalrikStage(4909045) && TraceUpload.IsMalrikStage(4819002) && !TraceUpload.IsMalrikStage(4709001) && !TraceUpload.IsMalrikStage(4909046), "trace upload: Malric's stages are 4809001-4909045");
+    Check(RFX.EndFormNeverShown(0, 0, 0) && !RFX.EndFormNeverShown(4809001, 0, 0) && !RFX.EndFormNeverShown(0, 77, 0) && !RFX.EndFormNeverShown(0, 0, 900), "battle end forms: a preloaded form (no stage, uid, frames) is ignored, a shown one is not");
+    Check(RFX.StageFromEnd("{\"screen\":\"Form_ExpeditionBattleEnd\",\"end\":{\"m_StageId\":4809017,\"m_FightUid\":5}}") == 4809017, "battle end forms: the Expedition screen gives its stage");
+    Check(TraceUpload.EndedByRecorder(4809017) && TraceUpload.EndedByRecorder(6001631) && !TraceUpload.EndedByRecorder(5002005), "battle end: the recorder ends arena and Malric fights");
     Check(TraceUpload.BuildPayload(boss.Replace("5002005", "1500100"), out skip) != null, "trace upload: a guild boss result screen is sent");
     Check(TraceUpload.BuildPayload(boss.Replace("5002005", "1500100").Replace("Form_UnionWeekBossBattleEnd", "Form_BattleEnd"), out skip) == null, "trace upload: a plain fight is not sent");
     Check(TraceUpload.BuildPayload("{\"stage\":6002001,\"at\":\"2026-10-10T11:50:00Z\",\"timeline\":{\"v\":3,\"units\":{},\"dmgT\":{}}}", out skip) == null && skip == "no trace in the timeline", "trace upload: an empty trace is not sent");

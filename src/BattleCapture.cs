@@ -13,9 +13,9 @@ using System.Text;
 namespace RealmForge {
   public static partial class RFX {
     // the result screens: the guild dragon, the weekly guild boss, the rest, the arena (CHAPTERTYPE.Pvp ->
-    // Form_PvpBattleEnd) and the friendly arena fight (Form_SparringPvpBattleEnd); ids = UIDefines (str_hash of the name)
-    static readonly string[] EndFormKeys = { "ID_FORM_UNIONBOSSBATTLEEND", "ID_FORM_UNIONWEEKBOSSBATTLEEND", "ID_FORM_BATTLEEND", "ID_FORM_PVPBATTLEEND", "ID_FORM_SPARRINGPVPBATTLEEND" };
-    static readonly string[] EndFormNames = { "Form_UnionBossBattleEnd", "Form_UnionWeekBossBattleEnd", "Form_BattleEnd", "Form_PvpBattleEnd", "Form_SparringPvpBattleEnd" };
+    // Form_PvpBattleEnd), the friendly arena fight (Form_SparringPvpBattleEnd) and the Malric halls (Form_ExpeditionBattleEnd); ids = UIDefines (str_hash of the name)
+    static readonly string[] EndFormKeys = { "ID_FORM_UNIONBOSSBATTLEEND", "ID_FORM_UNIONWEEKBOSSBATTLEEND", "ID_FORM_BATTLEEND", "ID_FORM_PVPBATTLEEND", "ID_FORM_SPARRINGPVPBATTLEEND", "ID_FORM_EXPEDITIONBATTLEEND" };
+    static readonly string[] EndFormNames = { "Form_UnionBossBattleEnd", "Form_UnionWeekBossBattleEnd", "Form_BattleEnd", "Form_PvpBattleEnd", "Form_SparringPvpBattleEnd", "Form_ExpeditionBattleEnd" };
     // forms whose node leads to UIInstance: the hero screen, the inventory, the battle screen, the result screens
     static readonly string[] UiAnchorKeys = { "ID_FORM_CHARACTORMAIN", "ID_FORM_BACKPACKINTEGRATION", "ID_FORM_BATTLE", "ID_FORM_UNIONBOSSBATTLEEND",
       "ID_FORM_UNIONWEEKBOSSBATTLEEND", "ID_FORM_BATTLEEND", "ID_FORM_PVPBATTLEEND", "ID_FORM_SPARRINGPVPBATTLEEND" };
@@ -24,7 +24,7 @@ namespace RealmForge {
     static long[] FormIds(string[] keys) {
       var ly = Layout.Current; if (ly == null) return new long[0];
       var r = new long[keys.Length];
-      for (int i = 0; i < keys.Length; i++) r[i] = ly.Form(keys[i]);
+      for (int i = 0; i < keys.Length; i++) r[i] = keys[i] == "ID_FORM_EXPEDITIONBATTLEEND" ? ly.FormOpt(keys[i]) : ly.Form(keys[i]);   // the newest form: older layout data lacks it (0 = skipped)
       return r;
     }
     static ulong uiTable; static int uiLastFind;
@@ -98,16 +98,22 @@ namespace RealmForge {
         if (BitConverter.ToInt32(nb, o + 24) != T_INT || BitConverter.ToInt32(nb, o + 8) != T_TABLE) continue;
         long k = BitConverter.ToInt64(nb, o + 16);
         for (int e = 0; e < endIds.Length; e++) {
-          if (!SameId(k, endIds[e])) continue;
+          if (endIds[e] == 0 || !SameId(k, endIds[e])) continue;
           ulong f = BitConverter.ToUInt64(nb, o), v; int tt;
           long inst = Field(f, "____instanceId", out v, out tt) && tt == T_INT ? (long)v : 0;
           long frames = Field(f, "m_FightFramIdx", out v, out tt) && tt == T_INT ? (long)v : 0;
+          long stg = Field(f, "m_StageId", out v, out tt) && tt == T_INT ? (long)v : 0;
+          long fuid = Field(f, "m_FightUid", out v, out tt) && tt == T_INT ? (long)v : 0;
+          if (EndFormNeverShown(stg, fuid, frames)) continue;
           res.Add(new KeyValuePair<int, ulong>(e, f));
-          marks.Add(e + ":" + f.ToString("X") + ":" + inst + ":" + frames);
+          marks.Add(e + ":" + f.ToString("X") + ":" + inst + ":" + frames + ":" + fuid);
         }
       }
       return res;
     }
+
+    /// <summary>A result screen object the battle loader preloaded and nobody opened: no stage, no fight uid, no frames.</summary>
+    public static bool EndFormNeverShown(long stage, long fightUid, long frames) { return stage == 0 && fightUid == 0 && frames == 0; }
 
     /// <summary>One fight as JSON: the result screen's name and its plain fields, the heroes' battle statistics and the
     /// simulations' lengths (DumpBattleStats). Null when nothing was found.</summary>

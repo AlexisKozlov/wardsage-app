@@ -212,7 +212,7 @@ version …: from the site» или «saved copy»). Без файла оста�
 * Название артефакта сайт не присылает: подсказка «Выбери артефакт в золотой рамке».
 
 ## RU
-- Бои в Чертогах иллюзий Малрика и других режимах теперь записываются с номером этапа.
+- Бои в Чертогах иллюзий Малрика и других режимах теперь записываются с номером этапа. Бои Малрика теперь сохраняются на его собственном экране результата.
 - Программа надёжнее находит игру и её журнал на других сборках игры (например, региональных), а данные для подсказок в игре проверяет по сборке и не использует чужие.
 - Программа теперь собрана под .NET Framework 4.8 — он уже есть в Windows 10 и 11, ничего ставить не нужно.
 - Синхронизация во время загрузки игры больше не считается ошибкой: программа просит войти в игру и повторить.
@@ -228,7 +228,7 @@ version …: from the site» или «saved copy»). Без файла оста�
 - «Надеть в игре»: окно фильтра героев снова распознаётся в игре 1.6.46, в том числе в маленьком окне; если не распознано, программа останавливается, а не нажимает вслепую.
 
 ## EN
-- Fights in Malric's Halls of Illusion and other modes are now recorded with their stage number.
+- Fights in Malric's Halls of Illusion and other modes are now recorded with their stage number. Malric fights are now saved at their own result screen.
 - The app finds the game and its log more reliably on other builds of the game (e.g. regional ones), and checks the in-game data layout against the build so it never uses one made for another build.
 - The app is now built for .NET Framework 4.8, which Windows 10 and 11 already include, so there is nothing to install.
 - Sync while the game is still loading is no longer treated as an error: the app asks you to enter the game and try again.

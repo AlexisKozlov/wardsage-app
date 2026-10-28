@@ -70,9 +70,12 @@ namespace RealmForge {
       return g == 5001 || g == 5002 || g == 5201 || g == 4601;
     }
 
-    /// <summary>Malric's Halls of Illusion (4809xxx: the 25 stages 4809001-4809025 of the game's stage table; the owner's auto-battle
+    /// <summary>Malric's Halls of Illusion (the stage ids of its chapters, 4809001-4909045; the owner's auto-battle
     /// on 1.6.46 was 4809017).</summary>
-    public static bool IsMalrikStage(int stage) { return stage / 1000 == 4809; }
+    public static bool IsMalrikStage(int stage) { return stage >= 4809001 && stage <= 4909045; }
+
+    /// <summary>Fights whose end is taken from the recorder when no result screen change shows it (the arena, Malric's halls).</summary>
+    public static bool EndedByRecorder(int stage) { return IsArenaStage(stage) || IsMalrikStage(stage); }
 
     /// <summary>The request body for a kept fight file's JSON, or null with the reason: neither an arena, a boss nor a Malric fight
     /// (no stage, or another stage), no timeline v3 with a trace ("units", "dmgT" or the heroes' skill damage), or over the size limit.</summary>
