@@ -255,6 +255,7 @@ namespace RealmForge {
       HideSplash();
       string lang = "ru";
       try { lang = AppConfig.Load().Lang; } catch (Exception) { }
+      ReportFallback(reason);
       var back = Color.FromArgb(11, 16, 27);
       var panel = new Panel { Dock = DockStyle.Fill, BackColor = back };
       var box = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, BackColor = back, Padding = new Padding(24) };
@@ -283,6 +284,19 @@ namespace RealmForge {
       try { web.Visible = false; } catch (Exception) { }
       Controls.Add(panel);
       panel.BringToFront();
+    }
+
+    // one error report per run (the bridge may not exist yet when the start failed, so this reads the config itself); same switches as HostBridge
+    static void ReportFallback(string reason) {
+      System.Threading.Tasks.Task.Factory.StartNew(() => {
+        try {
+          var cfg = AppConfig.Load();
+          if (!cfg.ErrorReports || !SyncClient.IsValidCode(cfg.Code)) return;
+          string json = ErrorReports.BuildJson("webview.fallback", reason, Program.Version, null, null, ErrorReports.ReadLogTail(Log.Path),
+                                               Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
+          Log.Write("error report webview.fallback: " + ErrorReports.Send(cfg.Site, cfg.Code, json, ErrorReports.TimeoutMs));
+        } catch (Exception ex) { Log.Write("error report webview.fallback: " + ex.Message); }
+      });
     }
 
     // the watchdog tick: the page has not said «ready» in time (see WebViewRecovery.ShouldShowFallback)
