@@ -2037,6 +2037,19 @@ static class CoreTests {
         var sc = RFX.ReadInventory(0);
         Check(sc != null && sc.Open, "forms: the window table lookup finds the form without a scan");
       } finally { RFX.SetUiTableForTest(0); }
+      // C2: the window table holds another form but not the inventory; the inventory is in visible memory: the scan runs and finds it
+      var m4 = new FakeLua(4 << 20); RFX.TestMemory = m4; RFX.ForgetLive();
+      FakeLogin(m4, 114, heroes, items, true, out knock, out uid); m4.Knock = knock;
+      Check(RFX.ReadLiveAccount(64) != null, "forms: fourth account read");
+      makeInv(m4, 3 << 20);   // all memory visible
+      m4.Top = 1 << 20;
+      var otherForm = new FakeState(m4).T("m_LuaLogicActive", true);
+      var ui4 = new FakeState(m4).T(104L, otherForm);   // ID_FORM_EQUIPSUBLIMING only
+      RFX.SetUiTableForTest(ui4.A);
+      try {
+        var sd = RFX.ReadInventory(0);
+        Check(sd != null && sd.Open, "forms: the window table lacks the inventory: the scan still finds it");
+      } finally { RFX.SetUiTableForTest(0); }
       // D: the busy flag after a failed search
       RFX.TestSearchHook = () => { throw new InvalidOperationException("boom"); };
       try {

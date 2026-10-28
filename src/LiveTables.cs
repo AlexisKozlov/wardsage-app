@@ -375,9 +375,13 @@ namespace RealmForge {
       long idMain = FormCharactorMainId, idInv = FormBackpackId, idRecast = FormRecastId, idGem = FormGemId, idCity = FormMainCityId, idArt = FormArtId;
       var hits = new List<ulong>();
       // first the game's own window table (UIInstance): a form is there as soon as it is created, wherever it lies in memory
-      FormsFromUiTable(new[] { idMain, idInv, idRecast, idGem, idCity, idArt }, hits);
-      formsVia = hits.Count > 0 ? "ui table" : "scan";
-      if (hits.Count == 0) {
+      var uiIds = FormsFromUiTable(new[] { idMain, idInv, idRecast, idGem, idCity, idArt }, hits);
+      int uiHits = hits.Count;
+      // the scan runs unless the window table holds every form the readers look for (a form it lacks for some reason must still be found)
+      bool needScan = false;
+      foreach (var id in new[] { idMain, idInv, idRecast, idGem }) if (id != 0 && !uiIds.Contains(id)) needScan = true;
+      formsVia = needScan ? (uiHits > 0 ? "ui table + scan" : "scan") : "ui table";
+      if (needScan) {
         // the memory regions change as the game allocates: a form made after the last refresh can lie outside the cached ones
         var fresh = Regions(); if (fresh != null && fresh.Count > 0) regs = fresh;
         ScanParallel((b0, buf, len) => {
@@ -388,6 +392,7 @@ namespace RealmForge {
             lock (hits) hits.Add(b0 + (ulong)i);
           }
         });
+        if (uiHits > 0) { var seen = new HashSet<ulong>(); for (int i = hits.Count - 1; i >= 0; i--) if (!seen.Add(hits[i])) hits.RemoveAt(i); }
       }
       ulong form = 0;
       var invHits = new List<ulong>(); var subHits = new List<ulong>(); var gemHits = new List<ulong>(); var cityHits = new List<ulong>(); var artHits = new List<ulong>();
@@ -418,19 +423,21 @@ namespace RealmForge {
 
     /// <summary>The nodes of UIInstance (the game's window table) keyed by one of <paramref name="ids"/> and holding a table, added to
     /// <paramref name="hits"/> as node addresses (what the scan finds too). Nothing when the table is not known.</summary>
-    static void FormsFromUiTable(long[] ids, List<ulong> hits) {
-      if (!UiKnown) return;
+    static HashSet<long> FormsFromUiTable(long[] ids, List<ulong> hits) {
+      var got = new HashSet<long>();
+      if (!UiKnown) return got;
       ulong t = uiTable;
-      var h = Read(t, 56); if (h == null || h[8] != 5) return;
-      int lsize = h[11]; if (lsize > 20) return;
+      var h = Read(t, 56); if (h == null || h[8] != 5) return got;
+      int lsize = h[11]; if (lsize > 20) return got;
       int nn = 1 << lsize; ulong np = BitConverter.ToUInt64(h, 24);
-      var nb = Read(np, nn * 32); if (nb == null) return;
+      var nb = Read(np, nn * 32); if (nb == null) return got;
       for (int i = 0; i < nn; i++) {
         int o = i * 32;
         if (BitConverter.ToInt32(nb, o + 24) != T_INT || BitConverter.ToInt32(nb, o + 8) != T_TABLE) continue;
         long k = BitConverter.ToInt64(nb, o + 16);
-        foreach (var id in ids) if (id != 0 && k == id) { hits.Add(np + (ulong)o); break; }
+        foreach (var id in ids) if (id != 0 && k == id) { hits.Add(np + (ulong)o); got.Add(id); break; }
       }
+      return got;
     }
 
     /// <summary>For the tests: sets / clears the window table (UIInstance) without a scan.</summary>
