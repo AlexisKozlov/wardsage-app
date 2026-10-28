@@ -773,6 +773,7 @@ namespace RealmForge {
       try { foreach (ProcessModule m in ps[0].Modules) if (string.Equals(m.ModuleName, "GameAssembly.dll", StringComparison.OrdinalIgnoreCase)) ga = (ulong)(long)m.BaseAddress; } catch (Exception) { }
       if (ga != 0) {
         ForgetClasses();
+        EnsureClasses(ga, 5000);
         var klass = SimKlasses(ga);
         var sims = new List<ulong>();
         ScanParallel((b0, buf, len) => {

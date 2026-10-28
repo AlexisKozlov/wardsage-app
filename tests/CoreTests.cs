@@ -732,6 +732,7 @@ static class CoreTests {
 
     RemoteSwitchesTests();
     LayoutTests(mock);
+    KlassScanTests();
     TestLogTests(mock);
     ScreenRecorderTests();
     RecInputsTests();
@@ -755,6 +756,159 @@ static class CoreTests {
     int j = json.IndexOfAny(new[] { ',', '}' }, i);
     return json.Substring(0, i) + json.Substring(json[j] == ',' ? j + 1 : j);
   }
+
+  // ------------------------------------------------------------------ classes found by a scan (src/KlassScan.cs, RFX in src/BattleClock.cs)
+  static byte[] Slots(params ulong[] vs) { var b = new byte[vs.Length * 8]; for (int i = 0; i < vs.Length; i++) Array.Copy(BitConverter.GetBytes(vs[i]), 0, b, i * 8, 8); return b; }
+
+  static void KlassScanTests() {
+    Console.WriteLine("Class scan (src/KlassScan.cs):");
+    const ulong H0 = 0x100000;
+    Func<ulong, bool> heap = v => v >= H0 && v < 0x10000000;
+    var names = new Dictionary<ulong, string> { { H0 + 0x100, "A.One" }, { H0 + 0x200, "A.Two" }, { H0 + 0x300, "A.Twin" }, { H0 + 0x400, "A.Twin" }, { H0 + 0x500, "A.Other" } };
+    Func<IList<ulong>, IList<string>> namesOf = ks => { var r = new List<string>(); foreach (var k in ks) { string n; r.Add(names.TryGetValue(k, out n) ? n : null); } return r; };
+    var want = new[] { "A.One", "A.Two", "A.Twin", "A.Gone" };
+    bool to; int far = Environment.TickCount + 60000;
+    var sec = new KlassSection { Base = 0x7000, Bytes = Slots(0, H0 + 0x100, 5, H0 + 0x201, H0 + 0x200) };
+    var res = KlassScan.Find(new[] { sec }, heap, namesOf, want, far, out to);
+    Check(!to && res.ContainsKey("A.One") && res["A.One"].Klass == H0 + 0x100 && res["A.One"].Slot == 0x7008 && res["A.One"].Distinct == 1, "a class is found from its slot");
+    Check(res.ContainsKey("A.Two") && res["A.Two"].Slot == 0x7020, "  ... an odd value (not filled yet) is skipped, the real slot found");
+    Check(!res.ContainsKey("A.Gone"), "  ... a class not there is not in the result");
+    sec = new KlassSection { Base = 0x7000, Bytes = Slots(H0 + 0x104, 0x5000, 0x20000000, H0 + 0x100) };
+    res = KlassScan.Find(new[] { sec }, heap, namesOf, want, far, out to);
+    Check(res.Count == 1 && res["A.One"].Slot == 0x7018, "misaligned and non-heap values are ignored");
+    sec = new KlassSection { Base = 0x7000, Bytes = Slots(H0 + 0x100, H0 + 0x100, H0 + 0x300, H0 + 0x400) };
+    var st = new KlassStats();
+    res = KlassScan.Find(new[] { sec }, heap, namesOf, want, () => false, st, out to);
+    Check(res["A.One"].Slot == 0x7000, "a value in two slots: the first slot");
+    Check(res["A.Twin"].Distinct == 2 && res["A.Twin"].Klass == 0 && res["A.Twin"].Slot == 0, "two different classes with one name: not accepted");
+    Check(st.Pointers == 3 && st.Ambiguous.Count == 1 && st.Ambiguous[0] == "A.Twin", "  ... counted and named in the stats");
+    // the deadline
+    res = KlassScan.Find(new[] { sec }, heap, namesOf, want, Environment.TickCount - 1000, out to);
+    Check(to && res.Count == 0, "an expired deadline: timed out, nothing");
+    var many = new ulong[BatchSizeForTest * 2]; for (int i = 0; i < many.Length; i++) many[i] = H0 + 0x1000 + (ulong)i * 16; many[5] = H0 + 0x100;
+    int calls = 0; bool stop = false;
+    res = KlassScan.Find(new[] { new KlassSection { Base = 0x7000, Bytes = Slots(many) } }, heap, ks => { calls++; stop = true; return namesOf(ks); }, want, () => stop, null, out to);
+    Check(to && calls == 1 && res.ContainsKey("A.One"), "the deadline in the second pass: the first batch's hits are kept (partial)");
+    // the cache file
+    string asm = new string('c', 64), dir = Path.Combine(Path.GetTempPath(), "rf-klass-" + Guid.NewGuid().ToString("N"));
+    try {
+      Check(KlassScan.CacheFile(dir, asm) == Path.Combine(dir, "layout", "klass-" + asm + ".json"), "cache file: layout\\klass-<asm>.json");
+      Check(KlassScan.CacheFile(dir, "../x") == null && KlassScan.CacheFile(dir, asm.Substring(1)) == null && KlassScan.CacheFile(dir, null) == null && KlassScan.CacheFile(dir, asm.Replace('c', 'z')) == null, "cache file: a bad asm is never a path");
+      Check(KlassScan.Load(dir, asm) == null, "cache: nothing saved: null");
+      var slots = new Dictionary<string, ulong> { { "A.One", 0x1234 }, { "B.Two", 0x20000 } };
+      Check(KlassScan.Save(dir, asm, slots), "cache: saved");
+      Check(!File.Exists(KlassScan.CacheFile(dir, asm) + ".tmp"), "  ... no tmp file left");
+      var back = KlassScan.Load(dir, asm);
+      Check(back != null && back.Count == 2 && back["A.One"] == 0x1234 && back["B.Two"] == 0x20000, "cache: round trip");
+      Check(KlassScan.Load(dir, asm.ToUpperInvariant()) != null, "  ... letter case of the asm does not matter");
+      string asm2 = new string('d', 64);
+      File.Copy(KlassScan.CacheFile(dir, asm), KlassScan.CacheFile(dir, asm2));
+      Check(KlassScan.Load(dir, asm2) == null, "cache: a file whose asm differs gives nothing");
+      File.WriteAllText(KlassScan.CacheFile(dir, asm), "{\"asm\":\"" + asm + "\",\"slot\":{\"A\":", Encoding.UTF8);
+      Check(KlassScan.Load(dir, asm) == null, "cache: a broken file gives null");
+      File.WriteAllText(KlassScan.CacheFile(dir, asm), "{\"asm\":\"" + asm + "\",\"slot\":{\"A\":\"x\"}}", Encoding.UTF8);
+      Check(KlassScan.Load(dir, asm) == null, "cache: a non-number slot gives null");
+      Check(!KlassScan.Save(dir, "nope", slots), "cache: a bad asm is not saved");
+    } finally { try { Directory.Delete(dir, true); } catch (Exception) { } }
+
+    Console.WriteLine("Class scan on the stand-in game (RFX):");
+    string saveAsm = Layout.LocalAsm; var saveDir = RFX.KlassDir;
+    string kd = Path.Combine(Path.GetTempPath(), "rf-klassr-" + Guid.NewGuid().ToString("N"));
+    try {
+      var m = new FakeLua(8 << 20); RFX.TestMemory = m; RFX.ForgetLive(); RFX.ForgetClasses();
+      ulong ga = FakeImage(m);
+      ulong data = ga + 0x2000;
+      ulong kBm = FakeKlass(m, "BattleView", "BattleManager"), kSim = FakeKlass(m, "CSharpBattle.Battle", "GameSimulation"), kTip = FakeKlass(m, "", "Form_CommonTips");
+      ulong imgSize; int nsec; List<KlassSection> gs = RFX.GaSections(ga, out imgSize, out nsec);
+      Check(gs.Count == 1 && nsec == 1 && gs[0].Base == data && gs[0].Bytes.Length == 0x2000 && imgSize == 0x10000, "GaSections: only the writable, non-executable section; image size read");
+      Check(RFX.GaSections(m.Alloc(0x1000), out imgSize, out nsec).Count == 0, "GaSections: no MZ: nothing");
+      var nm = RFX.KlassNames(new[] { kBm, kSim, kTip, kTip + 0x30000 });
+      Check(nm[0] == "BattleView.BattleManager" && nm[1] == "CSharpBattle.Battle.GameSimulation" && nm[2] == "Form_CommonTips" && nm[3] == null, "KlassNames: namespace.name, no namespace, unreadable = null");
+      var heapOk = RFX.HeapTest(ga, 0x10000);
+      Check(heapOk(kBm) && !heapOk(data) && !heapOk(ga + 8) && !heapOk(5) && !heapOk(FakeLua.Base + (ulong)m.Mem.Length + 8), "HeapTest: inside the memory, not inside the image");
+      // the slots in the data section
+      m.W64(data + 0x40, kBm); m.W64(data + 0x108, kSim); m.W64(data + 0x200, kTip);
+      Layout.LocalAsm = new string('e', 64); RFX.KlassDir = kd;
+      Check(RFX.ClassAt(ga, "BattleView.BattleManager") == 0, "ClassAt: no layout address, no disk slot: 0 at once (scan asked for)");
+      Check(RFX.EnsureClasses(ga, 5000), "EnsureClasses: the scan finds the simulation class");
+      Eq(kBm, RFX.ClassAt(ga, "BattleView.BattleManager"), "ClassAt: found by the scan");
+      Eq(kSim, RFX.ClassAt(ga, "CSharpBattle.Battle.GameSimulation"), "  ... the simulation class");
+      Check(RFX.ScanIdle(3000), "  ... the scan ends");
+      var disk = KlassScan.Load(kd, Layout.LocalAsm);
+      Check(disk != null && disk["BattleView.BattleManager"] == 0x2040 && disk["CSharpBattle.Battle.GameSimulation"] == 0x2108 && disk["Form_CommonTips"] == 0x2200, "the slots are kept on disk as rvas");
+      // a restart: the slots from disk, no scan
+      RFX.ForgetClasses(); long reads0 = RFX.Reads;
+      Eq(kTip, RFX.ClassAt(ga, "Form_CommonTips"), "ClassAt: from the slot kept on disk");
+      Check(RFX.Reads - reads0 < 20, "  ... without a scan");
+      // a stale slot: another class there now
+      m.W64(data + 0x200, kBm); RFX.ForgetClasses();
+      Check(RFX.ClassAt(ga, "Form_CommonTips") == 0, "ClassAt: a stale slot is not believed");
+      Check(RFX.ScanIdle(3000), "  ... the scan it asked for ends");
+      Check(RFX.ClassAt(ga, "Form_CommonTips") == 0, "  ... and the class is not found (not in a slot)");
+      RFX.ForgetClasses();
+      // two classes with one name, another process (another base address): none
+      Layout.LocalAsm = null;
+      var m2 = new FakeLua(8 << 20); m2.Alloc(0x3000); RFX.TestMemory = m2; RFX.ForgetClasses();
+      ulong ga2 = FakeImage(m2), data2 = ga2 + 0x2000;
+      ulong a1 = FakeKlass(m2, "BattleView", "BattleManager"), a2 = FakeKlass(m2, "BattleView", "BattleManager"), s1 = FakeKlass(m2, "CSharpBattle.Battle", "GameSimulation");
+      m2.W64(data2 + 0x40, a1); m2.W64(data2 + 0x48, a2); m2.W64(data2 + 0x80, s1);
+      Check(ga2 != ga, "  (a second image elsewhere)");
+      Check(RFX.ClassAt(ga2, "BattleView.BattleManager") == 0, "scan: two different classes named alike: asked for");
+      Check(RFX.EnsureClasses(ga2, 5000) && RFX.ScanIdle(3000), "  ... the scan ends, the simulation class found");
+      Check(RFX.ClassAt(ga2, "BattleView.BattleManager") == 0, "  ... the ambiguous name is not accepted");
+      Eq(s1, RFX.ClassAt(ga2, "CSharpBattle.Battle.GameSimulation"), "  ... the unique one is");
+    } finally {
+      RFX.ScanIdle(3000);
+      RFX.TestMemory = null; RFX.ForgetLive(); RFX.ForgetClasses(); Layout.LocalAsm = saveAsm; RFX.KlassDir = saveDir;
+      try { Directory.Delete(kd, true); } catch (Exception) { }
+    }
+    // the windows: strings 64 KB apart, a name at the window's end, a NUL at the very end of the memory
+    var w = new FakeLua(1 << 20); RFX.TestMemory = w;
+    try {
+      Func<ulong, string, ulong> Put = (at, str) => { Array.Copy(Encoding.ASCII.GetBytes(str + "\0"), 0, w.Mem, (int)(at - FakeLua.Base), str.Length + 1); return at; };
+      ulong b0 = FakeLua.Base + 0x1000, ns = Put(b0 + 0x300, "Ns");
+      ulong pa = b0 + 0x1000, pb = pa + 0x10000 - 96, pc = pa + 0x10000 + 1, pd = b0 + 0x30000, pe = FakeLua.Base + (ulong)w.Mem.Length - 9;
+      string n95 = new string('x', 95);
+      Put(pa, "Alpha"); Put(pb, n95); Put(pc, "Gamma"); Put(pd, new string('y', 96)); Put(pe, "EndOfBuf");
+      ulong k1 = b0 + 0x8000, k2 = k1 + 0xFFF0, k3 = k2 + 0x10, k4 = b0 + 0x50000, k5 = k4 + 0x20;
+      Action<ulong, ulong> Cls = (k, np) => { w.W64(k + 0x10, np); w.W64(k + 0x18, ns); };
+      Cls(k1, pa); Cls(k2, pb); Cls(k3, pc); Cls(k4, pd); Cls(k5, pe);
+      var nn = RFX.KlassNames(new[] { k1, k2, k3, k4, k5 });
+      Eq("Ns.Alpha", nn[0], "windows: first name");
+      Eq("Ns." + n95, nn[1], "windows: a name 64 KB on, its NUL the last byte of the window");
+      Eq("Ns.Gamma", nn[2], "windows: a name just past the window (a new window)");
+      Check(nn[3] == null, "windows: 96 characters and no NUL in reach: refused");
+      Eq("Ns.EndOfBuf", nn[4], "windows: a NUL at the last byte of the memory (the window cannot be read: string by string)");
+    } finally { RFX.TestMemory = null; RFX.ForgetLive(); }
+  }
+
+  /// <summary>A PE image in the stand-in memory: header, a code section, a writable data section (rva 0x2000, 8 KB) and a read-only one; 64 KB.</summary>
+  static ulong FakeImage(FakeLua m) {
+    ulong ga = m.Alloc(0x11000); ga = (ga + 0xFFF) & ~0xFFFUL;
+    byte[] hd = new byte[0x1000]; hd[0] = (byte)'M'; hd[1] = (byte)'Z';
+    Array.Copy(BitConverter.GetBytes(0x80), 0, hd, 0x3C, 4);
+    hd[0x80] = (byte)'P'; hd[0x81] = (byte)'E';
+    Array.Copy(BitConverter.GetBytes((ushort)3), 0, hd, 0x80 + 6, 2);
+    Array.Copy(BitConverter.GetBytes((ushort)0xF0), 0, hd, 0x80 + 20, 2);
+    Array.Copy(BitConverter.GetBytes(0x10000), 0, hd, 0x80 + 24 + 56, 4);
+    int tab = 0x80 + 24 + 0xF0;
+    Action<int, uint, uint, uint> Sec = (i, vs, va, ch) => { int e = tab + 40 * i; Array.Copy(BitConverter.GetBytes(vs), 0, hd, e + 8, 4); Array.Copy(BitConverter.GetBytes(va), 0, hd, e + 12, 4); Array.Copy(BitConverter.GetBytes(ch), 0, hd, e + 36, 4); };
+    Sec(0, 0x1000, 0x1000, 0x60000020u);      // code: not scanned
+    Sec(1, 0x2000, 0x2000, 0xC0000040u);      // data, writable: scanned
+    Sec(2, 0x1000, 0x4000, 0x40000040u);      // read-only data: not scanned
+    Array.Copy(hd, 0, m.Mem, (int)(ga - FakeLua.Base), 0x1000);
+    return ga;
+  }
+
+  /// <summary>An Il2CppClass in the stand-in memory: name at +0x10, namespace at +0x18 (plain C strings).</summary>
+  static ulong FakeKlass(FakeLua m, string ns, string name) {
+    ulong k = m.Alloc(0x60), sa = m.Alloc(ns.Length + 1), sb = m.Alloc(name.Length + 1);
+    Array.Copy(Encoding.ASCII.GetBytes(ns), 0, m.Mem, (int)(sa - FakeLua.Base), ns.Length);
+    Array.Copy(Encoding.ASCII.GetBytes(name), 0, m.Mem, (int)(sb - FakeLua.Base), name.Length);
+    m.W64(k + 0x10, sb); m.W64(k + 0x18, sa);
+    return k;
+  }
+  const int BatchSizeForTest = KlassScan.BatchSize;
 
   static void TestLogTests(string mock) {
     Console.WriteLine("Test-build log (src/TestLog.cs: bounded queue, send to the site):");
@@ -1009,18 +1163,37 @@ static class CoreTests {
     string fxAsm = fx.Replace("\"v\": 1", "\"v\": 1, \"asm\": \"" + asmA + "\"");
     Check(GameLayout.Parse(fxAsm, FixtureGame, asmA) != null, "asm: the same build is accepted");
     Check(GameLayout.Parse(fxAsm, FixtureGame, asmA.ToUpperInvariant()) != null, "asm: letter case does not matter");
-    Check(GameLayout.Parse(fxAsm, FixtureGame, asmB) == null, "asm: another build is refused");
+    {
+      var lo = GameLayout.Parse(fxAsm.Replace("\"v\": 1", "\"v\": 1, \"field\": {\"InfinityGrid.CellPerLine\": 12}"), FixtureGame, asmB);
+      Check(lo != null && lo.RvaDropped, "asm: another build is used, with the class addresses dropped");
+      Eq(0UL, lo.Rva("BattleView.BattleManager"), "  ... no class address");
+      Eq(909, lo.Const("EComponentType.Map"), "  ... consts intact");
+      Eq(-108L, lo.Form("ID_FORM_UNIONWEEKBOSSBATTLEEND"), "  ... forms intact");
+      Eq(64, lo.Span("DLNode"), "  ... spans intact");
+      Eq(12, lo.FieldOffset("InfinityGrid.CellPerLine"), "  ... field offsets intact");
+      var same = GameLayout.Parse(fxAsm, FixtureGame, asmA);
+      Check(same != null && !same.RvaDropped, "asm: the same build keeps the class addresses");
+      Eq(8192UL, same.Rva("BattleView.BattleManager"), "  ... the address");
+      Check(GameLayout.Parse(fxAsm.Replace("\"v\": 1", "\"v\": 2"), FixtureGame, asmB) == null, "asm: another build, another format: refused");
+      Check(GameLayout.Parse(Without(fxAsm, "DLNode"), FixtureGame, asmB) == null, "asm: another build, a needed entry missing: refused");
+    }
     Check(GameLayout.Parse(fx, FixtureGame, asmB) != null, "asm: data without one is accepted for any build");
     Check(GameLayout.Parse(fxAsm, FixtureGame, null) != null, "asm: no local hash, nothing to compare: accepted");
     Check(GameLayout.Parse(fxAsm.Replace(asmA, "7"), FixtureGame, asmB) == null, "asm: a malformed fingerprint is refused");
     GameLayout gotA;
     Eq(Layout.Reply.Got, Layout.Interpret(200, fxAsm, FixtureGame, asmA, out gotA), "asm: reply for this build: got");
-    Eq(Layout.Reply.OtherBuild, Layout.Interpret(200, fxAsm, FixtureGame, asmB, out gotA), "asm: reply for another build: other build");
+    Eq(Layout.Reply.Got, Layout.Interpret(200, fxAsm, FixtureGame, asmB, out gotA), "asm: reply for another build: got");
+    Check(gotA != null && gotA.RvaDropped, "  ... without the class addresses");
+    Eq(Layout.Reply.OtherBuild, Layout.Interpret(200, fxAsm.Replace(asmA, "7"), FixtureGame, asmB, out gotA), "asm: reply with a malformed fingerprint: refused");
     Check(gotA == null, "  ... and no data");
+    Eq(GameLayout.Build.Other, GameLayout.BuildOf(fxAsm, asmB), "asm: build of: other");
+    Eq(GameLayout.Build.Same, GameLayout.BuildOf(fxAsm, asmA), "asm: build of: same");
+    Eq(GameLayout.Build.Malformed, GameLayout.BuildOf(fxAsm.Replace(asmA, "7"), asmB), "asm: build of: malformed");
     string asmDir = Path.Combine(Path.GetTempPath(), "rf-layout-asm-" + Guid.NewGuid().ToString("N"));
     Layout.SaveCache(asmDir, FixtureGame, fxAsm);
     Check(Layout.LoadCache(asmDir, FixtureGame, asmA) != null, "asm: the saved copy of this build is used");
-    Check(Layout.LoadCache(asmDir, FixtureGame, asmB) == null, "asm: the saved copy of another build is not handed back");
+    var cacheB = Layout.LoadCache(asmDir, FixtureGame, asmB);
+    Check(cacheB != null && cacheB.RvaDropped, "asm: the saved copy of another build is used without its class addresses");
     Check(Layout.CacheIsOtherBuild(asmDir, FixtureGame) == (Layout.LocalAsm != null), "asm: the cache is seen as another build only with a different local hash");
     try { Directory.Delete(asmDir, true); } catch (Exception) { }
     Check(GameInfo.TitleIsGame("Watcher of Realms") && GameInfo.TitleIsGame("Watcher of Realms - US") && GameInfo.TitleIsGame("[Store] Watcher of Realms")
