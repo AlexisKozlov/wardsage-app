@@ -74,7 +74,7 @@ namespace RealmForge {
     // the sets list scrolls (20+ sets, 9 rows fit): rows it is scrolled by (as far as known), the row on the screen
     // clicked last (a set clicked there that is not the wanted one tells the real scroll)
     double setScroll; int setClickRow = -1; bool setPending;
-    bool setSkipped, statSkipped, eqSkipped, failed;
+    bool setSkipped, statSkipped, failed;
     /// <summary>idle | work | done | failed</summary>
     public string State = "idle";
     /// <summary>Why the pilot gave up or what it is doing besides the filter (for the journal).</summary>
@@ -96,7 +96,7 @@ namespace RealmForge {
 
       bool setOk = v.SetId <= 0 || setSkipped || Only(v.Suits, v.SetId);
       bool statOk = v.StatId <= 0 || statSkipped || Only(v.MainAttrs, v.StatId);
-      bool eqOk = !(v.OnOtherHero && v.HideEquipped) || eqSkipped;
+      bool eqOk = !(v.OnOtherHero && v.HideEquipped);
       // the item's sub stats (up to 4): the game lists the items with all of them first
       var subs = WantedSubs(v); var chosen = v.SubAttrs ?? new long[0];
       long missing = 0; foreach (var s in subs) if (Array.IndexOf(chosen, s) < 0) { missing = s; break; }
@@ -201,8 +201,14 @@ namespace RealmForge {
         var c = g.StatCell(idx, W, H);
         return Click(v, c[0], c[1]);
       }
-      // «Скрыть надетое» off: the item is on another hero
-      if (eqTries >= PartTries) { eqSkipped = true; return AutoAction.Nothing; }
+      // «Скрыть надетое» off: the item is on another hero. A side panel still open (the sub stats' one stays after the last
+      // pick) swallows the click: closed first, and the filter is not done while the item stays hidden (live 1.6.64)
+      if (v.SidePanelOpen) {
+        if (sideCloseTries >= PartTries) { failed = true; State = "failed"; Note = "the side panel stays open after " + sideCloseTries + " closing clicks (hide worn)"; return null; }
+        sideCloseTries++; Note = "closing the side panel (" + sideCloseTries + ")";
+        return Click(v, g.X(g.SideCloseX, W, H), g.Y(g.CloseY, W, H));
+      }
+      if (eqTries >= PartTries) { failed = true; State = "failed"; Note = "«Скрыть надетое» stays on after " + eqTries + " clicks"; return null; }
       eqTries++;
       return Click(v, g.X(g.HideEquippedX, W, H), g.Y(g.HideEquippedY, W, H));
     }
@@ -213,7 +219,7 @@ namespace RealmForge {
       Note = ""; wasSet = false;
       subSkipped = false; side = "";
       setClickRow = -1; setPending = false;
-      setSkipped = statSkipped = eqSkipped = false;
+      setSkipped = statSkipped = false;
     }
 
     AutoAction Click(FilterView v, double x, double y) {
