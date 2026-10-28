@@ -2873,40 +2873,7 @@ namespace RealmForge {
     /// <summary>The hero grid's filter pop-up is on the screen: its dark background (or a chosen row's blue) left of the class
     /// check boxes: 0.93 of the strip when open, at most 0.73 over the hero cards.</summary>
     bool HeroFilterSeen(W32.POINT o, double W, double H) {
-      double U = Ui.Unit(W, H);
-      int x0 = (int)(0.030 * U), x1 = (int)(0.058 * U), y0 = (int)(0.30 * U), y1 = (int)(0.87 * U);
-      int[] px = Grab(o.X + x0, o.Y + y0, x1 - x0, y1 - y0);
-      if (px == null) return false;
-      int dark = 0;
-      // its dark background, or the blue of a chosen row (a class / faction just clicked)
-      foreach (int c in px) {
-        int r = (c >> 16) & 255, g = (c >> 8) & 255, b = c & 255;
-        if ((r + g + b < 170 && Math.Max(r, Math.Max(g, b)) - Math.Min(r, Math.Min(g, b)) < 45) || (b >= r + 25 && b >= g + 10 && b >= 70 && r < 140)) dark++;
-      }
-      if (dark < 0.85 * px.Length) return false;
-      // a dark strip is not enough: a filtered grid of not-owned heroes (dark empty cards) looks the same, and a click
-      // on the funnel then OPENS the pop-up again (27.09: the filter kept opening and closing on Лайя). The pop-up's own
-      // mark: the thin light lines between its columns (Класс | Фракция | Фильтр), measured at 1920×1009: x 258 and 488
-      return DividerSeen(o, (int)(0.2557 * U), (int)(0.16 * U), (int)(0.87 * U)) && DividerSeen(o, (int)(0.4836 * U), (int)(0.16 * U), (int)(0.87 * U));
-    }
-
-    // a thin vertical line brighter than the pop-up around it, near x (a few pixels of play for rounding)
-    bool DividerSeen(W32.POINT o, int x, int y0, int y1) {
-      const int half = 12;
-      int w = 2 * half + 1, h = y1 - y0;
-      int[] px = Grab(o.X + x - half, o.Y + y0, w, h);
-      if (px == null || h <= 0) return false;
-      var mean = new double[w];
-      for (int c = 0; c < w; c++) {
-        long sum = 0; int n = 0;
-        for (int r = 0; r < h; r += 3) { int v = px[r * w + c]; sum += ((v >> 16) & 255) + ((v >> 8) & 255) + (v & 255); n++; }
-        mean[c] = n > 0 ? sum / (3.0 * n) : 0;
-      }
-      for (int c = 4; c < w - 4; c++) {
-        double side = (mean[c - 4] + mean[c + 4]) / 2;
-        if (mean[c] >= side + 30 && mean[c] >= mean[c - 1] && mean[c] >= mean[c + 1]) return true;
-      }
-      return false;
+      return HeroFilterLook.Seen((x, y, w, h) => Grab(o.X + x, o.Y + y, w, h), Ui.Unit(W, H));
     }
 
     // hero base id -> class id, faction ids (app/res/hero_tags.json, built from the site's game data)
@@ -3039,7 +3006,7 @@ namespace RealmForge {
       int i = v.Heroes != null ? Array.IndexOf(v.Heroes, v.Plan) : -2, j = v.Heroes != null ? Array.IndexOf(v.Heroes, v.Hero) : -2;
       string line = "hero: plan " + v.Plan + "@" + i + " shown " + v.Hero + "@" + j + " tab=" + v.Tab + " list=" + v.Part
         + " filter=" + (v.FilterOpen ? "open" : "closed") + " camps=" + string.Join(",", v.ChosenCamps ?? new long[0]) + " class=" + v.ClassChosen
-        + " small=" + v.SmallCards + " grid=" + (v.Heroes != null ? v.Heroes.Length : -1) + " -> " + hpilot.State;
+        + " small=" + v.SmallCards + " grid=" + (v.Heroes != null ? v.Heroes.Length : -1) + " -> " + hpilot.State + (hpilot.Why != "" ? " (" + hpilot.Why + ")" : "");
       if (line == heroLogged) return;
       heroLogged = line;
       Log.Write(line);

@@ -225,6 +225,7 @@ version …: from the site» или «saved copy»). Без файла оста�
 - Подробная запись боя (урон по умениям) теперь отправляется на сайт и для боёв с боссами гильдии, не только для арены.
 - Новая настройка «Отправлять промокоды на сайт» (включена по умолчанию, её можно выключить): когда вы вводите промокод в игре, программа отправляет на сайт сам код и ответ игры (принят, неверный, истёк). Отчёт привязан к вашему аккаунту на сайте, чтобы его нельзя было накрутить; имя в игре и данные аккаунта игры не отправляются. Так сайт собирает список рабочих кодов. Если выключить, программа не смотрит на окно ввода кода.
 - Программа запоминает оценки героев из игры, когда вы открываете экран оценки героя («Режимы»), и отправляет их на сайт вместе с очередной синхронизацией. Отправляются только оценка и число проголосовавших по каждому режиму, без данных вашего аккаунта; без кода синхронизации программа ничего не читает.
+- «Надеть в игре»: окно фильтра героев снова распознаётся в игре 1.6.46, в том числе в маленьком окне; если не распознано, программа останавливается, а не нажимает вслепую.
 
 ## EN
 - Fights in Malric's Halls of Illusion and other modes are now recorded with their stage number.
@@ -240,3 +241,4 @@ version …: from the site» или «saved copy»). Без файла оста�
 - The detailed fight record (damage per skill) is now also sent to the site for guild boss fights, not only for the arena.
 - New setting «Send promo codes to the site» (on by default, you can turn it off): when you enter a promo code in the game, the app sends the site the code itself and the game's answer (accepted, invalid, expired). The report is tied to your account on the site so it cannot be inflated; your in-game name and game account data are not sent. This is how the site builds a list of working codes. When it is off, the app does not look at the code window.
 - The app remembers the hero ratings shown in the game when you open a hero's rating screen («Modes») and sends them to the site with the next sync. Only the score and the number of voters per mode are sent, with no account data; without a sync code the app reads nothing.
+- Equip in game: the hero filter window is recognised again in game 1.6.46, including in a small window; if it is not recognised, the app stops instead of clicking blindly.

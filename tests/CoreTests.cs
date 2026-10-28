@@ -2506,11 +2506,13 @@ static class CoreTests {
     double CH { get { return Small ? g.SmallCardH : g.CardH; } }   // the main city (the hero screen closed): its «Герои» opens CityHero
     readonly HeroGeometry g; readonly double W, H;
     public int Clicks, Drags, Backs;
+    public bool Blind;   // the filter pop-up is not recognised: the host reports it closed whatever it shows
+    public List<double[]> Pts = new List<double[]>();
     public bool Blocked;   // something over the grid takes the clicks (a pop-up left open)
     public FakeHeroGame(HeroGeometry g, double W, double H) { this.g = g; this.W = W; this.H = H; }
     public double MaxScroll { get { int rows = (Heroes.Length + 2) / 3; return Math.Max(0, g.Row1Top * H + rows * PY * H - g.ViewBottom * H + 10); } }
     public void Click(double x, double y) {
-      Clicks++;
+      Clicks++; Pts.Add(new[] { x, y });
       if (Blocked) return;
       if (Tags != null && Math.Abs(x - g.FunnelX * H) < 20 && Math.Abs(y - (H - g.FunnelDY * H)) < 20) { FilterOpen = !FilterOpen; return; }
       if (FilterOpen) {
@@ -2543,7 +2545,7 @@ static class CoreTests {
     for (long t = 0; t < maxSteps * 100L; t += 100) {
       var v = new HeroView { NowMs = t, Foreground = true, W = 1920, H = 1009, Plan = plan, Hero = game.Shown, Tab = game.Tab,
         Part = game.Part, Heroes = game.Part >= 0 ? game.Heroes : game.Heroes, HeroesButton = game.City, ClientH = 1009, SmallCards = game.Small,
-        FilterOpen = game.FilterOpen, ChosenCamps = game.Camps.ToArray(), ClassChosen = game.Class > 0, GridPtr = game.Grid,
+        FilterOpen = game.FilterOpen && !game.Blind, ChosenCamps = game.Camps.ToArray(), ClassChosen = game.Class > 0, GridPtr = game.Grid,
         FactionList = game.Tags != null ? FakeHeroGame.FactionList : null, ClassCount = 7 };
       if (tags != null) { v.HeroClass = tags[0]; v.HeroCamps = new long[tags.Length - 1]; Array.Copy(tags, 1, v.HeroCamps, 0, tags.Length - 1); }
       last = v;
@@ -5014,6 +5016,34 @@ static class CoreTests {
     var fg3 = mk(); long wrong = heroes[110]; var badTags = new long[] { tagsAll[wrong][0] == 1 ? 2 : 1, tagsAll[wrong][1] };
     string sw = RunHero(new HeroPilot(g), fg3, wrong, 3000, out lv, badTags);
     Check(sw == "done" && fg3.Shown == wrong, "wrong class in the tags (a game patch): the hero vanishes, «Все» undoes it, found anyway");
+    // the pop-up is never recognised (a game build that draws it differently): the funnel clicks run out, then a stop - no click
+    // inside the pop-up's area (a grid click there picked a wrong class filter), whatever the hero
+    var fg4 = mk(); fg4.Blind = true; long blindHero = heroes[125];
+    var hp4 = new HeroPilot(g);
+    string s4 = RunHero(hp4, fg4, blindHero, 3000, out lv, tagsAll[blindHero]);
+    int inPop = 0; foreach (var pt in fg4.Pts) if (!(Math.Abs(pt[0] - g.FunnelX * H) < 20 && Math.Abs(pt[1] - (H - g.FunnelDY * H)) < 20) && pt[0] < 0.73 * H && pt[1] > 0.16 * H && pt[1] < 0.87 * H) inPop++;
+    Check(s4 == "failed" && fg4.Clicks == 3 && inPop == 0 && hp4.Why != "", "pop-up never recognised: 3 funnel clicks, then a stop, no click inside the pop-up area (" + s4 + ", " + fg4.Clicks + " clicks, " + inPop + " inside)");
+    {   // HeroFilterLook: 1.6.46 at 526×296 - no Class|Faction divider, a blue «Все» cell in the class column
+      double U = 295.875;
+      Func<bool, bool, bool, bool, Func<int, int, int, int, int[]>> frame = (strip, filterDiv, blueCell, classDiv) => (gx, gy, gw, gh) => {
+        var a = new int[gw * gh];
+        for (int j = 0; j < gh; j++) for (int i = 0; i < gw; i++) {
+          int x = gx + i, y = gy + j, c = (30 << 16) | (30 << 8) | 40;
+          if (!strip) c = (120 << 16) | (110 << 8) | 100;   // hero cards instead of the dark pop-up
+          if (filterDiv && Math.Abs(x - (int)(0.4836 * U)) <= 1 && y > 0.16 * U && y < 0.87 * U) c = (130 << 16) | (130 << 8) | 130;
+          if (classDiv && Math.Abs(x - (int)(0.2557 * U)) <= 1 && y > 0.16 * U && y < 0.87 * U) c = (130 << 16) | (130 << 8) | 130;
+          if (blueCell && x > 0.04 * U && x < 0.25 * U && Math.Abs(y - 0.2379 * U) < 0.05 * U) c = (30 << 16) | (90 << 8) | 170;
+          a[j * gw + i] = c;
+        }
+        return a;
+      };
+      Check(HeroFilterLook.Seen(frame(true, true, true, false), U), "filter pop-up seen: dark strip + Фракция|Фильтр divider + blue «Все» cell, no Класс|Фракция divider (1.6.46)");
+      Check(HeroFilterLook.Seen(frame(true, true, false, true), U), "filter pop-up seen: older layout (both dividers, no blue cell)");
+      Check(!HeroFilterLook.Seen(frame(true, false, false, false), U), "dark filtered grid without the Фильтр divider: not the pop-up");
+      Check(!HeroFilterLook.Seen(frame(true, false, true, true), U), "no Фильтр divider: not the pop-up even with the other marks");
+      Check(!HeroFilterLook.Seen(frame(true, true, false, false), U), "Фильтр divider alone (a grid line): not the pop-up");
+      Check(!HeroFilterLook.Seen(frame(false, true, true, true), U), "no dark strip: not the pop-up");
+    }
     var top = new FakeHeroGame(g, W, H) { Heroes = heroes, Shown = heroes[120] }; top.Scroll = top.MaxScroll;
     Check(RunHero(new HeroPilot(g), top, heroes[0], 3000, out lv) == "done" && top.Shown == heroes[0], "grid at its end, the first hero: up to the top");
 

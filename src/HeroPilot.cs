@@ -85,6 +85,8 @@ namespace RealmForge {
     /// <summary>idle | work | done | paused | background | noscreen (the hero screen is closed) | notfound (the hero is
     /// not in the grid: its filter) | failed</summary>
     public string State = "idle";
+    /// <summary>Why the pilot stopped, when it is a stop worth a journal line (the host appends it to the hero line).</summary>
+    public string Why = "";
 
     public HeroPilot(HeroGeometry g) { this.g = g; }
 
@@ -196,7 +198,9 @@ namespace RealmForge {
       if (filterPhase == 0 && (!known || !FarFromView(v, t))) return null;
       filterPhase = 1;
       if (!v.FilterOpen) {
-        if (++funnelTries > 3) { filterPhase = 2; return null; }
+        // the pop-up was never seen after the funnel clicks: a grid click now could land inside it (a wrong class filter),
+        // so stop here - a misdetection costs a stop, never a click
+        if (++funnelTries > 3) { filterPhase = 2; Why = "gear filter pop-up not recognised after " + (funnelTries - 1) + " funnel clicks - stopping, no grid click"; return Fail(); }
         waitUntil = v.NowMs + AfterClickMs; return Funnel(v, H);
       }
       if (!factionDone) {
@@ -272,11 +276,69 @@ namespace RealmForge {
 
     void Restart() {
       waitUntil = pauseUntil = failedAt = 0; clicks = drags = backs = tabs = misses = city = total = 0; bestDist = int.MaxValue; has = pending = false; State = "idle";
-      filterPhase = funnelTries = factionTries = clearTries = classResets = 0; classClicked = factionDone = classDone = false; lastGrid = 0;
+      Why = ""; filterPhase = funnelTries = factionTries = clearTries = classResets = 0; classClicked = factionDone = classDone = false; lastGrid = 0;
     }
 
     AutoAction Fail() { State = "failed"; return AutoAction.Nothing; }
 
     static AutoAction Click(double x, double y) { return new AutoAction { Kind = AutoKind.Click, X = x, Y = y }; }
+  }
+}
+
+namespace RealmForge {
+  /// <summary>The hero grid's filter pop-up on a grabbed frame: a dark strip left of the class check boxes, the Faction|Filter
+  /// divider, and a second mark that grid lines cannot fake: the blue selected «Все» cell of the class column (row 0) or,
+  /// on older layouts, the Class|Faction divider. Pure: the pixels come from <c>grab(x, y, w, h)</c> in client px.</summary>
+  public static class HeroFilterLook {
+    public static bool IsBlueRow(int c) {
+      int r = (c >> 16) & 255, g = (c >> 8) & 255, b = c & 255;
+      return b >= r + 25 && b >= g + 10 && b >= 70 && r < 140;
+    }
+
+    public static bool Seen(Func<int, int, int, int, int[]> grab, double U) {
+      int x0 = (int)(0.030 * U), x1 = (int)(0.058 * U), y0 = (int)(0.30 * U), y1 = (int)(0.87 * U);
+      int[] px = grab(x0, y0, x1 - x0, y1 - y0);
+      if (px == null) return false;
+      int dark = 0;
+      foreach (int c in px) {
+        int r = (c >> 16) & 255, g = (c >> 8) & 255, b = c & 255;
+        if ((r + g + b < 170 && Math.Max(r, Math.Max(g, b)) - Math.Min(r, Math.Min(g, b)) < 45) || IsBlueRow(c)) dark++;
+      }
+      if (dark < 0.85 * px.Length) return false;
+      // a dark strip is not enough: a filtered grid of not-owned heroes (dark empty cards) looks the same, and a click on the
+      // funnel then OPENS the pop-up again. Its own marks (measured at 1920×1009 and on 1.6.46 at 526×296): the thin light line
+      // between Фракция | Фильтр (x 0.4836·U), and the blue «Все» cell of the class column at row 0 (y 0.2379·U) or the
+      // Класс | Фракция line (x 0.2557·U; absent on 1.6.46)
+      if (!DividerSeen(grab, (int)(0.4836 * U), (int)(0.16 * U), (int)(0.87 * U))) return false;
+      return BlueCellSeen(grab, U) || DividerSeen(grab, (int)(0.2557 * U), (int)(0.16 * U), (int)(0.87 * U));
+    }
+
+    // the selected «Все» cell: between its check box and its text, a box of the cell's blue
+    public static bool BlueCellSeen(Func<int, int, int, int, int[]> grab, double U) {
+      int x0 = (int)(0.12 * U), x1 = (int)(0.17 * U), yc = (int)(0.2379 * U), hh = (int)(0.03 * U);
+      int[] px = grab(x0, yc - hh, x1 - x0, 2 * hh);
+      if (px == null || px.Length == 0) return false;
+      int n = 0; foreach (int c in px) if (IsBlueRow(c)) n++;
+      return n >= 0.6 * px.Length;
+    }
+
+    // a thin vertical line brighter than the pop-up around it, near x (a few pixels of play for rounding)
+    public static bool DividerSeen(Func<int, int, int, int, int[]> grab, int x, int y0, int y1) {
+      const int half = 12;
+      int w = 2 * half + 1, h = y1 - y0;
+      int[] px = h > 0 ? grab(x - half, y0, w, h) : null;
+      if (px == null) return false;
+      var mean = new double[w];
+      for (int c = 0; c < w; c++) {
+        long sum = 0; int n = 0;
+        for (int r = 0; r < h; r += 3) { int v = px[r * w + c]; sum += ((v >> 16) & 255) + ((v >> 8) & 255) + (v & 255); n++; }
+        mean[c] = n > 0 ? sum / (3.0 * n) : 0;
+      }
+      for (int c = 4; c < w - 4; c++) {
+        double side = (mean[c - 4] + mean[c + 4]) / 2;
+        if (mean[c] >= side + 30 && mean[c] >= mean[c - 1] && mean[c] >= mean[c + 1]) return true;
+      }
+      return false;
+    }
   }
 }
