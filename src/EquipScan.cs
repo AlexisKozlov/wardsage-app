@@ -254,6 +254,7 @@ namespace RealmForge {
       if (a.Form == 0) {
         ulong f0;
         if (RescanForm(4000, out f0) && f0 != 0) {
+          a.Panel = PanelAfterForm(a.Panel, a.Form, f0, 0);
           a.Form = f0;
           if (live != null) live.Form = f0;
           RefreshPanel(a);
@@ -272,9 +273,17 @@ namespace RealmForge {
       }
       if (f == 0) formNode = 0;
       L(f != 0 ? "  hero screen rebuilt by the game: following it" : "  hero screen lost: scanning again");
+      a.Panel = PanelAfterForm(a.Panel, a.Form, f, 0);
       a.Form = f;
       if (live != null) live.Form = f;
       if (f != 0) RefreshPanel(a);
+    }
+
+    /// <summary>The gear panel address after the hero screen's form changed: the old panel belongs to the old (dead) form, so it is dropped (0 = none yet)
+    /// unless the new form's own panel was found. RefreshPanel then sets the new one once the game has built it.</summary>
+    public static ulong PanelAfterForm(ulong oldPanel, ulong oldForm, ulong newForm, ulong foundPanel) {
+      if (foundPanel != 0) return foundPanel;
+      return newForm != oldForm ? 0UL : oldPanel;
     }
 
     static bool HeroScreenOpen() {
