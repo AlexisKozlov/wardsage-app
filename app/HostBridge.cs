@@ -1350,7 +1350,7 @@ namespace RealmForge {
       overlay.PanelOk = s.PanelOk; overlay.PanelNone = s.PanelNone;
       // the hero screen is open, but the scan ran before the game built it (the player was in the city): scan again, at
       // most once a minute - without the form the hero cannot be brought up and the gear list is not known to be open
-      if (s.GameRunning && s.HeroUid > 0 && addrs.Form == 0 && DateTime.UtcNow > rescanAfter) {
+      if (s.GameRunning && s.HeroUid > 0 && addrs.Form == 0 && watch != null && watch.Count > 0 && DateTime.UtcNow > rescanAfter) {   // (without a plan nothing is scanned, and the timer is not pushed: a new plan's fresh rescan must not be skipped)
         rescanAfter = DateTime.UtcNow.AddSeconds(60); Log.Write("equip scan again: the hero screen is open now"); StartScan(watch); return;
       }
       if (HeroStepStuck(s)) { StartScan(watch, false, true); return; }
@@ -1401,6 +1401,8 @@ namespace RealmForge {
 
     // ------------------------------------------------------------------ storage cleanup
 
+    string sellLogId;   // the list id last logged ("" = none)
+
     void LoadSell(string lang) {
       string site = cfg.Site, code = cfg.Code;
       if (!SyncClient.IsValidCode(code)) { Post("{\"ev\":\"sell\",\"status\":\"invalid_token\"}"); return; }
@@ -1410,6 +1412,8 @@ namespace RealmForge {
           Post("{\"ev\":\"sell\",\"status\":" + S(r.Status == PlansStatus.InvalidToken ? "invalid_token" : "error") + ",\"detail\":" + S(r.Details ?? ("HTTP " + r.HttpCode)) + "}");
           return;
         }
+        string lid = r.List == null ? "" : (r.List.Id ?? "");
+        if (lid != sellLogId) { sellLogId = lid; Log.Write(r.List == null ? "sell list: none" : "sell list: " + r.List.Items.Count + " items"); }
         var sb = new StringBuilder("{\"ev\":\"sell\",\"status\":\"ok\",\"list\":");
         if (r.List == null) sb.Append("null");
         else {

@@ -669,6 +669,7 @@ static class CoreTests {
     LocateGemAndListTests();
     SellHintTests();
     ArtifactSellTests();
+    CityGateAndPanelTests();
     ArtGridPictureTests();
     ArtPromoteTests();
     ArtAutoTests();
@@ -3887,6 +3888,32 @@ static class CoreTests {
   }
 
   // Storage cleanup of ARTIFACTS (the artifact tab's «Массовая продажа»): the panel reader on fake tables, the screen state, the steps and frames, no clicks
+  static void CityGateAndPanelTests() {
+    Check(ScreenState.NeedsCityPicture(ScreenKind.Unknown, false), "city picture: Unknown with the city form reading closed needs the picture");
+    Check(!ScreenState.NeedsCityPicture(ScreenKind.Unknown, true), "city picture: Unknown with the city form open does not");
+    Check(ScreenState.NeedsCityPicture(ScreenKind.Unknown, null), "city picture: Unknown with the form unreadable needs the picture");
+    Check(ScreenState.NeedsCityPicture(ScreenKind.City, false) && ScreenState.NeedsCityPicture(ScreenKind.City, true), "city picture: City needs it");
+    Check(!ScreenState.NeedsCityPicture(ScreenKind.Inventory, false), "city picture: another screen does not");
+    {   // the pilot loop: Preflight on a held City every tick, Check on an Unknown fresh state: ends in the unknown halt, not an endless Wait
+      var gate = new ClickGate(); var log = new List<string>(); gate.Sink = x => log.Add(x);
+      var city = ScreenState.Classify(new ScreenInputs { CityForm = true }, 0);
+      var unk = new ScreenState();
+      var rq = new ClickRequest { Owner = ClickOwner.Sell, Target = ClickTarget.CityInventory, AutoOn = true, Front = true };
+      GateResult res = null; bool halted = false; long t = 0;
+      for (; t <= ClickGate.UnknownGraceMs + 600 && !halted; t += 100) {
+        gate.Preflight(ClickOwner.Sell, city, t);
+        res = gate.Check(rq, unk, t);
+        halted = res.Verdict == GateVerdict.Deny;
+      }
+      Check(halted && gate.HaltReason(ClickOwner.Sell) == "unknown", "gate loop: Preflight(City) + Check(Unknown) past the grace -> halt unknown");
+      int waits = 0; foreach (var l in log) if (l.Contains("wait (unknown)")) waits++;
+      Eq(1, waits, "gate loop: the unknown wait is logged once");
+    }
+    Eq(0UL, RFX.PanelAfterForm(0x1000UL, 0x10UL, 0x20UL, 0), "panel: the form changed, no EquipFilter found -> 0");
+    Eq(0x1000UL, RFX.PanelAfterForm(0x1000UL, 0x10UL, 0x10UL, 0), "panel: same form -> kept");
+    Eq(0x2000UL, RFX.PanelAfterForm(0x1000UL, 0x10UL, 0x20UL, 0x2000UL), "panel: the new form's panel found -> it");
+  }
+
   static void ArtifactSellTests() {
     Console.WriteLine("Artifact storage cleanup (hints only)");
     // --- the panel reader (READ ONLY) on fake script tables
