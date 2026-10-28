@@ -78,6 +78,10 @@ namespace RealmForge {
     // the startup splash over the WebView until the page says «init» (HideSplash)
     Splash splash;
     readonly System.Windows.Forms.Timer splashGuard = new System.Windows.Forms.Timer();
+    // the plain panel in place of a black window when the built-in browser cannot start or render
+    readonly System.Windows.Forms.Timer readyGuard = new System.Windows.Forms.Timer();
+    readonly System.Diagnostics.Stopwatch navClock = new System.Diagnostics.Stopwatch();
+    bool navStarted, navDone, pageReady, fallbackShown;
 
     public AppWindow(bool hidden = false) {
       startHidden = hidden;
@@ -104,6 +108,13 @@ namespace RealmForge {
         Shown += (s, e) => { if (startHidden) { startHidden = false; Hide(); Opacity = 1; ShowInTaskbar = true; } };
       }
       ShowSignal.Listen(() => { try { BeginInvoke((Action)ShowFromTray); } catch (Exception) { } });
+    }
+
+    /// <summary>The page said «init»: it works. Cancels the not-opened watchdog and removes the splash (any thread).</summary>
+    public void PageReady() {
+      pageReady = true;
+      if (!IsDisposed && !InvokeRequired) readyGuard.Stop();
+      HideSplash();
     }
 
     /// <summary>Removes the startup splash (any thread; safe to call again).</summary>
@@ -229,14 +240,63 @@ namespace RealmForge {
       GiveUp(last);
     }
 
+    // the browser cannot start or render: a plain panel with the reason instead of a black window; the program (sync etc.) keeps running
     void GiveUp(Exception e) {
-      Program.Fatal(e, WebViewRecovery.FriendlyMessage(AppConfig.Load().Lang, e));
-      exiting = true;
-      Close();
+      ShowFallback(e == null ? "WebView2 start failed" : e.GetType().Name + " " + WebViewRecovery.HResultHex(e) + " " + e.Message);
+    }
+
+    void ShowFallback(string reason) {
+      if (IsDisposed) return;
+      if (InvokeRequired) { try { BeginInvoke((Action)(() => ShowFallback(reason))); } catch (Exception) { } return; }
+      if (fallbackShown) return;
+      fallbackShown = true;
+      Log.Write("WebView2 window not shown: " + reason);
+      readyGuard.Stop();
+      HideSplash();
+      string lang = "ru";
+      try { lang = AppConfig.Load().Lang; } catch (Exception) { }
+      var back = Color.FromArgb(11, 16, 27);
+      var panel = new Panel { Dock = DockStyle.Fill, BackColor = back };
+      var box = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, BackColor = back, Padding = new Padding(24) };
+      int w = 560;
+      Func<string, float, Color, Label> label = (text, size, color) => new Label {
+        Text = text, AutoSize = true, MaximumSize = new Size(w, 0), ForeColor = color, BackColor = back,
+        Font = new Font(SystemFonts.MessageBoxFont.FontFamily, size), Margin = new Padding(0, 0, 0, 14)
+      };
+      box.Controls.Add(label(WebViewRecovery.FallbackTitle(lang), 12f, Color.FromArgb(232, 226, 210)));
+      box.Controls.Add(label(WebViewRecovery.FallbackHint(lang), 10f, Color.FromArgb(180, 176, 165)));
+      box.Controls.Add(label(WebViewRecovery.FallbackReason(lang, reason), 8.5f, Color.FromArgb(130, 130, 130)));
+      var row = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, AutoSize = true, BackColor = back, Margin = new Padding(0) };
+      bool en = lang == "en";
+      var download = new Button { Text = en ? "Download WebView2 Runtime" : "Скачать WebView2 Runtime", AutoSize = true, Padding = new Padding(8, 3, 8, 3) };
+      download.Click += (s, e) => {
+        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(WebViewRecovery.RuntimeUrl) { UseShellExecute = true }); }
+        catch (Exception ex) { Log.Write("open download page: " + ex.Message); }
+      };
+      var logs = new Button { Text = en ? "Open log folder" : "Открыть папку с журналом", AutoSize = true, Padding = new Padding(8, 3, 8, 3) };
+      logs.Click += (s, e) => Shell.OpenFolder(File.Exists(Log.Path) ? Log.Path : AppConfig.DefaultDir);
+      row.Controls.Add(download);
+      row.Controls.Add(logs);
+      box.Controls.Add(row);
+      panel.Controls.Add(box);
+      box.Location = new Point(Scale(24), Scale(24));
+      try { web.Visible = false; } catch (Exception) { }
+      Controls.Add(panel);
+      panel.BringToFront();
+    }
+
+    // the watchdog tick: the page has not said «ready» in time (see WebViewRecovery.ShouldShowFallback)
+    void OnReadyGuard(object s, EventArgs e) {
+      double secs = navStarted ? navClock.Elapsed.TotalSeconds : -1;
+      if (!WebViewRecovery.ShouldShowFallback(false, pageReady, navDone, secs)) return;
+      ShowFallback(secs >= WebViewRecovery.HardSeconds && !navDone
+        ? "the page did not finish loading in " + WebViewRecovery.HardSeconds + " s"
+        : "the page did not signal ready in " + WebViewRecovery.ReadySeconds + " s");
     }
 
     async System.Threading.Tasks.Task StartWeb(bool fresh) {
       if (fresh) ReplaceWeb();
+      pageReady = false;
       // WebView2 needs the control's window; a form that started hidden in the tray has it too, but make sure
       if (!web.IsHandleCreated) { web.CreateControl(); var h = web.Handle; }
       var env = await CoreWebView2Environment.CreateAsync(null, Program.DataDir, null);
@@ -255,7 +315,7 @@ namespace RealmForge {
       // only our own page may load in the window; links go to the user's browser
       core.NavigationStarting += (s, e) => {
         Uri u;
-        if (Uri.TryCreate(e.Uri, UriKind.Absolute, out u) && u.Host == AppHost) return;
+        if (Uri.TryCreate(e.Uri, UriKind.Absolute, out u) && u.Host == AppHost) { navStarted = true; navDone = false; navClock.Restart(); return; }
         e.Cancel = true;
         Shell.OpenUrl(e.Uri);
       };
@@ -268,7 +328,7 @@ namespace RealmForge {
         try { json = e.WebMessageAsJson; } catch (Exception) { }
         if (json != null) br.OnMessage(json);
       };
-      core.NavigationCompleted += (s, e) => { if (!e.IsSuccess) HideSplash(); };
+      core.NavigationCompleted += (s, e) => { navDone = true; if (!e.IsSuccess) HideSplash(); };
       core.ProcessFailed += (s, e) => OnProcessFailed(core, e);
       // it must never stick: a page that fails or stays silent still gets shown 20 s after navigation (not before: a start that waits for Windows retries for minutes)
       splashGuard.Stop();
@@ -276,6 +336,12 @@ namespace RealmForge {
       splashGuard.Tick -= OnSplashGuard;
       splashGuard.Tick += OnSplashGuard;
       splashGuard.Start();
+      navStarted = false;
+      readyGuard.Stop();
+      readyGuard.Interval = 1000;
+      readyGuard.Tick -= OnReadyGuard;
+      readyGuard.Tick += OnReadyGuard;
+      readyGuard.Start();
       core.Navigate("https://" + AppHost + "/index.html");
     }
 
@@ -295,7 +361,7 @@ namespace RealmForge {
       if (recovering) return;
       if (!recoveries.TryAcquire(DateTime.UtcNow)) {
         Log.Write("WebView2: too many recoveries, giving up");
-        BeginInvoke((Action)(() => GiveUp(new InvalidOperationException("WebView2 process failed: " + kind))));
+        BeginInvoke((Action)(() => ShowFallback("WebView2 process failed: " + kind + ", exit " + e.ExitCode + " (renderer crashed, too many recoveries)")));
         return;
       }
       if (render) {

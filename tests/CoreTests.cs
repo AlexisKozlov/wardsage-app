@@ -708,6 +708,15 @@ static class CoreTests {
     UpdateKeysTests();
 
     // ---- WebViewRecovery
+    Check(!WebViewRecovery.ShouldShowFallback(false, true, true, 500), "fallback: never once the page is ready");
+    Check(!WebViewRecovery.ShouldShowFallback(true, true, false, -1), "fallback: ready wins over a start error");
+    Check(WebViewRecovery.ShouldShowFallback(true, false, false, -1), "fallback: the start failed");
+    Check(!WebViewRecovery.ShouldShowFallback(false, false, false, -1), "fallback: not before the navigation starts");
+    Check(!WebViewRecovery.ShouldShowFallback(false, false, true, 19.9), "fallback: not before 20 s");
+    Check(WebViewRecovery.ShouldShowFallback(false, false, true, 20), "fallback: 20 s after a finished navigation without ready");
+    Check(!WebViewRecovery.ShouldShowFallback(false, false, false, 30), "fallback: a page still loading is not cut off at 20 s");
+    Check(WebViewRecovery.ShouldShowFallback(false, false, false, 60), "fallback: a page that never finishes loading, after 60 s");
+    Check(WebViewRecovery.FallbackTitle("ru").StartsWith("Окно программы не открылось") && WebViewRecovery.FallbackTitle("en").StartsWith("The program window"), "fallback texts per language");
     Console.WriteLine("WebView2 recovery");
     Eq(2000, WebViewRecovery.DelayMs(1), "first retry waits 2 s");
     Eq(30000, WebViewRecovery.DelayMs(4), "fourth retry waits 30 s");

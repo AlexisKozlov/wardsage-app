@@ -51,6 +51,43 @@ namespace RealmForge {
       return false;
     }
 
+    /// <summary>Seconds after the page starts loading when a page that has not said «ready» counts as not opened.</summary>
+    public const int ReadySeconds = 20;
+    /// <summary>A page still loading (navigation not finished) gets this long in all before it counts as not opened.</summary>
+    public const int HardSeconds = 60;
+
+    /// <summary>Whether the plain «browser did not start» panel replaces the black area: the start failed for good, or the page has not
+    /// said «ready» and either its navigation is finished (or failed) and <see cref="ReadySeconds"/> passed since it began, or
+    /// <see cref="HardSeconds"/> passed (a slow first start that is merely loading is not cut off).</summary>
+    public static bool ShouldShowFallback(bool startFailed, bool ready, bool navDone, double secondsSinceNav) {
+      if (ready) return false;
+      if (startFailed) return true;
+      if (secondsSinceNav < 0) return false;   // no navigation yet
+      if (secondsSinceNav >= HardSeconds) return true;
+      return navDone && secondsSinceNav >= ReadySeconds;
+    }
+
+    public const string RuntimeUrl = "https://developer.microsoft.com/microsoft-edge/webview2/";
+
+    /// <summary>The panel's main message.</summary>
+    public static string FallbackTitle(string lang) {
+      if (lang == "en")
+        return "The program window did not open: the built-in browser (Microsoft WebView2) could not start on this computer. Syncing keeps working in the background.";
+      return "Окно программы не открылось: встроенный браузер (Microsoft WebView2) не запустился на этом компьютере. Синхронизация продолжает работать в фоне.";
+    }
+
+    /// <summary>The short explanation under the message.</summary>
+    public static string FallbackHint(string lang) {
+      if (lang == "en")
+        return "On Windows, install or update the WebView2 Runtime. Under CrossOver/Wine on a Mac the built-in window is not supported yet.";
+      return "Если вы на Windows — установите или обновите WebView2 Runtime. Под CrossOver/Wine на Mac встроенное окно пока не поддерживается.";
+    }
+
+    /// <summary>The reason line (what was logged), for the panel.</summary>
+    public static string FallbackReason(string lang, string reason) {
+      return (lang == "en" ? "Reason: " : "Причина: ") + (reason ?? "");
+    }
+
     public static string HResultHex(Exception e) {
       e = Inner(e);
       return e == null ? "" : "0x" + unchecked((uint)e.HResult).ToString("X8");
