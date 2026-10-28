@@ -3666,6 +3666,32 @@ static class CoreTests {
       Check(!res.Allowed && gate.HaltReason(ClickOwner.Sell) == "scroll", "sell gate: a list drag without a readable scroll stops the run as 'scroll' (" + res.Reason + ")");
       gate = new ClickGate(); res = gate.Check(new ClickRequest { Owner = ClickOwner.Sell, Target = ClickTarget.InvListDrag, AutoOn = true, Front = true }, eqBulk, 0);
       Check(res.Allowed, "sell gate: a list drag with a readable scroll is allowed (" + res.Reason + ")");
+      // a cell click with an unreadable scroll: the item under it cannot be told - the reason is the scroll, not "the click would hit another item"
+      gate = new ClickGate(); res = gate.Check(new ClickRequest { Owner = ClickOwner.Sell, Target = ClickTarget.InvBulkCell, AutoOn = true, Front = true, NoScroll = true, CellUid = 0, CellOk = new HashSet<long> { 2 } }, eqBulk, 0);
+      Check(!res.Allowed && gate.HaltReason(ClickOwner.Sell) == "scroll", "sell gate: a bulk-sale cell click without a readable scroll stops as 'scroll', not 'cell' (" + res.Reason + ")");
+      gate = new ClickGate(); res = gate.Check(new ClickRequest { Owner = ClickOwner.Sell, Target = ClickTarget.InvBulkCell, AutoOn = true, Front = true, CellUid = 7, CellOk = new HashSet<long> { 2 } }, eqBulk, 0);
+      Check(!res.Allowed && gate.HaltReason(ClickOwner.Sell) == "cell", "sell gate: a readable scroll and a wrong item stays 'cell' (" + res.Reason + ")");
+      gate = new ClickGate(); res = gate.Check(new ClickRequest { Owner = ClickOwner.Sell, Target = ClickTarget.InvBulkCell, AutoOn = true, Front = true, CellUid = 2, CellOk = new HashSet<long> { 2 } }, eqBulk, 0);
+      Check(res.Allowed, "sell gate: a bulk-sale cell click with the exact scroll and a wanted item is allowed (" + res.Reason + ")");
+      // the pilot: the game's scroll unreadable on every tick -> it waits, never sends a cell click, and stops as 'scroll'
+      {
+        var gs = new SellGeometry(); var fg = new FakeSellGame(gs, 40, 0); var ws = new HashSet<long> { 5000, 5001, 5002 };
+        var ps = new SellPilot(gs); long ts = 0; int cellClicks = 0;
+        for (int i = 0; i < 100 && ps.State != "failed"; i++, ts += 100) {
+          var a = ps.Step(new SellView { NowMs = ts, Foreground = true, W = fg.W, H = fg.H, U = fg.U, Screen = fg.Screen(), Wanted = ws, Phase = fg.Phase(), NeedExact = true });
+          if (a.Kind == AutoKind.Click) cellClicks++;
+          fg.Act(a);
+        }
+        Check(cellClicks == 0 && ps.State == "failed" && ps.FailWhy == "scroll", "sell pilot: Row1 NaN on every tick: no cell click, ends 'scroll' (clicks " + cellClicks + ", " + ps.State + "/" + ps.FailWhy + ")");
+        Check(ts >= SellPilot.ScrollWaitMs, "sell pilot: it re-reads the scroll for about " + SellPilot.ScrollWaitMs + " ms first (" + ts + " ms)");
+        var pe = new SellPilot(gs); var fe = new FakeSellGame(gs, 40, 0);
+        var ae = pe.Step(new SellView { NowMs = 0, Foreground = true, W = fe.W, H = fe.H, U = fe.U, Screen = fe.Screen(), Wanted = ws, Phase = double.NaN, Row1 = gs.ViewTopPx(fe.U) + gs.TopPad * fe.U, NeedExact = true });
+        Check(ae.Kind == AutoKind.Click && pe.State == "work", "sell pilot: with an exact Row1 the cell click goes out (" + ae.Kind + ", " + pe.State + ")");
+        var pl = new SellPilot(gs);   // a scroll that comes back in time: no stop
+        var al = pl.Step(new SellView { NowMs = 0, Foreground = true, W = fg.W, H = fg.H, U = fg.U, Screen = fe.Screen(), Wanted = ws, Phase = double.NaN, NeedExact = true });
+        al = pl.Step(new SellView { NowMs = 800, Foreground = true, W = fg.W, H = fg.H, U = fg.U, Screen = fe.Screen(), Wanted = ws, Phase = double.NaN, Row1 = gs.ViewTopPx(fe.U) + gs.TopPad * fe.U, NeedExact = true });
+        Check(al.Kind == AutoKind.Click && pl.FailWhy == "", "sell pilot: a scroll read that comes back within the wait lets the click go (" + al.Kind + ")");
+      }
       gate = new ClickGate();
       res = gate.Check(new ClickRequest { Owner = ClickOwner.Sell, Target = ClickTarget.InvEquipTab, AutoOn = true, Front = true }, scrN, 0);
       Check(res.Allowed, "art gate: a gear cleanup (not an artifact run) may still go from the artifact tab back to «Снаряжение»");

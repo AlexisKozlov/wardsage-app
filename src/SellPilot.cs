@@ -106,10 +106,11 @@ namespace RealmForge {
     public IDictionary<long, int> Levels;   // the items' upgrade levels (below +16 «Быстрое улучшение» opens); null = unknown
     public double Phase = double.NaN;   // row-top phase of the item rows on the screen now (client px mod the row step), NaN = not seen
     public double Row1 = double.NaN;    // client y of row 1's top from the game's own scroll reading (InvScroll), NaN = unreadable
+    public bool NeedExact;              // a cell click needs Row1 (the gate refuses one without the exact scroll): without it the pilot waits, then stops as "scroll"
   }
 
   public sealed class SellPilot {
-    public const int AfterClickMs = 250, AfterDragMs = 500, AfterFilterMs = 1100, UserPauseMs = 4000, MaxClicks = 4000, MaxDrags = 400, MaxMiss = 8, MaxFilterClicks = 12, AfterCloseMs = 300, MaxLevel = 16;
+    public const int AfterClickMs = 250, AfterDragMs = 500, AfterFilterMs = 1100, UserPauseMs = 4000, MaxClicks = 4000, MaxDrags = 400, MaxMiss = 8, MaxFilterClicks = 12, AfterCloseMs = 300, MaxLevel = 16, ScrollWaitMs = 1500;
     public const double MinDragPx = 24;
 
     SellGeometry g;
@@ -141,11 +142,14 @@ namespace RealmForge {
     public int Selected, Missing, Extra;
     /// <summary>What the last step did and why (the app's log).</summary>
     public string Trace = "";
+    /// <summary>Why the run failed when it is not the pilot's own count: "scroll" = a cell click needed the game's exact scroll and it stayed unreadable.</summary>
+    public string FailWhy = "";
+    long noScrollSince = -1;
 
     public SellPilot(SellGeometry g) { this.g = g; }
 
     /// <summary>A new list from the site, or the run was stopped: start over.</summary>
-    public void Reset() { list = 0; exact = phased = false; waitUntil = pauseUntil = 0; checkClick = false; undo = 0; clicks = drags = misses = filterClicks = endDir = endSeen = 0; resetDone = popup = false; slips.Clear(); skip.Clear(); State = "idle"; }
+    public void Reset() { list = 0; exact = phased = false; waitUntil = pauseUntil = 0; checkClick = false; undo = 0; clicks = drags = misses = filterClicks = endDir = endSeen = 0; resetDone = popup = false; slips.Clear(); skip.Clear(); State = "idle"; FailWhy = ""; noScrollSince = -1; }
 
     public AutoAction Step(SellView v) {
       var s = v.Screen;
@@ -157,7 +161,8 @@ namespace RealmForge {
       if (s.ListPtr != list) { list = s.ListPtr; row1 = g.ViewTopPx(v.U) + g.TopPad * v.U; exact = true; checkClick = false; undo = 0; measure = false; }
       // after a drag: the stat bars on the screen give the rows' exact phase (the drag's error is well under half a row)
       // the game says where the list is scrolled: that is exact, whatever a drag did (the picture is the last resort)
-      if (!double.IsNaN(v.Row1)) { row1 = v.Row1; exact = true; phased = true; }
+      if (!double.IsNaN(v.Row1)) { row1 = v.Row1; exact = true; phased = true; noScrollSince = -1; }
+      else if (noScrollSince < 0) noScrollSince = v.NowMs;
       if (!exact && !phased && !double.IsNaN(v.Phase)) Snap(v);
       if (v.UserClicked) pauseUntil = v.NowMs + UserPauseMs;
       bool failed = State == "failed";
@@ -189,6 +194,12 @@ namespace RealmForge {
       bool atEnd = endDir != 0 && endSeen >= 2 && Math.Sign(-(cy - mid)) == endDir && exact;
       if (atEnd && (cy < viewTop + cell * 0.3 || cy > viewBottom - cell * 0.3)) { skip.Add(next); return AutoAction.Nothing; }
       if ((cy >= viewTop + margin && cy <= viewBottom - margin) || atEnd) {
+        // the gate clicks a cell only with the game's exact scroll: re-read for a while, then stop (never click on the picture's estimate)
+        if (v.NeedExact && double.IsNaN(v.Row1)) {
+          if (v.NowMs - noScrollSince < ScrollWaitMs) { waitUntil = v.NowMs + 250; return AutoAction.Nothing; }
+          State = "failed"; FailWhy = "scroll"; Say("scroll: the game's list scroll stayed unreadable for " + (v.NowMs - noScrollSince) + " ms - no cell click on an estimate");
+          return AutoAction.Nothing;
+        }
         double cx = g.CellCentreX(p[1], v.W, v.U);
         var pc = ClosePopupFor(v, cx, cy); if (pc != null) return pc;
         if (clicks >= MaxClicks) return Fail();

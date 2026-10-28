@@ -559,32 +559,35 @@ namespace RealmForge {
     }
 
     static bool gridLayoutSaid;
+    /// <summary>Why the last <see cref="ReadList"/> gave null ("" = it read fine); for the log when the picture has to stand in.</summary>
+    public static string ListWhy = "";
 
     /// <summary>Reads the scroll and the grid of a list whose owner table (a form or a panel) holds them under
     /// <paramref name="scrollField"/> and <paramref name="gridField"/>; null when the scroll or the grid cannot be read, or the layout data has no grid fields for this game version.
     /// <paramref name="scrollField"/> null = the scroll component the grid itself holds (a panel whose script binds only the grid, as the artifact panel does).</summary>
     public static ListRead ReadList(ulong owner, string scrollField, string gridField, int pid) {
-      if (owner == 0) return null;
+      ListWhy = "";
+      if (owner == 0) { ListWhy = "list null: no owner form"; return null; }
       // the grid's fields: their offsets come with the layout data of the game version (the "field" section); without them
       // the list is not trusted (null): the caller falls back to the picture
       var ly = Layout.Current;
       int oCols = ly != null ? ly.FieldOffset("InfinityGrid.CellPerLine") : -1, oLine = ly != null ? ly.FieldOffset("InfinityGrid.LineSize") : -1;
       if (oCols < 0 || oLine < 0) {
         if (!gridLayoutSaid) { gridLayoutSaid = true; LL("list grid: the layout data has no grid fields for this game version - the picture is the fallback"); }
-        return null;
+        ListWhy = "no grid fields in the layout data"; return null;
       }
       var r = new ListRead();
       ulong grid = ScriptObject(owner, gridField, "UI.InfinityGrid", pid);
-      if (grid == 0) return null;
+      if (grid == 0) { ListWhy = "list null: grid object not found"; return null; }
       ulong rect = scrollField != null ? ScriptObject(owner, scrollField, "UnityEngine.UI.ScrollRect", pid) : GridScrollRect(grid, ly);
       double y;
-      if (rect == 0 || !ScrollPos(rect, out y)) return null;
+      if (rect == 0 || !ScrollPos(rect, out y)) { ListWhy = "list null: scroll position not readable"; return null; }
       r.ScrollY = y;
       var b = Read(grid + (ulong)oCols, 4);
       if (b != null) { int c = BitConverter.ToInt32(b, 0); if (c >= 1 && c <= 20) r.Cols = c; }
       var l = Read(grid + (ulong)oLine, 4);
       if (l != null) { float ls = BitConverter.ToSingle(l, 0); if (ls > 1 && ls < 2000) r.RowUnits = ls; }
-      if (r.Cols < 1 || r.RowUnits <= 0) return null;
+      if (r.Cols < 1 || r.RowUnits <= 0) { ListWhy = r.Cols < 1 ? "Cols out of range (1..20)" : "row size out of range"; return null; }
       int oFinal = ly.FieldOffset("InfinityGrid.m_finalLineSize"), oFirst = ly.FieldOffset("InfinityGrid.m_crtFirstInstanceIndex"),
           oLast = ly.FieldOffset("InfinityGrid.m_crtLastInstanceIndex"), oFit = ly.FieldOffset("InfinityGrid.m_fitScale");
       if (oFinal >= 0) { var fb = Read(grid + (ulong)oFinal, 4); if (fb != null) { float fl = BitConverter.ToSingle(fb, 0); if (fl > 1 && fl < 2000) r.FinalRowUnits = fl; } }
@@ -605,7 +608,7 @@ namespace RealmForge {
     }
 
     /// <summary>The inventory's equipment grid (the form's content list); null when it cannot be read.</summary>
-    public static ListRead ReadInventoryList(ulong form) { int pid = ListPid(); return pid == 0 ? null : ReadList(form, "m_Content_ScrollRect", "m_Content_InfinityGrid", pid); }
+    public static ListRead ReadInventoryList(ulong form) { int pid = ListPid(); if (pid == 0) { ListWhy = "list null: no game process"; return null; } return ReadList(form, "m_Content_ScrollRect", "m_Content_InfinityGrid", pid); }
 
     /// <summary>The foundry's Ascension list (the panel's own list); null when it cannot be read.</summary>
     public static ListRead ReadFoundryList(ulong panel) { int pid = ListPid(); return pid == 0 ? null : ReadList(panel, "m_EquipList_ScrollRect", "m_EquipList_InfinityGrid", pid); }

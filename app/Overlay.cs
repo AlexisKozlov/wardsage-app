@@ -1700,10 +1700,11 @@ namespace RealmForge {
         // the rows' place: the game's own scroll reading (the picture only learns its constant; it is the last resort without it)
         double sph = front && !busy && sellScroll.WantPhase(now) ? SellPhase(o, cr, U) : double.NaN;
         double srow1 = sellScroll.Row1(spilot.Geometry, inv.List, sph, U);
-        if (double.IsNaN(srow1)) { sph = front && !busy ? (double.IsNaN(sph) ? SellPhase(o, cr, U) : sph) : double.NaN; if (gridSaid != "sellpilot:px") { gridSaid = "sellpilot:px"; Log.Write("sell: the inventory's scroll cannot be read - the picture is the fallback (the gate will not let a cell be clicked without the exact scroll)"); } }
+        if (double.IsNaN(srow1)) { sph = front && !busy ? (double.IsNaN(sph) ? SellPhase(o, cr, U) : sph) : double.NaN; if (gridSaid != "sellpilot:px") { gridSaid = "sellpilot:px"; Log.Write("sell: the inventory's scroll cannot be read (" + (inv.List == null ? RFX.ListWhy : "list read, no scroll value") + ") - the picture is the fallback (the gate will not let a cell be clicked without the exact scroll)"); } }
         else sph = double.NaN;
         var a = spilot.Step(new SellView { NowMs = now, Foreground = front, UserBusy = busy, UserClicked = userClicked, W = W, H = H, U = U,
-                                           Screen = inv.AsSell(sellCols), Wanted = sellWanted, Phase = sph, Row1 = srow1 });
+                                           Screen = inv.AsSell(sellCols), Wanted = sellWanted, Phase = sph, Row1 = srow1, NeedExact = true });
+        if (spilot.State == "failed" && spilot.FailWhy == "scroll") { gate.Halt(ClickOwner.Sell, "scroll", "the inventory's exact scroll stayed unreadable - no cell was clicked on the picture's estimate"); AnnounceHalts(); }
         SellSay(spilot.State);
         if (spilot.Trace != "") { Log.Write("sell: " + spilot.Trace); spilot.Trace = ""; }
         if (a.Kind != AutoKind.None) {
@@ -1715,7 +1716,7 @@ namespace RealmForge {
             var ok = new System.Collections.Generic.HashSet<long>(sellWanted);
             if (fr.Inv != null) foreach (var u in fr.Inv.Selected) ok.Add(u);
             rq.CellOk = ok;
-            rq.NoScroll = fr.Inv == null || fr.Inv.List == null;
+            rq.NoScroll = fr.Inv == null || fr.Inv.List == null || !fr.Inv.List.Has;
           });
         }
         return;
@@ -2294,6 +2295,7 @@ namespace RealmForge {
             int i = fr.Inv != null ? ClickGate.ListCardIndexAt(geo, "inventory.artList", fr.Inv.List, LocateGuide.ArtInvCols, 116, rq.X, rq.Y, W, H, U) : -1;
             rq.CellUid = i >= 0 && fr.Inv != null && i < fr.Inv.Uids.Count ? fr.Inv.Uids[i] : 0;
             rq.CellOk = new[] { art.Uid };
+            rq.NoScroll = fr.Inv == null || fr.Inv.List == null || !fr.Inv.List.Has;
           };
           break;
         case ArtTodo.MatCell: {
@@ -2772,6 +2774,7 @@ namespace RealmForge {
             var g2 = SellGeometry.Inventory(W, U, locateCols);
             rq.CellUid = ClickGate.InvCellUid(fr.Inv, g2, locateScroll.Row1(g2, fr.Inv != null ? fr.Inv.List : null, double.NaN, U, now), locateCols, rq.X, rq.Y, W, U);
             rq.CellOk = new[] { req.Item.Uid };
+            rq.NoScroll = fr.Inv == null || fr.Inv.List == null || !fr.Inv.List.Has;
           };
           break;
         case LocateTodo.AscendCell:
