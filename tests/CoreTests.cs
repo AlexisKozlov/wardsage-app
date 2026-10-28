@@ -2454,6 +2454,42 @@ static class CoreTests {
     }
     Check(p7 == 1 && a7.X == 1075 && a7.Y == 665, "presses the button found on the screen («Надеть» of the single card)");
 
+    // the click selected ANOTHER item: the rows are not where the pilot thinks; never the same point again, then stop with the reason
+    double wtop = ScrollAnchor.TopRow1(geo, H);
+    Func<long, long, int, AutoView> wv = (t, wsel, wrow) => new AutoView { NowMs = t, Foreground = true, H = H, Target = 5, Row = 3, Col = 1, Sel = wsel,
+      SelRow = wrow, SelCol = wrow > 0 ? 1 : 0, Types = types, AnchorHas = true, Row1Top = wtop };
+    var w1 = new AutoPilot(geo);
+    var wa = w1.Step(wv(0, 0, 0));
+    var wb = w1.Step(wv(1000, 66, 4));
+    Check(wa.Kind == AutoKind.Click && wb.Kind == AutoKind.Click && (Math.Abs(wa.X - wb.X) > 2 || Math.Abs(wa.Y - wb.Y) > 2) && w1.State == "work",
+          "another item selected: re-anchored from its row, not the same point again");
+    w1.Step(wv(2000, 67, 5));
+    Eq("failed", w1.State, "a second wrong item -> failed, no more toggling");
+    Check(w1.Why.StartsWith("wrong item 67 at row 5/1"), "the reason names the item and its place (" + w1.Why + ")");
+    var wr2 = new AutoPilot(geo);
+    var wr2a = wr2.Step(wv(0, 0, 0)); var wr2b = wr2.Step(wv(1000, 66, 0));
+    Check(wr2b.Kind != AutoKind.Click || Math.Abs(wr2a.X - wr2b.X) > 2 || Math.Abs(wr2a.Y - wr2b.Y) > 2, "another item whose row is unknown: calibrates, not the same point again (" + wr2a.X + "," + wr2a.Y + " -> " + wr2b.Kind + " " + wr2b.X + "," + wr2b.Y + ")");
+
+    // «Заменить» pressed, the selection went away and the item is not on the hero: no item clicks, the player is asked
+    var c8 = new AutoPilot(geo); int p8 = 0, after8 = 0; bool pressed8 = false;
+    for (long t = 0; t < 10000; t += 100) {
+      var v8 = cv(t, 0, 77, rep); if (pressed8) v8.Sel = 0;
+      var a = c8.Step(v8);
+      if (a.Kind == AutoKind.Click) { if (pressed8) after8++; else { p8++; pressed8 = true; } }
+    }
+    Check(p8 == 1 && after8 == 0, "selection gone after the press: no item click (" + after8 + ")");
+    Eq("unconfirmed", c8.State, "selection gone after the press, item not on the hero -> unconfirmed, not failed");
+    Check(c8.Why != "", "unconfirmed says why (" + c8.Why + ")");
+
+    // a slot the screen read shows open, or the addresses being read again: not a try; the tries still end in slot_failed
+    var s1 = new AutoPilot(geo); int s1Clicks = 0; long st1 = 0;
+    for (; st1 < 10000; st1 += 100) if (s1.Step(new AutoView { NowMs = st1, Foreground = true, H = H, Slot = new[] { 100, 200, 60, 60 }, SlotOpen = true }).Kind == AutoKind.Click) s1Clicks++;
+    for (; st1 < 20000; st1 += 100) if (s1.Step(new AutoView { NowMs = st1, Foreground = true, H = H, Slot = new[] { 100, 200, 60, 60 }, PanelOk = false }).Kind == AutoKind.Click) s1Clicks++;
+    Check(s1Clicks == 0 && s1.State == "work", "slot shown open / addresses being scanned: no click, no try, not failed");
+    for (; st1 < 30000; st1 += 100) if (s1.Step(new AutoView { NowMs = st1, Foreground = true, H = H, Slot = new[] { 100, 200, 60, 60 } }).Kind == AutoKind.Click) s1Clicks++;
+    Eq(AutoPilot.SlotTries, s1Clicks, "slot: the tries start when it is not shown open");
+    Eq("slot_failed", s1.State, "slot that stays closed -> slot_failed");
+
     Console.WriteLine("Blue button test (measured on the live game)");
     int blue = unchecked((int)0xFF5160B3), dark = unchecked((int)0xFF49423F), gold = unchecked((int)0xFFC98F3A), white = unchecked((int)0xFFF0F0F0);
     Check(ButtonCheck.IsBlueFill(blue) && !ButtonCheck.IsBlueFill(dark) && !ButtonCheck.IsBlueFill(gold) && !ButtonCheck.IsBlueFill(white), "blue fill vs background, gold button, text");
@@ -5175,6 +5211,29 @@ static class CoreTests {
     game = new FakeFilterGame(g, W, H) { SetList = sets, StatList = stats, HideEq = true };
     RunFilter(new FilterPilot(g), game, 721500, 13, true, true);
     Check(!game.HideEq && game.Open, "item on another hero: «Скрыть надетое» off");
+
+    // the sub stats' side panel is still open: it swallows the click on «Скрыть надетое» - closed first, the filter is not done before
+    game = new FakeFilterGame(g, W, H) { SetList = sets, StatList = stats, HideEq = true, Open = true, Side = true, SubSide = true };
+    var fph = new FilterPilot(g); int swallowed = 0; double hx = g.X(g.HideEquippedX, W, H), hy = g.Y(g.HideEquippedY, W, H);
+    for (long t = 0; t < 20000; t += 100) {
+      var v = new FilterView { NowMs = t, Foreground = true, W = W, H = H, Item = 5, Wanted = true, Suits = game.Suits.ToArray(), MainAttrs = game.Mains.ToArray(),
+        HideEquipped = game.HideEq, OnOtherHero = true, SetOrder = game.SetList, SubOrder = game.SubList, SubAttrs = game.Subs.ToArray(),
+        PanelOpen = game.Open, SidePanelOpen = game.Open && game.Side, SetPanelOpen = false };
+      var a = fph.Step(v);
+      if (a == null) break;
+      if (a.Kind == AutoKind.Click) { if (game.Side && Math.Abs(a.X - hx) < 12 && Math.Abs(a.Y - hy) < 12) swallowed++; game.Click(a.X, a.Y); }
+    }
+    Check(swallowed == 0 && !game.HideEq, "side panel open: it is closed before «Скрыть надетое» is clicked (" + swallowed + " clicks into the panel)");
+    // the click never takes effect: the filter is not reported done while the item stays hidden
+    game = new FakeFilterGame(g, W, H) { SetList = sets, StatList = stats, HideEq = true, Open = true };
+    var fpn = new FilterPilot(g); bool doneEarly = false;
+    for (long t = 0; t < 20000; t += 100) {
+      var v = new FilterView { NowMs = t, Foreground = true, W = W, H = H, Item = 5, Wanted = true, Suits = new long[0], MainAttrs = new long[0],
+        HideEquipped = true, OnOtherHero = true, SetOrder = game.SetList, SubOrder = game.SubList, SubAttrs = new long[0], PanelOpen = true };
+      fpn.Step(v);
+      if (fpn.State == "done") doneEarly = true;
+    }
+    Check(!doneEarly && fpn.State == "failed" && fpn.Note != "", "«Скрыть надетое» stays on: failed with a note, never done (" + fpn.State + ": " + fpn.Note + ")");
 
     game = new FakeFilterGame(g, W, H) { SetList = sets, StatList = stats, Open = true };
     int m = RunFilter(new FilterPilot(g), game, 721500, 13, false, false);
