@@ -600,8 +600,12 @@ namespace RealmForge {
 
     /// <summary>The equip pilot's state (Overlay AutoSay, on every change): its failures are reported.</summary>
     void OnAutoState(string st) {
-      if (st == "failed" || st == "slot_failed" || st == "unconfirmed" || st == "hero_failed")
-        Report("pilot." + st, "auto: " + st, Ctx("state", st));
+      if (st == "failed" || st == "slot_failed" || st == "unconfirmed" || st == "hero_failed") {
+        var ctx = Ctx("state", st);
+        string why = "";
+        foreach (var kv in overlay.AutoDetail) { ctx[kv.Key] = kv.Value; if (kv.Key == "why") why = kv.Value; }
+        Report("pilot." + st, "auto: " + st + (why != "" ? " - " + why : ""), ctx);
+      }
     }
 
     static List<long> Uids(Dictionary<string, object> m) {
@@ -1336,6 +1340,7 @@ namespace RealmForge {
         return;
       }
       pollError = null;
+      overlay.PanelOk = s.PanelOk;
       // the hero screen is open, but the scan ran before the game built it (the player was in the city): scan again, at
       // most once a minute - without the form the hero cannot be brought up and the gear list is not known to be open
       if (s.GameRunning && s.HeroUid > 0 && addrs.Form == 0 && DateTime.UtcNow > rescanAfter) {

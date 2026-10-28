@@ -260,6 +260,12 @@ namespace RealmForge {
     public bool Busy { get { return runHero != 0 || target != 0 || (sellWanted != null && !sellHint) || sending; } }
     // what the frame tick found this tick (for the pilot)
     int curRow, curCol; long curSel;
+    // for the error report of a pilot failure (AutoDetail): what the pilot was given and did last
+    AutoView lastAutoView; FilterView lastFilterView; string lastPilotTrace = ""; int lastClientW, lastClientH;
+    /// <summary>Public to the host: set PanelOk from the live poll (the game's panel table is readable).</summary>
+    public bool PanelOk = true;
+    /// <summary>What the report of a pilot failure says about it (no account or user data): filled when the state changes to a failure.</summary>
+    public System.Collections.Generic.Dictionary<string, string> AutoDetail = new System.Collections.Generic.Dictionary<string, string>();
     // player activity: the cursor moved by someone else than the pilot, or a mouse button went down
     volatile bool sending; W32.POINT seen; bool seenSet; long lastMoveMs; bool btnWasDown, userClick; string autoSaid = "";
     EquipAddrs addrs; long target; int[] types; ulong typesPtr; long lastSel = -1;
@@ -1522,7 +1528,23 @@ namespace RealmForge {
 
     static long NowMs() { return Environment.TickCount & 0x7FFFFFFF; }
 
-    void AutoSay(string st) { if (st != autoSaid) { autoSaid = st; autoReport(st); Log.Write("auto: " + st + (target != 0 ? " item " + target + " row " + curRow + "/" + curCol + " anchor=" + anchor.Has : "")); } }
+    void AutoDetailFor(string st) {
+      var d = new System.Collections.Generic.Dictionary<string, string>();
+      var v = lastAutoView; var f = lastFilterView;
+      string tr = pilot.Trace != "" ? pilot.Trace : lastPilotTrace;
+      string why = st == "hero_failed" ? "" : pilot.Why;
+      d["why"] = why;
+      d["item"] = target.ToString();
+      d["place"] = "row " + curRow + "/" + curCol + " slot " + hintSlot + " guide " + hintKind;
+      d["trace"] = tr;
+      d["tries"] = "clicks " + pilot.Clicks + " drags " + pilot.Drags;
+      d["sel"] = "sel " + curSel + " owner " + (v != null ? v.Owner : -1) + " hero " + hintHero + " screen hero " + (v != null ? v.ScreenHero : 0);
+      d["filter"] = f == null ? "-" : "hideEq " + f.HideEquipped + " otherHero " + f.OnOtherHero + " panel " + f.PanelOpen + "/" + f.SidePanelOpen + " note " + fpilot.Note;
+      d["client"] = lastClientW + "x" + lastClientH + " row1top " + (v != null ? ((int)v.Row1Top).ToString() : "-") + " anchor " + anchor.Has + " src " + (anchorSrc == "" ? "-" : anchorSrc) + " panelok " + PanelOk;
+      AutoDetail = d;
+    }
+
+    void AutoSay(string st) { if (st != autoSaid) { autoSaid = st; AutoDetailFor(st); autoReport(st); Log.Write("auto: " + st + (target != 0 ? " item " + target + " row " + curRow + "/" + curCol + " anchor=" + anchor.Has : "")); } }
 
     /// <summary>The pilot's step for this tick: gather what the game shows, ask src/AutoPilot.cs, do the action.</summary>
     void TickAuto() {
@@ -1562,12 +1584,14 @@ namespace RealmForge {
       var v = new AutoView {
         NowMs = now, Foreground = fp == gp, UserBusy = down || now - lastMoveMs < 700, UserClicked = userClick, H = Ui.Unit(cr.R, cr.B),
         Slot = hintKind == "slot" ? hg.Slot(hintSlot, cr.R, cr.B) : null,
-        Target = target, Row = curRow, Col = curCol, Sel = curSel,
+        Target = target, Row = curRow, Col = curCol, Sel = curSel, SelRow = selRow, SelCol = selCol,
+        SlotOpen = hintKind == "slot" && screens.Hero != null && screens.Hero.FormOk && screens.Hero.Tab == HeroGeometry.GearTab && screens.Hero.Part == hintSlot,
+        PanelOk = PanelOk,
         AnchorHas = anchor.Has && !follow.Unsure && types != null && typesPtr != 0, Row1Top = anchor.Row1Top, Types = types,
         AutoConfirm = confirm, Button = confirm ? confirmBtn : null, Hero = hintHero,
-        ScreenHero = confirm ? RFX.ReadHero(addrs) : 0, Owner = confirm ? RFX.ReadOwner(addrs, target) : -1
+        ScreenHero = confirm ? RFX.ReadHero(addrs) : 0, Owner = AutoConfirm && target > 0 ? RFX.ReadOwner(addrs, target) : -1
       };
-      userClick = false;
+      userClick = false; lastAutoView = v; lastClientW = cr.R; lastClientH = cr.B;
       // first the plan's hero on the hero screen (a started plan only), then the game's filter (the item far down or
       // hidden), then the item itself
       if (runHero > 0) {
@@ -1606,7 +1630,7 @@ namespace RealmForge {
       if (ArtPhase) { TickArtEquip(o, cr, v); return; }
       var fview = FilterViewNow(o, cr, now, v.Foreground, v.UserBusy);
       var fa = fpilot.Step(fview);
-      LogFilter(fview);
+      LogFilter(fview); lastFilterView = fview;
       if (fview.PanelOpen && fview.SidePanelOpen) v.SideClose = new[] { fg.X(fg.SideCloseX, cr.R, cr.B), fg.Y(fg.CloseY, cr.R, cr.B) };
       if (fpilot.State == "failed") {
         if (!filterFailSaid) { filterFailSaid = true; RaiseProblem("pilot.filter_failed", "filter failed: the game's gear filter could not be set for item " + fview.Item + " (kind " + filterKind + ")"); }
@@ -1631,7 +1655,7 @@ namespace RealmForge {
       }
       var a = pilot.Step(v);
       AutoSay(pilot.State);
-      if (pilot.Trace != "") { Log.Write("auto: " + pilot.Trace); pilot.Trace = ""; }
+      if (pilot.Trace != "") { Log.Write("auto: " + pilot.Trace); lastPilotTrace = pilot.Trace; pilot.Trace = ""; }
       if (a.Kind == AutoKind.None) return;
       int x = o.X + (int)Math.Round(a.X), y = o.Y + (int)Math.Round(a.Y), y2 = y + (int)Math.Round(a.DY);
       if (x < o.X || y < o.Y || x >= o.X + cr.R || y >= o.Y + cr.B) return;   // never outside the game's client area
