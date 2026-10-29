@@ -79,6 +79,9 @@ static class CoreTests {
     return px;
   }
 
+  // the site checkout the tests read its data from: RF_WEB when set, else ../wardsage-web
+  static string WebRoot() { string e = Environment.GetEnvironmentVariable("RF_WEB"); return string.IsNullOrEmpty(e) ? Path.Combine("..", "wardsage-web") : e; }
+
   static string Tok(char c) { return "rf_" + new string(c, 32); }
 
   static int Main(string[] args) {
@@ -1290,12 +1293,21 @@ static class CoreTests {
     Check(threw, "no data: no fight timeline");
     Layout.Use(held);
     // the layout files the site serves (the web repo next to this one, when it is there): each is complete for the app
-    string web = Path.Combine("..", "wardsage-web", "data", "app-layout");
+    string web = Path.Combine(WebRoot(), "data", "app-layout");
     if (Directory.Exists(web)) {
       int n = 0;
       foreach (var p in Directory.GetFiles(web, "*.json")) {
         string v = Path.GetFileNameWithoutExtension(p);
-        Check(GameLayout.Parse(File.ReadAllText(p, Encoding.UTF8), v) != null, "the site's layout file " + v + " has everything the app reads");
+        int at = v.IndexOf('@');
+        if (at < 0) {
+          Check(GameLayout.Parse(File.ReadAllText(p, Encoding.UTF8), v) != null, "the site's layout file " + v + " has everything the app reads");
+        } else {
+          // a per-build file: <version>@<asm>.json, parsed with its own asm as the local one (so it is read fully)
+          string ver = v.Substring(0, at), asm = v.Substring(at + 1);
+          var lb = GameLayout.Parse(File.ReadAllText(p, Encoding.UTF8), ver, asm);
+          Check(lb != null && !lb.RvaDropped, "the site's layout file " + v + " has everything the app reads");
+          Check(lb != null && lb.Asm == asm, "the site's layout file " + v + " carries the asm of its name");
+        }
         n++;
       }
       Check(n > 0, "the site has layout files");
@@ -1343,12 +1355,12 @@ static class CoreTests {
 
   static void LayoutChecksums() {
     var sums = new Dictionary<string, string> {
-      { "1.6.38.829.1", "cbb997f406c44ee76d363baff7bf9011907d46727ed9323e967ff7e84807fb4d" },
-      { "1.6.39.829.1", "e80ebe2420d62e993a2fae927d85b8fe9a6ac9d449f5aa17c9c3e0ab561ba8d5" } };
+      { "1.6.38.829.1", "8d00e7891af329c886a61260a9e3f73c8cc4b5d48dcd68f2a671ad6289b21b99" },
+      { "1.6.39.829.1", "7138548316cfb63c9ca01d6b6211eb331390ed555b3f6ed3ed032673e9172da5" } };
     foreach (var kv in sums) {
       string path = null;
-      foreach (var repo in new[] { "wardsage-web", "realmforge-web" }) {
-        string p = Path.Combine("..", repo, "data", "app-layout", kv.Key + ".json");
+      foreach (var root in new[] { WebRoot(), Path.Combine("..", "realmforge-web") }) {
+        string p = Path.Combine(root, "data", "app-layout", kv.Key + ".json");
         if (File.Exists(p)) { path = p; break; }
       }
       if (path == null) { Console.WriteLine("  (no site layout file for " + kv.Key + ": checksum not checked)"); continue; }
@@ -3319,7 +3331,7 @@ static class CoreTests {
     cs = LocateFrames.CityButtonSize(null, U); Check(Math.Abs(cs[0] - 110) < 0.01 && Math.Abs(cs[1] - 130) < 0.01, "frame: ... else the old estimate");
 
     // the real file the site serves (the web repo next to this one): everything the frames use is in it and sits where the app's older constants say
-    string real = Path.Combine("..", "wardsage-web", "data", "app-geometry");
+    string real = Path.Combine(WebRoot(), "data", "app-geometry");
     if (Directory.Exists(real)) {
       int n = 0;
       foreach (var p in Directory.GetFiles(real, "*.json")) {
@@ -3443,7 +3455,7 @@ static class CoreTests {
     Check(LocateFrames.ListMarker(null, vt + pad, vt, pad, p100, 20, 5, W, H, U) == null, "list mark: no geometry -> none (only the pill)");
 
     // the real file: the card's button sits on the card's bottom edge at any window height, the bar next to the list
-    string real = Path.Combine("..", "wardsage-web", "data", "app-geometry");
+    string real = Path.Combine(WebRoot(), "data", "app-geometry");
     if (Directory.Exists(real)) foreach (var p in Directory.GetFiles(real, "*.json")) {
       string v = Path.GetFileNameWithoutExtension(p);
       var rg = GameGeometry.Parse(File.ReadAllText(p, Encoding.UTF8), v);
@@ -4094,7 +4106,7 @@ static class CoreTests {
     }
     Check(Math.Abs(tb[0] - 0.0023 * U) <= 1.5 && Math.Abs(tb[1] - 0.4022 * U) <= 1.5 && Math.Abs(tb[2] - 0.1688 * U) <= 1.5 && Math.Abs(tb[3] - 0.125 * U) <= 1.5, "art hint: the «Артефакт» toggle (research numbers) " + string.Join(",", tb));
     Check(Math.Abs(bb[0] - 0.4728 * U) <= 1.5 && Math.Abs(bb[1] - (H - 0.0983 * U)) <= 1.5 && Math.Abs(bb[2] - 0.2466 * U) <= 1.5 && Math.Abs(bb[3] - 0.0575 * U) <= 1.5, "art hint: «Массовая продажа» (live recording numbers) " + string.Join(",", bb));
-    string webGeo = Path.Combine("..", "wardsage-web", "data", "app-geometry", "1.6.39.829.1.json");
+    string webGeo = Path.Combine(WebRoot(), "data", "app-geometry", "1.6.39.829.1.json");
     if (File.Exists(webGeo)) {
       var rg = GameGeometry.Parse(File.ReadAllText(webGeo, Encoding.UTF8), "1.6.39.829.1");
       Check(rg != null && rg.Has("inventory.leftTab.artifact") && rg.Has("inventory.artBulkSell") && rg.Has("inventory.artList") && rg.Grid("inventory.artList") != null && rg.Grid("inventory.artList").Cols == 8 && Math.Abs(rg.Grid("inventory.artList").LineSize - 116) < 0.01,
@@ -4363,7 +4375,7 @@ static class CoreTests {
     var fMat = ArtFrames.For(LocateGuide.NextArt(req, null, wsM), null, wsM, null, Wd, Hd, U);
     double slotW = 245.0 / 3;
     Check(fMat != null && fMat.Mark.Kind == "box" && Math.Abs(fMat.Mark.X - (18.5 + slotW + (slotW - 80) / 2)) <= 1.5 && Math.Abs(fMat.Mark.Y - (73 + 2)) <= 1.5, "art frames: place 2 of the copy list: column 2, row 1 (" + (fMat == null ? "none" : fMat.Mark.X + "," + fMat.Mark.Y) + ")");
-    string webGeo = Path.Combine("..", "wardsage-web", "data", "app-geometry", "1.6.39.829.1.json");
+    string webGeo = Path.Combine(WebRoot(), "data", "app-geometry", "1.6.39.829.1.json");
     if (File.Exists(webGeo)) {
       var rg = GameGeometry.Parse(File.ReadAllText(webGeo, Encoding.UTF8), "1.6.39.829.1");
       Check(rg != null && rg.Has("inventory.artWorkshop") && rg.Has("artifact.tab.promote") && rg.Has("artifact.promoteBtn") && rg.Has("artifact.matList") && rg.Grid("artifact.matList") != null && rg.Grid("artifact.matList").Cols == 3 && Math.Abs(rg.Grid("artifact.matList").LineSize - 114) < 0.01,
@@ -4583,7 +4595,7 @@ static class CoreTests {
     Check(farF != null && farF.Mark.Kind == "down" && farF.Mark.Rows >= 1 && farF.ScrollPx < 0, "art frames: a cell far below -> the pill at the list's edge, the list is to be dragged up");
     var noScroll = HS(7, true, 0, other, 9001, u5); noScroll.ArtList = null;
     Check(ArtEquipFrames.For(s3, noScroll, null, Wd, Hd, U) == null, "art frames: the list's scroll unreadable -> no cell frame (the plate stays)");
-    string webGeo = Path.Combine("..", "wardsage-web", "data", "app-geometry", "1.6.39.829.1.json");
+    string webGeo = Path.Combine(WebRoot(), "data", "app-geometry", "1.6.39.829.1.json");
     if (File.Exists(webGeo)) {
       var rg = GameGeometry.Parse(File.ReadAllText(webGeo, Encoding.UTF8), "1.6.39.829.1");
       Check(rg != null && rg.Has("hero.artifactTab") && rg.Has("hero.artOpenList") && rg.Has("hero.artAdd") && rg.Has("hero.artList") && rg.Has("hero.artReplace") && rg.Has("popup.equipReplace") && rg.Has("hero.artSell") && rg.Has("hero.artQuickEquip"), "art frames: the site's geometry file has every key");
@@ -5012,7 +5024,7 @@ static class CoreTests {
     }
     var pbtn = ArtFrames.Rect(null, "artifact.promoteBtn", W, H, U);
     Check(ClickGate.OnNeverButton(null, pbtn.CX, pbtn.CY, W, H, U) && !ClickGate.OnNeverButton(null, 5, 5, W, H, U), "art gate: the guard knows «Продвинуть» (research numbers) and lets the rest of the screen be");
-    string rw = Path.Combine("..", "wardsage-web", "data", "app-geometry", "1.6.39.829.1.json");
+    string rw = Path.Combine(WebRoot(), "data", "app-geometry", "1.6.39.829.1.json");
     if (File.Exists(rw)) {
       var rg = GameGeometry.Parse(File.ReadAllText(rw, Encoding.UTF8), "1.6.39.829.1");
       var pb2 = rg != null ? ArtFrames.Rect(rg, "artifact.promoteBtn", W, H, U) : null;
