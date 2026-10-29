@@ -35,7 +35,7 @@ namespace RealmForge {
     InvListCell,      // an item's cell in the inventory list, normal mode (selects it; «Показать в игре»)
     InvBulkCell,      // an item's cell in the inventory list, bulk-sale mode (toggles its choice; the storage cleanup only)
     InvListDrag,      // a drag that scrolls the inventory list
-    FoundryButton,    // «Литейная» (the inventory's or the hero gear screen's)
+    FoundryButton,    // «Литейная» of the inventory's equipment tab (never on the hero screen)
     AscendTab,        // the Foundry's «Вознесение» tab
     SlotTab,          // the Ascension list's slot tab
     AscendCell,       // an item's cell in the Ascension list (selects it)
@@ -181,7 +181,8 @@ namespace RealmForge {
             case ClickTarget.InvEquipTab: return new Rule { Kinds = K(ScreenKind.Inventory), InvOtherTab = true };
             case ClickTarget.InvListCell: return new Rule { Kinds = K(ScreenKind.Inventory), InvNormalEquip = true, Cell = true, NeedScroll = true };
             case ClickTarget.InvListDrag: return new Rule { Kinds = K(ScreenKind.Inventory), InvNormalEquip = true };
-            case ClickTarget.FoundryButton: return new Rule { Kinds = K(ScreenKind.Inventory, ScreenKind.HeroScreen), InvNormalEquip = true, HeroTab = 3 };
+            // the inventory's only: the hero screen covers the city and the inventory (live 2026-10-29: its own «Литейная» is gone with a gear list open)
+            case ClickTarget.FoundryButton: return new Rule { Kinds = K(ScreenKind.Inventory), InvNormalEquip = true };
             case ClickTarget.AscendTab: return new Rule { Kinds = K(ScreenKind.Foundry), FoundryNotTab = 2 };
             case ClickTarget.SlotTab: return new Rule { Kinds = K(ScreenKind.Foundry), FoundryTab = 2 };
             case ClickTarget.AscendCell: return new Rule { Kinds = K(ScreenKind.Foundry), FoundryTab = 2, Cell = true };
@@ -288,7 +289,10 @@ namespace RealmForge {
     public static Func<ScreenState, bool> Expect(ClickRequest r, ScreenState before) {
       long uid = r.CellUid; string selKey = before != null ? before.InvSelKey : ""; string fkey = before != null ? before.FoundryKey : "";
       switch (r.Target) {
-        case ClickTarget.HeroBack: return s => s.Kind != ScreenKind.HeroScreen;
+        case ClickTarget.HeroBack: {   // the back arrow closes an open gear list first (the hero grid shows again), the hero screen then
+          int part = before != null && before.Kind == ScreenKind.HeroScreen ? before.HeroSlot : -1;
+          return s => s.Kind != ScreenKind.HeroScreen || (part >= 0 && s.HeroSlot < 0);
+        }
         case ClickTarget.CityInventory: return s => s.Kind == ScreenKind.Inventory;
         case ClickTarget.InvEquipTab: return s => s.Kind == ScreenKind.Inventory && s.InvEquipTab;
         case ClickTarget.InvBulkEnter: return s => s.Kind == ScreenKind.Inventory && s.InvBulk;

@@ -3562,9 +3562,16 @@ static class CoreTests {
     Eq(LocateTodo.FoundryButton, LocateAuto.Decide(v, out why), "foundry auto: the inventory's «Литейная» -> click it");
     p = new LocatePilot(); m = p.Step(v); var wk = g.Rect("inventory.workshop", W, H, U);
     Check(m.State == "work" && m.Action.Kind == AutoKind.Click && Math.Abs(m.Action.X - wk.CX) < 1 && Math.Abs(m.Action.Y - wk.CY) < 1, "foundry auto: ... at the button's centre from the geometry");
-    v = V(new LocateStep { Kind = LocateKind.OpenFoundry, OnGear = true }, null); v.OtherFormOpen = false; v.HeroScreenOpen = true;
-    Eq(LocateTodo.FoundryButton, LocateAuto.Decide(v, out why), "foundry auto: the hero gear screen's «Литейная» -> click it");
-    p = new LocatePilot(); m = p.Step(v); wk = g.Rect("hero.workshop", W, H, U); Check(Math.Abs(m.Action.X - wk.CX) < 1 && Math.Abs(m.Action.Y - wk.CY) < 1, "foundry auto: ... at the hero screen's button");
+    // the hero gear screen on top (live 2026-10-29: the equip helper left it open with a slot's gear list): back to the city first, never its «Литейная»
+    v = V(new LocateStep { Kind = LocateKind.OpenFoundry, OnGear = true }, null); v.OtherFormOpen = false; v.HeroScreenOpen = true; v.Inv = null;
+    Eq(LocateTodo.BackToCity, LocateAuto.Decide(v, out why), "foundry auto: the hero gear screen on top -> back to the city, not «Литейная»");
+    p = new LocatePilot(); m = p.Step(v); var hgeo = new HeroGeometry(); wk = g.Rect("hero.workshop", W, H, U);
+    Check(m.State == "work" && m.Todo == LocateTodo.BackToCity && m.Action.Kind == AutoKind.Click && Math.Abs(m.Action.X - hgeo.BackX * U) < 1 && Math.Abs(m.Action.Y - hgeo.BackY * U) < 1, "foundry auto: ... the first click is the hero screen's back arrow");
+    Check(!(Math.Abs(m.Action.X - wk.CX) < 1 && Math.Abs(m.Action.Y - wk.CY) < 1), "foundry auto: ... not the hero screen's «Литейная»");
+    m = p.Step(v); Check(m.Action.Kind == AutoKind.None, "foundry auto: ... then it waits for the screen to change");
+    v.NowMs = LocatePilot.AfterBackMs + 1; m = p.Step(v); Check(m.Todo == LocateTodo.BackToCity && m.Action.Kind == AutoKind.Click, "foundry auto: ... still the hero screen (the gear list closed): the back arrow again");
+    v = V(new LocateStep { Kind = LocateKind.OpenFoundry, OnGear = true }, null); v.OtherFormOpen = false; v.HeroScreenOpen = true; v.Geometry = null;
+    Eq(LocateTodo.Hint, LocateAuto.Decide(v, out why), "foundry auto: the hero gear screen without the geometry -> a hint, no click");
     v = V(new LocateStep { Kind = LocateKind.OpenFoundry }, null); v.OtherFormOpen = true; Eq(LocateTodo.Hint, LocateAuto.Decide(v, out why), "foundry auto: the gem screen on top -> no click");
     v = V(new LocateStep { Kind = LocateKind.OpenFoundry }, null); v.OtherFormOpen = false; v.Geometry = null; Eq(LocateTodo.Hint, LocateAuto.Decide(v, out why), "foundry auto: no geometry -> a hint");
     v = V(new LocateStep { Kind = LocateKind.OpenFoundry }, null); v.OtherFormOpen = false; v.Inv.EquipTab = false; Eq(LocateTodo.Stop, LocateAuto.Decide(v, out why), "foundry auto: «Литейная» is not on this inventory tab -> stop");
@@ -3988,6 +3995,28 @@ static class CoreTests {
       Check(halted && gate.HaltReason(ClickOwner.Sell) == "unknown", "gate loop: Preflight(City) + Check(Unknown) past the grace -> halt unknown");
       int waits = 0; foreach (var l in log) if (l.Contains("wait (unknown)")) waits++;
       Eq(1, waits, "gate loop: the unknown wait is logged once");
+    }
+    {   // the hero screen covers the city (live 2026-10-29: «Литейная» allowed on HeroScreen tab 3 slot 0, nothing changed): no city / Foundry button on it
+      var heroUp = ScreenState.Classify(new ScreenInputs { Hero = new HeroScreen { Hero = 204200000, FormOk = true, Tab = 3, Part = 0 }, CityForm = true, CitySeen = true }, 0);
+      Eq(ScreenKind.HeroScreen, heroUp.Kind, "city gate: the hero screen over an open city form is the hero screen");
+      foreach (ClickTarget ct in new[] { ClickTarget.FoundryButton, ClickTarget.CityInventory }) {
+        var g1 = new ClickGate(); var res = g1.Check(new ClickRequest { Owner = ClickOwner.Locate, Target = ct, AutoOn = true, Front = true }, heroUp, 0);
+        Check(res.Verdict == GateVerdict.Deny && res.Reason == "screen", "city gate: " + ct + " refused while the hero screen is on top, the city open beneath");
+        g1 = new ClickGate(); res = g1.Check(new ClickRequest { Owner = ClickOwner.Sell, Target = ct, AutoOn = true, Front = true }, heroUp, 0);
+        Check(!res.Allowed, "city gate: " + ct + " refused for the storage cleanup too");
+      }
+      var heroGrid = ScreenState.Classify(new ScreenInputs { Hero = new HeroScreen { Hero = 204200000, FormOk = true, Tab = 3, Part = -1 } }, 0);
+      Check(!new ClickGate().Check(new ClickRequest { Owner = ClickOwner.Locate, Target = ClickTarget.FoundryButton, AutoOn = true, Front = true }, heroGrid, 0).Allowed, "city gate: the hero gear screen's «Литейная» is not a target either");
+      var g2 = new ClickGate(); var back = new ClickRequest { Owner = ClickOwner.Locate, Target = ClickTarget.HeroBack, AutoOn = true, Front = true };
+      Check(g2.Check(back, heroUp, 0).Allowed, "city gate: the back arrow is allowed on the hero screen");
+      var exp = ClickGate.Expect(back, heroUp);
+      Check(exp(heroGrid), "city gate: the back arrow closing the gear list is its effect (the hero grid shows again)");
+      Check(exp(ScreenState.Classify(new ScreenInputs { CityForm = true }, 0)), "city gate: ... and so is the city");
+      Check(!exp(heroUp), "city gate: ... the gear list still open is no effect");
+      var expGrid = ClickGate.Expect(back, heroGrid);
+      Check(!expGrid(heroGrid) && expGrid(ScreenState.Classify(new ScreenInputs { CityForm = true }, 0)), "city gate: from the hero grid only leaving the hero screen counts");
+      var city = ScreenState.Classify(new ScreenInputs { CityForm = true }, 0);
+      Check(new ClickGate().Check(new ClickRequest { Owner = ClickOwner.Locate, Target = ClickTarget.CityInventory, AutoOn = true, Front = true }, city, 0).Allowed, "city gate: «Инвентарь» on the city still allowed");
     }
     Eq(0UL, RFX.PanelAfterForm(0x1000UL, 0x10UL, 0x20UL, 0), "panel: the form changed, no EquipFilter found -> 0");
     Eq(0x1000UL, RFX.PanelAfterForm(0x1000UL, 0x10UL, 0x10UL, 0), "panel: same form -> kept");

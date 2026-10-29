@@ -9,7 +9,7 @@
 //     run on a normal-mode screen: a click only selects the item here, nothing is sold). The list's position is the game's own
 //     scroll reading (InvScroll); the picture is only the fallback. Not for Ascension: the Foundry starts without the item.
 // With the screen geometry from the site (src/Geometry.cs, placed by src/LocateFrames.cs) it also clicks «Литейная» (the
-// inventory's or the hero gear screen's), the Foundry's «Вознесение» tab, the slot tab of the Ascension list and the item's cell
+// inventory's; from the hero gear screen it goes back to the city first), the Foundry's «Вознесение» tab, the slot tab of the Ascension list and the item's cell
 // there (scrolling the list by dragging, the exact place from the game's own scroll reading). Without the geometry these stay hints.
 // Recast: with the item selected in the Inventory it clicks the card's gem button («Улучшение самоцветами»; the rect is the frame's), and on the
 // gem screen the list row of the wanted recast function; then it stops - «Улучшить» is the player's.
@@ -33,7 +33,7 @@ namespace RealmForge {
     InventoryButton,   // the city: «Инвентарь»
     EquipTab,          // the inventory is on another tab: «Снаряжение»
     PickItem,          // the item is in the inventory's list: scroll to it and click it
-    FoundryButton,     // «Литейная» (the inventory's or the hero gear screen's)
+    FoundryButton,     // «Литейная» of the inventory (the hero gear screen's one is only pointed at: the hero screen is closed first)
     AscendTab,         // the Foundry is open on another tab: «Вознесение»
     SlotTab,           // the Ascension list: the item's slot tab (the filter itself is never touched)
     CardGem,           // recast: the selected item's card, the gem button («Улучшение самоцветами»)
@@ -109,6 +109,10 @@ namespace RealmForge {
           if (v.OtherFormOpen) { why = "form"; return LocateTodo.Hint; }   // the gem screen is on top: the button is not there
           var f = LocateFrames.For(st, v.Item, v.Rs, v.FoundryTabs, v.Geometry, v.W, v.H, v.U);
           if (f == null || !f.Clickable) { why = "foundry"; return LocateTodo.Hint; }
+          // the hero screen covers the city: its back arrow first (an open gear list closes with it too), then the city's «Инвентарь»
+          // and the inventory's «Литейная». The gear screen's own «Литейная» is never clicked (with a slot's gear list open it is not
+          // there: live 2026-10-29); it stays framed for the player.
+          if (v.HeroScreenOpen) return LocateTodo.BackToCity;
           if (st.OnGear ? !v.HeroScreenOpen : (v.Inv == null || !v.Inv.Open || !v.Inv.EquipTab)) { why = "screen"; return LocateTodo.Stop; }
           return LocateTodo.FoundryButton;
         }
