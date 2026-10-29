@@ -23,7 +23,7 @@ Set-StrictMode -Version 2
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$RunnerVersion   = '7'
+$RunnerVersion   = '8'
 $Dir             = Join-Path $env:LOCALAPPDATA 'WardsageLab'
 $StopFile        = Join-Path $Dir 'STOP'
 $LogFile         = Join-Path $Dir 'runner.log'
@@ -284,21 +284,81 @@ public static class LabWin {
     [DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr h);
     [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
     [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
+    [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
+    [StructLayout(LayoutKind.Sequential)] public struct MONITORINFO { public int cbSize; public RECT rcMonitor; public RECT rcWork; public int dwFlags; }
+    [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
+    [DllImport("user32.dll")] public static extern IntPtr MonitorFromWindow(IntPtr h, int flags);
+    [DllImport("user32.dll")] public static extern bool GetMonitorInfo(IntPtr m, ref MONITORINFO mi);
+    [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
 }
 "@
-function Set-GameFront {
+function Get-GameHandle {
     $h = [IntPtr]::Zero
     foreach ($p in @(Get-Process -Name $GameProcessName -ErrorAction SilentlyContinue)) {
         try { $p.Refresh(); if ($p.MainWindowHandle -ne [IntPtr]::Zero) { $h = $p.MainWindowHandle } } catch { }
     }
+    return $h
+}
+# returns @{ rect = 'l,t,r,b'; work = 'l,t,r,b'; inside = bool }
+function Get-GameBounds([IntPtr]$h) {
+    $r = New-Object 'LabWin+RECT'
+    [void][LabWin]::GetWindowRect($h, [ref]$r)
+    $mi = New-Object 'LabWin+MONITORINFO'
+    $mi.cbSize = [Runtime.InteropServices.Marshal]::SizeOf([type]'LabWin+MONITORINFO')
+    $m = [LabWin]::MonitorFromWindow($h, 2)      # MONITOR_DEFAULTTONEAREST
+    [void][LabWin]::GetMonitorInfo($m, [ref]$mi)
+    $w = $mi.rcWork
+    $inside = ($r.Left -ge $w.Left -and $r.Top -ge $w.Top -and $r.Right -le $w.Right -and $r.Bottom -le $w.Bottom)
+    return @{ rect = ('' + $r.Left + ',' + $r.Top + ',' + $r.Right + ',' + $r.Bottom); work = ('' + $w.Left + ',' + $w.Top + ',' + $w.Right + ',' + $w.Bottom)
+              inside = $inside; wl = $w.Left; wt = $w.Top; ww = ($w.Right - $w.Left); wh = ($w.Bottom - $w.Top) }
+}
+# fits the window into the monitor work area when it is out of bounds (window calls only); returns $true when it moved it
+function Repair-GameBounds([IntPtr]$h) {
+    $b = Get-GameBounds $h
+    if ($b.inside -and [LabWin]::IsZoomed($h)) { return $false }
+    if ($b.inside -and -not [LabWin]::IsIconic($h)) { return $false }
+    Write-Log ('game_front: out of bounds, rect=' + $b.rect + ' work=' + $b.work)
+    [void][LabWin]::ShowWindow($h, 9)      # SW_RESTORE
+    Start-Sleep -Milliseconds 300
+    [void][LabWin]::SetWindowPos($h, [IntPtr]::Zero, $b.wl, $b.wt, $b.ww, $b.wh, 0x0040)      # HWND_TOP, SWP_SHOWWINDOW
+    Start-Sleep -Milliseconds 300
+    $a = Get-GameBounds $h
+    Write-Log ('game_front: after fit rect=' + $a.rect + ' inside=' + $a.inside)
+    return $true
+}
+function Test-GameBoundsIdle {
+    try {
+        $h = Get-GameHandle
+        if ($h -eq [IntPtr]::Zero -or [LabWin]::IsIconic($h)) { return }
+        $b = Get-GameBounds $h
+        if (-not $b.inside) { [void](Repair-GameBounds $h) }
+    } catch { Write-Log ('bounds check failed: ' + (Get-ShortError $_)) }
+}
+function Set-GameFront {
+    $h = Get-GameHandle
     if ($h -eq [IntPtr]::Zero) { Write-Log 'game_front: no game window'; return @{ ok = $false; res = @{ error = 'no_game_window' } } }
     $maximized = $false
     try {
         $zoomed = [LabWin]::IsZoomed($h); $iconic = [LabWin]::IsIconic($h)
         if ($iconic -or -not $zoomed) { [void][LabWin]::ShowWindow($h, 3); $maximized = $true }      # SW_MAXIMIZE
+        Start-Sleep -Milliseconds 700
+        $fitted = $false
+        try {
+            $b = Get-GameBounds $h
+            Write-Log ('game_front: rect=' + $b.rect + ' work=' + $b.work + ' inside=' + $b.inside + ' zoomed=' + [LabWin]::IsZoomed($h))
+            if (-not $b.inside -or -not [LabWin]::IsZoomed($h)) {
+                [void][LabWin]::ShowWindow($h, 9)      # SW_RESTORE
+                Start-Sleep -Milliseconds 300
+                [void][LabWin]::SetWindowPos($h, [IntPtr]::Zero, $b.wl, $b.wt, $b.ww, $b.wh, 0x0040)      # HWND_TOP, SWP_SHOWWINDOW
+                Start-Sleep -Milliseconds 300
+                $fitted = $true
+                $a = Get-GameBounds $h
+                Write-Log ('game_front: after fit rect=' + $a.rect + ' inside=' + $a.inside)
+            }
+        } catch { Write-Log ('game_front: fit failed: ' + (Get-ShortError $_)) }
         $fg = [LabWin]::SetForegroundWindow($h)
-        Write-Log ('game_front: maximized=' + $maximized + ' foreground=' + $fg)
-        return @{ ok = $true; res = @{ maximized = $maximized; foreground = $fg } }
+        Write-Log ('game_front: maximized=' + $maximized + ' fitted=' + $fitted + ' foreground=' + $fg)
+        return @{ ok = $true; res = @{ maximized = $maximized; fitted = $fitted; foreground = $fg } }
     } catch {
         Write-Log ('game_front failed: ' + (Get-ShortError $_))
         return @{ ok = $false; res = @{ error = 'game_front_failed' } }
@@ -649,6 +709,7 @@ if ($Service) {
 }
 $lastBeat = [DateTime]::MinValue
 $lastClaim = [DateTime]::MinValue
+$lastBounds = Get-Date
 $backoffUntil = [DateTime]::MinValue
 try {
     while (-not $script:Exit) {
@@ -661,6 +722,7 @@ try {
         Test-RunnerUpdateDue
         if ($script:Exit) { break }
         Update-LogWatch
+        if (((Get-Date) - $lastBounds).TotalSeconds -ge 60) { $lastBounds = Get-Date; Test-GameBoundsIdle }
         if ((Get-Date) -ge $backoffUntil) {
             try {
                 $err = $null
