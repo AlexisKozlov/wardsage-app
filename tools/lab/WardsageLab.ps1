@@ -52,6 +52,17 @@ function Get-ClaimJob($d) {
     return $d
 }
 
+# the test app's manifest is requireAdministrator: the runner must be elevated to start/stop it (checked before the mutex)
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $isAdmin) {
+    Write-Host 'Run the lab as administrator: the test app requires admin rights'
+    try {
+        $relaunch = '-NoProfile -ExecutionPolicy Bypass -File "' + $PSCommandPath + '"'
+        Start-Process -FilePath 'powershell.exe' -ArgumentList $relaunch -Verb RunAs
+    } catch { Write-Host 'Elevation was not granted; the runner did not start.' }
+    exit 0
+}
+
 # ---------------------------------------------------------------- config, secrets
 if (-not (Test-Path (Join-Path $Dir 'config.json'))) { Write-Host 'Not set up: run setup-lab.ps1 first.'; exit 2 }
 $Cfg = Get-Content -Raw -Path (Join-Path $Dir 'config.json') | ConvertFrom-Json
@@ -242,17 +253,36 @@ function Invoke-UpdateApp {
 }
 
 # ---------------------------------------------------------------- restart_app (the configured test app only)
+# innermost exception message, one line, at most 200 chars
+function Get-ShortError($err) {
+    $e = $err.Exception
+    while ($e.InnerException -ne $null) { $e = $e.InnerException }
+    $m = ([string]$e.Message) -replace '\s+', ' '
+    if ($m.Length -gt 200) { $m = $m.Substring(0, 200) }
+    return $m
+}
+
 function Invoke-RestartApp {
-    foreach ($p in @(Get-AppProcesses)) { try { [void]$p.CloseMainWindow() } catch { } }
+    foreach ($p in @(Get-AppProcesses)) {
+        try { [void]$p.CloseMainWindow() } catch { Write-Log ('restart_app: close failed: ' + (Get-ShortError $_)) }
+    }
     $t = 0
     while (@(Get-AppProcesses).Count -gt 0 -and $t -lt 10) { Start-Sleep -Seconds 1; $t++ }
-    foreach ($p in @(Get-AppProcesses)) { try { $p.Kill() } catch { } }
+    foreach ($p in @(Get-AppProcesses)) {
+        try { $p.Kill() } catch { Write-Log ('restart_app: kill failed: ' + (Get-ShortError $_)) }
+    }
     Start-Sleep -Seconds 2
     # when a staged update is waiting, the app swaps its own exe at start (Updater.ApplyAtStart) and starts again
-    $psi = New-Object Diagnostics.ProcessStartInfo($AppExe)
-    $psi.UseShellExecute = $false
-    $psi.WorkingDirectory = [IO.Path]::GetDirectoryName($AppExe)
-    [void][Diagnostics.Process]::Start($psi)
+    try {
+        $psi = New-Object Diagnostics.ProcessStartInfo($AppExe)
+        $psi.UseShellExecute = $false
+        $psi.WorkingDirectory = [IO.Path]::GetDirectoryName($AppExe)
+        [void][Diagnostics.Process]::Start($psi)
+    } catch {
+        $m = Get-ShortError $_
+        Write-Log ('restart_app: start failed: ' + $m)
+        return @{ ok = $false; res = @{ error = 'start_failed'; message = $m } }
+    }
     return @{ ok = $true; res = @{ started = $true } }
 }
 

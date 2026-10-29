@@ -61,5 +61,10 @@ $lnk.WorkingDirectory = $dir
 $lnk.WindowStyle = 7
 $lnk.Description = 'Start the Wardsage test lab runner (after the game is running)'
 $lnk.Save()
+# "Run as administrator": set bit 0x20 of byte 0x15 in the .lnk (the test app needs admin rights)
+$lnkPath = Join-Path $desktop 'Wardsage Lab.lnk'
+$lnkBytes = [IO.File]::ReadAllBytes($lnkPath)
+$lnkBytes[0x15] = $lnkBytes[0x15] -bor 0x20
+[IO.File]::WriteAllBytes($lnkPath, $lnkBytes)
 Write-Host 'Done. Start the game yourself, then double-click "Wardsage Lab" on the desktop.'
 Write-Host 'To stop the runner at once, create the file:' (Join-Path $dir 'STOP')
