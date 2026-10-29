@@ -49,6 +49,9 @@ namespace RealmForge {
     /// <summary>On the city: the shown forms the screen map (src/ScreenMap.cs) calls a pop-up, a dangerous dialog or a wait (they cover the city's
     /// buttons): the screen is modal ("form:&lt;names&gt;"); "" = none / not read.</summary>
     public string TopCity = "";
+    /// <summary>The shown forms a pilot's own flow opens on this screen (ScreenMap.FlowForms: the item tip the item select opens, a list's filter,
+    /// a sale / ascension confirm): the screen's sub-state, never a pop-up to close; "" = none / not read.</summary>
+    public string Flow = "";
   }
 
   public sealed class ScreenState {
@@ -96,6 +99,8 @@ namespace RealmForge {
     public char TopClass = 'U';
     /// <summary>The shown known screens' forms (ScreenInputs.ShownKnown): "" = none, null = not read.</summary>
     public string ShownKnown;
+    /// <summary>The pilot's own flow forms shown on the screen (ScreenInputs.Flow; the screen stays the base one): "" = none.</summary>
+    public string Flow = "";
     // times (ms, the overlay's clock): this reading, the last time the screen was really read (older when Held), since when the screen is this one
     public long ReadAtMs, ConfirmedAtMs, SinceMs;
     /// <summary>The reads failed this moment and the last confirmed screen is shown (at most ScreenTracker.HoldMs).</summary>
@@ -127,6 +132,7 @@ namespace RealmForge {
           case ScreenKind.ArtWorkshop: sb.Append(" tab ").Append(ArtWsTab); break;
         }
         if (ModalOpen) sb.Append(" modal(").Append(ModalWhy).Append(')');
+        if (Flow != "") sb.Append(" flow(").Append(Flow).Append(')');
         if (Kind == ScreenKind.Unknown && TopForm != "") sb.Append(" top(").Append(TopForm).Append(')');
         if (Kind == ScreenKind.Unknown && Top != "") sb.Append(" map(").Append(Top).Append(':').Append(ScreenMap.ClassName(TopClass)).Append(')');
         return sb.ToString();
@@ -195,6 +201,7 @@ namespace RealmForge {
       if (!s.ModalOpen && s.Kind == ScreenKind.City && !string.IsNullOrEmpty(i.TopCity)) { s.ModalOpen = true; s.ModalWhy = "form:" + i.TopCity; }
       if (s.Kind == ScreenKind.Unknown) s.TopForm = i.TopUnknown ?? "";
       s.ShownKnown = i.ShownKnown;
+      if (s.Kind != ScreenKind.City) s.Flow = i.Flow ?? "";
       // the form on top by name
       if (s.OfferCount > 0) s.Top = s.Offer;
       else if (s.Kind == ScreenKind.Unknown) s.Top = ScreenMap.Top(s.TopForm);
@@ -237,7 +244,7 @@ namespace RealmForge {
 
     public ScreenState Update(ScreenInputs raw, long now) {
       var failing = new List<string>();
-      var use = new ScreenInputs { CitySeen = raw.CitySeen, CityForm = raw.CityForm, ModalExtra = raw.ModalExtra, ModalExtraWhy = raw.ModalExtraWhy, Offers = raw.Offers, TopUnknown = raw.TopUnknown, TopNew = raw.TopNew, ShownKnown = raw.ShownKnown, TopCity = raw.TopCity };
+      var use = new ScreenInputs { CitySeen = raw.CitySeen, CityForm = raw.CityForm, ModalExtra = raw.ModalExtra, ModalExtraWhy = raw.ModalExtraWhy, Offers = raw.Offers, TopUnknown = raw.TopUnknown, TopNew = raw.TopNew, ShownKnown = raw.ShownKnown, TopCity = raw.TopCity, Flow = raw.Flow };
       long oldest = now;   // the oldest reading that stands in for a failed one
       use.Inv = Hold(raw.Inv, ref inv, ref invAt, now, "inventory", failing, ref oldest);
       use.Rs = Hold(raw.Rs, ref rs, ref rsAt, now, "foundry", failing, ref oldest);
@@ -278,7 +285,7 @@ namespace RealmForge {
       c.Hero = s.Hero; c.HeroTab = s.HeroTab; c.HeroSlot = s.HeroSlot;
       c.FoundryTab = s.FoundryTab; c.FoundryPopup = s.FoundryPopup; c.FoundrySel = s.FoundrySel; c.FoundryKey = s.FoundryKey;
       c.GemFunc = s.GemFunc; c.GemSel = s.GemSel; c.ModalOpen = s.ModalOpen; c.ModalWhy = s.ModalWhy;
-      c.Offer = s.Offer; c.OfferCount = s.OfferCount; c.OfferRead = s.OfferRead; c.TopForm = s.TopForm; c.Top = s.Top; c.TopClass = s.TopClass;
+      c.Offer = s.Offer; c.OfferCount = s.OfferCount; c.OfferRead = s.OfferRead; c.TopForm = s.TopForm; c.Top = s.Top; c.TopClass = s.TopClass; c.Flow = s.Flow;
       c.ReadAtMs = s.ReadAtMs; c.ConfirmedAtMs = s.ConfirmedAtMs; c.SinceMs = s.SinceMs; c.Held = s.Held;
       c.Inv = s.Inv; c.Rs = s.Rs; c.HeroScr = s.HeroScr; c.ArtWs = s.ArtWs;
       return c;

@@ -727,6 +727,7 @@ static partial class CoreTests {
     ScreenMapTests();
     ScreenMapScenarios();
     SimRegressionTests();
+    FlowFormTests();
     ArtGridPictureTests();
     ArtPromoteTests();
     ArtAutoTests();
@@ -4626,6 +4627,68 @@ static partial class CoreTests {
   }
 
   // a small model of the game's form stack: the bottom form first; a full screen (F / K) hides what lies under it
+  // the laptop 2026-10-30 (test 1.6.66.347): the equip pilot selected an item, the game opened its tip (Form_CharactorEquipTip), the app took it for
+  // an unknown pop-up over the hero screen, sent the map's Escape twice and stopped («Escape was pressed 2 times already ... HeroScreen»)
+  static void FlowFormTests() {
+    Console.WriteLine("Flow forms: the pilots' own pop-ups are a sub-state of their screen");
+    const double W = 1350, H = 689; double U = Ui.Unit(W, H);
+    Check(ScreenMap.IsFlow(ScreenKind.HeroScreen, "Form_CharactorEquipTip") && ScreenMap.IsFlow(ScreenKind.Inventory, "Form_CharactorEquipTip"), "flow: the item tip is the hero screen's and the inventory's flow");
+    Check(!ScreenMap.IsFlow(ScreenKind.City, "Form_CharactorEquipTip") && !ScreenMap.IsFlow(ScreenKind.Unknown, "Form_CharactorEquipTip") && !ScreenMap.IsFlow(ScreenKind.HeroScreen, "Form_AchievementTip"),
+          "flow: never on the city / an unknown screen, never another form");
+    foreach (var f in ScreenMap.FlowForms) {
+      Check(ScreenMap.ByName(f.Name) != null, "flow: " + f.Name + " is in the screen map");
+      Check(ScreenMap.ClassOf(f.Name) != 'D' && ScreenMap.ClassOf(f.Name) != 'W' && !OfferForms.IsOffer(f.Name), "flow: " + f.Name + " is no dangerous dialog, wait or offer");
+      Check(ScreenMap.PilotScreen(f.Owner, f.Screen), "flow: " + f.Screen + " is " + f.Owner + "'s own screen");
+    }
+    Check(ScreenMap.PilotScreen(ClickOwner.Equip, ScreenKind.HeroScreen) && !ScreenMap.PilotScreen(ClickOwner.Equip, ScreenKind.Foundry) && !ScreenMap.PilotScreen(ClickOwner.Sell, ScreenKind.HeroScreen),
+          "flow: the pilots' own screens");
+    Func<string, string, ScreenState> hero = (flow, topNew) => {
+      var s = ScreenState.Classify(new ScreenInputs { Hero = new HeroScreen { Hero = 204200000, FormOk = true, Tab = 3, Part = 0 }, Offers = new List<string>(), ShownKnown = "Form_CharactorMain", Flow = flow, TopNew = topNew }, 0);
+      s.SinceMs = 0; return s;
+    };
+    var tip = hero("Form_CharactorEquipTip", "");
+    Eq(ScreenKind.HeroScreen, tip.Kind, "flow: the tip keeps the hero screen");
+    Check(!tip.ModalOpen && tip.Flow == "Form_CharactorEquipTip" && tip.Brief.Contains("flow(Form_CharactorEquipTip)"), "flow: the tip is the screen's sub-state, no modal (" + tip.Brief + ")");
+    Eq(MapMove.None, ClickGate.MapExit(tip, W, H, U).Move, "flow: the map has no exit to take on the tip");
+    Check(ClickGate.EscapeBlock(tip) != "" && ClickGate.CityBackBlock(tip) != "", "flow: no Escape or back press with the tip shown");
+    {
+      var g = new ClickGate();
+      Check(!g.EscapeDue(ClickOwner.Equip, tip, 20000) && !g.CityBackDue(ClickOwner.Equip, tip, 20000), "flow: nothing is due on the tip");
+      var r = g.Check(new ClickRequest { Owner = ClickOwner.Equip, Target = ClickTarget.EquipNav, AutoOn = true, Front = true, X = 152, Y = 564 }, tip, 20000);
+      Check(r.Allowed, "flow: the pilot's next item click with the tip shown (" + r.Detail + ")");
+    }
+    // the unknown moment of a failing read with the tip shown: no back press, no map exit on it
+    {
+      var un = ScreenState.Classify(new ScreenInputs { CityForm = false, Offers = new List<string>(), ShownKnown = "", Flow = "Form_CharactorEquipTip" }, 0); un.SinceMs = 0;
+      Check(ClickGate.UnknownBackBlock(un) != "" && ClickGate.MapExit(un, W, H, U).Move == MapMove.None && !new ClickGate().UnknownBackDue(ClickOwner.Equip, un, 60000),
+            "flow: no unknown back / map exit with the tip on an unread screen (" + ClickGate.UnknownBackBlock(un) + ")");
+    }
+    // an Escape form over the pilot's own screen: never an Escape there (a stop with the reason), elsewhere as before
+    {
+      var esc = hero("", "Form_AchievementTip");
+      var d = ClickGate.MapExit(esc, W, H, U);
+      Eq(MapMove.Escape, d.Move, "flow: the map still says Escape for a back-key pop-up over the hero screen");
+      var g = new ClickGate(); g.MapEscape(ClickOwner.Equip);
+      var r = g.Check(new ClickRequest { Owner = ClickOwner.Equip, Target = ClickTarget.EscapeBack, AutoOn = true, Front = true, U = U }, esc, 20000);
+      Check(!r.Allowed && g.Halted(ClickOwner.Equip) && g.HaltDetail(ClickOwner.Equip).Contains("own screen"), "flow: no Escape on the equip pilot's hero screen, a stop (" + g.HaltDetail(ClickOwner.Equip) + ")");
+      var g2 = new ClickGate(); g2.MapEscape(ClickOwner.Locate);
+      var esc2 = hero("", "Form_AchievementTip"); esc2.ShownKnown = "Form_CharactorMain";
+      Check(g2.Check(new ClickRequest { Owner = ClickOwner.Locate, Target = ClickTarget.EscapeBack, AutoOn = true, Front = true, U = U }, esc2, 20000).Allowed, "flow: another pilot may still close it with Escape");
+    }
+    // the sim: the item tip after the item select on the slow laptop, never escaped
+    {
+      var geo = GameGeometry.Parse(GeoJson(), GeoGame); int done = 0, runs = 0;
+      for (int seed = 0; seed < 400 && runs < 40; seed++) {
+        var oc = new Dictionary<string, int>(); string e = SimRun(seed, true, false, oc, geo);
+        string key = string.Join(",", new List<string>(oc.Keys).ToArray());
+        if (!key.StartsWith("Equip ")) continue;
+        runs++; if (key.EndsWith(" done")) done++;
+        Check(e == "", "flow: sim seed " + seed + " (slow, equip with the item tip) keeps every rule" + (e != "" ? ": " + e.Split('\n')[0] + " " + (e.Split('\n').Length > 1 ? e.Split('\n')[1].Trim() : "") : ""));
+      }
+      Check(runs >= 20 && done * 2 >= runs, "flow: the slow equip runs reach the item tip and end (" + done + " of " + runs + ")");
+    }
+  }
+
   static ScreenState MapModel(List<string> stack) {
     int fi = stack.Count - 1;
     while (fi > 0 && "FKU".IndexOf(ScreenMap.ClassOf(stack[fi])) < 0) fi--;

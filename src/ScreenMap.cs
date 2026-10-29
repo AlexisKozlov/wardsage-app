@@ -79,6 +79,43 @@ namespace RealmForge {
     }
     public static bool MayBeLatePart(string name) { char c = ClassOf(name); return MayBeBase(name) && c != 'F' && c != 'P' && c != 'E'; }
 
+    /// <summary>A form a pilot's own flow opens on its screen (client Lua: the item select's tip, the list filters, the sale / ascension
+    /// confirm): a sub-state of that screen (ScreenState.Flow), never an unknown form on top, never closed by OfferClose, the map's ×/Escape,
+    /// UnknownBack or EscapeBack. The screen stays the base one (the hero screen with the item tip open is the hero screen).</summary>
+    public sealed class FlowForm {
+      public readonly string Name, Why; public readonly ScreenKind Screen; public readonly ClickOwner Owner;
+      public FlowForm(string name, ScreenKind screen, ClickOwner owner, string why) { Name = name; Screen = screen; Owner = owner; Why = why; }
+    }
+    public static readonly FlowForm[] FlowForms = {
+      // the hero screen (the equip helper): CharactorMainEx_Equip / Panel_EquipBase open the tip when an item of the gear list is selected
+      new FlowForm("Form_CharactorEquipTip", ScreenKind.HeroScreen, ClickOwner.Equip, "the item's tip / compare the item select opens («Надеть» / «Заменить»: EquipConfirm)"),
+      new FlowForm("Form_EquipedCompared", ScreenKind.HeroScreen, ClickOwner.Equip, "the worn / chosen item compare (Panel_Equip_Simple)"),
+      new FlowForm("Form_EquipPopUp", ScreenKind.HeroScreen, ClickOwner.Equip, "the worn-by-another-hero question (read: ClickGate.ModalEquipPopup)"),
+      new FlowForm("Form_EquipFilterWidget", ScreenKind.HeroScreen, ClickOwner.Equip, "the gear list's filter pop-up (read: heroFilter)"),
+      new FlowForm("Form_ArtifactFilter", ScreenKind.HeroScreen, ClickOwner.Equip, "the artifact list's filter (Panel_Equip_Artifact)"),
+      new FlowForm("Form_EquipSellPopup", ScreenKind.HeroScreen, ClickOwner.Equip, "the artifact's info tip (Panel_Equip_Artifact_InfoTip)"),
+      // the inventory (the storage cleanup): the card's tip and the sale confirm («Продать» is the player's)
+      new FlowForm("Form_CharactorEquipTip", ScreenKind.Inventory, ClickOwner.Sell, "the item tip of the selected card (Panel_WearPreviewPanel)"),
+      new FlowForm("Form_ItemDetailArtifact", ScreenKind.Inventory, ClickOwner.Sell, "the artifact's tip"),
+      new FlowForm("Form_EquipSellPopup", ScreenKind.Inventory, ClickOwner.Sell, "the artifact sale confirm (Panel_ArtifactPanel)"),
+      new FlowForm("Form_EquipQuickSellPopup", ScreenKind.Inventory, ClickOwner.Sell, "the bulk sale confirm (Panel_BackpackEquipPanel)"),
+      // the Foundry («Найти в игре» for the Ascension): its filter, the item tip, the ascension confirm («Вознести» is the player's)
+      new FlowForm("Form_EquipFilterWidget", ScreenKind.Foundry, ClickOwner.Locate, "the Ascension list's filter (Form_EquipSubliming)"),
+      new FlowForm("Form_Equip_Tip", ScreenKind.Foundry, ClickOwner.Locate, "the item tip (PanelEquipSubliming)"),
+      new FlowForm("Form_CommonPopUp", ScreenKind.Foundry, ClickOwner.Locate, "the ascension confirm (PanelEquipSubliming)"),
+    };
+    /// <summary>The form is one a pilot's own flow opens on screen <paramref name="k"/> (FlowForms).</summary>
+    public static bool IsFlow(ScreenKind k, string name) {
+      if (name == null || k == ScreenKind.Unknown || k == ScreenKind.City) return false;
+      foreach (var f in FlowForms) if (f.Screen == k && f.Name == name) return true;
+      return false;
+    }
+    /// <summary>The screens a pilot works on (its flow forms' base screens): never an Escape there during its run (ClickGate CheckEscape).</summary>
+    public static bool PilotScreen(ClickOwner o, ScreenKind k) {
+      foreach (var f in FlowForms) if (f.Owner == o && f.Screen == k) return true;
+      return false;
+    }
+
     static double X(char a, double off, double W, double U) { return (a == 'L' ? 0 : a == 'C' ? W / 2 : W) + off * U; }
     static double Y(char a, double off, double H, double U) { return (a == 'T' ? 0 : a == 'M' ? H / 2 : H) + off * U; }
     /// <summary>A rect of the table in client px.</summary>

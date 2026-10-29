@@ -365,6 +365,7 @@ namespace RealmForge {
     public static MapDecision MapExit(ScreenState s, double W, double H, double U) {
       var d = new MapDecision();
       if (s == null || s.Held || s.OfferCount > 0) return d;
+      if (s.Kind == ScreenKind.Unknown && !string.IsNullOrEmpty(s.Flow)) return d;   // a pilot's flow form shown: the screen under it is only not read
       bool over = s.ModalOpen && s.ModalWhy != null && s.ModalWhy.StartsWith("form:");
       if (s.Kind == ScreenKind.Unknown ? s.ModalOpen : !over) return d;
       d.Form = s.Top ?? ""; d.Class = s.TopClass;
@@ -466,6 +467,7 @@ namespace RealmForge {
       if (s.Held) return "the screen is held";
       if (s.OfferCount > 0) return "an offer pop-up is open";
       if (s.ModalOpen) return "a pop-up is open (" + s.ModalWhy + ")";
+      if (!string.IsNullOrEmpty(s.Flow)) return FlowBlock + s.Flow;
       if (HasForm(s.ShownKnown, BattleForms)) return "a fight's form is shown";
       if (ExitDialogShown(s)) return "the exit dialog is shown";
       return "";
@@ -480,6 +482,7 @@ namespace RealmForge {
       if (s.Held) return "the screen is held";
       if (s.OfferCount > 0) return "an offer pop-up is open";
       if (s.ModalOpen && !MapEscapeOk(s)) return "a pop-up is open (" + s.ModalWhy + ")";
+      if (!string.IsNullOrEmpty(s.Flow)) return FlowBlock + s.Flow;
       if (ExitDialogShown(s)) return "the exit dialog is shown";
       if (Exempt(s.TopForm)) return "a fight's result";
       if (s.ShownKnown == null) return "the shown forms are not known";
@@ -510,7 +513,7 @@ namespace RealmForge {
       if (s != null && s.Kind == ScreenKind.City) { escapeDue.Remove(o); return false; }
       if (halted.ContainsKey(o) || watches.ContainsKey(o) || SearchWait || HintOnly(o)) return false;
       // (a tick's state has no shown forms read: the fresh one Check judges has them)
-      if (s == null || s.Held || (s.ModalOpen && !MapEscapeOk(s)) || s.OfferCount > 0 || ExitDialogShown(s) || Exempt(s.TopForm) || HasForm(s.ShownKnown, BattleForms)) return false;
+      if (s == null || s.Held || (s.ModalOpen && !MapEscapeOk(s)) || !string.IsNullOrEmpty(s.Flow) || s.OfferCount > 0 || ExitDialogShown(s) || Exempt(s.TopForm) || HasForm(s.ShownKnown, BattleForms)) return false;
       long t; if (cityTried.TryGetValue(o, out t) && now - t < UnknownBackRetryMs) return false;
       cityTried[o] = now;
       return true;
@@ -527,6 +530,7 @@ namespace RealmForge {
       if (s.Held) return "the screen is held";
       if (s.OfferCount > 0) return "an offer pop-up is open";
       if (s.ModalOpen) return "a pop-up is open (" + s.ModalWhy + ")";
+      if (!string.IsNullOrEmpty(s.Flow)) return FlowBlock + s.Flow;
       if (!s.OfferRead) return "the window table is not read";
       if (Exempt(s.TopForm)) return "a fight's result";
       if (s.ShownKnown == null) return "the shown forms are not known";
@@ -535,6 +539,8 @@ namespace RealmForge {
       return "";
     }
     const string MapBlock = "the screen map: ";
+    /// <summary>A pilot's own flow form is shown (ScreenMap.FlowForms): no back press or Escape acts on it.</summary>
+    const string FlowBlock = "a pilot's own flow form is shown: ";
 
     /// <summary>The host may try the back press now: the owner runs (not halted, no click on its way, no form search), the screen
     /// (the tick's) has been the same unrecognised one for UnknownBackSettleMs, presses are left, and no try was made within UnknownBackRetryMs.
@@ -542,7 +548,7 @@ namespace RealmForge {
     public bool UnknownBackDue(ClickOwner o, ScreenState s, long now) {
       if (halted.ContainsKey(o) || watches.ContainsKey(o) || SearchWait) return false;
       if ((o == ClickOwner.Sell && NoSellClicks) || (o == ClickOwner.Locate && NoLocateClicks)) return false;
-      if (!Unrecognised(s) || s.ModalOpen || !s.OfferRead || Exempt(s.TopForm) || (s.Top != "" && "DWPE".IndexOf(s.TopClass) >= 0)) return false;
+      if (!Unrecognised(s) || s.ModalOpen || !string.IsNullOrEmpty(s.Flow) || !s.OfferRead || Exempt(s.TopForm) || (s.Top != "" && "DWPE".IndexOf(s.TopClass) >= 0)) return false;
       if (now - s.SinceMs < UnknownBackSettleMs) return false;
       if (UnknownBacks(o) >= MaxUnknownBacks) return false;
       long t; if (backTried.TryGetValue(o, out t) && now - t < UnknownBackRetryMs) return false;
@@ -942,6 +948,8 @@ namespace RealmForge {
       var o = r.Owner;
       if (HintOnly(o)) return GateResult.Deny("off", tag + ": a hint run clicks nothing");
       tag = "EscapeBack (key)";
+      // never on the screen the pilot works on (the hero screen of the equip helper ...): a pop-up there is the pilot's flow or a stop
+      if (f != null && !f.Held && ScreenMap.PilotScreen(o, f.Kind)) { escapeDue.Remove(o); return Halt(o, "dangerous", tag + ": never on the pilot's own screen " + f.Brief + " - nothing is pressed"); }
       if (!escapeDue.Contains(o)) return Halt(o, "target", tag + ": no back press before it changed nothing");
       string block = EscapeBlock(f);
       if (block != "") {

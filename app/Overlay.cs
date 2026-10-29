@@ -2515,6 +2515,7 @@ namespace RealmForge {
       if (locateReq != null && locateReq.Purpose == "artPromote") inp.ArtWs = RFX.ReadArtWorkshop();   // the artifact guide's clicks are judged by the workshop too
       var st = ScreenState.Classify(inp, now);
       // the forms nobody knows (read every 2 s by the tick): over the same known screen a later one is a pop-up on top; on an unknown screen, its name
+      if (topFlowNow != "" && st.Kind == topFlowKind) { inp.Flow = topFlowNow; st = ScreenState.Classify(inp, now); }
       if (topNewNow != "" && st.Kind == topNewKind) { inp.TopNew = topNewNow; st = ScreenState.Classify(inp, now); }
       else if (topUnknownNow != "" && st.Kind == ScreenKind.Unknown) { inp.TopUnknown = topUnknownNow; st = ScreenState.Classify(inp, now); }
       else if (topCityNow != "" && st.Kind == ScreenKind.City) { inp.TopCity = topCityNow; st = ScreenState.Classify(inp, now); }
@@ -2563,6 +2564,7 @@ namespace RealmForge {
     // goes to the game until a read succeeds (the read is tried again on the next tick); never set while the table is not known (RFX.UiKnown)
     bool formsUnread; ScreenKind formsKind = ScreenKind.Unknown;   // formsKind: the screen the tick's forms were read for
     long topBaseAt, topLastAt; ScreenKind topLastKind = ScreenKind.Unknown, topBaseKind = ScreenKind.Unknown; HashSet<string> topBase = new HashSet<string>(); string topNewNow = "", topUnknownNow = "", topCityNow = ""; ScreenKind topNewKind = ScreenKind.Unknown;
+    string topFlowNow = ""; ScreenKind topFlowKind = ScreenKind.Unknown;   // the pilots' own flow forms on the screen (ScreenMap.FlowForms) and the screen they lie on
     readonly HashSet<string> unknownSaid = new HashSet<string>();
     string offerSaid = "";
 
@@ -2581,7 +2583,7 @@ namespace RealmForge {
       string os = inp.Offers == null ? "?" : string.Join(",", inp.Offers.ToArray());
       if (os != offerSaid) { offerSaid = os; if (os != "" && os != "?") Log.Write("offer: shown " + os); }
       var cls = ScreenState.Classify(inp, now).Kind;
-      topNewNow = ""; topUnknownNow = ""; topCityNow = "";
+      topNewNow = ""; topUnknownNow = ""; topCityNow = ""; topFlowNow = "";
       formsKind = cls;
       if (front && (inp.Offers == null || inp.Offers.Count == 0)) {
         // the forms of the last read on the city or a known screen (before this tick's): one not in it came with the screen. A short unknown
@@ -2592,6 +2594,14 @@ namespace RealmForge {
         bool settling = topBaseKind != ScreenKind.Unknown && topBaseKind != ScreenKind.City && now - topBaseAt < TopSettleMs;
         if (now - unknownFormsAt >= (settling ? SettleReadMs : 2000) || unknownFormsAt == 0) { unknownFormsAt = now; unknownForms = RFX.ReadUnknownShownForms(4); if (unknownForms == null) { formsUnread = true; unknownFormsAt = 0; }  else if (firstForms == null) { firstForms = unknownForms; firstFormsAt = now; } }
         var cur = unknownForms ?? new List<string>();
+        // the pilots' own flow forms on this screen (the item tip the item select opens ...; on an unknown moment: the last known screen's): its sub-state
+        ScreenKind flowOn = cls == ScreenKind.Unknown ? topLastKind : cls;
+        var flow = cur.FindAll(n => ScreenMap.IsFlow(flowOn, n));
+        if (flow.Count > 0) {
+          cur = cur.FindAll(n => !ScreenMap.IsFlow(flowOn, n));
+          inp.Flow = topFlowNow = string.Join(",", flow.ToArray()); topFlowKind = cls;
+          if (unknownSaid.Add("flow:" + flowOn + ":" + topFlowNow)) Log.Write("screen: " + topFlowNow + " is the pilot's own flow on " + flowOn + " (not a pop-up to close)");
+        }
         foreach (var n in cur) if (unknownSaid.Add(n)) Log.Write("offer: unknown top form " + n + " (not in list)");
         if (cls == ScreenKind.Unknown) {
           if (cur.Count > 0) {

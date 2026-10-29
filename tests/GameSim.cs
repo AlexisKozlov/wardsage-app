@@ -23,6 +23,8 @@ using RealmForge;
 static partial class CoreTests {
   const string SimCity = "Form_MainCity", SimHero = "Form_CharactorMain", SimInv = "Form_BackpackIntegration", SimFoundry = "Form_EquipSubliming";
   const long SimItem = 777;
+  // the equip flow's item tip: the game opens it when the pilot selects an item of the gear list (a flow form of the hero screen, never closed)
+  const string SimTip = "Form_CharactorEquipTip";
 
   sealed class SimGame {
     public readonly List<string> Stack = new List<string> { SimCity };
@@ -41,6 +43,8 @@ static partial class CoreTests {
     public readonly List<string> Bad = new List<string>(), Log = new List<string>();
     public readonly StringBuilder Acts = new StringBuilder();   // every click / drag / Escape with its time (--digest)
     public int CityEscapes;
+    public string OwnScreen = "";   // the full screen the pilot works on: never an Escape there during its run
+    public double ItemX { get { return W * 0.6; } } public double ItemY { get { return H * 0.45; } }   // a gear list item (the tip's opener)
     readonly List<KeyValuePair<long, Action>> due = new List<KeyValuePair<long, Action>>();
     // the slow laptop: the reader finds the inventory / Foundry form some seconds after it first opens; a lost form is searched for 17 s
     readonly Dictionary<string, long> findAt = new Dictionary<string, long>();
@@ -184,6 +188,7 @@ static partial class CoreTests {
         if (Near(x, y, W - hg.HeroesBtnDX * U, H - hg.HeroesBtnDY * U, 20)) Later(lat, () => { if (TopForm() != SimCity) return; Hero.Part = -1; Hero.Shown = Hero.CityHero; Push(SimHero); });
         return;
       }
+      if (top == SimHero && tg == ClickTarget.EquipNav && Near(x, y, ItemX, ItemY, 6)) { Later(lat, () => { if (TopForm() == SimHero) Push(SimTip); }); return; }
       if (top == SimHero) {
         // the gear tab's neighbour «План сборки» (a click a little off it opens the build plan screen)
         if (Near(x, y, W - hg.GearTabDX * U, hg.GearTabY * U, 20) && R.Next(25) == 0) { Later(lat, () => Push("Form_EquipmentPlan")); return; }
@@ -254,6 +259,8 @@ static partial class CoreTests {
       string top = TopForm(); char c = ScreenMap.ClassOf(top);
       Say("ESCAPE on " + top); Acts.Append(Now + " e;");
       if (c == 'D') { Bad.Add("ESCAPE ON A DANGEROUS FORM " + top); return; }
+      if (Stack.Contains(SimTip) && Full == SimHero) Bad.Add("ESCAPE WITH THE EQUIP FLOW'S TIP SHOWN (" + top + ")");
+      else if (OwnScreen != "" && Full == OwnScreen) Bad.Add("ESCAPE ON THE PILOT'S OWN SCREEN " + OwnScreen + " (" + top + ")");
       long lat = Lat();
       if (top == SimCity) { CityEscapes++; Bad.Add("ESCAPE ON THE CITY (the game asks to quit)"); Later(lat, () => Push("Form_SystemTips")); return; }
       if (c == 'W') return;
@@ -305,13 +312,14 @@ static partial class CoreTests {
     const int TopSettleMs = 3000, TopFlickerMs = 2000, KnownFormsMs = 60000, FreshFormsMs = 500, SettleReadMs = 500;
     List<string> knownForms, firstForms; long knownFormsAt, firstFormsAt;
     long topBaseAt, topLastAt, unknownFormsAt; ScreenKind topLastKind = ScreenKind.Unknown; ScreenKind topBaseKind = ScreenKind.Unknown; HashSet<string> topBase = new HashSet<string>();
-    string topNewNow = "", topUnknownNow = "", topCityNow = ""; ScreenKind topNewKind = ScreenKind.Unknown; List<string> unknownForms; bool formsUnread; ScreenKind formsKind = ScreenKind.Unknown;
+    string topNewNow = "", topUnknownNow = "", topCityNow = ""; ScreenKind topNewKind = ScreenKind.Unknown; List<string> unknownForms;
+    string topFlowNow = ""; ScreenKind topFlowKind = ScreenKind.Unknown; bool formsUnread; ScreenKind formsKind = ScreenKind.Unknown;
     bool FormsUnread(ScreenState fresh) { return formsUnread || fresh == null || !fresh.OfferRead || (fresh.Kind != ScreenKind.City && fresh.Kind != ScreenKind.Unknown && fresh.Kind != formsKind)
                                                  || fresh.ModalOpen && (Screens.Current == null || !Screens.Current.ModalOpen || Screens.Current.Held); }   // (app/Overlay.cs TickBehind)
     void ReadOffersInto(ScreenInputs inp, long now) {
       formsUnread = inp.Offers == null;
       var cls = ScreenState.Classify(inp, now).Kind;
-      topNewNow = ""; topUnknownNow = ""; topCityNow = "";
+      topNewNow = ""; topUnknownNow = ""; topCityNow = ""; topFlowNow = "";
       formsKind = cls;
       if (inp.Offers == null || inp.Offers.Count == 0) {
         // the forms of the last read on the city or a known screen (before this tick's): one not in it came with the screen. A short unknown
@@ -322,6 +330,9 @@ static partial class CoreTests {
         bool settling = topBaseKind != ScreenKind.Unknown && topBaseKind != ScreenKind.City && now - topBaseAt < TopSettleMs;
         if (now - unknownFormsAt >= (settling ? SettleReadMs : 2000) || unknownFormsAt == 0) { unknownFormsAt = now; unknownForms = G.Unknown(); if (unknownForms == null) { formsUnread = true; unknownFormsAt = 0; }  else if (firstForms == null) { firstForms = unknownForms; firstFormsAt = now; } }
         var cur = unknownForms ?? new List<string>();
+        ScreenKind flowOn = cls == ScreenKind.Unknown ? topLastKind : cls;
+        var flow = cur.FindAll(n => ScreenMap.IsFlow(flowOn, n));
+        if (flow.Count > 0) { cur = cur.FindAll(n => !ScreenMap.IsFlow(flowOn, n)); inp.Flow = topFlowNow = string.Join(",", flow.ToArray()); topFlowKind = cls; }
         if (cls == ScreenKind.Unknown) {
           if (cur.Count > 0) inp.TopUnknown = topUnknownNow = string.Join(",", cur.ToArray());
         } else if (cls == ScreenKind.City) {
@@ -360,6 +371,7 @@ static partial class CoreTests {
       var inp = G.Read();
       if (wantKnownForms) inp.ShownKnown = G.ShownKnown();
       var st = ScreenState.Classify(inp, Now);
+      if (topFlowNow != "" && st.Kind == topFlowKind) { inp.Flow = topFlowNow; st = ScreenState.Classify(inp, Now); }
       if (topNewNow != "" && st.Kind == topNewKind) { inp.TopNew = topNewNow; st = ScreenState.Classify(inp, Now); }
       else if (topUnknownNow != "" && st.Kind == ScreenKind.Unknown) { inp.TopUnknown = topUnknownNow; st = ScreenState.Classify(inp, Now); }
       else if (topCityNow != "" && st.Kind == ScreenKind.City) { inp.TopCity = topCityNow; st = ScreenState.Classify(inp, Now); }
@@ -454,6 +466,7 @@ static partial class CoreTests {
       if (UnknownBackStep(scr)) return;
       if (BackStep(scr, ClickGate.AwayFromStart(ClickOwner.Equip, scr))) return;
       if (Gate.UnknownStall(ClickOwner.Equip, scr, Now)) return;
+      if (heroDone) { ItemStep(scr); return; }
       var hv = new HeroView {
         NowMs = Now, Foreground = true, W = W, H = U, ClientH = H, Plan = plan, Hero = heroScreen.FormOk ? heroScreen.Hero : 0, Tab = heroScreen.Tab, Part = heroScreen.Part,
         SmallCards = heroScreen.SmallCards, Heroes = heroScreen.Heroes, HeroesButton = heroScreen.Hero == 0 && G.Full == SimCity && G.CityClear,
@@ -461,9 +474,26 @@ static partial class CoreTests {
       };
       if (!heroScreen.FormOk) hv.Hero = 0;
       var ha = hp.Step(hv); PilotState = "hero_" + hp.State;
-      if (ha == null) { if (hp.State == "done" || hp.State == "idle") Done = "done"; return; }   // idle: the plan's hero was there already
+      if (ha == null) { if (hp.State == "done" || hp.State == "idle") heroDone = true; return; }   // idle: the plan's hero was there already
       if (ha.Kind == AutoKind.None) return;
       if (!Send(ClickTarget.EquipNav, ha, null, true, false)) hp.NotSent();   // (app/Overlay.cs: EquipSend's no)
+    }
+    // the item select on the plan's hero: the game opens its tip (Form_CharactorEquipTip, a flow form); the screen stays the hero screen with the
+    // tip as its sub-state for 5 s, nothing presses Escape / back on it (the laptop: the tip escaped twice, then «Escape was pressed 2 times» stop)
+    bool heroDone; long itemAt = -100000, tipSeenAt;
+    void ItemStep(ScreenState scr) {
+      PilotState = "item";
+      if (G.Stack.Contains(SimTip)) {
+        if (scr != null && scr.Kind == ScreenKind.HeroScreen && !scr.Held && scr.Flow.Contains(SimTip) && !scr.ModalWhy.Contains(SimTip)) {
+          if (tipSeenAt == 0) tipSeenAt = Now;
+          if (Now - tipSeenAt >= 5000) Done = "done";
+        }
+        return;
+      }
+      tipSeenAt = 0;
+      if (Now - itemAt < 3000) return;
+      itemAt = Now;
+      Send(ClickTarget.EquipNav, new AutoAction { Kind = AutoKind.Click, X = G.ItemX, Y = G.ItemY }, null, false, false);
     }
     // TickSell (app/Overlay.cs) up to «Массовая продажа» (the marking itself: RunSell's tests)
     void TickSell() {
@@ -580,6 +610,7 @@ static partial class CoreTests {
     foreach (var f in g.Stack) g.StartForms.Add(f);
     long plan = 100 + r.Next(30);
     var h = new SimHost(g, owner, plan, geo);
+    g.OwnScreen = owner == ClickOwner.Equip ? SimHero : owner == ClickOwner.Sell ? SimInv : SimFoundry;
     long cap = slow ? 300000 : 150000, t = 0, lastChange = 0; string lastSay = "";
     while (t < cap) {
       g.Advance(t);
