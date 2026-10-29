@@ -95,26 +95,33 @@ watch_logs() {
 # The runner (v6+) reads the app's own log every 5 s and reports it in the heartbeat status (every 15 s while a run is active):
 # log_at (epoch of the newest log line), ready, stop + stop_at. That is ~1 min faster than the app_test_logs the app uploads every ~2 min,
 # which stay as the fallback for an older runner (no log_at in the status).
-NOPROG_DEV=${LAB_NOPROGRESS_DEV:-75}   # 60 s without a log line while a scenario waits + one heartbeat
+# Runner v7+ also reports pilot_at (epoch of the newest PILOT line: a step / guide change, a click allowed or taking effect, the locate / sell
+# pilots' own lines). The app keeps logging its syncs while a pilot waits on a screen it does not know, so a scenario's progress is pilot_at;
+# without it (older runner) the newest log line stands in, as before.
+NOPROG_DEV=${LAB_NOPROGRESS_DEV:-75}   # 60 s without a pilot line (old runner: a log line) while a scenario waits + one heartbeat
 READY_DEV=${LAB_READY_DEV:-180}        # the laptop read takes ~50 s
-SG_LOGAT=""; SG_SEEN=0; SG_READY=""; SG_STOPAT=0; SG_APPOK=""; SG_APPVER=""; SG_STOP=""
+SG_LOGAT=""; SG_SEEN=0; SG_READY=""; SG_STOPAT=0; SG_APPOK=""; SG_APPVER=""; SG_STOP=""; SG_PILOTAT=""
 devsig() {
   local row
-  row=$(dstat "coalesce(status->>'log_at', '') || '|' || coalesce(extract(epoch from last_seen)::bigint, 0) || '|' || coalesce(status->>'ready', '') || '|' || coalesce(status->>'stop_at', '0') || '|' || coalesce(status->>'app_running', '') || '|' || coalesce(status->>'app_version', '') || '|' || coalesce(replace(status->>'stop', chr(10), ' '), '')")
-  IFS='|' read -r SG_LOGAT SG_SEEN SG_READY SG_STOPAT SG_APPOK SG_APPVER SG_STOP <<< "$row"
+  row=$(dstat "coalesce(status->>'log_at', '') || '|' || coalesce(extract(epoch from last_seen)::bigint, 0) || '|' || coalesce(status->>'ready', '') || '|' || coalesce(status->>'stop_at', '0') || '|' || coalesce(status->>'app_running', '') || '|' || coalesce(status->>'app_version', '') || '|' || coalesce(status->>'pilot_at', '') || '|' || coalesce(replace(status->>'stop', chr(10), ' '), '')")
+  IFS='|' read -r SG_LOGAT SG_SEEN SG_READY SG_STOPAT SG_APPOK SG_APPVER SG_PILOTAT SG_STOP <<< "$row"
   [[ "$SG_LOGAT" =~ ^[0-9]+$ ]] || SG_LOGAT=""
+  [[ "$SG_PILOTAT" =~ ^[0-9]+$ ]] || SG_PILOTAT=""
   [[ "$SG_SEEN" =~ ^[0-9]+$ ]] || SG_SEEN=0
   [[ "$SG_STOPAT" =~ ^[0-9]+$ ]] || SG_STOPAT=0
 }
-# dev_watch <since epoch> <no-progress reference epoch> <no-progress seconds>: 0 = all well; 1 = a stop line (WHY); 2 = no log line for that long (WHY);
-# 9 = the runner is old (no log_at in its status): the caller uses watch_logs. A stop counts only when the status is newer than <since>.
+# dev_watch <since epoch> <no-progress reference epoch> <no-progress seconds> [pilot]: 0 = all well; 1 = a stop line (WHY); 2 = no progress for
+# that long (WHY); 9 = the runner is old (no log_at in its status): the caller uses watch_logs. A stop counts only when the status is newer than
+# <since>. With "pilot" (a scenario waits) the progress is the newest pilot line (pilot_at, runner v7+), else the newest log line.
 dev_watch() {
-  local ref
+  local ref at what
   devsig
   [ -n "$SG_LOGAT" ] || return 9
   if [ -n "$SG_STOP" ] && [ "$SG_SEEN" -gt "$1" ] && [ "$SG_STOPAT" -ge "$1" ]; then WHY="${SG_STOP:0:200}"; return 1; fi
-  ref=$2; [ "$SG_LOGAT" -gt "$ref" ] && ref=$SG_LOGAT
-  if [ $(( $(now) - ref )) -gt "$3" ]; then WHY="no progress: no new app log line for $3 s"; return 2; fi
+  at=$SG_LOGAT; what="no new app log line"
+  if [ "${4:-}" = pilot ] && [ -n "$SG_PILOTAT" ]; then at=$SG_PILOTAT; what="no pilot step"; fi
+  ref=$2; [ "$at" -gt "$ref" ] && ref=$at
+  if [ $(( $(now) - ref )) -gt "$3" ]; then WHY="no progress: $what for $3 s"; return 2; fi
   return 0
 }
 
@@ -235,7 +242,7 @@ tick() {
         done\|*) step "$label" true "${st#*|}" ""; dset last_scn_end "$(now)"; dset scn_idx "$((i + 1))"; phase scenario ;;
         cancelled\|*) step "$label" false "$(phase_age)" "the request was cancelled"; FAILED=1; dset last_scn_end "$(now)"; skip_to_logs ;;
         *) sa=$(dget seeded_at); ma=$(dget mark_at); [ -n "$ma" ] || ma=$sa
-           dev_watch "${ma:-0}" "${sa:-0}" "$NOPROG_DEV"; w=$?
+           dev_watch "${ma:-0}" "${sa:-0}" "$NOPROG_DEV" pilot; w=$?
            if [ "$w" = 9 ]; then watch_logs "${sa:-0}" "${sa:-0}"; w=$?; fi   # old runner
            if [ "$w" = 0 ]; then
              if [ "$(phase_age)" -gt "$maxs" ]; then fail_scn "$label" "not done in ${maxs} s" "$tbl" "$row"; fi

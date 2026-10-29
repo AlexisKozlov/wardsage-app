@@ -719,6 +719,7 @@ static class CoreTests {
     CityGateAndPanelTests();
     Console.WriteLine("Offer pop-ups over the city (OfferForms, OfferClose, the window table, the automatic recording):");
     OfferTests();
+    PlanScreenTests();
     ArtGridPictureTests();
     ArtPromoteTests();
     ArtAutoTests();
@@ -4095,10 +4096,133 @@ static class CoreTests {
   }
 
   // Storage cleanup of ARTIFACTS (the artifact tab's «Массовая продажа»): the panel reader on fake tables, the screen state, the steps and frames, no clicks
+  // the build plan screen a wrong click opened (laptop, 1366x705), the unknown-screen stop, the form search wait, a pop-up over a known screen
+  static void PlanScreenTests() {
+    const double W = 1366, H = 705; double U = Ui.Unit(W, H);
+    // «План сборки»: left with its back arrow (top left, where the photo of the laptop shows it), never its plan buttons
+    var bk = OfferForms.ClosePoint(null, "Form_EquipmentPlan", W, H, U);
+    Check(bk != null && bk.X > 20 && bk.X < 75 && bk.Y > 10 && bk.Y < 45, "plan screen: the back arrow at the top left (" + (bk == null ? "-" : (int)bk.X + "," + (int)bk.Y) + ")");
+    var plan = ScreenState.Classify(new ScreenInputs { CityForm = false, Offers = new List<string> { "Form_EquipmentPlan" } }, 0);
+    Check(plan.Kind == ScreenKind.Unknown && plan.ModalWhy == "offer:Form_EquipmentPlan", "plan screen: read as the pop-up on top (" + plan.Brief + ")");
+    Func<double, double, ClickRequest> Back = (x, y) => new ClickRequest { Owner = ClickOwner.Equip, Target = ClickTarget.OfferClose, AutoOn = true, Front = true, Form = "Form_EquipmentPlan", X = x, Y = y, W = W, H = H, U = U };
+    var g0 = new ClickGate();
+    Eq("offer", g0.Preflight(ClickOwner.Equip, plan, 0).Reason, "plan screen: the pilot's preflight leaves it first");
+    Check(g0.Check(Back(bk.X, bk.Y), plan, 0).Allowed, "plan screen: its back arrow may be pressed");
+    foreach (var p in new[] { new[] { 0.3 * U, 0.04 * U }, new[] { 0.13 * U, 0.18 * U }, new[] { W / 2, H - 0.05 * U }, new[] { W - 0.3 * U, H - 0.05 * U } })
+      Check(!new ClickGate().Check(Back(p[0], p[1]), plan, 0).Allowed, "plan screen: never a point off the arrow (" + (int)p[0] + "," + (int)p[1] + ")");
+    var gb = new ClickGate(); gb.Arm(ClickOwner.Equip, ClickTarget.OfferClose, ClickGate.Expect(Back(bk.X, bk.Y), plan), 0, "Form_EquipmentPlan");
+    gb.Observe(ScreenState.Classify(new ScreenInputs { CityForm = true, Offers = new List<string>() }, 0), 800);
+    Check(!gb.Pending(ClickOwner.Equip) && !gb.Halted(ClickOwner.Equip), "plan screen: back in the city = the effect, the pilot goes on");
+
+    // the unknown-screen stop: 20 s on the same unrecognised screen, the pilot running
+    Func<string, ScreenState> Unk = top => ScreenState.Classify(new ScreenInputs { CityForm = false, Offers = new List<string>(), TopUnknown = top }, 0);
+    {
+      var g = new ClickGate(); var log = new List<string>(); g.Sink = x => log.Add(x);
+      bool hit = false; long t;
+      for (t = 0; t <= ClickGate.UnknownStallMs + 500 && !hit; t += 200) hit = g.UnknownStall(ClickOwner.Equip, Unk(""), t);
+      Check(hit && t > ClickGate.UnknownStallMs && g.HaltReason(ClickOwner.Equip) == "unknown" && g.HaltDetail(ClickOwner.Equip).StartsWith("unknown screen ?"), "unknown stop: 20 s on an unknown screen stops the pilot (" + g.HaltDetail(ClickOwner.Equip) + ")");
+      Check(log.Exists(l => l.Contains("click gate Equip: STOP (unknown) unknown screen")), "unknown stop: the lab's stop pattern is in the log");
+      var g2 = new ClickGate(); bool h2 = false;
+      for (t = 0; t <= ClickGate.UnknownStallMs + 2000 && !h2; t += 200) h2 = g2.UnknownStall(ClickOwner.Locate, Unk("Form_Odd"), t);
+      Check(h2 && g2.HaltDetail(ClickOwner.Locate).StartsWith("unknown screen Form_Odd"), "unknown stop: the form's name is in the reason");
+      // Preflight (Locate / Sell / the artifact steps) stops the same way
+      var g3 = new ClickGate(); GateResult r3 = null;
+      for (t = 0; t <= ClickGate.UnknownStallMs + 500; t += 200) { r3 = g3.Preflight(ClickOwner.Sell, Unk("Form_Odd"), t); if (r3.Verdict == GateVerdict.Deny) break; }
+      Check(r3.Verdict == GateVerdict.Deny && g3.HaltReason(ClickOwner.Sell) == "unknown" && t >= ClickGate.UnknownStallMs, "unknown stop: Preflight waits 20 s, then stops");
+      // a gap (background / the player busy) or another unknown screen starts the count again
+      var g4 = new ClickGate();
+      for (t = 0; t < 15000; t += 200) g4.UnknownStall(ClickOwner.Equip, Unk(""), t);
+      for (t = 18000; t < 30000; t += 200) g4.UnknownStall(ClickOwner.Equip, Unk(""), t);
+      Check(!g4.Halted(ClickOwner.Equip), "unknown stop: a gap of the calls starts the count again");
+      var g5 = new ClickGate();
+      for (t = 0; t < 15000; t += 200) g5.UnknownStall(ClickOwner.Equip, Unk("Form_A"), t);
+      for (t = 15000; t < 30000; t += 200) g5.UnknownStall(ClickOwner.Equip, Unk("Form_B"), t);
+      Check(!g5.Halted(ClickOwner.Equip), "unknown stop: a change of the unknown screen is progress");
+      g5.Resume(ClickOwner.Equip);
+    }
+    {   // screens the pilots handle never count, however long
+      var hero = new HeroScreen { FormOk = true, Hero = 204200000, Tab = 1, Part = -1 };
+      var known = new Dictionary<string, ScreenState> {
+        { "city", ScreenState.Classify(new ScreenInputs { CityForm = true, Offers = new List<string>() }, 0) },
+        { "city by picture", ScreenState.Classify(new ScreenInputs { CitySeen = true }, 0) },
+        { "hero screen", ScreenState.Classify(new ScreenInputs { Hero = hero }, 0) },
+        { "inventory", ScreenState.Classify(new ScreenInputs { Inv = new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true } }, 0) },
+        { "sell list", ScreenState.Classify(new ScreenInputs { Inv = new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true, Bulk = true } }, 0) },
+        { "foundry", ScreenState.Classify(new ScreenInputs { Rs = new RecastScreen { SublimingOpen = true, CurType = 2 } }, 0) },
+        { "gem", ScreenState.Classify(new ScreenInputs { Rs = new RecastScreen { GemOpen = true, GemFunc = 7 } }, 0) },
+        { "offer", ScreenState.Classify(new ScreenInputs { Offers = new List<string> { "Form_PopUpShop" } }, 0) },
+        { "plan screen", plan },
+        { "fight result", Unk("Form_BattleEnd") },
+        { "arena result", Unk("Form_PvpBattleEnd") },
+        { "hero filter pop-up", ScreenState.Classify(new ScreenInputs { Hero = new HeroScreen { FormOk = true, Hero = 204200000, Tab = 1, Part = -1, FilterOpen = true } }, 0) },
+      };
+      foreach (var kv in known) {
+        var g = new ClickGate(); bool any = false;
+        for (long t = 0; t <= 3 * ClickGate.UnknownStallMs; t += 200) any |= g.UnknownStall(ClickOwner.Equip, kv.Value, t);
+        Check(!any && !g.Halted(ClickOwner.Equip), "unknown stop: never on " + kv.Key + " (" + kv.Value.Brief + ")");
+        var gp = new ClickGate(); GateResult last = null;
+        for (long t = 0; t <= 3 * ClickGate.UnknownStallMs; t += 200) last = gp.Preflight(ClickOwner.Locate, kv.Value, t);
+        Check(!gp.Halted(ClickOwner.Locate), "unknown stop: Preflight never stops on " + kv.Key + " (" + last.Reason + ")");
+      }
+      // a held screen (the reads fail for a moment) is the known one
+      var tr = new ScreenTracker(); tr.Update(new ScreenInputs { Hero = hero }, 0);
+      var held = tr.Update(new ScreenInputs(), 1000);
+      Check(held.Held && held.Kind == ScreenKind.HeroScreen && !new ClickGate().UnknownStall(ClickOwner.Equip, held, 1000), "unknown stop: never on a held screen");
+    }
+    {   // a known form moved: while the host's search for it runs, an unknown screen is waited for (no own-click stop, no effect timeout, no 20 s count)
+      var unk = Unk("");
+      var g = new ClickGate { SearchWait = true };
+      g.Arm(ClickOwner.Locate, ClickTarget.AscendTab, null, 0);
+      Eq("search", g.Preflight(ClickOwner.Locate, unk, 1700).Reason, "form search: an unknown screen right after the pilot's click waits for the search");
+      for (long t = 1700; t < 40000; t += 200) g.UnknownStall(ClickOwner.Locate, unk, t);
+      Check(!g.Halted(ClickOwner.Locate), "form search: no unknown-screen stop while it runs");
+      var rq = new ClickRequest { Owner = ClickOwner.Locate, Target = ClickTarget.CityInventory, AutoOn = true, Front = true };
+      Eq("search", g.Check(rq, unk, 40000).Reason, "form search: a click on an unknown screen waits for it");
+      g.SearchWait = false;
+      var rf = g.Preflight(ClickOwner.Locate, unk, 40200);
+      Check(rf.Verdict == GateVerdict.Deny && g.HaltDetail(ClickOwner.Locate).Contains("form search ended without finding"), "form search: ended, the screen still unknown -> stop (" + g.HaltDetail(ClickOwner.Locate) + ")");
+      // found: the screen is known again, nothing stops
+      var gf = new ClickGate { SearchWait = true }; gf.Arm(ClickOwner.Locate, ClickTarget.AscendTab, null, 0);
+      gf.Preflight(ClickOwner.Locate, unk, 1700);
+      gf.SearchWait = false;
+      var foundry = ScreenState.Classify(new ScreenInputs { Rs = new RecastScreen { SublimingOpen = true, CurType = 2 } }, 0);
+      Check(gf.Preflight(ClickOwner.Locate, foundry, 18000).Allowed && !gf.Halted(ClickOwner.Locate), "form search: found = the pilot goes on");
+      // a click's effect is not timed out while the search runs, and is after it
+      var ge = new ClickGate { SearchWait = true };
+      ge.Arm(ClickOwner.Locate, ClickTarget.AscendTab, s => s.Kind == ScreenKind.Foundry && s.FoundryTab == 2, 0);
+      ge.Observe(unk, ClickGate.EffectMs + 10000);
+      Check(ge.Pending(ClickOwner.Locate) && !ge.Halted(ClickOwner.Locate), "form search: the click's effect is still awaited while it runs");
+      ge.Observe(foundry, ClickGate.EffectMs + 17000);
+      Check(!ge.Pending(ClickOwner.Locate) && !ge.Halted(ClickOwner.Locate), "form search: the screen found = the click's effect");
+      var gn = new ClickGate { SearchWait = true };
+      gn.Arm(ClickOwner.Locate, ClickTarget.AscendTab, s => s.Kind == ScreenKind.Foundry, 0);
+      gn.Observe(unk, ClickGate.EffectMs + 10000); gn.SearchWait = false;
+      gn.Observe(unk, ClickGate.EffectMs + 12000);
+      Eq("nochange", gn.HaltReason(ClickOwner.Locate), "form search: ended without the screen -> the click changed nothing");
+      // without a search the old rules stand: unknown right after the own click stops
+      var go = new ClickGate(); go.Arm(ClickOwner.Locate, ClickTarget.AscendTab, null, 0);
+      Check(go.Preflight(ClickOwner.Locate, unk, 1700).Verdict == GateVerdict.Deny && go.HaltReason(ClickOwner.Locate) == "unknown", "form search: none running -> the own-click rule as before");
+    }
+    {   // a form nobody knows that came over a known screen is a pop-up on top: the gate stops instead of clicking under it
+      var inv = new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true };
+      var top = ScreenState.Classify(new ScreenInputs { Inv = inv, TopNew = "Form_ItemReward" }, 0);
+      Check(top.Kind == ScreenKind.Inventory && top.ModalOpen && top.ModalWhy == "form:Form_ItemReward", "pop-up on top: modal over the inventory (" + top.Brief + ")");
+      var rq = new ClickRequest { Owner = ClickOwner.Locate, Target = ClickTarget.InvEquipTab, AutoOn = true, Front = true };
+      var r = new ClickGate().Check(rq, top, 0);
+      Check(r.Verdict == GateVerdict.Deny && r.Reason == "modal", "pop-up on top: a click under it stops the pilot (" + r.Reason + ")");
+      Check(!ScreenState.Classify(new ScreenInputs { Inv = inv }, 0).ModalOpen, "pop-up on top: none = no modal");
+      Check(!ScreenState.Classify(new ScreenInputs { CityForm = true, TopNew = "Form_X" }, 0).ModalOpen, "pop-up on top: the city keeps its old rules");
+      var f = ScreenState.Classify(new ScreenInputs { Rs = new RecastScreen { SublimingOpen = true, CurType = 2, AscendFilterOpen = true }, TopNew = "Form_X" }, 0);
+      Eq("filter", f.ModalWhy, "pop-up on top: a modal the readers know keeps its name");
+      var tr = new ScreenTracker(); var st = tr.Update(new ScreenInputs { Inv = inv, TopNew = "Form_X" }, 0);
+      Check(st.ModalOpen && st.ModalWhy == "form:Form_X", "pop-up on top: the tracker passes it on");
+    }
+  }
+
   static void OfferTests() {
     const double W = 1920, H = 1009; double U = Ui.Unit(W, H);
-    // the list: the game's pop-up queue, 34 forms; the × known for 31 of them, and never on another button of the form
-    Eq(34, OfferForms.All.Length, "offer list: the forms of the game's pop-up queue");
+    // the list: the game's pop-up queue, 34 forms, and the build plan screen; the × known for 32 of them, and never on another button of the form
+    Eq(35, OfferForms.All.Length, "offer list: the forms of the game's pop-up queue and the build plan");
     int closable = 0;
     foreach (var e in OfferForms.All) {
       var r = OfferForms.CloseRect(null, e.Name, W, H, U);
@@ -4107,7 +4231,7 @@ static class CoreTests {
       Check(r.X >= 0 && r.Right <= W && r.Y >= 0 && r.Bottom <= H && r.W > 20 && r.H > 20, "offer list: the × of " + e.Name + " lies in the window");
       Check(!OfferForms.OnNeverButton(e.Name, r.CX, r.CY, W, H, U), "offer list: the × of " + e.Name + " is on none of its other buttons");
     }
-    Eq(31, closable, "offer list: forms with a known ×");
+    Eq(32, closable, "offer list: forms with a known ×");
     foreach (var nm in new[] { "Form_ChampionshipOver", "Form_MonthyCardGetReward", "Form_Feedback" }) Check(OfferForms.IsOffer(nm) && OfferForms.CloseRect(null, nm, W, H, U) == null, "offer list: " + nm + " has no × known: never clicked");
     Check(!OfferForms.IsOffer("Form_MainCity") && !OfferForms.IsOffer("Form_BackpackIntegration"), "offer list: the game's screens are not offers");
 

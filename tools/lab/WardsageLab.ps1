@@ -23,7 +23,7 @@ Set-StrictMode -Version 2
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$RunnerVersion   = '6'
+$RunnerVersion   = '7'
 $Dir             = Join-Path $env:LOCALAPPDATA 'WardsageLab'
 $StopFile        = Join-Path $Dir 'STOP'
 $LogFile         = Join-Path $Dir 'runner.log'
@@ -151,7 +151,7 @@ function Get-Status {
         runner = $RunnerVersion; game_running = $game; app_running = ($apps.Count -gt 0)
         app_version = (Get-AppVersion); busy = $script:Busy; up_min = [int]((Get-Date) - $script:Started).TotalMinutes
         log_at = $script:LogAt; log_lines = $script:LogCount; ready = $script:LogReady
-        stop = $script:LogStop; stop_at = $script:LogStopAt
+        stop = $script:LogStop; stop_at = $script:LogStopAt; pilot_at = $script:PilotAt
     }
 }
 function ConvertTo-StatusJson($st) {
@@ -390,14 +390,17 @@ function Test-RunnerUpdateDue {
 
 # ---------------------------------------------------------------- live log watch (the test app's own log, read-only, every tick)
 # State goes into the heartbeat status: log_at (epoch s of the newest new line), log_lines (new lines since the run started),
-# ready (the app read the game account), stop / stop_at (first stop line since the last mark). Only lines appended after
+# ready (the app read the game account), stop / stop_at (first stop line since the last mark), pilot_at (epoch s of the newest
+# pilot line: a step / guide change, a click the gate allowed or saw take effect, the locate / sell / art pilots' own lines; 0 = none
+# since the last mark - the app keeps logging its syncs while a pilot waits, so log_at alone is no progress). Only lines appended after
 # the runner started (or after a truncation / rotation) are looked at.
 $StopRe  = 'auto click stopped|click gate .*: STOP|auto: (failed|slot_failed|unconfirmed|hero_failed|stopped)|aborted'
 $ReadyRe = 'Player of the live tables: [0-9]+'
+$PilotRe = 'ui: step (?!stands still)|ui: guide |click gate .*: (allow |.* took effect)|locate auto:|live: hero|sell:|hero: plan|art (equip|promote) auto:|offer: closed'
 function Get-EpochNow { return [int64][DateTimeOffset]::UtcNow.ToUnixTimeSeconds() }
 function Reset-LogMarks {
     $script:LogReady = $false; $script:LogDone = $false; $script:LogSendOk = $false
-    $script:LogStop = ''; $script:LogStopAt = [int64]0
+    $script:LogStop = ''; $script:LogStopAt = [int64]0; $script:PilotAt = [int64]0
 }
 function Update-LogWatch {
     try {
@@ -435,6 +438,7 @@ function Update-LogWatch {
                 $script:LogStop = $t; $script:LogStopAt = $now
             }
             if ($line -cmatch $ReadyRe) { $script:LogReady = $true }
+            if ($line -cmatch $PilotRe) { $script:PilotAt = $now }
             if ($line -cmatch 'Done in') { $script:LogDone = $true }
             if ($line -cmatch 'send: Ok') { $script:LogSendOk = $true }
         }
