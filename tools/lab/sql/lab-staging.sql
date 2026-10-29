@@ -54,7 +54,7 @@ create table if not exists public.lab_jobs (
   id          uuid primary key default gen_random_uuid(),
   device_id   uuid not null references public.lab_devices (id) on delete cascade,
   run_id      uuid references public.lab_runs (id) on delete set null,
-  action      text not null check (action in ('status', 'update_app', 'restart_app', 'screenshot', 'upload_logs', 'finish', 'cancel')),
+  action      text not null check (action in ('status', 'update_app', 'start_game', 'restart_app', 'screenshot', 'upload_logs', 'finish', 'cancel')),
   args        jsonb not null default '{}'::jsonb check (jsonb_typeof(args) = 'object' and octet_length(args::text) < 2048),
   state       text not null default 'queued' check (state in ('queued', 'claimed', 'done', 'failed', 'expired', 'cancelled')),
   created_at  timestamptz not null default now(),
@@ -63,6 +63,10 @@ create table if not exists public.lab_jobs (
   finished_at timestamptz,
   result      jsonb check (result is null or octet_length(result::text) <= 8192)
 );
+-- existing installs: the action list grew (start_game)
+alter table public.lab_jobs drop constraint if exists lab_jobs_action_check;
+alter table public.lab_jobs add constraint lab_jobs_action_check
+  check (action in ('status', 'update_app', 'start_game', 'restart_app', 'screenshot', 'upload_logs', 'finish', 'cancel'));
 create index if not exists lab_jobs_device_state_idx on public.lab_jobs (device_id, state, created_at);
 
 create table if not exists public.lab_results (

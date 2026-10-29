@@ -3,20 +3,27 @@
 # What it is: a small whitelist executor. It is started by hand (desktop shortcut made by setup-lab.ps1) after the
 # owner switched the laptop on and started the game. Every 60 s it sends a heartbeat to the staging server; every
 # few seconds it asks for ONE job, runs it and reports the result. When the server queues the "finish" job, the runner
-# exits by itself. Nothing is installed to run it automatically: no scheduled task, no autostart, no service.
+# exits by itself. Automatic start is opt-in: setup-lab.ps1 -Autostart registers a logon task that starts it with -Service
+# (then it does not exit after "finish": it keeps heart-beating and waits for the next run; MaxRunnerHours only restarts its loop).
 #
-# What it never does: click or type anywhere, start or stop the game or its launcher, open a shell for the server,
-# run anything the server sends, or let a job value reach a command line or a file path. The jobs are only:
-#   status | update_app | restart_app | screenshot | upload_logs | finish | cancel
-# each with a strict argument schema (see $Schemas). The only process it starts/stops is the configured test app.
+# Self-update: every 30 min (and at start) it reads <updateHost>/downloads/test/lab/WardsageLab.json; when the version is higher
+# than $RunnerVersion it downloads WardsageLab.ps1, checks size, sha256 and the RSA signature against the pinned keys (the same
+# check as update_app), replaces its own file atomically and starts itself again. The server cannot send code through a job.
+#
+# What it never does: click or type anywhere, open a shell for the server, run anything the server sends, or let a job
+# value reach a command line or a file path. The jobs are only:
+#   status | update_app | start_game | restart_app | screenshot | upload_logs | finish | cancel
+# each with a strict argument schema (see $Schemas). The only processes it starts/stops are the configured test app and,
+# for start_game, the configured game exe (started directly when the game is not running: no launcher, no clicks).
 #
 # Local kill switch: create the file  %LOCALAPPDATA%\WardsageLab\STOP  (the runner exits at once, even mid-wait).
 
+param([switch]$Service)
 Set-StrictMode -Version 2
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$RunnerVersion   = '1'
+$RunnerVersion   = '2'
 $Dir             = Join-Path $env:LOCALAPPDATA 'WardsageLab'
 $StopFile        = Join-Path $Dir 'STOP'
 $LogFile         = Join-Path $Dir 'runner.log'
@@ -24,7 +31,11 @@ $HeartbeatSec    = 60
 $ClaimSec        = 15
 $MaxRunnerHours  = 4          # the runner never lives longer than this
 $MaxUpdateBytes  = 64MB       # same limit as app/Updater.cs MaxSize
-$GameProcessName = 'Watcher of Realms'   # src/GameInfo.cs ProcessName (read only: the runner never starts/stops it)
+$GameProcessName = 'Watcher of Realms'   # src/GameInfo.cs ProcessName (the runner never stops it; start_game starts gameExe)
+$SelfCheckMin    = 30         # runner self-update check interval
+$MaxRunnerBytes  = 512KB
+$GameWaitSec     = 180        # start_game: max wait for the game process + main window
+$GameStableSec   = 120        # start_game: the game must stay up this long (it may exit when it needs its launcher)
 
 function Write-Log([string]$msg) {
     try {
@@ -58,6 +69,7 @@ if (-not $isAdmin) {
     Write-Host 'Run the lab as administrator: the test app requires admin rights'
     try {
         $relaunch = '-NoProfile -ExecutionPolicy Bypass -File "' + $PSCommandPath + '"'
+        if ($Service) { $relaunch += ' -Service' }
         Start-Process -FilePath 'powershell.exe' -ArgumentList $relaunch -Verb RunAs
     } catch { Write-Host 'Elevation was not granted; the runner did not start.' }
     exit 0
@@ -146,6 +158,7 @@ function ConvertTo-StatusJson($st) {
 $Schemas = @{
     status      = @{}
     update_app  = @{}
+    start_game  = @{}
     restart_app = @{}
     screenshot  = @{ target = { param($v) $v -is [string] -and $v -ceq 'app' } }
     upload_logs = @{ lines  = { param($v) ($v -is [int] -or $v -is [long]) -and $v -ge 50 -and $v -le 2000 } }
@@ -250,6 +263,84 @@ function Invoke-UpdateApp {
     $meta = '{"version":"' + $ver + '","url":' + ($mUrl | ConvertTo-Json -Compress) + ',"size":' + $size + ',"sha256":"' + $hex + '","sig":"' + $mSig + '","notes":' + $notes + '}'
     [IO.File]::WriteAllText((Join-Path $upd ('Wardsage-Test-' + $ver + '.json')), $meta, (New-Object Text.UTF8Encoding($false)))
     return @{ ok = $true; res = @{ updated = $true; version = $ver; installed = $installed } }
+}
+
+# ---------------------------------------------------------------- start_game (gameExe from the config, directly: no launcher, no clicks)
+function Send-Beat {
+    try { [void](Invoke-Rpc 'lab_heartbeat' (ConvertTo-StatusJson (Get-Status))) } catch { }
+}
+function Get-GameWindow {
+    foreach ($p in @(Get-Process -Name $GameProcessName -ErrorAction SilentlyContinue)) {
+        try { $p.Refresh(); if ($p.MainWindowHandle -ne [IntPtr]::Zero) { return $true } } catch { }
+    }
+    return $false
+}
+function Invoke-StartGame {
+    if (@(Get-Process -Name $GameProcessName -ErrorAction SilentlyContinue).Count -gt 0) {
+        return @{ ok = $true; res = @{ started = $false; game_running = $true } }
+    }
+    $exe = [string](Get-Prop $Cfg 'gameExe')
+    if ([string]::IsNullOrEmpty($exe) -or -not (Test-Path -LiteralPath $exe -PathType Leaf)) {
+        return @{ ok = $false; res = @{ error = 'no_game_exe' } }
+    }
+    try {
+        $psi = New-Object Diagnostics.ProcessStartInfo($exe)
+        $psi.UseShellExecute = $false
+        $psi.WorkingDirectory = [IO.Path]::GetDirectoryName($exe)
+        [void][Diagnostics.Process]::Start($psi)
+    } catch {
+        $m = Get-ShortError $_
+        Write-Log ('start_game: start failed: ' + $m)
+        return @{ ok = $false; res = @{ error = 'game_needs_launcher'; message = $m } }
+    }
+    $t0 = Get-Date
+    $seenWindow = $false
+    $lastBeat = $t0
+    while ($true) {
+        Start-Sleep -Seconds 2
+        if (Test-Path $StopFile) { return @{ ok = $false; res = @{ error = 'stopped' } } }
+        $el = ((Get-Date) - $t0).TotalSeconds
+        $up = @(Get-Process -Name $GameProcessName -ErrorAction SilentlyContinue).Count -gt 0
+        if ($seenWindow -and -not $up) { Write-Log 'start_game: the game exited'; return @{ ok = $false; res = @{ error = 'game_needs_launcher'; message = 'exited' } } }
+        if ($up -and -not $seenWindow -and (Get-GameWindow)) { $seenWindow = $true }
+        if ($seenWindow -and $el -ge $GameStableSec) { return @{ ok = $true; res = @{ started = $true; game_running = $true } } }
+        if (-not $up -and $el -ge 20 -and -not $seenWindow) { Write-Log 'start_game: no game process'; return @{ ok = $false; res = @{ error = 'game_needs_launcher'; message = 'no process' } } }
+        if (-not $seenWindow -and $el -ge $GameWaitSec) { Write-Log 'start_game: no game window'; return @{ ok = $false; res = @{ error = 'game_needs_launcher'; message = 'no window' } } }
+        if (((Get-Date) - $lastBeat).TotalSeconds -ge 50) { Send-Beat; $lastBeat = Get-Date }      # the server must still see the laptop online
+    }
+}
+
+# ---------------------------------------------------------------- runner self-update (signed, like update_app)
+$script:Relaunch = $false
+function Invoke-RunnerSelfUpdate {
+    $base = $Cfg.updateHost.TrimEnd('/') + '/downloads/test/lab/'
+    $m = [Text.Encoding]::UTF8.GetString((Get-Bytes ([Uri]($base + 'WardsageLab.json')) 65536)) | ConvertFrom-Json
+    $ver = [string](Get-Prop $m 'version')
+    if (-not (Test-VersionText $ver)) { Write-Log 'self-update: bad version in the manifest'; return }
+    if (-not (Test-Newer $ver $RunnerVersion)) { return }
+    $size = [int64](Get-Prop $m 'size')
+    $mSha = [string](Get-Prop $m 'sha256')
+    $mSig = [string](Get-Prop $m 'sig')
+    if ($size -le 0 -or $size -gt $MaxRunnerBytes -or [string]::IsNullOrEmpty($mSha) -or [string]::IsNullOrEmpty($mSig)) { Write-Log 'self-update: bad manifest'; return }
+    $bytes = Get-Bytes ([Uri]($base + 'WardsageLab.ps1')) $MaxRunnerBytes
+    $hex = ([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($bytes)).Replace('-', '')).ToLowerInvariant()
+    if ($bytes.LongLength -ne $size -or $hex -ne $mSha.ToLowerInvariant()) { Write-Log 'self-update: hash mismatch, ignored'; return }
+    if (-not (Test-Signature $bytes ([Convert]::FromBase64String($mSig)))) { Write-Log 'self-update: bad signature, ignored'; return }
+    # the signed script must carry the version the (unsigned) manifest claims: no replay of an old script under a new number
+    $text = [Text.Encoding]::UTF8.GetString($bytes)
+    $pat = '(?m)^\$RunnerVersion\s*=\s*''' + [regex]::Escape($ver) + ''''
+    if ($text -notmatch $pat) { Write-Log 'self-update: version inside the script differs, ignored'; return }
+    $self = $PSCommandPath
+    [IO.File]::WriteAllBytes($self + '.new', $bytes)
+    Move-Item -LiteralPath ($self + '.new') -Destination $self -Force
+    Write-Log ('self-update: runner ' + $RunnerVersion + ' -> ' + $ver + ', restarting')
+    $script:Relaunch = $true
+    $script:Exit = $true
+}
+function Test-RunnerUpdateDue {
+    if (((Get-Date) - $script:LastSelfCheck).TotalMinutes -lt $SelfCheckMin) { return }
+    $script:LastSelfCheck = Get-Date
+    try { Invoke-RunnerSelfUpdate } catch { Write-Log ('self-update check failed: ' + (Get-ShortError $_)) }
 }
 
 # ---------------------------------------------------------------- restart_app (the configured test app only)
@@ -396,6 +487,7 @@ function Invoke-Job($job) {
             switch ($action) {
                 'status'      { $out = @{ ok = $true; res = (Get-Status) } }
                 'update_app'  { $out = Invoke-UpdateApp }
+                'start_game'  { $out = Invoke-StartGame }
                 'restart_app' { $out = Invoke-RestartApp }
                 'screenshot'  { $out = Invoke-Screenshot $id }
                 'upload_logs' { $out = Invoke-UploadLogs $id $jobArgs }
@@ -417,13 +509,21 @@ function Invoke-Job($job) {
 # ---------------------------------------------------------------- main loop
 $script:Busy = $false
 $script:Started = Get-Date
-Write-Log ('runner started (device ' + $Cfg.device + '). To stop it at once create ' + $StopFile)
+$script:LastSelfCheck = [DateTime]::MinValue
+$mode = 'one run'; if ($Service) { $mode = 'service' }
+Write-Log ('runner ' + $RunnerVersion + ' started (device ' + $Cfg.device + ', ' + $mode + '). To stop it at once create ' + $StopFile)
 $lastBeat = [DateTime]::MinValue
 $backoffUntil = [DateTime]::MinValue
 try {
     while (-not $script:Exit) {
         if (Test-Path $StopFile) { Write-Log 'STOP file found, exiting'; break }
-        if (((Get-Date) - $script:Started).TotalHours -gt $MaxRunnerHours) { Write-Log 'max lifetime reached, exiting'; break }
+        if (((Get-Date) - $script:Started).TotalHours -gt $MaxRunnerHours) {
+            if (-not $Service) { Write-Log 'max lifetime reached, exiting'; break }
+            Write-Log 'max lifetime reached, service mode: loop restarted'
+            $script:Started = Get-Date
+        }
+        Test-RunnerUpdateDue
+        if ($script:Exit) { break }
         if ((Get-Date) -ge $backoffUntil) {
             try {
                 $err = $null
@@ -439,6 +539,7 @@ try {
                         $job = Get-ClaimJob $c.data
                         if ($job -ne $null) {
                             Invoke-Job $job
+                            if ($Service -and -not $script:Relaunch) { $script:Exit = $false }      # service mode: "finish" ends the run, not the runner
                             $lastBeat = [DateTime]::MinValue      # heartbeat right after a job
                         }
                     }
@@ -463,4 +564,12 @@ try {
 } finally {
     $Mutex.ReleaseMutex()
     Write-Log 'runner stopped'
+}
+if ($script:Relaunch) {
+    # the mutex is free now: start the new copy of this file (the runner is already elevated, so no prompt)
+    try {
+        $args2 = '-NoProfile -ExecutionPolicy Bypass -File "' + $PSCommandPath + '"'
+        if ($Service) { $args2 += ' -Service' }
+        Start-Process -FilePath 'powershell.exe' -ArgumentList $args2
+    } catch { Write-Log ('relaunch failed: ' + (Get-ShortError $_)) }
 }

@@ -1,38 +1,40 @@
 #!/usr/bin/env bash
-# Drives one queued test-lab run of a device (staging), in the FOREGROUND. Started by hand, never by cron or a service.
-#   lab-loop.sh --until-done <device> [--timeout MIN]      (default 60 min)
-# Exits 0 when the run finished (then the Telegram message and the report file are done), 1 on timeout / failure.
+# Drives the test-lab runs of the devices (staging). Two modes:
+#   lab-loop.sh --until-done <device> [--timeout MIN]   FOREGROUND, by hand: drives the one queued run of a device (default 60 min).
+#                                                       Exits 0 when the run finished (Telegram message + report file done), 1 on timeout / failure.
+#   lab-loop.sh --auto                                  ONE pass, for cron every minute (flock; exits at once when nothing is to do). For every enabled
+#                                                       device that is online (heartbeat < 3 min): game not running -> queue start_game (once per 15 min);
+#                                                       the newest published test build has no finished run yet, or a lab-request waits -> start a run;
+#                                                       a run in progress advances (the same state machine, state in lab_runs). Always exits 0.
+#                                                       Env: TEST_FEED (feed dir, default /srv/wardsage/test-feed), LAB_NO_TG=1 (print instead of Telegram), LAB_ONLY=<device> (tests).
 #
 # Flow (state kept in lab_runs.phase, so a restart of this script resumes; each phase is idempotent):
 #   wait_online -> update_app -> restart_app -> wait_ready -> [seed -> wait done]* -> wait logs
 #   -> upload_logs -> screenshot -> finish -> report
-# The runner on the laptop only executes the whitelisted jobs queued here; it never clicks and never starts the game.
+# The runner on the laptop only executes the whitelisted jobs queued here; it never clicks (start_game starts the game exe, no launcher, no clicks).
 set -uo pipefail
 . "$(dirname "$0")/lab-common.sh"
 HERE=$(dirname "$(readlink -f "$0")")
+USAGE="usage: lab-loop.sh --until-done <device> [--timeout MIN]  |  lab-loop.sh --auto"
 
-dev=""; timeout_min=60; tick=10
+dev=""; timeout_min=60; tick=10; auto=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --until-done) dev=${2:-}; shift 2 ;;
+    --auto) auto=1; shift ;;
     --timeout) timeout_min=${2:-60}; shift 2 ;;
     --tick) tick=${2:-10}; shift 2 ;;
-    *) echo "usage: lab-loop.sh --until-done <device> [--timeout MIN]" >&2; exit 2 ;;
+    *) echo "$USAGE" >&2; exit 2 ;;
   esac
 done
-[ -n "$dev" ] || { echo "usage: lab-loop.sh --until-done <device> [--timeout MIN]" >&2; exit 2; }
+{ [ -n "$dev" ] || [ "$auto" = 1 ]; } && { [ -z "$dev" ] || [ "$auto" = 0 ]; } || { echo "$USAGE" >&2; exit 2; }
 [[ "$timeout_min" =~ ^[0-9]{1,3}$ ]] && [[ "$tick" =~ ^[0-9]{1,3}$ ]] || { echo "bad number" >&2; exit 2; }
-DEV=$(dev_id "$dev") || exit 2
-
-exec 9>"$LAB_DIR/loop-$dev.lock"
-flock -n 9 || { echo "lab-loop for '$dev' is already running" >&2; exit 1; }
+FEED=${TEST_FEED:-/srv/wardsage/test-feed}
 
 say() { echo "$(date -u +%H:%M:%S) $*"; }
 now() { date +%s; }
 
-# ---- run row helpers (RUN = run id)
-RUN=$(q -v d="$DEV" <<< "select id from public.lab_runs where device_id = :'d'::uuid and state in ('queued', 'running') order by created_at limit 1")
-[ -n "$RUN" ] || { echo "no queued run for '$dev' (lab-request.sh first)"; exit 0; }
+# ---- run row helpers (RUN = run id, DEV = device id)
 rget()   { q -v r="$RUN" <<< "select $1 from public.lab_runs where id = :'r'::uuid"; }
 dget()   { q -v r="$RUN" -v k="$1" <<< "select coalesce(data->>:'k', '') from public.lab_runs where id = :'r'::uuid"; }
 dset()   { q -v r="$RUN" -v k="$1" -v v="$2" <<< "update public.lab_runs set data = data || jsonb_build_object(:'k', :'v'::text) where id = :'r'::uuid"; }
@@ -62,18 +64,8 @@ wait_job() {
   JOBOK=""; return 1
 }
 
-# ---- go
-q -v r="$RUN" <<< "update public.lab_runs set state = 'running', started_at = coalesce(started_at, now()) where id = :'r'::uuid" >/dev/null
-first=0; [ -n "$(dget phase_at)" ] || { first=1; phase wait_online; }
-deadline=$(( $(now) + timeout_min * 60 ))
-say "run started for '$dev', timeout ${timeout_min} min"
-if [ "$first" = 1 ] && [ -z "${LAB_NO_TG:-}" ]; then
-  ver=$(dstat "coalesce(status->>'app_version', '?')"); tg "▶️ Проверка на ноутбуке началась: сборка ${ver:-?}" || true
-fi
-scenarios=($(q -v r="$RUN" <<< "select unnest(scenarios) from public.lab_runs where id = :'r'::uuid"))
-build=$(rget build)
-FAILED=0
 
+# ---- the state machine
 end_run() {   # $1 = final state
   q -v d="$DEV" -v r="$RUN" <<< "update public.lab_jobs set state = 'cancelled', finished_at = now() where run_id = :'r'::uuid and state = 'queued'" >/dev/null
   q -v r="$RUN" -v s="$1" <<< "update public.lab_runs set state = :'s', finished_at = now() where id = :'r'::uuid" >/dev/null
@@ -86,7 +78,7 @@ bail_finish() { local f; f=$(mkjob finish) && dset job "$f" && dset job_timeout 
 # What the app logs when a pilot or the click gate stops (app/Overlay.cs AutoSay + «auto click stopped», src/ClickGate.cs Note «click gate <owner>: STOP (...)»,
 # HALT, the pilot states of HostBridge.OnAutoState, the art equip/promote «auto: stopped»)
 STOP_RE='auto click stopped|click gate .*: STOP|HALT|auto: (failed|slot_failed|unconfirmed|hero_failed|stopped)'
-NOPROGRESS=${LAB_NOPROGRESS:-180}
+NOPROGRESS=${LAB_NOPROGRESS:-330}   # the app sends its log every ~2 min, in batches
 # watch_logs <since epoch> <no-progress reference epoch>: 0 = all well; 1 = a stop line (WHY = the line); 2 = no new log line for NOPROGRESS s (WHY)
 WHY=""
 watch_logs() {
@@ -107,10 +99,32 @@ fail_scn() {   # $1 = step label, $2 = reason, $3 = table, $4 = row id
 }
 skip_to_logs() { dset scn_idx "${#scenarios[@]}"; phase logs; }
 
-while :; do
+
+notify() { if [ -n "${LAB_NO_TG:-}" ]; then say "telegram (skipped): $1"; else tg "$1" || true; fi; }
+
+# the run RUN of device DEV: mark it running, load its scenarios, say hello on the first start. Sets deadline, first, scenarios, build.
+init_run() {
+  q -v r="$RUN" <<< "update public.lab_runs set state = 'running', started_at = coalesce(started_at, now()) where id = :'r'::uuid" >/dev/null
+  first=0; [ -n "$(dget phase_at)" ] || { first=1; phase wait_online; }
+  if [ "$auto" = 1 ]; then
+    local sa; sa=$(rget "coalesce(extract(epoch from started_at)::bigint, 0)"); deadline=$(( ${sa:-0} + timeout_min * 60 ))
+    [ "${sa:-0}" -gt 0 ] || deadline=$(( $(now) + timeout_min * 60 ))
+  else
+    deadline=$(( $(now) + timeout_min * 60 ))
+  fi
+  { [ "$auto" = 0 ] || [ "$first" = 1 ]; } && say "run ${RUN:0:8} for '$dev', timeout ${timeout_min} min"
+  if [ "$first" = 1 ]; then
+    local ver; ver=$(dstat "coalesce(status->>'app_version', '?')"); notify "▶️ Проверка на ноутбуке началась: сборка ${ver:-?}"
+  fi
+  scenarios=($(q -v r="$RUN" <<< "select unnest(scenarios) from public.lab_runs where id = :'r'::uuid"))
+  build=$(rget build)
+  FAILED=0; FINAL=""
+}
+
+tick() {
   if [ "$(now)" -gt "$deadline" ]; then
     say "TIMEOUT"; step "timeout" false "$((timeout_min * 60))" "the run did not finish in ${timeout_min} min"
-    end_run timeout; exit 1
+    end_run timeout; FINAL=1; return
   fi
   ph=$(rget phase)
   case "$ph" in
@@ -120,7 +134,7 @@ while :; do
         j=$(mkjob update_app) && dset job "$j" && phase update
       elif [ "$(phase_age)" -gt 600 ]; then
         step online false "$(phase_age)" "the laptop is not online with the game running"
-        end_run failed; exit 1
+        end_run failed; FINAL=1; return
       fi ;;
     update)
       if wait_job update_app restart 300; then
@@ -165,10 +179,10 @@ while :; do
       fi ;;
     scenario)
       i=$(dget scn_idx)
-      if [ "$i" -ge "${#scenarios[@]}" ]; then phase logs; continue; fi
+      if [ "$i" -ge "${#scenarios[@]}" ]; then phase logs; return; fi
       sc=${scenarios[$i]}
       row=$("$HERE/lab-seed.sh" "$dev" "$sc" "$build") || row=""
-      if [ -z "$row" ]; then step "$sc" false 0 "seed failed (fixture missing?)"; FAILED=1; skip_to_logs; continue; fi
+      if [ -z "$row" ]; then step "$sc" false 0 "seed failed (fixture missing?)"; FAILED=1; skip_to_logs; return; fi
       dset row "$row"; dset seeded_at "$(now)"; phase wait_scn ;;
     wait_scn)
       i=$(dget scn_idx); sc=${scenarios[$i]}; row=$(dget row)
@@ -209,8 +223,94 @@ while :; do
     report)
       [ "$(q -v r="$RUN" <<< "select count(*) from public.lab_runs where id = :'r'::uuid and steps @> '[{\"ok\": false}]'")" = 0 ] && final=done || final=failed
       end_run "$final"
-      [ "$final" = done ] && exit 0 || exit 1 ;;
-    *) say "unknown phase '$ph'"; exit 1 ;;
+      [ "$final" = done ] && FINAL=0 || FINAL=1 ;;
+    *) say "unknown phase '$ph'"; FINAL=1 ;;
   esac
-  sleep "$tick"
+}
+
+# ================================================================ --until-done
+if [ "$auto" = 0 ]; then
+  DEV=$(dev_id "$dev") || exit 2
+  exec 9>"$LAB_DIR/loop-$dev.lock"
+  flock -n 9 || { echo "lab-loop for '$dev' is already running" >&2; exit 1; }
+  RUN=$(q -v d="$DEV" <<< "select id from public.lab_runs where device_id = :'d'::uuid and state in ('queued', 'running') order by created_at limit 1")
+  [ -n "$RUN" ] || { echo "no queued run for '$dev' (lab-request.sh first)"; exit 0; }
+  init_run
+  while :; do
+    tick
+    [ -z "$FINAL" ] || exit "$FINAL"
+    sleep "$tick"
+  done
+fi
+
+# ================================================================ --auto (one pass)
+exec 8>"$LAB_DIR/auto.lock"
+flock -n 8 || exit 0
+
+# ensure_game: the game is not running -> queue ONE start_game job per 15 min
+ensure_game() {
+  local n; n=$(q -v d="$DEV" <<< "select count(*) from public.lab_jobs where device_id = :'d'::uuid and action = 'start_game' and (state in ('queued', 'claimed') or created_at > now() - interval '15 minutes')")
+  if [ "${n:-1}" = 0 ]; then
+    q -v d="$DEV" <<< "insert into public.lab_jobs (device_id, action, args, expires_at) values (:'d'::uuid, 'start_game', '{}'::jsonb, now() + interval '20 minutes')" >/dev/null
+    say "'$dev': game not running, start_game queued"
+  fi
+}
+
+# the game needs the launcher (start_game failed with game_needs_launcher): one message per 6 h, and only for a failure newer than the last message
+notify_launcher() {
+  local mark="$LAB_DIR/needs-launcher-$dev.at" last fin
+  last=$(cat "$mark" 2>/dev/null || echo 0); [[ "$last" =~ ^[0-9]+$ ]] || last=0
+  fin=$(q -v d="$DEV" <<< "select coalesce(extract(epoch from max(finished_at))::bigint, 0) from public.lab_jobs where device_id = :'d'::uuid and action = 'start_game' and state = 'failed' and result->>'error' = 'game_needs_launcher'")
+  if [ "${fin:-0}" -gt "$last" ] && [ $(( $(now) - last )) -gt 21600 ]; then
+    notify "🎮 Ноутбук: игре нужно обновление, откройте лаунчер и нажмите «Играть»"
+    echo "$(now)" > "$mark"
+  fi
+}
+
+# advance the run: a few ticks while the phase keeps changing (a chain of quick steps), then leave the rest to the next pass
+advance() {
+  local i p0 p1
+  init_run
+  for i in 1 2 3 4 5; do
+    p0=$(rget phase); tick
+    [ -z "$FINAL" ] || { say "run ${RUN:0:8} ended (exit code $FINAL)"; return; }
+    p1=$(rget phase); [ "$p0" != "$p1" ] || return
+  done
+}
+
+auto_dev() {   # $1 = device name
+  dev=$1; DEV=$(dev_id "$dev") || return 0
+  exec 9>"$LAB_DIR/loop-$dev.lock"
+  flock -n 9 || { exec 9>&-; return 0; }          # a hand-started --until-done owns the device
+  local gr st latest fin
+  gr=$(dstat "coalesce(status->>'game_running', 'false')")
+  RUN=$(q -v d="$DEV" <<< "select id from public.lab_runs where device_id = :'d'::uuid and state in ('queued', 'running') order by created_at limit 1")
+  if [ "$gr" != true ]; then ensure_game; notify_launcher; fi
+  if [ -n "$RUN" ]; then
+    st=$(rget state)
+    # a waiting request starts only when the game runs
+    if [ "$st" = running ] || [ "$gr" = true ]; then advance; fi
+  elif [ "$gr" = true ]; then
+    latest=$(jq -r '.version // empty' "$FEED/latest.json" 2>/dev/null)
+    if [[ "$latest" =~ ^[0-9]{1,9}(\.[0-9]{1,9}){0,3}$ ]]; then
+      fin=$(q -v d="$DEV" -v v="$latest" <<< "select count(*) from public.lab_runs where device_id = :'d'::uuid and state in ('done', 'failed', 'timeout') and (data->>'target_version' = :'v' or data->>'want_version' = :'v')")
+      if [ "$fin" = 0 ]; then
+        RUN=$(q -v d="$DEV" -v v="$latest" <<< "
+          insert into public.lab_runs (device_id, scenarios, build, data)
+          values (:'d'::uuid, '{equip_city,locate}', coalesce((select case build when 'a' then 'b' else 'a' end from public.lab_runs
+                  where device_id = :'d'::uuid and state <> 'cancelled' order by created_at desc limit 1), 'a'),
+                  jsonb_build_object('target_version', :'v'::text))
+          returning id")
+        say "'$dev': new test build $latest has no finished run, run ${RUN:0:8} queued"
+        advance
+      fi
+    fi
+  fi
+  exec 9>&-
+}
+
+# LAB_ONLY=<device> limits the pass to one device (tests)
+for d in $(q -v only="${LAB_ONLY:-}" <<< "select name from public.lab_devices where enabled and last_seen > now() - interval '3 minutes' and (:'only' = '' or name = :'only') order by name"); do
+  auto_dev "$d"
 done
+exit 0
