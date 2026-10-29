@@ -14,7 +14,7 @@ using System.Security.Cryptography;
 using System.Text;
 using RealmForge;
 
-static class CoreTests {
+static partial class CoreTests {
   static int passed, failed;
 
   // ConfirmChoice (a tie of both blue confirm buttons) and GameGeomCheck (the window geometry self-check), app/HintGeometry.cs
@@ -110,6 +110,7 @@ static class CoreTests {
   static string Tok(char c) { return "rf_" + new string(c, 32); }
 
   static int Main(string[] args) {
+    if (args.Length > 0 && args[0] == "--sim") return SimMain(args);
     string mock = args.Length > 0 ? args[0] : "http://localhost:3999";
     string realAccount = args.Length > 1 ? args[1] : null;
     // the fight timeline and the battle reading take their game values from the layout data (src/Layout.cs): a test copy
@@ -725,6 +726,7 @@ static class CoreTests {
     CityBackTests();
     ScreenMapTests();
     ScreenMapScenarios();
+    SimRegressionTests();
     ArtGridPictureTests();
     ArtPromoteTests();
     ArtAutoTests();

@@ -100,7 +100,8 @@ namespace RealmForge {
       if (State == "failed" && failedAt == 0) failedAt = v.NowMs;
       if (State == "failed" && retries < MaxRetries && v.NowMs - failedAt >= RetryMs) { retries++; Restart(); }
       if (v.Plan <= 0) { State = "idle"; return null; }
-      if (pending) Learn(v);
+      // a click that brought up nobody new is judged when its wait has run out (a slow PC shows the new hero later than the next tick)
+      if (pending && (v.Hero != heroBefore || v.NowMs >= waitUntil)) Learn(v);
       bool heroOk = v.Hero == v.Plan, tabOk = v.Tab == HeroGeometry.GearTab || v.Tab < 0;
       // (the grid filter set for the hero stays: back to «Все» the game would select another hero - live test 2026-09-26;
       // a filter hiding the next plan's hero is cleared then, FilterStep)

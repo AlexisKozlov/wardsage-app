@@ -63,6 +63,10 @@ namespace RealmForge {
       return best;
     }
 
+    /// <summary>A form shown when a known screen came counts as a part of that screen (the base: no pop-up on top), except a dangerous dialog or a
+    /// wait: those are never a screen's own part (a buy dialog already open when the pilot starts is on top, not under the screen's buttons).</summary>
+    public static bool MayBeBase(string name) { char c = ClassOf(name); return c != 'D' && c != 'W'; }
+
     static double X(char a, double off, double W, double U) { return (a == 'L' ? 0 : a == 'C' ? W / 2 : W) + off * U; }
     static double Y(char a, double off, double H, double U) { return (a == 'T' ? 0 : a == 'M' ? H / 2 : H) + off * U; }
     /// <summary>A rect of the table in client px.</summary>

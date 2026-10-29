@@ -2550,6 +2550,9 @@ namespace RealmForge {
     volatile bool uiFinding; long uiFindAt, unknownFormsAt, lostSearchAt; int lostSearchGen; List<string> unknownForms;
     // the shown unknown forms when the screen became the known one it is (TopNew: the ones that came later are a pop-up on top), and the last results
     const int TopSettleMs = 3000;
+    // the window table's read failed this tick (the offers or the shown forms): a pop-up over the screen cannot be ruled out, so no click or key
+    // goes to the game until a read succeeds (the read is tried again on the next tick); never set while the table is not known (RFX.UiKnown)
+    bool formsUnread; ScreenKind formsKind = ScreenKind.Unknown;   // formsKind: the screen the tick's forms were read for
     long topBaseAt; ScreenKind topBaseKind = ScreenKind.Unknown; HashSet<string> topBase = new HashSet<string>(); string topNewNow = "", topUnknownNow = "", topCityNow = ""; ScreenKind topNewKind = ScreenKind.Unknown;
     readonly HashSet<string> unknownSaid = new HashSet<string>();
     string offerSaid = "";
@@ -2565,12 +2568,14 @@ namespace RealmForge {
         return;
       }
       inp.Offers = RFX.ReadOffers();
+      formsUnread = inp.Offers == null;
       string os = inp.Offers == null ? "?" : string.Join(",", inp.Offers.ToArray());
       if (os != offerSaid) { offerSaid = os; if (os != "" && os != "?") Log.Write("offer: shown " + os); }
       var cls = ScreenState.Classify(inp, now).Kind;
       topNewNow = ""; topUnknownNow = ""; topCityNow = "";
+      formsKind = cls;
       if (front && (inp.Offers == null || inp.Offers.Count == 0)) {
-        if (now - unknownFormsAt >= 2000 || unknownFormsAt == 0) { unknownFormsAt = now; unknownForms = RFX.ReadUnknownShownForms(4); }
+        if (now - unknownFormsAt >= 2000 || unknownFormsAt == 0) { unknownFormsAt = now; unknownForms = RFX.ReadUnknownShownForms(4); if (unknownForms == null) { formsUnread = true; unknownFormsAt = 0; } }
         var cur = unknownForms ?? new List<string>();
         foreach (var n in cur) if (unknownSaid.Add(n)) Log.Write("offer: unknown top form " + n + " (not in list)");
         if (cls == ScreenKind.Unknown) {
@@ -2588,8 +2593,8 @@ namespace RealmForge {
         } else if (unknownForms != null) {
           // over a known screen: the forms there when it came are its own; one that came later is a pop-up on top (never pressed: the gate stops on it)
           // (the forms read within TopSettleMs of the screen's coming are its own too: a part the game builds a moment later; the read right after the change is fresh)
-          if (cls != topBaseKind) { topBaseKind = cls; topBaseAt = now; topBase = new HashSet<string>(); unknownForms = RFX.ReadUnknownShownForms(4); unknownFormsAt = now; cur = unknownForms ?? new List<string>(); }
-          if (now - topBaseAt < TopSettleMs) foreach (var n in cur) topBase.Add(n);
+          if (cls != topBaseKind) { topBaseKind = cls; topBaseAt = now; topBase = new HashSet<string>(); unknownForms = RFX.ReadUnknownShownForms(4); unknownFormsAt = now; cur = unknownForms ?? new List<string>(); if (unknownForms == null) { formsUnread = true; unknownFormsAt = 0; } }
+          if (now - topBaseAt < TopSettleMs) foreach (var n in cur) if (ScreenMap.MayBeBase(n)) topBase.Add(n);
           var fresh = cur.FindAll(n => !topBase.Contains(n));
           if (fresh.Count > 0) { inp.TopNew = topNewNow = string.Join(",", fresh.ToArray()); topNewKind = cls; }
         }
@@ -2669,11 +2674,18 @@ namespace RealmForge {
       return true;
     }
 
+    /// <summary>The window table (the offers, the shown forms) was not read this tick or for the fresh state: a dialog over the screen is not ruled out.</summary>
+    /// A known screen the tick took for another one (its read failed then): the forms over it were not read as its pop-ups either.
+    bool FormsUnread(ScreenState fresh) {
+      return RFX.UiKnown && (formsUnread || fresh == null || !fresh.OfferRead || (fresh.Kind != ScreenKind.City && fresh.Kind != ScreenKind.Unknown && fresh.Kind != formsKind));
+    }
+
     /// <summary>The one Escape key press (EscapeBack): the gate judges a fresh read (never the city - it asks to quit the game there -, a fight, a
     /// pop-up, the exit dialog); the key goes only to the game in front.</summary>
     bool EscapeSend(ClickOwner owner, W32.RECT cr, bool front) {
       long now = NowMs();
       var fresh = FreshScreen(false, true);
+      if (FormsUnread(fresh)) return false;
       var req = new ClickRequest { Owner = owner, Target = ClickTarget.EscapeBack, AutoOn = owner == ClickOwner.Locate ? AutoEnabled && LocateAutoEnabled : AutoEnabled, Front = front, U = Ui.Unit(cr.R, cr.B) };
       var res = gate.Check(req, fresh, now);
       AnnounceHalts();
@@ -2705,6 +2717,7 @@ namespace RealmForge {
     /// no pop-up, the cell is the item's, the last click showed its effect), then it is sent and its effect is awaited.</summary>
     bool GatedSend(ClickRequest req, ScreenState fresh, AutoAction a, int sx, int sy) {
       long now = NowMs();
+      if (FormsUnread(fresh)) return false;
       var res = gate.Check(req, fresh, now);
       AnnounceHalts();
       if (!res.Allowed) return false;

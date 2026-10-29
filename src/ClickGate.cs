@@ -390,6 +390,15 @@ namespace RealmForge {
       return d;
     }
 
+    /// <summary>The forms nobody knows shown with the screen: on an unknown screen its TopForm list, over a known screen or the city the pop-ups of
+    /// its "form:" modal.</summary>
+    static List<string> ShownForms(ScreenState s) {
+      var l = new List<string>();
+      string list = s.Kind == ScreenKind.Unknown ? s.TopForm : s.ModalWhy != null && s.ModalWhy.StartsWith("form:") ? s.ModalWhy.Substring(5) : "";
+      if (!string.IsNullOrEmpty(list)) foreach (var n in list.Split(',')) if (n.Trim() != "") l.Add(n.Trim());
+      return l;
+    }
+
     /// <summary>The map's × or Escape may be tried now: the owner runs (not halted, no click on its way, no form search, not a hint run), the form
     /// has been on top MapSettleMs, no try within UnknownBackRetryMs; MaxMapMoves made already: the owner stops ("nochange").</summary>
     public bool MapDue(ClickOwner o, ScreenState s, long now) {
@@ -957,6 +966,9 @@ namespace RealmForge {
       }
       if (!ScreenMap.OnExit(form, r.X, r.Y, r.W, r.H, r.U)) return Halt(o, "target", tag + ": not on the close button of " + form);
       if (ScreenMap.OnNever(form, r.X, r.Y, r.W, r.H, r.U)) return Halt(o, "target", tag + ": lies on another button of " + form + " (never pressed)");
+      // the window table has no order: another pop-up shown with it may lie on top of this one, so the point must be off its never-click buttons too
+      foreach (var other in ShownForms(f))
+        if (other != form && ScreenMap.OnNever(other, r.X, r.Y, r.W, r.H, r.U)) return Halt(o, "target", tag + ": lies on a never-click button of " + other + ", shown with " + form);
       int n = MapMoves(o);
       if (n >= MaxMapMoves) return Halt(o, "nochange", tag + ": " + n + " of the screen map's exits made already, " + form + " again (a loop?)");
       var res = GateResult.Allow(tag + " on " + f.Brief + " (" + form + ")");

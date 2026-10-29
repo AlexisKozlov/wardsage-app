@@ -65,7 +65,7 @@ NET8_REFS=$(for f in "$NET8"/*.dll; do printf -- '-r:%s ' "$f"; done)
 $CSC -langversion:5 -target:library -nostdlib -warnaserror -nowarn:SYSLIB0014 $NET8_REFS \
   -out:"$OUT/RealmForge.Core.dll" $CORE tests/CodeProtectorStub.cs
 $CSC -target:exe -nostdlib -nowarn:SYSLIB0014 $NET8_REFS -r:"$OUT/RealmForge.Core.dll" \
-  -out:"$OUT/CoreTests.dll" tests/CoreTests.cs
+  -out:"$OUT/CoreTests.dll" tests/CoreTests.cs tests/GameSim.cs
 cat > "$OUT/CoreTests.runtimeconfig.json" <<EOF
 { "runtimeOptions": { "tfm": "net8.0", "framework": { "name": "Microsoft.NETCore.App", "version": "$NET8_RT" } } }
 EOF
@@ -78,6 +78,9 @@ for i in $(seq 1 50); do curl -s -o /dev/null "http://127.0.0.1:$PORT/__last" &&
 
 step "5. Tests on .NET 8"
 dotnet exec --runtimeconfig "$OUT/CoreTests.runtimeconfig.json" "$OUT/CoreTests.dll" "http://localhost:$PORT" $ACCOUNT
+
+step "5a. Game sim: 3000 seeds of a random start + task through the real screen state, click gate and pilots (tests/GameSim.cs; longer: tests/run-sim.sh --soak N)"
+dotnet exec --runtimeconfig "$OUT/CoreTests.runtimeconfig.json" "$OUT/CoreTests.dll" --sim 3000
 
 step "5b. Screen state + click gate: replay of recorded screens (tests/fixtures/screens)"
 $CSC -target:exe -nostdlib -nowarn:SYSLIB0014 $NET8_REFS -r:"$OUT/RealmForge.Core.dll" -out:"$OUT/ScreenReplay.dll" tests/ScreenReplay.cs
@@ -100,7 +103,7 @@ if command -v mono >/dev/null && [ -f "$FX45/System.dll" ]; then
   step "6. Same tests on Mono (.NET Framework 4.5 API, HttpWebRequest of the Framework family, real DPAPI class)"
   $CSC -langversion:5 -nostdlib -target:exe -warnaserror -nowarn:618 \
     -r:$FX45/mscorlib.dll -r:$FX45/System.dll -r:$FX45/System.Core.dll -r:$FX45/System.Security.dll -r:$FX45/System.IO.Compression.dll \
-    -out:"$OUT/CoreTests-mono.exe" $CORE src/CodeProtector.cs tests/CoreTests.cs
+    -out:"$OUT/CoreTests-mono.exe" $CORE src/CodeProtector.cs tests/CoreTests.cs tests/GameSim.cs
   LANG=C.UTF-8 mono "$OUT/CoreTests-mono.exe" "http://localhost:$PORT" $ACCOUNT
 fi
 
