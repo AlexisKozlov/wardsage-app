@@ -425,6 +425,10 @@ static class CoreTests {
     Check(PlansWait.Interpret(200, "<html>").Kind == WaitKind.Error && PlansWait.Interpret(200, "").Kind == WaitKind.Error, "wait: junk body");
     Check(PlansWait.Interpret(401, "{}").Kind == WaitKind.Unauthorized && PlansWait.Interpret(429, "{}").Kind == WaitKind.TooMany, "wait: 401 / 429");
     Check(PlansWait.Interpret(404, "{}").Kind == WaitKind.NotDeployed && PlansWait.Interpret(502, "x").Kind == WaitKind.Error, "wait: 404 not deployed, 502 error");
+    Check(PollGate.ShouldPoll(false, 0, 0) && PollGate.ShouldPoll(false, 0, 999999), "poll gate: no game, polls");
+    Check(!PollGate.ShouldPoll(true, 0, 0) && !PollGate.ShouldPoll(true, 0, 59999), "poll gate: game up, no player, waits");
+    Check(PollGate.ShouldPoll(true, 0, 60000) && PollGate.ShouldPoll(true, 0, 90000), "poll gate: safety timeout polls");
+    Check(PollGate.ShouldPoll(true, 123, 0), "poll gate: player known polls at once");
     Eq(0, PlansWait.Backoff(0), "backoff: none yet");
     Check(PlansWait.Backoff(1) == 2000 && PlansWait.Backoff(2) == 4000 && PlansWait.Backoff(3) == 8000 && PlansWait.Backoff(5) == 32000, "backoff: 2 s, 4 s, 8 s ...");
     Check(PlansWait.Backoff(6) == 60000 && PlansWait.Backoff(50) == 60000, "backoff: capped at 60 s");

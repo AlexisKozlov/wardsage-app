@@ -64,6 +64,7 @@ namespace RealmForge {
       gameTimer.Interval = 2000; gameTimer.Tick += (s, e) => {
         CheckGame(false);
         SyncPlansWait();
+        PollGateTick();
         if (On("battle")) WatchBattleEnd();
         WatchStall();
         arenaWatch.Tick(gameRunning && On("battle")); guildWatch.Tick(gameRunning && On("guild")); packsWatch.Tick(gameRunning); codeWatch.Tick(gameRunning); gradeWatch.Tick(gameRunning);
@@ -692,7 +693,10 @@ namespace RealmForge {
       }
       bool running = pid != 0;
       if (!force && gameSent && running == gameRunning) return;
+      bool wasRunning = gameRunning;
       gameSent = true; gameRunning = running;
+      if (running && !wasRunning) { gameFoundAt = DateTime.UtcNow; pollHoldLogged = pollTimeoutLogged = false; }
+      if (!running) { gameFoundAt = DateTime.MinValue; pollHoldLogged = pollTimeoutLogged = false; }
       Post("{\"ev\":\"game\",\"running\":" + B(running) + ",\"version\":" + S(gameVersion) + "}");
       PostLayout();
       if (!running && addrs != null) { addrs = null; overlay.SetAddrs(null); liveTimer.Stop(); lastLive = null; }
@@ -1146,10 +1150,34 @@ namespace RealmForge {
       Task.Factory.StartNew(() => { Post("{\"ev\":\"forum\",\"r\":" + NewsClient.Unread(site, code) + "}"); });
     }
 
+    // Plans and the sell list are asked for the game account (X-RF-Player). While the game runs and the account is not
+    // read yet, the site would answer for the code's default account: the request waits (one log line) and goes at once
+    // when the account is known, or after PollGate.PlayerWaitMs
+    DateTime gameFoundAt = DateTime.MinValue; bool pollHoldLogged, pollTimeoutLogged; string heldPlansLang, heldSellLang;
+    bool PollAllowed() {
+      long since = gameFoundAt == DateTime.MinValue ? 0 : (long)(DateTime.UtcNow - gameFoundAt).TotalMilliseconds;
+      bool ok = PollGate.ShouldPoll(gameRunning, SyncClient.Player, since);
+      if (!ok) {
+        if (!pollHoldLogged) { pollHoldLogged = true; Log.Write("plans / sell list: held until the game account is read (no X-RF-Player yet)"); }
+        return false;
+      }
+      pollHoldLogged = false;
+      if (gameRunning && SyncClient.Player <= 0 && !pollTimeoutLogged) { pollTimeoutLogged = true; Log.Write("plans / sell list: the game account is still not read after " + PollGate.PlayerWaitMs / 1000 + " s, asking for the default account"); }
+      return true;
+    }
+    void PollGateTick() {
+      if (heldPlansLang == null && heldSellLang == null) return;
+      if (!PollAllowed()) return;
+      string pl = heldPlansLang, sl = heldSellLang; heldPlansLang = heldSellLang = null;
+      if (pl != null) LoadPlans(pl);
+      if (sl != null) LoadSell(sl);
+    }
+
     volatile string plansLogged;
     void LoadPlans(string lang) {
       string site = cfg.Site, code = cfg.Code;
       if (!SyncClient.IsValidCode(code)) { Post("{\"ev\":\"plans\",\"status\":\"invalid_token\"}"); return; }
+      if (!PollAllowed()) { heldPlansLang = lang; return; }
       Task.Factory.StartNew(() => {
        try {
         var r = PlansClient.List(site, code, lang == "en" ? "en" : "ru");
@@ -1406,6 +1434,7 @@ namespace RealmForge {
     void LoadSell(string lang) {
       string site = cfg.Site, code = cfg.Code;
       if (!SyncClient.IsValidCode(code)) { Post("{\"ev\":\"sell\",\"status\":\"invalid_token\"}"); return; }
+      if (!PollAllowed()) { heldSellLang = lang; return; }
       Task.Factory.StartNew(() => {
         var r = SellClient.Get(site, code, lang == "en" ? "en" : "ru");
         if (r.Status != PlansStatus.Ok) {

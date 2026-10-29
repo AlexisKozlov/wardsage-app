@@ -130,3 +130,16 @@ namespace RealmForge {
     }
   }
 }
+
+namespace RealmForge {
+  /// <summary>When the plan / sell-list requests may go out. Without the game account (SyncClient.Player, sent as X-RF-Player)
+  /// the site answers for the sync code's default account, which may be the wrong one: while the game runs they wait for the
+  /// account, but not longer than PlayerWaitMs after the game was found. No game: they go as ever (the site's own list).</summary>
+  public static class PollGate {
+    public const int PlayerWaitMs = 60000;
+    public static bool ShouldPoll(bool gameRunning, long player, long sinceGameFoundMs) {
+      if (!gameRunning || player > 0) return true;
+      return sinceGameFoundMs >= PlayerWaitMs;
+    }
+  }
+}
