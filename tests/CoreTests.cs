@@ -4184,13 +4184,26 @@ static class CoreTests {
     ars.AscendList = new RFX.ListRead { ScrollY = 0, Cols = 4, RowUnits = 100, First = 0, Last = 1 };
     Eq(LocateKind.AscendNotInList, LocateGuide.Next(areq, null, ars, null, 8, 1).Kind, "ascend: filter complete, item not in the list -> not ascendable / extra stat");
     ars.AscendSubAttrs = new long[0];
-    Eq(LocateKind.AscendFilter, LocateGuide.Next(areq, null, ars, null, 8, 1).Kind, "ascend: not in the list and the filter incomplete -> filter hint");
+    Eq(LocateKind.AscendNotInList, LocateGuide.Next(areq, null, ars, null, 8, 1).Kind, "ascend: not in the list, a filter part unset (it only narrows) -> not in the list, no filter hint");
+    ars.AscendSuits = new long[] { 999 };
+    Eq(LocateKind.AscendFilter, LocateGuide.Next(areq, null, ars, null, 8, 1).Kind, "ascend: not in the list and another set chosen -> filter hint");
+    {   // live 2026-10-29 (1.6.66.334): a T2 item, chest list of 17 narrowed by the slot, no set chosen -> not in the list; the pilot stops (it waited at «Фильтр» forever)
+      var lv = ar(); var ids17 = new List<long>(); for (int q = 0; q < 17; q++) ids17.Add(5000 + q); lv.AscendEquips = ids17.ToArray();
+      lv.AscendList = new RFX.ListRead { ScrollY = 0, Cols = 5, RowUnits = 100, First = 0, Last = 16 };
+      lv.AscendParts = new[] { item.Slot }; lv.AscendSuits = new long[0]; lv.AscendMainAttrs = new long[0]; lv.AscendSubAttrs = new long[0];
+      var lst = LocateGuide.Next(areq, null, lv, null, 8, 1);
+      Check(lst.Kind == LocateKind.AscendNotInList && Array.IndexOf(lst.Missing, "suit") >= 0, "ascend live: slot set, set unset, item not in the 17 -> not in the list (no set filter step)");
+      var lp = new LocatePilot(); LocateMove lm = null;
+      for (long t = 0; t <= LocatePilot.SettledMs + 400; t += 200) lm = lp.Step(new LocateView { Step = lst, Rs = lv, Item = item, Purpose = "ascend", NowMs = t, Foreground = true });
+      Check(lm != null && lm.State == "stopped" && lm.Why == "notinlist", "ascend live: the pilot stops with «not in the list», not a wait at the filter");
+    }
+    ars.AscendSuits = new long[] { 720100 };
     ars.AscendSel = 777; ars.AscendEquips = new long[] { 100 };
     Check(LocateGuide.Next(areq, null, ars, null, 8, 1).Kind != LocateKind.AscendReady, "ascend: a stale selection that the list does not hold is not 'ready'");
     // the filter pop-up: what to press (the filter is hints only)
     {
       var pr = ar(); pr.AscendEquips = new long[] { 100 }; pr.AscendList = new RFX.ListRead { ScrollY = 0, Cols = 5, RowUnits = 108, First = 0, Last = 0 };
-      pr.AscendParts = new[] { 4 }; pr.AscendMainAttrs = new long[] { 12 }; pr.AscendSubAttrs = new long[] { 5, 7, 9, 3 };
+      pr.AscendParts = new[] { 4 }; pr.AscendSuits = new long[] { 999 }; pr.AscendMainAttrs = new long[] { 12 }; pr.AscendSubAttrs = new long[] { 5, 7, 9, 3 };
       pr.FilterLeftSuits = new long[] { 720200 }; pr.FilterRightSuits = new long[] { 720100, 720101 }; pr.FilterShowSuits = new long[] { 720101, 720100 };
       st = LocateGuide.Next(areq, null, pr, null, 8, 1);
       Check(st.Kind == LocateKind.AscendFilter && st.FilterGo == "" && Array.IndexOf(st.Missing, "suit") >= 0, "pop-up closed: the filter step, nothing to press inside");
@@ -4207,7 +4220,7 @@ static class CoreTests {
       Check(st.Kind == LocateKind.AscendFilter && st.FilterGo == "reset", "a sub stat the item lacks hides it -> «Сбросить»");
       pr.AscendParts = new[] { 0 };
       Eq("", LocateGuide.Next(areq, null, pr, null, 8, 1).FilterGo, "the slot is still wrong -> the slot first, nothing in the pop-up");
-      pr.AscendParts = new[] { 4 }; pr.AscendSubAttrs = new long[] { 5, 7, 9, 3 }; pr.AscendMainAttrs = new long[0];
+      pr.AscendParts = new[] { 4 }; pr.AscendSubAttrs = new long[] { 5, 7, 9, 3 }; pr.AscendMainAttrs = new long[] { 99 };
       Eq("mainRow", LocateGuide.Next(areq, null, pr, null, 8, 1).FilterGo, "set chosen, main stat missing -> the main stat row");
       pr.AscendEquips = new long[] { 100, 777 };
       Eq(LocateKind.AscendPick, LocateGuide.Next(areq, null, pr, null, 8, 1).Kind, "the item shows in the list -> pick, the pop-up is no longer needed");

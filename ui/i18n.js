@@ -172,7 +172,7 @@ window.RF_TEXTS = {
     locPopSubRow: 'Нажмите стрелку у строки «Второстепенные хар-ки»', locPopSuitTab: 'Откройте вкладку «Комплект из {0} частей»', locPopSuitCell: 'Выберите комплект «{0}»',
     locScrollDown: 'Ещё {0} ряд(ов) ниже: прокрутите список вниз', locScrollUp: 'Ещё {0} ряд(ов) выше: прокрутите список вверх', locVisible: 'Вещь на экране.',
     locAscendTab: 'Откройте вкладку «Вознесение»',
-    locAscNotInList: 'Вещи нет в списке «Вознесения»', locAscNotInListP: 'Вознести можно не каждую вещь: нужны подходящая редкость и достаточное улучшение. Если в фильтре лишний стат или выбран не тот слот, поправьте его.',
+    locAscNotInList: 'Вещи нет в списке «Вознесения»', locAscNotInListP: 'Вознести можно не каждую вещь: нужны подходящая редкость и достаточное улучшение, а уже вознесённой вещи (T2) в списке нет. Если в фильтре лишний стат или выбран не тот слот, поправьте его.',
     locAscendReady: 'Готово: эта вещь выбрана', locAscendReadyP: 'Нажмите «Вознести» сами.',
     // «Продвинуть» артефакт (только подсказки)
     locArtInventory: 'Откройте Инвентарь → «Артефакт»', locArtInventoryP: 'Артефакт будет обведён рамкой в списке.',
@@ -402,7 +402,7 @@ window.RF_TEXTS = {
     locPopSubRow: 'Press the arrow of the «Sub stats» row', locPopSuitTab: 'Open the «Set of {0} pieces» tab', locPopSuitCell: 'Pick the «{0}» set',
     locScrollDown: '{0} more row(s) below: scroll the list down', locScrollUp: '{0} more row(s) above: scroll the list up', locVisible: 'The item is on the screen.',
     locAscendTab: 'Open the «Ascend» tab',
-    locAscNotInList: 'The item is not in the «Ascend» list', locAscNotInListP: 'Not every item can ascend: it needs a suitable rarity and enough enhancement. If the filter has an extra stat or the wrong slot is picked, fix it.',
+    locAscNotInList: 'The item is not in the «Ascend» list', locAscNotInListP: 'Not every item can ascend: it needs a suitable rarity and enough enhancement; an item already ascended (T2) is not listed. If the filter has an extra stat or the wrong slot is picked, fix it.',
     locAscendReady: 'Done: this item is selected', locAscendReadyP: 'Press «Ascend» yourself.',
     locDone: 'Done: this item is selected', locDoneP: 'Press «Recast» yourself.', locDoneGemP: 'Press «Enhance» yourself.',
     // promote an artifact (hints only)

@@ -118,7 +118,10 @@ namespace RealmForge {
           }
           if (ap != null) st.Kind = LocateKind.AscendPick;
           else if (rs.AscendList == null || !rs.AscendList.Has) st.Kind = LocateKind.AscendLoading;   // not read yet: nothing is known about the list
-          else if (st.Missing.Length > 0 || extra) { st.Kind = LocateKind.AscendFilter; PopupStep(st, req.Item, rs, extra); }
+          // m_Equips is the whole list (not only the cells on the screen) and the filter only narrows it: an item the list does not hold
+          // shows up only when a set filter part excludes it. An unset part (slot / set / main stat = all) never hides it: no filter
+          // advice then, the item is not ascendable (already ascended, rarity, level; live 2026-10-29: a T2 item, the pilot waited at «Фильтр»)
+          else if (extra || FilterHides(req.Item, rs.AscendParts, rs.AscendSuits, rs.AscendMainAttrs)) { st.Kind = LocateKind.AscendFilter; PopupStep(st, req.Item, rs, extra); }
           else st.Kind = LocateKind.AscendNotInList;
           return st;
         }
@@ -258,6 +261,16 @@ namespace RealmForge {
     public static bool LongOffScreen(LocateStep st, RFX.ListRead l) {
       if (l == null || l.First < 0 || l.Last < l.First || (st.Scroll != "above" && st.Scroll != "below")) return false;
       return st.Count > 2 * (l.Last - l.First + 1);
+    }
+
+    /// <summary>A set part of the Ascension filter excludes the item: slot switches on without its slot, sets chosen without its set,
+    /// main stats chosen without its main stat (an empty part = all: it hides nothing).</summary>
+    public static bool FilterHides(PlanItem it, int[] parts, long[] suits, long[] mains) {
+      if (it == null) return false;
+      if (parts != null && parts.Length > 0 && Array.IndexOf(parts, it.Slot) < 0) return true;
+      if (suits != null && suits.Length > 0 && it.SetId > 0 && Array.IndexOf(suits, it.SetId) < 0) return true;
+      long main = it.Main.Count > 0 ? it.Main[0].Stat : -1;
+      return mains != null && mains.Length > 0 && main > 0 && Array.IndexOf(mains, main) < 0;
     }
 
     /// <summary>The filter keeps a sub stat the item does not have (the list holds only items with all the chosen sub stats).</summary>
