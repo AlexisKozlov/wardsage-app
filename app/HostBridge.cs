@@ -95,7 +95,7 @@ namespace RealmForge {
       overlay.SellHintChanged += st => PostSellHint(st);
       // «Отменить чистку склада» over the game: the run ends at once here (clicks and hints), the page drops the list and tells the site in the background
       overlay.SellCancelPressed += () => { overlay.SetSell(null, null, null, 0); Post("{\"ev\":\"sell.cancelRun\"}"); };
-      overlay.Problem += (kind, message) => Report(kind, message, null);
+      overlay.Problem += (kind, message, ctx) => Report(kind, message, ctx);
       Program.FatalReport = ReportFatal;
       autoTimer.Interval = 1000; autoTimer.Tick += (s, e) => AutoSyncTick(); autoTimer.Start();
       updateTimer.Interval = 20000; updateTimer.Tick += (s, e) => { updateTimer.Interval = (Channel.IsTest ? 2 : 5) * 60 * 1000; if (updateReady == null || Channel.IsTest) CheckUpdate(); }; updateTimer.Start();

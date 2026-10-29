@@ -62,7 +62,7 @@ namespace RealmForge {
     string goal = "";
     long waitUntil, pauseUntil;
     int clicks, drags, calibs, stuck, calibMiss;
-    bool needCalib, measure, calibPending;
+    bool needCalib, measure, calibPending, endTaken;
     long selAtCalib;
     double beforeDrag, lastDrag;
     long selSince; bool confirmed; int confirmRetries;
@@ -93,7 +93,7 @@ namespace RealmForge {
     public AutoAction Step(AutoView v) {
       string key = v.Slot != null ? "slot:" + v.Slot[0] + ":" + v.Slot[1] : v.Target > 0 && v.Row > 0 ? "item:" + v.Target : "";
       if (key != goal) {
-        goal = key; waitUntil = 0; clicks = drags = calibs = stuck = calibMiss = 0; needCalib = measure = calibPending = false;
+        goal = key; waitUntil = 0; clicks = drags = calibs = stuck = calibMiss = 0; needCalib = measure = calibPending = endTaken = false;
         selSince = 0; confirmed = false; confirmRetries = 0; State = "idle"; Why = "";
         slotWaits = afterClicks = wrongs = 0; lastSlotClick = 0; itemPending = false; row1Fix = double.NaN;
       }
@@ -195,7 +195,16 @@ namespace RealmForge {
         measure = false;
         double moved = v.Row1Top - beforeDrag;                       // same sign as the drag when the list followed it
         if (Math.Abs(moved) > 3 && Math.Sign(moved) == Math.Sign(lastDrag)) { Gain = Math.Max(0.2, Math.Min(3, moved / lastDrag)); stuck = 0; }
-        else if (++stuck >= 2) return Fail("the list does not move (row 1 top " + (int)v.Row1Top + ")");   // its end, or no drag (its end, or no drag)
+        else if (++stuck >= 2) {
+          // the list stays put on drags toward one end: it is AT that end, whatever the position read says (live 1.6.66: the
+          // scroll read after the filter shrank the list put row 1 at -223 / -166 px, the item at row 2 "above" the view, while
+          // the short list sat at its top). Once per item the rows are taken from that end, then it gives up as before.
+          if (endTaken || v.Types == null || v.Types.Length < 2) return Fail("the list does not move (row 1 top " + (int)v.Row1Top + ", " + drags + " drags " + (lastDrag > 0 ? "down" : "up") + ")");
+          endTaken = true; stuck = 0;
+          double top0 = ScrollAnchor.TopRow1(g, H);
+          row1Fix = lastDrag > 0 ? top0 : Clamp(double.NegativeInfinity, v.Types, H); row1FixBase = v.Row1Top;
+          Trace = "the list does not move " + (lastDrag > 0 ? "down" : "up") + " (row 1 top " + (int)v.Row1Top + "): taken at its " + (lastDrag > 0 ? "top" : "end") + ", row 1 at " + (int)row1Fix;
+        }
       }
 
       // (the host moved the anchor itself since the wrong hit: its row 1 is the one to trust)

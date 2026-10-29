@@ -2742,7 +2742,27 @@ static class CoreTests {
       var a = e.Step(new AutoView { NowMs = t, Foreground = true, H = H, Target = 7, Row = 30, Col = 1, Sel = 1, Types = types, AnchorHas = true, Row1Top = stuckTop });
       if (a.Kind == AutoKind.Drag) w2++;
     }
-    Check(e.State == "failed" && w2 <= 3, "list does not scroll -> failed after " + w2 + " drags");
+    Check(e.State == "failed" && w2 <= 4, "list does not scroll -> failed after " + w2 + " drags");
+
+    {   // live 1.6.66 (3440x1440 and 1920x1051): after the filter the list is short and sits at its top, the scroll read says row 1 is
+        // at -223 px (stale): the item at row 2 looks above the view, the drags down do nothing -> "the list does not move". The list
+        // is taken at its top then, and the item is clicked there.
+      var st = new[] { 0, 1, 1, 1 }; double pitchS = geo.PitchY * H, cellS = geo.CellW * H, realTop = ScrollAnchor.TopRow1(geo, H), stale = realTop - 3.4 * pitchS;
+      long tgt = 9021; long selS = 0; int dragsS = 0;
+      Func<double, double, long> at = (x, y) => {
+        int col = geo.ColumnAt(x / H); if (col == 0) return 0;
+        int row = (int)Math.Floor((y - realTop) / pitchS) + 1; double inRow = y - (realTop + (row - 1) * pitchS);
+        return row >= 1 && row <= 3 && inRow <= cellS ? 9000 + row * 10 + col : 0;
+      };
+      var ps = new AutoPilot(geo);
+      for (long t = 0; t < 30000 && selS != tgt && ps.State != "failed"; t += 100) {
+        var a = ps.Step(new AutoView { NowMs = t, Foreground = true, H = H, Target = tgt, Row = 2, Col = 1, Sel = selS, SelRow = selS > 0 ? (int)((selS - 9000) / 10) : 0,
+                                       AnchorHas = true, Row1Top = stale, Types = st });
+        if (a.Kind == AutoKind.Drag) dragsS++;
+        else if (a.Kind == AutoKind.Click) { long hit = at(a.X, a.Y); if (hit != 0) selS = hit == selS ? 0 : hit; }
+      }
+      Check(selS == tgt, "stale scroll read on a short list at its top: the item is clicked after " + dragsS + " drags (" + ps.State + ", " + ps.Why + ")");
+    }
 
     // as in the live test: row 119 of 130, column 3 (the wheel could not get there at all)
     var lt = new int[131]; for (int i = 1; i <= 130; i++) lt[i] = 1;
@@ -2925,7 +2945,9 @@ static class CoreTests {
         l.Add(u);
       }
       Heroes = l.ToArray(); Scroll = 0; Grid++;
+      if (SelectFirst && Heroes.Length > 0) Shown = Heroes[0];
     }
+    public bool SelectFirst;   // as the game does: a grid filtered again shows its first hero
     double PY { get { return Small ? g.SmallPitchY : g.PitchY; } }
     double CH { get { return Small ? g.SmallCardH : g.CardH; } }   // the main city (the hero screen closed): its «Герои» opens CityHero
     readonly HeroGeometry g; readonly double W, H;
@@ -5628,6 +5650,33 @@ static class CoreTests {
 
   static void HeroPilotTests() {
     var g = new HeroGeometry(); double W = 1920, H = 1009;
+    {   // live 1.6.66 (3440x1440): a faction filter hid the plan's hero, its «Все» brought the hero up (the game shows the first hero of
+        // the new grid) - the pilot said done with the grid's filter pop-up still open over the gear slots, the slot did not open
+        // after 3 clicks. The pop-up is closed with the funnel first, then done.
+      var allF = new long[60]; var tagsF = new Dictionary<long, long[]>();
+      for (int i = 0; i < allF.Length; i++) { allF[i] = (200100 + i) * 100000L; tagsF[allF[i]] = new long[] { HeroGeometry.ClassOrder[i % 6], FakeHeroGame.FactionList[1 + i % 10] }; }
+      var gp = new FakeHeroGame(g, W, H) { All = allF, Tags = tagsF, SelectFirst = true };
+      gp.Camps.Add(FakeHeroGame.FactionList[5]); gp.Refilter();   // the plan's hero (faction 1) is hidden; the grid shows a faction-5 hero
+      Check(Array.IndexOf(gp.Heroes, allF[0]) < 0 && gp.Shown != allF[0], "pop-up case: the plan's hero starts hidden by the faction filter");
+      HeroView lvp; string stp = RunHero(new HeroPilot(g), gp, allF[0], 3000, out lvp, tagsF[allF[0]]);
+      Check(stp == "done" && gp.Shown == allF[0] && !gp.FilterOpen, "the filter's «Все» brings up the plan's hero: its pop-up closed before done (" + stp + ", pop-up open " + gp.FilterOpen + ")");
+      // a pop-up the read keeps seeing (it does not close, or a misread): one funnel click, never a second (that would open it again)
+      var hp2 = new HeroPilot(g); int funnels = 0; string st2 = "";
+      for (long t = 0; t < 10000; t += 100) {
+        var a = hp2.Step(new HeroView { NowMs = t, Foreground = true, W = W, H = H, ClientH = H, Plan = allF[0], Hero = allF[0], Tab = 3, Part = -1, Heroes = allF, FilterOpen = true });
+        if (a == null) { st2 = hp2.State; break; }
+        if (a.Kind == AutoKind.Click && Math.Abs(a.X - g.FunnelX * H) < 2) funnels++;
+      }
+      Check(st2 == "done" && funnels == 1, "pop-up seen open at the plan's hero: one funnel click, then done (" + funnels + " clicks, " + st2 + ")");
+      // a stop says why (the report had an empty reason)
+      var gb0 = new FakeHeroGame(g, W, H) { Heroes = allF, Shown = allF[7], Blocked = true };
+      var pb0 = new HeroPilot(g);
+      for (long t = 0; t < 20000 && pb0.State != "failed"; t += 100) {
+        var v0 = new HeroView { NowMs = t, Foreground = true, W = W, H = H, ClientH = H, Plan = allF[5], Hero = gb0.Shown, Tab = 3, Part = -1, Heroes = gb0.Heroes, GridPtr = gb0.Grid };
+        var a0 = pb0.Step(v0); if (a0 != null && a0.Kind == AutoKind.Click) gb0.Click(a0.X, a0.Y);
+      }
+      Check(pb0.State == "failed" && pb0.Why.Contains("clicks") && pb0.Detail(new HeroView { Plan = allF[5], Hero = allF[7], Heroes = allF }).Contains("plan@5 shown@7"), "hero pilot stop: a reason and a detail line (" + pb0.Why + ")");
+    }
     {   // noscreen does not stick: the city count starts again once the hero screen was reached; the game behind: waits
       var hc = new HeroPilot(g); long plan = 200100 * 100000L;
       Func<long, long, bool, bool, HeroView> hv = (t, hero, btn, fg) => new HeroView { NowMs = t, Foreground = fg, W = W, H = H, ClientH = H, Plan = plan, Hero = hero, HeroesButton = btn };
@@ -5919,6 +5968,20 @@ static class CoreTests {
       Check(hideClicks == 1 && hideClicksAfterOn == 0 && !game.HideEq, "stale hide-worn read (item listed turns " + listed + "): exactly one click, the game's toggle stays off (" + hideClicks + " clicks)");
       if (listed) Check(doneStale && fpst.State == "done", "stale hide-worn read, item listed after the click: the filter finishes (" + fpst.State + ")");
       else Check(!doneStale && fpst.State == "failed" && fpst.Note.Contains("did not switch off"), "stale read and the item never listed: failed after 2 s with a note, no second click (" + fpst.State + ": " + fpst.Note + ")");
+    }
+
+    {   // live 1.6.66: the item on another hero is listed under the filter (the guide says «pick»), the read of «Скрыть надетое» stays
+        // "on": no click - the one click switched it ON and hid the item, then "did not switch off"
+      var gl = new FakeFilterGame(g, W, H) { SetList = sets, StatList = stats, HideEq = false, Open = true };
+      var fpl = new FilterPilot(g); int hideL = 0; string stL = "";
+      for (long t = 0; t < 10000; t += 100) {
+        var v = new FilterView { NowMs = t, Foreground = true, W = W, H = H, Item = 5, Wanted = true, Suits = new long[0], MainAttrs = new long[0],
+          HideEquipped = true, OnOtherHero = true, ItemListed = !gl.HideEq, SetOrder = gl.SetList, SubOrder = gl.SubList, SubAttrs = new long[0], PanelOpen = true };
+        var a = fpl.Step(v); stL = fpl.State;
+        if (a == null) break;
+        if (a.Kind == AutoKind.Click) { if (Math.Abs(a.X - g.X(g.HideEquippedX, W, H)) < 12 && Math.Abs(a.Y - g.Y(g.HideEquippedY, W, H)) < 12) hideL++; gl.Click(a.X, a.Y); }
+      }
+      Check(hideL == 0 && !gl.HideEq && stL != "failed", "item listed, hide-worn read stale «on»: no click, the item stays listed (" + hideL + " clicks, " + stL + ")");
     }
 
     game = new FakeFilterGame(g, W, H) { SetList = sets, StatList = stats, Open = true };
