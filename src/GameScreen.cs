@@ -225,4 +225,20 @@ namespace RealmForge {
       return c;
     }
   }
+  /// <summary>When the overlay asks for a background search of the game's forms (a full pass, ~1 s, off the UI thread). Pure.</summary>
+  public static class FormSearchPolicy {
+    /// <summary>After the pilot's own click that opens a screen: how long a search is wanted (until the screen is read).</summary>
+    public const int OwnOpenWindowMs = 6000;
+    /// <summary>The least gap between two searches while the pilot's click is awaited (keep >= 1000 until the window table is the main source).</summary>
+    public const int OwnOpenGapMs = 1000;
+    public const int UnknownGapMs = 2000;
+
+    /// <summary>The reason of the search wanted now (and its least gap), null = none. <paramref name="msSinceOwnOpenClick"/> &lt; 0: no
+    /// open click of the pilot is awaited. A held screen (made from earlier readings while the reads fail) counts as Unknown.</summary>
+    public static string Want(ScreenKind kind, bool held, long msSinceOwnOpenClick, out int gapMs) {
+      if (msSinceOwnOpenClick >= 0 && msSinceOwnOpenClick < OwnOpenWindowMs) { gapMs = OwnOpenGapMs; return "opened by the pilot's click"; }
+      if (kind == ScreenKind.Unknown || held) { gapMs = UnknownGapMs; return "screen unknown"; }
+      gapMs = 0; return null;
+    }
+  }
 }

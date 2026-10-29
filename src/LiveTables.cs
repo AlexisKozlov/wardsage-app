@@ -670,8 +670,12 @@ namespace RealmForge {
     // measurement only: full passes per minute, split by caller (a pool thread = a worker search; any other thread = the UI / a timer thread)
     static int passesWorker, passesUi, passMsWorker, passMsUi, passMaxMs, passWindowAt;
     static readonly object passLock = new object();
+    static int passesTotal;
+    /// <summary>Full memory passes made so far, on any thread (for the tests).</summary>
+    public static int FullPasses { get { return Volatile.Read(ref passesTotal); } }
     static void PassDone(bool worker, int ms) {
       string line = null;
+      Interlocked.Increment(ref passesTotal);
       lock (passLock) {
         if (worker) { passesWorker++; passMsWorker += ms; } else { passesUi++; passMsUi += ms; }
         if (ms > passMaxMs) passMaxMs = ms;

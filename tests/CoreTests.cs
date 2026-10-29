@@ -710,6 +710,8 @@ static class CoreTests {
     GuildTests();
     LiveStateTests();
     FormSearchTests();
+    HeroFormFollowTests();
+    FormSearchPolicyTests();
     GamePacksTests();
     CodeTextTests();
     CodeReportTests();
@@ -2075,6 +2077,68 @@ static class CoreTests {
         Check(RFX.RequestFormSearch("boom again", 0) && WaitFormSearch(), "forms: a new search can start after it");
       } finally { RFX.TestSearchHook = null; }
     } finally { RFX.LiveLog = saveLog; RFX.TestMemory = null; RFX.ForgetLive(); }
+  }
+
+  // the hero screen's form is followed from the node a background search published: no full pass on the polling (UI) thread
+  static void HeroFormFollowTests() {
+    Console.WriteLine("Hero form: CheckForm takes the published node, no full pass on the caller");
+    var heroes = new long[] { 203400001, 209700001 }; var items = new long[] { 900000001, 900000002 };
+    try {
+      var m = new FakeLua(4 << 20); RFX.TestMemory = m; RFX.ForgetLive();
+      ulong knock, uid; FakeLogin(m, 121, heroes, items, true, out knock, out uid); m.Knock = knock;
+      Check(RFX.ReadLiveAccount(71) != null, "hero form: the account read");
+      m.Top = 3 << 20; var st = new FakeState(m);
+      var dead = st.T("m_Other", 1L);   // a rebuilt screen's old copy: no grid component
+      var alive = st.T("m_CharactorGrid_InfinityGrid", st.T(), "m_InfinityGridProxy", st.T());
+      var node = st.T(102L, alive);     // ID_FORM_CHARACTORMAIN -> the form
+      ulong slot = m.R64(node.A + 24);
+      int pid = System.Diagnostics.Process.GetCurrentProcess().Id;
+      Check(RFX.RequestFormSearch("test hero", 0) && WaitFormSearch(), "hero form: the background search runs");
+      RFX.TestSearchHook = () => { throw new InvalidOperationException("no pass in this test"); };   // a search the poll asks for must not run a pass that would count
+      // 1: no form known, the search published a live one: followed, zero full passes on the caller
+      var a = new EquipAddrs { Pid = pid };
+      int p0 = RFX.FullPasses;
+      RFX.Poll(a, new List<long>());
+      Check(a.Form == alive.A, "hero form: no form known, the published live node is taken");
+      Eq(p0, RFX.FullPasses, "hero form: taking the published node makes no full pass");
+      // 2: the form is dead and the node now holds a new live form: followed, the panel dropped
+      var a2 = new EquipAddrs { Pid = pid, Form = dead.A, Panel = 0x1234UL };
+      RFX.Poll(a2, new List<long>());
+      Check(a2.Form == alive.A && a2.Panel == 0UL, "hero form: a dead form whose node holds a new live form is followed, panel -> 0");
+      Eq(p0, RFX.FullPasses, "hero form: following the rebuilt form makes no full pass");
+      // 3: the form is dead and the node holds only a dead copy: lost without a pass on the caller (a search is asked for)
+      m.W64(slot, dead.A);
+      var a3 = new EquipAddrs { Pid = pid, Form = dead.A, Panel = 0x1234UL };
+      RFX.Poll(a3, new List<long>());
+      Check(a3.Form == 0UL && a3.Panel == 0UL, "hero form: a dead form with no live node is dropped, panel -> 0");
+      Eq(p0, RFX.FullPasses, "hero form: a dead form makes no full pass on the caller");
+      // 4: nothing known and nothing published: still no pass on the caller
+      var a4 = new EquipAddrs { Pid = pid };
+      RFX.Poll(a4, new List<long>());
+      Check(a4.Form == 0UL, "hero form: nothing published: still unknown");
+      Eq(p0, RFX.FullPasses, "hero form: nothing published makes no full pass on the caller");
+      WaitFormSearch();
+    } finally { RFX.TestSearchHook = null; RFX.TestMemory = null; RFX.ForgetLive(); }
+  }
+
+  static void FormSearchPolicyTests() {
+    Console.WriteLine("Form search policy: the pilot's own open click, held screens");
+    int gap; string w;
+    w = FormSearchPolicy.Want(ScreenKind.City, false, 0, out gap);
+    Check(w != null && gap == 1000, "policy: right after the pilot's open click a search is wanted, gap 1000 ms");
+    w = FormSearchPolicy.Want(ScreenKind.City, false, 5999, out gap);
+    Check(w != null && gap == 1000, "policy: still wanted just inside 6 s");
+    w = FormSearchPolicy.Want(ScreenKind.City, false, 6000, out gap);
+    Check(w == null, "policy: not after 6 s (a click that changed nothing is not searched for forever)");
+    w = FormSearchPolicy.Want(ScreenKind.City, false, -1, out gap);
+    Check(w == null, "policy: no open click awaited, a known screen: no search");
+    w = FormSearchPolicy.Want(ScreenKind.Unknown, false, -1, out gap);
+    Check(w != null && gap == 2000, "policy: Unknown screen: search every 2 s");
+    w = FormSearchPolicy.Want(ScreenKind.Inventory, true, -1, out gap);
+    Check(w != null && gap == 2000, "policy: a held screen (reads failing) is treated like Unknown");
+    w = FormSearchPolicy.Want(ScreenKind.Unknown, true, 100, out gap);
+    Check(w != null && gap == 1000, "policy: the open click's faster gap wins over Unknown");
+    Check(FormSearchPolicy.OwnOpenGapMs >= 1000, "policy: the gap stays >= 1000 ms");
   }
 
   static void LiveStateTests() {

@@ -2369,14 +2369,15 @@ namespace RealmForge {
       if (RecInfo.Active) RecReads.Add(now, inp);   // the recorder: what the tracker is given (src/RecInputs.cs)
       var st = screens.Update(inp, now);
       if (openClickAt != 0) {
-        if ((openClickWhat == "inventory" && st.Kind == ScreenKind.Inventory) || (openClickWhat == "heroes" && st.Kind == ScreenKind.HeroScreen)) { Log.Write("screen: " + openClickWhat + " first read " + (now - openClickAt) + " ms after the pilot's click"); openClickAt = 0; }
+        if ((openClickWhat == "inventory" && st.Kind == ScreenKind.Inventory) || (openClickWhat == "heroes" && st.Kind == ScreenKind.HeroScreen) || (openClickWhat == "foundry" && (st.Kind == ScreenKind.Foundry || st.Kind == ScreenKind.Gem))) { Log.Write("screen: " + openClickWhat + " first read " + (now - openClickAt) + " ms after the pilot's click"); openClickAt = 0; }
         else if (now - openClickAt > 20000) { Log.Write("screen: " + openClickWhat + " not read within 20 s of the pilot's click"); openClickAt = 0; }
       }
       // search policy: a form that read fine last tick and reads 0 now = the game moved it (soon, at most every 0.5 s); an Unknown screen = look every 2 s, no count limit
       if (front) {
         string lost = RFX.TakeFormsLost();
+        int wantGap; string wantSearch = FormSearchPolicy.Want(st.Kind, st.Held, openClickAt != 0 ? now - openClickAt : -1, out wantGap);
         if (lost != null) RFX.RequestFormSearch("lost: " + lost, 500);
-        else if (st.Kind == ScreenKind.Unknown) RFX.RequestFormSearch("screen unknown", 2000);
+        else if (wantSearch != null) RFX.RequestFormSearch(wantSearch, wantGap);
         // the workshop's form exists once the game has built it (the first open): with the artifact's card open, look for it every 2.5 s until found
         else if (artGuide && RFX.ArtFormMissing() && st.Kind == ScreenKind.Inventory && st.InvArtTab && st.InvArtSelected == locateReq.Art.Uid && now - artFormAskedAt >= 2500) {
           artFormAskedAt = now; RFX.RequestFormSearch("art workshop not built", 500);
@@ -2438,6 +2439,7 @@ namespace RealmForge {
       gate.Arm(req.Owner, req.Target, ClickGate.Expect(req, fresh), now);
       // measurement only: the pilot's click that opens the Inventory / Heroes screen, timed to the first reading of that screen (ReadScreens)
       if (req.Target == ClickTarget.CityInventory) { openClickAt = now; openClickWhat = "inventory"; }
+      else if (req.Target == ClickTarget.FoundryButton) { openClickAt = now; openClickWhat = "foundry"; }
       else if (req.Target == ClickTarget.EquipNav && fresh != null && fresh.Kind == ScreenKind.City) { openClickAt = now; openClickWhat = "heroes"; }
       Send(a, sx, sy);
       return true;

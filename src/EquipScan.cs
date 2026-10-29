@@ -251,27 +251,27 @@ namespace RealmForge {
     /// list's node has moved (the list grew), the form is dropped, so the host scans again.</summary>
     static void CheckForm(EquipAddrs a) {
       // no hero screen known (it was closed - the inventory, the city): look for it again, the player may have opened it
+      // (never a full pass here: this runs on the UI thread every 400 ms; the node a background search published is read, and a search is asked for)
       if (a.Form == 0) {
-        ulong f0;
-        if (RescanForm(4000, out f0) && f0 != 0) {
-          a.Panel = PanelAfterForm(a.Panel, a.Form, f0, 0);
-          a.Form = f0;
-          if (live != null) live.Form = f0;
-          RefreshPanel(a);
-          L("  hero screen found again");
-        }
+        ulong f0 = LiveForm();
+        if (f0 == 0) { RequestFormSearch("hero screen not known", 2000); return; }   // the next poll picks up what the search publishes
+        a.Panel = PanelAfterForm(a.Panel, a.Form, f0, 0);
+        a.Form = f0;
+        if (live != null) live.Form = f0;
+        RefreshPanel(a);
+        L("  hero screen found again");
         return;
       }
       // no node known and the form found by its keys is still shown: it stays
       if (formNode == 0 && FormAlive(a.Form)) return;
       ulong f = LiveForm();
       if (f == a.Form) return;
-      // the node is gone, moved, or holds a dead copy (the game rebuilt the screen after a battle): look for the live one
+      // the node is gone, moved, or holds a dead copy (the game rebuilt the screen after a battle): a search looks for the live one
       if (f == 0) {
-        if (!RescanForm(4000, out f)) return;   // too soon: the next poll tries again
-        if (f == a.Form) return;
+        RequestFormSearch("hero screen not known", 2000);
+        if (FormAlive(a.Form)) return;   // the form lives, only its node moved: the search publishes it again
+        formNode = 0;
       }
-      if (f == 0) formNode = 0;
       L(f != 0 ? "  hero screen rebuilt by the game: following it" : "  hero screen lost: scanning again");
       a.Panel = PanelAfterForm(a.Panel, a.Form, f, 0);
       a.Form = f;
