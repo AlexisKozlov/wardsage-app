@@ -43,6 +43,12 @@ done < <(q -F '|' -v r="$run" <<< "select s->>'name', ((s->>'ok')::boolean)::tex
 
 case "$state" in done) head="Лаборатория Wardsage ($devname): всё прошло" ;; timeout) head="Лаборатория Wardsage ($devname): время вышло" ;; *) head="Лаборатория Wardsage ($devname): есть ошибки" ;; esac
 msg="$head"$'\n'"$lines"
+if [ "$state" != done ]; then   # a failed run: the first failed step and its reason go first
+  fs=$(q -F '|' -v r="$run" <<< "select s->>'name', coalesce(s->>'note', '') from public.lab_runs r, jsonb_array_elements(r.steps) s where r.id = :'r'::uuid and not (s->>'ok')::boolean limit 1")
+  fname1=${fs%%|*}; freason=${fs#*|}
+  if [ "$fname1" = timeout ]; then top="❌ Проверка на ноутбуке: время вышло"; else top="❌ Проверка на ноутбуке: $(names "${fname1:-?}") остановилась"; fi
+  msg="$top"$'\n'"Причина: ${freason:-не указана}"$'\n'"$lines"
+fi
 [ -n "$firstreads" ] && msg+="Первое чтение экрана: $(paste -sd, <<< "$firstreads" | sed 's/,/, /g')"$'\n'
 [ -n "$passes" ] && msg+="passes: $(tail -1 <<< "$passes" | sed -E 's/^passes: //')"$'\n'
 if [ "$finish_ok" = 1 ]; then msg+="Можно выключать ноутбук."; else msg+="Ноутбук не подтвердил завершение: проверьте его, прежде чем выключать."; fi

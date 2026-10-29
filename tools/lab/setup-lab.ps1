@@ -8,11 +8,22 @@
 #   2. writes %LOCALAPPDATA%\WardsageLab\config.json (API host, device name, test app path, update host and the pinned
 #      RSA moduli copied from src/UpdateKeys.cs KeyN + TestKeyN);
 #   3. copies WardsageLab.ps1 next to it;
-#   4. creates the desktop shortcut "Wardsage Lab" that starts the runner.
-# No scheduled task, no autostart, no service. Run it again to change the token or the paths.
+#   4. creates the desktop shortcut "Wardsage Lab" that starts the runner;
+#   5. finds the game exe (gameExe in the config: the runner's start_game job starts it directly, without the launcher)
+#      and asks for the path once when it is not found. -GameExe "C:\...\Watcher of Realms.exe" sets it by hand.
+# Nothing starts by itself unless you ask for it:
+#   -Autostart        (run in an ADMIN PowerShell) registers the Task Scheduler task "Wardsage Lab": at your logon, highest
+#                     privileges (no UAC prompt), runs the runner with -Service. Also sets "never sleep / never turn the
+#                     screen off" on mains power (powercfg standby-timeout-ac 0, monitor-timeout-ac 0).
+#                     Can be used alone after a normal setup (then -TestAppPath is not needed).
+#   -RemoveAutostart  deletes the task (the power settings stay: set them back in Windows Settings, Power & sleep).
+# Run it again to change the token or the paths.
 param(
-    [Parameter(Mandatory = $true)][string]$TestAppPath,
-    [string]$UpdateHost = 'https://test.wardsage.com'
+    [string]$TestAppPath,
+    [string]$UpdateHost = 'https://test.wardsage.com',
+    [string]$GameExe,
+    [switch]$Autostart,
+    [switch]$RemoveAutostart
 )
 Set-StrictMode -Version 2
 $ErrorActionPreference = 'Stop'
@@ -22,6 +33,41 @@ $KeyN     = '6MiNF84wJ_zDGNfzUv5x11fzdDrgLEBJsZUvjuhpFYv90wVNCUbKTU7FkmGcFFz-n0S
 $TestKeyN = '9ZmiNDqwjh93pt2GrIE-8gIB0BxH08z8XglJqknEK3LTAoEE_f0gJtqbk2le-OB2iv2R8WZboGR7bYAKa0Mt9SGt8ZtuMRnLJNnj-0K1pj7PPvAUfRhEVwZwKhqXNQEvfU8HWkuCOmkVP04OrHkhJXTILwJmbP2nZsgFjRzheaVeVb3rnkDkhTBxbcTh-Xjjqc2RqIBjw_C3JemBJhWI_ngcbY2H8hE60R6S9MIiyrxqJZBBTJrhB57vsyhWygPL1-rONNYQPtnqXlhhH1RA9c1oP2x983MbAJQqYrBp7HDnnRqXmXjv2pTfSySQsVfnyawRwM3ws4_OLg7x7Htfa33efo_sqeKSjXwcPu7CjkXDoZZmSvATwUBGNlDotubqdbRW9ylSuDYg4MgXOGBI-SRi-9Id8GIjIk1oai8auadnuNdTp4gHnfQ4tUtt4Ya1zql8BND3KB2w9-wszH9gM_4w59Mp3Ka3W2JiL6AeajpLZyAngtEL_1rpb8fAhw4r'
 $KeyE     = 'AQAB'
 
+$TaskName = 'Wardsage Lab'
+$dir = Join-Path $env:LOCALAPPDATA 'WardsageLab'
+function Test-Admin { return ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) }
+
+if ($RemoveAutostart) {
+    if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
+        Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
+        Write-Host ('Removed the task "' + $TaskName + '". The sleep / screen-off settings were not changed back: see Windows Settings, Power & sleep.')
+    } else { Write-Host ('No task "' + $TaskName + '" found.') }
+    return
+}
+
+function Register-LabAutostart {
+    if (-not (Test-Admin)) { throw 'Run this in an administrator PowerShell: the task runs with the highest privileges.' }
+    $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $script = Join-Path $dir 'WardsageLab.ps1'
+    if (-not (Test-Path $script)) { throw 'Not set up yet: run setup-lab.ps1 with -TestAppPath first.' }
+    $action = New-ScheduledTaskAction -Execute $ps -Argument ('-NoProfile -ExecutionPolicy Bypass -WindowStyle Minimized -File "' + $script + '" -Service') -WorkingDirectory $dir
+    $user = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
+    $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Highest
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
+    Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
+    & powercfg /change standby-timeout-ac 0
+    & powercfg /change monitor-timeout-ac 0
+    Write-Host ('Autostart on: the task "' + $TaskName + '" starts the runner at every logon of ' + $user + ' (highest privileges, no prompt).')
+    Write-Host 'NOTE: on mains power this PC no longer goes to sleep and the screen stays on (standby-timeout-ac 0, monitor-timeout-ac 0).'
+    Write-Host 'Undo: setup-lab.ps1 -RemoveAutostart, then set sleep and screen-off again in Windows Settings (Power & sleep).'
+}
+
+# -Autostart alone: re-register with the existing setup
+if ([string]::IsNullOrEmpty($TestAppPath)) {
+    if ($Autostart -and (Test-Path (Join-Path $dir 'config.json'))) { Register-LabAutostart; return }
+    throw 'TestAppPath is required (-TestAppPath "C:\path\to\Wardsage-Test.exe").'
+}
 if (-not (Test-Path -LiteralPath $TestAppPath)) { throw 'TestAppPath does not exist.' }
 if ($UpdateHost -notmatch '^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?$') { throw 'UpdateHost must look like https://host' }
 $runnerSrc = Join-Path $PSScriptRoot 'WardsageLab.ps1'
@@ -35,16 +81,45 @@ if ($bundle.host -notmatch '^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?$') { throw 'Ba
 if ($bundle.device -notmatch '^[a-z0-9-]{1,32}$') { throw 'Bad device name in the bundle.' }
 if (-not $bundle.token -or -not $bundle.apikey) { throw 'The bundle has no token.' }
 
-$dir = Join-Path $env:LOCALAPPDATA 'WardsageLab'
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
 (ConvertTo-SecureString -String $bundle.token -AsPlainText -Force | ConvertFrom-SecureString) | Set-Content -Path (Join-Path $dir 'token.dat')
 (ConvertTo-SecureString -String $bundle.apikey -AsPlainText -Force | ConvertFrom-SecureString) | Set-Content -Path (Join-Path $dir 'apikey.dat')
+
+# the game exe (start_game starts it directly): the one given, the running game's, or a bounded search of the usual places
+function Test-GameDir([string]$exe) {
+    $d = [IO.Path]::GetDirectoryName($exe)
+    return (Test-Path (Join-Path $d 'GameAssembly.dll')) -or (Test-Path (Join-Path $d ([IO.Path]::GetFileNameWithoutExtension($exe) + '_Data')))
+}
+function Find-GameExe {
+    foreach ($p in @(Get-Process -Name 'Watcher of Realms' -ErrorAction SilentlyContinue)) {
+        try { if ($p.Path) { return $p.Path } } catch { }
+    }
+    $roots = @($env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:ProgramData, (Join-Path $env:USERPROFILE 'Documents'), (Join-Path $env:LOCALAPPDATA 'Programs'))
+    foreach ($dr in @(Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue)) { $roots += $dr.Root }
+    foreach ($r in $roots) {
+        if ([string]::IsNullOrEmpty($r) -or -not (Test-Path -LiteralPath $r)) { continue }
+        $hit = Get-ChildItem -LiteralPath $r -Filter 'Watcher of Realms.exe' -Recurse -Depth 5 -File -ErrorAction SilentlyContinue | Where-Object { Test-GameDir $_.FullName } | Select-Object -First 1
+        if ($hit) { return $hit.FullName }
+    }
+    return ''
+}
+$game = $GameExe
+if ([string]::IsNullOrEmpty($game)) {
+    Write-Host 'Looking for the game exe (Watcher of Realms.exe)...'
+    $game = Find-GameExe
+    if ([string]::IsNullOrEmpty($game)) {
+        $game = (Read-Host 'Game exe not found. Paste the full path of "Watcher of Realms.exe" (Enter = skip, then start_game will not work)').Trim('" ')
+    }
+}
+if (-not [string]::IsNullOrEmpty($game) -and -not (Test-Path -LiteralPath $game -PathType Leaf)) { throw 'The game exe path does not exist.' }
+if ([string]::IsNullOrEmpty($game)) { Write-Host 'No game exe: the runner cannot start the game (start_game).' } else { Write-Host ('Game exe: ' + $game) }
 
 $cfg = [ordered]@{
     host        = $bundle.host
     device      = $bundle.device
     testAppPath = (Resolve-Path -LiteralPath $TestAppPath).Path
     updateHost  = $UpdateHost
+    gameExe     = $game
     keys        = [ordered]@{ KeyN = $KeyN; TestKeyN = $TestKeyN; KeyE = $KeyE }
 }
 $cfg | ConvertTo-Json -Depth 4 | Set-Content -Path (Join-Path $dir 'config.json') -Encoding UTF8
@@ -61,5 +136,11 @@ $lnk.WorkingDirectory = $dir
 $lnk.WindowStyle = 7
 $lnk.Description = 'Start the Wardsage test lab runner (after the game is running)'
 $lnk.Save()
-Write-Host 'Done. Start the game yourself, then double-click "Wardsage Lab" on the desktop.'
+# "Run as administrator": set bit 0x20 of byte 0x15 in the .lnk (the test app needs admin rights)
+$lnkPath = Join-Path $desktop 'Wardsage Lab.lnk'
+$lnkBytes = [IO.File]::ReadAllBytes($lnkPath)
+$lnkBytes[0x15] = $lnkBytes[0x15] -bor 0x20
+[IO.File]::WriteAllBytes($lnkPath, $lnkBytes)
+if ($Autostart) { Register-LabAutostart }
+Write-Host 'Done. Start the game yourself, then double-click "Wardsage Lab" on the desktop (with -Autostart it starts by itself at logon).'
 Write-Host 'To stop the runner at once, create the file:' (Join-Path $dir 'STOP')
