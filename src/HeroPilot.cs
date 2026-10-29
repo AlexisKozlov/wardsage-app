@@ -75,7 +75,7 @@ namespace RealmForge {
     int retries;
     int clicks, drags, backs, tabs, misses, city, total, bestDist = int.MaxValue;
     // the grid filter: 0 not started, 1 filtering, 2 done (or given up); clearing a filter that hides the hero
-    int filterPhase, funnelTries, factionTries, clearTries, classResets; bool classClicked, factionDone, classDone;
+    int filterPhase, funnelTries, factionTries, clearTries, classResets, doneCloses; bool classClicked, factionDone, classDone;
     ulong lastGrid;
     // row 1's top (client px) lies in [lo, hi]; has = known
     bool has; double lo, hi;
@@ -104,7 +104,19 @@ namespace RealmForge {
       bool heroOk = v.Hero == v.Plan, tabOk = v.Tab == HeroGeometry.GearTab || v.Tab < 0;
       // (the grid filter set for the hero stays: back to «Все» the game would select another hero - live test 2026-09-26;
       // a filter hiding the next plan's hero is cleared then, FilterStep)
-      if (heroOk && tabOk) { if (State != "idle") State = "done"; return null; }
+      if (heroOk && tabOk) {
+        // the grid's filter pop-up still open (its «Все» / class click brought up the plan's hero, the game selects the first
+        // one of the new grid): it lies over the hero's gear slots and takes their clicks - closed by the funnel first (live
+        // 1.6.66: done with filter=open, then "the slot does not open after 3 clicks"). One click: a second would open it again.
+        if (v.FilterOpen && v.Part < 0 && doneCloses < 1) {
+          if (!v.Foreground || v.UserBusy) return AutoAction.Nothing;
+          if (v.NowMs < waitUntil) return AutoAction.Nothing;
+          doneCloses++; State = "work"; waitUntil = v.NowMs + AfterClickMs + 700;   // it fades out
+          return Funnel(v, v.H);
+        }
+        if (doneCloses > 0 && v.NowMs < waitUntil) return AutoAction.Nothing;   // (its fade: no slot click through it)
+        if (State != "idle") State = "done"; return null;
+      }
       if (State == "failed" || State == "notfound" || State == "small") return AutoAction.Nothing;
       // the hero screen is closed: from the main city its «Герои» button opens it (only when the button is seen with
       // nothing over it - a pop-up over the city dims it); elsewhere the player is asked
@@ -123,12 +135,12 @@ namespace RealmForge {
       }
 
       if (heroOk) {                                   // the right hero on another tab: open «Снаряжение»
-        if (++tabs > MaxTab) return Fail();
+        if (++tabs > MaxTab) return Fail("the gear tab does not open after " + MaxTab + " clicks (tab " + v.Tab + ")");
         waitUntil = v.NowMs + AfterBackMs;
         return Click(v.W - g.GearTabDX * H, g.GearTabY * H);
       }
       if (v.Part >= 0) {                              // the gear list covers the grid: back to the grid
-        if (++backs > MaxBack) return Fail();
+        if (++backs > MaxBack) return Fail("the gear list does not close after " + MaxBack + " back clicks (part " + v.Part + ")");
         has = false; waitUntil = v.NowMs + AfterBackMs;
         return Click(g.BackX * H, g.BackY * H);
       }
@@ -153,7 +165,7 @@ namespace RealmForge {
       double ch = v.ClientH > 0 ? v.ClientH : H;
       double pitch = pitchF * H, card = cardF * H, top = g.ViewTop * H, bottom = ch - (1 - g.ViewBottom) * H, mid = (top + bottom) / 2;
       if (!has) {                                     // nothing known: a card near the middle tells where the rows are
-        if (clicks >= MaxClicks || total >= MaxTotal) return Fail();
+        if (clicks >= MaxClicks || total >= MaxTotal) return Fail("no click near the grid's middle brings up another hero (" + clicks + " clicks, " + misses + " misses)");
         double y = mid + (misses % 3 == 1 ? 0.5 : misses % 3 == 2 ? -0.5 : 0) * pitch;
         // not the shown hero's column: a click on its own card changes nothing (live 27.09: Элизия in the middle column
         // at the middle of the grid took all 24 clicks)
@@ -162,11 +174,11 @@ namespace RealmForge {
       }
       double row1 = (lo + hi) / 2, cy = row1 + (t / HeroGeometry.Columns) * pitch + card / 2;
       if (cy >= top + card * 0.3 && cy <= bottom - card * 0.3) {
-        if (clicks >= MaxClicks || total >= MaxTotal) return Fail();
+        if (clicks >= MaxClicks || total >= MaxTotal) return Fail("the plan's hero at place " + t + " is not brought up by " + clicks + " clicks");
         return Pick(v, g.ColX(t % HeroGeometry.Columns) * H, cy);
       }
       // out of view: drag the grid so the row comes to the middle (the content follows the pointer)
-      if (drags >= MaxDrags || total >= MaxTotal) return Fail();
+      if (drags >= MaxDrags || total >= MaxTotal) return Fail("the plan's hero at place " + t + " is not reached after " + drags + " drags");
       // the pointer may leave the grid while dragging (the game keeps following it): up to near the window's edge
       double maxUp = bottom - card * 0.3 - 0.03 * H, maxDown = ch - 0.03 * H - (top + card * 0.3);
       double dy = Math.Max(-maxUp, Math.Min(maxDown, mid - cy));
@@ -201,7 +213,7 @@ namespace RealmForge {
       if (!v.FilterOpen) {
         // the pop-up was never seen after the funnel clicks: a grid click now could land inside it (a wrong class filter),
         // so stop here - a misdetection costs a stop, never a click
-        if (++funnelTries > 3) { filterPhase = 2; Why = "gear filter pop-up not recognised after " + (funnelTries - 1) + " funnel clicks - stopping, no grid click"; return Fail(); }
+        if (++funnelTries > 3) { filterPhase = 2; return Fail("gear filter pop-up not recognised after " + (funnelTries - 1) + " funnel clicks - stopping, no grid click"); }
         waitUntil = v.NowMs + AfterClickMs; return Funnel(v, H);
       }
       if (!factionDone) {
@@ -277,10 +289,21 @@ namespace RealmForge {
 
     void Restart() {
       waitUntil = pauseUntil = failedAt = 0; clicks = drags = backs = tabs = misses = city = total = 0; bestDist = int.MaxValue; has = pending = false; State = "idle";
-      Why = ""; filterPhase = funnelTries = factionTries = clearTries = classResets = 0; classClicked = factionDone = classDone = false; lastGrid = 0;
+      Why = ""; filterPhase = funnelTries = factionTries = clearTries = classResets = doneCloses = 0; classClicked = factionDone = classDone = false; lastGrid = 0;
     }
 
-    AutoAction Fail() { State = "failed"; return AutoAction.Nothing; }
+    AutoAction Fail(string why) { State = "failed"; Why = why; return AutoAction.Nothing; }
+
+    /// <summary>What the pilot saw and spent, for the error report: the plan's and the shown hero's places in the grid, the tab,
+    /// the gear list, the grid filter pop-up, the tries and where it thinks row 1 is.</summary>
+    public string Detail(HeroView v) {
+      if (v == null) return "-";
+      int pi = v.Heroes != null ? Array.IndexOf(v.Heroes, v.Plan) : -2, si = v.Heroes != null ? Array.IndexOf(v.Heroes, v.Hero) : -2;
+      return "state " + State + " plan@" + pi + " shown@" + si + " grid " + (v.Heroes != null ? v.Heroes.Length : -1) + " tab " + v.Tab + " part " + v.Part
+        + " filterOpen " + v.FilterOpen + " small " + v.SmallCards + " clicks " + clicks + " drags " + drags + " backs " + backs + " tabs " + tabs
+        + " misses " + misses + " total " + total + " filterPhase " + filterPhase + " funnel " + funnelTries + " doneCloses " + doneCloses
+        + " row1 " + (has ? (int)lo + ".." + (int)hi : "unknown") + " retries " + retries;
+    }
 
     static AutoAction Click(double x, double y) { return new AutoAction { Kind = AutoKind.Click, X = x, Y = y }; }
   }

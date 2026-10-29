@@ -102,7 +102,10 @@ namespace RealmForge {
       if (eqTries > 0 && v.OnOtherHero && v.HideEquipped && !v.ItemListed && v.NowMs - eqClickAt > EqConfirmMs) {
         failed = true; State = "failed"; Note = "«Скрыть надетое» did not switch off"; return null;
       }
-      bool eqOk = !(v.OnOtherHero && v.HideEquipped) || (eqTries > 0 && (v.ItemListed || v.NowMs - eqClickAt > EqConfirmMs));
+      // the guide sees the item in the list: the game shows it whatever the read says, so a click would only switch «Скрыть
+      // надетое» ON and hide it (live 1.6.66: the item listed for 5 s under the set filter with the read "on", the one click
+      // hid it, then "did not switch off")
+      bool eqOk = !(v.OnOtherHero && v.HideEquipped) || v.ItemListed || (eqTries > 0 && v.NowMs - eqClickAt > EqConfirmMs);
       // the item's sub stats (up to 4): the game lists the items with all of them first
       var subs = WantedSubs(v); var chosen = v.SubAttrs ?? new long[0];
       long missing = 0; foreach (var s in subs) if (Array.IndexOf(chosen, s) < 0) { missing = s; break; }

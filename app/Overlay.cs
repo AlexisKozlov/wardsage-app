@@ -265,7 +265,7 @@ namespace RealmForge {
     // what the frame tick found this tick (for the pilot)
     int curRow, curCol; long curSel;
     // for the error report of a pilot failure (AutoDetail): what the pilot was given and did last
-    AutoView lastAutoView; FilterView lastFilterView; string lastPilotTrace = ""; int lastClientW, lastClientH;
+    AutoView lastAutoView; FilterView lastFilterView; HeroView lastHeroView; string lastPilotTrace = ""; int lastClientW, lastClientH;
     /// <summary>Public to the host: set PanelOk from the live poll (the game's panel table is readable).</summary>
     public bool PanelOk = true;
     /// <summary>Public to the host: no gear list panel yet (the game creates it when a slot is first opened).</summary>
@@ -300,8 +300,9 @@ namespace RealmForge {
 
     /// <summary>A failure worth an error report (kind, message): the filter pilot gave up, «Заменить» not found with the
     /// auto-confirm on, an exception in the tick. HostBridge sends it when the player turned the reports on.</summary>
-    public event Action<string, string> Problem;
-    void RaiseProblem(string kind, string message) { var p = Problem; if (p != null) try { p(kind, message); } catch (Exception) { } }
+    /// <summary>A problem worth an error report: kind, message and what the pilot saw (null = nothing more).</summary>
+    public event Action<string, string, System.Collections.Generic.Dictionary<string, string>> Problem;
+    void RaiseProblem(string kind, string message, System.Collections.Generic.Dictionary<string, string> ctx = null) { var p = Problem; if (p != null) try { p(kind, message, ctx); } catch (Exception) { } }
     bool filterFailSaid; string tickError;
 
     public OverlayController(Action<string, bool> report, Action<string> autoReport, Action<SellPilot, string> sellReport) {
@@ -1541,15 +1542,24 @@ namespace RealmForge {
       var d = new System.Collections.Generic.Dictionary<string, string>();
       var v = lastAutoView; var f = lastFilterView;
       string tr = pilot.Trace != "" ? pilot.Trace : lastPilotTrace;
-      string why = st == "hero_failed" ? "" : pilot.Why;
+      // (a hero pilot's stop: its own reason, not the item pilot's last line - that was the previous item's)
+      bool heroSt = st == "hero_failed";
+      string why = heroSt ? hpilot.Why : pilot.Why;
+      if (heroSt) tr = "hero: " + hpilot.Why;
       d["why"] = why;
       d["item"] = target.ToString();
       d["place"] = "row " + curRow + "/" + curCol + " slot " + hintSlot + " guide " + hintKind;
       d["trace"] = tr;
       d["tries"] = "clicks " + pilot.Clicks + " drags " + pilot.Drags;
       d["sel"] = "sel " + curSel + " owner " + (v != null ? v.Owner : -1) + " hero " + hintHero + " screen hero " + (v != null ? v.ScreenHero : 0);
-      d["filter"] = f == null ? "-" : "hideEq " + f.HideEquipped + " otherHero " + f.OnOtherHero + " panel " + f.PanelOpen + "/" + f.SidePanelOpen + " note " + fpilot.Note;
-      d["client"] = lastClientW + "x" + lastClientH + " row1top " + (v != null ? ((int)v.Row1Top).ToString() : "-") + " anchor " + anchor.Has + " src " + (anchorSrc == "" ? "-" : anchorSrc) + " panelok " + PanelOk;
+      d["filter"] = f == null ? "-" : "hideEq " + f.HideEquipped + " otherHero " + f.OnOtherHero + " panel " + f.PanelOpen + "/" + f.SidePanelOpen + " note " + fpilot.Note
+        + " kind " + filterKind + " listed " + f.ItemListed + " state " + fpilot.State + " suits " + (f.Suits != null ? f.Suits.Length : -1) + " subs " + (f.SubAttrs != null ? f.SubAttrs.Length : -1);
+      d["client"] = lastClientW + "x" + lastClientH + " row1top " + (v != null ? ((int)v.Row1Top).ToString() : "-") + " anchor " + anchor.Has + " src " + (anchorSrc == "" ? "-" : anchorSrc) + " panelok " + PanelOk
+        + " toprow1 " + (int)ScrollAnchor.TopRow1(g, Ui.Unit(Math.Max(1, lastClientW), Math.Max(1, lastClientH))) + " rows " + (types != null ? types.Length - 1 : -1);
+      // the hero pilot (the plan's hero on the hero screen, its grid filter pop-up): the slot's and the hero's stops need it
+      d["hero"] = hpilot.Detail(lastHeroView);
+      // the item pilot's slot step: the slot rect and what the screen read said
+      d["slot"] = v == null ? "-" : (v.Slot != null ? "rect " + v.Slot[0] + "," + v.Slot[1] + "," + v.Slot[2] + "x" + v.Slot[3] : "none") + " open " + v.SlotOpen + " panelNone " + v.PanelNone + " panelOk " + v.PanelOk;
       AutoDetail = d;
     }
 
@@ -1626,6 +1636,7 @@ namespace RealmForge {
         long[] tags = HeroTags(runHero);
         if (tags != null) { hv.HeroClass = tags[0]; hv.HeroCamps = new long[tags.Length - 1]; Array.Copy(tags, 1, hv.HeroCamps, 0, tags.Length - 1); }
         var ha = hpilot.Step(hv);
+        lastHeroView = hv;
         LogHero(hv);
         if (ha != null) {
           pilot.Reset();
@@ -1644,7 +1655,13 @@ namespace RealmForge {
       LogFilter(fview); lastFilterView = fview;
       if (fview.PanelOpen && fview.SidePanelOpen) v.SideClose = new[] { fg.X(fg.SideCloseX, cr.R, cr.B), fg.Y(fg.CloseY, cr.R, cr.B) };
       if (fpilot.State == "failed") {
-        if (!filterFailSaid) { filterFailSaid = true; RaiseProblem("pilot.filter_failed", "filter failed: the game's gear filter could not be set for item " + fview.Item + " (kind " + filterKind + ")"); }
+        if (!filterFailSaid) {
+          filterFailSaid = true;
+          AutoDetailFor("filter_failed");
+          var fc = new System.Collections.Generic.Dictionary<string, string>(AutoDetail);
+          fc["why"] = fpilot.Note;
+          RaiseProblem("pilot.filter_failed", "filter failed: the game's gear filter could not be set for item " + fview.Item + " (kind " + filterKind + ")" + (fpilot.Note != "" ? " - " + fpilot.Note : ""), fc);
+        }
       } else filterFailSaid = false;
       if (fa != null) {
         pilot.Reset();
@@ -2976,6 +2993,9 @@ namespace RealmForge {
       return gameWnd;
     }
 
+    /// <summary>The guide's verdicts that mean the item is in the game's list now (it found its row).</summary>
+    internal static bool ListedKind(string kind) { return kind == "pick" || kind == "rel" || kind == "filter" || kind == "selected"; }
+
     /// <summary>What the filter pilot needs this tick: the filter in memory, the set / stat places in the game's lists, the
     /// open panels on the screen (only looked at with the game in front).</summary>
     FilterView FilterViewNow(W32.POINT o, W32.RECT cr, long now, bool front, bool busy) {
@@ -2983,7 +3003,7 @@ namespace RealmForge {
       if (filterItem <= 0 || addrs == null) return fv;
       long[] suits, mains, subAttrs; int part; bool foreign, hideEq;
       if (!RFX.ReadFilter(addrs, out suits, out mains, out subAttrs, out part, out foreign, out hideEq)) return fv;
-      fv.Item = filterItem; fv.Suits = suits; fv.MainAttrs = mains; fv.SubAttrs = subAttrs; fv.Foreign = foreign; fv.HideEquipped = hideEq; fv.ItemListed = filterKind != "hiddenEq";
+      fv.Item = filterItem; fv.Suits = suits; fv.MainAttrs = mains; fv.SubAttrs = subAttrs; fv.Foreign = foreign; fv.HideEquipped = hideEq; fv.ItemListed = ListedKind(filterKind);
       // the item is not on the screen: the filter (set + main stat) brings it to the first rows at once. Scrolling a long
       // list back from wherever the last item left it took the pilot up to a minute (live test 2026-09-26)
       bool onScreen = state == "on";
@@ -3199,7 +3219,7 @@ namespace RealmForge {
           string miss = "confirm: no single blue button (replace " + (rep != null) + ", equip " + (eq != null) + ") for item " + target;
           Log.Write(miss);
           // reported only with the auto-confirm on: then the program cannot press «Заменить»; without it only the hint moves
-          if (AutoConfirm && AutoEnabled) RaiseProblem("pilot.confirm_no_button", miss);
+          if (AutoConfirm && AutoEnabled) RaiseProblem("pilot.confirm_no_button", miss, ConfirmMissDetail(o, W, H, rep, eq));
         }
       } else if (btn != null && (btn[1] != hg.Replace(W, H)[1] && btn[1] != hg.Equip(W, H)[1]) && confirmFoundLogged != target) {
         confirmFoundLogged = target;
@@ -3208,6 +3228,25 @@ namespace RealmForge {
       return btn;
     }
     long confirmMissLogged, confirmFoundLogged, confirmMissSince, confirmMissFor;
+
+    /// <summary>What the confirm search saw (for the report): the window, both buttons' usual rects and their blue share
+    /// there, where each search found blue (or none), and the selection / owner / hero shown.</summary>
+    System.Collections.Generic.Dictionary<string, string> ConfirmMissDetail(W32.POINT o, double W, double H, int[] rep, int[] eq) {
+      var d = new System.Collections.Generic.Dictionary<string, string>();
+      int[] r0 = hg.Replace(W, H), e0 = hg.Equip(W, H);
+      Func<int[], string> rc = r => r == null ? "none" : r[0] + "," + r[1] + "," + r[2] + "x" + r[3];
+      Func<int[], string> share = r => {
+        int[] px = Grab(o.X + r[0] + r[2] * 15 / 100, o.Y + r[1] + r[3] / 5, r[2] * 70 / 100, r[3] * 3 / 5);
+        return px == null ? "-" : ButtonCheck.BlueShare(px).ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
+      };
+      d["client"] = (int)W + "x" + (int)H + " unit " + (int)Ui.Unit(W, H) + " aspect " + (W / Math.Max(1, H)).ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
+      d["replace"] = "usual " + rc(r0) + " blue " + share(r0) + " found " + rc(rep) + (rep != null ? " blue " + share(rep) : "");
+      d["equip"] = "usual " + rc(e0) + " blue " + share(e0) + " found " + rc(eq) + (eq != null ? " blue " + share(eq) : "");
+      long owner = addrs != null && target > 0 ? RFX.ReadOwner(addrs, target) : -1;
+      d["sel"] = "item " + target + " sel " + curSel + " owner " + owner + " hero " + hintHero + " screen hero " + (addrs != null ? RFX.ReadHero(addrs) : 0) + " slot " + hintSlot + " guide " + hintKind;
+      d["item"] = target.ToString();
+      return d;
+    }
 
     /// <summary>The button at its usual place, or moved: a card with more lines (sub-stats, set bonuses) is taller and its
     /// button lower (27.09: an item with more extras was not put on) - searched from a bit above down to 0.14 of the
