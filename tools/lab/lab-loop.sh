@@ -231,6 +231,14 @@ tick() {
       sc=${scenarios[$i]}
       mkjob game_front >/dev/null || true   # the game window to the front before each scenario
       dset mark_at "$(now)"; mkjob mark >/dev/null || true   # the runner forgets the old stop / ready markers
+      if [ "$sc" = equip_city ]; then
+        # never seed the build the hero already wears (then the app has nothing to change): the other one, whatever the last run did
+        pb=$("$HERE/lab-seed.sh" "$dev" --pick "$build" 2>/dev/null) || pb=""
+        if [[ "$pb" =~ ^[ab]$ ]] && [ "$pb" != "$build" ]; then
+          say "equip build $build -> $pb (the other one is worn now)"; build=$pb
+          q -v r="$RUN" -v b="$build" <<< "update public.lab_runs set build = :'b' where id = :'r'::uuid" >/dev/null
+        fi
+      fi
       row=$("$HERE/lab-seed.sh" "$dev" "$sc" "$build") || row=""
       if [ -z "$row" ]; then step "$sc" false 0 "seed failed (fixture missing?)"; FAILED=1; skip_to_logs; return; fi
       dset row "$row"; dset seeded_at "$(now)"; phase wait_scn ;;

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Seeds ONE fresh pending request for the device's game account on STAGING, copied from lab_fixtures.
 #   lab-seed.sh <device> equip_city [a|b]     a new «Надеть в игре» plan (fixture equip_a / equip_b)
+#   lab-seed.sh <device> --pick <a|b>        prints the build to seed: the one NOT worn now (see worn_build), else the hint
 #   lab-seed.sh <device> locate               a new «Найти в игре» request
 # Prints the new row id (a plan / request id, not an account id) on stdout.
 #
@@ -13,8 +14,29 @@ set -euo pipefail
 . "$(dirname "$0")/lab-common.sh"
 
 dev=${1:-}; what=${2:-}; build=${3:-a}
-[ -n "$dev" ] && [ -n "$what" ] || { sed -n 2,5p "$0" >&2; exit 2; }
 [[ "$build" =~ ^[ab]$ ]] || { echo "build must be a or b" >&2; exit 2; }
+
+# worn_build <device id>: a or b when the hero of fixture equip_a / equip_b wears exactly that fixture's items now (the newest staging
+# snapshot of the device's account: raw.equipment[].iHeroId / iItemUid), else empty (unknown / neither)
+worn_build() {
+  q -v d="$1" <<< "
+    with s as (select raw->'equipment' eq from public.snapshots sn join public.lab_devices dv on dv.account_id = sn.account_id
+               where dv.id = :'d'::uuid order by sn.created_at desc limit 1),
+    w as (select f.name, (f.payload->>'hero_uid')::bigint hu,
+                 array(select (i->>'uid')::bigint from jsonb_array_elements(f.payload->'items') i) want
+          from public.lab_fixtures f where f.device_id = :'d'::uuid and f.name in ('equip_a', 'equip_b'))
+    select substr(w.name, 7) from w, s
+    where jsonb_typeof(s.eq) = 'array' and cardinality(w.want) > 0
+      and w.want <@ array(select (e->>'iItemUid')::bigint from jsonb_array_elements(s.eq) e where (e->>'iHeroId')::bigint = w.hu)
+    order by w.name limit 1" 2>/dev/null || true
+}
+if [ "$what" = --pick ]; then
+  id=$(dev_id "$dev")
+  worn=$(worn_build "$id")
+  case "$worn" in a) echo b ;; b) echo a ;; *) echo "$build" ;; esac
+  exit 0
+fi
+[ -n "$dev" ] && [ -n "$what" ] || { sed -n 2,6p "$0" >&2; exit 2; }
 id=$(dev_id "$dev")
 
 # nothing is cancelled unless there is something to insert
