@@ -92,6 +92,32 @@ watch_logs() {
   return 0
 }
 
+# The runner (v6+) reads the app's own log every 5 s and reports it in the heartbeat status (every 15 s while a run is active):
+# log_at (epoch of the newest log line), ready, stop + stop_at. That is ~1 min faster than the app_test_logs the app uploads every ~2 min,
+# which stay as the fallback for an older runner (no log_at in the status).
+NOPROG_DEV=${LAB_NOPROGRESS_DEV:-75}   # 60 s without a log line while a scenario waits + one heartbeat
+READY_DEV=${LAB_READY_DEV:-180}        # the laptop read takes ~50 s
+SG_LOGAT=""; SG_SEEN=0; SG_READY=""; SG_STOPAT=0; SG_APPOK=""; SG_APPVER=""; SG_STOP=""
+devsig() {
+  local row
+  row=$(dstat "coalesce(status->>'log_at', '') || '|' || coalesce(extract(epoch from last_seen)::bigint, 0) || '|' || coalesce(status->>'ready', '') || '|' || coalesce(status->>'stop_at', '0') || '|' || coalesce(status->>'app_running', '') || '|' || coalesce(status->>'app_version', '') || '|' || coalesce(replace(status->>'stop', chr(10), ' '), '')")
+  IFS='|' read -r SG_LOGAT SG_SEEN SG_READY SG_STOPAT SG_APPOK SG_APPVER SG_STOP <<< "$row"
+  [[ "$SG_LOGAT" =~ ^[0-9]+$ ]] || SG_LOGAT=""
+  [[ "$SG_SEEN" =~ ^[0-9]+$ ]] || SG_SEEN=0
+  [[ "$SG_STOPAT" =~ ^[0-9]+$ ]] || SG_STOPAT=0
+}
+# dev_watch <since epoch> <no-progress reference epoch> <no-progress seconds>: 0 = all well; 1 = a stop line (WHY); 2 = no log line for that long (WHY);
+# 9 = the runner is old (no log_at in its status): the caller uses watch_logs. A stop counts only when the status is newer than <since>.
+dev_watch() {
+  local ref
+  devsig
+  [ -n "$SG_LOGAT" ] || return 9
+  if [ -n "$SG_STOP" ] && [ "$SG_SEEN" -gt "$1" ] && [ "$SG_STOPAT" -ge "$1" ]; then WHY="${SG_STOP:0:200}"; return 1; fi
+  ref=$2; [ "$SG_LOGAT" -gt "$ref" ] && ref=$SG_LOGAT
+  if [ $(( $(now) - ref )) -gt "$3" ]; then WHY="no progress: no new app log line for $3 s"; return 2; fi
+  return 0
+}
+
 # a scenario step failed: stop its request, record the reason, skip the remaining scenarios (upload_logs + screenshot + finish still run)
 fail_scn() {   # $1 = step label, $2 = reason, $3 = table, $4 = row id
   q -v r="$4" <<< "update public.$3 set status = 'cancelled', done_at = now() where id = :'r'::uuid and status = 'pending'" >/dev/null
@@ -163,6 +189,21 @@ tick() {
     wait_ready)
       # ready = the test app runs, shows the wanted version and has asked the site for its account after the restart
       want=$(dget want_version); rs=$(dget restarted_at)
+      dev_watch "${rs:-0}" 0 999999; w=$?
+      if [ "$w" != 9 ]; then
+        # device status first (runner v6+)
+        if [ "$w" = 1 ]; then
+          step app_ready false "$(phase_age)" "$WHY"; FAILED=1; skip_to_logs
+        elif [ "$SG_READY" = true ] && [ "$SG_APPOK" = true ] && [ "$SG_SEEN" -gt "${rs:-0}" ] && { [ -z "$want" ] || [ "$SG_APPVER" = "$want" ]; }; then
+          step app_ready true "$(( $(now) - ${rs:-0} ))" "version ${want:-?}"
+          dset scn_idx 0; phase scenario
+        elif [ "$(phase_age)" -gt "$READY_DEV" ]; then
+          step app_ready false "$(phase_age)" "the app did not report ready in $(( READY_DEV / 60 )) min"
+          FAILED=1; skip_to_logs
+        fi
+        return
+      fi
+      # fallback, old runner: the app asked the site for its account after the restart
       ok=$(q -v d="$DEV" -v w="$want" -v rs="$rs" <<< "
         select (dv.status->>'app_running' = 'true' and (:'w' = '' or dv.status->>'app_version' = :'w')
                 and a.app_seen_at > to_timestamp(:'rs'::bigint))
@@ -182,6 +223,7 @@ tick() {
       if [ "$i" -ge "${#scenarios[@]}" ]; then phase logs; return; fi
       sc=${scenarios[$i]}
       mkjob game_front >/dev/null || true   # the game window to the front before each scenario
+      dset mark_at "$(now)"; mkjob mark >/dev/null || true   # the runner forgets the old stop / ready markers
       row=$("$HERE/lab-seed.sh" "$dev" "$sc" "$build") || row=""
       if [ -z "$row" ]; then step "$sc" false 0 "seed failed (fixture missing?)"; FAILED=1; skip_to_logs; return; fi
       dset row "$row"; dset seeded_at "$(now)"; phase wait_scn ;;
@@ -192,8 +234,10 @@ tick() {
       case "$st" in
         done\|*) step "$label" true "${st#*|}" ""; dset last_scn_end "$(now)"; dset scn_idx "$((i + 1))"; phase scenario ;;
         cancelled\|*) step "$label" false "$(phase_age)" "the request was cancelled"; FAILED=1; dset last_scn_end "$(now)"; skip_to_logs ;;
-        *) sa=$(dget seeded_at)
-           if watch_logs "${sa:-0}" "${sa:-0}"; then
+        *) sa=$(dget seeded_at); ma=$(dget mark_at); [ -n "$ma" ] || ma=$sa
+           dev_watch "${ma:-0}" "${sa:-0}" "$NOPROG_DEV"; w=$?
+           if [ "$w" = 9 ]; then watch_logs "${sa:-0}" "${sa:-0}"; w=$?; fi   # old runner
+           if [ "$w" = 0 ]; then
              if [ "$(phase_age)" -gt "$maxs" ]; then fail_scn "$label" "not done in ${maxs} s" "$tbl" "$row"; fi
            else
              fail_scn "$label" "$WHY" "$tbl" "$row"

@@ -12,7 +12,7 @@
 #
 # What it never does: click or type anywhere, open a shell for the server, run anything the server sends, or let a job
 # value reach a command line or a file path. The jobs are only:
-#   status | update_app | start_game | restart_app | game_front | update_runner | screenshot | upload_logs | finish | cancel
+#   status | update_app | start_game | restart_app | game_front | update_runner | screenshot | upload_logs | finish | cancel | mark
 # each with a strict argument schema (see $Schemas). The only processes it starts/stops are the configured test app and,
 # for start_game, the configured game exe (started directly when the game is not running: no launcher, no clicks).
 #
@@ -23,12 +23,15 @@ Set-StrictMode -Version 2
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$RunnerVersion   = '5'
+$RunnerVersion   = '6'
 $Dir             = Join-Path $env:LOCALAPPDATA 'WardsageLab'
 $StopFile        = Join-Path $Dir 'STOP'
 $LogFile         = Join-Path $Dir 'runner.log'
-$HeartbeatSec    = 60
-$ClaimSec        = 15
+$HeartbeatSec    = 60          # idle heartbeat
+$ActiveBeatSec   = 15          # heartbeat while a run is active (a run job was claimed in the last $ActiveMin min)
+$ActiveMin       = 30
+$TickSec         = 5           # loop tick: the app log is read every tick
+$ClaimSec        = 10          # one claim per this many seconds (lab_claim allows 12/min)
 $MaxRunnerHours  = 4          # the runner never lives longer than this
 $MaxUpdateBytes  = 64MB       # same limit as app/Updater.cs MaxSize
 $GameProcessName = 'Watcher of Realms'   # src/GameInfo.cs ProcessName (the runner never stops it; start_game starts gameExe)
@@ -147,6 +150,8 @@ function Get-Status {
     return [ordered]@{
         runner = $RunnerVersion; game_running = $game; app_running = ($apps.Count -gt 0)
         app_version = (Get-AppVersion); busy = $script:Busy; up_min = [int]((Get-Date) - $script:Started).TotalMinutes
+        log_at = $script:LogAt; log_lines = $script:LogCount; ready = $script:LogReady
+        stop = $script:LogStop; stop_at = $script:LogStopAt
     }
 }
 function ConvertTo-StatusJson($st) {
@@ -166,6 +171,7 @@ $Schemas = @{
     upload_logs = @{ lines  = { param($v) ($v -is [int] -or $v -is [long]) -and $v -ge 50 -and $v -le 2000 } }
     finish      = @{}
     cancel      = @{}
+    mark        = @{}
 }
 function Test-JobArgs([string]$action, $args_) {
     if (-not $Schemas.ContainsKey($action)) { return $false }
@@ -382,6 +388,65 @@ function Test-RunnerUpdateDue {
     try { Invoke-RunnerSelfUpdate } catch { Write-Log ('self-update check failed: ' + (Get-ShortError $_)) }
 }
 
+# ---------------------------------------------------------------- live log watch (the test app's own log, read-only, every tick)
+# State goes into the heartbeat status: log_at (epoch s of the newest new line), log_lines (new lines since the run started),
+# ready (the app read the game account), stop / stop_at (first stop line since the last mark). Only lines appended after
+# the runner started (or after a truncation / rotation) are looked at.
+$StopRe  = 'auto click stopped|click gate .*: STOP|auto: (failed|slot_failed|unconfirmed|hero_failed|stopped)|aborted'
+$ReadyRe = 'Player of the live tables: [0-9]+'
+function Get-EpochNow { return [int64][DateTimeOffset]::UtcNow.ToUnixTimeSeconds() }
+function Reset-LogMarks {
+    $script:LogReady = $false; $script:LogDone = $false; $script:LogSendOk = $false
+    $script:LogStop = ''; $script:LogStopAt = [int64]0
+}
+function Update-LogWatch {
+    try {
+        $log = Join-Path $env:APPDATA 'WardsageTest\wardsage.log'      # src/Config.cs DefaultDir + Log.Path
+        if (-not (Test-Path -LiteralPath $log)) { $script:LogOff = [int64]0; return }
+        $fs = New-Object IO.FileStream($log, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+        try {
+            $len = [int64]$fs.Length
+            if ($script:LogOff -lt 0) {
+                $script:LogOff = $len
+                $script:LogAt = [int64]([DateTimeOffset](Get-Item -LiteralPath $log).LastWriteTimeUtc).ToUnixTimeSeconds()
+                return
+            }
+            if ($len -lt $script:LogOff) { $script:LogOff = [int64]0 }      # truncated / rotated (the app deletes it above 2 MB)
+            if ($len -eq $script:LogOff) { return }
+            $n = [int][Math]::Min($len - $script:LogOff, 1MB)
+            $buf = New-Object byte[] $n
+            [void]$fs.Seek($script:LogOff, [IO.SeekOrigin]::Begin)
+            $got = $fs.Read($buf, 0, $n)
+            if ($got -le 0) { return }
+            # only whole lines: a half-written last line waits for the next tick
+            $end = [Array]::LastIndexOf($buf, [byte]10, $got - 1) + 1
+            if ($end -le 0 -and $got -ge 1MB) { $end = $got }
+            if ($end -le 0) { return }
+            $script:LogOff = $script:LogOff + $end
+            $text = [Text.Encoding]::UTF8.GetString($buf, 0, $end)
+        } finally { $fs.Close() }
+        $now = Get-EpochNow
+        foreach ($line in ($text -split "`r?`n")) {
+            if ($line.Trim().Length -eq 0) { continue }
+            $script:LogCount = $script:LogCount + 1
+            $script:LogAt = $now
+            if ($script:LogStop -eq '' -and $line -cmatch $StopRe) {
+                $t = $line.Trim(); if ($t.Length -gt 200) { $t = $t.Substring(0, 200) }
+                $script:LogStop = $t; $script:LogStopAt = $now
+            }
+            if ($line -cmatch $ReadyRe) { $script:LogReady = $true }
+            if ($line -cmatch 'Done in') { $script:LogDone = $true }
+            if ($line -cmatch 'send: Ok') { $script:LogSendOk = $true }
+        }
+        if ($script:LogDone -and $script:LogSendOk) { $script:LogReady = $true }
+    } catch { }
+}
+function Invoke-Mark {
+    Update-LogWatch      # consume what is already written, then forget it
+    Reset-LogMarks
+    return @{ ok = $true; res = @{ marked = $true } }
+}
+
 # ---------------------------------------------------------------- restart_app (the configured test app only)
 # innermost exception message, one line, at most 200 chars
 function Get-ShortError($err) {
@@ -413,6 +478,7 @@ function Invoke-RestartApp {
         Write-Log ('restart_app: start failed: ' + $m)
         return @{ ok = $false; res = @{ error = 'start_failed'; message = $m } }
     }
+    Update-LogWatch; Reset-LogMarks      # the old app's last lines do not count for the new one
     Start-Sleep -Seconds 5
     [void](Set-GameFront)      # the test app took the focus: the game goes back to the front
     return @{ ok = $true; res = @{ started = $true } }
@@ -525,6 +591,9 @@ function Invoke-Job($job) {
             $out = @{ ok = $false; res = @{ error = 'bad_args' } }
         } else {
             Write-Log ('job: ' + $action)
+            if (@('update_app', 'restart_app', 'game_front', 'upload_logs', 'screenshot') -contains $action) { $script:RunJobAt = Get-Date }
+            if ($action -eq 'update_app') { $script:LogCount = 0 }
+            if ($action -eq 'finish') { $script:RunJobAt = [DateTime]::MinValue }
             switch ($action) {
                 'status'      { $out = @{ ok = $true; res = (Get-Status) } }
                 'update_app'  { $out = Invoke-UpdateApp }
@@ -536,6 +605,7 @@ function Invoke-Job($job) {
                 'upload_logs' { $out = Invoke-UploadLogs $id $jobArgs }
                 'finish'      { $out = @{ ok = $true; res = @{ bye = $true } }; $script:Exit = $true }
                 'cancel'      { $out = @{ ok = $true; res = @{ cancelled = $true } } }
+                'mark'        { $out = Invoke-Mark }
             }
         }
     } catch {
@@ -553,6 +623,10 @@ function Invoke-Job($job) {
 $script:Busy = $false
 $script:Started = Get-Date
 $script:LastSelfCheck = [DateTime]::MinValue
+$script:RunJobAt = [DateTime]::MinValue
+$script:LogOff = [int64]-1; $script:LogAt = [int64]0; $script:LogCount = 0
+Reset-LogMarks
+Update-LogWatch      # baseline: the end of the file now
 $mode = 'one run'; if ($Service) { $mode = 'service' }
 Write-Log ('runner ' + $RunnerVersion + ' started (device ' + $Cfg.device + ', ' + $mode + '). To stop it at once create ' + $StopFile)
 if ($Service) {
@@ -570,6 +644,7 @@ if ($Service) {
     [void](Set-GameFront)      # after a (re)launch the game goes back to the front
 }
 $lastBeat = [DateTime]::MinValue
+$lastClaim = [DateTime]::MinValue
 $backoffUntil = [DateTime]::MinValue
 try {
     while (-not $script:Exit) {
@@ -581,15 +656,19 @@ try {
         }
         Test-RunnerUpdateDue
         if ($script:Exit) { break }
+        Update-LogWatch
         if ((Get-Date) -ge $backoffUntil) {
             try {
                 $err = $null
-                if (((Get-Date) - $lastBeat).TotalSeconds -ge $HeartbeatSec) {
+                $beatSec = $HeartbeatSec
+                if (((Get-Date) - $script:RunJobAt).TotalMinutes -lt $ActiveMin) { $beatSec = $ActiveBeatSec }
+                if (((Get-Date) - $lastBeat).TotalSeconds -ge $beatSec) {
                     $r = Invoke-Rpc 'lab_heartbeat' (ConvertTo-StatusJson (Get-Status))
                     $lastBeat = Get-Date
                     if (-not $r.ok) { $err = $r }
                 }
-                if ($err -eq $null) {
+                if ($err -eq $null -and ((Get-Date) - $lastClaim).TotalSeconds -ge ($ClaimSec - 1)) {
+                    $lastClaim = Get-Date
                     $c = Invoke-Rpc 'lab_claim' '{}'
                     if (-not $c.ok) { $err = $c }
                     else {
@@ -616,7 +695,7 @@ try {
             }
         }
         $t = 0
-        while ($t -lt $ClaimSec -and -not $script:Exit -and -not (Test-Path $StopFile)) { Start-Sleep -Seconds 1; $t++ }
+        while ($t -lt $TickSec -and -not $script:Exit -and -not (Test-Path $StopFile)) { Start-Sleep -Seconds 1; $t++ }
     }
 } finally {
     $Mutex.ReleaseMutex()
