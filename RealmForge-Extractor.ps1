@@ -1837,55 +1837,119 @@ namespace RealmForge {
       if (H == IntPtr.Zero) H = OpenProcess(0x0410, false, ps[0].Id);
       if (H == IntPtr.Zero) return 0;
       regs = Regions();
-      // nodes keyed by one of the forms, holding a table
+      string said;
+      ulong found = FindUiIn(anchors, out said);
+      if (said != uiPickSaid) { uiPickSaid = said; LL(said); }
+      uiTable = found;
+      return found;
+    }
+    static string uiPickSaid = "";
+    // UIFormClass, once found: its keys are the id of every form file loaded (~1200), whatever screen is open
+    static ulong uiClassTable;
+
+    /// <summary>UIInstance from any screen (two full passes per round). First by the anchor forms (the city, the hero screen,
+    /// the fights...); when none of them is open (the game started on the guild, the foundry...) the anchors still find
+    /// UIFormClass (the city's class is loaded at the login), and its keys - every form loaded - are the anchors of a second
+    /// round, which finds UIInstance by whatever forms are open. UIFormClass is kept, so a later search makes one round.
+    /// <paramref name="said"/> = the log line.</summary>
+    internal static ulong FindUiIn(long[] anchors, out string said) {
+      string why = "", why2; ulong found = 0, classes; int sh;
+      if (uiClassTable == 0 || UiTableKind(uiClassTable, anchors, out sh) != "classes") {
+        uiClassTable = 0;
+        found = PickUiTable(UiCandidates(anchors), anchors, out why, out classes);
+        if (found == 0) uiClassTable = classes;
+      }
+      if (found == 0 && uiClassTable != 0) {
+        var all = UiClassIds(uiClassTable);
+        var cands = UiCandidates(all); cands.Remove(uiClassTable);
+        found = PickUiTable(cands, all, out why2, out classes);
+        why = (why != "" ? why + "; " : "") + "by the " + all.Length + " loaded forms: " + why2;
+      }
+      said = "forms: window table " + (found != 0 ? "found from " + ShownNames(found, 3) : "not found") + " (" + why + ")";
+      return found;
+    }
+
+    /// <summary>The tables keyed by one of <paramref name="ids"/> at a node holding a table (at most 64): one pass for the nodes,
+    /// one for the table headers whose node array holds one of them (an old array can linger after a rehash: the live table
+    /// points at the array in use, so a table header found this way is the one).</summary>
+    static List<ulong> UiCandidates(long[] ids) {
+      var idSet = new HashSet<long>();
+      foreach (var id in ids) if (id != 0) { idSet.Add(id); if (id < 0) idSet.Add((long)(uint)id); }
       var nodes = new List<ulong>();
+      var cands = new List<ulong>();
+      if (idSet.Count == 0) return cands;
       ScanParallel((b0, buf, len) => {
+        List<ulong> mine = null;
         for (int i = 0; i + 32 <= len; i += 8) {
           if (BitConverter.ToInt32(buf, i + 24) != T_INT || BitConverter.ToInt32(buf, i + 8) != T_TABLE) continue;
-          long k = BitConverter.ToInt64(buf, i + 16);
-          foreach (var id in anchors) if (SameId(k, id)) { lock (nodes) nodes.Add(b0 + (ulong)i); break; }
+          if (idSet.Contains(BitConverter.ToInt64(buf, i + 16))) (mine ?? (mine = new List<ulong>())).Add(b0 + (ulong)i);
         }
+        if (mine != null) lock (nodes) nodes.AddRange(mine);
       });
-      if (nodes.Count == 0) return 0;
-      // the tables whose node array holds one of them (an old array can linger after a rehash: the live table points at
-      // the array in use, so a table header found this way is the one). UIStatic keeps a second table of the same shape:
-      // UIFormClass (form id -> the form's CLASS, RegisterLuaUI, filled for every form file loaded); UIInstance holds the form
-      // OBJECTS (form.new(): an "____instanceId" and a "class" field). Taking the first header found picked UIFormClass at
-      // times (live 2026-10-29: no form name or shown flag was ever read from it), so every header is judged.
-      var set = new HashSet<ulong>(nodes);
-      var cands = new List<ulong>();
+      if (nodes.Count == 0) return cands;
+      var ns = nodes.ToArray(); Array.Sort(ns);
       ScanParallel((b0, buf, len) => {
         for (int i = 0; i + 56 <= len; i += 8) {
           if (buf[i + 8] != 5) continue;
           int lsize = buf[i + 11]; if (lsize < 2 || lsize > 12) continue;
           ulong np = BitConverter.ToUInt64(buf, i + 24); if (np == 0) continue;
           ulong end = np + (ulong)(32 << lsize);
-          foreach (var n in set) if (n >= np && n < end && (n - np) % 32 == 0) { lock (cands) { if (cands.Count < 64) cands.Add(b0 + (ulong)i); } break; }
+          int lo = 0, hi = ns.Length;
+          while (lo < hi) { int mid = (lo + hi) >> 1; if (ns[mid] < np) lo = mid + 1; else hi = mid; }
+          for (int j = lo; j < ns.Length && ns[j] < end; j++)
+            if ((ns[j] - np) % 32 == 0) { lock (cands) { if (cands.Count < 64) cands.Add(b0 + (ulong)i); } break; }
         }
       });
-      string why;
-      ulong found = PickUiTable(cands, anchors, out why);
-      if (why != uiPickSaid) { uiPickSaid = why; LL("forms: window table " + (found != 0 ? "found" : "not found") + " (" + why + ")"); }
-      uiTable = found;
-      return found;
+      return cands;
     }
-    static string uiPickSaid = "";
+
+    /// <summary>The keys of UIFormClass that hold a class (a table with a __cname): the id of every form loaded; at most 4096.</summary>
+    internal static long[] UiClassIds(ulong t) {
+      var res = new List<long>();
+      var h = t != 0 ? Read(t, 56) : null; if (h == null || h[8] != 5 || h[11] > 12) return res.ToArray();
+      int nn = 1 << h[11]; var nb = Read(BitConverter.ToUInt64(h, 24), nn * 32); if (nb == null) return res.ToArray();
+      for (int i = 0; i < nn && res.Count < 4096; i++) {
+        int o = i * 32;
+        if (BitConverter.ToInt32(nb, o + 24) != T_INT || BitConverter.ToInt32(nb, o + 8) != T_TABLE) continue;
+        ulong v; int tt;
+        if (Field(BitConverter.ToUInt64(nb, o), "__cname", out v, out tt) && (tt == T_SSTR || tt == T_LSTR)) res.Add(BitConverter.ToInt64(nb, o + 16));
+      }
+      return res.ToArray();
+    }
+
+    /// <summary>The class names of the shown forms of a window table (at most <paramref name="max"/>), for the log.</summary>
+    static string ShownNames(ulong t, int max) {
+      var h = Read(t, 56); if (h == null) return "?";
+      int nn = 1 << h[11]; var nb = Read(BitConverter.ToUInt64(h, 24), nn * 32); if (nb == null) return "?";
+      var names = new List<string>();
+      for (int i = 0; i < nn && names.Count < max; i++) {
+        int o = i * 32;
+        if (BitConverter.ToInt32(nb, o + 24) != T_INT || BitConverter.ToInt32(nb, o + 8) != T_TABLE) continue;
+        ulong f = BitConverter.ToUInt64(nb, o); if (!Shown(f)) continue;
+        string w, n = FormClassName(f, out w); names.Add(n != "" ? n : "id:" + BitConverter.ToInt64(nb, o + 16));
+      }
+      return names.Count > 0 ? string.Join(", ", names.ToArray()) : "no shown form";
+    }
 
     /// <summary>What a table keyed by form ids holds at the anchor ids: "forms" (form objects: UIInstance), "classes" (form classes:
     /// UIFormClass), "none" (no anchor id), "unreadable". <paramref name="shown"/> = anchor forms shown now.</summary>
-    internal static string UiTableKind(ulong t, long[] ids, out int shown) {
-      shown = 0;
+    internal static string UiTableKind(ulong t, long[] ids, out int shown) { int n; return UiTableKind(t, ids, out shown, out n); }
+    internal static string UiTableKind(ulong t, long[] ids, out int shown, out int forms) {
+      shown = 0; forms = 0;
       var h = t != 0 ? Read(t, 56) : null; if (h == null || h[8] != 5 || h[11] > 12) return "unreadable";
       int nn = 1 << h[11]; var nb = Read(BitConverter.ToUInt64(h, 24), nn * 32); if (nb == null) return "unreadable";
-      int forms = 0, classes = 0;
+      int classes = 0;
+      HashSet<long> idSet = null;
+      if (ids.Length > 16) { idSet = new HashSet<long>(); foreach (var id in ids) if (id != 0) { idSet.Add(id); if (id < 0) idSet.Add((long)(uint)id); } }
       for (int i = 0; i < nn; i++) {
         int o = i * 32;
         if (BitConverter.ToInt32(nb, o + 24) != T_INT || BitConverter.ToInt32(nb, o + 8) != T_TABLE) continue;
         long k = BitConverter.ToInt64(nb, o + 16);
-        bool anchor = false; foreach (var id in ids) if (id != 0 && SameId(k, id)) { anchor = true; break; }
+        if (idSet != null && !idSet.Contains(k)) continue;
+        bool anchor = idSet != null; if (!anchor) foreach (var id in ids) if (id != 0 && SameId(k, id)) { anchor = true; break; }
         if (!anchor) continue;
         ulong f = BitConverter.ToUInt64(nb, o), v; int tt;
-        if (Field(f, "____instanceId", out v, out tt) && tt == T_INT) { forms++; if (Shown(f)) shown++; }
+        if (Field(f, "____instanceId", out v, out tt) && tt == T_INT) { string w; if (FormClassName(f, out w).StartsWith("Form_", StringComparison.Ordinal)) { forms++; if (Shown(f)) shown++; } }
         else if (Field(f, "__cname", out v, out tt) && (tt == T_SSTR || tt == T_LSTR)) classes++;
       }
       return forms > 0 ? "forms" : classes > 0 ? "classes" : "none";
@@ -1893,12 +1957,14 @@ namespace RealmForge {
 
     /// <summary>Of the tables found by the anchor nodes, UIInstance: one that holds form objects, the one with a shown form first;
     /// 0 = none of them. <paramref name="why"/> = the verdicts, for the log.</summary>
-    internal static ulong PickUiTable(IList<ulong> cands, long[] ids, out string why) {
-      ulong best = 0; int bestShown = -1; int nf = 0, nc = 0, nx = 0;
+    internal static ulong PickUiTable(IList<ulong> cands, long[] ids, out string why) { ulong c; return PickUiTable(cands, ids, out why, out c); }
+    /// <summary>The same; <paramref name="classes"/> = the first table of form classes (UIFormClass), 0 = none.</summary>
+    internal static ulong PickUiTable(IList<ulong> cands, long[] ids, out string why, out ulong classes) {
+      ulong best = 0; int bestShown = -1, bestForms = 0; int nf = 0, nc = 0, nx = 0; classes = 0;
       foreach (var c in cands) {
-        int sh; string kind = UiTableKind(c, ids, out sh);
-        if (kind == "forms") { nf++; if (sh > bestShown) { best = c; bestShown = sh; } }
-        else if (kind == "classes") nc++; else nx++;
+        int sh, fm; string kind = UiTableKind(c, ids, out sh, out fm);
+        if (kind == "forms") { nf++; if (sh > bestShown || (sh == bestShown && fm > bestForms)) { best = c; bestShown = sh; bestForms = fm; } }
+        else if (kind == "classes") { nc++; if (classes == 0) classes = c; } else nx++;
       }
       why = cands.Count + " candidate(s): forms " + nf + ", classes " + nc + ", other " + nx;
       return best;
@@ -1906,6 +1972,8 @@ namespace RealmForge {
 
     /// <summary>For the tests: the table picked from <paramref name="cands"/> as UIInstance (0 = none).</summary>
     public static ulong PickUiTableForTest(IList<ulong> cands, long[] ids) { string w; return PickUiTable(cands, ids, out w); }
+    /// <summary>For the tests: the full search over the test memory by these anchor ids, with its log line (UIFormClass forgotten first).</summary>
+    public static ulong FindUiTableForTest(long[] anchors, out string said) { regs = Regions(); uiClassTable = 0; return FindUiIn(anchors, out said); }
 
     /// <summary>UIInstance's address (0 = not found yet), for the log.</summary>
     public static ulong UiAddress { get { return uiTable; } }

@@ -4349,6 +4349,40 @@ static partial class CoreTests {
       RFX.SetUiTableForTest(fs.T(many.ToArray()).A);
       RFX.ReadOffers(); var off2 = RFX.ReadOffers();
       Check(off2 != null && off2.Contains("Form_EquipmentPlan"), "window table: 30 nameless forms before it do not hide the plan screen for good (" + (off2 == null ? "null" : string.Join(",", off2.ToArray())) + ")");
+      // the full search from any screen (the scans over the test memory): the anchors are the city, the hero screen and the battle
+      {
+        var m2 = new FakeLua(1 << 21); RFX.TestMemory = m2; RFX.ForgetLive();
+        var fs2 = new FakeState(m2); long inst2 = 30001;
+        Func<string, FTab> Cls2 = nm => fs2.T("__cname", nm, "ctor", 0L, "__index", 0L);
+        const long idGuild = -1859031432, idFoundry = -1395031855;
+        var k2City = Cls2("Form_MainCity"); var k2Guild = Cls2("Form_Union"); var k2Hero = Cls2("Form_CharactorMain"); var k2Foundry = Cls2("Form_EquipSubliming");
+        var cls2 = fs2.T(idCity, k2City, idGuild, k2Guild, idHero, k2Hero, idFoundry, k2Foundry);                 // UIFormClass: the city's class is loaded at the login
+        var guildOnly = fs2.T(idGuild, fs2.T("m_LuaLogicActive", true, "class", k2Guild, "____instanceId", inst2++), 1L, 0L, 2L, 0L, 3L, 0L);  // UIInstance: only the guild open
+        var notForms = fs2.T(idFoundry, fs2.T("m_LuaLogicActive", true, "class", Cls2("UIStackItem"), "____instanceId", inst2++), 1L, 0L, 2L, 0L, 3L, 0L);   // keyed by a form id, not a form
+        string said;
+        ulong got = RFX.FindUiTableForTest(ids, out said);
+        Check(got == guildOnly.A, "window table: found with only Form_Union (the guild) open, by every loaded form's id (" + said + ")");
+        Check(said.StartsWith("forms: window table found from Form_Union"), "window table: the log line names the screen it was found from (" + said + ")");
+        Eq(0UL, RFX.PickUiTableForTest(new[] { notForms.A }, new[] { idFoundry }), "window table: objects whose class is not a Form_ are not forms");
+        // the city open: found in the first round, as before
+        var m3 = new FakeLua(1 << 21); RFX.TestMemory = m3; RFX.ForgetLive();
+        var fs3 = new FakeState(m3); long inst3 = 40001;
+        Func<string, FTab> Cls3 = nm => fs3.T("__cname", nm, "ctor", 0L, "__index", 0L);
+        var k3City = Cls3("Form_MainCity"); var k3Guild = Cls3("Form_Union");
+        var cls3 = fs3.T(idCity, k3City, idGuild, k3Guild, 1L, 0L, 2L, 0L);
+        var city = fs3.T(idCity, fs3.T("m_LuaLogicActive", true, "class", k3City, "____instanceId", inst3++), 1L, 0L, 2L, 0L, 3L, 0L);
+        got = RFX.FindUiTableForTest(ids, out said);
+        Check(got == city.A, "window table: found with the city open (" + said + ")");
+        Check(said.StartsWith("forms: window table found from Form_MainCity") && !said.Contains("loaded forms"), "window table: the city's way needs one round (" + said + ")");
+        // only UIFormClass in memory (no form open at all): it is never taken
+        var m4 = new FakeLua(1 << 21); RFX.TestMemory = m4; RFX.ForgetLive();
+        var fs4 = new FakeState(m4);
+        var cls4 = fs4.T(idCity, fs4.T("__cname", "Form_MainCity", "ctor", 0L), idGuild, fs4.T("__cname", "Form_Union", "ctor", 0L), 1L, 0L, 2L, 0L);
+        got = RFX.FindUiTableForTest(ids, out said);
+        Eq(0UL, got, "window table: not fooled by UIFormClass (" + said + ")");
+        Check(said.StartsWith("forms: window table not found"), "window table: not found is logged (" + said + ")");
+        RFX.TestMemory = m; RFX.ForgetLive();
+      }
       RFX.SetUiTableForTest(0);
       Eq("window table not found yet", RFX.ShownFormsDiag(8), "window table: not found - the log line says so");
       Check(RFX.ReadShownKnownForms() == null, "window table not found: the known forms are not read (null)");
