@@ -34,6 +34,24 @@ function Write-Log([string]$msg) {
     Write-Host $msg
 }
 
+# Server data is read only through Get-Prop: under StrictMode a missing property on a parsed object would throw.
+function Get-Prop($obj, [string]$name) {
+    if ($obj -isnot [PSCustomObject]) { return $null }
+    $p = $obj.PSObject.Properties[$name]
+    if ($p -eq $null) { return $null }
+    return $p.Value
+}
+# lab_claim answers null/''/[]/{} when nothing is queued: a claim is a job only with a non-empty id and action
+function Get-ClaimJob($d) {
+    if ($d -is [array]) {
+        if ($d.Count -ne 1) { return $null }
+        $d = $d[0]
+    }
+    if ($d -isnot [PSCustomObject]) { return $null }
+    if ([string]::IsNullOrEmpty([string](Get-Prop $d 'id')) -or [string]::IsNullOrEmpty([string](Get-Prop $d 'action'))) { return $null }
+    return $d
+}
+
 # ---------------------------------------------------------------- config, secrets
 if (-not (Test-Path (Join-Path $Dir 'config.json'))) { Write-Host 'Not set up: run setup-lab.ps1 first.'; exit 2 }
 $Cfg = Get-Content -Raw -Path (Join-Path $Dir 'config.json') | ConvertFrom-Json
@@ -73,7 +91,8 @@ function Invoke-Rpc([string]$name, [string]$json) {
                 $sr = New-Object IO.StreamReader($resp.GetResponseStream())
                 $body = $sr.ReadToEnd(); $sr.Close()
                 $o = $body | ConvertFrom-Json
-                if ($o.PSObject.Properties['message']) { $msg = [string]$o.message }
+                $em = Get-Prop $o 'message'
+                if ($em -ne $null) { $msg = [string]$em }
             }
         } catch { }
         return @{ ok = $false; data = $null; code = $code; msg = $msg }
@@ -126,6 +145,7 @@ function Test-JobArgs([string]$action, $args_) {
     if (-not $Schemas.ContainsKey($action)) { return $false }
     $schema = $Schemas[$action]
     if ($args_ -eq $null) { return $true }
+    if ($args_ -isnot [PSCustomObject]) { return $false }
     foreach ($prop in $args_.PSObject.Properties) {
         if (-not $schema.ContainsKey($prop.Name)) { return $false }
         if (-not (& $schema[$prop.Name] $prop.Value)) { return $false }
@@ -186,10 +206,13 @@ function Invoke-UpdateApp {
     $base = [Uri]$Cfg.updateHost
     $feed = Get-Bytes ([Uri]($Cfg.updateHost.TrimEnd('/') + '/downloads/test/latest.json')) 65536
     $m = [Text.Encoding]::UTF8.GetString($feed) | ConvertFrom-Json
-    $ver = [string]$m.version
+    $ver = [string](Get-Prop $m 'version')
     if (-not (Test-VersionText $ver)) { return @{ ok = $false; res = @{ error = 'bad_version' } } }
-    $size = [int64]$m.size
-    if ($size -le 0 -or $size -gt $MaxUpdateBytes -or [string]::IsNullOrEmpty([string]$m.url) -or [string]::IsNullOrEmpty([string]$m.sig)) {
+    $mUrl = [string](Get-Prop $m 'url')
+    $mSig = [string](Get-Prop $m 'sig')
+    $mSha = [string](Get-Prop $m 'sha256')
+    $size = [int64](Get-Prop $m 'size')
+    if ($size -le 0 -or $size -gt $MaxUpdateBytes -or [string]::IsNullOrEmpty($mUrl) -or [string]::IsNullOrEmpty($mSig)) {
         return @{ ok = $false; res = @{ error = 'bad_manifest' } }
     }
     $installed = Get-AppVersion
@@ -198,13 +221,13 @@ function Invoke-UpdateApp {
     }
     # the build comes from the configured host only
     $file = $null
-    if (-not [Uri]::TryCreate($base, [string]$m.url, [ref]$file) -or $file.Host -ne $base.Host -or $file.Scheme -ne $base.Scheme) {
+    if (-not [Uri]::TryCreate($base, $mUrl, [ref]$file) -or $file.Host -ne $base.Host -or $file.Scheme -ne $base.Scheme) {
         return @{ ok = $false; res = @{ error = 'foreign_url' } }
     }
     $bytes = Get-Bytes $file $MaxUpdateBytes
     $hex = ([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($bytes)).Replace('-', '')).ToLowerInvariant()
-    if ($bytes.LongLength -ne $size -or $hex -ne ([string]$m.sha256).ToLowerInvariant()) { return @{ ok = $false; res = @{ error = 'hash_mismatch' } } }
-    if (-not (Test-Signature $bytes ([Convert]::FromBase64String([string]$m.sig)))) { return @{ ok = $false; res = @{ error = 'bad_signature' } } }
+    if ($bytes.LongLength -ne $size -or $hex -ne $mSha.ToLowerInvariant()) { return @{ ok = $false; res = @{ error = 'hash_mismatch' } } }
+    if (-not (Test-Signature $bytes ([Convert]::FromBase64String($mSig)))) { return @{ ok = $false; res = @{ error = 'bad_signature' } } }
     # drop where Updater.ApplyAtStart looks: %LOCALAPPDATA%\WardsageTest\update\Wardsage-Test-<ver>.exe + .json
     $upd = Join-Path $env:LOCALAPPDATA 'WardsageTest\update'
     New-Item -ItemType Directory -Force -Path $upd | Out-Null
@@ -213,7 +236,7 @@ function Invoke-UpdateApp {
     if (Test-Path $exe) { Remove-Item $exe -Force }
     Move-Item -Path ($exe + '.tmp') -Destination $exe
     $notes = '{"ru":"","en":""}'
-    $meta = '{"version":"' + $ver + '","url":' + ([string]$m.url | ConvertTo-Json -Compress) + ',"size":' + $size + ',"sha256":"' + $hex + '","sig":"' + ([string]$m.sig) + '","notes":' + $notes + '}'
+    $meta = '{"version":"' + $ver + '","url":' + ($mUrl | ConvertTo-Json -Compress) + ',"size":' + $size + ',"sha256":"' + $hex + '","sig":"' + $mSig + '","notes":' + $notes + '}'
     [IO.File]::WriteAllText((Join-Path $upd ('Wardsage-Test-' + $ver + '.json')), $meta, (New-Object Text.UTF8Encoding($false)))
     return @{ ok = $true; res = @{ updated = $true; version = $ver; installed = $installed } }
 }
@@ -305,7 +328,8 @@ function Invoke-Screenshot([string]$job) {
 # ---------------------------------------------------------------- upload_logs: tail of the test app's own log
 function Invoke-UploadLogs([string]$job, $a) {
     $n = 1000
-    if ($a -ne $null -and ($a.PSObject.Properties.Name -contains 'lines')) { $n = [int]$a.lines }
+    $al = Get-Prop $a 'lines'
+    if ($al -ne $null) { $n = [int]$al }
     $log = Join-Path $env:APPDATA 'WardsageTest\wardsage.log'      # src/Config.cs DefaultDir + Log.Path
     if (-not (Test-Path -LiteralPath $log)) { return @{ ok = $false; res = @{ error = 'no_log' } } }
     $fs = New-Object IO.FileStream($log, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
@@ -323,16 +347,19 @@ function Invoke-UploadLogs([string]$job, $a) {
 # ---------------------------------------------------------------- one job
 $script:Exit = $false
 function Invoke-Job($job) {
-    $id = [string]$job.id
-    $action = [string]$job.action
-    if ($id -notmatch '^[0-9a-fA-F-]{36}$') { Write-Log 'job with a bad id ignored'; return }
-    $script:Busy = $true
+    $id = ''
+    $action = ''
     $out = @{ ok = $false; res = @{ error = 'unknown' } }
     try {
-        $expires = [DateTime]::Parse([string]$job.expires_at).ToUniversalTime()
+        $id = [string](Get-Prop $job 'id')
+        $action = [string](Get-Prop $job 'action')
+        if ($id -notmatch '^[0-9a-fA-F-]{36}$') { Write-Log 'job with a bad id ignored'; return }
+        $script:Busy = $true
+        $jobArgs = Get-Prop $job 'args'
+        $expires = [DateTime]::Parse([string](Get-Prop $job 'expires_at')).ToUniversalTime()
         if ($expires -lt (Get-Date).ToUniversalTime()) {
             $out = @{ ok = $false; res = @{ error = 'expired' } }
-        } elseif (-not (Test-JobArgs $action $job.args)) {
+        } elseif (-not (Test-JobArgs $action $jobArgs)) {
             $out = @{ ok = $false; res = @{ error = 'bad_args' } }
         } else {
             Write-Log ('job: ' + $action)
@@ -341,7 +368,7 @@ function Invoke-Job($job) {
                 'update_app'  { $out = Invoke-UpdateApp }
                 'restart_app' { $out = Invoke-RestartApp }
                 'screenshot'  { $out = Invoke-Screenshot $id }
-                'upload_logs' { $out = Invoke-UploadLogs $id $job.args }
+                'upload_logs' { $out = Invoke-UploadLogs $id $jobArgs }
                 'finish'      { $out = @{ ok = $true; res = @{ bye = $true } }; $script:Exit = $true }
                 'cancel'      { $out = @{ ok = $true; res = @{ cancelled = $true } } }
             }
@@ -368,25 +395,36 @@ try {
         if (Test-Path $StopFile) { Write-Log 'STOP file found, exiting'; break }
         if (((Get-Date) - $script:Started).TotalHours -gt $MaxRunnerHours) { Write-Log 'max lifetime reached, exiting'; break }
         if ((Get-Date) -ge $backoffUntil) {
-            $err = $null
-            if (((Get-Date) - $lastBeat).TotalSeconds -ge $HeartbeatSec) {
-                $r = Invoke-Rpc 'lab_heartbeat' (ConvertTo-StatusJson (Get-Status))
-                $lastBeat = Get-Date
-                if (-not $r.ok) { $err = $r }
-            }
-            if ($err -eq $null) {
-                $c = Invoke-Rpc 'lab_claim' '{}'
-                if (-not $c.ok) { $err = $c }
-                elseif ($c.data -ne $null) {
-                    Invoke-Job $c.data
-                    $lastBeat = [DateTime]::MinValue      # heartbeat right after a job
+            try {
+                $err = $null
+                if (((Get-Date) - $lastBeat).TotalSeconds -ge $HeartbeatSec) {
+                    $r = Invoke-Rpc 'lab_heartbeat' (ConvertTo-StatusJson (Get-Status))
+                    $lastBeat = Get-Date
+                    if (-not $r.ok) { $err = $r }
                 }
-            }
-            if ($err -ne $null) {
-                Write-Log ('server said ' + $err.code + ' ' + $err.msg)
-                if ($err.msg -in @('lab_bad_gen', 'lab_disabled', 'lab_unknown_device', 'lab_forbidden')) { Write-Log 'this token is no longer valid, exiting'; break }
-                $wait = 300; if ($err.msg -ne 'lab_killed' -and $err.msg -ne 'lab_rate') { $wait = 30 }
-                $backoffUntil = (Get-Date).AddSeconds($wait)
+                if ($err -eq $null) {
+                    $c = Invoke-Rpc 'lab_claim' '{}'
+                    if (-not $c.ok) { $err = $c }
+                    else {
+                        $job = Get-ClaimJob $c.data
+                        if ($job -ne $null) {
+                            Invoke-Job $job
+                            $lastBeat = [DateTime]::MinValue      # heartbeat right after a job
+                        }
+                    }
+                }
+                if ($err -ne $null) {
+                    Write-Log ('server said ' + $err.code + ' ' + $err.msg)
+                    if ($err.msg -in @('lab_bad_gen', 'lab_disabled', 'lab_unknown_device', 'lab_forbidden')) { Write-Log 'this token is no longer valid, exiting'; break }
+                    $wait = 300; if ($err.msg -ne 'lab_killed' -and $err.msg -ne 'lab_rate') { $wait = 30 }
+                    $backoffUntil = (Get-Date).AddSeconds($wait)
+                }
+            } catch {
+                $script:Busy = $false
+                $em = [string]$_.Exception.Message
+                if ($em.Length -gt 200) { $em = $em.Substring(0, 200) }
+                Write-Log ('loop error: ' + $_.Exception.GetType().Name + ': ' + $em)
+                $backoffUntil = (Get-Date).AddSeconds(30)
             }
         }
         $t = 0
