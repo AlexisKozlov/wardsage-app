@@ -36,6 +36,62 @@ namespace RealmForge {
       return new[] { (int)(ReplaceX0 * U), (int)(ReplaceY0 * U), (int)((ReplaceX1 - ReplaceX0) * U), (int)((ReplaceY1 - ReplaceY0) * U) };
     }
   }
+  /// <summary>Which blue confirm button to press when both searches see one («Заменить» at its left-anchored place and «Надеть»
+  /// at the centre). On a 3440×1440 (21:9) client both were seen on every replace for one player (27-29.10, 18 reports
+  /// pilot.confirm_no_button "replace True, equip True"), while every press that worked there was the centred one: the hint then
+  /// fell back to the usual «Заменить» place, higher than the real button. The kind whose single press put the item on the hero
+  /// is kept per client size and decides the tie; with nothing learned yet a tie still presses nothing.</summary>
+  public sealed class ConfirmChoice {
+    readonly System.Collections.Generic.Dictionary<string, bool> learned = new System.Collections.Generic.Dictionary<string, bool>();   // size -> true = «Надеть» place
+    long pendingItem; bool pendingEquip; string pendingSize;
+
+    public static string SizeKey(double W, double H) { return (int)W + "x" + (int)H; }
+
+    /// <summary>The button to use, or null. A single one is noted as pending for the item; a tie uses what worked at this size.</summary>
+    public int[] Pick(int[] rep, int[] eq, long item, double W, double H) {
+      string size = SizeKey(W, H);
+      if ((rep != null) != (eq != null)) {
+        if (item > 0) { pendingItem = item; pendingEquip = eq != null; pendingSize = size; }
+        return rep ?? eq;
+      }
+      bool useEquip;
+      if (rep == null || !learned.TryGetValue(size, out useEquip)) return null;
+      return useEquip ? eq : rep;
+    }
+
+    /// <summary>The pending item is now worn by the hero: its button kind is the one that works at that size.</summary>
+    public void Worn(long item) {
+      if (item <= 0 || item != pendingItem || pendingSize == null) return;
+      learned[pendingSize] = pendingEquip;
+      pendingItem = 0;
+    }
+
+    public long PendingItem { get { return pendingItem; } }
+    /// <summary>The learned kind at a size: "equip", "replace" or "" (nothing yet).</summary>
+    public string Learned(double W, double H) { bool e; return learned.TryGetValue(SizeKey(W, H), out e) ? (e ? "equip" : "replace") : ""; }
+  }
+
+  /// <summary>The game window's geometry self-check (journal line and pilot report field "geom"): the client origin by
+  /// ClientToScreen and by the window rect (frame borders taken as equal left/right/bottom, the caption on top), the client
+  /// size, the window's DPI and the Wine version (none on Windows). Under Wine / CrossOver the two origins or the DPI can
+  /// differ from Windows; a hint drawn off the game's button is then visible in the line.</summary>
+  public static class GameGeomCheck {
+    /// <summary>The client origin from the window rect {L, T, R, B} and the client size: the side border = half the width
+    /// difference, the client's bottom = the window's bottom minus that border.</summary>
+    public static void OriginFromWindow(int l, int t, int r, int b, int cw, int ch, out int x, out int y) {
+      int border = System.Math.Max(0, ((r - l) - cw) / 2);
+      x = l + border;
+      y = System.Math.Max(t, b - border - ch);
+    }
+
+    public static string Line(int ox, int oy, int l, int t, int r, int b, int cw, int ch, int dpi, string wine) {
+      int x2, y2; OriginFromWindow(l, t, r, b, cw, ch, out x2, out y2);
+      return "client " + cw + "x" + ch + " at " + ox + "," + oy + " (window " + l + "," + t + " " + (r - l) + "x" + (b - t)
+        + " -> " + x2 + "," + y2 + (x2 != ox || y2 != oy ? " DIFFERS " + (x2 - ox) + "," + (y2 - oy) : " same") + ")"
+        + " dpi " + dpi + " wine " + (string.IsNullOrEmpty(wine) ? "no" : wine);
+    }
+  }
+
   /// <summary>Our own clickable buttons over the game: the TEST build's record button on the game's left edge at mid-height
   /// (d = 0.034 U, flush with the edge, so it ends left of the gear list's first column at 0.0393 U) and the cancel plate. The
   /// first place (top left) lay on the game's back arrow (0.0515 U, 0.0367 U): a pilot click there pressed our button instead of
