@@ -722,6 +722,7 @@ static class CoreTests {
     PlanScreenTests();
     WindowTableTests();
     UnknownBackTests();
+    CityBackTests();
     ArtGridPictureTests();
     ArtPromoteTests();
     ArtAutoTests();
@@ -4429,11 +4430,18 @@ static class CoreTests {
       g.Observe(plain, 11000);
       Check(g.Pending(ClickOwner.Equip) && !g.Halted(ClickOwner.Equip), "unknown back: the effect is awaited for a moment");
       g.Observe(plain, 10000 + ClickGate.EffectMs + 1);
-      Eq("nochange", g.HaltReason(ClickOwner.Equip), "unknown back: the same screen after the press is a stop");
+      Check(!g.Halted(ClickOwner.Equip) && g.EscapePending(ClickOwner.Equip), "unknown back: the same screen after the press: one Escape next, no stop yet");
       var gn = new ClickGate(); var nameless = Unk("", "");
       gn.Arm(ClickOwner.Equip, ClickTarget.UnknownBack, ClickGate.Expect(Rq(ClickOwner.Equip), nameless), 0);
       gn.Observe(nameless, ClickGate.EffectMs + 1);
-      Eq("nochange", gn.HaltReason(ClickOwner.Equip), "unknown back: an unknown screen without a name before and after is no change either");
+      Check(!gn.Halted(ClickOwner.Equip) && gn.EscapePending(ClickOwner.Equip), "unknown back: an unknown screen without a name before and after is no change either (one Escape next)");
+      // the Escape changes nothing as well: the stop
+      var er = new ClickRequest { Owner = ClickOwner.Equip, Target = ClickTarget.EscapeBack, AutoOn = true, Front = true, U = U };
+      Check(gn.EscapeDue(ClickOwner.Equip, nameless, 10000) && !gn.Check(er, Unk("", null), 10000).Allowed, "unknown back: no Escape while the shown forms are not read (the unknown-back rules)");
+      Check(g.EscapeDue(ClickOwner.Equip, plain, 20000) && g.Check(er, plain, 20000).Allowed, "unknown back: the Escape on that full-screen unknown screen");
+      g.Arm(ClickOwner.Equip, ClickTarget.EscapeBack, ClickGate.Expect(er, plain), 20000);
+      g.Observe(plain, 20000 + ClickGate.EffectMs + 1);
+      Eq("nochange", g.HaltReason(ClickOwner.Equip), "unknown back: an Escape that changes nothing is a stop");
     }
     // at most MaxUnknownBacks presses a run; a new run starts the count again
     {
@@ -4453,6 +4461,172 @@ static class CoreTests {
       Check(!r.Allowed && g.HaltReason(ClickOwner.Locate) == "unknown", "unknown back: a fourth press is a stop (" + g.HaltDetail(ClickOwner.Locate) + ")");
       g.Resume(ClickOwner.Locate);
       Check(g.UnknownBacks(ClickOwner.Locate) == 0 && g.UnknownBackDue(ClickOwner.Locate, last, t + 20000), "unknown back: a new run may press again");
+    }
+  }
+
+  // back to the city (ClickTarget.CityBack) from a known screen the pilot cannot start from, and the one Escape after a back press that changed nothing
+  static void CityBackTests() {
+    Console.WriteLine("Back to the city: the back arrow, then Escape");
+    const double W = 1366, H = 705; double U = Ui.Unit(W, H);
+    var hg = new HeroGeometry(); double bx = hg.BackX * U, by = hg.BackY * U;
+    Func<string, ScreenInputs> In = known => new ScreenInputs { Offers = new List<string>(), ShownKnown = known, CityForm = false };
+    Func<string, ScreenState> City = known => { var i = In(known); i.CityForm = true; return ScreenState.Classify(i, 0); };
+    Func<string, ScreenState> Inv = known => { var i = In(known); i.Inv = new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true }; return ScreenState.Classify(i, 0); };
+    Func<string, ScreenState> Foundry = known => { var i = In(known); i.Inv = new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true }; i.Rs = new RecastScreen { SublimingOpen = true, CurType = 1 }; return ScreenState.Classify(i, 0); };
+    Func<string, ScreenState> Gem = known => { var i = In(known); i.Rs = new RecastScreen { GemOpen = true }; return ScreenState.Classify(i, 0); };
+    Func<string, ScreenState> Hero = known => { var i = In(known); i.Hero = new HeroScreen { Hero = 5, FormOk = true }; return ScreenState.Classify(i, 0); };
+    Func<ClickOwner, ClickRequest> Rq = o => new ClickRequest { Owner = o, Target = ClickTarget.CityBack, AutoOn = true, Front = true, X = bx, Y = by, U = U };
+    Func<ClickOwner, ClickRequest> Esc = o => new ClickRequest { Owner = o, Target = ClickTarget.EscapeBack, AutoOn = true, Front = true, U = U };
+    const string fdForms = "Form_BackpackIntegration,Form_EquipSubliming";
+    Check(Foundry(null).Kind == ScreenKind.Foundry && Gem(null).Kind == ScreenKind.Gem && Inv(null).Kind == ScreenKind.Inventory && Hero(null).Kind == ScreenKind.HeroScreen && City(null).Kind == ScreenKind.City, "city back: the test screens are read as meant");
+
+    // who needs it: the pilot's start screen never (the fast paths stay), every other known screen does
+    Check(!ClickGate.AwayFromStart(ClickOwner.Equip, City(null)) && !ClickGate.AwayFromStart(ClickOwner.Equip, Hero(null)), "city back: equip starts in the city / on the hero screen as before");
+    foreach (var s in new[] { Foundry(null), Inv(null), Gem(null) }) Check(ClickGate.AwayFromStart(ClickOwner.Equip, s), "city back: equip on " + s.Kind + " goes back first");
+    Check(!ClickGate.AwayFromStart(ClickOwner.Sell, Inv(null)) && !ClickGate.AwayFromStart(ClickOwner.Sell, City(null)) && !ClickGate.AwayFromStart(ClickOwner.Sell, Hero(null)), "city back: sell starts in the inventory / the city / with its own hero back as before");
+    Check(ClickGate.AwayFromStart(ClickOwner.Sell, Foundry(null)) && ClickGate.AwayFromStart(ClickOwner.Sell, Gem(null)), "city back: sell on the Foundry / the gem screen goes back first");
+    Check(!ClickGate.AwayFromStart(ClickOwner.Equip, ScreenState.Classify(In(""), 0)), "city back: an unknown screen is the unknown back's");
+    {   // Locate: the inventory's steps with the Foundry / the gem screen on top; never the recast's own gem steps, never the hero screen (its HeroBack)
+      Func<LocateKind, bool, bool, bool> L = (k, form, hero) => LocateAuto.NeedsCityBack(new LocateView { Step = new LocateStep { Kind = k }, OtherFormOpen = form, HeroScreenOpen = hero, W = W, H = H, U = U });
+      foreach (var k in new[] { LocateKind.OpenInventory, LocateKind.OpenEquipTab, LocateKind.InList }) Check(L(k, true, false), "city back: locate step " + k + " with the Foundry on top goes back");
+      Check(!L(LocateKind.OpenInventory, false, false) && !L(LocateKind.OpenInventory, false, true) && !L(LocateKind.InList, false, false), "city back: locate on its own screens / the hero screen: as before");
+      Check(!L(LocateKind.GemFunction, true, false) && !L(LocateKind.Selected, true, false) && !L(LocateKind.AscendPick, true, false), "city back: never in the recast's / ascension's own steps");
+    }
+
+    // from the Foundry: back (-> the inventory), back (-> the city), then the normal first click
+    {
+      var g = new ClickGate(); long t = 10000;
+      var fd = Foundry(null); fd.SinceMs = t - ClickGate.CityBackSettleMs;
+      var fresh0 = Foundry(null); fresh0.SinceMs = t - 10;
+      Check(!g.CityBackDue(ClickOwner.Equip, fresh0, t), "city back: not before the screen settled");
+      Check(g.CityBackDue(ClickOwner.Equip, fd, t), "city back: due on the Foundry");
+      Check(!g.CityBackDue(ClickOwner.Equip, fd, t + 200), "city back: not again within a second");
+      var r = g.Check(Rq(ClickOwner.Equip), Foundry(fdForms), t);
+      Check(r.Allowed, "city back: the back arrow on the Foundry (" + r.Detail + ")");
+      Check(!new ClickGate().Check(new ClickRequest { Owner = ClickOwner.Equip, Target = ClickTarget.CityBack, AutoOn = true, Front = true, X = W / 2, Y = H / 2, U = U }, Foundry(fdForms), t).Allowed, "city back: never a point off the arrow");
+      g.Arm(ClickOwner.Equip, ClickTarget.CityBack, ClickGate.Expect(Rq(ClickOwner.Equip), fd), t);
+      Eq("pending", g.Preflight(ClickOwner.Equip, fd, t + 300).Reason, "city back: its effect is awaited");
+      var iv = Inv(null); iv.SinceMs = t + 500;
+      g.Observe(iv, t + 500);
+      Check(!g.Pending(ClickOwner.Equip) && !g.Halted(ClickOwner.Equip), "city back: the inventory is its effect");
+      Check(!g.CityBackDue(ClickOwner.Equip, iv, t + 600), "city back: the inventory settles first");
+      t = t + 500 + ClickGate.CityBackSettleMs;
+      Check(g.CityBackDue(ClickOwner.Equip, iv, t) && g.Check(Rq(ClickOwner.Equip), Inv("Form_BackpackIntegration"), t).Allowed, "city back: the second press, on the inventory");
+      g.Arm(ClickOwner.Equip, ClickTarget.CityBack, ClickGate.Expect(Rq(ClickOwner.Equip), iv), t);
+      var city = City(null); city.SinceMs = t + 400;
+      g.Observe(city, t + 400);
+      Check(!g.Pending(ClickOwner.Equip) && g.CityBacks(ClickOwner.Equip) == 2, "city back: the city came after 2 presses");
+      Check(!g.CityBackDue(ClickOwner.Equip, city, t + 5000) && !g.Check(Rq(ClickOwner.Equip), City(""), t + 5000).Allowed, "city back: never a press on the city");
+      Check(!g.Halted(ClickOwner.Equip), "city back: not stopped by its own press on the city (" + g.HaltDetail(ClickOwner.Equip) + ")");
+      var nav = new ClickRequest { Owner = ClickOwner.Equip, Target = ClickTarget.EquipNav, AutoOn = true, Front = true, X = W - hg.HeroesBtnDX * U, Y = H - hg.HeroesBtnDY * U };
+      var nr = g.Check(nav, City(""), t + 5000);
+      Check(nr.Allowed, "city back: then the normal first click («Герои» of the city): " + nr.Reason + " " + nr.Detail);
+      Check(!g.EscapePending(ClickOwner.Equip) && g.Escapes(ClickOwner.Equip) == 0, "city back: no Escape on the way");
+    }
+    // from the gem screen (sell) and the hero screen of another flow (its gear list closing counts)
+    {
+      var g = new ClickGate(); var gm = Gem(null);
+      Check(g.CityBackDue(ClickOwner.Sell, gm, 10000) && g.Check(Rq(ClickOwner.Sell), Gem("Form_EquipGemMain"), 10000).Allowed, "city back: sell on the gem screen");
+      g.Arm(ClickOwner.Sell, ClickTarget.CityBack, ClickGate.Expect(Rq(ClickOwner.Sell), gm), 10000);
+      g.Observe(Inv(null), 10400);
+      Check(!g.Pending(ClickOwner.Sell) && !ClickGate.AwayFromStart(ClickOwner.Sell, Inv(null)), "city back: sell is in the inventory after one press, its own steps go on");
+      var gh = new ClickGate(); var hs = Hero(null); hs.HeroSlot = 2;
+      Check(gh.CityBackDue(ClickOwner.Locate, hs, 10000) && gh.Check(Rq(ClickOwner.Locate), hs, 10000).Allowed, "city back: allowed on a hero screen");
+      gh.Arm(ClickOwner.Locate, ClickTarget.CityBack, ClickGate.Expect(Rq(ClickOwner.Locate), hs), 10000);
+      var hs2 = Hero(null); hs2.HeroSlot = -1;
+      gh.Observe(hs2, 10300);
+      Check(!gh.Pending(ClickOwner.Locate) && !gh.Halted(ClickOwner.Locate), "city back: a gear list closing on the hero screen is a change");
+    }
+    // never: a pop-up, an offer, a held screen, a fight's form, a hint run
+    {
+      var md = Foundry(null); md.ModalOpen = true; md.ModalWhy = "form:Form_X";
+      var hd = Foundry(null); hd.Held = true;
+      var bt = Foundry("Form_Battle");
+      foreach (var s in new[] { md, hd, bt }) {
+        Check(ClickGate.CityBackBlock(s) != "" && !new ClickGate().CityBackDue(ClickOwner.Equip, s, 10000), "city back: never on " + s.Brief + " (" + ClickGate.CityBackBlock(s) + ")");
+        Check(!new ClickGate().Check(Rq(ClickOwner.Equip), s, 10000).Allowed, "city back: the gate waits on " + s.Brief);
+      }
+      var gl = new ClickGate { NoLocateClicks = true };
+      Check(!gl.CityBackDue(ClickOwner.Locate, Foundry(null), 10000) && !gl.Check(Rq(ClickOwner.Locate), Foundry(fdForms), 10000).Allowed, "city back: a hint run never presses");
+    }
+    // a back press that changes nothing: ONE Escape (never before such a press, never on the city or in a fight), then the stop
+    {
+      var g = new ClickGate(); long t = 10000; var fd = Foundry(null);
+      Check(!g.EscapeDue(ClickOwner.Equip, fd, t), "escape: never without a back press that changed nothing");
+      Eq("target", new ClickGate().Check(Esc(ClickOwner.Equip), Foundry(fdForms), t).Reason, "escape: the gate refuses one that was not due");
+      Check(g.CityBackDue(ClickOwner.Equip, fd, t) && g.Check(Rq(ClickOwner.Equip), Foundry(fdForms), t).Allowed, "escape: first the back arrow");
+      g.Arm(ClickOwner.Equip, ClickTarget.CityBack, ClickGate.Expect(Rq(ClickOwner.Equip), fd), t);
+      g.Observe(fd, t + ClickGate.EffectMs + 1);
+      Check(!g.Halted(ClickOwner.Equip) && g.EscapePending(ClickOwner.Equip), "escape: the back press changed nothing - an Escape is next, no stop");
+      t += ClickGate.EffectMs + 2000;
+      Check(!g.CityBackDue(ClickOwner.Equip, fd, t), "escape: no other back press while the Escape is due");
+      Check(g.EscapeDue(ClickOwner.Equip, fd, t), "escape: due on the same Foundry");
+      Check(!g.Check(Esc(ClickOwner.Equip), Foundry(null), t).Allowed && !g.Halted(ClickOwner.Equip), "escape: not without the shown forms read (a fight could be on)");
+      Check(!g.Check(Esc(ClickOwner.Equip), Foundry(fdForms + ",Form_Battle"), t).Allowed, "escape: never with the fight's form shown");
+      var r = g.Check(Esc(ClickOwner.Equip), Foundry(fdForms), t);
+      Check(r.Allowed, "escape: one Escape on the Foundry (" + r.Detail + ")");
+      g.Arm(ClickOwner.Equip, ClickTarget.EscapeBack, ClickGate.Expect(Esc(ClickOwner.Equip), fd), t);
+      Check(!g.EscapePending(ClickOwner.Equip) && g.Escapes(ClickOwner.Equip) == 1, "escape: one sent");
+      g.Observe(Inv(null), t + 300);
+      Check(!g.Pending(ClickOwner.Equip) && !g.Halted(ClickOwner.Equip), "escape: the inventory is its effect");
+      Check(!g.EscapeDue(ClickOwner.Equip, Inv(null), t + 5000), "escape: only one per back press that changed nothing");
+    }
+    {   // the city on top: never an Escape (it asks to quit the game), the due one is dropped
+      var g = new ClickGate(); var fd = Foundry(null);
+      g.CityBackDue(ClickOwner.Locate, fd, 10000);
+      g.Arm(ClickOwner.Locate, ClickTarget.CityBack, ClickGate.Expect(Rq(ClickOwner.Locate), fd), 10000);
+      g.Observe(fd, 10000 + ClickGate.EffectMs + 1);
+      Check(g.EscapePending(ClickOwner.Locate), "escape: due after the back press that changed nothing");
+      Check(!g.Check(Esc(ClickOwner.Locate), City("Form_MainCity"), 20000).Allowed, "escape: never on the city (fresh read)");
+      Check(!g.EscapeDue(ClickOwner.Locate, City(null), 20000) && !g.EscapePending(ClickOwner.Locate), "escape: the city came - nothing due any more");
+      Check(ClickGate.EscapeBlock(City("")) != "" && ClickGate.EscapeBlock(City(null)) != "", "escape: blocked on the city whatever the forms say");
+      var ub = ScreenState.Classify(new ScreenInputs { CityForm = false, Offers = new List<string>(), TopUnknown = "Form_BattleEnd", ShownKnown = "" }, 0);
+      Check(ClickGate.EscapeBlock(ub) != "", "escape: never on a fight's result");
+    }
+    {   // the game's exit question after an Escape: the stop, nothing of it pressed
+      var g = new ClickGate(); var un = ScreenState.Classify(new ScreenInputs { CityForm = false, Offers = new List<string>(), TopUnknown = "Form_Odd", ShownKnown = "" }, 0);
+      g.Arm(ClickOwner.Sell, ClickTarget.UnknownBack, ClickGate.Expect(new ClickRequest { Owner = ClickOwner.Sell, Target = ClickTarget.UnknownBack, U = U }, un), 0);
+      g.Observe(un, ClickGate.EffectMs + 1);
+      Check(g.EscapeDue(ClickOwner.Sell, un, 10000) && g.Check(Esc(ClickOwner.Sell), un, 10000).Allowed, "exit dialog: the Escape on an unknown full-screen form");
+      g.Arm(ClickOwner.Sell, ClickTarget.EscapeBack, ClickGate.Expect(Esc(ClickOwner.Sell), un), 10000);
+      var ex = ScreenState.Classify(new ScreenInputs { CityForm = false, Offers = new List<string>(), TopUnknown = "Form_SystemTips", ShownKnown = "" }, 0);
+      Check(ClickGate.ExitDialogShown(ex) && ClickGate.EscapeBlock(ex) != "", "exit dialog: seen, no Escape on it");
+      g.Observe(ex, 10300);
+      Eq("exitdialog", g.HaltReason(ClickOwner.Sell), "exit dialog: after the Escape it stops the pilot");
+    }
+    // caps: MaxCityBacks presses a run (each changing the screen without reaching the city), MaxEscapes Escapes a run
+    {
+      var g = new ClickGate(); long t = 10000; int n = 0;
+      Func<int, ScreenState> Alt = i => i % 2 == 0 ? Foundry(null) : Gem(null);
+      for (int i = 0; i < ClickGate.MaxCityBacks + 2; i++, t += 5000) {
+        var s = Alt(i); s.SinceMs = t - ClickGate.CityBackSettleMs;
+        if (!g.CityBackDue(ClickOwner.Locate, s, t)) break;
+        if (!g.Check(Rq(ClickOwner.Locate), s, t).Allowed) break;
+        g.Arm(ClickOwner.Locate, ClickTarget.CityBack, ClickGate.Expect(Rq(ClickOwner.Locate), s), t); n++;
+        g.Observe(Alt(i + 1), t + 300);
+      }
+      Eq(ClickGate.MaxCityBacks, n, "city back: presses in one run");
+      Eq("nochange", g.HaltReason(ClickOwner.Locate), "city back: the next one due is a stop (" + g.HaltDetail(ClickOwner.Locate) + ")");
+      g.Resume(ClickOwner.Locate);
+      Check(g.CityBacks(ClickOwner.Locate) == 0 && g.CityBackDue(ClickOwner.Locate, Foundry(null), t + 20000), "city back: a new run may press again");
+    }
+    {
+      var g = new ClickGate(); long t = 10000; int esc = 0;
+      for (int i = 0; i < 4 && !g.Halted(ClickOwner.Equip); i++, t += 20000) {
+        var s = i % 2 == 0 ? Foundry(null) : Gem(null); s.SinceMs = 0;
+        if (!g.CityBackDue(ClickOwner.Equip, s, t)) break;
+        g.Check(Rq(ClickOwner.Equip), s, t);
+        g.Arm(ClickOwner.Equip, ClickTarget.CityBack, ClickGate.Expect(Rq(ClickOwner.Equip), s), t);
+        g.Observe(s, t + ClickGate.EffectMs + 1);   // the back changes nothing
+        if (g.Halted(ClickOwner.Equip)) break;
+        long te = t + ClickGate.EffectMs + 2000;
+        if (!g.EscapeDue(ClickOwner.Equip, s, te)) break;
+        if (!g.Check(Esc(ClickOwner.Equip), i % 2 == 0 ? Foundry(fdForms) : Gem("Form_EquipGemMain"), te).Allowed) break;
+        g.Arm(ClickOwner.Equip, ClickTarget.EscapeBack, ClickGate.Expect(Esc(ClickOwner.Equip), s), te); esc++;
+        g.Observe(i % 2 == 0 ? Gem(null) : Foundry(null), te + 300);   // the Escape changed the screen
+      }
+      Eq(ClickGate.MaxEscapes, esc, "escape: at most this many a run");
+      Eq("nochange", g.HaltReason(ClickOwner.Equip), "escape: a back press that changes nothing with no Escape left is a stop");
     }
   }
 

@@ -53,6 +53,8 @@ namespace RealmForge {
     EquipConfirm,     // equip helper: «Заменить» (only with the player's auto confirm)
     OfferClose,       // every owner: the × of the game's offer / notice pop-up on top of the city (src/OfferForms.cs; never its buy / go / claim buttons)
     UnknownBack,      // every owner: the game's back arrow top left (HeroBack's spot) on a full-screen screen nobody knows, no pop-up on it (at most MaxUnknownBacks a run)
+    CityBack,         // every owner: the same back arrow on a KNOWN screen that is not the pilot's way (the Foundry, the inventory, the gem screen ...), on the way to the city (at most MaxCityBacks a run)
+    EscapeBack,       // every owner: ONE Escape key press after a back press that changed nothing (never on the city, in a fight or with the exit dialog; at most MaxEscapes a run)
     // the artifact flows (only with the site's "artAuto" switch; never «Продать», «Все», a lock, «Продвинуть», «Улучшить»)
     ArtTab,           // the inventory's left menu «Артефакт»
     ArtBulkEnter,     // the artifact tab's «Массовая продажа» (the storage cleanup)
@@ -148,6 +150,14 @@ namespace RealmForge {
     public const int MaxUnknownBacks = 3, UnknownBackSettleMs = 3000, UnknownBackRetryMs = 1000;
     /// <summary>How far (in units of the client height) the press may lie from the back arrow's centre.</summary>
     public const double UnknownBackTol = 0.03;
+    /// <summary>Back to the city (CityBack): a pilot on a known screen it cannot start from (the host says so: CityBackDue's caller) presses the
+    /// back arrow top left - once the screen has lasted CityBackSettleMs, at most MaxCityBacks times a run, each press has to change the screen;
+    /// none once the city is on top. A back press (CityBack or UnknownBack) that changes nothing is followed by ONE Escape key press (EscapeBack,
+    /// most screens close with it) instead of the stop, at most MaxEscapes a run; never on the city (it asks to quit the game), in a fight, with
+    /// a pop-up or the exit dialog (ExitDialogForms) shown. An Escape that changes nothing, or the exit dialog after it, stops the owner.</summary>
+    public const int MaxCityBacks = 4, MaxEscapes = 2, CityBackSettleMs = 1000;
+    /// <summary>The game's exit question (Form_MainCity's back-press listener: CS.Form_SystemTips «выйти из игры?»): never an Escape while it shows, a stop when it appears.</summary>
+    public static readonly string[] ExitDialogForms = { "Form_SystemTips" };
     /// <summary>Shown forms the unknown-screen stop leaves alone: a fight's result screens (the player is in a fight, not lost).</summary>
     public static readonly string[] StallExempt = { "Form_UnionBossBattleEnd", "Form_UnionWeekBossBattleEnd", "Form_BattleEnd", "Form_PvpBattleEnd", "Form_SparringPvpBattleEnd", "Form_ExpeditionBattleEnd" };
     /// <summary>A form the readers knew is being searched for again (the game moved its node, the search takes up to ~20 s on a slow PC): an
@@ -305,6 +315,10 @@ namespace RealmForge {
     readonly Dictionary<ClickOwner, int> unknownBacks = new Dictionary<ClickOwner, int>();    // UnknownBack presses in this run
     readonly Dictionary<ClickOwner, long> backTried = new Dictionary<ClickOwner, long>();     // the last UnknownBackDue yes
     readonly Dictionary<ClickOwner, ClickTarget> lastTarget = new Dictionary<ClickOwner, ClickTarget>();   // the owner's last click
+    readonly Dictionary<ClickOwner, int> cityBacks = new Dictionary<ClickOwner, int>();       // CityBack presses in this run
+    readonly Dictionary<ClickOwner, int> escapes = new Dictionary<ClickOwner, int>();         // EscapeBack presses in this run
+    readonly HashSet<ClickOwner> escapeDue = new HashSet<ClickOwner>();                       // a back press changed nothing: one Escape next
+    readonly Dictionary<ClickOwner, long> cityTried = new Dictionary<ClickOwner, long>();     // the last CityBackDue / EscapeDue yes
 
     void Note(ClickOwner o, string key, string text) {
       string was; if (noted.TryGetValue(o, out was) && was == key) return;
@@ -327,6 +341,100 @@ namespace RealmForge {
       halted.Remove(o); watches.Remove(o); unknownSince.Remove(o); noted.Remove(o); clickedAt.Remove(o); offerRun.Remove(o); haltDetail.Remove(o); foundryWait.Remove(o);
       stall.Remove(o); stallBrief.Remove(o); searchWaited.Remove(o);
       unknownBacks.Remove(o); backTried.Remove(o); lastTarget.Remove(o);
+      cityBacks.Remove(o); escapes.Remove(o); escapeDue.Remove(o); cityTried.Remove(o);
+    }
+
+    /// <summary>The back-to-the-city presses (CityBack) and the Escape presses (EscapeBack) made in this run.</summary>
+    public int CityBacks(ClickOwner o) { int n; return cityBacks.TryGetValue(o, out n) ? n : 0; }
+    public int Escapes(ClickOwner o) { int n; return escapes.TryGetValue(o, out n) ? n : 0; }
+    /// <summary>A back press changed nothing: the owner's next step is one Escape (EscapeDue).</summary>
+    public bool EscapePending(ClickOwner o) { return escapeDue.Contains(o); }
+
+    /// <summary>The back press changed nothing but the screen is now one the pilot can go on from: no Escape any more.</summary>
+    public void DropEscape(ClickOwner o) { escapeDue.Remove(o); }
+
+    /// <summary>A known screen the owner's pilot cannot start from, so back to the city first (CityBack): Equip starts in the city or on the hero
+    /// screen; Sell (the gear and the artifact cleanup) in the inventory, the city or the hero screen (its own HeroBack). Locate asks
+    /// LocateAuto.NeedsCityBack.</summary>
+    public static bool AwayFromStart(ClickOwner o, ScreenState s) {
+      if (s == null || s.Kind == ScreenKind.Unknown || s.Kind == ScreenKind.City) return false;
+      switch (o) {
+        case ClickOwner.Equip: return s.Kind != ScreenKind.HeroScreen;
+        case ClickOwner.Sell: return s.Kind != ScreenKind.Inventory && s.Kind != ScreenKind.HeroScreen;
+      }
+      return false;
+    }
+
+    bool HintOnly(ClickOwner o) { return (o == ClickOwner.Sell && NoSellClicks) || (o == ClickOwner.Locate && NoLocateClicks); }
+
+    static bool HasForm(string list, string[] names) {
+      if (string.IsNullOrEmpty(list)) return false;
+      foreach (var n in list.Split(',', ':')) if (Array.IndexOf(names, n.Trim()) >= 0) return true;
+      return false;
+    }
+    static readonly string[] BattleForms = { "Form_Battle" };
+    /// <summary>The game's exit question is shown (as the top unknown form, a pop-up's name or a new form over a screen).</summary>
+    public static bool ExitDialogShown(ScreenState s) {
+      return s != null && (HasForm(s.TopForm, ExitDialogForms) || HasForm(s.ModalWhy, ExitDialogForms) || HasForm(s.Offer, ExitDialogForms));
+    }
+
+    /// <summary>The screen allows the back-to-the-city press (CityBack): "" = yes, else why not. Only a known screen that is not the city, not
+    /// held, no pop-up on it, no fight's form shown.</summary>
+    public static string CityBackBlock(ScreenState s) {
+      if (s == null) return "no screen";
+      if (s.Kind == ScreenKind.City) return "the city is on top";
+      if (s.Kind == ScreenKind.Unknown) return "the screen is not recognised";
+      if (s.Held) return "the screen is held";
+      if (s.OfferCount > 0) return "an offer pop-up is open";
+      if (s.ModalOpen) return "a pop-up is open (" + s.ModalWhy + ")";
+      if (HasForm(s.ShownKnown, BattleForms)) return "a fight's form is shown";
+      if (ExitDialogShown(s)) return "the exit dialog is shown";
+      return "";
+    }
+
+    /// <summary>The screen allows the one Escape press (EscapeBack): "" = yes. NEVER on the city (Escape there asks to quit the game), never in a
+    /// fight (its form shown, or the shown forms not read), never with a pop-up, an offer or the exit dialog shown; on an unknown screen only
+    /// where the unknown-screen back press is allowed.</summary>
+    public static string EscapeBlock(ScreenState s) {
+      if (s == null) return "no screen";
+      if (s.Kind == ScreenKind.City) return "the city is on top (Escape asks to quit the game there)";
+      if (s.Held) return "the screen is held";
+      if (s.OfferCount > 0) return "an offer pop-up is open";
+      if (s.ModalOpen) return "a pop-up is open (" + s.ModalWhy + ")";
+      if (ExitDialogShown(s)) return "the exit dialog is shown";
+      if (Exempt(s.TopForm)) return "a fight's result";
+      if (s.ShownKnown == null) return "the shown forms are not known";
+      if (HasForm(s.ShownKnown, BattleForms)) return "a fight's form is shown";
+      if (s.Kind == ScreenKind.Unknown) { string b = UnknownBackBlock(s); if (b != "") return b; }
+      return "";
+    }
+
+    /// <summary>The host's pilot cannot go on from this screen (it needs the city, or its next target is not on this screen): may it press the
+    /// back arrow now? The owner runs (not halted, no click on its way, no form search, not a hint run, no Escape due), the screen (the tick's)
+    /// is a known one other than the city with no pop-up, it has lasted CityBackSettleMs, no try within UnknownBackRetryMs. MaxCityBacks
+    /// presses made already: the owner stops ("nochange": the city does not come).</summary>
+    public bool CityBackDue(ClickOwner o, ScreenState s, long now) {
+      if (halted.ContainsKey(o) || watches.ContainsKey(o) || SearchWait || HintOnly(o) || escapeDue.Contains(o)) return false;
+      if (CityBackBlock(s) != "") return false;
+      if (now - s.SinceMs < CityBackSettleMs) return false;
+      long t; if (cityTried.TryGetValue(o, out t) && now - t < UnknownBackRetryMs) return false;
+      int n = CityBacks(o);
+      if (n >= MaxCityBacks) { Halt(o, "nochange", "back to the city: the back arrow was pressed " + n + " times, the game shows " + s.Brief); return false; }
+      cityTried[o] = now;
+      return true;
+    }
+
+    /// <summary>The one Escape after a back press that changed nothing may be sent now (the fresh state is judged again by Check). The city on
+    /// top meanwhile: nothing is due any more.</summary>
+    public bool EscapeDue(ClickOwner o, ScreenState s, long now) {
+      if (!escapeDue.Contains(o)) return false;
+      if (s != null && s.Kind == ScreenKind.City) { escapeDue.Remove(o); return false; }
+      if (halted.ContainsKey(o) || watches.ContainsKey(o) || SearchWait || HintOnly(o)) return false;
+      // (a tick's state has no shown forms read: the fresh one Check judges has them)
+      if (s == null || s.Held || s.ModalOpen || s.OfferCount > 0 || ExitDialogShown(s) || Exempt(s.TopForm) || HasForm(s.ShownKnown, BattleForms)) return false;
+      long t; if (cityTried.TryGetValue(o, out t) && now - t < UnknownBackRetryMs) return false;
+      cityTried[o] = now;
+      return true;
     }
 
     /// <summary>The unknown-screen back presses made in this run.</summary>
@@ -407,6 +515,8 @@ namespace RealmForge {
       clickedAt[o] = now; lastTarget[o] = t;
       if (t == ClickTarget.OfferClose) offerRun[o] = OfferRun(o) + 1; else offerRun.Remove(o);
       if (t == ClickTarget.UnknownBack) unknownBacks[o] = UnknownBacks(o) + 1;
+      if (t == ClickTarget.CityBack) cityBacks[o] = CityBacks(o) + 1;
+      if (t == ClickTarget.EscapeBack) { escapes[o] = Escapes(o) + 1; escapeDue.Remove(o); }
       if (done == null) { watches.Remove(o); return; }
       int ms = t == ClickTarget.CityInventory || t == ClickTarget.FoundryButton || t == ClickTarget.ArtWorkshop || t == ClickTarget.ArtReplace || t == ClickTarget.ArtTakeOverConfirm ? SlowEffectMs : t == ClickTarget.InvCardGem || t == ClickTarget.GemFuncRow || t == ClickTarget.ArtMatCell ? GemEffectMs : t == ClickTarget.ArtBulkCell ? ArtTickMs : EffectMs;
       watches[o] = new Watch { Done = done, Deadline = now + ms, What = t == ClickTarget.OfferClose && offer != null ? "OfferClose(" + offer + ")" : t.ToString(), Offer = t == ClickTarget.OfferClose ? offer ?? "" : null, Target = t, ArmedAt = now };
@@ -421,6 +531,12 @@ namespace RealmForge {
           return s => s.Kind != ScreenKind.HeroScreen || (part >= 0 && s.HeroSlot < 0);
         }
         case ClickTarget.CityInventory: return s => s.Kind == ScreenKind.Inventory;
+        // back to the city / the Escape: the screen is another one (another kind, a hero screen's gear list closed, a pop-up or another unknown form on top)
+        case ClickTarget.CityBack: case ClickTarget.EscapeBack: {
+          ScreenKind k = before != null ? before.Kind : ScreenKind.Unknown; int slot = before != null ? before.HeroSlot : -1;
+          string top = before != null ? before.TopForm : ""; bool modal = before != null && before.ModalOpen;
+          return s => s.Kind != k || (k == ScreenKind.HeroScreen && s.HeroSlot != slot) || (k == ScreenKind.Unknown && s.TopForm != top) || s.OfferCount > 0 || (s.ModalOpen && !modal);
+        }
         // the screen is another one: a known one, another unknown form on top, a pop-up (an unknown screen with no name read stays "the same": nochange)
         case ClickTarget.UnknownBack: {
           string top = before != null ? before.TopForm : "";
@@ -467,7 +583,20 @@ namespace RealmForge {
           if (w.Offer != null) { var sk = Sink; if (sk != null) sk("offer: closed " + w.Offer); }
         }
         else if (now > w.Deadline && SearchWait && Unrecognised(s)) { w.Deadline = now + 1000; searchWaited.Add(o); }   // the form is being searched for: its effect may still show
-        else if (!StillAwaited(o, w, now)) Halt(o, "nochange", w.What + " changed nothing within the time (screen " + s.Brief + ")");
+        else if (!StillAwaited(o, w, now)) {
+          // a back press that changed nothing: one Escape next (not on the city, at most MaxEscapes a run), else the stop
+          if ((w.Target == ClickTarget.CityBack || w.Target == ClickTarget.UnknownBack) && Escapes(o) < MaxEscapes && s.Kind != ScreenKind.City && !ExitDialogShown(s)) {
+            watches.Remove(o); escapeDue.Add(o);
+            Note(o, "escape-due:" + w.ArmedAt, w.What + " changed nothing within the time (screen " + s.Brief + ") - one Escape next");
+          }
+          else Halt(o, "nochange", w.What + " changed nothing within the time (screen " + s.Brief + ")");
+        }
+      }
+      // the game's exit question after the pilot's Escape: stop (nothing of it is ever pressed)
+      foreach (var o in new List<ClickOwner>(lastTarget.Keys)) {
+        long at;
+        if (lastTarget[o] == ClickTarget.EscapeBack && !halted.ContainsKey(o) && ExitDialogShown(s) && clickedAt.TryGetValue(o, out at) && now - at <= 10000)
+          Halt(o, "exitdialog", "the game's exit question is shown after the Escape (" + s.Brief + ") - nothing of it is pressed, close it with its «Отмена»");
       }
     }
 
@@ -514,7 +643,7 @@ namespace RealmForge {
         long at;
         // (the back press leaves one unknown screen for another one at times: that is its effect, judged by its watch, not a stop)
         ClickTarget lt;
-        if (clickedAt.TryGetValue(o, out at) && now - at <= OwnClickWindowMs && !searchWaited.Contains(o) && !(lastTarget.TryGetValue(o, out lt) && lt == ClickTarget.UnknownBack)) return Halt(o, "unknown", d + " after the pilot's own click");
+        if (clickedAt.TryGetValue(o, out at) && now - at <= OwnClickWindowMs && !searchWaited.Contains(o) && !(lastTarget.TryGetValue(o, out lt) && (lt == ClickTarget.UnknownBack || lt == ClickTarget.CityBack || lt == ClickTarget.EscapeBack))) return Halt(o, "unknown", d + " after the pilot's own click");
         if (!modeUnknown && UnknownStall(o, s, now)) return GateResult.Deny("unknown", HaltDetail(o));
         return GateResult.Wait("unknown", d);
       }
@@ -535,6 +664,8 @@ namespace RealmForge {
       string tag = r.Target + " @" + (int)r.X + "," + (int)r.Y;
       if (r.Target == ClickTarget.OfferClose) return CheckOffer(r, f, now, tag);
       if (r.Target == ClickTarget.UnknownBack) return CheckUnknownBack(r, f, tag);
+      if (r.Target == ClickTarget.CityBack) return CheckCityBack(r, f, tag);
+      if (r.Target == ClickTarget.EscapeBack) return CheckEscape(r, f, tag);
       // any other click waits while an offer pop-up is on top (it would land on the pop-up)
       if (f != null && f.OfferCount > 0) return GateResult.Wait("offer", tag + ": " + f.ModalWhy + " is open");
       // the artifact cleanup never clicks, whatever the auto click setting says; nothing of the artifact tab is on any whitelist either
@@ -698,6 +829,40 @@ namespace RealmForge {
       if (n >= MaxUnknownBacks) return Halt(o, "unknown", "unknown screen " + (f.TopForm != "" ? f.TopForm : "?") + ": the back arrow was pressed " + n + " times already");
       if (!OnBackArrow(r.X, r.Y, r.U)) return Halt(o, "target", tag + ": not on the back arrow");
       var res = GateResult.Allow(tag + " on " + f.Brief + " (press " + (n + 1) + " of " + MaxUnknownBacks + ")");
+      Note(o, "allow:" + r.Target + ":" + f.Brief + ":" + n, "allow " + res.Detail);
+      return res;
+    }
+
+    /// <summary>CityBack: the fresh screen allows it (CityBackBlock), presses are left, the point is on the back arrow. A screen that does not allow
+    /// it is waited for; MaxCityBacks reached stops the owner.</summary>
+    GateResult CheckCityBack(ClickRequest r, ScreenState f, string tag) {
+      var o = r.Owner;
+      if (HintOnly(o)) return GateResult.Deny("off", tag + ": a hint run clicks nothing");
+      string block = CityBackBlock(f);
+      if (block != "") { Note(o, "wait-city:" + block, "wait " + tag + ": " + block); return GateResult.Wait("screen", tag + ": " + block); }
+      int n = CityBacks(o);
+      if (n >= MaxCityBacks) return Halt(o, "nochange", "back to the city: the back arrow was pressed " + n + " times, the game shows " + f.Brief);
+      if (!OnBackArrow(r.X, r.Y, r.U)) return Halt(o, "target", tag + ": not on the back arrow");
+      var res = GateResult.Allow(tag + " on " + f.Brief + " (back to the city, press " + (n + 1) + " of " + MaxCityBacks + ")");
+      Note(o, "allow:" + r.Target + ":" + f.Brief + ":" + n, "allow " + res.Detail);
+      return res;
+    }
+
+    /// <summary>EscapeBack: only after a back press that changed nothing, on a fresh screen EscapeBlock allows (never the city, a fight, a pop-up,
+    /// the exit dialog), at most MaxEscapes a run.</summary>
+    GateResult CheckEscape(ClickRequest r, ScreenState f, string tag) {
+      var o = r.Owner;
+      if (HintOnly(o)) return GateResult.Deny("off", tag + ": a hint run clicks nothing");
+      tag = "EscapeBack (key)";
+      if (!escapeDue.Contains(o)) return Halt(o, "target", tag + ": no back press before it changed nothing");
+      string block = EscapeBlock(f);
+      if (block != "") {
+        if (f != null && f.Kind == ScreenKind.City) escapeDue.Remove(o);   // the city came: nothing to close
+        Note(o, "wait-esc:" + block, "wait " + tag + ": " + block); return GateResult.Wait("screen", tag + ": " + block);
+      }
+      int n = Escapes(o);
+      if (n >= MaxEscapes) return Halt(o, "nochange", tag + ": Escape was pressed " + n + " times already, the game shows " + f.Brief);
+      var res = GateResult.Allow(tag + " on " + f.Brief + " (Escape " + (n + 1) + " of " + MaxEscapes + ")");
       Note(o, "allow:" + r.Target + ":" + f.Brief + ":" + n, "allow " + res.Detail);
       return res;
     }

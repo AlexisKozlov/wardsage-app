@@ -81,6 +81,15 @@ namespace RealmForge {
 
     static LocateTodo Hint(out string why) { why = "foundry"; return LocateTodo.Hint; }
 
+    /// <summary>The step is the inventory's (or the city's) but the Foundry / the gem screen is on top (a hint "form"): back towards the city
+    /// first (ClickTarget.CityBack; the host presses it until the step's screen shows). The recast's own gem steps never count.</summary>
+    public static bool NeedsCityBack(LocateView v) {
+      if (v == null || v.Step == null) return false;
+      var k = v.Step.Kind;
+      if (k != LocateKind.OpenInventory && k != LocateKind.OpenEquipTab && k != LocateKind.InList && k != LocateKind.OpenFoundry) return false;
+      string why; return Decide(v, out why) == LocateTodo.Hint && why == "form";
+    }
+
     /// <summary>What to do at this step. <paramref name="why"/> explains a Hint or Stop.</summary>
     public static LocateTodo Decide(LocateView v, out string why) {
       why = "";
