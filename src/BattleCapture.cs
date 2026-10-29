@@ -48,38 +48,91 @@ namespace RealmForge {
       if (H == IntPtr.Zero) return 0;
       regs = Regions();
       string said;
-      ulong found = FindUiIn(anchors, out said);
+      ulong found = FindUiIn(WithAllForms(anchors), out said);
       if (said != uiPickSaid) { uiPickSaid = said; LL(said); }
       uiTable = found;
       return found;
     }
     static string uiPickSaid = "";
-    // UIFormClass, once found: its keys are the id of every form file loaded (~1200), whatever screen is open
-    static ulong uiClassTable;
 
-    /// <summary>UIInstance from any screen (two full passes per round). First by the anchor forms (the city, the hero screen,
-    /// the fights...); when none of them is open (the game started on the guild, the foundry...) the anchors still find
-    /// UIFormClass (the city's class is loaded at the login), and its keys - every form loaded - are the anchors of a second
-    /// round, which finds UIInstance by whatever forms are open. UIFormClass is kept, so a later search makes one round.
-    /// <paramref name="said"/> = the log line.</summary>
-    internal static ulong FindUiIn(long[] anchors, out string said) {
-      string why = "", why2; ulong found = 0, classes; int sh;
-      if (uiClassTable == 0 || UiTableKind(uiClassTable, anchors, out sh) != "classes") {
-        uiClassTable = 0;
-        found = PickUiTable(UiCandidates(anchors), anchors, out why, out classes);
-        if (found == 0) uiClassTable = classes;
+    /// <summary>The id of a form by its name: the game's UIDefines.ID_FORM_* is the 32-bit String.GetHashCode of the name (the
+    /// legacy non-randomized 64-bit variant, il2cpp's).</summary>
+    public static long FormIdOf(string name) {
+      uint h1 = 5381, h2 = 5381;
+      for (int i = 0; i < name.Length; i += 2) {
+        h1 = unchecked(((h1 << 5) + h1) ^ name[i]);
+        if (i + 1 < name.Length) h2 = unchecked(((h2 << 5) + h2) ^ name[i + 1]);
       }
-      if (found == 0 && uiClassTable != 0) {
-        var all = UiClassIds(uiClassTable);
-        var cands = UiCandidates(all); cands.Remove(uiClassTable);
-        found = PickUiTable(cands, all, out why2, out classes);
-        why = (why != "" ? why + "; " : "") + "by the " + all.Length + " loaded forms: " + why2;
-      }
-      said = "forms: window table " + (found != 0 ? "found from " + ShownNames(found, 3) : "not found") + " (" + why + ")";
-      return found;
+      return unchecked((int)(h1 + h2 * 0x5D588B65u));
+    }
+    static long[] allFormIds;
+    /// <summary>The ids of every form of the screen map (~1200): whatever screen is open, one of them is in UIInstance.</summary>
+    static long[] AllFormIds() {
+      var a = allFormIds;
+      if (a == null) { var l = new List<long>(); foreach (var e in ScreenMap.All) l.Add(FormIdOf(e.Name)); allFormIds = a = l.ToArray(); }
+      return a;
+    }
+    /// <summary>The anchor ids and the id of every form of the screen map, without repeats.</summary>
+    static long[] WithAllForms(long[] anchors) {
+      var set = new HashSet<long>(); var res = new List<long>();
+      foreach (var id in anchors) if (id != 0 && set.Add(id)) res.Add(id);
+      foreach (var id in AllFormIds()) if (id != 0 && set.Add(id)) res.Add(id);
+      return res.ToArray();
     }
 
-    /// <summary>The tables keyed by one of <paramref name="ids"/> at a node holding a table (at most 64): one pass for the nodes,
+    /// <summary>UIInstance from any screen (two full passes). The anchors are the layout's forms and every form of the screen
+    /// map by its id (the name's hash): whatever forms are open (the guild, the foundry... with the city destroyed) one of
+    /// them is a key of UIInstance. UIFormClass is no help: the game clears the classes of the destroyed forms and a form
+    /// required again is never registered again (live 2026-10-30 on the guild: 3 classes left, none of an open form).
+    /// <paramref name="said"/> = the log line.</summary>
+    internal static ulong FindUiIn(long[] anchors, out string said) {
+      string why; ulong classes;
+      var cands = UiCandidates(anchors);
+      ulong found = PickUiTable(cands, anchors, out why, out classes);
+      said = "forms: window table " + (found != 0 ? "found from " + ShownNames(found, 3) : "not found") + " (by " + anchors.Length + " form ids: " + why + ")";
+      if (found == 0 && Channel.IsTest && !uiDiagSaid) { uiDiagSaid = true; said += "\n" + UiCandidatesDiag(cands, anchors, 40); }
+      return found;
+    }
+    static bool uiDiagSaid;
+
+    /// <summary>For the next lab run (test builds, once a process): the candidate tables of a failed search, at most
+    /// <paramref name="maxLines"/> lines: the size of each, its first 5 keys and values by type, and whether a table value
+    /// carries ____instanceId / class (with its __cname) / m_LuaLogicActive / __cname.</summary>
+    internal static string UiCandidatesDiag(IList<ulong> cands, long[] ids, int maxLines) {
+      var idSet = new HashSet<long>(); foreach (var id in ids) if (id != 0) { idSet.Add(id); if (id < 0) idSet.Add((long)(uint)id); }
+      var lines = new List<string> { "  window table search: " + cands.Count + " candidate table(s) by " + ids.Length + " form ids" };
+      foreach (var t in cands) {
+        if (lines.Count >= maxLines) { lines.Add("  ..."); break; }
+        var h = Read(t, 56);
+        if (h == null || h[8] != 5 || h[11] > 12) { lines.Add("  " + t.ToString("X") + ": unreadable"); continue; }
+        int nn = 1 << h[11]; var nb = Read(BitConverter.ToUInt64(h, 24), nn * 32);
+        if (nb == null) { lines.Add("  " + t.ToString("X") + ": nodes unreadable"); continue; }
+        int used = 0, anchors = 0; var first = new List<string>();
+        for (int i = 0; i < nn; i++) {
+          int o = i * 32, ktt = BitConverter.ToInt32(nb, o + 24), vtt = BitConverter.ToInt32(nb, o + 8);
+          if (vtt == 0) continue;
+          used++;
+          long k = BitConverter.ToInt64(nb, o + 16);
+          bool anchor = ktt == T_INT && idSet.Contains(k); if (anchor) anchors++;
+          if (first.Count >= 5) continue;
+          string d = "k" + ktt + (ktt == T_INT ? "=" + k + (anchor ? "*" : "") : "") + " v" + vtt;
+          if (vtt == T_TABLE) d += "[" + TableMarks(BitConverter.ToUInt64(nb, o)) + "]";
+          first.Add(d);
+        }
+        lines.Add("  " + t.ToString("X") + ": " + nn + " nodes, " + used + " used, " + anchors + " form ids, array " + BitConverter.ToInt32(h, 12) + "; " + string.Join(", ", first.ToArray()));
+      }
+      return string.Join("\n", lines.ToArray());
+    }
+    static string TableMarks(ulong f) {
+      ulong v, c; int tt, ct; var m = new List<string>();
+      if (Field(f, "____instanceId", out v, out tt)) m.Add("inst" + (tt == T_INT ? "" : ":" + tt));
+      if (Field(f, "class", out c, out ct)) { string w, n = ct == T_TABLE ? FormClassName(f, out w) : ""; m.Add("class" + (n != "" ? "=" + n : ":" + ct)); }
+      if (Field(f, "m_LuaLogicActive", out v, out tt)) m.Add("active" + (tt == T_BOOL ? "=" + ((v & 0xFFFFFFFF) != 0 ? "1" : "0") : ":" + tt));
+      if (Field(f, "__cname", out v, out tt)) { var s = tt == T_SSTR || tt == T_LSTR ? ReadLuaString(v) : null; m.Add("cname" + (s != null && s.Length < 60 ? "=" + s : ":" + tt)); }
+      return m.Count > 0 ? string.Join(" ", m.ToArray()) : "-";
+    }
+
+    /// <summary>The tables keyed by one of <paramref name="ids"/> at a node holding a table (at most 128): one pass for the nodes,
     /// one for the table headers whose node array holds one of them (an old array can linger after a rehash: the live table
     /// points at the array in use, so a table header found this way is the one).</summary>
     static List<ulong> UiCandidates(long[] ids) {
@@ -107,24 +160,10 @@ namespace RealmForge {
           int lo = 0, hi = ns.Length;
           while (lo < hi) { int mid = (lo + hi) >> 1; if (ns[mid] < np) lo = mid + 1; else hi = mid; }
           for (int j = lo; j < ns.Length && ns[j] < end; j++)
-            if ((ns[j] - np) % 32 == 0) { lock (cands) { if (cands.Count < 64) cands.Add(b0 + (ulong)i); } break; }
+            if ((ns[j] - np) % 32 == 0) { lock (cands) { if (cands.Count < 128) cands.Add(b0 + (ulong)i); } break; }
         }
       });
       return cands;
-    }
-
-    /// <summary>The keys of UIFormClass that hold a class (a table with a __cname): the id of every form loaded; at most 4096.</summary>
-    internal static long[] UiClassIds(ulong t) {
-      var res = new List<long>();
-      var h = t != 0 ? Read(t, 56) : null; if (h == null || h[8] != 5 || h[11] > 12) return res.ToArray();
-      int nn = 1 << h[11]; var nb = Read(BitConverter.ToUInt64(h, 24), nn * 32); if (nb == null) return res.ToArray();
-      for (int i = 0; i < nn && res.Count < 4096; i++) {
-        int o = i * 32;
-        if (BitConverter.ToInt32(nb, o + 24) != T_INT || BitConverter.ToInt32(nb, o + 8) != T_TABLE) continue;
-        ulong v; int tt;
-        if (Field(BitConverter.ToUInt64(nb, o), "__cname", out v, out tt) && (tt == T_SSTR || tt == T_LSTR)) res.Add(BitConverter.ToInt64(nb, o + 16));
-      }
-      return res.ToArray();
     }
 
     /// <summary>The class names of the shown forms of a window table (at most <paramref name="max"/>), for the log.</summary>
@@ -182,8 +221,11 @@ namespace RealmForge {
 
     /// <summary>For the tests: the table picked from <paramref name="cands"/> as UIInstance (0 = none).</summary>
     public static ulong PickUiTableForTest(IList<ulong> cands, long[] ids) { string w; return PickUiTable(cands, ids, out w); }
-    /// <summary>For the tests: the full search over the test memory by these anchor ids, with its log line (UIFormClass forgotten first).</summary>
-    public static ulong FindUiTableForTest(long[] anchors, out string said) { regs = Regions(); uiClassTable = 0; return FindUiIn(anchors, out said); }
+    /// <summary>For the tests: the diagnostic lines of a failed search over these candidate tables.</summary>
+    public static string UiCandidatesDiagForTest(IList<ulong> cands, long[] ids, int maxLines) { return UiCandidatesDiag(cands, WithAllForms(ids), maxLines); }
+    /// <summary>For the tests: the full search over the test memory by these anchor ids and every screen-map form's, with its log line
+    /// (the test build's one-shot diagnostic of a failed search armed again).</summary>
+    public static ulong FindUiTableForTest(long[] anchors, out string said) { regs = Regions(); uiDiagSaid = false; return FindUiIn(WithAllForms(anchors), out said); }
 
     /// <summary>UIInstance's address (0 = not found yet), for the log.</summary>
     public static ulong UiAddress { get { return uiTable; } }

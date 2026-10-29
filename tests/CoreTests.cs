@@ -4349,20 +4349,34 @@ static partial class CoreTests {
       RFX.SetUiTableForTest(fs.T(many.ToArray()).A);
       RFX.ReadOffers(); var off2 = RFX.ReadOffers();
       Check(off2 != null && off2.Contains("Form_EquipmentPlan"), "window table: 30 nameless forms before it do not hide the plan screen for good (" + (off2 == null ? "null" : string.Join(",", off2.ToArray())) + ")");
-      // the full search from any screen (the scans over the test memory): the anchors are the city, the hero screen and the battle
+      // a form's id is the hash of its name (UIDefines): every screen-map form is an anchor of the search
+      Eq(idCity, RFX.FormIdOf("Form_MainCity"), "form id: the city's id from its name");
+      Eq(idHero, RFX.FormIdOf("Form_CharactorMain"), "form id: the hero screen's id from its name");
+      Eq(idBattle, RFX.FormIdOf("Form_Battle"), "form id: the battle's id from its name");
+      Eq(idPlan, RFX.FormIdOf("Form_EquipmentPlan"), "form id: the build plan's id from its name (odd length)");
+      // the full search from any screen (the scans over the test memory): the layout's anchors are the city, the hero screen and the battle
       {
         var m2 = new FakeLua(1 << 21); RFX.TestMemory = m2; RFX.ForgetLive();
         var fs2 = new FakeState(m2); long inst2 = 30001;
         Func<string, FTab> Cls2 = nm => fs2.T("__cname", nm, "ctor", 0L, "__index", 0L);
-        const long idGuild = -1859031432, idFoundry = -1395031855;
-        var k2City = Cls2("Form_MainCity"); var k2Guild = Cls2("Form_Union"); var k2Hero = Cls2("Form_CharactorMain"); var k2Foundry = Cls2("Form_EquipSubliming");
-        var cls2 = fs2.T(idCity, k2City, idGuild, k2Guild, idHero, k2Hero, idFoundry, k2Foundry);                 // UIFormClass: the city's class is loaded at the login
-        var guildOnly = fs2.T(idGuild, fs2.T("m_LuaLogicActive", true, "class", k2Guild, "____instanceId", inst2++), 1L, 0L, 2L, 0L, 3L, 0L);  // UIInstance: only the guild open
+        const long idGuild = -1859031432, idFoundry = -1395031855, idChat = 748358717, idPrivacy = -1015447067, idOdd = 123456789;
+        var k2City = Cls2("Form_MainCity"); var k2Guild = Cls2("Form_Union"); var k2Chat = Cls2("Form_MinChat");
+        // live 2026-10-30, the game on the guild after the app restarted: UIFormClass kept 3 classes (the city's and two never opened;
+        // the game cleared the destroyed forms' classes and a form required again is never registered again), the city destroyed
+        var cls2 = fs2.T(idCity, k2City, idPrivacy, Cls2("Form_PopupPrivacy"), idOdd, Cls2("Form_Something"), 1L, 0L);
+        var guildOnly = fs2.T(idGuild, fs2.T("m_LuaLogicActive", true, "class", k2Guild, "____instanceId", inst2++),
+                              idChat, fs2.T("m_LuaLogicActive", false, "class", k2Chat, "____instanceId", inst2++), 1L, 0L, 2L, 0L);   // UIInstance: the guild and the chat
         var notForms = fs2.T(idFoundry, fs2.T("m_LuaLogicActive", true, "class", Cls2("UIStackItem"), "____instanceId", inst2++), 1L, 0L, 2L, 0L, 3L, 0L);   // keyed by a form id, not a form
         string said;
         ulong got = RFX.FindUiTableForTest(ids, out said);
-        Check(got == guildOnly.A, "window table: found with only Form_Union (the guild) open, by every loaded form's id (" + said + ")");
+        Check(got == guildOnly.A, "window table: found on the guild with the city destroyed and UIFormClass nearly empty, by the screen map's form ids (" + said + ")");
         Check(said.StartsWith("forms: window table found from Form_Union"), "window table: the log line names the screen it was found from (" + said + ")");
+        Check(!said.Contains("\n"), "window table found: no diagnostic lines");
+        // the test build's diagnostic of a failed search: each candidate's size, first keys and value marks
+        string dg = RFX.UiCandidatesDiagForTest(new[] { cls2.A, guildOnly.A }, ids, 40);
+        Check(dg.Contains("2 candidate table(s)") && dg.Contains("cname=Form_PopupPrivacy") && dg.Contains("class=Form_Union") && dg.Contains("inst") && dg.Contains("active=1"),
+              "window table diagnostic: sizes, keys and marks of the candidates (" + dg.Replace("\n", " | ") + ")");
+        Check(RFX.UiCandidatesDiagForTest(new[] { cls2.A, guildOnly.A, notForms.A }, ids, 2).Split('\n').Length <= 3, "window table diagnostic: capped");
         Eq(0UL, RFX.PickUiTableForTest(new[] { notForms.A }, new[] { idFoundry }), "window table: objects whose class is not a Form_ are not forms");
         // the city open: found in the first round, as before
         var m3 = new FakeLua(1 << 21); RFX.TestMemory = m3; RFX.ForgetLive();
@@ -4373,7 +4387,7 @@ static partial class CoreTests {
         var city = fs3.T(idCity, fs3.T("m_LuaLogicActive", true, "class", k3City, "____instanceId", inst3++), 1L, 0L, 2L, 0L, 3L, 0L);
         got = RFX.FindUiTableForTest(ids, out said);
         Check(got == city.A, "window table: found with the city open (" + said + ")");
-        Check(said.StartsWith("forms: window table found from Form_MainCity") && !said.Contains("loaded forms"), "window table: the city's way needs one round (" + said + ")");
+        Check(said.StartsWith("forms: window table found from Form_MainCity"), "window table: the city open (" + said + ")");
         // only UIFormClass in memory (no form open at all): it is never taken
         var m4 = new FakeLua(1 << 21); RFX.TestMemory = m4; RFX.ForgetLive();
         var fs4 = new FakeState(m4);
