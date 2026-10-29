@@ -50,7 +50,7 @@ function Register-LabAutostart {
     $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     $script = Join-Path $dir 'WardsageLab.ps1'
     if (-not (Test-Path $script)) { throw 'Not set up yet: run setup-lab.ps1 with -TestAppPath first.' }
-    $action = New-ScheduledTaskAction -Execute $ps -Argument ('-NoProfile -ExecutionPolicy Bypass -WindowStyle Minimized -File "' + $script + '" -Service') -WorkingDirectory $dir
+    $action = New-ScheduledTaskAction -Execute $ps -Argument ('-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $script + '" -Service') -WorkingDirectory $dir
     $user = [Security.Principal.WindowsIdentity]::GetCurrent().Name
     $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
     $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Highest

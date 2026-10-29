@@ -23,7 +23,7 @@ Set-StrictMode -Version 2
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$RunnerVersion   = '4'
+$RunnerVersion   = '5'
 $Dir             = Join-Path $env:LOCALAPPDATA 'WardsageLab'
 $StopFile        = Join-Path $Dir 'STOP'
 $LogFile         = Join-Path $Dir 'runner.log'
@@ -68,9 +68,9 @@ $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIden
 if (-not $isAdmin) {
     Write-Host 'Run the lab as administrator: the test app requires admin rights'
     try {
-        $relaunch = '-NoProfile -ExecutionPolicy Bypass -File "' + $PSCommandPath + '"'
+        $relaunch = '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $PSCommandPath + '"'
         if ($Service) { $relaunch += ' -Service' }
-        Start-Process -FilePath 'powershell.exe' -ArgumentList $relaunch -Verb RunAs
+        Start-Process -FilePath 'powershell.exe' -ArgumentList $relaunch -Verb RunAs -WindowStyle Hidden
     } catch { Write-Host 'Elevation was not granted; the runner did not start.' }
     exit 0
 }
@@ -277,6 +277,7 @@ public static class LabWin {
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
     [DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr h);
     [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
+    [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
 }
 "@
 function Set-GameFront {
@@ -554,6 +555,20 @@ $script:Started = Get-Date
 $script:LastSelfCheck = [DateTime]::MinValue
 $mode = 'one run'; if ($Service) { $mode = 'service' }
 Write-Log ('runner ' + $RunnerVersion + ' started (device ' + $Cfg.device + ', ' + $mode + '). To stop it at once create ' + $StopFile)
+if ($Service) {
+    # service mode: no visible console over the game; fix the scheduled task action so later logons start hidden too
+    try { $ch = [LabWin]::GetConsoleWindow(); if ($ch -ne [IntPtr]::Zero) { [void][LabWin]::ShowWindow($ch, 0) } } catch { }      # SW_HIDE
+    try {
+        $tk = Get-ScheduledTask -TaskName 'Wardsage Lab' -ErrorAction SilentlyContinue
+        if ($tk -and $tk.Actions.Count -gt 0 -and ([string]$tk.Actions[0].Arguments) -notmatch '-WindowStyle\s+Hidden') {
+            $na = New-ScheduledTaskAction -Execute $tk.Actions[0].Execute -Argument ('-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $PSCommandPath + '" -Service') -WorkingDirectory $Dir
+            Set-ScheduledTask -TaskName 'Wardsage Lab' -Action $na | Out-Null
+            Write-Log 'task action updated to start hidden'
+        }
+    } catch { Write-Log ('task action check failed: ' + (Get-ShortError $_)) }
+    Start-Sleep -Seconds 3
+    [void](Set-GameFront)      # after a (re)launch the game goes back to the front
+}
 $lastBeat = [DateTime]::MinValue
 $backoffUntil = [DateTime]::MinValue
 try {
@@ -610,8 +625,8 @@ try {
 if ($script:Relaunch) {
     # the mutex is free now: start the new copy of this file (the runner is already elevated, so no prompt)
     try {
-        $args2 = '-NoProfile -ExecutionPolicy Bypass -File "' + $PSCommandPath + '"'
+        $args2 = '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $PSCommandPath + '"'
         if ($Service) { $args2 += ' -Service' }
-        Start-Process -FilePath 'powershell.exe' -ArgumentList $args2
+        Start-Process -FilePath 'powershell.exe' -ArgumentList $args2 -WindowStyle Hidden
     } catch { Write-Log ('relaunch failed: ' + (Get-ShortError $_)) }
 }
