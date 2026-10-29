@@ -92,7 +92,12 @@ function Get-AppProcesses {
     return $res
 }
 function Get-AppVersion {
-    try { return ([string](Get-Item -LiteralPath $AppExe).VersionInfo.FileVersion).Trim() } catch { return '' }
+    try {
+        $v = ([string](Get-Item -LiteralPath $AppExe).VersionInfo.FileVersion).Trim()
+        $parts = ConvertTo-VersionParts $v
+        if ($parts -ne $null) { return ($parts -join '.') }
+        return $v
+    } catch { return '' }
 }
 function Get-Status {
     $game = @(Get-Process -Name $GameProcessName -ErrorAction SilentlyContinue).Count -gt 0

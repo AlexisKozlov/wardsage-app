@@ -53,6 +53,13 @@ if [ -n "${APP_VERSION:-}" ]; then
   sed -E "s/(public const string Version = \")[0-9.]+(\")/\1$APP_VERSION\2/" app/Program.cs > "$OUT/src/Program.cs"
   grep -q "Version = \"$APP_VERSION\"" "$OUT/src/Program.cs" || { echo "could not set the version" >&2; exit 1; }
   APP="${APP/app\/Program.cs/$OUT/src/Program.cs}"
+  V4="$APP_VERSION"; while [ "$(tr -cd . <<<"$V4" | wc -c)" -lt 3 ]; do V4="$V4.0"; done
+  sed -E -e "s/(AssemblyFileVersion\(\")[0-9.]+(\"\))/\1$V4\2/" -e "s/(AssemblyVersion\(\")[0-9.]+(\"\))/\1$V4\2/" \
+    -e "s/(AssemblyInformationalVersion\(\")[0-9.]+(\"\))/\1$APP_VERSION\2/" app/AssemblyInfo.cs > "$OUT/src/AssemblyInfo.cs"
+  for k in AssemblyFileVersion:$V4 AssemblyVersion:$V4 AssemblyInformationalVersion:$APP_VERSION; do
+    grep -q "${k%%:*}(\"${k#*:}\")" "$OUT/src/AssemblyInfo.cs" || { echo "could not set ${k%%:*}" >&2; exit 1; }
+  done
+  APP="${APP/app\/AssemblyInfo.cs/$OUT/src/AssemblyInfo.cs}"
 fi
 
 "${CSC[@]}" -langversion:7.3 -target:winexe -platform:x64 -optimize+ -deterministic -nostdlib -warnaserror -nowarn:1701,1702 \
