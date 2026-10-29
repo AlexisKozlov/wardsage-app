@@ -755,6 +755,7 @@ static class CoreTests {
     FormSearchTests();
     HeroFormFollowTests();
     FormSearchPolicyTests();
+    LocateAuditTests();
     GamePacksTests();
     CodeTextTests();
     CodeReportTests();
@@ -2182,6 +2183,164 @@ static class CoreTests {
     w = FormSearchPolicy.Want(ScreenKind.Unknown, true, 100, out gap);
     Check(w != null && gap == 1000, "policy: the open click's faster gap wins over Unknown");
     Check(FormSearchPolicy.OwnOpenGapMs >= 1000, "policy: the gap stays >= 1000 ms");
+  }
+
+  // the read-only audit of «Показать в игре» (2026-10-29, the lab laptop: one form search ~17 s): slow form searches, the long Ascension list,
+  // the inventory's «Литейная» inside the Foundry's «Вознести», the fixed «Массовая продажа» point
+  static void LocateAuditTests() {
+    Console.WriteLine("Locate audit: slow form searches, waits with a cap, the hidden «Вознести» overlap, the bulk-sale point");
+    var invNormal = ScreenState.Classify(new ScreenInputs { Inv = new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true }, CityForm = false }, 0);
+    var city = ScreenState.Classify(new ScreenInputs { CityForm = true }, 0);
+    var foundry = ScreenState.Classify(new ScreenInputs { Inv = new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true }, Rs = new RecastScreen { SublimingOpen = true, CurType = 1 } }, 0);
+    Func<ClickTarget, ScreenState, ClickRequest> Rq = (t, f) => new ClickRequest { Owner = ClickOwner.Locate, Target = t, AutoOn = true, Front = true };
+    // (1) the effect deadline: unchanged without a search ...
+    foreach (var hooked in new[] { false, true }) {
+      foreach (var tg in new[] { ClickTarget.CityInventory, ClickTarget.FoundryButton }) {
+        var g = new ClickGate(); if (hooked) g.FormSearchPending = x => false;
+        var before = tg == ClickTarget.CityInventory ? city : invNormal;
+        g.Arm(ClickOwner.Locate, tg, ClickGate.Expect(Rq(tg, before), before), 0);
+        g.Observe(before, ClickGate.SlowEffectMs - 10); Check(!g.Halted(ClickOwner.Locate), "audit fast: " + tg + " still awaited just inside " + ClickGate.SlowEffectMs + " ms (hook " + hooked + ")");
+        g.Observe(before, ClickGate.SlowEffectMs + 20); Eq("nochange", g.HaltReason(ClickOwner.Locate), "audit fast: " + tg + " with no search running: nochange right after " + ClickGate.SlowEffectMs + " ms as before (hook " + hooked + ")");
+        g = new ClickGate(); if (hooked) g.FormSearchPending = x => false;
+        g.Arm(ClickOwner.Locate, tg, ClickGate.Expect(Rq(tg, before), before), 0);
+        g.Observe(tg == ClickTarget.CityInventory ? invNormal : foundry, 900);
+        Check(!g.Halted(ClickOwner.Locate) && !g.Pending(ClickOwner.Locate), "audit fast: " + tg + " that shows its effect in time is done (hook " + hooked + ")");
+      }
+    }
+    {   // ... a slow PC: the search started with the click ends at 17 s, the screen is read right after it
+      bool busy = true; var g = new ClickGate(); var log = new List<string>(); g.Sink = x => log.Add(x);
+      ClickTarget asked = ClickTarget.None; g.FormSearchPending = x => { asked = x; return busy; };
+      g.Arm(ClickOwner.Locate, ClickTarget.CityInventory, ClickGate.Expect(Rq(ClickTarget.CityInventory, city), city), 0);
+      var unk = new ScreenState();
+      long t = 0; for (; t < 17000; t += 100) g.Observe(unk, t);
+      Check(!g.Halted(ClickOwner.Locate) && g.Pending(ClickOwner.Locate) && asked == ClickTarget.CityInventory, "audit slow: no stop while the search for the inventory runs (17 s > " + ClickGate.SlowEffectMs + " ms)");
+      Check(g.Preflight(ClickOwner.Locate, unk, t).Reason == "pending", "audit slow: ... the pilot waits for it (pending), no new click");
+      busy = false; g.Observe(unk, t); g.Observe(invNormal, t + 200);
+      Check(!g.Halted(ClickOwner.Locate) && !g.Pending(ClickOwner.Locate), "audit slow: the inventory read right after the search ended = the click's effect");
+      int said = 0; foreach (var l in log) if (l.Contains("form search still runs")) said++;
+      Eq(1, said, "audit slow: the wait for the search is logged once");
+    }
+    {   // ... the search ends and finds nothing: a stop a moment later (its result read once)
+      bool busy = true; var g = new ClickGate(); g.FormSearchPending = x => busy;
+      g.Arm(ClickOwner.Locate, ClickTarget.FoundryButton, ClickGate.Expect(Rq(ClickTarget.FoundryButton, invNormal), invNormal), 0);
+      long t = 0; for (; t < 12000; t += 100) g.Observe(invNormal, t);
+      busy = false;
+      for (; t <= 12000 + ClickGate.SearchGraceMs - 100; t += 100) g.Observe(invNormal, t);
+      Check(!g.Halted(ClickOwner.Locate), "audit slow: the search's end is followed by " + ClickGate.SearchGraceMs + " ms for its result");
+      for (; t <= 12000 + ClickGate.SearchGraceMs + 300 && !g.Halted(ClickOwner.Locate); t += 100) g.Observe(invNormal, t);
+      Eq("nochange", g.HaltReason(ClickOwner.Locate), "audit slow: ... then nochange (the search found no Foundry)");
+      // a later search does not extend again
+      busy = true; g = new ClickGate(); g.FormSearchPending = x => busy;
+      g.Arm(ClickOwner.Locate, ClickTarget.FoundryButton, ClickGate.Expect(Rq(ClickTarget.FoundryButton, invNormal), invNormal), 0);
+      for (t = 0; t < 8000; t += 100) g.Observe(invNormal, t);
+      busy = false; for (; t < 8000 + ClickGate.SearchGraceMs - 200; t += 100) g.Observe(invNormal, t);
+      busy = true; for (; t < 12000 && !g.Halted(ClickOwner.Locate); t += 100) g.Observe(invNormal, t);
+      Check(g.HaltReason(ClickOwner.Locate) == "nochange" && t <= 8000 + ClickGate.SearchGraceMs + 200, "audit slow: a second search does not move the deadline again (stop at " + t + " ms)");
+    }
+    {   // ... the cap
+      var g = new ClickGate(); g.FormSearchPending = x => true;
+      g.Arm(ClickOwner.Locate, ClickTarget.CityInventory, ClickGate.Expect(Rq(ClickTarget.CityInventory, city), city), 0);
+      long t = 0; for (; t < ClickGate.SearchCapMs - 100; t += 100) g.Observe(city, t);
+      Check(!g.Halted(ClickOwner.Locate), "audit slow: waited while the search runs, up to the cap");
+      for (; t <= ClickGate.SearchCapMs + 200 && !g.Halted(ClickOwner.Locate); t += 100) g.Observe(city, t);
+      Check(g.HaltReason(ClickOwner.Locate) == "nochange" && t <= ClickGate.SearchCapMs + 200, "audit slow: ... a stop at the cap (" + ClickGate.SearchCapMs + " ms) even with a search running");
+      Check(ClickGate.SearchCapMs <= 30000, "audit slow: the cap is at most 30 s");
+    }
+    foreach (var tg in new[] { ClickTarget.InvEquipTab, ClickTarget.AscendTab, ClickTarget.ArtWorkshop }) {   // only the two clicks that open a searched-for form
+      var g = new ClickGate(); g.FormSearchPending = x => true; g.ArtLocateAuto = true;
+      g.Arm(ClickOwner.Locate, tg, s => false, 0);
+      g.Observe(invNormal, (tg == ClickTarget.ArtWorkshop ? ClickGate.SlowEffectMs : ClickGate.EffectMs) + 20);
+      Eq("nochange", g.HaltReason(ClickOwner.Locate), "audit slow: " + tg + " is not extended by a search");
+    }
+    {   // the search window of the pilot's open click
+      int gap; string w;
+      w = FormSearchPolicy.Want(ScreenKind.Inventory, false, 6000, true, out gap);
+      Check(w != null && gap == FormSearchPolicy.OwnOpenGapMs, "audit policy: the form not found yet: searches go on after 6 s");
+      w = FormSearchPolicy.Want(ScreenKind.Inventory, false, FormSearchPolicy.SlowOpenWindowMs, true, out gap);
+      Check(w == null, "audit policy: ... up to the cap only");
+      w = FormSearchPolicy.Want(ScreenKind.Inventory, false, 6000, false, out gap);
+      Check(w == null, "audit policy: the form found (a fast PC): the 6 s window as before");
+      Check(FormSearchPolicy.Want(ScreenKind.City, false, 6000, out gap) == null && FormSearchPolicy.Want(ScreenKind.City, false, 5999, out gap) != null, "audit policy: the old overload is unchanged");
+    }
+    // (5) «Литейная» needs a read where the Foundry is NOT open
+    {
+      string gp = Path.Combine("tests", "fixtures", "screens", "_geometry.json");
+      if (File.Exists(gp)) {
+        var geo = GameGeometry.Parse(File.ReadAllText(gp, Encoding.UTF8), "1.6.39.829.1");
+        foreach (var wh in new[] { new[] { 1920.0, 1009 }, new[] { 1366.0, 705 }, new[] { 1920.0, 1080 } }) {   // 16:9-ish (on ultrawide the two part)
+          double W = wh[0], H = wh[1], U = Ui.Unit(W, H);
+          var wk = geo.Rect("inventory.workshop", W, H, U); var asc = geo.Rect("ascend.button", W, H, U);
+          Check(wk != null && asc != null && wk.CX >= asc.X && wk.CX <= asc.Right && wk.CY >= asc.Y && wk.CY <= asc.Bottom, "audit overlap: at " + W + "x" + H + " the inventory's «Литейная» centre lies inside the Foundry's «Вознести» (why the Foundry must read closed)");
+        }
+      } else Console.WriteLine("  (skip: no " + gp + ")");
+      var g = new ClickGate();
+      Check(g.Check(Rq(ClickTarget.FoundryButton, invNormal), invNormal, 0).Allowed, "audit foundry: the first open (the Foundry never built: nothing to read) is allowed as before");
+      var invRsClosed = ScreenState.Classify(new ScreenInputs { Inv = new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true }, Rs = new RecastScreen { SublimingOpen = false } }, 0);
+      Check(new ClickGate().Check(Rq(ClickTarget.FoundryButton, invRsClosed), invRsClosed, 0).Allowed, "audit foundry: the Foundry read closed -> allowed");
+      var rf = new ClickGate().Check(Rq(ClickTarget.FoundryButton, foundry), foundry, 0);
+      Check(rf.Verdict == GateVerdict.Deny && rf.Reason == "screen", "audit foundry: the Foundry read open -> never (the click would be «Вознести»)");
+      g = new ClickGate(); var rq = Rq(ClickTarget.FoundryButton, invNormal); rq.FoundryUnread = true;
+      var r1 = g.Check(rq, invNormal, 0);
+      Check(r1.Verdict == GateVerdict.Wait && r1.Reason == "unknown", "audit foundry: built before but not readable now -> wait (it may be open unseen)");
+      var r2 = g.Check(rq, invNormal, ClickGate.SearchCapMs - 100);
+      Check(r2.Verdict == GateVerdict.Wait, "audit foundry: ... waited for while a search can find it");
+      rq.FoundryUnread = false; Check(g.Check(rq, invRsClosed, ClickGate.SearchCapMs - 50).Allowed, "audit foundry: ... read closed again -> allowed");
+      g = new ClickGate(); rq = Rq(ClickTarget.FoundryButton, invNormal); rq.FoundryUnread = true;
+      g.Check(rq, invNormal, 0); var r3 = g.Check(rq, invNormal, ClickGate.SearchCapMs + 100);
+      Check(r3.Verdict == GateVerdict.Deny && g.HaltReason(ClickOwner.Locate) == "unknown", "audit foundry: ... unreadable past the cap -> stop");
+      g.Resume(ClickOwner.Locate); rq.FoundryUnread = true; Check(g.Check(rq, invNormal, ClickGate.SearchCapMs + 200).Verdict == GateVerdict.Wait, "audit foundry: a new request starts the wait over");
+      foreach (var tg in new[] { ClickTarget.InvListCell, ClickTarget.InvEquipTab, ClickTarget.CityInventory }) {
+        var rr = Rq(tg, invNormal); rr.FoundryUnread = true;
+        var gr = new ClickGate().Check(rr, tg == ClickTarget.CityInventory ? city : invNormal, 0);
+        Check(gr.Reason != "unknown", "audit foundry: " + tg + " does not look at the Foundry flag");
+      }
+    }
+    // (6) the fixed «Массовая продажа» point (app/Overlay.cs TickSell: 0.5867 U, H - 0.0723 U). In bulk-sale mode the game shows (Panel_BackpackEquipPanel
+    // _RefreshBottomButtons, state BulkSales) the left group's «Назад» only, and in the right group «Быстрый выбор» + «Продать» (m_BtnSell, from the right edge:
+    // x R-0.7761..R-0.5125, y B-0.1124..B-0.0282 U; «Быстрый выбор» R-1.049..R-0.7855): nothing at the point, so no never-press zone is needed there.
+    {
+      string gp = Path.Combine("tests", "fixtures", "screens", "_geometry.json");
+      if (File.Exists(gp)) {
+        var geo = GameGeometry.Parse(File.ReadAllText(gp, Encoding.UTF8), "1.6.39.829.1");
+        foreach (var wh in new[] { new[] { 1920.0, 1009 }, new[] { 1366.0, 705 }, new[] { 1280.0, 800 }, new[] { 2560.0, 1080 }, new[] { 3440.0, 1440 } }) {
+          double W = wh[0], H = wh[1], U = Ui.Unit(W, H), x = 0.5867 * U, y = H - 0.0723 * U;
+          var bs = geo.Rect("inventory.bulkSell", W, H, U); var back = geo.Rect("inventory.bulkBack", W, H, U);
+          Check(bs != null && x >= bs.X && x <= bs.Right && y >= bs.Y && y <= bs.Bottom, "audit bulk point: at " + W + "x" + H + " it is on «Массовая продажа» (normal mode)");
+          Check(back != null && x > back.Right, "audit bulk point: ... right of the bulk mode's «Назад»");
+          double sellX0 = W - 0.7761 * U, quickX0 = W - 1.049 * U;
+          Check(x < quickX0 && x < sellX0, "audit bulk point: ... left of «Быстрый выбор» / «Продать» of the bulk mode (" + (int)x + " < " + (int)quickX0 + ")");
+        }
+      } else Console.WriteLine("  (skip: no " + gp + ")");
+    }
+    // (3) the pilot never waits forever: a list that does not load, an item not in the list, a filter that hides it
+    {
+      var item = LocItem(777, 3, 720100, 12, 5, 7, 9, 3);
+      Func<LocateKind, long, LocateView> V = (k, now) => new LocateView { NowMs = now, Foreground = true, W = 2000, H = 1000, U = 1000, Step = new LocateStep { Kind = k }, Cols = 8, Item = item,
+        Rs = new RecastScreen { SublimingOpen = true, AscendShown = true, CurType = 2 }, OtherFormOpen = k != LocateKind.HiddenFilter, Inv = new InventoryScreen { Open = true, EquipTab = true } };
+      foreach (var c in new[] { new object[] { LocateKind.AscendLoading, LocatePilot.LoadingCapMs, "loading" }, new object[] { LocateKind.AscendNotInList, LocatePilot.SettledMs, "notinlist" }, new object[] { LocateKind.HiddenFilter, LocatePilot.SettledMs, "hidden" } }) {
+        var k = (LocateKind)c[0]; int cap = (int)c[1]; string why = (string)c[2];
+        var p = new LocatePilot(); LocateMove m = null; long t = 1000;
+        for (; t < 1000 + cap; t += 200) { m = p.Step(V(k, t)); if (m.State != "hint") break; }
+        Check(m.State == "hint" && !p.Stopped, "audit wait: " + k + " is a hint (waited for) up to " + cap + " ms");
+        m = p.Step(V(k, 1000 + cap));
+        Check(m.State == "stopped" && m.Why == why && p.Reason == why && m.Action.Kind == AutoKind.None, "audit wait: " + k + " -> a stop with the reason '" + why + "' after " + cap + " ms");
+        p.Reset(); Check(!p.Stopped && p.Step(V(k, 1000 + cap + 100)).State == "hint", "audit wait: " + k + ": a new request starts over");
+        p = new LocatePilot(); p.Step(V(k, 0)); m = p.Step(V(k, cap + 100));
+        Check(m.State == "hint", "audit wait: " + k + ": a gap (the gate held the pilot) starts the clock over");
+      }
+      {   // a list rebuilt after the slot tab says "not in the list" for a moment: no stop
+        var p = new LocatePilot();
+        for (long t = 0; t < 1200; t += 200) p.Step(V(LocateKind.AscendNotInList, t));
+        p.Step(V(LocateKind.AscendLoading, 1200));
+        for (long t = 1400; t < 1400 + LocatePilot.SettledMs - 200; t += 200) p.Step(V(LocateKind.AscendNotInList, t));
+        Check(!p.Stopped, "audit wait: a short 'not in the list' (each run under " + LocatePilot.SettledMs + " ms) is no stop");
+      }
+      {   // the normal path keeps going: a step the pilot clicks is not timed
+        var p = new LocatePilot(); var v = V(LocateKind.OpenAscendTab, 0); v.Rs = new RecastScreen { SublimingOpen = true, CurType = 0 }; v.Geometry = GameGeometry.Parse(GeoJson(), GeoGame);
+        var m = p.Step(v); Check(m.State == "work" && m.Todo == LocateTodo.AscendTab, "audit wait: a clickable step works as before");
+        v.NowMs = LocatePilot.LoadingCapMs + 10; m = p.Step(v); Check(!p.Stopped, "audit wait: ... and is never stopped by the wait caps");
+      }
+    }
   }
 
   static void LiveStateTests() {
@@ -3973,15 +4132,17 @@ static class CoreTests {
     ars.AscendList = new RFX.ListRead { ScrollY = 500, Cols = 4, RowUnits = 100, First = 20, Last = 27 };
     st = LocateGuide.Next(areq, null, ars, null, 8, 1);
     Check(st.Scroll == "above" && st.ScrollRows == 3, "ascend: item above the cells on screen -> rows to scroll up");
-    {   // a long list (3+ screens), the item off the screen: slot tab, then the set, then the pick (never the scroll first)
+    {   // a long list (3+ screens), the item off the screen: the slot tab, then the pick (the scroll); the set filter is never a step here (the pilot could not go on from it)
       var lg = ar(); var ids = new List<long>(); for (int q = 0; q < 112; q++) ids.Add(1000 + q); ids.Insert(90, 777); lg.AscendEquips = ids.ToArray();
       lg.AscendList = new RFX.ListRead { ScrollY = 0, Cols = 5, RowUnits = 100, First = 0, Last = 14 };
       lg.AscendParts = new int[0]; lg.AscendSuits = new long[0]; lg.AscendMainAttrs = new long[0]; lg.AscendSubAttrs = new long[0];
       st = LocateGuide.Next(areq, null, lg, null, 8, 1);
-      Check(st.Kind == LocateKind.AscendFilter && st.Pos == 91 && st.Missing.Length == 2 && st.Missing[0] == "slot" && st.Missing[1] == "suit", "ascend: 113 items, item off the screen, nothing set -> the slot tab first (suit next; main / subs not asked)");
+      Check(st.Kind == LocateKind.AscendFilter && st.Pos == 91 && st.Missing.Length == 1 && st.Missing[0] == "slot", "ascend: 113 items, item off the screen, nothing set -> the slot tab only (not the set; main / subs not asked)");
+      string fwhy;
       lg.AscendParts = new[] { item.Slot };
       st = LocateGuide.Next(areq, null, lg, null, 8, 1);
-      Check(st.Kind == LocateKind.AscendFilter && st.Missing.Length == 1 && st.Missing[0] == "suit", "ascend: slot set, set missing -> the set filter");
+      Check(st.Kind == LocateKind.AscendPick && st.Pos == 91 && Array.IndexOf(st.Missing, "suit") >= 0, "ascend: slot set, set missing, still long -> pick (scroll to it), not the set filter (live audit: the pilot waited forever there)");
+      Eq(LocateTodo.AscendCell, LocateAuto.Decide(new LocateView { Step = st, Rs = lg, Item = item, W = 2000, H = 1000, U = 1000, Geometry = GameGeometry.Parse(GeoJson(), GeoGame), Foreground = true }, out fwhy), "ascend: ... the pilot scrolls the list (AscendCell), it does not wait at the filter");
       lg.AscendSuits = new long[] { item.SetId };
       Eq(LocateKind.AscendPick, LocateGuide.Next(areq, null, lg, null, 8, 1).Kind, "ascend: slot and set set -> pick (main / sub stats are not asked before the scroll)");
       lg.AscendParts = new int[0]; lg.AscendSuits = new long[0]; lg.AscendList = new RFX.ListRead { ScrollY = 9000, Cols = 5, RowUnits = 100, First = 85, Last = 99 };

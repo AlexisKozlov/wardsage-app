@@ -482,6 +482,8 @@ namespace RealmForge {
     }
     /// <summary>The inventory's node is not known (the storage start asks for a search while the form is not built yet).</summary>
     public static bool InvFormMissing() { return NodeInv(invNode) == 0; }
+    /// <summary>The Foundry's node is not known or reads 0 now (never built, moved, or the search has not found it yet).</summary>
+    public static bool FoundryFormMissing() { return NodeTable(subNode, FormRecastId) == 0; }
 
     /// <summary>Starts a search of the forms on a worker thread (never two at once, at least <paramref name="minGapMs"/> after the last start); false = not started.
     /// A search that has been busy for more than 30 s is given up on (a new one may start). Does not block.</summary>

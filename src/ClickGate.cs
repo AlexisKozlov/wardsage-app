@@ -106,6 +106,9 @@ namespace RealmForge {
     public ICollection<int> ItemOk;
     /// <summary>The hero artifact targets: the plan's hero and the artifact (iItemUid) the steps are about.</summary>
     public long Hero, ArtUid;
+    /// <summary>FoundryButton: the Foundry's form cannot be read now although the game built it before (or the pilot opened it): the Foundry may be open
+    /// over the inventory unseen, and the inventory's «Литейная» lies inside its «Вознести» - the click waits for a read of the Foundry (set by the host).</summary>
+    public bool FoundryUnread;
     /// <summary>OfferClose: the pop-up the click closes, the game window's client size and unit, and the site's geometry (null = the prefab numbers).</summary>
     public string Form;
     public double W, H, U;
@@ -117,6 +120,12 @@ namespace RealmForge {
     public const int UnknownGraceMs = ScreenTracker.HoldMs;
     /// <summary>How long a click has to show its effect (a screen that opens may take a moment).</summary>
     public const int EffectMs = 3500, SlowEffectMs = 6000, GemEffectMs = 2000;
+    /// <summary>A slow PC (one form search takes ~17 s): a CityInventory / FoundryButton click whose form was not found yet shows its effect only
+    /// after the search ends. While FormSearchPending says such a search runs, the deadline moves on (SearchGraceMs past the search's end, so its
+    /// result is read once), up to SearchCapMs after the click. Only the search running at the deadline counts: a later one does not extend again.</summary>
+    public const int SearchCapMs = 30000, SearchGraceMs = 1500;
+    /// <summary>The host: a form search is running and the form this target opens is not found yet (null = never).</summary>
+    public Func<ClickTarget, bool> FormSearchPending;
     /// <summary>An artifact tick (or its taking off) has to show in the game's choice within this time.</summary>
     public const int ArtTickMs = 1000;
     /// <summary>An unrecognised screen stops the pilot only this long after the pilot's OWN last click (the screen it caused); later it is waited for.</summary>
@@ -188,6 +197,7 @@ namespace RealmForge {
       public bool WsUid;            // the workshop must hold one of the items meant
       public bool MatCell;          // the workshop's list entry under the click must be a planned one and not chosen yet
       public bool ArtTick;          // artifact bulk sale: the cell under the click is a wanted one that is not ticked (tick), or a ticked one that is not wanted (Untick)
+      public bool FoundryClosed;    // the fresh read must show the Foundry NOT open (FoundryButton: its point lies inside the Foundry's «Вознести»)
       public int HeroArt;           // hero screen artifact steps: 1 not on the artifact tab  2 tab, list closed  3 tab, list open  4 + the plan's artifact selected (its card)  5 + the "worn by another hero" pop-up
     }
 
@@ -204,7 +214,7 @@ namespace RealmForge {
             case ClickTarget.InvListCell: return new Rule { Kinds = K(ScreenKind.Inventory), InvNormalEquip = true, Cell = true, NeedScroll = true };
             case ClickTarget.InvListDrag: return new Rule { Kinds = K(ScreenKind.Inventory), InvNormalEquip = true };
             // the inventory's only: the hero screen covers the city and the inventory (live 2026-10-29: its own «Литейная» is gone with a gear list open)
-            case ClickTarget.FoundryButton: return new Rule { Kinds = K(ScreenKind.Inventory), InvNormalEquip = true };
+            case ClickTarget.FoundryButton: return new Rule { Kinds = K(ScreenKind.Inventory), InvNormalEquip = true, FoundryClosed = true };
             case ClickTarget.AscendTab: return new Rule { Kinds = K(ScreenKind.Foundry), FoundryNotTab = 2 };
             case ClickTarget.SlotTab: return new Rule { Kinds = K(ScreenKind.Foundry), FoundryTab = 2 };
             case ClickTarget.AscendCell: return new Rule { Kinds = K(ScreenKind.Foundry), FoundryTab = 2, Cell = true };
@@ -268,7 +278,7 @@ namespace RealmForge {
       return string.Join(", ", parts.ToArray());
     }
 
-    sealed class Watch { public Func<ScreenState, bool> Done; public long Deadline; public string What; public string Offer; }
+    sealed class Watch { public Func<ScreenState, bool> Done; public long Deadline; public string What; public string Offer; public ClickTarget Target; public long ArmedAt; public int Search; }   // Search: 0 none, 1 extended while a search runs, 2 its end awaited
 
     readonly Dictionary<ClickOwner, string> halted = new Dictionary<ClickOwner, string>();
     readonly Dictionary<ClickOwner, Watch> watches = new Dictionary<ClickOwner, Watch>();
@@ -280,6 +290,7 @@ namespace RealmForge {
     readonly Dictionary<ClickOwner, long[]> stall = new Dictionary<ClickOwner, long[]>();       // UnknownStall: since, last call
     readonly Dictionary<ClickOwner, string> stallBrief = new Dictionary<ClickOwner, string>();
     readonly HashSet<ClickOwner> searchWaited = new HashSet<ClickOwner>();                      // an unknown screen was waited for during a form search
+    readonly Dictionary<ClickOwner, long> foundryWait = new Dictionary<ClickOwner, long>();   // FoundryButton: since when the Foundry's form is unreadable
 
     void Note(ClickOwner o, string key, string text) {
       string was; if (noted.TryGetValue(o, out was) && was == key) return;
@@ -299,7 +310,7 @@ namespace RealmForge {
 
     /// <summary>A new request (or the player started it again): the owner may click again.</summary>
     public void Resume(ClickOwner o) {
-      halted.Remove(o); watches.Remove(o); unknownSince.Remove(o); noted.Remove(o); clickedAt.Remove(o); offerRun.Remove(o); haltDetail.Remove(o);
+      halted.Remove(o); watches.Remove(o); unknownSince.Remove(o); noted.Remove(o); clickedAt.Remove(o); offerRun.Remove(o); haltDetail.Remove(o); foundryWait.Remove(o);
       stall.Remove(o); stallBrief.Remove(o); searchWaited.Remove(o);
     }
 
@@ -344,7 +355,7 @@ namespace RealmForge {
       if (t == ClickTarget.OfferClose) offerRun[o] = OfferRun(o) + 1; else offerRun.Remove(o);
       if (done == null) { watches.Remove(o); return; }
       int ms = t == ClickTarget.CityInventory || t == ClickTarget.FoundryButton || t == ClickTarget.ArtWorkshop || t == ClickTarget.ArtReplace || t == ClickTarget.ArtTakeOverConfirm ? SlowEffectMs : t == ClickTarget.InvCardGem || t == ClickTarget.GemFuncRow || t == ClickTarget.ArtMatCell ? GemEffectMs : t == ClickTarget.ArtBulkCell ? ArtTickMs : EffectMs;
-      watches[o] = new Watch { Done = done, Deadline = now + ms, What = t == ClickTarget.OfferClose && offer != null ? "OfferClose(" + offer + ")" : t.ToString(), Offer = t == ClickTarget.OfferClose ? offer ?? "" : null };
+      watches[o] = new Watch { Done = done, Deadline = now + ms, What = t == ClickTarget.OfferClose && offer != null ? "OfferClose(" + offer + ")" : t.ToString(), Offer = t == ClickTarget.OfferClose ? offer ?? "" : null, Target = t, ArmedAt = now };
     }
 
     /// <summary>What a click is expected to change, judged on the state before it (null = nothing to check).</summary>
@@ -397,9 +408,30 @@ namespace RealmForge {
           if (w.Offer != null) { var sk = Sink; if (sk != null) sk("offer: closed " + w.Offer); }
         }
         else if (now > w.Deadline && SearchWait && Unrecognised(s)) { w.Deadline = now + 1000; searchWaited.Add(o); }   // the form is being searched for: its effect may still show
-        else if (now > w.Deadline) Halt(o, "nochange", w.What + " changed nothing within the time (screen " + s.Brief + ")");
+        else if (!StillAwaited(o, w, now)) Halt(o, "nochange", w.What + " changed nothing within the time (screen " + s.Brief + ")");
       }
     }
+
+    /// <summary>Is the click's effect still awaited at <paramref name="now"/>? Its deadline; for CityInventory / FoundryButton also the search for its
+    /// form that runs when the deadline passes (a slow PC): then the deadline follows the search, and its end plus SearchGraceMs, up to SearchCapMs.</summary>
+    bool StillAwaited(ClickOwner o, Watch w, long now) {
+      if (w.Target != ClickTarget.CityInventory && w.Target != ClickTarget.FoundryButton) return now <= w.Deadline;
+      long cap = w.ArmedAt + SearchCapMs;
+      if (w.Search == 1) {   // the search runs: the deadline follows it; once it ended, its result is read for SearchGraceMs
+        if (now >= cap) return false;
+        if (!SearchBusy(w.Target)) w.Search = 2;
+        w.Deadline = Math.Min(now + SearchGraceMs, cap);
+        return true;
+      }
+      if (now <= w.Deadline) return true;
+      if (w.Search == 0 && now < cap && SearchBusy(w.Target)) {
+        Note(o, "search:" + w.What + ":" + w.ArmedAt, w.What + ": no effect yet, the form search still runs - waiting for it (up to " + SearchCapMs + " ms after the click)");
+        w.Search = 1; w.Deadline = Math.Min(now + SearchGraceMs, cap);
+        return true;
+      }
+      return false;
+    }
+    bool SearchBusy(ClickTarget t) { var p = FormSearchPending; return p != null && p(t); }
 
     /// <summary>Before the pilot decides anything this tick: may it go on? Deny = it is stopped; Wait = not now (a click is still on its way,
     /// or the screen is not recognised yet). An unrecognised screen right after the pilot's OWN click (within OwnClickWindowMs; the tracker has
@@ -528,6 +560,18 @@ namespace RealmForge {
           int mid = mi - 1 < ws.MatItemIds.Count ? ws.MatItemIds[mi - 1] : 0;
           if (mid <= 0 || r.ItemOk == null || !r.ItemOk.Contains(mid)) return Halt(r.Owner, "cell", tag + ": entry " + mi + " holds essence item " + mid + ", not the planned one");
         }
+      }
+      if (rule.FoundryClosed) {
+        if (f.Rs != null && f.Rs.SublimingOpen) return Halt(r.Owner, "screen", tag + ": the Foundry is open (" + f.Brief + ")");
+        if (r.FoundryUnread) {   // waited for while a search can find it (the host asks for one), then a stop
+          long since;
+          if (!foundryWait.TryGetValue(r.Owner, out since)) { since = now; foundryWait[r.Owner] = now; }
+          string d = tag + ": the Foundry's form cannot be read - it may be open over the inventory (its «Вознести» lies there)";
+          if (now - since > SearchCapMs) return Halt(r.Owner, "unknown", d + " for " + (now - since) + " ms");
+          Note(r.Owner, "wait-foundry:" + since, "wait " + d);
+          return GateResult.Wait("unknown", d);
+        }
+        foundryWait.Remove(r.Owner);
       }
       if (f.Kind == ScreenKind.HeroScreen && rule.HeroTab >= 0 && f.HeroTab != rule.HeroTab) return Halt(r.Owner, "screen", tag + ": the hero screen is on tab " + f.HeroTab);
       if (f.Kind == ScreenKind.Foundry) {

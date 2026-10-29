@@ -355,6 +355,8 @@ namespace RealmForge {
       this.report = report; this.autoReport = autoReport; this.sellReport = sellReport;
       spilot = new SellPilot(SellGeometry.Inventory(1920, 1009, 8));
       screens.Sink = s => Log.Write(s); gate.Sink = s => Log.Write(s);
+      // a slow PC: the effect of «Инвентарь» / «Литейная» is awaited while the search for its form still runs (ClickGate.SearchCapMs)
+      gate.FormSearchPending = t => RFX.FormSearchRunning && (t == ClickTarget.CityInventory ? RFX.InvFormMissing() : t == ClickTarget.FoundryButton && RFX.FoundryFormMissing());
       RFX.LiveLog = s => Log.Write(s);   // the live reads' lines (the lists' scroll binding ...) reach the app's log
       pilot = new AutoPilot(g);
       fpilot = new FilterPilot(fg);
@@ -2454,7 +2456,8 @@ namespace RealmForge {
       // search policy: a form that read fine last tick and reads 0 now = the game moved it (soon, at most every 0.5 s); an Unknown screen = look every 2 s, no count limit
       if (front) {
         string lost = RFX.TakeFormsLost();
-        int wantGap; string wantSearch = FormSearchPolicy.Want(st.Kind, st.Held, openClickAt != 0 ? now - openClickAt : -1, out wantGap);
+        bool openMissing = openClickAt != 0 && (openClickWhat == "inventory" ? RFX.InvFormMissing() : openClickWhat == "foundry" && RFX.FoundryFormMissing());
+        int wantGap; string wantSearch = FormSearchPolicy.Want(st.Kind, st.Held, openClickAt != 0 ? now - openClickAt : -1, openMissing, out wantGap);
         if (lost != null) { RFX.RequestFormSearch("lost: " + lost, 500); lostSearchAt = now; lostSearchGen = RFX.FormSearchGeneration; }
         else if (wantSearch != null) RFX.RequestFormSearch(wantSearch, wantGap);
         // the workshop's form exists once the game has built it (the first open): with the artifact's card open, look for it every 2.5 s until found
@@ -2467,9 +2470,14 @@ namespace RealmForge {
       if (!sw) lostSearchAt = 0;
       if (gate.SearchWait != sw) { gate.SearchWait = sw; if (sw) Log.Write("screen: a known form is searched for - the pilots wait for the search"); }
       if (screens.Hero != null) heroScreen = screens.Hero;
+      if (foundryBuiltPid != GamePid(hwnd) && !RFX.FoundryFormMissing()) foundryBuiltPid = GamePid(hwnd);
       gate.Observe(st, now);
       AnnounceHalts();
     }
+
+    /// <summary>The game process the Foundry's form was found in, or the pilot opened it in (0 = none): from then on «Литейная» needs the Foundry read closed.</summary>
+    int foundryBuiltPid;
+    static int GamePid(IntPtr hwnd) { int p = 0; if (hwnd != IntPtr.Zero) W32.GetWindowThreadProcessId(hwnd, out p); return p; }
 
     bool CityVisible(IntPtr hwnd) {
       W32.RECT cr;
@@ -2598,9 +2606,11 @@ namespace RealmForge {
       gate.Arm(req.Owner, req.Target, ClickGate.Expect(req, fresh), now, req.Form);
       // measurement only: the pilot's click that opens the Inventory / Heroes screen, timed to the first reading of that screen (ReadScreens)
       if (req.Target == ClickTarget.CityInventory) { openClickAt = now; openClickWhat = "inventory"; }
-      else if (req.Target == ClickTarget.FoundryButton) { openClickAt = now; openClickWhat = "foundry"; }
+      else if (req.Target == ClickTarget.FoundryButton) { openClickAt = now; openClickWhat = "foundry"; foundryBuiltPid = GamePid(GameWindow()); }
       else if (req.Target == ClickTarget.EquipNav && fresh != null && fresh.Kind == ScreenKind.City) { openClickAt = now; openClickWhat = "heroes"; }
       Send(a, sx, sy, req.Owner);
+      // the form this click opens was never found: its search starts with the click (a slow PC needs every second of it)
+      if ((req.Target == ClickTarget.CityInventory && RFX.InvFormMissing()) || (req.Target == ClickTarget.FoundryButton && RFX.FoundryFormMissing())) RFX.RequestFormSearch("opened by the pilot's click", 0);
       return true;
     }
     long openClickAt; string openClickWhat = "";
@@ -2932,7 +2942,14 @@ namespace RealmForge {
         case LocateTodo.BackToCity: tg = ClickTarget.HeroBack; break;
         case LocateTodo.InventoryButton: tg = ClickTarget.CityInventory; break;
         case LocateTodo.EquipTab: tg = ClickTarget.InvEquipTab; break;
-        case LocateTodo.FoundryButton: tg = ClickTarget.FoundryButton; break;
+        case LocateTodo.FoundryButton:
+          tg = ClickTarget.FoundryButton;
+          // the Foundry built before in this game but not readable now: it may be open over the inventory unseen (the gate waits; a search is asked for)
+          fill = (rq, fr) => {
+            rq.FoundryUnread = foundryBuiltPid != 0 && foundryBuiltPid == GamePid(GameWindow()) && (fr.Rs == null || RFX.FoundryFormMissing());
+            if (rq.FoundryUnread) RFX.RequestFormSearch("foundry not readable before «Литейная»", 2000);
+          };
+          break;
         case LocateTodo.AscendTab: tg = ClickTarget.AscendTab; break;
         case LocateTodo.SlotTab: tg = ClickTarget.SlotTab; break;
         case LocateTodo.CardGem: case LocateTodo.GemFunc: {

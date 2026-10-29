@@ -110,9 +110,10 @@ namespace RealmForge {
           st.Missing = MissingFilter(req.Item, rs.AscendParts, rs.AscendSuits, rs.AscendMainAttrs, rs.AscendSubAttrs);
           // the item is in the shown list (whatever its length): pick it; only an item the list does not hold needs the filter
           bool extra = ExtraSubFilter(req.Item, rs.AscendSubAttrs);
-          // a long list and the item off the screen: the slot tab, then the set, narrow it before any scrolling (main / sub stats are not asked here)
+          // a long list and the item off the screen: the slot tab narrows it before any scrolling; then the list is scrolled (AscendPick).
+          // Not the set: the filter pop-up is the player's, the pilot could never go on from it (main / sub stats are not asked here either)
           if (ap != null && LongOffScreen(st, rs.AscendList)) {
-            var pre = new List<string>(); foreach (var m in st.Missing) if (m == "slot" || m == "suit") pre.Add(m);
+            var pre = new List<string>(); foreach (var m in st.Missing) if (m == "slot") pre.Add(m);
             if (pre.Count > 0) { st.Missing = pre.ToArray(); st.Kind = LocateKind.AscendFilter; PopupStep(st, req.Item, rs, false); return st; }
           }
           if (ap != null) st.Kind = LocateKind.AscendPick;

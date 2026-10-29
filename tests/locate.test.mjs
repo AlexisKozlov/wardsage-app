@@ -106,11 +106,12 @@ for (const lang of ['ru', 'en']) {
   const eb = L.describe(req, st({ step: 'exitBulk', auto: 'hint', autoWhy: 'bulk' }), t);
   ok(eb.head === T[lang].locExitBulk && eb.tone === 'warn' && eb.lines[0] === T[lang].locExitBulkP, lang + ': bulk sale: leave it');
   ok(L.describe(req, st({ step: 'exitBulk', auto: 'work' }), t).head === T[lang].locExitBulk, lang + ': bulk sale is never "auto work"');
-  for (const why of ['lost', 'stuck', 'cancelled']) {
+  for (const why of ['lost', 'stuck', 'cancelled', 'loading', 'notinlist', 'hidden']) {
     const d = L.describe(req, st({ step: 'inList', auto: 'stopped', autoWhy: why }), t);
     ok(d.head === T[lang].locAutoStop && d.lines.length >= 2 && !/^loc[A-Z]/.test(d.lines[0]) && d.lines[1] === plain.head, lang + ': stopped (' + why + ') says why and keeps the hint');
     ok(d.tip.length <= 3 && d.tip.every((x) => x.length <= 90), lang + ': stopped (' + why + ') plate is short');
   }
+  for (const [why, key] of [['loading', 'locAutoLoading'], ['notinlist', 'locAutoNotInList'], ['hidden', 'locAutoHidden']]) ok(T[lang][key] && L.describe(req, st({ step: 'ascendNotInList', auto: 'stopped', autoWhy: why }), t).lines[0] === T[lang][key], lang + ': stopped (' + why + ') names its own reason');
   ok(L.describe(req, st({ step: 'inList', auto: 'stopped', autoWhy: 'lost' }), t).tone === 'warn' && L.describe(req, st({ step: 'inList', auto: 'stopped', autoWhy: 'cancelled' }), t).tone === 'info', lang + ': stop tones');
   ok(T[lang].locLeadAuto && T[lang].locLeadAuto !== T[lang].locLead, lang + ': the lead changes with auto click');
 }

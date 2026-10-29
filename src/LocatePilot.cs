@@ -159,6 +159,10 @@ namespace RealmForge {
     public const int UserPauseMs = 4000, AfterBackMs = 1800, AfterButtonMs = 2500, AfterTabMs = 1500, AfterGemMs = 1500, SettleMs = 700;
     public const int MaxStepClicks = 4, MaxActions = 90, MaxClicks = 14, MaxDrags = 45, MaxWorkMs = 5 * 60 * 1000;
     public const double MinDragPx = 24;
+    /// <summary>Steps the pilot can only wait at: the Ascension list not readable (AscendLoading) is waited for up to LoadingCapMs; the item not in the
+    /// Ascension list (AscendNotInList) or hidden by the inventory's filter (HiddenFilter) is a stop once it has held for SettledMs (a list that is being
+    /// rebuilt after a tab press says "not in the list" for a moment). Stop reasons: loading | notinlist | hidden.</summary>
+    public const int LoadingCapMs = 20000, SettledMs = 3000;
 
     readonly HeroGeometry hg = new HeroGeometry();
     readonly SellPilot list = new SellPilot(SellGeometry.Inventory(1920, 1009, 8));
@@ -167,6 +171,7 @@ namespace RealmForge {
     long waitUntil, pauseUntil, workSince;
     LocateTodo kind; int kindClicks, actions, clicks, drags;
     double dragFrom = double.NaN; int dragStill;   // the foundry list's scroll before the last drag, drags in a row that moved nothing
+    LocateKind waitKind = LocateKind.None; long waitSince, waitSeen;   // a step the pilot can only wait at (see LoadingCapMs), since when, last seen
     /// <summary>What the last step did and why (the app's log).</summary>
     public string Trace = "";
     /// <summary>The item the list pilot is after (set by the host with the request).</summary>
@@ -175,7 +180,7 @@ namespace RealmForge {
     /// <summary>A new request (or the player stopped it): start over.</summary>
     public void Reset() {
       latched = ""; waitUntil = pauseUntil = workSince = 0; kind = LocateTodo.Nothing; kindClicks = actions = clicks = drags = 0;
-      list.Reset(); geoW = geoH = 0; geoCols = 0; Trace = ""; dragFrom = double.NaN; dragStill = 0;
+      list.Reset(); geoW = geoH = 0; geoCols = 0; Trace = ""; dragFrom = double.NaN; dragStill = 0; waitKind = LocateKind.None; waitSince = waitSeen = 0;
     }
 
     /// <summary>The overlay's cancel button: no more auto clicks for this request (the hints go on).</summary>
@@ -185,7 +190,7 @@ namespace RealmForge {
     public void Halt(string why) { if (latched == "") latched = why; }
 
     public bool Stopped { get { return latched != ""; } }
-    /// <summary>Why it stopped ("" while it runs): bulk, lost, stuck, screen, cancelled.</summary>
+    /// <summary>Why it stopped ("" while it runs): bulk, lost, stuck, screen, cancelled, loading, notinlist, hidden.</summary>
     public string Reason { get { return latched; } }
 
     public LocateMove Step(LocateView v) {
@@ -193,6 +198,14 @@ namespace RealmForge {
       if (latched != "") { m.State = "stopped"; m.Why = latched; return m; }
       string why;
       var todo = LocateAuto.Decide(v, out why);
+      var sk = v.Step != null ? v.Step.Kind : LocateKind.None;
+      string waitWhy = sk == LocateKind.AscendLoading ? "loading" : sk == LocateKind.AscendNotInList ? "notinlist" : sk == LocateKind.HiddenFilter ? "hidden" : "";
+      if (waitWhy == "" || todo != LocateTodo.Hint) waitKind = LocateKind.None;
+      else {
+        if (waitKind != sk || v.NowMs - waitSeen > 1500) { waitKind = sk; waitSince = v.NowMs; }   // a gap (the pilot was not asked: the gate waited) starts over
+        waitSeen = v.NowMs;
+        if (v.NowMs - waitSince >= (sk == LocateKind.AscendLoading ? LoadingCapMs : SettledMs)) return Abort(m, waitWhy);
+      }
       if (todo == LocateTodo.Nothing || todo == LocateTodo.Hint) { m.State = "hint"; m.Why = why; kind = LocateTodo.Nothing; kindClicks = 0; return m; }
       if (todo == LocateTodo.Stop) return Abort(m, why);
 
