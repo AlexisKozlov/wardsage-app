@@ -47,6 +47,10 @@ namespace RealmForge {
     [StructLayout(LayoutKind.Sequential)] public struct MOUSEINPUT { public int dx, dy; public uint mouseData, dwFlags, time; public IntPtr extra; }
     [StructLayout(LayoutKind.Sequential)] public struct INPUT { public uint type; public MOUSEINPUT mi; }   // type 0 = mouse; 40 bytes on x64
     public const uint LEFTDOWN = 0x0002, LEFTUP = 0x0004, WHEEL = 0x0800;
+    [DllImport("user32.dll", SetLastError = true, EntryPoint = "SendInput")] public static extern uint SendKeyInput(uint n, KINPUT[] inputs, int size);
+    [StructLayout(LayoutKind.Sequential)] public struct KEYBDINPUT { public ushort vk, scan; public uint dwFlags, time; public IntPtr extra; }
+    [StructLayout(LayoutKind.Sequential)] public struct KINPUT { public uint type; public KEYBDINPUT ki; public uint pad1, pad2; }   // type 1 = keyboard; padded to the mouse INPUT's size (40 bytes on x64)
+    public const uint KEYUP = 0x0002;
     [DllImport("user32.dll")] public static extern bool SetWindowDisplayAffinity(IntPtr h, uint affinity);
     [DllImport("user32.dll")] public static extern IntPtr GetDC(IntPtr h);
     [DllImport("user32.dll")] public static extern int ReleaseDC(IntPtr h, IntPtr dc);
@@ -1666,6 +1670,8 @@ namespace RealmForge {
       // a screen nobody knows for 20 s (or one a form search did not find): stop instead of waiting for ever
       // a full-screen screen nobody knows: its back arrow top left (at most 3 presses a run, each has to change the screen)
       if ((runHero > 0 || target > 0) && v.Foreground && !v.UserBusy && UnknownBackStep(ClickOwner.Equip, screens.Current, o, cr, v.Foreground, now)) return;
+      // a known screen the plan cannot start from (the Foundry, the inventory, the gem screen ...): back to the city with its arrow top left
+      if (runHero > 0 && v.Foreground && !v.UserBusy && BackStep(ClickOwner.Equip, screens.Current, ClickGate.AwayFromStart(ClickOwner.Equip, screens.Current), o, cr, v.Foreground, now)) { AutoSay("work"); return; }
       if ((runHero > 0 || target > 0) && v.Foreground && !v.UserBusy && gate.UnknownStall(ClickOwner.Equip, screens.Current, now)) { AnnounceHalts(); return; }
       // first the plan's hero on the hero screen (a started plan only), then the game's filter (the item far down or
       // hidden), then the item itself
@@ -1806,6 +1812,8 @@ namespace RealmForge {
         return;
       }
       if (!front || busy) { SellSay(front ? "paused" : "background"); return; }
+      // the Foundry, the gem screen, the workshop: back with the arrow top left (towards the inventory / the city)
+      if (BackStep(ClickOwner.Sell, scr, ClickGate.AwayFromStart(ClickOwner.Sell, scr), o, cr, front, now)) { SellSay("open"); return; }
       // the hero screen (the gear screen as well): back to the city with the arrow top left
       if (scr != null && scr.Kind == ScreenKind.HeroScreen) {
         SellSay("open");
@@ -2605,11 +2613,60 @@ namespace RealmForge {
     /// no pop-up, no known screen's form shown, not the city or a fight, at most ClickGate.MaxUnknownBacks a run, each press has to change the
     /// screen). True = a press was tried this tick; false = not due, the pilot goes on (it waits on the unknown screen as before).</summary>
     bool UnknownBackStep(ClickOwner owner, ScreenState scr, W32.POINT o, W32.RECT cr, bool front, long now) {
+      // the last back press changed nothing: one Escape instead (EscapeBack; never on the city or in a fight)
+      if (front && !sending && scr != null && scr.Kind == ScreenKind.Unknown && gate.EscapeDue(owner, scr, now)) { EscapeSend(owner, cr, front); AnnounceHalts(); return true; }
       if (!front || sending || !gate.UnknownBackDue(owner, scr, now)) return false;
       double W = cr.R, H = cr.B, U = Ui.Unit(W, H);
       SendInside(new AutoAction { Kind = AutoKind.Click, X = hg2.BackX * U, Y = hg2.BackY * U }, o, cr, owner, ClickTarget.UnknownBack, front, (rq, fr) => { rq.U = U; });
       AnnounceHalts();
       return true;
+    }
+
+    /// <summary>Back to the city, shared by every pilot: the pilot cannot go on from this known screen (<paramref name="need"/>) - the game's back
+    /// arrow top left (CityBack, through the gate: no pop-up, not the city or a fight, at most ClickGate.MaxCityBacks a run, each press has to
+    /// change the screen). A press that changed nothing is followed by ONE Escape key press (EscapeBack, at most ClickGate.MaxEscapes a run).
+    /// True = a press was tried this tick; false = nothing due, the pilot goes on.</summary>
+    bool BackStep(ClickOwner owner, ScreenState scr, bool need, W32.POINT o, W32.RECT cr, bool front, long now) {
+      if (!need) { if (scr != null && scr.Kind != ScreenKind.Unknown) gate.DropEscape(owner); return false; }
+      if (!front || sending) return false;
+      if (gate.EscapeDue(owner, scr, now)) { EscapeSend(owner, cr, front); AnnounceHalts(); return true; }
+      if (!gate.CityBackDue(owner, scr, now)) { AnnounceHalts(); return false; }
+      double W = cr.R, H = cr.B, U = Ui.Unit(W, H);
+      SendInside(new AutoAction { Kind = AutoKind.Click, X = hg2.BackX * U, Y = hg2.BackY * U }, o, cr, owner, ClickTarget.CityBack, front, (rq, fr) => { rq.U = U; });
+      AnnounceHalts();
+      return true;
+    }
+
+    /// <summary>The one Escape key press (EscapeBack): the gate judges a fresh read (never the city - it asks to quit the game there -, a fight, a
+    /// pop-up, the exit dialog); the key goes only to the game in front.</summary>
+    bool EscapeSend(ClickOwner owner, W32.RECT cr, bool front) {
+      long now = NowMs();
+      var fresh = FreshScreen(false, true);
+      var req = new ClickRequest { Owner = owner, Target = ClickTarget.EscapeBack, AutoOn = owner == ClickOwner.Locate ? AutoEnabled && LocateAutoEnabled : AutoEnabled, Front = front, U = Ui.Unit(cr.R, cr.B) };
+      var res = gate.Check(req, fresh, now);
+      AnnounceHalts();
+      if (!res.Allowed) return false;
+      gate.Arm(owner, ClickTarget.EscapeBack, ClickGate.Expect(req, fresh), now);
+      SendEscapeKey(owner);
+      return true;
+    }
+
+    /// <summary>VK_ESCAPE down and up, off the UI thread, only while the game's window is in front (else no key, the owner stops: "covered").</summary>
+    void SendEscapeKey(ClickOwner owner) {   // ONLY called by EscapeSend
+      sending = true;
+      IntPtr game = GameWindow();
+      var t = new System.Threading.Thread(() => {
+        try {
+          if (game == IntPtr.Zero || !IsForeground(game)) { covered = Tuple.Create(owner, "another window in front of the game (no Escape sent)"); return; }
+          int sz = Marshal.SizeOf(typeof(W32.KINPUT));
+          W32.SendKeyInput(1, new[] { new W32.KINPUT { type = 1, ki = new W32.KEYBDINPUT { vk = 0x1B, scan = 0x01 } } }, sz);
+          System.Threading.Thread.Sleep(60);
+          W32.SendKeyInput(1, new[] { new W32.KINPUT { type = 1, ki = new W32.KEYBDINPUT { vk = 0x1B, scan = 0x01, dwFlags = W32.KEYUP } } }, sz);
+          System.Threading.Thread.Sleep(30);
+        } catch (Exception e) { Log.Write("auto: " + e.Message); }
+        finally { sending = false; }
+      });
+      t.IsBackground = true; t.Start();
     }
 
     /// <summary>THE way a click leaves the app: the gate says yes (the target is on the whitelist of the screen the game shows right now,
@@ -2789,6 +2846,9 @@ namespace RealmForge {
         view.Row1 = locateScroll.Row1(pg, inv != null ? inv.List : null, double.NaN, U, now);   // the game's scroll (the constant is learned by the frame)
         if (double.IsNaN(view.Row1)) view.Phase = PhaseCached(pg, o, cr, U, now);                    // last resort
       }
+      // the step is the inventory's but the Foundry / the gem screen (or the workshop, outside the artifact guide) is on top: back with its arrow first
+      bool needBack = LocateAuto.NeedsCityBack(view) || (scr != null && scr.Kind == ScreenKind.ArtWorkshop && req.Purpose != "artPromote" && dstep.Kind != LocateKind.None);
+      if (gameFront && !busy && BackStep(ClickOwner.Locate, scr, needBack, o, cr, gameFront, now)) { step.Auto = "work"; step.AutoWhy = ""; locateDriving = true; return; }
       var mv = lpilot.Step(view);
       if (lpilot.Trace != "") { Log.Write("locate auto: " + lpilot.Trace); lpilot.Trace = ""; }
       locateMoveState = mv.State; locateMoveWhy = mv.Why;
@@ -2890,6 +2950,8 @@ namespace RealmForge {
         AnnounceHalts();
         if (pre.Reason == "offer" && OfferStep(ClickOwner.Sell, scr, o, cr, front, now)) return;
         if (pre.Verdict != GateVerdict.Allow) return;
+        // the Foundry, the gem screen, the workshop: back with the arrow top left (towards the inventory)
+        if (BackStep(ClickOwner.Sell, scr, ClickGate.AwayFromStart(ClickOwner.Sell, scr), o, cr, front, now)) return;
       }
       if (scr == null || scr.Kind != ScreenKind.Inventory || screens.Inv == null) return;   // the player brings the Inventory up (the hint says so)
       var inv = screens.Inv;
@@ -2951,7 +3013,7 @@ namespace RealmForge {
           gate.Halt(owner, "target", target + " @" + (int)a.X + "," + (int)a.Y + " lies on a button the artifact steps never press"); AnnounceHalts(); return false;
         }
       }
-      var fresh = FreshScreen(target == ClickTarget.CityInventory, target == ClickTarget.UnknownBack);
+      var fresh = FreshScreen(target == ClickTarget.CityInventory, target == ClickTarget.UnknownBack || target == ClickTarget.CityBack);
       var req = new ClickRequest { Owner = owner, Target = target, AutoOn = artT ? ArtAutoOn : owner == ClickOwner.Locate ? AutoEnabled && LocateAutoEnabled : AutoEnabled, Front = front, X = a.X, Y = a.Y };
       if (fill != null) fill(req, fresh);
       return GatedSend(req, fresh, a, x, y);
