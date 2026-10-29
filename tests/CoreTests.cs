@@ -17,6 +17,31 @@ using RealmForge;
 static class CoreTests {
   static int passed, failed;
 
+  // ConfirmChoice (a tie of both blue confirm buttons) and GameGeomCheck (the window geometry self-check), app/HintGeometry.cs
+  static void ConfirmChoiceTests() {
+    Console.WriteLine("ConfirmChoice / GameGeomCheck (confirm button tie, window geometry self-check):");
+    var c = new ConfirmChoice();
+    int[] rep = { 962, 1160, 285, 78 }, eq = { 1741, 1294, 275, 78 };
+    Check(c.Pick(rep, eq, 1, 3440, 1440) == null, "tie with nothing learned: no button");
+    Check(c.Pick(null, eq, 2, 3440, 1440) == eq, "a single «Надеть» is used");
+    c.Worn(3); Check(c.Learned(3440, 1440) == "", "another item worn: nothing learned");
+    c.Worn(2); Check(c.Learned(3440, 1440) == "equip", "the pending item worn: «Надеть» place learned for the size");
+    Check(c.Pick(rep, eq, 4, 3440, 1440) == eq, "tie at that size: the learned «Надеть» place");
+    Check(c.Pick(rep, eq, 4, 1920, 1009) == null, "tie at another size: still no button");
+    Check(c.Pick(null, null, 4, 3440, 1440) == null, "neither: no button");
+    Check(c.Pick(rep, null, 5, 1920, 1009) == rep, "a single «Заменить» is used");
+    c.Worn(5); Check(c.Learned(1920, 1009) == "replace" && c.Pick(rep, eq, 6, 1920, 1009) == rep, "«Заменить» learned at 1920x1009 decides its ties");
+    int x, y;
+    GameGeomCheck.OriginFromWindow(100, 50, 100 + 1936, 50 + 1048, 1920, 1009, out x, out y);
+    Check(x == 108 && y == 81, "origin from a framed window: border 8, caption 31 (" + x + "," + y + ")");
+    GameGeomCheck.OriginFromWindow(0, 0, 3440, 1440, 3440, 1440, out x, out y);
+    Check(x == 0 && y == 0, "borderless full screen: origin 0,0");
+    string l = GameGeomCheck.Line(0, 0, 0, 0, 3440, 1440, 3440, 1440, 96, "");
+    Check(l.Contains("3440x1440 at 0,0") && l.Contains(" same)") && l.Contains("wine no"), "line, Windows: " + l);
+    l = GameGeomCheck.Line(0, 0, 0, 25, 3440, 1465, 3440, 1440, 144, "8.0.1");
+    Check(l.Contains("DIFFERS 0,25") && l.Contains("dpi 144") && l.Contains("wine 8.0.1"), "line, a shifted window under Wine: " + l);
+  }
+
   static void Check(bool ok, string what) {
     if (ok) { passed++; Console.WriteLine("  ok   " + what); }
     else { failed++; Console.WriteLine("  FAIL " + what); }
@@ -683,6 +708,7 @@ static class CoreTests {
     FightPlanTests();
     LocateTests();
     OwnButtonTests();
+    ConfirmChoiceTests();
     LocatePilotTests();
     GeometryTests();
     GuideShapeTests();

@@ -56,6 +56,35 @@ namespace RealmForge {
     [DllImport("gdi32.dll")] public static extern bool DeleteDC(IntPtr dc);
     [DllImport("gdi32.dll")] public static extern IntPtr SelectObject(IntPtr dc, IntPtr obj);
     [DllImport("gdi32.dll")] public static extern bool DeleteObject(IntPtr obj);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr GetModuleHandle(string name);
+    [DllImport("kernel32.dll", CharSet = CharSet.Ansi)] public static extern IntPtr GetProcAddress(IntPtr module, string name);
+    [DllImport("user32.dll")] static extern uint GetDpiForWindow(IntPtr h);
+    [DllImport("gdi32.dll")] static extern int GetDeviceCaps(IntPtr dc, int index);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate IntPtr WineVersionFn();
+
+    /// <summary>The window's DPI (GetDpiForWindow on Windows 10+, else the screen's LOGPIXELSY); 0 if unknown.</summary>
+    public static int WindowDpi(IntPtr h) {
+      try { return (int)GetDpiForWindow(h); } catch (EntryPointNotFoundException) { }
+      catch (Exception) { return 0; }
+      IntPtr dc = GetDC(IntPtr.Zero);
+      try { return dc == IntPtr.Zero ? 0 : GetDeviceCaps(dc, 90); } finally { if (dc != IntPtr.Zero) ReleaseDC(IntPtr.Zero, dc); }
+    }
+
+    static string wine;
+    /// <summary>Wine's version when the app runs under Wine / CrossOver (ntdll exports wine_get_version), else "".</summary>
+    public static string WineVersion() {
+      if (wine != null) return wine;
+      wine = "";
+      try {
+        IntPtr nt = GetModuleHandle("ntdll.dll"), f = nt == IntPtr.Zero ? IntPtr.Zero : GetProcAddress(nt, "wine_get_version");
+        if (f != IntPtr.Zero) {
+          IntPtr v = ((WineVersionFn)Marshal.GetDelegateForFunctionPointer(f, typeof(WineVersionFn)))();
+          wine = v != IntPtr.Zero ? (Marshal.PtrToStringAnsi(v) ?? "yes") : "yes";
+          if (wine == "") wine = "yes";
+        }
+      } catch (Exception) { wine = "yes"; }
+      return wine;
+    }
   }
 
   /// <summary>A borderless per-pixel-alpha window that never takes focus; it lets clicks through, unless it is a
@@ -302,7 +331,24 @@ namespace RealmForge {
     /// auto-confirm on, an exception in the tick. HostBridge sends it when the player turned the reports on.</summary>
     /// <summary>A problem worth an error report: kind, message and what the pilot saw (null = nothing more).</summary>
     public event Action<string, string, System.Collections.Generic.Dictionary<string, string>> Problem;
-    void RaiseProblem(string kind, string message, System.Collections.Generic.Dictionary<string, string> ctx = null) { var p = Problem; if (p != null) try { p(kind, message, ctx); } catch (Exception) { } }
+    void RaiseProblem(string kind, string message, System.Collections.Generic.Dictionary<string, string> ctx = null) {
+      // every pilot report carries the game window's geometry self-check (client origin by two methods, DPI, Wine)
+      if (kind.StartsWith("pilot.", StringComparison.Ordinal) && geomLine != null) {
+        if (ctx == null) ctx = new System.Collections.Generic.Dictionary<string, string>();
+        if (!ctx.ContainsKey("geom")) ctx["geom"] = geomLine;
+      }
+      var p = Problem; if (p != null) try { p(kind, message, ctx); } catch (Exception) { }
+    }
+
+    /// <summary>The geometry self-check of the game window (GameGeomCheck.Line): journaled whenever it changes (start, move, resize).</summary>
+    string geomLine;
+    void GeomCheck(IntPtr hwnd, W32.POINT o, W32.RECT cr) {
+      W32.RECT wr; if (!W32.GetWindowRect(hwnd, out wr)) return;
+      string line = GameGeomCheck.Line(o.X, o.Y, wr.L, wr.T, wr.R, wr.B, cr.R, cr.B, W32.WindowDpi(hwnd), W32.WineVersion());
+      if (line == geomLine) return;
+      geomLine = line;
+      Log.Write("game geometry: " + line);
+    }
     bool filterFailSaid; string tickError;
 
     public OverlayController(Action<string, bool> report, Action<string> autoReport, Action<SellPilot, string> sellReport) {
@@ -995,6 +1041,7 @@ namespace RealmForge {
       if (hwnd == IntPtr.Zero || W32.IsIconic(hwnd) || !IsForeground(hwnd)) { HideTip(); return; }
       W32.RECT cr; if (!W32.GetClientRect(hwnd, out cr) || cr.B < 200) { HideTip(); return; }
       var o = new W32.POINT(0, 0); W32.ClientToScreen(hwnd, ref o);
+      GeomCheck(hwnd, o, cr);
       double H = cr.B, W = cr.R, U = Ui.Unit(W, H);
       SceneArea(o, cr);
       // the Inventory is in «Массовая продажа»: the hero and the items are not on screen - the way out is framed (the app clicks nothing there)
@@ -3204,7 +3251,13 @@ namespace RealmForge {
     /// or both are (unexpected: better not to press).</summary>
     int[] ConfirmButton(W32.POINT o, double W, double H) {
       int[] rep = FindBlue(o, hg.Replace(W, H), H), eq = FindBlue(o, hg.Equip(W, H), H);
-      int[] btn = (rep != null) == (eq != null) ? null : rep ?? eq;
+      // the item a single button was found for is on the hero now: that button kind is the one at this window size
+      if (confirmChoice.PendingItem > 0 && addrs != null && hintHero > 0 && RFX.ReadOwner(addrs, confirmChoice.PendingItem) == hintHero) confirmChoice.Worn(confirmChoice.PendingItem);
+      int[] btn = confirmChoice.Pick(rep, eq, target, W, H);
+      if (btn != null && rep != null && eq != null && confirmTieLogged != target) {
+        confirmTieLogged = target;
+        Log.Write("confirm: both blue, using the " + confirmChoice.Learned(W, H) + " place that worked at " + ConfirmChoice.SizeKey(W, H) + ", item " + target);
+      }
       if (btn != null || hintKind != "replace") confirmMissSince = 0;
       if (btn == null && hintKind == "replace") {
         // (the journal: why «Заменить» is not pressed - once per selected item). Right after a press the card closes while
@@ -3223,11 +3276,12 @@ namespace RealmForge {
         }
       } else if (btn != null && (btn[1] != hg.Replace(W, H)[1] && btn[1] != hg.Equip(W, H)[1]) && confirmFoundLogged != target) {
         confirmFoundLogged = target;
-        Log.Write("confirm: button found " + (btn[1] - (rep != null ? hg.Replace(W, H)[1] : hg.Equip(W, H)[1])) + " px off its usual place, item " + target);
+        Log.Write("confirm: button found " + (btn[1] - (btn == eq ? hg.Equip(W, H)[1] : hg.Replace(W, H)[1])) + " px off its usual place, item " + target);
       }
       return btn;
     }
-    long confirmMissLogged, confirmFoundLogged, confirmMissSince, confirmMissFor;
+    long confirmMissLogged, confirmFoundLogged, confirmMissSince, confirmMissFor, confirmTieLogged;
+    readonly ConfirmChoice confirmChoice = new ConfirmChoice();
 
     /// <summary>What the confirm search saw (for the report): the window, both buttons' usual rects and their blue share
     /// there, where each search found blue (or none), and the selection / owner / hero shown.</summary>
@@ -3245,6 +3299,7 @@ namespace RealmForge {
       long owner = addrs != null && target > 0 ? RFX.ReadOwner(addrs, target) : -1;
       d["sel"] = "item " + target + " sel " + curSel + " owner " + owner + " hero " + hintHero + " screen hero " + (addrs != null ? RFX.ReadHero(addrs) : 0) + " slot " + hintSlot + " guide " + hintKind;
       d["item"] = target.ToString();
+      d["learned"] = confirmChoice.Learned(W, H);
       return d;
     }
 
