@@ -12,7 +12,7 @@
 #
 # What it never does: click or type anywhere, open a shell for the server, run anything the server sends, or let a job
 # value reach a command line or a file path. The jobs are only:
-#   status | update_app | start_game | restart_app | screenshot | upload_logs | finish | cancel
+#   status | update_app | start_game | restart_app | game_front | screenshot | upload_logs | finish | cancel
 # each with a strict argument schema (see $Schemas). The only processes it starts/stops are the configured test app and,
 # for start_game, the configured game exe (started directly when the game is not running: no launcher, no clicks).
 #
@@ -23,7 +23,7 @@ Set-StrictMode -Version 2
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$RunnerVersion   = '2'
+$RunnerVersion   = '3'
 $Dir             = Join-Path $env:LOCALAPPDATA 'WardsageLab'
 $StopFile        = Join-Path $Dir 'STOP'
 $LogFile         = Join-Path $Dir 'runner.log'
@@ -160,6 +160,7 @@ $Schemas = @{
     update_app  = @{}
     start_game  = @{}
     restart_app = @{}
+    game_front  = @{}
     screenshot  = @{ target = { param($v) $v -is [string] -and $v -ceq 'app' } }
     upload_logs = @{ lines  = { param($v) ($v -is [int] -or $v -is [long]) -and $v -ge 50 -and $v -le 2000 } }
     finish      = @{}
@@ -266,6 +267,37 @@ function Invoke-UpdateApp {
 }
 
 # ---------------------------------------------------------------- start_game (gameExe from the config, directly: no launcher, no clicks)
+# ---------------------------------------------------------------- game window: maximize + bring to front (window calls only, no input)
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class LabWin {
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
+    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+    [DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr h);
+    [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
+}
+"@
+function Set-GameFront {
+    $h = [IntPtr]::Zero
+    foreach ($p in @(Get-Process -Name $GameProcessName -ErrorAction SilentlyContinue)) {
+        try { $p.Refresh(); if ($p.MainWindowHandle -ne [IntPtr]::Zero) { $h = $p.MainWindowHandle } } catch { }
+    }
+    if ($h -eq [IntPtr]::Zero) { Write-Log 'game_front: no game window'; return @{ ok = $false; res = @{ error = 'no_game_window' } } }
+    $maximized = $false
+    try {
+        $zoomed = [LabWin]::IsZoomed($h); $iconic = [LabWin]::IsIconic($h)
+        if ($iconic -or -not $zoomed) { [void][LabWin]::ShowWindow($h, 3); $maximized = $true }      # SW_MAXIMIZE
+        $fg = [LabWin]::SetForegroundWindow($h)
+        Write-Log ('game_front: maximized=' + $maximized + ' foreground=' + $fg)
+        return @{ ok = $true; res = @{ maximized = $maximized; foreground = $fg } }
+    } catch {
+        Write-Log ('game_front failed: ' + (Get-ShortError $_))
+        return @{ ok = $false; res = @{ error = 'game_front_failed' } }
+    }
+}
+function Invoke-GameFront { return (Set-GameFront) }
+
 function Send-Beat {
     try { [void](Invoke-Rpc 'lab_heartbeat' (ConvertTo-StatusJson (Get-Status))) } catch { }
 }
@@ -303,7 +335,7 @@ function Invoke-StartGame {
         $up = @(Get-Process -Name $GameProcessName -ErrorAction SilentlyContinue).Count -gt 0
         if ($seenWindow -and -not $up) { Write-Log 'start_game: the game exited'; return @{ ok = $false; res = @{ error = 'game_needs_launcher'; message = 'exited' } } }
         if ($up -and -not $seenWindow -and (Get-GameWindow)) { $seenWindow = $true }
-        if ($seenWindow -and $el -ge $GameStableSec) { return @{ ok = $true; res = @{ started = $true; game_running = $true } } }
+        if ($seenWindow -and $el -ge $GameStableSec) { [void](Set-GameFront); return @{ ok = $true; res = @{ started = $true; game_running = $true } } }
         if (-not $up -and $el -ge 20 -and -not $seenWindow) { Write-Log 'start_game: no game process'; return @{ ok = $false; res = @{ error = 'game_needs_launcher'; message = 'no process' } } }
         if (-not $seenWindow -and $el -ge $GameWaitSec) { Write-Log 'start_game: no game window'; return @{ ok = $false; res = @{ error = 'game_needs_launcher'; message = 'no window' } } }
         if (((Get-Date) - $lastBeat).TotalSeconds -ge 50) { Send-Beat; $lastBeat = Get-Date }      # the server must still see the laptop online
@@ -374,6 +406,8 @@ function Invoke-RestartApp {
         Write-Log ('restart_app: start failed: ' + $m)
         return @{ ok = $false; res = @{ error = 'start_failed'; message = $m } }
     }
+    Start-Sleep -Seconds 5
+    [void](Set-GameFront)      # the test app took the focus: the game goes back to the front
     return @{ ok = $true; res = @{ started = $true } }
 }
 
@@ -489,6 +523,7 @@ function Invoke-Job($job) {
                 'update_app'  { $out = Invoke-UpdateApp }
                 'start_game'  { $out = Invoke-StartGame }
                 'restart_app' { $out = Invoke-RestartApp }
+                'game_front'  { $out = Invoke-GameFront }
                 'screenshot'  { $out = Invoke-Screenshot $id }
                 'upload_logs' { $out = Invoke-UploadLogs $id $jobArgs }
                 'finish'      { $out = @{ ok = $true; res = @{ bye = $true } }; $script:Exit = $true }

@@ -181,6 +181,7 @@ tick() {
       i=$(dget scn_idx)
       if [ "$i" -ge "${#scenarios[@]}" ]; then phase logs; return; fi
       sc=${scenarios[$i]}
+      mkjob game_front >/dev/null || true   # the game window to the front before each scenario
       row=$("$HERE/lab-seed.sh" "$dev" "$sc" "$build") || row=""
       if [ -z "$row" ]; then step "$sc" false 0 "seed failed (fixture missing?)"; FAILED=1; skip_to_logs; return; fi
       dset row "$row"; dset seeded_at "$(now)"; phase wait_scn ;;
