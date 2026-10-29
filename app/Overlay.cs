@@ -1704,7 +1704,7 @@ namespace RealmForge {
           if (ha.Kind == AutoKind.None) return;
           int hx = o.X + (int)Math.Round(ha.X), hy = o.Y + (int)Math.Round(ha.Y), hy2 = hy + (int)Math.Round(ha.DY);
           if (hx < o.X || hy < o.Y || hx >= o.X + cr.R || hy >= o.Y + cr.B || hy2 < o.Y || hy2 >= o.Y + cr.B) return;
-          EquipSend(hv.FilterOpen ? ClickTarget.EquipFilter : ClickTarget.EquipNav, ha, hx, hy, o, v.Foreground);
+          if (!EquipSend(hv.FilterOpen ? ClickTarget.EquipFilter : ClickTarget.EquipNav, ha, hx, hy, o, v.Foreground)) hpilot.NotSent();   // not counted as a try
           return;
         }
       }
@@ -1768,6 +1768,8 @@ namespace RealmForge {
         if (pre.Reason == "offer" && OfferStep(ClickOwner.Sell, scr, o, cr, front, now)) { SellSay("open"); return; }
         if (pre.Reason == "unknown" && UnknownBackStep(ClickOwner.Sell, scr, o, cr, front, now)) { SellSay("open"); return; }
         if (pre.Verdict == GateVerdict.Wait) { if (pre.Reason == "unknown") SellSay("no_city"); return; }   // pending: the last click's effect is awaited
+        // a pop-up over the inventory (a wait, a notice that came while marking): closed / waited for first, as on every other screen
+        if (MapStep(ClickOwner.Sell, scr, o, cr, front, now)) { SellSay("open"); return; }
       }
       var inv = screens.Inv;
       if (scr != null && scr.Kind == ScreenKind.Inventory && inv != null) {
@@ -2516,6 +2518,12 @@ namespace RealmForge {
       if (topNewNow != "" && st.Kind == topNewKind) { inp.TopNew = topNewNow; st = ScreenState.Classify(inp, now); }
       else if (topUnknownNow != "" && st.Kind == ScreenKind.Unknown) { inp.TopUnknown = topUnknownNow; st = ScreenState.Classify(inp, now); }
       else if (topCityNow != "" && st.Kind == ScreenKind.City) { inp.TopCity = topCityNow; st = ScreenState.Classify(inp, now); }
+      // a pop-up or screen that came since the tick's read of the forms (every 2 s) and before this click: it lies on top. No click now (the
+      // forms count as unread); the next tick takes the new read and closes it first as any pop-up (a gate check now would stop the run on it)
+      if (unknownForms != null && now - unknownFormsAt >= FreshFormsMs && (inp.Offers == null || inp.Offers.Count == 0)) {
+        var fl = RFX.ReadUnknownShownForms(4);
+        if (fl != null && ScreenMap.Newcomers(unknownForms, fl) != "") { unknownForms = fl; unknownFormsAt = now; formsUnread = true; }
+      }
       // a click on a city button also needs the picture of the bar (the form alone is not enough for a click)
       if (wantCity && ScreenState.NeedsCityPicture(st.Kind, inp.CityForm)) {
         bool seen = CityVisible(GameWindow());
@@ -2549,7 +2557,8 @@ namespace RealmForge {
     // ---- the game's offer / notice pop-ups over the city (src/OfferForms.cs): read from the window table, closed by the pilots (OfferClose)
     volatile bool uiFinding; long uiFindAt, unknownFormsAt, lostSearchAt; int lostSearchGen; List<string> unknownForms;
     // the shown unknown forms when the screen became the known one it is (TopNew: the ones that came later are a pop-up on top), and the last results
-    const int TopSettleMs = 3000, TopFlickerMs = 2000;
+    const int TopSettleMs = 3000, TopFlickerMs = 2000, KnownFormsMs = 60000, FreshFormsMs = 500, SettleReadMs = 500;
+    List<string> knownForms, firstForms; long knownFormsAt, firstFormsAt;
     // the window table's read failed this tick (the offers or the shown forms): a pop-up over the screen cannot be ruled out, so no click or key
     // goes to the game until a read succeeds (the read is tried again on the next tick); never set while the table is not known (RFX.UiKnown)
     bool formsUnread; ScreenKind formsKind = ScreenKind.Unknown;   // formsKind: the screen the tick's forms were read for
@@ -2575,8 +2584,13 @@ namespace RealmForge {
       topNewNow = ""; topUnknownNow = ""; topCityNow = "";
       formsKind = cls;
       if (front && (inp.Offers == null || inp.Offers.Count == 0)) {
-        var prevForms = unknownForms;   // the forms of the last read (before this tick's): one not in it came with the screen
-        if (now - unknownFormsAt >= 2000 || unknownFormsAt == 0) { unknownFormsAt = now; unknownForms = RFX.ReadUnknownShownForms(4); if (unknownForms == null) { formsUnread = true; unknownFormsAt = 0; } }
+        // the forms of the last read on the city or a known screen (before this tick's): one not in it came with the screen. A short unknown
+        // stretch between (the slow laptop: the inventory's form is found seconds after it opened) is skipped: a pop-up that came then is new too
+        // (before any: the first read of the run, the forms there when it began - a pop-up that came after it is new as well)
+        var prevForms = knownForms != null && now - knownFormsAt <= KnownFormsMs ? knownForms : firstForms != null && now - firstFormsAt <= KnownFormsMs ? firstForms : unknownForms;
+        // (every 2 s; within a known screen's settle time every SettleReadMs: a part it builds late must be read before that time ends)
+        bool settling = topBaseKind != ScreenKind.Unknown && topBaseKind != ScreenKind.City && now - topBaseAt < TopSettleMs;
+        if (now - unknownFormsAt >= (settling ? SettleReadMs : 2000) || unknownFormsAt == 0) { unknownFormsAt = now; unknownForms = RFX.ReadUnknownShownForms(4); if (unknownForms == null) { formsUnread = true; unknownFormsAt = 0; }  else if (firstForms == null) { firstForms = unknownForms; firstFormsAt = now; } }
         var cur = unknownForms ?? new List<string>();
         foreach (var n in cur) if (unknownSaid.Add(n)) Log.Write("offer: unknown top form " + n + " (not in list)");
         if (cls == ScreenKind.Unknown) {
@@ -2587,6 +2601,7 @@ namespace RealmForge {
         } else if (cls == ScreenKind.City) {
           // over the city: a form the screen map calls a pop-up, a dangerous dialog or a wait covers its buttons (the pilots close it first: MapStep)
           var cov = cur.FindAll(n => "PEDW".IndexOf(ScreenMap.ClassOf(n)) >= 0);
+          if (unknownForms != null) { knownForms = unknownForms; knownFormsAt = now; }
           if (cov.Count > 0) {
             inp.TopCity = topCityNow = string.Join(",", cov.ToArray());
             if (unknownSaid.Add("city:" + topCityNow)) Log.Write("screen map: the city is covered by " + topCityNow + " (" + ScreenMap.ClassName(ScreenMap.ClassOf(ScreenMap.Top(topCityNow))) + ")");
@@ -2603,6 +2618,7 @@ namespace RealmForge {
           // with it or later lies on top, a part the game builds later does not)
           if (now - topBaseAt < TopSettleMs) foreach (var n in cur) if (now == topBaseAt && (prevForms == null || prevForms.Contains(n)) ? ScreenMap.MayBeBase(n) : ScreenMap.MayBeLatePart(n)) topBase.Add(n);
           var fresh = cur.FindAll(n => !topBase.Contains(n));
+          if (unknownForms != null) { knownForms = cur.FindAll(n => topBase.Contains(n)); knownFormsAt = now; }   // (a pop-up on top stays one on the next screen)
           if (fresh.Count > 0) { inp.TopNew = topNewNow = string.Join(",", fresh.ToArray()); topNewKind = cls; }
         }
         if (cls == ScreenKind.Unknown || cls == ScreenKind.City) topBaseKind = cls;
@@ -2684,8 +2700,13 @@ namespace RealmForge {
     /// <summary>The window table (the offers, the shown forms) was not read this tick or for the fresh state: a dialog over the screen is not ruled out.</summary>
     /// A known screen the tick took for another one (its read failed then): the forms over it were not read as its pop-ups either.
     bool FormsUnread(ScreenState fresh) {
-      return RFX.UiKnown && (formsUnread || fresh == null || !fresh.OfferRead || (fresh.Kind != ScreenKind.City && fresh.Kind != ScreenKind.Unknown && fresh.Kind != formsKind));
+      return RFX.UiKnown && (formsUnread || fresh == null || !fresh.OfferRead || (fresh.Kind != ScreenKind.City && fresh.Kind != ScreenKind.Unknown && fresh.Kind != formsKind)
+                             || TickBehind(fresh, screens.Current));
     }
+
+    /// <summary>The fresh read shows a pop-up the tick's screen does not have yet (it came a moment ago; the tracker takes it on the next ticks): the
+    /// pilots' step was made without it - no click now, the pilots close it or wait for it first (a gate check now would stop the run on it).</summary>
+    internal static bool TickBehind(ScreenState fresh, ScreenState tick) { return fresh != null && fresh.ModalOpen && (tick == null || !tick.ModalOpen || tick.Held); }
 
     /// <summary>The one Escape key press (EscapeBack): the gate judges a fresh read (never the city - it asks to quit the game there -, a fight, a
     /// pop-up, the exit dialog); the key goes only to the game in front.</summary>
@@ -3065,7 +3086,7 @@ namespace RealmForge {
           gate.Halt(owner, "target", target + " @" + (int)a.X + "," + (int)a.Y + " lies on a button the artifact steps never press"); AnnounceHalts(); return false;
         }
       }
-      var fresh = FreshScreen(target == ClickTarget.CityInventory, target == ClickTarget.UnknownBack || target == ClickTarget.CityBack);
+      var fresh = FreshScreen(target == ClickTarget.CityInventory, target == ClickTarget.UnknownBack || target == ClickTarget.CityBack || target == ClickTarget.FoundryButton);   // (FoundryButton: the Foundry's form shown unread, ClickGate)
       var req = new ClickRequest { Owner = owner, Target = target, AutoOn = artT ? ArtAutoOn : owner == ClickOwner.Locate ? AutoEnabled && LocateAutoEnabled : AutoEnabled, Front = front, X = a.X, Y = a.Y };
       if (fill != null) fill(req, fresh);
       return GatedSend(req, fresh, a, x, y);

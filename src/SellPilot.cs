@@ -112,6 +112,9 @@ namespace RealmForge {
   public sealed class SellPilot {
     public const int AfterClickMs = 250, AfterDragMs = 500, AfterFilterMs = 1100, UserPauseMs = 4000, MaxClicks = 4000, MaxDrags = 400, MaxMiss = 8, MaxFilterClicks = 12, AfterCloseMs = 300, MaxLevel = 16, ScrollWaitMs = 1500;
     public const double MinDragPx = 24;
+    // a game slower than AfterClickMs (a slow laptop): a choice that changes after the click was judged is a late answer, the waits grow to the latest
+    // answer seen plus this margin (never above MaxLateMs); a fast PC's never change
+    public const int LateMarginMs = 400, MaxLateMs = 4000;
 
     SellGeometry g;
     /// <summary>The list's layout; a new one (the window was resized) starts the anchor over.</summary>
@@ -145,11 +148,16 @@ namespace RealmForge {
     /// <summary>Why the run failed when it is not the pilot's own count: "scroll" = a cell click needed the game's exact scroll and it stayed unreadable.</summary>
     public string FailWhy = "";
     long noScrollSince = -1;
+    long clickAt, lateMs; HashSet<long> seenSel;
+    // a drag on the game's exact scroll: the scroll before it and when, awaited until it moves (or DragLandMs: the list's end)
+    bool dragWait; double dragFrom; long dragAt; int stillDrags;   // stillDrags: drags in a row the scroll did not follow
+    public const int MaxStillDrags = 4;
+    public const int DragLandMs = 2000;   // the last cell click's time, the latest answer seen, the choice on the last tick
 
     public SellPilot(SellGeometry g) { this.g = g; }
 
     /// <summary>A new list from the site, or the run was stopped: start over.</summary>
-    public void Reset() { list = 0; exact = phased = false; waitUntil = pauseUntil = 0; checkClick = false; undo = 0; clicks = drags = misses = filterClicks = endDir = endSeen = 0; resetDone = popup = false; slips.Clear(); skip.Clear(); State = "idle"; FailWhy = ""; noScrollSince = -1; }
+    public void Reset() { list = 0; exact = phased = false; waitUntil = pauseUntil = 0; checkClick = dragWait = false; stillDrags = 0; undo = 0; clicks = drags = misses = filterClicks = endDir = endSeen = 0; resetDone = popup = false; slips.Clear(); skip.Clear(); State = "idle"; FailWhy = ""; noScrollSince = -1; }
 
     public AutoAction Step(SellView v) {
       var s = v.Screen;
@@ -162,6 +170,23 @@ namespace RealmForge {
       // after a drag: the stat bars on the screen give the rows' exact phase (the drag's error is well under half a row)
       // the game says where the list is scrolled: that is exact, whatever a drag did (the picture is the last resort)
       if (!double.IsNaN(v.Row1)) { row1 = v.Row1; exact = true; phased = true; noScrollSince = -1; }
+      // the choice changed with no click awaited, after the last one was judged: the game answers late
+      if (!checkClick && seenSel != null && clickAt > 0 && !seenSel.SetEquals(s.Selected)) {
+        long dt = v.NowMs - clickAt;
+        if (dt > AfterClickMs && dt <= MaxLateMs && dt > lateMs) { lateMs = dt; Say("late answer " + dt + " ms"); }
+      }
+      seenSel = new HashSet<long>(s.Selected);
+      // the drag's answer: the game's scroll moves (late on a slow laptop: a click or drag on the old scroll would miss the list's new place)
+      if (dragWait && !double.IsNaN(v.Row1)) {
+        long dt = v.NowMs - dragAt;
+        if (Math.Abs(v.Row1 - dragFrom) > 1) { dragWait = false; stillDrags = 0; if (dt > AfterDragMs && dt <= MaxLateMs && dt > lateMs) { lateMs = dt; Say("late drag " + dt + " ms"); } }
+        else if (dt < Math.Max(DragLandMs, Late(AfterDragMs))) { State = "work"; return AutoAction.Nothing; }
+        else {
+          // the list did not move (its end, or something over it takes the drags): again and again - a stop, not drags for ever
+          dragWait = false;
+          if (++stillDrags >= MaxStillDrags) { State = "failed"; FailWhy = "drag"; Say("the list did not move on " + stillDrags + " drags"); return AutoAction.Nothing; }
+        }
+      }
       if (!exact && !phased && !double.IsNaN(v.Phase)) Snap(v);
       if (v.UserClicked) pauseUntil = v.NowMs + UserPauseMs;
       // the unreadable-scroll clock runs only while the pilot works: a pause, the background or a screen change starts it over
@@ -172,7 +197,7 @@ namespace RealmForge {
       if (v.UserBusy || v.NowMs < pauseUntil) { if (!failed) State = "paused"; checkClick = false; return AutoAction.Nothing; }
       if (v.NowMs < waitUntil) { if (!failed) State = "work"; return AutoAction.Nothing; }
 
-      if (checkClick) { checkClick = false; AfterClick(v); }
+      if (checkClick) { checkClick = false; AfterClick(v); seenSel = new HashSet<long>(s.Selected); }
       if (undo != 0) { var uc = ClosePopupFor(v, undoX, undoY); return uc ?? Undo(v); }
       if (State == "failed") return AutoAction.Nothing;
 
@@ -206,7 +231,7 @@ namespace RealmForge {
         var pc = ClosePopupFor(v, cx, cy); if (pc != null) return pc;
         if (clicks >= MaxClicks) return Fail();
         clicks++;
-        meant = next; meantCol = p[1]; curBefore = s.Current; selBefore = new HashSet<long>(s.Selected); clickY = cy; clickX = cx; checkClick = true; waitUntil = v.NowMs + AfterClickMs;
+        meant = next; meantCol = p[1]; curBefore = s.Current; selBefore = new HashSet<long>(s.Selected); clickY = cy; clickX = cx; checkClick = true; clickAt = v.NowMs; waitUntil = v.NowMs + Late(AfterClickMs);
         popup = Enhanceable(v, next);
         Say("click " + next + " r" + p[0] + "c" + p[1] + " y" + (int)cy + (exact ? " exact" : phased ? " phased" : " est"));
         return new AutoAction { Kind = AutoKind.Click, X = cx, Y = cy };
@@ -221,7 +246,8 @@ namespace RealmForge {
       Say("drag " + (int)dy + " for " + next + " r" + p[0] + " y" + (int)cy);
       drags++; beforeDrag = row1; lastDrag = dy; measure = true;
       row1 += dy * GainFor(dy); exact = phased = false;
-      waitUntil = v.NowMs + AfterDragMs;
+      waitUntil = v.NowMs + Late(AfterDragMs);
+      if (!double.IsNaN(v.Row1)) { dragWait = true; dragFrom = v.Row1; dragAt = v.NowMs; }
       return new AutoAction { Kind = AutoKind.Drag, X = g.StripCentreX(v.W, v.U), Y = y0, DY = dy };
     }
 
@@ -247,7 +273,7 @@ namespace RealmForge {
       var s = v.Screen;
       if (double.IsNaN(g.PartX0)) return null;   // no filter on this screen (the inventory: a filter change clears the choice)
       if (!resetDone && Missing > 0) {
-        resetDone = true; filterClicks++; waitUntil = v.NowMs + AfterFilterMs;
+        resetDone = true; filterClicks++; waitUntil = v.NowMs + Late(AfterFilterMs);
         var r = g.Reset(v.W, v.H, v.U); return new AutoAction { Kind = AutoKind.Click, X = r[0], Y = r[1] };
       }
       if (v.Parts == null || v.Parts.Count == 0) return null;
@@ -255,7 +281,7 @@ namespace RealmForge {
       if (want.Count == 5) want.Clear();                       // every part: no part filter (the game shows all then)
       for (int p = 0; p <= 4; p++) {
         if (want.Contains(p) == s.Parts.Contains(p)) continue;
-        filterClicks++; waitUntil = v.NowMs + AfterFilterMs;
+        filterClicks++; waitUntil = v.NowMs + Late(AfterFilterMs);
         var c = g.Part(p, v.W, v.H, v.U); return new AutoAction { Kind = AutoKind.Click, X = c[0], Y = c[1] };
       }
       return null;
@@ -291,12 +317,16 @@ namespace RealmForge {
         // a neighbour that is not wanted went on the choice: take it off again (same place)
         if (hit != meant && !v.Wanted.Contains(hit) && s.Selected.Contains(hit)) { undo = hit; undoY = clickY; undoX = clickX; undoTries = 0; }   // at the very place it was hit
       } else {
-        // nothing clicked (a gap, a title): the estimate is off by part of a row
-        exact = false; popup = true;   // perhaps «Быстрое улучшение» took the click: closed before the next one
+        // nothing clicked (a gap, a title): the estimate is off by part of a row. With the game's own scroll the place is exact: the click
+        // was not taken or its answer is late (a slow laptop) - the same place again, never a guess beside it (it went off the cells)
+        popup = true;   // perhaps «Быстрое улучшение» took the click: closed before the next one
         if (++misses >= MaxMiss) { State = "failed"; Say("missed " + misses + " times"); }
-        else row1 += (misses % 2 == 1 ? 1 : -1) * g.PitchY * v.U * 0.35 * misses;   // +0.35, −0.7, +1.05 … of a row around the estimate
+        else if (double.IsNaN(v.Row1)) { exact = false; row1 += (misses % 2 == 1 ? 1 : -1) * g.PitchY * v.U * 0.35 * misses; }   // +0.35, −0.7, +1.05 … of a row around the estimate
       }
     }
+
+    /// <summary>A wait after an action: as given, or on a game seen answering late, at least its latest answer and a margin.</summary>
+    long Late(long ms) { return lateMs > 0 ? Math.Max(ms, Math.Min(MaxLateMs, lateMs + LateMarginMs)) : ms; }
 
     // «Быстрое улучшение» opens by itself after a click on an item that can still be upgraded, over the lower middle of
     // the list (its «Улучшить», under the list, spends resources: never clicked). A click at (x, y) under it closes it
@@ -304,7 +334,7 @@ namespace RealmForge {
     // pilot keeps its own idea of whether it is shown). Elsewhere the click goes straight on: the panel follows the item.
     AutoAction ClosePopupFor(SellView v, double x, double y) {
       if (!popup || !g.InPopup(x, y, v.W, v.U)) return null;
-      popup = false; waitUntil = v.NowMs + AfterCloseMs; Say("close");
+      popup = false; waitUntil = v.NowMs + Late(AfterCloseMs); Say("close");
       var c = g.Close(v.W, v.H, v.U); return new AutoAction { Kind = AutoKind.Click, X = c[0], Y = c[1] };
     }
 
@@ -314,7 +344,7 @@ namespace RealmForge {
       if (!v.Screen.Selected.Contains(undo)) { undo = 0; return AutoAction.Nothing; }
       if (++undoTries > 3) { undo = 0; return Fail(); }
       meant = undo; curBefore = v.Screen.Current; selBefore = new HashSet<long>(v.Screen.Selected); clickY = undoY; checkClick = false; popup = Enhanceable(v, undo);
-      waitUntil = v.NowMs + AfterClickMs;
+      clickAt = v.NowMs; waitUntil = v.NowMs + Late(AfterClickMs);
       return new AutoAction { Kind = AutoKind.Click, X = undoX, Y = undoY };
     }
 

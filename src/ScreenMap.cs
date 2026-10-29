@@ -69,6 +69,14 @@ namespace RealmForge {
     /// <summary>A form that comes a moment AFTER the known screen (within its settle time) counts as a part the game builds late only when the map
     /// does not call it a screen or a pop-up of its own: a back-arrow screen, a close-button or Escape pop-up opened then lies on top (a reward
     /// shown as the hero screen opens took the pilot's grid clicks), as do a dangerous dialog and a wait.</summary>
+    /// <summary>The forms of a fresh window table read that the last read did not have and the map calls a screen, a pop-up, a dangerous dialog or a
+    /// wait: one that came since (the table is read every 2 s; a pop-up a moment before a click lies on top). "" = none; a joined list otherwise.</summary>
+    public static string Newcomers(ICollection<string> last, ICollection<string> fresh) {
+      if (last == null || fresh == null) return "";
+      var l = new List<string>();
+      foreach (var n in fresh) if (!last.Contains(n) && "FPEDW".IndexOf(ClassOf(n)) >= 0) l.Add(n);
+      return string.Join(",", l.ToArray());
+    }
     public static bool MayBeLatePart(string name) { char c = ClassOf(name); return MayBeBase(name) && c != 'F' && c != 'P' && c != 'E'; }
 
     static double X(char a, double off, double W, double U) { return (a == 'L' ? 0 : a == 'C' ? W / 2 : W) + off * U; }

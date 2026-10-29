@@ -451,6 +451,7 @@ namespace RealmForge {
       return false;
     }
     static readonly string[] BattleForms = { "Form_Battle" };
+    static readonly string[] FoundryForms = { "Form_EquipSubliming" };
     /// <summary>The game's exit question is shown (as the top unknown form, a pop-up's name or a new form over a screen).</summary>
     public static bool ExitDialogShown(ScreenState s) {
       return s != null && (HasForm(s.TopForm, ExitDialogForms) || HasForm(s.ModalWhy, ExitDialogForms) || HasForm(s.Offer, ExitDialogForms));
@@ -844,7 +845,9 @@ namespace RealmForge {
       }
       if (rule.FoundryClosed) {
         if (f.Rs != null && f.Rs.SublimingOpen) return Halt(r.Owner, "screen", tag + ": the Foundry is open (" + f.Brief + ")");
-        if (r.FoundryUnread) {   // waited for while a search can find it (the host asks for one), then a stop
+        // the window table shows the Foundry's form while its memory read does not have it yet (the slow laptop finds it seconds after it opens,
+        // the pilot started with it open): it lies over the inventory, «Литейная» would hit its «Вознести» - the same wait
+        if (r.FoundryUnread || HasForm(f.ShownKnown, FoundryForms)) {   // waited for while a search can find it (the host asks for one), then a stop
           long since;
           if (!foundryWait.TryGetValue(r.Owner, out since)) { since = now; foundryWait[r.Owner] = now; }
           string d = tag + ": the Foundry's form cannot be read - it may be open over the inventory (its «Вознести» lies there)";

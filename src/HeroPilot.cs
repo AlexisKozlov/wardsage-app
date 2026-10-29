@@ -101,6 +101,35 @@ namespace RealmForge {
     /// <summary>The click or drag to make, <see cref="AutoAction.Nothing"/> to wait, or null: the hero screen shows the
     /// plan's hero with the gear tab (or there is nothing to do), the gear pilots go on.</summary>
     public AutoAction Step(HeroView v) {
+      if (unsent != null) unsentRun = 0;   // the last action went out
+      var before = Save();
+      var a = StepCore(v);
+      unsent = a != null && a.Kind != AutoKind.None ? before : null;
+      return a;
+    }
+
+    /// <summary>The action of the last Step did not go out (the gate waited, a read failed before the click): it does not count as a try, and its
+    /// answer is not awaited - the pilot is as before it (an unsent «Герои» click took the city's two tries, then "noscreen").</summary>
+    public void NotSent() { if (unsent != null && ++unsentRun <= MaxUnsent) Load(unsent); unsent = null; }
+    /// <summary>Refused actions in a row taken back; beyond this they count again (a gate that never lets one out ends in the pilot's own stop).</summary>
+    public const int MaxUnsent = 60;
+    int unsentRun;
+
+    sealed class Saved { public long WaitUntil, HeroBefore, PickAt; public int Clicks, Drags, Backs, Tabs, Misses, City, Total, BestDist, FilterPhase, FunnelTries, FactionTries, ClearTries, ClassResets, DoneCloses;
+                         public bool Has, Pending, ClassClicked, FactionDone, ClassDone; public double Lo, Hi, ClickY; }
+    Saved unsent;
+    Saved Save() {
+      return new Saved { WaitUntil = waitUntil, HeroBefore = heroBefore, PickAt = pickAt, Clicks = clicks, Drags = drags, Backs = backs, Tabs = tabs, Misses = misses, City = city, Total = total,
+                         BestDist = bestDist, FilterPhase = filterPhase, FunnelTries = funnelTries, FactionTries = factionTries, ClearTries = clearTries, ClassResets = classResets,
+                         DoneCloses = doneCloses, Has = has, Pending = pending, ClassClicked = classClicked, FactionDone = factionDone, ClassDone = classDone, Lo = lo, Hi = hi, ClickY = clickY };
+    }
+    void Load(Saved x) {
+      waitUntil = x.WaitUntil; heroBefore = x.HeroBefore; pickAt = x.PickAt; clicks = x.Clicks; drags = x.Drags; backs = x.Backs; tabs = x.Tabs; misses = x.Misses; city = x.City; total = x.Total;
+      bestDist = x.BestDist; filterPhase = x.FilterPhase; funnelTries = x.FunnelTries; factionTries = x.FactionTries; clearTries = x.ClearTries; classResets = x.ClassResets;
+      doneCloses = x.DoneCloses; has = x.Has; pending = x.Pending; classClicked = x.ClassClicked; factionDone = x.FactionDone; classDone = x.ClassDone; lo = x.Lo; hi = x.Hi; clickY = x.ClickY;
+    }
+
+    AutoAction StepCore(HeroView v) {
       if (v.Plan != plan) { plan = v.Plan; Restart(); retries = 0; }
       if (State == "failed" && failedAt == 0) failedAt = v.NowMs;
       if (State == "failed" && retries < MaxRetries && v.NowMs - failedAt >= RetryMs) { retries++; Restart(); }

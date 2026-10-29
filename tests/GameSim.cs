@@ -30,6 +30,14 @@ static partial class CoreTests {
     public readonly double W = 1920, H = 1009, U;
     public readonly FakeHeroGame Hero; readonly HeroGeometry hg = new HeroGeometry();
     public bool InvEquipTab, InvBulk; public int FoundryTab;
+    // the inventory's equipment list (8 columns; «Массовая продажа» ticks its cells) and the Foundry's Ascension list (5 columns, the slot tabs
+    // narrow it): their items, the ticked / selected ones, the scroll (the game's units: a row is 118 / 108)
+    public readonly List<long> InvItems = new List<long>(); public readonly HashSet<long> InvSel = new HashSet<long>(); public double InvScrollY; public ulong InvPtr = 11;
+    public readonly List<long> AscAll = new List<long>(); public readonly Dictionary<long, int> AscSlot = new Dictionary<long, int>();
+    public readonly HashSet<int> AscParts = new HashSet<int>(); public long AscSel; public double AscScrollY;
+    public const int InvCols = 8, InvRowUnits = 118, AscCols = 5, AscRowUnits = 108;
+    public readonly SellGeometry InvGeo; public GameGeometry Geo;
+    public readonly HashSet<string> StartForms = new HashSet<string>();   // the forms there at the start (over or under a screen: nobody can tell)
     public readonly List<string> Bad = new List<string>(), Log = new List<string>();
     public readonly StringBuilder Acts = new StringBuilder();   // every click / drag / Escape with its time (--digest)
     public int CityEscapes;
@@ -37,14 +45,40 @@ static partial class CoreTests {
     // the slow laptop: the reader finds the inventory / Foundry form some seconds after it first opens; a lost form is searched for 17 s
     readonly Dictionary<string, long> findAt = new Dictionary<string, long>();
     public long LostFrom = -1, LostTo = -1;
-    readonly Dictionary<string, int> order = new Dictionary<string, int>();
+    // a known screen's own part the game builds within the first seconds (a form the screen map does not know): never a pop-up on top
+    readonly Dictionary<string, string> latePart = new Dictionary<string, string>(); readonly Dictionary<string, long> latePartAt = new Dictionary<string, long>();
+    readonly Dictionary<string, int> order = new Dictionary<string, int>(); readonly Dictionary<string, long> openAt = new Dictionary<string, long>();
+    // the window table is read every 2 s (and fresh when the screen changes): a form shown longer than this before a click had to be seen
+    const long SeenWithinMs = 2600;
     public long Now;
     public SimGame(int seed, bool slow, double failP) {
       R = new Random(seed); Slow = slow; FailP = failP; U = Ui.Unit(W, H);
       Hero = new FakeHeroGame(hg, W, U);
       var all = new List<long>(); for (int i = 0; i < 30; i++) all.Add(100 + i);
       Hero.All = all.ToArray(); Hero.Heroes = all.ToArray(); Hero.CityHero = 100; Hero.Tab = R.Next(2) == 0 ? 3 : 1;
+      InvGeo = SellGeometry.Inventory(W, U, InvCols);
+      int ni = 20 + R.Next(60); for (int i = 0; i < ni; i++) InvItems.Add(9000 + i);
+      int na = 3 + R.Next(40); for (int i = 0; i < na; i++) { long u = 600 + i; AscAll.Add(u); AscSlot[u] = R.Next(5); }
+      AscAll.Insert(R.Next(AscAll.Count + 1), SimItem); AscSlot[SimItem] = 3;
     }
+    public List<long> AscShown() { var l = new List<long>(); foreach (var u in AscAll) if (AscParts.Count == 0 || AscParts.Contains(AscSlot[u])) l.Add(u); return l; }
+    double InvPitch { get { return InvGeo.PitchY * U; } }
+    double InvMaxScroll { get { int rows = (InvItems.Count + InvCols - 1) / InvCols; double px = rows * InvPitch + InvGeo.TopPad * U - (InvGeo.ViewBottomPx(H, U) - InvGeo.ViewTopPx(U)); return Math.Max(0, px) * InvRowUnits / InvPitch; } }
+    double AscK { get { return U / GameGeometry.CanvasH; } }
+    double AscMaxScroll { get { var v = Geo.Rect("ascend.list", W, H, U); int rows = (AscShown().Count + AscCols - 1) / AscCols; return Math.Max(0, rows * AscRowUnits - v.H / AscK); } }
+    /// <summary>The Foundry's state as the game holds it (also the truth the game's own clicks are judged on).</summary>
+    public RecastScreen Rs() {
+      var parts = new List<int>(AscParts); parts.Sort();
+      return new RecastScreen { SublimingOpen = true, CurType = FoundryTab, AscendShown = FoundryTab == 2, AscendEquips = FoundryTab == 2 ? AscShown().ToArray() : new long[0],
+                                AscendSel = FoundryTab == 2 ? AscSel : 0, AscendParts = parts.ToArray(),
+                                AscendList = FoundryTab == 2 ? new RFX.ListRead { ScrollY = AscScrollY, Cols = AscCols, RowUnits = AscRowUnits } : null };
+    }
+    public InventoryScreen Inv() {
+      var inv = new InventoryScreen { Open = true, EquipTab = InvEquipTab, Bulk = InvBulk, BulkKnown = true, ListPtr = InvPtr };
+      if (InvEquipTab) { inv.Uids.AddRange(InvItems); foreach (var u in InvSel) inv.Selected.Add(u); inv.List = new RFX.ListRead { ScrollY = InvScrollY, Cols = InvCols, RowUnits = InvRowUnits }; }
+      return inv;
+    }
+    double InvRow1 { get { return InvGeo.ViewTopPx(U) + InvGeo.TopPad * U - InvScrollY * InvPitch / InvRowUnits; } }
     void Say(string t) { Log.Add(Now + " " + t); if (Log.Count > 60) Log.RemoveAt(0); }
     public long Lat() { return Slow ? 600 + R.Next(900) : 80 + R.Next(170); }   // the game's answer (the fast PC: within the click's own send time)
     void Later(long ms, Action a) { due.Add(new KeyValuePair<long, Action>(Now + ms, a)); }
@@ -62,10 +96,12 @@ static partial class CoreTests {
     public string Top { get { for (int i = Stack.Count - 1; i >= 0; i--) if (ScreenMap.ClassOf(Stack[i]) != 'O') return Stack[i]; return SimCity; } }
     public bool CityClear { get { return Top == SimCity; } }
     public void Push(string f) {
-      Stack.Add(f); Say("open " + f);
+      Stack.Add(f); Say("open " + f); openAt[f] = Now;
       if (ScreenMap.ClassOf(f) == 'W') { long ms = 2000 + R.Next(8000); Later(ms, () => Remove(f)); }   // a loading / result screen goes by itself
       if (Slow && (f == SimInv || f == SimFoundry) && !findAt.ContainsKey(f)) findAt[f] = Now + 3000 + R.Next(5000);
       if (!Slow && !findAt.ContainsKey(f)) findAt[f] = Now;
+      if ((f == SimHero || f == SimInv || f == SimFoundry) && R.Next(3) == 0) { latePart[f] = f + "_SimPart"; latePartAt[f] = Now + 200 + R.Next(2500); }
+      else if (f == SimHero || f == SimInv || f == SimFoundry) latePart.Remove(f);
     }
     void Pop(string f) { int i = Stack.LastIndexOf(f); if (i > 0) { Stack.RemoveAt(i); Say("close " + f); } }   // (an overlay above it stays)
     void Remove(string f) { int i = Stack.LastIndexOf(f); if (i > 0) { Stack.RemoveAt(i); Say("gone " + f); } }
@@ -84,22 +120,25 @@ static partial class CoreTests {
     /// <summary>What the app's readers give this tick (memory: the known forms; the window table: the offers).</summary>
     public ScreenInputs Read() {
       var i = new ScreenInputs { Offers = Fail() ? null : new List<string>(), ShownKnown = "" };
+      if (i.Offers != null) foreach (var f in Stack) if (OfferForms.IsOffer(f)) i.Offers.Add(f);
       string full = Full;
       i.CityForm = full == SimCity;
       bool heroOn = full == SimHero;
       if (Stack.Contains(SimHero) && !Fail()) i.Hero = new HeroScreen { Hero = Hero.Shown, FormOk = heroOn, Tab = Hero.Tab, Part = Hero.Part, Heroes = Hero.Heroes, GridPtr = Hero.Grid };
       else if (!Fail()) i.Hero = new HeroScreen { Hero = 0, FormOk = false };
       if ((full == SimInv || full == SimFoundry) && Found(SimInv) && !Fail())
-        i.Inv = new InventoryScreen { Open = true, EquipTab = InvEquipTab, Bulk = InvBulk, BulkKnown = true };
+        i.Inv = Inv();
       if (full == SimFoundry && Found(SimFoundry) && !Fail())
-        i.Rs = new RecastScreen { SublimingOpen = true, CurType = FoundryTab, AscendShown = FoundryTab == 2, AscendEquips = FoundryTab == 2 ? new long[] { 501, SimItem, 502 } : new long[0] };
+        i.Rs = Rs();
       return i;
     }
     /// <summary>The shown forms nobody knows (the window table, in no order); null = the read failed.</summary>
     public List<string> Unknown() {
       if (Fail()) return null;
       var l = new List<string>();
-      foreach (var f in Stack) if (Array.IndexOf(OfferForms.KnownScreens, f) < 0) l.Add(f);
+      foreach (var f in Stack) if (Array.IndexOf(OfferForms.KnownScreens, f) < 0 && !OfferForms.IsOffer(f)) l.Add(f);
+      string part; long at;   // a form the known screen on top builds a moment after it opens (no pop-up: a part of the screen)
+      if (latePart.TryGetValue(Full, out part) && latePartAt.TryGetValue(Full, out at) && Now >= at) l.Add(part);
       // in no order the app can rely on, but the same while the forms stay (a hash table's order): a key per form for the whole run
       foreach (var f in l) if (!order.ContainsKey(f)) order[f] = R.Next();
       l.Sort((a, b) => order[a].CompareTo(order[b]));
@@ -111,6 +150,7 @@ static partial class CoreTests {
       return string.Join(",", l.ToArray());
     }
 
+    static bool In(GeoRect r, double x, double y) { return r != null && x >= r.X && x <= r.Right && y >= r.Y && y <= r.Bottom; }
     bool Near(double x, double y, double px, double py, double tol) { return Math.Abs(x - px) <= tol && Math.Abs(y - py) <= tol; }
     bool OnBack(double x, double y) { return Near(x, y, hg.BackX * U, hg.BackY * U, 15); }
 
@@ -120,6 +160,14 @@ static partial class CoreTests {
       if (c == 'D') { Bad.Add("CLICK ON A DANGEROUS FORM " + top + " @" + (int)x + "," + (int)y + " (" + tg + ")"); return; }
       if (ScreenMap.OnNever(top, x, y, W, H, U)) { Bad.Add("CLICK ON A NEVER-CLICK BUTTON of " + top + " @" + (int)x + "," + (int)y + " (" + tg + ")"); return; }
       Say("click " + tg + " @" + (int)x + "," + (int)y + " on " + top); Acts.Append(Now + " c" + (int)x + "," + (int)y + ";");
+      // a click meant for a screen that lands on a pop-up / screen opened over it since the start, long enough ago for the app to have seen it
+      long oa; if (ScreenTarget(tg) && c != 'K' && !StartForms.Contains(top) && "PEF".IndexOf(c) >= 0 && openAt.TryGetValue(top, out oa) && Now - oa > SeenWithinMs)
+        Bad.Add("A " + tg + " CLICK LANDED ON " + top + " (" + c + ") opened over the screen after the start @" + (int)x + "," + (int)y);
+      if (OfferForms.IsOffer(top)) {
+        if (OfferForms.OnNeverButton(top, x, y, W, H, U)) { Bad.Add("CLICK ON A PLAN BUTTON of " + top + " @" + (int)x + "," + (int)y + " (" + tg + ")"); return; }
+        long l0 = Lat(); if (OfferForms.OnClose(Geo, top, x, y, W, H, U)) Later(l0, () => Pop(top));
+        return;
+      }
       long lat = Lat(); MaybeSpawn();
       if (c == 'F' || c == 'P' || c == 'U') {
         if (c != 'U' && ScreenMap.OnExit(top, x, y, W, H, U)) Later(lat, () => Pop(top));
@@ -128,11 +176,17 @@ static partial class CoreTests {
       }
       if (c != 'K') return;   // E: only the back key closes it; W: nothing takes clicks
       if (top == SimCity) {
-        if (tg == ClickTarget.CityInventory && Near(x, y, W - (0.5222 + 0.9316) * U, H - hg.HeroesBtnDY * U, 20)) { Later(lat, () => { InvEquipTab = R.Next(2) == 0; InvBulk = false; Push(SimInv); }); return; }
+        if (tg == ClickTarget.CityInventory && Near(x, y, W - (0.5222 + 0.9316) * U, H - hg.HeroesBtnDY * U, 20)) {
+          // now and then the bar has moved and the click takes «Сборка» next to «Инвентарь»: «План сборки» opens (a full screen of the offer list)
+          if (R.Next(25) == 0) { Later(lat, () => Push("Form_EquipmentPlan")); return; }
+          Later(lat, () => { InvEquipTab = R.Next(2) == 0; InvBulk = false; InvSel.Clear(); InvScrollY = 0; Push(SimInv); }); return;
+        }
         if (Near(x, y, W - hg.HeroesBtnDX * U, H - hg.HeroesBtnDY * U, 20)) Later(lat, () => { if (TopForm() != SimCity) return; Hero.Part = -1; Hero.Shown = Hero.CityHero; Push(SimHero); });
         return;
       }
       if (top == SimHero) {
+        // the gear tab's neighbour «План сборки» (a click a little off it opens the build plan screen)
+        if (Near(x, y, W - hg.GearTabDX * U, hg.GearTabY * U, 20) && R.Next(25) == 0) { Later(lat, () => Push("Form_EquipmentPlan")); return; }
         Later(lat, () => {
           if (TopForm() != SimHero) return;
           Hero.City = false; Hero.Blocked = false; Hero.Click(x, y);
@@ -143,21 +197,56 @@ static partial class CoreTests {
       if (top == SimInv) {
         if (OnBack(x, y)) { Later(lat, () => Pop(SimInv)); return; }
         if (Near(x, y, 0.085 * U, 0.315 * U, 20)) { Later(lat, () => { InvEquipTab = true; InvBulk = false; }); return; }
-        if (InvEquipTab && Near(x, y, 0.5867 * U, H - 0.0723 * U, 20)) { Later(lat, () => { InvBulk = true; }); return; }
+        var bs = Geo.Rect("inventory.bulkSell", W, H, U); var bb = Geo.Rect("inventory.bulkBack", W, H, U);
+        if (InvEquipTab && InvBulk) {
+          // «Массовая продажа»: the same button is «Продать» now (never pressed), «Назад» leaves the mode, a cell ticks / unticks its item
+          if (In(bs, x, y)) { Bad.Add("CLICK ON «Продать» (bulk sale) @" + (int)x + "," + (int)y + " (" + tg + ")"); return; }
+          if (In(bb, x, y)) { Later(lat, () => { InvBulk = false; InvSel.Clear(); }); return; }
+          long u = ClickGate.InvCellUid(Inv(), InvGeo, InvRow1, InvCols, x, y, W, U);
+          if (u != 0) Later(lat, () => { if (TopForm() == SimInv && InvBulk) { if (!InvSel.Remove(u)) InvSel.Add(u); } });
+          return;
+        }
+        if (InvEquipTab && Near(x, y, 0.5867 * U, H - 0.0723 * U, 20)) { Later(lat, () => { InvBulk = true; InvSel.Clear(); }); return; }
         if (tg == ClickTarget.FoundryButton) { Later(lat, () => { FoundryTab = R.Next(2) == 0 ? 0 : 3; Push(SimFoundry); }); return; }
         return;
       }
       if (top == SimFoundry) {
         if (OnBack(x, y)) { Later(lat, () => Pop(SimFoundry)); return; }
-        if (tg == ClickTarget.AscendTab) Later(lat, () => { FoundryTab = 2; });
+        if (tg == ClickTarget.AscendTab) { Later(lat, () => { FoundryTab = 2; AscSel = 0; AscScrollY = 0; }); return; }
+        if (FoundryTab == 2) {
+          var ab = Geo.Rect("ascend.button", W, H, U); if (In(ab, x, y)) { Bad.Add("CLICK ON «Вознести» @" + (int)x + "," + (int)y + " (" + tg + ")"); return; }
+          var st = Geo.Rect("ascend.slot.3", W, H, U);
+          if (In(st, x, y)) { Later(lat, () => { if (!AscParts.Remove(3)) AscParts.Add(3); AscScrollY = 0; }); return; }
+          long u = ClickGate.AscendCellUid(Geo, Rs(), x, y, W, H, U);
+          if (u != 0) Later(lat, () => { if (TopForm() == SimFoundry && FoundryTab == 2 && AscShown().Contains(u)) AscSel = u; });
+        }
       }
     }
 
     /// <summary>A drag: the hero grid follows it; on anything else it is a press on its start point.</summary>
     public void Drag(double x, double y, double dy, ClickTarget tg) {
-      if (TopForm() != SimHero) { Click(x, y, tg); return; }
+      string top = TopForm();
+      if (top == SimInv && InvBulk || top == SimFoundry && FoundryTab == 2) {   // a list follows the pointer
+        Say("drag " + tg + " @" + (int)x + "," + (int)y + " by " + (int)dy + " on " + top); Acts.Append(Now + " d" + (int)x + "," + (int)y + "," + (int)dy + ";");
+        bool inv = top == SimInv;
+        Later(Lat(), () => {
+          if (TopForm() != top) return;
+          if (inv) InvScrollY = Math.Max(0, Math.Min(InvMaxScroll, InvScrollY - dy * InvRowUnits / InvPitch));
+          else AscScrollY = Math.Max(0, Math.Min(AscMaxScroll, AscScrollY - dy / AscK));
+        });
+        return;
+      }
+      if (top != SimHero) { Click(x, y, tg); return; }
       Say("drag " + tg + " @" + (int)x + "," + (int)y + " by " + (int)dy); Acts.Append(Now + " d" + (int)x + "," + (int)y + "," + (int)dy + ";");
       Later(Lat(), () => { if (TopForm() == SimHero) Hero.Drag(dy); });
+    }
+
+    static bool ScreenTarget(ClickTarget t) {
+      switch (t) {
+        case ClickTarget.EquipNav: case ClickTarget.InvBulkCell: case ClickTarget.InvListDrag: case ClickTarget.InvEquipTab: case ClickTarget.InvBulkEnter:
+        case ClickTarget.FoundryButton: case ClickTarget.AscendTab: case ClickTarget.SlotTab: case ClickTarget.AscendCell: case ClickTarget.AscendDrag: return true;
+      }
+      return false;
     }
 
     /// <summary>The Escape key: closes an E / P / F form (and the app's screens); on the city the game asks to quit.</summary>
@@ -200,8 +289,12 @@ static partial class CoreTests {
     public string PilotState = "";
     public string HeroWhy { get { return hp.Why; } }
     public long SendingUntil;   // app/Overlay.cs Send: the cursor moves and the click take ~300 ms on their own thread; no tick reads the screens meanwhile
+    readonly SellPilot spilot = new SellPilot(new SellGeometry()); readonly InvScroll sellScroll = new InvScroll(); public readonly HashSet<long> Wanted = new HashSet<long>();
+    public string SellWhy { get { return spilot.FailWhy; } }
     public SimHost(SimGame g, ClickOwner o, long plan, GameGeometry geo) {
       G = g; Owner = o; this.plan = plan; this.geo = geo;
+      spilot.Geometry = g.InvGeo;
+      int nw = 1 + g.R.Next(8); while (Wanted.Count < nw) Wanted.Add(g.InvItems[g.R.Next(g.InvItems.Count)]);
       req = new LocateRequest { Id = "sim", Purpose = "ascend", Item = new PlanItem { Uid = SimItem, Slot = 3, Level = 16, Stars = 5 } };
       Gate.FormSearchPending = t => t == ClickTarget.CityInventory ? G.Searching(SimInv) : t == ClickTarget.FoundryButton && G.Searching(SimFoundry);
       Gate.FormFound = t => t == ClickTarget.CityInventory ? !G.Searching(SimInv) : t == ClickTarget.FoundryButton && !G.Searching(SimFoundry);
@@ -209,23 +302,31 @@ static partial class CoreTests {
     double W { get { return G.W; } } double H { get { return G.H; } } double U { get { return G.U; } }
 
     // ReadOffersInto (app/Overlay.cs): the forms nobody knows, read every 2 s; over a known screen the ones that came later are a pop-up
-    const int TopSettleMs = 3000, TopFlickerMs = 2000;
+    const int TopSettleMs = 3000, TopFlickerMs = 2000, KnownFormsMs = 60000, FreshFormsMs = 500, SettleReadMs = 500;
+    List<string> knownForms, firstForms; long knownFormsAt, firstFormsAt;
     long topBaseAt, topLastAt, unknownFormsAt; ScreenKind topLastKind = ScreenKind.Unknown; ScreenKind topBaseKind = ScreenKind.Unknown; HashSet<string> topBase = new HashSet<string>();
     string topNewNow = "", topUnknownNow = "", topCityNow = ""; ScreenKind topNewKind = ScreenKind.Unknown; List<string> unknownForms; bool formsUnread; ScreenKind formsKind = ScreenKind.Unknown;
-    bool FormsUnread(ScreenState fresh) { return formsUnread || fresh == null || !fresh.OfferRead || (fresh.Kind != ScreenKind.City && fresh.Kind != ScreenKind.Unknown && fresh.Kind != formsKind); }
+    bool FormsUnread(ScreenState fresh) { return formsUnread || fresh == null || !fresh.OfferRead || (fresh.Kind != ScreenKind.City && fresh.Kind != ScreenKind.Unknown && fresh.Kind != formsKind)
+                                                 || fresh.ModalOpen && (Screens.Current == null || !Screens.Current.ModalOpen || Screens.Current.Held); }   // (app/Overlay.cs TickBehind)
     void ReadOffersInto(ScreenInputs inp, long now) {
       formsUnread = inp.Offers == null;
       var cls = ScreenState.Classify(inp, now).Kind;
       topNewNow = ""; topUnknownNow = ""; topCityNow = "";
       formsKind = cls;
       if (inp.Offers == null || inp.Offers.Count == 0) {
-        var prevForms = unknownForms;   // the forms of the last read (before this tick's): one not in it came with the screen
-        if (now - unknownFormsAt >= 2000 || unknownFormsAt == 0) { unknownFormsAt = now; unknownForms = G.Unknown(); if (unknownForms == null) { formsUnread = true; unknownFormsAt = 0; } }
+        // the forms of the last read on the city or a known screen (before this tick's): one not in it came with the screen. A short unknown
+        // stretch between (the slow laptop: the inventory's form is found seconds after it opened) is skipped: a pop-up that came then is new too
+        // (before any: the first read of the run, the forms there when it began - a pop-up that came after it is new as well)
+        var prevForms = knownForms != null && now - knownFormsAt <= KnownFormsMs ? knownForms : firstForms != null && now - firstFormsAt <= KnownFormsMs ? firstForms : unknownForms;
+        // (every 2 s; within a known screen's settle time every SettleReadMs: a part it builds late must be read before that time ends)
+        bool settling = topBaseKind != ScreenKind.Unknown && topBaseKind != ScreenKind.City && now - topBaseAt < TopSettleMs;
+        if (now - unknownFormsAt >= (settling ? SettleReadMs : 2000) || unknownFormsAt == 0) { unknownFormsAt = now; unknownForms = G.Unknown(); if (unknownForms == null) { formsUnread = true; unknownFormsAt = 0; }  else if (firstForms == null) { firstForms = unknownForms; firstFormsAt = now; } }
         var cur = unknownForms ?? new List<string>();
         if (cls == ScreenKind.Unknown) {
           if (cur.Count > 0) inp.TopUnknown = topUnknownNow = string.Join(",", cur.ToArray());
         } else if (cls == ScreenKind.City) {
           var cov = cur.FindAll(n => "PEDW".IndexOf(ScreenMap.ClassOf(n)) >= 0);
+          if (unknownForms != null) { knownForms = unknownForms; knownFormsAt = now; }
           if (cov.Count > 0) inp.TopCity = topCityNow = string.Join(",", cov.ToArray());
         } else if (unknownForms != null) {
           // (a read that failed for a tick or two flips the screen to unknown and back: the same screen within TopFlickerMs keeps its base, else a
@@ -237,6 +338,7 @@ static partial class CoreTests {
           // with it or later lies on top, a part the game builds later does not)
           if (now - topBaseAt < TopSettleMs) foreach (var n in cur) if (now == topBaseAt && (prevForms == null || prevForms.Contains(n)) ? ScreenMap.MayBeBase(n) : ScreenMap.MayBeLatePart(n)) topBase.Add(n);
           var fresh = cur.FindAll(n => !topBase.Contains(n));
+          if (unknownForms != null) { knownForms = cur.FindAll(n => topBase.Contains(n)); knownFormsAt = now; }   // (a pop-up on top stays one on the next screen)
           if (fresh.Count > 0) { inp.TopNew = topNewNow = string.Join(",", fresh.ToArray()); topNewKind = cls; }
         }
         if (cls == ScreenKind.Unknown || cls == ScreenKind.City) topBaseKind = cls;
@@ -261,6 +363,12 @@ static partial class CoreTests {
       if (topNewNow != "" && st.Kind == topNewKind) { inp.TopNew = topNewNow; st = ScreenState.Classify(inp, Now); }
       else if (topUnknownNow != "" && st.Kind == ScreenKind.Unknown) { inp.TopUnknown = topUnknownNow; st = ScreenState.Classify(inp, Now); }
       else if (topCityNow != "" && st.Kind == ScreenKind.City) { inp.TopCity = topCityNow; st = ScreenState.Classify(inp, Now); }
+      // a pop-up or screen that came since the tick's read of the forms (every 2 s) and before this click: it lies on top. No click now (the
+      // forms count as unread); the next tick takes the new read and closes it first as any pop-up (a gate check now would stop the run on it)
+      if (unknownForms != null && Now - unknownFormsAt >= FreshFormsMs && (inp.Offers == null || inp.Offers.Count == 0)) {
+        var fl = G.Unknown();
+        if (fl != null && ScreenMap.Newcomers(unknownForms, fl) != "") { unknownForms = fl; unknownFormsAt = Now; formsUnread = true; }
+      }
       if (wantCity && ScreenState.NeedsCityPicture(st.Kind, inp.CityForm)) {
         bool seen = G.Full == SimCity && G.CityClear;
         if (inp.CityForm == true && !seen) inp.CityForm = false;
@@ -273,11 +381,11 @@ static partial class CoreTests {
     bool Send(ClickTarget t, AutoAction a, Action<ClickRequest, ScreenState> fill, bool wantCity, bool wantKnown) {
       if (a.X < 0 || a.Y < 0 || a.X >= W || a.Y >= H) return false;
       var fresh = Fresh(wantCity, wantKnown);
-      if (FormsUnread(fresh)) return false;
+      if (FormsUnread(fresh)) { if (Environment.GetEnvironmentVariable("SIM_TRACE") != null) Console.WriteLine("  UNREAD " + t + " fresh=" + (fresh != null ? fresh.Brief : "-") + " unread=" + formsUnread); return false; }
       var rq = new ClickRequest { Owner = Owner, Target = t, AutoOn = true, Front = true, X = a.X, Y = a.Y };
       if (fill != null) fill(rq, fresh);
       var res = Gate.Check(rq, fresh, Now);
-      if (!res.Allowed) return false;
+      if (!res.Allowed) { if (Environment.GetEnvironmentVariable("SIM_TRACE") != null) Console.WriteLine("  DENY " + t + " fresh=" + fresh.Brief + " tick=" + (Screens.Current != null ? Screens.Current.Brief : "-") + " " + res.Detail); return false; }
       Gate.Arm(Owner, t, ClickGate.Expect(rq, fresh), Now, rq.Form);
       Count(t);
       if (Environment.GetEnvironmentVariable("SIM_TRACE") != null) Console.WriteLine("  send " + t + " fresh=" + fresh.Brief + " top=" + fresh.Top + " tick=" + (Screens.Current != null ? Screens.Current.Brief : "-") + " unread=" + formsUnread);
@@ -292,6 +400,16 @@ static partial class CoreTests {
       if (!Gate.Check(rq, fresh, Now).Allowed) return false;
       Gate.Arm(Owner, ClickTarget.EscapeBack, ClickGate.Expect(rq, fresh), Now);
       EscapesSent++; G.Escape(); SendingUntil = Now + 90;
+      return true;
+    }
+    // OfferStep (app/Overlay.cs): an offer-list form on top («План сборки» too) is left by its × / back arrow, never its other buttons
+    bool OfferStep(ScreenState scr) {
+      if (scr == null || scr.OfferCount == 0) return false;
+      if (Gate.Halted(Owner) || Gate.Pending(Owner)) return true;
+      if (!OfferForms.Settled(scr, Now)) return true;
+      string form = scr.Offer; var pt = OfferForms.ClosePoint(geo, form, W, H, U);
+      if (pt == null) { Gate.Halt(Owner, "offer", "the offer pop-up " + form + " has no known close button - not clicked"); return true; }
+      Send(ClickTarget.OfferClose, new AutoAction { Kind = AutoKind.Click, X = pt.X, Y = pt.Y }, (rq, fr) => { rq.Form = form; rq.W = W; rq.H = H; rq.U = U; rq.Geo = geo; }, false, false);
       return true;
     }
     bool MapStep(ScreenState scr) {
@@ -332,6 +450,7 @@ static partial class CoreTests {
     // TickAuto's hero part (app/Overlay.cs): the plan's hero on the hero screen, the gear tab
     void TickEquip() {
       var scr = Screens.Current;
+      if (OfferStep(scr)) return;
       if (UnknownBackStep(scr)) return;
       if (BackStep(scr, ClickGate.AwayFromStart(ClickOwner.Equip, scr))) return;
       if (Gate.UnknownStall(ClickOwner.Equip, scr, Now)) return;
@@ -344,7 +463,7 @@ static partial class CoreTests {
       var ha = hp.Step(hv); PilotState = "hero_" + hp.State;
       if (ha == null) { if (hp.State == "done" || hp.State == "idle") Done = "done"; return; }   // idle: the plan's hero was there already
       if (ha.Kind == AutoKind.None) return;
-      Send(ClickTarget.EquipNav, ha, null, true, false);
+      if (!Send(ClickTarget.EquipNav, ha, null, true, false)) hp.NotSent();   // (app/Overlay.cs: EquipSend's no)
     }
     // TickSell (app/Overlay.cs) up to «Массовая продажа» (the marking itself: RunSell's tests)
     void TickSell() {
@@ -352,8 +471,10 @@ static partial class CoreTests {
       if (Gate.Halted(ClickOwner.Sell)) return;
       var pre = Gate.Preflight(ClickOwner.Sell, scr, Now);
       if (pre.Verdict == GateVerdict.Deny) return;
+      if (pre.Reason == "offer" && OfferStep(scr)) { PilotState = "open"; return; }
       if (pre.Reason == "unknown" && UnknownBackStep(scr)) return;
       if (pre.Verdict == GateVerdict.Wait) { PilotState = pre.Reason == "unknown" ? "no_city" : PilotState; return; }
+      if (MapStep(scr)) { PilotState = "open"; return; }   // a pop-up over the inventory first
       var inv = Screens.Inv;
       if (scr != null && scr.Kind == ScreenKind.Inventory && inv != null) {
         if (!inv.EquipTab || !inv.Bulk) {
@@ -364,7 +485,20 @@ static partial class CoreTests {
           Send(!inv.EquipTab ? ClickTarget.InvEquipTab : ClickTarget.InvBulkEnter, a0, null, false, false);
           return;
         }
-        Done = "done"; return;
+        // the marking: the sell pilot on the game's list order and its exact scroll; every cell click must hit a wanted (or a ticked) item
+        double srow1 = sellScroll.Row1(spilot.Geometry, inv.List, double.NaN, U);
+        var a = spilot.Step(new SellView { NowMs = Now, Foreground = true, W = W, H = H, U = U, Screen = inv.AsSell(SimGame.InvCols), Wanted = Wanted, Phase = double.NaN, Row1 = srow1, NeedExact = true });
+        if (spilot.State == "failed" && spilot.FailWhy == "scroll") Gate.Halt(ClickOwner.Sell, "scroll", "the inventory's exact scroll stayed unreadable");
+        PilotState = "sell_" + spilot.State;
+        if (a.Kind == AutoKind.None) { if (spilot.State == "done") Done = "done"; return; }
+        var sg = spilot.Geometry;
+        Send(a.Kind == AutoKind.Drag ? ClickTarget.InvListDrag : ClickTarget.InvBulkCell, a, (rq, fr) => {
+          rq.CellUid = ClickGate.InvCellUid(fr.Inv, sg, sellScroll.Row1(sg, fr.Inv != null ? fr.Inv.List : null, double.NaN, U, Now), SimGame.InvCols, rq.X, rq.Y, W, U);
+          var ok = new HashSet<long>(Wanted); if (fr.Inv != null) foreach (var u in fr.Inv.Selected) ok.Add(u);
+          rq.CellOk = ok; rq.NoScroll = fr.Inv == null || fr.Inv.List == null || !fr.Inv.List.Has;
+          if (Environment.GetEnvironmentVariable("SIM_TRACE") != null) Console.WriteLine("  cell x=" + (int)rq.X + " y=" + (int)rq.Y + " uid=" + rq.CellUid + " row1=" + sellScroll.Row1(sg, fr.Inv != null ? fr.Inv.List : null, double.NaN, U, Now) + " srow1=" + srow1 + " scroll=" + (fr.Inv != null && fr.Inv.List != null ? fr.Inv.List.ScrollY : -1) + " n=" + (fr.Inv != null ? fr.Inv.Uids.Count : -1) + " " + spilot.Trace);
+        }, false, false);
+        return;
       }
       if (BackStep(scr, ClickGate.AwayFromStart(ClickOwner.Sell, scr))) { PilotState = "open"; return; }
       if (scr != null && scr.Kind == ScreenKind.HeroScreen) {
@@ -390,12 +524,13 @@ static partial class CoreTests {
       if (Screens.Rs != null) locateRs = Screens.Rs;
       var pre = Gate.Preflight(ClickOwner.Locate, scr, Now);
       if (lp.Stopped) return;
+      if (pre.Reason == "offer" && OfferStep(scr)) return;
       if (pre.Reason == "unknown" && UnknownBackStep(scr)) return;
       if (pre.Verdict == GateVerdict.Wait) { PilotState = pre.Reason == "pending" ? "work" : "hint:no_city"; return; }
       bool heroOpen = scr != null && scr.Kind == ScreenKind.HeroScreen;
       bool formOpen = scr != null && (scr.Kind == ScreenKind.Foundry || scr.Kind == ScreenKind.Gem);
       var dstep = LocateGuide.Next(req, inv, locateRs, heroScreen, 8, 1);
-      if (dstep.Kind == LocateKind.AscendPick || dstep.Kind == LocateKind.AscendLoading || dstep.Kind == LocateKind.AscendReady) { Done = "done"; return; }
+      if (dstep.Kind == LocateKind.AscendReady) { Done = "done"; return; }   // the item selected in the Ascension list: «Вознести» is the player's
       var view = new LocateView { NowMs = Now, Foreground = true, W = W, H = H, U = U, Step = dstep, Inv = inv, Cols = 8, HeroScreenOpen = heroOpen, OtherFormOpen = formOpen,
                                   Geometry = geo, Rs = locateRs, Item = req.Item, Purpose = req.Purpose };
       if (LocateAuto.NeedsCityButton(dstep, heroOpen, formOpen)) view.CityButton = G.Full == SimCity && G.CityClear;
@@ -404,7 +539,7 @@ static partial class CoreTests {
       var mv = lp.Step(view);
       PilotState = mv.State + (mv.Why != "" ? ":" + mv.Why : "") + "@" + dstep.Kind;
       if (mv.Action.Kind == AutoKind.None) return;
-      ClickTarget tg = ClickTarget.None;
+      ClickTarget tg = ClickTarget.None; Action<ClickRequest, ScreenState> fill = null;
       switch (mv.Todo) {
         case LocateTodo.BackToCity: tg = ClickTarget.HeroBack; break;
         case LocateTodo.InventoryButton: tg = ClickTarget.CityInventory; break;
@@ -412,8 +547,12 @@ static partial class CoreTests {
         case LocateTodo.FoundryButton: tg = ClickTarget.FoundryButton; break;
         case LocateTodo.AscendTab: tg = ClickTarget.AscendTab; break;
         case LocateTodo.SlotTab: tg = ClickTarget.SlotTab; break;
+        case LocateTodo.AscendCell:
+          tg = mv.Action.Kind == AutoKind.Drag ? ClickTarget.AscendDrag : ClickTarget.AscendCell;
+          fill = (rq, fr) => { rq.CellUid = ClickGate.AscendCellUid(geo, fr.Rs, rq.X, rq.Y, W, H, U); rq.CellOk = new[] { SimItem }; };
+          break;
       }
-      Send(tg, mv.Action, null, tg == ClickTarget.CityInventory, tg == ClickTarget.UnknownBack || tg == ClickTarget.CityBack);
+      Send(tg, mv.Action, fill, tg == ClickTarget.CityInventory, tg == ClickTarget.UnknownBack || tg == ClickTarget.CityBack || tg == ClickTarget.FoundryButton);
     }
   }
 
@@ -424,7 +563,7 @@ static partial class CoreTests {
     var r = new Random(seed * 7919 + 13);
     bool slow = slowOnly || r.Next(2) == 0;
     double failP = r.Next(3) == 0 ? 0.0 : r.NextDouble() * 0.15;
-    var g = new SimGame(seed, slow, failP);
+    var g = new SimGame(seed, slow, failP); g.Geo = geo;
     var owner = new[] { ClickOwner.Equip, ClickOwner.Sell, ClickOwner.Locate }[r.Next(3)];
     // the start: a screen and the forms over it
     int k = r.Next(10);
@@ -438,6 +577,7 @@ static partial class CoreTests {
     }
     if (slow && r.Next(8) == 0) { g.LostFrom = 2000 + r.Next(20000); g.LostTo = g.LostFrom + 17000; }
     string start = string.Join(" > ", g.Stack.ToArray());
+    foreach (var f in g.Stack) g.StartForms.Add(f);
     long plan = 100 + r.Next(30);
     var h = new SimHost(g, owner, plan, geo);
     long cap = slow ? 300000 : 150000, t = 0, lastChange = 0; string lastSay = "";
@@ -448,7 +588,7 @@ static partial class CoreTests {
       string say = h.PilotState + "|" + string.Join(">", g.Stack.ToArray());
       if (say != lastSay) { lastSay = say; lastChange = t; }
       // a pilot that tells the player why it waits (the hero screen not reachable, a hint) and nothing changes for 30 s: a stop with a reason
-      if (t - lastChange > 30000 && (h.PilotState.StartsWith("hero_noscreen") || h.PilotState.StartsWith("hero_failed") || h.PilotState.StartsWith("hero_notfound") || h.PilotState.StartsWith("hint") || h.PilotState.StartsWith("stopped") || h.PilotState == "no_city")) break;
+      if (t - lastChange > 30000 && (h.PilotState.StartsWith("hero_noscreen") || h.PilotState.StartsWith("hero_failed") || h.PilotState.StartsWith("hero_notfound") || h.PilotState.StartsWith("hint") || h.PilotState.StartsWith("stopped") || h.PilotState == "no_city" || h.PilotState == "sell_failed")) break;
       t += slow ? 150 + r.Next(250) : 100;
     }
     string outcome = h.Done != "" ? "done" : h.Gate.Halted(owner) ? "halt:" + h.Gate.HaltReason(owner) : t >= cap ? "TIMEOUT" : "wait:" + h.PilotState.Split('@')[0];
@@ -457,7 +597,13 @@ static partial class CoreTests {
     if (list == "--digest") {   // one line a seed: its outcome and a hash of every press with its time (two builds compared seed by seed)
       ulong hsh = 14695981039346656037UL; foreach (char ch in g.Acts.ToString()) { hsh ^= ch; hsh *= 1099511628211UL; }
       Console.WriteLine(seed + " " + key + " " + hsh.ToString("x16"));
-    } else if (list != null && key.Contains(list)) Console.WriteLine("seed " + seed + ": " + key + (h.PilotState.StartsWith("hero_") ? " " + h.HeroWhy : "") + " end [" + string.Join(" > ", g.Stack.ToArray()) + "]");
+    } else if (list != null && key.Contains(list)) Console.WriteLine("seed " + seed + ": " + key + (h.PilotState.StartsWith("hero_") ? " " + h.HeroWhy : h.PilotState.StartsWith("sell_") ? " " + h.SellWhy : "") + " end [" + string.Join(" > ", g.Stack.ToArray()) + "]");
+    if (h.Done != "" && owner == ClickOwner.Sell) {   // the marking: the wanted items ticked, nothing else (after the last clicks' answers)
+      g.Advance(t + 3000);
+      var xtra = new List<string>(); foreach (var u in g.InvSel) if (!h.Wanted.Contains(u)) xtra.Add(u.ToString());
+      var miss = new List<string>(); foreach (var u in h.Wanted) if (!g.InvSel.Contains(u)) miss.Add(u.ToString());
+      if (xtra.Count > 0 || miss.Count > 0) g.Bad.Add("SELL MARKS WRONG: extra [" + string.Join(",", xtra.ToArray()) + "] missing [" + string.Join(",", miss.ToArray()) + "]");
+    }
     var errs = new List<string>(g.Bad);
     if (outcome == "TIMEOUT") errs.Add("no end within " + cap / 1000 + " s (silent waiting): " + h.PilotState);
     int n0;
@@ -501,6 +647,20 @@ static partial class CoreTests {
           Check(!res.Allowed == ScreenMap.OnNever(other, p2.X, p2.Y, W, H, U), "sim: the × of " + d.Form + " shown with " + other + ": " + (res.Allowed ? "allowed" : res.Detail));
         }
       }
+    }
+    // (8) the forms a fresh read has that the last one had not: the map's screens / pop-ups / waits; a late part of a screen only when the map does not
+    // call it one of those; the Foundry's form in the window table keeps «Литейная» waiting though its memory read is not there yet
+    Eq("Form_BuyPopup,Form_TogglePopUp", ScreenMap.Newcomers(new List<string> { "Form_LeftTip" }, new List<string> { "Form_LeftTip", "Form_BuyPopup", "Form_TogglePopUp", "Form_X_SimPart" }), "sim: newcomers of a fresh forms read");
+    Check(ScreenMap.MayBeLatePart("Form_X_SimPart") && !ScreenMap.MayBeLatePart("Form_TogglePopUp") && !ScreenMap.MayBeLatePart("Form_DeityBeastBuffTips") && !ScreenMap.MayBeLatePart("Form_BuyPopup"),
+          "sim: a late part of a screen is no pop-up / Escape form / dangerous dialog of the map");
+    {
+      var inp = new ScreenInputs { CityForm = false, Offers = new List<string>(), ShownKnown = "Form_BackpackIntegration,Form_EquipSubliming",
+                                   Inv = new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true } };
+      var fs = ScreenState.Classify(inp, 10000); var gg = new ClickGate();
+      var r0 = gg.Check(new ClickRequest { Owner = ClickOwner.Locate, Target = ClickTarget.FoundryButton, AutoOn = true, Front = true, X = 1330, Y = 938 }, fs, 10000);
+      Check(!r0.Allowed && !gg.Halted(ClickOwner.Locate), "sim: «Литейная» waits while the window table shows the Foundry unread (" + r0.Detail + ")");
+      inp.ShownKnown = "Form_BackpackIntegration"; fs = ScreenState.Classify(inp, 10000);
+      Check(gg.Check(new ClickRequest { Owner = ClickOwner.Locate, Target = ClickTarget.FoundryButton, AutoOn = true, Front = true, X = 1330, Y = 938 }, fs, 10000).Allowed, "sim: «Литейная» with the Foundry not shown");
     }
     // (3) the hero grid: a click whose new hero shows a few ticks late is still learnt (a slow PC), the plan's hero is reached
     {
@@ -547,6 +707,19 @@ static partial class CoreTests {
       }
       // (6) seeds that must reach the plan's hero: a pop-up that came with the hero screen (62) or while a failed read made it unknown for a
       // tick (82, 19) was taken for the screen's own form and took the grid clicks; a slow laptop's late answers (250, 161)
+      // (7) the model's build plan screen, sell marking, Foundry slot tab / Ascension pick and screens' late parts: a pop-up that came while the slow
+      // laptop searched for the inventory / Foundry (228, 6727, 15263, 2032, 359), after the run's first read (21515: no click under it), a moment
+      // before a click (22466: a drag on a never-click button), «Литейная» with the Foundry open but not read yet (2229: on «Вознести»), the sell
+      // pilot's guess beside an exact scroll (9) and its click on the old scroll after a late drag (20), drags into a pop-up for ever (2640)
+      foreach (int seed in new[] { 9, 20, 228, 359, 2032, 2229, 2640, 6727, 15263, 21515, 22466 }) {
+        string e = SimRun(seed, false, false, oc, geo);
+        Check(e == "", "sim: seed " + seed + " keeps every rule" + (e != "" ? ": " + e.Split('\n')[0] + " " + (e.Split('\n').Length > 1 ? e.Split('\n')[1].Trim() : "") : ""));
+      }
+      foreach (int seed in new[] { 9, 20, 228, 2032, 2229, 6727, 15263, 22466 }) {
+        var o1 = new Dictionary<string, int>(); SimRun(seed, false, false, o1, geo);
+        string got = string.Join(",", new List<string>(o1.Keys).ToArray());
+        Check(got.EndsWith(" done"), "sim: seed " + seed + " reaches its end (" + got + ")");
+      }
       foreach (int seed in new[] { 19, 62, 82, 161, 250 }) {
         var o1 = new Dictionary<string, int>(); SimRun(seed, false, false, o1, geo);
         string got = string.Join(",", new List<string>(o1.Keys).ToArray());
