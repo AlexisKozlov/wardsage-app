@@ -219,7 +219,7 @@ namespace RealmForge {
     /// <summary>The on-screen button during the storage cleanup's auto click: the player ends the whole cleanup run (the page cancels the list).</summary>
     public event Action SellCancelPressed;
     string cancelDrawn; Bitmap cancelBmp;
-    // TEST build: the record button over the game (top left); a clickable window like cancelWin, drawn only while the central gate allows
+    // TEST build: the record button over the game (left edge, mid-height); a clickable window like cancelWin, drawn only while the central gate allows
     readonly GlowWindow recWin = new GlowWindow(true);
     readonly Timer recBtnTimer = new Timer();
     readonly Stopwatch recSw = new Stopwatch();
@@ -693,7 +693,7 @@ namespace RealmForge {
       cancelWin.Put(cancelBmp, o.X + cr.R / 2 - w / 2, o.Y + (int)(0.012 * U));
     }
 
-    // the record button (TEST build): a round gold-rimmed dark button at the game's top left (d = 0.055 U, inset 0.012 U): a red dot when idle,
+    // the record button (TEST build): a round gold-rimmed dark button on the game's left edge at mid-height (d = 0.034 U): a red dot when idle,
     // a red rounded square while recording, with a plate «0:42» beside it. The central gate (GameDrawable) decides, as for every overlay drawing
     void TickRecBtn() {
       IntPtr hwnd = GameWindow();
@@ -701,7 +701,8 @@ namespace RealmForge {
       if (!Channel.IsTest || !RecButton || !GameDrawable() || !W32.GetClientRect(hwnd, out cr) || cr.B < 200) { if (recWin.Visible) recWin.Hide(); return; }
       var o = new W32.POINT(0, 0); W32.ClientToScreen(hwnd, ref o);
       double U = Ui.Unit(cr.R, cr.B);
-      int d = OwnButtons.RecDiameter(U), inset = OwnButtons.RecInset(U);
+      int d = OwnButtons.RecDiameter(U);
+      int[] rbox = OwnButtons.RecBox(cr.R, cr.B);
       int sec = recOn ? (int)(recSw.ElapsedMilliseconds / 1000) : 0;
       string key = d + "|" + (recOn ? "r" + sec : "i");
       if (key != recDrawn || recBmp == null) {
@@ -709,8 +710,8 @@ namespace RealmForge {
         recBmp = RecBtnBitmap(d, recOn, sec / 60 + ":" + (sec % 60).ToString("00")); recDrawn = key;
       }
       recWin.HitW = recBmp.Height;
-      recWin.Put(recBmp, o.X + inset, o.Y + inset);
-      recWin.Parts.Clear(); recWin.Parts.Add(new[] { o.X + inset, o.Y + inset, recBmp.Width, recBmp.Height });
+      recWin.Put(recBmp, o.X + rbox[0], o.Y + rbox[1]);
+      recWin.Parts.Clear(); recWin.Parts.Add(new[] { o.X + rbox[0], o.Y + rbox[1], recBmp.Width, recBmp.Height });
     }
 
     static Bitmap RecBtnBitmap(int d, bool recording, string time) {

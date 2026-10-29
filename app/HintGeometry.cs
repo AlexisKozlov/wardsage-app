@@ -36,15 +36,16 @@ namespace RealmForge {
       return new[] { (int)(ReplaceX0 * U), (int)(ReplaceY0 * U), (int)((ReplaceX1 - ReplaceX0) * U), (int)((ReplaceY1 - ReplaceY0) * U) };
     }
   }
-  /// <summary>Our own clickable buttons over the game: the TEST build's record button at the game's top left (d = 0.055 U, inset
-  /// 0.012 U) and the cancel plate. The record button lies on the game's back arrow (0.0515 U, 0.0367 U) at every window size:
-  /// a pilot click there pressed our button instead of the game's (live 2026-10-29, Locate's HeroBack started a recording and
-  /// stopped on «nochange»), so a pilot click lets the buttons it falls on pass the mouse through (app/Overlay.cs Send).</summary>
+  /// <summary>Our own clickable buttons over the game: the TEST build's record button on the game's left edge at mid-height
+  /// (d = 0.034 U, flush with the edge, so it ends left of the gear list's first column at 0.0393 U) and the cancel plate. The
+  /// first place (top left) lay on the game's back arrow (0.0515 U, 0.0367 U): a pilot click there pressed our button instead of
+  /// the game's (live 2026-10-29, Locate's HeroBack started a recording and stopped on «nochange»). The left edge at mid-height
+  /// is clear of the back arrow, the filter / funnel (bottom), the lists, the cards, the slots and the centred panels; a pilot
+  /// click that does fall on one of the buttons still lets it pass the mouse through (app/Overlay.cs Send).</summary>
   public static class OwnButtons {
-    public static int RecDiameter(double U) { return System.Math.Max(16, (int)(0.055 * U)); }
-    public static int RecInset(double U) { return System.Math.Max(2, (int)(0.012 * U)); }
-    /// <summary>The idle record button in client px {x, y, w, h} (its bitmap: d + 3 px of shadow).</summary>
-    public static int[] RecBox(double U) { int d = RecDiameter(U), i = RecInset(U); return new[] { i, i, d + 3, d + 3 }; }
+    public static int RecDiameter(double U) { return System.Math.Max(16, (int)(0.034 * U)); }
+    /// <summary>The idle record button in client px {x, y, w, h} (its bitmap: d + 3 px of shadow), centred on the left edge at mid-height.</summary>
+    public static int[] RecBox(double W, double H) { int d = RecDiameter(Ui.Unit(W, H)); return new[] { 0, (int)(H / 2 - (d + 3) / 2.0), d + 3, d + 3 }; }
     /// <summary>A click (or a drag from y to y2) at x touches one of these parts {x, y, w, h}.</summary>
     public static bool Covers(System.Collections.Generic.IList<int[]> parts, int x, int y, int y2) {
       if (parts == null) return false;

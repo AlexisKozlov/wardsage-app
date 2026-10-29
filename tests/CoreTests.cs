@@ -3653,14 +3653,51 @@ static class CoreTests {
     Console.WriteLine("Own buttons over the game (record button vs the back arrow, off-screen points):");
     var hg = new HeroGeometry();
     // live 2026-10-29 (laptop, game window not maximized): Locate's HeroBack @39,28 started a recording instead of pressing the game's arrow
+    var hint = new HintGeometry(); var fg = new FilterGeometry(); var sg = new SellGeometry(); var lg = new ListGeometry();
     foreach (double U in new[] { 600.0, 757.0, 1009.0, 1440.0 }) {
-      int bx = (int)Math.Round(hg.BackX * U), by = (int)Math.Round(hg.BackY * U);
-      Check(OwnButtons.Covers(new List<int[]> { OwnButtons.RecBox(U) }, bx, by, by), "U " + U + ": the record button covers the back arrow (the click must pass through)");
+      foreach (double asp in new[] { 16.0 / 9, 1.6, 4.0 / 3 }) {
+        double H = U, W = Math.Round(H * asp);
+        if (Ui.Unit(W, H) != U) continue;
+        int[] rb0 = OwnButtons.RecBox(W, H);
+        var one = new List<int[]> { rb0 };
+        int bx = (int)Math.Round(hg.BackX * U), by = (int)Math.Round(hg.BackY * U);
+        string at = "U " + U + " W " + W + ": ";
+        Check(!OwnButtons.Covers(one, bx, by, by), at + "the record button does not cover the back arrow");
+        Check(rb0[0] >= 0 && rb0[1] >= 0 && rb0[0] + rb0[2] <= W && rb0[1] + rb0[3] <= H, at + "the record button lies in the client area");
+        // every known target box: the gear screen's, the hero grid's, the filter, the sell screen's and the list's, left edge / centre anchored
+        var boxes = new List<int[]> { hint.Filter(W, H), hint.Replace(W, H), hint.Equip(W, H) };
+        for (int sl = 0; sl < 5; sl++) boxes.Add(hint.Slot(sl, W, H));
+        double hx = hg.ColX(0) * U, cw = hg.PitchX * U * 0.9;
+        boxes.Add(new[] { (int)(hx - cw / 2), (int)(hg.ViewTop * H), (int)(cw * 3), (int)((hg.ViewBottom - hg.ViewTop) * H) });                       // the hero grid
+        boxes.Add(new[] { (int)(lg.X0 * U), (int)(lg.ViewTop * H), (int)(lg.CellW * U), (int)((lg.ViewBottom - lg.ViewTop) * H) });                   // the list's first column
+        boxes.Add(new[] { (int)(sg.SellBtnX * U) - 4, (int)(sg.SellBtnY * U) - 4, 8, 8 });
+        var pts = new List<double[]> {
+          new[] { hg.BackX * U, hg.BackY * U },
+          new[] { hg.FunnelX * U, H - hg.FunnelDY * U },
+          new[] { hg.ClassX * U, hg.FilterRow0 * U }, new[] { hg.FactionX * U, hg.FilterRow0 * U },
+          new[] { W - hg.GearTabDX * U, hg.GearTabY * U },
+          new[] { W - hg.HeroesBtnDX * U, H - hg.HeroesBtnDY * U },
+          new[] { W / 2 + fg.MainCloseX * U, fg.CloseY * U }, new[] { W / 2 + fg.SideCloseX * U, fg.CloseY * U },
+          new[] { W / 2 + fg.ResetX * U, Ui.FromMiddle(fg.ResetY, W, H) }, new[] { W / 2 + fg.HideEquippedX * U, Ui.FromMiddle(fg.HideEquippedY, W, H) },
+          new[] { W / 2 + sg.ResetX * U, Ui.FromMiddle(sg.ResetY, W, H) }, new[] { W / 2 + sg.CloseX * U, sg.CloseY * U },
+        };
+        for (int pi = 0; pi < 5; pi++) pts.Add(new[] { W / 2 + (sg.PartX0 + pi * sg.PartPitch) * U, Ui.FromMiddle(sg.PartY, W, H) });
+        for (int bi = 0; bi < boxes.Count; bi++) {
+          var bb = boxes[bi];
+          bool hit = bb[0] < rb0[0] + rb0[2] && rb0[0] < bb[0] + bb[2] && bb[1] < rb0[1] + rb0[3] && rb0[1] < bb[1] + bb[3];
+          Check(!hit, at + "the record button misses known box #" + bi);
+        }
+        for (int pi = 0; pi < pts.Count; pi++) {
+          int px = (int)Math.Round(pts[pi][0]), py = (int)Math.Round(pts[pi][1]);
+          Check(!OwnButtons.Covers(one, px, py, py), at + "the record button misses known click point #" + pi);
+        }
+      }
     }
-    int[] rb = OwnButtons.RecBox(757);
-    Check(rb[0] == 9 && rb[2] == 44, "record box at U 757: inset 9, 41 + 3 px");
-    Check(OwnButtons.Covers(new List<int[]> { rb }, 39, 28, 28), "the live point 39,28 lies on it");
-    Check(!OwnButtons.Covers(new List<int[]> { rb }, 60, 28, 28) && !OwnButtons.Covers(new List<int[]> { rb }, 39, 60, 60), "points beside it are free");
+    int[] rb = OwnButtons.RecBox(1346, 757);
+    Check(rb[0] == 0 && rb[2] == 28, "record box at U 757: flush with the left edge, 25 + 3 px");
+    Check(Math.Abs(rb[1] + rb[2] / 2 - 757 / 2) <= 1, "record box centred at mid-height");
+    Check(OwnButtons.Covers(new List<int[]> { rb }, 10, 378, 378), "a point on it is covered");
+    Check(!OwnButtons.Covers(new List<int[]> { rb }, 39, 28, 28) && !OwnButtons.Covers(new List<int[]> { rb }, 60, 378, 378), "the back arrow's live point and points beside it are free");
     Check(OwnButtons.Covers(new List<int[]> { new[] { 100, 100, 20, 20 } }, 105, 50, 300), "a drag crossing a part touches it");
     Check(!OwnButtons.Covers(new List<int[]>(), 1, 1, 1) && !OwnButtons.Covers(null, 1, 1, 1), "no parts: nothing covered");
     int[] desk = { 0, 0, 1366, 768 };
