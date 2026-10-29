@@ -52,6 +52,7 @@ namespace RealmForge {
     EquipClosePopup,  // equip helper: the red × of a pop-up left over the list
     EquipConfirm,     // equip helper: «Заменить» (only with the player's auto confirm)
     OfferClose,       // every owner: the × of the game's offer / notice pop-up on top of the city (src/OfferForms.cs; never its buy / go / claim buttons)
+    UnknownBack,      // every owner: the game's back arrow top left (HeroBack's spot) on a full-screen screen nobody knows, no pop-up on it (at most MaxUnknownBacks a run)
     // the artifact flows (only with the site's "artAuto" switch; never «Продать», «Все», a lock, «Продвинуть», «Улучшить»)
     ArtTab,           // the inventory's left menu «Артефакт»
     ArtBulkEnter,     // the artifact tab's «Массовая продажа» (the storage cleanup)
@@ -137,6 +138,13 @@ namespace RealmForge {
     public const int UnknownStallMs = 20000;
     /// <summary>Calls of UnknownStall further apart than this (the game was in the background, the player was busy) start the count again.</summary>
     public const int StallGapMs = 2000;
+    /// <summary>The unknown-screen back press (UnknownBack): nearly every full-screen form of the game has its back arrow at the hero screen's
+    /// spot top left. On a screen nobody knows (no pop-up or modal detected, no known screen's form shown, not the city, not a fight) that has
+    /// lasted UnknownBackSettleMs, the pilot presses it - at most MaxUnknownBacks times a run, each press has to change the screen (else
+    /// "nochange"), and none once the screen is a known one.</summary>
+    public const int MaxUnknownBacks = 3, UnknownBackSettleMs = 3000, UnknownBackRetryMs = 1000;
+    /// <summary>How far (in units of the client height) the press may lie from the back arrow's centre.</summary>
+    public const double UnknownBackTol = 0.03;
     /// <summary>Shown forms the unknown-screen stop leaves alone: a fight's result screens (the player is in a fight, not lost).</summary>
     public static readonly string[] StallExempt = { "Form_UnionBossBattleEnd", "Form_UnionWeekBossBattleEnd", "Form_BattleEnd", "Form_PvpBattleEnd", "Form_SparringPvpBattleEnd", "Form_ExpeditionBattleEnd" };
     /// <summary>A form the readers knew is being searched for again (the game moved its node, the search takes up to ~20 s on a slow PC): an
@@ -291,6 +299,9 @@ namespace RealmForge {
     readonly Dictionary<ClickOwner, string> stallBrief = new Dictionary<ClickOwner, string>();
     readonly HashSet<ClickOwner> searchWaited = new HashSet<ClickOwner>();                      // an unknown screen was waited for during a form search
     readonly Dictionary<ClickOwner, long> foundryWait = new Dictionary<ClickOwner, long>();   // FoundryButton: since when the Foundry's form is unreadable
+    readonly Dictionary<ClickOwner, int> unknownBacks = new Dictionary<ClickOwner, int>();    // UnknownBack presses in this run
+    readonly Dictionary<ClickOwner, long> backTried = new Dictionary<ClickOwner, long>();     // the last UnknownBackDue yes
+    readonly Dictionary<ClickOwner, ClickTarget> lastTarget = new Dictionary<ClickOwner, ClickTarget>();   // the owner's last click
 
     void Note(ClickOwner o, string key, string text) {
       string was; if (noted.TryGetValue(o, out was) && was == key) return;
@@ -312,6 +323,45 @@ namespace RealmForge {
     public void Resume(ClickOwner o) {
       halted.Remove(o); watches.Remove(o); unknownSince.Remove(o); noted.Remove(o); clickedAt.Remove(o); offerRun.Remove(o); haltDetail.Remove(o); foundryWait.Remove(o);
       stall.Remove(o); stallBrief.Remove(o); searchWaited.Remove(o);
+      unknownBacks.Remove(o); backTried.Remove(o); lastTarget.Remove(o);
+    }
+
+    /// <summary>The unknown-screen back presses made in this run.</summary>
+    public int UnknownBacks(ClickOwner o) { int n; return unknownBacks.TryGetValue(o, out n) ? n : 0; }
+
+    /// <summary>The screen allows the unknown-screen back press (a fresh or a tick's state): "" = yes, else why not. Never on a known screen,
+    /// the city, a held screen, with an offer / modal / pop-up, with a known screen's form shown or not read (the battle among them), on a fight's result.</summary>
+    public static string UnknownBackBlock(ScreenState s) {
+      if (s == null) return "no screen";
+      if (s.Kind != ScreenKind.Unknown) return "the screen is " + s.Kind;
+      if (s.Held) return "the screen is held";
+      if (s.OfferCount > 0) return "an offer pop-up is open";
+      if (s.ModalOpen) return "a pop-up is open (" + s.ModalWhy + ")";
+      if (!s.OfferRead) return "the window table is not read";
+      if (Exempt(s.TopForm)) return "a fight's result";
+      if (s.ShownKnown == null) return "the shown forms are not known";
+      if (s.ShownKnown != "") return "a known screen's form is shown (" + s.ShownKnown + ")";
+      return "";
+    }
+
+    /// <summary>The host may try the back press now: the owner runs (not halted, no click on its way, no form search), the screen
+    /// (the tick's) has been the same unrecognised one for UnknownBackSettleMs, presses are left, and no try was made within UnknownBackRetryMs.
+    /// The fresh state is judged again by Check (which also needs the shown known forms).</summary>
+    public bool UnknownBackDue(ClickOwner o, ScreenState s, long now) {
+      if (halted.ContainsKey(o) || watches.ContainsKey(o) || SearchWait) return false;
+      if ((o == ClickOwner.Sell && NoSellClicks) || (o == ClickOwner.Locate && NoLocateClicks)) return false;
+      if (!Unrecognised(s) || s.ModalOpen || !s.OfferRead || Exempt(s.TopForm)) return false;
+      if (now - s.SinceMs < UnknownBackSettleMs) return false;
+      if (UnknownBacks(o) >= MaxUnknownBacks) return false;
+      long t; if (backTried.TryGetValue(o, out t) && now - t < UnknownBackRetryMs) return false;
+      backTried[o] = now;
+      return true;
+    }
+
+    /// <summary>The point is the back arrow's (HeroGeometry.BackX / BackY, client px from the top left in units of <paramref name="U"/>).</summary>
+    public static bool OnBackArrow(double x, double y, double U) {
+      var g = new HeroGeometry();
+      return U > 0 && Math.Abs(x - g.BackX * U) <= UnknownBackTol * U && Math.Abs(y - g.BackY * U) <= UnknownBackTol * U;
     }
 
     /// <summary>The screen is unrecognised for the unknown-screen rules: Unknown, no offer pop-up on it (the pilots close those), not held from a known one.</summary>
@@ -351,8 +401,9 @@ namespace RealmForge {
 
     /// <summary>The same; <paramref name="offer"/> = the pop-up an OfferClose closes (its effect is logged as "offer: closed &lt;Form&gt;").</summary>
     public void Arm(ClickOwner o, ClickTarget t, Func<ScreenState, bool> done, long now, string offer) {
-      clickedAt[o] = now;
+      clickedAt[o] = now; lastTarget[o] = t;
       if (t == ClickTarget.OfferClose) offerRun[o] = OfferRun(o) + 1; else offerRun.Remove(o);
+      if (t == ClickTarget.UnknownBack) unknownBacks[o] = UnknownBacks(o) + 1;
       if (done == null) { watches.Remove(o); return; }
       int ms = t == ClickTarget.CityInventory || t == ClickTarget.FoundryButton || t == ClickTarget.ArtWorkshop || t == ClickTarget.ArtReplace || t == ClickTarget.ArtTakeOverConfirm ? SlowEffectMs : t == ClickTarget.InvCardGem || t == ClickTarget.GemFuncRow || t == ClickTarget.ArtMatCell ? GemEffectMs : t == ClickTarget.ArtBulkCell ? ArtTickMs : EffectMs;
       watches[o] = new Watch { Done = done, Deadline = now + ms, What = t == ClickTarget.OfferClose && offer != null ? "OfferClose(" + offer + ")" : t.ToString(), Offer = t == ClickTarget.OfferClose ? offer ?? "" : null, Target = t, ArmedAt = now };
@@ -367,6 +418,11 @@ namespace RealmForge {
           return s => s.Kind != ScreenKind.HeroScreen || (part >= 0 && s.HeroSlot < 0);
         }
         case ClickTarget.CityInventory: return s => s.Kind == ScreenKind.Inventory;
+        // the screen is another one: a known one, another unknown form on top, a pop-up (an unknown screen with no name read stays "the same": nochange)
+        case ClickTarget.UnknownBack: {
+          string top = before != null ? before.TopForm : "";
+          return s => s.Kind != ScreenKind.Unknown || s.TopForm != top || s.OfferCount > 0 || s.ModalOpen;
+        }
         // the pop-up is no longer shown (read from the window table, so a failed read is no effect)
         case ClickTarget.OfferClose: { string form = r.Form ?? ""; return s => s.OfferRead && s.Offer != form; }
         case ClickTarget.InvEquipTab: return s => s.Kind == ScreenKind.Inventory && s.InvEquipTab;
@@ -450,7 +506,9 @@ namespace RealmForge {
         string d = modeUnknown ? "the inventory's mode is not readable" : "the screen is not recognised" + (s != null && s.TopForm != "" ? " (top form " + s.TopForm + " not in the list)" : "");
         if (!modeUnknown && SearchWait && Unrecognised(s)) { searchWaited.Add(o); stall.Remove(o); return GateResult.Wait("search", d + " (a form search runs)"); }
         long at;
-        if (clickedAt.TryGetValue(o, out at) && now - at <= OwnClickWindowMs && !searchWaited.Contains(o)) return Halt(o, "unknown", d + " after the pilot's own click");
+        // (the back press leaves one unknown screen for another one at times: that is its effect, judged by its watch, not a stop)
+        ClickTarget lt;
+        if (clickedAt.TryGetValue(o, out at) && now - at <= OwnClickWindowMs && !searchWaited.Contains(o) && !(lastTarget.TryGetValue(o, out lt) && lt == ClickTarget.UnknownBack)) return Halt(o, "unknown", d + " after the pilot's own click");
         if (!modeUnknown && UnknownStall(o, s, now)) return GateResult.Deny("unknown", HaltDetail(o));
         return GateResult.Wait("unknown", d);
       }
@@ -470,6 +528,7 @@ namespace RealmForge {
 
       string tag = r.Target + " @" + (int)r.X + "," + (int)r.Y;
       if (r.Target == ClickTarget.OfferClose) return CheckOffer(r, f, now, tag);
+      if (r.Target == ClickTarget.UnknownBack) return CheckUnknownBack(r, f, tag);
       // any other click waits while an offer pop-up is on top (it would land on the pop-up)
       if (f != null && f.OfferCount > 0) return GateResult.Wait("offer", tag + ": " + f.ModalWhy + " is open");
       // the artifact cleanup never clicks, whatever the auto click setting says; nothing of the artifact tab is on any whitelist either
@@ -619,6 +678,21 @@ namespace RealmForge {
       unknownSince.Remove(o);
       var res = GateResult.Allow(tag + " on " + f.Brief);
       Note(o, "allow:" + r.Target + ":" + f.Brief, "allow " + res.Detail);
+      return res;
+    }
+
+    /// <summary>UnknownBack: the fresh screen allows it (UnknownBackBlock), presses are left, the point is on the back arrow. A screen that does not
+    /// allow it is waited for (the unknown-screen stop still runs); MaxUnknownBacks reached stops the owner.</summary>
+    GateResult CheckUnknownBack(ClickRequest r, ScreenState f, string tag) {
+      var o = r.Owner;
+      if ((o == ClickOwner.Sell && NoSellClicks) || (o == ClickOwner.Locate && NoLocateClicks)) return GateResult.Deny("off", tag + ": a hint run clicks nothing");
+      string block = UnknownBackBlock(f);
+      if (block != "") { Note(o, "wait-back:" + block, "wait " + tag + ": " + block); return GateResult.Wait("screen", tag + ": " + block); }
+      int n = UnknownBacks(o);
+      if (n >= MaxUnknownBacks) return Halt(o, "unknown", "unknown screen " + (f.TopForm != "" ? f.TopForm : "?") + ": the back arrow was pressed " + n + " times already");
+      if (!OnBackArrow(r.X, r.Y, r.U)) return Halt(o, "target", tag + ": not on the back arrow");
+      var res = GateResult.Allow(tag + " on " + f.Brief + " (press " + (n + 1) + " of " + MaxUnknownBacks + ")");
+      Note(o, "allow:" + r.Target + ":" + f.Brief + ":" + n, "allow " + res.Detail);
       return res;
     }
 

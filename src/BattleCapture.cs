@@ -16,15 +16,16 @@ namespace RealmForge {
     // Form_PvpBattleEnd), the friendly arena fight (Form_SparringPvpBattleEnd) and the Malric halls (Form_ExpeditionBattleEnd); ids = UIDefines (str_hash of the name)
     static readonly string[] EndFormKeys = { "ID_FORM_UNIONBOSSBATTLEEND", "ID_FORM_UNIONWEEKBOSSBATTLEEND", "ID_FORM_BATTLEEND", "ID_FORM_PVPBATTLEEND", "ID_FORM_SPARRINGPVPBATTLEEND", "ID_FORM_EXPEDITIONBATTLEEND" };
     static readonly string[] EndFormNames = { "Form_UnionBossBattleEnd", "Form_UnionWeekBossBattleEnd", "Form_BattleEnd", "Form_PvpBattleEnd", "Form_SparringPvpBattleEnd", "Form_ExpeditionBattleEnd" };
-    // forms whose node leads to UIInstance: the hero screen, the inventory, the battle screen, the result screens
+    // forms whose node leads to UIInstance: the hero screen, the inventory, the battle screen, the result screens, the city (built at the login:
+    // the only one there before the player opens any of the others)
     static readonly string[] UiAnchorKeys = { "ID_FORM_CHARACTORMAIN", "ID_FORM_BACKPACKINTEGRATION", "ID_FORM_BATTLE", "ID_FORM_UNIONBOSSBATTLEEND",
-      "ID_FORM_UNIONWEEKBOSSBATTLEEND", "ID_FORM_BATTLEEND", "ID_FORM_PVPBATTLEEND", "ID_FORM_SPARRINGPVPBATTLEEND" };
+      "ID_FORM_UNIONWEEKBOSSBATTLEEND", "ID_FORM_BATTLEEND", "ID_FORM_PVPBATTLEEND", "ID_FORM_SPARRINGPVPBATTLEEND", "ID_FORM_MAINCITY" };
 
     /// <summary>The ids of these forms from the layout data; empty without it.</summary>
     static long[] FormIds(string[] keys) {
       var ly = Layout.Current; if (ly == null) return new long[0];
       var r = new long[keys.Length];
-      for (int i = 0; i < keys.Length; i++) r[i] = keys[i] == "ID_FORM_EXPEDITIONBATTLEEND" ? ly.FormOpt(keys[i]) : ly.Form(keys[i]);   // the newest form: older layout data lacks it (0 = skipped)
+      for (int i = 0; i < keys.Length; i++) r[i] = keys[i] == "ID_FORM_EXPEDITIONBATTLEEND" || keys[i] == "ID_FORM_MAINCITY" ? ly.FormOpt(keys[i]) : ly.Form(keys[i]);   // newer forms: older layout data lacks them (0 = skipped)
       return r;
     }
     static ulong uiTable; static int uiLastFind;
@@ -56,22 +57,65 @@ namespace RealmForge {
         }
       });
       if (nodes.Count == 0) return 0;
-      // the table whose node array holds one of them (an old array can linger after a rehash: the live table points at
-      // the array in use, so a table header found this way is the one)
+      // the tables whose node array holds one of them (an old array can linger after a rehash: the live table points at
+      // the array in use, so a table header found this way is the one). UIStatic keeps a second table of the same shape:
+      // UIFormClass (form id -> the form's CLASS, RegisterLuaUI, filled for every form file loaded); UIInstance holds the form
+      // OBJECTS (form.new(): an "____instanceId" and a "class" field). Taking the first header found picked UIFormClass at
+      // times (live 2026-10-29: no form name or shown flag was ever read from it), so every header is judged.
       var set = new HashSet<ulong>(nodes);
-      ulong found = 0;
+      var cands = new List<ulong>();
       ScanParallel((b0, buf, len) => {
         for (int i = 0; i + 56 <= len; i += 8) {
           if (buf[i + 8] != 5) continue;
           int lsize = buf[i + 11]; if (lsize < 2 || lsize > 12) continue;
           ulong np = BitConverter.ToUInt64(buf, i + 24); if (np == 0) continue;
           ulong end = np + (ulong)(32 << lsize);
-          foreach (var n in set) if (n >= np && n < end && (n - np) % 32 == 0) { lock (set) { if (found == 0) found = b0 + (ulong)i; } break; }
+          foreach (var n in set) if (n >= np && n < end && (n - np) % 32 == 0) { lock (cands) { if (cands.Count < 64) cands.Add(b0 + (ulong)i); } break; }
         }
       });
+      string why;
+      ulong found = PickUiTable(cands, anchors, out why);
+      if (why != uiPickSaid) { uiPickSaid = why; LL("forms: window table " + (found != 0 ? "found" : "not found") + " (" + why + ")"); }
       uiTable = found;
       return found;
     }
+    static string uiPickSaid = "";
+
+    /// <summary>What a table keyed by form ids holds at the anchor ids: "forms" (form objects: UIInstance), "classes" (form classes:
+    /// UIFormClass), "none" (no anchor id), "unreadable". <paramref name="shown"/> = anchor forms shown now.</summary>
+    internal static string UiTableKind(ulong t, long[] ids, out int shown) {
+      shown = 0;
+      var h = t != 0 ? Read(t, 56) : null; if (h == null || h[8] != 5 || h[11] > 12) return "unreadable";
+      int nn = 1 << h[11]; var nb = Read(BitConverter.ToUInt64(h, 24), nn * 32); if (nb == null) return "unreadable";
+      int forms = 0, classes = 0;
+      for (int i = 0; i < nn; i++) {
+        int o = i * 32;
+        if (BitConverter.ToInt32(nb, o + 24) != T_INT || BitConverter.ToInt32(nb, o + 8) != T_TABLE) continue;
+        long k = BitConverter.ToInt64(nb, o + 16);
+        bool anchor = false; foreach (var id in ids) if (id != 0 && SameId(k, id)) { anchor = true; break; }
+        if (!anchor) continue;
+        ulong f = BitConverter.ToUInt64(nb, o), v; int tt;
+        if (Field(f, "____instanceId", out v, out tt) && tt == T_INT) { forms++; if (Shown(f)) shown++; }
+        else if (Field(f, "__cname", out v, out tt) && (tt == T_SSTR || tt == T_LSTR)) classes++;
+      }
+      return forms > 0 ? "forms" : classes > 0 ? "classes" : "none";
+    }
+
+    /// <summary>Of the tables found by the anchor nodes, UIInstance: one that holds form objects, the one with a shown form first;
+    /// 0 = none of them. <paramref name="why"/> = the verdicts, for the log.</summary>
+    internal static ulong PickUiTable(IList<ulong> cands, long[] ids, out string why) {
+      ulong best = 0; int bestShown = -1; int nf = 0, nc = 0, nx = 0;
+      foreach (var c in cands) {
+        int sh; string kind = UiTableKind(c, ids, out sh);
+        if (kind == "forms") { nf++; if (sh > bestShown) { best = c; bestShown = sh; } }
+        else if (kind == "classes") nc++; else nx++;
+      }
+      why = cands.Count + " candidate(s): forms " + nf + ", classes " + nc + ", other " + nx;
+      return best;
+    }
+
+    /// <summary>For the tests: the table picked from <paramref name="cands"/> as UIInstance (0 = none).</summary>
+    public static ulong PickUiTableForTest(IList<ulong> cands, long[] ids) { string w; return PickUiTable(cands, ids, out w); }
 
     /// <summary>UIInstance's address (0 = not found yet), for the log.</summary>
     public static ulong UiAddress { get { return uiTable; } }
