@@ -4378,6 +4378,31 @@ static partial class CoreTests {
               "window table diagnostic: sizes, keys and marks of the candidates (" + dg.Replace("\n", " | ") + ")");
         Check(RFX.UiCandidatesDiagForTest(new[] { cls2.A, guildOnly.A, notForms.A }, ids, 2).Split('\n').Length <= 3, "window table diagnostic: capped");
         Eq(0UL, RFX.PickUiTableForTest(new[] { notForms.A }, new[] { idFoundry }), "window table: objects whose class is not a Form_ are not forms");
+        // live 2026-10-30 (1.6.66.346): UIInstance shrunk to one or two nodes (the guild alone, the rest destroyed): a table of any size is a candidate
+        foreach (int n in new[] { 1, 2 }) {
+          var m5 = new FakeLua(1 << 21); RFX.TestMemory = m5; RFX.ForgetLive();
+          var fs5 = new FakeState(m5); long inst5 = 50001;
+          Func<string, FTab> Cls5 = nm => fs5.T("__cname", nm, "ctor", 0L, "__index", 0L);
+          var k5Guild = Cls5("Form_Union");
+          var cls5 = fs5.T(idCity, Cls5("Form_MainCity"), RFX.FormIdOf("Form_Login"), Cls5("Form_Login"), 631657439L, Cls5("Form_UnionAdd"));
+          var g5 = fs5.T("m_LuaLogicActive", true, "class", k5Guild, "____instanceId", inst5++);
+          var small = n == 1 ? fs5.T(idGuild, g5) : fs5.T(idGuild, g5, idChat, fs5.T("m_LuaLogicActive", false, "class", Cls5("Form_MinChat"), "____instanceId", inst5++));
+          got = RFX.FindUiTableForTest(ids, out said);
+          Check(got == small.A, "window table: UIInstance of " + n + " node(s) is found (" + said.Replace("\n", " | ") + ")");
+          Check(said.StartsWith("forms: window table found from Form_Union"), "window table: the small table names the guild (" + said + ")");
+          string nd = RFX.UiNodesDiagForTest(ids);
+          Check(nd.StartsWith("  form id nodes: ") && nd.Contains(", 0 outside the candidates"), "window table diagnostic: every form id node lies in a candidate (" + nd + ")");
+        }
+        // a node whose table header is not found: named in the diagnostic by its form name and its value's marks
+        {
+          var m6 = new FakeLua(1 << 21); RFX.TestMemory = m6; RFX.ForgetLive();
+          var fs6 = new FakeState(m6);
+          var lost = fs6.T(idGuild, fs6.T("m_LuaLogicActive", true, "class", fs6.T("__cname", "Form_Union"), "____instanceId", 60001L));
+          m6.Mem[lost.A - FakeLua.Base + 8] = 0;   // the header unreadable as a table: the node alone remains
+          string nd = RFX.UiNodesDiagForTest(ids);
+          Check(nd.Contains(", 1 outside the candidates") && nd.Contains("Form_Union") && nd.Contains("class=Form_Union") && nd.Contains("active=1"),
+                "window table diagnostic: a node outside the candidates is named with its marks (" + nd.Replace("\n", " | ") + ")");
+        }
         // the city open: found in the first round, as before
         var m3 = new FakeLua(1 << 21); RFX.TestMemory = m3; RFX.ForgetLive();
         var fs3 = new FakeState(m3); long inst3 = 40001;

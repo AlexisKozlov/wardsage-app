@@ -87,10 +87,11 @@ namespace RealmForge {
     /// <paramref name="said"/> = the log line.</summary>
     internal static ulong FindUiIn(long[] anchors, out string said) {
       string why; ulong classes;
-      var cands = UiCandidates(anchors);
+      List<ulong> nodes;
+      var cands = UiCandidates(anchors, out nodes);
       ulong found = PickUiTable(cands, anchors, out why, out classes);
       said = "forms: window table " + (found != 0 ? "found from " + ShownNames(found, 3) : "not found") + " (by " + anchors.Length + " form ids: " + why + ")";
-      if (found == 0 && Channel.IsTest && !uiDiagSaid) { uiDiagSaid = true; said += "\n" + UiCandidatesDiag(cands, anchors, 40); }
+      if (found == 0 && Channel.IsTest && !uiDiagSaid) { uiDiagSaid = true; said += "\n" + UiCandidatesDiag(cands, anchors, 32) + "\n" + UiNodesDiag(nodes, cands, 8); }
       return found;
     }
     static bool uiDiagSaid;
@@ -123,6 +124,24 @@ namespace RealmForge {
       }
       return string.Join("\n", lines.ToArray());
     }
+    /// <summary>For the next lab run: the nodes keyed by a form id with a table value that lie in no candidate's node array (a
+    /// table whose header the scan missed), at most <paramref name="max"/>: the key's form name and the value's marks.</summary>
+    internal static string UiNodesDiag(IList<ulong> nodes, IList<ulong> cands, int max) {
+      var inCands = new List<KeyValuePair<ulong, ulong>>();
+      foreach (var t in cands) { var h = Read(t, 56); if (h != null && h[11] <= 12) { ulong np = BitConverter.ToUInt64(h, 24); inCands.Add(new KeyValuePair<ulong, ulong>(np, np + (ulong)(32 << h[11]))); } }
+      var outside = new List<ulong>();
+      foreach (var n in nodes) { bool inside = false; foreach (var r in inCands) if (n >= r.Key && n < r.Value) { inside = true; break; } if (!inside) outside.Add(n); }
+      var lines = new List<string> { "  form id nodes: " + nodes.Count + ", " + outside.Count + " outside the candidates" };
+      Dictionary<long, string> names = null;
+      foreach (var n in outside) {
+        if (lines.Count > max) { lines.Add("  ..."); break; }
+        var nb = Read(n, 32); if (nb == null) { lines.Add("  " + n.ToString("X") + ": unreadable"); continue; }
+        if (names == null) { names = new Dictionary<long, string>(); foreach (var e in ScreenMap.All) { long id = FormIdOf(e.Name); names[id] = e.Name; names[(long)(uint)id] = e.Name; } }
+        long k = BitConverter.ToInt64(nb, 16); string nm;
+        lines.Add("  " + n.ToString("X") + ": " + (names.TryGetValue(k, out nm) ? nm : "id " + k) + " next " + BitConverter.ToInt32(nb, 28) + " [" + TableMarks(BitConverter.ToUInt64(nb, 0)) + "]");
+      }
+      return string.Join("\n", lines.ToArray());
+    }
     static string TableMarks(ulong f) {
       ulong v, c; int tt, ct; var m = new List<string>();
       if (Field(f, "____instanceId", out v, out tt)) m.Add("inst" + (tt == T_INT ? "" : ":" + tt));
@@ -134,11 +153,12 @@ namespace RealmForge {
 
     /// <summary>The tables keyed by one of <paramref name="ids"/> at a node holding a table (at most 128): one pass for the nodes,
     /// one for the table headers whose node array holds one of them (an old array can linger after a rehash: the live table
-    /// points at the array in use, so a table header found this way is the one).</summary>
-    static List<ulong> UiCandidates(long[] ids) {
+    /// points at the array in use, so a table header found this way is the one). Any size: UIInstance shrinks to 1 or 2 nodes
+    /// when the game destroys its forms (the guild alone open). <paramref name="nodes"/> = the nodes found.</summary>
+    static List<ulong> UiCandidates(long[] ids, out List<ulong> nodes) {
       var idSet = new HashSet<long>();
       foreach (var id in ids) if (id != 0) { idSet.Add(id); if (id < 0) idSet.Add((long)(uint)id); }
-      var nodes = new List<ulong>();
+      nodes = new List<ulong>(); var found = nodes;
       var cands = new List<ulong>();
       if (idSet.Count == 0) return cands;
       ScanParallel((b0, buf, len) => {
@@ -147,14 +167,14 @@ namespace RealmForge {
           if (BitConverter.ToInt32(buf, i + 24) != T_INT || BitConverter.ToInt32(buf, i + 8) != T_TABLE) continue;
           if (idSet.Contains(BitConverter.ToInt64(buf, i + 16))) (mine ?? (mine = new List<ulong>())).Add(b0 + (ulong)i);
         }
-        if (mine != null) lock (nodes) nodes.AddRange(mine);
+        if (mine != null) lock (found) found.AddRange(mine);
       });
       if (nodes.Count == 0) return cands;
       var ns = nodes.ToArray(); Array.Sort(ns);
       ScanParallel((b0, buf, len) => {
         for (int i = 0; i + 56 <= len; i += 8) {
           if (buf[i + 8] != 5) continue;
-          int lsize = buf[i + 11]; if (lsize < 2 || lsize > 12) continue;
+          int lsize = buf[i + 11]; if (lsize > 12) continue;
           ulong np = BitConverter.ToUInt64(buf, i + 24); if (np == 0) continue;
           ulong end = np + (ulong)(32 << lsize);
           int lo = 0, hi = ns.Length;
@@ -223,6 +243,8 @@ namespace RealmForge {
     public static ulong PickUiTableForTest(IList<ulong> cands, long[] ids) { string w; return PickUiTable(cands, ids, out w); }
     /// <summary>For the tests: the diagnostic lines of a failed search over these candidate tables.</summary>
     public static string UiCandidatesDiagForTest(IList<ulong> cands, long[] ids, int maxLines) { return UiCandidatesDiag(cands, WithAllForms(ids), maxLines); }
+    /// <summary>For the tests: the node lines of the diagnostic over the test memory, by these anchor ids and every screen-map form's.</summary>
+    public static string UiNodesDiagForTest(long[] anchors) { regs = Regions(); List<ulong> nodes; var ids = WithAllForms(anchors); var c = UiCandidates(ids, out nodes); return UiNodesDiag(nodes, c, 8); }
     /// <summary>For the tests: the full search over the test memory by these anchor ids and every screen-map form's, with its log line
     /// (the test build's one-shot diagnostic of a failed search armed again).</summary>
     public static ulong FindUiTableForTest(long[] anchors, out string said) { regs = Regions(); uiDiagSaid = false; return FindUiIn(WithAllForms(anchors), out said); }
