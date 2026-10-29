@@ -31,6 +31,13 @@ using System.Collections.Generic;
 namespace RealmForge {
   public enum ClickOwner { Locate, Sell, Equip }
 
+  /// <summary>How a pilot leaves the form on top, by the screen map (ClickGate.MapExit).</summary>
+  public enum MapMove { None, Wait, Stop, Back, Close, Escape }
+  public sealed class MapDecision {
+    public MapMove Move; public string Form = ""; public char Class = 'U'; public GeoRect Point; public string Why = "";
+    public override string ToString() { return Move + (Form != "" ? " " + Form + ":" + ScreenMap.ClassName(Class) : "") + (Why != "" ? " (" + Why + ")" : ""); }
+  }
+
   public enum ClickTarget {
     None,
     HeroBack,         // the hero screen's back arrow
@@ -54,7 +61,8 @@ namespace RealmForge {
     OfferClose,       // every owner: the × of the game's offer / notice pop-up on top of the city (src/OfferForms.cs; never its buy / go / claim buttons)
     UnknownBack,      // every owner: the game's back arrow top left (HeroBack's spot) on a full-screen screen nobody knows, no pop-up on it (at most MaxUnknownBacks a run)
     CityBack,         // every owner: the same back arrow on a KNOWN screen that is not the pilot's way (the Foundry, the inventory, the gem screen ...), on the way to the city (at most MaxCityBacks a run)
-    EscapeBack,       // every owner: ONE Escape key press after a back press that changed nothing (never on the city, in a fight or with the exit dialog; at most MaxEscapes a run)
+    EscapeBack,       // every owner: ONE Escape key press after a back press that changed nothing (never on the city, in a fight or with the exit dialog; at most MaxEscapes a run); or on a form the screen map closes with Escape
+    MapClose,         // every owner: the × of the pop-up on top as the screen map gives it (src/ScreenMap.cs, class P; never its other buttons; at most MaxMapMoves a run)
     // the artifact flows (only with the site's "artAuto" switch; never «Продать», «Все», a lock, «Продвинуть», «Улучшить»)
     ArtTab,           // the inventory's left menu «Артефакт»
     ArtBulkEnter,     // the artifact tab's «Массовая продажа» (the storage cleanup)
@@ -156,6 +164,9 @@ namespace RealmForge {
     /// most screens close with it) instead of the stop, at most MaxEscapes a run; never on the city (it asks to quit the game), in a fight, with
     /// a pop-up or the exit dialog (ExitDialogForms) shown. An Escape that changes nothing, or the exit dialog after it, stops the owner.</summary>
     public const int MaxCityBacks = 4, MaxEscapes = 2, CityBackSettleMs = 1000;
+    /// <summary>The screen map's exits (MapExit): a form must have been on top MapSettleMs before its × or Escape (its opening animation), at most
+    /// MaxMapMoves of them a run (then "nochange": a loop).</summary>
+    public const int MapSettleMs = 1000, MaxMapMoves = 6;
     /// <summary>The game's exit question (Form_MainCity's back-press listener: CS.Form_SystemTips «выйти из игры?»): never an Escape while it shows, a stop when it appears.</summary>
     public static readonly string[] ExitDialogForms = { "Form_SystemTips" };
     /// <summary>Shown forms the unknown-screen stop leaves alone: a fight's result screens (the player is in a fight, not lost).</summary>
@@ -319,6 +330,8 @@ namespace RealmForge {
     readonly Dictionary<ClickOwner, int> escapes = new Dictionary<ClickOwner, int>();         // EscapeBack presses in this run
     readonly HashSet<ClickOwner> escapeDue = new HashSet<ClickOwner>();                       // a back press changed nothing: one Escape next
     readonly Dictionary<ClickOwner, long> cityTried = new Dictionary<ClickOwner, long>();     // the last CityBackDue / EscapeDue yes
+    readonly Dictionary<ClickOwner, int> mapMoves = new Dictionary<ClickOwner, int>();        // MapClose clicks and map Escapes in this run
+    readonly Dictionary<ClickOwner, long> mapTried = new Dictionary<ClickOwner, long>();      // the last MapDue yes
 
     void Note(ClickOwner o, string key, string text) {
       string was; if (noted.TryGetValue(o, out was) && was == key) return;
@@ -342,6 +355,62 @@ namespace RealmForge {
       stall.Remove(o); stallBrief.Remove(o); searchWaited.Remove(o);
       unknownBacks.Remove(o); backTried.Remove(o); lastTarget.Remove(o);
       cityBacks.Remove(o); escapes.Remove(o); escapeDue.Remove(o); cityTried.Remove(o);
+      mapMoves.Remove(o); mapTried.Remove(o);
+    }
+
+    /// <summary>The screen map's verdict for the form on top (ScreenState.Top): on an unknown screen, or for a pop-up over a known screen or the
+    /// city ("form:" modal). Dangerous: Stop; a fight / loading / result: Wait; a pop-up with its ×: Close (the point; never on one of its other
+    /// buttons); a form the game's back key closes: Escape (never on the city: Stop there); a full screen with its back arrow on an unknown
+    /// screen: Back (the UnknownBack press, at the map's point); else None (the older rules decide). An offer pop-up and a held screen: None.</summary>
+    public static MapDecision MapExit(ScreenState s, double W, double H, double U) {
+      var d = new MapDecision();
+      if (s == null || s.Held || s.OfferCount > 0) return d;
+      bool over = s.ModalOpen && s.ModalWhy != null && s.ModalWhy.StartsWith("form:");
+      if (s.Kind == ScreenKind.Unknown ? s.ModalOpen : !over) return d;
+      d.Form = s.Top ?? ""; d.Class = s.TopClass;
+      if (d.Form == "") return d;
+      var e = ScreenMap.ByName(d.Form);
+      string why = e != null ? e.Why : "";
+      switch (d.Class) {
+        case 'D': d.Move = MapMove.Stop; d.Why = "dangerous: " + why; break;
+        case 'W': d.Move = MapMove.Wait; d.Why = why; break;
+        case 'P': {
+          var pt = ScreenMap.ExitPoint(d.Form, W, H, U);
+          if (pt != null && !ScreenMap.OnNever(d.Form, pt.X, pt.Y, W, H, U)) { d.Move = MapMove.Close; d.Point = pt; d.Why = why; }
+          break;
+        }
+        case 'E':
+          if (s.Kind == ScreenKind.City) { d.Move = MapMove.Stop; d.Why = "only the back key closes it, and Escape is never sent on the city"; }
+          else { d.Move = MapMove.Escape; d.Why = why; }
+          break;
+        case 'F':
+          if (s.Kind == ScreenKind.Unknown) { d.Move = MapMove.Back; d.Point = ScreenMap.ExitPoint(d.Form, W, H, U); d.Why = why; }
+          break;
+      }
+      return d;
+    }
+
+    /// <summary>The map's × or Escape may be tried now: the owner runs (not halted, no click on its way, no form search, not a hint run), the form
+    /// has been on top MapSettleMs, no try within UnknownBackRetryMs; MaxMapMoves made already: the owner stops ("nochange").</summary>
+    public bool MapDue(ClickOwner o, ScreenState s, long now) {
+      if (s == null || halted.ContainsKey(o) || watches.ContainsKey(o) || SearchWait || HintOnly(o)) return false;
+      if (now - s.SinceMs < MapSettleMs) return false;
+      long t; if (mapTried.TryGetValue(o, out t) && now - t < UnknownBackRetryMs) return false;
+      int n = MapMoves(o);
+      if (n >= MaxMapMoves) { Halt(o, "nochange", "the screen map's exits: " + n + " made already, the game shows " + s.Brief + " (" + s.Top + ")"); return false; }
+      mapTried[o] = now;
+      return true;
+    }
+    public int MapMoves(ClickOwner o) { int n; return mapMoves.TryGetValue(o, out n) ? n : 0; }
+    /// <summary>The map says the form on top is dangerous (or has no exit allowed here): the owner stops, nothing of it is pressed.</summary>
+    public GateResult MapStop(ClickOwner o, MapDecision d, ScreenState s) {
+      return Halt(o, "dangerous", "the game shows " + d.Form + " (" + d.Why + ") on " + (s != null ? s.Brief : "?") + " - nothing of it is pressed");
+    }
+    /// <summary>The map closes the form on top with the back key: one Escape is due (EscapeSend; judged by CheckEscape on a fresh read).</summary>
+    public void MapEscape(ClickOwner o) { escapeDue.Add(o); mapMoves[o] = MapMoves(o) + 1; }
+    /// <summary>The fresh screen's pop-up over a known screen is one the map closes with Escape (never on the city).</summary>
+    static bool MapEscapeOk(ScreenState s) {
+      return s != null && s.Kind != ScreenKind.City && s.TopClass == 'E' && s.ModalOpen && s.ModalWhy != null && s.ModalWhy.StartsWith("form:") && s.OfferCount == 0;
     }
 
     /// <summary>The back-to-the-city presses (CityBack) and the Escape presses (EscapeBack) made in this run.</summary>
@@ -400,12 +469,12 @@ namespace RealmForge {
       if (s.Kind == ScreenKind.City) return "the city is on top (Escape asks to quit the game there)";
       if (s.Held) return "the screen is held";
       if (s.OfferCount > 0) return "an offer pop-up is open";
-      if (s.ModalOpen) return "a pop-up is open (" + s.ModalWhy + ")";
+      if (s.ModalOpen && !MapEscapeOk(s)) return "a pop-up is open (" + s.ModalWhy + ")";
       if (ExitDialogShown(s)) return "the exit dialog is shown";
       if (Exempt(s.TopForm)) return "a fight's result";
       if (s.ShownKnown == null) return "the shown forms are not known";
       if (HasForm(s.ShownKnown, BattleForms)) return "a fight's form is shown";
-      if (s.Kind == ScreenKind.Unknown) { string b = UnknownBackBlock(s); if (b != "") return b; }
+      if (s.Kind == ScreenKind.Unknown) { string b = UnknownBackBlock(s); if (b != "" && !(s.TopClass == 'E' && b.StartsWith(MapBlock))) return b; }
       return "";
     }
 
@@ -431,7 +500,7 @@ namespace RealmForge {
       if (s != null && s.Kind == ScreenKind.City) { escapeDue.Remove(o); return false; }
       if (halted.ContainsKey(o) || watches.ContainsKey(o) || SearchWait || HintOnly(o)) return false;
       // (a tick's state has no shown forms read: the fresh one Check judges has them)
-      if (s == null || s.Held || s.ModalOpen || s.OfferCount > 0 || ExitDialogShown(s) || Exempt(s.TopForm) || HasForm(s.ShownKnown, BattleForms)) return false;
+      if (s == null || s.Held || (s.ModalOpen && !MapEscapeOk(s)) || s.OfferCount > 0 || ExitDialogShown(s) || Exempt(s.TopForm) || HasForm(s.ShownKnown, BattleForms)) return false;
       long t; if (cityTried.TryGetValue(o, out t) && now - t < UnknownBackRetryMs) return false;
       cityTried[o] = now;
       return true;
@@ -452,8 +521,10 @@ namespace RealmForge {
       if (Exempt(s.TopForm)) return "a fight's result";
       if (s.ShownKnown == null) return "the shown forms are not known";
       if (s.ShownKnown != "") return "a known screen's form is shown (" + s.ShownKnown + ")";
+      if (s.Top != "" && "DWPE".IndexOf(s.TopClass) >= 0) return MapBlock + s.Top + " is " + ScreenMap.ClassName(s.TopClass);
       return "";
     }
+    const string MapBlock = "the screen map: ";
 
     /// <summary>The host may try the back press now: the owner runs (not halted, no click on its way, no form search), the screen
     /// (the tick's) has been the same unrecognised one for UnknownBackSettleMs, presses are left, and no try was made within UnknownBackRetryMs.
@@ -461,7 +532,7 @@ namespace RealmForge {
     public bool UnknownBackDue(ClickOwner o, ScreenState s, long now) {
       if (halted.ContainsKey(o) || watches.ContainsKey(o) || SearchWait) return false;
       if ((o == ClickOwner.Sell && NoSellClicks) || (o == ClickOwner.Locate && NoLocateClicks)) return false;
-      if (!Unrecognised(s) || s.ModalOpen || !s.OfferRead || Exempt(s.TopForm)) return false;
+      if (!Unrecognised(s) || s.ModalOpen || !s.OfferRead || Exempt(s.TopForm) || (s.Top != "" && "DWPE".IndexOf(s.TopClass) >= 0)) return false;
       if (now - s.SinceMs < UnknownBackSettleMs) return false;
       if (UnknownBacks(o) >= MaxUnknownBacks) return false;
       long t; if (backTried.TryGetValue(o, out t) && now - t < UnknownBackRetryMs) return false;
@@ -497,7 +568,7 @@ namespace RealmForge {
 
     static bool Exempt(string top) {
       if (string.IsNullOrEmpty(top)) return false;
-      foreach (var n in top.Split(',')) if (Array.IndexOf(StallExempt, n.Trim()) >= 0) return true;
+      foreach (var n in top.Split(',')) if (Array.IndexOf(StallExempt, n.Trim()) >= 0 || ScreenMap.ClassOf(n.Trim()) == 'W') return true;
       return false;
     }
 
@@ -517,6 +588,7 @@ namespace RealmForge {
       if (t == ClickTarget.UnknownBack) unknownBacks[o] = UnknownBacks(o) + 1;
       if (t == ClickTarget.CityBack) cityBacks[o] = CityBacks(o) + 1;
       if (t == ClickTarget.EscapeBack) { escapes[o] = Escapes(o) + 1; escapeDue.Remove(o); }
+      if (t == ClickTarget.MapClose) mapMoves[o] = MapMoves(o) + 1;
       if (done == null) { watches.Remove(o); return; }
       int ms = t == ClickTarget.CityInventory || t == ClickTarget.FoundryButton || t == ClickTarget.ArtWorkshop || t == ClickTarget.ArtReplace || t == ClickTarget.ArtTakeOverConfirm ? SlowEffectMs : t == ClickTarget.InvCardGem || t == ClickTarget.GemFuncRow || t == ClickTarget.ArtMatCell ? GemEffectMs : t == ClickTarget.ArtBulkCell ? ArtTickMs : EffectMs;
       watches[o] = new Watch { Done = done, Deadline = now + ms, What = t == ClickTarget.OfferClose && offer != null ? "OfferClose(" + offer + ")" : t.ToString(), Offer = t == ClickTarget.OfferClose ? offer ?? "" : null, Target = t, ArmedAt = now };
@@ -534,9 +606,12 @@ namespace RealmForge {
         // back to the city / the Escape: the screen is another one (another kind, a hero screen's gear list closed, a pop-up or another unknown form on top)
         case ClickTarget.CityBack: case ClickTarget.EscapeBack: {
           ScreenKind k = before != null ? before.Kind : ScreenKind.Unknown; int slot = before != null ? before.HeroSlot : -1;
-          string top = before != null ? before.TopForm : ""; bool modal = before != null && before.ModalOpen;
-          return s => s.Kind != k || (k == ScreenKind.HeroScreen && s.HeroSlot != slot) || (k == ScreenKind.Unknown && s.TopForm != top) || s.OfferCount > 0 || (s.ModalOpen && !modal);
+          string top = before != null ? before.TopForm : ""; bool modal = before != null && before.ModalOpen; string why = before != null ? before.ModalWhy : "";
+          return s => s.Kind != k || (k == ScreenKind.HeroScreen && s.HeroSlot != slot) || (k == ScreenKind.Unknown && s.TopForm != top) || s.OfferCount > 0 || (s.ModalOpen && !modal)
+                      || (modal && (!s.ModalOpen || s.ModalWhy != why));   // the pop-up the map's Escape closed
         }
+        // the map's pop-up is no longer on top (a read that names no form on an unknown screen is not an effect)
+        case ClickTarget.MapClose: { string form = r.Form ?? ""; return s => s.Top != form && (s.Kind != ScreenKind.Unknown || s.TopForm != ""); }
         // the screen is another one: a known one, another unknown form on top, a pop-up (an unknown screen with no name read stays "the same": nochange)
         case ClickTarget.UnknownBack: {
           string top = before != null ? before.TopForm : "";
@@ -643,7 +718,7 @@ namespace RealmForge {
         long at;
         // (the back press leaves one unknown screen for another one at times: that is its effect, judged by its watch, not a stop)
         ClickTarget lt;
-        if (clickedAt.TryGetValue(o, out at) && now - at <= OwnClickWindowMs && !searchWaited.Contains(o) && !(lastTarget.TryGetValue(o, out lt) && (lt == ClickTarget.UnknownBack || lt == ClickTarget.CityBack || lt == ClickTarget.EscapeBack))) return Halt(o, "unknown", d + " after the pilot's own click");
+        if (clickedAt.TryGetValue(o, out at) && now - at <= OwnClickWindowMs && !searchWaited.Contains(o) && !(lastTarget.TryGetValue(o, out lt) && (lt == ClickTarget.UnknownBack || lt == ClickTarget.CityBack || lt == ClickTarget.EscapeBack || lt == ClickTarget.MapClose))) return Halt(o, "unknown", d + " after the pilot's own click");
         if (!modeUnknown && UnknownStall(o, s, now)) return GateResult.Deny("unknown", HaltDetail(o));
         return GateResult.Wait("unknown", d);
       }
@@ -666,6 +741,7 @@ namespace RealmForge {
       if (r.Target == ClickTarget.UnknownBack) return CheckUnknownBack(r, f, tag);
       if (r.Target == ClickTarget.CityBack) return CheckCityBack(r, f, tag);
       if (r.Target == ClickTarget.EscapeBack) return CheckEscape(r, f, tag);
+      if (r.Target == ClickTarget.MapClose) return CheckMapClose(r, f, now, tag);
       // any other click waits while an offer pop-up is on top (it would land on the pop-up)
       if (f != null && f.OfferCount > 0) return GateResult.Wait("offer", tag + ": " + f.ModalWhy + " is open");
       // the artifact cleanup never clicks, whatever the auto click setting says; nothing of the artifact tab is on any whitelist either
@@ -827,7 +903,7 @@ namespace RealmForge {
       if (block != "") { Note(o, "wait-back:" + block, "wait " + tag + ": " + block); return GateResult.Wait("screen", tag + ": " + block); }
       int n = UnknownBacks(o);
       if (n >= MaxUnknownBacks) return Halt(o, "unknown", "unknown screen " + (f.TopForm != "" ? f.TopForm : "?") + ": the back arrow was pressed " + n + " times already");
-      if (!OnBackArrow(r.X, r.Y, r.U)) return Halt(o, "target", tag + ": not on the back arrow");
+      if (!OnBackArrow(r.X, r.Y, r.U) && !(f.TopClass == 'F' && r.W > 0 && ScreenMap.OnExit(f.Top, r.X, r.Y, r.W, r.H, r.U))) return Halt(o, "target", tag + ": not on the back arrow");
       var res = GateResult.Allow(tag + " on " + f.Brief + " (press " + (n + 1) + " of " + MaxUnknownBacks + ")");
       Note(o, "allow:" + r.Target + ":" + f.Brief + ":" + n, "allow " + res.Detail);
       return res;
@@ -863,6 +939,27 @@ namespace RealmForge {
       int n = Escapes(o);
       if (n >= MaxEscapes) return Halt(o, "nochange", tag + ": Escape was pressed " + n + " times already, the game shows " + f.Brief);
       var res = GateResult.Allow(tag + " on " + f.Brief + " (Escape " + (n + 1) + " of " + MaxEscapes + ")");
+      Note(o, "allow:" + r.Target + ":" + f.Brief + ":" + n, "allow " + res.Detail);
+      return res;
+    }
+
+    /// <summary>MapClose: the fresh screen's top form is still the pop-up the map closes with its × (MapExit Close), the point is on its × and on
+    /// none of its other buttons, MaxMapMoves not reached.</summary>
+    GateResult CheckMapClose(ClickRequest r, ScreenState f, long now, string tag) {
+      var o = r.Owner;
+      if (HintOnly(o)) return GateResult.Deny("off", tag + ": a hint run clicks nothing");
+      if (f == null) return UnknownWait(r, f, now, tag + ": the screen is not read");
+      var d = MapExit(f, r.W, r.H, r.U);
+      string form = r.Form ?? "";
+      if (d.Move != MapMove.Close || d.Form != form) {
+        if (d.Form != form) return GateResult.Wait("screen", tag + ": " + form + " is no longer on top (" + f.Brief + ", " + d + ")");
+        return Halt(o, "target", tag + ": the screen map has no × to press on " + form + " (" + d + ")");
+      }
+      if (!ScreenMap.OnExit(form, r.X, r.Y, r.W, r.H, r.U)) return Halt(o, "target", tag + ": not on the close button of " + form);
+      if (ScreenMap.OnNever(form, r.X, r.Y, r.W, r.H, r.U)) return Halt(o, "target", tag + ": lies on another button of " + form + " (never pressed)");
+      int n = MapMoves(o);
+      if (n >= MaxMapMoves) return Halt(o, "nochange", tag + ": " + n + " of the screen map's exits made already, " + form + " again (a loop?)");
+      var res = GateResult.Allow(tag + " on " + f.Brief + " (" + form + ")");
       Note(o, "allow:" + r.Target + ":" + f.Brief + ":" + n, "allow " + res.Detail);
       return res;
     }

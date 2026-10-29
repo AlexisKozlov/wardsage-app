@@ -2515,6 +2515,7 @@ namespace RealmForge {
       // the forms nobody knows (read every 2 s by the tick): over the same known screen a later one is a pop-up on top; on an unknown screen, its name
       if (topNewNow != "" && st.Kind == topNewKind) { inp.TopNew = topNewNow; st = ScreenState.Classify(inp, now); }
       else if (topUnknownNow != "" && st.Kind == ScreenKind.Unknown) { inp.TopUnknown = topUnknownNow; st = ScreenState.Classify(inp, now); }
+      else if (topCityNow != "" && st.Kind == ScreenKind.City) { inp.TopCity = topCityNow; st = ScreenState.Classify(inp, now); }
       // a click on a city button also needs the picture of the bar (the form alone is not enough for a click)
       if (wantCity && ScreenState.NeedsCityPicture(st.Kind, inp.CityForm)) {
         bool seen = CityVisible(GameWindow());
@@ -2549,7 +2550,7 @@ namespace RealmForge {
     volatile bool uiFinding; long uiFindAt, unknownFormsAt, lostSearchAt; int lostSearchGen; List<string> unknownForms;
     // the shown unknown forms when the screen became the known one it is (TopNew: the ones that came later are a pop-up on top), and the last results
     const int TopSettleMs = 3000;
-    long topBaseAt; ScreenKind topBaseKind = ScreenKind.Unknown; HashSet<string> topBase = new HashSet<string>(); string topNewNow = "", topUnknownNow = ""; ScreenKind topNewKind = ScreenKind.Unknown;
+    long topBaseAt; ScreenKind topBaseKind = ScreenKind.Unknown; HashSet<string> topBase = new HashSet<string>(); string topNewNow = "", topUnknownNow = "", topCityNow = ""; ScreenKind topNewKind = ScreenKind.Unknown;
     readonly HashSet<string> unknownSaid = new HashSet<string>();
     string offerSaid = "";
 
@@ -2567,7 +2568,7 @@ namespace RealmForge {
       string os = inp.Offers == null ? "?" : string.Join(",", inp.Offers.ToArray());
       if (os != offerSaid) { offerSaid = os; if (os != "" && os != "?") Log.Write("offer: shown " + os); }
       var cls = ScreenState.Classify(inp, now).Kind;
-      topNewNow = ""; topUnknownNow = "";
+      topNewNow = ""; topUnknownNow = ""; topCityNow = "";
       if (front && (inp.Offers == null || inp.Offers.Count == 0)) {
         if (now - unknownFormsAt >= 2000 || unknownFormsAt == 0) { unknownFormsAt = now; unknownForms = RFX.ReadUnknownShownForms(4); }
         var cur = unknownForms ?? new List<string>();
@@ -2577,7 +2578,14 @@ namespace RealmForge {
             inp.TopUnknown = topUnknownNow = string.Join(",", cur.ToArray());
             if (unknownSaid.Add("rec:" + inp.TopUnknown)) RaiseAutoRec(AutoRecPolicy.UnknownFormTag(inp.TopUnknown));
           }
-        } else if (cls != ScreenKind.City && unknownForms != null) {
+        } else if (cls == ScreenKind.City) {
+          // over the city: a form the screen map calls a pop-up, a dangerous dialog or a wait covers its buttons (the pilots close it first: MapStep)
+          var cov = cur.FindAll(n => "PEDW".IndexOf(ScreenMap.ClassOf(n)) >= 0);
+          if (cov.Count > 0) {
+            inp.TopCity = topCityNow = string.Join(",", cov.ToArray());
+            if (unknownSaid.Add("city:" + topCityNow)) Log.Write("screen map: the city is covered by " + topCityNow + " (" + ScreenMap.ClassName(ScreenMap.ClassOf(ScreenMap.Top(topCityNow))) + ")");
+          }
+        } else if (unknownForms != null) {
           // over a known screen: the forms there when it came are its own; one that came later is a pop-up on top (never pressed: the gate stops on it)
           // (the forms read within TopSettleMs of the screen's coming are its own too: a part the game builds a moment later; the read right after the change is fresh)
           if (cls != topBaseKind) { topBaseKind = cls; topBaseAt = now; topBase = new HashSet<string>(); unknownForms = RFX.ReadUnknownShownForms(4); unknownFormsAt = now; cur = unknownForms ?? new List<string>(); }
@@ -2613,11 +2621,15 @@ namespace RealmForge {
     /// no pop-up, no known screen's form shown, not the city or a fight, at most ClickGate.MaxUnknownBacks a run, each press has to change the
     /// screen). True = a press was tried this tick; false = not due, the pilot goes on (it waits on the unknown screen as before).</summary>
     bool UnknownBackStep(ClickOwner owner, ScreenState scr, W32.POINT o, W32.RECT cr, bool front, long now) {
+      if (MapStep(owner, scr, o, cr, front, now)) return true;
       // the last back press changed nothing: one Escape instead (EscapeBack; never on the city or in a fight)
       if (front && !sending && scr != null && scr.Kind == ScreenKind.Unknown && gate.EscapeDue(owner, scr, now)) { EscapeSend(owner, cr, front); AnnounceHalts(); return true; }
       if (!front || sending || !gate.UnknownBackDue(owner, scr, now)) return false;
       double W = cr.R, H = cr.B, U = Ui.Unit(W, H);
-      SendInside(new AutoAction { Kind = AutoKind.Click, X = hg2.BackX * U, Y = hg2.BackY * U }, o, cr, owner, ClickTarget.UnknownBack, front, (rq, fr) => { rq.U = U; });
+      // the screen map's back arrow of the form on top (the standard one top left for nearly every form)
+      var md = ClickGate.MapExit(scr, W, H, U);
+      double bx = md.Move == MapMove.Back && md.Point != null ? md.Point.X : hg2.BackX * U, by = md.Move == MapMove.Back && md.Point != null ? md.Point.Y : hg2.BackY * U;
+      SendInside(new AutoAction { Kind = AutoKind.Click, X = bx, Y = by }, o, cr, owner, ClickTarget.UnknownBack, front, (rq, fr) => { rq.U = U; rq.W = W; rq.H = H; });
       AnnounceHalts();
       return true;
     }
@@ -2627,12 +2639,32 @@ namespace RealmForge {
     /// change the screen). A press that changed nothing is followed by ONE Escape key press (EscapeBack, at most ClickGate.MaxEscapes a run).
     /// True = a press was tried this tick; false = nothing due, the pilot goes on.</summary>
     bool BackStep(ClickOwner owner, ScreenState scr, bool need, W32.POINT o, W32.RECT cr, bool front, long now) {
+      if (MapStep(owner, scr, o, cr, front, now)) return true;   // a pop-up over the screen (or the city) first
       if (!need) { if (scr != null && scr.Kind != ScreenKind.Unknown) gate.DropEscape(owner); return false; }
       if (!front || sending) return false;
       if (gate.EscapeDue(owner, scr, now)) { EscapeSend(owner, cr, front); AnnounceHalts(); return true; }
       if (!gate.CityBackDue(owner, scr, now)) { AnnounceHalts(); return false; }
       double W = cr.R, H = cr.B, U = Ui.Unit(W, H);
       SendInside(new AutoAction { Kind = AutoKind.Click, X = hg2.BackX * U, Y = hg2.BackY * U }, o, cr, owner, ClickTarget.CityBack, front, (rq, fr) => { rq.U = U; });
+      AnnounceHalts();
+      return true;
+    }
+
+    /// <summary>The screen map's exit of the form on top (ClickGate.MapExit), shared by every pilot: a dangerous form stops the pilot, a fight /
+    /// loading waits (the tick is taken), a pop-up is closed with its × (MapClose, through the gate) or with one Escape (never on the city).
+    /// A back arrow and the rest: false, the older steps decide (UnknownBack / CityBack).</summary>
+    bool MapStep(ClickOwner owner, ScreenState scr, W32.POINT o, W32.RECT cr, bool front, long now) {
+      if (scr == null || !front) return false;
+      double W = cr.R, H = cr.B, U = Ui.Unit(W, H);
+      var d = ClickGate.MapExit(scr, W, H, U);
+      if (d.Move == MapMove.None || d.Move == MapMove.Back) return false;
+      if (d.Move == MapMove.Wait || gate.Halted(owner) || sending) return true;
+      if (gate.EscapeDue(owner, scr, now)) { EscapeSend(owner, cr, front); AnnounceHalts(); return true; }
+      if (!gate.MapDue(owner, scr, now)) { AnnounceHalts(); return true; }
+      if (d.Move == MapMove.Stop) { gate.MapStop(owner, d, scr); AnnounceHalts(); return true; }
+      if (d.Move == MapMove.Escape) { gate.MapEscape(owner); EscapeSend(owner, cr, front); AnnounceHalts(); return true; }
+      string form = d.Form;
+      SendInside(new AutoAction { Kind = AutoKind.Click, X = d.Point.X, Y = d.Point.Y }, o, cr, owner, ClickTarget.MapClose, front, (rq, fr) => { rq.Form = form; rq.W = W; rq.H = H; rq.U = U; });
       AnnounceHalts();
       return true;
     }

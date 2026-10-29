@@ -46,6 +46,9 @@ namespace RealmForge {
     /// <summary>The shown forms that are screens the app knows, the battle among them (src/OfferScan.cs ReadShownKnownForms): "" = none, null = not read.
     /// Read for the unknown-screen back press only (ClickGate UnknownBack); it never changes the screen's kind.</summary>
     public string ShownKnown;
+    /// <summary>On the city: the shown forms the screen map (src/ScreenMap.cs) calls a pop-up, a dangerous dialog or a wait (they cover the city's
+    /// buttons): the screen is modal ("form:&lt;names&gt;"); "" = none / not read.</summary>
+    public string TopCity = "";
   }
 
   public sealed class ScreenState {
@@ -86,6 +89,11 @@ namespace RealmForge {
     public bool OfferRead;
     /// <summary>On an Unknown screen: the shown form that is not known (its name, for the log), "" = none.</summary>
     public string TopForm = "";
+    /// <summary>The form on top by name, for every screen: the offer pop-up, else the screen map's top of the forms over the screen (a pop-up
+    /// over a known screen or the city, the forms of an unknown screen: ScreenMap.Top), else the known screen's own form; "" = not known.</summary>
+    public string Top = "";
+    /// <summary>The screen map's class of Top (ScreenMap.ClassOf: F P E O D W K U).</summary>
+    public char TopClass = 'U';
     /// <summary>The shown known screens' forms (ScreenInputs.ShownKnown): "" = none, null = not read.</summary>
     public string ShownKnown;
     // times (ms, the overlay's clock): this reading, the last time the screen was really read (older when Held), since when the screen is this one
@@ -120,6 +128,7 @@ namespace RealmForge {
         }
         if (ModalOpen) sb.Append(" modal(").Append(ModalWhy).Append(')');
         if (Kind == ScreenKind.Unknown && TopForm != "") sb.Append(" top(").Append(TopForm).Append(')');
+        if (Kind == ScreenKind.Unknown && Top != "") sb.Append(" map(").Append(Top).Append(':').Append(ScreenMap.ClassName(TopClass)).Append(')');
         return sb.ToString();
       }
     }
@@ -129,6 +138,19 @@ namespace RealmForge {
 
     /// <summary>The screen from one set of readings, no memory of earlier ones (the click gate uses this on a fresh read).
     /// Order: the Foundry and the gem screen open from the inventory / the hero's gear screen and sit above them.</summary>
+    /// <summary>The form of a screen the app reads ("" = Unknown).</summary>
+    public static string OwnForm(ScreenKind k) {
+      switch (k) {
+        case ScreenKind.City: return "Form_MainCity";
+        case ScreenKind.Inventory: return "Form_BackpackIntegration";
+        case ScreenKind.HeroScreen: return "Form_CharactorMain";
+        case ScreenKind.Foundry: return "Form_EquipSubliming";
+        case ScreenKind.Gem: return "Form_EquipGemMain";
+        case ScreenKind.ArtWorkshop: return "Form_EquipArtifactIntensify";
+      }
+      return "";
+    }
+
     public static ScreenState Classify(ScreenInputs i, long now) {
       var s = new ScreenState { ReadAtMs = now, ConfirmedAtMs = now, SinceMs = now, Inv = i.Inv, Rs = i.Rs, HeroScr = i.Hero, ArtWs = i.ArtWs };
       var rs = i.Rs; var inv = i.Inv; var h = i.Hero; var aw = i.ArtWs;
@@ -170,8 +192,15 @@ namespace RealmForge {
       }
       if (!s.ModalOpen && i.ModalExtra) { s.ModalOpen = true; s.ModalWhy = i.ModalExtraWhy; }
       if (!s.ModalOpen && s.Kind != ScreenKind.Unknown && s.Kind != ScreenKind.City && !string.IsNullOrEmpty(i.TopNew)) { s.ModalOpen = true; s.ModalWhy = "form:" + i.TopNew; }
+      if (!s.ModalOpen && s.Kind == ScreenKind.City && !string.IsNullOrEmpty(i.TopCity)) { s.ModalOpen = true; s.ModalWhy = "form:" + i.TopCity; }
       if (s.Kind == ScreenKind.Unknown) s.TopForm = i.TopUnknown ?? "";
       s.ShownKnown = i.ShownKnown;
+      // the form on top by name
+      if (s.OfferCount > 0) s.Top = s.Offer;
+      else if (s.Kind == ScreenKind.Unknown) s.Top = ScreenMap.Top(s.TopForm);
+      else if (s.ModalOpen && s.ModalWhy.StartsWith("form:")) s.Top = ScreenMap.Top(s.ModalWhy.Substring(5));
+      if (s.Top == "") s.Top = OwnForm(s.Kind);
+      s.TopClass = ScreenMap.ClassOf(s.Top);
       return s;
     }
   }
@@ -208,7 +237,7 @@ namespace RealmForge {
 
     public ScreenState Update(ScreenInputs raw, long now) {
       var failing = new List<string>();
-      var use = new ScreenInputs { CitySeen = raw.CitySeen, CityForm = raw.CityForm, ModalExtra = raw.ModalExtra, ModalExtraWhy = raw.ModalExtraWhy, Offers = raw.Offers, TopUnknown = raw.TopUnknown, TopNew = raw.TopNew, ShownKnown = raw.ShownKnown };
+      var use = new ScreenInputs { CitySeen = raw.CitySeen, CityForm = raw.CityForm, ModalExtra = raw.ModalExtra, ModalExtraWhy = raw.ModalExtraWhy, Offers = raw.Offers, TopUnknown = raw.TopUnknown, TopNew = raw.TopNew, ShownKnown = raw.ShownKnown, TopCity = raw.TopCity };
       long oldest = now;   // the oldest reading that stands in for a failed one
       use.Inv = Hold(raw.Inv, ref inv, ref invAt, now, "inventory", failing, ref oldest);
       use.Rs = Hold(raw.Rs, ref rs, ref rsAt, now, "foundry", failing, ref oldest);
@@ -249,7 +278,7 @@ namespace RealmForge {
       c.Hero = s.Hero; c.HeroTab = s.HeroTab; c.HeroSlot = s.HeroSlot;
       c.FoundryTab = s.FoundryTab; c.FoundryPopup = s.FoundryPopup; c.FoundrySel = s.FoundrySel; c.FoundryKey = s.FoundryKey;
       c.GemFunc = s.GemFunc; c.GemSel = s.GemSel; c.ModalOpen = s.ModalOpen; c.ModalWhy = s.ModalWhy;
-      c.Offer = s.Offer; c.OfferCount = s.OfferCount; c.OfferRead = s.OfferRead; c.TopForm = s.TopForm;
+      c.Offer = s.Offer; c.OfferCount = s.OfferCount; c.OfferRead = s.OfferRead; c.TopForm = s.TopForm; c.Top = s.Top; c.TopClass = s.TopClass;
       c.ReadAtMs = s.ReadAtMs; c.ConfirmedAtMs = s.ConfirmedAtMs; c.SinceMs = s.SinceMs; c.Held = s.Held;
       c.Inv = s.Inv; c.Rs = s.Rs; c.HeroScr = s.HeroScr; c.ArtWs = s.ArtWs;
       return c;

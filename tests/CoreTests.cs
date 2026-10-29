@@ -723,6 +723,8 @@ static class CoreTests {
     WindowTableTests();
     UnknownBackTests();
     CityBackTests();
+    ScreenMapTests();
+    ScreenMapScenarios();
     ArtGridPictureTests();
     ArtPromoteTests();
     ArtAutoTests();
@@ -4465,6 +4467,188 @@ static class CoreTests {
   }
 
   // back to the city (ClickTarget.CityBack) from a known screen the pilot cannot start from, and the one Escape after a back press that changed nothing
+  // the screen map (src/ScreenMap.cs, src/ScreenMapData.cs): every form of the game has a class; every pop-up / full screen an exit that is not
+  // one of its never-click buttons; a dangerous form never gets a click
+  static void ScreenMapTests() {
+    Console.WriteLine("Screen map: every form's exit");
+    int n = 0, bad = 0, never = 0; var seen = new HashSet<string>();
+    foreach (var e in ScreenMap.All) {
+      n++;
+      if (!seen.Add(e.Name) || "FPEODWKU".IndexOf(e.Class) < 0 || !e.Name.StartsWith("Form_")) { bad++; Console.WriteLine("  bad entry " + e.Name); }
+    }
+    Check(n > 1000 && bad == 0, "screen map: " + n + " forms, one entry each, a known class letter");
+    foreach (var sz in new[] { new[] { 1920.0, 1080.0 }, new[] { 1366.0, 705.0 }, new[] { 1280.0, 1024.0 } }) {
+      double W = sz[0], H = sz[1], U = Ui.Unit(W, H);
+      int fp = 0, fails = 0, dang = 0;
+      foreach (var e in ScreenMap.All) {
+        if (e.Class == 'F' || e.Class == 'P') {
+          fp++;
+          // the form alone on an unknown screen (F) / over the inventory (P): the map's verdict
+          var s = e.Class == 'F'
+            ? ScreenState.Classify(new ScreenInputs { CityForm = false, Offers = new List<string>(), TopUnknown = e.Name, ShownKnown = "" }, 0)
+            : ScreenState.Classify(new ScreenInputs { Inv = new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true }, Offers = new List<string>(), TopNew = e.Name, ShownKnown = "" }, 0);
+          var d = ClickGate.MapExit(s, W, H, U);
+          bool ok = d.Form == e.Name && (e.Class == 'F' ? d.Move == MapMove.Back : d.Move == MapMove.Close) && d.Point != null
+                    && d.Point.X >= 0 && d.Point.X <= W && d.Point.Y >= 0 && d.Point.Y <= H
+                    && ScreenMap.OnExit(e.Name, d.Point.X, d.Point.Y, W, H, U) && !ScreenMap.OnNever(e.Name, d.Point.X, d.Point.Y, W, H, U);
+          if (e.Class == 'F' && ok) ok = ClickGate.UnknownBackBlock(s) == "";
+          if (!ok) { fails++; if (fails <= 5) Console.WriteLine("  no exit: " + e.Name + " " + d); }
+          if (e.NearNever.Length > 0) never++;
+        } else if (e.Class == 'D') {
+          dang++;
+          foreach (var s in new[] {
+            ScreenState.Classify(new ScreenInputs { CityForm = false, Offers = new List<string>(), TopUnknown = e.Name, ShownKnown = "" }, 0),
+            ScreenState.Classify(new ScreenInputs { CityForm = true, Offers = new List<string>(), TopCity = e.Name, ShownKnown = "" }, 0),
+            ScreenState.Classify(new ScreenInputs { Inv = new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true }, Offers = new List<string>(), TopNew = e.Name, ShownKnown = "" }, 0) }) {
+            var d = ClickGate.MapExit(s, W, H, U);
+            if (d.Move != MapMove.Stop || d.Point != null || ClickGate.UnknownBackBlock(s) == "") { fails++; Console.WriteLine("  dangerous not a stop: " + e.Name + " on " + s.Brief + " " + d); }
+            // no click of any kind is let through on it: the map's × (there is none), a click on any of its never-click buttons
+            foreach (var f in e.NearNever) {
+              var r = ScreenMap.Place(f, W, H, U);
+              var g = new ClickGate();
+              var res = g.Check(new ClickRequest { Owner = ClickOwner.Sell, Target = ClickTarget.MapClose, AutoOn = true, Front = true, X = r.CX, Y = r.CY, W = W, H = H, U = U, Form = e.Name }, s, 10000);
+              if (res.Allowed) { fails++; Console.WriteLine("  a never-click button of " + e.Name + " allowed"); }
+            }
+            var g2 = new ClickGate();
+            if (g2.Check(new ClickRequest { Owner = ClickOwner.Sell, Target = ClickTarget.MapClose, AutoOn = true, Front = true, X = W / 2, Y = H / 2, W = W, H = H, U = U, Form = e.Name }, s, 10000).Allowed) { fails++; Console.WriteLine("  a click on " + e.Name + " allowed"); }
+          }
+        }
+      }
+      Check(fails == 0 && fp > 600 && dang > 5, "screen map " + W + "x" + H + ": " + fp + " full screens / pop-ups have a back arrow or × off their never-click buttons, " + dang + " dangerous forms only stop (" + fails + " fails)");
+    }
+    Check(never > 50, "screen map: never-click buttons near the exit are kept (" + never + " forms)");
+    // the classes the gate relies on
+    Eq('K', ScreenMap.ClassOf("Form_MainCity"), "screen map: the city is the app's own screen");
+    Eq('D', ScreenMap.ClassOf("Form_SystemTips"), "screen map: the exit question is dangerous");
+    Eq('K', ScreenMap.ClassOf("Form_Battle"), "screen map: the fight is a known screen (ShownKnown)"); Eq('W', ScreenMap.ClassOf("Form_BattleLoading"), "screen map: a loading waits");
+    Eq('W', ScreenMap.ClassOf("Form_BattleEnd"), "screen map: a fight's result waits");
+    Eq('F', ScreenMap.ClassOf("Form_Union"), "screen map: the guild has its back arrow");
+    Eq('O', ScreenMap.ClassOf("Form_LeftTip"), "screen map: the tip panel is ignored");
+    foreach (var o in OfferForms.IgnoredOverlays) Eq('O', ScreenMap.ClassOf(o), "screen map: " + o + " is an overlay");
+    foreach (var k in OfferForms.KnownScreens) Eq('K', ScreenMap.ClassOf(k), "screen map: " + k + " is a screen the app reads");
+    Eq("Form_BuyPopup", ScreenMap.Top("Form_Union,Form_BuyPopup,Form_LeftTip"), "screen map: the dangerous form decides among several");
+    Eq("Form_AccountInfo", ScreenMap.Top("Form_Union,Form_AccountInfo"), "screen map: a pop-up over a full screen is on top");
+    Eq("", ScreenMap.Top("Form_Marquee"), "screen map: an overlay alone is no top form");
+    // every screen names its top form; the known screens' Brief is unchanged (the fast paths), an unknown one names the map's verdict
+    var inv = ScreenState.Classify(new ScreenInputs { Inv = new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true }, Offers = new List<string>(), ShownKnown = "" }, 0);
+    Eq("Form_BackpackIntegration", inv.Top, "top form: the inventory"); Eq("Inventory equip normal", inv.Brief, "top form: the known screen's brief as before");
+    var city = ScreenState.Classify(new ScreenInputs { CityForm = true, Offers = new List<string>(), ShownKnown = "" }, 0);
+    Eq("Form_MainCity", city.Top, "top form: the city"); Eq("City", city.Brief, "top form: the city's brief as before");
+    var guild = ScreenState.Classify(new ScreenInputs { CityForm = false, Offers = new List<string>(), TopUnknown = "Form_Union", ShownKnown = "" }, 0);
+    Eq("Form_Union", guild.Top, "top form: the guild"); Eq("Unknown top(Form_Union) map(Form_Union:back)", guild.Brief, "top form: an unknown screen names the map's verdict");
+    var offer = ScreenState.Classify(new ScreenInputs { CityForm = true, Offers = new List<string> { "Form_PopUpShop" }, ShownKnown = "" }, 0);
+    Eq("Form_PopUpShop", offer.Top, "top form: the offer pop-up");
+    var cov = ScreenState.Classify(new ScreenInputs { CityForm = true, Offers = new List<string>(), TopCity = "Form_AccountInfo", ShownKnown = "" }, 0);
+    Check(cov.Kind == ScreenKind.City && cov.ModalOpen && cov.Top == "Form_AccountInfo", "top form: a pop-up over the city makes it modal (" + cov.Brief + ")");
+    var odd = ScreenState.Classify(new ScreenInputs { CityForm = false, Offers = new List<string>(), TopUnknown = "Form_NotInTheGame", ShownKnown = "" }, 0);
+    Eq("", ClickGate.UnknownBackBlock(odd), "screen map: a form not in the map keeps the older back press");
+    Eq(MapMove.None, ClickGate.MapExit(odd, 1920, 1080, 1080).Move, "screen map: a form not in the map gets no map exit");
+    // an E pop-up over the city: never Escape there, the pilot stops
+    string ecity = null; foreach (var e in ScreenMap.All) if (e.Class == 'E') { ecity = e.Name; break; }
+    var ec = ScreenState.Classify(new ScreenInputs { CityForm = true, Offers = new List<string>(), TopCity = ecity, ShownKnown = "" }, 0);
+    Eq(MapMove.Stop, ClickGate.MapExit(ec, 1920, 1080, 1080).Move, "screen map: a back-key-only pop-up over the city stops (no Escape on the city)");
+    Check(ClickGate.EscapeBlock(ec) != "", "screen map: Escape stays blocked on the city");
+  }
+
+  // a small model of the game's form stack: the bottom form first; a full screen (F / K) hides what lies under it
+  static ScreenState MapModel(List<string> stack) {
+    int fi = stack.Count - 1;
+    while (fi > 0 && "FKU".IndexOf(ScreenMap.ClassOf(stack[fi])) < 0) fi--;
+    string full = stack[fi];
+    var above = stack.GetRange(fi + 1, stack.Count - fi - 1);
+    var i = new ScreenInputs { CityForm = false, Offers = new List<string>(), ShownKnown = "" };
+    var inv = new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true };
+    switch (full) {
+      case "Form_MainCity": i.CityForm = true; i.CitySeen = true; i.TopCity = string.Join(",", above.ToArray()); break;
+      case "Form_BackpackIntegration": i.Inv = inv; i.ShownKnown = full; i.TopNew = string.Join(",", above.ToArray()); break;
+      case "Form_EquipSubliming": i.Inv = inv; i.Rs = new RecastScreen { SublimingOpen = true, CurType = 1 }; i.ShownKnown = "Form_BackpackIntegration,Form_EquipSubliming"; i.TopNew = string.Join(",", above.ToArray()); break;
+      case "Form_CharactorMain": i.Hero = new HeroScreen { Hero = 5, FormOk = true }; i.ShownKnown = full; i.TopNew = string.Join(",", above.ToArray()); break;
+      default: { var l = new List<string> { full }; l.AddRange(above); i.TopUnknown = string.Join(",", l.ToArray()); break; }
+    }
+    var s = ScreenState.Classify(i, 0); s.SinceMs = 0;
+    return s;
+  }
+
+  // start a pilot from any screen: the map's exits (and the back to the city on a known screen) lead to the city, then the pilot's first click
+  static void ScreenMapScenarios() {
+    Console.WriteLine("Screen map: pilots from any screen");
+    const double W = 1366, H = 705; double U = Ui.Unit(W, H);
+    var hg = new HeroGeometry();
+    string popE = null; foreach (var e in ScreenMap.All) if (e.Class == 'E' && e.Name.Contains("Tip")) { popE = e.Name; break; }
+    var cases = new[] {
+      new[] { "the guild", "Form_MainCity", "Form_Union" },
+      new[] { "the Foundry", "Form_MainCity", "Form_BackpackIntegration", "Form_EquipSubliming" },
+      new[] { "the inventory", "Form_MainCity", "Form_BackpackIntegration" },
+      new[] { "the arena", "Form_MainCity", "Form_PVPMain" },
+      new[] { "the shop", "Form_MainCity", "Form_Shop" },
+      new[] { "a pop-up over the city", "Form_MainCity", "Form_AccountInfo" },
+      new[] { "a pop-up over the guild", "Form_MainCity", "Form_Union", "Form_AccountInfo" },
+      new[] { "a back-key pop-up over the Foundry", "Form_MainCity", "Form_BackpackIntegration", "Form_EquipSubliming", popE },
+      new[] { "the arena over the guild", "Form_MainCity", "Form_Union", "Form_PVPMain" },
+    };
+    foreach (var c in cases) {
+      var o = ClickOwner.Equip;
+      var g = new ClickGate(); long t = 100000;
+      var stack = new List<string>(c); stack.RemoveAt(0);
+      var moves = new List<string>(); bool ok = true; string why = "";
+      for (int step = 0; step < 10 && ok; step++) {
+        var s = MapModel(stack);
+        if (s.Kind == ScreenKind.City && !s.ModalOpen) break;
+        t += 5000;
+        var d = ClickGate.MapExit(s, W, H, U);
+        ClickRequest rq;
+        if (d.Move == MapMove.Close) {
+          if (!g.MapDue(o, s, t)) { ok = false; why = "× not due"; break; }
+          rq = new ClickRequest { Owner = o, Target = ClickTarget.MapClose, AutoOn = true, Front = true, X = d.Point.X, Y = d.Point.Y, W = W, H = H, U = U, Form = d.Form };
+        } else if (d.Move == MapMove.Escape) {
+          if (!g.MapDue(o, s, t)) { ok = false; why = "Escape not due"; break; }
+          g.MapEscape(o);
+          rq = new ClickRequest { Owner = o, Target = ClickTarget.EscapeBack, AutoOn = true, Front = true, U = U };
+        } else if (d.Move == MapMove.Back) {
+          if (!g.UnknownBackDue(o, s, t)) { ok = false; why = "back not due"; break; }
+          rq = new ClickRequest { Owner = o, Target = ClickTarget.UnknownBack, AutoOn = true, Front = true, X = d.Point.X, Y = d.Point.Y, W = W, H = H, U = U };
+        } else if (d.Move == MapMove.None && ClickGate.AwayFromStart(o, s)) {
+          if (!g.CityBackDue(o, s, t)) { ok = false; why = "city back not due"; break; }
+          rq = new ClickRequest { Owner = o, Target = ClickTarget.CityBack, AutoOn = true, Front = true, X = hg.BackX * U, Y = hg.BackY * U, U = U };
+        } else { ok = false; why = "no way on " + s.Brief + " (" + d + ")"; break; }
+        var res = g.Check(rq, s, t);
+        if (!res.Allowed) { ok = false; why = rq.Target + " refused on " + s.Brief + ": " + res.Reason + " " + res.Detail; break; }
+        g.Arm(o, rq.Target, ClickGate.Expect(rq, s), t);
+        moves.Add(rq.Target + (rq.Form != null ? "(" + rq.Form + ")" : ""));
+        stack.RemoveAt(stack.Count - 1);
+        g.Observe(MapModel(stack), t + 300);
+        if (g.Pending(o) || g.Halted(o)) { ok = false; why = rq.Target + " showed no effect (" + g.HaltDetail(o) + ")"; }
+      }
+      var end = MapModel(stack);
+      ok = ok && end.Kind == ScreenKind.City && !end.ModalOpen;
+      // the pilot's first click in the city: Equip's «Герои», Sell's «Инвентарь»
+      if (ok) {
+        t += 5000;
+        var r1 = g.Check(new ClickRequest { Owner = ClickOwner.Equip, Target = ClickTarget.EquipNav, AutoOn = true, Front = true, X = W * 0.9, Y = H * 0.9, U = U }, end, t);
+        var r2 = new ClickGate().Check(new ClickRequest { Owner = ClickOwner.Sell, Target = ClickTarget.CityInventory, AutoOn = true, Front = true, X = W * 0.9, Y = H * 0.9, U = U }, end, t);
+        if (!r1.Allowed || !r2.Allowed) { ok = false; why = "first click refused: " + r1.Detail + " / " + r2.Detail; }
+      }
+      Check(ok, "from " + c[0] + " to the city in " + moves.Count + " (" + string.Join(", ", moves.ToArray()) + "), then the pilot's first click" + (why != "" ? " - " + why : ""));
+    }
+    // a dangerous form on the way: the pilot stops, nothing is pressed
+    {
+      var g = new ClickGate();
+      var s = MapModel(new List<string> { "Form_MainCity", "Form_Union", "Form_BuyPopup" });
+      var d = ClickGate.MapExit(s, W, H, U);
+      Eq(MapMove.Stop, d.Move, "a buy dialog over the guild: stop");
+      Check(!g.UnknownBackDue(ClickOwner.Locate, s, 100000), "a buy dialog over the guild: no back press under it");
+      g.MapStop(ClickOwner.Locate, d, s);
+      Check(g.Halted(ClickOwner.Locate) && g.HaltReason(ClickOwner.Locate) == "dangerous", "a buy dialog over the guild: the pilot stops with the reason (" + g.HaltDetail(ClickOwner.Locate) + ")");
+    }
+    // a fight: wait, no stop for the unknown screen, no press
+    {
+      var g = new ClickGate();
+      var s = MapModel(new List<string> { "Form_MainCity", "Form_BattleLoading" });
+      Eq(MapMove.Wait, ClickGate.MapExit(s, W, H, U).Move, "a loading screen: wait");
+      Check(!g.UnknownBackDue(ClickOwner.Equip, s, 100000) && !g.UnknownStall(ClickOwner.Equip, s, 100000) && !g.UnknownStall(ClickOwner.Equip, s, 100000 + ClickGate.UnknownStallMs + 1000), "a loading screen: no back press, no unknown-screen stop");
+    }
+  }
+
   static void CityBackTests() {
     Console.WriteLine("Back to the city: the back arrow, then Escape");
     const double W = 1366, H = 705; double U = Ui.Unit(W, H);
