@@ -2549,11 +2549,11 @@ namespace RealmForge {
     // ---- the game's offer / notice pop-ups over the city (src/OfferForms.cs): read from the window table, closed by the pilots (OfferClose)
     volatile bool uiFinding; long uiFindAt, unknownFormsAt, lostSearchAt; int lostSearchGen; List<string> unknownForms;
     // the shown unknown forms when the screen became the known one it is (TopNew: the ones that came later are a pop-up on top), and the last results
-    const int TopSettleMs = 3000;
+    const int TopSettleMs = 3000, TopFlickerMs = 2000;
     // the window table's read failed this tick (the offers or the shown forms): a pop-up over the screen cannot be ruled out, so no click or key
     // goes to the game until a read succeeds (the read is tried again on the next tick); never set while the table is not known (RFX.UiKnown)
     bool formsUnread; ScreenKind formsKind = ScreenKind.Unknown;   // formsKind: the screen the tick's forms were read for
-    long topBaseAt; ScreenKind topBaseKind = ScreenKind.Unknown; HashSet<string> topBase = new HashSet<string>(); string topNewNow = "", topUnknownNow = "", topCityNow = ""; ScreenKind topNewKind = ScreenKind.Unknown;
+    long topBaseAt, topLastAt; ScreenKind topLastKind = ScreenKind.Unknown, topBaseKind = ScreenKind.Unknown; HashSet<string> topBase = new HashSet<string>(); string topNewNow = "", topUnknownNow = "", topCityNow = ""; ScreenKind topNewKind = ScreenKind.Unknown;
     readonly HashSet<string> unknownSaid = new HashSet<string>();
     string offerSaid = "";
 
@@ -2575,6 +2575,7 @@ namespace RealmForge {
       topNewNow = ""; topUnknownNow = ""; topCityNow = "";
       formsKind = cls;
       if (front && (inp.Offers == null || inp.Offers.Count == 0)) {
+        var prevForms = unknownForms;   // the forms of the last read (before this tick's): one not in it came with the screen
         if (now - unknownFormsAt >= 2000 || unknownFormsAt == 0) { unknownFormsAt = now; unknownForms = RFX.ReadUnknownShownForms(4); if (unknownForms == null) { formsUnread = true; unknownFormsAt = 0; } }
         var cur = unknownForms ?? new List<string>();
         foreach (var n in cur) if (unknownSaid.Add(n)) Log.Write("offer: unknown top form " + n + " (not in list)");
@@ -2593,8 +2594,14 @@ namespace RealmForge {
         } else if (unknownForms != null) {
           // over a known screen: the forms there when it came are its own; one that came later is a pop-up on top (never pressed: the gate stops on it)
           // (the forms read within TopSettleMs of the screen's coming are its own too: a part the game builds a moment later; the read right after the change is fresh)
+          // (a read that failed for a tick or two flips the screen to unknown and back: the same screen within TopFlickerMs keeps its base, else a
+          // pop-up shown meanwhile would be taken for the screen's own form - the slow laptop's grid clicks went into one)
+          if (cls != topBaseKind && cls == topLastKind && now - topLastAt <= TopFlickerMs) topBaseKind = cls;
           if (cls != topBaseKind) { topBaseKind = cls; topBaseAt = now; topBase = new HashSet<string>(); unknownForms = RFX.ReadUnknownShownForms(4); unknownFormsAt = now; cur = unknownForms ?? new List<string>(); if (unknownForms == null) { formsUnread = true; unknownFormsAt = 0; } }
-          if (now - topBaseAt < TopSettleMs) foreach (var n in cur) if (ScreenMap.MayBeBase(n)) topBase.Add(n);
+          topLastKind = cls; topLastAt = now;
+          // (one shown already is the screen's own, a pop-up may lie under the full screen - the window table has no order; a pop-up or screen that came
+          // with it or later lies on top, a part the game builds later does not)
+          if (now - topBaseAt < TopSettleMs) foreach (var n in cur) if (now == topBaseAt && (prevForms == null || prevForms.Contains(n)) ? ScreenMap.MayBeBase(n) : ScreenMap.MayBeLatePart(n)) topBase.Add(n);
           var fresh = cur.FindAll(n => !topBase.Contains(n));
           if (fresh.Count > 0) { inp.TopNew = topNewNow = string.Join(",", fresh.ToArray()); topNewKind = cls; }
         }

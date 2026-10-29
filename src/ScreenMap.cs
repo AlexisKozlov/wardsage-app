@@ -66,6 +66,10 @@ namespace RealmForge {
     /// <summary>A form shown when a known screen came counts as a part of that screen (the base: no pop-up on top), except a dangerous dialog or a
     /// wait: those are never a screen's own part (a buy dialog already open when the pilot starts is on top, not under the screen's buttons).</summary>
     public static bool MayBeBase(string name) { char c = ClassOf(name); return c != 'D' && c != 'W'; }
+    /// <summary>A form that comes a moment AFTER the known screen (within its settle time) counts as a part the game builds late only when the map
+    /// does not call it a screen or a pop-up of its own: a back-arrow screen, a close-button or Escape pop-up opened then lies on top (a reward
+    /// shown as the hero screen opens took the pilot's grid clicks), as do a dangerous dialog and a wait.</summary>
+    public static bool MayBeLatePart(string name) { char c = ClassOf(name); return MayBeBase(name) && c != 'F' && c != 'P' && c != 'E'; }
 
     static double X(char a, double off, double W, double U) { return (a == 'L' ? 0 : a == 'C' ? W / 2 : W) + off * U; }
     static double Y(char a, double off, double H, double U) { return (a == 'T' ? 0 : a == 'M' ? H / 2 : H) + off * U; }

@@ -1,6 +1,7 @@
 // A deterministic model of the game's UI for the pilots (built into CoreTests; C# 5 like the rest of it):
 //
-//   CoreTests --sim <seeds> [--from <n>] [--slow-only] [--seed <n>] [--verbose]     (SIM_TRACE=1: every click with the fresh state)
+//   CoreTests --sim <seeds> [--from <n>] [--slow-only] [--seed <n>] [--verbose] [--list <outcome>] [--digest]   (SIM_TRACE=1: every click with the fresh state;
+//   --digest: a line a seed with its outcome and a hash of its presses; --list: each seed whose "owner machine outcome" contains the text, with the hero pilot's why)
 //
 // The game: a stack of forms (the city at the bottom; the hero screen, the inventory and the Foundry the app reads; any form of the screen
 // map on top: back arrow F, close button P, Escape E, dangerous D, wait W, overlay O). A click / Escape acts as the map says (the back arrow
@@ -30,6 +31,7 @@ static partial class CoreTests {
     public readonly FakeHeroGame Hero; readonly HeroGeometry hg = new HeroGeometry();
     public bool InvEquipTab, InvBulk; public int FoundryTab;
     public readonly List<string> Bad = new List<string>(), Log = new List<string>();
+    public readonly StringBuilder Acts = new StringBuilder();   // every click / drag / Escape with its time (--digest)
     public int CityEscapes;
     readonly List<KeyValuePair<long, Action>> due = new List<KeyValuePair<long, Action>>();
     // the slow laptop: the reader finds the inventory / Foundry form some seconds after it first opens; a lost form is searched for 17 s
@@ -117,7 +119,7 @@ static partial class CoreTests {
       string top = TopForm(); char c = ScreenMap.ClassOf(top);
       if (c == 'D') { Bad.Add("CLICK ON A DANGEROUS FORM " + top + " @" + (int)x + "," + (int)y + " (" + tg + ")"); return; }
       if (ScreenMap.OnNever(top, x, y, W, H, U)) { Bad.Add("CLICK ON A NEVER-CLICK BUTTON of " + top + " @" + (int)x + "," + (int)y + " (" + tg + ")"); return; }
-      Say("click " + tg + " @" + (int)x + "," + (int)y + " on " + top);
+      Say("click " + tg + " @" + (int)x + "," + (int)y + " on " + top); Acts.Append(Now + " c" + (int)x + "," + (int)y + ";");
       long lat = Lat(); MaybeSpawn();
       if (c == 'F' || c == 'P' || c == 'U') {
         if (c != 'U' && ScreenMap.OnExit(top, x, y, W, H, U)) Later(lat, () => Pop(top));
@@ -154,14 +156,14 @@ static partial class CoreTests {
     /// <summary>A drag: the hero grid follows it; on anything else it is a press on its start point.</summary>
     public void Drag(double x, double y, double dy, ClickTarget tg) {
       if (TopForm() != SimHero) { Click(x, y, tg); return; }
-      Say("drag " + tg + " @" + (int)x + "," + (int)y + " by " + (int)dy);
+      Say("drag " + tg + " @" + (int)x + "," + (int)y + " by " + (int)dy); Acts.Append(Now + " d" + (int)x + "," + (int)y + "," + (int)dy + ";");
       Later(Lat(), () => { if (TopForm() == SimHero) Hero.Drag(dy); });
     }
 
     /// <summary>The Escape key: closes an E / P / F form (and the app's screens); on the city the game asks to quit.</summary>
     public void Escape() {
       string top = TopForm(); char c = ScreenMap.ClassOf(top);
-      Say("ESCAPE on " + top);
+      Say("ESCAPE on " + top); Acts.Append(Now + " e;");
       if (c == 'D') { Bad.Add("ESCAPE ON A DANGEROUS FORM " + top); return; }
       long lat = Lat();
       if (top == SimCity) { CityEscapes++; Bad.Add("ESCAPE ON THE CITY (the game asks to quit)"); Later(lat, () => Push("Form_SystemTips")); return; }
@@ -196,6 +198,7 @@ static partial class CoreTests {
     readonly GameGeometry geo;
     long sellBtnAt = -100000;
     public string PilotState = "";
+    public string HeroWhy { get { return hp.Why; } }
     public long SendingUntil;   // app/Overlay.cs Send: the cursor moves and the click take ~300 ms on their own thread; no tick reads the screens meanwhile
     public SimHost(SimGame g, ClickOwner o, long plan, GameGeometry geo) {
       G = g; Owner = o; this.plan = plan; this.geo = geo;
@@ -206,8 +209,8 @@ static partial class CoreTests {
     double W { get { return G.W; } } double H { get { return G.H; } } double U { get { return G.U; } }
 
     // ReadOffersInto (app/Overlay.cs): the forms nobody knows, read every 2 s; over a known screen the ones that came later are a pop-up
-    const int TopSettleMs = 3000;
-    long topBaseAt, unknownFormsAt; ScreenKind topBaseKind = ScreenKind.Unknown; HashSet<string> topBase = new HashSet<string>();
+    const int TopSettleMs = 3000, TopFlickerMs = 2000;
+    long topBaseAt, topLastAt, unknownFormsAt; ScreenKind topLastKind = ScreenKind.Unknown; ScreenKind topBaseKind = ScreenKind.Unknown; HashSet<string> topBase = new HashSet<string>();
     string topNewNow = "", topUnknownNow = "", topCityNow = ""; ScreenKind topNewKind = ScreenKind.Unknown; List<string> unknownForms; bool formsUnread; ScreenKind formsKind = ScreenKind.Unknown;
     bool FormsUnread(ScreenState fresh) { return formsUnread || fresh == null || !fresh.OfferRead || (fresh.Kind != ScreenKind.City && fresh.Kind != ScreenKind.Unknown && fresh.Kind != formsKind); }
     void ReadOffersInto(ScreenInputs inp, long now) {
@@ -216,6 +219,7 @@ static partial class CoreTests {
       topNewNow = ""; topUnknownNow = ""; topCityNow = "";
       formsKind = cls;
       if (inp.Offers == null || inp.Offers.Count == 0) {
+        var prevForms = unknownForms;   // the forms of the last read (before this tick's): one not in it came with the screen
         if (now - unknownFormsAt >= 2000 || unknownFormsAt == 0) { unknownFormsAt = now; unknownForms = G.Unknown(); if (unknownForms == null) { formsUnread = true; unknownFormsAt = 0; } }
         var cur = unknownForms ?? new List<string>();
         if (cls == ScreenKind.Unknown) {
@@ -224,8 +228,14 @@ static partial class CoreTests {
           var cov = cur.FindAll(n => "PEDW".IndexOf(ScreenMap.ClassOf(n)) >= 0);
           if (cov.Count > 0) inp.TopCity = topCityNow = string.Join(",", cov.ToArray());
         } else if (unknownForms != null) {
+          // (a read that failed for a tick or two flips the screen to unknown and back: the same screen within TopFlickerMs keeps its base, else a
+          // pop-up shown meanwhile would be taken for the screen's own form - the slow laptop's grid clicks went into one)
+          if (cls != topBaseKind && cls == topLastKind && now - topLastAt <= TopFlickerMs) topBaseKind = cls;
           if (cls != topBaseKind) { topBaseKind = cls; topBaseAt = now; topBase = new HashSet<string>(); unknownForms = G.Unknown(); unknownFormsAt = now; cur = unknownForms ?? new List<string>(); if (unknownForms == null) { formsUnread = true; unknownFormsAt = 0; } }
-          if (now - topBaseAt < TopSettleMs) foreach (var n in cur) if (ScreenMap.MayBeBase(n)) topBase.Add(n);
+          topLastKind = cls; topLastAt = now;
+          // (one shown already is the screen's own, a pop-up may lie under the full screen - the window table has no order; a pop-up or screen that came
+          // with it or later lies on top, a part the game builds later does not)
+          if (now - topBaseAt < TopSettleMs) foreach (var n in cur) if (now == topBaseAt && (prevForms == null || prevForms.Contains(n)) ? ScreenMap.MayBeBase(n) : ScreenMap.MayBeLatePart(n)) topBase.Add(n);
           var fresh = cur.FindAll(n => !topBase.Contains(n));
           if (fresh.Count > 0) { inp.TopNew = topNewNow = string.Join(",", fresh.ToArray()); topNewKind = cls; }
         }
@@ -410,7 +420,7 @@ static partial class CoreTests {
   static readonly string[] SimNamed = { "Form_Union", "Form_PVPMain", "Form_Shop" };
 
   /// <summary>One seed: the start, the task, the run. Returns "" when the run kept every rule, else what went wrong.</summary>
-  static string SimRun(int seed, bool slowOnly, bool verbose, Dictionary<string, int> outcomes, GameGeometry geo) {
+  static string SimRun(int seed, bool slowOnly, bool verbose, Dictionary<string, int> outcomes, GameGeometry geo, string list = null) {
     var r = new Random(seed * 7919 + 13);
     bool slow = slowOnly || r.Next(2) == 0;
     double failP = r.Next(3) == 0 ? 0.0 : r.NextDouble() * 0.15;
@@ -444,6 +454,10 @@ static partial class CoreTests {
     string outcome = h.Done != "" ? "done" : h.Gate.Halted(owner) ? "halt:" + h.Gate.HaltReason(owner) : t >= cap ? "TIMEOUT" : "wait:" + h.PilotState.Split('@')[0];
     string key = owner + (slow ? " slow " : " fast ") + outcome;
     int cnt; outcomes.TryGetValue(key, out cnt); outcomes[key] = cnt + 1;
+    if (list == "--digest") {   // one line a seed: its outcome and a hash of every press with its time (two builds compared seed by seed)
+      ulong hsh = 14695981039346656037UL; foreach (char ch in g.Acts.ToString()) { hsh ^= ch; hsh *= 1099511628211UL; }
+      Console.WriteLine(seed + " " + key + " " + hsh.ToString("x16"));
+    } else if (list != null && key.Contains(list)) Console.WriteLine("seed " + seed + ": " + key + (h.PilotState.StartsWith("hero_") ? " " + h.HeroWhy : "") + " end [" + string.Join(" > ", g.Stack.ToArray()) + "]");
     var errs = new List<string>(g.Bad);
     if (outcome == "TIMEOUT") errs.Add("no end within " + cap / 1000 + " s (silent waiting): " + h.PilotState);
     int n0;
@@ -504,6 +518,25 @@ static partial class CoreTests {
       }
       Eq("done", st, "sim: the hero grid with the game answering 300 ms after each click");
     }
+    // (5) the hero grid on a slow laptop: the game answers 0.6-1.5 s after each click (later than the click's wait): every answer was taken for the
+    // next click's, the rows never agreed (seeds 250, 161: «no click brings up another hero» / «not brought up by 24 clicks»); the waits now grow
+    foreach (int lat in new[] { 900, 1500 }) {
+      var g = new HeroGeometry(); var game = new FakeHeroGame(g, 1920, 1009);
+      var all = new List<long>(); for (int i = 0; i < 30; i++) all.Add(100 + i);
+      game.All = all.ToArray(); game.Heroes = all.ToArray(); game.Shown = 100;
+      var p = new HeroPilot(g); var q = new List<KeyValuePair<long, double[]>>(); string st = "timeout"; int acts = 0;
+      for (long t = 0; t < 120000; t += 100) {
+        foreach (var e in q.ToArray()) if (e.Key <= t) { if (e.Value[2] == 0) game.Click(e.Value[0], e.Value[1]); else game.Drag(e.Value[2]); q.Remove(e); }
+        var a = p.Step(new HeroView { NowMs = t, Foreground = true, W = 1920, H = 1009, ClientH = 1009, Plan = 127, Hero = game.Shown, Tab = 3, Part = -1, Heroes = game.Heroes, GridPtr = game.Grid });
+        if (a == null) { st = p.State; break; }
+        if (p.State == "failed") { st = "failed: " + p.Why; break; }
+        if (a.Kind != AutoKind.None) acts++;
+        if (a.Kind == AutoKind.Click) q.Add(new KeyValuePair<long, double[]>(t + lat, new[] { a.X, a.Y, 0 }));
+        else if (a.Kind == AutoKind.Drag) q.Add(new KeyValuePair<long, double[]>(t + lat, new[] { a.X, a.Y, a.DY }));
+      }
+      Eq("done", st, "sim: the hero grid with the game answering " + lat + " ms after each click");
+      Check(acts <= 20, "sim: the slow hero grid in " + acts + " clicks and drags (at most 20)");
+    }
     // (4) the seeds that found them: a dangerous dialog over a known screen at the start (10 ... 337), a failed window table read at the click
     // (612, 619, 1227, 1259, 1899), the × of one pop-up on a never-click button of another shown with it (27054, 31961); 3810: a plan already on
     {
@@ -512,24 +545,33 @@ static partial class CoreTests {
         string e = SimRun(seed, false, false, oc, geo);
         Check(e == "", "sim: seed " + seed + " keeps every rule" + (e != "" ? ": " + e.Split('\n')[0] + " " + (e.Split('\n').Length > 1 ? e.Split('\n')[1].Trim() : "") : ""));
       }
+      // (6) seeds that must reach the plan's hero: a pop-up that came with the hero screen (62) or while a failed read made it unknown for a
+      // tick (82, 19) was taken for the screen's own form and took the grid clicks; a slow laptop's late answers (250, 161)
+      foreach (int seed in new[] { 19, 62, 82, 161, 250 }) {
+        var o1 = new Dictionary<string, int>(); SimRun(seed, false, false, o1, geo);
+        string got = string.Join(",", new List<string>(o1.Keys).ToArray());
+        Check(got.EndsWith(" done"), "sim: seed " + seed + " brings up the plan's hero (" + got + ")");
+      }
     }
   }
 
   static int SimMain(string[] args) {
     Layout.Use(TestLayout());
-    int seeds = 500, from = 0; bool slowOnly = false, verbose = false;
+    int seeds = 500, from = 0; bool slowOnly = false, verbose = false; string list = null;
     for (int i = 1; i < args.Length; i++) {
       if (args[i] == "--slow-only") slowOnly = true;
       else if (args[i] == "--verbose") verbose = true;
       else if (args[i] == "--seed" && i + 1 < args.Length) { from = int.Parse(args[++i]); seeds = 1; }
       else if (args[i] == "--from" && i + 1 < args.Length) from = int.Parse(args[++i]);
+      else if (args[i] == "--list" && i + 1 < args.Length) list = args[++i];
+      else if (args[i] == "--digest") list = "--digest";
       else { int n; if (int.TryParse(args[i], out n)) seeds = n; }
     }
     var geo = GameGeometry.Parse(GeoJson(), GeoGame);
     var outcomes = new SortedDictionary<string, int>(); var tmp = new Dictionary<string, int>();
     int bad = 0; var sw = System.Diagnostics.Stopwatch.StartNew();
     for (int s = from; s < from + seeds; s++) {
-      string e = SimRun(s, slowOnly, verbose, tmp, geo);
+      string e = SimRun(s, slowOnly, verbose, tmp, geo, list);
       bool broke = e.Contains("\n    !! ");
       if (broke) bad++;
       if (e != "" && (verbose || bad <= 5)) Console.WriteLine(e);

@@ -4,6 +4,7 @@
 #   tests/run-sim.sh [seeds]                   (default 2000)
 #   tests/run-sim.sh --soak N [--slow-only]    (N seeds, in blocks of 5000, each block's summary printed)
 #   tests/run-sim.sh --seed S                  (one seed with its whole trace: what the game and the pilot did)
+#   tests/run-sim.sh --list TEXT [seeds]       (the seeds whose outcome contains TEXT, e.g. "slow wait:hero_failed")
 set -euo pipefail
 cd "$(dirname "$0")/.."
 SDK_CSC=$(ls -d /usr/lib/dotnet/sdk/*/Roslyn/bincore/csc.dll | tail -1)
@@ -26,5 +27,6 @@ case "${1:-}" in
     done
     exit $rc ;;
   --seed) $SIM --seed "$2" --verbose ;;
+  --list) $SIM "${3:-2000}" --list "$2" ;;
   *) $SIM "${1:-2000}" ;;
 esac

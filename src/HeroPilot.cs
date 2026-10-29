@@ -70,9 +70,14 @@ namespace RealmForge {
     public const int FilterClickMs = 1000;   // after a class / faction click: the game applies it before the pop-up closes
     public const int AfterClickMs = 500, AfterDragMs = 700, AfterBackMs = 900, UserPauseMs = 4000;   // each click is checked in memory
     public const double MinDragPx = 24;
+    // a game slower than AfterClickMs (a slow laptop: 0.6-1.5 s): a hero brought up after the click's wait ran out is a late answer, the waits grow to
+    // the latest answer seen plus this margin (never above MaxLateMs); a fast PC never answers that late, its waits stay as they are
+    public const int LateMarginMs = 400, MaxLateMs = 4000;
     readonly HeroGeometry g;
     long plan = -1, waitUntil, pauseUntil, failedAt;
     int retries;
+    // the latest answer seen (0 = none later than AfterClickMs), the last grid click's time, the hero seen on the last tick
+    long lateMs, pickAt; long seenHero;
     int clicks, drags, backs, tabs, misses, city, total, bestDist = int.MaxValue;
     // the grid filter: 0 not started, 1 filtering, 2 done (or given up); clearing a filter that hides the hero
     int filterPhase, funnelTries, factionTries, clearTries, classResets, doneCloses; bool classClicked, factionDone, classDone;
@@ -101,6 +106,13 @@ namespace RealmForge {
       if (State == "failed" && retries < MaxRetries && v.NowMs - failedAt >= RetryMs) { retries++; Restart(); }
       if (v.Plan <= 0) { State = "idle"; return null; }
       // a click that brought up nobody new is judged when its wait has run out (a slow PC shows the new hero later than the next tick)
+      // a hero that comes later than the click's wait: the game is slow. What the clicks since taught is not to be trusted (an answer taken for
+      // the wrong click), the rows are found again with waits as long as the game's answers
+      if (v.Hero != seenHero && v.Hero != 0 && seenHero != 0 && pickAt > 0 && v.NowMs - pickAt > AfterClickMs && v.NowMs - pickAt > lateMs) {
+        long dt = v.NowMs - pickAt;
+        if (dt <= MaxLateMs) { lateMs = dt; has = false; pending = false; misses = 0; waitUntil = Math.Max(waitUntil, v.NowMs + Late(AfterClickMs)); }
+      }
+      seenHero = v.Hero;
       if (pending && (v.Hero != heroBefore || v.NowMs >= waitUntil)) Learn(v);
       bool heroOk = v.Hero == v.Plan, tabOk = v.Tab == HeroGeometry.GearTab || v.Tab < 0;
       // (the grid filter set for the hero stays: back to «Все» the game would select another hero - live test 2026-09-26;
@@ -112,7 +124,7 @@ namespace RealmForge {
         if (v.FilterOpen && v.Part < 0 && doneCloses < 1) {
           if (!v.Foreground || v.UserBusy) return AutoAction.Nothing;
           if (v.NowMs < waitUntil) return AutoAction.Nothing;
-          doneCloses++; State = "work"; waitUntil = v.NowMs + AfterClickMs + 700;   // it fades out
+          doneCloses++; State = "work"; waitUntil = v.NowMs + Late(AfterClickMs + 700);   // it fades out
           return Funnel(v, v.H);
         }
         if (doneCloses > 0 && v.NowMs < waitUntil) return AutoAction.Nothing;   // (its fade: no slot click through it)
@@ -130,19 +142,19 @@ namespace RealmForge {
       if (v.NowMs < waitUntil) return AutoAction.Nothing;
       double H = v.H;
       if (v.Hero == 0) {
-        city++; waitUntil = v.NowMs + 3000;
+        city++; waitUntil = v.NowMs + Late(3000);
         double chh = v.ClientH > 0 ? v.ClientH : H;
         return Click(v.W - g.HeroesBtnDX * H, chh - g.HeroesBtnDY * H);
       }
 
       if (heroOk) {                                   // the right hero on another tab: open «Снаряжение»
         if (++tabs > MaxTab) return Fail("the gear tab does not open after " + MaxTab + " clicks (tab " + v.Tab + ")");
-        waitUntil = v.NowMs + AfterBackMs;
+        waitUntil = v.NowMs + Late(AfterBackMs);
         return Click(v.W - g.GearTabDX * H, g.GearTabY * H);
       }
       if (v.Part >= 0) {                              // the gear list covers the grid: back to the grid
         if (++backs > MaxBack) return Fail("the gear list does not close after " + MaxBack + " back clicks (part " + v.Part + ")");
-        has = false; waitUntil = v.NowMs + AfterBackMs;
+        has = false; waitUntil = v.NowMs + Late(AfterBackMs);
         return Click(g.BackX * H, g.BackY * H);
       }
       pitchF = v.SmallCards ? g.SmallPitchY : g.PitchY; cardF = v.SmallCards ? g.SmallCardH : g.CardH;
@@ -161,7 +173,7 @@ namespace RealmForge {
       if (v.Heroes == null || v.Heroes.Length == 0) return AutoAction.Nothing;
       int t = Array.IndexOf(v.Heroes, v.Plan);
       if (t < 0) { State = "notfound"; return AutoAction.Nothing; }
-      if (v.FilterOpen) { waitUntil = v.NowMs + AfterClickMs + 700; return Funnel(v, H); }   // (the pop-up covers the grid; it fades out)
+      if (v.FilterOpen) { waitUntil = v.NowMs + Late(AfterClickMs + 700); return Funnel(v, H); }   // (the pop-up covers the grid; it fades out)
 
       double ch = v.ClientH > 0 ? v.ClientH : H;
       double pitch = pitchF * H, card = cardF * H, top = g.ViewTop * H, bottom = ch - (1 - g.ViewBottom) * H, mid = (top + bottom) / 2;
@@ -185,7 +197,7 @@ namespace RealmForge {
       double dy = Math.Max(-maxUp, Math.Min(maxDown, mid - cy));
       if (Math.Abs(dy) < MinDragPx) dy = dy < 0 ? -MinDragPx : MinDragPx;
       double y0 = dy < 0 ? bottom - card * 0.3 : top + card * 0.3;
-      drags++; total++; waitUntil = v.NowMs + AfterDragMs;
+      drags++; total++; waitUntil = v.NowMs + Late(AfterDragMs);
       // the grid moved by about dy; the ends of the grid stop it, so the next click checks
       lo += dy; hi += dy; double slack = Math.Abs(dy) * 0.08 + 6; lo -= slack; hi += slack;
       if (hi - lo > 2.5 * card) has = false;
@@ -203,8 +215,8 @@ namespace RealmForge {
       if (t < 0 && active) {                                       // hidden by a filter: clear it
         if (classClicked && !classDone) { classDone = true; }      // our class click hid it: «Все» below undoes it
         if (clearTries >= 3) return null;
-        if (!v.FilterOpen) { if (++funnelTries > 4) return null; waitUntil = v.NowMs + AfterClickMs; return Funnel(v, H); }
-        clearTries++; waitUntil = v.NowMs + AfterClickMs;
+        if (!v.FilterOpen) { if (++funnelTries > 4) return null; waitUntil = v.NowMs + Late(AfterClickMs); return Funnel(v, H); }
+        clearTries++; waitUntil = v.NowMs + Late(AfterClickMs);
         return v.ClassChosen ? Cell(g.ClassX, 0, H) : Cell(g.FactionX, 0, H);
       }
       if (t < 0 || filterPhase == 2) return null;
@@ -215,22 +227,22 @@ namespace RealmForge {
         // the pop-up was never seen after the funnel clicks: a grid click now could land inside it (a wrong class filter),
         // so stop here - a misdetection costs a stop, never a click
         if (++funnelTries > 3) { filterPhase = 2; return Fail("gear filter pop-up not recognised after " + (funnelTries - 1) + " funnel clicks - stopping, no grid click"); }
-        waitUntil = v.NowMs + AfterClickMs; return Funnel(v, H);
+        waitUntil = v.NowMs + Late(AfterClickMs); return Funnel(v, H);
       }
       if (!factionDone) {
         int row = FactionRow(v);
         if (row < 1 || factionTries >= 2) factionDone = true;
         else if (Array.IndexOf(v.ChosenCamps ?? new long[0], v.FactionList[row]) >= 0) factionDone = true;
-        else { factionTries++; waitUntil = v.NowMs + FilterClickMs; return Cell(g.FactionX, row, H); }
+        else { factionTries++; waitUntil = v.NowMs + Late(FilterClickMs); return Cell(g.FactionX, row, H); }
       }
       if (!classDone) {
         int row = ClassRow(v);
         if (row < 1 || classClicked) classDone = true;
         // a class chosen already (the player's): «Все» first - a class clicked then would be added to it, not replace it
-        else if (v.ClassChosen) { if (++classResets > 2) classDone = true; else { waitUntil = v.NowMs + AfterClickMs; return Cell(g.ClassX, 0, H); } }
-        else { classClicked = true; waitUntil = v.NowMs + FilterClickMs; return Cell(g.ClassX, row, H); }
+        else if (v.ClassChosen) { if (++classResets > 2) classDone = true; else { waitUntil = v.NowMs + Late(AfterClickMs); return Cell(g.ClassX, 0, H); } }
+        else { classClicked = true; waitUntil = v.NowMs + Late(FilterClickMs); return Cell(g.ClassX, row, H); }
       }
-      filterPhase = 2; waitUntil = v.NowMs + AfterClickMs + 700;   // it fades out: no grid click through it meanwhile
+      filterPhase = 2; waitUntil = v.NowMs + Late(AfterClickMs + 700);   // it fades out: no grid click through it meanwhile
       return Funnel(v, H);                                         // close the pop-up: the grid is filtered
     }
 
@@ -284,14 +296,17 @@ namespace RealmForge {
     }
 
     AutoAction Pick(HeroView v, double x, double y) {
-      clicks++; total++; pending = true; clickY = y; heroBefore = v.Hero; waitUntil = v.NowMs + AfterClickMs;
+      clicks++; total++; pending = true; clickY = y; heroBefore = v.Hero; pickAt = v.NowMs; waitUntil = v.NowMs + Late(AfterClickMs);
       return Click(x, y);
     }
 
     void Restart() {
-      waitUntil = pauseUntil = failedAt = 0; clicks = drags = backs = tabs = misses = city = total = 0; bestDist = int.MaxValue; has = pending = false; State = "idle";
+      waitUntil = pauseUntil = failedAt = pickAt = 0; seenHero = 0; clicks = drags = backs = tabs = misses = city = total = 0; bestDist = int.MaxValue; has = pending = false; State = "idle";
       Why = ""; filterPhase = funnelTries = factionTries = clearTries = classResets = doneCloses = 0; classClicked = factionDone = classDone = false; lastGrid = 0;
     }
+
+    /// <summary>A wait after an action: as given, or on a game seen answering late, at least its latest answer and a margin.</summary>
+    long Late(long ms) { return lateMs > 0 ? Math.Max(ms, Math.Min(MaxLateMs, lateMs + LateMarginMs)) : ms; }
 
     AutoAction Fail(string why) { State = "failed"; Why = why; return AutoAction.Nothing; }
 
@@ -303,7 +318,7 @@ namespace RealmForge {
       return "state " + State + " plan@" + pi + " shown@" + si + " grid " + (v.Heroes != null ? v.Heroes.Length : -1) + " tab " + v.Tab + " part " + v.Part
         + " filterOpen " + v.FilterOpen + " small " + v.SmallCards + " clicks " + clicks + " drags " + drags + " backs " + backs + " tabs " + tabs
         + " misses " + misses + " total " + total + " filterPhase " + filterPhase + " funnel " + funnelTries + " doneCloses " + doneCloses
-        + " row1 " + (has ? (int)lo + ".." + (int)hi : "unknown") + " retries " + retries;
+        + " row1 " + (has ? (int)lo + ".." + (int)hi : "unknown") + " retries " + retries + " late " + lateMs;
     }
 
     static AutoAction Click(double x, double y) { return new AutoAction { Kind = AutoKind.Click, X = x, Y = y }; }
