@@ -33,7 +33,7 @@ namespace RealmForge {
 
     public static SellResult Get(string site, string code, string lang) {
       int http; string text, err;
-      if (!PlansClient.Send("GET", site + "/api/extractor/sell?lang=" + (lang == "en" ? "en" : "ru") + "&artifacts=1", code, null, out http, out text, out err))
+      if (!PlansClient.Send("GET", site + "/api/extractor/sell?lang=" + (lang == "en" ? "en" : "ru") + "&artifacts=1", code, null, true, out http, out text, out err))
         return new SellResult { Status = PlansStatus.Unreachable, Details = err };
       return Interpret(http, text);
     }
@@ -41,7 +41,7 @@ namespace RealmForge {
     public static SellResult Finish(string site, string code, string id, bool done) {
       if (id == null || id.Length > 64) return new SellResult { Status = PlansStatus.NotFound };
       int http; string text, err;
-      if (!PlansClient.Send("POST", site + "/api/extractor/sell/" + Uri.EscapeDataString(id), code, done ? "{\"status\":\"done\"}" : "{\"status\":\"cancelled\"}", out http, out text, out err))
+      if (!PlansClient.Send("POST", site + "/api/extractor/sell/" + Uri.EscapeDataString(id), code, done ? "{\"status\":\"done\"}" : "{\"status\":\"cancelled\"}", true, out http, out text, out err))
         return new SellResult { Status = PlansStatus.Unreachable, Details = err };
       return Interpret(http, text);
     }

@@ -57,7 +57,7 @@ namespace RealmForge {
         var req = (HttpWebRequest)WebRequest.Create(site + "/api/extractor/plans/wait?since=" + Uri.EscapeDataString(since));
         req.Method = "GET"; req.Accept = "application/json"; req.UserAgent = SyncClient.UserAgent;
         req.Headers["Authorization"] = "Bearer " + code; req.Headers["X-RF-Extractor"] = SyncClient.Version;
-        SyncClient.AddPlayer(req);
+        SyncClient.AddPlanPlayer(req);
         req.Timeout = TimeoutMs; req.ReadWriteTimeout = TimeoutMs; req.AllowAutoRedirect = false;
         req.AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate;
         if (started != null) started(req);
@@ -133,13 +133,18 @@ namespace RealmForge {
 
 namespace RealmForge {
   /// <summary>When the plan / sell-list requests may go out. Without the game account (SyncClient.Player, sent as X-RF-Player)
-  /// the site answers for the sync code's default account, which may be the wrong one: while the game runs they wait for the
-  /// account, but not longer than PlayerWaitMs after the game was found. No game: they go as ever (the site's own list).</summary>
+  /// the site answers for the sync code's default account, which may be the wrong one when the user has two game accounts.
+  /// While the game runs they wait for the account: the live tables give it within seconds of being found. When it is
+  /// still not read after PlayerWaitMs they go for the account last read on this install (SyncClient.LastPlayer), and
+  /// for the default account only on an install that never read one, after NoHistoryWaitMs. No game: they go at once.</summary>
   public static class PollGate {
-    public const int PlayerWaitMs = 60000;
-    public static bool ShouldPoll(bool gameRunning, long player, long sinceGameFoundMs) {
+    public const int PlayerWaitMs = 60000, NoHistoryWaitMs = 300000;
+    public static bool ShouldPoll(bool gameRunning, long player, long sinceGameFoundMs, long lastPlayer) {
       if (!gameRunning || player > 0) return true;
-      return sinceGameFoundMs >= PlayerWaitMs;
+      return sinceGameFoundMs >= (lastPlayer > 0 ? PlayerWaitMs : NoHistoryWaitMs);
     }
+    /// <summary>The lists shown were asked for <paramref name="polledFor"/> (-1 = not asked yet), the requests would now
+    /// name <paramref name="now"/>: they are asked again when a read game account differs (pure).</summary>
+    public static bool Reload(long polledFor, long now) { return polledFor >= 0 && now > 0 && now != polledFor; }
   }
 }

@@ -130,12 +130,18 @@ namespace RealmForge {
 
     static PlansResult Request(string method, string url, string code, string body, bool parsePlans) {
       int http; string text, err;
-      if (!Send(method, url, code, body, out http, out text, out err)) { var r = new PlansResult(); r.Status = PlansStatus.Unreachable; r.Details = err; return r; }
+      if (!Send(method, url, code, body, true, out http, out text, out err)) { var r = new PlansResult(); r.Status = PlansStatus.Unreachable; r.Details = err; return r; }
       return Interpret(http, text, parsePlans);
     }
 
     /// <summary>One request with the sync code; false when the site was not reached (err says why).</summary>
     internal static bool Send(string method, string url, string code, string body, out int http, out string text, out string err) {
+      return Send(method, url, code, body, false, out http, out text, out err);
+    }
+
+    /// <summary>The same; <paramref name="forPlans"/>: a plan / sell-list / locate request, named for SyncClient.PlanPlayer
+    /// (the account last read on this install while the game's one is not read yet). Data read from the game never is.</summary>
+    internal static bool Send(string method, string url, string code, string body, bool forPlans, out int http, out string text, out string err) {
       http = 0; text = null; err = null;
       try {
         SyncClient.EnableTls12();
@@ -146,7 +152,7 @@ namespace RealmForge {
         req.UserAgent = SyncClient.UserAgent;
         req.Headers["Authorization"] = "Bearer " + code;
         req.Headers["X-RF-Extractor"] = SyncClient.Version;
-        SyncClient.AddPlayer(req);
+        if (forPlans) SyncClient.AddPlanPlayer(req); else SyncClient.AddPlayer(req);
         req.Timeout = 30000;
         req.ReadWriteTimeout = 30000;
         req.AllowAutoRedirect = false;

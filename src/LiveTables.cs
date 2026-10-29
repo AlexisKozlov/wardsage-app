@@ -131,7 +131,7 @@ namespace RealmForge {
       if (lt != null && lt.Pid == pid && HasTable(lt.EquipData, "equips") && HasTable(lt.HeroData, KHeroes)
           && (!needForm || Layout.Current == null || (HasTable(lt.Form, "m_InfinityGridProxy") && LiveForm() == lt.Form))) {
         string why = StateGone(lt);
-        if (why == null) return lt;
+        if (why == null) { if (SyncClient.Player <= 0) NotePlayer(lt); return lt; }   // a new login is searched again (below)
         ForgetKeys(why);
       }
       var sw = Stopwatch.StartNew();
@@ -143,7 +143,19 @@ namespace RealmForge {
       L("Script state: " + lt.Note + (before != 0 && lt.State != 0 && lt.State != before ? "; a new login since the last search" : ""));
       if (before != 0 && lt.State != before) subValues = null;   // the server copies of another login: collected again
       live = lt; LastFindFresh = true;
+      NotePlayer(lt);
       return lt;
+    }
+
+    /// <summary>The game account of the live tables becomes SyncClient.Player as soon as they are found (the hints, the
+    /// equip scan, the start of an account read), not only at the end of a full read: the plan and sell-list requests wait
+    /// for it. Not from tables of an unknown or mixed login.</summary>
+    static void NotePlayer(LiveTables lt) {
+      try {
+        if (lt == null || lt.Ambiguous || MixedState(lt) != null) return;
+        long uid = PlayerUid(lt);
+        if (uid > 0 && SyncClient.Player != uid) { L("Player of the live tables: " + uid + (SyncClient.Player > 0 ? " (was " + SyncClient.Player + ")" : "")); SyncClient.Player = uid; }
+      } catch (Exception) { }
     }
 
     /// <summary>The last EnsureLive searched the tables (they were not the ones found before).</summary>

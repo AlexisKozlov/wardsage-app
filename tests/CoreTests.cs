@@ -425,10 +425,23 @@ static class CoreTests {
     Check(PlansWait.Interpret(200, "<html>").Kind == WaitKind.Error && PlansWait.Interpret(200, "").Kind == WaitKind.Error, "wait: junk body");
     Check(PlansWait.Interpret(401, "{}").Kind == WaitKind.Unauthorized && PlansWait.Interpret(429, "{}").Kind == WaitKind.TooMany, "wait: 401 / 429");
     Check(PlansWait.Interpret(404, "{}").Kind == WaitKind.NotDeployed && PlansWait.Interpret(502, "x").Kind == WaitKind.Error, "wait: 404 not deployed, 502 error");
-    Check(PollGate.ShouldPoll(false, 0, 0) && PollGate.ShouldPoll(false, 0, 999999), "poll gate: no game, polls");
-    Check(!PollGate.ShouldPoll(true, 0, 0) && !PollGate.ShouldPoll(true, 0, 59999), "poll gate: game up, no player, waits");
-    Check(PollGate.ShouldPoll(true, 0, 60000) && PollGate.ShouldPoll(true, 0, 90000), "poll gate: safety timeout polls");
-    Check(PollGate.ShouldPoll(true, 123, 0), "poll gate: player known polls at once");
+    Check(PollGate.ShouldPoll(false, 0, 0, 0) && PollGate.ShouldPoll(false, 0, 999999, 0) && PollGate.ShouldPoll(false, 0, 0, 77), "poll gate: no game, polls");
+    Check(!PollGate.ShouldPoll(true, 0, 0, 77) && !PollGate.ShouldPoll(true, 0, 59999, 77), "poll gate: game up, no player, waits");
+    Check(PollGate.ShouldPoll(true, 0, 60000, 77) && PollGate.ShouldPoll(true, 0, 90000, 77), "poll gate: after 60 s polls for the account last read here");
+    Check(!PollGate.ShouldPoll(true, 0, 60000, 0) && !PollGate.ShouldPoll(true, 0, 299999, 0) && PollGate.ShouldPoll(true, 0, 300000, 0), "poll gate: no account ever read here, the default account only after 5 min");
+    Check(PollGate.ShouldPoll(true, 123, 0, 0) && PollGate.ShouldPoll(true, 123, 0, 77), "poll gate: player known polls at once");
+    // the account the plan / sell-list requests name: the one read now, else the one last read on this install, never a guess
+    Check(SyncClient.PlanPlayer(123, 77) == 123 && SyncClient.PlanPlayer(0, 77) == 77 && SyncClient.PlanPlayer(0, 0) == 0 && SyncClient.PlanPlayer(-1, 0) == 0, "plan player: read, else last read, else none");
+    // the lists are asked again once the game account read differs from the one they were asked for
+    Check(!PollGate.Reload(-1, 123), "reload: not asked yet");
+    Check(PollGate.Reload(0, 123) && PollGate.Reload(77, 123), "reload: asked for the default / another account");
+    Check(!PollGate.Reload(123, 123) && !PollGate.Reload(77, 0), "reload: same account, or none read");
+    {   // the account last read on this install survives a restart (as text: a uid never loses digits)
+      var pc = new AppConfig(); pc.LastPlayer = 9007199254740993L;
+      Check(AppConfig.FromJson(pc.ToJson()).LastPlayer == 9007199254740993L, "config: lastPlayer round trip");
+      Check(AppConfig.FromJson("{}").LastPlayer == 0 && AppConfig.FromJson("{\"lastPlayer\":\"-5\"}").LastPlayer == 0 && AppConfig.FromJson("{\"lastPlayer\":12}").LastPlayer == 0, "config: lastPlayer missing / bad");
+      Check(new AppConfig().ToJson().IndexOf("lastPlayer") < 0, "config: no lastPlayer before one is read");
+    }
     Eq(0, PlansWait.Backoff(0), "backoff: none yet");
     Check(PlansWait.Backoff(1) == 2000 && PlansWait.Backoff(2) == 4000 && PlansWait.Backoff(3) == 8000 && PlansWait.Backoff(5) == 32000, "backoff: 2 s, 4 s, 8 s ...");
     Check(PlansWait.Backoff(6) == 60000 && PlansWait.Backoff(50) == 60000, "backoff: capped at 60 s");

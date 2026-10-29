@@ -46,6 +46,15 @@ namespace RealmForge {
     /// <summary>The desktop app's version (app/Program.cs), sent as X-RF-App so the site knows which build synced.</summary>
     public static string App;
     public static void AddPlayer(System.Net.HttpWebRequest req) { if (Player > 0) req.Headers["X-RF-Player"] = Player.ToString(System.Globalization.CultureInfo.InvariantCulture); }
+    /// <summary>The game account last read on this install (config.json lastPlayer; 0 = none yet): the plan and sell-list requests
+    /// name it while Player is not read yet, so a user with two game accounts never gets the code's default account's lists.</summary>
+    public static long LastPlayer;
+    /// <summary>The account the plan / sell-list requests are for: Player, else LastPlayer, else 0 (the site's default account).</summary>
+    public static long PlanPlayer(long player, long lastPlayer) { return player > 0 ? player : lastPlayer > 0 ? lastPlayer : 0; }
+    public static void AddPlanPlayer(System.Net.HttpWebRequest req) {
+      long p = PlanPlayer(Player, LastPlayer);
+      if (p > 0) req.Headers["X-RF-Player"] = p.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    }
     public const string DefaultSite = Channel.DefaultSite;
     public static int TimeoutMs = 60000;   // per request; a field (not const) so tests can shorten it
     const int MaxReplyBytes = 1024 * 1024;

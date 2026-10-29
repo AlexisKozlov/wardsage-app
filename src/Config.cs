@@ -35,6 +35,7 @@ namespace RealmForge {
     public string LastAt;                       // ISO 8601 UTC or null
     public int LastHeroes = -1, LastItems = -1, LastArtifacts = -1;
     public List<int> LastTop = new List<int>(); // base ids of the 3 strongest heroes
+    public long LastPlayer;   // the game account (PlayerData m_Uid) last read on this install, 0 = none (SyncClient.LastPlayer)
 
     const string ProtectedPrefix = "dpapi:";
 
@@ -117,6 +118,7 @@ namespace RealmForge {
       if (CoachX >= 0 && CoachY >= 0)
         sb.Append(",\n  \"coach\": [").Append(CoachX.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture))
           .Append(", ").Append(CoachY.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture)).Append("]");
+      if (LastPlayer > 0) sb.Append(",\n  \"lastPlayer\": ").Append(MiniJson.Quote(LastPlayer.ToString(System.Globalization.CultureInfo.InvariantCulture)));
       string code = string.IsNullOrEmpty(Code) ? "" : ProtectedPrefix + CodeProtector.Protect(Code);
       sb.Append(",\n  \"code\": ").Append(MiniJson.Quote(code));
       if (!string.IsNullOrEmpty(LastAt)) {
@@ -154,6 +156,8 @@ namespace RealmForge {
       c.RecButton = MiniJson.GetBool(d, "recButton", true);
       string gs = MiniJson.GetString(d, "guideStyle"); c.GuideStyle = gs == "on" || gs == "off" ? gs : "auto";
       c.TermsAccepted = MiniJson.GetString(d, "termsAccepted") ?? "";
+      long lp; string lps = MiniJson.GetString(d, "lastPlayer");
+      if (lps != null && long.TryParse(lps, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out lp) && lp > 0) c.LastPlayer = lp;
       object lv;
       var co = d.TryGetValue("coach", out lv) ? lv as List<object> : null;
       if (co != null && co.Count == 2 && co[0] is double && co[1] is double) {

@@ -11,7 +11,7 @@ namespace RealmForge {
     public static PlansResult Finish(string site, string code, string id, bool done) {
       if (string.IsNullOrEmpty(id) || id.Length > 64) return new PlansResult { Status = PlansStatus.NotFound };
       int http; string text, err;
-      if (!PlansClient.Send("POST", site + "/api/extractor/locate/" + Uri.EscapeDataString(id), code, done ? "{\"status\":\"done\"}" : "{\"status\":\"cancelled\"}", out http, out text, out err))
+      if (!PlansClient.Send("POST", site + "/api/extractor/locate/" + Uri.EscapeDataString(id), code, done ? "{\"status\":\"done\"}" : "{\"status\":\"cancelled\"}", true, out http, out text, out err))
         return new PlansResult { Status = PlansStatus.Unreachable, Details = err };
       return PlansClient.Interpret(http, text, false);
     }

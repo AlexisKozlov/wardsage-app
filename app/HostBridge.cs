@@ -54,6 +54,7 @@ namespace RealmForge {
       this.win = win; this.core = core;
       cfg = AppConfig.Load();
       SyncClient.App = Program.Version;
+      SyncClient.LastPlayer = cfg.LastPlayer;
       TakeInstallLang();
       if (string.IsNullOrEmpty(cfg.Site)) cfg.Site = SyncClient.DefaultSite;
       arenaWatch = new ArenaWatch(() => cfg.Site, () => cfg.Code);
@@ -1163,25 +1164,40 @@ namespace RealmForge {
 
     // Plans and the sell list are asked for the game account (X-RF-Player). While the game runs and the account is not
     // read yet, the site would answer for the code's default account: the request waits (one log line) and goes at once
-    // when the account is known, or after PollGate.PlayerWaitMs
+    // when the account is known; after PollGate.PlayerWaitMs for the account last read on this install (never the default
+    // account when one was read before). The lists are asked again when the account read later differs from the one asked
     DateTime gameFoundAt = DateTime.MinValue; bool pollHoldLogged, pollTimeoutLogged; string heldPlansLang, heldSellLang;
+    long plansFor = -1, sellFor = -1; string shownPlansLang, shownSellLang;
     bool PollAllowed() {
       long since = gameFoundAt == DateTime.MinValue ? 0 : (long)(DateTime.UtcNow - gameFoundAt).TotalMilliseconds;
-      bool ok = PollGate.ShouldPoll(gameRunning, SyncClient.Player, since);
+      bool ok = PollGate.ShouldPoll(gameRunning, SyncClient.Player, since, SyncClient.LastPlayer);
       if (!ok) {
         if (!pollHoldLogged) { pollHoldLogged = true; Log.Write("plans / sell list: held until the game account is read (no X-RF-Player yet)"); }
         return false;
       }
       pollHoldLogged = false;
-      if (gameRunning && SyncClient.Player <= 0 && !pollTimeoutLogged) { pollTimeoutLogged = true; Log.Write("plans / sell list: the game account is still not read after " + PollGate.PlayerWaitMs / 1000 + " s, asking for the default account"); }
+      if (gameRunning && SyncClient.Player <= 0 && !pollTimeoutLogged) {
+        pollTimeoutLogged = true;
+        Log.Write("plans / sell list: the game account is still not read after " + (since / 1000) + " s, asking for "
+          + (SyncClient.LastPlayer > 0 ? "the account last read on this PC" : "the default account (no account read on this PC yet)"));
+      }
       return true;
     }
     void PollGateTick() {
-      if (heldPlansLang == null && heldSellLang == null) return;
-      if (!PollAllowed()) return;
-      string pl = heldPlansLang, sl = heldSellLang; heldPlansLang = heldSellLang = null;
-      if (pl != null) LoadPlans(pl);
-      if (sl != null) LoadSell(sl);
+      long p = SyncClient.Player;
+      if (p > 0 && p != cfg.LastPlayer) { cfg.LastPlayer = p; SyncClient.LastPlayer = p; Save(); }
+      if (heldPlansLang != null || heldSellLang != null) {
+        if (!PollAllowed()) return;
+        string pl = heldPlansLang, sl = heldSellLang; heldPlansLang = heldSellLang = null;
+        if (pl != null) LoadPlans(pl);
+        if (sl != null) LoadSell(sl);
+      }
+      long now = SyncClient.PlanPlayer(SyncClient.Player, SyncClient.LastPlayer);
+      bool rp = shownPlansLang != null && PollGate.Reload(plansFor, now), rs = shownSellLang != null && PollGate.Reload(sellFor, now);
+      if (!rp && !rs) return;
+      Log.Write("plans / sell list: asked again for the game account read now (they were asked for " + (plansFor > 0 || sellFor > 0 ? "another account" : "the default account") + ")");
+      if (rp) LoadPlans(shownPlansLang);
+      if (rs) LoadSell(shownSellLang);
     }
 
     volatile string plansLogged;
@@ -1189,6 +1205,7 @@ namespace RealmForge {
       string site = cfg.Site, code = cfg.Code;
       if (!SyncClient.IsValidCode(code)) { Post("{\"ev\":\"plans\",\"status\":\"invalid_token\"}"); return; }
       if (!PollAllowed()) { heldPlansLang = lang; return; }
+      plansFor = SyncClient.PlanPlayer(SyncClient.Player, SyncClient.LastPlayer); shownPlansLang = lang;
       Task.Factory.StartNew(() => {
        try {
         var r = PlansClient.List(site, code, lang == "en" ? "en" : "ru");
@@ -1446,6 +1463,7 @@ namespace RealmForge {
       string site = cfg.Site, code = cfg.Code;
       if (!SyncClient.IsValidCode(code)) { Post("{\"ev\":\"sell\",\"status\":\"invalid_token\"}"); return; }
       if (!PollAllowed()) { heldSellLang = lang; return; }
+      sellFor = SyncClient.PlanPlayer(SyncClient.Player, SyncClient.LastPlayer); shownSellLang = lang;
       Task.Factory.StartNew(() => {
         var r = SellClient.Get(site, code, lang == "en" ? "en" : "ru");
         if (r.Status != PlansStatus.Ok) {
