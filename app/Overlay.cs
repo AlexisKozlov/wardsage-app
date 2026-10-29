@@ -36,6 +36,8 @@ namespace RealmForge {
     [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
     [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr h, int index);
     [DllImport("user32.dll")] public static extern int SetWindowLong(IntPtr h, int index, int value);
+    [DllImport("user32.dll")] public static extern IntPtr WindowFromPoint(POINT p);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassName(IntPtr h, System.Text.StringBuilder s, int max);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
     [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
     [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p);
@@ -576,6 +578,8 @@ namespace RealmForge {
     // the screen recorder (TEST build): what this tick decided, collected while a recording runs and published at its end
     RecInfo recB;
     void Tick() {
+      var cv = covered;
+      if (cv != null) { covered = null; gate.Halt(cv.Item1, "covered", "the click point is covered by " + cv.Item2 + ", not the game - no press"); AnnounceHalts(); }
       recB = RecInfo.Active ? new RecInfo() : null;
       try { TickWork(); }
       finally {
@@ -695,7 +699,7 @@ namespace RealmForge {
       if (!Channel.IsTest || !RecButton || !GameDrawable() || !W32.GetClientRect(hwnd, out cr) || cr.B < 200) { if (recWin.Visible) recWin.Hide(); return; }
       var o = new W32.POINT(0, 0); W32.ClientToScreen(hwnd, ref o);
       double U = Ui.Unit(cr.R, cr.B);
-      int d = Math.Max(16, (int)(0.055 * U)), inset = Math.Max(2, (int)(0.012 * U));
+      int d = OwnButtons.RecDiameter(U), inset = OwnButtons.RecInset(U);
       int sec = recOn ? (int)(recSw.ElapsedMilliseconds / 1000) : 0;
       string key = d + "|" + (recOn ? "r" + sec : "i");
       if (key != recDrawn || recBmp == null) {
@@ -2436,12 +2440,18 @@ namespace RealmForge {
       var res = gate.Check(req, fresh, now);
       AnnounceHalts();
       if (!res.Allowed) return false;
+      // a game window larger than the screen (not maximized, live 2026-10-29): a point off the desktop is never sent (the cursor would land on the edge)
+      var vs = SystemInformation.VirtualScreen;
+      int sy2 = sy + (a.Kind == AutoKind.Drag ? (int)Math.Round(a.DY) : 0);
+      if (!OwnButtons.AllInside(new[] { vs.X, vs.Y, vs.Width, vs.Height }, sx, sy, sy2)) {
+        gate.Halt(req.Owner, "offscreen", req.Target + " @" + (int)req.X + "," + (int)req.Y + " lies off the screen (the game window is larger than the screen)"); AnnounceHalts(); return false;
+      }
       gate.Arm(req.Owner, req.Target, ClickGate.Expect(req, fresh), now);
       // measurement only: the pilot's click that opens the Inventory / Heroes screen, timed to the first reading of that screen (ReadScreens)
       if (req.Target == ClickTarget.CityInventory) { openClickAt = now; openClickWhat = "inventory"; }
       else if (req.Target == ClickTarget.FoundryButton) { openClickAt = now; openClickWhat = "foundry"; }
       else if (req.Target == ClickTarget.EquipNav && fresh != null && fresh.Kind == ScreenKind.City) { openClickAt = now; openClickWhat = "heroes"; }
-      Send(a, sx, sy);
+      Send(a, sx, sy, req.Owner);
       return true;
     }
     long openClickAt; string openClickWhat = "";
@@ -2799,8 +2809,16 @@ namespace RealmForge {
 
     /// <summary>Moves the cursor and clicks / drags there, off the UI thread (short pauses let the game see the pointer
     /// over the button first). A drag moves in small steps and rests before the release, so the list does not coast.</summary>
-    void Send(AutoAction a, int x, int y) {   // ONLY called by GatedSend
+    void Send(AutoAction a, int x, int y, ClickOwner owner) {   // ONLY called by GatedSend
       sending = true;
+      int dy2 = y + (a.Kind == AutoKind.Drag ? (int)Math.Round(a.DY) : 0);
+      // our own buttons over the game (the TEST build's record button lies on the back arrow at every size, live 2026-10-29:
+      // Locate's HeroBack click started a recording) let this click through to the game, until it is done
+      var through = new List<GlowWindow>();
+      foreach (var w in new[] { recWin, cancelWin })
+        if (w.Visible && w.IsHandleCreated && OwnButtons.Covers(w.Parts, x, y, dy2)) { PassThrough(w, true); through.Add(w); }
+      IntPtr game = GameWindow(); int gamePid = 0;
+      if (game != IntPtr.Zero) W32.GetWindowThreadProcessId(game, out gamePid);
       seen = new W32.POINT(x, y); seenSet = true;
       // our own window (the compact one over the game) must not catch the click: for the moment it goes under the
       // game (z-order only: hiding it made its taskbar button vanish and come back on every click, 27.09) and back on
@@ -2823,6 +2841,9 @@ namespace RealmForge {
           if (hidden) System.Threading.Thread.Sleep(120);
           W32.SetCursorPos(x, y);
           System.Threading.Thread.Sleep(60);
+          // the press goes only to the game: another window at the point (a foreign one, or ours that did not step aside) = no press, the pilot stops
+          string cov = CoveredBy(x, y, gamePid);
+          if (cov != null) { covered = Tuple.Create(owner, cov); return; }
           if (a.Kind == AutoKind.Click) {
             Mouse(W32.LEFTDOWN, 0);
             System.Threading.Thread.Sleep(60);
@@ -2842,10 +2863,32 @@ namespace RealmForge {
         finally {
           // back over the game: topmost again when it was («Поверх игры»), else just above it
           if (hidden) W32.SetWindowPos(self, wasTop ? (IntPtr)(-1) : IntPtr.Zero, 0, 0, 0, 0, NoMoveSizeActivate | 0x4000);   // SWP_ASYNCWINDOWPOS
+          foreach (var w in through) try { PassThrough(w, false); } catch (Exception) { }
           sending = false;
         }
       });
       t.IsBackground = true; t.Start();
+    }
+
+    // a pilot click that found another window over the game's point (set by the click thread, turned into a halt by Tick)
+    volatile Tuple<ClickOwner, string> covered;
+
+    static void PassThrough(GlowWindow w, bool on) {   // WS_EX_TRANSPARENT on a layered window: the mouse goes to what is under it
+      int ex = W32.GetWindowLong(w.Handle, -20);
+      W32.SetWindowLong(w.Handle, -20, on ? ex | 0x20 : ex & ~0x20);
+    }
+
+    /// <summary>Null when the window at the screen point belongs to the game's process; else what is there (class and process name).</summary>
+    static string CoveredBy(int x, int y, int gamePid) {
+      if (gamePid == 0) return null;   // the game's window is unknown here: the gate has already checked the screen
+      IntPtr h = W32.WindowFromPoint(new W32.POINT(x, y));
+      if (h == IntPtr.Zero) return "no window";
+      int pid; W32.GetWindowThreadProcessId(h, out pid);
+      if (pid == gamePid) return null;
+      var cls = new System.Text.StringBuilder(128); W32.GetClassName(h, cls, cls.Capacity);
+      string proc = "?";
+      try { using (var p = Process.GetProcessById(pid)) proc = p.ProcessName; } catch (Exception) { }
+      return "the window «" + cls + "» of " + proc;
     }
 
     static IntPtr AppWindowHandle() {

@@ -669,6 +669,7 @@ static class CoreTests {
     SellPilotTests();
     FightPlanTests();
     LocateTests();
+    OwnButtonTests();
     LocatePilotTests();
     GeometryTests();
     GuideShapeTests();
@@ -3644,6 +3645,25 @@ static class CoreTests {
     v = V(new LocateStep { Kind = LocateKind.OpenAscendTab }, new RecastScreen { SublimingOpen = true }); v.Foreground = false; p = new LocatePilot(); m = p.Step(v);
     Check(m.State == "background" && m.Action.Kind == AutoKind.None, "foundry auto: the game is not in front -> no click");
     v = V(new LocateStep { Kind = LocateKind.OpenAscendTab }, new RecastScreen { SublimingOpen = true }); v.UserBusy = true; m = p.Step(v); Check(m.State == "paused" && m.Action.Kind == AutoKind.None, "foundry auto: the player moves the mouse -> paused");
+  }
+
+  static void OwnButtonTests() {
+    Console.WriteLine("Own buttons over the game (record button vs the back arrow, off-screen points):");
+    var hg = new HeroGeometry();
+    // live 2026-10-29 (laptop, game window not maximized): Locate's HeroBack @39,28 started a recording instead of pressing the game's arrow
+    foreach (double U in new[] { 600.0, 757.0, 1009.0, 1440.0 }) {
+      int bx = (int)Math.Round(hg.BackX * U), by = (int)Math.Round(hg.BackY * U);
+      Check(OwnButtons.Covers(new List<int[]> { OwnButtons.RecBox(U) }, bx, by, by), "U " + U + ": the record button covers the back arrow (the click must pass through)");
+    }
+    int[] rb = OwnButtons.RecBox(757);
+    Check(rb[0] == 9 && rb[2] == 44, "record box at U 757: inset 9, 41 + 3 px");
+    Check(OwnButtons.Covers(new List<int[]> { rb }, 39, 28, 28), "the live point 39,28 lies on it");
+    Check(!OwnButtons.Covers(new List<int[]> { rb }, 60, 28, 28) && !OwnButtons.Covers(new List<int[]> { rb }, 39, 60, 60), "points beside it are free");
+    Check(OwnButtons.Covers(new List<int[]> { new[] { 100, 100, 20, 20 } }, 105, 50, 300), "a drag crossing a part touches it");
+    Check(!OwnButtons.Covers(new List<int[]>(), 1, 1, 1) && !OwnButtons.Covers(null, 1, 1, 1), "no parts: nothing covered");
+    int[] desk = { 0, 0, 1366, 768 };
+    Check(OwnButtons.AllInside(desk, 39, 28, 28), "on the desktop");
+    Check(!OwnButtons.AllInside(desk, 1400, 28, 28) && !OwnButtons.AllInside(desk, 100, 700, 800) && !OwnButtons.AllInside(desk, -1, 5, 5), "off the desktop (a window larger than the screen): refused");
   }
 
   static void LocateTests() {

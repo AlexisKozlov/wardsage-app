@@ -36,4 +36,28 @@ namespace RealmForge {
       return new[] { (int)(ReplaceX0 * U), (int)(ReplaceY0 * U), (int)((ReplaceX1 - ReplaceX0) * U), (int)((ReplaceY1 - ReplaceY0) * U) };
     }
   }
+  /// <summary>Our own clickable buttons over the game: the TEST build's record button at the game's top left (d = 0.055 U, inset
+  /// 0.012 U) and the cancel plate. The record button lies on the game's back arrow (0.0515 U, 0.0367 U) at every window size:
+  /// a pilot click there pressed our button instead of the game's (live 2026-10-29, Locate's HeroBack started a recording and
+  /// stopped on «nochange»), so a pilot click lets the buttons it falls on pass the mouse through (app/Overlay.cs Send).</summary>
+  public static class OwnButtons {
+    public static int RecDiameter(double U) { return System.Math.Max(16, (int)(0.055 * U)); }
+    public static int RecInset(double U) { return System.Math.Max(2, (int)(0.012 * U)); }
+    /// <summary>The idle record button in client px {x, y, w, h} (its bitmap: d + 3 px of shadow).</summary>
+    public static int[] RecBox(double U) { int d = RecDiameter(U), i = RecInset(U); return new[] { i, i, d + 3, d + 3 }; }
+    /// <summary>A click (or a drag from y to y2) at x touches one of these parts {x, y, w, h}.</summary>
+    public static bool Covers(System.Collections.Generic.IList<int[]> parts, int x, int y, int y2) {
+      if (parts == null) return false;
+      int top = System.Math.Min(y, y2), bottom = System.Math.Max(y, y2);
+      foreach (var p in parts)
+        if (p != null && p.Length >= 4 && x >= p[0] && x < p[0] + p[2] && bottom >= p[1] && top < p[1] + p[3]) return true;
+      return false;
+    }
+    /// <summary>Both ends of a click / drag (x, y..y2) lie inside the rect {x, y, w, h} (the desktop: a game window larger than the
+    /// screen has client points off it, and the cursor would be clamped to the screen's edge, onto something else).</summary>
+    public static bool AllInside(int[] r, int x, int y, int y2) {
+      if (r == null || r.Length < 4) return false;
+      return x >= r[0] && x < r[0] + r[2] && y >= r[1] && y < r[1] + r[3] && y2 >= r[1] && y2 < r[1] + r[3];
+    }
+  }
 }
