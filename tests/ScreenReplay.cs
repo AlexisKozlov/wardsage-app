@@ -123,7 +123,7 @@ static class ScreenReplay {
     if (sellSpec != null) { foreach (var u in Longs(Get(sellSpec, "uids"))) sellWanted.Add(u); sellArt = Bool(sellSpec, "artifact", false); bool sellAuto = Bool(sellSpec, "artAuto", false); gate.NoSellClicks = sellArt && !sellAuto; gate.ArtSellAuto = sellArt && sellAuto; }
     double U = Ui.Unit(W, H);
     var inv0 = new InvScroll();
-    int n = 0;
+    int n = 0, backKnown = 0, backBad = 0;
     foreach (var fo in L(Get(fx, "frames"))) {
       var f = O(fo); n++;
       long t = (long)Num(f, "t", 0);
@@ -131,6 +131,19 @@ static class ScreenReplay {
       var raw = InputsOf(f);
       var st = tracker.Update(raw, t);
       gate.Observe(st, t);
+      // the unknown-screen back press is never due nor allowed on a screen the pilots know (gates of its own: the fixture's gate is left alone)
+      {
+        var fr = ScreenState.Classify(raw, t); fr.ShownKnown = "";
+        if (st.Kind != ScreenKind.Unknown || fr.Kind != ScreenKind.Unknown) {
+          backKnown++;
+          var hg = new HeroGeometry();
+          foreach (ClickOwner bo in new[] { ClickOwner.Equip, ClickOwner.Locate, ClickOwner.Sell }) {
+            var bg = new ClickGate();
+            var br = new ClickRequest { Owner = bo, Target = ClickTarget.UnknownBack, AutoOn = true, Front = true, X = hg.BackX * U, Y = hg.BackY * U, U = U };
+            if ((st.Kind != ScreenKind.Unknown && bg.UnknownBackDue(bo, st, t + 60000)) || (fr.Kind != ScreenKind.Unknown && bg.Check(br, fr, t).Allowed)) backBad++;
+          }
+        }
+      }
       var ex = O(Get(f, "expect"));
       if (ex != null) {
         string e;
@@ -262,6 +275,7 @@ static class ScreenReplay {
     }
     // a line is logged for every verdict change, never one per frame
     Check(logs.Count < 60, "the log stays short (" + logs.Count + " lines)");
+    Check(backBad == 0, "unknown back: never due nor allowed on the " + backKnown + " frame(s) of known screens (" + backBad + " wrong)");
   }
 
   // ---- checks that need no fixture

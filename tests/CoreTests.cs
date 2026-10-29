@@ -720,6 +720,8 @@ static class CoreTests {
     Console.WriteLine("Offer pop-ups over the city (OfferForms, OfferClose, the window table, the automatic recording):");
     OfferTests();
     PlanScreenTests();
+    WindowTableTests();
+    UnknownBackTests();
     ArtGridPictureTests();
     ArtPromoteTests();
     ArtAutoTests();
@@ -4253,6 +4255,167 @@ static class CoreTests {
       var g4 = new LocateGrid(); g4.FromClick(g, 4, 500, U, 9);
       Check(g4.Has && g4.ListPtr == 9 && Math.Abs(g4.RowTop(g, 4, U) - (500 - g.BarBottom * U / 2)) < 0.01, "grid: a click on row 4 anchors the list");
       g4.Reset(); Check(!g4.Has, "grid: reset");
+    }
+  }
+
+  // the game's window table (UIInstance) and its twin of the same shape, UIFormClass (form id -> the form's class): which one is read, the names,
+  // the shown flag, the reasons the log gives (live 2026-10-29: the finder took UIFormClass, no form name was ever read)
+  static void WindowTableTests() {
+    Console.WriteLine("Window table: UIInstance, not UIFormClass");
+    var m = new FakeLua(1 << 21); RFX.TestMemory = m; RFX.ForgetLive();
+    try {
+      var fs = new FakeState(m); long inst = 20001;
+      Func<string, FTab> Cls = nm => fs.T("__cname", nm, "ctor", 0L, "__index", 0L);
+      var cCity = Cls("Form_MainCity"); var cPlan = Cls("Form_EquipmentPlan"); var cHero = Cls("Form_CharactorMain"); var cBattle = Cls("Form_Battle");
+      Func<FTab, bool, FTab> Obj = (c, shown) => shown ? fs.T("m_LuaLogicActive", true, "class", c, "____instanceId", inst++) : fs.T("m_InitOK", true, "class", c, "____instanceId", inst++);
+      const long idCity = -1796900587, idPlan = 657588872, idHero = 1456276573, idBattle = -1008207313;
+      var classes = fs.T(idCity, cCity, idPlan, cPlan, idHero, cHero, idBattle, cBattle);                        // UIFormClass: every form file loaded
+      var forms = fs.T(idCity, Obj(cCity, false), idPlan, Obj(cPlan, true));                                    // UIInstance: the city (covered) and the plan screen
+      var ids = new[] { idHero, idBattle, idCity };
+      Check(RFX.PickUiTableForTest(new[] { classes.A, forms.A }, ids) == forms.A, "window table: of the two tables keyed by form ids the one with form objects is taken");
+      Check(RFX.PickUiTableForTest(new[] { forms.A, classes.A }, ids) == forms.A, "window table: ... whatever order the scan found them in");
+      Eq(0UL, RFX.PickUiTableForTest(new[] { classes.A }, ids), "window table: the class table alone is never taken");
+      Check(RFX.PickUiTableForTest(new[] { classes.A, forms.A }, new[] { idHero, idBattle }) == 0, "window table: no anchor form object (only the classes hold them): nothing is taken");
+      // read from the class table (the old bug): nothing shown, no names, and the log line says why
+      RFX.SetUiTableForTest(classes.A);
+      var off0 = RFX.ReadOffers();
+      Check(off0 != null && off0.Count == 0, "window table (class table): no offer read - what the lab saw");
+      string d0 = RFX.ShownFormsDiag(8);
+      Check(d0.Contains("0 shown") && d0.Contains("no form objects"), "window table (class table): the log line says it holds no form objects (" + d0 + ")");
+      // read from UIInstance: the build plan screen is the shown offer, its name is in the log line
+      RFX.SetUiTableForTest(forms.A);
+      var off = RFX.ReadOffers();
+      Check(off != null && off.Count == 1 && off[0] == "Form_EquipmentPlan", "window table: the build plan screen is read by its class name (" + (off == null ? "null" : string.Join(",", off.ToArray())) + ")");
+      string d1 = RFX.ShownFormsDiag(8);
+      Check(d1 == "window table: 2 forms, 1 shown: Form_EquipmentPlan", "window table: the log line lists the shown forms (" + d1 + ")");
+      Eq("", RFX.ReadShownKnownForms(), "window table: no known screen's form is shown (the city is covered)");
+      // a shown form without a class field: named by its key and the reason; the known-forms read is "not sure" (null)
+      var odd = fs.T(idCity, Obj(cCity, false), 777L, fs.T("m_LuaLogicActive", true, "m_Foo", 1L));
+      RFX.SetUiTableForTest(odd.A);
+      string d2 = RFX.ShownFormsDiag(8);
+      Check(d2.Contains("id:777(no class field)"), "window table: a form without a name is listed with the reason (" + d2 + ")");
+      Check(RFX.ReadShownKnownForms() == null, "window table: a shown form without a name: the known forms are not sure (null)");
+      // the battle and the hero screen shown are known screens (the back press is never made then); the tip toast is not one
+      var cTips = Cls("Form_CommonTips");
+      var fight = fs.T(idBattle, Obj(cBattle, true), 99L, Obj(cTips, true));
+      RFX.SetUiTableForTest(fight.A);
+      Eq("Form_Battle", RFX.ReadShownKnownForms(), "window table: the battle shown is a known screen's form, the tip toast is not");
+      // more forms without a name than one call may read: the ones after them are named on the next call (a miss is not read again for 10 s)
+      var many = new List<object>();
+      for (int i = 0; i < 30; i++) { many.Add((long)(1000 + i)); many.Add(fs.T("m_LuaLogicActive", true, "m_X", 1L)); }
+      many.Add(idPlan); many.Add(Obj(cPlan, true));
+      RFX.SetUiTableForTest(fs.T(many.ToArray()).A);
+      RFX.ReadOffers(); var off2 = RFX.ReadOffers();
+      Check(off2 != null && off2.Contains("Form_EquipmentPlan"), "window table: 30 nameless forms before it do not hide the plan screen for good (" + (off2 == null ? "null" : string.Join(",", off2.ToArray())) + ")");
+      RFX.SetUiTableForTest(0);
+      Eq("window table not found yet", RFX.ShownFormsDiag(8), "window table: not found - the log line says so");
+      Check(RFX.ReadShownKnownForms() == null, "window table not found: the known forms are not read (null)");
+    } finally { RFX.SetUiTableForTest(0); RFX.TestMemory = null; RFX.ForgetLive(); }
+  }
+
+  // the unknown-screen back press (ClickTarget.UnknownBack): only on a full-screen screen nobody knows, at most 3 a run, each has to change the screen
+  static void UnknownBackTests() {
+    Console.WriteLine("Unknown screen: the back arrow");
+    const double W = 1366, H = 705; double U = Ui.Unit(W, H);
+    var hg = new HeroGeometry(); double bx = hg.BackX * U, by = hg.BackY * U;
+    Func<string, string, ScreenState> Unk = (top, known) => { var s = ScreenState.Classify(new ScreenInputs { CityForm = false, Offers = new List<string>(), TopUnknown = top, ShownKnown = known }, 0); return s; };
+    Func<ClickOwner, ClickRequest> Rq = o => new ClickRequest { Owner = o, Target = ClickTarget.UnknownBack, AutoOn = true, Front = true, X = bx, Y = by, U = U };
+    var plain = Unk("Form_Odd", "");
+    Eq("", ClickGate.UnknownBackBlock(plain), "unknown back: a full-screen unknown screen without a pop-up allows it");
+    Check(ClickGate.OnBackArrow(bx, by, U) && !ClickGate.OnBackArrow(bx + 0.05 * U, by, U) && !ClickGate.OnBackArrow(W / 2, H / 2, U), "unknown back: the point is the hero screen's back arrow, nothing else");
+    // known screens and everything else that is not "a full-screen unknown screen" never get it
+    var inv = new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true };
+    var known = new Dictionary<string, ScreenState> {
+      { "City (form)", ScreenState.Classify(new ScreenInputs { CityForm = true, Offers = new List<string>(), ShownKnown = "" }, 0) },
+      { "City (picture)", ScreenState.Classify(new ScreenInputs { CityForm = false, CitySeen = true, Offers = new List<string>(), ShownKnown = "" }, 0) },
+      { "Inventory", ScreenState.Classify(new ScreenInputs { Inv = inv, Offers = new List<string>(), ShownKnown = "" }, 0) },
+      { "HeroScreen", ScreenState.Classify(new ScreenInputs { Hero = new HeroScreen { Hero = 5, FormOk = true }, Offers = new List<string>(), ShownKnown = "" }, 0) },
+      { "Foundry", ScreenState.Classify(new ScreenInputs { Rs = new RecastScreen { SublimingOpen = true }, Offers = new List<string>(), ShownKnown = "" }, 0) },
+      { "Gem", ScreenState.Classify(new ScreenInputs { Rs = new RecastScreen { GemOpen = true }, Offers = new List<string>(), ShownKnown = "" }, 0) },
+      { "ArtWorkshop", ScreenState.Classify(new ScreenInputs { ArtWs = new ArtWorkshopScreen { Open = true }, Offers = new List<string>(), ShownKnown = "" }, 0) },
+      { "an offer over the city", ScreenState.Classify(new ScreenInputs { CityForm = true, Offers = new List<string> { "Form_PopUpShop" }, ShownKnown = "" }, 0) },
+      { "an offer on an unknown screen", ScreenState.Classify(new ScreenInputs { CityForm = false, Offers = new List<string> { "Form_EquipmentPlan" }, ShownKnown = "" }, 0) },
+      { "a pop-up seen on the picture", ScreenState.Classify(new ScreenInputs { CityForm = false, Offers = new List<string>(), ModalExtra = true, ModalExtraWhy = "popup", ShownKnown = "" }, 0) },
+      { "the battle shown", Unk("", "Form_Battle") },
+      { "the hero screen's form shown", Unk("", "Form_CharactorMain") },
+      { "the known forms not read", Unk("Form_Odd", null) },
+      { "the window table not read", ScreenState.Classify(new ScreenInputs { CityForm = false, Offers = null, ShownKnown = "" }, 0) },
+      { "a fight's result", Unk("Form_BattleEnd", "") },
+    };
+    foreach (var kv in known) {
+      var s = kv.Value; s.SinceMs = 0;
+      Check(ClickGate.UnknownBackBlock(s) != "", "unknown back: never on " + kv.Key + " (" + ClickGate.UnknownBackBlock(s) + ")");
+      foreach (ClickOwner o in new[] { ClickOwner.Equip, ClickOwner.Locate, ClickOwner.Sell }) {
+        var g = new ClickGate();
+        var r = g.Check(Rq(o), s, 10000);
+        Check(!r.Allowed && !g.Halted(o), "unknown back: " + o + " gets no press on " + kv.Key + " (" + r.Reason + ")");
+        if (s.Kind != ScreenKind.Unknown || s.ModalOpen || s.OfferCount > 0 || !s.OfferRead) Check(!g.UnknownBackDue(o, s, 10000), "unknown back: " + o + " is never due on " + kv.Key);
+      }
+    }
+    var held = Unk("Form_Odd", ""); held.Held = true;
+    Check(ClickGate.UnknownBackBlock(held) != "" && !new ClickGate().UnknownBackDue(ClickOwner.Locate, held, 10000), "unknown back: never on a screen held from a known one");
+    // due only after the screen settled, not twice within a second, not in a hint run, not while a form search runs
+    {
+      var g = new ClickGate();
+      Check(!g.UnknownBackDue(ClickOwner.Locate, plain, ClickGate.UnknownBackSettleMs - 1), "unknown back: not before the screen settled");
+      Check(g.UnknownBackDue(ClickOwner.Locate, plain, ClickGate.UnknownBackSettleMs), "unknown back: due once it settled");
+      Check(!g.UnknownBackDue(ClickOwner.Locate, plain, ClickGate.UnknownBackSettleMs + 500), "unknown back: not again within a second");
+      var gh = new ClickGate { NoLocateClicks = true };
+      Check(!gh.UnknownBackDue(ClickOwner.Locate, plain, 10000) && gh.Check(Rq(ClickOwner.Locate), plain, 10000).Reason == "off", "unknown back: a hint run never presses");
+      var gs = new ClickGate { SearchWait = true };
+      Check(!gs.UnknownBackDue(ClickOwner.Locate, plain, 10000), "unknown back: not while a form search runs");
+      var go = new ClickGate();
+      Check(!go.Check(new ClickRequest { Owner = ClickOwner.Locate, Target = ClickTarget.UnknownBack, AutoOn = true, Front = true, X = W / 2, Y = H / 2, U = U }, plain, 10000).Allowed && go.HaltReason(ClickOwner.Locate) == "target", "unknown back: a point off the arrow is a stop");
+    }
+    // the press changes the screen: to the city (done, no more presses), to another unknown form (the next press may follow, no own-click stop)
+    {
+      var g = new ClickGate(); var rq = Rq(ClickOwner.Locate);
+      Check(g.Check(rq, plain, 10000).Allowed, "unknown back: allowed on the unknown screen");
+      g.Arm(ClickOwner.Locate, ClickTarget.UnknownBack, ClickGate.Expect(rq, plain), 10000);
+      var city = ScreenState.Classify(new ScreenInputs { CityForm = true, Offers = new List<string>() }, 10500);
+      g.Observe(city, 10500);
+      Check(!g.Pending(ClickOwner.Locate) && !g.Halted(ClickOwner.Locate) && g.UnknownBacks(ClickOwner.Locate) == 1, "unknown back: back in the city is its effect");
+      Check(!g.UnknownBackDue(ClickOwner.Locate, city, 20000) && g.Preflight(ClickOwner.Locate, city, 10600).Allowed, "unknown back: the city is known - no more presses, the pilot goes on");
+      var g2 = new ClickGate();
+      g2.Arm(ClickOwner.Sell, ClickTarget.UnknownBack, ClickGate.Expect(Rq(ClickOwner.Sell), plain), 10000);
+      var other = Unk("Form_Other", ""); other.SinceMs = 10400;
+      g2.Observe(other, 10400);
+      Check(!g2.Pending(ClickOwner.Sell) && !g2.Halted(ClickOwner.Sell), "unknown back: another unknown form on top is a change");
+      var pf = g2.Preflight(ClickOwner.Sell, other, 10500);
+      Check(pf.Verdict == GateVerdict.Wait && !g2.Halted(ClickOwner.Sell), "unknown back: the next unknown screen right after it is waited for, no own-click stop (" + pf.Reason + ")");
+      Check(!g2.UnknownBackDue(ClickOwner.Sell, other, 10500) && g2.UnknownBackDue(ClickOwner.Sell, other, 10400 + ClickGate.UnknownBackSettleMs), "unknown back: the next press once that screen settled");
+    }
+    // a press that changes nothing: "nochange"
+    {
+      var g = new ClickGate(); var rq = Rq(ClickOwner.Equip);
+      g.Arm(ClickOwner.Equip, ClickTarget.UnknownBack, ClickGate.Expect(rq, plain), 10000);
+      g.Observe(plain, 11000);
+      Check(g.Pending(ClickOwner.Equip) && !g.Halted(ClickOwner.Equip), "unknown back: the effect is awaited for a moment");
+      g.Observe(plain, 10000 + ClickGate.EffectMs + 1);
+      Eq("nochange", g.HaltReason(ClickOwner.Equip), "unknown back: the same screen after the press is a stop");
+      var gn = new ClickGate(); var nameless = Unk("", "");
+      gn.Arm(ClickOwner.Equip, ClickTarget.UnknownBack, ClickGate.Expect(Rq(ClickOwner.Equip), nameless), 0);
+      gn.Observe(nameless, ClickGate.EffectMs + 1);
+      Eq("nochange", gn.HaltReason(ClickOwner.Equip), "unknown back: an unknown screen without a name before and after is no change either");
+    }
+    // at most MaxUnknownBacks presses a run; a new run starts the count again
+    {
+      var g = new ClickGate(); int n = 0; long t = 10000;
+      for (int i = 0; i < ClickGate.MaxUnknownBacks + 2; i++, t += 5000) {
+        var s = Unk("Form_" + i, ""); s.SinceMs = t - ClickGate.UnknownBackSettleMs;
+        if (!g.UnknownBackDue(ClickOwner.Locate, s, t)) break;
+        var rq = Rq(ClickOwner.Locate);
+        if (!g.Check(rq, s, t).Allowed) break;
+        g.Arm(ClickOwner.Locate, ClickTarget.UnknownBack, ClickGate.Expect(rq, s), t); n++;
+        g.Observe(Unk("Form_" + (i + 1), ""), t + 300);
+      }
+      Eq(ClickGate.MaxUnknownBacks, n, "unknown back: presses in one run");
+      var last = Unk("Form_x", ""); last.SinceMs = 0;
+      Check(!g.UnknownBackDue(ClickOwner.Locate, last, t + 10000), "unknown back: none due after the last one");
+      var r = g.Check(Rq(ClickOwner.Locate), last, t + 10000);
+      Check(!r.Allowed && g.HaltReason(ClickOwner.Locate) == "unknown", "unknown back: a fourth press is a stop (" + g.HaltDetail(ClickOwner.Locate) + ")");
+      g.Resume(ClickOwner.Locate);
+      Check(g.UnknownBacks(ClickOwner.Locate) == 0 && g.UnknownBackDue(ClickOwner.Locate, last, t + 20000), "unknown back: a new run may press again");
     }
   }
 

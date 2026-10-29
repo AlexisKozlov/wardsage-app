@@ -43,6 +43,9 @@ namespace RealmForge {
     /// <summary>Over a known screen other than the city: shown forms nobody knows that were not there when this screen came (an item tip, a reward,
     /// a «Недостаточно…» notice ...): a pop-up on top, so the screen is modal ("form:&lt;names&gt;"); "" = none / not read.</summary>
     public string TopNew = "";
+    /// <summary>The shown forms that are screens the app knows, the battle among them (src/OfferScan.cs ReadShownKnownForms): "" = none, null = not read.
+    /// Read for the unknown-screen back press only (ClickGate UnknownBack); it never changes the screen's kind.</summary>
+    public string ShownKnown;
   }
 
   public sealed class ScreenState {
@@ -83,6 +86,8 @@ namespace RealmForge {
     public bool OfferRead;
     /// <summary>On an Unknown screen: the shown form that is not known (its name, for the log), "" = none.</summary>
     public string TopForm = "";
+    /// <summary>The shown known screens' forms (ScreenInputs.ShownKnown): "" = none, null = not read.</summary>
+    public string ShownKnown;
     // times (ms, the overlay's clock): this reading, the last time the screen was really read (older when Held), since when the screen is this one
     public long ReadAtMs, ConfirmedAtMs, SinceMs;
     /// <summary>The reads failed this moment and the last confirmed screen is shown (at most ScreenTracker.HoldMs).</summary>
@@ -166,6 +171,7 @@ namespace RealmForge {
       if (!s.ModalOpen && i.ModalExtra) { s.ModalOpen = true; s.ModalWhy = i.ModalExtraWhy; }
       if (!s.ModalOpen && s.Kind != ScreenKind.Unknown && s.Kind != ScreenKind.City && !string.IsNullOrEmpty(i.TopNew)) { s.ModalOpen = true; s.ModalWhy = "form:" + i.TopNew; }
       if (s.Kind == ScreenKind.Unknown) s.TopForm = i.TopUnknown ?? "";
+      s.ShownKnown = i.ShownKnown;
       return s;
     }
   }
@@ -202,7 +208,7 @@ namespace RealmForge {
 
     public ScreenState Update(ScreenInputs raw, long now) {
       var failing = new List<string>();
-      var use = new ScreenInputs { CitySeen = raw.CitySeen, CityForm = raw.CityForm, ModalExtra = raw.ModalExtra, ModalExtraWhy = raw.ModalExtraWhy, Offers = raw.Offers, TopUnknown = raw.TopUnknown, TopNew = raw.TopNew };
+      var use = new ScreenInputs { CitySeen = raw.CitySeen, CityForm = raw.CityForm, ModalExtra = raw.ModalExtra, ModalExtraWhy = raw.ModalExtraWhy, Offers = raw.Offers, TopUnknown = raw.TopUnknown, TopNew = raw.TopNew, ShownKnown = raw.ShownKnown };
       long oldest = now;   // the oldest reading that stands in for a failed one
       use.Inv = Hold(raw.Inv, ref inv, ref invAt, now, "inventory", failing, ref oldest);
       use.Rs = Hold(raw.Rs, ref rs, ref rsAt, now, "foundry", failing, ref oldest);
