@@ -123,6 +123,16 @@ namespace RealmForge {
     public const int OwnClickWindowMs = 2500;
     /// <summary>At most this many offer pop-ups are closed in a row (no other click of the pilot between): more is a loop, a stop.</summary>
     public const int MaxOfferCloses = 8;
+    /// <summary>A pilot that sees the same unrecognised screen (no offer pop-up on it, not held, not a fight's result) this long stops with
+    /// "unknown screen &lt;form&gt;" instead of waiting for ever (UnknownStall).</summary>
+    public const int UnknownStallMs = 20000;
+    /// <summary>Calls of UnknownStall further apart than this (the game was in the background, the player was busy) start the count again.</summary>
+    public const int StallGapMs = 2000;
+    /// <summary>Shown forms the unknown-screen stop leaves alone: a fight's result screens (the player is in a fight, not lost).</summary>
+    public static readonly string[] StallExempt = { "Form_UnionBossBattleEnd", "Form_UnionWeekBossBattleEnd", "Form_BattleEnd", "Form_PvpBattleEnd", "Form_SparringPvpBattleEnd", "Form_ExpeditionBattleEnd" };
+    /// <summary>A form the readers knew is being searched for again (the game moved its node, the search takes up to ~20 s on a slow PC): an
+    /// unrecognised screen is waited for meanwhile - no stop for it, no click effect runs out, the unknown-screen count does not run. Set by the host.</summary>
+    public volatile bool SearchWait;
     /// <summary>The log (the host's journal); null = none. A line only when an owner's verdict changes.</summary>
     public Action<string> Sink;
     /// <summary>The storage cleanup of ARTIFACTS is a hint run: the Sell owner never clicks while it runs (set by the host with the run).</summary>
@@ -267,6 +277,9 @@ namespace RealmForge {
     readonly Dictionary<ClickOwner, long> clickedAt = new Dictionary<ClickOwner, long>();   // when the owner sent its last click in this request
     readonly Dictionary<ClickOwner, int> offerRun = new Dictionary<ClickOwner, int>();      // offer pop-ups closed in a row
     readonly Dictionary<ClickOwner, string> haltDetail = new Dictionary<ClickOwner, string>();
+    readonly Dictionary<ClickOwner, long[]> stall = new Dictionary<ClickOwner, long[]>();       // UnknownStall: since, last call
+    readonly Dictionary<ClickOwner, string> stallBrief = new Dictionary<ClickOwner, string>();
+    readonly HashSet<ClickOwner> searchWaited = new HashSet<ClickOwner>();                      // an unknown screen was waited for during a form search
 
     void Note(ClickOwner o, string key, string text) {
       string was; if (noted.TryGetValue(o, out was) && was == key) return;
@@ -287,6 +300,33 @@ namespace RealmForge {
     /// <summary>A new request (or the player started it again): the owner may click again.</summary>
     public void Resume(ClickOwner o) {
       halted.Remove(o); watches.Remove(o); unknownSince.Remove(o); noted.Remove(o); clickedAt.Remove(o); offerRun.Remove(o); haltDetail.Remove(o);
+      stall.Remove(o); stallBrief.Remove(o); searchWaited.Remove(o);
+    }
+
+    /// <summary>The screen is unrecognised for the unknown-screen rules: Unknown, no offer pop-up on it (the pilots close those), not held from a known one.</summary>
+    static bool Unrecognised(ScreenState s) { return s != null && s.Kind == ScreenKind.Unknown && s.OfferCount == 0 && !s.Held; }
+
+    /// <summary>A pilot run on an unrecognised screen: true = the owner stops now, "unknown screen &lt;form&gt;" (the same unrecognised screen for
+    /// UnknownStallMs, calls at most StallGapMs apart). A known screen, an offer on top, a held screen, a fight's result form or a running
+    /// form search (SearchWait) never count. When a form search that was waited for ends with the screen still unrecognised, the owner stops at once.</summary>
+    public bool UnknownStall(ClickOwner o, ScreenState s, long now) {
+      if (halted.ContainsKey(o)) return false;
+      if (!Unrecognised(s) || Exempt(s.TopForm)) { stall.Remove(o); searchWaited.Remove(o); return false; }
+      if (SearchWait) { searchWaited.Add(o); stall.Remove(o); return false; }
+      string name = s.TopForm != "" ? s.TopForm : "?";
+      if (searchWaited.Remove(o)) { Halt(o, "unknown", "unknown screen " + name + ": the form search ended without finding the screen"); return true; }
+      long[] t; string b;
+      if (!stall.TryGetValue(o, out t) || now - t[1] > StallGapMs || !stallBrief.TryGetValue(o, out b) || b != s.Brief) { t = new[] { now, now }; stall[o] = t; stallBrief[o] = s.Brief; }
+      t[1] = now;
+      if (now - t[0] < UnknownStallMs) return false;
+      Halt(o, "unknown", "unknown screen " + name + " for " + ((now - t[0]) / 1000) + " s");
+      return true;
+    }
+
+    static bool Exempt(string top) {
+      if (string.IsNullOrEmpty(top)) return false;
+      foreach (var n in top.Split(',')) if (Array.IndexOf(StallExempt, n.Trim()) >= 0) return true;
+      return false;
     }
 
     /// <summary>The pilot stops (also used by the host for its own reasons, e.g. the player's cancel).</summary>
@@ -356,6 +396,7 @@ namespace RealmForge {
           watches.Remove(o); Note(o, "effect:" + w.What + ":" + now, w.What + " took effect");
           if (w.Offer != null) { var sk = Sink; if (sk != null) sk("offer: closed " + w.Offer); }
         }
+        else if (now > w.Deadline && SearchWait && Unrecognised(s)) { w.Deadline = now + 1000; searchWaited.Add(o); }   // the form is being searched for: its effect may still show
         else if (now > w.Deadline) Halt(o, "nochange", w.What + " changed nothing within the time (screen " + s.Brief + ")");
       }
     }
@@ -375,10 +416,13 @@ namespace RealmForge {
       bool modeUnknown = s != null && s.Kind == ScreenKind.Inventory && s.InvEquipTab && !s.InvBulkKnown;
       if (s == null || s.Kind == ScreenKind.Unknown || modeUnknown) {
         string d = modeUnknown ? "the inventory's mode is not readable" : "the screen is not recognised" + (s != null && s.TopForm != "" ? " (top form " + s.TopForm + " not in the list)" : "");
+        if (!modeUnknown && SearchWait && Unrecognised(s)) { searchWaited.Add(o); stall.Remove(o); return GateResult.Wait("search", d + " (a form search runs)"); }
         long at;
-        if (clickedAt.TryGetValue(o, out at) && now - at <= OwnClickWindowMs) return Halt(o, "unknown", d + " after the pilot's own click");
+        if (clickedAt.TryGetValue(o, out at) && now - at <= OwnClickWindowMs && !searchWaited.Contains(o)) return Halt(o, "unknown", d + " after the pilot's own click");
+        if (!modeUnknown && UnknownStall(o, s, now)) return GateResult.Deny("unknown", HaltDetail(o));
         return GateResult.Wait("unknown", d);
       }
+      stall.Remove(o); searchWaited.Remove(o);
       return GateResult.Allow(s.Brief);
     }
 
@@ -536,6 +580,7 @@ namespace RealmForge {
 
     GateResult UnknownWait(ClickRequest r, ScreenState f, long now, string detail) {
       long since;
+      if (SearchWait && Unrecognised(f)) { unknownSince.Remove(r.Owner); searchWaited.Add(r.Owner); return GateResult.Wait("search", detail + " (a form search runs)"); }
       if (!unknownSince.TryGetValue(r.Owner, out since)) { since = now; unknownSince[r.Owner] = now; }
       if (now - since > UnknownGraceMs) return Halt(r.Owner, "unknown", detail + " for " + (now - since) + " ms");
       Note(r.Owner, "wait-unknown:" + r.Target + ":" + (f == null ? "none" : f.Brief), "wait (unknown) " + r.Target + " on " + (f == null ? "no screen" : f.Brief));

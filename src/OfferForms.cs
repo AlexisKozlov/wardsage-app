@@ -9,6 +9,8 @@
 // buttons of the prefab («Купить», «Перейти», «Получить», arrows, items ...) are the never-click rectangles of that form.
 // A form without a known × (no close button in the prefab, or one that is not anchored to the screen) is never clicked:
 // the pilot stops with the form's name.
+// Also on the list: Form_EquipmentPlan («План сборки», the city bar's «Сборка»), a full screen a wrong click can open; it is left with its
+// back arrow (UIHelper.NewButtonBack m_Back / Btn_Back, anchored top left), never with any of its plan buttons.
 //
 // Pure data and placement math, no Windows APIs (tests: tests/CoreTests.cs, tests/ScreenReplay.cs); the host
 // (app/Overlay.cs) reads which form is shown (src/OfferScan.cs) and clicks through the gate (src/ClickGate.cs).
@@ -42,6 +44,7 @@ namespace RealmForge {
       new Entry("Form_ChampionshipBegin", R('C', 0.7667, 'C', 0.8511, 'M', -0.4828, 'M', -0.3984), R('C', -1.0687, 'C', -0.7078, 'M', 0.4251, 'M', 0.5438), R('C', -0.3421, 'C', 0.0189, 'M', 0.3813, 'M', 0.5001), R('C', 0.4058, 'C', 0.6942, 'M', 0.3255, 'M', 0.4332), R('C', 0.4516, 'C', 0.5297, 'M', -0.0453, 'M', 0.0297)),
       new Entry("Form_ChampionshipOver", null),
       new Entry("Form_DailyCheckIn", R('C', 0.7898, 'C', 0.8742, 'M', -0.4441, 'M', -0.3597), R('C', -0.6626, 'C', -0.5689, 'M', 0.2369, 'M', 0.3556), R('C', 0.0785, 'C', 0.3331, 'M', 0.2991, 'M', 0.3554)),
+      new Entry("Form_EquipmentPlan", R('L', 0.0, 'L', 0.13, 'T', 0.0, 'T', 0.084), R('L', 0.14, 'L', 0.6, 'T', 0.0, 'T', 0.08), R('L', 0.0, 'L', 0.27, 'T', 0.115, 'T', 0.245), R('L', 0.3, 'R', 0.0, 'B', -0.11, 'B', 0.0)),
       new Entry("Form_Feedback", null),
       new Entry("Form_FirstCharge", R('C', 0.7578, 'C', 0.8359, 'M', -0.4484, 'M', -0.3703)),
       new Entry("Form_FrameLessPopup", R('C', 0.7812, 'C', 0.8594, 'M', -0.475, 'M', -0.3969), R('L', 0.2391, 'R', -0.2391, 'T', 0.1445, 'B', -0.1445)),

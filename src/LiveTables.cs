@@ -516,6 +516,8 @@ namespace RealmForge {
       return true;
     }
     public static bool FormSearchRunning { get { return Volatile.Read(ref formSearchBusy) != 0; } }
+    /// <summary>The number of the newest search started (it grows by one with each start).</summary>
+    public static int FormSearchGeneration { get { return Volatile.Read(ref formSearchGen); } }
     const int FormSearchWatchdogMs = 30000;
     static int formSearchStart, formSearchGen;
     /// <summary>For the tests: called inside the search worker before the search (may throw).</summary>

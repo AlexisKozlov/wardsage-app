@@ -1660,6 +1660,8 @@ namespace RealmForge {
       userClick = false; lastAutoView = v; lastClientW = cr.R; lastClientH = cr.B;
       // an offer pop-up over the city is closed before the plan's next step (the equip helper has no preflight of its own here)
       if ((runHero > 0 || target > 0) && v.Foreground && !v.UserBusy && OfferStep(ClickOwner.Equip, screens.Current, o, cr, v.Foreground, now)) return;
+      // a screen nobody knows for 20 s (or one a form search did not find): stop instead of waiting for ever
+      if ((runHero > 0 || target > 0) && v.Foreground && !v.UserBusy && gate.UnknownStall(ClickOwner.Equip, screens.Current, now)) { AnnounceHalts(); return; }
       // first the plan's hero on the hero screen (a started plan only), then the game's filter (the item far down or
       // hidden), then the item itself
       if (runHero > 0) {
@@ -2453,13 +2455,17 @@ namespace RealmForge {
       if (front) {
         string lost = RFX.TakeFormsLost();
         int wantGap; string wantSearch = FormSearchPolicy.Want(st.Kind, st.Held, openClickAt != 0 ? now - openClickAt : -1, out wantGap);
-        if (lost != null) RFX.RequestFormSearch("lost: " + lost, 500);
+        if (lost != null) { RFX.RequestFormSearch("lost: " + lost, 500); lostSearchAt = now; lostSearchGen = RFX.FormSearchGeneration; }
         else if (wantSearch != null) RFX.RequestFormSearch(wantSearch, wantGap);
         // the workshop's form exists once the game has built it (the first open): with the artifact's card open, look for it every 2.5 s until found
         else if (artGuide && RFX.ArtFormMissing() && st.Kind == ScreenKind.Inventory && st.InvArtTab && st.InvArtSelected == locateReq.Art.Uid && now - artFormAskedAt >= 2500) {
           artFormAskedAt = now; RFX.RequestFormSearch("art workshop not built", 500);
         }
       }
+      // a known form moved and is searched for again: the gate waits for the search (and the next one, which may be the one that starts) at most 40 s
+      bool sw = lostSearchAt != 0 && now - lostSearchAt < 40000 && (now - lostSearchAt < 2500 || (RFX.FormSearchRunning && RFX.FormSearchGeneration <= lostSearchGen + 1));
+      if (!sw) lostSearchAt = 0;
+      if (gate.SearchWait != sw) { gate.SearchWait = sw; if (sw) Log.Write("screen: a known form is searched for - the pilots wait for the search"); }
       if (screens.Hero != null) heroScreen = screens.Hero;
       gate.Observe(st, now);
       AnnounceHalts();
@@ -2479,6 +2485,9 @@ namespace RealmForge {
       { IntPtr gw = GameWindow(); if (gw != IntPtr.Zero && !W32.IsIconic(gw) && IsForeground(gw)) FillArtPopup(inp, gw); }
       if (locateReq != null && locateReq.Purpose == "artPromote") inp.ArtWs = RFX.ReadArtWorkshop();   // the artifact guide's clicks are judged by the workshop too
       var st = ScreenState.Classify(inp, now);
+      // the forms nobody knows (read every 2 s by the tick): over the same known screen a later one is a pop-up on top; on an unknown screen, its name
+      if (topNewNow != "" && st.Kind == topNewKind) { inp.TopNew = topNewNow; st = ScreenState.Classify(inp, now); }
+      else if (topUnknownNow != "" && st.Kind == ScreenKind.Unknown) { inp.TopUnknown = topUnknownNow; st = ScreenState.Classify(inp, now); }
       // a click on a city button also needs the picture of the bar (the form alone is not enough for a click)
       if (wantCity && ScreenState.NeedsCityPicture(st.Kind, inp.CityForm)) {
         bool seen = CityVisible(GameWindow());
@@ -2510,7 +2519,10 @@ namespace RealmForge {
     void RaiseAutoRec(string tag) { if (!Channel.IsTest) return; var a = AutoRec; if (a != null) { try { a(tag); } catch (Exception e) { Log.Write("rec: auto failed: " + e.Message); } } }
 
     // ---- the game's offer / notice pop-ups over the city (src/OfferForms.cs): read from the window table, closed by the pilots (OfferClose)
-    volatile bool uiFinding; long uiFindAt, unknownFormsAt; List<string> unknownForms;
+    volatile bool uiFinding; long uiFindAt, unknownFormsAt, lostSearchAt; int lostSearchGen; List<string> unknownForms;
+    // the shown unknown forms when the screen became the known one it is (TopNew: the ones that came later are a pop-up on top), and the last results
+    const int TopSettleMs = 3000;
+    long topBaseAt; ScreenKind topBaseKind = ScreenKind.Unknown; HashSet<string> topBase = new HashSet<string>(); string topNewNow = "", topUnknownNow = ""; ScreenKind topNewKind = ScreenKind.Unknown;
     readonly HashSet<string> unknownSaid = new HashSet<string>();
     string offerSaid = "";
 
@@ -2528,15 +2540,25 @@ namespace RealmForge {
       string os = inp.Offers == null ? "?" : string.Join(",", inp.Offers.ToArray());
       if (os != offerSaid) { offerSaid = os; if (os != "" && os != "?") Log.Write("offer: shown " + os); }
       var cls = ScreenState.Classify(inp, now).Kind;
-      if (front && (cls == ScreenKind.Unknown || cls == ScreenKind.City) && (inp.Offers == null || inp.Offers.Count == 0)) {
+      topNewNow = ""; topUnknownNow = "";
+      if (front && (inp.Offers == null || inp.Offers.Count == 0)) {
         if (now - unknownFormsAt >= 2000 || unknownFormsAt == 0) { unknownFormsAt = now; unknownForms = RFX.ReadUnknownShownForms(4); }
-        if (unknownForms != null && unknownForms.Count > 0) {
-          foreach (var n in unknownForms) if (unknownSaid.Add(n)) Log.Write("offer: unknown top form " + n + " (not in list)");
-          if (cls == ScreenKind.Unknown) {
-            inp.TopUnknown = string.Join(",", unknownForms.ToArray());
+        var cur = unknownForms ?? new List<string>();
+        foreach (var n in cur) if (unknownSaid.Add(n)) Log.Write("offer: unknown top form " + n + " (not in list)");
+        if (cls == ScreenKind.Unknown) {
+          if (cur.Count > 0) {
+            inp.TopUnknown = topUnknownNow = string.Join(",", cur.ToArray());
             if (unknownSaid.Add("rec:" + inp.TopUnknown)) RaiseAutoRec(AutoRecPolicy.UnknownFormTag(inp.TopUnknown));
           }
+        } else if (cls != ScreenKind.City && unknownForms != null) {
+          // over a known screen: the forms there when it came are its own; one that came later is a pop-up on top (never pressed: the gate stops on it)
+          // (the forms read within TopSettleMs of the screen's coming are its own too: a part the game builds a moment later; the read right after the change is fresh)
+          if (cls != topBaseKind) { topBaseKind = cls; topBaseAt = now; topBase = new HashSet<string>(); unknownForms = RFX.ReadUnknownShownForms(4); unknownFormsAt = now; cur = unknownForms ?? new List<string>(); }
+          if (now - topBaseAt < TopSettleMs) foreach (var n in cur) topBase.Add(n);
+          var fresh = cur.FindAll(n => !topBase.Contains(n));
+          if (fresh.Count > 0) { inp.TopNew = topNewNow = string.Join(",", fresh.ToArray()); topNewKind = cls; }
         }
+        if (cls == ScreenKind.Unknown || cls == ScreenKind.City) topBaseKind = cls;
       } else unknownForms = null;
     }
 
@@ -2727,7 +2749,7 @@ namespace RealmForge {
       var dstep = LocateGuide.Next(req, inv, locateRs, heroScreen, locateCols, locateOnAccount);
       var view = new LocateView { NowMs = now, Foreground = gameFront, UserBusy = busy, UserClicked = uc, W = W, H = H, U = U, Step = dstep, Inv = inv, Cols = locateCols,
         HeroScreenOpen = heroOpen, OtherFormOpen = formOpen, InvDX = invDX, Geometry = Geo.Current, Rs = locateRs, Item = req.Item, Purpose = req.Purpose };
-      if (gameFront && !busy && LocateAuto.NeedsCityButton(dstep, heroOpen, formOpen)) view.CityButton = InventoryButtonSeen(o, W, H);
+      if (gameFront && !busy && LocateAuto.NeedsCityButton(dstep, heroOpen, formOpen)) { view.CityButton = InventoryButtonSeen(o, W, H); view.InvDX = invDX; }   // the place the bar search may have found just now
       if (gameFront && !busy && dstep.Kind == LocateKind.InList) {
         var pg = SellGeometry.Inventory(W, U, locateCols);
         view.Row1 = locateScroll.Row1(pg, inv != null ? inv.List : null, double.NaN, U, now);   // the game's scroll (the constant is learned by the frame)
