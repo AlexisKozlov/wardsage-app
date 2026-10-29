@@ -1,0 +1,109 @@
+{
+ "name": "An offer pop-up over the city: every other click waits, the pilot closes it by its × (OfferClose), the pop-up gone is the effect, then the pilot's own first click; a city form that stops reading as the pop-up goes holds the screen for 1.5 s, the effect is seen after it",
+ "cols": 8,
+ "frames": [
+  {
+   "t": 0,
+   "cityForm": true,
+   "offers": [
+    "Form_PopUpShop"
+   ],
+   "expect": {
+    "screen": "City",
+    "modal": true,
+    "brief": "modal(offer:Form_PopUpShop)",
+    "halt": ""
+   },
+   "clicks": [
+    {
+     "owner": "Locate",
+     "target": "CityInventory",
+     "expect": {
+      "verdict": "Wait",
+      "reason": "offer"
+     }
+    },
+    {
+     "owner": "Locate",
+     "target": "OfferClose",
+     "form": "Form_PopUpShop"
+    }
+   ]
+  },
+  {
+   "t": 300,
+   "cityForm": true,
+   "offers": [
+    "Form_PopUpShop"
+   ],
+   "expect": {
+    "screen": "City",
+    "modal": true
+   },
+   "clicks": [
+    {
+     "owner": "Locate",
+     "target": "CityInventory",
+     "expect": {
+      "verdict": "Wait",
+      "reason": "pending"
+     }
+    }
+   ]
+  },
+  {
+   "t": 700,
+   "cityForm": true,
+   "offers": [],
+   "expect": {
+    "screen": "City",
+    "modal": false,
+    "logged": "offer: closed Form_PopUpShop",
+    "halt": ""
+   },
+   "clicks": [
+    {
+     "owner": "Locate",
+     "target": "CityInventory"
+    }
+   ]
+  },
+  {
+   "t": 800,
+   "cityForm": true,
+   "offers": [
+    "Form_DailyCheckIn"
+   ],
+   "expect": {
+    "screen": "City",
+    "brief": "modal(offer:Form_DailyCheckIn)"
+   },
+   "clicks": [
+    {
+     "owner": "Sell",
+     "target": "OfferClose",
+     "form": "Form_DailyCheckIn"
+    }
+   ]
+  },
+  {
+   "t": 1500,
+   "cityForm": false,
+   "offers": [],
+   "expect": {
+    "screen": "City",
+    "held": true
+   }
+  },
+  {
+   "t": 3200,
+   "cityForm": false,
+   "offers": [],
+   "expect": {
+    "screen": "Unknown",
+    "logged": "offer: closed Form_DailyCheckIn",
+    "halt": ""
+   }
+  }
+ ]
+}

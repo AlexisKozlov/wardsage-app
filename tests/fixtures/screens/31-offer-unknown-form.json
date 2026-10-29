@@ -1,0 +1,92 @@
+{
+ "name": "An offer pop-up the app cannot close (no × in its prefab) is a stop with its name; an unknown form on top of an unrecognised screen is named in the stop",
+ "cols": 8,
+ "frames": [
+  {
+   "t": 0,
+   "cityForm": true,
+   "offers": [
+    "Form_Feedback"
+   ],
+   "expect": {
+    "screen": "City",
+    "brief": "modal(offer:Form_Feedback)"
+   },
+   "clicks": [
+    {
+     "owner": "Equip",
+     "target": "OfferClose",
+     "form": "Form_Feedback",
+     "at": [
+      1700,
+      120
+     ],
+     "expect": {
+      "verdict": "Deny",
+      "reason": "offer"
+     }
+    }
+   ]
+  },
+  {
+   "t": 100,
+   "cityForm": true,
+   "offers": [
+    "Form_Feedback"
+   ],
+   "expect": {
+    "halt": "Equip:offer",
+    "logged": "Form_Feedback"
+   }
+  },
+  {
+   "t": 2000,
+   "cityForm": false,
+   "offers": [],
+   "topForm": "Form_ItemReward",
+   "expect": {
+    "screen": "Unknown",
+    "brief": "top(Form_ItemReward)"
+   },
+   "clicks": [
+    {
+     "owner": "Locate",
+     "target": "CityInventory",
+     "expect": {
+      "verdict": "Wait",
+      "reason": "unknown"
+     }
+    }
+   ]
+  },
+  {
+   "t": 3800,
+   "cityForm": false,
+   "offers": [],
+   "topForm": "Form_ItemReward",
+   "expect": {
+    "screen": "Unknown"
+   },
+   "clicks": [
+    {
+     "owner": "Locate",
+     "target": "CityInventory",
+     "expect": {
+      "verdict": "Deny",
+      "reason": "unknown"
+     }
+    }
+   ]
+  },
+  {
+   "t": 3900,
+   "cityForm": false,
+   "offers": [],
+   "topForm": "Form_ItemReward",
+   "expect": {
+    "halt": "Locate:unknown",
+    "logged": "top form Form_ItemReward not in the list"
+   }
+  }
+ ]
+}

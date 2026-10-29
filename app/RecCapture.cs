@@ -20,6 +20,8 @@ namespace RealmForge {
     readonly Action<bool> setActive;    // the overlay: our windows visible to the capture, collecting on/off (it runs this on the UI thread)
     Thread th; volatile bool stopReq; volatile bool on;
     string stopWhy = "";
+    // an automatic recording (src/AutoRec.cs): its reason (written as auto.json into the first part) and its length; null = a manual one
+    string autoReason; long limitMs = MaxMs; string recId;
 
     public ScreenRecorder(Func<string> site, Func<string> code, Action<string> log, Action<string> post, Action<bool> setActive) {
       this.site = site; this.code = code; this.log = log; this.post = post; this.setActive = setActive;
@@ -27,12 +29,20 @@ namespace RealmForge {
 
     public bool On { get { return on; } }
 
-    public void Start() {
-      if (on) return;
+    public void Start() { StartAs(null, MaxMs); }
+
+    /// <summary>An automatic recording of the next <paramref name="ms"/> with its reason; the recording's id ("" = one is running already).</summary>
+    public string StartAuto(string reason, int ms) { return on ? "" : StartAs(reason ?? "", Math.Min(ms, MaxMs)); }
+
+    string StartAs(string reason, long ms) {
+      if (on) return "";
+      autoReason = reason; limitMs = ms;
+      recId = RecNames.NewId(DateTime.Now, new Random());
       on = true; stopReq = false; stopWhy = "";
       setActive(true);
       th = new Thread(Run) { IsBackground = true, Name = "rec-capture" };
       th.Start();
+      return recId;
     }
 
     public void Stop() { stopReq = true; }
@@ -69,7 +79,7 @@ namespace RealmForge {
     static readonly ImageCodecInfo Jpeg = ImageCodecInfo.GetImageEncoders().FirstOrDefault(c => c.FormatID == ImageFormat.Jpeg.Guid);
 
     void Run() {
-      string rec = RecNames.NewId(DateTime.Now, new Random());
+      string rec = recId, why = autoReason; long limit = limitMs; bool reasonWritten = false;
       string dir = Path.Combine(AppConfig.DefaultDir, "recordings", rec);
       var up = new RecUploader(rec, site, code, log);
       var sw = Stopwatch.StartNew();
@@ -80,7 +90,7 @@ namespace RealmForge {
       try {
         while (!stopReq) {
           long t = sw.ElapsedMilliseconds;
-          if (t >= MaxMs) { stopWhy = "time"; break; }
+          if (t >= limit) { stopWhy = why != null ? "" : "time"; break; }
           if (closedBytes + (w != null ? w.Bytes : 0) > MaxTotalBytes) { stopWhy = "size"; break; }
           int sec = (int)(t / 1000);
           if (sec != lastSec) { lastSec = sec; post(RecJson.State(true, sec, up.Sent, up.Total, "")); }
@@ -89,7 +99,10 @@ namespace RealmForge {
             bool fg = OverlayController.IsForeground(h);
             if (fg ? t >= nextFg : t >= nextBg) {
               if (fg) nextFg = t - nextFg < 2 * FgEveryMs ? nextFg + FgEveryMs : t + FgEveryMs; else nextBg = t + BgEveryMs;
-              if (w == null) { w = new RecPartWriter(dir, part); partStart = t; enc.Rebase(); }
+              if (w == null) {
+                w = new RecPartWriter(dir, part); partStart = t; enc.Rebase();
+                if (why != null && !reasonWritten) { w.AddText("auto.json", "{\"auto\":true,\"reason\":" + MiniJson.Quote(why) + ",\"app\":" + MiniJson.Quote(Program.Version) + "}"); reasonWritten = true; }
+              }
               try { Capture(h, t, !fg, w, ++frameNo); } catch (Exception e) { log("recording " + rec + ": frame failed: " + e.Message); }
             }
           }
@@ -115,6 +128,7 @@ namespace RealmForge {
           Thread.Sleep(500);
         }
         if (!on) post(RecJson.State(false, (int)(sw.ElapsedMilliseconds / 1000), up.Sent, up.Total, up.Off ? "off" : stopWhy));
+        if (why != null) log("rec: auto " + why + " " + (up.Idle && !up.Off && up.Sent > 0 ? "sent " + rec + " (" + up.Sent + " parts)" : "not sent " + rec + " (" + up.Sent + "/" + up.Total + " parts" + (up.Off ? ", the site takes no recordings" : "") + ")"));
       } catch (Exception) { }
     }
 

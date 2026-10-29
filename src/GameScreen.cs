@@ -6,7 +6,7 @@
 // only the decision is central:
 //
 //   Screen = City | Inventory(tab, bulk, selected item) | HeroScreen(hero, tab, slot) | Foundry(tab, pop-up) | Gem(function) | ArtWorkshop(tab, artifact) | Unknown
-//   plus ModalOpen (a pop-up or a pending choice the app can detect) and the times.
+//   plus ModalOpen (a pop-up or a pending choice the app can detect; "offer:<Form>" = one of the game's offer / notice pop-ups, src/OfferForms.cs) and the times.
 //
 // A short read failure must not flip the screen: the readers give null now and then (the form is rebuilt, a table is mid-write).
 // ScreenTracker keeps the last good reading of each source and the last confirmed screen for up to 1.5 s while the reads fail
@@ -36,6 +36,10 @@ namespace RealmForge {
     /// <summary>A pop-up found by the picture (the host fills it for a fresh read only), with its name.</summary>
     public bool ModalExtra;
     public string ModalExtraWhy = "";
+    /// <summary>The offer / notice pop-ups (src/OfferForms.cs) shown now, by form name (src/OfferScan.cs); null = the game's window table was not read.</summary>
+    public List<string> Offers;
+    /// <summary>A shown form that is neither a screen the app knows nor an offer (for the log and the stop's reason; "" = none / not read).</summary>
+    public string TopUnknown = "";
   }
 
   public sealed class ScreenState {
@@ -70,6 +74,12 @@ namespace RealmForge {
     // any pop-up / pending choice the app can detect
     public bool ModalOpen;
     public string ModalWhy = "";
+    // the offer / notice pop-ups over the city (src/OfferForms.cs): the first one shown, how many, whether the window table was read at all
+    public string Offer = "";
+    public int OfferCount;
+    public bool OfferRead;
+    /// <summary>On an Unknown screen: the shown form that is not known (its name, for the log), "" = none.</summary>
+    public string TopForm = "";
     // times (ms, the overlay's clock): this reading, the last time the screen was really read (older when Held), since when the screen is this one
     public long ReadAtMs, ConfirmedAtMs, SinceMs;
     /// <summary>The reads failed this moment and the last confirmed screen is shown (at most ScreenTracker.HoldMs).</summary>
@@ -101,6 +111,7 @@ namespace RealmForge {
           case ScreenKind.ArtWorkshop: sb.Append(" tab ").Append(ArtWsTab); break;
         }
         if (ModalOpen) sb.Append(" modal(").Append(ModalWhy).Append(')');
+        if (Kind == ScreenKind.Unknown && TopForm != "") sb.Append(" top(").Append(TopForm).Append(')');
         return sb.ToString();
       }
     }
@@ -143,7 +154,14 @@ namespace RealmForge {
       } else if (i.CityForm == true || i.CitySeen) {
         s.Kind = ScreenKind.City;
       }
+      // an offer pop-up sits above every screen (the game opens it on top of the city): it is THE modal
+      s.OfferRead = i.Offers != null;
+      if (i.Offers != null && i.Offers.Count > 0) {
+        s.OfferCount = i.Offers.Count; s.Offer = i.Offers[0];
+        s.ModalOpen = true; s.ModalWhy = "offer:" + s.Offer + (s.OfferCount > 1 ? "+" + (s.OfferCount - 1) : "");
+      }
       if (!s.ModalOpen && i.ModalExtra) { s.ModalOpen = true; s.ModalWhy = i.ModalExtraWhy; }
+      if (s.Kind == ScreenKind.Unknown) s.TopForm = i.TopUnknown ?? "";
       return s;
     }
   }
@@ -180,7 +198,7 @@ namespace RealmForge {
 
     public ScreenState Update(ScreenInputs raw, long now) {
       var failing = new List<string>();
-      var use = new ScreenInputs { CitySeen = raw.CitySeen, CityForm = raw.CityForm, ModalExtra = raw.ModalExtra, ModalExtraWhy = raw.ModalExtraWhy };
+      var use = new ScreenInputs { CitySeen = raw.CitySeen, CityForm = raw.CityForm, ModalExtra = raw.ModalExtra, ModalExtraWhy = raw.ModalExtraWhy, Offers = raw.Offers, TopUnknown = raw.TopUnknown };
       long oldest = now;   // the oldest reading that stands in for a failed one
       use.Inv = Hold(raw.Inv, ref inv, ref invAt, now, "inventory", failing, ref oldest);
       use.Rs = Hold(raw.Rs, ref rs, ref rsAt, now, "foundry", failing, ref oldest);
@@ -194,7 +212,8 @@ namespace RealmForge {
       var cand = ScreenState.Classify(use, now);
       if (oldest < now) { cand.Held = true; cand.ConfirmedAtMs = oldest; }   // made from readings that stand in for failed ones
       // the whole screen unknown for a moment while it was a known one: keep it (a flicker is not a screen change)
-      if (cand.Kind == ScreenKind.Unknown && last != null && last.Kind != ScreenKind.Unknown && now - last.ConfirmedAtMs <= HoldMs) {
+      // (not while an offer pop-up is read on top: that is a known state, the pilots close it)
+      if (cand.Kind == ScreenKind.Unknown && cand.OfferCount == 0 && last != null && last.Kind != ScreenKind.Unknown && now - last.ConfirmedAtMs <= HoldMs) {
         var held = ShallowCopy(last);
         held.Held = true; held.ReadAtMs = now;
         if (holdSaid != last.Brief) { holdSaid = last.Brief; Say("screen: reads failing - keeping " + last.Brief + " for up to " + HoldMs + " ms"); }
@@ -220,6 +239,7 @@ namespace RealmForge {
       c.Hero = s.Hero; c.HeroTab = s.HeroTab; c.HeroSlot = s.HeroSlot;
       c.FoundryTab = s.FoundryTab; c.FoundryPopup = s.FoundryPopup; c.FoundrySel = s.FoundrySel; c.FoundryKey = s.FoundryKey;
       c.GemFunc = s.GemFunc; c.GemSel = s.GemSel; c.ModalOpen = s.ModalOpen; c.ModalWhy = s.ModalWhy;
+      c.Offer = s.Offer; c.OfferCount = s.OfferCount; c.OfferRead = s.OfferRead; c.TopForm = s.TopForm;
       c.ReadAtMs = s.ReadAtMs; c.ConfirmedAtMs = s.ConfirmedAtMs; c.SinceMs = s.SinceMs; c.Held = s.Held;
       c.Inv = s.Inv; c.Rs = s.Rs; c.HeroScr = s.HeroScr; c.ArtWs = s.ArtWs;
       return c;

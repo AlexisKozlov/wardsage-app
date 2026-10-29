@@ -1,0 +1,270 @@
+{
+ "name": "Never a buy / go button of an offer pop-up (the lottery's «GO» is refused and stops the pilot); at most 8 pop-ups closed in a row, the 9th is a stop (a loop)",
+ "cols": 8,
+ "frames": [
+  {
+   "t": 0,
+   "cityForm": true,
+   "offers": [
+    "Form_ActPopupLottery"
+   ],
+   "expect": {
+    "screen": "City",
+    "brief": "modal(offer:Form_ActPopupLottery)"
+   },
+   "clicks": [
+    {
+     "owner": "Sell",
+     "target": "OfferClose",
+     "form": "Form_ActPopupLottery",
+     "at": [
+      1546,
+      790
+     ],
+     "expect": {
+      "verdict": "Deny",
+      "reason": "target"
+     }
+    }
+   ]
+  },
+  {
+   "t": 100,
+   "cityForm": true,
+   "offers": [
+    "Form_ActPopupLottery"
+   ],
+   "expect": {
+    "halt": "Sell:target"
+   }
+  },
+  {
+   "t": 1000,
+   "cityForm": true,
+   "offers": [
+    "Form_GiftPush"
+   ],
+   "clicks": [
+    {
+     "owner": "Equip",
+     "target": "OfferClose",
+     "form": "Form_GiftPush",
+     "expect": {
+      "verdict": "Allow"
+     }
+    }
+   ]
+  },
+  {
+   "t": 1400,
+   "cityForm": true,
+   "offers": [],
+   "expect": {
+    "logged": "offer: closed Form_GiftPush"
+   }
+  },
+  {
+   "t": 2000,
+   "cityForm": true,
+   "offers": [
+    "Form_GiftPush"
+   ],
+   "clicks": [
+    {
+     "owner": "Equip",
+     "target": "OfferClose",
+     "form": "Form_GiftPush",
+     "expect": {
+      "verdict": "Allow"
+     }
+    }
+   ]
+  },
+  {
+   "t": 2400,
+   "cityForm": true,
+   "offers": [],
+   "expect": {
+    "logged": "offer: closed Form_GiftPush"
+   }
+  },
+  {
+   "t": 3000,
+   "cityForm": true,
+   "offers": [
+    "Form_GiftPush"
+   ],
+   "clicks": [
+    {
+     "owner": "Equip",
+     "target": "OfferClose",
+     "form": "Form_GiftPush",
+     "expect": {
+      "verdict": "Allow"
+     }
+    }
+   ]
+  },
+  {
+   "t": 3400,
+   "cityForm": true,
+   "offers": [],
+   "expect": {
+    "logged": "offer: closed Form_GiftPush"
+   }
+  },
+  {
+   "t": 4000,
+   "cityForm": true,
+   "offers": [
+    "Form_GiftPush"
+   ],
+   "clicks": [
+    {
+     "owner": "Equip",
+     "target": "OfferClose",
+     "form": "Form_GiftPush",
+     "expect": {
+      "verdict": "Allow"
+     }
+    }
+   ]
+  },
+  {
+   "t": 4400,
+   "cityForm": true,
+   "offers": [],
+   "expect": {
+    "logged": "offer: closed Form_GiftPush"
+   }
+  },
+  {
+   "t": 5000,
+   "cityForm": true,
+   "offers": [
+    "Form_GiftPush"
+   ],
+   "clicks": [
+    {
+     "owner": "Equip",
+     "target": "OfferClose",
+     "form": "Form_GiftPush",
+     "expect": {
+      "verdict": "Allow"
+     }
+    }
+   ]
+  },
+  {
+   "t": 5400,
+   "cityForm": true,
+   "offers": [],
+   "expect": {
+    "logged": "offer: closed Form_GiftPush"
+   }
+  },
+  {
+   "t": 6000,
+   "cityForm": true,
+   "offers": [
+    "Form_GiftPush"
+   ],
+   "clicks": [
+    {
+     "owner": "Equip",
+     "target": "OfferClose",
+     "form": "Form_GiftPush",
+     "expect": {
+      "verdict": "Allow"
+     }
+    }
+   ]
+  },
+  {
+   "t": 6400,
+   "cityForm": true,
+   "offers": [],
+   "expect": {
+    "logged": "offer: closed Form_GiftPush"
+   }
+  },
+  {
+   "t": 7000,
+   "cityForm": true,
+   "offers": [
+    "Form_GiftPush"
+   ],
+   "clicks": [
+    {
+     "owner": "Equip",
+     "target": "OfferClose",
+     "form": "Form_GiftPush",
+     "expect": {
+      "verdict": "Allow"
+     }
+    }
+   ]
+  },
+  {
+   "t": 7400,
+   "cityForm": true,
+   "offers": [],
+   "expect": {
+    "logged": "offer: closed Form_GiftPush"
+   }
+  },
+  {
+   "t": 8000,
+   "cityForm": true,
+   "offers": [
+    "Form_GiftPush"
+   ],
+   "clicks": [
+    {
+     "owner": "Equip",
+     "target": "OfferClose",
+     "form": "Form_GiftPush",
+     "expect": {
+      "verdict": "Allow"
+     }
+    }
+   ]
+  },
+  {
+   "t": 8400,
+   "cityForm": true,
+   "offers": [],
+   "expect": {
+    "logged": "offer: closed Form_GiftPush"
+   }
+  },
+  {
+   "t": 9000,
+   "cityForm": true,
+   "offers": [
+    "Form_GiftPush"
+   ],
+   "clicks": [
+    {
+     "owner": "Equip",
+     "target": "OfferClose",
+     "form": "Form_GiftPush",
+     "expect": {
+      "verdict": "Deny",
+      "reason": "offers"
+     }
+    }
+   ]
+  },
+  {
+   "t": 10000,
+   "cityForm": true,
+   "offers": [
+    "Form_GiftPush"
+   ],
+   "expect": {
+    "halt": "Equip:offers"
+   }
+  }
+ ]
+}

@@ -678,6 +678,8 @@ static class CoreTests {
     SellHintTests();
     ArtifactSellTests();
     CityGateAndPanelTests();
+    Console.WriteLine("Offer pop-ups over the city (OfferForms, OfferClose, the window table, the automatic recording):");
+    OfferTests();
     ArtGridPictureTests();
     ArtPromoteTests();
     ArtAutoTests();
@@ -3995,6 +3997,137 @@ static class CoreTests {
   }
 
   // Storage cleanup of ARTIFACTS (the artifact tab's «Массовая продажа»): the panel reader on fake tables, the screen state, the steps and frames, no clicks
+  static void OfferTests() {
+    const double W = 1920, H = 1009; double U = Ui.Unit(W, H);
+    // the list: the game's pop-up queue, 34 forms; the × known for 31 of them, and never on another button of the form
+    Eq(34, OfferForms.All.Length, "offer list: the forms of the game's pop-up queue");
+    int closable = 0;
+    foreach (var e in OfferForms.All) {
+      var r = OfferForms.CloseRect(null, e.Name, W, H, U);
+      if (r == null) continue;
+      closable++;
+      Check(r.X >= 0 && r.Right <= W && r.Y >= 0 && r.Bottom <= H && r.W > 20 && r.H > 20, "offer list: the × of " + e.Name + " lies in the window");
+      Check(!OfferForms.OnNeverButton(e.Name, r.CX, r.CY, W, H, U), "offer list: the × of " + e.Name + " is on none of its other buttons");
+    }
+    Eq(31, closable, "offer list: forms with a known ×");
+    foreach (var nm in new[] { "Form_ChampionshipOver", "Form_MonthyCardGetReward", "Form_Feedback" }) Check(OfferForms.IsOffer(nm) && OfferForms.CloseRect(null, nm, W, H, U) == null, "offer list: " + nm + " has no × known: never clicked");
+    Check(!OfferForms.IsOffer("Form_MainCity") && !OfferForms.IsOffer("Form_BackpackIntegration"), "offer list: the game's screens are not offers");
+
+    Func<string[], bool, ScreenState> St = (offers, city) => ScreenState.Classify(new ScreenInputs { CityForm = city, Offers = offers == null ? null : new List<string>(offers) }, 0);
+    var shop = St(new[] { "Form_PopUpShop" }, true);
+    Check(shop.Kind == ScreenKind.City && shop.ModalOpen && shop.ModalWhy == "offer:Form_PopUpShop" && shop.Brief.Contains("modal(offer:Form_PopUpShop)"), "screen: an offer over the city is the modal offer:<Form> (" + shop.Brief + ")");
+    Check(!St(new string[0], true).ModalOpen && St(null, true).Kind == ScreenKind.City && !St(null, true).OfferRead, "screen: no offer / the table not read = no modal");
+    var two = St(new[] { "Form_GiftPush", "Form_DailyCheckIn" }, true);
+    Check(two.OfferCount == 2 && two.ModalWhy == "offer:Form_GiftPush+1", "screen: two offers at once are counted");
+    var unkTop = ScreenState.Classify(new ScreenInputs { TopUnknown = "Form_ItemReward" }, 0);
+    Check(unkTop.Kind == ScreenKind.Unknown && unkTop.TopForm == "Form_ItemReward" && unkTop.Brief.Contains("top(Form_ItemReward)"), "screen: an unknown form on an unrecognised screen is named");
+
+    Func<ClickOwner, string, double, double, ClickRequest> Rq = (ow, form, x, y) => new ClickRequest { Owner = ow, Target = ClickTarget.OfferClose, AutoOn = true, Front = true, Form = form, X = x, Y = y, W = W, H = H, U = U };
+    var c = OfferForms.ClosePoint(null, "Form_PopUpShop", W, H, U);
+    {   // the × is allowed for every owner; the effect is the pop-up gone, logged "offer: closed <Form>"; then the pilot's own click
+      foreach (ClickOwner ow in Enum.GetValues(typeof(ClickOwner))) Check(new ClickGate().Check(Rq(ow, "Form_PopUpShop", c.X, c.Y), shop, 0).Allowed, "offer close: " + ow + " may close the pop-up by its ×");
+      var g = new ClickGate(); var log = new List<string>(); g.Sink = x => log.Add(x);
+      var rq = Rq(ClickOwner.Locate, "Form_PopUpShop", c.X, c.Y);
+      Eq("offer", g.Preflight(ClickOwner.Locate, shop, 0).Reason, "offer close: the pilot's preflight waits for the offer to be closed");
+      var inv = new ClickRequest { Owner = ClickOwner.Locate, Target = ClickTarget.CityInventory, AutoOn = true, Front = true };
+      var r0 = g.Check(inv, shop, 0);
+      Check(r0.Verdict == GateVerdict.Wait && r0.Reason == "offer" && !g.Halted(ClickOwner.Locate), "offer close: the city button waits under an offer (no click, no stop)");
+      Check(g.Check(rq, shop, 0).Allowed, "offer close: allowed");
+      g.Arm(ClickOwner.Locate, ClickTarget.OfferClose, ClickGate.Expect(rq, shop), 0, "Form_PopUpShop");
+      g.Observe(St(new string[0], true), 500);
+      Check(!g.Pending(ClickOwner.Locate) && log.Exists(l => l == "offer: closed Form_PopUpShop"), "offer close: the pop-up gone = its effect, logged");
+      Check(g.Check(inv, St(new string[0], true), 600).Allowed, "offer close: then the pilot's own first click");
+      // a failed read of the table is not the effect
+      var g2 = new ClickGate(); g2.Arm(ClickOwner.Sell, ClickTarget.OfferClose, ClickGate.Expect(Rq(ClickOwner.Sell, "Form_PopUpShop", c.X, c.Y), shop), 0, "Form_PopUpShop");
+      g2.Observe(St(null, true), 500); Check(g2.Pending(ClickOwner.Sell), "offer close: an unread table is no effect");
+      g2.Observe(St(new[] { "Form_PopUpShop" }, true), ClickGate.EffectMs + 10);
+      Check(g2.HaltReason(ClickOwner.Sell) == "nochange", "offer close: the pop-up still there after the time -> nochange stop");
+    }
+    {   // never the buy / go / claim buttons; never off the ×; not on another screen; not an unknown form; one at a time
+      var lot = St(new[] { "Form_ActPopupLottery" }, true);
+      var go = OfferForms.All[Array.FindIndex(OfferForms.All, e => e.Name == "Form_ActPopupLottery")].Never[0];
+      double gx = W / 2 + ((double)go[1] + (double)go[3]) / 2 * U, gy = H / 2 + ((double)go[5] + (double)go[7]) / 2 * U;
+      Check(OfferForms.OnNeverButton("Form_ActPopupLottery", gx, gy, W, H, U), "offer close: the lottery's «GO» is a never-click button");
+      var g = new ClickGate(); var r = g.Check(Rq(ClickOwner.Equip, "Form_ActPopupLottery", gx, gy), lot, 0);
+      Check(r.Verdict == GateVerdict.Deny && r.Reason == "target", "offer close: a click on the «GO» button is never allowed");
+      foreach (var e in OfferForms.All) foreach (var f in e.Never) {
+        double fx = (f[0].Equals('L') ? 0 : f[0].Equals('C') ? W / 2 : W) + (double)f[1] * U, fy = (f[4].Equals('T') ? 0 : f[4].Equals('M') ? H / 2 : H) + (double)f[5] * U;
+        double fx1 = (f[2].Equals('L') ? 0 : f[2].Equals('C') ? W / 2 : W) + (double)f[3] * U, fy1 = (f[6].Equals('T') ? 0 : f[6].Equals('M') ? H / 2 : H) + (double)f[7] * U;
+        var st = St(new[] { e.Name }, true);
+        if (!new ClickGate().Check(Rq(ClickOwner.Sell, e.Name, (fx + fx1) / 2, (fy + fy1) / 2), st, 0).Allowed) continue;
+        Check(false, "offer close: " + e.Name + " has a button that could be clicked as its ×");
+      }
+      r = new ClickGate().Check(Rq(ClickOwner.Sell, "Form_PopUpShop", c.X - 60, c.Y + 40), shop, 0);
+      Check(r.Verdict == GateVerdict.Deny && r.Reason == "target", "offer close: a point off the × is refused");
+      var overInv = ScreenState.Classify(new ScreenInputs { Inv = new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true }, Offers = new List<string> { "Form_PopUpShop" } }, 0);
+      Eq("screen", new ClickGate().Check(Rq(ClickOwner.Sell, "Form_PopUpShop", c.X, c.Y), overInv, 0).Reason, "offer close: not over another screen than the city");
+      Eq("modal", new ClickGate().Check(Rq(ClickOwner.Sell, "Form_GiftPush", c.X, c.Y), two, 0).Reason, "offer close: two offers at once -> stop (which is on top is not known)");
+      Eq("offer", new ClickGate().Check(Rq(ClickOwner.Sell, "Form_Feedback", c.X, c.Y), St(new[] { "Form_Feedback" }, true), 0).Reason, "offer close: a form with no known × -> stop with its name");
+      Eq("cell", new ClickGate().Check(Rq(ClickOwner.Sell, "Form_GiftPush", c.X, c.Y), shop, 0).Reason, "offer close: the form shown is another one -> stop");
+      Eq("off", new ClickGate { NoSellClicks = true }.Check(Rq(ClickOwner.Sell, "Form_PopUpShop", c.X, c.Y), shop, 0).Reason, "offer close: a hint run never clicks");
+      var unk = ScreenState.Classify(new ScreenInputs { Offers = new List<string> { "Form_PopUpShop" } }, 0);
+      Check(new ClickGate().Check(Rq(ClickOwner.Locate, "Form_PopUpShop", c.X, c.Y), unk, 0).Allowed, "offer close: over a hidden city (screen unknown) it is allowed");
+      var gu = new ClickGate(); gu.Arm(ClickOwner.Locate, ClickTarget.OfferClose, null, 0);
+      Eq("offer", gu.Preflight(ClickOwner.Locate, unk, 500).Reason, "offer close: an unknown screen with an offer right after the pilot's click is no 'unknown' stop");
+      var gt = new ClickGate(); gt.Arm(ClickOwner.Locate, ClickTarget.OfferClose, null, 0);
+      Check(gt.Preflight(ClickOwner.Locate, unkTop, 500).Detail.Contains("Form_ItemReward") && gt.HaltReason(ClickOwner.Locate) == "unknown", "offer close: an unknown top form after the pilot's click stops with its name");
+    }
+    {   // the loop cap: MaxOfferCloses in a row, then a stop; a click of the pilot's own resets the count
+      var g = new ClickGate();
+      int n = 0;
+      for (int i = 0; i < ClickGate.MaxOfferCloses + 2; i++) {
+        var rq = Rq(ClickOwner.Equip, "Form_PopUpShop", c.X, c.Y);
+        var r = g.Check(rq, shop, i * 5000);
+        if (!r.Allowed) break;
+        n++; g.Arm(ClickOwner.Equip, ClickTarget.OfferClose, ClickGate.Expect(rq, shop), i * 5000, "Form_PopUpShop");
+        g.Observe(St(new string[0], true), i * 5000 + 100);
+      }
+      Eq(ClickGate.MaxOfferCloses, n, "offer loop: closes allowed in a row");
+      Eq("offers", g.HaltReason(ClickOwner.Equip), "offer loop: then a stop");
+      var g2 = new ClickGate();
+      for (int i = 0; i < ClickGate.MaxOfferCloses; i++) g2.Arm(ClickOwner.Equip, ClickTarget.OfferClose, null, i, "x");
+      g2.Arm(ClickOwner.Equip, ClickTarget.EquipNav, null, 100);
+      Check(g2.Check(Rq(ClickOwner.Equip, "Form_PopUpShop", c.X, c.Y), shop, 200).Allowed && g2.OfferRun(ClickOwner.Equip) == 0, "offer loop: the pilot's own click resets the count");
+    }
+    {   // the window table: a shown offer by its class name, a closed one not, an unknown shown form named
+      var m = new FakeLua(1 << 20); RFX.TestMemory = m; RFX.ForgetLive();
+      try {
+        var fs = new FakeState(m);
+        Func<string, FTab> Cls = nm => fs.T("__cname", nm);
+        var city = fs.T("m_LuaLogicActive", true, "class", Cls("Form_MainCity"));
+        var shopF = fs.T("m_LuaLogicActive", true, "class", Cls("Form_PopUpShop"));
+        var giftF = fs.T("m_InitOK", true, "class", Cls("Form_GiftPush"));   // closed: m_LuaLogicActive nil
+        var odd = fs.T("m_LuaLogicActive", true, "class", Cls("Form_ItemReward"));
+        var ui = fs.T(11L, city, 22L, shopF, 33L, giftF, 44L, odd);
+        RFX.SetUiTableForTest(ui.A);
+        var offers = RFX.ReadOffers();
+        Check(offers != null && offers.Count == 1 && offers[0] == "Form_PopUpShop", "window table: the shown offer is read by its class (" + (offers == null ? "null" : string.Join(",", offers.ToArray())) + ")");
+        var unknown = RFX.ReadUnknownShownForms(4);
+        Check(unknown != null && unknown.Count == 1 && unknown[0] == "Form_ItemReward", "window table: the unknown shown form is named, the city and the offers are not");
+        RFX.SetUiTableForTest(0);
+        Check(RFX.ReadOffers() == null, "window table not known: offers not read (null)");
+      } finally { RFX.SetUiTableForTest(0); RFX.TestMemory = null; RFX.ForgetLive(); }
+    }
+    {   // the automatic recording (TEST build): what is recorded and how often
+      var p = new AutoRecPolicy(); string why;
+      Check(!p.Want(false, false, 0, out why), "auto rec: never in the normal build");
+      Check(p.Want(true, false, 1000, out why), "auto rec: the first event records");
+      Check(!p.Want(true, false, 1000 + AutoRecPolicy.MinGapMs - 1, out why), "auto rec: not again within 2 minutes (" + why + ")");
+      Check(!p.Want(true, true, 1000 + AutoRecPolicy.MinGapMs * 3, out why), "auto rec: not while a recording runs");
+      int got = 1; long t = 1000;
+      for (int i = 0; i < 20; i++) { t += AutoRecPolicy.MinGapMs; if (p.Want(true, false, t, out why)) got++; }
+      Eq(AutoRecPolicy.MaxPerHour, got, "auto rec: an event every 2 minutes for 40 minutes records " + AutoRecPolicy.MaxPerHour + " times");
+      var q = new AutoRecPolicy(); int inHour = 0;
+      for (long ms = 0; ms < AutoRecPolicy.HourMs; ms += 60000) if (q.Want(true, false, ms, out why)) inHour++;
+      Check(inHour <= AutoRecPolicy.MaxPerHour, "auto rec: at most " + AutoRecPolicy.MaxPerHour + " an hour (" + inHour + ")");
+      Check(q.Want(true, false, AutoRecPolicy.HourMs + 5 * 60000, out why), "auto rec: an hour later again");
+      Eq("offer-fail Form_PopUpShop nochange", AutoRecPolicy.HaltTag("Sell", "nochange", "OfferClose(Form_PopUpShop) changed nothing within the time (screen City)"), "auto rec: a failed offer close is tagged by its form");
+      Eq("offer-fail Form_Feedback offer", AutoRecPolicy.HaltTag("Locate", "offer", "the offer pop-up Form_Feedback has no known close button - not clicked"), "auto rec: an offer without × is tagged by its form");
+      Check(AutoRecPolicy.HaltTag("Equip", "screen", "EquipNav @1,2 needs City").StartsWith("halt Equip screen: "), "auto rec: any other stop is tagged by owner and reason");
+      Eq("unknown-form Form_ItemReward", AutoRecPolicy.UnknownFormTag("Form_ItemReward"), "auto rec: an unknown form on top is tagged by its name");
+    }
+  }
+
   static void CityGateAndPanelTests() {
     Check(ScreenState.NeedsCityPicture(ScreenKind.Unknown, false), "city picture: Unknown with the city form reading closed needs the picture");
     Check(!ScreenState.NeedsCityPicture(ScreenKind.Unknown, true), "city picture: Unknown with the city form open does not");

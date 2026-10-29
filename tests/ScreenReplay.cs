@@ -17,6 +17,8 @@
 // Fixture: {"name", "request": {"purpose","uid","slot","hero"}, "cols", "frames": [{"t", "inv", "rs", "hero", "city", "expect", "clicks"}]}
 //   inv/rs/hero null or missing = that read failed. expect: screen, held, bulk, artBulk, brief (a substring of the screen's brief), sellStep (the storage
 //   cleanup's step key; needs "sell"), tab, modal, step, todo, why, halt (owner:reason), frame (a frame for the step exists). Optional "sell":
+//   offer pop-ups: frame "offers": [form names shown] (missing = the window table not read), "topForm" = an unknown shown form; click target "OfferClose" with
+//   "form" (the pop-up meant) clicks the centre of its × unless "at": [x, y] says where (client px of the 1920x1009 window).
 //   {"uids": [...], "artifact": true} = a storage cleanup list (an artifact list also switches the gate's artifact no-click rule on). clicks: {"owner","target","auto","front","cellIndex","cellKind","ok","expect":{"verdict","reason"}}
 using System;
 using System.Collections.Generic;
@@ -87,7 +89,8 @@ static class ScreenReplay {
 
   static ScreenInputs InputsOf(Dictionary<string, object> f) {
     return new ScreenInputs { Inv = InvOf(O(Get(f, "inv"))), Rs = RsOf(O(Get(f, "rs"))), Hero = HeroOf(O(Get(f, "hero"))), ArtWs = ArtWsOf(O(Get(f, "artWs"))), CitySeen = Bool(f, "city", false), CityForm = Get(f, "cityForm") is bool ? (bool?)Bool(f, "cityForm", false) : null,
-      ModalExtra = Bool(f, "popup", false), ModalExtraWhy = Bool(f, "popup", false) ? ClickGate.ModalEquipPopup : "" };
+      ModalExtra = Bool(f, "popup", false), ModalExtraWhy = Bool(f, "popup", false) ? ClickGate.ModalEquipPopup : "",
+      Offers = Get(f, "offers") is List<object> ? L(Get(f, "offers")).ConvertAll(x => x as string) : null, TopUnknown = Str(f, "topForm") ?? "" };
   }
 
   static string Verdict(GateResult r) { return r.Verdict + (r.Reason != "" && r.Reason != "ok" ? ":" + r.Reason : ""); }
@@ -242,12 +245,19 @@ static class ScreenReplay {
             cr.CellUid = ClickGate.AscendCellUid(geo, fresh.Rs, cr.X, cr.Y, W, H, U);
           }
         }
+        if (target == ClickTarget.OfferClose) {
+          cr.Form = Str(c, "form"); cr.W = W; cr.H = H; cr.U = U; cr.Geo = geo;
+          var cp = OfferForms.ClosePoint(geo, cr.Form, W, H, U);
+          var atXY = L(Get(c, "at"));
+          if (atXY != null && atXY.Count == 2) { cr.X = (double)atXY[0]; cr.Y = (double)atXY[1]; }
+          else if (cp != null) { cr.X = cp.X; cr.Y = cp.Y; }
+        }
         var res = gate.Check(cr, fresh, t);
         var cex = O(Get(c, "expect"));
         string want = cex != null ? Str(cex, "verdict") + (Str(cex, "reason") != null ? ":" + Str(cex, "reason") : "") : "Allow";
         string got = Verdict(res);
         Check(got == want, at + ": " + owner + " " + target + (cr.CellUid > 0 ? " on item " + cr.CellUid : "") + " -> " + want + (got == want ? "" : " (got " + got + ": " + res.Detail + ")"));
-        if (res.Allowed) gate.Arm(owner, target, ClickGate.Expect(cr, fresh), t);
+        if (res.Allowed) gate.Arm(owner, target, ClickGate.Expect(cr, fresh), t, cr.Form);
       }
     }
     // a line is logged for every verdict change, never one per frame
