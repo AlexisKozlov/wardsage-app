@@ -663,6 +663,29 @@ namespace RealmForge {
     /// <summary>Calls <paramref name="f"/> for every 16 MB chunk of the game's writable memory, on all cores. The callback
     /// must be thread-safe.</summary>
     static void ScanParallel(ChunkFn f) {
+      int pt0 = Environment.TickCount;
+      try { ScanParallelRun(f); } finally { PassDone(Thread.CurrentThread.IsThreadPoolThread, unchecked(Environment.TickCount - pt0)); }
+    }
+
+    // measurement only: full passes per minute, split by caller (a pool thread = a worker search; any other thread = the UI / a timer thread)
+    static int passesWorker, passesUi, passMsWorker, passMsUi, passMaxMs, passWindowAt;
+    static readonly object passLock = new object();
+    static void PassDone(bool worker, int ms) {
+      string line = null;
+      lock (passLock) {
+        if (worker) { passesWorker++; passMsWorker += ms; } else { passesUi++; passMsUi += ms; }
+        if (ms > passMaxMs) passMaxMs = ms;
+        int now = Environment.TickCount;
+        if (passWindowAt == 0) passWindowAt = now == 0 ? 1 : now;
+        else if (unchecked(now - passWindowAt) >= 60000) {
+          line = "passes: last " + (unchecked(now - passWindowAt) / 1000) + " s: worker " + passesWorker + " (" + passMsWorker + " ms), ui/other " + passesUi + " (" + passMsUi + " ms), longest " + passMaxMs + " ms";
+          passesWorker = passesUi = passMsWorker = passMsUi = passMaxMs = 0; passWindowAt = now == 0 ? 1 : now;
+        }
+      }
+      if (line != null) LL(line);
+    }
+
+    static void ScanParallelRun(ChunkFn f) {
       const int CH = 16 * 1024 * 1024;
       var chunks = new List<KeyValuePair<ulong, int>>();
       foreach (var r in regs) for (ulong off = 0; off < r.Size; off += CH) chunks.Add(new KeyValuePair<ulong, int>(r.Base + off, (int)Math.Min((ulong)CH, r.Size - off)));

@@ -2368,6 +2368,10 @@ namespace RealmForge {
       } else cityNow = false;
       if (RecInfo.Active) RecReads.Add(now, inp);   // the recorder: what the tracker is given (src/RecInputs.cs)
       var st = screens.Update(inp, now);
+      if (openClickAt != 0) {
+        if ((openClickWhat == "inventory" && st.Kind == ScreenKind.Inventory) || (openClickWhat == "heroes" && st.Kind == ScreenKind.HeroScreen)) { Log.Write("screen: " + openClickWhat + " first read " + (now - openClickAt) + " ms after the pilot's click"); openClickAt = 0; }
+        else if (now - openClickAt > 20000) { Log.Write("screen: " + openClickWhat + " not read within 20 s of the pilot's click"); openClickAt = 0; }
+      }
       // search policy: a form that read fine last tick and reads 0 now = the game moved it (soon, at most every 0.5 s); an Unknown screen = look every 2 s, no count limit
       if (front) {
         string lost = RFX.TakeFormsLost();
@@ -2432,9 +2436,13 @@ namespace RealmForge {
       AnnounceHalts();
       if (!res.Allowed) return false;
       gate.Arm(req.Owner, req.Target, ClickGate.Expect(req, fresh), now);
+      // measurement only: the pilot's click that opens the Inventory / Heroes screen, timed to the first reading of that screen (ReadScreens)
+      if (req.Target == ClickTarget.CityInventory) { openClickAt = now; openClickWhat = "inventory"; }
+      else if (req.Target == ClickTarget.EquipNav && fresh != null && fresh.Kind == ScreenKind.City) { openClickAt = now; openClickWhat = "heroes"; }
       Send(a, sx, sy);
       return true;
     }
+    long openClickAt; string openClickWhat = "";
 
     /// <summary>An equip helper click (screen px). Target: what it presses (city / hero / gear list = EquipNav, the filter pop-up, its ×, «Заменить»).</summary>
     bool EquipSend(ClickTarget t, AutoAction a, int sx, int sy, W32.POINT o, bool front) {
