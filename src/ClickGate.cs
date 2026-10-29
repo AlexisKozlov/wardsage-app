@@ -19,6 +19,11 @@
 // ones: the «Артефакт» tab, «Массовая продажа», the cells to tick / the artifact's cell / the copy's cell, «Мастерская», the «Продвинуть» tab.
 // Never «Продать», «Все» (select all), the lock icons, «Продвинуть» / «Улучшить» (NeverKeys).
 //
+// The game's offer / notice pop-ups over the city (src/OfferForms.cs: the game's own pop-up queue) are closed by every pilot before its
+// step (OfferClose): only when the one pop-up shown is on that list, the city (or nothing known) is under it, the click point is on its ×
+// (the prefab's close button) and on none of its other buttons («Купить», «Перейти», «Получить» ... are never targets), at most
+// MaxOfferCloses in a row; the click's effect is that pop-up gone. A pop-up with no known × is a stop with its name.
+//
 // Pure decision logic, no Windows APIs (tests: tests/ScreenReplay.cs); the host (app/Overlay.cs) reads the screen and sends.
 using System;
 using System.Collections.Generic;
@@ -46,6 +51,7 @@ namespace RealmForge {
     EquipFilter,      // equip helper: the controls of the game's gear / hero filter pop-up
     EquipClosePopup,  // equip helper: the red × of a pop-up left over the list
     EquipConfirm,     // equip helper: «Заменить» (only with the player's auto confirm)
+    OfferClose,       // every owner: the × of the game's offer / notice pop-up on top of the city (src/OfferForms.cs; never its buy / go / claim buttons)
     // the artifact flows (only with the site's "artAuto" switch; never «Продать», «Все», a lock, «Продвинуть», «Улучшить»)
     ArtTab,           // the inventory's left menu «Артефакт»
     ArtBulkEnter,     // the artifact tab's «Массовая продажа» (the storage cleanup)
@@ -100,6 +106,10 @@ namespace RealmForge {
     public ICollection<int> ItemOk;
     /// <summary>The hero artifact targets: the plan's hero and the artifact (iItemUid) the steps are about.</summary>
     public long Hero, ArtUid;
+    /// <summary>OfferClose: the pop-up the click closes, the game window's client size and unit, and the site's geometry (null = the prefab numbers).</summary>
+    public string Form;
+    public double W, H, U;
+    public GameGeometry Geo;
   }
 
   public sealed class ClickGate {
@@ -111,6 +121,8 @@ namespace RealmForge {
     public const int ArtTickMs = 1000;
     /// <summary>An unrecognised screen stops the pilot only this long after the pilot's OWN last click (the screen it caused); later it is waited for.</summary>
     public const int OwnClickWindowMs = 2500;
+    /// <summary>At most this many offer pop-ups are closed in a row (no other click of the pilot between): more is a loop, a stop.</summary>
+    public const int MaxOfferCloses = 8;
     /// <summary>The log (the host's journal); null = none. A line only when an owner's verdict changes.</summary>
     public Action<string> Sink;
     /// <summary>The storage cleanup of ARTIFACTS is a hint run: the Sell owner never clicks while it runs (set by the host with the run).</summary>
@@ -246,13 +258,15 @@ namespace RealmForge {
       return string.Join(", ", parts.ToArray());
     }
 
-    sealed class Watch { public Func<ScreenState, bool> Done; public long Deadline; public string What; }
+    sealed class Watch { public Func<ScreenState, bool> Done; public long Deadline; public string What; public string Offer; }
 
     readonly Dictionary<ClickOwner, string> halted = new Dictionary<ClickOwner, string>();
     readonly Dictionary<ClickOwner, Watch> watches = new Dictionary<ClickOwner, Watch>();
     readonly Dictionary<ClickOwner, long> unknownSince = new Dictionary<ClickOwner, long>();   // Check's own timer: Preflight never touches it
     readonly Dictionary<ClickOwner, string> noted = new Dictionary<ClickOwner, string>();
     readonly Dictionary<ClickOwner, long> clickedAt = new Dictionary<ClickOwner, long>();   // when the owner sent its last click in this request
+    readonly Dictionary<ClickOwner, int> offerRun = new Dictionary<ClickOwner, int>();      // offer pop-ups closed in a row
+    readonly Dictionary<ClickOwner, string> haltDetail = new Dictionary<ClickOwner, string>();
 
     void Note(ClickOwner o, string key, string text) {
       string was; if (noted.TryGetValue(o, out was) && was == key) return;
@@ -262,27 +276,35 @@ namespace RealmForge {
 
     /// <summary>Why the owner's pilot stopped ("" = it runs).</summary>
     public string HaltReason(ClickOwner o) { string r; return halted.TryGetValue(o, out r) ? r : ""; }
+    /// <summary>The stop's detail (what was clicked / seen), "" = it runs.</summary>
+    public string HaltDetail(ClickOwner o) { string r; return haltDetail.TryGetValue(o, out r) ? r : ""; }
+    /// <summary>Offer pop-ups this owner closed in a row.</summary>
+    public int OfferRun(ClickOwner o) { int n; return offerRun.TryGetValue(o, out n) ? n : 0; }
     public bool Halted(ClickOwner o) { return halted.ContainsKey(o); }
     /// <summary>A click is still waiting to show its effect.</summary>
     public bool Pending(ClickOwner o) { return watches.ContainsKey(o); }
 
     /// <summary>A new request (or the player started it again): the owner may click again.</summary>
     public void Resume(ClickOwner o) {
-      halted.Remove(o); watches.Remove(o); unknownSince.Remove(o); noted.Remove(o); clickedAt.Remove(o);
+      halted.Remove(o); watches.Remove(o); unknownSince.Remove(o); noted.Remove(o); clickedAt.Remove(o); offerRun.Remove(o); haltDetail.Remove(o);
     }
 
     /// <summary>The pilot stops (also used by the host for its own reasons, e.g. the player's cancel).</summary>
     public GateResult Halt(ClickOwner o, string reason, string detail) {
-      if (!halted.ContainsKey(o)) { halted[o] = reason; watches.Remove(o); Note(o, "halt:" + reason, "STOP (" + reason + ") " + detail + " - hints only from now on"); }
+      if (!halted.ContainsKey(o)) { halted[o] = reason; haltDetail[o] = detail ?? ""; watches.Remove(o); Note(o, "halt:" + reason, "STOP (" + reason + ") " + detail + " - hints only from now on"); }
       return GateResult.Deny(reason, detail);
     }
 
     /// <summary>(e) A click was sent: what has to happen next (null = nothing is checked, e.g. a drag).</summary>
-    public void Arm(ClickOwner o, ClickTarget t, Func<ScreenState, bool> done, long now) {
+    public void Arm(ClickOwner o, ClickTarget t, Func<ScreenState, bool> done, long now) { Arm(o, t, done, now, null); }
+
+    /// <summary>The same; <paramref name="offer"/> = the pop-up an OfferClose closes (its effect is logged as "offer: closed &lt;Form&gt;").</summary>
+    public void Arm(ClickOwner o, ClickTarget t, Func<ScreenState, bool> done, long now, string offer) {
       clickedAt[o] = now;
+      if (t == ClickTarget.OfferClose) offerRun[o] = OfferRun(o) + 1; else offerRun.Remove(o);
       if (done == null) { watches.Remove(o); return; }
       int ms = t == ClickTarget.CityInventory || t == ClickTarget.FoundryButton || t == ClickTarget.ArtWorkshop || t == ClickTarget.ArtReplace || t == ClickTarget.ArtTakeOverConfirm ? SlowEffectMs : t == ClickTarget.InvCardGem || t == ClickTarget.GemFuncRow || t == ClickTarget.ArtMatCell ? GemEffectMs : t == ClickTarget.ArtBulkCell ? ArtTickMs : EffectMs;
-      watches[o] = new Watch { Done = done, Deadline = now + ms, What = t.ToString() };
+      watches[o] = new Watch { Done = done, Deadline = now + ms, What = t == ClickTarget.OfferClose && offer != null ? "OfferClose(" + offer + ")" : t.ToString(), Offer = t == ClickTarget.OfferClose ? offer ?? "" : null };
     }
 
     /// <summary>What a click is expected to change, judged on the state before it (null = nothing to check).</summary>
@@ -294,6 +316,8 @@ namespace RealmForge {
           return s => s.Kind != ScreenKind.HeroScreen || (part >= 0 && s.HeroSlot < 0);
         }
         case ClickTarget.CityInventory: return s => s.Kind == ScreenKind.Inventory;
+        // the pop-up is no longer shown (read from the window table, so a failed read is no effect)
+        case ClickTarget.OfferClose: { string form = r.Form ?? ""; return s => s.OfferRead && s.Offer != form; }
         case ClickTarget.InvEquipTab: return s => s.Kind == ScreenKind.Inventory && s.InvEquipTab;
         case ClickTarget.InvBulkEnter: return s => s.Kind == ScreenKind.Inventory && s.InvBulk;
         case ClickTarget.InvListCell: return s => s.Kind == ScreenKind.Inventory && s.InvSelected == uid;
@@ -328,7 +352,10 @@ namespace RealmForge {
       if (s == null || watches.Count == 0) return;
       foreach (var o in new List<ClickOwner>(watches.Keys)) {
         var w = watches[o];
-        if (w.Done(s)) { watches.Remove(o); Note(o, "effect:" + w.What + ":" + now, w.What + " took effect"); }
+        if (w.Done(s)) {
+          watches.Remove(o); Note(o, "effect:" + w.What + ":" + now, w.What + " took effect");
+          if (w.Offer != null) { var sk = Sink; if (sk != null) sk("offer: closed " + w.Offer); }
+        }
         else if (now > w.Deadline) Halt(o, "nochange", w.What + " changed nothing within the time (screen " + s.Brief + ")");
       }
     }
@@ -343,9 +370,11 @@ namespace RealmForge {
       Observe(s, now);
       if (halted.TryGetValue(o, out h)) return GateResult.Deny("halted", h);
       if (watches.ContainsKey(o)) return GateResult.Wait("pending", "the previous click has not shown its effect yet");
+      // an offer pop-up on top: the pilot closes it first (OfferClose), nothing else is decided under it
+      if (s != null && s.OfferCount > 0) return GateResult.Wait("offer", s.ModalWhy);
       bool modeUnknown = s != null && s.Kind == ScreenKind.Inventory && s.InvEquipTab && !s.InvBulkKnown;
       if (s == null || s.Kind == ScreenKind.Unknown || modeUnknown) {
-        string d = modeUnknown ? "the inventory's mode is not readable" : "the screen is not recognised";
+        string d = modeUnknown ? "the inventory's mode is not readable" : "the screen is not recognised" + (s != null && s.TopForm != "" ? " (top form " + s.TopForm + " not in the list)" : "");
         long at;
         if (clickedAt.TryGetValue(o, out at) && now - at <= OwnClickWindowMs) return Halt(o, "unknown", d + " after the pilot's own click");
         return GateResult.Wait("unknown", d);
@@ -364,6 +393,9 @@ namespace RealmForge {
       if (watches.ContainsKey(r.Owner)) return GateResult.Wait("pending", "the previous click has not shown its effect yet");
 
       string tag = r.Target + " @" + (int)r.X + "," + (int)r.Y;
+      if (r.Target == ClickTarget.OfferClose) return CheckOffer(r, f, now, tag);
+      // any other click waits while an offer pop-up is on top (it would land on the pop-up)
+      if (f != null && f.OfferCount > 0) return GateResult.Wait("offer", tag + ": " + f.ModalWhy + " is open");
       // the artifact cleanup never clicks, whatever the auto click setting says; nothing of the artifact tab is on any whitelist either
       // (with the site's artAuto switch and the auto click on - ArtSellAuto / ArtLocateAuto - the artifact flows click their Art* targets and nothing else)
       bool artT = IsArtTarget(r.Target);
@@ -374,7 +406,7 @@ namespace RealmForge {
       if (heroArt && r.Owner == ClickOwner.Equip && !ArtEquipAuto) return Halt(r.Owner, "artifact", tag + ": the artifact steps are hints only");
       var rule = RuleOf(r.Owner, r.Target);
       if (rule == null) return Halt(r.Owner, "target", tag + " is not a target " + r.Owner + " may click");
-      if (f == null || f.Kind == ScreenKind.Unknown) return UnknownWait(r, f, now, tag + ": the screen is not recognised");
+      if (f == null || f.Kind == ScreenKind.Unknown) return UnknownWait(r, f, now, tag + ": the screen is not recognised" + (f != null && f.TopForm != "" ? " (top form " + f.TopForm + " not in the list)" : ""));
       if (Array.IndexOf(rule.Kinds, f.Kind) < 0) return Halt(r.Owner, "screen", tag + " needs " + string.Join("/", Names(rule.Kinds)) + ", the game shows " + f.Brief);
       if (f.ModalOpen && !rule.AllowModal) return Halt(r.Owner, "modal", tag + ": " + f.ModalWhy + " is open (" + f.Brief + ")");
       if (rule.HeroArt != 0) {
@@ -475,6 +507,30 @@ namespace RealmForge {
       unknownSince.Remove(r.Owner);
       var res = GateResult.Allow(tag + " on " + f.Brief + (r.CellUid > 0 ? " cell " + r.CellUid : ""));
       Note(r.Owner, "allow:" + r.Target + ":" + f.Brief, "allow " + res.Detail);
+      return res;
+    }
+
+    /// <summary>OfferClose: the one pop-up shown is the one meant, on the list, over the city (or nothing known); the point is on its × and on
+    /// none of its other buttons; not more than MaxOfferCloses in a row.</summary>
+    GateResult CheckOffer(ClickRequest r, ScreenState f, long now, string tag) {
+      var o = r.Owner;
+      // a hint run never clicks (the artifact cleanup / guide without the site's switch): no click, and that is not a stop
+      if ((o == ClickOwner.Sell && NoSellClicks) || (o == ClickOwner.Locate && NoLocateClicks)) return GateResult.Deny("off", tag + ": a hint run clicks nothing");
+      if (f == null) return UnknownWait(r, f, now, tag + ": the screen is not read");
+      if (!f.OfferRead || f.OfferCount == 0) return GateResult.Wait("screen", tag + ": no offer pop-up is shown (" + f.Brief + ")");   // gone already (the player closed it): nothing to do
+      string form = f.Offer;
+      if (f.OfferCount > 1) return Halt(o, "modal", tag + ": " + f.OfferCount + " offer pop-ups are shown at once (" + form + " ...): which one is on top is not known");
+      if (r.Form != form) return Halt(o, "cell", tag + ": the pop-up shown is " + form + ", not " + (r.Form ?? "-"));
+      if (!OfferForms.IsOffer(form)) return Halt(o, "offer", tag + ": " + form + " is not on the offer list");
+      if (f.Kind != ScreenKind.City && f.Kind != ScreenKind.Unknown) return Halt(o, "screen", tag + ": the pop-up is over " + f.Brief + ", not the city");
+      if (OfferForms.CloseRect(r.Geo, form, r.W, r.H, r.U) == null) return Halt(o, "offer", tag + ": the close button of " + form + " is not known - not clicked");
+      if (!OfferForms.OnClose(r.Geo, form, r.X, r.Y, r.W, r.H, r.U)) return Halt(o, "target", tag + ": not on the close button of " + form);
+      if (OfferForms.OnNeverButton(form, r.X, r.Y, r.W, r.H, r.U)) return Halt(o, "target", tag + ": lies on another button of " + form + " (buy / go / claim are never pressed)");
+      int n = OfferRun(o);
+      if (n >= MaxOfferCloses) return Halt(o, "offers", tag + ": " + n + " offer pop-ups closed in a row, " + form + " again - stopped (a loop?)");
+      unknownSince.Remove(o);
+      var res = GateResult.Allow(tag + " on " + f.Brief);
+      Note(o, "allow:" + r.Target + ":" + f.Brief, "allow " + res.Detail);
       return res;
     }
 

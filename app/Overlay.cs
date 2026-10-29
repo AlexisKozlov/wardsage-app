@@ -226,6 +226,8 @@ namespace RealmForge {
     public bool RecButton;
     /// <summary>The player pressed the record button over the game: the host toggles the recorder.</summary>
     public event Action RecPressed;
+    /// <summary>TEST build: something went wrong (a pilot stopped, an unknown form on top, an offer not closed): the host may record the screen (src/AutoRec.cs). The tag says why.</summary>
+    public event Action<string> AutoRec;
     readonly ListGeometry g = new ListGeometry();
     readonly HintGeometry hg = new HintGeometry();
     readonly ScrollAnchor anchor = new ScrollAnchor();
@@ -1594,6 +1596,8 @@ namespace RealmForge {
         ScreenHero = confirm ? RFX.ReadHero(addrs) : 0, Owner = AutoConfirm && target > 0 ? RFX.ReadOwner(addrs, target) : -1
       };
       userClick = false; lastAutoView = v; lastClientW = cr.R; lastClientH = cr.B;
+      // an offer pop-up over the city is closed before the plan's next step (the equip helper has no preflight of its own here)
+      if ((runHero > 0 || target > 0) && v.Foreground && !v.UserBusy && OfferStep(ClickOwner.Equip, screens.Current, o, cr, v.Foreground, now)) return;
       // first the plan's hero on the hero screen (a started plan only), then the game's filter (the item far down or
       // hidden), then the item itself
       if (runHero > 0) {
@@ -1679,6 +1683,7 @@ namespace RealmForge {
         var pre = gate.Preflight(ClickOwner.Sell, scr, now);
         AnnounceHalts();
         if (pre.Verdict == GateVerdict.Deny) return;
+        if (pre.Reason == "offer" && OfferStep(ClickOwner.Sell, scr, o, cr, front, now)) { SellSay("open"); return; }
         if (pre.Verdict == GateVerdict.Wait) { if (pre.Reason == "unknown") SellSay("no_city"); return; }   // pending: the last click's effect is awaited
       }
       var inv = screens.Inv;
@@ -2204,6 +2209,7 @@ namespace RealmForge {
       if (v.Foreground && !v.UserBusy) {
         var pre = gate.Preflight(ClickOwner.Equip, screens.Current, v.NowMs);
         AnnounceHalts();
+        if (pre.Reason == "offer" && OfferStep(ClickOwner.Equip, screens.Current, o, cr, v.Foreground, v.NowMs)) return;
         if (artEq.Stopped || pre.Verdict != GateVerdict.Allow) return;   // the last click's effect is awaited / the screen is not recognised yet
       }
       bool btnSeen = false;
@@ -2264,6 +2270,7 @@ namespace RealmForge {
         var pre = gate.Preflight(ClickOwner.Locate, scr, now);
         AnnounceHalts();
         if (artPilot.Stopped) { step.Auto = "stopped"; step.AutoWhy = artPilot.Reason; return; }
+        if (pre.Reason == "offer" && OfferStep(ClickOwner.Locate, scr, o, cr, gameFront, now)) return;
         if (pre.Verdict != GateVerdict.Allow) return;   // the last click's effect is awaited / the screen is not recognised yet
       }
       var req = locateReq;
@@ -2362,6 +2369,7 @@ namespace RealmForge {
       bool artGuide = locateReq != null && locateReq.Purpose == "artPromote";
       if (artGuide) inp.ArtWs = RFX.ReadArtWorkshop();   // only while an artifact request is guided
       inp.CityForm = RFX.CityShown();
+      ReadOffersInto(inp, front, now);
       if (front && inp.CityForm != true && ScreenState.NeedsCityPicture(ScreenState.Classify(inp, now).Kind, inp.CityForm)) {   // the city form is not readable or reads closed: the city's bottom bar (a picture, at most every 400 ms)
         if (now - cityAt >= 400) { cityAt = now; cityNow = CityVisible(hwnd); }
         inp.CitySeen = cityNow;
@@ -2398,7 +2406,7 @@ namespace RealmForge {
     /// <summary>A fresh read for the click gate: not held, not throttled (the screen right before the click).</summary>
     ScreenState FreshScreen(bool wantCity) {
       long now = NowMs();
-      var inp = new ScreenInputs { Inv = RFX.ReadInventory(-1), Rs = RFX.ReadRecastScreenSafe(-1), Hero = RFX.ReadHeroScreen(addrs, screens.Hero), CityForm = RFX.CityShown() };
+      var inp = new ScreenInputs { Inv = RFX.ReadInventory(-1), Rs = RFX.ReadRecastScreenSafe(-1), Hero = RFX.ReadHeroScreen(addrs, screens.Hero), CityForm = RFX.CityShown(), Offers = RFX.ReadOffers() };
       { IntPtr gw = GameWindow(); if (gw != IntPtr.Zero && !W32.IsIconic(gw) && IsForeground(gw)) FillArtPopup(inp, gw); }
       if (locateReq != null && locateReq.Purpose == "artPromote") inp.ArtWs = RFX.ReadArtWorkshop();   // the artifact guide's clicks are judged by the workshop too
       var st = ScreenState.Classify(inp, now);
@@ -2420,6 +2428,7 @@ namespace RealmForge {
         haltSaid[o] = why;
         if (why == "") continue;
         Log.Write("auto click stopped (" + o + "): " + why);
+        RaiseAutoRec(AutoRecPolicy.HaltTag(o.ToString(), why, gate.HaltDetail(o)));
         if (o == ClickOwner.Locate) { lpilot.Halt(why); artPilot.Halt(why); }
         else if (o == ClickOwner.Sell) { if (!sellArt) SellSay("gate_" + why); }   // (the artifact cleanup is a hint run for the page: the stop is in the log only)
         else { artEq.Halt(why); AutoSay("gate_" + why); }
@@ -2429,6 +2438,59 @@ namespace RealmForge {
     /// <summary>A new request / run of this owner: it may click again.</summary>
     void ResumeClicks(ClickOwner o) { gate.Resume(o); haltSaid.Remove(o); }
 
+    void RaiseAutoRec(string tag) { if (!Channel.IsTest) return; var a = AutoRec; if (a != null) { try { a(tag); } catch (Exception e) { Log.Write("rec: auto failed: " + e.Message); } } }
+
+    // ---- the game's offer / notice pop-ups over the city (src/OfferForms.cs): read from the window table, closed by the pilots (OfferClose)
+    volatile bool uiFinding; long uiFindAt, unknownFormsAt; List<string> unknownForms;
+    readonly HashSet<string> unknownSaid = new HashSet<string>();
+    string offerSaid = "";
+
+    /// <summary>The offer pop-ups shown (and, on an unrecognised screen or the city, the shown forms nobody knows, every 2 s) into this tick's inputs.
+    /// The window table is looked for off this thread when it is not known yet.</summary>
+    void ReadOffersInto(ScreenInputs inp, bool front, long now) {
+      if (!RFX.UiKnown) {
+        if (front && !uiFinding && Layout.Current != null && (uiFindAt == 0 || now - uiFindAt > 20000)) {
+          uiFindAt = now; uiFinding = true;
+          System.Threading.Tasks.Task.Factory.StartNew(() => { try { RFX.FindUi(20000); } catch (Exception) { } finally { uiFinding = false; } });
+        }
+        return;
+      }
+      inp.Offers = RFX.ReadOffers();
+      string os = inp.Offers == null ? "?" : string.Join(",", inp.Offers.ToArray());
+      if (os != offerSaid) { offerSaid = os; if (os != "" && os != "?") Log.Write("offer: shown " + os); }
+      var cls = ScreenState.Classify(inp, now).Kind;
+      if (front && (cls == ScreenKind.Unknown || cls == ScreenKind.City) && (inp.Offers == null || inp.Offers.Count == 0)) {
+        if (now - unknownFormsAt >= 2000 || unknownFormsAt == 0) { unknownFormsAt = now; unknownForms = RFX.ReadUnknownShownForms(4); }
+        if (unknownForms != null && unknownForms.Count > 0) {
+          foreach (var n in unknownForms) if (unknownSaid.Add(n)) Log.Write("offer: unknown top form " + n + " (not in list)");
+          if (cls == ScreenKind.Unknown) {
+            inp.TopUnknown = string.Join(",", unknownForms.ToArray());
+            if (unknownSaid.Add("rec:" + inp.TopUnknown)) RaiseAutoRec(AutoRecPolicy.UnknownFormTag(inp.TopUnknown));
+          }
+        }
+      } else unknownForms = null;
+    }
+
+    /// <summary>Before a pilot's step: an offer pop-up on top is closed first (its ×, through the gate). True = the tick is taken (a close was
+    /// sent, its effect is awaited, the pop-up is still opening, or the pilot stopped on it); false = no pop-up, the pilot goes on.</summary>
+    bool OfferStep(ClickOwner owner, ScreenState scr, W32.POINT o, W32.RECT cr, bool front, long now) {
+      if (scr == null || scr.OfferCount == 0) return false;
+      if (gate.Halted(owner)) return true;
+      if (gate.Pending(owner) || sending) return true;
+      if (!OfferForms.Settled(scr, now)) return true;   // still opening (its scale-in animation)
+      double W = cr.R, H = cr.B, U = Ui.Unit(W, H);
+      string form = scr.Offer;
+      var pt = OfferForms.ClosePoint(Geo.Current, form, W, H, U);
+      if (pt == null) {
+        gate.Halt(owner, "offer", "the offer pop-up " + form + (OfferForms.IsOffer(form) ? " has no known close button" : " is not on the list") + " - not clicked");
+        AnnounceHalts();
+        return true;
+      }
+      var g = Geo.Current;
+      SendInside(new AutoAction { Kind = AutoKind.Click, X = pt.X, Y = pt.Y }, o, cr, owner, ClickTarget.OfferClose, front, (rq, fr) => { rq.Form = form; rq.W = W; rq.H = H; rq.U = U; rq.Geo = g; });
+      return true;
+    }
+
     /// <summary>THE way a click leaves the app: the gate says yes (the target is on the whitelist of the screen the game shows right now,
     /// no pop-up, the cell is the item's, the last click showed its effect), then it is sent and its effect is awaited.</summary>
     bool GatedSend(ClickRequest req, ScreenState fresh, AutoAction a, int sx, int sy) {
@@ -2436,7 +2498,7 @@ namespace RealmForge {
       var res = gate.Check(req, fresh, now);
       AnnounceHalts();
       if (!res.Allowed) return false;
-      gate.Arm(req.Owner, req.Target, ClickGate.Expect(req, fresh), now);
+      gate.Arm(req.Owner, req.Target, ClickGate.Expect(req, fresh), now, req.Form);
       // measurement only: the pilot's click that opens the Inventory / Heroes screen, timed to the first reading of that screen (ReadScreens)
       if (req.Target == ClickTarget.CityInventory) { openClickAt = now; openClickWhat = "inventory"; }
       else if (req.Target == ClickTarget.FoundryButton) { openClickAt = now; openClickWhat = "foundry"; }
@@ -2578,6 +2640,7 @@ namespace RealmForge {
         var pre = gate.Preflight(ClickOwner.Locate, scr, now);
         AnnounceHalts();
         if (lpilot.Stopped) { step.Auto = "stopped"; step.AutoWhy = lpilot.Reason; return; }
+        if (pre.Reason == "offer" && OfferStep(ClickOwner.Locate, scr, o, cr, gameFront, now)) { step.Auto = "work"; step.AutoWhy = ""; locateDriving = true; return; }
         if (pre.Verdict == GateVerdict.Wait) {
           if (pre.Reason == "pending") { step.Auto = "work"; step.AutoWhy = ""; locateDriving = true; }   // the last click's effect is awaited
           else { step.Auto = "hint"; step.AutoWhy = "no_city"; }                                          // the screen is not recognised yet: hints only
@@ -2694,6 +2757,7 @@ namespace RealmForge {
       if (front && !busy) {
         var pre = gate.Preflight(ClickOwner.Sell, scr, now);
         AnnounceHalts();
+        if (pre.Reason == "offer" && OfferStep(ClickOwner.Sell, scr, o, cr, front, now)) return;
         if (pre.Verdict != GateVerdict.Allow) return;
       }
       if (scr == null || scr.Kind != ScreenKind.Inventory || screens.Inv == null) return;   // the player brings the Inventory up (the hint says so)

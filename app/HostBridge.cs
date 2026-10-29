@@ -79,6 +79,7 @@ namespace RealmForge {
       overlay.AutoConfirm = cfg.AutoConfirm;
       overlay.RecButton = Channel.IsTest && cfg.RecButton;
       overlay.RecPressed += () => { Log.Write("record button pressed over the game"); ToggleRec(); };
+      overlay.AutoRec += tag => StartAutoRec(tag);
       overlay.CancelText = CancelText(cfg.Lang); overlay.LocateCancelText = LocateCancelText(cfg.Lang); overlay.SellCancelText = SellCancelText(cfg.Lang);
       coach.Lang = cfg.Lang;
       coach.PlaceX = cfg.CoachX; coach.PlaceY = cfg.CoachY;
@@ -341,6 +342,16 @@ namespace RealmForge {
       if (!Channel.IsTest) return;
       if (testRec == null) testRec = new ScreenRecorder(() => cfg.Site, () => cfg.Code, s => Log.Write(s), ev => Post(ev), on => OnUi(() => overlay.SetRecording(on)));
       testRec.Start();
+    }
+    // TEST build: a recording starts by itself when a pilot stops, an unknown form is on top or an offer pop-up was not closed (src/AutoRec.cs)
+    readonly AutoRecPolicy autoRec = new AutoRecPolicy();
+    void StartAutoRec(string tag) {
+      if (!Channel.IsTest) return;
+      string why;
+      if (!autoRec.Want(true, testRec != null && testRec.On, RecInfo.NowMs(), out why)) { Log.Write("rec: auto " + tag + " skipped (" + why + ")"); return; }
+      if (testRec == null) testRec = new ScreenRecorder(() => cfg.Site, () => cfg.Code, s => Log.Write(s), ev => Post(ev), on => OnUi(() => overlay.SetRecording(on)));
+      string id = testRec.StartAuto(tag, AutoRecPolicy.RecordMs);
+      Log.Write("rec: auto " + tag + " recording " + (id != "" ? id : "(not started)") + " for " + AutoRecPolicy.RecordMs / 1000 + " s");
     }
     void ToggleRec() { if (testRec != null && testRec.On) testRec.Stop(); else StartRec(); }
 
