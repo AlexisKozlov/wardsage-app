@@ -357,6 +357,7 @@ namespace RealmForge {
       screens.Sink = s => Log.Write(s); gate.Sink = s => Log.Write(s);
       // a slow PC: the effect of «Инвентарь» / «Литейная» is awaited while the search for its form still runs (ClickGate.SearchCapMs)
       gate.FormSearchPending = t => RFX.FormSearchRunning && (t == ClickTarget.CityInventory ? RFX.InvFormMissing() : t == ClickTarget.FoundryButton && RFX.FoundryFormMissing());
+      gate.FormFound = t => t == ClickTarget.CityInventory ? !RFX.InvFormMissing() : t == ClickTarget.FoundryButton && !RFX.FoundryFormMissing();
       RFX.LiveLog = s => Log.Write(s);   // the live reads' lines (the lists' scroll binding ...) reach the app's log
       pilot = new AutoPilot(g);
       fpilot = new FilterPilot(fg);

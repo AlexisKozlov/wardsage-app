@@ -81,6 +81,13 @@ namespace RealmForge {
     public static readonly string[] KnownScreens = { "Form_MainCity", "Form_CharactorMain", "Form_BackpackIntegration", "Form_EquipSubliming", "Form_EquipGemMain",
       "Form_EquipArtifactIntensify", "Form_Battle", "Form_CommonTips", "Form_EquipPopUp", "Form_EquipFilterWidget" };
 
+    /// <summary>Always-on, non-blocking overlay forms: the game registers them on its flow layer (RegisterLuaUI ... StackFlow: toasts, the side tip
+    /// panel, the marquee banner; client Lua UI/Form_*.lua, none has a pop-up body or a close button). They never make a screen Unknown, never
+    /// count as an unknown top form or modal, and never trigger an auto recording. Other StackFlow forms (Dialog, Subtitle, GuideTextCutscenes,
+    /// BattleTimeLineSkip) can cover or block a screen and are left out; so are the chat forms (StackMain).</summary>
+    public static readonly string[] IgnoredOverlays = { "Form_LeftTip", "Form_Marquee", "Form_MiniSystemTip", "Form_PowerChangeTips", "Form_IntegralRewardTip" };
+    public static bool IsIgnoredOverlay(string name) { return name != null && Array.IndexOf(IgnoredOverlays, name) >= 0; }
+
     static double X(char a, double off, double W, double U) { return (a == 'L' ? 0 : a == 'C' ? W / 2 : W) + off * U; }
     static double Y(char a, double off, double H, double U) { return (a == 'T' ? 0 : a == 'M' ? H / 2 : H) + off * U; }
     static GeoRect Place(object[] f, double W, double H, double U) {

@@ -134,7 +134,7 @@ namespace RealmForge {
           if (!Shown(f)) continue;
           string n = NameOf(k, f, ref budget);
           if (n == "") n = "id:" + k;
-          if (OfferForms.IsOffer(n) || Array.IndexOf(OfferForms.KnownScreens, n) >= 0) continue;
+          if (OfferForms.IsOffer(n) || Array.IndexOf(OfferForms.KnownScreens, n) >= 0 || OfferForms.IsIgnoredOverlay(n)) continue;
           res.Add(n);
         }
       }

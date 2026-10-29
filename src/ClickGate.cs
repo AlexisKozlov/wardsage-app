@@ -127,6 +127,9 @@ namespace RealmForge {
     public const int SearchCapMs = 30000, SearchGraceMs = 1500;
     /// <summary>The host: a form search is running and the form this target opens is not found yet (null = never).</summary>
     public Func<ClickTarget, bool> FormSearchPending;
+    /// <summary>The host: the form this target opens HAS been found. After a search ran for the click, a found form keeps the effect awaited until the
+    /// screen classifier reports the screen (up to SearchCapMs), not just SearchGraceMs past the search's end (null = never found).</summary>
+    public Func<ClickTarget, bool> FormFound;
     /// <summary>An artifact tick (or its taking off) has to show in the game's choice within this time.</summary>
     public const int ArtTickMs = 1000;
     /// <summary>An unrecognised screen stops the pilot only this long after the pilot's OWN last click (the screen it caused); later it is waited for.</summary>
@@ -477,8 +480,10 @@ namespace RealmForge {
         if (now >= cap) return false;
         if (!SearchBusy(w.Target)) w.Search = 2;
         w.Deadline = Math.Min(now + SearchGraceMs, cap);
+        if (w.Search == 2 && FormIsFound(w.Target)) w.Deadline = cap;
         return true;
       }
+      if (w.Search == 2 && FormIsFound(w.Target)) { w.Deadline = cap; return now < cap; }   // found: the screen is read soon, wait for it up to the cap
       if (now <= w.Deadline) return true;
       if (w.Search == 0 && now < cap && SearchBusy(w.Target)) {
         Note(o, "search:" + w.What + ":" + w.ArmedAt, w.What + ": no effect yet, the form search still runs - waiting for it (up to " + SearchCapMs + " ms after the click)");
@@ -487,6 +492,7 @@ namespace RealmForge {
       }
       return false;
     }
+    bool FormIsFound(ClickTarget t) { var p = FormFound; return p != null && p(t); }
     bool SearchBusy(ClickTarget t) { var p = FormSearchPending; return p != null && p(t); }
 
     /// <summary>Before the pilot decides anything this tick: may it go on? Deny = it is stopped; Wait = not now (a click is still on its way,

@@ -697,7 +697,7 @@ namespace RealmForge {
       if (lt != null && lt.Pid == pid && HasTable(lt.EquipData, "equips") && HasTable(lt.HeroData, KHeroes)
           && (!needForm || Layout.Current == null || (HasTable(lt.Form, "m_InfinityGridProxy") && LiveForm() == lt.Form))) {
         string why = StateGone(lt);
-        if (why == null) return lt;
+        if (why == null) { if (SyncClient.Player <= 0) NotePlayer(lt); return lt; }   // a new login is searched again (below)
         ForgetKeys(why);
       }
       var sw = Stopwatch.StartNew();
@@ -709,7 +709,19 @@ namespace RealmForge {
       L("Script state: " + lt.Note + (before != 0 && lt.State != 0 && lt.State != before ? "; a new login since the last search" : ""));
       if (before != 0 && lt.State != before) subValues = null;   // the server copies of another login: collected again
       live = lt; LastFindFresh = true;
+      NotePlayer(lt);
       return lt;
+    }
+
+    /// <summary>The game account of the live tables becomes SyncClient.Player as soon as they are found (the hints, the
+    /// equip scan, the start of an account read), not only at the end of a full read: the plan and sell-list requests wait
+    /// for it. Not from tables of an unknown or mixed login.</summary>
+    static void NotePlayer(LiveTables lt) {
+      try {
+        if (lt == null || lt.Ambiguous || MixedState(lt) != null) return;
+        long uid = PlayerUid(lt);
+        if (uid > 0 && SyncClient.Player != uid) { L("Player of the live tables: " + uid + (SyncClient.Player > 0 ? " (was " + SyncClient.Player + ")" : "")); SyncClient.Player = uid; }
+      } catch (Exception) { }
     }
 
     /// <summary>The last EnsureLive searched the tables (they were not the ones found before).</summary>
@@ -1036,6 +1048,8 @@ namespace RealmForge {
     }
     /// <summary>The inventory's node is not known (the storage start asks for a search while the form is not built yet).</summary>
     public static bool InvFormMissing() { return NodeInv(invNode) == 0; }
+    /// <summary>The Foundry's node is not known or reads 0 now (never built, moved, or the search has not found it yet).</summary>
+    public static bool FoundryFormMissing() { return NodeTable(subNode, FormRecastId) == 0; }
 
     /// <summary>Starts a search of the forms on a worker thread (never two at once, at least <paramref name="minGapMs"/> after the last start); false = not started.
     /// A search that has been busy for more than 30 s is given up on (a new one may start). Does not block.</summary>
@@ -1070,6 +1084,8 @@ namespace RealmForge {
       return true;
     }
     public static bool FormSearchRunning { get { return Volatile.Read(ref formSearchBusy) != 0; } }
+    /// <summary>The number of the newest search started (it grows by one with each start).</summary>
+    public static int FormSearchGeneration { get { return Volatile.Read(ref formSearchGen); } }
     const int FormSearchWatchdogMs = 30000;
     static int formSearchStart, formSearchGen;
     /// <summary>For the tests: called inside the search worker before the search (may throw).</summary>
@@ -1790,15 +1806,16 @@ namespace RealmForge {
     // Form_PvpBattleEnd), the friendly arena fight (Form_SparringPvpBattleEnd) and the Malric halls (Form_ExpeditionBattleEnd); ids = UIDefines (str_hash of the name)
     static readonly string[] EndFormKeys = { "ID_FORM_UNIONBOSSBATTLEEND", "ID_FORM_UNIONWEEKBOSSBATTLEEND", "ID_FORM_BATTLEEND", "ID_FORM_PVPBATTLEEND", "ID_FORM_SPARRINGPVPBATTLEEND", "ID_FORM_EXPEDITIONBATTLEEND" };
     static readonly string[] EndFormNames = { "Form_UnionBossBattleEnd", "Form_UnionWeekBossBattleEnd", "Form_BattleEnd", "Form_PvpBattleEnd", "Form_SparringPvpBattleEnd", "Form_ExpeditionBattleEnd" };
-    // forms whose node leads to UIInstance: the hero screen, the inventory, the battle screen, the result screens
+    // forms whose node leads to UIInstance: the hero screen, the inventory, the battle screen, the result screens, the city (built at the login:
+    // the only one there before the player opens any of the others)
     static readonly string[] UiAnchorKeys = { "ID_FORM_CHARACTORMAIN", "ID_FORM_BACKPACKINTEGRATION", "ID_FORM_BATTLE", "ID_FORM_UNIONBOSSBATTLEEND",
-      "ID_FORM_UNIONWEEKBOSSBATTLEEND", "ID_FORM_BATTLEEND", "ID_FORM_PVPBATTLEEND", "ID_FORM_SPARRINGPVPBATTLEEND" };
+      "ID_FORM_UNIONWEEKBOSSBATTLEEND", "ID_FORM_BATTLEEND", "ID_FORM_PVPBATTLEEND", "ID_FORM_SPARRINGPVPBATTLEEND", "ID_FORM_MAINCITY" };
 
     /// <summary>The ids of these forms from the layout data; empty without it.</summary>
     static long[] FormIds(string[] keys) {
       var ly = Layout.Current; if (ly == null) return new long[0];
       var r = new long[keys.Length];
-      for (int i = 0; i < keys.Length; i++) r[i] = keys[i] == "ID_FORM_EXPEDITIONBATTLEEND" ? ly.FormOpt(keys[i]) : ly.Form(keys[i]);   // the newest form: older layout data lacks it (0 = skipped)
+      for (int i = 0; i < keys.Length; i++) r[i] = keys[i] == "ID_FORM_EXPEDITIONBATTLEEND" || keys[i] == "ID_FORM_MAINCITY" ? ly.FormOpt(keys[i]) : ly.Form(keys[i]);   // newer forms: older layout data lacks them (0 = skipped)
       return r;
     }
     static ulong uiTable; static int uiLastFind;
@@ -1830,22 +1847,65 @@ namespace RealmForge {
         }
       });
       if (nodes.Count == 0) return 0;
-      // the table whose node array holds one of them (an old array can linger after a rehash: the live table points at
-      // the array in use, so a table header found this way is the one)
+      // the tables whose node array holds one of them (an old array can linger after a rehash: the live table points at
+      // the array in use, so a table header found this way is the one). UIStatic keeps a second table of the same shape:
+      // UIFormClass (form id -> the form's CLASS, RegisterLuaUI, filled for every form file loaded); UIInstance holds the form
+      // OBJECTS (form.new(): an "____instanceId" and a "class" field). Taking the first header found picked UIFormClass at
+      // times (live 2026-10-29: no form name or shown flag was ever read from it), so every header is judged.
       var set = new HashSet<ulong>(nodes);
-      ulong found = 0;
+      var cands = new List<ulong>();
       ScanParallel((b0, buf, len) => {
         for (int i = 0; i + 56 <= len; i += 8) {
           if (buf[i + 8] != 5) continue;
           int lsize = buf[i + 11]; if (lsize < 2 || lsize > 12) continue;
           ulong np = BitConverter.ToUInt64(buf, i + 24); if (np == 0) continue;
           ulong end = np + (ulong)(32 << lsize);
-          foreach (var n in set) if (n >= np && n < end && (n - np) % 32 == 0) { lock (set) { if (found == 0) found = b0 + (ulong)i; } break; }
+          foreach (var n in set) if (n >= np && n < end && (n - np) % 32 == 0) { lock (cands) { if (cands.Count < 64) cands.Add(b0 + (ulong)i); } break; }
         }
       });
+      string why;
+      ulong found = PickUiTable(cands, anchors, out why);
+      if (why != uiPickSaid) { uiPickSaid = why; LL("forms: window table " + (found != 0 ? "found" : "not found") + " (" + why + ")"); }
       uiTable = found;
       return found;
     }
+    static string uiPickSaid = "";
+
+    /// <summary>What a table keyed by form ids holds at the anchor ids: "forms" (form objects: UIInstance), "classes" (form classes:
+    /// UIFormClass), "none" (no anchor id), "unreadable". <paramref name="shown"/> = anchor forms shown now.</summary>
+    internal static string UiTableKind(ulong t, long[] ids, out int shown) {
+      shown = 0;
+      var h = t != 0 ? Read(t, 56) : null; if (h == null || h[8] != 5 || h[11] > 12) return "unreadable";
+      int nn = 1 << h[11]; var nb = Read(BitConverter.ToUInt64(h, 24), nn * 32); if (nb == null) return "unreadable";
+      int forms = 0, classes = 0;
+      for (int i = 0; i < nn; i++) {
+        int o = i * 32;
+        if (BitConverter.ToInt32(nb, o + 24) != T_INT || BitConverter.ToInt32(nb, o + 8) != T_TABLE) continue;
+        long k = BitConverter.ToInt64(nb, o + 16);
+        bool anchor = false; foreach (var id in ids) if (id != 0 && SameId(k, id)) { anchor = true; break; }
+        if (!anchor) continue;
+        ulong f = BitConverter.ToUInt64(nb, o), v; int tt;
+        if (Field(f, "____instanceId", out v, out tt) && tt == T_INT) { forms++; if (Shown(f)) shown++; }
+        else if (Field(f, "__cname", out v, out tt) && (tt == T_SSTR || tt == T_LSTR)) classes++;
+      }
+      return forms > 0 ? "forms" : classes > 0 ? "classes" : "none";
+    }
+
+    /// <summary>Of the tables found by the anchor nodes, UIInstance: one that holds form objects, the one with a shown form first;
+    /// 0 = none of them. <paramref name="why"/> = the verdicts, for the log.</summary>
+    internal static ulong PickUiTable(IList<ulong> cands, long[] ids, out string why) {
+      ulong best = 0; int bestShown = -1; int nf = 0, nc = 0, nx = 0;
+      foreach (var c in cands) {
+        int sh; string kind = UiTableKind(c, ids, out sh);
+        if (kind == "forms") { nf++; if (sh > bestShown) { best = c; bestShown = sh; } }
+        else if (kind == "classes") nc++; else nx++;
+      }
+      why = cands.Count + " candidate(s): forms " + nf + ", classes " + nc + ", other " + nx;
+      return best;
+    }
+
+    /// <summary>For the tests: the table picked from <paramref name="cands"/> as UIInstance (0 = none).</summary>
+    public static ulong PickUiTableForTest(IList<ulong> cands, long[] ids) { string w; return PickUiTable(cands, ids, out w); }
 
     /// <summary>UIInstance's address (0 = not found yet), for the log.</summary>
     public static ulong UiAddress { get { return uiTable; } }
@@ -4067,6 +4127,15 @@ namespace RealmForge {
     /// <summary>The desktop app's version (app/Program.cs), sent as X-RF-App so the site knows which build synced.</summary>
     public static string App;
     public static void AddPlayer(System.Net.HttpWebRequest req) { if (Player > 0) req.Headers["X-RF-Player"] = Player.ToString(System.Globalization.CultureInfo.InvariantCulture); }
+    /// <summary>The game account last read on this install (config.json lastPlayer; 0 = none yet): the plan and sell-list requests
+    /// name it while Player is not read yet, so a user with two game accounts never gets the code's default account's lists.</summary>
+    public static long LastPlayer;
+    /// <summary>The account the plan / sell-list requests are for: Player, else LastPlayer, else 0 (the site's default account).</summary>
+    public static long PlanPlayer(long player, long lastPlayer) { return player > 0 ? player : lastPlayer > 0 ? lastPlayer : 0; }
+    public static void AddPlanPlayer(System.Net.HttpWebRequest req) {
+      long p = PlanPlayer(Player, LastPlayer);
+      if (p > 0) req.Headers["X-RF-Player"] = p.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    }
     public const string DefaultSite = Channel.DefaultSite;
     public static int TimeoutMs = 60000;   // per request; a field (not const) so tests can shorten it
     const int MaxReplyBytes = 1024 * 1024;
@@ -4399,12 +4468,18 @@ namespace RealmForge {
 
     static PlansResult Request(string method, string url, string code, string body, bool parsePlans) {
       int http; string text, err;
-      if (!Send(method, url, code, body, out http, out text, out err)) { var r = new PlansResult(); r.Status = PlansStatus.Unreachable; r.Details = err; return r; }
+      if (!Send(method, url, code, body, true, out http, out text, out err)) { var r = new PlansResult(); r.Status = PlansStatus.Unreachable; r.Details = err; return r; }
       return Interpret(http, text, parsePlans);
     }
 
     /// <summary>One request with the sync code; false when the site was not reached (err says why).</summary>
     internal static bool Send(string method, string url, string code, string body, out int http, out string text, out string err) {
+      return Send(method, url, code, body, false, out http, out text, out err);
+    }
+
+    /// <summary>The same; <paramref name="forPlans"/>: a plan / sell-list / locate request, named for SyncClient.PlanPlayer
+    /// (the account last read on this install while the game's one is not read yet). Data read from the game never is.</summary>
+    internal static bool Send(string method, string url, string code, string body, bool forPlans, out int http, out string text, out string err) {
       http = 0; text = null; err = null;
       try {
         SyncClient.EnableTls12();
@@ -4415,7 +4490,7 @@ namespace RealmForge {
         req.UserAgent = SyncClient.UserAgent;
         req.Headers["Authorization"] = "Bearer " + code;
         req.Headers["X-RF-Extractor"] = SyncClient.Version;
-        SyncClient.AddPlayer(req);
+        if (forPlans) SyncClient.AddPlanPlayer(req); else SyncClient.AddPlayer(req);
         req.Timeout = 30000;
         req.ReadWriteTimeout = 30000;
         req.AllowAutoRedirect = false;
@@ -4737,6 +4812,7 @@ namespace RealmForge {
     public string LastAt;                       // ISO 8601 UTC or null
     public int LastHeroes = -1, LastItems = -1, LastArtifacts = -1;
     public List<int> LastTop = new List<int>(); // base ids of the 3 strongest heroes
+    public long LastPlayer;   // the game account (PlayerData m_Uid) last read on this install, 0 = none (SyncClient.LastPlayer)
 
     const string ProtectedPrefix = "dpapi:";
 
@@ -4819,6 +4895,7 @@ namespace RealmForge {
       if (CoachX >= 0 && CoachY >= 0)
         sb.Append(",\n  \"coach\": [").Append(CoachX.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture))
           .Append(", ").Append(CoachY.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture)).Append("]");
+      if (LastPlayer > 0) sb.Append(",\n  \"lastPlayer\": ").Append(MiniJson.Quote(LastPlayer.ToString(System.Globalization.CultureInfo.InvariantCulture)));
       string code = string.IsNullOrEmpty(Code) ? "" : ProtectedPrefix + CodeProtector.Protect(Code);
       sb.Append(",\n  \"code\": ").Append(MiniJson.Quote(code));
       if (!string.IsNullOrEmpty(LastAt)) {
@@ -4856,6 +4933,8 @@ namespace RealmForge {
       c.RecButton = MiniJson.GetBool(d, "recButton", true);
       string gs = MiniJson.GetString(d, "guideStyle"); c.GuideStyle = gs == "on" || gs == "off" ? gs : "auto";
       c.TermsAccepted = MiniJson.GetString(d, "termsAccepted") ?? "";
+      long lp; string lps = MiniJson.GetString(d, "lastPlayer");
+      if (lps != null && long.TryParse(lps, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out lp) && lp > 0) c.LastPlayer = lp;
       object lv;
       var co = d.TryGetValue("coach", out lv) ? lv as List<object> : null;
       if (co != null && co.Count == 2 && co[0] is double && co[1] is double) {

@@ -2239,6 +2239,30 @@ static class CoreTests {
       busy = true; for (; t < 12000 && !g.Halted(ClickOwner.Locate); t += 100) g.Observe(invNormal, t);
       Check(g.HaltReason(ClickOwner.Locate) == "nochange" && t <= 8000 + ClickGate.SearchGraceMs + 200, "audit slow: a second search does not move the deadline again (stop at " + t + " ms)");
     }
+    {   // ... the form was FOUND by the search: the screen is awaited up to the cap (lab 22:40: found 1 s after the deadline, Foundry read 6 s later)
+      foreach (var tg in new[] { ClickTarget.FoundryButton, ClickTarget.CityInventory }) {
+        bool busy = true, found = false; var g = new ClickGate(); g.FormSearchPending = x => busy; g.FormFound = x => found;
+        var bf = tg == ClickTarget.CityInventory ? city : invNormal; var unk = new ScreenState();
+        g.Arm(ClickOwner.Locate, tg, ClickGate.Expect(Rq(tg, bf), bf), 0);
+        long t = 0; for (; t < 9000; t += 100) g.Observe(unk, t);
+        busy = false; found = true;
+        for (; t < 20000; t += 100) g.Observe(unk, t);
+        Check(!g.Halted(ClickOwner.Locate), "audit found: " + tg + " still awaited long after the search ended with the form found");
+        g.Observe(tg == ClickTarget.CityInventory ? invNormal : foundry, t);
+        Check(!g.Halted(ClickOwner.Locate) && !g.Pending(ClickOwner.Locate), "audit found: " + tg + " done when the screen is read");
+        g = new ClickGate(); g.FormSearchPending = x => busy; g.FormFound = x => true; busy = true;
+        g.Arm(ClickOwner.Locate, tg, ClickGate.Expect(Rq(tg, bf), bf), 0);
+        for (t = 0; t < 9000; t += 100) g.Observe(unk, t);
+        busy = false;
+        for (; t <= ClickGate.SearchCapMs + 200 && !g.Halted(ClickOwner.Locate); t += 100) g.Observe(unk, t);
+        Check(g.HaltReason(ClickOwner.Locate) == "nochange" && t <= ClickGate.SearchCapMs + 200, "audit found: " + tg + " stops at the cap when the screen never shows");
+      }
+      // no search ran: a found form does not extend the fast path
+      var gf = new ClickGate(); gf.FormSearchPending = x => false; gf.FormFound = x => true;
+      gf.Arm(ClickOwner.Locate, ClickTarget.FoundryButton, ClickGate.Expect(Rq(ClickTarget.FoundryButton, invNormal), invNormal), 0);
+      gf.Observe(invNormal, ClickGate.SlowEffectMs + 20);
+      Eq("nochange", gf.HaltReason(ClickOwner.Locate), "audit found: no search ran = the fast path is unchanged");
+    }
     {   // ... the cap
       var g = new ClickGate(); g.FormSearchPending = x => true;
       g.Arm(ClickOwner.Locate, ClickTarget.CityInventory, ClickGate.Expect(Rq(ClickTarget.CityInventory, city), city), 0);
@@ -4546,6 +4570,9 @@ static class CoreTests {
   static void OfferTests() {
     const double W = 1920, H = 1009; double U = Ui.Unit(W, H);
     // the list: the game's pop-up queue, 34 forms, and the build plan screen; the × known for 32 of them, and never on another button of the form
+    foreach (var n in new[] { "Form_LeftTip", "Form_Marquee", "Form_MiniSystemTip", "Form_PowerChangeTips", "Form_IntegralRewardTip" })
+      Check(OfferForms.IsIgnoredOverlay(n) && !OfferForms.IsOffer(n) && Array.IndexOf(OfferForms.KnownScreens, n) < 0, "overlay forms: " + n + " is ignored (not an offer, not a known screen)");
+    Check(!OfferForms.IsIgnoredOverlay("Form_ItemReward") && !OfferForms.IsIgnoredOverlay("Form_Dialog") && !OfferForms.IsIgnoredOverlay(null), "overlay forms: other forms still count");
     Eq(35, OfferForms.All.Length, "offer list: the forms of the game's pop-up queue and the build plan");
     int closable = 0;
     foreach (var e in OfferForms.All) {
