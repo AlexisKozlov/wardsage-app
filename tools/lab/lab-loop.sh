@@ -38,6 +38,7 @@ dget()   { q -v r="$RUN" -v k="$1" <<< "select coalesce(data->>:'k', '') from pu
 dset()   { q -v r="$RUN" -v k="$1" -v v="$2" <<< "update public.lab_runs set data = data || jsonb_build_object(:'k', :'v'::text) where id = :'r'::uuid"; }
 phase()  { q -v r="$RUN" -v p="$1" <<< "update public.lab_runs set phase = :'p', data = data || jsonb_build_object('phase_at', extract(epoch from now())::bigint::text) where id = :'r'::uuid"; say "phase: $1"; }
 step()   { q -v r="$RUN" -v n="$1" -v ok="$2" -v s="$3" -v note="${4:-}" <<< "update public.lab_runs set steps = steps || jsonb_build_array(jsonb_build_object('name', :'n', 'ok', :'ok'::boolean, 'seconds', :'s'::numeric, 'note', :'note')) where id = :'r'::uuid"; say "step $1 ok=$2 ${3}s ${4:-}"; }
+phase_at_epoch() { dget phase_at; }
 phase_age() { echo $(( $(now) - $(dget phase_at) )); }
 mkjob()  { q -v d="$DEV" -v r="$RUN" -v a="$1" -v args="${2:-{\}}" <<< "insert into public.lab_jobs (device_id, run_id, action, args, expires_at) values (:'d'::uuid, :'r'::uuid, :'a', :'args'::jsonb, now() + interval '90 minutes') returning id"; }
 jstate() { q -v j="$1" <<< "select state from public.lab_jobs where id = :'j'::uuid"; }
@@ -63,9 +64,12 @@ wait_job() {
 
 # ---- go
 q -v r="$RUN" <<< "update public.lab_runs set state = 'running', started_at = coalesce(started_at, now()) where id = :'r'::uuid" >/dev/null
-[ -n "$(dget phase_at)" ] || phase wait_online
+first=0; [ -n "$(dget phase_at)" ] || { first=1; phase wait_online; }
 deadline=$(( $(now) + timeout_min * 60 ))
 say "run started for '$dev', timeout ${timeout_min} min"
+if [ "$first" = 1 ] && [ -z "${LAB_NO_TG:-}" ]; then
+  ver=$(dstat "coalesce(status->>'app_version', '?')"); tg "▶️ Проверка на ноутбуке началась: сборка ${ver:-?}" || true
+fi
 scenarios=($(q -v r="$RUN" <<< "select unnest(scenarios) from public.lab_runs where id = :'r'::uuid"))
 build=$(rget build)
 FAILED=0
@@ -78,6 +82,29 @@ end_run() {   # $1 = final state
 
 # the app is not usable: only ask the runner to finish (so it exits), then report
 bail_finish() { local f; f=$(mkjob finish) && dset job "$f" && dset job_timeout "" && phase finish; }
+
+# What the app logs when a pilot or the click gate stops (app/Overlay.cs AutoSay + «auto click stopped», src/ClickGate.cs Note «click gate <owner>: STOP (...)»,
+# HALT, the pilot states of HostBridge.OnAutoState, the art equip/promote «auto: stopped»)
+STOP_RE='auto click stopped|click gate .*: STOP|HALT|auto: (failed|slot_failed|unconfirmed|hero_failed|stopped)'
+NOPROGRESS=${LAB_NOPROGRESS:-180}
+# watch_logs <since epoch> <no-progress reference epoch>: 0 = all well; 1 = a stop line (WHY = the line); 2 = no new log line for NOPROGRESS s (WHY)
+WHY=""
+watch_logs() {
+  local txt hit last ref
+  txt=$(q -v d="$DEV" -v s="$1" <<< "select l.lines from public.app_test_logs l join public.lab_devices dv on dv.account_id = l.account_id where dv.id = :'d'::uuid and l.at >= to_timestamp(:'s'::bigint) order by l.id")
+  hit=$(grep -E "$STOP_RE" <<< "$txt" | head -1 | sed -E 's/^\s+|\s+$//g' | cut -c1-200)
+  if [ -n "$hit" ]; then WHY="$hit"; return 1; fi
+  last=$(q -v d="$DEV" <<< "select coalesce(extract(epoch from max(l.at))::bigint, 0) from public.app_test_logs l join public.lab_devices dv on dv.account_id = l.account_id where dv.id = :'d'::uuid")
+  ref=$2; [ "${last:-0}" -gt "$ref" ] && ref=$last
+  if [ $(( $(now) - ref )) -gt "$NOPROGRESS" ]; then WHY="no progress: no new app log line for $(( NOPROGRESS / 60 )) min"; return 2; fi
+  return 0
+}
+
+# a scenario step failed: stop its request, record the reason, skip the remaining scenarios (upload_logs + screenshot + finish still run)
+fail_scn() {   # $1 = step label, $2 = reason, $3 = table, $4 = row id
+  q -v r="$4" <<< "update public.$3 set status = 'cancelled', done_at = now() where id = :'r'::uuid and status = 'pending'" >/dev/null
+  step "$1" false "$(phase_age)" "$2"; FAILED=1; dset last_scn_end "$(now)"; skip_to_logs
+}
 skip_to_logs() { dset scn_idx "${#scenarios[@]}"; phase logs; }
 
 while :; do
@@ -132,13 +159,16 @@ while :; do
       elif [ "$(phase_age)" -gt 420 ]; then
         step app_ready false "$(phase_age)" "the app did not report ready in 7 min"
         FAILED=1; skip_to_logs
+      else
+        pr=$(phase_at_epoch); watch_logs "${rs:-0}" "$pr"; w=$?
+        if [ "$w" != 0 ]; then step app_ready false "$(phase_age)" "$WHY"; FAILED=1; skip_to_logs; fi
       fi ;;
     scenario)
       i=$(dget scn_idx)
       if [ "$i" -ge "${#scenarios[@]}" ]; then phase logs; continue; fi
       sc=${scenarios[$i]}
       row=$("$HERE/lab-seed.sh" "$dev" "$sc" "$build") || row=""
-      if [ -z "$row" ]; then step "$sc" false 0 "seed failed (fixture missing?)"; FAILED=1; dset scn_idx "$((i + 1))"; continue; fi
+      if [ -z "$row" ]; then step "$sc" false 0 "seed failed (fixture missing?)"; FAILED=1; skip_to_logs; continue; fi
       dset row "$row"; dset seeded_at "$(now)"; phase wait_scn ;;
     wait_scn)
       i=$(dget scn_idx); sc=${scenarios[$i]}; row=$(dget row)
@@ -146,10 +176,12 @@ while :; do
       st=$(q -v r="$row" <<< "select status || '|' || coalesce(round(extract(epoch from done_at - created_at))::int, 0) from public.$tbl where id = :'r'::uuid")
       case "$st" in
         done\|*) step "$label" true "${st#*|}" ""; dset last_scn_end "$(now)"; dset scn_idx "$((i + 1))"; phase scenario ;;
-        cancelled\|*) step "$label" false "$(phase_age)" "the request was cancelled"; FAILED=1; dset last_scn_end "$(now)"; dset scn_idx "$((i + 1))"; phase scenario ;;
-        *) if [ "$(phase_age)" -gt "$maxs" ]; then
-             q -v r="$row" <<< "update public.$tbl set status = 'cancelled', done_at = now() where id = :'r'::uuid and status = 'pending'" >/dev/null
-             step "$label" false "$(phase_age)" "not done in ${maxs} s"; FAILED=1; dset last_scn_end "$(now)"; dset scn_idx "$((i + 1))"; phase scenario
+        cancelled\|*) step "$label" false "$(phase_age)" "the request was cancelled"; FAILED=1; dset last_scn_end "$(now)"; skip_to_logs ;;
+        *) sa=$(dget seeded_at)
+           if watch_logs "${sa:-0}" "${sa:-0}"; then
+             if [ "$(phase_age)" -gt "$maxs" ]; then fail_scn "$label" "not done in ${maxs} s" "$tbl" "$row"; fi
+           else
+             fail_scn "$label" "$WHY" "$tbl" "$row"
            fi ;;
       esac ;;
     logs)
