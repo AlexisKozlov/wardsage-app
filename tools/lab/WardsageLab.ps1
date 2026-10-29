@@ -6,13 +6,13 @@
 # exits by itself. Automatic start is opt-in: setup-lab.ps1 -Autostart registers a logon task that starts it with -Service
 # (then it does not exit after "finish": it keeps heart-beating and waits for the next run; MaxRunnerHours only restarts its loop).
 #
-# Self-update: every 30 min (and at start) it reads <updateHost>/downloads/test/lab/WardsageLab.json; when the version is higher
+# Self-update: every 2 min (and at start, and on the update_runner job) it reads <updateHost>/downloads/test/lab/WardsageLab.json; when the version is higher
 # than $RunnerVersion it downloads WardsageLab.ps1, checks size, sha256 and the RSA signature against the pinned keys (the same
 # check as update_app), replaces its own file atomically and starts itself again. The server cannot send code through a job.
 #
 # What it never does: click or type anywhere, open a shell for the server, run anything the server sends, or let a job
 # value reach a command line or a file path. The jobs are only:
-#   status | update_app | start_game | restart_app | game_front | screenshot | upload_logs | finish | cancel
+#   status | update_app | start_game | restart_app | game_front | update_runner | screenshot | upload_logs | finish | cancel
 # each with a strict argument schema (see $Schemas). The only processes it starts/stops are the configured test app and,
 # for start_game, the configured game exe (started directly when the game is not running: no launcher, no clicks).
 #
@@ -23,7 +23,7 @@ Set-StrictMode -Version 2
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$RunnerVersion   = '3'
+$RunnerVersion   = '4'
 $Dir             = Join-Path $env:LOCALAPPDATA 'WardsageLab'
 $StopFile        = Join-Path $Dir 'STOP'
 $LogFile         = Join-Path $Dir 'runner.log'
@@ -32,7 +32,7 @@ $ClaimSec        = 15
 $MaxRunnerHours  = 4          # the runner never lives longer than this
 $MaxUpdateBytes  = 64MB       # same limit as app/Updater.cs MaxSize
 $GameProcessName = 'Watcher of Realms'   # src/GameInfo.cs ProcessName (the runner never stops it; start_game starts gameExe)
-$SelfCheckMin    = 30         # runner self-update check interval
+$SelfCheckMin    = 2          # runner self-update check interval (minutes; the manifest is a tiny JSON)
 $MaxRunnerBytes  = 512KB
 $GameWaitSec     = 180        # start_game: max wait for the game process + main window
 $GameStableSec   = 120        # start_game: the game must stay up this long (it may exit when it needs its launcher)
@@ -161,6 +161,7 @@ $Schemas = @{
     start_game  = @{}
     restart_app = @{}
     game_front  = @{}
+    update_runner = @{}
     screenshot  = @{ target = { param($v) $v -is [string] -and $v -ceq 'app' } }
     upload_logs = @{ lines  = { param($v) ($v -is [int] -or $v -is [long]) -and $v -ge 50 -and $v -le 2000 } }
     finish      = @{}
@@ -369,6 +370,11 @@ function Invoke-RunnerSelfUpdate {
     $script:Relaunch = $true
     $script:Exit = $true
 }
+function Invoke-UpdateRunner {
+    try { Invoke-RunnerSelfUpdate } catch { $m = Get-ShortError $_; Write-Log ('update_runner failed: ' + $m); return @{ ok = $false; res = @{ error = 'self_update_failed'; message = $m } } }
+    $script:LastSelfCheck = Get-Date
+    return @{ ok = $true; res = @{ updating = [bool]$script:Relaunch; runner = $RunnerVersion } }
+}
 function Test-RunnerUpdateDue {
     if (((Get-Date) - $script:LastSelfCheck).TotalMinutes -lt $SelfCheckMin) { return }
     $script:LastSelfCheck = Get-Date
@@ -524,6 +530,7 @@ function Invoke-Job($job) {
                 'start_game'  { $out = Invoke-StartGame }
                 'restart_app' { $out = Invoke-RestartApp }
                 'game_front'  { $out = Invoke-GameFront }
+                'update_runner' { $out = Invoke-UpdateRunner }
                 'screenshot'  { $out = Invoke-Screenshot $id }
                 'upload_logs' { $out = Invoke-UploadLogs $id $jobArgs }
                 'finish'      { $out = @{ ok = $true; res = @{ bye = $true } }; $script:Exit = $true }

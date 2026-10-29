@@ -105,7 +105,7 @@ notify() { if [ -n "${LAB_NO_TG:-}" ]; then say "telegram (skipped): $1"; else t
 # the run RUN of device DEV: mark it running, load its scenarios, say hello on the first start. Sets deadline, first, scenarios, build.
 init_run() {
   q -v r="$RUN" <<< "update public.lab_runs set state = 'running', started_at = coalesce(started_at, now()) where id = :'r'::uuid" >/dev/null
-  first=0; [ -n "$(dget phase_at)" ] || { first=1; phase wait_online; }
+  first=0; [ -n "$(dget phase_at)" ] || { first=1; phase wait_online; mkjob update_runner >/dev/null || true; }
   if [ "$auto" = 1 ]; then
     local sa; sa=$(rget "coalesce(extract(epoch from started_at)::bigint, 0)"); deadline=$(( ${sa:-0} + timeout_min * 60 ))
     [ "${sa:-0}" -gt 0 ] || deadline=$(( $(now) + timeout_min * 60 ))
@@ -283,8 +283,15 @@ auto_dev() {   # $1 = device name
   dev=$1; DEV=$(dev_id "$dev") || return 0
   exec 9>"$LAB_DIR/loop-$dev.lock"
   flock -n 9 || { exec 9>&-; return 0; }          # a hand-started --until-done owns the device
-  local gr st latest fin
+  local gr st latest fin rv rn
   gr=$(dstat "coalesce(status->>'game_running', 'false')")
+  # a newer published runner than the one the laptop reports -> ask it to update (one job at a time)
+  rv=$(jq -r '.version // empty' "$FEED/lab/WardsageLab.json" 2>/dev/null); rn=$(dstat "coalesce(status->>'runner', '')")
+  if [[ "$rv" =~ ^[0-9]{1,9}$ ]] && [[ "$rn" =~ ^[0-9]{1,9}$ ]] && [ "$rv" -gt "$rn" ]; then
+    q -v d="$DEV" <<< "insert into public.lab_jobs (device_id, action, args, expires_at)
+      select :'d'::uuid, 'update_runner', '{}'::jsonb, now() + interval '20 minutes'
+      where not exists (select 1 from public.lab_jobs where device_id = :'d'::uuid and action = 'update_runner' and (state in ('queued', 'claimed') or created_at > now() - interval '10 minutes'))" >/dev/null
+  fi
   RUN=$(q -v d="$DEV" <<< "select id from public.lab_runs where device_id = :'d'::uuid and state in ('queued', 'running') order by created_at limit 1")
   if [ "$gr" != true ]; then ensure_game; notify_launcher; fi
   if [ -n "$RUN" ]; then
