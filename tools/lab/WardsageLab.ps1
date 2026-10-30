@@ -23,7 +23,7 @@ Set-StrictMode -Version 2
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$RunnerVersion   = '14'
+$RunnerVersion   = '15'
 $Dir             = Join-Path $env:LOCALAPPDATA 'WardsageLab'
 $StopFile        = Join-Path $Dir 'STOP'
 $LogFile         = Join-Path $Dir 'runner.log'
@@ -168,11 +168,11 @@ $Schemas = @{
     restart_app = @{}
     game_front  = @{}
     update_runner = @{}
-    screenshot  = @{ target = { param($v) $v -is [string] -and $v -ceq 'app' } }
+    screenshot  = @{ target = { param($v) $v -is [string] -and ($v -ceq 'app' -or $v -ceq 'screen') } }
     upload_logs = @{ lines  = { param($v) ($v -is [int] -or $v -is [long]) -and $v -ge 50 -and $v -le 2000 } }
     finish      = @{}
     cancel      = @{}
-    mark        = @{}
+    mark        = @{ scn = { param($v) $v -is [string] -and $v -cmatch '^[a-z_]{1,30}$' } }
 }
 function Test-JobArgs([string]$action, $args_) {
     if (-not $Schemas.ContainsKey($action)) { return $false }
@@ -538,9 +538,12 @@ function Update-LogWatch {
         if ($script:LogDone -and $script:LogSendOk) { $script:LogReady = $true }
     } catch { $script:LogErr = (Get-ShortError $_) }
 }
-function Invoke-Mark {
+function Invoke-Mark($a) {
     Update-LogWatch      # consume what is already written, then forget it
     Reset-LogMarks; $script:MarkAt = Get-EpochNow
+    $script:Scn = ''; $script:FailShot = $false
+    $sv = Get-Prop $a 'scn'
+    if ($sv -ne $null) { $script:Scn = [string]$sv; $script:ScnAt = Get-Date }
     return @{ ok = $true; res = @{ marked = $true } }
 }
 
@@ -582,13 +585,14 @@ function Invoke-RestartApp {
 }
 
 # ---------------------------------------------------------------- screenshot: the app window only (PrintWindow)
-Add-Type -ReferencedAssemblies System.Drawing -TypeDefinition @"
+Add-Type -ReferencedAssemblies System.Drawing,System.Windows.Forms -TypeDefinition @"
 using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Windows.Forms;
 public static class LabShot {
     [StructLayout(LayoutKind.Sequential)] struct RECT { public int L, T, R, B; }
     [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
@@ -609,6 +613,22 @@ public static class LabShot {
                 g.ReleaseHdc(dc);
                 if (!ok) return null;
             }
+            return Encode(full, maxSide, maxBytes);
+        }
+    }
+    // JPEG of the whole monitor that holds the window h (the primary one when h is 0): lab_only devices only
+    public static byte[] Screen(IntPtr h, int maxSide, int maxBytes) {
+        try { SetProcessDPIAware(); } catch (Exception) { }
+        Rectangle b = (h != IntPtr.Zero && !IsIconic(h)) ? System.Windows.Forms.Screen.FromHandle(h).Bounds : System.Windows.Forms.Screen.PrimaryScreen.Bounds;
+        if (b.Width < 50 || b.Height < 50) return null;
+        using (Bitmap full = new Bitmap(b.Width, b.Height, PixelFormat.Format24bppRgb)) {
+            using (Graphics g = Graphics.FromImage(full)) { g.CopyFromScreen(b.Left, b.Top, 0, 0, b.Size); }
+            return Encode(full, maxSide, maxBytes);
+        }
+    }
+    static byte[] Encode(Bitmap full, int maxSide, int maxBytes) {
+        int w = full.Width, ht = full.Height;
+        {
             double k = Math.Min(1.0, (double)maxSide / Math.Max(w, ht));
             int nw = Math.Max(1, (int)(w * k)), nh = Math.Max(1, (int)(ht * k));
             using (Bitmap small = new Bitmap(nw, nh, PixelFormat.Format24bppRgb)) {
@@ -619,7 +639,7 @@ public static class LabShot {
                 ImageCodecInfo codec = null;
                 foreach (ImageCodecInfo c in ImageCodecInfo.GetImageEncoders()) if (c.MimeType == "image/jpeg") codec = c;
                 if (codec == null) return null;
-                foreach (long q in new long[] { 75, 55, 35 }) {
+                foreach (long q in new long[] { 75, 55, 35, 20 }) {
                     using (EncoderParameters ep = new EncoderParameters(1))
                     using (MemoryStream ms = new MemoryStream()) {
                         ep.Param[0] = new EncoderParameter(Encoder.Quality, q);
@@ -635,10 +655,24 @@ public static class LabShot {
 "@
 
 function Send-File([string]$job, [string]$name, [string]$mime, [byte[]]$bytes) {
-    $json = '{"p_job":"' + $job + '","p_name":"' + $name + '","p_mime":"' + $mime + '","p_b64":"' + [Convert]::ToBase64String($bytes) + '"}'
+    $pj = 'null'; if ($job -ne '') { $pj = '"' + $job + '"' }
+    $json = '{"p_job":' + $pj + ',"p_name":"' + $name + '","p_mime":"' + $mime + '","p_b64":"' + [Convert]::ToBase64String($bytes) + '"}'
     return Invoke-Rpc 'lab_put_file' $json
 }
-function Invoke-Screenshot([string]$job) {
+function Get-GameHandle {
+    $h = [IntPtr]::Zero
+    foreach ($p in @(Get-Process -Name $GameProcessName -ErrorAction SilentlyContinue)) { try { $p.Refresh(); if ($p.MainWindowHandle -ne [IntPtr]::Zero) { $h = $p.MainWindowHandle } } catch { } }
+    return $h
+}
+function Invoke-Screenshot([string]$job, $a) {
+    if ((Get-Prop $a 'target') -ceq 'screen') {
+        if (-not $script:LabOnly) { return @{ ok = $false; res = @{ error = 'not_lab_only' } } }
+        $jpg = [LabShot]::Screen((Get-GameHandle), 1280, 1400000)
+        if ($jpg -eq $null) { return @{ ok = $false; res = @{ error = 'no_screen' } } }
+        $r = Send-File $job 'screen.jpg' 'image/jpeg' $jpg
+        if (-not $r.ok) { return @{ ok = $false; res = @{ error = 'upload_' + $r.code } } }
+        return @{ ok = $true; res = @{ bytes = $jpg.Length } }
+    }
     $procs = @(Get-AppProcesses)
     if ($procs.Count -eq 0) { return @{ ok = $false; res = @{ error = 'app_not_running' } } }
     $h = [IntPtr]::Zero
@@ -669,6 +703,51 @@ function Invoke-UploadLogs([string]$job, $a) {
     return @{ ok = $true; res = @{ bytes = $bytes.Length; lines = $lines.Count } }
 }
 
+# ---------------------------------------------------------------- automatic screen capture (lab_only devices, during a scenario)
+# One frame every 15 s (the last 4 kept in memory). On a stop (status.stop) or a stall (no pilot line for 60 s) one frame is taken
+# and uploaded as stop-<scenario>-<MMdd-HHmmss>.jpg together with the kept frames (-leadN), once per scenario (per mark).
+$script:Scn = ''; $script:ScnAt = [DateTime]::MinValue; $script:FailShot = $false; $script:LabOnly = $false
+$script:Frames = New-Object System.Collections.ArrayList; $script:LastFrame = [DateTime]::MinValue
+function Put-Shot([string]$name, [byte[]]$jpg) {
+    $r = Send-File '' $name 'image/jpeg' $jpg
+    if (-not $r.ok) { Write-Log ('auto shot ' + $name + ' upload failed: ' + $r.code + ' ' + $r.msg) }
+    return $r.ok
+}
+function Invoke-AutoShots {
+    if (-not $script:LabOnly -or $script:Busy -or $script:Scn -eq '') { $script:Frames.Clear(); return }
+    if (((Get-Date) - $script:ScnAt).TotalMinutes -gt $ActiveMin) { $script:Scn = ''; return }
+    $now = Get-Date
+    $why = ''
+    if (-not $script:FailShot) {
+        if ($script:LogStop -ne '') { $why = 'stop' }
+        else {
+            $ref = $script:PilotAt; if ($ref -eq 0) { $ref = $script:MarkAt }
+            if ($ref -gt 0 -and ((Get-EpochNow) - $ref) -gt 60) { $why = 'stall' }
+        }
+    }
+    if ($why -ne '') {
+        $script:FailShot = $true
+        $jpg = $null
+        try { $jpg = [LabShot]::Screen((Get-GameHandle), 1280, 300000) } catch { }
+        $stamp = $now.ToString('MMdd-HHmmss')
+        $base = 'stop-' + $script:Scn + '-' + $stamp
+        $up = 0
+        if ($jpg -ne $null -and (Put-Shot ($base + '.jpg') $jpg)) { $up++ }
+        $i = 1
+        foreach ($f in @($script:Frames)) { if (Put-Shot ($base + '-lead' + $i + '.jpg') $f) { $up++ }; $i++ }
+        $script:Frames.Clear()
+        Write-Log ('auto shots (' + $why + '): ' + $up + ' uploaded as ' + $base)
+        return
+    }
+    if (-not $script:FailShot -and ($now - $script:LastFrame).TotalSeconds -ge 15) {
+        $script:LastFrame = $now
+        try {
+            $jpg = [LabShot]::Screen((Get-GameHandle), 1280, 300000)
+            if ($jpg -ne $null) { [void]$script:Frames.Add($jpg); while ($script:Frames.Count -gt 4) { $script:Frames.RemoveAt(0) } }
+        } catch { }
+    }
+}
+
 # ---------------------------------------------------------------- one job
 $script:Exit = $false
 function Invoke-Job($job) {
@@ -690,7 +769,7 @@ function Invoke-Job($job) {
             Write-Log ('job: ' + $action)
             if (@('update_app', 'restart_app', 'game_front', 'upload_logs', 'screenshot') -contains $action) { $script:RunJobAt = Get-Date }
             if ($action -eq 'update_app') { $script:LogCount = 0 }
-            if ($action -eq 'finish') { $script:RunJobAt = [DateTime]::MinValue }
+            if ($action -eq 'finish') { $script:RunJobAt = [DateTime]::MinValue; $script:Scn = '' }
             switch ($action) {
                 'status'      { $out = @{ ok = $true; res = (Get-Status) } }
                 'update_app'  { $out = Invoke-UpdateApp }
@@ -698,11 +777,11 @@ function Invoke-Job($job) {
                 'restart_app' { $out = Invoke-RestartApp }
                 'game_front'  { $out = Invoke-GameFront }
                 'update_runner' { $out = Invoke-UpdateRunner }
-                'screenshot'  { $out = Invoke-Screenshot $id }
+                'screenshot'  { $out = Invoke-Screenshot $id $jobArgs }
                 'upload_logs' { $out = Invoke-UploadLogs $id $jobArgs }
-                'finish'      { $out = @{ ok = $true; res = @{ bye = $true } }; $script:Exit = $true }
+                'finish'      { $script:Scn = ''; $out = @{ ok = $true; res = @{ bye = $true } }; $script:Exit = $true }
                 'cancel'      { $out = @{ ok = $true; res = @{ cancelled = $true } } }
-                'mark'        { $out = Invoke-Mark }
+                'mark'        { $out = Invoke-Mark $jobArgs }
             }
         }
     } catch {
@@ -755,6 +834,7 @@ try {
         Test-RunnerUpdateDue
         if ($script:Exit) { break }
         Update-LogWatch
+        try { Invoke-AutoShots } catch { Write-Log ('auto shots error: ' + (Get-ShortError $_)) }
         if (((Get-Date) - $lastBounds).TotalSeconds -ge 60) { $lastBounds = Get-Date; Test-GameBoundsIdle }
         if ((Get-Date) -ge $backoffUntil) {
             try {
@@ -765,6 +845,7 @@ try {
                     $r = Invoke-Rpc 'lab_heartbeat' (ConvertTo-StatusJson (Get-Status))
                     $lastBeat = Get-Date
                     if (-not $r.ok) { $err = $r }
+                    else { $lo = Get-Prop $r.data 'lab_only'; $script:LabOnly = ($lo -eq $true) }
                 }
                 if ($err -eq $null -and ((Get-Date) - $lastClaim).TotalSeconds -ge ($ClaimSec - 1)) {
                     $lastClaim = Get-Date

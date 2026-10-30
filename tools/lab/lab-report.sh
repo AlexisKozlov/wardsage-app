@@ -69,6 +69,13 @@ fi
 [ -n "$passes" ] && msg+="passes: $(tail -1 <<< "$passes" | sed -E 's/^passes: //')"$'\n'
 if [ "$finish_ok" = 1 ]; then msg+="Можно выключать ноутбук."; else msg+="Ноутбук не подтвердил завершение: проверьте его, прежде чем выключать."; fi
 
+# screenshots the runner took at a stop / stall (stop-<scenario>-<time>[-leadN].jpg), per scenario, with their ids
+shots=$(q -F '|' -v r="$run" <<< "
+  select f.name, f.id from public.lab_files f join public.lab_runs r on r.device_id = f.device_id
+  where r.id = :'r'::uuid and f.name like 'stop-%' and f.created_at >= r.started_at - interval '1 minute' and f.created_at <= coalesce(r.finished_at, now()) + interval '5 minutes'
+  order by f.created_at" | awk -F'|' '{n=$1; sub(/^stop-/,"",n); sub(/-[0-9]{4}-[0-9]{6}.*$/,"",n); a[n]=a[n] "  " $1 " " $2 "\n"; if(!(n in o)){o[n]=++c}} END{for(k in a) printf "%s:\n%s", k, a[k]}')
+[ -n "$shots" ] && msg+="Скриншоты остановок: lab-shots.sh $run"$'\n'
+
 {
   echo "# Test lab report: $devname"
   echo
@@ -83,6 +90,7 @@ if [ "$finish_ok" = 1 ]; then msg+="Можно выключать ноутбук
   echo
   echo "first read:"; echo '```'; echo "${firstreads:-none}"; echo '```'
   echo "passes:"; echo '```'; echo "${passes:-none}"; echo '```'
+  if [ -n "$shots" ]; then echo; echo "## Stop screenshots (per scenario; download: tools/lab/lab-shots.sh $run)"; echo; echo '```'; echo "$shots"; echo '```'; fi
 } > "$LAB_DIR/$fname"
 echo "report: $LAB_DIR/$fname"
 if [ "$send" = 1 ]; then tg "$msg" && echo "telegram: sent"; else echo "--- message (not sent) ---"; echo "$msg"; fi
