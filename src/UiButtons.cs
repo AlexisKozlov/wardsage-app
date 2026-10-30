@@ -194,6 +194,7 @@ namespace RealmForge {
         case ClickTarget.FoundryButton: return new UiWidget("Form_BackpackIntegration", "m_PanelContentCur.m_BtnWorkShop") { Icon = true };
         case ClickTarget.AscendTab: return new UiWidget("Form_EquipSubliming", "m_ToggleSubliming") { Icon = true };
         case ClickTarget.ArtWorkshop: return new UiWidget("Form_BackpackIntegration", "m_PanelContentCur.m_BtnIntensify") { Icon = true };   // (the artifact card's «Мастерская»: it moves left when «Продать» is hidden on a worn artifact)
+        case ClickTarget.ArtHideWorn: return new UiWidget("Form_CharactorMain", "m_Panels.EquipArtifact.m_HideEquiped");   // (the artifact list's «Скрыть надетое»: the whole toggle takes the click)
         case ClickTarget.EquipConfirm: return new UiWidget("Form_CharactorEquipTip", "m_SelectEquipView.m_RightBtn.m_gameObject", "m_OneEquipView.m_RightBtn.m_gameObject") { Icon = true };
         case ClickTarget.OfferClose: return string.IsNullOrEmpty(offerForm) ? null : new UiWidget(offerForm, OfferClosePaths) { Icon = true, Discover = true };
       }
@@ -799,7 +800,7 @@ namespace RealmForge {
   // The item's picture inside: c_Frame (the quality frame round the icon), else c_Icon, else the cell child, else the cell.
   // InfinityGrid (dump 1.6.46.841.1): m_crtFirstInstanceIndex 0xD0, m_crtLastInstanceIndex 0xD4, m_crtItems 0xD8, viewport 0xC8;
   // InfinityGridV2: 0xF8, 0xFC, 0x100, viewport 0xF0. .NET Dictionary: entries 0x18, count 0x20; Entry {hashCode, next, key 0x8, value 0x10}.
-  public enum UiCellKind { None, Inventory, Ascend, Recast, HeroGear }
+  public enum UiCellKind { None, Inventory, Ascend, Recast, HeroGear, HeroArt }
 
   /// <summary>One item cell the grid has made now: the item, its list index (0-based) and row column (HeroGear, 1-based), its picture's rect (client px).</summary>
   public sealed class UiCell {
@@ -825,13 +826,15 @@ namespace RealmForge {
   public enum UiCellSee { Unknown, Shown, Hidden }
 
   public static partial class RFX {
-    sealed class CellSpec { public string Form, Owner, Grid, Uids, Child; public bool V2, Rows; }
+    sealed class CellSpec { public string Form, Owner, Grid, Uids, Child; public bool V2, Rows, Tables; }
     static CellSpec SpecOf(UiCellKind k) {
       switch (k) {
         case UiCellKind.Inventory: return new CellSpec { Form = "Form_BackpackIntegration", Owner = "", Grid = "m_Content_InfinityGrid", Uids = "m_CachedContentPanels.[-9998].m_FilterAndSortEquipUidList", Child = "c_Item" };
         case UiCellKind.Ascend: return new CellSpec { Form = "Form_EquipSubliming", Owner = "m_PanelEquipSubliming", Grid = "m_EquipList_InfinityGrid", Uids = "m_PanelEquipSubliming.m_Equips", Child = "c_EquipItem" };
         case UiCellKind.Recast: return new CellSpec { Form = "Form_EquipSubliming", Owner = "m_PanelEquipRecast", Grid = "m_EquipList_InfinityGrid", Uids = "m_PanelEquipRecast.m_Equips", Child = "c_EquipItem" };
         case UiCellKind.HeroGear: return new CellSpec { Form = "Form_CharactorMain", Owner = "m_Panels.EquipFilter", Grid = "m_EquipList_InfinityGrid", Uids = "m_Panels.EquipFilter.m_EquipListRealData", Child = "c_Equip", V2 = true, Rows = true };
+        // the hero screen's artifact list (Panel_Equip_Artifact): the grid proxy's m_Data rows are the artifact tables (iItemUid), the cell's card is c_CardBtn
+        case UiCellKind.HeroArt: return new CellSpec { Form = "Form_CharactorMain", Owner = "m_Panels.EquipArtifact", Grid = "m_List_InfinityGrid", Uids = "m_Panels.EquipArtifact.m_InfinityGridProxy.m_Data", Child = "c_CardBtn", Tables = true };
       }
       return null;
     }
@@ -841,6 +844,7 @@ namespace RealmForge {
         case ClickTarget.InvListCell: case ClickTarget.InvBulkCell: return UiCellKind.Inventory;
         case ClickTarget.AscendCell: return UiCellKind.Ascend;
         case ClickTarget.EquipNav: return UiCellKind.HeroGear;
+        case ClickTarget.ArtHeroCell: return UiCellKind.HeroArt;
       }
       return UiCellKind.None;
     }
@@ -860,9 +864,10 @@ namespace RealmForge {
     }
 
     /// <summary>The item a cell of list index <paramref name="idx"/> (0-based) shows: flat lists by the index, rows of HeroGear by row and column.</summary>
-    static long CellUidOf(ulong list, int idx, int col, bool rows) {
+    static long CellUidOf(ulong list, int idx, int col, bool rows, bool tables = false) {
       ulong v; int tt;
       if (!IntKey(list, idx + 1, out v, out tt)) return 0;
+      if (tables) { long u; return tt == T_TABLE && ArtInt(v, "iItemUid", out u) ? u : 0; }
       if (!rows) return tt == T_INT ? (long)v : 0;
       if (tt != T_TABLE) return 0;
       ulong items; int itt;
@@ -968,14 +973,14 @@ namespace RealmForge {
         ulong gnat = Ptr(mgo + CachedPtr); if (gnat == 0) continue;
         ulong cgo, ctr; if (!GoAndTransform(gnat, "UnityEngine.GameObject", "cell", new UiButtonInfo(), out cgo, out ctr)) continue;
         for (int col = sp.Rows ? 1 : 0; col <= (sp.Rows ? 6 : 0); col++) {
-          long uid = CellUidOf(list, idx, col, sp.Rows);
+          long uid = CellUidOf(list, idx, col, sp.Rows, sp.Tables);
           if (uid <= 0) { if (sp.Rows) break; continue; }
           if (want != null && !want.Contains(uid)) continue;
           var path = new List<ulong>();
           ulong item = ChildNamed(ctr, sp.Rows ? sp.Child + col : sp.Child, 2, path);
           if (item == 0 && sp.Rows) continue;
-          ulong at = item != 0 ? item : ctr, pic = ChildNamed(at, "c_Frame", 4, new List<ulong>());
-          string icon = "c_Frame";
+          ulong at = item != 0 ? item : ctr, pic = sp.Tables ? at : ChildNamed(at, "c_Frame", 4, new List<ulong>());   // (an artifact card is framed whole: the card is the picture)
+          string icon = sp.Tables ? (item != 0 ? sp.Child : "cell") : "c_Frame";
           if (pic == 0) { pic = ChildNamed(at, "c_Icon", 4, new List<ulong>()); icon = "c_Icon"; }
           if (pic == 0) { pic = at; icon = item != 0 ? (sp.Rows ? sp.Child + col : sp.Child) : "cell"; }
           var cb = new UiButtonInfo();
@@ -1038,6 +1043,7 @@ namespace RealmForge {
       var sp = SpecOf(k);
       if (sp == null || s == null || s.Held || s.OfferCount > 0 || s.ModalOpen) return false;
       if (k == UiCellKind.HeroGear) return s.Kind == ScreenKind.HeroScreen;   // (the item's tip is the equip helper's own flow form over it)
+      if (k == UiCellKind.HeroArt) return s.Kind == ScreenKind.HeroScreen && s.Top == sp.Form;   // (no pop-up: Form_EquipPopUp or the sort form cover the list)
       return s.Top == sp.Form;
     }
 

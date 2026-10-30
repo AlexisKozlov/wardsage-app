@@ -7023,6 +7023,59 @@ static partial class CoreTests {
     Check(ps.Stopped && ps.Reason == "stuck", "art pilot: the same step again and again -> stop 'stuck'");
     ps.Reset(); Check(!ps.Stopped, "art pilot: a new run starts again");
 
+    // --- the list's own filter, the game's fit rule, the live cell, the scroll's stillness
+    Func<long[], long, int, int, HeroScreen> HF = (uids, owner, hide, wornAhead) => { var x = HS(7, true, 0, owner, 9001, uids); x.ArtHideWorn = hide; x.ArtWornBefore = wornAhead; x.ArtGoalFit = 1; return x; };
+    var long60 = new long[60]; for (int i = 0; i < 60; i++) long60[i] = i == 54 ? 9004 : 8000 + i;
+    var sf = N(HF(long60, 0, 0, 50), false);
+    Check(sf.Kind == ArtEquipKind.PickCell && sf.Filter && sf.Name == "filter" && sf.Key.EndsWith(":filter"), "art filter: a free artifact far down with worn rows ahead -> «Скрыть надетое» first");
+    Check(!N(HF(long60, other, 0, 50), false).Filter, "art filter: an artifact another hero wears -> no «Скрыть надетое» (it would hide it)");
+    Check(!N(HF(long60, 0, 1, 50), false).Filter && !N(HF(long60, 0, 0, 2), false).Filter && !N(HF(u5, 0, 0, 3), false).Filter && !N(HF(long60, 0, -1, 50), false).Filter, "art filter: already on, under a row of worn ahead, in the first view, flag unread -> no filter");
+    var sfOff = N(HF(new long[] { 9001, 9002 }, other, 1, 0), false);
+    Check(sfOff.Kind == ArtEquipKind.NotInList && sfOff.Filter, "art filter: «Скрыть надетое» on hides the artifact another hero wears -> off");
+    Check(!N(HF(new long[] { 9001, 9002 }, 0, 1, 0), false).Filter, "art filter: a free artifact missing with the filter on is not the filter's doing");
+    var fFr = ArtEquipFrames.For(sf, HF(long60, 0, 0, 50), null, Wd, Hd, U);
+    Check(fFr != null && fFr.Target == ArtEquipFrames.KeyHideWorn && fFr.Mark.Kind == "box" && fFr.Mark.X < 60 && fFr.Mark.Y > Hd * 0.7, "art filter: the frame is on the toggle under the list (" + (fFr != null ? fFr.Mark.X + "," + fFr.Mark.Y : "none") + ")");
+    var hUnfit = HF(u5, 0, 0, 0); hUnfit.ArtGoalFit = 0;
+    var su = N(hUnfit, false); Check(su.Kind == ArtEquipKind.Unfit && su.Name == "unfit", "art fit: bCanEquip false -> unfit (another class)");
+    hUnfit.ArtGoalExclusive = true; Check(N(hUnfit, false).Name == "unfitEx", "art fit: an exclusive artifact of another hero -> unfitEx");
+    hUnfit.ArtSel = 9004; Check(N(hUnfit, false).Kind == ArtEquipKind.Unfit, "art fit: its card open -> still unfit, never «Заменить»");
+    Check(new ArtEquipPilot().Step(V(N(hUnfit, false), hUnfit, true, true, 0)).State == "hint", "art fit: the pilot never clicks an unfit artifact (no loop of «Заменить» and the game's tip)");
+    var hNoFit = HF(u5, 0, 0, 0); hNoFit.ArtGoalFit = -1; Check(N(hNoFit, false).Kind == ArtEquipKind.PickCell, "art fit: unread -> the cell as before (the game's own tip is the guard)");
+    // the pilot presses the toggle (live rect first), waits for the flag, then goes on to the cell
+    var hf0 = HF(long60, 0, 0, 50); var pf = new ArtEquipPilot();
+    var vf = V(N(hf0, false), hf0, false, false, 0); vf.FilterLive = new double[] { 30, 540, 200, 40 };
+    var mf = pf.Step(vf);
+    Check(mf.Todo == ArtEquipTodo.Filter && mf.Action.Kind == AutoKind.Click && Math.Abs(mf.Action.X - 130) < 1 && Math.Abs(mf.Action.Y - 560) < 1, "art filter: the pilot clicks the toggle's live centre");
+    var hf1 = HF(new long[] { 8001, 8002, 8003, 9004 }, 0, 1, 0);
+    var mf2 = pf.Step(V(N(hf1, false), hf1, false, false, 200));
+    Check(pf.FilterSpent && mf2.Action.Kind == AutoKind.None, "art filter: the flag on -> done with the filter, the short wait before the cell");
+    var mf3 = pf.Step(V(N(hf1, false), hf1, false, false, 200 + ArtEquipPilot.EffectSettleMs + 10));
+    Check(mf3.Todo == ArtEquipTodo.Cell && mf3.Action.Kind == AutoKind.Click && mf3.Action.Cell == 9004, "art filter: then the artifact's cell (it carries the uid for the live click)");
+    var pf2 = new ArtEquipPilot(); long tf = 0; int fclicks = 0;
+    ArtEquipMove mlast = null;
+    for (int i = 0; i < 3; i++) { mlast = pf2.Step(V(N(hf0, false), hf0, false, false, tf)); if (mlast.Todo == ArtEquipTodo.Filter && mlast.Action.Kind == AutoKind.Click) fclicks++; tf += 1000; }
+    Check(fclicks == ArtEquipPilot.MaxFilterClicks && pf2.FilterSpent && !pf2.Stopped && mlast.Drag, "art filter: no effect -> two presses, then the scroll (no blind loop, no stop): " + pf2.Trace);
+    var pNo = new ArtEquipPilot { NoFilter = true }; var vNo = V(N(hf0, false), hf0, false, false, 0); vNo.FilterSpent = pNo.FilterSpent;
+    Check(pNo.Step(vNo).Todo == ArtEquipTodo.Cell, "art filter: the bench's old way skips the filter");
+    // the live cell wins over the layout's place
+    var pl = new ArtEquipPilot(); var vl = V(N(hPick, false), hPick, false, false, 0); vl.CellLive = new double[] { 100, 200, 80, 110 };
+    var ml = pl.Step(vl);
+    Check(ml.Todo == ArtEquipTodo.Cell && Math.Abs(ml.Action.X - 140) < 1 && Math.Abs(ml.Action.Y - 255) < 1 && ml.Action.Cell == 9004, "art cell: the live card's centre is clicked");
+    var vl2 = V(sFar, hFar, false, false, 0); vl2.CellLive = new double[] { 100, 200, 80, 110 };
+    Check(new ArtEquipPilot().Step(vl2).Action.Kind == AutoKind.Click, "art cell: a live card in view is clicked even where the layout puts it far away");
+    // after a drag: no fixed wait, the scroll's own answer (moved, then two equal reads)
+    var pd = new ArtEquipPilot(); var ld = new RFX.ListRead { ScrollY = 0, Cols = 3, RowUnits = 116 };
+    var hd = HS(7, true, 0, other, 9001, far); hd.ArtList = ld;
+    var md = pd.Step(V(sFar, hd, false, false, 0)); Check(md.Drag, "art still: a drag first");
+    hd.ArtList = new RFX.ListRead { ScrollY = 0, Cols = 3, RowUnits = 116 }; Check(pd.Step(V(sFar, hd, false, false, 60)).Action.Kind == AutoKind.None, "art still: not moved yet -> wait");
+    hd.ArtList = new RFX.ListRead { ScrollY = 200, Cols = 3, RowUnits = 116 }; Check(pd.Step(V(sFar, hd, false, false, 120)).Action.Kind == AutoKind.None, "art still: moving -> wait");
+    hd.ArtList = new RFX.ListRead { ScrollY = 300, Cols = 3, RowUnits = 116 }; Check(pd.Step(V(sFar, hd, false, false, 170)).Action.Kind == AutoKind.None, "art still: still moving -> wait");
+    var mdn = pd.Step(V(sFar, hd, false, false, 230));
+    Check(mdn.Drag, "art still: two equal reads 60 ms apart -> the next drag at 230 ms (was 1000 ms)");
+    var pdf = new ArtEquipPilot { FixedDragWait = true }; hd.ArtList = ld; pdf.Step(V(sFar, hd, false, false, 0));
+    hd.ArtList = new RFX.ListRead { ScrollY = 300, Cols = 3, RowUnits = 116 };
+    Check(pdf.Step(V(sFar, hd, false, false, 500)).Action.Kind == AutoKind.None && pdf.Step(V(sFar, hd, false, false, 1001)).Drag, "art still: the bench's old way waits 1000 ms");
+
     // --- the gate: the Equip owner's artifact targets
     Func<HeroScreen, bool, ScreenState> SC = (hs, popup) => ScreenState.Classify(new ScreenInputs { Hero = hs, ModalExtra = popup, ModalExtraWhy = popup ? ClickGate.ModalEquipPopup : "" }, 0);
     Func<ClickTarget, ClickRequest> RQ = tg => new ClickRequest { Owner = ClickOwner.Equip, Target = tg, AutoOn = true, Front = true, Hero = hero, ArtUid = 9004, CellOk = new HashSet<long> { 9004 } };
@@ -7100,6 +7153,18 @@ static partial class CoreTests {
     string wl = ClickGate.WhitelistText(ClickOwner.Equip);
     Check(wl.Contains("ArtHeroTab@HeroScreen") && wl.Contains("ArtTakeOverConfirm@HeroScreen") && !wl.Contains("ArtBulk") && !wl.Contains("ArtWorkshop"), "art gate: the equip owner's whitelist has the hero-screen artifact targets only");
     foreach (var oo in new[] { ClickOwner.Locate, ClickOwner.Sell }) { string w2 = ClickGate.WhitelistText(oo); Check(!w2.Contains("ArtHero") && !w2.Contains("ArtOpenList") && !w2.Contains("ArtReplace") && !w2.Contains("ArtTakeOver"), oo + ": none of the equip owner's artifact targets"); }
+    // the gate: the toggle's effect is the flag; the live cell kind of the artifact list
+    {
+      var rqf = RQ(ClickTarget.ArtHideWorn); var gF = GOn();
+      Check(gF.Check(rqf, SC(hf0, false), 0).Allowed, "art gate: «Скрыть надетое» with the list open -> allowed");
+      Check(!GOn().Check(rqf, SC(hOpen, false), 0).Allowed, "art gate: «Скрыть надетое» with the list closed -> stop");
+      gF.Arm(ClickOwner.Equip, ClickTarget.ArtHideWorn, ClickGate.Expect(rqf, SC(hf0, false)), 0); gF.Observe(SC(hf1, false), 400);
+      Check(!gF.Pending(ClickOwner.Equip), "art gate: the flag on -> the toggle's effect seen");
+      var rqo = RQ(ClickTarget.ArtHideWorn); rqo.Untick = true; var gO = GOn();
+      gO.Arm(ClickOwner.Equip, ClickTarget.ArtHideWorn, ClickGate.Expect(rqo, SC(hf1, false)), 0); gO.Observe(SC(hf0, false), 400);
+      Check(!gO.Pending(ClickOwner.Equip), "art gate: the flag off -> the toggle's effect seen (off)");
+      Check(RFX.UiCellKindOf(ClickTarget.ArtHeroCell) == UiCellKind.HeroArt && RFX.UiWidgetOf(ClickTarget.ArtHideWorn, null) != null, "art cells: the artifact list's cells and the toggle are read live");
+    }
   }
 
   static void ArtAutoTests() {

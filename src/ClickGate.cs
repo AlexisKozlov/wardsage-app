@@ -86,7 +86,8 @@ namespace RealmForge {
     ArtHeroCell,      // the plan's artifact in the hero screen's artifact list (selects it, opens its card)
     ArtHeroDrag,      // a drag that scrolls that list
     ArtReplace,       // the selected artifact card's «Заменить» / «Надеть» (the player's auto confirm too)
-    ArtTakeOverConfirm // the pop-up «<artifact> в ячейке героя: <имя>» (the artifact is worn by another hero): its «Заменить» (the player's auto confirm too)
+    ArtTakeOverConfirm, // the pop-up «<artifact> в ячейке героя: <имя>» (the artifact is worn by another hero): its «Заменить» (the player's auto confirm too)
+    ArtHideWorn       // the artifact list's own filter «Скрыть надетое» (on before a long scroll to a free artifact; off when it hides the artifact). Untick = off
   }
 
   public enum GateVerdict { Allow, Wait, Deny }
@@ -447,6 +448,7 @@ namespace RealmForge {
             case ClickTarget.ArtHeroDrag: return new Rule { Kinds = K(ScreenKind.HeroScreen), HeroArt = 3 };
             case ClickTarget.ArtReplace: return new Rule { Kinds = K(ScreenKind.HeroScreen), HeroArt = 4 };
             case ClickTarget.ArtTakeOverConfirm: return new Rule { Kinds = K(ScreenKind.HeroScreen), HeroArt = 5, AllowModal = true };
+            case ClickTarget.ArtHideWorn: return new Rule { Kinds = K(ScreenKind.HeroScreen), HeroArt = 3 };
           }
           return null;
       }
@@ -900,6 +902,7 @@ namespace RealmForge {
         case ClickTarget.ArtHeroCell: { long au = r.ArtUid; return s => s.Kind == ScreenKind.HeroScreen && s.HeroScr != null && s.HeroScr.ArtSel == au; }
         case ClickTarget.ArtReplace: { long hh = r.Hero; return s => s.Kind == ScreenKind.HeroScreen && s.HeroScr != null && (s.HeroScr.ArtTargetOwner == hh || (s.ModalOpen && s.ModalWhy == ModalEquipPopup)); }
         case ClickTarget.ArtTakeOverConfirm: { long hh = r.Hero; return s => s.Kind == ScreenKind.HeroScreen && s.HeroScr != null && s.HeroScr.ArtTargetOwner == hh; }
+        case ClickTarget.ArtHideWorn: { int want = r.Untick ? 0 : 1; return s => s.Kind == ScreenKind.HeroScreen && s.HeroScr != null && s.HeroScr.ArtHideWorn == want; }
       }
       return null;
     }

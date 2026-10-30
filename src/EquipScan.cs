@@ -75,6 +75,11 @@ namespace RealmForge {
     public RFX.ListRead ArtList; // the list's scroll and grid (null = unreadable)
     public long ArtTargetOwner = -1;   // iHeroId of the goal artifact (-1 = unknown)
     public long ArtWorn = -1;    // the uid of the artifact the hero wears (0 = none, -1 = not read)
+    // the list's own filter and the goal's row (Panel_Equip_Artifact; read with the rows)
+    public int ArtHideWorn = -1; // m_iHideEquipedFlag: «Скрыть надетое» is on (1), off (0), not read (-1)
+    public int ArtGoalFit = -1;  // the goal's row bCanEquip (the game's own class / exclusive-hero rule): 1 fits, 0 does not, -1 not read (not in the list)
+    public bool ArtGoalExclusive;   // the goal's m_AfCfg.m_HeroExclusive is set (an exclusive artifact of another hero when it does not fit)
+    public int ArtWornBefore = -1;  // rows before the goal worn by a hero (iHeroId != 0): the ones «Скрыть надетое» would take out ahead of it
   }
 
   public static partial class RFX {
@@ -753,6 +758,7 @@ namespace RealmForge {
         ulong panels, p; int t1, t2;
         if (Field(form, "m_Panels", out panels, out t1) && t1 == T_TABLE && Field(panels, "EquipArtifact", out p, out t2) && t2 == T_TABLE) {
           h.ArtList = ReadHeroArtList(p);
+          long hf; if (ArtInt(p, "m_iHideEquipedFlag", out hf)) h.ArtHideWorn = hf == 1 ? 1 : 0;
           ulong data = FindHeroArtRows(p);
           if (data != 0) {
             h.ArtListPtr = data;
@@ -830,16 +836,30 @@ namespace RealmForge {
           ulong row; int rt; long uid;
           ok = IntKey(data, gi + 1, out row, out rt) && rt == T_TABLE && ArtInt(row, "iItemUid", out uid) && uid == goal;
         }
-        if (ok) { h.ArtUids.AddRange(prev.ArtUids); h.ArtRows = prev.ArtRows; if (gi >= 0) goalOwner = GoalRowOwner(data, gi + 1); return; }
+        if (ok) {
+          h.ArtUids.AddRange(prev.ArtUids); h.ArtRows = prev.ArtRows; h.ArtWornBefore = prev.ArtWornBefore;
+          if (gi >= 0) { goalOwner = GoalRowOwner(data, gi + 1); GoalRowFit(data, gi + 1, h); }
+          return;
+        }
       }
       h.ArtRows = sizearray;
+      int wornAhead = 0;
       for (int i = 1; i <= 800; i++) {
         ulong row; int rt; long uid;
         if (!IntKey(data, i, out row, out rt) || rt != T_TABLE) break;
         if (!ArtInt(row, "iItemUid", out uid)) uid = 0;
         h.ArtUids.Add(uid);
-        if (uid == goal && uid > 0) { long ow; goalOwner = ArtHeroOf(row, out ow) ? ow : -1; }
+        if (uid == goal && uid > 0) { long ow; goalOwner = ArtHeroOf(row, out ow) ? ow : -1; GoalRowFit(data, i, h); h.ArtWornBefore = wornAhead; }
+        else if (h.ArtWornBefore < 0) { long ow; if (ArtHeroOf(row, out ow) && ow != 0) wornAhead++; }
       }
+    }
+
+    // the goal's row: may this hero wear it (bCanEquip, which the list's own filter sets on every row by the class / exclusive-hero rule), and is it an exclusive one
+    static void GoalRowFit(ulong data, int index, HeroScreen h) {
+      ulong row, v, cfg; int rt, tt, ct;
+      if (!IntKey(data, index, out row, out rt) || rt != T_TABLE) return;
+      if (Field(row, "bCanEquip", out v, out tt) && tt == T_BOOL) h.ArtGoalFit = (v & 0xFFFFFFFF) != 0 ? 1 : 0;
+      long ex; h.ArtGoalExclusive = Field(row, "m_AfCfg", out cfg, out ct) && ct == T_TABLE && ArtInt(cfg, "m_HeroExclusive", out ex) && ex != 0;
     }
 
     // the list's data: the grid proxy's m_Data (Panel_Equip_Artifact.m_InfinityGridProxy). When that is missing or empty, the panel's (and its proxy's) own table fields are searched for an

@@ -2389,6 +2389,8 @@ namespace RealmForge {
           if (gs.Kind != ArtEquipKind.Wait) step = gs;
         }
       } else artWaitSince = 0;
+      // the list's own filter is the auto click's step before a long scroll; the hints (and the pilot once it is done with it) show the cell
+      if (step.Filter && step.Kind == ArtEquipKind.PickCell && (!ArtAutoOn || artEq.FilterSpent)) step.Filter = false;
       artEqStep = step;
       var hs = screens.Hero;
       if (step.Kind == ArtEquipKind.Done) {
@@ -2399,7 +2401,7 @@ namespace RealmForge {
       string sig = step.Key + "|" + step.Why + "|" + step.Owner;
       if (sig != artEqSaid) {
         artEqSaid = sig;
-        Log.Write("art equip: step " + step.Key + (step.Why != "" ? " (" + step.Why + ")" : "") + " owner " + step.Owner + (hs != null ? " tab " + hs.Tab + " list " + hs.ArtListOpen + " sel " + hs.ArtSel + " rows " + hs.ArtUids.Count + " worn " + hs.ArtWorn + " scroll " + (hs.ArtList != null ? hs.ArtList.ToString() : "none") : " (no hero screen)") + (popup ? " POPUP" : ""));
+        Log.Write("art equip: step " + step.Key + (step.Why != "" ? " (" + step.Why + ")" : "") + " owner " + step.Owner + (hs != null ? " tab " + hs.Tab + " list " + hs.ArtListOpen + " sel " + hs.ArtSel + " rows " + hs.ArtUids.Count + " worn " + hs.ArtWorn + " hideWorn " + hs.ArtHideWorn + " fit " + hs.ArtGoalFit + (hs.ArtGoalExclusive ? " exclusive" : "") + " wornAhead " + hs.ArtWornBefore + " scroll " + (hs.ArtList != null ? hs.ArtList.ToString() : "none") : " (no hero screen)") + (popup ? " POPUP" : ""));
       }
     }
 
@@ -2448,6 +2450,15 @@ namespace RealmForge {
       var lines = main != "" ? new[] { main } : new string[0];
       var lf = ArtEquipFrames.For(st, hs, Geo.Current, W, H, U);
       frame++;
+      if (lf != null && lf.Mark.Kind == "box" && lf.Target == ArtEquipFrames.KeyHideWorn) {   // «Скрыть надетое» where the game has put it (live rect, fresh)
+        var lv = LiveFrame(ClickTarget.ArtHideWorn, null, W, H, U, false, lf.Raw != null ? new[] { lf.Raw.X, lf.Raw.Y, lf.Raw.W, lf.Raw.H } : null);
+        if (lv != null) { lf.Raw = new GeoRect { X = lv[0], Y = lv[1], W = lv[2], H = lv[3] }; lf.Mark = new LocateMark { Kind = "box", X = (int)Math.Round(lv[0]), Y = (int)Math.Round(lv[1]), W = (int)Math.Round(lv[2]), H = (int)Math.Round(lv[3]) }; }
+      } else if (st.Kind == ArtEquipKind.PickCell && st.Pos > 0 && lf != null) {
+        // the artifact's card where the game has put it (the grid's live cells): its frame; no live cell in the viewport: the layout's pill / nothing on a guessed box
+        double[] lcf; var see = LiveCell(UiCellKind.HeroArt, artUid, null, W, H, U, new double[] { lf.Mark.X, lf.Mark.Y, lf.Mark.W, lf.Mark.H }, "art:" + artUid, out lcf);
+        if (see == UiCellSee.Shown) lf = new LocateFrame { Target = "cell", Raw = new GeoRect { X = lcf[0], Y = lcf[1], W = lcf[2], H = lcf[3] }, Mark = new LocateMark { Kind = "box", X = (int)Math.Round(lcf[0]), Y = (int)Math.Round(lcf[1]), W = (int)Math.Round(lcf[2]), H = (int)Math.Round(lcf[3]) } };
+        else if (see == UiCellSee.Hidden && lf.Mark.Kind == "box") lf = null;
+      }
       if (lf != null && lf.Mark.Kind != "box") {   // the cell is off the screen: the pill at the list's edge
         Draw(lf.Mark.Kind, o.X + lf.Mark.X, o.Y + lf.Mark.Y, lf.Mark.W, lf.Mark.H, lf.Mark.Rows);
         if (lines.Length > 0) DrawTipTop(lines, caps != "" ? caps : null); else HideTip();
@@ -2477,6 +2488,8 @@ namespace RealmForge {
       }
       var view = new ArtEquipView { NowMs = v.NowMs, Foreground = v.Foreground, UserBusy = v.UserBusy, UserClicked = v.UserClicked, W = W, H = H, U = U, Step = step, Hero = screens.Hero,
                                     Geometry = Geo.Current, AutoConfirm = AutoConfirm, ReplaceBtnSeen = btnSeen };
+      if (step.Kind == ArtEquipKind.PickCell && !step.Filter) view.CellLive = ArtCellLive(W, H, U);
+      if (step.Filter) view.FilterLive = ArtFilterLive(W, H, U);
       var mv = artEq.Step(view);
       if (artEq.Trace != "") { Log.Write("art equip auto: " + artEq.Trace); artEq.Trace = ""; }
       string said = mv.State + "|" + mv.Why + "|" + step.Key;
@@ -2490,16 +2503,41 @@ namespace RealmForge {
         case ArtEquipTodo.Cell: tg = drag ? ClickTarget.ArtHeroDrag : ClickTarget.ArtHeroCell; break;
         case ArtEquipTodo.Replace: tg = ClickTarget.ArtReplace; break;
         case ArtEquipTodo.Confirm: tg = ClickTarget.ArtTakeOverConfirm; break;
+        case ArtEquipTodo.Filter: tg = ClickTarget.ArtHideWorn; break;
         default: return;
       }
+      bool filterOff = screens.Hero != null && screens.Hero.ArtHideWorn == 1;
       if ((tg == ClickTarget.ArtReplace || tg == ClickTarget.ArtTakeOverConfirm) && !AutoConfirm) { gate.Halt(ClickOwner.Equip, "target", "«Заменить» without the player's auto confirm"); AnnounceHalts(); return; }
       SendInside(mv.Action, o, cr, ClickOwner.Equip, tg, v.Foreground, (rq, fr) => {
         rq.Hero = hero; rq.ArtUid = uid; rq.CellOk = new[] { uid };
+        if (tg == ClickTarget.ArtHideWorn) rq.Untick = filterOff;
         if (tg == ClickTarget.ArtHeroCell) {
           int i = fr.HeroScr != null ? ClickGate.ListCardIndexAt(geo, ArtEquipFrames.KeyList, fr.HeroScr.ArtList, 3, 116, rq.X, rq.Y, W, H, U) : -1;
           rq.CellUid = i >= 0 && fr.HeroScr != null && i < fr.HeroScr.ArtUids.Count ? fr.HeroScr.ArtUids[i] : 0;
         }
       });
+    }
+
+    /// <summary>The artifact's card where the game has put it (client px x, y, w, h), when the live read is fresh, the card wholly in the viewport and the list on top; else null.</summary>
+    double[] ArtCellLive(double W, double H, double U) {
+      if (artUid <= 0) return null;
+      RFX.UiCellWant(UiCellKind.HeroArt, new[] { artUid }, W, H, U);
+      int now = Environment.TickCount;
+      var s = RFX.UiCellFresh(UiCellKind.HeroArt, artUid, W, H, now, RFX.UiFreshMs);
+      double x, y; string why;
+      if (s == null || !RFX.UiCellPoint(s, artUid, W, H, now, out x, out y, out why) || !RFX.UiCellTopIs(UiCellKind.HeroArt, screens.Current)) return null;
+      var c = s.Of(artUid);
+      return c != null ? new[] { c.X, c.Y, c.W, c.H } : null;
+    }
+
+    /// <summary>«Скрыть надетое»'s live rect (client px) when the read is fresh, visible and on the form on top; else null (the geometry's).</summary>
+    double[] ArtFilterLive(double W, double H, double U) {
+      RFX.UiButtonWant(ClickTarget.ArtHideWorn, null, W, H, U);
+      int now = Environment.TickCount;
+      var r = RFX.UiButtonFresh(ClickTarget.ArtHideWorn, null, W, H, now, RFX.UiFreshMs);
+      double x, y; string why;
+      if (!RFX.UiLivePoint(r, W, H, now, out x, out y, out why) || !RFX.UiTopIs(ClickTarget.ArtHideWorn, null, screens.Current)) return null;
+      return new[] { r.X, r.Y, r.W, r.H };
     }
 
     // ---- auto click for the artifact promotion (src/LocatePilot.cs ArtPilot): only with ArtAutoOn. The pilot opens the «Артефакт» tab, selects the artifact's cell,

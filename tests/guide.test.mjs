@@ -109,7 +109,7 @@ ok(G.next(plan, live({ owner: { 6423: 0 } })).item.uid === 6423, 'in the bag: wa
   ok(g.kind === 'art' && G.artStep(g) === 'wait' && g.done === 1 && !g.artDone, 'gear on, no word from the host yet: the artifact step, waiting');
   g = G.next(p, lv({ art: { uid: 9004, step: 'pick', done: false, owner: 5 } }));
   ok(g.kind === 'art' && G.artStep(g) === 'pick', 'the host says pick');
-  for (const st of ['hero', 'tab', 'open', 'openAdd', 'missing', 'replace', 'equip', 'confirm']) ok(G.artStep(G.next(p, lv({ art: { uid: 9004, step: st } }))) === st, 'step ' + st + ' passes through');
+  for (const st of ['hero', 'tab', 'open', 'openAdd', 'missing', 'filter', 'unfit', 'unfitEx', 'replace', 'equip', 'confirm']) ok(G.artStep(G.next(p, lv({ art: { uid: 9004, step: st } }))) === st, 'step ' + st + ' passes through');
   ok(G.artStep(G.next(p, lv({ art: { uid: 9004, step: 'bogus' } }))) === 'wait', 'an unknown step is waiting');
   ok(G.next(p, lv({ art: { uid: 1234, step: 'done', done: true } })).kind === 'art', "another artifact's report does not count");
   g = G.next({ ...p, id: 'art1' }, lv({ art: { uid: 9004, step: 'done', done: true, owner: 7 } }));
@@ -134,7 +134,7 @@ ok(G.next(plan, live({ owner: { 6423: 0 } })).item.uid === 6423, 'in the bag: wa
   ok(tt && tt.ru && tt.en, 'the texts are loaded');
   const ks = (l) => Object.keys(tt[l]).filter((k) => /^art(S_|Sub_|Slot|FromSite|DoneRow|Head|Caps)/.test(k)).sort();
   ok(ks('ru').join() === ks('en').join() && ks('ru').length >= 15, 'artifact texts: the same keys in Russian and English');
-  for (const st of ['hero', 'wait', 'tab', 'open', 'openAdd', 'pick', 'pickAny', 'missing', 'replace', 'equip', 'confirm', 'done'])
+  for (const st of ['hero', 'wait', 'tab', 'open', 'openAdd', 'pick', 'pickAny', 'missing', 'filter', 'unfit', 'unfitEx', 'replace', 'equip', 'confirm', 'done'])
     for (const l of ['ru', 'en']) ok(typeof tt[l]['artS_' + st] === 'string' && tt[l]['artS_' + st].length > 3 && tt[l]['artS_' + st].replace('{0}', 'Хххххххххххх').length <= 80, 'artS_' + st + ' (' + l + ') fits a plate');
 }
 console.log(`guide: ${n} passed`);

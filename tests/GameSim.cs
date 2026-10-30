@@ -1523,6 +1523,91 @@ static partial class CoreTests {
     return broke == 0 ? 0 : 1;
   }
 
+  /// <summary>The hero screen's artifact list for --art-bench: <paramref name="items"/> artifacts, <paramref name="free"/> of them free (the goal among them,
+  /// near the end, the rest worn by other heroes), the list open on the «Артефакт» tab. The pilot runs on its own (no gate) against a model of the
+  /// game: a click answers after the machine's latency, a drag's scroll glides to its place, «Скрыть надетое» rebuilds the list with the free ones
+  /// from the top. The run ends when the goal's card is selected (ArtSel). <paramref name="old"/> = origin/main's way: no filter, 1 s after each drag.</summary>
+  static string ArtListRun(int seed, bool slow, bool old, int items, int free, out long ms, out int clicks, out int drags) {
+    var r = new Random(seed * 31 + (slow ? 7 : 3));
+    double W = 1136, H = 640, U = Ui.Unit(W, H), k = U / GameGeometry.CanvasH;
+    const long hero = 231, goal = 77777;
+    int lat = slow ? 180 + r.Next(120) : 50 + r.Next(50), glide = slow ? 450 + r.Next(250) : 220 + r.Next(120);
+    double gain = 0.85 + r.NextDouble() * 0.25;
+    // the list in the game's order: the goal near the end (a low rarity), the other free ones spread among the worn ones
+    var all = new List<long>(); var worn = new HashSet<long>();
+    int goalAt = items - 1 - r.Next(Math.Max(1, items / 8));
+    var freeAt = new HashSet<int> { goalAt }; while (freeAt.Count < free) freeAt.Add(r.Next(items));
+    for (int i = 0; i < items; i++) { long u = i == goalAt ? goal : 50000 + i; all.Add(u); if (!freeAt.Contains(i)) worn.Add(u); }
+    var view = ArtFrames.Rect(null, ArtEquipFrames.KeyList, W, H, U);
+    double viewUnits = view.H / k;
+    int hide = 0; double scroll = 0, from = 0, to = 0; long glideAt = -1; long sel = 0;
+    var due = new List<KeyValuePair<long, Action>>();
+    var pilot = new ArtEquipPilot { NoFilter = old, FixedDragWait = old };
+    long t = 0, cap = 120000; clicks = drags = 0;
+    Func<List<long>> shown = () => { if (hide == 0) return all; var l = new List<long>(); foreach (var u in all) if (!worn.Contains(u)) l.Add(u); return l; };
+    while (t < cap && sel != goal) {
+      // the game: due answers, the scroll's glide
+      for (int i = 0; i < due.Count; i++) if (due[i].Key <= t) { due[i].Value(); due.RemoveAt(i); i--; }
+      if (glideAt >= 0) { double f = Math.Min(1, (t - glideAt) / (double)glide); f = 1 - (1 - f) * (1 - f); scroll = from + (to - from) * f; if (f >= 1) glideAt = -1; }
+      var list = shown();
+      double maxScroll = Math.Max(0, Math.Ceiling(list.Count / 3.0) * 116 - viewUnits);
+      var hs = new HeroScreen { Hero = hero, FormOk = true, Tab = 7, ArtRead = true, ArtListOpen = true, ArtSel = sel, ArtTargetOwner = 0, ArtWorn = 9001, ArtHideWorn = hide, ArtGoalFit = 1,
+                                ArtList = new RFX.ListRead { ScrollY = Math.Round(scroll, 1), Cols = 3, RowUnits = 116 } };
+      hs.ArtUids.AddRange(list);
+      int gi = list.IndexOf(goal), wa = 0; for (int i = 0; i < gi; i++) if (worn.Contains(list[i])) wa++;
+      hs.ArtWornBefore = wa;
+      var st = ArtEquipGuide.Next(hero, goal, hs, false);
+      var v = new ArtEquipView { NowMs = t, Foreground = true, W = W, H = H, U = U, Step = st, Hero = hs };
+      // the live cell read (the grid's cells): the card wholly in the viewport
+      if (st.Kind == ArtEquipKind.PickCell && gi >= 0) {
+        var cf = ArtFrames.Cell(null, ArtEquipFrames.KeyList, hs.ArtList, gi, 3, 116, W, H, U);
+        if (cf != null && cf.Mark.Kind == "box" && cf.Mark.H >= 110 * k * 0.98) v.CellLive = new double[] { cf.Mark.X, cf.Mark.Y, cf.Mark.W, cf.Mark.H };
+      }
+      var mv = pilot.Step(v);
+      if (pilot.Stopped) break;
+      var a = mv.Action;
+      if (a.Kind == AutoKind.Drag) {
+        drags++;
+        double s1 = Math.Max(0, Math.Min(maxScroll, scroll - a.DY / k * gain));
+        long send = 120;   // the drag's own time (press, move, release)
+        due.Add(new KeyValuePair<long, Action>(t + send + lat, () => { from = scroll; to = s1; glideAt = t; }));
+      } else if (a.Kind == AutoKind.Click) {
+        clicks++;
+        double cx = a.X, cy = a.Y;
+        if (mv.Todo == ArtEquipTodo.Filter) due.Add(new KeyValuePair<long, Action>(t + lat, () => { hide = 1 - hide; scroll = 0; glideAt = -1; }));
+        else if (mv.Todo == ArtEquipTodo.Cell) due.Add(new KeyValuePair<long, Action>(t + lat, () => {
+          var l2 = shown(); int g2 = l2.IndexOf(goal);
+          var cf = g2 >= 0 ? ArtFrames.Cell(null, ArtEquipFrames.KeyList, new RFX.ListRead { ScrollY = scroll, Cols = 3, RowUnits = 116 }, g2, 3, 116, W, H, U) : null;
+          if (cf != null && cf.Mark.Kind == "box" && cx >= cf.Mark.X && cx <= cf.Mark.X + cf.Mark.W && cy >= cf.Mark.Y && cy <= cf.Mark.Y + cf.Mark.H) sel = goal;
+        }));
+      }
+      t += 50;
+    }
+    ms = t;
+    return sel == goal ? "" : pilot.Stopped ? "stop:" + pilot.Reason : "TIMEOUT";
+  }
+
+  /// <summary>--art-bench [runs]: seconds from the open artifact list to the goal's card selected, 200 artifacts (the filter leaves 10), both machines, origin/main's way vs now.</summary>
+  static int ArtBench(int runs, int from) {
+    int bad = 0;
+    Console.WriteLine("artifact bench: " + runs + " runs each, 200 artifacts in the list, 10 free (the goal one of them, near the end)");
+    foreach (bool slow in new[] { false, true })
+      foreach (bool old in new[] { true, false }) {
+        long tot = 0, worst = 0; int done = 0, cl = 0, dr = 0; var ends = new SortedDictionary<string, int>();
+        for (int i = 0; i < runs; i++) {
+          long ms; int c, d; string e = ArtListRun(from + i, slow, old, 200, 10, out ms, out c, out d);
+          string end = e == "" ? "done" : e; int x; ends.TryGetValue(end, out x); ends[end] = x + 1;
+          if (e == "") { done++; tot += ms; cl += c; dr += d; worst = Math.Max(worst, ms); } else if (!old) bad++;
+        }
+        var es = new List<string>(); foreach (var kv in ends) es.Add(kv.Key + " " + kv.Value);
+        Console.WriteLine("  " + (slow ? "slow" : "fast") + " " + (old ? "before (scroll, 1 s waits)" : "after (filter, live cell, still wait)") + ": "
+          + (done > 0 ? (tot / done / 1000.0).ToString("0.00") : "-") + " s average, " + (worst / 1000.0).ToString("0.00") + " s worst, "
+          + (done > 0 ? (cl / (double)done).ToString("0.0") : "-") + " clicks, " + (done > 0 ? (dr / (double)done).ToString("0.0") : "-") + " drags  [" + string.Join(", ", es.ToArray()) + "]");
+      }
+    Console.WriteLine("artifact bench: " + bad + " runs of the new way did not end on the goal");
+    return bad == 0 ? 0 : 1;
+  }
+
   static int SimMain(string[] args) {
     Layout.Use(TestLayout());
     int seeds = 500, from = 0; bool slowOnly = false, verbose = false, real = false, scan = false, timing = false, matrix = false; string list = null;
@@ -1536,13 +1621,14 @@ static partial class CoreTests {
       else if (args[i] == "--digest") list = "--digest";
       else if (args[i] == "--scan") scan = true;
       else if (args[i] == "--timing") timing = true;
-      else if (args[i] == "--sell-bench" || args[i] == "--spawn") { }
+      else if (args[i] == "--sell-bench" || args[i] == "--spawn" || args[i] == "--art-bench") { }
       else if (args[i] == "--matrix") matrix = true;
       else if (args[i] == "--gate-log") SimGateLog = true;
       else { int n; if (int.TryParse(args[i], out n)) seeds = n; }
     }
     var geo = GameGeometry.Parse(GeoJson(), GeoGame);
     if (Array.IndexOf(args, "--sell-bench") >= 0) return SellBench(geo, seeds, from, Array.IndexOf(args, "--spawn") >= 0);
+    if (Array.IndexOf(args, "--art-bench") >= 0) return ArtBench(seeds == 500 ? 200 : seeds, from);
     if (matrix) {   // the city-first matrix alone (tests/run-sim.sh --matrix [runs a cell])
       var mf = SimMatrix(geo, true, seeds > 0 && seeds != 500 ? seeds : 4);
       foreach (var f in mf) Console.WriteLine("  !! " + f);

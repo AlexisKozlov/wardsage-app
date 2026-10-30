@@ -328,6 +328,7 @@ namespace RealmForge {
       { "hero.artReplace",            new object[] { 'L', 0.7031, 'L', 0.925, 'B', -0.1413, 'B', -0.0584 } },
       { "hero.artSell",               new object[] { 'L', 0.8969, 'L', 0.9672, 'T', 0.2591, 'T', 0.3294 } },
       { "hero.artQuickEquip",         new object[] { 'R', -0.6687, 'R', -0.4469, 'B', -0.1008, 'B', -0.018 } },
+      { "hero.artHideWorn",           new object[] { 'L', 0.0359, 'L', 0.4172, 'B', -0.1816, 'B', -0.1097 } },   // the list's «Скрыть надетое» toggle (m_HideEquiped; the live rect is preferred)
       { "popup.equipReplace",         new object[] { 'C', 0.0031, 'C', 0.3641, 'M', 0.0563, 'M', 0.175 } },
     };
 

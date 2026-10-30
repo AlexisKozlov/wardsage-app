@@ -19,19 +19,23 @@ namespace RealmForge {
     PickCell,         // the list is open: the artifact's cell (Pos, 1-based)
     NotInList,        // the list does not hold the artifact (a filter / «Скрыть надетое» hides it)
     PressReplace,     // the artifact's card is open: «Заменить» (HasWorn) / «Надеть»
-    ConfirmTakeOver   // the pop-up «<artifact> в ячейке героя: <имя>» is open: its «Заменить»
+    ConfirmTakeOver,  // the pop-up «<artifact> в ячейке героя: <имя>» is open: its «Заменить»
+    Unfit             // the game will not put it on this hero (the row's bCanEquip is false: another class, or another hero's exclusive one): a hint, never a click
   }
 
   public sealed class ArtEquipStep {
     public ArtEquipKind Kind;
     public int Pos;              // PickCell: the 1-based place in the list
     public bool HasWorn;         // the hero wears an artifact now (the card says «Заменить», not «Надеть»)
+    /// <summary>PickCell: the game's own filter «Скрыть надетое» (off now) would take enough worn rows out ahead of the free artifact to spare a scroll.
+    /// NotInList: the filter is on and hides the artifact (another hero wears it): off brings it back.</summary>
+    public bool Filter;
     public long Owner = -1;      // iHeroId of the artifact now (-1 = unknown)
     public string Why = "";
     /// <summary>A hint worked out from the screen's geometry alone: the artifact data could not be read (the app never clicks on a guess).</summary>
     public bool Guess;
     public string Key {
-      get { return (Guess ? "guess:" : "") + Kind + (Kind == ArtEquipKind.PickCell ? ":" + Pos : "") + (Kind == ArtEquipKind.OpenList || Kind == ArtEquipKind.PressReplace ? (HasWorn ? ":worn" : ":empty") : ""); }
+      get { return (Guess ? "guess:" : "") + Kind + (Kind == ArtEquipKind.PickCell ? ":" + Pos : "") + (Filter ? ":filter" : "") + (Kind == ArtEquipKind.OpenList || Kind == ArtEquipKind.PressReplace ? (HasWorn ? ":worn" : ":empty") : ""); }
     }
     /// <summary>The step name the page gets (live.art.step).</summary>
     public string Name {
@@ -41,10 +45,11 @@ namespace RealmForge {
           case ArtEquipKind.Done: return "done";
           case ArtEquipKind.ArtTab: return "tab";
           case ArtEquipKind.OpenList: return HasWorn ? "open" : "openAdd";
-          case ArtEquipKind.PickCell: return "pick";
+          case ArtEquipKind.PickCell: return Filter ? "filter" : "pick";
           case ArtEquipKind.NotInList: return "missing";
           case ArtEquipKind.PressReplace: return HasWorn ? "replace" : "equip";
           case ArtEquipKind.ConfirmTakeOver: return "confirm";
+          case ArtEquipKind.Unfit: return Why == "exclusive" ? "unfitEx" : "unfit";
           default: return "wait";
         }
       }
@@ -54,6 +59,8 @@ namespace RealmForge {
   public static class ArtEquipGuide {
     /// <summary>Form_CharactorMain.m_LastType of the «Артефакт» tab (gear is 3).</summary>
     public const int ArtTabType = 7;
+    /// <summary>The cells the list shows without a scroll (3 columns, about 3.5 rows of 116 in the viewport): a goal in them needs no filter.</summary>
+    public const int FirstView = 9;
 
     /// <summary>What to do next for <paramref name="goal"/> on <paramref name="hero"/>'s screen. <paramref name="popup"/> = Form_EquipPopUp is open (seen on the picture).</summary>
     public static ArtEquipStep Next(long hero, long goal, HeroScreen h, bool popup) {
@@ -73,15 +80,25 @@ namespace RealmForge {
         if (h.ArtWorn == -1) { s.Kind = ArtEquipKind.Wait; s.Why = "worn artifact unknown"; return s; }
         s.Kind = ArtEquipKind.OpenList; return s;
       }
-      if (h.ArtSel == goal) { s.Kind = ArtEquipKind.PressReplace; return s; }
       int i = h.ArtUids.IndexOf(goal);
+      // the game's own rule (the row's bCanEquip): another class or another hero's exclusive one - «Заменить» would only show the game's tip; no click, the reason
+      if (i >= 0 && h.ArtGoalFit == 0) { s.Kind = ArtEquipKind.Unfit; s.Why = h.ArtGoalExclusive ? "exclusive" : "class"; return s; }
+      if (h.ArtSel == goal) { s.Kind = ArtEquipKind.PressReplace; return s; }
       if (i < 0) {
         // the list is filled after the panel slides in: an empty list is waited for, a filled one without the artifact is the player's filter
         s.Kind = h.ArtUids.Count == 0 ? ArtEquipKind.Wait : ArtEquipKind.NotInList; s.Why = h.ArtUids.Count == 0 ? "list loading" : "not in list";
+        s.Filter = s.Kind == ArtEquipKind.NotInList && h.ArtHideWorn == 1 && h.ArtTargetOwner > 0;   // «Скрыть надетое» hides it: off
         return s;
       }
       s.Kind = ArtEquipKind.PickCell; s.Pos = i + 1;
+      s.Filter = WantsFilter(h, s.Pos);
       return s;
+    }
+
+    /// <summary>«Скрыть надетое» before any scroll: the artifact is free, the filter is off, the artifact lies past the first view and the worn rows
+    /// ahead of it are at least a row of the grid (the filter then brings it up by a row or more).</summary>
+    public static bool WantsFilter(HeroScreen h, int pos) {
+      return h != null && h.ArtHideWorn == 0 && h.ArtTargetOwner == 0 && pos > FirstView && h.ArtWornBefore >= 3;
     }
   }
 
@@ -113,7 +130,7 @@ namespace RealmForge {
   /// <summary>Where the frames of the artifact steps go (the site's geometry file; where its copy lacks a key the built-in numbers of ArtFrames stand in).</summary>
   public static class ArtEquipFrames {
     public const string KeyTab = "hero.artifactTab", KeyOpenList = "hero.artOpenList", KeyAdd = "hero.artAdd", KeyList = "hero.artList", KeyReplace = "hero.artReplace",
-                        KeyPopup = "popup.equipReplace", KeySell = "hero.artSell", KeyQuick = "hero.artQuickEquip";
+                        KeyPopup = "popup.equipReplace", KeySell = "hero.artSell", KeyQuick = "hero.artQuickEquip", KeyHideWorn = "hero.artHideWorn";
     /// <summary>Buttons of this screen no click may touch: the sell icon of the selected artifact's card and the worn column's «Быстро надеть».</summary>
     public static readonly string[] NeverKeys = { KeySell, KeyQuick };
 
@@ -130,10 +147,10 @@ namespace RealmForge {
     /// <summary>The frame of the step; null = none (no rectangle, or the cell cannot be placed because the list is unreadable).</summary>
     public static LocateFrame For(ArtEquipStep st, HeroScreen h, GameGeometry g, double W, double H, double U) {
       if (st == null) return null;
-      if (st.Kind == ArtEquipKind.PickCell && st.Pos > 0)
+      if (st.Kind == ArtEquipKind.PickCell && st.Pos > 0 && !st.Filter)
         return h != null ? ArtFrames.Cell(g, KeyList, h.ArtList, st.Pos - 1, 3, 116, W, H, U) : null;
-      string key = st.Kind == ArtEquipKind.PickCell ? KeyList : KeyOf(st.Kind, st.HasWorn);   // a cell that cannot be placed (the list's rows are unreadable): the list's area, with the plate
-      if (st.Kind == ArtEquipKind.PickCell && st.Pos <= 0 && !st.Guess) return null;
+      string key = st.Filter && (st.Kind == ArtEquipKind.PickCell || st.Kind == ArtEquipKind.NotInList) ? KeyHideWorn : st.Kind == ArtEquipKind.PickCell ? KeyList : KeyOf(st.Kind, st.HasWorn);   // the filter first: its toggle; a cell that cannot be placed (the list's rows are unreadable): the list's area, with the plate
+      if (st.Kind == ArtEquipKind.PickCell && st.Pos <= 0 && !st.Guess && !st.Filter) return null;
       if (key == "") return null;
       var r = ArtFrames.Rect(g, key, W, H, U);
       if (r == null) return null;
@@ -176,7 +193,8 @@ namespace RealmForge {
     OpenList,     // the worn card's button / the empty slot's «+»
     Cell,         // the artifact's cell: the click or the drag that brings it into view
     Replace,      // the card's «Заменить» / «Надеть»
-    Confirm       // the pop-up's «Заменить»
+    Confirm,      // the pop-up's «Заменить»
+    Filter        // the list's «Скрыть надетое» toggle (on: a shorter list before any scroll; off: it hid the artifact)
   }
 
   /// <summary>What the host sees this tick of the artifact steps.</summary>
@@ -191,6 +209,12 @@ namespace RealmForge {
     public bool AutoConfirm;
     /// <summary>The card's button is seen on the picture as the game's blue button (so the click cannot land on a neighbour).</summary>
     public bool ReplaceBtnSeen;
+    /// <summary>The artifact's cell where the game has put it (its picture, client px: x, y, w, h), fresh and wholly in the viewport; null = not seen live (the layout's place).</summary>
+    public double[] CellLive;
+    /// <summary>The «Скрыть надетое» toggle's live rect (client px), fresh and on the form on top; null = the geometry's.</summary>
+    public double[] FilterLive;
+    /// <summary>The filter step is over for this goal (set, given up, or the player's own toggling): the pilot goes on to the cell.</summary>
+    public bool FilterSpent;
   }
 
   public sealed class ArtEquipMove {
@@ -208,14 +232,30 @@ namespace RealmForge {
     public const int UserPauseMs = 4000, AfterTabMs = 1500, AfterOpenMs = 2200, AfterConfirmMs = 2500, SettleMs = 700;
     public const int MaxStepClicks = 4, MaxActions = 60, MaxClicks = 12, MaxDrags = 40, MaxWorkMs = 4 * 60 * 1000;
     public const double MinDragPx = 24;
+    /// <summary>The filter toggle's answer (the game rebuilds the list at once); two presses without it and the pilot scrolls instead.</summary>
+    public const int AfterFilterMs = 900, MaxFilterClicks = 2;
+    /// <summary>After a drag: the scroll's first move is awaited up to DragLandMs (none: the list did not move), then still = two equal reads StillMs apart; never longer than DragMaxMs.</summary>
+    public const int DragLandMs = 600, StillMs = 50, DragMaxMs = 1500;
+    /// <summary>Once a cell or filter click showed its effect (the step moved on), the rest of its wait is cut to this.</summary>
+    public const int EffectSettleMs = 400;
+    /// <summary>Test knobs for the before/after bench (tests/GameSim.cs --art-bench): the old way, no filter and a fixed wait after each drag.</summary>
+    public bool NoFilter, FixedDragWait;
 
     string latched = "";
     long waitUntil, pauseUntil, workSince;
     ArtEquipTodo kind; int kindClicks, actions, clicks, drags;
     double dragFrom = double.NaN; int dragStill;
+    bool dragWait, dragMoved; long dragAt, stillAt; double stillY = double.NaN;
+    int filterClicks, filterWant = -1; bool filterSpent;
+    string actedKey = "";
     public string Trace = "";
 
-    public void Reset() { latched = ""; waitUntil = pauseUntil = workSince = 0; kind = ArtEquipTodo.Nothing; kindClicks = actions = clicks = drags = 0; dragFrom = double.NaN; dragStill = 0; Trace = ""; }
+    public void Reset() {
+      latched = ""; waitUntil = pauseUntil = workSince = 0; kind = ArtEquipTodo.Nothing; kindClicks = actions = clicks = drags = 0; dragFrom = double.NaN; dragStill = 0; Trace = "";
+      dragWait = dragMoved = false; dragAt = stillAt = 0; stillY = double.NaN; filterClicks = 0; filterWant = -1; filterSpent = false; actedKey = "";
+    }
+    /// <summary>The filter step is over (set, given up after MaxFilterClicks, or switched off by the knob): the host shows the cell, the pilot scrolls.</summary>
+    public bool FilterSpent { get { return filterSpent || NoFilter; } }
     public void Halt(string why) { if (latched == "") latched = why; }
     public bool Stopped { get { return latched != ""; } }
     public string Reason { get { return latched; } }
@@ -228,6 +268,7 @@ namespace RealmForge {
       if (st.Guess) { why = "guess"; return ArtEquipTodo.Hint; }
       var h = v.Hero;
       if (h == null || !h.FormOk) { why = "screen"; return ArtEquipTodo.Hint; }
+      if (st.Filter && !v.FilterSpent && (st.Kind == ArtEquipKind.PickCell || st.Kind == ArtEquipKind.NotInList)) return ArtEquipTodo.Filter;
       switch (st.Kind) {
         case ArtEquipKind.ArtTab: return ArtEquipTodo.Tab;
         case ArtEquipKind.OpenList: return ArtEquipTodo.OpenList;
@@ -242,6 +283,7 @@ namespace RealmForge {
           if (!v.AutoConfirm) { why = "player"; return ArtEquipTodo.Hint; }
           return ArtEquipTodo.Confirm;
         case ArtEquipKind.NotInList: why = "list"; return ArtEquipTodo.Hint;
+        case ArtEquipKind.Unfit: why = "unfit"; return ArtEquipTodo.Hint;   // the game's own refusal: the reason on the plate, no click at all
         default: why = "screen"; return ArtEquipTodo.Hint;
       }
     }
@@ -251,6 +293,9 @@ namespace RealmForge {
     public ArtEquipMove Step(ArtEquipView v) {
       var m = new ArtEquipMove();
       if (latched != "") { m.State = "stopped"; m.Why = latched; return m; }
+      FilterAnswer(v);
+      v.FilterSpent = v.FilterSpent || FilterSpent;
+      if (v.FilterSpent && v.Step != null && v.Step.Filter && v.Step.Kind == ArtEquipKind.PickCell) v.Step.Filter = false;   // done with the filter: the cell's own frame
       string why;
       var todo = Decide(v, out why);
       if (todo == ArtEquipTodo.Nothing || todo == ArtEquipTodo.Hint) { m.State = "hint"; m.Why = why; kind = ArtEquipTodo.Nothing; kindClicks = 0; return m; }
@@ -260,9 +305,12 @@ namespace RealmForge {
       m.State = "work"; m.Todo = todo;
       if (workSince == 0) workSince = v.NowMs;
       if (v.NowMs - workSince > MaxWorkMs || actions >= MaxActions) return Abort(m, "stuck");
+      // the last click showed its effect (the step moved on): the rest of its wait is cut short
+      if (actedKey != "" && v.Step.Key != actedKey) { actedKey = ""; if (!dragWait) waitUntil = Math.Min(waitUntil, v.NowMs + EffectSettleMs); }
       if (v.NowMs < waitUntil) return m;
       if (todo != kind) { kind = todo; kindClicks = 0; }
       if (todo == ArtEquipTodo.Cell) return Cell(m, v);
+      if (todo == ArtEquipTodo.Filter) return FilterClick(m, v);
       if (++kindClicks > MaxStepClicks) return Abort(m, "stuck");
       var step = v.Step;
       string key = ArtEquipFrames.KeyOf(step.Kind, step.HasWorn);
@@ -277,28 +325,68 @@ namespace RealmForge {
       var l = v.Hero != null ? v.Hero.ArtList : null;
       if (f == null || l == null || !l.Has || f.ViewH <= 0) return Abort(m, "screen");
       double sy = l.ScrollY;
-      if (!double.IsNaN(dragFrom)) {
+      if (dragWait) {
+        // the drag's answer: the scroll's first move (none within DragLandMs: the list did not follow), then still over two reads StillMs apart
+        long dt = v.NowMs - dragAt;
+        if (!dragMoved && Math.Abs(sy - dragFrom) >= 0.5) { dragMoved = true; stillY = sy; stillAt = v.NowMs; }
+        if (!dragMoved) {
+          if (dt < DragLandMs) return m;
+          dragWait = false; dragFrom = double.NaN;
+          if (++dragStill >= 2) return Abort(m, "lost");
+        } else {
+          if (Math.Abs(sy - stillY) >= 0.5) { stillY = sy; stillAt = v.NowMs; }
+          if (v.NowMs - stillAt < StillMs && dt < DragMaxMs) return m;
+          dragWait = false; dragFrom = double.NaN; dragStill = 0;
+          if (dt > 0) Say("still after " + dt + " ms");
+        }
+      } else if (!double.IsNaN(dragFrom)) {
         if (Math.Abs(sy - dragFrom) < 0.5) { if (++dragStill >= 2) return Abort(m, "lost"); } else dragStill = 0;
         dragFrom = double.NaN;
+      }
+      // the cell where the game has put it: its live picture, wholly in view - one click on its centre (the host checks the read again at the click)
+      long goal = v.Hero.ArtUids.Count >= v.Step.Pos && v.Step.Pos > 0 ? v.Hero.ArtUids[v.Step.Pos - 1] : 0;
+      if (v.CellLive != null && v.CellLive.Length >= 4 && v.CellLive[2] > 4 && v.CellLive[3] > 4) {
+        if (++kindClicks > MaxStepClicks) return Abort(m, "stuck");
+        if (++clicks > MaxClicks) return Abort(m, "lost");
+        return Click(m, v, new AutoAction { Kind = AutoKind.Click, X = v.CellLive[0] + v.CellLive[2] / 2.0, Y = v.CellLive[1] + v.CellLive[3] / 2.0, Cell = goal }, AfterOpenMs, "artifact (live)");
       }
       double cardH = 110 * v.U / GameGeometry.CanvasH;
       if (f.Mark.Kind == "box" && f.Mark.H >= 0.6 * cardH) {
         if (++kindClicks > MaxStepClicks) return Abort(m, "stuck");
         if (++clicks > MaxClicks) return Abort(m, "lost");
-        return Click(m, v, new AutoAction { Kind = AutoKind.Click, X = f.Mark.X + f.Mark.W / 2.0, Y = f.Mark.Y + f.Mark.H / 2.0 }, AfterOpenMs, "artifact");
+        return Click(m, v, new AutoAction { Kind = AutoKind.Click, X = f.Mark.X + f.Mark.W / 2.0, Y = f.Mark.Y + f.Mark.H / 2.0, Cell = goal }, AfterOpenMs, "artifact");
       }
       double dy = Math.Max(-0.8 * f.ViewH, Math.Min(0.8 * f.ViewH, f.ScrollPx));   // content follows the pointer: + = later rows move down
       if (Math.Abs(dy) < MinDragPx) dy = dy < 0 ? -MinDragPx : MinDragPx;
       if (++drags > MaxDrags) return Abort(m, "lost");
       actions++; dragFrom = sy;
-      waitUntil = v.NowMs + SettleMs + 300;
+      if (FixedDragWait || double.IsNaN(sy)) waitUntil = v.NowMs + SettleMs + 300;
+      else { dragWait = true; dragMoved = false; dragAt = v.NowMs; waitUntil = v.NowMs + StillMs; }   // no fixed wait: the scroll's own answer
       Say("scroll " + (int)dy);
       m.Action = new AutoAction { Kind = AutoKind.Drag, X = f.ViewX + f.ViewW / 2, Y = f.ViewY + f.ViewH / 2 - dy / 2, DY = dy };
       return m;
     }
 
+    // the filter's answer: the flag read from the panel became the wanted one (done for this goal), or no answer after MaxFilterClicks presses (given up: scroll)
+    void FilterAnswer(ArtEquipView v) {
+      if (filterWant < 0 || v.Hero == null) return;
+      if (v.Hero.ArtHideWorn == filterWant) { filterWant = -1; filterSpent = true; waitUntil = Math.Min(waitUntil, v.NowMs + EffectSettleMs); Say("filter " + (v.Hero.ArtHideWorn == 1 ? "on" : "off") + ", " + v.Hero.ArtUids.Count + " in the list"); return; }
+      if (v.NowMs >= waitUntil && filterClicks >= MaxFilterClicks) { filterWant = -1; filterSpent = true; Say("filter: no effect after " + filterClicks + " presses, scrolling"); }
+    }
+
+    ArtEquipMove FilterClick(ArtEquipMove m, ArtEquipView v) {
+      if (filterClicks >= MaxFilterClicks) { filterSpent = true; return m; }
+      double[] r = v.FilterLive;
+      if (r == null) { var g = ArtFrames.Rect(v.Geometry, ArtEquipFrames.KeyHideWorn, v.W, v.H, v.U); if (g != null) r = new[] { g.X, g.Y, g.W, g.H }; }
+      if (r == null) { filterSpent = true; return m; }
+      filterClicks++; filterWant = v.Hero.ArtHideWorn == 1 ? 0 : 1;
+      return Click(m, v, new AutoAction { Kind = AutoKind.Click, X = r[0] + r[2] / 2, Y = r[1] + r[3] / 2 }, AfterFilterMs, "filter " + (filterWant == 1 ? "on" : "off") + (v.FilterLive != null ? " (live)" : ""));
+    }
+
     ArtEquipMove Click(ArtEquipMove m, ArtEquipView v, AutoAction a, int waitMs, string what) {
       actions++; waitUntil = v.NowMs + waitMs;
+      // a cell or the filter: their effect is final at once (the selection, the flag), so a wait cut short is safe; the tab and the list slide in, their waits stay
+      actedKey = v.Step != null && (kind == ArtEquipTodo.Cell || kind == ArtEquipTodo.Filter) ? v.Step.Key : "";
       Say(what + " " + (int)a.X + "," + (int)a.Y);
       m.Action = a;
       return m;

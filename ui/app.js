@@ -1203,7 +1203,7 @@
       // the way to the hero is the gear steps' one: the «Герои» button, the list with the hero framed (the host draws it while the artifact step is «hero»)
       heroTips = [t('hHeroPick', p.heroName), t('hHeroFind', p.heroName), t('hHeroUp', p.heroName), t('hHeroDown', p.heroName), t('hHeroesBtn'), t('hHeroBack')];
       texts.art_caps = t('artCaps', p.heroName);
-      ['hero', 'wait', 'tab', 'open', 'openAdd', 'missing', 'replace', 'equip', 'confirm'].forEach((k) => { texts['art_' + k] = k === 'hero' ? t('artS_hero', p.heroName) : t('artS_' + k); });
+      ['hero', 'wait', 'tab', 'open', 'openAdd', 'missing', 'filter', 'unfit', 'unfitEx', 'replace', 'equip', 'confirm'].forEach((k) => { texts['art_' + k] = k === 'hero' ? t('artS_hero', p.heroName) : t('artS_' + k); });
       texts.art_pick = p.artifact.name ? t('artS_pick', p.artifact.name) : t('artS_pickAny');
       line1 = texts['art_' + G.artStep(g)] || '';
     }

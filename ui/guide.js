@@ -178,7 +178,7 @@
   const HIGHLIGHT = { pick: 1, filter: 1, rel: 1, selected: 1 };
 
   // The artifact step's text key (i18n artS_<step>) and its line for the plates: pick names the artifact when the site sent a name.
-  const ART_STEPS = { hero: 1, wait: 1, tab: 1, open: 1, openAdd: 1, pick: 1, missing: 1, replace: 1, equip: 1, confirm: 1, done: 1 };
+  const ART_STEPS = { hero: 1, wait: 1, tab: 1, open: 1, openAdd: 1, pick: 1, missing: 1, filter: 1, unfit: 1, unfitEx: 1, replace: 1, equip: 1, confirm: 1, done: 1 };
   function artStep(g) { const s = g && g.art && g.art.step; return ART_STEPS[s] ? s : 'wait'; }
   function highlightUid(g) { return g && g.item && HIGHLIGHT[g.kind] ? g.item.uid : 0; }
 
