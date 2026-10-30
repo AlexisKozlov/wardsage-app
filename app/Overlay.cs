@@ -1042,7 +1042,7 @@ namespace RealmForge {
     }
 
     void TickHint() {
-      confirmBtn = null; filterOpen = false; filterState = "";
+      confirmBtn = null; confirmBlueNone = false; filterOpen = false; filterState = "";
       if ((hintKind == "" && target == 0) || addrs == null) { HideTip(); return; }
       IntPtr hwnd = GameWindow();
       if (hwnd == IntPtr.Zero || W32.IsIconic(hwnd) || !IsForeground(hwnd)) { HideTip(); return; }
@@ -1666,7 +1666,8 @@ namespace RealmForge {
       };
       { var cs = screens.Current;   // the item's tip among the shown forms (a pilot's flow form of the hero screen: ScreenMap.FlowForms)
         v.TipKnown = RFX.UiKnown && !formsUnread && cs != null && !cs.Held && cs.Kind == ScreenKind.HeroScreen && cs.OfferRead && formsKind == ScreenKind.HeroScreen;
-        v.TipShown = cs != null && ((cs.Flow ?? "") + "," + (cs.ModalWhy ?? "")).Contains(EquipTipForm); }
+        v.TipShown = cs != null && ((cs.Flow ?? "") + "," + (cs.ModalWhy ?? "")).Contains(EquipTipForm);
+        v.BlueNone = confirm && confirmBlueNone; }
       userClick = false; lastAutoView = v; lastClientW = cr.R; lastClientH = cr.B;
       // an offer pop-up over the city is closed before the plan's next step (the equip helper has no preflight of its own here)
       if ((runHero > 0 || target > 0) && v.Foreground && !v.UserBusy && OfferStep(ClickOwner.Equip, screens.Current, o, cr, v.Foreground, now)) return;
@@ -3463,6 +3464,7 @@ namespace RealmForge {
     const string EquipTipForm = "Form_CharactorEquipTip";
     int[] ConfirmButton(W32.POINT o, double W, double H) {
       int[] rep = FindBlue(o, hg.Replace(W, H), H), eq = FindBlue(o, hg.Equip(W, H), H);
+      confirmBlueNone = rep == null && eq == null;
       // the item a single button was found for is on the hero now: that button kind is the one at this window size
       if (confirmChoice.PendingItem > 0 && addrs != null && hintHero > 0 && RFX.ReadOwner(addrs, confirmChoice.PendingItem) == hintHero) confirmChoice.Worn(confirmChoice.PendingItem);
       int[] btn = confirmChoice.Pick(rep, eq, target, W, H);
@@ -3492,6 +3494,7 @@ namespace RealmForge {
       }
       return btn;
     }
+    bool confirmBlueNone;   // the last confirm search saw no blue button at all (AutoView.BlueNone)
     long confirmMissLogged, confirmFoundLogged, confirmMissSince, confirmMissFor, confirmTieLogged;
     readonly ConfirmChoice confirmChoice = new ConfirmChoice();
 

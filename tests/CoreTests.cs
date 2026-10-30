@@ -4679,7 +4679,7 @@ static partial class CoreTests {
     {
       var lg = new ListGeometry(); double UH = 689; var types = new[] { 0, 1, 1, 1 };
       Func<long, bool, bool, int[], AutoView> av = (t, known, shown, btn) => new AutoView { NowMs = t, Foreground = true, H = UH, Target = 55070, Row = 2, Col = 1, Sel = 55070, SelRow = 2, SelCol = 1,
-        AnchorHas = true, Row1Top = (lg.ViewTop + ListGeometry.TopPad) * UH, Types = types, AutoConfirm = true, Button = btn, Hero = 204200000, ScreenHero = 204200000, Owner = 0, TipKnown = known, TipShown = shown };
+        AnchorHas = true, Row1Top = (lg.ViewTop + ListGeometry.TopPad) * UH, Types = types, AutoConfirm = true, Button = btn, Hero = 204200000, ScreenHero = 204200000, Owner = 0, TipKnown = known, TipShown = shown, BlueNone = btn == null };
       var p = new AutoPilot(lg);
       Eq(AutoKind.None, p.Step(av(1000, true, false, null)).Kind, "tip: the selected item with no tip: a moment first");
       Eq(AutoKind.None, p.Step(av(1000 + AutoPilot.TipReopenMs + 1, false, false, null)).Kind, "tip: never while the shown forms are not read");
@@ -4694,6 +4694,21 @@ static partial class CoreTests {
       p2.NotSent();
       var c2 = p2.Step(av(1000 + 10 * AutoPilot.TipReopenMs + 2, true, true, btn));
       Check(c2.Kind == AutoKind.Click && Math.Abs(c2.X - 800) < 1, "tip: a press the gate held back is not counted: pressed on the next step");
+      // live 1.6.66.349 (1350x689): the click on the selected item changed nothing twice - the second try anchors the rows again (the
+      // list's middle), never the same point; a tie of two blue buttons (no BlueNone) is no reason to click at all
+      {
+        var p4 = new AutoPilot(lg); p4.Step(av(1000, true, false, null));
+        var k1 = p4.Step(av(1000 + AutoPilot.TipReopenMs + 1, true, false, null));
+        var k2 = p4.Step(av(1000 + 2 * AutoPilot.TipReopenMs + 2, true, false, null));
+        double mid = (lg.ViewTop + lg.ViewBottom) / 2 * UH;
+        Check(k1.Kind == AutoKind.Click && k2.Kind == AutoKind.Click && Math.Abs(k2.Y - k1.Y) > 5 && Math.Abs(k2.Y - mid) < lg.PitchY * UH,
+              "tip: the second try clicks the list's middle to anchor the rows again (" + (int)k1.X + "," + (int)k1.Y + " then " + (int)k2.X + "," + (int)k2.Y + ")");
+        var k3 = p4.Step(av(1000 + 2 * AutoPilot.TipReopenMs + 600, true, false, null)); var v5 = av(1000 + 2 * AutoPilot.TipReopenMs + 1200, true, false, null); v5.Sel = 55681; v5.SelRow = 3; v5.SelCol = 1;
+        var k4 = p4.Step(v5);
+        Check(k4.Kind == AutoKind.Click && p4.State == "work", "tip: another item selected by it: the plan's item is clicked as any (" + k4.Kind + " " + p4.State + ")");
+        var p5 = new AutoPilot(lg); p5.Step(av(1000, true, false, null)); var tie = av(1000 + AutoPilot.TipReopenMs + 1, true, false, null); tie.BlueNone = false;
+        Eq(AutoKind.None, p5.Step(tie).Kind, "tip: two blue buttons (a tie) are no closed tip: no click");
+      }
       var p3 = new AutoPilot(lg); p3.Step(av(0, true, false, null)); int n = 0;
       for (long t = AutoPilot.TipReopenMs + 1; t < 60000; t += 300) if (p3.Step(av(t, true, false, null)).Kind == AutoKind.Click) n++;
       Check(n == AutoPilot.TipReopens && p3.State == "unconfirmed", "tip: at most " + AutoPilot.TipReopens + " clicks, then unconfirmed (" + n + ", " + p3.State + ")");

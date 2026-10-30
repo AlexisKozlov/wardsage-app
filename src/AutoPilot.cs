@@ -51,7 +51,9 @@ namespace RealmForge {
     public bool PanelOk = true;
     /// <summary>The game's window table was read for this hero screen (the shown forms are known) and whether the item's tip
     /// (Form_CharactorEquipTip, the card with «Надеть» / «Заменить») is among them.</summary>
-    public bool TipKnown, TipShown;    // the game's panel table is readable (false while the addresses are scanned again)
+    public bool TipKnown, TipShown;
+    /// <summary>Neither blue button search saw one (no «Заменить», no «Надеть»; not a tie of two): the card is not on the screen.</summary>
+    public bool BlueNone;    // the game's panel table is readable (false while the addresses are scanned again)
   }
 
   public sealed class AutoPilot {
@@ -100,7 +102,7 @@ namespace RealmForge {
     /// item's tip is not counted (live 1.6.66.348 sim: the press that met the tip's first read was taken for made, the retry met a failed read - unconfirmed).</summary>
     public void NotSent() {
       if (lastAct == 1) { confirmed = lastRetry; if (lastRetry) confirmRetries--; waitUntil = 0; }
-      else if (lastAct == 2) { tipReopens--; waitUntil = 0; }
+      else if (lastAct == 2) { tipReopens--; waitUntil = 0; calibPending = false; }
       lastAct = 0;
     }
 
@@ -146,12 +148,23 @@ namespace RealmForge {
       // the item is selected but its tip is known closed: the game keeps the selection after the tip went (an Escape, the app
       // started on it - live 1.6.66.348: «no single blue button», no step for 2 min). The item is clicked again: it opens the
       // tip, or clears the selection and the next item click selects it with its tip
-      if (v.Button == null && v.TipKnown && !v.TipShown && v.NowMs - selSince >= TipReopenMs) {
-        if (tipReopens >= TipReopens) { State = "unconfirmed"; Why = "the item's tip does not open (" + tipReopens + " clicks on the selected item)"; Trace = "unconfirmed: " + Why; return AutoAction.Nothing; }
-        var pt = ItemPoint(v); if (pt == null) return AutoAction.Nothing;
-        tipReopens++; selSince = v.NowMs; waitUntil = v.NowMs + AfterClickMs; lastAct = 2;
-        Trace = "the tip of item " + v.Target + " is not open: the item clicked again at " + (int)pt[0] + "," + (int)pt[1] + " (" + tipReopens + " of " + TipReopens + ")";
-        return Click(pt[0], pt[1]);
+      // (only for that known reason: no blue button at all and the window table read without the tip form)
+      if (v.Button == null && v.BlueNone && v.TipKnown && !v.TipShown && v.NowMs - selSince >= TipReopenMs) {
+        if (tipReopens >= TipReopens) { State = "unconfirmed"; Why = "the item's tip does not open (" + tipReopens + " clicks for it)"; Trace = "unconfirmed: " + Why; return AutoAction.Nothing; }
+        tipReopens++; selSince = v.NowMs; lastAct = 2;
+        var pt = tipReopens == 1 ? ItemPoint(v) : null;
+        if (pt != null) {
+          waitUntil = v.NowMs + AfterClickMs;
+          Trace = "the tip of item " + v.Target + " is not open (no blue button, no tip form shown): the item clicked again at " + (int)pt[0] + "," + (int)pt[1];
+          return Click(pt[0], pt[1]);
+        }
+        // the click on the item changed nothing (live 1.6.66.349: two clicks at 65,179, the selection and the closed tip stayed - the rows
+        // are not where the anchor puts them): an item in the list's middle is clicked to anchor the rows again (it selects another
+        // item; the plan's item is then clicked as any, which opens its tip)
+        needCalib = true;
+        var a = ItemStep(v);
+        Trace = "the tip of item " + v.Target + " is still not open: the rows are anchored again" + (a.Kind == AutoKind.Click ? " at " + (int)a.X + "," + (int)a.Y : "");
+        return a;
       }
       if (v.Button == null || v.NowMs - selSince < ConfirmSettleMs) return AutoAction.Nothing;  // the item card is opening
       confirmed = true; waitUntil = v.NowMs + AfterConfirmMs; lastAct = 1;

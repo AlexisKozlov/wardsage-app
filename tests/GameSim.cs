@@ -514,6 +514,7 @@ static partial class CoreTests {
       // (app/Overlay.cs TickAuto: the tip among the shown forms)
       v.TipKnown = !formsUnread && scr != null && !scr.Held && scr.Kind == ScreenKind.HeroScreen && scr.OfferRead && formsKind == ScreenKind.HeroScreen;
       v.TipShown = scr != null && ((scr.Flow ?? "") + "," + (scr.ModalWhy ?? "")).Contains(SimTip);
+      v.BlueNone = !tip;
       var a = ip.Step(v);
       PilotState = "item_" + ip.State;
       if (ip.State == "done") { Done = "done"; return; }
