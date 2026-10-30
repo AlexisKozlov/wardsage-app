@@ -1,6 +1,6 @@
 // A deterministic model of the game's UI for the pilots (built into CoreTests; C# 5 like the rest of it):
 //
-//   CoreTests --sim <seeds> [--from <n>] [--slow-only] [--seed <n>] [--verbose] [--list <outcome>] [--digest]   (SIM_TRACE=1: every click with the fresh state;
+//   CoreTests --sim <seeds> [--from <n>] [--slow-only] [--real] [--seed <n>] [--verbose] [--list <outcome>] [--digest]   (SIM_TRACE=1: every click with the fresh state;
 //   --digest: a line a seed with its outcome and a hash of its presses; --list: each seed whose "owner machine outcome" contains the text, with the hero pilot's why)
 //
 // The game: a stack of forms (the city at the bottom; the hero screen, the inventory and the Foundry the app reads; any form of the screen
@@ -43,6 +43,7 @@ static partial class CoreTests {
     public readonly List<string> Bad = new List<string>(), Log = new List<string>();
     public readonly StringBuilder Acts = new StringBuilder();   // every click / drag / Escape with its time (--digest)
     public int CityEscapes;
+    public double SpawnP = 0.04;   // a pop-up the game opens by itself, a click (--real: 0.01)
     public string OwnScreen = "";   // the full screen the pilot works on: never an Escape there during its run
     // the plan's item in the hero's gear list (row 2, column 1: AutoPilot's ListGeometry) and its state: selected (the game keeps the selection
     // when its tip closes: the laptop 1.6.66.348), worn; the gear list takes item clicks only once the pilot is at the item (ItemPhase)
@@ -118,10 +119,13 @@ static partial class CoreTests {
     string TopForm() { for (int i = Stack.Count - 1; i >= 0; i--) if (ScreenMap.ClassOf(Stack[i]) != 'O') return Stack[i]; return SimCity; }
     /// <summary>Now and then a pop-up the game opens by itself (a reward, a notice, a loading).</summary>
     void MaybeSpawn() {
-      if (R.NextDouble() >= 0.04) return;
+      if (R.NextDouble() >= SpawnP) return;
       string f = SimPick(R, R.Next(3) == 0 ? 'W' : R.Next(2) == 0 ? 'P' : 'E');
-      if (f != null && (ScreenMap.ClassOf(f) != 'E' || !CityClear)) Later(500 + R.Next(2500), () => Push(f));
+      // (never a pilot's flow form of the screen it would open over: the game opens those only from that screen's own buttons - the app takes them
+      // for a sub-state of the screen, ScreenMap.FlowForms)
+      if (f != null && (ScreenMap.ClassOf(f) != 'E' || !CityClear)) Later(500 + R.Next(2500), () => { if (!ScreenMap.IsFlow(FullKind, f)) Push(f); });
     }
+    ScreenKind FullKind { get { string f = Full; return f == SimHero ? ScreenKind.HeroScreen : f == SimInv ? ScreenKind.Inventory : f == SimFoundry ? ScreenKind.Foundry : ScreenKind.Unknown; } }
 
     public bool Searching(string f) { long t; return findAt.TryGetValue(f, out t) && Now < t && Stack.Contains(f); }
     bool Found(string f) { long t; return (!findAt.TryGetValue(f, out t) || Now >= t) && !(Now >= LostFrom && Now < LostTo); }
@@ -374,7 +378,7 @@ static partial class CoreTests {
           if (fresh.Count > 0) { inp.TopNew = topNewNow = string.Join(",", fresh.ToArray()); topNewKind = cls; }
         }
         if (cls == ScreenKind.Unknown || cls == ScreenKind.City) topBaseKind = cls;
-      } else unknownForms = null;
+      } else { unknownForms = null; unknownFormsAt = 0; }   // (app/Overlay.cs: the forms read again the moment the offer list goes)
     }
     public void ReadScreens(long now) {
       Now = now;
@@ -618,20 +622,22 @@ static partial class CoreTests {
   static readonly string[] SimNamed = { "Form_Union", "Form_PVPMain", "Form_Shop" };
 
   /// <summary>One seed: the start, the task, the run. Returns "" when the run kept every rule, else what went wrong.</summary>
-  static string SimRun(int seed, bool slowOnly, bool verbose, Dictionary<string, int> outcomes, GameGeometry geo, string list = null) {
+  static string SimRun(int seed, bool slowOnly, bool verbose, Dictionary<string, int> outcomes, GameGeometry geo, string list = null, bool real = false) {
     var r = new Random(seed * 7919 + 13);
     bool slow = slowOnly || r.Next(2) == 0;
     double failP = r.Next(3) == 0 ? 0.0 : r.NextDouble() * 0.15;
-    var g = new SimGame(seed, slow, failP); g.Geo = geo;
+    var g = new SimGame(seed, slow, failP); g.Geo = geo; if (real) g.SpawnP = 0.01;
     var owner = new[] { ClickOwner.Equip, ClickOwner.Sell, ClickOwner.Locate }[r.Next(3)];
     // the start: a screen and the forms over it
     int k = r.Next(10);
     if (k == 2) { g.Hero.Shown = 100 + r.Next(30); g.Push(SimHero); if (r.Next(3) == 0) g.Hero.Part = r.Next(5); }
     else if (k == 3 || k == 4) { g.InvEquipTab = r.Next(2) == 0; g.InvBulk = g.InvEquipTab && r.Next(3) == 0; g.Push(SimInv); if (k == 4) { g.FoundryTab = new[] { 0, 2, 3 }[r.Next(3)]; g.Push(SimFoundry); } }
     else if (k >= 5) { int n = 1 + r.Next(2); for (int i = 0; i < n; i++) g.Push(r.Next(2) == 0 ? SimNamed[r.Next(SimNamed.Length)] : SimPick(r, 'F')); }
-    int extra = r.Next(3);
+    // (the stress mix: 0-2 forms over the start, a tenth of them dangerous; --real: a form over the start one run in six, a dangerous one 3 in 100 of those)
+    int extra = r.Next(3); if (real) extra = extra == 0 && r.Next(2) == 0 ? 1 : 0;
     for (int i = 0; i < extra; i++) {
-      int p = r.Next(100); char c = p < 45 ? 'P' : p < 65 ? 'E' : p < 75 ? 'D' : p < 82 ? 'W' : 'O';
+      int p = r.Next(100); if (real && p >= 65 && p < 75) p = r.Next(10) < 3 ? p : 50;
+      char c = p < 45 ? 'P' : p < 65 ? 'E' : p < 75 ? 'D' : p < 82 ? 'W' : 'O';
       string f = SimPick(r, c); if (f != null) g.Push(f);
     }
     if (slow && r.Next(8) == 0) { g.LostFrom = 2000 + r.Next(20000); g.LostTo = g.LostFrom + 17000; }
@@ -787,15 +793,27 @@ static partial class CoreTests {
         string got = string.Join(",", new List<string>(o1.Keys).ToArray());
         Check(got.EndsWith(" done"), "sim: seed " + seed + " brings up the plan's hero (" + got + ")");
       }
+      // (8) the 50 000-seed soak: a pop-up that came under an offer list (25906: the forms were not read again when the list went - a click under
+      // it), Escape while the slow laptop's Foundry was shown but not read yet (19461, 30660, 46982, 55636 slow: Escape on the pilot's own screen);
+      // the rest were a pilot's flow form the model opened by itself over its screen (the game opens those only from that screen's own buttons)
+      foreach (int seed in new[] { 11812, 12485, 14365, 19310, 25906, 26380, 56891 }) {
+        string e = SimRun(seed, false, false, oc, geo);
+        Check(e == "", "sim: seed " + seed + " keeps every rule" + (e != "" ? ": " + e.Split('\n')[0] + " " + (e.Split('\n').Length > 1 ? e.Split('\n')[1].Trim() : "") : ""));
+      }
+      foreach (int seed in new[] { 11753, 19461, 30660, 30839, 46982, 51899, 55636, 59452 }) {
+        string e = SimRun(seed, true, false, oc, geo);
+        Check(e == "", "sim: slow seed " + seed + " keeps every rule" + (e != "" ? ": " + e.Split('\n')[0] + " " + (e.Split('\n').Length > 1 ? e.Split('\n')[1].Trim() : "") : ""));
+      }
     }
   }
 
   static int SimMain(string[] args) {
     Layout.Use(TestLayout());
-    int seeds = 500, from = 0; bool slowOnly = false, verbose = false; string list = null;
+    int seeds = 500, from = 0; bool slowOnly = false, verbose = false, real = false; string list = null;
     for (int i = 1; i < args.Length; i++) {
       if (args[i] == "--slow-only") slowOnly = true;
       else if (args[i] == "--verbose") verbose = true;
+      else if (args[i] == "--real") real = true;
       else if (args[i] == "--seed" && i + 1 < args.Length) { from = int.Parse(args[++i]); seeds = 1; }
       else if (args[i] == "--from" && i + 1 < args.Length) from = int.Parse(args[++i]);
       else if (args[i] == "--list" && i + 1 < args.Length) list = args[++i];
@@ -806,7 +824,7 @@ static partial class CoreTests {
     var outcomes = new SortedDictionary<string, int>(); var tmp = new Dictionary<string, int>();
     int bad = 0; var sw = System.Diagnostics.Stopwatch.StartNew();
     for (int s = from; s < from + seeds; s++) {
-      string e = SimRun(s, slowOnly, verbose, tmp, geo, list);
+      string e = SimRun(s, slowOnly, verbose, tmp, geo, list, real);
       bool broke = e.Contains("\n    !! ");
       if (broke) bad++;
       if (e != "" && (verbose || bad <= 5)) Console.WriteLine(e);

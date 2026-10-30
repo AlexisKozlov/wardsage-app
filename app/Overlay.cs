@@ -2636,7 +2636,7 @@ namespace RealmForge {
           if (fresh.Count > 0) { inp.TopNew = topNewNow = string.Join(",", fresh.ToArray()); topNewKind = cls; }
         }
         if (cls == ScreenKind.Unknown || cls == ScreenKind.City) topBaseKind = cls;
-      } else unknownForms = null;
+      } else { unknownForms = null; unknownFormsAt = 0; }   // (an offer list on top: the forms are read again the moment it goes - a pop-up that came under it lies on top)
     }
 
     /// <summary>Before a pilot's step: an offer pop-up on top is closed first (its ×, through the gate). True = the tick is taken (a close was
