@@ -130,6 +130,69 @@ namespace RealmForge {
     public List<string> Shown;
   }
 
+  /// <summary>Every pilot's flow (owner rule 2026-10-30, city first). The equip helper with the filter's «hide worn» is Equip; the guides
+  /// without auto click (EquipGuide, the hint runs) click nothing and have no flow here.</summary>
+  public enum PilotFlow { Equip, ArtEquip, Sell, ArtSell, LocateAscend, LocateRecast, LocateArtPromote }
+
+  /// <summary>City first, for EVERY pilot: on a known screen from which the pilot cannot go on with its own flow, it first goes back to the city
+  /// (the hosts' shared BackStep: MapExit / CityBack / one EscapeBack, the gate's limits; never an Escape on the city or in a fight), then takes
+  /// its normal path. The screens a flow goes on from (its continuation set) are declared here; a flow's sub-state on one of them (a Locate
+  /// step that is not that screen's) comes in as <c>subAway</c> (LocateAuto.NeedsCityBack / ArtLocateAuto.NeedsCityBack). An unknown screen
+  /// is the unknown-screen back's (UnknownBackStep), the city is every flow's start.</summary>
+  public static class CityFirst {
+    public static readonly PilotFlow[] All = { PilotFlow.Equip, PilotFlow.ArtEquip, PilotFlow.Sell, PilotFlow.ArtSell, PilotFlow.LocateAscend, PilotFlow.LocateRecast, PilotFlow.LocateArtPromote };
+    static readonly ScreenKind[] EquipSet = { ScreenKind.City, ScreenKind.HeroScreen };   // the hero pilot walks the hero screen to the plan's hero and tab
+    static readonly ScreenKind[] SellSet = { ScreenKind.City, ScreenKind.HeroScreen, ScreenKind.Inventory };   // the inventory on any tab / mode: the pilot switches
+    static readonly ScreenKind[] AscendSet = { ScreenKind.City, ScreenKind.HeroScreen, ScreenKind.Inventory, ScreenKind.Foundry };   // any Foundry tab: «Вознесение»
+    static readonly ScreenKind[] RecastSet = { ScreenKind.City, ScreenKind.HeroScreen, ScreenKind.Inventory, ScreenKind.Gem };   // the recast path is the inventory's card -> the gem screen
+    static readonly ScreenKind[] ArtPromoteSet = { ScreenKind.City, ScreenKind.HeroScreen, ScreenKind.Inventory, ScreenKind.ArtWorkshop };
+
+    /// <summary>The screens the flow goes on from.</summary>
+    public static ScreenKind[] Continuations(PilotFlow f) {
+      switch (f) {
+        case PilotFlow.Equip: case PilotFlow.ArtEquip: return EquipSet;
+        case PilotFlow.Sell: case PilotFlow.ArtSell: return SellSet;
+        case PilotFlow.LocateAscend: return AscendSet;
+        case PilotFlow.LocateRecast: return RecastSet;
+        default: return ArtPromoteSet;
+      }
+    }
+
+    /// <summary>The screen the flow's last step is on (its work screen): never an Escape there during its run (ClickGate CheckEscape, with the
+    /// owners' ScreenMap.PilotScreen).</summary>
+    public static ScreenKind WorkScreen(PilotFlow f) {
+      switch (f) {
+        case PilotFlow.Equip: case PilotFlow.ArtEquip: return ScreenKind.HeroScreen;
+        case PilotFlow.Sell: case PilotFlow.ArtSell: return ScreenKind.Inventory;
+        case PilotFlow.LocateAscend: return ScreenKind.Foundry;
+        case PilotFlow.LocateRecast: return ScreenKind.Gem;
+        default: return ScreenKind.ArtWorkshop;
+      }
+    }
+
+    /// <summary>The Locate flow of a request's purpose (ascend | artPromote | anything else: the recast).</summary>
+    public static PilotFlow OfLocate(string purpose) {
+      return purpose == "ascend" ? PilotFlow.LocateAscend : purpose == "artPromote" ? PilotFlow.LocateArtPromote : PilotFlow.LocateRecast;
+    }
+
+    /// <summary>The flow goes on from this screen (null / unknown: not this check's, true). A recast's finished states on the Foundry's own
+    /// recast tab (the item selected there, a result's choice waiting: the player's) are a continuation too.</summary>
+    public static bool Continues(PilotFlow f, ScreenState s, LocateKind step = LocateKind.None) {
+      if (s == null || s.Kind == ScreenKind.Unknown) return true;
+      if (Array.IndexOf(Continuations(f), s.Kind) >= 0) return true;
+      return f == PilotFlow.LocateRecast && s.Kind == ScreenKind.Foundry && (step == LocateKind.Done || step == LocateKind.ChoosePending);
+    }
+
+    /// <summary>Back to the city first: a known screen other than the city that the flow does not go on from, or one it does but its sub-state
+    /// there is not the flow's (<paramref name="subAway"/>). A Locate request with nothing to drive (no item, another account) never goes back.</summary>
+    public static bool NeedsCity(PilotFlow f, ScreenState s, LocateKind step = LocateKind.None, bool subAway = false) {
+      if (s == null || s.Kind == ScreenKind.Unknown || s.Kind == ScreenKind.City) return false;
+      bool locate = f == PilotFlow.LocateAscend || f == PilotFlow.LocateRecast || f == PilotFlow.LocateArtPromote;
+      if (locate && (step == LocateKind.NoItem || step == LocateKind.OtherAccount)) return false;
+      return !Continues(f, s, step) || subAway;
+    }
+  }
+
   public sealed class ClickGate {
     /// <summary>How long an unreadable screen is waited for before the pilot stops.</summary>
     public const int UnknownGraceMs = ScreenTracker.HoldMs;
@@ -205,7 +268,7 @@ namespace RealmForge {
       }
     }
     public static bool IsArtTarget(ClickTarget t) { return t >= ClickTarget.ArtTab; }
-    /// <summary>The way to the inventory the artifact guide may also click (the hero screen's back arrow, the city's «Инвентарь»): it starts from any screen.</summary>
+    /// <summary>The way to the inventory the artifact guide and the artifact cleanup may also click (the hero screen's back arrow, the city's «Инвентарь»): they start from any screen.</summary>
     public static bool ArtLocateWay(ClickTarget t) { return t == ClickTarget.HeroBack || t == ClickTarget.CityInventory; }
     /// <summary>The targets of the hero screen's artifact steps (the Equip owner's).</summary>
     public static bool IsHeroArtTarget(ClickTarget t) { return t >= ClickTarget.ArtHeroTab; }
@@ -335,6 +398,9 @@ namespace RealmForge {
     readonly Dictionary<ClickOwner, ClickTarget> lastTarget = new Dictionary<ClickOwner, ClickTarget>();   // the owner's last click
     readonly Dictionary<ClickOwner, int> cityBacks = new Dictionary<ClickOwner, int>();       // CityBack presses in this run
     readonly Dictionary<ClickOwner, int> escapes = new Dictionary<ClickOwner, int>();         // EscapeBack presses in this run
+    /// <summary>The flow each owner runs now (the hosts set it every tick: CityFirst.OfLocate of the request's purpose ...); its work screen gets no Escape.</summary>
+    public readonly Dictionary<ClickOwner, PilotFlow> Flows = new Dictionary<ClickOwner, PilotFlow>();
+    readonly HashSet<ClickOwner> barRetried = new HashSet<ClickOwner>();                     // «Инвентарь» opened its bar neighbour: pressed again once
     readonly HashSet<ClickOwner> escapeDue = new HashSet<ClickOwner>();                       // a back press changed nothing: one Escape next
     readonly Dictionary<ClickOwner, int> tipEscapes = new Dictionary<ClickOwner, int>();      // EquipTipEscape presses in this run
     /// <summary>The item tip / compare forms the equip helper closes with EquipTipEscape before a slot step (its own flow forms: ScreenMap.FlowForms).</summary>
@@ -373,7 +439,7 @@ namespace RealmForge {
       halted.Remove(o); watches.Remove(o); unknownSince.Remove(o); noted.Remove(o); clickedAt.Remove(o); offerRun.Remove(o); haltDetail.Remove(o); foundryWait.Remove(o); ownUnreadWait.Remove(o);
       stall.Remove(o); stallBrief.Remove(o); searchWaited.Remove(o);
       unknownBacks.Remove(o); backTried.Remove(o); lastTarget.Remove(o);
-      cityBacks.Remove(o); escapes.Remove(o); escapeDue.Remove(o); cityTried.Remove(o); cellRetried.Remove(o); CellAgainDue.Remove(o); tipEscapes.Remove(o);
+      cityBacks.Remove(o); escapes.Remove(o); escapeDue.Remove(o); cityTried.Remove(o); cellRetried.Remove(o); CellAgainDue.Remove(o); tipEscapes.Remove(o); barRetried.Remove(o);
       mapMoves.Remove(o); mapTried.Remove(o);
     }
 
@@ -451,15 +517,11 @@ namespace RealmForge {
     /// <summary>The back press changed nothing but the screen is now one the pilot can go on from: no Escape any more.</summary>
     public void DropEscape(ClickOwner o) { escapeDue.Remove(o); }
 
-    /// <summary>A known screen the owner's pilot cannot start from, so back to the city first (CityBack): Equip starts in the city or on the hero
-    /// screen; Sell (the gear and the artifact cleanup) in the inventory, the city or the hero screen (its own HeroBack). Locate asks
-    /// LocateAuto.NeedsCityBack.</summary>
+    /// <summary>The gear pilots' city-first check (CityFirst.NeedsCity of the owner's gear flow): Equip goes on in the city or on the hero
+    /// screen; Sell in the inventory, the city or the hero screen (its own HeroBack). Locate asks CityFirst with its purpose's flow.</summary>
     public static bool AwayFromStart(ClickOwner o, ScreenState s) {
-      if (s == null || s.Kind == ScreenKind.Unknown || s.Kind == ScreenKind.City) return false;
-      switch (o) {
-        case ClickOwner.Equip: return s.Kind != ScreenKind.HeroScreen;
-        case ClickOwner.Sell: return s.Kind != ScreenKind.Inventory && s.Kind != ScreenKind.HeroScreen;
-      }
+      if (o == ClickOwner.Equip) return CityFirst.NeedsCity(PilotFlow.Equip, s);
+      if (o == ClickOwner.Sell) return CityFirst.NeedsCity(PilotFlow.Sell, s);
       return false;
     }
 
@@ -485,11 +547,20 @@ namespace RealmForge {
       if (s.Kind == ScreenKind.Unknown) return "the screen is not recognised";
       if (s.Held) return "the screen is held";
       if (s.OfferCount > 0) return "an offer pop-up is open";
-      if (s.ModalOpen) return "a pop-up is open (" + s.ModalWhy + ")";
+      if (s.ModalOpen && !FullScreensOver(s)) return "a pop-up is open (" + s.ModalWhy + ")";
       if (!string.IsNullOrEmpty(s.Flow)) return FlowBlock + s.Flow;
       if (HasForm(s.ShownKnown, BattleForms)) return "a fight's form is shown";
       if (ExitDialogShown(s)) return "the exit dialog is shown";
       return "";
+    }
+
+    /// <summary>The "pop-up" over the known screen is full screens only (the map's F: each left by the standard back arrow top left) - the window
+    /// table has no order, so one may lie UNDER the screen: the back arrow is the same press either way (it closes whichever is on top).</summary>
+    static bool FullScreensOver(ScreenState s) {
+      if (s.OfferCount > 0 || s.ModalWhy == null || !s.ModalWhy.StartsWith("form:")) return false;
+      var l = ShownForms(s); if (l.Count == 0) return false;
+      foreach (var n in l) { var e = ScreenMap.ByName(n); if (e == null || e.Class != 'F' || !e.StdBack) return false; }
+      return true;
     }
 
     /// <summary>The screen allows the one Escape press (EscapeBack): "" = yes. NEVER on the city (Escape there asks to quit the game), never in a
@@ -644,7 +715,9 @@ namespace RealmForge {
         case ClickTarget.CityBack: case ClickTarget.EscapeBack: {
           ScreenKind k = before != null ? before.Kind : ScreenKind.Unknown; int slot = before != null ? before.HeroSlot : -1;
           string top = before != null ? before.TopForm : ""; bool modal = before != null && before.ModalOpen; string why = before != null ? before.ModalWhy : "";
+          bool bulk = before != null && before.InvBulk, abulk = before != null && before.InvArtBulk;   // (in a sale mode the arrow may leave the mode first)
           return s => s.Kind != k || (k == ScreenKind.HeroScreen && s.HeroSlot != slot) || (k == ScreenKind.Unknown && s.TopForm != top) || s.OfferCount > 0 || (s.ModalOpen && !modal)
+                      || (k == ScreenKind.Inventory && (s.InvBulk != bulk || s.InvArtBulk != abulk))
                       || (modal && (!s.ModalOpen || s.ModalWhy != why));   // the pop-up the map's Escape closed
         }
         // the map's pop-up is no longer on top (a read that names no form on an unknown screen is not an effect)
@@ -706,6 +779,12 @@ namespace RealmForge {
           else if (w.Target == ClickTarget.AscendCell && s.Kind == ScreenKind.Foundry && cellRetried.Add(o)) {
             watches.Remove(o); CellAgainDue.Add(o);
             Note(o, "cell-again:" + w.ArmedAt, w.What + " changed nothing within the time (screen " + s.Brief + ") - the list is read again, the cell placed again once");
+          }
+          // «Инвентарь» took its neighbour in the city's bar («Сборка»: «План сборки», an offer list): city first again - the list is closed
+          // with its × / back arrow (OfferStep) and «Инвентарь» pressed again, once a run
+          else if (w.Target == ClickTarget.CityInventory && s.OfferCount > 0 && barRetried.Add(o)) {
+            watches.Remove(o);
+            Note(o, "bar-again:" + w.ArmedAt, w.What + " opened " + s.Offer + " instead (the bar's neighbour) - closed, back to the city, «Инвентарь» again once");
           }
           else Halt(o, "nochange", w.What + " changed nothing within the time (screen " + s.Brief + ")");
         }
@@ -791,7 +870,7 @@ namespace RealmForge {
       // the artifact cleanup never clicks, whatever the auto click setting says; nothing of the artifact tab is on any whitelist either
       // (with the site's artAuto switch and the auto click on - ArtSellAuto / ArtLocateAuto - the artifact flows click their Art* targets and nothing else)
       bool artT = IsArtTarget(r.Target);
-      if (r.Owner == ClickOwner.Sell && (NoSellClicks || (artT && !ArtSellAuto) || (ArtSellAuto && !artT) || (f != null && f.Kind == ScreenKind.Inventory && f.InvArtTab && r.Target != ClickTarget.InvEquipTab && !artT))) return Halt(r.Owner, "artifact", tag + ": " + (NoSellClicks || !ArtSellAuto ? "the artifact cleanup is hints only" : "not a target of the artifact cleanup"));
+      if (r.Owner == ClickOwner.Sell && (NoSellClicks || (artT && !ArtSellAuto) || (ArtSellAuto && !artT && !ArtLocateWay(r.Target)) || (f != null && f.Kind == ScreenKind.Inventory && f.InvArtTab && r.Target != ClickTarget.InvEquipTab && !artT))) return Halt(r.Owner, "artifact", tag + ": " + (NoSellClicks || !ArtSellAuto ? "the artifact cleanup is hints only" : "not a target of the artifact cleanup"));
       if (r.Owner == ClickOwner.Locate && (NoLocateClicks || (artT && !ArtLocateAuto) || (ArtLocateAuto && !artT && !ArtLocateWay(r.Target)))) return Halt(r.Owner, "artifact", tag + ": " + (NoLocateClicks || !ArtLocateAuto ? "the artifact guide is hints only" : "not a target of the artifact guide"));
       bool heroArt = IsHeroArtTarget(r.Target);
       if (artT && r.Owner == ClickOwner.Equip && !heroArt) return Halt(r.Owner, "target", tag + " is not a target Equip may click");
@@ -994,7 +1073,8 @@ namespace RealmForge {
       if (HintOnly(o)) return GateResult.Deny("off", tag + ": a hint run clicks nothing");
       tag = "EscapeBack (key)";
       // never on the screen the pilot works on (the hero screen of the equip helper ...): a pop-up there is the pilot's flow or a stop
-      if (f != null && !f.Held && ScreenMap.PilotScreen(o, f.Kind)) { escapeDue.Remove(o); return Halt(o, "dangerous", tag + ": never on the pilot's own screen " + f.Brief + " - nothing is pressed"); }
+      PilotFlow fl;
+      if (f != null && !f.Held && (ScreenMap.PilotScreen(o, f.Kind) || (Flows.TryGetValue(o, out fl) && f.Kind == CityFirst.WorkScreen(fl)))) { escapeDue.Remove(o); return Halt(o, "dangerous", tag + ": never on the pilot's own screen " + f.Brief + " - nothing is pressed"); }
       // the window table shows the pilot's own screen while the memory read does not have it yet (the slow laptop finds the Foundry / the
       // inventory seconds after it opens): the pop-up may lie over that screen - no Escape until it is read (then the rule above stops)
       string own = OwnScreenUnread(o, f);

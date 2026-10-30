@@ -4,6 +4,7 @@
 #   tests/run-sim.sh [seeds] [--scan] [--timing] (default 2000; --timing: the reader's costs and the pilots' times, --scan: the old region-scan reader)
 #   tests/run-sim.sh --soak N [--slow-only]    (N seeds, in blocks of 5000, each block's summary printed)
 #   (--real after N: the start pop-ups and the game's own pop-ups at a realistic rate - the done-rate a player sees; the default mix stresses the rules)
+#   tests/run-sim.sh --matrix [runs]          (city first: every pilot x every start screen, runs a cell; the soak runs it too)
 #   tests/run-sim.sh --seed S                  (one seed with its whole trace: what the game and the pilot did)
 #   tests/run-sim.sh --list TEXT [seeds]       (the seeds whose outcome contains TEXT, e.g. "slow wait:hero_failed")
 set -euo pipefail
@@ -26,7 +27,9 @@ case "${1:-}" in
       n=$(( N - from < 5000 ? N - from : 5000 ))
       $SIM $n --from $((10000 + from)) "$@" || rc=1
     done
+    $SIM 16 --matrix || rc=1
     exit $rc ;;
+  --matrix) $SIM "${2:-4}" --matrix ;;
   --seed) $SIM --seed "$2" --verbose "${@:3}" ;;
   --list) $SIM "${3:-2000}" --list "$2" ;;
   *) $SIM "${1:-2000}" "${@:2}" ;;

@@ -22,6 +22,7 @@ using RealmForge;
 
 static partial class CoreTests {
   const string SimCity = "Form_MainCity", SimHero = "Form_CharactorMain", SimInv = "Form_BackpackIntegration", SimFoundry = "Form_EquipSubliming";
+  const string SimGem = "Form_EquipGemMain", SimWs = "Form_EquipArtifactIntensify";   // the gem screen, the artifact workshop (over the inventory)
   const long SimItem = 777;
   // the equip flow's item tip: the game opens it when the pilot selects an item of the gear list (a flow form of the hero screen, never closed)
   const string SimTip = "Form_CharactorEquipTip";
@@ -31,7 +32,8 @@ static partial class CoreTests {
     public readonly Random R, R2; public readonly bool Slow; public readonly double FailP;   // (R2: the later additions, so the old seeds keep their runs)
     public readonly double W = 1920, H = 1009, U;
     public readonly FakeHeroGame Hero; readonly HeroGeometry hg = new HeroGeometry();
-    public bool InvEquipTab, InvBulk; public int FoundryTab;
+    public bool InvEquipTab, InvBulk, InvArtTab; public int FoundryTab;
+    public bool FoundryBuilt;   // the Foundry's form was built once: its reader gives "not open" after it closes (app RFX.ReadRecastScreenSafe)
     // the inventory's equipment list (8 columns; «Массовая продажа» ticks its cells) and the Foundry's Ascension list (5 columns, the slot tabs
     // narrow it): their items, the ticked / selected ones, the scroll (the game's units: a row is 118 / 108)
     public readonly List<long> InvItems = new List<long>(); public readonly HashSet<long> InvSel = new HashSet<long>(); public double InvScrollY; public ulong InvPtr = 11;
@@ -90,7 +92,7 @@ static partial class CoreTests {
                                 AscendList = FoundryTab == 2 ? new RFX.ListRead { ScrollY = AscScrollY, Cols = AscCols, RowUnits = AscRowUnits } : null };
     }
     public InventoryScreen Inv() {
-      var inv = new InventoryScreen { Open = true, EquipTab = InvEquipTab, Bulk = InvBulk, BulkKnown = true, ListPtr = InvPtr };
+      var inv = new InventoryScreen { Open = true, EquipTab = InvEquipTab && !InvArtTab, Bulk = InvBulk, BulkKnown = true, ListPtr = InvPtr, ArtTab = InvArtTab, ArtBulkKnown = true, ArtMode = -1 };
       if (InvEquipTab) { inv.Uids.AddRange(InvItems); foreach (var u in InvSel) inv.Selected.Add(u); inv.List = new RFX.ListRead { ScrollY = InvScrollY, Cols = InvCols, RowUnits = InvRowUnits }; }
       return inv;
     }
@@ -123,6 +125,7 @@ static partial class CoreTests {
     public void Push(string f) {
       Stack.Add(f); Say("open " + f); openAt[f] = Now;
       if (ScreenMap.ClassOf(f) == 'W') { long ms = 2000 + R.Next(8000); Later(ms, () => Remove(f)); }   // a loading / result screen goes by itself
+      if (f == SimFoundry) FoundryBuilt = true;
       if (Slow && (f == SimInv || f == SimFoundry) && !findAt.ContainsKey(f)) { long d = DiscoveryMs(); findAt[f] = Now + d; DiscoveryN++; DiscoveryTotalMs += d; }
       if (!Slow && !findAt.ContainsKey(f)) findAt[f] = Now;
       if ((f == SimHero || f == SimInv || f == SimFoundry) && R.Next(3) == 0) { latePart[f] = f + "_SimPart"; latePartAt[f] = Now + 200 + R.Next(2500); }
@@ -139,7 +142,7 @@ static partial class CoreTests {
       // for a sub-state of the screen, ScreenMap.FlowForms)
       if (f != null && (ScreenMap.ClassOf(f) != 'E' || !CityClear)) Later(500 + R.Next(2500), () => { if (!ScreenMap.IsFlow(FullKind, f)) Push(f); });
     }
-    ScreenKind FullKind { get { string f = Full; return f == SimHero ? ScreenKind.HeroScreen : f == SimInv ? ScreenKind.Inventory : f == SimFoundry ? ScreenKind.Foundry : ScreenKind.Unknown; } }
+    ScreenKind FullKind { get { string f = Full; return f == SimHero ? ScreenKind.HeroScreen : f == SimInv ? ScreenKind.Inventory : f == SimFoundry ? ScreenKind.Foundry : f == SimGem ? ScreenKind.Gem : f == SimWs ? ScreenKind.ArtWorkshop : ScreenKind.Unknown; } }
 
     public bool Searching(string f) { long t; return findAt.TryGetValue(f, out t) && Now < t && Stack.Contains(f); }
     bool Found(string f) { long t; return (!findAt.TryGetValue(f, out t) || Now >= t) && !(Now >= LostFrom && Now < LostTo); }
@@ -159,6 +162,11 @@ static partial class CoreTests {
         i.Inv = Inv();
       if (full == SimFoundry && Found(SimFoundry) && !Fail())
         i.Rs = Rs();
+      // the gem screen and the workshop (opened from the inventory: its reader still gives it under them)
+      if ((full == SimGem || full == SimWs) && Stack.Contains(SimInv) && Found(SimInv) && !Fail()) i.Inv = Inv();
+      if (full == SimGem && !Fail()) i.Rs = new RecastScreen { GemOpen = true, GemFunc = 0 };
+      else if (full != SimFoundry && FoundryBuilt && i.Rs == null && !Fail()) i.Rs = new RecastScreen { SublimingOpen = false, CurType = -1 };
+      if (full == SimWs && !Fail()) i.ArtWs = new ArtWorkshopScreen { Open = true, Tab = 1, Uid = 555 };   // another artifact's workshop
       return i;
     }
     /// <summary>The shown forms nobody knows (the window table, in no order); null = the read failed.</summary>
@@ -215,7 +223,7 @@ static partial class CoreTests {
         if (tg == ClickTarget.CityInventory && Near(x, y, W - (0.5222 + 0.9316) * U, H - hg.HeroesBtnDY * U, 20)) {
           // now and then the bar has moved and the click takes «Сборка» next to «Инвентарь»: «План сборки» opens (a full screen of the offer list)
           if (R.Next(25) == 0) { Later(lat, () => Push("Form_EquipmentPlan")); return; }
-          Later(lat, () => { InvEquipTab = R.Next(2) == 0; InvBulk = false; InvSel.Clear(); InvScrollY = 0; Push(SimInv); }); return;
+          Later(lat, () => { InvEquipTab = R.Next(2) == 0; InvBulk = false; InvArtTab = false; InvSel.Clear(); InvScrollY = 0; Push(SimInv); }); return;
         }
         if (Near(x, y, W - hg.HeroesBtnDX * U, H - hg.HeroesBtnDY * U, 20)) Later(lat, () => { if (TopForm() != SimCity) return; Hero.Part = -1; Hero.Shown = Hero.CityHero; Push(SimHero); });
         return;
@@ -240,7 +248,9 @@ static partial class CoreTests {
       }
       if (top == SimInv) {
         if (OnBack(x, y)) { Later(lat, () => Pop(SimInv)); return; }
-        if (Near(x, y, 0.085 * U, 0.315 * U, 20)) { Later(lat, () => { InvEquipTab = true; InvBulk = false; }); return; }
+        if (Near(x, y, 0.085 * U, 0.315 * U, 20)) { Later(lat, () => { InvEquipTab = true; InvBulk = false; InvArtTab = false; }); return; }
+        var atr = ArtFrames.Rect(Geo, "inventory.leftTab.artifact", W, H, U);
+        if (tg == ClickTarget.ArtTab && In(atr, x, y)) { if (InvBulk) { Bad.Add("ArtTab CLICK IN THE EQUIPMENT BULK SALE"); return; } Later(lat, () => { InvArtTab = true; InvEquipTab = false; }); return; }
         var bs = Geo.Rect("inventory.bulkSell", W, H, U); var bb = Geo.Rect("inventory.bulkBack", W, H, U);
         if (InvEquipTab && InvBulk) {
           // «Массовая продажа»: the same button is «Продать» now (never pressed), «Назад» leaves the mode, a cell ticks / unticks its item
@@ -254,6 +264,7 @@ static partial class CoreTests {
         if (tg == ClickTarget.FoundryButton) { Later(lat, () => { FoundryTab = R.Next(2) == 0 ? 0 : 3; Push(SimFoundry); }); return; }
         return;
       }
+      if (top == SimGem || top == SimWs) { if (OnBack(x, y)) Later(lat, () => Pop(top)); return; }
       if (top == SimFoundry) {
         if (OnBack(x, y)) { Later(lat, () => Pop(SimFoundry)); return; }
         if (tg == ClickTarget.AscendTab) { Later(lat, () => { FoundryTab = 2; AscSel = 0; AscScrollY = 0; }); return; }
@@ -297,7 +308,7 @@ static partial class CoreTests {
     static bool ScreenTarget(ClickTarget t) {
       switch (t) {
         case ClickTarget.EquipNav: case ClickTarget.InvBulkCell: case ClickTarget.InvListDrag: case ClickTarget.InvEquipTab: case ClickTarget.InvBulkEnter:
-        case ClickTarget.FoundryButton: case ClickTarget.AscendTab: case ClickTarget.SlotTab: case ClickTarget.AscendCell: case ClickTarget.AscendDrag: return true;
+        case ClickTarget.FoundryButton: case ClickTarget.AscendTab: case ClickTarget.SlotTab: case ClickTarget.AscendCell: case ClickTarget.AscendDrag: case ClickTarget.ArtTab: return true;
       }
       return false;
     }
@@ -347,11 +358,20 @@ static partial class CoreTests {
     readonly SellPilot spilot = new SellPilot(new SellGeometry()); readonly InvScroll sellScroll = new InvScroll(); public readonly HashSet<long> Wanted = new HashSet<long>();
     public string SellWhy { get { return spilot.FailWhy; } }
     public bool SellPolling { get { return Owner == ClickOwner.Sell && spilot.Polling; } }   // (app/Overlay.cs: the 50 ms read while the sell pilot awaits a move)
-    public SimHost(SimGame g, ClickOwner o, long plan, GameGeometry geo) {
-      G = g; Owner = o; this.plan = plan; this.geo = geo;
+    public readonly PilotFlow Flow;
+    public static ClickOwner OwnerOf(PilotFlow f) {
+      return f == PilotFlow.Equip || f == PilotFlow.ArtEquip ? ClickOwner.Equip : f == PilotFlow.Sell || f == PilotFlow.ArtSell ? ClickOwner.Sell : ClickOwner.Locate;
+    }
+    public SimHost(SimGame g, PilotFlow flow, long plan, GameGeometry geo) {
+      G = g; Flow = flow; Owner = OwnerOf(flow); this.plan = plan; this.geo = geo;
       spilot.Geometry = g.InvGeo;
       int nw = 1 + g.R.Next(8); while (Wanted.Count < nw) Wanted.Add(g.InvItems[g.R.Next(g.InvItems.Count)]);
-      req = new LocateRequest { Id = "sim", Purpose = "ascend", Item = new PlanItem { Uid = SimItem, Slot = 3, Level = 16, Stars = 5 } };
+      string purpose = flow == PilotFlow.LocateRecast ? "recast" : flow == PilotFlow.LocateArtPromote ? "artPromote" : "ascend";
+      req = new LocateRequest { Id = "sim", Purpose = purpose, Item = new PlanItem { Uid = SimItem, Slot = 3, Level = 16, Stars = 5 } };
+      if (flow == PilotFlow.LocateRecast) { req.Item.Quality = 8; g.InvItems.Insert(g.R2.Next(g.InvItems.Count + 1), SimItem); }   // (the recast's item is in the inventory)
+      if (flow == PilotFlow.LocateArtPromote) req.Art = new ArtPromoteInfo { Uid = 4242, Id = 1, Level = 10, Cap = 10, Stage = 1 };
+      Gate.Flows[Owner] = flow;
+      Gate.ArtSellAuto = flow == PilotFlow.ArtSell; Gate.ArtLocateAuto = flow == PilotFlow.LocateArtPromote; Gate.ArtEquipAuto = flow == PilotFlow.ArtEquip;
       Gate.FormSearchPending = t => t == ClickTarget.CityInventory ? G.Searching(SimInv) : t == ClickTarget.FoundryButton && G.Searching(SimFoundry);
       Gate.FormFound = t => t == ClickTarget.CityInventory ? !G.Searching(SimInv) : t == ClickTarget.FoundryButton && !G.Searching(SimFoundry);
     }
@@ -509,21 +529,26 @@ static partial class CoreTests {
       if (MapStep(scr)) return true;
       if (!need) { if (scr != null && scr.Kind != ScreenKind.Unknown) Gate.DropEscape(Owner); return false; }
       if (Gate.EscapeDue(Owner, scr, Now)) { EscapeSend(); return true; }
-      if (!Gate.CityBackDue(Owner, scr, Now)) return false;
+      if (Environment.GetEnvironmentVariable("SIM_TRACE") != null) Console.WriteLine("  backstep " + Now + " " + (scr != null ? scr.Brief + " block=" + ClickGate.CityBackBlock(scr) : "-"));
+      if (!Gate.CityBackDue(Owner, scr, Now)) return !Gate.Halted(Owner) && ClickGate.CityBackBlock(scr) == "";   // (city first: the pilot never goes on from a screen not its flow's)
       Send(ClickTarget.CityBack, new AutoAction { Kind = AutoKind.Click, X = hg2.BackX * U, Y = hg2.BackY * U }, (rq, fr) => { rq.U = U; }, false, true);
       return true;
     }
 
     public void Tick() {
       if (Done != "") return;
-      if (Owner == ClickOwner.Equip) TickEquip(); else if (Owner == ClickOwner.Sell) TickSell(); else TickLocate();
+      if (Owner == ClickOwner.Equip) TickEquip();
+      else if (Flow == PilotFlow.ArtSell) TickArtSell();
+      else if (Owner == ClickOwner.Sell) TickSell();
+      else if (Flow == PilotFlow.LocateArtPromote) TickArtPromote();
+      else TickLocate();
     }
     // TickAuto's hero part (app/Overlay.cs): the plan's hero on the hero screen, the gear tab
     void TickEquip() {
       var scr = Screens.Current;
       if (OfferStep(scr)) return;
       if (UnknownBackStep(scr)) return;
-      if (BackStep(scr, ClickGate.AwayFromStart(ClickOwner.Equip, scr))) return;
+      if (BackStep(scr, CityFirst.NeedsCity(Flow, scr))) return;   // city first (the shared table)
       if (Gate.UnknownStall(ClickOwner.Equip, scr, Now)) return;
       var hv = new HeroView {
         NowMs = Now, Foreground = true, W = W, H = U, ClientH = H, Plan = plan, Hero = heroScreen.FormOk ? heroScreen.Hero : 0, Tab = heroScreen.Tab, Part = heroScreen.Part,
@@ -532,8 +557,9 @@ static partial class CoreTests {
       };
       if (!heroScreen.FormOk) hv.Hero = 0;
       var ha = hp.Step(hv); PilotState = "hero_" + hp.State;
-      // (idle: the plan's hero was there already) then the item, the hero pilot still watching the hero every tick (app/Overlay.cs TickAuto)
-      if (ha == null) { if (hp.State == "done" || hp.State == "idle") ItemStep(scr); return; }
+      // (idle: the plan's hero was there already) then the item, the hero pilot still watching the hero every tick (app/Overlay.cs TickAuto);
+      // the artifact equip's goal here: the plan's hero on its gear tab (the artifact steps after it: ArtEquipPilot's tests)
+      if (ha == null) { if (hp.State == "done" || hp.State == "idle") { if (Flow == PilotFlow.ArtEquip) { if (heroScreen.FormOk && heroScreen.Hero == plan) Done = "done"; return; } ItemStep(scr); } return; }
       if (ha.Kind == AutoKind.None) return;
       if (!Send(ClickTarget.EquipNav, ha, null, true, false)) hp.NotSent();   // (app/Overlay.cs: EquipSend's no)
     }
@@ -601,7 +627,7 @@ static partial class CoreTests {
         if (sent) spilot.Sent(); else spilot.NotSent();   // (app/Overlay.cs TickSell)
         return;
       }
-      if (BackStep(scr, ClickGate.AwayFromStart(ClickOwner.Sell, scr))) { PilotState = "open"; return; }
+      if (BackStep(scr, CityFirst.NeedsCity(PilotFlow.Sell, scr))) { PilotState = "open"; return; }
       if (scr != null && scr.Kind == ScreenKind.HeroScreen) {
         PilotState = "open";
         if (Now - sellBtnAt < 2000) return;
@@ -632,10 +658,12 @@ static partial class CoreTests {
       bool formOpen = scr != null && (scr.Kind == ScreenKind.Foundry || scr.Kind == ScreenKind.Gem);
       var dstep = LocateGuide.Next(req, inv, locateRs, heroScreen, 8, 1);
       if (dstep.Kind == LocateKind.AscendReady) { Done = "done"; return; }   // the item selected in the Ascension list: «Вознести» is the player's
+      // the recast: its item in the inventory's list (the card, the gem screen after it: LocatePilot's tests)
+      if (Flow == PilotFlow.LocateRecast && dstep.Kind == LocateKind.InList && scr != null && scr.Kind == ScreenKind.Inventory) { Done = "done"; return; }
       var view = new LocateView { NowMs = Now, Foreground = true, W = W, H = H, U = U, Step = dstep, Inv = inv, Cols = 8, HeroScreenOpen = heroOpen, OtherFormOpen = formOpen,
                                   Geometry = geo, Rs = locateRs, Item = req.Item, Purpose = req.Purpose };
       if (LocateAuto.NeedsCityButton(dstep, heroOpen, formOpen)) view.CityButton = G.Full == SimCity && G.CityClear;
-      bool needBack = LocateAuto.NeedsCityBack(view);
+      bool needBack = CityFirst.NeedsCity(Flow, scr, dstep.Kind, LocateAuto.NeedsCityBack(view));   // city first (app/Overlay.cs TickLocateDrive)
       if (BackStep(scr, needBack)) return;
       if (Gate.CellAgainDue.Remove(ClickOwner.Locate)) lp.CellAgain();   // (ClickGate.Observe: a cell click without effect, placed again once)
       if ((dstep.Kind == LocateKind.InList && !InvSettle.Settled) || (dstep.Kind == LocateKind.AscendPick && !RsSettle.Settled)) return;
@@ -656,6 +684,65 @@ static partial class CoreTests {
           break;
       }
       if (Send(tg, mv.Action, fill, tg == ClickTarget.CityInventory, tg == ClickTarget.UnknownBack || tg == ClickTarget.CityBack || tg == ClickTarget.FoundryButton)) lp.Sent(); else lp.NotSent();
+    }
+    // TickArtSellAuto (app/Overlay.cs) up to the artifact tab: city first, the hero screen's back arrow, «Инвентарь», «Артефакт»
+    long artSellAt = -100000;
+    void TickArtSell() {
+      var scr = Screens.Current;
+      if (Gate.Halted(ClickOwner.Sell)) return;
+      var pre = Gate.Preflight(ClickOwner.Sell, scr, Now);
+      if (pre.Reason == "offer" && OfferStep(scr)) { PilotState = "open"; return; }
+      if (pre.Reason == "unknown" && UnknownBackStep(scr)) return;
+      if (pre.Verdict != GateVerdict.Allow) { PilotState = pre.Reason == "unknown" ? "no_city" : PilotState; return; }
+      bool eqBulk = scr != null && scr.Kind == ScreenKind.Inventory && scr.InvEquipTab && scr.InvBulkKnown && scr.InvBulk;   // (app/Overlay.cs TickArtSellAuto)
+      bool need = CityFirst.NeedsCity(PilotFlow.ArtSell, scr, LocateKind.None, eqBulk);
+      if (BackStep(scr, need)) { PilotState = "open"; return; }
+      if (need) { PilotState = "no_city"; return; }   // the back press is blocked (a pop-up over the screen): the hint says so
+      PilotState = "open";
+      if (scr != null && scr.Kind == ScreenKind.HeroScreen) {
+        if (Now - artSellAt < 2000) return;
+        artSellAt = Now; Send(ClickTarget.HeroBack, new AutoAction { Kind = AutoKind.Click, X = hg2.BackX * U, Y = hg2.BackY * U }, null, false, false); return;
+      }
+      if (scr != null && scr.Kind == ScreenKind.City && G.Full == SimCity && G.CityClear) {
+        if (Now - artSellAt < 2500) return;
+        artSellAt = Now; Send(ClickTarget.CityInventory, new AutoAction { Kind = AutoKind.Click, X = W - (0.5222 + 0.9316) * U, Y = H - hg2.HeroesBtnDY * U }, null, true, false); return;
+      }
+      var inv = Screens.Inv;
+      if (scr == null || scr.Kind != ScreenKind.Inventory || inv == null) { PilotState = "no_city"; return; }
+      if (inv.ArtTab) { Done = "done"; return; }   // the artifact tab: the marking after it is RunSell's / the art sell tests'
+      if (Now - artSellAt < 2000) return;
+      artSellAt = Now;
+      var tr = ArtFrames.Rect(geo, "inventory.leftTab.artifact", W, H, U);
+      if (tr != null) Send(ClickTarget.ArtTab, new AutoAction { Kind = AutoKind.Click, X = tr.CX, Y = tr.CY }, null, false, false);
+    }
+    // TickArtDrive (app/Overlay.cs) up to the artifact tab: the real ArtPilot on LocateGuide.NextArt, city first
+    readonly ArtPilot ap = new ArtPilot();
+    void TickArtPromote() {
+      if (ap.Stopped) { PilotState = "stopped:" + ap.Reason; return; }
+      var scr = Screens.Current; var inv = Screens.Inv;
+      var pre = Gate.Preflight(ClickOwner.Locate, scr, Now);
+      if (pre.Reason == "offer" && OfferStep(scr)) return;
+      if (pre.Reason == "unknown" && UnknownBackStep(scr)) return;
+      if (pre.Verdict != GateVerdict.Allow) { PilotState = pre.Reason == "pending" ? "work" : "hint:no_city"; return; }
+      var ws = scr != null ? scr.ArtWs : null;
+      var step = LocateGuide.NextArt(req, scr != null && scr.Kind == ScreenKind.Inventory ? inv : null, ws);
+      if (scr != null && scr.Kind == ScreenKind.Inventory && inv != null && inv.ArtTab) { Done = "done"; return; }   // the artifact tab: its cell, the workshop after it (ArtPilot's tests)
+      bool heroOpen = scr != null && scr.Kind == ScreenKind.HeroScreen;
+      bool formOpen = scr != null && (scr.Kind == ScreenKind.Foundry || scr.Kind == ScreenKind.Gem);
+      var view = new ArtView { NowMs = Now, Foreground = true, W = W, H = H, U = U, Step = step, Inv = inv, Ws = ws, Art = req.Art, Geometry = geo, HeroScreenOpen = heroOpen, OtherFormOpen = formOpen };
+      if (ArtLocateAuto.NeedsCityButton(step, heroOpen, formOpen)) view.CityButton = G.Full == SimCity && G.CityClear;
+      if (BackStep(scr, CityFirst.NeedsCity(PilotFlow.LocateArtPromote, scr, step.Kind, ArtLocateAuto.NeedsCityBack(view)))) return;
+      var mv = ap.Step(view);
+      PilotState = (mv.State == "hint" ? "hint:" : mv.State + ":") + mv.Why + "@" + step.Kind;
+      if (mv.Action.Kind == AutoKind.None) return;
+      ClickTarget tg;
+      switch (mv.Todo) {
+        case ArtTodo.HeroBack: tg = ClickTarget.HeroBack; break;
+        case ArtTodo.InventoryButton: tg = ClickTarget.CityInventory; break;
+        case ArtTodo.ArtTab: tg = ClickTarget.ArtTab; break;
+        default: return;
+      }
+      Send(tg, mv.Action, null, tg == ClickTarget.CityInventory, false);
     }
   }
 
@@ -685,11 +772,55 @@ static partial class CoreTests {
     }
     // a known form moved: the old reader searched for it with a pass (17 s on the laptop); the window table gives it on the next tick's check
     if (slow && r.Next(8) == 0) { g.LostFrom = 2000 + r.Next(20000); g.LostTo = g.LostFrom + (scan ? 17000 : 150 + r.Next(250)); }
+    // every pilot's flow (CityFirst): the artifact equip / cleanup, the recast and the artifact promotion besides the gear ones, and the
+    // screens of the other flows as a start (the gem screen, the workshop, «План сборки») - their own stream, the old seeds keep their runs
+    var r3 = new Random(seed * 131 + 5);
+    if (SimOldFlows) return SimDrive(g, owner == ClickOwner.Equip ? PilotFlow.Equip : owner == ClickOwner.Sell ? PilotFlow.Sell : PilotFlow.LocateAscend, slow, failP, r, seed, verbose, outcomes, geo, list, scan, stats);
+    PilotFlow flow = owner == ClickOwner.Equip ? (r3.Next(3) == 0 ? PilotFlow.ArtEquip : PilotFlow.Equip) : owner == ClickOwner.Sell ? (r3.Next(3) == 0 ? PilotFlow.ArtSell : PilotFlow.Sell)
+                   : new[] { PilotFlow.LocateAscend, PilotFlow.LocateAscend, PilotFlow.LocateRecast, PilotFlow.LocateArtPromote }[r3.Next(4)];
+    int k3 = r3.Next(10);
+    if (k3 == 0) SimStartAt(g, "Gem", 0); else if (k3 == 1) SimStartAt(g, "Artifact workshop", 0); else if (k3 == 2) SimStartAt(g, "Plan", 0);
+    return SimDrive(g, flow, slow, failP, r, seed, verbose, outcomes, geo, list, scan, stats);
+  }
+
+  /// <summary>The regression seeds below were found with the gear flows and the Ascension only: they keep those (the soak and the matrix run every flow).</summary>
+  static bool SimOldFlows;
+  /// <summary>A pop-up the screen map closes (its own exit), the same one every run.</summary>
+  static string SimPopup() {
+    foreach (var e in ScreenMap.All) if (e.Class == 'P' && Array.IndexOf(OfferForms.KnownScreens, e.Name) < 0 && !OfferForms.IsOffer(e.Name) && e.Name.Contains("Reward")) return e.Name;
+    return SimPick(new Random(1), 'P');
+  }
+  /// <summary>A start screen by name (the matrix's and the soak's): pushed over what the game shows.</summary>
+  static void SimStartAt(SimGame g, string start, long other) {
+    switch (start) {
+      case "City": break;
+      case "Hero (other hero)": g.Hero.Shown = other; g.Hero.Part = -1; g.Push(SimHero); break;
+      case "Hero (gear list)": g.Hero.Shown = other; g.Hero.Tab = 3; g.Hero.Part = 2; g.Push(SimHero); break;
+      case "Inventory": g.InvEquipTab = true; g.InvBulk = false; g.Push(SimInv); break;
+      case "Inventory (other tab)": g.InvEquipTab = false; g.InvBulk = false; g.Push(SimInv); break;
+      case "Inventory (bulk)": g.InvEquipTab = true; g.InvBulk = true; g.Push(SimInv); break;
+      case "Foundry identify": case "Foundry ascend": case "Foundry recast":
+        g.InvEquipTab = true; g.Push(SimInv); g.FoundryTab = start == "Foundry identify" ? 1 : start == "Foundry ascend" ? 2 : 3; g.Push(SimFoundry); break;
+      case "Gem": g.InvEquipTab = true; g.Push(SimInv); g.Push(SimGem); break;
+      case "Artifact workshop": g.InvEquipTab = false; g.InvArtTab = true; g.Push(SimInv); g.Push(SimWs); break;
+      case "Guild": g.Push("Form_Union"); break;
+      case "Arena": g.Push("Form_PVPMain"); break;
+      case "Shop": g.Push("Form_Shop"); break;
+      case "Popup over City": g.Push(SimPopup()); break;
+      case "Plan": g.Push("Form_EquipmentPlan"); break;
+      default: throw new ArgumentException(start);
+    }
+  }
+
+  /// <summary>The run itself (SimRun's and the matrix's): the host of the flow, the ticks, the end and its rules.</summary>
+  static string SimDrive(SimGame g, PilotFlow flow, bool slow, double failP, Random r, int seed, bool verbose, Dictionary<string, int> outcomes, GameGeometry geo, string list, bool scan, Dictionary<string, SimStat> stats, string[] outcomeOut = null) {
+    var owner = SimHost.OwnerOf(flow);
     string start = string.Join(" > ", g.Stack.ToArray());
     foreach (var f in g.Stack) g.StartForms.Add(f);
     long plan = 100 + r.Next(30);
-    var h = new SimHost(g, owner, plan, geo);
-    g.OwnScreen = owner == ClickOwner.Equip ? SimHero : owner == ClickOwner.Sell ? SimInv : SimFoundry;
+    var h = new SimHost(g, flow, plan, geo);
+    // (Locate's own screen is where its last step is: the Foundry, the gem screen, the workshop - the inventory is its way, as for the Ascension)
+    g.OwnScreen = owner == ClickOwner.Equip ? SimHero : owner == ClickOwner.Sell ? SimInv : flow == PilotFlow.LocateRecast ? SimGem : flow == PilotFlow.LocateArtPromote ? SimWs : SimFoundry;
     g.ItemSel = owner == ClickOwner.Equip && r.Next(2) == 0;   // the item left selected with its tip closed
     long cap = slow ? 300000 : 150000, t = 0, lastChange = 0; string lastSay = "";
     while (t < cap) {
@@ -703,21 +834,23 @@ static partial class CoreTests {
       // (app/Overlay.cs ReadScreens: every 120 ms, a tick of the slow laptop's timer 150-400 ms; 50 ms while a click awaits its effect)
       t += !scan && (h.Gate.AnyPending || h.ListMoving || h.SellPolling) ? 50 : slow ? 150 + r.Next(250) : 100;
     }
+    string fname = flow == PilotFlow.Equip ? "Equip" : flow == PilotFlow.Sell ? "Sell" : flow == PilotFlow.LocateAscend ? "Locate" : flow.ToString();   // (the old flows keep their names)
     if (stats != null) {
-      string mk = owner + (slow ? " slow" : " fast");
+      string mk = fname + (slow ? " slow" : " fast");
       SimStat ss; if (!stats.TryGetValue(mk, out ss)) stats[mk] = ss = new SimStat();
       ss.Runs++; if (h.Done != "") { ss.Done++; ss.DoneMs += t; }
       ss.ConfirmN += ReadTiming.ConfirmN; ss.ConfirmMs += ReadTiming.ConfirmMs; if (ReadTiming.ConfirmMax > ss.ConfirmMax) ss.ConfirmMax = ReadTiming.ConfirmMax;
       ss.DiscN += g.DiscoveryN; ss.DiscMs += g.DiscoveryTotalMs; ss.FieldN += g.FieldReads; ss.FieldUs += g.FieldUs;
     }
     string outcome = h.Done != "" ? "done" : h.Gate.Halted(owner) ? "halt:" + h.Gate.HaltReason(owner) : t >= cap ? "TIMEOUT" : "wait:" + h.PilotState.Split('@')[0];
-    string key = owner + (slow ? " slow " : " fast ") + outcome;
+    string key = fname + (slow ? " slow " : " fast ") + outcome;
+    if (outcomeOut != null) outcomeOut[0] = outcome + (h.Gate.Halted(owner) ? " (" + h.Gate.HaltDetail(owner) + ")" : "");
     int cnt; outcomes.TryGetValue(key, out cnt); outcomes[key] = cnt + 1;
     if (list == "--digest") {   // one line a seed: its outcome and a hash of every press with its time (two builds compared seed by seed)
       ulong hsh = 14695981039346656037UL; foreach (char ch in g.Acts.ToString()) { hsh ^= ch; hsh *= 1099511628211UL; }
       Console.WriteLine(seed + " " + key + " " + hsh.ToString("x16"));
     } else if (list != null && key.Contains(list)) Console.WriteLine("seed " + seed + ": " + key + (h.PilotState.StartsWith("hero_") ? " " + h.HeroWhy : h.PilotState.StartsWith("sell_") ? " " + h.SellWhy : "") + " end [" + string.Join(" > ", g.Stack.ToArray()) + "]");
-    if (h.Done != "" && owner == ClickOwner.Sell) {   // the marking: the wanted items ticked, nothing else (after the last clicks' answers)
+    if (h.Done != "" && flow == PilotFlow.Sell) {   // the marking: the wanted items ticked, nothing else (after the last clicks' answers)
       g.Advance(t + 3000);
       var xtra = new List<string>(); foreach (var u in g.InvSel) if (!h.Wanted.Contains(u)) xtra.Add(u.ToString());
       var miss = new List<string>(); foreach (var u in h.Wanted) if (!g.InvSel.Contains(u)) miss.Add(u.ToString());
@@ -725,7 +858,7 @@ static partial class CoreTests {
     }
     // (not when a pop-up is shown at the stop: the game opened it after the click and before its answer, which it took - the click was right)
     if (h.Gate.HaltReason(owner) == "nochange" && h.Gate.HaltDetail(owner).StartsWith("AscendCell") && h.Gate.HaltDetail(owner).Contains("(screen Foundry") && !h.Gate.HaltDetail(owner).Contains("modal(")) g.Bad.Add("ASCENSION CELL CLICK WITHOUT EFFECT: " + h.Gate.HaltDetail(owner));
-    if (h.Done != "" && owner == ClickOwner.Equip && !g.Worn) g.Bad.Add("EQUIP DONE WITHOUT THE ITEM ON (" + h.Confirms + " EquipConfirm presses)");
+    if (h.Done != "" && flow == PilotFlow.Equip && !g.Worn) g.Bad.Add("EQUIP DONE WITHOUT THE ITEM ON (" + h.Confirms + " EquipConfirm presses)");
     var errs = new List<string>(g.Bad);
     if (outcome == "TIMEOUT") errs.Add("no end within " + cap / 1000 + " s (silent waiting): " + h.PilotState);
     int n0;
@@ -735,7 +868,7 @@ static partial class CoreTests {
     if (h.EscapesSent > ClickGate.MaxEscapes + ClickGate.MaxMapMoves) errs.Add(h.EscapesSent + " Escapes");
     if (errs.Count == 0 && !verbose) return "";
     var sb = new StringBuilder();
-    sb.Append("seed " + seed + " " + owner + (slow ? " slow" : " fast") + " fail " + failP.ToString("0.00") + " start [" + start + "] -> " + outcome
+    sb.Append("seed " + seed + " " + fname + (slow ? " slow" : " fast") + " fail " + failP.ToString("0.00") + " start [" + start + "] -> " + outcome
               + (h.Gate.Halted(owner) ? " (" + h.Gate.HaltDetail(owner) + ")" : "") + " end [" + string.Join(" > ", g.Stack.ToArray()) + "]");
     foreach (var e in errs) sb.Append("\n    !! " + e);
     if (errs.Count > 0 || verbose) foreach (var l in g.Log) sb.Append("\n      " + l);
@@ -822,6 +955,12 @@ static partial class CoreTests {
 
   // what the game sim found (each a fix in src/ or app/Overlay.cs), kept as plain tests
   static void SimRegressionTests() {
+    {   // city first (owner rule 2026-10-30): every pilot x every start screen reaches its goal or stops with its reason
+      var mgeo = GameGeometry.Parse(GeoJson(), GeoGame);
+      var mf = SimMatrix(mgeo, true);
+      SimOldFlows = true;
+      Check(mf.Count == 0, "sim: city-first matrix, " + CityFirst.All.Length + " flows x " + SimMatrixStarts.Length + " starts: every run at its goal or a stop with its reason" + (mf.Count > 0 ? " - " + mf.Count + " failed: " + mf[0] : ""));
+    }
     Console.WriteLine("Game sim: its findings");
     StaleRowsAfterFilter();
     TipOverSlots();
@@ -984,6 +1123,44 @@ static partial class CoreTests {
         Check(e == "", "sim: slow seed " + seed + " keeps every rule" + (e != "" ? ": " + e.Split('\n')[0] + " " + (e.Split('\n').Length > 1 ? e.Split('\n')[1].Trim() : "") : ""));
       }
     }
+    SimOldFlows = false;
+  }
+
+  /// <summary>City first, every pilot from every start (owner rule 2026-10-30): each flow x each start screen, fast and slow, no pop-ups of the
+  /// game's own (the start's only). A cell is "ok" when every run reached the flow's goal; a stop with its reason is listed; a broken rule or a
+  /// run without an end (silent waiting) fails. Returns the failed cells.</summary>
+  public static readonly string[] SimMatrixStarts = { "City", "Hero (other hero)", "Hero (gear list)", "Inventory", "Inventory (other tab)", "Inventory (bulk)",
+    "Foundry identify", "Foundry ascend", "Foundry recast", "Gem", "Artifact workshop", "Guild", "Arena", "Shop", "Popup over City", "Plan" };
+  static List<string> SimMatrix(GameGeometry geo, bool print, int runs = 4) {
+    var fails = new List<string>(); var sb = new StringBuilder();
+    sb.Append("city-first matrix (" + runs + " runs a cell; ok = every run at its goal)\n");
+    foreach (var flow in CityFirst.All) {
+      sb.Append("  " + flow.ToString().PadRight(17));
+      var cells = new List<string>();
+      foreach (var start in SimMatrixStarts) {
+        int done = 0; var why = new SortedDictionary<string, int>(); string fail = "";
+        for (int i = 0; i < runs; i++) {
+          int seed = 900000 + Array.IndexOf(SimMatrixStarts, start) * 97 + (int)flow * 7919 + i;
+          bool slow = i % 2 == 1;
+          ReadTiming.Take();
+          var g = new SimGame(seed, slow, 0); g.Geo = geo; g.SpawnP = 0;   // (read failures and the game's own pop-ups: the soak's)
+          SimStartAt(g, start, 100 + (seed % 30));
+          var oc = new Dictionary<string, int>(); var outc = new string[1];
+          bool mv = Environment.GetEnvironmentVariable("SIM_MATRIX_V") == flow + "/" + start;   // one cell's runs with their traces
+          string e = SimDrive(g, flow, slow, 0, new Random(seed), seed, mv, oc, geo, null, false, null, outc);
+          if (mv) { Console.WriteLine(e); e = e.Contains("\n    !! ") ? e : ""; }
+          if (e != "") { fail = e.Split('\n')[0] + (e.Split('\n').Length > 1 ? " " + e.Split('\n')[1].Trim() : ""); break; }
+          if (outc[0] == "done") done++;
+          else { string w = outc[0].Split(' ')[0]; int n; why.TryGetValue(w, out n); why[w] = n + 1; }
+        }
+        string cell = fail != "" ? "FAIL" : done == runs ? "ok" : string.Join("+", new List<string>(why.Keys).ToArray());
+        if (fail != "") fails.Add(flow + " from " + start + ": " + fail);
+        cells.Add(start + "=" + cell);
+      }
+      sb.Append(string.Join(" | ", cells.ToArray())).Append("\n");
+    }
+    if (print) Console.Write(sb.ToString());
+    return fails;
   }
 
   /// <summary>The storage cleanup's marking on a long list (--sell-bench): the game opens on «Массовая продажа» with <paramref name="items"/> items,
@@ -995,7 +1172,7 @@ static partial class CoreTests {
     g.InvItems.Clear(); for (int i = 0; i < items; i++) g.InvItems.Add(9000 + i);
     g.InvEquipTab = true; g.InvBulk = true; g.Push(SimInv);
     foreach (var f in g.Stack) g.StartForms.Add(f);
-    var h = new SimHost(g, ClickOwner.Sell, 100, geo);
+    var h = new SimHost(g, PilotFlow.Sell, 100, geo);
     h.Wanted.Clear(); var wr = new Random(seed * 13 + 5); while (h.Wanted.Count < n) h.Wanted.Add(g.InvItems[wr.Next(items)]);
     g.OwnScreen = SimInv;
     var r = new Random(seed * 7919 + 13);
@@ -1052,7 +1229,7 @@ static partial class CoreTests {
 
   static int SimMain(string[] args) {
     Layout.Use(TestLayout());
-    int seeds = 500, from = 0; bool slowOnly = false, verbose = false, real = false, scan = false, timing = false; string list = null;
+    int seeds = 500, from = 0; bool slowOnly = false, verbose = false, real = false, scan = false, timing = false, matrix = false; string list = null;
     for (int i = 1; i < args.Length; i++) {
       if (args[i] == "--slow-only") slowOnly = true;
       else if (args[i] == "--verbose") verbose = true;
@@ -1064,10 +1241,17 @@ static partial class CoreTests {
       else if (args[i] == "--scan") scan = true;
       else if (args[i] == "--timing") timing = true;
       else if (args[i] == "--sell-bench" || args[i] == "--spawn") { }
+      else if (args[i] == "--matrix") matrix = true;
       else { int n; if (int.TryParse(args[i], out n)) seeds = n; }
     }
     var geo = GameGeometry.Parse(GeoJson(), GeoGame);
     if (Array.IndexOf(args, "--sell-bench") >= 0) return SellBench(geo, seeds, from, Array.IndexOf(args, "--spawn") >= 0);
+    if (matrix) {   // the city-first matrix alone (tests/run-sim.sh --matrix [runs a cell])
+      var mf = SimMatrix(geo, true, seeds > 0 && seeds != 500 ? seeds : 4);
+      foreach (var f in mf) Console.WriteLine("  !! " + f);
+      Console.WriteLine("city-first matrix: " + mf.Count + " cells failed");
+      return mf.Count == 0 ? 0 : 1;
+    }
     var outcomes = new SortedDictionary<string, int>(); var tmp = new Dictionary<string, int>(); var stats = new Dictionary<string, SimStat>();
     int bad = 0; var sw = System.Diagnostics.Stopwatch.StartNew();
     for (int s = from; s < from + seeds; s++) {

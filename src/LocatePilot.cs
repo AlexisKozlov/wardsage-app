@@ -81,15 +81,16 @@ namespace RealmForge {
 
     static LocateTodo Hint(out string why) { why = "foundry"; return LocateTodo.Hint; }
 
-    /// <summary>The step is the inventory's (or the city's) but the Foundry / the gem screen is on top (a hint "form"): back towards the city
-    /// first (ClickTarget.CityBack; the host presses it until the step's screen shows). The recast's own gem steps never count.</summary>
+    /// <summary>The Locate sub-state for CityFirst.NeedsCity: the step is the inventory's (or the city's) but the Foundry / the gem screen is on
+    /// top (a hint "form"): back towards the city first (ClickTarget.CityBack; the host presses it until the step's screen shows). The recast's
+    /// own gem steps never count.</summary>
     public static bool NeedsCityBack(LocateView v) {
       if (v == null || v.Step == null) return false;
       var k = v.Step.Kind;
-      // a recast with the Foundry open (left on the Ascension tab by an earlier request, or on its own recast tab): the Foundry's recast steps
-      // are never clicked, the pilot's recast path is the inventory's (card -> gem screen), so back first (lab 1.6.66.377: it waited at openRecastTab)
-      if (v.Purpose != "ascend" && v.OtherFormOpen && v.Rs != null && v.Rs.SublimingOpen
-          && (k == LocateKind.OpenRecastTab || k == LocateKind.RecastFilter || k == LocateKind.RecastPick || k == LocateKind.RecastNotInList)) return true;
+      // (a recast with the Foundry open - left on the Ascension tab by an earlier request, lab 1.6.66.377 - is the shared table's: the Foundry is
+      // not in the recast's continuation set, CityFirst in src/ClickGate.cs)
+      // the inventory in «Массовая продажа» (a cell click there would tick a sale): the pilot never clicks in it, so city first as well
+      if (k == LocateKind.ExitBulk) return true;
       if (k != LocateKind.OpenInventory && k != LocateKind.OpenEquipTab && k != LocateKind.InList && k != LocateKind.OpenFoundry) return false;
       string why; return Decide(v, out why) == LocateTodo.Hint && why == "form";
     }
@@ -411,9 +412,15 @@ namespace RealmForge {
       return art.Via == "essence" && index - 1 < ws.MatItemIds.Count && ws.MatItemIds[index - 1] > 0;
     }
 
-    /// <summary>The way to the inventory: the Foundry / the gem screen is on top, so back with its arrow first (ClickTarget.CityBack, the host's BackStep).</summary>
+    /// <summary>The artifact promotion's sub-state for CityFirst.NeedsCity: on the way to the inventory with the Foundry / the gem screen on top,
+    /// or the workshop open on ANOTHER artifact (an earlier request left it): back with its arrow first (ClickTarget.CityBack, the host's BackStep).</summary>
     public static bool NeedsCityBack(ArtView v) {
-      return v != null && v.Step != null && v.Step.Kind == LocateKind.OpenInventory && v.OtherFormOpen;
+      if (v == null || v.Step == null) return false;
+      if (v.Step.Kind == LocateKind.ArtWrongArtifact && v.Ws != null && v.Ws.Open) return true;
+      // a sale / organise mode of the inventory (the equipment's or the artifact tab's): never clicked in, city first
+      if (v.Step.Kind == LocateKind.ArtExitMode) return true;
+      if (v.Step.Kind == LocateKind.ArtOpenTab && v.Inv != null && v.Inv.EquipTab && v.Inv.BulkKnown && v.Inv.Bulk) return true;
+      return v.Step.Kind == LocateKind.OpenInventory && v.OtherFormOpen;
     }
     /// <summary>The city's «Инвентарь» has to be looked for (a screen grab): only on the way to the inventory with no screen over the city.</summary>
     public static bool NeedsCityButton(LocateStep st, bool heroScreenOpen, bool otherFormOpen) {
