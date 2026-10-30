@@ -47,7 +47,8 @@ namespace RealmForge {
       return "unknown";
     }
 
-    // which of several shown forms is on top: the window table has no order, so the one that decides most safely wins:
+    // which of several shown forms is on top when the window table's order is not known (ScreenState.OrderTop takes the order first): the one
+    // that decides most safely wins:
     // a dangerous one, then a fight / loading, a pop-up with its ×, one closed by Escape, a full screen with its back arrow, then the rest
     static readonly string Rank = "DWPEFKU";
     /// <summary>The top form of a comma list of shown forms (overlays left out); "" = none.</summary>

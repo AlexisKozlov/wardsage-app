@@ -367,6 +367,7 @@ namespace RealmForge {
       // a slow PC: the effect of «Инвентарь» / «Литейная» is awaited while the search for its form still runs (ClickGate.SearchCapMs)
       gate.FormSearchPending = t => RFX.FormSearchRunning && (t == ClickTarget.CityInventory ? RFX.InvFormMissing() : t == ClickTarget.FoundryButton && RFX.FoundryFormMissing());
       gate.FormFound = t => t == ClickTarget.CityInventory ? !RFX.InvFormMissing() : t == ClickTarget.FoundryButton && !RFX.FoundryFormMissing();
+      gate.DangerLive = (form, field, w, h, u) => RFX.UiFieldReadNow(form, field, w, h, u);   // (a dangerous widget of a form over the click's one, where the game has it now)
       RFX.LiveLog = s => Log.Write(s);   // the live reads' lines (the lists' scroll binding ...) reach the app's log
       pilot = new AutoPilot(g);
       fpilot = new FilterPilot(fg);
@@ -2676,7 +2677,7 @@ namespace RealmForge {
       var inp = new ScreenInputs { Inv = RFX.ReadInventory(-1), Rs = RFX.ReadRecastScreenSafe(-1), Hero = RFX.ReadHeroScreen(addrs, screens.Hero) };
       if (front) FillArtPopup(inp, hwnd);
       inp.CityForm = RFX.CityShown();
-      if (RFX.UiKnown) inp.Screens = RFX.ReadShownScreens();   // the screen's kind first from the window table (the readers fill its details)
+      if (RFX.UiKnown) { inp.Screens = RFX.ReadShownScreens(); inp.Order = RFX.ReadShownOrder(); NoteOrder(inp.Order); }   // the screen's kind first from the window table (the readers fill its details); the forms' z-order
       bool artGuide = locateReq != null && locateReq.Purpose == "artPromote";
       if (WantArtWs(inp)) inp.ArtWs = RFX.ReadArtWorkshop();
       ReadTiming.Field(System.Diagnostics.Stopwatch.GetTimestamp() - readT0);
@@ -2777,11 +2778,20 @@ namespace RealmForge {
       return ScreenState.WantArtWs(locateReq != null && locateReq.Purpose == "artPromote", inp.Screens);
     }
 
+    string orderSaid;
+    /// <summary>Test build: the window table's z-order when it changes (zorder: top first, or "not certain").</summary>
+    void NoteOrder(List<string> order) {
+      if (!Channel.IsTest) return;
+      string s = order == null ? "not certain" : string.Join(" > ", order.ToArray());
+      if (s != orderSaid) { orderSaid = s; Log.Write("zorder: " + s); }
+    }
+
     /// <summary>A fresh read for the click gate: not held, not throttled (the screen right before the click).</summary>
     ScreenState FreshScreen(bool wantCity, bool wantKnownForms = false) {
       long now = NowMs();
       var inp = new ScreenInputs { Inv = RFX.ReadInventory(-1), Rs = RFX.ReadRecastScreenSafe(-1), Hero = RFX.ReadHeroScreen(addrs, screens.Hero), CityForm = RFX.CityShown(), Offers = offerOrder.Note(RFX.ReadOffers()) }; inp.OfferTopKnown = offerOrder.TopKnown; freshOffers = inp.Offers;
-      if (RFX.UiKnown) inp.Screens = RFX.ReadShownScreens();
+      if (RFX.UiKnown) { inp.Screens = RFX.ReadShownScreens(); inp.Order = RFX.ReadShownOrder(); NoteOrder(inp.Order); }   // (the click gate reads every shown form by its place)
+      gate.OrderRead = RFX.UiKnown;   // (the window table read: its z-order is expected - without it no click where the top is not certain)
       if (wantKnownForms) inp.ShownKnown = RFX.ReadShownKnownForms();   // the unknown-screen back press: no known screen's form (the battle among them) may be shown
       { IntPtr gw = GameWindow(); if (gw != IntPtr.Zero && !W32.IsIconic(gw) && IsForeground(gw)) FillArtPopup(inp, gw); }
       if (WantArtWs(inp)) inp.ArtWs = RFX.ReadArtWorkshop();   // the artifact guide's clicks are judged by the workshop too

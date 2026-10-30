@@ -86,7 +86,18 @@ static partial class CoreTests {
     // game's stays the seeds'); SubFailP: the readers' extra failures while the table reads (live 1.6.66.397: "read failed for inventory!"
     // with the inventory shown in the table); NoTable: the app without the window table (the readers alone decide the kind)
     public double SubFailP; public bool NoTable; public int KindFlips; ScreenKind lastKind = ScreenKind.Unknown;
-    readonly Random tableR, subR;
+    readonly Random tableR, subR, orderR;
+    /// <summary>The window table's order (ScreenInputs.Order): not certain in OrderFailP of the reads; NoOrder: never read (the app before it).</summary>
+    public double OrderFailP = 0.05; public bool NoOrder;
+    /// <summary>Every shown form, the top one first (the stack's order; a part a known screen builds late lies right over it).</summary>
+    public List<string> Order() {
+      var l = new List<string>(); string part; long at;
+      for (int i = Stack.Count - 1; i >= 0; i--) {
+        if (i == FullIndex && latePart.TryGetValue(Stack[i], out part) && latePartAt.TryGetValue(Stack[i], out at) && Now >= at) l.Add(part);
+        l.Add(Stack[i]);
+      }
+      return l;
+    }
     /// <summary>The tracker's screen this tick against the game's top screen: a known screen the app called Unknown (or another one) is a flip.</summary>
     public void NoteKind(ScreenKind k) {
       var want = ScreenState.KindOfForm(Full);
@@ -95,7 +106,7 @@ static partial class CoreTests {
     }
     public SimGame(int seed, bool slow, double failP, double w = 1920, double h = 1009) {
       W = w; H = h;
-      R = new Random(seed); R2 = new Random(seed * 31 + 7); fieldR = new Random(seed ^ 0x5F17); tableR = new Random(seed ^ 0x7AB1); subR = new Random(seed ^ 0x3C55); Slow = slow; FailP = failP; U = Ui.Unit(W, H);
+      R = new Random(seed); R2 = new Random(seed * 31 + 7); fieldR = new Random(seed ^ 0x5F17); tableR = new Random(seed ^ 0x7AB1); subR = new Random(seed ^ 0x3C55); orderR = new Random(seed ^ 0x6D21); Slow = slow; FailP = failP; U = Ui.Unit(W, H);
       Hero = new FakeHeroGame(hg, W, U);
       var all = new List<long>(); for (int i = 0; i < 30; i++) all.Add(100 + i);
       Hero.All = all.ToArray(); Hero.Heroes = all.ToArray(); Hero.CityHero = 100; Hero.Tab = R.Next(2) == 0 ? 3 : 1;
@@ -223,6 +234,7 @@ static partial class CoreTests {
         i.Screens = new List<string>();
         if (ScreenState.KindOfForm(full) != ScreenKind.Unknown) i.Screens.Add(full);
         if ((full == SimGem || full == SimWs || full == SimFoundry) && Stack.Contains(SimInv)) i.Screens.Add(SimInv);   // (the inventory under them)
+        if (!NoOrder && orderR.NextDouble() >= OrderFailP) i.Order = Order();   // (the forms' places: now and then not certain - a form's place unread, two at one place)
       }
       return i;
     }
@@ -421,6 +433,8 @@ static partial class CoreTests {
     }
   }
 
+  /// <summary>--order-fail P: the share of window table reads whose z-order is not certain (-1 = the game's default).</summary>
+  static double SimOrderFailP = -1;
   /// <summary>--graph: the game sim's forms, transitions and pop-ups come from the UI graph (src/UiGraphData.cs).</summary>
   static bool SimGraph;
   /// <summary>The forms a --graph run showed (its starts, the pop-ups, the forms its presses opened): the coverage of the report.</summary>
@@ -640,6 +654,7 @@ static partial class CoreTests {
       // app/Overlay.cs LiveClick: a pilot button read by name (RFX.UiWidgetOf) is pressed at the centre of its live rect
       var lr = t == ClickTarget.ArtWorkshop && G.LiveButtons && RFX.UiWidgetOf(t, rq.Form) != null ? G.WorkshopLive() : null;
       if (lr != null && a.Kind == AutoKind.Click) { a = new AutoAction { Kind = AutoKind.Click, X = lr[0] + lr[2] / 2, Y = lr[1] + lr[3] / 2 }; rq.X = a.X; rq.Y = a.Y; rq.Live = true; }
+      Gate.OrderRead = !G.NoOrder && !G.NoTable && !G.Scan;   // (app/Overlay.cs: the fresh read has the window table's z-order; the older readers had none)
       var res = Gate.Check(rq, fresh, Now);
       if (!res.Allowed) { if (Environment.GetEnvironmentVariable("SIM_TRACE") != null) Console.WriteLine("  DENY " + t + " fresh=" + fresh.Brief + " tick=" + (Screens.Current != null ? Screens.Current.Brief : "-") + " " + res.Detail); return false; }
       Gate.Arm(Owner, t, ClickGate.Expect(rq, fresh), Now, rq.Form);
@@ -936,7 +951,7 @@ static partial class CoreTests {
     var r = new Random(seed * 7919 + 13);
     bool slow = slowOnly || r.Next(2) == 0;
     double failP = r.Next(3) == 0 ? 0.0 : r.NextDouble() * 0.15;
-    var g = new SimGame(seed, slow, failP); g.Geo = geo; g.Scan = scan; if (real) g.SpawnP = 0.01;
+    var g = new SimGame(seed, slow, failP); g.Geo = geo; g.Scan = scan; if (real) g.SpawnP = 0.01; if (SimOrderFailP >= 0) g.OrderFailP = SimOrderFailP;
     var owner = new[] { ClickOwner.Equip, ClickOwner.Sell, ClickOwner.Locate }[r.Next(3)];
     // the start: a screen and the forms over it
     int k = r.Next(10);
@@ -1138,6 +1153,7 @@ static partial class CoreTests {
   // what the game sim found (each a fix in src/ or app/Overlay.cs), kept as plain tests
   static void SimRegressionTests() {
     UiGraphTests();
+    ZOrderTests();
     {   // city first (owner rule 2026-10-30): every pilot x every start screen reaches its goal or stops with its reason
       var mgeo = GameGeometry.Parse(GeoJson(), GeoGame);
       var mf = SimMatrix(mgeo, true);
@@ -1741,6 +1757,104 @@ static partial class CoreTests {
     }
   }
 
+  /// <summary>The centre of a form's dangerous widget whose path contains <paramref name="part"/> (client px), or null.</summary>
+  static double[] DangerPoint(string form, string part, double W, double H, double U) {
+    foreach (var w in UiGraph.DangerWidgets(form)) {
+      if (w.Rect == null || w.Path.IndexOf(part, StringComparison.Ordinal) < 0) continue;
+      var r = ScreenMap.Place(w.Rect, W, H, U); return new[] { r.CX, r.CY };
+    }
+    return null;
+  }
+  static GateResult ZGate(ClickTarget t, ClickOwner o, double[] pt, string form, List<string> shown, ScreenState s, bool orderRead, double W, double H, double U) {
+    var g = new ClickGate { OrderRead = orderRead };
+    return g.Check(new ClickRequest { Owner = o, Target = t, AutoOn = true, Front = true, X = pt[0], Y = pt[1], W = W, H = H, U = U, Form = form, Shown = shown }, s, 10000);
+  }
+  /// <summary>The window table's z-order (ScreenInputs.Order) and the click gate's read of every shown form: the three kinds of rule breaks the
+  /// graph-driven sim found (game sim --graph, f36711b: 16 in 20 000 seeds) and the seeds that showed them.</summary>
+  static void ZOrderTests() {
+    double W = 1920, H = 1009, U = Ui.Unit(W, H);
+    // the order itself: stack priority, then sorting order; a tie or an unread place (overlays aside) = not certain
+    var z = ScreenState.ZOrder(new[] { new ScreenState.FormZ { Name = "Form_MainCity", Prio = 0, Sorting = 10, Readable = true }, new ScreenState.FormZ { Name = "Form_HeroAppraise", Prio = 2, Sorting = 5, Readable = true },
+                                       new ScreenState.FormZ { Name = "Form_CharactorMain", Prio = 1, Sorting = 30, Readable = true }, new ScreenState.FormZ { Name = "Form_BranchDungeon", Prio = 2, Sorting = 9, Readable = true } });
+    Check(z != null && string.Join(">", z.ToArray()) == "Form_BranchDungeon>Form_HeroAppraise>Form_CharactorMain>Form_MainCity", "z-order: by the stack's priority, then the sorting order, the top first (" + (z == null ? "null" : string.Join(">", z.ToArray())) + ")");
+    Check(ScreenState.ZOrder(new[] { new ScreenState.FormZ { Name = "Form_HeroAppraise", Prio = 2, Sorting = 5, Readable = true }, new ScreenState.FormZ { Name = "Form_BranchDungeon", Prio = 2, Sorting = 5, Readable = true } }) == null, "z-order: two forms at one place - not certain");
+    Check(ScreenState.ZOrder(new[] { new ScreenState.FormZ { Name = "Form_HeroAppraise", Prio = 2, Sorting = 5, Readable = true }, new ScreenState.FormZ { Name = "Form_BranchDungeon" } }) == null, "z-order: a form whose place is not read - not certain");
+
+    // (1) an offer's × with a dangerous purchase dialog over it (seed 11920: Form_PurGiftDetail over Form_UnionWeekBossPopUp)
+    {
+      string offer = "Form_UnionWeekBossPopUp", buy = "Form_PurGiftDetail";
+      var order = new List<string> { buy, offer, "Form_SuperStrikeTips", "Form_MainCity" };
+      var s = ScreenState.Classify(new ScreenInputs { CityForm = true, CitySeen = true, Offers = new List<string> { offer }, Order = order }, 1000);
+      Check(s.OfferCount == 0 && s.Top == buy && s.TopClass == 'D', "z-order: an offer under a dangerous dialog is not the top (" + s.Brief + ", top " + s.Top + ")");
+      var pt = OfferForms.ClosePoint(null, offer, W, H, U); var p = new[] { pt.X, pt.Y };
+      var v = ZGate(ClickTarget.OfferClose, ClickOwner.Locate, p, offer, null, s, true, W, H, U);
+      Check(v.Verdict == GateVerdict.Deny && v.Reason == "dangerous", "z-order: the offer's × with the dialog over it - a stop, nothing pressed (" + v.Reason + ": " + v.Detail + ")");
+      var su = ScreenState.Classify(new ScreenInputs { CityForm = true, CitySeen = true, Offers = new List<string> { offer } }, 1000);
+      v = ZGate(ClickTarget.OfferClose, ClickOwner.Locate, p, offer, null, su, true, W, H, U);
+      Check(v.Verdict == GateVerdict.Wait && v.Reason == "order", "z-order: the order and the other shown forms not read - no click (" + v.Reason + ")");
+      v = ZGate(ClickTarget.OfferClose, ClickOwner.Locate, p, offer, new List<string> { "Form_SuperStrikeTips", buy }, su, true, W, H, U);
+      Check(v.Verdict == GateVerdict.Deny && v.Reason == "dangerous", "z-order: no order, the dialog among the shown forms - a stop (" + v.Reason + ")");
+      v = ZGate(ClickTarget.OfferClose, ClickOwner.Locate, p, offer, new List<string> { buy }, su, false, W, H, U);
+      Check(v.Verdict == GateVerdict.Deny && v.Reason == "dangerous", "z-order: a host with no order at all still stops on the dialog shown (" + v.Reason + ")");
+      // an offer under a screen opened later is not on top either (its × would land on that screen)
+      var si = ScreenState.Classify(new ScreenInputs { CityForm = false, Inv = new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true }, Screens = new List<string> { SimInv }, Offers = new List<string> { offer }, Order = new List<string> { SimInv, offer, "Form_MainCity" } }, 1000);
+      Check(si.OfferCount == 0 && si.Kind == ScreenKind.Inventory && !si.ModalOpen, "z-order: an offer under the inventory is not a pop-up on top (" + si.Brief + ")");
+    }
+    // (2) a pop-up's × under a full screen opened later: lands on its resource bar's «+» (seed 10704: Form_BranchDungeon over Form_HeroAppraise)
+    {
+      var plus = DangerPoint("Form_BranchDungeon", "m_ResourceBarItemPlus", W, H, U);
+      Check(plus != null, "z-order: Form_BranchDungeon's resource bar «+» is a dangerous widget of the UI graph");
+      var order = new List<string> { "Form_BranchDungeon", "Form_HeroAppraise", SimHero, "Form_MainCity" };
+      var s = ScreenState.Classify(new ScreenInputs { CityForm = false, Hero = new HeroScreen { Hero = 100, FormOk = true, Tab = 1, Part = -1 }, Screens = new List<string> { SimHero }, Offers = new List<string>(), ShownKnown = "", TopNew = "Form_HeroAppraise,Form_BranchDungeon", Order = order }, 1000);
+      Check(s.Top == "Form_BranchDungeon", "z-order: of the pop-ups over the hero screen the one on top is the later full screen (" + s.Top + ", " + s.Brief + ")");
+      var d = ClickGate.MapExit(s, W, H, U);
+      Check(d.Move != MapMove.Close || d.Form != "Form_HeroAppraise", "z-order: the map closes no pop-up under the full screen (" + d + ")");
+      if (plus != null) {
+        var v = ZGate(ClickTarget.MapClose, ClickOwner.Equip, plus, "Form_HeroAppraise", new List<string> { "Form_HeroAppraise", "Form_BranchDungeon" }, s, true, W, H, U);
+        Check(!v.Allowed, "z-order: the pop-up's × under the full screen is never pressed (" + v.Reason + ": " + v.Detail + ")");
+        var su = ScreenState.Classify(new ScreenInputs { CityForm = false, Hero = new HeroScreen { Hero = 100, FormOk = true, Tab = 1, Part = -1 }, Screens = new List<string> { SimHero }, Offers = new List<string>(), ShownKnown = "", TopNew = "Form_HeroAppraise,Form_BranchDungeon" }, 1000);
+        v = ZGate(ClickTarget.MapClose, ClickOwner.Equip, plus, "Form_HeroAppraise", new List<string> { "Form_HeroAppraise", "Form_BranchDungeon" }, su, true, W, H, U);
+        Check(v.Verdict == GateVerdict.Deny && v.Reason == "target", "z-order: no order - the point on a shown form's dangerous «+» is a stop (" + v.Reason + ": " + v.Detail + ")");
+        v = ZGate(ClickTarget.MapClose, ClickOwner.Equip, plus, "Form_HeroAppraise", new List<string> { "Form_HeroAppraise", "Form_BranchDungeon" }, su, false, W, H, U);
+        Check(v.Verdict == GateVerdict.Deny && v.Reason == "target", "z-order: a host with no order at all still stops on the «+» (" + v.Reason + ")");
+      }
+    }
+    // (3) a pilot click on the inventory with a pop-up over it from the start (seed 14292: Form_ChooseChanelToSharePopUp's share button)
+    {
+      string pop = "Form_ChooseChanelToSharePopUp";
+      var share = DangerPoint(pop, "m_GuideBtnShard", W, H, U);
+      Check(share != null, "z-order: " + pop + "'s share button is a dangerous widget of the UI graph");
+      var inv = new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true };
+      var order = new List<string> { "Form_IntegralRewardTip", pop, "Form_TournamentBonusPopUp", SimInv, "Form_MainCity" };
+      var s = ScreenState.Classify(new ScreenInputs { CityForm = false, Inv = inv, Screens = new List<string> { SimInv }, Offers = new List<string>(), Order = order }, 1000);
+      Check(s.Kind == ScreenKind.Inventory && s.ModalOpen && s.ModalWhy.Contains(pop), "z-order: a pop-up over the inventory since the start is a pop-up on top, not a part of it (" + s.Brief + ")");
+      if (share != null) {
+        var v = ZGate(ClickTarget.FoundryButton, ClickOwner.Locate, share, null, new List<string> { "Form_TournamentBonusPopUp", pop, "Form_IntegralRewardTip" }, s, true, W, H, U);
+        Check(!v.Allowed, "z-order: FoundryButton is never pressed under it (" + v.Reason + ": " + v.Detail + ")");
+        var su = ScreenState.Classify(new ScreenInputs { CityForm = false, Inv = inv, Screens = new List<string> { SimInv }, Offers = new List<string>() }, 1000);
+        v = ZGate(ClickTarget.FoundryButton, ClickOwner.Locate, share, null, new List<string> { "Form_TournamentBonusPopUp", pop, "Form_IntegralRewardTip" }, su, true, W, H, U);
+        Check(v.Verdict == GateVerdict.Deny && v.Reason == "target", "z-order: no order - the point on the shown pop-up's dangerous button is a stop (" + v.Reason + ": " + v.Detail + ")");
+        // with the order, the inventory on top: the same point is not refused for the pop-up (it lies under the inventory)
+        var top = ScreenState.Classify(new ScreenInputs { CityForm = false, Inv = inv, Screens = new List<string> { SimInv }, Offers = new List<string>(), Order = new List<string> { SimInv, pop, "Form_MainCity" } }, 1000);
+        v = ZGate(ClickTarget.FoundryButton, ClickOwner.Locate, share, null, new List<string> { pop }, top, true, W, H, U);
+        Check(v.Reason != "target" && v.Reason != "covered" && v.Reason != "order" && !top.ModalOpen, "z-order: the pop-up under the inventory takes no part (" + v.Reason + ": " + v.Detail + ")");
+      }
+    }
+    // a full screen over the known screens: its back arrow is pressed (the known screens under it are not on top)
+    Check(ClickGate.AllBelow(new List<string> { "Form_PhysicalPrize", SimInv, "Form_MainCity" }, "Form_PhysicalPrize", SimInv) && !ClickGate.AllBelow(null, "Form_PhysicalPrize", SimInv),
+          "z-order: a known screen under the full screen on top is below it (no order: not known)");
+    // the seeds of the graph-driven sim's rule breaks (f36711b), with the order read and with it never certain
+    var geo = GameGeometry.Parse(GeoJson(), GeoGame);
+    bool was = SimGraph; double wasP = SimOrderFailP; SimGraph = true;
+    foreach (double fp in new[] { -1.0, 1.0 })
+      foreach (int seed in new[] { 10704, 11920, 14292, 14415, 15290, 15849, 16157, 16488, 16870, 22850, 23375, 26615, 27080, 27328, 27527, 27543 }) {
+        SimOrderFailP = fp;
+        string e = SimRun(seed, false, false, new Dictionary<string, int>(), geo);
+        Check(e == "", "sim --graph: seed " + seed + (fp > 0 ? " (the order never certain)" : "") + " keeps every rule" + (e != "" ? ": " + e.Split('\n')[0] + " " + (e.Split('\n').Length > 1 ? e.Split('\n')[1].Trim() : "") : ""));
+      }
+    SimGraph = was; SimOrderFailP = wasP;
+  }
+
   /// <summary>The UI graph against the pilots: loaded, every pilot target reachable by safe clicks, the generated path the pilot's own chain.</summary>
   static void UiGraphTests() {
     Check(UiGraph.All.Count >= ScreenMap.Count - 5 && UiGraph.ByName(SimCity) != null, "ui graph: " + UiGraph.All.Count + " forms loaded (the screen map has " + ScreenMap.Count + ")");
@@ -1769,6 +1883,7 @@ static partial class CoreTests {
       else if (args[i] == "--verbose") verbose = true;
       else if (args[i] == "--real") real = true;
       else if (args[i] == "--graph") SimGraph = true;
+      else if (args[i] == "--order-fail" && i + 1 < args.Length) SimOrderFailP = double.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture);
       else if (args[i] == "--seed" && i + 1 < args.Length) { from = int.Parse(args[++i]); seeds = 1; }
       else if (args[i] == "--from" && i + 1 < args.Length) from = int.Parse(args[++i]);
       else if (args[i] == "--list" && i + 1 < args.Length) list = args[++i];

@@ -646,6 +646,16 @@ namespace RealmForge {
     /// <summary>No game to read (and no stand-in memory of the tests).</summary>
     static bool UiNoGame() { return TestMemory == null && (Layout.Current == null || GameInfo.GameProcesses().Length == 0); }
 
+    /// <summary>The live rect (client px: x, y, w, h) of a form's widget by its Lua field, read now (the click gate's cover check: a dangerous
+    /// widget of a form shown over the click's form); null = not read, or not visible. No game: null.</summary>
+    public static double[] UiFieldReadNow(string form, string field, double W, double H, double U) {
+      if (string.IsNullOrEmpty(form) || string.IsNullOrEmpty(field) || UiNoGame()) return null;
+      ulong env, ui; string why;
+      if (!UiRoots(out env, out ui, out why)) return null;
+      var r = UiButtonRead(env, ui, new UiWidget(form, field), W, H, U);
+      return r.FailStep == null && r.Visible && r.W > 0 && r.H > 0 ? new[] { r.X, r.Y, r.W, r.H } : null;
+    }
+
     /// <summary>One read now of the pilot button <paramref name="t"/> (from the script root), kept for the clicks and frames; a failed read is
     /// dumped step by step once a minute (test build). Null = not a button read by name, or no game.</summary>
     public static UiButtonInfo UiButtonReadNow(ClickTarget t, string offerForm, double W, double H, double U) {

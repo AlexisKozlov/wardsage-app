@@ -151,6 +151,44 @@ namespace RealmForge {
       return null;
     }
 
+    // UIBase (the game's C# form class; dump of 1.6.46.841.1): <OwnerStack>k__BackingField 0xE8 (UI.UIStack: <Prio>k__BackingField 0x10,
+    // UIStatic's StackBase < StackMain < StackFlow < StackPopup < StackTop), <Destroyed>k__BackingField 0xF8, <SortingOrder>k__BackingField 0xFC
+    // (the form's canvas order the stack gives it as it pushes the form: the later one higher)
+    const int UiBaseOwnerStack = 0xE8, UiStackPrio = 0x10;
+    /// <summary>Every shown form of the window table by its place on the screen, the top one first: its stack's priority, then its sorting order
+    /// (ScreenState.ZOrder). Null = not certain: the table or a form's C# side not readable, a name not read yet, two forms at one place.
+    /// A few fields per shown form: read with the screen (the tick) and on the fresh read before a click.</summary>
+    public static List<string> ReadShownOrder() {
+      ulong env, ui; string why;
+      if (!UiRoots(out env, out ui, out why)) return null;
+      var h = Read(ui, 56); if (h == null || h[8] != 5 || h[11] > 12) return null;
+      int nn = 1 << h[11]; var nb = Read(BitConverter.ToUInt64(h, 24), nn * 32); if (nb == null) return null;
+      var zs = new List<ScreenState.FormZ>(); int budget = NewNamesPerRead;
+      lock (formNames) {
+        for (int i = 0; i < nn; i++) {
+          int o = i * 32;
+          if (BitConverter.ToInt32(nb, o + 24) != T_INT || BitConverter.ToInt32(nb, o + 8) != T_TABLE) continue;
+          ulong f = BitConverter.ToUInt64(nb, o);
+          if (!Shown(f)) continue;
+          string n = ui == uiTable ? NameOf(BitConverter.ToInt64(nb, o + 16), f, ref budget) : FormClassName(f, out why);
+          if (n == "") return null;
+          var z = new ScreenState.FormZ { Name = n };
+          ulong csv; int ctt;
+          if (Field(f, "m_csui", out csv, out ctt) && ctt == T_UDATA) {
+            string cls; ulong obj = ManagedOf(env, csv, "m_csui", new UiButtonInfo(), out cls);
+            var b = obj != 0 && IsUiBaseClass(cls) ? Read(obj + UiBaseOwnerStack, 0x18) : null;
+            if (b != null && b[0x10] == 0) {
+              ulong st = BitConverter.ToUInt64(b, 0);
+              var pb = st != 0 && ClassName(Ptr(st)) == "UI.UIStack" ? Read(st + UiStackPrio, 4) : null;
+              if (pb != null) { z.Prio = BitConverter.ToInt32(pb, 0); z.Sorting = BitConverter.ToInt32(b, 0x14); z.Readable = true; }
+            }
+          }
+          zs.Add(z);
+        }
+      }
+      return zs.Count > 0 ? ScreenState.ZOrder(zs) : null;
+    }
+
     /// <summary>The shown forms that are neither a screen the app knows (OfferForms.KnownScreens) nor an offer, by class name ("id:&lt;key&gt;"
     /// when the name is not readable); at most <paramref name="max"/>. Null = the window table is not known. A field read per form held:
     /// call it seldom (every few seconds, only while it is wanted).</summary>

@@ -542,7 +542,7 @@ namespace RealmForge {
       stall.Remove(o); stallBrief.Remove(o); searchWaited.Remove(o);
       unknownBacks.Remove(o); backTried.Remove(o); lastTarget.Remove(o);
       cityBacks.Remove(o); escapes.Remove(o); escapeDue.Remove(o); cityTried.Remove(o); cellRetried.Remove(o); CellAgainDue.Remove(o); tipEscapes.Remove(o); barRetried.Remove(o); cityInvRetried.Remove(o); CityAgainDue.Remove(o);
-      mapMoves.Remove(o); mapTried.Remove(o);
+      mapMoves.Remove(o); mapTried.Remove(o); coverSince.Remove(o);
       failStep.Remove(o); failCount.Remove(o); retries.Remove(o); retryUntil.Remove(o); retryAt.Remove(o); chainUntil.Remove(o); retryWhy.Remove(o); stepNow.Remove(o); pilotStep.Remove(o); RetryDue.Remove(o);
     }
 
@@ -727,9 +727,17 @@ namespace RealmForge {
       if (!s.OfferRead) return "the window table is not read";
       if (Exempt(s.TopForm)) return "a fight's result";
       if (s.ShownKnown == null) return "the shown forms are not known";
-      if (s.ShownKnown != "") return "a known screen's form is shown (" + s.ShownKnown + ")";
+      if (s.ShownKnown != "" && !AllBelow(s.Order, s.Top, s.ShownKnown)) return "a known screen's form is shown (" + s.ShownKnown + ")";
       if (s.Top != "" && "DWPE".IndexOf(s.TopClass) >= 0) return MapBlock + s.Top + " is " + ScreenMap.ClassName(s.TopClass);
       return "";
+    }
+    /// <summary>The window table's order puts every form of the comma list <paramref name="list"/> under <paramref name="top"/> (false = no order,
+    /// or not so): a known screen under the full screen on top is not on top.</summary>
+    public static bool AllBelow(List<string> order, string top, string list) {
+      if (order == null || string.IsNullOrEmpty(top)) return false;
+      int ti = order.IndexOf(top); if (ti < 0) return false;
+      foreach (var n in list.Split(',')) { string x = n.Trim(); if (x != "" && order.IndexOf(x) <= ti) return false; }
+      return true;
     }
     const string MapBlock = "the screen map: ";
     /// <summary>A pilot's own flow form is shown (ScreenMap.FlowForms): no back press or Escape acts on it.</summary>
@@ -1036,6 +1044,7 @@ namespace RealmForge {
       if (retryUntil.TryGetValue(r.Owner, out until) && now < until) return GateResult.Wait("retry", tag + ": a retry - the screen is read again first");
       // after a pop-up was closed the next one of the game's chain is waited for (only another pop-up's × may be pressed meanwhile)
       if (r.Target != ClickTarget.OfferClose && chainUntil.TryGetValue(r.Owner, out until) && now < until) return GateResult.Wait("chain", tag + ": a pop-up was closed " + (OfferChainMs - (until - now)) + " ms ago - the next one of the chain is waited for");
+      var cover = CheckCover(r, f, now, tag); if (cover != null) return cover;
       if (r.Target == ClickTarget.OfferClose) return CheckOffer(r, f, now, tag);
       if (r.Target == ClickTarget.UnknownBack) return CheckUnknownBack(r, f, tag);
       if (r.Target == ClickTarget.CityBack) return CheckCityBack(r, f, tag);
@@ -1179,6 +1188,105 @@ namespace RealmForge {
       return res;
     }
 
+    /// <summary>The live rect (client px: x, y, w, h) of a form's widget by its Lua field, for a window of W x H px and unit U (src/UiButtons.cs
+    /// UiFieldReadNow); null = not read. The cover check takes it besides the UI graph's rect of a dangerous widget.</summary>
+    public Func<string, string, double, double, double, double[]> DangerLive;
+    /// <summary>The host reads the window table's order (ScreenInputs.Order: app/Overlay.cs, the game sim): a fresh state without it is a top not
+    /// known - a pop-up / screen shown besides the target's form, or shown forms not read at all, mean no click. Off: the older hosts' rules
+    /// (the forms shown since before the run count as the screen's part); the dangerous checks below run either way.</summary>
+    public bool OrderRead;
+
+    /// <summary>The form a click is meant for: the pop-up of an OfferClose / MapClose, the known screen's own form, else the form on top.</summary>
+    static string TargetForm(ClickRequest r, ScreenState f) {
+      if (r.Target == ClickTarget.OfferClose || r.Target == ClickTarget.MapClose) return r.Form ?? "";
+      if (f.Kind != ScreenKind.Unknown) return ScreenState.OwnForm(f.Kind);
+      return f.Top ?? "";
+    }
+    /// <summary>Every shown form the fresh state names when the window table's order is not known: the forms nobody knows (the request's), the
+    /// unknown screen's / the pop-up's forms, the known screens shown, the offer and the flow forms.</summary>
+    static List<string> ShownUnordered(ClickRequest r, ScreenState f) {
+      var l = new List<string>();
+      Action<string> add = list => { if (!string.IsNullOrEmpty(list)) foreach (var n in list.Split(',')) { string x = n.Trim(); if (x != "" && !l.Contains(x)) l.Add(x); } };
+      if (r.Shown != null) foreach (var n in r.Shown) add(n);
+      add(f.TopForm); add(f.ModalWhy != null && f.ModalWhy.StartsWith("form:") ? f.ModalWhy.Substring(5) : ""); add(f.ShownKnown); add(f.Offer);
+      return l;
+    }
+    /// <summary>A dangerous widget of <paramref name="form"/> under the click point: the UI graph's rect, or (<paramref name="live"/>) its live rect.</summary>
+    /// (<paramref name="own"/>: the click's own form - its close button, a request the game makes as the form closes, is left out: the × lists decide it.)
+    UiGraph.Widget DangerAt(string form, ClickRequest r, bool live, bool own = false) {
+      if (r.W <= 0 || r.H <= 0 || r.U <= 0) return null;
+      var w = UiGraph.WidgetAt(form, r.X, r.Y, r.W, r.H, r.U, true); if (w != null && !(own && w.Closes)) return w;
+      var lv = live ? DangerLive : null; if (lv == null) return null;
+      foreach (var d in UiGraph.DangerWidgets(form)) {
+        if (string.IsNullOrEmpty(d.Field)) continue;
+        var rc = lv(form, d.Field, r.W, r.H, r.U);
+        if (rc != null && r.X >= rc[0] && r.X <= rc[0] + rc[2] && r.Y >= rc[1] && r.Y <= rc[1] + rc[3]) return d;
+      }
+      return null;
+    }
+
+    /// <summary>Before ANY click with a point: every shown form is read, not only the one meant. With the window table's order (ScreenState.Order)
+    /// the forms above the target's form are known: a dangerous dialog among them stops the owner, a dangerous widget of one of them under the
+    /// point stops it, any other pop-up / screen there (or a form whose widget takes the point) is waited for - the click would land on it.
+    /// Without the order every shown form other than the target's own, its flow forms, the overlays and the known screens under it may be on
+    /// top: a dangerous one stops, a dangerous widget of one under the point stops, a pop-up / screen among them makes the top ambiguous - no
+    /// click. Last, a dangerous widget of the target's own form under the point stops (the UI graph's rects). Null = nothing against it.</summary>
+    GateResult CheckCover(ClickRequest r, ScreenState f, long now, string tag) {
+      if (f == null || r.Target == ClickTarget.EscapeBack || r.Target == ClickTarget.EquipTipEscape || r.Target == ClickTarget.None) return null;
+      var o = r.Owner;
+      string tf = TargetForm(r, f); if (tf == "") return null;   // (an unknown screen with no form named: the target's own rules wait)
+      var mine = new HashSet<string> { tf };
+      foreach (var n in (f.Flow ?? "").Split(',')) if (n.Trim() != "") mine.Add(n.Trim());
+      List<string> above = null; bool sure = false;
+      if (f.Order != null) {
+        var l = new List<string>();
+        foreach (var n in f.Order) { if (mine.Contains(n)) { sure = true; break; } l.Add(n); }
+        if (sure) above = l;
+      }
+      if (!sure) {
+        if (OrderRead && r.Shown == null) return CoverWait(o, "order", tag + ": neither the window table's order nor its other shown forms are read - which form is on top is not known", now);
+        above = ShownUnordered(r, f);
+      }
+      string where = sure ? "over " + tf : "shown with " + tf + " (the window table's order not known)";
+      var cand = new List<string>();
+      foreach (var n in above) {
+        if (mine.Contains(n) || ScreenMap.IsFlow(f.Kind, n) || ScreenMap.ClassOf(n) == 'O') continue;
+        var k = ScreenState.KindOfForm(n);
+        if (!sure && k != ScreenKind.Unknown && (n == tf || ScreenState.Rank(k) <= ScreenState.Rank(f.Kind))) continue;   // (a known screen under it)
+        cand.Add(n);
+      }
+      // first the dangerous ones: a dangerous dialog shown, a dangerous widget of a shown form under the point (the UI graph's rect, its live rect)
+      foreach (var n in cand) if (ScreenMap.ClassOf(n) == 'D') return Halt(o, "dangerous", tag + ": the dangerous " + n + " is " + where + " - nothing is pressed");
+      foreach (var n in cand) {
+        if (ScreenState.KindOfForm(n) != ScreenKind.Unknown) continue;   // (an app screen: its reader reads it, the rules below wait for it - the Foundry's «Вознести» under FoundryButton: FoundryClosed)
+        var dw = DangerAt(n, r, true);
+        if (dw != null) return Halt(o, "target", tag + ": lies on a dangerous widget of " + n + " (" + dw.Path + "), " + where);
+      }
+      // then any form that would take the click (with the order), or that may lie on top (without it)
+      foreach (var n in cand) {
+        char c = ScreenMap.ClassOf(n); var k = ScreenState.KindOfForm(n);
+        if (sure) {
+          if (c != 'U' || k != ScreenKind.Unknown || OfferForms.IsOffer(n) || UiGraph.WidgetAt(n, r.X, r.Y, r.W, r.H, r.U, false) != null)
+            return CoverWait(o, "covered", tag + ": " + n + " lies " + where, now);
+        } else if (OrderRead && ("FPEW".IndexOf(c) >= 0 || k != ScreenKind.Unknown || OfferForms.IsOffer(n)))
+          return CoverWait(o, "order", tag + ": " + n + " is " + where + " - which one is on top is not known", now);
+      }
+      coverSince.Remove(o);
+      var own = DangerAt(tf, r, false, true);
+      if (own != null) return Halt(o, "target", tag + ": lies on a dangerous widget of " + tf + " (" + own.Path + ")");
+      return null;
+    }
+    /// <summary>How long a click may wait for a top form that stays covered / not known before the owner stops (a hint instead of a click).</summary>
+    public const int CoverWaitMs = 15000;
+    readonly Dictionary<ClickOwner, long> coverSince = new Dictionary<ClickOwner, long>(), coverLast = new Dictionary<ClickOwner, long>();
+    GateResult CoverWait(ClickOwner o, string reason, string detail, long now) {
+      long at, last;   // (a wait more than 3 s after the last one starts the time again: the pilot did other things meanwhile)
+      if (!coverSince.TryGetValue(o, out at) || !coverLast.TryGetValue(o, out last) || now - last > 3000) { coverSince[o] = now; at = now; }
+      coverLast[o] = now;
+      if (now - at >= CoverWaitMs) { coverSince.Remove(o); return Halt(o, reason, detail + " (" + (now - at) / 1000 + " s)"); }
+      return GateResult.Wait(reason, detail);
+    }
+
     /// <summary>OfferClose: the one pop-up shown is the one meant, on the list, over the city (or nothing known); the point is on its × and on
     /// none of its other buttons; not more than MaxOfferCloses in a row.</summary>
     GateResult CheckOffer(ClickRequest r, ScreenState f, long now, string tag) {
@@ -1315,7 +1423,7 @@ namespace RealmForge {
       }
       if (!ScreenMap.OnExit(form, r.X, r.Y, r.W, r.H, r.U)) return Halt(o, "target", tag + ": not on the close button of " + form);
       if (ScreenMap.OnNever(form, r.X, r.Y, r.W, r.H, r.U)) return Halt(o, "target", tag + ": lies on another button of " + form + " (never pressed)");
-      // the window table has no order: another pop-up shown with it may lie on top of this one, so the point must be off its never-click buttons too
+      // without the window table's order another pop-up shown with it may lie on top of this one, so the point must be off its never-click buttons too
       foreach (var other in ShownForms(f))
         if (other != form && ScreenMap.OnNever(other, r.X, r.Y, r.W, r.H, r.U)) return Halt(o, "target", tag + ": lies on a never-click button of " + other + ", shown with " + form);
       int n = MapMoves(o);

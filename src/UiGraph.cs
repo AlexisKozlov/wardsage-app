@@ -143,6 +143,24 @@ namespace RealmForge {
       foreach (var w in f.Widgets) if (w.Shown && !w.Template && w.Safe && w.Closes && w.Rect != null) return "graph:" + w.Path;
       return "none";
     }
+    /// <summary>A widget of <paramref name="form"/> under the point (client px; shown in the prefab, not a list template, measured, not a
+    /// full-screen tap catcher): the smallest dangerous one when <paramref name="danger"/>, else the smallest of any kind; null = none.</summary>
+    public static Widget WidgetAt(string form, double x, double y, double W, double H, double U, bool danger) {
+      var f = ByName(form); if (f == null) return null;
+      Widget best = null; double ba = double.MaxValue;
+      foreach (var w in f.Widgets) {
+        if (!w.Shown || w.Template || w.Rect == null || (danger && !w.Danger)) continue;
+        var r = ScreenMap.Place(w.Rect, W, H, U);
+        if (r.W < 2 || r.H < 2 || r.W > W * 0.9 && r.H > H * 0.9) continue;
+        if (x >= r.X && x <= r.Right && y >= r.Y && y <= r.Bottom && r.W * r.H < ba) { best = w; ba = r.W * r.H; }
+      }
+      return best;
+    }
+    /// <summary>The dangerous widgets of a form (shown, not a list template): the ones a click must never land on.</summary>
+    public static IEnumerable<Widget> DangerWidgets(string form) {
+      var f = ByName(form); if (f == null) yield break;
+      foreach (var w in f.Widgets) if (w.Danger && w.Shown && !w.Template) yield return w;
+    }
     /// <summary>The forms the game opens by itself in a scene ("city": ActivityFormMgr over the city) or after an action (any).</summary>
     public static List<string> AutoForms(string scene) {
       Load(); var l = new List<string>();

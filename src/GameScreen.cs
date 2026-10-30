@@ -58,6 +58,10 @@ namespace RealmForge {
     /// (src/OfferScan.cs ReadShownScreens); null = the window table was not read. The screen's kind comes from these first: the readers
     /// above only fill its details (and decide alone while the table is not read).</summary>
     public List<string> Screens;
+    /// <summary>Every shown form of the window table by its place on the screen, the top one first (src/OfferScan.cs ReadShownOrder: the
+    /// game's own z-order, UIStack.Prio of the form's stack, then UIBase.SortingOrder of its canvas); null = not read, or not certain (a form
+    /// whose order was not readable, two forms with the same order): which form is on top is then not known.</summary>
+    public List<string> Order;
   }
 
   public sealed class ScreenState {
@@ -107,6 +111,8 @@ namespace RealmForge {
     public char TopClass = 'U';
     /// <summary>The shown known screens' forms (ScreenInputs.ShownKnown): "" = none, null = not read.</summary>
     public string ShownKnown;
+    /// <summary>The window table's shown forms, the top one first (ScreenInputs.Order); null = the order is not known.</summary>
+    public List<string> Order;
     /// <summary>The pilot's own flow forms shown on the screen (ScreenInputs.Flow; the screen stays the base one): "" = none.</summary>
     public string Flow = "";
     // times (ms, the overlay's clock): this reading, the last time the screen was really read (older when Held), since when the screen is this one
@@ -255,23 +261,111 @@ namespace RealmForge {
       }
       // an offer pop-up sits above every screen (the game opens it on top of the city): it is THE modal
       s.OfferRead = i.Offers != null;
-      if (i.Offers != null && i.Offers.Count > 0) {
-        s.OfferCount = i.Offers.Count; s.Offer = i.Offers[0]; s.OfferTopKnown = i.Offers.Count == 1 || i.OfferTopKnown;
+      // (with the window table's order: only the offers over the screen's own form, the top one first - one under a screen opened later is
+      // not on top: its × would land on that screen)
+      bool offerTop; var offers = OrderOffers(i.Order, s.Kind, i.Offers, out offerTop);
+      if (offers != null && offers.Count > 0) {
+        s.OfferCount = offers.Count; s.Offer = offers[0]; s.OfferTopKnown = offers.Count == 1 || i.OfferTopKnown || offerTop;
         s.ModalOpen = true; s.ModalWhy = "offer:" + s.Offer + (s.OfferCount > 1 ? "+" + (s.OfferCount - 1) : "");
       }
       if (!s.ModalOpen && i.ModalExtra) { s.ModalOpen = true; s.ModalWhy = i.ModalExtraWhy; }
-      if (!s.ModalOpen && s.Kind != ScreenKind.Unknown && s.Kind != ScreenKind.City && !string.IsNullOrEmpty(i.TopNew)) { s.ModalOpen = true; s.ModalWhy = "form:" + i.TopNew; }
-      if (!s.ModalOpen && s.Kind == ScreenKind.City && !string.IsNullOrEmpty(i.TopCity)) { s.ModalOpen = true; s.ModalWhy = "form:" + i.TopCity; }
-      if (s.Kind == ScreenKind.Unknown) s.TopForm = i.TopUnknown ?? "";
+      // (the forms that came after the screen / cover the city: with the window table's order only the ones over the screen's own form)
+      string topNew = OrderAbove(i.Order, s.Kind, i.TopNew), topCity = OrderAbove(i.Order, s.Kind, i.TopCity);
+      if (!s.ModalOpen && s.Kind != ScreenKind.Unknown && s.Kind != ScreenKind.City && !string.IsNullOrEmpty(topNew)) { s.ModalOpen = true; s.ModalWhy = "form:" + topNew; }
+      if (!s.ModalOpen && s.Kind == ScreenKind.City && !string.IsNullOrEmpty(topCity)) { s.ModalOpen = true; s.ModalWhy = "form:" + topCity; }
+      s.Order = i.Order;
+      // the window table's order says a pop-up / screen / dangerous dialog / wait lies over the known screen (one that was there when the
+      // screen came too: with the order known it is not taken for a part of the screen)
+      if (s.Kind != ScreenKind.Unknown && s.OfferCount == 0) {
+        string cov = OrderCover(i.Order, s.Kind, i.Flow);
+        if (cov != "" && !s.ModalOpen) { s.ModalOpen = true; s.ModalWhy = "form:" + cov; }
+        else if (cov != "" && s.ModalWhy.StartsWith("form:")) { var have = new List<string>(s.ModalWhy.Substring(5).Split(',')); foreach (var n in cov.Split(',')) if (!have.Contains(n)) have.Add(n); s.ModalWhy = "form:" + string.Join(",", have.ToArray()); }
+      }
+      if (s.Kind == ScreenKind.Unknown) s.TopForm = !string.IsNullOrEmpty(i.TopUnknown) ? i.TopUnknown : OrderFirst(i.Order);
       s.ShownKnown = i.ShownKnown;
       if (s.Kind != ScreenKind.City) s.Flow = i.Flow ?? "";
-      // the form on top by name
-      if (s.OfferCount > 0) s.Top = s.Offer;
-      else if (s.Kind == ScreenKind.Unknown) s.Top = ScreenMap.Top(s.TopForm);
-      else if (s.ModalOpen && s.ModalWhy.StartsWith("form:")) s.Top = ScreenMap.Top(s.ModalWhy.Substring(5));
+      // the form on top by name (of several shown, the window table's order decides when it is known)
+      if (s.OfferCount > 0) s.Top = OrderTop(i.Order, s.Offer, s.Offer);
+      else if (s.Kind == ScreenKind.Unknown) s.Top = OrderTop(i.Order, s.TopForm, ScreenMap.Top(s.TopForm));
+      else if (s.ModalOpen && s.ModalWhy.StartsWith("form:")) s.Top = OrderTop(i.Order, s.ModalWhy.Substring(5), ScreenMap.Top(s.ModalWhy.Substring(5)));
       if (s.Top == "") s.Top = OwnForm(s.Kind);
       s.TopClass = ScreenMap.ClassOf(s.Top);
       return s;
+    }
+
+    /// <summary>Of the comma list <paramref name="list"/>, the one the window table's order puts highest (overlays left out); no order, or none of
+    /// them in it: <paramref name="fallback"/>.</summary>
+    public static string OrderTop(List<string> order, string list, string fallback) {
+      if (order == null || string.IsNullOrEmpty(list)) return fallback;
+      var names = new HashSet<string>();
+      foreach (var n in list.Split(',')) if (n.Trim() != "") names.Add(n.Trim());
+      foreach (var n in order) if (names.Contains(n) && ScreenMap.ClassOf(n) != 'O') return n;
+      return fallback;
+    }
+    /// <summary>The top form of the window table's order that the screen map calls a pop-up, a screen, a dangerous dialog or a wait ("" = none / no order).</summary>
+    public static string OrderFirst(List<string> order) {
+      if (order == null) return "";
+      foreach (var n in order) if ("FPEDW".IndexOf(ScreenMap.ClassOf(n)) >= 0 && !OfferForms.IsOffer(n)) return n;
+      return "";
+    }
+    /// <summary>The offers shown over the screen <paramref name="k"/>'s own form by the window table's order, the top one first
+    /// (<paramref name="topKnown"/>); no order, or an offer not in it: the offers as read.</summary>
+    public static List<string> OrderOffers(List<string> order, ScreenKind k, List<string> offers, out bool topKnown) {
+      topKnown = false;
+      if (order == null || offers == null || offers.Count == 0) return offers;
+      foreach (var n in offers) if (!order.Contains(n)) return offers;
+      string own = OwnForm(k); var l = new List<string>();
+      bool covered = false;
+      foreach (var n in order) {
+        if (n == own) break;
+        if (offers.Contains(n)) { if (!l.Contains(n)) l.Add(n); continue; }
+        // a pop-up / screen / dangerous dialog / wait over the top offer: the offers are not on top (that form is, OrderCover / the unknown screen)
+        if (l.Count == 0 && !ScreenMap.IsFlow(k, n) && ("FPEDW".IndexOf(ScreenMap.ClassOf(n)) >= 0 || KindOfForm(n) != ScreenKind.Unknown)) covered = true;
+      }
+      topKnown = true;
+      return covered ? new List<string>() : l;
+    }
+    /// <summary>Of the comma list <paramref name="list"/>, the forms the window table's order puts over the known screen <paramref name="k"/>'s own
+    /// form; no order or the screen's form not in it: the list as it is.</summary>
+    public static string OrderAbove(List<string> order, ScreenKind k, string list) {
+      string own = OwnForm(k); if (order == null || own == "" || string.IsNullOrEmpty(list) || !order.Contains(own)) return list;
+      var names = new HashSet<string>(); foreach (var n in list.Split(',')) if (n.Trim() != "") names.Add(n.Trim());
+      var l = new List<string>();
+      foreach (var n in order) { if (n == own) break; if (names.Contains(n)) l.Add(n); }
+      return string.Join(",", l.ToArray());
+    }
+    /// <summary>The forms the order puts over the known screen <paramref name="k"/>'s own form that the screen map calls a pop-up, a screen, a
+    /// dangerous dialog or a wait (a joined list, the top one first; "" = none, or no order). Overlays, the screen's flow forms and forms nobody
+    /// knows (a part the screen builds late) are left out.</summary>
+    public static string OrderCover(List<string> order, ScreenKind k, string flow) {
+      string own = OwnForm(k); if (order == null || own == "") return "";
+      var flows = new HashSet<string>(); foreach (var n in (flow ?? "").Split(',')) if (n.Trim() != "") flows.Add(n.Trim());
+      var l = new List<string>();
+      foreach (var n in order) {
+        if (n == own) return string.Join(",", l.ToArray());
+        if (flows.Contains(n) || ScreenMap.IsFlow(k, n) || OfferForms.IsOffer(n)) continue;
+        var nk = KindOfForm(n); if (nk != ScreenKind.Unknown) { if (Rank(nk) > Rank(k)) l.Add(n); continue; }
+        if ("FPEDW".IndexOf(ScreenMap.ClassOf(n)) >= 0) l.Add(n);
+      }
+      return "";   // (the screen's own form not in the order: nothing is told from it)
+    }
+
+    /// <summary>A form of the window table with its place: UIStack.Prio of its stack and UIBase.SortingOrder (Readable false = not read).</summary>
+    public struct FormZ { public string Name; public int Prio, Sorting; public bool Readable; }
+    /// <summary>The shown forms the top one first, by stack priority then sorting order; null = not certain: a form whose place was not read or
+    /// two forms at the same place (overlays aside: they never take a click the app makes).</summary>
+    public static List<string> ZOrder(IList<FormZ> forms) {
+      if (forms == null) return null;
+      var l = new List<FormZ>();
+      foreach (var f in forms) {
+        if (string.IsNullOrEmpty(f.Name)) return null;
+        if (!f.Readable) { if (ScreenMap.ClassOf(f.Name) == 'O') continue; return null; }
+        l.Add(f);
+      }
+      l.Sort((a, b) => a.Prio != b.Prio ? b.Prio.CompareTo(a.Prio) : b.Sorting.CompareTo(a.Sorting));
+      for (int i = 1; i < l.Count; i++)
+        if (l[i].Prio == l[i - 1].Prio && l[i].Sorting == l[i - 1].Sorting && ScreenMap.ClassOf(l[i].Name) != 'O' && ScreenMap.ClassOf(l[i - 1].Name) != 'O') return null;
+      return l.ConvertAll(f => f.Name);
     }
   }
 
@@ -307,7 +401,7 @@ namespace RealmForge {
 
     public ScreenState Update(ScreenInputs raw, long now) {
       var failing = new List<string>();
-      var use = new ScreenInputs { Screens = raw.Screens, CitySeen = raw.CitySeen, CityForm = raw.CityForm, ModalExtra = raw.ModalExtra, ModalExtraWhy = raw.ModalExtraWhy, Offers = raw.Offers, OfferTopKnown = raw.OfferTopKnown, TopUnknown = raw.TopUnknown, TopNew = raw.TopNew, ShownKnown = raw.ShownKnown, TopCity = raw.TopCity, Flow = raw.Flow };
+      var use = new ScreenInputs { Screens = raw.Screens, CitySeen = raw.CitySeen, CityForm = raw.CityForm, ModalExtra = raw.ModalExtra, ModalExtraWhy = raw.ModalExtraWhy, Offers = raw.Offers, OfferTopKnown = raw.OfferTopKnown, TopUnknown = raw.TopUnknown, TopNew = raw.TopNew, ShownKnown = raw.ShownKnown, TopCity = raw.TopCity, Flow = raw.Flow, Order = raw.Order };
       long oldest = now;   // the oldest reading that stands in for a failed one
       use.Inv = Hold(raw.Inv, ref inv, ref invAt, now, "inventory", failing, ref oldest);
       use.Rs = Hold(raw.Rs, ref rs, ref rsAt, now, "foundry", failing, ref oldest);
@@ -348,7 +442,7 @@ namespace RealmForge {
       c.Hero = s.Hero; c.HeroTab = s.HeroTab; c.HeroSlot = s.HeroSlot;
       c.FoundryTab = s.FoundryTab; c.FoundryPopup = s.FoundryPopup; c.FoundrySel = s.FoundrySel; c.FoundryKey = s.FoundryKey;
       c.GemFunc = s.GemFunc; c.GemSel = s.GemSel; c.ModalOpen = s.ModalOpen; c.ModalWhy = s.ModalWhy;
-      c.Offer = s.Offer; c.OfferCount = s.OfferCount; c.OfferRead = s.OfferRead; c.OfferTopKnown = s.OfferTopKnown; c.TopForm = s.TopForm; c.Top = s.Top; c.TopClass = s.TopClass; c.Flow = s.Flow;
+      c.Offer = s.Offer; c.OfferCount = s.OfferCount; c.OfferRead = s.OfferRead; c.OfferTopKnown = s.OfferTopKnown; c.TopForm = s.TopForm; c.Top = s.Top; c.TopClass = s.TopClass; c.Flow = s.Flow; c.Order = s.Order;
       c.ReadAtMs = s.ReadAtMs; c.ConfirmedAtMs = s.ConfirmedAtMs; c.SinceMs = s.SinceMs; c.Held = s.Held; c.FromTable = s.FromTable; c.Partial = s.Partial;
       c.Inv = s.Inv; c.Rs = s.Rs; c.HeroScr = s.HeroScr; c.ArtWs = s.ArtWs;
       return c;

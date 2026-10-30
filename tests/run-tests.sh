@@ -83,9 +83,9 @@ step "5a. Game sim: 3000 seeds of a random start + task through the real screen 
 dotnet exec --runtimeconfig "$OUT/CoreTests.runtimeconfig.json" "$OUT/CoreTests.dll" --sim 3000
 
 step "5a2. Game sim driven by the UI graph (src/UiGraphData.cs): starts on safe paths from the city, the game's own pop-ups, presses do what the client's code does; with the graph's report"
-# (a report, not a gate yet: the rule breaks it finds are open bugs of the window table's missing order - an offer's x with a buy dialog
-# shown, a pop-up's x under a full screen opened later, a start pop-up's widget under a screen click; tests/run-sim.sh --soak N --graph lists them)
-dotnet exec --runtimeconfig "$OUT/CoreTests.runtimeconfig.json" "$OUT/CoreTests.dll" --sim 1000 --graph | grep -v '^ *[0-9]*  [A-Z]' || echo "graph-driven sim: rule breaks found (open bugs, see above)"
+# (a gate: any rule break fails the run - the window table's z-order and the gate's read of every shown form; tests/run-sim.sh --soak N --graph for a long run)
+dotnet exec --runtimeconfig "$OUT/CoreTests.runtimeconfig.json" "$OUT/CoreTests.dll" --sim 1000 --graph > "$OUT/graph-sim.txt" || { grep -v '^ *[0-9]*  [A-Z]' "$OUT/graph-sim.txt"; echo "graph-driven sim: rule breaks found"; exit 1; }
+grep -v '^ *[0-9]*  [A-Z]' "$OUT/graph-sim.txt"
 
 step "5b. Screen state + click gate: replay of recorded screens (tests/fixtures/screens)"
 $CSC -target:exe -nostdlib -nowarn:SYSLIB0014 $NET8_REFS -r:"$OUT/RealmForge.Core.dll" -out:"$OUT/ScreenReplay.dll" tests/ScreenReplay.cs
