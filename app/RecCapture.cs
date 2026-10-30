@@ -120,7 +120,9 @@ namespace RealmForge {
               string[] tg = null;
               lock (tagGate) if (tags.Count > 0) { tg = tags.ToArray(); tags.Clear(); }
               if (tg != null) foreach (var x in tg) { w.AddText("tag_" + (++tagNo).ToString("000", System.Globalization.CultureInfo.InvariantCulture) + ".json", LabRecCmd.TagJson(x, t)); log("recording " + rec + ": tagged " + x); }
+              long c0 = LoadMeter.Now();
               try { Capture(h, t, !fg, w, ++frameNo); } catch (Exception e) { log("recording " + rec + ": frame failed: " + e.Message); }
+              LoadMeter.Done(LoadMeter.RecFrame, c0);
             }
           }
           if (w != null && w.Frames > 0 && (t - partStart >= PartMs || w.Bytes >= PartMaxBytes)) {
