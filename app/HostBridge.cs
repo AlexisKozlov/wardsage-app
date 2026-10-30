@@ -106,6 +106,7 @@ namespace RealmForge {
       updateTimer.Interval = 20000; updateTimer.Tick += (s, e) => { updateTimer.Interval = (Channel.IsTest ? 2 : 5) * 60 * 1000; if (updateReady == null || Channel.IsTest) CheckUpdate(); }; updateTimer.Start();
       remoteTimer.Interval = 3000; remoteTimer.Tick += (s, e) => { remoteTimer.Interval = RemoteSwitches.EveryMinutes(Channel.IsTest) * 60 * 1000; FetchRemote(); }; remoteTimer.Start();
       if (Channel.IsTest) { testLogTimer.Interval = 30000; testLogTimer.Tick += (s, e) => { testLogTimer.Interval = 120000; SendTestLog(); }; testLogTimer.Start(); }
+      if (Channel.IsTest) overlay.ExploreDone += json => { LabWrite("explore.json", json); Log.Write("explore: result written (" + json.Length + " bytes)"); };
       if (Channel.IsTest) { labRecTimer.Interval = 1000; labRecTimer.Tick += (s, e) => LabRecTick(); labRecTimer.Start(); }
       Log.Write(Channel.ProductName + " " + Program.Version + " started");
       Log.Write("switches (saved copy or defaults): " + remote.ToJson());
@@ -363,7 +364,45 @@ namespace RealmForge {
     }
     // TEST build: the lab runner's command file (src/LabRec.cs). Only the time stamp is looked at until it changes
     static string LabRecDir { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), Channel.FolderName, "lab"); } }
+    // TEST build: the lab runner's explorer command (src/Explorer.cs): explore.cmd -> overlay.ExploreStart / ExploreStop, explore.ack, and the
+    // result explore.json when the run ends (the runner uploads it)
+    DateTime exploreStamp = DateTime.MinValue; long exploreSeq = -1; string exploreRun = "";
+    void ExploreTick() {
+      try {
+        string f = Path.Combine(LabRecDir, "explore.cmd");
+        if (!File.Exists(f)) return;
+        var at = File.GetLastWriteTimeUtc(f);
+        if (at == exploreStamp) return;
+        exploreStamp = at;
+        string text; using (var fs = new FileStream(f, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete)) using (var rd = new StreamReader(fs)) { var buf = new char[256]; int n = rd.Read(buf, 0, buf.Length); text = new string(buf, 0, n); }
+        var cmd = ExploreCmd.Parse(text);
+        if (cmd == null) { Log.Write("explore: lab command not understood"); return; }
+        if (cmd.Seq <= exploreSeq) return;
+        exploreSeq = cmd.Seq;
+        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (Math.Abs(nowMs - cmd.Seq) > LabRecCmd.StaleMs) { LabWrite("explore.ack", ExploreCmd.Ack(cmd.Seq, "stale", cmd.Run)); return; }
+        Log.Write("explore: lab " + cmd.Op + (cmd.Op == "start" ? " budget " + cmd.Budget + " rotation " + cmd.Rot : ""));
+        if (cmd.Op == "start") {
+          try { File.Delete(Path.Combine(LabRecDir, "explore.json")); } catch (Exception) { }
+          exploreRun = cmd.Run; overlay.ExploreApp = Program.Version; overlay.ExploreGame = gameVersion ?? "";
+          overlay.ExploreStart(cmd.Budget, cmd.Rot, cmd.Run);
+          LabWrite("explore.ack", ExploreCmd.Ack(cmd.Seq, "running", cmd.Run));
+        } else {
+          bool on = overlay.ExploreRunning; overlay.ExploreStop("the lab's stop");
+          LabWrite("explore.ack", ExploreCmd.Ack(cmd.Seq, on ? "stopped" : "idle", exploreRun));
+        }
+      } catch (Exception e) { Log.Write("explore: lab command failed: " + e.Message); }
+    }
+    void LabWrite(string name, string text) {
+      try {
+        string dir = LabRecDir; Directory.CreateDirectory(dir);
+        string f = Path.Combine(dir, name), tmp = f + ".tmp";
+        File.WriteAllText(tmp, text, new UTF8Encoding(false));
+        if (File.Exists(f)) File.Replace(tmp, f, null); else File.Move(tmp, f);
+      } catch (Exception e) { Log.Write("lab: " + name + " not written: " + e.Message); }
+    }
     void LabRecTick() {
+      ExploreTick();
       try {
         if (labRecPending != null) {
           // another recording was asked to stop first: start once it is off, give up after a while

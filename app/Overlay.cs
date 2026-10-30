@@ -669,6 +669,72 @@ namespace RealmForge {
       } catch (Exception) { }
     }
 
+    // ---- TEST build: the explorer (src/Explorer.cs), started by the lab runner's explore.cmd (app/HostBridge.cs): it walks the game's safe UI
+    // over the UI graph, every press through the click gate (owner Explore), and gives its result (explore.json) to ExploreDone
+    Explorer explorer; long exploreBusyUntil; W32.POINT exploreCursor; bool exploreCursorSet;
+    public bool ExploreRunning { get { return explorer != null; } }
+    /// <summary>The run's result JSON when it ended (done or stopped).</summary>
+    public event Action<string> ExploreDone;
+    public string ExploreApp = "", ExploreGame = "";
+    public void ExploreStart(int budget, int rot, string run) {
+      if (!Channel.IsTest) return;
+      if (explorer != null) ExploreStop("a new explore command");
+      gate.Resume(ClickOwner.Explore); gate.ExploreOn = true; exploreCursorSet = false; exploreBusyUntil = 0;
+      explorer = new Explorer(budget, rot, run);
+      foreach (var l in explorer.Lines) Log.Write(l); explorer.Lines.Clear();
+      Run();
+    }
+    public void ExploreStop(string why) {
+      var ex = explorer; if (ex == null) return;
+      ex.Stop(why); ExploreEnd(ex);
+    }
+    void ExploreEnd(Explorer ex) {
+      foreach (var l in ex.Lines) Log.Write(l); ex.Lines.Clear();
+      explorer = null; gate.ExploreOn = false;
+      string json = ex.Json(NowMs(), ExploreApp, ExploreGame);
+      var h = ExploreDone; if (h != null) try { h(json); } catch (Exception e) { Log.Write("explore: result not written: " + e.Message); }
+    }
+    void TickExplore() {
+      var ex = explorer; long now = NowMs();
+      if (gate.Halted(ClickOwner.Explore) && !ex.Over) ex.Stop("the click gate stopped: " + gate.HaltReason(ClickOwner.Explore) + " - " + gate.HaltDetail(ClickOwner.Explore));
+      if (ex.Over) { ExploreEnd(ex); return; }
+      if (sending || now < exploreBusyUntil) return;
+      IntPtr hwnd = GameWindow();
+      if (hwnd == IntPtr.Zero || W32.IsIconic(hwnd)) return;
+      W32.RECT cr; if (!W32.GetClientRect(hwnd, out cr) || cr.B < 200) return;
+      var o = new W32.POINT(0, 0); W32.ClientToScreen(hwnd, ref o);
+      bool front = IsForeground(hwnd);
+      // the player's own mouse: the cursor left the explorer's last point (or a button is down) - the run stops at once
+      W32.POINT c;
+      if (W32.GetCursorPos(out c)) {
+        bool down = (W32.GetAsyncKeyState(0x01) & 0x8000) != 0 || (W32.GetAsyncKeyState(0x02) & 0x8000) != 0;
+        if (exploreCursorSet && (c.X != exploreCursor.X || c.Y != exploreCursor.Y || down)) { ex.Stop("the player's own input"); ExploreEnd(ex); return; }
+      }
+      double W = cr.R, H = cr.B, U = Ui.Unit(W, H);
+      var v = new ExploreView { Now = now, Front = front, Order = RFX.UiKnown ? RFX.ReadShownOrder() : null, W = W, H = H, U = U,
+                                Live = (f, fld) => RFX.UiFieldReadNow(f, fld, W, H, U), OfferClose = f => OfferForms.ClosePoint(Geo.Current, f, W, H, U) };
+      var a = ex.Tick(v);
+      foreach (var l in ex.Lines) Log.Write(l); ex.Lines.Clear();
+      if (ex.Over) { ExploreEnd(ex); return; }
+      if (a.Kind != ExploreKind.Click && a.Kind != ExploreKind.Escape) return;
+      if (!front) return;   // (the game behind another window: waited for - the run's cap ends it)
+      var fresh = FreshScreen(false);
+      var req = new ClickRequest { Owner = ClickOwner.Explore, Target = a.Target, AutoOn = AutoEnabled, Front = front, X = a.X, Y = a.Y, W = W, H = H, U = U,
+                                   Form = a.Form, Widget = a.Widget ?? "", LiveRect = a.LiveRect, Geo = Geo.Current };
+      var res = gate.Check(req, fresh, now);
+      if (!res.Allowed) { ex.Denied(a, res, gate.Halted(ClickOwner.Explore), now); foreach (var l in ex.Lines) Log.Write(l); ex.Lines.Clear(); return; }
+      if (a.Kind == ExploreKind.Escape) {
+        ex.Sent(a, now); Log.Write("explore: press " + a);
+        SendEscapeKey(ClickOwner.Explore); exploreBusyUntil = now + 400; return;
+      }
+      int sx = o.X + (int)Math.Round(a.X), sy = o.Y + (int)Math.Round(a.Y);
+      var vs = SystemInformation.VirtualScreen;
+      if (!OwnButtons.AllInside(new[] { vs.X, vs.Y, vs.Width, vs.Height }, sx, sy, sy)) { ex.Stop(a + " lies off the screen (the game window is larger than the screen)"); ExploreEnd(ex); return; }
+      ex.Sent(a, now); Log.Write("explore: press " + a);
+      Send(new AutoAction { Kind = AutoKind.Click, X = a.X, Y = a.Y }, sx, sy, ClickOwner.Explore, a.Target, a.Form, freshOffers, unknownForms);
+      exploreCursor = new W32.POINT(sx, sy); exploreCursorSet = true; exploreBusyUntil = now + 400;
+    }
+
     /// <summary>TEST build: the recorder starts / stops. Our windows stay in screen captures while it runs (then the screen looks mask them themselves).</summary>
     public void SetRecording(bool on) {
       RecInfo.Active = on; GlowWindow.Capturable = on;
@@ -687,6 +753,7 @@ namespace RealmForge {
       ApplyArtGate();
       LogLoad(NowMs());
       ReadScreens(NowMs());   // the game's screen, once per tick: every feature below takes it from here
+      if (explorer != null) { TickExplore(); return; }   // (TEST build: the lab's explorer runs alone)
       UpdateArtStep();
       // the game is minimized / covered / alt-tabbed: nothing of ours stays over the desktop (the features go on reading)
       if (!GameDrawable()) { if (glow.Visible) glow.Hide(); HideTip(); drawnKey = null; }
@@ -3037,7 +3104,7 @@ namespace RealmForge {
     }
 
     /// <summary>VK_ESCAPE down and up, off the UI thread, only while the game's window is in front (else no key, the owner stops: "covered").</summary>
-    void SendEscapeKey(ClickOwner owner) {   // ONLY called by EscapeSend and TipEscapeSend
+    void SendEscapeKey(ClickOwner owner) {   // ONLY called by EscapeSend, TipEscapeSend and TickExplore (each after the gate's yes)
       sending = true; userIdle.OwnStart((uint)Environment.TickCount);
       IntPtr game = GameWindow();
       var t = new System.Threading.Thread(() => {
@@ -3491,7 +3558,7 @@ namespace RealmForge {
 
     /// <summary>Moves the cursor and clicks / drags there, off the UI thread (short pauses let the game see the pointer
     /// over the button first). A drag moves in small steps and rests before the release, so the list does not coast.</summary>
-    void Send(AutoAction a, int x, int y, ClickOwner owner, ClickTarget target, string form, List<string> offersBefore, List<string> formsBefore) {   // ONLY called by GatedSend
+    void Send(AutoAction a, int x, int y, ClickOwner owner, ClickTarget target, string form, List<string> offersBefore, List<string> formsBefore) {   // ONLY called by GatedSend and TickExplore (each after the gate's yes)
       var ob = offersBefore != null ? new List<string>(offersBefore) : null; var fb = formsBefore != null ? new List<string>(formsBefore) : null; bool uiKnown = RFX.UiKnown;
       sending = true;
       int dy2 = y + (a.Kind == AutoKind.Drag ? (int)Math.Round(a.DY) : 0);
