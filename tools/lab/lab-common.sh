@@ -34,3 +34,7 @@ tg() {
     --data-urlencode "chat_id=$chat" --data-urlencode "text=$1" --data-urlencode "disable_web_page_preview=true" 2>/dev/null \
     || { echo "lab: telegram send failed" >&2; return 1; }
 }
+
+# every scenario the lab knows, in the default run order (the storage cleanup last: it leaves the game in «Массовая продажа»;
+# the restart one at the very end). lab-request.sh with no list and the auto runs on a new test build run all of them.
+LAB_SCENARIOS="equip_city locate sell_mark sell_after_restart"

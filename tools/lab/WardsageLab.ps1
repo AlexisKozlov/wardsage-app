@@ -23,7 +23,7 @@ Set-StrictMode -Version 2
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$RunnerVersion   = '10'
+$RunnerVersion   = '11'
 $Dir             = Join-Path $env:LOCALAPPDATA 'WardsageLab'
 $StopFile        = Join-Path $Dir 'STOP'
 $LogFile         = Join-Path $Dir 'runner.log'
@@ -152,6 +152,7 @@ function Get-Status {
         app_version = (Get-AppVersion); busy = $script:Busy; up_min = [int]((Get-Date) - $script:Started).TotalMinutes
         log_at = $script:LogAt; log_lines = $script:LogCount; ready = $script:LogReady
         stop = $script:LogStop; stop_at = $script:LogStopAt; pilot_at = $script:PilotAt; mark_at = $script:MarkAt; pilot_line = $script:PilotLine; log_off = $script:LogOff; log_err = $script:LogErr; done = $script:LogFin
+        fin_line = $script:FinLine; never = $script:LogNever
     }
 }
 function ConvertTo-StatusJson($st) {
@@ -459,9 +460,12 @@ $StopRe  = 'auto click stopped|click gate .*: STOP|auto: (failed|slot_failed|unc
 $ReadyRe = 'Player of the live tables: [0-9]+'
 $PilotRe = 'ui: step (?!stands still)|ui: guide |click gate .*: (allow |.* took effect)|locate auto:|live: hero|sell:|hero: plan|art (equip|promote) auto:|offer: closed'
 function Get-EpochNow { return [int64][DateTimeOffset]::UtcNow.ToUnixTimeSeconds() }
-$FinRe = 'locate auto: hint \(\w+\) at step (ascendReady|done)\b|locate decision: (AscendReady|Done)\b|ui: guide .* done'
+$FinRe = 'locate auto: hint \(\w+\) at step (ascendReady|done)\b|locate decision: (AscendReady|Done)\b|ui: guide .* done|(?<!art )sell: done selected [0-9]+/[0-9]+ missing [0-9]+ extra [0-9]+'
+# the storage cleanup may click only these targets (src/ClickGate.cs, owner Sell): any other allowed Sell click (there is no target for
+# "Sell" (Prodat), "All", a lock or a sell confirm at all) is reported as never (and as a stop)
+$SellOkRe = 'click gate Sell: allow (HeroBack|CityInventory|InvEquipTab|InvBulkEnter|InvBulkCell|InvListDrag|OfferClose|UnknownBack|CityBack|EscapeBack|MapClose|ArtTab|ArtBulkEnter|ArtBulkCell|ArtListDrag)\b'
 function Reset-LogMarks {
-    $script:LogFin = ''
+    $script:LogFin = ''; $script:FinLine = ''; $script:LogNever = ''
     $script:LogReady = $false; $script:LogDone = $false; $script:LogSendOk = $false
     $script:LogStop = ''; $script:LogStopAt = [int64]0; $script:PilotAt = [int64]0; $script:PilotLine = ''
 }
@@ -501,7 +505,15 @@ function Update-LogWatch {
                 $script:LogStop = $t; $script:LogStopAt = $now
             }
             if ($line -cmatch $ReadyRe) { $script:LogReady = $true }
-            if ($line -cmatch $FinRe) { $script:LogFin = $(if ($line -cmatch 'ascendReady|AscendReady') { 'ascend' } elseif ($line -cmatch 'ui: guide') { 'equip' } else { 'ready' }) }
+            if ($line -cmatch $FinRe) {
+                $script:LogFin = $(if ($line -cmatch 'ascendReady|AscendReady') { 'ascend' } elseif ($line -cmatch 'ui: guide') { 'equip' } elseif ($line -cmatch 'sell: done') { 'sell' } else { 'ready' })
+                $script:FinLine = $Matches[0]
+            }
+            if ($script:LogNever -eq '' -and $line -cmatch 'click gate Sell: allow ' -and $line -cnotmatch $SellOkRe) {
+                $t = $line.Trim(); if ($t.Length -gt 200) { $t = $t.Substring(0, 200) }
+                $script:LogNever = $t
+                if ($script:LogStop -eq '') { $script:LogStop = 'never: ' + $t; $script:LogStopAt = $now }
+            }
             if ($line -cmatch $PilotRe) { $script:PilotAt = $now; $script:PilotLine = $line.Trim().Substring(0, [Math]::Min(120, $line.Trim().Length)) }
             if ($line -cmatch 'Done in') { $script:LogDone = $true }
             if ($line -cmatch 'send: Ok') { $script:LogSendOk = $true }

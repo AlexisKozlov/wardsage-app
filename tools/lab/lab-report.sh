@@ -31,21 +31,25 @@ fname="report-$(TZ=Etc/GMT-3 date '+%Y%m%d-%H%M').md"
 names() { case "$1" in
   online) echo "Ноутбук на связи" ;; update_app*) echo "Обновление тестовой сборки" ;; restart_app) echo "Перезапуск приложения" ;;
   app_ready) echo "Приложение готово" ;; equip_city*) echo "Надеть сборку из Города${1#equip_city}" ;;
-  locate) echo "Найти в игре" ;; upload_logs) echo "Загрузка логов" ;; screenshot) echo "Скриншот окна" ;; timeout) echo "Время вышло" ;; *) echo "$1" ;; esac; }
+  locate) echo "Найти в игре" ;; sell_mark) echo "Чистка склада: выделение" ;; sell_after_restart) echo "Чистка склада после перезапуска" ;; upload_logs) echo "Загрузка логов" ;; screenshot) echo "Скриншот окна" ;; timeout) echo "Время вышло" ;; *) echo "$1" ;; esac; }
 
 lines=""
-while IFS='|' read -r name ok secs note; do
+while IFS='|' read -r name ok secs note warnf; do
   [ -n "$name" ] || continue
-  mark="✅"; [ "$ok" = t ] || mark="❌"
+  mark="✅"; [ "$ok" = t ] || mark="❌"; [ "$warnf" = true ] && mark="⚠️"
   txt="$mark $(names "$name"): ${secs} с"; [ -n "$note" ] && txt="$txt ($note)"
   lines+="$txt"$'\n'
-done < <(q -F '|' -v r="$run" <<< "select s->>'name', ((s->>'ok')::boolean)::text::text, s->>'seconds', s->>'note' from public.lab_runs r, jsonb_array_elements(r.steps) s where r.id = :'r'::uuid" | sed -E 's/\|true\|/|t|/; s/\|false\|/|f|/')
+done < <(q -F '|' -v r="$run" <<< "select s->>'name', ((s->>'ok')::boolean)::text::text, s->>'seconds', s->>'note', coalesce(s->>'warn', '') from public.lab_runs r, jsonb_array_elements(r.steps) s where r.id = :'r'::uuid" | sed -E 's/\|true\|/|t|/; s/\|false\|/|f|/')
 
 # the equip plan finished without a single slot / «Заменить» click: the build was already worn, nothing was tested (a warning, not a pass)
 nochange=0
 if [ "$(q -v r="$run" <<< "select count(*) from public.lab_runs r, jsonb_array_elements(r.steps) s where r.id = :'r'::uuid and s->>'name' like 'equip_city%' and (s->>'ok')::boolean")" -gt 0 ] \
    && ! grep -qE 'click gate Equip: allow (EquipConfirm|EquipNav .*slot [0-9])' <<< "$logs"; then nochange=1; fi
 
+# the storage cleanup's safety check on the uploaded log: a Sell click outside its whitelist (there is no target for «Продать» at all)
+SELL_OK_RE='click gate Sell: allow (HeroBack|CityInventory|InvEquipTab|InvBulkEnter|InvBulkCell|InvListDrag|OfferClose|UnknownBack|CityBack|EscapeBack|MapClose|ArtTab|ArtBulkEnter|ArtBulkCell|ArtListDrag)\b'
+sellbad=$(grep -E 'click gate Sell: allow ' <<< "$logs" | grep -vE "$SELL_OK_RE" | head -3)
+sellclicks=$(grep -cE 'click gate Sell: allow InvBulkCell' <<< "$logs")
 case "$state" in done) head="Лаборатория Wardsage ($devname): всё прошло" ;; timeout) head="Лаборатория Wardsage ($devname): время вышло" ;; *) head="Лаборатория Wardsage ($devname): есть ошибки" ;; esac
 [ "$nochange" = 1 ] && [ "$state" = done ] && head="Лаборатория Wardsage ($devname): предупреждение, нечего менять"
 msg="$head"$'\n'"$lines"
@@ -55,6 +59,10 @@ if [ "$state" != done ]; then   # a failed run: the first failed step and its re
   fname1=${fs%%|*}; freason=${fs#*|}
   if [ "$fname1" = timeout ]; then top="❌ Проверка на ноутбуке: время вышло"; else top="❌ Проверка на ноутбуке: $(names "${fname1:-?}") остановилась"; fi
   msg="$top"$'\n'"Причина: ${freason:-не указана}"$'\n'"$lines"
+fi
+if grep -q '"sell_' <<< "$(q -v r="$run" <<< "select scenarios::text from public.lab_runs where id = :'r'::uuid" | sed 's/[{,]/"/g')"; then
+  if [ -n "$sellbad" ]; then msg+="❌ ОПАСНО: клик продажи вне списка разрешённых: $(head -1 <<< "$sellbad" | cut -c1-160)"$'\n'
+  else msg+="Чистка склада: «Продать» не нажималась (журнал: только разрешённые клики, отметок ячеек $sellclicks)"$'\n'; fi
 fi
 [ -n "$firstreads" ] && msg+="Первое чтение экрана: $(paste -sd, <<< "$firstreads" | sed 's/,/, /g')"$'\n'
 [ -n "$passes" ] && msg+="passes: $(tail -1 <<< "$passes" | sed -E 's/^passes: //')"$'\n'

@@ -4,6 +4,8 @@
 #   lab-seed.sh <device> --pick <a|b>        prints the build to seed: the one NOT worn now (see worn_build), else the hint
 #   lab-seed.sh <device> locate               a new «Найти в игре» request (the ascend target is picked from the newest snapshot, see pick_locate)
 #   lab-seed.sh <device> --pick-locate        dry run: prints the Locate target it would pick (inserts nothing)
+#   lab-seed.sh <device> sell_mark            a new «Чистка склада» list of junk gear from the newest snapshot (see pick_sell)
+#   lab-seed.sh <device> --pick-sell          dry run: prints the sell list it would seed (inserts nothing)
 # Prints the new row id (a plan / request id, not an account id) on stdout.
 #
 # Why "after the app restart": the app lists the plans of its account through the long poll and starts by itself only a
@@ -64,6 +66,48 @@ pick_locate() {
   [ -n "$eq" ] || return 0
   python3 -I -c "$PICK_PY" "$LAB_WEB_DIR" "${n:-0}" <<< "$eq" 2>/dev/null || true
 }
+# pick_sell <device id>: JSON array of StoredSellItem ({uid, slot, name, setName, level, stars}, lib/sell/types.ts) of junk gear from
+# the newest snapshot's page_data, or nothing. Rule (the site's sellable + offered rule, lib/sell/display.ts isSellable and
+# lib/sell/candidates.ts): in the bag (h 0), not locked (lk 0), no special effect (ef empty); never an item of a lab fixture
+# (equip_a / equip_b builds, the locate target) or of a pending equip plan; the lowest quality (st) first, then the lowest level;
+# only items below +12; at most LAB_SELL_N (default 8). The app only marks them; «Продать» is the player's and never pressed.
+SELL_N=${LAB_SELL_N:-8}
+PICK_SELL_PY='
+import sys, json
+n = int(sys.argv[1]); keep = set(int(x) for x in sys.argv[2].split(",") if x.strip().isdigit())
+pd = json.load(sys.stdin) or {}
+sets = pd.get("sets") or {}
+def lt(o): o = o or {}; return {"ru": o.get("ru") or o.get("en") or "", "en": o.get("en") or o.get("ru") or ""}
+c = [i for i in pd.get("items") or [] if not i.get("h") and not i.get("lk") and not i.get("ef") and int(i["u"]) not in keep and int(i.get("lv") or 0) < 12]
+c.sort(key=lambda i: (int(i.get("st") or 0), int(i.get("lv") or 0), int(i["u"])))
+out = []
+for i in c[:n]:
+    st = sets.get(str(i.get("s"))) if i.get("s") is not None else None
+    out.append({"uid": int(i["u"]), "slot": i.get("sl", -1) if i.get("sl") is not None else -1, "name": lt(i.get("n")),
+                "setName": lt(st.get("n")) if st else None, "level": int(i.get("lv") or 0), "stars": int(i.get("st") or 0)})
+if out: print(json.dumps(out, ensure_ascii=False))
+'
+pick_sell() {
+  local pd keep
+  pd=$(q -v d="$1" <<< "select page_data from public.snapshots sn join public.lab_devices dv on dv.account_id = sn.account_id
+                        where dv.id = :'d'::uuid and sn.page_data is not null order by sn.created_at desc limit 1") || return 0
+  [ -n "$pd" ] || return 0
+  keep=$(q -v d="$1" <<< "
+    select coalesce(string_agg(distinct u, ','), '') from (
+      select (i->>'uid') u from public.lab_fixtures f, jsonb_array_elements(coalesce(f.payload->'items', '[]'::jsonb)) i where f.device_id = :'d'::uuid
+      union all select (i->'cur'->>'uid') from public.lab_fixtures f, jsonb_array_elements(coalesce(f.payload->'items', '[]'::jsonb)) i where f.device_id = :'d'::uuid
+      union all select f.payload->>'item_uid' from public.lab_fixtures f where f.device_id = :'d'::uuid
+      union all select (i->>'uid') from public.equip_plans p join public.lab_devices dv on dv.account_id = p.account_id, jsonb_array_elements(p.items) i
+        where dv.id = :'d'::uuid and p.status = 'pending'
+      union all select l.item_uid::text from public.item_locates l join public.lab_devices dv on dv.account_id = l.account_id where dv.id = :'d'::uuid and l.status = 'pending'
+    ) x where u ~ '^[0-9]+$'") || keep=""
+  python3 -I -c "$PICK_SELL_PY" "$SELL_N" "$keep" <<< "$pd" 2>/dev/null || true
+}
+if [ "$what" = --pick-sell ]; then
+  r=$(pick_sell "$(dev_id "$dev")")
+  [ -n "$r" ] && python3 -I -c 'import sys,json; [print("%d\tslot %s\t+%d\t%d*\t%s" % (i["uid"], i["slot"], i["level"], i["stars"], i["name"]["en"])) for i in json.load(sys.stdin)]' <<< "$r" || echo "no junk gear in the newest snapshot"
+  exit 0
+fi
 if [ "$what" = --pick-locate ]; then
   r=$(pick_locate "$(dev_id "$dev")")
   [ -n "$r" ] && echo "$r" || echo "no ascendable item (T1 +16) in the newest snapshot"
@@ -79,10 +123,12 @@ fi
 id=$(dev_id "$dev")
 
 # nothing is cancelled unless there is something to insert
-case "$what" in equip_city) names="'equip_a','equip_b'" ;; locate) names="'locate'" ;; *) echo "unknown scenario" >&2; exit 2 ;; esac
-have=$(q -v d="$id" <<< "select count(*) from public.lab_devices dv join public.lab_fixtures x on x.device_id = dv.id
-  where dv.id = :'d'::uuid and dv.account_id is not null and x.name in ($names)")
-[ "$have" -ge 1 ] || { echo "seed failed: no fixture or no game account for '$dev'" >&2; exit 1; }
+case "$what" in equip_city) names="'equip_a','equip_b'" ;; locate) names="'locate'" ;; sell_mark|sell_after_restart) names="" ;; *) echo "unknown scenario" >&2; exit 2 ;; esac
+if [ -n "$names" ]; then
+  have=$(q -v d="$id" <<< "select count(*) from public.lab_devices dv join public.lab_fixtures x on x.device_id = dv.id
+    where dv.id = :'d'::uuid and dv.account_id is not null and x.name in ($names)")
+  [ "$have" -ge 1 ] || { echo "seed failed: no fixture or no game account for '$dev'" >&2; exit 1; }
+fi
 
 case "$what" in
   equip_city)
@@ -115,6 +161,21 @@ case "$what" in
         from public.lab_devices dv
         join public.game_accounts a on a.id = dv.account_id
         join public.lab_fixtures x on x.device_id = dv.id and x.name = 'locate'
+        where dv.id = :'d'::uuid
+        returning id;
+      commit;" ;;
+  sell_mark|sell_after_restart)
+    items=$(pick_sell "$id")
+    if [ -z "$items" ]; then echo "lab-seed: WARNING no junk gear in the snapshot, sell skipped" >&2; exit 3; fi
+    echo "lab-seed: sell list of $(python3 -I -c 'import sys,json; print(len(json.load(sys.stdin)))' <<< "$items") items" >&2
+    [ -n "${LAB_DRY_SEED:-}" ] && { echo "lab-seed: DRY, not inserted: $items" >&2; exit 3; }
+    q -v d="$id" -v it="$items" <<< "
+      begin;
+      update public.sell_plans set status = 'cancelled', done_at = now()
+        where status = 'pending' and account_id = (select account_id from public.lab_devices where id = :'d'::uuid);
+      insert into public.sell_plans (user_id, account_id, items, kind)
+        select a.user_id, a.id, :'it'::jsonb, 'equip'
+        from public.lab_devices dv join public.game_accounts a on a.id = dv.account_id
         where dv.id = :'d'::uuid
         returning id;
       commit;" ;;

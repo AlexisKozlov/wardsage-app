@@ -40,6 +40,7 @@ dget()   { q -v r="$RUN" -v k="$1" <<< "select coalesce(data->>:'k', '') from pu
 dset()   { q -v r="$RUN" -v k="$1" -v v="$2" <<< "update public.lab_runs set data = data || jsonb_build_object(:'k', :'v'::text) where id = :'r'::uuid"; }
 phase()  { q -v r="$RUN" -v p="$1" <<< "update public.lab_runs set phase = :'p', data = data || jsonb_build_object('phase_at', extract(epoch from now())::bigint::text) where id = :'r'::uuid"; say "phase: $1"; }
 step()   { q -v r="$RUN" -v n="$1" -v ok="$2" -v s="$3" -v note="${4:-}" <<< "update public.lab_runs set steps = steps || jsonb_build_array(jsonb_build_object('name', :'n', 'ok', :'ok'::boolean, 'seconds', :'s'::numeric, 'note', :'note')) where id = :'r'::uuid"; say "step $1 ok=$2 ${3}s ${4:-}"; }
+warn()   { q -v r="$RUN" -v n="$1" -v s="$2" -v note="${3:-}" <<< "update public.lab_runs set steps = steps || jsonb_build_array(jsonb_build_object('name', :'n', 'ok', true, 'warn', true, 'seconds', :'s'::numeric, 'note', :'note')) where id = :'r'::uuid"; say "step $1 WARN ${2}s ${3:-}"; }
 phase_at_epoch() { dget phase_at; }
 phase_age() { echo $(( $(now) - $(dget phase_at) )); }
 mkjob()  { q -v d="$DEV" -v r="$RUN" -v a="$1" -v args="${2:-{\}}" <<< "insert into public.lab_jobs (device_id, run_id, action, args, expires_at) values (:'d'::uuid, :'r'::uuid, :'a', :'args'::jsonb, now() + interval '90 minutes') returning id"; }
@@ -125,11 +126,17 @@ dev_watch() {
   return 0
 }
 
-# a scenario step failed: stop its request, record the reason, skip the remaining scenarios (upload_logs + screenshot + finish still run)
+# a scenario step failed: stop its request, record the reason, go on with the next scenario (each scenario is independent: the app's
+# pilots start from any screen, back to the city by themselves)
 fail_scn() {   # $1 = step label, $2 = reason, $3 = table, $4 = row id
-  q -v r="$4" <<< "update public.$3 set status = 'cancelled', done_at = now() where id = :'r'::uuid and status = 'pending'" >/dev/null
-  step "$1" false "$(phase_age)" "$2"; FAILED=1; dset last_scn_end "$(now)"; skip_to_logs
+  [ -n "$4" ] && q -v r="$4" <<< "update public.$3 set status = 'cancelled', done_at = now() where id = :'r'::uuid and status = 'pending'" >/dev/null
+  step "$1" false "$(phase_age)" "$2"; FAILED=1; next_scn
 }
+next_scn() { dset last_scn_end "$(now)"; dset scn_idx "$(( $(dget scn_idx) + 1 ))"; dset sar_ready ""; phase scenario; }
+# scenario -> table of its request
+scn_tbl() { case "$1" in equip_city) echo equip_plans ;; locate) echo item_locates ;; sell_mark|sell_after_restart) echo sell_plans ;; esac; }
+# the storage cleanup may click only these targets (src/ClickGate.cs, owner Sell); the runner (v11+) reports any other one as "never"
+SELL_OK_RE='click gate Sell: allow (HeroBack|CityInventory|InvEquipTab|InvBulkEnter|InvBulkCell|InvListDrag|OfferClose|UnknownBack|CityBack|EscapeBack|MapClose|ArtTab|ArtBulkEnter|ArtBulkCell|ArtListDrag)\b'
 skip_to_logs() { dset scn_idx "${#scenarios[@]}"; phase logs; }
 
 
@@ -239,23 +246,70 @@ tick() {
           q -v r="$RUN" -v b="$build" <<< "update public.lab_runs set build = :'b' where id = :'r'::uuid" >/dev/null
         fi
       fi
-      row=$("$HERE/lab-seed.sh" "$dev" "$sc" "$build") || row=""
-      if [ -z "$row" ]; then step "$sc" false 0 "seed failed (fixture missing?)"; FAILED=1; skip_to_logs; return; fi
+      if [ "$sc" = sell_after_restart ] && [ -z "$(dget sar_ready)" ]; then
+        r=$(mkjob restart_app) && dset job "$r" && dset job_timeout "" && phase scn_restart; return
+      fi
+      seederr=$(mktemp)
+      row=$("$HERE/lab-seed.sh" "$dev" "$sc" "$build" 2>"$seederr") || row=""
+      sw=$(grep -m1 WARNING "$seederr" | sed -E 's/^lab-seed: WARNING //'); cat "$seederr" >&2; rm -f "$seederr"
+      if [ -z "$row" ] && [ -n "$sw" ]; then warn "$sc" 0 "$sw"; next_scn; return; fi
+      if [ -z "$row" ]; then step "$sc" false 0 "seed failed (fixture missing?)"; FAILED=1; next_scn; return; fi
       dset row "$row"; dset seeded_at "$(now)"; phase wait_scn ;;
+    scn_restart)
+      # sell_after_restart: the app restarted, then ready again (it read the game account), then the list is seeded
+      if [ -z "$(dget sar_at)" ]; then
+        if wait_job restart_app x 120; then
+          j=$(dget job)
+          if [ "$JOBOK" = 1 ]; then dset sar_at "$(q -v j="$j" <<< "select extract(epoch from finished_at)::bigint from public.lab_jobs where id = :'j'::uuid")"
+          else [ -n "$(dget job_timeout)" ] || step sell_after_restart false "$(jsecs "$j")" "restart_app: $(jres "$j" error)"; FAILED=1; next_scn; fi
+        fi
+        return
+      fi
+      ra=$(dget sar_at); devsig
+      if [ "$SG_READY" = true ] && [ "$SG_APPOK" = true ] && [ "$SG_SEEN" -gt "${ra:-0}" ]; then
+        dset sar_ready "$(( $(now) - ra ))"; dset sar_at ""; phase scenario
+      elif [ $(( $(now) - ra )) -gt "$READY_DEV" ]; then
+        dset sar_at ""; step sell_after_restart false "$(phase_age)" "the app did not report ready after the restart"; FAILED=1; next_scn
+      fi ;;
     wait_scn)
       i=$(dget scn_idx); sc=${scenarios[$i]}; row=$(dget row)
-      case "$sc" in equip_city) tbl=equip_plans; maxs=600; label="$sc (build ${build^^})" ;; *) tbl=item_locates; maxs=300; label="$sc" ;; esac
+      tbl=$(scn_tbl "$sc")
+      case "$sc" in equip_city) maxs=600; label="$sc (build ${build^^})" ;; sell_*) maxs=480; label="$sc" ;; *) maxs=300; label="$sc" ;; esac
       st=$(q -v r="$row" <<< "select status || '|' || coalesce(round(extract(epoch from done_at - created_at))::int, 0) from public.$tbl where id = :'r'::uuid")
+      if [ "$tbl" = sell_plans ]; then
+        sa=$(dget seeded_at); devsig
+        nev=$(dstat "coalesce(status->>'never', '')")
+        # the app closes a list as done only when its items are gone from the game = sold: never allowed here
+        if [ "${st%%|*}" = done ]; then step "$label" false "$(phase_age)" "ОПАСНО: приложение закрыло список как проданный"; FAILED=1; next_scn; return; fi
+        if [ -n "$nev" ]; then fail_scn "$label" "ОПАСНО: запрещённый клик продажи: ${nev:0:160}" "$tbl" "$row"; return; fi
+        if [ "${st%%|*}" = cancelled ]; then step "$label" false "$(phase_age)" "the list was cancelled"; FAILED=1; next_scn; return; fi
+        fin=$(dstat "coalesce(status->>'done', '')"); fl=$(dstat "coalesce(status->>'fin_line', '')")
+        if [ "$fin" = sell ] && [[ "$fl" =~ selected\ ([0-9]+)/([0-9]+)\ missing\ ([0-9]+)\ extra\ ([0-9]+) ]]; then
+          a=${BASH_REMATCH[1]}; b=${BASH_REMATCH[2]}; m=${BASH_REMATCH[3]}; e=${BASH_REMATCH[4]}
+          # the list ends here: cancelled, so the app stops (it never presses «Продать»; the marks stay in the game's bulk sale)
+          q -v r="$row" <<< "update public.sell_plans set status = 'cancelled', done_at = now() where id = :'r'::uuid and status = 'pending'" >/dev/null
+          note="выделено $a/$b, не найдено $m, лишних $e; «Продать» не нажата"
+          [ "$sc" = sell_after_restart ] && note="$note; готово через $(dget sar_ready) с после перезапуска"
+          if [ "$a" = "$b" ] && [ "$m" = 0 ] && [ "$e" = 0 ]; then step "$label" true "$(( $(now) - ${sa:-0} ))" "$note"; next_scn
+          else step "$label" false "$(( $(now) - ${sa:-0} ))" "$note"; FAILED=1; next_scn; fi
+          return
+        fi
+        dev_watch "$(dget mark_at)" "${sa:-0}" "$NOPROG_DEV" pilot; w=$?
+        if [ "$w" = 9 ]; then fail_scn "$label" "runner too old (v11+ reports the sell marker)" "$tbl" "$row"
+        elif [ "$w" != 0 ]; then fail_scn "$label" "$WHY" "$tbl" "$row"
+        elif [ "$(phase_age)" -gt "$maxs" ]; then fail_scn "$label" "not done in ${maxs} s" "$tbl" "$row"; fi
+        return
+      fi
       case "$st" in
-        done\|*) step "$label" true "${st#*|}" ""; dset last_scn_end "$(now)"; dset scn_idx "$((i + 1))"; phase scenario ;;
-        cancelled\|*) step "$label" false "$(phase_age)" "the request was cancelled"; FAILED=1; dset last_scn_end "$(now)"; skip_to_logs ;;
+        done\|*) step "$label" true "${st#*|}" ""; next_scn ;;
+        cancelled\|*) step "$label" false "$(phase_age)" "the request was cancelled"; FAILED=1; next_scn ;;
         *) sa=$(dget seeded_at); ma=$(dget mark_at); [ -n "$ma" ] || ma=$sa
            # runner v9+: the app reached its final step (the item is selected, the last press is the player's) = Locate passed
            if [ "$tbl" = item_locates ]; then
              fin=$(dstat "coalesce(status->>'done', '')")
-             if [ -n "$fin" ] && [ "$fin" != equip ]; then
+             if [ "$fin" = ascend ] || [ "$fin" = ready ]; then
                if [ "$fin" = ascend ]; then fnote="вещь выбрана в «Вознесении», осталось нажать «Вознести»"; else fnote="вещь найдена, последний шаг за игроком"; fi
-               step "$label" true "$(( $(now) - ${sa:-0} ))" "$fnote"; dset last_scn_end "$(now)"; dset scn_idx "$((i + 1))"; phase scenario; return
+               step "$label" true "$(( $(now) - ${sa:-0} ))" "$fnote"; next_scn; return
              fi
            fi
            dev_watch "${ma:-0}" "${sa:-0}" "$NOPROG_DEV" pilot; w=$?
@@ -370,9 +424,9 @@ auto_dev() {   # $1 = device name
     if [[ "$latest" =~ ^[0-9]{1,9}(\.[0-9]{1,9}){0,3}$ ]]; then
       fin=$(q -v d="$DEV" -v v="$latest" <<< "select count(*) from public.lab_runs where device_id = :'d'::uuid and state in ('done', 'failed', 'timeout') and (data->>'target_version' = :'v' or data->>'want_version' = :'v')")
       if [ "$fin" = 0 ]; then
-        RUN=$(q -v d="$DEV" -v v="$latest" <<< "
+        RUN=$(q -v d="$DEV" -v v="$latest" -v all="$LAB_SCENARIOS" <<< "
           insert into public.lab_runs (device_id, scenarios, build, data)
-          values (:'d'::uuid, '{equip_city,locate}', coalesce((select case build when 'a' then 'b' else 'a' end from public.lab_runs
+          values (:'d'::uuid, ('{' || replace(:'all', ' ', ',') || '}')::text[], coalesce((select case build when 'a' then 'b' else 'a' end from public.lab_runs
                   where device_id = :'d'::uuid and state <> 'cancelled' order by created_at desc limit 1), 'a'),
                   jsonb_build_object('target_version', :'v'::text))
           returning id")
