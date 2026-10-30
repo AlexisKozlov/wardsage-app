@@ -1664,6 +1664,9 @@ namespace RealmForge {
         AutoConfirm = confirm, Button = confirm ? confirmBtn : null, Hero = hintHero,
         ScreenHero = confirm ? RFX.ReadHero(addrs) : 0, Owner = AutoConfirm && target > 0 ? RFX.ReadOwner(addrs, target) : -1
       };
+      { var cs = screens.Current;   // the item's tip among the shown forms (a pilot's flow form of the hero screen: ScreenMap.FlowForms)
+        v.TipKnown = RFX.UiKnown && !formsUnread && cs != null && !cs.Held && cs.Kind == ScreenKind.HeroScreen && cs.OfferRead && formsKind == ScreenKind.HeroScreen;
+        v.TipShown = cs != null && ((cs.Flow ?? "") + "," + (cs.ModalWhy ?? "")).Contains(EquipTipForm); }
       userClick = false; lastAutoView = v; lastClientW = cr.R; lastClientH = cr.B;
       // an offer pop-up over the city is closed before the plan's next step (the equip helper has no preflight of its own here)
       if ((runHero > 0 || target > 0) && v.Foreground && !v.UserBusy && OfferStep(ClickOwner.Equip, screens.Current, o, cr, v.Foreground, now)) return;
@@ -1750,7 +1753,7 @@ namespace RealmForge {
       if (y2 < o.Y || y2 >= o.Y + cr.B) return;
       // «Заменить» (the player's auto confirm) is its own target; everything else of the item pilot is the gear list
       bool onConfirm = confirmBtn != null && a.X >= confirmBtn[0] && a.X <= confirmBtn[0] + confirmBtn[2] && a.Y >= confirmBtn[1] && a.Y <= confirmBtn[1] + confirmBtn[3];
-      EquipSend(confirm && onConfirm ? ClickTarget.EquipConfirm : ClickTarget.EquipNav, a, x, y, o, v.Foreground);
+      if (!EquipSend(confirm && onConfirm ? ClickTarget.EquipConfirm : ClickTarget.EquipNav, a, x, y, o, v.Foreground)) pilot.NotSent();
     }
 
     // Storage cleanup, in the inventory: the city's «Инвентарь» → «Снаряжение» → «Массовая продажа», then the sell
@@ -3457,6 +3460,7 @@ namespace RealmForge {
     /// <summary>The confirm button the game shows now: «Заменить» (two cards) or «Надеть» (one card, the slot is empty) -
     /// the spot whose middle is the game's blue button. Null when neither is (the card is still opening, another screen)
     /// or both are (unexpected: better not to press).</summary>
+    const string EquipTipForm = "Form_CharactorEquipTip";
     int[] ConfirmButton(W32.POINT o, double W, double H) {
       int[] rep = FindBlue(o, hg.Replace(W, H), H), eq = FindBlue(o, hg.Equip(W, H), H);
       // the item a single button was found for is on the hero now: that button kind is the one at this window size

@@ -48,14 +48,19 @@ namespace RealmForge {
     public long Owner = -1;        // hero wearing Target now: 0 = in the bag, -1 = unknown
     public bool SlotOpen;          // the screen read shows the gear list of Slot's part open
     public bool PanelNone;         // no gear list panel exists yet (it is created when a slot is first opened): click the slot
-    public bool PanelOk = true;    // the game's panel table is readable (false while the addresses are scanned again)
+    public bool PanelOk = true;
+    /// <summary>The game's window table was read for this hero screen (the shown forms are known) and whether the item's tip
+    /// (Form_CharactorEquipTip, the card with «Надеть» / «Заменить») is among them.</summary>
+    public bool TipKnown, TipShown;    // the game's panel table is readable (false while the addresses are scanned again)
   }
 
   public sealed class AutoPilot {
     public const int SlotTries = 3, ClickTries = 5, DragTries = 60, CalibTries = 4, WrongTries = 2, AfterConfirmClicks = 2, SlotWaits = 40;
     public const int AfterSlotMs = 900, AfterClickMs = 500, AfterDragMs = 800, UserPauseMs = 4000;
     public const int SlotGraceMs = 2500;   // the last slot click gets this long to show its effect before the slot counts as closed
-    public const int ConfirmSettleMs = 600, AfterConfirmMs = 3000;   // item card opening; the server's answer to «Заменить»
+    public const int ConfirmSettleMs = 600, AfterConfirmMs = 3000;
+    /// <summary>The item selected with its tip known closed this long: the item is clicked again (at most TipReopens times an item).</summary>
+    public const int TipReopenMs = 2500, TipReopens = 2;   // item card opening; the server's answer to «Заменить»
     public const double MinDragPx = 24;   // shorter moves would count as a click in the game
 
     readonly ListGeometry g;
@@ -65,7 +70,8 @@ namespace RealmForge {
     bool needCalib, measure, calibPending, endTaken;
     long selAtCalib;
     double beforeDrag, lastDrag;
-    long selSince; bool confirmed; int confirmRetries;
+    long selSince; bool confirmed; int confirmRetries, tipReopens;
+    int lastAct; bool lastRetry;   // the last action: 1 = «Заменить», 2 = the item clicked again for its tip (NotSent undoes it)
     int slotWaits, afterClicks, wrongs; long lastSlotClick;
     // the last item click: where it went, and whether its result is still to be looked at; the row 1 top it implies
     // when it selected another item (NaN = none)
@@ -90,11 +96,20 @@ namespace RealmForge {
     /// <summary>Start over on the next step (the list was changed under it: the filter).</summary>
     public void Reset() { goal = "\u0001"; }
 
+    /// <summary>The host did not send the last action (the click gate's wait, the shown forms unread): a «Заменить» press or a click for the
+    /// item's tip is not counted (live 1.6.66.348 sim: the press that met the tip's first read was taken for made, the retry met a failed read - unconfirmed).</summary>
+    public void NotSent() {
+      if (lastAct == 1) { confirmed = lastRetry; if (lastRetry) confirmRetries--; waitUntil = 0; }
+      else if (lastAct == 2) { tipReopens--; waitUntil = 0; }
+      lastAct = 0;
+    }
+
     public AutoAction Step(AutoView v) {
+      lastAct = 0;
       string key = v.Slot != null ? "slot:" + v.Slot[0] + ":" + v.Slot[1] : v.Target > 0 && v.Row > 0 ? "item:" + v.Target : "";
       if (key != goal) {
         goal = key; waitUntil = 0; clicks = drags = calibs = stuck = calibMiss = 0; needCalib = measure = calibPending = endTaken = false;
-        selSince = 0; confirmed = false; confirmRetries = 0; State = "idle"; Why = "";
+        selSince = 0; confirmed = false; confirmRetries = 0; tipReopens = 0; lastRetry = false; State = "idle"; Why = "";
         slotWaits = afterClicks = wrongs = 0; lastSlotClick = 0; itemPending = false; row1Fix = double.NaN;
       }
       if (key == "") { State = "idle"; return AutoAction.Nothing; }
@@ -125,11 +140,21 @@ namespace RealmForge {
       if (confirmed) {
         // the first press left the item off the hero and it is selected again (the card was not settled, or the press missed): once more, never more
         if (confirmRetries >= ConfirmRetries) { State = "unconfirmed"; return AutoAction.Nothing; }
-        confirmRetries++; confirmed = false; Trace = "confirm again for item " + v.Target + " (owner " + v.Owner + ", hero " + v.Hero + ")";
+        confirmRetries++; confirmed = false; lastRetry = true; Trace = "confirm again for item " + v.Target + " (owner " + v.Owner + ", hero " + v.Hero + ")";
       }
       if (v.Hero <= 0 || v.ScreenHero != v.Hero || v.Owner < 0) return AutoAction.Nothing;   // not sure yet: wait
+      // the item is selected but its tip is known closed: the game keeps the selection after the tip went (an Escape, the app
+      // started on it - live 1.6.66.348: «no single blue button», no step for 2 min). The item is clicked again: it opens the
+      // tip, or clears the selection and the next item click selects it with its tip
+      if (v.Button == null && v.TipKnown && !v.TipShown && v.NowMs - selSince >= TipReopenMs) {
+        if (tipReopens >= TipReopens) { State = "unconfirmed"; Why = "the item's tip does not open (" + tipReopens + " clicks on the selected item)"; Trace = "unconfirmed: " + Why; return AutoAction.Nothing; }
+        var pt = ItemPoint(v); if (pt == null) return AutoAction.Nothing;
+        tipReopens++; selSince = v.NowMs; waitUntil = v.NowMs + AfterClickMs; lastAct = 2;
+        Trace = "the tip of item " + v.Target + " is not open: the item clicked again at " + (int)pt[0] + "," + (int)pt[1] + " (" + tipReopens + " of " + TipReopens + ")";
+        return Click(pt[0], pt[1]);
+      }
       if (v.Button == null || v.NowMs - selSince < ConfirmSettleMs) return AutoAction.Nothing;  // the item card is opening
-      confirmed = true; waitUntil = v.NowMs + AfterConfirmMs;
+      confirmed = true; waitUntil = v.NowMs + AfterConfirmMs; lastAct = 1;
       Trace = "confirm press for item " + v.Target + " at " + (int)(v.Button[0] + v.Button[2] / 2.0) + "," + (int)(v.Button[1] + v.Button[3] / 2.0) + " button " + v.Button[2] + "x" + v.Button[3] + " owner " + v.Owner + " hero " + v.Hero + " card settled " + (v.NowMs - selSince) + " ms";
       return Click(v.Button[0] + v.Button[2] / 2.0, v.Button[1] + v.Button[3] / 2.0);
     }
@@ -147,6 +172,15 @@ namespace RealmForge {
       }
       clicks++; lastSlotClick = v.NowMs; waitUntil = v.NowMs + AfterSlotMs;
       return Click(v.Slot[0] + v.Slot[2] / 2.0, v.Slot[1] + v.Slot[3] / 2.0);
+    }
+
+    /// <summary>The centre of the target item's cell (its place in the list shown now), null = not known or not in the view.</summary>
+    double[] ItemPoint(AutoView v) {
+      if (!v.AnchorHas || v.Types == null || v.Row <= 0 || v.Col <= 0) return null;
+      double H = v.H, cell = g.CellW * H;
+      double cy = v.Row1Top + g.RowOffset(v.Types, v.Row) * H + cell / 2, cx = g.ColLeft(v.Col) * H + cell / 2;
+      if (cy < g.ViewTop * H + cell * 0.45 || cy > g.ViewBottom * H - cell * 0.45) return null;
+      return new[] { cx, cy };
     }
 
     AutoAction ItemStep(AutoView v) {

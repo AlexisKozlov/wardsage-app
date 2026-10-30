@@ -44,7 +44,13 @@ static partial class CoreTests {
     public readonly StringBuilder Acts = new StringBuilder();   // every click / drag / Escape with its time (--digest)
     public int CityEscapes;
     public string OwnScreen = "";   // the full screen the pilot works on: never an Escape there during its run
-    public double ItemX { get { return W * 0.6; } } public double ItemY { get { return H * 0.45; } }   // a gear list item (the tip's opener)
+    // the plan's item in the hero's gear list (row 2, column 1: AutoPilot's ListGeometry) and its state: selected (the game keeps the selection
+    // when its tip closes: the laptop 1.6.66.348), worn; the gear list takes item clicks only once the pilot is at the item (ItemPhase)
+    public static readonly HintGeometry Hint = new HintGeometry(); public static readonly ListGeometry ItemGeo = new ListGeometry(); public static readonly int[] ItemTypes = { 0, 1, 1, 1, 1 };
+    public bool ItemPhase, ItemSel, Worn;
+    public double Row1Top { get { return (ItemGeo.ViewTop + ListGeometry.TopPad) * U; } }
+    public double ItemX { get { return (ItemGeo.ColLeft(1) + ItemGeo.CellW / 2) * U; } }
+    public double ItemY { get { return Row1Top + (ItemGeo.RowOffset(ItemTypes, 2) + ItemGeo.CellW / 2) * U; } }
     readonly List<KeyValuePair<long, Action>> due = new List<KeyValuePair<long, Action>>();
     // the slow laptop: the reader finds the inventory / Foundry form some seconds after it first opens; a lost form is searched for 17 s
     readonly Dictionary<string, long> findAt = new Dictionary<string, long>();
@@ -128,7 +134,8 @@ static partial class CoreTests {
       string full = Full;
       i.CityForm = full == SimCity;
       bool heroOn = full == SimHero;
-      if (Stack.Contains(SimHero) && !Fail()) i.Hero = new HeroScreen { Hero = Hero.Shown, FormOk = heroOn, Tab = Hero.Tab, Part = Hero.Part, Heroes = Hero.Heroes, GridPtr = Hero.Grid };
+      // (a failed read of the hero screen is no reading, never "no hero screen")
+      if (Stack.Contains(SimHero)) { if (!Fail()) i.Hero = new HeroScreen { Hero = Hero.Shown, FormOk = heroOn, Tab = Hero.Tab, Part = Hero.Part, Heroes = Hero.Heroes, GridPtr = Hero.Grid }; }
       else if (!Fail()) i.Hero = new HeroScreen { Hero = 0, FormOk = false };
       if ((full == SimInv || full == SimFoundry) && Found(SimInv) && !Fail())
         i.Inv = Inv();
@@ -164,6 +171,8 @@ static partial class CoreTests {
       if (c == 'D') { Bad.Add("CLICK ON A DANGEROUS FORM " + top + " @" + (int)x + "," + (int)y + " (" + tg + ")"); return; }
       if (ScreenMap.OnNever(top, x, y, W, H, U)) { Bad.Add("CLICK ON A NEVER-CLICK BUTTON of " + top + " @" + (int)x + "," + (int)y + " (" + tg + ")"); return; }
       Say("click " + tg + " @" + (int)x + "," + (int)y + " on " + top); Acts.Append(Now + " c" + (int)x + "," + (int)y + ";");
+      // the equip flow's item tip (a flow form of the hero screen, the pilots go on under it): a click beside it closes it and is taken by it
+      if (top == SimTip && Full == SimHero && tg != ClickTarget.EquipConfirm) { Later(Lat(), () => { if (TopForm() == SimTip) Pop(SimTip); }); return; }
       // a click meant for a screen that lands on a pop-up / screen opened over it since the start, long enough ago for the app to have seen it
       long oa; if (ScreenTarget(tg) && c != 'K' && !StartForms.Contains(top) && "PEF".IndexOf(c) >= 0 && openAt.TryGetValue(top, out oa) && Now - oa > SeenWithinMs)
         Bad.Add("A " + tg + " CLICK LANDED ON " + top + " (" + c + ") opened over the screen after the start @" + (int)x + "," + (int)y);
@@ -178,6 +187,11 @@ static partial class CoreTests {
         else if (c == 'U' && OnBack(x, y)) Later(lat, () => Pop(top));
         return;
       }
+      // the item's tip: «Заменить» puts the item on (the tip closes)
+      if (top == SimTip && Full == SimHero && tg == ClickTarget.EquipConfirm) {
+        if (In(new GeoRect { X = SimGame.Hint.Replace(W, H)[0], Y = SimGame.Hint.Replace(W, H)[1], W = SimGame.Hint.Replace(W, H)[2], H = SimGame.Hint.Replace(W, H)[3] }, x, y)) Later(lat, () => { if (TopForm() == SimTip) { Pop(SimTip); Worn = true; ItemSel = false; } });
+        return;
+      }
       if (c != 'K') return;   // E: only the back key closes it; W: nothing takes clicks
       if (top == SimCity) {
         if (tg == ClickTarget.CityInventory && Near(x, y, W - (0.5222 + 0.9316) * U, H - hg.HeroesBtnDY * U, 20)) {
@@ -188,7 +202,14 @@ static partial class CoreTests {
         if (Near(x, y, W - hg.HeroesBtnDX * U, H - hg.HeroesBtnDY * U, 20)) Later(lat, () => { if (TopForm() != SimCity) return; Hero.Part = -1; Hero.Shown = Hero.CityHero; Push(SimHero); });
         return;
       }
-      if (top == SimHero && tg == ClickTarget.EquipNav && Near(x, y, ItemX, ItemY, 6)) { Later(lat, () => { if (TopForm() == SimHero) Push(SimTip); }); return; }
+      // the item cell: selects it and opens its tip; on the selected item with no tip, the game opens the tip or clears the selection
+      if (top == SimHero && ItemPhase && tg == ClickTarget.EquipNav && Near(x, y, ItemX, ItemY, 6)) {
+        Later(lat, () => {
+          if (TopForm() != SimHero) return;
+          if (!ItemSel || R.Next(2) == 0) { ItemSel = true; Push(SimTip); } else ItemSel = false;
+        });
+        return;
+      }
       if (top == SimHero) {
         // the gear tab's neighbour «План сборки» (a click a little off it opens the build plan screen)
         if (Near(x, y, W - hg.GearTabDX * U, hg.GearTabY * U, 20) && R.Next(25) == 0) { Later(lat, () => Push("Form_EquipmentPlan")); return; }
@@ -466,7 +487,6 @@ static partial class CoreTests {
       if (UnknownBackStep(scr)) return;
       if (BackStep(scr, ClickGate.AwayFromStart(ClickOwner.Equip, scr))) return;
       if (Gate.UnknownStall(ClickOwner.Equip, scr, Now)) return;
-      if (heroDone) { ItemStep(scr); return; }
       var hv = new HeroView {
         NowMs = Now, Foreground = true, W = W, H = U, ClientH = H, Plan = plan, Hero = heroScreen.FormOk ? heroScreen.Hero : 0, Tab = heroScreen.Tab, Part = heroScreen.Part,
         SmallCards = heroScreen.SmallCards, Heroes = heroScreen.Heroes, HeroesButton = heroScreen.Hero == 0 && G.Full == SimCity && G.CityClear,
@@ -474,27 +494,35 @@ static partial class CoreTests {
       };
       if (!heroScreen.FormOk) hv.Hero = 0;
       var ha = hp.Step(hv); PilotState = "hero_" + hp.State;
-      if (ha == null) { if (hp.State == "done" || hp.State == "idle") heroDone = true; return; }   // idle: the plan's hero was there already
+      // (idle: the plan's hero was there already) then the item, the hero pilot still watching the hero every tick (app/Overlay.cs TickAuto)
+      if (ha == null) { if (hp.State == "done" || hp.State == "idle") ItemStep(scr); return; }
       if (ha.Kind == AutoKind.None) return;
       if (!Send(ClickTarget.EquipNav, ha, null, true, false)) hp.NotSent();   // (app/Overlay.cs: EquipSend's no)
     }
-    // the item select on the plan's hero: the game opens its tip (Form_CharactorEquipTip, a flow form); the screen stays the hero screen with the
-    // tip as its sub-state for 5 s, nothing presses Escape / back on it (the laptop: the tip escaped twice, then «Escape was pressed 2 times» stop)
-    bool heroDone; long itemAt = -100000, tipSeenAt;
+    // the item on the plan's hero through the real AutoPilot: the game opens its tip (Form_CharactorEquipTip, a flow form of the hero screen: never
+    // escaped - the laptop 1.6.66.347 escaped it twice and stopped), «Заменить» on it is EquipConfirm. A start with the item selected and its tip
+    // closed (the laptop 1.6.66.348: «no single blue button», no step for 2 min): the item is clicked again
+    readonly AutoPilot ip = new AutoPilot(SimGame.ItemGeo);
     void ItemStep(ScreenState scr) {
-      PilotState = "item";
-      if (G.Stack.Contains(SimTip)) {
-        if (scr != null && scr.Kind == ScreenKind.HeroScreen && !scr.Held && scr.Flow.Contains(SimTip) && !scr.ModalWhy.Contains(SimTip)) {
-          if (tipSeenAt == 0) tipSeenAt = Now;
-          if (Now - tipSeenAt >= 5000) Done = "done";
-        }
-        return;
-      }
-      tipSeenAt = 0;
-      if (Now - itemAt < 3000) return;
-      itemAt = Now;
-      Send(ClickTarget.EquipNav, new AutoAction { Kind = AutoKind.Click, X = G.ItemX, Y = G.ItemY }, null, false, false);
+      G.ItemPhase = true;
+      bool tip = G.Stack.Contains(SimTip) && G.Full == SimHero;
+      var v = new AutoView {
+        NowMs = Now, Foreground = true, H = U, Target = SimItem, Row = 2, Col = 1, Sel = G.ItemSel ? SimItem : 0, SelRow = G.ItemSel ? 2 : 0, SelCol = G.ItemSel ? 1 : 0,
+        AnchorHas = true, Row1Top = G.Row1Top, Types = SimGame.ItemTypes, AutoConfirm = true, Button = tip ? SimGame.Hint.Replace(W, H) : null,
+        Hero = plan, ScreenHero = heroScreen.FormOk ? heroScreen.Hero : 0, Owner = G.Worn ? plan : 0
+      };
+      // (app/Overlay.cs TickAuto: the tip among the shown forms)
+      v.TipKnown = !formsUnread && scr != null && !scr.Held && scr.Kind == ScreenKind.HeroScreen && scr.OfferRead && formsKind == ScreenKind.HeroScreen;
+      v.TipShown = scr != null && ((scr.Flow ?? "") + "," + (scr.ModalWhy ?? "")).Contains(SimTip);
+      var a = ip.Step(v);
+      PilotState = "item_" + ip.State;
+      if (ip.State == "done") { Done = "done"; return; }
+      if (a.Kind == AutoKind.None) return;
+      var b = v.Button; bool onConfirm = b != null && a.X >= b[0] && a.X <= b[0] + b[2] && a.Y >= b[1] && a.Y <= b[1] + b[3];
+      if (onConfirm) Confirms++;
+      if (!Send(onConfirm ? ClickTarget.EquipConfirm : ClickTarget.EquipNav, a, null, false, false)) { ip.NotSent(); if (onConfirm) Confirms--; }
     }
+    public int Confirms;
     // TickSell (app/Overlay.cs) up to «Массовая продажа» (the marking itself: RunSell's tests)
     void TickSell() {
       var scr = Screens.Current;
@@ -611,11 +639,12 @@ static partial class CoreTests {
     long plan = 100 + r.Next(30);
     var h = new SimHost(g, owner, plan, geo);
     g.OwnScreen = owner == ClickOwner.Equip ? SimHero : owner == ClickOwner.Sell ? SimInv : SimFoundry;
+    g.ItemSel = owner == ClickOwner.Equip && r.Next(2) == 0;   // the item left selected with its tip closed
     long cap = slow ? 300000 : 150000, t = 0, lastChange = 0; string lastSay = "";
     while (t < cap) {
       g.Advance(t);
       if (t >= h.SendingUntil) { h.ReadScreens(t); h.Tick(); }
-      if (g.Bad.Count > 0 || h.Done != "" || h.Gate.Halted(owner)) break;
+      if (g.Bad.Count > 0 || h.Done != "" || h.Gate.Halted(owner) || h.PilotState == "item_unconfirmed" || h.PilotState == "item_failed") break;   // (the item pilot's own ends)
       string say = h.PilotState + "|" + string.Join(">", g.Stack.ToArray());
       if (say != lastSay) { lastSay = say; lastChange = t; }
       // a pilot that tells the player why it waits (the hero screen not reachable, a hint) and nothing changes for 30 s: a stop with a reason
@@ -635,6 +664,7 @@ static partial class CoreTests {
       var miss = new List<string>(); foreach (var u in h.Wanted) if (!g.InvSel.Contains(u)) miss.Add(u.ToString());
       if (xtra.Count > 0 || miss.Count > 0) g.Bad.Add("SELL MARKS WRONG: extra [" + string.Join(",", xtra.ToArray()) + "] missing [" + string.Join(",", miss.ToArray()) + "]");
     }
+    if (h.Done != "" && owner == ClickOwner.Equip && !g.Worn) g.Bad.Add("EQUIP DONE WITHOUT THE ITEM ON (" + h.Confirms + " EquipConfirm presses)");
     var errs = new List<string>(g.Bad);
     if (outcome == "TIMEOUT") errs.Add("no end within " + cap / 1000 + " s (silent waiting): " + h.PilotState);
     int n0;

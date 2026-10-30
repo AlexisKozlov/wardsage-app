@@ -4675,6 +4675,29 @@ static partial class CoreTests {
       var esc2 = hero("", "Form_AchievementTip"); esc2.ShownKnown = "Form_CharactorMain";
       Check(g2.Check(new ClickRequest { Owner = ClickOwner.Locate, Target = ClickTarget.EscapeBack, AutoOn = true, Front = true, U = U }, esc2, 20000).Allowed, "flow: another pilot may still close it with Escape");
     }
+    // the laptop 1.6.66.348: the item left selected with its tip closed - «no single blue button», no step for 2 min. The item is clicked again
+    {
+      var lg = new ListGeometry(); double UH = 689; var types = new[] { 0, 1, 1, 1 };
+      Func<long, bool, bool, int[], AutoView> av = (t, known, shown, btn) => new AutoView { NowMs = t, Foreground = true, H = UH, Target = 55070, Row = 2, Col = 1, Sel = 55070, SelRow = 2, SelCol = 1,
+        AnchorHas = true, Row1Top = (lg.ViewTop + ListGeometry.TopPad) * UH, Types = types, AutoConfirm = true, Button = btn, Hero = 204200000, ScreenHero = 204200000, Owner = 0, TipKnown = known, TipShown = shown };
+      var p = new AutoPilot(lg);
+      Eq(AutoKind.None, p.Step(av(1000, true, false, null)).Kind, "tip: the selected item with no tip: a moment first");
+      Eq(AutoKind.None, p.Step(av(1000 + AutoPilot.TipReopenMs + 1, false, false, null)).Kind, "tip: never while the shown forms are not read");
+      var a1 = p.Step(av(1000 + AutoPilot.TipReopenMs + 2, true, false, null));
+      double cx = (lg.ColLeft(1) + lg.CellW / 2) * UH, cy = (lg.ViewTop + ListGeometry.TopPad + lg.PitchY + lg.CellW / 2) * UH;
+      Check(a1.Kind == AutoKind.Click && Math.Abs(a1.X - cx) < 1 && Math.Abs(a1.Y - cy) < 1, "tip: closed for " + AutoPilot.TipReopenMs + " ms: the item clicked again (" + a1.X + "," + a1.Y + ")");
+      var p2 = new AutoPilot(lg); p2.Step(av(1000, true, true, null));
+      Eq(AutoKind.None, p2.Step(av(1000 + 10 * AutoPilot.TipReopenMs, true, true, null)).Kind, "tip: shown (its button not seen yet): no click on the item");
+      var btn = new[] { 700, 800, 200, 54 };
+      var c1 = p2.Step(av(1000 + 10 * AutoPilot.TipReopenMs + 1, true, true, btn));
+      Check(c1.Kind == AutoKind.Click && Math.Abs(c1.X - 800) < 1, "tip: shown with its button: «Заменить» pressed");
+      p2.NotSent();
+      var c2 = p2.Step(av(1000 + 10 * AutoPilot.TipReopenMs + 2, true, true, btn));
+      Check(c2.Kind == AutoKind.Click && Math.Abs(c2.X - 800) < 1, "tip: a press the gate held back is not counted: pressed on the next step");
+      var p3 = new AutoPilot(lg); p3.Step(av(0, true, false, null)); int n = 0;
+      for (long t = AutoPilot.TipReopenMs + 1; t < 60000; t += 300) if (p3.Step(av(t, true, false, null)).Kind == AutoKind.Click) n++;
+      Check(n == AutoPilot.TipReopens && p3.State == "unconfirmed", "tip: at most " + AutoPilot.TipReopens + " clicks, then unconfirmed (" + n + ", " + p3.State + ")");
+    }
     // the sim: the item tip after the item select on the slow laptop, never escaped
     {
       var geo = GameGeometry.Parse(GeoJson(), GeoGame); int done = 0, runs = 0;
