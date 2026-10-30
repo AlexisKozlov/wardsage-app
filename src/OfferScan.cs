@@ -127,6 +127,30 @@ namespace RealmForge {
       return string.Join(",", res.ToArray());
     }
 
+    /// <summary>The shown forms of the window table that are screens the app reads (ScreenState.KindOfForm), by class name: the screen's kind
+    /// each tick (ScreenInputs.Screens). Null = the window table is not known or not readable. A read that finds no form at all (the node
+    /// array read while the game rehashes the table) is tried once more at once. A shown form whose name is not read yet is left out.</summary>
+    public static List<string> ReadShownScreens() {
+      for (int attempt = 0; attempt < 2; attempt++) {
+        int nn; var nb = UiNodes(out nn); if (nb == null) continue;
+        var res = new List<string>(); int forms = 0;
+        int budget = NewNamesPerRead;
+        lock (formNames) {
+          for (int i = 0; i < nn; i++) {
+            int o = i * 32;
+            if (BitConverter.ToInt32(nb, o + 24) != T_INT || BitConverter.ToInt32(nb, o + 8) != T_TABLE) continue;
+            forms++;
+            ulong f = BitConverter.ToUInt64(nb, o);
+            if (!Shown(f)) continue;
+            string n = NameOf(BitConverter.ToInt64(nb, o + 16), f, ref budget);
+            if (ScreenState.KindOfForm(n) != ScreenKind.Unknown) res.Add(n);
+          }
+        }
+        if (forms > 0) return res;
+      }
+      return null;
+    }
+
     /// <summary>The shown forms that are neither a screen the app knows (OfferForms.KnownScreens) nor an offer, by class name ("id:&lt;key&gt;"
     /// when the name is not readable); at most <paramref name="max"/>. Null = the window table is not known. A field read per form held:
     /// call it seldom (every few seconds, only while it is wanted).</summary>

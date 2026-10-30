@@ -984,10 +984,40 @@ namespace RealmForge {
 
     // the value of a UIInstance node keyed by the form id, when it is still that node and holds a table with the key
     static ulong NodeValue(ulong n, long id, string key) {
-      var b = n != 0 && id != 0 ? Read(n, 32) : null; if (b == null) return 0;
-      if (BitConverter.ToInt64(b, 16) != id || BitConverter.ToInt32(b, 24) != T_INT || BitConverter.ToInt32(b, 8) != T_TABLE) return 0;
+      var b = n != 0 && id != 0 ? Read(n, 32) : null; if (!IsNodeOf(b, id)) return 0;
       ulong f = BitConverter.ToUInt64(b, 0);
       return HasTable(f, key) ? f : 0;
+    }
+
+    static bool IsNodeOf(byte[] b, long id) { return b != null && BitConverter.ToInt64(b, 16) == id && BitConverter.ToInt32(b, 24) == T_INT && BitConverter.ToInt32(b, 8) == T_TABLE; }
+    /// <summary>The node the readers read form <paramref name="id"/> from: the published one while it still holds that form, else the node the
+    /// window table has for it now (the game moved it, the table rehashed: the readers go on at once, no search waited for; 0 = none).
+    /// Only for the readers: the search's own node checks stay strict.</summary>
+    static ulong LiveNode(ulong n, long id) {
+      if (id == 0) return n;
+      if (n != 0 && IsNodeOf(Read(n, 32), id)) return n;
+      ulong t = TableNodeOf(id);
+      return t != 0 ? t : n;
+    }
+
+    /// <summary>The node of form <paramref name="id"/> in the window table read now (its own buffer: callers may hold the per-tick one), 0 = not
+    /// there or the table not known. A read that finds no form at all (torn: the table rehashed meanwhile) is tried once more.</summary>
+    static ulong TableNodeOf(long id) {
+      ulong t = uiTable; if (t == 0 || id == 0 || Layout.Current == null) return 0;
+      for (int attempt = 0; attempt < 2; attempt++) {
+        var h = Read(t, 56); if (h == null || h[8] != 5 || h[11] > 16) continue;
+        int nn = 1 << h[11]; ulong np = BitConverter.ToUInt64(h, 24);
+        var nb = np != 0 ? Read(np, nn * 32) : null; if (nb == null) continue;
+        int forms = 0;
+        for (int i = 0; i < nn; i++) {
+          int o = i * 32;
+          if (BitConverter.ToInt32(nb, o + 24) != T_INT || BitConverter.ToInt32(nb, o + 8) != T_TABLE) continue;
+          forms++;
+          if (BitConverter.ToInt64(nb, o + 16) == id) return np + (ulong)o;
+        }
+        if (forms > 0) return 0;
+      }
+      return 0;
     }
     static ulong NodeForm(ulong n) { ulong f = NodeValue(n, FormCharactorMainId, "m_InfinityGridProxy"); return f != 0 && FormAlive(f) ? f : 0; }
 
@@ -1020,8 +1050,7 @@ namespace RealmForge {
 
     // the table of a UIInstance node keyed by the form id, when it is still that node
     static ulong NodeTable(ulong n, long id) {
-      var b = n != 0 && id != 0 ? Read(n, 32) : null; if (b == null) return 0;
-      if (BitConverter.ToInt64(b, 16) != id || BitConverter.ToInt32(b, 24) != T_INT || BitConverter.ToInt32(b, 8) != T_TABLE) return 0;
+      var b = n != 0 && id != 0 ? Read(n, 32) : null; if (!IsNodeOf(b, id)) return 0;
       return BitConverter.ToUInt64(b, 0);
     }
 
@@ -1197,9 +1226,9 @@ namespace RealmForge {
       return string.Join(", ", l.ToArray());
     }
     /// <summary>The inventory's node is not known (the storage start asks for a search while the form is not built yet).</summary>
-    public static bool InvFormMissing() { return NodeInv(invNode) == 0; }
+    public static bool InvFormMissing() { return NodeInv(LiveNode(invNode, FormBackpackId)) == 0; }
     /// <summary>The Foundry's node is not known or reads 0 now (never built, moved, or the search has not found it yet).</summary>
-    public static bool FoundryFormMissing() { return NodeTable(subNode, FormRecastId) == 0; }
+    public static bool FoundryFormMissing() { return NodeTable(LiveNode(subNode, FormRecastId), FormRecastId) == 0; }
 
     /// <summary>Starts a search of the forms on a worker thread (never two at once, at least <paramref name="minGapMs"/> after the last start); false = not started.
     /// A search that has been busy for more than 30 s is given up on (a new one may start). Does not block.</summary>
@@ -1275,39 +1304,39 @@ namespace RealmForge {
     }
 
     /// <summary>The hero screen the game holds now (0 = unknown: the node moved or was never found).</summary>
-    internal static ulong LiveForm() { ulong f = NodeForm(formNode); Watch(ref heroOk, f, formNode, 4); return f; }
+    internal static ulong LiveForm() { ulong f = NodeForm(LiveNode(formNode, FormCharactorMainId)); Watch(ref heroOk, f, formNode, 4); return f; }
 
     /// <summary>The inventory (Form_BackpackIntegration) the game holds now; searched again (a full pass, about a second)
     /// when its node is not known or has moved, at most every <paramref name="rescanMs"/> (&lt; 0: not now). 0 = the
     /// player never opened it.</summary>
     internal static ulong LiveInvForm(int rescanMs) {
-      ulong f = NodeInv(invNode);
+      ulong f = NodeInv(LiveNode(invNode, FormBackpackId));
       Watch(ref invOk, f, invNode, 0);
       if (f != 0 || rescanMs < 0 || FormSearchRunning) return f;
       if (Environment.TickCount - lastNodeScan < rescanMs && lastNodeScan != 0) return 0;
       lastNodeScan = Environment.TickCount;
       if (regs == null) return 0;
       FindFormNode();
-      return NodeInv(invNode);
+      return NodeInv(LiveNode(invNode, FormBackpackId));
     }
     static int lastNodeScan;
 
     /// <summary>The foundry's form (<paramref name="gem"/> false) or the gem screen (true) the game holds now; searched
     /// again like the inventory. 0 = never opened.</summary>
     internal static ulong LiveRecastForm(bool gem, int rescanMs) {
-      ulong f = NodeTable(gem ? gemNode : subNode, gem ? FormGemId : FormRecastId);
+      ulong f = NodeTable(LiveNode(gem ? gemNode : subNode, gem ? FormGemId : FormRecastId), gem ? FormGemId : FormRecastId);
       if (gem) Watch(ref gemOk, f, gemNode, 2); else Watch(ref subOk, f, subNode, 1);
       if (f != 0 || rescanMs < 0 || FormSearchRunning) return f;
       if (Environment.TickCount - lastNodeScan < rescanMs && lastNodeScan != 0) return 0;
       lastNodeScan = Environment.TickCount;
       if (regs == null) return 0;
       FindFormNode();
-      return NodeTable(gem ? gemNode : subNode, gem ? FormGemId : FormRecastId);
+      return NodeTable(LiveNode(gem ? gemNode : subNode, gem ? FormGemId : FormRecastId), gem ? FormGemId : FormRecastId);
     }
 
     /// <summary>The city form (the main screen) the game holds now; 0 = id unknown or its node never found. No rescan of its own
     /// (the scans come from the inventory / foundry / gem paths and the overlay's stale-forms pass).</summary>
-    internal static ulong LiveCityForm() { ulong f = NodeTable(cityNode, FormMainCityId); Watch(ref cityOk, f, cityNode, 3); return f; }
+    internal static ulong LiveCityForm() { ulong f = NodeTable(LiveNode(cityNode, FormMainCityId), FormMainCityId); Watch(ref cityOk, f, cityNode, 3); return f; }
 
     /// <summary>The city form as the window table holds it right now (one read of its nodes, not the published node): the game builds the city
     /// again after the guild or an event screen. When it differs from the published one, the published city node is dropped and the forms are
@@ -1328,10 +1357,10 @@ namespace RealmForge {
     }
 
     /// <summary>The artifact workshop's form the game holds now; 0 = the layout has no id for it, or its node was never found (the scans come from the other form paths and the stale-forms pass; the overlay asks for one while an artifact request waits).</summary>
-    internal static ulong LiveArtForm() { ulong f = NodeTable(artNode, FormArtId); Watch(ref artOk, f, artNode, 5); return f; }
+    internal static ulong LiveArtForm() { ulong f = NodeTable(LiveNode(artNode, FormArtId), FormArtId); Watch(ref artOk, f, artNode, 5); return f; }
 
     /// <summary>The workshop's form is not known yet (its id is in the layout data, but no live node was found).</summary>
-    public static bool ArtFormMissing() { return FormArtId != 0 && NodeTable(artNode, FormArtId) == 0; }
+    public static bool ArtFormMissing() { return FormArtId != 0 && NodeTable(LiveNode(artNode, FormArtId), FormArtId) == 0; }
 
     /// <summary>The layout data names the workshop's form (without it the workshop cannot be read).</summary>
     public static bool ArtFormKnown { get { return FormArtId != 0; } }

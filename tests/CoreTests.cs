@@ -1098,6 +1098,68 @@ static partial class CoreTests {
     public void Kids(ulong t, params ulong[] kids) { ulong a = M.Alloc(8 * kids.Length); for (int i = 0; i < kids.Length; i++) M.W64(a + (ulong)(8 * i), kids[i]); M.W64(t + 0x70, a); M.W64(t + 0x80, (ulong)kids.Length); }
   }
 
+  /// <summary>Live 1.6.66.397 (a 526x296 client): the screen's kind from the window table's shown forms, the readers failing; one frame source per
+  /// button; the canvas scale of the small client.</summary>
+  static void ScreenTopTests() {
+    Console.WriteLine("The screen from the window table's top form, frame sources, the small client's scale (src/GameScreen.cs, src/UiButtons.cs):");
+    Check(ScreenState.KindOfForm("Form_MainCity") == ScreenKind.City && ScreenState.KindOfForm("Form_BackpackIntegration") == ScreenKind.Inventory
+      && ScreenState.KindOfForm("Form_EquipSubliming") == ScreenKind.Foundry && ScreenState.KindOfForm("Form_CharactorMain") == ScreenKind.HeroScreen
+      && ScreenState.KindOfForm("Form_UnionBoss") == ScreenKind.Unknown, "table kind: the forms the app reads map to their screens, others to none");
+    Check(ScreenState.TopKind(new[] { "Form_MainCity", "Form_BackpackIntegration" }) == ScreenKind.Inventory && ScreenState.TopKind(new[] { "Form_BackpackIntegration", "Form_EquipSubliming" }) == ScreenKind.Foundry
+      && ScreenState.TopKind(new string[0]) == ScreenKind.Unknown && ScreenState.TopKind(null) == ScreenKind.Unknown, "table kind: a screen opened from another is on top");
+    // the log: City, then the inventory opened and its reader failing for seconds - the table names it: Inventory (details unknown, held), never Unknown
+    var tr = new ScreenTracker(); long t = 0;
+    var cityIn = new ScreenInputs { CityForm = true, Offers = new List<string>(), Screens = new List<string> { "Form_MainCity" } };
+    Check(tr.Update(cityIn, t).Kind == ScreenKind.City, "table kind: the city");
+    bool stable = true, unknown = false; ScreenState st = null;
+    for (t = 100; t <= 6000; t += 100) {
+      st = tr.Update(new ScreenInputs { CityForm = false, Offers = new List<string>(), Screens = new List<string> { "Form_BackpackIntegration", "Form_LeftTip" } }, t);
+      if (st.Kind != ScreenKind.Inventory) stable = false;
+      if (st.Kind == ScreenKind.Unknown) unknown = true;
+    }
+    Check(stable && !unknown && st.Partial && st.Held && st.FromTable && st.Brief == "Inventory details?", "table kind: the inventory's reader failing for 6 s - Inventory all along, its details unknown and held (" + st.Brief + ")");
+    // the reader back: its details, no longer held
+    var inv = new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true };
+    st = tr.Update(new ScreenInputs { Inv = inv, CityForm = false, Offers = new List<string>(), Screens = new List<string> { "Form_BackpackIntegration" } }, 6100);
+    Check(st.Kind == ScreenKind.Inventory && !st.Partial && !st.Held && st.InvNormalEquip, "table kind: the reader back - the details, not held (" + st.Brief + ")");
+    // a sub-read failing every other tick: the kind and its details stay (the last good reading stands in), the brief never changes
+    string b0 = st.Brief; bool same = true;
+    for (t = 6200; t <= 9000; t += 100) {
+      var x = tr.Update(new ScreenInputs { Inv = (t / 100) % 2 == 0 ? inv : null, CityForm = false, Offers = new List<string>(), Screens = new List<string> { "Form_BackpackIntegration" } }, t);
+      if (x.Brief != b0) same = false;
+    }
+    Check(same, "table kind: a sub-read failing every other tick changes nothing (" + b0 + ")");
+    // the table not read (null): the readers alone, as before (a failing inventory read held 1.5 s, then Unknown)
+    var tr2 = new ScreenTracker();
+    tr2.Update(new ScreenInputs { Inv = inv, Offers = new List<string>() }, 0);
+    Check(tr2.Update(new ScreenInputs { Offers = new List<string>() }, 1000).Kind == ScreenKind.Inventory && tr2.Update(new ScreenInputs { Offers = new List<string>() }, 3000).Kind == ScreenKind.Unknown,
+      "table kind: no window table - the readers decide alone (held 1.5 s, then Unknown)");
+    // a reader that reads its own screen open above the table's top keeps it (the table names a new form a moment later)
+    var rs = new RecastScreen { SublimingOpen = true, CurType = 2, AscendParts = new int[0], AscendEquips = new long[0], SelectParts = new int[0], Equips = new long[0] };
+    Check(ScreenState.Classify(new ScreenInputs { Rs = rs, Inv = inv, Screens = new List<string> { "Form_BackpackIntegration" } }, 0).Kind == ScreenKind.Foundry, "table kind: the Foundry read open over the table's inventory stays the Foundry");
+    Check(ScreenState.Classify(new ScreenInputs { Inv = inv, CityForm = true, Screens = new List<string> { "Form_EquipSubliming", "Form_BackpackIntegration" } }, 0).Kind == ScreenKind.Foundry, "table kind: the table's Foundry over a reader's inventory");
+
+    // frames: one source per button
+    var fs = new FrameStick(); var live = new double[] { 111, 238, 44, 44, 8 };
+    Check(fs.Pick(null, false, 526, 296, 0) == null, "frame source: nothing read yet - the layout's");
+    Check(fs.Pick(live, false, 526, 296, 100) == live, "frame source: a live read - the live frame");
+    bool kept = true;
+    for (long ft = 200; ft <= 1600; ft += 100) if (fs.Pick(ft % 300 == 0 ? live : null, false, 526, 296, ft) != live) kept = false;
+    Check(kept, "frame source: live reads missing now and then - the live frame all along, never the layout's");
+    Check(fs.Pick(null, false, 526, 296, 1500 + FrameStick.HoldMs - 1) != null && fs.Pick(null, false, 526, 296, 1600 + FrameStick.HoldMs + 1) == null, "frame source: 1.5 s without a live read - the layout's");
+    fs.Pick(live, false, 526, 296, 5000);
+    Check(fs.Pick(null, true, 526, 296, 5100) == null && fs.Pick(null, false, 526, 296, 5200) == null, "frame source: the button gone (hidden / covered) - dropped at once");
+    fs.Pick(live, false, 526, 296, 6000);
+    Check(fs.Pick(null, false, 1280, 720, 6100) == null, "frame source: another window size - no old frame");
+    // the small client's scale: the canvas has the client's shape, both ways give the same px a unit (0.46 on 526x296)
+    double byH, k = UiIcon.CanvasScale(526, 296, 526 / (296 / 640.0), 640, out byH);
+    Check(Math.Abs(k - byH) < 1e-9 && Math.Abs(k - 296 / 640.0) < 1e-9 && Math.Abs(k - Ui.Unit(526, 296) / 640) < 0.01, "small client: the canvas scale by width = by height = the unit's (" + k.ToString("0.000") + ")");
+    // the live rect of the city's «Инвентарь» on 526x296 (113,240,40,40: its centre 133) and the bar's place it gives: the layout's click on it
+    double U = Ui.Unit(526, 296), dx = (526 - (113 + 20)) / U;
+    Check(Math.Abs(dx - 1.320) < 0.01 && Math.Abs(dx - CityBar.DefaultDX) * U > 30, "small client: the live «Инвентарь» is 1.32 U from the right (the bar search's 136 px), the default offset " + Math.Round(Math.Abs(dx - CityBar.DefaultDX) * U) + " px off");
+    Check(UiIcon.Pick(new List<UiIcon.Cand> { new UiIcon.Cand { Name = "BtnHitArea", X = 116, Y = 243, W = 34, H = 34, Active = true, Depth = 1 } }, 113, 240, 40, 40) == -1, "icon: the touch area (BtnHitArea) is no picture");
+  }
+
   /// <summary>The bar buttons' frames hug the icon (UiIcon): the picture child picked by name / shape, the label, a red dot, the backdrop left
   /// out; the frame 2 px round the icon, inside the client, above the label.</summary>
   static void UiIconTests() {
@@ -1240,6 +1302,7 @@ static partial class CoreTests {
 
   static void UiButtonTests() {
     UiIconTests();
+    ScreenTopTests();
     Console.WriteLine("A button's live rect by name (src/UiButtons.cs):");
     var m = new FakeLua(4 << 20); RFX.TestMemory = m; RFX.ForgetLive(); RFX.ForgetClasses();
     try {

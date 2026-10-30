@@ -69,7 +69,7 @@ namespace RealmForge {
   public static class UiIcon {
     public sealed class Cand { public string Name = ""; public double X, Y, W, H; public bool Active; public int Depth; }
     public const double FramePad = 2;
-    static readonly string[] NotIcon = { "text", "txt", "label", "title", "name", "red", "dot", "num", "count", "tips", "effect", "fx", "lock", "new", "mask", "glow", "light", "arrow" };
+    static readonly string[] NotIcon = { "text", "txt", "label", "title", "name", "red", "dot", "num", "count", "tips", "effect", "fx", "lock", "new", "mask", "glow", "light", "arrow", "hitarea", "hit_area", "raycast" };   // (BtnHitArea: the touch area, not the picture)
     static readonly string[] IconWords = { "icon", "img", "image", "pic", "sprite" };
     /// <summary>The index of the icon in <paramref name="c"/> for the button's rect (bx, by, bw, bh); -1 = none (the button's rect frames it).</summary>
     public static int Pick(IList<Cand> c, double bx, double by, double bw, double bh) {
@@ -112,11 +112,38 @@ namespace RealmForge {
     public static string FrameLine(string who, double[] f, bool live) {
       return "frame: " + who + " rect=[" + Math.Round(f[0]) + "," + Math.Round(f[1]) + "," + Math.Round(f[2]) + "," + Math.Round(f[3]) + "] source=" + (live ? "live" : "layout");
     }
+    /// <summary>The px per canvas unit of a screen-space root canvas <paramref name="cw"/> x <paramref name="ch"/> units in a W x H client: the
+    /// canvas is sized to the client over its scale factor, so width and height give the same scale (the small 526x296 client of 1.6.66.397:
+    /// a canvas of about 1138x640 units, 0.46 px a unit both ways - the 37 px between the live rect and the layout's place came from the layout's bar offset,
+    /// not from the scale). <paramref name="byH"/> = the scale by the height (the check).</summary>
+    public static double CanvasScale(double W, double H, double cw, double ch, out double byH) {
+      byH = ch > 0 ? H / ch : 0;
+      return cw > 0 ? W / cw : 0;
+    }
     /// <summary>The frame round the icon (x, y, w, h, corner radius), client px, within W x H.</summary>
     public static double[] Frame(double x, double y, double w, double h, double W, double H) {
       double l = Math.Max(0, x - FramePad), t = Math.Max(0, y - FramePad), r = Math.Min(W, x + w + FramePad), b = Math.Min(H, y + h + FramePad);
       return new[] { l, t, r - l, b - t, Math.Round(Math.Min(r - l, b - t) * 0.18) };
     }
+  }
+
+  /// <summary>One frame source per pilot button: once its live rect was read, the frame stays on the last live rect (and follows each new one) while
+  /// the reads miss for up to <see cref="HoldMs"/>; only then the layout's place. A read that says the button is gone (hidden, another form on
+  /// top) drops it at once. Never live and layout tick by tick (live 1.6.66.397: the city's «Инвентарь» frame jumped 36 px each tick). Pure.</summary>
+  public sealed class FrameStick {
+    public const int HoldMs = 1500;
+    double[] last; long at; double lw, lh;
+    /// <summary>The live frame now: <paramref name="live"/> when read this tick, else the last one within HoldMs (same window size); null = the
+    /// layout's. <paramref name="gone"/>: the read says the button is not there (no frame held).</summary>
+    public double[] Pick(double[] live, bool gone, double W, double H, long now) {
+      if (gone) { last = null; return null; }
+      if (live != null) { last = live; at = now; lw = W; lh = H; return live; }
+      if (last != null && Math.Abs(lw - W) <= 0.5 && Math.Abs(lh - H) <= 0.5 && now - at >= 0 && now - at <= HoldMs) return last;
+      last = null; return null;
+    }
+    /// <summary>The frame shown is a held one (no live read this tick).</summary>
+    public bool Has { get { return last != null; } }
+    public void Reset() { last = null; }
   }
 
   public static partial class RFX {
@@ -238,7 +265,27 @@ namespace RealmForge {
     /// <summary>The form of class <paramref name="cls"/> in the window table, read now: the shown one whose C# side is alive (not Destroyed, its
     /// root GameObject there) first, then any alive one, then a shown one, then any (0 = none). The game builds a form again (the city after the
     /// guild): a destroyed copy is never preferred. <paramref name="copies"/> = the shown live copies (more than 1: the instance is not certain).</summary>
+    /// <summary>A read of the window table that finds no form of the class (the table read while the game rehashes it, a name read that failed)
+    /// is tried once more at once; still none: the last good result of the class stands in for up to FormKeepMs when its table still is a form of
+    /// that class (live 1.6.66.397: "not in UIInstance, forms=none" now and then while the city was shown).</summary>
+    public const int FormKeepMs = 500;
+    sealed class FormHit { public ulong F; public int Copies, At; }
+    static readonly Dictionary<string, FormHit> formLast = new Dictionary<string, FormHit>();
     static ulong FormOf(ulong env, ulong ui, string cls, UiButtonInfo r, out bool shown, out int copies) {
+      ulong f = FormOfOnce(env, ui, cls, r, out shown, out copies);
+      if (f == 0) { r.Tr("forms", "none - read again"); f = FormOfOnce(env, ui, cls, r, out shown, out copies); }
+      int now = Environment.TickCount;
+      lock (formLast) {
+        FormHit h;
+        if (f != 0) { formLast[cls] = new FormHit { F = f, Copies = copies, At = now }; return f; }
+        if (formLast.TryGetValue(cls, out h) && unchecked(now - h.At) >= 0 && unchecked(now - h.At) <= FormKeepMs) {
+          string why;
+          if (FormClassName(h.F, out why) == cls) { shown = Shown(h.F); copies = h.Copies; r.Tr("forms", "kept " + HexA(h.F) + " (" + unchecked(now - h.At) + " ms old)"); return h.F; }
+        }
+      }
+      return 0;
+    }
+    static ulong FormOfOnce(ulong env, ulong ui, string cls, UiButtonInfo r, out bool shown, out int copies) {
       shown = false; copies = 0;
       var h = Read(ui, 56); if (h == null || h[8] != 5 || h[11] > 12) return 0;
       int nn = 1 << h[11]; var nb = Read(BitConverter.ToUInt64(h, 24), nn * 32); if (nb == null) return 0;
@@ -338,10 +385,10 @@ namespace RealmForge {
       }
       double k2, cw, ch, pw, ph, sx = 1, sy = 1, px, py; int i0;
       if (canvas) {   // the canvas: its centre the origin, y up; children placed from its pivot
-        cw = rt[0][6]; ch = rt[0][7]; k2 = W / cw;
+        cw = rt[0][6]; ch = rt[0][7]; double byH; k2 = UiIcon.CanvasScale(W, H, cw, ch, out byH);
         pw = cw; ph = ch; px = (rt[0][8] - 0.5) * cw; py = (rt[0][9] - 0.5) * ch; i0 = 1;
         if (main) r.Scale = "canvas";
-        if (main) r.Tr("scale", "canvas " + F2(k2) + " px/unit (" + F2(H / ch) + " by height) vs unit " + F2(U / CanvasRefH));
+        if (main) r.Tr("scale", "canvas " + F2(k2) + " px/unit (" + F2(byH) + " by height) vs unit " + F2(U / CanvasRefH));
       } else {        // the form's root in a canvas of 640 units high = U px (its parent assumed to fill the canvas)
         k2 = U / CanvasRefH; cw = W / k2; ch = H / k2; pw = cw; ph = ch; px = py = 0; i0 = 0;
         if (main) r.Scale = "unit";

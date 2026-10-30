@@ -1052,6 +1052,9 @@ namespace RealmForge {
       var rule = RuleOf(r.Owner, r.Target);
       if (rule == null) return Halt(r.Owner, "target", tag + " is not a target " + r.Owner + " may click");
       if (f == null || f.Kind == ScreenKind.Unknown) return UnknownWait(r, f, now, tag + ": the screen is not recognised" + (f != null && f.TopForm != "" ? " (top form " + f.TopForm + " not in the list)" : ""));
+      // the window table shows the screen but its reader gave no reading of it: its details (tab, mode, selection) are not known - waited for as
+      // an unrecognised screen (the forms are searched again), never judged from details it does not have
+      if (f.Partial) return UnknownWait(r, f, now, tag + ": " + f.Brief + " - the window table shows it, its reader has no reading yet");
       if (Array.IndexOf(rule.Kinds, f.Kind) < 0) return Halt(r.Owner, "screen", tag + " needs " + string.Join("/", Names(rule.Kinds)) + ", the game shows " + f.Brief);
       if (f.ModalOpen && !rule.AllowModal) return Halt(r.Owner, "modal", tag + ": " + f.ModalWhy + " is open (" + f.Brief + ")");
       // a form shown with the screen since before the run (taken for a part of it: nobody can tell over or under) may lie on top

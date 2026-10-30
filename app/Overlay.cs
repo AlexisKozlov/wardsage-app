@@ -2591,6 +2591,7 @@ namespace RealmForge {
       bool artGuide = locateReq != null && locateReq.Purpose == "artPromote";
       if (artGuide) inp.ArtWs = RFX.ReadArtWorkshop();   // only while an artifact request is guided
       inp.CityForm = RFX.CityShown();
+      if (RFX.UiKnown) inp.Screens = RFX.ReadShownScreens();   // the screen's kind first from the window table (the readers fill its details)
       ReadTiming.Field(System.Diagnostics.Stopwatch.GetTimestamp() - readT0);
       string ik = ListSettle.KeyOf(inp.Inv), rk = ListSettle.KeyOf(inp.Rs);
       invSettle.Update(ik, now); rsSettle.Update(rk, now);
@@ -2688,6 +2689,7 @@ namespace RealmForge {
     ScreenState FreshScreen(bool wantCity, bool wantKnownForms = false) {
       long now = NowMs();
       var inp = new ScreenInputs { Inv = RFX.ReadInventory(-1), Rs = RFX.ReadRecastScreenSafe(-1), Hero = RFX.ReadHeroScreen(addrs, screens.Hero), CityForm = RFX.CityShown(), Offers = offerOrder.Note(RFX.ReadOffers()) }; inp.OfferTopKnown = offerOrder.TopKnown; freshOffers = inp.Offers;
+      if (RFX.UiKnown) inp.Screens = RFX.ReadShownScreens();
       if (wantKnownForms) inp.ShownKnown = RFX.ReadShownKnownForms();   // the unknown-screen back press: no known screen's form (the battle among them) may be shown
       { IntPtr gw = GameWindow(); if (gw != IntPtr.Zero && !W32.IsIconic(gw) && IsForeground(gw)) FillArtPopup(inp, gw); }
       if (locateReq != null && locateReq.Purpose == "artPromote") inp.ArtWs = RFX.ReadArtWorkshop();   // the artifact guide's clicks are judged by the workshop too
@@ -3684,6 +3686,9 @@ namespace RealmForge {
       var lv = LiveFrame(ClickTarget.CityInventory, null, W, H, U);
       var r = lv != null ? RFX.UiButtonFresh(ClickTarget.CityInventory, null, W, H, Environment.TickCount, RFX.UiFreshMs) : null;
       bool ok = cityLive.Note(r != null ? lv : null, r != null ? r.At : 0);
+      // the live rect's place is the bar's place: the layout's fallback (a missed read) and its clicks stay on it (live 1.6.66.397: the default
+      // offset put them 37 px left, onto the neighbour, after the place was dropped)
+      if (r != null && U > 0 && Math.Abs(r.ForW - W) <= 0.5) cityBar.InvDX = (W - (r.X + r.W / 2)) / U;
       if (ok) CityReadySay(now, "live rect held still, no bar search");
       return ok;
     }
@@ -3714,13 +3719,21 @@ namespace RealmForge {
       RFX.UiButtonWant(t, form, W, H, U);
       int now = Environment.TickCount;
       var r = RFX.UiButtonFresh(t, form, W, H, now, RFX.UiFreshMs);
-      double x, y; string why;
-      if (!RFX.UiLivePoint(r, W, H, now, out x, out y, out why) || !RFX.UiTopIs(t, form, screens.Current)) { if (layout != null) FrameSay(t, form, layout, false); return null; }
+      double x, y; string why; var sc = screens.Current;
+      bool ok = RFX.UiLivePoint(r, W, H, now, out x, out y, out why), top = RFX.UiTopIs(t, form, sc);
       // the picture of the button (its icon, or a wide button's visual child), 2 px round it; none found: its rect, 2 px round it as well
-      var f = icon && r.IW > 0 ? UiIcon.Frame(r.IX, r.IY, r.IW, r.IH, W, H) : UiIcon.Frame(r.X, r.Y, r.W, r.H, W, H);
-      FrameSay(t, form, f, true, r.Form + "." + r.Widget);
-      return f;
+      double[] f = ok && top ? (icon && r.IW > 0 ? UiIcon.Frame(r.IX, r.IY, r.IW, r.IH, W, H) : UiIcon.Frame(r.X, r.Y, r.W, r.H, W, H)) : null;
+      // one source per button (FrameStick): a missing or old read, a held screen keep the last live frame for 1.5 s; a fresh read that says the
+      // button is hidden, or another form named on top, drop it at once
+      bool gone = (r != null && why == "not visible") || (!top && sc != null && !sc.Held);
+      string sk = t + "|" + (form ?? ""); FrameStick st;
+      if (!frameStick.TryGetValue(sk, out st)) frameStick[sk] = st = new FrameStick();
+      var g = st.Pick(f, gone, W, H, NowMs());
+      if (g == null) { if (layout != null) FrameSay(t, form, layout, false); return null; }
+      FrameSay(t, form, g, true, r != null ? r.Form + "." + r.Widget : null);
+      return g;
     }
+    readonly Dictionary<string, FrameStick> frameStick = new Dictionary<string, FrameStick>();
 
     /// <summary>An item cell's frame where the game has put it: the live read of the list's cells (src/UiButtons.cs UiCellRead; asked again every
     /// tick while framed) - Shown: <paramref name="fr"/> = the item's picture 2 px out (x, y, w, h, radius, client px); Hidden: no cell of it in the
