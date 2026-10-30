@@ -45,6 +45,8 @@ namespace RealmForge {
     [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
     [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p);
     [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+    [StructLayout(LayoutKind.Sequential)] public struct LASTINPUTINFO { public uint cbSize; public uint dwTime; }
+    [DllImport("user32.dll")] public static extern bool GetLastInputInfo(ref LASTINPUTINFO i);
     [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vk);
     [DllImport("user32.dll", SetLastError = true)] public static extern uint SendInput(uint n, INPUT[] inputs, int size);
     [StructLayout(LayoutKind.Sequential)] public struct MOUSEINPUT { public int dx, dy; public uint mouseData, dwFlags, time; public IntPtr extra; }
@@ -1647,7 +1649,7 @@ namespace RealmForge {
       IntPtr hwnd = GameWindow();
       // a started plan («Надеть» here or on the site): the player's click left our window in front, so
       // the game is brought forward (and restored) - only from our own window, never over another program
-      if (RaiseGame(hwnd, runHero > 0 || sellWanted != null, now)) return;
+      if (RaiseGame(hwnd, runHero > 0 || sellWanted != null, now, (runHero > 0 && AutoEnabled) || SellClicking)) return;
       if (hwnd == IntPtr.Zero || W32.IsIconic(hwnd)) { AutoSay("idle"); return; }
       W32.RECT cr; if (!W32.GetClientRect(hwnd, out cr) || cr.B < 200) { AutoSay("idle"); return; }
       var o = new W32.POINT(0, 0); W32.ClientToScreen(hwnd, ref o);
@@ -2392,7 +2394,7 @@ namespace RealmForge {
       if (artPilot.Trace != "") { Log.Write("art promote auto: " + artPilot.Trace); artPilot.Trace = ""; }
       string said = mv.State + "|" + mv.Why + "|" + step.Key;
       if (said != artAutoSaid) { artAutoSaid = said; Log.Write("art promote auto: " + mv.State + (mv.Why != "" ? " (" + mv.Why + ")" : "") + " at step " + step.Key); }
-      if (mv.State == "background") RaiseGame(hwnd, true, now);
+      if (mv.State == "background") RaiseGame(hwnd, true, now, true);
       if (mv.Action.Kind != AutoKind.None) SendArt(mv, req, ws, o, cr, gameFront, W, H, U);
       if (artPilot.Stopped) { step.Auto = "stopped"; step.AutoWhy = artPilot.Reason; }
     }
@@ -2528,6 +2530,8 @@ namespace RealmForge {
       if (screens.Hero != null) heroScreen = screens.Hero;
       if (foundryBuiltPid != GamePid(hwnd) && !RFX.FoundryFormMissing()) foundryBuiltPid = GamePid(hwnd);
       gate.Observe(st, now);
+      // a city «Инвентарь» press changed nothing (the gate lets it be pressed once more): the bar's place is dropped and searched again first
+      if (gate.CityAgainDue.Count > 0) { gate.CityAgainDue.Clear(); cityBar.Drop(); cityInvAt = 0; Log.Write("city bar: «Инвентарь» changed nothing - the bar is searched again"); }
       // event confirmation: the gate saw the effect of the locate pilot's button / tab click - its fixed wait after the click ends soon
       long le = gate.EffectAt(ClickOwner.Locate); if (le != locEffectSeen) { locEffectSeen = le; lpilot.Confirmed(now); }
       AnnounceHalts();
@@ -2815,7 +2819,7 @@ namespace RealmForge {
 
     /// <summary>VK_ESCAPE down and up, off the UI thread, only while the game's window is in front (else no key, the owner stops: "covered").</summary>
     void SendEscapeKey(ClickOwner owner) {   // ONLY called by EscapeSend and TipEscapeSend
-      sending = true;
+      sending = true; userIdle.OwnStart((uint)Environment.TickCount);
       IntPtr game = GameWindow();
       var t = new System.Threading.Thread(() => {
         try {
@@ -2826,7 +2830,7 @@ namespace RealmForge {
           W32.SendKeyInput(1, new[] { new W32.KINPUT { type = 1, ki = new W32.KEYBDINPUT { vk = 0x1B, scan = 0x01, dwFlags = W32.KEYUP } } }, sz);
           System.Threading.Thread.Sleep(30);
         } catch (Exception e) { Log.Write("auto: " + e.Message); }
-        finally { sending = false; }
+        finally { userIdle.OwnEnd((uint)Environment.TickCount); sending = false; }
       });
       t.IsBackground = true; t.Start();
     }
@@ -3024,14 +3028,14 @@ namespace RealmForge {
       string said = mv.State + "|" + mv.Why + "|" + dstep.Key;
       if (said != locateAutoSaid) { locateAutoSaid = said; Log.Write("locate auto: " + mv.State + (mv.Why != "" ? " (" + mv.Why + ")" : "") + " at step " + dstep.Key); }
       // started from our own window: the game comes forward (and is restored), never over another program
-      if (mv.State == "background") RaiseGame(hwnd, true, now);
+      if (mv.State == "background") RaiseGame(hwnd, true, now, true);
       if (mv.Action.Kind != AutoKind.None) SendLocate(mv, req, o, cr, gameFront, now, W, H, U);
       if (lpilot.Stopped) { step.Auto = "stopped"; step.AutoWhy = lpilot.Reason; locateDriving = false; return; }
       step.Auto = mv.State; step.AutoWhy = mv.Why;
       locateDriving = mv.State == "work" || mv.State == "paused" || mv.State == "background";
     }
 
-    const double InvBtnDX = 0.5222 + 0.9316;   // «Инвентарь»: 0.9316 left of «Герои» in the city's bottom bar
+    const double InvBtnDX = CityBar.DefaultDX;   // «Инвентарь»: 0.9316 left of «Герои» in the city's bottom bar
     int sellCols = 8, sellGeoCols; double sellGeoW, sellGeoH; bool sellScanOnce;
 
     // the rows' phase on the screen: the stat bars under the cells (client px mod the row step), NaN = unclear
@@ -3102,7 +3106,7 @@ namespace RealmForge {
       if (hwnd == IntPtr.Zero) return;
       W32.GetWindowThreadProcessId(W32.GetForegroundWindow(), out fp); W32.GetWindowThreadProcessId(hwnd, out gp);
       // started from our own window: the game comes forward (and is restored), never over another program
-      if (RaiseGame(hwnd, true, now)) return;
+      if (RaiseGame(hwnd, true, now, true)) return;
       if (W32.IsIconic(hwnd)) return;
       W32.RECT cr; if (!W32.GetClientRect(hwnd, out cr) || cr.B < 200) return;
       var o = new W32.POINT(0, 0); W32.ClientToScreen(hwnd, ref o);
@@ -3272,6 +3276,7 @@ namespace RealmForge {
           hidden = true;
         }
       }
+      userIdle.OwnStart((uint)Environment.TickCount);
       var t = new System.Threading.Thread(() => {
         try {
           if (hidden) System.Threading.Thread.Sleep(120);
@@ -3300,6 +3305,7 @@ namespace RealmForge {
           // back over the game: topmost again when it was («Поверх игры»), else just above it
           if (hidden) W32.SetWindowPos(self, wasTop ? (IntPtr)(-1) : IntPtr.Zero, 0, 0, 0, 0, NoMoveSizeActivate | 0x4000);   // SWP_ASYNCWINDOWPOS
           foreach (var w in through) try { PassThrough(w, false); } catch (Exception) { }
+          userIdle.OwnEnd((uint)Environment.TickCount);
           sending = false;
         }
       });
@@ -3495,18 +3501,25 @@ namespace RealmForge {
     // the picture's centre (the click goes to the icon, a bit higher)
     bool HeroesButtonSeen(W32.POINT o, double W, double H) { double U = Ui.Unit(W, H); return heroesBtn.Seen(o, W, H, W - hg2.HeroesBtnDX * U, H - 0.1156 * U); }
     // «Инвентарь» / «Storage»: at its usual place, else searched along the bar to the left of «Герои» (an event button
-    // such as «Demon Soldier» moves it); the place found is kept for the window
-    double invDX = InvBtnDX; long invScanAt;
+    // such as «Demon Soldier» moves it); the place found is kept for the city form it was found on (CityBar: the game builds the city
+    // again after the guild / an event screen - then the place is searched again on the new city and the bar has to settle first)
+    readonly CityBar cityBar = new CityBar();
+    double invDX { get { return cityBar.InvDX; } }
     bool InventoryButtonSeen(W32.POINT o, double W, double H) {
-      double U = Ui.Unit(W, H), cy = H - 0.1156 * U;
-      if (inventoryBtn.Seen(o, W, H, W - invDX * U, cy)) return true;
       long now = NowMs();
-      if (now - invScanAt < 3000) return false;
-      invScanAt = now;
+      if (cityBar.Note(RFX.CityFormFresh())) { cityInvAt = 0; Log.Write("city bar: the city was built again - «Инвентарь» is searched again on the new city"); }
+      return cityBar.Look(InventoryButtonLook(o, W, H, now), now);
+    }
+    bool InventoryButtonLook(W32.POINT o, double W, double H, long now) {
+      double U = Ui.Unit(W, H), cy = H - 0.1156 * U;
+      if (!cityBar.MustSearch && inventoryBtn.Seen(o, W, H, W - invDX * U, cy)) return true;
+      if (!cityBar.MustSearch && now - cityBar.ScanAt < 3000) return false;
+      cityBar.ScanAt = now; cityBar.MustSearch = false;
       double x;
       if (!inventoryBtn.Find(o, W, H, W - (hg2.HeroesBtnDX + 0.3) * U, W - (hg2.HeroesBtnDX + 2.8) * U, cy, out x)) return false;
-      invDX = (W - x) / U;
-      Log.Write("sell: «Инвентарь» found in the bar at " + invDX.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture) + " U from the right");
+      cityBar.InvDX = (W - x) / U;
+      Log.Write("sell: «Инвентарь» found in the bar at " + invDX.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture) + " U from the right ("
+        + (int)Math.Round(x) + " px of " + (int)W + "x" + (int)H + ", U " + U.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) + ")");
       return true;
     }
 
@@ -3653,8 +3666,10 @@ namespace RealmForge {
 
     /// <summary>A pilot run is starting and the game is not in front while our window is (or covers the game): the app brings the game forward
     /// itself (allowed: we are the foreground process; fallback AttachThreadInput to the foreground thread; never a key press) and steps our main
-    /// window off the game when it covers it. Never when no pilot run is starting (FrontPolicy). Returns true when it raised.</summary>
-    bool RaiseGame(IntPtr hwnd, bool pilotStarting, long now) {
+    /// window off the game when it covers it. Never when no pilot run is starting (FrontPolicy). <paramref name="pilotWaiting"/>: an auto pilot
+    /// waits only for the game to come forward - then another program on top (Telegram) gives way too, once the player gave no input for
+    /// FrontPolicy.IdleRaiseMs (GetLastInputInfo, our own clicks and keys left out; never while the player is active). Returns true when it raised.</summary>
+    bool RaiseGame(IntPtr hwnd, bool pilotStarting, long now, bool pilotWaiting) {
       if (hwnd == IntPtr.Zero) return false;
       IntPtr f = W32.GetForegroundWindow();
       int fp; W32.GetWindowThreadProcessId(f, out fp);
@@ -3664,7 +3679,13 @@ namespace RealmForge {
       if (selfVis && !selfMin && W32.GetWindowRect(self, out sr) && W32.GetWindowRect(hwnd, out gr))
         over = FrontPolicy.Overlaps(sr.L, sr.T, sr.R, sr.B, gr.L, gr.T, gr.R, gr.B);
       bool gameFront = !W32.IsIconic(hwnd) && IsForeground(hwnd);
-      if (!FrontPolicy.ShouldRaise(true, pilotStarting, gameFront, fp == SelfPid, over, now, focusAfter)) return false;
+      long idle = -1;
+      if (!FrontPolicy.ShouldRaise(true, pilotStarting, gameFront, fp == SelfPid, over, now, focusAfter)) {
+        if (!pilotWaiting || gameFront) return false;
+        bool down = (W32.GetAsyncKeyState(0x01) & 0x8000) != 0 || (W32.GetAsyncKeyState(0x02) & 0x8000) != 0;
+        idle = UserIdleMs();
+        if (!FrontPolicy.ShouldRaiseIdle(true, pilotWaiting, gameFront, W32.IsIconic(hwnd), down, idle, now, focusAfter)) return false;
+      }
       focusAfter = now + 3000;
       string was = "?"; try { var pr = Process.GetProcessById(fp); was = pr.ProcessName; } catch { }
       if (W32.IsIconic(hwnd)) W32.ShowWindow(hwnd, 9);   // SW_RESTORE (only when minimized)
@@ -3677,8 +3698,16 @@ namespace RealmForge {
       }
       if (FrontPolicy.ShouldMoveSelf(selfVis, selfMin, over) && (W32.GetWindowLong(self, -20) & 0x00000008) == 0)
         W32.SetWindowPos(self, (IntPtr)1, 0, 0, 0, 0, 0x0002 | 0x0001 | 0x0010);   // HWND_BOTTOM, no move / size / activate: our window goes under the game
-      Log.Write("front: game raised by the app (was " + was + ")");
+      Log.Write("front: game raised by the app (was " + was + (idle >= 0 ? ", the pilot waited, no input for " + (idle / 1000) + " s" : "") + ")");
       return true;
+    }
+
+    // the player's last input (GetLastInputInfo), our own injected clicks / keys left out (UserIdle: the time of our sends)
+    readonly UserIdle userIdle = new UserIdle();
+    long UserIdleMs() {
+      var li = new W32.LASTINPUTINFO { cbSize = (uint)Marshal.SizeOf(typeof(W32.LASTINPUTINFO)) };
+      if (!W32.GetLastInputInfo(ref li)) return 0;
+      return userIdle.IdleMs(li.dwTime, (uint)Environment.TickCount);
     }
 
     static readonly int SelfPid = Process.GetCurrentProcess().Id;

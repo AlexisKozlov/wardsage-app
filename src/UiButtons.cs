@@ -114,22 +114,33 @@ namespace RealmForge {
       return true;
     }
 
-    /// <summary>The form of class <paramref name="cls"/> in the window table (the shown one first; 0 = none).</summary>
-    static ulong FormOf(ulong ui, string cls, out bool shown) {
+    /// <summary>The form of class <paramref name="cls"/> in the window table: the shown one whose C# side is alive first, then any alive one,
+    /// then a shown one, then any (0 = none). The game builds a form again (the city after the guild): a destroyed copy is never preferred.</summary>
+    static ulong FormOf(ulong env, ulong ui, string cls, out bool shown) {
       shown = false;
       var h = Read(ui, 56); if (h == null || h[8] != 5 || h[11] > 12) return 0;
       int nn = 1 << h[11]; var nb = Read(BitConverter.ToUInt64(h, 24), nn * 32); if (nb == null) return 0;
-      ulong any = 0;
+      ulong best = 0; int bestRank = -1;
       for (int i = 0; i < nn; i++) {
         int o = i * 32;
         if (I32(nb, o + 24) != T_INT || I32(nb, o + 8) != T_TABLE) continue;
         ulong f = BitConverter.ToUInt64(nb, o);
         string why;
         if (FormClassName(f, out why) != cls) continue;
-        if (Shown(f)) { shown = true; return f; }
-        if (any == 0) any = f;
+        bool sh = Shown(f), alive = CsuiAlive(env, f);
+        int rank = (alive ? 2 : 0) + (sh ? 1 : 0);
+        if (rank > bestRank) { best = f; bestRank = rank; shown = sh; }
+        if (rank == 3) break;
       }
-      return any;
+      return best;
+    }
+
+    /// <summary>Is the form's C# UIBase (m_csui) still a live Unity object (its m_CachedPtr set)?</summary>
+    static bool CsuiAlive(ulong env, ulong f) {
+      ulong csv; int ctt;
+      if (env == 0 || !Field(f, "m_csui", out csv, out ctt) || ctt != T_UDATA) return false;
+      var probe = new UiButtonInfo(); string cls;
+      return NativeOf(env, csv, "m_csui", probe, out cls) != 0;
     }
 
     /// <summary>The live rect of a button by name, from <paramref name="env"/> (XLua.LuaEnv) and <paramref name="ui"/> (UIInstance),
@@ -146,7 +157,7 @@ namespace RealmForge {
     static void UiButtonReadInto(ulong env, ulong ui, UiWidget w, double W, double H, double U, UiButtonInfo r) {
       if (env == 0 || ui == 0) { r.Fail("lua root", "not reached"); return; }
       if (U <= 0) { r.Fail("window", "no size"); return; }
-      bool shown; ulong f = FormOf(ui, w.Form, out shown);
+      bool shown; ulong f = FormOf(env, ui, w.Form, out shown);
       if (f == 0) { r.Fail("form", "not in UIInstance"); return; }
       // the widget's field: the first path that is there
       ulong ud = 0; int tt = 0; string miss = null;
@@ -232,17 +243,16 @@ namespace RealmForge {
     }
 
     // ---- the shadow run (test build): before each pilot click on one of these buttons and once a minute for the last one; changes nothing
-    static ulong ubEnv, ubUi;
     static int ubBusy, ubAt, ubLastAt;
     static ClickTarget ubT; static string ubOffer; static double ubX, ubY, ubW, ubH, ubU;
 
-    /// <summary>XLua.LuaEnv and UIInstance: the ones of the last walk while they still look right, else a new walk.</summary>
+    /// <summary>XLua.LuaEnv and UIInstance walked from the script root on every read (never a cached copy: the game builds its forms and
+    /// tables again, an old UIInstance lingers in memory with destroyed forms).</summary>
     static bool UiRoots(out ulong env, out ulong ui, out string why) {
-      env = ubEnv; ui = ubUi; why = null;
-      if (env != 0 && ClassName(Ptr(env)) == "XLua.LuaEnv" && IsTable(ui)) return true;
+      why = null;
       var lr = LuaRootWalk(RootGa());
       if (lr.Env == 0 || lr.Ui == 0) { why = lr.FailStep + " (" + lr.FailValue + ")"; env = ui = 0; return false; }
-      ubEnv = env = lr.Env; ubUi = ui = lr.Ui; return true;
+      env = lr.Env; ui = lr.Ui; return true;
     }
 
     /// <summary>Test build: the live rect of the button a pilot is about to click (<paramref name="x"/>, <paramref name="y"/> = its click

@@ -2479,7 +2479,12 @@ static partial class CoreTests {
         var before = tg == ClickTarget.CityInventory ? city : invNormal;
         g.Arm(ClickOwner.Locate, tg, ClickGate.Expect(Rq(tg, before), before), 0);
         g.Observe(before, ClickGate.SlowEffectMs - 10); Check(!g.Halted(ClickOwner.Locate), "audit fast: " + tg + " still awaited just inside " + ClickGate.SlowEffectMs + " ms (hook " + hooked + ")");
-        g.Observe(before, ClickGate.SlowEffectMs + 20); Eq("nochange", g.HaltReason(ClickOwner.Locate), "audit fast: " + tg + " with no search running: nochange right after " + ClickGate.SlowEffectMs + " ms as before (hook " + hooked + ")");
+        g.Observe(before, ClickGate.SlowEffectMs + 20);
+        if (tg == ClickTarget.CityInventory) {   // (on the city: the bar read again and «Инвентарь» pressed once more first)
+          Check(!g.Halted(ClickOwner.Locate) && !g.Pending(ClickOwner.Locate) && g.CityAgainDue.Contains(ClickOwner.Locate), "audit fast: «Инвентарь» without effect on the city: pressed again once, no stop yet (hook " + hooked + ")");
+          g.CityAgainDue.Clear(); g.Arm(ClickOwner.Locate, tg, ClickGate.Expect(Rq(tg, before), before), 10000); g.Observe(before, 10000 + ClickGate.SlowEffectMs + 20);
+        }
+        Eq("nochange", g.HaltReason(ClickOwner.Locate), "audit fast: " + tg + " with no search running: nochange right after " + ClickGate.SlowEffectMs + " ms as before (hook " + hooked + ")");
         g = new ClickGate(); if (hooked) g.FormSearchPending = x => false;
         g.Arm(ClickOwner.Locate, tg, ClickGate.Expect(Rq(tg, before), before), 0);
         g.Observe(tg == ClickTarget.CityInventory ? invNormal : foundry, 900);
@@ -2545,7 +2550,11 @@ static partial class CoreTests {
       g.Arm(ClickOwner.Locate, ClickTarget.CityInventory, ClickGate.Expect(Rq(ClickTarget.CityInventory, city), city), 0);
       long t = 0; for (; t < ClickGate.SearchCapMs - 100; t += 100) g.Observe(city, t);
       Check(!g.Halted(ClickOwner.Locate), "audit slow: waited while the search runs, up to the cap");
-      for (; t <= ClickGate.SearchCapMs + 200 && !g.Halted(ClickOwner.Locate); t += 100) g.Observe(city, t);
+      for (; t <= ClickGate.SearchCapMs + 200 && !g.Halted(ClickOwner.Locate) && !g.CityAgainDue.Contains(ClickOwner.Locate); t += 100) g.Observe(city, t);
+      Check(g.CityAgainDue.Contains(ClickOwner.Locate) && !g.Halted(ClickOwner.Locate) && t <= ClickGate.SearchCapMs + 200, "audit slow: at the cap, still on the city: «Инвентарь» pressed again once");
+      g.CityAgainDue.Clear(); long t0 = t; g.Arm(ClickOwner.Locate, ClickTarget.CityInventory, ClickGate.Expect(Rq(ClickTarget.CityInventory, city), city), t0);
+      for (; t <= t0 + ClickGate.SearchCapMs + 200 && !g.Halted(ClickOwner.Locate); t += 100) g.Observe(city, t);
+      t -= t0;
       Check(g.HaltReason(ClickOwner.Locate) == "nochange" && t <= ClickGate.SearchCapMs + 200, "audit slow: ... a stop at the cap (" + ClickGate.SearchCapMs + " ms) even with a search running");
       Check(ClickGate.SearchCapMs <= 30000, "audit slow: the cap is at most 30 s");
     }
@@ -6972,6 +6981,60 @@ static partial class CoreTests {
     Check(!FrontPolicy.ShouldRaise(true, true, false, true, true, 10, 20), "front: throttled");
     Check(FrontPolicy.Overlaps(0, 0, 100, 100, 50, 50, 200, 200) && !FrontPolicy.Overlaps(0, 0, 100, 100, 100, 0, 200, 100), "front: overlap rect test");
     Check(FrontPolicy.ShouldMoveSelf(true, false, true) && !FrontPolicy.ShouldMoveSelf(true, true, true) && !FrontPolicy.ShouldMoveSelf(true, false, false), "front: move our window only when visible, not minimized and overlapping");
+    // a pilot waiting behind another program (Telegram over the game): the game comes forward after 3 s without the player's input, never while he is active
+    Check(FrontPolicy.ShouldRaiseIdle(true, true, false, false, false, 3000, 10, 0), "front idle: the pilot waits, no input for 3 s -> raise");
+    Check(!FrontPolicy.ShouldRaiseIdle(true, true, false, false, false, 2999, 10, 0), "front idle: input within 3 s -> nothing");
+    Check(!FrontPolicy.ShouldRaiseIdle(true, true, false, false, true, 9000, 10, 0), "front idle: a mouse button down -> nothing");
+    Check(!FrontPolicy.ShouldRaiseIdle(true, false, false, false, false, 9000, 10, 0), "front idle: no pilot waiting -> nothing");
+    Check(!FrontPolicy.ShouldRaiseIdle(true, true, true, false, false, 9000, 10, 0) && !FrontPolicy.ShouldRaiseIdle(true, true, false, true, false, 9000, 10, 0), "front idle: game in front / minimized -> nothing");
+    Check(!FrontPolicy.ShouldRaiseIdle(true, true, false, false, false, 9000, 10, 20), "front idle: throttled");
+    {
+      var ui = new UserIdle();
+      Eq(0L, ui.IdleMs(1000, 1000), "user idle: the first read starts the count");
+      Eq(2500L, ui.IdleMs(1000, 3500), "user idle: no new input = idle grows");
+      ui.OwnStart(4000); Eq(4000L, ui.IdleMs(4010, 5000), "user idle: our own click while it is sent is not the player's");
+      ui.OwnEnd(4400); Eq(5000L, ui.IdleMs(4500, 6000), "user idle: input just after our send (within the slack) is ours");
+      Eq(0L, ui.IdleMs(7000, 7000), "user idle: the player's input after our send resets it");
+      ui.OwnStart(8000); Eq(0L, ui.IdleMs(7900, 7900), "user idle: the player's input before our send is his");
+      ui.OwnEnd(8100);
+      var w = new UserIdle(); w.IdleMs(4294967000u, 4294967000u); w.OwnStart(100); w.OwnEnd(200);
+      Eq(4296L, w.IdleMs(150, 4000), "user idle: the tick count wraps");
+    }
+    // the city bar's place: dropped when the city is built again, searched on the new city and settled before a press
+    {
+      var cb = new CityBar();
+      Check(!cb.Note(0) && !cb.Note(0xA0) && cb.Look(true, 0) && !cb.Look(false, 10), "city bar: the first city form keeps the place, seen = ready");
+      cb.InvDX = 1.6; Check(!cb.Note(0xA0) && cb.InvDX == 1.6, "city bar: the same city keeps the place found");
+      Check(cb.Note(0xB0) && cb.MustSearch && cb.InvDX == CityBar.DefaultDX && cb.Settling, "city bar: a new city form drops the place, the bar is searched again");
+      Check(!cb.Look(true, 1000), "city bar: before the search on the new city no press");
+      cb.MustSearch = false; cb.InvDX = 1.32;
+      Check(!cb.Look(true, 1000) && !cb.Look(true, 1000 + CityBar.SettleMs - 1), "city bar: found on the new city, still settling");
+      cb.InvDX = 1.5; Check(!cb.Look(true, 1000 + CityBar.SettleMs + 10), "city bar: the place moved (the bar comes in): settling again");
+      Check(cb.Look(true, 1000 + 2 * CityBar.SettleMs + 20) && !cb.Settling && cb.Look(true, 5000), "city bar: settled at one place: ready");
+      cb.Drop(); cb.MustSearch = false;
+      Check(!cb.Look(true, 6000) && !cb.Look(false, 6000 + CityBar.SettleMs + 10) && !cb.Look(true, 6000 + CityBar.SettleMs + 20), "city bar: after a drop a lost picture starts the settling over");
+    }
+    {   // «Инвентарь» changed nothing on the city: the bar read again and pressed once more, then the stop
+      var cg = new ClickGate(); var city = ScreenState.Classify(new ScreenInputs { CityForm = true }, 0);
+      var rq = new ClickRequest { Owner = ClickOwner.Locate, Target = ClickTarget.CityInventory, AutoOn = true, Front = true };
+      cg.Arm(ClickOwner.Locate, ClickTarget.CityInventory, ClickGate.Expect(rq, city), 0);
+      cg.Observe(city, ClickGate.SlowEffectMs + 20);
+      Check(!cg.Halted(ClickOwner.Locate) && !cg.Pending(ClickOwner.Locate) && cg.CityAgainDue.Contains(ClickOwner.Locate), "city again: the first press without effect on the city is pressed again");
+      Check(cg.Check(rq, city, ClickGate.SlowEffectMs + 500).Allowed, "city again: ... the gate allows the one more press");
+      cg.CityAgainDue.Clear(); cg.Arm(ClickOwner.Locate, ClickTarget.CityInventory, ClickGate.Expect(rq, city), 9000);
+      cg.Observe(city, 9000 + ClickGate.SlowEffectMs + 20);
+      Eq("nochange", cg.HaltReason(ClickOwner.Locate), "city again: the second press without effect stops (once a run)");
+      cg.Resume(ClickOwner.Locate); cg.Arm(ClickOwner.Locate, ClickTarget.CityInventory, ClickGate.Expect(rq, city), 20000); cg.Observe(city, 20000 + ClickGate.SlowEffectMs + 20);
+      Check(!cg.Halted(ClickOwner.Locate) && cg.CityAgainDue.Contains(ClickOwner.Locate), "city again: a new run may press again once");
+    }
+    // a tiny game window (the owner's second PC, client 526x296): U, the bar's click point and its frame
+    {
+      double tW = 526, tH = 296, tU = Ui.Unit(tW, tH); var hgt = new HeroGeometry();
+      double cx = tW - 1.320 * tU, cy = tH - hgt.HeroesBtnDY * tU;
+      var fr = LocateFrames.CityButton(null, tW, tH, tU, 1.320, hgt.HeroesBtnDY);
+      Check(Math.Abs(tU - 295.875) < 0.01 && (int)cx == 135 && (int)cy == 254, "tiny window: U " + tU + ", «Инвентарь» at " + (int)cx + "," + (int)cy + " (live 135,254)");
+      Check(fr[0] <= cx && cx < fr[0] + fr[2] && fr[1] <= cy && cy < fr[1] + fr[3] && fr[0] >= 0 && fr[1] + fr[3] <= tH && fr[2] >= 20, "tiny window: the frame holds the click point inside the client (" + string.Join(",", Array.ConvertAll(fr, x => x.ToString())) + ")");
+    }
 
     // the visibility rule for everything the overlay draws
     Check(OverlayGate.CanDraw(true, true, false, true, true), "gate: game visible and in front -> draw");

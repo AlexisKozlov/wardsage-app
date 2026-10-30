@@ -1309,6 +1309,24 @@ namespace RealmForge {
     /// (the scans come from the inventory / foundry / gem paths and the overlay's stale-forms pass).</summary>
     internal static ulong LiveCityForm() { ulong f = NodeTable(cityNode, FormMainCityId); Watch(ref cityOk, f, cityNode, 3); return f; }
 
+    /// <summary>The city form as the window table holds it right now (one read of its nodes, not the published node): the game builds the city
+    /// again after the guild or an event screen. When it differs from the published one, the published city node is dropped and the forms are
+    /// taken from the window table again (no region scan). 0 = the table, the id or the city is not known (then the published one).</summary>
+    public static ulong CityFormFresh() {
+      long id = FormMainCityId; if (id == 0 || Layout.Current == null) return 0;
+      byte[] nb; int nn; ulong np;
+      if (!UiNodeArray(out nb, out nn, out np)) return LiveCityForm();
+      ulong f = 0;
+      for (int i = 0; i < nn && f == 0; i++) {
+        int o = i * 32;
+        if (BitConverter.ToInt32(nb, o + 24) == T_INT && BitConverter.ToInt32(nb, o + 8) == T_TABLE && BitConverter.ToInt64(nb, o + 16) == id) f = BitConverter.ToUInt64(nb, o);
+      }
+      if (f != 0 && f != NodeTable(cityNode, id) && Monitor.TryEnter(formScanLock)) {
+        try { FindFormNodeLocked(false); } finally { Monitor.Exit(formScanLock); }
+      }
+      return f;
+    }
+
     /// <summary>The artifact workshop's form the game holds now; 0 = the layout has no id for it, or its node was never found (the scans come from the other form paths and the stale-forms pass; the overlay asks for one while an artifact request waits).</summary>
     internal static ulong LiveArtForm() { ulong f = NodeTable(artNode, FormArtId); Watch(ref artOk, f, artNode, 5); return f; }
 
