@@ -3,6 +3,7 @@
 #
 #   tests/run-sim.sh [seeds]                   (default 2000)
 #   tests/run-sim.sh --soak N [--slow-only]    (N seeds, in blocks of 5000, each block's summary printed)
+#   (--real after N: the start pop-ups and the game's own pop-ups at a realistic rate - the done-rate a player sees; the default mix stresses the rules)
 #   tests/run-sim.sh --seed S                  (one seed with its whole trace: what the game and the pilot did)
 #   tests/run-sim.sh --list TEXT [seeds]       (the seeds whose outcome contains TEXT, e.g. "slow wait:hero_failed")
 set -euo pipefail

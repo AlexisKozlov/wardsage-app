@@ -323,6 +323,7 @@ namespace RealmForge {
     readonly Dictionary<ClickOwner, string> stallBrief = new Dictionary<ClickOwner, string>();
     readonly HashSet<ClickOwner> searchWaited = new HashSet<ClickOwner>();                      // an unknown screen was waited for during a form search
     readonly Dictionary<ClickOwner, long> foundryWait = new Dictionary<ClickOwner, long>();   // FoundryButton: since when the Foundry's form is unreadable
+    readonly Dictionary<ClickOwner, long> ownUnreadWait = new Dictionary<ClickOwner, long>();   // EscapeBack: since when the pilot's own screen is shown but unread
     readonly Dictionary<ClickOwner, int> unknownBacks = new Dictionary<ClickOwner, int>();    // UnknownBack presses in this run
     readonly Dictionary<ClickOwner, long> backTried = new Dictionary<ClickOwner, long>();     // the last UnknownBackDue yes
     readonly Dictionary<ClickOwner, ClickTarget> lastTarget = new Dictionary<ClickOwner, ClickTarget>();   // the owner's last click
@@ -351,7 +352,7 @@ namespace RealmForge {
 
     /// <summary>A new request (or the player started it again): the owner may click again.</summary>
     public void Resume(ClickOwner o) {
-      halted.Remove(o); watches.Remove(o); unknownSince.Remove(o); noted.Remove(o); clickedAt.Remove(o); offerRun.Remove(o); haltDetail.Remove(o); foundryWait.Remove(o);
+      halted.Remove(o); watches.Remove(o); unknownSince.Remove(o); noted.Remove(o); clickedAt.Remove(o); offerRun.Remove(o); haltDetail.Remove(o); foundryWait.Remove(o); ownUnreadWait.Remove(o);
       stall.Remove(o); stallBrief.Remove(o); searchWaited.Remove(o);
       unknownBacks.Remove(o); backTried.Remove(o); lastTarget.Remove(o);
       cityBacks.Remove(o); escapes.Remove(o); escapeDue.Remove(o); cityTried.Remove(o);
@@ -756,7 +757,7 @@ namespace RealmForge {
       if (r.Target == ClickTarget.OfferClose) return CheckOffer(r, f, now, tag);
       if (r.Target == ClickTarget.UnknownBack) return CheckUnknownBack(r, f, tag);
       if (r.Target == ClickTarget.CityBack) return CheckCityBack(r, f, tag);
-      if (r.Target == ClickTarget.EscapeBack) return CheckEscape(r, f, tag);
+      if (r.Target == ClickTarget.EscapeBack) return CheckEscape(r, f, tag, now);
       if (r.Target == ClickTarget.MapClose) return CheckMapClose(r, f, now, tag);
       // any other click waits while an offer pop-up is on top (it would land on the pop-up)
       if (f != null && f.OfferCount > 0) return GateResult.Wait("offer", tag + ": " + f.ModalWhy + " is open");
@@ -942,14 +943,38 @@ namespace RealmForge {
       return res;
     }
 
+    /// <summary>The pilot's own screen (ScreenMap.PilotScreen) the window table shows while the fresh read is a screen it lies over (the Foundry
+    /// over the inventory) or no screen while its form search runs: its form's name, "" = none.</summary>
+    string OwnScreenUnread(ClickOwner o, ScreenState f) {
+      if (f == null || f.Held) return "";
+      foreach (var k in new[] { ScreenKind.Foundry, ScreenKind.Inventory, ScreenKind.HeroScreen }) {
+        if (f.Kind == k || !ScreenMap.PilotScreen(o, k)) continue;
+        string form = ScreenState.OwnForm(k);
+        if (!HasForm(f.ShownKnown, new[] { form })) continue;
+        if (k == ScreenKind.Foundry && f.Kind == ScreenKind.Inventory) return form;
+        if (f.Kind == ScreenKind.Unknown && k != ScreenKind.HeroScreen && SearchBusy(k == ScreenKind.Foundry ? ClickTarget.FoundryButton : ClickTarget.CityInventory)) return form;
+      }
+      return "";
+    }
+
     /// <summary>EscapeBack: only after a back press that changed nothing, on a fresh screen EscapeBlock allows (never the city, a fight, a pop-up,
     /// the exit dialog), at most MaxEscapes a run.</summary>
-    GateResult CheckEscape(ClickRequest r, ScreenState f, string tag) {
+    GateResult CheckEscape(ClickRequest r, ScreenState f, string tag, long now) {
       var o = r.Owner;
       if (HintOnly(o)) return GateResult.Deny("off", tag + ": a hint run clicks nothing");
       tag = "EscapeBack (key)";
       // never on the screen the pilot works on (the hero screen of the equip helper ...): a pop-up there is the pilot's flow or a stop
       if (f != null && !f.Held && ScreenMap.PilotScreen(o, f.Kind)) { escapeDue.Remove(o); return Halt(o, "dangerous", tag + ": never on the pilot's own screen " + f.Brief + " - nothing is pressed"); }
+      // the window table shows the pilot's own screen while the memory read does not have it yet (the slow laptop finds the Foundry / the
+      // inventory seconds after it opens): the pop-up may lie over that screen - no Escape until it is read (then the rule above stops)
+      string own = OwnScreenUnread(o, f);
+      if (own != "") {
+        long since; if (!ownUnreadWait.TryGetValue(o, out since)) { since = now; ownUnreadWait[o] = since; }
+        string d = tag + ": the pilot's own screen " + own + " is shown but not read yet (" + f.Brief + ") - the pop-up may lie over it";
+        if (now - since > SearchCapMs) { escapeDue.Remove(o); return Halt(o, "unknown", d + " for " + (now - since) + " ms"); }
+        Note(o, "wait-own:" + since, "wait " + d); return GateResult.Wait("unknown", d);
+      }
+      ownUnreadWait.Remove(o);
       if (!escapeDue.Contains(o)) return Halt(o, "target", tag + ": no back press before it changed nothing");
       string block = EscapeBlock(f);
       if (block != "") {
