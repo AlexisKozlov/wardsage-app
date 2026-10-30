@@ -2055,7 +2055,7 @@ namespace RealmForge {
       int[] cityBtn;
       if (step.Kind == SellHintKind.OpenInventory && CityInventoryButton(o, W, H, U, out cityBtn)) {   // the city: frame the bar's «Инвентарь»
         frame++;
-        DrawTip(cityBtn[0], cityBtn[1], cityBtn[2], cityBtn[3], sellHintLines, H, false, false, false, null, false, GuideStyle ? null : HlCity(cityBtn));
+        DrawTip(cityBtn[0], cityBtn[1], cityBtn[2], cityBtn[3], sellHintLines, H, false, false, false, null, false, GuideStyle ? null : HlCity(cityBtn), BarRow(null, cityBtn, o, W, H));
         return;
       }
       DrawTipTop(sellHintLines);   // no target on screen: the plate at the top centre
@@ -2275,6 +2275,7 @@ namespace RealmForge {
         frame++;
         var avoid = LocateAvoid(step, o, W, H, U);
         var t = locHint.Target;
+        if (t != null && step.Kind == LocateKind.OpenInventory && !step.OnHero && t[1] - o.Y > 0.6 * H) avoid = BarRow(avoid, t, o, W, H);   // the city bar's «Инвентарь»
         if (t == null) DrawTipTop(locateLines, locateCaps, avoid);   // its own header, not the plan's «Шаг N из M»
         else DrawTip(t[0], t[1], t[2], t[3], locateLines, H, locHint.Stale, false, false, locateCaps, false, locHint.Stale ? null : locHint.Tag as Hl, avoid);
       }
@@ -2339,7 +2340,7 @@ namespace RealmForge {
       int[] cityBtn;
       if (front && !hold && locateLines.Length > 0 && step.Kind == LocateKind.OpenInventory && CityInventoryButton(o, W, H, U, out cityBtn)) {
         frame++;   // the city: frame the bar's «Инвентарь» with the step's plate beside it
-        DrawTip(cityBtn[0], cityBtn[1], cityBtn[2], cityBtn[3], locateLines, H, false, false, false, locateCaps, false, GuideStyle ? null : HlCity(cityBtn));
+        DrawTip(cityBtn[0], cityBtn[1], cityBtn[2], cityBtn[3], locateLines, H, false, false, false, locateCaps, false, GuideStyle ? null : HlCity(cityBtn), BarRow(null, cityBtn, o, W, H));
       } else if (front && locateLines.Length > 0 && lf != null && lf.Mark.Kind == "box") {
         frame++;
         DrawTip(o.X + lf.Mark.X, o.Y + lf.Mark.Y, lf.Mark.W, lf.Mark.H, locateLines, H, false, false, false, locateCaps, false, lf.Target == "cell" && !GuideStyle ? null : HlLocate(lf, step, o));
@@ -3756,6 +3757,7 @@ namespace RealmForge {
       // (the city bar's «Инвентарь»: its Image_Icon also draws a tip and side lines: the frame hugs the round rim inside it)
       bool rim = t == ClickTarget.CityInventory && r != null && r.IW > 0 && r.IconName == "Image_Icon";
       double[] f = ok && top ? (rim ? UiIcon.BarRimFrame(r.IX, r.IY, r.IW, r.IH, W, H) : icon && r.IW > 0 ? UiIcon.Frame(r.IX, r.IY, r.IW, r.IH, W, H) : UiIcon.Frame(r.X, r.Y, r.W, r.H, W, H)) : null;
+      if (t == ClickTarget.CityInventory && f != null) PlateSay(f, r, rim);
       // one source per button (FrameStick): a missing or old read, a held screen keep the last live frame for 1.5 s; a fresh read that says the
       // button is hidden, or another form named on top, drop it at once
       bool gone = (r != null && why == "not visible") || (!top && sc != null && !sc.Held);
@@ -3815,6 +3817,31 @@ namespace RealmForge {
       Log.Write(key);
     }
     readonly Dictionary<ClickTarget, string> frameSaid = new Dictionary<ClickTarget, string>();
+
+    /// <summary><paramref name="avoid"/> plus the city bar's row (screen px): from the bar button's top to the client's bottom, the whole width, so
+    /// the plate beside «Инвентарь» goes above the row and never over the other bar buttons or their labels.</summary>
+    static int[][] BarRow(int[][] avoid, int[] btn, W32.POINT o, double W, double H) {
+      int top = btn[1] - 2;
+      var band = new[] { o.X, top, (int)W, Math.Max(1, o.Y + (int)H - top) };
+      var res = new List<int[]>(); if (avoid != null) res.AddRange(avoid); res.Add(band);
+      return res.ToArray();
+    }
+
+    // the test build's self-check of the city «Инвентарь» frame: the frame next to the live plate it hugs (and the button, the icon child),
+    // at most 4 lines a city stretch, a line only when the frame moved 2 px or more since the last one
+    long plateSaidFor = -1; int plateSaidN; double[] plateSaidF;
+    void PlateSay(double[] f, UiButtonInfo r, bool rim) {
+      if (!Channel.IsTest) return;
+      var c = screens.Current; long sk = c != null ? c.SinceMs : 0;
+      if (sk != plateSaidFor) { plateSaidFor = sk; plateSaidN = 0; plateSaidF = null; }
+      if (plateSaidN >= 4) return;
+      if (plateSaidF != null) { bool moved = false; for (int i = 0; i < 4; i++) if (Math.Abs(plateSaidF[i] - f[i]) >= 2) moved = true; if (!moved) return; }
+      plateSaidF = f; plateSaidN++;
+      Func<double, string> n0 = v => Math.Round(v).ToString();
+      string plate = rim ? string.Join(",", Array.ConvertAll(UiIcon.BarPlate(r.IX, r.IY, r.IW, r.IH), v => v.ToString("0.0"))) : "none";
+      Log.Write("frame check: CityInventory frame=[" + n0(f[0]) + "," + n0(f[1]) + "," + n0(f[2]) + "," + n0(f[3]) + "] plate(cx,cy,d)=[" + plate + "] button=[" + n0(r.X) + "," + n0(r.Y) + "," + n0(r.W) + "," + n0(r.H)
+        + "] icon=" + (r.IW > 0 ? r.IconName + "[" + n0(r.IX) + "," + n0(r.IY) + "," + n0(r.IW) + "," + n0(r.IH) + "]" : "none") + " source=" + (rim ? "plate" : r.IW > 0 ? "icon" : "button"));
+    }
 
     string heroLogged;
     /// <summary>One journal line whenever the hero pilot's view or state changes.</summary>

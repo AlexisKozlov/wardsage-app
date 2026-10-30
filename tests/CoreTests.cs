@@ -1183,14 +1183,24 @@ static partial class CoreTests {
     double k = 296 / 640.0, iw = 108 * k, ih = 88 * k, ix = 133 - iw / 2, iy = 260 - ih / 2;
     var rf = UiIcon.BarRimFrame(ix, iy, iw, ih, 526, 296);
     string rs = "[" + string.Join(",", Array.ConvertAll(rf, v => v.ToString("0.0"))) + "]";
-    Check(Math.Abs(rf[2] - rf[3]) < 0.01 && Math.Abs(rf[2] - (66.8 * k + 2 * UiIcon.FramePad)) < 0.6 && rf[4] == Math.Round(rf[2] / 2), "city rim frame: a circle round the rim, 2 px out (" + rs + ")");
-    Check(rf[0] >= 112 && rf[0] + rf[2] <= 151 && rf[1] >= 238 && rf[1] + rf[3] <= 276, "city rim frame: inside the icon's place in frame_0040 (x 112-150, y ~240-275) " + rs);
-    Check(Math.Abs(rf[0] + rf[2] / 2 - 132.7) < 0.5 && Math.Abs(rf[1] + rf[3] / 2 - 257.1) < 0.5, "city rim frame: centred on the rim (132.7, 257.1), above the button's centre (the tip below)");
+    Check(Math.Abs(rf[2] - rf[3]) < 0.01 && Math.Abs(rf[2] - (72 * k + 2 * UiIcon.FramePad)) < 0.6 && rf[4] == Math.Round(rf[2] / 2), "city rim frame: a circle round the plate, 2 px out (" + rs + ")");
+    Check(rf[0] >= 112 && rf[0] + rf[2] <= 152 && rf[1] >= 238 && rf[1] + rf[3] <= 278, "city rim frame: inside the icon's place in frame_0040 (x 112-150, y ~240-277) " + rs);
+    Check(Math.Abs(rf[0] + rf[2] / 2 - 132.7) < 0.5 && Math.Abs(rf[1] + rf[3] / 2 - 257.9) < 0.5, "city rim frame: centred on the plate (132.7, 257.9), above the button's centre (the tip below)");
     // the old way (the Image_Icon's frame with the hit area's inset): a bigger circle, lower, over the label «Инвентарь» (its top ~270)
     var of = UiIcon.Frame(ix, iy, iw, ih, 526, 296);
     var oa = GuideShape.ArtBox(new GeoRect { X = of[0], Y = of[1], W = of[2], H = of[3] }, new GeoInset { L = 0.0473, T = 0.1453, R = 0.1673, B = 0.0693 });
     double ob = oa.CY + Math.Min(oa.W, oa.H) / 2 + 2;
-    Check(ob > rf[1] + rf[3] + 5, "city rim frame: the old frame's bottom " + ob.ToString("0") + " was well over the label, now " + (rf[1] + rf[3]).ToString("0"));
+    Check(ob > rf[1] + rf[3] + 3, "city rim frame: the old frame's bottom " + ob.ToString("0") + " was well over the label, now " + (rf[1] + rf[3]).ToString("0"));
+    // live 1.6.66.400 (rec2 frame_0141): the button 113,248,40,40 (the recorded frame 111,246,44,44 was it + 2 px: the Image_Icon child was taken
+    // for a backdrop, wider than the button); the dark plate measured at (132, 264), 34 px across. Image_Icon by name, centred on the button
+    var lc = new List<UiIcon.Cand> { new UiIcon.Cand { Name = "BtnHitArea", X = 113, Y = 248, W = 40, H = 40, Active = true, Depth = 1 },
+      new UiIcon.Cand { Name = "Image_Icon", X = 133 - iw / 2, Y = 268 - ih / 2, W = iw, H = ih, Active = true, Depth = 1 },
+      new UiIcon.Cand { Name = "m_Text_Backpack", X = 112, Y = 258, W = 42, H = 17, Active = true, Depth = 1 } };
+    Check(UiIcon.Pick(lc, 113, 248, 40, 40) == -1 && UiIcon.Named(lc, "Image_Icon") == 1, "city plate: the shape rules miss the wide Image_Icon, its name finds it");
+    var lp = UiIcon.BarPlate(lc[1].X, lc[1].Y, lc[1].W, lc[1].H); var lf = UiIcon.BarRimFrame(lc[1].X, lc[1].Y, lc[1].W, lc[1].H, 526, 296);
+    string ls = "plate " + lp[0].ToString("0.0") + "," + lp[1].ToString("0.0") + " d " + lp[2].ToString("0.0") + ", frame [" + string.Join(",", Array.ConvertAll(lf, v => v.ToString("0.0"))) + "]";
+    Check(Math.Abs(lp[0] - 132) <= 2 && Math.Abs(lp[1] - 264) <= 2 && Math.Abs(lp[2] - 34) <= 2, "city plate: on the live plate (132, 264, 34 px) " + ls);
+    Check(Math.Abs(lf[2] / 2 - (lp[2] / 2 + 2)) < 0.01 && lf[2] < 44 - 4, "city plate: the frame = the plate's radius + 2 px, smaller than the old 44 px " + ls);
     var tiny = UiIcon.BarRimFrame(-20, 280, 50, 40, 526, 296);
     Check(tiny[0] == 0 && tiny[1] + tiny[3] <= 296, "city rim frame: kept inside the client");
   }
@@ -1210,6 +1220,11 @@ static partial class CoreTests {
     string el = HintSize.Ellipsize("Программа открывает вещь сама", 100, m6);
     Check(m6(el) <= 100 && el.EndsWith("…") && el.StartsWith("Программа"), "plate: a long line cut with «…» to the width (" + el + ")");
     Check(HintSize.Ellipsize("Коротко", 100, m6) == "Коротко" && HintSize.Ellipsize("", 10, m6) == "", "plate: a short line stays whole");
+    // live 1.6.66.400 (rec2 frame_0141, 526x296): the compact plate beside «Инвентарь» (frame 111,246,44,44) lay over Одиссея / Демон..;
+    // with the bar's row (button top to the client's bottom) to keep off, it goes above the row, near the button
+    { char sd; int[] bt = { 111, 246, 44, 44 }; int[][] band = { new[] { 0, 244, 526, 52 } };
+      var bp = HintLayout.Place(bt, band, 200, 24, 526, 296, out sd);
+      Check(sd == 't' && bp[1] + 24 <= 244 - 4 && bp[0] < 111 + 44 && bp[0] + 200 > 111, "plate: a bar button's plate above the bar row, not over the next buttons (" + sd + " " + bp[0] + "," + bp[1] + ")"); }
     // the hold: a live target jittering by a pixel keeps the layout; another step, a moved target or a new neighbour lay it out again
     var h = new PlateHold(); int[] t0 = { 113, 240, 35, 35 };
     Check(!h.Keep("s1", t0, null), "plate hold: nothing held at first");

@@ -58,6 +58,9 @@ namespace RealmForge {
     public readonly string Form; public readonly string[] Paths;
     /// <summary>A bar button with a picture and a label under it: its frame hugs the picture (the icon child), not the whole button.</summary>
     public bool Icon;
+    /// <summary>The picture child by its exact name (the city bar's Image_Icon: wider than the hit area, so the shape rules of
+    /// <see cref="UiIcon.Pick"/> take it for a backdrop); null = picked by <see cref="UiIcon.Pick"/>.</summary>
+    public string IconChild;
     /// <summary>No field of <see cref="Paths"/> there: the close button is looked for live among the form's objects (UiCloseFind), cached per form.</summary>
     public bool Discover;
     public UiWidget(string form, params string[] paths) { Form = form; Paths = paths; }
@@ -120,14 +123,23 @@ namespace RealmForge {
       byH = ch > 0 ? H / ch : 0;
       return cw > 0 ? W / cw : 0;
     }
-    /// <summary>The city bar button's picture (Image_Icon: the round rim with a pointed tip and side lines, 108 x 88 canvas units for
-    /// «Инвентарь») holds its round rim at these fractions of its rect: centre (0.494, 0.429), diameter 0.759 of the height
-    /// (the sprite's opaque edge fitted with a circle; 66.8 units, the same 0.785 of the 86-unit hit area measured on a live frame).</summary>
-    public const double RimCX = 0.494, RimCY = 0.429, RimD = 0.759;
+    /// <summary>The city bar button's dark round plate is no child of its own: it is drawn by the button's Image_Icon sprite (the plate with
+    /// a pointed tip below and side lines, 108 x 88 canvas units for «Инвентарь»; its other children are the hit area, the label and the
+    /// red dot). The plate's visible edge (the sprite's alpha 0.2, its soft silver rim included) fitted with a circle: centre (0.495, 0.447)
+    /// of the rect, diameter 0.8175 of its height (72 units: 33 px on the 526x296 client, live 1.6.66.400 about 34).</summary>
+    public const double RimCX = 0.495, RimCY = 0.447, RimD = 0.8175;
+    /// <summary>The index of the child named <paramref name="name"/> (active, not tiny); -1 = none or no name.</summary>
+    public static int Named(IList<Cand> c, string name) {
+      if (c == null || string.IsNullOrEmpty(name)) return -1;
+      for (int i = 0; i < c.Count; i++) if (c[i].Active && c[i].W >= 4 && c[i].H >= 4 && c[i].Name == name) return i;
+      return -1;
+    }
+    /// <summary>The plate circle {cx, cy, d} of a city bar button from its Image_Icon's rect.</summary>
+    public static double[] BarPlate(double x, double y, double w, double h) { return new[] { x + RimCX * w, y + RimCY * h, RimD * h }; }
     /// <summary>The frame round a city bar button's rim from its Image_Icon's live rect (x, y, w, h): the square round the rim circle,
     /// FramePad px out (x, y, w, h, radius = half its side), within W x H. The tip, the side lines and the label are left out.</summary>
     public static double[] BarRimFrame(double x, double y, double w, double h, double W, double H) {
-      double cx = x + RimCX * w, cy = y + RimCY * h, r = RimD * h / 2 + FramePad;
+      var pl = BarPlate(x, y, w, h); double cx = pl[0], cy = pl[1], r = pl[2] / 2 + FramePad;
       double l = Math.Max(0, cx - r), t = Math.Max(0, cy - r), rr = Math.Min(W, cx + r), b = Math.Min(H, cy + r);
       return new[] { l, t, rr - l, b - t, Math.Round(Math.Min(rr - l, b - t) / 2) };
     }
@@ -178,7 +190,7 @@ namespace RealmForge {
       switch (t) {
         // (Icon: every button is framed on its picture - its icon child, or for a wide button its visual child - never the whole hit area with its label)
         case ClickTarget.HeroBack: return new UiWidget("Form_CharactorMain", "m_ButtonBack.m_btnBack") { Icon = true };
-        case ClickTarget.CityInventory: return new UiWidget("Form_MainCity", "m_Button_Backpack") { Icon = true };
+        case ClickTarget.CityInventory: return new UiWidget("Form_MainCity", "m_Button_Backpack") { Icon = true, IconChild = "Image_Icon" };
         case ClickTarget.FoundryButton: return new UiWidget("Form_BackpackIntegration", "m_PanelContentCur.m_BtnWorkShop") { Icon = true };
         case ClickTarget.AscendTab: return new UiWidget("Form_EquipSubliming", "m_ToggleSubliming") { Icon = true };
         case ClickTarget.EquipConfirm: return new UiWidget("Form_CharactorEquipTip", "m_SelectEquipView.m_RightBtn.m_gameObject", "m_OneEquipView.m_RightBtn.m_gameObject") { Icon = true };
@@ -423,7 +435,7 @@ namespace RealmForge {
     }
 
     /// <summary>The icon child of the button (UiIcon.Pick over its children, depth 1-2, at most 40 looked at) into r.IX.. (none: IW stays 0).</summary>
-    static void IconInto(List<ulong> chain, bool canvas, double W, double H, double U, UiButtonInfo r) {
+    static void IconInto(List<ulong> chain, bool canvas, double W, double H, double U, UiButtonInfo r, string named = null) {
       var cands = new List<UiIcon.Cand>();
       var todo = new List<KeyValuePair<List<ulong>, int>> { new KeyValuePair<List<ulong>, int>(chain, 0) };
       for (int q = 0; q < todo.Count && cands.Count < 40; q++) {
@@ -443,7 +455,8 @@ namespace RealmForge {
           todo.Add(new KeyValuePair<List<ulong>, int>(path, depth + 1));
         }
       }
-      int k = UiIcon.Pick(cands, r.X, r.Y, r.W, r.H);
+      int k = UiIcon.Named(cands, named);
+      if (k < 0) k = UiIcon.Pick(cands, r.X, r.Y, r.W, r.H);
       if (k < 0) k = UiIcon.PickVisual(cands, r.X, r.Y, r.W, r.H);   // (no icon: the drawn part of a wide button)
       r.Tr("icon", k < 0 ? "none of " + cands.Count : cands[k].Name + " " + N0(cands[k].X) + "," + N0(cands[k].Y) + "," + N0(cands[k].W) + "," + N0(cands[k].H));
       if (k < 0) return;
@@ -507,7 +520,7 @@ namespace RealmForge {
       }
       r.Tr("shown", (shown ? "form" : "form-hidden") + (active ? " active" : " inactive") + " copies " + copies);
       r.Visible = shown && active && r.W >= 1 && r.H >= 1;
-      if (w.Icon && r.Visible) IconInto(chain, canvas, W, H, U, r);
+      if (w.Icon && r.Visible) IconInto(chain, canvas, W, H, U, r, w.IconChild);
     }
 
     static string N0(double v) { return Math.Round(v).ToString(CultureInfo.InvariantCulture); }
