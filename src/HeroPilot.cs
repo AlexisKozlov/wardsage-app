@@ -110,6 +110,8 @@ namespace RealmForge {
 
     /// <summary>The action of the last Step did not go out (the gate waited, a read failed before the click): it does not count as a try, and its
     /// answer is not awaited - the pilot is as before it (an unsent «Герои» click took the city's two tries, then "noscreen").</summary>
+    /// <summary>The click gate retries a failed step (ClickGate.RetryDue: a pop-up took the «Герои» press ...): the city's tries start over.</summary>
+    public void StepAgain() { city = 0; waitUntil = 0; pending = false; }
     public void NotSent() { if (unsent != null && ++unsentRun <= MaxUnsent) Load(unsent); unsent = null; }
     /// <summary>Refused actions in a row taken back; beyond this they count again (a gate that never lets one out ends in the pilot's own stop).</summary>
     public const int MaxUnsent = 60;

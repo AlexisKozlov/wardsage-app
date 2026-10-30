@@ -11,11 +11,13 @@
   const ART_KINDS = ['openInventory', 'artOpenTab', 'artExitMode', 'artListLoading', 'artNotInList', 'artInList', 'artSelected', 'artWrongArtifact', 'artLevelFirst',
     'artOpenPromote', 'artMatLoading', 'artMatGuess', 'artMatPick', 'artMatNone', 'artPromote'];
 
-  // auto click (host: src/LocatePilot.cs): st.auto = '' (off) | work | paused | background | hint | stopped, st.autoWhy = the reason when stopped.
+  // auto click (host: src/LocatePilot.cs): st.auto = '' (off) | work | paused | background | hint | stopped | retry, st.autoWhy = the reason when stopped ('reason/n' for a retry: src/ClickGate.cs).
   // The app clicks by itself only on these steps; the rest (the Foundry, the last button) stay the player's.
   const AUTO_STEPS = ['openInventory', 'openEquipTab', 'inList', 'openFoundry', 'openAscendTab', 'ascendFilter', 'ascendPick'];
   // why the click gate stopped the pilot (host: src/ClickGate.cs)
-  const GATE_WHY = { unknown: 'gateWhy_unknown', screen: 'gateWhy_screen', modal: 'gateWhy_modal', bulk: 'gateWhy_bulk', cell: 'gateWhy_cell', scroll: 'gateWhy_scroll', target: 'gateWhy_target', nochange: 'gateWhy_nochange' };
+  const GATE_WHY = { unknown: 'gateWhy_unknown', screen: 'gateWhy_screen', modal: 'gateWhy_modal', bulk: 'gateWhy_bulk', cell: 'gateWhy_cell', scroll: 'gateWhy_scroll', target: 'gateWhy_target', nochange: 'gateWhy_nochange',
+    popup: 'gateWhy_popup', offer: 'gateWhy_offer', offers: 'gateWhy_offers', dangerous: 'gateWhy_dangerous', exitdialog: 'gateWhy_exitdialog' };
+  const RETRY_MAX = 3;   // src/ClickGate.cs MaxStepFailures: the third failure of a step in a row is the stop
   const AUTO_WHY = { bulk: 'locAutoBulk', lost: 'locAutoLost', stuck: 'locAutoStuck', screen: 'locAutoScreen', cancelled: 'locAutoCancel', loading: 'locAutoLoading', notinlist: 'locAutoNotInList', hidden: 'locAutoHidden' };
 
   function names(list) { return (list || []).map((x) => x.name || x.text).filter(Boolean); }
@@ -140,7 +142,11 @@
       default: r = { tone: 'done', head: t('locDone'), lines: [t(st.onGem ? 'locDoneGemP' : 'locDoneP')] };   // the request stays until the player leaves this screen (ui/app.js)
     }
     // auto click: the app is doing this step itself, or it gave up (and says why; the step's own text follows)
-    if (st.auto === 'stopped' && GATE_WHY[st.autoWhy]) r = { tone: 'warn', head: t('gateStop', t(GATE_WHY[st.autoWhy])), lines: [t('locAutoRest'), r.head].concat(r.lines) };
+    // a step retried by the click gate (st.autoWhy = 'reason/n'): the reason and the try, the step's own text below
+    if (st.auto === 'retry') {
+      const p = String(st.autoWhy || '').split('/');
+      r = { tone: 'info', head: t('gateRetry', t(GATE_WHY[p[0]] || 'gateWhy_nochange'), Math.min(RETRY_MAX - 1, +p[1] || 1), RETRY_MAX - 1), lines: [r.head].concat(r.lines) };
+    } else if (st.auto === 'stopped' && GATE_WHY[st.autoWhy]) r = { tone: 'warn', head: t('gateStop', t(GATE_WHY[st.autoWhy])), lines: [t('locAutoRest'), r.head].concat(r.lines) };
     else if (st.auto === 'stopped') r = { tone: st.autoWhy === 'cancelled' ? 'info' : 'warn', head: t('locAutoStop'), lines: [t(AUTO_WHY[st.autoWhy] || 'locAutoLost'), r.head].concat(r.lines) };
     // recast: the app presses the card's gem button / selects the recast function itself, and says which (the last button stays the player's)
     else if (st.auto === 'work' && st.step === 'selected' && req.purpose !== 'ascend') r = { tone: r.tone, head: t('locAutoGem'), lines: [r.head] };

@@ -58,6 +58,8 @@ namespace RealmForge {
     public readonly string Form; public readonly string[] Paths;
     /// <summary>A bar button with a picture and a label under it: its frame hugs the picture (the icon child), not the whole button.</summary>
     public bool Icon;
+    /// <summary>No field of <see cref="Paths"/> there: the close button is looked for live among the form's objects (UiCloseFind), cached per form.</summary>
+    public bool Discover;
     public UiWidget(string form, params string[] paths) { Form = form; Paths = paths; }
   }
 
@@ -88,6 +90,28 @@ namespace RealmForge {
       }
       return best;
     }
+    /// <summary>A button with no icon (a wide one: «Заменить», a tab): its visual child - the biggest active picture among its children that is
+    /// not a label / dot / effect by its name, its centre on the button, at least a third of the button's area - else -1 (the button's rect).
+    /// The hit area of such a button is often larger than what is drawn. Pure (tests/CoreTests.cs).</summary>
+    public static int PickVisual(IList<Cand> c, double bx, double by, double bw, double bh) {
+      int best = -1; double ba = 0;
+      if (c == null || bw <= 0 || bh <= 0) return -1;
+      for (int i = 0; i < c.Count; i++) {
+        var k = c[i]; string n = (k.Name ?? "").ToLowerInvariant();
+        if (!k.Active || k.W < 4 || k.H < 4) continue;
+        bool bad = false; foreach (var t in NotIcon) if (n.Contains(t)) { bad = true; break; }
+        if (bad) continue;
+        double cx = k.X + k.W / 2, cy = k.Y + k.H / 2;
+        if (cx < bx || cx > bx + bw || cy < by || cy > by + bh) continue;
+        if (k.W * k.H < bw * bh / 3 || k.W > bw * 1.05 || k.H > bh * 1.05) continue;
+        if (k.W * k.H > ba) { ba = k.W * k.H; best = i; }
+      }
+      return best;
+    }
+    /// <summary>The test build's line for a frame drawn round a pilot button: "frame: Form.widget rect=[x,y,w,h] source=live|layout".</summary>
+    public static string FrameLine(string who, double[] f, bool live) {
+      return "frame: " + who + " rect=[" + Math.Round(f[0]) + "," + Math.Round(f[1]) + "," + Math.Round(f[2]) + "," + Math.Round(f[3]) + "] source=" + (live ? "live" : "layout");
+    }
     /// <summary>The frame round the icon (x, y, w, h, corner radius), client px, within W x H.</summary>
     public static double[] Frame(double x, double y, double w, double h, double W, double H) {
       double l = Math.Max(0, x - FramePad), t = Math.Max(0, y - FramePad), r = Math.Min(W, x + w + FramePad), b = Math.Min(H, y + h + FramePad);
@@ -114,12 +138,13 @@ namespace RealmForge {
     /// pop-up an OfferClose closes.</summary>
     public static UiWidget UiWidgetOf(ClickTarget t, string offerForm) {
       switch (t) {
-        case ClickTarget.HeroBack: return new UiWidget("Form_CharactorMain", "m_ButtonBack.m_btnBack");
+        // (Icon: every button is framed on its picture - its icon child, or for a wide button its visual child - never the whole hit area with its label)
+        case ClickTarget.HeroBack: return new UiWidget("Form_CharactorMain", "m_ButtonBack.m_btnBack") { Icon = true };
         case ClickTarget.CityInventory: return new UiWidget("Form_MainCity", "m_Button_Backpack") { Icon = true };
         case ClickTarget.FoundryButton: return new UiWidget("Form_BackpackIntegration", "m_PanelContentCur.m_BtnWorkShop") { Icon = true };
-        case ClickTarget.AscendTab: return new UiWidget("Form_EquipSubliming", "m_ToggleSubliming");
-        case ClickTarget.EquipConfirm: return new UiWidget("Form_CharactorEquipTip", "m_SelectEquipView.m_RightBtn.m_gameObject", "m_OneEquipView.m_RightBtn.m_gameObject");
-        case ClickTarget.OfferClose: return string.IsNullOrEmpty(offerForm) ? null : new UiWidget(offerForm, OfferClosePaths);
+        case ClickTarget.AscendTab: return new UiWidget("Form_EquipSubliming", "m_ToggleSubliming") { Icon = true };
+        case ClickTarget.EquipConfirm: return new UiWidget("Form_CharactorEquipTip", "m_SelectEquipView.m_RightBtn.m_gameObject", "m_OneEquipView.m_RightBtn.m_gameObject") { Icon = true };
+        case ClickTarget.OfferClose: return string.IsNullOrEmpty(offerForm) ? null : new UiWidget(offerForm, OfferClosePaths) { Icon = true, Discover = true };
       }
       return null;
     }
@@ -361,6 +386,7 @@ namespace RealmForge {
         }
       }
       int k = UiIcon.Pick(cands, r.X, r.Y, r.W, r.H);
+      if (k < 0) k = UiIcon.PickVisual(cands, r.X, r.Y, r.W, r.H);   // (no icon: the drawn part of a wide button)
       r.Tr("icon", k < 0 ? "none of " + cands.Count : cands[k].Name + " " + N0(cands[k].X) + "," + N0(cands[k].Y) + "," + N0(cands[k].W) + "," + N0(cands[k].H));
       if (k < 0) return;
       r.IX = cands[k].X; r.IY = cands[k].Y; r.IW = cands[k].W; r.IH = cands[k].H; r.IconName = cands[k].Name;
@@ -380,16 +406,21 @@ namespace RealmForge {
         if (LuaPath(f, p, out v, out tt, out m)) { if (tt == T_UDATA) { ud = v; r.Widget = p; break; } m = p + " tt " + tt; }
         if (miss == null) miss = m;
       }
-      if (ud == 0) { r.Fail("field", miss); return; }
+      if (ud == 0 && !w.Discover) { r.Fail("field", miss); return; }
       ulong csv; int ctt;
       if (!Field(f, "m_csui", out csv, out ctt) || ctt != T_UDATA) { r.Fail("m_csui", "tt " + ctt); return; }
-      string cls, rcls;
-      ulong nat = NativeOf(env, ud, "widget", r, out cls); if (nat == 0) return;
-      r.ClassName = cls;
+      string cls = "", rcls;
+      ulong nat = 0;
+      if (ud != 0) { nat = NativeOf(env, ud, "widget", r, out cls); if (nat == 0) return; r.ClassName = cls; }
       ulong rnat = FormRootOf(env, csv, r, out rcls); if (rnat == 0) return;
-      ulong go, tr, rgo, rtr;
-      if (!GoAndTransform(nat, cls, "widget", r, out go, out tr)) return;
+      ulong go = 0, tr = 0, rgo, rtr;
+      if (ud != 0 && !GoAndTransform(nat, cls, "widget", r, out go, out tr)) return;
       if (!GoAndTransform(rnat, rcls, "root", r, out rgo, out rtr)) return;
+      if (ud == 0) {   // the field is not there (live 1.6.66.393: Form_DailyCheckIn.m_BtnClose missing): the close button looked for live
+        string found;
+        if (!UiCloseFind(w.Form, rtr, W, H, U, r, out tr, out go, out found)) { if (r.Ok) r.Fail("field", miss + "; no close button found live"); return; }
+        r.Widget = "live:" + found; r.ClassName = "UnityEngine.GameObject";
+      }
       // the transforms from the widget up to the form's root
       var chain = new List<ulong>(); ulong t = tr;
       while (t != rtr) {
@@ -422,6 +453,98 @@ namespace RealmForge {
     }
 
     static string N0(double v) { return Math.Round(v).ToString(CultureInfo.InvariantCulture); }
+
+    // ---- the close button looked for live: a form whose × is not under the field names (OfferClosePaths)
+    /// <summary>The object names a close button has in the game's prefabs (tools/screen-map.py CLOSE_RX, and the exit buttons).</summary>
+    public static readonly System.Text.RegularExpressions.Regex CloseName = new System.Text.RegularExpressions.Regex(
+      @"^(m_?)?(Btn_?Close\w*|Button_?Close\w*|Close_?Btn\w*|Close_?Button\w*|btn_?close\w*|Btn_?Exit\w*|Exit_?Btn\w*|Button_?Exit\w*|Close)$",
+      System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+    static readonly Dictionary<string, string> closeFound = new Dictionary<string, string>();   // form class -> the object path found (names from the root)
+    public const int CloseFindNodes = 600, CloseFindDepth = 10;
+
+    /// <summary>Of the close-button candidates (client px) the one to press: a size of a button (8 px up to 30 % of the height), its centre in
+    /// the client's top right part (right of 45 % of the width, above 55 % of the height) and on none of the form's never-click buttons; the
+    /// top-right-most of those. -1 = none. Pure (tests/CoreTests.cs).</summary>
+    public static int UiClosePick(string form, IList<UiIcon.Cand> c, double W, double H, double U) {
+      int best = -1; double bs = double.NegativeInfinity;
+      for (int i = 0; c != null && i < c.Count; i++) {
+        var k = c[i]; if (!k.Active || !CloseName.IsMatch(k.Name ?? "")) continue;
+        if (k.W < 8 || k.H < 8 || k.W > H * 0.3 || k.H > H * 0.3) continue;
+        double cx = k.X + k.W / 2, cy = k.Y + k.H / 2;
+        if (cx < W * 0.45 || cx > W - 1 || cy > H * 0.55 || cy < 1) continue;
+        if (OfferForms.OnNeverButton(form, cx, cy, W, H, U)) continue;
+        double sc = cx / W - cy / H;
+        if (sc > bs) { bs = sc; best = i; }
+      }
+      return best;
+    }
+
+    /// <summary>The form's close button among its objects (active ones only, breadth first from the form's root, at most CloseFindNodes objects
+    /// CloseFindDepth deep): the path cached for the form is tried first, else the objects are walked and UiClosePick chooses.</summary>
+    static bool UiCloseFind(string form, ulong rtr, double W, double H, double U, UiButtonInfo r, out ulong tr, out ulong go, out string found) {
+      tr = 0; go = 0; found = null;
+      var above = new List<ulong>(); var probe = new UiButtonInfo();
+      bool canvas = CanvasAbove(rtr, W, H, probe, above);
+      if (!canvas && U <= 0) return false;
+      string cached; lock (closeFound) closeFound.TryGetValue(form, out cached);
+      if (cached != null) {
+        ulong t = rtr, g = 0; bool ok = true;
+        foreach (var nm in cached.Split('/')) { ulong c = ChildNamed(t, nm, out g); if (c == 0) { ok = false; break; } t = c; }
+        if (ok) { tr = t; go = g; found = cached; r.Tr("close", "cached " + cached); return true; }
+        lock (closeFound) closeFound.Remove(form);
+      }
+      var cands = new List<UiIcon.Cand>(); var paths = new List<string>(); var trs = new List<ulong>(); var gos = new List<ulong>();
+      var todo = new List<KeyValuePair<List<ulong>, string>> { new KeyValuePair<List<ulong>, string>(new List<ulong> { rtr }, "") };
+      int seen = 0;
+      for (int q = 0; q < todo.Count && seen < CloseFindNodes; q++) {
+        var at = todo[q].Key; string pre = todo[q].Value;
+        if (at.Count > CloseFindDepth) continue;
+        ulong t = at[at.Count - 1];
+        var cb = Read(t + TrChildren, 0x18); if (cb == null) continue;
+        ulong arr = BitConverter.ToUInt64(cb, 0); long cnt = BitConverter.ToInt64(cb, 0x10);
+        if (arr == 0 || cnt <= 0 || cnt > 64) continue;
+        for (int i = 0; i < cnt && seen < CloseFindNodes; i++) {
+          ulong c = Ptr(arr + (ulong)(8 * i)); if (c == 0 || Ptr(c + TrParent) != t) continue;
+          ulong g = Ptr(c + CompGo); if (g == 0) continue;
+          var ab = Read(g + GoActiveSelf, 1); if (ab == null || ab[0] != 1) continue;   // (a hidden object and all under it: not shown)
+          seen++;
+          string nm = CStr(Ptr(g + GoName)) ?? ""; string path = pre == "" ? nm : pre + "/" + nm;
+          var p2 = new List<ulong>(at); p2.Add(c);
+          if (CloseName.IsMatch(nm)) {
+            var chain = new List<ulong>(p2); if (canvas) chain.InsertRange(0, above);
+            var tmp = new UiButtonInfo(); double x, y, w2, h2;
+            if (ChainRect(chain, canvas, W, H, U, tmp, false, out x, out y, out w2, out h2)) {
+              cands.Add(new UiIcon.Cand { Name = nm, X = x, Y = y, W = w2, H = h2, Active = true, Depth = p2.Count - 1 }); paths.Add(path); trs.Add(c); gos.Add(g);
+            }
+          }
+          if (nm.IndexOf('/') < 0) todo.Add(new KeyValuePair<List<ulong>, string>(p2, path));
+        }
+      }
+      int k = UiClosePick(form, cands, W, H, U);
+      var sb = new System.Text.StringBuilder();
+      for (int i = 0; i < cands.Count && sb.Length < 300; i++) sb.Append(paths[i]).Append('[').Append(N0(cands[i].X)).Append(',').Append(N0(cands[i].Y)).Append(',').Append(N0(cands[i].W)).Append(',').Append(N0(cands[i].H)).Append("] ");
+      r.Tr("close", (k < 0 ? "none" : "found " + paths[k]) + " of " + cands.Count + " named (" + seen + " objects): " + sb);
+      if (k < 0) return false;
+      tr = trs[k]; go = gos[k]; found = paths[k];
+      lock (closeFound) closeFound[form] = found;
+      LL("uibtn: " + form + " close button found live: " + found + " [" + N0(cands[k].X) + "," + N0(cands[k].Y) + "," + N0(cands[k].W) + "," + N0(cands[k].H) + "] (cached for the form)");
+      return true;
+    }
+
+    /// <summary>The active child of transform <paramref name="t"/> named <paramref name="name"/> (0 = none), its GameObject in <paramref name="go"/>.</summary>
+    static ulong ChildNamed(ulong t, string name, out ulong go) {
+      go = 0;
+      var cb = Read(t + TrChildren, 0x18); if (cb == null) return 0;
+      ulong arr = BitConverter.ToUInt64(cb, 0); long cnt = BitConverter.ToInt64(cb, 0x10);
+      if (arr == 0 || cnt <= 0 || cnt > 64) return 0;
+      for (int i = 0; i < cnt; i++) {
+        ulong c = Ptr(arr + (ulong)(8 * i)); if (c == 0 || Ptr(c + TrParent) != t) continue;
+        ulong g = Ptr(c + CompGo); if (g == 0) continue;
+        var ab = Read(g + GoActiveSelf, 1); if (ab == null || ab[0] != 1) continue;
+        if ((CStr(Ptr(g + GoName)) ?? "") == name) { go = g; return c; }
+      }
+      return 0;
+    }
 
     /// <summary>The log line: "uibtn: Form.widget live=[x,y,w,h] layout=[x,y] diff=Npx visible=T in M ms" or "uibtn: Form.widget failed at step (value)".</summary>
     public static string UiButtonLine(UiButtonInfo r, double lx, double ly) {

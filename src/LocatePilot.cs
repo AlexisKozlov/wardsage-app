@@ -212,6 +212,8 @@ namespace RealmForge {
 
     /// <summary>The click gate stopped the pilot (src/ClickGate.cs): no more auto clicks for this request, the hints go on.</summary>
     public void Halt(string why) { if (latched == "") latched = why; }
+    /// <summary>The click gate retries a failed step (ClickGate.RetryDue): the step's clicks start over, its wait ends (the run's caps stay).</summary>
+    public void StepAgain() { kindClicks = 0; waitUntil = 0; }
 
     public bool Stopped { get { return latched != ""; } }
     /// <summary>Why it stopped ("" while it runs): bulk, lost, stuck, screen, cancelled, loading, notinlist, hidden.</summary>
@@ -484,6 +486,8 @@ namespace RealmForge {
     public string Trace = "";
 
     public void Reset() { latched = ""; waitUntil = pauseUntil = workSince = 0; kind = ArtTodo.Nothing; kindClicks = actions = clicks = drags = lastMat = 0; dragFrom = double.NaN; dragStill = 0; Trace = ""; }
+    /// <summary>The click gate retries a failed step (ClickGate.RetryDue): the step's clicks start over, its wait ends (the run's caps stay).</summary>
+    public void StepAgain() { kindClicks = 0; waitUntil = 0; }
     public void Cancel() { if (latched == "") latched = "cancelled"; }
     public void Halt(string why) { if (latched == "") latched = why; }
     public bool Stopped { get { return latched != ""; } }

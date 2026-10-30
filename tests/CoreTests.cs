@@ -113,6 +113,8 @@ static partial class CoreTests {
     if (args.Length > 0 && args[0] == "--sim") return SimMain(args);
     string mock = args.Length > 0 ? args[0] : "http://localhost:3999";
     string realAccount = args.Length > 1 ? args[1] : null;
+    // the checks below test single gate verdicts (one failure = the stop); the retry policy has its own tests (ResilienceTests) and the sim runs with it
+    ClickGate.DefaultResilient = false;
     // the fight timeline and the battle reading take their game values from the layout data (src/Layout.cs): a test copy
     Layout.Use(TestLayout());
 
@@ -787,6 +789,7 @@ static partial class CoreTests {
     ScreenMapTests();
     ScreenMapScenarios();
     SimRegressionTests();
+    ResilienceTests();
     FlowFormTests();
     ArtGridPictureTests();
     ArtPromoteTests();
@@ -5275,6 +5278,129 @@ static partial class CoreTests {
   // a small model of the game's form stack: the bottom form first; a full screen (F / K) hides what lies under it
   // the laptop 2026-10-30 (test 1.6.66.347): the equip pilot selected an item, the game opened its tip (Form_CharactorEquipTip), the app took it for
   // an unknown pop-up over the hero screen, sent the map's Escape twice and stopped («Escape was pressed 2 times already ... HeroScreen»)
+  /// <summary>The retry policy (src/ClickGate.cs header, live 1.6.66.393): a step failure is retried, the stop comes on the third failure of the
+  /// same step in a row, a dangerous form / a click not allowed stop at once; a pop-up in the click's time is a retry that does not count; after a
+  /// pop-up was closed the next one of the chain is waited for; several offers: the newest on top; the tap-to-close rewards; the live close
+  /// button's pick and the frames' visual child.</summary>
+  static void ResilienceTests() {
+    Console.WriteLine("Click gate: the retry policy, the login pop-up chain, the live close button and the frames:");
+    bool was = ClickGate.DefaultResilient; ClickGate.DefaultResilient = true;
+    try {
+      double W = 1920, H = 1009, U = Ui.Unit(W, H);
+      Func<string[], bool, ScreenState> St = (offers, city) => ScreenState.Classify(new ScreenInputs { CityForm = city, Offers = offers == null ? null : new List<string>(offers) }, 0);
+      var city = St(new string[0], true);
+      var log = new List<string>();
+      var g = new ClickGate(); g.Sink = x => log.Add(x);
+      var inv = new ClickRequest { Owner = ClickOwner.Locate, Target = ClickTarget.CityInventory, AutoOn = true, Front = true };
+      long t = 0;
+      Func<long, GateResult> PressAndLose = at => {   // «Инвентарь» allowed, sent, and nothing changes within its time
+        var r = g.Check(inv, city, at);
+        if (!r.Allowed) return r;
+        g.Arm(ClickOwner.Locate, ClickTarget.CityInventory, ClickGate.Expect(inv, city), at);
+        g.Observe(city, at + ClickGate.SlowEffectMs + ClickGate.SearchCapMs + 10);
+        return r;
+      };
+      // the gate's own one-time «Инвентарь» retry first (city-again), then the policy's
+      PressAndLose(t); t += 40000; g.CityAgainDue.Clear();
+      Check(!g.Halted(ClickOwner.Locate), "retry: the first «Инвентарь» without effect is pressed again (the gate's city-again)");
+      PressAndLose(t); t += 40000;
+      Check(!g.Halted(ClickOwner.Locate) && g.Retries(ClickOwner.Locate) == 1 && log.Exists(l => l.Contains("RETRY 1/3 of CityInventory (nochange)")), "retry: «Инвентарь» changed nothing again -> RETRY 1/3, no stop");
+      Check(g.RetryDue.Contains(ClickOwner.Locate), "retry: the host is told (the city bar dropped, the pilot's step tries start over)");
+      Check(g.RetryShown(ClickOwner.Locate, t - 40000 + ClickGate.SlowEffectMs + ClickGate.SearchCapMs + 100).StartsWith("nochange/1"), "retry: the window shows the retry and its reason");
+      var rw = g.Check(inv, city, g.Retries(ClickOwner.Locate) > 0 ? t - 40000 + ClickGate.SlowEffectMs + ClickGate.SearchCapMs + 20 : 0);
+      Eq("retry", rw.Reason, "retry: nothing is clicked for RetrySettleMs after a retry (the screen read again)");
+      PressAndLose(t); t += 40000;
+      Check(!g.Halted(ClickOwner.Locate) && g.Retries(ClickOwner.Locate) == 2, "retry: the second failure in a row -> RETRY 2/3");
+      PressAndLose(t); t += 40000;
+      Check(g.Halted(ClickOwner.Locate) && g.HaltReason(ClickOwner.Locate) == "nochange" && log.Exists(l => l.Contains("STOP (nochange)") && l.Contains("failure 3 of CityInventory in a row")), "retry: the third failure of the same step in a row stops the owner, with the count");
+      // a step that went on in between starts the count over
+      var g2 = new ClickGate(); var inv2 = new ClickRequest { Owner = ClickOwner.Sell, Target = ClickTarget.InvEquipTab, AutoOn = true, Front = true };
+      var invScr = ScreenState.Classify(new ScreenInputs { Offers = new List<string>(), Inv = new InventoryScreen { Open = true, EquipTab = false, BulkKnown = true } }, 0);
+      var invEq = ScreenState.Classify(new ScreenInputs { Offers = new List<string>(), Inv = new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true } }, 0);
+      long t2 = 0;
+      for (int k = 0; k < 2; k++) { g2.Arm(ClickOwner.Sell, ClickTarget.InvEquipTab, ClickGate.Expect(inv2, invScr), t2); g2.Observe(invScr, t2 + ClickGate.EffectMs + 10); t2 += 5000; }
+      g2.Arm(ClickOwner.Sell, ClickTarget.InvEquipTab, ClickGate.Expect(inv2, invScr), t2); g2.Observe(invEq, t2 + 300); t2 += 5000;
+      g2.Arm(ClickOwner.Sell, ClickTarget.InvEquipTab, ClickGate.Expect(inv2, invScr), t2); g2.Observe(invScr, t2 + ClickGate.EffectMs + 10); t2 += 5000;
+      Check(!g2.Halted(ClickOwner.Sell) && g2.Retries(ClickOwner.Sell) == 3, "retry: a step that took effect in between starts its count over (3 retries, no stop)");
+      // a pop-up that came in the click's time: a retry that does not count against the step
+      var g3 = new ClickGate(); var log3 = new List<string>(); g3.Sink = x => log3.Add(x);
+      var ann = St(new[] { "Form_AnnouncementHall" }, true);
+      for (int k = 0; k < 4; k++) {
+        long at = k * 10000;
+        Check(g3.Check(inv, city, at).Allowed || k > 0, "retry: «Инвентарь» allowed on the clear city");
+        g3.Arm(ClickOwner.Locate, ClickTarget.CityInventory, ClickGate.Expect(inv, city), at);
+        g3.Observe(ann, at + ClickGate.SearchCapMs + 10);
+      }
+      Check(!g3.Halted(ClickOwner.Locate) && log3.Exists(l => l.Contains("(popup)") && l.Contains("a pop-up came in its time")), "retry: a pop-up that took the press is a retry (popup), not a stop - four in a row");
+      // the reasons that stop at once
+      var g4 = new ClickGate();
+      g4.Halt(ClickOwner.Equip, "dangerous", "Form_ShopBuyTips: dangerous");
+      Check(g4.Halted(ClickOwner.Equip) && g4.Retries(ClickOwner.Equip) == 0, "retry: a dangerous form stops at once");
+      var g5 = new ClickGate(); g5.Halt(ClickOwner.Sell, "target", "not allowed"); g5.Halt(ClickOwner.Locate, "covered", "another window");
+      Check(g5.Halted(ClickOwner.Sell) && g5.Halted(ClickOwner.Locate), "retry: a click not allowed, the player's window in front: stops at once");
+      var g6 = new ClickGate(); g6.Resilient = false; g6.Halt(ClickOwner.Sell, "nochange", "x");
+      Check(g6.Halted(ClickOwner.Sell), "retry: Resilient off = the old rule (every failure a stop)");
+      var g7 = new ClickGate(); int n7 = 0;
+      for (int k = 0; k < 20 && !g7.Halted(ClickOwner.Sell); k++) { g7.Arm(ClickOwner.Sell, k % 2 == 0 ? ClickTarget.InvEquipTab : ClickTarget.InvBulkEnter, null, k * 3000); g7.Halt(ClickOwner.Sell, k % 2 == 0 ? "screen" : "cell", "alternating steps"); n7++; }
+      Check(g7.Halted(ClickOwner.Sell) && g7.Retries(ClickOwner.Sell) == ClickGate.MaxRetriesRun, "retry: at most MaxRetriesRun retries a run (" + n7 + " failures)");
+      g7.Resume(ClickOwner.Sell);
+      Check(!g7.Halted(ClickOwner.Sell) && g7.Retries(ClickOwner.Sell) == 0, "retry: a new request starts the retries over");
+      // the chain: after a pop-up was closed, nothing else for OfferChainMs; another pop-up's × is pressed meanwhile
+      var g8 = new ClickGate(); var c = OfferForms.ClosePoint(null, "Form_AnnouncementHall", W, H, U);
+      var rq = new ClickRequest { Owner = ClickOwner.Locate, Target = ClickTarget.OfferClose, AutoOn = true, Front = true, Form = "Form_AnnouncementHall", X = c.X, Y = c.Y, W = W, H = H, U = U };
+      Check(g8.Check(rq, ann, 0).Allowed, "chain: the pop-up's × allowed");
+      g8.Arm(ClickOwner.Locate, ClickTarget.OfferClose, ClickGate.Expect(rq, ann), 0, "Form_AnnouncementHall"); g8.Observe(city, 300);
+      Check(g8.RetryDue.Contains(ClickOwner.Locate), "chain: a closed pop-up starts the pilot's step tries over (it may have taken the last press)");
+      Eq("chain", g8.Preflight(ClickOwner.Locate, city, 800).Reason, "chain: the next pop-up of the chain is waited for (preflight)");
+      Eq("chain", g8.Check(inv, city, 900).Reason, "chain: no other click within OfferChainMs");
+      var nh = St(new[] { "Form_ActPopupNewHero" }, true); var c2 = OfferForms.ClosePoint(null, "Form_ActPopupNewHero", W, H, U);
+      var rq2 = new ClickRequest { Owner = ClickOwner.Locate, Target = ClickTarget.OfferClose, AutoOn = true, Front = true, Form = "Form_ActPopupNewHero", X = c2.X, Y = c2.Y, W = W, H = H, U = U };
+      Check(g8.Check(rq2, nh, 900).Allowed, "chain: the next pop-up's × may be pressed meanwhile");
+      // several offers: the one that came last (alone) is on top; two in the same read: not known, none pressed
+      var ord = new OfferForms.Order();
+      ord.Note(new List<string> { "Form_ItemReward" });
+      var both = ord.Note(new List<string> { "Form_ItemReward", "Form_AnnouncementHall" });
+      Check(ord.TopKnown && both[0] == "Form_AnnouncementHall", "offers: the newest of two is on top (" + string.Join(",", both.ToArray()) + ")");
+      var s2 = ScreenState.Classify(new ScreenInputs { CityForm = true, Offers = both, OfferTopKnown = ord.TopKnown }, 0);
+      var c3 = OfferForms.ClosePoint(null, "Form_AnnouncementHall", W, H, U);
+      var rq3 = new ClickRequest { Owner = ClickOwner.Sell, Target = ClickTarget.OfferClose, AutoOn = true, Front = true, Form = "Form_AnnouncementHall", X = c3.X, Y = c3.Y, W = W, H = H, U = U };
+      Check(new ClickGate().Check(rq3, s2, 0).Allowed, "offers: the × of the one on top is pressed");
+      var ord2 = new OfferForms.Order(); ord2.Note(new List<string> { "Form_ItemReward", "Form_AnnouncementHall" });
+      Check(!ord2.TopKnown, "offers: two that came in the same read: the top is not known");
+      var g9 = new ClickGate(); g9.Resilient = false;
+      Eq("modal", g9.Check(rq3, ScreenState.Classify(new ScreenInputs { CityForm = true, Offers = new List<string> { "Form_ItemReward", "Form_AnnouncementHall" } }, 0), 0).Reason, "offers: ... then none is pressed");
+      // Form_ItemReward (tap to close): an offer, its tap strip at the bottom centre, on no other button; the screen map agrees
+      Check(OfferForms.IsOffer("Form_ItemReward") && OfferForms.IsOffer("Form_SpecialItemReward"), "reward: the tap-to-close rewards are on the offer list");
+      var tap = OfferForms.CloseRect(null, "Form_ItemReward", W, H, U);
+      Check(tap != null && Math.Abs(tap.CX - W / 2) < 1 && tap.Bottom < H && tap.Y > H - 0.08 * U, "reward: the tap strip lies at the bottom centre (" + (tap == null ? "none" : (int)tap.X + "," + (int)tap.Y + "," + (int)tap.W + "x" + (int)tap.H) + ")");
+      Check(ScreenMap.ClassOf("Form_ItemReward") == 'P' && ScreenMap.ClassOf("Form_SpecialItemReward") == 'P', "reward: the screen map has them as pop-ups closed by their tap (class P)");
+      var rew = St(new[] { "Form_ItemReward" }, true);
+      var rqr = new ClickRequest { Owner = ClickOwner.Locate, Target = ClickTarget.OfferClose, AutoOn = true, Front = true, Form = "Form_ItemReward", X = tap.CX, Y = tap.CY, W = W, H = H, U = U };
+      Check(new ClickGate().Check(rqr, rew, 0).Allowed, "reward: the tap is allowed over the city");
+      // the live close button: by name, in the top right, not on a never-click button; the top-right-most of several
+      var cands = new List<UiIcon.Cand> {
+        new UiIcon.Cand { Name = "Button_Close", X = 1700, Y = 60, W = 70, H = 70, Active = true },
+        new UiIcon.Cand { Name = "m_BtnClose", X = 1600, Y = 120, W = 60, H = 60, Active = true },
+        new UiIcon.Cand { Name = "Btn_Get", X = 1750, Y = 20, W = 60, H = 60, Active = true },
+        new UiIcon.Cand { Name = "Button_Close", X = 200, Y = 60, W = 70, H = 70, Active = true },
+        new UiIcon.Cand { Name = "BtnExit", X = 1800, Y = 40, W = 60, H = 60, Active = false } };
+      Eq(0, RFX.UiClosePick("Form_DailyCheckIn", cands, W, H, U), "live ×: the top-right-most close-named button that is shown");
+      Check(RFX.CloseName.IsMatch("Button_Close") && RFX.CloseName.IsMatch("m_BtnClose") && RFX.CloseName.IsMatch("BtnExit") && RFX.CloseName.IsMatch("Btn_Close") && !RFX.CloseName.IsMatch("Click2Close") && !RFX.CloseName.IsMatch("m_BtnGet"),
+            "live ×: the close names of the prefabs (btnClose / Btn_Close / BtnExit ...), never a tap layer or a claim button");
+      Eq(-1, RFX.UiClosePick("Form_DailyCheckIn", new List<UiIcon.Cand> { new UiIcon.Cand { Name = "Button_Close", X = 200, Y = 800, W = 70, H = 70, Active = true } }, W, H, U), "live ×: none in the top right -> none (the layout's point)");
+      Check(RFX.UiWidgetOf(ClickTarget.OfferClose, "Form_DailyCheckIn").Discover && !RFX.UiWidgetOf(ClickTarget.CityInventory, null).Discover, "live ×: the offer's close button is looked for live when its field is missing");
+      // frames: the visual child of a wide button (its hit area larger, the label beside it), 2 px out; the line of the test build
+      var vis = new List<UiIcon.Cand> { new UiIcon.Cand { Name = "Text", X = 100, Y = 100, W = 200, H = 60, Active = true }, new UiIcon.Cand { Name = "Bg", X = 110, Y = 105, W = 180, H = 50, Active = true } };
+      Eq(-1, UiIcon.Pick(vis, 100, 100, 200, 60), "frame: a wide button has no icon");
+      Eq(1, UiIcon.PickVisual(vis, 100, 100, 200, 60), "frame: ... its visual child is framed (the label left out)");
+      var fr = UiIcon.Frame(110, 105, 180, 50, W, H);
+      Check(fr[0] == 108 && fr[1] == 103 && fr[2] == 184 && fr[3] == 54, "frame: 2 px round the visual child");
+      Eq("frame: Form_MainCity.m_Button_Backpack rect=[108,103,184,54] source=live", UiIcon.FrameLine("Form_MainCity.m_Button_Backpack", fr, true), "frame: the test build's line");
+      foreach (ClickTarget tg in new[] { ClickTarget.HeroBack, ClickTarget.CityInventory, ClickTarget.FoundryButton, ClickTarget.AscendTab, ClickTarget.EquipConfirm, ClickTarget.OfferClose })
+        Check(RFX.UiWidgetOf(tg, "Form_DailyCheckIn").Icon, "frame: " + tg + " is framed on its picture, not its hit area");
+    } finally { ClickGate.DefaultResilient = was; }
+  }
+
   static void FlowFormTests() {
     Console.WriteLine("Flow forms: the pilots' own pop-ups are a sub-state of their screen");
     const double W = 1350, H = 689; double U = Ui.Unit(W, H);
@@ -5792,7 +5918,7 @@ static partial class CoreTests {
     foreach (var n in new[] { "Form_LeftTip", "Form_Marquee", "Form_MiniSystemTip", "Form_PowerChangeTips", "Form_IntegralRewardTip" })
       Check(OfferForms.IsIgnoredOverlay(n) && !OfferForms.IsOffer(n) && Array.IndexOf(OfferForms.KnownScreens, n) < 0, "overlay forms: " + n + " is ignored (not an offer, not a known screen)");
     Check(!OfferForms.IsIgnoredOverlay("Form_ItemReward") && !OfferForms.IsIgnoredOverlay("Form_Dialog") && !OfferForms.IsIgnoredOverlay(null), "overlay forms: other forms still count");
-    Eq(35, OfferForms.All.Length, "offer list: the forms of the game's pop-up queue and the build plan");
+    Eq(37, OfferForms.All.Length, "offer list: the forms of the game's pop-up queue, the tap-to-close rewards and the build plan");
     int closable = 0;
     foreach (var e in OfferForms.All) {
       var r = OfferForms.CloseRect(null, e.Name, W, H, U);
@@ -5801,8 +5927,8 @@ static partial class CoreTests {
       Check(r.X >= 0 && r.Right <= W && r.Y >= 0 && r.Bottom <= H && r.W > 20 && r.H > 20, "offer list: the × of " + e.Name + " lies in the window");
       Check(!OfferForms.OnNeverButton(e.Name, r.CX, r.CY, W, H, U), "offer list: the × of " + e.Name + " is on none of its other buttons");
     }
-    Eq(32, closable, "offer list: forms with a known ×");
-    foreach (var nm in new[] { "Form_ChampionshipOver", "Form_MonthyCardGetReward", "Form_Feedback" }) Check(OfferForms.IsOffer(nm) && OfferForms.CloseRect(null, nm, W, H, U) == null, "offer list: " + nm + " has no × known: never clicked");
+    Eq(36, closable, "offer list: forms with a known × (or tap strip)");
+    foreach (var nm in new[] { "Form_Feedback" }) Check(OfferForms.IsOffer(nm) && OfferForms.CloseRect(null, nm, W, H, U) == null, "offer list: " + nm + " has no × known: never clicked");
     Check(!OfferForms.IsOffer("Form_MainCity") && !OfferForms.IsOffer("Form_BackpackIntegration"), "offer list: the game's screens are not offers");
 
     Func<string[], bool, ScreenState> St = (offers, city) => ScreenState.Classify(new ScreenInputs { CityForm = city, Offers = offers == null ? null : new List<string>(offers) }, 0);
@@ -5828,7 +5954,8 @@ static partial class CoreTests {
       g.Arm(ClickOwner.Locate, ClickTarget.OfferClose, ClickGate.Expect(rq, shop), 0, "Form_PopUpShop");
       g.Observe(St(new string[0], true), 500);
       Check(!g.Pending(ClickOwner.Locate) && log.Exists(l => l == "offer: closed Form_PopUpShop"), "offer close: the pop-up gone = its effect, logged");
-      Check(g.Check(inv, St(new string[0], true), 600).Allowed, "offer close: then the pilot's own first click");
+      Eq("chain", g.Check(inv, St(new string[0], true), 600).Reason, "offer close: the next pop-up of the chain is waited for (no other click within OfferChainMs)");
+      Check(g.Check(inv, St(new string[0], true), 500 + ClickGate.OfferChainMs + 10).Allowed, "offer close: then the pilot's own first click");
       // a failed read of the table is not the effect
       var g2 = new ClickGate(); g2.Arm(ClickOwner.Sell, ClickTarget.OfferClose, ClickGate.Expect(Rq(ClickOwner.Sell, "Form_PopUpShop", c.X, c.Y), shop), 0, "Form_PopUpShop");
       g2.Observe(St(null, true), 500); Check(g2.Pending(ClickOwner.Sell), "offer close: an unread table is no effect");
@@ -5889,13 +6016,13 @@ static partial class CoreTests {
         var city = fs.T("m_LuaLogicActive", true, "class", Cls("Form_MainCity"));
         var shopF = fs.T("m_LuaLogicActive", true, "class", Cls("Form_PopUpShop"));
         var giftF = fs.T("m_InitOK", true, "class", Cls("Form_GiftPush"));   // closed: m_LuaLogicActive nil
-        var odd = fs.T("m_LuaLogicActive", true, "class", Cls("Form_ItemReward"));
+        var odd = fs.T("m_LuaLogicActive", true, "class", Cls("Form_StageInfoOdd"));
         var ui = fs.T(11L, city, 22L, shopF, 33L, giftF, 44L, odd);
         RFX.SetUiTableForTest(ui.A);
         var offers = RFX.ReadOffers();
         Check(offers != null && offers.Count == 1 && offers[0] == "Form_PopUpShop", "window table: the shown offer is read by its class (" + (offers == null ? "null" : string.Join(",", offers.ToArray())) + ")");
         var unknown = RFX.ReadUnknownShownForms(4);
-        Check(unknown != null && unknown.Count == 1 && unknown[0] == "Form_ItemReward", "window table: the unknown shown form is named, the city and the offers are not");
+        Check(unknown != null && unknown.Count == 1 && unknown[0] == "Form_StageInfoOdd", "window table: the unknown shown form is named, the city and the offers are not");
         RFX.SetUiTableForTest(0);
         Check(RFX.ReadOffers() == null, "window table not known: offers not read (null)");
       } finally { RFX.SetUiTableForTest(0); RFX.TestMemory = null; RFX.ForgetLive(); }
