@@ -23,7 +23,7 @@ Set-StrictMode -Version 2
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$RunnerVersion   = '18'
+$RunnerVersion   = '19'
 $Dir             = Join-Path $env:LOCALAPPDATA 'WardsageLab'
 $StopFile        = Join-Path $Dir 'STOP'
 $LogFile         = Join-Path $Dir 'runner.log'
@@ -175,6 +175,10 @@ $Schemas = @{
     mark        = @{ scn = { param($v) $v -is [string] -and $v -cmatch '^[a-z_]{1,30}$' } }
     rec         = @{ cmd = { param($v) $v -is [string] -and ($v -ceq 'start' -or $v -ceq 'stop') }
                      scenario = { param($v) $v -is [string] -and $v -cmatch '^[a-z0-9_]{1,40}$' }
+                     run = { param($v) $v -is [string] -and $v -cmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' } }
+    explore     = @{ cmd = { param($v) $v -is [string] -and ($v -ceq 'start' -or $v -ceq 'stop' -or $v -ceq 'result') }
+                     budget = { param($v) ($v -is [int] -or $v -is [long]) -and $v -ge 1 -and $v -le 200 }
+                     rot = { param($v) ($v -is [int] -or $v -is [long]) -and $v -ge 0 -and $v -le 999999 }
                      run = { param($v) $v -is [string] -and $v -cmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' } }
 }
 function Test-JobArgs([string]$action, $args_) {
@@ -600,6 +604,69 @@ function Invoke-Rec($a) {
     return @{ ok = $false; res = @{ error = 'no_ack'; cmd = $cmd } }
 }
 
+# ---------------------------------------------------------------- explore (the test app's explorer, src/Explorer.cs)
+# start / stop: writes %LOCALAPPDATA%\WardsageTest\lab\explore.cmd (as rec.cmd) and waits for the app's explore.ack of the same seq.
+# result: reads explore.json; when it is this run's and the run is over, uploads it (explore-<run>.json, text/plain) and returns its figures,
+# else state = running. Only values that passed the schema go into the line; the file names are fixed.
+function Read-Shared([string]$f) {
+    $fs = New-Object IO.FileStream($f, [IO.FileMode]::Open, [IO.FileAccess]::Read, ([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+    try { $rd = New-Object IO.StreamReader($fs, (New-Object Text.UTF8Encoding($false))); return $rd.ReadToEnd() } finally { $fs.Dispose() }
+}
+function Invoke-Explore([string]$job, $a) {
+    $cmd = [string](Get-Prop $a 'cmd'); $run = [string](Get-Prop $a 'run')
+    $dir = Join-Path $env:LOCALAPPDATA 'WardsageTest\lab'
+    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir | Out-Null }
+    if ($cmd -ceq 'result') {
+        $rf = Join-Path $dir 'explore.json'
+        if (-not (Test-Path $rf)) { return @{ ok = $true; res = @{ state = 'running' } } }
+        $text = Read-Shared $rf
+        $r = $text | ConvertFrom-Json
+        if ([string](Get-Prop $r 'run') -ne $run) { return @{ ok = $true; res = @{ state = 'running'; other = $true } } }
+        $st = [string](Get-Prop $r 'state'); if ($st -notmatch '^[a-z]{1,12}$') { $st = 'bad' }
+        $why = [string](Get-Prop $r 'why'); if ($why.Length -gt 200) { $why = $why.Substring(0, 200) }
+        $bytes = [Text.Encoding]::UTF8.GetBytes($text)
+        if ($bytes.Length -gt 1500000) { return @{ ok = $false; res = @{ error = 'result_too_big'; state = $st } } }
+        $u = Send-File $job ('explore-' + $run.Substring(0, 8) + '.json') 'text/plain' $bytes
+        $mis = @(Get-Prop $r 'mismatches').Count
+        return @{ ok = $u.ok; res = @{ state = $st; why = $why; visited = [int](Get-Prop $r 'visited'); okforms = [int](Get-Prop $r 'ok'); mismatches = $mis
+                                       secs = [int](Get-Prop $r 'secs'); popups = [int](Get-Prop $r 'popups'); presses = [int](Get-Prop $r 'presses'); bytes = $bytes.Length; upload = $u.ok } }
+    }
+    $seq = [int64][DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+    if ($cmd -ceq 'start') {
+        $b = Get-Prop $a 'budget'; $ro = Get-Prop $a 'rot'
+        if ($run -eq '' -or $b -eq $null -or $ro -eq $null) { return @{ ok = $false; res = @{ error = 'bad_args' } } }
+        $line = [string]$seq + ' start ' + [string][int]$b + ' ' + [string][int]$ro + ' ' + $run
+    } elseif ($cmd -ceq 'stop') { $line = [string]$seq + ' stop' }
+    else { return @{ ok = $false; res = @{ error = 'bad_args' } } }
+    $f = Join-Path $dir 'explore.cmd'; $tmp = $f + '.tmp'; $ackf = Join-Path $dir 'explore.ack'
+    $written = $false
+    for ($try = 0; $try -lt 8 -and -not $written; $try++) {
+        try {
+            [IO.File]::WriteAllText($tmp, $line + "`r`n", (New-Object Text.UTF8Encoding($false)))
+            if ([IO.File]::Exists($f)) {
+                try { [IO.File]::Replace($tmp, $f, [NullString]::Value) }
+                catch { [IO.File]::Copy($tmp, $f, $true); [IO.File]::Delete($tmp) }
+            } else { [IO.File]::Move($tmp, $f) }
+            $written = $true
+        } catch { Start-Sleep -Milliseconds 250 }
+    }
+    if (-not $written) { return @{ ok = $false; res = @{ error = 'write_failed'; cmd = $cmd } } }
+    $until = (Get-Date).AddSeconds(15)
+    while ((Get-Date) -lt $until) {
+        Start-Sleep -Milliseconds 500
+        try {
+            if (Test-Path $ackf) {
+                $ack = (Read-Shared $ackf) | ConvertFrom-Json
+                if ([int64](Get-Prop $ack 'seq') -eq $seq) {
+                    $st = [string](Get-Prop $ack 'state'); if ($st -notmatch '^[a-z]{1,12}$') { $st = 'bad' }
+                    return @{ ok = ($st -eq 'running' -or $st -eq 'stopped' -or $st -eq 'idle'); res = @{ state = $st; cmd = $cmd } }
+                }
+            }
+        } catch { }
+    }
+    return @{ ok = $false; res = @{ error = 'no_ack'; cmd = $cmd } }
+}
+
 # ---------------------------------------------------------------- restart_app (the configured test app only)
 # innermost exception message, one line, at most 200 chars
 function Get-ShortError($err) {
@@ -836,6 +903,7 @@ function Invoke-Job($job) {
                 'cancel'      { $out = @{ ok = $true; res = @{ cancelled = $true } } }
                 'mark'        { $out = Invoke-Mark $jobArgs }
                 'rec'         { $out = Invoke-Rec $jobArgs }
+                'explore'     { $out = Invoke-Explore $id $jobArgs }
             }
         }
     } catch {

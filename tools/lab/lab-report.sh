@@ -32,7 +32,7 @@ names() { case "$1" in
   online) echo "Ноутбук на связи" ;; update_app*) echo "Обновление тестовой сборки" ;; restart_app) echo "Перезапуск приложения" ;;
   app_ready) echo "Приложение готово" ;; equip_city*) echo "Надеть сборку из Города${1#equip_city}" ;;
   equip_hide_worn) echo "Надеть вещь другого героя («Скрыть надетое»)" ;; equip_artifact) echo "Надеть артефакт" ;;
-  locate) echo "Найти в игре" ;; locate_recast) echo "Найти в игре: преобразование" ;; locate_art) echo "Найти в игре: продвинуть артефакт" ;; grades) echo "Оценки героев" ;; sell_mark) echo "Чистка склада: выделение" ;; sell_after_restart) echo "Чистка склада после перезапуска" ;; upload_logs) echo "Загрузка логов" ;; screenshot) echo "Скриншот окна" ;; timeout) echo "Время вышло" ;; *) echo "$1" ;; esac; }
+  explore) echo "Обход интерфейса (граф UI)" ;; locate) echo "Найти в игре" ;; locate_recast) echo "Найти в игре: преобразование" ;; locate_art) echo "Найти в игре: продвинуть артефакт" ;; grades) echo "Оценки героев" ;; sell_mark) echo "Чистка склада: выделение" ;; sell_after_restart) echo "Чистка склада после перезапуска" ;; upload_logs) echo "Загрузка логов" ;; screenshot) echo "Скриншот окна" ;; timeout) echo "Время вышло" ;; *) echo "$1" ;; esac; }
 
 lines=""
 while IFS='|' read -r name ok secs note warnf infof recid; do

@@ -5,6 +5,7 @@
 #   lab-loop.sh --auto                                  ONE pass, for cron every minute (flock; exits at once when nothing is to do). For every enabled
 #                                                       device that is online (heartbeat < 3 min): game not running -> queue start_game (once per 15 min);
 #                                                       the newest published test build has no finished run yet, or a lab-request waits -> start a run;
+#                                                       else the explorer once a day / on a new game version of the UI graph (explore_due);
 #                                                       a run in progress advances (the same state machine, state in lab_runs). Always exits 0.
 #                                                       Env: TEST_FEED (feed dir, default /srv/wardsage/test-feed), LAB_NO_TG=1 (print instead of Telegram), LAB_ONLY=<device> (tests).
 #
@@ -33,6 +34,8 @@ FEED=${TEST_FEED:-/srv/wardsage/test-feed}
 
 say() { echo "$(date -u +%H:%M:%S) $*"; }
 now() { date +%s; }
+# the game version of the UI graph on main (src/UiGraphData.cs): the explorer runs again when it changes
+graph_ver() { git -C "$HERE/../.." show origin/main:src/UiGraphData.cs 2>/dev/null | sed -nE 's/.*GameVersion = "([0-9.]+)".*/\1/p' | head -1; }
 
 # ---- run row helpers (RUN = run id, DEV = device id)
 rget()   { q -v r="$RUN" <<< "select $1 from public.lab_runs where id = :'r'::uuid"; }
@@ -104,6 +107,9 @@ watch_logs() {
 # Runner v7+ also reports pilot_at (epoch of the newest PILOT line: a step / guide change, a click allowed or taking effect, the locate / sell
 # pilots' own lines). The app keeps logging its syncs while a pilot waits on a screen it does not know, so a scenario's progress is pilot_at;
 # without it (older runner) the newest log line stands in, as before.
+EXPLORE_BUDGET=${LAB_EXPLORE_BUDGET:-60}   # the explorer's forms a run
+EXPLORE_POLL=${LAB_EXPLORE_POLL:-30}       # a result job every 30 s
+EXPLORE_MAX=${LAB_EXPLORE_MAX:-2400}       # the app's own cap is 30 min
 NOPROG_DEV=${LAB_NOPROGRESS_DEV:-40}   # 40 s without a pilot line (old runner: a log line) while a scenario waits (runner v17 beats every 5 s)
 REPEAT_N=${LAB_REPEAT_N:-10}           # the same newest pilot line this many times in a row (each a new pilot_at) = a pilot that spins
 READY_DEV=${LAB_READY_DEV:-180}        # the laptop read takes ~50 s
@@ -287,7 +293,7 @@ tick() {
       sc=${scenarios[$i]}
       # the screen recording starts before anything of the scenario (phase scn_rec waits for the app's answer); sell_after_restart: after
       # the app's restart (a restart ends any recording)
-      if [ "$(dget rec_for)" != "$i" ] && [[ "$sc" =~ ^[a-z0-9_]{1,40}$ ]] && { [ "$sc" != sell_after_restart ] || [ -n "$(dget sar_ready)" ]; }; then
+      if [ "$(dget rec_for)" != "$i" ] && [[ "$sc" =~ ^[a-z0-9_]{1,40}$ ]] && [ "$sc" != explore ] && { [ "$sc" != sell_after_restart ] || [ -n "$(dget sar_ready)" ]; }; then
         dset rec_for "$i"
         if r=$(mkjob rec "{\"cmd\":\"start\",\"scenario\":\"$sc\",\"run\":\"$RUN\"}"); then dset job "$r"; phase scn_rec; return; fi
         say "recording: the job could not be queued"
@@ -301,6 +307,12 @@ tick() {
           say "equip build $build -> $pb (the other one is worn now)"; build=$pb
           q -v r="$RUN" -v b="$build" <<< "update public.lab_runs set build = :'b' where id = :'r'::uuid" >/dev/null
         fi
+      fi
+      if [ "$sc" = explore ]; then
+        # the explorer (src/Explorer.cs): no request row; the start set rotates over the runs (rot = explore runs finished before on this device)
+        rot=$(q -v d="$DEV" <<< "select count(*) from public.lab_runs where device_id = :'d'::uuid and 'explore' = any(scenarios) and state in ('done', 'failed', 'timeout')")
+        j=$(mkjob explore "{\"cmd\":\"start\",\"budget\":$EXPLORE_BUDGET,\"rot\":${rot:-0},\"run\":\"$RUN\"}") || { step explore false 0 "the job could not be queued"; FAILED=1; next_scn; return; }
+        dset job "$j"; dset job_timeout ""; dset explore_rot "${rot:-0}"; dset graph_version "$(graph_ver)"; dset row ""; dset seeded_at "$(now)"; phase explore_start; return
       fi
       if [ "$sc" = sell_after_restart ] && [ -z "$(dget sar_ready)" ]; then
         r=$(mkjob restart_app) && dset job "$r" && dset job_timeout "" && phase scn_restart; return
@@ -337,6 +349,35 @@ tick() {
         dset sar_ready "$(( $(now) - ra ))"; dset sar_at ""; phase scenario
       elif [ $(( $(now) - ra )) -gt "$READY_DEV" ]; then
         dset sar_at ""; step sell_after_restart false "$(phase_age)" "the app did not report ready after the restart"; FAILED=1; next_scn
+      fi ;;
+    explore_start)
+      if wait_job explore x 60; then
+        j=$(dget job)
+        if [ "$JOBOK" = 1 ]; then say "explore: started (rotation $(dget explore_rot), budget $EXPLORE_BUDGET)"; dset explore_poll 0; dset job ""; phase explore_run
+        else [ -n "$(dget job_timeout)" ] || step explore false "$(jsecs "$j")" "start: $(jres "$j" error)$(jres "$j" state)"; FAILED=1; next_scn; fi
+      fi ;;
+    explore_run)
+      # every EXPLORE_POLL s one result job: the runner uploads explore.json once the app's run is over (state done / stopped)
+      j=$(dget job); sa=$(dget seeded_at)
+      if [ -n "$j" ]; then
+        st=$(jstate "$j")
+        case "$st" in
+          done|failed|expired|cancelled)
+            dset job ""
+            es=$(jres "$j" state)
+            if [ "$st" = done ] && { [ "$es" = done ] || [ "$es" = stopped ]; }; then
+              note="форм $(jres "$j" visited) (без расхождений $(jres "$j" okforms)), расхождений $(jres "$j" mismatches), всплывающих закрыто $(jres "$j" popups), нажатий $(jres "$j" presses), $(jres "$j" secs) с; файл explore-${RUN:0:8}.json: tools/lab/explore-diff.sh"
+              if [ "$es" = done ]; then step explore true "$(( $(now) - ${sa:-0} ))" "$note"
+              else warn explore "$(( $(now) - ${sa:-0} ))" "$note; остановка: $(jres "$j" why)"; fi
+              next_scn; return
+            fi ;;
+        esac
+      elif [ $(( $(now) - $(dget explore_poll) )) -ge "$EXPLORE_POLL" ]; then
+        r=$(mkjob explore "{\"cmd\":\"result\",\"run\":\"$RUN\"}") && dset job "$r"; dset explore_poll "$(now)"
+      fi
+      if [ $(( $(now) - ${sa:-0} )) -gt "$EXPLORE_MAX" ]; then
+        mkjob explore '{"cmd":"stop"}' >/dev/null || true
+        fail_scn explore "не закончился за $(( EXPLORE_MAX / 60 )) мин" "" ""
       fi ;;
     wait_scn)
       i=$(dget scn_idx); sc=${scenarios[$i]}; row=$(dget row)
@@ -486,6 +527,24 @@ advance() {
   done
 }
 
+# explore_due: the explorer runs on its own (a run with the one scenario explore) once a day, and when the game's version (the UI graph's
+# source: src/UiGraphData.cs on main) differs from the last explore run's. Queues it and drives it; 0 = it did so.
+explore_due() {
+  local gv last lv
+  gv=$(graph_ver)
+  last=$(q -v d="$DEV" <<< "select coalesce(extract(epoch from max(created_at))::bigint, 0) || '|' || coalesce((select data->>'graph_version' from public.lab_runs where device_id = :'d'::uuid and 'explore' = any(scenarios) order by created_at desc limit 1), '')
+    from public.lab_runs where device_id = :'d'::uuid and 'explore' = any(scenarios) and state <> 'cancelled'")
+  lv=${last#*|}; last=${last%%|*}
+  if [ $(( $(now) - ${last:-0} )) -lt 86400 ] && { [ -z "$gv" ] || [ "$gv" = "$lv" ]; }; then return 1; fi
+  RUN=$(q -v d="$DEV" -v g="$gv" <<< "
+    insert into public.lab_runs (device_id, scenarios, build, data)
+    values (:'d'::uuid, '{explore}'::text[], 'a', jsonb_build_object('graph_version', :'g'::text, 'explore_auto', '1'))
+    returning id")
+  say "'$dev': explore run ${RUN:0:8} queued (graph of game ${gv:-?}, last explore $(( ($(now) - ${last:-0}) / 3600 )) h ago)"
+  advance
+  return 0
+}
+
 auto_dev() {   # $1 = device name
   dev=$1; DEV=$(dev_id "$dev") || return 0
   exec 9>"$LAB_DIR/loop-$dev.lock"
@@ -506,6 +565,7 @@ auto_dev() {   # $1 = device name
     # a waiting request starts only when the game runs
     if [ "$st" = running ] || [ "$gr" = true ]; then advance; fi
   elif [ "$gr" = true ]; then
+    explore_due && return 0
     latest=$(jq -r '.version // empty' "$FEED/latest.json" 2>/dev/null)
     if [[ "$latest" =~ ^[0-9]{1,9}(\.[0-9]{1,9}){0,3}$ ]]; then
       fin=$(q -v d="$DEV" -v v="$latest" <<< "select count(*) from public.lab_runs where device_id = :'d'::uuid and state in ('done', 'failed', 'timeout') and (data->>'target_version' = :'v' or data->>'want_version' = :'v')")
