@@ -1061,6 +1061,14 @@ static partial class CoreTests {
       Broken("_G._G", () => SetField(st, G, "_G", reg.A, 0x45), () => SetField(st, G, "_G", G.A, 0x45));
       Broken("registry[2]", () => m.W32(arr + 24, 0), () => m.W32(arr + 24, 0x45));
       Broken("registry[1]", () => m.W64(arr, L + 8), () => m.W64(arr, L));
+      { // a big array part (luaL_ref): still read; [2] wrong: the slots are logged
+        ulong big = m.Alloc(16 * 16384); Array.Copy(m.Mem, (int)(arr - FakeLua.Base), m.Mem, (int)(big - FakeLua.Base), 32);
+        m.W32(reg.A + 12, 16384); m.W64(reg.A + 16, big);
+        string ln; Check(RFX.LuaRootForTest(out ln).Ok, "registry with 16384 array slots: _G from [2]: " + ln);
+        m.W32(big + 24, 0x13); var b = RFX.LuaRootForTest(out ln);
+        Check(!b.Ok && b.FailStep == "registry[2]" && ln.Contains("array 16384 at ") && ln.Contains("[0] tt=0x48 v=" + L.ToString("X")) && ln.Contains("[1] tt=0x13") && ln.Contains("[2] tt=0x0"), "  ... a wrong [2]: the slots' tt and values are logged: " + ln);
+        m.W32(reg.A + 12, 2); m.W64(reg.A + 16, arr);
+      }
       Broken("l_registry", () => m.W32(g + 0x48, 0x13), () => m.W32(g + 0x48, 0x45));
       Broken("lua_State", () => m.Mem[L - FakeLua.Base + 8] = 5, () => m.Mem[L - FakeLua.Base + 8] = 8);
       Broken("m_luaEnv class", () => m.W64(env, kLm), () => m.W64(env, kEnv));

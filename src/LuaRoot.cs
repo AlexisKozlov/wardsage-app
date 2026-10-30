@@ -82,13 +82,16 @@ namespace RealmForge {
       if (BitConverter.ToInt32(gb, 8) != T_TABLE) return r.Fail("l_registry", "tt " + BitConverter.ToInt32(gb, 8));
       ulong reg = BitConverter.ToUInt64(gb, 0); r.Registry = reg;
       var rh = Read(reg, 56); if (rh == null || rh[8] != 5) return r.Fail("registry", "not a table " + HexA(reg));
-      uint sa = BitConverter.ToUInt32(rh, 12); if (sa < 2 || sa > 64) return r.Fail("registry", "array " + sa);
-      var ra = Read(BitConverter.ToUInt64(rh, 16), 32); if (ra == null) return r.Fail("registry", "array unreadable");
-      if (BitConverter.ToInt32(ra, 8) != T_THREAD || BitConverter.ToUInt64(ra, 0) != L) return r.Fail("registry[1]", "not the main thread");
-      if (BitConverter.ToInt32(ra, 24) != T_TABLE) return r.Fail("registry[2]", "tt " + BitConverter.ToInt32(ra, 24));
+      // the array part is big (luaL_ref fills it: 16384 live); only [1] (main thread) and [2] (_G) are read
+      uint sa = BitConverter.ToUInt32(rh, 12); ulong ap = BitConverter.ToUInt64(rh, 16);
+      if (sa < 2) return r.Fail("registry", "array " + sa + " at " + HexA(ap));
+      int na = sa >= 3 ? 3 : 2;
+      var ra = ap != 0 ? Read(ap, 16 * na) : null; if (ra == null) return r.Fail("registry", "array " + sa + " at " + HexA(ap) + " unreadable");
+      if (BitConverter.ToInt32(ra, 8) != T_THREAD || BitConverter.ToUInt64(ra, 0) != L) return r.Fail("registry[1]", "not the main thread; " + RegSlots(ra, na, sa, ap));
+      if (BitConverter.ToInt32(ra, 24) != T_TABLE) return r.Fail("registry[2]", "not a table; " + RegSlots(ra, na, sa, ap));
       ulong G = BitConverter.ToUInt64(ra, 16);
       ulong v; int tt;
-      if (!Field(G, "_G", out v, out tt) || tt != T_TABLE || v != G) return r.Fail("_G._G", tt == T_TABLE ? HexA(v) : "tt " + tt);
+      if (!Field(G, "_G", out v, out tt) || tt != T_TABLE || v != G) return r.Fail("_G._G", (tt == T_TABLE ? HexA(v) : "tt " + tt) + " vs _G " + HexA(G) + "; " + RegSlots(ra, na, sa, ap));
       r.G = G; r.GNodes = UsedNodes(G);
       r.Ui = UpvalueTable(G, "GetUIInstanceLua", "UIInstance", r); if (r.Ui == 0) return r;
       FormsOf(r.Ui, r);
@@ -96,6 +99,13 @@ namespace RealmForge {
       r.ManagerCount = TableValues(r.Managers).Count;
       foreach (var n in RootManagers) if (Field(r.Managers, n, out v, out tt) && tt == T_TABLE && v != 0) r.Mgr[n] = v;
       return r;
+    }
+
+    /// <summary>The registry's first array slots for the log: "array N at A: [0] tt=.. v=.., [1] ..".</summary>
+    static string RegSlots(byte[] ra, int na, uint sa, ulong ap) {
+      var p = new List<string>();
+      for (int i = 0; i < na; i++) p.Add("[" + i + "] tt=0x" + BitConverter.ToInt32(ra, i * 16 + 8).ToString("X") + " v=" + HexA(BitConverter.ToUInt64(ra, i * 16)));
+      return "array " + sa + " at " + HexA(ap) + ": " + string.Join(", ", p.ToArray());
     }
 
     /// <summary>The table upvalue of the Lua function _G[<paramref name="fn"/>]: the one named <paramref name="name"/> when the
