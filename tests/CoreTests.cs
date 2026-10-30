@@ -3854,6 +3854,8 @@ static partial class CoreTests {
     v = V(new LocateStep { Kind = LocateKind.AscendPick, Pos = 8 }, R(0));
     Eq(LocateTodo.AscendCell, LocateAuto.Decide(v, out why), "foundry auto: the item in the Ascension list -> its cell");
     p = new LocatePilot(); m = p.Step(v);
+    Check(m.Action == null || m.Action.Kind == AutoKind.None, "foundry auto: ... in view: the list read once more first (two equal reads before the cell click)");
+    v.NowMs += LocatePilot.CellReadMs; m = p.Step(v);
     Check(m.Action.Kind == AutoKind.Click && Math.Abs(m.Action.X - 350) <= 1 && Math.Abs(m.Action.Y - (387.5 + 81.25)) <= 1, "foundry auto: ... in view: one click on the cell's centre");
     v = V(new LocateStep { Kind = LocateKind.AscendPick, Pos = 41 }, R(0)); p = new LocatePilot(); m = p.Step(v);
     Check(m.Action.Kind == AutoKind.Drag && m.Action.DY < 0 && m.Action.Y > 200 && m.Action.Y + m.Action.DY < 700 && m.Action.Y + m.Action.DY > 200, "foundry auto: ... far below: a drag up inside the list (later rows come in)");

@@ -1113,6 +1113,9 @@ namespace RealmForge {
         DrawTip(o.X + cx - s / 2, o.Y + cy - s / 2, s, s, pl.ToArray(), H);
         return;
       }
+      // the next slot with the item's tip / compare still open: it covers the slots - no frame on a slot under it (the pilot closes it first:
+      // EquipTipEscape; live 1.6.66.354 the frame sat on the compare card's ATK row and the pilot clicked there)
+      if (hintKind == "slot" && ClickGate.OnlyTip(screens.Current)) { HideTip(); return; }
       if (hintKind == "replace") confirmBtn = ConfirmButton(o, W, H);
       int[] r = hintKind == "filter" ? hg.Filter(W, H) : hintKind == "replace" ? confirmBtn ?? hg.Replace(W, H) : hintKind == "slot" ? hg.Slot(hintSlot, W, H) : null;
       // the hero is open on another tab: its «Снаряжение» tab (right edge)
@@ -1731,6 +1734,13 @@ namespace RealmForge {
         int fx = o.X + (int)Math.Round(fa.X), fy = o.Y + (int)Math.Round(fa.Y);
         if (fx < o.X || fy < o.Y || fx >= o.X + cr.R || fy >= o.Y + cr.B) return;
         EquipSend(ClickTarget.EquipFilter, fa, fx, fy, o, v.Foreground);
+        return;
+      }
+      // the next slot with the item's tip / compare still open over the slots (live 1.6.66.354: the pilot clicked the compare card where the
+      // slot is behind it): ONE Escape closes it (the tip is the equip helper's flow form, closed only here, when it is in the way)
+      if (v.Slot != null && v.TipKnown && v.TipShown && ClickGate.OnlyTip(screens.Current) && v.Foreground && !v.UserBusy && now >= slotCloseAfter) {
+        slotCloseAfter = now + 900; pilot.Reset();
+        if (TipEscapeSend(cr, v.Foreground)) Log.Write("auto: the item's tip is open over the slots - closing it (Escape)");
         return;
       }
       // the next slot: an open filter pop-up covers the hero's slots - close it first (the filter was for the item that is
@@ -2730,8 +2740,22 @@ namespace RealmForge {
       return true;
     }
 
+    /// <summary>EquipTipEscape: the item's tip over the slots of the next step, closed with one Escape (the gate: only the tip shown, at most 2 a run).</summary>
+    bool TipEscapeSend(W32.RECT cr, bool front) {
+      long now = NowMs();
+      var fresh = FreshScreen(false, true);
+      if (FormsUnread(fresh)) return false;
+      var req = new ClickRequest { Owner = ClickOwner.Equip, Target = ClickTarget.EquipTipEscape, AutoOn = AutoEnabled, Front = front, U = Ui.Unit(cr.R, cr.B) };
+      var res = gate.Check(req, fresh, now);
+      AnnounceHalts();
+      if (!res.Allowed) return false;
+      gate.Arm(ClickOwner.Equip, ClickTarget.EquipTipEscape, ClickGate.Expect(req, fresh), now);
+      SendEscapeKey(ClickOwner.Equip);
+      return true;
+    }
+
     /// <summary>VK_ESCAPE down and up, off the UI thread, only while the game's window is in front (else no key, the owner stops: "covered").</summary>
-    void SendEscapeKey(ClickOwner owner) {   // ONLY called by EscapeSend
+    void SendEscapeKey(ClickOwner owner) {   // ONLY called by EscapeSend and TipEscapeSend
       sending = true;
       IntPtr game = GameWindow();
       var t = new System.Threading.Thread(() => {
@@ -2929,6 +2953,7 @@ namespace RealmForge {
       // the step is the inventory's but the Foundry / the gem screen (or the workshop, outside the artifact guide) is on top: back with its arrow first
       bool needBack = LocateAuto.NeedsCityBack(view) || (scr != null && scr.Kind == ScreenKind.ArtWorkshop && req.Purpose != "artPromote" && dstep.Kind != LocateKind.None);
       if (gameFront && !busy && BackStep(ClickOwner.Locate, scr, needBack, o, cr, gameFront, now)) { step.Auto = "work"; step.AutoWhy = ""; locateDriving = true; return; }
+      if (gate.CellAgainDue.Remove(ClickOwner.Locate)) lpilot.CellAgain();   // (ClickGate.Observe: a cell click without effect, placed again once)
       var mv = lpilot.Step(view);
       if (lpilot.Trace != "") { Log.Write("locate auto: " + lpilot.Trace); lpilot.Trace = ""; }
       locateMoveState = mv.State; locateMoveWhy = mv.Why;

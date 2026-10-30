@@ -57,6 +57,7 @@ namespace RealmForge {
     EquipNav,         // equip helper: the city's «Герои», a hero's card, the gear tab, the back arrow, a slot, a gear list item, a list drag
     EquipFilter,      // equip helper: the controls of the game's gear / hero filter pop-up
     EquipClosePopup,  // equip helper: the red × of a pop-up left over the list
+    EquipTipEscape,   // equip helper: ONE Escape key press that closes the item's tip / compare (its own flow form) when the next step is a slot it covers (live 1.6.66.354)
     EquipConfirm,     // equip helper: «Заменить» (only with the player's auto confirm)
     OfferClose,       // every owner: the × of the game's offer / notice pop-up on top of the city (src/OfferForms.cs; never its buy / go / claim buttons)
     UnknownBack,      // every owner: the game's back arrow top left (HeroBack's spot) on a full-screen screen nobody knows, no pop-up on it (at most MaxUnknownBacks a run)
@@ -330,6 +331,13 @@ namespace RealmForge {
     readonly Dictionary<ClickOwner, int> cityBacks = new Dictionary<ClickOwner, int>();       // CityBack presses in this run
     readonly Dictionary<ClickOwner, int> escapes = new Dictionary<ClickOwner, int>();         // EscapeBack presses in this run
     readonly HashSet<ClickOwner> escapeDue = new HashSet<ClickOwner>();                       // a back press changed nothing: one Escape next
+    readonly Dictionary<ClickOwner, int> tipEscapes = new Dictionary<ClickOwner, int>();      // EquipTipEscape presses in this run
+    /// <summary>The item tip / compare forms the equip helper closes with EquipTipEscape before a slot step (its own flow forms: ScreenMap.FlowForms).</summary>
+    public static readonly string[] TipForms = { "Form_CharactorEquipTip", "Form_EquipedCompared" };
+    public const int MaxTipEscapes = 2;
+    readonly HashSet<ClickOwner> cellRetried = new HashSet<ClickOwner>();                     // an Ascension cell click changed nothing: placed again once
+    /// <summary>An Ascension cell click changed nothing and is placed again (the owner's pilot reads the list again: CellAgain); once a run.</summary>
+    public readonly HashSet<ClickOwner> CellAgainDue = new HashSet<ClickOwner>();
     readonly Dictionary<ClickOwner, long> cityTried = new Dictionary<ClickOwner, long>();     // the last CityBackDue / EscapeDue yes
     readonly Dictionary<ClickOwner, int> mapMoves = new Dictionary<ClickOwner, int>();        // MapClose clicks and map Escapes in this run
     readonly Dictionary<ClickOwner, long> mapTried = new Dictionary<ClickOwner, long>();      // the last MapDue yes
@@ -355,7 +363,7 @@ namespace RealmForge {
       halted.Remove(o); watches.Remove(o); unknownSince.Remove(o); noted.Remove(o); clickedAt.Remove(o); offerRun.Remove(o); haltDetail.Remove(o); foundryWait.Remove(o); ownUnreadWait.Remove(o);
       stall.Remove(o); stallBrief.Remove(o); searchWaited.Remove(o);
       unknownBacks.Remove(o); backTried.Remove(o); lastTarget.Remove(o);
-      cityBacks.Remove(o); escapes.Remove(o); escapeDue.Remove(o); cityTried.Remove(o);
+      cityBacks.Remove(o); escapes.Remove(o); escapeDue.Remove(o); cityTried.Remove(o); cellRetried.Remove(o); CellAgainDue.Remove(o); tipEscapes.Remove(o);
       mapMoves.Remove(o); mapTried.Remove(o);
     }
 
@@ -605,6 +613,7 @@ namespace RealmForge {
       if (t == ClickTarget.UnknownBack) unknownBacks[o] = UnknownBacks(o) + 1;
       if (t == ClickTarget.CityBack) cityBacks[o] = CityBacks(o) + 1;
       if (t == ClickTarget.EscapeBack) { escapes[o] = Escapes(o) + 1; escapeDue.Remove(o); }
+      if (t == ClickTarget.EquipTipEscape) { int n; tipEscapes.TryGetValue(o, out n); tipEscapes[o] = n + 1; }
       if (t == ClickTarget.MapClose) mapMoves[o] = MapMoves(o) + 1;
       if (done == null) { watches.Remove(o); return; }
       int ms = t == ClickTarget.CityInventory || t == ClickTarget.FoundryButton || t == ClickTarget.ArtWorkshop || t == ClickTarget.ArtReplace || t == ClickTarget.ArtTakeOverConfirm ? SlowEffectMs : t == ClickTarget.InvCardGem || t == ClickTarget.GemFuncRow || t == ClickTarget.ArtMatCell ? GemEffectMs : t == ClickTarget.ArtBulkCell ? ArtTickMs : EffectMs;
@@ -620,6 +629,7 @@ namespace RealmForge {
           return s => s.Kind != ScreenKind.HeroScreen || (part >= 0 && s.HeroSlot < 0);
         }
         case ClickTarget.CityInventory: return s => s.Kind == ScreenKind.Inventory;
+        case ClickTarget.EquipTipEscape: return s => !s.Held && (s.Kind != ScreenKind.HeroScreen || !OnlyTip(s));
         // back to the city / the Escape: the screen is another one (another kind, a hero screen's gear list closed, a pop-up or another unknown form on top)
         case ClickTarget.CityBack: case ClickTarget.EscapeBack: {
           ScreenKind k = before != null ? before.Kind : ScreenKind.Unknown; int slot = before != null ? before.HeroSlot : -1;
@@ -680,6 +690,11 @@ namespace RealmForge {
           if ((w.Target == ClickTarget.CityBack || w.Target == ClickTarget.UnknownBack) && Escapes(o) < MaxEscapes && s.Kind != ScreenKind.City && !ExitDialogShown(s)) {
             watches.Remove(o); escapeDue.Add(o);
             Note(o, "escape-due:" + w.ArmedAt, w.What + " changed nothing within the time (screen " + s.Brief + ") - one Escape next");
+          }
+          // an Ascension cell placed from a list still moving (a slow PC): the list is read again and the cell placed again, once a run
+          else if (w.Target == ClickTarget.AscendCell && s.Kind == ScreenKind.Foundry && cellRetried.Add(o)) {
+            watches.Remove(o); CellAgainDue.Add(o);
+            Note(o, "cell-again:" + w.ArmedAt, w.What + " changed nothing within the time (screen " + s.Brief + ") - the list is read again, the cell placed again once");
           }
           else Halt(o, "nochange", w.What + " changed nothing within the time (screen " + s.Brief + ")");
         }
@@ -758,6 +773,7 @@ namespace RealmForge {
       if (r.Target == ClickTarget.UnknownBack) return CheckUnknownBack(r, f, tag);
       if (r.Target == ClickTarget.CityBack) return CheckCityBack(r, f, tag);
       if (r.Target == ClickTarget.EscapeBack) return CheckEscape(r, f, tag, now);
+      if (r.Target == ClickTarget.EquipTipEscape) return CheckTipEscape(r, f);
       if (r.Target == ClickTarget.MapClose) return CheckMapClose(r, f, now, tag);
       // any other click waits while an offer pop-up is on top (it would land on the pop-up)
       if (f != null && f.OfferCount > 0) return GateResult.Wait("offer", tag + ": " + f.ModalWhy + " is open");
@@ -985,6 +1001,28 @@ namespace RealmForge {
       if (n >= MaxEscapes) return Halt(o, "nochange", tag + ": Escape was pressed " + n + " times already, the game shows " + f.Brief);
       var res = GateResult.Allow(tag + " on " + f.Brief + " (Escape " + (n + 1) + " of " + MaxEscapes + ")");
       Note(o, "allow:" + r.Target + ":" + f.Brief + ":" + n, "allow " + res.Detail);
+      return res;
+    }
+
+    /// <summary>The shown flow forms (and the pop-up read, if any) are only the item's tip / compare.</summary>
+    public static bool OnlyTip(ScreenState s) {
+      if (s == null || string.IsNullOrEmpty(s.Flow)) return false;
+      foreach (var n in s.Flow.Split(',')) if (n != "" && Array.IndexOf(TipForms, n) < 0) return false;
+      return !s.ModalOpen || Array.IndexOf(TipForms, s.ModalWhy ?? "") >= 0;
+    }
+
+    /// <summary>EquipTipEscape: the next step needs the hero's slots and the item's tip (a flow form of the equip helper) lies over them. The
+    /// FlowForms rule keeps Escape off a flow form only while it is the step's target: here it is in the way. Only the equip helper, only on its
+    /// hero screen read fresh, nothing but the tip / compare shown over it (no pop-up, offer, exit dialog), at most MaxTipEscapes a run.</summary>
+    GateResult CheckTipEscape(ClickRequest r, ScreenState f) {
+      var o = r.Owner; string tag = "EquipTipEscape (key)";
+      if (o != ClickOwner.Equip) return Halt(o, "target", tag + " is not a target " + o + " may press");
+      if (f == null || f.Held || f.Kind != ScreenKind.HeroScreen) return GateResult.Wait("screen", tag + ": needs the hero screen read fresh (" + (f != null ? f.Brief : "no screen") + ")");
+      if (f.OfferCount > 0 || ExitDialogShown(f) || f.ShownKnown == null || !OnlyTip(f)) return GateResult.Wait("screen", tag + ": not only the item's tip is shown (" + f.Brief + ", flow " + f.Flow + ")");
+      int n; tipEscapes.TryGetValue(o, out n);
+      if (n >= MaxTipEscapes) return Halt(o, "nochange", tag + ": Escape was pressed " + n + " times for the item's tip, it is still shown over the slots");
+      var res = GateResult.Allow(tag + " on " + f.Brief + " (" + (n + 1) + " of " + MaxTipEscapes + ")");
+      Note(o, "allow:tipesc:" + n, "allow " + res.Detail);
       return res;
     }
 
