@@ -594,4 +594,340 @@ namespace RealmForge {
       return r;
     }
   }
+  // ---- item cells of the game's lists, read live (src/UiButtons.cs: the same chain as the buttons)
+  // The lists are UI.InfinityGrid / UI.InfinityGridV2 components: pooled cells under the ScrollRect's content, the grid's m_crtItems
+  // (Dictionary<int, ItemInstance>: the list index a cell is bound to -> {TemplateIndex 0x0, ItemGo 0x8 [V2: Index 0x10]}) holds the
+  // cells it has made for the rows in view. The Lua bind of each list maps the index to the item (idx 0-based):
+  //   Form_BackpackIntegration.m_Content_InfinityGrid      m_CachedContentPanels[-9998].m_FilterAndSortEquipUidList[idx + 1] (cell child c_Item)
+  //   Form_EquipSubliming.m_PanelEquipSubliming / m_PanelEquipRecast .m_EquipList_InfinityGrid   .m_Equips[idx + 1] (cell child c_EquipItem)
+  //   Form_CharactorMain.m_Panels.EquipFilter.m_EquipList_InfinityGrid (V2)   .m_EquipListRealData[idx + 1].Item[col] (cell child c_Equip<col>)
+  // The item's picture inside: c_Frame (the quality frame round the icon), else c_Icon, else the cell child, else the cell.
+  // InfinityGrid (dump 1.6.46.841.1): m_crtFirstInstanceIndex 0xD0, m_crtLastInstanceIndex 0xD4, m_crtItems 0xD8, viewport 0xC8;
+  // InfinityGridV2: 0xF8, 0xFC, 0x100, viewport 0xF0. .NET Dictionary: entries 0x18, count 0x20; Entry {hashCode, next, key 0x8, value 0x10}.
+  public enum UiCellKind { None, Inventory, Ascend, Recast, HeroGear }
+
+  /// <summary>One item cell the grid has made now: the item, its list index (0-based) and row column (HeroGear, 1-based), its picture's rect (client px).</summary>
+  public sealed class UiCell {
+    public long Uid; public int Index, Col; public double X, Y, W, H; public string Icon = ""; public bool Active;
+    /// <summary>How much of the picture lies inside the list's viewport (0..1).</summary>
+    public double InView;
+  }
+
+  /// <summary>The cells of a list read at once (the wanted items only), the viewport, or the step the read stopped at.</summary>
+  public sealed class UiCellSet {
+    public UiCellKind Kind; public string Form = "", FailStep, FailValue, Scale = "";
+    public readonly List<UiCell> Cells = new List<UiCell>();
+    public double VX, VY, VW, VH;   // the viewport (client px)
+    public bool Visible, Rotated;   // the form shown; a rotation on the way
+    public int Copies, Created, First = -1, Last = -1; public double ForW, ForH; public int At; public long Ms;
+    public readonly System.Text.StringBuilder Trace = new System.Text.StringBuilder();
+    public bool Ok { get { return FailStep == null; } }
+    internal UiCellSet Fail(string step, string value) { FailStep = step; FailValue = value; return this; }
+    public UiCell Of(long uid) { foreach (var c in Cells) if (c.Uid == uid) return c; return null; }
+  }
+
+  /// <summary>What a live cell read says about an item: not known (the layout's estimate stands), shown (its frame), hidden (no cell in view, or covered).</summary>
+  public enum UiCellSee { Unknown, Shown, Hidden }
+
+  public static partial class RFX {
+    sealed class CellSpec { public string Form, Owner, Grid, Uids, Child; public bool V2, Rows; }
+    static CellSpec SpecOf(UiCellKind k) {
+      switch (k) {
+        case UiCellKind.Inventory: return new CellSpec { Form = "Form_BackpackIntegration", Owner = "", Grid = "m_Content_InfinityGrid", Uids = "m_CachedContentPanels.[-9998].m_FilterAndSortEquipUidList", Child = "c_Item" };
+        case UiCellKind.Ascend: return new CellSpec { Form = "Form_EquipSubliming", Owner = "m_PanelEquipSubliming", Grid = "m_EquipList_InfinityGrid", Uids = "m_PanelEquipSubliming.m_Equips", Child = "c_EquipItem" };
+        case UiCellKind.Recast: return new CellSpec { Form = "Form_EquipSubliming", Owner = "m_PanelEquipRecast", Grid = "m_EquipList_InfinityGrid", Uids = "m_PanelEquipRecast.m_Equips", Child = "c_EquipItem" };
+        case UiCellKind.HeroGear: return new CellSpec { Form = "Form_CharactorMain", Owner = "m_Panels.EquipFilter", Grid = "m_EquipList_InfinityGrid", Uids = "m_Panels.EquipFilter.m_EquipListRealData", Child = "c_Equip", V2 = true, Rows = true };
+      }
+      return null;
+    }
+    /// <summary>The list a cell click target picks in (None = not an item pick).</summary>
+    public static UiCellKind UiCellKindOf(ClickTarget t) {
+      switch (t) {
+        case ClickTarget.InvListCell: case ClickTarget.InvBulkCell: return UiCellKind.Inventory;
+        case ClickTarget.AscendCell: return UiCellKind.Ascend;
+        case ClickTarget.EquipNav: return UiCellKind.HeroGear;
+      }
+      return UiCellKind.None;
+    }
+
+    /// <summary>A Lua path "a.[-9998].b" from table <paramref name="t"/> (a [n] link is an integer key): the last value and type.</summary>
+    static bool LuaPathX(ulong t, string path, out ulong v, out int tt) {
+      v = t; tt = T_TABLE;
+      if (string.IsNullOrEmpty(path)) return true;
+      var parts = path.Split('.');
+      for (int i = 0; i < parts.Length; i++) {
+        if (tt != T_TABLE) return false;
+        string p = parts[i]; long n;
+        bool ok = p.StartsWith("[", StringComparison.Ordinal) && long.TryParse(p.Trim('[', ']'), NumberStyles.Integer, CultureInfo.InvariantCulture, out n) ? IntKey(v, n, out v, out tt) : Field(v, p, out v, out tt);
+        if (!ok || tt == T_NIL) return false;
+      }
+      return true;
+    }
+
+    /// <summary>The item a cell of list index <paramref name="idx"/> (0-based) shows: flat lists by the index, rows of HeroGear by row and column.</summary>
+    static long CellUidOf(ulong list, int idx, int col, bool rows) {
+      ulong v; int tt;
+      if (!IntKey(list, idx + 1, out v, out tt)) return 0;
+      if (!rows) return tt == T_INT ? (long)v : 0;
+      if (tt != T_TABLE) return 0;
+      ulong items; int itt;
+      if (!Field(v, "Item", out items, out itt) || itt != T_TABLE) return 0;
+      return IntKey(items, col, out v, out tt) && tt == T_INT ? (long)v : 0;
+    }
+
+    /// <summary>A child transform of <paramref name="t"/> named <paramref name="name"/> (breadth first, depth up to <paramref name="depth"/>, at most 80 looked at), with the path to it.</summary>
+    static ulong ChildNamed(ulong t, string name, int depth, List<ulong> path) {
+      var q = new List<KeyValuePair<ulong, int>> { new KeyValuePair<ulong, int>(t, 0) }; var from = new Dictionary<ulong, ulong>();
+      for (int i = 0; i < q.Count && q.Count < 80; i++) {
+        ulong at = q[i].Key; int d = q[i].Value; if (d >= depth) continue;
+        var cb = Read(at + TrChildren, 0x18); if (cb == null) continue;
+        ulong arr = BitConverter.ToUInt64(cb, 0); long cnt = BitConverter.ToInt64(cb, 0x10);
+        if (arr == 0 || cnt <= 0 || cnt > 48) continue;
+        for (int j = 0; j < cnt; j++) {
+          ulong c = Ptr(arr + (ulong)(8 * j)); if (c == 0 || Ptr(c + TrParent) != at || from.ContainsKey(c)) continue;
+          from[c] = at;
+          ulong go = Ptr(c + CompGo);
+          if (go != 0 && CStr(Ptr(go + GoName)) == name) {
+            var back = new List<ulong>(); for (ulong x = c; x != t; x = from[x]) back.Add(x);
+            back.Reverse(); path.AddRange(back); return c;
+          }
+          q.Add(new KeyValuePair<ulong, int>(c, d + 1));
+        }
+      }
+      return 0;
+    }
+
+    /// <summary>Is the GameObject of transform <paramref name="t"/> active in the hierarchy (the cached flag; not computed yet: its own flag)?</summary>
+    static bool TrActive(ulong t) {
+      ulong go = Ptr(t + CompGo); var ab = go != 0 ? Read(go + GoActiveSelf, 2) : null;
+      if (ab == null) return false;
+      return ab[1] == 0 || ab[1] == 1 ? ab[1] == 1 : ab[0] == 1;
+    }
+
+    /// <summary>The rect (client px) of transform <paramref name="t"/> under the form's root <paramref name="rtr"/> (chain up to it, the canvas above prefixed).</summary>
+    static bool RectUnder(ulong t, ulong rtr, List<ulong> above, bool canvas, double W, double H, double U, UiButtonInfo bi, bool main, out double x, out double y, out double w, out double h) {
+      x = y = w = h = 0;
+      var chain = new List<ulong>();
+      for (ulong a = t; a != rtr; a = Ptr(a + TrParent)) { if (a == 0 || chain.Count >= 64) { bi.Fail("parents", a == 0 ? "not under the form's root" : "too deep"); return false; } chain.Add(a); }
+      chain.Add(rtr); chain.Reverse();
+      if (canvas) chain.InsertRange(0, above);
+      return ChainRect(chain, canvas, W, H, U, bi, main, out x, out y, out w, out h);
+    }
+
+    /// <summary>The cells of list <paramref name="k"/> showing the items of <paramref name="want"/> (null = every cell made), read now.</summary>
+    public static UiCellSet UiCellRead(ulong env, ulong ui, UiCellKind k, ICollection<long> want, double W, double H, double U) {
+      var sw = Stopwatch.StartNew();
+      var r = new UiCellSet { Kind = k, ForW = W, ForH = H, At = Environment.TickCount };
+      try { UiCellReadInto(env, ui, k, want, W, H, U, r); }
+      catch (Exception e) { r.Fail("exception", e.Message); }
+      finally { r.Ms = sw.ElapsedMilliseconds; }
+      return r;
+    }
+
+    static void UiCellReadInto(ulong env, ulong ui, UiCellKind k, ICollection<long> want, double W, double H, double U, UiCellSet r) {
+      var sp = SpecOf(k); if (sp == null) { r.Fail("list", k.ToString()); return; }
+      r.Form = sp.Form;
+      if (env == 0 || ui == 0) { r.Fail("lua root", "not reached"); return; }
+      if (W < 50 || H < 50) { r.Fail("window", "no client size"); return; }
+      var bi = new UiButtonInfo();
+      bool shown; int copies; ulong f = FormOf(env, ui, sp.Form, bi, out shown, out copies);
+      if (f == 0) { r.Fail("form", "not in UIInstance"); return; }
+      r.Copies = copies; r.Visible = shown;
+      ulong owner, list, gud; int ott, ltt, gtt;
+      if (!LuaPathX(f, sp.Owner, out owner, out ott) || ott != T_TABLE) { r.Fail("owner", sp.Owner); return; }
+      if (!LuaPathX(f, sp.Uids, out list, out ltt) || ltt != T_TABLE) { r.Fail("uids", sp.Uids); return; }
+      if (!Field(owner, sp.Grid, out gud, out gtt) || gtt != T_UDATA) { r.Fail("grid", sp.Grid + " tt " + gtt); return; }
+      string gcls; ulong grid = ManagedOf(env, gud, "grid", bi, out gcls);
+      if (grid == 0) { r.Fail(bi.FailStep, bi.FailValue); r.Trace.Append(bi.Trace); return; }
+      if (gcls.IndexOf("InfinityGrid", StringComparison.Ordinal) < 0) { r.Fail("grid", "class " + gcls); return; }
+      int oFirst = sp.V2 ? 0xF8 : 0xD0;
+      if (!sp.V2 && Layout.Current != null) { int o = Layout.Current.FieldOffset("InfinityGrid.m_crtFirstInstanceIndex"); if (o > 0) oFirst = o; }
+      var fl = Read(grid + (ulong)oFirst, 8); if (fl != null) { r.First = I32(fl, 0); r.Last = I32(fl, 4); }
+      ulong dict = Ptr(grid + (ulong)(oFirst + 8)), vpm = Ptr(grid + (ulong)(oFirst - 8));   // (m_crtItems after the indices, the viewport before them)
+      // the form's root and the canvas above it (the scale)
+      ulong csv; int ctt; string rcls;
+      if (!Field(f, "m_csui", out csv, out ctt) || ctt != T_UDATA) { r.Fail("m_csui", "tt " + ctt); return; }
+      ulong rnat = FormRootOf(env, csv, bi, out rcls); if (rnat == 0) { r.Fail(bi.FailStep, bi.FailValue); r.Trace.Append(bi.Trace); return; }
+      ulong rgo, rtr; if (!GoAndTransform(rnat, rcls, "root", bi, out rgo, out rtr)) { r.Fail(bi.FailStep, bi.FailValue); r.Trace.Append(bi.Trace); return; }
+      var above = new List<ulong>(); bool canvas = CanvasAbove(rtr, W, H, bi, above);
+      if (!canvas && U <= 0) { r.Fail("window", "no canvas and no unit"); return; }
+      r.Scale = canvas ? "canvas" : "unit";
+      // the viewport
+      if (vpm == 0 || ClassName(Ptr(vpm)) != "UnityEngine.RectTransform") { r.Fail("viewport", HexA(vpm)); return; }
+      ulong vnat = Ptr(vpm + CachedPtr); if (vnat == 0) { r.Fail("viewport", "destroyed"); return; }
+      double x, y, w, h;
+      if (!RectUnder(vnat, rtr, above, canvas, W, H, U, bi, true, out x, out y, out w, out h)) { r.Fail("viewport " + bi.FailStep, bi.FailValue); return; }
+      r.VX = x; r.VY = y; r.VW = w; r.VH = h; r.Rotated = bi.Rotated;
+      // the cells made now
+      var db = dict != 0 ? Read(dict + 0x18, 12) : null; if (db == null) { r.Fail("m_crtItems", HexA(dict)); return; }
+      ulong ents = BitConverter.ToUInt64(db, 0); int cnt = I32(db, 8);
+      if (cnt < 0 || cnt > 512 || (cnt > 0 && ents == 0)) { r.Fail("m_crtItems", "count " + cnt); return; }
+      int stride = sp.V2 ? 0x28 : 0x20;
+      var eb = cnt > 0 ? Read(ents + ArrData, cnt * stride) : new byte[0]; if (eb == null) { r.Fail("m_crtItems", "entries unreadable"); return; }
+      for (int i = 0; i < cnt; i++) {
+        int o = i * stride; if (I32(eb, o) < 0) continue;   // a free entry
+        int idx = I32(eb, o + 8); ulong mgo = BitConverter.ToUInt64(eb, o + 0x18);
+        if (idx < 0 || mgo == 0) continue;
+        r.Created++;
+        if (r.First >= 0 && r.Last >= r.First && (idx < r.First || idx > r.Last)) { r.Fail("m_crtItems", "index " + idx + " outside " + r.First + ".." + r.Last); return; }
+        ulong gnat = Ptr(mgo + CachedPtr); if (gnat == 0) continue;
+        ulong cgo, ctr; if (!GoAndTransform(gnat, "UnityEngine.GameObject", "cell", new UiButtonInfo(), out cgo, out ctr)) continue;
+        for (int col = sp.Rows ? 1 : 0; col <= (sp.Rows ? 6 : 0); col++) {
+          long uid = CellUidOf(list, idx, col, sp.Rows);
+          if (uid <= 0) { if (sp.Rows) break; continue; }
+          if (want != null && !want.Contains(uid)) continue;
+          var path = new List<ulong>();
+          ulong item = ChildNamed(ctr, sp.Rows ? sp.Child + col : sp.Child, 2, path);
+          if (item == 0 && sp.Rows) continue;
+          ulong at = item != 0 ? item : ctr, pic = ChildNamed(at, "c_Frame", 4, new List<ulong>());
+          string icon = "c_Frame";
+          if (pic == 0) { pic = ChildNamed(at, "c_Icon", 4, new List<ulong>()); icon = "c_Icon"; }
+          if (pic == 0) { pic = at; icon = item != 0 ? (sp.Rows ? sp.Child + col : sp.Child) : "cell"; }
+          var cb = new UiButtonInfo();
+          if (!RectUnder(pic, rtr, above, canvas, W, H, U, cb, true, out x, out y, out w, out h)) continue;
+          if (cb.Rotated) r.Rotated = true;
+          var c = new UiCell { Uid = uid, Index = idx, Col = col, X = x, Y = y, W = w, H = h, Icon = icon, Active = TrActive(ctr) && TrActive(pic) };
+          c.InView = InViewOf(c.X, c.Y, c.W, c.H, r.VX, r.VY, r.VW, r.VH);
+          r.Cells.Add(c);
+        }
+      }
+      if (r.Trace.Length < 600) r.Trace.Append("cells ").Append(r.Created).Append(" (").Append(r.First).Append("..").Append(r.Last).Append(") kept ").Append(r.Cells.Count);
+    }
+
+    /// <summary>The part (0..1) of the rect x, y, w, h inside the viewport vx, vy, vw, vh.</summary>
+    public static double InViewOf(double x, double y, double w, double h, double vx, double vy, double vw, double vh) {
+      if (w <= 0 || h <= 0) return 0;
+      double ix = Math.Max(0, Math.Min(x + w, vx + vw) - Math.Max(x, vx)), iy = Math.Max(0, Math.Min(y + h, vy + vh) - Math.Max(y, vy));
+      return ix * iy / (w * h);
+    }
+
+    /// <summary>What the read <paramref name="s"/> says of item <paramref name="uid"/> at <paramref name="now"/>: Shown with its frame (the picture
+    /// 2 px out, rounded, clipped to the viewport: x, y, w, h, radius), Hidden (no cell of it made, or not half in view, or switched off), or Unknown (no
+    /// fresh good read for this window: the layout's estimate). The form on top is the caller's (<see cref="UiCellTopIs"/>).</summary>
+    public static UiCellSee UiCellState(UiCellSet s, long uid, double W, double H, int now, out double[] frame, out string why) {
+      frame = null; why = null;
+      if (s == null) { why = "no read"; return UiCellSee.Unknown; }
+      if (!s.Ok) { why = "failed at " + s.FailStep; return UiCellSee.Unknown; }
+      int age = unchecked(now - s.At);
+      if (age < 0 || age > UiFreshMs) { why = "old (" + age + " ms)"; return UiCellSee.Unknown; }
+      if (Math.Abs(s.ForW - W) > 0.5 || Math.Abs(s.ForH - H) > 0.5) { why = "another window size"; return UiCellSee.Unknown; }
+      if (!s.Visible) { why = "form not shown"; return UiCellSee.Unknown; }
+      if (s.Rotated) { why = "rotated"; return UiCellSee.Unknown; }
+      if (s.Copies != 1) { why = s.Copies + " shown copies of the form"; return UiCellSee.Unknown; }
+      if (s.VW < 4 || s.VH < 4) { why = "no viewport"; return UiCellSee.Unknown; }
+      var c = s.Of(uid);
+      if (c == null) { why = "no cell made for it (out of view)"; return UiCellSee.Hidden; }
+      if (!c.Active) { why = "cell switched off"; return UiCellSee.Hidden; }
+      if (c.InView < 0.5) { why = "out of the viewport (" + Math.Round(c.InView * 100) + "% in)"; return UiCellSee.Hidden; }
+      if (c.W > W * 0.5 || c.H > H * 0.5 || c.W < 4 || c.H < 4) { why = "size " + N0(c.W) + "x" + N0(c.H); return UiCellSee.Unknown; }
+      var fr = UiIcon.Frame(c.X, c.Y, c.W, c.H, W, H);
+      double l = Math.Max(fr[0], s.VX - UiIcon.FramePad), t = Math.Max(fr[1], s.VY - UiIcon.FramePad), rr = Math.Min(fr[0] + fr[2], s.VX + s.VW + UiIcon.FramePad), b = Math.Min(fr[1] + fr[3], s.VY + s.VH + UiIcon.FramePad);
+      frame = new[] { l, t, rr - l, b - t, fr[4] };
+      return UiCellSee.Shown;
+    }
+
+    /// <summary>The click point of item <paramref name="uid"/> from the read: its picture's centre when Shown, nearly wholly in view (95%) and inside the client; else false and why.</summary>
+    public static bool UiCellPoint(UiCellSet s, long uid, double W, double H, int now, out double x, out double y, out string why) {
+      x = y = 0; double[] fr;
+      var st = UiCellState(s, uid, W, H, now, out fr, out why);
+      if (st != UiCellSee.Shown) { if (why == null) why = st.ToString(); return false; }
+      var c = s.Of(uid);
+      if (c.InView < 0.95) { why = "partly out of the viewport (" + Math.Round(c.InView * 100) + "% in)"; return false; }
+      double cx = c.X + c.W / 2, cy = c.Y + c.H / 2;
+      if (cx < 1 || cy < 1 || cx > W - 1 || cy > H - 1) { why = "centre outside the client"; return false; }
+      x = cx; y = cy; return true;
+    }
+
+    /// <summary>Is the list's form on top of the game now (no pop-up, no modal over it)? Covered = no live frame, no live click.</summary>
+    public static bool UiCellTopIs(UiCellKind k, ScreenState s) {
+      var sp = SpecOf(k);
+      if (sp == null || s == null || s.Held || s.OfferCount > 0 || s.ModalOpen) return false;
+      if (k == UiCellKind.HeroGear) return s.Kind == ScreenKind.HeroScreen;   // (the item's tip is the equip helper's own flow form over it)
+      return s.Top == sp.Form;
+    }
+
+    /// <summary>The log line: "uibtn cell: Inventory 123 live=[x,y,w,h] calc=[x,y,w,h] diff=Npx ..." (calc: the layout's rect or point; null = none).</summary>
+    public static string UiCellLine(UiCellSet s, long uid, double[] calc) {
+      string who = "uibtn cell: " + (s != null ? s.Kind.ToString() : "?") + " " + uid;
+      if (s == null) return who + " no read";
+      if (!s.Ok) return who + " failed at " + s.FailStep + " (" + s.FailValue + ") in " + s.Ms + " ms";
+      var c = s.Of(uid);
+      string cs = calc == null ? "none" : calc.Length >= 4 ? N0(calc[0]) + "," + N0(calc[1]) + "," + N0(calc[2]) + "," + N0(calc[3]) : calc.Length >= 2 ? N0(calc[0]) + "," + N0(calc[1]) : "none";
+      if (c == null) return who + " live=none (cells " + s.Created + ", " + s.First + ".." + s.Last + ") calc=[" + cs + "] visible=" + (s.Visible ? "T" : "F") + " in " + s.Ms + " ms";
+      string d = "";
+      if (calc != null && calc.Length >= 2) {
+        double lx = c.X + c.W / 2, ly = c.Y + c.H / 2, kx = calc.Length >= 4 ? calc[0] + calc[2] / 2 : calc[0], ky = calc.Length >= 4 ? calc[1] + calc[3] / 2 : calc[1];
+        d = " diff=" + N0(Math.Sqrt((lx - kx) * (lx - kx) + (ly - ky) * (ly - ky))) + "px";
+      }
+      return who + " live=[" + N0(c.X) + "," + N0(c.Y) + "," + N0(c.W) + "," + N0(c.H) + "] calc=[" + cs + "]" + d + " icon=" + c.Icon + " idx=" + c.Index + (c.Col > 0 ? " col=" + c.Col : "")
+        + " inview=" + Math.Round(c.InView * 100) + "%" + (c.Active ? "" : " inactive") + " visible=" + (s.Visible ? "T" : "F") + (s.Copies != 1 ? " copies=" + s.Copies : "") + " scale=" + s.Scale + " in " + s.Ms + " ms";
+    }
+
+    // ---- the shadow log: the first minute of each pilot run, a line when the item or its place changed (at most one a second)
+    sealed class ShadowAt { public int Start, Last; public string Sig = ""; }
+    static readonly Dictionary<string, ShadowAt> cellShadow = new Dictionary<string, ShadowAt>();
+    public const int UiCellShadowMs = 60000;
+    /// <summary>The shadow line due for pilot run <paramref name="run"/> (a key new per run), or null (past its first minute, nothing changed, or within a second).</summary>
+    public static string UiCellShadowLine(string run, UiCellSet s, long uid, double[] calc, int now) {
+      if (string.IsNullOrEmpty(run) || s == null) return null;
+      ShadowAt a;
+      lock (cellShadow) {
+        if (!cellShadow.TryGetValue(run, out a)) { if (cellShadow.Count > 64) cellShadow.Clear(); a = new ShadowAt { Start = now, Last = unchecked(now - 100000) }; cellShadow[run] = a; }
+        if (unchecked(now - a.Start) > UiCellShadowMs || unchecked(now - a.Last) < 1000) return null;
+        var c = s.Ok ? s.Of(uid) : null;
+        string sig = uid + "|" + (c == null ? (s.Ok ? "none" : s.FailStep) : N0(c.X / 4) + "," + N0(c.Y / 4)) + "|" + (calc != null && calc.Length >= 2 ? N0(calc[0] / 4) + "," + N0(calc[1] / 4) : "");
+        if (sig == a.Sig) return null;
+        a.Sig = sig; a.Last = now;
+      }
+      return UiCellLine(s, uid, calc) + " [shadow]";
+    }
+
+    // ---- the kept reads (one per list) and the background reads while a cell is framed or a pick is near (one at a time, every tick)
+    sealed class KeptCells { public UiCellSet S; public HashSet<long> Want; }
+    static readonly Dictionary<UiCellKind, KeptCells> cellLive = new Dictionary<UiCellKind, KeptCells>();
+    static int ucBusy;
+
+    /// <summary>One read now of list <paramref name="k"/> for the items <paramref name="want"/>, kept for the frames and clicks. Null = no game.</summary>
+    public static UiCellSet UiCellReadNow(UiCellKind k, ICollection<long> want, double W, double H, double U) {
+      if (SpecOf(k) == null || UiNoGame()) return null;
+      var sw = Stopwatch.StartNew();
+      ulong env, ui; string why; UiCellSet r;
+      if (!UiRoots(out env, out ui, out why)) { r = new UiCellSet { Kind = k, ForW = W, ForH = H }; r.Fail("lua root", why); }
+      else r = UiCellRead(env, ui, k, want, W, H, U);
+      r.Ms = sw.ElapsedMilliseconds; r.At = Environment.TickCount;
+      UiCellKeep(k, r, want);
+      return r;
+    }
+
+    public static void UiCellKeep(UiCellKind k, UiCellSet r, ICollection<long> want) {
+      if (r == null) return;
+      lock (cellLive) cellLive[k] = new KeptCells { S = r, Want = want != null ? new HashSet<long>(want) : null };
+    }
+
+    /// <summary>The kept read of list <paramref name="k"/> if it covers item <paramref name="uid"/>, is for this window size and at most <paramref name="maxMs"/> old; else null.</summary>
+    public static UiCellSet UiCellFresh(UiCellKind k, long uid, double W, double H, int now, int maxMs) {
+      KeptCells kc; lock (cellLive) { if (!cellLive.TryGetValue(k, out kc)) return null; }
+      var s = kc.S; if (kc.Want != null && !kc.Want.Contains(uid)) return null;
+      if (Math.Abs(s.ForW - W) > 0.5 || Math.Abs(s.ForH - H) > 0.5) return null;
+      int age = unchecked(now - s.At);
+      return age >= 0 && age <= maxMs ? s : null;
+    }
+
+    /// <summary>A cell of list <paramref name="k"/> is framed or picked soon: it is read again in the background (every tick while it is, one read at a time).</summary>
+    public static void UiCellWant(UiCellKind k, ICollection<long> want, double W, double H, double U) {
+      if (SpecOf(k) == null) return;
+      if (Interlocked.CompareExchange(ref ucBusy, 1, 0) != 0) return;
+      var w = want != null ? new List<long>(want) : null;
+      try {
+        Task.Factory.StartNew(() => {
+          try { UiCellReadNow(k, w, W, H, U); }
+          catch (Exception e) { LL("uibtn cell: failed at exception (" + e.Message + ")"); }
+          finally { Interlocked.Exchange(ref ucBusy, 0); }
+        }, CancellationToken.None, TaskCreationOptions.None, TaskScheduler.Default);
+      } catch (Exception) { Interlocked.Exchange(ref ucBusy, 0); }
+    }
+
+    /// <summary>For the tests: the kept reads and the shadow minute start over.</summary>
+    public static void UiCellReset() { lock (cellLive) cellLive.Clear(); lock (cellShadow) cellShadow.Clear(); }
+  }
 }

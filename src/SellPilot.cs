@@ -260,7 +260,7 @@ namespace RealmForge {
         lastPopup = popup; popup = Enhanceable(v, next);
         Say("click " + next + " r" + p[0] + "c" + p[1] + " y" + (int)cy + (exact ? " exact" : phased ? " phased" : " est"));
         lastAct = 1;
-        return new AutoAction { Kind = AutoKind.Click, X = cx, Y = cy };
+        return new AutoAction { Kind = AutoKind.Click, X = cx, Y = cy, Cell = next };
       }
       if (drags >= MaxDrags) return Fail();
       // the drag starts inside the view. Up (the list's later rows) its end may leave the list towards the top edge (the game keeps following
@@ -372,12 +372,15 @@ namespace RealmForge {
 
     bool Enhanceable(SellView v, long uid) { int lv; return v.Levels == null || !v.Levels.TryGetValue(uid, out lv) || lv < MaxLevel; }
 
+    /// <summary>The host clicked the cell where the game has put it (its live rect), not at the pilot's point: the hit is judged from there.</summary>
+    public void LivePoint(double x, double y) { if (lastAct == 1) { clickX = x; clickY = y; } else if (lastAct == 3) { undoX = x; undoY = y; clickY = y; } }
+
     AutoAction Undo(SellView v) {
       if (!v.Screen.Selected.Contains(undo)) { undo = 0; return AutoAction.Nothing; }
       if (++undoTries > 3) { undo = 0; return Fail(); }
       meant = undo; curBefore = v.Screen.Current; selBefore = new HashSet<long>(v.Screen.Selected); clickY = undoY; checkClick = false; lastPopup = popup; popup = Enhanceable(v, undo);
       clickAt = v.NowMs; waitUntil = v.NowMs + Late(AfterClickMs); lastAct = 3;
-      return new AutoAction { Kind = AutoKind.Click, X = undoX, Y = undoY };
+      return new AutoAction { Kind = AutoKind.Click, X = undoX, Y = undoY, Cell = undo };
     }
 
     // the wanted item to select next: one sweep through the list - the top one in view, else the next one below the view,

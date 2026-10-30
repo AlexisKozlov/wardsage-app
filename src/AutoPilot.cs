@@ -20,6 +20,7 @@ namespace RealmForge {
     public AutoKind Kind;
     public double X, Y;       // client px: where the cursor goes (Drag: where the button goes down)
     public double DY;         // Drag: pointer move in client px; < 0 = up (the content follows: later rows come into view)
+    public long Cell;         // Click: the item whose list cell it picks (0 = none): the host clicks the cell's live rect when it is fresh
     public static readonly AutoAction Nothing = new AutoAction();
   }
 
@@ -300,7 +301,8 @@ namespace RealmForge {
         else if (clicks >= ClickTries) return Fail("item " + v.Target + " not selected after " + clicks + " clicks (sel " + v.Sel + ")");
         clicks++; waitUntil = v.NowMs + AfterClickMs;
         itemPending = true; clickX = cx; clickY = cy;
-        return ListClick(cx, cy);
+        var ic = ListClick(cx, cy); if (ic.Kind == AutoKind.Click) ic.Cell = v.Target;
+        return ic;
       }
       if (drags >= DragTries) return Fail("the item is not reached after " + drags + " drags");
       double dist = cy - mid;                                          // > 0: the item is below: drag the list up
@@ -328,6 +330,9 @@ namespace RealmForge {
     }
 
     /// <summary>A click on the list (an item or the re-anchoring one): never the same point more than SamePointMax times in a row.</summary>
+    /// <summary>The host clicked the item's cell where the game has put it (its live rect), not at the pilot's point: what follows is learned from there.</summary>
+    public void LivePoint(double x, double y) { if (!itemPending) return; clickX = x; clickY = y; lastPtX = x; lastPtY = y; }
+
     AutoAction ListClick(double x, double y) {
       if (Math.Abs(x - lastPtX) < 2 && Math.Abs(y - lastPtY) < 2) { if (++samePt > SamePointMax) { itemPending = calibPending = false; return Fail("the same point " + (int)x + "," + (int)y + " would be clicked a " + samePt + "rd time in a row"); } }
       else samePt = 1;

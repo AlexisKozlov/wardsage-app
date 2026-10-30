@@ -579,7 +579,7 @@ namespace RealmForge {
       sellLevels = levels;
       sellWanted = uids != null && uids.Count > 0 ? new System.Collections.Generic.HashSet<long>(uids) : null;
       sellParts = parts != null && parts.Count > 0 ? new System.Collections.Generic.HashSet<int>(parts) : null;
-      sellHero = hero; sellSaid = ""; spilot.Reset(); hpilot.Reset(); ResumeClicks(ClickOwner.Sell); sellBtnAt = 0; sellScanOnce = true;
+      sellHero = hero; sellSaid = ""; cellRunN++; spilot.Reset(); hpilot.Reset(); ResumeClicks(ClickOwner.Sell); sellBtnAt = 0; sellScanOnce = true;
       Run();
     }
 
@@ -943,7 +943,13 @@ namespace RealmForge {
       double contentH = g.RowOffset(types, types.Length) * H + 2 * ListGeometry.TopPad * H, dotY, b0, b1;
       HintLayout.Strip(g.ViewTop * H, g.ViewBottom * H, contentH, ScrollAnchor.TopRow1(g, H) - anchor.Row1Top, (ListGeometry.TopPad + g.RowOffset(types, row)) * H + cell / 2, out dotY, out b0, out b1);
       var strip = new[] { o.X + g.StripRight * H + 0.012 * H, o.Y + g.ViewTop * H, o.Y + g.ViewBottom * H, o.Y + dotY, o.Y + b0, o.Y + b1 };
-      if (mid < g.ViewTop * H) Draw("up", o.X + (int)left, o.Y + sy, (int)cell, 0, (int)Math.Ceiling((g.ViewTop * H - top) / pitch), strip);
+      // where the game has put the item's cell (live, fresh): the frame hugs its picture; no cell of it in view or the list covered: no box
+      W32.RECT gcr; IntPtr gwin = GameWindow(); double[] lcf = null; var see = UiCellSee.Unknown;
+      if (target > 0 && gwin != IntPtr.Zero && W32.GetClientRect(gwin, out gcr) && gcr.B > 0)
+        see = LiveCell(UiCellKind.HeroGear, target, null, gcr.R, H, Ui.Unit(gcr.R, H), new[] { left, top, cell, full }, "equip:" + target, out lcf);
+      if (see == UiCellSee.Shown) Draw("box", o.X + (int)Math.Round(lcf[0]), o.Y + (int)Math.Round(lcf[1]), (int)Math.Round(lcf[2]), (int)Math.Round(lcf[3]), 0);
+      else if (see == UiCellSee.Hidden && mid >= g.ViewTop * H && mid <= g.ViewBottom * H) { if (glow.Visible) glow.Hide(); drawnKey = null; return; }
+      else if (mid < g.ViewTop * H) Draw("up", o.X + (int)left, o.Y + sy, (int)cell, 0, (int)Math.Ceiling((g.ViewTop * H - top) / pitch), strip);
       else if (mid > g.ViewBottom * H) Draw("down", o.X + (int)left, o.Y + sy + sh, (int)cell, 0, (int)Math.Ceiling((top + full - g.ViewBottom * H) / pitch), strip);
       else Draw("box", o.X + (int)left, o.Y + (int)top, (int)cell, (int)full, 0);
       dX -= o.X; dY -= o.Y;   // (Draw keeps screen px)
@@ -1803,6 +1809,7 @@ namespace RealmForge {
       // «Заменить» (the player's auto confirm) is its own target; everything else of the item pilot is the gear list
       bool onConfirm = confirmBtn != null && a.X >= confirmBtn[0] && a.X <= confirmBtn[0] + confirmBtn[2] && a.Y >= confirmBtn[1] && a.Y <= confirmBtn[1] + confirmBtn[3];
       if (!EquipSend(confirm && onConfirm ? ClickTarget.EquipConfirm : ClickTarget.EquipNav, a, x, y, o, v.Foreground)) pilot.NotSent();
+      else if (cellLivePt != null) pilot.LivePoint(cellLivePt[0], cellLivePt[1]);   // (clicked on the cell's live rect: the pilot learns from there)
     }
 
     // Storage cleanup, in the inventory: the city's «Инвентарь» → «Снаряжение» → «Массовая продажа», then the sell
@@ -1863,7 +1870,7 @@ namespace RealmForge {
             rq.CellOk = ok;
             rq.NoScroll = fr.Inv == null || fr.Inv.List == null || !fr.Inv.List.Has;
           });
-          if (sent) spilot.Sent(); else spilot.NotSent();   // a refused click / drag is taken back: no miss, no drag the list ignored
+          if (sent) { if (cellLivePt != null) spilot.LivePoint(cellLivePt[0], cellLivePt[1]); spilot.Sent(); } else spilot.NotSent();   // a refused click / drag is taken back: no miss, no drag the list ignored
         }
         return;
       }
@@ -1971,7 +1978,14 @@ namespace RealmForge {
       int gx = (int)shGeo.X(shGeo.X0, W, U), gw = (int)(shGeo.PitchX * (shCols - 1) * U + shGeo.CellW * U);
       if (!shHold && (step.Kind == SellHintKind.Select || step.Kind == SellHintKind.AllSelected)) {
         var marks = new List<int[]>();
-        foreach (var fr in step.Frames) marks.Add(new[] { o.X + fr.X, o.Y + fr.Y, fr.W, fr.H, fr.Style == "todo" ? 0 : fr.Style == "done" ? 1 : 2 });
+        var wantU = new List<long>(); foreach (var fr in step.Frames) if (fr.Uid > 0) wantU.Add(fr.Uid);
+        foreach (var fr in step.Frames) {   // each cell where the game has put it (live, fresh): its picture framed; out of the viewport or covered: none
+          double[] lcf; var see = LiveCell(UiCellKind.Inventory, fr.Uid, wantU, W, H, U, new double[] { fr.X, fr.Y, fr.W, fr.H }, "sellhint:" + cellRunN, out lcf);
+          if (see == UiCellSee.Hidden) continue;
+          int sty = fr.Style == "todo" ? 0 : fr.Style == "done" ? 1 : 2;
+          if (see == UiCellSee.Shown) marks.Add(new[] { o.X + (int)Math.Round(lcf[0]), o.Y + (int)Math.Round(lcf[1]), (int)Math.Round(lcf[2]), (int)Math.Round(lcf[3]), sty });
+          else marks.Add(new[] { o.X + fr.X, o.Y + fr.Y, fr.W, fr.H, sty });
+        }
         marks.Sort((p, q) => p[4].CompareTo(q[4]));   // a stray (red) item is painted last, on top
         // list items out of view: a pill with an arrow at the list's edge (as the equip helper's «Вещь здесь ↓»)
         Plate pill = null; int[] pt = null;
@@ -2136,6 +2150,15 @@ namespace RealmForge {
           lf.ClickX = lb != null ? lb.X + lb.W / 2 : lv[0] + lv[2] / 2; lf.ClickY = lb != null ? lb.Y + lb.H / 2 : lv[1] + lv[3] / 2;
         }
       }
+      if (lf != null && lf.Target == "cell" && (step.Kind == LocateKind.AscendPick || step.Kind == LocateKind.RecastPick)) {   // the list cell: where the game has put it (live, fresh)
+        double[] lcf; var m0 = lf.Mark;
+        var see = LiveCell(step.Kind == LocateKind.AscendPick ? UiCellKind.Ascend : UiCellKind.Recast, uid, null, W, H, U, new double[] { m0.X, m0.Y, m0.W, m0.H }, "locate:" + req.Id, out lcf);
+        if (see == UiCellSee.Shown) {
+          lf.Raw = new GeoRect { X = lcf[0], Y = lcf[1], W = lcf[2], H = lcf[3] };
+          lf.Mark = new LocateMark { Kind = "box", X = (int)Math.Round(lcf[0]), Y = (int)Math.Round(lcf[1]), W = (int)Math.Round(lcf[2]), H = (int)Math.Round(lcf[3]) };
+          lf.ClickX = lcf[0] + lcf[2] / 2; lf.ClickY = lcf[1] + lcf[3] / 2;
+        } else if (see == UiCellSee.Hidden && m0.Kind == "box") lf = null;   // out of the viewport or covered: no frame on the layout's guess
+      }
       if (lf != null && step.Kind == LocateKind.Selected) {   // the card button's rect, once per change (to measure against a frame diagnostics capture)
         string csig = lf.Target + "|" + lf.Mark.X + "," + lf.Mark.Y + "," + lf.Mark.W + "," + lf.Mark.H;
         if (csig != locateCardSaid) { locateCardSaid = csig; Log.Write("locate card frame: " + lf.Target + " rect=" + lf.Mark.X + "," + lf.Mark.Y + " " + lf.Mark.W + "x" + lf.Mark.H + " window=" + (int)W + "x" + (int)H + " U=" + (int)U + " worn=" + step.Worn); }
@@ -2178,6 +2201,9 @@ namespace RealmForge {
           if (recB != null) recB.PlaceRow1 = lgrid.Row1;
           double[] mkr;
           var mk = LocateFrames.ListScene(Geo.Current, lgrid, locateGeo, inv.Uids.Count, locateCols, step.Row, step.Col, W, H, U, out mkr);
+          // where the game has put the item's cell (live, fresh): the frame hugs its picture; no cell of it in view or the list covered: no box
+          double[] lcf; var see = LiveCell(UiCellKind.Inventory, uid, null, W, H, U, new double[] { mk.X, mk.Y, mk.W, mk.H }, "locate:" + req.Id, out lcf);
+          if (see == UiCellSee.Shown) mk = new LocateMark { Kind = "box", X = (int)Math.Round(lcf[0]), Y = (int)Math.Round(lcf[1]), W = (int)Math.Round(lcf[2]), H = (int)Math.Round(lcf[3]) };
           frame++;
           // the item is off the screen: its place on the list's scroll bar too (the pill beside it says which way and how far)
           double[] strip = null;
@@ -2186,7 +2212,8 @@ namespace RealmForge {
             if (msig != locateMarkerSaid) { locateMarkerSaid = msig; Log.Write("locate marker: " + msig + " row=" + step.Row + " of " + ((inv.Uids.Count + locateCols - 1) / locateCols) + " row1=" + (int)lgrid.Row1 + " bar=" + (Geo.Current != null && Geo.Current.Rect("inventory.scrollbar", W, H, U) != null ? "geometry" : "no geometry")); }
             if (mkr != null) strip = new[] { o.X + mkr[0], o.Y + mkr[1], o.Y + mkr[2], o.Y + mkr[3], o.Y + mkr[4], o.Y + mkr[5], 1 };
           }
-          Draw(mk.Kind, o.X + mk.X, o.Y + mk.Y, mk.W, mk.H, mk.Rows, strip);
+          if (see == UiCellSee.Hidden && mk.Kind == "box") { if (glow.Visible) glow.Hide(); drawnKey = null; }
+          else Draw(mk.Kind, o.X + mk.X, o.Y + mk.Y, mk.W, mk.H, mk.Rows, strip);
         } else { if (glow.Visible) glow.Hide(); drawnKey = null; }
       } else if (!front) { if (glow.Visible) glow.Hide(); drawnKey = null; }
       else if (lf != null && lf.Mark.Kind != "box") { frame++; Draw(lf.Mark.Kind, o.X + lf.Mark.X, o.Y + lf.Mark.Y, lf.Mark.W, lf.Mark.H, lf.Mark.Rows); }   // the list cell is off the screen: the pill at the list's edge
@@ -2941,7 +2968,8 @@ namespace RealmForge {
       if (hwnd != IntPtr.Zero && W32.GetClientRect(hwnd, out cr)) {   // (the client size: the live read needs it - live 2026-10-30 "uibtn ... failed at window (no size)")
         req.W = cr.R; req.H = cr.B; req.U = Ui.Unit(cr.R, cr.B);
         if (a.Kind == AutoKind.Click) LiveClick(req, fresh, o, ref sx, ref sy);
-      }
+        if (a.Kind == AutoKind.Click && a.Cell > 0 && t == ClickTarget.EquipNav) LiveCellClick(req, fresh, a.Cell, o, ref sx, ref sy); else cellLivePt = null;
+      } else cellLivePt = null;
       return GatedSend(req, fresh, a, sx, sy);
     }
     RecastScreen locateRs; int locateOnAccount = -1; bool locateDriving;
@@ -3277,6 +3305,7 @@ namespace RealmForge {
       if (req.U <= 0) { req.W = cr.R; req.H = cr.B; req.U = Ui.Unit(cr.R, cr.B); }
       req.Shown = unknownForms;   // (every unknown form shown, a screen's own ones too: ClickGate)
       if (a.Kind == AutoKind.Click) LiveClick(req, fresh, o, ref x, ref y);
+      if (a.Kind == AutoKind.Click && a.Cell > 0) LiveCellClick(req, fresh, a.Cell, o, ref x, ref y); else cellLivePt = null;
       return GatedSend(req, fresh, a, x, y);
     }
 
@@ -3333,6 +3362,7 @@ namespace RealmForge {
           fill = (rq, fr) => { rq.CellUid = ClickGate.AscendCellUid(Geo.Current, fr.Rs, rq.X, rq.Y, W, H, U); rq.CellOk = new[] { req.Item.Uid }; };
           break;
       }
+      if (!drag && (mv.Todo == LocateTodo.PickItem || mv.Todo == LocateTodo.AscendCell) && req.Item != null) mv.Action.Cell = req.Item.Uid;   // (its live cell is clicked when fresh)
       if (SendInside(mv.Action, o, cr, ClickOwner.Locate, tg, front, fill)) lpilot.Sent(); else lpilot.NotSent();   // ClickTarget.None is on nobody's whitelist: stopped
     }
 
@@ -3660,6 +3690,42 @@ namespace RealmForge {
       if (icon && r.IW > 0) return UiIcon.Frame(r.IX, r.IY, r.IW, r.IH, W, H);
       return new[] { r.X, r.Y, r.W, r.H };
     }
+
+    /// <summary>An item cell's frame where the game has put it: the live read of the list's cells (src/UiButtons.cs UiCellRead; asked again every
+    /// tick while framed) - Shown: <paramref name="fr"/> = the item's picture 2 px out (x, y, w, h, radius, client px); Hidden: no cell of it in the
+    /// viewport, or the list covered by another form; Unknown: no fresh read (the layout's frame). <paramref name="calc"/> (the layout's rect) and
+    /// <paramref name="run"/> (the pilot run) for the shadow log of the run's first minute.</summary>
+    UiCellSee LiveCell(UiCellKind k, long uid, ICollection<long> want, double W, double H, double U, double[] calc, string run, out double[] fr) {
+      fr = null;
+      if (uid <= 0) return UiCellSee.Unknown;
+      RFX.UiCellWant(k, want ?? new[] { uid }, W, H, U);
+      int now = Environment.TickCount;
+      var s = RFX.UiCellFresh(k, uid, W, H, now, RFX.UiFreshMs);
+      if (s != null) { var sl = RFX.UiCellShadowLine(run, s, uid, calc, now); if (sl != null) Log.Write(sl); }
+      string why; var st = RFX.UiCellState(s, uid, W, H, now, out fr, out why);
+      if (st == UiCellSee.Unknown || RFX.UiCellTopIs(k, screens.Current)) return st;
+      fr = null; var sc = screens.Current;   // covered: hidden when another form is named on top (a pop-up, a modal); nothing named: the layout's
+      return sc != null && !sc.Held && (sc.OfferCount > 0 || sc.ModalOpen || !string.IsNullOrEmpty(sc.Top)) ? UiCellSee.Hidden : UiCellSee.Unknown;
+    }
+
+    /// <summary>The point of the last item pick clicked on its live cell (client px), null = the layout's (the pilot is told where it went).</summary>
+    double[] cellLivePt;
+    /// <summary>An item pick (<paramref name="uid"/>) clicks its cell's live rect when the read is fresh (at most 200 ms, else one read now), the cell
+    /// holds that item, is wholly in the viewport and the list's form is on top; the item under the click is then that one. Else the layout's point.</summary>
+    void LiveCellClick(ClickRequest req, ScreenState fresh, long uid, W32.POINT o, ref int sx, ref int sy) {
+      cellLivePt = null;
+      var k = RFX.UiCellKindOf(req.Target); if (k == UiCellKind.None || uid <= 0 || req.W <= 0 || req.H <= 0) return;
+      var s = RFX.UiCellFresh(k, uid, req.W, req.H, Environment.TickCount, RFX.UiFreshMs) ?? RFX.UiCellReadNow(k, new[] { uid }, req.W, req.H, req.U);
+      double lx = req.X, ly = req.Y, x, y; string why;
+      bool live = RFX.UiCellPoint(s, uid, req.W, req.H, Environment.TickCount, out x, out y, out why);
+      if (live && !RFX.UiCellTopIs(k, fresh)) { live = false; why = "the form on top is " + (fresh != null ? fresh.Top + " (" + fresh.Brief + ")" : "not read"); }
+      if (live) {
+        req.X = x; req.Y = y; req.Live = true; if (req.CellOk != null) req.CellUid = uid;
+        sx = o.X + (int)Math.Round(x); sy = o.Y + (int)Math.Round(y); cellLivePt = new[] { x, y };
+      }
+      if (s != null) Log.Write(RFX.UiCellLine(s, uid, new[] { lx, ly }) + (live ? " [click: live @" + (int)Math.Round(x) + "," + (int)Math.Round(y) + "]" : " [click: layout, " + why + "]"));
+    }
+    int cellRunN;
 
     string heroLogged;
     /// <summary>One journal line whenever the hero pilot's view or state changes.</summary>

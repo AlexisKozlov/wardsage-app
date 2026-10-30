@@ -868,6 +868,7 @@ static partial class CoreTests {
     KlassScanTests();
     LuaRootTests();
     UiButtonTests();
+    UiCellTests();
     TestLogTests(mock);
     ScreenRecorderTests();
     RecInputsTests();
@@ -1056,7 +1057,7 @@ static partial class CoreTests {
       ulong kEnv = FakeKlass(m, "XLua", "LuaEnv"), kTr = FakeKlass(m, "XLua", "ObjectTranslator"), tr = m.Alloc(0x1D0), pool = m.Alloc(0x20);
       Env = m.Alloc(0x70); List = m.Alloc(0x20 + 16 * 64);
       m.W64(Env, kEnv); m.W64(Env + 0x20, tr); m.W64(tr, kTr); m.W64(tr + 0xC8, pool); m.W64(pool + 0x10, List); m.W64(List + 0x18, 64);
-      hier = m.Alloc(0x30); trs = m.Alloc(48 * 32); m.W64(hier + 0x18, trs);
+      hier = m.Alloc(0x30); trs = m.Alloc(48 * 128); m.W64(hier + 0x18, trs);   // (room for 128 transforms: the list cells test makes ~60)
     }
     /// <summary>A GameObject with its RectTransform: anchors, anchored position, sizeDelta, pivot, local position and scale. Returns the transform.</summary>
     public ulong Rect(ulong parent, double[] amin, double[] amax, double[] sd, double[] pv, double[] pos, double scale, out ulong go) {
@@ -1112,6 +1113,126 @@ static partial class CoreTests {
     Check(f[1] + f[3] <= 668, "icon frame: above the label (bottom " + (f[1] + f[3]) + " <= 668)");
     var e = UiIcon.Frame(1, 700, 40, 19, 1280, 720);
     Check(e[0] == 0 && e[1] + e[3] == 720, "icon frame: kept inside the client");
+  }
+
+  /// <summary>A managed object (its class, <paramref name="size"/> bytes) put in the xLua pool, as a Lua userdata; <paramref name="obj"/> = the object.</summary>
+  static ulong FakeManaged(FakeUnity fu, string ns, string cls, int size, out ulong obj) {
+    var m = fu.M; obj = m.Alloc(size); m.W64(obj, FakeKlass(m, ns, cls));
+    int idx; ulong u = fu.Obj("X", "Y", 0, out idx);
+    m.W64(fu.List + 0x20 + (ulong)(16 * idx) + 8, obj);
+    return u;
+  }
+  /// <summary>A managed wrapper (class <paramref name="cls"/>, m_CachedPtr 0x10 = <paramref name="native"/>), its address.</summary>
+  static ulong FakeWrap(FakeLua m, string ns, string cls, ulong native) { ulong o = m.Alloc(0x20); m.W64(o, FakeKlass(m, ns, cls)); m.W64(o + 0x10, native); return o; }
+  /// <summary>A Dictionary&lt;int, ItemInstance&gt; of the grid: list index -> the cell's managed GameObject (stride 0x20; V2 0x28).</summary>
+  static ulong FakeCellDict(FakeLua m, int stride, int[] keys, ulong[] mgos) {
+    ulong d = m.Alloc(0x50), e = m.Alloc(0x20 + stride * keys.Length);
+    m.W64(d + 0x18, e); m.W32(d + 0x20, keys.Length); m.W64(e + 0x18, (ulong)keys.Length);
+    for (int i = 0; i < keys.Length; i++) { ulong at = e + 0x20 + (ulong)(stride * i); m.W32(at, keys[i] & 0x7FFFFFFF); m.W32(at + 8, keys[i]); m.W64(at + 0x18, mgos[i]); }
+    return d;
+  }
+
+  /// <summary>Item cells read live (src/UiButtons.cs UiCellRead): pooled cells of a scrolled InfinityGrid mapped to their items by the bound index,
+  /// the picture framed 2 px out, out of the viewport = hidden, the click point only wholly in view and fresh, the hero list's rows (V2) by column.</summary>
+  static void UiCellTests() {
+    Console.WriteLine("Item cells read live (src/UiButtons.cs UiCellRead):");
+    var m = new FakeLua(4 << 20); RFX.TestMemory = m; RFX.ForgetLive(); RFX.ForgetClasses(); RFX.UiCellReset();
+    try {
+      var fu = new FakeUnity(m); var st = new FakeState(m);
+      double W = 1280, H = 720, U = Ui.Unit(W, H), k = U / 640;
+      Func<double, double, bool> Near = (x, y) => Math.Abs(x - y) < 0.05;
+      var full = new[] { 0.0, 0 }; var one = new[] { 1.0, 1 }; var half = new[] { 0.5, 0.5 }; var tl = new[] { 0.0, 1 }; var tc = new[] { 0.5, 1 };
+      ulong g0, gv, gc;
+      ulong root = fu.Rect(0, full, one, full, half, full, 1, out g0);
+      ulong vp = fu.Rect(root, half, half, new[] { 550.0, 300 }, half, full, 1, out gv);
+      ulong content = fu.Rect(vp, tc, tc, new[] { 550.0, 1000 }, tc, new[] { 0.0, 150 }, 1, out gc);   // (local positions from the parent's pivot: its top at the viewport's)
+      // 15 pooled cells (3 rows of 5) for list indices 0..14, each with c_Item -> c_Frame
+      var cellT = new ulong[15]; var cellMgo = new ulong[15]; var keys = new int[15];
+      for (int i = 0; i < 15; i++) {
+        ulong go, gi, gf; int r = i / 5, cc = i % 5;
+        cellT[i] = fu.Rect(content, tl, tl, new[] { 100.0, 100 }, tl, new[] { cc * 110.0 - 275, -r * 110.0 }, 1, out go);
+        ulong it = fu.Rect(cellT[i], half, half, new[] { 90.0, 90 }, half, new[] { 50.0, -50 }, 1, out gi);
+        ulong fr = fu.Rect(it, half, half, new[] { 80.0, 80 }, half, full, 1, out gf);
+        fu.Name(gi, "c_Item"); fu.Name(gf, "c_Frame"); fu.Name(go, "Cell"); fu.Kids(cellT[i], it); fu.Kids(it, fr);
+        cellMgo[i] = FakeWrap(m, "UnityEngine", "GameObject", go); keys[i] = i;
+      }
+      ulong gridObj; ulong gud = FakeManaged(fu, "UI", "InfinityGrid", 0x140, out gridObj);
+      m.W64(gridObj + 0xC8, FakeWrap(m, "UnityEngine", "RectTransform", vp));
+      m.W32(gridObj + 0xD0, 0); m.W32(gridObj + 0xD4, 14);
+      m.W64(gridObj + 0xD8, FakeCellDict(m, 0x20, keys, cellMgo));
+      var uids = new List<object>(); for (int i = 0; i < 20; i++) { uids.Add((long)(i + 1)); uids.Add((long)(101 + i)); }
+      var panel = st.T("m_FilterAndSortEquipUidList", st.T(uids.ToArray()));
+      ulong csObj, csGo; ulong csui = fu.UiBase(g0, out csObj, out csGo);
+      var form = st.T("class", st.T("__cname", "Form_BackpackIntegration"), "m_LuaLogicActive", true, "m_csui", 0L, "m_Content_InfinityGrid", 0L, "m_CachedContentPanels", st.T(-9998L, panel));
+      SetField(st, form, "m_csui", csui, 0x47); SetField(st, form, "m_Content_InfinityGrid", gud, 0x47);
+      var ui = st.T(1L, form);
+      double vx = W / 2 - 275 * k, vy = H / 2 - 150 * k;
+      var s = RFX.UiCellRead(fu.Env, ui.A, UiCellKind.Inventory, new long[] { 102, 113 }, W, H, U);
+      var c = s.Ok ? s.Of(102) : null;
+      Check(s.Ok && s.Created == 15 && s.Cells.Count == 2 && Near(s.VX, vx) && Near(s.VY, vy) && Near(s.VW, 550 * k), "inventory: 15 cells made, the 2 wanted kept, the viewport read (" + (s.Ok ? "" : s.FailStep + " " + s.FailValue + " " + s.Trace) + ")");
+      Check(c != null && c.Icon == "c_Frame" && c.Index == 1 && Near(c.X, vx + 120 * k) && Near(c.Y, vy + 10 * k) && Near(c.W, 80 * k) && c.InView == 1, "  ... item 102 = index 1: its c_Frame's rect (" + (c != null ? c.X + "," + c.Y + " " + c.W : "none") + ")");
+      int now = s.At; double[] fr0; string why;
+      Check(RFX.UiCellState(s, 102, W, H, now, out fr0, out why) == UiCellSee.Shown && Near(fr0[0], c.X - 2) && Near(fr0[2], c.W + 4) && fr0[4] > 0, "  ... framed 2 px round its picture, rounded");
+      double px, py;
+      Check(RFX.UiCellPoint(s, 102, W, H, now, out px, out py, out why) && Near(px, c.X + c.W / 2) && Near(py, c.Y + c.H / 2), "  ... the click point is its picture's centre");
+      var c13 = s.Of(113);
+      Check(c13 != null && c13.InView > 0.5 && c13.InView < 0.95 && RFX.UiCellState(s, 113, W, H, now, out fr0, out why) == UiCellSee.Shown && !RFX.UiCellPoint(s, 113, W, H, now, out px, out py, out why) && fr0[1] + fr0[3] <= vy + 300 * k + 2.01,
+        "  ... row 3 partly in view: framed (clipped to the viewport), not clicked (" + why + ")");
+      Check(RFX.UiCellState(s, 102, W, H, now + 250, out fr0, out why) == UiCellSee.Unknown && !RFX.UiCellPoint(s, 102, W, H, now + 250, out px, out py, out why), "  ... a read 250 ms old: unknown (the layout's), no live click");
+      Check(RFX.UiCellState(s, 102, 1000, H, now, out fr0, out why) == UiCellSee.Unknown, "  ... another window size: unknown");
+      Check(RFX.UiCellState(s, 150, W, H, now, out fr0, out why) == UiCellSee.Hidden, "  ... an item with no cell made: hidden");
+      // scrolled down a row: index 1 out of the viewport, row 3 wholly in
+      WF(m, fu.Trs(content), 0, 260);
+      s = RFX.UiCellRead(fu.Env, ui.A, UiCellKind.Inventory, new long[] { 102, 113 }, W, H, U); now = s.At;
+      c13 = s.Of(113);
+      Check(RFX.UiCellState(s, 102, W, H, now, out fr0, out why) == UiCellSee.Hidden && c13 != null && Near(c13.Y, vy + 120 * k) && RFX.UiCellPoint(s, 113, W, H, now, out px, out py, out why),
+        "scroll: the frame follows the content (row 3 at " + (c13 != null ? c13.Y.ToString("0.#") : "?") + "), a row scrolled out is hidden: " + why);
+      // the pool binds the cell of index 0 again to index 15 (item 116) a row below: found by its bound index
+      WF(m, fu.Trs(cellT[0]), -275, -330);
+      keys[0] = 15; m.W64(gridObj + 0xD8, FakeCellDict(m, 0x20, keys, cellMgo)); m.W32(gridObj + 0xD0, 1); m.W32(gridObj + 0xD4, 15);
+      s = RFX.UiCellRead(fu.Env, ui.A, UiCellKind.Inventory, null, W, H, U); now = s.At;
+      var c16 = s.Of(116);
+      Check(s.Ok && s.Of(101) == null && c16 != null && c16.Index == 15 && Near(c16.Y, vy + (330 - 110 + 10) * k), "pool: a cell bound again shows its new item where it is now (" + (s.Ok ? "" : s.FailStep) + ")");
+      m.W32(gridObj + 0xD4, 10);
+      s = RFX.UiCellRead(fu.Env, ui.A, UiCellKind.Inventory, null, W, H, U);
+      Check(!s.Ok && s.FailStep == "m_crtItems", "a cell index outside the grid's first..last: the read is refused (" + s.FailValue + ")");
+      m.W32(gridObj + 0xD4, 15);
+      // the shadow line (the pilot's first minute) and the form on top
+      s = RFX.UiCellRead(fu.Env, ui.A, UiCellKind.Inventory, null, W, H, U); now = s.At;
+      string l1 = RFX.UiCellShadowLine("t:1", s, 116, new[] { c16.X + 10, c16.Y, c16.W, c16.H }, now), l2 = RFX.UiCellShadowLine("t:1", s, 116, new[] { c16.X + 10, c16.Y, c16.W, c16.H }, now + 1500),
+             l3 = RFX.UiCellShadowLine("t:1", s, 116, new[] { c16.X + 90, c16.Y, c16.W, c16.H }, now + 61000);
+      Check(l1 != null && l1.StartsWith("uibtn cell: Inventory 116 live=[") && l1.Contains(" calc=[") && l1.Contains(" diff=10px") && l2 == null && l3 == null, "shadow: one line with the diff, none when nothing changed, none after the first minute: " + l1);
+      Check(RFX.UiCellTopIs(UiCellKind.Inventory, new ScreenState { Kind = ScreenKind.Inventory, Top = "Form_BackpackIntegration" }) && !RFX.UiCellTopIs(UiCellKind.Inventory, new ScreenState { Kind = ScreenKind.Inventory, Top = "Form_BackpackIntegration", OfferCount = 1 })
+        && !RFX.UiCellTopIs(UiCellKind.Ascend, new ScreenState { Kind = ScreenKind.Inventory, Top = "Form_BackpackIntegration" }) && RFX.UiCellTopIs(UiCellKind.HeroGear, new ScreenState { Kind = ScreenKind.HeroScreen, Top = "Form_CharactorEquipTip" }),
+        "top: the list's form on top, no pop-up (the hero list under the equip tip still)");
+      SetField(st, form, "m_LuaLogicActive", 0, 1);
+      s = RFX.UiCellRead(fu.Env, ui.A, UiCellKind.Inventory, null, W, H, U);
+      Check(s.Ok && !s.Visible && RFX.UiCellState(s, 116, W, H, s.At, out fr0, out why) == UiCellSee.Unknown, "the form not shown: unknown (the layout's)");
+      // the hero's gear list (InfinityGridV2): a row cell, the items in c_Equip1..N, the uid by row and column
+      {
+        ulong h0, hv, hc, hg; ulong hroot = fu.Rect(0, full, one, full, half, full, 1, out h0);
+        ulong hvp = fu.Rect(hroot, half, half, new[] { 400.0, 400 }, half, full, 1, out hv);
+        ulong hcont = fu.Rect(hvp, tc, tc, new[] { 400.0, 800 }, tc, new[] { 0.0, 200 }, 1, out hc);
+        ulong row = fu.Rect(hcont, tl, tl, new[] { 400.0, 120 }, tl, new[] { -200.0, 0 }, 1, out hg);
+        var kids = new List<ulong>();
+        for (int i = 1; i <= 3; i++) { ulong ge, gf; ulong e = fu.Rect(row, tl, tl, new[] { 100.0, 100 }, tl, new[] { 10 + (i - 1) * 120.0, -10 }, 1, out ge); ulong f2 = fu.Rect(e, half, half, new[] { 90.0, 90 }, half, new[] { 50.0, -50 }, 1, out gf); fu.Name(ge, "c_Equip" + i); fu.Name(gf, "c_Frame"); fu.Kids(e, f2); kids.Add(e); }
+        fu.Kids(row, kids.ToArray());
+        ulong g2; ulong gud2 = FakeManaged(fu, "UI", "InfinityGridV2", 0x140, out g2);
+        m.W64(g2 + 0xF0, FakeWrap(m, "UnityEngine", "RectTransform", hvp)); m.W32(g2 + 0xF8, 0); m.W32(g2 + 0xFC, 1);
+        m.W64(g2 + 0x100, FakeCellDict(m, 0x28, new[] { 1 }, new[] { FakeWrap(m, "UnityEngine", "GameObject", hg) }));
+        var data = st.T(1L, st.T("Type", 2L), 2L, st.T("Type", 1L, "Item", st.T(1L, 201L, 2L, 202L, 3L, 203L)));
+        var ep = st.T("m_EquipListRealData", data, "m_EquipList_InfinityGrid", 0L);
+        SetField(st, ep, "m_EquipList_InfinityGrid", gud2, 0x47);
+        ulong o2, mg2; ulong cs2 = fu.UiBase(h0, out o2, out mg2);
+        var hero = st.T("class", st.T("__cname", "Form_CharactorMain"), "m_LuaLogicActive", true, "m_csui", 0L, "m_Panels", st.T("EquipFilter", ep));
+        SetField(st, hero, "m_csui", cs2, 0x47);
+        var ui2 = st.T(1L, hero);
+        var hs = RFX.UiCellRead(fu.Env, ui2.A, UiCellKind.HeroGear, new long[] { 202 }, W, H, U);
+        var hc2 = hs.Ok ? hs.Of(202) : null;
+        Check(hc2 != null && hc2.Col == 2 && hc2.Index == 1 && Near(hc2.X, W / 2 - 200 * k + (130 + 5) * k) && Near(hc2.W, 90 * k) && hs.Cells.Count == 1,
+          "hero gear (V2): row 2's second item from c_Equip2's c_Frame (" + (hs.Ok ? "" : hs.FailStep + " " + hs.FailValue) + ")");
+      }
+    } finally { RFX.TestMemory = null; RFX.ForgetLive(); RFX.UiCellReset(); }
   }
 
   static void UiButtonTests() {
