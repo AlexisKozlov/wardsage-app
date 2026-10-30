@@ -31,6 +31,69 @@ namespace RealmForge {
       return new[] { cx, Clamp(ty + th + Gap, Margin, H - h - Margin) };
     }
 
+    /// <summary>Like <see cref="Plate"/>, but the plate never covers its own <paramref name="target"/> nor any rect of
+    /// <paramref name="avoid"/> (the step's other click targets, {x, y, w, h}, same px; null = none): beside the target (right, left,
+    /// above, below; a wide button: above, below first), slid along that side past the rects it would cover, always inside the
+    /// W × H window. Null = no such place at this size (the caller shrinks the plate; <see cref="Place"/> takes the least bad).</summary>
+    public static int[] TryPlace(int[] target, int[][] avoid, int w, int h, int W, int H, out char side) {
+      foreach (var c in Candidates(target, avoid, w, h, W, H))
+        if (c[0] >= Margin && c[1] >= Margin && c[0] + w <= W - Margin && c[1] + h <= H - Margin && Cost(c[0], c[1], w, h, target, avoid) == 0) { side = (char)c[2]; return new[] { c[0], c[1] }; }
+      side = 'b';
+      return null;
+    }
+
+    /// <summary><see cref="TryPlace"/>, else the place inside the window that covers the least (the target counts ten times a neighbour).</summary>
+    public static int[] Place(int[] target, int[][] avoid, int w, int h, int W, int H, out char side) {
+      var p = TryPlace(target, avoid, w, h, W, H, out side);
+      if (p != null) return p;
+      long best = long.MaxValue; p = null; side = 'b';
+      foreach (var c in Candidates(target, avoid, w, h, W, H)) {
+        int x = Clamp(c[0], Margin, W - w - Margin), y = Clamp(c[1], Margin, H - h - Margin);
+        long k = Cost(x, y, w, h, target, avoid);
+        if (k < best) { best = k; p = new[] { x, y }; side = (char)c[2]; }
+      }
+      return p;
+    }
+
+    /// <summary>A plate with no target (top centre, <see cref="TopPlate"/>) moved off the step's click targets when it would cover one:
+    /// the top corners, then the bottom centre and corners; none free = the top centre.</summary>
+    public static int[] TopPlateFree(int w, int h, int W, int H, double U, int[][] avoid) {
+      var top = TopPlate(w, h, W, H, U);
+      if (avoid == null || avoid.Length == 0) return top;
+      int l = Margin, r = Math.Max(Margin, W - w - Margin), cx = top[0], t = top[1], b = Math.Max(Margin, H - h - Margin);
+      foreach (var c in new[] { new[] { cx, t }, new[] { l, t }, new[] { r, t }, new[] { cx, b }, new[] { l, b }, new[] { r, b } })
+        if (Cost(c[0], c[1], w, h, null, avoid) == 0) return c;
+      return top;
+    }
+
+    // the places tried, in order: {x, y, side}
+    static System.Collections.Generic.List<int[]> Candidates(int[] t, int[][] avoid, int w, int h, int W, int H) {
+      int tx = t[0], ty = t[1], tw = t[2], th = t[3];
+      var res = new System.Collections.Generic.List<int[]>();
+      var ys = new System.Collections.Generic.List<int> { Clamp(ty + th / 2 - h / 2, Margin, H - h - Margin), ty, ty + th - h, Margin, H - h - Margin };
+      var xs = new System.Collections.Generic.List<int> { Clamp(tx + tw / 2 - w / 2, Margin, W - w - Margin), tx, tx + tw - w, Margin, W - w - Margin };
+      if (avoid != null) foreach (var a in avoid) if (a != null) { ys.Add(a[1] - Gap - h); ys.Add(a[1] + a[3] + Gap); xs.Add(a[0] - Gap - w); xs.Add(a[0] + a[2] + Gap); }
+      string order = tw > th * 1.6 ? "tbrl" : "rltb";
+      foreach (char s in order) {
+        if (s == 'r' || s == 'l') { int x = s == 'r' ? tx + tw + Gap : tx - Gap - w; foreach (int y in ys) res.Add(new[] { x, y, s }); }
+        else { int y = s == 't' ? ty - Gap - h : ty + th + Gap; foreach (int x in xs) res.Add(new[] { x, y, s }); }
+      }
+      return res;
+    }
+
+    // how much a plate at (x, y) covers: the target (kept a gap away) ten times, the other targets once; 0 = free
+    static long Cost(int x, int y, int w, int h, int[] target, int[][] avoid) {
+      long k = 0;
+      if (target != null) k += 10 * Overlap(x, y, w, h, target[0] - Gap / 2, target[1] - Gap / 2, target[2] + Gap, target[3] + Gap);
+      if (avoid != null) foreach (var a in avoid) if (a != null) k += Overlap(x, y, w, h, a[0] - 4, a[1] - 4, a[2] + 8, a[3] + 8);
+      return k;
+    }
+
+    static long Overlap(int x, int y, int w, int h, int ax, int ay, int aw, int ah) {
+      long ox = Math.Min(x + w, ax + aw) - Math.Max(x, ax), oy = Math.Min(y + h, ay + ah) - Math.Max(y, ay);
+      return ox > 0 && oy > 0 ? ox * oy : 0;
+    }
+
     /// <summary>The pointer of a plate at {x, y} (w × h) on side <paramref name="side"/> of the target: three points
     /// {x0, y0, x1, y1, tipX, tipY}, the base on the plate's edge facing the target, the tip toward its middle.</summary>
     public static double[] Pointer(int[] plate, int w, int h, char side, int[] target, double size) {
@@ -66,5 +129,40 @@ namespace RealmForge {
     }
 
     static int Clamp(int v, int lo, int hi) { return hi < lo ? lo : Math.Max(lo, Math.Min(hi, v)); }
+  }
+  /// <summary>Keeps a hint steady over the game: a new step (or no hint) is taken over only when it has been asked for
+  /// <see cref="DebounceMs"/> in a row (the first hint at once), so reads that flip for a moment do not hide, show or move it;
+  /// within one step a tick without a target keeps the last good one (<see cref="Stale"/>: drawn as a plate only, no frame)
+  /// for up to <see cref="KeepMs"/>. Pure: the caller passes the clock.</summary>
+  public sealed class HintHold {
+    public const int DebounceMs = 350, KeepMs = 15000;
+    /// <summary>The step shown (null = no hint).</summary>
+    public string Key { get; private set; }
+    /// <summary>The target the plate is placed at (screen px {x, y, w, h}); null = no target (the plate at the top).</summary>
+    public int[] Target { get; private set; }
+    /// <summary>What came with <see cref="Target"/> (the caller's highlight shape).</summary>
+    public object Tag { get; private set; }
+    /// <summary>The target is the last good one, not this tick's.</summary>
+    public bool Stale { get; private set; }
+    string cand; long candSince, goodAt; bool any, candSet;
+
+    public void Reset() { Key = null; Target = null; Tag = null; Stale = false; cand = null; any = candSet = false; }
+
+    /// <summary>This tick: the step that wants a hint (null = none) and its target now (null = none this tick). True = a hint is shown.</summary>
+    public bool Update(string key, int[] target, object tag, long now) {
+      if (key != Key) {
+        if (any) {
+          if (!candSet || key != cand) { cand = key; candSet = true; candSince = now; }
+          if (now - candSince < DebounceMs) return Key != null;   // not yet: the old hint stays as it was
+        }
+        any = true; candSet = false; Key = key; Target = target; Tag = tag; Stale = false; goodAt = now;
+        return Key != null;
+      }
+      candSet = false;
+      if (target != null) { Target = target; Tag = tag; Stale = false; goodAt = now; }
+      else if (Target != null && now - goodAt < KeepMs) Stale = true;
+      else { Target = null; Tag = null; Stale = false; }
+      return Key != null;
+    }
   }
 }

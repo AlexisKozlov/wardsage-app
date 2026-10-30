@@ -276,25 +276,44 @@ namespace RealmForge {
     static void UiButtonShadowRun(string why) {
       if (Interlocked.CompareExchange(ref ubBusy, 1, 0) != 0) return;
       ubAt = Environment.TickCount; if (ubAt == 0) ubAt = 1;
-      var w = UiWidgetOf(ubT, ubOffer); double x = ubX, y = ubY, W = ubW, H = ubH, U = ubU;
+      var t = ubT; var w = UiWidgetOf(ubT, ubOffer); double x = ubX, y = ubY, W = ubW, H = ubH, U = ubU;
       try {
         Task.Factory.StartNew(() => {
           try {
             if (TestMemory == null && (Layout.Current == null || GameInfo.GameProcesses().Length == 0)) return;
-            LL(UiButtonLineNow(w, x, y, W, H, U) + " [" + why + "]");
+            LL(UiButtonLineNow(t, w, x, y, W, H, U) + " [" + why + "]");
           } catch (Exception e) { LL("uibtn: failed at exception (" + e.Message + ")"); }
           finally { Interlocked.Exchange(ref ubBusy, 0); }
         }, CancellationToken.None, TaskCreationOptions.None, TaskScheduler.Default);
       } catch (Exception) { Interlocked.Exchange(ref ubBusy, 0); }
     }
 
-    static string UiButtonLineNow(UiWidget w, double x, double y, double W, double H, double U) {
+    static string UiButtonLineNow(ClickTarget t, UiWidget w, double x, double y, double W, double H, double U) {
       var sw = Stopwatch.StartNew();
       ulong env, ui; string why;
       if (!UiRoots(out env, out ui, out why)) return "uibtn: " + w.Form + "." + w.Paths[0] + " failed at lua root (" + why + ") in " + sw.ElapsedMilliseconds + " ms";
       var r = UiButtonRead(env, ui, w, W, H, U);
       r.Ms = sw.ElapsedMilliseconds;
+      UiButtonKeep(t, r, W, H, Environment.TickCount);
       return UiButtonLine(r, x, y);
+    }
+
+    // the last good live rect (a shown, unrotated button), for the hints' plates to keep clear of (never for a click)
+    sealed class LiveRect { public ClickTarget T; public double W, H, X, Y, RW, RH; public int At; }
+    static LiveRect ubLive;
+    /// <summary>How long a live rect is taken as the button's place for the plates.</summary>
+    public const int UiLiveMs = 90000;
+
+    public static void UiButtonKeep(ClickTarget t, UiButtonInfo r, double W, double H, int at) {
+      if (r == null || !r.Ok || !r.Visible || r.Rotated || r.W <= 0 || r.H <= 0) return;
+      ubLive = new LiveRect { T = t, W = W, H = H, X = r.X, Y = r.Y, RW = r.W, RH = r.H, At = at };
+    }
+
+    /// <summary>The button's live rect {x, y, w, h} (client px) read lately for a window of this size (uibtn), or null: the layout's then.</summary>
+    public static double[] UiButtonLive(ClickTarget t, double W, double H, int now) {
+      var l = ubLive;
+      if (l == null || l.T != t || Math.Abs(l.W - W) > 0.5 || Math.Abs(l.H - H) > 0.5 || unchecked(now - l.At) > UiLiveMs || unchecked(now - l.At) < 0) return null;
+      return new[] { l.X, l.Y, l.RW, l.RH };
     }
 
     /// <summary>For the tests: one read now with the roots given (no task), and its log line.</summary>
