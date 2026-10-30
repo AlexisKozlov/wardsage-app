@@ -57,7 +57,7 @@ else
   echo "SKIPPED: $FX45 not found (install mono-devel for the .NET Framework reference assemblies)"
 fi
 
-CORE="src/ScreenMap.cs src/ScreenMapData.cs src/ArenaClient.cs src/ArenaOpponents.cs src/ArtEquip.cs src/ArtGridPicture.cs src/AutoPilot.cs src/BattleCapture.cs src/BattleClock.cs src/BattleTimeline.cs src/Channel.cs src/Config.cs src/EquipGuide.cs src/EquipScan.cs src/ErrorReport.cs src/Extractor.cs src/FolderMigration.cs src/ScreenRecorder.cs src/RecInputs.cs src/FightPlanClient.cs src/FilterPilot.cs src/GameInfo.cs src/GamePacks.cs src/GameScreen.cs src/OfferForms.cs src/OfferScan.cs src/AutoRec.cs src/ClickGate.cs src/GuildData.cs src/GvgData.cs src/HeroPilot.cs src/Geometry.cs src/Layout.cs src/ListTracker.cs src/HintLayout.cs src/GuideShape.cs src/LiveTables.cs src/LuaRoot.cs src/LocateClient.cs src/LocateFrames.cs src/LocateGuide.cs src/LocatePilot.cs src/MemoryReader.cs src/KlassScan.cs src/MiniJson.cs src/NewsClient.cs src/PlansClient.cs src/PlansWait.cs src/RecastScan.cs src/RemoteConfig.cs src/SellClient.cs src/SellHint.cs src/SellPilot.cs src/SellScan.cs src/Strings.cs src/SyncClient.cs src/TimelineBuilder.cs src/TestLog.cs src/TraceUpload.cs src/UpdateKeys.cs src/CodeWatch.cs src/CodeReport.cs src/WebViewRecovery.cs src/HeroGrades.cs app/HintGeometry.cs"
+CORE="src/ScreenMap.cs src/ScreenMapData.cs src/ArenaClient.cs src/ArenaOpponents.cs src/ArtEquip.cs src/ArtGridPicture.cs src/AutoPilot.cs src/BattleCapture.cs src/BattleClock.cs src/BattleTimeline.cs src/Channel.cs src/Config.cs src/EquipGuide.cs src/EquipScan.cs src/ErrorReport.cs src/Extractor.cs src/FolderMigration.cs src/ScreenRecorder.cs src/RecInputs.cs src/FightPlanClient.cs src/FilterPilot.cs src/GameInfo.cs src/GamePacks.cs src/GameScreen.cs src/OfferForms.cs src/OfferScan.cs src/AutoRec.cs src/LabRec.cs src/ClickGate.cs src/GuildData.cs src/GvgData.cs src/HeroPilot.cs src/Geometry.cs src/Layout.cs src/ListTracker.cs src/HintLayout.cs src/GuideShape.cs src/LiveTables.cs src/LuaRoot.cs src/LocateClient.cs src/LocateFrames.cs src/LocateGuide.cs src/LocatePilot.cs src/MemoryReader.cs src/KlassScan.cs src/MiniJson.cs src/NewsClient.cs src/PlansClient.cs src/PlansWait.cs src/RecastScan.cs src/RemoteConfig.cs src/SellClient.cs src/SellHint.cs src/SellPilot.cs src/SellScan.cs src/Strings.cs src/SyncClient.cs src/TimelineBuilder.cs src/TestLog.cs src/TraceUpload.cs src/UpdateKeys.cs src/CodeWatch.cs src/CodeReport.cs src/WebViewRecovery.cs src/HeroGrades.cs app/HintGeometry.cs"
 
 step "3. Core (no WinForms) compiles as C# 5 for .NET 8; tests build"
 NET8_REFS=$(for f in "$NET8"/*.dll; do printf -- '-r:%s ' "$f"; done)
@@ -113,6 +113,7 @@ node tests/news.test.mjs
 node tests/forum.test.mjs
 node tests/locate.test.mjs
 node tests/sellhint.test.mjs
+node tests/lab-rec.test.mjs
 for f in ui/*.js; do node --check "$f"; done && echo "ui scripts: syntax ok"
 
 step "8. Wardsage.exe builds (C# 7.3, .NET Framework 4.8, WebView2 SDK checksums)"

@@ -49,6 +49,10 @@ namespace RealmForge {
     bool testLogSending;
     PlansWaiter plansWait; string plansWaitKey = "";   // the long poll for new work from the site (src/PlansWait.cs)
     ScreenRecorder testRec;   // TEST build only: the screen recorder (app/RecCapture.cs), made at the first «Записать»
+    // TEST build only: the lab runner's recorder commands (src/LabRec.cs), read once a second
+    readonly System.Windows.Forms.Timer labRecTimer = new System.Windows.Forms.Timer();
+    readonly LabRecControl labRec = new LabRecControl();
+    DateTime labRecStamp = DateTime.MinValue; LabRecCmd labRecPending; long labRecPendingAt;
 
     public HostBridge(AppWindow win, CoreWebView2 core) {
       this.win = win; this.core = core;
@@ -102,6 +106,7 @@ namespace RealmForge {
       updateTimer.Interval = 20000; updateTimer.Tick += (s, e) => { updateTimer.Interval = (Channel.IsTest ? 2 : 5) * 60 * 1000; if (updateReady == null || Channel.IsTest) CheckUpdate(); }; updateTimer.Start();
       remoteTimer.Interval = 3000; remoteTimer.Tick += (s, e) => { remoteTimer.Interval = RemoteSwitches.EveryMinutes(Channel.IsTest) * 60 * 1000; FetchRemote(); }; remoteTimer.Start();
       if (Channel.IsTest) { testLogTimer.Interval = 30000; testLogTimer.Tick += (s, e) => { testLogTimer.Interval = 120000; SendTestLog(); }; testLogTimer.Start(); }
+      if (Channel.IsTest) { labRecTimer.Interval = 1000; labRecTimer.Tick += (s, e) => LabRecTick(); labRecTimer.Start(); }
       Log.Write(Channel.ProductName + " " + Program.Version + " started");
       Log.Write("switches (saved copy or defaults): " + remote.ToJson());
     }
@@ -284,7 +289,7 @@ namespace RealmForge {
 
     public void Dispose() {
       Program.FatalReport = null;
-      gameTimer.Dispose(); liveTimer.Dispose(); autoTimer.Dispose(); updateTimer.Dispose(); remoteTimer.Dispose(); testLogTimer.Dispose(); if (testRec != null) testRec.Stop(); if (plansWait != null) plansWait.Stop(); overlay.Dispose();
+      gameTimer.Dispose(); liveTimer.Dispose(); autoTimer.Dispose(); updateTimer.Dispose(); remoteTimer.Dispose(); testLogTimer.Dispose(); labRecTimer.Dispose(); if (testRec != null) testRec.Stop(); if (plansWait != null) plansWait.Stop(); overlay.Dispose();
     }
 
     // «Обновлять автоматически» (on by default): a downloaded update is put in place by restarting in a quiet moment — no
@@ -349,10 +354,56 @@ namespace RealmForge {
     void StartAutoRec(string tag) {
       if (!Channel.IsTest) return;
       string why;
+      // a lab recording runs: the trigger only tags it (src/LabRec.cs)
+      if (testRec != null && LabRecControl.TagInstead(testRec.On, testRec.Id)) { testRec.Tag(tag); Log.Write("rec: auto " + tag + " tagged the lab recording " + testRec.Id); return; }
       if (!autoRec.Want(true, testRec != null && testRec.On, RecInfo.NowMs(), out why)) { Log.Write("rec: auto " + tag + " skipped (" + why + ")"); return; }
       if (testRec == null) testRec = new ScreenRecorder(() => cfg.Site, () => cfg.Code, s => Log.Write(s), ev => Post(ev), on => OnUi(() => overlay.SetRecording(on)));
       string id = testRec.StartAuto(tag, AutoRecPolicy.RecordMs);
       Log.Write("rec: auto " + tag + " recording " + (id != "" ? id : "(not started)") + " for " + AutoRecPolicy.RecordMs / 1000 + " s");
+    }
+    // TEST build: the lab runner's command file (src/LabRec.cs). Only the time stamp is looked at until it changes
+    static string LabRecDir { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), Channel.FolderName, "lab"); } }
+    void LabRecTick() {
+      try {
+        if (labRecPending != null) {
+          // another recording was asked to stop first: start once it is off, give up after a while
+          if (testRec == null || !testRec.On) { var c = labRecPending; labRecPending = null; LabRecStart(c); }
+          else if (RecInfo.NowMs() - labRecPendingAt > LabRecCmd.StartWaitMs) { var c = labRecPending; labRecPending = null; LabRecAck(c, "busy", testRec.Id); Log.Write("rec: lab start " + c.Scenario + " gave up, another recording does not stop"); }
+        }
+        string f = Path.Combine(LabRecDir, "rec.cmd");
+        if (!File.Exists(f)) return;
+        var at = File.GetLastWriteTimeUtc(f);
+        if (at == labRecStamp) return;
+        labRecStamp = at;
+        string text; using (var fs = new FileStream(f, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete)) using (var rd = new StreamReader(fs)) { var buf = new char[256]; int n = rd.Read(buf, 0, buf.Length); text = new string(buf, 0, n); }
+        var cmd = LabRecCmd.Parse(text);
+        if (cmd == null) { Log.Write("rec: lab command not understood"); return; }
+        bool on = testRec != null && testRec.On; string cur = testRec != null ? testRec.Id : "";
+        string state;
+        var act = labRec.Decide(cmd, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), on, cur, out state);
+        if (state == null) return;
+        Log.Write("rec: lab " + cmd.Op + (cmd.Op == "start" ? " " + cmd.Scenario : "") + " -> " + act + " (" + state + ")");
+        switch (act) {
+          case LabRecControl.Act.Start: LabRecStart(cmd); break;
+          case LabRecControl.Act.StopThenStart: testRec.Stop(); labRecPending = cmd; labRecPendingAt = RecInfo.NowMs(); break;
+          case LabRecControl.Act.Stop: testRec.Stop(); LabRecAck(cmd, state, cur); break;
+          default: LabRecAck(cmd, state, cur); break;
+        }
+      } catch (Exception e) { Log.Write("rec: lab command failed: " + e.Message); }
+    }
+    void LabRecStart(LabRecCmd c) {
+      if (testRec == null) testRec = new ScreenRecorder(() => cfg.Site, () => cfg.Code, s => Log.Write(s), ev => Post(ev), on => OnUi(() => overlay.SetRecording(on)));
+      string id = testRec.StartLab(c.Scenario, c.Run);
+      Log.Write("rec: lab " + c.Scenario + " recording " + (id != "" ? id : "(not started)"));
+      LabRecAck(c, id != "" ? "recording" : "busy", id != "" ? id : testRec.Id);
+    }
+    void LabRecAck(LabRecCmd c, string state, string rec) {
+      try {
+        string dir = LabRecDir; Directory.CreateDirectory(dir);
+        string f = Path.Combine(dir, "rec.ack"), tmp = f + ".tmp";
+        File.WriteAllText(tmp, LabRecCmd.Ack(c.Seq, state, rec, c.Scenario, c.Run), new UTF8Encoding(false));
+        if (File.Exists(f)) File.Replace(tmp, f, null); else File.Move(tmp, f);
+      } catch (Exception e) { Log.Write("rec: lab ack failed: " + e.Message); }
     }
     void ToggleRec() { if (testRec != null && testRec.On) testRec.Stop(); else StartRec(); }
 

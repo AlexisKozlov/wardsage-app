@@ -69,6 +69,10 @@ wait_job() {
 
 # ---- the state machine
 end_run() {   # $1 = final state
+  local rid; rid=$(dget rec_id)
+  if [ -n "$rid" ]; then rec_tag "$rid"; dset rec_id ""; fi   # a run that ended inside a scenario (timeout): its recording is kept
+  # shellcheck disable=SC2046
+  rec_delete $(dget rec_del)
   q -v d="$DEV" -v r="$RUN" <<< "update public.lab_jobs set state = 'cancelled', finished_at = now() where run_id = :'r'::uuid and state = 'queued'" >/dev/null
   q -v r="$RUN" -v s="$1" <<< "update public.lab_runs set state = :'s', finished_at = now() where id = :'r'::uuid" >/dev/null
   "$HERE/lab-report.sh" "$RUN" || say "report failed"
@@ -138,9 +142,24 @@ fail_scn() {   # $1 = step label, $2 = reason, $3 = table, $4 = row id
 # (not 'done': the app did not finish it, the last press is the player's). An equip plan that passed is already 'done' (the app closed it).
 next_scn() {
   local r t; r=$(dget row); t=$(scn_tbl "${scenarios[$(dget scn_idx)]:-}")
+  rec_end
   [ -n "$r" ] && [ -n "$t" ] && q -v r="$r" <<< "update public.$t set status = 'cancelled', done_at = now() where id = :'r'::uuid and status = 'pending'" >/dev/null
   dset row ""; dset last_scn_end "$(now)"; dset scn_idx "$(( $(dget scn_idx) + 1 ))"; dset sar_ready ""; phase scenario
 }
+# the scenario's screen recording (runner v16+, src/LabRec.cs): started before the request is seeded; when the scenario ends it is stopped.
+# Passed (the last step ok, not a warning): the recording is deleted on the server (at the run's end, when its last part is in; the --auto
+# pass deletes them again for a day, in case a part came later). Else the last step keeps its id (rec) for the report and lab-rec.sh.
+rec_end() {
+  local id; id=$(dget rec_id); dset rec_for ""
+  [ -n "$id" ] || return 0
+  mkjob rec '{"cmd":"stop"}' >/dev/null || true
+  local pass; pass=$(q -v r="$RUN" <<< "select coalesce((s->>'ok')::boolean and coalesce(s->>'warn', '') = '', false) from public.lab_runs r, jsonb_array_elements(r.steps) with ordinality e(s, n) where r.id = :'r'::uuid order by n desc limit 1")
+  if [ "$pass" = t ]; then dset rec_del "$(dget rec_del) $id"; say "recording $id: passed, deleted at the end"
+  else rec_tag "$id"; say "recording $id: kept"; fi
+  dset rec_id ""
+}
+# rec_tag <id>: the last step names the recording
+rec_tag() { q -v r="$RUN" -v id="$1" <<< "update public.lab_runs set steps = jsonb_set(steps, array[(jsonb_array_length(steps) - 1)::text, 'rec'], to_jsonb(:'id'::text)) where id = :'r'::uuid and jsonb_array_length(steps) > 0" >/dev/null; }
 # scenario -> table of its request
 scn_tbl() { case "$1" in equip_*) echo equip_plans ;; locate*) echo item_locates ;; sell_mark|sell_after_restart) echo sell_plans ;; esac; }
 # the storage cleanup may click only these targets (src/ClickGate.cs, owner Sell); the runner (v11+) reports any other one as "never"
@@ -249,6 +268,13 @@ tick() {
       i=$(dget scn_idx)
       if [ "$i" -ge "${#scenarios[@]}" ]; then phase logs; return; fi
       sc=${scenarios[$i]}
+      # the screen recording starts before anything of the scenario (phase scn_rec waits for the app's answer); sell_after_restart: after
+      # the app's restart (a restart ends any recording)
+      if [ "$(dget rec_for)" != "$i" ] && [[ "$sc" =~ ^[a-z0-9_]{1,40}$ ]] && { [ "$sc" != sell_after_restart ] || [ -n "$(dget sar_ready)" ]; }; then
+        dset rec_for "$i"
+        if r=$(mkjob rec "{\"cmd\":\"start\",\"scenario\":\"$sc\",\"run\":\"$RUN\"}"); then dset job "$r"; phase scn_rec; return; fi
+        say "recording: the job could not be queued"
+      fi
       mkjob game_front >/dev/null || true   # the game window to the front before each scenario
       dset mark_at "$(now)"; mkjob mark "{\"scn\":\"$sc\"}" >/dev/null || true   # the runner forgets the old stop / ready markers
       if [ "$sc" = equip_city ]; then
@@ -268,6 +294,17 @@ tick() {
       if [ -z "$row" ] && [ -n "$sw" ]; then warn "$sc" 0 "$sw"; next_scn; return; fi
       if [ -z "$row" ]; then step "$sc" false 0 "seed failed (fixture missing?)"; FAILED=1; next_scn; return; fi
       dset row "$row"; dset seeded_at "$(now)"; phase wait_scn ;;
+    scn_rec)
+      # the recording is a help, never a verdict: no answer in 40 s (old runner, old app) and the scenario goes on without one
+      j=$(dget job); st=$(jstate "$j")
+      case "$st" in
+        done) id=$(jres "$j" rec); [[ "$id" =~ $LAB_REC_RX ]] && dset rec_id "$id"; say "recording ${id:-?} started"; phase scenario ;;
+        failed|expired|cancelled) say "recording not started: $(jres "$j" error)$(jres "$j" state)"; phase scenario ;;
+        *) if [ "$(phase_age)" -gt 40 ]; then
+             q -v j="$j" <<< "update public.lab_jobs set state = 'cancelled', finished_at = now() where id = :'j'::uuid and state = 'queued'" >/dev/null
+             say "recording: no answer in 40 s"; phase scenario
+           fi ;;
+      esac ;;
     scn_restart)
       # sell_after_restart: the app restarted, then ready again (it read the game account), then the list is seeded
       if [ -z "$(dget sar_at)" ]; then
@@ -468,6 +505,14 @@ auto_dev() {   # $1 = device name
   exec 9>&-
 }
 
+# the lab recordings (lab-common.sh): at most every 10 min, those of passed scenarios of the last day once more (a part may have come after the
+# run's end), and every lab recording older than 2 days
+if [ ! -f "$LAB_DIR/rec-prune.at" ] || [ -n "$(find "$LAB_DIR/rec-prune.at" -mmin +10 2>/dev/null)" ]; then
+  touch "$LAB_DIR/rec-prune.at"
+  # shellcheck disable=SC2046
+  rec_delete $(q <<< "select coalesce(data->>'rec_del', '') from public.lab_runs where finished_at > now() - interval '1 day'")
+  rec_prune 2
+fi
 # LAB_ONLY=<device> limits the pass to one device (tests)
 for d in $(q -v only="${LAB_ONLY:-}" <<< "select name from public.lab_devices where enabled and last_seen > now() - interval '3 minutes' and (:'only' = '' or name = :'only') order by name"); do
   auto_dev "$d"

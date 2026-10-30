@@ -66,10 +66,10 @@ create table if not exists public.lab_jobs (
   finished_at timestamptz,
   result      jsonb check (result is null or octet_length(result::text) <= 8192)
 );
--- existing installs: the action list grew (start_game, game_front, mark)
+-- existing installs: the action list grew (start_game, game_front, mark, rec)
 alter table public.lab_jobs drop constraint if exists lab_jobs_action_check;
 alter table public.lab_jobs add constraint lab_jobs_action_check
-  check (action in ('status', 'update_app', 'start_game', 'restart_app', 'game_front', 'update_runner', 'screenshot', 'upload_logs', 'finish', 'cancel', 'mark'));
+  check (action in ('status', 'update_app', 'start_game', 'restart_app', 'game_front', 'update_runner', 'screenshot', 'upload_logs', 'finish', 'cancel', 'mark', 'rec'));
 create index if not exists lab_jobs_device_state_idx on public.lab_jobs (device_id, state, created_at);
 
 create table if not exists public.lab_results (

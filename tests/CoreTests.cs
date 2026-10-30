@@ -5352,6 +5352,39 @@ static partial class CoreTests {
       Check(AutoRecPolicy.HaltTag("Equip", "screen", "EquipNav @1,2 needs City").StartsWith("halt Equip screen: "), "auto rec: any other stop is tagged by owner and reason");
       Eq("unknown-form Form_ItemReward", AutoRecPolicy.UnknownFormTag("Form_ItemReward"), "auto rec: an unknown form on top is tagged by its name");
     }
+    {   // the lab'lsc recorder commands (src/LabRec.cs): parsing and the decision
+      const string lrun = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0";
+      var lc = LabRecCmd.Parse("1700000000000 start equip_city " + lrun + "\r\n");
+      Check(lc != null && lc.Op == "start" && lc.Scenario == "equip_city" && lc.Run == lrun && lc.Seq == 1700000000000L, "lab rec: a start line is read (CRLF ignored)");
+      var lsc = LabRecCmd.Parse("1700000000001 stop");
+      Check(lsc != null && lsc.Op == "stop" && lsc.Scenario == "" && lsc.Seq == 1700000000001L, "lab rec: a stop line is read");
+      foreach (var lbad in new[] { null, "", "start equip_city " + lrun, "1 start Equip " + lrun, "1 start ../x " + lrun, "1 start equip_city " + lrun.ToUpperInvariant(), "1 start equip_city " + lrun + " x",
+                                  "1 start equip_city", "1  stop", "1 stop lnow", "1 keep fail", "1 discard", "x stop", "1234567890123456 stop", "1 start " + new string('a', 41) + " " + lrun, new string('1', 300) })
+        Check(LabRecCmd.Parse(lbad) == null, "lab rec: rejected: " + (lbad == null ? "null" : lbad.Length > 60 ? lbad.Substring(0, 60) + "..." : lbad));
+      Check(LabRecCmd.IsLabId(LabRecCmd.NewId(new DateTime(2026, 10, 30, 12, 0, 0), new Random(1))), "lab rec: its ids are lab ids");
+      Check(RecNames.IsValidId(LabRecCmd.NewId(new DateTime(2026, 10, 30, 12, 0, 0), new Random(1))), "lab rec: its ids are valid recording ids (the site takes them)");
+      Check(!LabRecCmd.IsLabId(RecNames.NewId(new DateTime(2026, 10, 30, 12, 0, 0), new Random(1))), "lab rec: a manual / automatic id is not a lab id");
+      Check(LabRecCmd.LabJson("locate", lrun, "1.6.1").Contains("\"scenario\":\"locate\"") && LabRecCmd.LabJson("locate", lrun, "1.6.1").Contains(lrun), "lab rec: lab.json names the scenario and the run");
+      Check(LabRecCmd.Ack(5, "recording", "lab-x", "locate", lrun).StartsWith("{\"seq\":5,\"state\":\"recording\",\"rec\":\"lab-x\""), "lab rec: the ack");
+
+      long lnow = 1700000000000L; string lst; var lk = new LabRecControl();
+      Eq(LabRecControl.Act.Start, lk.Decide(LabRecCmd.Parse(lnow + " start locate " + lrun), lnow + 500, false, "", out lst), "lab rec: start with nothing recording starts");
+      Eq("recording", lst, "lab rec: start acks recording");
+      Eq(LabRecControl.Act.None, lk.Decide(LabRecCmd.Parse(lnow + " start locate " + lrun), lnow + 1500, true, "lab-20261030-120000-abcdef", out lst), "lab rec: the same command again does nothing");
+      Check(lst == null, "lab rec: the same command is not acked again");
+      Eq(LabRecControl.Act.Stop, lk.Decide(LabRecCmd.Parse((lnow + 1) + " stop"), lnow + 2000, true, "lab-20261030-120000-abcdef", out lst), "lab rec: stop stops a lab recording");
+      Eq("stopped", lst, "lab rec: stop acks stopped");
+      Eq(LabRecControl.Act.None, lk.Decide(LabRecCmd.Parse((lnow + 2) + " stop"), lnow + 2000, true, "20261030-120000-abcdef", out lst), "lab rec: stop leaves a manual recording alone");
+      Eq("idle", lst, "lab rec: stop without a lab recording acks idle");
+      Eq(LabRecControl.Act.StopThenStart, lk.Decide(LabRecCmd.Parse((lnow + 3) + " start sell_mark " + lrun), lnow + 2000, true, "20261030-120000-abcdef", out lst), "lab rec: start while another recording runs stops it first");
+      Eq(LabRecControl.Act.None, lk.Decide(LabRecCmd.Parse((lnow + 2) + " stop"), lnow + 2000, true, "lab-20261030-120000-abcdef", out lst), "lab rec: an older command after a newer one does nothing");
+      var lk2 = new LabRecControl();
+      Eq(LabRecControl.Act.None, lk2.Decide(LabRecCmd.Parse(lnow + " start locate " + lrun), lnow + LabRecCmd.StaleMs + 1, false, "", out lst), "lab rec: a stale file (the app started after the run) is not acted on");
+      Eq("stale", lst, "lab rec: a stale command acks stale");
+      Eq(LabRecControl.Act.None, lk2.Decide(null, lnow, false, "", out lst), "lab rec: no command, nothing");
+      Check(LabRecControl.TagInstead(true, "lab-20261030-120000-abcdef"), "lab rec: an automatic trigger during a lab recording tags it");
+      Check(!LabRecControl.TagInstead(true, "20261030-120000-abcdef") && !LabRecControl.TagInstead(false, "lab-20261030-120000-abcdef"), "lab rec: otherwise the automatic recording decides as before");
+    }
   }
 
   static void CityGateAndPanelTests() {

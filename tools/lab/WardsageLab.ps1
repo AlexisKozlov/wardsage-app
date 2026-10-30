@@ -23,7 +23,7 @@ Set-StrictMode -Version 2
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$RunnerVersion   = '15'
+$RunnerVersion   = '16'
 $Dir             = Join-Path $env:LOCALAPPDATA 'WardsageLab'
 $StopFile        = Join-Path $Dir 'STOP'
 $LogFile         = Join-Path $Dir 'runner.log'
@@ -173,6 +173,9 @@ $Schemas = @{
     finish      = @{}
     cancel      = @{}
     mark        = @{ scn = { param($v) $v -is [string] -and $v -cmatch '^[a-z_]{1,30}$' } }
+    rec         = @{ cmd = { param($v) $v -is [string] -and ($v -ceq 'start' -or $v -ceq 'stop') }
+                     scenario = { param($v) $v -is [string] -and $v -cmatch '^[a-z0-9_]{1,40}$' }
+                     run = { param($v) $v -is [string] -and $v -cmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' } }
 }
 function Test-JobArgs([string]$action, $args_) {
     if (-not $Schemas.ContainsKey($action)) { return $false }
@@ -547,6 +550,40 @@ function Invoke-Mark($a) {
     return @{ ok = $true; res = @{ marked = $true } }
 }
 
+# ---------------------------------------------------------------- rec (the test app's screen recorder, src/LabRec.cs)
+# writes %LOCALAPPDATA%\WardsageTest\lab\rec.cmd (temp file, then replaced) and waits for the app's rec.ack of the same seq. Only values
+# that passed the schema above go into the line; the file name is fixed.
+function Invoke-Rec($a) {
+    $cmd = [string](Get-Prop $a 'cmd'); $scn = [string](Get-Prop $a 'scenario'); $run = [string](Get-Prop $a 'run')
+    $seq = [int64][DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+    if ($cmd -ceq 'start') {
+        if ($scn -eq '' -or $run -eq '') { return @{ ok = $false; res = @{ error = 'bad_args' } } }
+        $line = [string]$seq + ' start ' + $scn + ' ' + $run
+    } elseif ($cmd -ceq 'stop') { $line = [string]$seq + ' stop' }
+    else { return @{ ok = $false; res = @{ error = 'bad_args' } } }
+    $dir = Join-Path $env:LOCALAPPDATA 'WardsageTest\lab'
+    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir | Out-Null }
+    $f = Join-Path $dir 'rec.cmd'; $tmp = $f + '.tmp'; $ackf = Join-Path $dir 'rec.ack'
+    [IO.File]::WriteAllText($tmp, $line + "`r`n", (New-Object Text.UTF8Encoding($false)))
+    if (Test-Path $f) { [IO.File]::Replace($tmp, $f, $null) } else { [IO.File]::Move($tmp, $f) }
+    $until = (Get-Date).AddSeconds(15)
+    while ((Get-Date) -lt $until) {
+        Start-Sleep -Milliseconds 500
+        try {
+            if (Test-Path $ackf) {
+                $ack = Get-Content -Raw -Path $ackf | ConvertFrom-Json
+                if ([int64](Get-Prop $ack 'seq') -eq $seq) {
+                    $st = [string](Get-Prop $ack 'state'); $id = [string](Get-Prop $ack 'rec')
+                    if ($st -notmatch '^[a-z]{1,12}$') { $st = 'bad' }
+                    if ($id -notmatch '^[A-Za-z0-9-]{0,40}$') { $id = '' }
+                    return @{ ok = ($st -eq 'recording' -or $st -eq 'stopped' -or $st -eq 'idle'); res = @{ state = $st; rec = $id; cmd = $cmd } }
+                }
+            }
+        } catch { }
+    }
+    return @{ ok = $false; res = @{ error = 'no_ack'; cmd = $cmd } }
+}
+
 # ---------------------------------------------------------------- restart_app (the configured test app only)
 # innermost exception message, one line, at most 200 chars
 function Get-ShortError($err) {
@@ -782,6 +819,7 @@ function Invoke-Job($job) {
                 'finish'      { $script:Scn = ''; $out = @{ ok = $true; res = @{ bye = $true } }; $script:Exit = $true }
                 'cancel'      { $out = @{ ok = $true; res = @{ cancelled = $true } } }
                 'mark'        { $out = Invoke-Mark $jobArgs }
+                'rec'         { $out = Invoke-Rec $jobArgs }
             }
         }
     } catch {

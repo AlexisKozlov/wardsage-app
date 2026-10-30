@@ -22,22 +22,35 @@ namespace RealmForge {
     string stopWhy = "";
     // an automatic recording (src/AutoRec.cs): its reason (written as auto.json into the first part) and its length; null = a manual one
     string autoReason; long limitMs = MaxMs; string recId;
+    // a lab recording (src/LabRec.cs): lab.json for its first part; tags added while it runs (written into the part being filled)
+    string labJson;
+    readonly object tagGate = new object();
+    readonly System.Collections.Generic.List<string> tags = new System.Collections.Generic.List<string>();
 
     public ScreenRecorder(Func<string> site, Func<string> code, Action<string> log, Action<string> post, Action<bool> setActive) {
       this.site = site; this.code = code; this.log = log; this.post = post; this.setActive = setActive;
     }
 
     public bool On { get { return on; } }
+    /// <summary>The running recording's id, "" when none runs.</summary>
+    public string Id { get { return on ? (recId ?? "") : ""; } }
 
-    public void Start() { StartAs(null, MaxMs); }
+    public void Start() { StartAs(null, MaxMs, null); }
+
+    /// <summary>A lab recording (src/LabRec.cs) of at most LabRecCmd.CapMs, tagged with the scenario and the run; its id ("" = one is running already).</summary>
+    public string StartLab(string scenario, string run) { return on ? "" : StartAs(null, LabRecCmd.CapMs, LabRecCmd.LabJson(scenario, run, Program.Version)); }
+
+    /// <summary>Adds a tag (an automatic recording's reason) to the running recording.</summary>
+    public void Tag(string tag) { if (!on) return; lock (tagGate) if (tags.Count < 50) tags.Add(tag ?? ""); }
 
     /// <summary>An automatic recording of the next <paramref name="ms"/> with its reason; the recording's id ("" = one is running already).</summary>
-    public string StartAuto(string reason, int ms) { return on ? "" : StartAs(reason ?? "", Math.Min(ms, MaxMs)); }
+    public string StartAuto(string reason, int ms) { return on ? "" : StartAs(reason ?? "", Math.Min(ms, MaxMs), null); }
 
-    string StartAs(string reason, long ms) {
+    string StartAs(string reason, long ms, string lab) {
       if (on) return "";
-      autoReason = reason; limitMs = ms;
-      recId = RecNames.NewId(DateTime.Now, new Random());
+      autoReason = reason; limitMs = ms; labJson = lab;
+      lock (tagGate) tags.Clear();
+      recId = lab != null ? LabRecCmd.NewId(DateTime.Now, new Random()) : RecNames.NewId(DateTime.Now, new Random());
       on = true; stopReq = false; stopWhy = "";
       setActive(true);
       th = new Thread(Run) { IsBackground = true, Name = "rec-capture" };
@@ -79,7 +92,7 @@ namespace RealmForge {
     static readonly ImageCodecInfo Jpeg = ImageCodecInfo.GetImageEncoders().FirstOrDefault(c => c.FormatID == ImageFormat.Jpeg.Guid);
 
     void Run() {
-      string rec = recId, why = autoReason; long limit = limitMs; bool reasonWritten = false;
+      string rec = recId, why = autoReason, lab = labJson; long limit = limitMs; bool reasonWritten = false; int tagNo = 0;
       string dir = Path.Combine(AppConfig.DefaultDir, "recordings", rec);
       var up = new RecUploader(rec, site, code, log);
       var sw = Stopwatch.StartNew();
@@ -102,7 +115,11 @@ namespace RealmForge {
               if (w == null) {
                 w = new RecPartWriter(dir, part); partStart = t; enc.Rebase();
                 if (why != null && !reasonWritten) { w.AddText("auto.json", "{\"auto\":true,\"reason\":" + MiniJson.Quote(why) + ",\"app\":" + MiniJson.Quote(Program.Version) + "}"); reasonWritten = true; }
+                if (lab != null && !reasonWritten) { w.AddText("lab.json", lab); reasonWritten = true; }
               }
+              string[] tg = null;
+              lock (tagGate) if (tags.Count > 0) { tg = tags.ToArray(); tags.Clear(); }
+              if (tg != null) foreach (var x in tg) { w.AddText("tag_" + (++tagNo).ToString("000", System.Globalization.CultureInfo.InvariantCulture) + ".json", LabRecCmd.TagJson(x, t)); log("recording " + rec + ": tagged " + x); }
               try { Capture(h, t, !fg, w, ++frameNo); } catch (Exception e) { log("recording " + rec + ": frame failed: " + e.Message); }
             }
           }

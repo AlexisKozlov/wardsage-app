@@ -38,3 +38,19 @@ tg() {
 # every scenario the lab knows, in the default run order (the storage cleanup last: it leaves the game in «Массовая продажа»;
 # the restart one at the very end). lab-request.sh with no list and the auto runs on a new test build run all of them.
 LAB_SCENARIOS="equip_city equip_hide_worn equip_artifact locate locate_recast locate_art sell_mark sell_after_restart"
+
+# ---- the test app's lab recordings (src/LabRec.cs): files only, as the site stores them (lib/testRecording/handler.ts of wardsage-web):
+# $LAB_REC_ROOT/<user>/<account>/<rec>/<part>.zip, owned by deploy (mode 700): read and deleted as deploy. Only lab ids are touched.
+LAB_REC_ROOT=${LAB_REC_ROOT:-/srv/wardsage/staging/recordings}
+LAB_REC_RX='^lab-[0-9]{8}-[0-9]{6}-[0-9a-f]{6}$'
+# rec_dir <id>: the recording's folder (empty when it is not there)
+rec_dir() { [[ "$1" =~ $LAB_REC_RX ]] || return 1; sudo -n -u deploy find "$LAB_REC_ROOT" -mindepth 3 -maxdepth 3 -type d -name "$1" -print -quit 2>/dev/null; }
+# rec_delete <id>...: deletes these lab recordings (a passed scenario's)
+rec_delete() { local id; for id in "$@"; do [[ "$id" =~ $LAB_REC_RX ]] || continue; sudo -n -u deploy find "$LAB_REC_ROOT" -mindepth 3 -maxdepth 3 -type d -name "$id" -prune -exec rm -rf -- {} + 2>/dev/null || true; done; }
+# rec_prune [days]: deletes lab recordings whose last part is older than <days> (default 2); with LAB_REC_PRUNE_ALL=1 every staging recording
+# that old (the RecReplay fixtures are copies in the repo / ~/wardsage/work/recordings-ro, never under LAB_REC_ROOT)
+rec_prune() {
+  local min=$(( ${1:-2} * 1440 )) pat='lab-*'
+  [ "${LAB_REC_PRUNE_ALL:-0}" = 1 ] && pat='*'
+  sudo -n -u deploy find "$LAB_REC_ROOT" -mindepth 3 -maxdepth 3 -type d -name "$pat" -mmin +"$min" -prune -exec rm -rf -- {} + 2>/dev/null || true
+}
