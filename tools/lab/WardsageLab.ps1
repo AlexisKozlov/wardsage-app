@@ -23,7 +23,7 @@ Set-StrictMode -Version 2
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$RunnerVersion   = '11'
+$RunnerVersion   = '12'
 $Dir             = Join-Path $env:LOCALAPPDATA 'WardsageLab'
 $StopFile        = Join-Path $Dir 'STOP'
 $LogFile         = Join-Path $Dir 'runner.log'
@@ -460,7 +460,7 @@ $StopRe  = 'auto click stopped|click gate .*: STOP|auto: (failed|slot_failed|unc
 $ReadyRe = 'Player of the live tables: [0-9]+'
 $PilotRe = 'ui: step (?!stands still)|ui: guide |click gate .*: (allow |.* took effect)|locate auto:|live: hero|sell:|hero: plan|art (equip|promote) auto:|offer: closed'
 function Get-EpochNow { return [int64][DateTimeOffset]::UtcNow.ToUnixTimeSeconds() }
-$FinRe = 'locate auto: hint \(\w+\) at step (ascendReady|done)\b|locate decision: (AscendReady|Done)\b|ui: guide .* done|(?<!art )sell: done selected [0-9]+/[0-9]+ missing [0-9]+ extra [0-9]+'
+$FinRe = 'locate auto: hint( \([^)]*\))? at step (ascendReady|done)\b|locate decision: (AscendReady|Done)\b|art promote auto: hint( \([^)]*\))? at step artPromote\b|ui: guide .* done|(?<!art )sell: done selected [0-9]+/[0-9]+ missing [0-9]+ extra [0-9]+'
 # the storage cleanup may click only these targets (src/ClickGate.cs, owner Sell): any other allowed Sell click (there is no target for
 # "Sell" (Prodat), "All", a lock or a sell confirm at all) is reported as never (and as a stop)
 $SellOkRe = 'click gate Sell: allow (HeroBack|CityInventory|InvEquipTab|InvBulkEnter|InvBulkCell|InvListDrag|OfferClose|UnknownBack|CityBack|EscapeBack|MapClose|ArtTab|ArtBulkEnter|ArtBulkCell|ArtListDrag)\b'
@@ -506,7 +506,7 @@ function Update-LogWatch {
             }
             if ($line -cmatch $ReadyRe) { $script:LogReady = $true }
             if ($line -cmatch $FinRe) {
-                $script:LogFin = $(if ($line -cmatch 'ascendReady|AscendReady') { 'ascend' } elseif ($line -cmatch 'ui: guide') { 'equip' } elseif ($line -cmatch 'sell: done') { 'sell' } else { 'ready' })
+                $script:LogFin = $(if ($line -cmatch 'ascendReady|AscendReady') { 'ascend' } elseif ($line -cmatch 'art promote auto') { 'art' } elseif ($line -cmatch 'ui: guide') { 'equip' } elseif ($line -cmatch 'sell: done') { 'sell' } else { 'ready' })
                 $script:FinLine = $Matches[0]
             }
             if ($script:LogNever -eq '' -and $line -cmatch 'click gate Sell: allow ' -and $line -cnotmatch $SellOkRe) {

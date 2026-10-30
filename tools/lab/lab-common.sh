@@ -37,4 +37,4 @@ tg() {
 
 # every scenario the lab knows, in the default run order (the storage cleanup last: it leaves the game in «Массовая продажа»;
 # the restart one at the very end). lab-request.sh with no list and the auto runs on a new test build run all of them.
-LAB_SCENARIOS="equip_city locate sell_mark sell_after_restart"
+LAB_SCENARIOS="equip_city equip_hide_worn equip_artifact locate locate_recast locate_art sell_mark sell_after_restart"

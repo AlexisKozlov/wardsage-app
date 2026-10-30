@@ -6,6 +6,11 @@
 #   lab-seed.sh <device> --pick-locate        dry run: prints the Locate target it would pick (inserts nothing)
 #   lab-seed.sh <device> sell_mark            a new «Чистка склада» list of junk gear from the newest snapshot (see pick_sell)
 #   lab-seed.sh <device> --pick-sell          dry run: prints the sell list it would seed (inserts nothing)
+#   lab-seed.sh <device> equip_hide_worn      an equip plan of ONE item worn by another hero (the app unticks «Скрыть надетое»), from the snapshot
+#   lab-seed.sh <device> equip_artifact       an equip plan of the hero's worn gear + an artifact it does not wear (only the artifact changes)
+#   lab-seed.sh <device> locate_recast        a «Найти в игре» request, purpose recast (a recastable item from the snapshot)
+#   lab-seed.sh <device> locate_art           a «Найти в игре» request, purpose artPromote (a promotable artifact from the snapshot)
+#   lab-seed.sh <device> --pick-hide-worn | --pick-artifact | --pick-recast | --pick-art   dry runs of these pickers
 # Prints the new row id (a plan / request id, not an account id) on stdout.
 #
 # Why "after the app restart": the app lists the plans of its account through the long poll and starts by itself only a
@@ -103,6 +108,110 @@ pick_sell() {
     ) x where u ~ '^[0-9]+$'") || keep=""
   python3 -I -c "$PICK_SELL_PY" "$SELL_N" "$keep" <<< "$pd" 2>/dev/null || true
 }
+# snap_pd <device id>: the newest snapshot's page_data (or nothing)
+snap_pd() { q -v d="$1" <<< "select page_data from public.snapshots sn join public.lab_devices dv on dv.account_id = sn.account_id
+                              where dv.id = :'d'::uuid and sn.page_data is not null order by sn.created_at desc limit 1" 2>/dev/null || true; }
+# nlocates <device id> <purpose>: locate requests of that purpose so far (the pickers rotate among their first 4 candidates by it)
+nlocates() { q -v d="$1" -v p="$2" <<< "select count(*) from public.item_locates l join public.lab_devices dv on dv.account_id = l.account_id
+                                       where dv.id = :'d'::uuid and l.purpose = :'p'" 2>/dev/null || echo 0; }
+# pick_recast <device id>: "uid<TAB>slot<TAB>level<TAB>stars<TAB>worn|free" of an item the site lets recast (lib/recast.ts recastItem,
+# data/recast.json rule: iStarLvl in rule.stars, level >= rule.minLevel, >= rule.subs sub stats, each of a known pool for that quality).
+# Not worn first; never a lab fixture item; rotates among up to 4.
+PICK_RECAST_PY='
+import sys, json
+web, n = sys.argv[1], int(sys.argv[2]); keep = set(int(x) for x in sys.argv[3].split(",") if x.strip().isdigit())
+rc = json.load(open(web + "/data/recast.json")); r = rc["rule"]
+pd = json.load(sys.stdin) or {}
+def ok(i):
+    st = i.get("st") or 0; xs = i.get("x") or []
+    if st not in r["stars"] or int(i.get("lv") or 0) < r["minLevel"] or len(xs) < r["subs"]: return False
+    for x in xs[:4]:
+        pool = rc["byStat"].get(str(x[0])) if x and x[0] is not None else None
+        if pool is None or str(st) not in (rc["pools"].get(str(pool)) or {}).get("st", {}): return False
+    return True
+c = sorted([i for i in pd.get("items") or [] if ok(i) and int(i["u"]) not in keep], key=lambda i: (1 if i.get("h") else 0, int(i["u"])))
+if not c: sys.exit(0)
+pool = [i for i in c if bool(i.get("h")) == bool(c[0].get("h"))][:4]
+i = pool[n % len(pool)]
+print("%d\t%s\t%d\t%d\t%s" % (int(i["u"]), i.get("sl"), int(i.get("lv") or 0), int(i.get("st") or 0), "worn" if i.get("h") else "free"))
+'
+# pick_art <device id>: "uid<TAB>name<TAB>stage<TAB>worn|free" of an artifact the site lets promote (lib/locate/artifact.ts promotable:
+# stage st < MAX_STAGE 5, lib/artifact-plan.ts). Not worn first, then the highest stage; rotates among up to 4.
+PICK_ART_PY='
+import sys, json
+n = int(sys.argv[1])
+pd = json.load(sys.stdin) or {}
+arts = pd.get("arts") or []
+spare = {}
+for a in arts:
+    if not a.get("h"): spare[a.get("id")] = spare.get(a.get("id"), 0) + 1
+# an artifact with a spare copy of its own kind first (the promotion takes copies), then not worn, then the highest stage
+c = sorted([a for a in arts if int(a.get("st") or 0) < 5], key=lambda a: (0 if spare.get(a.get("id"), 0) - (0 if a.get("h") else 1) > 0 else 1, 1 if a.get("h") else 0, -int(a.get("st") or 0), -int(a.get("lv") or 0), a["u"]))
+if not c: sys.exit(0)
+pool = c[:4]
+a = pool[n % len(pool)]
+print("%s\t%s\t%d\t%s" % (a["u"], (a.get("n") or {}).get("en") or "?", int(a.get("st") or 0), "worn" if a.get("h") else "free"))
+'
+# pick_equip <device id> <hide_worn|artifact>: the JSON {hero_uid, hero_name, hero_name_en, items, note} of an equip plan for the hero of
+# the equip fixtures, built from the newest snapshot's page_data (plan items as lib/plans/display.ts stores them: slot, uid, name, setName,
+# setId, level, stars, mainStat, fromHeroUid, fromHeroName, icon, cur).
+#   hide_worn: ONE item worn by ANOTHER hero (the app unticks «Скрыть надетое» to find it); the strongest one, rotating among 4.
+#   artifact:  the hero's own 5 worn items (nothing to change) + an artifact the hero does not wear (items[0].artifact {uid, id}, as the
+#              site's POST /api/plans): only the artifact goes on. Not worn by anybody first.
+PICK_EQUIP_PY='
+import sys, json
+mode, n, fx = sys.argv[1], int(sys.argv[2]), json.loads(sys.argv[3])
+pd = json.load(sys.stdin) or {}
+hero = int(fx["hero_uid"]); sets = pd.get("sets") or {}
+names = {int(h["u"]): h.get("n") or {} for h in pd.get("heroes") or [] if h.get("u") is not None}
+SL = [("Weapon", "Оружие"), ("Armor", "Броня"), ("Bracer", "Наручи"), ("Amulet", "Амулет"), ("Ring", "Кольцо")]
+def lt(o): o = o or {}; return {"ru": o.get("ru") or o.get("en") or "", "en": o.get("en") or o.get("ru") or ""}
+items = [i for i in pd.get("items") or [] if isinstance(i.get("sl"), int) and 0 <= i["sl"] < 5]
+mine = {i["sl"]: i for i in items if int(i.get("h") or 0) == hero}
+def plan_item(i, frm):
+    st = sets.get(str(i.get("s"))) or {}
+    it = {"slot": i["sl"], "uid": int(i["u"]), "slotName": {"en": SL[i["sl"]][0], "ru": SL[i["sl"]][1]}, "name": lt(i.get("n")),
+          "setName": lt(st.get("n")) if st else None, "setId": i.get("s"), "level": int(i.get("lv") or 0), "stars": int(i.get("st") or 0),
+          "mainStat": {"en": "", "ru": ""}, "icon": i.get("ic"), "fromHeroUid": frm, "fromHeroName": lt(names.get(frm)).get("ru") if frm else None}
+    c = mine.get(i["sl"])
+    if c is not None and int(c["u"]) != int(i["u"]): it["cur"] = {"uid": int(c["u"]), "name": lt(c.get("n")), "level": int(c.get("lv") or 0), "stars": int(c.get("st") or 0)}
+    return it
+if mode == "hide_worn":
+    c = sorted([i for i in items if int(i.get("h") or 0) not in (0, hero)], key=lambda i: (-int(i.get("st") or 0), -int(i.get("lv") or 0), int(i["u"])))
+    if not c: sys.exit(0)
+    i = c[:4][n % len(c[:4])]
+    out = [plan_item(i, int(i["h"]))]
+    note = "uid %d slot %d from hero %d (%s)" % (int(i["u"]), i["sl"], int(i["h"]), lt(names.get(int(i["h"])))["en"])
+else:
+    if len(mine) < 1: sys.exit(0)
+    worn = [a["u"] for a in pd.get("arts") or [] if int(a.get("h") or 0) == hero]
+    c = sorted([a for a in pd.get("arts") or [] if int(a.get("h") or 0) != hero], key=lambda a: (1 if a.get("h") else 0, -int(a.get("st") or 0), -int(a.get("lv") or 0), a["u"]))
+    if not c: sys.exit(0)
+    a = c[:4][n % len(c[:4])]
+    out = [plan_item(mine[s], 0) for s in sorted(mine)]
+    out[0]["artifact"] = {"uid": int(a["u"]), "id": int(a["id"])}
+    note = "artifact %s %s (%s), the hero wears %s" % (a["u"], lt(a.get("n"))["en"], "worn" if a.get("h") else "free", ",".join(worn) or "none")
+print(json.dumps({"hero_uid": hero, "hero_name": fx.get("hero_name"), "hero_name_en": fx.get("hero_name_en"), "items": out, "note": note}, ensure_ascii=False))
+'
+fx_keep() { q -v d="$1" <<< "select coalesce(string_agg(u, ','), '') from (select (i->>'uid') u from public.lab_fixtures f, jsonb_array_elements(coalesce(f.payload->'items', '[]'::jsonb)) i
+  where f.device_id = :'d'::uuid union all select f.payload->>'item_uid' from public.lab_fixtures f where f.device_id = :'d'::uuid) x where u ~ '^[0-9]+$'" 2>/dev/null || true; }
+pick_recast() { local pd; pd=$(snap_pd "$1"); [ -n "$pd" ] || return 0; python3 -I -c "$PICK_RECAST_PY" "$LAB_WEB_DIR" "$(nlocates "$1" recast)" "$(fx_keep "$1")" <<< "$pd" 2>/dev/null || true; }
+pick_art() { local pd; pd=$(snap_pd "$1"); [ -n "$pd" ] || return 0; python3 -I -c "$PICK_ART_PY" "$(nlocates "$1" artPromote)" <<< "$pd" 2>/dev/null || true; }
+pick_equip() {
+  local pd fx n
+  pd=$(snap_pd "$1"); [ -n "$pd" ] || return 0
+  fx=$(q -v d="$1" <<< "select payload - 'items' from public.lab_fixtures where device_id = :'d'::uuid and name in ('equip_a', 'equip_b') order by name limit 1") || return 0
+  [ -n "$fx" ] || return 0
+  n=$(q -v d="$1" <<< "select count(*) from public.equip_plans p join public.lab_devices dv on dv.account_id = p.account_id where dv.id = :'d'::uuid") || n=0
+  python3 -I -c "$PICK_EQUIP_PY" "$2" "${n:-0}" "$fx" <<< "$pd" 2>/dev/null || true
+}
+case "$what" in
+  --pick-recast) r=$(pick_recast "$(dev_id "$dev")"); echo "${r:-no recastable item in the newest snapshot}"; exit 0 ;;
+  --pick-art) r=$(pick_art "$(dev_id "$dev")"); echo "${r:-no promotable artifact in the newest snapshot}"; exit 0 ;;
+  --pick-hide-worn|--pick-artifact) m=${what#--pick-}; m=${m//-/_}; r=$(pick_equip "$(dev_id "$dev")" "$m")
+    [ -n "$r" ] && python3 -I -c 'import sys,json; p=json.load(sys.stdin); print(p["note"]); [print("  slot %d uid %d from %s%s" % (i["slot"], i["uid"], i["fromHeroUid"], " artifact %s" % i["artifact"] if "artifact" in i else "")) for i in p["items"]]' <<< "$r" || echo "nothing to seed"
+    exit 0 ;;
+esac
 if [ "$what" = --pick-sell ]; then
   r=$(pick_sell "$(dev_id "$dev")")
   [ -n "$r" ] && python3 -I -c 'import sys,json; [print("%d\tslot %s\t+%d\t%d*\t%s" % (i["uid"], i["slot"], i["level"], i["stars"], i["name"]["en"])) for i in json.load(sys.stdin)]' <<< "$r" || echo "no junk gear in the newest snapshot"
@@ -123,7 +232,7 @@ fi
 id=$(dev_id "$dev")
 
 # nothing is cancelled unless there is something to insert
-case "$what" in equip_city) names="'equip_a','equip_b'" ;; locate) names="'locate'" ;; sell_mark|sell_after_restart) names="" ;; *) echo "unknown scenario" >&2; exit 2 ;; esac
+case "$what" in equip_city|equip_hide_worn|equip_artifact) names="'equip_a','equip_b'" ;; locate) names="'locate'" ;; locate_recast|locate_art|sell_mark|sell_after_restart) names="" ;; *) echo "unknown scenario" >&2; exit 2 ;; esac
 if [ -n "$names" ]; then
   have=$(q -v d="$id" <<< "select count(*) from public.lab_devices dv join public.lab_fixtures x on x.device_id = dv.id
     where dv.id = :'d'::uuid and dv.account_id is not null and x.name in ($names)")
@@ -161,6 +270,37 @@ case "$what" in
         from public.lab_devices dv
         join public.game_accounts a on a.id = dv.account_id
         join public.lab_fixtures x on x.device_id = dv.id and x.name = 'locate'
+        where dv.id = :'d'::uuid
+        returning id;
+      commit;" ;;
+  equip_hide_worn|equip_artifact)
+    plan=$(pick_equip "$id" "${what#equip_}")
+    if [ -z "$plan" ]; then echo "lab-seed: WARNING nothing in the snapshot for $what, skipped" >&2; exit 3; fi
+    echo "lab-seed: $what $(python3 -I -c 'import sys,json; print(json.load(sys.stdin)["note"])' <<< "$plan")" >&2
+    [ -n "${LAB_DRY_SEED:-}" ] && { echo "lab-seed: DRY, not inserted: $plan" >&2; exit 3; }
+    q -v d="$id" -v p="$plan" <<< "
+      begin;
+      update public.equip_plans set status = 'cancelled', done_at = now()
+        where status = 'pending' and account_id = (select account_id from public.lab_devices where id = :'d'::uuid);
+      insert into public.equip_plans (user_id, account_id, hero_uid, hero_name, hero_name_en, items)
+        select a.user_id, a.id, (:'p'::jsonb->>'hero_uid')::bigint, :'p'::jsonb->>'hero_name', :'p'::jsonb->>'hero_name_en', :'p'::jsonb->'items'
+        from public.lab_devices dv join public.game_accounts a on a.id = dv.account_id
+        where dv.id = :'d'::uuid
+        returning id;
+      commit;" ;;
+  locate_recast|locate_art)
+    if [ "$what" = locate_recast ]; then pick=$(pick_recast "$id"); purpose=recast; else pick=$(pick_art "$id"); purpose=artPromote; fi
+    if [ -z "$pick" ]; then echo "lab-seed: WARNING no eligible target ($purpose) in the snapshot, $what skipped" >&2; exit 3; fi
+    uid=${pick%%$'\t'*}
+    echo "lab-seed: $what target $pick" | tr '\t' ' ' >&2
+    [ -n "${LAB_DRY_SEED:-}" ] && { echo "lab-seed: DRY, not inserted" >&2; exit 3; }
+    q -v d="$id" -v u="$uid" -v p="$purpose" <<< "
+      begin;
+      update public.item_locates set status = 'cancelled', done_at = now()
+        where status = 'pending' and account_id = (select account_id from public.lab_devices where id = :'d'::uuid);
+      insert into public.item_locates (user_id, account_id, item_uid, purpose)
+        select a.user_id, a.id, :'u'::bigint, :'p'
+        from public.lab_devices dv join public.game_accounts a on a.id = dv.account_id
         where dv.id = :'d'::uuid
         returning id;
       commit;" ;;
