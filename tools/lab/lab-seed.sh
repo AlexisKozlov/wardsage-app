@@ -157,10 +157,13 @@ print("%s\t%s\t%d\t%s" % (a["u"], (a.get("n") or {}).get("en") or "?", int(a.get
 # setId, level, stars, mainStat, fromHeroUid, fromHeroName, icon, cur).
 #   hide_worn: ONE item worn by ANOTHER hero (the app unticks «Скрыть надетое» to find it); the strongest one, rotating among 4.
 #   artifact:  the hero's own 5 worn items (nothing to change) + an artifact the hero does not wear (items[0].artifact {uid, id}, as the
-#              site's POST /api/plans): only the artifact goes on. Not worn by anybody first.
+#              site's POST /api/plans): only the artifact goes on. Only one the hero CAN wear (the site's canWear, lib/artifacts.ts, on
+#              data/artifact-fx.json: an exclusive one only for its own hero, else no class mask or the hero's class in it) and free (worn by
+#              nobody); one worn by another hero (the take-over pop-up) only when no free one fits.
 PICK_EQUIP_PY='
 import sys, json
 mode, n, fx = sys.argv[1], int(sys.argv[2]), json.loads(sys.argv[3])
+afx = json.load(open(sys.argv[4] + "/data/artifact-fx.json")) if len(sys.argv) > 4 else {}
 pd = json.load(sys.stdin) or {}
 hero = int(fx["hero_uid"]); sets = pd.get("sets") or {}
 names = {int(h["u"]): h.get("n") or {} for h in pd.get("heroes") or [] if h.get("u") is not None}
@@ -185,12 +188,26 @@ if mode == "hide_worn":
 else:
     if len(mine) < 1: sys.exit(0)
     worn = [a["u"] for a in pd.get("arts") or [] if int(a.get("h") or 0) == hero]
-    c = sorted([a for a in pd.get("arts") or [] if int(a.get("h") or 0) != hero], key=lambda a: (1 if a.get("h") else 0, -int(a.get("st") or 0), -int(a.get("lv") or 0), a["u"]))
+    hr = next((h for h in pd.get("heroes") or [] if int(h.get("u") or 0) == hero), {})
+    hid, hc = int(hr.get("id") or 0), int(hr.get("c") or 0)
+    # the site canWear (lib/artifacts.ts): why it fits, or None
+    def fits(a):
+        m = afx.get(str(a.get("id")))
+        if not m: return None
+        if int(m.get("x") or 0): return "exclusive to this hero (id %d)" % hid if int(m["x"]) == hid else None
+        p = int(m.get("p") or 0)
+        if not p: return "any class"
+        return "class mask %d has the hero class %d" % (p, hc) if hc & p else None
+    ok = [a for a in pd.get("arts") or [] if int(a.get("h") or 0) != hero and fits(a)]
+    free = [a for a in ok if not int(a.get("h") or 0)]
+    c = sorted(free or ok, key=lambda a: (-int(a.get("st") or 0), -int(a.get("lv") or 0), a["u"]))
     if not c: sys.exit(0)
     a = c[:4][n % len(c[:4])]
     out = [plan_item(mine[s], 0) for s in sorted(mine)]
     out[0]["artifact"] = {"uid": int(a["u"]), "id": int(a["id"])}
-    note = "artifact %s %s (%s), the hero wears %s" % (a["u"], lt(a.get("n"))["en"], "worn" if a.get("h") else "free", ",".join(worn) or "none")
+    note = "artifact %s %s id %s (%s; eligible: %s; %d of %d artifacts fit, %d free), the hero (id %d, class %d) wears %s" % (
+        a["u"], lt(a.get("n"))["en"], a["id"], "free" if free else "worn by hero %s: take-over, no free one fits" % a.get("h"), fits(a),
+        len(ok), len(pd.get("arts") or []), len(free), hid, hc, ",".join(str(w) for w in worn) or "none")
 print(json.dumps({"hero_uid": hero, "hero_name": fx.get("hero_name"), "hero_name_en": fx.get("hero_name_en"), "items": out, "note": note}, ensure_ascii=False))
 '
 fx_keep() { q -v d="$1" <<< "select coalesce(string_agg(u, ','), '') from (select (i->>'uid') u from public.lab_fixtures f, jsonb_array_elements(coalesce(f.payload->'items', '[]'::jsonb)) i
@@ -203,7 +220,7 @@ pick_equip() {
   fx=$(q -v d="$1" <<< "select payload - 'items' from public.lab_fixtures where device_id = :'d'::uuid and name in ('equip_a', 'equip_b') order by name limit 1") || return 0
   [ -n "$fx" ] || return 0
   n=$(q -v d="$1" <<< "select count(*) from public.equip_plans p join public.lab_devices dv on dv.account_id = p.account_id where dv.id = :'d'::uuid") || n=0
-  python3 -I -c "$PICK_EQUIP_PY" "$2" "${n:-0}" "$fx" <<< "$pd" 2>/dev/null || true
+  python3 -I -c "$PICK_EQUIP_PY" "$2" "${n:-0}" "$fx" "$LAB_WEB_DIR" <<< "$pd" 2>/dev/null || true
 }
 case "$what" in
   --pick-recast) r=$(pick_recast "$(dev_id "$dev")"); echo "${r:-no recastable item in the newest snapshot}"; exit 0 ;;
