@@ -47,6 +47,8 @@ namespace RealmForge {
     /// <summary>Each step's addresses and values, for the diagnostic dump (uibtn diag: ...).</summary>
     public string Trace { get { return trace.ToString(); } }
     internal void Tr(string k, string v) { if (trace.Length < 1800) trace.Append(k).Append('=').Append(v).Append(' '); }
+    /// <summary>The button's icon (its picture child, the label left out: Icon widgets only), client px; IW 0 = none found (the button's rect frames it).</summary>
+    public double IX, IY, IW, IH; public string IconName = "";
     public bool Ok { get { return FailStep == null; } }
     internal UiButtonInfo Fail(string step, string value) { FailStep = step; FailValue = value; return this; }
   }
@@ -54,7 +56,43 @@ namespace RealmForge {
   /// <summary>A button by name: the form's class and the Lua field paths that lead to it (the first that is there is taken).</summary>
   public sealed class UiWidget {
     public readonly string Form; public readonly string[] Paths;
+    /// <summary>A bar button with a picture and a label under it: its frame hugs the picture (the icon child), not the whole button.</summary>
+    public bool Icon;
     public UiWidget(string form, params string[] paths) { Form = form; Paths = paths; }
+  }
+
+  /// <summary>The icon of a bar button among its children (depth 1-2): active, not a label / red dot / effect by its name, centred on the button,
+  /// near square; a name with icon / img / image the first, then the biggest. And its frame: the icon's rect outset by FramePad px with corners
+  /// rounded to its size, kept inside the client. Pure (tests/CoreTests.cs).</summary>
+  public static class UiIcon {
+    public sealed class Cand { public string Name = ""; public double X, Y, W, H; public bool Active; public int Depth; }
+    public const double FramePad = 2;
+    static readonly string[] NotIcon = { "text", "txt", "label", "title", "name", "red", "dot", "num", "count", "tips", "effect", "fx", "lock", "new", "mask", "glow", "light", "arrow" };
+    static readonly string[] IconWords = { "icon", "img", "image", "pic", "sprite" };
+    /// <summary>The index of the icon in <paramref name="c"/> for the button's rect (bx, by, bw, bh); -1 = none (the button's rect frames it).</summary>
+    public static int Pick(IList<Cand> c, double bx, double by, double bw, double bh) {
+      int best = -1; double bs = double.NegativeInfinity;
+      if (c == null || bw <= 0 || bh <= 0) return -1;
+      for (int i = 0; i < c.Count; i++) {
+        var k = c[i]; string n = (k.Name ?? "").ToLowerInvariant();
+        if (!k.Active || k.W < 4 || k.H < 4) continue;
+        bool bad = false; foreach (var t in NotIcon) if (n.Contains(t)) { bad = true; break; }
+        if (bad) continue;
+        double cx = k.X + k.W / 2, cy = k.Y + k.H / 2, a = k.W / k.H;
+        if (cx < bx - bw * 0.1 || cx > bx + bw * 1.1 || cy < by - bh * 0.1 || cy > by + bh * 1.1) continue;
+        if (a < 0.5 || a > 2) continue;
+        if (k.W * k.H > bw * bh * 0.95 && k.W >= bw * 0.97 && k.H >= bh * 0.97) continue;   // the button's backdrop, not its picture
+        double sc = k.W * k.H / (bw * bh) - 0.1 * k.Depth;
+        foreach (var t in IconWords) if (n.Contains(t)) { sc += 2; break; }
+        if (sc > bs) { bs = sc; best = i; }
+      }
+      return best;
+    }
+    /// <summary>The frame round the icon (x, y, w, h, corner radius), client px, within W x H.</summary>
+    public static double[] Frame(double x, double y, double w, double h, double W, double H) {
+      double l = Math.Max(0, x - FramePad), t = Math.Max(0, y - FramePad), r = Math.Min(W, x + w + FramePad), b = Math.Min(H, y + h + FramePad);
+      return new[] { l, t, r - l, b - t, Math.Round(Math.Min(r - l, b - t) * 0.18) };
+    }
   }
 
   public static partial class RFX {
@@ -64,6 +102,7 @@ namespace RealmForge {
     // UnityPlayer 2019.4.40f1
     const int CompGo = 0x30, GoComps = 0x30, GoCompCount = 0x40, GoActiveSelf = 0x56, GoActiveCached = 0x57;
     const int TrHier = 0x38, TrIndex = 0x40, TrParent = 0x90, HierLocal = 0x18, TrsSize = 48, RtFields = 0xC8;
+    const int TrChildren = 0x70, TrChildCount = 0x80, GoName = 0x60;   // (Transform.m_Children: data, size; GameObject.m_Name: char*)
     // UIBase (the game's C# form class, a plain object; dump of 1.6.46.841.1): m_uiGameObject 0xB8, <Destroyed>k__BackingField 0xF8
     const int UiBaseGameObject = 0xB8, UiBaseDestroyed = 0xF8;
     public const double CanvasRefH = 640;
@@ -76,8 +115,8 @@ namespace RealmForge {
     public static UiWidget UiWidgetOf(ClickTarget t, string offerForm) {
       switch (t) {
         case ClickTarget.HeroBack: return new UiWidget("Form_CharactorMain", "m_ButtonBack.m_btnBack");
-        case ClickTarget.CityInventory: return new UiWidget("Form_MainCity", "m_Button_Backpack");
-        case ClickTarget.FoundryButton: return new UiWidget("Form_BackpackIntegration", "m_PanelContentCur.m_BtnWorkShop");
+        case ClickTarget.CityInventory: return new UiWidget("Form_MainCity", "m_Button_Backpack") { Icon = true };
+        case ClickTarget.FoundryButton: return new UiWidget("Form_BackpackIntegration", "m_PanelContentCur.m_BtnWorkShop") { Icon = true };
         case ClickTarget.AscendTab: return new UiWidget("Form_EquipSubliming", "m_ToggleSubliming");
         case ClickTarget.EquipConfirm: return new UiWidget("Form_CharactorEquipTip", "m_SelectEquipView.m_RightBtn.m_gameObject", "m_OneEquipView.m_RightBtn.m_gameObject");
         case ClickTarget.OfferClose: return string.IsNullOrEmpty(offerForm) ? null : new UiWidget(offerForm, OfferClosePaths);
@@ -254,6 +293,79 @@ namespace RealmForge {
       return false;
     }
 
+    /// <summary>The rect (client px) of the last transform of <paramref name="chain"/> (the canvas or the form's root first). <paramref name="main"/>:
+    /// the button's own read (its scale and rotation noted in <paramref name="r"/>).</summary>
+    static bool ChainRect(List<ulong> chain, bool canvas, double W, double H, double U, UiButtonInfo r, bool main, out double x, out double y, out double w, out double h) {
+      int n = chain.Count; x = y = w = h = 0;
+      var lp = new double[n, 2]; var ls = new double[n, 2]; var rt = new double[n][];
+      for (int i = 0; i < n; i++) {
+        var hb = Read(chain[i] + TrHier, 12); if (hb == null) { r.Fail("hierarchy", HexA(chain[i])); return false; }
+        ulong hier = BitConverter.ToUInt64(hb, 0); int ix = I32(hb, 8);
+        ulong arr = hier != 0 ? Ptr(hier + HierLocal) : 0;
+        var trs = arr != 0 && ix >= 0 && ix < 100000 ? Read(arr + (ulong)ix * TrsSize, TrsSize) : null;
+        if (trs == null) { r.Fail("local transform", HexA(hier) + "[" + ix + "]"); return false; }
+        lp[i, 0] = F32(trs, 0); lp[i, 1] = F32(trs, 4);
+        ls[i, 0] = F32(trs, 0x20); ls[i, 1] = F32(trs, 0x24);
+        double qx = F32(trs, 0x10), qy = F32(trs, 0x14), qz = F32(trs, 0x18), qw = F32(trs, 0x1C);
+        if (i > 0 || !canvas) if (Math.Abs(qx) > 1e-3 || Math.Abs(qy) > 1e-3 || Math.Abs(qz) > 1e-3 || Math.Abs(Math.Abs(qw) - 1) > 1e-3) { if (main) r.Rotated = true; }
+        string bad; rt[i] = RectFields(chain[i], out bad);
+        if (rt[i] == null) { r.Fail("rect fields", "#" + i + " " + bad); return false; }
+      }
+      double k2, cw, ch, pw, ph, sx = 1, sy = 1, px, py; int i0;
+      if (canvas) {   // the canvas: its centre the origin, y up; children placed from its pivot
+        cw = rt[0][6]; ch = rt[0][7]; k2 = W / cw;
+        pw = cw; ph = ch; px = (rt[0][8] - 0.5) * cw; py = (rt[0][9] - 0.5) * ch; i0 = 1;
+        if (main) r.Scale = "canvas";
+        if (main) r.Tr("scale", "canvas " + F2(k2) + " px/unit (" + F2(H / ch) + " by height) vs unit " + F2(U / CanvasRefH));
+      } else {        // the form's root in a canvas of 640 units high = U px (its parent assumed to fill the canvas)
+        k2 = U / CanvasRefH; cw = W / k2; ch = H / k2; pw = cw; ph = ch; px = py = 0; i0 = 0;
+        if (main) r.Scale = "unit";
+        if (main) r.Tr("scale", "unit " + F2(k2) + " px/unit");
+      }
+      for (int i = i0; i < n; i++) {
+        var v = rt[i];
+        double amx = v[0], amy = v[1], aMx = v[2], aMy = v[3], sdx = v[6], sdy = v[7];
+        double w2 = pw * (aMx - amx) + sdx, h2 = ph * (aMy - amy) + sdy;
+        if (i == 0) {   // (unit mode) the root: its pivot from its anchors in the canvas
+          px = -cw / 2 + cw * (amx + (aMx - amx) * v[8]) + v[4];
+          py = -ch / 2 + ch * (amy + (aMy - amy) * v[9]) + v[5];
+        } else { px += sx * lp[i, 0]; py += sy * lp[i, 1]; }
+        sx *= ls[i, 0]; sy *= ls[i, 1];
+        pw = w2; ph = h2;
+      }
+      double cx = px + sx * (0.5 - rt[n - 1][8]) * pw, cy = py + sy * (0.5 - rt[n - 1][9]) * ph;
+      w = Math.Abs(sx * pw) * k2; h = Math.Abs(sy * ph) * k2;
+      x = W / 2 + cx * k2 - w / 2; y = H / 2 - cy * k2 - h / 2;
+      return true;
+    }
+
+    /// <summary>The icon child of the button (UiIcon.Pick over its children, depth 1-2, at most 40 looked at) into r.IX.. (none: IW stays 0).</summary>
+    static void IconInto(List<ulong> chain, bool canvas, double W, double H, double U, UiButtonInfo r) {
+      var cands = new List<UiIcon.Cand>();
+      var todo = new List<KeyValuePair<List<ulong>, int>> { new KeyValuePair<List<ulong>, int>(chain, 0) };
+      for (int q = 0; q < todo.Count && cands.Count < 40; q++) {
+        var at = todo[q].Key; int depth = todo[q].Value; if (depth >= 2) continue;
+        ulong t = at[at.Count - 1];
+        var cb = Read(t + TrChildren, 0x18); if (cb == null) continue;
+        ulong arr = BitConverter.ToUInt64(cb, 0); long cnt = BitConverter.ToInt64(cb, 0x10);
+        if (arr == 0 || cnt <= 0 || cnt > 32) continue;
+        for (int i = 0; i < cnt && cands.Count < 40; i++) {
+          ulong c = Ptr(arr + (ulong)(8 * i)); if (c == 0 || Ptr(c + TrParent) != t) continue;
+          ulong go = Ptr(c + CompGo); if (go == 0) continue;
+          var ab = Read(go + GoActiveSelf, 1);
+          var path = new List<ulong>(at); path.Add(c);
+          var tmp = new UiButtonInfo(); double x, y, w, h;
+          if (!ChainRect(path, canvas, W, H, U, tmp, false, out x, out y, out w, out h)) continue;
+          cands.Add(new UiIcon.Cand { Name = CStr(Ptr(go + GoName)) ?? "", X = x, Y = y, W = w, H = h, Active = ab != null && ab[0] == 1, Depth = depth + 1 });
+          todo.Add(new KeyValuePair<List<ulong>, int>(path, depth + 1));
+        }
+      }
+      int k = UiIcon.Pick(cands, r.X, r.Y, r.W, r.H);
+      r.Tr("icon", k < 0 ? "none of " + cands.Count : cands[k].Name + " " + N0(cands[k].X) + "," + N0(cands[k].Y) + "," + N0(cands[k].W) + "," + N0(cands[k].H));
+      if (k < 0) return;
+      r.IX = cands[k].X; r.IY = cands[k].Y; r.IW = cands[k].W; r.IH = cands[k].H; r.IconName = cands[k].Name;
+    }
+
     static void UiButtonReadInto(ulong env, ulong ui, UiWidget w, double W, double H, double U, UiButtonInfo r) {
       if (env == 0 || ui == 0) { r.Fail("lua root", "not reached"); return; }
       if (W < 50 || H < 50) { r.Fail("window", "no client size " + F2(W) + "x" + F2(H)); return; }
@@ -292,45 +404,9 @@ namespace RealmForge {
       if (!canvas && U <= 0) { r.Fail("window", "no canvas and no unit"); return; }
       if (canvas) chain.InsertRange(0, above);
       int n = chain.Count;
-      var lp = new double[n, 2]; var ls = new double[n, 2]; var rt = new double[n][];
-      for (int i = 0; i < n; i++) {
-        var hb = Read(chain[i] + TrHier, 12); if (hb == null) { r.Fail("hierarchy", HexA(chain[i])); return; }
-        ulong hier = BitConverter.ToUInt64(hb, 0); int ix = I32(hb, 8);
-        ulong arr = hier != 0 ? Ptr(hier + HierLocal) : 0;
-        var trs = arr != 0 && ix >= 0 && ix < 100000 ? Read(arr + (ulong)ix * TrsSize, TrsSize) : null;
-        if (trs == null) { r.Fail("local transform", HexA(hier) + "[" + ix + "]"); return; }
-        lp[i, 0] = F32(trs, 0); lp[i, 1] = F32(trs, 4);
-        ls[i, 0] = F32(trs, 0x20); ls[i, 1] = F32(trs, 0x24);
-        double qx = F32(trs, 0x10), qy = F32(trs, 0x14), qz = F32(trs, 0x18), qw = F32(trs, 0x1C);
-        if (i > 0 || !canvas) if (Math.Abs(qx) > 1e-3 || Math.Abs(qy) > 1e-3 || Math.Abs(qz) > 1e-3 || Math.Abs(Math.Abs(qw) - 1) > 1e-3) r.Rotated = true;
-        string bad; rt[i] = RectFields(chain[i], out bad);
-        if (rt[i] == null) { r.Fail("rect fields", "#" + i + " " + bad); return; }
-      }
-      double k2, cw, ch, pw, ph, sx = 1, sy = 1, px, py; int i0;
-      if (canvas) {   // the canvas: its centre the origin, y up; children placed from its pivot
-        cw = rt[0][6]; ch = rt[0][7]; k2 = W / cw;
-        pw = cw; ph = ch; px = (rt[0][8] - 0.5) * cw; py = (rt[0][9] - 0.5) * ch; i0 = 1;
-        r.Scale = "canvas";
-        r.Tr("scale", "canvas " + F2(k2) + " px/unit (" + F2(H / ch) + " by height) vs unit " + F2(U / CanvasRefH));
-      } else {        // the form's root in a canvas of 640 units high = U px (its parent assumed to fill the canvas)
-        k2 = U / CanvasRefH; cw = W / k2; ch = H / k2; pw = cw; ph = ch; px = py = 0; i0 = 0;
-        r.Scale = "unit";
-        r.Tr("scale", "unit " + F2(k2) + " px/unit");
-      }
-      for (int i = i0; i < n; i++) {
-        var v = rt[i];
-        double amx = v[0], amy = v[1], aMx = v[2], aMy = v[3], sdx = v[6], sdy = v[7];
-        double w2 = pw * (aMx - amx) + sdx, h2 = ph * (aMy - amy) + sdy;
-        if (i == 0) {   // (unit mode) the root: its pivot from its anchors in the canvas
-          px = -cw / 2 + cw * (amx + (aMx - amx) * v[8]) + v[4];
-          py = -ch / 2 + ch * (amy + (aMy - amy) * v[9]) + v[5];
-        } else { px += sx * lp[i, 0]; py += sy * lp[i, 1]; }
-        sx *= ls[i, 0]; sy *= ls[i, 1];
-        pw = w2; ph = h2;
-      }
-      double cx = px + sx * (0.5 - rt[n - 1][8]) * pw, cy = py + sy * (0.5 - rt[n - 1][9]) * ph;
-      r.W = Math.Abs(sx * pw) * k2; r.H = Math.Abs(sy * ph) * k2;
-      r.X = W / 2 + cx * k2 - r.W / 2; r.Y = H / 2 - cy * k2 - r.H / 2;
+      double rx, ry, rw, rh;
+      if (!ChainRect(chain, canvas, W, H, U, r, true, out rx, out ry, out rw, out rh)) return;
+      r.X = rx; r.Y = ry; r.W = rw; r.H = rh;
       r.Tr("rect", N0(r.X) + "," + N0(r.Y) + "," + N0(r.W) + "," + N0(r.H) + " chain " + n + " (form " + nForm + ")");
       // shown: the form is shown and the object is active in the hierarchy (the cached flag; not computed yet: every activeSelf up to the root)
       bool active;
@@ -342,6 +418,7 @@ namespace RealmForge {
       }
       r.Tr("shown", (shown ? "form" : "form-hidden") + (active ? " active" : " inactive") + " copies " + copies);
       r.Visible = shown && active && r.W >= 1 && r.H >= 1;
+      if (w.Icon && r.Visible) IconInto(chain, canvas, W, H, U, r);
     }
 
     static string N0(double v) { return Math.Round(v).ToString(CultureInfo.InvariantCulture); }
@@ -354,7 +431,7 @@ namespace RealmForge {
       bool inside = lx >= r.X && lx < r.X + r.W && ly >= r.Y && ly < r.Y + r.H;
       return "uibtn: " + who + " live=[" + N0(r.X) + "," + N0(r.Y) + "," + N0(r.W) + "," + N0(r.H) + "] layout=[" + N0(lx) + "," + N0(ly) + "] diff=" + N0(d) + "px"
         + (inside ? "" : " outside") + " visible=" + (r.Visible ? "T" : "F") + (r.Rotated ? " rotated" : "") + (r.Copies > 1 ? " copies=" + r.Copies : "")
-        + (r.Scale != "" ? " scale=" + r.Scale : "") + " " + r.ClassName + " in " + r.Ms + " ms";
+        + (r.Scale != "" ? " scale=" + r.Scale : "") + (r.IW > 0 ? " icon=" + r.IconName + "[" + N0(r.IX) + "," + N0(r.IY) + "," + N0(r.IW) + "," + N0(r.IH) + "]" : "") + " " + r.ClassName + " in " + r.Ms + " ms";
     }
 
     // ---- the reads: the clicks and hint frames of the pilot buttons use the live rect when fresh; a minute re-read of the last click (test build log)

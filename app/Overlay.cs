@@ -2128,11 +2128,12 @@ namespace RealmForge {
       LocateFrame lf = front && !hold && step.Kind != LocateKind.InList ? LocateFrames.For(step, req.Item, locateRs, null, Geo.Current, W, H, U) : null;
       if (lf != null && lf.Mark.Kind == "box") {   // «Литейная» / the «Вознесение» tab: framed where the game has put them (live rect, fresh)
         var lt = lf.Target == "inventory.workshop" ? ClickTarget.FoundryButton : lf.Target == "foundry.tab.ascend" ? ClickTarget.AscendTab : (ClickTarget?)null;
-        var lv = lt != null ? LiveFrame(lt.Value, null, W, H, U) : null;
+        var lv = lt != null ? LiveFrame(lt.Value, null, W, H, U, true) : null;   // («Литейная»: its icon, the label left out; the click: the button's centre)
+        var lb = lv != null && lv.Length > 4 ? RFX.UiButtonFresh(lt.Value, null, W, H, Environment.TickCount, RFX.UiFreshMs) : null;
         if (lv != null) {
           lf.Raw = new GeoRect { X = lv[0], Y = lv[1], W = lv[2], H = lv[3] };
           lf.Mark = new LocateMark { Kind = "box", X = (int)Math.Round(lv[0]), Y = (int)Math.Round(lv[1]), W = (int)Math.Round(lv[2]), H = (int)Math.Round(lv[3]) };
-          lf.ClickX = lv[0] + lv[2] / 2; lf.ClickY = lv[1] + lv[3] / 2;
+          lf.ClickX = lb != null ? lb.X + lb.W / 2 : lv[0] + lv[2] / 2; lf.ClickY = lb != null ? lb.Y + lb.H / 2 : lv[1] + lv[3] / 2;
         }
       }
       if (lf != null && step.Kind == LocateKind.Selected) {   // the card button's rect, once per change (to measure against a frame diagnostics capture)
@@ -2691,7 +2692,7 @@ namespace RealmForge {
     // ---- the game's offer / notice pop-ups over the city (src/OfferForms.cs): read from the window table, closed by the pilots (OfferClose)
     volatile bool uiFinding; long uiFindAt, unknownFormsAt, lostSearchAt; int lostSearchGen; List<string> unknownForms;
     // the shown unknown forms when the screen became the known one it is (TopNew: the ones that came later are a pop-up on top), and the last results
-    const int TopSettleMs = 3000, TopFlickerMs = 2000, KnownFormsMs = 60000, FreshFormsMs = 0, SettleReadMs = 500;   // (FreshFormsMs: the forms read again before every click - cheap with the window table; the pilots click faster now)
+    const int TopSettleMs = 3000, TopFlickerMs = 2000, KnownFormsMs = 60000, FreshFormsMs = 0, SettleReadMs = 500, UnknownReadMs = 250;   // (UnknownReadMs: on an unknown screen - its top form named within a tick or two)   // (FreshFormsMs: the forms read again before every click - cheap with the window table; the pilots click faster now)
     List<string> knownForms, firstForms; long knownFormsAt, firstFormsAt;
     // the window table's read failed this tick (the offers or the shown forms): a pop-up over the screen cannot be ruled out, so no click or key
     // goes to the game until a read succeeds (the read is tried again on the next tick); never set while the table is not known (RFX.UiKnown)
@@ -2699,7 +2700,7 @@ namespace RealmForge {
     long topBaseAt, topLastAt; ScreenKind topLastKind = ScreenKind.Unknown, topBaseKind = ScreenKind.Unknown; HashSet<string> topBase = new HashSet<string>(); string topNewNow = "", topUnknownNow = "", topCityNow = ""; ScreenKind topNewKind = ScreenKind.Unknown;
     string topFlowNow = ""; ScreenKind topFlowKind = ScreenKind.Unknown;   // the pilots' own flow forms on the screen (ScreenMap.FlowForms) and the screen they lie on
     readonly HashSet<string> unknownSaid = new HashSet<string>();
-    string offerSaid = "";
+    string offerSaid = ""; long unknownFromAt; bool unknownNamedSaid;   // (the timing line: the unknown screen's top form named how long after it came)
 
     /// <summary>The offer pop-ups shown (and, on an unrecognised screen or the city, the shown forms nobody knows, every 2 s) into this tick's inputs.
     /// The window table is looked for off this thread when it is not known yet.</summary>
@@ -2717,6 +2718,7 @@ namespace RealmForge {
       if (os != offerSaid) { offerSaid = os; if (os != "" && os != "?") Log.Write("offer: shown " + os); }
       var cls = ScreenState.Classify(inp, now).Kind;
       topNewNow = ""; topUnknownNow = ""; topCityNow = ""; topFlowNow = "";
+      if (cls == ScreenKind.Unknown && formsKind != ScreenKind.Unknown) { unknownFormsAt = 0; unknownFromAt = now; unknownNamedSaid = false; }   // just became unknown: its forms read at once
       formsKind = cls;
       if (front && (inp.Offers == null || inp.Offers.Count == 0)) {
         // the forms of the last read on the city or a known screen (before this tick's): one not in it came with the screen. A short unknown
@@ -2725,7 +2727,7 @@ namespace RealmForge {
         var prevForms = knownForms != null && now - knownFormsAt <= KnownFormsMs ? knownForms : firstForms != null && now - firstFormsAt <= KnownFormsMs ? firstForms : unknownForms;
         // (every 2 s; within a known screen's settle time every SettleReadMs: a part it builds late must be read before that time ends)
         bool settling = topBaseKind != ScreenKind.Unknown && topBaseKind != ScreenKind.City && now - topBaseAt < TopSettleMs;
-        if (now - unknownFormsAt >= (settling ? SettleReadMs : 2000) || unknownFormsAt == 0) { unknownFormsAt = now; unknownForms = RFX.ReadUnknownShownForms(4); if (unknownForms == null) { formsUnread = true; unknownFormsAt = 0; }  else if (firstForms == null) { firstForms = unknownForms; firstFormsAt = now; } }
+        if (now - unknownFormsAt >= (settling ? SettleReadMs : cls == ScreenKind.Unknown ? UnknownReadMs : 2000) || unknownFormsAt == 0) { unknownFormsAt = now; unknownForms = RFX.ReadUnknownShownForms(4); if (unknownForms == null) { formsUnread = true; unknownFormsAt = 0; }  else if (firstForms == null) { firstForms = unknownForms; firstFormsAt = now; } }
         var cur = unknownForms ?? new List<string>();
         // the pilots' own flow forms on this screen (the item tip the item select opens ...; on an unknown moment: the last known screen's): its sub-state
         ScreenKind flowOn = cls == ScreenKind.Unknown ? topLastKind : cls;
@@ -2739,6 +2741,7 @@ namespace RealmForge {
         if (cls == ScreenKind.Unknown) {
           if (cur.Count > 0) {
             inp.TopUnknown = topUnknownNow = string.Join(",", cur.ToArray());
+            if (!unknownNamedSaid && cur.Exists(n => !n.StartsWith("id:"))) { unknownNamedSaid = true; Log.Write("screen: top form " + topUnknownNow + " named " + (now - unknownFromAt) + " ms after the screen became unknown"); }
             if (unknownSaid.Add("rec:" + inp.TopUnknown)) RaiseAutoRec(AutoRecPolicy.UnknownFormTag(inp.TopUnknown));
           }
         } else if (cls == ScreenKind.City) {
@@ -3593,8 +3596,13 @@ namespace RealmForge {
     double invDX { get { return cityBar.InvDX; } }
     bool InventoryButtonSeen(W32.POINT o, double W, double H) {
       long now = NowMs();
+      // the game's own rect of the button (uibtn), fresh and held still over two reads: pressed at once, the bar's search skipped (its fallback)
+      if (CityLiveStill(W, H, now)) return true;
+      if (cityLive.Fresh) return false;   // (the rect still moves: the new bar slides in - waited for, never pressed by the picture)
       if (cityBar.Note(RFX.CityFormFresh())) { cityInvAt = 0; Log.Write("city bar: the city was built again - «Инвентарь» is searched again on the new city"); }
-      return cityBar.Look(InventoryButtonLook(o, W, H, now), now);
+      bool seen = cityBar.Look(InventoryButtonLook(o, W, H, now), now);
+      if (seen) CityReadySay(now, "the bar's picture");
+      return seen;
     }
     bool InventoryButtonLook(W32.POINT o, double W, double H, long now) {
       double U = Ui.Unit(W, H), cy = H - 0.1156 * U;
@@ -3609,6 +3617,24 @@ namespace RealmForge {
       return true;
     }
 
+    readonly LiveStill cityLive = new LiveStill(); long cityReadyFor = -1;
+    /// <summary>The city's «Инвентарь» by its live rect: fresh (UiFreshMs), visible, on the city on top, the same over two reads GapMs apart.
+    /// One timing line a city stretch: how long after the city came the button was ready, and by which way.</summary>
+    bool CityLiveStill(double W, double H, long now) {
+      double U = Ui.Unit(W, H);
+      var lv = LiveFrame(ClickTarget.CityInventory, null, W, H, U);
+      var r = lv != null ? RFX.UiButtonFresh(ClickTarget.CityInventory, null, W, H, Environment.TickCount, RFX.UiFreshMs) : null;
+      bool ok = cityLive.Note(r != null ? lv : null, r != null ? r.At : 0);
+      if (ok) CityReadySay(now, "live rect held still, no bar search");
+      return ok;
+    }
+    void CityReadySay(long now, string how) {
+      var c = screens.Current;
+      if (c == null || c.Kind != ScreenKind.City || c.SinceMs == cityReadyFor) return;
+      cityReadyFor = c.SinceMs;
+      Log.Write("city bar: «Инвентарь» ready " + (now - c.SinceMs) + " ms after the city came (" + how + ")");
+    }
+
     // the city's «Инвентарь» button in the bottom bar (where the auto mode clicks): its frame (client px -> screen px), seen by its
     // picture (looked at most every 0.4 s); false = the city bar is not on the screen
     long cityInvAt; bool cityInvSeen;
@@ -3617,19 +3643,21 @@ namespace RealmForge {
       if (now - cityInvAt >= 400) { cityInvAt = now; cityInvSeen = InventoryButtonSeen(o, W, H); }
       var cb = LocateFrames.CityButton(Geo.Current, W, H, U, invDX, hg2.HeroesBtnDY);   // the bar's button size from the geometry (else the estimate)
       r = new[] { o.X + cb[0], o.Y + cb[1], cb[2], cb[3] };
-      var lv = LiveFrame(ClickTarget.CityInventory, null, W, H, U);   // where the game has put it (live rect, fresh) wins
+      var lv = LiveFrame(ClickTarget.CityInventory, null, W, H, U, true);   // where the game has put it (live rect, fresh; its icon, the label left out) wins
       if (lv != null) { r = new[] { o.X + (int)Math.Round(lv[0]), o.Y + (int)Math.Round(lv[1]), (int)Math.Round(lv[2]), (int)Math.Round(lv[3]) }; return true; }
       return cityInvSeen;
     }
 
     /// <summary>A pilot button's frame where the game has put it: its live rect (client px) when the read is fresh (at most 200 ms), visible,
-    /// inside the client and on the form on top; null = the geometry's frame. Asks for the next background read (every 100 ms while framed).</summary>
-    double[] LiveFrame(ClickTarget t, string form, double W, double H, double U) {
+    /// inside the client and on the form on top; null = the geometry's frame. Asks for the next background read (every 100 ms while framed).
+    /// <paramref name="icon"/>: a bar button's frame hugs its icon (UiIcon.Frame, 2 px out: x, y, w, h, radius) when the read found it.</summary>
+    double[] LiveFrame(ClickTarget t, string form, double W, double H, double U, bool icon = false) {
       RFX.UiButtonWant(t, form, W, H, U);
       int now = Environment.TickCount;
       var r = RFX.UiButtonFresh(t, form, W, H, now, RFX.UiFreshMs);
       double x, y; string why;
       if (!RFX.UiLivePoint(r, W, H, now, out x, out y, out why) || !RFX.UiTopIs(t, form, screens.Current)) return null;
+      if (icon && r.IW > 0) return UiIcon.Frame(r.IX, r.IY, r.IW, r.IH, W, H);
       return new[] { r.X, r.Y, r.W, r.H };
     }
 
