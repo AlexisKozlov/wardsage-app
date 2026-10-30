@@ -57,7 +57,7 @@ else
   echo "SKIPPED: $FX45 not found (install mono-devel for the .NET Framework reference assemblies)"
 fi
 
-CORE="src/ScreenMap.cs src/ScreenMapData.cs src/ArenaClient.cs src/ArenaOpponents.cs src/ArtEquip.cs src/ArtGridPicture.cs src/AutoPilot.cs src/BattleCapture.cs src/BattleClock.cs src/BattleTimeline.cs src/Channel.cs src/Config.cs src/EquipGuide.cs src/EquipScan.cs src/ErrorReport.cs src/Extractor.cs src/FolderMigration.cs src/ScreenRecorder.cs src/RecInputs.cs src/FightPlanClient.cs src/FilterPilot.cs src/GameInfo.cs src/GamePacks.cs src/GameScreen.cs src/OfferForms.cs src/OfferScan.cs src/AutoRec.cs src/LabRec.cs src/ClickGate.cs src/GuildData.cs src/GvgData.cs src/HeroPilot.cs src/Geometry.cs src/Layout.cs src/ListTracker.cs src/HintLayout.cs src/GuideShape.cs src/LiveTables.cs src/LuaRoot.cs src/UiButtons.cs src/LocateClient.cs src/LocateFrames.cs src/LocateGuide.cs src/LocatePilot.cs src/MemoryReader.cs src/KlassScan.cs src/MiniJson.cs src/NewsClient.cs src/PlansClient.cs src/PlansWait.cs src/RecastScan.cs src/RemoteConfig.cs src/SellClient.cs src/SellHint.cs src/SellPilot.cs src/SellScan.cs src/Strings.cs src/SyncClient.cs src/TimelineBuilder.cs src/TestLog.cs src/TraceUpload.cs src/UpdateKeys.cs src/CodeWatch.cs src/CodeReport.cs src/WebViewRecovery.cs src/HeroGrades.cs app/HintGeometry.cs"
+CORE="src/ScreenMap.cs src/ScreenMapData.cs src/UiGraph.cs src/UiGraphData.cs src/ArenaClient.cs src/ArenaOpponents.cs src/ArtEquip.cs src/ArtGridPicture.cs src/AutoPilot.cs src/BattleCapture.cs src/BattleClock.cs src/BattleTimeline.cs src/Channel.cs src/Config.cs src/EquipGuide.cs src/EquipScan.cs src/ErrorReport.cs src/Extractor.cs src/FolderMigration.cs src/ScreenRecorder.cs src/RecInputs.cs src/FightPlanClient.cs src/FilterPilot.cs src/GameInfo.cs src/GamePacks.cs src/GameScreen.cs src/OfferForms.cs src/OfferScan.cs src/AutoRec.cs src/LabRec.cs src/ClickGate.cs src/GuildData.cs src/GvgData.cs src/HeroPilot.cs src/Geometry.cs src/Layout.cs src/ListTracker.cs src/HintLayout.cs src/GuideShape.cs src/LiveTables.cs src/LuaRoot.cs src/UiButtons.cs src/LocateClient.cs src/LocateFrames.cs src/LocateGuide.cs src/LocatePilot.cs src/MemoryReader.cs src/KlassScan.cs src/MiniJson.cs src/NewsClient.cs src/PlansClient.cs src/PlansWait.cs src/RecastScan.cs src/RemoteConfig.cs src/SellClient.cs src/SellHint.cs src/SellPilot.cs src/SellScan.cs src/Strings.cs src/SyncClient.cs src/TimelineBuilder.cs src/TestLog.cs src/TraceUpload.cs src/UpdateKeys.cs src/CodeWatch.cs src/CodeReport.cs src/WebViewRecovery.cs src/HeroGrades.cs app/HintGeometry.cs"
 
 step "3. Core (no WinForms) compiles as C# 5 for .NET 8; tests build"
 NET8_REFS=$(for f in "$NET8"/*.dll; do printf -- '-r:%s ' "$f"; done)
@@ -81,6 +81,11 @@ dotnet exec --runtimeconfig "$OUT/CoreTests.runtimeconfig.json" "$OUT/CoreTests.
 
 step "5a. Game sim: 3000 seeds of a random start + task through the real screen state, click gate and pilots (tests/GameSim.cs; longer: tests/run-sim.sh --soak N)"
 dotnet exec --runtimeconfig "$OUT/CoreTests.runtimeconfig.json" "$OUT/CoreTests.dll" --sim 3000
+
+step "5a2. Game sim driven by the UI graph (src/UiGraphData.cs): starts on safe paths from the city, the game's own pop-ups, presses do what the client's code does; with the graph's report"
+# (a report, not a gate yet: the rule breaks it finds are open bugs of the window table's missing order - an offer's x with a buy dialog
+# shown, a pop-up's x under a full screen opened later, a start pop-up's widget under a screen click; tests/run-sim.sh --soak N --graph lists them)
+dotnet exec --runtimeconfig "$OUT/CoreTests.runtimeconfig.json" "$OUT/CoreTests.dll" --sim 1000 --graph | grep -v '^ *[0-9]*  [A-Z]' || echo "graph-driven sim: rule breaks found (open bugs, see above)"
 
 step "5b. Screen state + click gate: replay of recorded screens (tests/fixtures/screens)"
 $CSC -target:exe -nostdlib -nowarn:SYSLIB0014 $NET8_REFS -r:"$OUT/RealmForge.Core.dll" -out:"$OUT/ScreenReplay.dll" tests/ScreenReplay.cs

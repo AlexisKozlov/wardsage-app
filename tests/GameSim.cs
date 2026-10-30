@@ -1,6 +1,9 @@
 // A deterministic model of the game's UI for the pilots (built into CoreTests; C# 5 like the rest of it):
 //
-//   CoreTests --sim <seeds> [--from <n>] [--slow-only] [--real] [--seed <n>] [--verbose] [--list <outcome>] [--digest]   (SIM_TRACE=1: every click with the fresh state;
+//   CoreTests --sim <seeds> [--from <n>] [--slow-only] [--real] [--graph] [--seed <n>] [--verbose] [--list <outcome>] [--digest]   (SIM_TRACE=1: every click with the fresh state;
+//   --graph: the game's forms, transitions and pop-ups from the UI graph (src/UiGraphData.cs): the starts walk a safe path from the city to any
+//   reachable form, the pop-ups are the forms the game opens by itself (ActivityFormMgr's queue over the city, the data modules' results), a
+//   click on a form's widget does what the client's code does (opens / closes a form; a click on a dangerous one breaks the run);
 //   --digest: a line a seed with its outcome and a hash of its presses; --list: each seed whose "owner machine outcome" contains the text, with the hero pilot's why)
 //
 // The game: a stack of forms (the city at the bottom; the hero screen, the inventory and the Foundry the app reads; any form of the screen
@@ -180,6 +183,11 @@ static partial class CoreTests {
     /// <summary>Now and then a pop-up the game opens by itself (a reward, a notice, a loading).</summary>
     void MaybeSpawn() {
       if (R.NextDouble() >= SpawnP) return;
+      if (SimGraph) {   // the forms the game opens by itself (the UI graph): ActivityFormMgr's queue over the city, a data module's / an action's result anywhere
+        string gf = SimGraphAuto(R, Full == SimCity);
+        if (gf != null) Later(500 + R.Next(2500), () => { if (!ScreenMap.IsFlow(FullKind, gf) && (Full == SimCity || !UiGraph.ByName(gf).AutoIn("activity:city"))) { SimGraphSeen.Add(gf); Push(gf); } });
+        return;
+      }
       string f = SimPick(R, R.Next(3) == 0 ? 'W' : R.Next(2) == 0 ? 'P' : 'E');
       // (never a pilot's flow form of the screen it would open over: the game opens those only from that screen's own buttons - the app takes them
       // for a sub-state of the screen, ScreenMap.FlowForms)
@@ -261,8 +269,10 @@ static partial class CoreTests {
       if (c == 'F' || c == 'P' || c == 'U') {
         if (c != 'U' && ScreenMap.OnExit(top, x, y, W, H, U)) Later(lat, () => Pop(top));
         else if (c == 'U' && OnBack(x, y)) Later(lat, () => Pop(top));
+        else if (SimGraph) GraphPress(top, x, y, lat, tg);
         return;
       }
+      if (SimGraph && c != 'K' && c != 'W') { GraphPress(top, x, y, lat, tg); if (Bad.Count > 0) return; }
       // the item's tip: «Заменить» puts the item on (the tip closes)
       if (top == SimTip && Full == SimHero && tg == ClickTarget.EquipConfirm) {
         if (In(new GeoRect { X = SimGame.Hint.Replace(W, H)[0], Y = SimGame.Hint.Replace(W, H)[1], W = SimGame.Hint.Replace(W, H)[2], H = SimGame.Hint.Replace(W, H)[3] }, x, y)) Later(lat, () => { if (TopForm() == SimTip) { Pop(SimTip); Worn = true; ItemSel = false; } });
@@ -346,6 +356,24 @@ static partial class CoreTests {
       }
     }
 
+    /// <summary>--graph: a press on a form the app does not read: the widget under it (shown in the prefab, not a list template; the
+    /// smallest one) does what the client's code does - opens its form, closes its own; a dangerous one (a purchase / claim / sell / consume
+    /// request, a confirm) breaks the run.</summary>
+    void GraphPress(string top, double x, double y, long lat, ClickTarget tg) {
+      var w = SimGraphWidgetAt(top, x, y, W, H, U); if (w == null) return;
+      GraphPresses++; SimGraphPressN++; if (w.Danger) SimGraphDangerN++;
+      // (a request that buys / claims / sells / consumes breaks the run; a confirm opens - the pilot stops on it, nothing is spent yet)
+      if (w.Danger) { Bad.Add("CLICK ON A DANGEROUS WIDGET of " + top + ": " + w.Path + " @" + (int)x + "," + (int)y + " (" + tg + ")"); return; }
+      if (w.Confirm) SimGraphConfirmN++;
+      Say("graph: " + top + " [" + w.Path + "]");
+      foreach (var t in w.Opens()) {
+        var tf = UiGraph.ByName(t); if (tf == null || Array.IndexOf(OfferForms.KnownScreens, t) >= 0) continue;
+        string to = t; Later(lat, () => { if (TopForm() == top) { SimGraphSeen.Add(to); Push(to); } }); return;
+      }
+      if (w.Closes) Later(lat, () => Pop(top));
+    }
+    public int GraphPresses;
+
     /// <summary>A drag: the hero grid follows it; on anything else it is a press on its start point.</summary>
     public void Drag(double x, double y, double dy, ClickTarget tg) {
       string top = TopForm();
@@ -390,6 +418,60 @@ static partial class CoreTests {
       if (top == SimHero) { Later(lat, () => { if (Hero.Part >= 0) Hero.Part = -1; else { Hero.Shown = 0; Pop(SimHero); } }); return; }
       if (top == SimInv && InvBulk) { Later(lat, () => { InvBulk = false; }); return; }
       Later(lat, () => Pop(top));
+    }
+  }
+
+  /// <summary>--graph: the game sim's forms, transitions and pop-ups come from the UI graph (src/UiGraphData.cs).</summary>
+  static bool SimGraph;
+  /// <summary>The forms a --graph run showed (its starts, the pop-ups, the forms its presses opened): the coverage of the report.</summary>
+  static readonly HashSet<string> SimGraphSeen = new HashSet<string>();
+  static List<string> simAutoCity, simAutoAny; static List<string> simReach; static long SimGraphPressN, SimGraphDangerN, SimGraphConfirmN;
+  static bool SimGraphUsable(string f) {
+    return Array.IndexOf(OfferForms.KnownScreens, f) < 0 && !OfferForms.IsOffer(f) && Array.IndexOf(OfferForms.IgnoredOverlays, f) < 0 && ScreenMap.ByName(f) != null;
+  }
+  static void SimGraphInit() {
+    if (simReach != null) return;
+    simAutoCity = new List<string>(); simAutoAny = new List<string>();
+    foreach (var f in UiGraph.All) {
+      if (!f.IsAuto) continue;
+      // (the city's queue: its offers too - the sim's offer pop-ups, closed by their own ×)
+      if (f.AutoIn("activity:city") && (SimGraphUsable(f.Name) || OfferForms.IsOffer(f.Name))) simAutoCity.Add(f.Name);
+      if (!SimGraphUsable(f.Name)) continue;
+      foreach (var a in f.Auto) if (a.StartsWith("data:") || a.StartsWith("result:")) { simAutoAny.Add(f.Name); break; }
+    }
+    simReach = new List<string>();
+    foreach (var kv in UiGraph.Reachable(SimCity)) if (kv.Key != SimCity && SimGraphUsable(kv.Key)) simReach.Add(kv.Key);
+    simReach.Sort(StringComparer.Ordinal);
+  }
+  /// <summary>A form the game opens by itself: over the city its pop-up queue's or a data module's, elsewhere a data module's / an action's result.</summary>
+  static string SimGraphAuto(Random r, bool city) {
+    SimGraphInit();
+    var l = city && r.Next(2) == 0 ? simAutoCity : simAutoAny;
+    return l.Count == 0 ? null : l[r.Next(l.Count)];
+  }
+  /// <summary>The widget of the form under the point (shown in the prefab, not a list template; the smallest one).</summary>
+  static UiGraph.Widget SimGraphWidgetAt(string form, double x, double y, double W, double H, double U) {
+    var f = UiGraph.ByName(form); if (f == null) return null;
+    UiGraph.Widget best = null; double ba = double.MaxValue;
+    foreach (var w in f.Widgets) {
+      if (!w.Shown || w.Template || w.Rect == null) continue;
+      var r = ScreenMap.Place(w.Rect, W, H, U);
+      if (r.W < 2 || r.H < 2 || r.W > W * 0.9 && r.H > H * 0.9) continue;   // (a full-screen tap catcher is the screen map's exit, not a widget)
+      if (x >= r.X && x <= r.Right && y >= r.Y && y <= r.Bottom && r.W * r.H < ba) { best = w; ba = r.W * r.H; }
+    }
+    return best;
+  }
+  /// <summary>A --graph start: the forms of a safe path from the city to a reachable form, pushed one after the other.</summary>
+  static void SimGraphStart(SimGame g, Random r) {
+    SimGraphInit(); if (simReach.Count == 0) return;
+    string goal = simReach[r.Next(simReach.Count)];
+    var p = UiGraph.Path(SimCity, goal); if (p == null) return;
+    foreach (var s in p) {
+      if (s.To == SimHero) { g.Hero.Shown = 100 + r.Next(30); g.Push(SimHero); }
+      else if (s.To == SimInv) { g.InvEquipTab = r.Next(2) == 0; g.Push(SimInv); }
+      else if (s.To == SimFoundry) { g.FoundryTab = new[] { 0, 2, 3 }[r.Next(3)]; g.Push(SimFoundry); }
+      else if (Array.IndexOf(OfferForms.KnownScreens, s.To) >= 0 || OfferForms.IsOffer(s.To)) return;   // (the app's own screens / the offers: the hand-made starts have them)
+      else { SimGraphSeen.Add(s.To); g.Push(s.To); }
     }
   }
 
@@ -860,13 +942,14 @@ static partial class CoreTests {
     int k = r.Next(10);
     if (k == 2) { g.Hero.Shown = 100 + r.Next(30); g.Push(SimHero); if (r.Next(3) == 0) g.Hero.Part = r.Next(5); }
     else if (k == 3 || k == 4) { g.InvEquipTab = r.Next(2) == 0; g.InvBulk = g.InvEquipTab && r.Next(3) == 0; g.Push(SimInv); if (k == 4) { g.FoundryTab = new[] { 0, 2, 3 }[r.Next(3)]; g.Push(SimFoundry); } }
+    else if (k >= 5 && SimGraph) SimGraphStart(g, r);   // (--graph: a real stack, the forms of a safe path from the city)
     else if (k >= 5) { int n = 1 + r.Next(2); for (int i = 0; i < n; i++) g.Push(r.Next(2) == 0 ? SimNamed[r.Next(SimNamed.Length)] : SimPick(r, 'F')); }
     // (the stress mix: 0-2 forms over the start, a tenth of them dangerous; --real: a form over the start one run in six, a dangerous one 3 in 100 of those)
     int extra = r.Next(3); if (real) extra = extra == 0 && r.Next(2) == 0 ? 1 : 0;
     for (int i = 0; i < extra; i++) {
       int p = r.Next(100); if (real && p >= 65 && p < 75) p = r.Next(10) < 3 ? p : 50;
       char c = p < 45 ? 'P' : p < 65 ? 'E' : p < 75 ? 'D' : p < 82 ? 'W' : 'O';
-      string f = SimPick(r, c); if (f != null) g.Push(f);
+      string f = SimGraph && (c == 'P' || c == 'E' || c == 'D') && r.Next(2) == 0 ? SimGraphAuto(r, g.Full == SimCity) : SimPick(r, c); if (f != null) { if (SimGraph) SimGraphSeen.Add(f); g.Push(f); }
     }
     // a known form moved: the old reader searched for it with a pass (17 s on the laptop); the window table gives it on the next tick's check
     if (slow && r.Next(8) == 0) { g.LostFrom = 2000 + r.Next(20000); g.LostTo = g.LostFrom + (scan ? 17000 : 150 + r.Next(250)); }
@@ -1054,6 +1137,7 @@ static partial class CoreTests {
 
   // what the game sim found (each a fix in src/ or app/Overlay.cs), kept as plain tests
   static void SimRegressionTests() {
+    UiGraphTests();
     {   // city first (owner rule 2026-10-30): every pilot x every start screen reaches its goal or stops with its reason
       var mgeo = GameGeometry.Parse(GeoJson(), GeoGame);
       var mf = SimMatrix(mgeo, true);
@@ -1634,6 +1718,49 @@ static partial class CoreTests {
     return bad == 0 ? 0 : 1;
   }
 
+  /// <summary>--graph: the UI graph's numbers and how much of it the run covered.</summary>
+  static void SimGraphReport() {
+    SimGraphInit();
+    int w = 0, d = 0, k = 0, open = 0, close = 0, req = 0, auto = 0, unknownT = 0;
+    foreach (var f in UiGraph.All) {
+      if (f.IsAuto) auto++;
+      foreach (var x in f.Widgets) {
+        w++; if (x.Danger) d++; if (x.Confirm) k++;
+        foreach (var e in x.Effects) { if (e.Kind == 'o') { open++; if (e.Target.StartsWith("?")) unknownT++; } else if (e.Kind == 'c' || e.Kind == 'x') close++; else if (e.Kind == 'r') req++; }
+      }
+    }
+    int seenReach = 0; foreach (var f in simReach) if (SimGraphSeen.Contains(f)) seenReach++;
+    Console.WriteLine("ui graph (game " + UiGraph.GameVersion + "): " + UiGraph.All.Count + " forms, " + w + " widgets with an effect (" + d + " dangerous, " + k + " open a confirm), "
+      + open + " opens (" + unknownT + " to an id with no form), " + close + " closes, " + req + " requests; " + auto + " forms the game opens by itself ("
+      + simAutoCity.Count + " over the city, " + simAutoAny.Count + " results / data)");
+    Console.WriteLine("  reachable from the city by safe clicks: " + simReach.Count + " forms (the app's own screens left out); shown in this run: " + seenReach
+      + " of them, " + SimGraphSeen.Count + " forms in all; presses on a graph widget " + SimGraphPressN + " (" + SimGraphDangerN + " on a dangerous one, " + SimGraphConfirmN + " opened a confirm)");
+    foreach (var t in UiGraph.Targets) {
+      var p = UiGraph.PathOf(t);
+      Console.WriteLine("  path " + t.PadRight(18) + (p == null ? "NOT REACHABLE" : string.Join(" | ", Array.ConvertAll(p, s => s.ToString()))));
+    }
+  }
+
+  /// <summary>The UI graph against the pilots: loaded, every pilot target reachable by safe clicks, the generated path the pilot's own chain.</summary>
+  static void UiGraphTests() {
+    Check(UiGraph.All.Count >= ScreenMap.Count - 5 && UiGraph.ByName(SimCity) != null, "ui graph: " + UiGraph.All.Count + " forms loaded (the screen map has " + ScreenMap.Count + ")");
+    foreach (var kv in UiGraph.PilotChains) {
+      var got = UiGraph.Chain(UiGraph.PathOf(kv.Key));
+      Check(got != null && string.Join(">", got) == string.Join(">", kv.Value), "ui graph: the path to " + kv.Key + " is the pilot's chain (" + (got == null ? "none" : string.Join(" > ", got)) + ")");
+    }
+    // every widget the generated paths press is safe and shown; the city's bar buttons the pilots press open what the pilots expect
+    foreach (var t in UiGraph.Targets) {
+      var p = UiGraph.PathOf(t); if (p == null) continue;
+      foreach (var s in p) {
+        UiGraph.Widget w = null; foreach (var x in UiGraph.ByName(s.From).Widgets) if (x.Path == s.Widget) w = x;
+        Check(w != null && w.Safe, "ui graph: " + t + ": the step " + s + " presses a safe widget");
+      }
+    }
+    var bp = UiGraph.Path(SimCity, SimInv);
+    Check(bp != null && bp.Length == 1 && bp[0].Widget.EndsWith("m_Button_Backpack"), "ui graph: the city's «Инвентарь» (m_Button_Backpack) opens the inventory (" + (bp == null ? "none" : bp[0].ToString()) + ")");
+    Check(UiGraph.AutoForms("activity:city").Count > 5, "ui graph: the city's pop-up queue (ActivityFormMgr) has its forms (" + UiGraph.AutoForms("activity:city").Count + ")");
+  }
+
   static int SimMain(string[] args) {
     Layout.Use(TestLayout());
     int seeds = 500, from = 0; bool slowOnly = false, verbose = false, real = false, scan = false, timing = false, matrix = false; string list = null;
@@ -1641,6 +1768,7 @@ static partial class CoreTests {
       if (args[i] == "--slow-only") slowOnly = true;
       else if (args[i] == "--verbose") verbose = true;
       else if (args[i] == "--real") real = true;
+      else if (args[i] == "--graph") SimGraph = true;
       else if (args[i] == "--seed" && i + 1 < args.Length) { from = int.Parse(args[++i]); seeds = 1; }
       else if (args[i] == "--from" && i + 1 < args.Length) from = int.Parse(args[++i]);
       else if (args[i] == "--list" && i + 1 < args.Length) list = args[++i];
@@ -1670,7 +1798,8 @@ static partial class CoreTests {
       if (e != "" && (verbose || bad <= 5)) Console.WriteLine(e);
     }
     foreach (var kv in tmp) outcomes[kv.Key] = kv.Value;
-    Console.WriteLine("game sim: " + seeds + " seeds from " + from + " in " + sw.ElapsedMilliseconds + " ms, " + bad + " broke a rule");
+    Console.WriteLine("game sim: " + seeds + " seeds from " + from + " in " + sw.ElapsedMilliseconds + " ms, " + bad + " broke a rule" + (SimGraph ? " (graph-driven)" : ""));
+    if (SimGraph) SimGraphReport();
     foreach (var kv in outcomes) Console.WriteLine("  " + kv.Value.ToString().PadLeft(5) + "  " + kv.Key);
     if (timing) {   // the reader's costs and the pilots' times (--scan: the reader before the window table was the forms' source)
       Console.WriteLine("timing (" + (scan ? "region-scan reader" : "window-table reader") + "): done = mean time of the runs that ended done; confirm = click to its effect seen");

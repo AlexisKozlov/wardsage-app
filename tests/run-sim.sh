@@ -2,7 +2,7 @@
 # The game sim (tests/GameSim.cs) alone: a quick run, or a long one for the night.
 #
 #   tests/run-sim.sh [seeds] [--scan] [--timing] (default 2000; --timing: the reader's costs and the pilots' times, --scan: the old region-scan reader)
-#   tests/run-sim.sh --soak N [--slow-only]    (N seeds, in blocks of 5000, each block's summary printed)
+#   tests/run-sim.sh --soak N [--slow-only] [--graph]   (N seeds, in blocks of 5000, each block's summary printed; --graph: the UI graph drives the game)
 #   (--real after N: the start pop-ups and the game's own pop-ups at a realistic rate - the done-rate a player sees; the default mix stresses the rules)
 #   tests/run-sim.sh --matrix [runs]          (city first: every pilot x every start screen, runs a cell; the soak runs it too)
 #   tests/run-sim.sh --seed S                  (one seed with its whole trace: what the game and the pilot did)
