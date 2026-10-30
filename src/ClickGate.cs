@@ -193,6 +193,41 @@ namespace RealmForge {
     }
   }
 
+  /// <summary>The city's bottom bar as the pilots click it: the place of «Инвентарь» (U from the right; an event button moves it), the city
+  /// form it was found on and whether the bar is settled. When the game builds the city again (another table for its form in the window
+  /// table: after the guild, an event screen) the place is dropped and searched again on the new city, and «Инвентарь» counts as seen only
+  /// once the picture stayed at one place for SettleMs (the new bar comes in with its animation). Pure (tests/CoreTests.cs).</summary>
+  public sealed class CityBar {
+    public const double DefaultDX = 0.5222 + 0.9316;   // «Инвентарь»: 0.9316 left of «Герои» in the city's bottom bar
+    public const int SettleMs = 600;
+    public double InvDX = DefaultDX;
+    public long ScanAt;           // the last search along the bar
+    public bool MustSearch;       // the next look searches the whole bar (a new city / the last press changed nothing)
+    public ulong Instance;        // the city form the place belongs to (0 = not known yet)
+    long seenFrom = -1;           // since when the picture is seen at InvDX after a drop (-1 = no drop pending: seen = ready)
+    double seenDX = double.NaN;
+    /// <summary>The city form the game holds now (0 = unknown: nothing changes). True when it is another one than the place was found on:
+    /// the place is dropped.</summary>
+    public bool Note(ulong inst) {
+      if (inst == 0 || inst == Instance) return false;
+      bool had = Instance != 0; Instance = inst;
+      if (had) Drop();
+      return had;
+    }
+    /// <summary>Forget the place: the next look searches the bar, the city clicks wait for a settled picture.</summary>
+    public void Drop() { InvDX = DefaultDX; ScanAt = 0; MustSearch = true; seenFrom = 0; seenDX = double.NaN; }
+    /// <summary>What the picture look gave (<paramref name="seen"/> at InvDX): may a city click go to the bar now?</summary>
+    public bool Look(bool seen, long now) {
+      if (seenFrom < 0) return seen;
+      if (!seen || MustSearch) { seenFrom = 0; seenDX = double.NaN; return false; }
+      if (seenFrom == 0 || Math.Abs(seenDX - InvDX) > 0.05) { seenFrom = now; seenDX = InvDX; return false; }
+      if (now - seenFrom < SettleMs) return false;
+      seenFrom = -1; return true;
+    }
+    /// <summary>A drop waits for the settled picture.</summary>
+    public bool Settling { get { return seenFrom >= 0; } }
+  }
+
   public sealed class ClickGate {
     /// <summary>How long an unreadable screen is waited for before the pilot stops.</summary>
     public const int UnknownGraceMs = ScreenTracker.HoldMs;
@@ -409,6 +444,10 @@ namespace RealmForge {
     readonly HashSet<ClickOwner> cellRetried = new HashSet<ClickOwner>();                     // an Ascension cell click changed nothing: placed again once
     /// <summary>An Ascension cell click changed nothing and is placed again (the owner's pilot reads the list again: CellAgain); once a run.</summary>
     public readonly HashSet<ClickOwner> CellAgainDue = new HashSet<ClickOwner>();
+    readonly HashSet<ClickOwner> cityInvRetried = new HashSet<ClickOwner>();                  // «Инвентарь» changed nothing on the city: the bar read again, pressed again once
+    /// <summary>A city «Инвентарь» click changed nothing (the city still shown): the host drops the bar's place and looks for it again
+    /// (CityBar.Drop) before the one more press; once a run.</summary>
+    public readonly HashSet<ClickOwner> CityAgainDue = new HashSet<ClickOwner>();
     readonly Dictionary<ClickOwner, long> cityTried = new Dictionary<ClickOwner, long>();     // the last CityBackDue / EscapeDue yes
     readonly Dictionary<ClickOwner, int> mapMoves = new Dictionary<ClickOwner, int>();        // MapClose clicks and map Escapes in this run
     readonly Dictionary<ClickOwner, long> mapTried = new Dictionary<ClickOwner, long>();      // the last MapDue yes
@@ -439,7 +478,7 @@ namespace RealmForge {
       halted.Remove(o); watches.Remove(o); unknownSince.Remove(o); noted.Remove(o); clickedAt.Remove(o); offerRun.Remove(o); haltDetail.Remove(o); foundryWait.Remove(o); ownUnreadWait.Remove(o);
       stall.Remove(o); stallBrief.Remove(o); searchWaited.Remove(o);
       unknownBacks.Remove(o); backTried.Remove(o); lastTarget.Remove(o);
-      cityBacks.Remove(o); escapes.Remove(o); escapeDue.Remove(o); cityTried.Remove(o); cellRetried.Remove(o); CellAgainDue.Remove(o); tipEscapes.Remove(o); barRetried.Remove(o);
+      cityBacks.Remove(o); escapes.Remove(o); escapeDue.Remove(o); cityTried.Remove(o); cellRetried.Remove(o); CellAgainDue.Remove(o); tipEscapes.Remove(o); barRetried.Remove(o); cityInvRetried.Remove(o); CityAgainDue.Remove(o);
       mapMoves.Remove(o); mapTried.Remove(o);
     }
 
@@ -785,6 +824,12 @@ namespace RealmForge {
           else if (w.Target == ClickTarget.CityInventory && s.OfferCount > 0 && barRetried.Add(o)) {
             watches.Remove(o);
             Note(o, "bar-again:" + w.ArmedAt, w.What + " opened " + s.Offer + " instead (the bar's neighbour) - closed, back to the city, «Инвентарь» again once");
+          }
+          // «Инвентарь» changed nothing and the city is still shown (the city was built again after a guild / event screen and its bar was not
+          // there yet, live 1.6.66.385): the bar is read again and «Инвентарь» pressed once more, once a run
+          else if (w.Target == ClickTarget.CityInventory && s.Kind == ScreenKind.City && cityInvRetried.Add(o)) {
+            watches.Remove(o); CityAgainDue.Add(o);
+            Note(o, "city-again:" + w.ArmedAt, w.What + " changed nothing within the time (screen " + s.Brief + ") - the bar is read again, «Инвентарь» pressed again once");
           }
           else Halt(o, "nochange", w.What + " changed nothing within the time (screen " + s.Brief + ")");
         }

@@ -31,6 +31,9 @@ static partial class CoreTests {
     public readonly List<string> Stack = new List<string> { SimCity };
     public readonly Random R, R2; public readonly bool Slow; public readonly double FailP;   // (R2: the later additions, so the old seeds keep their runs)
     public readonly double W = 1920, H = 1009, U;
+    // the city built again when a guild screen over it closes (live 1.6.66.385: Form_UnionBoss > Form_UnionAdd > the city, a new Form_MainCity):
+    // its bar comes in with an animation, a press within BarInMs is lost. Off unless a test sets it (the seeds keep their runs)
+    public bool CityRebuild; public ulong CityInst = 1; public long CityBuiltAt = -100000; public int LostPresses; public const long BarInMs = 1500;
     public readonly FakeHeroGame Hero; readonly HeroGeometry hg = new HeroGeometry();
     public bool InvEquipTab, InvBulk, InvArtTab; public int FoundryTab;
     public bool FoundryBuilt;   // the Foundry's form was built once: its reader gives "not open" after it closes (app RFX.ReadRecastScreenSafe)
@@ -66,7 +69,8 @@ static partial class CoreTests {
     // the window table is read every 2 s (and fresh when the screen changes): a form shown longer than this before a click had to be seen
     const long SeenWithinMs = 2600;
     public long Now;
-    public SimGame(int seed, bool slow, double failP) {
+    public SimGame(int seed, bool slow, double failP, double w = 1920, double h = 1009) {
+      W = w; H = h;
       R = new Random(seed); R2 = new Random(seed * 31 + 7); fieldR = new Random(seed ^ 0x5F17); Slow = slow; FailP = failP; U = Ui.Unit(W, H);
       Hero = new FakeHeroGame(hg, W, U);
       var all = new List<long>(); for (int i = 0; i < 30; i++) all.Add(100 + i);
@@ -131,7 +135,8 @@ static partial class CoreTests {
       if ((f == SimHero || f == SimInv || f == SimFoundry) && R.Next(3) == 0) { latePart[f] = f + "_SimPart"; latePartAt[f] = Now + 200 + R.Next(2500); }
       else if (f == SimHero || f == SimInv || f == SimFoundry) latePart.Remove(f);
     }
-    void Pop(string f) { int i = Stack.LastIndexOf(f); if (i > 0) { Stack.RemoveAt(i); Say("close " + f); } }   // (an overlay above it stays)
+    void Pop(string f) { int i = Stack.LastIndexOf(f); if (i > 0) { Stack.RemoveAt(i); Say("close " + f); Rebuilt(f); } }   // (an overlay above it stays)
+    void Rebuilt(string f) { if (CityRebuild && f.StartsWith("Form_Union") && Top == SimCity) { CityInst++; CityBuiltAt = Now; Say("city built again (" + CityInst + ")"); } }
     void Remove(string f) { int i = Stack.LastIndexOf(f); if (i > 0) { Stack.RemoveAt(i); Say("gone " + f); } }
     string TopForm() { for (int i = Stack.Count - 1; i >= 0; i--) if (ScreenMap.ClassOf(Stack[i]) != 'O') return Stack[i]; return SimCity; }
     /// <summary>Now and then a pop-up the game opens by itself (a reward, a notice, a loading).</summary>
@@ -220,7 +225,8 @@ static partial class CoreTests {
       }
       if (c != 'K') return;   // E: only the back key closes it; W: nothing takes clicks
       if (top == SimCity) {
-        if (tg == ClickTarget.CityInventory && Near(x, y, W - (0.5222 + 0.9316) * U, H - hg.HeroesBtnDY * U, 20)) {
+        if (tg == ClickTarget.CityInventory && Now - CityBuiltAt < BarInMs) { LostPresses++; Say("the bar is still coming in: the press is lost"); return; }
+        if (tg == ClickTarget.CityInventory && Near(x, y, W - (0.5222 + 0.9316) * U, H - hg.HeroesBtnDY * U, Math.Min(20, 0.055 * U))) {
           // now and then the bar has moved and the click takes «Сборка» next to «Инвентарь»: «План сборки» opens (a full screen of the offer list)
           if (R.Next(25) == 0) { Later(lat, () => Push("Form_EquipmentPlan")); return; }
           Later(lat, () => { InvEquipTab = R.Next(2) == 0; InvBulk = false; InvArtTab = false; InvSel.Clear(); InvScrollY = 0; Push(SimInv); }); return;
@@ -352,6 +358,9 @@ static partial class CoreTests {
     HeroScreen heroScreen = new HeroScreen(); RecastScreen locateRs; readonly long plan; readonly LocateRequest req;
     readonly GameGeometry geo;
     long sellBtnAt = -100000;
+    // the city bar's place as app/Overlay.cs keeps it (InventoryButtonSeen): dropped when the city is built again or «Инвентарь» changed nothing
+    readonly CityBar bar = new CityBar();
+    bool CityButtonSeen() { bar.Note(G.CityInst); bar.MustSearch = false; return bar.Look(G.Full == SimCity && G.CityClear, Now); }   // (the search along the bar finds it at once here)
     public string PilotState = "";
     public string HeroWhy { get { return hp.Why; } }
     public long SendingUntil;   // app/Overlay.cs Send: the cursor moves and the click take ~300 ms on their own thread; no tick reads the screens meanwhile
@@ -438,6 +447,7 @@ static partial class CoreTests {
       Gate.SearchWait = sw;
       if (Screens.Hero != null) heroScreen = Screens.Hero;
       Gate.Observe(st, now);
+      if (Gate.CityAgainDue.Count > 0) { Gate.CityAgainDue.Clear(); bar.Drop(); }   // (app/Overlay.cs ReadScreens)
       long le = Gate.EffectAt(ClickOwner.Locate); if (le != locEffectSeen) { locEffectSeen = le; lp.Confirmed(now); }   // (app/Overlay.cs ReadScreens)
     }
     long locEffectSeen;
@@ -635,7 +645,7 @@ static partial class CoreTests {
         Send(ClickTarget.HeroBack, new AutoAction { Kind = AutoKind.Click, X = hg2.BackX * U, Y = hg2.BackY * U }, null, false, false);
         return;
       }
-      if (scr != null && scr.Kind == ScreenKind.City && G.Full == SimCity && G.CityClear) {
+      if (scr != null && scr.Kind == ScreenKind.City && CityButtonSeen()) {
         PilotState = "open";
         if (Now - sellBtnAt < 2500) return;
         sellBtnAt = Now;
@@ -662,7 +672,7 @@ static partial class CoreTests {
       if (Flow == PilotFlow.LocateRecast && dstep.Kind == LocateKind.InList && scr != null && scr.Kind == ScreenKind.Inventory) { Done = "done"; return; }
       var view = new LocateView { NowMs = Now, Foreground = true, W = W, H = H, U = U, Step = dstep, Inv = inv, Cols = 8, HeroScreenOpen = heroOpen, OtherFormOpen = formOpen,
                                   Geometry = geo, Rs = locateRs, Item = req.Item, Purpose = req.Purpose };
-      if (LocateAuto.NeedsCityButton(dstep, heroOpen, formOpen)) view.CityButton = G.Full == SimCity && G.CityClear;
+      if (LocateAuto.NeedsCityButton(dstep, heroOpen, formOpen)) view.CityButton = CityButtonSeen();
       bool needBack = CityFirst.NeedsCity(Flow, scr, dstep.Kind, LocateAuto.NeedsCityBack(view));   // city first (app/Overlay.cs TickLocateDrive)
       if (BackStep(scr, needBack)) return;
       if (Gate.CellAgainDue.Remove(ClickOwner.Locate)) lp.CellAgain();   // (ClickGate.Observe: a cell click without effect, placed again once)
@@ -703,7 +713,7 @@ static partial class CoreTests {
         if (Now - artSellAt < 2000) return;
         artSellAt = Now; Send(ClickTarget.HeroBack, new AutoAction { Kind = AutoKind.Click, X = hg2.BackX * U, Y = hg2.BackY * U }, null, false, false); return;
       }
-      if (scr != null && scr.Kind == ScreenKind.City && G.Full == SimCity && G.CityClear) {
+      if (scr != null && scr.Kind == ScreenKind.City && CityButtonSeen()) {
         if (Now - artSellAt < 2500) return;
         artSellAt = Now; Send(ClickTarget.CityInventory, new AutoAction { Kind = AutoKind.Click, X = W - (0.5222 + 0.9316) * U, Y = H - hg2.HeroesBtnDY * U }, null, true, false); return;
       }
@@ -730,7 +740,7 @@ static partial class CoreTests {
       bool heroOpen = scr != null && scr.Kind == ScreenKind.HeroScreen;
       bool formOpen = scr != null && (scr.Kind == ScreenKind.Foundry || scr.Kind == ScreenKind.Gem);
       var view = new ArtView { NowMs = Now, Foreground = true, W = W, H = H, U = U, Step = step, Inv = inv, Ws = ws, Art = req.Art, Geometry = geo, HeroScreenOpen = heroOpen, OtherFormOpen = formOpen };
-      if (ArtLocateAuto.NeedsCityButton(step, heroOpen, formOpen)) view.CityButton = G.Full == SimCity && G.CityClear;
+      if (ArtLocateAuto.NeedsCityButton(step, heroOpen, formOpen)) view.CityButton = CityButtonSeen();
       if (BackStep(scr, CityFirst.NeedsCity(PilotFlow.LocateArtPromote, scr, step.Kind, ArtLocateAuto.NeedsCityBack(view)))) return;
       var mv = ap.Step(view);
       PilotState = (mv.State == "hint" ? "hint:" : mv.State + ":") + mv.Why + "@" + step.Kind;
@@ -961,6 +971,7 @@ static partial class CoreTests {
       SimOldFlows = true;
       Check(mf.Count == 0, "sim: city-first matrix, " + CityFirst.All.Length + " flows x " + SimMatrixStarts.Length + " starts: every run at its goal or a stop with its reason" + (mf.Count > 0 ? " - " + mf.Count + " failed: " + mf[0] : ""));
     }
+    SimCityRebuilt(GameGeometry.Parse(GeoJson(), GeoGame));
     Console.WriteLine("Game sim: its findings");
     StaleRowsAfterFilter();
     TipOverSlots();
@@ -1124,6 +1135,31 @@ static partial class CoreTests {
       }
     }
     SimOldFlows = false;
+  }
+
+  /// <summary>The city built again after the guild (live 1.6.66.385, Form_UnionBoss > Form_UnionAdd > the city: the bar's press 1 s after the city
+  /// came was lost, the run stopped "nochange"), in a full-size and a tiny game window (526x296): every city flow reaches its goal - the bar is
+  /// searched again on the new city and has to settle, a lost press is read again and pressed once more.</summary>
+  static void SimCityRebuilt(GameGeometry geo) {
+    var flows = new[] { PilotFlow.Sell, PilotFlow.ArtSell, PilotFlow.LocateAscend, PilotFlow.LocateRecast, PilotFlow.LocateArtPromote };
+    foreach (var size in new[] { new[] { 1920.0, 1009.0 }, new[] { 526.0, 296.0 } }) {
+      int runs = 0, done = 0, lost = 0; string fail = "";
+      foreach (var flow in flows) for (int i = 0; i < 4; i++) {
+        int seed = 770000 + (int)flow * 31 + i; bool slow = i % 2 == 1;
+        ReadTiming.Take();
+        var g = new SimGame(seed, slow, 0, size[0], size[1]); g.Geo = geo; g.SpawnP = 0; g.CityRebuild = true;
+        SimStartAt(g, "Guild", 0);
+        var oc = new Dictionary<string, int>(); var outc = new string[1];
+        string e = SimDrive(g, flow, slow, 0, new Random(seed), seed, false, oc, geo, null, false, null, outc);
+        runs++; lost += g.LostPresses;
+        if (e != "" && fail == "") fail = flow + (slow ? " slow: " : " fast: ") + e.Split('\n')[0];
+        else if (outc[0] == "done") done++;
+        else if (fail == "") fail = flow + (slow ? " slow: " : " fast: ") + outc[0];
+      }
+      string sz = (int)size[0] + "x" + (int)size[1];
+      Check(fail == "" && done == runs, "sim: the city built again after the guild, " + sz + ": " + done + "/" + runs + " runs at their goal" + (fail != "" ? " - " + fail : ""));
+      Check(lost > 0, "sim: the city built again, " + sz + ": a press lost while the bar came in was pressed again (" + lost + " lost)");
+    }
   }
 
   /// <summary>City first, every pilot from every start (owner rule 2026-10-30): each flow x each start screen, fast and slow, no pop-ups of the

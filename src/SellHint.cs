@@ -53,6 +53,39 @@ namespace RealmForge {
     /// <summary>Move our main window off the game: only when it is not minimized and really covers the game's client.</summary>
     public static bool ShouldMoveSelf(bool selfVisible, bool selfMinimized, bool selfOverlaps) { return selfVisible && !selfMinimized && selfOverlaps; }
     public static bool Overlaps(int al, int at, int ar, int ab, int bl, int bt, int br, int bb) { return al < br && bl < ar && at < bb && bt < ab; }
+
+    /// <summary>The player gave no input this long: an auto pilot that waits for the game may bring it forward over another program.</summary>
+    public const long IdleRaiseMs = 3000;
+    /// <summary>An auto pilot waits only because another program is in front of the game (Telegram over it): the game is brought forward
+    /// once the player gave no input for IdleRaiseMs (<paramref name="userIdleMs"/>: our own injected input left out, UserIdle) and no mouse
+    /// button is down; never while the player is active, never a minimized game (the player put it away), throttled as ShouldRaise.</summary>
+    public static bool ShouldRaiseIdle(bool hasGame, bool pilotWaiting, bool gameFront, bool gameMinimized, bool buttonDown, long userIdleMs, long now, long notBefore) {
+      return hasGame && pilotWaiting && !gameFront && !gameMinimized && !buttonDown && userIdleMs >= IdleRaiseMs && now >= notBefore;
+    }
+  }
+
+  /// <summary>How long the player gave no input, from GetLastInputInfo's tick, with the input the app injects itself (the pilots' clicks,
+  /// drags and Escapes, between OwnStart and OwnEnd) left out: a last-input time inside one of our sends (+ OwnSlackMs) is ours.
+  /// Ticks are Environment.TickCount's (uint, wrapping). Pure (tests/CoreTests.cs).</summary>
+  public sealed class UserIdle {
+    public const uint OwnSlackMs = 150;
+    uint lastSeen, userAt, ownFrom, ownTo; bool init, ownOpen, ownAny;
+    public void OwnStart(uint now) { lock (this) { ownFrom = now; ownOpen = true; ownAny = true; } }
+    public void OwnEnd(uint now) { lock (this) { ownTo = now; ownOpen = false; } }
+    bool Own(uint t) {
+      if (!ownAny) return false;
+      if (unchecked((int)(t - ownFrom)) < -50) return false;   // before our send
+      return ownOpen || unchecked((int)(ownTo + OwnSlackMs - t)) >= 0;
+    }
+    /// <summary>The player's idle time at <paramref name="now"/>, given the system's last input tick <paramref name="lastInput"/>.</summary>
+    public long IdleMs(uint lastInput, uint now) {
+      lock (this) {
+        if (!init) { init = true; lastSeen = userAt = lastInput; }
+        else if (lastInput != lastSeen) { lastSeen = lastInput; if (!Own(lastInput)) userAt = lastInput; }
+        int d = unchecked((int)(now - userAt));
+        return d < 0 ? 0 : d;
+      }
+    }
   }
 
   /// <summary>The one rule for everything the overlay draws over the game (equip helper, locate, storage cleanup, plates):
