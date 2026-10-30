@@ -23,7 +23,7 @@ Set-StrictMode -Version 2
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$RunnerVersion   = '17'
+$RunnerVersion   = '18'
 $Dir             = Join-Path $env:LOCALAPPDATA 'WardsageLab'
 $StopFile        = Join-Path $Dir 'STOP'
 $LogFile         = Join-Path $Dir 'runner.log'
@@ -564,14 +564,30 @@ function Invoke-Rec($a) {
     $dir = Join-Path $env:LOCALAPPDATA 'WardsageTest\lab'
     if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir | Out-Null }
     $f = Join-Path $dir 'rec.cmd'; $tmp = $f + '.tmp'; $ackf = Join-Path $dir 'rec.ack'
-    [IO.File]::WriteAllText($tmp, $line + "`r`n", (New-Object Text.UTF8Encoding($false)))
-    if (Test-Path $f) { [IO.File]::Replace($tmp, $f, $null) } else { [IO.File]::Move($tmp, $f) }
+    # temp file, then replaced; retried while the app holds the target open (sharing violation); falls back to an overwriting copy
+    $written = $false; $lastErr = $null
+    for ($try = 0; $try -lt 8 -and -not $written; $try++) {
+        try {
+            [IO.File]::WriteAllText($tmp, $line + "`r`n", (New-Object Text.UTF8Encoding($false)))
+            if ([IO.File]::Exists($f)) {
+                try { [IO.File]::Replace($tmp, $f, [NullString]::Value) }
+                catch { [IO.File]::Copy($tmp, $f, $true); [IO.File]::Delete($tmp) }
+            } else { [IO.File]::Move($tmp, $f) }
+            $written = $true
+        } catch { $lastErr = $_; Start-Sleep -Milliseconds 250 }
+    }
+    if (-not $written) {
+        $e = $lastErr.Exception
+        return @{ ok = $false; res = @{ error = 'write_failed'; type = $e.GetType().Name; message = (Get-ShortError $lastErr); cmd = $cmd } }
+    }
     $until = (Get-Date).AddSeconds(15)
     while ((Get-Date) -lt $until) {
         Start-Sleep -Milliseconds 500
         try {
             if (Test-Path $ackf) {
-                $ack = Get-Content -Raw -Path $ackf | ConvertFrom-Json
+                $fs = New-Object IO.FileStream($ackf, [IO.FileMode]::Open, [IO.FileAccess]::Read, ([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+                try { $rd = New-Object IO.StreamReader($fs); $ackText = $rd.ReadToEnd() } finally { $fs.Dispose() }
+                $ack = $ackText | ConvertFrom-Json
                 if ([int64](Get-Prop $ack 'seq') -eq $seq) {
                     $st = [string](Get-Prop $ack 'state'); $id = [string](Get-Prop $ack 'rec')
                     if ($st -notmatch '^[a-z]{1,12}$') { $st = 'bad' }
@@ -823,8 +839,9 @@ function Invoke-Job($job) {
             }
         }
     } catch {
-        Write-Log ('job ' + $action + ' failed: ' + $_.Exception.GetType().Name)
-        $out = @{ ok = $false; res = @{ error = 'exception' } }
+        $exType = $_.Exception.GetType().Name; $exMsg = Get-ShortError $_
+        Write-Log ('job ' + $action + ' failed: ' + $exType + ': ' + $exMsg)
+        $out = @{ ok = $false; res = @{ error = 'exception'; type = $exType; message = $exMsg } }
     }
     $script:Busy = $false
     $json = '{"p_job":"' + $id + '","p_ok":' + ([string]$out.ok).ToLower() + ',"p_result":' + ($out.res | ConvertTo-Json -Compress -Depth 4) + '}'
