@@ -36,6 +36,16 @@ static partial class CoreTests {
     public bool CityRebuild; public ulong CityInst = 1; public long CityBuiltAt = -100000; public int LostPresses; public const long BarInMs = 1500;
     public readonly FakeHeroGame Hero; readonly HeroGeometry hg = new HeroGeometry();
     public bool InvEquipTab, InvBulk, InvArtTab; public int FoundryTab;
+    // the artifact tab's list (7 columns, a row 116 units; empty unless a test fills it), its selected card (1-based, 0 none) and the workshop's artifact;
+    // ArtWorn: the selected artifact is worn - the card hides «Продать» and «Мастерская» moves left off the layout's place (live 1.6.66.402)
+    public readonly List<long> InvArts = new List<long>(); public int InvArtSel; public long WsUid = 555; public bool ArtWorn;
+    public const int ArtCols = 7, ArtRowUnits = 116;
+    /// <summary>The card's «Мастерская» where the game has put it (its live rect: x, y, w, h); null = the inventory's artifact card is not on top.</summary>
+    public double[] WorkshopLive() {
+      if (TopForm() != SimInv || !InvArtTab || InvArtSel <= 0) return null;
+      var r = ArtFrames.Rect(Geo, "inventory.artWorkshop", W, H, U); if (r == null) return null;
+      return new[] { r.X - (ArtWorn ? 0.8 * r.W : 0), r.Y, r.W, r.H };
+    }
     public bool FoundryBuilt;   // the Foundry's form was built once: its reader gives "not open" after it closes (app RFX.ReadRecastScreenSafe)
     // the inventory's equipment list (8 columns; «Массовая продажа» ticks its cells) and the Foundry's Ascension list (5 columns, the slot tabs
     // narrow it): their items, the ticked / selected ones, the scroll (the game's units: a row is 118 / 108)
@@ -109,6 +119,7 @@ static partial class CoreTests {
     public InventoryScreen Inv() {
       var inv = new InventoryScreen { Open = true, EquipTab = InvEquipTab && !InvArtTab, Bulk = InvBulk, BulkKnown = true, ListPtr = InvPtr, ArtTab = InvArtTab, ArtBulkKnown = true, ArtMode = -1 };
       if (InvEquipTab) { inv.Uids.AddRange(InvItems); foreach (var u in InvSel) inv.Selected.Add(u); inv.List = new RFX.ListRead { ScrollY = InvScrollY, Cols = InvCols, RowUnits = InvRowUnits }; }
+      else if (InvArtTab && InvArts.Count > 0) { inv.Uids.AddRange(InvArts); inv.ArtSel = InvArtSel; inv.ArtSelKnown = true; inv.List = new RFX.ListRead { ScrollY = 0, Cols = ArtCols, RowUnits = ArtRowUnits }; }
       return inv;
     }
     double InvRow1 { get { return InvGeo.ViewTopPx(U) + InvGeo.TopPad * U - InvScrollY * InvPitch / InvRowUnits; } }
@@ -198,7 +209,7 @@ static partial class CoreTests {
       if ((full == SimGem || full == SimWs) && Stack.Contains(SimInv) && Found(SimInv) && !Fail()) i.Inv = Inv();
       if (full == SimGem && !Fail()) i.Rs = new RecastScreen { GemOpen = true, GemFunc = 0 };
       else if (full != SimFoundry && FoundryBuilt && i.Rs == null && !Fail()) i.Rs = new RecastScreen { SublimingOpen = false, CurType = -1 };
-      if (full == SimWs && !Fail()) i.ArtWs = new ArtWorkshopScreen { Open = true, Tab = 1, Uid = 555 };   // another artifact's workshop
+      if (full == SimWs && !Fail()) i.ArtWs = new ArtWorkshopScreen { Open = true, Tab = 1, Uid = WsUid };   // (555: another artifact's workshop)
       if (SubFailP > 0) { if (subR.NextDouble() < SubFailP) i.Inv = null; if (subR.NextDouble() < SubFailP) i.Rs = null; if (subR.NextDouble() < SubFailP) i.Hero = null; if (subR.NextDouble() < SubFailP) i.ArtWs = null; }
       if (!NoTable && !Scan && tableR.NextDouble() >= FailP / 4) {   // (--scan: the reader before the window table)
         i.Screens = new List<string>();
@@ -293,6 +304,16 @@ static partial class CoreTests {
         if (OnBack(x, y)) { Later(lat, () => Pop(SimInv)); return; }
         if (Near(x, y, 0.085 * U, 0.315 * U, 20)) { Later(lat, () => { InvEquipTab = true; InvBulk = false; InvArtTab = false; }); return; }
         var atr = ArtFrames.Rect(Geo, "inventory.leftTab.artifact", W, H, U);
+        if (InvArtTab && InvArts.Count > 0 && tg == ClickTarget.ArtCell) {
+          int ci = ClickGate.ListCardIndexAt(Geo, "inventory.artList", Inv().List, ArtCols, ArtRowUnits, x, y, W, H, U);
+          if (ci >= 0 && ci < InvArts.Count) Later(lat, () => { if (TopForm() == SimInv && InvArtTab) InvArtSel = ci + 1; });
+          return;
+        }
+        if (InvArtTab && tg == ClickTarget.ArtWorkshop) {   // only a press on the button where it is now opens the workshop
+          var wl = WorkshopLive();
+          if (wl != null && x >= wl[0] && x <= wl[0] + wl[2] && y >= wl[1] && y <= wl[1] + wl[3]) { long wu = InvArts[InvArtSel - 1]; Later(lat, () => { if (TopForm() == SimInv) { WsUid = wu; Push(SimWs); } }); }
+          return;
+        }
         if (tg == ClickTarget.ArtTab && In(atr, x, y)) { if (InvBulk) { Bad.Add("ArtTab CLICK IN THE EQUIPMENT BULK SALE"); return; } Later(lat, () => { InvArtTab = true; InvEquipTab = false; }); return; }
         var bs = Geo.Rect("inventory.bulkSell", W, H, U); var bb = Geo.Rect("inventory.bulkBack", W, H, U);
         if (InvEquipTab && InvBulk) {
@@ -532,6 +553,9 @@ static partial class CoreTests {
       if (fill != null) fill(rq, fresh);
       if (rq.U <= 0) { rq.W = W; rq.H = H; rq.U = U; }
       rq.Shown = unknownForms;   // (app/Overlay.cs SendInside)
+      // app/Overlay.cs LiveClick: a pilot button read by name (RFX.UiWidgetOf) is pressed at the centre of its live rect
+      var lr = t == ClickTarget.ArtWorkshop && G.LiveButtons && RFX.UiWidgetOf(t, rq.Form) != null ? G.WorkshopLive() : null;
+      if (lr != null && a.Kind == AutoKind.Click) { a = new AutoAction { Kind = AutoKind.Click, X = lr[0] + lr[2] / 2, Y = lr[1] + lr[3] / 2 }; rq.X = a.X; rq.Y = a.Y; rq.Live = true; }
       var res = Gate.Check(rq, fresh, Now);
       if (!res.Allowed) { if (Environment.GetEnvironmentVariable("SIM_TRACE") != null) Console.WriteLine("  DENY " + t + " fresh=" + fresh.Brief + " tick=" + (Screens.Current != null ? Screens.Current.Brief : "-") + " " + res.Detail); return false; }
       Gate.Arm(Owner, t, ClickGate.Expect(rq, fresh), Now, rq.Form);
@@ -774,6 +798,8 @@ static partial class CoreTests {
     }
     // TickArtDrive (app/Overlay.cs) up to the artifact tab: the real ArtPilot on LocateGuide.NextArt, city first
     readonly ArtPilot ap = new ArtPilot();
+    /// <summary>The artifact promotion runs on to its workshop (the cell, «Мастерская»); off: done at the artifact tab.</summary>
+    public bool ArtToWorkshop;
     void TickArtPromote() {
       if (ap.Stopped) { PilotState = "stopped:" + ap.Reason; return; }
       var scr = Screens.Current; var inv = Screens.Inv;
@@ -783,7 +809,8 @@ static partial class CoreTests {
       if (pre.Verdict != GateVerdict.Allow) { PilotState = pre.Reason == "pending" ? "work" : "hint:no_city"; return; }
       var ws = scr != null ? scr.ArtWs : null;
       var step = LocateGuide.NextArt(req, scr != null && scr.Kind == ScreenKind.Inventory ? inv : null, ws);
-      if (scr != null && scr.Kind == ScreenKind.Inventory && inv != null && inv.ArtTab) { Done = "done"; return; }   // the artifact tab: its cell, the workshop after it (ArtPilot's tests)
+      if (!ArtToWorkshop && scr != null && scr.Kind == ScreenKind.Inventory && inv != null && inv.ArtTab) { Done = "done"; return; }   // the artifact tab: its cell, the workshop after it (ArtPilot's tests; ArtToWorkshop: here)
+      if (ArtToWorkshop && ws != null && ws.Uid == req.Art.Uid) { Done = "done"; return; }
       bool heroOpen = scr != null && scr.Kind == ScreenKind.HeroScreen;
       bool formOpen = scr != null && (scr.Kind == ScreenKind.Foundry || scr.Kind == ScreenKind.Gem);
       var view = new ArtView { NowMs = Now, Foreground = true, W = W, H = H, U = U, Step = step, Inv = inv, Ws = ws, Art = req.Art, Geometry = geo, HeroScreenOpen = heroOpen, OtherFormOpen = formOpen };
@@ -792,14 +819,24 @@ static partial class CoreTests {
       var mv = ap.Step(view);
       PilotState = (mv.State == "hint" ? "hint:" : mv.State + ":") + mv.Why + "@" + step.Kind;
       if (mv.Action.Kind == AutoKind.None) return;
-      ClickTarget tg;
+      ClickTarget tg; Action<ClickRequest, ScreenState> fill = null;
       switch (mv.Todo) {
         case ArtTodo.HeroBack: tg = ClickTarget.HeroBack; break;
         case ArtTodo.InventoryButton: tg = ClickTarget.CityInventory; break;
         case ArtTodo.ArtTab: tg = ClickTarget.ArtTab; break;
+        case ArtTodo.Workshop: tg = ClickTarget.ArtWorkshop; fill = (rq, fr) => { rq.CellOk = new[] { req.Art.Uid }; }; break;
+        case ArtTodo.Cell:   // (app/Overlay.cs SendArt)
+          tg = mv.Action.Kind == AutoKind.Drag ? ClickTarget.ArtListDrag : ClickTarget.ArtCell;
+          fill = (rq, fr) => {
+            int i = fr.Inv != null ? ClickGate.ListCardIndexAt(geo, "inventory.artList", fr.Inv.List, LocateGuide.ArtInvCols, 116, rq.X, rq.Y, W, H, U) : -1;
+            rq.CellUid = i >= 0 && fr.Inv != null && i < fr.Inv.Uids.Count ? fr.Inv.Uids[i] : 0;
+            rq.CellOk = new[] { req.Art.Uid };
+            rq.NoScroll = fr.Inv == null || fr.Inv.List == null || !fr.Inv.List.Has;
+          };
+          break;
         default: return;
       }
-      Send(tg, mv.Action, null, tg == ClickTarget.CityInventory, false);
+      Send(tg, mv.Action, fill, tg == ClickTarget.CityInventory, false);
     }
   }
 
@@ -1025,6 +1062,7 @@ static partial class CoreTests {
     SimLoginChain(GameGeometry.Parse(GeoJson(), GeoGame));
     SimTableKind(GameGeometry.Parse(GeoJson(), GeoGame));
     SimUnknownToInventory(GameGeometry.Parse(GeoJson(), GeoGame));
+    SimArtWorkshop(GameGeometry.Parse(GeoJson(), GeoGame));
     SimResultForms();
     Console.WriteLine("Game sim: its findings");
     StaleRowsAfterFilter();
@@ -1325,6 +1363,34 @@ static partial class CoreTests {
     var fa = new LocateFinish();
     fa.Update(true, 777, LocateKind.AscendReady, asc, null, 4000);
     Check(fa.Update(true, 777, LocateKind.AscendReady, asc, null, 5000, ScreenMap.SuccessShown(sa, "ascend")) == "ascend", "sim: the ascension result form marks the job done");
+  }
+
+  /// <summary>Lab 1.6.66.402 (locate_art): a worn artifact's card hides «Продать», «Мастерская» moves left; pressed at the layout's place it changed
+  /// nothing three times. The artifact promotion from the inventory's artifact tab: its cell, «Мастерская» pressed on its live rect, the workshop of
+  /// that artifact - worn or not, fast and slow; without the live rect the worn card's button is missed (the lab's stop).</summary>
+  static void SimArtWorkshop(GameGeometry geo) {
+    foreach (bool worn in new[] { false, true }) foreach (bool live in new[] { true, false }) {
+      int ok = 0, runs = 0; string fail = ""; long worst = 0;
+      for (int i = 0; i < 6; i++) {
+        int seed = 402000 + i * 31 + (worn ? 7 : 0); bool slow = i % 2 == 1;
+        var g = new SimGame(seed, slow, 0); g.Geo = geo; g.SpawnP = 0; g.LiveButtons = live; g.ArtWorn = worn;
+        g.InvEquipTab = false; g.InvArtTab = true; g.InvArts.AddRange(new long[] { 7001, 7002, 4242, 7003 }); g.Push(SimInv);
+        foreach (var f in g.Stack) g.StartForms.Add(f);
+        var h = new SimHost(g, PilotFlow.LocateArtPromote, 100, geo) { ArtToWorkshop = true }; g.OwnScreen = SimInv;
+        long t = 0; runs++;
+        while (t < 30000 && h.Done == "") {
+          g.Advance(t);
+          if (t >= h.SendingUntil) { h.ReadScreens(t); h.Tick(); }
+          if (g.Bad.Count > 0 || h.Gate.Halted(ClickOwner.Locate)) break;
+          t += h.Gate.AnyPending ? 50 : 100;
+        }
+        if (h.Done == "done") { ok++; worst = Math.Max(worst, t); }
+        else if (fail == "") fail = g.Bad.Count > 0 ? g.Bad[0] : h.Gate.Halted(ClickOwner.Locate) ? h.Gate.HaltReason(ClickOwner.Locate) : "no workshop within 30 s (" + h.PilotState + ")";
+      }
+      string what = "sim: artifact promotion" + (worn ? " of a worn artifact" : "") + (live ? " with" : " without") + " the live «Мастерская»: ";
+      if (live || !worn) Check(ok == runs, what + "its workshop in " + ok + "/" + runs + " runs, worst " + worst + " ms" + (fail != "" ? " - " + fail : ""));
+      else Check(ok == 0 && fail.Contains("nochange"), what + "the layout's place misses it (the lab's stop): " + ok + "/" + runs + (fail != "" ? " - " + fail : ""));
+    }
   }
 
   static void SimUnknownToInventory(GameGeometry geo) {

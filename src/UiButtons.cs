@@ -193,6 +193,7 @@ namespace RealmForge {
         case ClickTarget.CityInventory: return new UiWidget("Form_MainCity", "m_Button_Backpack") { Icon = true, IconChild = "Image_Icon" };
         case ClickTarget.FoundryButton: return new UiWidget("Form_BackpackIntegration", "m_PanelContentCur.m_BtnWorkShop") { Icon = true };
         case ClickTarget.AscendTab: return new UiWidget("Form_EquipSubliming", "m_ToggleSubliming") { Icon = true };
+        case ClickTarget.ArtWorkshop: return new UiWidget("Form_BackpackIntegration", "m_PanelContentCur.m_BtnIntensify") { Icon = true };   // (the artifact card's «Мастерская»: it moves left when «Продать» is hidden on a worn artifact)
         case ClickTarget.EquipConfirm: return new UiWidget("Form_CharactorEquipTip", "m_SelectEquipView.m_RightBtn.m_gameObject", "m_OneEquipView.m_RightBtn.m_gameObject") { Icon = true };
         case ClickTarget.OfferClose: return string.IsNullOrEmpty(offerForm) ? null : new UiWidget(offerForm, OfferClosePaths) { Icon = true, Discover = true };
       }

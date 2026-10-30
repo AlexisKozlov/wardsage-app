@@ -2346,6 +2346,13 @@ namespace RealmForge {
       if (recB != null) recB.Step = step.Kind.ToString();
       TickArtDrive(step, inv, ws, hold, hwnd, o, cr, now, W, H, U);
       LocateFrame lf = front && !hold ? ArtFrames.For(step, inv, ws, Geo.Current, W, H, U) : null;
+      if (lf != null && lf.Mark.Kind == "box" && lf.Target == "inventory.artWorkshop") {   // «Мастерская» where the game has put it (live rect, fresh): it moves with the card's other buttons
+        var lv = LiveFrame(ClickTarget.ArtWorkshop, null, W, H, U, true, lf.Raw != null ? new[] { lf.Raw.X, lf.Raw.Y, lf.Raw.W, lf.Raw.H } : null);
+        if (lv != null) {
+          lf.Raw = new GeoRect { X = lv[0], Y = lv[1], W = lv[2], H = lv[3] };
+          lf.Mark = new LocateMark { Kind = "box", X = (int)Math.Round(lv[0]), Y = (int)Math.Round(lv[1]), W = (int)Math.Round(lv[2]), H = (int)Math.Round(lv[3]) };
+        }
+      }
       if (!front) { LocateHide(); }
       else if (lf != null && lf.Mark.Kind != "box") { frame++; Draw(lf.Mark.Kind, o.X + lf.Mark.X, o.Y + lf.Mark.Y, lf.Mark.W, lf.Mark.H, lf.Mark.Rows); }   // the cell is off the screen: the pill at the list's edge
       else { if (glow.Visible) glow.Hide(); drawnKey = null; }

@@ -1405,10 +1405,13 @@ namespace RealmForge {
     }
 
     void Watch(List<long> uids, bool fresh = false) {
-      // a new or re-sent plan: the game's tables are read again (the earlier scan may hold stale ones), at most every 20 s
+      // a new or re-sent plan: the plan's items are looked up again, at most every 20 s, on the live tables found earlier when they
+      // still check out (EnsureLive: the tables, the login, the hero form); a full search of the game only when they do not - a forced
+      // one froze the guide on a stale step for the whole search (lab 1.6.66.402: 37 s, "no pilot step for 40 s"); a plan that then
+      // stands still is still searched afresh (WatchStall, HeroStepStuck)
       if (fresh && addrs != null && !scanning && remote.ReadEnabled && DateTime.UtcNow > rescanAfter) {
         rescanAfter = DateTime.UtcNow.AddSeconds(20); Log.Write("equip scan again: a new plan was received");
-        StartScan(uids, false, true); return;
+        StartScan(uids); return;
       }
       RFX.EnsureLiveForGuides();
       if (addrs == null) { if (scanning) watch = uids; else StartScan(uids); return; }
