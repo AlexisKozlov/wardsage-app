@@ -3535,7 +3535,7 @@ static partial class CoreTests {
       }
       Types = t.ToArray(); Scroll = 0; Ptr++; Sel.Clear(); Cur = 0;
     }
-    double Row1 { get { return G.ViewTopPx(U) + G.TopPad * U - Scroll; } }
+    public double Row1 { get { return G.ViewTopPx(U) + G.TopPad * U - Scroll; } }
     // the list stops when its last row reaches the bottom of the view
     public double MaxScroll { get { return Math.Max(0, G.RowOffset(Types, Types.Length) * U + G.TopPad * U - (G.ViewBottomPx(H, U) - G.ViewTopPx(U))); } }
     public double Phase() {   // the row tops of the item rows on the screen, mod the row step
@@ -6982,6 +6982,48 @@ static partial class CoreTests {
           "60 items over 150 rows (all parts): all selected, nothing else (" + game.Clicks + " clicks, " + game.Drags + " drags, " + st + ")");
     Check(game.Clicks <= want.Count * 2.0, "few extra clicks with the rows' phase from the screen (" + game.Clicks + " for " + want.Count + ", «Быстрое улучшение» closed too)");
     Check(game.DangerClicks == 0, "never a click on «Быстрое улучшение» (it opens after a click on an item below +16)");
+
+    // fast marking on the game's exact scroll (the inventory): a click's answer (the choice changed) is judged at once and the next item in
+    // view clicked at once; a click or drag the host could not send is taken back (no miss, no drag the list ignored)
+    {
+      var gi = SellGeometry.Inventory(1920, 1009, 8); var fi = new FakeSellGame(gi, 40, 0, 8) { HasPopup = false };
+      var wi = new HashSet<long> { 5000, 5002, 5005 };
+      Func<long, SellView> vi = t => new SellView { NowMs = t, Foreground = true, W = fi.W, H = fi.H, U = fi.U, Screen = fi.Screen(), Wanted = wi, Row1 = fi.Row1, NeedExact = true };
+      var pi = new SellPilot(gi);
+      var a1 = pi.Step(vi(0)); fi.Act(a1); pi.Sent();
+      Check(a1.Kind == AutoKind.Click && pi.Polling, "fast: the first item in view is clicked, its answer awaited (polled)");
+      var a2 = pi.Step(vi(50));
+      Check(a2.Kind == AutoKind.Click && Math.Abs(a2.X - a1.X) > 1, "fast: answered within 50 ms, the next item is clicked at once (not after " + SellPilot.AfterClickMs + " ms)");
+      pi.NotSent();
+      Check(!pi.Polling, "fast: a click the host could not send awaits nothing");
+      var a3 = pi.Step(vi(100));
+      Check(a3.Kind == AutoKind.Click && Math.Abs(a3.X - a2.X) < 0.5 && Math.Abs(a3.Y - a2.Y) < 0.5 && !pi.Trace.Contains("hit 0"), "fast: ... and is clicked again, no miss counted (" + pi.Trace + ")");
+      fi.Act(a3); pi.Sent();
+      // a sparse list over 150 rows: drags start in the view; up drags (later rows) may end above it up to 0.03 H from the top edge, down drags
+      // end inside it (never towards «Массовая продажа» / «Продать» under the list); the gain off by up to 12 % (live 1.0 up, 0.84 down)
+      foreach (double[] gains in new[] { new[] { 1.0, 0.84 }, new[] { 1.12, 0.95 }, new[] { 0.9, 0.78 } }) {
+        var gl = new FakeSellGame(gi, 150, 0, 8) { HasPopup = false, Gain = gains[0], GainDown = gains[1] };
+        var wl = new HashSet<long>(); foreach (var kv in gl.Pos) if (kv.Value[0] % 9 == 4 && kv.Value[1] == 3) wl.Add(kv.Key);
+        wl.Add(5001);   // (and one at the top again after the sweep: a down drag)
+        var pl = new SellPilot(gi); string sl = "timeout"; var ends = new List<double[]>(); bool back = false;
+        for (long t = 0; t < 600000; t += 50) {
+          var a = pl.Step(new SellView { NowMs = t, Foreground = true, W = gl.W, H = gl.H, U = gl.U, Screen = gl.Screen(), Wanted = wl, Row1 = gl.Row1, NeedExact = true });
+          if (a.Kind == AutoKind.Drag) ends.Add(new[] { a.Y, a.Y + a.DY });
+          if (a.Kind == AutoKind.Click && a.Y > 0 && !back && gl.Sel.Count == wl.Count - 1) { back = true; gl.Sel.Remove(5001); }   // the player took one off: back up for it
+          gl.Act(a);
+          if (pl.State == "done" || pl.State == "failed") { sl = pl.State; break; }
+        }
+        double vt = gi.ViewTopPx(gl.U), vb = gi.ViewBottomPx(gl.H, gl.U); bool startIn = true, upOk = true, downOk = true, longer = false, down = false;
+        foreach (var d in ends) {
+          if (d[0] < vt || d[0] > vb) startIn = false;
+          if (d[1] < d[0]) { if (d[1] < 0.03 * gl.H - 0.5) upOk = false; if (d[1] < vt) longer = true; }
+          else { down = true; if (d[1] > vb + 0.5) downOk = false; }
+        }
+        Check(sl == "done" && wl.IsSubsetOf(gl.Sel) && gl.Sel.Count == wl.Count, "drags, gain " + gains[0] + "/" + gains[1] + ": " + wl.Count + " items over 150 rows, all selected, nothing else (" + gl.Drags + " drags, " + gl.Clicks + " clicks, " + sl + ")");
+        Check(startIn && upOk && downOk && down, "drags, gain " + gains[0] + ": every drag starts in the view, up ones end no higher than 0.03 H, down ones inside the view (" + ends.Count + " drags)");
+        Check(longer && gl.Clicks <= wl.Count + 3, "drags, gain " + gains[0] + ": up drags reach past the view's top, few extra clicks (" + gl.Clicks + " for " + wl.Count + ")");
+      }
+    }
 
     // only rings and amulets: the part filter first (a shorter list), then the items
     var gp = new FakeSellGame(g, 150, 0); var wp = new HashSet<long>();

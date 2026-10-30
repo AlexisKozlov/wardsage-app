@@ -675,7 +675,7 @@ namespace RealmForge {
       curRow = curCol = 0; curSel = 0;
       // the frames over the inventory / Foundry lists follow a scroll the game renders at its own rate: those hints tick often
       // (the scroll is read every frame we draw); everything else stays at the slow tick
-      int wantInterval = LocateWins || (sellHint && sellWanted != null) ? 33 : gate.AnyPending ? ConfirmPollMs : 100;   // a pilot's click on its way: its effect polled at 50 ms
+      int wantInterval = LocateWins || (sellHint && sellWanted != null) ? 33 : gate.AnyPending || SellPolling ? ConfirmPollMs : 100;   // a pilot's click on its way: its effect polled at 50 ms (the sell pilot's drag: its move)
       if (timer.Interval != wantInterval) timer.Interval = wantInterval;
       ApplyArtGate();
       LogLoad(NowMs());
@@ -1820,13 +1820,14 @@ namespace RealmForge {
           // a cell click must hit a cell of an item the run is after (or one it ticked, to take it off again): the item under the
           // click point from the fresh list order and the game's exact scroll
           int ccols = sellCols; var geo = spilot.Geometry;
-          SendInside(a, o, cr, ClickOwner.Sell, a.Kind == AutoKind.Drag ? ClickTarget.InvListDrag : ClickTarget.InvBulkCell, front, (rq, fr) => {
+          bool sent = SendInside(a, o, cr, ClickOwner.Sell, a.Kind == AutoKind.Drag ? ClickTarget.InvListDrag : ClickTarget.InvBulkCell, front, (rq, fr) => {
             rq.CellUid = ClickGate.InvCellUid(fr.Inv, geo, sellScroll.Row1(geo, fr.Inv != null ? fr.Inv.List : null, double.NaN, U, now), ccols, rq.X, rq.Y, W, U);
             var ok = new System.Collections.Generic.HashSet<long>(sellWanted);
             if (fr.Inv != null) foreach (var u in fr.Inv.Selected) ok.Add(u);
             rq.CellOk = ok;
             rq.NoScroll = fr.Inv == null || fr.Inv.List == null || !fr.Inv.List.Has;
           });
+          if (sent) spilot.Sent(); else spilot.NotSent();   // a refused click / drag is taken back: no miss, no drag the list ignored
         }
         return;
       }
@@ -2466,7 +2467,7 @@ namespace RealmForge {
       RFX.EnsureLiveForGuides();   // the readers' basis (handle, regions, live tables) without waiting for the first account read; throttled and off-thread
       // every 120 ms; 50 ms while a pilot's click awaits its effect (the expected field is polled until it changes); once a second while the
       // game is minimised or gone (nothing to click, nothing to draw)
-      int readGap = gameAway ? 1000 : gate.AnyPending || listMoving ? ConfirmPollMs - 5 : 120;   // (a list that moves: read until it settles)
+      int readGap = gameAway ? 1000 : gate.AnyPending || listMoving || SellPolling ? ConfirmPollMs - 5 : 120;   // (a list that moves: read until it settles)
       if (screens.Current != null && now >= screenReadAt && now - screenReadAt < readGap) return;
       screenReadAt = now;
       IntPtr hwnd = GameWindow();
@@ -2531,6 +2532,8 @@ namespace RealmForge {
     }
 
     const int ConfirmPollMs = 50;
+    /// <summary>The storage cleanup's pilot awaits its click's answer or its drag's move: the game is read every 50 ms.</summary>
+    bool SellPolling { get { return sellWanted != null && !sellHint && spilot.Polling; } }
     bool gameAway, listMoving; long locEffectSeen;
     // the lists the pilots click into: their list steps run on a settled list only (two equal reads in a row, see ListSettle)
     readonly ListSettle invSettle = new ListSettle(), rsSettle = new ListSettle();

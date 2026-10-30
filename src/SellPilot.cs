@@ -112,6 +112,10 @@ namespace RealmForge {
   public sealed class SellPilot {
     public const int AfterClickMs = 250, AfterDragMs = 500, AfterFilterMs = 1100, UserPauseMs = 4000, MaxClicks = 4000, MaxDrags = 400, MaxMiss = 8, MaxFilterClicks = 12, AfterCloseMs = 300, MaxLevel = 16, ScrollWaitMs = 1500;
     public const double MinDragPx = 24;
+    /// <summary>An up drag ends no higher than this share of the window's height from its top; a drag brings its target this share of the view in.</summary>
+    public const double UpEndTop = 0.03, AimIn = 0.25;
+    /// <summary>A click's answer or a drag's move is awaited: the host reads the game every 50 ms meanwhile.</summary>
+    public bool Polling { get { return checkClick || dragWait; } }
     // a game slower than AfterClickMs (a slow laptop): a choice that changes after the click was judged is a late answer, the waits grow to the latest
     // answer seen plus this margin (never above MaxLateMs); a fast PC's never change
     public const int LateMarginMs = 400, MaxLateMs = 4000;
@@ -156,10 +160,28 @@ namespace RealmForge {
 
     public SellPilot(SellGeometry g) { this.g = g; }
 
+    // the last action the host was given, to take back when it could not send it (the gate refused it: a pop-up came, the forms unread, a
+    // failed read): a refused cell click is no miss and a refused drag no drag the list ignored (at most MaxUnsent in a row; then they count)
+    int lastAct, unsentRun; double lastRow1; bool lastExact, lastPhased, lastPopup;
+    public const int MaxUnsent = 60;
+    /// <summary>The last step's action was not sent: taken back (a cell click, a drag, an undo click, a pop-up close).</summary>
+    public void NotSent() {
+      int k = lastAct; lastAct = 0;
+      if (k == 0 || ++unsentRun > MaxUnsent) return;
+      if (k == 1) { checkClick = false; clicks--; popup = lastPopup; waitUntil = 0; }
+      else if (k == 2) { dragWait = false; drags--; measure = false; row1 = lastRow1; exact = lastExact; phased = lastPhased; waitUntil = 0; }
+      else if (k == 3) { undoTries--; popup = lastPopup; waitUntil = 0; }
+      else if (k == 4) { popup = true; waitUntil = 0; }
+      Say("not sent");
+    }
+    /// <summary>The last step's action went out: the refusals in a row start over.</summary>
+    public void Sent() { if (lastAct != 0) unsentRun = 0; lastAct = 0; }
+
     /// <summary>A new list from the site, or the run was stopped: start over.</summary>
     public void Reset() { list = 0; exact = phased = false; waitUntil = pauseUntil = 0; checkClick = dragWait = false; stillDrags = 0; undo = 0; clicks = drags = misses = filterClicks = endDir = endSeen = 0; resetDone = popup = false; slips.Clear(); skip.Clear(); State = "idle"; FailWhy = ""; noScrollSince = -1; }
 
     public AutoAction Step(SellView v) {
+      lastAct = 0;
       var s = v.Screen;
       if (s == null || !s.Open || s.Types == null || v.Wanted == null) { State = "idle"; noScrollSince = -1; return AutoAction.Nothing; }
       Count(v);
@@ -195,7 +217,10 @@ namespace RealmForge {
       bool failed = State == "failed";
       if (!v.Foreground) { if (!failed) State = "background"; return AutoAction.Nothing; }
       if (v.UserBusy || v.NowMs < pauseUntil) { if (!failed) State = "paused"; checkClick = false; return AutoAction.Nothing; }
-      if (v.NowMs < waitUntil) { if (!failed) State = "work"; return AutoAction.Nothing; }
+      // a click's answer is the choice changing (the game's own selection, read every 50 ms while it is awaited): judged at once, the next item
+      // follows at once; the fixed wait is only for a click that changed nothing (yet)
+      bool answered = checkClick && !s.Selected.SetEquals(selBefore);
+      if (v.NowMs < waitUntil && !answered) { if (!failed) State = "work"; return AutoAction.Nothing; }
 
       if (checkClick) { checkClick = false; AfterClick(v); seenSel = new HashSet<long>(s.Selected); }
       if (undo != 0) { var uc = ClosePopupFor(v, undoX, undoY); return uc ?? Undo(v); }
@@ -232,22 +257,29 @@ namespace RealmForge {
         if (clicks >= MaxClicks) return Fail();
         clicks++;
         meant = next; meantCol = p[1]; curBefore = s.Current; selBefore = new HashSet<long>(s.Selected); clickY = cy; clickX = cx; checkClick = true; clickAt = v.NowMs; waitUntil = v.NowMs + Late(AfterClickMs);
-        popup = Enhanceable(v, next);
+        lastPopup = popup; popup = Enhanceable(v, next);
         Say("click " + next + " r" + p[0] + "c" + p[1] + " y" + (int)cy + (exact ? " exact" : phased ? " phased" : " est"));
+        lastAct = 1;
         return new AutoAction { Kind = AutoKind.Click, X = cx, Y = cy };
       }
       if (drags >= MaxDrags) return Fail();
-      double span = viewBottom - viewTop - cell;
-      double want = -(cy - mid), gd = GainFor(want);
-      double dy = Math.Max(-span, Math.Min(span, want / gd));
+      // the drag starts inside the view. Up (the list's later rows) its end may leave the list towards the top edge (the game keeps following
+      // the pointer; never below the list: «Массовая продажа» / «Продать» lie under it), down it ends inside the view. The target is brought a
+      // quarter of the view in from the edge it comes in at: the rows after it in the sweep come into view with it, and a drag off by the
+      // gain's error still leaves it inside the view
+      double span = viewBottom - viewTop - cell, spanUp = Math.Max(span, (viewBottom - cell / 2) - UpEndTop * v.H);
+      double aim = cy > mid ? viewTop + (viewBottom - viewTop) * AimIn : viewBottom - (viewBottom - viewTop) * AimIn;
+      double want = aim - cy, gd = GainFor(want);
+      double dy = Math.Max(-spanUp, Math.Min(span, want / gd));
       if (Math.Sign(dy) != endDir) { endDir = 0; endSeen = 0; }
       if (Math.Abs(dy) < MinDragPx) dy = dy < 0 ? -MinDragPx : MinDragPx;
       double y0 = dy < 0 ? viewBottom - cell / 2 : viewTop + cell / 2;
       Say("drag " + (int)dy + " for " + next + " r" + p[0] + " y" + (int)cy);
-      drags++; beforeDrag = row1; lastDrag = dy; measure = true;
+      drags++; beforeDrag = row1; lastDrag = dy; measure = true; lastAct = 2; lastRow1 = row1; lastExact = exact; lastPhased = phased;
       row1 += dy * GainFor(dy); exact = phased = false;
-      waitUntil = v.NowMs + Late(AfterDragMs);
-      if (!double.IsNaN(v.Row1)) { dragWait = true; dragFrom = v.Row1; dragAt = v.NowMs; }
+      // with the game's own scroll no fixed wait: the scroll is awaited until it moves (then the host's two equal reads 50 ms apart: still)
+      if (!double.IsNaN(v.Row1)) { dragWait = true; dragFrom = v.Row1; dragAt = v.NowMs; waitUntil = v.NowMs; }
+      else waitUntil = v.NowMs + Late(AfterDragMs);
       return new AutoAction { Kind = AutoKind.Drag, X = g.StripCentreX(v.W, v.U), Y = y0, DY = dy };
     }
 
@@ -334,7 +366,7 @@ namespace RealmForge {
     // pilot keeps its own idea of whether it is shown). Elsewhere the click goes straight on: the panel follows the item.
     AutoAction ClosePopupFor(SellView v, double x, double y) {
       if (!popup || !g.InPopup(x, y, v.W, v.U)) return null;
-      popup = false; waitUntil = v.NowMs + Late(AfterCloseMs); Say("close");
+      popup = false; waitUntil = v.NowMs + Late(AfterCloseMs); Say("close"); lastAct = 4;
       var c = g.Close(v.W, v.H, v.U); return new AutoAction { Kind = AutoKind.Click, X = c[0], Y = c[1] };
     }
 
@@ -343,8 +375,8 @@ namespace RealmForge {
     AutoAction Undo(SellView v) {
       if (!v.Screen.Selected.Contains(undo)) { undo = 0; return AutoAction.Nothing; }
       if (++undoTries > 3) { undo = 0; return Fail(); }
-      meant = undo; curBefore = v.Screen.Current; selBefore = new HashSet<long>(v.Screen.Selected); clickY = undoY; checkClick = false; popup = Enhanceable(v, undo);
-      clickAt = v.NowMs; waitUntil = v.NowMs + Late(AfterClickMs);
+      meant = undo; curBefore = v.Screen.Current; selBefore = new HashSet<long>(v.Screen.Selected); clickY = undoY; checkClick = false; lastPopup = popup; popup = Enhanceable(v, undo);
+      clickAt = v.NowMs; waitUntil = v.NowMs + Late(AfterClickMs); lastAct = 3;
       return new AutoAction { Kind = AutoKind.Click, X = undoX, Y = undoY };
     }
 
