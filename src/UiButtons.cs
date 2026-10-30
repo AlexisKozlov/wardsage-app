@@ -644,7 +644,7 @@ namespace RealmForge {
     }
 
     /// <summary>No game to read (and no stand-in memory of the tests).</summary>
-    static bool UiNoGame() { return TestMemory == null && (Layout.Current == null || GameInfo.GameProcesses().Length == 0); }
+    static bool UiNoGame() { return TestMemory == null && (Layout.Current == null || GameInfo.GamePidFresh(1000) == 0); }
 
     /// <summary>The live rect (client px: x, y, w, h) of a form's widget by its Lua field, read now (the click gate's cover check: a dangerous
     /// widget of a form shown over the click's form); null = not read, or not visible. No game: null.</summary>
@@ -660,13 +660,14 @@ namespace RealmForge {
     /// dumped step by step once a minute (test build). Null = not a button read by name, or no game.</summary>
     public static UiButtonInfo UiButtonReadNow(ClickTarget t, string offerForm, double W, double H, double U) {
       var w = UiWidgetOf(t, offerForm); if (w == null || UiNoGame()) return null;
-      var sw = Stopwatch.StartNew(); int at = Environment.TickCount;
+      var sw = Stopwatch.StartNew(); int at = Environment.TickCount; long m0 = LoadMeter.Now();
       ulong env, ui; string why; UiButtonInfo r;
       if (!UiRoots(out env, out ui, out why)) { r = new UiButtonInfo { Form = w.Form, Widget = w.Paths[0], ForW = W, ForH = H, At = at }; r.Fail("lua root", why); }
       else r = UiButtonRead(env, ui, w, W, H, U);
       r.Ms = sw.ElapsedMilliseconds;
       at = Environment.TickCount; r.At = at;   // (its age from the end of the read: the rect fields are read last)
       UiButtonKeep(t, r, W, H, at);
+      LoadMeter.Done(LoadMeter.UiBtn, m0);
       UiButtonDiag(r, at);
       return r;
     }
@@ -926,11 +927,11 @@ namespace RealmForge {
 
     /// <summary>The cells of list <paramref name="k"/> showing the items of <paramref name="want"/> (null = every cell made), read now.</summary>
     public static UiCellSet UiCellRead(ulong env, ulong ui, UiCellKind k, ICollection<long> want, double W, double H, double U) {
-      var sw = Stopwatch.StartNew();
+      var sw = Stopwatch.StartNew(); long m0 = LoadMeter.Now();
       var r = new UiCellSet { Kind = k, ForW = W, ForH = H, At = Environment.TickCount };
       try { UiCellReadInto(env, ui, k, want, W, H, U, r); }
       catch (Exception e) { r.Fail("exception", e.Message); }
-      finally { r.Ms = sw.ElapsedMilliseconds; }
+      finally { r.Ms = sw.ElapsedMilliseconds; LoadMeter.Done(LoadMeter.Cell, m0); }
       return r;
     }
 

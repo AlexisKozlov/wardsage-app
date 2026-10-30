@@ -73,9 +73,8 @@ namespace RealmForge {
         if (isPop && active) popups.Add(f);
       }
       if (!deep && (cdk == 0 || !r.Open)) return r;
-      var ps = GameInfo.GameProcesses();
-      if (ps.Length == 0) return r;
-      int pid = ps[0].Id;
+      int pid = GameInfo.GamePidFresh(1000);   // (not a list of every process each look)
+      if (pid == 0) return r;
       // the input field: the window's script table holds it under m_CDKName_InputField
       int oText = ly.FieldOffset("InputField.m_Text");
       if (cdk != 0 && r.Open && oText >= 0) {

@@ -111,6 +111,7 @@ h2 { margin: 0 0 12px; font: 700 13px/1.2 var(--display); letter-spacing: 2px; c
 .btn-gold:disabled, .btn-line:disabled { filter: grayscale(.9) brightness(.55); cursor: default; transform: none }
 .btn-gold svg { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 2 }
 .btn-line svg { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 1.8 }
+body.still *, body.still *::before, body.still *::after { animation-play-state: paused !important }   /* the window hidden or not in use (ui/app.js still) */
 @media (prefers-reduced-motion: reduce) { .btn-gold, .btn-line { transition: none } }
 .btn-ghost { all: unset; cursor: pointer; color: var(--gold2); font-size: 14px; border-bottom: 1px dashed var(--golddim) }
 .btn-ghost:hover { color: var(--gold) }

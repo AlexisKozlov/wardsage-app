@@ -1,4 +1,4 @@
-// Wardsage - hero ratings: while the game runs the app looks (every 800 ms, read-only) whether the rating screen of a hero is
+// Wardsage - hero ratings: while the game runs the app looks (every 800 ms, 2 s with the game away; read-only) whether the rating screen of a hero is
 // open; when it is, the rows shown there are queued (src/HeroGrades.cs) and go to the site with the next account sync
 // (<see cref="Flush"/>, called after a sync that was uploaded). Without a sync code nothing is read. Nothing is written to the
 // game, nothing is clicked.
@@ -18,7 +18,9 @@ namespace RealmForge {
     public GradeWatch(Func<string> syncCode) { this.syncCode = syncCode; }
 
     /// <summary>Called by the game timer.</summary>
-    public void Tick(bool gameRunning) {
+    /// <param name="away">the game is minimized or behind another window: a look every 2 s</param>
+    public void Tick(bool gameRunning, bool away = false) {
+      if (timer != null) { int want = LoadPlan.GradeWatchMs(!away, !away); if (want != period) { period = want; try { timer.Change(want, want); } catch (Exception) { } } }
       if (!SyncClient.IsValidCode(syncCode())) gameRunning = false;
       bool was = running;
       running = gameRunning;
@@ -26,12 +28,15 @@ namespace RealmForge {
       if (!gameRunning && was) { queue.NewSession(); lastHero = 0; lastRows = 0; lastWhy = null; }
     }
 
+    int period = 800;
+
     void Look() {
       if (!running || busy) return;
       busy = true;
+      long t0 = LoadMeter.Now();
       try { Step(); }
       catch (Exception e) { Log.Write("hero grades: error " + e.Message); }
-      finally { busy = false; }
+      finally { busy = false; LoadMeter.Done(LoadMeter.Grades, t0); }
     }
 
     void Step() {

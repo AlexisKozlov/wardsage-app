@@ -3,7 +3,7 @@
 // once per code and answer per 10 minutes. Only while the setting "Send promo codes to the site" is on (default); when it is off
 // nothing is read and nothing is sent. The window, the input and the messages are also noted in the journal ("cdk:" lines).
 // For an accepted code the report also carries what the game's rewards window showed (item id and amount; up to 10 s are
-// waited for it, without it the report goes as before). A look every 300 ms while the game runs. Nothing is written to the game, nothing is clicked.
+// waited for it, without it the report goes as before). A look every 300 ms while the code window is open, else every second (2 s with the game away; src/LoadPlan.cs). Nothing is written to the game, nothing is clicked.
 using System;
 using System.Collections.Generic;
 using System.Threading;
@@ -31,7 +31,9 @@ namespace RealmForge {
     public CodeWatch(Func<bool> enabled, Func<string> site, Func<string> syncCode) { this.enabled = enabled; this.site = site; this.syncCode = syncCode; }
 
     /// <summary>Called by the game timer: watches only while the setting is on.</summary>
-    public void Tick(bool gameRunning) {
+    /// <param name="away">the game is minimized or behind another window: a look every 2 s (no code is typed then)</param>
+    public void Tick(bool gameRunning, bool away = false) {
+      this.away = away;
       if (!enabled()) gameRunning = false;
       running = gameRunning;
       if (timer == null) timer = new Timer(s => Look(), null, 1000, 300);
@@ -39,12 +41,24 @@ namespace RealmForge {
       if (!gameRunning) { wasOpen = false; whySaid = false; active = null; typed = null; loggedInput = null; tips.Clear(); }
     }
 
+    volatile bool away; int period = 300, findAt;
+
     void Look() {
-      if (!running || busy) return;
+      if (busy) return;
+      if (!running) { Period(LoadPlan.AwayMs); return; }
       busy = true;
+      long t0 = LoadMeter.Now();
       try { Step(); }
       catch (Exception e) { Say("error " + e.Message); }
-      finally { busy = false; }
+      finally { busy = false; LoadMeter.Done(LoadMeter.Cdk, t0); }
+      // 300 ms while the code window is open (or was just open, or a code awaits its rewards), else once a second (src/LoadPlan.cs)
+      Period(LoadPlan.CodeWatchMs(wasOpen || DateTime.UtcNow < watchUntil || pend != null, !away, !away));
+    }
+
+    void Period(int ms) {
+      if (ms == period) return;
+      period = ms;
+      try { timer.Change(ms, ms); } catch (Exception) { }
     }
 
     static void Say(string s) { Log.Write("cdk: " + s); }
@@ -54,8 +68,8 @@ namespace RealmForge {
       bool armed = wasOpen || now < watchUntil;
       var r = RFX.ReadCdk(armed);
       if (!r.Known) {
-        if (!RFX.UiKnown && !uiFinding) {
-          uiFinding = true;
+        if (!RFX.UiKnown && !uiFinding && (findAt == 0 || Environment.TickCount - findAt > 20000)) {   // (a search is a pass over the game's memory: at most every 20 s)
+          uiFinding = true; findAt = Environment.TickCount; if (findAt == 0) findAt = 1;
           Task.Factory.StartNew(() => { try { RFX.FindUi(60000); } catch (Exception) { } finally { uiFinding = false; } });
         }
         if (r.Why != lastWhy) { lastWhy = r.Why; Say("not watching: " + r.Why); }

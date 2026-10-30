@@ -1218,6 +1218,12 @@
     const step = run !== '0' ? [p.id, item, kind].join('|') : '';
     if (step !== S.stepKey) { S.stepKey = step; S.stepAt = Date.now(); host.send({ cmd: 'log', text: 'step ' + (step || '-') + ' (' + (g ? g.kind : '-') + ')' }); }
   }
+  // the window hidden (tray, minimized, covered) or not the one in use (the player is in the game): the endless animations (the game's dot,
+  // the step's shine, the spinner) stand still - each kept the page repainting many times a second on the player's PC
+  const still = () => document.body.classList.toggle('still', document.hidden || !document.hasFocus());
+  document.addEventListener('visibilitychange', still); window.addEventListener('blur', still); window.addEventListener('focus', still);
+  setTimeout(still, 0);
+
   setInterval(() => {
     if (!S.stepKey || !S.game.running || Date.now() - S.stepAt < 10000) return;
     if (S.auto === 'work' || S.auto === 'paused' || S.auto === 'background') return;

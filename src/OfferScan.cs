@@ -159,6 +159,10 @@ namespace RealmForge {
     /// (ScreenState.ZOrder). Null = not certain: the table or a form's C# side not readable, a name not read yet, two forms at one place.
     /// A few fields per shown form: read with the screen (the tick) and on the fresh read before a click.</summary>
     public static List<string> ReadShownOrder() {
+      long m0 = LoadMeter.Now();
+      try { return ReadShownOrderNow(); } finally { LoadMeter.Done(LoadMeter.Order, m0); }
+    }
+    static List<string> ReadShownOrderNow() {
       ulong env, ui; string why;
       if (!UiRoots(out env, out ui, out why)) return null;
       var h = Read(ui, 56); if (h == null || h[8] != 5 || h[11] > 12) return null;
