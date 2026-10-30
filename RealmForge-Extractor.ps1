@@ -168,12 +168,14 @@ namespace RealmForge {
     delegate void ChunkFn(ulong baseAddr, byte[] buf, int len);
     static void Scan(ChunkFn f) {
       const int CH = 16 * 1024 * 1024;
+      byte[] b = null;   // one buffer for the pass (not one per chunk)
       foreach (var r in regs)
         for (ulong off = 0; off < r.Size; off += CH) {
           int n = (int)Math.Min((ulong)CH, r.Size - off);
-          var b = new byte[n]; int rd;
+          if (b == null || b.Length < n) b = new byte[n];
+          int rd;
           if (!Rpm(r.Base + off, b, n, out rd)) continue;
-          f(r.Base + off, b, rd);
+          f(r.Base + off, b, Math.Min(rd, n));
         }
     }
 
@@ -323,7 +325,7 @@ namespace RealmForge {
       ulong node = BitConverter.ToUInt64(h, 24); int nn = 1 << lsize;
       // a field read before: its node is read alone (32 bytes) while the table keeps that node array and the node still holds the same key string
       var id = new FieldId(t, key); FieldSlot fs; int now = Environment.TickCount;
-      if (FieldSlotsValid() && fieldSlots.TryGetValue(id, out fs)) {
+      if (!FieldSlotsOff && FieldSlotsValid() && fieldSlots.TryGetValue(id, out fs)) {
         if (fs.Np == node && fs.Lsize == lsize) {
           var nb1 = fieldNode ?? (fieldNode = new byte[32]);
           if (ReadTo(node + (ulong)(32 * fs.Idx), nb1, 32) && BitConverter.ToInt32(nb1, 24) == T_SSTR && BitConverter.ToUInt64(nb1, 16) == fs.KeyAt
@@ -366,6 +368,8 @@ namespace RealmForge {
     static readonly System.Collections.Concurrent.ConcurrentDictionary<FieldId, FieldSlot> fieldSlots = new System.Collections.Concurrent.ConcurrentDictionary<FieldId, FieldSlot>();
     static IntPtr fieldSlotsH; static object fieldSlotsMem;
     const int FieldTextCheckMs = 500;
+    /// <summary>For the bench: every field looked up in its whole node array (the reader before the field nodes were kept).</summary>
+    public static bool FieldSlotsOff;
     /// <summary>Field reads taken from a known node (for measuring).</summary>
     public static long FieldHits;
     /// <summary>The remembered field nodes belong to this game process (and this stand-in memory); else they are dropped.</summary>
@@ -1427,15 +1431,20 @@ namespace RealmForge {
       const int CH = 16 * 1024 * 1024;
       var chunks = new List<KeyValuePair<ulong, int>>();
       foreach (var r in regs) for (ulong off = 0; off < r.Size; off += CH) chunks.Add(new KeyValuePair<ulong, int>(r.Base + off, (int)Math.Min((ulong)CH, r.Size - off)));
-      Parallel.ForEach(chunks, new ParallelOptions { MaxDegreeOfParallelism = Math.Max(2, Environment.ProcessorCount) },
-        () => new byte[CH],
-        (c, state, buf) => {
+      // light on the player's PC: a pass leaves a core to the game (one thread on 2-4 cores) and runs below normal priority; each thread's
+      // 16 MB buffer lives for the pass only
+      Parallel.ForEach(chunks, new ParallelOptions { MaxDegreeOfParallelism = ScanThreads(Environment.ProcessorCount) },
+        () => { var th = Thread.CurrentThread; var pr = th.Priority; try { th.Priority = ThreadPriority.BelowNormal; } catch (Exception) { } return new ScanBuf { B = new byte[CH], Prio = pr }; },
+        (c, state, sb) => {
           int rd;
-          if (Rpm(c.Key, buf, c.Value, out rd) && rd > 0) f(c.Key, buf, rd);
-          return buf;
+          if (Rpm(c.Key, sb.B, c.Value, out rd) && rd > 0) f(c.Key, sb.B, rd);
+          return sb;
         },
-        buf => { });
+        sb => { try { Thread.CurrentThread.Priority = sb.Prio; } catch (Exception) { } sb.B = null; });
     }
+    sealed class ScanBuf { public byte[] B; public ThreadPriority Prio; }
+    /// <summary>The threads of a memory pass: one on a PC of up to 4 cores, else all cores but one.</summary>
+    public static int ScanThreads(int cores) { return cores <= 4 ? 1 : cores - 1; }
 
     /// <summary>Short script strings with these texts (TString address -> text): aligned positions only.</summary>
     static Dictionary<ulong, string> FindLuaStringsFast(string[] names) {

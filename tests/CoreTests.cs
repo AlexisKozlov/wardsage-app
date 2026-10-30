@@ -2281,7 +2281,22 @@ static partial class CoreTests {
       ulong nd = st.ValueAt(t2, "m_ScrollY"); m.W64(nd + 16, st.S("m_Other"));
       Check(!RFX.FieldForTest(t.A, "m_ScrollY", out v, out tt), "field: a slot that holds another key is no hit, and the key is gone");
       Check(RFX.FieldForTest(t.A, "m_F7", out v, out tt) && (long)v == 7, "field: the other fields still read");
-    } finally { RFX.TestMemory = null; RFX.ForgetLive(); }
+      // the bench: one field of a 128-slot form table, read 20 000 times with the node kept and without (the reader before)
+      var alloc = typeof(GC).GetMethod("GetAllocatedBytesForCurrentThread");
+      var t3 = st.T(kv.ToArray());
+      foreach (bool off in new[] { true, false }) {
+        RFX.FieldSlotsOff = off; RFX.FieldForTest(t3.A, "m_ScrollY", out v, out tt);
+        long a0 = alloc != null ? (long)alloc.Invoke(null, null) : 0; long r0 = RFX.Reads, by0 = RFX.ReadBytes;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        for (int i = 0; i < 20000; i++) RFX.FieldForTest(t3.A, "m_ScrollY", out v, out tt);
+        double us = sw.Elapsed.TotalMilliseconds * 1000 / 20000; long ab = alloc != null ? ((long)alloc.Invoke(null, null) - a0) / 20000 : -1;
+        Console.WriteLine("  bench field read (" + (off ? "whole node array" : "node kept") + "): " + us.ToString("0.00") + " µs, " + ((RFX.Reads - r0) / 20000.0).ToString("0.0") + " reads / "
+          + ((RFX.ReadBytes - by0) / 20000) + " bytes, " + ab + " bytes allocated a read");
+        if (!off && alloc != null) Check(ab == 0, "field: a read from the kept node allocates nothing (" + ab + " bytes)");
+      }
+      RFX.FieldSlotsOff = false;
+      Eq(1, RFX.ScanThreads(2), "scan: one thread on 2 cores"); Eq(1, RFX.ScanThreads(4), "scan: one thread on 4 cores"); Eq(7, RFX.ScanThreads(8), "scan: all cores but one on 8");
+    } finally { RFX.FieldSlotsOff = false; RFX.TestMemory = null; RFX.ForgetLive(); }
   }
 
   // the hero screen's form is followed from the node a background search published: no full pass on the polling (UI) thread

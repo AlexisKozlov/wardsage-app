@@ -809,15 +809,20 @@ namespace RealmForge {
       const int CH = 16 * 1024 * 1024;
       var chunks = new List<KeyValuePair<ulong, int>>();
       foreach (var r in regs) for (ulong off = 0; off < r.Size; off += CH) chunks.Add(new KeyValuePair<ulong, int>(r.Base + off, (int)Math.Min((ulong)CH, r.Size - off)));
-      Parallel.ForEach(chunks, new ParallelOptions { MaxDegreeOfParallelism = Math.Max(2, Environment.ProcessorCount) },
-        () => new byte[CH],
-        (c, state, buf) => {
+      // light on the player's PC: a pass leaves a core to the game (one thread on 2-4 cores) and runs below normal priority; each thread's
+      // 16 MB buffer lives for the pass only
+      Parallel.ForEach(chunks, new ParallelOptions { MaxDegreeOfParallelism = ScanThreads(Environment.ProcessorCount) },
+        () => { var th = Thread.CurrentThread; var pr = th.Priority; try { th.Priority = ThreadPriority.BelowNormal; } catch (Exception) { } return new ScanBuf { B = new byte[CH], Prio = pr }; },
+        (c, state, sb) => {
           int rd;
-          if (Rpm(c.Key, buf, c.Value, out rd) && rd > 0) f(c.Key, buf, rd);
-          return buf;
+          if (Rpm(c.Key, sb.B, c.Value, out rd) && rd > 0) f(c.Key, sb.B, rd);
+          return sb;
         },
-        buf => { });
+        sb => { try { Thread.CurrentThread.Priority = sb.Prio; } catch (Exception) { } sb.B = null; });
     }
+    sealed class ScanBuf { public byte[] B; public ThreadPriority Prio; }
+    /// <summary>The threads of a memory pass: one on a PC of up to 4 cores, else all cores but one.</summary>
+    public static int ScanThreads(int cores) { return cores <= 4 ? 1 : cores - 1; }
 
     /// <summary>Short script strings with these texts (TString address -> text): aligned positions only.</summary>
     static Dictionary<ulong, string> FindLuaStringsFast(string[] names) {
