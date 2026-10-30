@@ -41,6 +41,7 @@ dset()   { q -v r="$RUN" -v k="$1" -v v="$2" <<< "update public.lab_runs set dat
 phase()  { q -v r="$RUN" -v p="$1" <<< "update public.lab_runs set phase = :'p', data = data || jsonb_build_object('phase_at', extract(epoch from now())::bigint::text) where id = :'r'::uuid"; say "phase: $1"; }
 step()   { q -v r="$RUN" -v n="$1" -v ok="$2" -v s="$3" -v note="${4:-}" <<< "update public.lab_runs set steps = steps || jsonb_build_array(jsonb_build_object('name', :'n', 'ok', :'ok'::boolean, 'seconds', :'s'::numeric, 'note', :'note')) where id = :'r'::uuid"; say "step $1 ok=$2 ${3}s ${4:-}"; }
 warn()   { q -v r="$RUN" -v n="$1" -v s="$2" -v note="${3:-}" <<< "update public.lab_runs set steps = steps || jsonb_build_array(jsonb_build_object('name', :'n', 'ok', true, 'warn', true, 'seconds', :'s'::numeric, 'note', :'note')) where id = :'r'::uuid"; say "step $1 WARN ${2}s ${3:-}"; }
+info()   { q -v r="$RUN" -v n="$1" -v s="$2" -v note="${3:-}" <<< "update public.lab_runs set steps = steps || jsonb_build_array(jsonb_build_object('name', :'n', 'ok', true, 'info', true, 'seconds', :'s'::numeric, 'note', :'note')) where id = :'r'::uuid"; say "step $1 INFO ${2}s ${3:-}"; }
 phase_at_epoch() { dget phase_at; }
 phase_age() { echo $(( $(now) - $(dget phase_at) )); }
 mkjob()  { q -v d="$DEV" -v r="$RUN" -v a="$1" -v args="${2:-{\}}" <<< "insert into public.lab_jobs (device_id, run_id, action, args, expires_at) values (:'d'::uuid, :'r'::uuid, :'a', :'args'::jsonb, now() + interval '90 minutes') returning id"; }
@@ -296,6 +297,10 @@ tick() {
         if [ -n "$nev" ]; then fail_scn "$label" "ОПАСНО: запрещённый клик продажи: ${nev:0:160}" "$tbl" "$row"; return; fi
         if [ "${st%%|*}" = cancelled ]; then step "$label" false "$(phase_age)" "the list was cancelled"; FAILED=1; next_scn; return; fi
         fin=$(dstat "coalesce(status->>'done', '')"); fl=$(dstat "coalesce(status->>'fin_line', '')")
+        # runner <= 13 reported only "sell: done" (its $Matches was overwritten): the full line from the uploaded app log
+        if [ "$fin" = sell ] && ! [[ "$fl" =~ selected\ [0-9]+/[0-9]+ ]]; then
+          fl=$(q -v d="$DEV" -v s="${sa:-0}" <<< "select l.lines from public.app_test_logs l join public.lab_devices dv on dv.account_id = l.account_id where dv.id = :'d'::uuid and l.at >= to_timestamp(:'s'::bigint) order by l.id" | grep -oE '(^|[^t] )sell: done selected [0-9]+/[0-9]+ missing [0-9]+ extra [0-9]+' | tail -1)
+        fi
         if [ "$fin" = sell ] && [[ "$fl" =~ selected\ ([0-9]+)/([0-9]+)\ missing\ ([0-9]+)\ extra\ ([0-9]+) ]]; then
           a=${BASH_REMATCH[1]}; b=${BASH_REMATCH[2]}; m=${BASH_REMATCH[3]}; e=${BASH_REMATCH[4]}
           # the list ends here: cancelled, so the app stops (it never presses «Продать»; the marks stay in the game's bulk sale)
@@ -336,13 +341,14 @@ tick() {
            fi ;;
       esac ;;
     logs)
-      # passive check: the app sends the in-game hero grades by itself; GRADES_WAIT s after app_ready hero_grades.updated_at has moved, else a warning
+      # passive check: GRADES_WAIT s after app_ready hero_grades.updated_at has moved (hero_grades_put sets it on every send, changed or not), else
+      # only an info line: the app reads grades only while a hero's rating screen is open (app/GradeWatch.cs), which a lab run never opens
       ra=$(dget ready_at)
       if [ -n "$ra" ] && [ -z "$(dget grades_done)" ]; then
         [ $(( $(now) - ra )) -ge "$GRADES_WAIT" ] || return
         g=$(grades_at)
         if [ "${g:-0}" -gt "$(dget grades0)" ]; then step grades true "$(( g - ra ))" "оценки обновились через $(( g - ra )) с после запуска"
-        else warn grades "$(( $(now) - ra ))" "оценки героев не обновились за $(( GRADES_WAIT / 60 )) мин после запуска"; fi
+        else info grades "$(( $(now) - ra ))" "оценки не отправлялись: приложение шлёт их, только когда открыт экран оценок героя"; fi
         dset grades_done 1; dset phase_at "$(now)"
       fi
       # the test app sends its log every 2 min: wait for a batch newer than the last scenario (max 150 s), then go on

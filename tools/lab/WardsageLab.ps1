@@ -23,7 +23,7 @@ Set-StrictMode -Version 2
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$RunnerVersion   = '13'
+$RunnerVersion   = '14'
 $Dir             = Join-Path $env:LOCALAPPDATA 'WardsageLab'
 $StopFile        = Join-Path $Dir 'STOP'
 $LogFile         = Join-Path $Dir 'runner.log'
@@ -522,8 +522,9 @@ function Update-LogWatch {
             }
             if ($line -cmatch $ReadyRe) { $script:LogReady = $true }
             if ($line -cmatch $FinRe) {
+                $finHit = $Matches[0]   # before the -cmatch below, which overwrite $Matches
                 $script:LogFin = $(if ($line -cmatch 'ascendReady|AscendReady') { 'ascend' } elseif ($line -cmatch 'art promote auto') { 'art' } elseif ($line -cmatch 'ui: guide') { 'equip' } elseif ($line -cmatch 'sell: done') { 'sell' } else { 'ready' })
-                $script:FinLine = $Matches[0]
+                $script:FinLine = $finHit
             }
             if ($script:LogNever -eq '' -and $line -cmatch 'click gate Sell: allow ' -and $line -cnotmatch $SellOkRe) {
                 $t = $line.Trim(); if ($t.Length -gt 200) { $t = $t.Substring(0, 200) }

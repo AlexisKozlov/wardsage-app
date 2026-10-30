@@ -35,12 +35,12 @@ names() { case "$1" in
   locate) echo "Найти в игре" ;; locate_recast) echo "Найти в игре: преобразование" ;; locate_art) echo "Найти в игре: продвинуть артефакт" ;; grades) echo "Оценки героев" ;; sell_mark) echo "Чистка склада: выделение" ;; sell_after_restart) echo "Чистка склада после перезапуска" ;; upload_logs) echo "Загрузка логов" ;; screenshot) echo "Скриншот окна" ;; timeout) echo "Время вышло" ;; *) echo "$1" ;; esac; }
 
 lines=""
-while IFS='|' read -r name ok secs note warnf; do
+while IFS='|' read -r name ok secs note warnf infof; do
   [ -n "$name" ] || continue
-  mark="✅"; [ "$ok" = t ] || mark="❌"; [ "$warnf" = true ] && mark="⚠️"
+  mark="✅"; [ "$ok" = t ] || mark="❌"; [ "$warnf" = true ] && mark="⚠️"; [ "$infof" = true ] && mark="ℹ️"
   txt="$mark $(names "$name"): ${secs} с"; [ -n "$note" ] && txt="$txt ($note)"
   lines+="$txt"$'\n'
-done < <(q -F '|' -v r="$run" <<< "select s->>'name', ((s->>'ok')::boolean)::text::text, s->>'seconds', s->>'note', coalesce(s->>'warn', '') from public.lab_runs r, jsonb_array_elements(r.steps) s where r.id = :'r'::uuid" | sed -E 's/\|true\|/|t|/; s/\|false\|/|f|/')
+done < <(q -F '|' -v r="$run" <<< "select s->>'name', ((s->>'ok')::boolean)::text::text, s->>'seconds', s->>'note', coalesce(s->>'warn', ''), coalesce(s->>'info', '') from public.lab_runs r, jsonb_array_elements(r.steps) s where r.id = :'r'::uuid" | sed -E 's/\|true\|/|t|/; s/\|false\|/|f|/')
 
 # the equip plan finished without a single slot / «Заменить» click: the build was already worn, nothing was tested (a warning, not a pass)
 nochange=0
