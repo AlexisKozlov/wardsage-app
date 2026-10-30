@@ -135,9 +135,12 @@ namespace RealmForge {
     public static IGameMemory TestMemory;
     /// <summary>Memory reads made so far (for measuring).</summary>
     public static long Reads;
+    /// <summary>Bytes asked for by those reads (for measuring).</summary>
+    public static long ReadBytes;
 
     static bool Rpm(ulong addr, byte[] buf, int n, out int got) {
       System.Threading.Interlocked.Increment(ref Reads);
+      System.Threading.Interlocked.Add(ref ReadBytes, n);
       var m = TestMemory;
       if (m != null) return m.Read(addr, buf, n, out got);
       IntPtr rd; bool ok = ReadProcessMemory(H, (IntPtr)(long)addr, buf, (IntPtr)n, out rd);
@@ -165,12 +168,14 @@ namespace RealmForge {
     delegate void ChunkFn(ulong baseAddr, byte[] buf, int len);
     static void Scan(ChunkFn f) {
       const int CH = 16 * 1024 * 1024;
+      byte[] b = null;   // one buffer for the pass (not one per chunk)
       foreach (var r in regs)
         for (ulong off = 0; off < r.Size; off += CH) {
           int n = (int)Math.Min((ulong)CH, r.Size - off);
-          var b = new byte[n]; int rd;
+          if (b == null || b.Length < n) b = new byte[n];
+          int rd;
           if (!Rpm(r.Base + off, b, n, out rd)) continue;
-          f(r.Base + off, b, rd);
+          f(r.Base + off, b, Math.Min(rd, n));
         }
     }
 
@@ -257,7 +262,7 @@ namespace RealmForge {
 
     /// <summary>Forgets the remembered key texts (the script state changed); logs why.</summary>
     static void ForgetKeys(string why) {
-      keyText.Clear();
+      keyText.Clear(); ForgetFieldSlots();
       if (why != null) L("Key names forgotten: " + why);
     }
 
@@ -314,9 +319,26 @@ namespace RealmForge {
     /// <summary>A field by its key text, with the address of its key string (<paramref name="keyAt"/>).</summary>
     static bool FieldKey(ulong t, string key, out ulong val, out int tt, out ulong keyAt) {
       val = 0; tt = 0; keyAt = 0;
-      var h = Read(t, 56); if (h == null || h[8] != 5) return false;
+      var h = fieldHead ?? (fieldHead = new byte[56]);   // (no allocation on a hit: the poll reads a few fields every tick)
+      if (!ReadTo(t, h, 56) || h[8] != 5) return false;
       int lsize = h[11]; if (lsize > 20) return false;
-      ulong node = BitConverter.ToUInt64(h, 24); int nn = 1 << lsize; var nb = Read(node, nn * 32); if (nb == null) return false;
+      ulong node = BitConverter.ToUInt64(h, 24); int nn = 1 << lsize;
+      // a field read before: its node is read alone (32 bytes) while the table keeps that node array and the node still holds the same key string
+      var id = new FieldId(t, key); FieldSlot fs; int now = Environment.TickCount;
+      if (!FieldSlotsOff && FieldSlotsValid() && fieldSlots.TryGetValue(id, out fs)) {
+        if (fs.Np == node && fs.Lsize == lsize) {
+          var nb1 = fieldNode ?? (fieldNode = new byte[32]);
+          if (ReadTo(node + (ulong)(32 * fs.Idx), nb1, 32) && BitConverter.ToInt32(nb1, 24) == T_SSTR && BitConverter.ToUInt64(nb1, 16) == fs.KeyAt
+              && (unchecked(now - fs.At) < FieldTextCheckMs || HoldsText(fs.KeyAt, key))) {
+            if (unchecked(now - fs.At) >= FieldTextCheckMs) { fs.At = now; fieldSlots[id] = fs; }
+            val = BitConverter.ToUInt64(nb1, 0); tt = BitConverter.ToInt32(nb1, 8); keyAt = fs.KeyAt;
+            System.Threading.Interlocked.Increment(ref FieldHits);
+            return true;
+          }
+        }
+        fieldSlots.TryRemove(id, out fs);
+      }
+      var nb = Read(node, nn * 32); if (nb == null) return false;
       for (int i = 0; i < nn; i++) {
         int o = i * 32; int ktt = BitConverter.ToInt32(nb, o + 24);
         if (ktt != T_SSTR) continue;
@@ -324,10 +346,44 @@ namespace RealmForge {
         bool fresh; string s = KeyText(k, key, out fresh);
         if (s.Length != key.Length || s != key) continue;
         if (!fresh && !HoldsText(k, key)) { keyText.Remove(k); if (ShortText(k) != key) continue; }
-        val = BitConverter.ToUInt64(nb, o); tt = BitConverter.ToInt32(nb, o + 8); keyAt = k; return true;
+        val = BitConverter.ToUInt64(nb, o); tt = BitConverter.ToInt32(nb, o + 8); keyAt = k;
+        if (fieldSlots.Count > 20000) fieldSlots.Clear();
+        fieldSlots[id] = new FieldSlot { Np = node, Lsize = lsize, Idx = i, KeyAt = k, At = now };
+        return true;
       }
       return false;
     }
+
+    // ---- the node of a field read before (FieldKey): the table's node array, the slot and the key string it held. Valid while the table's header
+    // still points at that node array of that size and the slot still holds that key string object; the key's text is read again every
+    // FieldTextCheckMs (a key string the game builds again can land at an address that held another text). Forgotten with the key texts.
+    struct FieldId : IEquatable<FieldId> {
+      public readonly ulong T; public readonly string Key;
+      public FieldId(ulong t, string key) { T = t; Key = key; }
+      public bool Equals(FieldId o) { return T == o.T && string.Equals(Key, o.Key); }
+      public override bool Equals(object o) { return o is FieldId && Equals((FieldId)o); }
+      public override int GetHashCode() { return unchecked(T.GetHashCode() * 397 ^ Key.GetHashCode()); }
+    }
+    struct FieldSlot { public ulong Np; public int Lsize; public int Idx; public ulong KeyAt; public int At; }
+    static readonly System.Collections.Concurrent.ConcurrentDictionary<FieldId, FieldSlot> fieldSlots = new System.Collections.Concurrent.ConcurrentDictionary<FieldId, FieldSlot>();
+    static IntPtr fieldSlotsH; static object fieldSlotsMem;
+    const int FieldTextCheckMs = 500;
+    /// <summary>For the bench: every field looked up in its whole node array (the reader before the field nodes were kept).</summary>
+    public static bool FieldSlotsOff;
+    /// <summary>Field reads taken from a known node (for measuring).</summary>
+    public static long FieldHits;
+    /// <summary>The remembered field nodes belong to this game process (and this stand-in memory); else they are dropped.</summary>
+    static bool FieldSlotsValid() {
+      object mem = TestMemory;
+      if (fieldSlotsH != H || !ReferenceEquals(fieldSlotsMem, mem)) { fieldSlots.Clear(); fieldSlotsH = H; fieldSlotsMem = mem; return false; }
+      return true;
+    }
+    static void ForgetFieldSlots() { fieldSlots.Clear(); }
+    [ThreadStatic] static byte[] fieldHead, fieldNode;
+    /// <summary>Exactly <paramref name="n"/> bytes into a buffer the caller keeps.</summary>
+    static bool ReadTo(ulong addr, byte[] buf, int n) { int rd; return Rpm(addr, buf, n, out rd) && rd == n; }
+    /// <summary>For the tests: a field's raw value and type tag (FieldKey).</summary>
+    public static bool FieldForTest(ulong t, string key, out ulong val, out int tt) { return Field(t, key, out val, out tt); }
     // Among tables owning key, take the field whose parsed table is largest
     static Dictionary<string, object> BestField(Dictionary<ulong, string> tstr, string key, int depth) {
       Dictionary<string, object> best = null;
@@ -594,6 +650,37 @@ namespace RealmForge {
     public string Note;                  // how the state was chosen (for the log)
   }
 
+  /// <summary>Timings of the game reads (measuring only): the form discovery from the window table and by a region scan, the per-tick check of
+  /// the window table, the screen's field reads, the list settle and the click-to-effect times. Thread-safe counters, taken (and reset) by
+  /// <see cref="Take"/>.</summary>
+  public static class ReadTiming {
+    public static long TableN, TableTicks, ScanN, ScanTicks, CheckN, CheckTicks, FieldN, FieldTicks, SettleN, SettleMs, ConfirmN, ConfirmMs, ConfirmMax;
+    internal static void Add(ref long n, ref long sum, long v) { Interlocked.Increment(ref n); Interlocked.Add(ref sum, v); }
+    /// <summary>One tick's field reads of the screen took <paramref name="ticks"/> (Stopwatch ticks).</summary>
+    public static void Field(long ticks) { Add(ref FieldN, ref FieldTicks, ticks); }
+    /// <summary>A list took <paramref name="ms"/> to settle (two equal reads) after it moved.</summary>
+    public static void Settle(long ms) { Add(ref SettleN, ref SettleMs, ms); }
+    /// <summary>A pilot's click showed its effect <paramref name="ms"/> after it was sent.</summary>
+    public static void Confirm(long ms) {
+      Add(ref ConfirmN, ref ConfirmMs, ms);
+      long m; do m = Interlocked.Read(ref ConfirmMax); while (ms > m && Interlocked.CompareExchange(ref ConfirmMax, ms, m) != m);
+    }
+    static double Us(long ticks, long n) { return n == 0 ? 0 : ticks * 1e6 / Stopwatch.Frequency / n; }
+    static long Avg(long sum, long n) { return n == 0 ? 0 : sum / n; }
+    /// <summary>"read: field N µs, settle M ms, confirm K ms (max X, n), forms: table N× X µs, scan N× Y ms, check X µs" over the counts since the
+    /// last call (the counts are reset); null when nothing was measured.</summary>
+    public static string Take() {
+      long fn = Interlocked.Exchange(ref FieldN, 0), ft = Interlocked.Exchange(ref FieldTicks, 0), sn = Interlocked.Exchange(ref SettleN, 0), sm = Interlocked.Exchange(ref SettleMs, 0);
+      long cn = Interlocked.Exchange(ref ConfirmN, 0), cm = Interlocked.Exchange(ref ConfirmMs, 0), cx = Interlocked.Exchange(ref ConfirmMax, 0);
+      long tn = Interlocked.Exchange(ref TableN, 0), tt = Interlocked.Exchange(ref TableTicks, 0), an = Interlocked.Exchange(ref ScanN, 0), at = Interlocked.Exchange(ref ScanTicks, 0);
+      long kn = Interlocked.Exchange(ref CheckN, 0), kt = Interlocked.Exchange(ref CheckTicks, 0);
+      if (fn + sn + cn + tn + an + kn == 0) return null;
+      var ci = System.Globalization.CultureInfo.InvariantCulture;
+      return "read: field " + ((long)Us(ft, fn)).ToString(ci) + " µs, settle " + Avg(sm, sn) + " ms, confirm " + Avg(cm, cn) + " ms (max " + cx + ", " + cn + " clicks; "
+        + fn + " ticks), forms: table " + tn + "× " + ((long)Us(tt, tn)).ToString(ci) + " µs, scan " + an + "× " + ((long)(Us(at, an) / 1000)).ToString(ci) + " ms, check " + kn + "× " + ((long)Us(kt, kn)).ToString(ci) + " µs";
+    }
+  }
+
   public static partial class RFX {
     static LiveTables live;
     const string KCamp = "m_CampHeroPerfectReward", KArts = "m_vArtifacts", KHeroes = "m_CharactorDatas", KBeasts = "m_AllBeastInfo", KEquipData = "suitId2EquipIdExt";
@@ -605,7 +692,7 @@ namespace RealmForge {
     /// (again). <paramref name="needForm"/>: also the hero screen (created when the player first opens it).</summary>
     /// <summary>The live tables are searched again on the next use (the helper's plan stood still: an item put on was not
     /// seen until the app was restarted, live 27.09).</summary>
-    public static void ForgetLive() { live = null; keyText.Clear(); }
+    public static void ForgetLive() { live = null; keyText.Clear(); ForgetFieldSlots(); }
 
     // ------------------------------------------------------------------ the tables for the on-screen hints, without an account read
     // The screen readers (lists, forms) need the process handle H, the memory regions (regs) and the live tables (their pid
@@ -941,24 +1028,27 @@ namespace RealmForge {
     /// <summary>Searches UIInstance's nodes of the hero screen, the inventory and the two recast screens (one pass; a
     /// form the player has not opened yet has none); returns the live hero screen (0 = none).</summary>
     static ulong FindFormNode() {
-      lock (formScanLock) { return FindFormNodeLocked(); }
+      lock (formScanLock) { return FindFormNodeLocked(true); }
     }
     static readonly object formScanLock = new object();
 
-    // the new values are built into locals and published at the end: a reader never sees a 0 from the middle of a scan
-    static ulong FindFormNodeLocked() {
+    // the new values are built into locals and published at the end: a reader never sees a 0 from the middle of a scan.
+    // <allowScan> false: only the window table (when it cannot be read, nothing is published and the forms known stay)
+    static ulong FindFormNodeLocked(bool allowScan) {
       ulong nForm = 0, nInv = 0, nSub = 0, nGem = 0, nCity = 0, nArt = 0;
       if (Layout.Current == null) { formNode = invNode = subNode = gemNode = cityNode = artNode = 0; return 0; }   // no form ids: the hero screen is found by its keys
-      int t0 = Environment.TickCount;
+      int t0 = Environment.TickCount; long q0 = Stopwatch.GetTimestamp();
       long idMain = FormCharactorMainId, idInv = FormBackpackId, idRecast = FormRecastId, idGem = FormGemId, idCity = FormMainCityId, idArt = FormArtId;
       var hits = new List<ulong>();
-      // first the game's own window table (UIInstance): a form is there as soon as it is created, wherever it lies in memory
-      var uiIds = FormsFromUiTable(new[] { idMain, idInv, idRecast, idGem, idCity, idArt }, hits);
+      // first the game's own window table (UIInstance): a form is there as soon as it is created, wherever it lies in memory. A form it does
+      // not hold is not created (not opened yet this session, or closed for good): a scan would find only dead copies of earlier ones, so
+      // the regions are scanned only while the window table is not known or cannot be read
+      bool uiRead;
+      FormsFromUiTable(new[] { idMain, idInv, idRecast, idGem, idCity, idArt }, hits, out uiRead);
       int uiHits = hits.Count;
-      // the scan runs unless the window table holds every form the readers look for (a form it lacks for some reason must still be found)
-      bool needScan = false;
-      foreach (var id in new[] { idMain, idInv, idRecast, idGem }) if (id != 0 && !uiIds.Contains(id)) needScan = true;
-      formsVia = needScan ? (uiHits > 0 ? "ui table + scan" : "scan") : "ui table";
+      bool needScan = !uiRead;
+      if (needScan && !allowScan) { formsPrint = 0; return formNode != 0 ? NodeForm(formNode) : 0; }
+      formsVia = needScan ? "scan" : "ui table";
       if (needScan) {
         // the memory regions change as the game allocates: a form made after the last refresh can lie outside the cached ones
         var fresh = Regions(); if (fresh != null && fresh.Count > 0) regs = fresh;
@@ -992,6 +1082,8 @@ namespace RealmForge {
       nArt = PickNode(artHits, n => InvFormShown(NodeTable(n, FormArtId)));
       nInv = PickNode(invHits, invShown); nSub = PickNode(subHits, subShown); nGem = PickNode(gemHits, gemShown);
       formNode = nForm; invNode = nInv; subNode = nSub; gemNode = nGem; cityNode = nCity; artNode = nArt;
+      if (needScan) { formsPrint = 0; NoteDiscovery(false, Stopwatch.GetTimestamp() - q0); }
+      else { formsPrint = uiPrint; NoteDiscovery(true, Stopwatch.GetTimestamp() - q0); }
       int ki = CountWhere(invHits, invShown), ks = CountWhere(subHits, subShown), kg = CountWhere(gemHits, gemShown);
       string line = "inventory " + invHits.Count + " (shown " + ki + "), foundry " + subHits.Count + " (shown " + ks + "), gem " + gemHits.Count + " (shown " + kg + "), city " + cityHits.Count + " (shown " + CountWhere(cityHits, cityShown) + ")" + (idArt != 0 ? ", art workshop " + artHits.Count : "");
       if (line != formsScanSaid) { formsScanSaid = line; Log.AppendLine("forms: scan " + (Environment.TickCount - t0) + " ms, " + line); }
@@ -1001,22 +1093,80 @@ namespace RealmForge {
 
     /// <summary>The nodes of UIInstance (the game's window table) keyed by one of <paramref name="ids"/> and holding a table, added to
     /// <paramref name="hits"/> as node addresses (what the scan finds too). Nothing when the table is not known.</summary>
-    static HashSet<long> FormsFromUiTable(long[] ids, List<ulong> hits) {
-      var got = new HashSet<long>();
-      if (!UiKnown) return got;
-      ulong t = uiTable;
-      var h = Read(t, 56); if (h == null || h[8] != 5) return got;
-      int lsize = h[11]; if (lsize > 20) return got;
-      int nn = 1 << lsize; ulong np = BitConverter.ToUInt64(h, 24);
-      var nb = Read(np, nn * 32); if (nb == null) return got;
+    static HashSet<long> FormsFromUiTable(long[] ids, List<ulong> hits, out bool readOk) {
+      var got = new HashSet<long>(); readOk = false;
+      ulong print;
+      byte[] nb; int nn; ulong np;
+      if (!UiNodeArray(out nb, out nn, out np)) return got;
+      int forms = 0;
+      for (int i = 0; i < nn; i++) {
+        int o = i * 32;
+        if (BitConverter.ToInt32(nb, o + 24) != T_INT || BitConverter.ToInt32(nb, o + 8) != T_TABLE) continue;
+        forms++;
+        long k = BitConverter.ToInt64(nb, o + 16);
+        foreach (var id in ids) if (id != 0 && k == id) { hits.Add(np + (ulong)o); got.Add(id); break; }
+      }
+      readOk = forms > 0;   // a window table holding no form at all is not trusted (the scan decides)
+      print = UiPrint(nb, nn, np, ids);
+      uiPrint = print;
+      return got;
+    }
+
+    // the window table's node array, read into a buffer kept for it (the per-tick check makes no allocation while its size stays)
+    [ThreadStatic] static byte[] uiNodesBuf;
+    static bool UiNodeArray(out byte[] nb, out int nn, out ulong np) {
+      nb = null; nn = 0; np = 0;
+      ulong t = uiTable; if (t == 0) return false;
+      var h = uiHeadBuf ?? (uiHeadBuf = new byte[56]);
+      if (!ReadTo(t, h, 56) || h[8] != 5) return false;
+      int lsize = h[11]; if (lsize > 16) return false;
+      nn = 1 << lsize; np = BitConverter.ToUInt64(h, 24);
+      if (uiNodesBuf == null || uiNodesBuf.Length != nn * 32) uiNodesBuf = new byte[nn * 32];
+      nb = uiNodesBuf;
+      return ReadTo(np, nb, nn * 32);
+    }
+    [ThreadStatic] static byte[] uiHeadBuf;
+
+    // a fingerprint of the window table's forms the readers follow: its node array, and for each id the slot and the table it holds.
+    // The same print = the nodes published are still the game's; another one = a form came, went, was built again or the table rehashed
+    static ulong UiPrint(byte[] nb, int nn, ulong np, long[] ids) {
+      ulong hsh = unchecked(np * 31 + (ulong)nn);
       for (int i = 0; i < nn; i++) {
         int o = i * 32;
         if (BitConverter.ToInt32(nb, o + 24) != T_INT || BitConverter.ToInt32(nb, o + 8) != T_TABLE) continue;
         long k = BitConverter.ToInt64(nb, o + 16);
-        foreach (var id in ids) if (id != 0 && k == id) { hits.Add(np + (ulong)o); got.Add(id); break; }
+        foreach (var id in ids) if (id != 0 && k == id) { hsh = unchecked((hsh * 31 + (ulong)i) * 31 + BitConverter.ToUInt64(nb, o)); break; }
       }
-      return got;
+      return hsh == 0 ? 1 : hsh;
     }
+    static ulong uiPrint, formsPrint;   // the print of the last window-table read / of the one the published nodes came from (0 = from a scan)
+    static int formsTickAt;
+
+    /// <summary>The cheap per-tick check of the forms (two reads of the window table, no allocation): when its forms changed since the nodes
+    /// were published (a form opened, closed or was built again, the table rehashed), they are taken from it again - no region scan. False
+    /// when the window table is not known or not readable (then the searches go on as before). At most every <paramref name="minGapMs"/>.</summary>
+    public static bool FormsTick(int minGapMs) {
+      if (Layout.Current == null || uiTable == 0) return false;
+      int now = Environment.TickCount;
+      if (formsTickAt != 0 && unchecked(now - formsTickAt) < minGapMs) return formsPrint != 0;
+      formsTickAt = now == 0 ? 1 : now;
+      long q0 = Stopwatch.GetTimestamp();
+      byte[] nb; int nn; ulong np;
+      if (!UiNodeArray(out nb, out nn, out np)) return false;
+      long[] ids = { FormCharactorMainId, FormBackpackId, FormRecastId, FormGemId, FormMainCityId, FormArtId };
+      ulong p = UiPrint(nb, nn, np, ids);
+      if (p == formsPrint) { NoteFieldCheck(Stopwatch.GetTimestamp() - q0); return true; }
+      if (!Monitor.TryEnter(formScanLock)) return false;   // a scan (no window table before) holds it: the next tick
+      try { FindFormNodeLocked(false); } finally { Monitor.Exit(formScanLock); }
+      return formsPrint != 0;
+    }
+
+    // ---- measuring the reads (the test build logs them once a minute, see ReadTiming)
+    static void NoteDiscovery(bool table, long ticks) { if (table) ReadTiming.Add(ref ReadTiming.TableN, ref ReadTiming.TableTicks, ticks); else ReadTiming.Add(ref ReadTiming.ScanN, ref ReadTiming.ScanTicks, ticks); }
+    static void NoteFieldCheck(long ticks) { ReadTiming.Add(ref ReadTiming.CheckN, ref ReadTiming.CheckTicks, ticks); }
+
+    /// <summary>The forms come from the window table now (no region scans are needed for them).</summary>
+    public static bool FormsFromTable { get { return formsPrint != 0 && uiTable != 0; } }
 
     /// <summary>For the tests: sets / clears the window table (UIInstance) without a scan.</summary>
     public static void SetUiTableForTest(ulong t) { uiTable = t; }
@@ -1054,7 +1204,13 @@ namespace RealmForge {
     /// <summary>Starts a search of the forms on a worker thread (never two at once, at least <paramref name="minGapMs"/> after the last start); false = not started.
     /// A search that has been busy for more than 30 s is given up on (a new one may start). Does not block.</summary>
     public static bool RequestFormSearch(string reason, int minGapMs) {
-      if (regs == null || Layout.Current == null) return false;
+      if (Layout.Current == null) return false;
+      // the window table known and readable: the forms are taken from it here and now (two small reads), no worker, no scan
+      if (uiTable != 0 && !FormSearchRunning && FormsTick(0)) {
+        if (reason != formSearchSaid) { formSearchSaid = reason; Log.AppendLine("forms: from the window table (" + reason + ")"); }
+        return true;
+      }
+      if (regs == null) return false;
       int now = Environment.TickCount;
       if (lastFormSearchAt != 0 && now - lastFormSearchAt < minGapMs) return false;
       if (Interlocked.CompareExchange(ref formSearchBusy, 1, 0) != 0) {
@@ -1275,15 +1431,20 @@ namespace RealmForge {
       const int CH = 16 * 1024 * 1024;
       var chunks = new List<KeyValuePair<ulong, int>>();
       foreach (var r in regs) for (ulong off = 0; off < r.Size; off += CH) chunks.Add(new KeyValuePair<ulong, int>(r.Base + off, (int)Math.Min((ulong)CH, r.Size - off)));
-      Parallel.ForEach(chunks, new ParallelOptions { MaxDegreeOfParallelism = Math.Max(2, Environment.ProcessorCount) },
-        () => new byte[CH],
-        (c, state, buf) => {
+      // light on the player's PC: a pass leaves a core to the game (one thread on 2-4 cores) and runs below normal priority; each thread's
+      // 16 MB buffer lives for the pass only
+      Parallel.ForEach(chunks, new ParallelOptions { MaxDegreeOfParallelism = ScanThreads(Environment.ProcessorCount) },
+        () => { var th = Thread.CurrentThread; var pr = th.Priority; try { th.Priority = ThreadPriority.BelowNormal; } catch (Exception) { } return new ScanBuf { B = new byte[CH], Prio = pr }; },
+        (c, state, sb) => {
           int rd;
-          if (Rpm(c.Key, buf, c.Value, out rd) && rd > 0) f(c.Key, buf, rd);
-          return buf;
+          if (Rpm(c.Key, sb.B, c.Value, out rd) && rd > 0) f(c.Key, sb.B, rd);
+          return sb;
         },
-        buf => { });
+        sb => { try { Thread.CurrentThread.Priority = sb.Prio; } catch (Exception) { } sb.B = null; });
     }
+    sealed class ScanBuf { public byte[] B; public ThreadPriority Prio; }
+    /// <summary>The threads of a memory pass: one on a PC of up to 4 cores, else all cores but one.</summary>
+    public static int ScanThreads(int cores) { return cores <= 4 ? 1 : cores - 1; }
 
     /// <summary>Short script strings with these texts (TString address -> text): aligned positions only.</summary>
     static Dictionary<ulong, string> FindLuaStringsFast(string[] names) {

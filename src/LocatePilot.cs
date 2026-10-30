@@ -195,6 +195,7 @@ namespace RealmForge {
       latched = ""; waitUntil = pauseUntil = workSince = 0; kind = LocateTodo.Nothing; kindClicks = actions = clicks = drags = 0;
       list.Reset(); geoW = geoH = 0; geoCols = 0; Trace = ""; dragFrom = double.NaN; dragStill = 0; waitKind = LocateKind.None; waitSince = waitSeen = 0;
       cellSy = cellX = cellY = double.NaN; cellSame = 0;
+      unsentOk = false; unsentRun = 0; clickedAt = 0; confirmWait = false;
     }
 
     /// <summary>The click gate found the last cell click without effect and lets it be placed again once (ClickGate.Observe): the
@@ -267,7 +268,8 @@ namespace RealmForge {
     }
 
     LocateMove Click(LocateMove m, LocateView v, double x, double y, int waitMs, string what) {
-      actions++; waitUntil = v.NowMs + waitMs;
+      unsentOk = what != "cell"; unsentWait = waitUntil; unsentKind = kindClicks - 1;
+      actions++; waitUntil = v.NowMs + waitMs; confirmWait = what != "cell"; clickedAt = v.NowMs;   // (a list cell: the list pilot's own waits)
       Say(what + " " + (int)x + "," + (int)y);
       m.Action = new AutoAction { Kind = AutoKind.Click, X = x, Y = y };
       return m;
@@ -323,6 +325,24 @@ namespace RealmForge {
       m.Action = new AutoAction { Kind = AutoKind.Drag, X = f.ViewX + f.ViewW / 2, Y = f.ViewY + f.ViewH / 2 - dy / 2, DY = dy };
       return m;
     }
+
+    // a button / tab click the host could not send (the gate refused it: a pop-up or wait form came, the forms unread): taken back, so a wait
+    // form over the screen does not use up the step's MaxStepClicks (at most MaxUnsent in a row; then they count again)
+    bool unsentOk, confirmWait; long unsentWait, clickedAt; int unsentKind, unsentRun;
+    public const int MaxUnsent = 60, SettleAfterEffectMs = 150;
+    /// <summary>The last step's click was not sent: a button / tab click is taken back (list cells and drags are the list pilot's own).</summary>
+    public void NotSent() {
+      if (!unsentOk || ++unsentRun > MaxUnsent) { unsentOk = false; return; }
+      actions--; kindClicks = Math.Max(0, unsentKind); waitUntil = unsentWait; unsentOk = false;
+    }
+    /// <summary>The click gate saw the effect of the last button / tab click (event confirmation): the fixed wait after it ends a short settle later.</summary>
+    public void Confirmed(long now) {
+      if (!confirmWait || now < clickedAt) return;
+      if (waitUntil > now + SettleAfterEffectMs) waitUntil = now + SettleAfterEffectMs;
+      confirmWait = false;
+    }
+    /// <summary>A click went out (the host sent it): the refusals in a row start over.</summary>
+    public void Sent() { unsentRun = 0; unsentOk = false; }
 
     LocateMove Abort(LocateMove m, string why) {
       latched = why; m.State = "stopped"; m.Why = why; m.Action = AutoAction.Nothing;

@@ -49,9 +49,12 @@ namespace RealmForge {
     public static IGameMemory TestMemory;
     /// <summary>Memory reads made so far (for measuring).</summary>
     public static long Reads;
+    /// <summary>Bytes asked for by those reads (for measuring).</summary>
+    public static long ReadBytes;
 
     static bool Rpm(ulong addr, byte[] buf, int n, out int got) {
       System.Threading.Interlocked.Increment(ref Reads);
+      System.Threading.Interlocked.Add(ref ReadBytes, n);
       var m = TestMemory;
       if (m != null) return m.Read(addr, buf, n, out got);
       IntPtr rd; bool ok = ReadProcessMemory(H, (IntPtr)(long)addr, buf, (IntPtr)n, out rd);
@@ -79,12 +82,14 @@ namespace RealmForge {
     delegate void ChunkFn(ulong baseAddr, byte[] buf, int len);
     static void Scan(ChunkFn f) {
       const int CH = 16 * 1024 * 1024;
+      byte[] b = null;   // one buffer for the pass (not one per chunk)
       foreach (var r in regs)
         for (ulong off = 0; off < r.Size; off += CH) {
           int n = (int)Math.Min((ulong)CH, r.Size - off);
-          var b = new byte[n]; int rd;
+          if (b == null || b.Length < n) b = new byte[n];
+          int rd;
           if (!Rpm(r.Base + off, b, n, out rd)) continue;
-          f(r.Base + off, b, rd);
+          f(r.Base + off, b, Math.Min(rd, n));
         }
     }
 
@@ -171,7 +176,7 @@ namespace RealmForge {
 
     /// <summary>Forgets the remembered key texts (the script state changed); logs why.</summary>
     static void ForgetKeys(string why) {
-      keyText.Clear();
+      keyText.Clear(); ForgetFieldSlots();
       if (why != null) L("Key names forgotten: " + why);
     }
 
@@ -228,9 +233,26 @@ namespace RealmForge {
     /// <summary>A field by its key text, with the address of its key string (<paramref name="keyAt"/>).</summary>
     static bool FieldKey(ulong t, string key, out ulong val, out int tt, out ulong keyAt) {
       val = 0; tt = 0; keyAt = 0;
-      var h = Read(t, 56); if (h == null || h[8] != 5) return false;
+      var h = fieldHead ?? (fieldHead = new byte[56]);   // (no allocation on a hit: the poll reads a few fields every tick)
+      if (!ReadTo(t, h, 56) || h[8] != 5) return false;
       int lsize = h[11]; if (lsize > 20) return false;
-      ulong node = BitConverter.ToUInt64(h, 24); int nn = 1 << lsize; var nb = Read(node, nn * 32); if (nb == null) return false;
+      ulong node = BitConverter.ToUInt64(h, 24); int nn = 1 << lsize;
+      // a field read before: its node is read alone (32 bytes) while the table keeps that node array and the node still holds the same key string
+      var id = new FieldId(t, key); FieldSlot fs; int now = Environment.TickCount;
+      if (!FieldSlotsOff && FieldSlotsValid() && fieldSlots.TryGetValue(id, out fs)) {
+        if (fs.Np == node && fs.Lsize == lsize) {
+          var nb1 = fieldNode ?? (fieldNode = new byte[32]);
+          if (ReadTo(node + (ulong)(32 * fs.Idx), nb1, 32) && BitConverter.ToInt32(nb1, 24) == T_SSTR && BitConverter.ToUInt64(nb1, 16) == fs.KeyAt
+              && (unchecked(now - fs.At) < FieldTextCheckMs || HoldsText(fs.KeyAt, key))) {
+            if (unchecked(now - fs.At) >= FieldTextCheckMs) { fs.At = now; fieldSlots[id] = fs; }
+            val = BitConverter.ToUInt64(nb1, 0); tt = BitConverter.ToInt32(nb1, 8); keyAt = fs.KeyAt;
+            System.Threading.Interlocked.Increment(ref FieldHits);
+            return true;
+          }
+        }
+        fieldSlots.TryRemove(id, out fs);
+      }
+      var nb = Read(node, nn * 32); if (nb == null) return false;
       for (int i = 0; i < nn; i++) {
         int o = i * 32; int ktt = BitConverter.ToInt32(nb, o + 24);
         if (ktt != T_SSTR) continue;
@@ -238,10 +260,44 @@ namespace RealmForge {
         bool fresh; string s = KeyText(k, key, out fresh);
         if (s.Length != key.Length || s != key) continue;
         if (!fresh && !HoldsText(k, key)) { keyText.Remove(k); if (ShortText(k) != key) continue; }
-        val = BitConverter.ToUInt64(nb, o); tt = BitConverter.ToInt32(nb, o + 8); keyAt = k; return true;
+        val = BitConverter.ToUInt64(nb, o); tt = BitConverter.ToInt32(nb, o + 8); keyAt = k;
+        if (fieldSlots.Count > 20000) fieldSlots.Clear();
+        fieldSlots[id] = new FieldSlot { Np = node, Lsize = lsize, Idx = i, KeyAt = k, At = now };
+        return true;
       }
       return false;
     }
+
+    // ---- the node of a field read before (FieldKey): the table's node array, the slot and the key string it held. Valid while the table's header
+    // still points at that node array of that size and the slot still holds that key string object; the key's text is read again every
+    // FieldTextCheckMs (a key string the game builds again can land at an address that held another text). Forgotten with the key texts.
+    struct FieldId : IEquatable<FieldId> {
+      public readonly ulong T; public readonly string Key;
+      public FieldId(ulong t, string key) { T = t; Key = key; }
+      public bool Equals(FieldId o) { return T == o.T && string.Equals(Key, o.Key); }
+      public override bool Equals(object o) { return o is FieldId && Equals((FieldId)o); }
+      public override int GetHashCode() { return unchecked(T.GetHashCode() * 397 ^ Key.GetHashCode()); }
+    }
+    struct FieldSlot { public ulong Np; public int Lsize; public int Idx; public ulong KeyAt; public int At; }
+    static readonly System.Collections.Concurrent.ConcurrentDictionary<FieldId, FieldSlot> fieldSlots = new System.Collections.Concurrent.ConcurrentDictionary<FieldId, FieldSlot>();
+    static IntPtr fieldSlotsH; static object fieldSlotsMem;
+    const int FieldTextCheckMs = 500;
+    /// <summary>For the bench: every field looked up in its whole node array (the reader before the field nodes were kept).</summary>
+    public static bool FieldSlotsOff;
+    /// <summary>Field reads taken from a known node (for measuring).</summary>
+    public static long FieldHits;
+    /// <summary>The remembered field nodes belong to this game process (and this stand-in memory); else they are dropped.</summary>
+    static bool FieldSlotsValid() {
+      object mem = TestMemory;
+      if (fieldSlotsH != H || !ReferenceEquals(fieldSlotsMem, mem)) { fieldSlots.Clear(); fieldSlotsH = H; fieldSlotsMem = mem; return false; }
+      return true;
+    }
+    static void ForgetFieldSlots() { fieldSlots.Clear(); }
+    [ThreadStatic] static byte[] fieldHead, fieldNode;
+    /// <summary>Exactly <paramref name="n"/> bytes into a buffer the caller keeps.</summary>
+    static bool ReadTo(ulong addr, byte[] buf, int n) { int rd; return Rpm(addr, buf, n, out rd) && rd == n; }
+    /// <summary>For the tests: a field's raw value and type tag (FieldKey).</summary>
+    public static bool FieldForTest(ulong t, string key, out ulong val, out int tt) { return Field(t, key, out val, out tt); }
     // Among tables owning key, take the field whose parsed table is largest
     static Dictionary<string, object> BestField(Dictionary<ulong, string> tstr, string key, int depth) {
       Dictionary<string, object> best = null;

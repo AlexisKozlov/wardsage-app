@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The game sim (tests/GameSim.cs) alone: a quick run, or a long one for the night.
 #
-#   tests/run-sim.sh [seeds]                   (default 2000)
+#   tests/run-sim.sh [seeds] [--scan] [--timing] (default 2000; --timing: the reader's costs and the pilots' times, --scan: the old region-scan reader)
 #   tests/run-sim.sh --soak N [--slow-only]    (N seeds, in blocks of 5000, each block's summary printed)
 #   (--real after N: the start pop-ups and the game's own pop-ups at a realistic rate - the done-rate a player sees; the default mix stresses the rules)
 #   tests/run-sim.sh --seed S                  (one seed with its whole trace: what the game and the pilot did)
@@ -27,7 +27,7 @@ case "${1:-}" in
       $SIM $n --from $((10000 + from)) "$@" || rc=1
     done
     exit $rc ;;
-  --seed) $SIM --seed "$2" --verbose ;;
+  --seed) $SIM --seed "$2" --verbose "${@:3}" ;;
   --list) $SIM "${3:-2000}" --list "$2" ;;
-  *) $SIM "${1:-2000}" ;;
+  *) $SIM "${1:-2000}" "${@:2}" ;;
 esac
