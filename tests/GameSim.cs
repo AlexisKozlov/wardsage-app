@@ -39,6 +39,8 @@ static partial class CoreTests {
     public readonly HashSet<int> AscParts = new HashSet<int>(); public long AscSel; public double AscScrollY;
     public const int InvCols = 8, InvRowUnits = 118, AscCols = 5, AscRowUnits = 108;
     public readonly SellGeometry InvGeo; public GameGeometry Geo;
+    // the inventory list follows a drag by its own gain, up and down apart (live about 1.0 and 0.84): the pilot's drags land off by that much
+    public double InvGainUp = 1, InvGainDown = 1;
     public readonly HashSet<string> StartForms = new HashSet<string>();   // the forms there at the start (over or under a screen: nobody can tell)
     public readonly List<string> Bad = new List<string>(), Log = new List<string>();
     public readonly StringBuilder Acts = new StringBuilder();   // every click / drag / Escape with its time (--digest)
@@ -68,6 +70,7 @@ static partial class CoreTests {
       var all = new List<long>(); for (int i = 0; i < 30; i++) all.Add(100 + i);
       Hero.All = all.ToArray(); Hero.Heroes = all.ToArray(); Hero.CityHero = 100; Hero.Tab = R.Next(2) == 0 ? 3 : 1;
       InvGeo = SellGeometry.Inventory(W, U, InvCols);
+      { var gr = new Random(seed ^ 0x2B7D); InvGainUp = 0.9 + 0.2 * gr.NextDouble(); InvGainDown = 0.78 + 0.17 * gr.NextDouble(); }   // (its own stream: the game's stays the seeds')
       int ni = 20 + R.Next(60); for (int i = 0; i < ni; i++) InvItems.Add(9000 + i);
       int na = 3 + R.Next(40); for (int i = 0; i < na; i++) { long u = 600 + i; AscAll.Add(u); AscSlot[u] = R.Next(5); }
       // (a third: a long list - the slot filter leaves rows to scroll, live 1.6.66.354)
@@ -280,7 +283,7 @@ static partial class CoreTests {
         double coast = !inv && Slow ? 0.25 + 0.2 * R2.NextDouble() : 0; long coastMs = 400 + R2.Next(500);
         Later(lat0, () => {
           if (TopForm() != top) return;
-          if (inv) InvScrollY = Math.Max(0, Math.Min(InvMaxScroll, InvScrollY - dy * InvRowUnits / InvPitch));
+          if (inv) InvScrollY = Math.Max(0, Math.Min(InvMaxScroll, InvScrollY - dy * (dy < 0 ? InvGainUp : InvGainDown) * InvRowUnits / InvPitch));
           else AscScrollY = Math.Max(0, Math.Min(AscMaxScroll, AscScrollY - dy * (1 - coast) / AscK));
         });
         if (coast > 0) Later(lat0 + coastMs, () => { if (TopForm() == top) AscScrollY = Math.Max(0, Math.Min(AscMaxScroll, AscScrollY - dy * coast / AscK)); });
@@ -343,6 +346,7 @@ static partial class CoreTests {
     public long SendingUntil;   // app/Overlay.cs Send: the cursor moves and the click take ~300 ms on their own thread; no tick reads the screens meanwhile
     readonly SellPilot spilot = new SellPilot(new SellGeometry()); readonly InvScroll sellScroll = new InvScroll(); public readonly HashSet<long> Wanted = new HashSet<long>();
     public string SellWhy { get { return spilot.FailWhy; } }
+    public bool SellPolling { get { return Owner == ClickOwner.Sell && spilot.Polling; } }   // (app/Overlay.cs: the 50 ms read while the sell pilot awaits a move)
     public SimHost(SimGame g, ClickOwner o, long plan, GameGeometry geo) {
       G = g; Owner = o; this.plan = plan; this.geo = geo;
       spilot.Geometry = g.InvGeo;
@@ -441,6 +445,7 @@ static partial class CoreTests {
       return st;
     }
     void Count(ClickTarget t) { int n; Sent.TryGetValue(t, out n); Sent[t] = n + 1; }
+    public int SentCount(ClickTarget t) { int n; return Sent.TryGetValue(t, out n) ? n : 0; }
     // GatedSend / SendInside: the gate's yes on a fresh read, then the click and its watch
     bool Send(ClickTarget t, AutoAction a, Action<ClickRequest, ScreenState> fill, bool wantCity, bool wantKnown) {
       if (a.X < 0 || a.Y < 0 || a.X >= W || a.Y >= H) return false;
@@ -456,7 +461,7 @@ static partial class CoreTests {
       Count(t);
       if (Environment.GetEnvironmentVariable("SIM_TRACE") != null) Console.WriteLine("  send " + t + " fresh=" + fresh.Brief + " top=" + fresh.Top + " tick=" + (Screens.Current != null ? Screens.Current.Brief : "-") + " unread=" + formsUnread);
       if (a.Kind == AutoKind.Click) G.Click(a.X, a.Y, t); else if (a.Kind == AutoKind.Drag) G.Drag(a.X, a.Y, a.DY, t);
-      SendingUntil = Now + 300;
+      SendingUntil = Now + (a.Kind == AutoKind.Drag ? 850 : 300);   // (a drag: press, 16 moves of 20 ms, 350 ms at rest, release - app/Overlay.cs Send)
       return true;
     }
     bool EscapeSend() {
@@ -587,12 +592,13 @@ static partial class CoreTests {
         PilotState = "sell_" + spilot.State;
         if (a.Kind == AutoKind.None) { if (spilot.State == "done") Done = "done"; return; }
         var sg = spilot.Geometry;
-        Send(a.Kind == AutoKind.Drag ? ClickTarget.InvListDrag : ClickTarget.InvBulkCell, a, (rq, fr) => {
+        bool sent = Send(a.Kind == AutoKind.Drag ? ClickTarget.InvListDrag : ClickTarget.InvBulkCell, a, (rq, fr) => {
           rq.CellUid = ClickGate.InvCellUid(fr.Inv, sg, sellScroll.Row1(sg, fr.Inv != null ? fr.Inv.List : null, double.NaN, U, Now), SimGame.InvCols, rq.X, rq.Y, W, U);
           var ok = new HashSet<long>(Wanted); if (fr.Inv != null) foreach (var u in fr.Inv.Selected) ok.Add(u);
           rq.CellOk = ok; rq.NoScroll = fr.Inv == null || fr.Inv.List == null || !fr.Inv.List.Has;
           if (Environment.GetEnvironmentVariable("SIM_TRACE") != null) Console.WriteLine("  cell x=" + (int)rq.X + " y=" + (int)rq.Y + " uid=" + rq.CellUid + " row1=" + sellScroll.Row1(sg, fr.Inv != null ? fr.Inv.List : null, double.NaN, U, Now) + " srow1=" + srow1 + " scroll=" + (fr.Inv != null && fr.Inv.List != null ? fr.Inv.List.ScrollY : -1) + " n=" + (fr.Inv != null ? fr.Inv.Uids.Count : -1) + " " + spilot.Trace);
         }, false, false);
+        if (sent) spilot.Sent(); else spilot.NotSent();   // (app/Overlay.cs TickSell)
         return;
       }
       if (BackStep(scr, ClickGate.AwayFromStart(ClickOwner.Sell, scr))) { PilotState = "open"; return; }
@@ -695,7 +701,7 @@ static partial class CoreTests {
       // a pilot that tells the player why it waits (the hero screen not reachable, a hint) and nothing changes for 30 s: a stop with a reason
       if (t - lastChange > 30000 && (h.PilotState.StartsWith("hero_noscreen") || h.PilotState.StartsWith("hero_failed") || h.PilotState.StartsWith("hero_notfound") || h.PilotState.StartsWith("hint") || h.PilotState.StartsWith("stopped") || h.PilotState == "no_city" || h.PilotState == "sell_failed")) break;
       // (app/Overlay.cs ReadScreens: every 120 ms, a tick of the slow laptop's timer 150-400 ms; 50 ms while a click awaits its effect)
-      t += !scan && (h.Gate.AnyPending || h.ListMoving) ? 50 : slow ? 150 + r.Next(250) : 100;
+      t += !scan && (h.Gate.AnyPending || h.ListMoving || h.SellPolling) ? 50 : slow ? 150 + r.Next(250) : 100;
     }
     if (stats != null) {
       string mk = owner + (slow ? " slow" : " fast");
@@ -980,6 +986,70 @@ static partial class CoreTests {
     }
   }
 
+  /// <summary>The storage cleanup's marking on a long list (--sell-bench): the game opens on «Массовая продажа» with <paramref name="items"/> items,
+  /// <paramref name="n"/> of them wanted (spread at random); the run ends done or stopped. "" when it kept every rule; <paramref name="ms"/> = its time,
+  /// <paramref name="markMs"/> = from the first cell click to the end.</summary>
+  static string SimSellRun(int seed, bool slow, int n, int items, GameGeometry geo, double spawnP, out long ms, out long markMs, out int clicks, out int drags) {
+    ReadTiming.Take();
+    var g = new SimGame(seed, slow, 0); g.Geo = geo; g.SpawnP = spawnP;
+    g.InvItems.Clear(); for (int i = 0; i < items; i++) g.InvItems.Add(9000 + i);
+    g.InvEquipTab = true; g.InvBulk = true; g.Push(SimInv);
+    foreach (var f in g.Stack) g.StartForms.Add(f);
+    var h = new SimHost(g, ClickOwner.Sell, 100, geo);
+    h.Wanted.Clear(); var wr = new Random(seed * 13 + 5); while (h.Wanted.Count < n) h.Wanted.Add(g.InvItems[wr.Next(items)]);
+    g.OwnScreen = SimInv;
+    var r = new Random(seed * 7919 + 13);
+    long cap = 600000, t = 0, first = -1;
+    while (t < cap) {
+      g.Advance(t);
+      if (t >= h.SendingUntil) { h.ReadScreens(t); h.Tick(); }
+      if (first < 0 && h.SentCount(ClickTarget.InvBulkCell) > 0) first = t;
+      if (g.Bad.Count > 0 || h.Done != "" || h.Gate.Halted(ClickOwner.Sell) || h.PilotState == "sell_failed") break;
+      t += h.Gate.AnyPending || h.ListMoving || h.SellPolling ? 50 : slow ? 150 + r.Next(250) : 100;
+    }
+    ms = t; markMs = first < 0 ? 0 : t - first; clicks = h.SentCount(ClickTarget.InvBulkCell); drags = h.SentCount(ClickTarget.InvListDrag);
+    var errs = new List<string>(g.Bad);
+    if (h.Done != "") {
+      g.Advance(t + 3000);
+      var xtra = new List<string>(); foreach (var u in g.InvSel) if (!h.Wanted.Contains(u)) xtra.Add(u.ToString());
+      var miss = new List<string>(); foreach (var u in h.Wanted) if (!g.InvSel.Contains(u)) miss.Add(u.ToString());
+      if (xtra.Count > 0 || miss.Count > 0) errs.Add("SELL MARKS WRONG: extra [" + string.Join(",", xtra.ToArray()) + "] missing [" + string.Join(",", miss.ToArray()) + "]");
+    } else {
+      var xtra = new List<string>(); foreach (var u in g.InvSel) if (!h.Wanted.Contains(u)) xtra.Add(u.ToString());
+      if (xtra.Count > 0) errs.Add("SELL STOPPED WITH WRONG MARKS: extra [" + string.Join(",", xtra.ToArray()) + "]");
+    }
+    string outcome = h.Done != "" ? "done" : h.Gate.Halted(ClickOwner.Sell) ? "halt:" + h.Gate.HaltReason(ClickOwner.Sell) : t >= cap ? "TIMEOUT" : "wait:" + h.PilotState;
+    if (errs.Count == 0) return outcome == "done" ? "" : "~" + outcome;
+    var sb = new StringBuilder("seed " + seed + (slow ? " slow" : " fast") + " n " + n + " -> " + outcome);
+    foreach (var e in errs) sb.Append("\n    !! " + e);
+    foreach (var l in g.Log) sb.Append("\n      " + l);
+    return sb.ToString();
+  }
+
+  /// <summary>--sell-bench [runs] [--spawn]: seconds a marked item and the total for 8 / 30 / 100 wanted items, both machines (--spawn: the game's own pop-ups as in the soak).</summary>
+  static int SellBench(GameGeometry geo, int runs, int from, bool spawn) {
+    int broke = 0;
+    Console.WriteLine("sell bench: " + runs + " runs each, 320 items in the list, " + (spawn ? "the game's pop-ups on" : "no pop-ups"));
+    foreach (bool slow in new[] { false, true })
+      foreach (int n in new[] { 8, 30, 100 }) {
+        long tot = 0, mark = 0; int done = 0, cl = 0, dr = 0; var ends = new SortedDictionary<string, int>();
+        for (int k = 0; k < runs; k++) {
+          long ms, mk; int c, d;
+          string e = SimSellRun(from + k, slow, n, 320, geo, spawn ? 0.04 : 0, out ms, out mk, out c, out d);
+          if (e.Contains("\n    !! ")) { broke++; if (broke <= 5) Console.WriteLine(e); }
+          string end = e == "" ? "done" : e.StartsWith("~") ? e.Substring(1) : "BROKE";
+          int x; ends.TryGetValue(end, out x); ends[end] = x + 1;
+          if (e == "") { done++; tot += ms; mark += mk; cl += c; dr += d; }
+        }
+        var es = new List<string>(); foreach (var kv in ends) es.Add(kv.Key + " " + kv.Value);
+        Console.WriteLine("  " + (slow ? "slow" : "fast") + " " + n.ToString().PadLeft(3) + " items: " + (done > 0 ? (tot / done / 1000.0).ToString("0.0") : "-") + " s total, "
+          + (done > 0 ? (mark / done / (double)n / 1000.0).ToString("0.00") : "-") + " s an item (marking), " + (done > 0 ? (cl / (double)done).ToString("0.0") : "-") + " clicks, "
+          + (done > 0 ? (dr / (double)done).ToString("0.0") : "-") + " drags  [" + string.Join(", ", es.ToArray()) + "]");
+      }
+    Console.WriteLine("sell bench: " + broke + " broke a rule");
+    return broke == 0 ? 0 : 1;
+  }
+
   static int SimMain(string[] args) {
     Layout.Use(TestLayout());
     int seeds = 500, from = 0; bool slowOnly = false, verbose = false, real = false, scan = false, timing = false; string list = null;
@@ -993,9 +1063,11 @@ static partial class CoreTests {
       else if (args[i] == "--digest") list = "--digest";
       else if (args[i] == "--scan") scan = true;
       else if (args[i] == "--timing") timing = true;
+      else if (args[i] == "--sell-bench" || args[i] == "--spawn") { }
       else { int n; if (int.TryParse(args[i], out n)) seeds = n; }
     }
     var geo = GameGeometry.Parse(GeoJson(), GeoGame);
+    if (Array.IndexOf(args, "--sell-bench") >= 0) return SellBench(geo, seeds, from, Array.IndexOf(args, "--spawn") >= 0);
     var outcomes = new SortedDictionary<string, int>(); var tmp = new Dictionary<string, int>(); var stats = new Dictionary<string, SimStat>();
     int bad = 0; var sw = System.Diagnostics.Stopwatch.StartNew();
     for (int s = from; s < from + seeds; s++) {
