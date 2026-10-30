@@ -23,7 +23,7 @@ Set-StrictMode -Version 2
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$RunnerVersion   = '11'
+$RunnerVersion   = '12'
 $Dir             = Join-Path $env:LOCALAPPDATA 'WardsageLab'
 $StopFile        = Join-Path $Dir 'STOP'
 $LogFile         = Join-Path $Dir 'runner.log'
@@ -282,6 +282,11 @@ using System.Runtime.InteropServices;
 public static class LabWin {
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+    [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr h);
+    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+    [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint a, uint b, bool attach);
+    [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
     [DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr h);
     [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
     [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
@@ -341,8 +346,9 @@ function Set-GameFront {
     $maximized = $false
     try {
         $zoomed = [LabWin]::IsZoomed($h); $iconic = [LabWin]::IsIconic($h)
-        if ($iconic -or -not $zoomed) { [void][LabWin]::ShowWindow($h, 3); $maximized = $true }      # SW_MAXIMIZE
-        Start-Sleep -Milliseconds 700
+        if ($iconic) { [void][LabWin]::ShowWindow($h, 9); $maximized = $true; Start-Sleep -Milliseconds 400 }      # SW_RESTORE, only a minimised window
+        if (-not [LabWin]::IsZoomed($h)) { $b0 = Get-GameBounds $h; if (-not $b0.inside) { [void][LabWin]::ShowWindow($h, 3); $maximized = $true } }      # SW_MAXIMIZE only when it is out of the work area; an already maximised window is left alone (no flicker)
+        if ($maximized) { Start-Sleep -Milliseconds 700 }
         $fitted = $false
         try {
             $b = Get-GameBounds $h
@@ -357,7 +363,17 @@ function Set-GameFront {
                 Write-Log ('game_front: after fit rect=' + $a.rect + ' inside=' + $a.inside)
             }
         } catch { Write-Log ('game_front: fit failed: ' + (Get-ShortError $_)) }
-        $fg = [LabWin]::SetForegroundWindow($h)
+        $fg = $false
+        $fgw = [LabWin]::GetForegroundWindow()
+        if ($fgw -eq $h) { $fg = $true }
+        else {
+            $pidx = [uint32]0
+            $ft = [LabWin]::GetWindowThreadProcessId($fgw, [ref]$pidx); $me = [LabWin]::GetCurrentThreadId()
+            $att = $false
+            if ($ft -ne 0 -and $ft -ne $me) { $att = [LabWin]::AttachThreadInput($me, $ft, $true) }
+            try { [void][LabWin]::BringWindowToTop($h); $fg = [LabWin]::SetForegroundWindow($h) }
+            finally { if ($att) { [void][LabWin]::AttachThreadInput($me, $ft, $false) } }
+        }
         Write-Log ('game_front: maximized=' + $maximized + ' fitted=' + $fitted + ' foreground=' + $fg)
         return @{ ok = $true; res = @{ maximized = $maximized; fitted = $fitted; foreground = $fg } }
     } catch {

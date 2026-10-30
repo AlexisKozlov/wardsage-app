@@ -6601,6 +6601,17 @@ static partial class CoreTests {
       Check(!SellHint.Warn(stx) && stx.Kind == SellHintKind.AllSelected, "plate: unticked -> the warning is gone");
     }
 
+    // when the app raises the game itself
+    Check(FrontPolicy.ShouldRaise(true, true, false, true, false, 10, 0), "front: pilot starting, our window foreground -> raise");
+    Check(FrontPolicy.ShouldRaise(true, true, false, false, true, 10, 0), "front: pilot starting, our window covers the game -> raise");
+    Check(!FrontPolicy.ShouldRaise(true, false, false, true, true, 10, 0), "front: no pilot run -> never steal focus");
+    Check(!FrontPolicy.ShouldRaise(true, true, true, true, true, 10, 0), "front: game already in front -> nothing");
+    Check(!FrontPolicy.ShouldRaise(true, true, false, false, false, 10, 0), "front: another program on top, not ours -> nothing");
+    Check(!FrontPolicy.ShouldRaise(false, true, false, true, true, 10, 0), "front: no game window -> nothing");
+    Check(!FrontPolicy.ShouldRaise(true, true, false, true, true, 10, 20), "front: throttled");
+    Check(FrontPolicy.Overlaps(0, 0, 100, 100, 50, 50, 200, 200) && !FrontPolicy.Overlaps(0, 0, 100, 100, 100, 0, 200, 100), "front: overlap rect test");
+    Check(FrontPolicy.ShouldMoveSelf(true, false, true) && !FrontPolicy.ShouldMoveSelf(true, true, true) && !FrontPolicy.ShouldMoveSelf(true, false, false), "front: move our window only when visible, not minimized and overlapping");
+
     // the visibility rule for everything the overlay draws
     Check(OverlayGate.CanDraw(true, true, false, true, true), "gate: game visible and in front -> draw");
     Check(!OverlayGate.CanDraw(false, false, false, false, true), "gate: no game window -> nothing");

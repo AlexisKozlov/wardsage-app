@@ -31,6 +31,9 @@ namespace RealmForge {
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out int pid);
     [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+    [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr h);
+    [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint a, uint b, bool attach);
+    [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
     [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr h, int cmd);
     [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
@@ -1636,13 +1639,7 @@ namespace RealmForge {
       IntPtr hwnd = GameWindow();
       // a started plan («Надеть» here or on the site): the player's click left our window in front, so
       // the game is brought forward (and restored) - only from our own window, never over another program
-      int fp0; W32.GetWindowThreadProcessId(W32.GetForegroundWindow(), out fp0);
-      if ((runHero > 0 || sellWanted != null) && hwnd != IntPtr.Zero && fp0 == SelfPid && now >= focusAfter) {
-        focusAfter = now + 3000;
-        if (W32.IsIconic(hwnd)) W32.ShowWindow(hwnd, 9);   // SW_RESTORE
-        W32.SetForegroundWindow(hwnd);
-        return;
-      }
+      if (RaiseGame(hwnd, runHero > 0 || sellWanted != null, now)) return;
       if (hwnd == IntPtr.Zero || W32.IsIconic(hwnd)) { AutoSay("idle"); return; }
       W32.RECT cr; if (!W32.GetClientRect(hwnd, out cr) || cr.B < 200) { AutoSay("idle"); return; }
       var o = new W32.POINT(0, 0); W32.ClientToScreen(hwnd, ref o);
@@ -2370,11 +2367,7 @@ namespace RealmForge {
       if (artPilot.Trace != "") { Log.Write("art promote auto: " + artPilot.Trace); artPilot.Trace = ""; }
       string said = mv.State + "|" + mv.Why + "|" + step.Key;
       if (said != artAutoSaid) { artAutoSaid = said; Log.Write("art promote auto: " + mv.State + (mv.Why != "" ? " (" + mv.Why + ")" : "") + " at step " + step.Key); }
-      if (mv.State == "background" && fp == SelfPid && now >= focusAfter) {   // started from our own window: the game comes forward
-        focusAfter = now + 3000;
-        if (W32.IsIconic(hwnd)) W32.ShowWindow(hwnd, 9);   // SW_RESTORE
-        W32.SetForegroundWindow(hwnd);
-      }
+      if (mv.State == "background") RaiseGame(hwnd, true, now);
       if (mv.Action.Kind != AutoKind.None) SendArt(mv, req, ws, o, cr, gameFront, W, H, U);
       if (artPilot.Stopped) { step.Auto = "stopped"; step.AutoWhy = artPilot.Reason; }
     }
@@ -2942,11 +2935,7 @@ namespace RealmForge {
       string said = mv.State + "|" + mv.Why + "|" + dstep.Key;
       if (said != locateAutoSaid) { locateAutoSaid = said; Log.Write("locate auto: " + mv.State + (mv.Why != "" ? " (" + mv.Why + ")" : "") + " at step " + dstep.Key); }
       // started from our own window: the game comes forward (and is restored), never over another program
-      if (mv.State == "background" && fp == SelfPid && now >= focusAfter) {
-        focusAfter = now + 3000;
-        if (W32.IsIconic(hwnd)) W32.ShowWindow(hwnd, 9);   // SW_RESTORE
-        W32.SetForegroundWindow(hwnd);
-      }
+      if (mv.State == "background") RaiseGame(hwnd, true, now);
       if (mv.Action.Kind != AutoKind.None) SendLocate(mv, req, o, cr, gameFront, now, W, H, U);
       if (lpilot.Stopped) { step.Auto = "stopped"; step.AutoWhy = lpilot.Reason; locateDriving = false; return; }
       step.Auto = mv.State; step.AutoWhy = mv.Why;
@@ -3024,7 +3013,7 @@ namespace RealmForge {
       if (hwnd == IntPtr.Zero) return;
       W32.GetWindowThreadProcessId(W32.GetForegroundWindow(), out fp); W32.GetWindowThreadProcessId(hwnd, out gp);
       // started from our own window: the game comes forward (and is restored), never over another program
-      if (fp == SelfPid && now >= focusAfter) { focusAfter = now + 3000; if (W32.IsIconic(hwnd)) W32.ShowWindow(hwnd, 9); W32.SetForegroundWindow(hwnd); return; }
+      if (RaiseGame(hwnd, true, now)) return;
       if (W32.IsIconic(hwnd)) return;
       W32.RECT cr; if (!W32.GetClientRect(hwnd, out cr) || cr.B < 200) return;
       var o = new W32.POINT(0, 0); W32.ClientToScreen(hwnd, ref o);
@@ -3554,6 +3543,36 @@ namespace RealmForge {
         } finally { bmp.UnlockBits(data); }
         return px;
       }
+    }
+
+    /// <summary>A pilot run is starting and the game is not in front while our window is (or covers the game): the app brings the game forward
+    /// itself (allowed: we are the foreground process; fallback AttachThreadInput to the foreground thread; never a key press) and steps our main
+    /// window off the game when it covers it. Never when no pilot run is starting (FrontPolicy). Returns true when it raised.</summary>
+    bool RaiseGame(IntPtr hwnd, bool pilotStarting, long now) {
+      if (hwnd == IntPtr.Zero) return false;
+      IntPtr f = W32.GetForegroundWindow();
+      int fp; W32.GetWindowThreadProcessId(f, out fp);
+      IntPtr self = AppWindowHandle();
+      bool selfVis = self != IntPtr.Zero && W32.IsWindowVisible(self), selfMin = selfVis && W32.IsIconic(self), over = false;
+      W32.RECT sr, gr;
+      if (selfVis && !selfMin && W32.GetWindowRect(self, out sr) && W32.GetWindowRect(hwnd, out gr))
+        over = FrontPolicy.Overlaps(sr.L, sr.T, sr.R, sr.B, gr.L, gr.T, gr.R, gr.B);
+      bool gameFront = !W32.IsIconic(hwnd) && IsForeground(hwnd);
+      if (!FrontPolicy.ShouldRaise(true, pilotStarting, gameFront, fp == SelfPid, over, now, focusAfter)) return false;
+      focusAfter = now + 3000;
+      string was = "?"; try { var pr = Process.GetProcessById(fp); was = pr.ProcessName; } catch { }
+      if (W32.IsIconic(hwnd)) W32.ShowWindow(hwnd, 9);   // SW_RESTORE (only when minimized)
+      bool ok = W32.SetForegroundWindow(hwnd);
+      if (!ok || !IsForeground(hwnd)) {
+        int d; uint ft = W32.GetWindowThreadProcessId(f, out d), me = W32.GetCurrentThreadId();
+        bool att = ft != 0 && ft != me && W32.AttachThreadInput(me, ft, true);
+        try { W32.BringWindowToTop(hwnd); W32.SetForegroundWindow(hwnd); }
+        finally { if (att) W32.AttachThreadInput(me, ft, false); }
+      }
+      if (FrontPolicy.ShouldMoveSelf(selfVis, selfMin, over) && (W32.GetWindowLong(self, -20) & 0x00000008) == 0)
+        W32.SetWindowPos(self, (IntPtr)1, 0, 0, 0, 0, 0x0002 | 0x0001 | 0x0010);   // HWND_BOTTOM, no move / size / activate: our window goes under the game
+      Log.Write("front: game raised by the app (was " + was + ")");
+      return true;
     }
 
     static readonly int SelfPid = Process.GetCurrentProcess().Id;

@@ -40,6 +40,21 @@ namespace RealmForge {
     public string FullKey { get { return StateKey + "|" + Below + "|" + Above; } }
   }
 
+  /// <summary>When the app itself brings the game window forward (live 2026-10-30: after a restart our window stayed over the game, the
+  /// runner's foreground call only made it flicker, so no auto click could run). Pure, tests: tests/CoreTests.cs.</summary>
+  public static class FrontPolicy {
+    /// <param name="pilotStarting">a pilot run is about to start or runs (equip, Locate, sell, artifact); never raise otherwise</param>
+    /// <param name="gameFront">the game is already in front (IsForeground)</param>
+    /// <param name="selfForeground">the foreground window is ours</param>
+    /// <param name="selfOverlaps">our visible, not minimized window overlaps the game window</param>
+    public static bool ShouldRaise(bool hasGame, bool pilotStarting, bool gameFront, bool selfForeground, bool selfOverlaps, long now, long notBefore) {
+      return hasGame && pilotStarting && !gameFront && (selfForeground || selfOverlaps) && now >= notBefore;
+    }
+    /// <summary>Move our main window off the game: only when it is not minimized and really covers the game's client.</summary>
+    public static bool ShouldMoveSelf(bool selfVisible, bool selfMinimized, bool selfOverlaps) { return selfVisible && !selfMinimized && selfOverlaps; }
+    public static bool Overlaps(int al, int at, int ar, int ab, int bl, int bt, int br, int bb) { return al < br && bl < ar && at < bb && bt < ab; }
+  }
+
   /// <summary>The one rule for everything the overlay draws over the game (equip helper, locate, storage cleanup, plates):
   /// only while the game window exists, is visible, is not minimized and is in front (or our own always-on-top window over it).
   /// Pure, so the host applies it centrally and the tests pin it down.</summary>
