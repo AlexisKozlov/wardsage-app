@@ -319,7 +319,7 @@ tick() {
            # runner v9+: the app reached its final step (the item is selected, the last press is the player's) = Locate passed
            if [ "$tbl" = item_locates ]; then
              fin=$(dstat "coalesce(status->>'done', '')")
-             # the final step of each purpose (runner v12+ reports art): ascend = AscendReady, recast = Done, artPromote = ArtPromote
+             # the final step of each purpose (runner v13+ reports art): ascend = AscendReady, recast = Done, artPromote = ArtPromote
              case "$sc" in locate) fok='^(ascend|ready)$' ;; locate_recast) fok='^ready$' ;; locate_art) fok='^art$' ;; *) fok='^$' ;; esac
              if [ -n "$fin" ] && [[ "$fin" =~ $fok ]]; then
                case "$fin" in ascend) fnote="вещь выбрана в «Вознесении», осталось нажать «Вознести»" ;; art) fnote="копии выбраны в «Мастерской», осталось нажать «Продвинуть»" ;;
