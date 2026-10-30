@@ -761,6 +761,7 @@ static partial class CoreTests {
     GuildTests();
     LiveStateTests();
     FormSearchTests();
+    FieldNodeTests();
     HeroFormFollowTests();
     FormSearchPolicyTests();
     LocateAuditTests();
@@ -2222,8 +2223,26 @@ static partial class CoreTests {
       var ui4 = new FakeState(m4).T(104L, otherForm);   // ID_FORM_EQUIPSUBLIMING only
       RFX.SetUiTableForTest(ui4.A);
       try {
+        // (a form the window table does not hold is not created: a scan would find only a dead copy, so none runs)
+        int p4 = RFX.FullPasses;
         var sd = RFX.ReadInventory(0);
-        Check(sd != null && sd.Open, "forms: the window table lacks the inventory: the scan still finds it");
+        Check(sd == null, "forms: the window table lacks the inventory: not taken from a scan");
+        Check(RFX.RequestFormSearch("test d", 0) && !RFX.FormSearchRunning, "forms: a search with the window table known runs at once, on the caller");
+        Eq(p4, RFX.FullPasses, "forms: the window table known: no full pass");
+        // the game builds the inventory: the window table gets its node (a rehash: a new node array of two slots) and the next tick takes it
+        m4.Top = (1 << 20) + (64 << 10); var st4 = new FakeState(m4);
+        var inv4 = st4.T("m_LuaLogicActive", true, "m_CurrentMainTabId2", -9998L, "m_CachedContentPanels", st4.T(-9998L, st4.T("m_CurrentBottomButtonState", 2L)));
+        var ui4b = st4.T(104L, otherForm, 103L, inv4);
+        m4.W64(ui4.A + 24, m4.R64(ui4b.A + 24)); m4.Mem[ui4.A - FakeLua.Base + 11] = m4.Mem[ui4b.A - FakeLua.Base + 11];
+        Check(RFX.FormsTick(0) && RFX.FormsFromTable, "forms: the tick check reads the window table");
+        var se = RFX.ReadInventory(-1);
+        Check(se != null && se.Open, "forms: the inventory the game built is read on the next tick, without a search");
+        Eq(p4, RFX.FullPasses, "forms: following the window table makes no full pass");
+        // the game closes it for good (its node goes): the tick check drops it
+        m4.W64(ui4.A + 24, m4.R64(ui4b.A + 24)); m4.W32(m4.R64(ui4.A + 24) + 32 + 24, 0);   // the second slot's key: nil
+        RFX.FormsTick(0);
+        Check(RFX.ReadInventory(-1) == null, "forms: a form gone from the window table is not read any more");
+        Eq(p4, RFX.FullPasses, "forms: still no full pass");
       } finally { RFX.SetUiTableForTest(0); }
       // D: the busy flag after a failed search
       RFX.TestSearchHook = () => { throw new InvalidOperationException("boom"); };
@@ -2233,6 +2252,36 @@ static partial class CoreTests {
         Check(RFX.RequestFormSearch("boom again", 0) && WaitFormSearch(), "forms: a new search can start after it");
       } finally { RFX.TestSearchHook = null; }
     } finally { RFX.LiveLog = saveLog; RFX.TestMemory = null; RFX.ForgetLive(); }
+  }
+
+  // a field read before is taken from its node alone: the value read fresh, the node array not read again; a rehash / a changed slot is a full lookup
+  static void FieldNodeTests() {
+    Console.WriteLine("Field reads: a known field from its node");
+    try {
+      var m = new FakeLua(1 << 20); RFX.TestMemory = m; RFX.ForgetLive();
+      var st = new FakeState(m);
+      var kv = new List<object>(); for (int i = 0; i < 100; i++) { kv.Add("m_F" + i); kv.Add((long)i); }
+      kv.Add("m_ScrollY"); kv.Add(1.5);
+      var t = st.T(kv.ToArray());
+      ulong v; int tt;
+      Check(RFX.FieldForTest(t.A, "m_ScrollY", out v, out tt) && tt == 3 && BitConverter.Int64BitsToDouble((long)v) == 1.5, "field: first read finds it");
+      long h0 = RFX.FieldHits, b0 = RFX.ReadBytes;
+      m.W64(st.ValueAt(t, "m_ScrollY"), (ulong)BitConverter.DoubleToInt64Bits(7.25));
+      Check(RFX.FieldForTest(t.A, "m_ScrollY", out v, out tt) && BitConverter.Int64BitsToDouble((long)v) == 7.25, "field: the second read sees the new value");
+      Eq(h0 + 1, RFX.FieldHits, "field: the second read is taken from the node");
+      Check(RFX.ReadBytes - b0 <= 56 + 32, "field: the second read reads the header and one node (" + (RFX.ReadBytes - b0) + " bytes)");
+      // the table rebuilt its node array (a rehash): the old node is not trusted, the field found again
+      var t2 = st.T(kv.ToArray()); ulong np2 = m.R64(t2.A + 24);
+      m.W64(st.ValueAt(t2, "m_ScrollY"), (ulong)BitConverter.DoubleToInt64Bits(9.0));
+      m.W64(t.A + 24, np2);
+      long h1 = RFX.FieldHits;
+      Check(RFX.FieldForTest(t.A, "m_ScrollY", out v, out tt) && BitConverter.Int64BitsToDouble((long)v) == 9.0, "field: after a rehash the new node array is read");
+      Eq(h1, RFX.FieldHits, "field: a rehash is a full lookup");
+      // the slot holds another key now: not taken from it
+      ulong nd = st.ValueAt(t2, "m_ScrollY"); m.W64(nd + 16, st.S("m_Other"));
+      Check(!RFX.FieldForTest(t.A, "m_ScrollY", out v, out tt), "field: a slot that holds another key is no hit, and the key is gone");
+      Check(RFX.FieldForTest(t.A, "m_F7", out v, out tt) && (long)v == 7, "field: the other fields still read");
+    } finally { RFX.TestMemory = null; RFX.ForgetLive(); }
   }
 
   // the hero screen's form is followed from the node a background search published: no full pass on the polling (UI) thread
