@@ -805,6 +805,7 @@ static partial class CoreTests {
     RemoteSwitchesTests();
     LayoutTests(mock);
     KlassScanTests();
+    LuaRootTests();
     TestLogTests(mock);
     ScreenRecorderTests();
     RecInputsTests();
@@ -980,6 +981,101 @@ static partial class CoreTests {
       Check(nn[3] == null, "windows: 96 characters and no NUL in reach: refused");
       Eq("Ns.EndOfBuf", nn[4], "windows: a NUL at the last byte of the memory (the window cannot be read: string by string)");
     } finally { RFX.TestMemory = null; RFX.ForgetLive(); }
+  }
+
+  // ------------------------------------------------------------------ the script state's tables from its root (src/LuaRoot.cs)
+  /// <summary>A Lua function with table upvalues (LClosure 5.3: tt 6, nupvalues 0xA, p 0x18, upvals 0x20; UpVal.v 0x0; Proto
+  /// sizeupvalues 0x10, upvalues 0x58); <paramref name="names"/> null = stripped (no upvalue names).</summary>
+  static ulong FakeClosure(FakeState st, ulong[] ups, string[] names) {
+    var m = st.M; int n = ups.Length;
+    ulong cl = m.Alloc(0x20 + 8 * n), p = m.Alloc(0x60);
+    m.Mem[cl - FakeLua.Base + 8] = 6; m.Mem[cl - FakeLua.Base + 0xA] = (byte)n; m.W64(cl + 0x18, p);
+    if (names != null) { ulong d = m.Alloc(16 * n); m.W32(p + 0x10, n); m.W64(p + 0x58, d); for (int i = 0; i < n; i++) m.W64(d + (ulong)(16 * i), st.S(names[i])); }
+    for (int i = 0; i < n; i++) { ulong uv = m.Alloc(0x20); m.W64(uv, uv + 0x10); m.W64(uv + 0x10, ups[i]); m.W32(uv + 0x18, 0x45); m.W64(cl + 0x20 + (ulong)(8 * i), uv); }
+    return cl;
+  }
+  static void SetField(FakeState st, FTab t, string key, ulong v, int tt) { ulong nd = st.ValueAt(t, key); st.M.W64(nd, v); st.M.W32(nd + 8, tt); }
+
+  static void LuaRootTests() {
+    Console.WriteLine("Script tables from the root (src/LuaRoot.cs):");
+    var saveLy = Layout.Current; string saveAsm = Layout.LocalAsm; bool saveFirst = RFX.LuaRootFirst;
+    var m = new FakeLua(8 << 20); RFX.TestMemory = m; RFX.ForgetLive(); RFX.ForgetClasses();
+    try {
+      ulong ga = FakeImage(m);
+      Layout.LocalAsm = null;
+      var ly = GameLayout.Parse(FixtureJson().Replace("\"BattleView.BattleManager\": 8192", "\"BattleView.BattleManager\": 8192, \"LuaManager\": 8256"), FixtureGame);
+      Check(ly != null && ly.Rva("LuaManager") == 0x2040, "  (a layout with the address of LuaManager)");
+      Layout.Use(ly);
+      var st = new FakeState(m);
+      // the forms, UIInstance, Managers, _G
+      var city = st.T("class", st.T("__cname", "Form_MainCity"), "____instanceId", 30001L, "m_LuaLogicActive", true);
+      var hero = st.T("class", st.T("__cname", "Form_CharactorMain"), "____instanceId", 30002L);
+      var ui = st.T(-11111L, city, 22222L, hero);
+      var eq = st.T("equips", st.T(), "class", st.T("__cname", "EquipData")); var hd = st.T("m_CharactorDatas", st.T());
+      var mgr = st.T("EquipData", eq, "HeroData", hd, "PlayerData", st.T("m_Uid", 5L), "RedpointDefine", st.T());
+      var G = st.T("_G", st.T(), "GetUIInstanceLua", st.T(), "mtEquipData", st.T(), "print", 1L, "UIInstanceNot", st.T());
+      SetField(st, G, "_G", G.A, 0x45);
+      SetField(st, G, "GetUIInstanceLua", FakeClosure(st, new[] { ui.A }, new[] { "UIInstance" }), 0x46);
+      SetField(st, G, "mtEquipData", FakeClosure(st, new[] { mgr.A, G.A }, new[] { "Managers", "_ENV" }), 0x46);
+      // lua_State -> global_State -> registry {[1] = main thread, [2] = _G}
+      ulong L = m.Alloc(0x40), g = m.Alloc(0x60); var reg = st.T("x", 1L); ulong arr = m.Alloc(32);
+      m.Mem[L - FakeLua.Base + 8] = 8; m.W64(L + 0x18, g);
+      m.W64(g + 0x40, reg.A); m.W32(g + 0x48, 0x45);
+      m.W32(reg.A + 12, 2); m.W64(reg.A + 16, arr); m.W64(arr, L); m.W32(arr + 8, 0x48); m.W64(arr + 16, G.A); m.W32(arr + 24, 0x45);
+      // il2cpp: LuaManager -> static_fields 0xB8 -> m_luaEnv -> rawL 0x10
+      ulong kLm = FakeKlass(m, "", "LuaManager"), kEnv = FakeKlass(m, "XLua", "LuaEnv"), sf = m.Alloc(0x10), env = m.Alloc(0x70);
+      m.W64(kLm + 0xB8, sf); m.W64(sf, env); m.W64(env, kEnv); m.W64(env + 0x10, L);
+      m.W64(ga + 0x2040, kLm);
+      RFX.LuaRootGaForTest = ga;
+      RFX.SetUiTableForTest(0);
+      string line; var r = RFX.LuaRootForTest(out line);
+      Check(r.Ok, "the walk gets to the end: " + line);
+      Eq(L, r.RawL, "  ... rawL from LuaManager.m_luaEnv");
+      Eq(G.A, r.G, "  ... _G from the registry's array [2]");
+      Eq(ui.A, r.Ui, "  ... UIInstance = the upvalue of GetUIInstanceLua");
+      Eq(mgr.A, r.Managers, "  ... Managers = the upvalue of mtEquipData (named, next to _ENV)");
+      Check(r.Mgr.ContainsKey("EquipData") && r.Mgr["EquipData"] == eq.A && r.Mgr["HeroData"] == hd.A && !r.Mgr.ContainsKey("ArtifactData"), "  ... the manager tables by name");
+      Eq(2, r.UiForms, "  ... the forms of UIInstance");
+      Check(r.FormNames.Count == 2 && r.FormNames[0] == "Form_MainCity*" && r.FormNames[1] == "Form_CharactorMain", "  ... their names, the shown one first (*)");
+      Eq(4, r.ManagerCount, "  ... Managers' table count");
+      Check(line.StartsWith("luaroot: ok in ") && line.Contains("_G nodes=5") && line.Contains("UIInstance forms=2 (Form_MainCity*, Form_CharactorMain)") && line.EndsWith("matches scan: n/a"), "  ... the log line: " + line);
+      // compared with the scan's results
+      var lt = new LiveTables { EquipData = eq.A, HeroData = hd.A };
+      Eq("yes", RFX.LuaRootMatches(r, ui.A, lt), "matches: the same tables as the scans");
+      Check(RFX.LuaRootMatches(r, ui.A + 0x100, lt).StartsWith("no (UIInstance "), "matches: another window table: no");
+      lt.ArtOwner = 0x1234;
+      Check(RFX.LuaRootMatches(r, 0, lt).StartsWith("no (ArtifactData 0 vs scan 1234"), "matches: a manager the root lacks: no");
+      // stripped bytecode (no upvalue names): the one table that is not _G
+      SetField(st, G, "mtEquipData", FakeClosure(st, new[] { G.A, mgr.A }, null), 0x46);
+      Eq(mgr.A, RFX.LuaRootForTest(out line).Managers, "no upvalue names: the table upvalue that is not _G");
+      SetField(st, G, "mtEquipData", FakeClosure(st, new[] { mgr.A, ui.A }, null), 0x46);
+      r = RFX.LuaRootForTest(out line);
+      Check(!r.Ok && r.FailStep == "Managers" && line.StartsWith("luaroot: failed at Managers (2 table upvalues"), "no names, two tables: not guessed: " + line);
+      SetField(st, G, "mtEquipData", FakeClosure(st, new[] { mgr.A, G.A }, new[] { "Managers", "_ENV" }), 0x46);
+      // the window table from the root first (UiTable)
+      RFX.LuaRootFirst = true; RFX.SetUiTableForTest(0);
+      RFX.FindUi(0);
+      Eq(ui.A, RFX.UiAddress, "LuaRootFirst: the window table comes from the root");
+      // broken links: the step is named
+      Action<string, Action, Action> Broken = (step, brk, fix) => { brk(); string ln; var b = RFX.LuaRootForTest(out ln); Check(!b.Ok && b.FailStep == step && ln.StartsWith("luaroot: failed at " + step + " ("), "broken " + step + ": " + ln); fix(); };
+      Broken("_G._G", () => SetField(st, G, "_G", reg.A, 0x45), () => SetField(st, G, "_G", G.A, 0x45));
+      Broken("registry[2]", () => m.W32(arr + 24, 0), () => m.W32(arr + 24, 0x45));
+      Broken("registry[1]", () => m.W64(arr, L + 8), () => m.W64(arr, L));
+      Broken("l_registry", () => m.W32(g + 0x48, 0x13), () => m.W32(g + 0x48, 0x45));
+      Broken("lua_State", () => m.Mem[L - FakeLua.Base + 8] = 5, () => m.Mem[L - FakeLua.Base + 8] = 8);
+      Broken("m_luaEnv class", () => m.W64(env, kLm), () => m.W64(env, kEnv));
+      Broken("m_luaEnv", () => m.W64(sf, 0), () => m.W64(sf, env));
+      Broken("static_fields", () => m.W64(kLm + 0xB8, 0), () => m.W64(kLm + 0xB8, sf));
+      Broken("GetUIInstanceLua", () => SetField(st, G, "GetUIInstanceLua", ui.A, 0x45), () => SetField(st, G, "GetUIInstanceLua", FakeClosure(st, new[] { ui.A }, new[] { "UIInstance" }), 0x46));
+      Check(RFX.LuaRootForTest(out line).Ok, "  ... all fixed again: ok");
+      RFX.LuaRootFirst = true; RFX.SetUiTableForTest(0); m.W64(sf, 0);
+      RFX.FindUi(0);
+      Check(RFX.UiAddress != ui.A, "LuaRootFirst: a broken root falls back to the scan");
+      m.W64(sf, env);
+    } finally {
+      RFX.LuaRootGaForTest = 0; RFX.LuaRootFirst = saveFirst; RFX.SetUiTableForTest(0);
+      RFX.TestMemory = null; RFX.ForgetLive(); RFX.ForgetClasses(); Layout.LocalAsm = saveAsm; Layout.Use(saveLy);
+    }
   }
 
   /// <summary>A PE image in the stand-in memory: header, a code section, a writable data section (rva 0x2000, 8 KB) and a read-only one; 64 KB.</summary>

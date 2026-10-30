@@ -216,7 +216,7 @@ namespace RealmForge {
     static string diskAsm; static Dictionary<string, ulong> diskSlots;     // the saved slots of the local build, under scanLock
     static readonly HashSet<string> diskOk = new HashSet<string>(), diskStale = new HashSet<string>();   // under scanLock
     const int ScanCapMs = 4000, ScanRetryMs = 30000, ScanMaxTries = 20;
-    static readonly string[] ScanWanted = { "BattleView.BattleManager", "XLua.InternalGlobals", "XLua.ObjectTranslator", "Form_CommonTips" };
+    static readonly string[] ScanWanted = { "BattleView.BattleManager", "XLua.InternalGlobals", "XLua.ObjectTranslator", "Form_CommonTips", "LuaManager" };
 
     /// <summary>The class from the slot kept for this build (an earlier scan), 0 when none or stale.</summary>
     static ulong DiskSlotClass(ulong ga, string cls) {

@@ -1826,6 +1826,13 @@ namespace RealmForge {
     static ulong UiTable(int rescanMs) {
       if (uiTable != 0 && IsTable(uiTable)) return uiTable;
       uiTable = 0;
+      if (LuaRootFirst && Layout.Current != null) {
+        // the game's own pointers first (src/LuaRoot.cs): no scan when they lead to the table
+        string rwhy; ulong r = RootUi(out rwhy);
+        string rs = r != 0 && IsTable(r) ? "forms: window table from the script root at " + r.ToString("X") + " (" + ShownNames(r, 3) + ")" : "forms: window table not reached from the script root: " + rwhy + "; the scan looks for it";
+        if (rs != uiRootSaid) { uiRootSaid = rs; LL(rs); }
+        if (r != 0 && IsTable(r)) { uiTable = r; return r; }
+      }
       if (uiLastFind != 0 && Environment.TickCount - uiLastFind < rescanMs) return 0;
       uiLastFind = Environment.TickCount;
       var anchors = FormIds(UiAnchorKeys);
@@ -1843,7 +1850,7 @@ namespace RealmForge {
       uiTable = found;
       return found;
     }
-    static string uiPickSaid = "";
+    static string uiPickSaid = "", uiRootSaid = "";
 
     /// <summary>The id of a form by its name: the game's UIDefines.ID_FORM_* is the 32-bit String.GetHashCode of the name (the
     /// legacy non-randomized 64-bit variant, il2cpp's).</summary>
@@ -2430,7 +2437,7 @@ namespace RealmForge {
     static string diskAsm; static Dictionary<string, ulong> diskSlots;     // the saved slots of the local build, under scanLock
     static readonly HashSet<string> diskOk = new HashSet<string>(), diskStale = new HashSet<string>();   // under scanLock
     const int ScanCapMs = 4000, ScanRetryMs = 30000, ScanMaxTries = 20;
-    static readonly string[] ScanWanted = { "BattleView.BattleManager", "XLua.InternalGlobals", "XLua.ObjectTranslator", "Form_CommonTips" };
+    static readonly string[] ScanWanted = { "BattleView.BattleManager", "XLua.InternalGlobals", "XLua.ObjectTranslator", "Form_CommonTips", "LuaManager" };
 
     /// <summary>The class from the slot kept for this build (an earlier scan), 0 when none or stale.</summary>
     static ulong DiskSlotClass(ulong ga, string cls) {

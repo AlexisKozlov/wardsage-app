@@ -532,7 +532,7 @@ namespace RealmForge {
       return runHero + "|" + target + "|" + filterItem + "|" + filterKind + "|" + hintKind + "|" + autoSaid + (ArtPhase && artEqStep != null ? "|" + artEqStep.Key : "");
     }
 
-    public void RestartPilots() { pilot.Reset(); fpilot.Reset(); hpilot.Reset(); artEq.Reset(); ResumeClicks(ClickOwner.Equip); }
+    public void RestartPilots() { RFX.LuaRootShadow("pilot start"); pilot.Reset(); fpilot.Reset(); hpilot.Reset(); artEq.Reset(); ResumeClicks(ClickOwner.Equip); }
 
     /// <summary>Item to highlight (0 = none).</summary>
     public void SetTarget(long uid) {
@@ -640,6 +640,7 @@ namespace RealmForge {
       var cv = covered;
       if (cv != null) { covered = null; gate.Halt(cv.Item1, "covered", "the click point is covered by " + cv.Item2 + ", not the game - no press"); AnnounceHalts(); }
       recB = RecInfo.Active ? new RecInfo() : null;
+      RFX.LuaRootShadowTick();
       try { TickWork(); }
       finally {
         if (recB != null) { var b = recB; recB = null; b.Screen = screens.Current != null ? screens.Current.Brief : "-"; RecInputs(b); RecInfo.Publish(b); }
