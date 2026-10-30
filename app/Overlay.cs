@@ -643,6 +643,8 @@ namespace RealmForge {
     void Tick() {
       var cv = covered;
       if (cv != null) { covered = null; gate.Halt(cv.Item1, "covered", "the click point is covered by " + cv.Item2 + ", not the game - no press"); AnnounceHalts(); }
+      var lt = lateTop;
+      if (lt != null) { lateTop = null; Log.Write("click gate " + lt.Item1 + ": not pressed - " + lt.Item2); gate.Halt(lt.Item1, "popup", lt.Item2 + " - not pressed"); AnnounceHalts(); }
       recB = RecInfo.Active ? new RecInfo() : null;
       RFX.LuaRootShadowTick();
       RFX.UiButtonShadowTick();
@@ -1131,7 +1133,13 @@ namespace RealmForge {
       // the next slot with the item's tip / compare still open: it covers the slots - no frame on a slot under it (the pilot closes it first:
       // EquipTipEscape; live 1.6.66.354 the frame sat on the compare card's ATK row and the pilot clicked there)
       if (hintKind == "slot" && ClickGate.OnlyTip(screens.Current)) { HideTip(); return; }
-      if (hintKind == "replace") confirmBtn = ConfirmButton(o, W, H);
+      if (hintKind == "replace") {
+        confirmBtn = ConfirmButton(o, W, H);
+        // «Заменить» where the game has put it (live rect, fresh: its drawn part, 2 px round it), else the picture's / the geometry's
+        var lb = hg.Replace(W, H); var lay = confirmBtn ?? lb;
+        var lv = LiveFrame(ClickTarget.EquipConfirm, null, W, H, U, true, new double[] { lay[0], lay[1], lay[2], lay[3] });
+        if (lv != null) confirmBtn = new[] { (int)Math.Round(lv[0]), (int)Math.Round(lv[1]), (int)Math.Round(lv[2]), (int)Math.Round(lv[3]) };
+      }
       int[] r = hintKind == "filter" ? hg.Filter(W, H) : hintKind == "replace" ? confirmBtn ?? hg.Replace(W, H) : hintKind == "slot" ? hg.Slot(hintSlot, W, H) : null;
       // the hero is open on another tab: its «Снаряжение» tab (right edge)
       if (hintKind == "geartab") { int s = (int)(0.1 * U); r = new[] { (int)(W - hg2.GearTabDX * U) - s / 2, (int)(hg2.GearTabY * U) - s / 2, s, s }; }
@@ -1247,7 +1255,7 @@ namespace RealmForge {
       if (hs.Part >= 0) {   // another hero's gear list covers the hero list: back
         heroShownWas = hs.Hero; heroAnchor.Has = false;
         int s = (int)(0.07 * U);
-        var lv = LiveFrame(ClickTarget.HeroBack, null, W, H, U);   // the back arrow where the game has put it (live rect, fresh), else the geometry's
+        var lv = LiveFrame(ClickTarget.HeroBack, null, W, H, U, true, new double[] { hg2.BackX * U - s / 2, hg2.BackY * U - s / 2, s, s });   // the back arrow where the game has put it (live rect, fresh: its picture, 2 px round it), else the geometry's
         if (lv != null) DrawTip(o.X + (int)Math.Round(lv[0]), o.Y + (int)Math.Round(lv[1]), (int)Math.Round(lv[2]), (int)Math.Round(lv[3]), HeroTip(5), H, false, true);
         else DrawTip(o.X + (int)(hg2.BackX * U) - s / 2, o.Y + (int)(hg2.BackY * U) - s / 2, s, s, HeroTip(5), H, false, true);
         return;
@@ -2137,12 +2145,13 @@ namespace RealmForge {
       var step = locateStep;
       if (recB != null) recB.Step = step.Kind.ToString();
       TickLocateDrive(step, req, hwnd, o, cr, now, W, H, U);   // auto click on: the app opens the item itself
+      { string rw = gate.RetryShown(ClickOwner.Locate, now); if (rw != "" && step.Auto != "stopped" && step.Auto != "") { step.Auto = "retry"; step.AutoWhy = rw; } }   // a step retried: the window says why
       FoundryScrollNow(step, now);
       // the step's frame from the screen geometry (the site's file, src/LocateFrames.cs): «Литейная», the tabs, the slot, the list cell, the final button
       LocateFrame lf = front && !hold && step.Kind != LocateKind.InList ? LocateFrames.For(step, req.Item, locateRs, null, Geo.Current, W, H, U) : null;
       if (lf != null && lf.Mark.Kind == "box") {   // «Литейная» / the «Вознесение» tab: framed where the game has put them (live rect, fresh)
         var lt = lf.Target == "inventory.workshop" ? ClickTarget.FoundryButton : lf.Target == "foundry.tab.ascend" ? ClickTarget.AscendTab : (ClickTarget?)null;
-        var lv = lt != null ? LiveFrame(lt.Value, null, W, H, U, true) : null;   // («Литейная»: its icon, the label left out; the click: the button's centre)
+        var lv = lt != null ? LiveFrame(lt.Value, null, W, H, U, true, lf.Raw != null ? new[] { lf.Raw.X, lf.Raw.Y, lf.Raw.W, lf.Raw.H } : null) : null;   // («Литейная», the tab: their picture, the label left out; the click: the button's centre)
         var lb = lv != null && lv.Length > 4 ? RFX.UiButtonFresh(lt.Value, null, W, H, Environment.TickCount, RFX.UiFreshMs) : null;
         if (lv != null) {
           lf.Raw = new GeoRect { X = lv[0], Y = lv[1], W = lv[2], H = lv[3] };
@@ -2625,6 +2634,14 @@ namespace RealmForge {
       gate.Observe(st, now);
       // a city «Инвентарь» press changed nothing (the gate lets it be pressed once more): the bar's place is dropped and searched again first
       if (gate.CityAgainDue.Count > 0) { gate.CityAgainDue.Clear(); cityBar.Drop(); cityInvAt = 0; Log.Write("city bar: «Инвентарь» changed nothing - the bar is searched again"); }
+      // the gate retries a failed step (a pop-up took the press, nothing changed ...): what is kept of the screen is read again, the step's tries start over
+      if (gate.RetryDue.Count > 0) {
+        foreach (var ro in new List<ClickOwner>(gate.RetryDue)) {
+          if (ro == ClickOwner.Locate) { lpilot.StepAgain(); artPilot.StepAgain(); }
+          else if (ro == ClickOwner.Equip) hpilot.StepAgain();
+        }
+        gate.RetryDue.Clear(); cityBar.Drop(); cityInvAt = 0;
+      }
       // event confirmation: the gate saw the effect of the locate pilot's button / tab click - its fixed wait after the click ends soon
       long le = gate.EffectAt(ClickOwner.Locate); if (le != locEffectSeen) { locEffectSeen = le; lpilot.Confirmed(now); }
       AnnounceHalts();
@@ -2670,7 +2687,7 @@ namespace RealmForge {
     /// <summary>A fresh read for the click gate: not held, not throttled (the screen right before the click).</summary>
     ScreenState FreshScreen(bool wantCity, bool wantKnownForms = false) {
       long now = NowMs();
-      var inp = new ScreenInputs { Inv = RFX.ReadInventory(-1), Rs = RFX.ReadRecastScreenSafe(-1), Hero = RFX.ReadHeroScreen(addrs, screens.Hero), CityForm = RFX.CityShown(), Offers = RFX.ReadOffers() };
+      var inp = new ScreenInputs { Inv = RFX.ReadInventory(-1), Rs = RFX.ReadRecastScreenSafe(-1), Hero = RFX.ReadHeroScreen(addrs, screens.Hero), CityForm = RFX.CityShown(), Offers = offerOrder.Note(RFX.ReadOffers()) }; inp.OfferTopKnown = offerOrder.TopKnown; freshOffers = inp.Offers;
       if (wantKnownForms) inp.ShownKnown = RFX.ReadShownKnownForms();   // the unknown-screen back press: no known screen's form (the battle among them) may be shown
       { IntPtr gw = GameWindow(); if (gw != IntPtr.Zero && !W32.IsIconic(gw) && IsForeground(gw)) FillArtPopup(inp, gw); }
       if (locateReq != null && locateReq.Purpose == "artPromote") inp.ArtWs = RFX.ReadArtWorkshop();   // the artifact guide's clicks are judged by the workshop too
@@ -2727,6 +2744,7 @@ namespace RealmForge {
     long topBaseAt, topLastAt; ScreenKind topLastKind = ScreenKind.Unknown, topBaseKind = ScreenKind.Unknown; HashSet<string> topBase = new HashSet<string>(); string topNewNow = "", topUnknownNow = "", topCityNow = ""; ScreenKind topNewKind = ScreenKind.Unknown;
     string topFlowNow = ""; ScreenKind topFlowKind = ScreenKind.Unknown;   // the pilots' own flow forms on the screen (ScreenMap.FlowForms) and the screen they lie on
     readonly HashSet<string> unknownSaid = new HashSet<string>();
+    readonly OfferForms.Order offerOrder = new OfferForms.Order();   // which of several offers shown is on top (the one that came last)
     string offerSaid = ""; long unknownFromAt; bool unknownNamedSaid;   // (the timing line: the unknown screen's top form named how long after it came)
 
     /// <summary>The offer pop-ups shown (and, on an unrecognised screen or the city, the shown forms nobody knows, every 2 s) into this tick's inputs.
@@ -2739,7 +2757,7 @@ namespace RealmForge {
         }
         return;
       }
-      inp.Offers = RFX.ReadOffers();
+      inp.Offers = offerOrder.Note(RFX.ReadOffers()); inp.OfferTopKnown = offerOrder.TopKnown;   // (several at once: the one that came last is on top)
       formsUnread = inp.Offers == null;
       string os = inp.Offers == null ? "?" : string.Join(",", inp.Offers.ToArray());
       if (os != offerSaid) { offerSaid = os; if (os != "" && os != "?") Log.Write("offer: shown " + os); }
@@ -2809,6 +2827,7 @@ namespace RealmForge {
       RFX.UiButtonWant(ClickTarget.OfferClose, form, W, H, U);   // its × read while it opens: the click takes the live rect (fresh)
       if (!OfferForms.Settled(scr, now)) return true;   // still opening (its scale-in animation)
       var pt = OfferForms.ClosePoint(Geo.Current, form, W, H, U);
+      { var cr0 = OfferForms.CloseRect(Geo.Current, form, W, H, U); LiveFrame(ClickTarget.OfferClose, form, W, H, U, true, cr0 != null ? new[] { cr0.X, cr0.Y, cr0.W, cr0.H } : null); }   // (the test build's frame line of the ×)
       if (pt == null) {
         gate.Halt(owner, "offer", "the offer pop-up " + form + (OfferForms.IsOffer(form) ? " has no known close button" : " is not on the list") + " - not clicked");
         AnnounceHalts();
@@ -2951,7 +2970,7 @@ namespace RealmForge {
       else if (req.Target == ClickTarget.FoundryButton) { openClickAt = now; openClickWhat = "foundry"; foundryBuiltPid = GamePid(GameWindow()); }
       else if (req.Target == ClickTarget.EquipNav && fresh != null && fresh.Kind == ScreenKind.City) { openClickAt = now; openClickWhat = "heroes"; }
       RFX.UiButtonClicked(req.Target, req.Form, req.X, req.Y, req.W, req.H, req.U);   // (the test build reads it again a minute on: uibtn ... [minute])
-      Send(a, sx, sy, req.Owner);
+      Send(a, sx, sy, req.Owner, req.Target, req.Form, freshOffers, unknownForms);
       // the form this click opens was never found: its search starts with the click (a slow PC needs every second of it)
       if ((req.Target == ClickTarget.CityInventory && RFX.InvFormMissing()) || (req.Target == ClickTarget.FoundryButton && RFX.FoundryFormMissing())) RFX.RequestFormSearch("opened by the pilot's click", 0);
       return true;
@@ -3368,7 +3387,8 @@ namespace RealmForge {
 
     /// <summary>Moves the cursor and clicks / drags there, off the UI thread (short pauses let the game see the pointer
     /// over the button first). A drag moves in small steps and rests before the release, so the list does not coast.</summary>
-    void Send(AutoAction a, int x, int y, ClickOwner owner) {   // ONLY called by GatedSend
+    void Send(AutoAction a, int x, int y, ClickOwner owner, ClickTarget target, string form, List<string> offersBefore, List<string> formsBefore) {   // ONLY called by GatedSend
+      var ob = offersBefore != null ? new List<string>(offersBefore) : null; var fb = formsBefore != null ? new List<string>(formsBefore) : null; bool uiKnown = RFX.UiKnown;
       sending = true;
       int dy2 = y + (a.Kind == AutoKind.Drag ? (int)Math.Round(a.DY) : 0);
       // our own buttons over the game (the TEST build's record button lies on the back arrow at every size, live 2026-10-29:
@@ -3404,6 +3424,12 @@ namespace RealmForge {
           // the press goes only to the game: another window at the point (a foreign one, or ours that did not step aside) = no press, the pilot stops
           string cov = CoveredBy(x, y, gamePid);
           if (cov != null) { covered = Tuple.Create(owner, cov); return; }
+          // the top form checked again right before the press (a pop-up of the game's chain may come while the cursor moves): no press, a retry
+          if (uiKnown && a.Kind == AutoKind.Click) {
+            var on = RFX.ReadOffers(); var fn = on != null && on.Count == 0 && fb != null ? RFX.ReadUnknownShownForms(4) : null;
+            string late = ClickGate.LateTop(target, form, ob, on, fb, fn);
+            if (late != null) { lateTop = Tuple.Create(owner, target + ": " + late); return; }
+          }
           if (a.Kind == AutoKind.Click) {
             Mouse(W32.LEFTDOWN, 0);
             System.Threading.Thread.Sleep(60);
@@ -3433,6 +3459,9 @@ namespace RealmForge {
 
     // a pilot click that found another window over the game's point (set by the click thread, turned into a halt by Tick)
     volatile Tuple<ClickOwner, string> covered;
+    // a pilot click not pressed: a pop-up came on top right before the press (set by the click thread, turned into a retry by Tick)
+    volatile Tuple<ClickOwner, string> lateTop;
+    List<string> freshOffers;   // the offers of the last fresh read (FreshScreen): the click thread's re-check compares with them
 
     static void PassThrough(GlowWindow w, bool on) {   // WS_EX_TRANSPARENT on a layered window: the mouse goes to what is under it
       int ex = W32.GetWindowLong(w.Handle, -20);
@@ -3673,7 +3702,7 @@ namespace RealmForge {
       if (now - cityInvAt >= 400) { cityInvAt = now; cityInvSeen = InventoryButtonSeen(o, W, H); }
       var cb = LocateFrames.CityButton(Geo.Current, W, H, U, invDX, hg2.HeroesBtnDY);   // the bar's button size from the geometry (else the estimate)
       r = new[] { o.X + cb[0], o.Y + cb[1], cb[2], cb[3] };
-      var lv = LiveFrame(ClickTarget.CityInventory, null, W, H, U, true);   // where the game has put it (live rect, fresh; its icon, the label left out) wins
+      var lv = LiveFrame(ClickTarget.CityInventory, null, W, H, U, true, new double[] { cb[0], cb[1], cb[2], cb[3] });   // where the game has put it (live rect, fresh; its icon, the label left out) wins
       if (lv != null) { r = new[] { o.X + (int)Math.Round(lv[0]), o.Y + (int)Math.Round(lv[1]), (int)Math.Round(lv[2]), (int)Math.Round(lv[3]) }; return true; }
       return cityInvSeen;
     }
@@ -3681,14 +3710,16 @@ namespace RealmForge {
     /// <summary>A pilot button's frame where the game has put it: its live rect (client px) when the read is fresh (at most 200 ms), visible,
     /// inside the client and on the form on top; null = the geometry's frame. Asks for the next background read (every 100 ms while framed).
     /// <paramref name="icon"/>: a bar button's frame hugs its icon (UiIcon.Frame, 2 px out: x, y, w, h, radius) when the read found it.</summary>
-    double[] LiveFrame(ClickTarget t, string form, double W, double H, double U, bool icon = false) {
+    double[] LiveFrame(ClickTarget t, string form, double W, double H, double U, bool icon = true, double[] layout = null) {
       RFX.UiButtonWant(t, form, W, H, U);
       int now = Environment.TickCount;
       var r = RFX.UiButtonFresh(t, form, W, H, now, RFX.UiFreshMs);
       double x, y; string why;
-      if (!RFX.UiLivePoint(r, W, H, now, out x, out y, out why) || !RFX.UiTopIs(t, form, screens.Current)) return null;
-      if (icon && r.IW > 0) return UiIcon.Frame(r.IX, r.IY, r.IW, r.IH, W, H);
-      return new[] { r.X, r.Y, r.W, r.H };
+      if (!RFX.UiLivePoint(r, W, H, now, out x, out y, out why) || !RFX.UiTopIs(t, form, screens.Current)) { if (layout != null) FrameSay(t, form, layout, false); return null; }
+      // the picture of the button (its icon, or a wide button's visual child), 2 px round it; none found: its rect, 2 px round it as well
+      var f = icon && r.IW > 0 ? UiIcon.Frame(r.IX, r.IY, r.IW, r.IH, W, H) : UiIcon.Frame(r.X, r.Y, r.W, r.H, W, H);
+      FrameSay(t, form, f, true, r.Form + "." + r.Widget);
+      return f;
     }
 
     /// <summary>An item cell's frame where the game has put it: the live read of the list's cells (src/UiButtons.cs UiCellRead; asked again every
@@ -3726,6 +3757,18 @@ namespace RealmForge {
       if (s != null) Log.Write(RFX.UiCellLine(s, uid, new[] { lx, ly }) + (live ? " [click: live @" + (int)Math.Round(x) + "," + (int)Math.Round(y) + "]" : " [click: layout, " + why + "]"));
     }
     int cellRunN;
+
+    /// <summary>The test build's line of a pilot button's frame, once per change: "frame: Form.widget rect=[x,y,w,h] source=live|layout".</summary>
+    void FrameSay(ClickTarget t, string form, double[] f, bool live, string who = null) {
+      if (!Channel.IsTest) return;
+      var w = RFX.UiWidgetOf(t, form); if (w == null) return;
+      if (f == null) return;
+      string key = UiIcon.FrameLine(who ?? w.Form + "." + w.Paths[0], f, live);
+      string was; if (frameSaid.TryGetValue(t, out was) && was == key) return;
+      frameSaid[t] = key;
+      Log.Write(key);
+    }
+    readonly Dictionary<ClickTarget, string> frameSaid = new Dictionary<ClickTarget, string>();
 
     string heroLogged;
     /// <summary>One journal line whenever the hero pilot's view or state changes.</summary>

@@ -24,6 +24,7 @@ Classes (one letter in the table):
   K  a screen the app reads itself (the city, the hero screen, the inventory, the Foundry ...: OfferForms.KnownScreens)
   D  dangerous: no × / back arrow and it buys, spends, draws, starts a fight or quits (or a confirm dialog): the pilot stops
   W  battle / loading / result / tutorial: wait, never click
+  P  also a tap-to-close form (UIHelper.NewClick2Close, a full-screen Click2Close): the tap strip at the bottom centre (TAP_RECT)
   U  none of these (no exit known): the pilot waits and stops after ClickGate.UnknownStallMs, as before
 
 Rects: {x0 anchor, x0, x1 anchor, x1, y0 anchor, y0 (top), y1 anchor, y1 (bottom)} in U (the canvas height), anchors L C R / T M B
@@ -38,6 +39,7 @@ RF = os.environ.get('RF_ROOT', os.path.expanduser('~/wardsage'))
 OUT_CS = os.path.join(APP, 'src', 'ScreenMapData.cs')
 
 STD_BACK = (0.0515, 0.0367)        # HeroGeometry.BackX / BackY (src/HeroPilot.cs): from the top left, in U
+TAP_RECT = ['C', -0.1, 'C', 0.1, 'B', -0.07, 'B', -0.02]   # the tap of a Click2Close form: the strip of «нажмите, чтобы закрыть» (CloseTextBg at B -0.045)
 NEAR = 0.35                         # a never-click button this near (U) to the exit point keeps its rect in the table
 
 # forms of the C# side (no Lua): the exit question of the city, the tips toast (a known screen), the battle test form
@@ -116,7 +118,7 @@ def lua_facts(f):
         esc = r[0] if len(set(r)) == 1 and re.match(r'^\s*return EBackspaceBehav\.\w+\s*$', b) else ('cond:' + '/'.join(sorted(set(r))) if r else 'cond')
     own = re.findall(r'AddBackPressListener\((.*)\)', t)
     own_ok = all(re.search(r'"(On\w*(Back|Close|Outside|Exit)\w*)"', a) for a in own) if own else True
-    return {'fs': fs, 'esc': esc, 'backBtn': 'NewButtonBack' in t, 'ownBack': bool(own), 'ownBackOk': own_ok,
+    return {'fs': fs, 'esc': esc, 'backBtn': 'NewButtonBack' in t, 'tap': 'NewClick2Close' in t, 'ownBack': bool(own), 'ownBackOk': own_ok,
             'danger': sorted(set(m.group(1) for m in DANGER_CODE.finditer(t)))}
 
 
@@ -240,6 +242,16 @@ def classify(name, lf, pf):
         return 'D', None, 'no ×: ' + (','.join(lf['danger'][:3]) if lf['danger'] else 'a confirm dialog'), nnames, []
     if esc_ok:
         return 'E', None, 'the back key closes it (GetBackspaceBehav Handle)', nnames, []
+    # tap to close (UIHelper.NewClick2Close: a full-screen Click2Close button, «нажмите, чтобы закрыть» at the bottom centre - the reward
+    # and notice forms): the tap goes to that text's strip, never onto a buy / claim / item button
+    taps = [b for b in btns if b['name'] == 'Click2Close' and b['w'] > 1.5 and b['h'] > 0.9]
+    if taps and lf.get('tap') and 'Chat' not in name:   # (the chat forms: their input lies at the bottom)
+        r = TAP_RECT
+        x0, y0, x1, y1 = place(r)
+        pt = ((x0 + x1) / 2, (y0 + y1) / 2)
+        others = [b for b in btns if b['name'] != 'Click2Close']   # no other button of the prefab under the strip (only the text is there)
+        if clear(pt) and not any(inside((x, y), b['rect']) for b in others for x in (x0, pt[0], x1) for y in (y0, pt[1], y1)):
+            return 'P', r, 'tap to close (Click2Close, the strip of its text at the bottom)', nnames, near(pt)
     return 'U', None, 'no exit known (backspace ' + lf['esc'] + (', own back-key handler' if lf['ownBack'] else '') + (', no prefab' if pf is None else '') + ')', nnames, []
 
 

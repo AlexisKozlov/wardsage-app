@@ -102,6 +102,7 @@ static partial class CoreTests {
     }
     double InvRow1 { get { return InvGeo.ViewTopPx(U) + InvGeo.TopPad * U - InvScrollY * InvPitch / InvRowUnits; } }
     void Say(string t) { Log.Add(Now + " " + t); if (Log.Count > 60) Log.RemoveAt(0); }
+    public void Note(string t) { Say(t); }
     public long Lat() { return Slow ? 600 + R.Next(900) : 80 + R.Next(170); }   // the game's answer (the fast PC: within the click's own send time)
     // the reader's costs (the slow laptop): DISCOVERY = finding a form the game just built - a region scan (--scan, the reader before the
     // window table was its source: 3-8 s) or one read of the window table (a tick's check, ~1 ms); a FIELD read = a known field of a known
@@ -142,7 +143,15 @@ static partial class CoreTests {
       if ((f == SimHero || f == SimInv || f == SimFoundry) && R.Next(3) == 0) { latePart[f] = f + "_SimPart"; latePartAt[f] = Now + 200 + R.Next(2500); }
       else if (f == SimHero || f == SimInv || f == SimFoundry) latePart.Remove(f);
     }
-    void Pop(string f) { int i = Stack.LastIndexOf(f); if (i > 0) { Stack.RemoveAt(i); Say("close " + f); Rebuilt(f); } }   // (an overlay above it stays)
+    void Pop(string f) { int i = Stack.LastIndexOf(f); if (i > 0) { Stack.RemoveAt(i); Say("close " + f); Rebuilt(f); var pp = Popped; if (pp != null) pp(f); } }
+    /// <summary>A form was closed by a click (the login chain scenario opens the next pop-up then).</summary>
+    public Action<string> Popped;
+    /// <summary>Called before a click is judged (a pop-up the game opens in that very moment takes the click).</summary>
+    public Action<ClickTarget> BeforeClick;
+    /// <summary>A form opened after <paramref name="ms"/> (the scenarios' own pop-ups).</summary>
+    public void PushLater(long ms, string f) { Later(ms, () => Push(f)); }
+    /// <summary>The game's login pop-up queue: a pop-up opens over the city only (Form_MainCity's queue); elsewhere it waits for the city.</summary>
+    public void PushOnCity(long ms, string f) { Later(ms, () => { if (Full == SimCity) Push(f); else PushOnCity(200, f); }); }   // (an overlay above it stays)
     void Rebuilt(string f) { if (CityRebuild && f.StartsWith("Form_Union") && Top == SimCity) { CityInst++; CityBuiltAt = Now; Say("city built again (" + CityInst + ")"); } }
     void Remove(string f) { int i = Stack.LastIndexOf(f); if (i > 0) { Stack.RemoveAt(i); Say("gone " + f); } }
     string TopForm() { for (int i = Stack.Count - 1; i >= 0; i--) if (ScreenMap.ClassOf(Stack[i]) != 'O') return Stack[i]; return SimCity; }
@@ -205,6 +214,7 @@ static partial class CoreTests {
 
     /// <summary>A click: judged on what is on top now, its effect shows after the game's latency.</summary>
     public void Click(double x, double y, ClickTarget tg) {
+      var bc = BeforeClick; if (bc != null) bc(tg);
       string top = TopForm(); char c = ScreenMap.ClassOf(top);
       if (c == 'D') { Bad.Add("CLICK ON A DANGEROUS FORM " + top + " @" + (int)x + "," + (int)y + " (" + tg + ")"); return; }
       if (ScreenMap.OnNever(top, x, y, W, H, U)) { Bad.Add("CLICK ON A NEVER-CLICK BUTTON of " + top + " @" + (int)x + "," + (int)y + " (" + tg + ")"); return; }
@@ -235,8 +245,11 @@ static partial class CoreTests {
         if (tg == ClickTarget.CityInventory && Now - CityBuiltAt < BarInMs) { LostPresses++; Say("the bar is still coming in: the press is lost"); return; }
         if (tg == ClickTarget.CityInventory && Near(x, y, W - (0.5222 + 0.9316) * U, H - hg.HeroesBtnDY * U, Math.Min(20, 0.055 * U))) {
           // now and then the bar has moved and the click takes «Сборка» next to «Инвентарь»: «План сборки» opens (a full screen of the offer list)
-          if (R.Next(25) == 0) { Later(lat, () => Push("Form_EquipmentPlan")); return; }
-          Later(lat, () => { InvEquipTab = R.Next(2) == 0; InvBulk = false; InvArtTab = false; InvSel.Clear(); InvScrollY = 0; Push(SimInv); }); return;
+          if (R.Next(25) == 0) { Later(lat, () => { if (OfferForms.IsOffer(TopForm())) { Say("the press was taken by " + TopForm()); return; } Push("Form_EquipmentPlan"); }); return; }
+          Later(lat, () => {
+            if (OfferForms.IsOffer(TopForm())) { Say("the press was taken by " + TopForm() + " (it came in the press's time)"); return; }   // (live 1.6.66.393)
+            InvEquipTab = R.Next(2) == 0; InvBulk = false; InvArtTab = false; InvSel.Clear(); InvScrollY = 0; Push(SimInv);
+          }); return;
         }
         if (Near(x, y, W - hg.HeroesBtnDX * U, H - hg.HeroesBtnDY * U, 20)) Later(lat, () => { if (TopForm() != SimCity) return; Hero.Part = -1; Hero.Shown = Hero.CityHero; Push(SimHero); });
         return;
@@ -384,6 +397,7 @@ static partial class CoreTests {
       return f == PilotFlow.Equip || f == PilotFlow.ArtEquip ? ClickOwner.Equip : f == PilotFlow.Sell || f == PilotFlow.ArtSell ? ClickOwner.Sell : ClickOwner.Locate;
     }
     public SimHost(SimGame g, PilotFlow flow, long plan, GameGeometry geo) {
+      if (SimGateLog) Gate.Sink = x => g.Note("gate: " + x);
       G = g; Flow = flow; Owner = OwnerOf(flow); this.plan = plan; this.geo = geo;
       spilot.Geometry = g.InvGeo;
       int nw = 1 + g.R.Next(8); while (Wanted.Count < nw) Wanted.Add(g.InvItems[g.R.Next(g.InvItems.Count)]);
@@ -398,6 +412,7 @@ static partial class CoreTests {
     }
     double W { get { return G.W; } } double H { get { return G.H; } } double U { get { return G.U; } }
 
+    readonly OfferForms.Order offerOrder = new OfferForms.Order();
     // ReadOffersInto (app/Overlay.cs): the forms nobody knows, read every 2 s; over a known screen the ones that came later are a pop-up
     const int TopSettleMs = 3000, TopFlickerMs = 2000, KnownFormsMs = 60000, FreshFormsMs = 0, SettleReadMs = 500, UnknownReadMs = 250;   // (FreshFormsMs: the forms read again before every click - cheap with the window table; the pilots click faster now)
     List<string> knownForms, firstForms; long knownFormsAt, firstFormsAt;
@@ -449,7 +464,7 @@ static partial class CoreTests {
     public void ReadScreens(long now) {
       Now = now;
       G.FieldTick();
-      var inp = G.Read();
+      var inp = G.Read(); inp.Offers = offerOrder.Note(inp.Offers); inp.OfferTopKnown = offerOrder.TopKnown;   // (app/Overlay.cs: the newest offer on top)
       string ik = ListSettle.KeyOf(inp.Inv), rk = ListSettle.KeyOf(inp.Rs);   // (app/Overlay.cs ReadScreens)
       InvSettle.Update(ik, now); RsSettle.Update(rk, now);
       ListMoving = (ik != null && !InvSettle.Settled) || (rk != null && rk != "" && !RsSettle.Settled);
@@ -461,13 +476,14 @@ static partial class CoreTests {
       if (Screens.Hero != null) heroScreen = Screens.Hero;
       Gate.Observe(st, now);
       if (Gate.CityAgainDue.Count > 0) { Gate.CityAgainDue.Clear(); bar.Drop(); }   // (app/Overlay.cs ReadScreens)
+      if (Gate.RetryDue.Count > 0) { if (Gate.RetryDue.Contains(ClickOwner.Locate)) { lp.StepAgain(); ap.StepAgain(); } if (Gate.RetryDue.Contains(ClickOwner.Equip)) hp.StepAgain(); Gate.RetryDue.Clear(); bar.Drop(); }   // (app/Overlay.cs ReadScreens: the retry)
       long le = Gate.EffectAt(ClickOwner.Locate); if (le != locEffectSeen) { locEffectSeen = le; lp.Confirmed(now); }   // (app/Overlay.cs ReadScreens)
     }
     long locEffectSeen;
     public readonly ListSettle InvSettle = new ListSettle(), RsSettle = new ListSettle(); public bool ListMoving;
     // FreshScreen (app/Overlay.cs): fresh memory reads, the forms read by the tick
     ScreenState Fresh(bool wantCity, bool wantKnownForms) {
-      var inp = G.Read();
+      var inp = G.Read(); inp.Offers = offerOrder.Note(inp.Offers); inp.OfferTopKnown = offerOrder.TopKnown;   // (app/Overlay.cs: the newest offer on top)
       if (wantKnownForms) inp.ShownKnown = G.ShownKnown();
       var st = ScreenState.Classify(inp, Now);
       if (topFlowNow != "" && st.Kind == topFlowKind) { inp.Flow = topFlowNow; st = ScreenState.Classify(inp, Now); }
@@ -774,6 +790,8 @@ static partial class CoreTests {
   /// <summary>One seed: the start, the task, the run. Returns "" when the run kept every rule, else what went wrong.</summary>
   sealed class SimStat { public long Runs, Done, DoneMs, ConfirmN, ConfirmMs, ConfirmMax, DiscN, DiscMs, FieldN, FieldUs; }
 
+  /// <summary>--gate-log (with --seed): the gate's journal lines in the seed's trace.</summary>
+  static bool SimGateLog;
   static string SimRun(int seed, bool slowOnly, bool verbose, Dictionary<string, int> outcomes, GameGeometry geo, string list = null, bool real = false, bool scan = false, Dictionary<string, SimStat> stats = null) {
     ReadTiming.Take();   // (the click gate counts its click-to-effect times there: this run's own)
     var r = new Random(seed * 7919 + 13);
@@ -884,11 +902,12 @@ static partial class CoreTests {
     if (h.Done != "" && flow == PilotFlow.Equip && !g.Worn) g.Bad.Add("EQUIP DONE WITHOUT THE ITEM ON (" + h.Confirms + " EquipConfirm presses)");
     var errs = new List<string>(g.Bad);
     if (outcome == "TIMEOUT") errs.Add("no end within " + cap / 1000 + " s (silent waiting): " + h.PilotState);
-    int n0;
-    if (h.Sent.TryGetValue(ClickTarget.UnknownBack, out n0) && n0 > ClickGate.MaxUnknownBacks) errs.Add(n0 + " unknown-screen back presses");
-    if (h.Sent.TryGetValue(ClickTarget.CityBack, out n0) && n0 > ClickGate.MaxCityBacks) errs.Add(n0 + " back-to-the-city presses");
-    if (h.Sent.TryGetValue(ClickTarget.MapClose, out n0) && n0 > ClickGate.MaxMapMoves) errs.Add(n0 + " × presses");
-    if (h.EscapesSent > ClickGate.MaxEscapes + ClickGate.MaxMapMoves) errs.Add(h.EscapesSent + " Escapes");
+    int n0, tries = 1 + h.Gate.Retries(owner);   // (each retry of the policy starts the run's counts over: the caps hold for each try)
+    if (h.Gate.Retries(owner) > ClickGate.MaxRetriesRun) errs.Add(h.Gate.Retries(owner) + " retries");
+    if (h.Sent.TryGetValue(ClickTarget.UnknownBack, out n0) && n0 > ClickGate.MaxUnknownBacks * tries) errs.Add(n0 + " unknown-screen back presses");
+    if (h.Sent.TryGetValue(ClickTarget.CityBack, out n0) && n0 > ClickGate.MaxCityBacks * tries) errs.Add(n0 + " back-to-the-city presses");
+    if (h.Sent.TryGetValue(ClickTarget.MapClose, out n0) && n0 > ClickGate.MaxMapMoves * tries) errs.Add(n0 + " × presses");
+    if (h.EscapesSent > (ClickGate.MaxEscapes + ClickGate.MaxMapMoves) * tries) errs.Add(h.EscapesSent + " Escapes");
     if (errs.Count == 0 && !verbose) return "";
     var sb = new StringBuilder();
     sb.Append("seed " + seed + " " + fname + (slow ? " slow" : " fast") + " fail " + failP.ToString("0.00") + " start [" + start + "] -> " + outcome
@@ -985,6 +1004,7 @@ static partial class CoreTests {
       Check(mf.Count == 0, "sim: city-first matrix, " + CityFirst.All.Length + " flows x " + SimMatrixStarts.Length + " starts: every run at its goal or a stop with its reason" + (mf.Count > 0 ? " - " + mf.Count + " failed: " + mf[0] : ""));
     }
     SimCityRebuilt(GameGeometry.Parse(GeoJson(), GeoGame));
+    SimLoginChain(GameGeometry.Parse(GeoJson(), GeoGame));
     SimUnknownToInventory(GameGeometry.Parse(GeoJson(), GeoGame));
     Console.WriteLine("Game sim: its findings");
     StaleRowsAfterFilter();
@@ -1177,6 +1197,54 @@ static partial class CoreTests {
     }
   }
 
+  /// <summary>Live 1.6.66.393: «Показать в игре» right after the login, the game's pop-up chain over the city - Form_DailyCheckIn (its × not
+  /// where the field name says: m_BtnClose missing), Form_ItemReward (tap to close, it was no offer then), Form_AnnouncementHall coming while
+  /// «Инвентарь» was on its way (the run stopped "nochange"), Form_ActPopupNewHero after it. Every city flow, fast and slow, a full-size and
+  /// a small window: the chain is closed pop-up by pop-up (the next one waited for), a pop-up that takes the pilot's click is a retry, and the
+  /// run reaches its goal - no stop, no click on a buy / claim button, the gate's caps kept.</summary>
+  static void SimLoginChain(GameGeometry geo) {
+    bool was = ClickGate.DefaultResilient; ClickGate.DefaultResilient = true;
+    try {
+      var flows = new[] { PilotFlow.Sell, PilotFlow.ArtSell, PilotFlow.LocateAscend, PilotFlow.LocateRecast, PilotFlow.LocateArtPromote, PilotFlow.Equip };
+      foreach (var size in new[] { new[] { 1920.0, 1009.0 }, new[] { 1280.0, 720.0 } }) {
+        int runs = 0, done = 0, retried = 0, taken = 0; string fail = "";
+        foreach (var flow in flows) for (int i = 0; i < 6; i++) {
+          int seed = 393000 + (int)flow * 41 + i; bool slow = i % 2 == 1;
+          ReadTiming.Take();
+          var g = new SimGame(seed, slow, 0, size[0], size[1]); g.Geo = geo; g.SpawnP = 0; g.LiveButtons = i % 3 != 2;
+          g.Push("Form_DailyCheckIn");
+          bool newHero = false, annClosed = false, heroClosed = false, rewardClosed = false, ann = false; var rr = new Random(seed);
+          bool annInPress = i % 2 == 0;   // AnnouncementHall: in the time of the pilot's first press after the reward (live), or a few seconds on
+          g.Popped = f => {
+            if (f == "Form_DailyCheckIn") g.PushOnCity(200 + rr.Next(400), "Form_ItemReward");
+            else if (f == "Form_ItemReward") { rewardClosed = true; if (!annInPress) { ann = true; g.PushOnCity(1100 + rr.Next(3500), "Form_AnnouncementHall"); } }
+            else if (f == "Form_AnnouncementHall") annClosed = true;
+            else if (f == "Form_ActPopupNewHero") heroClosed = true;
+          };
+          // the pop-ups that come while the pilot works: AnnouncementHall within its press's time (the press is lost, live 1.6.66.393),
+          // ActPopupNewHero in the very moment of the next press on the city (it takes that press)
+          g.BeforeClick = tg => {
+            if (tg == ClickTarget.OfferClose || g.Full != SimCity) return;
+            if (rewardClosed && !ann) { ann = true; g.PushLater(rr.Next(60), "Form_AnnouncementHall"); }
+            else if (!newHero && annClosed && g.Top == SimCity) { newHero = true; taken++; g.Push("Form_ActPopupNewHero"); }
+          };
+          var oc = new Dictionary<string, int>(); var outc = new string[1];
+          bool mv = Environment.GetEnvironmentVariable("SIM_CHAIN_V") == seed.ToString();   // (one run's trace)
+          string e = SimDrive(g, flow, slow, 0, new Random(seed), seed, mv, oc, geo, null, false, null, outc);
+          if (mv) { Console.WriteLine(e); e = e.Contains("\n    !! ") ? e : ""; }
+          runs++;
+          if (e != "" && fail == "") fail = flow + (slow ? " slow: " : " fast: ") + e.Split('\n')[0] + (e.Split('\n').Length > 1 ? " " + e.Split('\n')[1].Trim() : "");
+          else if (outc[0] == "done") done++;
+          else if (fail == "") fail = flow + (slow ? " slow " : " fast ") + "seed " + seed + ": " + outc[0];
+          if (newHero && heroClosed) retried++;
+        }
+        string sz = (int)size[0] + "x" + (int)size[1];
+        Check(fail == "" && done == runs, "sim: the login pop-up chain (DailyCheckIn > ItemReward > AnnouncementHall > ActPopupNewHero), " + sz + ": " + done + "/" + runs + " runs at their goal" + (fail != "" ? " - " + fail : ""));
+        Check(taken > 0 && retried == taken, "sim: the login chain, " + sz + ": the pop-up that took a press was closed and the step made again (" + retried + "/" + taken + ")");
+      }
+    } finally { ClickGate.DefaultResilient = was; }
+  }
+
   /// <summary>Live 1.6.66.391: «Показать в игре» from another full screen took 9 s to name its top form, 3 s more to press its back arrow, 18 s
   /// from the city to «Инвентарь». Now (the fast PC, the live rects read): the top form named within a tick, its back pressed after 500 ms, the
   /// city's «Инвентарь» pressed on its live rect held still - the inventory open within about 1.5 s of the start; with the city built again
@@ -1326,6 +1394,7 @@ static partial class CoreTests {
       else if (args[i] == "--timing") timing = true;
       else if (args[i] == "--sell-bench" || args[i] == "--spawn") { }
       else if (args[i] == "--matrix") matrix = true;
+      else if (args[i] == "--gate-log") SimGateLog = true;
       else { int n; if (int.TryParse(args[i], out n)) seeds = n; }
     }
     var geo = GameGeometry.Parse(GeoJson(), GeoGame);

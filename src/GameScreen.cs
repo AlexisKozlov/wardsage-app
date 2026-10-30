@@ -38,6 +38,8 @@ namespace RealmForge {
     public string ModalExtraWhy = "";
     /// <summary>The offer / notice pop-ups (src/OfferForms.cs) shown now, by form name (src/OfferScan.cs); null = the game's window table was not read.</summary>
     public List<string> Offers;
+    /// <summary>Several offers shown: the first of Offers is the one on top (it came last, alone: OfferForms.Order).</summary>
+    public bool OfferTopKnown;
     /// <summary>A shown form that is neither a screen the app knows nor an offer (for the log and the stop's reason; "" = none / not read).</summary>
     public string TopUnknown = "";
     /// <summary>Over a known screen other than the city: shown forms nobody knows that were not there when this screen came (an item tip, a reward,
@@ -90,6 +92,8 @@ namespace RealmForge {
     public string Offer = "";
     public int OfferCount;
     public bool OfferRead;
+    /// <summary>One offer shown, or of several the one on top is known (Offer is it).</summary>
+    public bool OfferTopKnown;
     /// <summary>On an Unknown screen: the shown form that is not known (its name, for the log), "" = none.</summary>
     public string TopForm = "";
     /// <summary>The form on top by name, for every screen: the offer pop-up, else the screen map's top of the forms over the screen (a pop-up
@@ -193,7 +197,7 @@ namespace RealmForge {
       // an offer pop-up sits above every screen (the game opens it on top of the city): it is THE modal
       s.OfferRead = i.Offers != null;
       if (i.Offers != null && i.Offers.Count > 0) {
-        s.OfferCount = i.Offers.Count; s.Offer = i.Offers[0];
+        s.OfferCount = i.Offers.Count; s.Offer = i.Offers[0]; s.OfferTopKnown = i.Offers.Count == 1 || i.OfferTopKnown;
         s.ModalOpen = true; s.ModalWhy = "offer:" + s.Offer + (s.OfferCount > 1 ? "+" + (s.OfferCount - 1) : "");
       }
       if (!s.ModalOpen && i.ModalExtra) { s.ModalOpen = true; s.ModalWhy = i.ModalExtraWhy; }
@@ -244,7 +248,7 @@ namespace RealmForge {
 
     public ScreenState Update(ScreenInputs raw, long now) {
       var failing = new List<string>();
-      var use = new ScreenInputs { CitySeen = raw.CitySeen, CityForm = raw.CityForm, ModalExtra = raw.ModalExtra, ModalExtraWhy = raw.ModalExtraWhy, Offers = raw.Offers, TopUnknown = raw.TopUnknown, TopNew = raw.TopNew, ShownKnown = raw.ShownKnown, TopCity = raw.TopCity, Flow = raw.Flow };
+      var use = new ScreenInputs { CitySeen = raw.CitySeen, CityForm = raw.CityForm, ModalExtra = raw.ModalExtra, ModalExtraWhy = raw.ModalExtraWhy, Offers = raw.Offers, OfferTopKnown = raw.OfferTopKnown, TopUnknown = raw.TopUnknown, TopNew = raw.TopNew, ShownKnown = raw.ShownKnown, TopCity = raw.TopCity, Flow = raw.Flow };
       long oldest = now;   // the oldest reading that stands in for a failed one
       use.Inv = Hold(raw.Inv, ref inv, ref invAt, now, "inventory", failing, ref oldest);
       use.Rs = Hold(raw.Rs, ref rs, ref rsAt, now, "foundry", failing, ref oldest);
@@ -285,7 +289,7 @@ namespace RealmForge {
       c.Hero = s.Hero; c.HeroTab = s.HeroTab; c.HeroSlot = s.HeroSlot;
       c.FoundryTab = s.FoundryTab; c.FoundryPopup = s.FoundryPopup; c.FoundrySel = s.FoundrySel; c.FoundryKey = s.FoundryKey;
       c.GemFunc = s.GemFunc; c.GemSel = s.GemSel; c.ModalOpen = s.ModalOpen; c.ModalWhy = s.ModalWhy;
-      c.Offer = s.Offer; c.OfferCount = s.OfferCount; c.OfferRead = s.OfferRead; c.TopForm = s.TopForm; c.Top = s.Top; c.TopClass = s.TopClass; c.Flow = s.Flow;
+      c.Offer = s.Offer; c.OfferCount = s.OfferCount; c.OfferRead = s.OfferRead; c.OfferTopKnown = s.OfferTopKnown; c.TopForm = s.TopForm; c.Top = s.Top; c.TopClass = s.TopClass; c.Flow = s.Flow;
       c.ReadAtMs = s.ReadAtMs; c.ConfirmedAtMs = s.ConfirmedAtMs; c.SinceMs = s.SinceMs; c.Held = s.Held;
       c.Inv = s.Inv; c.Rs = s.Rs; c.HeroScr = s.HeroScr; c.ArtWs = s.ArtWs;
       return c;

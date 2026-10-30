@@ -414,6 +414,7 @@ static class ScreenReplay {
   }
 
   static int Main(string[] args) {
+    ClickGate.DefaultResilient = false;   // (the fixtures pin single gate verdicts: one failure = the stop; the retry policy: tests/CoreTests.cs ResilienceTests, the sim)
     string dir = args.Length > 0 ? args[0] : "tests/fixtures/screens";
     var geo = GameGeometry.Parse(File.ReadAllText(Path.Combine(dir, "_geometry.json"), Encoding.UTF8), "1.6.39.829.1");
     if (geo == null) { Console.WriteLine("FAIL the geometry fixture does not load"); return 1; }

@@ -1,5 +1,5 @@
 {
- "name": "An offer pop-up over the city: every other click waits, the pilot closes it by its × (OfferClose), the pop-up gone is the effect, then the pilot's own first click; a city form that stops reading as the pop-up goes holds the screen for 1.5 s, the effect is seen after it",
+ "name": "An offer pop-up over the city: every other click waits, the pilot closes it by its × (OfferClose), the pop-up gone is the effect, then nothing else for ClickGate.OfferChainMs - the next pop-up of the game's chain comes (live 1.6.66.393: Form_DailyCheckIn after it) and is closed first; a city form that stops reading as the pop-up goes holds the screen for 1.5 s, the effect is seen after it",
  "cols": 8,
  "frames": [
   {
@@ -64,7 +64,11 @@
    "clicks": [
     {
      "owner": "Locate",
-     "target": "CityInventory"
+     "target": "CityInventory",
+     "expect": {
+      "verdict": "Wait",
+      "reason": "chain"
+     }
     }
    ]
   },
