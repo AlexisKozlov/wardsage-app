@@ -1077,6 +1077,16 @@ static partial class CoreTests {
     }
     /// <summary>A component on the GameObject of transform <paramref name="t"/> (Component.m_GameObject 0x30).</summary>
     public ulong Trs(ulong t) { return trs + (ulong)(48 * BitConverter.ToInt32(M.Mem, (int)(t + 0x40 - FakeLua.Base))); }
+    /// <summary>A form's C# side as the game has it: a Form_LuaBase (UIBase, a plain C# object: m_param 0x10 empty, m_uiGameObject 0xB8 a managed
+    /// GameObject over <paramref name="rootGo"/>, Destroyed 0xF8 off), as a Lua userdata. <paramref name="obj"/> = the managed object.</summary>
+    public ulong UiBase(ulong rootGo, out ulong obj, out ulong mgo) {
+      obj = M.Alloc(0x1B0); M.W64(obj, FakeKlass(M, "", "Form_LuaBase"));
+      int i0; ulong u0 = Obj("UnityEngine", "GameObject", rootGo, out i0);
+      mgo = M.R64(List + 0x20 + (ulong)(16 * i0) + 8); M.W64(obj + 0xB8, mgo);
+      int idx = next++; M.W64(List + 0x20 + (ulong)(16 * idx) + 8, obj);
+      ulong u = M.Alloc(0x30); M.Mem[u - FakeLua.Base + 8] = 7; M.W64(u + 0x18, 4); M.W32(u + 0x28, idx);
+      return u;
+    }
     public ulong Comp(ulong t) { ulong c = M.Alloc(0x40); M.W64(c + 0x30, M.R64(t + 0x30)); return c; }
   }
 
@@ -1092,8 +1102,9 @@ static partial class CoreTests {
       ulong a = fu.Rect(root, full, one, full, half, full, 1, out gA);
       ulong b = fu.Rect(a, new[] { 0.0, 1 }, new[] { 0.0, 1 }, new[] { 200.0, 80 }, new[] { 0.0, 1 }, new[] { -cw / 2 + 10, ch / 2 - 5 }, 1, out gB);
       ulong wt = fu.Rect(b, half, half, new[] { 60.0, 50 }, half, new[] { 40.0, -40 }, 1, out gW);
-      int iCs, iBtn, iBack;
-      ulong csui = fu.Obj("", "UIBase", fu.Comp(root), out iCs), btn = fu.Obj("UnityEngine.UI", "Button", fu.Comp(wt), out iBtn), back = fu.Obj("UnityEngine", "GameObject", gB, out iBack);
+      int iBtn, iBack;
+      ulong csObj, csGo;
+      ulong csui = fu.UiBase(g0, out csObj, out csGo), btn = fu.Obj("UnityEngine.UI", "Button", fu.Comp(wt), out iBtn), back = fu.Obj("UnityEngine", "GameObject", gB, out iBack);
       var bb = st.T("m_btnBack", 0L);
       var hero = st.T("class", st.T("__cname", "Form_CharactorMain"), "m_LuaLogicActive", true, "m_csui", 0L, "m_ButtonBack", bb, "m_Back", 0L);
       SetField(st, hero, "m_csui", csui, 0x47); SetField(st, bb, "m_btnBack", btn, 0x47); SetField(st, hero, "m_Back", back, 0x47);
@@ -1103,7 +1114,7 @@ static partial class CoreTests {
       Func<double, double, bool> Near = (x, y) => Math.Abs(x - y) < 0.01;
       string line; var r = RFX.UiButtonForTest(fu.Env, ui.A, wBack, 56, 51, W, H, U, out line);
       Check(r.Ok && Near(r.X, 22.5) && Near(r.Y, 22.5) && Near(r.W, 67.5) && Near(r.H, 56.25) && r.Visible && !r.Rotated, "HeroBack: the Button's rect from the chain to the form's root: " + line);
-      Check(line.StartsWith("uibtn: Form_CharactorMain.m_ButtonBack.m_btnBack live=[22,22,68,56] layout=[56,51] diff=0px visible=T UnityEngine.UI.Button in "), "  ... the log line: " + line);
+      Check(line.StartsWith("uibtn: Form_CharactorMain.m_ButtonBack.m_btnBack live=[22,22,68,56] layout=[56,51] diff=0px visible=T scale=unit UnityEngine.UI.Button in "), "  ... the log line: " + line);
       r = RFX.UiButtonForTest(fu.Env, ui.A, new UiWidget("Form_CharactorMain", "m_Nope", "m_Back"), 0, 0, W, H, U, out line);
       Check(r.Ok && r.Widget == "m_Back" && Near(r.X, 11.25) && Near(r.Y, 5.625) && Near(r.W, 225) && Near(r.H, 90) && r.ClassName == "UnityEngine.GameObject", "a GameObject field, the second path (pivot top left): " + line);
       Check(line.Contains(" outside "), "  ... a layout point outside the live rect is flagged: " + line);
@@ -1139,6 +1150,108 @@ static partial class CoreTests {
       // rotation flagged
       WF(m, fu.Trs(wt) + 0x10, 0, 0, 0.38, 0.92);
       Check(RFX.UiButtonForTest(fu.Env, ui.A, wBack, 56, 51, W, H, U, out line).Rotated && line.Contains(" rotated "), "a rotated transform is flagged: " + line);
+      WF(m, fu.Trs(wt) + 0x10, 0, 0, 0, 1);
+      // the form's C# side is a Form_LuaBase (a plain C# object; live 2026-10-30 every read stopped at "m_CachedPtr m_csui (Form_LuaBase destroyed)")
+      Check(m.R64(csObj + 0x10) == 0 && RFX.UiButtonForTest(fu.Env, ui.A, wBack, 56, 51, W, H, U, out line).Ok, "Form_LuaBase (m_param 0x10 empty): the root from m_uiGameObject: " + line);
+      Broken("m_csui", () => m.Mem[csObj - FakeLua.Base + 0xF8] = 1, () => m.Mem[csObj - FakeLua.Base + 0xF8] = 0);
+      Broken("m_uiGameObject", () => m.W64(csGo + 0x10, 0), () => m.W64(csGo + 0x10, g0));
+      Broken("m_uiGameObject", () => m.W64(csObj + 0xB8, 0), () => m.W64(csObj + 0xB8, csGo));
+      Broken("window", () => { W = 0; }, () => { W = 1280; });
+      // the city rebuilt (after the guild): the old copy still in UIInstance, shown, its C# side Destroyed - the new copy is read
+      {
+        ulong oObj, oGo, nObj, nGo, og, ng;
+        ulong oRoot = fu.Rect(0, full, one, full, half, full, 1, out og);
+        ulong gx;
+        ulong oBtn = fu.Rect(oRoot, half, half, new[] { 40.0, 40 }, half, new[] { -100.0, 0 }, 1, out gx);
+        ulong nRoot = fu.Rect(0, full, one, full, half, full, 1, out ng);
+        ulong nBtn = fu.Rect(nRoot, half, half, new[] { 40.0, 40 }, half, new[] { 100.0, 0 }, 1, out gx);
+        int io, inn;
+        ulong oCs = fu.UiBase(og, out oObj, out oGo), nCs = fu.UiBase(ng, out nObj, out nGo);
+        ulong oB = fu.Obj("UnityEngine.UI", "Button", fu.Comp(oBtn), out io), nB = fu.Obj("UnityEngine.UI", "Button", fu.Comp(nBtn), out inn);
+        var oldCity = st.T("class", st.T("__cname", "Form_MainCity"), "m_LuaLogicActive", true, "m_csui", 0L, "m_Button_Backpack", 0L);
+        var newCity = st.T("class", st.T("__cname", "Form_MainCity"), "m_LuaLogicActive", true, "m_csui", 0L, "m_Button_Backpack", 0L);
+        SetField(st, oldCity, "m_csui", oCs, 0x47); SetField(st, oldCity, "m_Button_Backpack", oB, 0x47);
+        SetField(st, newCity, "m_csui", nCs, 0x47); SetField(st, newCity, "m_Button_Backpack", nB, 0x47);
+        m.Mem[oObj - FakeLua.Base + 0xF8] = 1;
+        var ui2 = st.T(1L, oldCity, 2L, newCity, 3L, hero);
+        var wInv = RFX.UiWidgetOf(ClickTarget.CityInventory, null);
+        r = RFX.UiButtonForTest(fu.Env, ui2.A, wInv, 0, 0, W, H, U, out line);
+        Check(r.Ok && r.FormTable == newCity.A && r.Copies == 1 && Near(r.X + r.W / 2, W / 2 + 100 * k), "a rebuilt form: the live copy is read, the Destroyed one passed over: " + line);
+        m.Mem[oObj - FakeLua.Base + 0xF8] = 0;
+        r = RFX.UiButtonForTest(fu.Env, ui2.A, wInv, 0, 0, W, H, U, out line);
+        double px0, py0; string why0;
+        Check(r.Ok && r.Copies == 2 && line.Contains(" copies=2") && !RFX.UiLivePoint(r, W, H, r.At, out px0, out py0, out why0) && why0.Contains("copies"),
+          "two shown live copies of the form: the instance is not certain, no live click: " + line);
+        m.W64(oGo + 0x10, 0);
+        r = RFX.UiButtonForTest(fu.Env, ui2.A, wInv, 0, 0, W, H, U, out line);
+        Check(r.Ok && r.FormTable == newCity.A && r.Copies == 1, "  ... the old copy's GameObject destroyed: the new one, certain: " + line);
+      }
+      // a small window: the scale from the root canvas (its size against the client), whatever Ui.Unit says - live 2026-10-30: 526x296
+      {
+        double w2 = 526, h2 = 296, kc = w2 / 1136, ccw = 1136, cch = h2 / kc;   // a CanvasScaler matching the width: 1136 units wide
+        ulong gc, gr, gb;
+        ulong canv = fu.Rect(0, full, full, new[] { ccw, cch }, half, full, kc, out gc);
+        ulong froot = fu.Rect(canv, full, one, full, half, full, 1, out gr);
+        ulong fbtn = fu.Rect(froot, half, half, new[] { 60.0, 40 }, half, new[] { 100.0, -50 }, 1, out gb);
+        ulong cObj, cGo; ulong cCs = fu.UiBase(gr, out cObj, out cGo); int ib;
+        ulong cB = fu.Obj("UnityEngine.UI", "Button", fu.Comp(fbtn), out ib);
+        var bag = st.T("class", st.T("__cname", "Form_BackpackIntegration"), "m_LuaLogicActive", true, "m_csui", 0L, "m_PanelContentCur", st.T("m_BtnWorkShop", 0L));
+        SetField(st, bag, "m_csui", cCs, 0x47);
+        SetField(st, new FTab(m.R64(st.ValueAt(bag, "m_PanelContentCur"))), "m_BtnWorkShop", cB, 0x47);
+        var ui3 = st.T(1L, bag);
+        var wF = RFX.UiWidgetOf(ClickTarget.FoundryButton, null);
+        r = RFX.UiButtonForTest(fu.Env, ui3.A, wF, 0, 0, w2, h2, 0, out line);
+        Check(r.Ok && r.Scale == "canvas" && Near(r.X + r.W / 2, w2 / 2 + 100 * kc) && Near(r.Y + r.H / 2, h2 / 2 + 50 * kc) && Near(r.W, 60 * kc) && Near(r.H, 40 * kc) && line.Contains(" scale=canvas"),
+          "526x296: the rect from the root canvas's scale (no unit needed): " + line);
+        r = RFX.UiButtonForTest(fu.Env, ui3.A, wF, 0, 0, w2, h2, Ui.Unit(w2, h2), out line);
+        Check(r.Ok && r.Scale == "canvas" && Near(r.W, 60 * kc), "  ... the canvas wins over Ui.Unit (" + (Ui.Unit(w2, h2) / 640).ToString("0.###") + " vs " + kc.ToString("0.###") + " px/unit)");
+        r = RFX.UiButtonForTest(fu.Env, ui3.A, wF, 0, 0, 600, 296, Ui.Unit(600, 296), out line);
+        Check(r.Ok && r.Scale == "unit", "  ... a canvas of another shape than the client (not resized yet) is not taken: the unit: " + line);
+        // the click point: fresh, visible, inside, one copy
+        r = RFX.UiButtonForTest(fu.Env, ui3.A, wF, 0, 0, w2, h2, 0, out line);
+        double px, py; string why;
+        Check(RFX.UiLivePoint(r, w2, h2, r.At + 150, out px, out py, out why) && Near(px, w2 / 2 + 100 * kc) && Near(py, h2 / 2 + 50 * kc), "live point: the rect's centre when fresh (" + why + ")");
+        Check(!RFX.UiLivePoint(r, w2, h2, r.At + RFX.UiFreshMs + 1, out px, out py, out why) && why.StartsWith("old"), "  ... not when older than 200 ms: " + why);
+        Check(!RFX.UiLivePoint(r, 1280, 720, r.At, out px, out py, out why) && why == "another window size", "  ... not for another window size");
+        Check(!RFX.UiLivePoint(null, w2, h2, 0, out px, out py, out why), "  ... no read: the layout");
+        WF(m, fu.Trs(fbtn), 900, -50, 0);
+        r = RFX.UiButtonForTest(fu.Env, ui3.A, wF, 0, 0, w2, h2, 0, out line);
+        Check(!RFX.UiLivePoint(r, w2, h2, r.At, out px, out py, out why) && why.Contains("outside"), "  ... not when its centre is outside the client: " + why);
+        WF(m, fu.Trs(fbtn), 100, -50, 0);
+        // the kept read: fresh for the clicks / frames of this button and size only
+        r = RFX.UiButtonForTest(fu.Env, ui3.A, wF, 0, 0, w2, h2, 0, out line);
+        RFX.UiButtonKeep(ClickTarget.FoundryButton, r, w2, h2, 5000);
+        Check(RFX.UiButtonFresh(ClickTarget.FoundryButton, null, w2, h2, 5100, RFX.UiFreshMs) == r && RFX.UiButtonFresh(ClickTarget.FoundryButton, null, w2, h2, 5300, RFX.UiFreshMs) == null
+          && RFX.UiButtonFresh(ClickTarget.FoundryButton, null, 1280, 720, 5100, RFX.UiFreshMs) == null && RFX.UiButtonFresh(ClickTarget.AscendTab, null, w2, h2, 5100, RFX.UiFreshMs) == null,
+          "kept read: fresh for 200 ms, this size and button only");
+        RFX.UiButtonKeep(ClickTarget.FoundryButton, new UiButtonInfo { FailStep = "form" }, w2, h2, 5150);
+        Check(RFX.UiButtonFresh(ClickTarget.FoundryButton, null, w2, h2, 5160, RFX.UiFreshMs) == null, "  ... a failed read drops it");
+        var ro = new UiButtonInfo { Form = "Form_A", Visible = true, W = 5, H = 5 }; RFX.UiButtonKeep(ClickTarget.OfferClose, ro, w2, h2, 5000);
+        Check(RFX.UiButtonFresh(ClickTarget.OfferClose, "Form_A", w2, h2, 5010, 200) == ro && RFX.UiButtonFresh(ClickTarget.OfferClose, "Form_B", w2, h2, 5010, 200) == null, "  ... OfferClose: for the same pop-up only");
+      }
+      // the form on top: no live click into a covering screen
+      {
+        var inv = new ScreenState { Kind = ScreenKind.Inventory, Top = "Form_BackpackIntegration" };
+        var boss = new ScreenState { Kind = ScreenKind.Unknown, Top = "Form_UnionBoss" };
+        var tip = new ScreenState { Kind = ScreenKind.HeroScreen, Top = "Form_CharactorMain", Flow = "Form_CharactorEquipTip" };
+        var off = new ScreenState { Kind = ScreenKind.City, Top = "Form_X", Offer = "Form_X", OfferCount = 1, ModalOpen = true };
+        Check(RFX.UiTopIs(ClickTarget.FoundryButton, null, inv) && !RFX.UiTopIs(ClickTarget.FoundryButton, null, boss) && !RFX.UiTopIs(ClickTarget.FoundryButton, null, null)
+          && !RFX.UiTopIs(ClickTarget.FoundryButton, null, new ScreenState { Kind = ScreenKind.Inventory, Top = "Form_BackpackIntegration", Held = true }), "top: «Литейная» only on the inventory on top (not under Form_UnionBoss, not on a held read)");
+        Check(RFX.UiTopIs(ClickTarget.EquipConfirm, null, tip) && !RFX.UiTopIs(ClickTarget.EquipConfirm, null, new ScreenState { Kind = ScreenKind.HeroScreen, Top = "Form_CharactorMain" }), "top: «Заменить» on the item's tip over the hero screen");
+        Check(RFX.UiTopIs(ClickTarget.OfferClose, "Form_X", off) && !RFX.UiTopIs(ClickTarget.OfferClose, "Form_Y", off) && !RFX.UiTopIs(ClickTarget.CityInventory, null, off), "top: the × of the pop-up shown; the city's «Инвентарь» not under a pop-up");
+      }
+      // the diagnostic dump: a failing read step by step, one a minute
+      {
+        RFX.UiDiagReset();
+        m.Mem[csObj - FakeLua.Base + 0xF8] = 1;
+        r = RFX.UiButtonForTest(fu.Env, ui.A, wBack, 56, 51, W, H, U, out line);
+        string d1 = RFX.UiButtonDiagLine(r, 100000), d2 = RFX.UiButtonDiagLine(r, 130000), d3 = RFX.UiButtonDiagLine(r, 160001);
+        Check(d1 != null && d1.StartsWith("uibtn diag: Form_CharactorMain.m_ButtonBack.m_btnBack failed at m_csui (Form_LuaBase Destroyed): ") && d1.Contains("forms=") && d1.Contains("m_csui=ud ")
+          && d1.Contains("widget.native=") && d1.Contains("m_csui.Destroyed=1"), "diag: every step's addresses and values: " + d1);
+        Check(d2 == null && d3 != null, "  ... one a minute");
+        m.Mem[csObj - FakeLua.Base + 0xF8] = 0;
+        Check(RFX.UiButtonDiagLine(RFX.UiButtonForTest(fu.Env, ui.A, wBack, 56, 51, W, H, U, out line), 999999) == null, "  ... none for a good read");
+      }
       // the targets by name
       Check(RFX.UiWidgetOf(ClickTarget.CityInventory, null).Form == "Form_MainCity" && RFX.UiWidgetOf(ClickTarget.FoundryButton, null).Paths[0] == "m_PanelContentCur.m_BtnWorkShop"
         && RFX.UiWidgetOf(ClickTarget.AscendTab, null).Paths[0] == "m_ToggleSubliming" && RFX.UiWidgetOf(ClickTarget.EquipConfirm, null).Paths.Length == 2
