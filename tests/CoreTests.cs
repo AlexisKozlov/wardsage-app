@@ -1289,6 +1289,55 @@ static partial class CoreTests {
     Check(tiny[0] == 0 && tiny[1] + tiny[3] <= 296, "city rim frame: kept inside the client");
   }
 
+  /// <summary>A UI sprite's visible art (src/SpriteArtData.cs from tools/sprite-bounds.py) mapped through the Image's live rect (src/SpriteArt.cs).</summary>
+  static void SpriteArtTests() {
+    Console.WriteLine("Sprite art and its frame (src/SpriteArt.cs, src/SpriteArtData.cs):");
+    Check(SpriteArt.Count > 500, "sprite table: " + SpriteArt.Count + " sprites of the forms (game " + SpriteArt.GameVersion + ")");
+    // the city bar's «Инвентарь»: the dark round plate inside main_btn_Backpack (108 x 88, a tip below, side lines) - the numbers measured by hand
+    // before (d9b30e5: the solid body (0.494, 0.429) d 0.759; 1d3b137: the visible edge (0.495, 0.447) d 0.8175) come out of the table
+    var bp = SpriteArt.Of("main_btn_Backpack");
+    Check(bp != null && bp.W == 108 && bp.H == 88 && bp.Kind == 'c', "Inventory plate: in the table, 108 x 88, a circle");
+    if (bp != null && bp.Core != null && bp.Circle != null) {
+      string cs = string.Join(",", Array.ConvertAll(bp.Core, v => v.ToString("0.000"))), vs = string.Join(",", Array.ConvertAll(bp.Circle, v => v.ToString("0.000")));
+      Check(Math.Abs(bp.Core[0] - 0.494) <= 0.01 && Math.Abs(bp.Core[1] - 0.429) <= 0.01 && Math.Abs(bp.Core[2] - 0.759) <= 0.01, "Inventory plate: solid body centre (0.494, 0.429), d 0.759 of the height: " + cs);
+      Check(Math.Abs(bp.Circle[0] - 0.495) <= 0.01 && Math.Abs(bp.Circle[1] - 0.447) <= 0.01 && Math.Abs(bp.Circle[2] - 0.8175) <= 0.015, "Inventory plate: visible edge centre (0.495, 0.447), d 0.8175: " + vs);
+      Check(bp.Poly != null && bp.Poly.Length / 2 >= 8 && bp.Poly.Length / 2 <= 64, "Inventory plate: a contour of " + (bp.Poly != null ? bp.Poly.Length / 2 : 0) + " points (at most 64)");
+      // the side lines are no part of it: the visible box is the plate and its tip (about the circle's width), not the whole sprite
+      Check(bp.L > 0.12 && bp.R < 0.88 && bp.B > 0.85, "Inventory plate: the box leaves the side lines out, keeps the tip (" + bp.L.ToString("0.000") + ".." + bp.R.ToString("0.000") + ", bottom " + bp.B.ToString("0.000") + ")");
+      // live 1.6.66.400 (526x296): Image_Icon 106.3,247.4 at 108 x 88 units of 0.4625 px: the frame round the plate, 2 px out
+      double iw = 108 * 0.4625, ih = 88 * 0.4625, ix = 133 - iw / 2, iy = 268 - ih / 2;
+      var fit = SpriteArt.FrameOf(bp, new SpriteArt.Draw(), ix, iy, iw, ih, 526, 296);
+      double cx = ix + bp.Circle[0] * iw, d = bp.Circle[2] * ih;
+      Check(fit != null && fit.Kind == "poly" && Math.Abs(fit.Frame[0] + fit.Frame[2] / 2 - cx) <= 1.5 && Math.Abs(fit.Frame[2] - (d + 4)) <= 2.5, "Inventory frame: on the plate (centre x " + cx.ToString("0.0") + ", " + (d + 4).ToString("0.0") + " px wide), the contour drawn: " + (fit != null ? string.Join(",", Array.ConvertAll(fit.Frame, v => v.ToString("0.0"))) : "none"));
+      var pts = fit != null ? GuideShape.FrameOutline(fit.Box, fit.Shape, null, 2) : null;
+      bool inside = pts != null; if (pts != null) foreach (var q in pts) if (q.X < fit.Frame[0] - 2.5 || q.X > fit.Frame[0] + fit.Frame[2] + 2.5 || q.Y < fit.Frame[1] - 2.5 || q.Y > fit.Frame[1] + fit.Frame[3] + 2.5) inside = false;
+      Check(inside, "Inventory frame: the contour 2 px out stays on the frame's box");
+    }
+    // preserveAspect: a 100 x 50 sprite in a 100 x 100 rect is drawn 100 x 50, the spare 50 shared on the pivot (y up: pivot 0 = at the bottom)
+    var a = new SpriteArt.Art { Name = "t", W = 100, H = 50, L = 0, T = 0, R = 1, B = 1, Kind = 'x' };
+    var dc = SpriteArt.Drawn(a, new SpriteArt.Draw { Preserve = true }, 0, 0, 100, 100);
+    var db = SpriteArt.Drawn(a, new SpriteArt.Draw { Preserve = true, PivY = 0 }, 0, 0, 100, 100);
+    var dn = SpriteArt.Drawn(a, new SpriteArt.Draw(), 0, 0, 100, 100);
+    var dt = SpriteArt.Drawn(a, new SpriteArt.Draw { Preserve = true, PivX = 1 }, 0, 0, 300, 100);   // a wide rect: 200 x 100, pushed right by pivot 1
+    Check(dc[1] == 25 && dc[3] == 50 && db[1] == 50 && dn[3] == 100 && dt[0] == 100 && dt[2] == 200, "preserveAspect: letterboxed on the pivot (centre 25, pivot 0 at 50, off: stretched, wide rect x 100)");
+    var ds = SpriteArt.Drawn(a, new SpriteArt.Draw { Preserve = true, Type = 1 }, 0, 0, 100, 100);
+    Check(ds[3] == 100, "preserveAspect: not for a Sliced Image");
+    // Sliced: 20 px borders of a 100 px sprite at 2 client px per sprite px stay 40 px, the middle stretches; borders that do not fit shrink together
+    Check(SpriteArt.SliceAxis(10, 100, 20, 20, 300, 2) == 20 && SpriteArt.SliceAxis(90, 100, 20, 20, 300, 2) == 280 && SpriteArt.SliceAxis(50, 100, 20, 20, 300, 2) == 150, "sliced: borders kept at their size, the middle stretched");
+    Check(SpriteArt.SliceAxis(20, 100, 20, 20, 40, 2) == 20, "sliced: borders wider than the rect shrink together");
+    var sl = new SpriteArt.Art { Name = "s", W = 100, H = 100, BL = 20, BR = 20, BT = 20, BB = 20, L = 0.1, T = 0.1, R = 0.9, B = 0.9, Kind = 'r', Round = 0.1 };
+    var sf = SpriteArt.FrameOf(sl, new SpriteArt.Draw { Type = 1, Px = 1 }, 0, 0, 400, 100, 1000, 1000);
+    Check(sf != null && Math.Abs(sf.Box.X - 10) < 1e-6 && Math.Abs(sf.Box.W - 380) < 1e-6 && Math.Abs(sf.Box.H - 80) < 1e-6, "sliced: the visible box 10 px in on each side of a 400 px wide button (the border's own 10 px), not 40");
+    // the shapes: a table line parses; a poly outline is offset outwards
+    var pa = SpriteArt.Parse("x|10|10|100|0,0,0,0|0.1,0.1,0.9,0.9|p|0|||100,100,900,100,900,900,100,900");
+    Check(pa != null && pa.Poly != null && pa.Poly.Length == 8 && pa.Kind == 'p' && pa.Circle == null, "table line: parsed (a square contour, no circle)");
+    var sq = GuideShape.Offset(new List<GuidePt> { new GuidePt(0, 0), new GuidePt(10, 0), new GuidePt(10, 10), new GuidePt(0, 10) }, 2);
+    Check(Math.Abs(sq[0].X + 2) < 1e-6 && Math.Abs(sq[0].Y + 2) < 1e-6 && Math.Abs(sq[2].X - 12) < 1e-6, "contour offset: 2 px out at each corner");
+    var ls = new LiveShapes(); ls.Put(new double[] { 10, 10, 50, 50, 5 }, new GeoRect { X = 12, Y = 12, W = 46, H = 46 }, new GeoShape { K = "circle" }, 1000);
+    GeoRect fb; GeoShape fs;
+    Check(ls.Find(10.6, 10, 50, 51, 1500, out fb, out fs) && fs.K == "circle" && !ls.Find(10, 10, 50, 50, 3500, out fb, out fs) && !ls.Find(20, 10, 50, 50, 1500, out fb, out fs), "live shapes: found by the frame rect within 1.5 px and 2 s");
+  }
+
   /// <summary>The step plate scales with the game client (src/HintLayout.cs HintSize) and keeps its place while the step stays (PlateHold).</summary>
   static void HintSizeTests() {
     Console.WriteLine("The step plate's size and its hold (src/HintLayout.cs HintSize, PlateHold):");
@@ -1441,7 +1490,7 @@ static partial class CoreTests {
   }
 
   static void UiButtonTests() {
-    UiIconTests(); HintSizeTests();
+    UiIconTests(); HintSizeTests(); SpriteArtTests();
     ScreenTopTests();
     Console.WriteLine("A button's live rect by name (src/UiButtons.cs):");
     var m = new FakeLua(4 << 20); RFX.TestMemory = m; RFX.ForgetLive(); RFX.ForgetClasses();

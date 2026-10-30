@@ -1487,6 +1487,7 @@ namespace RealmForge {
     /// <param name="avoid">the step's other click targets (screen px {x, y, w, h}): the plate is never put over them (nor over the target)</param>
     void DrawTip(int x, int y, int w, int h, string[] lines, double H, bool plateOnly = false, bool below = false, bool right = false, string caps = null, bool warn = false, Hl hl = null, int[][] avoid = null) {
       var p = lines != null && lines.Length > 0 ? new Plate { Caps = caps ?? Tx("caps"), Main = lines[0], Sub = lines.Length > 1 ? lines[1] : "", Warn = warn } : null;
+      if (hl == null && !GuideStyle && !plateOnly) hl = HlLive(x, y, w, h);   // a live frame with its sprite's outline (LiveFrame / LiveCell)
       Scene(tip, ref tipKey, plateOnly ? null : new[] { x, y, w, h }, p, new[] { x, y, w, h }, null, null, hl, avoid);
     }
 
@@ -3978,9 +3979,15 @@ namespace RealmForge {
       bool ok = RFX.UiLivePoint(r, W, H, now, out x, out y, out why), top = RFX.UiTopIs(t, form, sc);
       // the picture of the button (its icon, or a wide button's visual child), 2 px round it; none found: its rect, 2 px round it as well
       // (the city bar's «Инвентарь»: its Image_Icon also draws a tip and side lines: the frame hugs the round rim inside it)
-      bool rim = t == ClickTarget.CityInventory && r != null && r.IW > 0 && r.IconName == "Image_Icon";
-      double[] f = ok && top ? (rim ? UiIcon.BarRimFrame(r.IX, r.IY, r.IW, r.IH, W, H) : icon && r.IW > 0 ? UiIcon.Frame(r.IX, r.IY, r.IW, r.IH, W, H) : UiIcon.Frame(r.X, r.Y, r.W, r.H, W, H)) : null;
-      if (t == ClickTarget.CityInventory && f != null) PlateSay(f, r, rim);
+      // the Image's sprite in the table (src/SpriteArt.cs): the frame hugs the sprite's visible art mapped through the live rect, outlined by its contour
+      var art = ok && top && r != null && (icon || r.IW <= 0) ? SpriteArt.Of(r.Sprite) : null;
+      var fit = art != null ? (r.IW > 0 ? SpriteArt.FrameOf(art, r.Art, r.IX, r.IY, r.IW, r.IH, W, H) : SpriteArt.FrameOf(art, r.Art, r.X, r.Y, r.W, r.H, W, H)) : null;
+      bool rim = fit == null && t == ClickTarget.CityInventory && r != null && r.IW > 0 && r.IconName == "Image_Icon";   // (no sprite read: the plate's measured circle)
+      double[] f = ok && top ? (fit != null ? fit.Frame : rim ? UiIcon.BarRimFrame(r.IX, r.IY, r.IW, r.IH, W, H) : icon && r.IW > 0 ? UiIcon.Frame(r.IX, r.IY, r.IW, r.IH, W, H) : UiIcon.Frame(r.X, r.Y, r.W, r.H, W, H)) : null;
+      if (f != null) {
+        if (fit != null) liveShapes.Put(f, fit.Box, fit.Shape, NowMs());
+        FrameCheck(r.Form + "." + r.Widget, r.Sprite, r.Art, fit, f, r.Sprite == "" ? r.ArtWhy : art == null ? "not in the table" : null);
+      }
       // one source per button (FrameStick): a missing or old read, a held screen keep the last live frame for 1.5 s; a fresh read that says the
       // button is hidden, or another form named on top, drop it at once
       bool gone = (r != null && why == "not visible") || (!top && sc != null && !sc.Held);
@@ -4005,6 +4012,11 @@ namespace RealmForge {
       var s = RFX.UiCellFresh(k, uid, W, H, now, RFX.UiFreshMs);
       if (s != null) { var sl = RFX.UiCellShadowLine(run, s, uid, calc, now); if (sl != null) Log.Write(sl); }
       string why; var st = RFX.UiCellState(s, uid, W, H, now, out fr, out why);
+      if (st == UiCellSee.Shown && fr != null) {   // the quality frame's sprite: its outline (not when the viewport clipped the frame)
+        var c = s.Of(uid);
+        if (c != null && c.Fit != null && Math.Abs(c.Fit.Frame[2] - fr[2]) < 0.5 && Math.Abs(c.Fit.Frame[3] - fr[3]) < 0.5) liveShapes.Put(fr, c.Fit.Box, c.Fit.Shape, NowMs());
+        if (c != null) FrameCheck("cell." + k + "." + c.Icon, c.Sprite, c.Art, c.Fit, fr, c.Sprite == "" ? "not read" : c.Fit == null ? "not in the table" : null);
+      }
       if (st == UiCellSee.Unknown || RFX.UiCellTopIs(k, screens.Current)) return st;
       fr = null; var sc = screens.Current;   // covered: hidden when another form is named on top (a pop-up, a modal); nothing named: the layout's
       return sc != null && !sc.Held && (sc.OfferCount > 0 || sc.ModalOpen || !string.IsNullOrEmpty(sc.Top)) ? UiCellSee.Hidden : UiCellSee.Unknown;
@@ -4050,20 +4062,16 @@ namespace RealmForge {
       return res.ToArray();
     }
 
-    // the test build's self-check of the city «Инвентарь» frame: the frame next to the live plate it hugs (and the button, the icon child),
-    // at most 4 lines a city stretch, a line only when the frame moved 2 px or more since the last one
-    long plateSaidFor = -1; int plateSaidN; double[] plateSaidF;
-    void PlateSay(double[] f, UiButtonInfo r, bool rim) {
-      if (!Channel.IsTest) return;
-      var c = screens.Current; long sk = c != null ? c.SinceMs : 0;
-      if (sk != plateSaidFor) { plateSaidFor = sk; plateSaidN = 0; plateSaidF = null; }
-      if (plateSaidN >= 4) return;
-      if (plateSaidF != null) { bool moved = false; for (int i = 0; i < 4; i++) if (Math.Abs(plateSaidF[i] - f[i]) >= 2) moved = true; if (!moved) return; }
-      plateSaidF = f; plateSaidN++;
-      Func<double, string> n0 = v => Math.Round(v).ToString();
-      string plate = rim ? string.Join(",", Array.ConvertAll(UiIcon.BarPlate(r.IX, r.IY, r.IW, r.IH), v => v.ToString("0.0"))) : "none";
-      Log.Write("frame check: CityInventory frame=[" + n0(f[0]) + "," + n0(f[1]) + "," + n0(f[2]) + "," + n0(f[3]) + "] plate(cx,cy,d)=[" + plate + "] button=[" + n0(r.X) + "," + n0(r.Y) + "," + n0(r.W) + "," + n0(r.H)
-        + "] icon=" + (r.IW > 0 ? r.IconName + "[" + n0(r.IX) + "," + n0(r.IY) + "," + n0(r.IW) + "," + n0(r.IH) + "]" : "none") + " source=" + (rim ? "plate" : r.IW > 0 ? "icon" : "button"));
+    // the test build's self-check of a framed target, once per target and sprite: "frame check: <form>.<widget> sprite=<name> shape=… frame=[…] visible=[…]"
+    // (tools/lab/frames-sheet.sh crops each from the lab's screenshots)
+    readonly LiveShapes liveShapes = new LiveShapes();
+    readonly HashSet<string> frameChecked = new HashSet<string>();
+    void FrameCheck(string who, string sprite, SpriteArt.Draw d, SpriteArt.Fit fit, double[] f, string why) {
+      if (!Channel.IsTest || f == null) return;
+      if (!frameChecked.Add(who + "|" + sprite + "|" + (fit != null ? fit.Kind : "rect")) || frameChecked.Count > 400) return;
+      var mon = System.Windows.Forms.Screen.FromPoint(new Point(sceneX, sceneY)).Bounds;
+      string where = " client=[" + sceneX + "," + sceneY + "," + sceneW + "," + sceneH + "] screen=[" + mon.X + "," + mon.Y + "," + mon.Width + "," + mon.Height + "]";
+      Log.Write(SpriteArt.CheckLine(who, sprite, d, fit, f, sprite == "" || fit == null ? why : null, where));
     }
 
     string heroLogged;
@@ -4291,9 +4299,17 @@ namespace RealmForge {
     }
     Hl HlCell(double x, double y, double w, double h) { return HlRound(x, y, w, h, true); }
 
+    /// <summary>The outline of the live frame drawn at x, y, w, h (screen px): the sprite's contour / shape LiveFrame or LiveCell found for it; null = none.</summary>
+    Hl HlLive(double x, double y, double w, double h) {
+      GeoRect b; GeoShape sh;
+      if (!liveShapes.Find(x - sceneX, y - sceneY, w, h, NowMs(), out b, out sh) || sh.K == "rect") return null;
+      return new Hl { Rect = new GeoRect { X = b.X + sceneX, Y = b.Y + sceneY, W = b.W, H = b.H }, Shape = sh };
+    }
+
     // the city bar's «Инвентарь» (screen px rect): its geometry shape for the old frame
     Hl HlCity(int[] r) {
       var g = Geo.Current;
+      var lh = cityBtnLive ? HlLive(r[0], r[1], r[2], r[3]) : null; if (lh != null) return lh;   // its sprite's contour
       // the live frame is the rim's own square already (2 px out): the outline is that circle, no inset (the inset is of the hit area)
       if (cityBtnLive) { double p = UiIcon.FramePad; return new Hl { Rect = new GeoRect { X = r[0] + p, Y = r[1] + p, W = r[2] - 2 * p, H = r[3] - 2 * p }, Shape = new GeoShape { K = "circle" } }; }
       return new Hl { Rect = new GeoRect { X = r[0], Y = r[1], W = r[2], H = r[3] }, Shape = g != null ? g.Shape("city.barButton") : null, Inset = g != null ? g.Inset("city.barButton") : null };

@@ -79,6 +79,11 @@ shots=$(q -F '|' -v r="$run" <<< "
   order by f.created_at" | awk -F'|' '{n=$1; sub(/^stop-/,"",n); sub(/-[0-9]{4}-[0-9]{6}.*$/,"",n); a[n]=a[n] "  " $1 " " $2 "\n"; if(!(n in o)){o[n]=++c}} END{for(k in a) printf "%s:\n%s", k, a[k]}')
 [ -n "$shots" ] && msg+="Скриншоты остановок: lab-shots.sh $run"$'\n'
 
+# the hint frames the test app checked (src/SpriteArt.cs "frame check:" lines) cropped from the run's screenshots into one picture
+fchecks=$(grep -oE 'frame check: .*' <<< "$logs" | sed -E 's/ client=.*$//' | awk '!seen[$0]++' | head -40)
+fsheet=""
+if [ -n "$fchecks" ] && [ -n "$shots" ]; then fsheet=$(bash "$(dirname "$0")/frames-sheet.sh" "$run" 2>/dev/null | tail -1); fi
+
 {
   echo "# Test lab report: $devname"
   echo
@@ -93,6 +98,7 @@ shots=$(q -F '|' -v r="$run" <<< "
   echo
   echo "first read:"; echo '```'; echo "${firstreads:-none}"; echo '```'
   echo "passes:"; echo '```'; echo "${passes:-none}"; echo '```'
+  if [ -n "$fchecks" ]; then echo; echo "## Frames (frame check lines; contact sheet: ${fsheet:-none, no screenshots} - tools/lab/frames-sheet.sh $run)"; echo; echo '```'; echo "$fchecks"; echo '```'; fi
   if [ -n "$shots" ]; then echo; echo "## Stop screenshots (per scenario; download: tools/lab/lab-shots.sh $run)"; echo; echo '```'; echo "$shots"; echo '```'; fi
 } > "$LAB_DIR/$fname"
 echo "report: $LAB_DIR/$fname"

@@ -49,6 +49,11 @@ namespace RealmForge {
     internal void Tr(string k, string v) { if (trace.Length < 1800) trace.Append(k).Append('=').Append(v).Append(' '); }
     /// <summary>The button's icon (its picture child, the label left out: Icon widgets only), client px; IW 0 = none found (the button's rect frames it).</summary>
     public double IX, IY, IW, IH; public string IconName = "";
+    /// <summary>The Image that draws the framed picture (the icon when IW &gt; 0, else the widget itself): its sprite's name ("" = not read,
+    /// <see cref="ArtWhy"/> says why) and how it is drawn (src/SpriteArt.cs).</summary>
+    public string Sprite = "", ArtWhy = ""; public SpriteArt.Draw Art;
+    /// <summary>The last ChainRect's pivot (y up), client px per local unit and flips of its last transform (the Image's drawing).</summary>
+    internal double CPivX = 0.5, CPivY = 0.5, CPx; internal bool CFlipX, CFlipY;
     public bool Ok { get { return FailStep == null; } }
     internal UiButtonInfo Fail(string step, string value) { FailStep = step; FailValue = value; return this; }
   }
@@ -70,7 +75,7 @@ namespace RealmForge {
   /// near square; a name with icon / img / image the first, then the biggest. And its frame: the icon's rect outset by FramePad px with corners
   /// rounded to its size, kept inside the client. Pure (tests/CoreTests.cs).</summary>
   public static class UiIcon {
-    public sealed class Cand { public string Name = ""; public double X, Y, W, H; public bool Active; public int Depth; }
+    public sealed class Cand { public string Name = ""; public double X, Y, W, H; public bool Active; public int Depth; internal ulong Go; internal UiButtonInfo Rect; }
     public const double FramePad = 2;
     static readonly string[] NotIcon = { "text", "txt", "label", "title", "name", "red", "dot", "num", "count", "tips", "effect", "fx", "lock", "new", "mask", "glow", "light", "arrow", "hitarea", "hit_area", "raycast" };   // (BtnHitArea: the touch area, not the picture)
     static readonly string[] IconWords = { "icon", "img", "image", "pic", "sprite" };
@@ -433,6 +438,7 @@ namespace RealmForge {
       double cx = px + sx * (0.5 - rt[n - 1][8]) * pw, cy = py + sy * (0.5 - rt[n - 1][9]) * ph;
       w = Math.Abs(sx * pw) * k2; h = Math.Abs(sy * ph) * k2;
       x = W / 2 + cx * k2 - w / 2; y = H / 2 - cy * k2 - h / 2;
+      r.CPivX = rt[n - 1][8]; r.CPivY = rt[n - 1][9]; r.CPx = Math.Abs(sx) * k2; r.CFlipX = sx < 0; r.CFlipY = sy < 0;
       return true;
     }
 
@@ -453,7 +459,7 @@ namespace RealmForge {
           var path = new List<ulong>(at); path.Add(c);
           var tmp = new UiButtonInfo(); double x, y, w, h;
           if (!ChainRect(path, canvas, W, H, U, tmp, false, out x, out y, out w, out h)) continue;
-          cands.Add(new UiIcon.Cand { Name = CStr(Ptr(go + GoName)) ?? "", X = x, Y = y, W = w, H = h, Active = ab != null && ab[0] == 1, Depth = depth + 1 });
+          cands.Add(new UiIcon.Cand { Name = CStr(Ptr(go + GoName)) ?? "", X = x, Y = y, W = w, H = h, Active = ab != null && ab[0] == 1, Depth = depth + 1, Go = go, Rect = tmp });
           todo.Add(new KeyValuePair<List<ulong>, int>(path, depth + 1));
         }
       }
@@ -463,6 +469,41 @@ namespace RealmForge {
       r.Tr("icon", k < 0 ? "none of " + cands.Count : cands[k].Name + " " + N0(cands[k].X) + "," + N0(cands[k].Y) + "," + N0(cands[k].W) + "," + N0(cands[k].H));
       if (k < 0) return;
       r.IX = cands[k].X; r.IY = cands[k].Y; r.IW = cands[k].W; r.IH = cands[k].H; r.IconName = cands[k].Name;
+      ArtInto(cands[k].Go, cands[k].Rect, r);
+    }
+
+    // ---- the Image of a picture: its sprite's name and how it draws it (src/SpriteArt.cs maps the sprite's art through the rect)
+    // native component -> its managed object (Unity 2019.4 Object: the cached scripting object 0x28), checked by class name (UnityEngine.UI.Image
+    // or the game's subclass of it); Image (dump 1.6.46.841.1): m_Sprite 0xD0, m_OverrideSprite 0xD8 (drawn when set), m_Type 0xE0,
+    // m_PreserveAspect 0xE4, m_PixelsPerUnitMultiplier 0x108; Sprite (managed) -> m_CachedPtr -> the native Sprite, NamedObject m_Name 0x30 (char*).
+    const int NativeManaged = 0x28, ImgSprite = 0xD0, ImgType = 0xE0, ImgPreserve = 0xE4, ImgPpum = 0x108, NamedName = 0x30;
+
+    /// <summary>The sprite name and drawing of the Image on GameObject <paramref name="go"/> (native) into r.Sprite / r.Art; <paramref name="rect"/>:
+    /// the ChainRect info of that object's rect (pivot, px per unit, flips). Nothing found: r.ArtWhy says why (the frame stays the rect's).</summary>
+    static void ArtInto(ulong go, UiButtonInfo rect, UiButtonInfo r) {
+      r.Sprite = ""; r.Art = null; r.ArtWhy = "";
+      if (go == 0) { r.ArtWhy = "no object"; return; }
+      var cb = Read(go + GoComps, 0x18); if (cb == null) { r.ArtWhy = "components"; return; }
+      ulong arr = BitConverter.ToUInt64(cb, 0); long cnt = BitConverter.ToInt64(cb, 0x10);
+      if (arr == 0 || cnt <= 0 || cnt > 24) { r.ArtWhy = "components " + cnt; return; }
+      for (int i = 1; i < cnt; i++) {   // (0 is the Transform)
+        ulong c = Ptr(arr + (ulong)(16 * i + 8)); if (c == 0) continue;
+        ulong m = Ptr(c + NativeManaged); if (m == 0 || Ptr(m + CachedPtr) != c) continue;   // (the managed side points back at the native one)
+        string cls = ClassName(Ptr(m)) ?? "";
+        if (!cls.EndsWith("Image", StringComparison.Ordinal) || cls.EndsWith("RawImage", StringComparison.Ordinal)) continue;
+        var b = Read(m + ImgSprite, ImgPpum + 4 - ImgSprite); if (b == null) { r.ArtWhy = "image fields"; return; }
+        ulong sp = BitConverter.ToUInt64(b, 8); if (sp == 0) sp = BitConverter.ToUInt64(b, 0);
+        if (sp == 0) { r.ArtWhy = "no sprite"; return; }
+        ulong sn = Ptr(sp + CachedPtr); string name = sn != 0 ? CStr(Ptr(sn + NamedName)) : null;
+        if (string.IsNullOrEmpty(name) || name.Length > 80) { r.ArtWhy = "sprite name"; return; }
+        foreach (char ch in name) if (ch < 32 || ch > 126) { r.ArtWhy = "sprite name"; return; }
+        int type = I32(b, ImgType - ImgSprite); float ppum = F32(b, ImgPpum - ImgSprite);
+        r.Sprite = name;
+        r.Art = new SpriteArt.Draw { Type = type >= 0 && type <= 3 ? type : 0, Preserve = b[ImgPreserve - ImgSprite] != 0, Ppum = ppum > 0.01 && ppum < 100 ? ppum : 1,
+          PivX = rect != null ? rect.CPivX : 0.5, PivY = rect != null ? rect.CPivY : 0.5, Px = rect != null ? rect.CPx : 0, FlipX = rect != null && rect.CFlipX, FlipY = rect != null && rect.CFlipY };
+        return;
+      }
+      r.ArtWhy = "no Image";
     }
 
     static void UiButtonReadInto(ulong env, ulong ui, UiWidget w, double W, double H, double U, UiButtonInfo r) {
@@ -523,6 +564,10 @@ namespace RealmForge {
       r.Tr("shown", (shown ? "form" : "form-hidden") + (active ? " active" : " inactive") + " copies " + copies);
       r.Visible = shown && active && r.W >= 1 && r.H >= 1;
       if (w.Icon && r.Visible) IconInto(chain, canvas, W, H, U, r, w.IconChild);
+      if (r.Visible && r.IW <= 0) {   // the widget's own Image draws it (no icon child): its rect's drawing is the main one
+        var me = new UiButtonInfo { CPivX = r.CPivX, CPivY = r.CPivY, CPx = r.CPx, CFlipX = r.CFlipX, CFlipY = r.CFlipY };
+        ArtInto(go, me, r);
+      }
     }
 
     static string N0(double v) { return Math.Round(v).ToString(CultureInfo.InvariantCulture); }
@@ -816,6 +861,8 @@ namespace RealmForge {
   /// <summary>One item cell the grid has made now: the item, its list index (0-based) and row column (HeroGear, 1-based), its picture's rect (client px).</summary>
   public sealed class UiCell {
     public long Uid; public int Index, Col; public double X, Y, W, H; public string Icon = ""; public bool Active;
+    /// <summary>The picture's Image: its sprite ("" = not read) and drawing (src/SpriteArt.cs); Fit = the frame UiCellState made from it (null = the rect's).</summary>
+    public string Sprite = ""; public SpriteArt.Draw Art; public SpriteArt.Fit Fit;
     /// <summary>How much of the picture lies inside the list's viewport (0..1).</summary>
     public double InView;
   }
@@ -998,6 +1045,7 @@ namespace RealmForge {
           if (!RectUnder(pic, rtr, above, canvas, W, H, U, cb, true, out x, out y, out w, out h)) continue;
           if (cb.Rotated) r.Rotated = true;
           var c = new UiCell { Uid = uid, Index = idx, Col = col, X = x, Y = y, W = w, H = h, Icon = icon, Active = TrActive(ctr) && TrActive(pic) };
+          if (icon == "c_Frame") { var ai = new UiButtonInfo(); ArtInto(Ptr(pic + CompGo), cb, ai); c.Sprite = ai.Sprite; c.Art = ai.Art; }   // (the quality frame's sprite: its visible part)
           c.InView = InViewOf(c.X, c.Y, c.W, c.H, r.VX, r.VY, r.VW, r.VH);
           r.Cells.Add(c);
         }
@@ -1031,7 +1079,9 @@ namespace RealmForge {
       if (!c.Active) { why = "cell switched off"; return UiCellSee.Hidden; }
       if (c.InView < 0.5) { why = "out of the viewport (" + Math.Round(c.InView * 100) + "% in)"; return UiCellSee.Hidden; }
       if (c.W > W * 0.5 || c.H > H * 0.5 || c.W < 4 || c.H < 4) { why = "size " + N0(c.W) + "x" + N0(c.H); return UiCellSee.Unknown; }
-      var fr = UiIcon.Frame(c.X, c.Y, c.W, c.H, W, H);
+      var art = SpriteArt.Of(c.Sprite);
+      c.Fit = art != null ? SpriteArt.FrameOf(art, c.Art, c.X, c.Y, c.W, c.H, W, H) : null;
+      var fr = c.Fit != null ? c.Fit.Frame : UiIcon.Frame(c.X, c.Y, c.W, c.H, W, H);
       double l = Math.Max(fr[0], s.VX - UiIcon.FramePad), t = Math.Max(fr[1], s.VY - UiIcon.FramePad), rr = Math.Min(fr[0] + fr[2], s.VX + s.VW + UiIcon.FramePad), b = Math.Min(fr[1] + fr[3], s.VY + s.VH + UiIcon.FramePad);
       frame = new[] { l, t, rr - l, b - t, fr[4] };
       return UiCellSee.Shown;

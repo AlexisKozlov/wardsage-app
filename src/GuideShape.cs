@@ -13,7 +13,8 @@ namespace RealmForge {
 
   /// <summary>The form of a button's visible art.</summary>
   public sealed class GeoShape {
-    public string K = "rect";        // circle | bevel | round | rect
+    public string K = "rect";        // circle | bevel | round | rect | poly
+    public double[] P;               // poly: the contour, x, y pairs as fractions of the art box (src/SpriteArt.cs)
     public double CX, CY;            // bevel: the cuts, fractions of the art's height (horizontal / vertical)
     public double R;                 // round: the corner radius, fraction of the art's height
   }
@@ -43,7 +44,9 @@ namespace RealmForge {
       if (a.W <= 0 || a.H <= 0) return pts;
       string k = shape != null ? shape.K : "rect";
       double l = a.X, t = a.Y, r = a.Right, b = a.Bottom;
-      if (k == "circle") {
+      if (k == "poly" && shape.P != null && shape.P.Length >= 6) {
+        for (int i = 0; i + 1 < shape.P.Length; i += 2) pts.Add(new GuidePt(l + shape.P[i] * a.W, t + shape.P[i + 1] * a.H));
+      } else if (k == "circle") {
         double rad = Math.Min(a.W, a.H) / 2;
         for (int i = 0; i < CircleSides; i++) {
           double ang = -Math.PI / 2 + 2 * Math.PI * i / CircleSides;
@@ -68,9 +71,31 @@ namespace RealmForge {
 
     /// <summary>The old frame along a button's shape: the outline of the art (inset applied) grown by <paramref name="margin"/> px, or null when the shape is a rectangle, missing or unknown (the old rectangle frame stays).</summary>
     public static List<GuidePt> FrameOutline(GeoRect rect, GeoShape shape, GeoInset inset, double margin) {
-      if (rect == null || shape == null || (shape.K != "circle" && shape.K != "bevel" && shape.K != "round")) return null;
+      if (rect == null || shape == null) return null;
+      if (shape.K == "poly") { var pp = Outline(rect, shape, inset); return pp.Count >= 3 ? Offset(pp, margin) : null; }
+      if (shape.K != "circle" && shape.K != "bevel" && shape.K != "round") return null;
       var pts = Outline(Grow(ArtBox(rect, inset), margin), shape, null);
       return pts.Count >= 3 ? pts : null;
+    }
+
+    /// <summary>The closed polygon moved out by <paramref name="m"/> px along each corner's bisector (the miter capped at 2 m).</summary>
+    public static List<GuidePt> Offset(List<GuidePt> p, double m) {
+      int n = p.Count; double area = 0;
+      for (int i = 0; i < n; i++) { var a = p[i]; var b = p[(i + 1) % n]; area += a.X * b.Y - b.X * a.Y; }
+      double sg = area >= 0 ? 1 : -1;   // y down: area > 0 = clockwise on the screen, the outward normal of edge (dx, dy) is (dy, -dx)
+      var res = new List<GuidePt>(n);
+      for (int i = 0; i < n; i++) {
+        var a = p[(i + n - 1) % n]; var c = p[i]; var b = p[(i + 1) % n];
+        double e1x = c.X - a.X, e1y = c.Y - a.Y, e2x = b.X - c.X, e2y = b.Y - c.Y;
+        double l1 = Math.Sqrt(e1x * e1x + e1y * e1y), l2 = Math.Sqrt(e2x * e2x + e2y * e2y);
+        double n1x = l1 > 0 ? sg * e1y / l1 : 0, n1y = l1 > 0 ? -sg * e1x / l1 : 0, n2x = l2 > 0 ? sg * e2y / l2 : 0, n2y = l2 > 0 ? -sg * e2x / l2 : 0;
+        double mx = n1x + n2x, my = n1y + n2y, ml = Math.Sqrt(mx * mx + my * my);
+        if (ml < 1e-9) { mx = n1x; my = n1y; ml = 1; }
+        mx /= ml; my /= ml;
+        double cos = mx * n1x + my * n1y, len = cos > 0.5 ? m / cos : 2 * m;
+        res.Add(new GuidePt(c.X + mx * len, c.Y + my * len));
+      }
+      return res;
     }
 
     static void Rect4(List<GuidePt> pts, double l, double t, double r, double b) {
