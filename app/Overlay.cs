@@ -1680,7 +1680,7 @@ namespace RealmForge {
       // a full-screen screen nobody knows: its back arrow top left (at most 3 presses a run, each has to change the screen)
       if ((runHero > 0 || target > 0) && v.Foreground && !v.UserBusy && UnknownBackStep(ClickOwner.Equip, screens.Current, o, cr, v.Foreground, now)) return;
       // a known screen the plan cannot start from (the Foundry, the inventory, the gem screen ...): back to the city with its arrow top left
-      if (runHero > 0 && v.Foreground && !v.UserBusy && BackStep(ClickOwner.Equip, screens.Current, ClickGate.AwayFromStart(ClickOwner.Equip, screens.Current), o, cr, v.Foreground, now)) { AutoSay("work"); return; }
+      if (runHero > 0 && v.Foreground && !v.UserBusy && BackStep(ClickOwner.Equip, screens.Current, CityFirst.NeedsCity(ArtPhase ? PilotFlow.ArtEquip : PilotFlow.Equip, screens.Current), o, cr, v.Foreground, now)) { AutoSay("work"); return; }
       if ((runHero > 0 || target > 0) && v.Foreground && !v.UserBusy && gate.UnknownStall(ClickOwner.Equip, screens.Current, now)) { AnnounceHalts(); return; }
       // first the plan's hero on the hero screen (a started plan only), then the game's filter (the item far down or
       // hidden), then the item itself
@@ -1833,7 +1833,7 @@ namespace RealmForge {
       }
       if (!front || busy) { SellSay(front ? "paused" : "background"); return; }
       // the Foundry, the gem screen, the workshop: back with the arrow top left (towards the inventory / the city)
-      if (BackStep(ClickOwner.Sell, scr, ClickGate.AwayFromStart(ClickOwner.Sell, scr), o, cr, front, now)) { SellSay("open"); return; }
+      if (BackStep(ClickOwner.Sell, scr, CityFirst.NeedsCity(PilotFlow.Sell, scr), o, cr, front, now)) { SellSay("open"); return; }
       // the hero screen (the gear screen as well): back to the city with the arrow top left
       if (scr != null && scr.Kind == ScreenKind.HeroScreen) {
         SellSay("open");
@@ -2376,16 +2376,18 @@ namespace RealmForge {
         AnnounceHalts();
         if (artPilot.Stopped) { step.Auto = "stopped"; step.AutoWhy = artPilot.Reason; return; }
         if (pre.Reason == "offer" && OfferStep(ClickOwner.Locate, scr, o, cr, gameFront, now)) return;
+        if (pre.Reason == "unknown" && UnknownBackStep(ClickOwner.Locate, scr, o, cr, gameFront, now)) { step.Auto = "work"; step.AutoWhy = ""; return; }
         if (pre.Verdict != GateVerdict.Allow) return;   // the last click's effect is awaited / the screen is not recognised yet
       }
       var req = locateReq;
+      gate.Flows[ClickOwner.Locate] = PilotFlow.LocateArtPromote;   // (its work screen, the workshop: never an Escape there)
       bool heroOpen = scr != null && scr.Kind == ScreenKind.HeroScreen;
       bool formOpen = scr != null && (scr.Kind == ScreenKind.Foundry || scr.Kind == ScreenKind.Gem);
       var view = new ArtView { NowMs = now, Foreground = gameFront, UserBusy = busy, UserClicked = uc, W = W, H = H, U = U, Step = step, Inv = inv, Ws = ws, Art = req.Art, Geometry = Geo.Current,
         HeroScreenOpen = heroOpen, OtherFormOpen = formOpen, InvDX = invDX };
       if (gameFront && !busy && ArtLocateAuto.NeedsCityButton(step, heroOpen, formOpen)) { view.CityButton = InventoryButtonSeen(o, W, H); view.InvDX = invDX; }
-      // not in the inventory yet and the Foundry / the gem screen is on top (an earlier request left it): back with its arrow first
-      if (gameFront && !busy && BackStep(ClickOwner.Locate, scr, ArtLocateAuto.NeedsCityBack(view), o, cr, gameFront, now)) { step.Auto = "work"; step.AutoWhy = ""; return; }
+      // city first: the Foundry / the gem screen (an earlier request left it) or the step's screen not on top: back with its arrow first
+      if (gameFront && !busy && BackStep(ClickOwner.Locate, scr, CityFirst.NeedsCity(PilotFlow.LocateArtPromote, scr, step.Kind, ArtLocateAuto.NeedsCityBack(view)), o, cr, gameFront, now)) { step.Auto = "work"; step.AutoWhy = ""; return; }
       var mv = artPilot.Step(view);
       if (artPilot.Trace != "") { Log.Write("art promote auto: " + artPilot.Trace); artPilot.Trace = ""; }
       string said = mv.State + "|" + mv.Why + "|" + step.Key;
@@ -2737,13 +2739,15 @@ namespace RealmForge {
     /// <summary>Back to the city, shared by every pilot: the pilot cannot go on from this known screen (<paramref name="need"/>) - the game's back
     /// arrow top left (CityBack, through the gate: no pop-up, not the city or a fight, at most ClickGate.MaxCityBacks a run, each press has to
     /// change the screen). A press that changed nothing is followed by ONE Escape key press (EscapeBack, at most ClickGate.MaxEscapes a run).
-    /// True = a press was tried this tick; false = nothing due, the pilot goes on.</summary>
+    /// True = a press was tried this tick, or one is due on this screen and the pilot waits for it (city first); false = the pilot goes on.</summary>
     bool BackStep(ClickOwner owner, ScreenState scr, bool need, W32.POINT o, W32.RECT cr, bool front, long now) {
       if (MapStep(owner, scr, o, cr, front, now)) return true;   // a pop-up over the screen (or the city) first
       if (!need) { if (scr != null && scr.Kind != ScreenKind.Unknown) gate.DropEscape(owner); return false; }
       if (!front || sending) return false;
       if (gate.EscapeDue(owner, scr, now)) { EscapeSend(owner, cr, front); AnnounceHalts(); return true; }
-      if (!gate.CityBackDue(owner, scr, now)) { AnnounceHalts(); return false; }
+      // (the screen is not the flow's: the pilot never goes on from it - it waits for the press, the screen to settle, the retry time)
+      // (a block of the press - a pop-up over the screen, the screen held - leaves the pilot its own reason: it clicks nothing past the gate)
+      if (!gate.CityBackDue(owner, scr, now)) { AnnounceHalts(); return !gate.Halted(owner) && ClickGate.CityBackBlock(scr) == ""; }
       double W = cr.R, H = cr.B, U = Ui.Unit(W, H);
       SendInside(new AutoAction { Kind = AutoKind.Click, X = hg2.BackX * U, Y = hg2.BackY * U }, o, cr, owner, ClickTarget.CityBack, front, (rq, fr) => { rq.U = U; });
       AnnounceHalts();
@@ -2976,6 +2980,7 @@ namespace RealmForge {
       if (down && !btnWasDown) userClick = true;
       btnWasDown = down;
       if (lpilot.Stopped) { step.Auto = "stopped"; step.AutoWhy = lpilot.Reason; return; }
+      gate.Flows[ClickOwner.Locate] = CityFirst.OfLocate(req.Purpose);   // (its work screen - the Foundry, the gem screen - never an Escape there)
       bool busy = down || now - lastMoveMs < 700, uc = userClick; userClick = false;
       int fp, gp; W32.GetWindowThreadProcessId(W32.GetForegroundWindow(), out fp); W32.GetWindowThreadProcessId(hwnd, out gp);
       bool gameFront = fp == gp;
@@ -3006,8 +3011,9 @@ namespace RealmForge {
         view.Row1 = locateScroll.Row1(pg, inv != null ? inv.List : null, double.NaN, U, now);   // the game's scroll (the constant is learned by the frame)
         if (double.IsNaN(view.Row1)) view.Phase = PhaseCached(pg, o, cr, U, now);                    // last resort
       }
-      // the step is the inventory's but the Foundry / the gem screen (or the workshop, outside the artifact guide) is on top: back with its arrow first
-      bool needBack = LocateAuto.NeedsCityBack(view) || (scr != null && scr.Kind == ScreenKind.ArtWorkshop && req.Purpose != "artPromote" && dstep.Kind != LocateKind.None);
+      // city first: a screen the purpose's flow does not go on from (the workshop, the gem screen for an Ascension, the Foundry for a recast), or
+      // the step is the inventory's while the Foundry / the gem screen is on top: back with its arrow first
+      bool needBack = CityFirst.NeedsCity(CityFirst.OfLocate(req.Purpose), scr, dstep.Kind, LocateAuto.NeedsCityBack(view));
       if (gameFront && !busy && BackStep(ClickOwner.Locate, scr, needBack, o, cr, gameFront, now)) { step.Auto = "work"; step.AutoWhy = ""; locateDriving = true; return; }
       if (gate.CellAgainDue.Remove(ClickOwner.Locate)) lpilot.CellAgain();   // (ClickGate.Observe: a cell click without effect, placed again once)
       // a list step on a list that still moves: the next read (the click point from a settled one)
@@ -3108,11 +3114,26 @@ namespace RealmForge {
         var pre = gate.Preflight(ClickOwner.Sell, scr, now);
         AnnounceHalts();
         if (pre.Reason == "offer" && OfferStep(ClickOwner.Sell, scr, o, cr, front, now)) return;
+        if (pre.Reason == "unknown" && UnknownBackStep(ClickOwner.Sell, scr, o, cr, front, now)) return;
         if (pre.Verdict != GateVerdict.Allow) return;
-        // the Foundry, the gem screen, the workshop: back with the arrow top left (towards the inventory)
-        if (BackStep(ClickOwner.Sell, scr, ClickGate.AwayFromStart(ClickOwner.Sell, scr), o, cr, front, now)) return;
+        // city first: the Foundry, the gem screen, the workshop ... back with the arrow top left
+        bool eqBulk = scr != null && scr.Kind == ScreenKind.Inventory && scr.InvEquipTab && scr.InvBulkKnown && scr.InvBulk;   // the equipment sale: never clicked in
+        if (BackStep(ClickOwner.Sell, scr, CityFirst.NeedsCity(PilotFlow.ArtSell, scr, LocateKind.None, eqBulk), o, cr, front, now)) return;
+        // then the normal way to the inventory: the hero screen's back arrow, the city's «Инвентарь»
+        if (scr != null && scr.Kind == ScreenKind.HeroScreen) {
+          if (now - artSellBtnAt < 2000) return;
+          artSellBtnAt = now;
+          SendInside(new AutoAction { Kind = AutoKind.Click, X = hg2.BackX * U, Y = hg2.BackY * U }, o, cr, ClickOwner.Sell, ClickTarget.HeroBack, front);
+          return;
+        }
+        if (scr != null && scr.Kind == ScreenKind.City && InventoryButtonSeen(o, W, H)) {
+          if (now - artSellBtnAt < 2500) return;
+          artSellBtnAt = now;
+          SendInside(new AutoAction { Kind = AutoKind.Click, X = W - invDX * U, Y = H - hg2.HeroesBtnDY * U }, o, cr, ClickOwner.Sell, ClickTarget.CityInventory, front);
+          return;
+        }
       }
-      if (scr == null || scr.Kind != ScreenKind.Inventory || screens.Inv == null) return;   // the player brings the Inventory up (the hint says so)
+      if (scr == null || scr.Kind != ScreenKind.Inventory || screens.Inv == null) return;   // not the city's bar (a fight, a covered city): the hint says so
       var inv = screens.Inv;
       if (!front || busy) return;
       if (!inv.ArtTab) {

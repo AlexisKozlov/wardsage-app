@@ -5130,6 +5130,20 @@ static partial class CoreTests {
     Check(!ClickGate.AwayFromStart(ClickOwner.Sell, Inv(null)) && !ClickGate.AwayFromStart(ClickOwner.Sell, City(null)) && !ClickGate.AwayFromStart(ClickOwner.Sell, Hero(null)), "city back: sell starts in the inventory / the city / with its own hero back as before");
     Check(ClickGate.AwayFromStart(ClickOwner.Sell, Foundry(null)) && ClickGate.AwayFromStart(ClickOwner.Sell, Gem(null)), "city back: sell on the Foundry / the gem screen goes back first");
     Check(!ClickGate.AwayFromStart(ClickOwner.Equip, ScreenState.Classify(In(""), 0)), "city back: an unknown screen is the unknown back's");
+    {   // the declared continuation sets (CityFirst): every flow goes on from the city; a known screen outside its set goes back first
+      Func<string, ScreenState> Ws = known => { var i = In(known); i.ArtWs = new ArtWorkshopScreen { Open = true, Tab = 1 }; return ScreenState.Classify(i, 0); };
+      var screensK = new[] { City(null), Hero(null), Inv(null), Foundry(null), Gem(null), Ws(null) };
+      var want = new Dictionary<PilotFlow, string> {   // the screens it goes on from, by kind
+        { PilotFlow.Equip, "City,HeroScreen" }, { PilotFlow.ArtEquip, "City,HeroScreen" }, { PilotFlow.Sell, "City,HeroScreen,Inventory" }, { PilotFlow.ArtSell, "City,HeroScreen,Inventory" },
+        { PilotFlow.LocateAscend, "City,HeroScreen,Inventory,Foundry" }, { PilotFlow.LocateRecast, "City,HeroScreen,Inventory,Gem" }, { PilotFlow.LocateArtPromote, "City,HeroScreen,Inventory,ArtWorkshop" } };
+      foreach (var f in CityFirst.All) foreach (var sc in screensK) {
+        bool on = ("," + want[f] + ",").Contains("," + sc.Kind + ",");
+        Check(CityFirst.NeedsCity(f, sc, LocateKind.InList) == !on, "city first: " + f + " on " + sc.Kind + (on ? " goes on" : " goes back to the city first"));
+      }
+      Check(!CityFirst.NeedsCity(PilotFlow.LocateAscend, Gem(null), LocateKind.NoItem) && !CityFirst.NeedsCity(PilotFlow.LocateRecast, ScreenState.Classify(In(""), 0), LocateKind.InList), "city first: no item to drive / an unknown screen: not this step's");
+      Check(CityFirst.NeedsCity(PilotFlow.Sell, Inv(null), LocateKind.None, true), "city first: a sub-state the flow cannot go on from goes back");
+      Check(CityFirst.OfLocate("ascend") == PilotFlow.LocateAscend && CityFirst.OfLocate("artPromote") == PilotFlow.LocateArtPromote && CityFirst.OfLocate("recast") == PilotFlow.LocateRecast && CityFirst.OfLocate("") == PilotFlow.LocateRecast, "city first: the purposes' flows");
+    }
     {   // Locate: the inventory's steps with the Foundry / the gem screen on top; never the recast's own gem steps, never the hero screen (its HeroBack)
       Func<LocateKind, bool, bool, bool> L = (k, form, hero) => LocateAuto.NeedsCityBack(new LocateView { Step = new LocateStep { Kind = k }, OtherFormOpen = form, HeroScreenOpen = hero, W = W, H = H, U = U });
       foreach (var k in new[] { LocateKind.OpenInventory, LocateKind.OpenEquipTab, LocateKind.InList }) Check(L(k, true, false), "city back: locate step " + k + " with the Foundry on top goes back");
@@ -5139,11 +5153,14 @@ static partial class CoreTests {
       var rsAsc = new RecastScreen { SublimingOpen = true, CurType = 2 };
       var recReq = new LocateRequest { Id = "r", Purpose = "recast", Item = LocItem(777, 4, 0, 0) }; recReq.Item.Quality = 8;
       var recStep = LocateGuide.Next(recReq, null, rsAsc, null, 8, 1);
-      Func<LocateStep, string, RecastScreen, bool> R = (st, pur, rs) => LocateAuto.NeedsCityBack(new LocateView { Step = st, OtherFormOpen = true, Rs = rs, Purpose = pur, W = W, H = H, U = U });
-      Check(recStep.Kind == LocateKind.OpenRecastTab && R(recStep, "recast", rsAsc), "city back: recast with the Foundry on the Ascension tab goes back (the inventory's recast path)");
-      foreach (var k in new[] { LocateKind.RecastFilter, LocateKind.RecastPick, LocateKind.RecastNotInList }) Check(R(new LocateStep { Kind = k }, "recast", rsAsc), "city back: recast step " + k + " in the Foundry goes back");
-      Check(!R(recStep, "ascend", rsAsc) && !R(new LocateStep { Kind = LocateKind.OpenAscendTab }, "recast", rsAsc), "city back: the Ascension's Foundry steps stay");
-      Check(!R(recStep, "recast", null) && !LocateAuto.NeedsCityBack(new LocateView { Step = recStep, OtherFormOpen = false, Rs = rsAsc, Purpose = "recast", W = W, H = H, U = U }), "city back: ... only with the Foundry shown");
+      // (the shared city-first table: the Foundry is not the recast's screen, CityFirst; the inventory steps under the Foundry: NeedsCityBack)
+      Func<LocateStep, string, bool, bool> R = (st, pur, shown) => CityFirst.NeedsCity(CityFirst.OfLocate(pur), shown ? ScreenState.Classify(new ScreenInputs { Offers = new List<string>(), ShownKnown = null, CityForm = false, Rs = rsAsc }, 0) : Inv(null), st.Kind,
+        LocateAuto.NeedsCityBack(new LocateView { Step = st, OtherFormOpen = shown, Rs = shown ? rsAsc : null, Purpose = pur, W = W, H = H, U = U }));
+      Check(recStep.Kind == LocateKind.OpenRecastTab && R(recStep, "recast", true), "city back: recast with the Foundry on the Ascension tab goes back (the inventory's recast path)");
+      foreach (var k in new[] { LocateKind.RecastFilter, LocateKind.RecastPick, LocateKind.RecastNotInList }) Check(R(new LocateStep { Kind = k }, "recast", true), "city back: recast step " + k + " in the Foundry goes back");
+      Check(!R(recStep, "ascend", true) && !R(new LocateStep { Kind = LocateKind.OpenAscendTab }, "ascend", true), "city back: the Ascension's Foundry steps stay");
+      Check(!R(new LocateStep { Kind = LocateKind.Done }, "recast", true) && !R(new LocateStep { Kind = LocateKind.ChoosePending }, "recast", true), "city back: a recast finished on the Foundry's recast tab stays (the player's)");
+      Check(!R(recStep, "recast", false), "city back: ... only with the Foundry shown");
     }
 
     // from the Foundry: back (-> the inventory), back (-> the city), then the normal first click
