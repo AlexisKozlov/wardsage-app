@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Drives the test-lab runs of the devices (staging). Two modes:
-#   lab-loop.sh --until-done <device> [--timeout MIN]   FOREGROUND, by hand: drives the one queued run of a device (default 60 min).
+#   lab-loop.sh --until-done <device> [--timeout MIN]   FOREGROUND, by hand: drives the one queued run of a device (default 90 min).
 #                                                       Exits 0 when the run finished (Telegram message + report file done), 1 on timeout / failure.
 #   lab-loop.sh --auto                                  ONE pass, for cron every minute (flock; exits at once when nothing is to do). For every enabled
 #                                                       device that is online (heartbeat < 3 min): game not running -> queue start_game (once per 15 min);
@@ -17,7 +17,7 @@ set -uo pipefail
 HERE=$(dirname "$(readlink -f "$0")")
 USAGE="usage: lab-loop.sh --until-done <device> [--timeout MIN]  |  lab-loop.sh --auto"
 
-dev=""; timeout_min=60; tick=10; auto=0
+dev=""; timeout_min=90; tick=10; auto=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --until-done) dev=${2:-}; shift 2 ;;
@@ -134,9 +134,14 @@ fail_scn() {   # $1 = step label, $2 = reason, $3 = table, $4 = row id
 }
 next_scn() { dset last_scn_end "$(now)"; dset scn_idx "$(( $(dget scn_idx) + 1 ))"; dset sar_ready ""; phase scenario; }
 # scenario -> table of its request
-scn_tbl() { case "$1" in equip_city) echo equip_plans ;; locate) echo item_locates ;; sell_mark|sell_after_restart) echo sell_plans ;; esac; }
+scn_tbl() { case "$1" in equip_*) echo equip_plans ;; locate*) echo item_locates ;; sell_mark|sell_after_restart) echo sell_plans ;; esac; }
 # the storage cleanup may click only these targets (src/ClickGate.cs, owner Sell); the runner (v11+) reports any other one as "never"
 SELL_OK_RE='click gate Sell: allow (HeroBack|CityInventory|InvEquipTab|InvBulkEnter|InvBulkCell|InvListDrag|OfferClose|UnknownBack|CityBack|EscapeBack|MapClose|ArtTab|ArtBulkEnter|ArtBulkCell|ArtListDrag)\b'
+# hero_grades keeps an HMAC of the game account (a server secret, never read here), not the account: the newest updated_at of the table
+# stands for the device's account (on staging only the lab's app sends grades as a rule)
+GRADES_WAIT=${LAB_GRADES_WAIT:-360}
+grades_at() { q <<< "select coalesce(extract(epoch from max(updated_at))::bigint, 0) from public.hero_grades"; }
+grades_mark() { dset ready_at "$(now)"; dset grades0 "$(grades_at)"; }
 skip_to_logs() { dset scn_idx "${#scenarios[@]}"; phase logs; }
 
 
@@ -210,7 +215,7 @@ tick() {
           step app_ready false "$(phase_age)" "$WHY"; FAILED=1; skip_to_logs
         elif [ "$SG_READY" = true ] && [ "$SG_APPOK" = true ] && [ "$SG_SEEN" -gt "${rs:-0}" ] && { [ -z "$want" ] || [ "$SG_APPVER" = "$want" ]; }; then
           step app_ready true "$(( $(now) - ${rs:-0} ))" "version ${want:-?}"
-          dset scn_idx 0; phase scenario
+          grades_mark; dset scn_idx 0; phase scenario
         elif [ "$(phase_age)" -gt "$READY_DEV" ]; then
           step app_ready false "$(phase_age)" "the app did not report ready in $(( READY_DEV / 60 )) min"
           FAILED=1; skip_to_logs
@@ -224,7 +229,7 @@ tick() {
         from public.lab_devices dv join public.game_accounts a on a.id = dv.account_id where dv.id = :'d'::uuid")
       if [ "$ok" = t ]; then
         step app_ready true "$(( $(now) - rs ))" "version ${want:-?}"
-        dset scn_idx 0; phase scenario
+        grades_mark; dset scn_idx 0; phase scenario
       elif [ "$(phase_age)" -gt 420 ]; then
         step app_ready false "$(phase_age)" "the app did not report ready in 7 min"
         FAILED=1; skip_to_logs
@@ -274,7 +279,7 @@ tick() {
     wait_scn)
       i=$(dget scn_idx); sc=${scenarios[$i]}; row=$(dget row)
       tbl=$(scn_tbl "$sc")
-      case "$sc" in equip_city) maxs=600; label="$sc (build ${build^^})" ;; sell_*) maxs=480; label="$sc" ;; *) maxs=300; label="$sc" ;; esac
+      case "$sc" in equip_city) maxs=600; label="$sc (build ${build^^})" ;; equip_*) maxs=600; label="$sc" ;; sell_*) maxs=480; label="$sc" ;; *) maxs=300; label="$sc" ;; esac
       st=$(q -v r="$row" <<< "select status || '|' || coalesce(round(extract(epoch from done_at - created_at))::int, 0) from public.$tbl where id = :'r'::uuid")
       if [ "$tbl" = sell_plans ]; then
         sa=$(dget seeded_at); devsig
@@ -307,8 +312,11 @@ tick() {
            # runner v9+: the app reached its final step (the item is selected, the last press is the player's) = Locate passed
            if [ "$tbl" = item_locates ]; then
              fin=$(dstat "coalesce(status->>'done', '')")
-             if [ "$fin" = ascend ] || [ "$fin" = ready ]; then
-               if [ "$fin" = ascend ]; then fnote="вещь выбрана в «Вознесении», осталось нажать «Вознести»"; else fnote="вещь найдена, последний шаг за игроком"; fi
+             # the final step of each purpose (runner v12+ reports art): ascend = AscendReady, recast = Done, artPromote = ArtPromote
+             case "$sc" in locate) fok='^(ascend|ready)$' ;; locate_recast) fok='^ready$' ;; locate_art) fok='^art$' ;; *) fok='^$' ;; esac
+             if [ -n "$fin" ] && [[ "$fin" =~ $fok ]]; then
+               case "$fin" in ascend) fnote="вещь выбрана в «Вознесении», осталось нажать «Вознести»" ;; art) fnote="копии выбраны в «Мастерской», осталось нажать «Продвинуть»" ;;
+                 *) [ "$sc" = locate_recast ] && fnote="вещь выбрана в «Преобразовании», осталось нажать «Улучшить»" || fnote="вещь найдена, последний шаг за игроком" ;; esac
                step "$label" true "$(( $(now) - ${sa:-0} ))" "$fnote"; next_scn; return
              fi
            fi
@@ -321,6 +329,15 @@ tick() {
            fi ;;
       esac ;;
     logs)
+      # passive check: the app sends the in-game hero grades by itself; GRADES_WAIT s after app_ready hero_grades.updated_at has moved, else a warning
+      ra=$(dget ready_at)
+      if [ -n "$ra" ] && [ -z "$(dget grades_done)" ]; then
+        [ $(( $(now) - ra )) -ge "$GRADES_WAIT" ] || return
+        g=$(grades_at)
+        if [ "${g:-0}" -gt "$(dget grades0)" ]; then step grades true "$(( g - ra ))" "оценки обновились через $(( g - ra )) с после запуска"
+        else warn grades "$(( $(now) - ra ))" "оценки героев не обновились за $(( GRADES_WAIT / 60 )) мин после запуска"; fi
+        dset grades_done 1; dset phase_at "$(now)"
+      fi
       # the test app sends its log every 2 min: wait for a batch newer than the last scenario (max 150 s), then go on
       le=$(dget last_scn_end); [ -n "$le" ] || le=$(now)
       n=$(q -v d="$DEV" -v le="$le" <<< "select count(*) from public.app_test_logs l join public.lab_devices dv on dv.account_id = l.account_id where dv.id = :'d'::uuid and l.at > to_timestamp(:'le'::bigint)")
