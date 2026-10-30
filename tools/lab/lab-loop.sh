@@ -132,7 +132,14 @@ fail_scn() {   # $1 = step label, $2 = reason, $3 = table, $4 = row id
   [ -n "$4" ] && q -v r="$4" <<< "update public.$3 set status = 'cancelled', done_at = now() where id = :'r'::uuid and status = 'pending'" >/dev/null
   step "$1" false "$(phase_age)" "$2"; FAILED=1; next_scn
 }
-next_scn() { dset last_scn_end "$(now)"; dset scn_idx "$(( $(dget scn_idx) + 1 ))"; dset sar_ready ""; phase scenario; }
+# next_scn: the scenario ended (pass, fail or skip): its request is closed at once, so the app stops guiding before the next one. The site's
+# long poll returns only pending rows, so the app drops a guide whose row is anything else (app/Overlay.cs locateReq = null); 'cancelled'
+# (not 'done': the app did not finish it, the last press is the player's). An equip plan that passed is already 'done' (the app closed it).
+next_scn() {
+  local r t; r=$(dget row); t=$(scn_tbl "${scenarios[$(dget scn_idx)]:-}")
+  [ -n "$r" ] && [ -n "$t" ] && q -v r="$r" <<< "update public.$t set status = 'cancelled', done_at = now() where id = :'r'::uuid and status = 'pending'" >/dev/null
+  dset row ""; dset last_scn_end "$(now)"; dset scn_idx "$(( $(dget scn_idx) + 1 ))"; dset sar_ready ""; phase scenario
+}
 # scenario -> table of its request
 scn_tbl() { case "$1" in equip_*) echo equip_plans ;; locate*) echo item_locates ;; sell_mark|sell_after_restart) echo sell_plans ;; esac; }
 # the storage cleanup may click only these targets (src/ClickGate.cs, owner Sell); the runner (v11+) reports any other one as "never"
