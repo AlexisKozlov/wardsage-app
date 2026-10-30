@@ -130,7 +130,8 @@ namespace RealmForge {
 
     // ---- what is left of ScreenInputs
     public static string Flags(ScreenInputs i) {
-      return "{\"city\":" + B(i.CitySeen) + ",\"cf\":" + (i.CityForm.HasValue ? B(i.CityForm.Value) : "null") + ",\"mx\":" + B(i.ModalExtra) + ",\"mxw\":" + MiniJson.Quote(i.ModalExtraWhy ?? "") + "}";
+      return "{\"city\":" + B(i.CitySeen) + ",\"cf\":" + (i.CityForm.HasValue ? B(i.CityForm.Value) : "null") + ",\"mx\":" + B(i.ModalExtra) + ",\"mxw\":" + MiniJson.Quote(i.ModalExtraWhy ?? "")
+        + (i.Screens != null ? ",\"scr\":[" + string.Join(",", i.Screens.ConvertAll(x => MiniJson.Quote(x ?? "")).ToArray()) + "]" : "") + "}";
     }
 
     /// <summary>The five slots of one read, as JSON text each.</summary>
@@ -146,7 +147,8 @@ namespace RealmForge {
     public static ScreenInputs ParseInputs(Dictionary<string, object> slots) {
       var s = new ScreenInputs { Inv = ParseInv(Get(slots, "r.inv"), Get(slots, "r.invList")), Rs = ParseRs(Get(slots, "r.rs"), Get(slots, "r.rsLists")), Hero = ParseHero(Get(slots, "r.hero")) };
       var f = O(Get(slots, "r.flags"));
-      if (f != null) { s.CitySeen = Bool(f, "city", false); s.CityForm = Get(f, "cf") is bool ? (bool?)Bool(f, "cf", false) : null; s.ModalExtra = Bool(f, "mx", false); s.ModalExtraWhy = Str(f, "mxw") ?? ""; }
+      if (f != null) { s.CitySeen = Bool(f, "city", false); s.CityForm = Get(f, "cf") is bool ? (bool?)Bool(f, "cf", false) : null; s.ModalExtra = Bool(f, "mx", false); s.ModalExtraWhy = Str(f, "mxw") ?? "";
+        var scr = Get(f, "scr") as List<object>; if (scr != null) { s.Screens = new List<string>(); foreach (var x in scr) if (x is string) s.Screens.Add((string)x); } }
       return s;
     }
 

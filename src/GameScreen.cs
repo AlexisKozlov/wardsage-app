@@ -54,6 +54,10 @@ namespace RealmForge {
     /// <summary>The shown forms a pilot's own flow opens on this screen (ScreenMap.FlowForms: the item tip the item select opens, a list's filter,
     /// a sale / ascension confirm): the screen's sub-state, never a pop-up to close; "" = none / not read.</summary>
     public string Flow = "";
+    /// <summary>The shown forms of the game's window table that are screens the app knows (ScreenState.KindOfForm), read every tick
+    /// (src/OfferScan.cs ReadShownScreens); null = the window table was not read. The screen's kind comes from these first: the readers
+    /// above only fill its details (and decide alone while the table is not read).</summary>
+    public List<string> Screens;
   }
 
   public sealed class ScreenState {
@@ -109,6 +113,11 @@ namespace RealmForge {
     public long ReadAtMs, ConfirmedAtMs, SinceMs;
     /// <summary>The reads failed this moment and the last confirmed screen is shown (at most ScreenTracker.HoldMs).</summary>
     public bool Held;
+    /// <summary>The kind came from the window table's shown forms (ScreenInputs.Screens).</summary>
+    public bool FromTable;
+    /// <summary>The window table shows this screen but its reader gave no reading of it: the kind is sure, its details are not
+    /// (Held is set too: nothing is clicked on it, the forms are searched again).</summary>
+    public bool Partial;
     // the readings the state was made of (for the host and the guide)
     public InventoryScreen Inv;
     public RecastScreen Rs;
@@ -125,7 +134,8 @@ namespace RealmForge {
     public string Brief {
       get {
         var sb = new StringBuilder(Kind.ToString());
-        switch (Kind) {
+        if (Partial) sb.Append(" details?");
+        else switch (Kind) {
           case ScreenKind.Inventory:
             if (InvArtTab) sb.Append(" artifact").Append(!InvArtBulkKnown ? " bulk?" : InvArtBulk ? " ART-BULK-SALE" : " normal");
             else sb.Append(InvEquipTab ? " equip" : " other-tab").Append(!InvBulkKnown ? " bulk?" : InvBulk ? " BULK-SALE" : " normal");
@@ -161,6 +171,39 @@ namespace RealmForge {
       return "";
     }
 
+    /// <summary>The screen a form of the window table is (Unknown = none the app reads).</summary>
+    public static ScreenKind KindOfForm(string form) {
+      switch (form) {
+        case "Form_MainCity": return ScreenKind.City;
+        case "Form_BackpackIntegration": return ScreenKind.Inventory;
+        case "Form_CharactorMain": return ScreenKind.HeroScreen;
+        case "Form_EquipSubliming": return ScreenKind.Foundry;
+        case "Form_EquipGemMain": return ScreenKind.Gem;
+        case "Form_EquipArtifactIntensify": return ScreenKind.ArtWorkshop;
+      }
+      return ScreenKind.Unknown;
+    }
+    /// <summary>Which of two screens shown at once is on top: the ones that open from another sit above it (the workshop and the Foundry /
+    /// gem screen open from the inventory or the hero's gear, those from the city). Higher = on top; Unknown is 0.</summary>
+    public static int Rank(ScreenKind k) {
+      switch (k) {
+        case ScreenKind.ArtWorkshop: return 6;
+        case ScreenKind.Foundry: return 5;
+        case ScreenKind.Gem: return 4;
+        case ScreenKind.Inventory: return 3;
+        case ScreenKind.HeroScreen: return 2;
+        case ScreenKind.City: return 1;
+      }
+      return 0;
+    }
+    /// <summary>The top screen of the window table's shown forms (Unknown = none known, or not read).</summary>
+    public static ScreenKind TopKind(IEnumerable<string> forms) {
+      var best = ScreenKind.Unknown;
+      if (forms == null) return best;
+      foreach (var f in forms) { var k = KindOfForm(f); if (Rank(k) > Rank(best)) best = k; }
+      return best;
+    }
+
     public static ScreenState Classify(ScreenInputs i, long now) {
       var s = new ScreenState { ReadAtMs = now, ConfirmedAtMs = now, SinceMs = now, Inv = i.Inv, Rs = i.Rs, HeroScr = i.Hero, ArtWs = i.ArtWs };
       var rs = i.Rs; var inv = i.Inv; var h = i.Hero; var aw = i.ArtWs;
@@ -193,6 +236,16 @@ namespace RealmForge {
         if (h.FilterOpen) { s.ModalOpen = true; s.ModalWhy = "heroFilter"; }
       } else if (i.CityForm == true || i.CitySeen) {
         s.Kind = ScreenKind.City;
+      }
+      // the window table's top screen comes first: a reader that failed (null) or still has an older form never makes it Unknown or a
+      // screen below it. A reader that reads its own screen open above the table's top keeps it (the table names a new form a tick later)
+      var tk = TopKind(i.Screens);
+      if (tk != ScreenKind.Unknown && Rank(tk) >= Rank(s.Kind)) {
+        if (tk != s.Kind) {
+          s = new ScreenState { ReadAtMs = now, ConfirmedAtMs = now, SinceMs = now, Inv = i.Inv, Rs = i.Rs, HeroScr = i.Hero, ArtWs = i.ArtWs, Kind = tk };
+          if (tk != ScreenKind.City) { s.Partial = true; s.Held = true; }   // (the city has no details to read)
+        }
+        s.FromTable = true;
       }
       // an offer pop-up sits above every screen (the game opens it on top of the city): it is THE modal
       s.OfferRead = i.Offers != null;
@@ -248,7 +301,7 @@ namespace RealmForge {
 
     public ScreenState Update(ScreenInputs raw, long now) {
       var failing = new List<string>();
-      var use = new ScreenInputs { CitySeen = raw.CitySeen, CityForm = raw.CityForm, ModalExtra = raw.ModalExtra, ModalExtraWhy = raw.ModalExtraWhy, Offers = raw.Offers, OfferTopKnown = raw.OfferTopKnown, TopUnknown = raw.TopUnknown, TopNew = raw.TopNew, ShownKnown = raw.ShownKnown, TopCity = raw.TopCity, Flow = raw.Flow };
+      var use = new ScreenInputs { Screens = raw.Screens, CitySeen = raw.CitySeen, CityForm = raw.CityForm, ModalExtra = raw.ModalExtra, ModalExtraWhy = raw.ModalExtraWhy, Offers = raw.Offers, OfferTopKnown = raw.OfferTopKnown, TopUnknown = raw.TopUnknown, TopNew = raw.TopNew, ShownKnown = raw.ShownKnown, TopCity = raw.TopCity, Flow = raw.Flow };
       long oldest = now;   // the oldest reading that stands in for a failed one
       use.Inv = Hold(raw.Inv, ref inv, ref invAt, now, "inventory", failing, ref oldest);
       use.Rs = Hold(raw.Rs, ref rs, ref rsAt, now, "foundry", failing, ref oldest);
@@ -290,7 +343,7 @@ namespace RealmForge {
       c.FoundryTab = s.FoundryTab; c.FoundryPopup = s.FoundryPopup; c.FoundrySel = s.FoundrySel; c.FoundryKey = s.FoundryKey;
       c.GemFunc = s.GemFunc; c.GemSel = s.GemSel; c.ModalOpen = s.ModalOpen; c.ModalWhy = s.ModalWhy;
       c.Offer = s.Offer; c.OfferCount = s.OfferCount; c.OfferRead = s.OfferRead; c.OfferTopKnown = s.OfferTopKnown; c.TopForm = s.TopForm; c.Top = s.Top; c.TopClass = s.TopClass; c.Flow = s.Flow;
-      c.ReadAtMs = s.ReadAtMs; c.ConfirmedAtMs = s.ConfirmedAtMs; c.SinceMs = s.SinceMs; c.Held = s.Held;
+      c.ReadAtMs = s.ReadAtMs; c.ConfirmedAtMs = s.ConfirmedAtMs; c.SinceMs = s.SinceMs; c.Held = s.Held; c.FromTable = s.FromTable; c.Partial = s.Partial;
       c.Inv = s.Inv; c.Rs = s.Rs; c.HeroScr = s.HeroScr; c.ArtWs = s.ArtWs;
       return c;
     }

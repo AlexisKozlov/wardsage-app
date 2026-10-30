@@ -69,9 +69,20 @@ static partial class CoreTests {
     // the window table is read every 2 s (and fresh when the screen changes): a form shown longer than this before a click had to be seen
     const long SeenWithinMs = 2600;
     public long Now;
+    // the window table's shown screens (ScreenInputs.Screens): read every tick, it fails far less often than the readers (its own stream: the
+    // game's stays the seeds'); SubFailP: the readers' extra failures while the table reads (live 1.6.66.397: "read failed for inventory!"
+    // with the inventory shown in the table); NoTable: the app without the window table (the readers alone decide the kind)
+    public double SubFailP; public bool NoTable; public int KindFlips; ScreenKind lastKind = ScreenKind.Unknown;
+    readonly Random tableR, subR;
+    /// <summary>The tracker's screen this tick against the game's top screen: a known screen the app called Unknown (or another one) is a flip.</summary>
+    public void NoteKind(ScreenKind k) {
+      var want = ScreenState.KindOfForm(Full);
+      if (want != ScreenKind.Unknown && k != want && lastKind == want && TopForm() == Full) KindFlips++;
+      lastKind = k;
+    }
     public SimGame(int seed, bool slow, double failP, double w = 1920, double h = 1009) {
       W = w; H = h;
-      R = new Random(seed); R2 = new Random(seed * 31 + 7); fieldR = new Random(seed ^ 0x5F17); Slow = slow; FailP = failP; U = Ui.Unit(W, H);
+      R = new Random(seed); R2 = new Random(seed * 31 + 7); fieldR = new Random(seed ^ 0x5F17); tableR = new Random(seed ^ 0x7AB1); subR = new Random(seed ^ 0x3C55); Slow = slow; FailP = failP; U = Ui.Unit(W, H);
       Hero = new FakeHeroGame(hg, W, U);
       var all = new List<long>(); for (int i = 0; i < 30; i++) all.Add(100 + i);
       Hero.All = all.ToArray(); Hero.Heroes = all.ToArray(); Hero.CityHero = 100; Hero.Tab = R.Next(2) == 0 ? 3 : 1;
@@ -188,6 +199,12 @@ static partial class CoreTests {
       if (full == SimGem && !Fail()) i.Rs = new RecastScreen { GemOpen = true, GemFunc = 0 };
       else if (full != SimFoundry && FoundryBuilt && i.Rs == null && !Fail()) i.Rs = new RecastScreen { SublimingOpen = false, CurType = -1 };
       if (full == SimWs && !Fail()) i.ArtWs = new ArtWorkshopScreen { Open = true, Tab = 1, Uid = 555 };   // another artifact's workshop
+      if (SubFailP > 0) { if (subR.NextDouble() < SubFailP) i.Inv = null; if (subR.NextDouble() < SubFailP) i.Rs = null; if (subR.NextDouble() < SubFailP) i.Hero = null; if (subR.NextDouble() < SubFailP) i.ArtWs = null; }
+      if (!NoTable && !Scan && tableR.NextDouble() >= FailP / 4) {   // (--scan: the reader before the window table)
+        i.Screens = new List<string>();
+        if (ScreenState.KindOfForm(full) != ScreenKind.Unknown) i.Screens.Add(full);
+        if ((full == SimGem || full == SimWs || full == SimFoundry) && Stack.Contains(SimInv)) i.Screens.Add(SimInv);   // (the inventory under them)
+      }
       return i;
     }
     /// <summary>The shown forms nobody knows (the window table, in no order); null = the read failed.</summary>
@@ -471,6 +488,7 @@ static partial class CoreTests {
       ReadOffersInto(inp, now);
       inp.CitySeen = inp.CityForm == true && G.CityClear;
       var st = Screens.Update(inp, now);
+      G.NoteKind(st.Kind);
       bool sw = now >= G.LostFrom && now < G.LostTo;
       Gate.SearchWait = sw;
       if (Screens.Hero != null) heroScreen = Screens.Hero;
@@ -1005,6 +1023,7 @@ static partial class CoreTests {
     }
     SimCityRebuilt(GameGeometry.Parse(GeoJson(), GeoGame));
     SimLoginChain(GameGeometry.Parse(GeoJson(), GeoGame));
+    SimTableKind(GameGeometry.Parse(GeoJson(), GeoGame));
     SimUnknownToInventory(GameGeometry.Parse(GeoJson(), GeoGame));
     Console.WriteLine("Game sim: its findings");
     StaleRowsAfterFilter();
@@ -1194,6 +1213,38 @@ static partial class CoreTests {
       string sz = (int)size[0] + "x" + (int)size[1];
       Check(fail == "" && done == runs, "sim: the city built again after the guild, " + sz + ": " + done + "/" + runs + " runs at their goal" + (fail != "" ? " - " + fail : ""));
       Check(lost > 0, "sim: the city built again, " + sz + ": a press lost while the bar came in was pressed again (" + lost + " lost)");
+    }
+  }
+
+  /// <summary>Live 1.6.66.397 on a small window (526x296): the readers failed now and then while the window table knew the forms, the screen went
+  /// City > Unknown > Inventory and the hint jumped. Every flow, a full-size and the small window, the readers failing a third of their reads:
+  /// with the window table the screen's kind never leaves the game's top screen, and every run reaches its goal (the old way, the readers alone, is printed for the comparison).</summary>
+  static void SimTableKind(GameGeometry geo) {
+    var flows = new[] { PilotFlow.Sell, PilotFlow.ArtSell, PilotFlow.LocateAscend, PilotFlow.LocateRecast, PilotFlow.LocateArtPromote, PilotFlow.Equip };
+    foreach (var size in new[] { new[] { 1920.0, 1009.0 }, new[] { 526.0, 296.0 } }) {
+      string sz = (int)size[0] + "x" + (int)size[1]; int oldDone = 0;
+      foreach (bool table in new[] { false, true }) {
+        int runs = 0, done = 0, flips = 0, screenHalts = 0; string broke = "", other = "";
+        foreach (var flow in flows) for (int i = 0; i < 4; i++) {
+          int seed = 397000 + (int)flow * 37 + i; bool slow = i % 2 == 1;
+          ReadTiming.Take();
+          var g = new SimGame(seed, slow, 0.05, size[0], size[1]); g.Geo = geo; g.SpawnP = 0; g.SubFailP = 0.3; g.NoTable = !table;
+          var oc = new Dictionary<string, int>(); var outc = new string[1];
+          string e = SimDrive(g, flow, slow, 0.05, new Random(seed), seed, false, oc, geo, null, false, null, outc);
+          runs++; flips += g.KindFlips;
+          string tag = flow + (slow ? " slow: " : " fast: ");
+          if (e != "") { if (broke == "") broke = tag + e.Split('\n')[0]; }
+          else if (outc[0] == "done") done++;
+          else {
+            if (outc[0] == "halt:screen" || outc[0] == "halt:unknown") screenHalts++;
+            if (other == "") other = tag + outc[0];
+          }
+        }
+        if (!table) { oldDone = done; Console.WriteLine("  (the old way, " + sz + ", readers only: " + done + "/" + runs + " runs at their goal, " + flips + " kind flips" + (other != "" ? "; " + other : "") + ")"); continue; }
+        Check(broke == "", "sim: failing sub-reads, " + sz + ", window table: every rule kept" + (broke != "" ? " - " + broke : ""));
+        Check(flips == 0, "sim: failing sub-reads, " + sz + ", window table: the screen's kind stays the game's top screen (" + flips + " flips)");
+        Check(screenHalts == 0 && done >= oldDone && done >= runs - 3, "sim: failing sub-reads, " + sz + ", window table: " + done + "/" + runs + " runs at their goal (the old way " + oldDone + "), no stop on a wrong or unknown screen" + (other != "" ? " (" + other + ")" : ""));
+      }
     }
   }
 
