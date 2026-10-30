@@ -641,6 +641,7 @@ namespace RealmForge {
       if (cv != null) { covered = null; gate.Halt(cv.Item1, "covered", "the click point is covered by " + cv.Item2 + ", not the game - no press"); AnnounceHalts(); }
       recB = RecInfo.Active ? new RecInfo() : null;
       RFX.LuaRootShadowTick();
+      RFX.UiButtonShadowTick();
       try { TickWork(); }
       finally {
         if (recB != null) { var b = recB; recB = null; b.Screen = screens.Current != null ? screens.Current.Brief : "-"; RecInputs(b); RecInfo.Publish(b); }
@@ -2832,6 +2833,7 @@ namespace RealmForge {
       if (req.Target == ClickTarget.CityInventory) { openClickAt = now; openClickWhat = "inventory"; }
       else if (req.Target == ClickTarget.FoundryButton) { openClickAt = now; openClickWhat = "foundry"; foundryBuiltPid = GamePid(GameWindow()); }
       else if (req.Target == ClickTarget.EquipNav && fresh != null && fresh.Kind == ScreenKind.City) { openClickAt = now; openClickWhat = "heroes"; }
+      RFX.UiButtonShadow(req.Target, req.Form, req.X, req.Y, req.W, req.H, req.U, "click");   // test build: the button's live rect logged (uibtn: ...), changes nothing
       Send(a, sx, sy, req.Owner);
       // the form this click opens was never found: its search starts with the click (a slow PC needs every second of it)
       if ((req.Target == ClickTarget.CityInventory && RFX.InvFormMissing()) || (req.Target == ClickTarget.FoundryButton && RFX.FoundryFormMissing())) RFX.RequestFormSearch("opened by the pilot's click", 0);

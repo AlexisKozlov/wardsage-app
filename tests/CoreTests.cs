@@ -807,6 +807,7 @@ static partial class CoreTests {
     LayoutTests(mock);
     KlassScanTests();
     LuaRootTests();
+    UiButtonTests();
     TestLogTests(mock);
     ScreenRecorderTests();
     RecInputsTests();
@@ -982,6 +983,108 @@ static partial class CoreTests {
       Check(nn[3] == null, "windows: 96 characters and no NUL in reach: refused");
       Eq("Ns.EndOfBuf", nn[4], "windows: a NUL at the last byte of the memory (the window cannot be read: string by string)");
     } finally { RFX.TestMemory = null; RFX.ForgetLive(); }
+  }
+
+  // ------------------------------------------------------------------ a button's live rect by name (src/UiButtons.cs)
+  static void WF(FakeLua m, ulong a, params double[] v) { for (int i = 0; i < v.Length; i++) Array.Copy(BitConverter.GetBytes((float)v[i]), 0, m.Mem, (int)(a - FakeLua.Base) + 4 * i, 4); }
+
+  /// <summary>A stand-in xLua object pool and Unity's native objects (2019.4 offsets) for the button reader.</summary>
+  sealed class FakeUnity {
+    public readonly FakeLua M; public readonly ulong Env, List; int next = 1; ulong hier, trs; int nTr;
+    public FakeUnity(FakeLua m) {
+      M = m;
+      ulong kEnv = FakeKlass(m, "XLua", "LuaEnv"), kTr = FakeKlass(m, "XLua", "ObjectTranslator"), tr = m.Alloc(0x1D0), pool = m.Alloc(0x20);
+      Env = m.Alloc(0x70); List = m.Alloc(0x20 + 16 * 64);
+      m.W64(Env, kEnv); m.W64(Env + 0x20, tr); m.W64(tr, kTr); m.W64(tr + 0xC8, pool); m.W64(pool + 0x10, List); m.W64(List + 0x18, 64);
+      hier = m.Alloc(0x30); trs = m.Alloc(48 * 32); m.W64(hier + 0x18, trs);
+    }
+    /// <summary>A GameObject with its RectTransform: anchors, anchored position, sizeDelta, pivot, local position and scale. Returns the transform.</summary>
+    public ulong Rect(ulong parent, double[] amin, double[] amax, double[] sd, double[] pv, double[] pos, double scale, out ulong go) {
+      go = M.Alloc(0x60); ulong comps = M.Alloc(16), t = M.Alloc(0xF0);
+      M.W64(go + 0x30, comps); M.W64(go + 0x40, 1); M.W64(comps + 8, t); M.Mem[go - FakeLua.Base + 0x56] = 1; M.Mem[go - FakeLua.Base + 0x57] = 1;
+      M.W64(t + 0x30, go); M.W64(t + 0x38, hier); M.W32(t + 0x40, nTr); M.W64(t + 0x90, parent);
+      ulong e = trs + (ulong)(48 * nTr++);
+      WF(M, e, pos[0], pos[1], 0); WF(M, e + 0x10, 0, 0, 0, 1); WF(M, e + 0x20, scale, scale, 1);
+      WF(M, t + 0xC8, amin[0], amin[1], amax[0], amax[1], 0, 0, sd[0], sd[1], pv[0], pv[1]);
+      return t;
+    }
+    /// <summary>A managed object of class <paramref name="ns"/>.<paramref name="cls"/> over <paramref name="native"/>, as a Lua userdata (its address).</summary>
+    public ulong Obj(string ns, string cls, ulong native, out int idx) {
+      ulong o = M.Alloc(0x20); M.W64(o, FakeKlass(M, ns, cls)); M.W64(o + 0x10, native);
+      idx = next++; M.W64(List + 0x20 + (ulong)(16 * idx) + 8, o);
+      ulong u = M.Alloc(0x30); M.Mem[u - FakeLua.Base + 8] = 7; M.W64(u + 0x18, 4); M.W32(u + 0x28, idx);
+      return u;
+    }
+    /// <summary>A component on the GameObject of transform <paramref name="t"/> (Component.m_GameObject 0x30).</summary>
+    public ulong Trs(ulong t) { return trs + (ulong)(48 * BitConverter.ToInt32(M.Mem, (int)(t + 0x40 - FakeLua.Base))); }
+    public ulong Comp(ulong t) { ulong c = M.Alloc(0x40); M.W64(c + 0x30, M.R64(t + 0x30)); return c; }
+  }
+
+  static void UiButtonTests() {
+    Console.WriteLine("A button's live rect by name (src/UiButtons.cs):");
+    var m = new FakeLua(4 << 20); RFX.TestMemory = m; RFX.ForgetLive(); RFX.ForgetClasses();
+    try {
+      var fu = new FakeUnity(m); var st = new FakeState(m);
+      double W = 1280, H = 720, U = Ui.Unit(W, H), k = U / 640, cw = W / k, ch = H / k;
+      ulong g0, gA, gB, gW;
+      var full = new[] { 0.0, 0 }; var one = new[] { 1.0, 1 }; var half = new[] { 0.5, 0.5 };
+      ulong root = fu.Rect(0, full, one, full, half, full, 1, out g0);
+      ulong a = fu.Rect(root, full, one, full, half, full, 1, out gA);
+      ulong b = fu.Rect(a, new[] { 0.0, 1 }, new[] { 0.0, 1 }, new[] { 200.0, 80 }, new[] { 0.0, 1 }, new[] { -cw / 2 + 10, ch / 2 - 5 }, 1, out gB);
+      ulong wt = fu.Rect(b, half, half, new[] { 60.0, 50 }, half, new[] { 40.0, -40 }, 1, out gW);
+      int iCs, iBtn, iBack;
+      ulong csui = fu.Obj("", "UIBase", fu.Comp(root), out iCs), btn = fu.Obj("UnityEngine.UI", "Button", fu.Comp(wt), out iBtn), back = fu.Obj("UnityEngine", "GameObject", gB, out iBack);
+      var bb = st.T("m_btnBack", 0L);
+      var hero = st.T("class", st.T("__cname", "Form_CharactorMain"), "m_LuaLogicActive", true, "m_csui", 0L, "m_ButtonBack", bb, "m_Back", 0L);
+      SetField(st, hero, "m_csui", csui, 0x47); SetField(st, bb, "m_btnBack", btn, 0x47); SetField(st, hero, "m_Back", back, 0x47);
+      var city = st.T("class", st.T("__cname", "Form_MainCity"), "m_LuaLogicActive", true);
+      var ui = st.T(1L, city, 2L, hero);
+      var wBack = RFX.UiWidgetOf(ClickTarget.HeroBack, null);
+      Func<double, double, bool> Near = (x, y) => Math.Abs(x - y) < 0.01;
+      string line; var r = RFX.UiButtonForTest(fu.Env, ui.A, wBack, 56, 51, W, H, U, out line);
+      Check(r.Ok && Near(r.X, 22.5) && Near(r.Y, 22.5) && Near(r.W, 67.5) && Near(r.H, 56.25) && r.Visible && !r.Rotated, "HeroBack: the Button's rect from the chain to the form's root: " + line);
+      Check(line.StartsWith("uibtn: Form_CharactorMain.m_ButtonBack.m_btnBack live=[22,22,68,56] layout=[56,51] diff=0px visible=T UnityEngine.UI.Button in "), "  ... the log line: " + line);
+      r = RFX.UiButtonForTest(fu.Env, ui.A, new UiWidget("Form_CharactorMain", "m_Nope", "m_Back"), 0, 0, W, H, U, out line);
+      Check(r.Ok && r.Widget == "m_Back" && Near(r.X, 11.25) && Near(r.Y, 5.625) && Near(r.W, 225) && Near(r.H, 90) && r.ClassName == "UnityEngine.GameObject", "a GameObject field, the second path (pivot top left): " + line);
+      Check(line.Contains(" outside "), "  ... a layout point outside the live rect is flagged: " + line);
+      // shown / active
+      m.Mem[gW - FakeLua.Base + 0x57] = 0;
+      Check(!RFX.UiButtonForTest(fu.Env, ui.A, wBack, 56, 51, W, H, U, out line).Visible, "inactive in the hierarchy (cached flag 0): visible=F: " + line);
+      m.Mem[gW - FakeLua.Base + 0x57] = 0xFF;
+      Check(RFX.UiButtonForTest(fu.Env, ui.A, wBack, 56, 51, W, H, U, out line).Visible, "flag not computed: every activeSelf up to the root is on: visible=T");
+      m.Mem[gA - FakeLua.Base + 0x56] = 0;
+      Check(!RFX.UiButtonForTest(fu.Env, ui.A, wBack, 56, 51, W, H, U, out line).Visible, "  ... a parent switched off: visible=F");
+      m.Mem[gA - FakeLua.Base + 0x56] = 1; m.Mem[gW - FakeLua.Base + 0x57] = 1;
+      SetField(st, hero, "m_LuaLogicActive", 0, 1);
+      Check(!RFX.UiButtonForTest(fu.Env, ui.A, wBack, 56, 51, W, H, U, out line).Visible, "the form not shown: visible=F");
+      SetField(st, hero, "m_LuaLogicActive", 1, 1);
+      // broken links: the step is named
+      Action<string, Action, Action> Broken = (step, brk, fix) => {
+        brk(); string ln; var x = RFX.UiButtonForTest(fu.Env, ui.A, wBack, 56, 51, W, H, U, out ln);
+        Check(!x.Ok && x.FailStep == step && ln.Contains(" failed at " + step + " ("), "broken " + step + ": " + ln); fix();
+      };
+      r = RFX.UiButtonForTest(fu.Env, ui.A, new UiWidget("Form_Nope", "m_Back"), 0, 0, W, H, U, out line);
+      Check(!r.Ok && r.FailStep == "form" && line == "uibtn: Form_Nope.m_Back failed at form (not in UIInstance) in " + r.Ms + " ms", "a form not in UIInstance: " + line);
+      Broken("field", () => SetField(st, bb, "m_btnBack", 5, 0x13), () => SetField(st, bb, "m_btnBack", btn, 0x47));
+      ulong slot = fu.List + 0x20 + (ulong)(16 * iBtn) + 8, obj = m.R64(slot);
+      Broken("slot widget", () => m.W64(slot, 0), () => m.W64(slot, obj));
+      Broken("m_CachedPtr widget", () => m.W64(obj + 0x10, 0), () => m.W64(obj + 0x10, fu.Comp(wt)));
+      ulong tr = m.R64(fu.Env + 0x20);
+      Broken("translator", () => m.W64(fu.Env + 0x20, fu.Env), () => m.W64(fu.Env + 0x20, tr));
+      Broken("transform widget", () => m.W64(wt + 0x30, gA), () => m.W64(wt + 0x30, gW));
+      Broken("parents", () => m.W64(a + 0x90, 0), () => m.W64(a + 0x90, root));
+      Broken("rect fields", () => WF(m, b + 0xC8, 5), () => WF(m, b + 0xC8, 0));
+      Broken("userdata widget", () => m.W64(btn + 0x18, 8), () => m.W64(btn + 0x18, 4));
+      Check(RFX.UiButtonForTest(fu.Env, ui.A, wBack, 56, 51, W, H, U, out line).Ok, "  ... all fixed again: ok: " + line);
+      // rotation flagged
+      WF(m, fu.Trs(wt) + 0x10, 0, 0, 0.38, 0.92);
+      Check(RFX.UiButtonForTest(fu.Env, ui.A, wBack, 56, 51, W, H, U, out line).Rotated && line.Contains(" rotated "), "a rotated transform is flagged: " + line);
+      // the targets by name
+      Check(RFX.UiWidgetOf(ClickTarget.CityInventory, null).Form == "Form_MainCity" && RFX.UiWidgetOf(ClickTarget.FoundryButton, null).Paths[0] == "m_PanelContentCur.m_BtnWorkShop"
+        && RFX.UiWidgetOf(ClickTarget.AscendTab, null).Paths[0] == "m_ToggleSubliming" && RFX.UiWidgetOf(ClickTarget.EquipConfirm, null).Paths.Length == 2
+        && RFX.UiWidgetOf(ClickTarget.OfferClose, "Form_X").Form == "Form_X" && RFX.UiWidgetOf(ClickTarget.OfferClose, null) == null && RFX.UiWidgetOf(ClickTarget.InvEquipTab, null) == null,
+        "the pilot targets read by name (others none)");
+    } finally { RFX.TestMemory = null; RFX.ForgetLive(); RFX.ForgetClasses(); }
   }
 
   // ------------------------------------------------------------------ the script state's tables from its root (src/LuaRoot.cs)
