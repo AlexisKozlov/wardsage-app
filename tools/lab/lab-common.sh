@@ -51,6 +51,6 @@ rec_delete() { local id; for id in "$@"; do [[ "$id" =~ $LAB_REC_RX ]] || contin
 # that old (the RecReplay fixtures are copies in the repo / ~/wardsage/work/recordings-ro, never under LAB_REC_ROOT)
 rec_prune() {
   local min=$(( ${1:-2} * 1440 )) pat='lab-*'
-  [ "${LAB_REC_PRUNE_ALL:-0}" = 1 ] && pat='*'
+  [ "${LAB_REC_PRUNE_ALL:-1}" = 1 ] && pat='*'
   sudo -n -u deploy find "$LAB_REC_ROOT" -mindepth 3 -maxdepth 3 -type d -name "$pat" -mmin +"$min" -prune -exec rm -rf -- {} + 2>/dev/null || true
 }
