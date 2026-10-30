@@ -1060,7 +1060,7 @@ static partial class CoreTests {
     }
     /// <summary>A GameObject with its RectTransform: anchors, anchored position, sizeDelta, pivot, local position and scale. Returns the transform.</summary>
     public ulong Rect(ulong parent, double[] amin, double[] amax, double[] sd, double[] pv, double[] pos, double scale, out ulong go) {
-      go = M.Alloc(0x60); ulong comps = M.Alloc(16), t = M.Alloc(0xF0);
+      go = M.Alloc(0x70); ulong comps = M.Alloc(16), t = M.Alloc(0xF0);
       M.W64(go + 0x30, comps); M.W64(go + 0x40, 1); M.W64(comps + 8, t); M.Mem[go - FakeLua.Base + 0x56] = 1; M.Mem[go - FakeLua.Base + 0x57] = 1;
       M.W64(t + 0x30, go); M.W64(t + 0x38, hier); M.W32(t + 0x40, nTr); M.W64(t + 0x90, parent);
       ulong e = trs + (ulong)(48 * nTr++);
@@ -1088,9 +1088,34 @@ static partial class CoreTests {
       return u;
     }
     public ulong Comp(ulong t) { ulong c = M.Alloc(0x40); M.W64(c + 0x30, M.R64(t + 0x30)); return c; }
+    /// <summary>GameObject.m_Name (0x60, a C string).</summary>
+    public void Name(ulong go, string n) { ulong p = M.Alloc(n.Length + 1); for (int i = 0; i < n.Length; i++) M.Mem[p - FakeLua.Base + (ulong)i] = (byte)n[i]; M.W64(go + 0x60, p); }
+    /// <summary>Transform.m_Children (0x70 data, 0x80 size).</summary>
+    public void Kids(ulong t, params ulong[] kids) { ulong a = M.Alloc(8 * kids.Length); for (int i = 0; i < kids.Length; i++) M.W64(a + (ulong)(8 * i), kids[i]); M.W64(t + 0x70, a); M.W64(t + 0x80, (ulong)kids.Length); }
+  }
+
+  /// <summary>The bar buttons' frames hug the icon (UiIcon): the picture child picked by name / shape, the label, a red dot, the backdrop left
+  /// out; the frame 2 px round the icon, inside the client, above the label.</summary>
+  static void UiIconTests() {
+    Console.WriteLine("A bar button's icon frame (src/UiButtons.cs UiIcon):");
+    double bx = 100, by = 600, bw = 80, bh = 90;
+    Func<string, double, double, double, double, UiIcon.Cand> C = (n, x, y, w, h) => new UiIcon.Cand { Name = n, X = x, Y = y, W = w, H = h, Active = true, Depth = 1 };
+    var c = new List<UiIcon.Cand> { C("Bg", 100, 600, 80, 90), C("Text_Backpack", 100, 668, 80, 20), C("Image_Backpack", 112, 604, 56, 56), C("RedDot", 160, 600, 14, 14) };
+    Check(UiIcon.Pick(c, bx, by, bw, bh) == 2, "icon: the picture is picked, not the backdrop, the label or the red dot");
+    var c2 = new List<UiIcon.Cand> { C("Text", 100, 668, 80, 20), C("Obj_1", 116, 606, 48, 48), C("Obj_2", 130, 620, 20, 20) };
+    Check(UiIcon.Pick(c2, bx, by, bw, bh) == 1, "icon: no telling name - the biggest near-square child");
+    var c3 = new List<UiIcon.Cand> { C("Image_Icon", 112, 604, 56, 56) }; c3[0].Active = false;
+    Check(UiIcon.Pick(c3, bx, by, bw, bh) == -1 && UiIcon.Pick(new List<UiIcon.Cand> { C("Image_Far", 600, 100, 56, 56) }, bx, by, bw, bh) == -1, "icon: an inactive child or one off the button is none (the button's rect frames it)");
+    Check(UiIcon.Pick(new List<UiIcon.Cand> { C("Icon_Wide", 100, 640, 80, 20) }, bx, by, bw, bh) == -1, "icon: a strip is no icon");
+    var f = UiIcon.Frame(112, 604, 56, 56, 1280, 720);
+    Check(f[0] == 110 && f[1] == 602 && f[2] == 60 && f[3] == 60 && f[4] > 0 && f[4] <= 30, "icon frame: 2 px round the icon, rounded corners to its size ([" + string.Join(",", Array.ConvertAll(f, v => v.ToString())) + "])");
+    Check(f[1] + f[3] <= 668, "icon frame: above the label (bottom " + (f[1] + f[3]) + " <= 668)");
+    var e = UiIcon.Frame(1, 700, 40, 19, 1280, 720);
+    Check(e[0] == 0 && e[1] + e[3] == 720, "icon frame: kept inside the client");
   }
 
   static void UiButtonTests() {
+    UiIconTests();
     Console.WriteLine("A button's live rect by name (src/UiButtons.cs):");
     var m = new FakeLua(4 << 20); RFX.TestMemory = m; RFX.ForgetLive(); RFX.ForgetClasses();
     try {
@@ -1115,6 +1140,24 @@ static partial class CoreTests {
       string line; var r = RFX.UiButtonForTest(fu.Env, ui.A, wBack, 56, 51, W, H, U, out line);
       Check(r.Ok && Near(r.X, 22.5) && Near(r.Y, 22.5) && Near(r.W, 67.5) && Near(r.H, 56.25) && r.Visible && !r.Rotated, "HeroBack: the Button's rect from the chain to the form's root: " + line);
       Check(line.StartsWith("uibtn: Form_CharactorMain.m_ButtonBack.m_btnBack live=[22,22,68,56] layout=[56,51] diff=0px visible=T scale=unit UnityEngine.UI.Button in "), "  ... the log line: " + line);
+      Check(r.IW == 0, "no icon looked for on a plain button");
+      {   // a bar button (Icon): its picture child, the label under it left out
+        ulong gI, gL, gD;
+        ulong ic = fu.Rect(wt, half, half, new[] { 40.0, 40 }, half, new[] { 0.0, 6 }, 1, out gI);
+        ulong lb = fu.Rect(wt, half, half, new[] { 60.0, 12 }, half, new[] { 0.0, -24 }, 1, out gL);
+        ulong dt = fu.Rect(ic, half, half, new[] { 8.0, 8 }, half, new[] { 18.0, 18 }, 1, out gD);
+        fu.Name(gI, "Image_Backpack"); fu.Name(gL, "Text_Backpack"); fu.Name(gD, "RedDot"); fu.Kids(wt, lb, ic); fu.Kids(ic, dt);
+        var wi = new UiWidget("Form_CharactorMain", "m_ButtonBack.m_btnBack") { Icon = true };
+        r = RFX.UiButtonForTest(fu.Env, ui.A, wi, 56, 51, W, H, U, out line);
+        Check(r.Ok && Near(r.X, 22.5) && Near(r.W, 67.5) && r.IconName == "Image_Backpack" && Near(r.IX, 33.75) && Near(r.IY, 21.375) && Near(r.IW, 45) && Near(r.IH, 45),
+          "icon: the bar button's picture child read live (" + r.IconName + " " + r.IX + "," + r.IY + " " + r.IW + "x" + r.IH + "), the click rect stays the button's: " + line);
+        Check(line.Contains(" icon=Image_Backpack[34,21,45,45] "), "  ... the log line names it: " + line);
+        var fr = UiIcon.Frame(r.IX, r.IY, r.IW, r.IH, W, H);
+        Check(Near(fr[0], 31.75) && Near(fr[3], 49) && fr[1] + fr[3] < 50.625 + 24 * 1.125 - 6.75, "icon: the frame hugs the picture and stays above the label");
+        fu.Kids(wt);
+        r = RFX.UiButtonForTest(fu.Env, ui.A, wi, 56, 51, W, H, U, out line);
+        Check(r.Ok && r.IW == 0, "icon: no children - none (the button's rect frames it)");
+      }
       r = RFX.UiButtonForTest(fu.Env, ui.A, new UiWidget("Form_CharactorMain", "m_Nope", "m_Back"), 0, 0, W, H, U, out line);
       Check(r.Ok && r.Widget == "m_Back" && Near(r.X, 11.25) && Near(r.Y, 5.625) && Near(r.W, 225) && Near(r.H, 90) && r.ClassName == "UnityEngine.GameObject", "a GameObject field, the second path (pivot top left): " + line);
       Check(line.Contains(" outside "), "  ... a layout point outside the live rect is flagged: " + line);
@@ -4934,14 +4977,30 @@ static partial class CoreTests {
         if (s.Kind != ScreenKind.Unknown || s.ModalOpen || s.OfferCount > 0 || !s.OfferRead) Check(!g.UnknownBackDue(o, s, 10000), "unknown back: " + o + " is never due on " + kv.Key);
       }
     }
+    // a new form's name not readable yet is tried again soon (live 1.6.66.391: once in 10 s left the screen unnamed for 9 s), then ever more seldom
+    Check(RFX.NameRetryDelay(1) <= 100 && RFX.NameRetryDelay(2) <= 200 && RFX.NameRetryDelay(3) <= 400 && RFX.NameRetryDelay(20) == 10000 && RFX.NameRetryDelay(8) <= 10000,
+      "forms: an unreadable name retried after 100, 200, 400 ms ... at most 10 s (" + RFX.NameRetryDelay(1) + ", " + RFX.NameRetryDelay(4) + ", " + RFX.NameRetryDelay(20) + ")");
+    {   // the city «Инвентарь»'s live rect: pressed once two reads at least 100 ms apart hold the same rect
+      var ls = new LiveStill(); var rc = new double[] { 1700, 900, 60, 60 };
+      Check(!ls.Note(rc, 1000) && !ls.Note(rc, 1050) && ls.Note(rc, 1100), "live still: the same rect over 100 ms is still (not before)");
+      Check(!ls.Note(new double[] { 1700, 905, 60, 60 }, 1200) && !ls.Note(new double[] { 1700, 905.5, 60, 60 }, 1250) && ls.Note(new double[] { 1700, 905, 60, 60 }, 1300), "live still: a moved rect starts again, within 1 px it is the same");
+      Check(!ls.Note(null, 1400) && !ls.Fresh && !ls.Note(rc, 1450) && ls.Fresh, "live still: no fresh rect forgets the stillness; a fresh moving one is Fresh (waited for)");
+    }
     var held = Unk("Form_Odd", ""); held.Held = true;
     Check(ClickGate.UnknownBackBlock(held) != "" && !new ClickGate().UnknownBackDue(ClickOwner.Locate, held, 10000), "unknown back: never on a screen held from a known one");
     // due only after the screen settled, not twice within a second, not in a hint run, not while a form search runs
     {
       var g = new ClickGate();
-      Check(!g.UnknownBackDue(ClickOwner.Locate, plain, ClickGate.UnknownBackSettleMs - 1), "unknown back: not before the screen settled");
-      Check(g.UnknownBackDue(ClickOwner.Locate, plain, ClickGate.UnknownBackSettleMs), "unknown back: due once it settled");
-      Check(!g.UnknownBackDue(ClickOwner.Locate, plain, ClickGate.UnknownBackSettleMs + 500), "unknown back: not again within a second");
+      // (a named top form: a short stillness; one not named yet - "id:" or none - the long one)
+      Check(ClickGate.UnknownBackSettle(plain) == ClickGate.UnknownBackNamedSettleMs && ClickGate.UnknownBackNamedSettleMs <= 500, "unknown back: a named top form settles in at most 500 ms");
+      Check(ClickGate.UnknownBackSettle(Unk("id:4242", "")) == ClickGate.UnknownBackSettleMs && ClickGate.UnknownBackSettle(Unk("Form_Odd,id:7", "")) == ClickGate.UnknownBackSettleMs
+        && ClickGate.UnknownBackSettle(Unk("", "")) == ClickGate.UnknownBackSettleMs, "unknown back: an unnamed top form waits the long settle");
+      int st = ClickGate.UnknownBackSettle(plain);
+      Check(!g.UnknownBackDue(ClickOwner.Locate, plain, st - 1), "unknown back: not before the screen settled");
+      Check(g.UnknownBackDue(ClickOwner.Locate, plain, st), "unknown back: due once it settled");
+      Check(!g.UnknownBackDue(ClickOwner.Locate, plain, st + 500), "unknown back: not again within a second");
+      var gid = new ClickGate(); var unnamed = Unk("id:4242", "");
+      Check(!gid.UnknownBackDue(ClickOwner.Locate, unnamed, ClickGate.UnknownBackSettleMs - 1) && gid.UnknownBackDue(ClickOwner.Locate, unnamed, ClickGate.UnknownBackSettleMs), "unknown back: an unnamed screen after the long settle");
       var gh = new ClickGate { NoLocateClicks = true };
       Check(!gh.UnknownBackDue(ClickOwner.Locate, plain, 10000) && gh.Check(Rq(ClickOwner.Locate), plain, 10000).Reason == "off", "unknown back: a hint run never presses");
       var gs = new ClickGate { SearchWait = true };
@@ -4965,7 +5024,7 @@ static partial class CoreTests {
       Check(!g2.Pending(ClickOwner.Sell) && !g2.Halted(ClickOwner.Sell), "unknown back: another unknown form on top is a change");
       var pf = g2.Preflight(ClickOwner.Sell, other, 10500);
       Check(pf.Verdict == GateVerdict.Wait && !g2.Halted(ClickOwner.Sell), "unknown back: the next unknown screen right after it is waited for, no own-click stop (" + pf.Reason + ")");
-      Check(!g2.UnknownBackDue(ClickOwner.Sell, other, 10500) && g2.UnknownBackDue(ClickOwner.Sell, other, 10400 + ClickGate.UnknownBackSettleMs), "unknown back: the next press once that screen settled");
+      Check(!g2.UnknownBackDue(ClickOwner.Sell, other, 10500) && g2.UnknownBackDue(ClickOwner.Sell, other, 10400 + ClickGate.UnknownBackSettle(other)), "unknown back: the next press once that screen settled");
     }
     // a press that changes nothing: "nochange"
     {

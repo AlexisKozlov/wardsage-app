@@ -25,19 +25,28 @@ namespace RealmForge {
       if (formNamesOf != uiTable) { formNames.Clear(); formNameMiss.Clear(); formNamesOf = uiTable; }
       string n;
       if (formNames.TryGetValue(key, out n)) return n;
-      int miss;
-      if (formNameMiss.TryGetValue(key, out miss) && unchecked(Environment.TickCount - miss) < NameRetryMs) return "";
+      NameMiss miss;
+      if (formNameMiss.TryGetValue(key, out miss) && unchecked(Environment.TickCount - miss.At) < NameRetryDelay(miss.N)) return "";
       if (budget <= 0) return "";
       budget--;
       string why;
       n = FormClassName(f, out why);
-      if (n != "") { formNames[key] = n; formNameMiss.Remove(key); } else formNameMiss[key] = Environment.TickCount;
+      int now = Environment.TickCount;
+      if (n != "") {
+        formNames[key] = n; formNameMiss.Remove(key);
+        if (miss != null) LL("forms: " + n + " named " + unchecked(now - miss.First) + " ms after its first unreadable try (" + miss.N + " misses)");
+      } else if (miss == null) formNameMiss[key] = new NameMiss { First = now, At = now, N = 1 };
+      else { miss.At = now; miss.N++; }
       return n;
     }
-    // a name that could not be read is tried again only after NameRetryMs: the failing ones must not take the whole budget of every call
-    // (the forms after them in the table would never be named)
-    static readonly Dictionary<long, int> formNameMiss = new Dictionary<long, int>();
-    const int NameRetryMs = 10000;
+    // a name that could not be read is tried again after NameRetryDelay: soon at first (a form the game has just built gets its class a
+    // moment later - live 1.6.66.391: one try in 10 s left a new screen unnamed for 9 s), then ever more seldom up to NameRetryMs: the
+    // failing ones must not take the whole budget of every call (the forms after them in the table would never be named)
+    sealed class NameMiss { public int First, At, N; }
+    static readonly Dictionary<long, NameMiss> formNameMiss = new Dictionary<long, NameMiss>();
+    const int NameRetryMs = 10000, NameRetryFirstMs = 100;
+    /// <summary>The wait before a form's name is tried again after <paramref name="misses"/> unreadable tries: 100, 200, 400 ... ms, at most NameRetryMs.</summary>
+    public static int NameRetryDelay(int misses) { return misses <= 0 ? 0 : misses > 7 ? NameRetryMs : Math.Min(NameRetryMs, NameRetryFirstMs << (misses - 1)); }
 
     /// <summary>The offer pop-ups shown now (their names, in the table's order); null = the window table is not known or not readable.</summary>
     public static List<string> ReadOffers() {

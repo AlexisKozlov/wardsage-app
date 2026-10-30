@@ -230,6 +230,26 @@ namespace RealmForge {
     public bool Settling { get { return seenFrom >= 0; } }
   }
 
+  /// <summary>A pilot button's live rect (uibtn) held still: two reads of the game's own rect at least GapMs apart give the same rect (within
+  /// TolPx) - the button has stopped moving (a bar coming in with its animation moves it). The city's «Инвентарь» is pressed on that at once,
+  /// without the bar's picture search (live 1.6.66.391: 18 s from the city to the press). Pure (tests/CoreTests.cs).</summary>
+  public sealed class LiveStill {
+    public const int GapMs = 100; public const double TolPx = 1.0;
+    double[] first; long firstAt;
+    /// <summary>The last Note had a fresh rect: while it moves the press waits for it (the bar's picture is no fallback then: a press into a
+    /// sliding bar is lost); without one the bar's picture decides.</summary>
+    public bool Fresh;
+    /// <summary>The fresh live rect (x, y, w, h; null = none fresh) and the time of its read: true once it has been the same for GapMs.</summary>
+    public bool Note(double[] r, long readAt) {
+      Fresh = r != null && r.Length >= 4;
+      if (!Fresh) { first = null; return false; }
+      if (first == null || !Same(first, r)) { first = (double[])r.Clone(); firstAt = readAt; return false; }
+      return readAt - firstAt >= GapMs;
+    }
+    public void Reset() { first = null; Fresh = false; }
+    static bool Same(double[] a, double[] b) { for (int i = 0; i < 4; i++) if (Math.Abs(a[i] - b[i]) > TolPx) return false; return true; }
+  }
+
   public sealed class ClickGate {
     /// <summary>How long an unreadable screen is waited for before the pilot stops.</summary>
     public const int UnknownGraceMs = ScreenTracker.HoldMs;
@@ -258,8 +278,15 @@ namespace RealmForge {
     /// <summary>The unknown-screen back press (UnknownBack): nearly every full-screen form of the game has its back arrow at the hero screen's
     /// spot top left. On a screen nobody knows (no pop-up or modal detected, no known screen's form shown, not the city, not a fight) that has
     /// lasted UnknownBackSettleMs, the pilot presses it - at most MaxUnknownBacks times a run, each press has to change the screen (else
-    /// "nochange"), and none once the screen is a known one.</summary>
-    public const int MaxUnknownBacks = 3, UnknownBackSettleMs = 3000, UnknownBackRetryMs = 1000;
+    /// "nochange"), and none once the screen is a known one. A screen whose top form is named (the window table read it) needs only
+    /// UnknownBackNamedSettleMs (live 1.6.66.391: 3 s more after the name came, for a screen the map already knew to have a back arrow).</summary>
+    public const int MaxUnknownBacks = 3, UnknownBackSettleMs = 3000, UnknownBackNamedSettleMs = 500, UnknownBackRetryMs = 1000;
+    /// <summary>The stillness an unknown screen needs before its back press: short when its top form is named, else UnknownBackSettleMs.</summary>
+    public static int UnknownBackSettle(ScreenState s) {
+      if (s == null || string.IsNullOrEmpty(s.TopForm)) return UnknownBackSettleMs;
+      foreach (var n in s.TopForm.Split(',')) if (n == "" || n.StartsWith("id:")) return UnknownBackSettleMs;
+      return UnknownBackNamedSettleMs;
+    }
     /// <summary>How far (in units of the client height) the press may lie from the back arrow's centre.</summary>
     public const double UnknownBackTol = 0.03;
     /// <summary>Back to the city (CityBack): a pilot on a known screen it cannot start from (the host says so: CityBackDue's caller) presses the
@@ -680,7 +707,7 @@ namespace RealmForge {
       if (halted.ContainsKey(o) || watches.ContainsKey(o) || SearchWait) return false;
       if ((o == ClickOwner.Sell && NoSellClicks) || (o == ClickOwner.Locate && NoLocateClicks)) return false;
       if (!Unrecognised(s) || s.ModalOpen || !string.IsNullOrEmpty(s.Flow) || !s.OfferRead || Exempt(s.TopForm) || (s.Top != "" && "DWPE".IndexOf(s.TopClass) >= 0)) return false;
-      if (now - s.SinceMs < UnknownBackSettleMs) return false;
+      if (now - s.SinceMs < UnknownBackSettle(s)) return false;
       if (UnknownBacks(o) >= MaxUnknownBacks) return false;
       long t; if (backTried.TryGetValue(o, out t) && now - t < UnknownBackRetryMs) return false;
       backTried[o] = now;

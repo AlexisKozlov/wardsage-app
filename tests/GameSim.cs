@@ -126,6 +126,13 @@ static partial class CoreTests {
     /// <summary>The form on top for the player (overlays left out).</summary>
     public string Top { get { for (int i = Stack.Count - 1; i >= 0; i--) if (ScreenMap.ClassOf(Stack[i]) != 'O') return Stack[i]; return SimCity; } }
     public bool CityClear { get { return Top == SimCity; } }
+    // the city «Инвентарь»'s live rect (uibtn; LiveButtons on): read while the city is on top; it moves while a new bar comes in (BarInMs)
+    public bool LiveButtons;
+    public double[] CityLiveRect() {
+      if (!CityClear) return null;
+      double slide = CityRebuild && Now - CityBuiltAt < BarInMs ? (BarInMs - (Now - CityBuiltAt)) * 0.05 : 0;
+      return new[] { W - 1.45 * U, H - 0.17 * U + slide, 0.11 * U, 0.11 * U };
+    }
     public void Push(string f) {
       Stack.Add(f); Say("open " + f); openAt[f] = Now;
       if (ScreenMap.ClassOf(f) == 'W') { long ms = 2000 + R.Next(8000); Later(ms, () => Remove(f)); }   // a loading / result screen goes by itself
@@ -360,7 +367,12 @@ static partial class CoreTests {
     long sellBtnAt = -100000;
     // the city bar's place as app/Overlay.cs keeps it (InventoryButtonSeen): dropped when the city is built again or «Инвентарь» changed nothing
     readonly CityBar bar = new CityBar();
-    bool CityButtonSeen() { bar.Note(G.CityInst); bar.MustSearch = false; return bar.Look(G.Full == SimCity && G.CityClear, Now); }   // (the search along the bar finds it at once here)
+    bool CityButtonSeen() {
+      if (G.LiveButtons && cityLive.Note(G.CityLiveRect(), Now)) { if (CityReadyAt < 0) CityReadyAt = Now; return true; }   // (app/Overlay.cs CityLiveStill: the live rect held still, no bar search)
+      if (G.LiveButtons && cityLive.Fresh) return false;   // (it still moves)
+      bar.Note(G.CityInst); bar.MustSearch = false; return bar.Look(G.Full == SimCity && G.CityClear, Now);   // (the search along the bar finds it at once here)
+    }
+    readonly LiveStill cityLive = new LiveStill(); public long CityReadyAt = -1, UnknownFromAt = -1;
     public string PilotState = "";
     public string HeroWhy { get { return hp.Why; } }
     public long SendingUntil;   // app/Overlay.cs Send: the cursor moves and the click take ~300 ms on their own thread; no tick reads the screens meanwhile
@@ -387,7 +399,7 @@ static partial class CoreTests {
     double W { get { return G.W; } } double H { get { return G.H; } } double U { get { return G.U; } }
 
     // ReadOffersInto (app/Overlay.cs): the forms nobody knows, read every 2 s; over a known screen the ones that came later are a pop-up
-    const int TopSettleMs = 3000, TopFlickerMs = 2000, KnownFormsMs = 60000, FreshFormsMs = 0, SettleReadMs = 500;   // (FreshFormsMs: the forms read again before every click - cheap with the window table; the pilots click faster now)
+    const int TopSettleMs = 3000, TopFlickerMs = 2000, KnownFormsMs = 60000, FreshFormsMs = 0, SettleReadMs = 500, UnknownReadMs = 250;   // (FreshFormsMs: the forms read again before every click - cheap with the window table; the pilots click faster now)
     List<string> knownForms, firstForms; long knownFormsAt, firstFormsAt;
     long topBaseAt, topLastAt, unknownFormsAt; ScreenKind topLastKind = ScreenKind.Unknown; ScreenKind topBaseKind = ScreenKind.Unknown; HashSet<string> topBase = new HashSet<string>();
     string topNewNow = "", topUnknownNow = "", topCityNow = ""; ScreenKind topNewKind = ScreenKind.Unknown; List<string> unknownForms;
@@ -398,6 +410,7 @@ static partial class CoreTests {
       formsUnread = inp.Offers == null;
       var cls = ScreenState.Classify(inp, now).Kind;
       topNewNow = ""; topUnknownNow = ""; topCityNow = ""; topFlowNow = "";
+      if (cls == ScreenKind.Unknown && formsKind != ScreenKind.Unknown) { unknownFormsAt = 0; UnknownFromAt = now; }   // just became unknown: its forms read at once
       formsKind = cls;
       if (inp.Offers == null || inp.Offers.Count == 0) {
         // the forms of the last read on the city or a known screen (before this tick's): one not in it came with the screen. A short unknown
@@ -406,7 +419,7 @@ static partial class CoreTests {
         var prevForms = knownForms != null && now - knownFormsAt <= KnownFormsMs ? knownForms : firstForms != null && now - firstFormsAt <= KnownFormsMs ? firstForms : unknownForms;
         // (every 2 s; within a known screen's settle time every SettleReadMs: a part it builds late must be read before that time ends)
         bool settling = topBaseKind != ScreenKind.Unknown && topBaseKind != ScreenKind.City && now - topBaseAt < TopSettleMs;
-        if (now - unknownFormsAt >= (settling ? SettleReadMs : 2000) || unknownFormsAt == 0) { unknownFormsAt = now; unknownForms = G.Unknown(); if (unknownForms == null) { formsUnread = true; unknownFormsAt = 0; }  else if (firstForms == null) { firstForms = unknownForms; firstFormsAt = now; } }
+        if (now - unknownFormsAt >= (settling ? SettleReadMs : cls == ScreenKind.Unknown ? UnknownReadMs : 2000) || unknownFormsAt == 0) { unknownFormsAt = now; unknownForms = G.Unknown(); if (unknownForms == null) { formsUnread = true; unknownFormsAt = 0; }  else if (firstForms == null) { firstForms = unknownForms; firstFormsAt = now; } }
         var cur = unknownForms ?? new List<string>();
         ScreenKind flowOn = cls == ScreenKind.Unknown ? topLastKind : cls;
         var flow = cur.FindAll(n => ScreenMap.IsFlow(flowOn, n));
@@ -972,6 +985,7 @@ static partial class CoreTests {
       Check(mf.Count == 0, "sim: city-first matrix, " + CityFirst.All.Length + " flows x " + SimMatrixStarts.Length + " starts: every run at its goal or a stop with its reason" + (mf.Count > 0 ? " - " + mf.Count + " failed: " + mf[0] : ""));
     }
     SimCityRebuilt(GameGeometry.Parse(GeoJson(), GeoGame));
+    SimUnknownToInventory(GameGeometry.Parse(GeoJson(), GeoGame));
     Console.WriteLine("Game sim: its findings");
     StaleRowsAfterFilter();
     TipOverSlots();
@@ -1101,8 +1115,9 @@ static partial class CoreTests {
           Check(e == "", "sim: seed " + seed + (scan ? " (scan reader)" : "") + " keeps every rule" + (e != "" ? ": " + e.Split('\n')[0] + " " + (e.Split('\n').Length > 1 ? e.Split('\n')[1].Trim() : "") : ""));
         }
       // (2032 and 228 keep their rules but no longer end done: the pilots click sooner now (the effect confirmed, the list settled) and the
-      // pop-up the game opens after a click lands before its answer - the safe stop "nochange" is right there)
-      foreach (int seed in new[] { 9, 20, 2229, 6727, 15263, 22466 }) {
+      // pop-up the game opens after a click lands before its answer - the safe stop "nochange" is right there; 9 the same since the named
+      // unknown screen's back is pressed after 500 ms: a game pop-up lands on its first sell cell's click)
+      foreach (int seed in new[] { 20, 2229, 6727, 15263, 22466 }) {
         var o1 = new Dictionary<string, int>(); SimRun(seed, false, false, o1, geo, null, false, true);
         string got = string.Join(",", new List<string>(o1.Keys).ToArray());
         Check(got.EndsWith(" done"), "sim: seed " + seed + " reaches its end (" + got + ")");
@@ -1159,6 +1174,39 @@ static partial class CoreTests {
       string sz = (int)size[0] + "x" + (int)size[1];
       Check(fail == "" && done == runs, "sim: the city built again after the guild, " + sz + ": " + done + "/" + runs + " runs at their goal" + (fail != "" ? " - " + fail : ""));
       Check(lost > 0, "sim: the city built again, " + sz + ": a press lost while the bar came in was pressed again (" + lost + " lost)");
+    }
+  }
+
+  /// <summary>Live 1.6.66.391: «Показать в игре» from another full screen took 9 s to name its top form, 3 s more to press its back arrow, 18 s
+  /// from the city to «Инвентарь». Now (the fast PC, the live rects read): the top form named within a tick, its back pressed after 500 ms, the
+  /// city's «Инвентарь» pressed on its live rect held still - the inventory open within about 1.5 s of the start; with the city built again
+  /// (its bar sliding in) the press waits for the rect to stop and is never lost.</summary>
+  static void SimUnknownToInventory(GameGeometry geo) {
+    foreach (var start in new[] { "Guild", "Arena", "Shop" }) foreach (bool rebuild in new[] { false, true }) {
+      if (rebuild && start != "Guild") continue;
+      long worst = 0, named = -1; string fail = ""; int lost = 0;
+      for (int i = 0; i < 6 && fail == ""; i++) {
+        int seed = 391000 + i * 17 + start.Length;
+        var g = new SimGame(seed, false, 0); g.Geo = geo; g.SpawnP = 0; g.LiveButtons = true; g.CityRebuild = rebuild;
+        SimStartAt(g, start, 0);
+        foreach (var f in g.Stack) g.StartForms.Add(f);
+        var h = new SimHost(g, PilotFlow.LocateAscend, 100, geo); g.OwnScreen = SimFoundry;
+        long t = 0, at = -1;
+        while (t < 20000) {
+          g.Advance(t);
+          if (t >= h.SendingUntil) { h.ReadScreens(t); h.Tick(); }
+          if (g.Full == SimInv) { at = t; break; }
+          if (g.Bad.Count > 0 || h.Gate.Halted(ClickOwner.Locate)) break;
+          t += h.Gate.AnyPending ? 50 : 100;
+        }
+        lost += g.LostPresses;
+        if (g.Bad.Count > 0) fail = g.Bad[0];
+        else if (at < 0) fail = "no inventory within 20 s (" + (h.Gate.Halted(ClickOwner.Locate) ? h.Gate.HaltReason(ClickOwner.Locate) : h.PilotState) + ")";
+        worst = Math.Max(worst, at); if (h.CityReadyAt >= 0 && named < 0) named = h.CityReadyAt;
+      }
+      long cap = rebuild ? 1500 + SimGame.BarInMs : 1500;
+      Check(fail == "" && worst <= cap && (named >= 0 || !rebuild) && lost == 0, "sim: " + start + (rebuild ? " (the city built again)" : "") + " -> city -> inventory on the fast PC within "
+        + cap + " ms: worst " + worst + " ms" + (named < 0 && rebuild ? ", the live rect never used" : "") + (lost > 0 ? ", " + lost + " presses lost" : "") + (fail != "" ? " - " + fail : ""));
     }
   }
 
