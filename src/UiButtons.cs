@@ -120,6 +120,17 @@ namespace RealmForge {
       byH = ch > 0 ? H / ch : 0;
       return cw > 0 ? W / cw : 0;
     }
+    /// <summary>The city bar button's picture (Image_Icon: the round rim with a pointed tip and side lines, 108 x 88 canvas units for
+    /// «Инвентарь») holds its round rim at these fractions of its rect: centre (0.494, 0.429), diameter 0.759 of the height
+    /// (the sprite's opaque edge fitted with a circle; 66.8 units, the same 0.785 of the 86-unit hit area measured on a live frame).</summary>
+    public const double RimCX = 0.494, RimCY = 0.429, RimD = 0.759;
+    /// <summary>The frame round a city bar button's rim from its Image_Icon's live rect (x, y, w, h): the square round the rim circle,
+    /// FramePad px out (x, y, w, h, radius = half its side), within W x H. The tip, the side lines and the label are left out.</summary>
+    public static double[] BarRimFrame(double x, double y, double w, double h, double W, double H) {
+      double cx = x + RimCX * w, cy = y + RimCY * h, r = RimD * h / 2 + FramePad;
+      double l = Math.Max(0, cx - r), t = Math.Max(0, cy - r), rr = Math.Min(W, cx + r), b = Math.Min(H, cy + r);
+      return new[] { l, t, rr - l, b - t, Math.Round(Math.Min(rr - l, b - t) / 2) };
+    }
     /// <summary>The frame round the icon (x, y, w, h, corner radius), client px, within W x H.</summary>
     public static double[] Frame(double x, double y, double w, double h, double W, double H) {
       double l = Math.Max(0, x - FramePad), t = Math.Max(0, y - FramePad), r = Math.Min(W, x + w + FramePad), b = Math.Min(H, y + h + FramePad);

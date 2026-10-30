@@ -1178,6 +1178,47 @@ static partial class CoreTests {
     Check(f[1] + f[3] <= 668, "icon frame: above the label (bottom " + (f[1] + f[3]) + " <= 668)");
     var e = UiIcon.Frame(1, 700, 40, 19, 1280, 720);
     Check(e[0] == 0 && e[1] + e[3] == 720, "icon frame: kept inside the client");
+    // the city's «Инвентарь» on the owner's 526x296 client (1.6.66.399, rec frame_0040): the live button 113,240,40,40 (centre 133,260), its
+    // Image_Icon 108 x 88 units centred on it at 296/640 px a unit = 49.95 x 40.7 px. The round rim in the frame is about x 117-148, y 241-272
+    double k = 296 / 640.0, iw = 108 * k, ih = 88 * k, ix = 133 - iw / 2, iy = 260 - ih / 2;
+    var rf = UiIcon.BarRimFrame(ix, iy, iw, ih, 526, 296);
+    string rs = "[" + string.Join(",", Array.ConvertAll(rf, v => v.ToString("0.0"))) + "]";
+    Check(Math.Abs(rf[2] - rf[3]) < 0.01 && Math.Abs(rf[2] - (66.8 * k + 2 * UiIcon.FramePad)) < 0.6 && rf[4] == Math.Round(rf[2] / 2), "city rim frame: a circle round the rim, 2 px out (" + rs + ")");
+    Check(rf[0] >= 112 && rf[0] + rf[2] <= 151 && rf[1] >= 238 && rf[1] + rf[3] <= 276, "city rim frame: inside the icon's place in frame_0040 (x 112-150, y ~240-275) " + rs);
+    Check(Math.Abs(rf[0] + rf[2] / 2 - 132.7) < 0.5 && Math.Abs(rf[1] + rf[3] / 2 - 257.1) < 0.5, "city rim frame: centred on the rim (132.7, 257.1), above the button's centre (the tip below)");
+    // the old way (the Image_Icon's frame with the hit area's inset): a bigger circle, lower, over the label «Инвентарь» (its top ~270)
+    var of = UiIcon.Frame(ix, iy, iw, ih, 526, 296);
+    var oa = GuideShape.ArtBox(new GeoRect { X = of[0], Y = of[1], W = of[2], H = of[3] }, new GeoInset { L = 0.0473, T = 0.1453, R = 0.1673, B = 0.0693 });
+    double ob = oa.CY + Math.Min(oa.W, oa.H) / 2 + 2;
+    Check(ob > rf[1] + rf[3] + 5, "city rim frame: the old frame's bottom " + ob.ToString("0") + " was well over the label, now " + (rf[1] + rf[3]).ToString("0"));
+    var tiny = UiIcon.BarRimFrame(-20, 280, 50, 40, 526, 296);
+    Check(tiny[0] == 0 && tiny[1] + tiny[3] <= 296, "city rim frame: kept inside the client");
+  }
+
+  /// <summary>The step plate scales with the game client (src/HintLayout.cs HintSize) and keeps its place while the step stays (PlateHold).</summary>
+  static void HintSizeTests() {
+    Console.WriteLine("The step plate's size and its hold (src/HintLayout.cs HintSize, PlateHold):");
+    double Us = Ui.Unit(526, 296), Ub = Ui.Unit(1920, 1080);
+    Check(HintSize.FontPx(1, false, Us) == HintSize.MinMain && HintSize.FontPx(0, false, Us) == HintSize.MinCaps && HintSize.Pad(Us) == HintSize.MinPad, "plate on 526x296: fonts and padding at the readable minimum (" + HintSize.FontPx(1, false, Us) + " px)");
+    Check(Math.Abs(HintSize.FontPx(1, false, Ub) - 0.026 * Ub) < 1e-9 && HintSize.FontPx(1, false, Ub) > 2.5 * HintSize.MinMain, "plate on 1920x1080: fonts in U (" + HintSize.FontPx(1, false, Ub).ToString("0.0") + " px)");
+    Check(HintSize.MaxWidth(526) == 210 && HintSize.MaxWidth(1920) == 768, "plate: at most 40 % of the client wide");
+    Check(HintSize.Compact(Us) && !HintSize.Compact(Ub) && !HintSize.Compact(Ui.Unit(1280, 720)), "plate: one compact line on a small client only");
+    Check(HintSize.StepShort("Показать в игре · Браслет «Ночной ужас» · шаг 1 из 6") == "1/6" && HintSize.StepShort("Show in game · Ring · step 12 of 14") == "12/14" && HintSize.StepShort("Показать в игре · Браслет") == "", "plate: the step number from the caps line");
+    Check(HintSize.CompactLine("Показать в игре · Браслет · шаг 1 из 6", "Откройте Инвентарь") == "1/6 · Откройте Инвентарь" && HintSize.CompactLine("", "Откройте") == "Откройте", "plate: the compact line is the step and the action");
+    // a fixed-width measure: 6 px a character
+    Func<string, double> m6 = t => 6.0 * t.Length;
+    string el = HintSize.Ellipsize("Программа открывает вещь сама", 100, m6);
+    Check(m6(el) <= 100 && el.EndsWith("…") && el.StartsWith("Программа"), "plate: a long line cut with «…» to the width (" + el + ")");
+    Check(HintSize.Ellipsize("Коротко", 100, m6) == "Коротко" && HintSize.Ellipsize("", 10, m6) == "", "plate: a short line stays whole");
+    // the hold: a live target jittering by a pixel keeps the layout; another step, a moved target or a new neighbour lay it out again
+    var h = new PlateHold(); int[] t0 = { 113, 240, 35, 35 };
+    Check(!h.Keep("s1", t0, null), "plate hold: nothing held at first");
+    h.Made("s1", t0, null, 1f, new[] { 160, 230 }, 'r');
+    Check(h.Keep("s1", new[] { 114, 239, 35, 36 }, null) && h.Count == 1, "plate hold: the target 1 px off - the same layout (1 layout for the step)");
+    Check(!h.Keep("s1", new[] { 120, 240, 35, 35 }, null) && !h.Keep("s2", t0, null) && !h.Keep("s1", t0, new[] { new[] { 10, 10, 20, 20 } }), "plate hold: moved, another step or a new neighbour - laid out again");
+    h.Made("s1", new[] { 120, 240, 35, 35 }, null, 1f, new[] { 167, 230 }, 'r');
+    bool fresh = h.Made("s2", t0, null, 1f, new[] { 160, 230 }, 'r');
+    Check(fresh && h.LastStep == "s1" && h.LastCount == 2 && h.Count == 1, "plate hold: a new step - the one before counted (2 layouts)");
   }
 
   /// <summary>A managed object (its class, <paramref name="size"/> bytes) put in the xLua pool, as a Lua userdata; <paramref name="obj"/> = the object.</summary>
@@ -1301,7 +1342,7 @@ static partial class CoreTests {
   }
 
   static void UiButtonTests() {
-    UiIconTests();
+    UiIconTests(); HintSizeTests();
     ScreenTopTests();
     Console.WriteLine("A button's live rect by name (src/UiButtons.cs):");
     var m = new FakeLua(4 << 20); RFX.TestMemory = m; RFX.ForgetLive(); RFX.ForgetClasses();

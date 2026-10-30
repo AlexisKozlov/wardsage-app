@@ -1373,15 +1373,30 @@ namespace RealmForge {
     // the plate's sizes tried in turn when it does not fit beside its target (the smallest is taken anyway)
     static readonly float[] PlateScales = { 1f, 0.85f, 0.72f, 0.6f };
 
-    // the plate's fonts: 0 = the caps line, 1 = the action, 2 = the next step; scaled by sc (never below 7 px)
+    // the plate's fonts: 0 = the caps line, 1 = the action, 2 = the next step; in U (src/HintLayout.cs HintSize), scaled by sc, never below the readable minimum
     static Font PlateFont(int which, Plate p, double U, float sc) {
-      double px = which == 0 ? Math.Max(10, 0.0155 * U) : which == 1 ? Math.Max(14, (p != null && p.Pill ? 0.019 : 0.026) * U) : Math.Max(11, 0.018 * U);
-      return new Font("Segoe UI", (float)Math.Max(7, px * sc), which == 2 ? FontStyle.Regular : FontStyle.Bold, GraphicsUnit.Pixel);
+      double px = HintSize.FontPx(which, p != null && p.Pill, U);
+      return new Font("Segoe UI", (float)Math.Max(HintSize.MinPx(which), px * sc), which == 2 ? FontStyle.Regular : FontStyle.Bold, GraphicsUnit.Pixel);
+    }
+    static float PlatePad(double U, float sc) { return (float)Math.Max(HintSize.MinPad, HintSize.Pad(U) * sc); }
+
+    // the plate's texts cut with «…» so that it is at most maxW px wide (0 = no limit); the plate itself is not changed
+    static Plate FitPlate(Plate p, Font fCaps, Font fMain, Font fSub, float pad, int maxW, Graphics pg) {
+      if (p == null || maxW <= 0) return p;
+      float owl = fCaps.Height * 1.5f, room = maxW - 2 * pad;
+      float arrow = p.Arrow != 0 && p.Main != "" ? fMain.Height * 0.8f + 10 : 0;
+      return new Plate {
+        Caps = p.Caps == "" ? "" : HintSize.Ellipsize(p.Caps.ToUpperInvariant(), room - owl - 6, t => pg.MeasureString(t, fCaps).Width),
+        Main = HintSize.Ellipsize(p.Main, room - arrow, t => pg.MeasureString(t, fMain).Width),
+        Sub = HintSize.Ellipsize(p.Sub, room, t => pg.MeasureString(t, fSub).Width),
+        Pill = p.Pill, Warn = p.Warn, Arrow = p.Arrow
+      };
     }
 
-    static void PlateSize(Plate p, Font fCaps, Font fMain, Font fSub, float pad, out int pw, out int ph, out float owl, out float capsH, out float mainH, out float subH) {
+    static Plate PlateSize(Plate p, Font fCaps, Font fMain, Font fSub, float pad, int maxW, out int pw, out int ph, out float owl, out float capsH, out float mainH, out float subH) {
       owl = fCaps.Height * 1.5f;
       using (var probe = new Bitmap(1, 1)) using (var pg = Graphics.FromImage(probe)) {
+        p = FitPlate(p, fCaps, fMain, fSub, pad, maxW, pg);
         float cw = p.Caps != "" ? owl + 6 + pg.MeasureString(p.Caps.ToUpperInvariant(), fCaps).Width : 0;
         float mw = p.Main != "" ? pg.MeasureString(p.Main, fMain).Width : 0, sw = p.Sub != "" ? pg.MeasureString(p.Sub, fSub).Width : 0;
         capsH = p.Caps != "" ? Math.Max(owl, fCaps.Height) : 0; mainH = p.Main != "" ? fMain.Height : 0; subH = p.Sub != "" ? fSub.Height : 0;
@@ -1389,12 +1404,16 @@ namespace RealmForge {
         pw = (int)(Math.Max(cw, Math.Max(mw, sw)) + 2 * pad);
         ph = (int)(pad * (p.Pill ? 1.0f : 2f) + capsH + mainH + subH + (capsH > 0 ? 2 : 0) + (subH > 0 ? 2 : 0));
       }
+      return p;
     }
 
-    static void MeasurePlate(Plate p, double U, float sc, out int pw, out int ph) {
-      float pad = (float)Math.Max(8 * sc, 0.012 * U * sc), owl, capsH, mainH, subH;
-      using (var a = PlateFont(0, p, U, sc)) using (var b = PlateFont(1, p, U, sc)) using (var c = PlateFont(2, p, U, sc)) PlateSize(p, a, b, c, pad, out pw, out ph, out owl, out capsH, out mainH, out subH);
+    static void MeasurePlate(Plate p, double U, float sc, int maxW, out int pw, out int ph) {
+      float pad = PlatePad(U, sc), owl, capsH, mainH, subH;
+      using (var a = PlateFont(0, p, U, sc)) using (var b = PlateFont(1, p, U, sc)) using (var c = PlateFont(2, p, U, sc)) PlateSize(p, a, b, c, pad, maxW, out pw, out ph, out owl, out capsH, out mainH, out subH);
     }
+
+    // the plate's layout per window, held while its step stays (src/HintLayout.cs PlateHold): no move or resize tick by tick
+    readonly Dictionary<GlowWindow, PlateHold> plateHold = new Dictionary<GlowWindow, PlateHold>();
 
     /// <summary>Draws one hint into <paramref name="win"/>: <paramref name="frameR"/> (screen px, null = no frame), the plate
     /// beside <paramref name="target"/>, and the scroll strip (null = none: {x, viewTop, viewBottom, dotY, b0, b1}, screen px)
@@ -1432,21 +1451,28 @@ namespace RealmForge {
       // the step's other click targets in client px (the plate keeps off them and off its own target)
       int[][] av = avoid == null ? null : Array.ConvertAll(avoid, a => a == null ? null : new[] { a[0] - sceneX, a[1] - sceneY, a[2], a[3] });
       int[] tcl = target != null ? new[] { target[0] - sceneX, target[1] - sceneY, target[2], target[3] } : null;
+      // a small game window: one short line (the step and the action); the app's window has the whole text
+      string stepId = p != null ? p.Caps + "|" + (p.Pill ? "pill" : "") + "|" + sceneW + "x" + sceneH : null;
+      if (p != null && !p.Pill && HintSize.Compact(U)) p = new Plate { Main = HintSize.CompactLine(p.Caps, p.Main != "" ? p.Main : p.Sub), Warn = p.Warn, Arrow = p.Arrow };
+      int maxW = p != null && !p.Pill ? HintSize.MaxWidth(sceneW) : 0;
+      // the layout held for this step (same target and neighbours within a few px): scale and place stay, only the text is drawn anew
+      PlateHold hold; if (!plateHold.TryGetValue(win, out hold)) plateHold[win] = hold = new PlateHold();
+      bool held = p != null && strip == null && hold.Keep(stepId, tcl, av);
       // the plate's size: full, or smaller steps until it fits beside the target without covering a button (a tiny game window)
-      float sc = 1f;
-      if (p != null && strip == null && tcl != null) {
+      float sc = held ? hold.Scale : 1f;
+      if (!held && p != null && strip == null && tcl != null) {
         foreach (float s in PlateScales) {
-          sc = s; int tw, th; MeasurePlate(p, U, s, out tw, out th);
+          sc = s; int tw, th; MeasurePlate(p, U, s, maxW, out tw, out th);
           char sd; if (HintLayout.TryPlace(tcl, av, tw, th, sceneW, sceneH, out sd) != null) break;
         }
       }
-      float pad = (float)Math.Max(8 * sc, 0.012 * U * sc);
+      float pad = PlatePad(U, sc);
       using (var fCaps = PlateFont(0, p, U, sc))
       using (var fMain = PlateFont(1, p, U, sc))
       using (var fSub = PlateFont(2, p, U, sc)) {
         // the plate's size
         int pw = 0, ph = 0; float owl = fCaps.Height * 1.5f, capsH = 0, mainH = 0, subH = 0;
-        if (p != null) PlateSize(p, fCaps, fMain, fSub, pad, out pw, out ph, out owl, out capsH, out mainH, out subH);
+        if (p != null) p = PlateSize(p, fCaps, fMain, fSub, pad, maxW, out pw, out ph, out owl, out capsH, out mainH, out subH);
         // where the plate goes (client px), and the pointer toward the target
         int[] pos = null; char side = 'r'; double[] ptr = null;
         if (p != null) {
@@ -1457,11 +1483,14 @@ namespace RealmForge {
             pos = new[] { px, Math.Max(HintLayout.Margin, Math.Min(sceneH - ph - HintLayout.Margin, py)) };
           } else {
             var tc = target != null ? new[] { target[0] - sceneX, target[1] - sceneY, target[2], target[3] } : new[] { sceneW / 2, (int)(0.3 * sceneH), 0, 0 };
-            if (target == null) pos = HintLayout.TopPlateFree(pw, ph, sceneW, sceneH, U, av);   // no target: top centre (off the step's buttons)
-            else {
-              pos = HintLayout.Place(tc, av, pw, ph, sceneW, sceneH, out side);
-              if (frameR != null || tc[2] > 0) ptr = HintLayout.Pointer(pos, pw, ph, side, tc, Math.Max(7, 0.01 * U));
-            }
+            if (held) { pos = new[] { hold.Pos[0], hold.Pos[1] }; side = hold.Side; }
+            else if (target == null) pos = HintLayout.TopPlateFree(pw, ph, sceneW, sceneH, U, av);   // no target: top centre (off the step's buttons)
+            else pos = HintLayout.Place(tc, av, pw, ph, sceneW, sceneH, out side);
+            // the text grew on a held place: kept inside the window
+            pos[0] = Math.Max(HintLayout.Margin, Math.Min(sceneW - pw - HintLayout.Margin, pos[0])); pos[1] = Math.Max(HintLayout.Margin, Math.Min(sceneH - ph - HintLayout.Margin, pos[1]));
+            if (target != null && (frameR != null || tc[2] > 0)) ptr = HintLayout.Pointer(pos, pw, ph, side, tc, Math.Max(7, 0.01 * U));
+            if (!held && hold.Made(stepId, tcl, av, sc, new[] { pos[0], pos[1] }, side) && hold.LastStep != null)
+              Log.Write("hint layouts: " + hold.LastCount + " for step «" + hold.LastStep + "»");   // 1 = laid out once, never moved
           }
         }
         // the bitmap covers everything: the frame with its glow, the plate, the strip
@@ -3702,12 +3731,14 @@ namespace RealmForge {
     // the city's «Инвентарь» button in the bottom bar (where the auto mode clicks): its frame (client px -> screen px), seen by its
     // picture (looked at most every 0.4 s); false = the city bar is not on the screen
     long cityInvAt; bool cityInvSeen;
+    bool cityBtnLive;   // the last CityInventoryButton rect is the live one (its icon's frame, 2 px out), not the layout's hit area
     bool CityInventoryButton(W32.POINT o, double W, double H, double U, out int[] r) {
       long now = NowMs();
       if (now - cityInvAt >= 400) { cityInvAt = now; cityInvSeen = InventoryButtonSeen(o, W, H); }
       var cb = LocateFrames.CityButton(Geo.Current, W, H, U, invDX, hg2.HeroesBtnDY);   // the bar's button size from the geometry (else the estimate)
       r = new[] { o.X + cb[0], o.Y + cb[1], cb[2], cb[3] };
       var lv = LiveFrame(ClickTarget.CityInventory, null, W, H, U, true, new double[] { cb[0], cb[1], cb[2], cb[3] });   // where the game has put it (live rect, fresh; its icon, the label left out) wins
+      cityBtnLive = lv != null;
       if (lv != null) { r = new[] { o.X + (int)Math.Round(lv[0]), o.Y + (int)Math.Round(lv[1]), (int)Math.Round(lv[2]), (int)Math.Round(lv[3]) }; return true; }
       return cityInvSeen;
     }
@@ -3722,7 +3753,9 @@ namespace RealmForge {
       double x, y; string why; var sc = screens.Current;
       bool ok = RFX.UiLivePoint(r, W, H, now, out x, out y, out why), top = RFX.UiTopIs(t, form, sc);
       // the picture of the button (its icon, or a wide button's visual child), 2 px round it; none found: its rect, 2 px round it as well
-      double[] f = ok && top ? (icon && r.IW > 0 ? UiIcon.Frame(r.IX, r.IY, r.IW, r.IH, W, H) : UiIcon.Frame(r.X, r.Y, r.W, r.H, W, H)) : null;
+      // (the city bar's «Инвентарь»: its Image_Icon also draws a tip and side lines: the frame hugs the round rim inside it)
+      bool rim = t == ClickTarget.CityInventory && r != null && r.IW > 0 && r.IconName == "Image_Icon";
+      double[] f = ok && top ? (rim ? UiIcon.BarRimFrame(r.IX, r.IY, r.IW, r.IH, W, H) : icon && r.IW > 0 ? UiIcon.Frame(r.IX, r.IY, r.IW, r.IH, W, H) : UiIcon.Frame(r.X, r.Y, r.W, r.H, W, H)) : null;
       // one source per button (FrameStick): a missing or old read, a held screen keep the last live frame for 1.5 s; a fresh read that says the
       // button is hidden, or another form named on top, drop it at once
       bool gone = (r != null && why == "not visible") || (!top && sc != null && !sc.Held);
@@ -4011,6 +4044,8 @@ namespace RealmForge {
     // the city bar's «Инвентарь» (screen px rect): its geometry shape for the old frame
     Hl HlCity(int[] r) {
       var g = Geo.Current;
+      // the live frame is the rim's own square already (2 px out): the outline is that circle, no inset (the inset is of the hit area)
+      if (cityBtnLive) { double p = UiIcon.FramePad; return new Hl { Rect = new GeoRect { X = r[0] + p, Y = r[1] + p, W = r[2] - 2 * p, H = r[3] - 2 * p }, Shape = new GeoShape { K = "circle" } }; }
       return new Hl { Rect = new GeoRect { X = r[0], Y = r[1], W = r[2], H = r[3] }, Shape = g != null ? g.Shape("city.barButton") : null, Inset = g != null ? g.Inset("city.barButton") : null };
     }
 

@@ -165,4 +165,72 @@ namespace RealmForge {
       return Key != null;
     }
   }
+
+  /// <summary>The step plate's size against the game client (U: the client's UI unit, its height on 16:9): fonts and padding
+  /// in U with a readable minimum, at most <see cref="MaxWidthFrac"/> of the client wide (longer texts are cut with «…»); a small
+  /// client (U below <see cref="CompactBelowU"/>) gets one short line, the step number and the action (the app's window has the
+  /// whole text). Pure (tests/CoreTests.cs).</summary>
+  public static class HintSize {
+    public const double MaxWidthFrac = 0.4, CompactBelowU = 420;
+    public const double MinCaps = 8, MinMain = 10, MinSub = 9, MinPad = 5;
+    /// <summary>The font size in px: 0 = the caps line, 1 = the action (a pill's is smaller), 2 = the next step.</summary>
+    public static double FontPx(int which, bool pill, double U) {
+      return which == 0 ? Math.Max(MinCaps, 0.0155 * U) : which == 1 ? Math.Max(MinMain, (pill ? 0.019 : 0.026) * U) : Math.Max(MinSub, 0.018 * U);
+    }
+    public static double MinPx(int which) { return which == 0 ? MinCaps : which == 1 ? MinMain : MinSub; }
+    public static double Pad(double U) { return Math.Max(MinPad, 0.012 * U); }
+    public static int MaxWidth(double W) { return (int)Math.Max(100, MaxWidthFrac * W); }
+    public static bool Compact(double U) { return U < CompactBelowU; }
+    /// <summary>"N/M" from a caps line that ends with its step numbers («… · шаг 1 из 6», «… · step 1 of 6»); "" when it has none.</summary>
+    public static string StepShort(string caps) {
+      var m = System.Text.RegularExpressions.Regex.Match(caps ?? "", @"(\d+)\D{1,8}?(\d+)\s*$");
+      return m.Success ? m.Groups[1].Value + "/" + m.Groups[2].Value : "";
+    }
+    /// <summary>The compact plate's one line: the step number and the action.</summary>
+    public static string CompactLine(string caps, string main) {
+      string n = StepShort(caps); main = main ?? "";
+      return n == "" ? main : main == "" ? n : n + " · " + main;
+    }
+    /// <summary><paramref name="s"/> cut to at most <paramref name="maxW"/> px wide (by <paramref name="measure"/>) with «…» at the end.</summary>
+    public static string Ellipsize(string s, double maxW, Func<string, double> measure) {
+      if (string.IsNullOrEmpty(s) || measure(s) <= maxW) return s ?? "";
+      int lo = 0, hi = s.Length - 1;
+      while (lo < hi) { int mid = (lo + hi + 1) / 2; if (measure(s.Substring(0, mid).TrimEnd() + "…") <= maxW) lo = mid; else hi = mid - 1; }
+      return lo == 0 ? "…" : s.Substring(0, lo).TrimEnd() + "…";
+    }
+    /// <summary>Two target / avoid rect lists the same within <paramref name="tol"/> px each (a live rect that jitters by a pixel is the same place).</summary>
+    public static bool SameRects(int[][] a, int[][] b, int tol) {
+      int na = a == null ? 0 : a.Length, nb = b == null ? 0 : b.Length;
+      if (na != nb) return false;
+      for (int i = 0; i < na; i++) if (!SameRect(a[i], b[i], tol)) return false;
+      return true;
+    }
+    public static bool SameRect(int[] a, int[] b, int tol) {
+      if (a == null || b == null) return a == b;
+      if (a.Length != b.Length) return false;
+      for (int i = 0; i < a.Length; i++) if (Math.Abs(a[i] - b[i]) > tol) return false;
+      return true;
+    }
+  }
+
+  /// <summary>One plate layout per step: while the step (its id), the client size, the target and the step's other targets stay
+  /// (within <see cref="Tol"/> px), the plate keeps its scale and place; only its text is redrawn. Counts the layouts of the step
+  /// (1 = it never moved). Pure (tests/CoreTests.cs).</summary>
+  public sealed class PlateHold {
+    public const int Tol = 3;
+    public string Step; public int[] Target; public int[][] Avoid; public float Scale = 1f; public int[] Pos; public char Side = 'r';
+    /// <summary>The layouts made for the current step; <see cref="LastStep"/> / <see cref="LastCount"/>: the step before and its count.</summary>
+    public int Count; public string LastStep; public int LastCount;
+    /// <summary>True = keep the held layout (Scale, Pos, Side).</summary>
+    public bool Keep(string step, int[] target, int[][] avoid) {
+      return Pos != null && step == Step && HintSize.SameRect(target, Target, Tol) && HintSize.SameRects(avoid, Avoid, Tol);
+    }
+    /// <summary>A new layout made: held for the step; true = a new step began (LastStep / LastCount say how the one before went).</summary>
+    public bool Made(string step, int[] target, int[][] avoid, float scale, int[] pos, char side) {
+      bool fresh = step != Step;
+      if (fresh) { LastStep = Step; LastCount = Count; Count = 0; }
+      Step = step; Target = target; Avoid = avoid; Scale = scale; Pos = pos; Side = side; Count++;
+      return fresh;
+    }
+  }
 }
