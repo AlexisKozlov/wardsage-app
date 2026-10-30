@@ -250,6 +250,14 @@ tick() {
         done\|*) step "$label" true "${st#*|}" ""; dset last_scn_end "$(now)"; dset scn_idx "$((i + 1))"; phase scenario ;;
         cancelled\|*) step "$label" false "$(phase_age)" "the request was cancelled"; FAILED=1; dset last_scn_end "$(now)"; skip_to_logs ;;
         *) sa=$(dget seeded_at); ma=$(dget mark_at); [ -n "$ma" ] || ma=$sa
+           # runner v9+: the app reached its final step (the item is selected, the last press is the player's) = Locate passed
+           if [ "$tbl" = item_locates ]; then
+             fin=$(dstat "coalesce(status->>'done', '')")
+             if [ -n "$fin" ] && [ "$fin" != equip ]; then
+               if [ "$fin" = ascend ]; then fnote="вещь выбрана в «Вознесении», осталось нажать «Вознести»"; else fnote="вещь найдена, последний шаг за игроком"; fi
+               step "$label" true "$(( $(now) - ${sa:-0} ))" "$fnote"; dset last_scn_end "$(now)"; dset scn_idx "$((i + 1))"; phase scenario; return
+             fi
+           fi
            dev_watch "${ma:-0}" "${sa:-0}" "$NOPROG_DEV" pilot; w=$?
            if [ "$w" = 9 ]; then watch_logs "${sa:-0}" "${sa:-0}"; w=$?; fi   # old runner
            if [ "$w" = 0 ]; then

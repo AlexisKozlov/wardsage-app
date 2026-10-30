@@ -23,7 +23,7 @@ Set-StrictMode -Version 2
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$RunnerVersion   = '8'
+$RunnerVersion   = '9'
 $Dir             = Join-Path $env:LOCALAPPDATA 'WardsageLab'
 $StopFile        = Join-Path $Dir 'STOP'
 $LogFile         = Join-Path $Dir 'runner.log'
@@ -151,7 +151,7 @@ function Get-Status {
         runner = $RunnerVersion; game_running = $game; app_running = ($apps.Count -gt 0)
         app_version = (Get-AppVersion); busy = $script:Busy; up_min = [int]((Get-Date) - $script:Started).TotalMinutes
         log_at = $script:LogAt; log_lines = $script:LogCount; ready = $script:LogReady
-        stop = $script:LogStop; stop_at = $script:LogStopAt; pilot_at = $script:PilotAt
+        stop = $script:LogStop; stop_at = $script:LogStopAt; pilot_at = $script:PilotAt; done = $script:LogFin
     }
 }
 function ConvertTo-StatusJson($st) {
@@ -458,7 +458,9 @@ $StopRe  = 'auto click stopped|click gate .*: STOP|auto: (failed|slot_failed|unc
 $ReadyRe = 'Player of the live tables: [0-9]+'
 $PilotRe = 'ui: step (?!stands still)|ui: guide |click gate .*: (allow |.* took effect)|locate auto:|live: hero|sell:|hero: plan|art (equip|promote) auto:|offer: closed'
 function Get-EpochNow { return [int64][DateTimeOffset]::UtcNow.ToUnixTimeSeconds() }
+$FinRe = 'locate auto: hint \(\w+\) at step (ascendReady|done)\b|locate decision: (AscendReady|Done)\b|ui: guide .* done'
 function Reset-LogMarks {
+    $script:LogFin = ''
     $script:LogReady = $false; $script:LogDone = $false; $script:LogSendOk = $false
     $script:LogStop = ''; $script:LogStopAt = [int64]0; $script:PilotAt = [int64]0
 }
@@ -498,6 +500,7 @@ function Update-LogWatch {
                 $script:LogStop = $t; $script:LogStopAt = $now
             }
             if ($line -cmatch $ReadyRe) { $script:LogReady = $true }
+            if ($line -cmatch $FinRe) { $script:LogFin = $(if ($line -cmatch 'ascendReady|AscendReady') { 'ascend' } elseif ($line -cmatch 'ui: guide') { 'equip' } else { 'ready' }) }
             if ($line -cmatch $PilotRe) { $script:PilotAt = $now }
             if ($line -cmatch 'Done in') { $script:LogDone = $true }
             if ($line -cmatch 'send: Ok') { $script:LogSendOk = $true }
