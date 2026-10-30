@@ -250,7 +250,7 @@ tick() {
       if [ "$i" -ge "${#scenarios[@]}" ]; then phase logs; return; fi
       sc=${scenarios[$i]}
       mkjob game_front >/dev/null || true   # the game window to the front before each scenario
-      dset mark_at "$(now)"; mkjob mark >/dev/null || true   # the runner forgets the old stop / ready markers
+      dset mark_at "$(now)"; mkjob mark "{\"scn\":\"$sc\"}" >/dev/null || true   # the runner forgets the old stop / ready markers
       if [ "$sc" = equip_city ]; then
         # never seed the build the hero already wears (then the app has nothing to change): the other one, whatever the last run did
         pb=$("$HERE/lab-seed.sh" "$dev" --pick "$build" 2>/dev/null) || pb=""

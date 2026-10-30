@@ -35,6 +35,9 @@ create table if not exists public.lab_devices (
   created_at timestamptz not null default now()
 );
 
+-- lab_only: a dedicated lab device (full-screen screenshots allowed); set by hand: update lab_devices set lab_only = true where name = 'laptop'
+alter table public.lab_devices add column if not exists lab_only boolean not null default false;
+
 create table if not exists public.lab_runs (
   id          uuid primary key default gen_random_uuid(),
   device_id   uuid not null references public.lab_devices (id) on delete cascade,
@@ -175,7 +178,7 @@ begin
     raise exception 'lab_bad_status' using errcode = 'PT400';
   end if;
   update public.lab_devices set last_seen = now(), status = p_status where id = d;
-  return jsonb_build_object('ok', true, 'now', now());
+  return jsonb_build_object('ok', true, 'now', now(), 'lab_only', (select lab_only from public.lab_devices where id = d));
 end $$;
 
 create or replace function public.lab_claim()
@@ -228,7 +231,8 @@ begin
   return jsonb_build_object('ok', true);
 end $$;
 
--- p_b64: standard base64 of the file; 1..1.5 MB decoded; the job must be claimed by this device
+-- p_b64: standard base64 of the file; 1..1.5 MB decoded; p_job = a job claimed by this device, or null (the runner's automatic
+-- stop / lead-up screenshots, name stop-*); at most 300 files per device per day
 create or replace function public.lab_put_file(p_job uuid, p_name text, p_mime text, p_b64 text)
 returns jsonb
 language plpgsql
@@ -246,8 +250,13 @@ begin
   if p_b64 is null or length(p_b64) > 2200000 then
     raise exception 'lab_file_too_big' using errcode = 'PT413';
   end if;
-  if not exists (select 1 from public.lab_jobs where id = p_job and device_id = d and state = 'claimed') then
+  if p_job is null then
+    if p_name !~ '^stop-' then raise exception 'lab_bad_file' using errcode = 'PT400'; end if;
+  elsif not exists (select 1 from public.lab_jobs where id = p_job and device_id = d and state = 'claimed') then
     raise exception 'lab_no_such_job' using errcode = 'PT404';
+  end if;
+  if (select count(*) from public.lab_files where device_id = d and created_at > now() - interval '1 day') >= 300 then
+    raise exception 'lab_rate' using errcode = 'PT429';
   end if;
   raw := decode(p_b64, 'base64');
   if octet_length(raw) < 1 or octet_length(raw) > 1572864 then
