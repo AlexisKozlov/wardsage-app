@@ -503,6 +503,7 @@ static partial class CoreTests {
       Now = now;
       G.FieldTick();
       var inp = G.Read(); inp.Offers = offerOrder.Note(inp.Offers); inp.OfferTopKnown = offerOrder.TopKnown;   // (app/Overlay.cs: the newest offer on top)
+      if (!ScreenState.WantArtWs(Flow == PilotFlow.LocateArtPromote, inp.Screens)) inp.ArtWs = null;   // (app/Overlay.cs WantArtWs)
       string ik = ListSettle.KeyOf(inp.Inv), rk = ListSettle.KeyOf(inp.Rs);   // (app/Overlay.cs ReadScreens)
       InvSettle.Update(ik, now); RsSettle.Update(rk, now);
       ListMoving = (ik != null && !InvSettle.Settled) || (rk != null && rk != "" && !RsSettle.Settled);
@@ -523,6 +524,7 @@ static partial class CoreTests {
     // FreshScreen (app/Overlay.cs): fresh memory reads, the forms read by the tick
     ScreenState Fresh(bool wantCity, bool wantKnownForms) {
       var inp = G.Read(); inp.Offers = offerOrder.Note(inp.Offers); inp.OfferTopKnown = offerOrder.TopKnown;   // (app/Overlay.cs: the newest offer on top)
+      if (!ScreenState.WantArtWs(Flow == PilotFlow.LocateArtPromote, inp.Screens)) inp.ArtWs = null;   // (app/Overlay.cs WantArtWs)
       if (wantKnownForms) inp.ShownKnown = G.ShownKnown();
       var st = ScreenState.Classify(inp, Now);
       if (topFlowNow != "" && st.Kind == topFlowKind) { inp.Flow = topFlowNow; st = ScreenState.Classify(inp, Now); }
@@ -1063,6 +1065,7 @@ static partial class CoreTests {
     SimTableKind(GameGeometry.Parse(GeoJson(), GeoGame));
     SimUnknownToInventory(GameGeometry.Parse(GeoJson(), GeoGame));
     SimArtWorkshop(GameGeometry.Parse(GeoJson(), GeoGame));
+    SimLeftOnWorkshop(GameGeometry.Parse(GeoJson(), GeoGame));
     SimResultForms();
     Console.WriteLine("Game sim: its findings");
     StaleRowsAfterFilter();
@@ -1368,6 +1371,29 @@ static partial class CoreTests {
   /// <summary>Lab 1.6.66.402 (locate_art): a worn artifact's card hides «Продать», «Мастерская» moves left; pressed at the layout's place it changed
   /// nothing three times. The artifact promotion from the inventory's artifact tab: its cell, «Мастерская» pressed on its live rect, the workshop of
   /// that artifact - worn or not, fast and slow; without the live rect the worn card's button is missed (the lab's stop).</summary>
+  /// <summary>Lab 1.6.66.403: «Показать в игре» for an artifact left the game on the workshop, the storage run after it read the screen as
+  /// "ArtWorkshop details?" (the workshop was read only while an artifact request was guided: held, no back press) and said "no_city" for good.
+  /// Every other flow started on the workshop, fast and slow: back to the city and on to its goal.</summary>
+  static void SimLeftOnWorkshop(GameGeometry geo) {
+    int runs = 0, done = 0; string fail = "";
+    foreach (var flow in CityFirst.All) {
+      if (flow == PilotFlow.LocateArtPromote) continue;
+      for (int i = 0; i < 4; i++) {
+        int seed = 403000 + (int)flow * 53 + i; bool slow = i % 2 == 1;
+        ReadTiming.Take();
+        var g = new SimGame(seed, slow, 0); g.Geo = geo; g.SpawnP = 0;
+        SimStartAt(g, "Artifact workshop", 100 + (seed % 30));
+        var oc = new Dictionary<string, int>(); var outc = new string[1];
+        string e = SimDrive(g, flow, slow, 0, new Random(seed), seed, false, oc, geo, null, false, null, outc);
+        runs++;
+        if (e != "") { if (fail == "") fail = flow + (slow ? " slow: " : " fast: ") + e.Split('\n')[0]; }
+        else if (outc[0] == "done") done++;
+        else if (fail == "") fail = flow + (slow ? " slow: " : " fast: ") + outc[0];
+      }
+    }
+    Check(fail == "" && done == runs, "sim: a run started on the artifact workshop (no artifact request): " + done + "/" + runs + " back to the city and at their goal" + (fail != "" ? " - " + fail : ""));
+  }
+
   static void SimArtWorkshop(GameGeometry geo) {
     foreach (bool worn in new[] { false, true }) foreach (bool live in new[] { true, false }) {
       int ok = 0, runs = 0; string fail = ""; long worst = 0;

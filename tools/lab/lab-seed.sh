@@ -136,21 +136,29 @@ i = pool[n % len(pool)]
 print("%d\t%s\t%d\t%d\t%s" % (int(i["u"]), i.get("sl"), int(i.get("lv") or 0), int(i.get("st") or 0), "worn" if i.get("h") else "free"))
 '
 # pick_art <device id>: "uid<TAB>name<TAB>stage<TAB>worn|free" of an artifact the site lets promote (lib/locate/artifact.ts promotable:
-# stage st < MAX_STAGE 5, lib/artifact-plan.ts). Not worn first, then the highest stage; rotates among up to 4.
+# stage st < MAX_STAGE 5, lib/artifact-plan.ts). At its level cap first (below it the guide stops at «Улучшить» first, the player's press:
+# lab 1.6.66.403 stalled there, "no pilot step for 40 s"), then not worn, then the highest stage; rotates among up to 4.
 PICK_ART_PY='
-import sys, json
+import sys, json, os
 n = int(sys.argv[1])
 pd = json.load(sys.stdin) or {}
+try: plan = json.load(open(os.path.join(sys.argv[2], "data", "artifact-plan.json")))
+except Exception: plan = {}
+def cap(a):
+    r = (plan.get("a") or {}).get(str(a.get("id")))
+    m = ((plan.get("br") or {}).get(str(r[1])) or {}).get("m") if r else None
+    st = int(a.get("st") or 0)
+    return m[st] if m and st < len(m) else 0
 arts = pd.get("arts") or []
 spare = {}
 for a in arts:
     if not a.get("h"): spare[a.get("id")] = spare.get(a.get("id"), 0) + 1
-# an artifact with a spare copy of its own kind first (the promotion takes copies), then not worn, then the highest stage
-c = sorted([a for a in arts if int(a.get("st") or 0) < 5], key=lambda a: (0 if spare.get(a.get("id"), 0) - (0 if a.get("h") else 1) > 0 else 1, 1 if a.get("h") else 0, -int(a.get("st") or 0), -int(a.get("lv") or 0), a["u"]))
+# at its level cap first, then an artifact with a spare copy of its own kind (the promotion takes copies), then not worn, then the highest stage
+c = sorted([a for a in arts if int(a.get("st") or 0) < 5], key=lambda a: (0 if cap(a) > 0 and int(a.get("lv") or 0) >= cap(a) else 1, 0 if spare.get(a.get("id"), 0) - (0 if a.get("h") else 1) > 0 else 1, 1 if a.get("h") else 0, -int(a.get("st") or 0), -int(a.get("lv") or 0), a["u"]))
 if not c: sys.exit(0)
 pool = c[:4]
 a = pool[n % len(pool)]
-print("%s\t%s\t%d\t%s" % (a["u"], (a.get("n") or {}).get("en") or "?", int(a.get("st") or 0), "worn" if a.get("h") else "free"))
+print("%s\t%s\t%d\t%s\tlv %d/%d" % (a["u"], (a.get("n") or {}).get("en") or "?", int(a.get("st") or 0), "worn" if a.get("h") else "free", int(a.get("lv") or 0), cap(a)))
 '
 # pick_equip <device id> <hide_worn|artifact>: the JSON {hero_uid, hero_name, hero_name_en, items, note} of an equip plan for the hero of
 # the equip fixtures, built from the newest snapshot's page_data (plan items as lib/plans/display.ts stores them: slot, uid, name, setName,
@@ -213,7 +221,7 @@ print(json.dumps({"hero_uid": hero, "hero_name": fx.get("hero_name"), "hero_name
 fx_keep() { q -v d="$1" <<< "select coalesce(string_agg(u, ','), '') from (select (i->>'uid') u from public.lab_fixtures f, jsonb_array_elements(coalesce(f.payload->'items', '[]'::jsonb)) i
   where f.device_id = :'d'::uuid union all select f.payload->>'item_uid' from public.lab_fixtures f where f.device_id = :'d'::uuid) x where u ~ '^[0-9]+$'" 2>/dev/null || true; }
 pick_recast() { local pd; pd=$(snap_pd "$1"); [ -n "$pd" ] || return 0; python3 -I -c "$PICK_RECAST_PY" "$LAB_WEB_DIR" "$(nlocates "$1" recast)" "$(fx_keep "$1")" <<< "$pd" 2>/dev/null || true; }
-pick_art() { local pd; pd=$(snap_pd "$1"); [ -n "$pd" ] || return 0; python3 -I -c "$PICK_ART_PY" "$(nlocates "$1" artPromote)" <<< "$pd" 2>/dev/null || true; }
+pick_art() { local pd; pd=$(snap_pd "$1"); [ -n "$pd" ] || return 0; python3 -I -c "$PICK_ART_PY" "$(nlocates "$1" artPromote)" "$LAB_WEB_DIR" <<< "$pd" 2>/dev/null || true; }
 pick_equip() {
   local pd fx n
   pd=$(snap_pd "$1"); [ -n "$pd" ] || return 0

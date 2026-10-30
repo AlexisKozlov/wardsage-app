@@ -2675,10 +2675,10 @@ namespace RealmForge {
       sellScanOnce = false;
       var inp = new ScreenInputs { Inv = RFX.ReadInventory(-1), Rs = RFX.ReadRecastScreenSafe(-1), Hero = RFX.ReadHeroScreen(addrs, screens.Hero) };
       if (front) FillArtPopup(inp, hwnd);
-      bool artGuide = locateReq != null && locateReq.Purpose == "artPromote";
-      if (artGuide) inp.ArtWs = RFX.ReadArtWorkshop();   // only while an artifact request is guided
       inp.CityForm = RFX.CityShown();
       if (RFX.UiKnown) inp.Screens = RFX.ReadShownScreens();   // the screen's kind first from the window table (the readers fill its details)
+      bool artGuide = locateReq != null && locateReq.Purpose == "artPromote";
+      if (WantArtWs(inp)) inp.ArtWs = RFX.ReadArtWorkshop();
       ReadTiming.Field(System.Diagnostics.Stopwatch.GetTimestamp() - readT0);
       string ik = ListSettle.KeyOf(inp.Inv), rk = ListSettle.KeyOf(inp.Rs);
       invSettle.Update(ik, now); rsSettle.Update(rk, now);
@@ -2772,6 +2772,11 @@ namespace RealmForge {
       return InventoryButtonSeen(o, cr.R, cr.B) || HeroesButtonSeen(o, cr.R, cr.B);
     }
 
+    /// <summary>The artifact workshop is read this tick (ScreenState.WantArtWs).</summary>
+    bool WantArtWs(ScreenInputs inp) {
+      return ScreenState.WantArtWs(locateReq != null && locateReq.Purpose == "artPromote", inp.Screens);
+    }
+
     /// <summary>A fresh read for the click gate: not held, not throttled (the screen right before the click).</summary>
     ScreenState FreshScreen(bool wantCity, bool wantKnownForms = false) {
       long now = NowMs();
@@ -2779,7 +2784,7 @@ namespace RealmForge {
       if (RFX.UiKnown) inp.Screens = RFX.ReadShownScreens();
       if (wantKnownForms) inp.ShownKnown = RFX.ReadShownKnownForms();   // the unknown-screen back press: no known screen's form (the battle among them) may be shown
       { IntPtr gw = GameWindow(); if (gw != IntPtr.Zero && !W32.IsIconic(gw) && IsForeground(gw)) FillArtPopup(inp, gw); }
-      if (locateReq != null && locateReq.Purpose == "artPromote") inp.ArtWs = RFX.ReadArtWorkshop();   // the artifact guide's clicks are judged by the workshop too
+      if (WantArtWs(inp)) inp.ArtWs = RFX.ReadArtWorkshop();   // the artifact guide's clicks are judged by the workshop too
       var st = ScreenState.Classify(inp, now);
       // the forms nobody knows (read every 2 s by the tick): over the same known screen a later one is a pop-up on top; on an unknown screen, its name
       if (topFlowNow != "" && st.Kind == topFlowKind) { inp.Flow = topFlowNow; st = ScreenState.Classify(inp, now); }

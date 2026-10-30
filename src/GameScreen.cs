@@ -196,6 +196,12 @@ namespace RealmForge {
       }
       return 0;
     }
+    /// <summary>Is the artifact workshop read this tick: while an artifact request is guided, and whenever the window table shows it on top -
+    /// unread, the screen stays "ArtWorkshop details?" (held) and a held screen gets no back press, so every other pilot started on it waited
+    /// for good (lab 1.6.66.403: a locate run left the game there, the storage run said "no_city").</summary>
+    public static bool WantArtWs(bool artGuide, IEnumerable<string> forms) {
+      return artGuide || TopKind(forms) == ScreenKind.ArtWorkshop;
+    }
     /// <summary>The top screen of the window table's shown forms (Unknown = none known, or not read).</summary>
     public static ScreenKind TopKind(IEnumerable<string> forms) {
       var best = ScreenKind.Unknown;

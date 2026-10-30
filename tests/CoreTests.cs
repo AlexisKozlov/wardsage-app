@@ -1107,6 +1107,14 @@ static partial class CoreTests {
       && ScreenState.KindOfForm("Form_UnionBoss") == ScreenKind.Unknown, "table kind: the forms the app reads map to their screens, others to none");
     Check(ScreenState.TopKind(new[] { "Form_MainCity", "Form_BackpackIntegration" }) == ScreenKind.Inventory && ScreenState.TopKind(new[] { "Form_BackpackIntegration", "Form_EquipSubliming" }) == ScreenKind.Foundry
       && ScreenState.TopKind(new string[0]) == ScreenKind.Unknown && ScreenState.TopKind(null) == ScreenKind.Unknown, "table kind: a screen opened from another is on top");
+    // lab 1.6.66.403: the workshop on top with no artifact request - read all the same (held, it got no back press: the storage run waited for good)
+    var wsTop = new List<string> { "Form_BackpackIntegration", "Form_EquipArtifactIntensify" };
+    Check(ScreenState.WantArtWs(false, wsTop) && ScreenState.WantArtWs(true, null) && !ScreenState.WantArtWs(false, new List<string> { "Form_BackpackIntegration" }) && !ScreenState.WantArtWs(false, null),
+      "workshop read: while an artifact request is guided, or the window table shows it on top - not else");
+    var wsSt = ScreenState.Classify(new ScreenInputs { CityForm = false, Offers = new List<string>(), Screens = wsTop, ArtWs = new ArtWorkshopScreen { Open = true, Tab = 1, Uid = 7 } }, 0);
+    var wsNo = ScreenState.Classify(new ScreenInputs { CityForm = false, Offers = new List<string>(), Screens = wsTop }, 0);
+    Check(wsSt.Kind == ScreenKind.ArtWorkshop && !wsSt.Held && ClickGate.CityBackBlock(wsSt) == "" && wsNo.Held && ClickGate.CityBackBlock(wsNo) != "",
+      "workshop read: read, the workshop takes the back press (" + wsSt.Brief + "); unread it is held and blocks it (" + wsNo.Brief + ")");
     // the log: City, then the inventory opened and its reader failing for seconds - the table names it: Inventory (details unknown, held), never Unknown
     var tr = new ScreenTracker(); long t = 0;
     var cityIn = new ScreenInputs { CityForm = true, Offers = new List<string>(), Screens = new List<string> { "Form_MainCity" } };
