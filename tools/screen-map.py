@@ -61,6 +61,11 @@ DANGER_CODE = re.compile(r'\b(CashPurchase\w*|DirectBuy|_DirectBuy|SendMessage_S
 NEVER_RX = re.compile(r'(Buy|Purchase|Pay|Recharge|Charge|Shop|Store|Mall|Gift|Pack|Goto|GoTo|Jump|Get|Claim|Receive|Reward|Confirm|Sure|Ok$|OK|Yes|'
                       r'Battle|Fight|Challenge|Start|Begin|Attack|Sweep|Raid|Summon|Draw|Lottery|Recruit|Upgrade|LevelUp|Levelup|Exchange|Sell|Use|'
                       r'Spend|Exit|Quit|Logout|Delete|Reset|Refresh|Unlock|Join|Apply|Create|Donate|Send|Accept|Plus|Add|Go$|Free|Open|Enter|Equip|Select|Choose)', re.I)
+# the result forms a player's action opens (recast / ascension / promotion / gem results: Form_*Success*): never an Escape on them (they lie
+# over a pilot's own screen, where the gate never sends one) - a tap-to-close one (Click2Close / Click2Coroutine) is closed by its tap strip,
+# one that holds the player's choice (keep the old / take the new stats) waits: the choice is the player's
+SUCCESS_RX = re.compile(r'^Form_\w*Success\d*$')
+CHOICE_CODE = re.compile(r'(\w*SendMessage_\w*Choose\w*|GetRecastChooseEquip|_OnSuccess2Select)\s*\(')
 CLOSE_RX = re.compile(r'^(m_?)?(Btn_?Close\w*|Button_?Close\w*|Close_?Btn\w*|Close_?Button\w*|btn_?close\w*|Close)$', re.I)
 
 
@@ -119,6 +124,7 @@ def lua_facts(f):
     own = re.findall(r'AddBackPressListener\((.*)\)', t)
     own_ok = all(re.search(r'"(On\w*(Back|Close|Outside|Exit)\w*)"', a) for a in own) if own else True
     return {'fs': fs, 'esc': esc, 'backBtn': 'NewButtonBack' in t, 'tap': 'NewClick2Close' in t, 'ownBack': bool(own), 'ownBackOk': own_ok,
+            'tapAny': 'NewClick2Close' in t or 'NewClick2Coroutine' in t, 'choice': bool(CHOICE_CODE.search(t)),
             'danger': sorted(set(m.group(1) for m in DANGER_CODE.finditer(t)))}
 
 
@@ -238,6 +244,17 @@ def classify(name, lf, pf):
             return 'P', r, 'close button (' + b['path'].split('/', 1)[-1] + ')', nnames, near(pt)
         if clear(pt) and fs and not backs:
             return 'P', r, 'full screen, close button (' + b['path'].split('/', 1)[-1] + ')', nnames, near(pt)
+    if SUCCESS_RX.match(name) and not lf['danger']:
+        if lf.get('choice'):
+            return 'W', None, "a result with the player's choice (old / new): wait, never clicked", nnames, []
+        taps = [b for b in btns if b['name'].startswith('Click2Close') and b['w'] > 1.5 and b['h'] > 0.9]
+        if taps and lf.get('tapAny'):
+            r = TAP_RECT
+            x0, y0, x1, y1 = place(r)
+            pt = ((x0 + x1) / 2, (y0 + y1) / 2)
+            others = [b for b in btns if not b['name'].startswith('Click2Close')]
+            if clear(pt) and not any(inside((x, y), b['rect']) for b in others for x in (x0, pt[0], x1) for y in (y0, pt[1], y1)):
+                return 'P', r, 'a result, tap to close (the strip of its text at the bottom; never Escape)', nnames, near(pt)
     if lf['danger'] or (not fs and CONFIRM_RX.search(name)):
         return 'D', None, 'no ×: ' + (','.join(lf['danger'][:3]) if lf['danger'] else 'a confirm dialog'), nnames, []
     if esc_ok:

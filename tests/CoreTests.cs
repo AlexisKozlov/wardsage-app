@@ -4893,6 +4893,17 @@ static partial class CoreTests {
       Eq("recast", rcf.Update(false, 777, LocateKind.RecastPick, null, new[] { new long[] { 5, 10 }, new long[] { 9, 20 } }), "finish: sub stats differ -> done");
       rcf.Reset(); rcf.Update(false, 777, LocateKind.Done, null, subs0);
       Eq("recast", rcf.Update(false, 777, LocateKind.ChoosePending, new RecastScreen { ChoosePending = true }, subs0), "finish: a result waits for the choice -> done");
+      // the game's result form after the player's own press (live 1.6.66.401: Form_EquipRecastSuccess over the gem screen, the job never done)
+      rcf.Reset();
+      Eq("", rcf.Update(false, 777, LocateKind.GemPick, null, subs0, 0, true), "finish: a recast result before the item was ready on the screen is not this job's");
+      Eq("recast", rcf.Update(false, 777, LocateKind.Done, null, subs0, 0, true), "finish: Done reached and Form_EquipRecastSuccess shown (subs unchanged until the choice) -> done");
+      rcf.Reset(); rcf.Update(false, 777, LocateKind.Done, null, subs0);
+      Eq("recast", rcf.Update(false, 777, LocateKind.Done, null, subs0, 300, true), "finish: the result form a tick after Done -> done");
+      fnz.Reset();
+      Eq("", fnz.Update(true, 777, LocateKind.AscendFilter, gne, null, 0, true), "finish: an ascension result without the item ready -> not this job's");
+      Eq("ascend", fnz.Update(true, 777, LocateKind.AscendReady, fre, null, 100, true), "finish: ready and Form_EquipSublimedSuccess shown -> done");
+      fnz.Reset(); fnz.Update(true, 777, LocateKind.AscendReady, fre, null);
+      Eq("ascend", fnz.Update(true, 777, LocateKind.AscendLoading, unrd, null, 200, true), "finish: ready, the list unreadable under the result form -> done by the form");
     }
     iv = inv(); iv.Current = 777;
     Eq(LocateKind.OpenFoundry, LocateGuide.Next(areq, iv, null, null, 8, 1).Kind, "ascend: the item selected in the inventory does not matter (the foundry starts empty)");
@@ -5366,6 +5377,22 @@ static partial class CoreTests {
     Eq('D', ScreenMap.ClassOf("Form_SystemTips"), "screen map: the exit question is dangerous");
     Eq('K', ScreenMap.ClassOf("Form_Battle"), "screen map: the fight is a known screen (ShownKnown)"); Eq('W', ScreenMap.ClassOf("Form_BattleLoading"), "screen map: a loading waits");
     Eq('W', ScreenMap.ClassOf("Form_BattleEnd"), "screen map: a fight's result waits");
+    // the results of a player's action (client Lua): a choice waits (the player's), a tap-to-close one is closed by its tap, never an Escape
+    Eq('W', ScreenMap.ClassOf("Form_EquipRecastSuccess"), "screen map: the recast result holds the old / new choice -> wait");
+    Eq('W', ScreenMap.ClassOf("Form_EquipReforgeSuccess"), "screen map: the reforge result holds a choice -> wait");
+    Eq('W', ScreenMap.ClassOf("Form_ArtifactRefineSuccess2"), "screen map: the artifact refine choice -> wait");
+    foreach (var sf in new[] { "Form_EquipSublimedSuccess", "Form_ArtifactBreakSuccess", "Form_ArtifactRefineSuccess", "Form_EquipEnhancedSuccess", "Form_EquipGemSuccess2", "Form_EquipGemSuccess3" })
+      Check(ScreenMap.ClassOf(sf) == 'P' && ScreenMap.ExitPoint(sf, 1920, 1080, 1080) != null && ScreenMap.ExitPoint(sf, 1920, 1080, 1080).Y > 1080 * 0.9, "screen map: " + sf + " is closed by its tap strip at the bottom");
+    foreach (var e in ScreenMap.All) if (ScreenMap.IsSuccessForm(e.Name)) Check(e.Class != 'E', "screen map: no Escape on the result form " + e.Name);
+    Check(ScreenMap.IsSuccessForm("Form_EquipGemSuccess3") && !ScreenMap.IsSuccessForm("Form_EquipSuccessList") && !ScreenMap.IsSuccessForm("Form_EquipSubliming"), "screen map: the result forms by name");
+    Eq("Form_EquipRecastSuccess", ScreenMap.SuccessFormOf("foundry"), "screen map: the recast's result form");
+    Eq("Form_EquipSublimedSuccess", ScreenMap.SuccessFormOf("ascend"), "screen map: the ascension's result form");
+    Eq("Form_ArtifactBreakSuccess", ScreenMap.SuccessFormOf("artPromote"), "screen map: the promotion's result form");
+    {
+      var sg = ScreenState.Classify(new ScreenInputs { CityForm = false, Offers = new List<string>(), TopNew = "Form_EquipRecastSuccess", Rs = new RecastScreen { GemOpen = true, GemFunc = 7, GemSel = 777 } }, 0);
+      Check(ScreenMap.SuccessShown(sg, "foundry") && !ScreenMap.SuccessShown(sg, "ascend"), "screen map: the recast result over the gem screen is the recast's (" + sg.Brief + ")");
+      Check(!ScreenMap.SuccessShown(ScreenState.Classify(new ScreenInputs { CityForm = false, Offers = new List<string>(), Rs = new RecastScreen { GemOpen = true, GemFunc = 7 } }, 0), "foundry"), "screen map: no result form shown");
+    }
     Eq('F', ScreenMap.ClassOf("Form_Union"), "screen map: the guild has its back arrow");
     Eq('O', ScreenMap.ClassOf("Form_LeftTip"), "screen map: the tip panel is ignored");
     foreach (var o in OfferForms.IgnoredOverlays) Eq('O', ScreenMap.ClassOf(o), "screen map: " + o + " is an overlay");
@@ -6666,6 +6693,10 @@ static partial class CoreTests {
     Check(!fin.Update(5001, W(5001, 2, 10, 1, matsA, lvA, new int[0]), 200), "art finish: a first read of a higher stage waits for a second");
     Check(!fin.Update(5001, new ArtWorkshopScreen { Open = false }, 300), "art finish: not readable now -> nothing is known");
     Check(fin.Update(5001, W(5001, 2, 10, 1, matsA, lvA, new int[0]), 500), "art finish: the stage rose over two reads -> done");
+    var fin3 = new ArtFinish();
+    Check(!fin3.Update(5001, null, 0, true), "art finish: a promotion result before the artifact was seen in the workshop is not this job's");
+    fin3.Update(5001, W(5001, 2, 10, 0, matsA, lvA, new[] { 2, 1 }), 100);
+    Check(fin3.Update(5001, null, 200, true), "art finish: the artifact seen, then Form_ArtifactBreakSuccess shown -> done (the workshop under it unread)");
     var fin2 = new ArtFinish(); fin2.Update(5001, W(5001, 2, 10, 3, matsA, lvA, new int[0]), 0);
     Check(!fin2.Update(5001, W(9999, 2, 10, 5, matsA, lvA, new int[0]), 400) && !fin2.Update(5001, W(5001, 2, 10, 3, matsA, lvA, new int[0]), 800), "art finish: another artifact's stage does not count, a stale site stage is no baseline");
 

@@ -1025,6 +1025,7 @@ static partial class CoreTests {
     SimLoginChain(GameGeometry.Parse(GeoJson(), GeoGame));
     SimTableKind(GameGeometry.Parse(GeoJson(), GeoGame));
     SimUnknownToInventory(GameGeometry.Parse(GeoJson(), GeoGame));
+    SimResultForms();
     Console.WriteLine("Game sim: its findings");
     StaleRowsAfterFilter();
     TipOverSlots();
@@ -1300,6 +1301,32 @@ static partial class CoreTests {
   /// from the city to «Инвентарь». Now (the fast PC, the live rects read): the top form named within a tick, its back pressed after 500 ms, the
   /// city's «Инвентарь» pressed on its live rect held still - the inventory open within about 1.5 s of the start; with the city built again
   /// (its bar sliding in) the press waits for the rect to stop and is never lost.</summary>
+  /// <summary>The game's result form after the player's own press (live 1.6.66.401: Form_EquipRecastSuccess over the gem screen got an Escape,
+  /// the gate stopped the run, the job was never done): the job is done by the form, a choice form waits, a tap-to-close one is closed by its tap.</summary>
+  static void SimResultForms() {
+    const double W = 1920, H = 1009; double U = Ui.Unit(W, H);
+    // recast on the gem screen: «Улучшить» pressed by the player, the result with the old / new choice comes
+    var gem = new RecastScreen { GemOpen = true, GemFunc = 7, GemSel = 777 };
+    var sg = ScreenState.Classify(new ScreenInputs { CityForm = false, Offers = new List<string>(), TopNew = "Form_EquipRecastSuccess", Rs = gem }, 5000);
+    var dg = ClickGate.MapExit(sg, W, H, U);
+    Check(sg.Kind == ScreenKind.Gem && sg.Top == "Form_EquipRecastSuccess" && dg.Move == MapMove.Wait, "sim: the recast result over the gem screen waits (the choice is the player's), no Escape (" + sg.Brief + ", " + dg + ")");
+    var fin = new LocateFinish(); var subs = new[] { new long[] { 5, 10 } };
+    fin.Update(false, 777, LocateKind.Done, gem, subs, 4000);
+    Check(fin.Update(false, 777, LocateKind.Done, gem, subs, 5000, ScreenMap.SuccessShown(sg, "foundry")) == "recast", "sim: the recast result form marks the job done");
+    // the Ascension: the result is closed by its tap through the gate, on the pilot's own screen (the Foundry), never an Escape there
+    var asc = new RecastScreen { SublimingOpen = true, CurType = 2, AscendShown = true, AscendEquips = new long[] { 777 }, AscendSel = 777 };
+    var sa = ScreenState.Classify(new ScreenInputs { CityForm = false, Offers = new List<string>(), TopNew = "Form_EquipSublimedSuccess", Rs = asc }, 5000);
+    var da = ClickGate.MapExit(sa, W, H, U);
+    Check(da.Move == MapMove.Close && da.Point != null && da.Point.Y > H * 0.9, "sim: the ascension result is closed by its tap strip at the bottom (" + sa.Brief + ", " + da + ")");
+    var g = new ClickGate(); g.Flows[ClickOwner.Locate] = PilotFlow.LocateAscend;
+    var rq = new ClickRequest { Owner = ClickOwner.Locate, Target = ClickTarget.MapClose, AutoOn = true, Front = true, X = da.Point.X, Y = da.Point.Y, W = W, H = H, U = U, Form = "Form_EquipSublimedSuccess" };
+    var res = g.Check(rq, sa, 7000);
+    Check(res.Allowed, "sim: the gate allows the result's tap on the Foundry (" + res.Detail + ")");
+    var fa = new LocateFinish();
+    fa.Update(true, 777, LocateKind.AscendReady, asc, null, 4000);
+    Check(fa.Update(true, 777, LocateKind.AscendReady, asc, null, 5000, ScreenMap.SuccessShown(sa, "ascend")) == "ascend", "sim: the ascension result form marks the job done");
+  }
+
   static void SimUnknownToInventory(GameGeometry geo) {
     foreach (var start in new[] { "Guild", "Arena", "Shop" }) foreach (bool rebuild in new[] { false, true }) {
       if (rebuild && start != "Guild") continue;

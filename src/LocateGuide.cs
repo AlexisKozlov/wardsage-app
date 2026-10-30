@@ -399,12 +399,15 @@ namespace RealmForge {
 
     /// <summary>"" = not yet; "ascend" = the item left the Ascension list after it was ready; "recast" = the item's sub stats changed
     /// or a recast result waits for the choice after the «Улучшить» step. <paramref name="kind"/> is the step LocateGuide.Next gave,
-    /// <paramref name="live"/> the item's sub stats read from the game now (null = not read).</summary>
-    public string Update(bool ascend, long uid, LocateKind kind, RecastScreen rs, long[][] live, long nowMs = 0) {
+    /// <paramref name="live"/> the item's sub stats read from the game now (null = not read). <paramref name="success"/>: the purpose's result
+    /// form is shown (ScreenMap.SuccessShown: Form_EquipSublimedSuccess / Form_EquipRecastSuccess) - the job is done once the item was ready
+    /// on the screen (the recast's sub stats change only with the player's old / new choice, keeping the old ones changes nothing).</summary>
+    public string Update(bool ascend, long uid, LocateKind kind, RecastScreen rs, long[][] live, long nowMs = 0, bool success = false) {
       if (ascend) {
         string parts = rs == null ? "" : FilterSig(rs);   // slot tab + set + main + sub filter
-        if (kind == LocateKind.AscendReady) { ready = true; readyLen = rs.AscendEquips.Length; readyParts = parts; goneSince = -1; return ""; }
+        if (kind == LocateKind.AscendReady) { ready = true; readyLen = rs.AscendEquips.Length; readyParts = parts; goneSince = -1; if (!success) return ""; }
         if (!ready) return "";
+        if (success) { ready = false; goneSince = -1; return "ascend"; }
         if (rs == null || !rs.OnAscend || rs.AscendList == null || !rs.AscendList.Has) return "";   // not readable now: nothing is known
         if (parts != readyParts) { ready = false; goneSince = -1; return ""; }                      // the player changed the slot tab / filter: the list changed, not the item
         if (Array.IndexOf(rs.AscendEquips, uid) < 0 && rs.AscendEquips.Length < readyLen) {
@@ -417,6 +420,7 @@ namespace RealmForge {
       }
       if (kind == LocateKind.Done) doneSeen = true;
       if (!doneSeen) return "";
+      if (success) return "recast";
       string sig = SubSig(live);
       if (baseline == null) baseline = sig;
       else if (sig != null && sig != baseline) return "recast";
@@ -431,7 +435,9 @@ namespace RealmForge {
     public const int ConfirmMs = 250;
     long uid; int baseStage = -1; long upSince = -1;
     public void Reset() { uid = 0; baseStage = -1; upSince = -1; }
-    public bool Update(long artUid, ArtWorkshopScreen ws, long nowMs) {
+    /// <summary><paramref name="success"/>: Form_ArtifactBreakSuccess is shown after this artifact was seen in the workshop: done.</summary>
+    public bool Update(long artUid, ArtWorkshopScreen ws, long nowMs, bool success = false) {
+      if (success && artUid != 0 && uid == artUid && baseStage >= 0) return true;
       if (ws == null || !ws.Open || ws.Uid != artUid || ws.Stage < 0) return false;   // not readable now: nothing is known
       if (uid != artUid || baseStage < 0) { uid = artUid; baseStage = ws.Stage; upSince = -1; return false; }
       if (ws.Stage <= baseStage) { upSince = -1; return false; }

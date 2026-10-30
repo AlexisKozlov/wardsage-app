@@ -2090,22 +2090,34 @@ namespace RealmForge {
     }
 
     // the job is done in the game (src/LocateGuide.cs LocateFinish): a short plate, the request is reported (LocateFinished), then the hints end
-    readonly LocateFinish lfin = new LocateFinish(); long[][] locateLive; long locateDoneUntil; string locateDoneWhat = "";
+    readonly LocateFinish lfin = new LocateFinish(); long[][] locateLive; long locateDoneUntil, locateDoneCap; bool locateDoneAuto; string locateDoneWhat = "", locateSuccessSaid = "";
     /// <summary>The job of the request is done in the game: request id and what ("ascend" | "recast").</summary>
     public event Action<string, string> LocateFinished;
 
     void FinishLocateJob(string what, long now) {
       var req = locateReq; if (req == null) return;
       Log.Write("locate: job done (" + what + ") for " + (req.Item != null ? "item " + req.Item.Uid : "artifact " + (req.Art != null ? req.Art.Uid : 0)));
-      locateDoneUntil = now + 4000; locateDoneWhat = what; locateDriving = false; lpilot.Cancel();
+      locateDoneUntil = now + 4000; locateDoneCap = now + 15000; locateDoneAuto = LocateAutoOn; locateDoneWhat = what; locateDriving = false; lpilot.Cancel();
       var h = LocateFinished; if (h != null) h(req.Id, what);
     }
 
     void TickLocateDone(string what) {
-      if (NowMs() >= locateDoneUntil) { SetLocate(null); return; }
+      long now = NowMs();
+      // the game's result form of the job still on top (ScreenMap.IsSuccessForm): with auto click on, a tap-to-close one (class P) is closed by
+      // its tap strip through the gate (MapClose, never an Escape); the choice one (Form_EquipRecastSuccess, class W) is the player's. The plate
+      // stays while it is shown (at most locateDoneCap)
+      var scr = screens.Current;
+      bool succ = scr != null && ScreenMap.IsSuccessForm(scr.Top);
+      if (succ && now < locateDoneCap && locateDoneUntil < now + 500) locateDoneUntil = now + 500;
+      if (now >= locateDoneUntil) { SetLocate(null); return; }
       IntPtr hwnd = GameWindow(); W32.RECT cr;
       if (hwnd == IntPtr.Zero || W32.IsIconic(hwnd) || !FrontSteady(hwnd) || !W32.GetClientRect(hwnd, out cr) || cr.B < 200) { LocateHide(); return; }
       var o = new W32.POINT(0, 0); W32.ClientToScreen(hwnd, ref o); SceneArea(o, cr);
+      if (succ && locateDoneAuto && scr.TopClass == 'P' && !sending) {
+        string said = scr.Top + "|" + scr.SinceMs;
+        if (said != locateSuccessSaid) { locateSuccessSaid = said; Log.Write("locate: result form " + scr.Top + " on " + scr.Brief + " - closed by its tap"); }
+        MapStep(ClickOwner.Locate, scr, o, cr, IsForeground(hwnd), now);
+      }
       if (glow.Visible) glow.Hide(); drawnKey = null;
       string txt = Tx(what == "artPromote" ? "doneArtPromote" : what == "ascend" ? "doneAscend" : "doneRecast");
       DrawTipTop(new[] { txt != "" ? txt : (what == "artPromote" ? "Готово: артефакт продвинут" : what == "ascend" ? "Готово: вещь вознесена" : "Готово: вещь преобразована") }, locateCaps);
@@ -2166,7 +2178,7 @@ namespace RealmForge {
           locateSubs = live != null ? LocateGuide.CheckSubs(req.Item, live) : null;
         }
         // the job itself done (ascended: the item left the Ascension list; recast: its sub stats changed / a result waits): report it
-        string fin = lfin.Update(req.Purpose == "ascend", uid, st.Kind, rs, locateLive, now);
+        string fin = lfin.Update(req.Purpose == "ascend", uid, st.Kind, rs, locateLive, now, ScreenMap.SuccessShown(screens.Current, req.Purpose));
         if (fin != "") { FinishLocateJob(fin, now); return; }
         st.NeedClick = locateNeedClick;
         locateStep = st;
@@ -2324,7 +2336,7 @@ namespace RealmForge {
           if (now - artWsWaitSince >= LocateGuide.ArtWsWaitMs) st = LocateGuide.ArtWsGuess(st, ws);
         } else artWsWaitSince = 0;
         if (ws != null && ws.Diag != null && ws.Diag != "" && ws.Diag != artWsDiagSaid) { artWsDiagSaid = ws.Diag; Log.Write("art workshop: " + ws.Diag); }
-        if (artFin.Update(art.Uid, ws, now)) { FinishLocateJob("artPromote", now); return; }
+        if (artFin.Update(art.Uid, ws, now, ScreenMap.SuccessShown(scr, "artPromote"))) { FinishLocateJob("artPromote", now); return; }
         artStep = st;
         string sig = st.Key + "|" + st.Pos + "|" + st.MatChosen + "|" + st.MatWrong + "|" + st.MatKind;
         if (sig != artSaid) { artSaid = sig; Log.Write("art promote: step " + st.Key + " pos " + st.Pos + " of " + st.Count + " scroll " + st.Scroll + " chosen " + st.MatChosen + "/" + st.MatNeed + (st.MatWrong ? " WRONG" : "") + " level " + st.ArtLevel + "/" + st.ArtCap + " screen " + (scr != null ? scr.Brief : "?")); }

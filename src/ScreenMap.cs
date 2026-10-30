@@ -116,6 +116,34 @@ namespace RealmForge {
       return false;
     }
 
+    /// <summary>The result form the player's own action of a «Найти в игре» purpose opens (client Lua): «Улучшить» on the gem screen's recast
+    /// functions 7 / 8 (Form_EquipGemMain) and the Foundry's recast tab (PanelEquipRecast) -> Form_EquipRecastSuccess (the old / new choice:
+    /// the player's, class W); «Вознести» (PanelEquipSubliming) -> Form_EquipSublimedSuccess (tap to close, P); «Продвинуть»
+    /// (Panel_Equip_Artifact_Break) -> Form_ArtifactBreakSuccess (tap to close, P). Shown over the target's screen = the job is done.</summary>
+    public static string SuccessFormOf(string purpose) {
+      switch (purpose ?? "") {
+        case "ascend": return "Form_EquipSublimedSuccess";
+        case "artPromote": return "Form_ArtifactBreakSuccess";
+      }
+      return "Form_EquipRecastSuccess";   // every other purpose is the recast (CityFirst.OfLocate)
+    }
+    /// <summary>A game result form (Form_*Success*: recast, ascension, promotion, gem, level-up results): never an Escape on it.</summary>
+    public static bool IsSuccessForm(string name) {
+      if (string.IsNullOrEmpty(name) || !name.StartsWith("Form_")) return false;
+      int i = name.IndexOf("Success", StringComparison.Ordinal); if (i < 0) return false;
+      for (int k = i + 7; k < name.Length; k++) if (!char.IsDigit(name[k])) return false;
+      return true;
+    }
+    /// <summary>The purpose's result form is shown (the top form, an unknown screen's forms, a known screen's "form:" pop-ups).</summary>
+    public static bool SuccessShown(ScreenState s, string purpose) {
+      string f = SuccessFormOf(purpose);
+      if (s == null || f == "") return false;
+      if (s.Top == f) return true;
+      string list = (s.TopForm ?? "") + "," + (s.ModalWhy != null && s.ModalWhy.StartsWith("form:") ? s.ModalWhy.Substring(5) : "");
+      foreach (var n in list.Split(',')) if (n.Trim() == f) return true;
+      return false;
+    }
+
     static double X(char a, double off, double W, double U) { return (a == 'L' ? 0 : a == 'C' ? W / 2 : W) + off * U; }
     static double Y(char a, double off, double H, double U) { return (a == 'T' ? 0 : a == 'M' ? H / 2 : H) + off * U; }
     /// <summary>A rect of the table in client px.</summary>
