@@ -23,7 +23,7 @@ Set-StrictMode -Version 2
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$RunnerVersion   = '9'
+$RunnerVersion   = '10'
 $Dir             = Join-Path $env:LOCALAPPDATA 'WardsageLab'
 $StopFile        = Join-Path $Dir 'STOP'
 $LogFile         = Join-Path $Dir 'runner.log'
@@ -151,7 +151,7 @@ function Get-Status {
         runner = $RunnerVersion; game_running = $game; app_running = ($apps.Count -gt 0)
         app_version = (Get-AppVersion); busy = $script:Busy; up_min = [int]((Get-Date) - $script:Started).TotalMinutes
         log_at = $script:LogAt; log_lines = $script:LogCount; ready = $script:LogReady
-        stop = $script:LogStop; stop_at = $script:LogStopAt; pilot_at = $script:PilotAt; done = $script:LogFin
+        stop = $script:LogStop; stop_at = $script:LogStopAt; pilot_at = $script:PilotAt; mark_at = $script:MarkAt; pilot_line = $script:PilotLine; log_off = $script:LogOff; log_err = $script:LogErr; done = $script:LogFin
     }
 }
 function ConvertTo-StatusJson($st) {
@@ -453,7 +453,8 @@ function Test-RunnerUpdateDue {
 # ready (the app read the game account), stop / stop_at (first stop line since the last mark), pilot_at (epoch s of the newest
 # pilot line: a step / guide change, a click the gate allowed or saw take effect, the locate / sell / art pilots' own lines; 0 = none
 # since the last mark - the app keeps logging its syncs while a pilot waits, so log_at alone is no progress). Only lines appended after
-# the runner started (or after a truncation / rotation) are looked at.
+# the runner started or the last mark / restart_app (file offset, never the line's own time; or after a truncation / rotation) are looked at.
+# mark_at / pilot_line / log_off / log_err are diagnostics: when pilot_at is 0 they show whether a mark came after the pilot lines.
 $StopRe  = 'auto click stopped|click gate .*: STOP|auto: (failed|slot_failed|unconfirmed|hero_failed|stopped)|aborted'
 $ReadyRe = 'Player of the live tables: [0-9]+'
 $PilotRe = 'ui: step (?!stands still)|ui: guide |click gate .*: (allow |.* took effect)|locate auto:|live: hero|sell:|hero: plan|art (equip|promote) auto:|offer: closed'
@@ -462,7 +463,7 @@ $FinRe = 'locate auto: hint \(\w+\) at step (ascendReady|done)\b|locate decision
 function Reset-LogMarks {
     $script:LogFin = ''
     $script:LogReady = $false; $script:LogDone = $false; $script:LogSendOk = $false
-    $script:LogStop = ''; $script:LogStopAt = [int64]0; $script:PilotAt = [int64]0
+    $script:LogStop = ''; $script:LogStopAt = [int64]0; $script:PilotAt = [int64]0; $script:PilotLine = ''
 }
 function Update-LogWatch {
     try {
@@ -501,16 +502,16 @@ function Update-LogWatch {
             }
             if ($line -cmatch $ReadyRe) { $script:LogReady = $true }
             if ($line -cmatch $FinRe) { $script:LogFin = $(if ($line -cmatch 'ascendReady|AscendReady') { 'ascend' } elseif ($line -cmatch 'ui: guide') { 'equip' } else { 'ready' }) }
-            if ($line -cmatch $PilotRe) { $script:PilotAt = $now }
+            if ($line -cmatch $PilotRe) { $script:PilotAt = $now; $script:PilotLine = $line.Trim().Substring(0, [Math]::Min(120, $line.Trim().Length)) }
             if ($line -cmatch 'Done in') { $script:LogDone = $true }
             if ($line -cmatch 'send: Ok') { $script:LogSendOk = $true }
         }
         if ($script:LogDone -and $script:LogSendOk) { $script:LogReady = $true }
-    } catch { }
+    } catch { $script:LogErr = (Get-ShortError $_) }
 }
 function Invoke-Mark {
     Update-LogWatch      # consume what is already written, then forget it
-    Reset-LogMarks
+    Reset-LogMarks; $script:MarkAt = Get-EpochNow
     return @{ ok = $true; res = @{ marked = $true } }
 }
 
@@ -545,7 +546,7 @@ function Invoke-RestartApp {
         Write-Log ('restart_app: start failed: ' + $m)
         return @{ ok = $false; res = @{ error = 'start_failed'; message = $m } }
     }
-    Update-LogWatch; Reset-LogMarks      # the old app's last lines do not count for the new one
+    Update-LogWatch; Reset-LogMarks; $script:MarkAt = Get-EpochNow      # the old app's last lines do not count for the new one
     Start-Sleep -Seconds 5
     [void](Set-GameFront)      # the test app took the focus: the game goes back to the front
     return @{ ok = $true; res = @{ started = $true } }
@@ -691,7 +692,7 @@ $script:Busy = $false
 $script:Started = Get-Date
 $script:LastSelfCheck = [DateTime]::MinValue
 $script:RunJobAt = [DateTime]::MinValue
-$script:LogOff = [int64]-1; $script:LogAt = [int64]0; $script:LogCount = 0
+$script:LogOff = [int64]-1; $script:LogAt = [int64]0; $script:LogCount = 0; $script:MarkAt = [int64]0; $script:LogErr = ''
 Reset-LogMarks
 Update-LogWatch      # baseline: the end of the file now
 $mode = 'one run'; if ($Service) { $mode = 'service' }
