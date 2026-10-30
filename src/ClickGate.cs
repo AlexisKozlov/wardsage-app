@@ -125,6 +125,8 @@ namespace RealmForge {
     public string Form;
     public double W, H, U;
     public GameGeometry Geo;
+    /// <summary>The point is the centre of the button's live rect (read by name on the form on top, fresh: src/UiButtons.cs), not the geometry's.</summary>
+    public bool Live;
     /// <summary>Every form nobody knows the window table shows now, the ones taken for a part of the screen too (set by the host; null = not
     /// given). The table has no order: any of them may lie on top, so no click lands on a never-click button of one (needs W, H, U).</summary>
     public List<string> Shown;
@@ -1057,7 +1059,7 @@ namespace RealmForge {
       if (!OfferForms.IsOffer(form)) return Halt(o, "offer", tag + ": " + form + " is not on the offer list");
       if (f.Kind != ScreenKind.City && f.Kind != ScreenKind.Unknown) return Halt(o, "screen", tag + ": the pop-up is over " + f.Brief + ", not the city");
       if (OfferForms.CloseRect(r.Geo, form, r.W, r.H, r.U) == null) return Halt(o, "offer", tag + ": the close button of " + form + " is not known - not clicked");
-      if (!OfferForms.OnClose(r.Geo, form, r.X, r.Y, r.W, r.H, r.U)) return Halt(o, "target", tag + ": not on the close button of " + form);
+      if (!r.Live && !OfferForms.OnClose(r.Geo, form, r.X, r.Y, r.W, r.H, r.U)) return Halt(o, "target", tag + ": not on the close button of " + form);   // (a live point is the × itself)
       if (OfferForms.OnNeverButton(form, r.X, r.Y, r.W, r.H, r.U)) return Halt(o, "target", tag + ": lies on another button of " + form + " (buy / go / claim are never pressed)");
       int n = OfferRun(o);
       if (n >= MaxOfferCloses) return Halt(o, "offers", tag + ": " + n + " offer pop-ups closed in a row, " + form + " again - stopped (a loop?)");
