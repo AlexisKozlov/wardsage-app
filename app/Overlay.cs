@@ -698,6 +698,8 @@ namespace RealmForge {
     /// <summary>The artifact flows (storage cleanup, promotion) may click: the player's auto click AND the site's "artAuto" switch (off by default).</summary>
     public bool ArtAutoEnabled;
     bool ArtAutoOn { get { return AutoEnabled && ArtAutoEnabled; } }
+    /// <summary>The Locate owner's way clicks (back arrows, «Инвентарь», Escape): an artifact request follows the artifact switch, the others the locateAuto one.</summary>
+    bool LocateAutoOn { get { return locateReq != null && locateReq.Purpose == "artPromote" ? ArtAutoOn : AutoEnabled && LocateAutoEnabled; } }
 
     /// <summary>The gate's artifact rules follow the switches at every tick (a switch turned off mid-run: hints only again, at once).</summary>
     void ApplyArtGate() {
@@ -2376,7 +2378,13 @@ namespace RealmForge {
         if (pre.Verdict != GateVerdict.Allow) return;   // the last click's effect is awaited / the screen is not recognised yet
       }
       var req = locateReq;
-      var view = new ArtView { NowMs = now, Foreground = gameFront, UserBusy = busy, UserClicked = uc, W = W, H = H, U = U, Step = step, Inv = inv, Ws = ws, Art = req.Art, Geometry = Geo.Current };
+      bool heroOpen = scr != null && scr.Kind == ScreenKind.HeroScreen;
+      bool formOpen = scr != null && (scr.Kind == ScreenKind.Foundry || scr.Kind == ScreenKind.Gem);
+      var view = new ArtView { NowMs = now, Foreground = gameFront, UserBusy = busy, UserClicked = uc, W = W, H = H, U = U, Step = step, Inv = inv, Ws = ws, Art = req.Art, Geometry = Geo.Current,
+        HeroScreenOpen = heroOpen, OtherFormOpen = formOpen, InvDX = invDX };
+      if (gameFront && !busy && ArtLocateAuto.NeedsCityButton(step, heroOpen, formOpen)) { view.CityButton = InventoryButtonSeen(o, W, H); view.InvDX = invDX; }
+      // not in the inventory yet and the Foundry / the gem screen is on top (an earlier request left it): back with its arrow first
+      if (gameFront && !busy && BackStep(ClickOwner.Locate, scr, ArtLocateAuto.NeedsCityBack(view), o, cr, gameFront, now)) { step.Auto = "work"; step.AutoWhy = ""; return; }
       var mv = artPilot.Step(view);
       if (artPilot.Trace != "") { Log.Write("art promote auto: " + artPilot.Trace); artPilot.Trace = ""; }
       string said = mv.State + "|" + mv.Why + "|" + step.Key;
@@ -2393,6 +2401,8 @@ namespace RealmForge {
       Action<ClickRequest, ScreenState> fill = null;
       var geo = Geo.Current;
       switch (mv.Todo) {
+        case ArtTodo.HeroBack: tg = ClickTarget.HeroBack; break;
+        case ArtTodo.InventoryButton: tg = ClickTarget.CityInventory; break;
         case ArtTodo.ArtTab: tg = ClickTarget.ArtTab; break;
         case ArtTodo.Workshop: tg = ClickTarget.ArtWorkshop; fill = (rq, fr) => { rq.CellOk = new[] { art.Uid }; }; break;
         case ArtTodo.PromoteTab: tg = ClickTarget.ArtPromoteTab; fill = (rq, fr) => { rq.CellOk = new[] { art.Uid }; }; break;
@@ -2773,7 +2783,7 @@ namespace RealmForge {
       long now = NowMs();
       var fresh = FreshScreen(false, true);
       if (FormsUnread(fresh)) return false;
-      var req = new ClickRequest { Owner = owner, Target = ClickTarget.EscapeBack, AutoOn = owner == ClickOwner.Locate ? AutoEnabled && LocateAutoEnabled : AutoEnabled, Front = front, U = Ui.Unit(cr.R, cr.B) };
+      var req = new ClickRequest { Owner = owner, Target = ClickTarget.EscapeBack, AutoOn = owner == ClickOwner.Locate ? LocateAutoOn : AutoEnabled, Front = front, U = Ui.Unit(cr.R, cr.B) };
       var res = gate.Check(req, fresh, now);
       AnnounceHalts();
       if (!res.Allowed) return false;
@@ -3160,7 +3170,7 @@ namespace RealmForge {
         }
       }
       var fresh = FreshScreen(target == ClickTarget.CityInventory, target == ClickTarget.UnknownBack || target == ClickTarget.CityBack || target == ClickTarget.FoundryButton);   // (FoundryButton: the Foundry's form shown unread, ClickGate)
-      var req = new ClickRequest { Owner = owner, Target = target, AutoOn = artT ? ArtAutoOn : owner == ClickOwner.Locate ? AutoEnabled && LocateAutoEnabled : AutoEnabled, Front = front, X = a.X, Y = a.Y };
+      var req = new ClickRequest { Owner = owner, Target = target, AutoOn = artT ? ArtAutoOn : owner == ClickOwner.Locate ? LocateAutoOn : AutoEnabled, Front = front, X = a.X, Y = a.Y };
       if (fill != null) fill(req, fresh);
       if (req.U <= 0) { req.W = cr.R; req.H = cr.B; req.U = Ui.Unit(cr.R, cr.B); }
       req.Shown = unknownForms;   // (every unknown form shown, a screen's own ones too: ClickGate)

@@ -86,6 +86,10 @@ namespace RealmForge {
     public static bool NeedsCityBack(LocateView v) {
       if (v == null || v.Step == null) return false;
       var k = v.Step.Kind;
+      // a recast with the Foundry open (left on the Ascension tab by an earlier request, or on its own recast tab): the Foundry's recast steps
+      // are never clicked, the pilot's recast path is the inventory's (card -> gem screen), so back first (lab 1.6.66.377: it waited at openRecastTab)
+      if (v.Purpose != "ascend" && v.OtherFormOpen && v.Rs != null && v.Rs.SublimingOpen
+          && (k == LocateKind.OpenRecastTab || k == LocateKind.RecastFilter || k == LocateKind.RecastPick || k == LocateKind.RecastNotInList)) return true;
       if (k != LocateKind.OpenInventory && k != LocateKind.OpenEquipTab && k != LocateKind.InList && k != LocateKind.OpenFoundry) return false;
       string why; return Decide(v, out why) == LocateTodo.Hint && why == "form";
     }
@@ -362,7 +366,9 @@ namespace RealmForge {
     Cell,         // the artifact's cell in the normal list (selects it): the click or the drag that brings it into view
     Workshop,     // the open card's «Мастерская»
     PromoteTab,   // the workshop's tab «Продвинуть»
-    MatCell       // the planned copy / essence in the workshop's left list: the click or the drag that brings it into view
+    MatCell,      // the planned copy / essence in the workshop's left list: the click or the drag that brings it into view
+    HeroBack,     // not in the inventory yet, the hero screen is open: its back arrow
+    InventoryButton   // not in the inventory yet, the city: «Инвентарь»
   }
 
   /// <summary>What the host sees this tick of an artifact promotion («Показать в игре», purpose artPromote).</summary>
@@ -375,6 +381,10 @@ namespace RealmForge {
     public ArtWorkshopScreen Ws;        // the workshop as read now (null = not shown)
     public ArtPromoteInfo Art;
     public GameGeometry Geometry;       // the site's screen geometry (null: the research numbers of ArtFrames)
+    public bool HeroScreenOpen;         // the hero screen is shown
+    public bool OtherFormOpen;          // the Foundry or the gem screen is shown (the host presses the back arrow: NeedsCityBack)
+    public bool CityButton;             // «Инвентарь» is seen in the city's bottom bar (looked for only when asked: NeedsCityButton)
+    public double InvDX = 0.5222 + 0.9316;   // its place from the right edge, UI units
   }
 
   public sealed class ArtMove {
@@ -401,12 +411,27 @@ namespace RealmForge {
       return art.Via == "essence" && index - 1 < ws.MatItemIds.Count && ws.MatItemIds[index - 1] > 0;
     }
 
+    /// <summary>The way to the inventory: the Foundry / the gem screen is on top, so back with its arrow first (ClickTarget.CityBack, the host's BackStep).</summary>
+    public static bool NeedsCityBack(ArtView v) {
+      return v != null && v.Step != null && v.Step.Kind == LocateKind.OpenInventory && v.OtherFormOpen;
+    }
+    /// <summary>The city's «Инвентарь» has to be looked for (a screen grab): only on the way to the inventory with no screen over the city.</summary>
+    public static bool NeedsCityButton(LocateStep st, bool heroScreenOpen, bool otherFormOpen) {
+      return st != null && st.Kind == LocateKind.OpenInventory && !heroScreenOpen && !otherFormOpen;
+    }
+
     public static ArtTodo Decide(ArtView v, out string why) {
       why = "";
       var st = v.Step;
       if (st == null || st.Kind == LocateKind.None) return ArtTodo.Nothing;
       var inv = v.Inv; var ws = v.Ws;
       switch (st.Kind) {
+        case LocateKind.OpenInventory:
+          // any screen is a start (an earlier request may have left the Foundry or the gem screen open: lab 1.6.66.377 waited here)
+          if (v.OtherFormOpen) { why = "form"; return ArtTodo.Hint; }   // the host's back arrow (NeedsCityBack)
+          if (v.HeroScreenOpen) return ArtTodo.HeroBack;
+          if (v.CityButton) return ArtTodo.InventoryButton;
+          why = "no_city"; return ArtTodo.Hint;
         case LocateKind.ArtOpenTab:
           if (inv == null || !inv.Open || inv.ArtTab) { why = "screen"; return ArtTodo.Hint; }
           if (inv.EquipTab && !inv.BulkKnown) { why = "wait"; return ArtTodo.Hint; }
@@ -443,6 +468,7 @@ namespace RealmForge {
     public const int MaxStepClicks = 4, MaxActions = 90, MaxClicks = 14, MaxDrags = 45, MaxWorkMs = 5 * 60 * 1000;
     public const double MinDragPx = 24;
 
+    readonly HeroGeometry hg = new HeroGeometry();
     string latched = "";
     long waitUntil, pauseUntil, workSince;
     ArtTodo kind; int kindClicks, actions, clicks, drags, lastMat;
@@ -473,6 +499,12 @@ namespace RealmForge {
       if (v.NowMs < waitUntil) return m;
       if (todo != kind) { kind = todo; kindClicks = 0; }
       switch (todo) {
+        case ArtTodo.HeroBack:
+          if (++kindClicks > MaxStepClicks) return Abort(m, "stuck");
+          return Click(m, v, new AutoAction { Kind = AutoKind.Click, X = hg.BackX * v.U, Y = hg.BackY * v.U }, AfterTabMs, "back");
+        case ArtTodo.InventoryButton:
+          if (++kindClicks > MaxStepClicks) return Abort(m, "stuck");
+          return Click(m, v, new AutoAction { Kind = AutoKind.Click, X = v.W - v.InvDX * v.U, Y = v.H - hg.HeroesBtnDY * v.U }, AfterOpenMs, "inventory");
         case ArtTodo.ArtTab: case ArtTodo.Workshop: case ArtTodo.PromoteTab: {
           if (++kindClicks > MaxStepClicks) return Abort(m, "stuck");
           string key = todo == ArtTodo.ArtTab ? "inventory.leftTab.artifact" : todo == ArtTodo.Workshop ? "inventory.artWorkshop" : "artifact.tab.promote";

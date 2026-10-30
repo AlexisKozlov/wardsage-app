@@ -205,6 +205,8 @@ namespace RealmForge {
       }
     }
     public static bool IsArtTarget(ClickTarget t) { return t >= ClickTarget.ArtTab; }
+    /// <summary>The way to the inventory the artifact guide may also click (the hero screen's back arrow, the city's «Инвентарь»): it starts from any screen.</summary>
+    public static bool ArtLocateWay(ClickTarget t) { return t == ClickTarget.HeroBack || t == ClickTarget.CityInventory; }
     /// <summary>The targets of the hero screen's artifact steps (the Equip owner's).</summary>
     public static bool IsHeroArtTarget(ClickTarget t) { return t >= ClickTarget.ArtHeroTab; }
     /// <summary>The target acts on the artifact workshop, the screen that has the «Продвинуть» / «Улучшить» buttons (NeverKeys): no point of it may lie inside them.</summary>
@@ -790,7 +792,7 @@ namespace RealmForge {
       // (with the site's artAuto switch and the auto click on - ArtSellAuto / ArtLocateAuto - the artifact flows click their Art* targets and nothing else)
       bool artT = IsArtTarget(r.Target);
       if (r.Owner == ClickOwner.Sell && (NoSellClicks || (artT && !ArtSellAuto) || (ArtSellAuto && !artT) || (f != null && f.Kind == ScreenKind.Inventory && f.InvArtTab && r.Target != ClickTarget.InvEquipTab && !artT))) return Halt(r.Owner, "artifact", tag + ": " + (NoSellClicks || !ArtSellAuto ? "the artifact cleanup is hints only" : "not a target of the artifact cleanup"));
-      if (r.Owner == ClickOwner.Locate && (NoLocateClicks || (artT && !ArtLocateAuto) || (ArtLocateAuto && !artT))) return Halt(r.Owner, "artifact", tag + ": " + (NoLocateClicks || !ArtLocateAuto ? "the artifact guide is hints only" : "not a target of the artifact guide"));
+      if (r.Owner == ClickOwner.Locate && (NoLocateClicks || (artT && !ArtLocateAuto) || (ArtLocateAuto && !artT && !ArtLocateWay(r.Target)))) return Halt(r.Owner, "artifact", tag + ": " + (NoLocateClicks || !ArtLocateAuto ? "the artifact guide is hints only" : "not a target of the artifact guide"));
       bool heroArt = IsHeroArtTarget(r.Target);
       if (artT && r.Owner == ClickOwner.Equip && !heroArt) return Halt(r.Owner, "target", tag + " is not a target Equip may click");
       if (heroArt && r.Owner == ClickOwner.Equip && !ArtEquipAuto) return Halt(r.Owner, "artifact", tag + ": the artifact steps are hints only");

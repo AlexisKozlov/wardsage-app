@@ -5135,6 +5135,15 @@ static partial class CoreTests {
       foreach (var k in new[] { LocateKind.OpenInventory, LocateKind.OpenEquipTab, LocateKind.InList }) Check(L(k, true, false), "city back: locate step " + k + " with the Foundry on top goes back");
       Check(!L(LocateKind.OpenInventory, false, false) && !L(LocateKind.OpenInventory, false, true) && !L(LocateKind.InList, false, false), "city back: locate on its own screens / the hero screen: as before");
       Check(!L(LocateKind.GemFunction, true, false) && !L(LocateKind.Selected, true, false) && !L(LocateKind.AscendPick, true, false), "city back: never in the recast's / ascension's own steps");
+      // a recast after an Ascension request left the Foundry open on its Ascension tab (lab 1.6.66.377: the pilot waited at openRecastTab)
+      var rsAsc = new RecastScreen { SublimingOpen = true, CurType = 2 };
+      var recReq = new LocateRequest { Id = "r", Purpose = "recast", Item = LocItem(777, 4, 0, 0) }; recReq.Item.Quality = 8;
+      var recStep = LocateGuide.Next(recReq, null, rsAsc, null, 8, 1);
+      Func<LocateStep, string, RecastScreen, bool> R = (st, pur, rs) => LocateAuto.NeedsCityBack(new LocateView { Step = st, OtherFormOpen = true, Rs = rs, Purpose = pur, W = W, H = H, U = U });
+      Check(recStep.Kind == LocateKind.OpenRecastTab && R(recStep, "recast", rsAsc), "city back: recast with the Foundry on the Ascension tab goes back (the inventory's recast path)");
+      foreach (var k in new[] { LocateKind.RecastFilter, LocateKind.RecastPick, LocateKind.RecastNotInList }) Check(R(new LocateStep { Kind = k }, "recast", rsAsc), "city back: recast step " + k + " in the Foundry goes back");
+      Check(!R(recStep, "ascend", rsAsc) && !R(new LocateStep { Kind = LocateKind.OpenAscendTab }, "recast", rsAsc), "city back: the Ascension's Foundry steps stay");
+      Check(!R(recStep, "recast", null) && !LocateAuto.NeedsCityBack(new LocateView { Step = recStep, OtherFormOpen = false, Rs = rsAsc, Purpose = "recast", W = W, H = H, U = U }), "city back: ... only with the Foundry shown");
     }
 
     // from the Foundry: back (-> the inventory), back (-> the city), then the normal first click
@@ -6623,7 +6632,25 @@ static partial class CoreTests {
     Eq(ArtTodo.ArtTab, ArtLocateAuto.Decide(VN(new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true }, null), out why), "art pilot: the equipment tab -> «Артефакт»");
     Eq(ArtTodo.Hint, ArtLocateAuto.Decide(VN(new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true, Bulk = true }, null), out why), "art pilot: the equipment sale -> the player leaves it"); Eq("bulk", why, "art pilot: ... because of the bulk sale");
     Eq(ArtTodo.Hint, ArtLocateAuto.Decide(VN(new InventoryScreen { Open = true, EquipTab = true }, null), out why), "art pilot: the equipment mode unreadable -> no click");
-    Eq(ArtTodo.Hint, ArtLocateAuto.Decide(VN(null, null), out why), "art pilot: nothing open -> a hint (the player opens the Inventory)");
+    Eq(ArtTodo.Hint, ArtLocateAuto.Decide(VN(null, null), out why), "art pilot: nothing open, the city's button not seen -> a hint"); Eq("no_city", why, "art pilot: ... no_city");
+    {   // the way to the inventory from any screen (lab 1.6.66.377: an earlier request left the Foundry open, the pilot waited at openInventory)
+      var vc = VN(null, null); vc.CityButton = true; Eq(ArtTodo.InventoryButton, ArtLocateAuto.Decide(vc, out why), "art pilot: the city -> «Инвентарь»");
+      var vh = VN(null, null); vh.HeroScreenOpen = true; Eq(ArtTodo.HeroBack, ArtLocateAuto.Decide(vh, out why), "art pilot: the hero screen -> its back arrow");
+      var vf = VN(null, null); vf.OtherFormOpen = true; vf.CityButton = true;
+      Check(ArtLocateAuto.Decide(vf, out why) == ArtTodo.Hint && why == "form" && ArtLocateAuto.NeedsCityBack(vf), "art pilot: the Foundry / gem screen on top -> the host's back arrow");
+      Check(!ArtLocateAuto.NeedsCityBack(vc) && !ArtLocateAuto.NeedsCityBack(VN(new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true }, null)), "art pilot: no back arrow in the city / the inventory");
+      Check(ArtLocateAuto.NeedsCityButton(vc.Step, false, false) && !ArtLocateAuto.NeedsCityButton(vc.Step, true, false) && !ArtLocateAuto.NeedsCityButton(vc.Step, false, true), "art pilot: the city button is looked for only on the city");
+      var hg = new HeroGeometry(); var ap = new ArtPilot();
+      var mc = ap.Step(vc);
+      Check(mc.Todo == ArtTodo.InventoryButton && mc.Action.Kind == AutoKind.Click && Math.Abs(mc.Action.X - (W - vc.InvDX * U)) < 1 && Math.Abs(mc.Action.Y - (H - hg.HeroesBtnDY * U)) < 1, "art pilot: «Инвентарь» in the city's bar");
+      ap = new ArtPilot(); var mh = ap.Step(vh);
+      Check(mh.Todo == ArtTodo.HeroBack && Math.Abs(mh.Action.X - hg.BackX * U) < 1 && Math.Abs(mh.Action.Y - hg.BackY * U) < 1, "art pilot: the hero screen's back arrow");
+      var gw = LOn(); var cityS = ScreenState.Classify(new ScreenInputs { CityForm = true }, 0);
+      var rwy = gw.Check(L(ClickTarget.CityInventory), cityS, 0);
+      Check(rwy.Allowed || gw.HaltReason(ClickOwner.Locate) != "artifact", "art auto: the promotion may press the city's «Инвентарь» (" + rwy.Reason + ")");
+      gw = LOn(); var rg = gw.Check(L(ClickTarget.InvEquipTab), S(artSel(2)), 0);
+      Check(!rg.Allowed && gw.HaltReason(ClickOwner.Locate) == "artifact", "art auto: ... but still no gear target");
+    }
     Eq(ArtTodo.Hint, ArtLocateAuto.Decide(VN(new InventoryScreen { Open = true, ArtTab = true, ArtBulkKnown = true, ArtMode = 2, ArtBulk = true, Uids = { 5001 } }, null), out why), "art pilot: the artifact tab's bulk sale -> a hint");
     Eq(ArtTodo.Cell, ArtLocateAuto.Decide(VN(artSel(0), null), out why), "art pilot: the artifact in the list -> its cell");
     Eq(ArtTodo.Workshop, ArtLocateAuto.Decide(VN(artSel(2), null), out why), "art pilot: its card open -> «Мастерская»");
