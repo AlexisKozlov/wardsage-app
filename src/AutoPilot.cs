@@ -78,6 +78,12 @@ namespace RealmForge {
     // the last item click: where it went, and whether its result is still to be looked at; the row 1 top it implies
     // when it selected another item (NaN = none)
     bool itemPending; double clickX, clickY, row1Fix = double.NaN, row1FixBase;
+    // what the clicks on the list taught (live 1.6.66.354: the filter shrank the list, the scroll read stayed stale, every
+    // re-anchoring click was undone by the next read - 184 clicks between two rows): row 1 is this far from the host's anchor
+    // (NaN = trust it); the list clicks that changed nothing for this item; the last list click point and how often in a row
+    double row1Off = double.NaN, calY; int noEffect, samePt, typesLen = -1; long selBefore; double lastPtX = double.NaN, lastPtY = double.NaN; bool lastNoEffect;
+    /// <summary>List clicks with no effect for one item before the pilot stops; the same point at most this often in a row.</summary>
+    public const int NoEffectTries = 3, SamePointMax = 2;
     /// <summary>What the last step did (the app's log), empty when nothing new.</summary>
     public string Trace = "";
     /// <summary>Why the pilot gave up (failed / slot_failed / unconfirmed), for the error report.</summary>
@@ -103,18 +109,22 @@ namespace RealmForge {
     public void NotSent() {
       if (lastAct == 1) { confirmed = lastRetry; if (lastRetry) confirmRetries--; waitUntil = 0; }
       else if (lastAct == 2) { tipReopens--; waitUntil = 0; calibPending = false; }
+      // a list click not sent: its result is not waited for, its point was not clicked
+      if (listSent) { listSent = false; itemPending = calibPending = false; if (samePt > 0) samePt--; if (samePt == 0) lastPtX = lastPtY = double.NaN; waitUntil = 0; }
       lastAct = 0;
     }
 
     public AutoAction Step(AutoView v) {
-      lastAct = 0;
+      lastAct = 0; listSent = false;
       string key = v.Slot != null ? "slot:" + v.Slot[0] + ":" + v.Slot[1] : v.Target > 0 && v.Row > 0 ? "item:" + v.Target : "";
       if (key != goal) {
         goal = key; waitUntil = 0; clicks = drags = calibs = stuck = calibMiss = 0; needCalib = measure = calibPending = endTaken = false;
         selSince = 0; confirmed = false; confirmRetries = 0; tipReopens = 0; lastRetry = false; State = "idle"; Why = "";
         slotWaits = afterClicks = wrongs = 0; lastSlotClick = 0; itemPending = false; row1Fix = double.NaN;
+        row1Off = double.NaN; noEffect = samePt = 0; typesLen = -1; lastPtX = lastPtY = double.NaN; lastNoEffect = false;
       }
       if (key == "") { State = "idle"; return AutoAction.Nothing; }
+      curSel = v.Sel; nowMs = v.NowMs;
       bool selected = v.Slot == null && v.Sel == v.Target;
       if (!selected) selSince = 0; else if (selSince == 0) selSince = v.NowMs;
       if (selected) itemPending = false;
@@ -156,7 +166,7 @@ namespace RealmForge {
         if (pt != null) {
           waitUntil = v.NowMs + AfterClickMs;
           Trace = "the tip of item " + v.Target + " is not open (no blue button, no tip form shown): the item clicked again at " + (int)pt[0] + "," + (int)pt[1];
-          return Click(pt[0], pt[1]);
+          return ListClick(pt[0], pt[1]);
         }
         // the click on the item changed nothing (live 1.6.66.349: two clicks at 65,179, the selection and the closed tip stayed - the rows
         // are not where the anchor puts them): an item in the list's middle is clicked to anchor the rows again (it selects another
@@ -191,7 +201,7 @@ namespace RealmForge {
     double[] ItemPoint(AutoView v) {
       if (!v.AnchorHas || v.Types == null || v.Row <= 0 || v.Col <= 0) return null;
       double H = v.H, cell = g.CellW * H;
-      double cy = v.Row1Top + g.RowOffset(v.Types, v.Row) * H + cell / 2, cx = g.ColLeft(v.Col) * H + cell / 2;
+      double cy = v.Row1Top + Off + g.RowOffset(v.Types, v.Row) * H + cell / 2, cx = g.ColLeft(v.Col) * H + cell / 2;
       if (cy < g.ViewTop * H + cell * 0.45 || cy > g.ViewBottom * H - cell * 0.45) return null;
       return new[] { cx, cy };
     }
@@ -203,6 +213,25 @@ namespace RealmForge {
 
       // the filter's side panel is open: clicks on the list would go into it - close it first (not counted as a try)
       if (v.SideClose != null) { waitUntil = v.NowMs + AfterClickMs; return Click(v.SideClose[0], v.SideClose[1]); }
+      // the list changed its length (a filter): what was learnt of its rows is stale - one more read before any click
+      int tl = v.Types != null ? v.Types.Length : 0;
+      if (tl != typesLen) {
+        bool first = typesLen < 0; typesLen = tl;
+        if (!first) { row1Off = row1Fix = double.NaN; itemPending = calibPending = false; lastPtX = lastPtY = double.NaN; samePt = 0; waitUntil = v.NowMs + AfterClickMs; Trace = "the list changed (" + tl + " rows): read again"; return AutoAction.Nothing; }
+      }
+      // the last list click: did it change anything? (the selection stayed: a gap, a stale place) - the rows are anchored again, and
+      // after NoEffectTries such clicks for one item the pilot stops
+      if (itemPending || calibPending) {
+        // (a slow PC answers up to 1.5 s after the click: nothing changed yet is not judged before JudgeMs)
+        if (v.Sel == selBefore && v.NowMs - clickAt < JudgeMs) return AutoAction.Nothing;
+        lastNoEffect = v.Sel == selBefore;
+        if (lastNoEffect) {
+          if (++noEffect >= NoEffectTries) { itemPending = calibPending = false; return Fail(noEffect + " clicks on the list changed nothing (sel " + v.Sel + ", last at " + (int)lastPtX + "," + (int)lastPtY + ")"); }
+          needCalib = true;
+        }
+        // a click selected an item whose row is known: the click point lies in that row - the rows are where that says
+        else if (v.Sel > 0 && v.SelRow > 0 && v.Types != null && v.SelRow < v.Types.Length) Learn(v, itemPending ? clickY : calY);
+      }
 
       // the item click selected another item: the list is not where the pilot thinks it is. Its place in the list is known
       // (SelRow): row 1 is where that click puts it; never the same point again, and after two such hits stop
@@ -211,8 +240,7 @@ namespace RealmForge {
         if (v.Sel > 0 && v.Sel != v.Target) {
           if (++wrongs >= WrongTries) return Fail("wrong item " + v.Sel + " at row " + v.SelRow + "/" + v.SelCol);
           Trace = "wrong item " + v.Sel + " at row " + v.SelRow + "/" + v.SelCol + " (clicked for row " + v.Row + "/" + v.Col + ")";
-          if (v.SelRow > 0 && v.Types != null && v.SelRow < v.Types.Length) { row1Fix = clickY - g.BarBottom * H / 2 - g.RowOffset(v.Types, v.SelRow) * H; row1FixBase = v.Row1Top; }
-          else needCalib = true;
+          if (!(v.SelRow > 0 && v.Types != null && v.SelRow < v.Types.Length)) needCalib = true;
         }
       }
       // the re-anchoring click selected nothing new (a gap, a title row, the same item): once more, a row further
@@ -230,12 +258,18 @@ namespace RealmForge {
         // where the list should be now: moved with the drag since the last anchor, else as last known, else at the top
         // (a short filtered list is; its middle can be a title or «nothing found» - no item to click there)
         // (the list stops at its ends: a drag longer than the way left moved it only that far - see Clamp)
-        double est = measure && v.AnchorHas ? Clamp(beforeDrag + lastDrag * GainOr1, v.Types, H) : v.AnchorHas ? v.Row1Top : ScrollAnchor.TopRow1(g, H);
+        double est = measure && v.AnchorHas ? Clamp(beforeDrag + lastDrag * GainOr1, v.Types, H) : v.AnchorHas ? v.Row1Top + Off : ScrollAnchor.TopRow1(g, H);
         double shift = (calibMiss % 3 == 1 ? 1 : calibMiss % 3 == 2 ? -1 : 0) * pitch;
         double cyC = double.IsNaN(est) || v.Types == null ? mid + shift * 0.3 : NearestCellCentre(est, v.Types, H, mid + shift);
         // (after a wrong hit: not the point that selected the other item - a row further)
         if (wrongs > 0 && v.Types != null && !double.IsNaN(est) && Math.Abs(col1 - clickX) < 2 && Math.Abs(cyC - clickY) < 2) cyC = NearestCellCentre(est, v.Types, H, cyC + pitch);
-        return Click(col1, cyC);
+        // (the last click changed nothing: its point is off the cells - half a row from it, not where the rows are thought to be)
+        if (lastNoEffect && !double.IsNaN(lastPtY)) {
+          double up = lastPtY - pitch / 2, dn = lastPtY + pitch / 2, lo = viewTop + cell * 0.45, hi = viewBottom - cell * 0.45;
+          cyC = noEffect % 2 == 1 ? (dn <= hi ? dn : up) : (up >= lo ? up : dn);
+        }
+        lastNoEffect = false; calY = cyC;
+        return ListClick(col1, cyC);
       }
       // after a drag and the re-anchoring click: how far did the list follow the pointer?
       if (measure) {
@@ -256,7 +290,7 @@ namespace RealmForge {
 
       // (the host moved the anchor itself since the wrong hit: its row 1 is the one to trust)
       if (!double.IsNaN(row1Fix) && Math.Abs(v.Row1Top - row1FixBase) > 1) row1Fix = double.NaN;
-      double row1 = double.IsNaN(row1Fix) ? v.Row1Top : row1Fix;
+      double row1 = double.IsNaN(row1Fix) ? v.Row1Top + Off : row1Fix;
       double top = row1 + g.RowOffset(v.Types, v.Row) * H, cy = top + cell / 2, cx = g.ColLeft(v.Col) * H + cell / 2;
       if (cy >= viewTop + cell * 0.45 && cy <= viewBottom - cell * 0.45) {
         // the same point selected another item before: look for the rows again instead of clicking it
@@ -266,7 +300,7 @@ namespace RealmForge {
         else if (clicks >= ClickTries) return Fail("item " + v.Target + " not selected after " + clicks + " clicks (sel " + v.Sel + ")");
         clicks++; waitUntil = v.NowMs + AfterClickMs;
         itemPending = true; clickX = cx; clickY = cy;
-        return Click(cx, cy);
+        return ListClick(cx, cy);
       }
       if (drags >= DragTries) return Fail("the item is not reached after " + drags + " drags");
       double dist = cy - mid;                                          // > 0: the item is below: drag the list up
@@ -281,6 +315,28 @@ namespace RealmForge {
       waitUntil = v.NowMs + AfterDragMs;
       return new AutoAction { Kind = AutoKind.Drag, X = (g.StripLeft + g.StripRight) / 2 * H, Y = y0, DY = dy };
     }
+
+    double Off { get { return double.IsNaN(row1Off) ? 0 : row1Off; } }
+
+    /// <summary>The click at <paramref name="y"/> selected the item of row SelRow: when the rows as thought put that row's cell elsewhere,
+    /// row 1 is taken from the click (the point at the cell's middle).</summary>
+    void Learn(AutoView v, double y) {
+      double H = v.H, cell = g.CellW * H, t = v.Row1Top + Off + g.RowOffset(v.Types, v.SelRow) * H;
+      if (y >= t - 1 && y <= t + cell + 1) return;
+      row1Off = y - cell / 2 - g.RowOffset(v.Types, v.SelRow) * H - v.Row1Top; row1Fix = double.NaN;
+      Trace = (Trace != "" ? Trace + "; " : "") + "rows taken from the click on row " + v.SelRow + ": row 1 at " + (int)(v.Row1Top + row1Off) + " (anchor " + (int)v.Row1Top + ")";
+    }
+
+    /// <summary>A click on the list (an item or the re-anchoring one): never the same point more than SamePointMax times in a row.</summary>
+    AutoAction ListClick(double x, double y) {
+      if (Math.Abs(x - lastPtX) < 2 && Math.Abs(y - lastPtY) < 2) { if (++samePt > SamePointMax) { itemPending = calibPending = false; return Fail("the same point " + (int)x + "," + (int)y + " would be clicked a " + samePt + "rd time in a row"); } }
+      else samePt = 1;
+      lastPtX = x; lastPtY = y; selBefore = curSel; clickAt = nowMs; listSent = true;
+      return Click(x, y);
+    }
+    long curSel, nowMs, clickAt; bool listSent;
+    /// <summary>How long a list click gets to change the selection before it counts as one that changed nothing.</summary>
+    public const int JudgeMs = 1800;
 
     double GainOr1 { get { return Gain > 0.2 ? Gain : 1; } }
 

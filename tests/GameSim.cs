@@ -28,7 +28,7 @@ static partial class CoreTests {
 
   sealed class SimGame {
     public readonly List<string> Stack = new List<string> { SimCity };
-    public readonly Random R; public readonly bool Slow; public readonly double FailP;
+    public readonly Random R, R2; public readonly bool Slow; public readonly double FailP;   // (R2: the later additions, so the old seeds keep their runs)
     public readonly double W = 1920, H = 1009, U;
     public readonly FakeHeroGame Hero; readonly HeroGeometry hg = new HeroGeometry();
     public bool InvEquipTab, InvBulk; public int FoundryTab;
@@ -63,13 +63,15 @@ static partial class CoreTests {
     const long SeenWithinMs = 2600;
     public long Now;
     public SimGame(int seed, bool slow, double failP) {
-      R = new Random(seed); Slow = slow; FailP = failP; U = Ui.Unit(W, H);
+      R = new Random(seed); R2 = new Random(seed * 31 + 7); Slow = slow; FailP = failP; U = Ui.Unit(W, H);
       Hero = new FakeHeroGame(hg, W, U);
       var all = new List<long>(); for (int i = 0; i < 30; i++) all.Add(100 + i);
       Hero.All = all.ToArray(); Hero.Heroes = all.ToArray(); Hero.CityHero = 100; Hero.Tab = R.Next(2) == 0 ? 3 : 1;
       InvGeo = SellGeometry.Inventory(W, U, InvCols);
       int ni = 20 + R.Next(60); for (int i = 0; i < ni; i++) InvItems.Add(9000 + i);
       int na = 3 + R.Next(40); for (int i = 0; i < na; i++) { long u = 600 + i; AscAll.Add(u); AscSlot[u] = R.Next(5); }
+      // (a third: a long list - the slot filter leaves rows to scroll, live 1.6.66.354)
+      if (R2.Next(3) == 0) { int nb = 100 + R2.Next(150); for (int i = 0; i < nb; i++) { long u = 20000 + i; AscAll.Add(u); AscSlot[u] = R2.Next(5); } }
       AscAll.Insert(R.Next(AscAll.Count + 1), SimItem); AscSlot[SimItem] = 3;
     }
     public List<long> AscShown() { var l = new List<long>(); foreach (var u in AscAll) if (AscParts.Count == 0 || AscParts.Contains(AscSlot[u])) l.Add(u); return l; }
@@ -247,8 +249,12 @@ static partial class CoreTests {
           var ab = Geo.Rect("ascend.button", W, H, U); if (In(ab, x, y)) { Bad.Add("CLICK ON «Вознести» @" + (int)x + "," + (int)y + " (" + tg + ")"); return; }
           var st = Geo.Rect("ascend.slot.3", W, H, U);
           if (In(st, x, y)) { Later(lat, () => { if (!AscParts.Remove(3)) AscParts.Add(3); AscScrollY = 0; }); return; }
-          long u = ClickGate.AscendCellUid(Geo, Rs(), x, y, W, H, U);
-          if (u != 0) Later(lat, () => { if (TopForm() == SimFoundry && FoundryTab == 2 && AscShown().Contains(u)) AscSel = u; });
+          // (the game takes the press when it gets it: a list still coasting has moved under the point by then)
+          Later(lat, () => {
+            if (TopForm() != SimFoundry || FoundryTab != 2) return;
+            long u = ClickGate.AscendCellUid(Geo, Rs(), x, y, W, H, U);
+            if (u != 0 && AscShown().Contains(u)) AscSel = u;
+          });
         }
       }
     }
@@ -259,11 +265,16 @@ static partial class CoreTests {
       if (top == SimInv && InvBulk || top == SimFoundry && FoundryTab == 2) {   // a list follows the pointer
         Say("drag " + tg + " @" + (int)x + "," + (int)y + " by " + (int)dy + " on " + top); Acts.Append(Now + " d" + (int)x + "," + (int)y + "," + (int)dy + ";");
         bool inv = top == SimInv;
-        Later(Lat(), () => {
+        long lat0 = Lat();
+        // the slow laptop's Ascension list coasts: most of the move first, the rest 0.4-0.9 s later (live 1.6.66.354: the cell placed from
+        // the first read, the click changed nothing)
+        double coast = !inv && Slow ? 0.25 + 0.2 * R2.NextDouble() : 0; long coastMs = 400 + R2.Next(500);
+        Later(lat0, () => {
           if (TopForm() != top) return;
           if (inv) InvScrollY = Math.Max(0, Math.Min(InvMaxScroll, InvScrollY - dy * InvRowUnits / InvPitch));
-          else AscScrollY = Math.Max(0, Math.Min(AscMaxScroll, AscScrollY - dy / AscK));
+          else AscScrollY = Math.Max(0, Math.Min(AscMaxScroll, AscScrollY - dy * (1 - coast) / AscK));
         });
+        if (coast > 0) Later(lat0 + coastMs, () => { if (TopForm() == top) AscScrollY = Math.Max(0, Math.Min(AscMaxScroll, AscScrollY - dy * coast / AscK)); });
         return;
       }
       if (top != SimHero) { Click(x, y, tg); return; }
@@ -520,6 +531,8 @@ static partial class CoreTests {
       v.TipShown = scr != null && ((scr.Flow ?? "") + "," + (scr.ModalWhy ?? "")).Contains(SimTip);
       v.BlueNone = !tip;
       var a = ip.Step(v);
+      if (ip.Trace != "" && Environment.GetEnvironmentVariable("SIM_TRACE") != null) Console.WriteLine("  item " + Now + ": " + ip.Trace);
+      ip.Trace = "";
       PilotState = "item_" + ip.State;
       if (ip.State == "done") { Done = "done"; return; }
       if (a.Kind == AutoKind.None) return;
@@ -599,6 +612,7 @@ static partial class CoreTests {
       if (LocateAuto.NeedsCityButton(dstep, heroOpen, formOpen)) view.CityButton = G.Full == SimCity && G.CityClear;
       bool needBack = LocateAuto.NeedsCityBack(view);
       if (BackStep(scr, needBack)) return;
+      if (Gate.CellAgainDue.Remove(ClickOwner.Locate)) lp.CellAgain();   // (ClickGate.Observe: a cell click without effect, placed again once)
       var mv = lp.Step(view);
       PilotState = mv.State + (mv.Why != "" ? ":" + mv.Why : "") + "@" + dstep.Kind;
       if (mv.Action.Kind == AutoKind.None) return;
@@ -671,6 +685,7 @@ static partial class CoreTests {
       var miss = new List<string>(); foreach (var u in h.Wanted) if (!g.InvSel.Contains(u)) miss.Add(u.ToString());
       if (xtra.Count > 0 || miss.Count > 0) g.Bad.Add("SELL MARKS WRONG: extra [" + string.Join(",", xtra.ToArray()) + "] missing [" + string.Join(",", miss.ToArray()) + "]");
     }
+    if (h.Gate.HaltReason(owner) == "nochange" && h.Gate.HaltDetail(owner).StartsWith("AscendCell") && h.Gate.HaltDetail(owner).Contains("(screen Foundry")) g.Bad.Add("ASCENSION CELL CLICK WITHOUT EFFECT: " + h.Gate.HaltDetail(owner));
     if (h.Done != "" && owner == ClickOwner.Equip && !g.Worn) g.Bad.Add("EQUIP DONE WITHOUT THE ITEM ON (" + h.Confirms + " EquipConfirm presses)");
     var errs = new List<string>(g.Bad);
     if (outcome == "TIMEOUT") errs.Add("no end within " + cap / 1000 + " s (silent waiting): " + h.PilotState);
@@ -688,9 +703,89 @@ static partial class CoreTests {
     return sb.ToString();
   }
 
+  // live 1.6.66.354 (the laptop, equip from the city): the filter shrank the gear list and the item moved up; the scroll read stayed stale
+  // and the host put the anchor back from it after every click, so the pilot's re-anchoring clicks taught nothing - 184 clicks for a
+  // minute at one spot between the two bottom rows. The game here answers a click 1 s later (the slow laptop); the host's Row1Top is
+  // the stale one every tick. shift: how far (in rows) the stale anchor puts the rows below the real ones.
+  static string StaleRowsRun(double shift, bool barHit, bool startSel, out int clicks, out int maxSame, out string why) {
+    var geo = new ListGeometry(); double H = 1009, pitch = geo.PitchY * H, cell = geo.CellW * H;
+    var types = new[] { 0, 1, 1, 1, 1, 1, 1 };
+    double real = ScrollAnchor.TopRow1(geo, H), stale = real + shift * pitch;
+    long target = 9021; long sel = startSel ? target : 9051; clicks = 0; maxSame = 0; int same = 0; double lx = double.NaN, ly = double.NaN;
+    Func<double, double, long> at = (x, y) => {
+      int col = geo.ColumnAt(x / H); if (col == 0) return 0;
+      for (int r = 1; r < types.Length; r++) { double t = real + geo.RowOffset(types, r) * H; if (y >= t && y <= t + (barHit ? geo.BarBottom * H : cell)) return 9000 + r * 10 + col; }
+      return 0;
+    };
+    var p = new AutoPilot(geo); var due = new List<KeyValuePair<long, long>>(); int confirms = 0;
+    var button = new[] { 800, 600, 136, 37 };
+    for (long t = 0; t < 120000; t += 100) {
+      foreach (var e in due.ToArray()) if (e.Key <= t) { sel = e.Value == sel ? 0 : e.Value; due.Remove(e); }
+      int selRow = sel > 0 ? (int)((sel - 9000) / 10) : 0;
+      var a = p.Step(new AutoView { NowMs = t, Foreground = true, H = H, Target = target, Row = 2, Col = 1, Sel = sel, SelRow = selRow, SelCol = sel > 0 ? 1 : 0,
+                                    AnchorHas = true, Row1Top = stale, Types = types, AutoConfirm = startSel, Button = startSel && sel == target ? button : null, Hero = 5, ScreenHero = 5, Owner = 0 });
+      if (p.State == "failed" || p.State == "done") break;
+      if (a.Kind != AutoKind.Click) continue;
+      if (a.X >= button[0] && a.X <= button[0] + button[2] && a.Y >= button[1] && a.Y <= button[1] + button[3]) { confirms++; break; }
+      clicks++;
+      if (Math.Abs(a.X - lx) < 2 && Math.Abs(a.Y - ly) < 2) same++; else same = 1;
+      lx = a.X; ly = a.Y; maxSame = Math.Max(maxSame, same);
+      long hit = at(a.X, a.Y); if (hit != 0) due.Add(new KeyValuePair<long, long>(t + 1000, hit));
+    }
+    why = p.Why;
+    return confirms > 0 ? "confirm" : sel == target ? "selected" : p.State;
+  }
+
+  // live 1.6.66.354 (the owner's photo): the weapon's compare tip stayed open, the next step was the bracer slot - the frame sat on the
+  // compare card where the slot is behind it, the pilot clicked there. The tip is the equip helper's flow form: Escape is kept off it only
+  // while it is the step's target; before a slot step ONE Escape closes it (EquipTipEscape), at most 2 a run, nothing else shown over it.
+  static void TipOverSlots() {
+    Func<string, bool, ScreenState> hero = (flow, modal) => {
+      var s = ScreenState.Classify(new ScreenInputs { Hero = new HeroScreen { Hero = 204200000, FormOk = true, Tab = 3, Part = 0 }, Offers = new List<string>(), ShownKnown = "Form_CharactorMain", Flow = flow }, 0);
+      s.SinceMs = 0; return s;
+    };
+    var tip = hero("Form_CharactorEquipTip", false); var cmp = hero("Form_CharactorEquipTip,Form_EquipedCompared", false);
+    var g = new ClickGate();
+    Func<ScreenState, ClickGate, GateResult> esc = (st, gg) => gg.Check(new ClickRequest { Owner = ClickOwner.Equip, Target = ClickTarget.EquipTipEscape, AutoOn = true, Front = true }, st, 1000);
+    Check(ClickGate.OnlyTip(tip) && ClickGate.OnlyTip(cmp) && !ClickGate.OnlyTip(hero("", false)) && !ClickGate.OnlyTip(hero("Form_EquipFilterWidget", false)), "sim: the item's tip / compare over the slots is told apart from the other flow forms");
+    var r1 = esc(cmp, g);
+    Check(r1.Allowed, "sim: tip open, a slot step: one Escape closes the compare tip (" + r1.Detail + ")");
+    g.Arm(ClickOwner.Equip, ClickTarget.EquipTipEscape, ClickGate.Expect(new ClickRequest { Owner = ClickOwner.Equip, Target = ClickTarget.EquipTipEscape }, cmp), 1000);
+    g.Observe(hero("", false), 1500);
+    Check(!g.Pending(ClickOwner.Equip) && !g.Halted(ClickOwner.Equip), "sim: ... the tip gone is the Escape's effect");
+    var g2 = new ClickGate();
+    Check(!esc(hero("Form_EquipFilterWidget", false), g2).Allowed && !g2.Halted(ClickOwner.Equip), "sim: no tip Escape while the filter pop-up (a step's own target) is shown");
+    Check(!g2.Check(new ClickRequest { Owner = ClickOwner.Sell, Target = ClickTarget.EquipTipEscape, AutoOn = true, Front = true }, tip, 1000).Allowed, "sim: the tip Escape is the equip helper's only");
+    var g3 = new ClickGate(); int sent = 0;
+    for (int i = 0; i < 4 && !g3.Halted(ClickOwner.Equip); i++) {
+      if (esc(tip, g3).Allowed) { sent++; g3.Arm(ClickOwner.Equip, ClickTarget.EquipTipEscape, null, 1000 + i); }
+    }
+    Check(sent == ClickGate.MaxTipEscapes && g3.Halted(ClickOwner.Equip), "sim: a tip that stays: " + sent + " Escapes, then a stop with the reason (" + g3.HaltDetail(ClickOwner.Equip) + ")");
+    // the general Escape stays off the pilot's own screen
+    var g4 = new ClickGate();
+    Check(!g4.Check(new ClickRequest { Owner = ClickOwner.Equip, Target = ClickTarget.EscapeBack, AutoOn = true, Front = true }, tip, 1000).Allowed, "sim: the back Escape never on the hero screen with the tip");
+  }
+
+  static void StaleRowsAfterFilter() {
+    int c, m; string why;
+    foreach (bool bar in new[] { false, true }) {
+      // the click for row 2 selects the item of row 4: the rows are taken from that click, the next one selects the item
+      string r = StaleRowsRun(2, bar, false, out c, out m, out why);
+      Check(r == "selected" && c <= 4 && m <= 2, "sim: stale rows after the filter (a click selects row 4): the item is selected (" + r + ", " + c + " clicks, same point " + m + " in a row, " + why + ")");
+      // the click lands between two rows (nothing changes): never more than 2 clicks at one point, the item or a clear stop within a few clicks
+      r = StaleRowsRun(2.5, bar, false, out c, out m, out why);
+      Check((r == "selected" || (r == "failed" && why != "")) && c <= 8 && m <= 2, "sim: stale rows after the filter (a click between two rows): no loop (" + r + ", " + c + " clicks, same point " + m + " in a row, " + why + ")");
+    }
+    // the item is selected already when the pilot starts: no list click, straight to «Заменить»
+    string s0 = StaleRowsRun(2, false, true, out c, out m, out why);
+    Check(s0 == "confirm" && c == 0, "sim: the item selected already: the confirm step at once (" + s0 + ", " + c + " list clicks)");
+  }
+
   // what the game sim found (each a fix in src/ or app/Overlay.cs), kept as plain tests
   static void SimRegressionTests() {
     Console.WriteLine("Game sim: its findings");
+    StaleRowsAfterFilter();
+    TipOverSlots();
     // (1) a dangerous dialog or a wait shown when a known screen comes is never taken for a part of that screen (the pilot clicked under a buy dialog)
     Check(!ScreenMap.MayBeBase("Form_BuyPopup") && !ScreenMap.MayBeBase("Form_BattleLoading") && ScreenMap.MayBeBase("Form_AccountInfo") && ScreenMap.MayBeBase("Form_NotInTheGame"),
           "sim: a dangerous dialog / a wait is never a known screen's own form, a pop-up may be");
@@ -799,6 +894,14 @@ static partial class CoreTests {
       foreach (int seed in new[] { 11812, 12485, 14365, 19310, 25906, 26380, 56891 }) {
         string e = SimRun(seed, false, false, oc, geo);
         Check(e == "", "sim: seed " + seed + " keeps every rule" + (e != "" ? ": " + e.Split('\n')[0] + " " + (e.Split('\n').Length > 1 ? e.Split('\n')[1].Trim() : "") : ""));
+      }
+      // (9) the slow laptop's Ascension list coasts after a drag (live 1.6.66.354: the cell placed from a read of a list still moving, the
+      // click changed nothing - «nochange»): the cell waits for two equal reads, a click without effect is placed again once
+      {
+        var o9 = new Dictionary<string, int>(); int asc = 0;
+        for (int seed = 0; seed < 300; seed++) if (SimRun(seed, true, false, o9, geo).Contains("ASCENSION CELL")) asc++;
+        int ld; o9.TryGetValue("Locate slow done", out ld);
+        Check(asc == 0 && ld > 0, "sim: slow Ascension scroll, 300 slow seeds: no Locate stop on a cell click without effect (" + asc + " stops, " + ld + " done)");
       }
       foreach (int seed in new[] { 11753, 19461, 30660, 30839, 46982, 51899, 55636, 59452 }) {
         string e = SimRun(seed, true, false, oc, geo);

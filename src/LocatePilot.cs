@@ -180,6 +180,10 @@ namespace RealmForge {
     long waitUntil, pauseUntil, workSince;
     LocateTodo kind; int kindClicks, actions, clicks, drags;
     double dragFrom = double.NaN; int dragStill;   // the foundry list's scroll before the last drag, drags in a row that moved nothing
+    // the cell click waits for two equal scroll reads (a slow PC: the list still moves after the drag - live 1.6.66.354, the cell
+    // placed from a stale read, the click changed nothing); the last cell click's point and how often in a row
+    double cellSy = double.NaN, cellX = double.NaN, cellY = double.NaN; int cellSame;
+    public const int CellReadMs = 1000, CellSameMax = 2;
     LocateKind waitKind = LocateKind.None; long waitSince, waitSeen;   // a step the pilot can only wait at (see LoadingCapMs), since when, last seen
     /// <summary>What the last step did and why (the app's log).</summary>
     public string Trace = "";
@@ -190,7 +194,12 @@ namespace RealmForge {
     public void Reset() {
       latched = ""; waitUntil = pauseUntil = workSince = 0; kind = LocateTodo.Nothing; kindClicks = actions = clicks = drags = 0;
       list.Reset(); geoW = geoH = 0; geoCols = 0; Trace = ""; dragFrom = double.NaN; dragStill = 0; waitKind = LocateKind.None; waitSince = waitSeen = 0;
+      cellSy = cellX = cellY = double.NaN; cellSame = 0;
     }
+
+    /// <summary>The click gate found the last cell click without effect and lets it be placed again once (ClickGate.Observe): the
+    /// scroll is read twice again before the next cell click.</summary>
+    public void CellAgain() { cellSy = double.NaN; waitUntil = 0; Say("the cell click changed nothing: the list is read again"); }
 
     /// <summary>The overlay's cancel button: no more auto clicks for this request (the hints go on).</summary>
     public void Cancel() { if (latched == "") latched = "cancelled"; }
@@ -296,6 +305,11 @@ namespace RealmForge {
         dragFrom = double.NaN;
       }
       if (f.Clickable) {
+        // the list's place from two equal reads: a read that differs from the last one waits for the next
+        if (double.IsNaN(cellSy) || Math.Abs(sy - cellSy) >= 0.5) { cellSy = sy; waitUntil = v.NowMs + CellReadMs; return m; }
+        bool same = Math.Abs(f.ClickX - cellX) < 2 && Math.Abs(f.ClickY - cellY) < 2;
+        if (same && cellSame >= CellSameMax) return Abort(m, "lost");
+        cellSame = same ? cellSame + 1 : 1; cellX = f.ClickX; cellY = f.ClickY; cellSy = double.NaN;
         if (++kindClicks > MaxStepClicks) return Abort(m, "stuck");
         if (++clicks > MaxClicks) return Abort(m, "lost");
         return Click(m, v, f.ClickX, f.ClickY, AfterTabMs, "cell");
@@ -303,7 +317,7 @@ namespace RealmForge {
       double dy = Math.Max(-0.8 * f.ViewH, Math.Min(0.8 * f.ViewH, f.ScrollPx));   // content follows the pointer: + = later rows move down
       if (Math.Abs(dy) < MinDragPx) dy = dy < 0 ? -MinDragPx : MinDragPx;
       if (++drags > MaxDrags) return Abort(m, "lost");
-      actions++; dragFrom = sy;
+      actions++; dragFrom = sy; cellSy = double.NaN;
       waitUntil = v.NowMs + SettleMs + 300;
       Say("scroll " + (int)dy);
       m.Action = new AutoAction { Kind = AutoKind.Drag, X = f.ViewX + f.ViewW / 2, Y = f.ViewY + f.ViewH / 2 - dy / 2, DY = dy };
