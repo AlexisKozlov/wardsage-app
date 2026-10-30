@@ -1807,6 +1807,7 @@ namespace RealmForge {
         double srow1 = sellScroll.Row1(spilot.Geometry, inv.List, sph, U);
         if (double.IsNaN(srow1)) { sph = front && !busy ? (double.IsNaN(sph) ? SellPhase(o, cr, U) : sph) : double.NaN; if (gridSaid != "sellpilot:px") { gridSaid = "sellpilot:px"; Log.Write("sell: the inventory's scroll cannot be read (" + (inv.List == null ? RFX.ListWhy : "list read, no scroll value") + ") - the picture is the fallback (the gate will not let a cell be clicked without the exact scroll)"); } }
         else sph = double.NaN;
+        if (!invSettle.Settled) return;   // the list still moves (or this tick's read failed): the cells are judged on a settled read only
         var a = spilot.Step(new SellView { NowMs = now, Foreground = front, UserBusy = busy, UserClicked = userClicked, W = W, H = H, U = U,
                                            Screen = inv.AsSell(sellCols), Wanted = sellWanted, Phase = sph, Row1 = srow1, NeedExact = true });
         if (spilot.State == "failed" && spilot.FailWhy == "scroll") { gate.Halt(ClickOwner.Sell, "scroll", "the inventory's exact scroll stayed unreadable - no cell was clicked on the picture's estimate"); AnnounceHalts(); }
@@ -2454,7 +2455,7 @@ namespace RealmForge {
       RFX.EnsureLiveForGuides();   // the readers' basis (handle, regions, live tables) without waiting for the first account read; throttled and off-thread
       // every 120 ms; 50 ms while a pilot's click awaits its effect (the expected field is polled until it changes); once a second while the
       // game is minimised or gone (nothing to click, nothing to draw)
-      int readGap = gameAway ? 1000 : gate.AnyPending ? ConfirmPollMs - 5 : 120;
+      int readGap = gameAway ? 1000 : gate.AnyPending || listMoving ? ConfirmPollMs - 5 : 120;   // (a list that moves: read until it settles)
       if (screens.Current != null && now >= screenReadAt && now - screenReadAt < readGap) return;
       screenReadAt = now;
       IntPtr hwnd = GameWindow();
@@ -2473,6 +2474,9 @@ namespace RealmForge {
       if (artGuide) inp.ArtWs = RFX.ReadArtWorkshop();   // only while an artifact request is guided
       inp.CityForm = RFX.CityShown();
       ReadTiming.Field(System.Diagnostics.Stopwatch.GetTimestamp() - readT0);
+      string ik = ListSettle.KeyOf(inp.Inv), rk = ListSettle.KeyOf(inp.Rs);
+      invSettle.Update(ik, now); rsSettle.Update(rk, now);
+      listMoving = (ik != null && !invSettle.Settled) || (rk != null && rk != "" && !rsSettle.Settled);
       ReadOffersInto(inp, front, now);
       if (front && inp.CityForm != true && ScreenState.NeedsCityPicture(ScreenState.Classify(inp, now).Kind, inp.CityForm)) {   // the city form is not readable or reads closed: the city's bottom bar (a picture, at most every 400 ms)
         if (now - cityAt >= 400) { cityAt = now; cityNow = CityVisible(hwnd); }
@@ -2516,7 +2520,9 @@ namespace RealmForge {
     }
 
     const int ConfirmPollMs = 50;
-    bool gameAway; long locEffectSeen;
+    bool gameAway, listMoving; long locEffectSeen;
+    // the lists the pilots click into: their list steps run on a settled list only (two equal reads in a row, see ListSettle)
+    readonly ListSettle invSettle = new ListSettle(), rsSettle = new ListSettle();
 
     // TEST build: the app's own load and the read timings, one line each a minute (the lab reports them)
     long loadAt; TimeSpan loadCpu; long loadReads;
@@ -2600,7 +2606,7 @@ namespace RealmForge {
     // ---- the game's offer / notice pop-ups over the city (src/OfferForms.cs): read from the window table, closed by the pilots (OfferClose)
     volatile bool uiFinding; long uiFindAt, unknownFormsAt, lostSearchAt; int lostSearchGen; List<string> unknownForms;
     // the shown unknown forms when the screen became the known one it is (TopNew: the ones that came later are a pop-up on top), and the last results
-    const int TopSettleMs = 3000, TopFlickerMs = 2000, KnownFormsMs = 60000, FreshFormsMs = 500, SettleReadMs = 500;
+    const int TopSettleMs = 3000, TopFlickerMs = 2000, KnownFormsMs = 60000, FreshFormsMs = 0, SettleReadMs = 500;   // (FreshFormsMs: the forms read again before every click - cheap with the window table; the pilots click faster now)
     List<string> knownForms, firstForms; long knownFormsAt, firstFormsAt;
     // the window table's read failed this tick (the offers or the shown forms): a pop-up over the screen cannot be ruled out, so no click or key
     // goes to the game until a read succeeds (the read is tried again on the next tick); never set while the table is not known (RFX.UiKnown)
@@ -2989,6 +2995,8 @@ namespace RealmForge {
       bool needBack = LocateAuto.NeedsCityBack(view) || (scr != null && scr.Kind == ScreenKind.ArtWorkshop && req.Purpose != "artPromote" && dstep.Kind != LocateKind.None);
       if (gameFront && !busy && BackStep(ClickOwner.Locate, scr, needBack, o, cr, gameFront, now)) { step.Auto = "work"; step.AutoWhy = ""; locateDriving = true; return; }
       if (gate.CellAgainDue.Remove(ClickOwner.Locate)) lpilot.CellAgain();   // (ClickGate.Observe: a cell click without effect, placed again once)
+      // a list step on a list that still moves: the next read (the click point from a settled one)
+      if (gameFront && !busy && ((dstep.Kind == LocateKind.InList && !invSettle.Settled) || (dstep.Kind == LocateKind.AscendPick && !rsSettle.Settled))) { step.Auto = "work"; step.AutoWhy = ""; locateDriving = true; return; }
       var mv = lpilot.Step(view);
       if (lpilot.Trace != "") { Log.Write("locate auto: " + lpilot.Trace); lpilot.Trace = ""; }
       locateMoveState = mv.State; locateMoveWhy = mv.Why;
@@ -3152,6 +3160,8 @@ namespace RealmForge {
       var fresh = FreshScreen(target == ClickTarget.CityInventory, target == ClickTarget.UnknownBack || target == ClickTarget.CityBack || target == ClickTarget.FoundryButton);   // (FoundryButton: the Foundry's form shown unread, ClickGate)
       var req = new ClickRequest { Owner = owner, Target = target, AutoOn = artT ? ArtAutoOn : owner == ClickOwner.Locate ? AutoEnabled && LocateAutoEnabled : AutoEnabled, Front = front, X = a.X, Y = a.Y };
       if (fill != null) fill(req, fresh);
+      if (req.U <= 0) { req.W = cr.R; req.H = cr.B; req.U = Ui.Unit(cr.R, cr.B); }
+      req.Shown = unknownForms;   // (every unknown form shown, a screen's own ones too: ClickGate)
       return GatedSend(req, fresh, a, x, y);
     }
 

@@ -354,7 +354,7 @@ static partial class CoreTests {
     double W { get { return G.W; } } double H { get { return G.H; } } double U { get { return G.U; } }
 
     // ReadOffersInto (app/Overlay.cs): the forms nobody knows, read every 2 s; over a known screen the ones that came later are a pop-up
-    const int TopSettleMs = 3000, TopFlickerMs = 2000, KnownFormsMs = 60000, FreshFormsMs = 500, SettleReadMs = 500;
+    const int TopSettleMs = 3000, TopFlickerMs = 2000, KnownFormsMs = 60000, FreshFormsMs = 0, SettleReadMs = 500;   // (FreshFormsMs: the forms read again before every click - cheap with the window table; the pilots click faster now)
     List<string> knownForms, firstForms; long knownFormsAt, firstFormsAt;
     long topBaseAt, topLastAt, unknownFormsAt; ScreenKind topLastKind = ScreenKind.Unknown; ScreenKind topBaseKind = ScreenKind.Unknown; HashSet<string> topBase = new HashSet<string>();
     string topNewNow = "", topUnknownNow = "", topCityNow = ""; ScreenKind topNewKind = ScreenKind.Unknown; List<string> unknownForms;
@@ -404,6 +404,9 @@ static partial class CoreTests {
       Now = now;
       G.FieldTick();
       var inp = G.Read();
+      string ik = ListSettle.KeyOf(inp.Inv), rk = ListSettle.KeyOf(inp.Rs);   // (app/Overlay.cs ReadScreens)
+      InvSettle.Update(ik, now); RsSettle.Update(rk, now);
+      ListMoving = (ik != null && !InvSettle.Settled) || (rk != null && rk != "" && !RsSettle.Settled);
       ReadOffersInto(inp, now);
       inp.CitySeen = inp.CityForm == true && G.CityClear;
       var st = Screens.Update(inp, now);
@@ -414,6 +417,7 @@ static partial class CoreTests {
       long le = Gate.EffectAt(ClickOwner.Locate); if (le != locEffectSeen) { locEffectSeen = le; lp.Confirmed(now); }   // (app/Overlay.cs ReadScreens)
     }
     long locEffectSeen;
+    public readonly ListSettle InvSettle = new ListSettle(), RsSettle = new ListSettle(); public bool ListMoving;
     // FreshScreen (app/Overlay.cs): fresh memory reads, the forms read by the tick
     ScreenState Fresh(bool wantCity, bool wantKnownForms) {
       var inp = G.Read();
@@ -444,6 +448,8 @@ static partial class CoreTests {
       if (FormsUnread(fresh)) { if (Environment.GetEnvironmentVariable("SIM_TRACE") != null) Console.WriteLine("  UNREAD " + t + " fresh=" + (fresh != null ? fresh.Brief : "-") + " unread=" + formsUnread); return false; }
       var rq = new ClickRequest { Owner = Owner, Target = t, AutoOn = true, Front = true, X = a.X, Y = a.Y };
       if (fill != null) fill(rq, fresh);
+      if (rq.U <= 0) { rq.W = W; rq.H = H; rq.U = U; }
+      rq.Shown = unknownForms;   // (app/Overlay.cs SendInside)
       var res = Gate.Check(rq, fresh, Now);
       if (!res.Allowed) { if (Environment.GetEnvironmentVariable("SIM_TRACE") != null) Console.WriteLine("  DENY " + t + " fresh=" + fresh.Brief + " tick=" + (Screens.Current != null ? Screens.Current.Brief : "-") + " " + res.Detail); return false; }
       Gate.Arm(Owner, t, ClickGate.Expect(rq, fresh), Now, rq.Form);
@@ -575,6 +581,7 @@ static partial class CoreTests {
         }
         // the marking: the sell pilot on the game's list order and its exact scroll; every cell click must hit a wanted (or a ticked) item
         double srow1 = sellScroll.Row1(spilot.Geometry, inv.List, double.NaN, U);
+        if (!InvSettle.Settled) return;
         var a = spilot.Step(new SellView { NowMs = Now, Foreground = true, W = W, H = H, U = U, Screen = inv.AsSell(SimGame.InvCols), Wanted = Wanted, Phase = double.NaN, Row1 = srow1, NeedExact = true });
         if (spilot.State == "failed" && spilot.FailWhy == "scroll") Gate.Halt(ClickOwner.Sell, "scroll", "the inventory's exact scroll stayed unreadable");
         PilotState = "sell_" + spilot.State;
@@ -625,6 +632,7 @@ static partial class CoreTests {
       bool needBack = LocateAuto.NeedsCityBack(view);
       if (BackStep(scr, needBack)) return;
       if (Gate.CellAgainDue.Remove(ClickOwner.Locate)) lp.CellAgain();   // (ClickGate.Observe: a cell click without effect, placed again once)
+      if ((dstep.Kind == LocateKind.InList && !InvSettle.Settled) || (dstep.Kind == LocateKind.AscendPick && !RsSettle.Settled)) return;
       var mv = lp.Step(view);
       PilotState = mv.State + (mv.Why != "" ? ":" + mv.Why : "") + "@" + dstep.Kind;
       if (mv.Action.Kind == AutoKind.None) return;
@@ -687,7 +695,7 @@ static partial class CoreTests {
       // a pilot that tells the player why it waits (the hero screen not reachable, a hint) and nothing changes for 30 s: a stop with a reason
       if (t - lastChange > 30000 && (h.PilotState.StartsWith("hero_noscreen") || h.PilotState.StartsWith("hero_failed") || h.PilotState.StartsWith("hero_notfound") || h.PilotState.StartsWith("hint") || h.PilotState.StartsWith("stopped") || h.PilotState == "no_city" || h.PilotState == "sell_failed")) break;
       // (app/Overlay.cs ReadScreens: every 120 ms, a tick of the slow laptop's timer 150-400 ms; 50 ms while a click awaits its effect)
-      t += !scan && h.Gate.AnyPending ? 50 : slow ? 150 + r.Next(250) : 100;
+      t += !scan && (h.Gate.AnyPending || h.ListMoving) ? 50 : slow ? 150 + r.Next(250) : 100;
     }
     if (stats != null) {
       string mk = owner + (slow ? " slow" : " fast");
@@ -810,6 +818,37 @@ static partial class CoreTests {
     Console.WriteLine("Game sim: its findings");
     StaleRowsAfterFilter();
     TipOverSlots();
+    // (9) a list is settled after two equal reads; a moving one (a glide after a drag, a slot filter) is not, an unreadable one neither
+    {
+      var ls = new ListSettle(); var inv = new InventoryScreen { Open = true, EquipTab = true, Bulk = true, List = new RFX.ListRead { ScrollY = 0 } }; inv.Uids.AddRange(new long[] { 1, 2, 3 });
+      ls.Update(ListSettle.KeyOf(inv), 0); Check(!ls.Settled, "settle: one read is not settled");
+      ls.Update(ListSettle.KeyOf(inv), 50); Check(ls.Settled, "settle: two equal reads are");
+      inv.List.ScrollY = 40; ls.Update(ListSettle.KeyOf(inv), 100); Check(!ls.Settled, "settle: the scroll moved: not settled");
+      inv.List.ScrollY = 55; ls.Update(ListSettle.KeyOf(inv), 150); Check(!ls.Settled, "settle: still gliding");
+      long n0 = ReadTiming.SettleN, m0 = ReadTiming.SettleMs;
+      ls.Update(ListSettle.KeyOf(inv), 200); Check(ls.Settled, "settle: stopped");
+      Check(ReadTiming.SettleN == n0 + 1 && ReadTiming.SettleMs - m0 == 100, "settle: the time from the first move to settled is counted (" + (ReadTiming.SettleMs - m0) + " ms)");
+      ls.Update(null, 250); Check(!ls.Settled, "settle: an unreadable read is not settled");
+      var rs = new RecastScreen { CurType = 2, AscendEquips = new long[] { 5, 6 }, AscendParts = new[] { 3 }, AscendList = new RFX.ListRead { ScrollY = 0 } };
+      string k1 = ListSettle.KeyOf(rs); rs.AscendParts = new int[0];
+      Check(k1 != ListSettle.KeyOf(rs) && ListSettle.KeyOf(new RecastScreen { CurType = 0 }) == "", "settle: a slot filter changes the Ascension list's key; another tab has none");
+    }
+    // (10) a form shown with the screen from the start (taken for its part) may lie on top: no list click on one of its never-click buttons
+    {
+      const double W = 1920, H = 1009; double U = Ui.Unit(W, H); string pf = null; double px = 0, py = 0;
+      foreach (var e in ScreenMap.All) {
+        if (pf != null || !ScreenMap.MayBeBase(e.Name)) continue;
+        for (double x = 100; x < W && pf == null; x += 37) for (double y = 150; y < H - 150 && pf == null; y += 29) if (ScreenMap.OnNever(e.Name, x, y, W, H, U)) { pf = e.Name; px = x; py = y; }
+      }
+      Check(pf != null, "sim: a form that may be a screen's part has a never-click button (" + pf + ")");
+      if (pf != null) {
+        var g = new ClickGate();
+        var s = ScreenState.Classify(new ScreenInputs { CityForm = false, Offers = new List<string>(), ShownKnown = "", Inv = new InventoryScreen { Open = true, EquipTab = true, Bulk = true, BulkKnown = true } }, 0);
+        var rq = new ClickRequest { Owner = ClickOwner.Sell, Target = ClickTarget.InvBulkCell, AutoOn = true, Front = true, X = px, Y = py, W = W, H = H, U = U, Shown = new List<string> { pf }, CellUid = 1, CellOk = new long[] { 1 } };
+        var res = g.Check(rq, s, 10000);
+        Check(!res.Allowed && g.HaltReason(ClickOwner.Sell) == "target", "sim: a list click on a never-click button of " + pf + " shown with the inventory is refused (" + res.Detail + ")");
+      }
+    }
     // (1) a dangerous dialog or a wait shown when a known screen comes is never taken for a part of that screen (the pilot clicked under a buy dialog)
     Check(!ScreenMap.MayBeBase("Form_BuyPopup") && !ScreenMap.MayBeBase("Form_BattleLoading") && ScreenMap.MayBeBase("Form_AccountInfo") && ScreenMap.MayBeBase("Form_NotInTheGame"),
           "sim: a dangerous dialog / a wait is never a known screen's own form, a pop-up may be");
@@ -904,15 +943,17 @@ static partial class CoreTests {
           string e = SimRun(seed, false, false, oc, geo, null, false, scan);
           Check(e == "", "sim: seed " + seed + (scan ? " (scan reader)" : "") + " keeps every rule" + (e != "" ? ": " + e.Split('\n')[0] + " " + (e.Split('\n').Length > 1 ? e.Split('\n')[1].Trim() : "") : ""));
         }
-      // (2032 keeps its rules but no longer ends done: with the locate pilot's wait ended by the tab's effect, its Ascension cell click comes
-      // earlier and the pop-up that click brings lands before the game's answer - the safe stop "nochange" is right there)
-      foreach (int seed in new[] { 9, 20, 228, 2229, 6727, 15263, 22466 }) {
+      // (2032 and 228 keep their rules but no longer end done: the pilots click sooner now (the effect confirmed, the list settled) and the
+      // pop-up the game opens after a click lands before its answer - the safe stop "nochange" is right there)
+      foreach (int seed in new[] { 9, 20, 2229, 6727, 15263, 22466 }) {
         var o1 = new Dictionary<string, int>(); SimRun(seed, false, false, o1, geo, null, false, true);
         string got = string.Join(",", new List<string>(o1.Keys).ToArray());
         Check(got.EndsWith(" done"), "sim: seed " + seed + " reaches its end (" + got + ")");
       }
+      // (found with the region-scan reader: its model. 161 with the window-table reader: the share pop-up the game opens over the hero screen
+      // comes earlier in the run and has no exit but Escape - never pressed on the pilot's own screen, the safe stop "dangerous")
       foreach (int seed in new[] { 19, 62, 82, 161, 250 }) {
-        var o1 = new Dictionary<string, int>(); SimRun(seed, false, false, o1, geo);
+        var o1 = new Dictionary<string, int>(); SimRun(seed, false, false, o1, geo, null, false, true);
         string got = string.Join(",", new List<string>(o1.Keys).ToArray());
         Check(got.EndsWith(" done"), "sim: seed " + seed + " brings up the plan's hero (" + got + ")");
       }

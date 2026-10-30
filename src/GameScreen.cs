@@ -292,6 +292,39 @@ namespace RealmForge {
     }
   }
   /// <summary>When the overlay asks for a background search of the game's forms (a full pass, ~1 s, off the UI thread). Pure.</summary>
+  /// <summary>A list the pilots click into, settled: two reads in a row gave the same scroll, length, ends and filter (a list that still moves
+  /// after a drag, a filter or a tab press - the game's scroll glides on - is not clicked from an older read). The pilots' list steps run only
+  /// on a settled list; the time from its first move to settled is measured (ReadTiming).</summary>
+  public sealed class ListSettle {
+    string last; long movedAt = -1;
+    /// <summary>The last two reads were equal (and readable).</summary>
+    public bool Settled { get; private set; }
+    /// <summary>One read of the list (null = not readable: not settled).</summary>
+    public void Update(string key, long now) {
+      bool same = key != null && key == last;
+      if (!same && last != null && key != null && movedAt < 0) movedAt = now;
+      if (same && movedAt >= 0) { ReadTiming.Settle(now - movedAt); movedAt = -1; }
+      Settled = same; last = key;
+    }
+    public void Reset() { last = null; movedAt = -1; Settled = false; }
+    static readonly System.Globalization.CultureInfo Ci = System.Globalization.CultureInfo.InvariantCulture;
+    /// <summary>The inventory's list as the pilots click it (null = not read).</summary>
+    public static string KeyOf(InventoryScreen inv) {
+      if (inv == null || !inv.Open) return null;
+      int n = inv.Uids.Count;
+      return (inv.EquipTab ? "e" : "o") + (inv.Bulk ? "b" : "n") + "|" + (inv.List != null && inv.List.Has ? inv.List.ScrollY.ToString("0.0", Ci) : "-") + "|" + n
+        + "|" + (n > 0 ? inv.Uids[0] : 0) + "|" + (n > 0 ? inv.Uids[n - 1] : 0) + "|" + inv.ListPtr;
+    }
+    /// <summary>The Foundry's Ascension list as the pilots click it (null = not read; "" = not on that tab).</summary>
+    public static string KeyOf(RecastScreen rs) {
+      if (rs == null) return null;
+      if (rs.CurType != 2) return "";
+      var e = rs.AscendEquips ?? new long[0];
+      return (rs.AscendList != null && rs.AscendList.Has ? rs.AscendList.ScrollY.ToString("0.0", Ci) : "-") + "|" + e.Length + "|" + (e.Length > 0 ? e[0] : 0) + "|" + (e.Length > 0 ? e[e.Length - 1] : 0)
+        + "|" + string.Join(",", Array.ConvertAll(rs.AscendParts ?? new int[0], x => x.ToString(Ci)));
+    }
+  }
+
   public static class FormSearchPolicy {
     /// <summary>After the pilot's own click that opens a screen: how long a search is wanted (until the screen is read).</summary>
     public const int OwnOpenWindowMs = 6000;

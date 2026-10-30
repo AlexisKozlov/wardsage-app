@@ -125,6 +125,9 @@ namespace RealmForge {
     public string Form;
     public double W, H, U;
     public GameGeometry Geo;
+    /// <summary>Every form nobody knows the window table shows now, the ones taken for a part of the screen too (set by the host; null = not
+    /// given). The table has no order: any of them may lie on top, so no click lands on a never-click button of one (needs W, H, U).</summary>
+    public List<string> Shown;
   }
 
   public sealed class ClickGate {
@@ -796,6 +799,9 @@ namespace RealmForge {
       if (f == null || f.Kind == ScreenKind.Unknown) return UnknownWait(r, f, now, tag + ": the screen is not recognised" + (f != null && f.TopForm != "" ? " (top form " + f.TopForm + " not in the list)" : ""));
       if (Array.IndexOf(rule.Kinds, f.Kind) < 0) return Halt(r.Owner, "screen", tag + " needs " + string.Join("/", Names(rule.Kinds)) + ", the game shows " + f.Brief);
       if (f.ModalOpen && !rule.AllowModal) return Halt(r.Owner, "modal", tag + ": " + f.ModalWhy + " is open (" + f.Brief + ")");
+      // a form shown with the screen since before the run (taken for a part of it: nobody can tell over or under) may lie on top
+      if (r.Shown != null && r.U > 0)
+        foreach (var n in r.Shown) if (ScreenMap.OnNever(n, r.X, r.Y, r.W, r.H, r.U)) return Halt(r.Owner, "target", tag + ": lies on a never-click button of " + n + ", shown with " + f.Brief);
       if (rule.HeroArt != 0) {
         var hs = f.HeroScr;
         if (hs == null || r.Hero <= 0 || r.ArtUid <= 0) return Halt(r.Owner, "target", tag + ": no hero / artifact named");
