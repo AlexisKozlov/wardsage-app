@@ -172,7 +172,7 @@ language plpgsql
 security definer
 set search_path = public, pg_temp
 as $$
-declare d uuid := public.lab_dev('hb', 12);
+declare d uuid := public.lab_dev('hb', 20);
 begin
   if p_status is null or jsonb_typeof(p_status) <> 'object' or octet_length(p_status::text) > 4096 then
     raise exception 'lab_bad_status' using errcode = 'PT400';
@@ -188,7 +188,7 @@ security definer
 set search_path = public, pg_temp
 as $$
 declare
-  d uuid := public.lab_dev('claim', 12);
+  d uuid := public.lab_dev('claim', 20);
   j public.lab_jobs;
 begin
   update public.lab_jobs set state = 'expired', finished_at = now()

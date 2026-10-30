@@ -66,6 +66,8 @@ if grep -q '"sell_' <<< "$(q -v r="$run" <<< "select scenarios::text from public
   if [ -n "$sellbad" ]; then msg+="❌ ОПАСНО: клик продажи вне списка разрешённых: $(head -1 <<< "$sellbad" | cut -c1-160)"$'\n'
   else msg+="Чистка склада: «Продать» не нажималась (журнал: только разрешённые клики, отметок ячеек $sellclicks)"$'\n'; fi
 fi
+tot=$(q -v r="$run" <<< "select coalesce(round(extract(epoch from coalesce(finished_at, now()) - started_at))::int, 0) from public.lab_runs where id = :'r'::uuid")
+[ "${tot:-0}" -gt 0 ] && msg+="Всего: $((tot / 60)) мин $((tot % 60)) с"$'\n'
 [ -n "$firstreads" ] && msg+="Первое чтение экрана: $(paste -sd, <<< "$firstreads" | sed 's/,/, /g')"$'\n'
 [ -n "$passes" ] && msg+="passes: $(tail -1 <<< "$passes" | sed -E 's/^passes: //')"$'\n'
 if [ "$finish_ok" = 1 ]; then msg+="Можно выключать ноутбук."; else msg+="Ноутбук не подтвердил завершение: проверьте его, прежде чем выключать."; fi

@@ -17,13 +17,13 @@ set -uo pipefail
 HERE=$(dirname "$(readlink -f "$0")")
 USAGE="usage: lab-loop.sh --until-done <device> [--timeout MIN]  |  lab-loop.sh --auto"
 
-dev=""; timeout_min=90; tick=10; auto=0
+dev=""; timeout_min=90; tick=3; auto=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --until-done) dev=${2:-}; shift 2 ;;
     --auto) auto=1; shift ;;
     --timeout) timeout_min=${2:-60}; shift 2 ;;
-    --tick) tick=${2:-10}; shift 2 ;;
+    --tick) tick=${2:-3}; shift 2 ;;
     *) echo "$USAGE" >&2; exit 2 ;;
   esac
 done
@@ -83,7 +83,7 @@ bail_finish() { local f; f=$(mkjob finish) && dset job "$f" && dset job_timeout 
 
 # What the app logs when a pilot or the click gate stops (app/Overlay.cs AutoSay + «auto click stopped», src/ClickGate.cs Note «click gate <owner>: STOP (...)»,
 # HALT, the pilot states of HostBridge.OnAutoState, the art equip/promote «auto: stopped»)
-STOP_RE='auto click stopped|click gate .*: STOP|HALT|auto: (failed|slot_failed|unconfirmed|hero_failed|stopped)'
+STOP_RE='auto click stopped|auto click is off|click gate .*: STOP|HALT|auto: (failed|slot_failed|unconfirmed|hero_failed|stopped)'
 NOPROGRESS=${LAB_NOPROGRESS:-330}   # the app sends its log every ~2 min, in batches
 # watch_logs <since epoch> <no-progress reference epoch>: 0 = all well; 1 = a stop line (WHY = the line); 2 = no new log line for NOPROGRESS s (WHY)
 WHY=""
@@ -104,13 +104,15 @@ watch_logs() {
 # Runner v7+ also reports pilot_at (epoch of the newest PILOT line: a step / guide change, a click allowed or taking effect, the locate / sell
 # pilots' own lines). The app keeps logging its syncs while a pilot waits on a screen it does not know, so a scenario's progress is pilot_at;
 # without it (older runner) the newest log line stands in, as before.
-NOPROG_DEV=${LAB_NOPROGRESS_DEV:-75}   # 60 s without a pilot line (old runner: a log line) while a scenario waits + one heartbeat
+NOPROG_DEV=${LAB_NOPROGRESS_DEV:-40}   # 40 s without a pilot line (old runner: a log line) while a scenario waits (runner v17 beats every 5 s)
+REPEAT_N=${LAB_REPEAT_N:-10}           # the same newest pilot line this many times in a row (each a new pilot_at) = a pilot that spins
 READY_DEV=${LAB_READY_DEV:-180}        # the laptop read takes ~50 s
+RP_AT=""; RP_LINE=""; RP_N=0; SG_PLINE=""
 SG_LOGAT=""; SG_SEEN=0; SG_READY=""; SG_STOPAT=0; SG_APPOK=""; SG_APPVER=""; SG_STOP=""; SG_PILOTAT=""
 devsig() {
   local row
-  row=$(dstat "coalesce(status->>'log_at', '') || '|' || coalesce(extract(epoch from last_seen)::bigint, 0) || '|' || coalesce(status->>'ready', '') || '|' || coalesce(status->>'stop_at', '0') || '|' || coalesce(status->>'app_running', '') || '|' || coalesce(status->>'app_version', '') || '|' || coalesce(status->>'pilot_at', '') || '|' || coalesce(replace(status->>'stop', chr(10), ' '), '')")
-  IFS='|' read -r SG_LOGAT SG_SEEN SG_READY SG_STOPAT SG_APPOK SG_APPVER SG_PILOTAT SG_STOP <<< "$row"
+  row=$(dstat "coalesce(status->>'log_at', '') || '|' || coalesce(extract(epoch from last_seen)::bigint, 0) || '|' || coalesce(status->>'ready', '') || '|' || coalesce(status->>'stop_at', '0') || '|' || coalesce(status->>'app_running', '') || '|' || coalesce(status->>'app_version', '') || '|' || coalesce(status->>'pilot_at', '') || '|' || coalesce(replace(replace(status->>'pilot_line', chr(10), ' '), '|', '/'), '') || '|' || coalesce(replace(status->>'stop', chr(10), ' '), '')")
+  IFS='|' read -r SG_LOGAT SG_SEEN SG_READY SG_STOPAT SG_APPOK SG_APPVER SG_PILOTAT SG_PLINE SG_STOP <<< "$row"
   [[ "$SG_LOGAT" =~ ^[0-9]+$ ]] || SG_LOGAT=""
   [[ "$SG_PILOTAT" =~ ^[0-9]+$ ]] || SG_PILOTAT=""
   [[ "$SG_SEEN" =~ ^[0-9]+$ ]] || SG_SEEN=0
@@ -125,7 +127,14 @@ dev_watch() {
   [ -n "$SG_LOGAT" ] || return 9
   if [ -n "$SG_STOP" ] && [ "$SG_SEEN" -gt "$1" ] && [ "$SG_STOPAT" -ge "$1" ]; then WHY="${SG_STOP:0:200}"; return 1; fi
   at=$SG_LOGAT; what="no new app log line"
-  if [ "${4:-}" = pilot ] && [ -n "$SG_PILOTAT" ]; then at=$SG_PILOTAT; what="no pilot step"; fi
+  if [ "${4:-}" = pilot ] && [ -n "$SG_PILOTAT" ]; then
+    at=$SG_PILOTAT; what="no pilot step"
+    if [ "$SG_PILOTAT" != "$RP_AT" ]; then
+      if [ -n "$SG_PLINE" ] && [ "$SG_PLINE" = "$RP_LINE" ]; then RP_N=$(( RP_N + 1 )); else RP_N=1; fi
+      RP_AT=$SG_PILOTAT; RP_LINE=$SG_PLINE
+    fi
+    if [ "$RP_N" -ge "$REPEAT_N" ] && [ "${5:-}" != norepeat ]; then WHY="pilot repeats the same line $RP_N times: ${SG_PLINE:0:120}"; return 2; fi
+  fi
   ref=$2; [ "$at" -gt "$ref" ] && ref=$at
   if [ $(( $(now) - ref )) -gt "$3" ]; then WHY="no progress: $what for $3 s"; return 2; fi
   return 0
@@ -135,7 +144,10 @@ dev_watch() {
 # pilots start from any screen, back to the city by themselves)
 fail_scn() {   # $1 = step label, $2 = reason, $3 = table, $4 = row id
   [ -n "$4" ] && q -v r="$4" <<< "update public.$3 set status = 'cancelled', done_at = now() where id = :'r'::uuid and status = 'pending'" >/dev/null
-  step "$1" false "$(phase_age)" "$2"; FAILED=1; next_scn
+  step "$1" false "$(phase_age)" "$2"; FAILED=1
+  # logs + a screenshot of the failed screen are queued together (the runner takes them back to back) and the next scenario starts at once
+  mkjob upload_logs '{"lines":1000}' >/dev/null || true; mkjob screenshot '{"target":"app"}' >/dev/null || true; dset fail_shot 1
+  next_scn
 }
 # next_scn: the scenario ended (pass, fail or skip): its request is closed at once, so the app stops guiding before the next one. The site's
 # long poll returns only pending rows, so the app drops a guide whose row is anything else (app/Overlay.cs locateReq = null); 'cancelled'
@@ -166,6 +178,7 @@ scn_tbl() { case "$1" in equip_*) echo equip_plans ;; locate*) echo item_locates
 SELL_OK_RE='click gate Sell: allow (HeroBack|CityInventory|InvEquipTab|InvBulkEnter|InvBulkCell|InvListDrag|OfferClose|UnknownBack|CityBack|EscapeBack|MapClose|ArtTab|ArtBulkEnter|ArtBulkCell|ArtListDrag)\b'
 # hero_grades keeps an HMAC of the game account (a server secret, never read here), not the account: the newest updated_at of the table
 # stands for the device's account (on staging only the lab's app sends grades as a rule)
+LOGS_WAIT=${LAB_LOGS_WAIT:-60}   # max wait at the end for the app's next log batch (the report's figures come from it)
 GRADES_WAIT=${LAB_GRADES_WAIT:-360}
 grades_at() { q <<< "select coalesce(extract(epoch from max(updated_at))::bigint, 0) from public.hero_grades"; }
 grades_mark() { dset ready_at "$(now)"; dset grades0 "$(grades_at)"; }
@@ -214,6 +227,10 @@ tick() {
         if [ "$JOBOK" = 1 ]; then
           step update_app true "$(jsecs "$j")" "$(jres "$j" version)"
           dset want_version "$(jres "$j" version)"
+          devsig
+          if [ "$(jres "$j" updated)" = false ] && [ "$SG_READY" = true ] && [ "$SG_APPOK" = true ] && [ "$SG_APPVER" = "$(jres "$j" version)" ]; then
+            step app_ready true 0 "already ready, no restart"; grades_mark; dset scn_idx 0; phase scenario; return
+          fi
           r=$(mkjob restart_app) && dset job "$r" && dset job_timeout "" && phase restart
         else
           [ -n "$(dget job_timeout)" ] || step update_app false "$(jsecs "$j")" "$(jres "$j" error)"
@@ -293,7 +310,7 @@ tick() {
       sw=$(grep -m1 WARNING "$seederr" | sed -E 's/^lab-seed: WARNING //'); cat "$seederr" >&2; rm -f "$seederr"
       if [ -z "$row" ] && [ -n "$sw" ]; then warn "$sc" 0 "$sw"; next_scn; return; fi
       if [ -z "$row" ]; then step "$sc" false 0 "seed failed (fixture missing?)"; FAILED=1; next_scn; return; fi
-      dset row "$row"; dset seeded_at "$(now)"; phase wait_scn ;;
+      dset row "$row"; dset seeded_at "$(now)"; RP_AT=""; RP_LINE=""; RP_N=0; phase wait_scn ;;
     scn_rec)
       # the recording is a help, never a verdict: no answer in 40 s (old runner, old app) and the scenario goes on without one
       j=$(dget job); st=$(jstate "$j")
@@ -348,7 +365,7 @@ tick() {
           else step "$label" false "$(( $(now) - ${sa:-0} ))" "$note"; FAILED=1; next_scn; fi
           return
         fi
-        dev_watch "$(dget mark_at)" "${sa:-0}" "$NOPROG_DEV" pilot; w=$?
+        dev_watch "$(dget mark_at)" "${sa:-0}" "$NOPROG_DEV" pilot norepeat; w=$?
         if [ "$w" = 9 ]; then fail_scn "$label" "runner too old (v11+ reports the sell marker)" "$tbl" "$row"
         elif [ "$w" != 0 ]; then fail_scn "$label" "$WHY" "$tbl" "$row"
         elif [ "$(phase_age)" -gt "$maxs" ]; then fail_scn "$label" "not done in ${maxs} s" "$tbl" "$row"; fi
@@ -382,30 +399,30 @@ tick() {
       # only an info line: the app reads grades only while a hero's rating screen is open (app/GradeWatch.cs), which a lab run never opens
       ra=$(dget ready_at)
       if [ -n "$ra" ] && [ -z "$(dget grades_done)" ]; then
-        [ $(( $(now) - ra )) -ge "$GRADES_WAIT" ] || return
         g=$(grades_at)
-        if [ "${g:-0}" -gt "$(dget grades0)" ]; then step grades true "$(( g - ra ))" "оценки обновились через $(( g - ra )) с после запуска"
+        if [ $(( $(now) - ra )) -lt "$GRADES_WAIT" ]; then : # the run ended early: never wait for this passive check
+        elif [ "${g:-0}" -gt "$(dget grades0)" ]; then step grades true "$(( g - ra ))" "оценки обновились через $(( g - ra )) с после запуска"
         else info grades "$(( $(now) - ra ))" "оценки не отправлялись: приложение шлёт их, только когда открыт экран оценок героя"; fi
         dset grades_done 1; dset phase_at "$(now)"
       fi
-      # the test app sends its log every 2 min: wait for a batch newer than the last scenario (max 150 s), then go on
+      # the test app sends its log every 2 min: wait for a batch newer than the last scenario (max $LOGS_WAIT s), then go on; no wait when a scenario failed
+      # (its logs and screenshot were queued at the failure)
       le=$(dget last_scn_end); [ -n "$le" ] || le=$(now)
       n=$(q -v d="$DEV" -v le="$le" <<< "select count(*) from public.app_test_logs l join public.lab_devices dv on dv.account_id = l.account_id where dv.id = :'d'::uuid and l.at > to_timestamp(:'le'::bigint)")
-      if [ "$n" -gt 0 ] || [ "$(phase_age)" -gt 150 ]; then
-        j=$(mkjob upload_logs '{"lines":1000}') && dset job "$j" && dset job_timeout "" && phase upload_logs
-      fi ;;
-    upload_logs)
-      if wait_job upload_logs shot 180; then
-        j=$(dget job); [ -n "$(dget job_timeout)" ] || step upload_logs "$([ "$JOBOK" = 1 ] && echo true || echo false)" "$(jsecs "$j")" ""
-        s=$(mkjob screenshot '{"target":"app"}') && dset job "$s" && dset job_timeout "" && phase screenshot
-      fi ;;
-    screenshot)
-      if wait_job screenshot finish 180; then
-        j=$(dget job); [ -n "$(dget job_timeout)" ] || step screenshot "$([ "$JOBOK" = 1 ] && echo true || echo false)" "$(jsecs "$j")" ""
+      if [ "$n" -gt 0 ] || [ "$FAILED" = 1 ] || [ "$(phase_age)" -gt "$LOGS_WAIT" ]; then
+        # logs, screenshot and finish are queued together: the runner takes them back to back
+        dset job_ul "$(mkjob upload_logs '{"lines":1000}')"
+        [ -n "$(dget fail_shot)" ] || dset job_ss "$(mkjob screenshot '{"target":"app"}')"
         f=$(mkjob finish) && dset job "$f" && dset job_timeout "" && phase finish
       fi ;;
+    upload_logs|screenshot) phase logs ;;   # a run started by an older loop
     finish)
-      if wait_job finish report 180; then
+      if wait_job finish report 300; then
+        for kv in upload_logs:job_ul screenshot:job_ss; do
+          j=$(dget "${kv#*:}"); [ -n "$j" ] || continue
+          [ "$(jstate "$j")" = done ] && ok=true || ok=false
+          step "${kv%%:*}" "$ok" "$(jsecs "$j")" ""
+        done
         [ "$JOBOK" = 1 ] && dset finish_ok 1
         phase report
       fi ;;
@@ -456,14 +473,16 @@ notify_launcher() {
   fi
 }
 
-# advance the run: a few ticks while the phase keeps changing (a chain of quick steps), then leave the rest to the next pass
+# advance the run: keep driving it in this process (3 s tick) until it ends or its deadline (timeout_min, from started_at); the flock (auto.lock)
+# is held meanwhile, so the cron passes of the next minutes exit at once
 advance() {
-  local i p0 p1
   init_run
-  for i in 1 2 3 4 5; do
+  local t0 st p0 p1; t0=$(now)
+  while :; do
     p0=$(rget phase); tick
-    [ -z "$FINAL" ] || { say "run ${RUN:0:8} ended (exit code $FINAL)"; return; }
-    p1=$(rget phase); [ "$p0" != "$p1" ] || return
+    [ -z "$FINAL" ] || { say "run ${RUN:0:8} ended (exit code $FINAL), $(( $(now) - t0 )) s in this pass"; return; }
+    st=$(rget state); [[ "$st" =~ ^(queued|running)$ ]] || { say "run ${RUN:0:8} is $st: leaving it"; return; }
+    p1=$(rget phase); [ "$p0" != "$p1" ] || sleep "$tick"   # a phase change goes straight on
   done
 }
 

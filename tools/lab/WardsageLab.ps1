@@ -23,15 +23,15 @@ Set-StrictMode -Version 2
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$RunnerVersion   = '16'
+$RunnerVersion   = '17'
 $Dir             = Join-Path $env:LOCALAPPDATA 'WardsageLab'
 $StopFile        = Join-Path $Dir 'STOP'
 $LogFile         = Join-Path $Dir 'runner.log'
 $HeartbeatSec    = 60          # idle heartbeat
-$ActiveBeatSec   = 15          # heartbeat while a run is active (a run job was claimed in the last $ActiveMin min)
+$ActiveBeatSec   = 5           # heartbeat while a run is active (a run job was claimed in the last $ActiveMin min)
 $ActiveMin       = 30
-$TickSec         = 5           # loop tick: the app log is read every tick
-$ClaimSec        = 10          # one claim per this many seconds (lab_claim allows 12/min)
+$TickSec         = 2           # loop tick: the app log is read every tick
+$ClaimSec        = 4           # one claim per this many seconds (lab_claim allows 20/min)
 $MaxRunnerHours  = 4          # the runner never lives longer than this
 $MaxUpdateBytes  = 64MB       # same limit as app/Updater.cs MaxSize
 $GameProcessName = 'Watcher of Realms'   # src/GameInfo.cs ProcessName (the runner never stops it; start_game starts gameExe)
@@ -475,7 +475,7 @@ function Test-RunnerUpdateDue {
 # since the last mark - the app keeps logging its syncs while a pilot waits, so log_at alone is no progress). Only lines appended after
 # the runner started or the last mark / restart_app (file offset, never the line's own time; or after a truncation / rotation) are looked at.
 # mark_at / pilot_line / log_off / log_err are diagnostics: when pilot_at is 0 they show whether a mark came after the pilot lines.
-$StopRe  = 'auto click stopped|click gate .*: STOP|auto: (failed|slot_failed|unconfirmed|hero_failed|stopped)|aborted'
+$StopRe  = 'auto click stopped|auto click is off|click gate .*: HALT|click gate .*: STOP|auto: (failed|slot_failed|unconfirmed|hero_failed|stopped)|aborted'
 $ReadyRe = 'Player of the live tables: [0-9]+'
 $PilotRe = 'ui: step (?!stands still)|ui: guide |click gate .*: (allow |.* took effect)|locate auto:|live: hero|sell:|hero: plan|art (equip|promote) auto:|offer: closed'
 function Get-EpochNow { return [int64][DateTimeOffset]::UtcNow.ToUnixTimeSeconds() }
