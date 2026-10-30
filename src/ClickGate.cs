@@ -35,7 +35,7 @@ using System;
 using System.Collections.Generic;
 
 namespace RealmForge {
-  public enum ClickOwner { Locate, Sell, Equip }
+  public enum ClickOwner { Locate, Sell, Equip, Explore }   // (Explore: the test build's explorer, src/Explorer.cs)
 
   /// <summary>How a pilot leaves the form on top, by the screen map (ClickGate.MapExit).</summary>
   public enum MapMove { None, Wait, Stop, Back, Close, Escape }
@@ -87,7 +87,10 @@ namespace RealmForge {
     ArtHeroDrag,      // a drag that scrolls that list
     ArtReplace,       // the selected artifact card's «Заменить» / «Надеть» (the player's auto confirm too)
     ArtTakeOverConfirm, // the pop-up «<artifact> в ячейке героя: <имя>» (the artifact is worn by another hero): its «Заменить» (the player's auto confirm too)
-    ArtHideWorn       // the artifact list's own filter «Скрыть надетое» (on before a long scroll to a free artifact; off when it hides the artifact). Untick = off
+    ArtHideWorn,      // the artifact list's own filter «Скрыть надетое» (on before a long scroll to a free artifact; off when it hides the artifact). Untick = off
+    // the test build's explorer (owner Explore only, src/Explorer.cs; CheckExplore): a safe graph widget of the form on top that opens one form,
+    // a tab of it, its way back (the screen map's back arrow / ×, an offer's ×, the graph's close widget), one Escape on a form the map closes so
+    ExploreOpen, ExploreTab, ExploreClose, ExploreEscape
   }
 
   public enum GateVerdict { Allow, Wait, Deny }
@@ -130,6 +133,8 @@ namespace RealmForge {
     public bool FoundryUnread;
     /// <summary>OfferClose: the pop-up the click closes, the game window's client size and unit, and the site's geometry (null = the prefab numbers).</summary>
     public string Form;
+    /// <summary>The explorer's targets: the UI graph's widget path on <see cref="Form"/> ("" = an exit of the screen map); its live rect (x, y, w, h) when read.</summary>
+    public string Widget = ""; public double[] LiveRect;
     public double W, H, U;
     public GameGeometry Geo;
     /// <summary>The point is the centre of the button's live rect (read by name on the form on top, fresh: src/UiButtons.cs), not the geometry's.</summary>
@@ -457,6 +462,7 @@ namespace RealmForge {
 
     /// <summary>The whitelist as text, for the log and the report: target names per owner and screen.</summary>
     public static string WhitelistText(ClickOwner o) {
+      if (o == ClickOwner.Explore) return "ExploreOpen, ExploreTab, ExploreClose, ExploreEscape@the form on top (CheckExplore: the explorer's safe graph presses and ways back; test build)";
       var parts = new List<string>();
       foreach (ClickTarget t in Enum.GetValues(typeof(ClickTarget))) {
         var r = RuleOf(o, t);
@@ -1044,6 +1050,10 @@ namespace RealmForge {
       if (retryUntil.TryGetValue(r.Owner, out until) && now < until) return GateResult.Wait("retry", tag + ": a retry - the screen is read again first");
       // after a pop-up was closed the next one of the game's chain is waited for (only another pop-up's × may be pressed meanwhile)
       if (r.Target != ClickTarget.OfferClose && chainUntil.TryGetValue(r.Owner, out until) && now < until) return GateResult.Wait("chain", tag + ": a pop-up was closed " + (OfferChainMs - (until - now)) + " ms ago - the next one of the chain is waited for");
+      if (IsExploreTarget(r.Target)) {   // (the explorer's own targets: its owner only; the shared ones - an offer's × - as for every owner)
+        if (r.Owner != ClickOwner.Explore) return Halt(r.Owner, "target", tag + " is not a target " + r.Owner + " may click");
+        return CheckExplore(r, f, now, tag);
+      }
       var cover = CheckCover(r, f, now, tag); if (cover != null) return cover;
       if (r.Target == ClickTarget.OfferClose) return CheckOffer(r, f, now, tag);
       if (r.Target == ClickTarget.UnknownBack) return CheckUnknownBack(r, f, tag);
@@ -1198,7 +1208,7 @@ namespace RealmForge {
 
     /// <summary>The form a click is meant for: the pop-up of an OfferClose / MapClose, the known screen's own form, else the form on top.</summary>
     static string TargetForm(ClickRequest r, ScreenState f) {
-      if (r.Target == ClickTarget.OfferClose || r.Target == ClickTarget.MapClose) return r.Form ?? "";
+      if (r.Target == ClickTarget.OfferClose || r.Target == ClickTarget.MapClose || r.Owner == ClickOwner.Explore) return r.Form ?? "";
       if (f.Kind != ScreenKind.Unknown) return ScreenState.OwnForm(f.Kind);
       return f.Top ?? "";
     }
@@ -1232,7 +1242,7 @@ namespace RealmForge {
     /// top: a dangerous one stops, a dangerous widget of one under the point stops, a pop-up / screen among them makes the top ambiguous - no
     /// click. Last, a dangerous widget of the target's own form under the point stops (the UI graph's rects). Null = nothing against it.</summary>
     GateResult CheckCover(ClickRequest r, ScreenState f, long now, string tag) {
-      if (f == null || r.Target == ClickTarget.EscapeBack || r.Target == ClickTarget.EquipTipEscape || r.Target == ClickTarget.None) return null;
+      if (f == null || r.Target == ClickTarget.EscapeBack || r.Target == ClickTarget.EquipTipEscape || r.Target == ClickTarget.ExploreEscape || r.Target == ClickTarget.None) return null;
       var o = r.Owner;
       string tf = TargetForm(r, f); if (tf == "") return null;   // (an unknown screen with no form named: the target's own rules wait)
       var mine = new HashSet<string> { tf };
@@ -1275,6 +1285,89 @@ namespace RealmForge {
       var own = DangerAt(tf, r, false, true);
       if (own != null) return Halt(o, "target", tag + ": lies on a dangerous widget of " + tf + " (" + own.Path + ")");
       return null;
+    }
+    public static bool IsExploreTarget(ClickTarget t) { return t == ClickTarget.ExploreOpen || t == ClickTarget.ExploreTab || t == ClickTarget.ExploreClose || t == ClickTarget.ExploreEscape; }
+    /// <summary>The explorer may click at all (the test build's lab command; off = every explore click is a no).</summary>
+    public bool ExploreOn;
+    /// <summary>The explorer's press (owner Explore, src/Explorer.cs): the window table's order is read and its top form is the one meant; never a
+    /// dangerous (stop) or wait form; an open / tab is a widget the explorer's own rules allow (ExplorePlan: one safe open / a tab switch, no
+    /// request, confirm, danger or never-word) with the point on it and on no smaller widget, no dangerous widget of the form under the point (the
+    /// graph's rect and the live one), no never-click button of the screen map; a close is on the map's exit, the offer's × or the graph's close
+    /// widget; Escape only on a form the map closes so, never the city. Then the cover check as for every click. A point on something not allowed
+    /// is a no without a stop (the explorer skips that press); the dangerous form and the gate's cover stops are stops.</summary>
+    GateResult CheckExplore(ClickRequest r, ScreenState f, long now, string tag) {
+      var o = r.Owner;
+      if (!ExploreOn) return GateResult.Deny("off", tag + ": the explorer is not on");
+      if (f == null || f.Order == null) return GateResult.Wait("order", tag + ": the window table's order is not read");
+      string top = ExplorePlan.TopOf(f.Order);
+      string form = r.Form ?? "";
+      char c = ScreenMap.ClassOf(top);
+      if (c == 'D') return Halt(o, "dangerous", tag + ": the dangerous " + top + " is on top - nothing is pressed");
+      if (top != form) return GateResult.Wait("covered", tag + ": " + (top == "" ? "no form" : top) + " is on top, not " + form);
+      if (c == 'W') return GateResult.Wait("wait", tag + ": " + top + " is a wait form");
+      if (r.Target == ClickTarget.ExploreEscape) {
+        var e = ScreenMap.ByName(top);
+        if (top == ExplorePlan.City || c == 'K') return GateResult.Deny("skip", tag + ": never an Escape on " + top);
+        if (c != 'E' && (e == null || e.Esc != "Handle")) return GateResult.Deny("skip", tag + ": " + top + " is not closed by Escape");
+        return GateResult.Allow(tag + ": Escape on " + top);
+      }
+      if (r.W <= 0 || r.H <= 0 || r.U <= 0) return GateResult.Deny("skip", tag + ": no window size");
+      if (r.X < 0 || r.Y < 0 || r.X >= r.W || r.Y >= r.H) return GateResult.Deny("skip", tag + ": the point is off the window");
+      if (ScreenMap.OnNever(top, r.X, r.Y, r.W, r.H, r.U)) return GateResult.Deny("skip", tag + ": lies on a never-click button of " + top);
+      if (OfferForms.IsOffer(top) && OfferForms.OnNeverButton(top, r.X, r.Y, r.W, r.H, r.U)) return GateResult.Deny("skip", tag + ": lies on a button of the offer " + top);
+      // (the way back: its close button may make a request as the form closes - the screen map's / offers' × decide it, as for every pilot's ×)
+      bool back = r.Target == ClickTarget.ExploreClose;
+      var dw = UiGraph.WidgetAt(top, r.X, r.Y, r.W, r.H, r.U, true);
+      if (dw != null && !(back && dw.Closes)) return GateResult.Deny("skip", tag + ": lies on the dangerous " + dw.Path + " of " + top);
+      var gtop = UiGraph.ByName(top);
+      if (DangerLive != null && gtop != null)
+        foreach (var d in gtop.Widgets) {   // (every dangerous widget of the form, the ones hidden in the prefab too: the game may show them)
+          if (!d.Danger || d.Template || string.IsNullOrEmpty(d.Field) || back && d.Closes) continue;
+          var rc = DangerLive(top, d.Field, r.W, r.H, r.U);
+          if (rc != null && r.X >= rc[0] && r.X <= rc[0] + rc[2] && r.Y >= rc[1] && r.Y <= rc[1] + rc[3]) return GateResult.Deny("skip", tag + ": lies on the dangerous " + d.Path + " of " + top + " (live)");
+        }
+      UiGraph.Widget w = null;
+      if (!string.IsNullOrEmpty(r.Widget)) { var gf = UiGraph.ByName(top); if (gf != null) foreach (var x in gf.Widgets) if (x.Path == r.Widget) { w = x; break; } }
+      if (r.Target == ClickTarget.ExploreClose) {
+        bool onExit = ScreenMap.OnExit(top, r.X, r.Y, r.W, r.H, r.U) || OfferForms.IsOffer(top) && r.Geo != null && OfferForms.OnClose(r.Geo, top, r.X, r.Y, r.W, r.H, r.U);
+        if (!onExit) {
+          if (w == null || w != ExplorePlan.CloseWidget(top)) return GateResult.Deny("skip", tag + ": not on the way back of " + top);
+          if (!OnWidget(w, r)) return GateResult.Deny("skip", tag + ": not on " + w.Path);
+          var on = UiGraph.WidgetAt(top, r.X, r.Y, r.W, r.H, r.U, false);
+          if (on != null && on != w) return GateResult.Deny("skip", tag + ": " + on.Path + " lies over " + w.Path + " there");
+        }
+      } else {
+        if (w == null) return GateResult.Deny("skip", tag + ": " + r.Widget + " is no widget of " + top + " in the UI graph");
+        bool okw = r.Target == ClickTarget.ExploreOpen ? ExplorePlan.OpenOf(top, w) != null : ExplorePlan.TabOk(top, w);
+        if (!okw) return GateResult.Deny("skip", tag + ": " + w.Path + " is not a press the explorer may make (" + (ExplorePlan.Unsafe(top, w) ?? "its effect") + ")");
+        if (!OnWidget(w, r)) return GateResult.Deny("skip", tag + ": not on " + w.Path);
+        // a smaller widget of the form at the point takes the press: allowed only when it opens the same form, or the game does not show it now
+        var at = Explorer.WidgetAt(top, r.X, r.Y, r.W, r.H, r.U);
+        if (at != null && at != w && !Explorer.Same(top, at, w)) {
+          var ar = DangerLive != null && !string.IsNullOrEmpty(at.Field) && !Explorer.SharedField(top, at.Field) ? DangerLive(top, at.Field, r.W, r.H, r.U) : new[] { r.X, r.Y, 0.0, 0.0 };
+          if (ar != null && r.X >= ar[0] && r.X <= ar[0] + ar[2] && r.Y >= ar[1] && r.Y <= ar[1] + ar[3]) return GateResult.Deny("skip", tag + ": " + at.Path + " lies over " + w.Path + " there");
+        }
+        // a widget hidden in the prefab that the game shows now may lie there (one of several buttons at one place): its live rect must not take the point
+        if (DangerLive != null && gtop != null)
+          foreach (var x in gtop.Widgets) {
+            if (x == w || x.Shown || x.Template || x.Rect == null || string.IsNullOrEmpty(x.Field) || x.Field == w.Field) continue;
+            var gr = ScreenMap.Place(x.Rect, r.W, r.H, r.U);
+            bool layout = gr.W < 2 || gr.H < 2;
+            if (!layout && !(r.X >= gr.X && r.X <= gr.Right && r.Y >= gr.Y && r.Y <= gr.Bottom)) continue;
+            var rc = DangerLive(top, x.Field, r.W, r.H, r.U);
+            if (rc != null && r.X >= rc[0] && r.X <= rc[0] + rc[2] && r.Y >= rc[1] && r.Y <= rc[1] + rc[3]) return GateResult.Deny("skip", tag + ": " + x.Path + " (hidden in the prefab) is there live");
+          }
+      }
+      var cover = CheckCover(r, f, now, tag); if (cover != null) return cover;
+      return GateResult.Allow(tag + ": " + r.Target + " on " + top + (r.Widget != "" ? " [" + r.Widget + "]" : ""));
+    }
+    /// <summary>The point lies on the widget: its live rect when read, else the UI graph's.</summary>
+    static bool OnWidget(UiGraph.Widget w, ClickRequest r) {
+      var lr = r.LiveRect;
+      if (lr != null && lr.Length == 4) return r.X >= lr[0] && r.X <= lr[0] + lr[2] && r.Y >= lr[1] && r.Y <= lr[1] + lr[3];
+      if (w.Rect == null) return false;
+      var g = ScreenMap.Place(w.Rect, r.W, r.H, r.U);
+      return r.X >= g.X && r.X <= g.Right && r.Y >= g.Y && r.Y <= g.Bottom;
     }
     /// <summary>How long a click may wait for a top form that stays covered / not known before the owner stops (a hint instead of a click).</summary>
     public const int CoverWaitMs = 15000;

@@ -67,15 +67,23 @@ namespace RealmForge {
       codeWatch = new CodeWatch(() => cfg.SendCodes, () => cfg.Site, () => cfg.Code);
       gradeWatch = new GradeWatch(() => cfg.Code);
       gameTimer.Interval = 2000; gameTimer.Tick += (s, e) => {
+        long gt0 = LoadMeter.Now();
         CheckGame(false);
         SyncPlansWait();
         PollGateTick();
         if (On("battle")) WatchBattleEnd();
         WatchStall();
-        arenaWatch.Tick(gameRunning && On("battle")); guildWatch.Tick(gameRunning && On("guild")); packsWatch.Tick(gameRunning); codeWatch.Tick(gameRunning); gradeWatch.Tick(gameRunning);
+        arenaWatch.Tick(gameRunning && On("battle")); guildWatch.Tick(gameRunning && On("guild")); packsWatch.Tick(gameRunning); bool away = overlay.GameAway();
+        codeWatch.Tick(gameRunning, away); gradeWatch.Tick(gameRunning, away);
         TraceStartTick(); TryAutoUpdate(); LayoutTick();
+        LoadMeter.Done(LoadMeter.Game, gt0);
       }; gameTimer.Start();
-      liveTimer.Interval = 400; liveTimer.Tick += (s, e) => PollLive();
+      liveTimer.Interval = 400; liveTimer.Tick += (s, e) => {
+        long lt0 = LoadMeter.Now();
+        PollLive();
+        LoadMeter.Done(LoadMeter.Live, lt0);
+        int want = overlay.LivePollMs(); if (liveTimer.Enabled && liveTimer.Interval != want) liveTimer.Interval = want;   // 400 ms with a guide on, 1 s without, 2 s with the game away (src/LoadPlan.cs)
+      };
       overlay = new OverlayController((st, far) => Post("{\"ev\":\"overlay\",\"state\":" + S(st) + ",\"far\":" + (far ? "true" : "false") + "}"),
                                       st => { Post("{\"ev\":\"auto\",\"state\":" + S(st) + "}"); OnAutoState(st); },
                                       (p, st) => Post("{\"ev\":\"sell.state\",\"state\":" + S(st) + ",\"selected\":" + p.Selected + ",\"missing\":" + p.Missing + ",\"extra\":" + p.Extra + "}"));
@@ -106,6 +114,7 @@ namespace RealmForge {
       updateTimer.Interval = 20000; updateTimer.Tick += (s, e) => { updateTimer.Interval = (Channel.IsTest ? 2 : 5) * 60 * 1000; if (updateReady == null || Channel.IsTest) CheckUpdate(); }; updateTimer.Start();
       remoteTimer.Interval = 3000; remoteTimer.Tick += (s, e) => { remoteTimer.Interval = RemoteSwitches.EveryMinutes(Channel.IsTest) * 60 * 1000; FetchRemote(); }; remoteTimer.Start();
       if (Channel.IsTest) { testLogTimer.Interval = 30000; testLogTimer.Tick += (s, e) => { testLogTimer.Interval = 120000; SendTestLog(); }; testLogTimer.Start(); }
+      if (Channel.IsTest) overlay.ExploreDone += json => { LabWrite("explore.json", json); Log.Write("explore: result written (" + json.Length + " bytes)"); };
       if (Channel.IsTest) { labRecTimer.Interval = 1000; labRecTimer.Tick += (s, e) => LabRecTick(); labRecTimer.Start(); }
       Log.Write(Channel.ProductName + " " + Program.Version + " started");
       Log.Write("switches (saved copy or defaults): " + remote.ToJson());
@@ -363,7 +372,45 @@ namespace RealmForge {
     }
     // TEST build: the lab runner's command file (src/LabRec.cs). Only the time stamp is looked at until it changes
     static string LabRecDir { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), Channel.FolderName, "lab"); } }
+    // TEST build: the lab runner's explorer command (src/Explorer.cs): explore.cmd -> overlay.ExploreStart / ExploreStop, explore.ack, and the
+    // result explore.json when the run ends (the runner uploads it)
+    DateTime exploreStamp = DateTime.MinValue; long exploreSeq = -1; string exploreRun = "";
+    void ExploreTick() {
+      try {
+        string f = Path.Combine(LabRecDir, "explore.cmd");
+        if (!File.Exists(f)) return;
+        var at = File.GetLastWriteTimeUtc(f);
+        if (at == exploreStamp) return;
+        exploreStamp = at;
+        string text; using (var fs = new FileStream(f, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete)) using (var rd = new StreamReader(fs)) { var buf = new char[256]; int n = rd.Read(buf, 0, buf.Length); text = new string(buf, 0, n); }
+        var cmd = ExploreCmd.Parse(text);
+        if (cmd == null) { Log.Write("explore: lab command not understood"); return; }
+        if (cmd.Seq <= exploreSeq) return;
+        exploreSeq = cmd.Seq;
+        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (Math.Abs(nowMs - cmd.Seq) > LabRecCmd.StaleMs) { LabWrite("explore.ack", ExploreCmd.Ack(cmd.Seq, "stale", cmd.Run)); return; }
+        Log.Write("explore: lab " + cmd.Op + (cmd.Op == "start" ? " budget " + cmd.Budget + " rotation " + cmd.Rot : ""));
+        if (cmd.Op == "start") {
+          try { File.Delete(Path.Combine(LabRecDir, "explore.json")); } catch (Exception) { }
+          exploreRun = cmd.Run; overlay.ExploreApp = Program.Version; overlay.ExploreGame = gameVersion ?? "";
+          overlay.ExploreStart(cmd.Budget, cmd.Rot, cmd.Run);
+          LabWrite("explore.ack", ExploreCmd.Ack(cmd.Seq, "running", cmd.Run));
+        } else {
+          bool on = overlay.ExploreRunning; overlay.ExploreStop("the lab's stop");
+          LabWrite("explore.ack", ExploreCmd.Ack(cmd.Seq, on ? "stopped" : "idle", exploreRun));
+        }
+      } catch (Exception e) { Log.Write("explore: lab command failed: " + e.Message); }
+    }
+    void LabWrite(string name, string text) {
+      try {
+        string dir = LabRecDir; Directory.CreateDirectory(dir);
+        string f = Path.Combine(dir, name), tmp = f + ".tmp";
+        File.WriteAllText(tmp, text, new UTF8Encoding(false));
+        if (File.Exists(f)) File.Replace(tmp, f, null); else File.Move(tmp, f);
+      } catch (Exception e) { Log.Write("lab: " + name + " not written: " + e.Message); }
+    }
     void LabRecTick() {
+      ExploreTick();
       try {
         if (labRecPending != null) {
           // another recording was asked to stop first: start once it is off, give up after a while
@@ -582,9 +629,9 @@ namespace RealmForge {
             break;
           }
           case "equip.rescan":
-            // the page's plan stands still: the game's tables are read again (at most every 20 s)
-            if (addrs != null && !scanning && DateTime.UtcNow > rescanAfter) {
-              rescanAfter = DateTime.UtcNow.AddSeconds(20); Log.Write("equip scan again: the plan stands still");
+            // the page's plan stands still: the game's tables are read again (20 s, then less often while they come out the same: StallRescan)
+            if (addrs != null && !scanning && DateTime.UtcNow > rescanAfter && DateTime.UtcNow > stallNextAt) {
+              StallRescan(); Log.Write("equip scan again: the plan stands still");
               StartScan(watch, false, true); overlay.RestartPilots();
             }
             break;
@@ -1388,6 +1435,7 @@ namespace RealmForge {
       scanning = true; watch = uids; liveTimer.Stop(); lastLive = null;
       Task.Factory.StartNew(() => {
         EquipAddrs a = null;
+        long st0 = LoadMeter.Now();
         try {
           lock (Extractor.Gate) {
             if (fresh) RFX.ForgetLive();
@@ -1395,8 +1443,9 @@ namespace RealmForge {
           }
         }
         catch (Exception e) { Log.Write("equip scan: " + e); }
+        LoadMeter.Done(LoadMeter.Scan, st0);
         win.BeginInvoke((Action)(() => {
-          scanning = false; addrs = a; overlay.SetAddrs(a);
+          scanning = false; addrs = a; overlay.SetAddrs(a); NoteScanTables(a, fresh);
           Log.Write("equip scan: " + (a == null ? "failed " + RFX.LastError : "panel=" + (a.Panel != 0) + " form=" + (a.Form != 0) + " items=" + a.Items.Count));
           Post("{\"ev\":\"equip.scan\",\"status\":" + S(a == null ? "fail" : "ok") + ",\"panel\":" + B(a != null && (a.Panel != 0 || a.Form != 0)) + "}");
           if (a != null) { liveTimer.Start(); PollLive(); }
@@ -1404,7 +1453,28 @@ namespace RealmForge {
       });
     }
 
+    // A fresh search for a plan that stands still costs a core for seconds on a slow PC (lab 1.6.66.409: 14 s each, every 20 s while a
+    // hint waited for the player): the next one waits 20, 60, 120, then 300 s while the searches find the same tables; a search that finds
+    // other tables, another plan or another stall starts over at 20 s (src/LoadPlan.cs StallRescanSec)
+    int stallStreak; string stallTables, stallPlan, stallSeen; DateTime stallNextAt = DateTime.MinValue;
+    void StallRescan() {
+      rescanAfter = DateTime.UtcNow.AddSeconds(20);   // (any search, as before)
+      stallNextAt = DateTime.UtcNow.AddSeconds(LoadPlan.StallRescanSec(stallStreak));   // (the next fresh one for a plan standing still)
+      stallStreak++;
+    }
+    void NoteScanTables(EquipAddrs a, bool fresh) {
+      string t = a == null ? "-" : a.EquipData + "|" + a.Form + "|" + a.Panel;
+      if (fresh && t != stallTables) { stallStreak = 0; stallNextAt = DateTime.MinValue; }   // the search found something else: it helped, the next one may come soon
+      stallTables = t;
+    }
+    void NotePlan(List<long> uids) {
+      var l = new List<long>(uids); l.Sort();
+      string k = string.Join(",", l);
+      if (k != stallPlan) { stallPlan = k; stallStreak = 0; stallNextAt = DateTime.MinValue; }
+    }
+
     void Watch(List<long> uids, bool fresh = false) {
+      NotePlan(uids);
       // a new or re-sent plan: the plan's items are looked up again, at most every 20 s, on the live tables found earlier when they
       // still check out (EnsureLive: the tables, the login, the hero form); a full search of the game only when they do not - a forced
       // one froze the guide on a stale step for the whole search (lab 1.6.66.402: 37 s, "no pilot step for 40 s"); a plan that then
@@ -1425,9 +1495,12 @@ namespace RealmForge {
     string stallKey, pollError, ownersLogged; DateTime stallAt;
     void WatchStall() {
       string k = overlay.StallKey();
-      if (k == null || k != stallKey) { stallKey = k; stallAt = DateTime.UtcNow; return; }
-      if ((DateTime.UtcNow - stallAt).TotalSeconds < 10 || addrs == null || scanning || DateTime.UtcNow <= rescanAfter) return;
-      stallAt = DateTime.UtcNow; rescanAfter = DateTime.UtcNow.AddSeconds(20);
+      if (k == null || k != stallKey) {
+        if (k != null && k != stallSeen) { stallSeen = k; stallStreak = 0; stallNextAt = DateTime.MinValue; }   // another step stands still (a step gone for a moment and back is the same one)
+        stallKey = k; stallAt = DateTime.UtcNow; return;
+      }
+      if ((DateTime.UtcNow - stallAt).TotalSeconds < 10 || addrs == null || scanning || DateTime.UtcNow <= rescanAfter || DateTime.UtcNow <= stallNextAt) return;
+      stallAt = DateTime.UtcNow; StallRescan();
       Log.Write("equip scan again: the plan stands still (" + k + ")");
       StartScan(watch, false, true); overlay.RestartPilots();
     }
@@ -1440,8 +1513,8 @@ namespace RealmForge {
       if (want <= 0 || !s.GameRunning || !s.FormOk || s.HeroUid == want) { heroStepSince = DateTime.MinValue; return false; }
       var now = DateTime.UtcNow;
       if (heroStepSince == DateTime.MinValue) { heroStepSince = now; return false; }
-      if ((now - heroStepSince).TotalSeconds < 10 || now <= rescanAfter) return false;
-      heroStepSince = now; rescanAfter = now.AddSeconds(20);
+      if ((now - heroStepSince).TotalSeconds < 10 || now <= rescanAfter || now <= stallNextAt) return false;
+      heroStepSince = now; StallRescan();
       Log.Write("equip scan again: hero step stands still (game hero " + s.HeroUid + ", plan hero " + want + ")");
       return true;
     }

@@ -111,6 +111,17 @@ namespace RealmForge {
     const int PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
 
     // Id of the running game process, or 0.
+    static int freshPid, freshAt; static readonly object freshGate = new object();
+    /// <summary>The game's process id as found at most <paramref name="maxAgeMs"/> ago (0 = not running): the hot paths' "is there a game"
+    /// without listing every process of the PC on each call (a list of them all costs ms and garbage on a slow PC).</summary>
+    public static int GamePidFresh(int maxAgeMs) {
+      int now = Environment.TickCount;
+      lock (freshGate) { if (freshAt != 0 && unchecked(now - freshAt) >= 0 && unchecked(now - freshAt) < maxAgeMs) return freshPid; }
+      int pid = FindGameProcess();
+      lock (freshGate) { freshPid = pid; freshAt = now == 0 ? 1 : now; }
+      return pid;
+    }
+
     public static int FindGameProcess() {
       Process[] ps = GameProcesses();
       try { return ps.Length > 0 ? ps[0].Id : 0; }

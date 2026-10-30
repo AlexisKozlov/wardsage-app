@@ -558,6 +558,12 @@ namespace RealmForge {
       if (formsTickAt != 0 && unchecked(now - formsTickAt) < minGapMs) return formsPrint != 0;
       formsTickAt = now == 0 ? 1 : now;
       long q0 = Stopwatch.GetTimestamp();
+      try { return FormsTickNow(q0); } finally { var lh = LoadHook; if (lh != null) lh(1, Stopwatch.GetTimestamp() - q0); }
+    }
+    /// <summary>The app's load meter (src/LoadPlan.cs, set by the app): (0 = a memory pass, 1 = a forms check, its Stopwatch ticks).</summary>
+    public static Action<int, long> LoadHook;
+
+    static bool FormsTickNow(long q0) {
       byte[] nb; int nn; ulong np;
       if (!UiNodeArray(out nb, out nn, out np)) return false;
       long[] ids = { FormCharactorMainId, FormBackpackId, FormRecastId, FormGemId, FormMainCityId, FormArtId };
@@ -827,7 +833,7 @@ namespace RealmForge {
     /// must be thread-safe.</summary>
     static void ScanParallel(ChunkFn f) {
       int pt0 = Environment.TickCount;
-      try { ScanParallelRun(f); } finally { PassDone(Thread.CurrentThread.IsThreadPoolThread, unchecked(Environment.TickCount - pt0)); }
+      try { ScanParallelRun(f); } finally { int pms = unchecked(Environment.TickCount - pt0); var lh = LoadHook; if (lh != null) lh(0, pms * Stopwatch.Frequency / 1000); PassDone(Thread.CurrentThread.IsThreadPoolThread, pms); }
     }
 
     // measurement only: full passes per minute, split by caller (a pool thread = a worker search; any other thread = the UI / a timer thread)

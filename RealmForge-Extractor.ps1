@@ -1180,6 +1180,12 @@ namespace RealmForge {
       if (formsTickAt != 0 && unchecked(now - formsTickAt) < minGapMs) return formsPrint != 0;
       formsTickAt = now == 0 ? 1 : now;
       long q0 = Stopwatch.GetTimestamp();
+      try { return FormsTickNow(q0); } finally { var lh = LoadHook; if (lh != null) lh(1, Stopwatch.GetTimestamp() - q0); }
+    }
+    /// <summary>The app's load meter (src/LoadPlan.cs, set by the app): (0 = a memory pass, 1 = a forms check, its Stopwatch ticks).</summary>
+    public static Action<int, long> LoadHook;
+
+    static bool FormsTickNow(long q0) {
       byte[] nb; int nn; ulong np;
       if (!UiNodeArray(out nb, out nn, out np)) return false;
       long[] ids = { FormCharactorMainId, FormBackpackId, FormRecastId, FormGemId, FormMainCityId, FormArtId };
@@ -1449,7 +1455,7 @@ namespace RealmForge {
     /// must be thread-safe.</summary>
     static void ScanParallel(ChunkFn f) {
       int pt0 = Environment.TickCount;
-      try { ScanParallelRun(f); } finally { PassDone(Thread.CurrentThread.IsThreadPoolThread, unchecked(Environment.TickCount - pt0)); }
+      try { ScanParallelRun(f); } finally { int pms = unchecked(Environment.TickCount - pt0); var lh = LoadHook; if (lh != null) lh(0, pms * Stopwatch.Frequency / 1000); PassDone(Thread.CurrentThread.IsThreadPoolThread, pms); }
     }
 
     // measurement only: full passes per minute, split by caller (a pool thread = a worker search; any other thread = the UI / a timer thread)
@@ -4230,6 +4236,17 @@ namespace RealmForge {
     const int PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
 
     // Id of the running game process, or 0.
+    static int freshPid, freshAt; static readonly object freshGate = new object();
+    /// <summary>The game's process id as found at most <paramref name="maxAgeMs"/> ago (0 = not running): the hot paths' "is there a game"
+    /// without listing every process of the PC on each call (a list of them all costs ms and garbage on a slow PC).</summary>
+    public static int GamePidFresh(int maxAgeMs) {
+      int now = Environment.TickCount;
+      lock (freshGate) { if (freshAt != 0 && unchecked(now - freshAt) >= 0 && unchecked(now - freshAt) < maxAgeMs) return freshPid; }
+      int pid = FindGameProcess();
+      lock (freshGate) { freshPid = pid; freshAt = now == 0 ? 1 : now; }
+      return pid;
+    }
+
     public static int FindGameProcess() {
       Process[] ps = GameProcesses();
       try { return ps.Length > 0 ? ps[0].Id : 0; }

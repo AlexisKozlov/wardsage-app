@@ -42,6 +42,80 @@ static partial class CoreTests {
     Check(l.Contains("DIFFERS 0,25") && l.Contains("dpi 144") && l.Contains("wine 8.0.1"), "line, a shifted window under Wine: " + l);
   }
 
+  /// <summary>The periods of the periodic work (src/LoadPlan.cs) and the load line (LoadMeter).</summary>
+  static void LoadPlanTests() {
+    Console.WriteLine("Load plan and meter (src/LoadPlan.cs):");
+    // overlay tick: job, diag, effect, shown, front, listHint, listMoving, inputMs
+    Eq(LoadPlan.IdleMs, LoadPlan.OverlayMs(false, false, false, true, true, false, false, 99999), "no guide: once a second (only the recorder keeps the tick then)");
+    Eq(LoadPlan.DiagMs, LoadPlan.OverlayMs(false, true, false, true, true, false, false, 99999), "frame diagnostics: 100 ms as before");
+    Eq(LoadPlan.EffectMs, LoadPlan.OverlayMs(true, false, true, false, false, false, false, 99999), "a click awaiting its effect: 50 ms, even with the game behind");
+    Eq(LoadPlan.AwayMs, LoadPlan.OverlayMs(true, false, false, false, false, true, true, 0), "the game minimized: 2 s");
+    Eq(LoadPlan.AwayMs, LoadPlan.OverlayMs(true, false, false, true, false, false, false, 0), "the game behind another window: 2 s");
+    Eq(LoadPlan.FollowMs, LoadPlan.OverlayMs(true, false, false, true, true, true, true, 99999), "a list moving under the frames: 33 ms");
+    Eq(LoadPlan.FollowMs, LoadPlan.OverlayMs(true, false, false, true, true, true, false, 300), "a list hint, the wheel or the mouse just used: 33 ms (the list may be scrolling)");
+    Eq(LoadPlan.ActiveMs, LoadPlan.OverlayMs(true, false, false, true, true, true, false, 1500), "a list hint, the mouse used a moment ago: 100 ms");
+    Eq(LoadPlan.ActiveMs, LoadPlan.OverlayMs(true, false, false, true, true, false, false, 300), "a guide without list frames, the mouse used: 100 ms");
+    Eq(LoadPlan.CalmMs, LoadPlan.OverlayMs(true, false, false, true, true, true, false, 5000), "a list hint nobody touches: 250 ms");
+    Eq(LoadPlan.CalmMs, LoadPlan.OverlayMs(true, false, false, true, true, false, true, 5000), "a moving list without frames over it: not followed");
+    Eq(LoadPlan.ActiveMs, LoadPlan.OverlayMs(true, false, false, true, true, false, false, -1), "input age not known: as if active");
+    // screen reads
+    Eq(2000, LoadPlan.ReadGapMs(true, true, true, 0), "screens: the game away, every 2 s");
+    Eq(45, LoadPlan.ReadGapMs(false, true, false, 99999), "screens: a click awaiting its effect, 45 ms");
+    Eq(45, LoadPlan.ReadGapMs(false, false, true, 99999), "screens: a moving list, 45 ms");
+    Eq(120, LoadPlan.ReadGapMs(false, false, false, 100), "screens: the mouse used, 120 ms as before");
+    Eq(240, LoadPlan.ReadGapMs(false, false, false, 5000), "screens: nobody touching anything, 240 ms");
+    Check(LoadPlan.LookFast(100) && !LoadPlan.LookFast(LoadPlan.InputRecentMs + 1), "the gear list's quick looks only while the mouse is used");
+    Eq(400, LoadPlan.LivePollMs(true, true, true), "live poll: a guide on, 400 ms as before");
+    Eq(1000, LoadPlan.LivePollMs(false, true, true), "live poll: no guide, 1 s");
+    Eq(2000, LoadPlan.LivePollMs(true, true, false), "live poll: the game behind, 2 s");
+    Eq(300, LoadPlan.CodeWatchMs(true, false, false), "code watch: the code window open, 300 ms");
+    Eq(1000, LoadPlan.CodeWatchMs(false, true, true), "code watch: closed, 1 s");
+    Eq(2000, LoadPlan.CodeWatchMs(false, false, false), "code watch: the game away, 2 s");
+    Eq(800, LoadPlan.GradeWatchMs(true, true), "grades: 800 ms as before with the game in front");
+    Eq(2000, LoadPlan.GradeWatchMs(true, false), "grades: 2 s with the game behind");
+    Check(LoadPlan.StallRescanSec(0) == 20 && LoadPlan.StallRescanSec(1) == 60 && LoadPlan.StallRescanSec(2) == 120 && LoadPlan.StallRescanSec(3) == 300 && LoadPlan.StallRescanSec(9) == 300,
+      "stall rescans: 20, 60, 120, then 300 s");
+    double tot, one; LoadMeter.Pct(600, 60000, 4, out tot, out one);
+    Check(Math.Abs(one - 1.0) < 1e-9 && Math.Abs(tot - 0.25) < 1e-9, "cpu: 600 ms in a minute = 1% of one core, 0.25% of all 4 cores");
+    LoadMeter.Line(0, 1, 1, "", null);   // (the counters start from here)
+    long f = System.Diagnostics.Stopwatch.Frequency;
+    LoadMeter.Add(LoadMeter.Screens, f / 100); LoadMeter.Add(LoadMeter.Screens, f / 100); LoadMeter.AddMs(LoadMeter.Pass, 3000);
+    string l = LoadMeter.Line(1200, 30000, 4, "hint", "mem 80 MB");
+    Check(l.StartsWith("load: cpu 1.0% of all 4 cores (4.0% of one core) (hint), mem 80 MB; per min: ", StringComparison.Ordinal), "the line's head: per all cores and per one core: " + l);
+    Check(l.Contains("screens 4x 40 ms") && l.Contains("pass 2x 6000 ms") && !l.Contains("tick "), "per activity: calls and ms a minute, only the ones that ran");
+    string l2 = LoadMeter.Line(0, 60000, 4, "idle", null);
+    Check(!l2.Contains("per min"), "the next line counts from the last one: " + l2);
+  }
+
+  /// <summary>--load-bench: the periodic work a minute in each situation, the plan before (origin/main 464c94a) and now (src/LoadPlan.cs), with
+  /// the per call costs measured on the lab's slow laptop (1.6.66.403-409 logs: the screen read 3-4 ms, 10-30 ms while a search runs beside it; a memory pass 3.3-4.8 s, a fresh
+  /// table search 13.6-13.9 s, a forms check 30-70 us) and of a managed tick here. A model: the lab's new load line gives the real numbers.</summary>
+  static void LoadBench() {
+    // a managed tick of the plan itself, measured here (the overlay's own tick is Win32 and not run here)
+    var sw = System.Diagnostics.Stopwatch.StartNew(); int n = 0; long sink = 0;
+    while (sw.ElapsedMilliseconds < 300) { sink += LoadPlan.OverlayMs(true, false, (n & 1) == 0, true, true, true, (n & 2) == 0, n & 4095) + LoadPlan.ReadGapMs(false, false, false, n); n++; }
+    Console.WriteLine("LoadPlan decision: " + (sw.Elapsed.TotalMilliseconds * 1000 / n).ToString("0.000") + " us a call (" + sink % 7 + ")");
+    const double ScreenMs = 4, PassS = 3.8, FreshS = 13.7, ShotMs = 8, DrawMs = 15, LiveMs = 1.5, CdkMs = 0.6, GradeMs = 0.6;
+    // situations: name, old periods {tick, screens, look, draws per min, live, cdk, grades, fresh scans per min}, new ones
+    var rows = new[] {
+      new { N = "idle (no guide)",        O = new double[] { 0, 0, 0, 0, 400, 300, 800, 0 },   W = new double[] { 0, 0, 0, 0, 1000, 1000, 800, 0 } },
+      new { N = "game behind / minimized", O = new double[] { 100, 1000, 0, 0, 400, 300, 800, 0 }, W = new double[] { 2000, 2000, 0, 0, 2000, 2000, 2000, 0 } },
+      new { N = "hint, nobody touching",   O = new double[] { 100, 120, 30, 600, 400, 300, 800, 3 }, W = new double[] { 250, 240, 0, 0, 400, 1000, 800, 0.4 } },
+      new { N = "hint, mouse used",        O = new double[] { 100, 120, 30, 600, 400, 300, 800, 3 }, W = new double[] { 100, 120, 30, 20, 400, 1000, 800, 0.4 } },
+      new { N = "pilot clicking",          O = new double[] { 50, 45, 30, 600, 400, 300, 800, 0 }, W = new double[] { 50, 45, 30, 30, 400, 1000, 800, 0 } },
+    };
+    Func<double, double> perMin = ms => ms > 0 ? 60000 / ms : 0;
+    Func<double[], double> cost = p => perMin(p[1]) * ScreenMs + perMin(p[2]) * ShotMs + p[3] * DrawMs + perMin(p[4]) * LiveMs + perMin(p[5]) * CdkMs + perMin(p[6]) * GradeMs + p[7] * FreshS * 1000;
+    Console.WriteLine("situation: ms of CPU a minute before -> now (screen reads, quick looks, repaints, live poll, code watch, grades, fresh searches); % of one core");
+    foreach (var r in rows) {
+      double a = cost(r.O), b = cost(r.W);
+      Console.WriteLine("  " + r.N.PadRight(24) + " " + a.ToString("0").PadLeft(6) + " -> " + b.ToString("0").PadLeft(5) + " ms/min  (" + (a / 600).ToString("0.0") + "% -> " + (b / 600).ToString("0.0") + "% of one core)"
+        + "  screens " + perMin(r.O[1]).ToString("0") + "->" + perMin(r.W[1]).ToString("0") + "/min, looks " + perMin(r.O[2]).ToString("0") + "->" + perMin(r.W[2]).ToString("0") + ", repaints " + r.O[3] + "->" + r.W[3]
+        + ", live " + perMin(r.O[4]).ToString("0") + "->" + perMin(r.W[4]).ToString("0") + ", cdk " + perMin(r.O[5]).ToString("0") + "->" + perMin(r.W[5]).ToString("0") + ", fresh searches " + r.O[7] + "->" + r.W[7]);
+    }
+    Console.WriteLine("  (a memory pass: " + PassS + " s; the lab's 15 passes a minute came from the fresh searches of a plan standing still)");
+  }
+
   static void Check(bool ok, string what) {
     if (ok) { passed++; Console.WriteLine("  ok   " + what); }
     else { failed++; Console.WriteLine("  FAIL " + what); }
@@ -111,6 +185,7 @@ static partial class CoreTests {
 
   static int Main(string[] args) {
     if (args.Length > 0 && args[0] == "--sim") return SimMain(args);
+    if (args.Length > 0 && args[0] == "--load-bench") { LoadBench(); return 0; }
     string mock = args.Length > 0 ? args[0] : "http://localhost:3999";
     string realAccount = args.Length > 1 ? args[1] : null;
     // the checks below test single gate verdicts (one failure = the stop); the retry policy has its own tests (ResilienceTests) and the sim runs with it
@@ -872,6 +947,7 @@ static partial class CoreTests {
     LuaRootTests();
     UiButtonTests();
     UiCellTests();
+    LoadPlanTests();
     TestLogTests(mock);
     ScreenRecorderTests();
     RecInputsTests();

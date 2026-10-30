@@ -274,7 +274,7 @@ static partial class CoreTests {
         Bad.Add("A " + tg + " CLICK LANDED ON " + top + " (" + c + ") opened over the screen after the start @" + (int)x + "," + (int)y);
       if (OfferForms.IsOffer(top)) {
         if (OfferForms.OnNeverButton(top, x, y, W, H, U)) { Bad.Add("CLICK ON A PLAN BUTTON of " + top + " @" + (int)x + "," + (int)y + " (" + tg + ")"); return; }
-        long l0 = Lat(); if (OfferForms.OnClose(Geo, top, x, y, W, H, U)) Later(l0, () => Pop(top));
+        long l0 = Lat(); if (OfferForms.OnClose(Geo, top, x, y, W, H, U) || ClickGate.IsExploreTarget(tg) && ScreenMap.OnExit(top, x, y, W, H, U)) Later(l0, () => Pop(top));
         return;
       }
       long lat = Lat(); MaybeSpawn();
@@ -284,6 +284,7 @@ static partial class CoreTests {
         else if (SimGraph) GraphPress(top, x, y, lat, tg);
         return;
       }
+      if (SimGraph && c == 'K' && ClickGate.IsExploreTarget(tg)) { GraphPress(top, x, y, lat, tg); return; }   // (the explorer: the city's widgets do what the graph says)
       if (SimGraph && c != 'K' && c != 'W') { GraphPress(top, x, y, lat, tg); if (Bad.Count > 0) return; }
       // the item's tip: «Заменить» puts the item on (the tip closes)
       if (top == SimTip && Full == SimHero && tg == ClickTarget.EquipConfirm) {
@@ -372,15 +373,17 @@ static partial class CoreTests {
     /// smallest one) does what the client's code does - opens its form, closes its own; a dangerous one (a purchase / claim / sell / consume
     /// request, a confirm) breaks the run.</summary>
     void GraphPress(string top, double x, double y, long lat, ClickTarget tg) {
-      var w = SimGraphWidgetAt(top, x, y, W, H, U); if (w == null) return;
+      var w = SimGraphWidgetAt(top, x, y, W, H, U, ClickGate.IsExploreTarget(tg)); if (w == null) return;
       GraphPresses++; SimGraphPressN++; if (w.Danger) SimGraphDangerN++;
       // (a request that buys / claims / sells / consumes breaks the run; a confirm opens - the pilot stops on it, nothing is spent yet)
       if (w.Danger) { Bad.Add("CLICK ON A DANGEROUS WIDGET of " + top + ": " + w.Path + " @" + (int)x + "," + (int)y + " (" + tg + ")"); return; }
       if (w.Confirm) SimGraphConfirmN++;
       Say("graph: " + top + " [" + w.Path + "]");
       foreach (var t in w.Opens()) {
-        var tf = UiGraph.ByName(t); if (tf == null || Array.IndexOf(OfferForms.KnownScreens, t) >= 0) continue;
-        string to = t; Later(lat, () => { if (TopForm() == top) { SimGraphSeen.Add(to); Push(to); } }); return;
+        var tf = UiGraph.ByName(t); if (tf == null) continue;
+        bool pass = ClickGate.IsExploreTarget(tg) && Array.IndexOf(ExplorePlan.PassScreens, t) >= 0;   // (the explorer goes through the heroes / the inventory)
+        if (Array.IndexOf(OfferForms.KnownScreens, t) >= 0 && !pass) continue;
+        string to = t; Later(lat, () => { if (TopForm() == top) { SimGraphSeen.Add(to); if (to == SimHero) { Hero.Part = -1; Hero.Shown = Hero.CityHero; } Push(to); } }); return;
       }
       if (w.Closes) Later(lat, () => Pop(top));
     }
@@ -464,17 +467,86 @@ static partial class CoreTests {
     return l.Count == 0 ? null : l[r.Next(l.Count)];
   }
   /// <summary>The widget of the form under the point (shown in the prefab, not a list template; the smallest one).</summary>
-  static UiGraph.Widget SimGraphWidgetAt(string form, double x, double y, double W, double H, double U) {
+  static UiGraph.Widget SimGraphWidgetAt(string form, double x, double y, double W, double H, double U, bool layout = false) {
     var f = UiGraph.ByName(form); if (f == null) return null;
     UiGraph.Widget best = null; double ba = double.MaxValue;
     foreach (var w in f.Widgets) {
-      if (!w.Shown || w.Template || w.Rect == null) continue;
+      if (!(layout ? SimLiveShown(form, w) : w.Shown) || w.Template || w.Rect == null) continue;
       var r = ScreenMap.Place(w.Rect, W, H, U);
+      if (layout && ExplorePlan.NeedsLive(w, W, H, U)) { r = SimLayoutRect(form, w, W, H, U); if (r == null) continue; }
+      if (layout && r.W * r.H > 0.5 * W * H && SimCatcher(w)) continue;   // (a tap catcher lies under the buttons: below)
       if (r.W < 2 || r.H < 2 || r.W > W * 0.9 && r.H > H * 0.9) continue;   // (a full-screen tap catcher is the screen map's exit, not a widget)
       if (x >= r.X && x <= r.Right && y >= r.Y && y <= r.Bottom && r.W * r.H < ba) { best = w; ba = r.W * r.H; }
     }
+    if (best == null && layout)   // (nothing else there: a tip's tap catcher takes it)
+      foreach (var w in f.Widgets) {
+        if (!w.Shown || w.Template || w.Rect == null || !SimCatcher(w)) continue;
+        var r = ScreenMap.Place(w.Rect, W, H, U);
+        if (x >= r.X && x <= r.Right && y >= r.Y && y <= r.Bottom) return w;
+      }
     return best;
   }
+  static bool SimCatcher(UiGraph.Widget w) { if (w.Effects.Count == 0) return false; foreach (var e in w.Effects) if (e.Kind != 'c') return false; return true; }
+  /// <summary>Where the sim's game puts a widget the prefab gives no size (a layout group places it; the explorer presses it on its live rect): a
+  /// 48 px cell of the form's own free space (no measured widget of the form in it), one after the other; null = no cell left.</summary>
+  static GeoRect SimLayoutRect(string form, UiGraph.Widget w, double W, double H, double U) {
+    string key = form + "|" + W + "x" + H; Dictionary<UiGraph.Widget, GeoRect> m;
+    if (!simLayout.TryGetValue(key, out m)) {
+      simLayout[key] = m = new Dictionary<UiGraph.Widget, GeoRect>();
+      var f = UiGraph.ByName(form); var taken = new List<GeoRect>();
+      foreach (var x in f.Widgets) { if (x.Rect == null) continue; var r = ScreenMap.Place(x.Rect, W, H, U); if (r.W >= 2 && r.H >= 2 && r.W * r.H < 0.15 * W * H) taken.Add(r); }   // (a panel's backdrop is no button: cells may lie on it)
+      double c = 48, gx = 80, gy = 120;
+      foreach (var x in f.Widgets) {
+        if (x.Rect == null || !SimLiveShown(form, x) || x.Template || !ExplorePlan.NeedsLive(x, W, H, U)) continue;
+        GeoRect cell = null;
+        while (cell == null && gy + c < H - 60) {
+          var k = new GeoRect { X = gx, Y = gy, W = c, H = c };
+          bool free = true; foreach (var t in taken) if (k.X < t.Right + 4 && k.Right > t.X - 4 && k.Y < t.Bottom + 4 && k.Bottom > t.Y - 4) { free = false; break; }
+          gx += c + 8; if (gx + c > W - 80) { gx = 80; gy += c + 8; }
+          if (free) cell = k;
+        }
+        if (cell == null) break;
+        m[x] = cell; taken.Add(cell);
+      }
+    }
+    GeoRect g; return m.TryGetValue(w, out g) ? g : null;
+  }
+  /// <summary>A widget hidden in the prefab that the sim's game shows (half of them, by name: the activity buttons, a state's buttons ...).</summary>
+  static bool SimLiveShown(string form, UiGraph.Widget w) {
+    int h = 17; foreach (char ch in form + "|" + w.Path) h = unchecked(h * 31 + ch);
+    if (ExplorePlan.CloseWidget(form) == w) return true;   // (the way back is always there)
+    // a screen's panels (m_ParentPanel / m_PanelContent children: the inventory's tabs, the hero screen's parts): only the first one is shown;
+    // a filter is closed
+    if (w.Path.Contains("m_PanelFilter") || w.Path.Contains("FilterWidget")) return false;
+    var p = w.Path.Split('/');
+    for (int i = 0; i + 1 < p.Length; i++)
+      if (p[i] == "m_ParentPanel" || p[i] == "m_PanelContent") { if (p[i + 1] != SimFirstPanel(form, p[i])) return false; break; }
+    if (w.Shown) return true;
+    // a hidden one at the place of another hidden one after it is its alternative (one of them shows, the last): hidden then
+    if (w.Rect != null && !ExplorePlan.NeedsLive(w, 1920, 1009, Ui.Unit(1920, 1009))) {
+      var g = ScreenMap.Place(w.Rect, 1920, 1009, Ui.Unit(1920, 1009)); bool after = false;
+      foreach (var x in UiGraph.ByName(form).Widgets) {
+        if (x == w) { after = true; continue; }
+        if (!after || x.Shown || x.Template || x.Rect == null) continue;
+        var r = ScreenMap.Place(x.Rect, 1920, 1009, Ui.Unit(1920, 1009));
+        if (r.W < 2 || r.H < 2 || r.W * r.H > 0.15 * 1920 * 1009) continue;
+        if (g.CX >= r.X && g.CX <= r.Right && g.CY >= r.Y && g.CY <= r.Bottom) return false;
+      }
+    }
+    return (h & 15) != 0;   // (15 in 16 of the hidden ones shown now: the activity buttons, a state's buttons ...)
+  }
+  /// <summary>The panel a screen shows first: the gear one (the inventory's equipment, the hero screen's gear), else the one with the most widgets.</summary>
+  static string SimFirstPanel(string form, string box) {
+    var f = UiGraph.ByName(form); if (f == null) return "";
+    var n = new Dictionary<string, int>(); string best = ""; int bn = 0;
+    foreach (var w in f.Widgets) { var p = w.Path.Split('/'); for (int i = 0; i + 1 < p.Length; i++) if (p[i] == box && p[i + 1].Contains("Equip")) return p[i + 1]; }   // (the gear part first)
+    foreach (var w in f.Widgets) {
+      var p = w.Path.Split('/');
+      for (int i = 0; i + 1 < p.Length; i++) if (p[i] == box) { int c; n.TryGetValue(p[i + 1], out c); n[p[i + 1]] = ++c; if (c > bn) { bn = c; best = p[i + 1]; } break; }
+    }
+    return best;
+  }
+  static readonly Dictionary<string, Dictionary<UiGraph.Widget, GeoRect>> simLayout = new Dictionary<string, Dictionary<UiGraph.Widget, GeoRect>>();
   /// <summary>A --graph start: the forms of a safe path from the city to a reachable form, pushed one after the other.</summary>
   static void SimGraphStart(SimGame g, Random r) {
     SimGraphInit(); if (simReach.Count == 0) return;
@@ -1890,7 +1962,7 @@ static partial class CoreTests {
       else if (args[i] == "--digest") list = "--digest";
       else if (args[i] == "--scan") scan = true;
       else if (args[i] == "--timing") timing = true;
-      else if (args[i] == "--sell-bench" || args[i] == "--spawn" || args[i] == "--art-bench") { }
+      else if (args[i] == "--sell-bench" || args[i] == "--spawn" || args[i] == "--art-bench" || args[i] == "--explore") { }
       else if (args[i] == "--matrix") matrix = true;
       else if (args[i] == "--gate-log") SimGateLog = true;
       else { int n; if (int.TryParse(args[i], out n)) seeds = n; }
@@ -1898,6 +1970,7 @@ static partial class CoreTests {
     var geo = GameGeometry.Parse(GeoJson(), GeoGame);
     if (Array.IndexOf(args, "--sell-bench") >= 0) return SellBench(geo, seeds, from, Array.IndexOf(args, "--spawn") >= 0);
     if (Array.IndexOf(args, "--art-bench") >= 0) return ArtBench(seeds == 500 ? 200 : seeds, from);
+    if (Array.IndexOf(args, "--explore") >= 0) return ExploreSimMain(geo, seeds == 500 ? 20 : seeds, from, verbose);
     if (matrix) {   // the city-first matrix alone (tests/run-sim.sh --matrix [runs a cell])
       var mf = SimMatrix(geo, true, seeds > 0 && seeds != 500 ? seeds : 4);
       foreach (var f in mf) Console.WriteLine("  !! " + f);
@@ -1926,5 +1999,110 @@ static partial class CoreTests {
       }
     }
     return bad == 0 ? 0 : 1;
+  }
+
+  // ---------------------------------------------------------------- the explorer (src/Explorer.cs) on the graph-driven sim
+  /// <summary>One explorer run on the --graph game: the gate as in the app (owner Explore, the window table's order not certain now and then,
+  /// the game's own pop-ups at <paramref name="spawn"/> a press); live rects = the graph's (3% not read). The sim's rule breaks are in g.Bad.</summary>
+  static long ExMs;
+  static Explorer ExploreSimRun(int seed, int budget, int rot, double spawn, GameGeometry geo, out SimGame g, bool trace) {
+    bool was = SimGraph; SimGraph = true;
+    try {
+      var gm = new SimGame(seed, seed % 2 == 1, 0.02); gm.Geo = geo; gm.SpawnP = spawn; g = gm;
+      var gate = new ClickGate { ExploreOn = true, OrderRead = true };
+      gate.DangerLive = (form, field, W, H, U) => {   // (a widget's live rect: where the sim's game has it)
+        var f = UiGraph.ByName(form); if (f == null) return null;
+        foreach (var w in f.Widgets) {
+          if (w.Field != field || w.Template || w.Rect == null || !SimLiveShown(form, w)) continue;
+          var r = ScreenMap.Place(w.Rect, W, H, U); if (ExplorePlan.NeedsLive(w, W, H, U)) r = SimLayoutRect(form, w, W, H, U);
+          if (r != null) return new[] { r.X, r.Y, r.W, r.H };
+        }
+        return null;
+      };
+      var ex = new Explorer(budget, rot, "sim-" + seed);
+      var lr = new Random(seed ^ 0x51ED);
+      Func<string, string, double[]> live = (form, field) => {
+        string tf = ExplorePlan.TopOf(gm.Order());
+        if (tf != form || lr.NextDouble() < 0.03) return null;
+        var f = UiGraph.ByName(form); if (f == null) return null;
+        double x0 = double.MaxValue, y0 = double.MaxValue, x1 = double.MinValue, y1 = double.MinValue;
+        foreach (var w in f.Widgets) {
+          if (!SimLiveShown(form, w) || w.Template || w.Rect == null || Explorer.LiveField(w) != field) continue;
+          var r = ScreenMap.Place(w.Rect, gm.W, gm.H, gm.U);
+          if (ExplorePlan.NeedsLive(w, gm.W, gm.H, gm.U)) { r = SimLayoutRect(form, w, gm.W, gm.H, gm.U); if (r == null) continue; }
+          x0 = Math.Min(x0, r.X); y0 = Math.Min(y0, r.Y); x1 = Math.Max(x1, r.Right); y1 = Math.Max(y1, r.Bottom);
+        }
+        return x0 == double.MaxValue ? null : new[] { x0, y0, x1 - x0, y1 - y0 };
+      };
+      long now = 0, busy = 0;
+      while (!ex.Over && now < Explorer.CapMs + 60000) {
+        now += 100; gm.Advance(now);
+        if (gm.Bad.Count > 0) { ex.Stop("sim rule break"); break; }
+        if (now < busy) continue;
+        var inp = gm.Read(); var st = ScreenState.Classify(inp, now);
+        var v = new ExploreView { Now = now, Order = inp.Order, W = gm.W, H = gm.H, U = gm.U, Live = live, OfferClose = f => OfferForms.ClosePoint(geo, f, gm.W, gm.H, gm.U) };
+        var a = ex.Tick(v);
+        if (trace) foreach (var l in ex.Lines) Console.WriteLine("  " + now + " " + l);
+        ex.Lines.Clear();
+        if (a.Kind != ExploreKind.Click && a.Kind != ExploreKind.Escape) continue;
+        var rq = new ClickRequest { Owner = ClickOwner.Explore, Target = a.Target, AutoOn = true, Front = true, X = a.X, Y = a.Y, W = gm.W, H = gm.H, U = gm.U, Form = a.Form, Widget = a.Widget ?? "", LiveRect = a.LiveRect, Geo = geo };
+        var res = gate.Check(rq, st, now);
+        if (trace) Console.WriteLine("  " + now + " " + a + " -> " + res.Verdict + " " + res.Detail);
+        if (res.Allowed) { ex.Sent(a, now); if (a.Kind == ExploreKind.Click) gm.Click(a.X, a.Y, a.Target); else gm.Escape(); busy = now + 300; }
+        else ex.Denied(a, res, gate.Halted(ClickOwner.Explore), now);
+      }
+      if (trace) foreach (var l in ex.Lines) Console.WriteLine("  " + l);
+      ExMs = ex.Ms(now);
+      return ex;
+    } finally { SimGraph = was; }
+  }
+  /// <summary>--explore: a run with no pop-ups of the game (budget 60: at least 50 forms, no rule break, back in the city), then <paramref name="seeds"/>
+  /// runs with the game's pop-ups, each its own rotation (no rule break; the forms they covered).</summary>
+  static int ExploreSimMain(GameGeometry geo, int seeds, int from, bool verbose) {
+    int bad = 0; SimGame g; var sw = System.Diagnostics.Stopwatch.StartNew();
+    if (Environment.GetEnvironmentVariable("EXPLORE_DIAG") != null) {   // why the opens of the graph are not the explorer's
+      var why = new SortedDictionary<string, int>();
+      foreach (var f in UiGraph.All) foreach (var w in f.Widgets) {
+        bool op = false; foreach (var e in w.Effects) if (e.Kind == 'o') op = true; if (!op) continue;
+        string u = ExplorePlan.Unsafe(f.Name, w);
+        if (u == null) { if (w.Effects.Count != 1) u = "effects " + w.Effects.Count; else if (w.Toggle) u = "toggle"; else if (!ExplorePlan.FormOk(w.Effects[0].Target)) u = "to " + ScreenMap.ClassOf(w.Effects[0].Target) + (UiGraph.ByName(w.Effects[0].Target) == null ? "?" : ""); else u = "ok"; }
+        if (u.StartsWith("the word")) u = "word " + u.Substring(9);
+        int n; why.TryGetValue(u, out n); why[u] = n + 1;
+        if (f.Name == ExplorePlan.City) Console.WriteLine("  city " + w.Field + ": " + u);
+      }
+      foreach (var kv in why) Console.WriteLine("  " + kv.Value.ToString().PadLeft(5) + " " + kv.Key);
+      Console.WriteLine("  tree: " + string.Join(" ", ExplorePlan.Order().ToArray()));
+      var inTree = new HashSet<string>(ExplorePlan.Order()); inTree.Add(ExplorePlan.City);
+      foreach (var fn in inTree) foreach (var w in UiGraph.ByName(fn).Widgets) foreach (var e in w.Effects) if (e.Kind == 'o' && !inTree.Contains(e.Target) && UiGraph.ByName(e.Target) != null)
+        Console.WriteLine("  blocked " + fn + " [" + w.Field + "] -> " + e.Target + ":" + ScreenMap.ClassOf(e.Target) + " " + (ExplorePlan.Unsafe(fn, w) ?? (ExplorePlan.FormOk(e.Target) ? "effects " + w.Effects.Count : "form")));
+      var rc = UiGraph.Reachable(ExplorePlan.City); var miss = new List<string>();
+      foreach (var kv in rc) if (!ExplorePlan.Order().Contains(kv.Key) && kv.Key != ExplorePlan.City) miss.Add(kv.Key + ":" + ScreenMap.ClassOf(kv.Key) + (ExplorePlan.FormOk(kv.Key) ? "" : "!"));
+      Console.WriteLine("  graph-reachable " + rc.Count + ", not the explorer's: " + string.Join(" ", miss.ToArray()));
+    }
+    var ex = ExploreSimRun(from, 60, 0, 0, geo, out g, verbose);
+    bool home = g.Top == SimCity;
+    Console.WriteLine("explore sim: " + ExplorePlan.Order().Count + " forms reachable by safe presses; a run (budget 60, no pop-ups): " + ex.State + (ex.Why != "" ? " (" + ex.Why + ")" : "")
+      + ", " + ex.Visited + " forms, " + ex.OkForms + " ok, " + ex.Mismatches.Count + " mismatches, " + ex.Presses + " presses, " + ExMs / 1000 + " s, back in the city " + home + ", rule breaks " + g.Bad.Count);
+    foreach (var b in g.Bad) Console.WriteLine("    !! " + b);
+    foreach (var m in ex.Mismatches) if (verbose) Console.WriteLine("    mismatch " + m.Form + " " + m.Kind + ": " + m.What);
+    { string jf = Environment.GetEnvironmentVariable("EXPLORE_JSON"); if (!string.IsNullOrEmpty(jf)) System.IO.File.WriteAllText(jf, ex.Json(ExMs, "sim", "sim")); }   // (tools/lab/explore-diff.sh --files)
+    if (ex.Visited < 50 || g.Bad.Count > 0 || !home || ex.State != "done") { bad++; Console.WriteLine("    !! the run must visit 50+ forms, keep every rule, end done in the city"); }
+    var seen = new HashSet<string>(); int stops = 0; var stopWhy = new SortedDictionary<string, int>();
+    for (int s = from + 1; s <= from + seeds; s++) {
+      var e = ExploreSimRun(s, 60, s, 0.04, geo, out g, false);
+      if (e.State != "done" && verbose) Console.WriteLine("    seed " + s + ": " + e.Why + " | " + (e.Skips.Count > 0 ? e.Skips[e.Skips.Count - 1] : ""));
+      if (e.State != "done") { stops++; string k = System.Text.RegularExpressions.Regex.Replace(e.Why, "Form_[A-Za-z0-9_]+", "F"); int c; stopWhy.TryGetValue(k, out c); stopWhy[k] = c + 1; }
+      if (g.Bad.Count > 0) { bad++; Console.WriteLine("    !! seed " + s + ": " + g.Bad[0]); if (verbose) foreach (var l in g.Log) Console.WriteLine("       " + l); }
+      seen.UnionWith(Visits(e));
+    }
+    Console.WriteLine("explore sim: " + seeds + " runs with the game's pop-ups, " + seen.Count + " forms covered, " + stops + " stopped early (a dangerous form came up / no way back), "
+      + bad + " broke a rule, " + sw.ElapsedMilliseconds + " ms");
+    foreach (var kv in stopWhy) Console.WriteLine("  " + kv.Value.ToString().PadLeft(4) + " stopped: " + kv.Key);
+    return bad == 0 ? 0 : 1;
+  }
+  static HashSet<string> Visits(Explorer e) {
+    var h = new HashSet<string>();
+    foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(e.Json(0, "", ""), "\\{\"form\":\"([^\"]+)\"")) h.Add(m.Groups[1].Value);
+    return h;
   }
 }

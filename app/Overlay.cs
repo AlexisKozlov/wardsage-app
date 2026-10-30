@@ -47,6 +47,15 @@ namespace RealmForge {
     [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
     [StructLayout(LayoutKind.Sequential)] public struct LASTINPUTINFO { public uint cbSize; public uint dwTime; }
     [DllImport("user32.dll")] public static extern bool GetLastInputInfo(ref LASTINPUTINFO i);
+    /// <summary>ms since the last mouse / keyboard input of anyone (SendInput included); -1 = not known.</summary>
+    public static long InputAgeMs() {
+      var li = new LASTINPUTINFO { cbSize = (uint)Marshal.SizeOf(typeof(LASTINPUTINFO)) };
+      if (!GetLastInputInfo(ref li)) return -1;
+      return unchecked((uint)Environment.TickCount - li.dwTime);
+    }
+    public delegate void WinEventProc(IntPtr hook, uint ev, IntPtr hwnd, int idObject, int idChild, uint thread, uint time);
+    [DllImport("user32.dll")] public static extern IntPtr SetWinEventHook(uint min, uint max, IntPtr mod, WinEventProc proc, uint pid, uint thread, uint flags);
+    [DllImport("user32.dll")] public static extern bool UnhookWinEvent(IntPtr hook);
     [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vk);
     [DllImport("user32.dll", SetLastError = true)] public static extern uint SendInput(uint n, INPUT[] inputs, int size);
     [StructLayout(LayoutKind.Sequential)] public struct MOUSEINPUT { public int dx, dy; public uint mouseData, dwFlags, time; public IntPtr extra; }
@@ -180,7 +189,20 @@ namespace RealmForge {
 
     /// <summary>Shows the bitmap (32-bit ARGB) at the screen position, in physical pixels.</summary>
     public void Put(Bitmap bmp, int x, int y) {
+      // the same picture again (the callers keep a bitmap while its key stays): nothing to copy; only moved = the window is moved
+      if (Visible && ReferenceEquals(bmp, putBmp)) {
+        if (x != putX || y != putY) { W32.SetWindowPos(Handle, IntPtr.Zero, x, y, 0, 0, 0x0001 | 0x0004 | 0x0010); putX = x; putY = y; }   // SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
+        return;
+      }
+      long t0 = LoadMeter.Now();
       if (!Visible) Show();
+      putBmp = bmp; putX = x; putY = y;
+      PutNow(bmp, x, y);
+      LoadMeter.Done(LoadMeter.Put, t0);
+    }
+    Bitmap putBmp; int putX, putY;
+
+    void PutNow(Bitmap bmp, int x, int y) {
       IntPtr screen = W32.GetDC(IntPtr.Zero), mem = W32.CreateCompatibleDC(screen), hb = IntPtr.Zero, old = IntPtr.Zero;
       try {
         hb = bmp.GetHbitmap(Color.FromArgb(0));
@@ -368,11 +390,13 @@ namespace RealmForge {
       gate.FormSearchPending = t => RFX.FormSearchRunning && (t == ClickTarget.CityInventory ? RFX.InvFormMissing() : t == ClickTarget.FoundryButton && RFX.FoundryFormMissing());
       gate.FormFound = t => t == ClickTarget.CityInventory ? !RFX.InvFormMissing() : t == ClickTarget.FoundryButton && !RFX.FoundryFormMissing();
       gate.DangerLive = (form, field, w, h, u) => RFX.UiFieldReadNow(form, field, w, h, u);   // (a dangerous widget of a form over the click's one, where the game has it now)
+      LoadMeter.Hook();   // (the memory passes and the forms checks counted in the load line)
       RFX.LiveLog = s => Log.Write(s);   // the live reads' lines (the lists' scroll binding ...) reach the app's log
       pilot = new AutoPilot(g);
       fpilot = new FilterPilot(fg);
       hpilot = new HeroPilot(heroG);
       timer.Interval = 100; timer.Tick += (s, e) => {
+        long lt0 = LoadMeter.Now();
         try { Tick(); tickError = null; }
         catch (Exception ex) {
           // the same exception every 100 ms: journaled (with its stack) and reported once
@@ -380,6 +404,7 @@ namespace RealmForge {
           if (m != tickError) { tickError = m; Log.Write("overlay: " + ex); RaiseProblem("overlay.exception", "overlay: " + m); }
           Hide("off");
         }
+        LoadMeter.Done(LoadMeter.Tick, lt0);
       };
       lookTimer.Interval = 30; lookTimer.Tick += (s, e) => {
         try { LookFast(); }
@@ -393,10 +418,21 @@ namespace RealmForge {
         try { TickRecBtn(); } catch (Exception) { }
         var r = RecPressed; if (r != null) r();
       };
-      recBtnTimer.Interval = 200; recBtnTimer.Tick += (s, e) => {
+      recBtnTimer.Interval = LoadPlan.RecButtonMs(false); recBtnTimer.Tick += (s, e) => {
+        int rbi = LoadPlan.RecButtonMs(recOn); if (recBtnTimer.Interval != rbi) recBtnTimer.Interval = rbi;
+        long rt0 = LoadMeter.Now();
         try { TickRecBtn(); } catch (Exception ex) { if (recWin.Visible) recWin.Hide(); string m = "recbtn: " + ex.GetType().Name + ": " + ex.Message; if (m != tickError) { tickError = m; Log.Write("overlay: " + ex); } }
+        LoadMeter.Done(LoadMeter.RecBtn, rt0);
       };
       if (Channel.IsTest) recBtnTimer.Start();
+      // TEST build: the load line once a minute, also while no guide runs (the overlay tick is stopped then)
+      if (Channel.IsTest) { loadTimer.Interval = 60000; loadTimer.Tick += (s, e) => { try { LogLoad(); } catch (Exception) { } }; loadTimer.Start(); }
+      // the game coming to the front or back from minimized: the slow tick of a game away is cut short (the hints are back at once)
+      try {
+        winEventProc = (h, ev, hwnd, idObject, idChild, thread, time) => { if (timer.Enabled && timer.Interval > LoadPlan.ActiveMs) timer.Interval = 15; };
+        winHookFg = W32.SetWinEventHook(0x0003, 0x0003, IntPtr.Zero, winEventProc, 0, 0, 0x0000 | 0x0002);   // EVENT_SYSTEM_FOREGROUND, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS
+        winHookMin = W32.SetWinEventHook(0x0017, 0x0017, IntPtr.Zero, winEventProc, 0, 0, 0x0000 | 0x0002);  // EVENT_SYSTEM_MINIMIZEEND
+      } catch (Exception) { }
       cancelWin.Pressed += () => {
         cancelWin.Hide();
         if (SellClicking) { Log.Write("sell: cancelled over the game"); var sc = SellCancelPressed; if (sc != null) sc(); return; }   // storage cleanup: the whole run ends (clicks and hints), the page cancels the list
@@ -405,7 +441,13 @@ namespace RealmForge {
       };
     }
 
-    public void Dispose() { timer.Dispose(); lookTimer.Dispose(); glow.Dispose(); tip.Dispose(); cancelWin.Dispose(); recBtnTimer.Dispose(); recWin.Dispose(); }
+    readonly Timer loadTimer = new Timer();
+    W32.WinEventProc winEventProc; IntPtr winHookFg, winHookMin;   // (the delegate is kept: the hook calls it for as long as it is set)
+
+    public void Dispose() {
+      if (winHookFg != IntPtr.Zero) W32.UnhookWinEvent(winHookFg); if (winHookMin != IntPtr.Zero) W32.UnhookWinEvent(winHookMin);
+      winHookFg = winHookMin = IntPtr.Zero; loadTimer.Dispose();
+      timer.Dispose(); lookTimer.Dispose(); glow.Dispose(); tip.Dispose(); cancelWin.Dispose(); recBtnTimer.Dispose(); recWin.Dispose(); }
 
     public void StartDiag(int minutes) {
       // one folder per run: a second run must not overwrite the first one's files
@@ -669,6 +711,72 @@ namespace RealmForge {
       } catch (Exception) { }
     }
 
+    // ---- TEST build: the explorer (src/Explorer.cs), started by the lab runner's explore.cmd (app/HostBridge.cs): it walks the game's safe UI
+    // over the UI graph, every press through the click gate (owner Explore), and gives its result (explore.json) to ExploreDone
+    Explorer explorer; long exploreBusyUntil; W32.POINT exploreCursor; bool exploreCursorSet;
+    public bool ExploreRunning { get { return explorer != null; } }
+    /// <summary>The run's result JSON when it ended (done or stopped).</summary>
+    public event Action<string> ExploreDone;
+    public string ExploreApp = "", ExploreGame = "";
+    public void ExploreStart(int budget, int rot, string run) {
+      if (!Channel.IsTest) return;
+      if (explorer != null) ExploreStop("a new explore command");
+      gate.Resume(ClickOwner.Explore); gate.ExploreOn = true; exploreCursorSet = false; exploreBusyUntil = 0;
+      explorer = new Explorer(budget, rot, run);
+      foreach (var l in explorer.Lines) Log.Write(l); explorer.Lines.Clear();
+      Run();
+    }
+    public void ExploreStop(string why) {
+      var ex = explorer; if (ex == null) return;
+      ex.Stop(why); ExploreEnd(ex);
+    }
+    void ExploreEnd(Explorer ex) {
+      foreach (var l in ex.Lines) Log.Write(l); ex.Lines.Clear();
+      explorer = null; gate.ExploreOn = false;
+      string json = ex.Json(NowMs(), ExploreApp, ExploreGame);
+      var h = ExploreDone; if (h != null) try { h(json); } catch (Exception e) { Log.Write("explore: result not written: " + e.Message); }
+    }
+    void TickExplore() {
+      var ex = explorer; long now = NowMs();
+      if (gate.Halted(ClickOwner.Explore) && !ex.Over) ex.Stop("the click gate stopped: " + gate.HaltReason(ClickOwner.Explore) + " - " + gate.HaltDetail(ClickOwner.Explore));
+      if (ex.Over) { ExploreEnd(ex); return; }
+      if (sending || now < exploreBusyUntil) return;
+      IntPtr hwnd = GameWindow();
+      if (hwnd == IntPtr.Zero || W32.IsIconic(hwnd)) return;
+      W32.RECT cr; if (!W32.GetClientRect(hwnd, out cr) || cr.B < 200) return;
+      var o = new W32.POINT(0, 0); W32.ClientToScreen(hwnd, ref o);
+      bool front = IsForeground(hwnd);
+      // the player's own mouse: the cursor left the explorer's last point (or a button is down) - the run stops at once
+      W32.POINT c;
+      if (W32.GetCursorPos(out c)) {
+        bool down = (W32.GetAsyncKeyState(0x01) & 0x8000) != 0 || (W32.GetAsyncKeyState(0x02) & 0x8000) != 0;
+        if (exploreCursorSet && (c.X != exploreCursor.X || c.Y != exploreCursor.Y || down)) { ex.Stop("the player's own input"); ExploreEnd(ex); return; }
+      }
+      double W = cr.R, H = cr.B, U = Ui.Unit(W, H);
+      var v = new ExploreView { Now = now, Front = front, Order = RFX.UiKnown ? RFX.ReadShownOrder() : null, W = W, H = H, U = U,
+                                Live = (f, fld) => RFX.UiFieldReadNow(f, fld, W, H, U), OfferClose = f => OfferForms.ClosePoint(Geo.Current, f, W, H, U) };
+      var a = ex.Tick(v);
+      foreach (var l in ex.Lines) Log.Write(l); ex.Lines.Clear();
+      if (ex.Over) { ExploreEnd(ex); return; }
+      if (a.Kind != ExploreKind.Click && a.Kind != ExploreKind.Escape) return;
+      if (!front) return;   // (the game behind another window: waited for - the run's cap ends it)
+      var fresh = FreshScreen(false);
+      var req = new ClickRequest { Owner = ClickOwner.Explore, Target = a.Target, AutoOn = AutoEnabled, Front = front, X = a.X, Y = a.Y, W = W, H = H, U = U,
+                                   Form = a.Form, Widget = a.Widget ?? "", LiveRect = a.LiveRect, Geo = Geo.Current };
+      var res = gate.Check(req, fresh, now);
+      if (!res.Allowed) { ex.Denied(a, res, gate.Halted(ClickOwner.Explore), now); foreach (var l in ex.Lines) Log.Write(l); ex.Lines.Clear(); return; }
+      if (a.Kind == ExploreKind.Escape) {
+        ex.Sent(a, now); Log.Write("explore: press " + a);
+        SendEscapeKey(ClickOwner.Explore); exploreBusyUntil = now + 400; return;
+      }
+      int sx = o.X + (int)Math.Round(a.X), sy = o.Y + (int)Math.Round(a.Y);
+      var vs = SystemInformation.VirtualScreen;
+      if (!OwnButtons.AllInside(new[] { vs.X, vs.Y, vs.Width, vs.Height }, sx, sy, sy)) { ex.Stop(a + " lies off the screen (the game window is larger than the screen)"); ExploreEnd(ex); return; }
+      ex.Sent(a, now); Log.Write("explore: press " + a);
+      Send(new AutoAction { Kind = AutoKind.Click, X = a.X, Y = a.Y }, sx, sy, ClickOwner.Explore, a.Target, a.Form, freshOffers, unknownForms);
+      exploreCursor = new W32.POINT(sx, sy); exploreCursorSet = true; exploreBusyUntil = now + 400;
+    }
+
     /// <summary>TEST build: the recorder starts / stops. Our windows stay in screen captures while it runs (then the screen looks mask them themselves).</summary>
     public void SetRecording(bool on) {
       RecInfo.Active = on; GlowWindow.Capturable = on;
@@ -682,11 +790,19 @@ namespace RealmForge {
       curRow = curCol = 0; curSel = 0;
       // the frames over the inventory / Foundry lists follow a scroll the game renders at its own rate: those hints tick often
       // (the scroll is read every frame we draw); everything else stays at the slow tick
-      int wantInterval = LocateWins || (sellHint && sellWanted != null) ? 33 : gate.AnyPending || SellPolling ? ConfirmPollMs : 100;   // a pilot's click on its way: its effect polled at 50 ms (the sell pilot's drag: its move)
+      // (src/LoadPlan.cs) a pilot's click on its way: its effect polled at 50 ms (the sell pilot's drag: its move); a list moving under
+      // the frames: 33 ms; someone using the mouse: 100 ms; a hint or a pilot nobody touches: 250 ms; the game minimized or behind: 2 s
+      inputAge = W32.InputAgeMs();
+      IntPtr tw = GameWindow();
+      bool twShown = tw != IntPtr.Zero && W32.IsWindowVisible(tw) && !W32.IsIconic(tw), twFront = twShown && IsForeground(tw);
+      bool effect = gate.AnyPending || SellPolling;
+      int wantInterval = LoadPlan.OverlayMs(ScreensWanted(), DateTime.Now < diagUntil, effect, twShown, twFront, LocateWins || (sellHint && sellWanted != null), listMoving, inputAge);
       if (timer.Interval != wantInterval) timer.Interval = wantInterval;
+      loadMode = !ScreensWanted() ? "idle" : !twShown || !twFront ? "away" : effect || EquipClicking || SellClicking || (LocateWins && LocateClicking) ? "pilot" : "hint";
+      if (Channel.IsTest) { long tn = NowMs(); if (modeAt != 0 && tn - modeAt > 0 && tn - modeAt < 5000) modeMs[loadMode == "away" ? 0 : loadMode == "hint" ? 1 : loadMode == "pilot" ? 2 : 3] += tn - modeAt; modeAt = tn; }
       ApplyArtGate();
-      LogLoad(NowMs());
       ReadScreens(NowMs());   // the game's screen, once per tick: every feature below takes it from here
+      if (explorer != null) { TickExplore(); return; }   // (TEST build: the lab's explorer runs alone)
       UpdateArtStep();
       // the game is minimized / covered / alt-tabbed: nothing of ours stays over the desktop (the features go on reading)
       if (!GameDrawable()) { if (glow.Visible) glow.Hide(); HideTip(); drawnKey = null; }
@@ -962,11 +1078,14 @@ namespace RealmForge {
     // A quick look between the frame ticks (every 30 ms): a list flicked by the player moves up to a few thousand px a
     // second - in 100 ms further than the strip is high, and then its picture fits nowhere or somewhere wrong.
     void LookFast() {
+      if (!LoadPlan.LookFast(W32.InputAgeMs())) return;   // a list nobody scrolls stays where the tick's own look saw it
       if (LocateWins || target == 0 || target != lookTarget || addrs == null || types == null || !lookOk || !anchor.Has || filterState != "" || typesPtr != lookList) return;
       IntPtr hwnd = GameWindow();
       if (hwnd == IntPtr.Zero || !IsForeground(hwnd)) return;
+      long l0 = LoadMeter.Now();
       bool sure = LookAtList(lookO, lookH, NowMs());
       if (sure) PlaceFrame(lookO, lookH); else NeedClick();
+      LoadMeter.Done(LoadMeter.Look, l0);
     }
 
     /// <summary>One look at the list strip: the bars' phase, its picture, and what says where the rows are - the list just
@@ -1427,17 +1546,22 @@ namespace RealmForge {
       if (marks != null) foreach (var m in marks) recB.Frames.Add(new RecFrameRect { Kind = pre + "mark" + (m.Length > 4 ? m[4].ToString() : ""), X = m[0] - sceneX, Y = m[1] - sceneY, W = m[2], H = m[3] });
     }
 
+    /// <summary>The hints pulse (a repaint every tick); off: they stand still and are drawn only on a change (the player's PC is not loaded).</summary>
+    static readonly bool HintPulse = false;
+
     void Scene(GlowWindow win, ref string key, int[] frameR, Plate p, int[] target, double[] strip, List<int[]> marks = null, Hl hl = null, int[][] avoid = null) {
       if (!GameDrawable()) { if (win.Visible) win.Hide(); key = null; return; }
       if (recB != null) RecScene(win, frameR, strip, marks);
-      float pulse = (float)(0.6 + 0.4 * Math.Sin(frame * 0.45));
+      // the frames and the new highlight stand still at their brightest (they pulsed: a repaint and a copy of the whole picture, up to the
+      // game's client with the dimming, every tick a hint was shown); the picture is drawn again only when what it shows changes
+      float pulse = HintPulse ? (float)(0.6 + 0.4 * Math.Sin(frame * 0.45)) : 1f;
       // the new highlight (switch guideStyle): a frame with a Hl is drawn by PaintGuide; off = the old frame, nothing below changes
       bool ng = GuideStyle && hl != null && frameR != null, dim = ng && !hl.Important;
       // the old frame (guideStyle off) follows a round / bevelled button's outline; rect shapes and targets without geometry keep the rectangle
       bool oldShape = !GuideStyle && hl != null && frameR != null && GuideShape.FrameOutline(hl.Rect, hl.Shape, hl.Inset, 2) != null;
       long tms = (uint)Environment.TickCount;
-      guideLvl = (int)Math.Round(5 * (0.5 + 0.5 * Math.Sin(2 * Math.PI * (tms % 1200) / 1200.0)));   // the pulse, 1.2 s, in 6 steps
-      int bob = dim ? (int)Math.Round(2 + 2 * Math.Sin(2 * Math.PI * (tms % 1600) / 1600.0)) : 0;   // the hand's bob, 4 px
+      guideLvl = HintPulse ? (int)Math.Round(5 * (0.5 + 0.5 * Math.Sin(2 * Math.PI * (tms % 1200) / 1200.0))) : 5;   // the pulse, 1.2 s, in 6 steps
+      int bob = dim ? (HintPulse ? (int)Math.Round(2 + 2 * Math.Sin(2 * Math.PI * (tms % 1600) / 1600.0)) : 2) : 0;   // the hand's bob, 4 px
       Image hand = dim ? GuideHand.Get(GuideSite) : null;
       string k = (frameR != null ? string.Join(",", frameR) : "-") + "|" + (target != null ? string.Join(",", target) : "-") + "|"
         + (p != null ? p.Caps + "/" + p.Main + "/" + p.Sub + "/" + p.Pill + "/" + p.Warn : "-") + "|" + (strip != null ? string.Join(",", Array.ConvertAll(strip, v => ((int)v).ToString())) : "-")
@@ -1448,6 +1572,11 @@ namespace RealmForge {
         + (avoid != null && avoid.Length > 0 ? "|a" + string.Join(";", Array.ConvertAll(avoid, a => a != null ? string.Join(",", a) : "-")) : "");
       if (k == key) return;
       key = k;
+      long d0 = LoadMeter.Now();
+      try { SceneDraw(win, frameR, p, target, strip, marks, hl, avoid, pulse, ng, dim, oldShape, hand, bob); } finally { LoadMeter.Done(LoadMeter.Draw, d0); }
+    }
+
+    void SceneDraw(GlowWindow win, int[] frameR, Plate p, int[] target, double[] strip, List<int[]> marks, Hl hl, int[][] avoid, float pulse, bool ng, bool dim, bool oldShape, Image hand, int bob) {
       double U = Ui.Unit(Math.Max(1, sceneW), Math.Max(1, sceneH));
       // the step's other click targets in client px (the plate keeps off them and off its own target)
       int[][] av = avoid == null ? null : Array.ConvertAll(avoid, a => a == null ? null : new[] { a[0] - sceneX, a[1] - sceneY, a[2], a[3] });
@@ -2643,7 +2772,7 @@ namespace RealmForge {
     /// <summary>The name of the screen for the page (the equip helper's live event), "" when it was not read lately.</summary>
     public string ScreenName(out bool bulk) {
       var s = screens.Current; bulk = false;
-      if (s == null || NowMs() - s.ReadAtMs > 2000) return "";
+      if (s == null || NowMs() - s.ReadAtMs > 5000) return "";   // (the screen is read every 2 s while the game is away)
       bulk = s.Kind == ScreenKind.Inventory && s.InvEquipTab && s.InvBulk;
       return s.Kind.ToString().ToLowerInvariant();
     }
@@ -2651,6 +2780,18 @@ namespace RealmForge {
     public bool LocateAutoEnabled;
     long screenReadAt, cityAt; bool cityNow; long locUnkSince = -1, shUnkSince = -1; SellHintStep shLast; bool shHold;
     readonly Dictionary<ClickOwner, string> haltSaid = new Dictionary<ClickOwner, string>();
+
+    /// <summary>The game is gone, minimized or behind another window (the watches look less often then).</summary>
+    public bool GameAway() {
+      IntPtr h = GameWindow();
+      return h == IntPtr.Zero || !W32.IsWindowVisible(h) || W32.IsIconic(h) || !IsForeground(h);
+    }
+    /// <summary>The equip helper's live poll period (src/LoadPlan.cs).</summary>
+    public int LivePollMs() {
+      IntPtr h = GameWindow();
+      bool sh = h != IntPtr.Zero && W32.IsWindowVisible(h) && !W32.IsIconic(h);
+      return LoadPlan.LivePollMs(ScreensWanted(), sh, sh && IsForeground(h));
+    }
 
     bool ScreensWanted() { return target != 0 || locateReq != null || filterItem != 0 || hintKind != "" || runHero != 0 || sellWanted != null; }
 
@@ -2661,9 +2802,14 @@ namespace RealmForge {
       RFX.EnsureLiveForGuides();   // the readers' basis (handle, regions, live tables) without waiting for the first account read; throttled and off-thread
       // every 120 ms; 50 ms while a pilot's click awaits its effect (the expected field is polled until it changes); once a second while the
       // game is minimised or gone (nothing to click, nothing to draw)
-      int readGap = gameAway ? 1000 : gate.AnyPending || listMoving || SellPolling ? ConfirmPollMs - 5 : 120;   // (a list that moves: read until it settles)
+      int readGap = LoadPlan.ReadGapMs(gameAway, gate.AnyPending || SellPolling, listMoving, inputAge);   // (a list that moves: read until it settles; nobody touching anything: 240 ms)
       if (screens.Current != null && now >= screenReadAt && now - screenReadAt < readGap) return;
       screenReadAt = now;
+      long rs0 = LoadMeter.Now();
+      try { ReadScreensNow(now); } finally { LoadMeter.Done(LoadMeter.Screens, rs0); }
+    }
+
+    void ReadScreensNow(long now) {
       IntPtr hwnd = GameWindow();
       gameAway = hwnd == IntPtr.Zero || W32.IsIconic(hwnd);
       bool front = hwnd != IntPtr.Zero && !W32.IsIconic(hwnd) && IsForeground(hwnd);
@@ -2743,23 +2889,28 @@ namespace RealmForge {
     // the lists the pilots click into: their list steps run on a settled list only (two equal reads in a row, see ListSettle)
     readonly ListSettle invSettle = new ListSettle(), rsSettle = new ListSettle();
 
-    // TEST build: the app's own load and the read timings, one line each a minute (the lab reports them)
-    long loadAt; TimeSpan loadCpu; long loadReads;
-    void LogLoad(long now) {
+    // TEST build: the app's own load and the read timings, one line each a minute (the lab reports them), on its own timer. The CPU is the
+    // whole process (every thread: the overlay, the watches, the memory passes, the recorder) over the wall time, given as a share of all
+    // the PC's cores and of one core; the mode is the overlay's at the line (idle = no guide, away = the game minimized / behind, hint =
+    // a guide nobody clicks for, pilot = a pilot clicking), with the seconds of the minute in each; per activity calls and ms a minute.
+    long loadAt; TimeSpan loadCpu; long loadReads; int loadGc0, loadGc2; string loadMode = "idle"; long inputAge = -1;
+    readonly long[] modeMs = new long[4]; long modeAt;   // the guides' ms in the minute: away, hint, pilot, other (the recorder alone)
+    void LogLoad() {
       if (!Channel.IsTest) return;
-      if (loadAt != 0 && now - loadAt < 60000) return;
-      try {
-        using (var me = Process.GetCurrentProcess()) {
-          var cpu = me.TotalProcessorTime; long reads = System.Threading.Interlocked.Read(ref RFX.Reads);
-          if (loadAt != 0) {
-            double wall = now - loadAt, pct = (cpu - loadCpu).TotalMilliseconds * 100.0 / wall / Environment.ProcessorCount;
-            var ci = System.Globalization.CultureInfo.InvariantCulture;
-            Log.Write("load: cpu " + pct.ToString("0.0", ci) + "% (" + (ScreensWanted() ? "pilot" : "idle") + "), mem " + (me.PrivateMemorySize64 >> 20) + " MB, reads " + ((reads - loadReads) * 1000 / (long)Math.Max(1, wall)) + "/s");
-            string rt = ReadTiming.Take(); if (rt != null) Log.Write(rt);
-          }
-          loadAt = now; loadCpu = cpu; loadReads = reads;
-        }
-      } catch (Exception) { loadAt = now; }
+      long now = NowMs();
+      using (var me = Process.GetCurrentProcess()) {
+        var cpu = me.TotalProcessorTime; long reads = System.Threading.Interlocked.Read(ref RFX.Reads);
+        int gc0 = GC.CollectionCount(0), gc2 = GC.CollectionCount(2);
+        if (loadAt != 0) {
+          double wall = Math.Max(1, now - loadAt);
+          string mode = (timer.Enabled ? loadMode : "idle") + (RecInfo.Active ? "+rec" : "");   // (+rec: the screen recorder ran, its frames are in the cpu)
+          string guides = "guides: away " + modeMs[0] / 1000 + " s, hint " + modeMs[1] / 1000 + " s, pilot " + modeMs[2] / 1000 + " s";
+          string extra = guides + ", mem " + (me.PrivateMemorySize64 >> 20) + " MB, reads " + (long)((reads - loadReads) * 1000 / wall) + "/s, gc " + (gc0 - loadGc0) + "/" + (gc2 - loadGc2) + " (gen0/gen2)";
+          Log.Write(LoadMeter.Line((cpu - loadCpu).TotalMilliseconds, wall, Environment.ProcessorCount, mode, extra));
+          string rt = ReadTiming.Take(); if (rt != null) Log.Write(rt);
+        } else LoadMeter.Line(0, 1, 1, "", null);   // (the counters start from here)
+        loadAt = now; loadCpu = cpu; loadReads = reads; loadGc0 = gc0; loadGc2 = gc2; Array.Clear(modeMs, 0, modeMs.Length);
+      }
     }
 
     /// <summary>The game process the Foundry's form was found in, or the pilot opened it in (0 = none): from then on «Литейная» needs the Foundry read closed.</summary>
@@ -3037,7 +3188,7 @@ namespace RealmForge {
     }
 
     /// <summary>VK_ESCAPE down and up, off the UI thread, only while the game's window is in front (else no key, the owner stops: "covered").</summary>
-    void SendEscapeKey(ClickOwner owner) {   // ONLY called by EscapeSend and TipEscapeSend
+    void SendEscapeKey(ClickOwner owner) {   // ONLY called by EscapeSend, TipEscapeSend and TickExplore (each after the gate's yes)
       sending = true; userIdle.OwnStart((uint)Environment.TickCount);
       IntPtr game = GameWindow();
       var t = new System.Threading.Thread(() => {
@@ -3491,7 +3642,7 @@ namespace RealmForge {
 
     /// <summary>Moves the cursor and clicks / drags there, off the UI thread (short pauses let the game see the pointer
     /// over the button first). A drag moves in small steps and rests before the release, so the list does not coast.</summary>
-    void Send(AutoAction a, int x, int y, ClickOwner owner, ClickTarget target, string form, List<string> offersBefore, List<string> formsBefore) {   // ONLY called by GatedSend
+    void Send(AutoAction a, int x, int y, ClickOwner owner, ClickTarget target, string form, List<string> offersBefore, List<string> formsBefore) {   // ONLY called by GatedSend and TickExplore (each after the gate's yes)
       var ob = offersBefore != null ? new List<string>(offersBefore) : null; var fb = formsBefore != null ? new List<string>(formsBefore) : null; bool uiKnown = RFX.UiKnown;
       sending = true;
       int dy2 = y + (a.Kind == AutoKind.Drag ? (int)Math.Round(a.DY) : 0);
