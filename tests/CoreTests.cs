@@ -3547,6 +3547,17 @@ static partial class CoreTests {
     v = V(LocateKind.OpenEquipTab); var m = p.Step(v);
     Check(m.State == "work" && m.Action.Kind == AutoKind.Click && Math.Abs(m.Action.X - 0.085 * U) < 1 && Math.Abs(m.Action.Y - 0.315 * U) < 1, "auto: «Снаряжение» at the storage cleanup's spot");
     v = V(LocateKind.OpenEquipTab); v.NowMs = 100; Eq(AutoKind.None, p.Step(v).Action.Kind, "auto: waits for the game after a click");
+    // event confirmation: the gate saw the tab click's effect - the fixed wait after it ends a short settle later
+    p.Confirmed(400);
+    v = V(LocateKind.OpenEquipTab); v.NowMs = 400 + LocatePilot.SettleAfterEffectMs - 1; Eq(AutoKind.None, p.Step(v).Action.Kind, "auto: after the effect, a short settle first");
+    v = V(LocateKind.OpenEquipTab); v.NowMs = 400 + LocatePilot.SettleAfterEffectMs; Eq(AutoKind.Click, p.Step(v).Action.Kind, "auto: the effect seen ends the fixed wait (not " + LocatePilot.AfterTabMs + " ms)");
+    // a click the gate refused (a wait form came) is taken back: it does not use up the step's tries
+    p = new LocatePilot(); long tn = 0;
+    for (int i = 0; i < LocatePilot.MaxStepClicks + 6; i++) { v = V(LocateKind.OpenEquipTab); v.NowMs = tn; m = p.Step(v); tn += 100; if (m.Action.Kind == AutoKind.Click) p.NotSent(); }
+    Check(!p.Stopped, "auto: refused clicks do not end the step as stuck (" + p.Reason + ")");
+    p = new LocatePilot(); tn = 0;
+    for (int i = 0; i < LocatePilot.MaxStepClicks + 1; i++) { v = V(LocateKind.OpenEquipTab); v.NowMs = tn; m = p.Step(v); tn += LocatePilot.AfterTabMs; if (m.Action.Kind == AutoKind.Click) p.Sent(); }
+    Eq("stuck", p.Reason, "auto: sent clicks that change nothing still end the step as stuck");
     p = new LocatePilot(); v = V(LocateKind.OpenInventory); v.CityButton = true; m = p.Step(v);
     Check(m.Action.Kind == AutoKind.Click && Math.Abs(m.Action.X - (W - v.InvDX * U)) < 1 && Math.Abs(m.Action.Y - (H - hg.HeroesBtnDY * U)) < 1, "auto: «Инвентарь» in the city's bar");
     p = new LocatePilot(); v = V(LocateKind.OpenInventory); v.HeroScreenOpen = true; m = p.Step(v);

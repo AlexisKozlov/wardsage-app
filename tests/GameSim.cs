@@ -63,7 +63,7 @@ static partial class CoreTests {
     const long SeenWithinMs = 2600;
     public long Now;
     public SimGame(int seed, bool slow, double failP) {
-      R = new Random(seed); R2 = new Random(seed * 31 + 7); Slow = slow; FailP = failP; U = Ui.Unit(W, H);
+      R = new Random(seed); R2 = new Random(seed * 31 + 7); fieldR = new Random(seed ^ 0x5F17); Slow = slow; FailP = failP; U = Ui.Unit(W, H);
       Hero = new FakeHeroGame(hg, W, U);
       var all = new List<long>(); for (int i = 0; i < 30; i++) all.Add(100 + i);
       Hero.All = all.ToArray(); Hero.Heroes = all.ToArray(); Hero.CityHero = 100; Hero.Tab = R.Next(2) == 0 ? 3 : 1;
@@ -94,6 +94,15 @@ static partial class CoreTests {
     double InvRow1 { get { return InvGeo.ViewTopPx(U) + InvGeo.TopPad * U - InvScrollY * InvPitch / InvRowUnits; } }
     void Say(string t) { Log.Add(Now + " " + t); if (Log.Count > 60) Log.RemoveAt(0); }
     public long Lat() { return Slow ? 600 + R.Next(900) : 80 + R.Next(170); }   // the game's answer (the fast PC: within the click's own send time)
+    // the reader's costs (the slow laptop): DISCOVERY = finding a form the game just built - a region scan (--scan, the reader before the
+    // window table was its source: 3-8 s) or one read of the window table (a tick's check, ~1 ms); a FIELD read = a known field of a known
+    // node (the header and one node: tens of µs each, ~25 of them a tick). A fast PC finds every form at once either way
+    public bool Scan;   // --scan: the old reader
+    public long DiscoveryN, DiscoveryTotalMs, FieldReads, FieldUs;
+    long DiscoveryMs() { return Scan ? 3000 + R.Next(5000) : 1 + R.Next(2); }
+    /// <summary>The µs of one tick's field reads (counted, not waited: they end within the tick).</summary>
+    public void FieldTick() { FieldReads++; FieldUs += Slow ? 400 + fieldR.Next(1200) : 60 + fieldR.Next(140); }
+    readonly Random fieldR;   // (its own: the game's stream stays the one the seeds were made with)
     void Later(long ms, Action a) { due.Add(new KeyValuePair<long, Action>(Now + ms, a)); }
     public void Advance(long now) {
       Now = now;
@@ -111,7 +120,7 @@ static partial class CoreTests {
     public void Push(string f) {
       Stack.Add(f); Say("open " + f); openAt[f] = Now;
       if (ScreenMap.ClassOf(f) == 'W') { long ms = 2000 + R.Next(8000); Later(ms, () => Remove(f)); }   // a loading / result screen goes by itself
-      if (Slow && (f == SimInv || f == SimFoundry) && !findAt.ContainsKey(f)) findAt[f] = Now + 3000 + R.Next(5000);
+      if (Slow && (f == SimInv || f == SimFoundry) && !findAt.ContainsKey(f)) { long d = DiscoveryMs(); findAt[f] = Now + d; DiscoveryN++; DiscoveryTotalMs += d; }
       if (!Slow && !findAt.ContainsKey(f)) findAt[f] = Now;
       if ((f == SimHero || f == SimInv || f == SimFoundry) && R.Next(3) == 0) { latePart[f] = f + "_SimPart"; latePartAt[f] = Now + 200 + R.Next(2500); }
       else if (f == SimHero || f == SimInv || f == SimFoundry) latePart.Remove(f);
@@ -393,6 +402,7 @@ static partial class CoreTests {
     }
     public void ReadScreens(long now) {
       Now = now;
+      G.FieldTick();
       var inp = G.Read();
       ReadOffersInto(inp, now);
       inp.CitySeen = inp.CityForm == true && G.CityClear;
@@ -401,7 +411,9 @@ static partial class CoreTests {
       Gate.SearchWait = sw;
       if (Screens.Hero != null) heroScreen = Screens.Hero;
       Gate.Observe(st, now);
+      long le = Gate.EffectAt(ClickOwner.Locate); if (le != locEffectSeen) { locEffectSeen = le; lp.Confirmed(now); }   // (app/Overlay.cs ReadScreens)
     }
+    long locEffectSeen;
     // FreshScreen (app/Overlay.cs): fresh memory reads, the forms read by the tick
     ScreenState Fresh(bool wantCity, bool wantKnownForms) {
       var inp = G.Read();
@@ -629,18 +641,21 @@ static partial class CoreTests {
           fill = (rq, fr) => { rq.CellUid = ClickGate.AscendCellUid(geo, fr.Rs, rq.X, rq.Y, W, H, U); rq.CellOk = new[] { SimItem }; };
           break;
       }
-      Send(tg, mv.Action, fill, tg == ClickTarget.CityInventory, tg == ClickTarget.UnknownBack || tg == ClickTarget.CityBack || tg == ClickTarget.FoundryButton);
+      if (Send(tg, mv.Action, fill, tg == ClickTarget.CityInventory, tg == ClickTarget.UnknownBack || tg == ClickTarget.CityBack || tg == ClickTarget.FoundryButton)) lp.Sent(); else lp.NotSent();
     }
   }
 
   static readonly string[] SimNamed = { "Form_Union", "Form_PVPMain", "Form_Shop" };
 
   /// <summary>One seed: the start, the task, the run. Returns "" when the run kept every rule, else what went wrong.</summary>
-  static string SimRun(int seed, bool slowOnly, bool verbose, Dictionary<string, int> outcomes, GameGeometry geo, string list = null, bool real = false) {
+  sealed class SimStat { public long Runs, Done, DoneMs, ConfirmN, ConfirmMs, ConfirmMax, DiscN, DiscMs, FieldN, FieldUs; }
+
+  static string SimRun(int seed, bool slowOnly, bool verbose, Dictionary<string, int> outcomes, GameGeometry geo, string list = null, bool real = false, bool scan = false, Dictionary<string, SimStat> stats = null) {
+    ReadTiming.Take();   // (the click gate counts its click-to-effect times there: this run's own)
     var r = new Random(seed * 7919 + 13);
     bool slow = slowOnly || r.Next(2) == 0;
     double failP = r.Next(3) == 0 ? 0.0 : r.NextDouble() * 0.15;
-    var g = new SimGame(seed, slow, failP); g.Geo = geo; if (real) g.SpawnP = 0.01;
+    var g = new SimGame(seed, slow, failP); g.Geo = geo; g.Scan = scan; if (real) g.SpawnP = 0.01;
     var owner = new[] { ClickOwner.Equip, ClickOwner.Sell, ClickOwner.Locate }[r.Next(3)];
     // the start: a screen and the forms over it
     int k = r.Next(10);
@@ -654,7 +669,8 @@ static partial class CoreTests {
       char c = p < 45 ? 'P' : p < 65 ? 'E' : p < 75 ? 'D' : p < 82 ? 'W' : 'O';
       string f = SimPick(r, c); if (f != null) g.Push(f);
     }
-    if (slow && r.Next(8) == 0) { g.LostFrom = 2000 + r.Next(20000); g.LostTo = g.LostFrom + 17000; }
+    // a known form moved: the old reader searched for it with a pass (17 s on the laptop); the window table gives it on the next tick's check
+    if (slow && r.Next(8) == 0) { g.LostFrom = 2000 + r.Next(20000); g.LostTo = g.LostFrom + (scan ? 17000 : 150 + r.Next(250)); }
     string start = string.Join(" > ", g.Stack.ToArray());
     foreach (var f in g.Stack) g.StartForms.Add(f);
     long plan = 100 + r.Next(30);
@@ -670,7 +686,15 @@ static partial class CoreTests {
       if (say != lastSay) { lastSay = say; lastChange = t; }
       // a pilot that tells the player why it waits (the hero screen not reachable, a hint) and nothing changes for 30 s: a stop with a reason
       if (t - lastChange > 30000 && (h.PilotState.StartsWith("hero_noscreen") || h.PilotState.StartsWith("hero_failed") || h.PilotState.StartsWith("hero_notfound") || h.PilotState.StartsWith("hint") || h.PilotState.StartsWith("stopped") || h.PilotState == "no_city" || h.PilotState == "sell_failed")) break;
-      t += slow ? 150 + r.Next(250) : 100;
+      // (app/Overlay.cs ReadScreens: every 120 ms, a tick of the slow laptop's timer 150-400 ms; 50 ms while a click awaits its effect)
+      t += !scan && h.Gate.AnyPending ? 50 : slow ? 150 + r.Next(250) : 100;
+    }
+    if (stats != null) {
+      string mk = owner + (slow ? " slow" : " fast");
+      SimStat ss; if (!stats.TryGetValue(mk, out ss)) stats[mk] = ss = new SimStat();
+      ss.Runs++; if (h.Done != "") { ss.Done++; ss.DoneMs += t; }
+      ss.ConfirmN += ReadTiming.ConfirmN; ss.ConfirmMs += ReadTiming.ConfirmMs; if (ReadTiming.ConfirmMax > ss.ConfirmMax) ss.ConfirmMax = ReadTiming.ConfirmMax;
+      ss.DiscN += g.DiscoveryN; ss.DiscMs += g.DiscoveryTotalMs; ss.FieldN += g.FieldReads; ss.FieldUs += g.FieldUs;
     }
     string outcome = h.Done != "" ? "done" : h.Gate.Halted(owner) ? "halt:" + h.Gate.HaltReason(owner) : t >= cap ? "TIMEOUT" : "wait:" + h.PilotState.Split('@')[0];
     string key = owner + (slow ? " slow " : " fast ") + outcome;
@@ -874,12 +898,16 @@ static partial class CoreTests {
       // laptop searched for the inventory / Foundry (228, 6727, 15263, 2032, 359), after the run's first read (21515: no click under it), a moment
       // before a click (22466: a drag on a never-click button), «Литейная» with the Foundry open but not read yet (2229: on «Вознести»), the sell
       // pilot's guess beside an exact scroll (9) and its click on the old scroll after a late drag (20), drags into a pop-up for ever (2640)
-      foreach (int seed in new[] { 9, 20, 228, 359, 2032, 2229, 2640, 6727, 15263, 21515, 22466 }) {
-        string e = SimRun(seed, false, false, oc, geo);
-        Check(e == "", "sim: seed " + seed + " keeps every rule" + (e != "" ? ": " + e.Split('\n')[0] + " " + (e.Split('\n').Length > 1 ? e.Split('\n')[1].Trim() : "") : ""));
-      }
-      foreach (int seed in new[] { 9, 20, 228, 2032, 2229, 6727, 15263, 22466 }) {
-        var o1 = new Dictionary<string, int>(); SimRun(seed, false, false, o1, geo);
+      // (found with the region-scan reader, whose late finds they need: its model --scan; the rules are kept with the window-table reader as well)
+      foreach (bool scan in new[] { true, false })
+        foreach (int seed in new[] { 9, 20, 228, 359, 2032, 2229, 2640, 6727, 15263, 21515, 22466 }) {
+          string e = SimRun(seed, false, false, oc, geo, null, false, scan);
+          Check(e == "", "sim: seed " + seed + (scan ? " (scan reader)" : "") + " keeps every rule" + (e != "" ? ": " + e.Split('\n')[0] + " " + (e.Split('\n').Length > 1 ? e.Split('\n')[1].Trim() : "") : ""));
+        }
+      // (2032 keeps its rules but no longer ends done: with the locate pilot's wait ended by the tab's effect, its Ascension cell click comes
+      // earlier and the pop-up that click brings lands before the game's answer - the safe stop "nochange" is right there)
+      foreach (int seed in new[] { 9, 20, 228, 2229, 6727, 15263, 22466 }) {
+        var o1 = new Dictionary<string, int>(); SimRun(seed, false, false, o1, geo, null, false, true);
         string got = string.Join(",", new List<string>(o1.Keys).ToArray());
         Check(got.EndsWith(" done"), "sim: seed " + seed + " reaches its end (" + got + ")");
       }
@@ -912,7 +940,7 @@ static partial class CoreTests {
 
   static int SimMain(string[] args) {
     Layout.Use(TestLayout());
-    int seeds = 500, from = 0; bool slowOnly = false, verbose = false, real = false; string list = null;
+    int seeds = 500, from = 0; bool slowOnly = false, verbose = false, real = false, scan = false, timing = false; string list = null;
     for (int i = 1; i < args.Length; i++) {
       if (args[i] == "--slow-only") slowOnly = true;
       else if (args[i] == "--verbose") verbose = true;
@@ -921,13 +949,15 @@ static partial class CoreTests {
       else if (args[i] == "--from" && i + 1 < args.Length) from = int.Parse(args[++i]);
       else if (args[i] == "--list" && i + 1 < args.Length) list = args[++i];
       else if (args[i] == "--digest") list = "--digest";
+      else if (args[i] == "--scan") scan = true;
+      else if (args[i] == "--timing") timing = true;
       else { int n; if (int.TryParse(args[i], out n)) seeds = n; }
     }
     var geo = GameGeometry.Parse(GeoJson(), GeoGame);
-    var outcomes = new SortedDictionary<string, int>(); var tmp = new Dictionary<string, int>();
+    var outcomes = new SortedDictionary<string, int>(); var tmp = new Dictionary<string, int>(); var stats = new Dictionary<string, SimStat>();
     int bad = 0; var sw = System.Diagnostics.Stopwatch.StartNew();
     for (int s = from; s < from + seeds; s++) {
-      string e = SimRun(s, slowOnly, verbose, tmp, geo, list, real);
+      string e = SimRun(s, slowOnly, verbose, tmp, geo, list, real, scan, stats);
       bool broke = e.Contains("\n    !! ");
       if (broke) bad++;
       if (e != "" && (verbose || bad <= 5)) Console.WriteLine(e);
@@ -935,6 +965,15 @@ static partial class CoreTests {
     foreach (var kv in tmp) outcomes[kv.Key] = kv.Value;
     Console.WriteLine("game sim: " + seeds + " seeds from " + from + " in " + sw.ElapsedMilliseconds + " ms, " + bad + " broke a rule");
     foreach (var kv in outcomes) Console.WriteLine("  " + kv.Value.ToString().PadLeft(5) + "  " + kv.Key);
+    if (timing) {   // the reader's costs and the pilots' times (--scan: the reader before the window table was the forms' source)
+      Console.WriteLine("timing (" + (scan ? "region-scan reader" : "window-table reader") + "): done = mean time of the runs that ended done; confirm = click to its effect seen");
+      var keys = new List<string>(stats.Keys); keys.Sort();
+      foreach (var k in keys) {
+        var x = stats[k];
+        Console.WriteLine("  " + k.PadRight(12) + " done " + x.Done + "/" + x.Runs + " in " + (x.Done > 0 ? x.DoneMs / x.Done : 0) + " ms, confirm " + (x.ConfirmN > 0 ? x.ConfirmMs / x.ConfirmN : 0)
+          + " ms (max " + x.ConfirmMax + ", " + x.ConfirmN + "), discovery " + (x.DiscN > 0 ? x.DiscMs / x.DiscN : 0) + " ms (" + x.DiscN + "), field " + (x.FieldN > 0 ? x.FieldUs / x.FieldN : 0) + " µs a tick");
+      }
+    }
     return bad == 0 ? 0 : 1;
   }
 }

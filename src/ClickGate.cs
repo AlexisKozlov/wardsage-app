@@ -357,6 +357,11 @@ namespace RealmForge {
     public bool Halted(ClickOwner o) { return halted.ContainsKey(o); }
     /// <summary>A click is still waiting to show its effect.</summary>
     public bool Pending(ClickOwner o) { return watches.ContainsKey(o); }
+    /// <summary>Some owner's click is on its way (its effect awaited): the screen is read often then (event confirmation).</summary>
+    public bool AnyPending { get { return watches.Count > 0; } }
+    readonly Dictionary<ClickOwner, long> effectAt = new Dictionary<ClickOwner, long>();
+    /// <summary>When the owner's last click was seen to take effect (0 = never): the pilot's wait after it can end then.</summary>
+    public long EffectAt(ClickOwner o) { long t; return effectAt.TryGetValue(o, out t) ? t : 0; }
 
     /// <summary>A new request (or the player started it again): the owner may click again.</summary>
     public void Resume(ClickOwner o) {
@@ -682,6 +687,7 @@ namespace RealmForge {
         var w = watches[o];
         if (w.Done(s)) {
           watches.Remove(o); Note(o, "effect:" + w.What + ":" + now, w.What + " took effect");
+          ReadTiming.Confirm(now - w.ArmedAt); effectAt[o] = now;
           if (w.Offer != null) { var sk = Sink; if (sk != null) sk("offer: closed " + w.Offer); }
         }
         else if (now > w.Deadline && SearchWait && Unrecognised(s)) { w.Deadline = now + 1000; searchWaited.Add(o); }   // the form is being searched for: its effect may still show
