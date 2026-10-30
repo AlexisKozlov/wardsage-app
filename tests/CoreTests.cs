@@ -670,6 +670,66 @@ static partial class CoreTests {
         Check(pl[1] + 90 <= 705 - HintLayout.Margin, "kept inside the window at the bottom");
         pl = HintLayout.Plate(new[] { 670, 870, 200, 60 }, 300, 70, 1920, 1009, out side);
         Check(side == 't' && pl[1] + 70 + HintLayout.Gap == 870, "a wide button: the plate above it, not over its neighbours");
+        // the plate never covers its target nor the step's other buttons (TryPlace / Place), on a normal and on a tiny client
+        {
+          Func<int[], int, int, int[], bool> hits = (q, w, h, r) => q[0] < r[0] + r[2] && r[0] < q[0] + w && q[1] < r[1] + r[3] && r[1] < q[1] + h;
+          Func<int[], int, int, int, int, bool> inside = (q, w, h, W, H) => q[0] >= HintLayout.Margin && q[1] >= HintLayout.Margin && q[0] + w <= W - HintLayout.Margin && q[1] + h <= H - HintLayout.Margin;
+          // normal client, nothing to avoid: the same place as Plate
+          int[] q = HintLayout.TryPlace(new[] { 100, 300, 80, 100 }, null, 300, 90, 1366, 705, out side);
+          Check(q != null && side == 'r' && q[0] == 194 && q[1] == 305, "place: right of the item as before");
+          // the 526x296 Ascension screen: the item's cell on the left, «Вознести» bottom right; the plate right of the cell would cover the button
+          int[] cell = { 120, 200, 40, 40 }, ascend = { 300, 236, 110, 34 }, filter = { 30, 40, 60, 24 };
+          q = HintLayout.TryPlace(cell, new int[][] { ascend, filter }, 200, 66, 526, 296, out side);
+          Check(q != null && !hits(q, 200, 66, ascend) && !hits(q, 200, 66, cell) && !hits(q, 200, 66, filter) && inside(q, 200, 66, 526, 296), "tiny client: beside the cell, off «Вознести» (" + (q == null ? "none" : side + " " + q[0] + "," + q[1]) + ")");
+          // the target is «Вознести» itself at the bottom right corner: above it, inside, not over it
+          int[] btn = { 400, 250, 110, 36 };
+          q = HintLayout.TryPlace(btn, new int[][] { btn, filter }, 220, 66, 526, 296, out side);
+          Check(q != null && side == 't' && !hits(q, 220, 66, btn) && inside(q, 220, 66, 526, 296), "tiny client, target at the bottom right edge: above it (" + (q == null ? "none" : side + " " + q[0] + "," + q[1]) + ")");
+          // target at the top left edge: right of it or below, never over it
+          int[] tl = { 6, 6, 50, 30 };
+          q = HintLayout.TryPlace(tl, null, 220, 66, 526, 296, out side);
+          Check(q != null && !hits(q, 220, 66, tl) && inside(q, 220, 66, 526, 296), "target at the top left edge: beside it");
+          // a plate too big for any free place: TryPlace says none (the caller shrinks), Place still keeps off the target as far as it can
+          int[] mid = { 200, 100, 120, 90 };
+          Check(HintLayout.TryPlace(mid, null, 500, 200, 526, 296, out side) == null, "too big for the tiny client: no free place");
+          q = HintLayout.Place(mid, null, 500, 200, 526, 296, out side);
+          Check(q != null && inside(q, 500, 200, 526, 296), "the least bad place stays inside the window");
+          // the smaller plate fits
+          Check(HintLayout.TryPlace(mid, null, 180, 60, 526, 296, out side) != null, "a shrunk plate fits");
+          // no target: the top plate moves off a button it would cover
+          int[] topBtn = { 200, 30, 120, 40 };
+          int[] tp2 = HintLayout.TopPlateFree(200, 60, 526, 296, Ui.Unit(526, 296), new int[][] { topBtn });
+          Check(!hits(tp2, 200, 60, topBtn) && inside(tp2, 200, 60, 526, 296), "top plate: off the button at the top centre");
+        }
+        // the plate's steadiness (HintHold): shown at once, a new step or a hide only after it held DebounceMs, the last place kept on failing reads
+        {
+          var hh = new HintHold();
+          int[] a = { 10, 10, 20, 20 }, b = { 300, 200, 20, 20 };
+          Check(hh.Update("pick", a, null, 1000) && hh.Key == "pick" && hh.Target == a, "hold: the first hint at once");
+          Check(hh.Update(null, null, null, 1050) && hh.Key == "pick", "hold: a hide for one tick does not hide");
+          Check(hh.Update("pick", null, null, 1080) && hh.Target == a && hh.Stale, "hold: the same step without a target keeps the last place (plate only)");
+          Check(hh.Update("pick", a, null, 1100) && !hh.Stale, "hold: the target back: fresh again");
+          hh.Update("ready", b, null, 1200); hh.Update("pick", a, null, 1250); hh.Update("ready", b, null, 1300);
+          Check(hh.Key == "pick", "hold: steps flipping back and forth do not switch the hint");
+          bool shown = true; string seen = "";
+          for (long t = 1300; t <= 1300 + HintHold.DebounceMs + 33; t += 33) { shown &= hh.Update("ready", b, null, t); if (seen.IndexOf(hh.Key) < 0) seen += hh.Key + ";"; }
+          Check(shown && hh.Key == "ready" && hh.Target == b && seen == "pick;ready;", "hold: a step that holds is taken over once, never hidden in between (" + seen + ")");
+          long t0 = 2000; hh.Update(null, null, null, t0);
+          Check(hh.Update(null, null, null, t0 + HintHold.DebounceMs - 1), "hold: still shown before the debounce");
+          Check(!hh.Update(null, null, null, t0 + HintHold.DebounceMs) && hh.Key == null, "hold: hidden once the hide held");
+          Check(HintHold.DebounceMs >= 300, "hold: the debounce is at least 300 ms");
+          hh.Reset(); hh.Update("x", a, null, 5000); hh.Update("x", null, null, 5000 + HintHold.KeepMs + 1);
+          Check(hh.Key == "x" && hh.Target == null, "hold: a target missing for longer than KeepMs: the plate goes to the top");
+        }
+        // a button's live rect (uibtn) stands for the layout only when fresh and read for this window size
+        {
+          RFX.UiButtonKeep(ClickTarget.AscendTab, new UiButtonInfo { X = 10, Y = 20, W = 30, H = 40, Visible = true }, 526, 296, 1000);
+          var lvr = RFX.UiButtonLive(ClickTarget.AscendTab, 526, 296, 2000);
+          Check(lvr != null && lvr[0] == 10 && lvr[3] == 40, "live rect: taken when fresh");
+          Check(RFX.UiButtonLive(ClickTarget.AscendTab, 1366, 705, 2000) == null && RFX.UiButtonLive(ClickTarget.FoundryButton, 526, 296, 2000) == null
+            && RFX.UiButtonLive(ClickTarget.AscendTab, 526, 296, 1000 + RFX.UiLiveMs + 1) == null, "live rect: not for another size, button or when old");
+        }
+        Check(Array.IndexOf(LocateFrames.AvoidKeys(new LocateStep { Kind = LocateKind.AscendPick }), "ascend.button") >= 0, "avoid: the Ascension pick keeps the plate off «Вознести»");
         var ptr = HintLayout.Pointer(new[] { 194, 305 }, 300, 90, 'r', new[] { 100, 300, 80, 100 }, 8);
         Check(ptr[4] < 194 && Math.Abs(ptr[5] - 350) < 0.01, "the pointer points left at the item's middle");
         double dot, sb0, sb1;

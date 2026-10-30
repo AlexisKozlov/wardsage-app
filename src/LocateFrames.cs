@@ -153,6 +153,27 @@ namespace RealmForge {
       return st.Missing != null && Array.IndexOf(st.Missing, "slot") >= 0 && item != null && item.Slot >= 0 && item.Slot <= 4 ? item.Slot : -1;
     }
 
+    /// <summary>The geometry keys of the buttons the player (or the auto mode) presses on this step's screen: the step plate is
+    /// never placed over them (src/HintLayout.cs TryPlace), whichever of them the step frames.</summary>
+    public static string[] AvoidKeys(LocateStep st) {
+      if (st == null) return new string[0];
+      if (st.Kind == LocateKind.OpenFoundry && st.OnGear) return new[] { "hero.workshop", "hero.gem", "hero.back" };
+      switch (st.Kind) {
+        case LocateKind.OpenAscendTab: case LocateKind.OpenRecastTab:
+          return new[] { "foundry.tab.ascend", "foundry.tab.recast", "foundry.back" };
+        case LocateKind.AscendFilter: case LocateKind.AscendPick: case LocateKind.AscendNotInList: case LocateKind.AscendLoading: case LocateKind.AscendReady:
+          return new[] { "ascend.button", "ascend.filter", "foundry.back" };
+        case LocateKind.RecastFilter: case LocateKind.RecastPick: case LocateKind.RecastNotInList: case LocateKind.ChoosePending:
+          return new[] { "recast.button", "recast.filter", "recast.chooseOld", "recast.chooseNew", "foundry.back" };
+        case LocateKind.Done: case LocateKind.GemFunction: case LocateKind.GemPick:
+          return new[] { "gem.button", "recast.button" };
+        case LocateKind.Selected: case LocateKind.OpenFoundry:
+          return new[] { "inventory.workshop", "inventory.gem", "inventory.cardLeft", "inventory.cardRight", "inventory.cardSolo" };
+        case LocateKind.ExitBulk: return new[] { "inventory.bulkBack" };
+        default: return new string[0];
+      }
+    }
+
     /// <summary>Whether a frame (not a click) may be drawn for this kind of step at all.</summary>
     public static bool Framed(LocateKind k) {
       switch (k) {

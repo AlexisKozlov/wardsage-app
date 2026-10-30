@@ -596,7 +596,7 @@ namespace RealmForge {
       locateStep = null; locateSubs = null; locateKey = ""; locateReadAt = 0; locateLastCur = -1; locateSubsAt = 0; lgrid.Reset();
       locateScreensSaid = ""; locateMarkerSaid = ""; locateCardSaid = ""; locateListSig = ""; locateDecisionSaid = ""; locatePlaceSaid = "";
       lpilot.Reset(); ResumeClicks(ClickOwner.Locate); lpilot.ItemUid = locateReq != null ? (artReq ? locateReq.Art.Uid : locateReq.Item.Uid) : 0; locateDriving = false; locateAutoSaid = "";
-      Hide("off"); HideTip();
+      Hide("off"); HideTip(); locHint.Reset();
       Run();
     }
 
@@ -609,7 +609,9 @@ namespace RealmForge {
 
     /// <summary>The text plate for the current step (composed by the page in the interface language).</summary>
     /// <param name="caps">the plate's header line («Показать в игре · вещь · шаг N из M»); its own, never the equip plan's.</param>
-    public void SetLocateTip(string[] lines, string caps, Dictionary<string, string> texts = null) { locateLines = lines ?? new string[0]; locateCaps = caps ?? ""; if (texts != null) locateTexts = texts; HideTip(); }
+    // (the plate is not hidden here: the page answers every step change, often with the same text, and a hide here showed as a blink;
+    // the next tick redraws it when the text changed, the scene key holds the text)
+    public void SetLocateTip(string[] lines, string caps, Dictionary<string, string> texts = null) { locateLines = lines ?? new string[0]; locateCaps = caps ?? ""; if (texts != null) locateTexts = texts; }
 
     void Run() {
       if (target != 0 || locateReq != null || filterItem != 0 || hintKind != "" || runHero != 0 || sellWanted != null || DateTime.Now < diagUntil || RecInfo.Active) { timer.Start(); if (target != 0) lookTimer.Start(); else lookTimer.Stop(); return; }
@@ -1341,14 +1343,41 @@ namespace RealmForge {
     /// <summary>A pulsing gold frame around a button of the game (x, y, w, h: screen px) with the step plate beside it
     /// (plateOnly: the plate alone, beside that spot). below / right: kept for the callers, the plate finds its own side.</summary>
     /// <summary>A plate with no target on screen (nothing to frame): top centre of the game window, for every guide.</summary>
-    void DrawTipTop(string[] lines, string caps = null) {
+    void DrawTipTop(string[] lines, string caps = null, int[][] avoid = null) {
       if (lines == null || lines.Length == 0) { HideTip(); return; }
-      Scene(tip, ref tipKey, null, new Plate { Caps = caps ?? Tx("caps"), Main = lines[0], Sub = lines.Length > 1 ? lines[1] : "" }, null, null);
+      Scene(tip, ref tipKey, null, new Plate { Caps = caps ?? Tx("caps"), Main = lines[0], Sub = lines.Length > 1 ? lines[1] : "" }, null, null, null, null, avoid);
     }
 
-    void DrawTip(int x, int y, int w, int h, string[] lines, double H, bool plateOnly = false, bool below = false, bool right = false, string caps = null, bool warn = false, Hl hl = null) {
+    /// <param name="avoid">the step's other click targets (screen px {x, y, w, h}): the plate is never put over them (nor over the target)</param>
+    void DrawTip(int x, int y, int w, int h, string[] lines, double H, bool plateOnly = false, bool below = false, bool right = false, string caps = null, bool warn = false, Hl hl = null, int[][] avoid = null) {
       var p = lines != null && lines.Length > 0 ? new Plate { Caps = caps ?? Tx("caps"), Main = lines[0], Sub = lines.Length > 1 ? lines[1] : "", Warn = warn } : null;
-      Scene(tip, ref tipKey, plateOnly ? null : new[] { x, y, w, h }, p, new[] { x, y, w, h }, null, null, hl);
+      Scene(tip, ref tipKey, plateOnly ? null : new[] { x, y, w, h }, p, new[] { x, y, w, h }, null, null, hl, avoid);
+    }
+
+    // the plate's sizes tried in turn when it does not fit beside its target (the smallest is taken anyway)
+    static readonly float[] PlateScales = { 1f, 0.85f, 0.72f, 0.6f };
+
+    // the plate's fonts: 0 = the caps line, 1 = the action, 2 = the next step; scaled by sc (never below 7 px)
+    static Font PlateFont(int which, Plate p, double U, float sc) {
+      double px = which == 0 ? Math.Max(10, 0.0155 * U) : which == 1 ? Math.Max(14, (p != null && p.Pill ? 0.019 : 0.026) * U) : Math.Max(11, 0.018 * U);
+      return new Font("Segoe UI", (float)Math.Max(7, px * sc), which == 2 ? FontStyle.Regular : FontStyle.Bold, GraphicsUnit.Pixel);
+    }
+
+    static void PlateSize(Plate p, Font fCaps, Font fMain, Font fSub, float pad, out int pw, out int ph, out float owl, out float capsH, out float mainH, out float subH) {
+      owl = fCaps.Height * 1.5f;
+      using (var probe = new Bitmap(1, 1)) using (var pg = Graphics.FromImage(probe)) {
+        float cw = p.Caps != "" ? owl + 6 + pg.MeasureString(p.Caps.ToUpperInvariant(), fCaps).Width : 0;
+        float mw = p.Main != "" ? pg.MeasureString(p.Main, fMain).Width : 0, sw = p.Sub != "" ? pg.MeasureString(p.Sub, fSub).Width : 0;
+        capsH = p.Caps != "" ? Math.Max(owl, fCaps.Height) : 0; mainH = p.Main != "" ? fMain.Height : 0; subH = p.Sub != "" ? fSub.Height : 0;
+        if (p.Arrow != 0 && p.Main != "") mw += fMain.Height * 0.8f + 10;   // the arrow before the text
+        pw = (int)(Math.Max(cw, Math.Max(mw, sw)) + 2 * pad);
+        ph = (int)(pad * (p.Pill ? 1.0f : 2f) + capsH + mainH + subH + (capsH > 0 ? 2 : 0) + (subH > 0 ? 2 : 0));
+      }
+    }
+
+    static void MeasurePlate(Plate p, double U, float sc, out int pw, out int ph) {
+      float pad = (float)Math.Max(8 * sc, 0.012 * U * sc), owl, capsH, mainH, subH;
+      using (var a = PlateFont(0, p, U, sc)) using (var b = PlateFont(1, p, U, sc)) using (var c = PlateFont(2, p, U, sc)) PlateSize(p, a, b, c, pad, out pw, out ph, out owl, out capsH, out mainH, out subH);
     }
 
     /// <summary>Draws one hint into <paramref name="win"/>: <paramref name="frameR"/> (screen px, null = no frame), the plate
@@ -1362,7 +1391,7 @@ namespace RealmForge {
       if (marks != null) foreach (var m in marks) recB.Frames.Add(new RecFrameRect { Kind = pre + "mark" + (m.Length > 4 ? m[4].ToString() : ""), X = m[0] - sceneX, Y = m[1] - sceneY, W = m[2], H = m[3] });
     }
 
-    void Scene(GlowWindow win, ref string key, int[] frameR, Plate p, int[] target, double[] strip, List<int[]> marks = null, Hl hl = null) {
+    void Scene(GlowWindow win, ref string key, int[] frameR, Plate p, int[] target, double[] strip, List<int[]> marks = null, Hl hl = null, int[][] avoid = null) {
       if (!GameDrawable()) { if (win.Visible) win.Hide(); key = null; return; }
       if (recB != null) RecScene(win, frameR, strip, marks);
       float pulse = (float)(0.6 + 0.4 * Math.Sin(frame * 0.45));
@@ -1379,26 +1408,29 @@ namespace RealmForge {
         + "|" + (frameR != null || strip != null ? (ng ? 0 : (int)(pulse * 10)) : 0) + "|" + sceneW + "x" + sceneH
         + (ng ? "|g" + guideLvl + "," + bob + (hand != null ? "h" : "") + (hl.Important ? "i" : "") + (hl.Shape != null ? hl.Shape.K : "") : GuideStyle && marks != null && marks.Count > 0 ? "|g" + guideLvl : "")
         + (oldShape ? "|o" + hl.Shape.K + (int)hl.Rect.X + "," + (int)hl.Rect.Y + "," + (int)hl.Rect.W + "," + (int)hl.Rect.H : "")
-        + (marks != null && marks.Count > 0 ? "|m" + string.Join(";", marks.ConvertAll(m => string.Join(",", m))) : "");
+        + (marks != null && marks.Count > 0 ? "|m" + string.Join(";", marks.ConvertAll(m => string.Join(",", m))) : "")
+        + (avoid != null && avoid.Length > 0 ? "|a" + string.Join(";", Array.ConvertAll(avoid, a => a != null ? string.Join(",", a) : "-")) : "");
       if (k == key) return;
       key = k;
       double U = Ui.Unit(Math.Max(1, sceneW), Math.Max(1, sceneH));
-      float pad = (float)Math.Max(8, 0.012 * U);
-      using (var fCaps = new Font("Segoe UI", (float)Math.Max(10, 0.0155 * U), FontStyle.Bold, GraphicsUnit.Pixel))
-      using (var fMain = new Font("Segoe UI", (float)Math.Max(14, (p != null && p.Pill ? 0.019 : 0.026) * U), FontStyle.Bold, GraphicsUnit.Pixel))
-      using (var fSub = new Font("Segoe UI", (float)Math.Max(11, 0.018 * U), FontStyle.Regular, GraphicsUnit.Pixel)) {
+      // the step's other click targets in client px (the plate keeps off them and off its own target)
+      int[][] av = avoid == null ? null : Array.ConvertAll(avoid, a => a == null ? null : new[] { a[0] - sceneX, a[1] - sceneY, a[2], a[3] });
+      int[] tcl = target != null ? new[] { target[0] - sceneX, target[1] - sceneY, target[2], target[3] } : null;
+      // the plate's size: full, or smaller steps until it fits beside the target without covering a button (a tiny game window)
+      float sc = 1f;
+      if (p != null && strip == null && tcl != null) {
+        foreach (float s in PlateScales) {
+          sc = s; int tw, th; MeasurePlate(p, U, s, out tw, out th);
+          char sd; if (HintLayout.TryPlace(tcl, av, tw, th, sceneW, sceneH, out sd) != null) break;
+        }
+      }
+      float pad = (float)Math.Max(8 * sc, 0.012 * U * sc);
+      using (var fCaps = PlateFont(0, p, U, sc))
+      using (var fMain = PlateFont(1, p, U, sc))
+      using (var fSub = PlateFont(2, p, U, sc)) {
         // the plate's size
         int pw = 0, ph = 0; float owl = fCaps.Height * 1.5f, capsH = 0, mainH = 0, subH = 0;
-        if (p != null) {
-          using (var probe = new Bitmap(1, 1)) using (var pg = Graphics.FromImage(probe)) {
-            float cw = p.Caps != "" ? owl + 6 + pg.MeasureString(p.Caps.ToUpperInvariant(), fCaps).Width : 0;
-            float mw = p.Main != "" ? pg.MeasureString(p.Main, fMain).Width : 0, sw = p.Sub != "" ? pg.MeasureString(p.Sub, fSub).Width : 0;
-            capsH = p.Caps != "" ? Math.Max(owl, fCaps.Height) : 0; mainH = p.Main != "" ? fMain.Height : 0; subH = p.Sub != "" ? fSub.Height : 0;
-            if (p.Arrow != 0 && p.Main != "") mw += fMain.Height * 0.8f + 10;   // the arrow before the text
-            pw = (int)(Math.Max(cw, Math.Max(mw, sw)) + 2 * pad);
-            ph = (int)(pad * (p.Pill ? 1.0f : 2f) + capsH + mainH + subH + (capsH > 0 ? 2 : 0) + (subH > 0 ? 2 : 0));
-          }
-        }
+        if (p != null) PlateSize(p, fCaps, fMain, fSub, pad, out pw, out ph, out owl, out capsH, out mainH, out subH);
         // where the plate goes (client px), and the pointer toward the target
         int[] pos = null; char side = 'r'; double[] ptr = null;
         if (p != null) {
@@ -1409,9 +1441,9 @@ namespace RealmForge {
             pos = new[] { px, Math.Max(HintLayout.Margin, Math.Min(sceneH - ph - HintLayout.Margin, py)) };
           } else {
             var tc = target != null ? new[] { target[0] - sceneX, target[1] - sceneY, target[2], target[3] } : new[] { sceneW / 2, (int)(0.3 * sceneH), 0, 0 };
-            if (target == null) pos = HintLayout.TopPlate(pw, ph, sceneW, sceneH, U);   // no target: top centre
+            if (target == null) pos = HintLayout.TopPlateFree(pw, ph, sceneW, sceneH, U, av);   // no target: top centre (off the step's buttons)
             else {
-              pos = HintLayout.Plate(tc, pw, ph, sceneW, sceneH, out side);
+              pos = HintLayout.Place(tc, av, pw, ph, sceneW, sceneH, out side);
               if (frameR != null || tc[2] > 0) ptr = HintLayout.Pointer(pos, pw, ph, side, tc, Math.Max(7, 0.01 * U));
             }
           }
@@ -1987,7 +2019,22 @@ namespace RealmForge {
     /// <summary>The step changed (or its list place / sub stat check): the page shows it and answers with the text plate.</summary>
     public event Action<LocateStep, SubCheck> LocateChanged;
 
-    void LocateHide() { if (glow.Visible) glow.Hide(); drawnKey = null; HideTip(); }
+    void LocateHide() { if (glow.Visible) glow.Hide(); drawnKey = null; HideTip(); locHint.Reset(); }
+    readonly HintHold locHint = new HintHold();
+
+    // the buttons of the step's screen the plate must leave free (screen px): the geometry's rects, and a button's live rect
+    // (uibtn, read before a pilot's click) when one is fresh for this window size
+    int[][] LocateAvoid(LocateStep step, W32.POINT o, double W, double H, double U) {
+      var g = Geo.Current; var res = new List<int[]>();
+      foreach (var k in LocateFrames.AvoidKeys(step)) {
+        var r = g != null ? g.Rect(k, W, H, U) : null;
+        if (r != null && r.W > 0 && r.H > 0) res.Add(new[] { o.X + (int)r.X, o.Y + (int)r.Y, (int)Math.Ceiling(r.W), (int)Math.Ceiling(r.H) });
+        var t = k == "inventory.workshop" ? ClickTarget.FoundryButton : k == "foundry.tab.ascend" ? ClickTarget.AscendTab : (ClickTarget?)null;
+        var lv = t != null ? RFX.UiButtonLive(t.Value, W, H, Environment.TickCount) : null;
+        if (lv != null) res.Add(new[] { o.X + (int)lv[0], o.Y + (int)lv[1], (int)Math.Ceiling(lv[2]), (int)Math.Ceiling(lv[3]) });
+      }
+      return res.Count > 0 ? res.ToArray() : null;
+    }
 
     // the job is done in the game (src/LocateGuide.cs LocateFinish): a short plate, the request is reported (LocateFinished), then the hints end
     readonly LocateFinish lfin = new LocateFinish(); long[][] locateLive; long locateDoneUntil; string locateDoneWhat = "";
@@ -2004,7 +2051,7 @@ namespace RealmForge {
     void TickLocateDone(string what) {
       if (NowMs() >= locateDoneUntil) { SetLocate(null); return; }
       IntPtr hwnd = GameWindow(); W32.RECT cr;
-      if (hwnd == IntPtr.Zero || W32.IsIconic(hwnd) || !IsForeground(hwnd) || !W32.GetClientRect(hwnd, out cr) || cr.B < 200) { LocateHide(); return; }
+      if (hwnd == IntPtr.Zero || W32.IsIconic(hwnd) || !FrontSteady(hwnd) || !W32.GetClientRect(hwnd, out cr) || cr.B < 200) { LocateHide(); return; }
       var o = new W32.POINT(0, 0); W32.ClientToScreen(hwnd, ref o); SceneArea(o, cr);
       if (glow.Visible) glow.Hide(); drawnKey = null;
       string txt = Tx(what == "artPromote" ? "doneArtPromote" : what == "ascend" ? "doneAscend" : "doneRecast");
@@ -2120,7 +2167,6 @@ namespace RealmForge {
           double[] mkr;
           var mk = LocateFrames.ListScene(Geo.Current, lgrid, locateGeo, inv.Uids.Count, locateCols, step.Row, step.Col, W, H, U, out mkr);
           frame++;
-          HideTip();
           // the item is off the screen: its place on the list's scroll bar too (the pill beside it says which way and how far)
           double[] strip = null;
           if (mk.Kind != "box") {
@@ -2129,24 +2175,32 @@ namespace RealmForge {
             if (mkr != null) strip = new[] { o.X + mkr[0], o.Y + mkr[1], o.Y + mkr[2], o.Y + mkr[3], o.Y + mkr[4], o.Y + mkr[5], 1 };
           }
           Draw(mk.Kind, o.X + mk.X, o.Y + mk.Y, mk.W, mk.H, mk.Rows, strip);
-        } else LocateHide();
-      } else if (!front) { LocateHide(); }
+        } else { if (glow.Visible) glow.Hide(); drawnKey = null; }
+      } else if (!front) { if (glow.Visible) glow.Hide(); drawnKey = null; }
       else if (lf != null && lf.Mark.Kind != "box") { frame++; Draw(lf.Mark.Kind, o.X + lf.Mark.X, o.Y + lf.Mark.Y, lf.Mark.W, lf.Mark.H, lf.Mark.Rows); }   // the list cell is off the screen: the pill at the list's edge
       else { if (glow.Visible) glow.Hide(); drawnKey = null; }
       if (locateInv != null && step.Kind != LocateKind.InList) locateLastCur = locateInv.Current;
       step.NeedClick = locateNeedClick;
-      // a plate with the step's text (the page composes it): in the list's top-left corner, no frame
-      int[] cityBtn;
+      // a plate with the step's text (the page composes it): beside the step's target, at the top when there is none. What this tick
+      // wants goes through locHint (HintHold): a step is shown / hidden / moved only after it held 350 ms, and a tick without a target
+      // (a held or failing read, the game out of front for a moment) keeps the plate where it was
+      int[] cityBtn; string wantKey = null; int[] wantT = null; Hl wantHl = null;
       if (front && !hold && locateLines.Length > 0 && step.Kind == LocateKind.OpenInventory && !step.OnHero && CityInventoryButton(o, W, H, U, out cityBtn)) {
-        frame++;   // the city: frame the bar's «Инвентарь» (where the auto mode clicks) with the step's plate beside it
-        DrawTip(cityBtn[0], cityBtn[1], cityBtn[2], cityBtn[3], locateLines, H, false, false, false, locateCaps, false, GuideStyle ? null : HlCity(cityBtn));
+        wantKey = step.Key; wantT = cityBtn;   // the city: frame the bar's «Инвентарь» (where the auto mode clicks) with the step's plate beside it
+        wantHl = GuideStyle ? null : HlCity(cityBtn);
       } else if (front && locateLines.Length > 0 && lf != null && lf.Mark.Kind == "box") {
-        frame++;   // the button / tab / cell: its frame with the step's plate beside it
-        DrawTip(o.X + lf.Mark.X, o.Y + lf.Mark.Y, lf.Mark.W, lf.Mark.H, locateLines, H, false, false, false, locateCaps, false, lf.Target == "cell" && !GuideStyle ? null : HlLocate(lf, step, o));   // a list cell (off): the same PaintFrame as the inventory cell; other buttons: the old frame's outline
-      } else if (front && locateLines.Length > 0 && (hold || step.Kind != LocateKind.InList || locateNeedClick)) {
+        wantKey = step.Key; wantT = new[] { o.X + lf.Mark.X, o.Y + lf.Mark.Y, lf.Mark.W, lf.Mark.H };   // the button / tab / cell: its frame with the plate beside it
+        wantHl = lf.Target == "cell" && !GuideStyle ? null : HlLocate(lf, step, o);   // a list cell (off): the same PaintFrame as the inventory cell; other buttons: the old frame's outline
+      } else if (locateLines.Length > 0 && (hold || step.Kind != LocateKind.InList || locateNeedClick)) wantKey = step.Key;   // no target: the plate at the top
+      if (locateLines.Length == 0) { locHint.Update(null, null, null, now); HideTip(); }
+      else if (!locHint.Update(wantKey, wantT, wantHl, now)) HideTip();
+      else {
         frame++;
-        DrawTipTop(locateLines, locateCaps);   // its own header, not the plan's «Шаг N из M»
-      } else if (!front || locateLines.Length == 0 || (!hold && step.Kind == LocateKind.InList)) HideTip();
+        var avoid = LocateAvoid(step, o, W, H, U);
+        var t = locHint.Target;
+        if (t == null) DrawTipTop(locateLines, locateCaps, avoid);   // its own header, not the plan's «Шаг N из M»
+        else DrawTip(t[0], t[1], t[2], t[3], locateLines, H, locHint.Stale, false, false, locateCaps, false, locHint.Stale ? null : locHint.Tag as Hl, avoid);
+      }
       string key = step.Key + "|" + step.Pos + "|" + step.Row + "|" + step.Col + "|" + step.Count + "|" + string.Join(",", step.Missing) + "|" + step.OnHero + "|" + step.NeedClick
         + "|" + (locateSubs != null ? string.Join(",", Array.ConvertAll(locateSubs.Match, x => x ? "1" : "0")) + locateSubs.Changed : "") + "|" + step.Auto + "|" + step.AutoWhy;
       if (key != locateKey) { locateKey = key; var h = LocateChanged; if (h != null) h(step, locateSubs); }
@@ -3724,7 +3778,16 @@ namespace RealmForge {
     bool GameDrawable(bool screenActive = true) {
       IntPtr hwnd = GameWindow();
       bool has = hwnd != IntPtr.Zero;
-      return OverlayGate.CanDraw(has, has && W32.IsWindowVisible(hwnd), has && W32.IsIconic(hwnd), has && IsForeground(hwnd), screenActive);
+      return OverlayGate.CanDraw(has, has && W32.IsWindowVisible(hwnd), has && W32.IsIconic(hwnd), has && FrontSteady(hwnd), screenActive);
+    }
+
+    // the game in front for drawing: a foreground change shorter than HintHold.DebounceMs (the pilot raising the game, a click's focus
+    // hand-over, the foreground window 0 for a moment) does not hide our hints; the pilots' own checks use IsForeground itself
+    long frontSeenAt = -1;
+    bool FrontSteady(IntPtr hwnd) {
+      long now = NowMs();
+      if (IsForeground(hwnd)) { frontSeenAt = now; return true; }
+      return frontSeenAt >= 0 && now - frontSeenAt >= 0 && now - frontSeenAt < HintHold.DebounceMs;
     }
 
     // values per line of the strip picture (ListTracker.LineSig): 4 parts of each of the 3 columns
