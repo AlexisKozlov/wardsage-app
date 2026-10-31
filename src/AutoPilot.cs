@@ -142,6 +142,10 @@ namespace RealmForge {
       lastAct = 0; listSent = false;
       string key = v.Slot != null ? "slot:" + v.Slot[0] + ":" + v.Slot[1] : v.Target > 0 && v.Row > 0 ? "item:" + v.Target : "";
       if (key != goal) {
+        // the step before ended: a slot step's duration is noted for the item step's line
+        if (goal.StartsWith("slot:") && goalAt > 0) slotMs = v.NowMs - goalAt;
+        else if (goal.StartsWith("item:")) slotMs = -1;
+        goalAt = v.NowMs; pickAt = selAt = confirmAt = 0; stepSaid = false;
         goal = key; waitUntil = 0; effect.Drop(); clicks = drags = calibs = stuck = calibMiss = 0; needCalib = measure = calibPending = endTaken = false;
         selSince = 0; confirmed = false; confirmRetries = 0; tipReopens = 0; lastRetry = false; State = "idle"; Why = "";
         slotWaits = afterClicks = wrongs = 0; lastSlotClick = 0; itemPending = false; row1Fix = double.NaN;
@@ -150,24 +154,24 @@ namespace RealmForge {
       if (key == "") { State = "idle"; return AutoAction.Nothing; }
       curSel = v.Sel; nowMs = v.NowMs; curKey = Key(v); curTip = v.TipKnown && v.TipShown;
       bool selected = v.Slot == null && v.Sel == v.Target;
-      if (!selected) selSince = 0; else if (selSince == 0) selSince = v.NowMs;
+      if (!selected) selSince = 0; else if (selSince == 0) { selSince = v.NowMs; if (selAt == 0) selAt = v.NowMs; }
       if (selected) itemPending = false;
       // selected: the player presses «Заменить», or it is pressed below and the item is on the hero now
-      if (selected && (!v.AutoConfirm || (v.Hero > 0 && v.Owner == v.Hero))) { State = "done"; return AutoAction.Nothing; }
+      if (selected && (!v.AutoConfirm || (v.Hero > 0 && v.Owner == v.Hero))) { State = "done"; StepSay(v.NowMs); return AutoAction.Nothing; }
       if (State == "failed" || State == "unconfirmed" || State == "slot_failed") return AutoAction.Nothing;
       if (v.UserClicked) pauseUntil = v.NowMs + UserPauseMs;       // the player acts himself: step back for a while
       if (!v.Foreground) { State = "background"; return AutoAction.Nothing; }
       if (v.UserBusy || v.NowMs < pauseUntil) { State = "paused"; return AutoAction.Nothing; }
       State = "work";
       // «Заменить» was pressed and the item is on the plan's hero: done at once (not after the press's whole wait)
-      if (confirmed && !selected && v.Slot == null && v.Hero > 0 && v.Owner == v.Hero) { State = "done"; return AutoAction.Nothing; }
+      if (confirmed && !selected && v.Slot == null && v.Hero > 0 && v.Owner == v.Hero) { State = "done"; StepSay(v.NowMs); return AutoAction.Nothing; }
       // the last click's effect (the slot open, the selection, the tip) seen and held still: its fixed wait ends now
       if (v.NowMs < waitUntil && effect.Seen(Key(v), v.NowMs)) waitUntil = v.NowMs;
       if (v.NowMs < waitUntil) return AutoAction.Nothing;
       // «Заменить» was pressed and the selection went away: the item is on the hero, or the press did nothing (a dialog of
       // the game, a missed press) - item clicks would only select it again and fail, the player looks at the game
       if (confirmed && !selected && v.Slot == null) {
-        if (v.Hero > 0 && v.Owner == v.Hero) { State = "done"; return AutoAction.Nothing; }
+        if (v.Hero > 0 && v.Owner == v.Hero) { State = "done"; StepSay(v.NowMs); return AutoAction.Nothing; }
         if (v.Sel <= 0) { State = "unconfirmed"; Why = "no selection after the confirm press, owner " + v.Owner + ", hero " + v.Hero; Trace = "unconfirmed: " + Why; return AutoAction.Nothing; }
       }
       if (selected) return ConfirmStep(v);
@@ -205,7 +209,7 @@ namespace RealmForge {
         return a;
       }
       if (v.Button == null || v.NowMs - selSince < (v.ButtonStill ? ConfirmLiveMs : ConfirmSettleMs)) return AutoAction.Nothing;  // the item card is opening
-      confirmed = true; waitUntil = v.NowMs + AfterConfirmMs; lastAct = 1; effect.Drop();   // (its answer: the owner, checked above; never ended early by the selection)
+      confirmed = true; confirmAt = v.NowMs; waitUntil = v.NowMs + AfterConfirmMs; lastAct = 1; effect.Drop();   // (its answer: the owner, checked above; never ended early by the selection)
       Trace = "confirm press for item " + v.Target + " at " + (int)(v.Button[0] + v.Button[2] / 2.0) + "," + (int)(v.Button[1] + v.Button[3] / 2.0) + " button " + v.Button[2] + "x" + v.Button[3] + " owner " + v.Owner + " hero " + v.Hero + " card settled " + (v.NowMs - selSince) + " ms";
       return Click(v.Button[0] + v.Button[2] / 2.0, v.Button[1] + v.Button[3] / 2.0);
     }
@@ -373,12 +377,26 @@ namespace RealmForge {
     AutoAction ListClick(double x, double y) {
       if (Math.Abs(x - lastPtX) < 2 && Math.Abs(y - lastPtY) < 2) { if (++samePt > SamePointMax) { itemPending = calibPending = false; return Fail("the same point " + (int)x + "," + (int)y + " would be clicked a " + samePt + "rd time in a row"); } }
       else samePt = 1;
+      if (pickAt == 0) pickAt = nowMs;
       lastPtX = x; lastPtY = y; selBefore = curSel; tipAtClick = curTip; clickAt = nowMs; listSent = true; effect.Arm(curKey, nowMs);
       return Click(x, y);
     }
     readonly EffectWait effect = new EffectWait(); string curKey = "";
     /// <summary>The pilot waits for its last click's effect (the host reads at its effect rate meanwhile).</summary>
-    public bool Polling(long now) { return effect.Armed && now < waitUntil; }
+    /// <summary>(An item click whose selection is not seen yet is polled at the same rate until the judging time: the selected uid is a hot field.)</summary>
+    public bool Polling(long now) { return (effect.Armed && now < waitUntil) || (itemPending && curSel == selBefore && now - clickAt < JudgeMs); }
+    // the durations of the step (the host's log: "step ms: slot=… pick=… selected=… confirm=…"; - = not part of this step)
+    long goalAt, pickAt, selAt, confirmAt, slotMs = -1; bool stepSaid;
+    void StepSay(long now) {
+      if (stepSaid || goalAt == 0) return;
+      stepSaid = true;
+      Func<long, string> ms = d => d < 0 ? "-" : d.ToString();
+      long pick = selAt > 0 ? selAt - goalAt : -1, selected = selAt > 0 && confirmAt > 0 ? confirmAt - selAt : -1, confirm = confirmAt > 0 ? now - confirmAt : -1;
+      StepLine = "step ms: slot=" + ms(slotMs) + " pick=" + ms(pick) + " selected=" + ms(selected) + " confirm=" + ms(confirm);
+      Trace = Trace != "" ? Trace + "; " + StepLine : StepLine;
+    }
+    /// <summary>The last finished step's durations (see above); "" = none yet.</summary>
+    public string StepLine = "";
     // what a click of this pilot changes: the selection, the slot open, the tip, the list (its length)
     static string Key(AutoView v) { return v.Sel + "|" + v.SlotOpen + "|" + v.TipShown + "|" + (v.Types != null ? v.Types.Length : -1); }
     long curSel, nowMs, clickAt; bool listSent, curTip, tipAtClick;

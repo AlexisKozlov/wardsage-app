@@ -1507,6 +1507,25 @@ static partial class CoreTests {
     { char sd; int[] bt = { 111, 246, 44, 44 }; int[][] band = { new[] { 0, 244, 526, 52 } };
       var bp = HintLayout.Place(bt, band, 200, 24, 526, 296, out sd);
       Check(sd == 't' && bp[1] + 24 <= 244 - 4 && bp[0] < 111 + 44 && bp[0] + 200 > 111, "plate: a bar button's plate above the bar row, not over the next buttons (" + sd + " " + bp[0] + "," + bp[1] + ")"); }
+    // lab 1.6.66.434: the hint of «Заменить» sometimes covered the button: whatever the live rect and the client, the plate never overlaps it (nor its frame), 1 layout a step
+    { int bad = 0, n = 0; var rnd = new Random(434);
+      foreach (var sz in new[] { new[] { 526, 296 }, new[] { 1366, 705 }, new[] { 1920, 1009 }, new[] { 1280, 720 } }) {
+        int W = sz[0], Hh = sz[1]; double Uu = Ui.Unit(W, Hh);
+        for (int i = 0; i < 200; i++) {
+          int bw = (int)(0.2 * Uu + rnd.Next((int)(0.05 * Uu))), bh = (int)(0.07 * Uu + rnd.Next((int)(0.02 * Uu)));
+          var cf = new[] { rnd.Next(W - bw), rnd.Next(Hh - bh), bw, bh };
+          var fr = new[] { cf[0] - 2, cf[1] - 2, cf[2] + 4, cf[3] + 4 };   // (the frame is the rect 2 px out)
+          int pw = (int)(HintSize.MaxWidth(W) * (0.5 + 0.5 * rnd.NextDouble())), ph = (int)(0.09 * Uu + rnd.Next((int)(0.05 * Uu))); char sd;
+          var pos = HintLayout.Place(fr, null, pw, ph, W, Hh, out sd); n++;
+          bool inside = pos[0] >= 0 && pos[1] >= 0 && pos[0] + pw <= W && pos[1] + ph <= Hh;
+          bool over = pos[0] < cf[0] + cf[2] && pos[0] + pw > cf[0] && pos[1] < cf[1] + cf[3] && pos[1] + ph > cf[1];
+          if (over && inside) bad++;
+        }
+      }
+      Check(bad == 0, "hint of «Заменить»: the plate never overlaps the live button when it fits the client (" + n + " placements, " + bad + " over it)");
+      var hc = new PlateHold(); int[] cr0 = { 600, 300, 160, 50 };
+      hc.Made("Шаг 2 из 5 · Нагрудник|||1920x1009", cr0, null, 1f, new[] { 780, 300 }, 'r');
+      Check(hc.Keep("Шаг 2 из 5 · Нагрудник|||1920x1009", new[] { 601, 299, 160, 50 }, null) && hc.Count == 1, "hint of «Заменить»: the held live rect 1 px off keeps the one layout (the step's count stays 1)"); }
     // the hold: a live target jittering by a pixel keeps the layout; another step, a moved target or a new neighbour lay it out again
     var h = new PlateHold(); int[] t0 = { 113, 240, 35, 35 };
     Check(!h.Keep("s1", t0, null), "plate hold: nothing held at first");
@@ -1806,6 +1825,22 @@ static partial class CoreTests {
         Check(RFX.UiTopIs(ClickTarget.FoundryButton, null, inv) && !RFX.UiTopIs(ClickTarget.FoundryButton, null, boss) && !RFX.UiTopIs(ClickTarget.FoundryButton, null, null)
           && !RFX.UiTopIs(ClickTarget.FoundryButton, null, new ScreenState { Kind = ScreenKind.Inventory, Top = "Form_BackpackIntegration", Held = true }), "top: «Литейная» only on the inventory on top (not under Form_UnionBoss, not on a held read)");
         Check(RFX.UiTopIs(ClickTarget.EquipConfirm, null, tip) && !RFX.UiTopIs(ClickTarget.EquipConfirm, null, new ScreenState { Kind = ScreenKind.HeroScreen, Top = "Form_CharactorMain" }), "top: «Заменить» on the item's tip over the hero screen");
+        // lab 1.6.66.434 (test 2): the tip is the equip pilot's flow form above the hero screen - it IS the top form of «Заменить», named on top or as a flow form
+        var tipTop = new ScreenState { Kind = ScreenKind.HeroScreen, Top = "Form_CharactorEquipTip", Flow = "Form_CharactorEquipTip" };
+        var tipTopOnly = new ScreenState { Kind = ScreenKind.Unknown, Top = "Form_CharactorEquipTip" };
+        var tipOver = new ScreenState { Kind = ScreenKind.HeroScreen, Top = "Form_CharactorMain", Flow = "Form_CharactorEquipTip,Form_EquipedCompared" };
+        var tipPop = new ScreenState { Kind = ScreenKind.HeroScreen, Top = "Form_X", Offer = "Form_X", OfferCount = 1, Flow = "Form_CharactorEquipTip" };
+        Check(RFX.UiTopIs(ClickTarget.EquipConfirm, null, tipTop) && RFX.UiTopIs(ClickTarget.EquipConfirm, null, tipTopOnly) && RFX.UiTopIs(ClickTarget.EquipConfirm, null, tipOver),
+          "top: the equip pilot's flow form (the tip) is the top form of «Заменить», as the named top or as a flow form with the compare card");
+        { var fst = new FrameSteady(); var lv0 = new double[] { 400, 300, 120, 44, 8 };
+          var first = fst.Pick(lv0);
+          Check(first[0] == 400 && first[1] == 300 && first[2] == 120 && first[3] == 44, "frame: the first drawn rect equals the live rect (no layout rect first)");
+          var jit = fst.Pick(new double[] { 402, 301, 118, 45, 8 });
+          Check(jit[2] == 120 && jit[0] == 400, "frame: a live rect within 3 px keeps the drawn one (no size flicker)");
+          var mv = fst.Pick(new double[] { 410, 300, 120, 44, 8 });
+          Check(mv[0] == 410, "frame: a real move (over 3 px) follows the live rect"); }
+        Check(!RFX.UiTopIs(ClickTarget.EquipConfirm, null, tipPop) && !RFX.UiTopIs(ClickTarget.EquipConfirm, null, new ScreenState { Kind = ScreenKind.HeroScreen, Top = "Form_CharactorEquipTip", Held = true }),
+          "top: «Заменить» not under a pop-up, not on a held read");
         Check(RFX.UiTopIs(ClickTarget.OfferClose, "Form_X", off) && !RFX.UiTopIs(ClickTarget.OfferClose, "Form_Y", off) && !RFX.UiTopIs(ClickTarget.CityInventory, null, off), "top: the × of the pop-up shown; the city's «Инвентарь» not under a pop-up");
       }
       // the diagnostic dump: a failing read step by step, one a minute

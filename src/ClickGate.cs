@@ -1556,6 +1556,9 @@ namespace RealmForge {
       return res;
     }
 
+    /// <summary>The tip over a slot is gone: its Escape count starts again (the cap is per tip, not per run).</summary>
+    public void ResetTipEscapes(ClickOwner o) { tipEscapes.Remove(o); }
+
     /// <summary>MapClose: the fresh screen's top form is still the pop-up the map closes with its × (MapExit Close), the point is on its × and on
     /// none of its other buttons, MaxMapMoves not reached.</summary>
     GateResult CheckMapClose(ClickRequest r, ScreenState f, long now, string tag) {

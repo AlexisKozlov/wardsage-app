@@ -1222,6 +1222,24 @@ static partial class CoreTests {
     Check(!g4.Check(new ClickRequest { Owner = ClickOwner.Equip, Target = ClickTarget.EscapeBack, AutoOn = true, Front = true }, tip, 1000).Allowed, "sim: the back Escape never on the hero screen with the tip");
   }
 
+  /// <summary>Lab 1.6.66.434 (test 2, the laptop): steps of 4-9 s between slots (the tip's Escape retried with multi-second waits, the selection
+  /// seen 4 s late). A 5-slot plan on the fast PC (the real pilots in EquipBench's model: the item's card closes after «Заменить»): no step of the
+  /// pilot ("step ms: slot / pick / selected / confirm") takes over 2 s, and its log line says so.</summary>
+  static void EquipStepTiming() {
+    var geo = GameGeometry.Parse(GeoJson(), GeoGame);
+    long worst = 0; string where = ""; int done = 0, n = 8; int was = BenchSlotCount;
+    BenchSlotCount = 5;
+    try {
+      for (int i = 0; i < n; i++) {
+        var r = BenchOne(geo, 434000 + i * 11, false, false);
+        if (r.Done) done++;
+        if (r.MaxStep > worst) { worst = r.MaxStep; where = r.WorstStep; }
+      }
+    } finally { BenchSlotCount = was; }
+    Check(done == n, "sim timing: a 5-slot plan on the fast PC is done " + done + "/" + n);
+    Check(worst > 0 && worst <= 2000, "sim timing: no step of a 5-slot plan over 2 s on the fast PC (worst " + worst + " ms: " + where + ")");
+  }
+
   static void StaleRowsAfterFilter() {
     int c, m; string why;
     foreach (bool bar in new[] { false, true }) {
@@ -1330,6 +1348,7 @@ static partial class CoreTests {
     StaleRowsAfterFilter();
     SimLeftoverFilter();
     TipOverSlots();
+    EquipStepTiming();
     // (9) a list is settled after two equal reads; a moving one (a glide after a drag, a slot filter) is not, an unreadable one neither
     {
       var ls = new ListSettle(); var inv = new InventoryScreen { Open = true, EquipTab = true, Bulk = true, List = new RFX.ListRead { ScrollY = 0 } }; inv.Uids.AddRange(new long[] { 1, 2, 3 });

@@ -28,7 +28,8 @@ static partial class CoreTests {
   static int BenchHotMs() { var f = typeof(LoadPlan).GetField("EquipHotMs"); return f != null ? (int)f.GetValue(null) : 0; }
   static bool BenchHostHot(SimHost h) { var p = typeof(SimHost).GetProperty("EquipHot"); return p != null && (bool)p.GetValue(h, null); }
 
-  sealed class BenchRun { public long Chain, Hero, Slots; public bool Done; public int Lost, Clicks; public string Why = ""; }
+  static int BenchSlotCount = 6;
+  sealed class BenchRun { public long Chain, Hero, Slots, MaxStep; public string WorstStep = ""; public bool Done; public int Lost, Clicks; public string Why = ""; }
 
   static int EquipBench(GameGeometry geo, int seeds) {
     Console.WriteLine("equip bench: a 6-slot plan from the city, " + seeds + " seeds a cell; mean seconds of the runs at their goal (chain / hero / slots / all)");
@@ -103,6 +104,9 @@ static partial class CoreTests {
     var s = new BenchSlot();
     int[] slotRect = hint.Slot(0, W, H);
     long tickAt = t;
+    // the steps' durations (the pilot's "step ms: slot / pick / selected / confirm"): the slot opened, the item selected, «Заменить» pressed, the item on the hero
+    long tSlot0 = t, tPick0 = -1, tSel = -1, tConf = -1; bool slotNoted = false;
+    Action<string, long> note = (nm, d) => { if (d > res.MaxStep) { res.MaxStep = d; res.WorstStep = nm + " " + d + " ms (slot " + slot + ")"; } };
     for (long cap = t + 180000; t < cap; ) {
       for (bool any = true; any; ) { any = false; for (int i = 0; i < due.Count; i++) if (due[i].Key <= t) { var a = due[i].Value; due.RemoveAt(i); a(); any = true; break; } }
       long item = 1000 + slot;
@@ -114,9 +118,12 @@ static partial class CoreTests {
       if (t >= pollAt) {
         bool hot = t - lastClick < BenchHotMs() || BenchPolling(ip, t) || BenchPolling(fp, t);
         pollAt = t + BenchLivePoll(hot);
-        if (s.Owner == hero) { slot++; if (slot >= 6) return t; s = new BenchSlot { Panel = s.Panel, Side = s.Side, Suits = s.Suits, Mains = s.Mains, Subs = s.Subs }; guide = "slot"; continue; }
+        if (s.Owner == hero) { if (tConf >= 0) note("confirm", t - tConf); tSlot0 = t; tPick0 = tSel = tConf = -1; slotNoted = false; slot++; if (slot >= BenchSlotCount) return t; s = new BenchSlot { Panel = s.Panel, Side = s.Side, Suits = s.Suits, Mains = s.Mains, Subs = s.Subs }; guide = "slot"; continue; }
         guide = !s.Open ? "slot" : !filterOk ? "filter" : s.Sel != item ? "pick" : "replace";
       }
+      if (s.Open && !slotNoted) { slotNoted = true; note("slot", t - tSlot0); }
+      if (guide == "pick" && tPick0 < 0) tPick0 = t;
+      if (s.Sel == item && tSel < 0) { tSel = t; if (tPick0 >= 0) note("pick", t - tPick0); }
       if (t < sendingUntil || t < tickAt) { t += 10; continue; }
       // the overlay's tick: the hot fields at the effect rate while a pilot awaits its click's effect, else the calm read
       bool effect = BenchPolling(ip, t) || BenchPolling(fp, t);
@@ -159,6 +166,7 @@ static partial class CoreTests {
       else if (what == "item") due.Add(new KeyValuePair<long, Action>(tc + l, () => { st.Sel = 1000 + sl0; st.Tip = true; st.TipAt = tc + l; }));
       else if (what == "confirm") {
         if (t - s.TipAt < 300) { res.Lost++; continue; }   // the card still opening: the press is lost
+        if (tSel >= 0 && tConf < 0) { tConf = t; note("selected", t - tSel); }
         due.Add(new KeyValuePair<long, Action>(tc + l, () => { st.Owner = hero; st.Sel = 0; st.Tip = false; }));
       } else {   // the filter pop-up's controls
         l = memLat();

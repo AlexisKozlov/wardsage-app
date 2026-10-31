@@ -162,6 +162,21 @@ namespace RealmForge {
   /// <summary>One frame source per pilot button: once its live rect was read, the frame stays on the last live rect (and follows each new one) while
   /// the reads miss for up to <see cref="HoldMs"/>; only then the layout's place. A read that says the button is gone (hidden, another form on
   /// top) drops it at once. Never live and layout tick by tick (live 1.6.66.397: the city's «Инвентарь» frame jumped 36 px each tick). Pure.</summary>
+  /// <summary>A frame's drawn rect follows its live rect only on a real move: while every value stays within <see cref="TolPx"/> of the one drawn,
+  /// the drawn one is kept (the first live rect is drawn as it is). Pure (tests/CoreTests.cs).</summary>
+  public sealed class FrameSteady {
+    public const double TolPx = 3;
+    double[] drawn;
+    public double[] Pick(double[] live) {
+      if (live == null) { drawn = null; return null; }
+      if (drawn != null && drawn.Length == live.Length) {
+        bool same = true; for (int i = 0; i < live.Length && i < 4; i++) if (Math.Abs(live[i] - drawn[i]) > TolPx) same = false;
+        if (same) return drawn;
+      }
+      drawn = (double[])live.Clone(); return drawn;
+    }
+  }
+
   public sealed class FrameStick {
     public const int HoldMs = 1500;
     double[] last; long at; double lw, lh;
@@ -941,7 +956,9 @@ namespace RealmForge {
     public static bool UiTopIs(ClickTarget t, string offerForm, ScreenState s) {
       var w = UiWidgetOf(t, offerForm);
       if (w == null || s == null || s.Held) return false;
-      if (t == ClickTarget.EquipConfirm) return s.Kind == ScreenKind.HeroScreen && s.OfferCount == 0 && Array.IndexOf((s.Flow ?? "").Split(','), w.Form) >= 0;
+      // (the tip is the equip pilot's flow form above the hero screen: named on top, or shown as the hero screen's flow form, it IS the top form
+      // of the target)
+      if (t == ClickTarget.EquipConfirm) return s.OfferCount == 0 && (s.Top == w.Form || (s.Kind == ScreenKind.HeroScreen && Array.IndexOf((s.Flow ?? "").Split(','), w.Form) >= 0));
       if (t == ClickTarget.OfferClose) return s.OfferCount > 0 && s.Offer == w.Form;
       return s.Top == w.Form && s.OfferCount == 0 && !s.ModalOpen;
     }

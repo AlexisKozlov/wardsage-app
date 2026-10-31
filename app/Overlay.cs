@@ -312,6 +312,8 @@ namespace RealmForge {
     /// <summary>The plan the player started («Надеть»): its hero is brought up on the hero screen; 0 = none.</summary>
     long runHero;
     long focusAfter, slotCloseAfter;
+    const int TipStillMs = 600, TipAgainMs = 3000;
+    string tipSeenKey; long tipSeenAt, tipEscapedAt; int tipEscapes;   // the item's tip over the next slot: seen unchanged since, Escapes pressed for it
     // the item the guide looks for and what it says about it (the filter pilot), and what the plans say about items
     long filterItem; string filterKind = "";
     readonly System.Collections.Generic.Dictionary<long, long[]> itemInfo = new System.Collections.Generic.Dictionary<long, long[]>();
@@ -341,6 +343,7 @@ namespace RealmForge {
     // diagnostics (Settings → «Диагностика рамки»): screenshots and list data into debug\ for a few minutes
     DateTime diagUntil = DateTime.MinValue; int diagTick, diagN, shotN; string diagLast, diagDir, diagInfo = "";
     string hintKind = ""; int hintSlot = -1; string[] hintLines = new string[0]; string tipKey; long hintHero;
+    int[] confirmHintRect;   // the live rect of «Заменить» the hint frames (held still), this tick
     int[] confirmBtn;   // «Заменить» / «Надеть» found on the screen this tick (TickHint), for the pilot
     // storage cleanup: the items to select on the game's sell screen (null = no run); the hero whose gear screen leads there
     readonly SellPilot spilot;
@@ -1268,11 +1271,15 @@ namespace RealmForge {
         // «Заменить» where the game has put it (live rect, fresh: its drawn part, 2 px round it), else the picture's / the geometry's
         var lb = hg.Replace(W, H); var lay = confirmBtn ?? lb;
         bool cl; var cf = FrameForI(FrameTargets.KeyConfirm, lay, W, H, U, out cl);
-        if (cl) confirmBtn = cf;
+        if (cl && cf != null) confirmBtn = cf;
         confirmStill = confirmLive.Note(cl && cf != null ? new double[] { cf[0], cf[1], cf[2], cf[3] } : null, NowMs());   // (the card has stopped opening: AutoView.ButtonStill)
+        // the frame and the plate beside it stand on the live rect only, and once it has stopped moving (one layout of the plate a step); until then
+        // the plate alone at the top, nothing over the button
+        if (!(cl && cf != null && confirmStill)) { DrawTipTop(hintLines); return; }
+        confirmHintRect = cf;
       }
       bool rl;
-      int[] r = hintKind == "filter" ? FrameForI("hero.filter", hg.Filter(W, H), W, H, U, out rl) : hintKind == "replace" ? confirmBtn ?? hg.Replace(W, H)
+      int[] r = hintKind == "filter" ? FrameForI("hero.filter", hg.Filter(W, H), W, H, U, out rl) : hintKind == "replace" ? confirmHintRect
         : hintKind == "slot" ? FrameForI("hero.slot." + hintSlot, hg.Slot(hintSlot, W, H), W, H, U, out rl) : null;
       // the hero is open on another tab: its «Снаряжение» tab (right edge)
       if (hintKind == "geartab") { int s = (int)(0.1 * U); r = FrameForI("hero.tab.equip", new[] { (int)(W - hg2.GearTabDX * U) - s / 2, (int)(hg2.GearTabY * U) - s / 2, s, s }, W, H, U, out rl); }
@@ -2054,12 +2061,18 @@ namespace RealmForge {
         return;
       }
       // the next slot with the item's tip / compare still open over the slots (live 1.6.66.354: the pilot clicked the compare card where the
-      // slot is behind it): ONE Escape closes it (the tip is the equip helper's flow form, closed only here, when it is in the way)
-      if (v.Slot != null && v.TipKnown && v.TipShown && ClickGate.OnlyTip(screens.Current) && v.Foreground && !v.UserBusy && now >= slotCloseAfter) {
-        slotCloseAfter = now + 900; pilot.Reset();
-        if (TipEscapeSend(cr, v.Foreground)) Log.Write("auto: the item's tip is open over the slots - closing it (Escape)");
+      // slot is behind it): the tip usually closes by itself after «Заменить»; if it stays 600 ms unchanged ONE Escape closes it (a second only
+      // after 3 s), the slot is not clicked meanwhile
+      if (v.Slot != null && v.TipKnown && v.TipShown && ClickGate.OnlyTip(screens.Current)) {
+        var tcs = screens.Current; string tk = (tcs.Flow ?? "") + "|" + (tcs.ModalWhy ?? "");
+        if (tk != tipSeenKey) { tipSeenKey = tk; tipSeenAt = now; }
+        pilot.Reset();
+        if (v.Foreground && !v.UserBusy && now - tipSeenAt >= TipStillMs && (tipEscapes == 0 || (tipEscapes < 2 && now - tipEscapedAt >= TipAgainMs))) {
+          if (TipEscapeSend(cr, v.Foreground)) { tipEscapes++; tipEscapedAt = now; Log.Write("auto: the item's tip is open over the slots - closing it (Escape " + tipEscapes + ")"); }
+        }
         return;
       }
+      if (tipEscapes > 0 || tipSeenKey != null) { tipEscapes = 0; tipSeenKey = null; gate.ResetTipEscapes(ClickOwner.Equip); }
       // the next slot: an open filter pop-up covers the hero's slots - close it first (the filter was for the item that is
       // on now; the next one gets its own)
       if (v.Slot != null && v.Foreground && !v.UserBusy && now >= slotCloseAfter
@@ -4247,6 +4260,10 @@ namespace RealmForge {
 
     // ---- every hint frame through one function (src/FrameTargets.cs): the live rect of the target's visual child -> its sprite's contour ->
     // the outline; the layout's rect only when the live read fails ("frame: <key> source=layout reason=...", once per key and reason)
+    // every frame stands on its live rect only (a layout's / estimated rect is never drawn first: the plate comes alone until the live one is
+    // known) and, once drawn, moves only when the target really moves (more than FrameSteady.TolPx): no size jumps, no source switching
+    readonly Dictionary<string, FrameSteady> frameSteady = new Dictionary<string, FrameSteady>();
+    FrameSteady FrameSteadyOf(string key) { FrameSteady st; if (!frameSteady.TryGetValue(key, out st)) frameSteady[key] = st = new FrameSteady(); return st; }
     readonly Dictionary<string, string> frameLayoutSaid = new Dictionary<string, string>();
 
     /// <summary>The frame of target <paramref name="key"/> (client px: x, y, w, h[, radius]): live when the read is fresh, shown and on the form on top
@@ -4259,16 +4276,18 @@ namespace RealmForge {
       else if (ft.Cell != UiCellKind.None) why = "a list cell (LiveCell)";
       else if (ft.Click != ClickTarget.None) {
         var lv = LiveFrame(ft.Click, null, W, H, U, ft.Visual != "-", layout);
-        if (lv != null) { live = true; FrameLiveSeen(key); AuditFrameFor(key, layout, lv, true, null); return lv; }
+        if (lv != null) { live = true; FrameLiveSeen(key); lv = FrameSteadyOf(key).Pick(lv); AuditFrameFor(key, layout, lv, true, null); return lv; }
         var r = RFX.UiButtonFresh(ft.Click, null, W, H, Environment.TickCount, 1000);
         why = r == null ? "no fresh read" : !r.Ok ? "failed at " + r.FailStep : !r.Visible ? "not visible" : "not on top";
       } else {
         var lv = LiveFrameKey(ft, W, H, U, out why);
-        if (lv != null) { live = true; FrameLiveSeen(key); AuditFrameFor(key, layout, lv, true, null); return lv; }
+        if (lv != null) { live = true; FrameLiveSeen(key); lv = FrameSteadyOf(key).Pick(lv); AuditFrameFor(key, layout, lv, true, null); return lv; }
       }
+      // «Заменить» / «Надеть»: no live rect, no frame (never the layout's: it sat beside the card's real button, the plate covered it)
+      if (key == FrameTargets.KeyConfirm) { FrameNoneSay(key, why); AuditFrameFor(key, layout, layout, false, why); return null; }
       // a target with a live reader whose first read has not come yet: the frame waits for it (up to FramePendingMs) instead of standing on the
       // layout's rect first and jumping to the live one (the flicker of 1.6.66.423); the plate is shown meanwhile
-      if (ft != null && ft.Layout == null && ft.Cell == UiCellKind.None && layout != null && (FramePending(key) || (key != "hero.filterClose" && FrameTargets.PopupOver(ft.Form, screens.Current)))) pendingRects.Add(new[] { layout[0], layout[1], layout[2], layout[3] });
+      if (ft != null && ft.Layout == null && ft.Cell == UiCellKind.None && layout != null) pendingRects.Add(new[] { layout[0], layout[1], layout[2], layout[3] });
       FrameLayoutSay(key, why, layout);
       AuditFrameFor(key, layout, layout, false, why);
       return layout;
@@ -4361,6 +4380,12 @@ namespace RealmForge {
       return false;
     }
 
+    void FrameNoneSay(string key, string why) {
+      string was; if (frameLayoutSaid.TryGetValue(key, out was) && was == "none " + why) return;
+      frameLayoutSaid[key] = "none " + why;
+      Log.Write("frame: " + key + " source=none reason=" + why);
+    }
+
     void FrameLayoutSay(string key, string why, double[] layout) {
       string was; if (frameLayoutSaid.TryGetValue(key, out was) && was == why) return;
       frameLayoutSaid[key] = why;
@@ -4412,7 +4437,8 @@ namespace RealmForge {
       live = false;
       if (layout == null) return null;
       var f = FrameFor(key, new double[] { layout[0], layout[1], layout[2], layout[3] }, W, H, U, out live);
-      return live ? new[] { (int)Math.Round(f[0]), (int)Math.Round(f[1]), (int)Math.Round(f[2]), (int)Math.Round(f[3]) } : layout;
+      if (!live) return key == FrameTargets.KeyConfirm ? null : layout;
+      return new[] { (int)Math.Round(f[0]), (int)Math.Round(f[1]), (int)Math.Round(f[2]), (int)Math.Round(f[3]) };
     }
 
     string heroLogged;
