@@ -5577,6 +5577,17 @@ static partial class CoreTests {
       double wantY = row1Want + gg.RowOffset(null, 3) * 1009 + gg.CellHeight * 1009 / 2;
       Check(act.Kind == AutoKind.Click && Math.Abs(act.Y - wantY) < 1, "sell pilot: with the game's scroll it clicks the item's row where the scroll puts it (no drag)");
     }
+    {   // the finished run (everything marked) stays «done» while the player moves the mouse / clicks / the game is behind: the final frame on «Продать» never blinks out
+      var gd = SellGeometry.Inventory(1920, 1009, 8); var pd = new SellPilot(gd);
+      var scd = new InventoryScreen { Open = true, EquipTab = true, Bulk = true, ListPtr = 5 }; for (int k = 1; k <= 40; k++) scd.Uids.Add(9000 + k); scd.Selected.Add(9020);
+      double r1d = gd.ViewTopPx(1009) + gd.TopPad * 1009;
+      Func<long, bool, bool, bool, string> stp = (t, busy, fg, clicked) => { pd.Step(new SellView { NowMs = t, Foreground = fg, UserBusy = busy, UserClicked = clicked, W = 1920, H = 1080, U = 1009, Screen = scd.AsSell(8), Wanted = new HashSet<long> { 9020 }, Row1 = r1d }); return pd.State; };
+      Eq("done", stp(1000, false, true, false), "sell pilot: everything marked -> done");
+      Eq("done", stp(1100, true, true, false), "sell pilot: done stays done while the mouse moves (the final frame stays)");
+      Eq("done", stp(1200, false, true, true), "sell pilot: done stays done after a click of the player");
+      Eq("done", stp(1300, false, false, false), "sell pilot: done stays done while the game is behind");
+      Eq("done", stp(1400, true, true, false), "sell pilot: done still, mouse moving again");
+    }
     Eq(LocateKind.OtherAccount, LocateGuide.Next(areq, inv(), ar(), null, 8, 0).Kind, "ascend: another account");
     var gmA = new RecastScreen { GemOpen = true, GemFunc = 7, GemSel = 777, GemList = new long[] { 777 } };
     Eq(LocateKind.OpenFoundry, LocateGuide.Next(areq, inv(), gmA, null, 8, 1).Kind, "ascend: the gem screen is not part of it");

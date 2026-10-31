@@ -215,8 +215,9 @@ namespace RealmForge {
       if (!v.Foreground || v.UserBusy || v.NowMs < pauseUntil) noScrollSince = -1;
       else if (double.IsNaN(v.Row1) && noScrollSince < 0) noScrollSince = v.NowMs;
       bool failed = State == "failed";
-      if (!v.Foreground) { if (!failed) State = "background"; return AutoAction.Nothing; }
-      if (v.UserBusy || v.NowMs < pauseUntil) { if (!failed) State = "paused"; checkClick = false; return AutoAction.Nothing; }
+      if (!v.Foreground) { if (!failed && State != "done") State = "background"; return AutoAction.Nothing; }   // (a finished run stays finished: the final frame on «Продать» is drawn from it)
+      if (v.UserBusy || v.NowMs < pauseUntil) { if (!failed && State != "done") State = "paused"; checkClick = false;   // mouse moves must not take the final step away (live 1.6.66.446: the «Продать» frame went out while the mouse moved)
+         return AutoAction.Nothing; }
       // a click's answer is the choice changing (the game's own selection, read every 50 ms while it is awaited): judged at once, the next item
       // follows at once; the fixed wait is only for a click that changed nothing (yet)
       bool answered = checkClick && !s.Selected.SetEquals(selBefore);
