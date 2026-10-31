@@ -7332,6 +7332,8 @@ static partial class CoreTests {
       double abY = 0.1906 * AU, abH = 0.6689 * AU, ap = 116 * AU / 640, adot = abY + abH * (2.5 * ap) / (13 * ap);
       Check(ast != null && Math.Abs(ast[0] - (AW - 0.5126 * AU)) < 0.5 && Math.Abs(ast[1] - abY) < 0.5 && Math.Abs(ast[3] - adot) < 0.5 && ast.Length == 9 && ast[6] == 1 && Math.Abs(ast[7] - adot) < 0.5 && ast[8] == 1,
         "art list strip: the marker on the scroll bar (x " + (ast != null ? ast[0].ToString("0.0") : "-") + ", dot y " + (ast != null ? ast[3].ToString("0.0") : "-") + " of " + adot.ToString("0.0") + ")");
+      { var so = LocateFrames.StripAt(new double[] { 1000, 134, 606, 225, 190, 300, 1, 225, 1, 400, 3 }, 80, 40);   // a window at (80, 40): the count 3 stays 3
+        Check(so[0] == 1080 && so[1] == 174 && so[3] == 265 && so[6] == 1 && so[7] == 265 && so[8] == 1 && so[9] == 440 && so[10] == 3, "scroll strip on the screen: the window's origin moves x and the y's, never the flag or the marker counts"); }
       Check(ArtFrames.InvStrip(null, agl, 100, 21, 8, null, AW, AH, AU) == null && ArtFrames.InvStrip(ag, new RFX.ListRead(), 100, 21, 8, null, AW, AH, AU) == null, "art list strip: no bar geometry / no scroll reading -> none");
     }
 

@@ -2263,7 +2263,7 @@ namespace RealmForge {
         if (!art && !double.IsNaN(row1) && step.TodoRows.Count > 0) {
           var sv = LocateFrames.ListStrip(Geo.Current, row1, vt, shGeo.TopPad * U, shGeo.PitchY * U, (inv.Uids.Count + shCols - 1) / shCols, step.TodoRows,
             SellHint.LeadRow(step.TodoRows, row1, shGeo, H, U, step.Below > 0, step.Above > 0), W, H, U);
-          if (sv != null) { strip = new double[sv.Length]; for (int i = 0; i < sv.Length; i++) strip[i] = i == 0 ? o.X + sv[i] : i == 6 ? sv[i] : o.Y + sv[i]; }
+          if (sv != null) strip = LocateFrames.StripAt(sv, o.X, o.Y);
           if (strip != null && pill != null) pt = null;
         }
         shLastMarks = marks; shLastStrip = strip; shLastPill = pill; shLastPt = pt;
@@ -2607,13 +2607,6 @@ namespace RealmForge {
     readonly ArtFinish artFin = new ArtFinish();
     LocateStep artStep; string artKey = "", artSaid = "", artWsDiagSaid = ""; long artFormAskedAt, artWsWaitSince;
 
-    /// <summary>A scroll bar strip (LocateFrames.ListStrip, client px) on the screen: x and the y's moved by the client's origin, the flag and the marker counts as they are.</summary>
-    static double[] StripAt(double[] sv, W32.POINT o) {
-      var r = new double[sv.Length];
-      for (int i = 0; i < sv.Length; i++) r[i] = i == 0 ? o.X + sv[i] : i == 6 || (i > 7 && (i - 7) % 2 == 1) ? sv[i] : o.Y + sv[i];
-      return r;
-    }
-
     void TickArtPromote() {
       var req = locateReq; var art = req.Art;
       IntPtr hwnd = GameWindow();
@@ -2669,7 +2662,7 @@ namespace RealmForge {
           else if (see == UiCellSee.Hidden) lf = null;
         }
         var sv = ArtFrames.InvStrip(Geo.Current, inv.List, inv.Uids.Count, step.Pos - 1, LocateGuide.ArtInvCols, null, W, H, U);
-        if (sv != null) artStrip = StripAt(sv, o);
+        if (sv != null) artStrip = LocateFrames.StripAt(sv, o.X, o.Y);
       }
       if (lf != null && (lf.Target == "cell" || lf.Target == "artifact.matList")) { string ck = step.Kind == LocateKind.ArtInList ? "cell.InvArt" : lf.Target == "artifact.matList" ? "artifact.matList" : "artifact.matCell"; FrameLayoutSay(ck, FrameTargets.Of(ck).Layout, null); }
       if (!front) { LocateHide(); }

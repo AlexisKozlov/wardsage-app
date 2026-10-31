@@ -341,6 +341,13 @@ namespace RealmForge {
       return res.ToArray();
     }
 
+    /// <summary>A <see cref="ListStrip"/> (client px) moved onto the screen by the client's origin: x and every y by it, the flag (index 6) and the marker counts (odd places from 8) as they are.</summary>
+    public static double[] StripAt(double[] sv, double ox, double oy) {
+      var r = new double[sv.Length];
+      for (int i = 0; i < sv.Length; i++) r[i] = i == 0 ? ox + sv[i] : i == 6 || (i > 7 && (i - 7) % 2 == 1) ? sv[i] : oy + sv[i];
+      return r;
+    }
+
     /// <summary>Markers closer than <paramref name="minGap"/> px merge into one (its y = the mean, count = how many), never more than <paramref name="maxMarks"/>
     /// of them (the gap grows until they fit), each kept inside the bar [<paramref name="top"/> + edge, <paramref name="bottom"/> - edge]. Result: {y, count} ascending.</summary>
     public static List<double[]> ClusterMarks(IList<double> ys, double top, double bottom, double minGap = 10, int maxMarks = 12, double edge = 6) {
