@@ -2397,7 +2397,7 @@ namespace RealmForge {
           else Draw(mk.Kind, o.X + mk.X, o.Y + mk.Y, mk.W, mk.H, mk.Rows, strip);
         } else { if (glow.Visible) glow.Hide(); drawnKey = null; }
       } else if (!front) { if (glow.Visible) glow.Hide(); drawnKey = null; }
-      else if (lf != null && lf.Mark.Kind != "box") { frame++; Draw(lf.Mark.Kind, o.X + lf.Mark.X, o.Y + lf.Mark.Y, lf.Mark.W, lf.Mark.H, lf.Mark.Rows); }   // the list cell is off the screen: the pill at the list's edge
+      else if (lf != null && lf.Mark.Kind != "box") { frame++; Draw(lf.Mark.Kind, o.X + lf.Mark.X, o.Y + lf.Mark.Y, lf.Mark.W, lf.Mark.H, lf.Mark.Rows, FoundryStrip(step, o, W, H, U)); }   // the list cell is off the screen: the pill at the list's edge (by the Ascension / recast list's scroll strip)
       else { if (glow.Visible) glow.Hide(); drawnKey = null; }
       if (locateInv != null && step.Kind != LocateKind.InList) locateLastCur = locateInv.Current;
       step.NeedClick = locateNeedClick;
@@ -2581,24 +2581,72 @@ namespace RealmForge {
       var lines = main != "" ? new[] { main } : new string[0];
       var lf = ArtEquipFrames.For(st, hs, Geo.Current, W, H, U);
       frame++;
+      bool liveReplace = false;
       if (lf != null && lf.Mark.Kind == "box" && lf.Target == ArtEquipFrames.KeyHideWorn) {   // «Скрыть надетое» where the game has put it (live rect, fresh)
         var lv = LiveFrame(ClickTarget.ArtHideWorn, null, W, H, U, false, lf.Raw != null ? new[] { lf.Raw.X, lf.Raw.Y, lf.Raw.W, lf.Raw.H } : null);
         if (lv != null) { lf.Raw = new GeoRect { X = lv[0], Y = lv[1], W = lv[2], H = lv[3] }; lf.Mark = new LocateMark { Kind = "box", X = (int)Math.Round(lv[0]), Y = (int)Math.Round(lv[1]), W = (int)Math.Round(lv[2]), H = (int)Math.Round(lv[3]) }; }
+      } else if (lf != null && lf.Mark.Kind == "box" && lf.Target == ArtEquipFrames.KeyReplace) {   // «Заменить» on its visible plate (Button_Normal_2) where the game has put it (live rect, fresh)
+        var lay = new[] { (double)lf.Mark.X, lf.Mark.Y, lf.Mark.W, lf.Mark.H };
+        var lv = LiveFrame(ClickTarget.ArtReplace, null, W, H, U, true, lay);
+        ArtReplaceSay(lay, lv);
+        if (lv != null) {
+          liveReplace = true;
+          lf.Raw = new GeoRect { X = lv[0], Y = lv[1], W = lv[2], H = lv[3] };
+          lf.Mark = new LocateMark { Kind = "box", X = (int)Math.Round(lv[0]), Y = (int)Math.Round(lv[1]), W = (int)Math.Round(lv[2]), H = (int)Math.Round(lv[3]) };
+        }
       } else if (st.Kind == ArtEquipKind.PickCell && st.Pos > 0 && lf != null) {
         // the artifact's card where the game has put it (the grid's live cells): its frame; no live cell in the viewport: the layout's pill / nothing on a guessed box
         double[] lcf; var see = LiveCell(UiCellKind.HeroArt, artUid, null, W, H, U, new double[] { lf.Mark.X, lf.Mark.Y, lf.Mark.W, lf.Mark.H }, "art:" + artUid, out lcf);
         if (see == UiCellSee.Shown) lf = new LocateFrame { Target = "cell", Raw = new GeoRect { X = lcf[0], Y = lcf[1], W = lcf[2], H = lcf[3] }, Mark = new LocateMark { Kind = "box", X = (int)Math.Round(lcf[0]), Y = (int)Math.Round(lcf[1]), W = (int)Math.Round(lcf[2]), H = (int)Math.Round(lcf[3]) } };
         else if (see == UiCellSee.Hidden && lf.Mark.Kind == "box") lf = null;
       }
+      if (st.Kind == ArtEquipKind.PickCell && st.Pos > 0 && !st.Filter) {
+        // find the artifact: one steady hint for the whole step - the plate at the top while the list moves (no plate and frame laid out anew per
+        // drag), the side scroll strip (the part on the screen, the artifact's dot) redrawn only when the scroll moves; the card framed once the list stands still
+        bool still = artScroll.Note(hs != null && hs.ArtList != null ? hs.ArtList.ScrollY : double.NaN, NowMs());
+        var sp = hs != null ? ArtFrames.Strip(Geo.Current, ArtEquipFrames.KeyList, hs.ArtList, Math.Max(hs.ArtUids.Count, st.Pos), st.Pos - 1, 3, 116, W, H, U) : null;
+        if (sp != null) Scene(glow, ref drawnKey, null, null, null, new[] { o.X + sp[0], o.Y + sp[1], o.Y + sp[2], o.Y + sp[3], o.Y + sp[4], o.Y + sp[5] });
+        else { if (glow.Visible) glow.Hide(); drawnKey = null; }
+        if (still && lf != null && lf.Mark.Kind == "box") DrawTip(o.X + lf.Mark.X, o.Y + lf.Mark.Y, lf.Mark.W, lf.Mark.H, lines, H, false, false, false, caps != "" ? caps : null, false, HlArtEq(lf, st, o));
+        else if (lines.Length > 0) DrawTipTop(lines, caps != "" ? caps : null);
+        else HideTip();
+        return;
+      }
+      artScroll.Reset();
       if (lf != null && lf.Mark.Kind != "box") {   // the cell is off the screen: the pill at the list's edge
         Draw(lf.Mark.Kind, o.X + lf.Mark.X, o.Y + lf.Mark.Y, lf.Mark.W, lf.Mark.H, lf.Mark.Rows);
         if (lines.Length > 0) DrawTipTop(lines, caps != "" ? caps : null); else HideTip();
         return;
       }
       if (glow.Visible) glow.Hide(); drawnKey = null;
-      if (lf != null) DrawTip(o.X + lf.Mark.X, o.Y + lf.Mark.Y, lf.Mark.W, lf.Mark.H, lines, H, false, false, false, caps != "" ? caps : null, false, HlArtEq(lf, st, o));
+      Hl hl = null;
+      if (lf != null && liveReplace) {   // the live plate: its sprite's outline (LiveFrame), else a rounded box on it (the geometry's inset is of its own rect)
+        hl = HlLive(o.X + lf.Mark.X, o.Y + lf.Mark.Y, lf.Mark.W, lf.Mark.H) ?? HlRound(o.X + lf.Mark.X, o.Y + lf.Mark.Y, lf.Mark.W, lf.Mark.H, true);
+      } else if (lf != null) hl = HlArtEq(lf, st, o);
+      if (lf != null) DrawTip(o.X + lf.Mark.X, o.Y + lf.Mark.Y, lf.Mark.W, lf.Mark.H, lines, H, false, false, false, caps != "" ? caps : null, false, hl);
       else if (lines.Length > 0) DrawTipTop(lines, caps != "" ? caps : null);
       else HideTip();
+    }
+    /// <summary>The Ascension / recast list's side scroll strip for the step's item (screen px: {x, viewTop, viewBottom, dotY, b0, b1}), from the game's
+    /// scroll reading and the list's length; null = not a list step, no reading or no geometry (the pill alone).</summary>
+    double[] FoundryStrip(LocateStep st, W32.POINT o, double W, double H, double U) {
+      var rs = locateRs;
+      if (st == null || rs == null || st.Pos <= 0 || (st.Kind != LocateKind.AscendPick && st.Kind != LocateKind.RecastPick)) return null;
+      bool asc = st.Kind == LocateKind.AscendPick;
+      int n = Math.Max(asc ? rs.AscendEquips.Length : rs.Equips.Length, st.Pos);
+      var sp = FoundryPlace.Strip(Geo.Current, asc ? "ascend" : "recast", asc ? rs.AscendList : rs.RecastList, n, st.Pos - 1, W, H, U);
+      return sp == null ? null : new[] { o.X + sp[0], o.Y + sp[1], o.Y + sp[2], o.Y + sp[3], o.Y + sp[4], o.Y + sp[5] };
+    }
+    readonly ScrollStill artScroll = new ScrollStill();
+    string artReplaceSaid;
+    /// <summary>The test build's frame check of the card's «Заменить», once per change: the geometry's rect against the live plate's frame and how far it moved.</summary>
+    void ArtReplaceSay(double[] lay, double[] lv) {
+      if (!Channel.IsTest) return;
+      Func<double[], string> r4 = a => a == null ? "none" : "[" + (int)Math.Round(a[0]) + "," + (int)Math.Round(a[1]) + "," + (int)Math.Round(a[2]) + "," + (int)Math.Round(a[3]) + "]";
+      string k = "frame check: art replace layout=" + r4(lay) + " live=" + r4(lv)
+        + (lv != null ? " dx=" + (int)Math.Round(lv[0] + lv[2] / 2 - lay[0] - lay[2] / 2) + " dy=" + (int)Math.Round(lv[1] + lv[3] / 2 - lay[1] - lay[3] / 2) : "");
+      if (k == artReplaceSaid) return;
+      artReplaceSaid = k; Log.Write(k);
     }
 
     // the auto click for the artifact steps (src/ArtEquip.cs ArtEquipPilot): only with ArtAutoOn; «Заменить» of the card and of the pop-up also need the player's auto confirm.

@@ -4665,6 +4665,36 @@ static partial class CoreTests {
     Check(LocateFrames.ListMarker(g, vt + pad, vt, pad, p100, 20, 21, W, H, U) == null && LocateFrames.ListMarker(g, vt + pad, vt, pad, p100, 20, 0, W, H, U) == null, "list mark: a row outside the list -> none");
     Check(LocateFrames.ListMarker(null, vt + pad, vt, pad, p100, 20, 5, W, H, U) == null, "list mark: no geometry -> none (only the pill)");
 
+    // the side scroll strip of a live list (ListStrip): view 200..800, 20 rows of 100 px, row 0's top now at the view's top
+    var ls0 = ListStrip.Of(500, 200, 800, 200, 100, 20, 19);
+    Check(ls0 != null && ls0[0] == 500 && ls0[1] == 200 && ls0[2] == 800, "list strip: the track beside the viewport, over its whole height");
+    Check(Math.Abs(ls0[3] - (200 + 600 * 1950.0 / 2000)) < 0.01 && Math.Abs(ls0[4] - 200) < 0.01 && Math.Abs(ls0[5] - (200 + 600 * 600.0 / 2000)) < 0.01, "list strip: the last row's dot near the bottom, the bracket the top 600 of 2000 px");
+    var ls1 = ListStrip.Of(500, 200, 800, 200 - 700, 100, 20, 19);   // scrolled down 700 px
+    Check(Math.Abs(ls1[4] - (200 + 600 * 700.0 / 2000)) < 0.01 && Math.Abs(ls1[5] - (200 + 600 * 1300.0 / 2000)) < 0.01 && Math.Abs(ls1[3] - ls0[3]) < 0.01, "list strip: the scroll moves the bracket, the dot stays on the item");
+    var ls2 = ListStrip.Of(500, 200, 800, 200 - 5000, 100, 20, 0);   // past the end: clamped inside the track
+    Check(Math.Abs(ls2[4] - (200 + 600 * 1400.0 / 2000)) < 0.01 && Math.Abs(ls2[5] - 800) < 0.01 && Math.Abs(ls2[3] - (200 + 600 * 50.0 / 2000)) < 0.01, "list strip: an overscroll stays on the track, the first row's dot at the top");
+    var ls3 = ListStrip.Of(500, 200, 800, 200, 100, 3, 1);   // a list shorter than the view: the bracket covers the track
+    Check(Math.Abs(ls3[4] - 200) < 0.01 && Math.Abs(ls3[5] - 800) < 0.01 && Math.Abs(ls3[3] - (200 + 150)) < 0.01, "list strip: a short list -> the whole track bracketed, the dot at the row's place");
+    Check(ListStrip.Of(500, 200, 800, 200, 100, 20, 20) == null && ListStrip.Of(500, 200, 800, 200, 100, 0, 0) == null && ListStrip.Of(500, 200, 800, double.NaN, 100, 20, 1) == null, "list strip: a row outside / no rows / no scroll -> none");
+    var lv0 = new GeoRect { X = 10, Y = 200, W = 300, H = 600 };
+    var lf0 = ListStrip.For(lv0, 200, 100, 3, 59, 58, 1000, 1000);   // 59 items in 3 columns: 20 rows, the last item in row 19
+    Check(lf0 != null && Math.Abs(lf0[0] - (310 + 12)) < 0.01 && Math.Abs(lf0[3] - ls0[3]) < 0.01, "list strip: a grid's item index -> its row (index / columns), the track 0.012 H right of the view");
+    Check(ListStrip.For(lv0, 200, 100, 3, 59, 59, 1000, 1000) == null && Math.Abs(ListStrip.For(lv0, 200, 100, 3, 59, 0, 315, 1000)[0] - 309) < 0.01, "list strip: an index past the list -> none; the track kept inside the client");
+    // the hero screen's artifact list (ArtFrames.Strip): the same rows as its card frames (ArtFrames.Cell)
+    var arl = new RFX.ListRead { ScrollY = 232, Cols = 3, RowUnits = 116 };
+    var ars = ArtFrames.Strip(null, ArtEquipFrames.KeyList, arl, 30, 29, 3, 116, W, H, U);
+    var arv = ArtFrames.Rect(null, ArtEquipFrames.KeyList, W, H, U); double ak = U / GameGeometry.CanvasH;
+    Check(ars != null && Math.Abs(ars[1] - arv.Y) < 0.01 && Math.Abs(ars[2] - arv.Bottom) < 0.01, "art list strip: the track over the artifact list's viewport");
+    Check(Math.Abs(ars[3] - (arv.Y + arv.H * 9.5 / 10)) < 0.01 && Math.Abs(ars[4] - (arv.Y + arv.H * Math.Min(1, 232 * ak / (10 * 116 * ak)))) < 0.01, "art list strip: 30 cards = 10 rows, the last card's dot in row 10, the bracket at the scroll (2 rows down)");
+    Check(ArtFrames.Strip(null, ArtEquipFrames.KeyList, new RFX.ListRead(), 30, 1, 3, 116, W, H, U) == null && ArtFrames.Strip(null, ArtEquipFrames.KeyList, arl, 30, 30, 3, 116, W, H, U) == null, "art list strip: no scroll reading / an index past the list -> none");
+    Check(FoundryPlace.Strip(null, "ascend", arl, 30, 1, W, H, U) == null, "ascension strip: no geometry -> none (the pill alone)");
+    // the find step's still list: framed once the scroll has not moved for ScrollStill.StillMs
+    var ss = new ScrollStill();
+    Check(ss.Note(100, 1000), "scroll still: the first reading counts as still (the card framed at once)");
+    Check(!ss.Note(140, 1100) && !ss.Note(180, 1200) && !ss.Note(180.3, 1200 + ScrollStill.StillMs - 1) && ss.Note(180, 1200 + ScrollStill.StillMs), "scroll still: moving -> the steady plate; held StillMs -> still");
+    Check(ss.Note(double.NaN, 1300), "scroll still: no reading -> still (nothing to wait for)");
+    ss.Reset(); Check(ss.Note(5, 9000), "scroll still: after a reset the next reading is still again");
+
     // the real file: the card's button sits on the card's bottom edge at any window height, the bar next to the list
     string real = Path.Combine(WebRoot(), "data", "app-geometry");
     if (Directory.Exists(real)) foreach (var p in Directory.GetFiles(real, "*.json")) {

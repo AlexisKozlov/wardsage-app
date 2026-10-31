@@ -72,6 +72,40 @@ namespace RealmForge {
       f.Mark = m;
       return f;
     }
+
+    /// <summary>The side scroll indicator of the list (<paramref name="prefix"/> "ascend" / "recast") for the item at the 0-based <paramref name="index"/>
+    /// of <paramref name="count"/>, from the game's scroll reading (ListStrip.Of; client px). Null = no geometry, no reading or the index is outside the list.</summary>
+    public static double[] Strip(GameGeometry g, string prefix, RFX.ListRead l, int count, int index, double W, double H, double U) {
+      if (g == null || l == null || !l.Has) return null;
+      var view = g.Rect(prefix + ".list", W, H, U); var grid = g.Grid(prefix + ".list");
+      if (view == null || grid == null || view.H <= 0) return null;
+      int cols = l.Cols >= 1 ? l.Cols : grid.Cols;
+      double k = U / GameGeometry.CanvasH, pitch = (l.RowUnits > 0 ? l.RowUnits : grid.LineSize) * k;
+      return ListStrip.For(view, view.Y + PadSign * grid.PadTop * k - l.ScrollY * k, pitch, cols, count, index, W, H);
+    }
+  }
+
+  /// <summary>The side scroll indicator of a long list (the gold strip the gear list has): a slim track beside the viewport, a bracket for the part
+  /// on the screen and a dot where the target item is, from the list's live length, the item's index and the scroll. Pure (tests/CoreTests.cs).</summary>
+  public static class ListStrip {
+    /// <summary>The track's gap right of the viewport, of the client height (the gear list's 0.012).</summary>
+    public const double GapH = 0.012;
+    /// <summary>{x, viewTop, viewBottom, dotY, b0, b1} (client px, the strip PaintStrip draws): the content is <paramref name="rows"/> rows of
+    /// <paramref name="pitch"/> px whose first row's top is now at <paramref name="row0Top"/>; the item is in the 0-based <paramref name="row"/>.
+    /// Null = no rows, a row outside the list or no viewport.</summary>
+    public static double[] Of(double x, double viewTop, double viewBottom, double row0Top, double pitch, int rows, int row) {
+      if (pitch <= 0 || rows < 1 || row < 0 || row >= rows || viewBottom - viewTop < 8 || double.IsNaN(row0Top) || double.IsInfinity(row0Top)) return null;
+      double dotY, b0, b1, content = rows * pitch, scroll = Math.Max(0, Math.Min(Math.Max(0, content - (viewBottom - viewTop)), viewTop - row0Top));   // (a bounce past an end: the bracket stays at that end)
+      HintLayout.Strip(viewTop, viewBottom, content, scroll, (row + 0.5) * pitch, out dotY, out b0, out b1);
+      return new[] { x, viewTop, viewBottom, dotY, b0, b1 };
+    }
+    /// <summary>The strip of a grid list: <paramref name="cols"/> items a row, <paramref name="count"/> items, the item at the 0-based <paramref name="index"/>;
+    /// the track GapH right of <paramref name="view"/> (kept inside the W-wide client).</summary>
+    public static double[] For(GeoRect view, double row0Top, double pitch, int cols, int count, int index, double W, double H) {
+      if (view == null || cols < 1 || count < 1 || index < 0 || index >= count) return null;
+      double x = Math.Min(W - 6, view.Right + GapH * H);
+      return Of(x, view.Y, view.Bottom, row0Top, pitch, (count + cols - 1) / cols, index / cols);
+    }
   }
 
   /// <summary>A frame for a step: what it points at, where, and whether the auto mode may click it.</summary>
@@ -406,6 +440,19 @@ namespace RealmForge {
       }
       f.Mark = m; f.ViewX = view.X; f.ViewY = view.Y; f.ViewW = view.W; f.ViewH = view.H;
       return f;
+    }
+
+    /// <summary>The side scroll indicator of the list in <paramref name="rectKey"/> (the hero screen's artifact list) for the card at the 0-based
+    /// <paramref name="index"/> of <paramref name="count"/>, placed as <see cref="Cell"/> places it (ListStrip.For; client px). Null = unreadable / outside.</summary>
+    public static double[] Strip(GameGeometry g, string rectKey, RFX.ListRead l, int count, int index, int fallbackCols, double fallbackLine, double W, double H, double U) {
+      if (l == null || !l.Has) return null;
+      var view = Rect(g, rectKey, W, H, U);
+      if (view == null || view.H <= 0) return null;
+      var grid = g != null ? g.Grid(rectKey) : null;
+      int cols = l.Cols >= 1 ? l.Cols : grid != null ? grid.Cols : fallbackCols;
+      double line = l.RowUnits > 0 ? l.RowUnits : grid != null && grid.LineSize > 0 ? grid.LineSize : fallbackLine;
+      double padTop = grid != null ? grid.PadTop : 0, k = U / GameGeometry.CanvasH;
+      return ListStrip.For(view, view.Y + FoundryPlace.PadSign * padTop * k - l.ScrollY * k, line * k, cols, count, index, W, H);
     }
   }
 }

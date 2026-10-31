@@ -236,4 +236,20 @@ namespace RealmForge {
       return fresh;
     }
   }
+
+  /// <summary>A list's scroll held still: the list's scroll value (its own units; NaN = unreadable) noted each tick, still once it has not moved by
+  /// more than <see cref="Tol"/> for <see cref="StillMs"/> (the first value seen counts as still; unreadable = still). The find-the-item step frames
+  /// the item only then, so a drag does not move the plate and the frame each tick. Pure (tests/CoreTests.cs).</summary>
+  public sealed class ScrollStill {
+    public const int StillMs = 350;
+    public const double Tol = 0.5;
+    double y = double.NaN; long at;
+    public bool Note(double scroll, long now) {
+      if (double.IsNaN(scroll)) return true;
+      if (double.IsNaN(y)) { y = scroll; at = now - StillMs; }
+      else if (Math.Abs(scroll - y) > Tol) { y = scroll; at = now; }
+      return now - at >= StillMs;
+    }
+    public void Reset() { y = double.NaN; at = 0; }
+  }
 }

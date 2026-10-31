@@ -200,6 +200,9 @@ namespace RealmForge {
         case ClickTarget.AscendTab: return new UiWidget("Form_EquipSubliming", "m_ToggleSubliming") { Icon = true };
         case ClickTarget.ArtWorkshop: return new UiWidget("Form_BackpackIntegration", "m_PanelContentCur.m_BtnIntensify") { Icon = true };   // (the artifact card's «Мастерская»: it moves left when «Продать» is hidden on a worn artifact)
         case ClickTarget.ArtHideWorn: return new UiWidget("Form_CharactorMain", "m_Panels.EquipArtifact.m_HideEquiped");   // (the artifact list's «Скрыть надетое»: the whole toggle takes the click)
+        // the selected artifact's «Заменить» / «Надеть» (the compare tip's, else the hero's card's): framed on its visible plate Button_Normal_2 where the
+        // game has put it (the geometry's rect is the plate's from the left edge at one aspect: on a wider client it sat left of the button)
+        case ClickTarget.ArtReplace: return new UiWidget("Form_CharactorMain", "m_Panels.EquipArtifactInfoTip.m_BtnEquip", "m_Panels.EquipArtifactInfo.m_BtnEquip") { Icon = true, IconChild = "Button_Normal_2" };
         case ClickTarget.EquipConfirm: return new UiWidget("Form_CharactorEquipTip", "m_SelectEquipView.m_RightBtn.m_gameObject", "m_OneEquipView.m_RightBtn.m_gameObject") { Icon = true };
         case ClickTarget.OfferClose: return string.IsNullOrEmpty(offerForm) ? null : new UiWidget(offerForm, OfferClosePaths) { Icon = true, Discover = true };
       }
