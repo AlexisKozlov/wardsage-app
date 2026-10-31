@@ -77,12 +77,17 @@ namespace RealmForge {
       var xs = new System.Collections.Generic.List<int> { Clamp(tx + tw / 2 - w / 2, Margin, W - w - Margin), tx, tx + tw - w, Margin, W - w - Margin };
       if (avoid != null) foreach (var a in avoid) if (a != null) { ys.Add(a[1] - Gap - h); ys.Add(a[1] + a[3] + Gap); xs.Add(a[0] - Gap - w); xs.Add(a[0] + a[2] + Gap); }
       // a rect of avoid that holds the target whole is the target's row (the city bar): only above or below it, never beside along the row
-      bool row = false;
-      if (avoid != null) foreach (var a in avoid) if (a != null && a[0] <= tx && a[1] <= ty && a[0] + a[2] >= tx + tw && a[1] + a[3] >= ty + th) row = true;
+      bool row = false; int rowTop = ty, rowBottom = ty + th;
+      if (avoid != null) foreach (var a in avoid) if (a != null && a[0] <= tx && a[1] <= ty && a[0] + a[2] >= tx + tw && a[1] + a[3] >= ty + th) { row = true; rowTop = Math.Min(rowTop, a[1]); rowBottom = Math.Max(rowBottom, a[1] + a[3]); }
       string order = row ? "tb" : tw > th * 1.6 ? "tbrl" : "rltb";
       foreach (char s in order) {
         if (s == 'r' || s == 'l') { int x = s == 'r' ? tx + tw + Gap : tx - Gap - w; foreach (int y in ys) res.Add(new[] { x, y, s }); }
-        else { int y = s == 't' ? ty - Gap - h : ty + th + Gap; foreach (int x in xs) res.Add(new[] { x, y, s }); }
+        else {
+          // a target in a row: above / below the whole row first (its taller neighbours: the hero gear tab's round buttons), then by the target
+          int y = s == 't' ? ty - Gap - h : ty + th + Gap, yr = s == 't' ? rowTop - Gap - h : rowBottom + Gap;
+          if (yr != y) foreach (int x in xs) res.Add(new[] { x, yr, s });
+          foreach (int x in xs) res.Add(new[] { x, y, s });
+        }
       }
       return res;
     }

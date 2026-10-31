@@ -4505,6 +4505,41 @@ static partial class CoreTests {
   }
 
   // ------------------------------------------------------------------ screen geometry (src/Geometry.cs) and the frames built on it (src/LocateFrames.cs)
+  // ------------------------------------------------------------------ the hero gear tab's bottom row (lab 1.6.66.424, client 1350x689)
+  static void HeroGearRowTests() {
+    // the live «Литейная» icon at [824,567,47,43] (frame check), «Улучшение самоцветами» ~750, «Быстрая смена» ~942; the site's data (prefab state,
+    // the column slid off the screen) put the frame at [1177,548,87,89], right of «Быстро надеть»
+    string gp = Path.Combine("tests", "fixtures", "screens", "_geometry.json");
+    if (!File.Exists(gp)) { Console.WriteLine("  (skip: no " + gp + ")"); return; }
+    var geo = GameGeometry.Parse(File.ReadAllText(gp, Encoding.UTF8), "1.6.39.829.1");
+    double W = 1350, H = 689, U = Ui.Unit(W, H);
+    var wk = geo.Rect("hero.workshop", W, H, U); var gem = geo.Rect("hero.gem", W, H, U); var sw = geo.Rect("hero.switching", W, H, U);
+    Check(wk != null && Math.Abs(wk.CX - 847.5) < 6 && Math.Abs(wk.CY - 588.5) < 8, "hero row: «Литейная» on the live icon (" + (wk != null ? wk.CX + "," + wk.CY : "none") + " vs 847.5,588.5)");
+    Check(wk != null && wk.X <= 824 && wk.Right >= 871 && wk.Y <= 567 && wk.Bottom >= 610, "hero row: «Литейная» rect holds the live icon");
+    Check(gem != null && Math.Abs(gem.CX - 750) < 10 && sw != null && Math.Abs(sw.CX - 942) < 10, "hero row: «Улучшение самоцветами» and «Быстрая смена» on theirs (" + (gem != null ? gem.CX : 0) + ", " + (sw != null ? sw.CX : 0) + ")");
+    // data already of the shown state (the generator fixed) is not moved again
+    var fixedJson = "{\"game\":\"9.8.7.6.5\",\"v\":1,\"rects\":{" + GeoBox("hero.workshop", "R:-0.7937", "R:-0.6671", "M:0.2948", "M:0.4245", 0.1266, 0.1297) + "}}";
+    var g2 = GameGeometry.Parse(fixedJson, "9.8.7.6.5"); var wk2 = g2 != null ? g2.Rect("hero.workshop", W, H, U) : null;
+    Check(wk2 != null && Math.Abs(wk2.CX - 847.5) < 6, "hero row: data of the shown state stays (" + (wk2 != null ? wk2.CX : 0) + ")");
+    // the step plate (~450x70) beside «Литейная»: off the target, the row's buttons, the quick buttons and the right tab column
+    var st = new LocateStep { Kind = LocateKind.OpenFoundry, OnGear = true };
+    var av = new List<int[]>();
+    foreach (var k in LocateFrames.AvoidKeys(st)) { var r = geo.Rect(k, W, H, U); if (r != null) av.Add(new[] { (int)r.X, (int)r.Y, (int)Math.Ceiling(r.W), (int)Math.Ceiling(r.H) }); }
+    foreach (var r in LocateFrames.AvoidAreas(st, geo, W, H, U)) av.Add(new[] { (int)r.X, (int)r.Y, (int)Math.Ceiling(r.W), (int)Math.Ceiling(r.H) });
+    int[] target = { 824, 567, 47, 43 }; char side;
+    foreach (var pw in new[] { 450, 560 }) {
+      var pos = HintLayout.Place(target, av.ToArray(), pw, 70, (int)W, (int)H, out side);
+      Func<int[], bool> hit = r => pos[0] < r[0] + r[2] && r[0] < pos[0] + pw && pos[1] < r[1] + r[3] && r[1] < pos[1] + 70;
+      bool clear = !hit(target);
+      int[][] keep = { new[] { (int)gem.X, (int)gem.Y, (int)gem.W, (int)gem.H }, new[] { (int)sw.X, (int)sw.Y, (int)sw.W, (int)sw.H },
+        new[] { (int)(W - 0.1656 * U), 0, (int)(0.1656 * U), (int)H }, new[] { 980, 630, 263, 40 } };   // the tab column; «Быстро снять / надеть» (client px off the shot)
+      foreach (var r in keep) clear &= !hit(r);
+      Check(side == 't' && pos[0] <= 847 && pos[0] + pw >= 847 && pos[1] + 70 <= 548, "hero row: the " + pw + " px plate stands above «Литейная» and its row (" + pos[0] + "," + pos[1] + " " + side + ")");
+      Check(clear, "hero row: a " + pw + " px plate leaves «Литейная», the row, the quick buttons and the tab column free (at " + pos[0] + "," + pos[1] + " side " + side + ")");
+    }
+    Check(LocateFrames.AvoidAreas(new LocateStep { Kind = LocateKind.OpenFoundry }, geo, W, H, U).Length == 0, "hero row: no hero areas on the inventory's «Литейная» step");
+  }
+
   static string GeoBox(string key, string x0, string x1, string y0, string y1, double w, double h) {
     // "L:0.1" style edges
     Func<string, string> e = s => "[\"" + s.Split(':')[0] + "\"," + s.Split(':')[1] + "]";
@@ -4653,6 +4688,7 @@ static partial class CoreTests {
     Check(f != null && f.Clickable && Math.Abs(f.ClickY - (0.0328 + 0.25 + 0.0625) * U) < 0.01, "frame: the «Вознесение» tab, clickable");
     f = LocateFrames.For(new LocateStep { Kind = LocateKind.OpenFoundry }, item, rs, null, g, W, H, U); Check(f != null && f.Clickable && f.Target == "inventory.workshop", "frame: «Литейная» in the inventory, clickable");
     f = LocateFrames.For(new LocateStep { Kind = LocateKind.OpenFoundry, OnGear = true }, item, rs, null, g, W, H, U); Check(f != null && f.Clickable && f.Target == "hero.workshop", "frame: «Литейная» on the hero's gear screen, clickable");
+    HeroGearRowTests();
     f = LocateFrames.For(new LocateStep { Kind = LocateKind.AscendFilter, Missing = new[] { "slot", "main" } }, item, rs, null, g, W, H, U); Check(f != null && f.Clickable && f.Target == "ascend.slot.3", "frame: the item's slot tab first, clickable");
     f = LocateFrames.For(new LocateStep { Kind = LocateKind.AscendFilter, Missing = new[] { "main", "subs" } }, item, rs, null, g, W, H, U); Check(f != null && !f.Clickable && f.Target == "ascend.filter", "frame: the filter button is only pointed at");
     f = LocateFrames.For(S(LocateKind.AscendReady), item, rs, null, g, W, H, U); Check(f != null && !f.Clickable && f.Target == "ascend.button", "frame: «Вознести», never clickable");

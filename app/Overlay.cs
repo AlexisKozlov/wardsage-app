@@ -2236,6 +2236,7 @@ namespace RealmForge {
         var lv = t != null ? RFX.UiButtonLive(t.Value, W, H, Environment.TickCount) : null;
         if (lv != null) res.Add(new[] { o.X + (int)lv[0], o.Y + (int)lv[1], (int)Math.Ceiling(lv[2]), (int)Math.Ceiling(lv[3]) });
       }
+      foreach (var r in LocateFrames.AvoidAreas(step, g, W, H, U)) res.Add(new[] { o.X + (int)r.X, o.Y + (int)r.Y, (int)Math.Ceiling(r.W), (int)Math.Ceiling(r.H) });   // the hero's tab column and button row
       return res.Count > 0 ? res.ToArray() : null;
     }
 
