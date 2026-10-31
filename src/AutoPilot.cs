@@ -116,7 +116,7 @@ namespace RealmForge {
     // the list rebuilt by a filter / toggle (live 1.6.66.442 «Скрыть надетое»: the re-anchoring click on the old rows picked a random item, the
     // item itself was clicked a second later): no click until the filter has rested ListSettleMs, the list's sign and the target's live cell are
     // the same on two reads; with live cells the item is clicked only at its live cell, a calibration click on the row math never
-    long listSig = long.MinValue, listSigAt, liveWaitSince, liveSeenAt; double liveSeenX = double.NaN, liveSeenY; int liveSame;
+    long listSig = long.MinValue, listSigAt, liveWaitSince, liveSeenAt; double liveSeenX = double.NaN, liveSeenY;
     public const int ListSettleMs = 450, LiveWaitMs = 5000;
     /// <summary>List clicks with no effect for one item before the pilot stops; the same point at most this often in a row.</summary>
     public const int NoEffectTries = 3, SamePointMax = 2;
@@ -162,7 +162,7 @@ namespace RealmForge {
         selSince = 0; confirmed = false; confirmRetries = 0; tipReopens = 0; lastRetry = false; State = "idle"; Why = "";
         slotWaits = afterClicks = wrongs = 0; lastSlotClick = 0; itemPending = false; row1Fix = double.NaN;
         row1Off = double.NaN; noEffect = samePt = 0; typesLen = -1; lastPtX = lastPtY = double.NaN; lastNoEffect = false;
-        listSig = long.MinValue; liveWaitSince = 0; liveSame = 0; liveSeenX = double.NaN;
+        listSig = long.MinValue; liveWaitSince = 0; liveSeenX = double.NaN;
       }
       if (key == "") { State = "idle"; return AutoAction.Nothing; }
       curSel = v.Sel; nowMs = v.NowMs; curKey = Key(v); curTip = v.TipKnown && v.TipShown;
@@ -263,9 +263,9 @@ namespace RealmForge {
       // holds still (the sign the same on two reads, the filter at rest ListSettleMs)
       if (v.ListSig != listSig) {
         bool firstSig = listSig == long.MinValue; listSig = v.ListSig; listSigAt = v.NowMs;
-        if (!firstSig) { row1Off = row1Fix = double.NaN; itemPending = calibPending = needCalib = false; lastPtX = lastPtY = double.NaN; samePt = 0; liveSame = 0; liveSeenX = double.NaN; waitUntil = v.NowMs + EffectWait.StableMs; effect.Drop(); Trace = "the list was rebuilt: read again"; return AutoAction.Nothing; }
+        if (!firstSig) { row1Off = row1Fix = double.NaN; itemPending = calibPending = needCalib = false; lastPtX = lastPtY = double.NaN; samePt = 0; liveSeenX = double.NaN; waitUntil = v.NowMs + EffectWait.StableMs; effect.Drop(); Trace = "the list was rebuilt: read again"; return AutoAction.Nothing; }
       }
-      if (v.FilterAt > 0 && v.NowMs - v.FilterAt < ListSettleMs) { liveSame = 0; liveSeenX = double.NaN; waitUntil = Math.Max(waitUntil, v.FilterAt + ListSettleMs); return AutoAction.Nothing; }
+      if (v.FilterAt > 0 && v.NowMs - v.FilterAt < ListSettleMs) { liveSeenX = double.NaN; waitUntil = Math.Max(waitUntil, v.FilterAt + ListSettleMs); return AutoAction.Nothing; }
       // the list changed its length (a filter): what was learnt of its rows is stale - one more read before any click
       int tl = v.Types != null ? v.Types.Length : 0;
       if (tl != typesLen) {
@@ -303,7 +303,7 @@ namespace RealmForge {
           if (++wrongs >= WrongTries) return Fail("wrong item " + v.Sel + " at row " + v.SelRow + "/" + v.SelCol);
           Trace = "wrong item " + v.Sel + " at row " + v.SelRow + "/" + v.SelCol + " (clicked for row " + v.Row + "/" + v.Col + ")";
           if (!v.LiveGrid && !(v.SelRow > 0 && v.Types != null && v.SelRow < v.Types.Length)) needCalib = true;
-          if (v.LiveGrid) { liveSame = 0; liveSeenX = double.NaN; waitUntil = v.NowMs + EffectWait.StableMs; effect.Drop(); return AutoAction.Nothing; }   // the live cell held another item: the list moved - read again
+          if (v.LiveGrid) { liveSeenX = double.NaN; waitUntil = v.NowMs + EffectWait.StableMs; effect.Drop(); return AutoAction.Nothing; }   // the live cell held another item: the list moved - read again
         }
       }
       // the re-anchoring click selected nothing new (a gap, a title row, the same item): once more, a row further
@@ -319,10 +319,10 @@ namespace RealmForge {
       if (v.LiveGrid) {
         if (v.LiveTarget) {
           liveWaitSince = 0;
+          // (the host reads the cells about every 200 ms: a tick between two reads may see none - a gap keeps what was seen, a moved cell starts over)
           bool same = !double.IsNaN(liveSeenX) && Math.Abs(v.LiveX - liveSeenX) < 1.5 && Math.Abs(v.LiveY - liveSeenY) < 1.5;
-          if (same) { if (v.NowMs - liveSeenAt >= EffectWait.StableMs) liveSame++; } else { liveSame = 0; liveSeenAt = v.NowMs; }
-          liveSeenX = v.LiveX; liveSeenY = v.LiveY;
-          if (liveSame < 1 || v.NowMs - listSigAt < EffectWait.StableMs) return AutoAction.Nothing;   // two equal reads first
+          if (!same) { liveSeenAt = v.NowMs; liveSeenX = v.LiveX; liveSeenY = v.LiveY; }
+          if (v.NowMs - liveSeenAt < EffectWait.StableMs || v.NowMs - listSigAt < EffectWait.StableMs) return AutoAction.Nothing;   // the same place on reads 50 ms apart first
           needCalib = calibPending = false; wrongs = 0;
           if (confirmed) { if (afterClicks >= AfterConfirmClicks) { State = "unconfirmed"; Why = "the item is not selected again after the confirm press (sel " + v.Sel + ", owner " + v.Owner + ")"; Trace = "unconfirmed: " + Why; return AutoAction.Nothing; } afterClicks++; }
           else if (clicks >= ClickTries) return Fail("item " + v.Target + " not selected after " + clicks + " clicks (sel " + v.Sel + ")");
@@ -335,7 +335,6 @@ namespace RealmForge {
         }
         if (liveWaitSince == 0) liveWaitSince = v.NowMs;
         liveOnly = v.NowMs - liveWaitSince < LiveWaitMs;
-        liveSame = 0; liveSeenX = double.NaN;
         if (liveOnly) { needCalib = calibPending = false; if (!v.AnchorHas) return AutoAction.Nothing; }
       }
       // no idea where the rows are: click an item in the middle, the game says which one it is

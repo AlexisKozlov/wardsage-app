@@ -4306,7 +4306,7 @@ namespace RealmForge {
       if (target <= 0 || cr.R <= 0 || cr.B <= 0) return;
       double W = cr.R, Hc = cr.B, U = Ui.Unit(cr.R, cr.B);
       RFX.UiCellWant(UiCellKind.HeroGear, new[] { target }, W, Hc, U);
-      var s = RFX.UiCellFresh(UiCellKind.HeroGear, target, W, Hc, Environment.TickCount, RFX.UiFreshMs);
+      var s = RFX.UiCellFresh(UiCellKind.HeroGear, target, W, Hc, Environment.TickCount, RFX.UiFrameFreshMs);   // (the ticks are ~200 ms apart: a 200 ms limit left most ticks without a read)
       if (s == null || !s.Ok || !s.Visible || s.Rotated || s.Copies != 1 || s.VW < 4 || s.VH < 4) return;
       if (!RFX.UiCellTopIs(UiCellKind.HeroGear, screens.Current)) return;
       v.LiveGrid = true;

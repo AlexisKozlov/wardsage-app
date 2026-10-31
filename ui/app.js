@@ -898,7 +898,12 @@
     else if (a === 'autoUpdate') { S.autoUpdate = !S.autoUpdate; host.send({ cmd: 'setAutoUpdate', on: S.autoUpdate }); render(); }
     else if (a === 'errorReports') { S.errorReports = !S.errorReports; host.send({ cmd: 'setErrorReports', on: S.errorReports }); if (S.errorReports) toast(t(S.hasCode ? 'reportsOn' : 'reportsNoCode'), 6000); render(); }
     else if (a === 'autoSync') { S.autoSync = !S.autoSync; host.send({ cmd: 'setAutoSync', on: S.autoSync }); render(); }
-    else if (a === 'autoClick') { S.autoClick = !S.autoClick; host.send({ cmd: 'setAutoClick', on: S.autoClick }); syncHighlight(); render(); }
+    else if (a === 'autoClick') {
+      S.autoClick = !S.autoClick; host.send({ cmd: 'setAutoClick', on: S.autoClick });
+      // switched on with a plan made a moment ago waiting (it came while auto click was off): it starts now, as if it had come with the setting on
+      if (S.autoClick) labRecheck();
+      syncHighlight(); render();
+    }
     else if (a === 'autoConfirm') {
       S.autoConfirm = !S.autoConfirm; host.send({ cmd: 'setAutoConfirm', on: S.autoConfirm });
       if (S.autoConfirm) toast(t('autoConfirmOn'));
@@ -1172,7 +1177,7 @@
     }
   });
 
-  // lab (test build): the host forced auto click on after the plans / the list had come in: start them like the toggle would
+  // auto click switched on (the setting, or the lab forcing it) after the plans / the list had come in: start them as if they had come with it on
   function labRecheck() {
     if (!S.game.running) return;
     const fresh = G.freshPlans(S.plans.list, {}, Date.now()).filter((p) => S.run !== p.id && !S.queue.includes(p.id));
