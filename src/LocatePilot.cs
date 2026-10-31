@@ -39,6 +39,10 @@ namespace RealmForge {
     CardGem,           // recast: the selected item's card, the gem button («Улучшение самоцветами»)
     GemFunc,           // recast: the gem screen's list row of the wanted function («Преобразование» / «Продв. преобразование»)
     AscendCell,        // the item is in the Ascension list: scroll to it and click its cell (selecting only)
+    InvFilter,         // the inventory's list is long: a button / toggle of its filter panel (LocateMove.FilterKey; owner LocateFilter)
+    InvFilterCell,     // ... a set of the filter's pop-up (LocateMove.FilterArg = the set's id)
+    InvFilterDrag,     // ... a drag that scrolls the pop-up's list
+    InvFilterClose,    // ... a click outside that closes the pop-up (FilterArg 1) / the panel (0); the filter stays
     Stop               // cannot go on alone
   }
 
@@ -61,6 +65,7 @@ namespace RealmForge {
     public PlanItem Item;             // the item looked for
     public string Purpose = "";       // the request's purpose: recast | ascend
     public bool[] FoundryTabs;        // which of the Foundry's tabs are shown (null = all assumed)
+    public InvFilterView Filter;      // the inventory's filter for a long search (null = the host does not offer it: the list is scrolled as before)
   }
 
   public sealed class LocateMove {
@@ -71,6 +76,8 @@ namespace RealmForge {
     public string Why = "";
     /// <summary>What the action is for (the host maps it to the click gate's target; Nothing when there is no action).</summary>
     public LocateTodo Todo = LocateTodo.Nothing;
+    /// <summary>InvFilter*: the filter widget's key (src/UiButtons.cs InvFilterWidget), and the argument (the set id of InvFilterCell, 1 for the pop-up of InvFilterClose, the toggle's meaning).</summary>
+    public string FilterKey = ""; public long FilterArg;
   }
 
   public static class LocateAuto {
@@ -198,7 +205,7 @@ namespace RealmForge {
     /// <summary>A new request (or the player stopped it): start over.</summary>
     public void Reset() {
       latched = ""; waitUntil = pauseUntil = workSince = 0; kind = LocateTodo.Nothing; kindClicks = actions = clicks = drags = 0;
-      list.Reset(); geoW = geoH = 0; geoCols = 0; Trace = ""; dragFrom = double.NaN; dragStill = 0; waitKind = LocateKind.None; waitSince = waitSeen = 0;
+      list.Reset(); geoW = geoH = 0; geoCols = 0; Trace = ""; dragFrom = double.NaN; dragStill = 0; waitKind = LocateKind.None; waitSince = waitSeen = 0; filt.Reset();
       cellSy = cellX = cellY = double.NaN; cellSame = 0;
       unsentOk = false; unsentRun = 0; clickedAt = 0; confirmWait = false;
     }
@@ -261,6 +268,8 @@ namespace RealmForge {
           return Click(m, v, f.ClickX, f.ClickY, todo == LocateTodo.FoundryButton ? AfterButtonMs : AfterTabMs, todo == LocateTodo.FoundryButton ? "foundry" : todo == LocateTodo.AscendTab ? "ascend tab" : "slot tab");
         }
         case LocateTodo.CardGem: case LocateTodo.GemFunc: {
+          // the filter this pilot set for the search is cleared before the card's button leaves the inventory (the game keeps it when the player comes back)
+          if (todo == LocateTodo.CardGem && v.Filter != null) { var cm = FilterMove(m, v, true); if (cm != null) return cm; }
           if (++kindClicks > MaxStepClicks) return Abort(m, "stuck");
           var f = todo == LocateTodo.CardGem ? LocateFrames.For(v.Step, v.Item, v.Rs, v.FoundryTabs, v.Geometry, v.W, v.H, v.U)
                                              : LocateFrames.GemRow(v.Geometry, v.Rs, v.Step.Func, v.W, v.H, v.U, true);
@@ -270,8 +279,32 @@ namespace RealmForge {
         case LocateTodo.AscendCell:
           return AscendCell(m, v);
         default:
+          if (v.Filter != null) { var fm = FilterMove(m, v, false); if (fm != null) return fm; }
           return PickItem(m, v);
       }
+    }
+
+    // ---- the inventory's filter for a long search (InvFilterPilot): its own presses, owner LocateFilter; its stop never stops the search
+    readonly InvFilterPilot filt = new InvFilterPilot();
+    /// <summary>The click gate stopped the filter pilot (owner LocateFilter): no more filter presses for this request, the list is scrolled as before.</summary>
+    public void FilterHalt(string why) { filt.Off(why); Say("filter off: " + why); }
+    /// <summary>The filter pilot's state (idle | work | done | skipped | off) and why, for the log.</summary>
+    public string FilterState { get { return filt.State; } }
+    public string FilterNote { get { return filt.Note; } }
+    public bool FilterUsed { get { return filt.Used; } }
+    /// <summary>The last filter press was not sent (the gate refused it for now): taken back.</summary>
+    public void FilterNotSent() { filt.NotSent(); waitUntil = 0; actions--; }
+
+    LocateMove FilterMove(LocateMove m, LocateView v, bool clear) {
+      var fv = v.Filter; fv.Selected = clear;
+      var mv = filt.Step(fv);
+      if (mv == null) return null;
+      Say("filter " + filt.State + (filt.Note != "" ? " (" + filt.Note + ")" : "") + (mv.Todo != LocateTodo.Nothing ? ": " + mv.Todo + " " + mv.Key : ""));
+      if (mv.Todo == LocateTodo.Nothing) return m;   // waits for the game
+      actions++;
+      m.Todo = mv.Todo; m.FilterKey = mv.Key; m.FilterArg = mv.Arg; m.Action = mv.Action;
+      waitUntil = v.NowMs + InvFilterPilot.WaitMs;
+      return m;
     }
 
     LocateMove Click(LocateMove m, LocateView v, double x, double y, int waitMs, string what) {
@@ -571,5 +604,167 @@ namespace RealmForge {
     }
 
     void Say(string t) { Trace = Trace == "" ? t : Trace + "; " + t; }
+  }
+}
+
+namespace RealmForge {
+  /// <summary>What the host sees this tick for the inventory's filter (the equipment list of «Инвентарь», «Найти в игре» recast).</summary>
+  public sealed class InvFilterView {
+    public long NowMs;
+    public bool Foreground, UserBusy;
+    public double W, H, U;
+    public PlanItem Item;
+    public bool Wanted;              // the list is long and the item is off the first screen: the filter helps
+    public bool Selected;            // set by the Locate pilot: the item's card is open (the clear phase)
+    public InvFilterRead F;          // the game's filter (null / not Known = unreadable: the pilot stays out)
+    /// <summary>The set's cell in the pop-up's list (the live cell read): 0 = not read, 1 = shown (CellRect), 2 = not in the view.</summary>
+    public int SuitCell; public double[] CellRect;
+    public double[] GridView;        // the pop-up list's viewport (client px x, y, w, h)
+    public int CellFirst = -1, CellLast = -1;   // the list indices the grid has made cells for
+  }
+
+  public sealed class InvFilterMove {
+    public LocateTodo Todo = LocateTodo.Nothing;   // Nothing = waits for the game
+    public string Key = ""; public long Arg;
+    public AutoAction Action = AutoAction.Nothing;
+  }
+
+  /// <summary>«Найти в игре» recast: to find ONE item in a long equipment list of the inventory the pilot sets the game's own filter first (the funnel next to the sort
+  /// button): the item's set (the pop-up's list, scrolled when the set is out of view) and its quality, then closes the panel (the filter stays: only a click outside)
+  /// and picks the cell from the short list by its live rect. The filter is the game's - it keeps it while the player comes back from the gem screen, so before the
+  /// card's button is pressed the pilot clears it (the panel's «Сбросить»). Presses are toggles of the filter only (owner LocateFilter, its own gate stop: a refusal
+  /// ends the filter and the list is scrolled as before); never «Продать» / the card's buttons. A filter the player already has is left alone. Mass sale keeps the
+  /// no-filter logic (the storage cleanup pilot never gets here). Pure (tests/CoreTests.cs).</summary>
+  public sealed class InvFilterPilot {
+    public const int WaitMs = 700, Tries = 3, MaxDrags = 6, MaxActions = 30, MinRow = 3;   // MinRow: 0-based rows above which the item counts as off the first screen
+    /// <summary>The keys of the widgets a click may press (the others of InvFilterWidget are only read).</summary>
+    public static bool ClickKey(string k) {
+      switch (k ?? "") { case "funnel": case "suitOpen": case "suitLeft": case "suitRight": case "reset": return true; }
+      return QualityMapKey(k) > 0;
+    }
+    /// <summary>The quality toggle (q1..q6) of the panel for an item quality; "" = none. The game's rows: q1 = 12+, q2 = 8 / 11, q3 = 6 / 10, q4 = 5 / 7, q5 = 4, q6 = 3.</summary>
+    public static string QualityKey(int q) {
+      if (q >= 12) return "q1"; if (q == 8 || q == 11) return "q2"; if (q == 6 || q == 10) return "q3"; if (q == 5 || q == 7) return "q4"; if (q == 4) return "q5"; if (q == 3) return "q6";
+      return "";
+    }
+    /// <summary>The ItemQuality key the game stores for a toggle (0 = not a quality toggle).</summary>
+    public static long QualityMapKey(string key) {
+      switch (key ?? "") { case "q1": return 12; case "q2": return 8; case "q3": return 6; case "q4": return 5; case "q5": return 4; case "q6": return 3; }
+      return 0;
+    }
+    /// <summary>The widget's layout point (client px) from the prefab: the canvas 1136 x 640, the panel anchored right / top; the host presses the live rect instead when it reads one.</summary>
+    public static double[] Layout(string key, double W, double H, double U) {
+      double cx, cy;
+      switch (key) {
+        case "funnel": cx = 851.7; cy = 97.5; break;
+        case "suitOpen": cx = 1077.0; cy = 228.1; break;
+        case "suitLeft": cx = 574.7; cy = 285.1; break;
+        case "suitRight": cx = 724.2; cy = 285.1; break;
+        case "reset": cx = 965.7; cy = 603.9; break;
+        default: {
+          long q = QualityMapKey(key); if (q <= 0) return null;
+          cx = 851.5 + (key[1] - '1') * 45.6; cy = 308; break;
+        }
+      }
+      return new[] { W - (1136 - cx) * U / 640.0, cy * U / 640.0 };
+    }
+
+    long item = -1, waitUntil; int actions, drags, closeTries, funTries, openTries, tabTries, cellTries, qTries, resetTries, waits;
+    bool off, done, setSkipped, qSkipped, clearDone, used;
+    string lastKey = "";
+    /// <summary>idle | work | done | skipped | off</summary>
+    public string State = "idle";
+    public string Note = "";
+    /// <summary>This pilot changed the game's filter (its clear phase is due before the card's button).</summary>
+    public bool Used { get { return used && !clearDone; } }
+
+    public void Reset() { item = -1; off = false; State = "idle"; Note = ""; }
+    /// <summary>The click gate stopped the filter (owner LocateFilter): no more presses for this request.</summary>
+    public void Off(string why) { off = true; State = "off"; Note = why; }
+    /// <summary>The last press was not sent (the gate refused it for now): taken back.</summary>
+    public void NotSent() { if (lastKey != "") { actions--; waitUntil = 0; lastKey = ""; } }
+
+    InvFilterMove Wait() { return new InvFilterMove(); }
+    InvFilterMove Press(InvFilterView v, string key, long arg = 0) {
+      actions++; waitUntil = v.NowMs + WaitMs; lastKey = key; State = "work";
+      var p = Layout(key, v.W, v.H, v.U);
+      return new InvFilterMove { Todo = key == "close" || key == "close1" ? LocateTodo.InvFilterClose : LocateTodo.InvFilter, Key = key, Arg = arg, Action = new AutoAction { Kind = AutoKind.Click, X = p[0], Y = p[1] } };
+    }
+    InvFilterMove Close(InvFilterView v) {
+      // a click outside the panel (the game's m_PanelClose lies over the screen): the first one closes the set pop-up, the next the panel; a point on the list's left part
+      bool suit = v.F.SuitOpen;
+      if (++closeTries > 2 * Tries) { done = true; Note = "the panel did not close"; State = "done"; return null; }
+      actions++; waitUntil = v.NowMs + WaitMs; lastKey = "close";
+      return new InvFilterMove { Todo = LocateTodo.InvFilterClose, Key = "close", Arg = suit ? 1 : 0, Action = new AutoAction { Kind = AutoKind.Click, X = 0.30 * v.W, Y = 0.55 * v.H } };
+    }
+
+    /// <summary>The press to make, an empty move to wait, or null: nothing to do with the filter (the list pilot goes on).</summary>
+    public InvFilterMove Step(InvFilterView v) {
+      if (v == null || v.Item == null) return null;
+      if (v.Item.Uid != item) {
+        item = v.Item.Uid; waitUntil = 0; actions = drags = closeTries = funTries = openTries = tabTries = cellTries = qTries = resetTries = waits = 0;
+        done = setSkipped = qSkipped = clearDone = used = false; State = "idle"; Note = ""; lastKey = "";
+      }
+      var f = v.F;
+      if (off || f == null || !f.Known || !f.PanelKnown) { if (!off && State == "idle") Note = f == null ? "the filter is not read" : "the panel is not read"; return null; }
+      if (actions >= MaxActions) { off = true; State = "off"; Note = "too many presses"; return null; }
+      if (v.NowMs < waitUntil) return State == "work" ? Wait() : null;
+      long setId = v.Item.SetId;
+      // ---- the clear phase: the item's card is open, the filter this pilot set goes (the game keeps it when the player comes back from the gem screen)
+      if (v.Selected) {
+        if (!used || clearDone) return null;
+        bool has = f.Suits.Length > 0 || f.Qualities.Length > 0;
+        if (!has) {
+          if (f.PanelOpen) return Close(v);
+          clearDone = true; State = "done"; Note = "the filter is cleared"; return null;
+        }
+        if (!f.PanelOpen) { if (++funTries > Tries) { clearDone = true; State = "done"; Note = "the filter stays (the panel does not open)"; return null; } return Press(v, "funnel"); }
+        if (++resetTries > Tries) { clearDone = true; State = "done"; Note = "the filter stays (the reset does not take)"; return null; }
+        return Press(v, "reset");
+      }
+      if (done) return f.PanelOpen && used && State == "work" ? Close(v) : null;
+      // ---- the search phase
+      if (!v.Wanted && !f.PanelOpen && !used) return null;
+      string qKey = QualityKey(v.Item.Quality); long qMap = QualityMapKey(qKey);
+      bool setOn = setId > 0 && f.Suits.Length == 1 && f.Suits[0] == setId;
+      bool qOn = qMap > 0 && f.Qualities.Length == 1 && f.Qualities[0] == qMap;
+      // a filter that was there before is the player's: left alone (the list is short already, or he wants it)
+      bool foreign = f.Other || (f.Suits.Length > 0 && !(setId > 0 && f.Suits.Length == 1 && f.Suits[0] == setId) && !used) || (f.Qualities.Length > 0 && !(qMap > 0 && f.Qualities.Length == 1 && f.Qualities[0] == qMap) && !used);
+      if (!used && foreign) { done = true; State = "skipped"; Note = "the player's own filter is on"; return null; }
+      bool setOk = setId <= 0 || setOn || setSkipped, qOk = qMap <= 0 || qOn || qSkipped;
+      if (setOk && qOk) {
+        if (f.PanelOpen) return Close(v);
+        done = true; State = used ? "done" : "skipped"; if (!used) Note = "nothing to set"; return null;
+      }
+      if (!v.Wanted && !used) return null;
+      if (!f.PanelOpen) { if (++funTries > Tries) { off = true; State = "off"; Note = "the filter panel does not open"; return null; } return Press(v, "funnel"); }
+      if (!setOk) {
+        bool inL = Array.IndexOf(f.Left, setId) >= 0, inR = Array.IndexOf(f.Right, setId) >= 0;
+        if (!inL && !inR) { setSkipped = true; Note = "the set is in neither list"; return Wait(); }
+        if (!f.SuitOpen) { if (++openTries > Tries) { setSkipped = true; Note = "the set pop-up does not open"; return Wait(); } used = true; return Press(v, "suitOpen"); }
+        bool wantRight = inR && (!inL || f.RightShown);
+        if (f.RightShown != wantRight) { if (++tabTries > Tries) { setSkipped = true; Note = "the set list does not switch"; return Wait(); } used = true; return Press(v, wantRight ? "suitRight" : "suitLeft"); }
+        long[] shown = wantRight ? f.Right : f.Left;
+        if (v.SuitCell == 1 && v.CellRect != null && v.CellRect.Length >= 4) {
+          if (++cellTries > Tries) { setSkipped = true; Note = "the set's cell does not take the press"; return Wait(); }
+          used = true; actions++; waitUntil = v.NowMs + WaitMs; lastKey = "cell"; State = "work";
+          return new InvFilterMove { Todo = LocateTodo.InvFilterCell, Key = "cell", Arg = setId, Action = new AutoAction { Kind = AutoKind.Click, X = v.CellRect[0] + v.CellRect[2] / 2, Y = v.CellRect[1] + v.CellRect[3] / 2, Cell = setId } };
+        }
+        if (v.SuitCell == 2 && v.GridView != null && v.GridView.Length >= 4) {
+          int idx = Array.IndexOf(shown, setId);
+          if (++drags > MaxDrags || idx < 0) { setSkipped = true; Note = "the set's cell stays out of the list's view"; return Wait(); }
+          double dy = (v.CellFirst >= 0 && idx < v.CellFirst ? 1 : -1) * 0.6 * v.GridView[3];   // the list follows the pointer: down = the earlier rows come in
+          actions++; waitUntil = v.NowMs + WaitMs; lastKey = "drag"; State = "work";
+          return new InvFilterMove { Todo = LocateTodo.InvFilterDrag, Key = "drag", Action = new AutoAction { Kind = AutoKind.Drag, X = v.GridView[0] + v.GridView[2] / 2, Y = v.GridView[1] + v.GridView[3] / 2 - dy / 2, DY = dy } };
+        }
+        if (++waits > 40) { setSkipped = true; Note = "the pop-up's list is not readable"; }
+        waitUntil = v.NowMs + 150; State = "work"; return Wait();
+      }
+      if (!qOk) {
+        if (++qTries > Tries) { qSkipped = true; Note = "the quality toggle does not take the press"; return Wait(); }
+        used = true; return Press(v, qKey);
+      }
+      return Wait();
+    }
   }
 }

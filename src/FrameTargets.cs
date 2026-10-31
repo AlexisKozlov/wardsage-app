@@ -8,6 +8,7 @@
 // city.heroes                 Form_MainCity BottomPanel/Image/m_Down_Layout/m_Button_Heros                            Image_Icon              (live)
 // inventory.leftTab.equip     Form_BackpackIntegration Main_Frame/m_ToggleLeftTabGroup/#1 (template copy)             (picked)                (live)
 // inventory.leftTab.artifact  Form_BackpackIntegration Main_Frame/m_ToggleLeftTabGroup/#2 (template copy)             (picked)                (live)
+// inventory.back              Form_BackpackIntegration m_Back/Button_Back_New/Btn_Back (the hint step «back to the city»)
 // inventory.workshop          Form_BackpackIntegration ...Panel_BackpackEquipPanel/Root/LeftBottomBtnGroup/Right/m_BtnWorkShop (FoundryButton)
 // inventory.gem               Form_BackpackIntegration ...LeftBottomBtnGroup/Right/m_BtnGem
 // inventory.bulkSell          Form_BackpackIntegration ...LeftBottomBtnGroup/Left/m_BtnBatchSell                      BackpackIntegration_btn_icon_enhanced
@@ -97,6 +98,7 @@ namespace RealmForge {
       // the inventory
       B("inventory.leftTab.equip", "Form_BackpackIntegration", "Main_Frame/m_ToggleLeftTabGroup/#1", "-", "", "prefab");
       B("inventory.leftTab.artifact", "Form_BackpackIntegration", "Main_Frame/m_ToggleLeftTabGroup/#2", "-", "", "prefab");
+      B("inventory.back", "Form_BackpackIntegration", "m_Back/Button_Back_New/Btn_Back");
       P("inventory.workshop", "Form_BackpackIntegration", ClickTarget.FoundryButton, Bpi + "LeftBottomBtnGroup/Right/m_BtnWorkShop");
       B("inventory.gem", "Form_BackpackIntegration", Bpi + "LeftBottomBtnGroup/Right/m_BtnGem");
       B("inventory.bulkSell", "Form_BackpackIntegration", Bpi + "LeftBottomBtnGroup/Left/m_BtnBatchSell", "-");
@@ -109,6 +111,7 @@ namespace RealmForge {
       B("inventory.cardRight", "Form_BackpackIntegration", Bpi + "LeftLayout/m_Info/c_Button/c_RightBtn", "", "", "geometry");
       P("inventory.artWorkshop", "Form_BackpackIntegration", ClickTarget.ArtWorkshop, "Main_Frame/m_ParentPanel/Panel_ArtifactPanel/m_ButtonGroup/m_IntensifyContainer/m_BtnIntensify/Button_Special_2");
       C("cell.Inventory", "Form_BackpackIntegration", UiCellKind.Inventory, "Main_Frame/ParentPanel/m_Content");
+      C("cell.InvSuit", "Form_BackpackIntegration", UiCellKind.InvSuit, "m_CachedContentPanels.[-9998].m_SuitFilterGridProxy.m_Data (the filter pop-up's set list)");
       L("inventory.artCell", "Form_BackpackIntegration", "the artifact tab's list cells are not read live");
       // the hero screen
       B("hero.workshop", "Form_CharactorMain", Hero + "m_Right/Panel_Equip_Simple/Content/GameObject/m_BtnSubliming", "Icon");

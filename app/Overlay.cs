@@ -645,6 +645,8 @@ namespace RealmForge {
     public void SetLocate(LocateRequest r) {
       locateReq = r != null && (r.Item != null || (r.Purpose == "artPromote" && r.Art != null)) ? r : null;
       bool artReq = locateReq != null && locateReq.Purpose == "artPromote";
+      RFX.InvFilterWanted = locateReq != null && !artReq && locateReq.Purpose != "ascend";   // the recast's long inventory search filters the list (ascend: the Foundry's own list; artPromote: the artifact tab)
+      if (!RFX.InvFilterWanted) { RFX.InvFilterW = RFX.InvFilterH = RFX.InvFilterU = 0; }
       RFX.ArtListWanted = artReq; ApplyArtGate();   // an artifact request is hints only unless ArtAutoOn (the site's artAuto switch and the player's auto click): then only its Art* targets
       artPilot.Reset(); artAutoSaid = "";
       artFin.Reset(); artStep = null; artKey = ""; artSaid = ""; artFormAskedAt = 0;
@@ -652,7 +654,7 @@ namespace RealmForge {
       locateSince = Stamp(); locateCaps = ""; locateLines = new string[0];
       locateStep = null; locateSubs = null; locateKey = ""; locateReadAt = 0; locateLastCur = -1; locateSubsAt = 0; lgrid.Reset();
       locateScreensSaid = ""; locateMarkerSaid = ""; locateCardSaid = ""; locateListSig = ""; locateDecisionSaid = ""; locatePlaceSaid = "";
-      lpilot.Reset(); ResumeClicks(ClickOwner.Locate); lpilot.ItemUid = locateReq != null ? (artReq ? locateReq.Art.Uid : locateReq.Item.Uid) : 0; locateDriving = false; locateAutoSaid = "";
+      lpilot.Reset(); ResumeClicks(ClickOwner.Locate); ResumeClicks(ClickOwner.LocateFilter); lpilot.ItemUid = locateReq != null ? (artReq ? locateReq.Art.Uid : locateReq.Item.Uid) : 0; locateDriving = false; locateAutoSaid = "";
       Hide("off"); HideTip(); locHint.Reset();
       Run();
     }
@@ -2357,6 +2359,16 @@ namespace RealmForge {
 
     /// <summary>The frame of a ClosePopup step: the pop-up's × (the gear filter's by its live rect through FrameFor, any other form's by the screen map's
     /// exit rect); null = the pop-up has no known ×: the plate alone.</summary>
+    string locateCitySaid = "";
+    /// <summary>The frame of a BackToCity step: the back arrow of the screen on top where the game has put it (the Foundry's, the hero screen's, the inventory's by
+    /// their live rects through FrameFor), else the standard back spot (the same one the pilot's CityBack press uses).</summary>
+    LocateFrame BackFrame(ScreenState sc, double W, double H, double U) {
+      string key = sc == null ? "" : sc.Kind == ScreenKind.Foundry ? "foundry.back" : sc.Kind == ScreenKind.HeroScreen ? "hero.back" : sc.Kind == ScreenKind.Inventory ? "inventory.back" : "";
+      var g = new HeroGeometry(); double t = ClickGate.UnknownBackTol * U;
+      var r = new GeoRect { X = g.BackX * U - t, Y = g.BackY * U - t, W = 2 * t, H = 2 * t };
+      return new LocateFrame { Target = key != "" ? key : "popup.exit", Mark = new LocateMark { Kind = "box", X = (int)Math.Round(r.X), Y = (int)Math.Round(r.Y), W = (int)Math.Round(r.W), H = (int)Math.Round(r.H) }, Raw = r };
+    }
+
     LocateFrame PopupCloseFrame(LocateStep step, double W, double H, double U) {
       GeoRect r = null; string key = "popup.exit";
       if (step.PopupClose == "hero.filterClose") {
@@ -2464,6 +2476,11 @@ namespace RealmForge {
           string cov = st.Covered + "|" + st.Popup;
           if (cov != locateCoverSaid) { locateCoverSaid = cov; Log.Write("locate: step " + st.Covered + " is covered by " + st.Popup + " (z-order " + (screens.Current.Order != null ? string.Join(",", screens.Current.Order.ToArray()) : "unknown") + ") - close it first"); }
         } else locateCoverSaid = "";
+        // hint mode, city first (the auto pilot's BackStep does the same): a screen the purpose's flow does not go on from - the first hint is its back arrow
+        if (!LocateAutoOn && LocateGuide.CityFirstStep(st, req.Purpose, screens.Current)) {
+          string cf = st.Covered + "|" + screens.Current.Kind;
+          if (cf != locateCitySaid) { locateCitySaid = cf; Log.Write("locate: step " + st.Covered + " is not for the screen " + screens.Current.Brief + " (city first) - back first"); }
+        } else locateCitySaid = "";
         st.NeedClick = locateNeedClick;
         locateStep = st;
       }
@@ -2473,7 +2490,8 @@ namespace RealmForge {
       { string rw = gate.RetryShown(ClickOwner.Locate, now); if (rw != "" && step.Auto != "stopped" && step.Auto != "") { step.Auto = "retry"; step.AutoWhy = rw; } }   // a step retried: the window says why
       FoundryScrollNow(step, now);
       // the step's frame from the screen geometry (the site's file, src/LocateFrames.cs): «Литейная», the tabs, the slot, the list cell, the final button
-      LocateFrame lf = front && !hold && step.Kind == LocateKind.ClosePopup ? PopupCloseFrame(step, W, H, U)
+      LocateFrame lf = front && !hold && step.Kind == LocateKind.BackToCity ? BackFrame(screens.Current, W, H, U)
+        : front && !hold && step.Kind == LocateKind.ClosePopup ? PopupCloseFrame(step, W, H, U)
         : front && !hold && step.Kind != LocateKind.InList ? LocateFrames.For(step, req.Item, locateRs, null, Geo.Current, W, H, U) : null;
       // every button / tab of the step framed where the game has put it (FrameFor: live rect, its sprite's outline; the layout's when unread)
       bool lfLive = LiveInto(lf, W, H, U);
@@ -3161,7 +3179,7 @@ namespace RealmForge {
 
     /// <summary>A pilot was stopped by the gate (or by a click that changed nothing): each owner's pilot shows it once and goes on as hints only.</summary>
     void AnnounceHalts() {
-      foreach (var o in new[] { ClickOwner.Locate, ClickOwner.Sell, ClickOwner.Equip }) {
+      foreach (var o in new[] { ClickOwner.Locate, ClickOwner.Sell, ClickOwner.Equip, ClickOwner.LocateFilter }) {
         string why = gate.HaltReason(o), said;
         haltSaid.TryGetValue(o, out said);
         if (why == (said ?? "")) continue;
@@ -3170,6 +3188,7 @@ namespace RealmForge {
         Log.Write("auto click stopped (" + o + "): " + why);
         RaiseAutoRec(AutoRecPolicy.HaltTag(o.ToString(), why, gate.HaltDetail(o)));
         if (o == ClickOwner.Locate) { lpilot.Halt(why); artPilot.Halt(why); }
+        else if (o == ClickOwner.LocateFilter) lpilot.FilterHalt(why);   // (its own stop: the search goes on without the filter)
         else if (o == ClickOwner.Sell) { if (!sellArt) SellSay("gate_" + why); }   // (the artifact cleanup is a hint run for the page: the stop is in the log only)
         else { artEq.Halt(why); AutoSay("gate_" + why); }
       }
@@ -3593,6 +3612,8 @@ namespace RealmForge {
         view.Row1 = locateScroll.Row1(pg, inv != null ? inv.List : null, double.NaN, U, now);   // the game's scroll (the constant is learned by the frame)
         if (double.IsNaN(view.Row1)) view.Phase = PhaseCached(pg, o, cr, U, now);                    // last resort
       }
+      if (RFX.InvFilterWanted && !gate.Halted(ClickOwner.LocateFilter) && inv != null && inv.Open && inv.EquipTab && !inv.Bulk && (dstep.Kind == LocateKind.InList || dstep.Kind == LocateKind.Selected))
+        view.Filter = FilterView(inv, dstep, req, gameFront, busy, now, W, H, U);
       // city first: a screen the purpose's flow does not go on from (the workshop, the gem screen for an Ascension, the Foundry for a recast), or
       // the step is the inventory's while the Foundry / the gem screen is on top: back with its arrow first
       bool needBack = CityFirst.NeedsCity(CityFirst.OfLocate(req.Purpose), scr, dstep.Kind, LocateAuto.NeedsCityBack(view));
@@ -3611,6 +3632,36 @@ namespace RealmForge {
       if (lpilot.Stopped) { step.Auto = "stopped"; step.AutoWhy = lpilot.Reason; locateDriving = false; return; }
       step.Auto = mv.State; step.AutoWhy = mv.Why;
       locateDriving = mv.State == "work" || mv.State == "paused" || mv.State == "background";
+    }
+
+    /// <summary>The inventory's filter for a long search (src/LocatePilot.cs InvFilterPilot): what the game shows now. Wanted = the item is in the list but off the first
+    /// screen of cells (the game's own cell indices when read, else its row).</summary>
+    InvFilterView FilterView(InventoryScreen inv, LocateStep dstep, LocateRequest req, bool gameFront, bool busy, long now, double W, double H, double U) {
+      RFX.InvFilterW = W; RFX.InvFilterH = H; RFX.InvFilterU = U;
+      var fv = new InvFilterView { NowMs = now, Foreground = gameFront, UserBusy = busy, W = W, H = H, U = U, Item = req.Item, F = inv.Filter };
+      var l = inv.List; int idx = dstep.Pos - 1;
+      bool shown = idx >= 0 && l != null && l.First >= 0 && l.Last >= l.First && idx >= l.First && idx <= l.Last;
+      fv.Wanted = dstep.Kind == LocateKind.InList && idx >= 0 && !shown && dstep.Row > InvFilterPilot.MinRow;
+      var f = inv.Filter;
+      if (f != null && f.Known && f.SuitOpen && req.Item != null && req.Item.SetId > 0) {
+        var cs = RFX.UiCellFresh(UiCellKind.InvSuit, req.Item.SetId, W, H, Environment.TickCount, RFX.UiFreshMs);
+        RFX.UiCellWant(UiCellKind.InvSuit, new[] { req.Item.SetId }, W, H, U);
+        double[] fr; string why; var st = RFX.UiCellState(cs, req.Item.SetId, W, H, Environment.TickCount, out fr, out why, RFX.UiFreshMs);
+        if (cs != null && cs.Ok) { fv.GridView = new[] { cs.VX, cs.VY, cs.VW, cs.VH }; fv.CellFirst = cs.First; fv.CellLast = cs.Last; }
+        fv.SuitCell = st == UiCellSee.Shown && fr != null ? 1 : cs != null && cs.Ok ? 2 : 0;
+        if (fv.SuitCell == 1) fv.CellRect = fr;
+        var wr = RFX.UiKeyRead("grid", W, H, U);
+        if (wr != null && wr.Ok && wr.Visible && fv.GridView == null) fv.GridView = new[] { wr.X, wr.Y, wr.W, wr.H };
+      }
+      return fv;
+    }
+
+    /// <summary>A filter button's click point: the live rect of its widget (read now) when it is visible and inside the client, else the prefab's layout point the pilot gave.</summary>
+    void FilterLivePoint(LocateMove mv, double W, double H, double U) {
+      var r = RFX.UiKeyRead(mv.FilterKey, W, H, U); double x, y; string why;
+      bool live = RFX.UiLivePoint(r, W, H, Environment.TickCount, out x, out y, out why);
+      if (live) { mv.Action.X = x; mv.Action.Y = y; }
+      Log.Write("uibtn: filter " + mv.FilterKey + (r != null ? " " + (r.Ok ? "[" + (int)r.X + "," + (int)r.Y + " " + (int)r.W + "x" + (int)r.H + (r.Visible ? "" : " hidden") + "]" : "failed at " + r.FailStep) : " no read") + (live ? " [click: live @" + (int)x + "," + (int)y + "]" : " [click: layout, " + why + "]"));
     }
 
     const double InvBtnDX = CityBar.DefaultDX;   // «Инвентарь»: 0.9316 left of «Герои» in the city's bottom bar
@@ -3776,7 +3827,7 @@ namespace RealmForge {
         }
       }
       var fresh = FreshScreen(target == ClickTarget.CityInventory, target == ClickTarget.UnknownBack || target == ClickTarget.CityBack || target == ClickTarget.FoundryButton);   // (FoundryButton: the Foundry's form shown unread, ClickGate)
-      var req = new ClickRequest { Owner = owner, Target = target, AutoOn = artT ? ArtAutoOn : owner == ClickOwner.Locate ? LocateAutoOn : AutoEnabled, Front = front, X = a.X, Y = a.Y };
+      var req = new ClickRequest { Owner = owner, Target = target, AutoOn = artT ? ArtAutoOn : owner == ClickOwner.Locate || owner == ClickOwner.LocateFilter ? LocateAutoOn : AutoEnabled, Front = front, X = a.X, Y = a.Y };
       if (fill != null) fill(req, fresh);
       if (req.U <= 0) { req.W = cr.R; req.H = cr.B; req.U = Ui.Unit(cr.R, cr.B); }
       req.Shown = unknownForms;   // (every unknown form shown, a screen's own ones too: ClickGate)
@@ -3823,6 +3874,18 @@ namespace RealmForge {
           tg = gemBtn ? ClickTarget.InvCardGem : ClickTarget.GemFuncRow;
           fill = (rq, fr) => { rq.CellOk = new[] { req.Item.Uid }; rq.Func = GemRows.FuncOfQuality(req.Item.Quality); };   // the screen's selected item has to be this one
           break;
+        }
+        case LocateTodo.InvFilter: case LocateTodo.InvFilterCell: case LocateTodo.InvFilterDrag: case LocateTodo.InvFilterClose: {
+          // the inventory's filter (owner LocateFilter: its own gate stop): a toggle of the panel, a set of the pop-up, a drag on its list, the click outside
+          if (mv.Todo == LocateTodo.InvFilter) FilterLivePoint(mv, W, H, U);
+          var ftg = mv.Todo == LocateTodo.InvFilter ? ClickTarget.InvFilterBtn : mv.Todo == LocateTodo.InvFilterCell ? ClickTarget.InvFilterCell : mv.Todo == LocateTodo.InvFilterDrag ? ClickTarget.InvFilterDrag : ClickTarget.InvFilterClose;
+          long fset = req.Item != null ? req.Item.SetId : 0; string fkey = mv.FilterKey; int farg = (int)mv.FilterArg; int ffn = mv.Todo == LocateTodo.InvFilterClose ? farg : 0;
+          bool fsent = SendInside(mv.Action, o, cr, ClickOwner.LocateFilter, ftg, front, (rq, fr) => {
+            rq.Form = fkey; rq.W = W; rq.H = H; rq.U = U; rq.Func = ffn;
+            if (ftg == ClickTarget.InvFilterCell) rq.CellOk = new[] { fset };   // (the set under the click: LiveCellClick names it from the live cell; none = the gate stops the filter)
+          });
+          if (!fsent) lpilot.FilterNotSent(); else lpilot.Sent();
+          return;
         }
         case LocateTodo.PickItem:
           tg = drag ? ClickTarget.InvListDrag : ClickTarget.InvListCell;

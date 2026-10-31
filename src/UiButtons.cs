@@ -231,6 +231,37 @@ namespace RealmForge {
       return null;
     }
 
+    // ---- the inventory's filter panel (Panel_BackpackEquipPanel, «Найти в игре»): its widgets by a key, each read now (the pilot clicks a few; no shared cache)
+    const string InvPanelTree = "Main_Frame/m_ParentPanel/Panel_BackpackEquipPanel/Front/m_EquipFilterPanel/";
+    static UiWidget InvF(string field, string tree) { return new UiWidget("Form_BackpackIntegration", field) { Trees = new[] { tree } }; }
+    /// <summary>The widget of a filter key of the inventory's equipment panel (funnel | panel | suitPanel | suitOpen | suitLeft | suitRight | q1..q6 | reset | grid); null = not a key.
+    /// The Lua fields are the panel's (m_PanelContentCur: the content panel the form shows), the trees the prefab's.</summary>
+    public static UiWidget InvFilterWidget(string key) {
+      switch (key ?? "") {
+        case "funnel": return InvF("m_btn_filter", "Main_Frame/filter/m_FilterRoot/m_btn_filter");
+        case "panel": return InvF("m_PanelContentCur.m_EquipFilterPanel", InvPanelTree.TrimEnd('/'));
+        case "suitPanel": return InvF("m_PanelContentCur.m_FilterContent", InvPanelTree + "m_FilterContent");
+        case "suitOpen": return InvF("m_PanelContentCur.m_BtnSuitOff", InvPanelTree + "MainFrame/m_suit/SuitContent/FilterBtn/m_BtnSuitOff");
+        case "suitLeft": return InvF("m_PanelContentCur.m_LeftSuitFilterToggle", InvPanelTree + "m_FilterContent/m_SuitFilter/ToggleContent/m_LeftSuitFilterToggle");
+        case "suitRight": return InvF("m_PanelContentCur.m_RightSuitFilterToggle", InvPanelTree + "m_FilterContent/m_SuitFilter/ToggleContent/m_RightSuitFilterToggle");
+        case "reset": return InvF("m_PanelContentCur.m_BtnEquipReset", InvPanelTree + "MainFrame/m_BtnEquipReset");
+        case "grid": return InvF("m_PanelContentCur.m_SuitFilterGrid", InvPanelTree + "m_FilterContent/m_SuitFilter/m_SuitFilterGrid");
+      }
+      if (key != null && key.Length == 2 && key[0] == 'q' && key[1] >= '1' && key[1] <= '6')
+        return InvF("m_PanelContentCur.m_EquipQualityToggle_" + key[1], InvPanelTree + "MainFrame/m_suit/QuailtyContent/QualityGrid/m_EquipQualityToggle_" + key[1]);
+      return null;
+    }
+
+    /// <summary>One read now of a filter widget of the inventory (null = not a key / no game); a failed read says its step.</summary>
+    public static UiButtonInfo UiKeyRead(string key, double W, double H, double U) {
+      var w = InvFilterWidget(key); if (w == null || UiNoGame()) return null;
+      ulong env, ui; string why; UiButtonInfo r;
+      if (!UiRoots(out env, out ui, out why)) { r = new UiButtonInfo { Form = w.Form, Widget = w.Paths[0], ForW = W, ForH = H }; r.Fail("lua root", why); }
+      else r = UiButtonRead(env, ui, w, W, H, U);
+      r.At = Environment.TickCount;
+      return r;
+    }
+
     static int I32(byte[] b, int o) { return BitConverter.ToInt32(b, o); }
     static float F32(byte[] b, int o) { return BitConverter.ToSingle(b, o); }
     static string F2(double v) { return v.ToString("0.##", CultureInfo.InvariantCulture); }
@@ -1033,7 +1064,7 @@ namespace RealmForge {
   // InfinityGrid (dump 1.6.46.841.1): m_crtFirstInstanceIndex 0xD0, m_crtLastInstanceIndex 0xD4, m_crtItems 0xD8, viewport 0xC8;
   // InfinityGridV2: 0xF8, 0xFC, 0x100, viewport 0xF0. .NET Dictionary: entries 0x18, count 0x20; Entry {hashCode, next, key 0x8, value 0x10}.
   //   Form_CharactorMain (the hero list)  the form's one *_InfinityGrid   .m_InfinityGridProxy.m_Data[idx + 1].iHeroId (the card: the cell itself)
-  public enum UiCellKind { None, Inventory, Ascend, Recast, HeroGear, HeroArt, HeroList }
+  public enum UiCellKind { None, Inventory, Ascend, Recast, HeroGear, HeroArt, HeroList, InvSuit }
 
   /// <summary>One item cell the grid has made now: the item, its list index (0-based) and row column (HeroGear, 1-based), its picture's rect (client px).</summary>
   public sealed class UiCell {
@@ -1075,6 +1106,8 @@ namespace RealmForge {
         // the hero list: the grid proxy's m_Data rows are the hero tables (iHeroId, the order EquipScan.ReadHeroScreen reads); the grid is the form's
         // one field named *_InfinityGrid (Grid "*": found by its name, none or more than one = no read - the card is then not framed)
         case UiCellKind.HeroList: return new CellSpec { Form = "Form_CharactorMain", Owner = "", Grid = "*", Uids = "m_InfinityGridProxy.m_Data", Child = "", Tables = true, UidKey = "iHeroId" };
+        // the inventory's filter pop-up: the sets it lists (grid mode and list mode: the cell's c_Select button); the proxy's m_Data holds the set ids
+        case UiCellKind.InvSuit: return new CellSpec { Form = "Form_BackpackIntegration", Owner = "m_CachedContentPanels.[-9998]", Grid = "m_SuitFilterGrid_InfinityGrid", Uids = "m_CachedContentPanels.[-9998].m_SuitFilterGridProxy.m_Data", Child = "c_Select" };
       }
       return null;
     }
@@ -1085,6 +1118,7 @@ namespace RealmForge {
         case ClickTarget.AscendCell: return UiCellKind.Ascend;
         case ClickTarget.EquipNav: return UiCellKind.HeroGear;
         case ClickTarget.ArtHeroCell: return UiCellKind.HeroArt;
+        case ClickTarget.InvFilterCell: return UiCellKind.InvSuit;
       }
       return UiCellKind.None;
     }

@@ -6,7 +6,7 @@
 (function (root) {
   const KINDS = ['noItem', 'otherAccount', 'openInventory', 'openEquipTab', 'inList', 'hiddenFilter', 'selected', 'openRecastTab',
     'recastFilter', 'recastPick', 'recastNotInList', 'choosePending', 'gemPick', 'done',
-    'openAscendTab', 'ascendPick', 'ascendNotInList', 'ascendReady', 'openFoundry', 'gemFunction', 'ascendFilter', 'ascendLoading', 'exitBulk', 'closePopup'];
+    'openAscendTab', 'ascendPick', 'ascendNotInList', 'ascendReady', 'openFoundry', 'gemFunction', 'ascendFilter', 'ascendLoading', 'exitBulk', 'closePopup', 'backToCity'];
   // «Продвинуть» артефакт (purpose artPromote): req.art = {uid, id, name, lv, cap, st, need, via}; the host never clicks for it
   const ART_KINDS = ['openInventory', 'artOpenTab', 'artExitMode', 'artListLoading', 'artNotInList', 'artInList', 'artSelected', 'artWrongArtifact', 'artLevelFirst',
     'artOpenPromote', 'artMatLoading', 'artMatGuess', 'artMatPick', 'artMatNone', 'artPromote'];
@@ -105,6 +105,8 @@
         r = { tone: 'info', head: st.popup === 'filter' ? t('locClosePopupFilter') : pn ? t('locClosePopup', pn) : t('locClosePopupAny'), lines: [t('locClosePopupP')] };
         break;
       }
+      // city first (hint mode): the screen is not one the flow goes on from - its back arrow is the first step
+      case 'backToCity': r = { tone: 'info', head: t('locBackCity'), lines: [t('locBackCityP')] }; break;
       case 'openFoundry': r = st.onGear ? { tone: 'info', head: t('locFoundryHero'), lines: [t('locFoundryP')] } : { tone: 'info', head: t('locFoundryInv'), lines: [t('locFoundryP')] }; break;
       case 'gemFunction': {
         // the function the item needs (the host reads it from the item's quality): the hint names that one only

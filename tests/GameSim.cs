@@ -1387,6 +1387,7 @@ static partial class CoreTests {
     SimTableKind(GameGeometry.Parse(GeoJson(), GeoGame));
     SimUnknownToInventory(GameGeometry.Parse(GeoJson(), GeoGame));
     SimArtWorkshop(GameGeometry.Parse(GeoJson(), GeoGame));
+    SimInvFilter(GameGeometry.Parse(GeoJson(), GeoGame));
     SimLeftOnWorkshop(GameGeometry.Parse(GeoJson(), GeoGame));
     SimResultForms();
     Console.WriteLine("Game sim: its findings");
@@ -2283,5 +2284,257 @@ static partial class CoreTests {
     var h = new HashSet<string>();
     foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(e.Json(0, "", ""), "\\{\"form\":\"([^\"]+)\"")) h.Add(m.Groups[1].Value);
     return h;
+  }
+
+  // ---- «Найти в игре» recast, the inventory's filter for a long search (src/LocatePilot.cs InvFilterPilot): a 600-item list, the same targets searched with and without it.
+  // The game here is only the equipment panel: the list (drags move it by the measured gains), the filter panel (the funnel, the quality toggles, the set pop-up with its two
+  // lists and a scrolling grid, «Сбросить»), and the game's m_PanelClose that swallows a click outside the panel. The pilot, the click gate and the screen state are the real ones.
+  sealed class InvFilterGame {
+    public const int Cols = 8;
+    public readonly double W = 1920, H = 1009, U, K;
+    public readonly SellGeometry Geo;
+    public readonly Random R;
+    public readonly List<long> All = new List<long>();
+    public readonly Dictionary<long, int> SetOf = new Dictionary<long, int>(), QualOf = new Dictionary<long, int>();
+    public readonly List<long> SetsL = new List<long>(), SetsR = new List<long>();
+    public readonly HashSet<long> FSuits = new HashSet<long>(), FQuals = new HashSet<long>();
+    public bool PanelOpen, SuitOpen, RightShown, FunnelDead;   // FunnelDead: the funnel's press does nothing (the filter cannot be used)
+    public long Current, Now; public double ScrollPx, GridRows; public readonly double GainUp, GainDown;
+    public int ListDrags, GridDrags, Presses, Swallowed, ListClicks, Pending;
+    public readonly List<string> Bad = new List<string>();
+    readonly List<KeyValuePair<long, Action>> due = new List<KeyValuePair<long, Action>>();
+    public InvFilterGame(int seed, int n) {
+      R = new Random(seed); U = Ui.Unit(W, H); K = U / 640.0; Geo = SellGeometry.Inventory(W, U, Cols);
+      GainUp = 0.9 + 0.2 * R.NextDouble(); GainDown = 0.78 + 0.17 * R.NextDouble();
+      for (int i = 0; i < 24; i++) { long sid = 1001 + i; if (i < 16) SetsL.Add(sid); else SetsR.Add(sid); }
+      int[] qs = { 3, 4, 4, 5, 5, 5, 6, 6, 6, 6, 8, 8 };
+      for (int i = 0; i < n; i++) { long u = 9000 + i; All.Add(u); SetOf[u] = R.Next(24); QualOf[u] = qs[R.Next(qs.Length)]; }
+    }
+    public long SetId(int i) { return 1001 + i; }
+    public List<long> Shown() {
+      var l = new List<long>();
+      foreach (var u in All) if ((FSuits.Count == 0 || FSuits.Contains(SetId(SetOf[u]))) && (FQuals.Count == 0 || FQuals.Contains(QualOf[u]))) l.Add(u);
+      return l;
+    }
+    public double Pitch { get { return Geo.PitchY * U; } }
+    public double ViewH { get { return Geo.ViewBottomPx(H, U) - Geo.ViewTopPx(U); } }
+    public double MaxScroll { get { int rows = (Shown().Count + Cols - 1) / Cols; return Math.Max(0, rows * Pitch + Geo.TopPad * U - ViewH); } }
+    public double Row1 { get { return Geo.ViewTopPx(U) + Geo.TopPad * U - ScrollPx; } }
+    long Lat() { return 80 + R.Next(170); }
+    void Later(long ms, Action a) { due.Add(new KeyValuePair<long, Action>(Now + ms, a)); }
+    public void Advance(long now) {
+      Now = now;
+      for (bool any = true; any; ) { any = false; for (int i = 0; i < due.Count; i++) if (due[i].Key <= now) { var a = due[i].Value; due.RemoveAt(i); a(); any = true; break; } }
+    }
+    // the canvas (1136 x 640) -> client px: the panel is anchored right / top
+    public double CX(double cx) { return W - (1136 - cx) * K; }
+    public double CY(double cy) { return cy * K; }
+    public List<long> ShownSets() { return RightShown ? SetsR : SetsL; }
+    public double MaxGrid { get { return Math.Max(0, (ShownSets().Count + 1) / 2 - 6); } }
+    public double[] GridView() { return new[] { CX(499.2), CY(310.1), 300 * K, 263.7 * K }; }
+    /// <summary>The set cell (list index) at a client point of the pop-up's grid, -1 = none.</summary>
+    public int SetIndexAt(double x, double y) {
+      var g = GridView(); if (x < g[0] || x >= g[0] + g[2] || y < g[1] || y >= g[1] + g[3]) return -1;
+      int col = (int)((x - g[0]) / (150 * K)); double rowF = (y - g[1]) / (42 * K) + GridRows; int row = (int)Math.Floor(rowF);
+      int idx = row * 2 + col; return idx >= 0 && idx < ShownSets().Count ? idx : -1;
+    }
+    public double[] SetCell(long sid) {
+      int idx = ShownSets().IndexOf(sid); if (idx < 0) return null;
+      var g = GridView(); double x = g[0] + (idx % 2) * 150 * K, y = g[1] + (idx / 2 - GridRows) * 42 * K;
+      return y < g[1] - 1 || y + 42 * K > g[1] + g[3] + 1 ? null : new[] { x, y, 148 * K, 42 * K };
+    }
+    static bool In(double x, double y, double x0, double x1, double y0, double y1, double k, double W) { double px0 = W - (1136 - x0) * k, px1 = W - (1136 - x1) * k; return x >= px0 && x <= px1 && y >= y0 * k && y <= y1 * k; }
+    bool InCanvas(double x, double y, double x0, double x1, double y0, double y1) { return In(x, y, x0, x1, y0, y1, K, W); }
+    /// <summary>A click at a client point: the game's answer comes later.</summary>
+    public void Click(double x, double y, ClickTarget tg) {
+      long lat = Lat();
+      bool inPanelFrame = PanelOpen && InCanvas(x, y, 815.8, 1114.2, 117.6, 632.0), inPop = PanelOpen && SuitOpen && InCanvas(x, y, 477.7, 820.7, 117.6, 635.0);
+      if (PanelOpen && !inPanelFrame && !inPop) { Swallowed++; Later(lat, () => { if (SuitOpen) SuitOpen = false; else PanelOpen = false; }); return; }   // m_PanelClose
+      if (PanelOpen) {
+        if (InCanvas(x, y, 888.7, 1042.7, 581.9, 625.9)) { Presses++; Later(lat, () => { FSuits.Clear(); FQuals.Clear(); ScrollPx = 0; }); return; }
+        if (InCanvas(x, y, 1055, 1099, 206, 250)) { Presses++; Later(lat, () => { SuitOpen = !SuitOpen; GridRows = 0; }); return; }
+        for (int i = 0; i < 6; i++) if (InCanvas(x, y, 835.5 + i * 45.6, 835.5 + i * 45.6 + 32, 292, 324)) {
+          long[] qk = { 12, 8, 6, 5, 4, 3 }; long q = qk[i]; Presses++;
+          Later(lat, () => { if (!FQuals.Remove(q)) FQuals.Add(q); ScrollPx = 0; }); return;
+        }
+        if (inPop) {
+          if (InCanvas(x, y, 499.7, 649.7, 265.1, 305.1)) { Presses++; Later(lat, () => { RightShown = false; GridRows = 0; }); return; }
+          if (InCanvas(x, y, 649.2, 799.2, 265.1, 305.1)) { Presses++; Later(lat, () => { RightShown = true; GridRows = 0; }); return; }
+          int si = SetIndexAt(x, y);
+          if (si >= 0) { long sid = ShownSets()[si]; Presses++; Later(lat, () => { if (!FSuits.Remove(sid)) FSuits.Add(sid); ScrollPx = 0; }); }
+        }
+        return;
+      }
+      if (InCanvas(x, y, 828.2, 875.2, 73.5, 121.5)) { Presses++; if (FunnelDead) return; Later(lat, () => { PanelOpen = true; SuitOpen = false; }); return; }
+      // the list's cell (normal mode: selects the item)
+      var inv = Inv(); long u = ClickGate.InvCellUid(inv, Geo, Row1, Cols, x, y, W, U);
+      ListClicks++;
+      if (u != 0) { long uu = u; Later(lat, () => { Current = uu; }); }
+    }
+    public void Drag(double x, double y, double dy) {
+      long lat = Lat();
+      if (PanelOpen && SuitOpen) {
+        var g = GridView();
+        if (x >= g[0] && x < g[0] + g[2] && y >= g[1] && y < g[1] + g[3]) { GridDrags++; Pending++; Later(lat, () => { GridRows = Math.Max(0, Math.Min(MaxGrid, GridRows - dy / (42 * K))); Pending--; }); }
+        return;
+      }
+      if (PanelOpen) { Swallowed++; return; }
+      ListDrags++; Pending++;
+      Later(lat, () => { ScrollPx = Math.Max(0, Math.Min(MaxScroll, ScrollPx - dy * (dy < 0 ? GainUp : GainDown))); Pending--; });
+    }
+    public InventoryScreen Inv() {
+      var inv = new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true, ListPtr = 1, Current = Current };
+      var sh = Shown(); inv.Uids.AddRange(sh);
+      int rows = (sh.Count + Cols - 1) / Cols; int r0 = (int)Math.Floor(ScrollPx / Pitch), r1 = (int)Math.Floor((ScrollPx + ViewH) / Pitch);
+      inv.List = new RFX.ListRead { ScrollY = ScrollPx / Pitch * 100, Cols = Cols, RowUnits = 100, First = Math.Min(sh.Count - 1, r0 * Cols), Last = Math.Min(sh.Count - 1, Math.Min(rows - 1, r1) * Cols + Cols - 1) };
+      var f = new InvFilterRead { Known = true, PanelKnown = true, RightShown = RightShown, PanelOpen = PanelOpen, SuitOpen = PanelOpen && SuitOpen, Left = SetsL.ToArray(), Right = SetsR.ToArray() };
+      var su = new List<long>(FSuits); su.Sort(); f.Suits = su.ToArray(); var qu = new List<long>(FQuals); qu.Sort(); f.Qualities = qu.ToArray();
+      inv.Filter = f;
+      return inv;
+    }
+  }
+
+  /// <summary>One search: the item <paramref name="target"/> from the top of the list; true = filter on. Returns the game; the result says how it ended.</summary>
+  static string InvFilterSearch(InvFilterGame g, long target, bool useFilter, GameGeometry geo, out long endedAt, out bool gateStopped, out string filterNote) {
+    var gate = new ClickGate { OrderRead = false }; var pilot = new LocatePilot(); pilot.ItemUid = target;
+    var item = new PlanItem { Uid = target, Slot = 0, SetId = g.SetId(g.SetOf[target]), Quality = g.QualOf[target] };
+    var req = new LocateRequest { Id = "sim", Purpose = "recast", Item = item };
+    gate.Flows[ClickOwner.Locate] = PilotFlow.LocateRecast;
+    gateStopped = false; filterNote = ""; endedAt = -1;
+    long now = 0;
+    for (; now < 300000; now += 50) {
+      g.Advance(now);
+      if (g.Bad.Count > 0) return "bad: " + g.Bad[0];
+      var inv = g.Inv(); var scr = ScreenState.Classify(new ScreenInputs { Inv = inv }, now);
+      gate.Observe(scr, now);
+      if (gate.Halted(ClickOwner.Locate)) { gateStopped = true; return "gate: " + gate.HaltReason(ClickOwner.Locate) + " " + gate.HaltDetail(ClickOwner.Locate); }
+      if (gate.Halted(ClickOwner.LocateFilter) && !pilot.Stopped) { pilot.FilterHalt(gate.HaltReason(ClickOwner.LocateFilter)); filterNote = "filter halted: " + gate.HaltReason(ClickOwner.LocateFilter) + " " + gate.HaltDetail(ClickOwner.LocateFilter); gate.Resume(ClickOwner.LocateFilter); }
+      if (pilot.Stopped) return "pilot stopped: " + pilot.Reason;
+      var pre = gate.Preflight(ClickOwner.Locate, scr, now);
+      if (pre.Verdict == GateVerdict.Wait) continue;
+      if (g.Pending > 0) continue;
+      var dstep = LocateGuide.Next(req, inv, null, null, Cols8, 1);
+      var view = new LocateView { NowMs = now, Foreground = true, W = g.W, H = g.H, U = g.U, Step = dstep, Inv = inv, Cols = Cols8, Geometry = geo, Item = item, Purpose = "recast", Row1 = g.Row1 };
+      if (useFilter && (dstep.Kind == LocateKind.InList || dstep.Kind == LocateKind.Selected)) {
+        var l = inv.List; int idx = dstep.Pos - 1;
+        bool shown = idx >= 0 && l != null && idx >= l.First && idx <= l.Last;
+        var fv = new InvFilterView { NowMs = now, Foreground = true, W = g.W, H = g.H, U = g.U, Item = item, F = inv.Filter, Wanted = dstep.Kind == LocateKind.InList && idx >= 0 && !shown && dstep.Row > InvFilterPilot.MinRow };
+        if (inv.Filter.SuitOpen) {
+          var cr = g.SetCell(item.SetId); var gv = g.GridView();
+          fv.GridView = gv; int first = (int)Math.Floor(g.GridRows) * 2, last = ((int)Math.Ceiling(g.GridRows + 6)) * 2 - 1; fv.CellFirst = first; fv.CellLast = last;
+          fv.SuitCell = cr != null ? 1 : 2; fv.CellRect = cr;
+        }
+        view.Filter = fv;
+      }
+      if (dstep.Kind == LocateKind.Selected) {   // the card is open: the filter's clear phase runs, then the card's gem button (never pressed here)
+        var mv0 = pilot.Step(view);
+        if (mv0.Todo == LocateTodo.CardGem && mv0.Action.Kind != AutoKind.None) { endedAt = now; filterNote = pilot.FilterNote; return "ok"; }
+        if (mv0.Action.Kind == AutoKind.None) continue;
+        InvFilterSend(g, gate, pilot, mv0, item, inv, scr, now); continue;
+      }
+      var mv = pilot.Step(view);
+      if (mv.State == "stopped") return "pilot stopped: " + mv.Why;
+      if (mv.Action.Kind == AutoKind.None) continue;
+      InvFilterSend(g, gate, pilot, mv, item, inv, scr, now);
+    }
+    return "timeout";
+  }
+  const int Cols8 = 8;
+
+  static void InvFilterSend(InvFilterGame g, ClickGate gate, LocatePilot pilot, LocateMove mv, PlanItem item, InventoryScreen inv, ScreenState scr, long now) {
+    var a = mv.Action; ClickOwner owner = ClickOwner.Locate; ClickTarget tg = ClickTarget.None;
+    var rq = new ClickRequest { AutoOn = true, Front = true, X = a.X, Y = a.Y, W = g.W, H = g.H, U = g.U };
+    switch (mv.Todo) {
+      case LocateTodo.PickItem:
+        tg = a.Kind == AutoKind.Drag ? ClickTarget.InvListDrag : ClickTarget.InvListCell;
+        rq.CellUid = ClickGate.InvCellUid(inv, g.Geo, g.Row1, Cols8, a.X, a.Y, g.W, g.U); rq.CellOk = new[] { item.Uid }; rq.NoScroll = false; break;
+      case LocateTodo.InvFilter: owner = ClickOwner.LocateFilter; tg = ClickTarget.InvFilterBtn; rq.Form = mv.FilterKey; break;
+      case LocateTodo.InvFilterCell: {
+        owner = ClickOwner.LocateFilter; tg = ClickTarget.InvFilterCell; rq.CellOk = new[] { item.SetId };
+        int si = g.SetIndexAt(a.X, a.Y); rq.CellUid = si >= 0 ? g.ShownSets()[si] : 0; break;
+      }
+      case LocateTodo.InvFilterDrag: owner = ClickOwner.LocateFilter; tg = ClickTarget.InvFilterDrag; break;
+      case LocateTodo.InvFilterClose: owner = ClickOwner.LocateFilter; tg = ClickTarget.InvFilterClose; rq.Func = (int)mv.FilterArg; break;
+      default: return;   // the other steps of the flow are not part of this search
+    }
+    rq.Owner = owner; rq.Target = tg;
+    var res = gate.Check(rq, scr, now);
+    if (!res.Allowed) { if (owner == ClickOwner.Locate) pilot.NotSent(); else pilot.FilterNotSent(); return; }
+    gate.Arm(owner, tg, ClickGate.Expect(rq, scr), now, rq.Form);
+    if (a.Kind == AutoKind.Drag) g.Drag(a.X, a.Y, a.DY); else g.Click(a.X, a.Y, tg);
+    pilot.Sent();
+  }
+
+  static void SimInvFilter(GameGeometry geo) {
+    Console.WriteLine("Sim: the inventory's filter for a long search (600 items)");
+    int runs = 40; long dragsOff = 0, dragsOn = 0, msOff = 0, msOn = 0, presses = 0, swallowed = 0, listClicksOn = 0; int fails = 0; string failWhy = ""; int clearedOk = 0, usedN = 0;
+    for (int i = 0; i < runs; i++) {
+      int seed = 77000 + i;
+      var probe = new InvFilterGame(seed, 600); long target = probe.All[200 + (i * 37) % 390];   // deep in the list (row 25+)
+      for (int mode = 0; mode < 2; mode++) {
+        var g = new InvFilterGame(seed, 600); long t; bool gs; string note;
+        string r = InvFilterSearch(g, target, mode == 1, geo, out t, out gs, out note);
+        if (r != "ok" || g.Current != target) { fails++; if (failWhy == "") failWhy = "seed " + seed + " " + (mode == 1 ? "filter" : "plain") + ": " + r + (note != "" ? " (" + note + ")" : "") + " current " + g.Current + " of " + target; continue; }
+        if (mode == 0) { dragsOff += g.ListDrags; msOff += t; }
+        else {
+          dragsOn += g.ListDrags; msOn += t; presses += g.Presses; swallowed += g.Swallowed; listClicksOn += g.ListClicks;
+          if (g.FSuits.Count > 0 || g.FQuals.Count > 0 || g.PanelOpen) { if (failWhy == "") failWhy = "seed " + seed + ": the filter stays after the clear phase (sets " + g.FSuits.Count + ", qualities " + g.FQuals.Count + ", panel " + g.PanelOpen + ")"; fails++; }
+          else clearedOk++;
+          if (g.Presses > 0) usedN++;
+        }
+      }
+    }
+    Console.WriteLine("  inventory 600 items, " + runs + " targets: without the filter " + (dragsOff / (double)runs).ToString("0.0") + " list drags / " + (msOff / runs / 1000.0).ToString("0.0") + " s per search; with it " + (dragsOn / (double)runs).ToString("0.0") + " drags / " + (msOn / runs / 1000.0).ToString("0.0") + " s ("
+      + (presses / (double)runs).ToString("0.0") + " filter presses, " + (swallowed / (double)runs).ToString("0.0") + " close clicks outside the panel)");
+    Check(fails == 0, "sim filter: every search ends on the item selected, the filter cleared, no gate stop" + (failWhy != "" ? " - " + failWhy : ""));
+    Check(dragsOff >= 3 * Math.Max(1, dragsOn), "sim filter: >= 3x fewer list drags with the filter (" + dragsOff + " -> " + dragsOn + ", " + (dragsOff / (double)Math.Max(1, dragsOn)).ToString("0.0") + "x)");
+    Check(msOn < msOff, "sim filter: the search is faster with the filter (" + (msOff / runs) + " ms -> " + (msOn / runs) + " ms per search)");
+    Check(listClicksOn <= runs * 2 && usedN == runs, "sim filter: the item is clicked once or twice (" + listClicksOn + " cell clicks in " + runs + " searches), the filter was used every time (" + usedN + ")");
+
+    // the pilot's own rules
+    var it = new PlanItem { Uid = 9100, SetId = 1003, Quality = 6 };
+    var fp = new InvFilterPilot(); var read = new InvFilterRead { Known = true, PanelKnown = true, Suits = new long[] { 1005 }, Left = new long[] { 1003, 1005 }, Right = new long[0] };
+    var vw = new InvFilterView { NowMs = 0, Foreground = true, W = 1920, H = 1009, U = 1009, Item = it, Wanted = true, F = read };
+    Check(fp.Step(vw) == null && fp.State == "skipped", "sim filter: a filter the player already has (another set) is left alone: no press");
+    read.Suits = new long[0]; read.Other = true; fp = new InvFilterPilot();
+    Check(fp.Step(vw) == null && fp.State == "skipped", "sim filter: a level / status / stat filter the player has is left alone too");
+    read.Other = false; fp = new InvFilterPilot(); var m0 = fp.Step(vw);
+    Check(m0 != null && m0.Todo == LocateTodo.InvFilter && m0.Key == "funnel", "sim filter: a clean filter, a long list: the funnel first (" + (m0 == null ? "none" : m0.Key) + ")");
+    vw.Wanted = false; fp = new InvFilterPilot();
+    Check(fp.Step(vw) == null, "sim filter: the item is near the top: the filter is not touched");
+    Check(InvFilterPilot.QualityKey(6) == "q3" && InvFilterPilot.QualityKey(10) == "q3" && InvFilterPilot.QualityKey(8) == "q2" && InvFilterPilot.QualityKey(11) == "q2" && InvFilterPilot.QualityKey(13) == "q1" && InvFilterPilot.QualityKey(5) == "q4" && InvFilterPilot.QualityKey(1) == "",
+      "sim filter: the item's quality picks the game's quality toggle (mythic = the 3rd)");
+    Check(InvFilterPilot.ClickKey("funnel") && InvFilterPilot.ClickKey("q3") && InvFilterPilot.ClickKey("reset") && !InvFilterPilot.ClickKey("panel") && !InvFilterPilot.ClickKey("m_BtnSell") && !InvFilterPilot.ClickKey("q7") && !InvFilterPilot.ClickKey(""), "sim filter: only the filter's own keys may be pressed");
+    // the gate: its own stop, no sale, no bulk mode, hint runs press nothing
+    var gi = new ClickGate(); var inv0 = new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true, ListPtr = 1 };
+    inv0.Filter = new InvFilterRead { Known = true, PanelKnown = true, PanelOpen = true };
+    var sc0 = ScreenState.Classify(new ScreenInputs { Inv = inv0 }, 0);
+    var okReq = new ClickRequest { Owner = ClickOwner.LocateFilter, Target = ClickTarget.InvFilterBtn, AutoOn = true, Front = true, Form = "q3", W = 1920, H = 1009, U = 1009, X = 1500, Y = 300 };
+    Check(gi.Check(okReq, sc0, 0).Allowed, "sim filter gate: a quality toggle of the open panel is allowed");
+    var gb = new ClickGate(); var badReq = new ClickRequest { Owner = ClickOwner.LocateFilter, Target = ClickTarget.InvFilterBtn, AutoOn = true, Front = true, Form = "m_BtnSell", W = 1920, H = 1009, U = 1009, X = 1500, Y = 300 };
+    Check(!gb.Check(badReq, sc0, 0).Allowed && gb.Halted(ClickOwner.LocateFilter) && !gb.Halted(ClickOwner.Locate), "sim filter gate: an unknown button is refused, and only the filter's own owner stops (the search goes on without it)");
+    var gk = new ClickGate(); var invB = new InventoryScreen { Open = true, EquipTab = true, Bulk = true, BulkKnown = true, ListPtr = 1, Filter = inv0.Filter };
+    okReq.Form = "funnel";
+    Check(!gk.Check(okReq, ScreenState.Classify(new ScreenInputs { Inv = invB }, 0), 0).Allowed && gk.HaltReason(ClickOwner.LocateFilter) == "bulk", "sim filter gate: never in the bulk-sale mode (the sale keeps its no-filter logic)");
+    var gh = new ClickGate { NoLocateClicks = true };
+    Check(!gh.Check(okReq, sc0, 0).Allowed, "sim filter gate: a hint run presses no filter");
+    var gc = new ClickGate(); var cellReq = new ClickRequest { Owner = ClickOwner.LocateFilter, Target = ClickTarget.InvFilterCell, AutoOn = true, Front = true, W = 1920, H = 1009, U = 1009, X = 1000, Y = 400, CellUid = 1004, CellOk = new long[] { 1003 } };
+    var inv1 = new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true, ListPtr = 1, Filter = new InvFilterRead { Known = true, PanelKnown = true, PanelOpen = true, SuitOpen = true } };
+    Check(!gc.Check(cellReq, ScreenState.Classify(new ScreenInputs { Inv = inv1 }, 0), 0).Allowed && gc.HaltReason(ClickOwner.LocateFilter) == "cell", "sim filter gate: a set cell that is not the item's set is refused");
+    foreach (ClickOwner ow in Enum.GetValues(typeof(ClickOwner))) {
+      string wl = ClickGate.WhitelistText(ow);
+      Check((ow == ClickOwner.LocateFilter) == wl.Contains("InvFilterBtn") && !wl.Contains("BtnSell") && !wl.Contains("BatchSell"), "sim filter gate: " + ow + (ow == ClickOwner.LocateFilter ? " may press the filter's targets and nothing of the sale" : " has no filter target"));
+    }
+    // the clear phase: a filter this pilot set is gone before the card's button; never when it set nothing
+    fp = new InvFilterPilot(); vw.Wanted = true; read.Suits = new long[0]; read.Qualities = new long[0]; read.PanelOpen = false; fp.Step(vw);
+    vw.NowMs = 5000; read.PanelOpen = true; read.SuitOpen = true; var ms = fp.Step(vw);
+    Check(ms != null && ms.Todo == LocateTodo.Nothing, "sim filter: the set pop-up is open and its cell is not read yet: the pilot waits, presses nothing");
+    var fq = new InvFilterPilot(); var vq = new InvFilterView { NowMs = 0, Foreground = true, W = 1920, H = 1009, U = 1009, Item = it, Selected = true, F = new InvFilterRead { Known = true, PanelKnown = true, Suits = new long[] { 1003 } } };
+    Check(fq.Step(vq) == null, "sim filter: the clear phase never touches a filter this pilot did not set");
+
+    // a filter that cannot be used (the funnel does nothing): the gate stops the filter alone, the item is still found by scrolling
+    { var gd = new InvFilterGame(77500, 600) { FunnelDead = true }; long tgt = gd.All[350]; long te; bool gst; string nt;
+      string rd = InvFilterSearch(gd, tgt, true, geo, out te, out gst, out nt);
+      Check(rd == "ok" && gd.Current == tgt && !gst && nt == "nochange" && gd.ListDrags > 3, "sim filter: a funnel that does nothing stops the filter only (" + nt + "), the item is found by scrolling (" + gd.ListDrags + " drags) - " + rd); }
   }
 }

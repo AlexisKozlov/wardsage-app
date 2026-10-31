@@ -46,7 +46,8 @@ namespace RealmForge {
     ArtMatPick,       // pick a copy (or an essence) in the left list; MatWrong: a wrong one is chosen
     ArtMatNone,       // the list has no copy and no essence
     ArtPromote,       // the material is chosen: «Продвинуть» is the player's
-    ClosePopup        // the step's target lies under a shown pop-up / flow form: close it first (Covered is the step it hides; Popup, PopupTitle, PopupClose say which)
+    ClosePopup,       // the step's target lies under a shown pop-up / flow form: close it first (Covered is the step it hides; Popup, PopupTitle, PopupClose say which)
+    BackToCity        // hint mode, CityFirst (src/ClickGate.cs): the screen is not one the flow goes on from: the first hint is its back arrow (Covered is the step it hides)
   }
 
   public sealed class LocateStep {
@@ -144,6 +145,21 @@ namespace RealmForge {
       var c = Covering(st, sc, targetCovered);
       if (c == null) return false;
       st.Covered = st.Kind; st.Kind = LocateKind.ClosePopup; st.Popup = c.Form; st.PopupTitle = c.Title; st.PopupClose = c.Close;
+      st.Pos = st.Row = st.Col = st.Count = 0; st.Missing = new string[0]; st.FilterGo = ""; st.Scroll = "";
+      return true;
+    }
+
+    /// <summary>Hint mode (the auto pilot goes back by itself, the shared BackStep): the CityFirst rule of the purpose's flow. On a known screen the flow does not
+    /// go on from (the Foundry's Ascension tab for a recast, the gem screen for an Ascension ...), or with the Foundry / the gem screen over the inventory's
+    /// own step, the first hint is the back arrow, not a step of another screen (live 1.6.66.442: «open the tab on the right» on a screen that has none). The
+    /// step becomes BackToCity (Covered keeps it, it comes back once the city side is reached). True = the step was replaced.</summary>
+    public static bool CityFirstStep(LocateStep st, string purpose, ScreenState sc) {
+      if (st == null || sc == null || sc.Held || st.Kind == LocateKind.None || st.Kind == LocateKind.ClosePopup || st.Kind == LocateKind.BackToCity) return false;
+      bool away = false;
+      var k = st.Kind;
+      if ((sc.Kind == ScreenKind.Foundry || sc.Kind == ScreenKind.Gem) && (k == LocateKind.OpenInventory || k == LocateKind.OpenEquipTab || k == LocateKind.InList || k == LocateKind.OpenFoundry)) away = true;
+      if (!CityFirst.NeedsCity(CityFirst.OfLocate(purpose), sc, k, away)) return false;
+      st.Covered = st.Kind; st.Kind = LocateKind.BackToCity; st.Popup = ""; st.PopupTitle = ""; st.PopupClose = "";
       st.Pos = st.Row = st.Col = st.Count = 0; st.Missing = new string[0]; st.FilterGo = ""; st.Scroll = "";
       return true;
     }

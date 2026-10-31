@@ -4707,6 +4707,43 @@ static partial class CoreTests {
     int clicks = 0;
     for (int i = 0; i < 10; i++) { bool auto = LabRecCmd.AutoClick(true, true, true, true); if (auto) { var p2 = new LocatePilot(); if (p2.Step(v).Action.Kind != AutoKind.None) clicks++; } }
     Eq(0, clicks, "lab: hint mode -> zero pilot clicks");
+    CityFirstHintTests();
+  }
+
+  // hint mode, city first (live 1.6.66.442: a recast started on the Foundry's Ascension tab: the first hint said to open a tab on the right, which that screen
+  // does not have, and only then «go to the city»): on a screen the purpose's flow does not go on from the first hint is the back arrow
+  static void CityFirstHintTests() {
+    Console.WriteLine("Hint mode: city first");
+    var req = new LocateRequest { Id = "r1", Purpose = "recast", Item = new PlanItem { Uid = 77, Slot = 3, SetId = 5, Quality = 6 } };
+    // the Foundry on the Ascension tab, a recast request: the step of the Foundry's own list says «open the recast tab»; the first hint is the back arrow
+    var rs = new RecastScreen { SublimingOpen = true, CurType = 2 };
+    var st = LocateGuide.Next(req, null, rs, null, 8, 1);
+    Check(st.Kind == LocateKind.OpenRecastTab, "city first: the plain step of the Foundry's Ascension tab for a recast is OpenRecastTab");
+    var fo = new ScreenState { Kind = ScreenKind.Foundry, FoundryTab = 2 };
+    Check(LocateGuide.CityFirstStep(st, "recast", fo) && st.Kind == LocateKind.BackToCity && st.Covered == LocateKind.OpenRecastTab && st.Key == "backToCity", "city first: ... a recast on the Foundry's Ascension tab: the first hint is BackToCity");
+    Check(FrameTargets.Of("foundry.back") != null && FrameTargets.Of("hero.back") != null && FrameTargets.Of("inventory.back") != null && FrameTargets.Of("popup.exit") != null, "city first: the back arrow keys are mapped");
+    // an Ascension request on that tab goes on (the Foundry is its continuation screen)
+    var reqA = new LocateRequest { Id = "r2", Purpose = "ascend", Item = req.Item };
+    var rsA = new RecastScreen { SublimingOpen = true, CurType = 2, AscendShown = true };
+    st = LocateGuide.Next(reqA, null, rsA, null, 8, 1);
+    Check(!LocateGuide.CityFirstStep(st, "ascend", fo) && st.Kind != LocateKind.BackToCity, "city first: an Ascension request on the Ascension tab is not sent back");
+    // the gem screen for an Ascension request: not a continuation screen -> back first
+    st = new LocateStep { Kind = LocateKind.OpenInventory };
+    Check(LocateGuide.CityFirstStep(st, "ascend", new ScreenState { Kind = ScreenKind.Gem }) && st.Kind == LocateKind.BackToCity, "city first: the gem screen for an Ascension request -> back first");
+    // the recast with the Foundry over the inventory's own step (the sub-state): back first
+    st = new LocateStep { Kind = LocateKind.InList };
+    Check(LocateGuide.CityFirstStep(st, "recast", fo) && st.Kind == LocateKind.BackToCity, "city first: the inventory's step under the Foundry -> back first");
+    // the city, the hero screen, the inventory: the flow's own screens, nothing changes; no item / another account: never a back step
+    foreach (var k in new[] { ScreenKind.City, ScreenKind.HeroScreen, ScreenKind.Inventory }) {
+      st = new LocateStep { Kind = LocateKind.OpenInventory };
+      Check(!LocateGuide.CityFirstStep(st, "recast", new ScreenState { Kind = k }) && st.Kind == LocateKind.OpenInventory, "city first: " + k + " is a continuation screen of the recast: no back step");
+    }
+    st = new LocateStep { Kind = LocateKind.NoItem }; Check(!LocateGuide.CityFirstStep(st, "recast", fo), "city first: no item: no back step");
+    st = new LocateStep { Kind = LocateKind.OtherAccount }; Check(!LocateGuide.CityFirstStep(st, "recast", fo), "city first: another account: no back step");
+    st = new LocateStep { Kind = LocateKind.OpenRecastTab }; Check(!LocateGuide.CityFirstStep(st, "recast", new ScreenState { Kind = ScreenKind.Unknown }) && !LocateGuide.CityFirstStep(st, "recast", new ScreenState { Kind = ScreenKind.Foundry, Held = true }), "city first: an unknown or held screen changes nothing");
+    // after the back press the city is shown: the original step is there again (the step is recomputed every tick)
+    st = new LocateStep { Kind = LocateKind.OpenInventory };
+    Check(!LocateGuide.CityFirstStep(st, "recast", new ScreenState { Kind = ScreenKind.City }), "city first: back in the city -> the original step");
   }
 
   static string GeoBox(string key, string x0, string x1, string y0, string y1, double w, double h) {

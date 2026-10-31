@@ -36,7 +36,22 @@ namespace RealmForge {
     public bool Popup;                      // a pop-up over the list (none in the inventory's bulk sale)
   }
 
+  /// <summary>The equipment panel's filter (Panel_BackpackEquipPanel, READ ONLY): the choice the game holds in m_EquipFilterDataMap (0 status, 1 sets
+  /// {LeftSuitList, RightSuitList}, 2 quality {ItemQuality key = true}, 3 level, 4 main stats, 5 sub stats), the sets the pop-up lists (m_LeftSuitIdList /
+  /// m_RightSuitIdList), which of the two it shows and whether the panel and the set pop-up are open (the host's widget reads).</summary>
+  public sealed class InvFilterRead {
+    public bool Known;                                  // the choice was read
+    public long[] Suits = new long[0], Qualities = new long[0];   // chosen sets (both lists), chosen quality keys
+    public long[] Left = new long[0], Right = new long[0];        // the sets of the pop-up's two lists
+    public bool RightShown, ListMode;                   // m_SuitFilterListLeftRight, m_SuitFilterListMode
+    public bool Other;                                  // another part is on (status, level, main / sub stats): it may hide the item
+    public bool PanelOpen, SuitOpen, PanelKnown;        // the filter panel / the set pop-up shown (widget reads; PanelKnown: they were read)
+    public string Key { get { return string.Join(",", Array.ConvertAll(Suits, x => x.ToString())) + "|" + string.Join(",", Array.ConvertAll(Qualities, x => x.ToString())) + "|" + Other + RightShown + PanelOpen + SuitOpen; } }
+  }
+
   public sealed class InventoryScreen {
+    /// <summary>The filter of the equipment panel; null = not read (RFX.InvFilterWanted off, or the panel is not there).</summary>
+    public InvFilterRead Filter;
     public bool Open;          // the inventory is shown
     public bool EquipTab;      // on «Снаряжение»
     public bool Bulk;          // in «Массовая продажа»
@@ -150,7 +165,42 @@ namespace RealmForge {
         var d = ParseTable(map, 0, new HashSet<ulong>());
         if (d != null) foreach (var k in d.Keys) { long u; if (k.Length > 2 && long.TryParse(k.Substring(1, k.Length - 2), out u) && u > 0) s.Selected.Add(u); }
       }
+      if (InvFilterWanted && s.Open && s.EquipTab) { try { s.Filter = ReadInvFilter(panel); } catch (Exception e) { s.Filter = null; LL("inventory filter read failed: " + e.Message); } }
       return s;
+    }
+
+    /// <summary>«Найти в игре» filters the inventory's list for a long search (the host sets it for the request's run): the filter is read with the inventory.</summary>
+    public static volatile bool InvFilterWanted;
+    /// <summary>The client size and unit the filter's widget reads are made for (the host sets them; 0 = none: the panels' state is not read).</summary>
+    public static double InvFilterW, InvFilterH, InvFilterU;
+
+    /// <summary>The equipment panel's filter state. <paramref name="panel"/> = m_CachedContentPanels[-9998]. Public for the tests (fake tables).</summary>
+    public static InvFilterRead ReadInvFilter(ulong panel) {
+      var f = new InvFilterRead(); ulong map, t; int mt, tt; ulong sub; int st;
+      if (Field(panel, "m_LeftSuitIdList", out t, out tt) && tt == T_TABLE) f.Left = OrderedInts(t);
+      if (Field(panel, "m_RightSuitIdList", out t, out tt) && tt == T_TABLE) f.Right = OrderedInts(t);
+      ulong v;
+      f.RightShown = Field(panel, "m_SuitFilterListLeftRight", out v, out tt) && tt == T_BOOL && (v & 0xFFFFFFFF) != 0;
+      f.ListMode = Field(panel, "m_SuitFilterListMode", out v, out tt) && tt == T_BOOL && (v & 0xFFFFFFFF) != 0;
+      if (!Field(panel, "m_EquipFilterDataMap", out map, out mt) || mt != T_TABLE) return f;
+      var suits = new List<long>();
+      if (IntKey(map, 1, out sub, out st) && st == T_TABLE) {
+        if (Field(sub, "LeftSuitList", out t, out tt) && tt == T_TABLE) suits.AddRange(OrderedInts(t));
+        if (Field(sub, "RightSuitList", out t, out tt) && tt == T_TABLE) suits.AddRange(OrderedInts(t));
+      }
+      suits.Sort(); f.Suits = suits.ToArray();
+      if (IntKey(map, 2, out sub, out st) && st == T_TABLE) { var q = new HashSet<long>(); ReadTrueKeys(sub, q); var ql = new List<long>(q); ql.Sort(); f.Qualities = ql.ToArray(); }
+      foreach (long k in new long[] { 0, 3, 4, 5 }) if (IntKey(map, k, out sub, out st) && st == T_TABLE && TableCount(sub) > 0) f.Other = true;
+      f.Known = true;
+      // the panel and the set pop-up shown: the widgets' own visibility (src/UiButtons.cs; the host gave the window's size)
+      if (InvFilterW > 0 && InvFilterH > 0) {
+        var pn = UiKeyRead("panel", InvFilterW, InvFilterH, InvFilterU);
+        var sp = UiKeyRead("suitPanel", InvFilterW, InvFilterH, InvFilterU);
+        f.PanelKnown = pn != null && pn.Ok;
+        f.PanelOpen = f.PanelKnown && pn.Visible;
+        f.SuitOpen = f.PanelOpen && sp != null && sp.Ok && sp.Visible;
+      }
+      return f;
     }
 
     /// <summary>The artifact panel's mode and, in «Массовая продажа», its list and choice (READ ONLY). <paramref name="panels"/> = the form's

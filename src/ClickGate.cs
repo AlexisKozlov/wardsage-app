@@ -35,7 +35,7 @@ using System;
 using System.Collections.Generic;
 
 namespace RealmForge {
-  public enum ClickOwner { Locate, Sell, Equip, Explore }   // (Explore: the test build's explorer, src/Explorer.cs)
+  public enum ClickOwner { Locate, Sell, Equip, Explore, LocateFilter }   // (Explore: the test build's explorer, src/Explorer.cs; LocateFilter: the Locate pilot's filter presses in the inventory, its own stop: the search goes on without the filter)
 
   /// <summary>How a pilot leaves the form on top, by the screen map (ClickGate.MapExit).</summary>
   public enum MapMove { None, Wait, Stop, Back, Close, Escape }
@@ -60,6 +60,9 @@ namespace RealmForge {
     AscendDrag,       // a drag that scrolls the Ascension list
     InvCardGem,       // the selected item's card, its «Улучшение самоцветами» button (normal mode; opens the gem screen; «Показать в игре» recast)
     GemFuncRow,       // the gem screen's function list: the row of the wanted recast function (selects it only; «Показать в игре» recast)
+    // the inventory's filter for a long search (owner LocateFilter only; src/LocatePilot.cs InvFilterPilot): a button / toggle of the equipment panel's filter (the key in ClickRequest.Form),
+    // a set of its pop-up, a drag that scrolls the pop-up's list, a click outside that closes the pop-up / the panel (the filter stays). Never «Продать» or any button of the card
+    InvFilterBtn, InvFilterCell, InvFilterDrag, InvFilterClose,
     EquipNav,         // equip helper: the city's «Герои», a hero's card, the gear tab, the back arrow, a slot, a gear list item, a list drag
     EquipFilter,      // equip helper: the controls of the game's gear / hero filter pop-up
     EquipClosePopup,  // equip helper: the red × of a pop-up left over the list
@@ -376,6 +379,8 @@ namespace RealmForge {
       }
     }
     public static bool IsArtTarget(ClickTarget t) { return t >= ClickTarget.ArtTab; }
+    /// <summary>The inventory filter's own targets (owner LocateFilter).</summary>
+    public static bool IsInvFilterTarget(ClickTarget t) { return t >= ClickTarget.InvFilterBtn && t <= ClickTarget.InvFilterClose; }
     /// <summary>The way to the inventory the artifact guide and the artifact cleanup may also click (the hero screen's back arrow, the city's «Инвентарь»): they start from any screen.</summary>
     public static bool ArtLocateWay(ClickTarget t) { return t == ClickTarget.HeroBack || t == ClickTarget.CityInventory; }
     /// <summary>The targets of the hero screen's artifact steps (the Equip owner's).</summary>
@@ -408,6 +413,7 @@ namespace RealmForge {
       public bool ArtTick;          // artifact bulk sale: the cell under the click is a wanted one that is not ticked (tick), or a ticked one that is not wanted (Untick)
       public bool FoundryClosed;    // the fresh read must show the Foundry NOT open (FoundryButton: its point lies inside the Foundry's «Вознести»)
       public int HeroArt;           // hero screen artifact steps: 1 not on the artifact tab  2 tab, list closed  3 tab, list open  4 + the plan's artifact selected (its card)  5 + the "worn by another hero" pop-up
+      public int InvFilter;         // the inventory's filter: 1 a key of InvFilterPilot.ClickKey  2 a set of the pop-up (the set under the click is one of the items meant)  3 a drag on the pop-up's list  4 the close click (the panel must be open)
     }
 
     static ScreenKind[] K(params ScreenKind[] k) { return k; }
@@ -439,6 +445,14 @@ namespace RealmForge {
             case ClickTarget.ArtPromoteTab: return new Rule { Kinds = K(ScreenKind.ArtWorkshop), WsNotTab = 2, WsUid = true };
             case ClickTarget.ArtMatCell: return new Rule { Kinds = K(ScreenKind.ArtWorkshop), WsTab = 2, WsUid = true, MatCell = true };
             case ClickTarget.ArtMatDrag: return new Rule { Kinds = K(ScreenKind.ArtWorkshop), WsTab = 2, WsUid = true };
+          }
+          return null;
+        case ClickOwner.LocateFilter:
+          switch (t) {
+            case ClickTarget.InvFilterBtn: return new Rule { Kinds = K(ScreenKind.Inventory), InvNormalEquip = true, InvFilter = 1 };
+            case ClickTarget.InvFilterCell: return new Rule { Kinds = K(ScreenKind.Inventory), InvNormalEquip = true, InvFilter = 2 };
+            case ClickTarget.InvFilterDrag: return new Rule { Kinds = K(ScreenKind.Inventory), InvNormalEquip = true, InvFilter = 3 };
+            case ClickTarget.InvFilterClose: return new Rule { Kinds = K(ScreenKind.Inventory), InvNormalEquip = true, InvFilter = 4 };
           }
           return null;
         case ClickOwner.Sell:
@@ -649,7 +663,7 @@ namespace RealmForge {
       return false;
     }
 
-    bool HintOnly(ClickOwner o) { return (o == ClickOwner.Sell && NoSellClicks) || (o == ClickOwner.Locate && NoLocateClicks); }
+    bool HintOnly(ClickOwner o) { return (o == ClickOwner.Sell && NoSellClicks) || ((o == ClickOwner.Locate || o == ClickOwner.LocateFilter) && NoLocateClicks); }
 
     static bool HasForm(string list, string[] names) {
       if (string.IsNullOrEmpty(list)) return false;
@@ -916,6 +930,23 @@ namespace RealmForge {
         case ClickTarget.SlotTab: return s => s.Kind == ScreenKind.Foundry && s.FoundryKey != fkey;
         case ClickTarget.AscendCell: return s => s.Kind == ScreenKind.Foundry && s.FoundrySel == uid;
         case ClickTarget.InvCardGem: return s => s.Kind == ScreenKind.Gem;
+        // the inventory's filter: the choice / the panels the game holds change (r.Form = the key, r.Func the toggle's meaning, CellUid the set)
+        case ClickTarget.InvFilterBtn: {
+          string key = r.Form ?? ""; int fn = r.Func; long qk = InvFilterPilot.QualityMapKey(key);
+          return s => {
+            var fl = s.Inv != null ? s.Inv.Filter : null; if (s.Kind != ScreenKind.Inventory || fl == null) return false;
+            switch (key) {
+              case "funnel": return fl.PanelOpen;
+              case "suitOpen": return fl.SuitOpen;
+              case "suitLeft": return !fl.RightShown;
+              case "suitRight": return fl.RightShown;
+              case "reset": return fl.Suits.Length == 0 && fl.Qualities.Length == 0;
+            }
+            return qk > 0 && Array.IndexOf(fl.Qualities, qk) >= 0;
+          };
+        }
+        case ClickTarget.InvFilterCell: { long su = r.CellUid; return s => s.Kind == ScreenKind.Inventory && s.Inv != null && s.Inv.Filter != null && Array.IndexOf(s.Inv.Filter.Suits, su) >= 0; }
+        case ClickTarget.InvFilterClose: { bool suit = r.Func == 1; return s => s.Kind == ScreenKind.Inventory && s.Inv != null && s.Inv.Filter != null && (suit ? !s.Inv.Filter.SuitOpen : !s.Inv.Filter.PanelOpen); }
         case ClickTarget.GemFuncRow: { int fn = r.Func; return s => s.Kind == ScreenKind.Gem && s.GemFunc == fn; }
         case ClickTarget.ArtTab: return s => s.Kind == ScreenKind.Inventory && s.InvArtTab;
         case ClickTarget.ArtBulkEnter: return s => s.Kind == ScreenKind.Inventory && s.InvArtTab && s.InvArtBulk;
@@ -1024,7 +1055,7 @@ namespace RealmForge {
       NoteForms(s, now);
       Observe(s, now);
       if (halted.TryGetValue(o, out h)) return GateResult.Deny("halted", h);
-      if (watches.ContainsKey(o)) return GateResult.Wait("pending", "the previous click has not shown its effect yet");
+      if (watches.ContainsKey(o) || (o == ClickOwner.Locate && watches.ContainsKey(ClickOwner.LocateFilter))) return GateResult.Wait("pending", "the previous click has not shown its effect yet");
       // an offer pop-up on top: the pilot closes it first (OfferClose), nothing else is decided under it
       if (s != null && s.OfferCount > 0) return GateResult.Wait("offer", s.ModalWhy);
       long until;
@@ -1090,6 +1121,7 @@ namespace RealmForge {
       if (heroArt && r.Owner == ClickOwner.Equip && !ArtEquipAuto) return Halt(r.Owner, "artifact", tag + ": the artifact steps are hints only");
       var rule = RuleOf(r.Owner, r.Target);
       if (rule == null) return Halt(r.Owner, "target", tag + " is not a target " + r.Owner + " may click");
+      if (r.Owner == ClickOwner.LocateFilter && (NoLocateClicks || ArtLocateAuto)) return Halt(r.Owner, "artifact", tag + ": a hint run / the artifact guide presses no filter");
       if (f == null || f.Kind == ScreenKind.Unknown) return UnknownWait(r, f, now, tag + ": the screen is not recognised" + (f != null && f.TopForm != "" ? " (top form " + f.TopForm + " not in the list)" : ""));
       // the window table shows the screen but its reader gave no reading of it: its details (tab, mode, selection) are not known - waited for as
       // an unrecognised screen (the forms are searched again), never judged from details it does not have
@@ -1130,6 +1162,18 @@ namespace RealmForge {
           if (!f.InvEquipTab || !f.InvBulk) return Halt(r.Owner, "screen", tag + ": not in bulk-sale mode on the equipment tab");
         }
         if (rule.InvOtherTab && f.InvEquipTab) return Halt(r.Owner, "screen", tag + ": already on the equipment tab");
+        if (rule.InvFilter != 0) {
+          var fl = f.Inv != null ? f.Inv.Filter : null;
+          if (fl == null || !fl.Known) return UnknownWait(r, f, now, tag + ": the inventory's filter is not readable");
+          if (rule.InvFilter == 1 && !InvFilterPilot.ClickKey(r.Form)) return Halt(r.Owner, "target", tag + ": '" + r.Form + "' is not a filter button the pilot may press");
+          if (rule.InvFilter == 1 && r.Form != "funnel" && !fl.PanelOpen) return Halt(r.Owner, "screen", tag + ": the filter panel is not open");
+          if (rule.InvFilter == 2) {
+            if (!fl.SuitOpen) return Halt(r.Owner, "screen", tag + ": the set pop-up is not open");
+            if (r.CellUid <= 0 || r.CellOk == null || !r.CellOk.Contains(r.CellUid)) return Halt(r.Owner, "cell", tag + ": the set under the click is " + r.CellUid + ", not the item's");
+          }
+          if (rule.InvFilter == 3 && !fl.SuitOpen) return Halt(r.Owner, "screen", tag + ": the set pop-up is not open");
+          if (rule.InvFilter == 4 && !fl.PanelOpen) return Halt(r.Owner, "screen", tag + ": the filter panel is not open - nothing to close");
+        }
       }
       if (f.Kind == ScreenKind.Inventory && rule.InvArt != 0) {
         if (rule.InvArt == 3) {
