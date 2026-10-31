@@ -77,6 +77,29 @@
     return g;
   }
 
+  // The «selected / confirm» step is sticky (lab 1.6.66.437: «Заменить» and «Выберите ...» alternated while the item's tip opened and the game's selection
+  // read flickered). `st` is the caller's own state object ({}); `g` the step from next(). Once the plan's item is the selected one (live.selUid) the step
+  // stays 'selected' while its tip (live.tip) is shown, and without a tip while it is still selected; it ends when the tip closes with the item no longer
+  // selected, or when another item stays selected for STICKY_OTHER_MS. Returns g (the same object, its kind set); st.changes counts the state changes.
+  const STICKY_OTHER_MS = 1000;
+  function sticky(st, g, live, now) {
+    const uid = g && g.item ? g.item.uid : 0;
+    const eligible = uid && live && (g.kind === 'pick' || g.kind === 'rel' || g.kind === 'filter' || g.kind === 'selected');
+    if (!eligible || st.uid !== uid) { st.uid = eligible ? uid : 0; st.on = false; st.otherAt = 0; st.tip = false; }
+    if (!eligible) return g;
+    const sel = live.selUid > 0 ? live.selUid : 0, tip = !!live.tip, was = st.on;
+    if (sel === uid) { st.on = true; st.otherAt = 0; }
+    else if (st.on) {
+      if (st.tip && !tip) st.on = false;   // the tip closed and the item is not the selected one
+      else if (sel > 0 || !tip) { if (!st.otherAt) st.otherAt = now; if (now - st.otherAt >= STICKY_OTHER_MS) st.on = false; }   // another item (or nothing, no tip) for a second
+      else st.otherAt = 0;   // the tip is shown and the read shows nothing: still this item
+    }
+    st.tip = tip;
+    if (st.on !== was) st.changes = (st.changes || 0) + 1;
+    if (st.on) { g.kind = 'selected'; g.wrong = false; if (!g.row) { const pos = live.rows && live.rows[uid]; if (pos) { g.row = pos[0]; g.col = pos[1] || 0; } } }
+    return g;
+  }
+
   // Plan of the hero open in the game, else the current choice, else the first.
   function pickPlan(plans, live, current) {
     if (!plans || !plans.length) return -1;
@@ -190,7 +213,7 @@
     return a > 10 && a < 20 ? many : b === 1 ? one : b >= 2 && b <= 4 ? few : many;
   }
 
-  const api = { next, artStep, pickPlan, freshPlan, freshPlans, freshSell, nextQueued, takeOver, highlightUid, plural, bustUrl, headUrl, itemUrl, setUrl, rankOf, statOf, statId, statUrl, VISIBLE_ROWS };
+  const api = { next, sticky, artStep, pickPlan, freshPlan, freshPlans, freshSell, nextQueued, takeOver, highlightUid, plural, bustUrl, headUrl, itemUrl, setUrl, rankOf, statOf, statId, statUrl, VISIBLE_ROWS };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.RFGuide = api;
 })(typeof window !== 'undefined' ? window : globalThis);

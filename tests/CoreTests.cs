@@ -1652,7 +1652,9 @@ static partial class CoreTests {
         ulong hcont = fu.Rect(hvp, tc, tc, new[] { 400.0, 800 }, tc, new[] { 0.0, 200 }, 1, out hc);
         ulong row = fu.Rect(hcont, tl, tl, new[] { 400.0, 120 }, tl, new[] { -200.0, 0 }, 1, out hg);
         var kids = new List<ulong>();
-        for (int i = 1; i <= 3; i++) { ulong ge, gf; ulong e = fu.Rect(row, tl, tl, new[] { 100.0, 100 }, tl, new[] { 10 + (i - 1) * 120.0, -10 }, 1, out ge); ulong f2 = fu.Rect(e, half, half, new[] { 90.0, 90 }, half, new[] { 50.0, -50 }, 1, out gf); fu.Name(ge, "c_Equip" + i); fu.Name(gf, "c_Frame"); fu.Kids(e, f2); kids.Add(e); }
+        for (int i = 1; i <= 3; i++) { ulong ge, gf; ulong e = fu.Rect(row, tl, tl, new[] { 100.0, 100 }, tl, new[] { 10 + (i - 1) * 120.0, -10 }, 1, out ge); ulong f2 = fu.Rect(e, half, half, new[] { 90.0, 90 }, half, new[] { 50.0, -62 }, 1, out gf); fu.Name(ge, "c_Equip" + i); fu.Name(gf, "c_Frame");
+          if (i == 3) { ulong gs; ulong sel = fu.Rect(e, tl, tl, new[] { 100.0, 124 }, tl, new[] { 0.0, -12 }, 1, out gs); fu.Name(gs, "c_EquipSelected"); fu.Kids(e, f2, sel); } else fu.Kids(e, f2);   // (the item root stands 17 px above its picture; item 3 shows the game's own selection frame)
+          kids.Add(e); }
         fu.Kids(row, kids.ToArray());
         ulong g2; ulong gud2 = FakeManaged(fu, "UI", "InfinityGridV2", 0x140, out g2);
         m.W64(g2 + 0xF0, FakeWrap(m, "UnityEngine", "RectTransform", hvp)); m.W32(g2 + 0xF8, 0); m.W32(g2 + 0xFC, 1);
@@ -1668,6 +1670,24 @@ static partial class CoreTests {
         var hc2 = hs.Ok ? hs.Of(202) : null;
         Check(hc2 != null && hc2.Col == 2 && hc2.Index == 1 && Near(hc2.X, W / 2 - 200 * k + (130 + 5) * k) && Near(hc2.W, 90 * k) && hs.Cells.Count == 1,
           "hero gear (V2): row 2's second item from c_Equip2's c_Frame (" + (hs.Ok ? "" : hs.FailStep + " " + hs.FailValue) + ")");
+        // the cell's frame never reaches above its picture (the row above's plate), and the game's own selection frame is the cell where there is one
+        Check(hc2 != null && hc2.BY >= hc2.Y - 0.01 && hc2.BY + hc2.BH >= hc2.Y + hc2.H - 0.01 && hc2.BH >= hc2.H - 0.01,
+          "hero gear cell: the frame box starts at the picture's top, not above it (the item root stood 17 px higher): " + (hc2 != null ? hc2.BY + " vs " + hc2.Y : "none"));
+        var hs3 = RFX.UiCellRead(fu.Env, ui2.A, UiCellKind.HeroGear, new long[] { 203 }, W, H, U); var hc3 = hs3.Ok ? hs3.Of(203) : null;
+        Check(hc3 != null && Math.Abs(hc3.BY - (hc3.Y - 5 * k)) < 0.05 && Math.Abs(hc3.BH - 124 * k) < 0.05 && Math.Abs(hc3.BW - 100 * k) < 0.05,
+          "hero gear cell: the game's c_EquipSelected rect is the frame's cell (" + (hc3 != null ? hc3.BY + "," + hc3.BH : "none") + ")");
+        // the cell layout: rows 130 px apart (picture 90 + plate), the frame of a cell never meets the row above
+        {
+          var up = new UiCell { X = 100, Y = 100, W = 90, H = 90, BX = 95, BY = 100 - 17, BW = 100, BH = 124 + 17 };   // a root 17 px above its picture
+          var above = new UiCell { X = 100, Y = -30, W = 90, H = 90, BX = 100, BY = -30, BW = 90, BH = 120 };   // the row above: picture to y 60, its plate to 90
+          RFX.CellClampTop(up);
+          Check(up.BY >= above.BY + above.BH && up.BY >= 100 - 0.01 && up.BY + up.BH >= 190, "hero gear cell layout: the clamped frame (top " + up.BY + ") does not intersect the plate of the row above (bottom " + (above.BY + above.BH) + ")");
+          var bad = new UiCell { X = 100, Y = 100, W = 90, H = 90 }; bad.BX = bad.X; bad.BY = bad.Y; bad.BW = bad.W; bad.BH = bad.H;
+          Check(!RFX.CellSelected(bad, 100, 20, 90, 300) && !RFX.CellSelected(bad, 400, 100, 90, 90) && RFX.CellSelected(bad, 98, 96, 94, 120) && bad.BY == 96, "hero gear cell: an unusable selection rect (too tall, beside the picture) is not the cell; a fitting one is");
+        }
+        Check(ConfirmFrame.Ready(true, true) && !ConfirmFrame.Ready(true, false) && !ConfirmFrame.Ready(false, true), "«Заменить»: the frame stands from the first live rect on the shown tip, never without the tip or the live rect");
+        { var ls = new LiveStill(); var rc = new double[] { 470, 568, 139, 38 };
+          Check(!ls.Note(rc, 1000) && ls.Fresh && ConfirmFrame.Ready(ls.Fresh, true) && !ls.Note(rc, 1050) && ls.Note(rc, 1100), "«Заменить»: the frame is ready at the first read (Fresh), the click waits for the confirming read 100 ms later"); }
       }
     } finally { RFX.TestMemory = null; RFX.ForgetLive(); RFX.UiCellReset(); }
   }

@@ -1237,6 +1237,10 @@ namespace RealmForge {
           double ax, ay, aw, ah;
           foreach (ulong root in new[] { at, ctr })   // (the item child, then the cell: a plate that is the cell's own child is in the cell's rect)
             if (root != pic && RectUnder(root, rtr, above, canvas, W, H, U, new UiButtonInfo(), true, out ax, out ay, out aw, out ah) && aw >= 4 && ah >= 4) CellBox(c, ax, ay, aw, ah, sp.Rows && root == at);
+          if (sp.Rows) {   // the game's own yellow selection frame (c_EquipSelected, shown on a selected item) is the cell's true rect; never above the picture
+            double sx, sy, sw, sh; ulong selT = ChildNamed(at, "c_EquipSelected", 3, new List<ulong>());
+            if (!(selT != 0 && RectUnder(selT, rtr, above, canvas, W, H, U, new UiButtonInfo(), true, out sx, out sy, out sw, out sh) && CellSelected(c, sx, sy, sw, sh))) CellClampTop(c);
+          }
           if (icon == "c_Frame") { var ai = new UiButtonInfo(); ArtInto(Ptr(pic + CompGo), cb, ai); c.Sprite = ai.Sprite; c.Art = ai.Art; }   // (the quality frame's sprite: its visible part)
           c.InView = InViewOf(c.X, c.Y, c.W, c.H, r.VX, r.VY, r.VW, r.VH);
           r.Cells.Add(c);
@@ -1258,6 +1262,23 @@ namespace RealmForge {
       if (w > c.W * 1.6 + 2 || h > c.H * (item ? 3.0 : 2.2) + 2) return;   // (item: a list row's own item child, the cell itself: its stat plate may be tall)
       double l = Math.Min(c.X, x), t = Math.Min(c.Y, y), r = Math.Max(c.X + c.W, x + w), b = Math.Max(c.Y + c.H, y + h);
       c.BX = l; c.BY = t; c.BW = r - l; c.BH = b - t;
+    }
+
+    /// <summary>The game's selection frame of the cell (x, y, w, h) is the whole cell when it is about the picture's size (0.8..1.6 wide, 0.8..2.2 tall) and holds the
+    /// picture's middle; false = it is not usable.</summary>
+    public static bool CellSelected(UiCell c, double x, double y, double w, double h) {
+      if (w < c.W * 0.8 || w > c.W * 1.6 + 2 || h < c.H * 0.8 || h > c.H * 2.2 + 2) return false;
+      double mx = c.X + c.W / 2, my = c.Y + c.H / 2;
+      if (mx < x || mx > x + w || my < y || my > y + h) return false;
+      c.BX = x; c.BY = y; c.BW = w; c.BH = h;
+      return true;
+    }
+
+    /// <summary>The cell's box never reaches above its picture (a root rect that stands higher covers the plate of the item above).</summary>
+    public static void CellClampTop(UiCell c) {
+      if (c.BY >= c.Y) return;
+      c.BH -= c.Y - c.BY; c.BY = c.Y;
+      if (c.BH < c.H) c.BH = c.H;
     }
 
     /// <summary>What the read <paramref name="s"/> says of item <paramref name="uid"/> at <paramref name="now"/>: Shown with its frame (the picture

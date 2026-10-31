@@ -138,4 +138,30 @@ ok(G.next(plan, live({ owner: { 6423: 0 } })).item.uid === 6423, 'in the bag: wa
   for (const st of ['hero', 'wait', 'tab', 'open', 'openAdd', 'pick', 'pickAny', 'missing', 'filter', 'unfit', 'unfitEx', 'replace', 'equip', 'confirm', 'done'])
     for (const l of ['ru', 'en']) ok(typeof tt[l]['artS_' + st] === 'string' && tt[l]['artS_' + st].length > 3 && tt[l]['artS_' + st].replace('{0}', 'Хххххххххххх').length <= 80, 'artS_' + st + ' (' + l + ') fits a plate');
 }
+// the «selected / confirm» step is sticky: the selection read and the tip flicker, the step does not (target: one change per real action)
+{
+  const st = {}; const rows = { 6423: [3, 2], 77: [4, 1] }; let t = 1000, kinds = [];
+  const step = (o) => { t += 100; const g = G.sticky(st, G.next(plan, live({ rows, ...o })), live({ rows, ...o }), t); kinds.push(g.kind); return g; };
+  ok(step({}).kind === 'pick', 'sticky: nothing selected -> pick');
+  ok(step({ selUid: 6423, selRow: 3 }).kind === 'selected' && st.changes === 1, 'sticky: the plan item selected -> selected (one change)');
+  kinds = [];
+  // the tip opens and the selection read flickers: another item, nothing, the item
+  step({ selUid: 77, selRow: 4, tip: true }); step({ selUid: 0, tip: true }); step({ selUid: 77, selRow: 4, tip: true }); step({ selUid: 6423, selRow: 3, tip: true }); step({ selUid: 0, tip: true });
+  ok(kinds.every((k) => k === 'selected') && st.changes === 1, 'sticky: flicker of the read under the shown tip: still selected, no change (' + kinds.join() + ')');
+  // another item stays selected under a shown tip for a second: released
+  t += 100; let g = G.sticky(st, G.next(plan, live({ rows, selUid: 77, selRow: 4, tip: true })), live({ rows, selUid: 77, selRow: 4, tip: true }), t);
+  ok(g.kind === 'selected', 'sticky: another item for less than a second: still selected');
+  t += 1100; g = G.sticky(st, G.next(plan, live({ rows, selUid: 77, selRow: 4, tip: true })), live({ rows, selUid: 77, selRow: 4, tip: true }), t);
+  ok(g.kind !== 'selected' && st.changes === 2, 'sticky: another item selected for 1 s: released (' + g.kind + ')');
+  // the tip closes with the item not selected any more: released at once
+  const s2 = {}; let t2 = 5000; const nx = (o) => { t2 += 100; const L = live({ rows, ...o }); return G.sticky(s2, G.next(plan, L), L, t2); };
+  nx({ selUid: 6423, selRow: 3, tip: true }); ok(nx({ selUid: 0, tip: true }).kind === 'selected', 'sticky: tip shown, nothing read: held');
+  ok(nx({ selUid: 0, tip: false }).kind !== 'selected' && s2.changes === 2, 'sticky: the tip closed, the item not selected: released');
+  // without a tip the selection itself holds the step; a read of nothing for under a second does not drop it
+  const s3 = {}; let t3 = 9000; const n3 = (o) => { t3 += 100; const L = live({ rows, ...o }); return G.sticky(s3, G.next(plan, L), L, t3); };
+  n3({ selUid: 6423, selRow: 3 }); ok(n3({ selUid: 0 }).kind === 'selected' && n3({ selUid: 6423 }).kind === 'selected' && s3.changes === 1, 'sticky: a one-read gap without a tip does not flip the step');
+  // another plan item: a fresh state
+  const L4 = live({ rows, selUid: 0 }); ok(G.sticky({ uid: 999, on: true }, G.next(plan, L4), L4, 1).kind === 'pick', 'sticky: the state of another item is not carried over');
+  ok(G.sticky({}, G.next(plan, live({ heroUid: 1 })), live({ heroUid: 1 }), 1).kind === 'hero', 'sticky: other steps are untouched');
+}
 console.log(`guide: ${n} passed`);

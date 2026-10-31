@@ -1285,9 +1285,9 @@ namespace RealmForge {
         bool cl; var cf = FrameForI(FrameTargets.KeyConfirm, lay, W, H, U, out cl);
         if (cl && cf != null) confirmBtn = cf;
         confirmStill = confirmLive.Note(cl && cf != null ? new double[] { cf[0], cf[1], cf[2], cf[3] } : null, NowMs());   // (the card has stopped opening: AutoView.ButtonStill)
-        // the frame and the plate beside it stand on the live rect only, and once it has stopped moving (one layout of the plate a step); until then
-        // the plate alone at the top, nothing over the button
-        if (!(cl && cf != null && confirmStill)) { DrawTipTop(hintLines); return; }
+        // the frame and the plate beside it stand on the live rect only, from its first read on the shown tip (the frame's own steadiness holds the
+        // jitter; only the pilot's click waits for the confirming read, AutoView.ButtonStill); until then the plate alone at the top
+        if (!ConfirmFrame.Ready(cl && cf != null, EquipTipShown())) { DrawTipTop(hintLines); return; }
         confirmHintRect = cf;
       }
       bool rl;
@@ -1925,7 +1925,7 @@ namespace RealmForge {
       };
       { var cs = screens.Current;   // the item's tip among the shown forms (a pilot's flow form of the hero screen: ScreenMap.FlowForms)
         v.TipKnown = RFX.UiKnown && !formsUnread && cs != null && !cs.Held && cs.Kind == ScreenKind.HeroScreen && cs.OfferRead && formsKind == ScreenKind.HeroScreen;
-        v.TipShown = cs != null && ((cs.Flow ?? "") + "," + (cs.ModalWhy ?? "")).Contains(EquipTipForm);
+        v.TipShown = EquipTipShown();
         v.BlueNone = confirm && confirmBlueNone; v.ButtonStill = confirm && confirmBtn != null && confirmStill; }
       userClick = false; lastAutoView = v; lastClientW = cr.R; lastClientH = cr.B;
       // an offer pop-up over the city is closed before the plan's next step (the equip helper has no preflight of its own here)
@@ -4412,6 +4412,8 @@ namespace RealmForge {
     /// the spot whose middle is the game's blue button. Null when neither is (the card is still opening, another screen)
     /// or both are (unexpected: better not to press).</summary>
     const string EquipTipForm = "Form_CharactorEquipTip";
+    /// <summary>The item's tip is among the shown forms (a flow form of the hero screen).</summary>
+    public bool EquipTipShown() { var cs = screens.Current; return cs != null && ((cs.Flow ?? "") + "," + (cs.ModalWhy ?? "")).Contains(EquipTipForm); }
     int[] ConfirmButton(W32.POINT o, double W, double H) {
       int[] rep = FindBlue(o, hg.Replace(W, H), H), eq = FindBlue(o, hg.Equip(W, H), H);
       confirmBlueNone = rep == null && eq == null;

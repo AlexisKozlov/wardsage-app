@@ -1573,7 +1573,7 @@ namespace RealmForge {
         .Append(",\"form\":").Append(B(s.FormOk)).Append(",\"tab\":").Append(N(s.Tab))
         .Append(",\"part\":").Append(N(s.Part)).Append(",\"hideEquipped\":").Append(B(s.HideEquipped)).Append(",\"hideEnhanced\":").Append(B(s.HideEnhanced))
         .Append(",\"filterActive\":").Append(B(s.FilterActive)).Append(",\"selUid\":").Append(N(s.SelUid)).Append(",\"selRow\":").Append(N(s.SelRow))
-        .Append(",\"selCol\":").Append(N(s.SelCol)).Append(",\"selOwner\":").Append(N(s.SelOwner))
+        .Append(",\"tip\":").Append(B(overlay.EquipTipShown())).Append(",\"selCol\":").Append(N(s.SelCol)).Append(",\"selOwner\":").Append(N(s.SelOwner))
         .Append(",\"screen\":").Append(S(scrName)).Append(",\"bulk\":").Append(B(inBulk)).Append(",\"rows\":{");
       bool first = true;
       foreach (var kv in s.Row) {

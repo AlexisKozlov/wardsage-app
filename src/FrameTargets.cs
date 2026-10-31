@@ -312,6 +312,11 @@ namespace RealmForge {
     }
   }
 
+  /// <summary>«Заменить» / «Надеть» of the item's tip: its frame is drawn from the first live rect read on the shown tip (no stability wait).</summary>
+  public static class ConfirmFrame {
+    public static bool Ready(bool liveRect, bool tipShown) { return liveRect && tipShown; }
+  }
+
   /// <summary>An item cell's one frame: the whole cell (the icon with the stat plate under it), and held through a moment without a fresh read.</summary>
   public static class CellFrame {
     /// <summary>The live frame <paramref name="fr"/> (x, y, w, h, r) made the whole cell: when the list's own cell (<paramref name="calc"/>: the layout's

@@ -78,6 +78,19 @@
     clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('show'), ms || 1800);
   }
 
+  // the step of plan p for the current game state: the «selected / confirm» step is sticky (ui/guide.js sticky), each change is logged once
+  function guideOf(p) {
+    const g = G.next(p, S.live);
+    S.sticky = S.sticky || {};
+    const st = S.sticky[p.id] || (S.sticky[p.id] = {});
+    const was = st.on;
+    G.sticky(st, g, S.live, Date.now());
+    if (st.on !== was) host.send({ cmd: 'log', text: 'guide step ' + (st.on ? 'held as selected' : 'released') + ' item ' + st.uid + ' (sel ' + (S.live && S.live.selUid) + ', tip ' + !!(S.live && S.live.tip) + ', ' + (st.changes || 0) + ' changes)' });
+    return g;
+  }
+  // a held step is let go after a second with the host quiet (the live event only comes on a change)
+  setInterval(() => { try { const p = current(); if (p && S.hasCode && S.sticky && S.sticky[p.id] && S.sticky[p.id].on) syncHighlight(); } catch (e) { /* no plan yet */ } }, 500);
+
   // ---------------------------------------------------------------- shell
   let lastRail = '', lastPage = '', lastView = '', lastModal = '';
   // Re-renders only what changed (the game is polled several times a second): no flicker, hover and focus survive.
@@ -522,7 +535,7 @@
   }
 
   function planCard(p, i) {
-    const g = G.next(p, S.live);
+    const g = guideOf(p);
     const pct = Math.round((g.done / p.items.length) * 100);
     return `<button class="plan" data-act="pick" data-i="${i}" aria-pressed="${i === S.sel}">${bust(p)}
       <div><b>${esc(p.heroName)}</b><span>${esc(foreign(p) ? t('otherAccount') : t('itemsOn', g.done, p.items.length))}</span><div class="mini-bar"><i style="width:${pct}%"></i></div></div></button>`;
@@ -676,7 +689,7 @@
 
   function guideCard() {
     const p = current(); if (!p) return '';
-    const g = G.next(p, S.live);
+    const g = guideOf(p);
     return `<div class="card framed"><div class="guide">${bust(p, 'lg')}
       <div><h3>${esc(p.heroName)}</h3><div class="meta">${esc(t('itemsOn', g.done, p.items.length))}</div>
         <div class="bar"><i style="width:${Math.round((g.done / p.items.length) * 100)}%"></i></div></div></div>
@@ -691,7 +704,7 @@
     const sc = S.sell.list ? sellCard() : '';
     if (!p) return `<div class="compact-view">${S.locate.req ? locateCard(true) : ''}${sc}<div class="row" style="justify-content:space-between"><b>${esc(t('plansNone'))}</b>
       <button class="icon-btn" data-act="compact" title="${esc(t('expand'))}">${I.expand}</button></div></div>`;
-    const g = G.next(p, S.live);
+    const g = guideOf(p);
     return `<div class="compact-view">${remoteNote(['equip', 'autoclick'])}${S.locate.req ? locateCard(true) : ''}${sc}
       <div class="compact-top">${bust(p)}<div><b>${esc(p.heroName)}</b><span>${esc(t('itemsOn', g.done, p.items.length))}</span>
         <div class="mini-bar"><i style="width:${Math.round((g.done / p.items.length) * 100)}%"></i></div></div>
@@ -1170,7 +1183,7 @@
   // tell the host which item to frame in the game
   function syncHighlight() {
     const p = current();
-    const g = p && S.hasCode ? G.next(p, S.live) : null;
+    const g = p && S.hasCode ? guideOf(p) : null;
     const uid = g ? G.highlightUid(g) : 0;
     // hints on the game's own buttons: the filter to set, «Заменить», the next slot
     let hint = '', slot = -1, line1 = '', line2 = '';
