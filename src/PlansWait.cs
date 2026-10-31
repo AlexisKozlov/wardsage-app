@@ -48,14 +48,18 @@ namespace RealmForge {
       return string.IsNullOrEmpty(lastAt) ? nowUtc.AddSeconds(-60).ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", CultureInfo.InvariantCulture) : lastAt;
     }
 
+    /// <summary>The last Request on this thread failed because a pooled keep-alive connection was closed.</summary>
+    [ThreadStatic] public static bool LastClosed;
+
     /// <summary>One long request; false when the site was not reached.</summary>
     public static bool Request(string site, string code, string since, Action<HttpWebRequest> started, out int http, out string text) {
-      http = 0; text = null;
+      http = 0; text = null; LastClosed = false;
       try {
         SyncClient.EnableTls12();
         ServicePointManager.Expect100Continue = false;
         var req = (HttpWebRequest)WebRequest.Create(site + "/api/extractor/plans/wait?since=" + Uri.EscapeDataString(since));
         req.Method = "GET"; req.Accept = "application/json"; req.UserAgent = SyncClient.UserAgent;
+        req.ConnectionGroupName = "wait";   // its own connections: the 25 s hold must not block the plan list
         req.Headers["Authorization"] = "Bearer " + code; req.Headers["X-RF-Extractor"] = SyncClient.Version;
         SyncClient.AddPlanPlayer(req);
         req.Timeout = TimeoutMs; req.ReadWriteTimeout = TimeoutMs; req.AllowAutoRedirect = false;
@@ -66,6 +70,7 @@ namespace RealmForge {
       } catch (WebException e) {
         var resp = e.Response as HttpWebResponse;
         if (resp != null) using (resp) { http = (int)resp.StatusCode; text = Read(resp); return true; }
+        LastClosed = SyncClient.IsConnectionClosed(e);
         return false;
       } catch (Exception) { return false; }
     }
@@ -123,6 +128,8 @@ namespace RealmForge {
         if (ok || up != lastUp) { ok = false; lastUp = up; state(false, up); }
         if (r.Kind == WaitKind.NotDeployed) { Dead = true; on = false; log("plans wait: the site has no long poll, the timer polling stays"); return; }
         fails++;
+        // an idle keep-alive connection the server dropped: once more on a fresh one, no pause
+        if (fails == 1 && !reached && PlansWait.LastClosed) continue;
         int wait = PlansWait.Backoff(fails);
         if (fails == 1 || fails % 10 == 0) log("plans wait: " + r.Kind + (reached ? " (HTTP " + http + ")" : " (no connection)") + ", retry in " + wait / 1000 + " s");
         for (int t = 0; t < wait && my == gen; t += 100) Thread.Sleep(100);
@@ -141,7 +148,8 @@ namespace RealmForge {
     public const int PlayerWaitMs = 60000, NoHistoryWaitMs = 300000;
     public static bool ShouldPoll(bool gameRunning, long player, long sinceGameFoundMs, long lastPlayer) {
       if (!gameRunning || player > 0) return true;
-      return sinceGameFoundMs >= (lastPlayer > 0 ? PlayerWaitMs : NoHistoryWaitMs);
+      if (lastPlayer > 0) return true;   // the account last read here; PollGate.Reload asks again if the account read later differs
+      return sinceGameFoundMs >= NoHistoryWaitMs;
     }
     /// <summary>The lists shown were asked for <paramref name="polledFor"/> (-1 = not asked yet), the requests would now
     /// name <paramref name="now"/>: they are asked again when a read game account differs (pure).</summary>

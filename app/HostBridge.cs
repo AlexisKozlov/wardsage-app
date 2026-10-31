@@ -483,12 +483,12 @@ namespace RealmForge {
     void SyncPlansWait() {
       bool want = gameRunning && SyncClient.IsValidCode(cfg.Code);
       string key = want ? cfg.Site + "|" + cfg.Code : "";
-      if (plansWait == null) plansWait = new PlansWaiter(() => cfg.Site, () => cfg.Code, () => Post("{\"ev\":\"plans.changed\"}"), (ok, reach) => Post("{\"ev\":\"plansWait\",\"ok\":" + B(ok) + ",\"reach\":" + B(reach) + "}"), s => Log.Write(s));
+      if (plansWait == null) plansWait = new PlansWaiter(() => cfg.Site, () => cfg.Code, PlansChanged, (ok, reach) => Post("{\"ev\":\"plansWait\",\"ok\":" + B(ok) + ",\"reach\":" + B(reach) + "}"), s => Log.Write(s));
       if (key != plansWaitKey) {
         bool dead = plansWait.Dead;
         plansWait.Stop();
         plansWaitKey = key;
-        if (dead) plansWait = new PlansWaiter(() => cfg.Site, () => cfg.Code, () => Post("{\"ev\":\"plans.changed\"}"), (ok, reach) => Post("{\"ev\":\"plansWait\",\"ok\":" + B(ok) + ",\"reach\":" + B(reach) + "}"), s => Log.Write(s));
+        if (dead) plansWait = new PlansWaiter(() => cfg.Site, () => cfg.Code, PlansChanged, (ok, reach) => Post("{\"ev\":\"plansWait\",\"ok\":" + B(ok) + ",\"reach\":" + B(reach) + "}"), s => Log.Write(s));
       }
       if (want) plansWait.Start();
     }
@@ -1323,6 +1323,8 @@ namespace RealmForge {
     }
 
     volatile string plansLogged;
+    long changedAt;   // Stopwatch timestamp of the last plans.changed not yet delivered (0 = none)
+    void PlansChanged() { Interlocked.Exchange(ref changedAt, Stopwatch.GetTimestamp()); Post("{\"ev\":\"plans.changed\"}"); }
     void LoadPlans(string lang) {
       string site = cfg.Site, code = cfg.Code;
       if (!SyncClient.IsValidCode(code)) { Post("{\"ev\":\"plans\",\"status\":\"invalid_token\"}"); return; }
@@ -1347,6 +1349,8 @@ namespace RealmForge {
           Post("{\"ev\":\"plans\",\"status\":" + S(r.Status == PlansStatus.InvalidToken ? "invalid_token" : "error") + ",\"detail\":" + S(r.Details ?? ("HTTP " + r.HttpCode)) + "}");
           return;
         }
+        long ch = Interlocked.Exchange(ref changedAt, 0);
+        if (ch != 0) Log.Write("plans: delivered " + r.Plans.Count + " in " + ((Stopwatch.GetTimestamp() - ch) * 1000 / Stopwatch.Frequency) + " ms after change");
         var sb = new StringBuilder("{\"ev\":\"plans\",\"status\":\"ok\",\"plans\":[");
         for (int i = 0; i < r.Plans.Count; i++) {
           var p = r.Plans[i]; if (i > 0) sb.Append(',');

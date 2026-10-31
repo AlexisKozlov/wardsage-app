@@ -108,6 +108,8 @@ namespace RealmForge {
     public static void EnableTls12() {
       const SecurityProtocolType Tls12 = (SecurityProtocolType)3072;
       try { ServicePointManager.SecurityProtocol |= Tls12; } catch (NotSupportedException) { }
+      // .NET Framework allows 2 connections per host: the plan list queued behind the 25 s long poll and the recording uploads
+      if (ServicePointManager.DefaultConnectionLimit < 10) ServicePointManager.DefaultConnectionLimit = 10;
     }
 
     // Sends account.json. site must come from NormalizeSite. Never throws.

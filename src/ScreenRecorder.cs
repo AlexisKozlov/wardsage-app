@@ -198,6 +198,7 @@ namespace RealmForge {
         SyncClient.EnableTls12();
         var req = (HttpWebRequest)WebRequest.Create(site.TrimEnd('/') + "/api/extractor/test-recording?rec=" + rec + "&part=" + part.ToString(CultureInfo.InvariantCulture));
         req.Method = "POST";
+        req.ConnectionGroupName = "rec";   // its own connections: uploads must not block the plan list
         req.ContentType = "application/zip";
         req.Accept = "application/json";
         req.UserAgent = SyncClient.UserAgent;

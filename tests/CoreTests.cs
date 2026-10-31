@@ -533,13 +533,16 @@ static partial class CoreTests {
     Check(PlansWait.Interpret(401, "{}").Kind == WaitKind.Unauthorized && PlansWait.Interpret(429, "{}").Kind == WaitKind.TooMany, "wait: 401 / 429");
     Check(PlansWait.Interpret(404, "{}").Kind == WaitKind.NotDeployed && PlansWait.Interpret(502, "x").Kind == WaitKind.Error, "wait: 404 not deployed, 502 error");
     Check(PollGate.ShouldPoll(false, 0, 0, 0) && PollGate.ShouldPoll(false, 0, 999999, 0) && PollGate.ShouldPoll(false, 0, 0, 77), "poll gate: no game, polls");
-    Check(!PollGate.ShouldPoll(true, 0, 0, 77) && !PollGate.ShouldPoll(true, 0, 59999, 77), "poll gate: game up, no player, waits");
-    Check(PollGate.ShouldPoll(true, 0, 60000, 77) && PollGate.ShouldPoll(true, 0, 90000, 77), "poll gate: after 60 s polls for the account last read here");
+    Check(!PollGate.ShouldPoll(true, 0, 0, 0) && !PollGate.ShouldPoll(true, 0, 59999, 0), "poll gate: game up, no player, no history, waits");
+    Check(PollGate.ShouldPoll(true, 0, 0, 77) && PollGate.ShouldPoll(true, 0, 1000, 77), "poll gate: the account last read here, polls at once");
     Check(!PollGate.ShouldPoll(true, 0, 60000, 0) && !PollGate.ShouldPoll(true, 0, 299999, 0) && PollGate.ShouldPoll(true, 0, 300000, 0), "poll gate: no account ever read here, the default account only after 5 min");
     Check(PollGate.ShouldPoll(true, 123, 0, 0) && PollGate.ShouldPoll(true, 123, 0, 77), "poll gate: player known polls at once");
     // the account the plan / sell-list requests name: the one read now, else the one last read on this install, never a guess
     Check(SyncClient.PlanPlayer(123, 77) == 123 && SyncClient.PlanPlayer(0, 77) == 77 && SyncClient.PlanPlayer(0, 0) == 0 && SyncClient.PlanPlayer(-1, 0) == 0, "plan player: read, else last read, else none");
     // the lists are asked again once the game account read differs from the one they were asked for
+    SyncClient.EnableTls12();
+    Check(System.Net.ServicePointManager.DefaultConnectionLimit >= 10, "connections: limit raised to 10 per host");
+    { int hh; string tx; Check(!PlansWait.Request("http://127.0.0.1:1", "x", "", null, out hh, out tx) && !PlansWait.LastClosed, "plans wait: refused connection is not a closed keep-alive"); }
     Check(!PollGate.Reload(-1, 123), "reload: not asked yet");
     Check(PollGate.Reload(0, 123) && PollGate.Reload(77, 123), "reload: asked for the default / another account");
     Check(!PollGate.Reload(123, 123) && !PollGate.Reload(77, 0), "reload: same account, or none read");

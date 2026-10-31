@@ -8,6 +8,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Net;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Threading;
@@ -81,6 +82,7 @@ namespace RealmForge {
         if (r == DialogResult.Yes) Shell.OpenUrl("https://go.microsoft.com/fwlink/p/?LinkId=2124703");
         return 2;
       }
+      if (ServicePointManager.DefaultConnectionLimit < 10) ServicePointManager.DefaultConnectionLimit = 10;   // before the first WebRequest.Create
       Autostart.Refresh();
       if (!Channel.IsTest) ThreadPool.QueueUserWorkItem(delegate { ShortcutMigration.Run(); });
       using (var w = new AppWindow(startInTray)) Application.Run(w);

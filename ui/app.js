@@ -1000,6 +1000,7 @@
         break;
       case 'plans':
         clearTimeout(S.plansWd);
+        if (S.plansAgain) { S.plansAgain = false; setTimeout(loadPlans, 0); }   // plans.changed came while this load was running: it may predate the change
         if (m.status === 'ok') {
           const id = current() && current().id;
           S.plans = { status: 'ok', list: (m.plans || []), err: null };
@@ -1042,7 +1043,7 @@
         if (l.missing !== S.layout.missing || l.noCode !== S.layout.noCode || l.game !== S.layout.game) { S.layout = l; render(); }
         break;
       }
-      case 'plans.changed': if (S.hasCode && S.plans.status !== 'loading') loadPlans(); break;   // the site has new work (long poll in the host)
+      case 'plans.changed': if (S.hasCode) { if (S.plans.status !== 'loading') loadPlans(); else S.plansAgain = true; } break;   // the site has new work (long poll in the host)
       case 'plansWait': S.plansWait = m.ok === true; siteState('plans', (m.reach === undefined ? m.ok : m.reach) === true); break;   // while it works the timer below is only a fallback
       case 'rec': {
         // the recorder's timer / upload count (the page is only redrawn when it starts, stops or the counts change)
