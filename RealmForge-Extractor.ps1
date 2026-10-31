@@ -354,6 +354,23 @@ namespace RealmForge {
       return false;
     }
 
+    /// <summary>The string-keyed fields of table <paramref name="t"/> whose key ends with <paramref name="suffix"/> and whose value has type
+    /// <paramref name="wantTt"/> (key, value); empty when none or unreadable.</summary>
+    static List<KeyValuePair<string, ulong>> FieldsEnding(ulong t, string suffix, int wantTt) {
+      var res = new List<KeyValuePair<string, ulong>>();
+      var h = Read(t, 56); if (h == null || h[8] != 5) return res;
+      int lsize = h[11]; if (lsize > 12) return res;
+      ulong node = BitConverter.ToUInt64(h, 24); int nn = 1 << lsize;
+      var nb = Read(node, nn * 32); if (nb == null) return res;
+      for (int i = 0; i < nn; i++) {
+        int o = i * 32;
+        if (BitConverter.ToInt32(nb, o + 24) != T_SSTR || BitConverter.ToInt32(nb, o + 8) != wantTt) continue;
+        string s = ShortText(BitConverter.ToUInt64(nb, o + 16));
+        if (s != null && s.EndsWith(suffix, StringComparison.Ordinal)) res.Add(new KeyValuePair<string, ulong>(s, BitConverter.ToUInt64(nb, o)));
+      }
+      return res;
+    }
+
     // ---- the node of a field read before (FieldKey): the table's node array, the slot and the key string it held. Valid while the table's header
     // still points at that node array of that size and the slot still holds that key string object; the key's text is read again every
     // FieldTextCheckMs (a key string the game builds again can land at an address that held another text). Forgotten with the key texts.

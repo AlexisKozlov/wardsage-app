@@ -684,6 +684,7 @@ namespace RealmForge {
     // the screen recorder (TEST build): what this tick decided, collected while a recording runs and published at its end
     RecInfo recB;
     void Tick() {
+      pendingRects.Clear();
       var cv = covered;
       if (cv != null) { covered = null; gate.Halt(cv.Item1, "covered", "the click point is covered by " + cv.Item2 + ", not the game - no press"); AnnounceHalts(); }
       var lt = lateTop;
@@ -1066,7 +1067,8 @@ namespace RealmForge {
       W32.RECT gcr; IntPtr gwin = GameWindow(); double[] lcf = null; var see = UiCellSee.Unknown;
       if (target > 0 && gwin != IntPtr.Zero && W32.GetClientRect(gwin, out gcr) && gcr.B > 0)
         see = LiveCell(UiCellKind.HeroGear, target, null, gcr.R, H, Ui.Unit(gcr.R, H), new[] { left, top, cell, full }, "equip:" + target, out lcf);
-      if (see == UiCellSee.Shown) Draw("box", o.X + (int)Math.Round(lcf[0]), o.Y + (int)Math.Round(lcf[1]), (int)Math.Round(lcf[2]), (int)Math.Round(lcf[3]), 0);
+      if (see == UiCellSee.Shown) { gearLiveSeen = target; gearLiveMs = NowMs(); Draw("box", o.X + (int)Math.Round(lcf[0]), o.Y + (int)Math.Round(lcf[1]), (int)Math.Round(lcf[2]), (int)Math.Round(lcf[3]), 0); }
+      else if (see == UiCellSee.Unknown && gearLiveSeen == target && target > 0 && NowMs() - gearLiveMs < 2500 && mid >= g.ViewTop * H && mid <= g.ViewBottom * H) { dKind = "held"; return; }   // read live before: the live frame stays, never the layout's in between
       else if (see == UiCellSee.Hidden && mid >= g.ViewTop * H && mid <= g.ViewBottom * H) { if (glow.Visible) glow.Hide(); drawnKey = null; return; }
       else if (mid < g.ViewTop * H) Draw("up", o.X + (int)left, o.Y + sy, (int)cell, 0, (int)Math.Ceiling((g.ViewTop * H - top) / pitch), strip);
       else if (mid > g.ViewBottom * H) Draw("down", o.X + (int)left, o.Y + sy + sh, (int)cell, 0, (int)Math.Ceiling((top + full - g.ViewBottom * H) / pitch), strip);
@@ -1074,6 +1076,7 @@ namespace RealmForge {
       dX -= o.X; dY -= o.Y;   // (Draw keeps screen px)
     }
     int frameRow, frameCol;
+    long gearLiveSeen, gearLiveMs;   // the item whose cell was read live in this hint and when (its frame stays live up to 2.5 s without a read)
 
     // A quick look between the frame ticks (every 30 ms): a list flicked by the player moves up to a few thousand px a
     // second - in 100 ms further than the strip is high, and then its picture fits nowhere or somewhere wrong.
@@ -1454,11 +1457,26 @@ namespace RealmForge {
       }
       if (sure) heroFollow.Settled(heroAnchor, sig, top0, pitch);
       heroDiag = (exact ? "scroll=" + heroY.ToString("0") : "pixels") + " phase=" + (hasPhase ? (vt + ph).ToString("0") : "none") + " row1=" + (heroAnchor.Has ? heroAnchor.Row1Top.ToString("0") : "-") + " sure=" + sure + " index=" + t;
-      if (!sure) { DrawTipTop(HeroTip(1)); return; }
       double ctop = heroAnchor.Row1Top + (t / HeroGeometry.Columns) * pitch, ccx = hg2.ColX(t % HeroGeometry.Columns) * U, cwid = 0.115 * U;
-      if (ctop + card / 2 < vt) DrawTip(o.X + lx0, o.Y + lvt, lw, 4, HeroTip(2), H, true);
-      else if (ctop + card / 2 > vb) DrawTip(o.X + lx0, o.Y + lvt + lh - 4, lw, 4, HeroTip(3), H, true);
-      else DrawTip(o.X + (int)(ccx - cwid / 2), o.Y + (int)ctop, (int)cwid, (int)card, HeroTip(0), H, false, ctop < 0.35 * H);
+      // the card is framed only on its live cell (the hero grid's cell root), and only when that cell is bound to this hero at this hero's place in
+      // the list (the read's index = the scan's); otherwise no frame on the cards - a frame from the layout stood between two cards
+      double[] hcf; var hsee = LiveCell(UiCellKind.HeroList, hintHero, null, W, H, U, new double[] { ccx - cwid / 2, ctop, cwid, card }, "hero:" + hintHero, out hcf);
+      if (hsee == UiCellSee.Shown && hcf != null && HeroCellSure(hintHero, t, W, H)) {
+        heroDiag += " card=live";
+        DrawTip(o.X + (int)Math.Round(hcf[0]), o.Y + (int)Math.Round(hcf[1]), (int)Math.Round(hcf[2]), (int)Math.Round(hcf[3]), HeroTip(0), H, false, hcf[1] < 0.35 * H);
+        return;
+      }
+      if (!sure) { DrawTipTop(HeroTip(1)); return; }
+      if (hsee != UiCellSee.Shown && ctop + card / 2 < vt) DrawTip(o.X + lx0, o.Y + lvt, lw, 4, HeroTip(2), H, true);
+      else if (hsee != UiCellSee.Shown && ctop + card / 2 > vb) DrawTip(o.X + lx0, o.Y + lvt + lh - 4, lw, 4, HeroTip(3), H, true);
+      else { heroDiag += " card=unsure"; DrawTipTop(HeroTip(1)); }
+    }
+
+    /// <summary>The hero list's live read binds hero <paramref name="hero"/> to exactly one cell, at list index <paramref name="index"/> (the scan's
+    /// order), fresh, for this window size: then its cell is the card. Else unsure (no frame).</summary>
+    bool HeroCellSure(long hero, int index, double W, double H) {
+      var s = RFX.UiCellFresh(UiCellKind.HeroList, hero, W, H, Environment.TickCount, RFX.UiFreshMs);
+      return CellFrame.HeroCellSure(s, hero, index);
     }
     bool heroFreshTop;
     string heroDiag = "";
@@ -1556,6 +1574,7 @@ namespace RealmForge {
     static readonly bool HintPulse = false;
 
     void Scene(GlowWindow win, ref string key, int[] frameR, Plate p, int[] target, double[] strip, List<int[]> marks = null, Hl hl = null, int[][] avoid = null) {
+      if (strip == null && PendingFrame(frameR)) { frameR = null; hl = null; }   // the target's live frame is awaited: the plate alone, the frame comes once, live
       if (!GameDrawable()) { if (win.Visible) win.Hide(); key = null; return; }
       if (recB != null) RecScene(win, frameR, strip, marks);
       // the frames and the new highlight stand still at their brightest (they pulsed: a repaint and a copy of the whole picture, up to the
@@ -1684,15 +1703,17 @@ namespace RealmForge {
           }
     }
 
-    // the hint frame (owner 2026-10-31: modest): a light glow (0..3 px out of the art) under a 2 px gold line (1..3 px out). The frame rect
-    // is the art's visible box 2 px out (UiIcon.Frame / SpriteArt.FrameOf), so nothing is drawn past the art + FrameTargets.MaxOut px.
+    // the hint frame, clearly visible again (owner 2026-10-31 on 1.6.66.423: the 2 px line was barely seen): the glow rings, a dark underline and
+    // the 3.5 px gold line of the frame before 4882eea, on the accurate rect (UiIcon.Frame / SpriteArt.FrameOf: the art's visible box 2 px out);
+    // the game's frame texture stretched 20 % past the target is not drawn
     void PaintFrame(Graphics gr, float x, float y, float w, float h, float pulse, int G) {
-      float r = Math.Max(2f, Math.Min(7f, Math.Min(w, h) * 0.18f));
-      using (var pen = new Pen(Color.FromArgb((int)(90 * pulse), 255, 190, 60), 3f)) gr.DrawPath(pen, Round(x + 0.5f, y + 0.5f, w - 1, h - 1, r));
-      using (var pen = new Pen(Color.FromArgb(255, 255, 214, 110), 2f)) gr.DrawPath(pen, Round(x, y, w, h, r));
+      for (int i = G; i >= 4; i -= 3)
+        using (var pen = new Pen(Color.FromArgb(FrameStyle.GlowAlpha(i, G, pulse), 255, 190, 60), 3f)) gr.DrawPath(pen, Round(x - i, y - i, w + 2 * i, h + 2 * i, 6 + i));
+      using (var pen = new Pen(Color.FromArgb(230, 40, 22, 4), FrameStyle.UnderWidth)) gr.DrawPath(pen, Round(x - 2, y - 2, w + 4, h + 4, 7));
+      using (var pen = new Pen(Color.FromArgb(255, 255, 214, 110), FrameStyle.LineWidth)) gr.DrawPath(pen, Round(x - 2, y - 2, w + 4, h + 4, 7));
     }
 
-    // the same frame along a button's outline (the sprite's contour, a circle / bevel / round): the glow at 1.5 px out, the gold line at 2 px out
+    // the same frame along a round button's outline (the sprite's contour, a circle / bevel / round): the same rings, underline and gold line
     void PaintFrameShape(Graphics gr, Hl hl, int ox, int oy, float pulse, int G) {
       Func<double, GraphicsPath> poly = m => {
         var pts = GuideShape.FrameOutline(hl.Rect, hl.Shape, hl.Inset, m);
@@ -1703,8 +1724,13 @@ namespace RealmForge {
         path.AddPolygon(pf);
         return path;
       };
-      using (var path = poly(1.5)) using (var pen = new Pen(Color.FromArgb((int)(90 * pulse), 255, 190, 60), 3f) { LineJoin = LineJoin.Round }) gr.DrawPath(pen, path);
-      using (var path = poly(2)) using (var pen = new Pen(Color.FromArgb(255, 255, 214, 110), 2f) { LineJoin = LineJoin.Round }) gr.DrawPath(pen, path);
+      for (int i = G; i >= 4; i -= 3)
+        using (var pen = new Pen(Color.FromArgb(FrameStyle.GlowAlpha(i, G, pulse), 255, 190, 60), 3f) { LineJoin = LineJoin.Round })
+        using (var path = poly(i)) gr.DrawPath(pen, path);
+      using (var path = poly(2)) {
+        using (var pen = new Pen(Color.FromArgb(230, 40, 22, 4), FrameStyle.UnderWidth) { LineJoin = LineJoin.Round }) gr.DrawPath(pen, path);
+        using (var pen = new Pen(Color.FromArgb(255, 255, 214, 110), FrameStyle.LineWidth) { LineJoin = LineJoin.Round }) gr.DrawPath(pen, path);
+      }
     }
 
     // a cell frame among many (the storage cleanup): style 0 = to select (the game's gold frame, steady), 1 = selected (a thin
@@ -4046,15 +4072,19 @@ namespace RealmForge {
       var s = RFX.UiCellFresh(k, uid, W, H, now, RFX.UiFreshMs);
       if (s != null) { var sl = RFX.UiCellShadowLine(run, s, uid, calc, now); if (sl != null) Log.Write(sl); }
       string why; var st = RFX.UiCellState(s, uid, W, H, now, out fr, out why);
-      if (st == UiCellSee.Shown && fr != null) {   // the quality frame's sprite: its outline (not when the viewport clipped the frame)
+      if (st == UiCellSee.Shown && fr != null) {   // one frame on the whole cell (the icon with its stat plate)
+        fr = CellFrame.Whole(fr, calc);
         var c = s.Of(uid);
-        if (c != null && c.Fit != null && Math.Abs(c.Fit.Frame[2] - fr[2]) < 0.5 && Math.Abs(c.Fit.Frame[3] - fr[3]) < 0.5) liveShapes.Put(fr, c.Fit.Box, c.Fit.Shape, NowMs());
-        if (c != null) FrameCheck(FrameTargets.KeyOf(k), "cell." + k + "." + c.Icon, c.Sprite, c.Art, c.Fit, fr, new[] { c.X, c.Y, c.W, c.H }, "live", c.Sprite == "" ? "not read" : c.Fit == null ? "not in the table" : null);
+        if (c != null) FrameCheck(FrameTargets.KeyOf(k), "cell." + k + ".root", c.Sprite, c.Art, null, fr, new[] { c.BX, c.BY, c.BW, c.BH }, "live", "cell root");
       }
+      // no fresh read for a moment: the last live frame of this item stays (never a jump to the layout's and back, no flicker)
+      st = cellHold.Pick(k + ":" + uid, st, ref fr, W, H, NowMs());
       if (st == UiCellSee.Unknown || RFX.UiCellTopIs(k, screens.Current)) return st;
       fr = null; var sc = screens.Current;   // covered: hidden when another form is named on top (a pop-up, a modal); nothing named: the layout's
       return sc != null && !sc.Held && (sc.OfferCount > 0 || sc.ModalOpen || !string.IsNullOrEmpty(sc.Top)) ? UiCellSee.Hidden : UiCellSee.Unknown;
     }
+
+    readonly CellFrame.Hold cellHold = new CellFrame.Hold();
 
     /// <summary>The point of the last item pick clicked on its live cell (client px), null = the layout's (the pilot is told where it went).</summary>
     double[] cellLivePt;
@@ -4123,15 +4153,38 @@ namespace RealmForge {
       else if (ft.Cell != UiCellKind.None) why = "a list cell (LiveCell)";
       else if (ft.Click != ClickTarget.None) {
         var lv = LiveFrame(ft.Click, null, W, H, U, ft.Visual != "-", layout);
-        if (lv != null) { live = true; return lv; }
+        if (lv != null) { live = true; FrameLiveSeen(key); return lv; }
         var r = RFX.UiButtonFresh(ft.Click, null, W, H, Environment.TickCount, 1000);
         why = r == null ? "no fresh read" : !r.Ok ? "failed at " + r.FailStep : !r.Visible ? "not visible" : "not on top";
       } else {
         var lv = LiveFrameKey(ft, W, H, U, out why);
-        if (lv != null) { live = true; return lv; }
+        if (lv != null) { live = true; FrameLiveSeen(key); return lv; }
       }
+      // a target with a live reader whose first read has not come yet: the frame waits for it (up to FramePendingMs) instead of standing on the
+      // layout's rect first and jumping to the live one (the flicker of 1.6.66.423); the plate is shown meanwhile
+      if (ft != null && ft.Layout == null && ft.Cell == UiCellKind.None && layout != null && FramePending(key)) pendingRects.Add(new[] { layout[0], layout[1], layout[2], layout[3] });
       FrameLayoutSay(key, why, layout);
       return layout;
+    }
+
+    /// <summary>The live frame of a target is still awaited: asked first under <see cref="FramePendingMs"/> ago and never read live since (a key not
+    /// asked for 2 s starts again).</summary>
+    bool FramePending(string key) {
+      long now = NowMs(); long[] a;
+      if (!frameAsk.TryGetValue(key, out a) || now - a[1] > 2000 || now < a[1]) frameAsk[key] = a = new[] { now, now, 0 };
+      a[1] = now;
+      return a[2] == 0 && now - a[0] < FramePendingMs;
+    }
+    void FrameLiveSeen(string key) { long now = NowMs(); long[] a; if (!frameAsk.TryGetValue(key, out a)) frameAsk[key] = a = new[] { now, now, 0 }; a[1] = now; a[2] = 1; }
+    const long FramePendingMs = 1200;
+    readonly Dictionary<string, long[]> frameAsk = new Dictionary<string, long[]>();
+    /// <summary>The layout rects (client px) FrameFor gave this tick while their target's live read is awaited: a scene framing one of them draws the plate alone.</summary>
+    readonly List<double[]> pendingRects = new List<double[]>();
+    bool PendingFrame(int[] fr) {
+      if (fr == null) return false;
+      foreach (var p in pendingRects)
+        if (Math.Abs(fr[2] - p[2]) <= 2 && Math.Abs(fr[3] - p[3]) <= 2 && Math.Abs(fr[0] - sceneX - p[0]) <= 2 && Math.Abs(fr[1] - sceneY - p[1]) <= 2) return true;
+      return false;
     }
 
     void FrameLayoutSay(string key, string why, double[] layout) {

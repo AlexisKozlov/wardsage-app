@@ -981,7 +981,8 @@ namespace RealmForge {
   // The item's picture inside: c_Frame (the quality frame round the icon), else c_Icon, else the cell child, else the cell.
   // InfinityGrid (dump 1.6.46.841.1): m_crtFirstInstanceIndex 0xD0, m_crtLastInstanceIndex 0xD4, m_crtItems 0xD8, viewport 0xC8;
   // InfinityGridV2: 0xF8, 0xFC, 0x100, viewport 0xF0. .NET Dictionary: entries 0x18, count 0x20; Entry {hashCode, next, key 0x8, value 0x10}.
-  public enum UiCellKind { None, Inventory, Ascend, Recast, HeroGear, HeroArt }
+  //   Form_CharactorMain (the hero list)  the form's one *_InfinityGrid   .m_InfinityGridProxy.m_Data[idx + 1].iHeroId (the card: the cell itself)
+  public enum UiCellKind { None, Inventory, Ascend, Recast, HeroGear, HeroArt, HeroList }
 
   /// <summary>One item cell the grid has made now: the item, its list index (0-based) and row column (HeroGear, 1-based), its picture's rect (client px).</summary>
   public sealed class UiCell {
@@ -990,6 +991,8 @@ namespace RealmForge {
     public string Sprite = ""; public SpriteArt.Draw Art; public SpriteArt.Fit Fit;
     /// <summary>How much of the picture lies inside the list's viewport (0..1).</summary>
     public double InView;
+    /// <summary>The whole cell (client px): the cell root with its picture, the icon and the stat plate under it; the frame is drawn on it.</summary>
+    public double BX, BY, BW, BH;
   }
 
   /// <summary>The cells of a list read at once (the wanted items only), the viewport, or the step the read stopped at.</summary>
@@ -1009,7 +1012,7 @@ namespace RealmForge {
   public enum UiCellSee { Unknown, Shown, Hidden }
 
   public static partial class RFX {
-    sealed class CellSpec { public string Form, Owner, Grid, Uids, Child; public bool V2, Rows, Tables; }
+    sealed class CellSpec { public string Form, Owner, Grid, Uids, Child, UidKey = "iItemUid"; public bool V2, Rows, Tables; }
     static CellSpec SpecOf(UiCellKind k) {
       switch (k) {
         case UiCellKind.Inventory: return new CellSpec { Form = "Form_BackpackIntegration", Owner = "", Grid = "m_Content_InfinityGrid", Uids = "m_CachedContentPanels.[-9998].m_FilterAndSortEquipUidList", Child = "c_Item" };
@@ -1018,6 +1021,9 @@ namespace RealmForge {
         case UiCellKind.HeroGear: return new CellSpec { Form = "Form_CharactorMain", Owner = "m_Panels.EquipFilter", Grid = "m_EquipList_InfinityGrid", Uids = "m_Panels.EquipFilter.m_EquipListRealData", Child = "c_Equip", V2 = true, Rows = true };
         // the hero screen's artifact list (Panel_Equip_Artifact): the grid proxy's m_Data rows are the artifact tables (iItemUid), the cell's card is c_CardBtn
         case UiCellKind.HeroArt: return new CellSpec { Form = "Form_CharactorMain", Owner = "m_Panels.EquipArtifact", Grid = "m_List_InfinityGrid", Uids = "m_Panels.EquipArtifact.m_InfinityGridProxy.m_Data", Child = "c_CardBtn", Tables = true };
+        // the hero list: the grid proxy's m_Data rows are the hero tables (iHeroId, the order EquipScan.ReadHeroScreen reads); the grid is the form's
+        // one field named *_InfinityGrid (Grid "*": found by its name, none or more than one = no read - the card is then not framed)
+        case UiCellKind.HeroList: return new CellSpec { Form = "Form_CharactorMain", Owner = "", Grid = "*", Uids = "m_InfinityGridProxy.m_Data", Child = "", Tables = true, UidKey = "iHeroId" };
       }
       return null;
     }
@@ -1047,10 +1053,10 @@ namespace RealmForge {
     }
 
     /// <summary>The item a cell of list index <paramref name="idx"/> (0-based) shows: flat lists by the index, rows of HeroGear by row and column.</summary>
-    static long CellUidOf(ulong list, int idx, int col, bool rows, bool tables = false) {
+    static long CellUidOf(ulong list, int idx, int col, bool rows, bool tables = false, string uidKey = "iItemUid") {
       ulong v; int tt;
       if (!IntKey(list, idx + 1, out v, out tt)) return 0;
-      if (tables) { long u; return tt == T_TABLE && ArtInt(v, "iItemUid", out u) ? u : 0; }
+      if (tables) { long u; return tt == T_TABLE && ArtInt(v, uidKey, out u) ? u : 0; }
       if (!rows) return tt == T_INT ? (long)v : 0;
       if (tt != T_TABLE) return 0;
       ulong items; int itt;
@@ -1119,12 +1125,17 @@ namespace RealmForge {
       ulong owner, list, gud; int ott, ltt, gtt;
       if (!LuaPathX(f, sp.Owner, out owner, out ott) || ott != T_TABLE) { r.Fail("owner", sp.Owner); return; }
       if (!LuaPathX(f, sp.Uids, out list, out ltt) || ltt != T_TABLE) { r.Fail("uids", sp.Uids); return; }
-      if (!Field(owner, sp.Grid, out gud, out gtt) || gtt != T_UDATA) { r.Fail("grid", sp.Grid + " tt " + gtt); return; }
+      if (sp.Grid == "*") {   // found by its name: exactly one *_InfinityGrid on the owner, else no read (never a guess)
+        var gs = FieldsEnding(owner, "_InfinityGrid", T_UDATA);
+        if (gs.Count != 1) { r.Fail("grid", "*_InfinityGrid x" + gs.Count); return; }
+        gud = gs[0].Value; gtt = T_UDATA; r.Trace.Append("grid ").Append(gs[0].Key).Append(' ');
+      } else if (!Field(owner, sp.Grid, out gud, out gtt) || gtt != T_UDATA) { r.Fail("grid", sp.Grid + " tt " + gtt); return; }
       string gcls; ulong grid = ManagedOf(env, gud, "grid", bi, out gcls);
       if (grid == 0) { r.Fail(bi.FailStep, bi.FailValue); r.Trace.Append(bi.Trace); return; }
       if (gcls.IndexOf("InfinityGrid", StringComparison.Ordinal) < 0) { r.Fail("grid", "class " + gcls); return; }
-      int oFirst = sp.V2 ? 0xF8 : 0xD0;
-      if (!sp.V2 && Layout.Current != null) { int o = Layout.Current.FieldOffset("InfinityGrid.m_crtFirstInstanceIndex"); if (o > 0) oFirst = o; }
+      bool v2 = sp.V2 || (sp.Grid == "*" && gcls.EndsWith("V2", StringComparison.Ordinal));
+      int oFirst = v2 ? 0xF8 : 0xD0;
+      if (!v2 && Layout.Current != null) { int o = Layout.Current.FieldOffset("InfinityGrid.m_crtFirstInstanceIndex"); if (o > 0) oFirst = o; }
       var fl = Read(grid + (ulong)oFirst, 8); if (fl != null) { r.First = I32(fl, 0); r.Last = I32(fl, 4); }
       ulong dict = Ptr(grid + (ulong)(oFirst + 8)), vpm = Ptr(grid + (ulong)(oFirst - 8));   // (m_crtItems after the indices, the viewport before them)
       // the form's root and the canvas above it (the scale)
@@ -1145,7 +1156,7 @@ namespace RealmForge {
       var db = dict != 0 ? Read(dict + 0x18, 12) : null; if (db == null) { r.Fail("m_crtItems", HexA(dict)); return; }
       ulong ents = BitConverter.ToUInt64(db, 0); int cnt = I32(db, 8);
       if (cnt < 0 || cnt > 512 || (cnt > 0 && ents == 0)) { r.Fail("m_crtItems", "count " + cnt); return; }
-      int stride = sp.V2 ? 0x28 : 0x20;
+      int stride = v2 ? 0x28 : 0x20;
       var eb = cnt > 0 ? Read(ents + ArrData, cnt * stride) : new byte[0]; if (eb == null) { r.Fail("m_crtItems", "entries unreadable"); return; }
       for (int i = 0; i < cnt; i++) {
         int o = i * stride; if (I32(eb, o) < 0) continue;   // a free entry
@@ -1156,11 +1167,11 @@ namespace RealmForge {
         ulong gnat = Ptr(mgo + CachedPtr); if (gnat == 0) continue;
         ulong cgo, ctr; if (!GoAndTransform(gnat, "UnityEngine.GameObject", "cell", new UiButtonInfo(), out cgo, out ctr)) continue;
         for (int col = sp.Rows ? 1 : 0; col <= (sp.Rows ? 6 : 0); col++) {
-          long uid = CellUidOf(list, idx, col, sp.Rows, sp.Tables);
+          long uid = CellUidOf(list, idx, col, sp.Rows, sp.Tables, sp.UidKey);
           if (uid <= 0) { if (sp.Rows) break; continue; }
           if (want != null && !want.Contains(uid)) continue;
           var path = new List<ulong>();
-          ulong item = ChildNamed(ctr, sp.Rows ? sp.Child + col : sp.Child, 2, path);
+          ulong item = sp.Child == "" ? 0 : ChildNamed(ctr, sp.Rows ? sp.Child + col : sp.Child, 2, path);
           if (item == 0 && sp.Rows) continue;
           ulong at = item != 0 ? item : ctr, pic = sp.Tables ? at : ChildNamed(at, "c_Frame", 4, new List<ulong>());   // (an artifact card is framed whole: the card is the picture)
           string icon = sp.Tables ? (item != 0 ? sp.Child : "cell") : "c_Frame";
@@ -1170,6 +1181,11 @@ namespace RealmForge {
           if (!RectUnder(pic, rtr, above, canvas, W, H, U, cb, true, out x, out y, out w, out h)) continue;
           if (cb.Rotated) r.Rotated = true;
           var c = new UiCell { Uid = uid, Index = idx, Col = col, X = x, Y = y, W = w, H = h, Icon = icon, Active = TrActive(ctr) && TrActive(pic) };
+          // the whole cell: the cell root (its item child for a row) with the picture - the icon with its stat plate, one frame for all of it
+          c.BX = x; c.BY = y; c.BW = w; c.BH = h;
+          double ax, ay, aw, ah;
+          foreach (ulong root in new[] { at, ctr })   // (the item child, then the cell: a plate that is the cell's own child is in the cell's rect)
+            if (root != pic && RectUnder(root, rtr, above, canvas, W, H, U, new UiButtonInfo(), true, out ax, out ay, out aw, out ah) && aw >= 4 && ah >= 4) CellBox(c, ax, ay, aw, ah);
           if (icon == "c_Frame") { var ai = new UiButtonInfo(); ArtInto(Ptr(pic + CompGo), cb, ai); c.Sprite = ai.Sprite; c.Art = ai.Art; }   // (the quality frame's sprite: its visible part)
           c.InView = InViewOf(c.X, c.Y, c.W, c.H, r.VX, r.VY, r.VW, r.VH);
           r.Cells.Add(c);
@@ -1183,6 +1199,14 @@ namespace RealmForge {
       if (w <= 0 || h <= 0) return 0;
       double ix = Math.Max(0, Math.Min(x + w, vx + vw) - Math.Max(x, vx)), iy = Math.Max(0, Math.Min(y + h, vy + vh) - Math.Max(y, vy));
       return ix * iy / (w * h);
+    }
+
+    /// <summary>The whole cell <paramref name="c"/>: its picture's rect joined with the cell root's (x, y, w, h); a root wider than 1.6 pictures or
+    /// taller than 2.2 (the row's strip, a list's content) is not the cell and is left out.</summary>
+    public static void CellBox(UiCell c, double x, double y, double w, double h) {
+      if (w > c.W * 1.6 + 2 || h > c.H * 2.2 + 2) return;
+      double l = Math.Min(c.X, x), t = Math.Min(c.Y, y), r = Math.Max(c.X + c.W, x + w), b = Math.Max(c.Y + c.H, y + h);
+      c.BX = l; c.BY = t; c.BW = r - l; c.BH = b - t;
     }
 
     /// <summary>What the read <paramref name="s"/> says of item <paramref name="uid"/> at <paramref name="now"/>: Shown with its frame (the picture
@@ -1204,9 +1228,10 @@ namespace RealmForge {
       if (!c.Active) { why = "cell switched off"; return UiCellSee.Hidden; }
       if (c.InView < 0.5) { why = "out of the viewport (" + Math.Round(c.InView * 100) + "% in)"; return UiCellSee.Hidden; }
       if (c.W > W * 0.5 || c.H > H * 0.5 || c.W < 4 || c.H < 4) { why = "size " + N0(c.W) + "x" + N0(c.H); return UiCellSee.Unknown; }
-      var art = SpriteArt.Of(c.Sprite);
-      c.Fit = art != null ? SpriteArt.FrameOf(art, c.Art, c.X, c.Y, c.W, c.H, W, H) : null;
-      var fr = c.Fit != null ? c.Fit.Frame : UiIcon.Frame(c.X, c.Y, c.W, c.H, W, H);
+      // one frame on the whole cell (the icon with its stat plate, the card), a rounded rect: never the quality frame's contour alone
+      c.Fit = null;
+      bool box = c.BW >= 4 && c.BH >= 4;
+      var fr = box ? UiIcon.Frame(c.BX, c.BY, c.BW, c.BH, W, H) : UiIcon.Frame(c.X, c.Y, c.W, c.H, W, H);
       double l = Math.Max(fr[0], s.VX - UiIcon.FramePad), t = Math.Max(fr[1], s.VY - UiIcon.FramePad), rr = Math.Min(fr[0] + fr[2], s.VX + s.VW + UiIcon.FramePad), b = Math.Min(fr[1] + fr[3], s.VY + s.VH + UiIcon.FramePad);
       frame = new[] { l, t, rr - l, b - t, fr[4] };
       return UiCellSee.Shown;

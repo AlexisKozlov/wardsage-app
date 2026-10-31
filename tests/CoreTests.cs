@@ -1415,6 +1415,61 @@ static partial class CoreTests {
       var pos2 = HintLayout.Place(tgt, avoid, pw, (int)(tgt[1] - 2), (int)W, (int)H, out side);
       Check(!HintLayout.OnTarget(pos2[0], pos2[1], pw, (int)(tgt[1] - 2), tgt), "no free place: the least covering place OFF the button is taken (side " + side + ")");
     }
+
+    Func<double, double, bool> Nr = (a1, b1) => Math.Abs(a1 - b1) < 0.01;
+    // owner 2026-10-31 on 1.6.66.423: frames too thin, two frames on a cell, «Снаряжение» on its icon contour, a hero frame between two cards, flicker
+    Check(FrameStyle.LineWidth >= 3.5f && FrameStyle.UnderWidth >= 6f && FrameStyle.GlowAlpha(4, 14, 1f) >= 70 && FrameStyle.GlowAlpha(14, 14, 1f) > 0,
+      "the frame is clearly visible: the 3.5 px gold line on a 6 px dark underline with glow rings (the look before 4882eea)");
+    // a cell: the c_Frame icon square 80 x 80 and the cell root with the stat plate under it 84 x 112 -> one frame on the root
+    var cell = new UiCell { Uid = 7, Index = 3, X = 102, Y = 202, W = 80, H = 80, Icon = "c_Frame", Active = true, InView = 1 };
+    cell.BX = cell.X; cell.BY = cell.Y; cell.BW = cell.W; cell.BH = cell.H;
+    RFX.CellBox(cell, 100, 200, 84, 112);
+    Check(Nr(cell.BX, 100) && Nr(cell.BY, 200) && Nr(cell.BW, 84) && Nr(cell.BH, 112), "a cell's frame box is the cell root: icon and stat plate (" + cell.BX + "," + cell.BY + " " + cell.BW + "x" + cell.BH + ")");
+    var wide = new UiCell { X = 102, Y = 202, W = 80, H = 80 }; wide.BX = wide.X; wide.BY = wide.Y; wide.BW = wide.W; wide.BH = wide.H;
+    RFX.CellBox(wide, 0, 200, 700, 112);
+    Check(Nr(wide.BW, 80) && Nr(wide.BH, 80), "a row strip or the list's content is not taken for the cell");
+    var cs = new UiCellSet { Kind = UiCellKind.Inventory, Visible = true, Copies = 1, ForW = 1366, ForH = 705, At = Environment.TickCount, VX = 0, VY = 0, VW = 900, VH = 600 };
+    cs.Cells.Add(cell);
+    double[] cfr; string cwhy;
+    var cst = RFX.UiCellState(cs, 7, 1366, 705, Environment.TickCount, out cfr, out cwhy);
+    Check(cst == UiCellSee.Shown && cfr != null && Nr(cfr[0], 98) && Nr(cfr[1], 198) && Nr(cfr[2], 88) && Nr(cfr[3], 116) && cell.Fit == null,
+      "the cell's one frame is the whole cell 2 px out, a rect (no quality-frame contour): " + (cfr != null ? string.Join(",", Array.ConvertAll(cfr, v => v.ToString("0"))) : cst + " " + cwhy));
+    double[] sq = { 98, 198, 88, 88, 16 }, wh = CellFrame.Whole(sq, new double[] { 100, 200, 84, 112 });
+    Check(Nr(wh[3], Math.Round(88 * 112 / 84.0)) && Nr(wh[0], 98) && Nr(wh[2], 88) && CellFrame.Whole(new double[] { 98, 198, 88, 120, 16 }, new double[] { 100, 200, 84, 112 })[3] == 120,
+      "an icon-only live frame grows down over the stat plate to the list's own cell proportion; a whole one stays");
+    // one frame per target: a moment without a fresh read keeps the live frame (no jump to the layout's and back); another item or Hidden drops it
+    var hold = new CellFrame.Hold(); double[] f1 = { 10, 20, 30, 40, 5 }, fa = f1;
+    var h1 = hold.Pick("a", UiCellSee.Shown, ref fa, 1366, 705, 1000);
+    double[] g = null; var h2 = hold.Pick("a", UiCellSee.Unknown, ref g, 1366, 705, 1500);
+    double[] g2 = null; var h3 = hold.Pick("b", UiCellSee.Unknown, ref g2, 1366, 705, 1600);
+    double[] g3 = null; var h4 = hold.Pick("a", UiCellSee.Unknown, ref g3, 1366, 705, 1700);
+    var hold2 = new CellFrame.Hold(); double[] k1 = f1; hold2.Pick("a", UiCellSee.Shown, ref k1, 1366, 705, 0);
+    double[] k2 = null; var h5 = hold2.Pick("a", UiCellSee.Unknown, ref k2, 1366, 705, CellFrame.Hold.Ms + 1);
+    Check(h1 == UiCellSee.Shown && h2 == UiCellSee.Shown && g == f1 && h3 == UiCellSee.Unknown && g2 == null && h4 == UiCellSee.Unknown && h5 == UiCellSee.Unknown,
+      "one frame per cell: held through a short gap in the reads, dropped for another item and after " + CellFrame.Hold.Ms + " ms");
+    // menu / tab buttons with a label: the whole plate; round icon buttons without a plate: the sprite's contour
+    var plates = new List<string>();
+    foreach (var key in new[] { "hero.tab.equip", "hero.artifactTab", "inventory.leftTab.equip", "inventory.leftTab.artifact", "foundry.tab.ascend", "foundry.tab.recast",
+      "hero.filter", "ascend.filter", "recast.filter", "artifact.tab.promote", "artifact.tab.enhance", "inventory.bulkSell", "inventory.artBulkSell", "inventory.bulkBack" }) {
+      var ft = FrameTargets.Of(key); var fw = ft != null ? FrameTargets.Widget(ft) : null;
+      if (ft == null || ft.Visual != "-" || (fw != null && (fw.Icon || fw.IconChild != null))) plates.Add(key);
+    }
+    Check(plates.Count == 0, "tabs and labelled buttons («Снаряжение», «Фильтр», ...) are framed on their whole plate, not the icon" + (plates.Count > 0 ? ": " + string.Join(", ", plates.ToArray()) : ""));
+    var hf = FrameTargets.Widget(FrameTargets.Of("hero.filter"));
+    Check(hf != null && hf.Trees.Length == 1 && hf.Trees[0].EndsWith("/m_BtnFilter", StringComparison.Ordinal), "«Фильтр» framed on m_BtnFilter (the bar with its label), not its m_FilterOff icon");
+    var rw = FrameTargets.Widget(FrameTargets.Of("hero.workshop")); var ch = FrameTargets.Widget(FrameTargets.Of("city.heroes"));
+    Check(rw != null && rw.Icon && rw.IconChild == "Icon" && ch != null && ch.Icon, "round icon buttons without a plate keep the contour");
+    // the hero card: the live cell of the hero grid, only when the read binds this hero to one cell at its place in the list
+    var hc = FrameTargets.Of("hero.card");
+    Check(hc != null && hc.Cell == UiCellKind.HeroList && hc.Layout == null && FrameTargets.KeyOf(UiCellKind.HeroList) == "hero.card", "the hero card is read live (the hero grid's cell), never the layout's rect");
+    var hs1 = new UiCellSet { Kind = UiCellKind.HeroList };
+    var hcell = new UiCell { Uid = 1050, Index = 4, X = 300, Y = 200, W = 90, H = 125, Active = true }; hcell.BX = 300; hcell.BY = 200; hcell.BW = 90; hcell.BH = 125;
+    hs1.Cells.Add(hcell);
+    bool sure = CellFrame.HeroCellSure(hs1, 1050, 4), wrongIdx = CellFrame.HeroCellSure(hs1, 1050, 5), noRead = CellFrame.HeroCellSure(null, 1050, 4);
+    var hs2 = new UiCellSet { Kind = UiCellKind.HeroList }; hs2.Cells.Add(hcell); hs2.Cells.Add(new UiCell { Uid = 1050, Index = 7, Active = true, BW = 90, BH = 125 });
+    var hs3 = new UiCellSet { Kind = UiCellKind.HeroList, FailStep = "grid" }; hs3.Cells.Add(hcell);
+    Check(sure && !wrongIdx && !noRead && !CellFrame.HeroCellSure(hs2, 1050, 4) && !CellFrame.HeroCellSure(hs3, 1050, 4),
+      "the hero card is framed only when sure: its cell at its list index; another index, two cells, a failed read or none = no frame");
   }
 
   /// <summary>The step plate scales with the game client (src/HintLayout.cs HintSize) and keeps its place while the step stays (PlateHold).</summary>
@@ -1505,7 +1560,7 @@ static partial class CoreTests {
       Check(s.Ok && s.Created == 15 && s.Cells.Count == 2 && Near(s.VX, vx) && Near(s.VY, vy) && Near(s.VW, 550 * k), "inventory: 15 cells made, the 2 wanted kept, the viewport read (" + (s.Ok ? "" : s.FailStep + " " + s.FailValue + " " + s.Trace) + ")");
       Check(c != null && c.Icon == "c_Frame" && c.Index == 1 && Near(c.X, vx + 120 * k) && Near(c.Y, vy + 10 * k) && Near(c.W, 80 * k) && c.InView == 1, "  ... item 102 = index 1: its c_Frame's rect (" + (c != null ? c.X + "," + c.Y + " " + c.W : "none") + ")");
       int now = s.At; double[] fr0; string why;
-      Check(RFX.UiCellState(s, 102, W, H, now, out fr0, out why) == UiCellSee.Shown && Near(fr0[0], c.X - 2) && Near(fr0[2], c.W + 4) && fr0[4] > 0, "  ... framed 2 px round its picture, rounded");
+      Check(RFX.UiCellState(s, 102, W, H, now, out fr0, out why) == UiCellSee.Shown && Near(fr0[0], c.BX - 2) && Near(fr0[2], c.BW + 4) && fr0[4] > 0 && c.BX <= c.X && c.BX + c.BW >= c.X + c.W && c.BY + c.BH >= c.Y + c.H, "  ... framed 2 px round the whole cell (c_Item with its picture), rounded");
       double px, py;
       Check(RFX.UiCellPoint(s, 102, W, H, now, out px, out py, out why) && Near(px, c.X + c.W / 2) && Near(py, c.Y + c.H / 2), "  ... the click point is its picture's centre");
       var c13 = s.Of(113);

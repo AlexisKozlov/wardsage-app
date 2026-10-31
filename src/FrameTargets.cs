@@ -17,7 +17,7 @@
 // inventory.cardRight         Form_BackpackIntegration ...Root/LeftLayout/m_Info/c_Button/c_RightBtn
 // inventory.artWorkshop       Form_BackpackIntegration.m_PanelContentCur.m_BtnIntensify (pilot read ArtWorkshop)
 // hero.workshop / hero.gem    Form_CharactorMain ...Panel_Equip_Simple/Content/GameObject/m_BtnSubliming / m_BtnEquipGem   Icon
-// hero.tab.equip              Form_CharactorMain m_Main_Frame/m_Right/m_ToggleGroup/m_Toggle_Equip                    img_untoggle
+// hero.tab.equip              Form_CharactorMain m_Main_Frame/m_Right/m_ToggleGroup/m_Toggle_Equip                    - (the whole tab: icon and label)
 // hero.artifactTab            Form_CharactorMain m_Main_Frame/m_Right/m_ToggleGroup/m_Toggle_Artifact                 (picked)
 // hero.slot.0..4              Form_CharactorMain ...EquipPanel/m_EquipGrid/m_LeftGrid|m_RightGrid/m_EquipPart_N       (picked)
 // hero.filter                 Form_CharactorMain ...Panel_Equip_Filter/m_BtnFilter                                    (picked)
@@ -40,8 +40,9 @@
 // filter.*                    Form_EquipFilterWidget Root/m_Root/... m_BtnReset, m_BtnSuitOff, m_BtnMainAttrOff, m_BtnSubAttrOff, m_Left|RightSuitFilterToggle
 // artifact.tab.promote/enhance Form_EquipArtifactIntensify m_RightTab/GameObject/m_ToggleBreak / m_ToggleEnhance
 // artifact.promoteBtn         Form_EquipArtifactIntensify Panel_Equip_Artifact_Break/root/m_CouldBreak/Middle/m_BreakInfo/m_Break/m_ButtonBreak (made in code)   Button_Special_3
-// cell.*                      the lists' live cells (src/UiButtons.cs UiCellRead): their c_Frame quality frame        c_Frame                 (live)
-// layout only (a reason each): the gem function rows, the filter's set cells, the artifact tab's and the workshop's lists, the hero list cards,
+// cell.*, hero.card           the lists' live cells (src/UiButtons.cs UiCellRead): the whole cell (icon with stat plate, the card)   cell root   (live)
+// A tab or a button with a label (a plate) is framed whole ("-"); the sprite's contour only on round icon buttons without a plate.
+// layout only (a reason each): the gem function rows, the filter's set cells, the artifact tab's and the workshop's lists,
 // the gear filter's part icons and rows (no live reader of those lists yet).
 // Pure data (tests/CoreTests.cs: every key resolves to a widget of the UI graph or the geometry file; no key the frames use is missing).
 using System;
@@ -84,7 +85,7 @@ namespace RealmForge {
     static void P(string key, string form, ClickTarget t, string tree, string visual = "", string src = "graph") {
       Add(new FrameTarget { Key = key, Form = form, Click = t, Tree = tree, Visual = visual, Src = src });
     }
-    static void C(string key, string form, UiCellKind k, string tree) { Add(new FrameTarget { Key = key, Form = form, Cell = k, Tree = tree, Visual = "c_Frame" }); }
+    static void C(string key, string form, UiCellKind k, string tree) { Add(new FrameTarget { Key = key, Form = form, Cell = k, Tree = tree, Visual = "root" }); }
     static void L(string key, string form, string why) { Add(new FrameTarget { Key = key, Form = form, Layout = why, Src = "layout" }); }
     static void Add(FrameTarget t) { all.Add(t); byKey[t.Key] = t; }
 
@@ -93,13 +94,13 @@ namespace RealmForge {
       P("city.barButton", "Form_MainCity", ClickTarget.CityInventory, "BottomPanel/Image/m_Down_Layout/m_Button_Backpack", "Image_Icon");
       B("city.heroes", "Form_MainCity", "BottomPanel/Image/m_Down_Layout/m_Button_Heros", "Image_Icon");
       // the inventory
-      B("inventory.leftTab.equip", "Form_BackpackIntegration", "Main_Frame/m_ToggleLeftTabGroup/#1", "", "", "prefab");
-      B("inventory.leftTab.artifact", "Form_BackpackIntegration", "Main_Frame/m_ToggleLeftTabGroup/#2", "", "", "prefab");
+      B("inventory.leftTab.equip", "Form_BackpackIntegration", "Main_Frame/m_ToggleLeftTabGroup/#1", "-", "", "prefab");
+      B("inventory.leftTab.artifact", "Form_BackpackIntegration", "Main_Frame/m_ToggleLeftTabGroup/#2", "-", "", "prefab");
       P("inventory.workshop", "Form_BackpackIntegration", ClickTarget.FoundryButton, Bpi + "LeftBottomBtnGroup/Right/m_BtnWorkShop");
       B("inventory.gem", "Form_BackpackIntegration", Bpi + "LeftBottomBtnGroup/Right/m_BtnGem");
-      B("inventory.bulkSell", "Form_BackpackIntegration", Bpi + "LeftBottomBtnGroup/Left/m_BtnBatchSell", "BackpackIntegration_btn_icon_enhanced");
-      B("inventory.artBulkSell", "Form_BackpackIntegration", "Main_Frame/m_ParentPanel/Panel_ArtifactPanel/LeftBottomBtnGroup/Left/m_BtnBatchSell", "BackpackIntegration_btn_icon_enhanced", "", "prefab");
-      B("inventory.bulkBack", "Form_BackpackIntegration", Bpi + "LeftBottomBtnGroup/Left/m_BtnBack", "", "", "geometry");
+      B("inventory.bulkSell", "Form_BackpackIntegration", Bpi + "LeftBottomBtnGroup/Left/m_BtnBatchSell", "-");
+      B("inventory.artBulkSell", "Form_BackpackIntegration", "Main_Frame/m_ParentPanel/Panel_ArtifactPanel/LeftBottomBtnGroup/Left/m_BtnBatchSell", "-", "", "prefab");
+      B("inventory.bulkBack", "Form_BackpackIntegration", Bpi + "LeftBottomBtnGroup/Left/m_BtnBack", "-", "", "geometry");
       B("inventory.cardLeft", "Form_BackpackIntegration", Bpi + "LeftLayout/m_Info/c_Button/c_LeftBtn", "", "", "geometry");
       B("inventory.cardSolo", "Form_BackpackIntegration", Bpi + "LeftLayout/m_Info/c_Button/c_LeftBtn", "", "", "geometry");
       B("inventory.cardRight", "Form_BackpackIntegration", Bpi + "LeftLayout/m_Info/c_Button/c_RightBtn", "", "", "geometry");
@@ -109,10 +110,10 @@ namespace RealmForge {
       // the hero screen
       B("hero.workshop", "Form_CharactorMain", Hero + "m_Right/Panel_Equip_Simple/Content/GameObject/m_BtnSubliming", "Icon");
       B("hero.gem", "Form_CharactorMain", Hero + "m_Right/Panel_Equip_Simple/Content/GameObject/m_BtnEquipGem", "Icon");
-      B("hero.tab.equip", "Form_CharactorMain", "m_Main_Frame/m_Right/m_ToggleGroup/m_Toggle_Equip");
-      B("hero.artifactTab", "Form_CharactorMain", "m_Main_Frame/m_Right/m_ToggleGroup/m_Toggle_Artifact");
+      B("hero.tab.equip", "Form_CharactorMain", "m_Main_Frame/m_Right/m_ToggleGroup/m_Toggle_Equip", "-");
+      B("hero.artifactTab", "Form_CharactorMain", "m_Main_Frame/m_Right/m_ToggleGroup/m_Toggle_Artifact", "-");
       for (int i = 0; i < 5; i++) B("hero.slot." + i, "Form_CharactorMain", Hero + "m_EquipGrid/" + (i < 2 ? "m_LeftGrid" : "m_RightGrid") + "/m_EquipPart_" + i);
-      B("hero.filter", "Form_CharactorMain", Hero + "m_Left/Panel_Equip_Filter/m_BtnFilter/m_FilterOff|" + Hero + "m_Left/Panel_Equip_Filter/m_BtnFilter/m_FilterOn");
+      B("hero.filter", "Form_CharactorMain", Hero + "m_Left/Panel_Equip_Filter/m_BtnFilter", "-");
       B("hero.filterClose", "Form_CharactorMain", Hero + "m_Middle/m_PanelFilter/Panel_EquipFilterWidget_Charactor/MainFrame/MainFrame/m_BtnMainClose");
       P("hero.confirm", "Form_CharactorEquipTip", ClickTarget.EquipConfirm, "root/GameObject/m_SelectEquip/Panel_CharactorEquipTip/Button/c_RightBtn/Button_Normal_2", "", "prefab");
       P("hero.back", "Form_CharactorMain", ClickTarget.HeroBack, "m_Main_Frame/m_Back/Button_Back_New/Btn_Back");
@@ -123,19 +124,19 @@ namespace RealmForge {
       B("popup.equipReplace", "Form_EquipPopUp", "Main_Frame/m_Bg/ButtonLayout/m_Btn_Right/Button_Special_3", "-");
       C("cell.HeroGear", "Form_CharactorMain", UiCellKind.HeroGear, "m_Panels.EquipFilter.m_EquipList_InfinityGrid");
       C("cell.HeroArt", "Form_CharactorMain", UiCellKind.HeroArt, "m_Panels.EquipArtifact (artifact list)");
-      L("hero.card", "Form_CharactorMain", "the hero list's cards are not read live");
+      C("hero.card", "Form_CharactorMain", UiCellKind.HeroList, "m_InfinityGridProxy.m_Data (the form's *_InfinityGrid)");
       L("hero.filterPart", "Form_CharactorMain", "the gear filter's part icons are not read live");
       L("hero.filterRow", "Form_CharactorMain", "the gear filter's rows are not read live");
       // the Foundry
-      P("foundry.tab.ascend", "Form_EquipSubliming", ClickTarget.AscendTab, "GameObject/m_RightTab/GameObject/m_ToggleSubliming");
-      B("foundry.tab.recast", "Form_EquipSubliming", "GameObject/m_RightTab/GameObject/m_ToggleRecast");
+      P("foundry.tab.ascend", "Form_EquipSubliming", ClickTarget.AscendTab, "GameObject/m_RightTab/GameObject/m_ToggleSubliming", "-");
+      B("foundry.tab.recast", "Form_EquipSubliming", "GameObject/m_RightTab/GameObject/m_ToggleRecast", "-");
       B("foundry.back", "Form_EquipSubliming", "GameObject/m_Back/Button_Back_New/Btn_Back");
       for (int i = 0; i < 5; i++) {
         B("ascend.slot." + i, "Form_EquipSubliming", Asc + "m_Left/EquipFilterContent/m_EquipToogle_" + i, "equipment_icon");
         B("recast.slot." + i, "Form_EquipSubliming", Rec + "m_Left/EquipFilterContent/m_EquipToogle_" + i, "equipment_icon");
       }
-      B("ascend.filter", "Form_EquipSubliming", Asc + "m_Left/FilterContent/m_BtnFilter", "", "", "geometry");
-      B("recast.filter", "Form_EquipSubliming", Rec + "m_Left/FilterContent/m_BtnFilter", "", "", "geometry");
+      B("ascend.filter", "Form_EquipSubliming", Asc + "m_Left/FilterContent/m_BtnFilter", "-", "", "geometry");
+      B("recast.filter", "Form_EquipSubliming", Rec + "m_Left/FilterContent/m_BtnFilter", "-", "", "geometry");
       B("ascend.button", "Form_EquipSubliming", Asc + "m_Right/ButtonContent/m_BtnSubliming");
       B("recast.button", "Form_EquipSubliming", Rec + "m_Right/ButtonContent/m_RecastContent/m_BtnRecast");
       B("recast.chooseOld", "Form_EquipSubliming", Rec + "m_Right/ButtonContent/m_ChooseContent/m_BtnChooseOld", "", "", "geometry");
@@ -152,12 +153,12 @@ namespace RealmForge {
       B("filter.suitOpen", "Form_EquipFilterWidget", Flt + "m_Content/SuitContent/hero_grid_number/FilterBtn/m_BtnSuitOff", "", "", "geometry");
       B("filter.mainOpen", "Form_EquipFilterWidget", Flt + "m_Content/MainAttrContent/hero_grid_number/FilterBtn/m_BtnMainAttrOff", "", "", "geometry");
       B("filter.subOpen", "Form_EquipFilterWidget", Flt + "m_Content/SubAttrContent/hero_grid_number/FilterBtn/m_BtnSubAttrOff", "", "", "geometry");
-      B("filter.suit.tab.0", "Form_EquipFilterWidget", Flt + "FilterFrame/RectMask/m_FilterContent/m_SuitFilter/ToggleContent/m_LeftSuitFilterToggle");
-      B("filter.suit.tab.1", "Form_EquipFilterWidget", Flt + "FilterFrame/RectMask/m_FilterContent/m_SuitFilter/ToggleContent/m_RightSuitFilterToggle", "", "", "geometry");
+      B("filter.suit.tab.0", "Form_EquipFilterWidget", Flt + "FilterFrame/RectMask/m_FilterContent/m_SuitFilter/ToggleContent/m_LeftSuitFilterToggle", "-");
+      B("filter.suit.tab.1", "Form_EquipFilterWidget", Flt + "FilterFrame/RectMask/m_FilterContent/m_SuitFilter/ToggleContent/m_RightSuitFilterToggle", "-", "", "geometry");
       L("filter.suit.cell", "Form_EquipFilterWidget", "the filter's set cells are not read live");
       // the artifact workshop
-      B("artifact.tab.promote", "Form_EquipArtifactIntensify", "m_RightTab/GameObject/m_ToggleBreak", "", "", "prefab");
-      B("artifact.tab.enhance", "Form_EquipArtifactIntensify", "m_RightTab/GameObject/m_ToggleEnhance", "", "", "prefab");
+      B("artifact.tab.promote", "Form_EquipArtifactIntensify", "m_RightTab/GameObject/m_ToggleBreak", "-", "", "prefab");
+      B("artifact.tab.enhance", "Form_EquipArtifactIntensify", "m_RightTab/GameObject/m_ToggleEnhance", "-", "", "prefab");
       B("artifact.promoteBtn", "Form_EquipArtifactIntensify", "Panel_Equip_Artifact_Break/root/m_CouldBreak/Middle/m_BreakInfo/m_Break/m_ButtonBreak/Button_Special_3", "-", "", "prefab");
       L("artifact.matList", "Form_EquipArtifactIntensify", "the copies list area (its cells are placed from the game's scroll)");
       L("artifact.matCell", "Form_EquipArtifactIntensify", "the workshop's copies list cells are not read live");
@@ -172,7 +173,7 @@ namespace RealmForge {
     public static FrameTarget Of(string key) { FrameTarget t; return key != null && byKey.TryGetValue(key, out t) ? t : null; }
     /// <summary>The key a pilot button's frame is checked under (null = none).</summary>
     public static string KeyOf(ClickTarget c) { if (c == ClickTarget.None) return null; foreach (var t in all) if (t.Click == c) return t.Key; return null; }
-    public static string KeyOf(UiCellKind k) { return k == UiCellKind.None ? null : "cell." + k; }
+    public static string KeyOf(UiCellKind k) { return k == UiCellKind.None ? null : k == UiCellKind.HeroList ? "hero.card" : "cell." + k; }
 
     /// <summary>The widget read of a target (null = read by its ClickTarget / a cell / layout only).</summary>
     public static UiWidget Widget(FrameTarget t) {
@@ -182,5 +183,46 @@ namespace RealmForge {
 
     /// <summary>The frame's size rule: never past the sprite's visible box by more than <see cref="MaxOut"/> px (the drawn line and its glow included).</summary>
     public const double MaxOut = 3;
+  }
+
+  /// <summary>The hint frame's look (app/Overlay.cs PaintFrame): the frame before 4882eea - glow rings from G px out down to 4 px, a 6 px dark underline
+  /// and a 3.5 px gold line 2 px out of the frame rect.</summary>
+  public static class FrameStyle {
+    public const float LineWidth = 3.5f, UnderWidth = 6f;
+    public static int GlowAlpha(int i, int G, float pulse) { return Math.Max(0, Math.Min(255, (int)(110 * pulse * (1 - i / (float)(G + 2))))); }
+  }
+
+  /// <summary>An item cell's one frame: the whole cell (the icon with the stat plate under it), and held through a moment without a fresh read.</summary>
+  public static class CellFrame {
+    /// <summary>The live frame <paramref name="fr"/> (x, y, w, h, r) made the whole cell: when the list's own cell (<paramref name="calc"/>: the layout's
+    /// x, y, w, h - icon and plate) is taller than wide and the live one is the icon square only, it grows down to the layout's proportion.</summary>
+    public static double[] Whole(double[] fr, double[] calc) {
+      if (fr == null || fr.Length < 4 || calc == null || calc.Length < 4 || calc[2] <= 0 || fr[2] <= 0) return fr;
+      double k = calc[3] / calc[2];
+      if (k < 1.1 || fr[3] >= fr[2] * k * 0.9) return fr;
+      var r = (double[])fr.Clone(); r[3] = Math.Round(fr[2] * k);
+      return r;
+    }
+
+    /// <summary>The hero list read <paramref name="s"/> binds <paramref name="hero"/> to exactly one shown cell, at list index <paramref name="index"/>
+    /// (the scan's order of the hero grid); anything else is unsure and the card is not framed.</summary>
+    public static bool HeroCellSure(UiCellSet s, long hero, int index) {
+      if (s == null || !s.Ok || hero <= 0 || index < 0) return false;
+      UiCell one = null;
+      foreach (var c in s.Cells) if (c.Uid == hero) { if (one != null) return false; one = c; }
+      return one != null && one.Index == index && one.Active && one.BW >= 4 && one.BH >= 4;
+    }
+
+    /// <summary>The last Shown frame of the item framed now; an Unknown (no fresh read) within <see cref="Ms"/> gives it back, a Hidden or another item drops it.</summary>
+    public sealed class Hold {
+      public const long Ms = 800;
+      string key; double[] fr; double w, h; long at;
+      public UiCellSee Pick(string k, UiCellSee st, ref double[] f, double W, double H, long now) {
+        if (st == UiCellSee.Shown && f != null) { key = k; fr = f; w = W; h = H; at = now; return st; }
+        if (st == UiCellSee.Unknown && key == k && fr != null && Math.Abs(w - W) < 0.5 && Math.Abs(h - H) < 0.5 && now - at >= 0 && now - at <= Ms) { f = fr; return UiCellSee.Shown; }
+        if (st != UiCellSee.Unknown || key != k) { key = null; fr = null; }
+        return st;
+      }
+    }
   }
 }
