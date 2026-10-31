@@ -573,7 +573,7 @@ namespace RealmForge {
     /// <summary>What the helper is at while a started plan runs (null = no plan, or a pilot is clicking / waiting for the
     /// player): the same key for long means the plan stands still.</summary>
     /// <summary>The hero the plan wants opened while its step is «open the hero» (the hint, or the started plan); 0 = none.</summary>
-    public long HeroStepHero() { return hintKind == "hero" ? hintHero : (hintKind == "" ? runHero : 0); }
+    public long HeroStepHero() { return hintKind == "hero" ? hintHero : (hintKind == "" || hintKind == "bulk" ? runHero : 0); }
 
     public string StallKey() {
       if (runHero <= 0 || autoSaid == "work" || autoSaid == "paused" || autoSaid == "background") return null;
@@ -857,7 +857,7 @@ namespace RealmForge {
 
     /// <summary>The equip pilots may click: a started build, or (auto click switched on while the job was already shown) the hint of a build with the game scanned.
     /// Follows AutoEnabled at every tick, so the stop button shows when auto click is switched on mid-job and hides when it is switched off.</summary>
-    bool EquipClicking { get { return AutoEnabled && (runHero > 0 || (addrs != null && !LocateWins && sellWanted == null && (target != 0 || (hintKind != "" && hintKind != "done")))); } }
+    bool EquipClicking { get { return AutoEnabled && (runHero > 0 || (addrs != null && !LocateWins && sellWanted == null && (target != 0 || (hintKind != "" && hintKind != "done" && hintKind != "bulk")))); } }
 
     /// <summary>Something is shown or running that auto click could take over (the host starts the game scan for it when auto click is switched on).</summary>
     public bool HasJob { get { return PlanOn || locateReq != null || sellWanted != null; } }
@@ -2429,7 +2429,7 @@ namespace RealmForge {
         if (fin != "") { FinishLocateJob(fin, now); return; }
         // the step's target lies under a shown pop-up (the gear filter over the hero screen, a flow form): «close the pop-up» is the step shown until it
         // is closed, then the step comes back; no frame on the hidden target
-        if (LocateGuide.CoverStep(st, screens.Current)) {
+        if (!LocateAutoOn && LocateGuide.CoverStep(st, screens.Current)) {
           string cov = st.Covered + "|" + st.Popup;
           if (cov != locateCoverSaid) { locateCoverSaid = cov; Log.Write("locate: step " + st.Covered + " is covered by " + st.Popup + " (z-order " + (screens.Current.Order != null ? string.Join(",", screens.Current.Order.ToArray()) : "unknown") + ") - close it first"); }
         } else locateCoverSaid = "";
@@ -3549,7 +3549,7 @@ namespace RealmForge {
       bool heroOpen = scr != null && scr.Kind == ScreenKind.HeroScreen;
       bool formOpen = scr != null && (scr.Kind == ScreenKind.Foundry || scr.Kind == ScreenKind.Gem);
       var dstep = LocateGuide.Next(req, inv, locateRs, heroScreen, locateCols, locateOnAccount);
-      LocateGuide.CoverStep(dstep, scr);   // a pop-up over the target: the pilot clicks nothing (the step is «close the window», the player's)
+      // (a pop-up over the target: BackStep above closes it by the screen map's × / Escape through the gate; the «close the window» step is the hint mode's only)
       var view = new LocateView { NowMs = now, Foreground = gameFront, UserBusy = busy, UserClicked = uc, W = W, H = H, U = U, Step = dstep, Inv = inv, Cols = locateCols,
         HeroScreenOpen = heroOpen, OtherFormOpen = formOpen, InvDX = invDX, Geometry = Geo.Current, Rs = locateRs, Item = req.Item, Purpose = req.Purpose };
       if (gameFront && !busy && LocateAuto.NeedsCityButton(dstep, heroOpen, formOpen)) { view.CityButton = InventoryButtonSeen(o, W, H); view.InvDX = invDX; }   // the place the bar search may have found just now

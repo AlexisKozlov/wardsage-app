@@ -111,8 +111,10 @@ namespace RealmForge {
       }
     }
 
+    static string GameScreenOwn(ScreenKind k) { return ScreenState.OwnForm(k); }
+
     /// <summary>The pop-up that covers the step's target now, null = none. The hero's gear filter (the hero screen's own pop-up: ModalWhy "heroFilter")
-    /// covers the gear row at the bottom (the step's «Литейная»); any other form shown over the screen (the pilot's flow forms, a pop-up of the screen map) covers it too, the topmost by the game's z-order (ScreenState.Order, top first) when that is known.
+    /// covers the gear row at the bottom (the step's «Литейная»); any other pop-up of the screen map shown over the screen (never a flow form or the screen's own panels) covers it too, the topmost by the game's z-order (ScreenState.Order, top first) when that is known.
     /// <paramref name="targetCovered"/> (optional) answers from the live rects whether the form's rect holds the target: false = it does not (the
     /// small tip beside the button): no cover; no answer / null = covered.</summary>
     public static PopupCover Covering(LocateStep st, ScreenState sc, Func<string, bool> targetCovered = null) {
@@ -120,12 +122,12 @@ namespace RealmForge {
       string why = sc.ModalWhy ?? "";
       if (sc.ModalOpen && why == "heroFilter" && sc.Kind == ScreenKind.HeroScreen && st.Kind == LocateKind.OpenFoundry && st.OnGear)
         return new PopupCover { Form = "Form_CharactorMain", Title = "filter", Close = "hero.filterClose" };
+      // only a pop-up of its own counts: never a form of the screen's pilot flows (the tip, the filters, the confirms: the screen's sub-state), never the
+      // screen's own form or its sub-panels (the gem function panel, the workshop's tabs: forms the screen map does not list as pop-ups)
       var list = new List<string>();
-      Action<string> add = s => { foreach (var f in (s ?? "").Split(',')) { string n = f.Trim(); if (n != "" && n.StartsWith("Form_") && list.IndexOf(n) < 0) list.Add(n); } };
-      add(sc.Flow); if (why.StartsWith("form:")) add(why.Substring(5));
-      string baseForm = sc.Kind == ScreenKind.HeroScreen ? "Form_CharactorMain" : "";
-      list.RemoveAll(n => n == baseForm);
-      if (list.Count == 0) return null;
+      string own = GameScreenOwn(sc.Kind);
+      Action<string> add = s => { foreach (var f in (s ?? "").Split(',')) { string n = f.Trim(); if (n != "" && n.StartsWith("Form_") && list.IndexOf(n) < 0 && n != own && !ScreenMap.IsFlow(sc.Kind, n) && "FPEDW".IndexOf(ScreenMap.ClassOf(n)) >= 0 && ScreenState.KindOfForm(n) == ScreenKind.Unknown) list.Add(n); } };
+      if (why.StartsWith("form:")) add(why.Substring(5));
       string top = null; int best = int.MaxValue;
       foreach (var n in list) {
         int i = sc.Order != null ? sc.Order.IndexOf(n) : -1;
@@ -136,7 +138,7 @@ namespace RealmForge {
       return new PopupCover { Form = top, Title = PopupTitleOf(top), Close = "" };
     }
 
-    /// <summary>Hint mode and the auto pilot alike: the step whose target a pop-up covers becomes «close the pop-up» (the frame on its ×, never on the
+    /// <summary>Hint mode only (the auto pilot closes a covering pop-up itself, the shared MapStep): the step whose target a pop-up covers becomes «close the pop-up» (the frame on its ×, never on the
     /// hidden target); once it is closed the original step comes back by itself (the next read). True = the step was replaced.</summary>
     public static bool CoverStep(LocateStep st, ScreenState sc, Func<string, bool> targetCovered = null) {
       var c = Covering(st, sc, targetCovered);

@@ -18,7 +18,7 @@ CORE=$(sed -n 's/^CORE="\(.*\)"$/\1/p' tests/run-tests.sh)
 OUT=build; mkdir -p "$OUT"
 NET8_REFS=$(for f in "$NET8"/*.dll; do printf -- '-r:%s ' "$f"; done)
 $CSC -langversion:5 -target:library -nostdlib -warnaserror -nowarn:SYSLIB0014 $NET8_REFS -out:"$OUT/RealmForge.Core.dll" $CORE tests/CodeProtectorStub.cs
-$CSC -target:exe -nostdlib -nowarn:SYSLIB0014 $NET8_REFS -r:"$OUT/RealmForge.Core.dll" -out:"$OUT/CoreTests.dll" tests/CoreTests.cs tests/GameSim.cs tests/EquipBench.cs
+$CSC -target:exe -nostdlib -nowarn:SYSLIB0014 $NET8_REFS -r:"$OUT/RealmForge.Core.dll" -out:"$OUT/CoreTests.dll" tests/CoreTests.cs tests/FrameStyleTests.cs tests/GameSim.cs tests/EquipBench.cs
 printf '{ "runtimeOptions": { "tfm": "net8.0", "framework": { "name": "Microsoft.NETCore.App", "version": "%s" } } }\n' "$NET8_RT" > "$OUT/CoreTests.runtimeconfig.json"
 SIM="dotnet exec --runtimeconfig $OUT/CoreTests.runtimeconfig.json $OUT/CoreTests.dll --sim"
 case "${1:-}" in

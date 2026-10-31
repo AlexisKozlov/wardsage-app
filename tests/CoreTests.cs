@@ -4570,14 +4570,26 @@ static partial class CoreTests {
     Check(!LocateGuide.CoverStep(st, hero) && st.Kind == LocateKind.OpenFoundry, "cover: the filter closed -> the original step is back");
     st = mk(LocateKind.OpenFoundry); st.OnGear = false;
     Check(!LocateGuide.CoverStep(st, new ScreenState { Kind = ScreenKind.HeroScreen, ModalOpen = true, ModalWhy = "heroFilter" }), "cover: the gear filter does not cover the inventory's «Литейная»");
-    // a flow form: the topmost by the z-order, with its own title
+    // a flow form (the pilot's own tip / question / filter) is the screen's sub-state: it never covers; a pop-up of the screen map does, the topmost by the z-order
     var inv = new ScreenState { Kind = ScreenKind.Inventory, Flow = "Form_CharactorEquipTip,Form_EquipPopUp", Order = new List<string> { "Form_EquipPopUp", "Form_CharactorEquipTip", "Form_BackpackIntegration" } };
     st = mk(LocateKind.OpenFoundry); st.OnGear = false;
-    Check(LocateGuide.CoverStep(st, inv) && st.Popup == "Form_EquipPopUp" && st.PopupTitle == "question" && st.PopupClose == "", "cover: two forms over the inventory -> the one on top is closed first");
-    inv.Order = new List<string> { "Form_CharactorEquipTip", "Form_EquipPopUp", "Form_BackpackIntegration" };
-    st = mk(LocateKind.OpenEquipTab); LocateGuide.CoverStep(st, inv); Eq("Form_CharactorEquipTip", st.Popup, "cover: ... the z-order decides");
+    Check(!LocateGuide.CoverStep(st, inv) && st.Kind == LocateKind.OpenFoundry, "cover: the inventory's own flow forms (tip, question) never cover the step");
+    var popL = new List<string>(); foreach (var e in ScreenMap.All) if (e.Class == 'P' && popL.Count < 2 && ScreenState.KindOfForm(e.Name) == ScreenKind.Unknown && !ScreenMap.IsFlow(ScreenKind.Inventory, e.Name)) popL.Add(e.Name);
+    string[] pops = popL.ToArray();
+    inv = new ScreenState { Kind = ScreenKind.Inventory, ModalOpen = true, ModalWhy = "form:" + pops[0] + "," + pops[1], Order = new List<string> { pops[1], pops[0], "Form_BackpackIntegration" } };
+    st = mk(LocateKind.OpenFoundry); st.OnGear = false;
+    Check(LocateGuide.CoverStep(st, inv) && st.Popup == pops[1], "cover: two map pop-ups over the inventory -> the one on top is closed first");
+    inv.Order = new List<string> { pops[0], pops[1], "Form_BackpackIntegration" };
+    st = mk(LocateKind.OpenEquipTab); LocateGuide.CoverStep(st, inv); Eq(pops[0], st.Popup, "cover: ... the z-order decides");
     st = mk(LocateKind.OpenFoundry); st.OnGear = false;
     Check(!LocateGuide.CoverStep(st, inv, f => false) && st.Kind == LocateKind.OpenFoundry, "cover: the live rects say the pop-up is beside the target -> no cover");
+    // the recast / promotion screens' own panels, an overlay: never a cover (the lab regression: no pilot step for 40 s)
+    foreach (var sk in new[] { ScreenKind.Gem, ScreenKind.ArtWorkshop, ScreenKind.Foundry, ScreenKind.HeroScreen }) {
+      var own = new ScreenState { Kind = sk, ModalOpen = true, ModalWhy = "form:Form_EquipGemFunction,Form_LeftTip,Form_ArtifactBreakPanel" };
+      st = mk(LocateKind.GemFunction); st.OnGear = false;
+      Check(!LocateGuide.CoverStep(st, own) && st.Kind == LocateKind.GemFunction, "cover: " + sk + " with its own panels shown -> the step stays (recast / artPromote reach the final step)");
+      st = mk(LocateKind.OpenInventory); Check(!LocateGuide.CoverStep(st, own) && st.Kind == LocateKind.OpenInventory, "cover: " + sk + " panels never turn the inventory step into a close step");
+    }
     st = mk(LocateKind.Selected); Check(!LocateGuide.CoverStep(st, inv), "cover: the item card step is never covered by its own tip");
     st = mk(LocateKind.AscendReady); Check(!LocateGuide.CoverStep(st, inv), "cover: the final button is the player's: no cover step");
     st = mk(LocateKind.OpenFoundry); inv.Held = true; Check(!LocateGuide.CoverStep(st, inv), "cover: a held (unread) screen changes nothing");
