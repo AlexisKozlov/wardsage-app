@@ -334,10 +334,31 @@ namespace RealmForge {
         dots.Add(m[3]);
       }
       if (first == null) return null;
+      var clusters = ClusterMarks(dots, first[1], first[2]);
       var lead = ListMarker(g, row1, viewTop, topPad, pitch, rows, leadRow, W, H, U) ?? first;
       var res = new List<double> { first[0], first[1], first[2], lead[3], first[4], first[5], 1 };
-      res.AddRange(dots);
+      foreach (var c in clusters) { res.Add(c[0]); res.Add(c[1]); }
       return res.ToArray();
+    }
+
+    /// <summary>Markers closer than <paramref name="minGap"/> px merge into one (its y = the mean, count = how many), never more than <paramref name="maxMarks"/>
+    /// of them (the gap grows until they fit), each kept inside the bar [<paramref name="top"/> + edge, <paramref name="bottom"/> - edge]. Result: {y, count} ascending.</summary>
+    public static List<double[]> ClusterMarks(IList<double> ys, double top, double bottom, double minGap = 10, int maxMarks = 12, double edge = 6) {
+      var sorted = new List<double>(ys); sorted.Sort();
+      List<double[]> res;
+      for (double gap = minGap; ; gap *= 1.25) {
+        res = new List<double[]>(); double start = 0, sum = 0; int n = 0;
+        foreach (double y in sorted) {
+          if (n > 0 && y - start >= gap) { res.Add(new[] { sum / n, n }); n = 0; sum = 0; }
+          if (n == 0) start = y;
+          sum += y; n++;
+        }
+        if (n > 0) res.Add(new[] { sum / n, n });
+        if (res.Count <= maxMarks || gap > 1e6) break;
+      }
+      double lo = top + edge, hi = Math.Max(lo, bottom - edge);
+      foreach (var c in res) c[0] = Math.Max(lo, Math.Min(hi, c[0]));
+      return res;
     }
 
     // the exact scroll is unreadable but the game's own cell range says the item is above / below: only the pill, at the viewport edge

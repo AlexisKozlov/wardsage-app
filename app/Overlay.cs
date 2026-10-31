@@ -1781,11 +1781,13 @@ namespace RealmForge {
       }
       if (marks != null) {
         var mo = new List<double[]>(); foreach (var m in marks) mo.Add(new double[] { m[0], m[1], m[2], m[3] });
+        bool owlDone = false;
         foreach (var m0 in marks) {
           var m = m0;
-          var ms = m[4] != 1 && !(m[4] == 0 && GuideStyle) ? FrameSpec(null, m[0], m[1], m[2], m[3], m[4] == 2 ? FrameStyle.Red : FrameStyle.Gold, FrameStyle.Gap(m[0], m[1], m[2], m[3], mo)) : null;
+          var ms = m[4] != 1 ? FrameSpec(null, m[0], m[1], m[2], m[3], m[4] == 2 ? FrameStyle.Red : FrameStyle.Gold, FrameStyle.Gap(m[0], m[1], m[2], m[3], mo)) : null;
           add(m[0], m[1], m[2], m[3], "mark" + m[4], (g, ox, oy, bw, bh, f) => PaintMark(g, m[0] - ox, m[1] - oy, m[2], m[3], m[4], Gm, ms, ox, oy));
-          if (m[4] == 0 && !GuideStyle) {   // the owl badge on the frames to mark, as on every other hint frame
+          if (m[4] == 0 && !owlDone) {   // the owl badge on ONE frame (the first / top target): on all of them it is clutter
+            owlDone = true;
             var at = FrameStyle.OwlAt(m[0], m[1], m[2], m[3], sy);
             add((int)at[0] - 9, (int)at[1] - 9, 18, 18, "owl", (g, ox, oy, bw, bh, f) => PaintOwl(g, at, ox, oy));
           }
@@ -1865,8 +1867,7 @@ namespace RealmForge {
     // dim gold line with a check mark), 2 = selected but not on the list (red)
     void PaintMark(Graphics gr, float x, float y, float w, float h, int style, int G, FrameSpecT sp, int ox, int oy) {
       if (style == 0) {
-        if (GuideStyle) PaintGuide(gr, HlCell(0, 0, 0, 0), 0, 0, 0, 0, false, G, null, 0, 0, new GeoRect { X = x, Y = y, W = w, H = h });   // storage cleanup: the gold edge of the new highlight
-        else PaintFrame(gr, sp, ox, oy);
+        PaintFrame(gr, sp, ox, oy);   // the branded C1 frame (4 px gold, glow, full opacity), in both guide styles
         return;
       }
       if (style == 1) {
@@ -2289,6 +2290,13 @@ namespace RealmForge {
         bool tl; var tb = FrameForI("inventory.leftTab.artifact", SellHint.ArtTabRect(W, H, U), W, H, U, out tl);
         frame++;
         DrawTip(o.X + tb[0], o.Y + tb[1], tb[2], tb[3], sellHintLines, H);
+        return;
+      }
+      if (step.Kind == SellHintKind.OpenEquipTab) {
+        // the inventory is open on another tab (materials...): the left menu's «Снаряжение» toggle, its live rect
+        bool el; var eb = FrameForI("inventory.leftTab.equip", SellHint.EquipTabRect(W, H, U), W, H, U, out el);
+        frame++;
+        DrawTip(o.X + eb[0], o.Y + eb[1], eb[2], eb[3], sellHintLines, H);
         return;
       }
       if (step.Kind == SellHintKind.NeedPosition) { DrawTipTop(sellHintLines); return; }

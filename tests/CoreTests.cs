@@ -5039,10 +5039,21 @@ static partial class CoreTests {
     {   // the storage cleanup's strip: the viewport's bracket and a dot for EACH target still to mark (a row of two targets = two dots)
       var rowsT = new List<int> { 1, 5, 5, 20 };
       var sv = LocateFrames.ListStrip(g, vt + pad - 500, vt, pad, p100, 20, rowsT, 20, W, H, U);
-      Check(sv != null && sv.Length == 7 + rowsT.Count && sv[6] == 1, "scroll strip: a dot for each of the 4 remaining targets (" + (sv != null ? (sv.Length - 7).ToString() : "-") + ")");
+      Check(sv != null && sv.Length == 7 + 2 * 3 && sv[6] == 1 && sv[8] == 1 && sv[10] == 2 && sv[12] == 1, "scroll strip: 4 targets, the two of one row merge into one marker with a count (" + (sv != null ? (sv.Length - 7).ToString() : "-") + ")");
       var mkL = LocateFrames.ListMarker(g, vt + pad - 500, vt, pad, p100, 20, 20, W, H, U);
-      Check(sv != null && Math.Abs(sv[3] - mkL[3]) < 0.01 && Math.Abs(sv[4] - mkL[4]) < 0.01 && Math.Abs(sv[5] - mkL[5]) < 0.01 && Math.Abs(sv[7] - LocateFrames.ListMarker(g, vt + pad - 500, vt, pad, p100, 20, 1, W, H, U)[3]) < 0.01 && sv[8] == sv[9],
-        "scroll strip: the viewport's bracket and the lead dot as the single marker's; every dot at its row's share; two targets of a row stand at one y");
+      Check(sv != null && Math.Abs(sv[3] - mkL[3]) < 0.01 && Math.Abs(sv[4] - mkL[4]) < 0.01 && Math.Abs(sv[5] - mkL[5]) < 0.01 && Math.Abs(sv[7] - LocateFrames.ListMarker(g, vt + pad - 500, vt, pad, p100, 20, 1, W, H, U)[3]) < 0.01 && sv[7] > sv[1],
+        "scroll strip: the viewport's bracket and the lead dot as the single marker's; every marker at its row's share");
+      {   // 100 targets: clustered, at most 12 markers, all inside the bar, counts add up
+        var many = new List<int>(); for (int i = 1; i <= 20; i++) for (int jj = 0; jj < 5; jj++) many.Add(i);
+        var sm = LocateFrames.ListStrip(g, vt + pad, vt, pad, p100, 20, many, 1, W, H, U);
+        int nm = sm != null ? (sm.Length - 7) / 2 : -1, tot = 0; bool inside = sm != null, asc = true;
+        for (int i = 7; sm != null && i + 1 < sm.Length; i += 2) { tot += (int)sm[i + 1]; inside &= sm[i] >= sm[1] && sm[i] <= sm[2]; if (i > 7 && sm[i] < sm[i - 2]) asc = false; }
+        Check(sm != null && nm >= 1 && nm <= 12 && tot == 100 && inside && asc, "scroll strip: 100 targets -> " + nm + " markers (max 12), counts sum to 100, inside the bar");
+        var cl = LocateFrames.ClusterMarks(new List<double> { 100, 104, 109, 300 }, 50, 400);
+        Check(cl.Count == 2 && (int)cl[0][1] == 3 && (int)cl[1][1] == 1, "scroll strip: markers within 10 px merge");
+        var cl2 = LocateFrames.ClusterMarks(new List<double> { 0, 500 }, 50, 400);
+        Check(cl2[0][0] >= 50 && cl2[1][0] <= 400, "scroll strip: a marker is kept inside the bar");
+      }
       Check(LocateFrames.ListStrip(g, vt + pad, vt, pad, p100, 20, new List<int>(), 1, W, H, U) == null && LocateFrames.ListStrip(null, vt + pad, vt, pad, p100, 20, rowsT, 1, W, H, U) == null, "scroll strip: no targets or no bar geometry -> none");
     }
 
@@ -7073,6 +7084,12 @@ static partial class CoreTests {
 
     // the rectangles: research numbers, or the site's geometry
     var tb = SellHint.ArtTabRect(W, H, U); var bb = SellHint.ArtBulkRect(W, H, U);
+    {   // the inventory open on another tab (materials) during the cleanup: the step is «open Equipment» and its frame is the live «Снаряжение» toggle, above «Артефакт»
+      Eq(SellHintKind.OpenEquipTab, SellHint.Classify(new InventoryScreen { Open = true, EquipTab = false }, wanted).Kind, "sell hint: the inventory on another tab -> open the «Снаряжение» tab");
+      var eb = SellHint.EquipTabRect(W, H, U);
+      Check(eb[2] == tb[2] && eb[3] == tb[3] && eb[1] < tb[1] && eb[1] + eb[3] <= tb[1] + 2 && Math.Abs(eb[1] - (0.2772 * U)) <= 1.5, "sell hint: the «Снаряжение» toggle's frame above «Артефакт» " + string.Join(",", eb));
+      Check(Array.IndexOf(FrameTargets.OverlayKeys, "inventory.leftTab.equip") >= 0, "sell hint: the equip tab's key is framed by the overlay");
+    }
     {
       Check(SellGeometry.ArtCols(new GeoRect { X = 0.195 * 705, Y = 0, W = (1366.0 / 705 - 0.5231 - 0.195) * 705, H = 400 }, 705, 7) == 8 && SellGeometry.ArtCols(new GeoRect { X = 0.195 * U, Y = 0, W = (W / U - 0.5231 - 0.195) * U, H = 400 }, U, 8) == 7 && SellGeometry.ArtCols(null, U, 8) == 8,
             "art hint: columns from the list's width: 8 at the live window, 7 at the authored one, the fallback without a rectangle");

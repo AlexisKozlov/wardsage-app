@@ -175,7 +175,7 @@ namespace RealmForge {
     public const string KeyCityHeroes = "city.heroes", KeyHeroBack = "hero.back", KeyConfirm = "hero.confirm";
     /// <summary>The keys app/Overlay.cs frames by name (besides the steps' own keys of src/LocateFrames.cs and src/ArtEquip.cs).</summary>
     public static readonly string[] OverlayKeys = { KeyCityHeroes, KeyHeroBack, KeyConfirm, "hero.filter", "hero.tab.equip", "hero.filterClose", "inventory.bulkBack",
-      "inventory.bulkSell", "inventory.artBulkSell", "inventory.sellBtn", "inventory.artSellBtn", "inventory.leftTab.artifact", "hero.slot.0", "hero.slot.1", "hero.slot.2", "hero.slot.3", "hero.slot.4" };
+      "inventory.bulkSell", "inventory.artBulkSell", "inventory.leftTab.equip", "inventory.sellBtn", "inventory.artSellBtn", "inventory.leftTab.artifact", "hero.slot.0", "hero.slot.1", "hero.slot.2", "hero.slot.3", "hero.slot.4" };
 
     public static IList<FrameTarget> All { get { return all; } }
     public static FrameTarget Of(string key) { FrameTarget t; return key != null && byKey.TryGetValue(key, out t) ? t : null; }

@@ -11,6 +11,7 @@ ProductVersion → `node tools/release-app.mjs --key D:/RealmForge/keys/realmfor
 
 Optional `### Heading` lines inside a `## RU` / `
 - Чистка склада: когда всё отмечено (само или вами), программа пишет «Готово: отмечено N — нажмите «Продать»» и обводит кнопку «Продать» (нажимаете вы); рамки на вещах точно по размеру ячеек, без наложения; на полосе прокрутки списка видны отметки всех оставшихся вещей; лишняя отметка — красная рамка с крестиком; подсказки не мигают, пока вы не двигаете мышь.
+- Чистка склада: если инвентарь открыт на другой вкладке (например «Материалы»), рамка стоит на вкладке «Снаряжение»; рамки вещей яркие и чёткие (золотая рамка бренда, одна сова на самой верхней); отметки на полосе прокрутки сливаются в группы (не больше 12, с числом вещей).
 
 ## EN` section split the update window's notes into titled groups (the headings are left out of the «What's new» page).
 
@@ -253,3 +254,4 @@ version …: from the site» или «saved copy»). Без файла оста�
 - Highlight frames sit exactly on buttons and icons, and hints are more compact.
 - Lower CPU load, and the app never clicks near purchase buttons; when it starts working, the game window comes to the front.
 - Storage cleanup: once everything is marked (by the app or by you) the app says «Done: N selected — press «Sell»» and frames the «Sell» button (you press it); item frames match the cells and no longer overlap; the list's scroll bar shows a marker for every remaining item; a wrongly marked item gets a red frame with a ✕; hints no longer blink out while the mouse is still.
+- Storage cleanup: with the inventory open on another tab (e.g. «Materials») the frame stands on the «Equipment» tab; item frames are bright and clear (the brand gold frame, one owl on the top one); scroll bar markers merge into groups (at most 12, with the item count).

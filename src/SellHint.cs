@@ -304,6 +304,14 @@ namespace RealmForge {
       return new[] { (int)(0.0023 * U), (int)(0.4022 * U), (int)(0.1688 * U), (int)(0.125 * U) };
     }
 
+    /// <summary>The left menu's «Снаряжение» toggle (geometry key inventory.leftTab.equip; the toggle above «Артефакт» when the file has no rect): {x, y, w, h} in client px.</summary>
+    public static int[] EquipTabRect(double W, double H, double U) {
+      var r = Geo.Rect("inventory.leftTab.equip", W, H, U);
+      if (r != null && r.W > 4 && r.H > 4) return new[] { (int)r.X, (int)r.Y, (int)r.W, (int)r.H };
+      var a = ArtTabRect(W, H, U);
+      return new[] { a[0], (int)(a[1] - 0.125 * U), a[2], a[3] };
+    }
+
     /// <summary>Keeps the frames that did not really move: a frame within <paramref name="tol"/> px of the same cell's frame
     /// drawn before (same style) stays where it was, so the picture does not shiver while the rows are tracked.</summary>
     public static List<SellFrame> Stabilize(List<SellFrame> prev, List<SellFrame> cur, int tol) {
