@@ -1912,6 +1912,32 @@ static partial class CoreTests {
         Check(v.Reason != "target" && v.Reason != "covered" && v.Reason != "order" && !top.ModalOpen, "z-order: the pop-up under the inventory takes no part (" + v.Reason + ": " + v.Detail + ")");
       }
     }
+    // (4) the target's own form and the forms under it (lab 2026-10-31, 1.6.66.415): EquipConfirm's «Заменить» lies on the compare tip over the hero
+    // screen - a dangerous widget of Form_CharactorMain under it is covered by the tip (ignored); one of the same form or of a flow form above stops
+    {
+      var dis = DangerPoint(SimHero, "m_BtnAutoDismount", W, H, U);
+      Check(dis != null, "z-order: Form_CharactorMain's «auto dismount» is a dangerous widget of the UI graph");
+      Check(DangerPoint(SimHero, "Panel_Equip_Artifact_InfoTip/m_Root/m_ButtonGroup/m_EquipContainer/m_BtnEquip", W, H, U) == null && DangerPoint(SimHero, "Panel_Equip_Artifact_Info/m_Content/m_ButtonGroup/m_EquipContainer/m_BtnEquip", W, H, U) == null,
+            "ui graph: the artifact tip's «Надеть» / «Заменить» (a put on, nothing spent) is not a dangerous widget");
+      var hero = new HeroScreen { Hero = 100, FormOk = true, Tab = 1, Part = -1 };
+      if (dis != null) {
+        var s = ScreenState.Classify(new ScreenInputs { CityForm = false, Hero = hero, Screens = new List<string> { SimHero }, Offers = new List<string>(), Flow = "Form_CharactorEquipTip", Order = new List<string> { "Form_CharactorEquipTip", SimHero, "Form_MainCity" } }, 1000);
+        var v = ZGate(ClickTarget.EquipConfirm, ClickOwner.Equip, dis, null, null, s, true, W, H, U);
+        Check(!(v.Reason == "target" && v.Detail.Contains("dangerous widget")), "z-order: a dangerous widget of the form under the target's tip is ignored (" + v.Reason + ": " + v.Detail + ")");
+        var su = ScreenState.Classify(new ScreenInputs { CityForm = false, Hero = hero, Screens = new List<string> { SimHero }, Offers = new List<string>(), Flow = "Form_CharactorEquipTip" }, 1000);
+        v = ZGate(ClickTarget.EquipConfirm, ClickOwner.Equip, dis, null, new List<string>(), su, false, W, H, U);
+        Check(!(v.Reason == "target" && v.Detail.Contains("dangerous widget")), "z-order: no order - the tip is the flow form over its screen, the screen's widget under it is ignored (" + v.Reason + ": " + v.Detail + ")");
+        v = ZGate(ClickTarget.HeroBack, ClickOwner.Equip, dis, null, null, s, true, W, H, U);
+        Check(v.Verdict == GateVerdict.Deny && v.Reason == "target" && v.Detail.Contains("dangerous widget of " + SimHero), "z-order: a dangerous widget of the target's own form under the point stops (" + v.Reason + ": " + v.Detail + ")");
+      }
+      var dec = DangerPoint("Form_EquipSellPopup", "m_Confirm", W, H, U);
+      Check(dec != null, "z-order: Form_EquipSellPopup's confirm is a dangerous widget of the UI graph");
+      if (dec != null) {
+        var s = ScreenState.Classify(new ScreenInputs { CityForm = false, Hero = hero, Screens = new List<string> { SimHero }, Offers = new List<string>(), Flow = "Form_CharactorEquipTip,Form_EquipSellPopup", Order = new List<string> { "Form_EquipSellPopup", "Form_CharactorEquipTip", SimHero, "Form_MainCity" } }, 1000);
+        var v = ZGate(ClickTarget.EquipConfirm, ClickOwner.Equip, dec, null, null, s, true, W, H, U);
+        Check(v.Verdict == GateVerdict.Deny && v.Reason == "target" && v.Detail.Contains("dangerous widget of Form_EquipSellPopup"), "z-order: a dangerous widget of a flow form above the target widget's tip stops (" + v.Reason + ": " + v.Detail + ")");
+      }
+    }
     // a full screen over the known screens: its back arrow is pressed (the known screens under it are not on top)
     Check(ClickGate.AllBelow(new List<string> { "Form_PhysicalPrize", SimInv, "Form_MainCity" }, "Form_PhysicalPrize", SimInv) && !ClickGate.AllBelow(null, "Form_PhysicalPrize", SimInv),
           "z-order: a known screen under the full screen on top is below it (no order: not known)");

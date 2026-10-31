@@ -156,6 +156,17 @@ namespace RealmForge {
       }
       return best;
     }
+    /// <summary>Every dangerous widget of <paramref name="form"/> under the point (the filters of <see cref="WidgetAt"/>).</summary>
+    public static List<Widget> DangerWidgetsAt(string form, double x, double y, double W, double H, double U) {
+      var l = new List<Widget>(); var f = ByName(form); if (f == null) return l;
+      foreach (var w in f.Widgets) {
+        if (!w.Shown || w.Template || w.Rect == null || !w.Danger) continue;
+        var r = ScreenMap.Place(w.Rect, W, H, U);
+        if (r.W < 2 || r.H < 2 || r.W > W * 0.9 && r.H > H * 0.9) continue;
+        if (x >= r.X && x <= r.Right && y >= r.Y && y <= r.Bottom) l.Add(w);
+      }
+      return l;
+    }
     /// <summary>The dangerous widgets of a form (shown, not a list template): the ones a click must never land on.</summary>
     public static IEnumerable<Widget> DangerWidgets(string form) {
       var f = ByName(form); if (f == null) yield break;

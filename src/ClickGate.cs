@@ -1222,10 +1222,9 @@ namespace RealmForge {
       return l;
     }
     /// <summary>A dangerous widget of <paramref name="form"/> under the click point: the UI graph's rect, or (<paramref name="live"/>) its live rect.</summary>
-    /// (<paramref name="own"/>: the click's own form - its close button, a request the game makes as the form closes, is left out: the × lists decide it.)
-    UiGraph.Widget DangerAt(string form, ClickRequest r, bool live, bool own = false) {
+    UiGraph.Widget DangerAt(string form, ClickRequest r, bool live) {
       if (r.W <= 0 || r.H <= 0 || r.U <= 0) return null;
-      var w = UiGraph.WidgetAt(form, r.X, r.Y, r.W, r.H, r.U, true); if (w != null && !(own && w.Closes)) return w;
+      var w = UiGraph.WidgetAt(form, r.X, r.Y, r.W, r.H, r.U, true); if (w != null) return w;
       var lv = live ? DangerLive : null; if (lv == null) return null;
       foreach (var d in UiGraph.DangerWidgets(form)) {
         if (string.IsNullOrEmpty(d.Field)) continue;
@@ -1240,7 +1239,8 @@ namespace RealmForge {
     /// point stops it, any other pop-up / screen there (or a form whose widget takes the point) is waited for - the click would land on it.
     /// Without the order every shown form other than the target's own, its flow forms, the overlays and the known screens under it may be on
     /// top: a dangerous one stops, a dangerous widget of one under the point stops, a pop-up / screen among them makes the top ambiguous - no
-    /// click. Last, a dangerous widget of the target's own form under the point stops (the UI graph's rects). Null = nothing against it.</summary>
+    /// click. Last, a dangerous widget of the target widget's own form, or of a flow form over it, under the point stops (the UI graph's
+    /// rects; the forms under the target widget's form are covered by it). Null = nothing against it.</summary>
     GateResult CheckCover(ClickRequest r, ScreenState f, long now, string tag) {
       if (f == null || r.Target == ClickTarget.EscapeBack || r.Target == ClickTarget.EquipTipEscape || r.Target == ClickTarget.ExploreEscape || r.Target == ClickTarget.None) return null;
       var o = r.Owner;
@@ -1282,8 +1282,45 @@ namespace RealmForge {
           return CoverWait(o, "order", tag + ": " + n + " is " + where + " - which one is on top is not known", now);
       }
       coverSince.Remove(o);
-      var own = DangerAt(tf, r, false, true);
-      if (own != null) return Halt(o, "target", tag + ": lies on a dangerous widget of " + tf + " (" + own.Path + ")");
+      // last the target's own form and the flow forms over it: a form under the target's form is covered by it and takes no click
+      var ownForms = OwnForms(r, f, tf, mine, sure);
+      for (int i = 0; i < ownForms.Count; i++) {
+        var own = OwnDangerAt(ownForms[i], r, i == ownForms.Count - 1); string n = ownForms[i];
+        if (own != null) return Halt(o, "target", tag + ": lies on a dangerous widget of " + n + " (" + own.Path + ")");
+      }
+      return null;
+    }
+    /// <summary>The form the target's widget is on (src/UiButtons.cs UiWidgetOf: EquipConfirm's tip over the hero screen), when it is one of the
+    /// click's own forms (the target's form or its flow forms); else the target's form.</summary>
+    static string WidgetForm(ClickRequest r, string tf, HashSet<string> mine) {
+      var u = RFX.UiWidgetOf(r.Target, r.Form);
+      return u != null && mine.Contains(u.Form) ? u.Form : tf;
+    }
+    /// <summary>The own forms whose dangerous widgets under the point stop the click: the target widget's form and, with the order, the own
+    /// (flow) forms above it. The forms under it are covered by it (Form_CharactorMain's artifact tip under the compare tip's «Заменить»);
+    /// without the order a flow form is the one opened over its screen.</summary>
+    static List<string> OwnForms(ClickRequest r, ScreenState f, string tf, HashSet<string> mine, bool sure) {
+      string wf = WidgetForm(r, tf, mine);
+      var l = new List<string>();
+      if (sure) foreach (var n in f.Order) { if (n == wf) break; if (mine.Contains(n) && !l.Contains(n)) l.Add(n); }
+      l.Add(wf);
+      return l;
+    }
+    /// <summary>The target widget itself in the UI graph (a dangerous widget the click is meant for is not a cover of it): path endings per target.</summary>
+    static readonly Dictionary<ClickTarget, string[]> SelfPaths = new Dictionary<ClickTarget, string[]> {
+      { ClickTarget.ArtReplace, new[] { "Panel_Equip_Artifact_InfoTip/m_Root/m_ButtonGroup/m_EquipContainer/m_BtnEquip/Button_Normal_2", "Panel_Equip_Artifact_Info/m_Content/m_ButtonGroup/m_EquipContainer/m_BtnEquip/Button_Normal_2" } },
+    };
+    static bool IsSelf(ClickTarget t, UiGraph.Widget w) {
+      string[] ps; if (!SelfPaths.TryGetValue(t, out ps)) return false;
+      foreach (var p in ps) if (w.Path.EndsWith(p, StringComparison.Ordinal)) return true;
+      return false;
+    }
+    /// <summary>A dangerous widget of an own form under the point (the UI graph's rects), not the target widget itself; on the target widget's
+    /// form (<paramref name="widgetForm"/>) not its close button either (a request the game makes as the form closes: the × lists decide it) -
+    /// on a form above it every dangerous widget counts (Form_EquipSellPopup's confirm closes it and sells).</summary>
+    static UiGraph.Widget OwnDangerAt(string form, ClickRequest r, bool widgetForm) {
+      if (r.W <= 0 || r.H <= 0 || r.U <= 0) return null;
+      foreach (var w in UiGraph.DangerWidgetsAt(form, r.X, r.Y, r.W, r.H, r.U)) if (!(widgetForm && w.Closes) && !IsSelf(r.Target, w)) return w;
       return null;
     }
     public static bool IsExploreTarget(ClickTarget t) { return t == ClickTarget.ExploreOpen || t == ClickTarget.ExploreTab || t == ClickTarget.ExploreClose || t == ClickTarget.ExploreEscape; }

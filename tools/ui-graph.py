@@ -20,7 +20,7 @@ Sources:
     close (Click2Close);
   - the effects: the handler's code and one level of the helpers it calls on self (and on its form, for a panel): ShowUI(ID_FORM_X)
     opens X (a confirm form or a dangerous one makes the edge dangerous), CloseUI / Hide / CloseForm closes, the network requests
-    (SendMessage_* / Request* / Send*: dangerous unless a read: Get / Info / Rank / List / View ...), screen-map's dangerous calls, a
+    (SendMessage_* / Request* / Send*: dangerous unless a read: Get / Info / Rank / List / View ..., or a put on: WEAR_REQ), screen-map's dangerous calls, a
     tab switch (a toggle, or a helper named *Tab / *Toggle / *Page / *Switch), a jump (the game's jump system: target not resolved);
   - the automatic forms: ActivityFormMgr's pop-up queue (its scene: the city, a dungeon, the lottery), forms the data / network
     modules open (outside UI/), and the forms a form opens from its event listeners (the results after its actions).
@@ -40,6 +40,8 @@ CITY = 'Form_MainCity'
 
 CLICKABLE = ('Button', 'Toggle', 'ActiveToggle')
 SAFE_REQ = re.compile(r'(Cancel|Get|Info|Rank|List|View|Init|Recommend|Search|Query|Detail|Report|Remind|SetFuncOpen|Preview|Check|Record|Log|Read|Load|Lock)', re.I)
+# putting an item / artifact on a hero: a state change that spends nothing (the equip pilots' own «Надеть» / «Заменить»), not dangerous
+WEAR_REQ = re.compile(r'^(SendMessageEquipArtifact|SendMessage_Artifact_PutOn_CS|SendMessage_Equip_PutOn)$')
 TAB_RX = re.compile(r'(Tab|Toggle|Page|Switch|SubPanel|ChangePanel|Category|Mode)', re.I)
 CONFIRM_FORM = re.compile(r'(Confirm|CommonPopup|SecondTip|BuyTip|CostTip|PurchaseTip|PayTip|ExitTip|QuitTip|SpendTip|BuyPopup|UnbindAlert)', re.I)
 JUMP_RX = re.compile(r'\b(QuickJump\w*|JumpTo\w*|mtJump\w*|JumpManager|GotoFunc\w*|GoToFunc\w*|DoJump\w*|JumpSystem\w*|OpenFunction\w*)\s*[:.(]')
@@ -226,7 +228,7 @@ class Graph:
         for m in REQ_RX.finditer(body):
             r = m.group(1)
             if r.startswith('Send') and not r.startswith('SendMessage') and re.match(r'Send(Event|Notify|Broadcast|Msg)\b', r): continue
-            eff.append(('req', r + ('' if SAFE_REQ.search(r[11:] if r.startswith('SendMessage') else r) else '!')))
+            eff.append(('req', r + ('' if WEAR_REQ.match(r) or SAFE_REQ.search(r[11:] if r.startswith('SendMessage') else r) else '!')))
         for m in self.danger.finditer(body):
             eff.append(('req', m.group(1) + '!'))
         if JUMP_RX.search(body):
