@@ -661,7 +661,7 @@ namespace RealmForge {
       timer.Stop(); lookTimer.Stop(); HideTip(); if (cancelWin.Visible) cancelWin.Hide();
     }
 
-    void HideTip() { if (tip.Visible) tip.Hide(); tipKey = null; }
+    void HideTip() { if (tip.Visible) tip.Hide(); tipKey = null; frameWins.Remove(tip); }
 
     void Hide(string st) {
       if (glow.Visible) glow.Hide();
@@ -695,6 +695,7 @@ namespace RealmForge {
       AuditBegin();
       try { TickWork(); }
       finally {
+        try { TickFramesOne(); } catch (Exception e) { Log.Write("frames: " + e.Message); }
         try { AuditEnd(); } catch (Exception e) { Log.Write("frame audit: " + e.Message); }
         if (recB != null) { var b = recB; recB = null; b.Screen = screens.Current != null ? screens.Current.Brief : "-"; RecInputs(b); RecInfo.Publish(b); }
       }
@@ -1504,9 +1505,9 @@ namespace RealmForge {
     /// <summary>A pulsing gold frame around a button of the game (x, y, w, h: screen px) with the step plate beside it
     /// (plateOnly: the plate alone, beside that spot). below / right: kept for the callers, the plate finds its own side.</summary>
     /// <summary>A plate with no target on screen (nothing to frame): top centre of the game window, for every guide.</summary>
-    void DrawTipTop(string[] lines, string caps = null, int[][] avoid = null) {
+    void DrawTipTop(string[] lines, string caps = null, int[][] avoid = null, bool warn = false) {
       if (lines == null || lines.Length == 0) { HideTip(); return; }
-      Scene(tip, ref tipKey, null, new Plate { Caps = caps ?? Tx("caps"), Main = lines[0], Sub = lines.Length > 1 ? lines[1] : "" }, null, null, null, null, avoid);
+      Scene(tip, ref tipKey, null, new Plate { Caps = caps ?? Tx("caps"), Main = lines[0], Sub = lines.Length > 1 ? lines[1] : "", Warn = warn }, null, null, null, null, avoid);
     }
 
     /// <param name="avoid">the step's other click targets (screen px {x, y, w, h}): the plate is never put over them (nor over the target)</param>
@@ -1575,9 +1576,27 @@ namespace RealmForge {
     /// <summary>The hints pulse (a repaint every tick); off: they stand still and are drawn only on a change (the player's PC is not loaded).</summary>
     static readonly bool HintPulse = false;
 
+    GlowWindow frameWinTick; readonly HashSet<GlowWindow> frameWins = new HashSet<GlowWindow>(), sceneWins = new HashSet<GlowWindow>();
+    /// <summary>End of a tick: a window that still shows a frame while another one drew a frame this tick, and was not drawn itself, is hidden
+    /// (the new frame replaces the old one in the same paint).</summary>
+    void TickFramesOne() {
+      if (frameWinTick != null)
+        foreach (var w in new[] { tip, glow })
+          if (w != frameWinTick && !sceneWins.Contains(w) && frameWins.Contains(w)) {
+            frameWins.Remove(w); if (w.Visible) w.Hide();
+            if (w == tip) tipKey = null; else drawnKey = null;
+          }
+      frameWinTick = null; sceneWins.Clear();
+    }
+
     void Scene(GlowWindow win, ref string key, int[] frameR, Plate p, int[] target, double[] strip, List<int[]> marks = null, Hl hl = null, int[][] avoid = null) {
       if (strip == null && PendingFrame(frameR)) { frameR = null; hl = null; }   // the target's live frame is awaited: the plate alone, the frame comes once, live
-      if (!GameDrawable()) { if (win.Visible) win.Hide(); key = null; return; }
+      if (!GameDrawable()) { if (win.Visible) win.Hide(); key = null; frameWins.Remove(win); return; }
+      // one frame at a time: the first frame of a tick is drawn, a second window's own frame waits (its plate stays); the window of an older frame
+      // that no scene reached this tick is taken down in the same tick (TickFramesOne)
+      if (frameR != null && frameWinTick != null && frameWinTick != win) { frameR = null; hl = null; }
+      if (frameR != null) { frameWinTick = win; frameWins.Add(win); } else frameWins.Remove(win);
+      sceneWins.Add(win);
       if (recB != null) RecScene(win, frameR, strip, marks);
       if (auditOn) auditScenes.Add(new AuditScene { Win = win, Frame = frameR, Step = p != null ? FrameAudit.StepKey(p.Caps, p.Main) : "-" });
       // the frames and the new highlight stand still at their brightest (they pulsed: a repaint and a copy of the whole picture, up to the
@@ -2184,7 +2203,8 @@ namespace RealmForge {
         else if (step.Above > 0 && sellPillUp != "") { pill = new Plate { Pill = true, Main = sellPillUp }; pt = new[] { o.X + gx, o.Y + (int)vt, (int)(shGeo.CellW * U), 2 }; }
         Scene(glow, ref drawnKey, null, pill, pt, null, marks);
         // the step's plate above the list
-        if (haveText) DrawTip(o.X + gx, o.Y + (int)vt - 2, gw, 2, sellHintLines, H, true, false, false, null, SellHint.Warn(step)); else HideTip();
+        // (the plate in the free top centre of the window: above the list lie the inventory's tabs, the cells' own frames never meet it)
+        if (haveText) DrawTipTop(sellHintLines, null, null, SellHint.Warn(step)); else HideTip();
         return;
       }
       if (glow.Visible) glow.Hide();
@@ -4167,7 +4187,7 @@ namespace RealmForge {
       }
       // a target with a live reader whose first read has not come yet: the frame waits for it (up to FramePendingMs) instead of standing on the
       // layout's rect first and jumping to the live one (the flicker of 1.6.66.423); the plate is shown meanwhile
-      if (ft != null && ft.Layout == null && ft.Cell == UiCellKind.None && layout != null && FramePending(key)) pendingRects.Add(new[] { layout[0], layout[1], layout[2], layout[3] });
+      if (ft != null && ft.Layout == null && ft.Cell == UiCellKind.None && layout != null && (FramePending(key) || (key != "hero.filterClose" && FrameTargets.PopupOver(ft.Form, screens.Current)))) pendingRects.Add(new[] { layout[0], layout[1], layout[2], layout[3] });
       FrameLayoutSay(key, why, layout);
       AuditFrameFor(key, layout, layout, false, why);
       return layout;
@@ -4177,7 +4197,7 @@ namespace RealmForge {
     // from; once it stood still for FrameAudit.StableMs it is checked once per (scenario, step, target) and run: the flags are logged
     // ("frame audit: FLAG <key> <why>"), and while the overlay is left in captures (a lab recording runs) the client is shot (FrameAuditSink)
     sealed class AuditScene { public GlowWindow Win; public int[] Frame; public string Step; }
-    sealed class AuditFor { public string Widget = "", Sprite = "", Shape = "", Why = ""; public double[] Layout, Frame, Live; public bool IsLive; }
+    sealed class AuditFor { public string Widget = "", Sprite = "", Shape = "", Why = ""; public double[] Layout, Frame, Live; public bool IsLive, Plate; }
     /// <summary>The lab scenario and run the audit runs for ("" scenario = off), set by the lab's recorder command (app/HostBridge.cs).</summary>
     public string AuditScenario = "", AuditRun = "";
     public Func<string> AuditSite = () => "", AuditCode = () => "";
@@ -4194,11 +4214,18 @@ namespace RealmForge {
       auditScenes.Clear(); auditFor.Clear(); auditLive.Clear();
     }
 
+    /// <summary>The layout rect the audit compares a live frame with: a target framed by its whole plate (a tab) has the graph's plate, others the caller's rect.</summary>
+    double[] PlateLayoutFor(string key, double[] layout, out bool plate) {
+      var pl = sceneW > 0 && sceneH > 0 ? FrameTargets.PlateLayout(FrameTargets.Of(key), sceneW, sceneH, Ui.Unit(sceneW, sceneH)) : null;
+      plate = pl != null;
+      return pl ?? (layout != null ? (double[])layout.Clone() : null);
+    }
+
     void AuditFrameFor(string key, double[] layout, double[] frame, bool live, string why) {
       if (!auditOn || frame == null) return;
-      AuditFor a; auditLive.TryGetValue(key, out a);
+      AuditFor a; auditLive.TryGetValue(key, out a); bool plate;
       auditFor[key] = new AuditFor { Widget = a != null ? a.Widget : "", Sprite = a != null ? a.Sprite : "", Shape = a != null ? a.Shape : "", Live = live && a != null ? a.Live : null,
-        Layout = layout != null ? (double[])layout.Clone() : null, Frame = (double[])frame.Clone(), IsLive = live, Why = why ?? "" };
+        Layout = PlateLayoutFor(key, layout, out plate), Plate = plate, Frame = (double[])frame.Clone(), IsLive = live, Why = why ?? "" };
     }
 
     void AuditEnd() {
@@ -4219,7 +4246,7 @@ namespace RealmForge {
         var s = new FrameAuditShot { Scenario = AuditScenario, Run = AuditRun, Step = sc.Step, Target = target, Frame = fr, ClientW = sceneW, ClientH = sceneH, FramesNow = frames.Count, AtMs = now };
         if (best != null) {
           s.Source = best.IsLive ? "live" : "layout"; s.Widget = best.Widget; s.Sprite = best.Sprite; s.Shape = best.Shape; s.Why = best.Why;
-          s.Live = best.Live; s.Layout = best.Layout;
+          s.Live = best.Live; s.Layout = best.Layout; s.PlateLayout = best.Plate;
           FrameAudit.HiddenOrCovered(best.Why, out s.Hidden, out s.Covered);
         } else s.Source = "none";
         foreach (var pr in plates) s.Plates.Add(new[] { pr[0] - sceneX, pr[1] - sceneY, pr[2], pr[3] });

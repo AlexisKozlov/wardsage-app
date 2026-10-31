@@ -148,7 +148,7 @@ namespace RealmForge {
         row1Off = double.NaN; noEffect = samePt = 0; typesLen = -1; lastPtX = lastPtY = double.NaN; lastNoEffect = false;
       }
       if (key == "") { State = "idle"; return AutoAction.Nothing; }
-      curSel = v.Sel; nowMs = v.NowMs; curKey = Key(v);
+      curSel = v.Sel; nowMs = v.NowMs; curKey = Key(v); curTip = v.TipKnown && v.TipShown;
       bool selected = v.Slot == null && v.Sel == v.Target;
       if (!selected) selSince = 0; else if (selSince == 0) selSince = v.NowMs;
       if (selected) itemPending = false;
@@ -251,6 +251,15 @@ namespace RealmForge {
       // the last list click: did it change anything? (the selection stayed: a gap, a stale place) - the rows are anchored again, and
       // after NoEffectTries such clicks for one item the pilot stops
       if (itemPending || calibPending) {
+        // a click made while another item's tip stood was taken by the tip (its tap catcher closes it, the selection stays: lab 1.6.66.427, the
+        // re-anchoring click selected row 4 and opened its tip, the click on the item only closed it): that is no click that changed nothing,
+        // the item is clicked again now that the tip is gone
+        if (tipAtClick && v.TipKnown && !v.TipShown && v.Sel == selBefore) {
+          itemPending = calibPending = false; tipAtClick = false; lastPtX = lastPtY = clickX = clickY = double.NaN; samePt = 0;
+          waitUntil = v.NowMs + EffectWait.StableMs; effect.Drop();
+          Trace = "the click was taken by the tip of item " + v.Sel + " (it closed): the click again";
+          return AutoAction.Nothing;
+        }
         // (a slow PC answers up to 1.5 s after the click: nothing changed yet is not judged before JudgeMs)
         if (v.Sel == selBefore && v.NowMs - clickAt < JudgeMs) return AutoAction.Nothing;
         lastNoEffect = v.Sel == selBefore;
@@ -364,7 +373,7 @@ namespace RealmForge {
     AutoAction ListClick(double x, double y) {
       if (Math.Abs(x - lastPtX) < 2 && Math.Abs(y - lastPtY) < 2) { if (++samePt > SamePointMax) { itemPending = calibPending = false; return Fail("the same point " + (int)x + "," + (int)y + " would be clicked a " + samePt + "rd time in a row"); } }
       else samePt = 1;
-      lastPtX = x; lastPtY = y; selBefore = curSel; clickAt = nowMs; listSent = true; effect.Arm(curKey, nowMs);
+      lastPtX = x; lastPtY = y; selBefore = curSel; tipAtClick = curTip; clickAt = nowMs; listSent = true; effect.Arm(curKey, nowMs);
       return Click(x, y);
     }
     readonly EffectWait effect = new EffectWait(); string curKey = "";
@@ -372,7 +381,7 @@ namespace RealmForge {
     public bool Polling(long now) { return effect.Armed && now < waitUntil; }
     // what a click of this pilot changes: the selection, the slot open, the tip, the list (its length)
     static string Key(AutoView v) { return v.Sel + "|" + v.SlotOpen + "|" + v.TipShown + "|" + (v.Types != null ? v.Types.Length : -1); }
-    long curSel, nowMs, clickAt; bool listSent;
+    long curSel, nowMs, clickAt; bool listSent, curTip, tipAtClick;
     /// <summary>How long a list click gets to change the selection before it counts as one that changed nothing.</summary>
     public const int JudgeMs = 1800;
 

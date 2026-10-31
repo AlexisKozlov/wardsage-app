@@ -181,6 +181,37 @@ namespace RealmForge {
       return new UiWidget(t.Form) { Trees = t.Tree.Split('|'), Icon = t.Visual != "-", IconChild = t.Visual == "" || t.Visual == "-" ? null : t.Visual };
     }
 
+    /// <summary>The graph's rect (client px: x, y, w, h) of a target framed by its whole widget (Visual "-": a tab's plate): the layout the frame audit
+    /// compares the live plate with (not the icon square the geometry file gives); null = not such a target / not in the graph.</summary>
+    public static double[] PlateLayout(FrameTarget t, double W, double H, double U) {
+      if (t == null || t.Visual != "-" || string.IsNullOrEmpty(t.Tree) || t.Form == null) return null;
+      var f = UiGraph.ByName(t.Form); if (f == null) return null;
+      var trees = t.Tree.Split('|');
+      foreach (var w in f.Widgets) {
+        if (!w.Shown || w.Rect == null || Array.IndexOf(trees, w.Path) < 0) continue;
+        var r = ScreenMap.Place(w.Rect, W, H, U);
+        if (r.W >= 2 && r.H >= 2) return new[] { r.X, r.Y, r.W, r.H };
+      }
+      return null;
+    }
+
+    /// <summary>A flow form or a modal pop-up other than the target's own form is shown (the screen's own sub-state: the gear filter over the hero
+    /// screen, a dialog): a target whose live rect is missing stands on the layout's rect, which the pop-up may cover - no frame then (the plate
+    /// alone) until the live rect comes (lab 1.6.66.427: «Заменить» framed on the filter pop-up's rows).</summary>
+    public static bool PopupOver(string form, string flow, bool modalOpen, string modalWhy) {
+      foreach (var f in (flow ?? "").Split(','))
+        if (f.Trim() != "" && f.Trim() != (form ?? "")) return true;
+      if (modalOpen) {
+        string w = modalWhy ?? "";
+        if (w.StartsWith("form:")) w = w.Substring(5);
+        bool other = w.Trim() == "";
+        foreach (var f in w.Split(',')) if (f.Trim() != "" && f.Trim() != (form ?? "")) other = true;
+        if (other) return true;
+      }
+      return false;
+    }
+    public static bool PopupOver(string form, ScreenState sc) { return sc != null && !sc.Held && PopupOver(form, sc.Flow, sc.ModalOpen, sc.ModalWhy); }
+
     /// <summary>The frame's size rule: never past the sprite's visible box by more than <see cref="MaxOut"/> px (the drawn line and its glow included).</summary>
     public const double MaxOut = 3;
   }

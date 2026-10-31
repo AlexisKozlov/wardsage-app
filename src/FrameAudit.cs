@@ -26,6 +26,8 @@ namespace RealmForge {
     /// <summary>Frames drawn in the same tick (this one included).</summary>
     public int FramesNow = 1;
     public bool Hidden, Covered;
+    /// <summary>Layout is the graph's rect of a plate-framed target (a tab): measured at the prefab's own state, so the tolerance is wider (PlateTolPct).</summary>
+    public bool PlateLayout;
     /// <summary>The capture's image px per client px (0 = no image).</summary>
     public double Scale;
     public string Image = "";
@@ -41,6 +43,9 @@ namespace RealmForge {
 
     /// <summary>The tolerance of a disagreement on an axis of <paramref name="size"/> px.</summary>
     public static double Tol(double size) { return Math.Max(12, 0.15 * Math.Abs(size)); }
+    /// <summary>The tolerance against a graph plate: 25 % of the size (lab 1.6.66.427: the game's tab plate stood 14 px off the graph's rect, 86 px high).</summary>
+    public const double PlateTolPct = 0.25;
+    public static double Tol(double size, bool plate) { return plate ? Math.Max(Tol(size), PlateTolPct * Math.Abs(size)) : Tol(size); }
 
     /// <summary>Live minus layout: {centre dx, centre dy, dw, dh}; null when one is missing.</summary>
     public static double[] Disagree(double[] live, double[] layout) {
@@ -69,7 +74,7 @@ namespace RealmForge {
       var f = s.Frame;
       var d = Disagree(s.Live, s.Layout);
       if (d != null) {
-        double tw = Tol(s.Layout[2]), th = Tol(s.Layout[3]);
+        double tw = Tol(s.Layout[2], s.PlateLayout), th = Tol(s.Layout[3], s.PlateLayout);
         if (Math.Abs(d[0]) > tw || Math.Abs(d[1]) > th) res.Add("live vs layout centre dx=" + R(d[0]) + " dy=" + R(d[1]) + " (tolerance " + R(tw) + "x" + R(th) + ")");
         if (Math.Abs(d[2]) > tw || Math.Abs(d[3]) > th) res.Add("live vs layout size dw=" + R(d[2]) + " dh=" + R(d[3]) + " (tolerance " + R(tw) + "x" + R(th) + ")");
       }

@@ -1420,6 +1420,22 @@ static partial class CoreTests {
     // owner 2026-10-31 on 1.6.66.423: frames too thin, two frames on a cell, «Снаряжение» on its icon contour, a hero frame between two cards, flicker
     Check(FrameStyle.LineWidth >= 3.5f && FrameStyle.UnderWidth >= 6f && FrameStyle.GlowAlpha(4, 14, 1f) >= 70 && FrameStyle.GlowAlpha(14, 14, 1f) > 0,
       "the frame is clearly visible: the 3.5 px gold line on a 6 px dark underline with glow rings (the look before 4882eea)");
+    // a frame on a cell never reaches the neighbouring cells (the line and the glow stay in the gap), inventory and artifact grids, small and big windows
+    foreach (var sz in new[] { new[] { 1366.0, 705.0 }, new[] { 1920.0, 1009.0 }, new[] { 1280.0, 720.0 } })
+      foreach (bool artG in new[] { false, true }) {
+        double gW = sz[0], gH = sz[1], gU = Ui.Unit(gW, gH); int cols = 8;
+        var sg = artG ? SellGeometry.Artifacts(gW, gH, gU, cols) : SellGeometry.Inventory(gW, gU, cols);
+        double cellW = sg.CellW * gU, cellH = sg.CellHeight * gU, px = sg.PitchX * gU, py = sg.PitchY * gU, x0 = gW / 2 + sg.X0 * gU;
+        var c0 = new[] { x0, 100.0, cellW, cellH };
+        var right = new[] { x0 + px, 100.0, cellW, cellH }; var below = new[] { x0, 100.0 + py, cellW, cellH };
+        foreach (bool glowToo in new[] { false }) {
+          double reach = 4;   // the drawn line: 2 px out of the cell's edge, 3.5 px wide, rounded up
+          var fb = new[] { c0[0] - reach, c0[1] - reach, c0[2] + 2 * reach, c0[3] + 2 * reach };
+          Func<double[], bool> hit = nb => { var ov = FrameAudit.Overlap(fb, nb); return ov[0] > 0 && ov[1] > 0; };
+          Check(!hit(right) && !hit(below),
+            "frame geometry: a frame on a cell (" + (artG ? "artifact" : "gear") + " grid, " + gW + "x" + gH + ", " + (glowToo ? "with the glow" : "the line") + ") does not meet the neighbouring cells (gaps " + Math.Round(px - cellW, 1) + " / " + Math.Round(py - cellH, 1) + " px)");
+        }
+      }
     // a cell: the c_Frame icon square 80 x 80 and the cell root with the stat plate under it 84 x 112 -> one frame on the root
     var cell = new UiCell { Uid = 7, Index = 3, X = 102, Y = 202, W = 80, H = 80, Icon = "c_Frame", Active = true, InView = 1 };
     cell.BX = cell.X; cell.BY = cell.Y; cell.BW = cell.W; cell.BH = cell.H;
@@ -6511,6 +6527,20 @@ static partial class CoreTests {
       Eq(0, FrameAudit.Flags(fa).Count, "frame audit: a plate touching the frame's edge is clean");
       fa = clean(); fa.FramesNow = 2;
       Check(FrameAudit.Flags(fa).Contains("2 frames at once"), "frame audit: two frames at once are flagged");
+      // lab 1.6.66.427: «Заменить» framed from the layout over the gear filter pop-up; the tab's plate against the icon square
+      Check(FrameTargets.PopupOver("Form_CharactorEquipTip", "Form_EquipFilterWidget", false, ""), "frame audit: the gear filter pop-up is a pop-up over the tip's target");
+      Check(!FrameTargets.PopupOver("Form_CharactorEquipTip", "Form_CharactorEquipTip", false, "") && !FrameTargets.PopupOver("Form_CharactorEquipTip", "", false, ""), "frame audit: the target's own form / nothing shown is no pop-up");
+      Check(FrameTargets.PopupOver("Form_CharactorMain", "", true, "form:Form_X") && !FrameTargets.PopupOver("Form_CharactorMain", "", true, "form:Form_CharactorMain"), "frame audit: a modal pop-up is one, the target's own form is not");
+      {
+        var tabT = FrameTargets.Of("hero.tab.equip"); double pW = 1366, pH = 705, pU = Ui.Unit(pW, pH);
+        var pl = FrameTargets.PlateLayout(tabT, pW, pH, pU);
+        Check(pl != null && Math.Abs(pl[2] - 0.1656 * pU) < 2 && pl[3] > 80 && pl[0] + pl[2] <= pW + 1, "frame audit: the tab's plate layout comes from the graph (" + (pl == null ? "null" : string.Join(",", pl)) + ")");
+        var tl = clean(); tl.Live = new double[] { 1236, 200, 114, 86 }; tl.Frame = tl.Live; tl.Layout = FrameTargets.PlateLayout(tabT, 1350, 689, Ui.Unit(1350, 689)); tl.PlateLayout = true; tl.ClientW = 1350; tl.ClientH = 689;
+        Check(pl != null && !FrameAudit.Flags(tl).Exists(f => f.StartsWith("live vs layout")), "frame audit: the live plate against the layout plate is clean");
+        tl.Layout = new double[] { 1256, 196, 68, 68 }; tl.PlateLayout = false;
+        Check(FrameAudit.Flags(tl).Exists(f => f.StartsWith("live vs layout size")), "frame audit: the same plate against the icon square was the false flag");
+        Check(FrameTargets.PlateLayout(FrameTargets.Of("hero.slot.0"), pW, pH, pU) == null, "frame audit: a target framed by its icon has no plate layout");
+      }
       bool fh, fc;
       FrameAudit.HiddenOrCovered("not visible", out fh, out fc); Check(fh && !fc, "frame audit: not visible = hidden");
       FrameAudit.HiddenOrCovered("form not on top", out fh, out fc); Check(!fh && fc, "frame audit: form not on top = covered");

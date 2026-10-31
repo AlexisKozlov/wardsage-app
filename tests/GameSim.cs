@@ -1232,9 +1232,38 @@ static partial class CoreTests {
       r = StaleRowsRun(2.5, bar, false, out c, out m, out why);
       Check((r == "selected" || (r == "failed" && why != "")) && c <= 8 && m <= 2, "sim: stale rows after the filter (a click between two rows): no loop (" + r + ", " + c + " clicks, same point " + m + " in a row, " + why + ")");
     }
+    // lab 1.6.66.427 equip_city: the click for row 2 selected row 4 and opened its tip, the click on the item was taken by the tip (it closed, the
+    // selection stayed) and counted as one that changed nothing, the re-anchoring clicks then toggled that item: 3 no-effect clicks, a stop
+    string rt = StaleRowsTipRun(out c, out why);
+    Check(rt == "selected" && c <= 4, "sim: the click taken by another item's tip (it closes) is no click that changed nothing: the item is selected (" + rt + ", " + c + " clicks, " + why + ")");
     // the item is selected already when the pilot starts: no list click, straight to «Заменить»
     string s0 = StaleRowsRun(2, false, true, out c, out m, out why);
     Check(s0 == "confirm" && c == 0, "sim: the item selected already: the confirm step at once (" + s0 + ", " + c + " list clicks)");
+  }
+
+  // a list whose tip of the selected item is a tap catcher: a click while it stands only closes it (the selection stays); the stale rows put the
+  // first click on row 4
+  static string StaleRowsTipRun(out int clicks, out string why) {
+    var geo = new ListGeometry(); double H = 1009, cell = geo.CellW * H;
+    var types = new[] { 0, 1, 1, 1, 1, 1, 1 };
+    double real = ScrollAnchor.TopRow1(geo, H), stale = real + 2 * geo.PitchY * H;
+    long target = 9021, sel = 0; bool tip = false; clicks = 0;
+    var p = new AutoPilot(geo); var due = new List<KeyValuePair<long, Action>>();
+    for (long t = 0; t < 60000; t += 100) {
+      foreach (var e in due.ToArray()) if (e.Key <= t) { e.Value(); due.Remove(e); }
+      int selRow = sel > 0 ? (int)((sel - 9000) / 10) : 0;
+      var a = p.Step(new AutoView { NowMs = t, Foreground = true, H = H, Target = target, Row = 2, Col = 1, Sel = sel, SelRow = selRow, SelCol = sel > 0 ? 1 : 0,
+                                    AnchorHas = true, Row1Top = stale, Types = types, TipKnown = true, TipShown = tip, Hero = 5, ScreenHero = 5, Owner = 0 });
+      if (p.State == "failed" || p.State == "done" || sel == target) break;
+      if (a.Kind != AutoKind.Click) continue;
+      clicks++;
+      long hit = 0; int col = geo.ColumnAt(a.X / H);
+      if (col != 0) for (int r = 1; r < types.Length; r++) { double top = real + geo.RowOffset(types, r) * H; if (a.Y >= top && a.Y <= top + cell) hit = 9000 + r * 10 + col; }
+      bool up = tip;
+      due.Add(new KeyValuePair<long, Action>(t + 600, () => { if (up) tip = false; else if (hit != 0) { sel = hit == sel ? 0 : hit; tip = sel > 0; } }));
+    }
+    why = p.Why;
+    return sel == target ? "selected" : p.State;
   }
 
   // lab 1.6.66.417 equip_artifact: the bracer put on just before was filtered for (set 722400, main stat 24, its subs); the game keeps that
