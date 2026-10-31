@@ -84,6 +84,12 @@ namespace RealmForge {
 
     public FilterPilot(FilterGeometry g) { this.g = g; }
 
+    /// <summary>The guide's verdict (ui/guide.js kind) asks for the filter: the item is far down, hidden or not in the list (a
+    /// «Скрыть улучшенное» verdict does not: the filter cannot show it).</summary>
+    public static bool WantedFor(string kind, bool onScreen) {
+      return kind == "filter" || kind == "hiddenEq" || kind == "hiddenFilter" || kind == "notIn" || ((kind == "pick" || kind == "rel") && !onScreen);
+    }
+
     /// <summary>Start over on the next step (the player pressed «Надеть» again).</summary>
     public void Reset() { item = -1; }
 

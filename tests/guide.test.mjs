@@ -28,6 +28,7 @@ ok(g.kind === 'hiddenEq' && g.other === 'Байек', 'hidden: worn by another h
 ok(G.next(plan, live({ hideEquipped: true, owner: { 6423: 0 } })).kind === 'notIn', 'in the bag now: not hidden by that filter');
 ok(G.next(plan, live({ hideEnhanced: true })).kind === 'hiddenEnh', 'enhanced hidden');
 ok(G.next(plan, live({ filterActive: true })).kind === 'hiddenFilter', 'filter');
+ok(G.next(plan, live({ filterActive: true, hideEnhanced: true })).kind === 'hiddenFilter', 'a filter left on and «Скрыть улучшенное» read on: the filter first (lab 1.6.66.417)');
 ok(G.next(plan, live()).kind === 'notIn', 'not in list');
 g = G.next(plan, live({ owner: { 6423: 214700000 } }));
 ok(g.kind === 'slot' && g.item.uid === 33 && g.done === 1, 'first on -> next slot');

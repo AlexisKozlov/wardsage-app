@@ -3771,8 +3771,7 @@ namespace RealmForge {
       // the item is not on the screen: the filter (set + main stat) brings it to the first rows at once. Scrolling a long
       // list back from wherever the last item left it took the pilot up to a minute (live test 2026-09-26)
       bool onScreen = state == "on";
-      fv.Wanted = filterKind == "filter" || filterKind == "hiddenEq" || filterKind == "hiddenFilter" || filterKind == "notIn"
-        || ((filterKind == "pick" || filterKind == "rel") && !onScreen);
+      fv.Wanted = FilterPilot.WantedFor(filterKind, onScreen);
       long[] info;
       if (itemInfo.TryGetValue(filterItem, out info) && part >= 0) {
         // weapons and chest armour have one main stat each: filtering by it narrows nothing, two clicks saved

@@ -61,8 +61,9 @@ namespace RealmForge {
         g.OtherHero = owner == next.FromHeroUid ? next.FromHeroName : null;
         return g;
       }
-      if (s.HideEnhanced && next.Level > 0) { g.Kind = GuideKind.HiddenEnhanced; return g; }
+      // a filter left on hides it first (the filter pilot clears it), «Скрыть улучшенное» only without one (as ui/guide.js)
       if (s.FilterActive) { g.Kind = GuideKind.HiddenFilter; return g; }
+      if (s.HideEnhanced && next.Level > 0) { g.Kind = GuideKind.HiddenEnhanced; return g; }
       g.Kind = GuideKind.NotInList;
       return g;
     }

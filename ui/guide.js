@@ -69,8 +69,10 @@
       g.other = who === cur.fromHeroUid ? cur.fromHeroName : null;
       return g;
     }
-    if (live.hideEnhanced && cur.level > 0) { g.kind = 'hiddenEnh'; return g; }
+    // a set / stat filter on (the last item's, left by the game) hides it first: the filter pilot clears it; «Скрыть улучшенное» only
+    // without one (lab 1.6.66.417: the filter of the bracer before hid the next bracer, the step said «улучшенные скрыты» and nobody moved)
     if (live.filterActive) { g.kind = 'hiddenFilter'; return g; }
+    if (live.hideEnhanced && cur.level > 0) { g.kind = 'hiddenEnh'; return g; }
     g.kind = 'notIn';
     return g;
   }

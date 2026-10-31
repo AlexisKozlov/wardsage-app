@@ -1222,6 +1222,49 @@ static partial class CoreTests {
     Check(s0 == "confirm" && c == 0, "sim: the item selected already: the confirm step at once (" + s0 + ", " + c + " list clicks)");
   }
 
+  // lab 1.6.66.417 equip_artifact: the bracer put on just before was filtered for (set 722400, main stat 24, its subs); the game keeps that
+  // filter, so the plan's next bracer (32398: the same set, main stat 13, +16) is not in the list. «Скрыть улучшенное» reads on (it did in
+  // the passing runs too, where the item was listed all the same). The step said «улучшенные скрыты», the filter pilot was not asked and
+  // nothing moved for 40 s. Through the guide, the filter pilot and a list that shows only what the filter lets through: the item must
+  // come into the list (a pick) within 30 s.
+  static string SimLeftoverFilterRun(out int clicks) {
+    var g = new FilterGeometry(); double W = 1920, H = 1009;
+    long[] sets = { 723000, 722900, 722800, 722600, 722500, 722200, 722100, 723100, 722400, 722300, 722000, 721900 };
+    long[] stats = { 13, 14, 19, 23, 24, 25, 27, 29 };
+    long[] subList = { 1, 13, 14, 19, 23, 24, 25, 29 };
+    var game = new FakeFilterGame(g, W, H) { SetList = sets, StatList = stats, SubList = subList };
+    game.Suits.Add(722400); game.Mains.Add(24); game.Subs.AddRange(new long[] { 1, 13, 29, 25 });   // the last bracer's filter
+    const long hero = 204200000, uid = 32398, set = 722400, stat = 13; long[] subs = { 24, 25, 29, 19 };
+    var plan = new Plan { Id = "p", HeroUid = hero };
+    plan.Items.Add(new PlanItem { Slot = 2, Uid = uid, Level = 16, SetId = set, FromHeroUid = 0 });
+    var pilot = new FilterPilot(g); clicks = 0; string last = "";
+    for (long t = 0; t < 30000; t += 100) {
+      bool listed = (game.Suits.Count == 0 || game.Suits.Contains(set)) && (game.Mains.Count == 0 || game.Mains.Contains(stat));
+      var lv = new EquipLive { HeroUid = hero, PanelOk = true, FormOk = true, Part = 2, HideEquipped = true, HideEnhanced = true,
+                               FilterActive = game.Suits.Count + game.Mains.Count + game.Subs.Count > 0 };
+      lv.Owner[uid] = 0;
+      if (listed) { lv.Row[uid] = 1; lv.Col[uid] = 1; }
+      var st = EquipGuide.Next(plan, lv);
+      string kind = st.Kind == GuideKind.Pick ? "pick" : st.Kind == GuideKind.HiddenFilter ? "hiddenFilter" : st.Kind == GuideKind.HiddenEnhanced ? "hiddenEnh"
+        : st.Kind == GuideKind.HiddenEquipped ? "hiddenEq" : st.Kind == GuideKind.NotInList ? "notIn" : st.Kind.ToString();
+      last = kind;
+      var v = new FilterView { NowMs = t, Foreground = true, W = W, H = H, Item = uid, Wanted = FilterPilot.WantedFor(kind, listed),
+        SetId = set, StatId = stat, SetIndex = Array.IndexOf(sets, set), StatIndex = Array.IndexOf(stats, stat), SetOrder = sets,
+        SubIds = subs, SubOrder = subList, SubAttrs = game.Subs.ToArray(), Suits = game.Suits.ToArray(), MainAttrs = game.Mains.ToArray(),
+        HideEquipped = true, ItemListed = kind == "pick",
+        PanelOpen = game.Open, SidePanelOpen = game.Open && game.Side, SetPanelOpen = game.Open && game.Side && game.SetSide };
+      var a = pilot.Step(v);
+      if (kind == "pick" && a == null) return "pick";
+      if (a != null && a.Kind == AutoKind.Click) { clicks++; game.Click(a.X, a.Y); }
+      else if (a != null && a.Kind == AutoKind.Drag) game.Drag(a.DY);
+    }
+    return last + " (pilot " + pilot.State + ")";
+  }
+  static void SimLeftoverFilter() {
+    int c; string r = SimLeftoverFilterRun(out c);
+    Check(r == "pick" && c > 0 && c <= 16, "sim: the last item's filter left on hides the next one («Скрыть улучшенное» read on): the filter pilot clears it, the item comes into the list (" + r + ", " + c + " clicks)");
+  }
+
   // what the game sim found (each a fix in src/ or app/Overlay.cs), kept as plain tests
   static void SimRegressionTests() {
     UiGraphTests();
@@ -1241,6 +1284,7 @@ static partial class CoreTests {
     SimResultForms();
     Console.WriteLine("Game sim: its findings");
     StaleRowsAfterFilter();
+    SimLeftoverFilter();
     TipOverSlots();
     // (9) a list is settled after two equal reads; a moving one (a glide after a drag, a slot filter) is not, an unreadable one neither
     {
