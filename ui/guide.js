@@ -100,6 +100,13 @@
     return g;
   }
 
+  // The numbered step of the plate: choosing the item and pressing «Заменить» are two steps of each item (n = 2 * done + 1 / 2, of 2 * items).
+  // It comes from the guide step alone (the host guide's single state): the mouse and hover reads never reach it.
+  function stepNo(g, total) {
+    const done = g && g.done > 0 ? g.done : 0;
+    return { n: Math.min(2 * done + (g && g.kind === 'selected' ? 2 : 1), 2 * total), total: 2 * total };
+  }
+
   // Plan of the hero open in the game, else the current choice, else the first.
   function pickPlan(plans, live, current) {
     if (!plans || !plans.length) return -1;
@@ -213,7 +220,7 @@
     return a > 10 && a < 20 ? many : b === 1 ? one : b >= 2 && b <= 4 ? few : many;
   }
 
-  const api = { next, sticky, artStep, pickPlan, freshPlan, freshPlans, freshSell, nextQueued, takeOver, highlightUid, plural, bustUrl, headUrl, itemUrl, setUrl, rankOf, statOf, statId, statUrl, VISIBLE_ROWS };
+  const api = { next, sticky, stepNo, artStep, pickPlan, freshPlan, freshPlans, freshSell, nextQueued, takeOver, highlightUid, plural, bustUrl, headUrl, itemUrl, setUrl, rankOf, statOf, statId, statUrl, VISIBLE_ROWS };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.RFGuide = api;
 })(typeof window !== 'undefined' ? window : globalThis);

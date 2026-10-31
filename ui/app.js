@@ -1221,7 +1221,7 @@
     const it = g && g.item, texts = { lang: S.lang === 'en' ? 'en' : 'ru' };
     if (p && g) {
       const where = g.kind === 'hero' ? p.heroName : it ? (it.slotName || t('slot' + it.slot)) : '';
-      texts.caps = t('pCaps', Math.min(g.done + 1, p.items.length), p.items.length, where);
+      texts.caps = (() => { const sn = G.stepNo(g, p.items.length); return t('pCaps', sn.n, sn.total, where); })();
       if (it) { texts.pick = t('pPick', it.name + (it.level ? ' +' + it.level : '')); texts.wrongSub = t('pWrongSub', it.name + (it.level ? ' +' + it.level : '')); }
       Object.assign(texts, { then: t('pThen'), pillDown: t('pPillDown'), pillUp: t('pPillUp'), rows1: t('pRows1'), rows2: t('pRows2'), rows5: t('pRows5'),
         unknown: t('pUnknown'), unknownSub: t('pUnknownSub'), done: t('pDone'), wrong: t('hWrong'),

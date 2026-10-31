@@ -148,6 +148,11 @@ namespace RealmForge {
 
     static int Clamp(int v, int lo, int hi) { return hi < lo ? lo : Math.Max(lo, Math.Min(hi, v)); }
   }
+  /// <summary>The hint step is the page's guide state alone (hint kind): in «replace» (the plan's item is selected, its tip shown) the only frame is
+  /// «Заменить»; the list tracking (mouse moves, hover, fast looks) draws no item frame and no «pick» plate then. Pure.</summary>
+  public static class HintStepRule {
+    public static bool ListFrameOff(string hintKind) { return hintKind == "replace"; }
+  }
   /// <summary>Keeps a hint steady over the game: a new step (or no hint) is taken over only when it has been asked for
   /// <see cref="DebounceMs"/> in a row (the first hint at once), so reads that flip for a moment do not hide, show or move it;
   /// within one step a tick without a target keeps the last good one (<see cref="Stale"/>: drawn as a plate only, no frame)

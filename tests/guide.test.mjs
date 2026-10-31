@@ -163,5 +163,16 @@ ok(G.next(plan, live({ owner: { 6423: 0 } })).item.uid === 6423, 'in the bag: wa
   // another plan item: a fresh state
   const L4 = live({ rows, selUid: 0 }); ok(G.sticky({ uid: 999, on: true }, G.next(plan, L4), L4, 1).kind === 'pick', 'sticky: the state of another item is not carried over');
   ok(G.sticky({}, G.next(plan, live({ heroUid: 1 })), live({ heroUid: 1 }), 1).kind === 'hero', 'sticky: other steps are untouched');
+
+// hover / mouse reads (the host's live event with the cursor over cells, the tip flicker) never change the numbered step: pick = 2n+1, selected = 2n+2
+{
+  const st = {}; let t = 20000; const seen = new Set();
+  const run = (o) => { t += 50; const L = live({ rows: { 6423: [3, 2] }, ...o }); const g = G.sticky(st, G.next(plan, L), L, t); const s = G.stepNo(g, plan.items.length); seen.add(g.kind + ':' + s.n + '/' + s.total); return g; };
+  const a = run({}); ok(a.kind === 'pick', 'step no: pick first');
+  run({ selUid: 6423, selRow: 3, tip: true });
+  for (let i = 0; i < 40; i++) run({ selUid: i % 3 === 0 ? 0 : 6423, selRow: i % 2 ? 3 : 0, tip: true, hover: i % 5, hoverUid: i % 2 ? 6423 : 77, hoverRow: i % 4 });
+  ok([...seen].join() === 'pick:1/4,selected:2/4', 'step no: hover reads do not change the step (' + [...seen].join() + ')');
+  const st2 = G.stepNo({ kind: 'selected', done: 1 }, 3); ok(st2.n === 4 && st2.total === 6, 'step no: second item, selected = 4 of 6');
+}
 }
 console.log(`guide: ${n} passed`);

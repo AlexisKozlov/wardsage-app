@@ -802,6 +802,7 @@ static partial class CoreTests {
           Check(hh.Update(null, null, null, t0 + HintHold.DebounceMs - 1), "hold: still shown before the debounce");
           Check(!hh.Update(null, null, null, t0 + HintHold.DebounceMs) && hh.Key == null, "hold: hidden once the hide held");
           Check(HintHold.DebounceMs >= 300, "hold: the debounce is at least 300 ms");
+          Check(HintStepRule.ListFrameOff("replace") && !HintStepRule.ListFrameOff("pick") && !HintStepRule.ListFrameOff("filter") && !HintStepRule.ListFrameOff("slot"), "step rule: only the held «replace» step has no list frame (hover / mouse moves cannot bring the pick plate back)");
           hh.Reset(); hh.Update("x", a, null, 5000); hh.Update("x", null, null, 5000 + HintHold.KeepMs + 1);
           Check(hh.Key == "x" && hh.Target == null, "hold: a target missing for longer than KeepMs: the plate goes to the top");
         }

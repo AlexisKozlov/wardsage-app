@@ -1001,6 +1001,9 @@ namespace RealmForge {
     void FrameStep() {
       diagInfo = "";
       TickHint();
+      // the held «selected» step (hint "replace", the page's guide state): «Заменить» is the only frame; the item's frame and its «pick» plate never come back
+      // from the list tracking (they alternated with it on mouse moves, 1.6.66.439)
+      if (HintStepRule.ListFrameOff(hintKind)) return;
       if (target == 0 || addrs == null) { Hide("off"); return; }
       int col; ulong list;
       int row = RFX.RowOfUid(addrs, target, out col, out list);
@@ -1103,7 +1106,7 @@ namespace RealmForge {
     // second - in 100 ms further than the strip is high, and then its picture fits nowhere or somewhere wrong.
     void LookFast() {
       if (!LoadPlan.LookFast(W32.InputAgeMs())) return;   // a list nobody scrolls stays where the tick's own look saw it
-      if (LocateWins || target == 0 || target != lookTarget || addrs == null || types == null || !lookOk || !anchor.Has || filterState != "" || typesPtr != lookList) return;
+      if (LocateWins || HintStepRule.ListFrameOff(hintKind) || target == 0 || target != lookTarget || addrs == null || types == null || !lookOk || !anchor.Has || filterState != "" || typesPtr != lookList) return;
       IntPtr hwnd = GameWindow();
       if (hwnd == IntPtr.Zero || !IsForeground(hwnd)) return;
       long l0 = LoadMeter.Now();
