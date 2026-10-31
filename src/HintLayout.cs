@@ -37,7 +37,7 @@ namespace RealmForge {
     /// W × H window. Null = no such place at this size (the caller shrinks the plate; <see cref="Place"/> takes the least bad).</summary>
     public static int[] TryPlace(int[] target, int[][] avoid, int w, int h, int W, int H, out char side) {
       foreach (var c in Candidates(target, avoid, w, h, W, H))
-        if (c[0] >= Margin && c[1] >= Margin && c[0] + w <= W - Margin && c[1] + h <= H - Margin && Cost(c[0], c[1], w, h, target, avoid) == 0) { side = (char)c[2]; return new[] { c[0], c[1] }; }
+        if (c[0] >= Margin && c[1] >= Margin && c[0] + w <= W - Margin && c[1] + h <= H - Margin && Adjacent(c, w, h, target) && Cost(c[0], c[1], w, h, target, avoid) == 0) { side = (char)c[2]; return new[] { c[0], c[1] }; }
       side = 'b';
       return null;
     }
@@ -50,7 +50,7 @@ namespace RealmForge {
       long best = long.MaxValue, bestOff = long.MaxValue; p = null; int[] off = null; char sideOff = 'b'; side = 'b';
       foreach (var c in Candidates(target, avoid, w, h, W, H)) {
         int x = Clamp(c[0], Margin, W - w - Margin), y = Clamp(c[1], Margin, H - h - Margin);
-        long k = Cost(x, y, w, h, target, avoid);
+        long k = Cost(x, y, w, h, target, avoid) + (Adjacent(new[] { x, y, c[2] }, w, h, target) ? 0 : FarPenalty);   // (the label stays next to its frame)
         if (k < best) { best = k; p = new[] { x, y }; side = (char)c[2]; }
         if (k < bestOff && !OnTarget(x, y, w, h, target)) { bestOff = k; off = new[] { x, y }; sideOff = (char)c[2]; }
       }
@@ -69,6 +69,18 @@ namespace RealmForge {
       return top;
     }
 
+    /// <summary>Cost added to a place that is not beside its target (see <see cref="Adjacent"/>): above any covering of a neighbour.</summary>
+    const long FarPenalty = 1L << 40;
+
+    /// <summary>Is the place c = {x, y, side} of a w x h label next to the target: its span along the facing edge overlaps the target's
+    /// span (a label slid far along the side, e.g. to the screen's other end, is not).</summary>
+    public static bool Adjacent(int[] c, int w, int h, int[] target) {
+      if (target == null) return true;
+      int tx = target[0], ty = target[1], tw = target[2], th = target[3];
+      if (c[2] == 'r' || c[2] == 'l') return Math.Min(c[1] + h, ty + th) - Math.Max(c[1], ty) > 0;
+      return Math.Min(c[0] + w, tx + tw) - Math.Max(c[0], tx) > 0;
+    }
+
     // the places tried, in order: {x, y, side}
     static System.Collections.Generic.List<int[]> Candidates(int[] t, int[][] avoid, int w, int h, int W, int H) {
       int tx = t[0], ty = t[1], tw = t[2], th = t[3];
@@ -79,6 +91,7 @@ namespace RealmForge {
       // a rect of avoid that holds the target whole is the target's row (the city bar): only above or below it, never beside along the row
       bool row = false; int rowTop = ty, rowBottom = ty + th;
       if (avoid != null) foreach (var a in avoid) if (a != null && a[0] <= tx && a[1] <= ty && a[0] + a[2] >= tx + tw && a[1] + a[3] >= ty + th) { row = true; rowTop = Math.Min(rowTop, a[1]); rowBottom = Math.Max(rowBottom, a[1] + a[3]); }
+      ys = Near(ys, ty + th / 2 - h / 2); xs = Near(xs, tx + tw / 2 - w / 2);   // nearest to the target's middle first: the label slides only as far as it must
       string order = row ? "tb" : tw > th * 1.6 ? "tbrl" : "rltb";
       foreach (char s in order) {
         if (s == 'r' || s == 'l') { int x = s == 'r' ? tx + tw + Gap : tx - Gap - w; foreach (int y in ys) res.Add(new[] { x, y, s }); }
@@ -90,6 +103,13 @@ namespace RealmForge {
         }
       }
       return res;
+    }
+
+    // the values nearest to c first (stable)
+    static System.Collections.Generic.List<int> Near(System.Collections.Generic.List<int> v, int c) {
+      var r = new System.Collections.Generic.List<int>();
+      foreach (int a in v) { int i = r.Count; while (i > 0 && Math.Abs(r[i - 1] - c) > Math.Abs(a - c)) i--; r.Insert(i, a); }
+      return r;
     }
 
     /// <summary>The plate's least gap to its target (the frame): it never comes closer (owner 2026-10-31: the hint over «Улучшить»).</summary>
