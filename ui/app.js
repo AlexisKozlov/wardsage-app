@@ -945,6 +945,12 @@
         const wasAuto = S.autoClick;
         if (m.autoSync !== undefined) { S.autoSync = m.autoSync; S.autoClick = m.autoClick; S.autoConfirm = !!m.autoConfirm; S.errorReports = !!m.errorReports; S.autoUpdate = m.autoUpdate !== false; S.tray = m.tray !== false; S.bossHints = m.bossHints !== false; S.sendCodes = m.sendCodes !== false; S.recButton = m.recButton !== false; S.autostart = !!m.autostart; }
         if (m.game) S.game = m.game;
+        // auto click taken away by the host (the lab's hint mode, the site's switch): the running build, the queue and a sell run stop at once, nothing starts by itself
+        if (wasAuto && !S.autoClick && m.autoSync !== undefined) {
+          S.run = null; S.queue = [];
+          if (S.sell.run && !S.sell.hint) { S.sell.run = false; host.send({ cmd: 'sell.stop' }); }
+          syncHighlight();
+        }
         if (m.lab && S.autoClick && !wasAuto) labRecheck();   // lab (test build): auto click forced on in memory, the pending plans and the sell list start as if the switch was toggled
         if (m.codeSaved) { S.editCode = false; toast(t('saved')); if (S.page === 'equip' || S.plans.status !== 'idle') loadPlans(); }
         if (m.siteSaved) toast(t('saved'));

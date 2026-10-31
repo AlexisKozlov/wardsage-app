@@ -123,7 +123,7 @@ namespace RealmForge {
     // ------------------------------------------------------------------ the site's switches
 
     /// <summary>The app's own clicks: the player's setting and the site's "autoclick" switch.</summary>
-    bool AutoClickOn() { return (cfg.AutoClick || labForce) && On("autoclick") && !labHintOnly; }
+    bool AutoClickOn() { return LabRecCmd.AutoClick(cfg.AutoClick, labForce, On("autoclick"), labHintOnly); }
     /// <summary>TEST build: a lab scenario «..._hint» runs (its recorder command named it): auto click is off as for a player without it, hints only.</summary>
     bool labHintOnly; long labHintAt;
     /// <summary>TEST build: the lab forces auto click, locateAuto and artAuto on for this app run (in memory, never saved: cfg.AutoClick stays the player's); the hint mode (labHintOnly) is in memory too.</summary>
@@ -415,8 +415,8 @@ namespace RealmForge {
     }
     void LabRecTick() {
       ExploreTick();
-      // the hint mode never outlives 3 minutes: auto click comes back by itself even if the lab's stop command is lost
-      if (labHintOnly && RecInfo.NowMs() - labHintAt > 180000) { labHintOnly = false; ApplyAutoClick(); SendState(null); Log.Write("lab: hint mode off (3 min timeout)"); }
+      // the hint mode never outlives 10 minutes: auto click comes back by itself even if the lab's stop command is lost
+      if (labHintOnly && LabRecCmd.HintExpired(labHintAt, RecInfo.NowMs())) { labHintOnly = false; ApplyAutoClick(); SendState(null); Log.Write("lab: hint mode off (10 min timeout)"); }
       try {
         if (labRecPending != null) {
           // another recording was asked to stop first: start once it is off, give up after a while
@@ -455,7 +455,7 @@ namespace RealmForge {
       bool hint = start && LabRecCmd.IsHintScenario(c.Scenario);
       if (start && !hint && !labForce) LabForceSettings();   // every non-hint scenario: the settings it needs are on
       if (hint) labHintAt = RecInfo.NowMs();
-      if (hint != labHintOnly) { labHintOnly = hint; ApplyAutoClick(); SendState(null); Log.Write("lab: hint mode " + (hint ? "on (auto click off for " + c.Scenario + ")" : "off")); }
+      if (hint != labHintOnly) { labHintOnly = hint; if (hint) { overlay.SetRun(0); overlay.SetSell(null, null, null, 0); } ApplyAutoClick(); SendState(null); Log.Write("lab: hint mode " + (hint ? "on (auto click off for " + c.Scenario + ")" : "off")); }
     }
     // the lab forces the settings its scenarios need (auto click, locateAuto, artAuto) for this run: in memory, the saved config is not touched
     void LabForceSettings() {
@@ -598,7 +598,7 @@ namespace RealmForge {
             var ll = m.TryGetValue("levels", out lv) ? lv as List<object> : null;
             if (ll != null) for (int i = 0; i < ll.Count && i < uids.Count; i++) if (ll[i] is double) levels[uids[i]] = (int)Math.Max(0, Math.Min(99, (double)ll[i]));
             long hero = addrs != null ? RFX.ReadHero(addrs) : 0; if (hero <= 0) hero = RFX.AnyHeroUid();
-            bool hintOnly = cmd == "sell.hint";
+            bool hintOnly = cmd == "sell.hint" || labHintOnly;
             // an artifact list is always a hint run (frames on the artifact tab's «Массовая продажа»); the clicks come on top of it only with the player's auto click AND the site's "artAuto" switch (Overlay.TickArtSellAuto)
             bool artifact = MiniJson.GetString(m, "kind") == "artifact";
             if (artifact) hintOnly = true;
@@ -648,7 +648,7 @@ namespace RealmForge {
           case "equip.run": {
             // the plan the player started («Надеть»): its hero is brought up on the hero screen
             object v; double h = m.TryGetValue("hero", out v) && v is double ? (double)v : 0;
-            overlay.SetRun(h > 0 && h < 9e15 ? (long)h : 0);
+            overlay.SetRun(h > 0 && h < 9e15 && !labHintOnly ? (long)h : 0);   // (the lab's hint mode: no run, whatever the page says)
             if (MiniJson.GetBool(m, "restart", false)) overlay.RestartPilots();
             break;
           }
@@ -1413,7 +1413,7 @@ namespace RealmForge {
     void PostLocateState(LocateStep st, SubCheck subs) {
       var sb = new StringBuilder("{\"ev\":\"locate.state\",\"step\":").Append(S(st.Key)).Append(",\"pos\":").Append(N(st.Pos)).Append(",\"row\":").Append(N(st.Row))
         .Append(",\"col\":").Append(N(st.Col)).Append(",\"count\":").Append(N(st.Count)).Append(",\"onHero\":").Append(B(st.OnHero)).Append(",\"onGear\":").Append(B(st.OnGear)).Append(",\"onGem\":").Append(B(st.OnGem)).Append(",\"func\":").Append(N(st.Func)).Append(",\"wrongFunc\":").Append(B(st.WrongFunc)).Append(",\"worn\":").Append(B(st.Worn)).Append(",\"scroll\":").Append(S(st.Scroll)).Append(",\"scrollRows\":").Append(N(st.ScrollRows))
-        .Append(",\"filterGo\":").Append(S(st.FilterGo)).Append(",\"suitTab\":").Append(N(st.SuitTab))
+        .Append(",\"popup\":").Append(S(st.PopupTitle)).Append(",\"covered\":").Append(S(st.Covered.ToString())).Append(",\"filterGo\":").Append(S(st.FilterGo)).Append(",\"suitTab\":").Append(N(st.SuitTab))
         .Append(",\"artCap\":").Append(N(st.ArtCap)).Append(",\"artLevel\":").Append(N(st.ArtLevel)).Append(",\"matNeed\":").Append(N(st.MatNeed)).Append(",\"matChosen\":").Append(N(st.MatChosen))
         .Append(",\"matKind\":").Append(S(st.MatKind)).Append(",\"matWrong\":").Append(B(st.MatWrong))
         .Append(",\"needClick\":").Append(B(st.NeedClick)).Append(",\"auto\":").Append(S(st.Auto)).Append(",\"autoWhy\":").Append(S(st.AutoWhy)).Append(",\"missing\":[");

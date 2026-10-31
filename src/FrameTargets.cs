@@ -129,6 +129,7 @@ namespace RealmForge {
       C("hero.card", "Form_CharactorMain", UiCellKind.HeroList, "m_InfinityGridProxy.m_Data (the form's *_InfinityGrid)");
       L("hero.filterPart", "Form_CharactorMain", "the gear filter's part icons are not read live");
       L("hero.filterRow", "Form_CharactorMain", "the gear filter's rows are not read live");
+      L("popup.exit", "Form_CommonPopUp", "a pop-up's × from the screen map's exit rect (the step «close the window»; not read live)");
       // the Foundry
       P("foundry.tab.ascend", "Form_EquipSubliming", ClickTarget.AscendTab, "GameObject/m_RightTab/GameObject/m_ToggleSubliming", "-");
       B("foundry.tab.recast", "Form_EquipSubliming", "GameObject/m_RightTab/GameObject/m_ToggleRecast", "-");

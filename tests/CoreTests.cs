@@ -4553,6 +4553,47 @@ static partial class CoreTests {
       Check(clear, "hero row: a " + pw + " px plate leaves «Литейная», the row, the quick buttons and the tab column free (at " + pos[0] + "," + pos[1] + " side " + side + ")");
     }
     Check(LocateFrames.AvoidAreas(new LocateStep { Kind = LocateKind.OpenFoundry }, geo, W, H, U).Length == 0, "hero row: no hero areas on the inventory's «Литейная» step");
+    PopupCoverTests(geo, W, H, U);
+  }
+
+  // the step's target under a shown pop-up: «close the window» (the frame on the pop-up's ×, never on the hidden target); hint mode: no pilot click
+  static void PopupCoverTests(GameGeometry geo, double W, double H, double U) {
+    Console.WriteLine("Covered target: close the pop-up first");
+    Func<LocateKind, LocateStep> mk = k => new LocateStep { Kind = k, OnGear = true };
+    var hero = new ScreenState { Kind = ScreenKind.HeroScreen, ModalOpen = true, ModalWhy = "heroFilter" };
+    var st = mk(LocateKind.OpenFoundry);
+    Check(LocateGuide.CoverStep(st, hero) && st.Kind == LocateKind.ClosePopup && st.Covered == LocateKind.OpenFoundry && st.PopupTitle == "filter" && st.PopupClose == "hero.filterClose" && st.Key == "closePopup",
+      "cover: «Литейная» under the gear filter -> the step is «close the filter window» (the original is kept)");
+    Check(LocateFrames.For(st, null, null, null, geo, W, H, U) == null, "cover: ... and the step has no target frame (the frame goes on the pop-up's ×)");
+    Check(FrameTargets.Of("hero.filterClose") != null && FrameTargets.Of("popup.exit") != null, "cover: the × keys are mapped");
+    st = mk(LocateKind.OpenFoundry); hero.ModalOpen = false; hero.ModalWhy = "";
+    Check(!LocateGuide.CoverStep(st, hero) && st.Kind == LocateKind.OpenFoundry, "cover: the filter closed -> the original step is back");
+    st = mk(LocateKind.OpenFoundry); st.OnGear = false;
+    Check(!LocateGuide.CoverStep(st, new ScreenState { Kind = ScreenKind.HeroScreen, ModalOpen = true, ModalWhy = "heroFilter" }), "cover: the gear filter does not cover the inventory's «Литейная»");
+    // a flow form: the topmost by the z-order, with its own title
+    var inv = new ScreenState { Kind = ScreenKind.Inventory, Flow = "Form_CharactorEquipTip,Form_EquipPopUp", Order = new List<string> { "Form_EquipPopUp", "Form_CharactorEquipTip", "Form_BackpackIntegration" } };
+    st = mk(LocateKind.OpenFoundry); st.OnGear = false;
+    Check(LocateGuide.CoverStep(st, inv) && st.Popup == "Form_EquipPopUp" && st.PopupTitle == "question" && st.PopupClose == "", "cover: two forms over the inventory -> the one on top is closed first");
+    inv.Order = new List<string> { "Form_CharactorEquipTip", "Form_EquipPopUp", "Form_BackpackIntegration" };
+    st = mk(LocateKind.OpenEquipTab); LocateGuide.CoverStep(st, inv); Eq("Form_CharactorEquipTip", st.Popup, "cover: ... the z-order decides");
+    st = mk(LocateKind.OpenFoundry); st.OnGear = false;
+    Check(!LocateGuide.CoverStep(st, inv, f => false) && st.Kind == LocateKind.OpenFoundry, "cover: the live rects say the pop-up is beside the target -> no cover");
+    st = mk(LocateKind.Selected); Check(!LocateGuide.CoverStep(st, inv), "cover: the item card step is never covered by its own tip");
+    st = mk(LocateKind.AscendReady); Check(!LocateGuide.CoverStep(st, inv), "cover: the final button is the player's: no cover step");
+    st = mk(LocateKind.OpenFoundry); inv.Held = true; Check(!LocateGuide.CoverStep(st, inv), "cover: a held (unread) screen changes nothing");
+    // the auto pilot and the hint mode: the cover step is a hint, nothing is clicked; the lab's hint mode never has auto click
+    var v = new LocateView { NowMs = 0, Foreground = true, W = W, H = H, U = U, Step = new LocateStep { Kind = LocateKind.OpenFoundry, OnGear = true }, Cols = 8, HeroScreenOpen = true, Geometry = geo };
+    LocateGuide.CoverStep(v.Step, new ScreenState { Kind = ScreenKind.HeroScreen, ModalOpen = true, ModalWhy = "heroFilter" });
+    var pil = new LocatePilot(); var mv = pil.Step(v);
+    Check(v.Step.Kind == LocateKind.ClosePopup && mv.Action.Kind == AutoKind.None && mv.State == "hint", "cover: the auto pilot under a pop-up clicks nothing (the back arrow included)");
+    Check(!LabRecCmd.AutoClick(true, true, true, true) && !LabRecCmd.AutoClick(true, false, true, true) && LabRecCmd.AutoClick(false, true, true, false) && LabRecCmd.AutoClick(true, false, true, false) && !LabRecCmd.AutoClick(true, true, false, false),
+      "lab: hint mode -> auto click off whatever is forced or saved; a non-hint run forced -> on; the site's switch still rules");
+    long t0 = 1000000;
+    Check(!LabRecCmd.HintExpired(t0, t0 + 180000 + 60000) && !LabRecCmd.HintExpired(t0, t0 + LabRecCmd.HintMaxMs) && LabRecCmd.HintExpired(t0, t0 + LabRecCmd.HintMaxMs + 1), "lab: the hint mode outlives the runner's 3 minute scenario (10 min cap)");
+    // hint mode: ten ticks of a locate request with auto off - the pilot is not driven at all (Overlay.TickLocateDrive: AutoEnabled / LocateAutoEnabled), so no clicks
+    int clicks = 0;
+    for (int i = 0; i < 10; i++) { bool auto = LabRecCmd.AutoClick(true, true, true, true); if (auto) { var p2 = new LocatePilot(); if (p2.Step(v).Action.Kind != AutoKind.None) clicks++; } }
+    Eq(0, clicks, "lab: hint mode -> zero pilot clicks");
   }
 
   static string GeoBox(string key, string x0, string x1, string y0, string y1, double w, double h) {

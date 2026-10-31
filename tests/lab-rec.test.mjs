@@ -58,7 +58,11 @@ const hb = readFileSync(new URL('../app/HostBridge.cs', import.meta.url), 'utf8'
 const appjs = readFileSync(new URL('../ui/app.js', import.meta.url), 'utf8');
 ok(/Append\(B\(\(cfg\.AutoClick \|\| labForce\) && !labHintOnly\)\)\.Append\(",\\"lab\\":"\)/.test(hb), 'the state event carries the forced auto click and lab');
 ok(/labForce = true; ApplyAutoClick\(\); SendState\(null\)/.test(hb), 'forcing the settings posts the state to the page');
-ok(/labHintOnly = hint; ApplyAutoClick\(\); SendState\(null\)/.test(hb), 'the hint mode posts the state to the page');
+ok(/labHintOnly = hint;[^\n]*ApplyAutoClick\(\); SendState\(null\)/.test(hb), 'the hint mode posts the state to the page');
 ok(/m\.lab && S\.autoClick && !wasAuto\) labRecheck\(\)/.test(appjs) && /function labRecheck\(\)[\s\S]*enqueue\(fresh\)[\s\S]*sellStart\(\)/.test(appjs), 'the page starts pending plans and the sell list when the lab forces auto click');
+ok(/LabRecCmd\.AutoClick\(cfg\.AutoClick, labForce, On\("autoclick"\), labHintOnly\)/.test(hb), 'the host auto click is the pure rule (never in the hint mode)');
+ok(/if \(hint\) \{ overlay\.SetRun\(0\); overlay\.SetSell\(null, null, null, 0\); \}/.test(hb) && /!labHintOnly \? \(long\)h : 0/.test(hb) && /cmd == "sell\.hint" \|\| labHintOnly/.test(hb), 'the hint mode drops a running plan and sell run, and ignores run / sell starts from the page');
+ok(/wasAuto && !S\.autoClick && m\.autoSync !== undefined\) \{\s*S\.run = null; S\.queue = \[\];/.test(appjs), 'the page stops its run and queue when the host takes auto click away');
+ok(/HintExpired\(labHintAt/.test(hb), 'the hint mode ends by the 10 min cap');
 console.log(`lab rec: ${n - bad}/${n} ok`);
 process.exit(bad ? 1 : 0);

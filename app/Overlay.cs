@@ -2299,7 +2299,7 @@ namespace RealmForge {
 
     LocateRequest locateReq; string[] locateLines = new string[0]; string locateCaps = "";
     readonly LocateGrid lgrid = new LocateGrid();
-    LocateStep locateStep; SubCheck locateSubs; string locateKey = "";
+    LocateStep locateStep; SubCheck locateSubs; string locateKey = "", locateCoverSaid = "";
     string locateScreensSaid = "", locateMarkerSaid = "", locateCardSaid = "", locateListSig = "", locateDecisionSaid = "", locatePlaceSaid = ""; long locateListChangeAt;   // the Ascension list's shape (to wait after it changed), the log keys
     long locateReadAt, locateLastCur = -1, locateSubsAt; int locateCols = 8, locateGeoCols; double locateGeoW, locateGeoH;
     SellGeometry locateGeo; InventoryScreen locateInv; bool locateNeedClick;
@@ -2322,6 +2322,18 @@ namespace RealmForge {
       }
       foreach (var r in LocateFrames.AvoidAreas(step, g, W, H, U)) res.Add(new[] { o.X + (int)r.X, o.Y + (int)r.Y, (int)Math.Ceiling(r.W), (int)Math.Ceiling(r.H) });   // the hero's tab column and button row
       return res.Count > 0 ? res.ToArray() : null;
+    }
+
+    /// <summary>The frame of a ClosePopup step: the pop-up's × (the gear filter's by its live rect through FrameFor, any other form's by the screen map's
+    /// exit rect); null = the pop-up has no known ×: the plate alone.</summary>
+    LocateFrame PopupCloseFrame(LocateStep step, double W, double H, double U) {
+      GeoRect r = null; string key = "popup.exit";
+      if (step.PopupClose == "hero.filterClose") {
+        double fx = fg.X(fg.MainCloseX, W, H), fy = fg.Y(fg.CloseY, W, H); int rr = Math.Max(8, (int)(0.028 * U));
+        r = new GeoRect { X = fx - rr, Y = fy - rr, W = 2 * rr, H = 2 * rr }; key = step.PopupClose;
+      } else r = ScreenMap.ExitRect(step.Popup, W, H, U);
+      if (r == null || r.W < 2 || r.H < 2) return null;
+      return new LocateFrame { Target = key, Mark = new LocateMark { Kind = "box", X = (int)Math.Round(r.X), Y = (int)Math.Round(r.Y), W = (int)Math.Round(r.W), H = (int)Math.Round(r.H) }, Raw = r };
     }
 
     // the job is done in the game (src/LocateGuide.cs LocateFinish): a short plate, the request is reported (LocateFinished), then the hints end
@@ -2415,6 +2427,12 @@ namespace RealmForge {
         // the job itself done (ascended: the item left the Ascension list; recast: its sub stats changed / a result waits): report it
         string fin = lfin.Update(req.Purpose == "ascend", uid, st.Kind, rs, locateLive, now, ScreenMap.SuccessShown(screens.Current, req.Purpose));
         if (fin != "") { FinishLocateJob(fin, now); return; }
+        // the step's target lies under a shown pop-up (the gear filter over the hero screen, a flow form): «close the pop-up» is the step shown until it
+        // is closed, then the step comes back; no frame on the hidden target
+        if (LocateGuide.CoverStep(st, screens.Current)) {
+          string cov = st.Covered + "|" + st.Popup;
+          if (cov != locateCoverSaid) { locateCoverSaid = cov; Log.Write("locate: step " + st.Covered + " is covered by " + st.Popup + " (z-order " + (screens.Current.Order != null ? string.Join(",", screens.Current.Order.ToArray()) : "unknown") + ") - close it first"); }
+        } else locateCoverSaid = "";
         st.NeedClick = locateNeedClick;
         locateStep = st;
       }
@@ -2424,7 +2442,8 @@ namespace RealmForge {
       { string rw = gate.RetryShown(ClickOwner.Locate, now); if (rw != "" && step.Auto != "stopped" && step.Auto != "") { step.Auto = "retry"; step.AutoWhy = rw; } }   // a step retried: the window says why
       FoundryScrollNow(step, now);
       // the step's frame from the screen geometry (the site's file, src/LocateFrames.cs): «Литейная», the tabs, the slot, the list cell, the final button
-      LocateFrame lf = front && !hold && step.Kind != LocateKind.InList ? LocateFrames.For(step, req.Item, locateRs, null, Geo.Current, W, H, U) : null;
+      LocateFrame lf = front && !hold && step.Kind == LocateKind.ClosePopup ? PopupCloseFrame(step, W, H, U)
+        : front && !hold && step.Kind != LocateKind.InList ? LocateFrames.For(step, req.Item, locateRs, null, Geo.Current, W, H, U) : null;
       // every button / tab of the step framed where the game has put it (FrameFor: live rect, its sprite's outline; the layout's when unread)
       bool lfLive = LiveInto(lf, W, H, U);
       if (lf != null && lf.Target == "cell" && step.Kind == LocateKind.GemFunction) FrameLayoutSay("gem.cell", FrameTargets.Of("gem.cell").Layout, null);
@@ -2521,7 +2540,7 @@ namespace RealmForge {
         else DrawTip(t[0], t[1], t[2], t[3], locateLines, H, locHint.Stale, false, false, locateCaps, false, locHint.Stale ? null : locHint.Tag as Hl, avoid);
       }
       string key = step.Key + "|" + step.Pos + "|" + step.Row + "|" + step.Col + "|" + step.Count + "|" + string.Join(",", step.Missing) + "|" + step.OnHero + "|" + step.NeedClick
-        + "|" + (locateSubs != null ? string.Join(",", Array.ConvertAll(locateSubs.Match, x => x ? "1" : "0")) + locateSubs.Changed : "") + "|" + step.Auto + "|" + step.AutoWhy;
+        + "|" + (locateSubs != null ? string.Join(",", Array.ConvertAll(locateSubs.Match, x => x ? "1" : "0")) + locateSubs.Changed : "") + "|" + step.Auto + "|" + step.AutoWhy + "|" + step.Popup;
       if (key != locateKey) { locateKey = key; var h = LocateChanged; if (h != null) h(step, locateSubs); }
     }
 
@@ -3530,6 +3549,7 @@ namespace RealmForge {
       bool heroOpen = scr != null && scr.Kind == ScreenKind.HeroScreen;
       bool formOpen = scr != null && (scr.Kind == ScreenKind.Foundry || scr.Kind == ScreenKind.Gem);
       var dstep = LocateGuide.Next(req, inv, locateRs, heroScreen, locateCols, locateOnAccount);
+      LocateGuide.CoverStep(dstep, scr);   // a pop-up over the target: the pilot clicks nothing (the step is «close the window», the player's)
       var view = new LocateView { NowMs = now, Foreground = gameFront, UserBusy = busy, UserClicked = uc, W = W, H = H, U = U, Step = dstep, Inv = inv, Cols = locateCols,
         HeroScreenOpen = heroOpen, OtherFormOpen = formOpen, InvDX = invDX, Geometry = Geo.Current, Rs = locateRs, Item = req.Item, Purpose = req.Purpose };
       if (gameFront && !busy && LocateAuto.NeedsCityButton(dstep, heroOpen, formOpen)) { view.CityButton = InventoryButtonSeen(o, W, H); view.InvDX = invDX; }   // the place the bar search may have found just now

@@ -6,7 +6,7 @@
 (function (root) {
   const KINDS = ['noItem', 'otherAccount', 'openInventory', 'openEquipTab', 'inList', 'hiddenFilter', 'selected', 'openRecastTab',
     'recastFilter', 'recastPick', 'recastNotInList', 'choosePending', 'gemPick', 'done',
-    'openAscendTab', 'ascendPick', 'ascendNotInList', 'ascendReady', 'openFoundry', 'gemFunction', 'ascendFilter', 'ascendLoading', 'exitBulk'];
+    'openAscendTab', 'ascendPick', 'ascendNotInList', 'ascendReady', 'openFoundry', 'gemFunction', 'ascendFilter', 'ascendLoading', 'exitBulk', 'closePopup'];
   // «Продвинуть» артефакт (purpose artPromote): req.art = {uid, id, name, lv, cap, st, need, via}; the host never clicks for it
   const ART_KINDS = ['openInventory', 'artOpenTab', 'artExitMode', 'artListLoading', 'artNotInList', 'artInList', 'artSelected', 'artWrongArtifact', 'artLevelFirst',
     'artOpenPromote', 'artMatLoading', 'artMatGuess', 'artMatPick', 'artMatNone', 'artPromote'];
@@ -99,6 +99,12 @@
       case 'exitBulk': r = { tone: 'warn', head: t('locExitBulk'), lines: [t('locExitBulkP')] }; break;
       // recast goes through the gem screen (the Foundry is for Ascension only): card button, then the function, then «Улучшить»
       case 'selected': r = { tone: 'done', head: t('locSelected'), lines: [t(req.purpose === 'ascend' ? 'locSelectedAscP' : 'locSelectedP')] }; break;
+      // the step's target lies under a pop-up (the gear filter, a flow form): close it first, the step comes back by itself
+      case 'closePopup': {
+        const pn = st.popup === 'filter' ? '' : st.popup ? t('locPopup_' + st.popup) : '';
+        r = { tone: 'info', head: st.popup === 'filter' ? t('locClosePopupFilter') : pn ? t('locClosePopup', pn) : t('locClosePopupAny'), lines: [t('locClosePopupP')] };
+        break;
+      }
       case 'openFoundry': r = st.onGear ? { tone: 'info', head: t('locFoundryHero'), lines: [t('locFoundryP')] } : { tone: 'info', head: t('locFoundryInv'), lines: [t('locFoundryP')] }; break;
       case 'gemFunction': {
         // the function the item needs (the host reads it from the item's quality): the hint names that one only
@@ -165,7 +171,8 @@
   };
   function stepNo(req, st) {
     if (!req || !st) return null;
-    const p = PATH[req.purpose === 'ascend' ? 'ascend' : req.purpose === 'artPromote' ? 'artPromote' : 'recast'], n = p[st.step];
+    const p = PATH[req.purpose === 'ascend' ? 'ascend' : req.purpose === 'artPromote' ? 'artPromote' : 'recast'];
+    const k = st.step === 'closePopup' && st.covered ? st.covered.charAt(0).toLowerCase() + st.covered.slice(1) : st.step, n = p[k];   // (the pop-up keeps the number of the step it hides)
     return n ? { n, total: p.total } : null;
   }
 

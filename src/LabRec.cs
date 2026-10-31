@@ -39,6 +39,15 @@ namespace RealmForge {
     /// <summary>A hint-mode scenario (equip_city_hint, locate_hint): the app runs it with auto click off.</summary>
     public static bool IsHintScenario(string scenario) { return scenario != null && scenario.EndsWith("_hint", StringComparison.Ordinal); }
 
+    /// <summary>The hint mode (auto click off for a «_hint» scenario) ends by itself after this long (a lost stop command): longer than the
+    /// runner's longest hint scenario (180 s) with its waits - at 3 min the auto click came back mid-scenario and the page ran the plan.</summary>
+    public const long HintMaxMs = 10 * 60 * 1000;
+    /// <summary>The hint mode that began at <paramref name="atMs"/> is over by now.</summary>
+    public static bool HintExpired(long atMs, long nowMs) { return nowMs - atMs > HintMaxMs; }
+    /// <summary>The app's auto click (and the page's: the state event carries the same value): the player's setting or the lab's forcing, the site's
+    /// switch, and never in the lab's hint mode.</summary>
+    public static bool AutoClick(bool cfgAuto, bool labForce, bool siteSwitch, bool hintOnly) { return (cfgAuto || labForce) && siteSwitch && !hintOnly; }
+
     public static string NewId(DateTime now, Random rnd) { return "lab-" + RecNames.NewId(now, rnd); }
     public static bool IsLabId(string id) { return id != null && IdRx.IsMatch(id); }
 

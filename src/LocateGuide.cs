@@ -45,7 +45,8 @@ namespace RealmForge {
     ArtMatGuess,      // the copy list cannot be read for a while: the list's area is framed, the player picks a copy or an essence himself (never a cell, never a click)
     ArtMatPick,       // pick a copy (or an essence) in the left list; MatWrong: a wrong one is chosen
     ArtMatNone,       // the list has no copy and no essence
-    ArtPromote        // the material is chosen: «Продвинуть» is the player's
+    ArtPromote,       // the material is chosen: «Продвинуть» is the player's
+    ClosePopup        // the step's target lies under a shown pop-up / flow form: close it first (Covered is the step it hides; Popup, PopupTitle, PopupClose say which)
   }
 
   public sealed class LocateStep {
@@ -67,6 +68,8 @@ namespace RealmForge {
     public string MatKind = "";                     // artPromote, ArtMatPick: what to pick: copy | essence
     public bool MatWrong;                           // artPromote, ArtMatPick: Pos is a chosen copy that should not be used (unchoose it)
     public bool NeedClick;                          // the inventory's list position is not known yet: the player is asked to click a cell
+    public LocateKind Covered;                      // ClosePopup: the step the pop-up hides (it returns once the pop-up is closed)
+    public string Popup = "", PopupTitle = "", PopupClose = "";   // ClosePopup: the form, its title key for the page (filter | tip | compare | question | confirm | "" = generic), the FrameTargets key of its × ("" = ScreenMap.ExitRect)
     public string Auto = "", AutoWhy = "";          // auto click (src/LocatePilot.cs): "" = off, else work | paused | background | hint | stopped, and why
     /// <summary>The page's key of the step (ui/locate.js).</summary>
     public string Key { get { return Kind.ToString().Substring(0, 1).ToLowerInvariant() + Kind.ToString().Substring(1); } }
@@ -79,7 +82,70 @@ namespace RealmForge {
     public bool Changed;                 // the game's stat types differ from the site's: the item changed after the snapshot
   }
 
+  /// <summary>A pop-up that covers the step's target (LocateGuide.Covering).</summary>
+  public sealed class PopupCover {
+    public string Form = "", Title = "", Close = "";
+  }
+
   public static class LocateGuide {
+    /// <summary>The steps whose target is a button of the screen below a pop-up (the other steps are about the pop-up itself, a list cell the live
+    /// read hides by itself, or a text only).</summary>
+    public static bool CoverableKind(LocateKind k) {
+      switch (k) {
+        // (not Selected / AscendReady / Done: the item card, the ascension confirm are the step's own pop-ups there)
+        case LocateKind.OpenInventory: case LocateKind.OpenEquipTab: case LocateKind.OpenFoundry: case LocateKind.OpenRecastTab:
+        case LocateKind.OpenAscendTab: case LocateKind.GemFunction: return true;
+        default: return false;
+      }
+    }
+
+    /// <summary>The title key the page names a pop-up by (ui/locate.js locPopup*); "" = a form nobody named.</summary>
+    public static string PopupTitleOf(string form) {
+      switch (form ?? "") {
+        case "Form_EquipFilterWidget": case "Form_ArtifactFilter": return "filter";
+        case "Form_CharactorEquipTip": case "Form_Equip_Tip": case "Form_ItemDetailArtifact": case "Form_EquipSellPopup": return "tip";
+        case "Form_EquipedCompared": return "compare";
+        case "Form_EquipPopUp": return "question";
+        case "Form_CommonPopUp": case "Form_EquipQuickSellPopup": return "confirm";
+        default: return "";
+      }
+    }
+
+    /// <summary>The pop-up that covers the step's target now, null = none. The hero's gear filter (the hero screen's own pop-up: ModalWhy "heroFilter")
+    /// covers the gear row at the bottom (the step's «Литейная»); any other form shown over the screen (the pilot's flow forms, a pop-up of the screen map) covers it too, the topmost by the game's z-order (ScreenState.Order, top first) when that is known.
+    /// <paramref name="targetCovered"/> (optional) answers from the live rects whether the form's rect holds the target: false = it does not (the
+    /// small tip beside the button): no cover; no answer / null = covered.</summary>
+    public static PopupCover Covering(LocateStep st, ScreenState sc, Func<string, bool> targetCovered = null) {
+      if (st == null || sc == null || sc.Held || !CoverableKind(st.Kind)) return null;
+      string why = sc.ModalWhy ?? "";
+      if (sc.ModalOpen && why == "heroFilter" && sc.Kind == ScreenKind.HeroScreen && st.Kind == LocateKind.OpenFoundry && st.OnGear)
+        return new PopupCover { Form = "Form_CharactorMain", Title = "filter", Close = "hero.filterClose" };
+      var list = new List<string>();
+      Action<string> add = s => { foreach (var f in (s ?? "").Split(',')) { string n = f.Trim(); if (n != "" && n.StartsWith("Form_") && list.IndexOf(n) < 0) list.Add(n); } };
+      add(sc.Flow); if (why.StartsWith("form:")) add(why.Substring(5));
+      string baseForm = sc.Kind == ScreenKind.HeroScreen ? "Form_CharactorMain" : "";
+      list.RemoveAll(n => n == baseForm);
+      if (list.Count == 0) return null;
+      string top = null; int best = int.MaxValue;
+      foreach (var n in list) {
+        int i = sc.Order != null ? sc.Order.IndexOf(n) : -1;
+        if (i < 0) i = sc.Order != null ? 1000 : 0;
+        if (i < best) { best = i; top = n; }
+      }
+      if (top == null || (targetCovered != null && !targetCovered(top))) return null;
+      return new PopupCover { Form = top, Title = PopupTitleOf(top), Close = "" };
+    }
+
+    /// <summary>Hint mode and the auto pilot alike: the step whose target a pop-up covers becomes «close the pop-up» (the frame on its ×, never on the
+    /// hidden target); once it is closed the original step comes back by itself (the next read). True = the step was replaced.</summary>
+    public static bool CoverStep(LocateStep st, ScreenState sc, Func<string, bool> targetCovered = null) {
+      var c = Covering(st, sc, targetCovered);
+      if (c == null) return false;
+      st.Covered = st.Kind; st.Kind = LocateKind.ClosePopup; st.Popup = c.Form; st.PopupTitle = c.Title; st.PopupClose = c.Close;
+      st.Pos = st.Row = st.Col = st.Count = 0; st.Missing = new string[0]; st.FilterGo = ""; st.Scroll = "";
+      return true;
+    }
+
     /// <summary>Foundry lists up to this long are picked from directly; longer ones are filtered first.</summary>
     public const int ShortList = 8;
 
