@@ -773,6 +773,13 @@ static partial class CoreTests {
           int[] tl = { 6, 6, 50, 30 };
           q = HintLayout.TryPlace(tl, null, 220, 66, 526, 296, out side);
           Check(q != null && !hits(q, 220, 66, tl) && inside(q, 220, 66, 526, 296), "target at the top left edge: beside it");
+          // the owner's recast case: a wide button at the far right, another click target above it covering the usual centred spot: the label
+          // stays next to the frame (above or below, over its span), never slid to the screen's far left
+          int[] rb = { 1034, 633, 147, 51 }, upper = { 900, 480, 280, 120 };
+          q = HintLayout.Place(rb, new int[][] { rb, upper }, 367, 85, 1190, 705, out side);
+          Check(q != null && inside(q, 367, 85, 1190, 705) && !hits(q, 367, 85, rb) && q[0] + 367 > rb[0] && q[0] < rb[0] + rb[2] && (side == 't' || side == 'b'), "frame at the right edge: the label adjacent, inside (" + (q == null ? "none" : side + " " + q[0] + "," + q[1]) + ")");
+          q = HintLayout.Place(new[] { 1100, 300, 80, 100 }, null, 367, 85, 1190, 705, out side);
+          Check(q != null && inside(q, 367, 85, 1190, 705) && side == 'l' && q[0] + 367 + HintLayout.Gap == 1100, "a tall frame at the right edge: left of it, next to it");
           // a plate too big for any free place: TryPlace says none (the caller shrinks), Place still keeps off the target as far as it can
           int[] mid = { 200, 100, 120, 90 };
           Check(HintLayout.TryPlace(mid, null, 500, 200, 526, 296, out side) == null, "too big for the tiny client: no free place");
