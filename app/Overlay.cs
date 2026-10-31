@@ -266,6 +266,8 @@ namespace RealmForge {
     readonly Timer lookTimer = new Timer();   // quick looks at the gear list between the ticks (LookFast)
     readonly GlowWindow glow = new GlowWindow();
     readonly GlowWindow tip = new GlowWindow();     // hint on the game's own buttons (filter, «Заменить», next slot)
+    readonly GlowWindow glowPulse = new GlowWindow(), tipPulse = new GlowWindow();   // the frames' pulse lines: a small window of their own beside each of the two
+    readonly Timer pulseTimer = new Timer();   // runs only while a frame is shown
     // «Отменить надевание» over the game while a build is being put on: the player's clicks in the game send our
     // window to the back, so the way to call it off is where the player looks
     readonly GlowWindow cancelWin = new GlowWindow(true);
@@ -395,6 +397,7 @@ namespace RealmForge {
       pilot = new AutoPilot(g);
       fpilot = new FilterPilot(fg);
       hpilot = new HeroPilot(heroG);
+      pulseTimer.Interval = FrameStyle.PulseMs; pulseTimer.Tick += (s, e) => { long pt0 = LoadMeter.Now(); try { PulseTick(); } catch (Exception ex) { pulseTimer.Stop(); Log.Write("overlay: pulse: " + ex.Message); } finally { LoadMeter.Done(LoadMeter.Pulse, pt0); } };
       timer.Interval = 100; timer.Tick += (s, e) => {
         long lt0 = LoadMeter.Now();
         try { Tick(); tickError = null; }
@@ -446,7 +449,7 @@ namespace RealmForge {
 
     public void Dispose() {
       if (winHookFg != IntPtr.Zero) W32.UnhookWinEvent(winHookFg); if (winHookMin != IntPtr.Zero) W32.UnhookWinEvent(winHookMin);
-      winHookFg = winHookMin = IntPtr.Zero; loadTimer.Dispose();
+      winHookFg = winHookMin = IntPtr.Zero; loadTimer.Dispose(); pulseTimer.Dispose(); glowPulse.Dispose(); tipPulse.Dispose();
       timer.Dispose(); lookTimer.Dispose(); glow.Dispose(); tip.Dispose(); cancelWin.Dispose(); recBtnTimer.Dispose(); recWin.Dispose(); }
 
     public void StartDiag(int minutes) {
@@ -786,7 +789,7 @@ namespace RealmForge {
       RecInfo.Active = on; GlowWindow.Capturable = on;
       recOn = on; if (on) recSw.Restart(); else recSw.Reset();
       if (on) RecReads.Clear();
-      foreach (var w in new[] { glow, tip, cancelWin, recWin }) if (w.IsHandleCreated) w.ApplyAffinity();
+      foreach (var w in new[] { glow, tip, glowPulse, tipPulse, cancelWin, recWin }) if (w.IsHandleCreated) w.ApplyAffinity();
       Run();
     }
 
@@ -1625,6 +1628,7 @@ namespace RealmForge {
 
     void SceneDraw(GlowWindow win, int[] frameR, Plate p, int[] target, double[] strip, List<int[]> marks, Hl hl, int[][] avoid, float pulse, bool ng, bool dim, bool oldShape, Image hand, int bob) {
       double U = Ui.Unit(Math.Max(1, sceneW), Math.Max(1, sceneH));
+      SetPulse(win, null); var pulseSpecs = new List<FrameSpecT>();
       // the step's other click targets in client px (the plate keeps off them and off its own target)
       int[][] av = avoid == null ? null : Array.ConvertAll(avoid, a => a == null ? null : new[] { a[0] - sceneX, a[1] - sceneY, a[2], a[3] });
       int[] tcl = target != null ? new[] { target[0] - sceneX, target[1] - sceneY, target[2], target[3] } : null;
@@ -1694,10 +1698,22 @@ namespace RealmForge {
             gr.SmoothingMode = SmoothingMode.AntiAlias; gr.TextRenderingHint = TextRenderingHint.AntiAliasGridFit; gr.Clear(Color.Transparent);
             gr.InterpolationMode = InterpolationMode.HighQualityBicubic;
             if (ng) PaintGuide(gr, hl, x0, y0, bw, bh, dim, G, hand, bob, U);
-            else if (oldShape) PaintFrameShape(gr, hl, x0, y0, pulse, G);
-            else if (frameR != null) PaintFrame(gr, frameR[0] - x0, frameR[1] - y0, frameR[2], frameR[3], pulse, G);
+            else if (frameR != null) {
+              var fo = new List<double[]>(); if (avoid != null) foreach (var a in avoid) if (a != null) fo.Add(new double[] { a[0], a[1], a[2], a[3] });
+              var fs = FrameSpec(oldShape ? hl : null, frameR[0], frameR[1], frameR[2], frameR[3], FrameStyle.Gold, FrameStyle.Gap(frameR[0], frameR[1], frameR[2], frameR[3], fo));
+              PaintFrame(gr, fs, x0, y0);
+              if (!oldShape) PaintOwl(gr, FrameStyle.OwlAt(frameR[0], frameR[1], frameR[2], frameR[3], sceneY), x0, y0);
+              pulseSpecs.Add(fs);
+            }
             if (strip != null) PaintStrip(gr, strip, x0, y0, pulse, U);
-            if (marks != null) foreach (var m in marks) PaintMark(gr, m[0] - x0, m[1] - y0, m[2], m[3], m[4], Gm);
+            if (marks != null) {
+              var mo = new List<double[]>(); foreach (var m in marks) mo.Add(new double[] { m[0], m[1], m[2], m[3] });
+              foreach (var m in marks) {
+                var ms = m[4] != 1 && !(m[4] == 0 && GuideStyle) ? FrameSpec(null, m[0], m[1], m[2], m[3], m[4] == 2 ? FrameStyle.Red : FrameStyle.Gold, FrameStyle.Gap(m[0], m[1], m[2], m[3], mo)) : null;
+                PaintMark(gr, m[0] - x0, m[1] - y0, m[2], m[3], m[4], Gm, ms, x0, y0);
+                if (ms != null) pulseSpecs.Add(ms);
+              }
+            }
             if (p != null) {
               float px = sceneX + pos[0] - x0, py = sceneY + pos[1] - y0;
               PaintPlate(gr, px, py, pw, ph, p, fCaps, fMain, fSub, owl, capsH, mainH, pad, ptr, sceneX - x0, sceneY - y0);
@@ -1712,13 +1728,14 @@ namespace RealmForge {
           if (marks != null) foreach (var m in marks) win.Parts.Add(new[] { m[0] - 4, m[1] - 4, m[2] + 8, m[3] + 8 });
         }
       }
+      SetPulse(win, pulseSpecs);
     }
 
     /// <summary>Where our own windows showed something that a screen look sees (only when they cannot be hidden from
     /// captures): those pixels of a grab at (x, y) w × h are set to the dark background, so they are no bars, no glow, no cells.</summary>
     void MaskOwn(int[] px, int x, int y, int w, int h) {
       if (px == null) return;
-      foreach (var win in new[] { glow, tip, recWin })
+      foreach (var win in new[] { glow, tip, glowPulse, tipPulse, recWin })
         if (!win.Excluded && win.Visible)
           foreach (var r in win.Parts) {
             int ax = Math.Max(x, r[0]), ay = Math.Max(y, r[1]), bx = Math.Min(x + w, r[0] + r[2]), by = Math.Min(y + h, r[1] + r[3]);
@@ -1726,42 +1743,97 @@ namespace RealmForge {
           }
     }
 
-    // the hint frame, clearly visible again (owner 2026-10-31 on 1.6.66.423: the 2 px line was barely seen): the glow rings, a dark underline and
-    // the 3.5 px gold line of the frame before 4882eea, on the accurate rect (UiIcon.Frame / SpriteArt.FrameOf: the art's visible box 2 px out);
-    // the game's frame texture stretched 20 % past the target is not drawn
-    void PaintFrame(Graphics gr, float x, float y, float w, float h, float pulse, int G) {
-      for (int i = G; i >= 4; i -= 3)
-        using (var pen = new Pen(Color.FromArgb(FrameStyle.GlowAlpha(i, G, pulse), 255, 190, 60), 3f)) gr.DrawPath(pen, Round(x - i, y - i, w + 2 * i, h + 2 * i, 6 + i));
-      using (var pen = new Pen(Color.FromArgb(230, 40, 22, 4), FrameStyle.UnderWidth)) gr.DrawPath(pen, Round(x - 2, y - 2, w + 4, h + 4, 7));
-      using (var pen = new Pen(Color.FromArgb(255, 255, 214, 110), FrameStyle.LineWidth)) gr.DrawPath(pen, Round(x - 2, y - 2, w + 4, h + 4, 7));
+    // the branded hint frame (owner-approved mockup C1, src/FrameTargets.cs FrameStyle): a 4 px line exactly on the target's outline, a soft 4 px
+    // glow outside it, an owl badge on the top edge; the pulse line is drawn by PulseTick in a small window of its own. A frame is a rounded rect
+    // (corner 4 px) or, for a round button, the sprite's contour; Path(offset, ox, oy) = its outline moved <offset> px outward, in a bitmap at (ox, oy)
+    sealed class FrameSpecT { public Func<float, int, int, GraphicsPath> Path; public int Rgb; public float Gap; public int[] Box; }
+
+    FrameSpecT FrameSpec(Hl hl, double x, double y, double w, double h, int rgb, float gap) {
+      var sp = new FrameSpecT { Rgb = rgb, Gap = gap, Box = new[] { (int)Math.Floor(x), (int)Math.Floor(y), (int)Math.Ceiling(w), (int)Math.Ceiling(h) } };
+      if (hl != null && GuideShape.FrameOutline(hl.Rect, hl.Shape, hl.Inset, 0) != null) {
+        var r = hl.Rect;
+        sp.Box = new[] { (int)Math.Floor(r.X), (int)Math.Floor(r.Y), (int)Math.Ceiling(r.W), (int)Math.Ceiling(r.H) };
+        sp.Path = (o, ox, oy) => {
+          var pts = GuideShape.FrameOutline(hl.Rect, hl.Shape, hl.Inset, o);
+          var path = new GraphicsPath(); if (pts == null || pts.Count < 3) return path;
+          var pf = new PointF[pts.Count];
+          for (int i = 0; i < pf.Length; i++) pf[i] = new PointF((float)(pts[i].X - ox), (float)(pts[i].Y - oy));
+          path.AddPolygon(pf); return path;
+        };
+      } else {
+        float fx = (float)x, fy = (float)y, fw = (float)w, fh = (float)h;
+        sp.Path = (o, ox, oy) => Round(fx - ox - o, fy - oy - o, fw + 2 * o, fh + 2 * o, FrameStyle.CornerR + o);
+      }
+      return sp;
     }
 
-    // the same frame along a round button's outline (the sprite's contour, a circle / bevel / round): the same rings, underline and gold line
-    void PaintFrameShape(Graphics gr, Hl hl, int ox, int oy, float pulse, int G) {
-      Func<double, GraphicsPath> poly = m => {
-        var pts = GuideShape.FrameOutline(hl.Rect, hl.Shape, hl.Inset, m);
-        var path = new GraphicsPath();
-        if (pts == null) return path;
-        var pf = new PointF[pts.Count];
-        for (int i = 0; i < pf.Length; i++) pf[i] = new PointF((float)(pts[i].X - ox), (float)(pts[i].Y - oy));
-        path.AddPolygon(pf);
-        return path;
-      };
-      for (int i = G; i >= 4; i -= 3)
-        using (var pen = new Pen(Color.FromArgb(FrameStyle.GlowAlpha(i, G, pulse), 255, 190, 60), 3f) { LineJoin = LineJoin.Round })
-        using (var path = poly(i)) gr.DrawPath(pen, path);
-      using (var path = poly(2)) {
-        using (var pen = new Pen(Color.FromArgb(230, 40, 22, 4), FrameStyle.UnderWidth) { LineJoin = LineJoin.Round }) gr.DrawPath(pen, path);
-        using (var pen = new Pen(Color.FromArgb(255, 255, 214, 110), FrameStyle.LineWidth) { LineJoin = LineJoin.Round }) gr.DrawPath(pen, path);
+    static Color FrameColor(int rgb, int alpha) { return Color.FromArgb(Math.Max(0, Math.Min(255, alpha)), (rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255); }
+
+    static void StrokeLayer(Graphics gr, FrameSpecT sp, FrameStyle.Layer l, int ox, int oy) {
+      using (var pen = new Pen(FrameColor(l.Rgb, l.Alpha), l.Width) { LineJoin = LineJoin.Round })
+      using (var path = sp.Path(l.Offset, ox, oy)) gr.DrawPath(pen, path);
+    }
+
+    // the still part (glow rings, then the line) of a frame into a bitmap at (ox, oy)
+    void PaintFrame(Graphics gr, FrameSpecT sp, int ox, int oy) {
+      foreach (var l in FrameStyle.Still(sp.Rgb, sp.Gap)) StrokeLayer(gr, sp, l, ox, oy);
+    }
+
+    // the owl badge (the Wardsage mark: the shield, dark navy with a gold outline and gold eyes), at {cx, cy, flipped}
+    void PaintOwl(Graphics gr, double[] at, int ox, int oy) {
+      double cx = at[0] - ox, cy = at[1] - oy;
+      var sh = FrameStyle.OwlShield(cx, cy);
+      var pf = new PointF[sh.Length / 2];
+      for (int i = 0; i < pf.Length; i++) pf[i] = new PointF((float)sh[2 * i], (float)sh[2 * i + 1]);
+      using (var br = new SolidBrush(FrameColor(FrameStyle.Navy, 255))) gr.FillPolygon(br, pf);
+      using (var pen = new Pen(FrameColor(FrameStyle.Gold, 255), 1.5f) { LineJoin = LineJoin.Round }) gr.DrawPolygon(pen, pf);
+      foreach (var e in FrameStyle.OwlEyes(cx, cy)) {
+        float r = (float)e[2], q = (float)e[3];
+        using (var br = new SolidBrush(FrameColor(FrameStyle.Gold, 255))) gr.FillEllipse(br, (float)e[0] - r, (float)e[1] - r, 2 * r, 2 * r);
+        using (var br = new SolidBrush(FrameColor(FrameStyle.Navy, 255))) gr.FillEllipse(br, (float)e[0] - q, (float)e[1] - q, 2 * q, 2 * q);
       }
+    }
+
+    // the pulse: one small window beside the scene window, repainted at most 15 times a second, only while a frame is shown
+    sealed class PulseState { public List<FrameSpecT> Specs; }
+    readonly Dictionary<GlowWindow, PulseState> pulses = new Dictionary<GlowWindow, PulseState>();
+
+    void SetPulse(GlowWindow win, List<FrameSpecT> specs) {
+      if (specs == null || specs.Count == 0) { pulses.Remove(win); GlowWindow pw0 = win == tip ? tipPulse : glowPulse; if (pw0.Visible) pw0.Hide(); return; }
+      pulses[win] = new PulseState { Specs = specs };
+      if (!pulseTimer.Enabled) pulseTimer.Start();
+    }
+
+    void PulseTick() {
+      float phase = FrameStyle.Phase((uint)Environment.TickCount);
+      int live = 0;
+      foreach (var kv in new List<KeyValuePair<GlowWindow, PulseState>>(pulses)) {
+        var win = kv.Key; var pw = win == tip ? tipPulse : glowPulse;
+        if (!win.Visible || !GameDrawable()) { if (pw.Visible) pw.Hide(); continue; }
+        int x0 = int.MaxValue, y0 = int.MaxValue, x1 = int.MinValue, y1 = int.MinValue, M = 12;
+        foreach (var sp in kv.Value.Specs) { x0 = Math.Min(x0, sp.Box[0] - M); y0 = Math.Min(y0, sp.Box[1] - M); x1 = Math.Max(x1, sp.Box[0] + sp.Box[2] + M); y1 = Math.Max(y1, sp.Box[1] + sp.Box[3] + M); }
+        if (sceneW > 0 && sceneH > 0) { x0 = Math.Max(x0, sceneX); y0 = Math.Max(y0, sceneY); x1 = Math.Min(x1, sceneX + sceneW); y1 = Math.Min(y1, sceneY + sceneH); }
+        int bw = x1 - x0, bh = y1 - y0;
+        if (bw <= 0 || bh <= 0 || (long)bw * bh > 250000) { if (pw.Visible) pw.Hide(); continue; }   // a big spread of frames stays still
+        live++;
+        using (var bmp = new Bitmap(bw, bh, PixelFormat.Format32bppArgb)) {
+          using (var gr = Graphics.FromImage(bmp)) {
+            gr.SmoothingMode = SmoothingMode.AntiAlias; gr.Clear(Color.Transparent);
+            foreach (var sp in kv.Value.Specs) { var l = FrameStyle.Pulse(sp.Rgb, phase, sp.Gap); if (l != null) StrokeLayer(gr, sp, l, x0, y0); }
+          }
+          pw.Put(bmp, x0, y0);
+          pw.Parts.Clear(); pw.Parts.Add(new[] { x0, y0, bw, bh });
+        }
+      }
+      if (live == 0) pulseTimer.Stop();
     }
 
     // a cell frame among many (the storage cleanup): style 0 = to select (the game's gold frame, steady), 1 = selected (a thin
     // dim gold line with a check mark), 2 = selected but not on the list (red)
-    void PaintMark(Graphics gr, float x, float y, float w, float h, int style, int G) {
+    void PaintMark(Graphics gr, float x, float y, float w, float h, int style, int G, FrameSpecT sp, int ox, int oy) {
       if (style == 0) {
         if (GuideStyle) PaintGuide(gr, HlCell(0, 0, 0, 0), 0, 0, 0, 0, false, G, null, 0, 0, new GeoRect { X = x, Y = y, W = w, H = h });   // storage cleanup: the gold edge of the new highlight
-        else PaintFrame(gr, x, y, w, h, 1f, G);
+        else PaintFrame(gr, sp, ox, oy);
         return;
       }
       if (style == 1) {
@@ -1774,19 +1846,8 @@ namespace RealmForge {
         }
         return;
       }
-      // style 2: unmistakable - a red tint over the whole cell, a thick red frame with a glow, a red cross badge in the corner
-      for (int i = G; i >= 2; i -= 3)
-        using (var pen = new Pen(Color.FromArgb((int)(150 * (1 - i / (float)(G + 2))), 255, 70, 50), 3f)) gr.DrawPath(pen, Round(x - i, y - i, w + 2 * i, h + 2 * i, 6 + i));
-      using (var tint = new SolidBrush(Color.FromArgb(95, 230, 30, 24))) gr.FillPath(tint, Round(x - 2, y - 2, w + 4, h + 4, 7));
-      using (var pen = new Pen(Color.FromArgb(240, 40, 6, 4), 9f)) gr.DrawPath(pen, Round(x - 2, y - 2, w + 4, h + 4, 7));
-      using (var pen = new Pen(Color.FromArgb(255, 240, 56, 44), 6f)) gr.DrawPath(pen, Round(x - 2, y - 2, w + 4, h + 4, 7));
-      float br = Math.Max(10f, Math.Min(w, h) * 0.17f), bx = x + w - br - 2, by = y + br + 2;
-      using (var bg = new SolidBrush(Color.FromArgb(250, 190, 24, 20))) gr.FillEllipse(bg, bx - br, by - br, 2 * br, 2 * br);
-      using (var pen = new Pen(Color.FromArgb(255, 255, 214, 204), 2f)) gr.DrawEllipse(pen, bx - br, by - br, 2 * br, 2 * br);
-      using (var pen = new Pen(Color.White, Math.Max(2.5f, br * 0.24f)) { StartCap = LineCap.Round, EndCap = LineCap.Round }) {
-        float d = br * 0.42f;
-        gr.DrawLine(pen, bx - d, by - d, bx + d, by + d); gr.DrawLine(pen, bx + d, by - d, bx - d, by + d);
-      }
+      // style 2: the same branded frame in red (no owl)
+      PaintFrame(gr, sp, ox, oy);
     }
 
     // the step plate: strictly rectangular, dark, a thin bronze border with a gold line inside; the owl and the caps line,
@@ -1795,23 +1856,22 @@ namespace RealmForge {
       using (var shadow = new SolidBrush(Color.FromArgb(110, 0, 0, 0))) gr.FillRectangle(shadow, x + 3, y + 5, w, h);
       if (p.Pill) {
         var path = Round(x, y, w, h, h / 2f - 0.5f);
-        using (var bg = new SolidBrush(Color.FromArgb(240, 18, 16, 12))) gr.FillPath(bg, path);
-        using (var pen = new Pen(Color.FromArgb(255, 224, 182, 96), 2f)) gr.DrawPath(pen, path);
+        using (var bg = new SolidBrush(Color.FromArgb(244, 0x12, 0x1A, 0x2B))) gr.FillPath(bg, path);
+        using (var pen = new Pen(FrameColor(FrameStyle.Gold, 255), 2f)) gr.DrawPath(pen, path);
       } else {
         // a warning plate (a stray item is ticked) is red: dark red body, a bright red border
-        using (var bg = new SolidBrush(p.Warn ? Color.FromArgb(246, 52, 12, 12) : Color.FromArgb(242, 16, 18, 26))) gr.FillRectangle(bg, x, y, w, h);
-        using (var pen = new Pen(p.Warn ? Color.FromArgb(255, 214, 54, 44) : Color.FromArgb(255, 122, 92, 46), p.Warn ? 3f : 2f)) gr.DrawRectangle(pen, x + 1, y + 1, w - 2, h - 2);
-        using (var pen = new Pen(p.Warn ? Color.FromArgb(200, 255, 130, 110) : Color.FromArgb(170, 224, 182, 96), 1f)) gr.DrawRectangle(pen, x + 3.5f, y + 3.5f, w - 7, h - 7);
+        using (var bg = new SolidBrush(p.Warn ? Color.FromArgb(246, 52, 12, 12) : Color.FromArgb(244, 0x12, 0x1A, 0x2B))) gr.FillRectangle(bg, x, y, w, h);
+        using (var pen = new Pen(FrameColor(p.Warn ? FrameStyle.Red : FrameStyle.Gold, 255), 2f)) gr.DrawRectangle(pen, x + 1, y + 1, w - 2, h - 2);
       }
       if (ptr != null) {
         var tri = new[] { new PointF((float)ptr[0] + ox, (float)ptr[1] + oy), new PointF((float)ptr[2] + ox, (float)ptr[3] + oy), new PointF((float)ptr[4] + ox, (float)ptr[5] + oy) };
-        using (var br = new SolidBrush(Color.FromArgb(255, 224, 182, 96))) gr.FillPolygon(br, tri);
+        using (var br = new SolidBrush(FrameColor(p.Warn ? FrameStyle.Red : FrameStyle.Gold, 255))) gr.FillPolygon(br, tri);
       }
       float ty = y + (p.Pill ? pad / 2 : pad), tx = x + pad;
       if (p.Caps != "") {
         var owlImg = OwlTex();
         if (owlImg != null) gr.DrawImage(owlImg, tx, ty, owl, owl);
-        using (var gold = new SolidBrush(Color.FromArgb(255, 216, 176, 96)))
+        using (var gold = new SolidBrush(FrameColor(FrameStyle.Gold, 255)))
           gr.DrawString(p.Caps.ToUpperInvariant(), fCaps, gold, tx + owl + 6, ty + (owl - fCaps.Height) / 2);
         ty += capsH + 2;
       }

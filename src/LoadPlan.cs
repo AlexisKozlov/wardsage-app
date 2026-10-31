@@ -89,9 +89,9 @@ namespace RealmForge {
   /// <summary>Per activity: calls and time, summed lock-free from any thread; one line a minute (test build).</summary>
   public static class LoadMeter {
     public const int Tick = 0, Screens = 1, Look = 2, Draw = 3, Put = 4, Live = 5, Cdk = 6, Grades = 7, Game = 8, RecBtn = 9,
-      RecFrame = 10, Pass = 11, Forms = 12, Scan = 13, UiBtn = 14, Cell = 15, Order = 16, Count = 17;
+      RecFrame = 10, Pass = 11, Forms = 12, Scan = 13, UiBtn = 14, Cell = 15, Order = 16, Pulse = 17, Count = 18;
     static readonly string[] names = { "tick", "screens", "look", "draw", "put", "live", "cdk", "grades", "game", "recbtn",
-      "recframe", "pass", "forms", "scan", "uibtn", "cell", "zorder" };
+      "recframe", "pass", "forms", "scan", "uibtn", "cell", "zorder", "pulse" };
     static readonly long[] calls = new long[Count], ticks = new long[Count];
     static readonly long[] lastCalls = new long[Count], lastTicks = new long[Count];
 

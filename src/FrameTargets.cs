@@ -219,8 +219,94 @@ namespace RealmForge {
   /// <summary>The hint frame's look (app/Overlay.cs PaintFrame): the frame before 4882eea - glow rings from G px out down to 4 px, a 6 px dark underline
   /// and a 3.5 px gold line 2 px out of the frame rect.</summary>
   public static class FrameStyle {
-    public const float LineWidth = 3.5f, UnderWidth = 6f;
-    public static int GlowAlpha(int i, int G, float pulse) { return Math.Max(0, Math.Min(255, (int)(110 * pulse * (1 - i / (float)(G + 2))))); }
+    // the branded frame (owner-approved mockup C1): a 4 px gold line exactly on the target's outline, a 2 px pulse line 4 px out that
+    // drifts outward and fades (1.4 s), a 4 px soft glow, an owl badge on the top edge; the red frame is the same in red
+    public const float MainWidth = 4f, PulseWidth = 2f, PulseOffset = 4f, PulseTravel = 3f, GlowWidth = 4f, CornerR = 4f, OwlSize = 18f, HalfMain = 2f;
+    public const int Gold = 0xF0C36A, Red = 0xE05A5A, Navy = 0x121A2B, PeriodMs = 1400, PulseMs = 66;   // 66 ms = 15 fps at most
+    public const int PulseAlpha = 128;   // 50 %
+    public const float NoLimit = 999f;
+
+    /// <summary>One stroke of the frame: its centre <see cref="Offset"/> px outward from the outline, its width, alpha (0..255) and colour.</summary>
+    public sealed class Layer { public float Offset, Width; public int Alpha, Rgb; }
+
+    /// <summary>The pulse's phase 0..1 at <paramref name="ms"/> (one period = <see cref="PeriodMs"/>).</summary>
+    public static float Phase(long ms) { return (float)(((ms % PeriodMs) + PeriodMs) % PeriodMs) / PeriodMs; }
+
+    /// <summary>The still part: the glow rings (outside the line, 2..6 px), then the main line. <paramref name="gap"/>: px from the outline
+    /// to a neighbour (<see cref="NoLimit"/> = none); rings are cut to it, the main line stays on the edge.</summary>
+    public static List<Layer> Still(int rgb, float gap) {
+      var l = new List<Layer>();
+      Add(l, new Layer { Offset = HalfMain + GlowWidth * 0.75f, Width = GlowWidth / 2, Alpha = 40, Rgb = rgb }, gap, false);
+      Add(l, new Layer { Offset = HalfMain + GlowWidth * 0.25f, Width = GlowWidth / 2, Alpha = 105, Rgb = rgb }, gap, false);
+      l.Add(new Layer { Offset = 0, Width = MainWidth, Alpha = 255, Rgb = rgb });
+      return l;
+    }
+
+    /// <summary>The pulse line at <paramref name="phase"/>: 2 px, 50 % at the start, 4 px out, drifting outward and fading; null = no room for it.</summary>
+    public static Layer Pulse(int rgb, float phase, float gap) {
+      phase = Math.Max(0f, Math.Min(1f, phase));
+      var l = new List<Layer>();
+      Add(l, new Layer { Offset = PulseOffset + PulseTravel * phase, Width = PulseWidth, Alpha = (int)Math.Round(PulseAlpha * (1 - phase)), Rgb = rgb }, gap, true);
+      return l.Count > 0 && l[0].Alpha > 0 ? l[0] : null;
+    }
+
+    // keeps a stroke inside the gap to the neighbour (from the outline; the main line's outer edge is HalfMain): shifted in (shift) and then cut; dropped when nothing is left
+    static void Add(List<Layer> to, Layer a, float gap, bool shift) {
+      if (gap >= NoLimit) { to.Add(a); return; }
+      float room = Math.Max(HalfMain, gap);   // the gap is measured from the outline; the line itself reaches HalfMain out
+      if (shift) a.Offset = Math.Max(HalfMain + a.Width / 2, Math.Min(a.Offset, room - a.Width / 2));
+      float inner = Math.Max(HalfMain, a.Offset - a.Width / 2), outer = Math.Min(room, a.Offset + a.Width / 2);
+      if (outer - inner < 0.5f) return;
+      a.Offset = (inner + outer) / 2; a.Width = outer - inner;
+      to.Add(a);
+    }
+
+    /// <summary>Free px outside the frame rect (x, y, w, h) before the nearest of <paramref name="others"/> (rects x, y, w, h; a rect that
+    /// touches or overlaps it counts 0); <see cref="NoLimit"/> when there are none. The frame never paints over the neighbouring cell.</summary>
+    public static float Gap(double x, double y, double w, double h, IEnumerable<double[]> others) {
+      double best = NoLimit;
+      if (others == null) return NoLimit;
+      foreach (var o in others) {
+        if (o == null || o.Length < 4) continue;
+        if (Math.Abs(o[0] - x) < 0.5 && Math.Abs(o[1] - y) < 0.5 && Math.Abs(o[2] - w) < 0.5 && Math.Abs(o[3] - h) < 0.5) continue;   // itself
+        double dx = Math.Max(0, Math.Max(o[0] - (x + w), x - (o[0] + o[2]))), dy = Math.Max(0, Math.Max(o[1] - (y + h), y - (o[1] + o[3])));
+        double d = dx > 0 && dy > 0 ? Math.Sqrt(dx * dx + dy * dy) : Math.Max(dx, dy);
+        best = Math.Min(best, d);
+      }
+      return (float)best;
+    }
+
+    /// <summary>The owl badge on the frame's top edge, centred (<see cref="OwlSize"/> px): {centre x, centre y, flipped 0|1}. It goes to the bottom
+    /// edge when the top one would leave the client (its top above <paramref name="clientTop"/>).</summary>
+    public static double[] OwlAt(double x, double y, double w, double h, double clientTop) {
+      double cx = x + w / 2, top = y;
+      bool flip = top - OwlSize / 2 < clientTop;
+      return new[] { cx, flip ? y + h : top, flip ? 1.0 : 0.0 };
+    }
+
+    /// <summary>The badge's body: the Wardsage mark's shield (app icon) as a polygon {x, y, x, y, ...} of height <see cref="OwlSize"/> centred on (cx, cy).</summary>
+    public static double[] OwlShield(double cx, double cy) {
+      // the icon's path in its 128 box: M12 14 L40 50 L64 32 L88 50 L116 14 C122 62 108 106 64 124 C20 106 6 62 12 14
+      var pts = new List<double>();
+      Action<double, double> P = (a, b) => { pts.Add(a); pts.Add(b); };
+      P(12, 14); P(40, 50); P(64, 32); P(88, 50); P(116, 14);
+      double[][] c = { new[] { 116.0, 14, 122, 62, 108, 106, 64, 124 }, new[] { 64.0, 124, 20, 106, 6, 62, 12, 14 } };
+      foreach (var s in c)
+        for (int i = 1; i <= 8; i++) {
+          double t = i / 8.0, u = 1 - t;
+          P(u * u * u * s[0] + 3 * u * u * t * s[2] + 3 * u * t * t * s[4] + t * t * t * s[6], u * u * u * s[1] + 3 * u * u * t * s[3] + 3 * u * t * t * s[5] + t * t * t * s[7]);
+        }
+      double k = OwlSize / 110.0;
+      var r = new double[pts.Count];
+      for (int i = 0; i < r.Length; i += 2) { r[i] = cx + (pts[i] - 64) * k; r[i + 1] = cy + (pts[i + 1] - 69) * k; }
+      return r;
+    }
+
+    /// <summary>The badge's two eyes {x, y, outer radius, pupil radius} (the icon's eyes at (42, 76) and (86, 76), radius 11 and 5).</summary>
+    public static double[][] OwlEyes(double cx, double cy) {
+      double k = OwlSize / 110.0;
+      return new[] { new[] { cx + (42 - 64) * k, cy + (76 - 69) * k, 11 * k, 5 * k }, new[] { cx + (86 - 64) * k, cy + (76 - 69) * k, 11 * k, 5 * k } };
+    }
   }
 
   /// <summary>An item cell's one frame: the whole cell (the icon with the stat plate under it), and held through a moment without a fresh read.</summary>

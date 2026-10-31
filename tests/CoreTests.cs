@@ -1418,8 +1418,6 @@ static partial class CoreTests {
 
     Func<double, double, bool> Nr = (a1, b1) => Math.Abs(a1 - b1) < 0.01;
     // owner 2026-10-31 on 1.6.66.423: frames too thin, two frames on a cell, «Снаряжение» on its icon contour, a hero frame between two cards, flicker
-    Check(FrameStyle.LineWidth >= 3.5f && FrameStyle.UnderWidth >= 6f && FrameStyle.GlowAlpha(4, 14, 1f) >= 70 && FrameStyle.GlowAlpha(14, 14, 1f) > 0,
-      "the frame is clearly visible: the 3.5 px gold line on a 6 px dark underline with glow rings (the look before 4882eea)");
     // a frame on a cell never reaches the neighbouring cells (the line and the glow stay in the gap), inventory and artifact grids, small and big windows
     foreach (var sz in new[] { new[] { 1366.0, 705.0 }, new[] { 1920.0, 1009.0 }, new[] { 1280.0, 720.0 } })
       foreach (bool artG in new[] { false, true }) {
@@ -1429,13 +1427,14 @@ static partial class CoreTests {
         var c0 = new[] { x0, 100.0, cellW, cellH };
         var right = new[] { x0 + px, 100.0, cellW, cellH }; var below = new[] { x0, 100.0 + py, cellW, cellH };
         foreach (bool glowToo in new[] { false }) {
-          double reach = 4;   // the drawn line: 2 px out of the cell's edge, 3.5 px wide, rounded up
+          double reach = 4;   // the drawn line: the 4 px line centred on the edge reaches 2 px out; 4 leaves room for the cut-down glow
           var fb = new[] { c0[0] - reach, c0[1] - reach, c0[2] + 2 * reach, c0[3] + 2 * reach };
           Func<double[], bool> hit = nb => { var ov = FrameAudit.Overlap(fb, nb); return ov[0] > 0 && ov[1] > 0; };
           Check(!hit(right) && !hit(below),
             "frame geometry: a frame on a cell (" + (artG ? "artifact" : "gear") + " grid, " + gW + "x" + gH + ", " + (glowToo ? "with the glow" : "the line") + ") does not meet the neighbouring cells (gaps " + Math.Round(px - cellW, 1) + " / " + Math.Round(py - cellH, 1) + " px)");
         }
       }
+    FrameStyleTests.Run(Check);
     // a cell: the c_Frame icon square 80 x 80 and the cell root with the stat plate under it 84 x 112 -> one frame on the root
     var cell = new UiCell { Uid = 7, Index = 3, X = 102, Y = 202, W = 80, H = 80, Icon = "c_Frame", Active = true, InView = 1 };
     cell.BX = cell.X; cell.BY = cell.Y; cell.BW = cell.W; cell.BH = cell.H;
