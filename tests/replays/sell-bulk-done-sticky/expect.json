@@ -1,0 +1,14 @@
+{
+  "name": "sell-bulk-done-sticky",
+  "source": "20261031-233356-923d71",
+  "kind": "sell",
+  "status": "pass",
+  "text": "bulk sale finished, the Prodat frame vanished on mouse move (fixed b2cf9fb)",
+  "checks": [
+    {
+      "id": "final-step-stays",
+      "text": "once the cleanup is done it stays done (mouse moves, clicks, game behind): the frame on «Продать» never goes out",
+      "type": "sell-done-sticky"
+    }
+  ]
+}

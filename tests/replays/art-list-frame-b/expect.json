@@ -1,0 +1,15 @@
+{
+  "name": "art-list-frame-b",
+  "source": "20261101-005302-46a18e",
+  "kind": "art",
+  "status": "pending",
+  "pending": "artifact list frame shifted (not fixed yet)",
+  "text": "artifact list frame shifted",
+  "checks": [
+    {
+      "id": "art-frame-on-card",
+      "text": "on every artifact-list step the frame sits on the card the guide names (rows placed from the game's scroll / the picture)",
+      "type": "frame-on-card"
+    }
+  ]
+}

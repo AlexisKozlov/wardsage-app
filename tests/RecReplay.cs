@@ -89,20 +89,52 @@ static class RecReplay {
     return ok ? r : double.NaN;
   }
 
+  /// <summary>tests/replays/name: replays the fixture and judges its expect.json (tests/ReplayCheck.cs). 0 = as the expectation says.</summary>
+  static int Check(string fixDir) {
+    string expect = Path.Combine(fixDir, "expect.json");
+    if (!File.Exists(expect)) { Console.WriteLine("no expect.json in " + fixDir); return 2; }
+    var ticks = new List<ReplayCheck.Tick>(); int mism;
+    string tmp = Path.Combine(Path.GetTempPath(), "recreplay-" + Guid.NewGuid().ToString("N"));
+    try {
+      var sw = new StringWriter(); var old = Console.Out; Console.SetOut(sw);
+      int rc; try { rc = Replay(fixDir, tmp, null, 0, ticks, out mism); } finally { Console.SetOut(old); }
+      if (rc != 0) { Console.WriteLine(Path.GetFileName(fixDir) + ": the fixture cannot be replayed (" + rc + ")"); return 1; }
+      Console.WriteLine("== " + Path.GetFileName(Path.GetFullPath(fixDir).TrimEnd(Path.DirectorySeparatorChar)) + " (" + ticks.Count + " ticks, " + mism + " recorded-vs-replayed differences)");
+      return ReplayCheck.Judge(expect, ticks, mism, Console.Out);
+    } finally { try { if (Directory.Exists(tmp)) Directory.Delete(tmp, true); } catch (Exception) { } }
+  }
+
   static int Main(string[] args) {
     if (args.Length >= 3 && args[0] == "--make-fixture") return Fixture.Make(args[1], args[2]);
+    if (args.Length >= 2 && args[0] == "--check") return Check(args[1]);
+    if (args.Length >= 2 && args[0] == "--make-pilot-fixture") return PilotFixture.Make(args[1]);
     if (args.Length < 2) { Console.WriteLine("usage: RecReplay.dll <recording dir with part_*.zip> <out dir>"); return 2; }
     string dir = args[0], outDir = args[1], pixDir = null; int artPos = 0;
     for (int ai = 2; ai + 1 < args.Length; ai++) { if (args[ai] == "--pixels") pixDir = args[ai + 1]; else if (args[ai] == "--art-pos") int.TryParse(args[ai + 1], out artPos); }
+    int mm; return Replay(dir, outDir, pixDir, artPos, null, out mm);
+  }
+
+  static int Replay(string dir, string outDir, string pixDir, int artPos, List<ReplayCheck.Tick> ticks, out int mismatchCount) {
+    mismatchCount = 0;
+    var pilots = new ReplayCheck.Pilots();
     var artPic = new ArtGridPicture(); int nPic = 0, nPicOk = 0; HashSet<long> prevSel = null;
     var parts = new List<string>();
     if (Directory.Exists(dir)) foreach (var f in Directory.GetFiles(dir, "*.zip")) if (RecNames.PartOf(Path.GetFileName(f)) >= 0) parts.Add(f);
     parts.Sort(StringComparer.Ordinal);
-    if (parts.Count == 0) { Console.WriteLine("no part_NNN.zip / NNN.zip in " + dir); return 2; }
+    bool plain = File.Exists(Path.Combine(dir, "frames.jsonl"));   // a fixture of tests/replays: one frames.jsonl, no pictures
+    if (parts.Count == 0 && !plain) { Console.WriteLine("no part_NNN.zip / NNN.zip in " + dir); return 2; }
     Directory.CreateDirectory(outDir);
 
     // ---- read every part: the frames' names with their lines, the data files
     var frames = new List<Frame>(); string layoutText = null, geoText = null; var partNotes = new List<string>();
+    if (plain) {
+      int n = 0;
+      foreach (var line in File.ReadAllText(Path.Combine(dir, "frames.jsonl"), new UTF8Encoding(false)).Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries)) {
+        var j = O(MiniJson.TryParse(line)); if (j != null) frames.Add(new Frame { Name = RecNames.FrameFile(++n).Replace(".jpg", ""), J = j });
+      }
+      if (File.Exists(Path.Combine(dir, "geometry.json"))) geoText = File.ReadAllText(Path.Combine(dir, "geometry.json"), new UTF8Encoding(false));
+      if (File.Exists(Path.Combine(dir, "layout.json"))) layoutText = File.ReadAllText(Path.Combine(dir, "layout.json"), new UTF8Encoding(false));
+    }
     foreach (var pf in parts) {
       try {
         using (var z = ZipFile.OpenRead(pf)) {
@@ -140,7 +172,7 @@ static class RecReplay {
       string screenRec = Str(j, "screen") ?? "-", stepRec = Str(j, "step") ?? "-";
       var recRects = RectsOf(Get(j, "frames"));
       var inn = O(Get(j, "in"));
-      string screenRep = "-", stepRep = "-", mode = "-"; List<RecFrameRect> repRects = null;
+      string screenRep = "-", stepRep = "-", mode = "-"; List<RecFrameRect> repRects = null; ReplayCheck.Tick tk = null;
       var why = new List<string>();
       if (inn == null) { nNoInputs++; screenRep = null; stepRep = null; }
       else {
@@ -164,6 +196,12 @@ static class RecReplay {
         }
         mode = ctx != null ? ctx.Mode : "";
         long tn = (long)Num(inn, "tn", 0);
+        if (ticks != null) {
+          tk = new ReplayCheck.Tick { T = t, Tn = tn, Screen = screenRep, Step = stepRec, Mode = mode, Front = ctx != null && ctx.Front };
+          double srow = Get(inn, "sr") is double ? Num(inn, "sr", double.NaN) : double.NaN;
+          pilots.Run(tk, inn, ctx, tickSlots, j, w, h, U, srow);
+          ticks.Add(tk);
+        }
         if (ctx != null && mode == "locate" && ctx.Req != null) {
           var req = ctx.Req;
           var step = LocateGuide.Next(req, tracker.Inv, tracker.Rs, lastHero, ctx.Cols, ctx.OnAccount);
@@ -213,6 +251,7 @@ static class RecReplay {
         }
       }
       // ---- compare
+      if (tk != null) tk.Step = stepRep ?? stepRec;
       if (screenRep != null) { nAny++; if (screenRep != screenRec) { nScreen++; why.Add("screen: recorded '" + screenRec + "', replayed '" + screenRep + "'"); } }
       if (stepRep != null && (mode == "locate" || mode == "sell")) { nReplayedStep++; if (stepRep != stepRec) { nStep++; why.Add("step: recorded '" + stepRec + "', replayed '" + stepRep + "'"); } }
       if (repRects != null) {
@@ -259,6 +298,7 @@ static class RecReplay {
     s.AppendLine("steps checked: " + nReplayedStep + ", mismatches " + nStep);
     s.AppendLine("rectangle sets checked: " + nReplayedRect + ", mismatches " + nRect);
     s.AppendLine("mismatches: " + mismatches.Count);
+    mismatchCount = mismatches.Count;
     if (pixDir != null) s.AppendLine("rows from the picture: " + nPicOk + " of " + nPic + " frames placed");
     File.WriteAllText(Path.Combine(outDir, "summary.txt"), s.ToString(), new UTF8Encoding(false));
     Console.Write(s.ToString());
@@ -310,6 +350,38 @@ static class Fixture {
       w.Add(RecNames.FrameFile(n + 1), Convert.FromBase64String(Jpg), line);
     }
     Console.WriteLine("fixture: " + w.Close());
+    return 0;
+  }
+}
+
+/// <summary>A recording in the recorder's own "ap" format made from a run of the item pilot on a simulated plain auto-equip (the item in the top row, its live cell read
+/// about every 210 ms (every other 105 ms tick), the game answering a click 600 ms later): proves the "ap" slot round-trips and gives tests/replays/sim-plain-pick (live 1.6.66.450: «выберите
+/// оружие» framed, never clicked; the fix 87dc12b is in AutoPilot, so a pilot with the old wait fails this replay). tests/replays/sim-plain-pick is this tool's output.</summary>
+static class PilotFixture {
+  public static int Make(string dir) {
+    var geo = new ListGeometry(); double H = 1009, cell = geo.CellW * H;
+    var types = new[] { 0, 1, 1, 1, 1, 1, 1 };
+    double real = ScrollAnchor.TopRow1(geo, H);
+    const long target = 9012; long sel = 0; bool tip = false;
+    var p = new AutoPilot(geo); var due = new List<KeyValuePair<long, Action>>();
+    double ty = real + geo.RowOffset(types, 1) * H + cell / 2, tx = geo.ColLeft(2) * H + cell / 2;
+    var lines = new List<string>(); int n = 0;
+    for (long t = 0; t < 10000; t += 105) {
+      foreach (var e in due.ToArray()) if (e.Key <= t) { e.Value(); due.Remove(e); }
+      var v = new AutoView { NowMs = t, Foreground = true, H = H, Target = target, Row = 1, Col = 2, Sel = sel, SelRow = sel > 0 ? 1 : 0, SelCol = sel > 0 ? 2 : 0,
+                             AnchorHas = true, Row1Top = real, Types = types, TipKnown = true, TipShown = tip, Hero = 5, ScreenHero = 5, Owner = 0,
+                             LiveGrid = true, LiveTarget = (t / 105) % 2 == 0, LiveX = tx, LiveY = ty, ListSig = 1, FilterAt = 0 };
+      var a = p.Step(v);
+      var info = new RecInfo { Screen = "HeroScreen", Step = "-", Ap = RecView.Line(v, a, p.State), TickNow = t };
+      var enc = new RecLineEncoder();
+      lines.Add(RecJson.Line(++n * 105, 1920, 1080, 0.5, false, info, 10, 20, "{\"tn\":" + t + ",\"reads\":[],\"ap\":" + info.Ap + "}"));
+      if (p.State == "failed" || p.State == "done" || sel == target) break;
+      if (a.Kind != AutoKind.Click) continue;
+      due.Add(new KeyValuePair<long, Action>(t + 600, () => { sel = target; tip = true; }));
+    }
+    Directory.CreateDirectory(dir);
+    File.WriteAllText(Path.Combine(dir, "frames.jsonl"), string.Join("\n", lines.ToArray()) + "\n", new UTF8Encoding(false));
+    Console.WriteLine("pilot fixture: " + lines.Count + " ticks in " + dir);
     return 0;
   }
 }

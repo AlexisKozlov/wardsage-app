@@ -1997,6 +1997,7 @@ namespace RealmForge {
         long[] tags = HeroTags(runHero);
         if (tags != null) { hv.HeroClass = tags[0]; hv.HeroCamps = new long[tags.Length - 1]; Array.Copy(tags, 1, hv.HeroCamps, 0, tags.Length - 1); }
         var ha = hpilot.Step(hv);
+        if (recB != null) { try { recB.Hp = RecView.Line(hv, ha, hpilot.State); } catch (Exception) { } }
         lastHeroView = hv;
         LogHero(hv);
         if (ha != null) {
@@ -2060,6 +2061,7 @@ namespace RealmForge {
       v.FilterAt = filterTouchAt; v.ListSig = typesPtr != 0 ? (long)typesPtr * 31 + (types != null ? types.Length : 0) : 0;
       LiveGearView(v, cr);
       var a = pilot.Step(v);
+      if (recB != null) { try { recB.Ap = RecView.Line(v, a, pilot.State); } catch (Exception) { } }   // (the recorder keeps the view and the answer: tests/ReplayCheck.cs runs the pilot on them again)
       AutoSay(pilot.State);
       if (pilot.Trace != "") { Log.Write("auto: " + pilot.Trace); lastPilotTrace = pilot.Trace; pilot.Trace = ""; }
       if (a.Kind == AutoKind.None) return;

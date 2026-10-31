@@ -274,6 +274,8 @@ namespace RealmForge {
       if (info.SInv != null) { persistent["sinv"] = info.SInv; persistent["sinvList"] = info.SInvList; }
       var vol = new Dictionary<string, string>();
       if (info.Fd != null) vol["fd"] = info.Fd;
+      if (info.Ap != null) vol["ap"] = info.Ap;
+      if (info.Hp != null) vol["hp"] = info.Hp;
       if (!double.IsNaN(info.PlaceRow1)) vol["pr"] = RecIn.D(info.PlaceRow1);
       if (!double.IsNaN(info.InvSmooth)) vol["sr"] = RecIn.D(info.InvSmooth);
       return Encode(info.TickNow, RecReads.Take(info.ReadSeq), persistent, vol);
@@ -355,5 +357,75 @@ namespace RealmForge {
       return r;
     }
     static int Style(SellFrame f) { return f.Style == "todo" ? 0 : f.Style == "done" ? 1 : 2; }
+  }
+
+  /// <summary>The pilots' views as the recorder keeps them (TEST build): the whole view a pilot's Step got this tick, with the pilot's answer and state, so
+  /// a replay can run the real pilot on it again (tests/ReplayCheck.cs). Public fields of plain types (bool, int, long, double, string, ulong and arrays
+  /// of them) go in by reflection: a field added to a view later is recorded without a change here. A slot is written only on a tick the pilot ran.</summary>
+  public static class RecView {
+    static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
+    static string Num(double v) { return double.IsNaN(v) || double.IsInfinity(v) ? "null" : v.ToString("R", Inv); }
+    static string One(object v) {
+      if (v == null) return "null";
+      if (v is bool) return (bool)v ? "true" : "false";
+      if (v is double) return Num((double)v);
+      if (v is string) return MiniJson.Quote((string)v);
+      if (v is ulong) return MiniJson.Quote(((ulong)v).ToString(Inv));
+      if (v is int || v is long) return Convert.ToInt64(v, Inv).ToString(Inv);
+      return null;
+    }
+    /// <summary>{"v":{field:value..},"a":{k,x,y,dy,cell},"s":state}: <paramref name="act"/> is the pilot's answer (may be null), <paramref name="state"/> its State afterwards.</summary>
+    public static string Line(object view, AutoAction act, string state) {
+      var sb = new StringBuilder("{\"v\":{"); bool first = true;
+      foreach (var f in view.GetType().GetFields()) {
+        if (f.IsStatic) continue;
+        object val = f.GetValue(view); string j = One(val);
+        if (j == null && val is Array) {
+          var e = f.FieldType.GetElementType(); var parts = new List<string>(); bool ok = true;
+          foreach (var x in (Array)val) { string k = One(x); if (k == null) { ok = false; break; } parts.Add(k); }
+          if (!ok || e == null) continue;
+          j = "[" + string.Join(",", parts.ToArray()) + "]";
+        }
+        if (j == null) continue;
+        if (!first) sb.Append(','); first = false;
+        sb.Append(MiniJson.Quote(f.Name)).Append(':').Append(j);
+      }
+      sb.Append('}');
+      if (act != null) sb.Append(",\"a\":{\"k\":").Append(((int)act.Kind).ToString(Inv)).Append(",\"x\":").Append(Num(act.X)).Append(",\"y\":").Append(Num(act.Y)).Append(",\"dy\":").Append(Num(act.DY)).Append(",\"cell\":").Append(act.Cell.ToString(Inv)).Append('}');
+      return sb.Append(",\"s\":").Append(MiniJson.Quote(state ?? "")).Append('}').ToString();
+    }
+
+    /// <summary>The view back: every field the line has is set (others keep the view's own default).</summary>
+    public static void Fill(object view, object v) {
+      var d = RecIn.O(v); if (d == null) return;
+      foreach (var f in view.GetType().GetFields()) {
+        object o; if (f.IsStatic || !d.TryGetValue(f.Name, out o)) continue;
+        var t = f.FieldType;
+        try {
+          if (t == typeof(bool) && o is bool) f.SetValue(view, o);
+          else if (t == typeof(double)) f.SetValue(view, o is double ? (double)o : double.NaN);
+          else if (t == typeof(int) && o is double) f.SetValue(view, (int)(double)o);
+          else if (t == typeof(long) && o is double) f.SetValue(view, (long)(double)o);
+          else if (t == typeof(string)) f.SetValue(view, o as string);
+          else if (t == typeof(ulong) && o is string) { ulong u; if (ulong.TryParse((string)o, NumberStyles.None, Inv, out u)) f.SetValue(view, u); }
+          else if (t.IsArray && o is List<object>) {
+            var l = (List<object>)o; var e = t.GetElementType(); var arr = Array.CreateInstance(e, l.Count);
+            for (int i = 0; i < l.Count; i++) {
+              if (e == typeof(double)) arr.SetValue(l[i] is double ? (double)l[i] : double.NaN, i);
+              else if (e == typeof(int)) arr.SetValue((int)(l[i] is double ? (double)l[i] : 0), i);
+              else if (e == typeof(long)) arr.SetValue((long)(l[i] is double ? (double)l[i] : 0), i);
+            }
+            f.SetValue(view, arr);
+          }
+        } catch (Exception) { }
+      }
+    }
+
+    /// <summary>The recorded answer.</summary>
+    public static AutoAction Action(object line) {
+      var d = RecIn.O(line); var a = RecIn.O(d != null && d.ContainsKey("a") ? d["a"] : null);
+      if (a == null) return AutoAction.Nothing;
+      return new AutoAction { Kind = (AutoKind)(int)RecIn.Num(a, "k", 0), X = RecIn.Num(a, "x", double.NaN), Y = RecIn.Num(a, "y", double.NaN), DY = RecIn.Num(a, "dy", 0), Cell = (long)RecIn.Num(a, "cell", 0) };
+    }
   }
 }

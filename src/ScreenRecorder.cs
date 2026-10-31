@@ -44,6 +44,8 @@ namespace RealmForge {
     // the raw inputs of the tick (src/RecInputs.cs): the overlay clock, the last screen read before the tick ended, the context, the sell hint's inventory, the Foundry list as drawn, the row 1 the list cell was placed from
     public long TickNow, ReadSeq;
     public string Ctx, SInv, SInvList, Fd;
+    /// <summary>The item pilot's and the hero pilot's view of this tick with their answers (RecView.Line); null = the pilot did not run.</summary>
+    public string Ap, Hp;
     public double PlaceRow1 = double.NaN;
     public InventoryScreen SellInv;
 

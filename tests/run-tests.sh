@@ -95,7 +95,7 @@ cp "$OUT/CoreTests.runtimeconfig.json" "$OUT/ScreenReplay.runtimeconfig.json"
 dotnet exec --runtimeconfig "$OUT/ScreenReplay.runtimeconfig.json" "$OUT/ScreenReplay.dll" tests/fixtures/screens
 
 step "5c. Recording replay: a synthetic recording (tests/RecReplay.cs makes it with the recorder's own writers) is replayed, its drawing script runs"
-$CSC -target:exe -nostdlib -nowarn:SYSLIB0014 $NET8_REFS -r:"$OUT/RealmForge.Core.dll" -out:"$OUT/RecReplay.dll" tests/RecReplay.cs
+$CSC -target:exe -nostdlib -nowarn:SYSLIB0014 $NET8_REFS -r:"$OUT/RealmForge.Core.dll" -out:"$OUT/RecReplay.dll" tests/RecReplay.cs tests/ReplayCheck.cs
 cp "$OUT/CoreTests.runtimeconfig.json" "$OUT/RecReplay.runtimeconfig.json"
 rm -rf "$OUT/rec-fixture" "$OUT/rec-out" "$OUT/rec-png"
 dotnet exec --runtimeconfig "$OUT/RecReplay.runtimeconfig.json" "$OUT/RecReplay.dll" --make-fixture "$OUT/rec-fixture" tests/fixtures/screens/_geometry.json
@@ -105,6 +105,14 @@ grep -q "^mismatches: 1\$" "$OUT/rec-out/summary.txt" || { echo "RecReplay: expe
 echo "replay ok (the planted mismatch found, the other frames agree)"
 SHARP=/home/dev/wardsage/wardsage-web/node_modules/sharp
 if [ -d "$SHARP" ]; then node tests/rec-draw.mjs "$OUT/rec-fixture" "$OUT/rec-out" "$OUT/rec-png" && test -s "$OUT/rec-png/frame_0001.png" && echo "rec-draw ok"; else echo "rec-draw SKIPPED (sharp not found)"; fi
+
+step "5d. Regression replays of the owner's recordings (tests/replays/*: made by tools/rec-to-test.mjs; the real guide / pilot code runs on the recorded inputs, expect.json says what must happen; status pending = a known open bug that must still fail)"
+replay_bad=0
+for d in tests/replays/*/; do
+  [ -f "$d/expect.json" ] || continue
+  dotnet exec --runtimeconfig "$OUT/RecReplay.runtimeconfig.json" "$OUT/RecReplay.dll" --check "$d" || replay_bad=1
+done
+[ "$replay_bad" = 0 ] || { echo "recording replays: a regression (or a pending one that now passes)"; exit 1; }
 
 if command -v mono >/dev/null && [ -f "$FX45/System.dll" ]; then
   step "6. Same tests on Mono (.NET Framework 4.5 API, HttpWebRequest of the Framework family, real DPAPI class)"
