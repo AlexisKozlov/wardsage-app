@@ -5916,6 +5916,8 @@ static partial class CoreTests {
     var odd = ScreenState.Classify(new ScreenInputs { CityForm = false, Offers = new List<string>(), TopUnknown = "Form_NotInTheGame", ShownKnown = "" }, 0);
     Eq("", ClickGate.UnknownBackBlock(odd), "screen map: a form not in the map keeps the older back press");
     Eq(MapMove.None, ClickGate.MapExit(odd, 1920, 1080, 1080).Move, "screen map: a form not in the map gets no map exit");
+    var sold = ScreenState.Classify(new ScreenInputs { CityForm = false, Offers = new List<string>(), TopUnknown = "Form_SoldierDetail", ShownKnown = "" }, 0);
+    Eq(MapMove.Back, ClickGate.MapExit(sold, 1920, 1080, 1080).Move, "screen map: the demon soldier's details leave by the back arrow");
     // an E pop-up over the city: never Escape there, the pilot stops
     string ecity = null; foreach (var e in ScreenMap.All) if (e.Class == 'E') { ecity = e.Name; break; }
     var ec = ScreenState.Classify(new ScreenInputs { CityForm = true, Offers = new List<string>(), TopCity = ecity, ShownKnown = "" }, 0);

@@ -906,7 +906,7 @@
     }
     else if (a === 'saveSite') host.send({ cmd: 'setSite', site: $('#site').value });
     else if (a === 'resetSite') host.send({ cmd: 'setSite', site: S.defaultSite });
-    else if (a === 'reload') loadPlans();
+    else if (a === 'reload') { S.refreshStart = true; loadPlans(); }
     else if (a === 'updRestart') host.send({ cmd: 'update.restart' });
     else if (a === 'noticeX') { try { localStorage.setItem('rf.noticeOff', noticeText()); } catch (e) { } render(); }
     else if (a === 'updLater') { S.updDismissed = true; render(); }
@@ -1020,7 +1020,8 @@
           const i = S.plans.list.findIndex((p) => p.id === id); S.sel = i >= 0 ? i : 0;
           // «Надеть в игре» pressed on the site a moment ago: start it (older plans wait for «Надеть» here)
           // (several heroes at once: they queue up and go one after another)
-          const fresh = G.freshPlans(S.plans.list, S.seen, Date.now(), S.bootAt);
+          const fresh = G.freshPlans(S.plans.list, S.refreshStart ? {} : S.seen, Date.now()).filter((p) => !S.refreshStart || (S.run !== p.id && !S.queue.includes(p.id)));
+          S.refreshStart = false;
           S.seen = S.seen || {}; S.plans.list.forEach((p) => { S.seen[p.id] = true; });
           if (fresh.length && S.autoClick && S.game.running) { enqueue(fresh); if (!S.compact) S.page = 'equip'; }
           watchPlans(fresh.length > 0);
@@ -1123,7 +1124,7 @@
         if (!m.list) { if (L.run) host.send({ cmd: 'sell.stop' }); L.run = false; }
         else if (m.list.id !== was) {
           // «Очистить в игре» on the site a moment ago: start at once (an older list waits for «Выделить в игре»)
-          const fresh = G.freshSell(m.list, L.seen, Date.now(), S.bootAt);
+          const fresh = G.freshSell(m.list, L.seen, Date.now());
           L.seen[m.list.id] = true;
           if (L.run) host.send({ cmd: 'sell.stop' });
           L.run = false;
@@ -1174,7 +1175,7 @@
   // lab (test build): the host forced auto click on after the plans / the list had come in: start them like the toggle would
   function labRecheck() {
     if (!S.game.running) return;
-    const fresh = G.freshPlans(S.plans.list, {}, Date.now(), S.bootAt).filter((p) => S.run !== p.id && !S.queue.includes(p.id));
+    const fresh = G.freshPlans(S.plans.list, {}, Date.now()).filter((p) => S.run !== p.id && !S.queue.includes(p.id));
     if (fresh.length) { enqueue(fresh); if (!S.compact) S.page = 'equip'; }
     const L = S.sell;
     if (L.list && L.list.kind !== 'artifact' && (!L.run || L.hint)) { if (L.run) host.send({ cmd: 'sell.stop' }); sellStart(); if (!S.compact) S.page = 'equip'; }

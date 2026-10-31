@@ -63,21 +63,22 @@ ok(G.next(plan, live({ owner: { 6423: 0 } })).item.uid === 6423, 'in the bag: wa
 {
   const now = Date.parse('2026-09-26T10:00:00Z');
   const mk = (id, min) => ({ id, heroUid: 1, items: [], createdAt: new Date(now - min * 60000).toISOString() });
-  ok(G.freshPlan([mk('a', 1)], null, now) === null, 'first listing after the app starts: nothing started');
+  ok(G.freshPlan([mk('a', 1)], null, now).id === 'a', 'first listing after the app starts: a plan made a minute ago is started');
   ok(G.freshPlan([mk('a', 1)], {}, now).id === 'a', 'a plan made a minute ago, not seen before: started');
   ok(G.freshPlan([mk('a', 1)], { a: true }, now) === null, 'seen before: not started again');
-  ok(G.freshPlan([mk('b', 10)], {}, now) === null, 'made 10 minutes ago: waits for «Надеть»');
+  ok(G.freshPlan([mk('b', 11)], {}, now) === null, 'made 11 minutes ago: waits for «Надеть»');
+  ok(G.freshPlan([mk('c', 8)], null, now).id === 'c', 'made 8 minutes ago, before the app start: started');
   const boot = now - 90000;
   ok(G.freshPlans([mk('a', 1)], null, now, boot).map((p) => p.id).join() === 'a', 'first listing, plan made after the app started: started');
-  ok(G.freshPlans([mk('a', 2)], null, now, now - 30000).length === 0, 'first listing, plan made before the app started: waits for «Надеть»');
-  ok(G.freshPlans([mk('a', 1)], null, now).length === 0, 'first listing without the start time: nothing started');
+  ok(G.freshPlans([mk('a', 2)], null, now, now - 30000).length === 1, 'first listing, plan made before the app started but within 10 minutes: started');
+  ok(G.freshPlans([mk('a', 1)], null, now).length === 1, 'first listing without the start time: started');
 }
 // storage cleanup list: started only when made after the app started, within 10 minutes
 {
   const now = Date.parse('2026-09-26T10:00:00Z'), boot = now - 60000;
   const mk = (min) => ({ id: 's', createdAt: new Date(now - min * 60000).toISOString() });
-  ok(G.freshSell(mk(25), {}, now, boot) === false, 'sell list made 25 minutes before the start: not fresh');
-  ok(G.freshSell(mk(6), {}, now, boot) === false, 'sell list made 5 minutes before the start: not fresh');
+  ok(G.freshSell(mk(25), {}, now, boot) === false, 'sell list made 25 minutes ago: not fresh');
+  ok(G.freshSell(mk(6), {}, now, boot) === true, 'sell list made 6 minutes ago, before the start: fresh');
   ok(G.freshSell(mk(0.5), {}, now, boot) === true, 'sell list made after the start: fresh');
   ok(G.freshSell(mk(0.5), { s: true }, now, boot) === false, 'sell list seen before: not fresh');
 }

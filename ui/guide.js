@@ -114,22 +114,21 @@
     return current >= 0 && current < plans.length ? current : 0;
   }
 
-  // A plan made on the site within the last 3 minutes that this app has not listed before: the player pressed «Надеть в
-  // игре» just now, so it starts by itself. The first listing after the app starts only marks what is there.
-  const FRESH_MS = 3 * 60 * 1000;
-  // `since` (when the app started): the first listing still starts the plans made after that moment.
-  function freshPlans(plans, seen, now, since) {
-    if (!seen && !(since > 0)) return [];
+  // A plan made on the site within the last 10 minutes that this app has not listed before: the player pressed «Надеть в
+  // игре» just now, so it starts by itself. This holds for the first listing after the app starts too (a build sent just before
+  // an update restart); older plans wait for «Надеть». `since` is kept for old callers and ignored.
+  const FRESH_MS = 10 * 60 * 1000;
+  function freshPlans(plans, seen, now) {
     return (plans || []).filter((p) => !(seen && seen[p.id]) && p.createdAt && now - Date.parse(p.createdAt) < FRESH_MS
-      && now - Date.parse(p.createdAt) > -FRESH_MS && (seen || Date.parse(p.createdAt) >= since));
+      && now - Date.parse(p.createdAt) > -FRESH_MS);
   }
-  // A storage cleanup list from the site: started by itself only when made within 10 minutes, after the app started, and not listed before.
-  // (A list paused shortly before an update must not start clicking after the restart.)
+  // A storage cleanup list from the site: started by itself only when made within 10 minutes and not listed before
+  // (the app start time does not matter, as for plans).
   const SELL_FRESH_MS = 10 * 60 * 1000;
-  function freshSell(list, seen, now, bootAt) {
+  function freshSell(list, seen, now) {
     if (!list || !list.createdAt || (seen && seen[list.id])) return false;
     const at = Date.parse(list.createdAt);
-    return now - at < SELL_FRESH_MS && at >= bootAt;
+    return now - at < SELL_FRESH_MS && now - at > -SELL_FRESH_MS;
   }
   function freshPlan(plans, seen, now) { return freshPlans(plans, seen, now)[0] || null; }
 
