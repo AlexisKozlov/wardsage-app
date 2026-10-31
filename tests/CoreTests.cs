@@ -1342,6 +1342,81 @@ static partial class CoreTests {
     Check(ls.Find(10.6, 10, 50, 51, 1500, out fb, out fs) && fs.K == "circle" && !ls.Find(10, 10, 50, 50, 3500, out fb, out fs) && !ls.Find(20, 10, 50, 50, 1500, out fb, out fs), "live shapes: found by the frame rect within 1.5 px and 2 s");
   }
 
+  /// <summary>Every hint frame target (src/FrameTargets.cs) is a widget of the UI graph / the geometry file, and «Улучшить» of the gem screen is framed
+  /// on its plate (the owner's photo 2026-10-31: the glow far past the button, the hint over its top).</summary>
+  static void FrameTargetTests() {
+    Console.WriteLine("Frame targets (src/FrameTargets.cs) and the «Улучшить» frame:");
+    // the keys the frames use: the steps' own keys, the plates' neighbours, the overlay's
+    var used = new HashSet<string>(FrameTargets.OverlayKeys);
+    foreach (LocateKind lk in Enum.GetValues(typeof(LocateKind)))
+      foreach (bool gear in new[] { false, true }) foreach (var key in LocateFrames.AvoidKeys(new LocateStep { Kind = lk, OnGear = gear })) used.Add(key);
+    foreach (var key in new[] { "hero.workshop", "inventory.workshop", "foundry.tab.ascend", "foundry.tab.recast", "ascend.filter", "recast.filter", "filter.reset", "filter.suitOpen",
+      "filter.mainOpen", "filter.subOpen", "filter.suit.tab.0", "filter.suit.tab.1", "ascend.button", "recast.button", "gem.button", "inventory.bulkBack", "inventory.cardLeft", "inventory.cardSolo",
+      "inventory.leftTab.artifact", "inventory.artWorkshop", "artifact.tab.promote", "artifact.tab.enhance", "artifact.promoteBtn", "artifact.matList", "city.barButton",
+      ArtEquipFrames.KeyTab, ArtEquipFrames.KeyOpenList, ArtEquipFrames.KeyAdd, ArtEquipFrames.KeyReplace, ArtEquipFrames.KeyPopup, ArtEquipFrames.KeyHideWorn }) used.Add(key);
+    for (int i = 0; i < 5; i++) { used.Add("ascend.slot." + i); used.Add("recast.slot." + i); }
+    foreach (UiCellKind ck in Enum.GetValues(typeof(UiCellKind))) if (ck != UiCellKind.None) used.Add(FrameTargets.KeyOf(ck));
+    var unmapped = new List<string>(); foreach (var key in used) if (FrameTargets.Of(key) == null) unmapped.Add(key);
+    Check(unmapped.Count == 0, "every key the frames use is mapped (" + used.Count + " keys)" + (unmapped.Count > 0 ? ": unmapped " + string.Join(", ", unmapped.ToArray()) : ""));
+    // each target: its form in the UI graph, its tree a widget path of the graph (or the geometry file's path of the key); a prefab-only path is one of the known panels made in code
+    string gp = Path.Combine("tests", "fixtures", "screens", "_geometry.json");
+    var geo = File.Exists(gp) ? MiniJson.Parse(File.ReadAllText(gp)) as Dictionary<string, object> : null;
+    var rects = geo != null && geo.ContainsKey("rects") ? geo["rects"] as Dictionary<string, object> : null;
+    var prefabOk = new HashSet<string> { "inventory.leftTab.equip", "inventory.leftTab.artifact", "inventory.artBulkSell", "hero.confirm", "hero.artOpenList", "hero.artAdd",
+      "artifact.tab.promote", "artifact.tab.enhance", "artifact.promoteBtn", "gem.button" };
+    var bad = new List<string>(); int live = 0, layout = 0;
+    foreach (var t in FrameTargets.All) {
+      if (t.Layout != null) { layout++; if (t.Layout.Length < 10) bad.Add(t.Key + " (no reason)"); continue; }
+      live++;
+      var f = UiGraph.ByName(t.Form);
+      if (f == null) { bad.Add(t.Key + " (form " + t.Form + " not in the graph)"); continue; }
+      if (t.Cell != UiCellKind.None) continue;
+      if (t.Click != ClickTarget.None && RFX.UiWidgetOf(t.Click, null) == null) { bad.Add(t.Key + " (no pilot read)"); continue; }
+      if (t.Click == ClickTarget.None && (FrameTargets.Widget(t) == null || FrameTargets.Widget(t).Trees.Length == 0)) { bad.Add(t.Key + " (no widget)"); continue; }
+      string t0 = t.Tree.Split('|')[0];
+      if (t.Src == "graph") {
+        bool hit = false; foreach (var w in f.Widgets) if (w.Path == t0 || t0.StartsWith(w.Path + "/", StringComparison.Ordinal) || w.Path.StartsWith(t0 + "/", StringComparison.Ordinal)) hit = true;
+        if (!hit) bad.Add(t.Key + " (" + t0 + " not a widget of " + t.Form + " in the graph)");
+      } else if (t.Src == "geometry") {
+        var r = rects != null && rects.ContainsKey(t.Key) ? rects[t.Key] as Dictionary<string, object> : null;
+        string path = r != null && r.ContainsKey("path") ? r["path"] as string : null;
+        if (rects != null && (path == null || !path.EndsWith("/" + t0, StringComparison.Ordinal))) bad.Add(t.Key + " (geometry path " + (path ?? "none") + ")");
+      } else if (!prefabOk.Contains(t.Key)) bad.Add(t.Key + " (prefab path not on the known list)");
+    }
+    Check(bad.Count == 0, "every target resolves to a widget path (" + live + " read live, " + layout + " layout only)" + (bad.Count > 0 ? ": " + string.Join("; ", bad.ToArray()) : ""));
+    Console.WriteLine("    targets: " + live + " live (" + FrameTargets.All.Count + " keys), " + layout + " layout only");
+    var gw = FrameTargets.Widget(FrameTargets.Of("gem.button"));
+    Check(gw != null && gw.Form == "Form_EquipGemMain" && gw.Trees.Length == 5 && gw.Trees[0].EndsWith("/c_BtnReforge", StringComparison.Ordinal) && gw.IconChild == "common_btn_special" && gw.Icon,
+      "«Улучшить»: read by its tree (the shown function's widget wins), framed on its plate common_btn_special");
+
+    // «Улучшить» on a 1366 x 705 client (the owner's laptop): the button 216 x 70 canvas units at the layout's place, its plate the same rect
+    double W = 1366, H = 705, U = 705, k = U / 640;
+    double bw = 216 * k, bh = 70 * k, bx = W / 2 - bw / 2, by = H / 2 + 0.3453 * U;
+    var art = SpriteArt.Of("common_btn_special");
+    Check(art != null, "the plate's sprite is in the table");
+    if (art != null) {
+      var fit = SpriteArt.FrameOf(art, new SpriteArt.Draw { Type = 1, Px = k }, bx, by, bw, bh, W, H);
+      var b = fit.Box; var fr = fit.Frame;
+      Check(b.X >= bx - 0.01 && b.Y >= by - 0.01 && b.X + b.W <= bx + bw + 0.01 && b.Y + b.H <= by + bh + 0.01, "the plate's visible art lies inside the button");
+      // the frame drawn (PaintFrame: the gold line 1 px out of the frame rect, the glow inside it) never more than 3 px past the art
+      double outL = b.X - (fr[0] - 1), outT = b.Y - (fr[1] - 1), outR = fr[0] + fr[2] + 1 - (b.X + b.W), outB = fr[1] + fr[3] + 1 - (b.Y + b.H);
+      Check(Math.Max(Math.Max(outL, outT), Math.Max(outR, outB)) <= FrameTargets.MaxOut + 0.01 && Math.Min(Math.Min(outL, outT), Math.Min(outR, outB)) >= 0,
+        "the frame hugs the plate: at most " + FrameTargets.MaxOut + " px past its art (was the texture 20 % and a 14 px glow out)");
+      Check(fr[2] <= bw + 2 * FrameTargets.MaxOut && fr[3] <= bh + 2 * FrameTargets.MaxOut, "the frame is no bigger than the button + 3 px a side");
+      // the hint of the photo: 1.42 x the button's width, 1.07 x its height; the gem screen's other buttons to keep off
+      var tgt = new[] { (int)Math.Round(fr[0]), (int)Math.Round(fr[1]), (int)Math.Round(fr[2]), (int)Math.Round(fr[3]) };
+      int pw = (int)(1.42 * bw), ph = (int)(1.07 * bh); char side;
+      var avoid = new[] { new[] { (int)bx, (int)by, (int)bw, (int)bh } };
+      var pos = HintLayout.Place(tgt, avoid, pw, ph, (int)W, (int)H, out side);
+      bool clear = !HintLayout.OnTarget(pos[0], pos[1], pw, ph, tgt);
+      int gap = side == 't' ? tgt[1] - (pos[1] + ph) : side == 'b' ? pos[1] - (tgt[1] + tgt[3]) : side == 'r' ? pos[0] - (tgt[0] + tgt[2]) : tgt[0] - (pos[0] + pw);
+      Check(clear && gap >= HintLayout.TargetGap, "the hint stays off «Улучшить»: side " + side + ", " + gap + " px from the frame (at least " + HintLayout.TargetGap + ")");
+      // a cramped client (the button near the bottom, no room above for the plate at its size): still never on the button
+      var pos2 = HintLayout.Place(tgt, avoid, pw, (int)(tgt[1] - 2), (int)W, (int)H, out side);
+      Check(!HintLayout.OnTarget(pos2[0], pos2[1], pw, (int)(tgt[1] - 2), tgt), "no free place: the least covering place OFF the button is taken (side " + side + ")");
+    }
+  }
+
   /// <summary>The step plate scales with the game client (src/HintLayout.cs HintSize) and keeps its place while the step stays (PlateHold).</summary>
   static void HintSizeTests() {
     Console.WriteLine("The step plate's size and its hold (src/HintLayout.cs HintSize, PlateHold):");
@@ -1494,7 +1569,7 @@ static partial class CoreTests {
   }
 
   static void UiButtonTests() {
-    UiIconTests(); HintSizeTests(); SpriteArtTests();
+    UiIconTests(); HintSizeTests(); SpriteArtTests(); FrameTargetTests();
     ScreenTopTests();
     Console.WriteLine("A button's live rect by name (src/UiButtons.cs):");
     var m = new FakeLua(4 << 20); RFX.TestMemory = m; RFX.ForgetLive(); RFX.ForgetClasses();

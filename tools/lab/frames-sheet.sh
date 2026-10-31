@@ -37,24 +37,31 @@ const [logF, dir, out, from] = process.argv.slice(2);
 const sharp = createRequire(from)('sharp');
 const nums = (s) => (s || '').split(',').map(Number);
 const rx = /frame check: (\S+) sprite=(.*?) shape=(\w+) frame=\[([-\d,]+)\](?: visible=\[([-\d,]+)\])? client=\[([-\d,]+)\] screen=\[([-\d,]+)\]/;
+// one row per target and source (src=live|layout: src/FrameTargets.cs, app/Overlay.cs FrameFor), so every scenario's targets are on the sheet
 const seen = new Set(), frames = [];
-for (const line of fs.readFileSync(logF, 'utf8').split('\n')) {
-  const m = rx.exec(line); if (!m) continue;
-  const key = m[1] + '|' + m[2] + '|' + m[4]; if (seen.has(key)) continue; seen.add(key);
-  frames.push({ who: m[1], sprite: m[2].split(' ')[0], shape: m[3], f: nums(m[4]), v: m[5] ? nums(m[5]) : null, c: nums(m[6]), s: nums(m[7]) });
-}
-// the stop shot of each scenario first, then its lead-up frames, newest first; at most 4
-const files = fs.readdirSync(dir).filter((n) => /\.(jpe?g|png)$/i.test(n)).map((n) => path.join(dir, n))
-  .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs).slice(0, 4);
+const lines = fs.readFileSync(logF, 'utf8').split('\n');
+lines.forEach((line, at) => {
+  const m = rx.exec(line); if (!m) return;
+  const src = (/ src=(\w+)/.exec(line) || [])[1] || 'live';
+  const key = m[1] + '|' + src; if (seen.has(key)) return; seen.add(key);
+  frames.push({ who: m[1] + ' (' + src + ')', sprite: m[2].split(' ')[0], shape: m[3], f: nums(m[4]), v: m[5] ? nums(m[5]) : null, c: nums(m[6]), s: nums(m[7]), p: at / Math.max(1, lines.length - 1) });
+});
+// the run's shots in their order (lab-shots.sh writes them as the lab made them); each frame is cropped from the 3 shots nearest its own place in
+// the log (a scenario's frames from that scenario's shots)
+const all = fs.readdirSync(dir).filter((n) => /\.(jpe?g|png)$/i.test(n)).map((n) => path.join(dir, n))
+  .sort((a, b) => fs.statSync(a).mtimeMs - fs.statSync(b).mtimeMs || a.localeCompare(b));
+const near = (p) => { const c = Math.round(p * (all.length - 1)); const lo = Math.max(0, Math.min(all.length - 3, c - 1)); return all.slice(lo, lo + 3); };
+const files = all;
 if (!frames.length || !files.length) { console.log(frames.length ? 'no screenshots in ' + dir : 'no frame checks'); process.exit(0); }
 const TH = 150, LW = 330, PAD = 6;
 const esc = (t) => t.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
-const metas = await Promise.all(files.map((f) => sharp(f).metadata()));
+const metaOf = new Map((await Promise.all(files.map(async (f) => [f, await sharp(f).metadata()]))));
 const rows = [];
 for (const fr of frames) {
   const tiles = [];
-  for (let i = 0; i < files.length; i++) {
-    const { width: iw, height: ih } = metas[i];
+  const mine = near(fr.p);
+  for (let i = 0; i < mine.length; i++) {
+    const { width: iw, height: ih } = metaOf.get(mine[i]);
     const k = iw / fr.s[2];                                   // image px per screen px (the shot is the monitor, scaled)
     const m = Math.max(12, 0.6 * Math.max(fr.f[2], fr.f[3]));
     const sx = fr.c[0] - fr.s[0] + fr.f[0] - m, sy = fr.c[1] - fr.s[1] + fr.f[1] - m, sw = fr.f[2] + 2 * m, sh = fr.f[3] + 2 * m;
@@ -63,7 +70,7 @@ for (const fr of frames) {
     const z = TH / h, tw = Math.max(1, Math.round(w * z));
     const fx = ((fr.c[0] - fr.s[0] + fr.f[0]) * k - l) * z, fy = ((fr.c[1] - fr.s[1] + fr.f[1]) * k - t) * z;
     const box = `<svg width="${tw}" height="${TH}"><rect x="${fx.toFixed(1)}" y="${fy.toFixed(1)}" width="${(fr.f[2] * k * z).toFixed(1)}" height="${(fr.f[3] * k * z).toFixed(1)}" fill="none" stroke="#3ff" stroke-width="1" stroke-dasharray="3,3"/></svg>`;
-    const buf = await sharp(files[i]).extract({ left: l, top: t, width: w, height: h }).resize(tw, TH).composite([{ input: Buffer.from(box), top: 0, left: 0 }]).png().toBuffer();
+    const buf = await sharp(mine[i]).extract({ left: l, top: t, width: w, height: h }).resize(tw, TH).composite([{ input: Buffer.from(box), top: 0, left: 0 }]).png().toBuffer();
     tiles.push({ buf, w: tw });
   }
   rows.push({ fr, tiles });
@@ -79,5 +86,5 @@ rows.forEach((r, j) => {
   for (const t of r.tiles) { comps.push({ input: t.buf, top: y, left: x }); x += t.w + PAD; }
 });
 await sharp({ create: { width: W, height: H, channels: 3, background: '#1a1a22' } }).composite(comps).png().toFile(out);
-console.log(out + ' (' + rows.length + ' frames x ' + files.length + ' shots)');
+console.log(out + ' (' + rows.length + ' targets, ' + files.length + ' shots)');
 EOF

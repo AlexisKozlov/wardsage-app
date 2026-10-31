@@ -1195,7 +1195,8 @@ namespace RealmForge {
       var bs = screens.Current;
       if (bs != null && bs.Kind == ScreenKind.Inventory && bs.InvEquipTab && bs.InvBulk && Tx("bulkExit") != "") {
         var br = Geo.Current != null ? Geo.Current.Rect("inventory.bulkBack", W, H, U) : null;
-        if (br != null) DrawTip(o.X + (int)br.X, o.Y + (int)br.Y, (int)br.W, (int)br.H, new[] { Tx("bulkExit") }, H);
+        bool bl; var bb = br != null ? FrameForI("inventory.bulkBack", new[] { (int)br.X, (int)br.Y, (int)br.W, (int)br.H }, W, H, U, out bl) : null;
+        if (bb != null) DrawTip(o.X + bb[0], o.Y + bb[1], bb[2], bb[3], new[] { Tx("bulkExit") }, H);
         else DrawTipTop(new[] { Tx("bulkExit") });
         return;
       }
@@ -1257,12 +1258,14 @@ namespace RealmForge {
         confirmBtn = ConfirmButton(o, W, H);
         // «Заменить» where the game has put it (live rect, fresh: its drawn part, 2 px round it), else the picture's / the geometry's
         var lb = hg.Replace(W, H); var lay = confirmBtn ?? lb;
-        var lv = LiveFrame(ClickTarget.EquipConfirm, null, W, H, U, true, new double[] { lay[0], lay[1], lay[2], lay[3] });
-        if (lv != null) confirmBtn = new[] { (int)Math.Round(lv[0]), (int)Math.Round(lv[1]), (int)Math.Round(lv[2]), (int)Math.Round(lv[3]) };
+        bool cl; var cf = FrameForI(FrameTargets.KeyConfirm, lay, W, H, U, out cl);
+        if (cl) confirmBtn = cf;
       }
-      int[] r = hintKind == "filter" ? hg.Filter(W, H) : hintKind == "replace" ? confirmBtn ?? hg.Replace(W, H) : hintKind == "slot" ? hg.Slot(hintSlot, W, H) : null;
+      bool rl;
+      int[] r = hintKind == "filter" ? FrameForI("hero.filter", hg.Filter(W, H), W, H, U, out rl) : hintKind == "replace" ? confirmBtn ?? hg.Replace(W, H)
+        : hintKind == "slot" ? FrameForI("hero.slot." + hintSlot, hg.Slot(hintSlot, W, H), W, H, U, out rl) : null;
       // the hero is open on another tab: its «Снаряжение» tab (right edge)
-      if (hintKind == "geartab") { int s = (int)(0.1 * U); r = new[] { (int)(W - hg2.GearTabDX * U) - s / 2, (int)(hg2.GearTabY * U) - s / 2, s, s }; }
+      if (hintKind == "geartab") { int s = (int)(0.1 * U); r = FrameForI("hero.tab.equip", new[] { (int)(W - hg2.GearTabDX * U) - s / 2, (int)(hg2.GearTabY * U) - s / 2, s, s }, W, H, U, out rl); }
       if (r == null) HideTip(); else DrawTip(o.X + r[0], o.Y + r[1], r[2], r[3], hintLines, H, false, false, hintKind == "geartab", null, false, GuideStyle && hintKind == "replace" ? HlRound(o.X + r[0], o.Y + r[1], r[2], r[3], true) : null);   // «Заменить»: the player's own press, the edge only
     }
 
@@ -1283,8 +1286,9 @@ namespace RealmForge {
     // the tip at the filter pop-up's ×
     void CloseFilterTip(W32.POINT o, double fx, double fy, double U, double H, string text) {
       filterState = "filter_open";
-      int rr = Math.Max(8, (int)(0.028 * U));
-      DrawTip(o.X + (int)fx - rr, o.Y + (int)fy - rr, 2 * rr, 2 * rr, string.IsNullOrEmpty(text) ? new string[0] : new[] { text }, H);
+      int rr = Math.Max(8, (int)(0.028 * U)); bool cl;
+      var cr = FrameForI("hero.filterClose", new[] { (int)fx - rr, (int)fy - rr, 2 * rr, 2 * rr }, sceneW, H, U, out cl);
+      DrawTip(o.X + cr[0], o.Y + cr[1], cr[2], cr[3], string.IsNullOrEmpty(text) ? new string[0] : new[] { text }, H);
     }
 
     /// <summary>The game's gear filter has a set or a main stat chosen now.</summary>
@@ -1363,8 +1367,9 @@ namespace RealmForge {
       if (hs == null || hs.Hero == 0 || !hs.FormOk) {
         heroShownWas = 0; heroAnchor.Has = false; heroDiag = "screen closed";
         if (HeroesButtonSeen(o, W, H)) {
-          int s = (int)(0.1 * U);
-          DrawTip(o.X + (int)(W - hg2.HeroesBtnDX * U) - s / 2, o.Y + (int)(H - 0.1156 * U) - s / 2, s, s, HeroTip(4), H, false, false, true);
+          int s = (int)(0.1 * U); bool hl;
+          var hb = FrameForI(FrameTargets.KeyCityHeroes, new[] { (int)(W - hg2.HeroesBtnDX * U) - s / 2, (int)(H - 0.1156 * U) - s / 2, s, s }, W, H, U, out hl);
+          DrawTip(o.X + hb[0], o.Y + hb[1], hb[2], hb[3], HeroTip(4), H, false, false, true);
         } else HideTip();
         return;
       }
@@ -1375,9 +1380,8 @@ namespace RealmForge {
       if (hs.Part >= 0) {   // another hero's gear list covers the hero list: back
         heroShownWas = hs.Hero; heroAnchor.Has = false;
         int s = (int)(0.07 * U);
-        var lv = LiveFrame(ClickTarget.HeroBack, null, W, H, U, true, new double[] { hg2.BackX * U - s / 2, hg2.BackY * U - s / 2, s, s });   // the back arrow where the game has put it (live rect, fresh: its picture, 2 px round it), else the geometry's
-        if (lv != null) DrawTip(o.X + (int)Math.Round(lv[0]), o.Y + (int)Math.Round(lv[1]), (int)Math.Round(lv[2]), (int)Math.Round(lv[3]), HeroTip(5), H, false, true);
-        else DrawTip(o.X + (int)(hg2.BackX * U) - s / 2, o.Y + (int)(hg2.BackY * U) - s / 2, s, s, HeroTip(5), H, false, true);
+        bool bl; var bk = FrameForI(FrameTargets.KeyHeroBack, new[] { (int)(hg2.BackX * U) - s / 2, (int)(hg2.BackY * U) - s / 2, s, s }, W, H, U, out bl);   // the back arrow where the game has put it, else the geometry's
+        DrawTip(o.X + bk[0], o.Y + bk[1], bk[2], bk[3], HeroTip(5), H, false, true);
         return;
       }
       int t = Array.IndexOf(hs.Heroes, hintHero);
@@ -1614,7 +1618,7 @@ namespace RealmForge {
             pos = new[] { px, Math.Max(HintLayout.Margin, Math.Min(sceneH - ph - HintLayout.Margin, py)) };
           } else {
             var tc = target != null ? new[] { target[0] - sceneX, target[1] - sceneY, target[2], target[3] } : new[] { sceneW / 2, (int)(0.3 * sceneH), 0, 0 };
-            if (held) { pos = new[] { hold.Pos[0], hold.Pos[1] }; side = hold.Side; }
+            if (held) { pos = new[] { hold.Pos[0], hold.Pos[1] }; side = hold.Side; if (target != null && HintLayout.OnTarget(pos[0], pos[1], pw, ph, tc)) { held = false; pos = HintLayout.Place(tc, av, pw, ph, sceneW, sceneH, out side); } }
             else if (target == null) pos = HintLayout.TopPlateFree(pw, ph, sceneW, sceneH, U, av);   // no target: top centre (off the step's buttons)
             else pos = HintLayout.Place(tc, av, pw, ph, sceneW, sceneH, out side);
             // the text grew on a held place: kept inside the window
@@ -1679,22 +1683,15 @@ namespace RealmForge {
           }
     }
 
-    // the game's gold frame (its texture), bolder: drawn twice over the cell with its glow, a gold line on the edge
+    // the hint frame (owner 2026-10-31: modest): a light glow (0..3 px out of the art) under a 2 px gold line (1..3 px out). The frame rect
+    // is the art's visible box 2 px out (UiIcon.Frame / SpriteArt.FrameOf), so nothing is drawn past the art + FrameTargets.MaxOut px.
     void PaintFrame(Graphics gr, float x, float y, float w, float h, float pulse, int G) {
-      var tex = FrameTex();
-      for (int i = G; i >= 4; i -= 3)
-        using (var pen = new Pen(Color.FromArgb((int)(110 * pulse * (1 - i / (float)(G + 2))), 255, 190, 60), 3f)) gr.DrawPath(pen, Round(x - i, y - i, w + 2 * i, h + 2 * i, 6 + i));
-      if (tex != null) {
-        // the texture's gold line runs 14.5 % inside its picture: stretched so that line lies on the cell's edge
-        float mx = w * 0.204f, my = h * 0.204f;
-        var r = new RectangleF(x - mx, y - my, w + 2 * mx, h + 2 * my);
-        gr.DrawImage(tex, r); gr.DrawImage(tex, r);
-      }
-      using (var pen = new Pen(Color.FromArgb(230, 40, 22, 4), 6f)) gr.DrawPath(pen, Round(x - 2, y - 2, w + 4, h + 4, 7));
-      using (var pen = new Pen(Color.FromArgb(255, 255, 214, 110), 3.5f)) gr.DrawPath(pen, Round(x - 2, y - 2, w + 4, h + 4, 7));
+      float r = Math.Max(2f, Math.Min(7f, Math.Min(w, h) * 0.18f));
+      using (var pen = new Pen(Color.FromArgb((int)(90 * pulse), 255, 190, 60), 3f)) gr.DrawPath(pen, Round(x + 0.5f, y + 0.5f, w - 1, h - 1, r));
+      using (var pen = new Pen(Color.FromArgb(255, 255, 214, 110), 2f)) gr.DrawPath(pen, Round(x, y, w, h, r));
     }
 
-    // the old frame along a button's outline (circle / bevel / round): the same glow rings, dark underline and gold line as PaintFrame, same widths and pulse, on the art's polygon
+    // the same frame along a button's outline (the sprite's contour, a circle / bevel / round): the glow at 1.5 px out, the gold line at 2 px out
     void PaintFrameShape(Graphics gr, Hl hl, int ox, int oy, float pulse, int G) {
       Func<double, GraphicsPath> poly = m => {
         var pts = GuideShape.FrameOutline(hl.Rect, hl.Shape, hl.Inset, m);
@@ -1705,13 +1702,8 @@ namespace RealmForge {
         path.AddPolygon(pf);
         return path;
       };
-      for (int i = G; i >= 4; i -= 3)
-        using (var pen = new Pen(Color.FromArgb((int)(110 * pulse * (1 - i / (float)(G + 2))), 255, 190, 60), 3f) { LineJoin = LineJoin.Round })
-        using (var path = poly(i)) gr.DrawPath(pen, path);
-      using (var path = poly(2)) {
-        using (var pen = new Pen(Color.FromArgb(230, 40, 22, 4), 6f) { LineJoin = LineJoin.Round }) gr.DrawPath(pen, path);
-        using (var pen = new Pen(Color.FromArgb(255, 255, 214, 110), 3.5f) { LineJoin = LineJoin.Round }) gr.DrawPath(pen, path);
-      }
+      using (var path = poly(1.5)) using (var pen = new Pen(Color.FromArgb((int)(90 * pulse), 255, 190, 60), 3f) { LineJoin = LineJoin.Round }) gr.DrawPath(pen, path);
+      using (var path = poly(2)) using (var pen = new Pen(Color.FromArgb(255, 255, 214, 110), 2f) { LineJoin = LineJoin.Round }) gr.DrawPath(pen, path);
     }
 
     // a cell frame among many (the storage cleanup): style 0 = to select (the game's gold frame, steady), 1 = selected (a thin
@@ -2170,14 +2162,14 @@ namespace RealmForge {
       if (shHold) { DrawTipTop(sellHintLines); return; }   // held: the plate only
       if (step.Kind == SellHintKind.PressBulk) {
         // «Массовая продажа» under the list (bottom left): where the auto mode clicks
-        var pb = art ? SellHint.ArtBulkRect(W, H, U) : SellHint.PressBulkRect(W, H, U);
+        bool pl; var pb = FrameForI(art ? "inventory.artBulkSell" : "inventory.bulkSell", art ? SellHint.ArtBulkRect(W, H, U) : SellHint.PressBulkRect(W, H, U), W, H, U, out pl);
         frame++;
         DrawTip(o.X + pb[0], o.Y + pb[1], pb[2], pb[3], sellHintLines, H);
         return;
       }
       if (step.Kind == SellHintKind.OpenArtTab) {
         // the left menu's third toggle «Артефакт»
-        var tb = SellHint.ArtTabRect(W, H, U);
+        bool tl; var tb = FrameForI("inventory.leftTab.artifact", SellHint.ArtTabRect(W, H, U), W, H, U, out tl);
         frame++;
         DrawTip(o.X + tb[0], o.Y + tb[1], tb[2], tb[3], sellHintLines, H);
         return;
@@ -2321,16 +2313,10 @@ namespace RealmForge {
       FoundryScrollNow(step, now);
       // the step's frame from the screen geometry (the site's file, src/LocateFrames.cs): «Литейная», the tabs, the slot, the list cell, the final button
       LocateFrame lf = front && !hold && step.Kind != LocateKind.InList ? LocateFrames.For(step, req.Item, locateRs, null, Geo.Current, W, H, U) : null;
-      if (lf != null && lf.Mark.Kind == "box") {   // «Литейная» / the «Вознесение» tab: framed where the game has put them (live rect, fresh)
-        var lt = lf.Target == "inventory.workshop" ? ClickTarget.FoundryButton : lf.Target == "foundry.tab.ascend" ? ClickTarget.AscendTab : (ClickTarget?)null;
-        var lv = lt != null ? LiveFrame(lt.Value, null, W, H, U, true, lf.Raw != null ? new[] { lf.Raw.X, lf.Raw.Y, lf.Raw.W, lf.Raw.H } : null) : null;   // («Литейная», the tab: their picture, the label left out; the click: the button's centre)
-        var lb = lv != null && lv.Length > 4 ? RFX.UiButtonFresh(lt.Value, null, W, H, Environment.TickCount, RFX.UiFreshMs) : null;
-        if (lv != null) {
-          lf.Raw = new GeoRect { X = lv[0], Y = lv[1], W = lv[2], H = lv[3] };
-          lf.Mark = new LocateMark { Kind = "box", X = (int)Math.Round(lv[0]), Y = (int)Math.Round(lv[1]), W = (int)Math.Round(lv[2]), H = (int)Math.Round(lv[3]) };
-          lf.ClickX = lb != null ? lb.X + lb.W / 2 : lv[0] + lv[2] / 2; lf.ClickY = lb != null ? lb.Y + lb.H / 2 : lv[1] + lv[3] / 2;
-        }
-      }
+      // every button / tab of the step framed where the game has put it (FrameFor: live rect, its sprite's outline; the layout's when unread)
+      bool lfLive = LiveInto(lf, W, H, U);
+      if (lf != null && lf.Target == "cell" && step.Kind == LocateKind.GemFunction) FrameLayoutSay("gem.cell", FrameTargets.Of("gem.cell").Layout, null);
+      if (lf != null && lf.Target == "cell" && step.Kind == LocateKind.AscendFilter) FrameLayoutSay("filter.suit.cell", FrameTargets.Of("filter.suit.cell").Layout, null);
       if (lf != null && lf.Target == "cell" && (step.Kind == LocateKind.AscendPick || step.Kind == LocateKind.RecastPick)) {   // the list cell: where the game has put it (live, fresh)
         double[] lcf; var m0 = lf.Mark;
         var see = LiveCell(step.Kind == LocateKind.AscendPick ? UiCellKind.Ascend : UiCellKind.Recast, uid, null, W, H, U, new double[] { m0.X, m0.Y, m0.W, m0.H }, "locate:" + req.Id, out lcf);
@@ -2410,7 +2396,7 @@ namespace RealmForge {
         wantHl = GuideStyle ? null : HlCity(cityBtn);
       } else if (front && locateLines.Length > 0 && lf != null && lf.Mark.Kind == "box") {
         wantKey = step.Key; wantT = new[] { o.X + lf.Mark.X, o.Y + lf.Mark.Y, lf.Mark.W, lf.Mark.H };   // the button / tab / cell: its frame with the plate beside it
-        wantHl = lf.Target == "cell" && !GuideStyle ? null : HlLocate(lf, step, o);   // a list cell (off): the same PaintFrame as the inventory cell; other buttons: the old frame's outline
+        wantHl = (lf.Target == "cell" || lfLive) && !GuideStyle ? null : HlLocate(lf, step, o);   // a list cell / a live frame: its sprite's outline (DrawTip's HlLive); the layout's: the old frame's outline
       } else if (locateLines.Length > 0 && (hold || step.Kind != LocateKind.InList || locateNeedClick)) wantKey = step.Key;   // no target: the plate at the top
       if (locateLines.Length == 0) { locHint.Update(null, null, null, now); HideTip(); }
       else if (!locHint.Update(wantKey, wantT, wantHl, now)) HideTip();
@@ -2477,13 +2463,8 @@ namespace RealmForge {
       if (recB != null) recB.Step = step.Kind.ToString();
       TickArtDrive(step, inv, ws, hold, hwnd, o, cr, now, W, H, U);
       LocateFrame lf = front && !hold ? ArtFrames.For(step, inv, ws, Geo.Current, W, H, U) : null;
-      if (lf != null && lf.Mark.Kind == "box" && lf.Target == "inventory.artWorkshop") {   // «Мастерская» where the game has put it (live rect, fresh): it moves with the card's other buttons
-        var lv = LiveFrame(ClickTarget.ArtWorkshop, null, W, H, U, true, lf.Raw != null ? new[] { lf.Raw.X, lf.Raw.Y, lf.Raw.W, lf.Raw.H } : null);
-        if (lv != null) {
-          lf.Raw = new GeoRect { X = lv[0], Y = lv[1], W = lv[2], H = lv[3] };
-          lf.Mark = new LocateMark { Kind = "box", X = (int)Math.Round(lv[0]), Y = (int)Math.Round(lv[1]), W = (int)Math.Round(lv[2]), H = (int)Math.Round(lv[3]) };
-        }
-      }
+      bool afLive = LiveInto(lf, W, H, U);   // «Мастерская», the tabs, «Продвинуть»: where the game has put them (FrameFor)
+      if (lf != null && (lf.Target == "cell" || lf.Target == "artifact.matList")) { string ck = step.Kind == LocateKind.ArtInList ? "inventory.artCell" : lf.Target == "artifact.matList" ? "artifact.matList" : "artifact.matCell"; FrameLayoutSay(ck, FrameTargets.Of(ck).Layout, null); }
       if (!front) { LocateHide(); }
       else if (lf != null && lf.Mark.Kind != "box") { frame++; Draw(lf.Mark.Kind, o.X + lf.Mark.X, o.Y + lf.Mark.Y, lf.Mark.W, lf.Mark.H, lf.Mark.Rows); }   // the cell is off the screen: the pill at the list's edge
       else { if (glow.Visible) glow.Hide(); drawnKey = null; }
@@ -2493,7 +2474,7 @@ namespace RealmForge {
         DrawTip(cityBtn[0], cityBtn[1], cityBtn[2], cityBtn[3], locateLines, H, false, false, false, locateCaps, false, GuideStyle ? null : HlCity(cityBtn), BarRow(null, cityBtn, o, W, H));
       } else if (front && locateLines.Length > 0 && lf != null && lf.Mark.Kind == "box") {
         frame++;
-        DrawTip(o.X + lf.Mark.X, o.Y + lf.Mark.Y, lf.Mark.W, lf.Mark.H, locateLines, H, false, false, false, locateCaps, false, lf.Target == "cell" && !GuideStyle ? null : HlLocate(lf, step, o));
+        DrawTip(o.X + lf.Mark.X, o.Y + lf.Mark.Y, lf.Mark.W, lf.Mark.H, locateLines, H, false, false, false, locateCaps, false, (lf.Target == "cell" || afLive) && !GuideStyle ? null : HlLocate(lf, step, o));
       } else if (front && locateLines.Length > 0) {
         frame++;
         DrawTipTop(locateLines, locateCaps);
@@ -2581,19 +2562,11 @@ namespace RealmForge {
       var lines = main != "" ? new[] { main } : new string[0];
       var lf = ArtEquipFrames.For(st, hs, Geo.Current, W, H, U);
       frame++;
-      bool liveReplace = false;
-      if (lf != null && lf.Mark.Kind == "box" && lf.Target == ArtEquipFrames.KeyHideWorn) {   // «Скрыть надетое» where the game has put it (live rect, fresh)
-        var lv = LiveFrame(ClickTarget.ArtHideWorn, null, W, H, U, false, lf.Raw != null ? new[] { lf.Raw.X, lf.Raw.Y, lf.Raw.W, lf.Raw.H } : null);
-        if (lv != null) { lf.Raw = new GeoRect { X = lv[0], Y = lv[1], W = lv[2], H = lv[3] }; lf.Mark = new LocateMark { Kind = "box", X = (int)Math.Round(lv[0]), Y = (int)Math.Round(lv[1]), W = (int)Math.Round(lv[2]), H = (int)Math.Round(lv[3]) }; }
-      } else if (lf != null && lf.Mark.Kind == "box" && lf.Target == ArtEquipFrames.KeyReplace) {   // «Заменить» on its visible plate (Button_Normal_2) where the game has put it (live rect, fresh)
+      bool aeLive = false;
+      if (lf != null && lf.Mark.Kind == "box" && lf.Target != "cell") {   // the tab, the list button, «Скрыть надетое», «Заменить» (its plate Button_Normal_2), the pop-up's: where the game has put them (FrameFor)
         var lay = new[] { (double)lf.Mark.X, lf.Mark.Y, lf.Mark.W, lf.Mark.H };
-        var lv = LiveFrame(ClickTarget.ArtReplace, null, W, H, U, true, lay);
-        ArtReplaceSay(lay, lv);
-        if (lv != null) {
-          liveReplace = true;
-          lf.Raw = new GeoRect { X = lv[0], Y = lv[1], W = lv[2], H = lv[3] };
-          lf.Mark = new LocateMark { Kind = "box", X = (int)Math.Round(lv[0]), Y = (int)Math.Round(lv[1]), W = (int)Math.Round(lv[2]), H = (int)Math.Round(lv[3]) };
-        }
+        aeLive = LiveInto(lf, W, H, U);
+        if (lf.Target == ArtEquipFrames.KeyReplace) ArtReplaceSay(lay, aeLive ? new[] { lf.Raw.X, lf.Raw.Y, lf.Raw.W, lf.Raw.H } : null);
       } else if (st.Kind == ArtEquipKind.PickCell && st.Pos > 0 && lf != null) {
         // the artifact's card where the game has put it (the grid's live cells): its frame; no live cell in the viewport: the layout's pill / nothing on a guessed box
         double[] lcf; var see = LiveCell(UiCellKind.HeroArt, artUid, null, W, H, U, new double[] { lf.Mark.X, lf.Mark.Y, lf.Mark.W, lf.Mark.H }, "art:" + artUid, out lcf);
@@ -2620,7 +2593,7 @@ namespace RealmForge {
       }
       if (glow.Visible) glow.Hide(); drawnKey = null;
       Hl hl = null;
-      if (lf != null && liveReplace) {   // the live plate: its sprite's outline (LiveFrame), else a rounded box on it (the geometry's inset is of its own rect)
+      if (lf != null && aeLive) {   // a live frame: its sprite's outline (FrameFor), else a rounded box on it (the geometry's inset is of its own rect)
         hl = HlLive(o.X + lf.Mark.X, o.Y + lf.Mark.Y, lf.Mark.W, lf.Mark.H) ?? HlRound(o.X + lf.Mark.X, o.Y + lf.Mark.Y, lf.Mark.W, lf.Mark.H, true);
       } else if (lf != null) hl = HlArtEq(lf, st, o);
       if (lf != null) DrawTip(o.X + lf.Mark.X, o.Y + lf.Mark.Y, lf.Mark.W, lf.Mark.H, lines, H, false, false, false, caps != "" ? caps : null, false, hl);
@@ -4033,7 +4006,7 @@ namespace RealmForge {
       double[] f = ok && top ? (fit != null ? fit.Frame : rim ? UiIcon.BarRimFrame(r.IX, r.IY, r.IW, r.IH, W, H) : icon && r.IW > 0 ? UiIcon.Frame(r.IX, r.IY, r.IW, r.IH, W, H) : UiIcon.Frame(r.X, r.Y, r.W, r.H, W, H)) : null;
       if (f != null) {
         if (fit != null) liveShapes.Put(f, fit.Box, fit.Shape, NowMs());
-        FrameCheck(r.Form + "." + r.Widget, r.Sprite, r.Art, fit, f, r.Sprite == "" ? r.ArtWhy : art == null ? "not in the table" : null);
+        FrameCheck(FrameTargets.KeyOf(t) ?? r.Form + "." + r.Widget, r.Form + "." + r.Widget, r.Sprite, r.Art, fit, f, new[] { r.X, r.Y, r.W, r.H }, "live", r.Sprite == "" ? r.ArtWhy : art == null ? "not in the table" : null);
       }
       // one source per button (FrameStick): a missing or old read, a held screen keep the last live frame for 1.5 s; a fresh read that says the
       // button is hidden, or another form named on top, drop it at once
@@ -4062,7 +4035,7 @@ namespace RealmForge {
       if (st == UiCellSee.Shown && fr != null) {   // the quality frame's sprite: its outline (not when the viewport clipped the frame)
         var c = s.Of(uid);
         if (c != null && c.Fit != null && Math.Abs(c.Fit.Frame[2] - fr[2]) < 0.5 && Math.Abs(c.Fit.Frame[3] - fr[3]) < 0.5) liveShapes.Put(fr, c.Fit.Box, c.Fit.Shape, NowMs());
-        if (c != null) FrameCheck("cell." + k + "." + c.Icon, c.Sprite, c.Art, c.Fit, fr, c.Sprite == "" ? "not read" : c.Fit == null ? "not in the table" : null);
+        if (c != null) FrameCheck(FrameTargets.KeyOf(k), "cell." + k + "." + c.Icon, c.Sprite, c.Art, c.Fit, fr, new[] { c.X, c.Y, c.W, c.H }, "live", c.Sprite == "" ? "not read" : c.Fit == null ? "not in the table" : null);
       }
       if (st == UiCellSee.Unknown || RFX.UiCellTopIs(k, screens.Current)) return st;
       fr = null; var sc = screens.Current;   // covered: hidden when another form is named on top (a pop-up, a modal); nothing named: the layout's
@@ -4111,14 +4084,94 @@ namespace RealmForge {
 
     // the test build's self-check of a framed target, once per target and sprite: "frame check: <form>.<widget> sprite=<name> shape=… frame=[…] visible=[…]"
     // (tools/lab/frames-sheet.sh crops each from the lab's screenshots)
+    // "frame check: <key> sprite=... shape=... frame=[...] visible=[...] client=[...] screen=[...] live=[...] src=live|layout widget=<form.widget>"
     readonly LiveShapes liveShapes = new LiveShapes();
     readonly HashSet<string> frameChecked = new HashSet<string>();
-    void FrameCheck(string who, string sprite, SpriteArt.Draw d, SpriteArt.Fit fit, double[] f, string why) {
+    void FrameCheck(string key, string widget, string sprite, SpriteArt.Draw d, SpriteArt.Fit fit, double[] f, double[] live, string src, string why) {
       if (!Channel.IsTest || f == null) return;
-      if (!frameChecked.Add(who + "|" + sprite + "|" + (fit != null ? fit.Kind : "rect")) || frameChecked.Count > 400) return;
+      if (!frameChecked.Add(key + "|" + src + "|" + sprite + "|" + (fit != null ? fit.Kind : "rect")) || frameChecked.Count > 400) return;
       var mon = System.Windows.Forms.Screen.FromPoint(new Point(sceneX, sceneY)).Bounds;
       string where = " client=[" + sceneX + "," + sceneY + "," + sceneW + "," + sceneH + "] screen=[" + mon.X + "," + mon.Y + "," + mon.Width + "," + mon.Height + "]";
-      Log.Write(SpriteArt.CheckLine(who, sprite, d, fit, f, sprite == "" || fit == null ? why : null, where));
+      Log.Write(SpriteArt.CheckLine(key, sprite, d, fit, f, sprite == "" || fit == null ? why : null, where) + SpriteArt.CheckTail(live, src, widget));
+    }
+
+    // ---- every hint frame through one function (src/FrameTargets.cs): the live rect of the target's visual child -> its sprite's contour ->
+    // the outline; the layout's rect only when the live read fails ("frame: <key> source=layout reason=...", once per key and reason)
+    readonly Dictionary<string, string> frameLayoutSaid = new Dictionary<string, string>();
+
+    /// <summary>The frame of target <paramref name="key"/> (client px: x, y, w, h[, radius]): live when the read is fresh, shown and on the form on top
+    /// (<paramref name="live"/> true), else <paramref name="layout"/> (null stays null).</summary>
+    double[] FrameFor(string key, double[] layout, double W, double H, double U, out bool live) {
+      live = false; string why;
+      var ft = FrameTargets.Of(key);
+      if (ft == null) why = "unmapped key";
+      else if (ft.Layout != null) why = ft.Layout;
+      else if (ft.Cell != UiCellKind.None) why = "a list cell (LiveCell)";
+      else if (ft.Click != ClickTarget.None) {
+        var lv = LiveFrame(ft.Click, null, W, H, U, ft.Visual != "-", layout);
+        if (lv != null) { live = true; return lv; }
+        var r = RFX.UiButtonFresh(ft.Click, null, W, H, Environment.TickCount, 1000);
+        why = r == null ? "no fresh read" : !r.Ok ? "failed at " + r.FailStep : !r.Visible ? "not visible" : "not on top";
+      } else {
+        var lv = LiveFrameKey(ft, W, H, U, out why);
+        if (lv != null) { live = true; return lv; }
+      }
+      FrameLayoutSay(key, why, layout);
+      return layout;
+    }
+
+    void FrameLayoutSay(string key, string why, double[] layout) {
+      string was; if (frameLayoutSaid.TryGetValue(key, out was) && was == why) return;
+      frameLayoutSaid[key] = why;
+      Log.Write("frame: " + key + " source=layout reason=" + why);
+      if (layout != null) FrameCheck(key, "layout", "", null, null, layout, null, "layout", why);
+    }
+
+    /// <summary>A frame target's live frame (FrameTargets.Widget: read by its tree), as LiveFrame does for the pilot buttons; null = none (why says).</summary>
+    double[] LiveFrameKey(FrameTarget ft, double W, double H, double U, out string why) {
+      var w = FrameTargets.Widget(ft);
+      if (w == null) { why = "no widget"; return null; }
+      RFX.UiTargetWant(ft.Key, w, W, H, U);
+      int now = Environment.TickCount;
+      var r = RFX.UiTargetFresh(ft.Key, W, H, now, RFX.UiFreshMs);
+      double x, y; string pw; var sc = screens.Current;
+      bool ok = RFX.UiLivePoint(r, W, H, now, out x, out y, out pw), top = RFX.UiFormTopIs(ft.Form, sc);
+      var art = ok && top ? SpriteArt.Of(r.Sprite) : null;
+      var fit = art != null ? (r.IW > 0 ? SpriteArt.FrameOf(art, r.Art, r.IX, r.IY, r.IW, r.IH, W, H) : SpriteArt.FrameOf(art, r.Art, r.X, r.Y, r.W, r.H, W, H)) : null;
+      double[] f = ok && top ? (fit != null ? fit.Frame : r.IW > 0 ? UiIcon.Frame(r.IX, r.IY, r.IW, r.IH, W, H) : UiIcon.Frame(r.X, r.Y, r.W, r.H, W, H)) : null;
+      if (f != null) {
+        if (fit != null) liveShapes.Put(f, fit.Box, fit.Shape, NowMs());
+        FrameCheck(ft.Key, r.Form + "." + r.Widget, r.Sprite, r.Art, fit, f, r.IW > 0 ? new[] { r.IX, r.IY, r.IW, r.IH } : new[] { r.X, r.Y, r.W, r.H }, "live", r.Sprite == "" ? r.ArtWhy : art == null ? "not in the table" : null);
+      }
+      bool gone = (r != null && pw == "not visible") || (!top && sc != null && !sc.Held);
+      string sk = "key|" + ft.Key; FrameStick st;
+      if (!frameStick.TryGetValue(sk, out st)) frameStick[sk] = st = new FrameStick();
+      var g = st.Pick(f, gone, W, H, NowMs());
+      why = g != null ? null : !ok ? (r != null && !r.Ok ? "failed at " + r.FailStep + " (" + r.FailValue + ")" : pw) : !top ? "form not on top" : "held";
+      return g;
+    }
+
+    /// <summary>The step's box frame <paramref name="lf"/> moved onto its target's live frame (FrameFor); the click point too for a pilot button
+    /// (its read's centre). False = the layout's box stays.</summary>
+    bool LiveInto(LocateFrame lf, double W, double H, double U) {
+      if (lf == null || lf.Mark == null || lf.Mark.Kind != "box" || lf.Target == "cell") return false;
+      var lay = lf.Raw != null ? new[] { lf.Raw.X, lf.Raw.Y, lf.Raw.W, lf.Raw.H } : new double[] { lf.Mark.X, lf.Mark.Y, lf.Mark.W, lf.Mark.H };
+      bool live; var lv = FrameFor(lf.Target, lay, W, H, U, out live);
+      if (!live) return false;
+      var ft = FrameTargets.Of(lf.Target);
+      var lb = ft != null && ft.Click != ClickTarget.None ? RFX.UiButtonFresh(ft.Click, null, W, H, Environment.TickCount, RFX.UiFreshMs) : null;
+      lf.Raw = new GeoRect { X = lv[0], Y = lv[1], W = lv[2], H = lv[3] };
+      lf.Mark = new LocateMark { Kind = "box", X = (int)Math.Round(lv[0]), Y = (int)Math.Round(lv[1]), W = (int)Math.Round(lv[2]), H = (int)Math.Round(lv[3]) };
+      if (lb != null) { lf.ClickX = lb.X + lb.W / 2; lf.ClickY = lb.Y + lb.H / 2; }
+      return true;
+    }
+
+    /// <summary>An int rect (client px) through FrameFor: the target's live frame, else the rect itself.</summary>
+    int[] FrameForI(string key, int[] layout, double W, double H, double U, out bool live) {
+      live = false;
+      if (layout == null) return null;
+      var f = FrameFor(key, new double[] { layout[0], layout[1], layout[2], layout[3] }, W, H, U, out live);
+      return live ? new[] { (int)Math.Round(f[0]), (int)Math.Round(f[1]), (int)Math.Round(f[2]), (int)Math.Round(f[3]) } : layout;
     }
 
     string heroLogged;

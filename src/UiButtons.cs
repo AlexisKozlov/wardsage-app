@@ -68,6 +68,10 @@ namespace RealmForge {
     public string IconChild;
     /// <summary>No field of <see cref="Paths"/> there: the close button is looked for live among the form's objects (UiCloseFind), cached per form.</summary>
     public bool Discover;
+    /// <summary>No field of <see cref="Paths"/> there: the object by its place under the form's root (src/FrameTargets.cs), alternatives tried in
+    /// turn: names between '/', "(Clone)" ignored, "#n" = the n-th active child; a name not under its parent is looked for deeper (a panel the
+    /// form makes in code). The first found active wins.</summary>
+    public string[] Trees;
     public UiWidget(string form, params string[] paths) { Form = form; Paths = paths; }
   }
 
@@ -523,7 +527,7 @@ namespace RealmForge {
         if (LuaPath(f, p, out v, out tt, out m)) { if (tt == T_UDATA) { ud = v; r.Widget = p; break; } m = p + " tt " + tt; }
         if (miss == null) miss = m;
       }
-      if (ud == 0 && !w.Discover) { r.Fail("field", miss); return; }
+      if (ud == 0 && !w.Discover && w.Trees == null) { r.Fail("field", miss); return; }
       ulong csv; int ctt;
       if (!Field(f, "m_csui", out csv, out ctt) || ctt != T_UDATA) { r.Fail("m_csui", "tt " + ctt); return; }
       string cls = "", rcls;
@@ -533,7 +537,11 @@ namespace RealmForge {
       ulong go = 0, tr = 0, rgo, rtr;
       if (ud != 0 && !GoAndTransform(nat, cls, "widget", r, out go, out tr)) return;
       if (!GoAndTransform(rnat, rcls, "root", r, out rgo, out rtr)) return;
-      if (ud == 0) {   // the field is not there (live 1.6.66.393: Form_DailyCheckIn.m_BtnClose missing): the close button looked for live
+      if (ud == 0 && w.Trees != null) {   // a frame target by its place in the form's tree
+        string found;
+        if (!TreeFind(rtr, w.Trees, r, out tr, out go, out found)) return;
+        r.Widget = "tree:" + found; r.ClassName = "UnityEngine.GameObject";
+      } else if (ud == 0) {   // the field is not there (live 1.6.66.393: Form_DailyCheckIn.m_BtnClose missing): the close button looked for live
         string found;
         if (!UiCloseFind(w.Form, rtr, W, H, U, r, out tr, out go, out found)) { if (r.Ok) r.Fail("field", miss + "; no close button found live"); return; }
         r.Widget = "live:" + found; r.ClassName = "UnityEngine.GameObject";
@@ -571,6 +579,120 @@ namespace RealmForge {
         var me = new UiButtonInfo { CPivX = r.CPivX, CPivY = r.CPivY, CPx = r.CPx, CFlipX = r.CFlipX, CFlipY = r.CFlipY };
         ArtInto(go, me, r);
       }
+    }
+
+    // ---- a frame target by its place in the form's tree (src/FrameTargets.cs)
+    static string NodeName(ulong t) {
+      ulong go = Ptr(t + CompGo); string n = go != 0 ? CStr(Ptr(go + GoName)) : null;
+      if (n == null) return null;
+      return n.EndsWith("(Clone)", StringComparison.Ordinal) ? n.Substring(0, n.Length - 7) : n;
+    }
+    static bool NodeActive(ulong t) { ulong go = Ptr(t + CompGo); var b = go != 0 ? Read(go + GoActiveSelf, 1) : null; return b != null && b[0] == 1; }
+    static List<ulong> Kids(ulong t) {
+      var res = new List<ulong>();
+      var cb = Read(t + TrChildren, 0x18); if (cb == null) return res;
+      ulong arr = BitConverter.ToUInt64(cb, 0); long cnt = BitConverter.ToInt64(cb, 0x10);
+      if (arr == 0 || cnt <= 0 || cnt > 256) return res;
+      for (int i = 0; i < cnt; i++) { ulong c = Ptr(arr + (ulong)(8 * i)); if (c != 0 && Ptr(c + TrParent) == t) res.Add(c); }
+      return res;
+    }
+    /// <summary>The child of <paramref name="t"/> named <paramref name="seg"/> (an active one first), or "#n": its n-th active child; 0 = none.</summary>
+    static ulong ChildNamed(ulong t, string seg) {
+      var kids = Kids(t);
+      if (seg.StartsWith("#", StringComparison.Ordinal)) {
+        int n; if (!int.TryParse(seg.Substring(1), NumberStyles.Integer, CultureInfo.InvariantCulture, out n)) return 0;
+        foreach (var c in kids) if (NodeActive(c) && n-- == 0) return c;
+        return 0;
+      }
+      ulong hidden = 0;
+      foreach (var c in kids) if (NodeName(c) == seg) { if (NodeActive(c)) return c; if (hidden == 0) hidden = c; }
+      return hidden;
+    }
+    /// <summary>A node named <paramref name="seg"/> below <paramref name="t"/> (breadth first, 6 levels, 800 nodes; an active one first).</summary>
+    static ulong DescendantNamed(ulong t, string seg) {
+      if (seg.StartsWith("#", StringComparison.Ordinal)) return 0;
+      var q = new List<KeyValuePair<ulong, int>> { new KeyValuePair<ulong, int>(t, 0) }; ulong hidden = 0;
+      for (int i = 0; i < q.Count && q.Count < 800; i++) {
+        if (q[i].Value >= 6) continue;
+        foreach (var c in Kids(q[i].Key)) {
+          if (NodeName(c) == seg) { if (NodeActive(c)) return c; if (hidden == 0) hidden = c; }
+          q.Add(new KeyValuePair<ulong, int>(c, q[i].Value + 1));
+        }
+      }
+      return hidden;
+    }
+    static bool ActiveUp(ulong t, ulong root) {
+      for (int i = 0; i < 64 && t != 0; i++) { if (!NodeActive(t)) return false; if (t == root) return true; t = Ptr(t + TrParent); }
+      return false;
+    }
+    /// <summary>The first of <paramref name="trees"/> found under the form's root <paramref name="rtr"/> and shown (else the first found at all: the read
+    /// says not visible); false = none found (the step in <paramref name="r"/>).</summary>
+    static bool TreeFind(ulong rtr, string[] trees, UiButtonInfo r, out ulong tr, out ulong go, out string found) {
+      tr = go = 0; found = null; string why = null; ulong ftr = 0; string ff = null;
+      foreach (var p in trees) {
+        ulong t = rtr; bool ok = true;
+        foreach (var seg in p.Split('/')) {
+          if (seg.Length == 0) continue;
+          ulong c = ChildNamed(t, seg); if (c == 0) c = DescendantNamed(t, seg);
+          if (c == 0) { ok = false; if (why == null) why = p + " at " + seg; break; }
+          t = c;
+        }
+        if (!ok || Ptr(t + CompGo) == 0) continue;
+        if (ftr == 0) { ftr = t; ff = p; }
+        if (ActiveUp(t, rtr)) { tr = t; go = Ptr(t + CompGo); found = p; return true; }
+      }
+      if (ftr != 0) { tr = ftr; go = Ptr(ftr + CompGo); found = ff; return true; }
+      r.Fail("tree", why ?? "no path"); return false;
+    }
+
+    // ---- the kept reads of the frame targets by key (src/FrameTargets.cs; the pilot buttons keep theirs by ClickTarget above)
+    sealed class KeyedRect { public UiButtonInfo R; public double W, H; public int At; }
+    static readonly Dictionary<string, KeyedRect> tgLive = new Dictionary<string, KeyedRect>();
+    static readonly Dictionary<string, int> tgTried = new Dictionary<string, int>();
+    static int tgBusy;
+
+    /// <summary>One read now of the frame target <paramref name="key"/> (widget <paramref name="w"/>), kept for its frame. Null = no game.</summary>
+    public static UiButtonInfo UiTargetReadNow(string key, UiWidget w, double W, double H, double U) {
+      if (w == null || UiNoGame()) return null;
+      int at = Environment.TickCount; long m0 = LoadMeter.Now();
+      ulong env, ui; string why; UiButtonInfo r;
+      if (!UiRoots(out env, out ui, out why)) { r = new UiButtonInfo { Form = w.Form, Widget = key, ForW = W, ForH = H, At = at }; r.Fail("lua root", why); }
+      else r = UiButtonRead(env, ui, w, W, H, U);
+      r.At = Environment.TickCount;
+      lock (tgLive) tgLive[key] = new KeyedRect { R = r, W = W, H = H, At = r.At };
+      LoadMeter.Done(LoadMeter.UiBtn, m0);
+      return r;
+    }
+
+    /// <summary>The kept read of frame target <paramref name="key"/> when at most <paramref name="maxMs"/> old and for this window size (a failed or hidden
+    /// read too: UiLivePoint says why); else null.</summary>
+    public static UiButtonInfo UiTargetFresh(string key, double W, double H, int now, int maxMs) {
+      KeyedRect l; lock (tgLive) if (!tgLive.TryGetValue(key, out l)) return null;
+      if (Math.Abs(l.W - W) > 0.5 || Math.Abs(l.H - H) > 0.5) return null;
+      int age = unchecked(now - l.At);
+      return age >= 0 && age <= maxMs ? l.R : null;
+    }
+
+    /// <summary>A frame target is shown: read again in the background when its kept read is UiWantMs old (one read at a time).</summary>
+    public static void UiTargetWant(string key, UiWidget w, double W, double H, double U) {
+      if (w == null) return;
+      int now = Environment.TickCount;
+      lock (tgTried) { int at; if (tgTried.TryGetValue(key, out at) && unchecked(now - at) >= 0 && unchecked(now - at) < UiWantMs) return; tgTried[key] = now; }
+      if (Interlocked.CompareExchange(ref tgBusy, 1, 0) != 0) return;
+      try {
+        Task.Factory.StartNew(() => {
+          try { UiTargetReadNow(key, w, W, H, U); }
+          catch (Exception e) { LL("uibtn: failed at exception (" + e.Message + ")"); }
+          finally { Interlocked.Exchange(ref tgBusy, 0); }
+        }, CancellationToken.None, TaskCreationOptions.None, TaskScheduler.Default);
+      } catch (Exception) { Interlocked.Exchange(ref tgBusy, 0); }
+    }
+
+    /// <summary>Is <paramref name="form"/> on top now (named on top, or one of the flow forms over its screen), with no pop-up over it?</summary>
+    public static bool UiFormTopIs(string form, ScreenState s) {
+      if (string.IsNullOrEmpty(form) || s == null || s.Held || s.OfferCount > 0) return false;
+      if (s.Top == form) return true;
+      return !s.ModalOpen && Array.IndexOf((s.Flow ?? "").Split(','), form) >= 0;
     }
 
     static string N0(double v) { return Math.Round(v).ToString(CultureInfo.InvariantCulture); }

@@ -144,6 +144,13 @@ namespace RealmForge {
       if (f != null) s += " visible=[" + n0(f.Box.X) + "," + n0(f.Box.Y) + "," + n0(f.Box.W) + "," + n0(f.Box.H) + "]";
       return s + (where ?? "");
     }
+
+    /// <summary>The check line's tail: the live rect read (none for a layout frame), where the frame came from and the widget read.</summary>
+    public static string CheckTail(double[] live, string src, string widget) {
+      Func<double, string> n0 = v => Math.Round(v).ToString(CultureInfo.InvariantCulture);
+      return " live=" + (live != null && live.Length >= 4 ? "[" + n0(live[0]) + "," + n0(live[1]) + "," + n0(live[2]) + "," + n0(live[3]) + "]" : "none")
+        + " src=" + (src ?? "layout") + (string.IsNullOrEmpty(widget) ? "" : " widget=" + widget);
+    }
   }
 
   /// <summary>The outlines of the live frames drawn lately (client px), found again by the frame rect the hint is drawn with (within 1.5 px,

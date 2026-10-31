@@ -46,12 +46,15 @@ namespace RealmForge {
     public static int[] Place(int[] target, int[][] avoid, int w, int h, int W, int H, out char side) {
       var p = TryPlace(target, avoid, w, h, W, H, out side);
       if (p != null) return p;
-      long best = long.MaxValue; p = null; side = 'b';
+      // never on the target (it is kept TargetGap px clear): the least covering place among those off it first, any place only when none is
+      long best = long.MaxValue, bestOff = long.MaxValue; p = null; int[] off = null; char sideOff = 'b'; side = 'b';
       foreach (var c in Candidates(target, avoid, w, h, W, H)) {
         int x = Clamp(c[0], Margin, W - w - Margin), y = Clamp(c[1], Margin, H - h - Margin);
         long k = Cost(x, y, w, h, target, avoid);
         if (k < best) { best = k; p = new[] { x, y }; side = (char)c[2]; }
+        if (k < bestOff && !OnTarget(x, y, w, h, target)) { bestOff = k; off = new[] { x, y }; sideOff = (char)c[2]; }
       }
+      if (off != null) { side = sideOff; return off; }
       return p;
     }
 
@@ -82,6 +85,13 @@ namespace RealmForge {
         else { int y = s == 't' ? ty - Gap - h : ty + th + Gap; foreach (int x in xs) res.Add(new[] { x, y, s }); }
       }
       return res;
+    }
+
+    /// <summary>The plate's least gap to its target (the frame): it never comes closer (owner 2026-10-31: the hint over «Улучшить»).</summary>
+    public const int TargetGap = 6;
+    /// <summary>Does a plate at (x, y) come within <see cref="TargetGap"/> px of the target?</summary>
+    public static bool OnTarget(int x, int y, int w, int h, int[] target) {
+      return target != null && Overlap(x, y, w, h, target[0] - TargetGap, target[1] - TargetGap, target[2] + 2 * TargetGap, target[3] + 2 * TargetGap) > 0;
     }
 
     // how much a plate at (x, y) covers: the target (kept a gap away) ten times, the other targets once; 0 = free

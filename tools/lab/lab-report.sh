@@ -80,7 +80,7 @@ shots=$(q -F '|' -v r="$run" <<< "
 [ -n "$shots" ] && msg+="Скриншоты остановок: lab-shots.sh $run"$'\n'
 
 # the hint frames the test app checked (src/SpriteArt.cs "frame check:" lines) cropped from the run's screenshots into one picture
-fchecks=$(grep -oE 'frame check: .*' <<< "$logs" | sed -E 's/ client=.*$//' | awk '!seen[$0]++' | head -40)
+fchecks=$(grep -oE 'frame check: .*' <<< "$logs" | sed -E 's/ client=\[[^]]*\] screen=\[[^]]*\]//' | awk '!seen[$0]++' | head -200)
 fsheet=""
 if [ -n "$fchecks" ] && [ -n "$shots" ]; then fsheet=$(bash "$(dirname "$0")/frames-sheet.sh" "$run" 2>/dev/null | tail -1); fi
 
