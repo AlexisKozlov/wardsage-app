@@ -213,4 +213,20 @@ version …: from the site» или «saved copy»). Без файла оста�
 
 ## RU
 
+- Автоматические действия начинаются с любого экрана: программа сама возвращается в город и закрывает рекламу и окна наград.
+- «Надеть в игре», «Найти в игре» (вознесение, преобразование, улучшение артефакта) и чистка склада стали заметно быстрее и надёжнее, в том числе на слабых компьютерах и в маленьком окне.
+- Артефакты надеваются быстрее: программа сама снимает лишние фильтры списка и не берёт вещь, которую герой надеть не может.
+- Работа на широких мониторах 21:9 и с двумя аккаунтами.
+- Если шаг не получился, программа пробует ещё раз, а не останавливается сразу.
+- Рамки подсказок точно ложатся на кнопки и значки, сами подсказки стали компактнее.
+- Меньше нагрузка на процессор, программа никогда не нажимает рядом с кнопками покупки; когда она берётся за работу, окно игры выходит на передний план.
+
 ## EN
+
+- Auto actions now start from any screen: the app goes back to the city on its own and closes ads and reward pop-ups.
+- «Equip in game», «Find in game» (ascension, recast, artifact upgrade) and storage cleanup are much faster and more reliable, including on slow PCs and small windows.
+- Artifacts are equipped faster: the app clears leftover list filters and skips items the hero can't wear.
+- Works on wide 21:9 monitors and with two accounts.
+- If a step fails, the app tries again instead of stopping right away.
+- Highlight frames sit exactly on buttons and icons, and hints are more compact.
+- Lower CPU load, and the app never clicks near purchase buttons; when it starts working, the game window comes to the front.
