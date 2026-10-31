@@ -123,7 +123,9 @@ namespace RealmForge {
     // ------------------------------------------------------------------ the site's switches
 
     /// <summary>The app's own clicks: the player's setting and the site's "autoclick" switch.</summary>
-    bool AutoClickOn() { return cfg.AutoClick && On("autoclick"); }
+    bool AutoClickOn() { return cfg.AutoClick && On("autoclick") && !labHintOnly; }
+    /// <summary>TEST build: a lab scenario «..._hint» runs (its recorder command named it): auto click is off as for a player without it, hints only.</summary>
+    bool labHintOnly;
     /// <summary>«Показать в игре» clicks by itself only with its own switch on (off by default until the owner enables it), on top of the player's setting.</summary>
     bool LocateAutoOn() { return AutoClickOn() && On("locateAuto"); }
     /// <summary>The artifact flows (storage cleanup, promotion) click by themselves only with the site's "artAuto" switch on (off by default), on top of the player's setting.</summary>
@@ -430,6 +432,7 @@ namespace RealmForge {
         var act = labRec.Decide(cmd, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), on, cur, out state);
         if (state == null) return;
         Log.Write("rec: lab " + cmd.Op + (cmd.Op == "start" ? " " + cmd.Scenario : "") + " -> " + act + " (" + state + ")");
+        if (state != "stale") LabScenario(cmd);
         switch (act) {
           case LabRecControl.Act.Start: LabRecStart(cmd); break;
           case LabRecControl.Act.StopThenStart: testRec.Stop(); labRecPending = cmd; labRecPendingAt = RecInfo.NowMs(); break;
@@ -437,6 +440,15 @@ namespace RealmForge {
           default: LabRecAck(cmd, state, cur); break;
         }
       } catch (Exception e) { Log.Write("rec: lab command failed: " + e.Message); }
+    }
+    // the lab scenario the recorder command names: the frame audit runs for it (src/FrameAudit.cs), and a «..._hint» one turns auto click off
+    // until the next command (the lab never clicks for it: the app shows its hints, the audit checks their frames)
+    void LabScenario(LabRecCmd c) {
+      bool start = c.Op == "start";
+      overlay.AuditSite = () => cfg.Site; overlay.AuditCode = () => cfg.Code;
+      overlay.AuditScenario = start ? c.Scenario : ""; if (start) overlay.AuditRun = c.Run;
+      bool hint = start && LabRecCmd.IsHintScenario(c.Scenario);
+      if (hint != labHintOnly) { labHintOnly = hint; ApplyAutoClick(); Log.Write("lab: hint mode " + (hint ? "on (auto click off for " + c.Scenario + ")" : "off")); }
     }
     void LabRecStart(LabRecCmd c) {
       if (testRec == null) testRec = new ScreenRecorder(() => cfg.Site, () => cfg.Code, s => Log.Write(s), ev => Post(ev), on => OnUi(() => overlay.SetRecording(on)));

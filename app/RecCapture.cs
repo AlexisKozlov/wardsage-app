@@ -196,4 +196,87 @@ namespace RealmForge {
       w.Add(RecNames.FrameFile(no), jpg, RecJson.Line(t, cr.R, cr.B, scale, bg, info, cx, cy, inputs));
     }
   }
+
+  /// <summary>TEST build, lab runs: the frame audit's shots (src/FrameAudit.cs). The game's client with our overlay on it (the screen's pixels, so
+  /// only while the overlay windows are left in captures, i.e. a lab recording runs) at most ImageMaxWidth wide and ImageMaxBytes, one shot a
+  /// part of a lab recording of its own (FrameAudit.RecId), sent by the recorder's uploader. One worker thread; a full queue drops the shot.</summary>
+  sealed class FrameAuditSink {
+    sealed class Job { public FrameAuditShot Shot; public int X, Y, W, H; public bool Image; }
+    readonly Func<string> site, code;
+    readonly Action<string> log;
+    readonly object gate = new object();
+    readonly System.Collections.Generic.Queue<Job> queue = new System.Collections.Generic.Queue<Job>();
+    bool busy;
+    string rec, run = ""; int part, no; RecUploader up;
+
+    public FrameAuditSink(Func<string> site, Func<string> code, Action<string> log) { this.site = site; this.code = code; this.log = log ?? (s => { }); }
+
+    /// <summary>Queues the shot: the client at screen x, y, w, h is captured when <paramref name="image"/> (else the sidecar alone is logged).</summary>
+    public void Add(FrameAuditShot s, int x, int y, int w, int h, bool image) {
+      if (!image) return;
+      lock (gate) {
+        if (queue.Count >= 8) return;
+        queue.Enqueue(new Job { Shot = s, X = x, Y = y, W = w, H = h, Image = true });
+        if (busy) return;
+        busy = true;
+      }
+      ThreadPool.QueueUserWorkItem(_ => Work());
+    }
+
+    void Work() {
+      while (true) {
+        Job j;
+        lock (gate) { if (queue.Count == 0) { busy = false; return; } j = queue.Dequeue(); }
+        try { Shoot(j); } catch (Exception e) { log("frame audit: shot failed: " + e.Message); }
+      }
+    }
+
+    static readonly ImageCodecInfo Jpeg = ImageCodecInfo.GetImageEncoders().FirstOrDefault(c => c.FormatID == ImageFormat.Jpeg.Guid);
+
+    /// <summary>The client's JPEG at most maxW wide and maxBytes (quality stepped down), scale = image px per client px; null = none fits.</summary>
+    public static byte[] Grab(int x, int y, int w, int h, int maxW, int maxBytes, out double scale) {
+      scale = 0;
+      if (w < 64 || h < 64) return null;
+      using (var full = new Bitmap(w, h, PixelFormat.Format24bppRgb)) {
+        using (var g = Graphics.FromImage(full)) g.CopyFromScreen(x, y, 0, 0, new Size(w, h), CopyPixelOperation.SourceCopy);
+        int nw, nh; scale = RecSize.Fit(w, h, maxW, out nw, out nh);
+        foreach (int k in new[] { 100, 85, 70 }) {   // a smaller picture when even the lowest quality is too big
+          int sw = Math.Max(1, nw * k / 100), sh = Math.Max(1, nh * k / 100);
+          using (var small = new Bitmap(sw, sh, PixelFormat.Format24bppRgb)) {
+            using (var g = Graphics.FromImage(small)) { g.InterpolationMode = InterpolationMode.HighQualityBilinear; g.DrawImage(full, new Rectangle(0, 0, sw, sh), 0, 0, w, h, GraphicsUnit.Pixel); }
+            foreach (long q in new long[] { 80, 65, 50, 35 }) {
+              using (var ep = new EncoderParameters(1))
+              using (var ms = new MemoryStream()) {
+                ep.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, q);
+                small.Save(ms, Jpeg, ep);
+                if (ms.Length <= maxBytes) { scale = (double)sw / w; return ms.ToArray(); }
+              }
+            }
+          }
+        }
+      }
+      return null;
+    }
+
+    void Shoot(Job j) {
+      var s = j.Shot;
+      double scale; var jpg = Grab(j.X, j.Y, j.W, j.H, FrameAudit.ImageMaxWidth, FrameAudit.ImageMaxBytes, out scale);
+      if (jpg == null) { log("frame audit: no picture of " + FrameAudit.Key(s)); return; }
+      if (rec == null || s.Run != run || part > RecNames.MaxPart - 2) {
+        if (up != null) up.Close();
+        run = s.Run; rec = FrameAudit.RecId(DateTime.Now, s.Run); part = 0;
+        up = new RecUploader(rec, site, code, log);
+        log("frame audit: recording " + rec + " for run " + (run.Length >= 8 ? run.Substring(0, 8) : run));
+      }
+      no++;
+      s.Scale = scale; s.Image = "audit_" + no.ToString("0000", System.Globalization.CultureInfo.InvariantCulture) + ".jpg";
+      string json = FrameAudit.Json(s, FrameAudit.Flags(s));
+      var w = new RecPartWriter(Path.Combine(AppConfig.DefaultDir, "recordings", rec), part);
+      w.AddText("audit.json", FrameAudit.MetaJson(run, Program.Version));
+      w.Add(s.Image, jpg, json);
+      w.AddText(Path.ChangeExtension(s.Image, ".json"), json);
+      string path = w.Close();
+      if (path != null) { up.Add(part, path); part++; }
+    }
+  }
 }

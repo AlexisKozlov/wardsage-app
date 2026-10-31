@@ -30,7 +30,7 @@ fname="report-$(TZ=Etc/GMT-3 date '+%Y%m%d-%H%M').md"
 
 names() { case "$1" in
   online) echo "Ноутбук на связи" ;; update_app*) echo "Обновление тестовой сборки" ;; restart_app) echo "Перезапуск приложения" ;;
-  app_ready) echo "Приложение готово" ;; equip_city*) echo "Надеть сборку из Города${1#equip_city}" ;;
+  app_ready) echo "Приложение готово" ;; equip_city_hint*) echo "Подсказки без автоклика: надеть из Города${1#equip_city_hint}" ;; locate_hint) echo "Подсказки без автоклика: найти в игре" ;; equip_city*) echo "Надеть сборку из Города${1#equip_city}" ;;
   equip_hide_worn) echo "Надеть вещь другого героя («Скрыть надетое»)" ;; equip_artifact) echo "Надеть артефакт" ;;
   explore) echo "Обход интерфейса (граф UI)" ;; locate) echo "Найти в игре" ;; locate_recast) echo "Найти в игре: преобразование" ;; locate_art) echo "Найти в игре: продвинуть артефакт" ;; grades) echo "Оценки героев" ;; sell_mark) echo "Чистка склада: выделение" ;; sell_after_restart) echo "Чистка склада после перезапуска" ;; upload_logs) echo "Загрузка логов" ;; screenshot) echo "Скриншот окна" ;; timeout) echo "Время вышло" ;; *) echo "$1" ;; esac; }
 
@@ -45,7 +45,7 @@ done < <(q -F '|' -v r="$run" <<< "select s->>'name', ((s->>'ok')::boolean)::tex
 
 # the equip plan finished without a single slot / «Заменить» click: the build was already worn, nothing was tested (a warning, not a pass)
 nochange=0
-if [ "$(q -v r="$run" <<< "select count(*) from public.lab_runs r, jsonb_array_elements(r.steps) s where r.id = :'r'::uuid and s->>'name' like 'equip_city%' and (s->>'ok')::boolean")" -gt 0 ] \
+if [ "$(q -v r="$run" <<< "select count(*) from public.lab_runs r, jsonb_array_elements(r.steps) s where r.id = :'r'::uuid and s->>'name' like 'equip_city%' and s->>'name' not like '%hint%' and (s->>'ok')::boolean")" -gt 0 ] \
    && ! grep -qE 'click gate Equip: allow (EquipConfirm|EquipNav .*slot [0-9])' <<< "$logs"; then nochange=1; fi
 
 # the storage cleanup's safety check on the uploaded log: a Sell click outside its whitelist (there is no target for «Продать» at all)
@@ -69,6 +69,9 @@ fi
 tot=$(q -v r="$run" <<< "select coalesce(round(extract(epoch from coalesce(finished_at, now()) - started_at))::int, 0) from public.lab_runs where id = :'r'::uuid")
 [ "${tot:-0}" -gt 0 ] && msg+="Всего: $((tot / 60)) мин $((tot % 60)) с"$'\n'
 [ -n "$firstreads" ] && msg+="Первое чтение экрана: $(paste -sd, <<< "$firstreads" | sed 's/,/, /g')"$'\n'
+# the frame audit (src/FrameAudit.cs): every hint frame shot once it stood still, checked against its widget's live and layout rects
+faout=$(bash "$(dirname "$0")/frame-audit.sh" "$run" 2>/dev/null); faline=$(grep -E '^рамки: [0-9]+ проверено' <<< "$faout" | tail -1 | sed -E 's/ \(.*//')
+[ -n "$faline" ] && msg+="$faline"$'\n'
 [ -n "$passes" ] && msg+="passes: $(tail -1 <<< "$passes" | sed -E 's/^passes: //')"$'\n'
 if [ "$finish_ok" = 1 ]; then msg+="Можно выключать ноутбук."; else msg+="Ноутбук не подтвердил завершение: проверьте его, прежде чем выключать."; fi
 
@@ -99,6 +102,7 @@ if [ -n "$fchecks" ] && [ -n "$shots" ]; then fsheet=$(bash "$(dirname "$0")/fra
   echo "first read:"; echo '```'; echo "${firstreads:-none}"; echo '```'
   echo "passes:"; echo '```'; echo "${passes:-none}"; echo '```'
   if [ -n "$fchecks" ]; then echo; echo "## Frames (frame check lines; contact sheet: ${fsheet:-none, no screenshots} - tools/lab/frames-sheet.sh $run)"; echo; echo '```'; echo "$fchecks"; echo '```'; fi
+  if [ -n "$faout" ]; then echo; echo "## Frame audit (tools/lab/frame-audit.sh $run)"; echo; echo '```'; echo "$faout"; echo '```'; fi
   if [ -n "$shots" ]; then echo; echo "## Stop screenshots (per scenario; download: tools/lab/lab-shots.sh $run)"; echo; echo '```'; echo "$shots"; echo '```'; fi
 } > "$LAB_DIR/$fname"
 echo "report: $LAB_DIR/$fname"

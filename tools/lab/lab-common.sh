@@ -37,7 +37,10 @@ tg() {
 
 # every scenario the lab knows, in the default run order (the storage cleanup last: it leaves the game in «Массовая продажа»;
 # the restart one at the very end). lab-request.sh with no list and the auto runs on a new test build run all of them.
-LAB_SCENARIOS="equip_city equip_hide_worn equip_artifact locate locate_recast locate_art sell_mark sell_after_restart"
+# equip_city_hint / locate_hint: the same requests with auto click off (the recorder command names the scenario, the test app turns its auto
+# click off for it, app/HostBridge.cs LabScenario): the app only shows hints, nobody clicks; the frame audit's shots of the first steps are the
+# verdict (src/FrameAudit.cs, tools/lab/frame-audit.sh), then the request is cancelled
+LAB_SCENARIOS="equip_city_hint equip_city equip_hide_worn equip_artifact locate_hint locate locate_recast locate_art sell_mark sell_after_restart"
 # scenarios run only when asked (lab-request.sh <device> --only explore) or by the --auto pass on their own schedule: explore = the test app's
 # explorer (src/Explorer.cs: the game's safe UI against the UI graph; once a day and on every new game version, lab-loop.sh explore_due)
 LAB_EXTRA_SCENARIOS="explore"

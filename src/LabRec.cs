@@ -35,6 +35,9 @@ namespace RealmForge {
       return new LabRecCmd { Seq = seq, Op = "stop" };
     }
 
+    /// <summary>A hint-mode scenario (equip_city_hint, locate_hint): the app runs it with auto click off.</summary>
+    public static bool IsHintScenario(string scenario) { return scenario != null && scenario.EndsWith("_hint", StringComparison.Ordinal); }
+
     public static string NewId(DateTime now, Random rnd) { return "lab-" + RecNames.NewId(now, rnd); }
     public static bool IsLabId(string id) { return id != null && IdRx.IsMatch(id); }
 

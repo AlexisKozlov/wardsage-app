@@ -4,7 +4,9 @@
 #   lab-request.sh <device>                       all scenarios (LAB_SCENARIOS in lab-common.sh), in their order
 #   lab-request.sh <device> --only a,b            only these, in the default order
 #   lab-request.sh <device> <scenario>...         these, in the given order
-# Scenarios: equip_city, equip_hide_worn, equip_artifact, locate, locate_recast, locate_art, sell_mark, sell_after_restart;
+# Scenarios: equip_city_hint, equip_city, equip_hide_worn, equip_artifact, locate_hint, locate, ... (the _hint ones: auto click off, hints only,
+# the frame audit checks their frames);
+# all: equip_city, equip_hide_worn, equip_artifact, locate, locate_recast, locate_art, sell_mark, sell_after_restart;
 # not in the default run: explore (the explorer over the game's safe UI, ~10 min; e.g. lab-request.sh laptop --only explore).
 # The equip build alternates by itself: A, then B, then A ... (fixtures equip_a / equip_b, see lab-fixture.sh).
 set -euo pipefail

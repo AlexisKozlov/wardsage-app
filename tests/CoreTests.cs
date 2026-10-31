@@ -6488,6 +6488,57 @@ static partial class CoreTests {
       Check(AutoRecPolicy.HaltTag("Equip", "screen", "EquipNav @1,2 needs City").StartsWith("halt Equip screen: "), "auto rec: any other stop is tagged by owner and reason");
       Eq("unknown-form Form_ItemReward", AutoRecPolicy.UnknownFormTag("Form_ItemReward"), "auto rec: an unknown form on top is tagged by its name");
     }
+    {   // the frame audit (src/FrameAudit.cs): the flag rules, the stability, the sidecar
+      Func<FrameAuditShot> clean = () => new FrameAuditShot { Step = "s", Target = "t", Frame = new double[] { 100, 100, 80, 40 }, Live = new double[] { 102, 101, 76, 38 }, Layout = new double[] { 100, 100, 80, 40 }, ClientW = 1280, ClientH = 720 };
+      Eq(0, FrameAudit.Flags(clean()).Count, "frame audit: a frame on its widget, inside the client, alone, off the plate is clean");
+      var fa = clean(); fa.Live = new double[] { 100 + 12, 100, 80, 40 };
+      Eq(0, FrameAudit.Flags(fa).Count, "frame audit: 12 px off (tolerance 12) is clean");
+      fa.Live = new double[] { 100 + 13, 100, 80, 40 };
+      Check(FrameAudit.Flags(fa).Exists(f => f.StartsWith("live vs layout centre dx=13")), "frame audit: 13 px off is flagged");
+      fa = clean(); fa.Layout = new double[] { 0, 0, 200, 100 }; fa.Live = new double[] { 25, 0, 200, 100 };
+      Eq(0, FrameAudit.Flags(fa).Count, "frame audit: 25 px off a 200 px widget (15 % = 30) is clean");
+      fa.Live = new double[] { 0, 0, 240, 100 };
+      Check(FrameAudit.Flags(fa).Exists(f => f.StartsWith("live vs layout size dw=40")), "frame audit: 40 px wider than a 200 px layout is flagged");
+      fa = clean(); fa.Live = null;
+      Eq(0, FrameAudit.Flags(fa).Count, "frame audit: no live rect, no disagreement check");
+      fa = clean(); fa.Frame = new double[] { 1250, 100, 80, 40 };
+      Check(FrameAudit.Flags(fa).Exists(f => f.StartsWith("outside the client")), "frame audit: past the client's right edge is flagged");
+      fa.Frame = new double[] { -1, 0, 80, 40 };
+      Check(!FrameAudit.Flags(fa).Exists(f => f.StartsWith("outside")), "frame audit: 1 px past the edge is tolerated");
+      fa = clean(); fa.Plates.Add(new double[] { 170, 130, 200, 80 });
+      Check(FrameAudit.Flags(fa).Exists(f => f.StartsWith("overlaps the hint box by 10x10")), "frame audit: a plate over the frame is flagged");
+      fa = clean(); fa.Plates.Add(new double[] { 180, 100, 200, 80 });
+      Eq(0, FrameAudit.Flags(fa).Count, "frame audit: a plate touching the frame's edge is clean");
+      fa = clean(); fa.FramesNow = 2;
+      Check(FrameAudit.Flags(fa).Contains("2 frames at once"), "frame audit: two frames at once are flagged");
+      bool fh, fc;
+      FrameAudit.HiddenOrCovered("not visible", out fh, out fc); Check(fh && !fc, "frame audit: not visible = hidden");
+      FrameAudit.HiddenOrCovered("form not on top", out fh, out fc); Check(!fh && fc, "frame audit: form not on top = covered");
+      FrameAudit.HiddenOrCovered("no fresh read", out fh, out fc); Check(!fh && !fc, "frame audit: no read is neither");
+      fa = clean(); fa.Covered = true; fa.Why = "not on top";
+      Check(FrameAudit.Flags(fa).Contains("on a covered widget (not on top)"), "frame audit: a covered widget is flagged");
+      fa = clean(); fa.Hidden = true; fa.Covered = true;
+      Check(FrameAudit.Flags(fa).Contains("on a hidden widget") && !FrameAudit.Flags(fa).Exists(f => f.StartsWith("on a covered")), "frame audit: hidden wins over covered");
+      Eq("frame audit: FLAG s / t 2 frames at once", FrameAudit.FlagLine(clean(), "2 frames at once"), "frame audit: the flag line");
+      Eq("ШАГ # ИЗ # Нажмите «Инвентарь»", FrameAudit.StepKey("ШАГ 1 ИЗ 5", "Нажмите  «Инвентарь»"), "frame audit: the step key drops digits, folds spaces");
+      Eq(60, FrameAudit.StepKey(new string('a', 80), "").Length, "frame audit: the step key is at most 60 chars");
+      Eq("lab-20261031-120000-0f1e2d", FrameAudit.RecId(new DateTime(2026, 10, 31, 12, 0, 0), "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0"), "frame audit: its recording id carries the run");
+      Check(LabRecCmd.IsLabId(FrameAudit.RecId(DateTime.Now, "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0")) && RecNames.IsValidId(FrameAudit.RecId(DateTime.Now, "x")), "frame audit: its id is a lab recording id");
+      var fj = FrameAudit.Json(clean(), new List<string> { "a \"b\"" });
+      Check(fj.Contains("\"frame\":[100,100,80,40]") && fj.Contains("\"disagree\":[0,0,-4,-2]") && fj.Contains("\"flags\":[\"a \\\"b\\\"\"]") && fj.Contains("\"plates\":[]"), "frame audit: the sidecar JSON");
+      Check(MiniJson.Parse(fj) != null, "frame audit: the sidecar is valid JSON");
+      var ft = new FrameAuditTracker(); ft.Run("r1"); var fr0 = new double[] { 10, 10, 50, 50 };
+      Check(!ft.Observe("k", fr0, 1000), "frame audit: first sight is not stable");
+      Check(!ft.Observe("k", fr0, 1300), "frame audit: 300 ms is not stable");
+      Check(ft.Observe("k", new double[] { 12, 10, 50, 50 }, 1400), "frame audit: 400 ms within 3 px is stable");
+      Check(!ft.Observe("k", fr0, 2000), "frame audit: checked once per run");
+      Check(!ft.Observe("k2", fr0, 3000) && !ft.Observe("k2", new double[] { 20, 10, 50, 50 }, 3300) && !ft.Observe("k2", new double[] { 20, 10, 50, 50 }, 3600), "frame audit: a move restarts the wait");
+      Check(ft.Observe("k2", new double[] { 20, 10, 50, 50 }, 3700), "frame audit: then stable");
+      Check(!ft.Observe("k3", fr0, 5000) && !ft.Observe("k3", fr0, 6200) && !ft.Observe("k3", fr0, 6500), "frame audit: a gap over 1 s restarts the wait");
+      ft.Run("r2"); Check(!ft.Observe("k", fr0, 9000) && ft.Observe("k", fr0, 9400), "frame audit: a new run checks again");
+      Check(LabRecCmd.IsHintScenario("equip_city_hint") && LabRecCmd.IsHintScenario("locate_hint") && !LabRecCmd.IsHintScenario("equip_city") && !LabRecCmd.IsHintScenario(null), "lab: the hint scenarios");
+      Check(LabRecCmd.Parse("1700000000000 start equip_city_hint 0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0") != null, "lab rec: a hint scenario's start is read");
+    }
     {   // the lab'lsc recorder commands (src/LabRec.cs): parsing and the decision
       const string lrun = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0";
       var lc = LabRecCmd.Parse("1700000000000 start equip_city " + lrun + "\r\n");

@@ -692,8 +692,10 @@ namespace RealmForge {
       recB = RecInfo.Active ? new RecInfo() : null;
       RFX.LuaRootShadowTick();
       RFX.UiButtonShadowTick();
+      AuditBegin();
       try { TickWork(); }
       finally {
+        try { AuditEnd(); } catch (Exception e) { Log.Write("frame audit: " + e.Message); }
         if (recB != null) { var b = recB; recB = null; b.Screen = screens.Current != null ? screens.Current.Brief : "-"; RecInputs(b); RecInfo.Publish(b); }
       }
     }
@@ -1577,6 +1579,7 @@ namespace RealmForge {
       if (strip == null && PendingFrame(frameR)) { frameR = null; hl = null; }   // the target's live frame is awaited: the plate alone, the frame comes once, live
       if (!GameDrawable()) { if (win.Visible) win.Hide(); key = null; return; }
       if (recB != null) RecScene(win, frameR, strip, marks);
+      if (auditOn) auditScenes.Add(new AuditScene { Win = win, Frame = frameR, Step = p != null ? FrameAudit.StepKey(p.Caps, p.Main) : "-" });
       // the frames and the new highlight stand still at their brightest (they pulsed: a repaint and a copy of the whole picture, up to the
       // game's client with the dimming, every tick a hint was shown); the picture is drawn again only when what it shows changes
       float pulse = HintPulse ? (float)(0.6 + 0.4 * Math.Sin(frame * 0.45)) : 1f;
@@ -1648,6 +1651,7 @@ namespace RealmForge {
               Log.Write("hint layouts: " + hold.LastCount + " for step «" + hold.LastStep + "»");   // 1 = laid out once, never moved
           }
         }
+        auditPlate[win] = pos != null ? new double[] { sceneX + pos[0], sceneY + pos[1], pw, ph } : null;   // (the frame audit: the plate it must keep off)
         // the bitmap covers everything: the frame with its glow, the plate, the strip
         int G = (int)Math.Max(14, 0.022 * U);
         int x0 = int.MaxValue, y0 = int.MaxValue, x1 = int.MinValue, y1 = int.MinValue;
@@ -4133,6 +4137,7 @@ namespace RealmForge {
     readonly HashSet<string> frameChecked = new HashSet<string>();
     void FrameCheck(string key, string widget, string sprite, SpriteArt.Draw d, SpriteArt.Fit fit, double[] f, double[] live, string src, string why) {
       if (!Channel.IsTest || f == null) return;
+      if (auditOn && src == "live") auditLive[key] = new AuditFor { Widget = widget ?? "", Sprite = sprite ?? "", Shape = fit != null ? fit.Kind : "rect", Live = live };
       if (!frameChecked.Add(key + "|" + src + "|" + sprite + "|" + (fit != null ? fit.Kind : "rect")) || frameChecked.Count > 400) return;
       var mon = System.Windows.Forms.Screen.FromPoint(new Point(sceneX, sceneY)).Bounds;
       string where = " client=[" + sceneX + "," + sceneY + "," + sceneW + "," + sceneH + "] screen=[" + mon.X + "," + mon.Y + "," + mon.Width + "," + mon.Height + "]";
@@ -4153,18 +4158,79 @@ namespace RealmForge {
       else if (ft.Cell != UiCellKind.None) why = "a list cell (LiveCell)";
       else if (ft.Click != ClickTarget.None) {
         var lv = LiveFrame(ft.Click, null, W, H, U, ft.Visual != "-", layout);
-        if (lv != null) { live = true; FrameLiveSeen(key); return lv; }
+        if (lv != null) { live = true; FrameLiveSeen(key); AuditFrameFor(key, layout, lv, true, null); return lv; }
         var r = RFX.UiButtonFresh(ft.Click, null, W, H, Environment.TickCount, 1000);
         why = r == null ? "no fresh read" : !r.Ok ? "failed at " + r.FailStep : !r.Visible ? "not visible" : "not on top";
       } else {
         var lv = LiveFrameKey(ft, W, H, U, out why);
-        if (lv != null) { live = true; FrameLiveSeen(key); return lv; }
+        if (lv != null) { live = true; FrameLiveSeen(key); AuditFrameFor(key, layout, lv, true, null); return lv; }
       }
       // a target with a live reader whose first read has not come yet: the frame waits for it (up to FramePendingMs) instead of standing on the
       // layout's rect first and jumping to the live one (the flicker of 1.6.66.423); the plate is shown meanwhile
       if (ft != null && ft.Layout == null && ft.Cell == UiCellKind.None && layout != null && FramePending(key)) pendingRects.Add(new[] { layout[0], layout[1], layout[2], layout[3] });
       FrameLayoutSay(key, why, layout);
+      AuditFrameFor(key, layout, layout, false, why);
       return layout;
+    }
+
+    // ---- TEST build, lab runs: the frame audit (src/FrameAudit.cs). Every frame Scene draws this tick is matched to the FrameFor target it came
+    // from; once it stood still for FrameAudit.StableMs it is checked once per (scenario, step, target) and run: the flags are logged
+    // ("frame audit: FLAG <key> <why>"), and while the overlay is left in captures (a lab recording runs) the client is shot (FrameAuditSink)
+    sealed class AuditScene { public GlowWindow Win; public int[] Frame; public string Step; }
+    sealed class AuditFor { public string Widget = "", Sprite = "", Shape = "", Why = ""; public double[] Layout, Frame, Live; public bool IsLive; }
+    /// <summary>The lab scenario and run the audit runs for ("" scenario = off), set by the lab's recorder command (app/HostBridge.cs).</summary>
+    public string AuditScenario = "", AuditRun = "";
+    public Func<string> AuditSite = () => "", AuditCode = () => "";
+    bool auditOn;
+    readonly List<AuditScene> auditScenes = new List<AuditScene>();
+    readonly Dictionary<GlowWindow, double[]> auditPlate = new Dictionary<GlowWindow, double[]>();
+    readonly Dictionary<string, AuditFor> auditFor = new Dictionary<string, AuditFor>(), auditLive = new Dictionary<string, AuditFor>();
+    readonly FrameAuditTracker auditTrack = new FrameAuditTracker();
+    FrameAuditSink auditSink;
+    int auditShots, auditFlags;
+
+    void AuditBegin() {
+      auditOn = Channel.IsTest && AuditScenario != "" && AuditRun != "";
+      auditScenes.Clear(); auditFor.Clear(); auditLive.Clear();
+    }
+
+    void AuditFrameFor(string key, double[] layout, double[] frame, bool live, string why) {
+      if (!auditOn || frame == null) return;
+      AuditFor a; auditLive.TryGetValue(key, out a);
+      auditFor[key] = new AuditFor { Widget = a != null ? a.Widget : "", Sprite = a != null ? a.Sprite : "", Shape = a != null ? a.Shape : "", Live = live && a != null ? a.Live : null,
+        Layout = layout != null ? (double[])layout.Clone() : null, Frame = (double[])frame.Clone(), IsLive = live, Why = why ?? "" };
+    }
+
+    void AuditEnd() {
+      if (!auditOn || sceneW <= 0 || sceneH <= 0) return;
+      auditTrack.Run(AuditRun);
+      var frames = new List<AuditScene>();
+      foreach (var sc in auditScenes) if (sc.Frame != null && sc.Frame.Length >= 4 && !frames.Exists(f => f.Frame[0] == sc.Frame[0] && f.Frame[1] == sc.Frame[1] && f.Frame[2] == sc.Frame[2] && f.Frame[3] == sc.Frame[3])) frames.Add(sc);
+      if (frames.Count == 0) return;
+      var plates = new List<double[]>();
+      foreach (var sc in auditScenes) { double[] pr; if (auditPlate.TryGetValue(sc.Win, out pr) && pr != null && !plates.Contains(pr)) plates.Add(pr); }
+      long now = NowMs();
+      foreach (var sc in frames) {
+        var fr = new double[] { sc.Frame[0] - sceneX, sc.Frame[1] - sceneY, sc.Frame[2], sc.Frame[3] };
+        // the target: the FrameFor rect this frame is (best overlap, at least half)
+        string target = "unmapped"; AuditFor best = null; double bi = 0.5;
+        foreach (var kv in auditFor) { double i = FrameAudit.IoU(fr, kv.Value.Frame); if (i > bi) { bi = i; best = kv.Value; target = kv.Key; } }
+        if (!auditTrack.Observe(AuditScenario + "|" + sc.Step + "|" + target, fr, now)) continue;
+        var s = new FrameAuditShot { Scenario = AuditScenario, Run = AuditRun, Step = sc.Step, Target = target, Frame = fr, ClientW = sceneW, ClientH = sceneH, FramesNow = frames.Count, AtMs = now };
+        if (best != null) {
+          s.Source = best.IsLive ? "live" : "layout"; s.Widget = best.Widget; s.Sprite = best.Sprite; s.Shape = best.Shape; s.Why = best.Why;
+          s.Live = best.Live; s.Layout = best.Layout;
+          FrameAudit.HiddenOrCovered(best.Why, out s.Hidden, out s.Covered);
+        } else s.Source = "none";
+        foreach (var pr in plates) s.Plates.Add(new[] { pr[0] - sceneX, pr[1] - sceneY, pr[2], pr[3] });
+        var flags = FrameAudit.Flags(s);
+        auditShots++; if (flags.Count > 0) auditFlags++;
+        foreach (var why in flags) Log.Write(FrameAudit.FlagLine(s, why));
+        Log.Write("frame audit: " + (flags.Count > 0 ? "suspect " : "ok ") + FrameAudit.Key(s) + " source=" + s.Source + " frame=[" + string.Join(",", Array.ConvertAll(fr, v => ((int)Math.Round(v)).ToString())) + "]"
+          + " (" + auditShots + " checked, " + auditFlags + " suspect in this app run)");
+        if (auditSink == null) auditSink = new FrameAuditSink(AuditSite, AuditCode, m => Log.Write(m));
+        auditSink.Add(s, sceneX, sceneY, sceneW, sceneH, GlowWindow.Capturable);
+      }
     }
 
     /// <summary>The live frame of a target is still awaited: asked first under <see cref="FramePendingMs"/> ago and never read live since (a key not

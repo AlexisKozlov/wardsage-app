@@ -184,7 +184,9 @@ scn_tbl() { case "$1" in equip_*) echo equip_plans ;; locate*) echo item_locates
 SELL_OK_RE='click gate Sell: allow (HeroBack|CityInventory|InvEquipTab|InvBulkEnter|InvBulkCell|InvListDrag|OfferClose|UnknownBack|CityBack|EscapeBack|MapClose|ArtTab|ArtBulkEnter|ArtBulkCell|ArtListDrag)\b'
 # hero_grades keeps an HMAC of the game account (a server secret, never read here), not the account: the newest updated_at of the table
 # stands for the device's account (on staging only the lab's app sends grades as a rule)
-LOGS_WAIT=${LAB_LOGS_WAIT:-60}   # max wait at the end for the app's next log batch (the report's figures come from it)
+LOGS_WAIT=${LAB_LOGS_WAIT:-60}
+FA_QUIET=${LAB_FA_QUIET:-40}   # a hint scenario: no new frame shot for this long after the first one = the steps shown without a click are done
+FA_MAX=${LAB_FA_MAX:-180}      # a hint scenario: at most this long   # max wait at the end for the app's next log batch (the report's figures come from it)
 GRADES_WAIT=${LAB_GRADES_WAIT:-360}
 grades_at() { q <<< "select coalesce(extract(epoch from max(updated_at))::bigint, 0) from public.hero_grades"; }
 grades_mark() { dset ready_at "$(now)"; dset grades0 "$(grades_at)"; }
@@ -300,7 +302,7 @@ tick() {
       fi
       mkjob game_front >/dev/null || true   # the game window to the front before each scenario
       dset mark_at "$(now)"; mkjob mark "{\"scn\":\"$sc\"}" >/dev/null || true   # the runner forgets the old stop / ready markers
-      if [ "$sc" = equip_city ]; then
+      if [ "${sc%_hint}" = equip_city ]; then
         # never seed the build the hero already wears (then the app has nothing to change): the other one, whatever the last run did
         pb=$("$HERE/lab-seed.sh" "$dev" --pick "$build" 2>/dev/null) || pb=""
         if [[ "$pb" =~ ^[ab]$ ]] && [ "$pb" != "$build" ]; then
@@ -318,20 +320,23 @@ tick() {
         r=$(mkjob restart_app) && dset job "$r" && dset job_timeout "" && phase scn_restart; return
       fi
       seederr=$(mktemp)
-      row=$("$HERE/lab-seed.sh" "$dev" "$sc" "$build" 2>"$seederr") || row=""
+      row=$("$HERE/lab-seed.sh" "$dev" "${sc%_hint}" "$build" 2>"$seederr") || row=""
       sw=$(grep -m1 WARNING "$seederr" | sed -E 's/^lab-seed: WARNING //'); cat "$seederr" >&2; rm -f "$seederr"
       if [ -z "$row" ] && [ -n "$sw" ]; then warn "$sc" 0 "$sw"; next_scn; return; fi
       if [ -z "$row" ]; then step "$sc" false 0 "seed failed (fixture missing?)"; FAILED=1; next_scn; return; fi
-      dset row "$row"; dset seeded_at "$(now)"; RP_AT=""; RP_LINE=""; RP_N=0; phase wait_scn ;;
+      dset row "$row"; dset seeded_at "$(now)"; dset fa_n 0; dset fa_at "$(now)"; dset fa_poll 0; RP_AT=""; RP_LINE=""; RP_N=0; phase wait_scn ;;
     scn_rec)
       # the recording is a help, never a verdict: no answer in 40 s (old runner, old app) and the scenario goes on without one
       j=$(dget job); st=$(jstate "$j")
       case "$st" in
         done) id=$(jres "$j" rec); [[ "$id" =~ $LAB_REC_RX ]] && dset rec_id "$id"; say "recording ${id:-?} started"; phase scenario ;;
-        failed|expired|cancelled) say "recording not started: $(jres "$j" error)$(jres "$j" state)"; phase scenario ;;
+        failed|expired|cancelled) say "recording not started: $(jres "$j" error)$(jres "$j" state)"
+          # a hint scenario's auto click is turned off by this command only: without its answer the scenario is not run
+          sc=${scenarios[$(dget scn_idx)]}; if [[ "$sc" == *_hint ]]; then warn "$sc" 0 "режим подсказок не включён (команда записи не прошла)"; next_scn; else phase scenario; fi ;;
         *) if [ "$(phase_age)" -gt 40 ]; then
              q -v j="$j" <<< "update public.lab_jobs set state = 'cancelled', finished_at = now() where id = :'j'::uuid and state = 'queued'" >/dev/null
-             say "recording: no answer in 40 s"; phase scenario
+             say "recording: no answer in 40 s"
+             sc=${scenarios[$(dget scn_idx)]}; if [[ "$sc" == *_hint ]]; then warn "$sc" 0 "режим подсказок не включён (нет ответа на команду записи)"; next_scn; else phase scenario; fi
            fi ;;
       esac ;;
     scn_restart)
@@ -384,6 +389,24 @@ tick() {
       tbl=$(scn_tbl "$sc")
       case "$sc" in equip_city) maxs=600; label="$sc (build ${build^^})" ;; equip_*) maxs=600; label="$sc" ;; sell_*) maxs=480; label="$sc" ;; *) maxs=300; label="$sc" ;; esac
       st=$(q -v r="$row" <<< "select status || '|' || coalesce(round(extract(epoch from done_at - created_at))::int, 0) from public.$tbl where id = :'r'::uuid")
+      if [[ "$sc" == *_hint ]]; then
+        # hint mode (auto click off, nobody clicks): the frame audit's shots of this scenario (src/FrameAudit.cs) are the verdict. Pass = shots of
+        # 3 steps, or at least one and nothing new for FA_QUIET s (the next step waits on the player's click), and no FLAG; then cancelled
+        sa=$(dget seeded_at)
+        if [ "${st%%|*}" = done ]; then fail_scn "$label" "в режиме подсказок запрос выполнен сам: автоклик не выключился" "$tbl" "$row"; return; fi
+        if [ $(( $(now) - $(dget fa_poll) )) -ge 10 ]; then
+          dset fa_poll "$(now)"
+          read -r fn fk fs ff <<< "$(bash "$HERE/frame-audit.sh" "$RUN" --count "$sc" 2>/dev/null)"
+          fn=${fn:-0}; fk=${fk:-0}; fs=${fs:-0}
+          [ "$fn" != "$(dget fa_n)" ] && { dset fa_n "$fn"; dset fa_at "$(now)"; }
+          if [ "$fk" -gt 0 ]; then fail_scn "$label" "рамка под подозрением ($fk из $fn): ${ff:0:180}" "$tbl" "$row"; return; fi
+          if [ "$fs" -ge 3 ] || { [ "$fn" -ge 1 ] && [ $(( $(now) - $(dget fa_at) )) -ge "$FA_QUIET" ]; }; then
+            step "$label" true "$(( $(now) - ${sa:-0} ))" "рамок проверено $fn (шагов $fs), под подозрением нет; без кликов, запрос отменён"; next_scn; return
+          fi
+        fi
+        if [ "$(phase_age)" -gt "$FA_MAX" ]; then fail_scn "$label" "за $FA_MAX с снято рамок: $(dget fa_n) (нужна хотя бы одна)" "$tbl" "$row"; fi
+        return
+      fi
       if [ "$tbl" = sell_plans ]; then
         sa=$(dget seeded_at); devsig
         nev=$(dstat "coalesce(status->>'never', '')")
