@@ -191,7 +191,7 @@ namespace RealmForge {
     /// never placed over them (src/HintLayout.cs TryPlace), whichever of them the step frames.</summary>
     public static string[] AvoidKeys(LocateStep st) {
       if (st == null) return new string[0];
-      if (st.Kind == LocateKind.OpenFoundry && st.OnGear) return new[] { "hero.workshop", "hero.gem", "hero.back" };
+      if (st.Kind == LocateKind.OpenFoundry && st.OnGear) return new[] { "hero.workshop", "hero.gem", "hero.switching", "hero.artifactTab", "hero.back" };
       switch (st.Kind) {
         case LocateKind.OpenAscendTab: case LocateKind.OpenRecastTab:
           return new[] { "foundry.tab.ascend", "foundry.tab.recast", "foundry.back" };
@@ -206,6 +206,24 @@ namespace RealmForge {
         case LocateKind.ExitBulk: return new[] { "inventory.bulkBack" };
         default: return new string[0];
       }
+    }
+
+    /// <summary>The hero gear tab's «Быстро снять» / «Быстро надеть» (Panel_Equip_Simple/Content/Buttons, shown state), U from the right / bottom edge.</summary>
+    public const double HeroQuickX0 = -0.586, HeroQuickX1 = -0.13, HeroQuickY0 = -0.0941;
+    /// <summary>The hero screen's right tab column (m_ToggleGroup), U from the right edge.</summary>
+    public const double HeroTabsX0 = -0.1656;
+
+    /// <summary>The areas of the hero gear tab the step plate leaves free beside the step's buttons (client px x, y, w, h): the right tab column
+    /// whole and the bottom button row from «Улучшение самоцветами» to «Быстро надеть». Empty for other steps.</summary>
+    public static GeoRect[] AvoidAreas(LocateStep st, GameGeometry g, double W, double H, double U) {
+      if (st == null || st.Kind != LocateKind.OpenFoundry || !st.OnGear) return new GeoRect[0];
+      var res = new System.Collections.Generic.List<GeoRect>();
+      double tx = W + HeroTabsX0 * U;
+      res.Add(new GeoRect { X = tx, Y = 0, W = W - tx, H = H });
+      var gem = g != null ? g.Rect("hero.gem", W, H, U) : null;
+      double x0 = gem != null ? Math.Min(gem.X, W + HeroQuickX0 * U) : W + HeroQuickX0 * U, y0 = gem != null ? Math.Min(gem.Y, H + HeroQuickY0 * U) : H + HeroQuickY0 * U;
+      res.Add(new GeoRect { X = x0, Y = y0, W = W + HeroQuickX1 * U - x0, H = H - y0 });
+      return res.ToArray();
     }
 
     /// <summary>Whether a frame (not a click) may be drawn for this kind of step at all.</summary>

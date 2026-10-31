@@ -17,6 +17,7 @@
 // inventory.cardRight         Form_BackpackIntegration ...Root/LeftLayout/m_Info/c_Button/c_RightBtn
 // inventory.artWorkshop       Form_BackpackIntegration.m_PanelContentCur.m_BtnIntensify (pilot read ArtWorkshop)
 // hero.workshop / hero.gem    Form_CharactorMain ...Panel_Equip_Simple/Content/GameObject/m_BtnSubliming / m_BtnEquipGem   Icon
+// hero.switching              Form_CharactorMain ...Panel_Equip_Simple/Content/GameObject/m_BtnSwitching («Быстрая смена»)   Icon
 // hero.tab.equip              Form_CharactorMain m_Main_Frame/m_Right/m_ToggleGroup/m_Toggle_Equip                    - (the whole tab: icon and label)
 // hero.artifactTab            Form_CharactorMain m_Main_Frame/m_Right/m_ToggleGroup/m_Toggle_Artifact                 (picked)
 // hero.slot.0..4              Form_CharactorMain ...EquipPanel/m_EquipGrid/m_LeftGrid|m_RightGrid/m_EquipPart_N       (picked)
@@ -110,6 +111,7 @@ namespace RealmForge {
       // the hero screen
       B("hero.workshop", "Form_CharactorMain", Hero + "m_Right/Panel_Equip_Simple/Content/GameObject/m_BtnSubliming", "Icon");
       B("hero.gem", "Form_CharactorMain", Hero + "m_Right/Panel_Equip_Simple/Content/GameObject/m_BtnEquipGem", "Icon");
+      B("hero.switching", "Form_CharactorMain", Hero + "m_Right/Panel_Equip_Simple/Content/GameObject/m_BtnSwitching", "Icon");
       B("hero.tab.equip", "Form_CharactorMain", "m_Main_Frame/m_Right/m_ToggleGroup/m_Toggle_Equip", "-");
       B("hero.artifactTab", "Form_CharactorMain", "m_Main_Frame/m_Right/m_ToggleGroup/m_Toggle_Artifact", "-");
       for (int i = 0; i < 5; i++) B("hero.slot." + i, "Form_CharactorMain", Hero + "m_EquipGrid/" + (i < 2 ? "m_LeftGrid" : "m_RightGrid") + "/m_EquipPart_" + i);

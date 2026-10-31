@@ -70,6 +70,7 @@ namespace RealmForge {
         b.Shape = ReadShape(r); b.Inset = ReadInset(r);   // both optional: missing or odd = a rectangle, no inset
         g.rects[kv.Key] = b;
       }
+      ShowHeroGear(g);
       object gv;
       var gs = o.TryGetValue("grids", out gv) ? MiniJson.AsObject(gv) : null;
       if (gs != null) {
@@ -126,6 +127,24 @@ namespace RealmForge {
       if (a.Length != 1 || anchors.IndexOf(a[0]) < 0 || double.IsNaN(off) || Math.Abs(off) > 100) return false;
       e.A = a[0]; e.Off = off;
       return true;
+    }
+
+    /// <summary>The hero gear tab's round buttons (Panel_Equip_Simple/Content/GameObject): «Улучшение самоцветами», «Литейная», «Быстрая смена».</summary>
+    public static readonly string[] HeroGearRow = { "hero.gem", "hero.workshop", "hero.switching" };
+    /// <summary>The gear tab's right column slides in (clip Form_CharactorMain_Equip_Simple_Show): Content.anchoredPosition.x 118 in the prefab
+    /// (off the screen) -> -229 shown, 347 canvas units = 0.5422 U to the left.</summary>
+    public const double HeroGearShowDx = -347.0 / 640;
+
+    // data made from the prefab's hidden state (the site's files up to 1.6.46.841.1) put the row 0.54 U too far right: «Литейная» framed on an
+    // empty spot right of «Быстро надеть» (lab 1.6.66.424); moved onto the shown state. Data already in it (workshop's right edge left of
+    // R-0.4 U) stays as it is
+    static void ShowHeroGear(GameGeometry g) {
+      Box w;
+      if (!g.rects.TryGetValue("hero.workshop", out w) || w.X1.A != 'R' || w.X1.Off < -0.4) return;
+      foreach (var k in HeroGearRow) {
+        Box b;
+        if (g.rects.TryGetValue(k, out b) && b.X0.A == 'R' && b.X1.A == 'R') { b.X0.Off += HeroGearShowDx; b.X1.Off += HeroGearShowDx; }
+      }
     }
 
     public bool Has(string key) { return rects.ContainsKey(key); }
