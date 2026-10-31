@@ -1264,8 +1264,34 @@ static partial class CoreTests {
     Check(hw == "selected" && other == 0 && c >= 1 && c <= 2 && atRebuild == 0, "sim: hide-worn toggled, the list rebuilds: the item is picked by its live cell only, no click on another item (" + hw + ", " + c + " clicks, " + other + " on others, " + atRebuild + " while rebuilding, " + why + ")");
     hw = HideWornRebuildRun(false, true, out c, out other, out atRebuild, out rt0, out why);
     Check(hw == "selected" && other == 0 && c == 1 && atRebuild == 0 && rt0 < 6000, "sim: the same with the cell read every other tick and the selection read 1.2 s late: one click (no second one that would deselect), picked at " + rt0 + " ms (" + hw + ", " + c + " clicks, " + other + " on others, " + why + ")");
+    // plain auto-equip (live 1.6.66.450: «выберите оружие» framed, never clicked): the item in the top row, its live cell read every ~200 ms, no filter touched
+    // since long (FilterAt 0), the list never rebuilt: one click on its live cell within 1.5 s
+    string pl = PlainLiveRun(out c, out other, out rt0);
+    Check(pl == "selected" && c == 1 && other == 0 && rt0 <= 1500, "sim: plain pick, the live cell read every 200 ms: clicked at its live cell within 1.5 s (" + pl + ", " + c + " clicks, " + other + " on others, first at " + rt0 + " ms)");
     hw = HideWornRebuildRun(true, false, out c, out other, out atRebuild, out rt0, out why);
     Check(hw == "selected" && other == 0 && c == 0, "sim: hide-worn toggled with the item selected already: recognised by the selected uid, no click at all (" + hw + ", " + c + " clicks, " + other + " on others)");
+  }
+
+  static string PlainLiveRun(out int clicks, out int other, out long firstClickAt) {
+    var geo = new ListGeometry(); double H = 1009, cell = geo.CellW * H;
+    var types = new[] { 0, 1, 1, 1, 1, 1, 1 };
+    double real = ScrollAnchor.TopRow1(geo, H);
+    const long target = 9012; long sel = 0, seen = 0; bool tip = false; clicks = other = 0; firstClickAt = -1;
+    var p = new AutoPilot(geo); var due = new List<KeyValuePair<long, Action>>();
+    double ty = real + geo.RowOffset(types, 1) * H + cell / 2, tx = geo.ColLeft(2) * H + cell / 2;
+    for (long t = 0; t < 10000; t += 210) {
+      foreach (var e in due.ToArray()) if (e.Key <= t) { e.Value(); due.Remove(e); }
+      var v = new AutoView { NowMs = t, Foreground = true, H = H, Target = target, Row = 1, Col = 2, Sel = sel, SelRow = sel > 0 ? 1 : 0, SelCol = sel > 0 ? 2 : 0,
+                             AnchorHas = true, Row1Top = real, Types = types, TipKnown = true, TipShown = tip, Hero = 5, ScreenHero = 5, Owner = 0,
+                             LiveGrid = true, LiveTarget = true, LiveX = tx, LiveY = ty, ListSig = 1, FilterAt = 0 };
+      var a = p.Step(v);
+      if (p.State == "failed" || p.State == "done" || sel == target) break;
+      if (a.Kind != AutoKind.Click) continue;
+      clicks++; if (firstClickAt < 0) firstClickAt = t;
+      if (a.Cell != target) other++;
+      due.Add(new KeyValuePair<long, Action>(t + 600, () => { sel = target; tip = true; }));
+    }
+    return sel == target ? "selected" : p.State;
   }
 
   // the gear list after the «Скрыть надетое» toggle: at 1000 ms the list is rebuilt (a new list, re-sorted: the plan's item moves from row 2 to row 4),

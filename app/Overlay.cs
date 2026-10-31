@@ -2012,7 +2012,8 @@ namespace RealmForge {
       // the plan's gear is on: the artifact steps (the gear pilots below stay idle)
       if (ArtPhase) { TickArtEquip(o, cr, v); return; }
       var fview = FilterViewNow(o, cr, now, v.Foreground, v.UserBusy);
-      if (fview.PanelOpen) filterTouchAt = now;   // (the list rebuilds under the panel and after it closes: the item pilot waits for it)
+      // (the list rebuilds under the filter's side panel and after it closes: the item pilot waits for it; PanelOpen alone stays true through the item picks - live 1.6.66.450: the pilot waited for ever)
+      if (fview.PanelOpen && fview.SidePanelOpen) filterTouchAt = now;
       var fa = fpilot.Step(fview);
       LogFilter(fview); lastFilterView = fview;
       if (fview.PanelOpen && fview.SidePanelOpen) v.SideClose = new[] { fg.X(fg.SideCloseX, cr.R, cr.B), fg.Y(fg.CloseY, cr.R, cr.B) };
