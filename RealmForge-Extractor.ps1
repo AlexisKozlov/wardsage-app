@@ -5447,9 +5447,9 @@ namespace RealmForge {
       { "footer",             new[] { "Только чтение: программа читает память игры и ничего в ней не меняет.",
                                       "Read-only: the program reads game memory and never changes anything in it." } },
       { "minutes",            new[] { "{0} мин", "{0} min" } },
-      // equip helper («Переодевание»)
-      { "btn_equip",          new[] { "Переодевание", "Equip helper" } },
-      { "eq_title",           new[] { "Переодевание", "Equip helper" } },
+      // equip helper («Поручения»)
+      { "btn_equip",          new[] { "Поручения", "Tasks" } },
+      { "eq_title",           new[] { "Поручения", "Tasks" } },
       { "eq_plan",            new[] { "Сборка", "Build" } },
       { "eq_reload",          new[] { "Обновить сборки", "Reload builds" } },
       { "eq_rescan",          new[] { "Найти заново", "Search again" } },
@@ -5745,7 +5745,7 @@ namespace RealmForge {
       root.Controls.Add(primary);
       AcceptButton = primary;
 
-      // equip helper («Переодевание»): builds sent from the site, hints over the game
+      // equip helper («Поручения»): builds sent from the site, hints over the game
       equipBtn = NewButton(false);
       equipBtn.Size = new Size(W, 32);
       equipBtn.Margin = new Padding(0, 0, 0, 12);
@@ -6280,7 +6280,7 @@ namespace RealmForge {
 }
 
 // ===== src/HelperForm.cs =====
-// RealmForge extractor - equip helper window («Переодевание»).
+// RealmForge extractor - equip helper window («Поручения»).
 //
 // Loads the builds the player sent from the site («Надеть в игре»), finds the game's gear screen once
 // (read-only memory scan), then re-reads it several times a second and tells the player which slot / item

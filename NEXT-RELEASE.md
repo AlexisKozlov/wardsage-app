@@ -242,6 +242,7 @@ version …: from the site» или «saved copy»). Без файла оста�
 - Если шаг не получился, программа пробует ещё раз, а не останавливается сразу.
 - Рамки подсказок точно ложатся на кнопки и значки, сами подсказки стали компактнее.
 - Меньше нагрузка на процессор, программа никогда не нажимает рядом с кнопками покупки; когда она берётся за работу, окно игры выходит на передний план.
+- Раздел «Переодевание» стал «Поручения»: сверху крупно идёт текущее задание (герой или вещь, шаг, подсказка, шаги полосой), ниже — очередь остальных: надеть сборку, найти вещь, артефакт, очистка склада; кнопки и режимы те же.
 
 ## EN
 
@@ -255,3 +256,4 @@ version …: from the site» или «saved copy»). Без файла оста�
 - Lower CPU load, and the app never clicks near purchase buttons; when it starts working, the game window comes to the front.
 - Storage cleanup: once everything is marked (by the app or by you) the app says «Done: N selected — press «Sell»» and frames the «Sell» button (you press it); item frames match the cells and no longer overlap; the list's scroll bar shows a marker for every remaining item; a wrongly marked item gets a red frame with a ✕; hints no longer blink out while the mouse is still.
 - Storage cleanup: with the inventory open on another tab (e.g. «Materials») the frame stands on the «Equipment» tab; item frames are bright and clear (the brand gold frame, one owl on the top one); scroll bar markers merge into groups (at most 12, with the item count).
+- The «Equip» section is now «Tasks»: the current task is shown large on top (hero or item, the step, the hint, the steps as a bar) and the rest of the queue below: equip a build, find an item, artifact, storage cleanup; the buttons and modes are the same.

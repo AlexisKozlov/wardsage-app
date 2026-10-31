@@ -58,7 +58,7 @@
         if (s === 'reading') emit({ ev: 'sync', stage: 'read', seconds: 17 });
         if (s === 'done') emit({ ev: 'sync', stage: 'done', result: { seconds: 41, heroes: 128, items: 1109, artifacts: 380, viewUrl: site + '/app/heroes' } });
         if (s === 'error') emit({ ev: 'sync', stage: 'error', error: { kind: 'not_running' } });
-        if (['equip', 'pick', 'rel', 'selected', 'hidden', 'done-plan', 'compact', 'filter-open', 'filter-guide', 'far'].includes(s)) {
+        if (s.indexOf('tasks') === 0 || ['equip', 'pick', 'rel', 'selected', 'hidden', 'done-plan', 'compact', 'filter-open', 'filter-guide', 'far'].includes(s)) {
           setTimeout(() => document.querySelector('[data-page=equip]').click(), 20);
         }
         if (s === 'settings') setTimeout(() => document.querySelector('[data-page=settings]').click(), 20);
@@ -93,6 +93,14 @@
           { id: 't7', title: 'Как понять, какой набор брать на героя в рейд?', kind: 'question', status: 'new', area: null, comments: 0, newCount: 0, lastAt: ago(52), url: u('t7') } ];
         emit({ ev: 'forum', r: { ok: true, total: s === 'forum00' ? 0 : s === 'forum0' ? 0 : 3, newTopicUrl: nt, topics: s === 'forum00' ? [] : s === 'forum0' ? calm : busy } });
       } else if (m.cmd === 'plans.load') {
+        // s=tasks (a build running, the site's find request, a cleanup list, more builds) | tasks-1 (one build) | tasks-0 (nothing) | tasks-sell (a cleanup list only)
+        if (s.indexOf('tasks') === 0) {
+          const none = s === 'tasks-0' || s === 'tasks-sell';
+          emit({ ev: 'plans', status: 'ok', plans: none ? [] : s === 'tasks-1' ? [plan] : plans });
+          if (s === 'tasks' || s === 'tasks-sell') emit({ ev: 'sell', status: 'ok', list: { id: 's1', kind: 'equip', createdAt: '2026-10-12T10:00:00Z', items: plan.items.concat(plan.items, plan.items).map((i, n) => ({ uid: 5000 + n, slot: i.slot, name: i.name, setName: i.setName, level: i.level, stars: i.stars })) } });
+          if (s === 'tasks') emit({ ev: 'locate', req: locateReq });
+          return;
+        }
         emit({ ev: 'plans', status: 'ok', plans });
         if (s.indexOf('locate') === 0) emit({ ev: 'locate', req: s === 'locate-gone' ? { id: 'l1', purpose: 'recast', createdAt: '2026-10-12T10:00:00Z', heroUid: 0, heroName: null, item: null } : locateReq });
       } else if (m.cmd === 'locate.show') {

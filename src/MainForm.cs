@@ -240,7 +240,7 @@ namespace RealmForge {
       root.Controls.Add(primary);
       AcceptButton = primary;
 
-      // equip helper («Переодевание»): builds sent from the site, hints over the game
+      // equip helper («Поручения»): builds sent from the site, hints over the game
       equipBtn = NewButton(false);
       equipBtn.Size = new Size(W, 32);
       equipBtn.Margin = new Padding(0, 0, 0, 12);

@@ -185,12 +185,6 @@ body.still *, body.still *::before, body.still *::after { animation-play-state: 
 .onboard b { display: block; color: var(--text); font-weight: 500; margin-bottom: 2px }
 
 /* ---------- equip ---------- */
-.plans { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px }
-.plan { all: unset; cursor: pointer; display: grid; grid-template-columns: 58px minmax(0, 1fr); gap: 12px; align-items: center; padding: 10px; border: 1px solid var(--line2); border-radius: 4px; background: rgba(18, 26, 43, .7); transition: border-color .15s, transform .15s var(--ease), background .15s }
-.plan:hover { border-color: var(--golddim); transform: translateY(-1px) }
-.plan[aria-pressed=true] { border-color: var(--gold2); background: rgba(38, 44, 60, .8); box-shadow: 0 0 0 1px var(--gold2), 0 10px 24px rgba(0, 0, 0, .3) }
-.plan b { display: block; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
-.plan span { font-size: 13px; color: var(--dim) }
 .bust { width: 58px; height: 58px; border-radius: 3px; overflow: hidden; background: radial-gradient(circle at 50% 30%, #2a3656, #121a2b); border: 1px solid var(--line); position: relative }
 .bust img { width: 100%; height: 100%; object-fit: cover; object-position: 50% 8% }
 .bust img.bust-img { object-position: 50% 15% }
@@ -509,3 +503,90 @@ body.compact .say p { font-size: 16px }
 .loc-subs .st { width: 16px; height: 16px; display: inline-flex; opacity: .25 }
 .loc-subs .st svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 2.4 }
 .loc-subs li.ok { color: var(--ok) } .loc-subs li.ok .st { opacity: 1 }
+
+/* ---------- tasks («Поручения»): the focus panel and the queue ---------- */
+.tasks { container-type: inline-size; display: grid; gap: 0 }
+.tk-focus, .tk-row { --ac: var(--gold2); --ab: 232, 207, 142 }
+.kd-find, .kd-art { --ac: #6fd0c4; --ab: 111, 208, 196 }
+.kd-sell { --ac: #f0a08c; --ab: 240, 160, 140 }
+.tk-gi { width: 28px; height: 28px; object-fit: contain; flex: none; filter: drop-shadow(0 0 3px rgba(var(--ab), .35)) }
+.tk-chip { display: inline-block; box-sizing: border-box; min-width: 0; padding: 0 9px; font-size: 11.5px; line-height: 1.6; letter-spacing: .04em; white-space: nowrap; font-weight: 600; color: var(--c); border: 1px solid color-mix(in srgb, var(--c) 55%, transparent); background: color-mix(in srgb, var(--c) 12%, transparent); border-radius: 0 }
+.tk-chip.s_wait { --c: #9aa4b8 } .tk-chip.s_run { --c: #e0a43a } .tk-chip.s_done { --c: #6fae7c } .tk-chip.s_stop { --c: #e07f6e }
+.tk-n { font: 700 12px/1 var(--body); color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap }
+/* buttons: the same forged ones, small; no letter-spacing, so no word is torn apart */
+.tasks .btn-gold, .tasks .btn-line { --cut: 7px; --h: 26px; min-width: 78px; padding: 1px 12px 0; font-size: 10.5px; letter-spacing: 0; font-kerning: none; white-space: nowrap; word-break: keep-all }
+.tasks .btn-gold::after, .tasks .btn-line::after { letter-spacing: 0 }
+.tk-acts { display: flex; gap: 6px; justify-content: flex-end; align-items: center; flex-wrap: wrap }
+.tk-thumbs { display: flex; gap: 3px; align-items: center; min-width: 0 }
+.tk-thumbs .cell { width: 40px; height: 40px; border-radius: 2px }
+.tk-thumbs .cell.dn { opacity: .6 }
+.tk-thumbs .cell.dn::after { content: ''; position: absolute; right: 2px; top: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--ok) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='m6 12.5 4 4 8-9' fill='none' stroke='%231a2a17' stroke-width='3.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 9px no-repeat }
+.tk-more { display: inline-grid; place-items: center; height: 24px; min-width: 32px; padding: 0 4px; font: 700 10px var(--body); color: var(--gold2); border: 1px solid var(--golddim); background: rgba(11, 16, 27, .6); border-radius: 2px; box-sizing: border-box }
+
+.tk-focus { position: relative; display: grid; grid-template-columns: 138px minmax(0, 1fr); gap: 22px; padding: 18px 20px 16px 18px; border-radius: 4px; overflow: hidden; border: 1px solid var(--gold2);
+  background: linear-gradient(90deg, rgba(11, 16, 27, .35), rgba(14, 21, 36, .92) 55%), linear-gradient(180deg, rgba(24, 34, 58, .4), rgba(11, 16, 27, .9)), url(img/bg_main.webp) center / cover;
+  box-shadow: 0 0 0 1px rgba(232, 207, 142, .12), 0 0 26px rgba(232, 207, 142, .12), inset 0 0 0 3px var(--bg2), inset 0 0 0 4px var(--edge), 0 16px 40px rgba(0, 0, 0, .45) }
+.tk-art-col { display: flex; justify-content: center; align-items: flex-start; padding-top: 2px }
+/* the hero: the same card art as in the hero cards, larger */
+.bust.lg.xl { width: 128px; height: 170px }
+.tk-art { width: 128px; height: 170px; display: grid; place-items: center; position: relative; box-sizing: border-box; background: url(img/card5.webp) center / cover;
+  box-shadow: 0 0 0 1px var(--ac), 0 0 0 4px var(--bg2), 0 0 0 5px var(--edge), 0 12px 30px rgba(0, 0, 0, .4) }
+.tk-art .cell.xl { width: 104px; height: 104px; border-radius: 3px; box-shadow: 0 0 0 2px var(--gold), 0 0 18px rgba(232, 207, 142, .45); overflow: visible }
+.tk-art .cell.xl .lv { font-size: 14px; right: 4px; bottom: 3px } .tk-art .cell.xl .sr { font-size: 11px }
+.tk-art.sprite { background: radial-gradient(circle at 50% 40%, rgba(var(--ab), .22), rgba(11, 16, 27, .85) 70%), var(--bg2) }
+.tk-art.sprite img { width: 72px; height: 72px; object-fit: contain; filter: drop-shadow(0 0 8px rgba(var(--ab), .5)) }
+.tk-main { display: grid; gap: 9px; align-content: start; min-width: 0 }
+.tk-top { display: flex; align-items: center; gap: 10px; min-width: 0; flex-wrap: wrap; min-height: 28px }
+.tk-kind { font: 700 10.5px/1.2 var(--display); letter-spacing: 1.3px; text-transform: uppercase; color: var(--ac); white-space: nowrap }
+.tk-top .tk-n { margin-left: 2px }
+.tk-title { margin: 0; font: 700 28px/1.12 var(--display); letter-spacing: .4px; color: var(--goldhi); text-transform: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+.tk-hint { display: flex; gap: 10px; align-items: flex-start; box-sizing: border-box; height: 88px; padding: 10px 14px; border: 1px solid rgba(232, 207, 142, .45);
+  background: linear-gradient(135deg, rgba(232, 207, 142, .16), rgba(232, 207, 142, .03) 70%), var(--panel); color: var(--goldhi) }
+.tk-hint b { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; font: 500 19px/1.25 var(--body); overflow-wrap: anywhere }
+.tk-hint small { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; min-height: 18px; margin-top: 3px; font-size: 13.5px; line-height: 1.3; color: var(--muted) }
+.tk-dia { width: 7px; height: 7px; margin-top: 9px; flex: none; transform: rotate(45deg); background: currentColor; opacity: .85 }
+.tk-hint.warn { border-color: rgba(240, 160, 140, .55); background: linear-gradient(135deg, rgba(240, 160, 140, .13), transparent 70%), var(--panel); color: #ffd9cf }
+.tk-hint.ok { border-color: rgba(169, 214, 143, .55); background: linear-gradient(135deg, rgba(169, 214, 143, .13), transparent 70%), var(--panel); color: #dff0d5 }
+.tk-seg { display: grid; grid-template-columns: repeat(var(--n), minmax(0, 1fr)); gap: 6px }
+.tk-seg > div { display: grid; gap: 5px; min-width: 0; font-size: 11.5px; color: var(--dim) }
+.tk-seg i { display: block; height: 6px; background: var(--line2); transition: background .25s, box-shadow .25s }
+.tk-seg b { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: 15px }
+.tk-seg .done { color: var(--muted) } .tk-seg .done i { background: var(--gold2) }
+.tk-seg .now { color: var(--goldhi) } .tk-seg .now i { background: var(--goldhi); box-shadow: 0 0 10px rgba(232, 207, 142, .8) }
+.tk-bot { display: flex; justify-content: space-between; align-items: center; gap: 12px; min-height: 42px; flex-wrap: wrap }
+.tk-bot .tk-thumbs { flex-wrap: wrap }
+
+.tk-sec { margin: 22px 0 10px; font: 700 12px/1.2 var(--display); letter-spacing: 2px; color: var(--gold2); text-transform: uppercase; display: flex; gap: 10px; align-items: center }
+.tk-sec::after { content: ''; flex: 1; height: 1px; background: linear-gradient(90deg, var(--line), transparent) }
+.tk-queue { display: grid; gap: 6px }
+.tk-row { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto auto; gap: 12px; align-items: center; min-height: 46px; padding: 6px 12px; border: 1px solid var(--line2); border-radius: 3px; cursor: pointer;
+  background: linear-gradient(90deg, rgba(var(--ab), .06), rgba(18, 26, 43, .92) 50%), var(--panel); transition: border-color .15s, background .15s }
+.tk-row:hover { border-color: var(--golddim); background: linear-gradient(90deg, rgba(var(--ab), .1), rgba(24, 34, 58, .94) 50%), var(--panel2) }
+.tk-name { min-width: 0; display: flex; align-items: baseline; gap: 9px; overflow: hidden }
+.tk-name em { flex: none; font: 700 10px/1.2 var(--display); font-style: normal; letter-spacing: 1.1px; text-transform: uppercase; color: var(--ac) }
+.tk-name span { min-width: 0; font: 600 15px/1.3 var(--body); color: var(--goldhi); white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+.tk-mid { display: grid; grid-template-columns: 92px 34px 118px; gap: 10px; align-items: center }
+.tk-mid .tk-chip { justify-self: end }
+.tk-mid .tk-n { text-align: right }
+.tk-row .tk-thumbs { gap: 2px; flex-wrap: nowrap }
+.tk-row .tk-thumbs .cell { width: 26px; height: 26px }
+.tk-row .tk-thumbs .cell .lv, .tk-row .tk-thumbs .cell .sr { display: none }
+.tk-more.big { height: 40px; min-width: 40px; font-size: 12px }
+.tk-row .tk-more { height: 26px }
+.tk-row .tk-acts { min-width: 168px; flex-wrap: nowrap }
+.tasks > .readonly { margin-top: 18px }
+
+/* narrow window: the row takes two lines, the focus panel gets a slimmer art */
+@container (max-width: 700px) {
+  .tk-focus { grid-template-columns: 104px minmax(0, 1fr); gap: 16px; padding: 14px 14px 14px 14px }
+  .bust.lg.xl, .tk-art { width: 102px; height: 136px }
+  .tk-art .cell.xl { width: 80px; height: 80px } .tk-art.sprite img { width: 56px; height: 56px }
+  .tk-title { font-size: 23px }
+  .tk-hint b { font-size: 17px }
+  .tk-hint { height: 104px }
+  .tk-row { grid-template-columns: 28px minmax(0, 1fr) auto; row-gap: 4px }
+  .tk-mid { grid-column: 2; grid-row: 2; display: flex; gap: 10px }
+  .tk-row .tk-acts { grid-column: 3; grid-row: 1 / span 2; min-width: 0; flex-direction: column; align-items: stretch; gap: 4px }
+  .tk-row .tk-gi { grid-row: 1 / span 2 }
+}
+@media (prefers-reduced-motion: reduce) { .tk-row, .tk-seg i { transition: none } }

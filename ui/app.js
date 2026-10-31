@@ -411,14 +411,14 @@
   // ---------------------------------------------------------------- equip
   function equipPage() {
     const P = S.plans;
-    let body;
-    if (!S.hasCode && !P.list.length) body = emptyBox(t('needCode'), '', codeBtns());
-    else if (P.status === 'loading' && !P.list.length) body = `<div class="card"><div class="scan"><span class="spinner"></span>${esc(t('plansLoading'))}</div></div>`;
-    else if (P.status === 'error') body = emptyBox(t('plansErr'), P.err === 'token' ? t('plansErrToken') : P.err || '', P.err === 'token' ? codeBtns() : `<button class="btn-line" data-act="reload">${I.reload}${esc(t('reload'))}</button>`);
-    else if (!P.list.length) body = emptyBox(t('plansNone'), t('plansNoneP'), `<button class="btn-line" data-act="open" data-url="${esc(S.site + '/app/optimizer')}">${I.ext}${esc(t('openOptimizer'))}</button>`);
-    else body = `<div class="stack"><div class="plans">${P.list.map(planCard).join('')}</div>${guideCard()}</div>`;
-    if (S.sell.list) { body = sellCard() + body; sellAutoHint(); }
-    if (S.locate.req) body = locateCard() + body;
+    let note = '';
+    const tasks = taskList();
+    if (!S.hasCode && !P.list.length) note = emptyBox(t('needCode'), '', codeBtns());
+    else if (P.status === 'loading' && !P.list.length) note = `<div class="card"><div class="scan"><span class="spinner"></span>${esc(t('plansLoading'))}</div></div>`;
+    else if (P.status === 'error') note = emptyBox(t('plansErr'), P.err === 'token' ? t('plansErrToken') : P.err || '', P.err === 'token' ? codeBtns() : `<button class="btn-line" data-act="reload">${I.reload}${esc(t('reload'))}</button>`);
+    else if (!tasks.length) note = emptyBox(t('plansNone'), t('plansNoneP'), `<button class="btn-line" data-act="open" data-url="${esc(S.site + '/app/optimizer')}">${I.ext}${esc(t('openOptimizer'))}</button>`);
+    if (S.sell.list) sellAutoHint();
+    let body = (tasks.length ? taskPanel(tasks) : '') + note;
     body = remoteNote(['equip', 'autoclick', 'locate']) + body;
     return `
       <div class="head"><div><h1>${esc(t('equipTitle'))}</h1><p class="lead">${esc(t('equipLead'))}</p></div>
@@ -430,6 +430,13 @@
       ${body}`;
   }
 
+  // «Выделить в игре» / «Остановить» / «Показать рамки» of the cleanup list
+  function sellRunBtns(L, art) {
+    return L.run ? `<button class="btn-line" data-act="sellStop">${esc(t('stopBtn'))}</button>`
+      : art ? `<button class="btn-gold" data-act="sellRun" ${S.game.running ? '' : 'disabled'}>${esc(t('sellShowArt'))}</button>`
+      : S.autoClick ? `<button class="btn-gold" data-act="sellRun" ${S.game.running ? '' : 'disabled'}>${esc(t('sellRun'))}</button>`
+      : `<button class="btn-line" data-act="sellAuto" ${S.game.running ? '' : 'disabled'}>${esc(t('sellAutoRun'))}</button>`;
+  }
   // «Чистка склада»: the list from the site; the app selects it on the game's sell screen, the player presses «Продать»
   function sellCard() {
     const L = S.sell, n = L.list.items.length;
@@ -441,10 +448,7 @@
     const hs = hd ? L.hs : null;
     const warn = hd ? [hs && hs.missing ? t('sellMissing', hs.missing) : '', hs && hs.extra && hs.step !== 'select' ? t('sellExtra', hs.extra) : ''].filter(Boolean).join(' ')
       : [L.missing ? t('sellMissing', L.missing) : '', L.extra ? t('sellExtra', L.extra) : ''].filter(Boolean).join(' ');
-    const runBtns = L.run ? `<button class="btn-line" data-act="sellStop">${esc(t('stopBtn'))}</button>`
-      : art ? `<button class="btn-gold" data-act="sellRun" ${S.game.running ? '' : 'disabled'}>${esc(t('sellShowArt'))}</button>`
-      : S.autoClick ? `<button class="btn-gold" data-act="sellRun" ${S.game.running ? '' : 'disabled'}>${esc(t('sellRun'))}</button>`
-      : `<button class="btn-line" data-act="sellAuto" ${S.game.running ? '' : 'disabled'}>${esc(t('sellAutoRun'))}</button>`;
+    const runBtns = sellRunBtns(L, art);
     return `<div class="card sell"><div class="row" style="justify-content:space-between;align-items:flex-start">
         <div><h3>${esc(t(art ? 'sellTitleArt' : 'sellTitle'))}</h3><div class="meta">${esc(t('sellCount', n))}</div></div>
         <div class="row">${runBtns}
@@ -532,13 +536,6 @@
     return `<span class="cell ${r ? 'r' + r : 'r0'} ${cls}"${card ? ` data-card="${esc(card)}"` : ''}>${url ? `<img src="${esc(url)}" alt="" onerror="this.src='img/slot${slot | 0}.webp';this.className='ph'">` : `<img class="ph" src="img/slot${slot | 0}.webp" alt="">`}`
       + `${su ? `<img class="set" src="${esc(su)}" alt="" onerror="this.remove()">` : ''}`
       + `${level ? `<i class="lv num">+${level}</i>` : ''}</span>`;
-  }
-
-  function planCard(p, i) {
-    const g = guideOf(p);
-    const pct = Math.round((g.done / p.items.length) * 100);
-    return `<button class="plan" data-act="pick" data-i="${i}" aria-pressed="${i === S.sel}">${bust(p)}
-      <div><b>${esc(p.heroName)}</b><span>${esc(foreign(p) ? t('otherAccount') : t('itemsOn', g.done, p.items.length))}</span><div class="mini-bar"><i style="width:${pct}%"></i></div></div></button>`;
   }
 
   function current() { return S.plans.list[S.sel] || null; }
@@ -687,16 +684,140 @@
   const sayBox = (cls, icon, head, sub, extra = '') =>
     `<div class="say ${cls}"><span class="ring">${icon}</span><div><p>${esc(head)}</p>${sub ? `<small>${esc(sub)}</small>` : ''}${extra}</div></div>`;
 
-  function guideCard() {
-    const p = current(); if (!p) return '';
-    const g = guideOf(p);
-    return `<div class="card framed"><div class="guide">${bust(p, 'lg')}
-      <div><h3>${esc(p.heroName)}</h3><div class="meta">${esc(t('itemsOn', g.done, p.items.length))}</div>
-        <div class="bar"><i style="width:${Math.round((g.done / p.items.length) * 100)}%"></i></div></div></div>
-      ${say(p, g)}${slotList(p, g)}
-      <div class="row" style="margin-top:16px;justify-content:space-between">
-        <div class="readonly" style="margin:0">${I.lock}<span>${esc(t('readonly'))}</span></div>
-        <div class="row">${runButton(p, g)}${cancelButton()}</div></div></div>`;
+  // ---------------------------------------------------------------- tasks («Поручения»)
+  // One list for everything the program does in the game: the builds to put on, «Найти в игре», the storage cleanup. The focus panel
+  // shows the running task (else the picked one, else the first); the others are slim rows. All actions are the old ones (data-act).
+  const TK_ICON = { equip: 'img/ti_equip.png', find: 'img/ti_find.png', art: 'img/ti_art.png', sell: 'img/ti_sell.png' };
+  const tkBtn = (act, label, cls, i, extra = '') => `<button class="${cls}" data-act="${act}"${i === undefined ? '' : ` data-i="${i}"`} ${extra}>${esc(label)}</button>`;
+  // the auto-pilot gave up (or the game state needs the player): the task shows «Остановлено»
+  const autoStopped = () => !!S.autoClick && !!S.auto && (/^(gate_|hero_)/.test(S.auto) || ['failed', 'slot_failed', 'unconfirmed'].includes(S.auto));
+  const segState = (list, now) => list.map((l, i) => ({ l, s: now < 0 ? '' : i < now ? 'done' : i === now ? 'now' : '' }));
+
+  function planTask(p, i, full) {
+    const g = guideOf(p), n = p.items.length;
+    const done = g.kind === 'done', run = S.run === p.id;
+    const st = foreign(p) ? 'stop' : done ? 'done' : run ? (autoStopped() ? 'stop' : 'run') : 'wait';
+    const k = { key: 'p' + p.id, kind: 'equip', word: t('tkEquip'), name: p.heroName, st, stText: foreign(p) ? t('otherAccount') : '', n: g.done, m: n, plan: p, i, g };
+    k.thumbs = p.items.map((it) => cell(it.icon, it.stars, it.level, it.slot, 'new' + (g.states[it.uid] === 'done' ? ' dn' : ''), it.setIcon, it.uid + ':new'));
+    const showRun = S.autoClick && !done && g.kind !== 'taken' && g.kind !== 'closed';
+    k.btns = (showRun ? (run ? tkBtn('stopRun', t('stopBtn'), 'btn-line', i) : tkBtn('run', st === 'stop' ? t('tkRetry') : t('runBtn'), 'btn-gold', i, foreign(p) ? 'disabled' : '')) : '')
+      + tkBtn('removePlan', t('cancelPlan'), 'btn-line', i, `title="${esc(t('cancelPlanTip'))}"`);
+    if (!full) return k;
+    k.art = bust(p, 'lg xl');
+    // the step bar: the hero, one per slot, the artifact
+    const hero = g.kind === 'hero' || g.kind === 'closed';
+    const labels = [t('tkStepHero')].concat(p.items.map((it) => it.slotName || t('slot' + it.slot)), p.artifact ? [t('tkStepArt')] : []);
+    let now = labels.length;
+    if (hero && !done) now = 0;
+    else if (!done) {
+      const j = p.items.findIndex((it) => g.states[it.uid] !== 'done' && g.states[it.uid] !== 'taken');
+      now = g.kind === 'art' || j < 0 ? (p.artifact && !g.artDone ? labels.length - 1 : labels.length) : j + 1;
+    }
+    k.segs = segState(labels, now).map((x, j) => ({ ...x, l: (j + 1) + '. ' + x.l }));
+    const sp = sayParts(p, g);
+    Object.assign(k, { head: sp.head, sub: sp.sub, tone: sp.tone });
+    k.btns = sp.btns + k.btns;
+    return k;
+  }
+
+  // the old «say» box of the plan, as the focus panel's two lines (and its own buttons: «Найти заново», «Снять с героев»)
+  function sayParts(p, g) {
+    const tp = document.createElement('template'); tp.innerHTML = say(p, g);
+    const box = tp.content.querySelector('.say'); if (!box) return { head: '', sub: '', tone: '', btns: '' };
+    const q = (sel) => [...box.querySelectorAll(sel)];
+    const steps = q('.fsteps li').map((x) => x.textContent.trim()).join(' · ');
+    const sub = [steps].concat(q('small:not(.faster)').map((x) => x.textContent.trim()), q('small.faster').map((x) => x.textContent.trim())).filter(Boolean).join(' · ');
+    const p1 = box.querySelector('p');
+    return { head: p1 ? p1.textContent.trim() : '', sub, tone: box.classList.contains('warn') ? 'warn' : box.classList.contains('done') ? 'ok' : '',
+      btns: q('button[data-act]').map((b) => { b.className = 'btn-line'; return b.outerHTML; }).join('') };
+  }
+
+  function locTask(full) {
+    const L = S.locate, r = L.req, d = LC.describe(r, L.step, t), sn = LC.stepNo(r, L.step);
+    const art = !r.item, ph = r.purpose;
+    const word = art ? t('tkArt') : ph === 'ascend' ? t('tkAscend') : ph === 'recast' ? t('tkRecast') : t('tkFind');
+    const done = !!(L.step && L.step.step === 'done');
+    const k = { key: 'loc', kind: art ? 'art' : 'find', word, name: r.item ? r.item.name : (r.art && r.art.name) || t('locTitle'), st: done ? 'done' : 'run', n: sn ? sn.n : 0, m: sn ? sn.total : 0,
+      btns: (r.item || r.art ? tkBtn('locFound', t('locFound'), 'btn-gold') : '') + tkBtn('locCancel', t('locCancel'), 'btn-line') };
+    k.thumbs = r.item ? [cell(r.item.icon, r.item.stars, r.item.level, r.item.slot, 'new', r.item.setIcon, r.item.uid + ':new')] : [];
+    if (!full) return k;
+    k.art = r.item ? `<div class="tk-art">${cell(r.item.icon, r.item.stars, r.item.level, r.item.slot, 'xl', r.item.setIcon, r.item.uid + ':new')}</div>` : `<div class="tk-art sprite"><img src="${TK_ICON.art}" alt=""></div>`;
+    const total = sn ? sn.total : r.purpose === 'artPromote' ? 7 : 6;
+    k.segs = segState(Array.from({ length: total }, (_, j) => t('tkStepN', j + 1)), done ? total : sn ? sn.n - 1 : -1).map((x, j) => ({ ...x, l: String(j + 1) }));
+    const checked = L.step && L.step.subs && ['selected', 'done', 'recastPick', 'inList'].includes(L.step.step);
+    k.head = d.head; k.sub = d.lines.concat(checked && L.step.changed ? [t('locChanged')] : []).join(' · ');
+    k.tone = d.tone === 'warn' ? 'warn' : d.tone === 'done' ? 'ok' : '';
+    return k;
+  }
+
+  function sellTask(full) {
+    const L = S.sell, items = L.list.items, art = L.list.kind === 'artifact';
+    const hd = L.run && L.hint ? SH.describe(L.hs, t, art ? 'artifact' : 'equip') : null;
+    const bad = L.run && (L.state === 'failed' || L.state === 'no_city' || (L.state || '').indexOf('gate_') === 0);
+    const st = L.run ? (L.state === 'done' || (hd && hd.tone === 'done') ? 'done' : bad ? 'stop' : 'run') : 'wait';
+    const sel = hd ? (L.hs && L.hs.selected) || 0 : L.selected || 0;
+    const k = { key: 'sell', kind: 'sell', word: t('tkSell'), name: t(art ? 'sellTitleArt' : 'tkItems', items.length), st, n: sel, m: items.length,
+      btns: sellRunBtns(L, art) + tkBtn('sellCancel', t('sellCancel'), 'btn-line') };
+    k.thumbs = items.map((x) => cell('', x.stars, x.level, x.slot, 'new'));
+    if (!full) return k;
+    k.art = `<div class="tk-art sprite"><img src="${TK_ICON.sell}" alt=""></div>`;
+    const step = hd ? ({ openInventory: 0, openEquipTab: 0, openArtTab: 0, pressBulk: 1, needPosition: 1, allSelected: 4 }[L.hs && L.hs.step] ?? (L.hs && L.hs.step ? 2 : 0)) : (L.state === 'done' ? 4 : L.state === 'open' ? 0 : 2);
+    const labels = [t('tkSell1'), t('tkSell2'), t('tkSell3'), t('tkSell4')];
+    k.segs = segState(labels, L.run ? (step === undefined ? 2 : step) : -1).map((x, j) => ({ ...x, l: (j + 1) + '. ' + x.l }));
+    const text = hd ? [hd.head].concat(hd.lines).join(' · ') : L.run ? (L.state === 'done' ? t('sellDone', L.selected) : L.state === 'failed' ? t('sellFailed') : (L.state || '').indexOf('gate_') === 0 ? t('gateStop', t('gateWhy_' + L.state.slice(5))) : L.state === 'no_city' ? t('sellNoCity')
+      : L.state === 'open' ? t('sellOpening') : L.state === 'background' ? t('sellBack') : L.state === 'paused' ? t('sellPaused') : t('sellWork', L.selected, items.length)) : '';
+    const hs = hd ? L.hs : null;
+    const warn = hd ? [hs && hs.missing ? t('sellMissing', hs.missing) : '', hs && hs.extra && hs.step !== 'select' ? t('sellExtra', hs.extra) : ''].filter(Boolean).join(' ')
+      : [L.missing ? t('sellMissing', L.missing) : '', L.extra ? t('sellExtra', L.extra) : ''].filter(Boolean).join(' ');
+    const hintMode = art || (L.run ? L.hint : !S.autoClick);
+    k.head = text || t(art ? 'sellHintLeadArt' : hintMode ? 'sellHintLead' : 'sellLead');
+    k.sub = [t('sellCount', items.length), warn].filter(Boolean).join(' · ');
+    k.tone = warn || bad ? 'warn' : st === 'done' ? 'ok' : '';
+    return k;
+  }
+
+  function taskList() {
+    const out = [];
+    if (S.locate.req) out.push(locTask(false));
+    if (S.sell.list) out.push(sellTask(false));
+    if (S.plans.status !== 'error') S.plans.list.forEach((p, i) => out.push(planTask(p, i, false)));
+    return out;
+  }
+
+  function taskPanel(list) {
+    // focus: the picked row, else what runs (the site's request first), else the picked build, else the first
+    let f = list.find((x) => x.key === S.focusKey);
+    if (!f) f = list.find((x) => x.key === 'loc') || list.find((x) => x.plan && S.run === x.plan.id) || list.find((x) => x.kind === 'sell' && x.st === 'run')
+      || list.find((x) => x.plan && x.i === S.sel) || list[0];
+    const full = f.kind === 'equip' ? planTask(f.plan, f.i, true) : f.key === 'loc' ? locTask(true) : sellTask(true);
+    const rest = list.filter((x) => x.key !== f.key);
+    return `<div class="tasks">${focusCard(full)}${rest.length ? `<h2 class="tk-sec">${esc(t('tkQueue'))} · ${rest.length}</h2><div class="tk-queue">${rest.map(taskRow).join('')}</div>` : ''}
+      <div class="readonly">${I.lock}<span>${esc(t('readonly'))}</span></div></div>`;
+  }
+
+  const tkChip = (k) => `<span class="tk-chip s_${k.st}">${esc(k.stText || t('tk' + { run: 'Run', wait: 'Wait', done: 'Done', stop: 'Stop' }[k.st]))}</span>`;
+  const tkCount = (k) => (k.m ? `<span class="tk-n num">${k.n}/${k.m}</span>` : '<span class="tk-n"></span>');
+
+  function focusCard(k) {
+    const lead = k.st === 'run' ? t('tkNow') : t('tkNext');
+    return `<section class="tk-focus kd-${k.kind}${k.st === 'run' ? ' live' : ''}">
+      <div class="tk-art-col">${k.art}</div>
+      <div class="tk-main">
+        <div class="tk-top"><img class="tk-gi" src="${TK_ICON[k.kind]}" alt=""><span class="tk-kind">${esc(lead)} · ${esc(k.word)}</span>${tkChip(k)}${tkCount(k)}</div>
+        <h2 class="tk-title" title="${esc(k.name)}">${esc(k.name)}</h2>
+        <div class="tk-hint ${k.tone || ''}" title="${esc([k.head, k.sub].filter(Boolean).join(' — '))}"><i class="tk-dia"></i><div><b>${esc(k.head || '')}</b><small>${esc(k.sub || '')}</small></div></div>
+        <div class="tk-seg" style="--n:${k.segs.length}">${k.segs.map((x) => `<div class="${x.s}"><i></i><b title="${esc(x.l)}">${esc(x.l)}</b></div>`).join('')}</div>
+        <div class="tk-bot"><div class="tk-thumbs">${k.thumbs.length > 12 ? k.thumbs.slice(0, 11).join('') + `<span class="tk-more big">+${k.thumbs.length - 11}</span>` : k.thumbs.join('')}</div><div class="tk-acts">${k.btns}</div></div>
+      </div></section>`;
+  }
+
+  function taskRow(k) {
+    const th = k.thumbs.length > 4 ? k.thumbs.slice(0, 3).join('') + `<span class="tk-more">+${k.thumbs.length - 3}</span>` : k.thumbs.join('');
+    return `<div class="tk-row kd-${k.kind}" data-act="focus" data-k="${esc(k.key)}"${k.plan ? ` data-i="${k.i}"` : ''}>
+      <img class="tk-gi" src="${TK_ICON[k.kind]}" alt="">
+      <div class="tk-name" title="${esc(k.word + ' · ' + k.name)}"><em>${esc(k.word)}</em><span>${esc(k.name)}</span></div>
+      <div class="tk-mid">${tkChip(k)}${tkCount(k)}<div class="tk-thumbs">${th}</div></div>
+      <div class="tk-acts">${k.btns}</div></div>`;
   }
 
   function compactView() {
@@ -739,7 +860,7 @@
   }
 
   function startRun(p) {
-    S.run = p.id; S.sel = S.plans.list.indexOf(p);
+    S.run = p.id; S.sel = S.plans.list.indexOf(p); S.focusKey = null;
     host.send({ cmd: 'equip.run', hero: p.heroUid, restart: true }); S.runKey = String(p.heroUid);
     watchPlans(true);
   }
@@ -866,6 +987,7 @@
   document.addEventListener('click', (e) => {
     const el = e.target.closest('[data-act]'); if (!el) return;
     const a = el.dataset.act;
+    if (el.dataset.i !== undefined && ['run', 'stopRun', 'removePlan', 'takeOver'].includes(a)) S.sel = Number(el.dataset.i);   // a button on a task's row acts on that build
     if (a === 'nav') {
       S.page = el.dataset.page; S.editCode = false;
       if (S.page === 'news') { newsSeen(); loadNews(false); }
@@ -919,6 +1041,7 @@
     else if (a === 'updBack') { if (e.target === el) { S.updDismissed = true; render(); } }
     else if (a === 'rescan') scan();
     else if (a === 'pick') { S.sel = Number(el.dataset.i); render(); }
+    else if (a === 'focus') { S.focusKey = el.dataset.k; if (el.dataset.i !== undefined) S.sel = Number(el.dataset.i); render(); }
     else if (a === 'run') { const p = current(); if (!p || foreign(p)) return; startRun(p); if (!S.autoConfirm) toast(t('runNoConfirm'), 6000); render(); }
     else if (a === 'locFound') locateEnd(true, false);
     else if (a === 'locCancel') locateEnd(false, false);

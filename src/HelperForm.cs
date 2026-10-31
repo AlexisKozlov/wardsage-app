@@ -1,4 +1,4 @@
-// RealmForge extractor - equip helper window («Переодевание»).
+// RealmForge extractor - equip helper window («Поручения»).
 //
 // Loads the builds the player sent from the site («Надеть в игре»), finds the game's gear screen once
 // (read-only memory scan), then re-reads it several times a second and tells the player which slot / item

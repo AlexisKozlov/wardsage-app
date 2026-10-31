@@ -82,9 +82,9 @@ namespace RealmForge {
       { "footer",             new[] { "Только чтение: программа читает память игры и ничего в ней не меняет.",
                                       "Read-only: the program reads game memory and never changes anything in it." } },
       { "minutes",            new[] { "{0} мин", "{0} min" } },
-      // equip helper («Переодевание»)
-      { "btn_equip",          new[] { "Переодевание", "Equip helper" } },
-      { "eq_title",           new[] { "Переодевание", "Equip helper" } },
+      // equip helper («Поручения»)
+      { "btn_equip",          new[] { "Поручения", "Tasks" } },
+      { "eq_title",           new[] { "Поручения", "Tasks" } },
       { "eq_plan",            new[] { "Сборка", "Build" } },
       { "eq_reload",          new[] { "Обновить сборки", "Reload builds" } },
       { "eq_rescan",          new[] { "Найти заново", "Search again" } },
