@@ -1509,7 +1509,8 @@ namespace RealmForge {
       // still check out (EnsureLive: the tables, the login, the hero form); a full search of the game only when they do not - a forced
       // one froze the guide on a stale step for the whole search (lab 1.6.66.402: 37 s, "no pilot step for 40 s"); a plan that then
       // stands still is still searched afresh (WatchStall, HeroStepStuck)
-      if (fresh && addrs != null && !scanning && remote.ReadEnabled && DateTime.UtcNow > rescanAfter) {
+      // (not with the item table found: the plan's items come through EquipData.equips on the next poll - the full search stalled the hero step ~12 s after a plan, live 1.6.66.450; a plan that then stands still is searched afresh by WatchStall)
+      if (fresh && addrs != null && addrs.EquipData == 0 && !scanning && remote.ReadEnabled && DateTime.UtcNow > rescanAfter) {
         rescanAfter = DateTime.UtcNow.AddSeconds(20); Log.Write("equip scan again: a new plan was received");
         StartScan(uids); return;
       }

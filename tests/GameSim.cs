@@ -1266,6 +1266,8 @@ static partial class CoreTests {
     Check(hw == "selected" && other == 0 && c == 1 && atRebuild == 0 && rt0 < 6000, "sim: the same with the cell read every other tick and the selection read 1.2 s late: one click (no second one that would deselect), picked at " + rt0 + " ms (" + hw + ", " + c + " clicks, " + other + " on others, " + why + ")");
     // plain auto-equip (live 1.6.66.450: «выберите оружие» framed, never clicked): the item in the top row, its live cell read every ~200 ms, no filter touched
     // since long (FilterAt 0), the list never rebuilt: one click on its live cell within 1.5 s
+    var ct = ConfirmText.ForButton(new[] { "Нажмите «Заменить»", "Press “Replace”" }, true);
+    Check(ct[0] == "Нажмите «Надеть»" && ct[1] == "Press “Equip”" && ConfirmText.ForButton(new[] { "Нажмите «Заменить»" }, false)[0] == "Нажмите «Заменить»", "sim: the empty slot's hint names «Надеть» (the game's button), a replace keeps «Заменить»");
     string pl = PlainLiveRun(out c, out other, out rt0);
     Check(pl == "selected" && c == 1 && other == 0 && rt0 <= 1500, "sim: plain pick, the live cell read every 200 ms: clicked at its live cell within 1.5 s (" + pl + ", " + c + " clicks, " + other + " on others, first at " + rt0 + " ms)");
     hw = HideWornRebuildRun(true, false, out c, out other, out atRebuild, out rt0, out why);

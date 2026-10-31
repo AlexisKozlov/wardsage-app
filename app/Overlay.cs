@@ -1313,7 +1313,7 @@ namespace RealmForge {
         confirmStill = confirmLive.Note(cl && cf != null ? new double[] { cf[0], cf[1], cf[2], cf[3] } : null, NowMs());   // (the card has stopped opening: AutoView.ButtonStill)
         // the frame and the plate beside it stand on the live rect only, from its first read on the shown tip (the frame's own steadiness holds the
         // jitter; only the pilot's click waits for the confirming read, AutoView.ButtonStill); until then the plate alone at the top
-        if (!ConfirmFrame.Ready(cl && cf != null, EquipTipShown())) { DrawTipTop(hintLines); return; }
+        if (!ConfirmFrame.Ready(cl && cf != null, EquipTipShown())) { DrawTipTop(HintLinesShown()); return; }
         confirmHintRect = cf;
       }
       bool rl;
@@ -1321,7 +1321,7 @@ namespace RealmForge {
         : hintKind == "slot" ? FrameForI("hero.slot." + hintSlot, hg.Slot(hintSlot, W, H), W, H, U, out rl) : null;
       // the hero is open on another tab: its «Снаряжение» tab (right edge)
       if (hintKind == "geartab") { int s = (int)(0.1 * U); r = FrameForI("hero.tab.equip", new[] { (int)(W - hg2.GearTabDX * U) - s / 2, (int)(hg2.GearTabY * U) - s / 2, s, s }, W, H, U, out rl); }
-      if (r == null) HideTip(); else DrawTip(o.X + r[0], o.Y + r[1], r[2], r[3], hintLines, H, false, false, hintKind == "geartab", null, false, GuideStyle && hintKind == "replace" ? HlRound(o.X + r[0], o.Y + r[1], r[2], r[3], true) : null);   // «Заменить»: the player's own press, the edge only
+      if (r == null) HideTip(); else DrawTip(o.X + r[0], o.Y + r[1], r[2], r[3], HintLinesShown(), H, false, false, hintKind == "geartab", null, false, GuideStyle && hintKind == "replace" ? HlRound(o.X + r[0], o.Y + r[1], r[2], r[3], true) : null);   // «Заменить»: the player's own press, the edge only
     }
 
     // the filter pop-up's «Выбрать часть» icons: x of their middles from the window centre and y (in the pop-up's terms)
@@ -4597,6 +4597,7 @@ namespace RealmForge {
       // the item a single button was found for is on the hero now: that button kind is the one at this window size
       if (confirmChoice.PendingItem > 0 && addrs != null && hintHero > 0 && RFX.ReadOwner(addrs, confirmChoice.PendingItem) == hintHero) confirmChoice.Worn(confirmChoice.PendingItem);
       int[] btn = confirmChoice.Pick(rep, eq, target, W, H);
+      confirmIsEquip = btn != null && btn == eq;
       if (btn != null && rep != null && eq != null && confirmTieLogged != target) {
         confirmTieLogged = target;
         Log.Write("confirm: both blue, using the " + confirmChoice.Learned(W, H) + " place that worked at " + ConfirmChoice.SizeKey(W, H) + ", item " + target);
@@ -4622,6 +4623,12 @@ namespace RealmForge {
         Log.Write("confirm: button found " + (btn[1] - (btn == eq ? hg.Equip(W, H)[1] : hg.Replace(W, H)[1])) + " px off its usual place, item " + target);
       }
       return btn;
+    }
+    bool confirmIsEquip;   // the button found is the single card's «Надеть» (the slot is empty), not «Заменить»
+    /// <summary>The hint's lines; on the «replace» step the button's name is the one the game shows (the page says «Заменить» for every selected item).</summary>
+    string[] HintLinesShown() {
+      if (hintKind != "replace" || !confirmIsEquip) return hintLines;
+      return ConfirmText.ForButton(hintLines, true);
     }
     bool confirmBlueNone;   // the last confirm search saw no blue button at all (AutoView.BlueNone)
     long confirmMissLogged, confirmFoundLogged, confirmMissSince, confirmMissFor, confirmTieLogged;

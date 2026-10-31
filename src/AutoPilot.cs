@@ -85,6 +85,15 @@ namespace RealmForge {
       armed = false; return true;
     }
   }
+  /// <summary>The «replace» step's lines name the button the game shows: the page says «Заменить» for every selected item, an empty slot has «Надеть».</summary>
+  public static class ConfirmText {
+    public static string[] ForButton(string[] lines, bool equip) {
+      if (!equip || lines == null) return lines;
+      var l = new string[lines.Length];
+      for (int i = 0; i < l.Length; i++) l[i] = (lines[i] ?? "").Replace("«Заменить»", "«Надеть»").Replace("“Replace”", "“Equip”");
+      return l;
+    }
+  }
   public sealed class AutoPilot {
     public const int SlotTries = 3, ClickTries = 5, DragTries = 60, CalibTries = 4, WrongTries = 2, AfterConfirmClicks = 2, SlotWaits = 40;
     public const int AfterSlotMs = 900, AfterClickMs = 500, AfterDragMs = 800, UserPauseMs = 4000;
