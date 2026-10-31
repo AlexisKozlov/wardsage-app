@@ -3102,6 +3102,9 @@ namespace RealmForge {
 
     // ---- the game's offer / notice pop-ups over the city (src/OfferForms.cs): read from the window table, closed by the pilots (OfferClose)
     volatile bool uiFinding; long uiFindAt, unknownFormsAt, lostSearchAt; int lostSearchGen; List<string> unknownForms;
+    // «Заменить» is the hint (the hero screen's item tip is the pilot's own flow form, found by this read only): the forms are read every tick, not every 2 s
+    // (live 1.6.66.440: the tip was named 1.4 s after it opened, the «Заменить» frame waited for it)
+    bool HintFlowWanted(ScreenKind cls) { return cls == ScreenKind.HeroScreen && hintKind == "replace"; }
     // the shown unknown forms when the screen became the known one it is (TopNew: the ones that came later are a pop-up on top), and the last results
     const int TopSettleMs = 3000, TopFlickerMs = 2000, KnownFormsMs = 60000, FreshFormsMs = 0, SettleReadMs = 500, UnknownReadMs = 250;   // (UnknownReadMs: on an unknown screen - its top form named within a tick or two)   // (FreshFormsMs: the forms read again before every click - cheap with the window table; the pilots click faster now)
     List<string> knownForms, firstForms; long knownFormsAt, firstFormsAt;
@@ -3139,7 +3142,7 @@ namespace RealmForge {
         var prevForms = knownForms != null && now - knownFormsAt <= KnownFormsMs ? knownForms : firstForms != null && now - firstFormsAt <= KnownFormsMs ? firstForms : unknownForms;
         // (every 2 s; within a known screen's settle time every SettleReadMs: a part it builds late must be read before that time ends)
         bool settling = topBaseKind != ScreenKind.Unknown && topBaseKind != ScreenKind.City && now - topBaseAt < TopSettleMs;
-        if (now - unknownFormsAt >= (settling ? SettleReadMs : cls == ScreenKind.Unknown ? UnknownReadMs : 2000) || unknownFormsAt == 0) { unknownFormsAt = now; unknownForms = RFX.ReadUnknownShownForms(4); if (unknownForms == null) { formsUnread = true; unknownFormsAt = 0; }  else if (firstForms == null) { firstForms = unknownForms; firstFormsAt = now; } }
+        if (now - unknownFormsAt >= ConfirmFrame.FormsReadMs(HintFlowWanted(cls), settling ? SettleReadMs : cls == ScreenKind.Unknown ? UnknownReadMs : 2000) || unknownFormsAt == 0) { unknownFormsAt = now; unknownForms = RFX.ReadUnknownShownForms(4); if (unknownForms == null) { formsUnread = true; unknownFormsAt = 0; }  else if (firstForms == null) { firstForms = unknownForms; firstFormsAt = now; } }
         var cur = unknownForms ?? new List<string>();
         // the pilots' own flow forms on this screen (the item tip the item select opens ...; on an unknown moment: the last known screen's): its sub-state
         ScreenKind flowOn = cls == ScreenKind.Unknown ? topLastKind : cls;

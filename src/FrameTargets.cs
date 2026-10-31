@@ -315,6 +315,9 @@ namespace RealmForge {
   /// <summary>«Заменить» / «Надеть» of the item's tip: its frame is drawn from the first live rect read on the shown tip (no stability wait).</summary>
   public static class ConfirmFrame {
     public static bool Ready(bool liveRect, bool tipShown) { return liveRect && tipShown; }
+    /// <summary>How often the shown forms are read on a known screen: every <paramref name="otherMs"/>, but 100 ms while «Заменить» is the hint on the hero screen (the
+    /// item's tip is a flow form found by that read only; live 1.6.66.440 it was named 1.4 s after it opened and the frame waited, read every 2 s).</summary>
+    public static int FormsReadMs(bool heroReplace, int otherMs) { return heroReplace ? Math.Min(100, otherMs) : otherMs; }
   }
 
   /// <summary>An item cell's one frame: the whole cell (the icon with the stat plate under it), and held through a moment without a fresh read.</summary>

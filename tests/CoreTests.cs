@@ -1675,7 +1675,7 @@ static partial class CoreTests {
         Check(hc2 != null && hc2.BY >= hc2.Y - 0.01 && hc2.BY + hc2.BH >= hc2.Y + hc2.H - 0.01 && hc2.BH >= hc2.H - 0.01,
           "hero gear cell: the frame box starts at the picture's top, not above it (the item root stood 17 px higher): " + (hc2 != null ? hc2.BY + " vs " + hc2.Y : "none"));
         var hs3 = RFX.UiCellRead(fu.Env, ui2.A, UiCellKind.HeroGear, new long[] { 203 }, W, H, U); var hc3 = hs3.Ok ? hs3.Of(203) : null;
-        Check(hc3 != null && Math.Abs(hc3.BY - (hc3.Y - 5 * k)) < 0.05 && Math.Abs(hc3.BH - 124 * k) < 0.05 && Math.Abs(hc3.BW - 100 * k) < 0.05,
+        Check(hc3 != null && Math.Abs(hc3.BY - (hc3.Y - 5 * k)) < 0.05 && Math.Abs(hc3.BH - 124 * k * RFX.SelectedH) < 0.05 && Math.Abs(hc3.BW - 100 * k) < 0.05,
           "hero gear cell: the game's c_EquipSelected rect is the frame's cell (" + (hc3 != null ? hc3.BY + "," + hc3.BH : "none") + ")");
         // the cell layout: rows 130 px apart (picture 90 + plate), the frame of a cell never meets the row above
         {
@@ -1684,8 +1684,15 @@ static partial class CoreTests {
           RFX.CellClampTop(up);
           Check(up.BY >= above.BY + above.BH && up.BY >= 100 - 0.01 && up.BY + up.BH >= 190, "hero gear cell layout: the clamped frame (top " + up.BY + ") does not intersect the plate of the row above (bottom " + (above.BY + above.BH) + ")");
           var bad = new UiCell { X = 100, Y = 100, W = 90, H = 90 }; bad.BX = bad.X; bad.BY = bad.Y; bad.BW = bad.W; bad.BH = bad.H;
-          Check(!RFX.CellSelected(bad, 100, 20, 90, 300) && !RFX.CellSelected(bad, 400, 100, 90, 90) && RFX.CellSelected(bad, 98, 96, 94, 120) && bad.BY == 96, "hero gear cell: an unusable selection rect (too tall, beside the picture) is not the cell; a fitting one is");
+          {   // the recorded cell (1.6.66.440, 1366x705): selection rect x 112 y 247 w 88 h 115; its lower border at 359.5 -> 112 high, the frame 2 px out: y 245 h 116
+          var rc = new UiCell { X = 112, Y = 247, W = 88, H = 88 }; rc.BX = rc.X; rc.BY = rc.Y; rc.BW = rc.W; rc.BH = rc.H;
+          Check(RFX.CellSelected(rc, 112, 247, 88, 115) && Math.Abs(rc.BH - 112) < 0.01 && rc.BY == 247 && rc.BX == 112 && rc.BW == 88 && Math.Abs(UiIcon.Frame(rc.BX, rc.BY, rc.BW, rc.BH, 1366, 705)[3] - 116) < 0.01,
+            "item cell: the selection rect's lower 3 px are not the cell (112 of 115 high, as measured on the recording): " + rc.BH);
+          Check(Math.Abs(RFX.HeroCardW * 81 - 75.4) < 0.01 && Math.Abs(210 + 81 * RFX.HeroCardW - 285.4) < 0.01, "hero card: 75.4 of the root's 81 px wide (root x 210..291 -> the card's edges 210.8 and 286.1 measured)");
         }
+        Check(!RFX.CellSelected(bad, 100, 20, 90, 300) && !RFX.CellSelected(bad, 400, 100, 90, 90) && RFX.CellSelected(bad, 98, 96, 94, 120) && bad.BY == 96, "hero gear cell: an unusable selection rect (too tall, beside the picture) is not the cell; a fitting one is");
+        }
+        Check(ConfirmFrame.FormsReadMs(true, 2000) == 100 && ConfirmFrame.FormsReadMs(true, 500) == 100 && ConfirmFrame.FormsReadMs(false, 2000) == 2000, "«Заменить» hint on the hero screen: the forms (the item tip's flow) are read every 100 ms, not every 2 s");
         Check(ConfirmFrame.Ready(true, true) && !ConfirmFrame.Ready(true, false) && !ConfirmFrame.Ready(false, true), "«Заменить»: the frame stands from the first live rect on the shown tip, never without the tip or the live rect");
         { var ls = new LiveStill(); var rc = new double[] { 470, 568, 139, 38 };
           Check(!ls.Note(rc, 1000) && ls.Fresh && ConfirmFrame.Ready(ls.Fresh, true) && !ls.Note(rc, 1050) && ls.Note(rc, 1100), "«Заменить»: the frame is ready at the first read (Fresh), the click waits for the confirming read 100 ms later"); }
