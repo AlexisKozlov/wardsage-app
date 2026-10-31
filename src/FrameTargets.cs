@@ -112,7 +112,7 @@ namespace RealmForge {
       P("inventory.artWorkshop", "Form_BackpackIntegration", ClickTarget.ArtWorkshop, "Main_Frame/m_ParentPanel/Panel_ArtifactPanel/m_ButtonGroup/m_IntensifyContainer/m_BtnIntensify/Button_Special_2");
       C("cell.Inventory", "Form_BackpackIntegration", UiCellKind.Inventory, "Main_Frame/ParentPanel/m_Content");
       C("cell.InvSuit", "Form_BackpackIntegration", UiCellKind.InvSuit, "m_CachedContentPanels.[-9998].m_SuitFilterGridProxy.m_Data (the filter pop-up's set list)");
-      L("inventory.artCell", "Form_BackpackIntegration", "the artifact tab's list cells are not read live");
+      C("cell.InvArt", "Form_BackpackIntegration", UiCellKind.InvArt, "m_CachedContentPanels.[-9997] (the artifact tab's list)");
       // the hero screen
       B("hero.workshop", "Form_CharactorMain", Hero + "m_Right/Panel_Equip_Simple/Content/GameObject/m_BtnSubliming", "Icon");
       B("hero.gem", "Form_CharactorMain", Hero + "m_Right/Panel_Equip_Simple/Content/GameObject/m_BtnEquipGem", "Icon");

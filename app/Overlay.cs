@@ -2606,6 +2606,13 @@ namespace RealmForge {
     readonly ArtFinish artFin = new ArtFinish();
     LocateStep artStep; string artKey = "", artSaid = "", artWsDiagSaid = ""; long artFormAskedAt, artWsWaitSince;
 
+    /// <summary>A scroll bar strip (LocateFrames.ListStrip, client px) on the screen: x and the y's moved by the client's origin, the flag and the marker counts as they are.</summary>
+    static double[] StripAt(double[] sv, W32.POINT o) {
+      var r = new double[sv.Length];
+      for (int i = 0; i < sv.Length; i++) r[i] = i == 0 ? o.X + sv[i] : i == 6 || (i > 7 && (i - 7) % 2 == 1) ? sv[i] : o.Y + sv[i];
+      return r;
+    }
+
     void TickArtPromote() {
       var req = locateReq; var art = req.Art;
       IntPtr hwnd = GameWindow();
@@ -2652,9 +2659,21 @@ namespace RealmForge {
       TickArtDrive(step, inv, ws, hold, hwnd, o, cr, now, W, H, U);
       LocateFrame lf = front && !hold ? ArtFrames.For(step, inv, ws, Geo.Current, W, H, U) : null;
       bool afLive = LiveInto(lf, W, H, U);   // «Мастерская», the tabs, «Продвинуть»: where the game has put them (FrameFor)
-      if (lf != null && (lf.Target == "cell" || lf.Target == "artifact.matList")) { string ck = step.Kind == LocateKind.ArtInList ? "inventory.artCell" : lf.Target == "artifact.matList" ? "artifact.matList" : "artifact.matCell"; FrameLayoutSay(ck, FrameTargets.Of(ck).Layout, null); }
+      double[] artStrip = null;
+      if (front && !hold && step.Kind == LocateKind.ArtInList && inv != null && inv.ArtTab && step.Pos > 0) {
+        // the artifact's card where the game has put it (its own selection frame, live): no live cell in view = none on a guessed box; the scroll bar's marker beside the list
+        if (lf != null && lf.Mark.Kind == "box") {
+          double[] lcf; var see = LiveCell(UiCellKind.InvArt, art.Uid, null, W, H, U, new double[] { lf.Mark.X, lf.Mark.Y, lf.Mark.W, lf.Mark.H }, "artpromote:" + art.Uid, out lcf);
+          if (see == UiCellSee.Shown) lf = new LocateFrame { Target = "cell", Raw = new GeoRect { X = lcf[0], Y = lcf[1], W = lcf[2], H = lcf[3] }, Mark = new LocateMark { Kind = "box", X = (int)Math.Round(lcf[0]), Y = (int)Math.Round(lcf[1]), W = (int)Math.Round(lcf[2]), H = (int)Math.Round(lcf[3]) } };
+          else if (see == UiCellSee.Hidden) lf = null;
+        }
+        var sv = ArtFrames.InvStrip(Geo.Current, inv.List, inv.Uids.Count, step.Pos - 1, LocateGuide.ArtInvCols, null, W, H, U);
+        if (sv != null) artStrip = StripAt(sv, o);
+      }
+      if (lf != null && (lf.Target == "cell" || lf.Target == "artifact.matList")) { string ck = step.Kind == LocateKind.ArtInList ? "cell.InvArt" : lf.Target == "artifact.matList" ? "artifact.matList" : "artifact.matCell"; FrameLayoutSay(ck, FrameTargets.Of(ck).Layout, null); }
       if (!front) { LocateHide(); }
-      else if (lf != null && lf.Mark.Kind != "box") { frame++; Draw(lf.Mark.Kind, o.X + lf.Mark.X, o.Y + lf.Mark.Y, lf.Mark.W, lf.Mark.H, lf.Mark.Rows); }   // the cell is off the screen: the pill at the list's edge
+      else if (lf != null && lf.Mark.Kind != "box") { frame++; Draw(lf.Mark.Kind, o.X + lf.Mark.X, o.Y + lf.Mark.Y, lf.Mark.W, lf.Mark.H, lf.Mark.Rows, artStrip); }   // the cell is off the screen: the pill at the list's edge (with the scroll bar's marker)
+      else if (artStrip != null) { frame++; Scene(glow, ref drawnKey, null, null, null, artStrip); }   // the card in view: its frame is the plate's, the marker on the scroll bar is the glow window's
       else { if (glow.Visible) glow.Hide(); drawnKey = null; }
       int[] cityBtn;
       if (front && !hold && locateLines.Length > 0 && step.Kind == LocateKind.OpenInventory && CityInventoryButton(o, W, H, U, out cityBtn)) {

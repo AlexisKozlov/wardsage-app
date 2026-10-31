@@ -1064,7 +1064,7 @@ namespace RealmForge {
   // InfinityGrid (dump 1.6.46.841.1): m_crtFirstInstanceIndex 0xD0, m_crtLastInstanceIndex 0xD4, m_crtItems 0xD8, viewport 0xC8;
   // InfinityGridV2: 0xF8, 0xFC, 0x100, viewport 0xF0. .NET Dictionary: entries 0x18, count 0x20; Entry {hashCode, next, key 0x8, value 0x10}.
   //   Form_CharactorMain (the hero list)  the form's one *_InfinityGrid   .m_InfinityGridProxy.m_Data[idx + 1].iHeroId (the card: the cell itself)
-  public enum UiCellKind { None, Inventory, Ascend, Recast, HeroGear, HeroArt, HeroList, InvSuit }
+  public enum UiCellKind { None, Inventory, Ascend, Recast, HeroGear, HeroArt, HeroList, InvSuit, InvArt }
 
   /// <summary>One item cell the grid has made now: the item, its list index (0-based) and row column (HeroGear, 1-based), its picture's rect (client px).</summary>
   public sealed class UiCell {
@@ -1107,6 +1107,9 @@ namespace RealmForge {
         // one field named *_InfinityGrid (Grid "*": found by its name, none or more than one = no read - the card is then not framed)
         case UiCellKind.HeroList: return new CellSpec { Form = "Form_CharactorMain", Owner = "", Grid = "*", Uids = "m_InfinityGridProxy.m_Data", Child = "", Tables = true, UidKey = "iHeroId" };
         // the inventory's filter pop-up: the sets it lists (grid mode and list mode: the cell's c_Select button); the proxy's m_Data holds the set ids
+        // the inventory's artifact tab (Panel_ArtifactPanel, work/artifact-screens.md 4.2): the panel's own grid, _listDataCur rows are the artifact tables (iItemUid);
+        // the cell's card is BackpackItemArtifact: c_CardHide 80 x 110 units (the picture), c_CardSelected the game's selection frame
+        case UiCellKind.InvArt: return new CellSpec { Form = "Form_BackpackIntegration", Owner = "m_CachedContentPanels.[-9997]", Grid = "m_ListArtifact_InfinityGrid", Uids = "m_CachedContentPanels.[-9997]._listDataCur", Child = "c_CardHide", Tables = true };
         case UiCellKind.InvSuit: return new CellSpec { Form = "Form_BackpackIntegration", Owner = "m_CachedContentPanels.[-9998]", Grid = "m_SuitFilterGrid_InfinityGrid", Uids = "m_CachedContentPanels.[-9998].m_SuitFilterGridProxy.m_Data", Child = "c_Select" };
       }
       return null;
@@ -1258,6 +1261,7 @@ namespace RealmForge {
           var path = new List<ulong>();
           ulong item = sp.Child == "" ? 0 : ChildNamed(ctr, sp.Rows ? sp.Child + col : sp.Child, 2, path);
           if (item == 0 && sp.Rows) continue;
+          if (item == 0 && k == UiCellKind.InvArt) { r.Fail("card", sp.Child + " not under the cell"); return; }   // (no read, not a guess: the layout's frame stands)
           ulong at = item != 0 ? item : ctr, pic = sp.Tables ? at : ChildNamed(at, "c_Frame", 4, new List<ulong>());   // (an artifact card is framed whole: the card is the picture)
           string icon = sp.Tables ? (item != 0 ? sp.Child : "cell") : "c_Frame";
           if (pic == 0) { pic = ChildNamed(at, "c_Icon", 4, new List<ulong>()); icon = "c_Icon"; }
@@ -1275,6 +1279,10 @@ namespace RealmForge {
           if (sp.Rows || k == UiCellKind.Inventory) {   // the game's own yellow selection frame (c_EquipSelected, shown on a selected item) is the cell's true rect; never above the picture
             double sx, sy, sw, sh; ulong selT = ChildNamed(at, "c_EquipSelected", k == UiCellKind.Inventory ? 4 : 3, new List<ulong>());
             if (!(selT != 0 && RectUnder(selT, rtr, above, canvas, W, H, U, new UiButtonInfo(), true, out sx, out sy, out sw, out sh) && CellSelected(c, sx, sy, sw, sh))) { if (k == UiCellKind.Inventory) InvCellFallback(c); else CellClampTop(c); }
+          }
+          if (k == UiCellKind.InvArt) {   // the game's selection frame of an artifact card (c_CardSelected) when it is the measured size, else the measured offsets from the picture
+            double sx, sy, sw, sh; ulong selT = ChildNamed(ctr, "c_CardSelected", 4, new List<ulong>());
+            if (!(selT != 0 && RectUnder(selT, rtr, above, canvas, W, H, U, new UiButtonInfo(), true, out sx, out sy, out sw, out sh) && InvArtSelected(c, sx, sy, sw, sh))) InvArtFallback(c);
           }
           if (icon == "c_Frame") { var ai = new UiButtonInfo(); ArtInto(Ptr(pic + CompGo), cb, ai); c.Sprite = ai.Sprite; c.Art = ai.Art; }   // (the quality frame's sprite: its visible part)
           c.InView = InViewOf(c.X, c.Y, c.W, c.H, r.VX, r.VY, r.VW, r.VH);
@@ -1323,6 +1331,22 @@ namespace RealmForge {
     /// <summary>The hero card in width of its cell root: the root keeps the gap to the next card on its right (live 1.6.66.440, 1366x705, a recorded card:
     /// root x 210 w 81, the card's edges at x 210.8 and 286.1, so 75.4 of 81; the left edge lies on the root).</summary>
     public const double HeroCardW = 75.4 / 81;
+
+    /// <summary>The artifact tab's card frame: the game's own selection frame on a card (live 1.6.66.452 recording, 1366x705, U 705, the picture c_CardHide 80 x 110 units =
+    /// 88.1 x 121.2 px): its lines lie 80.7 px apart and 120.9 px, the left line 7.5 px inside the picture's left edge (0.916 of the width, centred), top and bottom on the picture.</summary>
+    public const double InvArtW = 73.3 / 80;
+    /// <summary>The artifact card's box from its picture (x, y, w, h) when the game's selection rect is not readable: <see cref="InvArtW"/> of the width, centred, the picture's height.</summary>
+    public static void InvArtFallback(UiCell c) {
+      c.BW = c.W * InvArtW; c.BX = c.X + (c.W - c.BW) / 2; c.BY = c.Y; c.BH = c.H;
+    }
+    /// <summary>The game's selection rect (x, y, w, h) is the artifact card's box when it is the measured size (0.85..1.0 of the picture wide, 0.95..1.1 tall) and holds the picture's middle.</summary>
+    public static bool InvArtSelected(UiCell c, double x, double y, double w, double h) {
+      if (w < c.W * 0.85 || w > c.W * 1.0 + 1 || h < c.H * 0.95 || h > c.H * 1.1 + 1) return false;
+      double mx = c.X + c.W / 2, my = c.Y + c.H / 2;
+      if (mx < x || mx > x + w || my < y || my > y + h) return false;
+      c.BX = x; c.BY = y; c.BW = w; c.BH = h;
+      return true;
+    }
 
     /// <summary>The cell's box never reaches above its picture (a root rect that stands higher covers the plate of the item above).</summary>
     public static void CellClampTop(UiCell c) {
