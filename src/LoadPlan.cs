@@ -112,11 +112,19 @@ namespace RealmForge {
 
     /// <summary>"load: cpu 1.2% of all 4 cores (4.8% of one core) ..." - the caller's head, then the activities since the last call,
     /// each "name N/min T ms" (calls and time a minute), only the ones that ran.</summary>
-    public static string Line(double cpuMs, double wallMs, int cores, string mode, string extra) {
+    public static string Line(double cpuMs, double wallMs, int cores, string mode, string extra) { return Line(cpuMs, -1, wallMs, cores, mode, extra); }
+    /// <param name="recMs">the screen recorder's own CPU in the same time (src/ScreenRecorder.cs RecCpu; below 0 = not given): the line then
+    /// splits the CPU into the recording's (test / lab only) and the rest, the load a player's app has without a recording</param>
+    public static string Line(double cpuMs, double recMs, double wallMs, int cores, string mode, string extra) {
       var ci = CultureInfo.InvariantCulture;
       double total, one; Pct(cpuMs, wallMs, cores, out total, out one);
       var sb = new StringBuilder("load: cpu ");
       sb.Append(total.ToString("0.0", ci)).Append("% of all ").Append(cores).Append(" cores (").Append(one.ToString("0.0", ci)).Append("% of one core) (").Append(mode).Append(')');
+      if (recMs >= 0) {
+        double rec = Math.Min(recMs, cpuMs), rt, ro, pt, po; Pct(rec, wallMs, cores, out rt, out ro); Pct(cpuMs - rec, wallMs, cores, out pt, out po);
+        sb.Append(" = rec ").Append(rt.ToString("0.0", ci)).Append("% (").Append(ro.ToString("0.0", ci)).Append("% of one core) + player load ")
+          .Append(pt.ToString("0.0", ci)).Append("% (").Append(po.ToString("0.0", ci)).Append("% of one core)");
+      }
       if (!string.IsNullOrEmpty(extra)) sb.Append(", ").Append(extra);
       double perMin = wallMs > 0 ? 60000.0 / wallMs : 0;
       bool first = true;

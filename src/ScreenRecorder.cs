@@ -64,8 +64,25 @@ namespace RealmForge {
     }
   }
 
+  /// <summary>The recorder's own CPU (its capture and upload threads, each thread's CPU time by GetThreadTimes): the load line splits it from
+  /// the rest of the app - a player's app records nothing unless the player presses the button, the lab records every scenario.</summary>
+  public static class RecCpu {
+    static long ticks100ns;
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")] static extern IntPtr GetCurrentThread();
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")] static extern bool GetThreadTimes(IntPtr h, out long created, out long exited, out long kernel, out long user);
+    /// <summary>The calling thread's CPU time so far (100 ns units; 0 = not read).</summary>
+    public static long ThreadNow() {
+      try { long c, e, k, u; return GetThreadTimes(GetCurrentThread(), out c, out e, out k, out u) ? k + u : 0; } catch (Exception) { return 0; }
+    }
+    /// <summary>Counts the calling thread's CPU since <paramref name="since"/> (from <see cref="ThreadNow"/>) and returns the new mark.</summary>
+    public static long Count(long since) { long n = ThreadNow(); if (n > since && since > 0) Add((n - since) / 10000.0); return n; }
+    public static void Add(double ms) { if (ms > 0) System.Threading.Interlocked.Add(ref ticks100ns, (long)(ms * 10000)); }
+    /// <summary>The recorder's CPU in ms since the app started.</summary>
+    public static double TotalMs { get { return System.Threading.Interlocked.Read(ref ticks100ns) / 10000.0; } }
+  }
+
   public static class RecSize {
-    public const int MaxWidth = 1280;
+    public const int MaxWidth = 1024;
     /// <summary>The frame's size so that the width is at most <paramref name="maxW"/> (aspect kept, never enlarged); the scale used.</summary>
     public static double Fit(int w, int h, int maxW, out int nw, out int nh) {
       if (w <= 0 || h <= 0) { nw = Math.Max(1, w); nh = Math.Max(1, h); return 1; }
@@ -263,7 +280,9 @@ namespace RealmForge {
         if (it == null || now < retryAt) { wake.WaitOne(it == null ? 1000 : (int)Math.Max(50, Math.Min(1000, retryAt - now))); continue; }
         long size = 0; try { size = new FileInfo(it.Path).Length; } catch (Exception) { }
         RecClient.LastStatus = 0; RecClient.LastKind = "";
+        long c0 = RecCpu.ThreadNow();
         var r = Sender(site(), code(), rec, it.Part, it.Path);
+        RecCpu.Count(c0);
         int status = RecClient.LastStatus; string kind = RecClient.LastKind;
         if (r == TestLogClient.Result.Later && status == 413) {
           // over the server's limit: it will never be accepted, so do not retry it forever

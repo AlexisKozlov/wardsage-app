@@ -2894,23 +2894,23 @@ namespace RealmForge {
     // whole process (every thread: the overlay, the watches, the memory passes, the recorder) over the wall time, given as a share of all
     // the PC's cores and of one core; the mode is the overlay's at the line (idle = no guide, away = the game minimized / behind, hint =
     // a guide nobody clicks for, pilot = a pilot clicking), with the seconds of the minute in each; per activity calls and ms a minute.
-    long loadAt; TimeSpan loadCpu; long loadReads; int loadGc0, loadGc2; string loadMode = "idle"; long inputAge = -1;
+    long loadAt; TimeSpan loadCpu; double loadRec; long loadReads; int loadGc0, loadGc2; string loadMode = "idle"; long inputAge = -1;
     readonly long[] modeMs = new long[4]; long modeAt;   // the guides' ms in the minute: away, hint, pilot, other (the recorder alone)
     void LogLoad() {
       if (!Channel.IsTest) return;
       long now = NowMs();
       using (var me = Process.GetCurrentProcess()) {
-        var cpu = me.TotalProcessorTime; long reads = System.Threading.Interlocked.Read(ref RFX.Reads);
+        var cpu = me.TotalProcessorTime; double recCpu = RecCpu.TotalMs; long reads = System.Threading.Interlocked.Read(ref RFX.Reads);
         int gc0 = GC.CollectionCount(0), gc2 = GC.CollectionCount(2);
         if (loadAt != 0) {
           double wall = Math.Max(1, now - loadAt);
           string mode = (timer.Enabled ? loadMode : "idle") + (RecInfo.Active ? "+rec" : "");   // (+rec: the screen recorder ran, its frames are in the cpu)
           string guides = "guides: away " + modeMs[0] / 1000 + " s, hint " + modeMs[1] / 1000 + " s, pilot " + modeMs[2] / 1000 + " s";
           string extra = guides + ", mem " + (me.PrivateMemorySize64 >> 20) + " MB, reads " + (long)((reads - loadReads) * 1000 / wall) + "/s, gc " + (gc0 - loadGc0) + "/" + (gc2 - loadGc2) + " (gen0/gen2)";
-          Log.Write(LoadMeter.Line((cpu - loadCpu).TotalMilliseconds, wall, Environment.ProcessorCount, mode, extra));
+          Log.Write(LoadMeter.Line((cpu - loadCpu).TotalMilliseconds, recCpu - loadRec, wall, Environment.ProcessorCount, mode, extra));   // (rec = the recorder's threads; the rest = a player's load)
           string rt = ReadTiming.Take(); if (rt != null) Log.Write(rt);
         } else LoadMeter.Line(0, 1, 1, "", null);   // (the counters start from here)
-        loadAt = now; loadCpu = cpu; loadReads = reads; loadGc0 = gc0; loadGc2 = gc2; Array.Clear(modeMs, 0, modeMs.Length);
+        loadAt = now; loadCpu = cpu; loadRec = recCpu; loadReads = reads; loadGc0 = gc0; loadGc2 = gc2; Array.Clear(modeMs, 0, modeMs.Length);
       }
     }
 

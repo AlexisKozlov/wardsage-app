@@ -11,7 +11,7 @@ using System.Threading;
 
 namespace RealmForge {
   sealed class ScreenRecorder {
-    public const int MaxMs = 5 * 60 * 1000, PartMs = 10000, PartMaxBytes = 7 * 1024 * 1024, FgEveryMs = 125, BgEveryMs = 2000;
+    public const int MaxMs = 5 * 60 * 1000, PartMs = 10000, PartMaxBytes = 7 * 1024 * 1024, FgEveryMs = 200, BgEveryMs = 2000;   // (5 frames a second in front: the lab's steps are slower)
     public const long MaxTotalBytes = 400L * 1024 * 1024;
 
     readonly Func<string> site, code;
@@ -53,7 +53,7 @@ namespace RealmForge {
       recId = lab != null ? LabRecCmd.NewId(DateTime.Now, new Random()) : RecNames.NewId(DateTime.Now, new Random());
       on = true; stopReq = false; stopWhy = "";
       setActive(true);
-      th = new Thread(Run) { IsBackground = true, Name = "rec-capture" };
+      th = new Thread(Run) { IsBackground = true, Name = "rec-capture", Priority = ThreadPriority.BelowNormal };   // (never ahead of the overlay / the readers)
       th.Start();
       return recId;
     }
@@ -120,9 +120,9 @@ namespace RealmForge {
               string[] tg = null;
               lock (tagGate) if (tags.Count > 0) { tg = tags.ToArray(); tags.Clear(); }
               if (tg != null) foreach (var x in tg) { w.AddText("tag_" + (++tagNo).ToString("000", System.Globalization.CultureInfo.InvariantCulture) + ".json", LabRecCmd.TagJson(x, t)); log("recording " + rec + ": tagged " + x); }
-              long c0 = LoadMeter.Now();
+              long c0 = LoadMeter.Now(), u0 = RecCpu.ThreadNow();
               try { Capture(h, t, !fg, w, ++frameNo); } catch (Exception e) { log("recording " + rec + ": frame failed: " + e.Message); }
-              LoadMeter.Done(LoadMeter.RecFrame, c0);
+              LoadMeter.Done(LoadMeter.RecFrame, c0); RecCpu.Count(u0);
             }
           }
           if (w != null && w.Frames > 0 && (t - partStart >= PartMs || w.Bytes >= PartMaxBytes)) {
@@ -133,6 +133,7 @@ namespace RealmForge {
         }
       } catch (Exception e) { log("recording " + rec + ": " + e); }
       if (w != null) Finish(ref w, ref part, ref parts, up);
+      FreeBuffers();
       up.Close();
       log("recording " + rec + ": stopped, " + parts + " parts" + (stopWhy != "" ? " (" + stopWhy + " limit)" : ""));
       on = false;
@@ -156,6 +157,13 @@ namespace RealmForge {
       if (path != null) { up.Add(part, path); parts++; part++; }
     }
 
+    // the capture thread's buffers (only it touches them)
+    Bitmap full, small; Graphics fullG, smallG; EncoderParameters jpegQ; readonly MemoryStream jpgBuf = new MemoryStream();
+    void FreeBuffers() {
+      if (fullG != null) fullG.Dispose(); if (full != null) full.Dispose(); if (smallG != null) smallG.Dispose(); if (small != null) small.Dispose();
+      fullG = smallG = null; full = small = null;
+    }
+
     void Capture(IntPtr h, long t, bool bg, RecPartWriter w, int no) {
       W32.RECT cr; if (!W32.GetClientRect(h, out cr) || cr.R < 64 || cr.B < 64) return;
       var o = new W32.POINT(0, 0); W32.ClientToScreen(h, ref o);
@@ -163,25 +171,24 @@ namespace RealmForge {
       if (W32.GetCursorPos(out c)) { cx = c.X - o.X; cy = c.Y - o.Y; }
       int nw, nh; double scale = RecSize.Fit(cr.R, cr.B, RecSize.MaxWidth, out nw, out nh);
       byte[] jpg;
-      using (var full = new Bitmap(cr.R, cr.B, PixelFormat.Format24bppRgb)) {
-        // the screen's pixels, so our overlay windows are in the picture (they are not hidden from captures while recording)
-        using (var g = Graphics.FromImage(full)) g.CopyFromScreen(o.X, o.Y, 0, 0, new Size(cr.R, cr.B), CopyPixelOperation.SourceCopy);
-        Bitmap small = null;
-        try {
-          var src = full;
-          if (nw != cr.R || nh != cr.B) {
-            small = new Bitmap(nw, nh, PixelFormat.Format24bppRgb);
-            using (var g = Graphics.FromImage(small)) { g.InterpolationMode = InterpolationMode.HighQualityBilinear; g.DrawImage(full, new Rectangle(0, 0, nw, nh), 0, 0, cr.R, cr.B, GraphicsUnit.Pixel); }
-            src = small;
-          }
-          using (var ms = new MemoryStream())
-          using (var ep = new EncoderParameters(1)) {
-            ep.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 70L);
-            src.Save(ms, Jpeg, ep);
-            jpg = ms.ToArray();
-          }
-        } finally { if (small != null) small.Dispose(); }
+      // the bitmaps are kept while the size stays (no 3 MB allocation a frame), the scale is a plain bilinear one, the jpeg on this thread
+      if (full == null || full.Width != cr.R || full.Height != cr.B) { FreeBuffers(); full = new Bitmap(cr.R, cr.B, PixelFormat.Format24bppRgb); fullG = Graphics.FromImage(full); }
+      // the screen's pixels, so our overlay windows are in the picture (they are not hidden from captures while recording)
+      fullG.CopyFromScreen(o.X, o.Y, 0, 0, new Size(cr.R, cr.B), CopyPixelOperation.SourceCopy);
+      var src = full;
+      if (nw != cr.R || nh != cr.B) {
+        if (small == null || small.Width != nw || small.Height != nh) {
+          if (smallG != null) smallG.Dispose(); if (small != null) small.Dispose();
+          small = new Bitmap(nw, nh, PixelFormat.Format24bppRgb); smallG = Graphics.FromImage(small);
+          smallG.InterpolationMode = InterpolationMode.Bilinear; smallG.PixelOffsetMode = PixelOffsetMode.HighSpeed; smallG.CompositingQuality = CompositingQuality.HighSpeed; smallG.CompositingMode = CompositingMode.SourceCopy;
+        }
+        smallG.DrawImage(full, new Rectangle(0, 0, nw, nh), 0, 0, cr.R, cr.B, GraphicsUnit.Pixel);
+        src = small;
       }
+      if (jpegQ == null) { jpegQ = new EncoderParameters(1); jpegQ.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 70L); }
+      jpgBuf.SetLength(0);
+      src.Save(jpgBuf, Jpeg, jpegQ);
+      jpg = jpgBuf.ToArray();
       var info = RecInfo.Take();
       if (info != null && RecInfo.NowMs() - info.AtMs > 1500) info = null;   // the overlay's tick is not running: nothing known
       string inputs = null;

@@ -85,6 +85,9 @@ static partial class CoreTests {
     Check(l.Contains("screens 4x 40 ms") && l.Contains("pass 2x 6000 ms") && !l.Contains("tick "), "per activity: calls and ms a minute, only the ones that ran");
     string l2 = LoadMeter.Line(0, 60000, 4, "idle", null);
     Check(!l2.Contains("per min"), "the next line counts from the last one: " + l2);
+    string l3 = LoadMeter.Line(2400, 1600, 60000, 4, "pilot+rec", null);
+    Check(l3.StartsWith("load: cpu 1.0% of all 4 cores (4.0% of one core) (pilot+rec) = rec 0.7% (2.7% of one core) + player load 0.3% (1.3% of one core)", StringComparison.Ordinal),
+          "the line splits the recorder's CPU from the rest (a player's load): " + l3);
   }
 
   /// <summary>--load-bench: the periodic work a minute in each situation, the plan before (origin/main 464c94a) and now (src/LoadPlan.cs), with
