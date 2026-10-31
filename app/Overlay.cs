@@ -1027,7 +1027,8 @@ namespace RealmForge {
       if (target == 0 || addrs == null) { Hide("off"); return; }
       int col; ulong list;
       int row = RFX.RowOfUid(addrs, target, out col, out list);
-      if (row <= 0 || col <= 0 || list == 0) { Hide("off"); return; }
+      // (the selected item is a hot field of its own: read also while the target is not in the list read - a rebuilt list, the item shown as worn by another hero)
+      if (row <= 0 || col <= 0 || list == 0) { curSel = RFX.ReadSel(addrs); selRow = selCol = 0; Hide("off"); return; }
       curRow = row; curCol = col; frameRow = row; frameCol = col;
 
       IntPtr hwnd = GameWindow();
@@ -2008,6 +2009,7 @@ namespace RealmForge {
       // the plan's gear is on: the artifact steps (the gear pilots below stay idle)
       if (ArtPhase) { TickArtEquip(o, cr, v); return; }
       var fview = FilterViewNow(o, cr, now, v.Foreground, v.UserBusy);
+      if (fview.PanelOpen) filterTouchAt = now;   // (the list rebuilds under the panel and after it closes: the item pilot waits for it)
       var fa = fpilot.Step(fview);
       LogFilter(fview); lastFilterView = fview;
       if (fview.PanelOpen && fview.SidePanelOpen) v.SideClose = new[] { fg.X(fg.SideCloseX, cr.R, cr.B), fg.Y(fg.CloseY, cr.R, cr.B) };
@@ -2026,7 +2028,7 @@ namespace RealmForge {
         if (fa.Kind == AutoKind.None) return;
         int fx = o.X + (int)Math.Round(fa.X), fy = o.Y + (int)Math.Round(fa.Y);
         if (fx < o.X || fy < o.Y || fx >= o.X + cr.R || fy >= o.Y + cr.B) return;
-        EquipSend(ClickTarget.EquipFilter, fa, fx, fy, o, v.Foreground);
+        if (EquipSend(ClickTarget.EquipFilter, fa, fx, fy, o, v.Foreground)) filterTouchAt = now;
         return;
       }
       // the next slot with the item's tip / compare still open over the slots (live 1.6.66.354: the pilot clicked the compare card where the
@@ -2051,6 +2053,8 @@ namespace RealmForge {
         EquipSend(ClickTarget.EquipClosePopup, new AutoAction { Kind = AutoKind.Click }, cx, cy, o, v.Foreground);
         return;
       }
+      v.FilterAt = filterTouchAt; v.ListSig = typesPtr != 0 ? (long)typesPtr * 31 + (types != null ? types.Length : 0) : 0;
+      LiveGearView(v, cr);
       var a = pilot.Step(v);
       AutoSay(pilot.State);
       if (pilot.Trace != "") { Log.Write("auto: " + pilot.Trace); lastPilotTrace = pilot.Trace; pilot.Trace = ""; }
@@ -3437,8 +3441,9 @@ namespace RealmForge {
       if (hwnd != IntPtr.Zero && W32.GetClientRect(hwnd, out cr)) {   // (the client size: the live read needs it - live 2026-10-30 "uibtn ... failed at window (no size)")
         req.W = cr.R; req.H = cr.B; req.U = Ui.Unit(cr.R, cr.B);
         if (a.Kind == AutoKind.Click) LiveClick(req, fresh, o, ref sx, ref sy);
-        if (a.Kind == AutoKind.Click && a.Cell > 0 && t == ClickTarget.EquipNav) LiveCellClick(req, fresh, a.Cell, o, ref sx, ref sy); else cellLivePt = null;
-      } else cellLivePt = null;
+        if (a.Kind == AutoKind.Click && a.Cell > 0 && t == ClickTarget.EquipNav) LiveCellClick(req, fresh, a.Cell, o, ref sx, ref sy); else { cellLivePt = null; cellRefused = false; }
+      } else { cellLivePt = null; cellRefused = false; }
+      if (cellRefused) { cellRefused = false; Log.Write("auto: the item's live cell is not in view now - no click on the layout's point"); return false; }
       if (!GatedSend(req, fresh, a, sx, sy)) return false;
       equipClickAt = NowMs(); return true;
     }
@@ -4223,19 +4228,37 @@ namespace RealmForge {
 
     /// <summary>The point of the last item pick clicked on its live cell (client px), null = the layout's (the pilot is told where it went).</summary>
     double[] cellLivePt;
+    long filterTouchAt;
+    int cellRefuseN; bool cellRefused;   // the last LiveCellClick refused: the gear list's live cells are read but not the one asked for (never the layout's point then)
+    /// <summary>The pilot's view of the game's own gear cells: readable now (LiveGrid), the plan's item among them and wholly in view (LiveTarget, its centre).</summary>
+    void LiveGearView(AutoView v, W32.RECT cr) {
+      if (target <= 0 || cr.R <= 0 || cr.B <= 0) return;
+      double W = cr.R, Hc = cr.B, U = Ui.Unit(cr.R, cr.B);
+      RFX.UiCellWant(UiCellKind.HeroGear, new[] { target }, W, Hc, U);
+      var s = RFX.UiCellFresh(UiCellKind.HeroGear, target, W, Hc, Environment.TickCount, RFX.UiFreshMs);
+      if (s == null || !s.Ok || !s.Visible || s.Rotated || s.Copies != 1 || s.VW < 4 || s.VH < 4) return;
+      if (!RFX.UiCellTopIs(UiCellKind.HeroGear, screens.Current)) return;
+      v.LiveGrid = true;
+      double x, y; string why;
+      if (RFX.UiCellPoint(s, target, W, Hc, Environment.TickCount, out x, out y, out why)) { v.LiveTarget = true; v.LiveX = x; v.LiveY = y; }
+    }
     /// <summary>An item pick (<paramref name="uid"/>) clicks its cell's live rect when the read is fresh (at most 200 ms, else one read now), the cell
     /// holds that item, is wholly in the viewport and the list's form is on top; the item under the click is then that one. Else the layout's point.</summary>
     void LiveCellClick(ClickRequest req, ScreenState fresh, long uid, W32.POINT o, ref int sx, ref int sy) {
-      cellLivePt = null;
+      cellLivePt = null; cellRefused = false;
       var k = RFX.UiCellKindOf(req.Target); if (k == UiCellKind.None || uid <= 0 || req.W <= 0 || req.H <= 0) return;
       var s = RFX.UiCellFresh(k, uid, req.W, req.H, Environment.TickCount, RFX.UiFreshMs) ?? RFX.UiCellReadNow(k, new[] { uid }, req.W, req.H, req.U);
       double lx = req.X, ly = req.Y, x, y; string why;
       bool live = RFX.UiCellPoint(s, uid, req.W, req.H, Environment.TickCount, out x, out y, out why);
       if (live && !RFX.UiCellTopIs(k, fresh)) { live = false; why = "the form on top is " + (fresh != null ? fresh.Top + " (" + fresh.Brief + ")" : "not read"); }
       if (live) {
+        cellRefuseN = 0;
         req.X = x; req.Y = y; req.Live = true; if (req.CellOk != null) req.CellUid = uid;
         sx = o.X + (int)Math.Round(x); sy = o.Y + (int)Math.Round(y); cellLivePt = new[] { x, y };
       }
+      // the grid is read (its form shown, its viewport known) but the item's cell is not wholly in view / not that item: never the layout's point
+      // (live 1.6.66.442: a click on stale rows picked another item after a filter rebuilt the list)
+      if (!live && k == UiCellKind.HeroGear && req.Target == ClickTarget.EquipNav && s != null && s.Ok && s.Visible && s.Copies == 1 && s.VW >= 4 && cellRefuseN++ < 12) cellRefused = true;   // (twelve in a row at most: a cell that never shows is the old way's)
       if (s != null) Log.Write(RFX.UiCellLine(s, uid, new[] { lx, ly }) + (live ? " [click: live @" + (int)Math.Round(x) + "," + (int)Math.Round(y) + "]" : " [click: layout, " + why + "]"));
     }
     int cellRunN;

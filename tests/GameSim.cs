@@ -1257,6 +1257,51 @@ static partial class CoreTests {
     // the item is selected already when the pilot starts: no list click, straight to «Заменить»
     string s0 = StaleRowsRun(2, false, true, out c, out m, out why);
     Check(s0 == "confirm" && c == 0, "sim: the item selected already: the confirm step at once (" + s0 + ", " + c + " list clicks)");
+    // lab 1.6.66.442 «Скрыть надетое»: the filter toggled, the list rebuilds (re-sorted, the rows move, no anchor for 1.5 s): no click on any other
+    // item, the plan's item is clicked at its live cell once the list holds still, and recognised as selected at once
+    int other, atRebuild; long rt0;
+    string hw = HideWornRebuildRun(false, out c, out other, out atRebuild, out rt0, out why);
+    Check(hw == "selected" && other == 0 && c >= 1 && c <= 2 && atRebuild == 0, "sim: hide-worn toggled, the list rebuilds: the item is picked by its live cell only, no click on another item (" + hw + ", " + c + " clicks, " + other + " on others, " + atRebuild + " while rebuilding, " + why + ")");
+    hw = HideWornRebuildRun(true, out c, out other, out atRebuild, out rt0, out why);
+    Check(hw == "selected" && other == 0 && c == 0, "sim: hide-worn toggled with the item selected already: recognised by the selected uid, no click at all (" + hw + ", " + c + " clicks, " + other + " on others)");
+  }
+
+  // the gear list after the «Скрыть надетое» toggle: at 1000 ms the list is rebuilt (a new list, re-sorted: the plan's item moves from row 2 to row 4),
+  // for 1500 ms the game's live cells do not hold the item (and the pilot has no anchor), then the item's live cell is at its new place. A click without a
+  // live cell lands on whatever row is at that point; a click on the live cell lands on the item.
+  static string HideWornRebuildRun(bool selectedAtStart, out int clicks, out int other, out int whileRebuilding, out long firstClickAt, out string why) {
+    var geo = new ListGeometry(); double H = 1009, cell = geo.CellW * H;
+    var types = new[] { 0, 1, 1, 1, 1, 1, 1 };
+    double real = ScrollAnchor.TopRow1(geo, H);
+    const long target = 9041, rebuildAt = 1000, rebuiltAt = 2500; long sel = selectedAtStart ? target : 0; bool tip = false;
+    clicks = other = whileRebuilding = 0; firstClickAt = -1;
+    var p = new AutoPilot(geo); var due = new List<KeyValuePair<long, Action>>();
+    for (long t = 0; t < 30000; t += 100) {
+      foreach (var e in due.ToArray()) if (e.Key <= t) { e.Value(); due.Remove(e); }
+      bool built = t >= rebuiltAt, rebuilding = t >= rebuildAt && !built;
+      int trow = t >= rebuildAt ? 4 : 2;
+      double ty = real + geo.RowOffset(types, trow) * H + cell / 2, tx = geo.ColLeft(1) * H + cell / 2;
+      var v = new AutoView { NowMs = t, Foreground = true, H = H, Target = target, Row = trow, Col = 1, Sel = sel, SelRow = sel > 0 ? trow : 0, SelCol = sel > 0 ? 1 : 0,
+                             AnchorHas = !rebuilding, Row1Top = real + 2 * geo.PitchY * H * (t >= rebuildAt ? 0 : 1), Types = types, TipKnown = true, TipShown = tip, Hero = 5, ScreenHero = 5, Owner = 0,
+                             LiveGrid = true, LiveTarget = t < rebuildAt || built, LiveX = tx, LiveY = ty,
+                             ListSig = t >= rebuildAt ? 2 : 1, FilterAt = t >= rebuildAt - 200 && t <= rebuildAt + 300 ? Math.Max(rebuildAt, t) : 0 };
+      var a = p.Step(v);
+      if (p.State == "failed" || p.State == "done" || sel == target && !selectedAtStart) break;
+      if (selectedAtStart && t > 6000) break;
+      if (a.Kind != AutoKind.Click) continue;
+      clicks++; if (firstClickAt < 0) firstClickAt = t; if (rebuilding) whileRebuilding++;
+      long hit = 0; int col = geo.ColumnAt(a.X / H);
+      if (a.Cell == target && v.LiveTarget) hit = target;                       // the host clicks the item's live cell
+      else {
+        other++;                                                                 // a click not on the live cell of the item
+        int hr = 0; if (col != 0) for (int r = 1; r < types.Length; r++) { double top = real + geo.RowOffset(types, r) * H; if (a.Y >= top && a.Y <= top + cell) hr = r; }
+        if (hr != 0) hit = 9000 + hr * 10 + col;
+      }
+      long h2 = hit;
+      due.Add(new KeyValuePair<long, Action>(t + 600, () => { if (h2 != 0) { sel = h2 == sel ? 0 : h2; tip = sel > 0; } }));
+    }
+    why = p.Why;
+    return sel == target ? "selected" : p.State;
   }
 
   // a list whose tip of the selected item is a tap catcher: a click while it stands only closes it (the selection stays); the stale rows put the
