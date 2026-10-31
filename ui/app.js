@@ -942,8 +942,10 @@
     switch (m.ev) {
       case 'state':
         Object.assign(S, { lang: m.lang, version: m.version, channel: m.channel || 'main', site: m.site, defaultSite: m.defaultSite, termsOk: m.termsOk !== false, hasCode: m.hasCode, codePrefix: m.codePrefix, saveCopy: m.saveCopy, last: m.last || S.last });
+        const wasAuto = S.autoClick;
         if (m.autoSync !== undefined) { S.autoSync = m.autoSync; S.autoClick = m.autoClick; S.autoConfirm = !!m.autoConfirm; S.errorReports = !!m.errorReports; S.autoUpdate = m.autoUpdate !== false; S.tray = m.tray !== false; S.bossHints = m.bossHints !== false; S.sendCodes = m.sendCodes !== false; S.recButton = m.recButton !== false; S.autostart = !!m.autostart; }
         if (m.game) S.game = m.game;
+        if (m.lab && S.autoClick && !wasAuto) labRecheck();   // lab (test build): auto click forced on in memory, the pending plans and the sell list start as if the switch was toggled
         if (m.codeSaved) { S.editCode = false; toast(t('saved')); if (S.page === 'equip' || S.plans.status !== 'idle') loadPlans(); }
         if (m.siteSaved) toast(t('saved'));
         if (S.hasCode && !S.bootLoad && S.plans.status === 'idle') { S.bootLoad = true; loadPlans(); }   // the first listing must not wait for the slow poll
@@ -1148,6 +1150,15 @@
       }
     }
   });
+
+  // lab (test build): the host forced auto click on after the plans / the list had come in: start them like the toggle would
+  function labRecheck() {
+    if (!S.game.running) return;
+    const fresh = G.freshPlans(S.plans.list, {}, Date.now(), S.bootAt).filter((p) => S.run !== p.id && !S.queue.includes(p.id));
+    if (fresh.length) { enqueue(fresh); if (!S.compact) S.page = 'equip'; }
+    const L = S.sell;
+    if (L.list && L.list.kind !== 'artifact' && (!L.run || L.hint)) { if (L.run) host.send({ cmd: 'sell.stop' }); sellStart(); if (!S.compact) S.page = 'equip'; }
+  }
 
   // tell the host which item to frame in the game
   function syncHighlight() {

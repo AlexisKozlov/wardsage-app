@@ -53,5 +53,12 @@ if (j) {
   let o = null; try { o = JSON.parse(txt); } catch { }
   ok(o && valid(o), 'the loop start args are valid for the runner (' + txt + ')');
 }
+// the lab's forced settings reach the page: the state event carries the forced auto click and the lab flag, the page re-checks plans and the sell list
+const hb = readFileSync(new URL('../app/HostBridge.cs', import.meta.url), 'utf8');
+const appjs = readFileSync(new URL('../ui/app.js', import.meta.url), 'utf8');
+ok(/Append\(B\(\(cfg\.AutoClick \|\| labForce\) && !labHintOnly\)\)\.Append\(",\\"lab\\":"\)/.test(hb), 'the state event carries the forced auto click and lab');
+ok(/labForce = true; ApplyAutoClick\(\); SendState\(null\)/.test(hb), 'forcing the settings posts the state to the page');
+ok(/labHintOnly = hint; ApplyAutoClick\(\); SendState\(null\)/.test(hb), 'the hint mode posts the state to the page');
+ok(/m\.lab && S\.autoClick && !wasAuto\) labRecheck\(\)/.test(appjs) && /function labRecheck\(\)[\s\S]*enqueue\(fresh\)[\s\S]*sellStart\(\)/.test(appjs), 'the page starts pending plans and the sell list when the lab forces auto click');
 console.log(`lab rec: ${n - bad}/${n} ok`);
 process.exit(bad ? 1 : 0);

@@ -416,7 +416,7 @@ namespace RealmForge {
     void LabRecTick() {
       ExploreTick();
       // the hint mode never outlives 3 minutes: auto click comes back by itself even if the lab's stop command is lost
-      if (labHintOnly && RecInfo.NowMs() - labHintAt > 180000) { labHintOnly = false; ApplyAutoClick(); Log.Write("lab: hint mode off (3 min timeout)"); }
+      if (labHintOnly && RecInfo.NowMs() - labHintAt > 180000) { labHintOnly = false; ApplyAutoClick(); SendState(null); Log.Write("lab: hint mode off (3 min timeout)"); }
       try {
         if (labRecPending != null) {
           // another recording was asked to stop first: start once it is off, give up after a while
@@ -455,11 +455,11 @@ namespace RealmForge {
       bool hint = start && LabRecCmd.IsHintScenario(c.Scenario);
       if (start && !hint && !labForce) LabForceSettings();   // every non-hint scenario: the settings it needs are on
       if (hint) labHintAt = RecInfo.NowMs();
-      if (hint != labHintOnly) { labHintOnly = hint; ApplyAutoClick(); Log.Write("lab: hint mode " + (hint ? "on (auto click off for " + c.Scenario + ")" : "off")); }
+      if (hint != labHintOnly) { labHintOnly = hint; ApplyAutoClick(); SendState(null); Log.Write("lab: hint mode " + (hint ? "on (auto click off for " + c.Scenario + ")" : "off")); }
     }
     // the lab forces the settings its scenarios need (auto click, locateAuto, artAuto) for this run: in memory, the saved config is not touched
     void LabForceSettings() {
-      labForce = true; ApplyAutoClick();
+      labForce = true; ApplyAutoClick(); SendState(null);   // the page too: it starts the equip and sell runs
       Log.Write("lab: settings forced auto=on locateAuto=on artAuto=on (saved config: autoClick=" + (cfg.AutoClick ? "on" : "off") + ", not changed)");
     }
     void LabRecStart(LabRecCmd c) {
@@ -778,7 +778,7 @@ namespace RealmForge {
       sb.Append(",\"hasCode\":").Append(B(has));
       sb.Append(",\"codePrefix\":").Append(S(has ? cfg.Code.Substring(0, 8) : ""));
       sb.Append(",\"saveCopy\":").Append(B(cfg.SaveCopy));
-      sb.Append(",\"autoSync\":").Append(B(cfg.AutoSync)).Append(",\"autoClick\":").Append(B(cfg.AutoClick))
+      sb.Append(",\"autoSync\":").Append(B(cfg.AutoSync)).Append(",\"autoClick\":").Append(B((cfg.AutoClick || labForce) && !labHintOnly)).Append(",\"lab\":").Append(B(labForce))
         .Append(",\"autoConfirm\":").Append(B(cfg.AutoConfirm)).Append(",\"errorReports\":").Append(B(cfg.ErrorReports)).Append(",\"autoUpdate\":").Append(B(cfg.AutoUpdate))
         .Append(",\"tray\":").Append(B(cfg.Tray)).Append(",\"bossHints\":").Append(B(cfg.BossHints)).Append(",\"sendCodes\":").Append(B(cfg.SendCodes)).Append(",\"recButton\":").Append(B(cfg.RecButton)).Append(",\"guideStyle\":").Append(S(cfg.GuideStyle)).Append(",\"autostart\":").Append(B(Autostart.IsOn()));
       win.TrayEnabled = cfg.Tray;
