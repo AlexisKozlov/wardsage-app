@@ -80,7 +80,7 @@ namespace RealmForge {
     long lateMs, pickAt; long seenHero;
     int clicks, drags, backs, tabs, misses, city, total, bestDist = int.MaxValue;
     // the grid filter: 0 not started, 1 filtering, 2 done (or given up); clearing a filter that hides the hero
-    int filterPhase, funnelTries, factionTries, clearTries, classResets, doneCloses; bool classClicked, factionDone, classDone;
+    int filterPhase, funnelTries, factionTries, clearTries, classResets, doneCloses; bool classClicked, factionDone, classDone, forceClear;
     ulong lastGrid;
     // row 1's top (client px) lies in [lo, hi]; has = known
     bool has; double lo, hi;
@@ -258,7 +258,10 @@ namespace RealmForge {
       if (v.Heroes == null) return null;
       int t = Array.IndexOf(v.Heroes, v.Plan);
       bool active = (v.ChosenCamps != null && v.ChosenCamps.Length > 0) || v.ClassChosen;
-      if (t < 0 && active) {                                       // hidden by a filter: clear it
+      // (also a filtered grid whose rows the pilot cannot find: three clicks in the middle brought up no other hero - the player's filter
+      // left on over the grid, live 1.6.66.452: 24 clicks, no hero. «Все» in both columns, the unfiltered grid starts at its top.)
+      if (misses >= 3 && active) forceClear = true;
+      if ((t < 0 || forceClear) && active) {              // hidden by a filter, or its rows not found: clear it
         if (classClicked && !classDone) { classDone = true; }      // our class click hid it: «Все» below undoes it
         if (clearTries >= 3) return null;
         if (!v.FilterOpen) { if (++funnelTries > 4) return null; waitUntil = v.NowMs + Late(AfterClickMs); return Funnel(v, H); }
@@ -349,7 +352,7 @@ namespace RealmForge {
     void Restart() {
       effect.Drop();
       waitUntil = pauseUntil = failedAt = pickAt = 0; seenHero = 0; clicks = drags = backs = tabs = misses = city = total = 0; bestDist = int.MaxValue; has = pending = false; State = "idle";
-      Why = ""; filterPhase = funnelTries = factionTries = clearTries = classResets = doneCloses = 0; classClicked = factionDone = classDone = false; lastGrid = 0;
+      Why = ""; filterPhase = funnelTries = factionTries = clearTries = classResets = doneCloses = 0; classClicked = factionDone = classDone = forceClear = false; lastGrid = 0;
     }
 
     /// <summary>A wait after an action: as given, or on a game seen answering late, at least its latest answer and a margin.</summary>

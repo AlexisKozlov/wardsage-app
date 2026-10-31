@@ -4314,6 +4314,7 @@ static partial class CoreTests {
     public int Clicks, Drags, Backs;
     public bool Blind;   // the filter pop-up is not recognised: the host reports it closed whatever it shows
     public List<double[]> Pts = new List<double[]>();
+    public bool DeadWhileFiltered;   // the grid takes no card click while a class / faction filter is on (live 1.6.66.452: the clicks brought up no hero)
     public bool Blocked;   // something over the grid takes the clicks (a pop-up left open)
     public FakeHeroGame(HeroGeometry g, double W, double H) { this.g = g; this.W = W; this.H = H; }
     public double MaxScroll { get { int rows = (Heroes.Length + 2) / 3; return Math.Max(0, g.Row1Top * H + rows * PY * H - g.ViewBottom * H + 10); } }
@@ -4332,6 +4333,7 @@ static partial class CoreTests {
       if (Math.Abs(x - g.BackX * H) < 15 && Math.Abs(y - g.BackY * H) < 15) { if (Part >= 0) Part = -1; else Shown = 0; Backs++; return; }
       if (Math.Abs(x - (W - g.GearTabDX * H)) < 30 && Math.Abs(y - g.GearTabY * H) < 30) { Tab = 3; return; }
       if (Part >= 0 || y < g.ViewTop * H || y > g.ViewBottom * H) return;
+      if (DeadWhileFiltered && (Camps.Count > 0 || Class > 0)) return;
       for (int c = 0; c < 3; c++) {
         if (Math.Abs(x - g.ColX(c) * H) > 0.109 * H / 2) continue;
         double rel = y - (g.Row1Top * H - Scroll);
@@ -8605,6 +8607,16 @@ static partial class CoreTests {
 
   static void HeroPilotTests() {
     var g = new HeroGeometry(); double W = 1920, H = 1009;
+    {   // the player's class / faction filter left on over the grid, the plan's hero in it but the pilot's clicks find no other hero (live 1.6.66.452:
+        // 24 clicks in the grid's middle, nothing): the filter is cleared and the hero is brought up
+      var allG = new long[80]; var tagsG = new Dictionary<long, long[]>();
+      for (int i = 0; i < allG.Length; i++) { allG[i] = (200100 + i) * 100000L; tagsG[allG[i]] = new long[] { HeroGeometry.ClassOrder[i % 6], FakeHeroGame.FactionList[1 + i % 10] }; }
+      var gg = new FakeHeroGame(g, W, H) { All = allG, Tags = tagsG, Shown = allG[1], DeadWhileFiltered = true };
+      gg.Camps.Add(FakeHeroGame.FactionList[1]); gg.Class = tagsG[allG[0]][0]; gg.Refilter();
+      gg.Shown = gg.Heroes[1]; gg.Blocked = false;
+      HeroView lvg; var hpg = new HeroPilot(g); string stg = RunHero(hpg, gg, gg.Heroes[0], 3000, out lvg, null) + (hpg.Why != "" ? " - " + hpg.Why : "") + ", " + gg.Clicks + " clicks, camps " + gg.Camps.Count + " class " + gg.Class + " open " + gg.FilterOpen;
+      Check(stg.StartsWith("done") && gg.Shown == gg.Heroes[0], "a player's filter left on over the hero grid: the plan's hero is brought up (" + stg + ")");
+    }
     {   // live 1.6.66 (3440x1440): a faction filter hid the plan's hero, its «Все» brought the hero up (the game shows the first hero of
         // the new grid) - the pilot said done with the grid's filter pop-up still open over the gear slots, the slot did not open
         // after 3 clicks. The pop-up is closed with the funnel first, then done.
