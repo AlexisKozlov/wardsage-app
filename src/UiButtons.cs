@@ -68,6 +68,9 @@ namespace RealmForge {
     public string IconChild;
     /// <summary>No field of <see cref="Paths"/> there: the close button is looked for live among the form's objects (UiCloseFind), cached per form.</summary>
     public bool Discover;
+    /// <summary>Several instances of the button (a compare view's two tips): every path is read and the best one is taken (<see cref="RFX.UiPickScore"/>:
+    /// shown, inside the client, in its lower half, the right-hand one) and kept while it stays shown - hovering never re-picks.</summary>
+    public bool Pick;
     /// <summary>No field of <see cref="Paths"/> there: the object by its place under the form's root (src/FrameTargets.cs), alternatives tried in
     /// turn: names between '/', "(Clone)" ignored, "#n" = the n-th active child; a name not under its parent is looked for deeper (a panel the
     /// form makes in code). The first found active wins.</summary>
@@ -178,7 +181,7 @@ namespace RealmForge {
   }
 
   public sealed class FrameStick {
-    public const int HoldMs = 1500;
+    public const int HoldMs = 60000;   // (a held frame goes only when its target is gone / covered / another step; never for the age of a read)
     double[] last; long at; double lw, lh;
     /// <summary>The live frame now: <paramref name="live"/> when read this tick, else the last one within HoldMs (same window size); null = the
     /// layout's. <paramref name="gone"/>: the read says the button is not there (no frame held).</summary>
@@ -222,7 +225,7 @@ namespace RealmForge {
         // the selected artifact's «Заменить» / «Надеть» (the compare tip's, else the hero's card's): framed on its visible plate Button_Normal_2 where the
         // game has put it (the geometry's rect is the plate's from the left edge at one aspect: on a wider client it sat left of the button)
         case ClickTarget.ArtReplace: return new UiWidget("Form_CharactorMain", "m_Panels.EquipArtifactInfoTip.m_BtnEquip", "m_Panels.EquipArtifactInfo.m_BtnEquip") { Icon = true, IconChild = "Button_Normal_2" };
-        case ClickTarget.EquipConfirm: return new UiWidget("Form_CharactorEquipTip", "m_SelectEquipView.m_RightBtn.m_gameObject", "m_OneEquipView.m_RightBtn.m_gameObject") { Icon = true };
+        case ClickTarget.EquipConfirm: return new UiWidget("Form_CharactorEquipTip", "m_SelectEquipView.m_RightBtn.m_gameObject", "m_OneEquipView.m_RightBtn.m_gameObject") { Icon = true, Pick = true };
         case ClickTarget.OfferClose: return string.IsNullOrEmpty(offerForm) ? null : new UiWidget(offerForm, OfferClosePaths) { Icon = true, Discover = true };
       }
       return null;
@@ -369,12 +372,40 @@ namespace RealmForge {
     /// <summary>The live rect of a button by name, from <paramref name="env"/> (XLua.LuaEnv) and <paramref name="ui"/> (UIInstance),
     /// for a game window of client size W x H px and UI unit U px (the fallback scale when the root canvas cannot be told).</summary>
     public static UiButtonInfo UiButtonRead(ulong env, ulong ui, UiWidget w, double W, double H, double U) {
+      if (w.Pick && w.Paths.Length > 1) return UiPickRead(env, ui, w, W, H, U);
       var sw = Stopwatch.StartNew();
       var r = new UiButtonInfo { Form = w.Form, Widget = w.Paths.Length > 0 ? w.Paths[0] : "", ForW = W, ForH = H, At = Environment.TickCount };
       try { UiButtonReadInto(env, ui, w, W, H, U, r); }
       catch (Exception e) { r.Fail("exception", e.Message); }
       finally { r.Ms = sw.ElapsedMilliseconds; }
       return r;
+    }
+
+    static readonly Dictionary<string, string> pickKept = new Dictionary<string, string>();   // widget -> the path taken while it stays shown
+
+    /// <summary>How good a read of one of several instances is: 0 = none (failed, hidden, outside the client), else shown 4 + the centre in the lower
+    /// half 2 + the centre right of the client's middle 1 (the candidate's card is the right one of the compare view). Pure (tests/CoreTests.cs).</summary>
+    public static int UiPickScore(UiButtonInfo r, double W, double H) {
+      if (r == null || !r.Ok || !r.Visible || r.W < 4 || r.H < 4) return 0;
+      double cx = r.X + r.W / 2, cy = r.Y + r.H / 2;
+      if (cx < 0 || cx > W || cy < 0 || cy > H) return 0;
+      return 4 + (cy > H / 2 ? 2 : 0) + (cx > W / 2 ? 1 : 0);
+    }
+
+    /// <summary>The instance of <paramref name="w"/> to frame: the one kept from the last read while it is still shown and inside the client (no re-pick
+    /// when the cursor hovers a button), else the best of all paths; none shown: the first path's read (it says why).</summary>
+    static UiButtonInfo UiPickRead(ulong env, ulong ui, UiWidget w, double W, double H, double U) {
+      string key = w.Form + "|" + w.Paths[0], kept; lock (pickKept) pickKept.TryGetValue(key, out kept);
+      UiButtonInfo best = null, first = null; int bs = 0;
+      foreach (var p in w.Paths) {
+        var r = UiButtonRead(env, ui, new UiWidget(w.Form, p) { Icon = w.Icon, IconChild = w.IconChild, Discover = w.Discover, Trees = w.Trees }, W, H, U);
+        if (first == null) first = r;
+        int sc = UiPickScore(r, W, H);
+        if (sc > 0 && p == kept) { best = r; break; }   // the kept one stays while it is shown
+        if (sc > bs) { bs = sc; best = r; }
+      }
+      lock (pickKept) { if (best != null) pickKept[key] = best.Widget; else pickKept.Remove(key); }
+      return best ?? first;
     }
 
     /// <summary>The rect fields of a RectTransform {anchorMin, anchorMax, anchoredPosition, sizeDelta, pivot} (null = unreadable or not one:
@@ -905,6 +936,9 @@ namespace RealmForge {
     public const int UiLiveMs = 90000;
     /// <summary>How old a live rect may be to be clicked or framed (else the layout's place).</summary>
     public const int UiFreshMs = 200;
+    /// <summary>How old a live read may be to place a FRAME (never a click): the screen read of a calm hint runs every 250 ms (src/LoadPlan.cs), so
+    /// a read is up to that old at the next tick; a frame is not hidden for it (owner, 1.6.66.435: the frame went away when he stopped touching).</summary>
+    public const int UiFrameFreshMs = 900;
 
     public static void UiButtonKeep(ClickTarget t, UiButtonInfo r, double W, double H, int at) {
       if (r == null) return;
@@ -965,12 +999,12 @@ namespace RealmForge {
 
     /// <summary>The click point of a pilot button from its live read: the rect's centre when the read is ok, fresh (at most UiFreshMs old at
     /// <paramref name="now"/>), visible, unrotated, the form's one shown copy and the centre inside the client; else false and why (the layout's point then).</summary>
-    public static bool UiLivePoint(UiButtonInfo r, double W, double H, int now, out double x, out double y, out string why) {
+    public static bool UiLivePoint(UiButtonInfo r, double W, double H, int now, out double x, out double y, out string why, int maxAge = UiFreshMs) {
       x = y = 0; why = null;
       if (r == null) { why = "no read"; return false; }
       if (!r.Ok) { why = "failed at " + r.FailStep; return false; }
       int age = unchecked(now - r.At);
-      if (age < 0 || age > UiFreshMs) { why = "old (" + age + " ms)"; return false; }
+      if (age < 0 || age > maxAge) { why = "old (" + age + " ms)"; return false; }
       if (Math.Abs(r.ForW - W) > 0.5 || Math.Abs(r.ForH - H) > 0.5) { why = "another window size"; return false; }
       if (!r.Visible) { why = "not visible"; return false; }
       if (r.Rotated) { why = "rotated"; return false; }
@@ -1202,7 +1236,7 @@ namespace RealmForge {
           c.BX = x; c.BY = y; c.BW = w; c.BH = h;
           double ax, ay, aw, ah;
           foreach (ulong root in new[] { at, ctr })   // (the item child, then the cell: a plate that is the cell's own child is in the cell's rect)
-            if (root != pic && RectUnder(root, rtr, above, canvas, W, H, U, new UiButtonInfo(), true, out ax, out ay, out aw, out ah) && aw >= 4 && ah >= 4) CellBox(c, ax, ay, aw, ah);
+            if (root != pic && RectUnder(root, rtr, above, canvas, W, H, U, new UiButtonInfo(), true, out ax, out ay, out aw, out ah) && aw >= 4 && ah >= 4) CellBox(c, ax, ay, aw, ah, sp.Rows && root == at);
           if (icon == "c_Frame") { var ai = new UiButtonInfo(); ArtInto(Ptr(pic + CompGo), cb, ai); c.Sprite = ai.Sprite; c.Art = ai.Art; }   // (the quality frame's sprite: its visible part)
           c.InView = InViewOf(c.X, c.Y, c.W, c.H, r.VX, r.VY, r.VW, r.VH);
           r.Cells.Add(c);
@@ -1220,8 +1254,8 @@ namespace RealmForge {
 
     /// <summary>The whole cell <paramref name="c"/>: its picture's rect joined with the cell root's (x, y, w, h); a root wider than 1.6 pictures or
     /// taller than 2.2 (the row's strip, a list's content) is not the cell and is left out.</summary>
-    public static void CellBox(UiCell c, double x, double y, double w, double h) {
-      if (w > c.W * 1.6 + 2 || h > c.H * 2.2 + 2) return;
+    public static void CellBox(UiCell c, double x, double y, double w, double h, bool item = false) {
+      if (w > c.W * 1.6 + 2 || h > c.H * (item ? 3.0 : 2.2) + 2) return;   // (item: a list row's own item child, the cell itself: its stat plate may be tall)
       double l = Math.Min(c.X, x), t = Math.Min(c.Y, y), r = Math.Max(c.X + c.W, x + w), b = Math.Max(c.Y + c.H, y + h);
       c.BX = l; c.BY = t; c.BW = r - l; c.BH = b - t;
     }
@@ -1229,12 +1263,12 @@ namespace RealmForge {
     /// <summary>What the read <paramref name="s"/> says of item <paramref name="uid"/> at <paramref name="now"/>: Shown with its frame (the picture
     /// 2 px out, rounded, clipped to the viewport: x, y, w, h, radius), Hidden (no cell of it made, or not half in view, or switched off), or Unknown (no
     /// fresh good read for this window: the layout's estimate). The form on top is the caller's (<see cref="UiCellTopIs"/>).</summary>
-    public static UiCellSee UiCellState(UiCellSet s, long uid, double W, double H, int now, out double[] frame, out string why) {
+    public static UiCellSee UiCellState(UiCellSet s, long uid, double W, double H, int now, out double[] frame, out string why, int maxAge = UiFreshMs) {
       frame = null; why = null;
       if (s == null) { why = "no read"; return UiCellSee.Unknown; }
       if (!s.Ok) { why = "failed at " + s.FailStep; return UiCellSee.Unknown; }
       int age = unchecked(now - s.At);
-      if (age < 0 || age > UiFreshMs) { why = "old (" + age + " ms)"; return UiCellSee.Unknown; }
+      if (age < 0 || age > maxAge) { why = "old (" + age + " ms)"; return UiCellSee.Unknown; }
       if (Math.Abs(s.ForW - W) > 0.5 || Math.Abs(s.ForH - H) > 0.5) { why = "another window size"; return UiCellSee.Unknown; }
       if (!s.Visible) { why = "form not shown"; return UiCellSee.Unknown; }
       if (s.Rotated) { why = "rotated"; return UiCellSee.Unknown; }

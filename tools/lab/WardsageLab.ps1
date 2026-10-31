@@ -23,13 +23,14 @@ Set-StrictMode -Version 2
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$RunnerVersion   = '20'
+$RunnerVersion   = '21'
 $Dir             = Join-Path $env:LOCALAPPDATA 'WardsageLab'
 $StopFile        = Join-Path $Dir 'STOP'
 $LogFile         = Join-Path $Dir 'runner.log'
 $HeartbeatSec    = 60          # idle heartbeat
 $ActiveBeatSec   = 5           # heartbeat while a run is active (a run job was claimed in the last $ActiveMin min)
 $ActiveMin       = 30
+$FrontMin        = 10          # the game window is touched only within this many minutes after a claimed run job
 $TickSec         = 2           # loop tick: the app log is read every tick
 $ClaimSec        = 4           # one claim per this many seconds (lab_claim allows 20/min)
 $MaxRunnerHours  = 4          # the runner never lives longer than this
@@ -327,8 +328,8 @@ function Get-GameBounds([IntPtr]$h) {
 }
 # fits the window into the monitor work area when it is out of bounds (window calls only); returns $true when it moved it
 function Repair-GameBounds([IntPtr]$h) {
+    if ([LabWin]::IsZoomed($h)) { return $false }      # a maximised window is never restored or resized
     $b = Get-GameBounds $h
-    if ($b.inside -and [LabWin]::IsZoomed($h)) { return $false }
     if ($b.inside -and -not [LabWin]::IsIconic($h)) { return $false }
     Write-Log ('game_front: out of bounds, rect=' + $b.rect + ' work=' + $b.work)
     [void][LabWin]::ShowWindow($h, 9)      # SW_RESTORE
@@ -339,10 +340,16 @@ function Repair-GameBounds([IntPtr]$h) {
     Write-Log ('game_front: after fit rect=' + $a.rect + ' inside=' + $a.inside)
     return $true
 }
+# the game window is touched only while a lab run is active (a run job was claimed in the last $FrontMin min) and the kill switch is off
+function Test-FrontAllowed {
+    if ($script:Killed) { return $false }
+    return (((Get-Date) - $script:RunJobAt).TotalMinutes -lt $FrontMin)
+}
 function Test-GameBoundsIdle {
     try {
+        if (-not (Test-FrontAllowed)) { return }
         $h = Get-GameHandle
-        if ($h -eq [IntPtr]::Zero -or [LabWin]::IsIconic($h)) { return }
+        if ($h -eq [IntPtr]::Zero -or [LabWin]::IsIconic($h) -or [LabWin]::IsZoomed($h)) { return }
         $b = Get-GameBounds $h
         if (-not $b.inside) { [void](Repair-GameBounds $h) }
     } catch { Write-Log ('bounds check failed: ' + (Get-ShortError $_)) }
@@ -350,6 +357,7 @@ function Test-GameBoundsIdle {
 function Set-GameFront {
     $h = Get-GameHandle
     if ($h -eq [IntPtr]::Zero) { Write-Log 'game_front: no game window'; return @{ ok = $false; res = @{ error = 'no_game_window' } } }
+    if (-not (Test-FrontAllowed)) { Write-Log 'game_front: no active run, the window is left alone'; return @{ ok = $true; res = @{ maximized = $false; fitted = $false; foreground = $false; skipped = 'no_active_run' } } }
     $maximized = $false
     try {
         $zoomed = [LabWin]::IsZoomed($h); $iconic = [LabWin]::IsIconic($h)
@@ -360,7 +368,7 @@ function Set-GameFront {
         try {
             $b = Get-GameBounds $h
             Write-Log ('game_front: rect=' + $b.rect + ' work=' + $b.work + ' inside=' + $b.inside + ' zoomed=' + [LabWin]::IsZoomed($h))
-            if (-not $b.inside -or -not [LabWin]::IsZoomed($h)) {
+            if (-not [LabWin]::IsZoomed($h) -and -not $b.inside) {      # only a non-maximised window that is partly outside the work area
                 [void][LabWin]::ShowWindow($h, 9)      # SW_RESTORE
                 Start-Sleep -Milliseconds 300
                 [void][LabWin]::SetWindowPos($h, [IntPtr]::Zero, $b.wl, $b.wt, $b.ww, $b.wh, 0x0040)      # HWND_TOP, SWP_SHOWWINDOW
@@ -887,7 +895,7 @@ function Invoke-Job($job) {
             $out = @{ ok = $false; res = @{ error = 'bad_args' } }
         } else {
             Write-Log ('job: ' + $action)
-            if (@('update_app', 'restart_app', 'game_front', 'upload_logs', 'screenshot') -contains $action) { $script:RunJobAt = Get-Date }
+            if (@('update_app', 'restart_app', 'start_game', 'game_front', 'upload_logs', 'screenshot') -contains $action) { $script:RunJobAt = Get-Date }
             if ($action -eq 'update_app') { $script:LogCount = 0 }
             if ($action -eq 'finish') { $script:RunJobAt = [DateTime]::MinValue; $script:Scn = '' }
             switch ($action) {
@@ -923,6 +931,7 @@ $script:Busy = $false
 $script:Started = Get-Date
 $script:LastSelfCheck = [DateTime]::MinValue
 $script:RunJobAt = [DateTime]::MinValue
+$script:Killed = $false
 $script:LogOff = [int64]-1; $script:LogAt = [int64]0; $script:LogCount = 0; $script:MarkAt = [int64]0; $script:LogErr = ''
 Reset-LogMarks
 Update-LogWatch      # baseline: the end of the file now
@@ -983,8 +992,10 @@ try {
                         }
                     }
                 }
+                if ($err -eq $null) { $script:Killed = $false }
                 if ($err -ne $null) {
                     Write-Log ('server said ' + $err.code + ' ' + $err.msg)
+                    $script:Killed = ($err.msg -eq 'lab_killed')
                     if ($err.msg -in @('lab_bad_gen', 'lab_disabled', 'lab_unknown_device', 'lab_forbidden')) { Write-Log 'this token is no longer valid, exiting'; break }
                     $wait = 300; if ($err.msg -ne 'lab_killed' -and $err.msg -ne 'lab_rate') { $wait = 30 }
                     $backoffUntil = (Get-Date).AddSeconds($wait)

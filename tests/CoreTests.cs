@@ -1446,6 +1446,18 @@ static partial class CoreTests {
     var wide = new UiCell { X = 102, Y = 202, W = 80, H = 80 }; wide.BX = wide.X; wide.BY = wide.Y; wide.BW = wide.W; wide.BH = wide.H;
     RFX.CellBox(wide, 0, 200, 700, 112);
     Check(Nr(wide.BW, 80) && Nr(wide.BH, 80), "a row strip or the list's content is not taken for the cell");
+    var tallItem = new UiCell { X = 102, Y = 202, W = 80, H = 80 }; tallItem.BX = tallItem.X; tallItem.BY = tallItem.Y; tallItem.BW = tallItem.W; tallItem.BH = tallItem.H;
+    RFX.CellBox(tallItem, 100, 200, 84, 230, true);
+    var tallCell = new UiCell { X = 102, Y = 202, W = 80, H = 80 }; tallCell.BX = tallCell.X; tallCell.BY = tallCell.Y; tallCell.BW = tallCell.W; tallCell.BH = tallCell.H;
+    RFX.CellBox(tallCell, 100, 200, 84, 230);
+    Check(Nr(tallItem.BH, 230) && Nr(tallCell.BH, 80), "a gear row's own item child with a tall stat plate is the cell root; a tall root of another cell is still left out");
+    var okR = new UiButtonInfo { Visible = true, X = 900, Y = 500, W = 120, H = 40 }; var topR = new UiButtonInfo { Visible = true, X = 100, Y = -300, W = 120, H = 40 };
+    var hidR = new UiButtonInfo { Visible = false, X = 900, Y = 500, W = 120, H = 40 }; var leftR = new UiButtonInfo { Visible = true, X = 100, Y = 500, W = 120, H = 40 };
+    Check(RFX.UiPickScore(okR, 1366, 705) > RFX.UiPickScore(leftR, 1366, 705) && RFX.UiPickScore(leftR, 1366, 705) > 0 && RFX.UiPickScore(topR, 1366, 705) == 0 && RFX.UiPickScore(hidR, 1366, 705) == 0 && RFX.UiPickScore(null, 1366, 705) == 0,
+      "«Заменить»: the shown tip's button inside the client, in the lower half and right-hand wins; a hidden one or one above the client never");
+    var oldR = new UiButtonInfo { Visible = true, X = 900, Y = 500, W = 120, H = 40, ForW = 1366, ForH = 705, Copies = 1, At = 1000 }; double lx, ly; string lwhy;
+    Check(!RFX.UiLivePoint(oldR, 1366, 705, 1500, out lx, out ly, out lwhy) && RFX.UiLivePoint(oldR, 1366, 705, 1500, out lx, out ly, out lwhy, RFX.UiFrameFreshMs),
+      "a frame takes a read of the calm 250 ms rate (500 ms old); a click still needs one of 200 ms");
     var cs = new UiCellSet { Kind = UiCellKind.Inventory, Visible = true, Copies = 1, ForW = 1366, ForH = 705, At = Environment.TickCount, VX = 0, VY = 0, VW = 900, VH = 600 };
     cs.Cells.Add(cell);
     double[] cfr; string cwhy;

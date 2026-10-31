@@ -1488,7 +1488,7 @@ namespace RealmForge {
     /// <summary>The hero list's live read binds hero <paramref name="hero"/> to exactly one cell, at list index <paramref name="index"/> (the scan's
     /// order), fresh, for this window size: then its cell is the card. Else unsure (no frame).</summary>
     bool HeroCellSure(long hero, int index, double W, double H) {
-      var s = RFX.UiCellFresh(UiCellKind.HeroList, hero, W, H, Environment.TickCount, RFX.UiFreshMs);
+      var s = RFX.UiCellFresh(UiCellKind.HeroList, hero, W, H, Environment.TickCount, RFX.UiFrameFreshMs);
       return CellFrame.HeroCellSure(s, hero, index);
     }
     bool heroFreshTop;
@@ -4116,7 +4116,7 @@ namespace RealmForge {
     bool CityLiveStill(double W, double H, long now) {
       double U = Ui.Unit(W, H);
       var lv = LiveFrame(ClickTarget.CityInventory, null, W, H, U);
-      var r = lv != null ? RFX.UiButtonFresh(ClickTarget.CityInventory, null, W, H, Environment.TickCount, RFX.UiFreshMs) : null;
+      var r = lv != null ? RFX.UiButtonFresh(ClickTarget.CityInventory, null, W, H, Environment.TickCount, RFX.UiFrameFreshMs) : null;
       bool ok = cityLive.Note(r != null ? lv : null, r != null ? r.At : 0);
       // the live rect's place is the bar's place: the layout's fallback (a missed read) and its clicks stay on it (live 1.6.66.397: the default
       // offset put them 37 px left, onto the neighbour, after the place was dropped)
@@ -4152,9 +4152,9 @@ namespace RealmForge {
     double[] LiveFrame(ClickTarget t, string form, double W, double H, double U, bool icon = true, double[] layout = null) {
       RFX.UiButtonWant(t, form, W, H, U);
       int now = Environment.TickCount;
-      var r = RFX.UiButtonFresh(t, form, W, H, now, RFX.UiFreshMs);
+      var r = RFX.UiButtonFresh(t, form, W, H, now, RFX.UiFrameFreshMs);
       double x, y; string why; var sc = screens.Current;
-      bool ok = RFX.UiLivePoint(r, W, H, now, out x, out y, out why), top = RFX.UiTopIs(t, form, sc);
+      bool ok = RFX.UiLivePoint(r, W, H, now, out x, out y, out why, RFX.UiFrameFreshMs), top = RFX.UiTopIs(t, form, sc);
       // the picture of the button (its icon, or a wide button's visual child), 2 px round it; none found: its rect, 2 px round it as well
       // (the city bar's «Инвентарь»: its Image_Icon also draws a tip and side lines: the frame hugs the round rim inside it)
       // the Image's sprite in the table (src/SpriteArt.cs): the frame hugs the sprite's visible art mapped through the live rect, outlined by its contour
@@ -4187,9 +4187,9 @@ namespace RealmForge {
       if (uid <= 0) return UiCellSee.Unknown;
       RFX.UiCellWant(k, want ?? new[] { uid }, W, H, U);
       int now = Environment.TickCount;
-      var s = RFX.UiCellFresh(k, uid, W, H, now, RFX.UiFreshMs);
+      var s = RFX.UiCellFresh(k, uid, W, H, now, RFX.UiFrameFreshMs);
       if (s != null) { var sl = RFX.UiCellShadowLine(run, s, uid, calc, now); if (sl != null) Log.Write(sl); }
-      string why; var st = RFX.UiCellState(s, uid, W, H, now, out fr, out why);
+      string why; var st = RFX.UiCellState(s, uid, W, H, now, out fr, out why, RFX.UiFrameFreshMs);
       if (st == UiCellSee.Shown && fr != null) {   // one frame on the whole cell (the icon with its stat plate)
         fr = CellFrame.Whole(fr, calc);
         var c = s.Of(uid);
@@ -4399,9 +4399,9 @@ namespace RealmForge {
       if (w == null) { why = "no widget"; return null; }
       RFX.UiTargetWant(ft.Key, w, W, H, U);
       int now = Environment.TickCount;
-      var r = RFX.UiTargetFresh(ft.Key, W, H, now, RFX.UiFreshMs);
+      var r = RFX.UiTargetFresh(ft.Key, W, H, now, RFX.UiFrameFreshMs);
       double x, y; string pw; var sc = screens.Current;
-      bool ok = RFX.UiLivePoint(r, W, H, now, out x, out y, out pw), top = RFX.UiFormTopIs(ft.Form, sc);
+      bool ok = RFX.UiLivePoint(r, W, H, now, out x, out y, out pw, RFX.UiFrameFreshMs), top = RFX.UiFormTopIs(ft.Form, sc);
       var art = ok && top ? SpriteArt.Of(r.Sprite) : null;
       var fit = art != null ? (r.IW > 0 ? SpriteArt.FrameOf(art, r.Art, r.IX, r.IY, r.IW, r.IH, W, H) : SpriteArt.FrameOf(art, r.Art, r.X, r.Y, r.W, r.H, W, H)) : null;
       double[] f = ok && top ? (fit != null ? fit.Frame : r.IW > 0 ? UiIcon.Frame(r.IX, r.IY, r.IW, r.IH, W, H) : UiIcon.Frame(r.X, r.Y, r.W, r.H, W, H)) : null;

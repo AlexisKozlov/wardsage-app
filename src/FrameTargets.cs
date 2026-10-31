@@ -335,7 +335,7 @@ namespace RealmForge {
 
     /// <summary>The last Shown frame of the item framed now; an Unknown (no fresh read) within <see cref="Ms"/> gives it back, a Hidden or another item drops it.</summary>
     public sealed class Hold {
-      public const long Ms = 800;
+      public const long Ms = 60000;   // (kept until the item is Hidden or another one is framed, never for the age of a read)
       string key; double[] fr; double w, h; long at;
       public UiCellSee Pick(string k, UiCellSee st, ref double[] f, double W, double H, long now) {
         if (st == UiCellSee.Shown && f != null) { key = k; fr = f; w = W; h = H; at = now; return st; }
