@@ -9,6 +9,13 @@
 #                                                       a run in progress advances (the same state machine, state in lab_runs). Always exits 0.
 #                                                       Env: TEST_FEED (feed dir, default /srv/wardsage/test-feed), LAB_NO_TG=1 (print instead of Telegram), LAB_ONLY=<device> (tests).
 #
+# Build gate: a new test build (feed latest.json) gets ONE full suite (LAB_SCENARIOS + the frame audit of the _hint ones); the result of every
+# scenario is kept per build in $LAB_DIR/build-<N>.status (N = 4th part of the version: PASS / FAIL / SKIP / PENDING per scenario, frame_audit,
+# OVERALL). A newer build published mid-suite: the scenario in hand ends, the run is closed as 'cancelled' (superseded) and the next pass starts the
+# suite on the newer build. The laptop's idle gate (runner v22): a run starts only while the runner reports status.input = idle (no physical user
+# input for 1 min); user input during a run (status.input = user_busy, or a job failed with user_busy) cancels the run quietly (its request is
+# cancelled at once, no report, no verdict) and the build's suite starts again when the laptop is idle.
+#
 # Flow (state kept in lab_runs.phase, so a restart of this script resumes; each phase is idempotent):
 #   wait_online -> update_app -> restart_app -> wait_ready -> [seed -> wait done]* -> wait logs
 #   -> upload_logs -> screenshot -> finish -> report
@@ -31,6 +38,7 @@ done
 { [ -n "$dev" ] || [ "$auto" = 1 ]; } && { [ -z "$dev" ] || [ "$auto" = 0 ]; } || { echo "$USAGE" >&2; exit 2; }
 [[ "$timeout_min" =~ ^[0-9]{1,3}$ ]] && [[ "$tick" =~ ^[0-9]{1,3}$ ]] || { echo "bad number" >&2; exit 2; }
 FEED=${TEST_FEED:-/srv/wardsage/test-feed}
+TEST_LOG=${LAB_TEST_LOG:-$HOME/wardsage/work/test-autorelease.log}   # tools/test-autorelease.sh: "<time> published 1.6.66.N (sha8)"
 
 say() { echo "$(date -u +%H:%M:%S) $*"; }
 now() { date +%s; }
@@ -70,6 +78,60 @@ wait_job() {
 }
 
 
+# ---- the build gate: the per-build result file
+# run_build: the version this run tests: the one the app was updated to, else the one the run was queued for
+run_build() { local v; v=$(dget want_version); [ -n "$v" ] || v=$(dget target_version); echo "$v"; }
+# write_build_status: $LAB_DIR/build-<N>.status of the run's build, from the run's steps (atomic write). Never fails the caller.
+write_build_status() {
+  local v n sha js tmp
+  v=$(run_build); [[ "$v" =~ ^[0-9]{1,9}(\.[0-9]{1,9}){1,3}$ ]] || return 0
+  n=${v##*.}
+  sha=$(sed -nE "s/^[^ ]+ published ${v//./\\.} \(([0-9a-f]+)\)\$/\1/p" "$TEST_LOG" 2>/dev/null | tail -1)
+  js=$(q -v r="$RUN" <<< "select jsonb_build_object('state', state, 'scenarios', scenarios, 'steps', steps, 'data', data)::text from public.lab_runs where id = :'r'::uuid") || return 0
+  [ -n "$js" ] || return 0
+  tmp=$(mktemp "$LAB_DIR/.build-status.XXXXXX") || return 0
+  if jq -r --arg ver "$v" --arg sha "${sha:-?}" --arg run "${RUN:0:8}" --arg now "$(date -u +%FT%TZ)" '
+      . as $r
+      | def st($sc): [$r.steps[] | select(.name == $sc or (.name | startswith($sc + " ")))] | last;
+      def verdict($sc): st($sc) as $s | if $s == null then "PENDING" elif $s.ok == false then "FAIL" elif ($s.warn // false) then "SKIP" else "PASS" end;
+      def line($sc): st($sc) as $s | $sc + " " + verdict($sc) + (if $s == null then "" else " " + (($s.seconds // 0) | floor | tostring) + "s" + (if (($s.note // "") != "") then " - " + ($s.note | gsub("[\n\r]"; " ") | .[0:160]) else "" end) end);
+      ($r.scenarios | map(select(. != "explore"))) as $sc
+      | ($sc | map(select(endswith("_hint")))) as $hint
+      | ($sc | map(verdict(.))) as $vs
+      | ($hint | map(verdict(.))) as $hv
+      | ([$r.steps[] | select(.ok == false) | .name as $n | select(([$sc[] | . as $x | select($n == $x or ($n | startswith($x + " ")))] | length) == 0)]) as $other
+      | "build \($ver) sha \($sha)",
+        "run \($run) state \($r.state)\(if ($r.data.superseded_by // "") != "" then " (superseded by " + $r.data.superseded_by + ")" else "" end)\(if ($r.data.abort // "") != "" then " (" + $r.data.abort + ")" else "" end) updated \($now)",
+        ($sc[] | line(.)),
+        (if ($hint | length) > 0 then "frame_audit " + (if ($hv | index("FAIL")) then "FAIL" elif ($hv | all(. == "PASS")) then "PASS" else "PENDING" end) + " (" + ($hint | join(", ")) + ")" else empty end),
+        ($other[] | "run_step " + .name + " FAIL" + (if ((.note // "") != "") then " - " + (.note | gsub("[\n\r]"; " ") | .[0:160]) else "" end)),
+        "OVERALL " + (if (($vs | index("FAIL")) or ($other | length) > 0) then "FAIL" elif ($vs | all(. == "PASS")) then "PASS" else "INCOMPLETE" end)
+    ' <<< "$js" > "$tmp" 2>/dev/null; then
+    chmod 644 "$tmp"; mv -f "$tmp" "$LAB_DIR/build-$n.status"
+  else rm -f "$tmp"; fi
+  return 0
+}
+# user_busy_now: the runner (v22+) says the laptop's user is active, or a job of this run failed with user_busy
+user_busy_now() {
+  [ "$(dstat "coalesce(status->>'input', '')")" = user_busy ] && return 0
+  [ "$(q -v r="$RUN" <<< "select count(*) from public.lab_jobs where run_id = :'r'::uuid and state = 'failed' and result->>'error' = 'user_busy'")" != 0 ]
+}
+# input_ok: the laptop may start a run (the old runner reports no input state: allowed)
+input_ok() { local i; i=$(dstat "coalesce(status->>'input', '')"); [ -z "$i" ] || [ "$i" = idle ] || [ "$i" = running ]; }
+# abort_quiet <state> <why>: the run ends without a verdict and without a report (user input / a newer build): its request is cancelled at once
+# (the app stops guiding), queued jobs cancelled, the recording of the scenario in hand deleted; the suite of the build starts again later
+abort_quiet() {
+  local r t sc0 rid; sc0=${scenarios[$(dget scn_idx)]:-}; r=$(dget row); t=$(scn_tbl "$sc0")
+  [ -n "$r" ] && [ -n "$t" ] && q -v r="$r" <<< "update public.$t set status = 'cancelled', done_at = now() where id = :'r'::uuid and status = 'pending'" >/dev/null
+  rid=$(dget rec_id); [ -n "$rid" ] && dset rec_del "$(dget rec_del) $rid"
+  dset rec_id ""; dset row ""; dset abort "$2"
+  # shellcheck disable=SC2046
+  rec_delete $(dget rec_del)
+  q -v r="$RUN" -v s="$1" <<< "update public.lab_jobs set state = 'cancelled', finished_at = now() where run_id = :'r'::uuid and state = 'queued'; update public.lab_runs set state = :'s', finished_at = now() where id = :'r'::uuid" >/dev/null
+  say "run ${RUN:0:8} ended without a verdict: $2"
+  write_build_status
+}
+
 # ---- the state machine
 end_run() {   # $1 = final state
   local rid; rid=$(dget rec_id)
@@ -78,6 +140,7 @@ end_run() {   # $1 = final state
   rec_delete $(dget rec_del)
   q -v d="$DEV" -v r="$RUN" <<< "update public.lab_jobs set state = 'cancelled', finished_at = now() where run_id = :'r'::uuid and state = 'queued'" >/dev/null
   q -v r="$RUN" -v s="$1" <<< "update public.lab_runs set state = :'s', finished_at = now() where id = :'r'::uuid" >/dev/null
+  write_build_status
   "$HERE/lab-report.sh" "$RUN" || say "report failed"
 }
 
@@ -166,6 +229,7 @@ lab_settings_start() {
 # (not 'done': the app did not finish it, the last press is the player's). An equip plan that passed is already 'done' (the app closed it).
 next_scn() {
   local r t sc0; sc0=${scenarios[$(dget scn_idx)]:-}; r=$(dget row); t=$(scn_tbl "$sc0")
+  write_build_status
   dset last_rec_job ""
   rec_end
   if [[ "$sc0" == *_hint ]]; then
@@ -233,6 +297,7 @@ tick() {
     end_run timeout; FINAL=1; return
   fi
   ph=$(rget phase)
+  if user_busy_now; then abort_quiet cancelled "user_busy: the laptop's user is active"; FINAL=1; return; fi
   case "$ph" in
     start|wait_online)
       ok=$(dstat "(last_seen > now() - interval '150 seconds' and status->>'game_running' = 'true' and coalesce(status->>'busy', 'false') = 'false')")
@@ -306,6 +371,14 @@ tick() {
       i=$(dget scn_idx)
       if [ "$i" -ge "${#scenarios[@]}" ]; then phase logs; return; fi
       sc=${scenarios[$i]}
+      # a newer test build was published: the scenario in hand has ended, the suite restarts on the newer build (the next --auto pass queues it)
+      tv=$(dget target_version)
+      if [ "$i" -ge 1 ] && [ -n "$tv" ]; then
+        nb=$(jq -r '.version // empty' "$FEED/latest.json" 2>/dev/null); cb=$(run_build)
+        if [[ "$nb" =~ ^[0-9]{1,9}(\.[0-9]{1,9}){0,3}$ ]] && [ -n "$cb" ] && [ "$nb" != "$cb" ] && [ "$(printf '%s\n%s\n' "$cb" "$nb" | sort -V | tail -1)" = "$nb" ]; then
+          dset superseded_by "$nb"; abort_quiet cancelled "superseded by build $nb"; FINAL=1; return
+        fi
+      fi
       # the screen recording starts before anything of the scenario (phase scn_rec waits for the app's answer); sell_after_restart: after
       # the app's restart (a restart ends any recording)
       if [ "$(dget rec_for)" != "$i" ] && [[ "$sc" =~ ^[a-z0-9_]{1,40}$ ]] && [ "$sc" != explore ] && { [ "$sc" != sell_after_restart ] || [ -n "$(dget sar_ready)" ]; }; then
@@ -613,9 +686,9 @@ auto_dev() {   # $1 = device name
   if [ "$gr" != true ]; then ensure_game; notify_launcher; fi
   if [ -n "$RUN" ]; then
     st=$(rget state)
-    # a waiting request starts only when the game runs
-    if [ "$st" = running ] || [ "$gr" = true ]; then advance; fi
-  elif [ "$gr" = true ]; then
+    # a waiting request starts only when the game runs and the laptop's user is away (idle gate); a run in progress is always advanced (it ends itself on user input)
+    if [ "$st" = running ] || { [ "$gr" = true ] && input_ok; }; then advance; fi
+  elif [ "$gr" = true ] && input_ok; then
     explore_due && return 0
     latest=$(jq -r '.version // empty' "$FEED/latest.json" 2>/dev/null)
     if [[ "$latest" =~ ^[0-9]{1,9}(\.[0-9]{1,9}){0,3}$ ]]; then
@@ -628,6 +701,7 @@ auto_dev() {   # $1 = device name
                   jsonb_build_object('target_version', :'v'::text))
           returning id")
         say "'$dev': new test build $latest has no finished run, run ${RUN:0:8} queued"
+        write_build_status
         advance
       fi
     fi
