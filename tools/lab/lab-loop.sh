@@ -155,6 +155,12 @@ fail_scn() {   # $1 = step label, $2 = reason, $3 = table, $4 = row id
   mkjob upload_logs '{"lines":1000}' >/dev/null || true; mkjob screenshot '{"target":"app"}' >/dev/null || true; dset fail_shot 1
   next_scn
 }
+# lab_settings_start: before the first scenario the app is told to force auto click (locateAuto, artAuto) on for the run (src/LabRec.cs "settings"; a
+# saved config with auto click off must not stall the run); phase lab_settings waits for its ack
+lab_settings_start() {
+  local sj
+  if sj=$(mkjob rec '{"cmd":"settings"}'); then dset job "$sj"; phase lab_settings; else say "settings: the job could not be queued"; phase scenario; fi
+}
 # next_scn: the scenario ended (pass, fail or skip): its request is closed at once, so the app stops guiding before the next one. The site's
 # long poll returns only pending rows, so the app drops a guide whose row is anything else (app/Overlay.cs locateReq = null); 'cancelled'
 # (not 'done': the app did not finish it, the last press is the player's). An equip plan that passed is already 'done' (the app closed it).
@@ -244,7 +250,7 @@ tick() {
           dset want_version "$(jres "$j" version)"
           devsig
           if [ "$(jres "$j" updated)" = false ] && [ "$SG_READY" = true ] && [ "$SG_APPOK" = true ] && [ "$SG_APPVER" = "$(jres "$j" version)" ]; then
-            step app_ready true 0 "already ready, no restart"; grades_mark; dset scn_idx 0; phase scenario; return
+            step app_ready true 0 "already ready, no restart"; grades_mark; dset scn_idx 0; lab_settings_start; return
           fi
           r=$(mkjob restart_app) && dset job "$r" && dset job_timeout "" && phase restart
         else
@@ -274,7 +280,7 @@ tick() {
           step app_ready false "$(phase_age)" "$WHY"; FAILED=1; skip_to_logs
         elif [ "$SG_READY" = true ] && [ "$SG_APPOK" = true ] && [ "$SG_SEEN" -gt "${rs:-0}" ] && { [ -z "$want" ] || [ "$SG_APPVER" = "$want" ]; }; then
           step app_ready true "$(( $(now) - ${rs:-0} ))" "version ${want:-?}"
-          grades_mark; dset scn_idx 0; phase scenario
+          grades_mark; dset scn_idx 0; lab_settings_start
         elif [ "$(phase_age)" -gt "$READY_DEV" ]; then
           step app_ready false "$(phase_age)" "the app did not report ready in $(( READY_DEV / 60 )) min"
           FAILED=1; skip_to_logs
@@ -288,7 +294,7 @@ tick() {
         from public.lab_devices dv join public.game_accounts a on a.id = dv.account_id where dv.id = :'d'::uuid")
       if [ "$ok" = t ]; then
         step app_ready true "$(( $(now) - rs ))" "version ${want:-?}"
-        grades_mark; dset scn_idx 0; phase scenario
+        grades_mark; dset scn_idx 0; lab_settings_start
       elif [ "$(phase_age)" -gt 420 ]; then
         step app_ready false "$(phase_age)" "the app did not report ready in 7 min"
         FAILED=1; skip_to_logs
@@ -345,6 +351,13 @@ tick() {
              say "recording: no answer in 40 s"
              sc=${scenarios[$(dget scn_idx)]}; if [[ "$sc" == *_hint ]]; then warn "$sc" 0 "режим подсказок не включён (нет ответа на команду записи)"; next_scn; else phase scenario; fi
            fi ;;
+      esac ;;
+    lab_settings)
+      j=$(dget job); st=$(jstate "$j")
+      case "$st" in
+        done) say "app settings forced (auto click on): acked"; phase scenario ;;
+        failed|expired|cancelled) say "app settings: no ack ($(jres "$j" error)$(jres "$j" state)); each scenario's start forces them too"; phase scenario ;;
+        *) if [ "$(phase_age)" -gt 40 ]; then say "app settings: no ack in 40 s"; phase scenario; fi ;;
       esac ;;
     scn_unhint)
       # after a hint scenario: the app's ack of the stop command = auto click is back on; no ack in 40 s = the app's own 3 min fallback restores it

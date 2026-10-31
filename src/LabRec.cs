@@ -18,7 +18,7 @@ namespace RealmForge {
     public const long StaleMs = 2 * 60 * 1000;        // a command older than this is left alone (an app started after the run)
     public const long StartWaitMs = 10000;            // the wait for another recording to stop before a lab one starts
 
-    static readonly Regex LineRx = new Regex("^([0-9]{1,15}) (?:(start) ([a-z0-9_]{1,40}) ([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})|(stop))$");
+    static readonly Regex LineRx = new Regex("^([0-9]{1,15}) (?:(start) ([a-z0-9_]{1,40}) ([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})|(stop)|(settings))$");
     static readonly Regex IdRx = new Regex("^lab-[0-9]{8}-[0-9]{6}-[0-9a-f]{6}$");
 
     /// <summary>The command of the file's text (its first line), null when it is not exactly one of the two forms.</summary>
@@ -32,6 +32,7 @@ namespace RealmForge {
       long seq;
       if (!long.TryParse(m.Groups[1].Value, NumberStyles.None, CultureInfo.InvariantCulture, out seq)) return null;
       if (m.Groups[2].Success) return new LabRecCmd { Seq = seq, Op = "start", Scenario = m.Groups[3].Value, Run = m.Groups[4].Value };
+      if (m.Groups[6].Success) return new LabRecCmd { Seq = seq, Op = "settings" };
       return new LabRecCmd { Seq = seq, Op = "stop" };
     }
 
@@ -59,7 +60,7 @@ namespace RealmForge {
 
   /// <summary>What to do with a command, given the recorder. One instance per app run; it remembers the last command done.</summary>
   public sealed class LabRecControl {
-    public enum Act { None, Start, Stop, StopThenStart }
+    public enum Act { None, Start, Stop, StopThenStart, Settings }
     long lastSeq = -1;
 
     /// <summary>The action for <paramref name="c"/> at <paramref name="nowMs"/> (unix ms) while the recorder is <paramref name="recOn"/> with
@@ -69,6 +70,7 @@ namespace RealmForge {
       if (c == null || c.Seq <= lastSeq) return Act.None;
       lastSeq = c.Seq;
       if (nowMs - c.Seq > LabRecCmd.StaleMs || c.Seq - nowMs > LabRecCmd.StaleMs) { state = "stale"; return Act.None; }
+      if (c.Op == "settings") { state = "settings"; return Act.Settings; }
       if (c.Op == "start") { state = "recording"; return recOn ? Act.StopThenStart : Act.Start; }
       if (c.Op == "stop") {
         // only a lab recording is stopped: a manual one of the owner goes on

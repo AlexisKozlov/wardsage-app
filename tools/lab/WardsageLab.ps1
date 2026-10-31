@@ -23,7 +23,7 @@ Set-StrictMode -Version 2
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$RunnerVersion   = '19'
+$RunnerVersion   = '20'
 $Dir             = Join-Path $env:LOCALAPPDATA 'WardsageLab'
 $StopFile        = Join-Path $Dir 'STOP'
 $LogFile         = Join-Path $Dir 'runner.log'
@@ -596,7 +596,7 @@ function Invoke-Rec($a) {
                     $st = [string](Get-Prop $ack 'state'); $id = [string](Get-Prop $ack 'rec')
                     if ($st -notmatch '^[a-z]{1,12}$') { $st = 'bad' }
                     if ($id -notmatch '^[A-Za-z0-9-]{0,40}$') { $id = '' }
-                    return @{ ok = ($st -eq 'recording' -or $st -eq 'stopped' -or $st -eq 'idle'); res = @{ state = $st; rec = $id; cmd = $cmd } }
+                    return @{ ok = ($st -eq 'recording' -or $st -eq 'stopped' -or $st -eq 'idle' -or $st -eq 'settings'); res = @{ state = $st; rec = $id; cmd = $cmd } }
                 }
             }
         } catch { }

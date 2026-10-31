@@ -123,13 +123,15 @@ namespace RealmForge {
     // ------------------------------------------------------------------ the site's switches
 
     /// <summary>The app's own clicks: the player's setting and the site's "autoclick" switch.</summary>
-    bool AutoClickOn() { return cfg.AutoClick && On("autoclick") && !labHintOnly; }
+    bool AutoClickOn() { return (cfg.AutoClick || labForce) && On("autoclick") && !labHintOnly; }
     /// <summary>TEST build: a lab scenario «..._hint» runs (its recorder command named it): auto click is off as for a player without it, hints only.</summary>
     bool labHintOnly; long labHintAt;
+    /// <summary>TEST build: the lab forces auto click, locateAuto and artAuto on for this app run (in memory, never saved: cfg.AutoClick stays the player's); the hint mode (labHintOnly) is in memory too.</summary>
+    bool labForce;
     /// <summary>«Показать в игре» clicks by itself only with its own switch on (off by default until the owner enables it), on top of the player's setting.</summary>
-    bool LocateAutoOn() { return AutoClickOn() && On("locateAuto"); }
+    bool LocateAutoOn() { return AutoClickOn() && (labForce || On("locateAuto")); }
     /// <summary>The artifact flows (storage cleanup, promotion) click by themselves only with the site's "artAuto" switch on (off by default), on top of the player's setting.</summary>
-    bool ArtAutoOn() { return AutoClickOn() && On("artAuto"); }
+    bool ArtAutoOn() { return AutoClickOn() && (labForce || On("artAuto")); }
     /// <summary>The new button highlight: only the site's "guideStyle" switch.</summary>
     void ApplyGuideStyle() { overlay.GuideStyle = remote.Allows("guideStyle"); }
     void ApplyAutoClick() { overlay.AutoEnabled = AutoClickOn(); overlay.LocateAutoEnabled = LocateAutoOn(); overlay.ArtAutoEnabled = ArtAutoOn(); }
@@ -434,8 +436,9 @@ namespace RealmForge {
         var act = labRec.Decide(cmd, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), on, cur, out state);
         if (state == null) return;
         Log.Write("rec: lab " + cmd.Op + (cmd.Op == "start" ? " " + cmd.Scenario : "") + " -> " + act + " (" + state + ")");
-        if (state != "stale") LabScenario(cmd);
+        if (state != "stale" && act != LabRecControl.Act.Settings) LabScenario(cmd);
         switch (act) {
+          case LabRecControl.Act.Settings: LabForceSettings(); LabRecAck(cmd, state, cur); break;
           case LabRecControl.Act.Start: LabRecStart(cmd); break;
           case LabRecControl.Act.StopThenStart: testRec.Stop(); labRecPending = cmd; labRecPendingAt = RecInfo.NowMs(); break;
           case LabRecControl.Act.Stop: testRec.Stop(); LabRecAck(cmd, state, cur); break;
@@ -450,8 +453,14 @@ namespace RealmForge {
       overlay.AuditSite = () => cfg.Site; overlay.AuditCode = () => cfg.Code;
       overlay.AuditScenario = start ? c.Scenario : ""; if (start) overlay.AuditRun = c.Run;
       bool hint = start && LabRecCmd.IsHintScenario(c.Scenario);
+      if (start && !hint && !labForce) LabForceSettings();   // every non-hint scenario: the settings it needs are on
       if (hint) labHintAt = RecInfo.NowMs();
       if (hint != labHintOnly) { labHintOnly = hint; ApplyAutoClick(); Log.Write("lab: hint mode " + (hint ? "on (auto click off for " + c.Scenario + ")" : "off")); }
+    }
+    // the lab forces the settings its scenarios need (auto click, locateAuto, artAuto) for this run: in memory, the saved config is not touched
+    void LabForceSettings() {
+      labForce = true; ApplyAutoClick();
+      Log.Write("lab: settings forced auto=on locateAuto=on artAuto=on (saved config: autoClick=" + (cfg.AutoClick ? "on" : "off") + ", not changed)");
     }
     void LabRecStart(LabRecCmd c) {
       if (testRec == null) testRec = new ScreenRecorder(() => cfg.Site, () => cfg.Code, s => Log.Write(s), ev => Post(ev), on => OnUi(() => overlay.SetRecording(on)));

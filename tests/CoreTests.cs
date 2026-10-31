@@ -6548,6 +6548,16 @@ static partial class CoreTests {
       foreach (var lbad in new[] { null, "", "start equip_city " + lrun, "1 start Equip " + lrun, "1 start ../x " + lrun, "1 start equip_city " + lrun.ToUpperInvariant(), "1 start equip_city " + lrun + " x",
                                   "1 start equip_city", "1  stop", "1 stop lnow", "1 keep fail", "1 discard", "x stop", "1234567890123456 stop", "1 start " + new string('a', 41) + " " + lrun, new string('1', 300) })
         Check(LabRecCmd.Parse(lbad) == null, "lab rec: rejected: " + (lbad == null ? "null" : lbad.Length > 60 ? lbad.Substring(0, 60) + "..." : lbad));
+      var lset = LabRecCmd.Parse("1700000000002 settings\r\n");
+      Check(lset != null && lset.Op == "settings" && lset.Seq == 1700000000002L && lset.Scenario == "", "lab rec: a settings line is read");
+      foreach (var lbad2 in new[] { "1 settings x", "1 settings auto=off", "settings", "1  settings", "1 Settings" })
+        Check(LabRecCmd.Parse(lbad2) == null, "lab rec: rejected: " + lbad2);
+      { string sst; var sk = new LabRecControl();
+        Eq(LabRecControl.Act.Settings, sk.Decide(LabRecCmd.Parse("1700000000100 settings"), 1700000000500L, true, "lab-20261030-120000-abcdef", out sst), "lab rec: settings -> force the settings, a running recording goes on");
+        Eq("settings", sst, "lab rec: settings acks 'settings'");
+        Eq(LabRecControl.Act.None, sk.Decide(LabRecCmd.Parse("1700000000100 settings"), 1700000001000L, false, "", out sst), "lab rec: the same settings command again does nothing");
+        Eq(LabRecControl.Act.None, sk.Decide(LabRecCmd.Parse("1700000000200 settings"), 1700000000200L + LabRecCmd.StaleMs + 1, false, "", out sst), "lab rec: an old settings command is not acted on");
+        Eq("stale", sst, "lab rec: ... and acks stale"); }
       Check(LabRecCmd.IsLabId(LabRecCmd.NewId(new DateTime(2026, 10, 30, 12, 0, 0), new Random(1))), "lab rec: its ids are lab ids");
       Check(RecNames.IsValidId(LabRecCmd.NewId(new DateTime(2026, 10, 30, 12, 0, 0), new Random(1))), "lab rec: its ids are valid recording ids (the site takes them)");
       Check(!LabRecCmd.IsLabId(RecNames.NewId(new DateTime(2026, 10, 30, 12, 0, 0), new Random(1))), "lab rec: a manual / automatic id is not a lab id");
