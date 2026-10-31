@@ -66,7 +66,8 @@ static partial class CoreTests {
     Eq(240, LoadPlan.ReadGapMs(false, false, false, 5000), "screens: nobody touching anything, 240 ms");
     Check(LoadPlan.LookFast(100) && !LoadPlan.LookFast(LoadPlan.InputRecentMs + 1), "the gear list's quick looks only while the mouse is used");
     Eq(400, LoadPlan.LivePollMs(true, true, true), "live poll: a guide on, 400 ms as before");
-    Eq(1000, LoadPlan.LivePollMs(false, true, true), "live poll: no guide, 1 s");
+    Eq(2000, LoadPlan.LivePollMs(false, true, true), "live poll: no guide, 2 s");
+    Check(LoadPlan.RecButtonMs(false) >= 1000 && LoadPlan.RecButtonMs(true) == 200, "record button: 1 s idle, 200 ms while recording");
     Eq(2000, LoadPlan.LivePollMs(true, true, false), "live poll: the game behind, 2 s");
     Eq(300, LoadPlan.CodeWatchMs(true, false, false), "code watch: the code window open, 300 ms");
     Eq(1000, LoadPlan.CodeWatchMs(false, true, true), "code watch: closed, 1 s");

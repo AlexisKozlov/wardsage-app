@@ -82,7 +82,7 @@ namespace RealmForge {
         long lt0 = LoadMeter.Now();
         PollLive();
         LoadMeter.Done(LoadMeter.Live, lt0);
-        int want = overlay.LivePollMs(); if (liveTimer.Enabled && liveTimer.Interval != want) liveTimer.Interval = want;   // 400 ms with a guide on, 1 s without, 2 s with the game away (src/LoadPlan.cs)
+        int want = overlay.LivePollMs(); if (liveTimer.Enabled && liveTimer.Interval != want) liveTimer.Interval = want;   // 400 ms with a guide on, 2 s without or with the game away (src/LoadPlan.cs)
       };
       overlay = new OverlayController((st, far) => Post("{\"ev\":\"overlay\",\"state\":" + S(st) + ",\"far\":" + (far ? "true" : "false") + "}"),
                                       st => { Post("{\"ev\":\"auto\",\"state\":" + S(st) + "}"); OnAutoState(st); },

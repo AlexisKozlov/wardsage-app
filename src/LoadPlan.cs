@@ -63,8 +63,9 @@ namespace RealmForge {
     /// scrolls (a list flicked by the player moves far in 100 ms); a still list needs the tick's own look only.</summary>
     public static bool LookFast(long inputMs) { return InputRecent(inputMs); }
 
-    /// <summary>The equip helper's live poll (the page's game state): 400 ms while a guide is on, 1 s with none, 2 s with the game away.</summary>
-    public static int LivePollMs(bool job, bool shown, bool front) { return !shown || !front ? AwayMs : job ? 400 : IdleMs; }
+    /// <summary>The equip helper's live poll (the page's game state): 400 ms while a guide is on, 2 s with none (nothing waits on it then but
+    /// the owners' change for the sync, lab 1.6.66.417 idle: 60 polls a minute were the biggest steady cost), 2 s with the game away.</summary>
+    public static int LivePollMs(bool job, bool shown, bool front) { return !shown || !front ? AwayMs : job ? 400 : AwayMs; }
 
     /// <summary>The promo-code watch: 300 ms while the code window is open (or was just open), else once a second; 2 s with the game away.</summary>
     public static int CodeWatchMs(bool armed, bool shown, bool front) { return armed ? 300 : !shown || !front ? AwayMs : IdleMs; }
@@ -77,8 +78,8 @@ namespace RealmForge {
     /// for the player searched every 20 s for as long as the player did not act).</summary>
     public static int StallRescanSec(int streak) { return streak <= 0 ? 20 : streak == 1 ? 60 : streak == 2 ? 120 : 300; }
 
-    /// <summary>The record button's tick (test build): 200 ms while recording (its clock), else 500 ms.</summary>
-    public static int RecButtonMs(bool recording) { return recording ? 200 : 500; }
+    /// <summary>The record button's tick (test build): 200 ms while recording (its clock), else 1 s.</summary>
+    public static int RecButtonMs(bool recording) { return recording ? 200 : IdleMs; }
   }
 
   /// <summary>Per activity: calls and time, summed lock-free from any thread; one line a minute (test build).</summary>
