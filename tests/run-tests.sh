@@ -65,7 +65,7 @@ NET8_REFS=$(for f in "$NET8"/*.dll; do printf -- '-r:%s ' "$f"; done)
 $CSC -langversion:5 -target:library -nostdlib -warnaserror -nowarn:SYSLIB0014 $NET8_REFS \
   -out:"$OUT/RealmForge.Core.dll" $CORE tests/CodeProtectorStub.cs
 $CSC -target:exe -nostdlib -nowarn:SYSLIB0014 $NET8_REFS -r:"$OUT/RealmForge.Core.dll" \
-  -out:"$OUT/CoreTests.dll" tests/CoreTests.cs tests/GameSim.cs
+  -out:"$OUT/CoreTests.dll" tests/CoreTests.cs tests/GameSim.cs tests/EquipBench.cs
 cat > "$OUT/CoreTests.runtimeconfig.json" <<EOF
 { "runtimeOptions": { "tfm": "net8.0", "framework": { "name": "Microsoft.NETCore.App", "version": "$NET8_RT" } } }
 EOF
@@ -110,7 +110,7 @@ if command -v mono >/dev/null && [ -f "$FX45/System.dll" ]; then
   step "6. Same tests on Mono (.NET Framework 4.5 API, HttpWebRequest of the Framework family, real DPAPI class)"
   $CSC -langversion:5 -nostdlib -target:exe -warnaserror -nowarn:618 \
     -r:$FX45/mscorlib.dll -r:$FX45/System.dll -r:$FX45/System.Core.dll -r:$FX45/System.Security.dll -r:$FX45/System.IO.Compression.dll \
-    -out:"$OUT/CoreTests-mono.exe" $CORE src/CodeProtector.cs tests/CoreTests.cs tests/GameSim.cs
+    -out:"$OUT/CoreTests-mono.exe" $CORE src/CodeProtector.cs tests/CoreTests.cs tests/GameSim.cs tests/EquipBench.cs
   LANG=C.UTF-8 mono "$OUT/CoreTests-mono.exe" "http://localhost:$PORT" $ACCOUNT
 fi
 

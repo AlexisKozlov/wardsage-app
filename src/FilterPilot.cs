@@ -97,10 +97,12 @@ namespace RealmForge {
     /// (the item pilot goes on).</summary>
     public AutoAction Step(FilterView v) {
       if (v.Item != item) {
-        item = v.Item; waitUntil = 0; passes = 0; reopens = 0; failed = false; State = "idle";
+        item = v.Item; waitUntil = 0; passes = 0; reopens = 0; failed = false; State = "idle"; effect.Drop();
         NewPass();
       }
-      if (v.Item <= 0 || v.Suits == null || v.MainAttrs == null) { State = "idle"; return null; }
+      if (v.Item <= 0 || v.Suits == null || v.MainAttrs == null) { State = "idle"; effect.Drop(); return null; }
+      // the last click's effect in the filter's memory / panels, held still for two reads: its fixed wait ends now
+      if (v.NowMs < waitUntil && effect.Seen(Key(v), v.NowMs)) waitUntil = v.NowMs;
 
       bool setOk = v.SetId <= 0 || setSkipped || Only(v.Suits, v.SetId);
       bool statOk = v.StatId <= 0 || statSkipped || Only(v.MainAttrs, v.StatId);
@@ -118,7 +120,10 @@ namespace RealmForge {
       bool subOk = subs.Count == 0 || subSkipped || missing == 0;
       bool subsClean = true; foreach (var s in chosen) if (!subs.Contains(s)) subsClean = false;
       bool clean = !v.Foreign && OnlyOrNone(v.Suits, v.SetId) && OnlyOrNone(v.MainAttrs, v.StatId) && (subsClean || subSkipped);
-      bool satisfied = setOk && statOk && subOk && eqOk && clean;
+      // the guide sees the item in the list's view now (its verdict no longer asks for the filter: live 1.6.66.417, the set alone brought the
+      // weapon up, and the main stat and four sub stats were still clicked, 4 s): what is set is enough, the rest is not clicked
+      bool enough = !v.Wanted && State == "work" && v.PanelOpen && eqOk && !failed;
+      bool satisfied = (setOk && statOk && subOk && eqOk && clean) || enough;
       // set: leave the pop-up open (its × would drop the filter); the item pilot picks the item from the list beside it
       // (the side panel of sets / stats stays open after the last pick and swallows the item list's clicks: closed first)
       if (satisfied) {
@@ -191,7 +196,7 @@ namespace RealmForge {
           double want = Math.Max(0, Math.Min(Math.Max(0, rows - FilterGeometry.SetRows), row - FilterGeometry.SetRows / 2));
           double dy = -(want - setScroll) * g.SetPitch * Ui.Unit(W, H);
           double yTop = g.Y(g.SetRow0, W, H), yBottom = g.Y(g.SetRow0 + (FilterGeometry.SetRows - 1) * g.SetPitch, W, H);
-          setDrags++; setScroll = want; clicks++; waitUntil = v.NowMs + AfterClickMs;
+          setDrags++; setScroll = want; clicks++; waitUntil = v.NowMs + AfterClickMs; effect.Drop();   // (a drag's effect is not read: its wait stays)
           return new AutoAction { Kind = AutoKind.Drag, X = g.X(g.SetColX0, W, H), Y = dy < 0 ? yBottom : yTop, DY = dy };
         }
         setTries++;
@@ -238,9 +243,18 @@ namespace RealmForge {
     }
 
     AutoAction Click(FilterView v, double x, double y) {
-      clicks++; waitUntil = v.NowMs + AfterClickMs;
+      clicks++; waitUntil = v.NowMs + AfterClickMs; effect.Arm(Key(v), v.NowMs);
       return new AutoAction { Kind = AutoKind.Click, X = x, Y = y };
     }
+
+    /// <summary>The pilot waits for its last click's effect (the host reads at its effect rate meanwhile).</summary>
+    public bool Polling(long now) { return effect.Armed && now < waitUntil; }
+    readonly EffectWait effect = new EffectWait();
+    // what a filter click changes: the chosen set / stats / sub stats, the panels open, «Скрыть надетое»
+    static string Key(FilterView v) {
+      return J(v.Suits) + "|" + J(v.MainAttrs) + "|" + J(v.SubAttrs) + "|" + v.PanelOpen + v.SidePanelOpen + v.SetPanelOpen + v.HideEquipped;
+    }
+    static string J(long[] a) { return a == null ? "-" : string.Join(",", Array.ConvertAll(a, x => x.ToString())); }
 
     static bool Only(long[] set, long id) { return set.Length == 1 && set[0] == id; }
 

@@ -14,7 +14,7 @@
 // on the MaxStepFailures-th failure of the same step in a row, after MaxRetriesRun retries a run, on a dangerous form (buy / quit), the
 // player's own input or cancel, and on every other reason (a click that is not allowed, a hint run, the window off the screen ...).
 // A pop-up that came while a click's effect was awaited is a retry that does not count against the step. After a pop-up was closed
-// nothing else is clicked for OfferChainMs (the game opens the next pop-up of its login chain then).
+// nothing else is clicked until no new form has been shown for OfferQuietMs (at most OfferChainMs: the game opens the next pop-up of its login chain then).
 //
 // What is NEVER a target: «Вознести», «Преобразовать», «Улучшить», «Продать», «Продвинуть», the item card's button and every confirmation
 // dialog of the game (except «Заменить» of the equip helper - the gear card's and, for a plan with an artifact, the artifact card's and its "worn by another hero" pop-up's -
@@ -285,6 +285,21 @@ namespace RealmForge {
     /// <summary>The retry policy (the header): the same step failing this many times in a row stops the owner; at most MaxRetriesRun retries a run;
     /// nothing is clicked for RetrySettleMs after a retry, nor for OfferChainMs after a pop-up was closed (the next one of the chain comes then).</summary>
     public const int MaxStepFailures = 3, MaxRetriesRun = 9, RetrySettleMs = 1000, OfferChainMs = 1000;
+    /// <summary>The chain's wait ends earlier: no new shown form (the window table names a form the moment the game builds it) for this long after
+    /// the close and since the last change of the shown forms; a failed read of the table is a change (nothing is known then).</summary>
+    public const int OfferQuietMs = 300;
+    string formsSig; long formsAt;
+    void NoteForms(ScreenState s, long now) {
+      if (s == null) return;
+      string sig = !s.OfferRead ? "?" + now : s.OfferCount + "|" + s.Offer + "|" + s.TopForm + "|" + (s.Order != null ? string.Join(",", s.Order.ToArray()) : "") + "|" + (s.ShownKnown ?? "");
+      if (sig != formsSig) { formsSig = sig; formsAt = now; }
+    }
+    /// <summary>The chain's wait still runs: before its cap, and the shown forms not quiet for OfferQuietMs since the close.</summary>
+    bool ChainWaits(ClickOwner o, long now, out long until) {
+      if (!chainUntil.TryGetValue(o, out until) || now >= until) return false;
+      long closed = until - OfferChainMs;
+      return now - closed < OfferQuietMs || now - formsAt < OfferQuietMs;
+    }
     /// <summary>The stop reasons a retry replaces (the rest are stops at once: dangerous, exitdialog, target, artifact, scroll, bulk, covered, offscreen ...).</summary>
     public static readonly string[] RetryReasons = { "nochange", "unknown", "modal", "screen", "cell", "offer", "offers", "popup" };
     /// <summary>Failures are retried (the policy above); false = every failure stops the owner at once (the old rule, for tests of single checks).</summary>
@@ -934,7 +949,7 @@ namespace RealmForge {
           ReadTiming.Confirm(now - w.ArmedAt); effectAt[o] = now;
           // a step of the pilot went on: the failures in a row are over (not for the ways out - a ×, a back press, an Escape: their loop is counted on)
           if (!IsWayOut(w.Target)) { failStep.Remove(o); failCount.Remove(o); }
-          if (w.Offer != null) { chainUntil[o] = now + OfferChainMs; RetryDue.Add(o); var sk = Sink; if (sk != null) sk("offer: closed " + w.Offer); Note(o, "chain:" + now, "the next pop-up of the chain is waited for " + OfferChainMs + " ms before any other click"); }
+          if (w.Offer != null) { chainUntil[o] = now + OfferChainMs; RetryDue.Add(o); var sk = Sink; if (sk != null) sk("offer: closed " + w.Offer); Note(o, "chain:" + now, "the next pop-up of the chain is waited for (" + OfferQuietMs + " ms with no new form shown, at most " + OfferChainMs + " ms) before any other click"); }
         }
         else if (now > w.Deadline && SearchWait && Unrecognised(s)) { w.Deadline = now + 1000; searchWaited.Add(o); }   // the form is being searched for: its effect may still show
         else if (!StillAwaited(o, w, now)) {
@@ -1006,6 +1021,7 @@ namespace RealmForge {
       string h;
       if (now > lastNow) lastNow = now;
       if (halted.TryGetValue(o, out h)) return GateResult.Deny("halted", h);
+      NoteForms(s, now);
       Observe(s, now);
       if (halted.TryGetValue(o, out h)) return GateResult.Deny("halted", h);
       if (watches.ContainsKey(o)) return GateResult.Wait("pending", "the previous click has not shown its effect yet");
@@ -1013,7 +1029,7 @@ namespace RealmForge {
       if (s != null && s.OfferCount > 0) return GateResult.Wait("offer", s.ModalWhy);
       long until;
       if (retryUntil.TryGetValue(o, out until) && now < until) return GateResult.Wait("retry", "a retry: the screen is read again before the step (" + (until - now) + " ms)");
-      if (chainUntil.TryGetValue(o, out until) && now < until) return GateResult.Wait("chain", "a pop-up was closed: the next one of the chain is waited for (" + (until - now) + " ms)");
+      if (ChainWaits(o, now, out until)) return GateResult.Wait("chain", "a pop-up was closed: the next one of the chain is waited for (" + (until - now) + " ms)");
       bool modeUnknown = s != null && s.Kind == ScreenKind.Inventory && s.InvEquipTab && !s.InvBulkKnown;
       if (s == null || s.Kind == ScreenKind.Unknown || modeUnknown) {
         string d = modeUnknown ? "the inventory's mode is not readable" : "the screen is not recognised" + (s != null && s.TopForm != "" ? " (top form " + s.TopForm + " not in the list)" : "");
@@ -1036,6 +1052,7 @@ namespace RealmForge {
       if (halted.TryGetValue(r.Owner, out h)) return GateResult.Deny("halted", h);
       if (!r.AutoOn) return GateResult.Deny("off", "auto click is off");
       if (!r.Front) return GateResult.Wait("background", "the game is not in front");
+      NoteForms(f, now);
       Observe(f, now);
       if (halted.TryGetValue(r.Owner, out h)) return GateResult.Deny("halted", h);
       if (watches.ContainsKey(r.Owner)) return GateResult.Wait("pending", "the previous click has not shown its effect yet");
@@ -1049,7 +1066,7 @@ namespace RealmForge {
       long until;
       if (retryUntil.TryGetValue(r.Owner, out until) && now < until) return GateResult.Wait("retry", tag + ": a retry - the screen is read again first");
       // after a pop-up was closed the next one of the game's chain is waited for (only another pop-up's × may be pressed meanwhile)
-      if (r.Target != ClickTarget.OfferClose && chainUntil.TryGetValue(r.Owner, out until) && now < until) return GateResult.Wait("chain", tag + ": a pop-up was closed " + (OfferChainMs - (until - now)) + " ms ago - the next one of the chain is waited for");
+      if (r.Target != ClickTarget.OfferClose && ChainWaits(r.Owner, now, out until)) return GateResult.Wait("chain", tag + ": a pop-up was closed " + (OfferChainMs - (until - now)) + " ms ago - the next one of the chain is waited for");
       if (IsExploreTarget(r.Target)) {   // (the explorer's own targets: its owner only; the shared ones - an offer's × - as for every owner)
         if (r.Owner != ClickOwner.Explore) return Halt(r.Owner, "target", tag + " is not a target " + r.Owner + " may click");
         return CheckExplore(r, f, now, tag);

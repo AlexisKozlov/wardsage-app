@@ -55,13 +55,36 @@ namespace RealmForge {
     public bool TipKnown, TipShown;
     /// <summary>Neither blue button search saw one (no «Заменить», no «Надеть»; not a tie of two): the card is not on the screen.</summary>
     public bool BlueNone;    // the game's panel table is readable (false while the addresses are scanned again)
+    /// <summary>Button is the live rect of the tip's «Заменить» / «Надеть», held still (LiveStill): the card has stopped opening.</summary>
+    public bool ButtonStill;
   }
 
+  /// <summary>A pilot's wait after its click ends early once the click's effect shows in the fields the pilot reads every tick (the hot
+  /// fields: the hero shown, the open slot, the selection, the filter's choice and panels ...): a key of them other than the one at the
+  /// click, the same on two reads at least StableMs apart and at least MinMs after the click. A click whose effect is never seen (a drag,
+  /// a read that stays stale) keeps its fixed wait. Polling: while armed the host reads at its effect rate (50 ms, src/LoadPlan.cs).</summary>
+  public sealed class EffectWait {
+    public const int StableMs = 50, MinMs = 150;
+    string before, last; long clickAt, lastAt; bool armed;
+    public void Arm(string key, long now) { before = key; last = null; clickAt = now; armed = true; }
+    public void Drop() { armed = false; last = null; }
+    public bool Armed { get { return armed; } }
+    /// <summary>True once: the effect has shown and held still (the wait may end now).</summary>
+    public bool Seen(string key, long now) {
+      if (!armed) return false;
+      if (key == before) { last = null; return false; }
+      if (key != last) { last = key; lastAt = now; return false; }
+      if (now - lastAt < StableMs || now - clickAt < MinMs) return false;
+      armed = false; return true;
+    }
+  }
   public sealed class AutoPilot {
     public const int SlotTries = 3, ClickTries = 5, DragTries = 60, CalibTries = 4, WrongTries = 2, AfterConfirmClicks = 2, SlotWaits = 40;
     public const int AfterSlotMs = 900, AfterClickMs = 500, AfterDragMs = 800, UserPauseMs = 4000;
     public const int SlotGraceMs = 2500;   // the last slot click gets this long to show its effect before the slot counts as closed
     public const int ConfirmSettleMs = 600, AfterConfirmMs = 3000;
+    /// <summary>The selection this long with the button's live rect held still: the card is open, «Заменить» is pressed (else ConfirmSettleMs).</summary>
+    public const int ConfirmLiveMs = 150;
     /// <summary>The item selected with its tip known closed this long: the item is clicked again (at most TipReopens times an item).</summary>
     public const int TipReopenMs = 2500, TipReopens = 2;   // item card opening; the server's answer to «Заменить»
     public const double MinDragPx = 24;   // shorter moves would count as a click in the game
@@ -112,20 +135,20 @@ namespace RealmForge {
       else if (lastAct == 2) { tipReopens--; waitUntil = 0; calibPending = false; }
       // a list click not sent: its result is not waited for, its point was not clicked
       if (listSent) { listSent = false; itemPending = calibPending = false; if (samePt > 0) samePt--; if (samePt == 0) lastPtX = lastPtY = double.NaN; waitUntil = 0; }
-      lastAct = 0;
+      lastAct = 0; effect.Drop();
     }
 
     public AutoAction Step(AutoView v) {
       lastAct = 0; listSent = false;
       string key = v.Slot != null ? "slot:" + v.Slot[0] + ":" + v.Slot[1] : v.Target > 0 && v.Row > 0 ? "item:" + v.Target : "";
       if (key != goal) {
-        goal = key; waitUntil = 0; clicks = drags = calibs = stuck = calibMiss = 0; needCalib = measure = calibPending = endTaken = false;
+        goal = key; waitUntil = 0; effect.Drop(); clicks = drags = calibs = stuck = calibMiss = 0; needCalib = measure = calibPending = endTaken = false;
         selSince = 0; confirmed = false; confirmRetries = 0; tipReopens = 0; lastRetry = false; State = "idle"; Why = "";
         slotWaits = afterClicks = wrongs = 0; lastSlotClick = 0; itemPending = false; row1Fix = double.NaN;
         row1Off = double.NaN; noEffect = samePt = 0; typesLen = -1; lastPtX = lastPtY = double.NaN; lastNoEffect = false;
       }
       if (key == "") { State = "idle"; return AutoAction.Nothing; }
-      curSel = v.Sel; nowMs = v.NowMs;
+      curSel = v.Sel; nowMs = v.NowMs; curKey = Key(v);
       bool selected = v.Slot == null && v.Sel == v.Target;
       if (!selected) selSince = 0; else if (selSince == 0) selSince = v.NowMs;
       if (selected) itemPending = false;
@@ -136,6 +159,10 @@ namespace RealmForge {
       if (!v.Foreground) { State = "background"; return AutoAction.Nothing; }
       if (v.UserBusy || v.NowMs < pauseUntil) { State = "paused"; return AutoAction.Nothing; }
       State = "work";
+      // «Заменить» was pressed and the item is on the plan's hero: done at once (not after the press's whole wait)
+      if (confirmed && !selected && v.Slot == null && v.Hero > 0 && v.Owner == v.Hero) { State = "done"; return AutoAction.Nothing; }
+      // the last click's effect (the slot open, the selection, the tip) seen and held still: its fixed wait ends now
+      if (v.NowMs < waitUntil && effect.Seen(Key(v), v.NowMs)) waitUntil = v.NowMs;
       if (v.NowMs < waitUntil) return AutoAction.Nothing;
       // «Заменить» was pressed and the selection went away: the item is on the hero, or the press did nothing (a dialog of
       // the game, a missed press) - item clicks would only select it again and fail, the player looks at the game
@@ -177,8 +204,8 @@ namespace RealmForge {
         Trace = "the tip of item " + v.Target + " is still not open: the rows are anchored again" + (a.Kind == AutoKind.Click ? " at " + (int)a.X + "," + (int)a.Y : "");
         return a;
       }
-      if (v.Button == null || v.NowMs - selSince < ConfirmSettleMs) return AutoAction.Nothing;  // the item card is opening
-      confirmed = true; waitUntil = v.NowMs + AfterConfirmMs; lastAct = 1;
+      if (v.Button == null || v.NowMs - selSince < (v.ButtonStill ? ConfirmLiveMs : ConfirmSettleMs)) return AutoAction.Nothing;  // the item card is opening
+      confirmed = true; waitUntil = v.NowMs + AfterConfirmMs; lastAct = 1; effect.Drop();   // (its answer: the owner, checked above; never ended early by the selection)
       Trace = "confirm press for item " + v.Target + " at " + (int)(v.Button[0] + v.Button[2] / 2.0) + "," + (int)(v.Button[1] + v.Button[3] / 2.0) + " button " + v.Button[2] + "x" + v.Button[3] + " owner " + v.Owner + " hero " + v.Hero + " card settled " + (v.NowMs - selSince) + " ms";
       return Click(v.Button[0] + v.Button[2] / 2.0, v.Button[1] + v.Button[3] / 2.0);
     }
@@ -190,11 +217,12 @@ namespace RealmForge {
         if (++slotWaits > SlotWaits) { State = "slot_failed"; Why = "the slot is shown open for " + slotWaits + " ticks, memory disagrees (panel ok " + v.PanelOk + ")"; Trace = "slot failed: " + Why; }
         waitUntil = v.NowMs + AfterSlotMs; return AutoAction.Nothing;
       }
+      // the last click may still be opening it (a slow laptop: 0.6-1.5 s): not clicked again before SlotGraceMs
+      if (clicks > 0 && v.NowMs - lastSlotClick < SlotGraceMs) return AutoAction.Nothing;
       if (clicks >= SlotTries) {
-        if (v.NowMs - lastSlotClick < SlotGraceMs) return AutoAction.Nothing;   // the last click may still be opening it
         State = "slot_failed"; Why = "the slot does not open after " + clicks + " clicks"; Trace = "slot failed: " + Why; return AutoAction.Nothing;
       }
-      clicks++; lastSlotClick = v.NowMs; waitUntil = v.NowMs + AfterSlotMs;
+      clicks++; lastSlotClick = v.NowMs; waitUntil = v.NowMs + AfterSlotMs; effect.Arm(Key(v), v.NowMs);
       return Click(v.Slot[0] + v.Slot[2] / 2.0, v.Slot[1] + v.Slot[3] / 2.0);
     }
 
@@ -213,12 +241,12 @@ namespace RealmForge {
       double col1 = g.ColLeft(1) * H + cell / 2;
 
       // the filter's side panel is open: clicks on the list would go into it - close it first (not counted as a try)
-      if (v.SideClose != null) { waitUntil = v.NowMs + AfterClickMs; return Click(v.SideClose[0], v.SideClose[1]); }
+      if (v.SideClose != null) { waitUntil = v.NowMs + AfterClickMs; effect.Arm(Key(v), v.NowMs); return Click(v.SideClose[0], v.SideClose[1]); }
       // the list changed its length (a filter): what was learnt of its rows is stale - one more read before any click
       int tl = v.Types != null ? v.Types.Length : 0;
       if (tl != typesLen) {
         bool first = typesLen < 0; typesLen = tl;
-        if (!first) { row1Off = row1Fix = double.NaN; itemPending = calibPending = false; lastPtX = lastPtY = double.NaN; samePt = 0; waitUntil = v.NowMs + AfterClickMs; Trace = "the list changed (" + tl + " rows): read again"; return AutoAction.Nothing; }
+        if (!first) { row1Off = row1Fix = double.NaN; itemPending = calibPending = false; lastPtX = lastPtY = double.NaN; samePt = 0; waitUntil = v.NowMs + EffectWait.StableMs; effect.Drop(); Trace = "the list changed (" + tl + " rows): read again"; return AutoAction.Nothing; }
       }
       // the last list click: did it change anything? (the selection stayed: a gap, a stale place) - the rows are anchored again, and
       // after NoEffectTries such clicks for one item the pilot stops
@@ -314,7 +342,7 @@ namespace RealmForge {
       if (Math.Abs(dy) < MinDragPx) dy = dy < 0 ? -MinDragPx : MinDragPx;
       double y0 = dy < 0 ? viewBottom - cell / 2 : viewTop + cell / 2;   // start at the far end so the whole move fits
       drags++; beforeDrag = v.Row1Top; lastDrag = dy; needCalib = true; measure = true; row1Fix = double.NaN;
-      waitUntil = v.NowMs + AfterDragMs;
+      waitUntil = v.NowMs + AfterDragMs; effect.Drop();
       return new AutoAction { Kind = AutoKind.Drag, X = (g.StripLeft + g.StripRight) / 2 * H, Y = y0, DY = dy };
     }
 
@@ -336,9 +364,14 @@ namespace RealmForge {
     AutoAction ListClick(double x, double y) {
       if (Math.Abs(x - lastPtX) < 2 && Math.Abs(y - lastPtY) < 2) { if (++samePt > SamePointMax) { itemPending = calibPending = false; return Fail("the same point " + (int)x + "," + (int)y + " would be clicked a " + samePt + "rd time in a row"); } }
       else samePt = 1;
-      lastPtX = x; lastPtY = y; selBefore = curSel; clickAt = nowMs; listSent = true;
+      lastPtX = x; lastPtY = y; selBefore = curSel; clickAt = nowMs; listSent = true; effect.Arm(curKey, nowMs);
       return Click(x, y);
     }
+    readonly EffectWait effect = new EffectWait(); string curKey = "";
+    /// <summary>The pilot waits for its last click's effect (the host reads at its effect rate meanwhile).</summary>
+    public bool Polling(long now) { return effect.Armed && now < waitUntil; }
+    // what a click of this pilot changes: the selection, the slot open, the tip, the list (its length)
+    static string Key(AutoView v) { return v.Sel + "|" + v.SlotOpen + "|" + v.TipShown + "|" + (v.Types != null ? v.Types.Length : -1); }
     long curSel, nowMs, clickAt; bool listSent;
     /// <summary>How long a list click gets to change the selection before it counts as one that changed nothing.</summary>
     public const int JudgeMs = 1800;

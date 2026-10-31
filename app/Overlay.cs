@@ -795,7 +795,7 @@ namespace RealmForge {
       inputAge = W32.InputAgeMs();
       IntPtr tw = GameWindow();
       bool twShown = tw != IntPtr.Zero && W32.IsWindowVisible(tw) && !W32.IsIconic(tw), twFront = twShown && IsForeground(tw);
-      bool effect = gate.AnyPending || SellPolling;
+      bool effect = gate.AnyPending || SellPolling || EquipHot;
       int wantInterval = LoadPlan.OverlayMs(ScreensWanted(), DateTime.Now < diagUntil, effect, twShown, twFront, LocateWins || (sellHint && sellWanted != null), listMoving, inputAge);
       if (timer.Interval != wantInterval) timer.Interval = wantInterval;
       loadMode = !ScreensWanted() ? "idle" : !twShown || !twFront ? "away" : effect || EquipClicking || SellClicking || (LocateWins && LocateClicking) ? "pilot" : "hint";
@@ -1182,7 +1182,7 @@ namespace RealmForge {
     }
 
     void TickHint() {
-      confirmBtn = null; confirmBlueNone = false; filterOpen = false; filterState = "";
+      confirmBtn = null; confirmStill = false; confirmBlueNone = false; filterOpen = false; filterState = "";
       if ((hintKind == "" && target == 0) || addrs == null) { HideTip(); return; }
       IntPtr hwnd = GameWindow();
       if (hwnd == IntPtr.Zero || W32.IsIconic(hwnd) || !IsForeground(hwnd)) { HideTip(); return; }
@@ -1260,6 +1260,7 @@ namespace RealmForge {
         var lb = hg.Replace(W, H); var lay = confirmBtn ?? lb;
         bool cl; var cf = FrameForI(FrameTargets.KeyConfirm, lay, W, H, U, out cl);
         if (cl) confirmBtn = cf;
+        confirmStill = confirmLive.Note(cl && cf != null ? new double[] { cf[0], cf[1], cf[2], cf[3] } : null, NowMs());   // (the card has stopped opening: AutoView.ButtonStill)
       }
       bool rl;
       int[] r = hintKind == "filter" ? FrameForI("hero.filter", hg.Filter(W, H), W, H, U, out rl) : hintKind == "replace" ? confirmBtn ?? hg.Replace(W, H)
@@ -1874,7 +1875,7 @@ namespace RealmForge {
       { var cs = screens.Current;   // the item's tip among the shown forms (a pilot's flow form of the hero screen: ScreenMap.FlowForms)
         v.TipKnown = RFX.UiKnown && !formsUnread && cs != null && !cs.Held && cs.Kind == ScreenKind.HeroScreen && cs.OfferRead && formsKind == ScreenKind.HeroScreen;
         v.TipShown = cs != null && ((cs.Flow ?? "") + "," + (cs.ModalWhy ?? "")).Contains(EquipTipForm);
-        v.BlueNone = confirm && confirmBlueNone; }
+        v.BlueNone = confirm && confirmBlueNone; v.ButtonStill = confirm && confirmBtn != null && confirmStill; }
       userClick = false; lastAutoView = v; lastClientW = cr.R; lastClientH = cr.B;
       // an offer pop-up over the city is closed before the plan's next step (the equip helper has no preflight of its own here)
       if ((runHero > 0 || target > 0) && v.Foreground && !v.UserBusy && OfferStep(ClickOwner.Equip, screens.Current, o, cr, v.Foreground, now)) return;
@@ -1954,7 +1955,7 @@ namespace RealmForge {
       // on now; the next one gets its own)
       if (v.Slot != null && v.Foreground && !v.UserBusy && now >= slotCloseAfter
           && Mark(o, fg.X(fg.MainCloseX, cr.R, cr.B), fg.Y(fg.CloseY, cr.R, cr.B), Ui.Unit(cr.R, cr.B), ButtonCheck.IsCloseRed)) {
-        slotCloseAfter = now + 900; pilot.Reset();
+        slotCloseAfter = now + ClosePopupAgainMs; pilot.Reset();   // (a slow laptop closes it 0.6-1.5 s later: not pressed twice meanwhile)
         int cx = o.X + (int)Math.Round(fg.X(fg.MainCloseX, cr.R, cr.B)), cy = o.Y + (int)Math.Round(fg.Y(fg.CloseY, cr.R, cr.B));
         EquipSend(ClickTarget.EquipClosePopup, new AutoAction { Kind = AutoKind.Click }, cx, cy, o, v.Foreground);
         return;
@@ -2812,7 +2813,7 @@ namespace RealmForge {
     public int LivePollMs() {
       IntPtr h = GameWindow();
       bool sh = h != IntPtr.Zero && W32.IsWindowVisible(h) && !W32.IsIconic(h);
-      return LoadPlan.LivePollMs(ScreensWanted(), sh, sh && IsForeground(h));
+      return LoadPlan.LivePollMs(ScreensWanted(), sh, sh && IsForeground(h), EquipLiveHot);
     }
 
     bool ScreensWanted() { return target != 0 || locateReq != null || filterItem != 0 || hintKind != "" || runHero != 0 || sellWanted != null; }
@@ -2824,7 +2825,7 @@ namespace RealmForge {
       RFX.EnsureLiveForGuides();   // the readers' basis (handle, regions, live tables) without waiting for the first account read; throttled and off-thread
       // every 120 ms; 50 ms while a pilot's click awaits its effect (the expected field is polled until it changes); once a second while the
       // game is minimised or gone (nothing to click, nothing to draw)
-      int readGap = LoadPlan.ReadGapMs(gameAway, gate.AnyPending || SellPolling, listMoving, inputAge);   // (a list that moves: read until it settles; nobody touching anything: 240 ms)
+      int readGap = LoadPlan.ReadGapMs(gameAway, gate.AnyPending || SellPolling || EquipHot, listMoving, inputAge);   // (a list that moves: read until it settles; nobody touching anything: 240 ms)
       if (screens.Current != null && now >= screenReadAt && now - screenReadAt < readGap) return;
       screenReadAt = now;
       long rs0 = LoadMeter.Now();
@@ -2907,6 +2908,14 @@ namespace RealmForge {
     const int ConfirmPollMs = 50;
     /// <summary>The storage cleanup's pilot awaits its click's answer or its drag's move: the game is read every 50 ms.</summary>
     bool SellPolling { get { return sellWanted != null && !sellHint && spilot.Polling; } }
+    /// <summary>An equip pilot awaits its click's effect, or clicked within LoadPlan.EquipHotMs: the hot fields (the hero, the slot, the selection,
+    /// the filter, the tip, the owners) are read at the effect rate, so each step follows its effect instead of a fixed wait.</summary>
+    bool EquipHot { get { long n = NowMs(); return runHero > 0 && AutoEnabled && (hpilot.Polling(n) || fpilot.Polling(n) || pilot.Polling(n)); } }
+    /// <summary>The live poll (the guide's step) at the effect rate also for LoadPlan.EquipHotMs after an equip click: its effect moves the step.</summary>
+    bool EquipLiveHot { get { return EquipHot || (runHero > 0 && AutoEnabled && NowMs() - equipClickAt < LoadPlan.EquipHotMs); } }
+    long equipClickAt = -100000;
+    const int ClosePopupAgainMs = 2000;
+    readonly LiveStill offerLive = new LiveStill(), confirmLive = new LiveStill(); string offerLiveForm = ""; bool confirmStill;
     bool gameAway, listMoving; long locEffectSeen;
     // the lists the pilots click into: their list steps run on a settled list only (two equal reads in a row, see ListSettle)
     readonly ListSettle invSettle = new ListSettle(), rsSettle = new ListSettle();
@@ -3102,7 +3111,11 @@ namespace RealmForge {
       double W = cr.R, H = cr.B, U = Ui.Unit(W, H);
       string form = scr.Offer;
       RFX.UiButtonWant(ClickTarget.OfferClose, form, W, H, U);   // its × read while it opens: the click takes the live rect (fresh)
-      if (!OfferForms.Settled(scr, now)) return true;   // still opening (its scale-in animation)
+      // still opening (its scale-in animation): its × live and held still ends the wait early (LiveStill), else OfferForms.SettleMs
+      if (form != offerLiveForm) { offerLiveForm = form; offerLive.Reset(); }
+      var olr = RFX.UiButtonFresh(ClickTarget.OfferClose, form, W, H, Environment.TickCount, RFX.UiFreshMs);
+      bool ostill = offerLive.Note(olr != null ? new[] { olr.X, olr.Y, olr.W, olr.H } : null, now);
+      if (!OfferForms.Settled(scr, now, ostill)) return true;
       var pt = OfferForms.ClosePoint(Geo.Current, form, W, H, U);
       { var cr0 = OfferForms.CloseRect(Geo.Current, form, W, H, U); LiveFrame(ClickTarget.OfferClose, form, W, H, U, true, cr0 != null ? new[] { cr0.X, cr0.Y, cr0.W, cr0.H } : null); }   // (the test build's frame line of the ×)
       if (pt == null) {
@@ -3266,7 +3279,8 @@ namespace RealmForge {
         if (a.Kind == AutoKind.Click) LiveClick(req, fresh, o, ref sx, ref sy);
         if (a.Kind == AutoKind.Click && a.Cell > 0 && t == ClickTarget.EquipNav) LiveCellClick(req, fresh, a.Cell, o, ref sx, ref sy); else cellLivePt = null;
       } else cellLivePt = null;
-      return GatedSend(req, fresh, a, sx, sy);
+      if (!GatedSend(req, fresh, a, sx, sy)) return false;
+      equipClickAt = NowMs(); return true;
     }
     RecastScreen locateRs; int locateOnAccount = -1; bool locateDriving;
     readonly InvScroll locateScroll = new InvScroll(), sellScroll = new InvScroll();

@@ -170,6 +170,15 @@ static partial class CoreTests {
       double slide = CityRebuild && Now - CityBuiltAt < BarInMs ? (BarInMs - (Now - CityBuiltAt)) * 0.05 : 0;
       return new[] { W - 1.45 * U, H - 0.17 * U + slide, 0.11 * U, 0.11 * U };
     }
+    /// <summary>An offer pop-up scales in this long after it opened (its × moves meanwhile; a press on it then is lost).</summary>
+    public long OfferScaleMs { get { return Slow ? 500 : 250; } }
+    /// <summary>The live rect of the × of the offer on top (uibtn; LiveButtons on): it grows from the middle while the pop-up scales in.</summary>
+    public double[] OfferLiveRect(string form) {
+      long oa; if (!LiveButtons || TopForm() != form || !OfferForms.IsOffer(form) || !openAt.TryGetValue(form, out oa)) return null;
+      var r = OfferForms.CloseRect(Geo, form, W, H, U); if (r == null) return null;
+      double k = Math.Min(1.0, (Now - oa) / (double)OfferScaleMs), cx = W / 2, cy = H / 2;
+      return new[] { cx + (r.X - cx) * k, cy + (r.Y - cy) * k, r.W * k, r.H * k };
+    }
     public void Push(string f) {
       Stack.Add(f); Say("open " + f); openAt[f] = Now;
       if (ScreenMap.ClassOf(f) == 'W') { long ms = 2000 + R.Next(8000); Later(ms, () => Remove(f)); }   // a loading / result screen goes by itself
@@ -274,7 +283,8 @@ static partial class CoreTests {
         Bad.Add("A " + tg + " CLICK LANDED ON " + top + " (" + c + ") opened over the screen after the start @" + (int)x + "," + (int)y);
       if (OfferForms.IsOffer(top)) {
         if (OfferForms.OnNeverButton(top, x, y, W, H, U)) { Bad.Add("CLICK ON A PLAN BUTTON of " + top + " @" + (int)x + "," + (int)y + " (" + tg + ")"); return; }
-        long l0 = Lat(); if (OfferForms.OnClose(Geo, top, x, y, W, H, U) || ClickGate.IsExploreTarget(tg) && ScreenMap.OnExit(top, x, y, W, H, U)) Later(l0, () => Pop(top));
+        long l0 = Lat(), oa0; if (openAt.TryGetValue(top, out oa0) && Now - oa0 < OfferScaleMs) { Say("the press on " + top + " came while it scales in: lost"); return; }
+        if (OfferForms.OnClose(Geo, top, x, y, W, H, U) || ClickGate.IsExploreTarget(tg) && ScreenMap.OnExit(top, x, y, W, H, U)) Later(l0, () => Pop(top));
         return;
       }
       long lat = Lat(); MaybeSpawn();
@@ -749,12 +759,17 @@ static partial class CoreTests {
     bool OfferStep(ScreenState scr) {
       if (scr == null || scr.OfferCount == 0) return false;
       if (Gate.Halted(Owner) || Gate.Pending(Owner)) return true;
-      if (!OfferForms.Settled(scr, Now)) return true;
-      string form = scr.Offer; var pt = OfferForms.ClosePoint(geo, form, W, H, U);
+      string form = scr.Offer;
+      if (form != offerLiveForm) { offerLiveForm = form; offerLive.Reset(); }   // (app/Overlay.cs OfferStep: its × live and held still)
+      if (!OfferForms.Settled(scr, Now, offerLive.Note(G.OfferLiveRect(form), Now))) return true;
+      var pt = OfferForms.ClosePoint(geo, form, W, H, U);
       if (pt == null) { Gate.Halt(Owner, "offer", "the offer pop-up " + form + " has no known close button - not clicked"); return true; }
       Send(ClickTarget.OfferClose, new AutoAction { Kind = AutoKind.Click, X = pt.X, Y = pt.Y }, (rq, fr) => { rq.Form = form; rq.W = W; rq.H = H; rq.U = U; rq.Geo = geo; }, false, false);
       return true;
     }
+    readonly LiveStill offerLive = new LiveStill(); string offerLiveForm = "";
+    /// <summary>app/Overlay.cs EquipHot: an equip pilot awaits its click's effect or clicked within LoadPlan.EquipHotMs.</summary>
+    public bool EquipHot { get { return Owner == ClickOwner.Equip && (hp.Polling(Now) || ip.Polling(Now)); } }
     bool MapStep(ScreenState scr) {
       if (scr == null) return false;
       var d = ClickGate.MapExit(scr, W, H, U);
@@ -1100,7 +1115,7 @@ static partial class CoreTests {
       // a pilot that tells the player why it waits (the hero screen not reachable, a hint) and nothing changes for 30 s: a stop with a reason
       if (t - lastChange > 30000 && (h.PilotState.StartsWith("hero_noscreen") || h.PilotState.StartsWith("hero_failed") || h.PilotState.StartsWith("hero_notfound") || h.PilotState.StartsWith("hint") || h.PilotState.StartsWith("stopped") || h.PilotState == "no_city" || h.PilotState == "sell_failed")) break;
       // (app/Overlay.cs ReadScreens: every 120 ms, a tick of the slow laptop's timer 150-400 ms; 50 ms while a click awaits its effect)
-      t += !scan && (h.Gate.AnyPending || h.ListMoving || h.SellPolling) ? 50 : slow ? 150 + r.Next(250) : 100;
+      t += !scan && (h.Gate.AnyPending || h.ListMoving || h.SellPolling || h.EquipHot) ? 50 : slow ? 150 + r.Next(250) : 100;
     }
     string fname = flow == PilotFlow.Equip ? "Equip" : flow == PilotFlow.Sell ? "Sell" : flow == PilotFlow.LocateAscend ? "Locate" : flow.ToString();   // (the old flows keep their names)
     if (stats != null) {
@@ -2032,13 +2047,14 @@ static partial class CoreTests {
       else if (args[i] == "--digest") list = "--digest";
       else if (args[i] == "--scan") scan = true;
       else if (args[i] == "--timing") timing = true;
-      else if (args[i] == "--sell-bench" || args[i] == "--spawn" || args[i] == "--art-bench" || args[i] == "--explore") { }
+      else if (args[i] == "--sell-bench" || args[i] == "--spawn" || args[i] == "--art-bench" || args[i] == "--explore" || args[i] == "--equip-bench") { }
       else if (args[i] == "--matrix") matrix = true;
       else if (args[i] == "--gate-log") SimGateLog = true;
       else { int n; if (int.TryParse(args[i], out n)) seeds = n; }
     }
     var geo = GameGeometry.Parse(GeoJson(), GeoGame);
     if (Array.IndexOf(args, "--sell-bench") >= 0) return SellBench(geo, seeds, from, Array.IndexOf(args, "--spawn") >= 0);
+    if (Array.IndexOf(args, "--equip-bench") >= 0) return EquipBench(geo, seeds == 500 ? 40 : seeds);
     if (Array.IndexOf(args, "--art-bench") >= 0) return ArtBench(seeds == 500 ? 200 : seeds, from);
     if (Array.IndexOf(args, "--explore") >= 0) return ExploreSimMain(geo, seeds == 500 ? 20 : seeds, from, verbose);
     if (matrix) {   // the city-first matrix alone (tests/run-sim.sh --matrix [runs a cell])

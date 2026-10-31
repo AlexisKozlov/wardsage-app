@@ -8365,11 +8365,13 @@ static partial class CoreTests {
 
   // Runs the pilot against the fake game until it lets go; returns the clicks made.
   static int RunFilter(FilterPilot p, FakeFilterGame game, long setId, long statId, bool onOther, bool wanted) { return RunFilter(p, game, setId, statId, onOther, wanted, null); }
-  static int RunFilter(FilterPilot p, FakeFilterGame game, long setId, long statId, bool onOther, bool wanted, long[] subIds) {
+  static int RunFilter(FilterPilot p, FakeFilterGame game, long setId, long statId, bool onOther, bool wanted, long[] subIds) { return RunFilter(p, game, setId, statId, onOther, wanted, subIds, false); }
+  // (inView: the guide's verdict stops asking for the filter once the set and the stat are on - the item has come into the list's view)
+  static int RunFilter(FilterPilot p, FakeFilterGame game, long setId, long statId, bool onOther, bool wanted, long[] subIds, bool inView) {
     int clicks = 0;
     for (long t = 0; t < 120000; t += 100) {
       bool filtered = (setId <= 0 || game.Suits.Contains(setId)) && (statId <= 0 || game.Mains.Contains(statId));
-      var v = new FilterView { NowMs = t, Foreground = true, W = 1920, H = 1009, Item = 5, Wanted = wanted && !filtered,
+      var v = new FilterView { NowMs = t, Foreground = true, W = 1920, H = 1009, Item = 5, Wanted = wanted && !(inView && filtered),
         SetId = setId, StatId = statId, SetIndex = Array.IndexOf(game.SetList, setId), StatIndex = Array.IndexOf(game.StatList, statId),
         Suits = game.Suits.ToArray(), MainAttrs = game.Mains.ToArray(), HideEquipped = game.HideEq, OnOtherHero = onOther, SetOrder = game.SetList,
         SubIds = subIds, SubOrder = game.SubList, SubAttrs = game.Subs.ToArray(),
@@ -8474,6 +8476,11 @@ static partial class CoreTests {
     game.Subs.Sort();
     Check(game.Suits.Count == 1 && game.Mains.Count == 0 && string.Join(",", game.Subs) == "7,13,25,29" && game.Open,
           "set + the item's 4 sub stats chosen, the pop-up open (" + ns + " clicks)");
+    // the set alone brings the item into the list's view (the guide's verdict is «pick» now, live 1.6.66.417): no main stat, no sub stat clicked
+    game = new FakeFilterGame(g, W, H) { SetList = sets, StatList = stats, SubList = subList };
+    int nv = RunFilter(new FilterPilot(g), game, 721500, 0, false, true, new long[] { 25, 13, 7, 29 }, true);
+    Check(game.Suits.Count == 1 && game.Subs.Count == 0 && game.Open && !game.Side && nv <= 4,
+          "the item in view with its set: the sub stats are not clicked, the side panel closed, the pop-up open (" + nv + " clicks)");
     game = new FakeFilterGame(g, W, H) { SetList = sets, StatList = stats, SubList = subList };
     game.Subs.Add(1);   // a sub stat left from before: reset, then the right ones
     RunFilter(new FilterPilot(g), game, 721500, 13, false, true, new long[] { 24, 25 });

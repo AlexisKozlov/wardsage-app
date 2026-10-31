@@ -103,9 +103,22 @@ namespace RealmForge {
     public AutoAction Step(HeroView v) {
       if (unsent != null) unsentRun = 0;   // the last action went out
       var before = Save();
+      fade = false;
       var a = StepCore(v);
       unsent = a != null && a.Kind != AutoKind.None ? before : null;
+      // a click's wait ends once its effect shows (EffectWait); a pop-up's close keeps its fade, a drag its wait
+      // (a grid pick: only another hero shown is its effect - a slow game's late answer to it is judged by Learn, never a grid redraw)
+      if (a != null && a.Kind == AutoKind.Click && !fade) { pickKey = pending; effect.Arm(Key(v), v.NowMs); } else if (a != null && a.Kind != AutoKind.None) effect.Drop();
       return a;
+    }
+    readonly EffectWait effect = new EffectWait(); bool fade, pickKey;
+    /// <summary>The pilot waits for its last click's effect (the host reads at its effect rate meanwhile).</summary>
+    /// <summary>(Not for a grid pick: a slow game answers it after its wait, and the late answer is learnt only from reads at the usual rate.)</summary>
+    public bool Polling(long now) { return effect.Armed && !pickKey && now < waitUntil; }
+    // what a click of the hero pilot changes: the hero shown, the tab, the gear list, the grid filter (pop-up, factions, class, the grid)
+    string Key(HeroView v) {
+      if (pickKey) return v.Hero.ToString();
+      return v.Hero + "|" + v.Tab + "|" + v.Part + "|" + v.FilterOpen + "|" + (v.ChosenCamps != null ? string.Join(",", Array.ConvertAll(v.ChosenCamps, x => x.ToString())) : "-") + "|" + v.ClassChosen + "|" + v.GridPtr;
     }
 
     /// <summary>The action of the last Step did not go out (the gate waited, a read failed before the click): it does not count as a try, and its
@@ -126,6 +139,7 @@ namespace RealmForge {
                          DoneCloses = doneCloses, Has = has, Pending = pending, ClassClicked = classClicked, FactionDone = factionDone, ClassDone = classDone, Lo = lo, Hi = hi, ClickY = clickY };
     }
     void Load(Saved x) {
+      effect.Drop();
       waitUntil = x.WaitUntil; heroBefore = x.HeroBefore; pickAt = x.PickAt; clicks = x.Clicks; drags = x.Drags; backs = x.Backs; tabs = x.Tabs; misses = x.Misses; city = x.City; total = x.Total;
       bestDist = x.BestDist; filterPhase = x.FilterPhase; funnelTries = x.FunnelTries; factionTries = x.FactionTries; clearTries = x.ClearTries; classResets = x.ClassResets;
       doneCloses = x.DoneCloses; has = x.Has; pending = x.Pending; classClicked = x.ClassClicked; factionDone = x.FactionDone; classDone = x.ClassDone; lo = x.Lo; hi = x.Hi; clickY = x.ClickY;
@@ -144,6 +158,7 @@ namespace RealmForge {
         if (dt <= MaxLateMs) { lateMs = dt; has = false; pending = false; misses = 0; waitUntil = Math.Max(waitUntil, v.NowMs + Late(AfterClickMs)); }
       }
       seenHero = v.Hero;
+      if (v.NowMs < waitUntil && effect.Seen(Key(v), v.NowMs)) waitUntil = v.NowMs;   // the last click's effect seen, held still
       if (pending && (v.Hero != heroBefore || v.NowMs >= waitUntil)) Learn(v);
       bool heroOk = v.Hero == v.Plan, tabOk = v.Tab == HeroGeometry.GearTab || v.Tab < 0;
       // (the grid filter set for the hero stays: back to «Все» the game would select another hero - live test 2026-09-26;
@@ -155,7 +170,7 @@ namespace RealmForge {
         if (v.FilterOpen && v.Part < 0 && doneCloses < 1) {
           if (!v.Foreground || v.UserBusy) return AutoAction.Nothing;
           if (v.NowMs < waitUntil) return AutoAction.Nothing;
-          doneCloses++; State = "work"; waitUntil = v.NowMs + Late(AfterClickMs + 700);   // it fades out
+          doneCloses++; State = "work"; waitUntil = v.NowMs + Late(AfterClickMs + 700); fade = true;   // it fades out
           return Funnel(v, v.H);
         }
         if (doneCloses > 0 && v.NowMs < waitUntil) return AutoAction.Nothing;   // (its fade: no slot click through it)
@@ -204,7 +219,7 @@ namespace RealmForge {
       if (v.Heroes == null || v.Heroes.Length == 0) return AutoAction.Nothing;
       int t = Array.IndexOf(v.Heroes, v.Plan);
       if (t < 0) { State = "notfound"; return AutoAction.Nothing; }
-      if (v.FilterOpen) { waitUntil = v.NowMs + Late(AfterClickMs + 700); return Funnel(v, H); }   // (the pop-up covers the grid; it fades out)
+      if (v.FilterOpen) { waitUntil = v.NowMs + Late(AfterClickMs + 700); fade = true; return Funnel(v, H); }   // (the pop-up covers the grid; it fades out)
 
       double ch = v.ClientH > 0 ? v.ClientH : H;
       double pitch = pitchF * H, card = cardF * H, top = g.ViewTop * H, bottom = ch - (1 - g.ViewBottom) * H, mid = (top + bottom) / 2;
@@ -273,7 +288,7 @@ namespace RealmForge {
         else if (v.ClassChosen) { if (++classResets > 2) classDone = true; else { waitUntil = v.NowMs + Late(AfterClickMs); return Cell(g.ClassX, 0, H); } }
         else { classClicked = true; waitUntil = v.NowMs + Late(FilterClickMs); return Cell(g.ClassX, row, H); }
       }
-      filterPhase = 2; waitUntil = v.NowMs + Late(AfterClickMs + 700);   // it fades out: no grid click through it meanwhile
+      filterPhase = 2; waitUntil = v.NowMs + Late(AfterClickMs + 700); fade = true;   // it fades out: no grid click through it meanwhile
       return Funnel(v, H);                                         // close the pop-up: the grid is filtered
     }
 
@@ -332,6 +347,7 @@ namespace RealmForge {
     }
 
     void Restart() {
+      effect.Drop();
       waitUntil = pauseUntil = failedAt = pickAt = 0; seenHero = 0; clicks = drags = backs = tabs = misses = city = total = 0; bestDist = int.MaxValue; has = pending = false; State = "idle";
       Why = ""; filterPhase = funnelTries = factionTries = clearTries = classResets = doneCloses = 0; classClicked = factionDone = classDone = false; lastGrid = 0;
     }

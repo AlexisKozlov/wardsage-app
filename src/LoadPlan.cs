@@ -65,7 +65,11 @@ namespace RealmForge {
 
     /// <summary>The equip helper's live poll (the page's game state): 400 ms while a guide is on, 2 s with none (nothing waits on it then but
     /// the owners' change for the sync, lab 1.6.66.417 idle: 60 polls a minute were the biggest steady cost), 2 s with the game away.</summary>
-    public static int LivePollMs(bool job, bool shown, bool front) { return !shown || !front ? AwayMs : job ? 400 : AwayMs; }
+    public static int LivePollMs(bool job, bool shown, bool front) { return LivePollMs(job, shown, front, false); }
+    /// <summary>hot: an equip pilot's click went out within EquipHotMs (its effect moves the guide's step): the live fields at the effect rate.</summary>
+    public static int LivePollMs(bool job, bool shown, bool front, bool hot) { return !shown || !front ? AwayMs : job ? (hot ? EffectMs : 400) : AwayMs; }
+    /// <summary>How long after an equip pilot's click the live poll (and the overlay's read) stays at the effect rate.</summary>
+    public const int EquipHotMs = 1500;
 
     /// <summary>The promo-code watch: 300 ms while the code window is open (or was just open), else once a second; 2 s with the game away.</summary>
     public static int CodeWatchMs(bool armed, bool shown, bool front) { return armed ? 300 : !shown || !front ? AwayMs : IdleMs; }

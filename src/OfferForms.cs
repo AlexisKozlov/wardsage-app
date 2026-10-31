@@ -155,5 +155,8 @@ namespace RealmForge {
 
     /// <summary>The pop-up has been on the screen long enough (SettleMs) for its × to be where the prefab puts it.</summary>
     public static bool Settled(ScreenState s, long now) { return s != null && s.OfferCount > 0 && now - s.SinceMs >= SettleMs; }
+    /// <summary>Its × read live and held still (LiveStill: the same rect for its gap, the scale-in is over): settled after LiveSettleMs already.</summary>
+    public static bool Settled(ScreenState s, long now, bool liveStill) { return Settled(s, now) || (liveStill && s != null && s.OfferCount > 0 && now - s.SinceMs >= LiveSettleMs); }
+    public const int LiveSettleMs = 200;
   }
 }
