@@ -125,7 +125,7 @@ namespace RealmForge {
     /// <summary>The app's own clicks: the player's setting and the site's "autoclick" switch.</summary>
     bool AutoClickOn() { return cfg.AutoClick && On("autoclick") && !labHintOnly; }
     /// <summary>TEST build: a lab scenario «..._hint» runs (its recorder command named it): auto click is off as for a player without it, hints only.</summary>
-    bool labHintOnly;
+    bool labHintOnly; long labHintAt;
     /// <summary>«Показать в игре» clicks by itself only with its own switch on (off by default until the owner enables it), on top of the player's setting.</summary>
     bool LocateAutoOn() { return AutoClickOn() && On("locateAuto"); }
     /// <summary>The artifact flows (storage cleanup, promotion) click by themselves only with the site's "artAuto" switch on (off by default), on top of the player's setting.</summary>
@@ -413,6 +413,8 @@ namespace RealmForge {
     }
     void LabRecTick() {
       ExploreTick();
+      // the hint mode never outlives 3 minutes: auto click comes back by itself even if the lab's stop command is lost
+      if (labHintOnly && RecInfo.NowMs() - labHintAt > 180000) { labHintOnly = false; ApplyAutoClick(); Log.Write("lab: hint mode off (3 min timeout)"); }
       try {
         if (labRecPending != null) {
           // another recording was asked to stop first: start once it is off, give up after a while
@@ -448,6 +450,7 @@ namespace RealmForge {
       overlay.AuditSite = () => cfg.Site; overlay.AuditCode = () => cfg.Code;
       overlay.AuditScenario = start ? c.Scenario : ""; if (start) overlay.AuditRun = c.Run;
       bool hint = start && LabRecCmd.IsHintScenario(c.Scenario);
+      if (hint) labHintAt = RecInfo.NowMs();
       if (hint != labHintOnly) { labHintOnly = hint; ApplyAutoClick(); Log.Write("lab: hint mode " + (hint ? "on (auto click off for " + c.Scenario + ")" : "off")); }
     }
     void LabRecStart(LabRecCmd c) {

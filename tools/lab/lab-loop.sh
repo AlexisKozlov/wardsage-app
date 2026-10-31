@@ -159,8 +159,15 @@ fail_scn() {   # $1 = step label, $2 = reason, $3 = table, $4 = row id
 # long poll returns only pending rows, so the app drops a guide whose row is anything else (app/Overlay.cs locateReq = null); 'cancelled'
 # (not 'done': the app did not finish it, the last press is the player's). An equip plan that passed is already 'done' (the app closed it).
 next_scn() {
-  local r t; r=$(dget row); t=$(scn_tbl "${scenarios[$(dget scn_idx)]:-}")
+  local r t sc0; sc0=${scenarios[$(dget scn_idx)]:-}; r=$(dget row); t=$(scn_tbl "$sc0")
+  dset last_rec_job ""
   rec_end
+  if [[ "$sc0" == *_hint ]]; then
+    # a hint scenario turned auto click off: the stop command (always sent here) turns it back on; the next scenario waits for the app's ack
+    [ -n "$(dget last_rec_job)" ] || { local sj; sj=$(mkjob rec '{"cmd":"stop"}') && dset last_rec_job "$sj" || true; }
+    [ -n "$r" ] && [ -n "$t" ] && q -v r="$r" <<< "update public.$t set status = 'cancelled', done_at = now() where id = :'r'::uuid and status = 'pending'" >/dev/null
+    dset row ""; dset last_scn_end "$(now)"; dset scn_idx "$(( $(dget scn_idx) + 1 ))"; dset sar_ready ""; dset job "$(dget last_rec_job)"; phase scn_unhint; return
+  fi
   [ -n "$r" ] && [ -n "$t" ] && q -v r="$r" <<< "update public.$t set status = 'cancelled', done_at = now() where id = :'r'::uuid and status = 'pending'" >/dev/null
   dset row ""; dset last_scn_end "$(now)"; dset scn_idx "$(( $(dget scn_idx) + 1 ))"; dset sar_ready ""; phase scenario
 }
@@ -170,7 +177,7 @@ next_scn() {
 rec_end() {
   local id; id=$(dget rec_id); dset rec_for ""
   [ -n "$id" ] || return 0
-  mkjob rec '{"cmd":"stop"}' >/dev/null || true
+  local sj; sj=$(mkjob rec '{"cmd":"stop"}') && dset last_rec_job "$sj" || true
   local pass; pass=$(q -v r="$RUN" <<< "select coalesce((s->>'ok')::boolean and coalesce(s->>'warn', '') = '', false) from public.lab_runs r, jsonb_array_elements(r.steps) with ordinality e(s, n) where r.id = :'r'::uuid order by n desc limit 1")
   if [ "$pass" = t ]; then dset rec_del "$(dget rec_del) $id"; say "recording $id: passed, deleted at the end"
   else rec_tag "$id"; say "recording $id: kept"; fi
@@ -338,6 +345,14 @@ tick() {
              say "recording: no answer in 40 s"
              sc=${scenarios[$(dget scn_idx)]}; if [[ "$sc" == *_hint ]]; then warn "$sc" 0 "режим подсказок не включён (нет ответа на команду записи)"; next_scn; else phase scenario; fi
            fi ;;
+      esac ;;
+    scn_unhint)
+      # after a hint scenario: the app's ack of the stop command = auto click is back on; no ack in 40 s = the app's own 3 min fallback restores it
+      j=$(dget job); st=$(jstate "$j")
+      case "$st" in
+        done) say "hint mode off (app acked)"; phase scenario ;;
+        failed|expired|cancelled) say "hint mode off: no ack ($(jres "$j" error)$(jres "$j" state)), the app restores auto click itself"; phase scenario ;;
+        *) if [ "$(phase_age)" -gt 40 ]; then say "hint mode off: no ack in 40 s"; phase scenario; fi ;;
       esac ;;
     scn_restart)
       # sell_after_restart: the app restarted, then ready again (it read the game account), then the list is seeded
