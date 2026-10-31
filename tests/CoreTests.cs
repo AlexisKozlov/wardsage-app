@@ -2153,6 +2153,15 @@ static partial class CoreTests {
     Check(!RecNames.IsValidId("short") && !RecNames.IsValidId("has space 12345") && !RecNames.IsValidId(new string('a', 41)) && !RecNames.IsValidId(null), "rec id: the site's pattern");
     Eq("part_000.zip", RecNames.PartFile(0), "part name 0"); Eq("part_119.zip", RecNames.PartFile(119), "part name 119");
     Eq("frame_0001.jpg", RecNames.FrameFile(1), "frame name");
+    Eq("ov_0001.json", RecNames.OverlayFile(1), "overlay sidecar name");
+    {
+      var els = new List<RecOverlayEl> {
+        new RecOverlayEl { Key = "frame", Src = "glow", X = 10, Y = 20, W = 74, H = 74 },
+        new RecOverlayEl { Key = "pulse", Src = "glow", Listed = false },
+        new RecOverlayEl { Key = "plate", Src = "tip", X = 100, Y = 30, W = 200, H = 60 } };
+      Eq("{\"t\":1250,\"els\":[{\"key\":\"frame\",\"src\":\"glow\",\"x\":10,\"y\":20,\"w\":74,\"h\":74},{\"key\":\"plate\",\"src\":\"tip\",\"x\":100,\"y\":30,\"w\":200,\"h\":60}]}", RecOverlayJson.Line(1250, els), "overlay sidecar: key, src, rect of the listed elements");
+      Check(RecOverlayJson.Line(5, new List<RecOverlayEl>()) == null && RecOverlayJson.Line(5, null) == null, "overlay sidecar: none when nothing was drawn");
+    }
     Eq(7, RecNames.PartOf("part_007.zip"), "part number from a name"); Eq(-1, RecNames.PartOf("part_7.zip.tmp"), "not a part name");
     Eq(12, RecNames.PartOf("012.zip"), "part number from the server's name (NNN.zip)");
     {   // the layout / geometry text is kept in memory, so the recorder has it without a saved file

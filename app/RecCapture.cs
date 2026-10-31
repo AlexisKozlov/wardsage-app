@@ -175,6 +175,14 @@ namespace RealmForge {
       if (full == null || full.Width != cr.R || full.Height != cr.B) { FreeBuffers(); full = new Bitmap(cr.R, cr.B, PixelFormat.Format24bppRgb); fullG = Graphics.FromImage(full); }
       // the screen's pixels, so our overlay windows are in the picture (they are not hidden from captures while recording)
       fullG.CopyFromScreen(o.X, o.Y, 0, 0, new Size(cr.R, cr.B), CopyPixelOperation.SourceCopy);
+      // our overlay's elements (hint frames, boxes, the scroll indicator) drawn onto the picture with the overlay's own drawing code: its windows may be
+      // out of the capture (display affinity) or not in it (layered windows), and the recording must show what the player saw
+      var info = RecInfo.Take();
+      if (info != null && RecInfo.NowMs() - info.AtMs > 1500) info = null;   // the overlay's tick is not running: nothing known
+      string ovJson = null;
+      if (info != null && info.Overlay.Count > 0) {
+        try { if (OverlayPaint.Composite(fullG, info.Overlay, cr.R, cr.B, FrameStyle.Phase((uint)Environment.TickCount)) > 0) ovJson = RecOverlayJson.Line(t, info.Overlay); } catch (Exception) { }
+      }
       var src = full;
       if (nw != cr.R || nh != cr.B) {
         if (small == null || small.Width != nw || small.Height != nh) {
@@ -189,11 +197,10 @@ namespace RealmForge {
       jpgBuf.SetLength(0);
       src.Save(jpgBuf, Jpeg, jpegQ);
       jpg = jpgBuf.ToArray();
-      var info = RecInfo.Take();
-      if (info != null && RecInfo.NowMs() - info.AtMs > 1500) info = null;   // the overlay's tick is not running: nothing known
       string inputs = null;
       try { if (info != null && info.Ctx != null) inputs = enc.EncodeInfo(info, Env(w, cr.R, cr.B)); } catch (Exception) { }
       w.Add(RecNames.FrameFile(no), jpg, RecJson.Line(t, cr.R, cr.B, scale, bg, info, cx, cy, inputs));
+      if (ovJson != null) w.AddText(RecNames.OverlayFile(no), ovJson);
     }
   }
 

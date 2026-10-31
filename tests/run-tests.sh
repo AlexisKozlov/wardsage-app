@@ -123,6 +123,15 @@ node tests/sellhint.test.mjs
 node tests/lab-rec.test.mjs
 for f in ui/*.js; do node --check "$f"; done && echo "ui scripts: syntax ok"
 
+step "8b. Recording overlay: OverlayPaint.Composite draws a fake frame and hint box onto a bitmap (tests/RecOverlayPixels.cs; compiled always, run when Mono's GDI+ is there)"
+FX48=${FX:-"$(cd .. && pwd)/tools/net48/build/.NETFramework/v4.8"}
+WV=vendor/webview2
+CORE_APP=$(grep '^CORE=' tools/build-app.sh | sed 's/^CORE="//; s/"$//')
+$CSC -langversion:7.3 -target:exe -platform:x64 -nostdlib -nowarn:1701,1702,649 -r:$FX48/mscorlib.dll -r:$FX48/System.dll -r:$FX48/System.Core.dll -r:$FX48/System.Drawing.dll \
+  -r:$FX48/System.Windows.Forms.dll -r:$FX48/System.Security.dll -r:$FX48/System.IO.Compression.dll -r:$WV/Microsoft.Web.WebView2.Core.dll -r:$WV/Microsoft.Web.WebView2.WinForms.dll \
+  -out:"$OUT/RecOverlayPixels.exe" $CORE_APP app/OverlayPaint.cs tests/RecOverlayPixels.cs
+if command -v mono >/dev/null 2>&1 && ldconfig -p 2>/dev/null | grep -q libgdiplus; then mono "$OUT/RecOverlayPixels.exe"; else echo "RecOverlayPixels run SKIPPED (no Mono + libgdiplus; compiles; run it on Windows)"; fi
+
 step "8. Wardsage.exe builds (C# 7.3, .NET Framework 4.8, WebView2 SDK checksums)"
 bash tools/build-app.sh
 

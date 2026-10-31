@@ -17,6 +17,7 @@ using System.Drawing.Text;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
+using static RealmForge.OverlayPaint;
 
 namespace RealmForge {
   static class W32 {
@@ -703,8 +704,19 @@ namespace RealmForge {
       finally {
         try { TickFramesOne(); } catch (Exception e) { Log.Write("frames: " + e.Message); }
         try { AuditEnd(); } catch (Exception e) { Log.Write("frame audit: " + e.Message); }
-        if (recB != null) { var b = recB; recB = null; b.Screen = screens.Current != null ? screens.Current.Brief : "-"; RecInputs(b); RecInfo.Publish(b); }
+        if (recB != null) { var b = recB; recB = null; b.Screen = screens.Current != null ? screens.Current.Brief : "-"; RecOverlayNow(b); RecInputs(b); RecInfo.Publish(b); }
       }
+    }
+
+    // the recorder: the elements of every overlay window that is shown now (the frames, hint boxes, scroll indicator), for it to draw onto its frames
+    void RecOverlayNow(RecInfo b) {
+      try {
+        if (!GameDrawable()) return;
+        foreach (var w in new[] { glow, tip }) {
+          List<RecOverlayEl> e;
+          if (w.Visible && sceneEls.TryGetValue(w, out e)) b.Overlay.AddRange(e);
+        }
+      } catch (Exception ex) { Log.Write("rec overlay: " + ex.Message); }
     }
 
     // the recorder's raw inputs of this tick (src/RecInputs.cs): the guides' arguments and what decides whether they draw; the screen reads are queued by ReadScreens
@@ -1507,7 +1519,6 @@ namespace RealmForge {
     // «Показать в игре»: the page's texts for its pills (pillUp, pillDown, rows1 / rows2 / rows5, lang); the plan's Texts are not set while it runs
     Dictionary<string, string> locateTexts = new Dictionary<string, string>();
 
-    sealed class Plate { public string Caps = "", Main = "", Sub = ""; public bool Pill, Warn; public int Arrow; /* -1 = an up arrow before the main text, 1 = down */ }
     // the game window's client area on the screen for the scene being drawn (plates are kept inside it)
     int sceneX, sceneY, sceneW, sceneH;
     void SceneArea(W32.POINT o, W32.RECT cr) { sceneX = o.X; sceneY = o.Y; sceneW = cr.R; sceneH = cr.B; }
@@ -1530,12 +1541,6 @@ namespace RealmForge {
     // the plate's sizes tried in turn when it does not fit beside its target (the smallest is taken anyway)
     static readonly float[] PlateScales = { 1f, 0.85f, 0.72f, 0.6f };
 
-    // the plate's fonts: 0 = the caps line, 1 = the action, 2 = the next step; in U (src/HintLayout.cs HintSize), scaled by sc, never below the readable minimum
-    static Font PlateFont(int which, Plate p, double U, float sc) {
-      double px = HintSize.FontPx(which, p != null && p.Pill, U);
-      return new Font("Segoe UI", (float)Math.Max(HintSize.MinPx(which), px * sc), which == 2 ? FontStyle.Regular : FontStyle.Bold, GraphicsUnit.Pixel);
-    }
-    static float PlatePad(double U, float sc) { return (float)Math.Max(HintSize.MinPad, HintSize.Pad(U) * sc); }
 
     // the plate's texts cut with «…» so that it is at most maxW px wide (0 = no limit); the plate itself is not changed
     static Plate FitPlate(Plate p, Font fCaps, Font fMain, Font fSub, float pad, int maxW, Graphics pg) {
@@ -1700,31 +1705,14 @@ namespace RealmForge {
           if (x1 <= x0 || y1 <= y0) { win.Hide(); return; }
         }
         int bw = Math.Max(1, x1 - x0), bh = Math.Max(1, y1 - y0);
+        // the scene as elements: each is painted by the same code into the overlay window's bitmap here and onto the recorder's frames (Composite)
+        var els = SceneElements(win, frameR, p, strip, marks, hl, ng, dim, oldShape, hand, bob, G, Gm, U, pos, pw, ph, sc, owl, capsH, mainH, pad, ptr, pulseSpecs, avoid);
+        sceneEls[win] = els;
         using (var bmp = new Bitmap(bw, bh, PixelFormat.Format32bppArgb)) {
           using (var gr = Graphics.FromImage(bmp)) {
             gr.SmoothingMode = SmoothingMode.AntiAlias; gr.TextRenderingHint = TextRenderingHint.AntiAliasGridFit; gr.Clear(Color.Transparent);
             gr.InterpolationMode = InterpolationMode.HighQualityBicubic;
-            if (ng) PaintGuide(gr, hl, x0, y0, bw, bh, dim, G, hand, bob, U);
-            else if (frameR != null) {
-              var fo = new List<double[]>(); if (avoid != null) foreach (var a in avoid) if (a != null) fo.Add(new double[] { a[0], a[1], a[2], a[3] });
-              var fs = FrameSpec(oldShape ? hl : null, frameR[0], frameR[1], frameR[2], frameR[3], FrameStyle.Gold, FrameStyle.Gap(frameR[0], frameR[1], frameR[2], frameR[3], fo));
-              PaintFrame(gr, fs, x0, y0);
-              if (!oldShape) PaintOwl(gr, FrameStyle.OwlAt(frameR[0], frameR[1], frameR[2], frameR[3], sceneY), x0, y0);
-              pulseSpecs.Add(fs);
-            }
-            if (strip != null) PaintStrip(gr, strip, x0, y0, pulse, U);
-            if (marks != null) {
-              var mo = new List<double[]>(); foreach (var m in marks) mo.Add(new double[] { m[0], m[1], m[2], m[3] });
-              foreach (var m in marks) {
-                var ms = m[4] != 1 && !(m[4] == 0 && GuideStyle) ? FrameSpec(null, m[0], m[1], m[2], m[3], m[4] == 2 ? FrameStyle.Red : FrameStyle.Gold, FrameStyle.Gap(m[0], m[1], m[2], m[3], mo)) : null;
-                PaintMark(gr, m[0] - x0, m[1] - y0, m[2], m[3], m[4], Gm, ms, x0, y0);
-                if (ms != null) pulseSpecs.Add(ms);
-              }
-            }
-            if (p != null) {
-              float px = sceneX + pos[0] - x0, py = sceneY + pos[1] - y0;
-              PaintPlate(gr, px, py, pw, ph, p, fCaps, fMain, fSub, owl, capsH, mainH, pad, ptr, sceneX - x0, sceneY - y0);
-            }
+            foreach (var el in els) el.Draw(gr, x0, y0, bw, bh, -1f);
           }
           win.Put(bmp, x0, y0);
           win.Parts.Clear();
@@ -1738,6 +1726,65 @@ namespace RealmForge {
       SetPulse(win, pulseSpecs);
     }
 
+    // the last scene of each overlay window as elements (what the recorder draws onto its frames while the window is shown)
+    readonly Dictionary<GlowWindow, List<RecOverlayEl>> sceneEls = new Dictionary<GlowWindow, List<RecOverlayEl>>();
+
+    List<RecOverlayEl> SceneElements(GlowWindow win, int[] frameR, Plate p, double[] strip, List<int[]> marks, Hl hl, bool ng, bool dim, bool oldShape, Image hand, int bob,
+        int G, int Gm, double U, int[] pos, int pw, int ph, float sc, float owl, float capsH, float mainH, float pad, double[] ptr, List<FrameSpecT> pulseSpecs, int[][] avoid) {
+      var els = new List<RecOverlayEl>();
+      string src = win == tip ? "tip" : "glow"; int sx = sceneX, sy = sceneY;
+      Func<int, int, int, int, string, Action<Graphics, int, int, int, int, float>, RecOverlayEl> add = (x, y, w, h, key, paint) => {
+        var e = Element(key, src, sx, sy, x - sx, y - sy, w, h, paint); els.Add(e); return e;
+      };
+      if (ng) {
+        var e = add((int)hl.Rect.X, (int)hl.Rect.Y, (int)hl.Rect.W, (int)hl.Rect.H, "guide", (g, ox, oy, bw, bh, f) => PaintGuide(g, hl, ox, oy, bw, bh, dim, G, hand, bob, U));
+        e.Layer = dim;
+      } else if (frameR != null) {
+        var fo = new List<double[]>(); if (avoid != null) foreach (var a in avoid) if (a != null) fo.Add(new double[] { a[0], a[1], a[2], a[3] });
+        var fs = FrameSpec(oldShape ? hl : null, frameR[0], frameR[1], frameR[2], frameR[3], FrameStyle.Gold, FrameStyle.Gap(frameR[0], frameR[1], frameR[2], frameR[3], fo));
+        add(frameR[0], frameR[1], frameR[2], frameR[3], "frame", (g, ox, oy, bw, bh, f) => PaintFrame(g, fs, ox, oy));
+        if (!oldShape) {
+          var at = FrameStyle.OwlAt(frameR[0], frameR[1], frameR[2], frameR[3], sy);
+          add((int)at[0] - 9, (int)at[1] - 9, 18, 18, "owl", (g, ox, oy, bw, bh, f) => PaintOwl(g, at, ox, oy));
+        }
+        pulseSpecs.Add(fs);
+      }
+      if (strip != null) {
+        var s = strip;
+        add((int)s[0] - 12, (int)s[1], 24, (int)(s[2] - s[1]), "strip", (g, ox, oy, bw, bh, f) => PaintStrip(g, s, ox, oy, 1f, U));
+      }
+      if (marks != null) {
+        var mo = new List<double[]>(); foreach (var m in marks) mo.Add(new double[] { m[0], m[1], m[2], m[3] });
+        foreach (var m0 in marks) {
+          var m = m0;
+          var ms = m[4] != 1 && !(m[4] == 0 && GuideStyle) ? FrameSpec(null, m[0], m[1], m[2], m[3], m[4] == 2 ? FrameStyle.Red : FrameStyle.Gold, FrameStyle.Gap(m[0], m[1], m[2], m[3], mo)) : null;
+          add(m[0], m[1], m[2], m[3], "mark" + m[4], (g, ox, oy, bw, bh, f) => PaintMark(g, m[0] - ox, m[1] - oy, m[2], m[3], m[4], Gm, ms, ox, oy));
+          if (ms != null) pulseSpecs.Add(ms);
+        }
+      }
+      if (p != null) {
+        var pp = p;
+        add(sx + pos[0], sy + pos[1], pw, ph, "plate", (g, ox, oy, bw, bh, f) => {
+          using (var fC = PlateFont(0, pp, U, sc)) using (var fM = PlateFont(1, pp, U, sc)) using (var fS = PlateFont(2, pp, U, sc))
+            PaintPlate(g, sx + pos[0] - ox, sy + pos[1] - oy, pw, ph, pp, fC, fM, fS, owl, capsH, mainH, pad, ptr, sx - ox, sy - oy);
+        });
+      }
+      // the pulse line of the frames (a window of its own on screen): over everything, a recording catches the phase of the moment
+      if (pulseSpecs.Count > 0) {
+        var specs = new List<FrameSpecT>(pulseSpecs); int cw = sceneW, ch = sceneH;
+        var pe = Element("pulse", src, sx, sy, 0, 0, 0, 0, (g, ox, oy, bw, bh, phase) => {
+          if (phase < 0) return;
+          int x0 = int.MaxValue, y0 = int.MaxValue, x1 = int.MinValue, y1 = int.MinValue, M = 12;
+          foreach (var sp in specs) { x0 = Math.Min(x0, sp.Box[0] - M); y0 = Math.Min(y0, sp.Box[1] - M); x1 = Math.Max(x1, sp.Box[0] + sp.Box[2] + M); y1 = Math.Max(y1, sp.Box[1] + sp.Box[3] + M); }
+          if (cw > 0 && ch > 0) { x0 = Math.Max(x0, sx); y0 = Math.Max(y0, sy); x1 = Math.Min(x1, sx + cw); y1 = Math.Min(y1, sy + ch); }
+          if (x1 - x0 <= 0 || y1 - y0 <= 0 || (long)(x1 - x0) * (y1 - y0) > 250000) return;   // a big spread of frames stays still
+          foreach (var sp in specs) { var l = FrameStyle.Pulse(sp.Rgb, phase, sp.Gap); if (l != null) StrokeLayer(g, sp, l, ox, oy); }
+        }, false);
+        els.Add(pe);
+      }
+      return els;
+    }
+
     /// <summary>Where our own windows showed something that a screen look sees (only when they cannot be hidden from
     /// captures): those pixels of a grab at (x, y) w × h are set to the dark background, so they are no bars, no glow, no cells.</summary>
     void MaskOwn(int[] px, int x, int y, int w, int h) {
@@ -1748,57 +1795,6 @@ namespace RealmForge {
             int ax = Math.Max(x, r[0]), ay = Math.Max(y, r[1]), bx = Math.Min(x + w, r[0] + r[2]), by = Math.Min(y + h, r[1] + r[3]);
             for (int yy = ay; yy < by; yy++) for (int xx = ax; xx < bx; xx++) px[(yy - y) * w + (xx - x)] = ListTracker.Masked;
           }
-    }
-
-    // the branded hint frame (owner-approved mockup C1, src/FrameTargets.cs FrameStyle): a 4 px line exactly on the target's outline, a soft 4 px
-    // glow outside it, an owl badge on the top edge; the pulse line is drawn by PulseTick in a small window of its own. A frame is a rounded rect
-    // (corner 4 px) or, for a round button, the sprite's contour; Path(offset, ox, oy) = its outline moved <offset> px outward, in a bitmap at (ox, oy)
-    sealed class FrameSpecT { public Func<float, int, int, GraphicsPath> Path; public int Rgb; public float Gap; public int[] Box; }
-
-    FrameSpecT FrameSpec(Hl hl, double x, double y, double w, double h, int rgb, float gap) {
-      var sp = new FrameSpecT { Rgb = rgb, Gap = gap, Box = new[] { (int)Math.Floor(x), (int)Math.Floor(y), (int)Math.Ceiling(w), (int)Math.Ceiling(h) } };
-      if (hl != null && GuideShape.FrameOutline(hl.Rect, hl.Shape, hl.Inset, 0) != null) {
-        var r = hl.Rect;
-        sp.Box = new[] { (int)Math.Floor(r.X), (int)Math.Floor(r.Y), (int)Math.Ceiling(r.W), (int)Math.Ceiling(r.H) };
-        sp.Path = (o, ox, oy) => {
-          var pts = GuideShape.FrameOutline(hl.Rect, hl.Shape, hl.Inset, o);
-          var path = new GraphicsPath(); if (pts == null || pts.Count < 3) return path;
-          var pf = new PointF[pts.Count];
-          for (int i = 0; i < pf.Length; i++) pf[i] = new PointF((float)(pts[i].X - ox), (float)(pts[i].Y - oy));
-          path.AddPolygon(pf); return path;
-        };
-      } else {
-        float fx = (float)x, fy = (float)y, fw = (float)w, fh = (float)h;
-        sp.Path = (o, ox, oy) => Round(fx - ox - o, fy - oy - o, fw + 2 * o, fh + 2 * o, FrameStyle.CornerR + o);
-      }
-      return sp;
-    }
-
-    static Color FrameColor(int rgb, int alpha) { return Color.FromArgb(Math.Max(0, Math.Min(255, alpha)), (rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255); }
-
-    static void StrokeLayer(Graphics gr, FrameSpecT sp, FrameStyle.Layer l, int ox, int oy) {
-      using (var pen = new Pen(FrameColor(l.Rgb, l.Alpha), l.Width) { LineJoin = LineJoin.Round })
-      using (var path = sp.Path(l.Offset, ox, oy)) gr.DrawPath(pen, path);
-    }
-
-    // the still part (glow rings, then the line) of a frame into a bitmap at (ox, oy)
-    void PaintFrame(Graphics gr, FrameSpecT sp, int ox, int oy) {
-      foreach (var l in FrameStyle.Still(sp.Rgb, sp.Gap)) StrokeLayer(gr, sp, l, ox, oy);
-    }
-
-    // the owl badge (the Wardsage mark: the shield, dark navy with a gold outline and gold eyes), at {cx, cy, flipped}
-    void PaintOwl(Graphics gr, double[] at, int ox, int oy) {
-      double cx = at[0] - ox, cy = at[1] - oy;
-      var sh = FrameStyle.OwlShield(cx, cy);
-      var pf = new PointF[sh.Length / 2];
-      for (int i = 0; i < pf.Length; i++) pf[i] = new PointF((float)sh[2 * i], (float)sh[2 * i + 1]);
-      using (var br = new SolidBrush(FrameColor(FrameStyle.Navy, 255))) gr.FillPolygon(br, pf);
-      using (var pen = new Pen(FrameColor(FrameStyle.Gold, 255), 1.5f) { LineJoin = LineJoin.Round }) gr.DrawPolygon(pen, pf);
-      foreach (var e in FrameStyle.OwlEyes(cx, cy)) {
-        float r = (float)e[2], q = (float)e[3];
-        using (var br = new SolidBrush(FrameColor(FrameStyle.Gold, 255))) gr.FillEllipse(br, (float)e[0] - r, (float)e[1] - r, 2 * r, 2 * r);
-        using (var br = new SolidBrush(FrameColor(FrameStyle.Navy, 255))) gr.FillEllipse(br, (float)e[0] - q, (float)e[1] - q, 2 * q, 2 * q);
-      }
     }
 
     // the pulse: one small window beside the scene window, repainted at most 15 times a second, only while a frame is shown
@@ -1855,67 +1851,6 @@ namespace RealmForge {
       }
       // style 2: the same branded frame in red (no owl)
       PaintFrame(gr, sp, ox, oy);
-    }
-
-    // the step plate: strictly rectangular, dark, a thin bronze border with a gold line inside; the owl and the caps line,
-    // the action in white, the next step smaller; a pill (the strip's «Вещь здесь») has rounded ends and one line
-    void PaintPlate(Graphics gr, float x, float y, int w, int h, Plate p, Font fCaps, Font fMain, Font fSub, float owl, float capsH, float mainH, float pad, double[] ptr, int ox, int oy) {
-      using (var shadow = new SolidBrush(Color.FromArgb(110, 0, 0, 0))) gr.FillRectangle(shadow, x + 3, y + 5, w, h);
-      if (p.Pill) {
-        var path = Round(x, y, w, h, h / 2f - 0.5f);
-        using (var bg = new SolidBrush(Color.FromArgb(244, 0x12, 0x1A, 0x2B))) gr.FillPath(bg, path);
-        using (var pen = new Pen(FrameColor(FrameStyle.Gold, 255), 2f)) gr.DrawPath(pen, path);
-      } else {
-        // a warning plate (a stray item is ticked) is red: dark red body, a bright red border
-        using (var bg = new SolidBrush(p.Warn ? Color.FromArgb(246, 52, 12, 12) : Color.FromArgb(244, 0x12, 0x1A, 0x2B))) gr.FillRectangle(bg, x, y, w, h);
-        using (var pen = new Pen(FrameColor(p.Warn ? FrameStyle.Red : FrameStyle.Gold, 255), 2f)) gr.DrawRectangle(pen, x + 1, y + 1, w - 2, h - 2);
-      }
-      if (ptr != null) {
-        var tri = new[] { new PointF((float)ptr[0] + ox, (float)ptr[1] + oy), new PointF((float)ptr[2] + ox, (float)ptr[3] + oy), new PointF((float)ptr[4] + ox, (float)ptr[5] + oy) };
-        using (var br = new SolidBrush(FrameColor(p.Warn ? FrameStyle.Red : FrameStyle.Gold, 255))) gr.FillPolygon(br, tri);
-      }
-      float ty = y + (p.Pill ? pad / 2 : pad), tx = x + pad;
-      if (p.Caps != "") {
-        var owlImg = OwlTex();
-        if (owlImg != null) gr.DrawImage(owlImg, tx, ty, owl, owl);
-        using (var gold = new SolidBrush(FrameColor(FrameStyle.Gold, 255)))
-          gr.DrawString(p.Caps.ToUpperInvariant(), fCaps, gold, tx + owl + 6, ty + (owl - fCaps.Height) / 2);
-        ty += capsH + 2;
-      }
-      if (p.Main != "") {
-        if (p.Arrow != 0) {   // the direction of the item: a gold arrow before the text
-          float aw = mainH * 0.8f, acx = tx + aw / 2, acy = ty + mainH / 2, ah = mainH * 0.6f, dir = p.Arrow < 0 ? -1 : 1;
-          var tri = new[] { new PointF(acx, acy + dir * ah / 2), new PointF(acx - aw / 2, acy - dir * ah / 2), new PointF(acx + aw / 2, acy - dir * ah / 2) };
-          using (var br = new SolidBrush(Color.FromArgb(255, 255, 214, 110))) gr.FillPolygon(br, tri);
-          using (var pen = new Pen(Color.FromArgb(230, 60, 36, 6), 1.5f)) gr.DrawPolygon(pen, tri);
-          tx += aw + 10;
-        }
-        using (var sh = new SolidBrush(Color.FromArgb(200, 0, 0, 0))) gr.DrawString(p.Main, fMain, sh, tx + 1, ty + 1.5f);
-        using (var white = new SolidBrush(p.Warn ? Color.FromArgb(255, 255, 196, 184) : p.Pill ? Color.FromArgb(255, 255, 222, 150) : Color.White)) gr.DrawString(p.Main, fMain, white, tx, ty);
-        ty += mainH + 2;
-      }
-      if (p.Sub != "") using (var muted = new SolidBrush(Color.FromArgb(255, 207, 198, 176))) gr.DrawString(p.Sub, fSub, muted, tx, ty);
-    }
-
-    // the scroll strip along the list: a thin gold line over the visible part, a bracket for where the view is in the whole
-    // list and a gold dot where the item is
-    void PaintStrip(Graphics gr, double[] s, int ox, int oy, float pulse, double U) {
-      float x = (float)s[0] - ox, top = (float)s[1] - oy, bottom = (float)s[2] - oy, dot = (float)s[3] - oy, b0 = (float)s[4] - oy, b1 = (float)s[5] - oy;
-      using (var line = new Pen(Color.FromArgb(150, 224, 182, 96), 2f)) gr.DrawLine(line, x, top, x, bottom);
-      using (var br = new Pen(Color.FromArgb(255, 240, 200, 110), 2f)) gr.DrawPath(br, Round(x - 4, b0, 8, Math.Max(8, b1 - b0), 4));
-      float r = (float)Math.Max(5, 0.008 * U);
-      for (int i = 3; i >= 1; i--) using (var glowB = new SolidBrush(Color.FromArgb((int)(60 * pulse), 255, 190, 60))) gr.FillEllipse(glowB, x - r - 2 * i, dot - r - 2 * i, 2 * (r + 2 * i), 2 * (r + 2 * i));
-      using (var g2 = new SolidBrush(Color.FromArgb(255, 255, 214, 110))) gr.FillEllipse(g2, x - r, dot - r, 2 * r, 2 * r);
-      using (var pen = new Pen(Color.FromArgb(230, 60, 36, 6), 1.5f)) gr.DrawEllipse(pen, x - r, dot - r, 2 * r, 2 * r);
-    }
-
-    static Image owlTex;
-    static Image OwlTex() {
-      if (owlTex == null) {
-        try { using (var s = typeof(OverlayController).Assembly.GetManifestResourceStream("overlay/owl.png")) if (s != null) owlTex = new Bitmap(Image.FromStream(s)); }
-        catch (Exception) { }
-      }
-      return owlTex;
     }
 
     // ---------------------------------------------------------------- auto-pilot
@@ -4658,7 +4593,6 @@ namespace RealmForge {
     int guideLvl;   // the pulse of this draw, 0..5
 
     /// <summary>What the new highlight outlines: the art's rectangle (screen px) with its shape and inset; Important = variant B.</summary>
-    sealed class Hl { public GeoRect Rect; public GeoShape Shape; public GeoInset Inset; public bool Important; }
 
     // a rectangle with rounded corners (a list cell, a button of unknown shape)
     Hl HlRound(double x, double y, double w, double h, bool important) {
@@ -4778,11 +4712,5 @@ namespace RealmForge {
       Scene(glow, ref drawnKey, null, new Plate { Caps = Tx("caps"), Main = m, Sub = Tx("unknownSub") }, null, null);
     }
 
-    static GraphicsPath Round(float x, float y, float w, float h, float r) {
-      var p = new GraphicsPath(); float d = r * 2;
-      p.AddArc(x, y, d, d, 180, 90); p.AddArc(x + w - d, y, d, d, 270, 90);
-      p.AddArc(x + w - d, y + h - d, d, d, 0, 90); p.AddArc(x, y + h - d, d, d, 90, 90);
-      p.CloseFigure(); return p;
-    }
   }
 }

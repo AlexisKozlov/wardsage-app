@@ -21,11 +21,24 @@ namespace RealmForge {
   /// <summary>One frame the overlay drew, in the game window's client px.</summary>
   public sealed class RecFrameRect { public string Kind; public int X, Y, W, H; }
 
+  /// <summary>One element the overlay showed (a frame, its owl, a hint box, the scroll indicator, a cell mark, a guide highlight) in the game window's
+  /// client px; Src = the overlay window it lives in ("glow" / "tip"). Draw paints it (a System.Drawing.Graphics, bitmap origin on the screen,
+  /// bitmap size, pulse phase or negative) with the overlay's own drawing code (app/OverlayPaint.cs); null in tests that only read the list.
+  /// Layer: drawn into a transparent layer first (it cuts holes: the dimming of a guide highlight). Listed = false: drawn, not named in the sidecar.</summary>
+  public sealed class RecOverlayEl {
+    public string Key = "", Src = "";
+    public int X, Y, W, H, SceneX, SceneY;
+    public bool Listed = true, Layer;
+    public Action<object, int, int, int, int, float> Draw;
+  }
+
   /// <summary>What the overlay's last tick decided, for the recorder (the overlay builds a new one per tick and publishes it; a published one
   /// is never changed). NaN = no value.</summary>
   public sealed class RecInfo {
     public string Screen = "-", Step = "-";
     public readonly List<RecFrameRect> Frames = new List<RecFrameRect>();
+    /// <summary>The overlay's elements at the end of the tick, in drawing order (RecOverlayEl); the recorder draws them onto its frames.</summary>
+    public readonly List<RecOverlayEl> Overlay = new List<RecOverlayEl>();
     public double InvRaw = double.NaN, InvRow1 = double.NaN, InvSmooth = double.NaN, FdRaw = double.NaN, FdSmooth = double.NaN;
     public long AtMs;
     // the raw inputs of the tick (src/RecInputs.cs): the overlay clock, the last screen read before the tick ended, the context, the sell hint's inventory, the Foundry list as drawn, the row 1 the list cell was placed from
@@ -45,6 +58,24 @@ namespace RealmForge {
     public static void Clear() { lock (gate) current = null; }
   }
 
+  /// <summary>The per-frame sidecar of the overlay elements drawn onto the picture: {"t":ms,"els":[{"key","src","x","y","w","h"}]} (client px, the
+  /// frame's own w x h are in frames.jsonl); null when none was drawn.</summary>
+  public static class RecOverlayJson {
+    public static string Line(long t, IList<RecOverlayEl> els) {
+      var sb = new StringBuilder(); int n = 0;
+      sb.Append("{\"t\":").Append(t.ToString(CultureInfo.InvariantCulture)).Append(",\"els\":[");
+      if (els != null)
+        foreach (var e in els) {
+          if (e == null || !e.Listed) continue;
+          if (n++ > 0) sb.Append(',');
+          sb.Append("{\"key\":").Append(MiniJson.Quote(e.Key)).Append(",\"src\":").Append(MiniJson.Quote(e.Src))
+            .Append(",\"x\":").Append(e.X.ToString(CultureInfo.InvariantCulture)).Append(",\"y\":").Append(e.Y.ToString(CultureInfo.InvariantCulture))
+            .Append(",\"w\":").Append(e.W.ToString(CultureInfo.InvariantCulture)).Append(",\"h\":").Append(e.H.ToString(CultureInfo.InvariantCulture)).Append('}');
+        }
+      return n == 0 ? null : sb.Append("]}").ToString();
+    }
+  }
+
   public static class RecNames {
     public const int MaxPart = 119;
     static readonly Regex IdRx = new Regex("^[A-Za-z0-9-]{8,40}$");
@@ -56,6 +87,8 @@ namespace RealmForge {
     }
     public static bool IsValidId(string id) { return id != null && IdRx.IsMatch(id); }
     public static string PartFile(int part) { return "part_" + part.ToString("000", CultureInfo.InvariantCulture) + ".zip"; }
+    /// <summary>The overlay sidecar of frame n: the elements drawn onto it (RecOverlayJson).</summary>
+    public static string OverlayFile(int n) { return "ov_" + n.ToString("0000", CultureInfo.InvariantCulture) + ".json"; }
     public static string FrameFile(int n) { return "frame_" + n.ToString("0000", CultureInfo.InvariantCulture) + ".jpg"; }
     /// <summary>The part number of a part file name, -1 when it is not one.</summary>
     public static int PartOf(string file) {
