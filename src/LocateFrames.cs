@@ -408,6 +408,7 @@ namespace RealmForge {
     static readonly System.Collections.Generic.Dictionary<string, object[]> Research = new System.Collections.Generic.Dictionary<string, object[]> {
       { "inventory.leftTab.artifact", new object[] { 'L', 0.0023, 'L', 0.1711, 'T', 0.4022, 'T', 0.5272 } },
       { "inventory.artList",          new object[] { 'L', 0.195, 'R', -0.5231, 'T', 0.1922, 'B', -0.14 } },
+      { "inventory.scrollbar",        new object[] { 'R', -0.5231, 'R', -0.5024, 'T', 0.1906, 'B', -0.1405 } },
       { "inventory.artWorkshop",      new object[] { 'R', -0.2562, 'R', -0.0344, 'B', -0.1030, 'B', -0.0202 } },
       { "artifact.tab.promote",       new object[] { 'R', -0.1631, 'R', 0.0025, 'T', 0.125, 'T', 0.25 } },
       { "artifact.tab.enhance",       new object[] { 'R', -0.1631, 'R', 0.0025, 'T', 0.0, 'T', 0.125 } },
@@ -461,7 +462,7 @@ namespace RealmForge {
         case LocateKind.ArtPromote: key = "artifact.promoteBtn"; break;
         case LocateKind.ArtMatGuess: key = "artifact.matList"; break;   // the whole list area: the cells cannot be placed without the game's scroll
         case LocateKind.ArtInList:
-          return st.Pos > 0 && inv != null ? Cell(g, "inventory.artList", inv.List, st.Pos - 1, LocateGuide.ArtInvCols, 116, W, H, U) : null;
+          return st.Pos > 0 && inv != null ? InvCell(g, inv.List, st.Pos - 1, LocateGuide.ArtInvCols, W, H, U) : null;
         case LocateKind.ArtMatPick:
           return st.Pos > 0 && ws != null ? Cell(g, "artifact.matList", ws.MatList, st.Pos - 1, LocateGuide.ArtMatCols, 114, W, H, U) : null;
       }
@@ -476,15 +477,15 @@ namespace RealmForge {
     /// <summary>The card (80 x 110 canvas units, centred in its cell) at the 0-based list <paramref name="index"/> of the list in <paramref name="rectKey"/>,
     /// placed from the game's own scroll reading <paramref name="l"/> (exact, nothing from the picture): a box, or an "up" / "down" pill at the list's edge.
     /// Null = the list cannot be read or has no rectangle.</summary>
-    public static LocateFrame Cell(GameGeometry g, string rectKey, RFX.ListRead l, int index, int fallbackCols, double fallbackLine, double W, double H, double U) {
+    public static LocateFrame Cell(GameGeometry g, string rectKey, RFX.ListRead l, int index, int fallbackCols, double fallbackLine, double W, double H, double U, GeoRect viewIn = null, double cardUnitsW = 80) {
       if (l == null || !l.Has || index < 0) return null;
-      var view = Rect(g, rectKey, W, H, U);
+      var view = viewIn ?? Rect(g, rectKey, W, H, U);
       if (view == null || view.W <= 0 || view.H <= 0) return null;
       var grid = g != null ? g.Grid(rectKey) : null;
       int cols = l.Cols >= 1 ? l.Cols : grid != null ? grid.Cols : fallbackCols;
       double line = l.RowUnits > 0 ? l.RowUnits : grid != null && grid.LineSize > 0 ? grid.LineSize : fallbackLine;
       double padTop = grid != null ? grid.PadTop : 0;
-      double k = U / GameGeometry.CanvasH, pitch = line * k, cardW = 80 * k, cardH = 110 * k;
+      double k = U / GameGeometry.CanvasH, pitch = line * k, cardW = cardUnitsW * k, cardH = 110 * k;
       int row = index / cols, col = index % cols;
       double rowTop = view.Y + FoundryPlace.PadSign * padTop * k + row * pitch - l.ScrollY * k;
       double slotW = view.W / cols;
@@ -500,6 +501,37 @@ namespace RealmForge {
       }
       f.Mark = m; f.ViewX = view.X; f.ViewY = view.Y; f.ViewW = view.W; f.ViewH = view.H;
       return f;
+    }
+
+    /// <summary>The card width in canvas units of the inventory's artifact tab: the game's selection frame (live 1.6.66.452 recording, 1366x705: 80.7 px of 88.1 for 80 units).</summary>
+    public const double InvCardW = 73.3;
+
+    /// <summary>The artifact tab's list as the cells lay out in it: the geometry's rectangle ends under the scroll bar's left edge (live 1.6.66.452 recording: the file's
+    /// rectangle runs 18 px past it and put the column centres up to 13 px right of the game's: column 6 of 8 at x 741 against the game's 728).</summary>
+    public static GeoRect InvView(GameGeometry g, double W, double H, double U) {
+      var v = Rect(g, "inventory.artList", W, H, U); if (v == null) return null;
+      var b = Rect(g, "inventory.scrollbar", W, H, U);
+      if (b != null && b.X > v.X + 10 && b.X < v.Right) return new GeoRect { X = v.X, Y = v.Y, W = b.X - v.X, H = v.H };
+      return v;
+    }
+
+    /// <summary>The card of the artifact tab's list at the 0-based <paramref name="index"/> as the game's selection frame lies on it (<see cref="Cell"/> in the corrected list, <see cref="InvCardW"/> wide).</summary>
+    public static LocateFrame InvCell(GameGeometry g, RFX.ListRead l, int index, int fallbackCols, double W, double H, double U) {
+      return Cell(g, "inventory.artList", l, index, fallbackCols, 116, W, H, U, InvView(g, W, H, U), InvCardW);
+    }
+
+    /// <summary>The artifact tab's scroll bar for the card at the 0-based <paramref name="index"/> of <paramref name="count"/> (LocateFrames.ListStrip: the viewport's bracket and the
+    /// clustered markers, as the storage cleanup draws them; client px). <paramref name="indexes"/> = every card to mark (null = just <paramref name="index"/>). Null = no bar geometry / list unreadable.</summary>
+    public static double[] InvStrip(GameGeometry g, RFX.ListRead l, int count, int index, int fallbackCols, IList<int> indexes, double W, double H, double U) {
+      if (l == null || !l.Has || count < 1) return null;
+      var view = InvView(g, W, H, U); if (view == null || view.H <= 0) return null;
+      var grid = g != null ? g.Grid("inventory.artList") : null;
+      int cols = l.Cols >= 1 ? l.Cols : grid != null ? grid.Cols : fallbackCols;
+      double line = l.RowUnits > 0 ? l.RowUnits : grid != null && grid.LineSize > 0 ? grid.LineSize : 116;
+      double padTop = grid != null ? grid.PadTop : 0, k = U / GameGeometry.CanvasH;
+      var rows = new List<int>();
+      foreach (int i in indexes ?? new[] { index }) rows.Add(i / cols + 1);
+      return LocateFrames.ListStrip(g, view.Y + FoundryPlace.PadSign * padTop * k - l.ScrollY * k, view.Y, padTop * k, line * k, (count + cols - 1) / cols, rows, index / cols + 1, W, H, U);
     }
 
     /// <summary>The side scroll indicator of the list in <paramref name="rectKey"/> (the hero screen's artifact list) for the card at the 0-based

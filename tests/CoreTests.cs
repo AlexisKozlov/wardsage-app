@@ -7303,6 +7303,36 @@ static partial class CoreTests {
     var stF = LocateGuide.NextArt(req, new InventoryScreen { Open = true, ArtTab = true, ArtBulkKnown = true, ArtMode = -1, ArtSelKnown = true, ArtSel = 1, Uids = new List<long>(far), List = new RFX.ListRead { ScrollY = 0, Cols = 7, RowUnits = 116, First = 0, Last = 27 } }, null);
     Check(stF.Kind == LocateKind.ArtInList && stF.Scroll == "below" && stF.ScrollRows >= 1 && stF.Row == 8, "art guide: far down the list -> scroll below (" + stF.Scroll + " " + stF.ScrollRows + ")");
 
+    // the inventory's artifact list frame (live 1.6.66.452 recording, 1366x705, U 705, the site's geometry file): the game's own selection frame of the card in column 6 of 8 had its lines at
+    // x 687.0..767.7 (80.7 wide) and y 340.9..461.8 (120.9 tall); ours was x 697 w 88 (the file's list rectangle runs 18 px past the scroll bar's left edge, 109.9 px columns instead of 107.6)
+    {
+      const double AW = 1366, AH = 705, AU = 705;
+      var ag = GameGeometry.Parse("{\"game\":\"" + GeoGame + "\",\"v\":1,\"rects\":{" + GeoBox("inventory.artList", "L:0.1938", "R:-0.4969", "T:0.1922", "B:-0.14", 1.0844, 0.6678) + ","
+        + GeoBox("inventory.scrollbar", "R:-0.5231", "R:-0.5024", "T:0.1906", "B:-0.1405", 0.0208, 0.6689) + "},\"grids\":{\"inventory.artList\":{\"cols\":1,\"lineSize\":116,\"padding\":[0,0,0,0]}}}", GeoGame);
+      var agl = new RFX.ListRead { ScrollY = 48.6, Cols = 8, RowUnits = 116, First = 0, Last = 40 };
+      var agc = ArtFrames.InvCell(ag, agl, 2 * 8 + 5, 8, AW, AH, AU);
+      Check(agc != null && agc.Mark.Kind == "box" && Math.Abs(agc.Mark.X - 687.0) <= 1.5 && Math.Abs(agc.Mark.W - 80.7) <= 1.5 && Math.Abs(agc.Mark.Y - 340.9) <= 1.5 && Math.Abs(agc.Mark.H - 120.9) <= 1.5,
+        "art list cell: the card of column 6 sits on the game's selection frame (x 687, w 80.7, y 340.9, h 120.9): " + (agc != null ? agc.Mark.X + "," + agc.Mark.Y + " " + agc.Mark.W + "x" + agc.Mark.H : "none"));
+      var agv = ArtFrames.InvView(ag, AW, AH, AU);
+      Check(Math.Abs(agv.Right - (AW - 0.5231 * AU)) < 0.01 && Math.Abs(agv.X - 0.1938 * AU) < 0.01, "art list cell: the list ends under the scroll bar's left edge (997.2), not 18 px past it");
+      var agOld = ArtFrames.Cell(ag, "inventory.artList", agl, 2 * 8 + 5, 8, 116, AW, AH, AU);
+      Check(agOld != null && agOld.Mark.X == 697 && agOld.Mark.W == 88, "art list cell: the old layout (the file's rectangle, 80 units) stood at x 697 w 88 - the shift the owner saw");
+      // the cell read: the picture (c_CardHide) 88.1 x 121.2 centred in column 6 (x 683.3), the game's selection rect, or the measured offsets from the picture
+      var pc = new UiCell { X = 683.3, Y = 340.9, W = 88.1, H = 121.2 };
+      RFX.InvArtFallback(pc);
+      Check(Math.Abs(pc.BX - 687.0) < 0.1 && Math.Abs(pc.BW - 80.7) < 0.1 && Math.Abs(pc.BY - 340.9) < 0.01 && Math.Abs(pc.BH - 121.2) < 0.01, "art card: without the game's rect the frame is 0.916 of the picture's width, centred, its height: x 687.0 w 80.7");
+      var pg = new UiCell { X = 683.3, Y = 340.9, W = 88.1, H = 121.2 };
+      Check(RFX.InvArtSelected(pg, 687.0, 340.9, 80.7, 120.9) && pg.BX == 687.0 && pg.BW == 80.7 && pg.BH == 120.9, "art card: the game's selection rect of the measured size is the card's box");
+      var pwh = new UiCell { X = 683.3, Y = 340.9, W = 88.1, H = 121.2 };
+      Check(!RFX.InvArtSelected(pwh, 673.0, 330, 107.6, 127.8) && !RFX.InvArtSelected(pwh, 800, 340, 80.7, 121), "art card: the whole cell (107.6 x 127.8) or a rect beside the picture is not the card's box");
+      // the scroll bar marker: 100 cards = 13 rows of 127.8 px, the card 21 in row 3, the view scrolled 53.5 px
+      var ast = ArtFrames.InvStrip(ag, agl, 100, 21, 8, null, AW, AH, AU);
+      double abY = 0.1906 * AU, abH = 0.6689 * AU, ap = 116 * AU / 640, adot = abY + abH * (2.5 * ap) / (13 * ap);
+      Check(ast != null && Math.Abs(ast[0] - (AW - 0.5126 * AU)) < 0.5 && Math.Abs(ast[1] - abY) < 0.5 && Math.Abs(ast[3] - adot) < 0.5 && ast.Length == 9 && ast[6] == 1 && Math.Abs(ast[7] - adot) < 0.5 && ast[8] == 1,
+        "art list strip: the marker on the scroll bar (x " + (ast != null ? ast[0].ToString("0.0") : "-") + ", dot y " + (ast != null ? ast[3].ToString("0.0") : "-") + " of " + adot.ToString("0.0") + ")");
+      Check(ArtFrames.InvStrip(null, agl, 100, 21, 8, null, AW, AH, AU) == null && ArtFrames.InvStrip(ag, new RFX.ListRead(), 100, 21, 8, null, AW, AH, AU) == null, "art list strip: no bar geometry / no scroll reading -> none");
+    }
+
     Func<long, int, int, int, long[], long[], int[], ArtWorkshopScreen> W = (uid, tab, lv, stage, mats, levels, sel) => { var w = new ArtWorkshopScreen { Open = true, Tab = tab, Uid = uid, Level = lv, Stage = stage, PanelKnown = mats != null };
       if (mats != null) { w.Mats.AddRange(mats); foreach (var l in levels) w.MatLevels.Add((int)l); foreach (var x in sel) w.MatSel.Add(x); w.MatList = new RFX.ListRead { ScrollY = 0, Cols = 3, RowUnits = 114, First = 0, Last = 8 }; } return w; };
     var matsA = new long[] { 5003, 5002, 0 }; var lvA = new long[] { 7, 1, -1 };
@@ -7367,8 +7397,8 @@ static partial class CoreTests {
     var iv = inv(u3, 1, -1, 0);
     var fCell = ArtFrames.For(stL, iv, null, null, Wd, Hd, U);
     double cellW = (1136 - (0.5231 + 0.195) * 640) / 7;
-    Check(fCell != null && fCell.Mark.Kind == "box" && Math.Abs(fCell.Mark.X - (124.8 + cellW + (cellW - 80) / 2)) <= 1.5 && Math.Abs(fCell.Mark.Y - 126) <= 1.5 && Math.Abs(fCell.Mark.W - 80) <= 1.5 && Math.Abs(fCell.Mark.H - 110) <= 1.5,
-          "art frames: the cell of place 2 is the 80 x 110 card, centred in its column (" + (fCell == null ? "none" : fCell.Mark.X + "," + fCell.Mark.Y + " " + fCell.Mark.W + "x" + fCell.Mark.H) + ")");
+    Check(fCell != null && fCell.Mark.Kind == "box" && Math.Abs(fCell.Mark.X - (124.8 + cellW + (cellW - 73.3) / 2)) <= 1.5 && Math.Abs(fCell.Mark.Y - 126) <= 1.5 && Math.Abs(fCell.Mark.W - 73.3) <= 1.5 && Math.Abs(fCell.Mark.H - 110) <= 1.5,
+          "art frames: the cell of place 2 is the card as the game's selection frame (73.3 x 110), centred in its column (" + (fCell == null ? "none" : fCell.Mark.X + "," + fCell.Mark.Y + " " + fCell.Mark.W + "x" + fCell.Mark.H) + ")");
     var ivS = inv(u3, 1, -1, 3);
     var fS = ArtFrames.For(stL, ivS, null, null, Wd, Hd, U);
     Check(fS != null && Math.Abs((fCell.Mark.Y - fS.Mark.Y) - 3) <= 1.01 && !fCell.Clickable, "art frames: the frame moves with ScrollY exactly, and is never clickable");
