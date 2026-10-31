@@ -140,7 +140,7 @@ namespace RealmForge {
 
     public AutoAction Step(AutoView v) {
       lastAct = 0; listSent = false;
-      string key = v.Slot != null ? "slot:" + v.Slot[0] + ":" + v.Slot[1] : v.Target > 0 && v.Row > 0 ? "item:" + v.Target : "";
+      string key = v.Slot != null ? "slot:" + v.Slot[0] + ":" + v.Slot[1] : v.Target > 0 && (v.Row > 0 || (v.AutoConfirm && v.Sel == v.Target)) ? "item:" + v.Target : "";
       if (key != goal) {
         // the step before ended: a slot step's duration is noted for the item step's line
         if (goal.StartsWith("slot:") && goalAt > 0) slotMs = v.NowMs - goalAt;

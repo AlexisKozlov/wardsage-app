@@ -1003,7 +1003,16 @@ namespace RealmForge {
       TickHint();
       // the held «selected» step (hint "replace", the page's guide state): «Заменить» is the only frame; the item's frame and its «pick» plate never come back
       // from the list tracking (they alternated with it on mouse moves, 1.6.66.439)
-      if (HintStepRule.ListFrameOff(hintKind)) return;
+      // (the pilot still needs the item's row and the game's selection to press «Заменить»: read here, nothing drawn)
+      if (HintStepRule.ListFrameOff(hintKind)) {
+        if (target > 0 && addrs != null) {
+          int pc; ulong pl; int pr = RFX.RowOfUid(addrs, target, out pc, out pl);
+          if (pr > 0 && pc > 0 && pl != 0) { curRow = pr; curCol = pc; }
+          long ps = RFX.ReadSel(addrs); curSel = ps; selRow = selCol = 0;
+          if (ps > 0) { int sc; ulong sl; int sr = RFX.RowOfUid(addrs, ps, out sc, out sl); if (sr > 0 && sl == pl) { selRow = sr; selCol = sc; } }
+        }
+        return;
+      }
       if (target == 0 || addrs == null) { Hide("off"); return; }
       int col; ulong list;
       int row = RFX.RowOfUid(addrs, target, out col, out list);

@@ -4156,6 +4156,20 @@ static partial class CoreTests {
     Eq("unconfirmed", c1.State, "did not go on twice -> unconfirmed, the player looks");
     Check(c1.Trace.StartsWith("confirm "), "the confirm press is traced for the journal (" + c1.Trace + ")");
 
+    // auto-confirm regression (lab 1.6.66.441): the held «replace» step draws no list frame, so the item's row is 0 - «Заменить» is still pressed fast on the live rect
+    {
+      var ac = new AutoPilot(geo); long firstAt = -1; int n = 0;
+      for (long t = 0; t < 3000; t += 50) {
+        // the guide still said «pick» for the first 200 ms (no auto confirm yet), then «replace»; the previous item's tip is closing until 100 ms
+        bool conf = t >= 200;
+        var av = new AutoView { NowMs = t, Foreground = true, H = H, Target = 5, Row = 0, Col = 0, Sel = 5, Types = types, AnchorHas = true, Row1Top = row1,
+          AutoConfirm = conf, Button = conf && t >= 100 ? rep : null, ButtonStill = true, Hero = 77, ScreenHero = 77, Owner = 0 };
+        var a = ac.Step(av);
+        if (a.Kind == AutoKind.Click) { n++; if (firstAt < 0) firstAt = t; }
+      }
+      Check(firstAt >= 0 && firstAt <= 200 + AutoPilot.ConfirmLiveMs + 100, "auto: «Заменить» pressed within ~300 ms of the tip with no list row (" + firstAt + " ms)");
+      Eq(1, n, "auto: one press");
+    }
     var c2 = new AutoPilot(geo); int p2 = 0;
     for (long t = 0; t < 3000; t += 100) if (c2.Step(cv(t, 77, 77, rep)).Kind != AutoKind.None) p2++;
     Check(p2 == 0 && c2.State == "done", "the hero already wears it (the button would be «Снять») -> never pressed");
