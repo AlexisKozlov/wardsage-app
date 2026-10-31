@@ -40,23 +40,25 @@ namespace RealmForge {
     /// <param name="listHint">a list hint draws frames over a list («Показать в игре», the storage cleanup hint)</param>
     /// <param name="listMoving">the list under the frames moved since the last read</param>
     /// <param name="inputMs">ms since the last mouse / keyboard input of anyone (the pilots' own included); &lt; 0 = not known</param>
-    public static int OverlayMs(bool job, bool diag, bool effect, bool shown, bool front, bool listHint, bool listMoving, long inputMs) {
+    /// <param name="guideActive">a storage cleanup guide (frames, the final plate) is shown: it is kept fresh whether the player moves the mouse or not (live 1.6.66.442:
+    /// the frames blinked out while the mouse stood still and came back on a mouse move)</param>
+    public static int OverlayMs(bool job, bool diag, bool effect, bool shown, bool front, bool listHint, bool listMoving, long inputMs, bool guideActive = false) {
       if (diag) return DiagMs;
       if (!job) return IdleMs;
       if (effect) return EffectMs;
       if (!shown || !front) return AwayMs;
       if (listHint && (listMoving || (inputMs >= 0 && inputMs < FollowInputMs))) return FollowMs;   // (a wheel turn moves the list before a read shows it)
-      return InputRecent(inputMs) ? ActiveMs : CalmMs;
+      return InputRecent(inputMs) || guideActive ? ActiveMs : CalmMs;
     }
 
     public static bool InputRecent(long inputMs) { return inputMs < 0 || inputMs < InputRecentMs; }
 
     /// <summary>The least gap between two reads of the game's screens (ReadScreens).</summary>
     /// <param name="away">the game is minimized or gone</param>
-    public static int ReadGapMs(bool away, bool effect, bool listMoving, long inputMs) {
+    public static int ReadGapMs(bool away, bool effect, bool listMoving, long inputMs, bool guideActive = false) {
       if (away) return AwayMs;
       if (effect || listMoving) return EffectMs - 5;
-      return InputRecent(inputMs) ? 120 : CalmMs - 10;
+      return InputRecent(inputMs) || guideActive ? 120 : CalmMs - 10;
     }
 
     /// <summary>The quick looks at the gear list between the ticks (30 ms, a screen picture each): only while someone moves the mouse or

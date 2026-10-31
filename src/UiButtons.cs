@@ -1238,9 +1238,9 @@ namespace RealmForge {
           foreach (ulong root in new[] { at, ctr })   // (the item child, then the cell: a plate that is the cell's own child is in the cell's rect)
             if (root != pic && RectUnder(root, rtr, above, canvas, W, H, U, new UiButtonInfo(), true, out ax, out ay, out aw, out ah) && aw >= 4 && ah >= 4) CellBox(c, ax, ay, aw, ah, sp.Rows && root == at);
           if (k == UiCellKind.HeroList) c.BW *= HeroCardW;   // (the card, not the root with the gap beside it)
-          if (sp.Rows) {   // the game's own yellow selection frame (c_EquipSelected, shown on a selected item) is the cell's true rect; never above the picture
-            double sx, sy, sw, sh; ulong selT = ChildNamed(at, "c_EquipSelected", 3, new List<ulong>());
-            if (!(selT != 0 && RectUnder(selT, rtr, above, canvas, W, H, U, new UiButtonInfo(), true, out sx, out sy, out sw, out sh) && CellSelected(c, sx, sy, sw, sh))) CellClampTop(c);
+          if (sp.Rows || k == UiCellKind.Inventory) {   // the game's own yellow selection frame (c_EquipSelected, shown on a selected item) is the cell's true rect; never above the picture
+            double sx, sy, sw, sh; ulong selT = ChildNamed(at, "c_EquipSelected", k == UiCellKind.Inventory ? 4 : 3, new List<ulong>());
+            if (!(selT != 0 && RectUnder(selT, rtr, above, canvas, W, H, U, new UiButtonInfo(), true, out sx, out sy, out sw, out sh) && CellSelected(c, sx, sy, sw, sh))) { if (k == UiCellKind.Inventory) InvCellFallback(c); else CellClampTop(c); }
           }
           if (icon == "c_Frame") { var ai = new UiButtonInfo(); ArtInto(Ptr(pic + CompGo), cb, ai); c.Sprite = ai.Sprite; c.Art = ai.Art; }   // (the quality frame's sprite: its visible part)
           c.InView = InViewOf(c.X, c.Y, c.W, c.H, r.VX, r.VY, r.VW, r.VH);
@@ -1278,6 +1278,14 @@ namespace RealmForge {
     /// <summary>The visible part of the game's selection rect (c_EquipSelected) in height: the rect stands 3 px below the cell's own border (live 1.6.66.440,
     /// 1366x705, a recorded cell: rect y 247 h 115, the cell's lower border at y 359.5, so 112 of 115; left, right and top lie on the rect).</summary>
     public const double SelectedH = 112.0 / 115;
+    /// <summary>The inventory's cell without a readable selection rect: the picture's width (the game's selection frame is as wide as the picture) and
+    /// <see cref="InvCellH"/> of its height, from 2 px above the picture (live 1.6.66.442 recording, 1366x705, the game's own gold frame on a selected cell:
+    /// 88.3 x 122.7 px, the picture 89.4 wide; the cell root joined with the picture gave 101 x 145, so a frame of 105 x 149 over cells 107 x 129 apart).</summary>
+    public static void InvCellFallback(UiCell c) {
+      c.BX = c.X; c.BW = c.W; c.BY = c.Y - InvCellTop; c.BH = c.W * InvCellH;
+    }
+    public const double InvCellTop = 2, InvCellH = 122.7 / 89.4;
+
     /// <summary>The hero card in width of its cell root: the root keeps the gap to the next card on its right (live 1.6.66.440, 1366x705, a recorded card:
     /// root x 210 w 81, the card's edges at x 210.8 and 286.1, so 75.4 of 81; the left edge lies on the root).</summary>
     public const double HeroCardW = 75.4 / 81;

@@ -93,7 +93,7 @@ namespace RealmForge {
       overlay.RecButton = Channel.IsTest && cfg.RecButton;
       overlay.RecPressed += () => { Log.Write("record button pressed over the game"); ToggleRec(); };
       overlay.AutoRec += tag => StartAutoRec(tag);
-      overlay.CancelText = CancelText(cfg.Lang); overlay.LocateCancelText = LocateCancelText(cfg.Lang); overlay.SellCancelText = SellCancelText(cfg.Lang);
+      overlay.CancelText = CancelText(cfg.Lang); overlay.LocateCancelText = LocateCancelText(cfg.Lang); overlay.SellCancelText = SellCancelText(cfg.Lang); overlay.SellDoneText = SellDoneText(cfg.Lang);
       coach.Lang = cfg.Lang;
       coach.PlaceX = cfg.CoachX; coach.PlaceY = cfg.CoachY;
       coach.PlaceChanged = (x, y) => { cfg.CoachX = x; cfg.CoachY = y; Save(); };
@@ -299,6 +299,8 @@ namespace RealmForge {
     static string CancelText(string lang) { return lang == "en" ? "Cancel equipping" : "Отменить надевание"; }
     static string LocateCancelText(string lang) { return lang == "en" ? "Stop auto click" : "Остановить автонажатие"; }
     static string SellCancelText(string lang) { return lang == "en" ? "Cancel storage cleanup" : "Отменить чистку склада"; }
+    /// <summary>The storage cleanup's final plate ({0} = marked items); the same words as the interface's shAll.</summary>
+    static string SellDoneText(string lang) { return lang == "en" ? "Done: {0} selected — press «Sell»" : "Готово: отмечено {0} — нажмите «Продать»"; }
 
     public void Dispose() {
       Program.FatalReport = null;
@@ -517,7 +519,7 @@ namespace RealmForge {
         switch (cmd) {
           case "init": win.PageReady(); SendState(null); CheckGame(true); PostRemote(); PostLayout(); if (updateReady != null) Post(updateReady); break;
           case "acceptTerms": cfg.TermsAccepted = AppConfig.TermsVersion; Save(); Log.Write("terms accepted: " + AppConfig.TermsVersion); break;
-          case "setLang": cfg.Lang = MiniJson.GetString(m, "lang") == "en" ? "en" : "ru"; overlay.CancelText = CancelText(cfg.Lang); overlay.LocateCancelText = LocateCancelText(cfg.Lang); overlay.SellCancelText = SellCancelText(cfg.Lang); coach.Lang = cfg.Lang; Save(); break;
+          case "setLang": cfg.Lang = MiniJson.GetString(m, "lang") == "en" ? "en" : "ru"; overlay.CancelText = CancelText(cfg.Lang); overlay.LocateCancelText = LocateCancelText(cfg.Lang); overlay.SellCancelText = SellCancelText(cfg.Lang); overlay.SellDoneText = SellDoneText(cfg.Lang); coach.Lang = cfg.Lang; Save(); break;
           case "setCode": {
             string code = SyncClient.ExtractCode(MiniJson.GetString(m, "code") ?? "");
             if (SyncClient.IsValidCode(code)) {

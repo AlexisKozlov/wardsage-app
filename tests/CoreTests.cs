@@ -4999,6 +4999,15 @@ static partial class CoreTests {
     Check(Math.Abs(mk2[4] - (200 + 600 * 500 / total)) < 0.5 && Math.Abs(mk2[3] - mk[3]) < 0.01, "list mark: scrolling moves the bracket, not the item's dot");
     Check(LocateFrames.ListMarker(g, vt + pad, vt, pad, p100, 20, 21, W, H, U) == null && LocateFrames.ListMarker(g, vt + pad, vt, pad, p100, 20, 0, W, H, U) == null, "list mark: a row outside the list -> none");
     Check(LocateFrames.ListMarker(null, vt + pad, vt, pad, p100, 20, 5, W, H, U) == null, "list mark: no geometry -> none (only the pill)");
+    {   // the storage cleanup's strip: the viewport's bracket and a dot for EACH target still to mark (a row of two targets = two dots)
+      var rowsT = new List<int> { 1, 5, 5, 20 };
+      var sv = LocateFrames.ListStrip(g, vt + pad - 500, vt, pad, p100, 20, rowsT, 20, W, H, U);
+      Check(sv != null && sv.Length == 7 + rowsT.Count && sv[6] == 1, "scroll strip: a dot for each of the 4 remaining targets (" + (sv != null ? (sv.Length - 7).ToString() : "-") + ")");
+      var mkL = LocateFrames.ListMarker(g, vt + pad - 500, vt, pad, p100, 20, 20, W, H, U);
+      Check(sv != null && Math.Abs(sv[3] - mkL[3]) < 0.01 && Math.Abs(sv[4] - mkL[4]) < 0.01 && Math.Abs(sv[5] - mkL[5]) < 0.01 && Math.Abs(sv[7] - LocateFrames.ListMarker(g, vt + pad - 500, vt, pad, p100, 20, 1, W, H, U)[3]) < 0.01 && sv[8] == sv[9],
+        "scroll strip: the viewport's bracket and the lead dot as the single marker's; every dot at its row's share; two targets of a row stand at one y");
+      Check(LocateFrames.ListStrip(g, vt + pad, vt, pad, p100, 20, new List<int>(), 1, W, H, U) == null && LocateFrames.ListStrip(null, vt + pad, vt, pad, p100, 20, rowsT, 1, W, H, U) == null, "scroll strip: no targets or no bar geometry -> none");
+    }
 
     // the side scroll strip of a live list (ListStrip): view 200..800, 20 rows of 100 px, row 0's top now at the view's top
     var ls0 = ListStrip.Of(500, 200, 800, 200, 100, 20, 19);
@@ -8157,6 +8166,68 @@ static partial class CoreTests {
     var nx = SellHint.BuildExact(bulk(), wanted, 8, double.NaN, g, W, H, U);
     Check(nx.Kind == SellHintKind.Select && nx.Frames.Count == 0 && nx.Total == 4 && nx.Selected == 0 && nx.Below == 0, "hint exact: no exact read -> no frames at all, the counts stay");
     Check(double.IsNaN(scr.Row1(g, new RFX.ListRead(), double.NaN, U)), "hint exact: an unreadable list gives NaN");
+
+    // remaining targets: the grid rows of every item still to select, in view or not (the markers on the scroll bar)
+    {
+      var tr = SellHint.Build(bulk(), wanted, 8, gridAt(0), g, W, H, U);
+      Check(tr.TodoRows.Count == 4 && tr.TodoRows[0] == 1 && tr.TodoRows[1] == 1 && tr.TodoRows[2] == 2 && tr.TodoRows[3] == 10, "final step: a marker row for each of the 4 targets (rows 1, 1, 2, 10), also the one below the view");
+      var inv3 = bulk(); inv3.Selected.Add(1001); inv3.Selected.Add(1075);
+      var tr2 = SellHint.Build(inv3, wanted, 8, gridAt(0), g, W, H, U);
+      Check(tr2.TodoRows.Count == 2 && tr2.TodoRows[0] == 1 && tr2.TodoRows[1] == 2, "final step: a marked target has no marker any more");
+      var r1 = g.ViewTopPx(U) + g.TopPad * U;
+      Eq(10, SellHint.LeadRow(tr.TodoRows, r1, g, H, U, true, false), "scroll strip: the pill's dot is the first target row below the view");
+      Eq(2, SellHint.LeadRow(tr.TodoRows, r1 - 8 * g.PitchY * U, g, H, U, false, true), "scroll strip: ... the last target row above the view when none is below");
+      Eq(1, SellHint.LeadRow(tr.TodoRows, r1, g, H, U, false, false), "scroll strip: ... the first target when all are in view");
+    }
+    // the final step: everything marked -> «Готово: отмечено N — нажмите «Продать»» and the frame on «Продать» (never a click)
+    {
+      var fin = bulk(); foreach (var u in wanted) fin.Selected.Add(u);
+      var stF = SellHint.BuildExact(fin, wanted, 8, row1At(0), g, W, H, U);
+      Check(SellHint.IsFinal(stF) && stF.Selected == 4 && stF.Frames.Count == 0 && stF.TodoRows.Count == 0, "final step: all 4 marked -> the final step, no cell frames, no markers");
+      Check(!SellHint.IsFinal(SellHint.BuildExact(bulk(), wanted, 8, row1At(0), g, W, H, U)) && !SellHint.IsFinal(null), "final step: not while a target is left");
+      fin.Selected.Add(1002);
+      Check(!SellHint.IsFinal(SellHint.Classify(fin, wanted)), "final step: a stray marked item is not the final step");
+      Eq("Готово: отмечено 4 — нажмите «Продать»", SellHint.DoneLine("Готово: отмечено {0} — нажмите «Продать»", 4), "final step: the plate's text with the count");
+      Eq("", SellHint.DoneLine("", 4), "final step: no format -> no text of its own");
+      var br = SellHint.SellBtnRect(1366, 705, Ui.Unit(1366, 705));   // measured on the recording: the button at x 820.4..996.5, y 633.7..676.3
+      Check(Math.Abs(br[0] - 820.4) <= 1 && Math.Abs(br[0] + br[2] - 996.5) <= 1 && Math.Abs(br[1] - 633.7) <= 1 && Math.Abs(br[1] + br[3] - 676.3) <= 1, "final step: «Продать»'s layout rect agrees with the measured button (" + string.Join(",", Array.ConvertAll(br, v => v.ToString())) + ")");
+      var tgt = FrameTargets.Of("inventory.sellBtn"); var tga = FrameTargets.Of("inventory.artSellBtn");
+      Check(tgt != null && tga != null && FrameTargets.Widget(tgt) != null && FrameTargets.Widget(tga) != null && Array.IndexOf(FrameTargets.OverlayKeys, "inventory.sellBtn") >= 0, "final step: «Продать» is a frame target with a live widget (both tabs)");
+    }
+    // nothing hides for idleness while a sell guide is shown (live 1.6.66.442: the frames blinked out with the mouse still, back on a mouse move)
+    {
+      Eq(LoadPlan.ActiveMs, LoadPlan.OverlayMs(true, false, false, true, true, true, false, 99999, true), "no-hide: a sell guide keeps the active tick with no input at all");
+      Eq(LoadPlan.CalmMs, LoadPlan.OverlayMs(true, false, false, true, true, true, false, 99999, false), "no-hide: without a guide the idle tick stays calm (the load plan is unchanged)");
+      Eq(120, LoadPlan.ReadGapMs(false, false, false, 99999, true), "no-hide: a sell guide keeps its reads at the active gap with the mouse still");
+      Eq(LoadPlan.CalmMs - 10, LoadPlan.ReadGapMs(false, false, false, 99999, false), "no-hide: no guide, no input: the calm read gap, as before");
+      Eq(LoadPlan.AwayMs, LoadPlan.OverlayMs(true, false, false, true, false, true, false, 99999, true), "no-hide: a game behind another window still goes to the slow tick");
+      Check(SellHint.KeepFramesInHold(0) && SellHint.KeepFramesInHold(SellHint.HoldFramesMs - 1) && !SellHint.KeepFramesInHold(SellHint.HoldFramesMs) && !SellHint.KeepFramesInHold(-1), "no-hide: a moment of an unknown screen keeps the frames for " + SellHint.HoldFramesMs + " ms, a real pop-up drops them");
+    }
+    // the cell frames of the inventory's list (live 1.6.66.442 recordings, 1366x705, 8 columns): cells 107 px apart in x and 129 in y; the game's own gold
+    // selection frame on a selected cell 88.3 x 122.7 px (the picture 88.3 wide); the cell root joined with the picture made a box of 101 x 145, so frames of
+    // 105 x 149 that overlapped the neighbours by 2 px at the sides and 20 px below
+    {
+      const double px = 107, py = 129;
+      Func<double[], double[], bool> meet = (a, b) => a[0] < b[0] + b[2] && b[0] < a[0] + a[2] && a[1] < b[1] + b[3] && b[1] < a[1] + a[3];
+      var old = new double[] { 0, 0, 105, 149 };
+      Check(meet(old, new double[] { 0, py, 105, 149 }) && 149 - py == 20 && px - 105 == 2, "cell frames: the old 105 x 149 frames overlapped the row below by 20 px and left 2 px at the sides (their stroke met the neighbour), as recorded");
+      // c_EquipSelected: the rect's visible part is 122.7 high = 112 of 115 of the rect
+      var pic = new UiCell { X = 147.3, Y = 143.4, W = 88.3, H = 88.3 };
+      pic.BX = pic.X; pic.BY = pic.Y; pic.BW = pic.W; pic.BH = pic.H;
+      Check(RFX.CellSelected(pic, 147.3, 141.4, 88.3, 122.7 * 115 / 112), "cell frames: the game's selection rect is usable for an inventory cell");
+      var fr = UiIcon.Frame(pic.BX, pic.BY, pic.BW, pic.BH, 1366, 705);
+      Check(Math.Abs(fr[2] - 92.3) < 0.1 && Math.Abs(fr[3] - 126.7) < 0.1, "cell frames: 92.3 x 126.7 px with the 2 px pad (" + fr[2].ToString("0.0") + " x " + fr[3].ToString("0.0") + ")");
+      // the fallback without a selection rect: the picture's width, 122.7 / 89.4 of it high, from 2 px above
+      var fb = new UiCell { X = 147.3, Y = 143.4, W = 89.4, H = 89.4 };
+      RFX.InvCellFallback(fb);
+      var ff = UiIcon.Frame(fb.BX, fb.BY, fb.BW, fb.BH, 1366, 705);
+      foreach (var f in new[] { fr, ff }) {
+        var cells = new List<double[]>();
+        for (int r = 0; r < 3; r++) for (int c = 0; c < 8; c++) cells.Add(new double[] { f[0] + c * px, f[1] + r * py, f[2], f[3] });
+        bool any = false; for (int i = 0; i < cells.Count; i++) for (int j = i + 1; j < cells.Count; j++) if (meet(cells[i], cells[j])) any = true;
+        Check(!any && f[2] <= px - 10 && f[3] <= py - 1.5, "cell frames: " + f[2].ToString("0.0") + " x " + f[3].ToString("0.0") + " frames of a 107 x 129 grid never meet a neighbour (gaps " + (px - f[2]).ToString("0.0") + " and " + (py - f[3]).ToString("0.0") + " px)");
+      }
+    }
 
     // smooth motion: the drawn value eases, jumps for a new list, holds a small reversal within 100 ms
     {

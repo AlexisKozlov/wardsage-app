@@ -19,7 +19,7 @@
       case 'openArtTab': r = { tone: 'info', head: t('shArtTab'), lines: [] }; break;
       case 'pressBulk': r = { tone: 'info', head: t('shBulk'), lines: [] }; break;
       case 'needPosition': r = { tone: 'info', head: t('shScrollTop'), lines: [count] }; break;
-      case 'allSelected': r = { tone: 'done', head: t('shAll'), lines: [count] }; break;
+      case 'allSelected': r = { tone: 'done', head: t('shAll', st.selected || 0), lines: [] }; break;
       case 'noneHere': r = { tone: 'warn', head: t(art ? 'shNoneArt' : 'shNone'), lines: [] }; break;
       default: r = st.extra > 0 ? { tone: 'warn', head: t(art ? 'shExtraArt' : 'shExtra'), lines: [count] } : { tone: 'info', head: t(art ? 'shSelectArt' : 'shSelect'), lines: [count] };
     }

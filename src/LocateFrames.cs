@@ -4,6 +4,7 @@
 // src/LocatePilot.cs clicks the targets that are safe to click. Without geometry (the site has no file for the game's
 // version, or the app is offline with no saved copy) every function gives null and the steps stay text hints.
 using System;
+using System.Collections.Generic;
 
 namespace RealmForge {
   /// <summary>The Foundry's right tab strip: the game hides tabs by what the account has unlocked, and the tabs left pack from
@@ -317,6 +318,26 @@ namespace RealmForge {
       double b0 = at(scroll), b1 = at(scroll + viewLen);
       if (b1 - b0 < 6) b1 = Math.Min(bar.Bottom, b0 + 6);
       return new[] { bar.CX, bar.Y, bar.Bottom, at(itemY), b0, b1 };
+    }
+
+    /// <summary>The scroll bar's strip for SEVERAL targets (the storage cleanup): {x, track top, track bottom, lead dot y, bracket top, bracket bottom, 1, dot y, ...} in
+    /// client px - the same strip as <see cref="ListMarker"/>, with the viewport's bracket and one dot for EACH row in <paramref name="targetRows"/> (a row twice =
+    /// two dots, the painter sets them side by side); element 3 is the lead dot (the pill's) of <paramref name="leadRow"/>, the dots from index 7 are every target
+    /// in the order given. Null = no geometry for the bar, or no row of the list.</summary>
+    public static double[] ListStrip(GameGeometry g, double row1, double viewTop, double topPad, double pitch, int rows, IList<int> targetRows, int leadRow, double W, double H, double U) {
+      if (targetRows == null || targetRows.Count == 0) return null;
+      double[] first = null; var dots = new List<double>();
+      foreach (int r in targetRows) {
+        var m = ListMarker(g, row1, viewTop, topPad, pitch, rows, r, W, H, U);
+        if (m == null) continue;
+        if (first == null) first = m;
+        dots.Add(m[3]);
+      }
+      if (first == null) return null;
+      var lead = ListMarker(g, row1, viewTop, topPad, pitch, rows, leadRow, W, H, U) ?? first;
+      var res = new List<double> { first[0], first[1], first[2], lead[3], first[4], first[5], 1 };
+      res.AddRange(dots);
+      return res.ToArray();
     }
 
     // the exact scroll is unreadable but the game's own cell range says the item is above / below: only the pill, at the viewport edge

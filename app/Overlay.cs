@@ -361,6 +361,12 @@ namespace RealmForge {
     InventoryScreen shInv; bool shHave; string shReadSig = ""; long shReadAt;
     int shCols = 8, shGeoCols; double shGeoW, shGeoH; SellGeometry shGeo;
     List<SellFrame> shFrames; string shKey = "";
+    /// <summary>The final plate's format ("Готово: отмечено {0} — нажмите «Продать»", the interface's language; set by the host): every target is marked.</summary>
+    public string SellDoneText = "";
+    /// <summary>The final step is shown (everything is marked): the stop plate «Отменить чистку склада» goes away.</summary>
+    bool sellFinal;
+    // the last scene of the hint's frames (kept for a moment when the screen reads unknown, see SellHint.KeepFramesInHold)
+    List<int[]> shLastMarks; double[] shLastStrip; Plate shLastPill; int[] shLastPt;
     /// <summary>The hint's step changed (kind, counts, rows out of view): the page shows it and answers with the plate texts.</summary>
     public event Action<SellHintStep> SellHintChanged;
 
@@ -622,10 +628,11 @@ namespace RealmForge {
       artSellBtnAt = 0; artSellSaid = "";
       if (wasHint || sellHint) {
         // a hint run starts (or ends) clean: no frames, no plate, the rows' place unknown
-        sgrid.Reset(); shInv = null; shHave = false; shReadSig = ""; shReadAt = 0; shFrames = null; shKey = ""; shLast = null; shUnkSince = -1; shHold = false;
+        sgrid.Reset(); shInv = null; shHave = false; shReadSig = ""; shReadAt = 0; shFrames = null; shKey = ""; shLast = null; shUnkSince = -1; shHold = false; shLastMarks = null; shLastStrip = null; shLastPill = null; shLastPt = null;
         sellHintLines = new string[0]; sellPillUp = sellPillDown = "";
         Hide("off"); HideTip();
       }
+      sellFinal = false;
       sellLevels = levels;
       sellWanted = uids != null && uids.Count > 0 ? new System.Collections.Generic.HashSet<long>(uids) : null;
       sellParts = parts != null && parts.Count > 0 ? new System.Collections.Generic.HashSet<int>(parts) : null;
@@ -818,7 +825,7 @@ namespace RealmForge {
       IntPtr tw = GameWindow();
       bool twShown = tw != IntPtr.Zero && W32.IsWindowVisible(tw) && !W32.IsIconic(tw), twFront = twShown && IsForeground(tw);
       bool effect = gate.AnyPending || SellPolling || EquipHot;
-      int wantInterval = LoadPlan.OverlayMs(ScreensWanted(), DateTime.Now < diagUntil, effect, twShown, twFront, LocateWins || (sellHint && sellWanted != null), listMoving, inputAge);
+      int wantInterval = LoadPlan.OverlayMs(ScreensWanted(), DateTime.Now < diagUntil, effect, twShown, twFront, LocateWins || (sellHint && sellWanted != null), listMoving, inputAge, SellGuideShown);
       if (timer.Interval != wantInterval) timer.Interval = wantInterval;
       loadMode = !ScreensWanted() ? "idle" : !twShown || !twFront ? "away" : effect || EquipClicking || SellClicking || (LocateWins && LocateClicking) ? "pilot" : "hint";
       if (Channel.IsTest) { long tn = NowMs(); if (modeAt != 0 && tn - modeAt > 0 && tn - modeAt < 5000) modeMs[loadMode == "away" ? 0 : loadMode == "hint" ? 1 : loadMode == "pilot" ? 2 : 3] += tn - modeAt; modeAt = tn; }
@@ -830,6 +837,7 @@ namespace RealmForge {
       if (!GameDrawable()) { if (glow.Visible) glow.Hide(); HideTip(); drawnKey = null; }
       if (LocateWins) { TickLocate(); TickCancel(); return; }
       if (sellHint && sellWanted != null) { TickSellHint(); TickArtSellAuto(); TickCancel(); return; }
+      if (sellWanted != null && spilot.State == "done") { TickAuto(); TickSellFinalAuto(); TickCancel(); return; }   // the auto run marked everything: the final plate and the frame on «Продать»
       TickFrame();
       TickAuto();
       TickCancel();
@@ -837,8 +845,11 @@ namespace RealmForge {
 
     // «Отменить надевание»: top centre of the game (free on the hero screen and in the gear list), only while a started
     // build is on and the game is in front
+    /// <summary>A storage cleanup guide is on the screen (the hint's frames and plates, or the final plate after the auto run): its reads stay active (LoadPlan), nothing hides for idleness.</summary>
+    bool SellGuideShown { get { return sellWanted != null && (sellHint || spilot.State == "done"); } }
+
     /// <summary>The storage cleanup's auto click is running (not halted, not finished): the stop button is shown for it.</summary>
-    bool SellClicking { get { return sellWanted != null && (!sellHint || (sellArt && ArtAutoOn)) && runHero <= 0 && !LocateWins && !gate.Halted(ClickOwner.Sell) && spilot.State != "done" && spilot.State != "failed"; } }
+    bool SellClicking { get { return sellWanted != null && !sellFinal && (!sellHint || (sellArt && ArtAutoOn)) && runHero <= 0 && !LocateWins && !gate.Halted(ClickOwner.Sell) && spilot.State != "done" && spilot.State != "failed"; } }
 
     /// <summary>The artifact flows (storage cleanup, promotion) may click: the player's auto click AND the site's "artAuto" switch (off by default).</summary>
     public bool ArtAutoEnabled;
@@ -1771,6 +1782,10 @@ namespace RealmForge {
           var m = m0;
           var ms = m[4] != 1 && !(m[4] == 0 && GuideStyle) ? FrameSpec(null, m[0], m[1], m[2], m[3], m[4] == 2 ? FrameStyle.Red : FrameStyle.Gold, FrameStyle.Gap(m[0], m[1], m[2], m[3], mo)) : null;
           add(m[0], m[1], m[2], m[3], "mark" + m[4], (g, ox, oy, bw, bh, f) => PaintMark(g, m[0] - ox, m[1] - oy, m[2], m[3], m[4], Gm, ms, ox, oy));
+          if (m[4] == 0 && !GuideStyle) {   // the owl badge on the frames to mark, as on every other hint frame
+            var at = FrameStyle.OwlAt(m[0], m[1], m[2], m[3], sy);
+            add((int)at[0] - 9, (int)at[1] - 9, 18, 18, "owl", (g, ox, oy, bw, bh, f) => PaintOwl(g, at, ox, oy));
+          }
           if (ms != null) pulseSpecs.Add(ms);
         }
       }
@@ -1861,8 +1876,15 @@ namespace RealmForge {
         }
         return;
       }
-      // style 2: the same branded frame in red (no owl)
+      // style 2: the same branded frame in red (no owl), and a clear red ✕ badge in the cell's top right corner: this item is marked but is not on the list
       PaintFrame(gr, sp, ox, oy);
+      float br = Math.Max(9f, Math.Min(w, h) * 0.14f), bx = x + w - br - 4, by = y + br + 4;
+      using (var bg = new SolidBrush(Color.FromArgb(240, 150, 22, 22))) gr.FillEllipse(bg, bx - br, by - br, 2 * br, 2 * br);
+      using (var rim = new Pen(Color.FromArgb(255, 255, 214, 214), 1.8f)) gr.DrawEllipse(rim, bx - br, by - br, 2 * br, 2 * br);
+      using (var cross = new Pen(Color.FromArgb(255, 255, 255, 255), Math.Max(2.4f, br * 0.26f)) { StartCap = LineCap.Round, EndCap = LineCap.Round }) {
+        float k = br * 0.45f;
+        gr.DrawLine(cross, bx - k, by - k, bx + k, by + k); gr.DrawLine(cross, bx - k, by + k, bx + k, by - k);
+      }
     }
 
     // ---------------------------------------------------------------- auto-pilot
@@ -2201,12 +2223,19 @@ namespace RealmForge {
       shFrames = shHold ? new List<SellFrame>() : step.Frames;
       string key = step.FullKey;
       if (key != shKey) { shKey = key; var h = SellHintChanged; if (h != null) h(step); }
+      sellFinal = !shHold && SellHint.IsFinal(step);
 
       if (!GameDrawable(true)) { SellHintHide(); return; }
       bool haveText = sellHintLines.Length > 0;
       double vt = shGeo.ViewTopPx(U), vb = shGeo.ViewBottomPx(H, U);
       int gx = (int)shGeo.X(shGeo.X0, W, U), gw = (int)(shGeo.PitchX * (shCols - 1) * U + shGeo.CellW * U);
-      if (!shHold && (step.Kind == SellHintKind.Select || step.Kind == SellHintKind.AllSelected)) {
+      // a moment of «unknown» screen (a read that came late): the frames stay for a short time with the plate, they never blink out while the player holds still
+      if (shHold && SellHint.KeepFramesInHold(now - shUnkSince) && shLastMarks != null) {
+        Scene(glow, ref drawnKey, null, shLastPill, shLastPt, shLastStrip, shLastMarks);
+        if (haveText) DrawTipTop(sellHintLines, null, null, false); else HideTip();
+        return;
+      }
+      if (!shHold && step.Kind == SellHintKind.Select) {
         var marks = new List<int[]>();
         var wantU = new List<long>(); foreach (var fr in step.Frames) if (fr.Uid > 0) wantU.Add(fr.Uid);
         foreach (var fr in step.Frames) {   // each cell where the game has put it (live, fresh): its picture framed; out of the viewport or covered: none
@@ -2221,16 +2250,27 @@ namespace RealmForge {
         Plate pill = null; int[] pt = null;
         if (step.Below > 0 && sellPillDown != "") { pill = new Plate { Pill = true, Main = sellPillDown }; pt = new[] { o.X + gx, o.Y + (int)vb - 2, (int)(shGeo.CellW * U), 2 }; }
         else if (step.Above > 0 && sellPillUp != "") { pill = new Plate { Pill = true, Main = sellPillUp }; pt = new[] { o.X + gx, o.Y + (int)vt, (int)(shGeo.CellW * U), 2 }; }
-        Scene(glow, ref drawnKey, null, pill, pt, null, marks);
+        // the list's scroll bar: the viewport and a dot for EACH target still to mark (the inventory's list; the artifact list has no bar geometry)
+        double[] strip = null;
+        if (!art && !double.IsNaN(row1) && step.TodoRows.Count > 0) {
+          var sv = LocateFrames.ListStrip(Geo.Current, row1, vt, shGeo.TopPad * U, shGeo.PitchY * U, (inv.Uids.Count + shCols - 1) / shCols, step.TodoRows,
+            SellHint.LeadRow(step.TodoRows, row1, shGeo, H, U, step.Below > 0, step.Above > 0), W, H, U);
+          if (sv != null) { strip = new double[sv.Length]; for (int i = 0; i < sv.Length; i++) strip[i] = i == 0 ? o.X + sv[i] : i == 6 ? sv[i] : o.Y + sv[i]; }
+          if (strip != null && pill != null) pt = null;
+        }
+        shLastMarks = marks; shLastStrip = strip; shLastPill = pill; shLastPt = pt;
+        Scene(glow, ref drawnKey, null, pill, pt, strip, marks);
         // the step's plate above the list
         // (the plate in the free top centre of the window: above the list lie the inventory's tabs, the cells' own frames never meet it)
         if (haveText) DrawTipTop(sellHintLines, null, null, SellHint.Warn(step)); else HideTip();
         return;
       }
       if (glow.Visible) glow.Hide();
-      drawnKey = null;
-      if (!haveText) { HideTip(); return; }
+      drawnKey = null; shLastMarks = null;
+      if (shHold && !haveText) { HideTip(); return; }
       if (shHold) { DrawTipTop(sellHintLines); return; }   // held: the plate only
+      if (SellHint.IsFinal(step)) { DrawSellFinal(o, W, H, U, art, step.Selected, sellHintLines); return; }   // everything is marked: the plate and the frame on «Продать»
+      if (!haveText) { HideTip(); return; }
       if (step.Kind == SellHintKind.PressBulk) {
         // «Массовая продажа» under the list (bottom left): where the auto mode clicks
         bool pl; var pb = FrameForI(art ? "inventory.artBulkSell" : "inventory.bulkSell", art ? SellHint.ArtBulkRect(W, H, U) : SellHint.PressBulkRect(W, H, U), W, H, U, out pl);
@@ -2253,6 +2293,33 @@ namespace RealmForge {
         return;
       }
       DrawTipTop(sellHintLines);   // no target on screen: the plate at the top centre
+    }
+
+    /// <summary>The final step of the storage cleanup (the player marked everything, or the auto run did): «Готово: отмечено N — нажмите «Продать»» and the gold branded
+    /// frame on the live «Продать» button. A frame only: the app never presses «Продать» (nothing here clicks).</summary>
+    void DrawSellFinal(W32.POINT o, double W, double H, double U, bool art, int selected, string[] fallback) {
+      string line = SellHint.DoneLine(SellDoneText, selected);
+      string[] lines = line != "" ? new[] { line } : fallback;
+      bool pl; var pb = FrameForI(art ? "inventory.artSellBtn" : "inventory.sellBtn", SellHint.SellBtnRect(W, H, U), W, H, U, out pl);
+      frame++;
+      if (lines == null || lines.Length == 0) { HideTip(); return; }
+      DrawTip(o.X + pb[0], o.Y + pb[1], pb[2], pb[3], lines, H);
+    }
+
+    // The auto run ended (the pilot's state is «done»): the same final step as the hint's, from the screen read of this tick; nothing is clicked.
+    void TickSellFinalAuto() {
+      IntPtr hwnd = GameWindow(); W32.RECT cr = new W32.RECT();
+      if (hwnd == IntPtr.Zero || W32.IsIconic(hwnd) || !W32.GetClientRect(hwnd, out cr) || cr.B < 200) { SellHintHide(); return; }
+      var o = new W32.POINT(0, 0); W32.ClientToScreen(hwnd, ref o);
+      double W = cr.R, H = cr.B, U = Ui.Unit(W, H);
+      SceneArea(o, cr);
+      var scr = screens.Current; var inv = scr != null && scr.Kind == ScreenKind.Inventory ? screens.Inv : null;
+      var step = SellHint.Classify(inv, sellWanted, false);
+      sellFinal = SellHint.IsFinal(step);
+      if (!sellFinal || !GameDrawable(true)) { if (glow.Visible) glow.Hide(); drawnKey = null; HideTip(); return; }
+      if (glow.Visible) glow.Hide();
+      drawnKey = null;
+      DrawSellFinal(o, W, H, U, false, step.Selected, null);
     }
 
     // ---------------------------------------------------------------- «Найти в игре»
@@ -2915,7 +2982,7 @@ namespace RealmForge {
       RFX.EnsureLiveForGuides();   // the readers' basis (handle, regions, live tables) without waiting for the first account read; throttled and off-thread
       // every 120 ms; 50 ms while a pilot's click awaits its effect (the expected field is polled until it changes); once a second while the
       // game is minimised or gone (nothing to click, nothing to draw)
-      int readGap = LoadPlan.ReadGapMs(gameAway, gate.AnyPending || SellPolling || EquipHot, listMoving, inputAge);   // (a list that moves: read until it settles; nobody touching anything: 240 ms)
+      int readGap = LoadPlan.ReadGapMs(gameAway, gate.AnyPending || SellPolling || EquipHot, listMoving, inputAge, SellGuideShown);   // (a list that moves: read until it settles; nobody touching anything: 240 ms)
       if (screens.Current != null && now >= screenReadAt && now - screenReadAt < readGap) return;
       screenReadAt = now;
       long rs0 = LoadMeter.Now();

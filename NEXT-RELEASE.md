@@ -9,7 +9,10 @@ this list) → `node tools/build.mjs` → `bash tools/build-app.sh` → `bash ..
 ProductVersion → `node tools/release-app.mjs --key D:/RealmForge/keys/realmforge-update-key.pem --web ../realmforge-web` (the notes come from
 `tools/.release-notes.json`; `--ru` / `--en` override them) → commit both repos.
 
-Optional `### Heading` lines inside a `## RU` / `## EN` section split the update window's notes into titled groups (the headings are left out of the «What's new» page).
+Optional `### Heading` lines inside a `## RU` / `
+- Чистка склада: когда всё отмечено (само или вами), программа пишет «Готово: отмечено N — нажмите «Продать»» и обводит кнопку «Продать» (нажимаете вы); рамки на вещах точно по размеру ячеек, без наложения; на полосе прокрутки списка видны отметки всех оставшихся вещей; лишняя отметка — красная рамка с крестиком; подсказки не мигают, пока вы не двигаете мышь.
+
+## EN` section split the update window's notes into titled groups (the headings are left out of the «What's new» page).
 
 ## Проверить в игре (до выпуска «Найти в игре», следующая версия)
 
@@ -230,3 +233,4 @@ version …: from the site» или «saved copy»). Без файла оста�
 - If a step fails, the app tries again instead of stopping right away.
 - Highlight frames sit exactly on buttons and icons, and hints are more compact.
 - Lower CPU load, and the app never clicks near purchase buttons; when it starts working, the game window comes to the front.
+- Storage cleanup: once everything is marked (by the app or by you) the app says «Done: N selected — press «Sell»» and frames the «Sell» button (you press it); item frames match the cells and no longer overlap; the list's scroll bar shows a marker for every remaining item; a wrongly marked item gets a red frame with a ✕; hints no longer blink out while the mouse is still.

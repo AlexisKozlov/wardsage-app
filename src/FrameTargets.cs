@@ -101,6 +101,8 @@ namespace RealmForge {
       B("inventory.gem", "Form_BackpackIntegration", Bpi + "LeftBottomBtnGroup/Right/m_BtnGem");
       B("inventory.bulkSell", "Form_BackpackIntegration", Bpi + "LeftBottomBtnGroup/Left/m_BtnBatchSell", "-");
       B("inventory.artBulkSell", "Form_BackpackIntegration", "Main_Frame/m_ParentPanel/Panel_ArtifactPanel/LeftBottomBtnGroup/Left/m_BtnBatchSell", "-", "", "prefab");
+      B("inventory.sellBtn", "Form_BackpackIntegration", Bpi + "LeftBottomBtnGroup/Right/m_BtnSell", "-");   // «Продать» of the bulk-sale mode: framed only, the app never presses it
+      B("inventory.artSellBtn", "Form_BackpackIntegration", "Main_Frame/m_ParentPanel/Panel_ArtifactPanel/LeftBottomBtnGroup/Right/m_BtnSell", "-");
       B("inventory.bulkBack", "Form_BackpackIntegration", Bpi + "LeftBottomBtnGroup/Left/m_BtnBack", "-", "", "geometry");
       B("inventory.cardLeft", "Form_BackpackIntegration", Bpi + "LeftLayout/m_Info/c_Button/c_LeftBtn", "", "", "geometry");
       B("inventory.cardSolo", "Form_BackpackIntegration", Bpi + "LeftLayout/m_Info/c_Button/c_LeftBtn", "", "", "geometry");
@@ -170,7 +172,7 @@ namespace RealmForge {
     public const string KeyCityHeroes = "city.heroes", KeyHeroBack = "hero.back", KeyConfirm = "hero.confirm";
     /// <summary>The keys app/Overlay.cs frames by name (besides the steps' own keys of src/LocateFrames.cs and src/ArtEquip.cs).</summary>
     public static readonly string[] OverlayKeys = { KeyCityHeroes, KeyHeroBack, KeyConfirm, "hero.filter", "hero.tab.equip", "hero.filterClose", "inventory.bulkBack",
-      "inventory.bulkSell", "inventory.artBulkSell", "inventory.leftTab.artifact", "hero.slot.0", "hero.slot.1", "hero.slot.2", "hero.slot.3", "hero.slot.4" };
+      "inventory.bulkSell", "inventory.artBulkSell", "inventory.sellBtn", "inventory.artSellBtn", "inventory.leftTab.artifact", "hero.slot.0", "hero.slot.1", "hero.slot.2", "hero.slot.3", "hero.slot.4" };
 
     public static IList<FrameTarget> All { get { return all; } }
     public static FrameTarget Of(string key) { FrameTarget t; return key != null && byKey.TryGetValue(key, out t) ? t : null; }

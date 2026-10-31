@@ -31,6 +31,8 @@ namespace RealmForge {
     public int Selected, Total, Missing, Extra;
     /// <summary>List items still to select that are out of view below / above.</summary>
     public int Below, Above;
+    /// <summary>The grid row (1-based) of EVERY list item still to select, in or out of view, ascending: the markers on the list's scroll bar.</summary>
+    public List<int> TodoRows = new List<int>();
     public List<SellFrame> Frames = new List<SellFrame>();
     /// <summary>The page's key of the step (ui/sellhint.js).</summary>
     public string Key { get { string k = Kind.ToString(); return k.Substring(0, 1).ToLowerInvariant() + k.Substring(1); } }
@@ -239,12 +241,47 @@ namespace RealmForge {
         bool wantedItem = want.Contains(u), selected = inv.Selected.Contains(u);
         var mark = grid.Place(g, i / cols + 1, i % cols + 1, W, H, U);
         string style = !wantedItem ? "extra" : selected ? "done" : "todo";
+        if (style == "todo") st.TodoRows.Add(i / cols + 1);
         if (mark.Kind == "box") st.Frames.Add(new SellFrame { Uid = u, Style = style, X = mark.X, Y = mark.Y, W = mark.W, H = mark.H });
         else if (style == "todo") { if (mark.Kind == "down") st.Below++; else st.Above++; }
       }
       st.Frames.Sort(delegate (SellFrame a, SellFrame b) { int c = a.Y.CompareTo(b.Y); return c != 0 ? c : a.X.CompareTo(b.X); });
+      st.TodoRows.Sort();
       return st;
     }
+
+    /// <summary>The row (1-based) whose dot on the scroll bar carries the pill: the first target row below the viewport when some are below, else the last one above, else
+    /// the first target. <paramref name="row1"/> = client y of row 1's top.</summary>
+    public static int LeadRow(IList<int> rows, double row1, SellGeometry g, double H, double U, bool below, bool above) {
+      if (rows == null || rows.Count == 0 || g == null) return 0;
+      double vt = g.ViewTopPx(U), vb = g.ViewBottomPx(H, U), pitch = g.PitchY * U, half = g.CellHeight * U / 2;
+      if (below) { foreach (int r in rows) if (row1 + (r - 1) * pitch + half > vb) return r; }
+      else if (above) { for (int i = rows.Count - 1; i >= 0; i--) if (row1 + (rows[i] - 1) * pitch + half < vt) return rows[i]; }
+      return rows[0];
+    }
+
+    /// <summary>The last step: every target is marked (by the pilot or by the player), the player presses «Продать» (the app never does).</summary>
+    public static bool IsFinal(SellHintStep st) { return st != null && st.Kind == SellHintKind.AllSelected; }
+
+    /// <summary>The final plate's text from the interface's format ("Готово: отмечено {0} — нажмите «Продать»"); the count of marked items.</summary>
+    public static string DoneLine(string format, int selected) {
+      if (string.IsNullOrEmpty(format)) return "";
+      try { return string.Format(System.Globalization.CultureInfo.InvariantCulture, format, selected); } catch (FormatException) { return format; }
+    }
+
+    /// <summary>How long the frames stay drawn while the screen reads «unknown» for a moment (a read that came late, a form being searched): a
+    /// hold shorter than this keeps the frames and the plate, so nothing blinks while the player holds still; a longer one (a real pop-up) drops the frames.</summary>
+    public const long HoldFramesMs = 1500;
+    public static bool KeepFramesInHold(long holdMs) { return holdMs >= 0 && holdMs < HoldFramesMs; }
+
+    /// <summary>«Продать» in the bulk-sale mode (bottom right, the layout's numbers when the live rect is not read): {x, y, w, h} in client px. Measured on a
+    /// recording of build 1.6.66.442 (1366x705): the button's edges at x 820.4..996.5 and y 633.7..676.3, i.e. 0.649 U from the right edge to its centre,
+    /// 0.0709 U from the bottom, 0.2497 x 0.0606 U.</summary>
+    public static int[] SellBtnRect(double W, double H, double U) {
+      double bw = SellBtnW * U, bh = SellBtnH * U;
+      return new[] { (int)Math.Round(W - SellBtnRight * U - bw / 2), (int)Math.Round(H - SellBtnBottom * U - bh / 2), (int)Math.Round(bw), (int)Math.Round(bh) };
+    }
+    public const double SellBtnW = 0.2497, SellBtnH = 0.0606, SellBtnRight = 0.649, SellBtnBottom = 0.0709;
 
     /// <summary>The frame of «Массовая продажа» under the list (bottom left), where the auto mode clicks: {x, y, w, h} in client px.</summary>
     public static int[] PressBulkRect(double W, double H, double U) {

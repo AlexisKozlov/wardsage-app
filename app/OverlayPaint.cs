@@ -118,6 +118,17 @@ namespace RealmForge {
       for (int i = 3; i >= 1; i--) using (var glowB = new SolidBrush(Color.FromArgb((int)(60 * pulse), 255, 190, 60))) gr.FillEllipse(glowB, x - r - 2 * i, dot - r - 2 * i, 2 * (r + 2 * i), 2 * (r + 2 * i));
       using (var g2 = new SolidBrush(Color.FromArgb(255, 255, 214, 110))) gr.FillEllipse(g2, x - r, dot - r, 2 * r, 2 * r);
       using (var pen = new Pen(Color.FromArgb(230, 60, 36, 6), 1.5f)) gr.DrawEllipse(pen, x - r, dot - r, 2 * r, 2 * r);
+      // the storage cleanup: one small dot for EACH target still to mark (s[7..] = their y); targets of one row stand side by side
+      if (s.Length > 7) {
+        float rr = (float)Math.Max(3.5, 0.0055 * U); var ys = new List<float>();
+        using (var fill = new SolidBrush(Color.FromArgb(255, 255, 214, 110))) using (var rim = new Pen(Color.FromArgb(230, 60, 36, 6), 1f))
+          for (int i = 7; i < s.Length; i++) {
+            float y = (float)s[i] - oy; int same = 0; foreach (float v in ys) if (Math.Abs(v - y) < 1.5f) same++;
+            ys.Add(y);
+            float dx = same == 0 ? 0 : Math.Max(-11f, Math.Min(11f, ((same + 1) / 2) * 2.2f * rr * (same % 2 == 1 ? 1 : -1)));  // (kept inside the strip's window)
+            gr.FillEllipse(fill, x + dx - rr, y - rr, 2 * rr, 2 * rr); gr.DrawEllipse(rim, x + dx - rr, y - rr, 2 * rr, 2 * rr);
+          }
+      }
     }
 
     static Image owlTex;

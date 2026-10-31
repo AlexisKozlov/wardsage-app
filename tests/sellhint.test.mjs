@@ -23,7 +23,8 @@ for (const lang of ['ru', 'en']) {
   ok(sel.lines[0].includes('3') && sel.lines[0].includes('12'), lang + ': the counter says 3 of 12');
   ok(sel.head === T[lang].shSelect && sel.tone === 'info', lang + ': select step');
   ok(SH.describe(st({ step: 'allSelected', selected: 12 }), t).tone === 'done', lang + ': all selected is done');
-  ok(SH.describe(st({ step: 'allSelected', selected: 12 }), t).head === T[lang].shAll, lang + ': all selected -> press Sell');
+  ok(SH.describe(st({ step: 'allSelected', selected: 12 }), t).head === T[lang].shAll.replace('{0}', '12'), lang + ': all selected -> press Sell, with the count');
+  ok(SH.describe(st({ step: 'allSelected', selected: 12 }), t).tip.length === 1 && SH.describe(st({ step: 'allSelected', selected: 12 }), t).head.includes('12'), lang + ': the final plate is one line with the number marked');
   const ex = SH.describe(st({ extra: 1 }), t);
   ok(ex.tone === 'warn' && ex.head === T[lang].shExtra, lang + ': a stray item -> warning');
   // the scroll pills: only while items are left to select
@@ -44,7 +45,7 @@ for (const lang of ['ru', 'en']) {
   ok(SH.describe(st(), t, 'artifact').head === T[lang].shSelectArt, lang + ': tick the framed artifacts');
   ok(SH.describe(st({ extra: 1 }), t, 'artifact').head === T[lang].shExtraArt && SH.describe(st({ extra: 1 }), t, 'artifact').tone === 'warn', lang + ': a stray artifact -> warning');
   ok(SH.describe(st({ step: 'noneHere' }), t, 'artifact').head === T[lang].shNoneArt, lang + ': none here');
-  ok(SH.describe(st({ step: 'allSelected', selected: 3 }), t, 'artifact').head === T[lang].shAll, lang + ': all ticked -> press Sell (same words)');
+  ok(SH.describe(st({ step: 'allSelected', selected: 3 }), t, 'artifact').head === T[lang].shAll.replace('{0}', '3'), lang + ': all ticked -> press Sell (same words)');
   ok(SH.describe(st({ below: 4 }), t, 'artifact').pillDown.includes('4'), lang + ': the scroll pill for artifacts');
   ok(SH.describe(st(), t).head === T[lang].shSelect && SH.describe(st({ step: 'noneHere' }), t, 'equip').head === T[lang].shNone, lang + ': gear words unchanged');
   for (const k of SH.KINDS) {
@@ -55,7 +56,7 @@ for (const lang of ['ru', 'en']) {
 }
 // the texts asked for
 ok(T.ru.sellHintLead === 'Программа покажет рамками, какие вещи отметить; отмечаете вы сами.', 'ru: lead text');
-ok(T.ru.shAll === 'Все отмечены — нажмите «Продать»' && T.ru.shExtra === 'Эта вещь не из списка — снимите с неё отметку' && T.en.shExtra === 'This item is not on the list — untick it', 'ru/en: step texts');
+ok(T.ru.shAll === 'Готово: отмечено {0} — нажмите «Продать»' && T.en.shAll === 'Done: {0} selected — press «Sell»' && T.ru.shExtra === 'Эта вещь не из списка — снимите с неё отметку' && T.en.shExtra === 'This item is not on the list — untick it', 'ru/en: step texts');
 // both languages have the same keys
 for (const k of Object.keys(T.ru).filter((x) => /^(sellHint|sh[A-Z])/.test(x))) ok(k in T.en, 'en has ' + k);
 for (const k of Object.keys(T.en).filter((x) => /^(sellHint|sh[A-Z])/.test(x))) ok(k in T.ru, 'ru has ' + k);
