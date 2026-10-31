@@ -10,6 +10,12 @@
 # than $RunnerVersion it downloads WardsageLab.ps1, checks size, sha256 and the RSA signature against the pinned keys (the same
 # check as update_app), replaces its own file atomically and starts itself again. The server cannot send code through a job.
 #
+# Idle gate (v22): no job is claimed before the laptop had no physical user input for $IdleStartSec s (GetLastInputInfo). Input the test
+# app itself injected (its pilot's clicks and keys, which the runner sees as "click gate ..." lines of the app log with their own
+# time stamps) and the cursor where the pilot left it do not count. During a run any other input (or the cursor away from where the pilot
+# left it) aborts it: the job in hand ends with error user_busy, a recording and an explorer run are stopped (the app's stop command also
+# turns the hint mode off), the state goes to the server in the heartbeat (status.input = idle | user_busy | running, idle_s) at once.
+#
 # What it never does: click or type anywhere, open a shell for the server, run anything the server sends, or let a job
 # value reach a command line or a file path. The jobs are only:
 #   status | update_app | start_game | restart_app | game_front | update_runner | screenshot | upload_logs | finish | cancel | mark
@@ -23,7 +29,7 @@ Set-StrictMode -Version 2
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$RunnerVersion   = '21'
+$RunnerVersion   = '22'
 $Dir             = Join-Path $env:LOCALAPPDATA 'WardsageLab'
 $StopFile        = Join-Path $Dir 'STOP'
 $LogFile         = Join-Path $Dir 'runner.log'
@@ -40,6 +46,9 @@ $SelfCheckMin    = 2          # runner self-update check interval (minutes; the 
 $MaxRunnerBytes  = 512KB
 $GameWaitSec     = 180        # start_game: max wait for the game process + main window
 $GameStableSec   = 120        # start_game: the game must stay up this long (it may exit when it needs its launcher)
+$IdleStartSec    = 60         # a run starts only after this long without PHYSICAL user input (owner decision: 1 min)
+$UserBackoffSec  = 60         # after an abort for user input: no new job for this long, and not before the next input-free $IdleStartSec
+$LiveMaxMin      = 12         # a run counts as live this long after its last run job (the server may wait ~10 min for a scenario without a job)
 
 function Write-Log([string]$msg) {
     try {
@@ -153,7 +162,7 @@ function Get-Status {
         app_version = (Get-AppVersion); busy = $script:Busy; up_min = [int]((Get-Date) - $script:Started).TotalMinutes
         log_at = $script:LogAt; log_lines = $script:LogCount; ready = $script:LogReady
         stop = $script:LogStop; stop_at = $script:LogStopAt; pilot_at = $script:PilotAt; mark_at = $script:MarkAt; pilot_line = $script:PilotLine; log_off = $script:LogOff; log_err = $script:LogErr; done = $script:LogFin
-        fin_line = $script:FinLine; never = $script:LogNever
+        fin_line = $script:FinLine; never = $script:LogNever; input = $script:InState; idle_s = (Get-IdleSec)
     }
 }
 function ConvertTo-StatusJson($st) {
@@ -280,6 +289,96 @@ function Invoke-UpdateApp {
     $meta = '{"version":"' + $ver + '","url":' + ($mUrl | ConvertTo-Json -Compress) + ',"size":' + $size + ',"sha256":"' + $hex + '","sig":"' + $mSig + '","notes":' + $notes + '}'
     [IO.File]::WriteAllText((Join-Path $upd ('Wardsage-Test-' + $ver + '.json')), $meta, (New-Object Text.UTF8Encoding($false)))
     return @{ ok = $true; res = @{ updated = $true; version = $ver; installed = $installed } }
+}
+
+# ---------------------------------------------------------------- idle gate: physical user input (read-only: GetLastInputInfo, GetCursorPos)
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class LabInput {
+    [StructLayout(LayoutKind.Sequential)] struct LASTINPUTINFO { public uint cbSize; public uint dwTime; }
+    [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X, Y; }
+    [DllImport("user32.dll")] static extern bool GetLastInputInfo(ref LASTINPUTINFO i);
+    [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p);
+    public static long LastTick() { LASTINPUTINFO li = new LASTINPUTINFO(); li.cbSize = (uint)Marshal.SizeOf(typeof(LASTINPUTINFO)); return GetLastInputInfo(ref li) ? (long)li.dwTime : -1; }
+    public static long AgeMs(long tick) { return (long)unchecked((uint)Environment.TickCount - (uint)tick); }
+    public static string Cursor() { POINT p; if (!GetCursorPos(out p)) return ""; return p.X + "," + p.Y; }
+}
+"@
+$script:InitDone = $false; $script:SeenTick = [int64]-1; $script:UserAt = Get-Date; $script:OwnPos = ''
+$script:OwnWin = New-Object System.Collections.ArrayList      # @{ from; until } windows in which input is the app's own
+$script:PendingIn = New-Object System.Collections.ArrayList   # @{ at; pos } input events waiting ~3 s for the app's log lines to be read
+$script:UserHit = $false; $script:RunLive = $false; $script:RunLiveAt = [DateTime]::MinValue; $script:UserBackoff = [DateTime]::MinValue
+$script:InState = 'user_busy'; $script:ExploreOn = $false
+$InputJudgeSec = 3
+# Add-OwnInput: the app's pilot clicked / pressed a key at $at (the log line's own time stamp): input around it is explained
+function Add-OwnInput([DateTime]$at) {
+    [void]$script:OwnWin.Add(@{ from = $at.AddSeconds(-1.5); until = $at.AddSeconds(5) })
+    if ($script:OwnWin.Count -gt 200) { $script:OwnWin.RemoveRange(0, 100) }
+}
+function Test-OwnAt([DateTime]$t) {
+    foreach ($w in $script:OwnWin) { if ($t -ge $w.from -and $t -le $w.until) { return $true } }
+    return $false
+}
+function Get-CursorDist([string]$a, [string]$b) {
+    if ($a -eq '' -or $b -eq '') { return 0 }
+    $x = $a.Split(','); $y = $b.Split(',')
+    return [Math]::Max([Math]::Abs([int]$x[0] - [int]$y[0]), [Math]::Abs([int]$x[1] - [int]$y[1]))
+}
+# Update-UserInput: call about once a second. New input (GetLastInputInfo moved) is judged ~3 s later, when the app's log lines about its own
+# clicks have been read: input inside an own window is the app's, anything else is the user's. A cursor away from where the pilot left it
+# (outside an own window) is the user's too (SetCursorPos leaves GetLastInputInfo alone).
+function Update-UserInput {
+    try {
+        $now = Get-Date
+        $t = [LabInput]::LastTick()
+        if ($t -lt 0) { return }
+        $pos = [LabInput]::Cursor()
+        if (-not $script:InitDone) {
+            $script:InitDone = $true; $script:SeenTick = $t; $script:OwnPos = $pos
+            $script:UserAt = $now.AddMilliseconds(0 - [LabInput]::AgeMs($t))
+            return
+        }
+        if ($t -ne $script:SeenTick) {
+            $script:SeenTick = $t
+            [void]$script:PendingIn.Add(@{ at = $now.AddMilliseconds(0 - [LabInput]::AgeMs($t)); pos = $pos })
+        }
+        for ($i = $script:PendingIn.Count - 1; $i -ge 0; $i--) {
+            $e = $script:PendingIn[$i]
+            if (($now - $e.at).TotalSeconds -lt $InputJudgeSec) { continue }
+            $script:PendingIn.RemoveAt($i)
+            if (Test-OwnAt $e.at) { $script:OwnPos = $e.pos }
+            elseif ($e.at -gt $script:UserAt) { $script:UserAt = $e.at; $script:UserHit = $true; $script:OwnPos = $e.pos }
+        }
+        if (Test-OwnAt $now) { $script:OwnPos = $pos }
+        elseif ($script:PendingIn.Count -eq 0 -and (Get-CursorDist $pos $script:OwnPos) -gt 6) {
+            $script:UserAt = $now; $script:UserHit = $true; $script:OwnPos = $pos
+        }
+    } catch { Write-Log ('input check failed: ' + (Get-ShortError $_)) }
+}
+# Get-InputState: running (a run is live), idle (no user input for $IdleStartSec s and the back-off is over), else user_busy
+function Get-InputState {
+    if ($script:RunLive -and ((Get-Date) - $script:RunLiveAt).TotalMinutes -ge $LiveMaxMin) { $script:RunLive = $false; Write-Log 'run no longer live (no run job for a while)' }
+    if ($script:RunLive) { return 'running' }
+    $idle = ((Get-Date) - $script:UserAt).TotalSeconds
+    if ($idle -ge $IdleStartSec -and (Get-Date) -ge $script:UserBackoff -and $script:PendingIn.Count -eq 0) { return 'idle' }
+    return 'user_busy'
+}
+function Get-IdleSec { return [int][Math]::Max(0, ((Get-Date) - $script:UserAt).TotalSeconds) }
+# Stop-RunForUser: the user touched the laptop during a run. The run is left (the server sees status.input = user_busy at once and cancels its
+# request and jobs); the recording and the explorer are stopped (the app's stop also ends the hint mode), the gate closes for $UserBackoffSec s
+function Stop-RunForUser([string]$why) {
+    Write-Log ('user input during a run (' + $why + '): run aborted, the idle gate applies again')
+    $script:RunLive = $false; $script:RunJobAt = [DateTime]::MinValue; $script:Scn = ''
+    $script:UserBackoff = (Get-Date).AddSeconds($UserBackoffSec)
+    $script:InState = 'user_busy'; $script:UserHit = $false
+    Send-Beat
+    try { [void](Invoke-Rec ([pscustomobject]@{ cmd = 'stop' })) } catch { Write-Log ('abort: rec stop failed: ' + (Get-ShortError $_)) }
+    if ($script:ExploreOn) {
+        $script:ExploreOn = $false
+        try { [void](Invoke-Explore '' ([pscustomobject]@{ cmd = 'stop' })) } catch { Write-Log ('abort: explore stop failed: ' + (Get-ShortError $_)) }
+    }
+    Send-Beat
 }
 
 # ---------------------------------------------------------------- start_game (gameExe from the config, directly: no launcher, no clicks)
@@ -490,6 +589,8 @@ function Test-RunnerUpdateDue {
 $StopRe  = 'auto click stopped|auto click is off|click gate .*: HALT|click gate .*: STOP|auto: (failed|slot_failed|unconfirmed|hero_failed|stopped)|aborted'
 $ReadyRe = 'Player of the live tables: [0-9]+'
 $PilotRe = 'ui: step (?!stands still)|ui: guide |click gate .*: (allow |.* took effect)|locate auto:|live: hero|sell:|hero: plan|art (equip|promote) auto:|offer: closed'
+# the app's own injected clicks / keys (src/ClickGate.cs Note lines, the pilots' offer closing): the runner's idle gate does not count them
+$OwnClickRe = 'click gate |offer: closed'
 function Get-EpochNow { return [int64][DateTimeOffset]::UtcNow.ToUnixTimeSeconds() }
 $FinRe = 'locate auto: hint( \([^)]*\))? at step (ascendReady|done)\b|locate decision: (AscendReady|Done)\b|art promote auto: hint( \([^)]*\))? at step artPromote\b|ui: guide .* done|(?<!art )sell: done selected [0-9]+/[0-9]+ missing [0-9]+ extra [0-9]+'
 # the storage cleanup may click only these targets (src/ClickGate.cs, owner Sell): any other allowed Sell click (there is no target for
@@ -545,6 +646,11 @@ function Update-LogWatch {
                 $t = $line.Trim(); if ($t.Length -gt 200) { $t = $t.Substring(0, 200) }
                 $script:LogNever = $t
                 if ($script:LogStop -eq '') { $script:LogStop = 'never: ' + $t; $script:LogStopAt = $now }
+            }
+            if ($line -cmatch $OwnClickRe) {
+                $at = Get-Date
+                if ($line -match '^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)') { try { $at = [DateTime]::ParseExact($Matches[1], 'yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture) } catch { } }
+                Add-OwnInput $at
             }
             if ($line -cmatch $PilotRe) { $script:PilotAt = $now; $script:PilotLine = $line.Trim().Substring(0, [Math]::Min(120, $line.Trim().Length)) }
             if ($line -cmatch 'Done in') { $script:LogDone = $true }
@@ -893,11 +999,21 @@ function Invoke-Job($job) {
             $out = @{ ok = $false; res = @{ error = 'expired' } }
         } elseif (-not (Test-JobArgs $action $jobArgs)) {
             $out = @{ ok = $false; res = @{ error = 'bad_args' } }
+        } elseif ($script:RunLive -and $script:UserHit) {
+            # the user came while the job was being claimed: the job is not run, the run is left
+            Write-Log ('job ' + $action + ': user input, not run')
+            $out = @{ ok = $false; res = @{ error = 'user_busy' } }
+            Stop-RunForUser ('before ' + $action)
         } else {
             Write-Log ('job: ' + $action)
             if (@('update_app', 'restart_app', 'start_game', 'game_front', 'upload_logs', 'screenshot') -contains $action) { $script:RunJobAt = Get-Date }
             if ($action -eq 'update_app') { $script:LogCount = 0 }
-            if ($action -eq 'finish') { $script:RunJobAt = [DateTime]::MinValue; $script:Scn = '' }
+            if ($action -eq 'finish') { $script:RunJobAt = [DateTime]::MinValue; $script:Scn = ''; $script:RunLive = $false; $script:ExploreOn = $false }
+            elseif (@('update_app', 'restart_app', 'start_game', 'game_front', 'rec', 'mark', 'explore', 'screenshot') -contains $action) {
+                if (-not $script:RunLive) { $script:RunLive = $true; $script:UserHit = $false }
+                $script:RunLiveAt = Get-Date
+            }
+            elseif ($script:RunLive) { $script:RunLiveAt = Get-Date }
             switch ($action) {
                 'status'      { $out = @{ ok = $true; res = (Get-Status) } }
                 'update_app'  { $out = Invoke-UpdateApp }
@@ -911,7 +1027,8 @@ function Invoke-Job($job) {
                 'cancel'      { $out = @{ ok = $true; res = @{ cancelled = $true } } }
                 'mark'        { $out = Invoke-Mark $jobArgs }
                 'rec'         { $out = Invoke-Rec $jobArgs }
-                'explore'     { $out = Invoke-Explore $id $jobArgs }
+                'explore'     { $ec = [string](Get-Prop $jobArgs 'cmd'); if ($ec -ceq 'start') { $script:ExploreOn = $true } elseif ($ec -ceq 'stop') { $script:ExploreOn = $false }
+                                $out = Invoke-Explore $id $jobArgs }
             }
         }
     } catch {
@@ -966,6 +1083,10 @@ try {
         Test-RunnerUpdateDue
         if ($script:Exit) { break }
         Update-LogWatch
+        Update-UserInput
+        $inp = Get-InputState
+        if ($script:RunLive -and $script:UserHit) { Stop-RunForUser 'between jobs'; $inp = Get-InputState }
+        if ($inp -ne $script:InState) { $script:InState = $inp; $lastBeat = [DateTime]::MinValue }
         try { Invoke-AutoShots } catch { Write-Log ('auto shots error: ' + (Get-ShortError $_)) }
         if (((Get-Date) - $lastBounds).TotalSeconds -ge 60) { $lastBounds = Get-Date; Test-GameBoundsIdle }
         if ((Get-Date) -ge $backoffUntil) {
@@ -979,7 +1100,7 @@ try {
                     if (-not $r.ok) { $err = $r }
                     else { $lo = Get-Prop $r.data 'lab_only'; $script:LabOnly = ($lo -eq $true) }
                 }
-                if ($err -eq $null -and ((Get-Date) - $lastClaim).TotalSeconds -ge ($ClaimSec - 1)) {
+                if ($err -eq $null -and $inp -ne 'user_busy' -and ((Get-Date) - $lastClaim).TotalSeconds -ge ($ClaimSec - 1)) {
                     $lastClaim = Get-Date
                     $c = Invoke-Rpc 'lab_claim' '{}'
                     if (-not $c.ok) { $err = $c }
@@ -1009,7 +1130,11 @@ try {
             }
         }
         $t = 0
-        while ($t -lt $TickSec -and -not $script:Exit -and -not (Test-Path $StopFile)) { Start-Sleep -Seconds 1; $t++ }
+        while ($t -lt $TickSec -and -not $script:Exit -and -not (Test-Path $StopFile)) {
+            Start-Sleep -Seconds 1; $t++
+            Update-UserInput
+            if ($script:RunLive -and $script:UserHit) { break }
+        }
     }
 } finally {
     $Mutex.ReleaseMutex()
