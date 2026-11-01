@@ -40,7 +40,7 @@ tg() {
 # equip_city_hint / locate_hint: the same requests with auto click off (the recorder command names the scenario, the test app turns its auto
 # click off for it, app/HostBridge.cs LabScenario): the app only shows hints, nobody clicks; the frame audit's shots of the first steps are the
 # verdict (src/FrameAudit.cs, tools/lab/frame-audit.sh), then the request is cancelled
-LAB_SCENARIOS="equip_city equip_hide_worn equip_artifact locate locate_recast locate_art sell_mark sell_after_restart equip_city_hint locate_hint"  # the _hint ones last: they switch auto click off
+LAB_SCENARIOS="equip_city equip_hide_worn equip_artifact equip_city_hint locate locate_recast locate_art locate_hint sell_mark sell_after_restart"  # each _hint one right after a scenario of its own flow (the game stands on the hero / foundry screens there); the sell ones last: they leave the game on «Массовая продажа», where a hint scenario (auto click off, nobody clicks) only frames «Назад» and never advances
 # scenarios run only when asked (lab-request.sh <device> --only explore) or by the --auto pass on their own schedule: explore = the test app's
 # explorer (src/Explorer.cs: the game's safe UI against the UI graph; once a day and on every new game version, lab-loop.sh explore_due)
 LAB_EXTRA_SCENARIOS="explore"
