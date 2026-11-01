@@ -927,6 +927,7 @@ namespace RealmForge {
       UpdateArtStep();
       // the game is minimized / covered / alt-tabbed: nothing of ours stays over the desktop (the features go on reading)
       if (!GameDrawable()) { if (glow.Visible) glow.Hide(); HideTip(); drawnKey = null; }
+      if (TickHintFallback()) return;   // hint mode on a screen no flow can go on from: one hint for every flow (back to the city)
       if (LocateWins) { TickLocate(); TickCancel(); return; }
       if (sellHint && sellWanted != null) { TickSellHint(); TickArtSellAuto(); TickCancel(); return; }
       if (sellWanted != null && spilot.State == "done") { TickAuto(); TickSellFinalAuto(); TickCancel(); return; }   // the auto run marked everything: the final plate and the frame on «Продать»
@@ -937,6 +938,54 @@ namespace RealmForge {
 
     // «Отменить надевание»: top centre of the game (free on the hero screen and in the gear list), only while a started
     // build is on and the game is in front
+    /// <summary>The fallback hint's texts (the interface language, set by the host like the cancel texts): the line and the key to press when no frame is possible.</summary>
+    public string BackCityText = "Вернитесь в город", EscText = "Нажмите Esc";
+    string hintFbSaid = "";
+
+    /// <summary>The ONE hint-mode fallback of every flow (equip, find item / locate, artifact, storage cleanup; src/ClickGate.cs HintFallback): the game shows a
+    /// screen nobody knows, a known one the flow does not go on from, or a pop-up nobody knows - «Вернитесь в город» with the frame on the way out (the
+    /// pop-up's close button, else the screen's back arrow), else the text alone with «Нажмите Esc». It replaces the flow's own tick, so no step label is
+    /// shown for a step the screen cannot do. Auto mode is not this (its pilots go back by themselves). True = drawn, the flow's tick is skipped.</summary>
+    bool TickHintFallback() {
+      PilotFlow flow; var step = LocateKind.None;
+      if (LocateWins) {
+        var rq = locateReq;
+        if (rq == null || locateDoneUntil != 0 || LocateAutoOn) { hintFbSaid = ""; return false; }
+        flow = CityFirst.OfLocate(rq.Purpose);
+        var ls = rq.Purpose == "artPromote" ? artStep : locateStep;
+        if (ls != null) step = ls.Kind == LocateKind.BackToCity || ls.Kind == LocateKind.ClosePopup ? ls.Covered : ls.Kind;
+      } else if (sellHint && sellWanted != null) {
+        if (sellArt && ArtAutoOn) { hintFbSaid = ""; return false; }
+        flow = sellArt ? PilotFlow.ArtSell : PilotFlow.Sell;
+      } else if (sellWanted == null && !AutoEnabled && runHero <= 0 && (target != 0 || (hintKind != "" && hintKind != "done" && hintKind != "bulk"))) {
+        flow = ArtPhase ? PilotFlow.ArtEquip : PilotFlow.Equip;
+      } else { hintFbSaid = ""; return false; }
+      IntPtr hwnd = GameWindow();
+      W32.RECT cr = new W32.RECT();
+      if (hwnd == IntPtr.Zero || W32.IsIconic(hwnd) || !W32.GetClientRect(hwnd, out cr) || cr.B < 200 || !IsForeground(hwnd) || !GameDrawable()) return false;
+      var sc = screens.Current;
+      long now = NowMs();
+      if (sc == null || now - sc.SinceMs < HintFallback.SettleMs) return false;
+      var o = new W32.POINT(0, 0); W32.ClientToScreen(hwnd, ref o);
+      double W = cr.R, H = cr.B, U = Ui.Unit(W, H);
+      // a known screen's back arrow where the game has put it (live rect), else the standard spot
+      LocateFrame bf = null; bool backLive = false;
+      if (sc.Kind != ScreenKind.Unknown && sc.Kind != ScreenKind.City) { bf = BackFrame(sc, W, H, U); backLive = LiveInto(bf, W, H, U); }
+      var plan = HintFallback.Decide(flow, sc, step, backLive, W, H, U);
+      if (plan.Kind == HintLeave.None) { hintFbSaid = ""; return false; }
+      SceneArea(o, cr);
+      if (glow.Visible) glow.Hide();
+      drawnKey = null;
+      string said = plan.Kind + "|" + sc.Kind + "|" + plan.Why;
+      if (said != hintFbSaid) { hintFbSaid = said; Log.Write("hint fallback (" + flow + "): " + plan.Kind + " on " + sc.Brief + " - " + plan.Why); }
+      if (plan.Kind == HintLeave.Esc) { DrawTipTop(new[] { BackCityText, EscText }, ""); return true; }
+      int[] r = plan.Kind == HintLeave.Back && bf != null && bf.Mark != null ? new[] { bf.Mark.X, bf.Mark.Y, bf.Mark.W, bf.Mark.H }
+        : new[] { (int)Math.Round(plan.Rect.X), (int)Math.Round(plan.Rect.Y), (int)Math.Round(plan.Rect.W), (int)Math.Round(plan.Rect.H) };
+      frame++;
+      DrawTip(o.X + r[0], o.Y + r[1], r[2], r[3], new[] { BackCityText }, U, false, false, false, "");
+      return true;
+    }
+
     /// <summary>A storage cleanup guide is on the screen (the hint's frames and plates, or the final plate after the auto run): its reads stay active (LoadPlan), nothing hides for idleness.</summary>
     bool SellGuideShown { get { return sellWanted != null && (sellHint || spilot.State == "done"); } }
 

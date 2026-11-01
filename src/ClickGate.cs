@@ -211,6 +211,54 @@ namespace RealmForge {
     }
   }
 
+  /// <summary>How the hint leaves a screen no flow can continue from: its back arrow, a pop-up's close button, or the Escape key (text only).</summary>
+  public enum HintLeave { None, Back, Close, Esc }
+
+  /// <summary>The fallback hint's plan: what to show (Kind) and the frame's rect in client px (Back / Close; null = the standard back spot).</summary>
+  public sealed class HintFallbackPlan {
+    public HintLeave Kind; public GeoRect Rect; public string Why = "";
+  }
+
+  /// <summary>The ONE hint-mode fallback for every flow (equip, find item / locate, artifact, storage cleanup; owner rule 2026-11-01): when the app cannot
+  /// recognise the current screen (Unknown), or it is a known screen the flow does not go on from (CityFirst), or a pop-up nobody knows is over it, the
+  /// hint is «Вернитесь в город» with a frame on the way out: the pop-up's close button when one is open (it covers the screen), else the screen's back
+  /// arrow (a known screen: its own, read live by the host; an unknown one: the screen map's, or one read live), else the text alone «Нажмите Esc» (no
+  /// frame). Never a step label for a step the screen cannot do. Pure (tests/CoreTests.cs); the host draws it (app/Overlay.cs TickHintFallback). Auto
+  /// mode is not this: its pilots go back by themselves (UnknownBackStep / BackStep).</summary>
+  public static class HintFallback {
+    /// <summary>The screen has to stay as it is this long before the fallback shows (the form is being searched for, a screen is coming in).</summary>
+    public const int SettleMs = 700;
+
+    /// <param name="backLive">the screen's back arrow was read live by the host (only needed on an unknown screen the map has no exit for)</param>
+    public static HintFallbackPlan Decide(PilotFlow f, ScreenState s, LocateKind step, bool backLive, double W, double H, double U) {
+      var p = new HintFallbackPlan();
+      if (s == null || s.Held || s.Kind == ScreenKind.City) return p;
+      bool unk = s.Kind == ScreenKind.Unknown;
+      if (unk && !string.IsNullOrEmpty(s.Flow)) return p;   // a pilot's flow form is shown: the screen under it is only not read
+      bool locate = f == PilotFlow.LocateAscend || f == PilotFlow.LocateRecast || f == PilotFlow.LocateArtPromote;
+      if (locate && (step == LocateKind.NoItem || step == LocateKind.OtherAccount)) return p;   // nothing to drive: it never goes back
+      var md = ClickGate.MapExit(s, W, H, U);
+      if (md.Move == MapMove.Wait || md.Move == MapMove.Stop) return p;   // a fight / loading / a dangerous form: not the hint's to judge
+      bool form = s.ModalWhy != null && s.ModalWhy.StartsWith("form:") && s.OfferCount == 0;
+      bool away = !unk && !CityFirst.Continues(f, s, step);
+      bool stray = !unk && form && md.Move == MapMove.None;   // a pop-up over the screen that the map does not know
+      if (!unk && !away && !stray) return p;
+      bool pop = s.ModalOpen || s.OfferCount > 0;
+      if (md.Move == MapMove.Close && md.Point != null) { var r = ScreenMap.ExitRect(md.Form, W, H, U); if (r != null) { p.Kind = HintLeave.Close; p.Rect = r; p.Why = "pop-up " + md.Form; return p; } }
+      if (md.Move == MapMove.Escape) { p.Kind = HintLeave.Esc; p.Why = "pop-up " + md.Form + " closes with the back key"; return p; }
+      if (md.Move == MapMove.Back && md.Point != null) { var r = ScreenMap.ExitRect(md.Form, W, H, U); if (r != null) { p.Kind = HintLeave.Back; p.Rect = r; p.Why = "back arrow of " + md.Form; return p; } }
+      if (pop) { p.Kind = HintLeave.Esc; p.Why = "pop-up with no known close button"; return p; }
+      if (!unk || backLive) { p.Kind = HintLeave.Back; p.Rect = BackRect(U); p.Why = unk ? "back arrow read live" : "back arrow of " + s.Kind; return p; }
+      p.Kind = HintLeave.Esc; p.Why = "unknown screen, no back arrow read"; return p;
+    }
+
+    /// <summary>The standard back arrow's frame (HeroBack's spot, the same one the pilots press), client px.</summary>
+    public static GeoRect BackRect(double U) {
+      var g = new HeroGeometry(); double t = ClickGate.UnknownBackTol * U;
+      return new GeoRect { X = g.BackX * U - t, Y = g.BackY * U - t, W = 2 * t, H = 2 * t };
+    }
+  }
+
   /// <summary>The city's bottom bar as the pilots click it: the place of «Инвентарь» (U from the right; an event button moves it), the city
   /// form it was found on and whether the bar is settled. When the game builds the city again (another table for its form in the window
   /// table: after the guild, an event screen) the place is dropped and searched again on the new city, and «Инвентарь» counts as seen only

@@ -875,6 +875,7 @@ static partial class CoreTests {
     PlanScreenTests();
     WindowTableTests();
     UnknownBackTests();
+    HintFallbackTests();
     CityBackTests();
     ScreenMapTests();
     ScreenMapScenarios();
@@ -5769,6 +5770,48 @@ static partial class CoreTests {
       Eq("window table not found yet", RFX.ShownFormsDiag(8), "window table: not found - the log line says so");
       Check(RFX.ReadShownKnownForms() == null, "window table not found: the known forms are not read (null)");
     } finally { RFX.SetUiTableForTest(0); RFX.TestMemory = null; RFX.ForgetLive(); }
+  }
+
+  // the hint-mode fallback of every flow (HintFallback): an unknown screen / a screen the flow does not continue from / a pop-up nobody knows -> «back to the city»
+  static void HintFallbackTests() {
+    Console.WriteLine("Hint fallback: back to the city");
+    const double W = 1366, H = 705; double U = Ui.Unit(W, H);
+    var hg = new HeroGeometry(); double bx = hg.BackX * U, by = hg.BackY * U;
+    Func<string, string, ScreenState> Unk = (top, known) => ScreenState.Classify(new ScreenInputs { CityForm = false, Offers = new List<string>(), TopUnknown = top, ShownKnown = known }, 0);
+    var inv = new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true };
+    var invS = ScreenState.Classify(new ScreenInputs { Inv = inv, Offers = new List<string>(), ShownKnown = "" }, 0);
+    var city = ScreenState.Classify(new ScreenInputs { CityForm = true, Offers = new List<string>(), ShownKnown = "" }, 0);
+    var heroS = ScreenState.Classify(new ScreenInputs { Hero = new HeroScreen { Hero = 5, FormOk = true }, Offers = new List<string>(), ShownKnown = "" }, 0);
+    var foundry = ScreenState.Classify(new ScreenInputs { Rs = new RecastScreen { SublimingOpen = true }, Offers = new List<string>(), ShownKnown = "" }, 0);
+    Func<PilotFlow, ScreenState, bool, HintFallbackPlan> D = (f, sc, live) => HintFallback.Decide(f, sc, LocateKind.None, live, W, H, U);
+    Func<GeoRect, bool> onBack = r => r != null && Math.Abs(r.CX - bx) <= 0.03 * U + 1 && Math.Abs(r.CY - by) <= 0.03 * U + 1;
+    // an unknown screen whose form the map knows with a back arrow: the arrow framed (every flow alike)
+    foreach (var f in CityFirst.All) {
+      var pl = D(f, Unk("Form_ActALinkageMain", ""), false);
+      Check(pl.Kind == HintLeave.Back && onBack(pl.Rect), "fallback: " + f + " on a screen with a back arrow: the arrow framed (" + pl.Kind + ")");
+    }
+    // an unknown screen nobody has in the map: the arrow when the host read it live, else the text alone with Escape (no frame)
+    var odd = Unk("Form_Odd", "");
+    Check(D(PilotFlow.Equip, odd, true).Kind == HintLeave.Back && onBack(D(PilotFlow.Equip, odd, true).Rect), "fallback: an unknown screen, back arrow read live: framed");
+    var esc = D(PilotFlow.Sell, odd, false);
+    Check(esc.Kind == HintLeave.Esc && esc.Rect == null, "fallback: an unknown screen, nothing read: «Esc», no frame");
+    // a known screen the flow does not go on from: the screen's back arrow (every flow has its own set)
+    Check(D(PilotFlow.Equip, foundry, false).Kind == HintLeave.Back && onBack(D(PilotFlow.Equip, foundry, false).Rect), "fallback: equip on the Foundry: back arrow");
+    Check(D(PilotFlow.LocateRecast, ScreenState.Classify(new ScreenInputs { Rs = new RecastScreen { GemOpen = true }, Offers = new List<string>(), ShownKnown = "" }, 0), false).Kind == HintLeave.None, "fallback: the recast flow goes on from the gem screen: no fallback");
+    Check(D(PilotFlow.LocateRecast, foundry, false).Kind == HintLeave.Back, "fallback: the recast flow on the Foundry's tab: back arrow");
+    // screens the flow goes on from, and the city: never
+    Check(D(PilotFlow.Sell, invS, false).Kind == HintLeave.None && D(PilotFlow.Equip, heroS, false).Kind == HintLeave.None && D(PilotFlow.Equip, city, false).Kind == HintLeave.None && D(PilotFlow.Equip, null, false).Kind == HintLeave.None, "fallback: a screen the flow goes on from, the city, no screen: nothing");
+    // a pop-up with a known close button over a screen: the close button framed (not the back arrow, it is covered)
+    var pop = ScreenState.Classify(new ScreenInputs { Rs = new RecastScreen { SublimingOpen = true }, Offers = new List<string>(), ShownKnown = "", TopNew = "Form_AccountInfo" }, 0);
+    var pc = D(PilotFlow.Equip, pop, false);
+    Check(pc.Kind == HintLeave.Close && pc.Rect != null && !onBack(pc.Rect), "fallback: a known pop-up over a screen the flow leaves: its close button framed (" + pc.Kind + ")");
+    // a pop-up nobody knows: no close button to frame - the text with Escape
+    var stray = ScreenState.Classify(new ScreenInputs { Inv = inv, Offers = new List<string>(), ShownKnown = "", TopNew = "Form_NobodyKnowsThis" }, 0);
+    Check(D(PilotFlow.Sell, stray, false).Kind == HintLeave.Esc, "fallback: an unrecognised pop-up over the inventory: «Esc»");
+    // a held screen is not judged; a locate request with nothing to drive never goes back
+    var held = Unk("Form_ActALinkageMain", ""); held.Held = true;
+    Check(D(PilotFlow.Equip, held, false).Kind == HintLeave.None, "fallback: a held screen is not judged");
+    Check(HintFallback.Decide(PilotFlow.LocateRecast, foundry, LocateKind.NoItem, false, W, H, U).Kind == HintLeave.None, "fallback: nothing to drive: no back");
   }
 
   // the unknown-screen back press (ClickTarget.UnknownBack): only on a full-screen screen nobody knows, at most 3 a run, each has to change the screen
