@@ -217,6 +217,8 @@ namespace RealmForge {
   /// <summary>The fallback hint's plan: what to show (Kind) and the frame's rect in client px (Back / Close; null = the standard back spot).</summary>
   public sealed class HintFallbackPlan {
     public HintLeave Kind; public GeoRect Rect; public string Why = "";
+    /// <summary>The frame target's key when the rect is that target's layout (the host reads its live rect through FrameFor, so the frame is reported to the audit): "" = none.</summary>
+    public string Key = "";
   }
 
   /// <summary>The ONE hint-mode fallback for every flow (equip, find item / locate, artifact, storage cleanup; owner rule 2026-11-01): when the app cannot
@@ -239,7 +241,7 @@ namespace RealmForge {
       bool locate = f == PilotFlow.LocateAscend || f == PilotFlow.LocateRecast || f == PilotFlow.LocateArtPromote;
       if (locate && (step == LocateKind.NoItem || step == LocateKind.OtherAccount)) return p;   // nothing to drive: it never goes back
       // an open pop-up always wins over the flow's step: the hero grid's filter pop-up (its own screen, the flows go on from it) is closed with the funnel
-      if (s.Kind == ScreenKind.HeroScreen && ((s.ModalOpen && s.ModalWhy == "heroFilter") || heroFilterPic)) { p.Kind = HintLeave.Close; p.Rect = FunnelRect(H, U); p.Why = "the hero grid's filter pop-up: its funnel"; return p; }
+      if (s.Kind == ScreenKind.HeroScreen && ((s.ModalOpen && s.ModalWhy == "heroFilter") || heroFilterPic)) { p.Kind = HintLeave.Close; p.Rect = FunnelRect(H, U); p.Key = "hero.filter"; p.Why = "the hero grid's filter pop-up: its funnel"; return p; }
       var md = ClickGate.MapExit(s, W, H, U);
       if (md.Move == MapMove.Wait || md.Move == MapMove.Stop) return p;   // a fight / loading / a dangerous form: not the hint's to judge
       bool form = s.ModalWhy != null && s.ModalWhy.StartsWith("form:") && s.OfferCount == 0;
