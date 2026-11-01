@@ -2193,7 +2193,16 @@ namespace RealmForge {
         if (fa.Kind == AutoKind.None) return;
         int fx = o.X + (int)Math.Round(fa.X), fy = o.Y + (int)Math.Round(fa.Y);
         if (fx < o.X || fy < o.Y || fx >= o.X + cr.R || fy >= o.Y + cr.B) return;
-        if (EquipSend(ClickTarget.EquipFilter, fa, fx, fy, o, v.Foreground)) filterTouchAt = now;
+        // the item's tip (the card of the slot's item, Form_CharactorEquipTip) stands over the list: its tap catcher takes the click on the «Фильтр» bar and only closes
+        // the tip (lab f5516fa2: two of three bar clicks went under it, «the filter panel does not stay open»): one Escape closes the tip first, the click comes after
+        if (!fview.PanelOpen && v.Foreground && !v.UserBusy && EquipTipShown() && ClickGate.OnlyTip(screens.Current) && filterTipEscN < 3) {
+          if (now >= filterTipEscAfter) {
+            filterTipEscAfter = now + 1500; filterTipEscN++;
+            if (TipEscapeSend(cr, v.Foreground)) Log.Write("filter: the item's tip is over the list - closing it before the filter bar is clicked");
+          }
+          return;
+        }
+        if (EquipSend(ClickTarget.EquipFilter, fa, fx, fy, o, v.Foreground)) { filterTouchAt = now; if (!EquipTipShown()) filterTipEscN = 0; }
         return;
       }
       // the next slot with the item's tip / compare still open over the slots (live 1.6.66.354: the pilot clicked the compare card where the
@@ -4494,7 +4503,7 @@ namespace RealmForge {
 
     /// <summary>The point of the last item pick clicked on its live cell (client px), null = the layout's (the pilot is told where it went).</summary>
     double[] cellLivePt;
-    long filterTouchAt;
+    long filterTouchAt, filterTipEscAfter; int filterTipEscN;
     int cellRefuseN; bool cellRefused;   // the last LiveCellClick refused: the gear list's live cells are read but not the one asked for (never the layout's point then)
     /// <summary>The pilot's view of the game's own gear cells: readable now (LiveGrid), the plan's item among them and wholly in view (LiveTarget, its centre).</summary>
     void LiveGearView(AutoView v, W32.RECT cr) {
