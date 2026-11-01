@@ -229,8 +229,9 @@ namespace RealmForge {
     /// <summary>The screen has to stay as it is this long before the fallback shows (the form is being searched for, a screen is coming in).</summary>
     public const int SettleMs = 700;
 
+    /// <param name="heroFilterPic">the host sees the hero grid's filter pop-up on the picture (the game's own flag may not be read: the pilot uses the picture too)</param>
     /// <param name="backLive">the screen's back arrow was read live by the host (only needed on an unknown screen the map has no exit for)</param>
-    public static HintFallbackPlan Decide(PilotFlow f, ScreenState s, LocateKind step, bool backLive, double W, double H, double U) {
+    public static HintFallbackPlan Decide(PilotFlow f, ScreenState s, LocateKind step, bool backLive, double W, double H, double U, bool heroFilterPic = false) {
       var p = new HintFallbackPlan();
       if (s == null || s.Held || s.Kind == ScreenKind.City) return p;
       bool unk = s.Kind == ScreenKind.Unknown;
@@ -238,7 +239,7 @@ namespace RealmForge {
       bool locate = f == PilotFlow.LocateAscend || f == PilotFlow.LocateRecast || f == PilotFlow.LocateArtPromote;
       if (locate && (step == LocateKind.NoItem || step == LocateKind.OtherAccount)) return p;   // nothing to drive: it never goes back
       // an open pop-up always wins over the flow's step: the hero grid's filter pop-up (its own screen, the flows go on from it) is closed with the funnel
-      if (s.Kind == ScreenKind.HeroScreen && s.ModalOpen && s.ModalWhy == "heroFilter") { p.Kind = HintLeave.Close; p.Rect = FunnelRect(H, U); p.Why = "the hero grid's filter pop-up: its funnel"; return p; }
+      if (s.Kind == ScreenKind.HeroScreen && ((s.ModalOpen && s.ModalWhy == "heroFilter") || heroFilterPic)) { p.Kind = HintLeave.Close; p.Rect = FunnelRect(H, U); p.Why = "the hero grid's filter pop-up: its funnel"; return p; }
       var md = ClickGate.MapExit(s, W, H, U);
       if (md.Move == MapMove.Wait || md.Move == MapMove.Stop) return p;   // a fight / loading / a dangerous form: not the hint's to judge
       bool form = s.ModalWhy != null && s.ModalWhy.StartsWith("form:") && s.OfferCount == 0;

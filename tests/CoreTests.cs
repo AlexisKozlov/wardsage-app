@@ -5816,6 +5816,9 @@ static partial class CoreTests {
       var fn = HintFallback.FunnelRect(H, U);
       Check(fp.Kind == HintLeave.Close && fp.Rect != null && Math.Abs(fp.Rect.CX - fn.CX) < 1 && Math.Abs(fp.Rect.CY - fn.CY) < 1, "fallback: " + f + " with the hero filter pop-up open: the funnel framed (" + fp.Kind + ")");
     }
+    // live state of the lab run: the game's own flag not read (ModalWhy empty) but the pop-up is on the picture: the same funnel
+    var hnf = ScreenState.Classify(new ScreenInputs { Hero = new HeroScreen { Hero = 5, FormOk = true }, Offers = new List<string>(), ShownKnown = "" }, 0);
+    Check(!hnf.ModalOpen && HintFallback.Decide(PilotFlow.Equip, hnf, LocateKind.None, false, W, H, U).Kind == HintLeave.None && HintFallback.Decide(PilotFlow.Equip, hnf, LocateKind.None, false, W, H, U, true).Kind == HintLeave.Close, "fallback: the hero filter pop-up seen on the picture only: the funnel framed; nothing when it is closed");
     // a held screen is not judged; a locate request with nothing to drive never goes back
     var held = Unk("Form_ActALinkageMain", ""); held.Held = true;
     Check(D(PilotFlow.Equip, held, false).Kind == HintLeave.None, "fallback: a held screen is not judged");

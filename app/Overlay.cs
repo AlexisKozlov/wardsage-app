@@ -957,7 +957,7 @@ namespace RealmForge {
       } else if (sellHint && sellWanted != null) {
         if (sellArt && ArtAutoOn) { hintFbSaid = ""; return false; }
         flow = sellArt ? PilotFlow.ArtSell : PilotFlow.Sell;
-      } else if (sellWanted == null && !AutoEnabled && runHero <= 0 && (target != 0 || (hintKind != "" && hintKind != "done" && hintKind != "bulk"))) {
+      } else if (sellWanted == null && !AutoEnabled && (runHero > 0 || target != 0 || (hintKind != "" && hintKind != "done" && hintKind != "bulk"))) {
         flow = ArtPhase ? PilotFlow.ArtEquip : PilotFlow.Equip;
       } else { hintFbSaid = ""; return false; }
       IntPtr hwnd = GameWindow();
@@ -971,7 +971,8 @@ namespace RealmForge {
       // a known screen's back arrow where the game has put it (live rect), else the standard spot
       LocateFrame bf = null; bool backLive = false;
       if (sc.Kind != ScreenKind.Unknown && sc.Kind != ScreenKind.City) { bf = BackFrame(sc, W, H, U); backLive = LiveInto(bf, W, H, U); }
-      var plan = HintFallback.Decide(flow, sc, step, backLive, W, H, U);
+      bool heroPic = sc.Kind == ScreenKind.HeroScreen && HeroFilterSeen(o, W, H);   // (the pop-up on the picture, as the hero pilot sees it)
+      var plan = HintFallback.Decide(flow, sc, step, backLive, W, H, U, heroPic);
       if (plan.Kind == HintLeave.None) { hintFbSaid = ""; return false; }
       SceneArea(o, cr);
       if (glow.Visible) glow.Hide();
