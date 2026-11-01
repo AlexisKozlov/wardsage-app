@@ -1011,9 +1011,29 @@ namespace RealmForge {
 
     static string Num(double v) { return v >= 1e9 ? "-" : v.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture); }
 
+    /// <summary>The plan went away (cancelled, another scenario) while the hero pilot had the grid's filter pop-up open: it is cleared («Все») and closed (src/HeroPilot.cs Cleanup).</summary>
+    void HeroFilterCleanup() {
+      if (!AutoEnabled || runHero > 0 || !hpilot.FilterDirty || sending) return;
+      IntPtr hwnd = GameWindow(); W32.RECT cr;
+      if (hwnd == IntPtr.Zero || W32.IsIconic(hwnd) || !W32.GetClientRect(hwnd, out cr) || cr.B < 200) return;
+      var o = new W32.POINT(0, 0); W32.ClientToScreen(hwnd, ref o);
+      var hs = screens.Hero ?? heroScreen;
+      if (hs == null || !hs.FormOk || hs.Hero == 0) { hpilot.FilterDirty = false; return; }
+      int fp, gp; W32.GetWindowThreadProcessId(W32.GetForegroundWindow(), out fp); W32.GetWindowThreadProcessId(hwnd, out gp);
+      var hv = new HeroView { NowMs = NowMs(), Foreground = fp == gp, UserBusy = (W32.GetAsyncKeyState(0x01) & 0x8000) != 0 || (W32.GetAsyncKeyState(0x02) & 0x8000) != 0 || NowMs() - lastMoveMs < 700, W = cr.R, H = Ui.Unit(cr.R, cr.B), ClientH = cr.B,
+        FilterOpen = fp == gp && HeroFilterSeen(o, cr.R, cr.B), ClassChosen = hs.ClassChosen, ChosenCamps = hs.ChosenCamps };
+      var a = hpilot.Cleanup(hv);
+      if (a == null || a.Kind != AutoKind.Click) return;
+      int x = o.X + (int)Math.Round(a.X), y = o.Y + (int)Math.Round(a.Y);
+      if (x < o.X || y < o.Y || x >= o.X + cr.R || y >= o.Y + cr.B) return;
+      Log.Write("hero: the plan is gone with the grid's filter pop-up open - clearing it");
+      EquipSend(ClickTarget.EquipFilter, a, x, y, o, hv.Foreground);
+    }
+
     void FrameStep() {
       diagInfo = "";
       TickHint();
+      HeroFilterCleanup();
       // the held «selected» step (hint "replace", the page's guide state): «Заменить» is the only frame; the item's frame and its «pick» plate never come back
       // from the list tracking (they alternated with it on mouse moves, 1.6.66.439)
       // (the pilot still needs the item's row and the game's selection to press «Заменить»: read here, nothing drawn)
@@ -2380,6 +2400,10 @@ namespace RealmForge {
       return new LocateFrame { Target = key != "" ? key : "popup.exit", Mark = new LocateMark { Kind = "box", X = (int)Math.Round(r.X), Y = (int)Math.Round(r.Y), W = (int)Math.Round(r.W), H = (int)Math.Round(r.H) }, Raw = r };
     }
 
+    bool LocateHintExit(LocateKind k, bool hasFrame, W32.POINT o, double W, double H) {
+      return HintExit.CloseFilterFirst(k, hasFrame, HeroFilterSeen(o, W, H), true);
+    }
+
     LocateFrame PopupCloseFrame(LocateStep step, double W, double H, double U) {
       GeoRect r = null; string key = "popup.exit";
       if (step.PopupClose == "hero.filterClose") {
@@ -2504,6 +2528,12 @@ namespace RealmForge {
       LocateFrame lf = front && !hold && step.Kind == LocateKind.BackToCity ? BackFrame(screens.Current, W, H, U)
         : front && !hold && step.Kind == LocateKind.ClosePopup ? PopupCloseFrame(step, W, H, U)
         : front && !hold && step.Kind != LocateKind.InList ? LocateFrames.For(step, req.Item, locateRs, null, Geo.Current, W, H, U) : null;
+      // the hero grid's filter pop-up covers the hero screen and the step has no frame: the funnel that closes it is framed (hint mode, never a label alone)
+      if (front && !hold && !LocateAutoOn && screens.Current != null && screens.Current.Kind == ScreenKind.HeroScreen
+          && LocateHintExit(step.Kind, lf != null, o, W, H)) {
+        var hgx = new HeroGeometry(); int fr = Math.Max(10, (int)(0.04 * U)); double fx = hgx.FunnelX * U, fy = H - hgx.FunnelDY * U;
+        lf = new LocateFrame { Target = "hero.filter", Mark = new LocateMark { Kind = "box", X = (int)Math.Round(fx - fr), Y = (int)Math.Round(fy - fr), W = 2 * fr, H = 2 * fr }, Raw = new GeoRect { X = fx - fr, Y = fy - fr, W = 2 * fr, H = 2 * fr } };
+      }
       // every button / tab of the step framed where the game has put it (FrameFor: live rect, its sprite's outline; the layout's when unread)
       bool lfLive = LiveInto(lf, W, H, U);
       if (lf != null && lf.Target == "cell" && step.Kind == LocateKind.GemFunction) FrameLayoutSay("gem.cell", FrameTargets.Of("gem.cell").Layout, null);

@@ -6,6 +6,15 @@ using System;
 using System.Collections.Generic;
 
 namespace RealmForge {
+  /// <summary>Hint mode: a step label with no frame while the hero grid's filter pop-up covers the hero screen (lab 4512f342: «Откройте Инвентарь», nothing drawn,
+  /// the pop-up left open by an earlier run): the frame goes on the funnel button that closes the pop-up, whatever the step. A step that has its own frame, or no step, keeps it.</summary>
+  public static class HintExit {
+    public static bool CloseFilterFirst(LocateKind k, bool hasFrame, bool heroFilterOpen, bool heroScreen) {
+      if (hasFrame || !heroFilterOpen || !heroScreen) return false;
+      return k != LocateKind.None && k != LocateKind.NoItem && k != LocateKind.OtherAccount && k != LocateKind.Done && k != LocateKind.ClosePopup;
+    }
+  }
+
   public enum LocateKind {
     None,             // no request
     NoItem,           // the item is not in the site's last snapshot

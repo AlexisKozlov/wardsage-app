@@ -8654,6 +8654,22 @@ static partial class CoreTests {
 
   static void HeroPilotTests() {
     var g = new HeroGeometry(); double W = 1920, H = 1009;
+    {   // lab 4512f342: the plan went away while the pilot had the grid's filter pop-up open with a faction ticked: it clears the faction and closes the pop-up
+      var allC = new long[60]; var tagsC = new Dictionary<long, long[]>();
+      for (int i = 0; i < allC.Length; i++) { allC[i] = (200100 + i) * 100000L; tagsC[allC[i]] = new long[] { HeroGeometry.ClassOrder[i % 6], FakeHeroGame.FactionList[1 + i % 10] }; }
+      var gc = new FakeHeroGame(g, W, H) { All = allC, Tags = tagsC }; gc.Refilter();
+      var hpc = new HeroPilot(g); gc.FilterOpen = true; gc.Camps.Add(FakeHeroGame.FactionList[3]); gc.Refilter(); hpc.FilterDirty = true;
+      for (long t = 0; t < 20000 && hpc.FilterDirty; t += 100) {
+        var vc = new HeroView { NowMs = t, Foreground = true, W = W, H = H, ClientH = H, FilterOpen = gc.FilterOpen, ChosenCamps = gc.Camps.ToArray(), ClassChosen = gc.Class > 0 };
+        var ac = hpc.Cleanup(vc); if (ac != null && ac.Kind == AutoKind.Click) gc.Click(ac.X, ac.Y);
+      }
+      Check(!gc.FilterOpen && gc.Camps.Count == 0 && !hpc.FilterDirty, "the plan gone with the grid's filter pop-up open: the faction is cleared with «Все», the pop-up closed (open " + gc.FilterOpen + ", factions " + gc.Camps.Count + ")");
+      var hpn = new HeroPilot(g);
+      Check(hpn.Cleanup(new HeroView { NowMs = 0, Foreground = true, W = W, H = H, ClientH = H, FilterOpen = true }) == null, "a pop-up the pilot never touched is left alone");
+    }
+    // hint mode: a step label with no frame while the hero grid's filter pop-up covers the screen: the funnel is framed (never a label alone)
+    Check(HintExit.CloseFilterFirst(LocateKind.OpenInventory, false, true, true), "hint: OpenInventory with no frame under the hero filter pop-up: close it first");
+    Check(!HintExit.CloseFilterFirst(LocateKind.OpenInventory, true, true, true) && !HintExit.CloseFilterFirst(LocateKind.OpenInventory, false, false, true) && !HintExit.CloseFilterFirst(LocateKind.Done, false, true, true), "hint: a step with its own frame, no pop-up, or nothing to do keeps its own");
     {   // the player's class / faction filter left on over the grid, the plan's hero in it but the pilot's clicks find no other hero (live 1.6.66.452:
         // 24 clicks in the grid's middle, nothing): the filter is cleared and the hero is brought up
       var allG = new long[80]; var tagsG = new Dictionary<long, long[]>();
