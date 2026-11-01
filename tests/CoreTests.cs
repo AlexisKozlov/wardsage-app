@@ -9119,6 +9119,22 @@ static partial class CoreTests {
     RunFilter(new FilterPilot(g), game, 721500, 13, true, true);
     Check(!game.HideEq && game.Open, "item on another hero: «Скрыть надетое» off");
 
+    // lab b3da8af5: the panel read flickers right after the «Фильтр» bar opened it (open, closed, open ...): the bar is a toggle - one click, never a second
+    // one that shuts the panel again (the pilot gave up with «the filter panel does not stay open (3 retries)»)
+    {
+      var gfl = new FakeFilterGame(g, W, H) { SetList = sets, StatList = stats, HideEq = false };
+      var pfl = new FilterPilot(g); int barClicks = 0;
+      double bx = (0.029 + 0.379 / 2) * Ui.Unit(W, H), by = Ui.FromBottom(0.9275, W, H);
+      for (long t = 0; t < 6000; t += 100) {
+        bool seen = gfl.Open && ((t / 200) % 3 != 1);   // a read in three says «closed»
+        var v = new FilterView { NowMs = t, Foreground = true, W = W, H = H, Item = 5, Wanted = true, Suits = gfl.Suits.ToArray(), MainAttrs = gfl.Mains.ToArray(),
+          SetId = sets[3], SetIndex = 3, SetOrder = gfl.SetList, SubOrder = gfl.SubList, SubAttrs = gfl.Subs.ToArray(), PanelOpen = seen, SidePanelOpen = false, SetPanelOpen = false };
+        var a = pfl.Step(v);
+        if (a == null) break;
+        if (a.Kind == AutoKind.Click) { if (Math.Abs(a.X - bx) < 12 && Math.Abs(a.Y - by) < 12) barClicks++; gfl.Click(a.X, a.Y); }
+      }
+      Check(barClicks == 1 && pfl.State != "failed", "a flickering panel read: the «Фильтр» bar is clicked once, the panel stays open (" + barClicks + " bar clicks, " + pfl.State + " " + pfl.Note + ")");
+    }
     // the sub stats' side panel is still open: it swallows the click on «Скрыть надетое» - closed first, the filter is not done before
     game = new FakeFilterGame(g, W, H) { SetList = sets, StatList = stats, HideEq = true, Open = true, Side = true, SubSide = true };
     var fph = new FilterPilot(g); int swallowed = 0; double hx = g.X(g.HideEquippedX, W, H), hy = g.Y(g.HideEquippedY, W, H);

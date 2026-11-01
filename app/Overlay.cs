@@ -3525,10 +3525,20 @@ namespace RealmForge {
     /// arrow top left (CityBack, through the gate: no pop-up, not the city or a fight, at most ClickGate.MaxCityBacks a run, each press has to
     /// change the screen). A press that changed nothing is followed by ONE Escape key press (EscapeBack, at most ClickGate.MaxEscapes a run).
     /// True = a press was tried this tick, or one is due on this screen and the pilot waits for it (city first); false = the pilot goes on.</summary>
+    long heroFunnelCloseAfter;
     bool BackStep(ClickOwner owner, ScreenState scr, bool need, W32.POINT o, W32.RECT cr, bool front, long now) {
       if (MapStep(owner, scr, o, cr, front, now)) return true;   // a pop-up over the screen (or the city) first
       if (!need) { if (scr != null && scr.Kind != ScreenKind.Unknown) gate.DropEscape(owner); return false; }
       if (!front || sending) return false;
+      // the hero grid's filter pop-up is open over the hero screen (the player's, an interrupted run's): the gate does not let «back» through it
+      // (lab b3da8af5: «city, screen HeroScreen» for 100 s) - the funnel under the grid closes it first, once a second
+      if (scr != null && scr.Kind == ScreenKind.HeroScreen && owner == ClickOwner.Equip && now >= heroFunnelCloseAfter && HeroFilterSeen(o, cr.R, cr.B)) {
+        heroFunnelCloseAfter = now + 1200;
+        double U0 = Ui.Unit(cr.R, cr.B); int fx = o.X + (int)Math.Round(hg2.FunnelX * U0), fy = o.Y + (int)Math.Round(cr.B - hg2.FunnelDY * U0);
+        Log.Write("back: the hero grid's filter pop-up is open - closing it first");
+        EquipSend(ClickTarget.EquipFilter, new AutoAction { Kind = AutoKind.Click, X = fx - o.X, Y = fy - o.Y }, fx, fy, o, front);
+        return true;
+      }
       if (gate.EscapeDue(owner, scr, now)) { EscapeSend(owner, cr, front); AnnounceHalts(); return true; }
       // (the screen is not the flow's: the pilot never goes on from it - it waits for the press, the screen to settle, the retry time)
       // (a block of the press - a pop-up over the screen, the screen held - leaves the pilot its own reason: it clicks nothing past the gate)

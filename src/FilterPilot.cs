@@ -95,7 +95,11 @@ namespace RealmForge {
 
     /// <summary>The click to make, <see cref="AutoAction.Nothing"/> to wait, or null: nothing to do with the filter
     /// (the item pilot goes on).</summary>
+    // the panel read flickers while it opens (lab b3da8af5: open, closed, open, closed within a second): the «Фильтр» bar is a toggle, a click on a read
+    // of «closed» right after a read of «open» shut the panel the first click had opened - three times, then «the panel does not stay open»
+    long panelSeenAt = long.MinValue; public const int PanelGraceMs = 1500;
     public AutoAction Step(FilterView v) {
+      if (v.PanelOpen) panelSeenAt = v.NowMs;
       if (v.Item != item) {
         item = v.Item; waitUntil = 0; passes = 0; reopens = 0; failed = false; State = "idle"; effect.Drop();
         NewPass();
@@ -159,6 +163,7 @@ namespace RealmForge {
 
       double W = v.W, H = v.H;
       if (!v.PanelOpen) {
+        if (panelSeenAt != long.MinValue && v.NowMs - panelSeenAt < PanelGraceMs && !failed) return AutoAction.Nothing;   // (it was just seen open: the read flickers, no toggling click)
         if (++openTries > PartTries) {
           if (reopens >= MaxReopens) { failed = true; State = "failed"; Note = "the filter panel does not stay open (" + reopens + " retries)"; return null; }
           reopens++; NewPass(); openTries = 1; Note = "the panel closed without a filter: opening it again (" + reopens + ")";
