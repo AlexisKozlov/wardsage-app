@@ -3139,7 +3139,7 @@ namespace RealmForge {
       return LoadPlan.LivePollMs(ScreensWanted(), sh, sh && IsForeground(h), EquipLiveHot);
     }
 
-    bool ScreensWanted() { return target != 0 || locateReq != null || filterItem != 0 || hintKind != "" || runHero != 0 || sellWanted != null; }
+    bool ScreensWanted() { return labPrep != null || target != 0 || locateReq != null || filterItem != 0 || hintKind != "" || runHero != 0 || sellWanted != null; }
 
     /// <summary>THE read of the game's screens, once per tick (at most every 120 ms). The equip helper, «Показать в игре», the storage
     /// cleanup and the click gate take the screen from here (a short read failure is held for 1.5 s, see ScreenTracker).</summary>

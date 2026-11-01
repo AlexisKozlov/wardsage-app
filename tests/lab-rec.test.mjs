@@ -69,6 +69,8 @@ ok(/labForce = true; labAutoOff = false; ApplyAutoClick\(\); SendState\(null\)/.
 ok(/labHintOnly = hint;[^\n]*ApplyAutoClick\(\); SendState\(null\)/.test(hb), 'the hint mode posts the state to the page');
 ok(/m\.lab && S\.autoClick && !wasAuto\) labRecheck\(\)/.test(appjs) && /function labRecheck\(\)[\s\S]*enqueue\(fresh\)[\s\S]*sellStart\(\)/.test(appjs), 'the page starts pending plans and the sell list when the lab forces auto click');
 ok(/LabRecCmd\.AutoClick\(cfg\.AutoClick, labForce, On\("autoclick"\), labHintOnly \|\| labAutoOff\)/.test(hb), 'the host auto click is the pure rule (never in the hint mode, nor in the auto-off scenario)');
+const ov = readFileSync(new URL('../app/Overlay.cs', import.meta.url), 'utf8');
+ok(/bool ScreensWanted\(\) \{ return labPrep != null \|\|/.test(ov), 'the screens are read while a lab setup runs (lab 24c266d0: the prep never got a screen read and failed in 100 s)');
 ok(/labPrepOn && On\("autoclick"\)/.test(hb) && /if \(!Channel\.IsTest\) \{ LabWrite\("rec\.ack"/.test(hb), 'a lab setup clicks only with the site\'s autoclick switch on, and a release build refuses it');
 ok(/if \(hint\) \{ overlay\.SetRun\(0\); overlay\.SetSell\(null, null, null, 0\); \}/.test(hb) && /!labHintOnly && !labAutoOff \? \(long\)h : 0/.test(hb) && /cmd == "sell\.hint" \|\| labHintOnly/.test(hb), 'the hint mode drops a running plan and sell run, and ignores run / sell starts from the page');
 ok(/wasAuto && !S\.autoClick && m\.autoSync !== undefined\) \{\s*S\.run = null; S\.queue = \[\];/.test(appjs), 'the page stops its run and queue when the host takes auto click away');
