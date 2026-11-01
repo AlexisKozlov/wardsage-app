@@ -2937,7 +2937,7 @@ namespace RealmForge {
       var mv = artPilot.Step(view);
       if (artPilot.Trace != "") { Log.Write("art promote auto: " + artPilot.Trace); artPilot.Trace = ""; }
       string said = mv.State + "|" + mv.Why + "|" + step.Key;
-      if (said != artAutoSaid) { artAutoSaid = said; Log.Write("art promote auto: " + mv.State + (mv.Why != "" ? " (" + mv.Why + ")" : "") + " at step " + step.Key); }
+      if (said != artAutoSaid) { artAutoSaid = said; Log.Write("art promote auto: " + mv.State + (mv.Why != "" ? " (" + mv.Why + ")" : "") + " at step " + step.Key + (mv.Why == "plan" && ws != null && req.Art != null ? " (the site's copies [" + string.Join(",", req.Art.Copies) + "] via " + req.Art.Via + ", the workshop's list [" + string.Join(",", ws.Mats) + "])" : "")); }
       if (mv.State == "background") RaiseGame(hwnd, true, now, true);
       if (mv.Action.Kind != AutoKind.None) SendArt(mv, req, ws, o, cr, gameFront, W, H, U);
       if (artPilot.Stopped) { step.Auto = "stopped"; step.AutoWhy = artPilot.Reason; }
@@ -4473,6 +4473,7 @@ namespace RealmForge {
         if (best != null) {
           s.Source = best.IsLive ? "live" : "layout"; s.Widget = best.Widget; s.Sprite = best.Sprite; s.Shape = best.Shape; s.Why = best.Why;
           s.Live = best.Live; s.Layout = best.Layout; s.PlateLayout = best.Plate;
+          { var ft = FrameTargets.Of(target); s.ChildVisual = ft != null && ft.Visual != "" && ft.Visual != "-" && ft.Visual != "root"; }
           FrameAudit.HiddenOrCovered(best.Why, out s.Hidden, out s.Covered);
         } else s.Source = "none";
         foreach (var pr in plates) s.Plates.Add(new[] { pr[0] - sceneX, pr[1] - sceneY, pr[2], pr[3] });

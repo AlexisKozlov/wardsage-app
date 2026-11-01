@@ -28,6 +28,8 @@ namespace RealmForge {
     public bool Hidden, Covered;
     /// <summary>Layout is the graph's rect of a plate-framed target (a tab): measured at the prefab's own state, so the tolerance is wider (PlateTolPct).</summary>
     public bool PlateLayout;
+    /// <summary>The live rect is a named visual child of the widget (hero.workshop: its Icon, 50 x 44 in a 89 x 91 button), not the whole widget: the size is not comparable with the layout's, only the centre.</summary>
+    public bool ChildVisual;
     /// <summary>The capture's image px per client px (0 = no image).</summary>
     public double Scale;
     public string Image = "";
@@ -76,7 +78,7 @@ namespace RealmForge {
       if (d != null) {
         double tw = Tol(s.Layout[2], s.PlateLayout), th = Tol(s.Layout[3], s.PlateLayout);
         if (Math.Abs(d[0]) > tw || Math.Abs(d[1]) > th) res.Add("live vs layout centre dx=" + R(d[0]) + " dy=" + R(d[1]) + " (tolerance " + R(tw) + "x" + R(th) + ")");
-        if (Math.Abs(d[2]) > tw || Math.Abs(d[3]) > th) res.Add("live vs layout size dw=" + R(d[2]) + " dh=" + R(d[3]) + " (tolerance " + R(tw) + "x" + R(th) + ")");
+        if (!s.ChildVisual && (Math.Abs(d[2]) > tw || Math.Abs(d[3]) > th)) res.Add("live vs layout size dw=" + R(d[2]) + " dh=" + R(d[3]) + " (tolerance " + R(tw) + "x" + R(th) + ")");
       }
       if (s.ClientW > 0 && s.ClientH > 0 && (f[0] < -2 || f[1] < -2 || f[0] + f[2] > s.ClientW + 2 || f[1] + f[3] > s.ClientH + 2 || f[2] < 2 || f[3] < 2))
         res.Add("outside the client [" + R(f[0]) + "," + R(f[1]) + "," + R(f[2]) + "," + R(f[3]) + "] of " + s.ClientW + "x" + s.ClientH);

@@ -6775,6 +6775,14 @@ static partial class CoreTests {
     {   // the frame audit (src/FrameAudit.cs): the flag rules, the stability, the sidecar
       Func<FrameAuditShot> clean = () => new FrameAuditShot { Step = "s", Target = "t", Frame = new double[] { 100, 100, 80, 40 }, Live = new double[] { 102, 101, 76, 38 }, Layout = new double[] { 100, 100, 80, 40 }, ClientW = 1280, ClientH = 720 };
       Eq(0, FrameAudit.Flags(clean()).Count, "frame audit: a frame on its widget, inside the client, alone, off the plate is clean");
+      { // lab 1.6.66.463 hero.workshop: the live rect is the button's Icon (50 x 44), the layout's the whole button (89 x 91); same centre
+        var hw = new FrameAuditShot { Step = "s", Target = "hero.workshop", Frame = new double[] { 828, 581, 48, 44 }, Live = new double[] { 826, 580, 50, 44 }, Layout = new double[] { 806, 560, 89, 91 }, ClientW = 1366, ClientH = 705 };
+        Check(FrameAudit.Flags(hw).Exists(f => f.StartsWith("live vs layout size dw=-39")), "frame audit: a child visual against the whole button's layout is flagged by size (the old rule)");
+        hw.ChildVisual = true;
+        Eq(0, FrameAudit.Flags(hw).Count, "frame audit: a named visual child's size is not compared with the whole widget's layout (its centre still is)");
+        hw.Live = new double[] { 826 + 40, 580, 50, 44 };
+        Check(FrameAudit.Flags(hw).Exists(f => f.StartsWith("live vs layout centre")), "frame audit: a child visual off the layout's centre is still flagged");
+      }
       var fa = clean(); fa.Live = new double[] { 100 + 12, 100, 80, 40 };
       Eq(0, FrameAudit.Flags(fa).Count, "frame audit: 12 px off (tolerance 12) is clean");
       fa.Live = new double[] { 100 + 13, 100, 80, 40 };
