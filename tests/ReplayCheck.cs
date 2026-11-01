@@ -26,6 +26,8 @@ using System.Text;
 using RealmForge;
 
 static class ReplayCheck {
+  /// <summary>NAV_REPLAY=1: the recorded pilot views are run with NavOwned on (the navigator owns the way to the slot and the hero screen).</summary>
+  static readonly bool NavOwnedRun = Environment.GetEnvironmentVariable("NAV_REPLAY") == "1";
   public sealed class Tick {
     public long T, Tn; public string Screen = "-", Step = "-", Mode = ""; public bool Front;
     public bool Busy;                                   // the player moved the mouse in the last 700 ms (as the overlay's UserBusy)
@@ -51,12 +53,14 @@ static class ReplayCheck {
       object ap, hp;
       if (inn.TryGetValue("ap", out ap)) {
         var d = RecIn.O(ap); var v = new AutoView(); RecView.Fill(v, d != null && d.ContainsKey("v") ? d["v"] : null);
+        if (NavOwnedRun) v.NavOwned = true;
         k.Item = v; k.ItemRec = RecView.Action(ap); k.ItemRecState = d != null ? RecIn.Str(d, "s") : null;
         k.ItemRep = Item.Step(v); k.ItemRepState = Item.State;
         if (k.ItemRep.Kind != AutoKind.None) Item.LivePoint(k.ItemRep.X, k.ItemRep.Y);   // (the app tells the pilot where a click really went: the live cell's point, here the one it asked)
       }
       if (inn.TryGetValue("hp", out hp)) {
         var d = RecIn.O(hp); var v = new HeroView(); RecView.Fill(v, d != null && d.ContainsKey("v") ? d["v"] : null);
+        if (NavOwnedRun) v.NavOwned = true;
         k.Hero = v; k.HeroRec = RecView.Action(hp); k.HeroRecState = d != null ? RecIn.Str(d, "s") : null;
         k.HeroRep = Hero.Step(v) ?? AutoAction.Nothing; k.HeroRepState = Hero.State;
       }

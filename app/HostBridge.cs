@@ -146,6 +146,7 @@ namespace RealmForge {
       if (Channel.IsTest && labNav != "") return labNav == "on";   // the lab's settings command (settings nav=on|off) rules in a test build
       string m = Channel.IsTest ? cfg.NavCore : "site";
       if (m == "off") return false;
+      if (Channel.IsTest && m != "lab") return true;   // test builds: on by default ("site" = the default); config "navCore":"off" is the escape hatch; "lab" = only when the lab's settings command forces it
       if (m == "on") return true;
       if (m == "lab" && (labForce || labPrepOn)) return true;
       return On("navCore");
@@ -815,6 +816,7 @@ namespace RealmForge {
       sb.Append(",\"lang\":").Append(S(cfg.Lang == "en" ? "en" : "ru"));
       sb.Append(",\"version\":").Append(S(Program.Version));
       sb.Append(",\"channel\":").Append(S(Channel.IsTest ? "test" : "main"));
+      if (Channel.IsTest) sb.Append(",\"navCore\":").Append(B(overlay.NavCoreEnabled));   // (the bottom-left version line says «ядро: вкл»)
       sb.Append(",\"site\":").Append(S(cfg.Site));
       sb.Append(",\"defaultSite\":").Append(S(SyncClient.DefaultSite));
       bool has = SyncClient.IsValidCode(cfg.Code);

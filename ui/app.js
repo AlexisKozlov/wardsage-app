@@ -12,7 +12,7 @@
 
   const CODE_RE = /^rf_[0-9A-Za-z]{32}$/;
   const S = {
-    notice: null, offline: false, down: {}, rec: { on: false, sec: 0, sent: 0, total: 0, why: '' }, ready: false, termsOk: true, lang: 'ru', version: '', channel: 'main', site: '', defaultSite: '', hasCode: false, codePrefix: '', saveCopy: false,
+    notice: null, offline: false, down: {}, rec: { on: false, sec: 0, sent: 0, total: 0, why: '' }, ready: false, termsOk: true, lang: 'ru', version: '', channel: 'main', navCore: false, site: '', defaultSite: '', hasCode: false, codePrefix: '', saveCopy: false,
     game: { running: false, version: null }, last: null, page: 'sync', editCode: false,
     sync: { phase: 'idle', stage: null, seconds: 0, result: null, error: null },
     plans: { status: 'idle', list: [], err: null }, sel: 0,
@@ -150,7 +150,7 @@
       <div class="rail-foot">
         ${S.update && S.updDismissed ? `<button class="btn-line" data-act="updOpen">${I.reload}<span>${esc(t('updAvail', shownVer(S.update.version)))}</span></button>` : ''}
         <div class="game-state"><span class="dot ${S.game.running ? 'on' : ''}"></span><div>${esc(S.game.running ? t('gameOn') : t('gameOff'))}
-          ${S.game.running && S.game.version ? `<small>${esc(t('gameVer', S.game.version))}</small>` : ''}${S.version ? `<small>${esc(t('appVer', shownVer(S.version)))}</small>` : ''}</div></div>
+          ${S.game.running && S.game.version ? `<small>${esc(t('gameVer', S.game.version))}</small>` : ''}${S.version ? `<small>${esc(t('appVer', shownVer(S.version)))}${S.channel === 'test' && S.navCore ? ' · ядро: вкл' : ''}</small>` : ''}</div></div>
       </div>`;
   }
 
@@ -1082,7 +1082,7 @@
     if (!m || !m.ev) return;
     switch (m.ev) {
       case 'state':
-        Object.assign(S, { lang: m.lang, version: m.version, channel: m.channel || 'main', site: m.site, defaultSite: m.defaultSite, termsOk: m.termsOk !== false, hasCode: m.hasCode, codePrefix: m.codePrefix, saveCopy: m.saveCopy, last: m.last || S.last });
+        Object.assign(S, { lang: m.lang, version: m.version, channel: m.channel || 'main', navCore: !!m.navCore, site: m.site, defaultSite: m.defaultSite, termsOk: m.termsOk !== false, hasCode: m.hasCode, codePrefix: m.codePrefix, saveCopy: m.saveCopy, last: m.last || S.last });
         const wasAuto = S.autoClick;
         if (m.autoSync !== undefined) { S.autoSync = m.autoSync; S.autoClick = m.autoClick; S.autoConfirm = !!m.autoConfirm; S.errorReports = !!m.errorReports; S.autoUpdate = m.autoUpdate !== false; S.tray = m.tray !== false; S.bossHints = m.bossHints !== false; S.sendCodes = m.sendCodes !== false; S.recButton = m.recButton !== false; S.autostart = !!m.autostart; }
         if (m.game) S.game = m.game;

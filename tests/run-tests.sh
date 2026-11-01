@@ -113,6 +113,12 @@ for d in tests/replays/*/; do
   dotnet exec --runtimeconfig "$OUT/RecReplay.runtimeconfig.json" "$OUT/RecReplay.dll" --check "$d" || replay_bad=1
 done
 [ "$replay_bad" = 0 ] || { echo "recording replays: a regression (or a pending one that now passes)"; exit 1; }
+# the same fixtures with the pilot views run NavOwned (the navigator owns the way to the slot / the hero screen)
+for d in tests/replays/*/; do
+  [ -f "$d/expect.json" ] || continue
+  NAV_REPLAY=1 dotnet exec --runtimeconfig "$OUT/RecReplay.runtimeconfig.json" "$OUT/RecReplay.dll" --check "$d" || replay_bad=1
+done
+[ "$replay_bad" = 0 ] || { echo "recording replays with NavOwned: a regression"; exit 1; }
 
 if command -v mono >/dev/null && [ -f "$FX45/System.dll" ]; then
   step "6. Same tests on Mono (.NET Framework 4.5 API, HttpWebRequest of the Framework family, real DPAPI class)"
