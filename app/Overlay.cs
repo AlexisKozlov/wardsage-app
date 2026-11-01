@@ -551,7 +551,19 @@ namespace RealmForge {
     public void SetItemInfo(long uid, long setId, long statId) { if (uid > 0 && (setId > 0 || statId > 0)) itemInfo[uid] = new[] { setId, statId }; }
 
     /// <summary>The started plan's hero (0 = none): the pilot opens that hero's gear on the hero screen.</summary>
-    public void SetRun(long hero) { if (hero == runHero) return; if (hero > 0) ResumeClicks(ClickOwner.Equip); bool was = PlanOn; if (hero > 0) artLatch.NewPlan(); runHero = hero; PlanStamp(was); Run(); }
+    // owner rule: every auto-click run starts from the city (back arrow / Escape / pop-up closes until the screen is the city); false = this run has not been in the city yet
+    object sellRunSeen; LocateRequest locateRunSeen;
+    bool cityRunEquip = true, cityRunSell = true, cityRunLocate = true; long cityRunSince;
+    const int CityRunCapMs = 25000;
+    /// <summary>The run's city-first rule: true = the run must still go back to the city (a known screen other than the city is up). Held for CityRunCapMs at most.</summary>
+    bool CityStartDue(ref bool flag, ScreenState scr, long now) {
+      if (flag) return false;
+      if (scr != null && scr.Kind == ScreenKind.City) { flag = true; return false; }
+      if (cityRunSince == 0) cityRunSince = now;
+      if (now - cityRunSince > CityRunCapMs) { flag = true; Log.Write("auto: the city was not reached in " + CityRunCapMs / 1000 + " s - the run goes on from this screen"); return false; }
+      return scr != null && scr.Kind != ScreenKind.Unknown;
+    }
+    public void SetRun(long hero) { if (hero == runHero) return; if (hero > 0) { ResumeClicks(ClickOwner.Equip); cityRunEquip = false; cityRunSince = 0; } bool was = PlanOn; if (hero > 0) artLatch.NewPlan(); runHero = hero; PlanStamp(was); Run(); }
 
     // ---- «Надеть в игре» with an artifact (src/ArtEquip.cs): after the gear the guide puts the plan's artifact on the hero (hint kind "art")
     long artHero, artUid;
@@ -590,7 +602,7 @@ namespace RealmForge {
       return runHero + "|" + target + "|" + filterItem + "|" + filterKind + "|" + hintKind + "|" + autoSaid + (ArtPhase && artEqStep != null ? "|" + artEqStep.Key : "");
     }
 
-    public void RestartPilots() { RFX.LuaRootShadow("pilot start"); pilot.Reset(); fpilot.Reset(); hpilot.Reset(); artEq.Reset(); ResumeClicks(ClickOwner.Equip); }
+    public void RestartPilots() { cityRunEquip = false; cityRunSince = 0; RFX.LuaRootShadow("pilot start"); pilot.Reset(); fpilot.Reset(); hpilot.Reset(); artEq.Reset(); ResumeClicks(ClickOwner.Equip); }
 
     /// <summary>Item to highlight (0 = none).</summary>
     public void SetTarget(long uid) {
@@ -2134,7 +2146,8 @@ namespace RealmForge {
       // a full-screen screen nobody knows: its back arrow top left (at most 3 presses a run, each has to change the screen)
       if ((runHero > 0 || target > 0) && v.Foreground && !v.UserBusy && UnknownBackStep(ClickOwner.Equip, screens.Current, o, cr, v.Foreground, now)) return;
       // a known screen the plan cannot start from (the Foundry, the inventory, the gem screen ...): back to the city with its arrow top left
-      if (runHero > 0 && v.Foreground && !v.UserBusy && BackStep(ClickOwner.Equip, screens.Current, CityFirst.NeedsCity(ArtPhase ? PilotFlow.ArtEquip : PilotFlow.Equip, screens.Current), o, cr, v.Foreground, now)) { AutoSay("work"); return; }
+      bool cityEq = runHero > 0 && CityStartDue(ref cityRunEquip, screens.Current, now);
+      if (runHero > 0 && v.Foreground && !v.UserBusy && BackStep(ClickOwner.Equip, screens.Current, cityEq || CityFirst.NeedsCity(ArtPhase ? PilotFlow.ArtEquip : PilotFlow.Equip, screens.Current), o, cr, v.Foreground, now, cityEq)) { AutoSay("work"); return; }
       if ((runHero > 0 || target > 0) && v.Foreground && !v.UserBusy && gate.UnknownStall(ClickOwner.Equip, screens.Current, now)) { AnnounceHalts(); return; }
       // first the plan's hero on the hero screen (a started plan only), then the game's filter (the item far down or
       // hidden), then the item itself
@@ -2263,6 +2276,9 @@ namespace RealmForge {
         // a pop-up over the inventory (a wait, a notice that came while marking): closed / waited for first, as on every other screen
         if (MapStep(ClickOwner.Sell, scr, o, cr, front, now)) { SellSay("open"); return; }
       }
+      // owner rule: the run starts from the city (the inventory too: back arrow / Escape until the city)
+      if (!ReferenceEquals(sellWanted, sellRunSeen)) { sellRunSeen = sellWanted; cityRunSell = false; cityRunSince = 0; }
+      if (front && !busy && CityStartDue(ref cityRunSell, scr, now) && BackStep(ClickOwner.Sell, scr, true, o, cr, front, now, true)) { SellSay("open"); return; }
       var inv = screens.Inv;
       if (scr != null && scr.Kind == ScreenKind.Inventory && inv != null) {
         if (!inv.EquipTab || !inv.Bulk) {
@@ -3536,8 +3552,8 @@ namespace RealmForge {
     /// arrow top left (CityBack, through the gate: no pop-up, not the city or a fight, at most ClickGate.MaxCityBacks a run, each press has to
     /// change the screen). A press that changed nothing is followed by ONE Escape key press (EscapeBack, at most ClickGate.MaxEscapes a run).
     /// True = a press was tried this tick, or one is due on this screen and the pilot waits for it (city first); false = the pilot goes on.</summary>
-    long heroFunnelCloseAfter;
-    bool BackStep(ClickOwner owner, ScreenState scr, bool need, W32.POINT o, W32.RECT cr, bool front, long now) {
+    long heroFunnelCloseAfter, cityTipAfter;
+    bool BackStep(ClickOwner owner, ScreenState scr, bool need, W32.POINT o, W32.RECT cr, bool front, long now, bool hold = false) {
       if (MapStep(owner, scr, o, cr, front, now)) return true;   // a pop-up over the screen (or the city) first
       if (!need) { if (scr != null && scr.Kind != ScreenKind.Unknown) gate.DropEscape(owner); return false; }
       if (!front || sending) return false;
@@ -3553,7 +3569,17 @@ namespace RealmForge {
       if (gate.EscapeDue(owner, scr, now)) { EscapeSend(owner, cr, front); AnnounceHalts(); return true; }
       // (the screen is not the flow's: the pilot never goes on from it - it waits for the press, the screen to settle, the retry time)
       // (a block of the press - a pop-up over the screen, the screen held - leaves the pilot its own reason: it clicks nothing past the gate)
-      if (!gate.CityBackDue(owner, scr, now)) { AnnounceHalts(); return !gate.Halted(owner) && ClickGate.CityBackBlock(scr) == ""; }
+      // the item's tip (a flow form) or the gear filter's main pop-up over the hero screen block «back»: closed first (the tip with one Escape, the pop-up by its ×)
+      if (hold && owner == ClickOwner.Equip && scr != null && scr.Kind == ScreenKind.HeroScreen && now >= cityTipAfter) {
+        double W1 = cr.R, H1 = cr.B, U1 = Ui.Unit(W1, H1);
+        if (EquipTipShown() && ClickGate.OnlyTip(scr)) { cityTipAfter = now + 1200; if (TipEscapeSend(cr, front)) Log.Write("back: the item's tip is open - closed with Escape first"); return true; }
+        if (Mark(o, fg.X(fg.MainCloseX, W1, H1), fg.Y(fg.CloseY, W1, H1), U1, ButtonCheck.IsCloseRed)) {
+          cityTipAfter = now + 1200; Log.Write("back: the gear filter's pop-up is open - closing it first");
+          EquipSend(ClickTarget.EquipClosePopup, new AutoAction { Kind = AutoKind.Click }, o.X + (int)Math.Round(fg.X(fg.MainCloseX, W1, H1)), o.Y + (int)Math.Round(fg.Y(fg.CloseY, W1, H1)), o, front);
+          return true;
+        }
+      }
+      if (!gate.CityBackDue(owner, scr, now)) { AnnounceHalts(); return !gate.Halted(owner) && (hold || ClickGate.CityBackBlock(scr) == ""); }
       double W = cr.R, H = cr.B, U = Ui.Unit(W, H);
       SendInside(new AutoAction { Kind = AutoKind.Click, X = hg2.BackX * U, Y = hg2.BackY * U }, o, cr, owner, ClickTarget.CityBack, front, (rq, fr) => { rq.U = U; });
       AnnounceHalts();
@@ -3830,8 +3856,10 @@ namespace RealmForge {
         view.Filter = FilterView(inv, dstep, req, gameFront, busy, now, W, H, U);
       // city first: a screen the purpose's flow does not go on from (the workshop, the gem screen for an Ascension, the Foundry for a recast), or
       // the step is the inventory's while the Foundry / the gem screen is on top: back with its arrow first
-      bool needBack = CityFirst.NeedsCity(CityFirst.OfLocate(req.Purpose), scr, dstep.Kind, LocateAuto.NeedsCityBack(view));
-      if (gameFront && !busy && BackStep(ClickOwner.Locate, scr, needBack, o, cr, gameFront, now)) { step.Auto = "work"; step.AutoWhy = ""; locateDriving = true; return; }
+      if (!ReferenceEquals(req, locateRunSeen)) { locateRunSeen = req; cityRunLocate = false; cityRunSince = 0; }
+      bool cityLoc = CityStartDue(ref cityRunLocate, scr, now);
+      bool needBack = cityLoc || CityFirst.NeedsCity(CityFirst.OfLocate(req.Purpose), scr, dstep.Kind, LocateAuto.NeedsCityBack(view));
+      if (gameFront && !busy && BackStep(ClickOwner.Locate, scr, needBack, o, cr, gameFront, now, cityLoc)) { step.Auto = "work"; step.AutoWhy = ""; locateDriving = true; return; }
       if (gate.CellAgainDue.Remove(ClickOwner.Locate)) lpilot.CellAgain();   // (ClickGate.Observe: a cell click without effect, placed again once)
       // a list step on a list that still moves: the next read (the click point from a settled one)
       if (gameFront && !busy && ((dstep.Kind == LocateKind.InList && !invSettle.Settled) || (dstep.Kind == LocateKind.AscendPick && !rsSettle.Settled))) { step.Auto = "work"; step.AutoWhy = ""; locateDriving = true; return; }

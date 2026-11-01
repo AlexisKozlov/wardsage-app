@@ -792,6 +792,8 @@ static partial class CoreTests {
       Send(ClickTarget.UnknownBack, new AutoAction { Kind = AutoKind.Click, X = bx, Y = by }, (rq, fr) => { rq.U = U; rq.W = W; rq.H = H; }, false, true);
       return true;
     }
+    bool cityDone;   // owner rule: the run has been in the city
+    bool CityStartDue(ScreenState scr) { if (cityDone) return false; if (scr != null && scr.Kind == ScreenKind.City) { cityDone = true; return false; } return scr != null && scr.Kind != ScreenKind.Unknown; }
     bool BackStep(ScreenState scr, bool need) {
       if (MapStep(scr)) return true;
       if (!need) { if (scr != null && scr.Kind != ScreenKind.Unknown) Gate.DropEscape(Owner); return false; }
@@ -815,7 +817,7 @@ static partial class CoreTests {
       var scr = Screens.Current;
       if (OfferStep(scr)) return;
       if (UnknownBackStep(scr)) return;
-      if (BackStep(scr, CityFirst.NeedsCity(Flow, scr))) return;   // city first (the shared table)
+      if (BackStep(scr, CityStartDue(scr) || CityFirst.NeedsCity(Flow, scr))) return;   // city first (the shared table; owner rule: every run starts from the city)
       if (Gate.UnknownStall(ClickOwner.Equip, scr, Now)) return;
       var hv = new HeroView {
         NowMs = Now, Foreground = true, W = W, H = U, ClientH = H, Plan = plan, Hero = heroScreen.FormOk ? heroScreen.Hero : 0, Tab = heroScreen.Tab, Part = heroScreen.Part,
@@ -894,7 +896,7 @@ static partial class CoreTests {
         if (sent) spilot.Sent(); else spilot.NotSent();   // (app/Overlay.cs TickSell)
         return;
       }
-      if (BackStep(scr, CityFirst.NeedsCity(PilotFlow.Sell, scr))) { PilotState = "open"; return; }
+      if (BackStep(scr, CityStartDue(scr) || CityFirst.NeedsCity(PilotFlow.Sell, scr))) { PilotState = "open"; return; }
       if (scr != null && scr.Kind == ScreenKind.HeroScreen) {
         PilotState = "open";
         if (Now - sellBtnAt < 2000) return;
@@ -930,7 +932,7 @@ static partial class CoreTests {
       var view = new LocateView { NowMs = Now, Foreground = true, W = W, H = H, U = U, Step = dstep, Inv = inv, Cols = 8, HeroScreenOpen = heroOpen, OtherFormOpen = formOpen,
                                   Geometry = geo, Rs = locateRs, Item = req.Item, Purpose = req.Purpose };
       if (LocateAuto.NeedsCityButton(dstep, heroOpen, formOpen)) view.CityButton = CityButtonSeen();
-      bool needBack = CityFirst.NeedsCity(Flow, scr, dstep.Kind, LocateAuto.NeedsCityBack(view));   // city first (app/Overlay.cs TickLocateDrive)
+      bool needBack = CityStartDue(scr) || CityFirst.NeedsCity(Flow, scr, dstep.Kind, LocateAuto.NeedsCityBack(view));   // city first (app/Overlay.cs TickLocateDrive)
       if (BackStep(scr, needBack)) return;
       if (Gate.CellAgainDue.Remove(ClickOwner.Locate)) lp.CellAgain();   // (ClickGate.Observe: a cell click without effect, placed again once)
       if ((dstep.Kind == LocateKind.InList && !InvSettle.Settled) || (dstep.Kind == LocateKind.AscendPick && !RsSettle.Settled)) return;
