@@ -170,7 +170,7 @@ namespace RealmForge {
         if (v.FilterOpen && v.Part < 0 && doneCloses < 1) {
           if (!v.Foreground || v.UserBusy) return AutoAction.Nothing;
           if (v.NowMs < waitUntil) return AutoAction.Nothing;
-          doneCloses++; State = "work"; waitUntil = v.NowMs + Late(AfterClickMs + 700); fade = true;   // it fades out
+          doneCloses++; FilterDirty = false; State = "work"; waitUntil = v.NowMs + Late(AfterClickMs + 700); fade = true;   // it fades out
           return Funnel(v, v.H);
         }
         if (doneCloses > 0 && v.NowMs < waitUntil) return AutoAction.Nothing;   // (its fade: no slot click through it)
@@ -219,7 +219,7 @@ namespace RealmForge {
       if (v.Heroes == null || v.Heroes.Length == 0) return AutoAction.Nothing;
       int t = Array.IndexOf(v.Heroes, v.Plan);
       if (t < 0) { State = "notfound"; return AutoAction.Nothing; }
-      if (v.FilterOpen) { waitUntil = v.NowMs + Late(AfterClickMs + 700); fade = true; return Funnel(v, H); }   // (the pop-up covers the grid; it fades out)
+      if (v.FilterOpen) { FilterDirty = false; waitUntil = v.NowMs + Late(AfterClickMs + 700); fade = true; return Funnel(v, H); }   // (the pop-up covers the grid; it fades out)
 
       double ch = v.ClientH > 0 ? v.ClientH : H;
       double pitch = pitchF * H, card = cardF * H, top = g.ViewTop * H, bottom = ch - (1 - g.ViewBottom) * H, mid = (top + bottom) / 2;
@@ -291,7 +291,7 @@ namespace RealmForge {
         else if (v.ClassChosen) { if (++classResets > 2) classDone = true; else { waitUntil = v.NowMs + Late(AfterClickMs); return Cell(g.ClassX, 0, H); } }
         else { classClicked = true; waitUntil = v.NowMs + Late(FilterClickMs); return Cell(g.ClassX, row, H); }
       }
-      filterPhase = 2; waitUntil = v.NowMs + Late(AfterClickMs + 700); fade = true;   // it fades out: no grid click through it meanwhile
+      filterPhase = 2; FilterDirty = false; waitUntil = v.NowMs + Late(AfterClickMs + 700); fade = true;   // it fades out: no grid click through it meanwhile
       return Funnel(v, H);                                         // close the pop-up: the grid is filtered
     }
 
@@ -322,7 +322,24 @@ namespace RealmForge {
       return Click(g.FunnelX * H, ch - g.FunnelDY * H);
     }
 
-    AutoAction Cell(double x, int row, double H) { return Click(x * H, (g.FilterRow0 + row * g.FilterPitch) * H); }
+    /// <summary>The pilot clicked in the grid's filter pop-up and has not closed it itself: if the plan goes away now (cancelled, another scenario) the
+    /// pop-up stays open over the hero screen with the pilot's faction ticked (lab 4512f342: the next hint had no frame to show). Cleanup closes it.</summary>
+    public bool FilterDirty;
+    int cleanTries; long cleanAt;
+    /// <summary>With no plan to run: leave the hero grid's filter as found or cleared («Все» in both columns) and the pop-up closed. Null = nothing to do now.</summary>
+    public AutoAction Cleanup(HeroView v) {
+      if (!FilterDirty) { cleanTries = 0; return null; }
+      if (!v.Foreground || v.UserBusy || v.NowMs - cleanAt < 700) return null;
+      double H = v.H;
+      if (!v.FilterOpen || cleanTries >= 4) { FilterDirty = false; cleanTries = 0; return null; }
+      cleanAt = v.NowMs; cleanTries++;
+      if (v.ChosenCamps != null && v.ChosenCamps.Length > 0 && cleanTries <= 2) return Click(g.FactionX * H, (g.FilterRow0) * H);
+      if (v.ClassChosen && cleanTries <= 3) return Click(g.ClassX * H, (g.FilterRow0) * H);
+      FilterDirty = false; cleanTries = 0;
+      return Funnel(v, H);
+    }
+
+    AutoAction Cell(double x, int row, double H) { FilterDirty = true; return Click(x * H, (g.FilterRow0 + row * g.FilterPitch) * H); }
 
     // a click brought up hero i (or nobody new): the top of i's row is in [y - card, y]
     void Learn(HeroView v) {
