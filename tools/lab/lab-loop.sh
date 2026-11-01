@@ -384,8 +384,15 @@ tick() {
         if r=$(mkjob rec "{\"cmd\":\"start\",\"scenario\":\"$sc\",\"run\":\"$RUN\"}"); then dset job "$r"; phase scn_rec; return; fi
         say "recording: the job could not be queued"
       fi
-      mkjob game_front >/dev/null || true   # the game window to the front before each scenario
-      dset mark_at "$(now)"; mkjob mark "{\"scn\":\"$sc\"}" >/dev/null || true   # the runner forgets the old stop / ready markers
+      # strict order: the runner's mark (it forgets the old stop / ready / pilot markers) must be DONE before the request is seeded; a mark that ran
+      # after a fast app's first lines (a list already marked in the game ends in ~1 s) wiped them: "no pilot step for 40 s" with the run finished (lab cdc2e581)
+      mk="$i/$(dget sar_ready)"
+      if [ "$(dget mark_for)" != "$mk" ]; then
+        dset mark_for "$mk"
+        mkjob game_front >/dev/null || true   # the game window to the front before each scenario
+        dset mark_at "$(now)"
+        if mj=$(mkjob mark "{\"scn\":\"$sc\"}"); then dset job "$mj"; dset job_timeout ""; phase scn_mark; return; fi
+      fi
       if [ "${sc%_hint}" = equip_city ]; then
         # never seed the build the hero already wears (then the app has nothing to change): the other one, whatever the last run did
         pb=$("$HERE/lab-seed.sh" "$dev" --pick "$build" 2>/dev/null) || pb=""
@@ -409,6 +416,13 @@ tick() {
       if [ -z "$row" ] && [ -n "$sw" ]; then warn "$sc" 0 "$sw"; next_scn; return; fi
       if [ -z "$row" ]; then step "$sc" false 0 "seed failed (fixture missing?)"; FAILED=1; next_scn; return; fi
       dset row "$row"; dset seeded_at "$(now)"; dset fa_n 0; dset fa_at "$(now)"; dset fa_poll 0; RP_AT=""; RP_LINE=""; RP_N=0; phase wait_scn ;;
+    scn_mark)
+      # the mark job is done (or failed / expired / 30 s passed: the scenario goes on, a mark is a help, never a verdict) -> seed
+      j=$(dget job); st=$(jstate "$j")
+      case "$st" in
+        done|failed|expired|cancelled) phase scenario ;;
+        *) if [ "$(phase_age)" -gt 30 ]; then say "mark: no answer in 30 s"; phase scenario; fi ;;
+      esac ;;
     scn_rec)
       # the recording is a help, never a verdict: no answer in 40 s (old runner, old app) and the scenario goes on without one
       j=$(dget job); st=$(jstate "$j")
@@ -518,6 +532,15 @@ tick() {
         if [ "$fin" = sell ] && ! [[ "$fl" =~ selected\ [0-9]+/[0-9]+ ]]; then
           fl=$(q -v d="$DEV" -v s="${sa:-0}" <<< "select l.lines from public.app_test_logs l join public.lab_devices dv on dv.account_id = l.account_id where dv.id = :'d'::uuid and l.at >= to_timestamp(:'s'::bigint) order by l.id" | grep -oE '(^|[^t] )sell: done selected [0-9]+/[0-9]+ missing [0-9]+ extra [0-9]+' | tail -1)
         fi
+        # no final line from the runner (its mark / offset lost it): the verdict comes from the app's collected log (FinRe: "sell: done selected a/b missing m extra e"),
+        # asked for once before a "no progress" stop
+        if [ -z "$fin" ] && [ "$(dget sl_for)" = "$(dget scn_idx)" ]; then
+          sj=$(dget sl_job); sjs=$(jstate "$sj")
+          if [[ "$sjs" =~ ^(done|failed|expired|cancelled)$ ]] || [ "$(( $(now) - $(dget sl_at) ))" -gt 30 ]; then
+            fl=$(q -v d="$DEV" -v s="${sa:-0}" <<< "select l.lines from public.app_test_logs l join public.lab_devices dv on dv.account_id = l.account_id where dv.id = :'d'::uuid and l.at >= to_timestamp(:'s'::bigint) order by l.id" | grep -oE '(^|[^t] )sell: done selected [0-9]+/[0-9]+ missing [0-9]+ extra [0-9]+' | tail -1)
+            [ -n "$fl" ] && { fin=sell; say "sell: the final line is taken from the app's log"; }
+          fi
+        fi
         if [ "$fin" = sell ] && [[ "$fl" =~ selected\ ([0-9]+)/([0-9]+)\ missing\ ([0-9]+)\ extra\ ([0-9]+) ]]; then
           a=${BASH_REMATCH[1]}; b=${BASH_REMATCH[2]}; m=${BASH_REMATCH[3]}; e=${BASH_REMATCH[4]}
           # the list ends here: cancelled, so the app stops (it never presses «Продать»; the marks stay in the game's bulk sale)
@@ -530,6 +553,10 @@ tick() {
         fi
         dev_watch "$(dget mark_at)" "${sa:-0}" "$NOPROG_DEV" pilot norepeat; w=$?
         if [ "$w" = 9 ]; then fail_scn "$label" "runner too old (v11+ reports the sell marker)" "$tbl" "$row"
+        elif [ "$w" != 0 ] && [ "$(dget sl_for)" != "$(dget scn_idx)" ]; then
+          # before a "no progress" stop: the app's log is uploaded and read once (the runner may have missed the final line)
+          dset sl_for "$(dget scn_idx)"; dset sl_at "$(now)"; dset sl_job "$(mkjob upload_logs '{"lines":1000}')"
+        elif [ "$w" != 0 ] && ! [[ "$(jstate "$(dget sl_job)")" =~ ^(done|failed|expired|cancelled)$ ]] && [ "$(( $(now) - $(dget sl_at) ))" -le 30 ]; then :   # the log upload is awaited
         elif [ "$w" != 0 ]; then fail_scn "$label" "$WHY" "$tbl" "$row"
         elif [ "$(phase_age)" -gt "$maxs" ]; then fail_scn "$label" "not done in ${maxs} s" "$tbl" "$row"; fi
         return
