@@ -58,9 +58,9 @@ namespace RealmForge {
   }
 
   public sealed class RemoteSwitches {
-    public static readonly string[] Features = { "guild", "gvg", "battle", "autoclick", "equip", "locate", "locateAuto", "guideStyle", "artAuto" };
+    public static readonly string[] Features = { "guild", "gvg", "battle", "autoclick", "equip", "locate", "locateAuto", "guideStyle", "artAuto", "navCore" };
     /// <summary>Features that are off until the site says true (a missing or odd value, no reply and no saved copy all mean off).</summary>
-    public static readonly string[] DefaultOff = { "locateAuto", "guideStyle", "artAuto" };
+    public static readonly string[] DefaultOff = { "locateAuto", "guideStyle", "artAuto", "navCore" };
     public static bool StartsOff(string feature) { return Array.IndexOf(DefaultOff, feature) >= 0; }
     const int MaxBytes = 16 * 1024;
 

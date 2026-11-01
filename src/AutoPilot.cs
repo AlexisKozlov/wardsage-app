@@ -48,6 +48,8 @@ namespace RealmForge {
     public long ScreenHero;        // hero whose gear screen the game shows
     public long Owner = -1;        // hero wearing Target now: 0 = in the bag, -1 = unknown
     public bool SlotOpen;          // the screen read shows the gear list of Slot's part open
+    /// <summary>The navigator owns the way to the slot (src/NavEquip.cs): the pilot never opens a slot, it works on the open one. Default off: the old path unchanged.</summary>
+    public bool NavOwned;
     public bool PanelNone;         // no gear list panel exists yet (it is created when a slot is first opened): click the slot
     public bool PanelOk = true;
     /// <summary>The game's window table was read for this hero screen (the shown forms are known) and whether the item's tip
@@ -160,6 +162,7 @@ namespace RealmForge {
     }
 
     public AutoAction Step(AutoView v) {
+      if (v.NavOwned) v.Slot = null;   // the navigator opened the slot (NavPlan's facet:slot): the item steps only
       lastAct = 0; listSent = false;
       string key = v.Slot != null ? "slot:" + v.Slot[0] + ":" + v.Slot[1] : v.Target > 0 && (v.Row > 0 || (v.AutoConfirm && v.Sel == v.Target)) ? "item:" + v.Target : "";
       if (key != goal) {

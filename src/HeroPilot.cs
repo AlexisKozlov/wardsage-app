@@ -58,6 +58,8 @@ namespace RealmForge {
     public ulong GridPtr;
     public long HeroClass;
     public long[] HeroCamps;
+    /// <summary>The navigator owns the way to the hero grid (src/NavEquip.cs): the pilot does not click «Герои», the gear tab or the gear list's back arrow; it only finds the hero in the grid. Default off: the old path unchanged.</summary>
+    public bool NavOwned;
   }
 
   public sealed class HeroPilot {
@@ -176,12 +178,14 @@ namespace RealmForge {
         if (doneCloses > 0 && v.NowMs < waitUntil) return AutoAction.Nothing;   // (its fade: no slot click through it)
         if (State != "idle") State = "done"; return null;
       }
+      if (v.NavOwned && heroOk) { if (State != "idle") State = "done"; return null; }   // (the gear tab is the navigator's)
       if (State == "failed" || State == "notfound" || State == "small") return AutoAction.Nothing;
       // the hero screen is closed: from the main city its «Герои» button opens it (only when the button is seen with
       // nothing over it - a pop-up over the city dims it); elsewhere the player is asked
       if (v.Hero != 0) city = 0;   // the hero screen was reached: the next time in the city starts afresh
       if (v.UserClicked) pauseUntil = v.NowMs + UserPauseMs;
       if (!v.Foreground) { State = "background"; return AutoAction.Nothing; }   // (the «Герои» button is seen only with the game in front)
+      if (v.NavOwned && (v.Hero == 0 || v.Part >= 0)) { State = v.Hero == 0 ? "noscreen" : "work"; return AutoAction.Nothing; }   // («Герои» and the list's back arrow are the navigator's)
       if (v.Hero == 0 && (!v.HeroesButton || city >= MaxCity)) { State = "noscreen"; return AutoAction.Nothing; }
       if (v.UserBusy || v.NowMs < pauseUntil) { State = "paused"; return AutoAction.Nothing; }
       State = "work";

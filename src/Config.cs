@@ -27,6 +27,7 @@ namespace RealmForge {
     public double CoachX = -1, CoachY = -1;
     public string TermsAccepted = "";   // version of the Terms of Use the player accepted on the first-run card (Config.TermsVersion)
     public const string TermsVersion = "2026-10-17";
+    public string NavCore = "site";   // TEST build: the navigator core for the auto-equip gear phase, "site" (the site's navCore switch, off by default) | "on" | "lab" (on when the lab's settings command forces the settings) | "off"
     public string GuideStyle = "auto";   // TEST build: the new button highlight, "auto" (the site's switch) | "on" | "off"
     public bool RecButton = true;   // TEST build: the record button over the game (app/Overlay.cs)
     public bool SendCodes = true;   // promo codes the player enters in the game, with the game's answer, go to the site (app/CodeWatch.cs; the player can turn it off)
@@ -112,6 +113,7 @@ namespace RealmForge {
       sb.Append(",\n  \"tray\": ").Append(Tray ? "true" : "false");
       sb.Append(",\n  \"termsAccepted\": ").Append(MiniJson.Quote(TermsAccepted ?? ""));
       sb.Append(",\n  \"guideStyle\": ").Append(MiniJson.Quote(GuideStyle));
+      if (NavCore != "site") sb.Append(",\n  \"navCore\": ").Append(MiniJson.Quote(NavCore));
       sb.Append(",\n  \"recButton\": ").Append(RecButton ? "true" : "false");
       sb.Append(",\n  \"sendCodes\": ").Append(SendCodes ? "true" : "false");
       sb.Append(",\n  \"bossHints\": ").Append(BossHints ? "true" : "false");
@@ -154,6 +156,7 @@ namespace RealmForge {
       c.BossHints = MiniJson.GetBool(d, "bossHints", true);
       c.SendCodes = MiniJson.GetBool(d, "sendCodes", true);
       c.RecButton = MiniJson.GetBool(d, "recButton", true);
+      string nc = MiniJson.GetString(d, "navCore"); c.NavCore = nc == "on" || nc == "off" || nc == "lab" ? nc : "site";
       string gs = MiniJson.GetString(d, "guideStyle"); c.GuideStyle = gs == "on" || gs == "off" ? gs : "auto";
       c.TermsAccepted = MiniJson.GetString(d, "termsAccepted") ?? "";
       long lp; string lps = MiniJson.GetString(d, "lastPlayer");

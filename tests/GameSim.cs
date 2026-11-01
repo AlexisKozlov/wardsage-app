@@ -69,6 +69,9 @@ static partial class CoreTests {
     // when its tip closes: the laptop 1.6.66.348), worn; the gear list takes item clicks only once the pilot is at the item (ItemPhase)
     public static readonly HintGeometry Hint = new HintGeometry(); public static readonly ListGeometry ItemGeo = new ListGeometry(); public static readonly int[] ItemTypes = { 0, 1, 1, 1, 1 };
     public bool ItemPhase, ItemSel, Worn;
+    /// <summary>--nav: the gear filter's pop-up (its red cross) and the hero grid's filter pop-up over the hero screen: panels that are not forms; they swallow every click but the one that closes them.</summary>
+    public bool GearFilter, HeroFilter; public ClickTarget EscapeTarget = ClickTarget.EscapeBack;
+    static readonly FilterGeometry NavFg = new FilterGeometry();
     public double Row1Top { get { return (ItemGeo.ViewTop + ListGeometry.TopPad) * U; } }
     public double ItemX { get { return (ItemGeo.ColLeft(1) + ItemGeo.CellW / 2) * U; } }
     public double ItemY { get { return Row1Top + (ItemGeo.RowOffset(ItemTypes, 2) + ItemGeo.CellW / 2) * U; } }
@@ -276,6 +279,12 @@ static partial class CoreTests {
       if (c == 'D') { Bad.Add("CLICK ON A DANGEROUS FORM " + top + " @" + (int)x + "," + (int)y + " (" + tg + ")"); return; }
       if (ScreenMap.OnNever(top, x, y, W, H, U)) { Bad.Add("CLICK ON A NEVER-CLICK BUTTON of " + top + " @" + (int)x + "," + (int)y + " (" + tg + ")"); return; }
       Say("click " + tg + " @" + (int)x + "," + (int)y + " on " + top); Acts.Append(Now + " c" + (int)x + "," + (int)y + ";");
+      if (top == SimHero && Full == SimHero && (GearFilter || HeroFilter)) {
+        long latp = Lat();
+        if (GearFilter) { if (tg == ClickTarget.EquipClosePopup && Near(x, y, NavFg.X(NavFg.MainCloseX, W, H), NavFg.Y(NavFg.CloseY, W, H), 20)) Later(latp, () => { GearFilter = false; }); return; }
+        if (Near(x, y, hg.FunnelX * U, H - hg.FunnelDY * U, 20)) Later(latp, () => { HeroFilter = false; });
+        return;
+      }
       // the equip flow's item tip (a flow form of the hero screen, the pilots go on under it): a click beside it closes it and is taken by it
       if (top == SimTip && Full == SimHero && tg != ClickTarget.EquipConfirm) { Later(Lat(), () => { if (TopForm() == SimTip) Pop(SimTip); }); return; }
       // a click meant for a screen that lands on a pop-up / screen opened over it since the start, long enough ago for the app to have seen it
@@ -435,9 +444,11 @@ static partial class CoreTests {
       string top = TopForm(); char c = ScreenMap.ClassOf(top);
       Say("ESCAPE on " + top); Acts.Append(Now + " e;");
       if (c == 'D') { Bad.Add("ESCAPE ON A DANGEROUS FORM " + top); return; }
-      if (Stack.Contains(SimTip) && Full == SimHero) Bad.Add("ESCAPE WITH THE EQUIP FLOW'S TIP SHOWN (" + top + ")");
-      else if (OwnScreen != "" && Full == OwnScreen) Bad.Add("ESCAPE ON THE PILOT'S OWN SCREEN " + OwnScreen + " (" + top + ")");
+      bool tipEsc = EscapeTarget == ClickTarget.EquipTipEscape;
+      if (Stack.Contains(SimTip) && Full == SimHero && !tipEsc) Bad.Add("ESCAPE WITH THE EQUIP FLOW'S TIP SHOWN (" + top + ")");
+      else if (OwnScreen != "" && Full == OwnScreen && !tipEsc) Bad.Add("ESCAPE ON THE PILOT'S OWN SCREEN " + OwnScreen + " (" + top + ")");
       long lat = Lat();
+      if (tipEsc) { if (top == SimTip) Later(lat, () => { if (TopForm() == SimTip) Pop(SimTip); }); else Bad.Add("TIP ESCAPE WITH " + top + " ON TOP"); return; }
       if (top == SimCity) { CityEscapes++; Bad.Add("ESCAPE ON THE CITY (the game asks to quit)"); Later(lat, () => Push("Form_SystemTips")); return; }
       if (c == 'W') return;
       if (top == SimHero) { Later(lat, () => { if (Hero.Part >= 0) Hero.Part = -1; else { Hero.Shown = 0; Pop(SimHero); } }); return; }
@@ -585,7 +596,7 @@ static partial class CoreTests {
   }
 
   // ---- the host: app/Overlay.cs's glue around the real tracker, gate and pilots ----
-  sealed class SimHost {
+  sealed partial class SimHost {
     public readonly SimGame G; public readonly ClickGate Gate = new ClickGate(); public readonly ScreenTracker Screens = new ScreenTracker();
     public readonly ClickOwner Owner; public long Now;
     public readonly Dictionary<ClickTarget, int> Sent = new Dictionary<ClickTarget, int>(); public int EscapesSent;
@@ -681,6 +692,7 @@ static partial class CoreTests {
       Now = now;
       G.FieldTick();
       var inp = G.Read(); inp.Offers = offerOrder.Note(inp.Offers); inp.OfferTopKnown = offerOrder.TopKnown;   // (app/Overlay.cs: the newest offer on top)
+      if (Nav && Cfg.CellLatencyMs > 0) NavLatency(inp);
       if (!ScreenState.WantArtWs(Flow == PilotFlow.LocateArtPromote, inp.Screens)) inp.ArtWs = null;   // (app/Overlay.cs WantArtWs)
       string ik = ListSettle.KeyOf(inp.Inv), rk = ListSettle.KeyOf(inp.Rs);   // (app/Overlay.cs ReadScreens)
       InvSettle.Update(ik, now); RsSettle.Update(rk, now);
@@ -726,6 +738,7 @@ static partial class CoreTests {
     public int SentCount(ClickTarget t) { int n; return Sent.TryGetValue(t, out n) ? n : 0; }
     // GatedSend / SendInside: the gate's yes on a fresh read, then the click and its watch
     bool Send(ClickTarget t, AutoAction a, Action<ClickRequest, ScreenState> fill, bool wantCity, bool wantKnown) {
+      if (Nav && !InNavSend) G.Bad.Add("A SEND OUTSIDE ActClick (" + t + ") WHILE THE NAVIGATOR IS ON");
       if (a.X < 0 || a.Y < 0 || a.X >= W || a.Y >= H) return false;
       var fresh = Fresh(wantCity, wantKnown);
       if (FormsUnread(fresh)) { if (Environment.GetEnvironmentVariable("SIM_TRACE") != null) Console.WriteLine("  UNREAD " + t + " fresh=" + (fresh != null ? fresh.Brief : "-") + " unread=" + formsUnread); return false; }
@@ -737,7 +750,7 @@ static partial class CoreTests {
       var lr = t == ClickTarget.ArtWorkshop && G.LiveButtons && RFX.UiWidgetOf(t, rq.Form) != null ? G.WorkshopLive() : null;
       if (lr != null && a.Kind == AutoKind.Click) { a = new AutoAction { Kind = AutoKind.Click, X = lr[0] + lr[2] / 2, Y = lr[1] + lr[3] / 2 }; rq.X = a.X; rq.Y = a.Y; rq.Live = true; }
       Gate.OrderRead = !G.NoOrder && !G.NoTable && !G.Scan;   // (app/Overlay.cs: the fresh read has the window table's z-order; the older readers had none)
-      var res = Gate.Check(rq, fresh, Now);
+      var res = Gate.Check(rq, fresh, Now); lastGate = res;
       if (!res.Allowed) { if (Environment.GetEnvironmentVariable("SIM_TRACE") != null) Console.WriteLine("  DENY " + t + " fresh=" + fresh.Brief + " tick=" + (Screens.Current != null ? Screens.Current.Brief : "-") + " " + res.Detail); return false; }
       Gate.Arm(Owner, t, ClickGate.Expect(rq, fresh), Now, rq.Form);
       Count(t);
@@ -746,15 +759,20 @@ static partial class CoreTests {
       SendingUntil = Now + (a.Kind == AutoKind.Drag ? 850 : 300);   // (a drag: press, 16 moves of 20 ms, 350 ms at rest, release - app/Overlay.cs Send)
       return true;
     }
-    bool EscapeSend() {
+    GateResult lastGate;
+    bool EscapeSend(ClickTarget et = ClickTarget.EscapeBack) {
+      if (Nav && !InNavSend) G.Bad.Add("AN ESCAPE OUTSIDE ActClick WHILE THE NAVIGATOR IS ON");
       var fresh = Fresh(false, true);
       if (FormsUnread(fresh)) return false;
-      var rq = new ClickRequest { Owner = Owner, Target = ClickTarget.EscapeBack, AutoOn = true, Front = true, U = U };
-      if (!Gate.Check(rq, fresh, Now).Allowed) return false;
-      Gate.Arm(Owner, ClickTarget.EscapeBack, ClickGate.Expect(rq, fresh), Now);
-      EscapesSent++; G.Escape(); SendingUntil = Now + 90;
+      var rq = new ClickRequest { Owner = Owner, Target = et, AutoOn = true, Front = true, U = U };
+      lastGate = Gate.Check(rq, fresh, Now);
+      if (!lastGate.Allowed) return false;
+      Gate.Arm(Owner, et, ClickGate.Expect(rq, fresh), Now);
+      if (et == ClickTarget.EquipTipEscape) TipEscapesSent++; else EscapesSent++;
+      G.EscapeTarget = et; G.Escape(); G.EscapeTarget = ClickTarget.EscapeBack; SendingUntil = Now + 90;
       return true;
     }
+    public int TipEscapesSent;
     // OfferStep (app/Overlay.cs): an offer-list form on top («План сборки» too) is left by its × / back arrow, never its other buttons
     bool OfferStep(ScreenState scr) {
       if (scr == null || scr.OfferCount == 0) return false;
@@ -814,6 +832,8 @@ static partial class CoreTests {
     }
     // TickAuto's hero part (app/Overlay.cs): the plan's hero on the hero screen, the gear tab
     void TickEquip() {
+      if (NavCity) { TickCityNav(); return; }
+      if (Nav) { TickEquipNav(); return; }
       var scr = Screens.Current;
       if (OfferStep(scr)) return;
       if (UnknownBackStep(scr)) return;
@@ -1102,16 +1122,17 @@ static partial class CoreTests {
     var owner = SimHost.OwnerOf(flow);
     string start = string.Join(" > ", g.Stack.ToArray());
     foreach (var f in g.Stack) g.StartForms.Add(f);
-    long plan = 100 + r.Next(30);
+    long plan = SimNavPlan > 0 ? SimNavPlan : 100 + r.Next(30);
     var h = new SimHost(g, flow, plan, geo);
+    if (SimNav && owner == ClickOwner.Equip && flow == PilotFlow.Equip) h.EnableNav(SimNavCfg, SimNavCity);
     // (Locate's own screen is where its last step is: the Foundry, the gem screen, the workshop - the inventory is its way, as for the Ascension)
-    g.OwnScreen = owner == ClickOwner.Equip ? SimHero : owner == ClickOwner.Sell ? SimInv : flow == PilotFlow.LocateRecast ? SimGem : flow == PilotFlow.LocateArtPromote ? SimWs : SimFoundry;
+    g.OwnScreen = owner == ClickOwner.Equip ? (SimNavCity && SimNav ? "" : SimHero) : owner == ClickOwner.Sell ? SimInv : flow == PilotFlow.LocateRecast ? SimGem : flow == PilotFlow.LocateArtPromote ? SimWs : SimFoundry;
     g.ItemSel = owner == ClickOwner.Equip && r.Next(2) == 0;   // the item left selected with its tip closed
     long cap = slow ? 300000 : 150000, t = 0, lastChange = 0; string lastSay = "";
     while (t < cap) {
       g.Advance(t);
       if (t >= h.SendingUntil) { h.ReadScreens(t); h.Tick(); }
-      if (g.Bad.Count > 0 || h.Done != "" || h.Gate.Halted(owner) || h.PilotState == "item_unconfirmed" || h.PilotState == "item_failed") break;   // (the item pilot's own ends)
+      if (g.Bad.Count > 0 || h.Done != "" || h.NavHalt != "" || h.Gate.Halted(owner) || h.PilotState == "item_unconfirmed" || h.PilotState == "item_failed") break;   // (the item pilot's own ends)
       string say = h.PilotState + "|" + string.Join(">", g.Stack.ToArray());
       if (say != lastSay) { lastSay = say; lastChange = t; }
       // a pilot that tells the player why it waits (the hero screen not reachable, a hint) and nothing changes for 30 s: a stop with a reason
@@ -1127,7 +1148,7 @@ static partial class CoreTests {
       ss.ConfirmN += ReadTiming.ConfirmN; ss.ConfirmMs += ReadTiming.ConfirmMs; if (ReadTiming.ConfirmMax > ss.ConfirmMax) ss.ConfirmMax = ReadTiming.ConfirmMax;
       ss.DiscN += g.DiscoveryN; ss.DiscMs += g.DiscoveryTotalMs; ss.FieldN += g.FieldReads; ss.FieldUs += g.FieldUs;
     }
-    string outcome = h.Done != "" ? "done" : h.Gate.Halted(owner) ? "halt:" + h.Gate.HaltReason(owner) : t >= cap ? "TIMEOUT" : "wait:" + h.PilotState.Split('@')[0];
+    string outcome = h.Done != "" ? "done" : h.NavHalt != "" ? "navhalt:" + h.NavHalt.Split(':')[0] : h.Gate.Halted(owner) ? "halt:" + h.Gate.HaltReason(owner) : t >= cap ? "TIMEOUT" : "wait:" + h.PilotState.Split('@')[0];
     string key = fname + (slow ? " slow " : " fast ") + outcome;
     if (outcomeOut != null) outcomeOut[0] = outcome + (h.Gate.Halted(owner) ? " (" + h.Gate.HaltDetail(owner) + ")" : "");
     int cnt; outcomes.TryGetValue(key, out cnt); outcomes[key] = cnt + 1;
@@ -1143,7 +1164,7 @@ static partial class CoreTests {
     }
     // (not when a pop-up is shown at the stop: the game opened it after the click and before its answer, which it took - the click was right)
     if (h.Gate.HaltReason(owner) == "nochange" && h.Gate.HaltDetail(owner).StartsWith("AscendCell") && h.Gate.HaltDetail(owner).Contains("(screen Foundry") && !h.Gate.HaltDetail(owner).Contains("modal(")) g.Bad.Add("ASCENSION CELL CLICK WITHOUT EFFECT: " + h.Gate.HaltDetail(owner));
-    if (h.Done != "" && flow == PilotFlow.Equip && !g.Worn) g.Bad.Add("EQUIP DONE WITHOUT THE ITEM ON (" + h.Confirms + " EquipConfirm presses)");
+    if (h.Done != "" && flow == PilotFlow.Equip && !g.Worn && !(SimNav && SimNavCity)) g.Bad.Add("EQUIP DONE WITHOUT THE ITEM ON (" + h.Confirms + " EquipConfirm presses)");
     var errs = new List<string>(g.Bad);
     if (outcome == "TIMEOUT") errs.Add("no end within " + cap / 1000 + " s (silent waiting): " + h.PilotState);
     int n0, tries = 1 + h.Gate.Retries(owner);   // (each retry of the policy starts the run's counts over: the caps hold for each try)
@@ -1152,6 +1173,7 @@ static partial class CoreTests {
     if (h.Sent.TryGetValue(ClickTarget.CityBack, out n0) && n0 > ClickGate.MaxCityBacks * tries) errs.Add(n0 + " back-to-the-city presses");
     if (h.Sent.TryGetValue(ClickTarget.MapClose, out n0) && n0 > ClickGate.MaxMapMoves * tries) errs.Add(n0 + " × presses");
     if (h.EscapesSent > (ClickGate.MaxEscapes + ClickGate.MaxMapMoves) * tries) errs.Add(h.EscapesSent + " Escapes");
+    if (h.TipEscapesSent > 3 * ClickGate.MaxTipEscapes * tries) errs.Add(h.TipEscapesSent + " tip Escapes");
     if (errs.Count == 0 && !verbose) return "";
     var sb = new StringBuilder();
     sb.Append("seed " + seed + " " + fname + (slow ? " slow" : " fast") + " fail " + failP.ToString("0.00") + " start [" + start + "] -> " + outcome
@@ -2166,6 +2188,7 @@ static partial class CoreTests {
       else if (args[i] == "--verbose") verbose = true;
       else if (args[i] == "--real") real = true;
       else if (args[i] == "--graph") SimGraph = true;
+      else if (args[i] == "--nav") SimNav = true;
       else if (args[i] == "--order-fail" && i + 1 < args.Length) SimOrderFailP = double.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture);
       else if (args[i] == "--seed" && i + 1 < args.Length) { from = int.Parse(args[++i]); seeds = 1; }
       else if (args[i] == "--from" && i + 1 < args.Length) from = int.Parse(args[++i]);
@@ -2189,6 +2212,7 @@ static partial class CoreTests {
       Console.WriteLine("city-first matrix: " + mf.Count + " cells failed");
       return mf.Count == 0 ? 0 : 1;
     }
+    if (SimNav) return NavSimMain(geo, seeds == 500 ? 1300 : seeds, from, verbose);
     var outcomes = new SortedDictionary<string, int>(); var tmp = new Dictionary<string, int>(); var stats = new Dictionary<string, SimStat>();
     int bad = 0; var sw = System.Diagnostics.Stopwatch.StartNew();
     for (int s = from; s < from + seeds; s++) {

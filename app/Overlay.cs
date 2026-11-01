@@ -262,7 +262,7 @@ namespace RealmForge {
   }
 
   /// <summary>Finds the target item on the screen and keeps the frame on it (10 times a second while the gear list is open).</summary>
-  sealed class OverlayController : IDisposable {
+  sealed partial class OverlayController : IDisposable {
     readonly Timer timer = new Timer();
     readonly Timer lookTimer = new Timer();   // quick looks at the gear list between the ticks (LookFast)
     readonly GlowWindow glow = new GlowWindow();
@@ -602,7 +602,7 @@ namespace RealmForge {
       return runHero + "|" + target + "|" + filterItem + "|" + filterKind + "|" + hintKind + "|" + autoSaid + (ArtPhase && artEqStep != null ? "|" + artEqStep.Key : "");
     }
 
-    public void RestartPilots() { cityRunEquip = false; cityRunSince = 0; RFX.LuaRootShadow("pilot start"); pilot.Reset(); fpilot.Reset(); hpilot.Reset(); artEq.Reset(); ResumeClicks(ClickOwner.Equip); }
+    public void RestartPilots() { NavRestart(); cityRunEquip = false; cityRunSince = 0; RFX.LuaRootShadow("pilot start"); pilot.Reset(); fpilot.Reset(); hpilot.Reset(); artEq.Reset(); ResumeClicks(ClickOwner.Equip); }
 
     /// <summary>Item to highlight (0 = none).</summary>
     public void SetTarget(long uid) {
@@ -855,6 +855,7 @@ namespace RealmForge {
       var owner = p.InventoryPrep ? ClickOwner.Sell : ClickOwner.Equip;
       var scr = screens.Current;
       if (gate.Halted(owner)) { LabPrepEnd(false, "the click gate stopped " + owner + ": " + gate.HaltReason(owner) + " - " + gate.HaltDetail(owner)); return; }
+      if (p.IsCity && NavCoreOn) { TickLabPrepNav(p, o, cr, front, now); return; }
       if (front) {
         var pre = gate.Preflight(owner, scr, now);
         AnnounceHalts();
@@ -2140,6 +2141,8 @@ namespace RealmForge {
         v.TipShown = EquipTipShown();
         v.BlueNone = confirm && confirmBlueNone; v.ButtonStill = confirm && confirmBtn != null && confirmStill; }
       userClick = false; lastAutoView = v; lastClientW = cr.R; lastClientH = cr.B;
+      // the navigator core (src/Nav*.cs, behind the navCore switch, off by default): the gear phase of a started plan; none of the preamble below runs for it
+      if (NavCoreOn && runHero > 0 && !ArtPhase) { TickAutoNav(o, cr, v, now, confirm); return; }
       // an offer pop-up over the city is closed before the plan's next step (the equip helper has no preflight of its own here)
       if ((runHero > 0 || target > 0) && v.Foreground && !v.UserBusy && OfferStep(ClickOwner.Equip, screens.Current, o, cr, v.Foreground, now)) return;
       // a screen nobody knows for 20 s (or one a form search did not find): stop instead of waiting for ever
@@ -3623,7 +3626,7 @@ namespace RealmForge {
       var fresh = FreshScreen(false, true);
       if (FormsUnread(fresh)) return false;
       var req = new ClickRequest { Owner = owner, Target = ClickTarget.EscapeBack, AutoOn = owner == ClickOwner.Locate ? LocateAutoOn : AutoEnabled, Front = front, U = Ui.Unit(cr.R, cr.B) };
-      var res = gate.Check(req, fresh, now);
+      var res = gate.Check(req, fresh, now); navLastGate = res;
       AnnounceHalts();
       if (!res.Allowed) return false;
       gate.Arm(owner, ClickTarget.EscapeBack, ClickGate.Expect(req, fresh), now);
@@ -3637,7 +3640,7 @@ namespace RealmForge {
       var fresh = FreshScreen(false, true);
       if (FormsUnread(fresh)) return false;
       var req = new ClickRequest { Owner = ClickOwner.Equip, Target = ClickTarget.EquipTipEscape, AutoOn = AutoEnabled, Front = front, U = Ui.Unit(cr.R, cr.B) };
-      var res = gate.Check(req, fresh, now);
+      var res = gate.Check(req, fresh, now); navLastGate = res;
       AnnounceHalts();
       if (!res.Allowed) return false;
       gate.Arm(ClickOwner.Equip, ClickTarget.EquipTipEscape, ClickGate.Expect(req, fresh), now);
@@ -3668,7 +3671,7 @@ namespace RealmForge {
     bool GatedSend(ClickRequest req, ScreenState fresh, AutoAction a, int sx, int sy) {
       long now = NowMs();
       if (FormsUnread(fresh)) return false;
-      var res = gate.Check(req, fresh, now);
+      var res = gate.Check(req, fresh, now); navLastGate = res;
       AnnounceHalts();
       if (!res.Allowed) return false;
       // a game window larger than the screen (not maximized, live 2026-10-29): a point off the desktop is never sent (the cursor would land on the edge)

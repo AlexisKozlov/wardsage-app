@@ -140,7 +140,16 @@ namespace RealmForge {
     bool ArtAutoOn() { return AutoClickOn() && (labForce || labPrepOn || On("artAuto")); }
     /// <summary>The new button highlight: only the site's "guideStyle" switch.</summary>
     void ApplyGuideStyle() { overlay.GuideStyle = remote.Allows("guideStyle"); }
-    void ApplyAutoClick() { overlay.AutoEnabled = AutoClickOn(); overlay.LocateAutoEnabled = LocateAutoOn(); overlay.ArtAutoEnabled = ArtAutoOn(); }
+    /// <summary>The navigator core (src/Nav*.cs) for the auto-equip gear phase: off unless the site's "navCore" switch is on; the test build's config "navCore": "on" forces it, "lab" forces it when the lab's settings command (or a lab setup) is running, "off" never.</summary>
+    bool NavCoreOn() {
+      if (!AutoClickOn()) return false;
+      string m = Channel.IsTest ? cfg.NavCore : "site";
+      if (m == "off") return false;
+      if (m == "on") return true;
+      if (m == "lab" && (labForce || labPrepOn)) return true;
+      return On("navCore");
+    }
+    void ApplyAutoClick() { overlay.NavCoreEnabled = NavCoreOn(); overlay.AutoEnabled = AutoClickOn(); overlay.LocateAutoEnabled = LocateAutoOn(); overlay.ArtAutoEnabled = ArtAutoOn(); }
 
     // the features that read the game's screens and fights need the layout data for the running game version
     // (src/Layout.cs); the account sync, the guild and the update packs do not
