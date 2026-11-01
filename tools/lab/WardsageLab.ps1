@@ -29,7 +29,7 @@ Set-StrictMode -Version 2
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$RunnerVersion   = '22'
+$RunnerVersion   = '23'
 $Dir             = Join-Path $env:LOCALAPPDATA 'WardsageLab'
 $StopFile        = Join-Path $Dir 'STOP'
 $LogFile         = Join-Path $Dir 'runner.log'
@@ -183,7 +183,7 @@ $Schemas = @{
     finish      = @{}
     cancel      = @{}
     mark        = @{ scn = { param($v) $v -is [string] -and $v -cmatch '^[a-z_]{1,30}$' } }
-    rec         = @{ cmd = { param($v) $v -is [string] -and ($v -ceq 'start' -or $v -ceq 'stop') }
+    rec         = @{ cmd = { param($v) $v -is [string] -and ($v -ceq 'start' -or $v -ceq 'stop' -or $v -ceq 'settings') }
                      scenario = { param($v) $v -is [string] -and $v -cmatch '^[a-z0-9_]{1,40}$' }
                      run = { param($v) $v -is [string] -and $v -cmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' } }
     explore     = @{ cmd = { param($v) $v -is [string] -and ($v -ceq 'start' -or $v -ceq 'stop' -or $v -ceq 'result') }
@@ -590,7 +590,7 @@ $StopRe  = 'auto click stopped|auto click is off|click gate .*: HALT|click gate 
 $ReadyRe = 'Player of the live tables: [0-9]+'
 $PilotRe = 'ui: step (?!stands still)|ui: guide |click gate .*: (allow |.* took effect)|locate auto:|live: hero|sell:|hero: plan|art (equip|promote) auto:|offer: closed'
 # the app's own injected clicks / keys (src/ClickGate.cs Note lines, the pilots' offer closing): the runner's idle gate does not count them
-$OwnClickRe = 'click gate |offer: closed'
+$OwnClickRe = 'click gate |offer: closed|art (equip|promote) auto:|locate auto:|auto: (work|confirm)|sell: |ui: step (?!stands still)'
 function Get-EpochNow { return [int64][DateTimeOffset]::UtcNow.ToUnixTimeSeconds() }
 $FinRe = 'locate auto: hint( \([^)]*\))? at step (ascendReady|done)\b|locate decision: (AscendReady|Done)\b|art promote auto: hint( \([^)]*\))? at step artPromote\b|ui: guide .* done|(?<!art )sell: done selected [0-9]+/[0-9]+ missing [0-9]+ extra [0-9]+'
 # the storage cleanup may click only these targets (src/ClickGate.cs, owner Sell): any other allowed Sell click (there is no target for
@@ -678,6 +678,7 @@ function Invoke-Rec($a) {
         if ($scn -eq '' -or $run -eq '') { return @{ ok = $false; res = @{ error = 'bad_args' } } }
         $line = [string]$seq + ' start ' + $scn + ' ' + $run
     } elseif ($cmd -ceq 'stop') { $line = [string]$seq + ' stop' }
+    elseif ($cmd -ceq 'settings') { $line = [string]$seq + ' settings' }
     else { return @{ ok = $false; res = @{ error = 'bad_args' } } }
     $dir = Join-Path $env:LOCALAPPDATA 'WardsageTest\lab'
     if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir | Out-Null }

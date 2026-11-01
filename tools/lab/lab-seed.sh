@@ -230,6 +230,32 @@ pick_equip() {
   n=$(q -v d="$1" <<< "select count(*) from public.equip_plans p join public.lab_devices dv on dv.account_id = p.account_id where dv.id = :'d'::uuid") || n=0
   python3 -I -c "$PICK_EQUIP_PY" "$2" "${n:-0}" "$fx" "$LAB_WEB_DIR" <<< "$pd" 2>/dev/null || true
 }
+# refresh_fixture <fixture payload json>: the fixture's plan items with fromHeroUid / fromHeroName / cur taken from the newest snapshot (stdin: its page_data).
+# The equip_hide_worn scenario really swaps gear between heroes, so the fixture's own idea of who wears an item goes stale; the app's guide
+# (ui/guide.js) skips an item worn by a hero other than the plan's fromHeroUid as "taken" (never taken away from someone the plan did not
+# count on), the plan then never completes: equip_city "no pilot step for 40 s". Items missing from the snapshot are left as they are.
+REFRESH_PY='
+import sys, json
+fx = json.loads(sys.argv[1]); pd = json.load(sys.stdin) or {}
+hero = int(fx["hero_uid"])
+snap = {int(i["u"]): i for i in pd.get("items") or [] if i.get("u") is not None}
+names = {int(h["u"]): h.get("n") or {} for h in pd.get("heroes") or [] if h.get("u") is not None}
+mine = {i["sl"]: i for i in snap.values() if isinstance(i.get("sl"), int) and int(i.get("h") or 0) == hero}
+def lt(o): o = o or {}; return {"ru": o.get("ru") or o.get("en") or "", "en": o.get("en") or o.get("ru") or ""}
+out = []
+for it in fx["items"]:
+    it = dict(it); s = snap.get(int(it["uid"]))
+    if s is None: out.append(it); continue
+    own = int(s.get("h") or 0)
+    frm = own if own not in (0, hero) else 0
+    it["fromHeroUid"] = frm
+    it["fromHeroName"] = (lt(names.get(frm)).get("ru") or None) if frm else None
+    c = mine.get(it["slot"])
+    if c is not None and int(c["u"]) != int(it["uid"]): it["cur"] = {"uid": int(c["u"]), "name": lt(c.get("n")), "level": int(c.get("lv") or 0), "stars": int(c.get("st") or 0)}
+    else: it.pop("cur", None)
+    out.append(it)
+print(json.dumps(out, ensure_ascii=False))
+'
 case "$what" in
   --pick-recast) r=$(pick_recast "$(dev_id "$dev")"); echo "${r:-no recastable item in the newest snapshot}"; exit 0 ;;
   --pick-art) r=$(pick_art "$(dev_id "$dev")"); echo "${r:-no promotable artifact in the newest snapshot}"; exit 0 ;;
@@ -266,13 +292,18 @@ fi
 
 case "$what" in
   equip_city)
+    # the fixture's items, owners refreshed from the newest snapshot (empty = the fixture as it is)
+    fxj=$(q -v d="$id" -v f="equip_$build" <<< "select payload::text from public.lab_fixtures where device_id = :'d'::uuid and name in ('equip_a', 'equip_b') order by (name = :'f') desc limit 1" 2>/dev/null) || fxj=""
+    pdj=$(snap_pd "$id"); fxi=""
+    if [ -n "$fxj" ] && [ -n "$pdj" ]; then fxi=$(python3 -I -c "$REFRESH_PY" "$fxj" <<< "$pdj" 2>/dev/null) || fxi=""; fi
+    echo "lab-seed: equip_city items ${fxi:+refreshed from the snapshot}${fxi:-as in the fixture (no snapshot)}" | cut -c1-80 >&2
     # two statements in one transaction: cancel first, then insert (a data-modifying CTE pair could race on the unique index)
-    q -v d="$id" -v f="equip_$build" <<< "
+    q -v d="$id" -v f="equip_$build" -v it="$fxi" <<< "
       begin;
       update public.equip_plans set status = 'cancelled', done_at = now()
         where status = 'pending' and account_id = (select account_id from public.lab_devices where id = :'d'::uuid);
       insert into public.equip_plans (user_id, account_id, hero_uid, hero_name, hero_name_en, items)
-        select a.user_id, a.id, (x.payload->>'hero_uid')::bigint, x.payload->>'hero_name', x.payload->>'hero_name_en', x.payload->'items'
+        select a.user_id, a.id, (x.payload->>'hero_uid')::bigint, x.payload->>'hero_name', x.payload->>'hero_name_en', coalesce(nullif(:'it', '')::jsonb, x.payload->'items')
         from public.lab_devices dv
         join public.game_accounts a on a.id = dv.account_id
         join lateral (select payload from public.lab_fixtures
