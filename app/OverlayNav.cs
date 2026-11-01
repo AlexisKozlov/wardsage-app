@@ -129,7 +129,7 @@ namespace RealmForge {
       }, (vv, a) => {
         bool onConfirm = confirmBtn != null && a.X >= confirmBtn[0] && a.X <= confirmBtn[0] + confirmBtn[2] && a.Y >= confirmBtn[1] && a.Y <= confirmBtn[1] + confirmBtn[3];
         return navTickConfirm && onConfirm ? ClickTarget.EquipConfirm : ClickTarget.EquipNav;
-      });
+      }, gf);
       ip.OnStep = (vv, a) => {
         if (recB != null) { try { recB.Ap = RecView.Line(vv, a, pilot.State); } catch (Exception) { } }
         if (pilot.Trace != "") { Log.Write("auto: " + pilot.Trace); lastPilotTrace = pilot.Trace; pilot.Trace = ""; }

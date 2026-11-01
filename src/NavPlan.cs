@@ -124,7 +124,7 @@ namespace RealmForge {
       ICollection<string> keep = first < 0 ? atTargetKeep : wps[first].Seek != "" ? seekKeep : null;
       var md = ModalHandler.Next(s, keep, m, io, t.Owner);
       if (md.Kind != StepKind.None) return md;
-      if (s.Kind == ScreenKind.Unknown) return UnknownScreen(s, t, io, now);
+      if (s.Kind == ScreenKind.Unknown) return UnknownScreen(s, t, m, io, now);
       bool onRoute = s.Kind == ScreenKind.City || (t.Goal != NavGoal.City && s.Kind == ScreenKind.HeroScreen);
       if (!onRoute) return Pop(s, t, io, now);
       if (first < 0) return new NavStep { Kind = StepKind.AtTarget, Edge = "at_target", Keep = atTargetKeep };
@@ -152,11 +152,17 @@ namespace RealmForge {
         Expect = n => n.Kind != kind || n.BaseForm != bf, Fill = rq => { rq.U = U; } }, "pop:" + bf);
     }
 
-    static NavStep UnknownScreen(Snapshot s, NavTarget t, INavIo io, long now) {
+    static NavStep UnknownScreen(Snapshot s, NavTarget t, NavMemory m, INavIo io, long now) {
       var gate = io.Gate; var st = s.State;
       if (gate.UnknownStall(t.Owner, st, now)) return NavStep.Halt("unknown_screen:" + (st.TopForm ?? ""));
       if (gate.EscapeDue(t.Owner, st, now)) return EscapeStep(t.Owner, s, ClickTarget.EscapeBack, "pop:escape");
-      if (!gate.UnknownBackDue(t.Owner, st, now)) return NavStep.Wait("unknown screen " + st.TopForm);
+      if (!gate.UnknownBackDue(t.Owner, st, now)) {
+        // the gate's back press is not allowed here (a pilot's flow form under it, a known screen's form shown ...) or not due: a few seconds, then a stop with the form's name
+        long since; if (!m.WaitSince.TryGetValue("unknown-screen", out since)) { since = now; m.WaitSince["unknown-screen"] = now; }
+        if (now - since > 15000 && gate.UnknownBacks(t.Owner) < ClickGate.MaxUnknownBacks) return NavStep.Halt("unknown_screen:" + (st.TopForm ?? ""));
+        return NavStep.Wait("unknown screen " + st.TopForm);
+      }
+      m.WaitSince.Remove("unknown-screen");
       double W = io.W, H = io.H, U = io.U;
       var md = ClickGate.MapExit(st, W, H, U);
       double bx = md.Move == MapMove.Back && md.Point != null ? md.Point.X : Hg.BackX * U, by = md.Move == MapMove.Back && md.Point != null ? md.Point.Y : Hg.BackY * U;

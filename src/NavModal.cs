@@ -21,8 +21,10 @@ namespace RealmForge {
       switch (l.Form) {
         case "panel:heroFilter": return new CloseRecipe { How = CloseHow.Funnel, Target = ClickTarget.EquipFilter, Why = "hero grid filter: the funnel closes it" };
         case "panel:gearFilter": case "panel:gearSide": case "Form_EquipFilterWidget":
+          if (s.Kind != ScreenKind.HeroScreen) break;
           return new CloseRecipe { How = CloseHow.RedX, Target = ClickTarget.EquipClosePopup, Why = "gear filter: its red cross" };
         case "Form_CharactorEquipTip": case "Form_EquipedCompared":
+          if (s.Kind != ScreenKind.HeroScreen) break;   // (the tip's Escape is the hero screen's flow rule; elsewhere the screen map decides)
           return new CloseRecipe { How = CloseHow.TipEscape, Target = ClickTarget.EquipTipEscape, Why = "item tip: one Escape" };
       }
       if (l.Role == LayerRole.Offer) return new CloseRecipe { How = CloseHow.OfferClose, Target = ClickTarget.OfferClose, Why = "offer: its cross" };
@@ -66,10 +68,6 @@ namespace RealmForge {
           return NavStep.Of(new Act { Owner = owner, Target = ClickTarget.EquipTipEscape, Kind = ActKind.Escape, Closing = closing, Expect = gone, Why = rc.Why, WantKnown = true }, "modal:" + closing);
         }
         case CloseHow.OfferClose: return Offer(s, layer, m, io, owner);
-      }
-      if (layer.Role == LayerRole.Flow) {
-        // a pilot's flow form with no recipe (the worn-by-another question, the artifact filter ...): never pressed here
-        return NavStep.Halt("flow_form:" + closing);
       }
       return ByMap(s, layer, m, io, owner);
     }

@@ -45,10 +45,13 @@ namespace RealmForge {
     public bool Blocked(string key, long now) { long t; return NextAt.TryGetValue(key, out t) && now < t; }
     public void Hold(string key, long until) { NextAt[key] = until; }
     public long Seen(string form, long now) { long t; if (!SeenAt.TryGetValue(form, out t)) { SeenAt[form] = now; t = now; } return t; }
-    public void Prune(Snapshot s) {
+    readonly Dictionary<string, long> lastIn = new Dictionary<string, long>();
+    /// <summary>Forget a layer that has been gone for a few seconds (a flicker of the read does not start its clock over).</summary>
+    public void Prune(Snapshot s, long now) {
+      foreach (var l in s.Stack) lastIn[l.Form] = now;
       var gone = new List<string>();
-      foreach (var k in SeenAt.Keys) if (!s.Has(k)) gone.Add(k);
-      foreach (var k in gone) { SeenAt.Remove(k); WaitSince.Remove(k); Rung.Remove(k); }
+      foreach (var k in SeenAt.Keys) { long t; if (!s.Has(k) && (!lastIn.TryGetValue(k, out t) || now - t > 3000)) gone.Add(k); }
+      foreach (var k in gone) { SeenAt.Remove(k); WaitSince.Remove(k); Rung.Remove(k); lastIn.Remove(k); }
     }
   }
 
@@ -98,8 +101,8 @@ namespace RealmForge {
       }
       if (s == null) return;
       if (s.HasTip()) tipSeen = true; else if (tipSeen) { tipSeen = false; io.Gate.ResetTipEscapes(Owner); }
-      mem.Prune(s);
-      if (s.Signature != lastSig) { lastSig = s.Signature; lastProgress = now; }
+      mem.Prune(s, now);
+      if (s.StateKey != lastSig) { lastSig = s.StateKey; lastProgress = now; }
       // the window table's order: 15 s without it is a stop with a reason
       if (s.Confidence == NavConfidence.NoOrder) { if (mem.NoOrderSince < 0) mem.NoOrderSince = now; if (now - mem.NoOrderSince > OrderUnreadMs) { Halt(io, "order_unread"); return; } }
       else mem.NoOrderSince = -1;
@@ -126,6 +129,7 @@ namespace RealmForge {
       }
       var step = NavPlanner.Plan(s, tgt, atKeep, mem, io, seekKeep);
       Note(io, step);
+      if (step.Kind != StepKind.AtTarget && State == "at_target") State = "work";
       switch (step.Kind) {
         case StepKind.Wait: Say = step.Why; return;
         case StepKind.None: return;
@@ -133,6 +137,7 @@ namespace RealmForge {
         case StepKind.Act:
           StartAct(io, s, step.Act, now); return;
         case StepKind.AtTarget:
+          if (tgt.Goal == NavGoal.City && popCity) { popCity = false; lastProgress = now; return; }   // (the way back to the city is done: the real target goes on)
           if (tgt.Goal == NavGoal.City) {
             State = "done"; Say = "done"; io.Log("nav: done City " + (now - startedAt) + "ms clicks=" + Clicks + " recoveries=" + Recoveries); return;
           }

@@ -143,6 +143,7 @@ namespace RealmForge {
     /// <summary>The navigator core (src/Nav*.cs) for the auto-equip gear phase: off unless the site's "navCore" switch is on; the test build's config "navCore": "on" forces it, "lab" forces it when the lab's settings command (or a lab setup) is running, "off" never.</summary>
     bool NavCoreOn() {
       if (!AutoClickOn()) return false;
+      if (Channel.IsTest && labNav != "") return labNav == "on";   // the lab's settings command (settings nav=on|off) rules in a test build
       string m = Channel.IsTest ? cfg.NavCore : "site";
       if (m == "off") return false;
       if (m == "on") return true;
@@ -483,7 +484,7 @@ namespace RealmForge {
     /// <summary>TEST build: the navigator's navCore flag as the lab's settings command set it ("on" | "off" | "" = never given: the app's own default). The app has no such flag yet
     /// (docs/specs/navigator.md): whoever builds the navigator reads this field; off = the current behaviour.</summary>
     internal string labNav = "";
-    void LabNav(string v) { labNav = v; Log.Write("lab: navCore " + v + " requested (the app " + (Channel.IsTest ? "has no navCore flag yet: no effect" : "ignores it") + ")"); }
+    void LabNav(string v) { labNav = v; Log.Write("lab: navCore " + v + (Channel.IsTest ? " (the navigator core is switched " + v + " for this app run)" : " ignored: not a test build")); ApplyAutoClick(); }
     // the lab forces the settings its scenarios need (auto click, locateAuto, artAuto) for this run: in memory, the saved config is not touched
     void LabForceSettings() {
       labForce = true; labAutoOff = false; ApplyAutoClick(); SendState(null);   // the page too: it starts the equip and sell runs

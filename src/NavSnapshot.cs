@@ -35,6 +35,8 @@ namespace RealmForge {
     /// <summary>How long the signature must stay the same before the snapshot may be acted on (ScreenReader.StableMs).</summary>
     public int NeedMs = 250;
     public string Signature = "";
+    /// <summary>The signature without the layers: the screen and its facets (a pop-up that flickers is no progress).</summary>
+    public string StateKey = "";
     public bool Blocking;
     public long StableForMs(long now) { return now - StableSinceMs; }
     public bool Stable(long now) { return now - StableSinceMs >= NeedMs; }
@@ -92,7 +94,7 @@ namespace RealmForge {
         r.StableSinceMs = candSince; Current = r; candReads = 0; candSig = ""; return r;
       }
       // not yet: the old picture stands, with the new read's quality (and its state, so the latest facts are there)
-      cur.Confidence = r.Confidence; cur.NeedMs = StableMs;
+      cur.Confidence = r.Confidence; cur.NeedMs = StableMs; cur.StableSinceMs = now;   // (a read that differs: the picture is in flux, nothing is acted on until it stands still)
       return cur;
     }
 
@@ -169,9 +171,11 @@ namespace RealmForge {
       var sb = new StringBuilder();
       sb.Append(sn.Kind).Append('|').Append(sn.BaseForm).Append('|');
       foreach (var l in sn.Stack) sb.Append(l).Append(',');
+      string head = sb.ToString(); int cut = head.IndexOf('|', head.IndexOf('|') + 1);
       sb.Append('|').Append(s.HeroTab).Append('/').Append(s.HeroSlot).Append('/').Append(s.Hero).Append('/').Append(s.InvEquipTab ? 1 : 0).Append(s.InvArtTab ? 1 : 0).Append(s.InvBulk ? 1 : 0)
         .Append('/').Append(s.FoundryTab).Append('/').Append(s.ArtWsTab);
       sn.Signature = sb.ToString();
+      sn.StateKey = sn.Kind + "|" + sn.BaseForm + sn.Signature.Substring(sn.Signature.LastIndexOf('|'));
       return sn;
     }
   }

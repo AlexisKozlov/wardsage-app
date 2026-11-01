@@ -332,6 +332,12 @@ static partial class CoreTests {
         });
         return;
       }
+      if (top == SimHero && Hero.Tab == 3 && tg == ClickTarget.EquipNav && Hero.Shown != 0) {   // a gear slot's icon opens its list (--nav: the navigator's facet:slot)
+        for (int sl = 0; sl < 5; sl++) {
+          var sr = Hint.Slot(sl, W, H);
+          if (sr != null && x >= sr[0] && x <= sr[0] + sr[2] && y >= sr[1] && y <= sr[1] + sr[3]) { int s2 = sl; Later(lat, () => { if (TopForm() == SimHero) Hero.Part = s2; }); return; }
+        }
+      }
       if (top == SimHero) {
         // the gear tab's neighbour «План сборки» (a click a little off it opens the build plan screen)
         if (Near(x, y, W - hg.GearTabDX * U, hg.GearTabY * U, 20) && R.Next(25) == 0) { Later(lat, () => Push("Form_EquipmentPlan")); return; }
@@ -692,7 +698,7 @@ static partial class CoreTests {
       Now = now;
       G.FieldTick();
       var inp = G.Read(); inp.Offers = offerOrder.Note(inp.Offers); inp.OfferTopKnown = offerOrder.TopKnown;   // (app/Overlay.cs: the newest offer on top)
-      if (Nav && Cfg.CellLatencyMs > 0) NavLatency(inp);
+      if (Cfg.CellLatencyMs > 0 && navR != null) NavLatency(inp);
       if (!ScreenState.WantArtWs(Flow == PilotFlow.LocateArtPromote, inp.Screens)) inp.ArtWs = null;   // (app/Overlay.cs WantArtWs)
       string ik = ListSettle.KeyOf(inp.Inv), rk = ListSettle.KeyOf(inp.Rs);   // (app/Overlay.cs ReadScreens)
       InvSettle.Update(ik, now); RsSettle.Update(rk, now);
@@ -756,6 +762,7 @@ static partial class CoreTests {
       Count(t);
       if (Environment.GetEnvironmentVariable("SIM_TRACE") != null) Console.WriteLine("  send " + t + " fresh=" + fresh.Brief + " top=" + fresh.Top + " tick=" + (Screens.Current != null ? Screens.Current.Brief : "-") + " unread=" + formsUnread);
       if (a.Kind == AutoKind.Click) G.Click(a.X, a.Y, t); else if (a.Kind == AutoKind.Drag) G.Drag(a.X, a.Y, a.DY, t);
+      if (Cfg.LatePopupP > 0) LatePopup();
       SendingUntil = Now + (a.Kind == AutoKind.Drag ? 850 : 300);   // (a drag: press, 16 moves of 20 ms, 350 ms at rest, release - app/Overlay.cs Send)
       return true;
     }
@@ -1124,7 +1131,7 @@ static partial class CoreTests {
     foreach (var f in g.Stack) g.StartForms.Add(f);
     long plan = SimNavPlan > 0 ? SimNavPlan : 100 + r.Next(30);
     var h = new SimHost(g, flow, plan, geo);
-    if (SimNav && owner == ClickOwner.Equip && flow == PilotFlow.Equip) h.EnableNav(SimNavCfg, SimNavCity);
+    if (owner == ClickOwner.Equip && flow == PilotFlow.Equip) { if (SimNav) h.EnableNav(SimNavCfg, SimNavCity); else h.SetInjectors(SimNavCfg); }
     // (Locate's own screen is where its last step is: the Foundry, the gem screen, the workshop - the inventory is its way, as for the Ascension)
     g.OwnScreen = owner == ClickOwner.Equip ? (SimNavCity && SimNav ? "" : SimHero) : owner == ClickOwner.Sell ? SimInv : flow == PilotFlow.LocateRecast ? SimGem : flow == PilotFlow.LocateArtPromote ? SimWs : SimFoundry;
     g.ItemSel = owner == ClickOwner.Equip && r.Next(2) == 0;   // the item left selected with its tip closed
@@ -1448,6 +1455,7 @@ static partial class CoreTests {
     StaleRowsAfterFilter();
     SimLeftoverFilter();
     TipOverSlots();
+    NavTests();
     EquipStepTiming();
     // (9) a list is settled after two equal reads; a moving one (a glide after a drag, a slot filter) is not, an unreadable one neither
     {

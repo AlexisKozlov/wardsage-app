@@ -7,7 +7,9 @@ namespace RealmForge {
   public static class NavKeep {
     public static readonly string[] HeroSeek = { "panel:heroFilter" };
     public static readonly string[] GearFilter = { "Form_EquipFilterWidget", "panel:gearFilter", "panel:gearSide", "Form_ArtifactFilter" };
+    /// <summary>The item pick keeps the filter pop-up open only when this target's filter pilot set it (its × drops the filter); a filter left from before is closed.</summary>
     public static readonly string[] ItemPick = { "Form_EquipFilterWidget", "panel:gearFilter", "panel:gearSide", "Form_ArtifactFilter", "Form_CharactorEquipTip", "Form_EquipedCompared", "Form_EquipPopUp", "Form_EquipSellPopup" };
+    public static readonly string[] ItemPickNoFilter = { "Form_CharactorEquipTip", "Form_EquipedCompared", "Form_EquipPopUp", "Form_EquipSellPopup" };
   }
 
   static class NavAdapt {
@@ -43,6 +45,8 @@ namespace RealmForge {
   public sealed class GearFilterAction : IAtTargetAction {
     readonly FilterPilot pilot; readonly Func<Snapshot, NavTarget, long, FilterView> view; readonly Func<bool> wanted;
     public Action<FilterView, AutoAction> OnStep;
+    /// <summary>The target key this filter pilot last clicked for: the filter pop-up on screen is its own, not a leftover.</summary>
+    public string ActedKey = "";
     public GearFilterAction(FilterPilot p, Func<Snapshot, NavTarget, long, FilterView> v, Func<bool> wanted) { pilot = p; view = v; this.wanted = wanted; }
     public string Name { get { return "filter"; } }
     public ICollection<string> Keep { get { return NavKeep.GearFilter; } }
@@ -55,6 +59,7 @@ namespace RealmForge {
       if (fa == null) return null;
       if (fa.Kind == AutoKind.None) return NavStep.Wait(pilot.State == "failed" ? "idle" : "work");
       var act = NavAdapt.ToAct(fa, ClickTarget.EquipFilter, t.Owner, "Form_CharactorMain", NavKeep.GearFilter, "filter: " + pilot.State);
+      string key = t.Key(); act.OnSent = () => { ActedKey = key; };
       return NavStep.Of(act, "act:filter");
     }
   }
@@ -63,10 +68,11 @@ namespace RealmForge {
   public sealed class ItemPickAction : IAtTargetAction {
     readonly AutoPilot pilot; readonly Func<Snapshot, NavTarget, long, AutoView> view; readonly Func<AutoView, AutoAction, ClickTarget> targetOf;
     public Action<AutoView, AutoAction> OnStep; public Action<AutoAction> OnSent;
-    public ItemPickAction(AutoPilot p, Func<Snapshot, NavTarget, long, AutoView> v, Func<AutoView, AutoAction, ClickTarget> targetOf) { pilot = p; view = v; this.targetOf = targetOf; }
+    readonly GearFilterAction filter; string key = "";
+    public ItemPickAction(AutoPilot p, Func<Snapshot, NavTarget, long, AutoView> v, Func<AutoView, AutoAction, ClickTarget> targetOf, GearFilterAction filter = null) { pilot = p; view = v; this.targetOf = targetOf; this.filter = filter; }
     public string Name { get { return "item"; } }
-    public ICollection<string> Keep { get { return NavKeep.ItemPick; } }
-    public bool Wants(Snapshot s, NavTarget t) { return true; }
+    public ICollection<string> Keep { get { return filter != null && filter.ActedKey == key ? NavKeep.ItemPick : NavKeep.ItemPickNoFilter; } }
+    public bool Wants(Snapshot s, NavTarget t) { key = t.Key(); return true; }
     public void Reset() { pilot.Reset(); }
     public NavStep Step(Snapshot s, NavTarget t, INavIo io, long now) {
       var v = view(s, t, now); v.NavOwned = true;
@@ -74,7 +80,7 @@ namespace RealmForge {
       if (OnStep != null) OnStep(v, a);
       if (a.Kind == AutoKind.None) return NavStep.Wait(pilot.State);
       var tg = targetOf(v, a);
-      var act = NavAdapt.ToAct(a, tg, t.Owner, "Form_CharactorMain", NavKeep.ItemPick, "item: " + pilot.State);
+      var act = NavAdapt.ToAct(a, tg, t.Owner, "Form_CharactorMain", Keep, "item: " + pilot.State);
       act.OnNotSent = pilot.NotSent;
       var cb = OnSent; var aa = a; if (cb != null) act.OnSent = () => cb(aa);
       return NavStep.Of(act, "act:item");
