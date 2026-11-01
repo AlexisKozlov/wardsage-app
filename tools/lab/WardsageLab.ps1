@@ -10,6 +10,9 @@
 # than $RunnerVersion it downloads WardsageLab.ps1, checks size, sha256 and the RSA signature against the pinned keys (the same
 # check as update_app), replaces its own file atomically and starts itself again. The server cannot send code through a job.
 #
+# Speed (v26): while a run is active the loop ticks every second and claims a job as soon as one may be asked for (at most 18 claims in any 60 s: the server allows 20),
+# the rec ack is looked for every 150 ms, city / prep are waited for 45 s.
+#
 # Lab setup (v25): the rec job also passes 'city' and 'prep <name>' (name from a fixed list) to the test app unchanged; the app clicks, the runner never does.
 #
 # Input (v24): the runner does NOT look at the user's input at all (no idle wait, no abort, no back-off). status.input is only
@@ -28,7 +31,7 @@ Set-StrictMode -Version 2
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$RunnerVersion   = '25'
+$RunnerVersion   = '26'
 $Dir             = Join-Path $env:LOCALAPPDATA 'WardsageLab'
 $StopFile        = Join-Path $Dir 'STOP'
 $LogFile         = Join-Path $Dir 'runner.log'
@@ -36,8 +39,10 @@ $HeartbeatSec    = 60          # idle heartbeat
 $ActiveBeatSec   = 5           # heartbeat while a run is active (a run job was claimed in the last $ActiveMin min)
 $ActiveMin       = 30
 $FrontMin        = 10          # the game window is touched only within this many minutes after a claimed run job
-$TickSec         = 2           # loop tick: the app log is read every tick
-$ClaimSec        = 4           # one claim per this many seconds (lab_claim allows 20/min)
+$TickSec         = 1           # loop tick: the app log is read every tick
+$ClaimSec        = 4           # idle: one claim per this many seconds (lab_claim allows 20/min)
+$ClaimWindowMax  = 18          # active run: at most this many claims in any 60 s, one per second at the fastest
+$script:ClaimTimes = New-Object System.Collections.ArrayList
 $MaxRunnerHours  = 4          # the runner never lives longer than this
 $MaxUpdateBytes  = 64MB       # same limit as app/Updater.cs MaxSize
 $GameProcessName = 'Watcher of Realms'   # src/GameInfo.cs ProcessName (the runner never stops it; start_game starts gameExe)
@@ -614,10 +619,10 @@ function Invoke-Rec($a) {
         $e = $lastErr.Exception
         return @{ ok = $false; res = @{ error = 'write_failed'; type = $e.GetType().Name; message = (Get-ShortError $lastErr); cmd = $cmd } }
     }
-    # city / prep: the app answers when its clicks are done (up to ~100 s), the other commands at once
-    $until = (Get-Date).AddSeconds($(if ($cmd -ceq 'city' -or $cmd -ceq 'prep') { 125 } else { 15 }))
+    # city / prep: the app answers when its clicks are done (city 30 s, a prep 20 s at most), the other commands at once
+    $until = (Get-Date).AddSeconds($(if ($cmd -ceq 'city' -or $cmd -ceq 'prep') { 45 } else { 15 }))
     while ((Get-Date) -lt $until) {
-        Start-Sleep -Milliseconds 500
+        Start-Sleep -Milliseconds 150
         try {
             if (Test-Path $ackf) {
                 $fs = New-Object IO.FileStream($ackf, [IO.FileMode]::Open, [IO.FileAccess]::Read, ([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
@@ -1013,8 +1018,16 @@ try {
                     if (-not $r.ok) { $err = $r }
                     else { $lo = Get-Prop $r.data 'lab_only'; $script:LabOnly = ($lo -eq $true) }
                 }
-                if ($err -eq $null -and ((Get-Date) - $lastClaim).TotalSeconds -ge ($ClaimSec - 1)) {
-                    $lastClaim = Get-Date
+                $claimDue = $false
+                if ($err -eq $null) {
+                    $nowT = Get-Date
+                    if (((Get-Date) - $script:RunJobAt).TotalMinutes -lt $ActiveMin) {
+                        while ($script:ClaimTimes.Count -gt 0 -and ($nowT - [DateTime]$script:ClaimTimes[0]).TotalSeconds -gt 60) { $script:ClaimTimes.RemoveAt(0) }
+                        $claimDue = ($script:ClaimTimes.Count -lt $ClaimWindowMax) -and (($nowT - $lastClaim).TotalSeconds -ge 0.9)
+                    } else { $claimDue = (($nowT - $lastClaim).TotalSeconds -ge ($ClaimSec - 1)) }
+                }
+                if ($claimDue) {
+                    $lastClaim = Get-Date; [void]$script:ClaimTimes.Add($lastClaim)
                     $c = Invoke-Rpc 'lab_claim' '{}'
                     if (-not $c.ok) { $err = $c }
                     else {
@@ -1023,6 +1036,7 @@ try {
                             Invoke-Job $job
                             if ($Service -and -not $script:Relaunch) { $script:Exit = $false }      # service mode: "finish" ends the run, not the runner
                             $lastBeat = [DateTime]::MinValue      # heartbeat right after a job
+                            $lastClaim = [DateTime]::MinValue     # and the next claim at once (the window above keeps the rate)
                         }
                     }
                 }

@@ -7015,7 +7015,7 @@ static partial class CoreTests {
           Eq(LabMove.Back, cp.Step(vc).Move, "lab setup: city on the inventory goes back (the game need not be in front: the gate decides)");
           vc.Kind = ScreenKind.City; Eq(LabMove.Done, cp.Step(vc).Move, "lab setup: city on the city is done");
           vc.Kind = ScreenKind.City; vc.Modal = true; Eq(LabMove.Back, new LabPrep("city").Step(vc).Move, "lab setup: city under a pop-up is not done");
-          var cp2 = new LabPrep("city"); vc.Modal = false; vc.Kind = ScreenKind.Foundry; cp2.Step(vc); vc.Now = 5 + LabPrep.CapMs + 1;
+          var cp2 = new LabPrep("city"); vc.Modal = false; vc.Kind = ScreenKind.Foundry; cp2.Step(vc); vc.Now = 5 + LabPrep.CityCapMs + 1;
           Eq(LabMove.Fail, cp2.Step(vc).Move, "lab setup: city that never reaches the city fails after the cap"); }
         { var pf = new LabPrep("hero_filter"); var vf = new LabPrepView { Now = 5, Front = false, Kind = ScreenKind.City, HeroesButton = true, W = 1920, H = 1009, U = Ui.Unit(1920, 1009) };
           Eq(LabMove.Wait, pf.Step(vf).Move, "lab setup: a prep waits while the game is not in front"); }

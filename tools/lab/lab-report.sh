@@ -68,6 +68,9 @@ if grep -q '"sell_' <<< "$(q -v r="$run" <<< "select scenarios::text from public
 fi
 tot=$(q -v r="$run" <<< "select coalesce(round(extract(epoch from coalesce(finished_at, now()) - started_at))::int, 0) from public.lab_runs where id = :'r'::uuid")
 [ "${tot:-0}" -gt 0 ] && msg+="Всего: $((tot / 60)) мин $((tot % 60)) с"$'\n'
+# the phases of the loop (lab-loop.sh phase(): data.phase_log "<phase>=<s> ..."): seconds per phase, the biggest first
+phases=$(q -v r="$run" <<< "select coalesce(data->>'phase_log', '') from public.lab_runs where id = :'r'::uuid" | tr ' ' '\n' | awk -F= 'NF == 2 { t[$1] += $2; n[$1]++ } END { for (k in t) printf "%d %s %d\n", t[k], k, n[k] }' | sort -rn | awk '{ printf "%s%s %d с%s", (NR > 1 ? ", " : ""), $2, $1, ($3 > 1 ? " (x" $3 ")" : "") }')
+[ -n "$phases" ] && msg+="Фазы: $phases"$'\n'
 [ -n "$firstreads" ] && msg+="Первое чтение экрана: $(paste -sd, <<< "$firstreads" | sed 's/,/, /g')"$'\n'
 # the frame audit (src/FrameAudit.cs): every hint frame shot once it stood still, checked against its widget's live and layout rects
 faout=$(bash "$(dirname "$0")/frame-audit.sh" "$run" 2>/dev/null); faline=$(grep -E '^рамки: [0-9]+ проверено' <<< "$faout" | tail -1 | sed -E 's/ \(.*//')
@@ -91,6 +94,7 @@ if [ -n "$fchecks" ] && [ -n "$shots" ]; then fsheet=$(bash "$(dirname "$0")/fra
   echo "# Test lab report: $devname"
   echo
   echo "- time (UTC+3): $TZ_NOW"
+  [ "${tot:-0}" -gt 0 ] && echo "- total: $((tot / 60)) min $((tot % 60)) s; phases (s): ${phases:-none}"
   echo "- run: $run (equip build ${build^^}), state: $state$([ "$nochange" = 1 ] && echo ", WARNING: nothing to change (no slot click)")"
   echo
   echo "## Steps"

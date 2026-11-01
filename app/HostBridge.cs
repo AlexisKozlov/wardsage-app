@@ -49,7 +49,7 @@ namespace RealmForge {
     bool testLogSending;
     PlansWaiter plansWait; string plansWaitKey = "";   // the long poll for new work from the site (src/PlansWait.cs)
     ScreenRecorder testRec;   // TEST build only: the screen recorder (app/RecCapture.cs), made at the first «Записать»
-    // TEST build only: the lab runner's recorder commands (src/LabRec.cs), read once a second
+    // TEST build only: the lab runner's recorder commands (src/LabRec.cs), read four times a second
     readonly System.Windows.Forms.Timer labRecTimer = new System.Windows.Forms.Timer();
     readonly LabRecControl labRec = new LabRecControl();
     DateTime labRecStamp = DateTime.MinValue; LabRecCmd labRecPending; long labRecPendingAt;
@@ -116,7 +116,7 @@ namespace RealmForge {
       if (Channel.IsTest) { testLogTimer.Interval = 30000; testLogTimer.Tick += (s, e) => { testLogTimer.Interval = 120000; SendTestLog(); }; testLogTimer.Start(); }
       if (Channel.IsTest) overlay.LabPrepDone += (name, ok, why) => OnUi(() => LabSetupDone(name, ok, why));
       if (Channel.IsTest) overlay.ExploreDone += json => { LabWrite("explore.json", json); Log.Write("explore: result written (" + json.Length + " bytes)"); };
-      if (Channel.IsTest) { labRecTimer.Interval = 1000; labRecTimer.Tick += (s, e) => LabRecTick(); labRecTimer.Start(); }
+      if (Channel.IsTest) { labRecTimer.Interval = 250; labRecTimer.Tick += (s, e) => LabRecTick(); labRecTimer.Start(); }
       Log.Write(Channel.ProductName + " " + Program.Version + " started");
       Log.Write("switches (saved copy or defaults): " + remote.ToJson());
     }

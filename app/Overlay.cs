@@ -831,7 +831,7 @@ namespace RealmForge {
     string labPrepSaid = "";
     void TickLabPrep() {
       var p = labPrep; long now = NowMs();
-      if (now - labPrepStartAt > LabPrep.CapMs + 5000) { LabPrepEnd(false, "not done in " + LabPrep.CapMs / 1000 + " s (the game window or its screen was not readable)"); return; }
+      if (now - labPrepStartAt > p.CapMs + 3000) { LabPrepEnd(false, "not done in " + p.CapMs / 1000 + " s (the game window or its screen was not readable)"); return; }
       if (sending || now < labPrepBusyUntil) return;
       IntPtr hwnd = GameWindow();
       if (hwnd == IntPtr.Zero || W32.IsIconic(hwnd)) return;

@@ -152,7 +152,7 @@ namespace RealmForge {
     public static readonly string[] Names = { "hero_filter", "hero_filter_closed", "item_filter", "hide_worn_on", "start_inventory_materials", "start_bulk_sale", "start_artifact" };
     public const string CityName = "city";
     public static bool Known(string name) { return Array.IndexOf(Names, name) >= 0; }
-    public const long CapMs = 100000, GapMs = 1600, SlowGapMs = 3000;
+    public const long CityCapMs = 30000, PrepCapMs = 20000, GapMs = 1600, SlowGapMs = 3000;   // the lab's speed-up: a prep ends in 20 s, the road to the city in 30 s, or it fails with its step
     public const int SetPick = 3;                 // the set cell the item filter ticks (the 4th of the pop-up's grid: not the first, which a plan's item often is)
 
     public readonly string Name;
@@ -164,6 +164,7 @@ namespace RealmForge {
 
     public LabPrep(string name) { Name = name; }
     public bool IsCity { get { return Name == CityName; } }
+    public long CapMs { get { return IsCity ? CityCapMs : PrepCapMs; } }
     /// <summary>The click owner of the prep's inventory work (the sell owner's whitelist) or of the hero work (the equip owner's).</summary>
     public bool InventoryPrep { get { return Name.StartsWith("start_", StringComparison.Ordinal); } }
 

@@ -27,7 +27,7 @@ set -uo pipefail
 HERE=$(dirname "$(readlink -f "$0")")
 USAGE="usage: lab-loop.sh --until-done <device> [--timeout MIN]  |  lab-loop.sh --auto"
 
-dev=""; timeout_min=90; tick=3; auto=0
+dev=""; timeout_min=90; tick=1; auto=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --until-done) dev=${2:-}; shift 2 ;;
@@ -51,7 +51,9 @@ graph_ver() { git -C "$HERE/../.." show origin/main:src/UiGraphData.cs 2>/dev/nu
 rget()   { q -v r="$RUN" <<< "select $1 from public.lab_runs where id = :'r'::uuid"; }
 dget()   { q -v r="$RUN" -v k="$1" <<< "select coalesce(data->>:'k', '') from public.lab_runs where id = :'r'::uuid"; }
 dset()   { q -v r="$RUN" -v k="$1" -v v="$2" <<< "update public.lab_runs set data = data || jsonb_build_object(:'k', :'v'::text) where id = :'r'::uuid"; }
-phase()  { q -v r="$RUN" -v p="$1" <<< "update public.lab_runs set phase = :'p', data = data || jsonb_build_object('phase_at', extract(epoch from now())::bigint::text) where id = :'r'::uuid"; say "phase: $1"; }
+# (every phase change also adds "<old phase>=<seconds in it> " to data.phase_log: the report sums them per phase)
+phase()  { q -v r="$RUN" -v p="$1" <<< "update public.lab_runs set phase = :'p', data = data || jsonb_build_object('phase_at', extract(epoch from now())::bigint::text,
+  'phase_log', coalesce(data->>'phase_log', '') || coalesce(phase, '') || '=' || greatest(0, extract(epoch from now())::bigint - coalesce(nullif(data->>'phase_at', '')::bigint, extract(epoch from now())::bigint)) || ' ') where id = :'r'::uuid"; say "phase: $1"; }
 step()   { q -v r="$RUN" -v n="$1" -v ok="$2" -v s="$3" -v note="${4:-}" <<< "update public.lab_runs set steps = steps || jsonb_build_array(jsonb_build_object('name', :'n', 'ok', :'ok'::boolean, 'seconds', :'s'::numeric, 'note', :'note')) where id = :'r'::uuid"; say "step $1 ok=$2 ${3}s ${4:-}"; }
 warn()   { q -v r="$RUN" -v n="$1" -v s="$2" -v note="${3:-}" <<< "update public.lab_runs set steps = steps || jsonb_build_array(jsonb_build_object('name', :'n', 'ok', true, 'warn', true, 'seconds', :'s'::numeric, 'note', :'note')) where id = :'r'::uuid"; say "step $1 WARN ${2}s ${3:-}"; }
 info()   { q -v r="$RUN" -v n="$1" -v s="$2" -v note="${3:-}" <<< "update public.lab_runs set steps = steps || jsonb_build_array(jsonb_build_object('name', :'n', 'ok', true, 'info', true, 'seconds', :'s'::numeric, 'note', :'note')) where id = :'r'::uuid"; say "step $1 INFO ${2}s ${3:-}"; }
@@ -293,9 +295,9 @@ scn_tbl() { case "$1" in equip_*) echo equip_plans ;; locate*) echo item_locates
 SELL_OK_RE='click gate Sell: allow (HeroBack|CityInventory|InvEquipTab|InvMaterialsTab|InvBulkEnter|InvBulkCell|InvListDrag|OfferClose|UnknownBack|CityBack|EscapeBack|MapClose|ArtTab|ArtBulkEnter|ArtBulkCell|ArtListDrag)\b'
 # hero_grades keeps an HMAC of the game account (a server secret, never read here), not the account: the newest updated_at of the table
 # stands for the device's account (on staging only the lab's app sends grades as a rule)
-LOGS_WAIT=${LAB_LOGS_WAIT:-60}
-FA_QUIET=${LAB_FA_QUIET:-40}   # a hint scenario: no new frame shot for this long after the first one = the steps shown without a click are done
-FA_MAX=${LAB_FA_MAX:-180}      # a hint scenario: at most this long   # max wait at the end for the app's next log batch (the report's figures come from it)
+LOGS_WAIT=${LAB_LOGS_WAIT:-15}
+FA_QUIET=${LAB_FA_QUIET:-12}   # a hint scenario: no new frame shot for this long after the first one = the steps shown without a click are done
+FA_MAX=${LAB_FA_MAX:-120}      # a hint scenario: at most this long   # max wait at the end for the app's next log batch (the report's figures come from it)
 GRADES_WAIT=${LAB_GRADES_WAIT:-360}
 grades_at() { q <<< "select coalesce(extract(epoch from max(updated_at))::bigint, 0) from public.hero_grades"; }
 grades_mark() { dset ready_at "$(now)"; dset grades0 "$(grades_at)"; }
@@ -482,11 +484,11 @@ tick() {
            fi ;;
       esac ;;
     scn_setup)
-      # the app's answer to "city" / "prep <name>" (it comes when its clicks are over, up to ~100 s; the runner waits 125 s for it)
+      # the app's answer to "city" / "prep <name>" (it comes when its clicks are over: city 30 s at most, a prep 20 s; the runner waits 45 s for it)
       i=$(dget scn_idx); sc=${scenarios[$i]}; j=$(dget job); st=$(jstate "$j"); stage=$(dget setup_stage)
       case "$st" in
         done|failed|expired|cancelled) ;;
-        *) if [ "$(phase_age)" -gt 170 ]; then st=expired; else return; fi ;;
+        *) if [ "$(phase_age)" -gt 60 ]; then st=expired; else return; fi ;;
       esac
       why="$(jres "$j" why)$(jres "$j" error)"; [ -n "$why" ] || why=$st
       if [ "$stage" = city ]; then
@@ -592,7 +594,7 @@ tick() {
         # 3 steps, or at least one and nothing new for FA_QUIET s (the next step waits on the player's click), and no FLAG; then cancelled
         sa=$(dget seeded_at)
         if [ "${st%%|*}" = done ]; then fail_scn "$label" "в режиме подсказок запрос выполнен сам: автоклик не выключился" "$tbl" "$row"; return; fi
-        if [ $(( $(now) - $(dget fa_poll) )) -ge 10 ]; then
+        if [ $(( $(now) - $(dget fa_poll) )) -ge 4 ]; then
           dset fa_poll "$(now)"
           read -r fn fk fs ff <<< "$(bash "$HERE/frame-audit.sh" "$RUN" --count "$sc" 2>/dev/null)"
           fn=${fn:-0}; fk=${fk:-0}; fs=${fs:-0}
