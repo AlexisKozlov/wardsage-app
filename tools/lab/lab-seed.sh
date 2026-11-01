@@ -162,10 +162,27 @@ def need(a):
     n = (((plan.get("br") or {}).get(str(r[1])) or {}).get("n") or []) if r else []
     st = int(a.get("st") or 0)
     return max(1, int(n[st])) if st < len(n) else 1
-def free_copies(a):
+def kind_ids(a):
     r = (plan.get("a") or {}).get(str(a.get("id")))
-    ids = [a.get("id")] + (list(r[3:]) if r else [])
-    return [x for x in arts if not x.get("h") and x["u"] != a["u"] and x.get("id") in ids]
+    return [a.get("id")] + (list(r[3:]) if r else [])
+# the copies the own plan of the site (lib/artifact-plan.ts planPromotions) gives to the OTHER worn artifacts at their level cap ("ready"): artPromoteInfo leaves them
+# out of this artifact list (usedByOthers). Lab 1.6.66.469: two artifacts shared one spare copy, the site gave it to the stronger hero, the other got
+# copies [] via none - "hint (plan) at step artMatPick". Replayed here in the plan order: worn ones by their hero power, the spare copies by stage, level.
+power = {}
+for h in pd.get("heroes") or []: power[h.get("u")] = h.get("p") or 0
+spare_list = sorted([x for x in arts if not x.get("h")], key=lambda x: (int(x.get("st") or 0), int(x.get("lv") or 0)))
+taken = {}   # copy uid -> the worn artifact (uid) the plan gave it to
+for w in sorted([x for x in arts if x.get("h") and int(x.get("st") or 0) < 5], key=lambda x: (-power.get(x.get("h"), 0), -int(x.get("st") or 0), x.get("id") or 0)):
+    if cap(w) <= 0: continue
+    for c0 in spare_list:
+        if c0["u"] not in taken and c0.get("id") in kind_ids(w): taken[c0["u"]] = w["u"]; break
+def free_copies(a):
+    mine = [u for u, o in taken.items() if o == a["u"] and int(a.get("lv") or 0) >= cap(a)]
+    others = set(u for u, o in taken.items() if o != a["u"] and next((w for w in arts if w["u"] == o), {}).get("lv", 0) >= cap(next((w for w in arts if w["u"] == o), {})))
+    ids = kind_ids(a)
+    fc = [x for x in arts if not x.get("h") and x["u"] != a["u"] and x.get("id") in ids and x["u"] not in others]
+    fc.sort(key=lambda x: (0 if x["u"] in mine else 1, int(x.get("st") or 0), int(x.get("lv") or 0)))
+    return fc
 # at its level cap first, then an artifact with a spare copy of its own kind (the promotion takes copies), then not worn, then the highest stage
 c = sorted([a for a in arts if int(a.get("st") or 0) < 5 and len(free_copies(a)) >= need(a)], key=lambda a: (0 if cap(a) > 0 and int(a.get("lv") or 0) >= cap(a) else 1, 0 if spare.get(a.get("id"), 0) - (0 if a.get("h") else 1) > 0 else 1, 1 if a.get("h") else 0, -int(a.get("st") or 0), -int(a.get("lv") or 0), a["u"]))
 if not c: sys.exit(0)
