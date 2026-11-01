@@ -2,19 +2,18 @@
 # Drives the test-lab runs of the devices (staging). Two modes:
 #   lab-loop.sh --until-done <device> [--timeout MIN]   FOREGROUND, by hand: drives the one queued run of a device (default 90 min).
 #                                                       Exits 0 when the run finished (Telegram message + report file done), 1 on timeout / failure.
-#   lab-loop.sh --auto                                  ONE pass, for cron every minute (flock; exits at once when nothing is to do). For every enabled
-#                                                       device that is online (heartbeat < 3 min): game not running -> queue start_game (once per 15 min);
-#                                                       the newest published test build has no finished run yet, or a lab-request waits -> start a run;
-#                                                       else the explorer once a day / on a new game version of the UI graph (explore_due);
-#                                                       a run in progress advances (the same state machine, state in lab_runs). Always exits 0.
+#   lab-loop.sh --auto                                  ONE pass, for cron every minute (flock; exits at once when nothing is to do). A run starts ONLY from a
+#                                                       queued lab-request (lab-request.sh) of an enabled device that is online (heartbeat < 3 min) with the game
+#                                                       running; nothing starts by itself (no run for a new test build, no start_game, no explorer: that one only
+#                                                       with lab-request.sh <device> --only explore). A run in progress advances (the same state machine, state in
+#                                                       lab_runs). Always exits 0.
 #                                                       Env: TEST_FEED (feed dir, default /srv/wardsage/test-feed), LAB_NO_TG=1 (print instead of Telegram), LAB_ONLY=<device> (tests).
 #
-# Build gate: a new test build (feed latest.json) gets ONE full suite (LAB_SCENARIOS + the frame audit of the _hint ones); the result of every
-# scenario is kept per build in $LAB_DIR/build-<N>.status (N = 4th part of the version: PASS / FAIL / SKIP / PENDING per scenario, frame_audit,
-# OVERALL). A newer build published mid-suite: the scenario in hand ends, the run is closed as 'cancelled' (superseded) and the next pass starts the
-# suite on the newer build. The laptop's idle gate (runner v22): a run starts only while the runner reports status.input = idle (no physical user
-# input for 1 min); user input during a run (status.input = user_busy, or a job failed with user_busy) cancels the run quietly (its request is
-# cancelled at once, no report, no verdict) and the build's suite starts again when the laptop is idle.
+# Per-build result: $LAB_DIR/build-<N>.status (N = 4th part of the version the run tested: PASS / FAIL / SKIP / PENDING per scenario, frame_audit, OVERALL),
+# rewritten after every scenario of a run.
+# A run interrupted by the laptop going offline (no heartbeat for LAB_OFFLINE_SEC, default 180 s) is not failed: it waits, and when the laptop is back
+# its request is restarted from the interrupted scenario (jobs and the pending request cancelled, update/restart/ready again, the run's time limit
+# extended by the time gone). The runner (v24) does not look at the user's input at all.
 #
 # Flow (state kept in lab_runs.phase, so a restart of this script resumes; each phase is idempotent):
 #   wait_online -> update_app -> restart_app -> wait_ready -> [seed -> wait done]* -> wait logs
@@ -111,26 +110,25 @@ write_build_status() {
   else rm -f "$tmp"; fi
   return 0
 }
-# user_busy_now: the runner (v22+) says the laptop's user is active, or a job of this run failed with user_busy
-user_busy_now() {
-  [ "$(dstat "coalesce(status->>'input', '')")" = user_busy ] && return 0
-  [ "$(q -v r="$RUN" <<< "select count(*) from public.lab_jobs where run_id = :'r'::uuid and state = 'failed' and result->>'error' = 'user_busy'")" != 0 ]
-}
-# input_ok: the laptop may start a run (the old runner reports no input state: allowed)
-input_ok() { local i; i=$(dstat "coalesce(status->>'input', '')"); [ -z "$i" ] || [ "$i" = idle ] || [ "$i" = running ]; }
-# abort_quiet <state> <why>: the run ends without a verdict and without a report (user input / a newer build): its request is cancelled at once
-# (the app stops guiding), queued jobs cancelled, the recording of the scenario in hand deleted; the suite of the build starts again later
-abort_quiet() {
-  local r t sc0 rid; sc0=${scenarios[$(dget scn_idx)]:-}; r=$(dget row); t=$(scn_tbl "$sc0")
+# resume_run <seconds gone>: the laptop was away (offline, or this loop was not running): restart the interrupted step of the run
+OFFLINE=0
+resume_run() {
+  local gap=$1 ph0 idx r t sc0 rid tot n
+  ph0=$(rget phase); idx=$(dget scn_idx); idx=${idx:-0}
+  say "run ${RUN:0:8}: the laptop is back after $gap s (phase $ph0, scenario $idx): restarting the interrupted step"
+  tot=$(dget offline_total); n=$(dget resumed)
+  dset offline_total "$(( ${tot:-0} + gap ))"; dset resumed "$(( ${n:-0} + 1 ))"; dset offline_at ""
+  deadline=$(( deadline + gap ))
+  [ "$ph0" = report ] && return 0
+  sc0=${scenarios[$idx]:-}; r=$(dget row); t=$(scn_tbl "$sc0")
   [ -n "$r" ] && [ -n "$t" ] && q -v r="$r" <<< "update public.$t set status = 'cancelled', done_at = now() where id = :'r'::uuid and status = 'pending'" >/dev/null
   rid=$(dget rec_id); [ -n "$rid" ] && dset rec_del "$(dget rec_del) $rid"
-  dset rec_id ""; dset row ""; dset abort "$2"
-  # shellcheck disable=SC2046
-  rec_delete $(dget rec_del)
-  q -v r="$RUN" -v s="$1" <<< "update public.lab_jobs set state = 'cancelled', finished_at = now() where run_id = :'r'::uuid and state = 'queued'; update public.lab_runs set state = :'s', finished_at = now() where id = :'r'::uuid" >/dev/null
-  say "run ${RUN:0:8} ended without a verdict: $2"
-  write_build_status
+  q -v r="$RUN" <<< "update public.lab_jobs set state = 'cancelled', finished_at = now() where run_id = :'r'::uuid and state in ('queued', 'claimed')" >/dev/null
+  dset resume_idx "$idx"; dset rec_id ""; dset row ""; dset rec_for ""; dset job ""; dset job_timeout ""; dset sar_ready ""; dset sar_at ""
+  phase wait_online
 }
+# scn_start: the scenario index a run continues with after app_ready (0, or the interrupted one after a resume)
+scn_start() { local i; i=$(dget resume_idx); echo "${i:-0}"; }
 
 # ---- the state machine
 end_run() {   # $1 = final state
@@ -292,18 +290,26 @@ init_run() {
 }
 
 tick() {
+  OFFLINE=0
+  if [ "$(dstat "(last_seen is null or last_seen < now() - interval '${LAB_OFFLINE_SEC:-180} seconds')")" = t ]; then
+    [ -n "$(dget offline_at)" ] || { dset offline_at "$(now)"; say "run ${RUN:0:8}: the laptop is offline, the run waits"; }
+    OFFLINE=1; return
+  fi
+  local oa al gap=0; oa=$(dget offline_at); al=$(dget alive_at)
+  if [ -n "$oa" ]; then gap=$(( $(now) - oa )); elif [ -n "$al" ] && [ $(( $(now) - al )) -gt 120 ]; then gap=$(( $(now) - al )); fi
+  [ "$gap" -gt 0 ] && resume_run "$gap"
+  dset alive_at "$(now)"
   if [ "$(now)" -gt "$deadline" ]; then
     say "TIMEOUT"; step "timeout" false "$((timeout_min * 60))" "the run did not finish in ${timeout_min} min"
     end_run timeout; FINAL=1; return
   fi
   ph=$(rget phase)
-  if user_busy_now; then abort_quiet cancelled "user_busy: the laptop's user is active"; FINAL=1; return; fi
   case "$ph" in
     start|wait_online)
       ok=$(dstat "(last_seen > now() - interval '150 seconds' and status->>'game_running' = 'true' and coalesce(status->>'busy', 'false') = 'false')")
       if [ "$ok" = t ]; then
         j=$(mkjob update_app) && dset job "$j" && phase update
-      elif [ "$(phase_age)" -gt 600 ]; then
+      elif [ "$(phase_age)" -gt "$([ -n "$(dget resumed)" ] && echo 3600 || echo 600)" ]; then
         step online false "$(phase_age)" "the laptop is not online with the game running"
         end_run failed; FINAL=1; return
       fi ;;
@@ -315,7 +321,7 @@ tick() {
           dset want_version "$(jres "$j" version)"
           devsig
           if [ "$(jres "$j" updated)" = false ] && [ "$SG_READY" = true ] && [ "$SG_APPOK" = true ] && [ "$SG_APPVER" = "$(jres "$j" version)" ]; then
-            step app_ready true 0 "already ready, no restart"; grades_mark; dset scn_idx 0; lab_settings_start; return
+            step app_ready true 0 "already ready, no restart"; grades_mark; dset scn_idx "$(scn_start)"; lab_settings_start; return
           fi
           r=$(mkjob restart_app) && dset job "$r" && dset job_timeout "" && phase restart
         else
@@ -345,7 +351,7 @@ tick() {
           step app_ready false "$(phase_age)" "$WHY"; FAILED=1; skip_to_logs
         elif [ "$SG_READY" = true ] && [ "$SG_APPOK" = true ] && [ "$SG_SEEN" -gt "${rs:-0}" ] && { [ -z "$want" ] || [ "$SG_APPVER" = "$want" ]; }; then
           step app_ready true "$(( $(now) - ${rs:-0} ))" "version ${want:-?}"
-          grades_mark; dset scn_idx 0; lab_settings_start
+          grades_mark; dset scn_idx "$(scn_start)"; lab_settings_start
         elif [ "$(phase_age)" -gt "$READY_DEV" ]; then
           step app_ready false "$(phase_age)" "the app did not report ready in $(( READY_DEV / 60 )) min"
           FAILED=1; skip_to_logs
@@ -359,7 +365,7 @@ tick() {
         from public.lab_devices dv join public.game_accounts a on a.id = dv.account_id where dv.id = :'d'::uuid")
       if [ "$ok" = t ]; then
         step app_ready true "$(( $(now) - rs ))" "version ${want:-?}"
-        grades_mark; dset scn_idx 0; lab_settings_start
+        grades_mark; dset scn_idx "$(scn_start)"; lab_settings_start
       elif [ "$(phase_age)" -gt 420 ]; then
         step app_ready false "$(phase_age)" "the app did not report ready in 7 min"
         FAILED=1; skip_to_logs
@@ -371,14 +377,6 @@ tick() {
       i=$(dget scn_idx)
       if [ "$i" -ge "${#scenarios[@]}" ]; then phase logs; return; fi
       sc=${scenarios[$i]}
-      # a newer test build was published: the scenario in hand has ended, the suite restarts on the newer build (the next --auto pass queues it)
-      tv=$(dget target_version)
-      if [ "$i" -ge 1 ] && [ -n "$tv" ]; then
-        nb=$(jq -r '.version // empty' "$FEED/latest.json" 2>/dev/null); cb=$(run_build)
-        if [[ "$nb" =~ ^[0-9]{1,9}(\.[0-9]{1,9}){0,3}$ ]] && [ -n "$cb" ] && [ "$nb" != "$cb" ] && [ "$(printf '%s\n%s\n' "$cb" "$nb" | sort -V | tail -1)" = "$nb" ]; then
-          dset superseded_by "$nb"; abort_quiet cancelled "superseded by build $nb"; FINAL=1; return
-        fi
-      fi
       # the screen recording starts before anything of the scenario (phase scn_rec waits for the app's answer); sell_after_restart: after
       # the app's restart (a restart ends any recording)
       if [ "$(dget rec_for)" != "$i" ] && [[ "$sc" =~ ^[a-z0-9_]{1,40}$ ]] && [ "$sc" != explore ] && { [ "$sc" != sell_after_restart ] || [ -n "$(dget sar_ready)" ]; }; then
@@ -618,26 +616,6 @@ fi
 exec 8>"$LAB_DIR/auto.lock"
 flock -n 8 || exit 0
 
-# ensure_game: the game is not running -> queue ONE start_game job per 15 min
-ensure_game() {
-  local n; n=$(q -v d="$DEV" <<< "select count(*) from public.lab_jobs where device_id = :'d'::uuid and action = 'start_game' and (state in ('queued', 'claimed') or created_at > now() - interval '15 minutes')")
-  if [ "${n:-1}" = 0 ]; then
-    q -v d="$DEV" <<< "insert into public.lab_jobs (device_id, action, args, expires_at) values (:'d'::uuid, 'start_game', '{}'::jsonb, now() + interval '20 minutes')" >/dev/null
-    say "'$dev': game not running, start_game queued"
-  fi
-}
-
-# the game needs the launcher (start_game failed with game_needs_launcher): one message per 6 h, and only for a failure newer than the last message
-notify_launcher() {
-  local mark="$LAB_DIR/needs-launcher-$dev.at" last fin
-  last=$(cat "$mark" 2>/dev/null || echo 0); [[ "$last" =~ ^[0-9]+$ ]] || last=0
-  fin=$(q -v d="$DEV" <<< "select coalesce(extract(epoch from max(finished_at))::bigint, 0) from public.lab_jobs where device_id = :'d'::uuid and action = 'start_game' and state = 'failed' and result->>'error' = 'game_needs_launcher'")
-  if [ "${fin:-0}" -gt "$last" ] && [ $(( $(now) - last )) -gt 21600 ]; then
-    notify "🎮 Ноутбук: игре нужно обновление, откройте лаунчер и нажмите «Играть»"
-    echo "$(now)" > "$mark"
-  fi
-}
-
 # advance the run: keep driving it in this process (3 s tick) until it ends or its deadline (timeout_min, from started_at); the flock (auto.lock)
 # is held meanwhile, so the cron passes of the next minutes exit at once
 advance() {
@@ -645,35 +623,18 @@ advance() {
   local t0 st p0 p1; t0=$(now)
   while :; do
     p0=$(rget phase); tick
+    [ "$OFFLINE" = 0 ] || { [ "$auto" = 0 ] || { say "run ${RUN:0:8}: the laptop is offline, the run waits (next pass)"; return; }; }
     [ -z "$FINAL" ] || { say "run ${RUN:0:8} ended (exit code $FINAL), $(( $(now) - t0 )) s in this pass"; return; }
     st=$(rget state); [[ "$st" =~ ^(queued|running)$ ]] || { say "run ${RUN:0:8} is $st: leaving it"; return; }
     p1=$(rget phase); [ "$p0" != "$p1" ] || sleep "$tick"   # a phase change goes straight on
   done
 }
 
-# explore_due: the explorer runs on its own (a run with the one scenario explore) once a day, and when the game's version (the UI graph's
-# source: src/UiGraphData.cs on main) differs from the last explore run's. Queues it and drives it; 0 = it did so.
-explore_due() {
-  local gv last lv
-  gv=$(graph_ver)
-  last=$(q -v d="$DEV" <<< "select coalesce(extract(epoch from max(created_at))::bigint, 0) || '|' || coalesce((select data->>'graph_version' from public.lab_runs where device_id = :'d'::uuid and 'explore' = any(scenarios) order by created_at desc limit 1), '')
-    from public.lab_runs where device_id = :'d'::uuid and 'explore' = any(scenarios) and state <> 'cancelled'")
-  lv=${last#*|}; last=${last%%|*}
-  if [ $(( $(now) - ${last:-0} )) -lt 86400 ] && { [ -z "$gv" ] || [ "$gv" = "$lv" ]; }; then return 1; fi
-  RUN=$(q -v d="$DEV" -v g="$gv" <<< "
-    insert into public.lab_runs (device_id, scenarios, build, data)
-    values (:'d'::uuid, '{explore}'::text[], 'a', jsonb_build_object('graph_version', :'g'::text, 'explore_auto', '1'))
-    returning id")
-  say "'$dev': explore run ${RUN:0:8} queued (graph of game ${gv:-?}, last explore $(( ($(now) - ${last:-0}) / 3600 )) h ago)"
-  advance
-  return 0
-}
-
 auto_dev() {   # $1 = device name
   dev=$1; DEV=$(dev_id "$dev") || return 0
   exec 9>"$LAB_DIR/loop-$dev.lock"
   flock -n 9 || { exec 9>&-; return 0; }          # a hand-started --until-done owns the device
-  local gr st latest fin rv rn
+  local gr st rv rn
   gr=$(dstat "coalesce(status->>'game_running', 'false')")
   # a newer published runner than the one the laptop reports -> ask it to update (one job at a time)
   rv=$(jq -r '.version // empty' "$FEED/lab/WardsageLab.json" 2>/dev/null); rn=$(dstat "coalesce(status->>'runner', '')")
@@ -683,28 +644,10 @@ auto_dev() {   # $1 = device name
       where not exists (select 1 from public.lab_jobs where device_id = :'d'::uuid and action = 'update_runner' and (state in ('queued', 'claimed') or created_at > now() - interval '10 minutes'))" >/dev/null
   fi
   RUN=$(q -v d="$DEV" <<< "select id from public.lab_runs where device_id = :'d'::uuid and state in ('queued', 'running') order by created_at limit 1")
-  if [ "$gr" != true ]; then ensure_game; notify_launcher; fi
   if [ -n "$RUN" ]; then
     st=$(rget state)
-    # a waiting request starts only when the game runs and the laptop's user is away (idle gate); a run in progress is always advanced (it ends itself on user input)
-    if [ "$st" = running ] || { [ "$gr" = true ] && input_ok; }; then advance; fi
-  elif [ "$gr" = true ] && input_ok; then
-    explore_due && return 0
-    latest=$(jq -r '.version // empty' "$FEED/latest.json" 2>/dev/null)
-    if [[ "$latest" =~ ^[0-9]{1,9}(\.[0-9]{1,9}){0,3}$ ]]; then
-      fin=$(q -v d="$DEV" -v v="$latest" <<< "select count(*) from public.lab_runs where device_id = :'d'::uuid and state in ('done', 'failed', 'timeout') and (data->>'target_version' = :'v' or data->>'want_version' = :'v')")
-      if [ "$fin" = 0 ]; then
-        RUN=$(q -v d="$DEV" -v v="$latest" -v all="$LAB_SCENARIOS" <<< "
-          insert into public.lab_runs (device_id, scenarios, build, data)
-          values (:'d'::uuid, ('{' || replace(:'all', ' ', ',') || '}')::text[], coalesce((select case build when 'a' then 'b' else 'a' end from public.lab_runs
-                  where device_id = :'d'::uuid and state <> 'cancelled' order by created_at desc limit 1), 'a'),
-                  jsonb_build_object('target_version', :'v'::text))
-          returning id")
-        say "'$dev': new test build $latest has no finished run, run ${RUN:0:8} queued"
-        write_build_status
-        advance
-      fi
-    fi
+    # a requested run starts when the game runs; a run in progress is always advanced (it waits itself while the laptop is offline)
+    if [ "$st" = running ] || [ "$gr" = true ]; then advance; fi
   fi
   exec 9>&-
 }
