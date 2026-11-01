@@ -114,6 +114,7 @@ namespace RealmForge {
       updateTimer.Interval = 20000; updateTimer.Tick += (s, e) => { updateTimer.Interval = (Channel.IsTest ? 2 : 5) * 60 * 1000; if (updateReady == null || Channel.IsTest) CheckUpdate(); }; updateTimer.Start();
       remoteTimer.Interval = 3000; remoteTimer.Tick += (s, e) => { remoteTimer.Interval = RemoteSwitches.EveryMinutes(Channel.IsTest) * 60 * 1000; FetchRemote(); }; remoteTimer.Start();
       if (Channel.IsTest) { testLogTimer.Interval = 30000; testLogTimer.Tick += (s, e) => { testLogTimer.Interval = 120000; SendTestLog(); }; testLogTimer.Start(); }
+      if (Channel.IsTest) overlay.LabPrepDone += (name, ok, why) => OnUi(() => LabSetupDone(name, ok, why));
       if (Channel.IsTest) overlay.ExploreDone += json => { LabWrite("explore.json", json); Log.Write("explore: result written (" + json.Length + " bytes)"); };
       if (Channel.IsTest) { labRecTimer.Interval = 1000; labRecTimer.Tick += (s, e) => LabRecTick(); labRecTimer.Start(); }
       Log.Write(Channel.ProductName + " " + Program.Version + " started");
@@ -123,15 +124,20 @@ namespace RealmForge {
     // ------------------------------------------------------------------ the site's switches
 
     /// <summary>The app's own clicks: the player's setting and the site's "autoclick" switch.</summary>
-    bool AutoClickOn() { return LabRecCmd.AutoClick(cfg.AutoClick, labForce, On("autoclick"), labHintOnly); }
+    bool AutoClickOn() { return (labPrepOn && On("autoclick")) || LabRecCmd.AutoClick(cfg.AutoClick, labForce, On("autoclick"), labHintOnly || labAutoOff); }
+    /// <summary>TEST build: a lab setup («city» / «prep <name>», src/LabRec.cs) runs: the overlay's own gate clicks are allowed for it alone (the site's autoclick switch still rules), whatever the hint mode or the player's setting.</summary>
+    bool labPrepOn;
+    /// <summary>TEST build: a scenario that starts with auto click off (LabRecCmd.IsAutoOffScenario); the «settings» command (LabForceSettings) turns it on.</summary>
+    bool labAutoOff;
+    LabRecCmd labSetupCmd;
     /// <summary>TEST build: a lab scenario «..._hint» runs (its recorder command named it): auto click is off as for a player without it, hints only.</summary>
     bool labHintOnly; long labHintAt;
     /// <summary>TEST build: the lab forces auto click, locateAuto and artAuto on for this app run (in memory, never saved: cfg.AutoClick stays the player's); the hint mode (labHintOnly) is in memory too.</summary>
     bool labForce;
     /// <summary>«Показать в игре» clicks by itself only with its own switch on (off by default until the owner enables it), on top of the player's setting.</summary>
-    bool LocateAutoOn() { return AutoClickOn() && (labForce || On("locateAuto")); }
+    bool LocateAutoOn() { return AutoClickOn() && (labForce || labPrepOn || On("locateAuto")); }
     /// <summary>The artifact flows (storage cleanup, promotion) click by themselves only with the site's "artAuto" switch on (off by default), on top of the player's setting.</summary>
-    bool ArtAutoOn() { return AutoClickOn() && (labForce || On("artAuto")); }
+    bool ArtAutoOn() { return AutoClickOn() && (labForce || labPrepOn || On("artAuto")); }
     /// <summary>The new button highlight: only the site's "guideStyle" switch.</summary>
     void ApplyGuideStyle() { overlay.GuideStyle = remote.Allows("guideStyle"); }
     void ApplyAutoClick() { overlay.AutoEnabled = AutoClickOn(); overlay.LocateAutoEnabled = LocateAutoOn(); overlay.ArtAutoEnabled = ArtAutoOn(); }
@@ -438,8 +444,9 @@ namespace RealmForge {
         var act = labRec.Decide(cmd, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), on, cur, out state);
         if (state == null) return;
         Log.Write("rec: lab " + cmd.Op + (cmd.Op == "start" ? " " + cmd.Scenario : "") + " -> " + act + " (" + state + ")");
-        if (state != "stale" && act != LabRecControl.Act.Settings) LabScenario(cmd);
+        if (state != "stale" && act != LabRecControl.Act.Settings && act != LabRecControl.Act.City && act != LabRecControl.Act.Prep) LabScenario(cmd);
         switch (act) {
+          case LabRecControl.Act.City: case LabRecControl.Act.Prep: LabSetupStart(cmd); break;
           case LabRecControl.Act.Settings: LabForceSettings(); LabRecAck(cmd, state, cur); break;
           case LabRecControl.Act.Start: LabRecStart(cmd); break;
           case LabRecControl.Act.StopThenStart: testRec.Stop(); labRecPending = cmd; labRecPendingAt = RecInfo.NowMs(); break;
@@ -455,14 +462,33 @@ namespace RealmForge {
       overlay.AuditSite = () => cfg.Site; overlay.AuditCode = () => cfg.Code;
       overlay.AuditScenario = start ? c.Scenario : ""; if (start) overlay.AuditRun = c.Run;
       bool hint = start && LabRecCmd.IsHintScenario(c.Scenario);
-      if (start && !hint && !labForce) LabForceSettings();   // every non-hint scenario: the settings it needs are on
+      bool autoOff = start && LabRecCmd.IsAutoOffScenario(c.Scenario);
+      if (start && !hint && !autoOff && !labForce) LabForceSettings();   // every non-hint scenario: the settings it needs are on
+      if (!autoOff && labAutoOff) { labAutoOff = false; ApplyAutoClick(); SendState(null); Log.Write("lab: auto click back (" + (start ? c.Scenario : "scenario over") + ")"); }
+      if (autoOff) { labAutoOff = true; labForce = true; ApplyAutoClick(); SendState(null); Log.Write("lab: auto click OFF for " + c.Scenario + " until the settings command"); }
       if (hint) labHintAt = RecInfo.NowMs();
       if (hint != labHintOnly) { labHintOnly = hint; if (hint) { overlay.SetRun(0); overlay.SetSell(null, null, null, 0); } ApplyAutoClick(); SendState(null); Log.Write("lab: hint mode " + (hint ? "on (auto click off for " + c.Scenario + ")" : "off")); }
     }
     // the lab forces the settings its scenarios need (auto click, locateAuto, artAuto) for this run: in memory, the saved config is not touched
     void LabForceSettings() {
-      labForce = true; ApplyAutoClick(); SendState(null);   // the page too: it starts the equip and sell runs
+      labForce = true; labAutoOff = false; ApplyAutoClick(); SendState(null);   // the page too: it starts the equip and sell runs
       Log.Write("lab: settings forced auto=on locateAuto=on artAuto=on (saved config: autoClick=" + (cfg.AutoClick ? "on" : "off") + ", not changed)");
+    }
+    // the lab's «city» / «prep <name>» (src/LabRec.cs): the overlay's TickLabPrep does the clicks through the gate and tells the end; the ack is written then
+    void LabSetupStart(LabRecCmd c) {
+      string name = c.Op == "city" ? LabPrep.CityName : c.Name;
+      if (!Channel.IsTest) { LabWrite("rec.ack", LabRecCmd.AckSetup(c.Seq, c.Op == "city" ? "cityfail" : "prepfail", name, "not a test build")); return; }
+      if (labSetupCmd != null || overlay.LabPrepRunning) { LabWrite("rec.ack", LabRecCmd.AckSetup(c.Seq, c.Op == "city" ? "cityfail" : "prepfail", name, "another setup is running")); return; }
+      labSetupCmd = c; labPrepOn = true; ApplyAutoClick();
+      Log.Write("lab: setup " + name + " starts");
+      if (!overlay.LabPrepStart(name)) { labPrepOn = false; ApplyAutoClick(); labSetupCmd = null; LabWrite("rec.ack", LabRecCmd.AckSetup(c.Seq, c.Op == "city" ? "cityfail" : "prepfail", name, "the overlay refused it")); }
+    }
+    void LabSetupDone(string name, bool ok, string why) {
+      var c = labSetupCmd; labSetupCmd = null; labPrepOn = false; ApplyAutoClick();
+      Log.Write("lab: setup " + name + (ok ? " ok" : " FAILED") + ": " + why);
+      if (c == null) return;
+      string st = c.Op == "city" ? (ok ? "city" : "cityfail") : (ok ? "prepok" : "prepfail");
+      LabWrite("rec.ack", LabRecCmd.AckSetup(c.Seq, st, name, why));
     }
     void LabRecStart(LabRecCmd c) {
       if (testRec == null) testRec = new ScreenRecorder(() => cfg.Site, () => cfg.Code, s => Log.Write(s), ev => Post(ev), on => OnUi(() => overlay.SetRecording(on)));
@@ -650,7 +676,7 @@ namespace RealmForge {
           case "equip.run": {
             // the plan the player started («Надеть»): its hero is brought up on the hero screen
             object v; double h = m.TryGetValue("hero", out v) && v is double ? (double)v : 0;
-            overlay.SetRun(h > 0 && h < 9e15 && !labHintOnly ? (long)h : 0);   // (the lab's hint mode: no run, whatever the page says)
+            overlay.SetRun(h > 0 && h < 9e15 && !labHintOnly && !labAutoOff ? (long)h : 0);   // (the lab's hint mode: no run, whatever the page says)
             if (MiniJson.GetBool(m, "restart", false)) overlay.RestartPilots();
             break;
           }
@@ -780,7 +806,7 @@ namespace RealmForge {
       sb.Append(",\"hasCode\":").Append(B(has));
       sb.Append(",\"codePrefix\":").Append(S(has ? cfg.Code.Substring(0, 8) : ""));
       sb.Append(",\"saveCopy\":").Append(B(cfg.SaveCopy));
-      sb.Append(",\"autoSync\":").Append(B(cfg.AutoSync)).Append(",\"autoClick\":").Append(B((cfg.AutoClick || labForce) && !labHintOnly)).Append(",\"lab\":").Append(B(labForce))
+      sb.Append(",\"autoSync\":").Append(B(cfg.AutoSync)).Append(",\"autoClick\":").Append(B((cfg.AutoClick || labForce) && !labHintOnly && !labAutoOff)).Append(",\"lab\":").Append(B(labForce))
         .Append(",\"autoConfirm\":").Append(B(cfg.AutoConfirm)).Append(",\"errorReports\":").Append(B(cfg.ErrorReports)).Append(",\"autoUpdate\":").Append(B(cfg.AutoUpdate))
         .Append(",\"tray\":").Append(B(cfg.Tray)).Append(",\"bossHints\":").Append(B(cfg.BossHints)).Append(",\"sendCodes\":").Append(B(cfg.SendCodes)).Append(",\"recButton\":").Append(B(cfg.RecButton)).Append(",\"guideStyle\":").Append(S(cfg.GuideStyle)).Append(",\"autostart\":").Append(B(Autostart.IsOn()));
       win.TrayEnabled = cfg.Tray;

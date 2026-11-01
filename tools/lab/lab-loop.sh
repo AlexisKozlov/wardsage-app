@@ -13,10 +13,13 @@
 # rewritten after every scenario of a run.
 # A run interrupted by the laptop going offline (no heartbeat for LAB_OFFLINE_SEC, default 180 s) is not failed: it waits, and when the laptop is back
 # its request is restarted from the interrupted scenario (jobs and the pending request cancelled, update/restart/ready again, the run's time limit
-# extended by the time gone). The runner (v24) does not look at the user's input at all.
+# extended by the time gone). The runner (v25) does not look at the user's input at all.
+# Before EVERY scenario (explore aside) the test app is told to go to the city (rec job «city», src/LabRec.cs; the app's own road through its click gate), and
+# an extra scenario (lab-common.sh LAB_SCENARIOS_EXTRA) then has its prep run (rec job «prep <name>»: the game put into a non-standard start state by the app's
+# own click gate) before its request is seeded. A prep that fails is a warning (the scenario is not run: nothing would be proven), not a verdict on the app.
 #
 # Flow (state kept in lab_runs.phase, so a restart of this script resumes; each phase is idempotent):
-#   wait_online -> update_app -> restart_app -> wait_ready -> [seed -> wait done]* -> wait logs
+#   wait_online -> update_app -> restart_app -> wait_ready -> [city [-> prep] -> seed -> wait done]* -> wait logs
 #   -> upload_logs -> screenshot -> finish -> report
 # The runner on the laptop only executes the whitelisted jobs queued here; it never clicks (start_game starts the game exe, no launcher, no clicks).
 set -uo pipefail
@@ -82,26 +85,32 @@ wait_job() {
 run_build() { local v; v=$(dget want_version); [ -n "$v" ] || v=$(dget target_version); echo "$v"; }
 # write_build_status: $LAB_DIR/build-<N>.status of the run's build, from the run's steps (atomic write). Never fails the caller.
 write_build_status() {
-  local v n sha js tmp
+  local v n sha js tmp s nstd=0
+  # a run of extra (non-standard) scenarios only: it never writes the build gate's file; mixed with the standard ones their lines are listed apart (no OVERALL effect)
+  for s in "${scenarios[@]:-}"; do case " $LAB_SCENARIOS_EXTRA explore " in *" $s "*) ;; *) nstd=1 ;; esac; done
+  [ "$nstd" = 1 ] || return 0
   v=$(run_build); [[ "$v" =~ ^[0-9]{1,9}(\.[0-9]{1,9}){1,3}$ ]] || return 0
   n=${v##*.}
   sha=$(sed -nE "s/^[^ ]+ published ${v//./\\.} \(([0-9a-f]+)\)\$/\1/p" "$TEST_LOG" 2>/dev/null | tail -1)
   js=$(q -v r="$RUN" <<< "select jsonb_build_object('state', state, 'scenarios', scenarios, 'steps', steps, 'data', data)::text from public.lab_runs where id = :'r'::uuid") || return 0
   [ -n "$js" ] || return 0
   tmp=$(mktemp "$LAB_DIR/.build-status.XXXXXX") || return 0
-  if jq -r --arg ver "$v" --arg sha "${sha:-?}" --arg run "${RUN:0:8}" --arg now "$(date -u +%FT%TZ)" '
+  if jq -r --argjson ex "$(printf '%s\n' $LAB_SCENARIOS_EXTRA | jq -R . | jq -cs .)" --arg ver "$v" --arg sha "${sha:-?}" --arg run "${RUN:0:8}" --arg now "$(date -u +%FT%TZ)" '
       . as $r
       | def st($sc): [$r.steps[] | select(.name == $sc or (.name | startswith($sc + " ")))] | last;
       def verdict($sc): st($sc) as $s | if $s == null then "PENDING" elif $s.ok == false then "FAIL" elif ($s.warn // false) then "SKIP" else "PASS" end;
       def line($sc): st($sc) as $s | $sc + " " + verdict($sc) + (if $s == null then "" else " " + (($s.seconds // 0) | floor | tostring) + "s" + (if (($s.note // "") != "") then " - " + ($s.note | gsub("[\n\r]"; " ") | .[0:160]) else "" end) end);
-      ($r.scenarios | map(select(. != "explore"))) as $sc
+      ($r.scenarios | map(select(. != "explore"))) as $all
+      | ($all | map(select(. as $x | ($ex | index($x)) == null))) as $sc
+      | ($all | map(select(. as $x | ($ex | index($x)) != null))) as $xs
       | ($sc | map(select(endswith("_hint")))) as $hint
       | ($sc | map(verdict(.))) as $vs
       | ($hint | map(verdict(.))) as $hv
-      | ([$r.steps[] | select(.ok == false) | .name as $n | select(([$sc[] | . as $x | select($n == $x or ($n | startswith($x + " ")))] | length) == 0)]) as $other
+      | ([$r.steps[] | select(.ok == false) | .name as $n | select(([$all[] | . as $x | select($n == $x or ($n | startswith($x + " ")))] | length) == 0)]) as $other
       | "build \($ver) sha \($sha)",
         "run \($run) state \($r.state)\(if ($r.data.superseded_by // "") != "" then " (superseded by " + $r.data.superseded_by + ")" else "" end)\(if ($r.data.abort // "") != "" then " (" + $r.data.abort + ")" else "" end) updated \($now)",
         ($sc[] | line(.)),
+        ($xs[] | "extra " + line(.)),
         (if ($hint | length) > 0 then "frame_audit " + (if ($hv | index("FAIL")) then "FAIL" elif ($hv | all(. == "PASS")) then "PASS" else "PENDING" end) + " (" + ($hint | join(", ")) + ")" else empty end),
         ($other[] | "run_step " + .name + " FAIL" + (if ((.note // "") != "") then " - " + (.note | gsub("[\n\r]"; " ") | .[0:160]) else "" end)),
         "OVERALL " + (if (($vs | index("FAIL")) or ($other | length) > 0) then "FAIL" elif ($vs | all(. == "PASS")) then "PASS" else "INCOMPLETE" end)
@@ -124,7 +133,7 @@ resume_run() {
   [ -n "$r" ] && [ -n "$t" ] && q -v r="$r" <<< "update public.$t set status = 'cancelled', done_at = now() where id = :'r'::uuid and status = 'pending'" >/dev/null
   rid=$(dget rec_id); [ -n "$rid" ] && dset rec_del "$(dget rec_del) $rid"
   q -v r="$RUN" <<< "update public.lab_jobs set state = 'cancelled', finished_at = now() where run_id = :'r'::uuid and state in ('queued', 'claimed')" >/dev/null
-  dset resume_idx "$idx"; dset rec_id ""; dset row ""; dset rec_for ""; dset job ""; dset job_timeout ""; dset sar_ready ""; dset sar_at ""
+  dset resume_idx "$idx"; dset rec_id ""; dset row ""; dset rec_for ""; dset setup_for ""; dset setup_stage ""; dset prep_note ""; dset late_sent ""; dset job ""; dset job_timeout ""; dset sar_ready ""; dset sar_at ""
   phase wait_online
 }
 # scn_start: the scenario index a run continues with after app_ready (0, or the interrupted one after a resume)
@@ -216,6 +225,31 @@ fail_scn() {   # $1 = step label, $2 = reason, $3 = table, $4 = row id
   mkjob upload_logs '{"lines":1000}' >/dev/null || true; mkjob screenshot '{"target":"app"}' >/dev/null || true; dset fail_shot 1
   next_scn
 }
+# scn_log_verdict <scenario>: stdin = the app's newest log lines; prints "ok|<note>" or "fail|<reason>" (Russian). Only the lines after the end of the scenario's prep
+# are looked at (the app logs "lab: setup <name> ok: ..." there).
+scn_log_verdict() {
+  local txt tail hero last fail
+  txt=$(cat)
+  tail=$(awk '/lab: setup .* ok:/ { buf = "" ; next } { buf = buf $0 "\n" } END { printf "%s", buf }' <<< "$txt")
+  [ -n "$tail" ] || tail=$txt
+  if [ -z "$txt" ]; then echo "ok|журнал приложения не получен, проверен только итог плана"; return; fi
+  case "$1" in
+    equip_hero_filter_open|equip_hero_filter_closed)
+      # clicks into empty cells: the hero pilot gave up on the grid ("no click near the grid's middle brings up another hero", "the plan's hero at place N is not brought up",
+      # the filter pop-up not recognised) - even if a later try finished the plan
+      fail=$(grep -E "hero: .* -> failed \((no click near the grid|the plan's hero at place|gear filter pop-up not recognised)" <<< "$tail" | head -1 | sed -E 's/^\s+|\s+$//g' | cut -c1-200)
+      if [ -n "$fail" ]; then echo "fail|клики в пустые ячейки сетки героев: $fail"; return; fi
+      hero=$(grep -E "^[0-9-]+ [0-9:]+ +hero: plan " <<< "$tail" | tail -1)
+      if [[ "$hero" == *"filter=open"* ]]; then echo "fail|план выполнен, но панель фильтра героев осталась открытой"; return; fi
+      last=$(sed -nE 's/.*camps=([0-9,]*) class=(True|False).*/фракции в фильтре: \1, класс: \2/p' <<< "$hero")
+      echo "ok|${last:-состояние фильтра в журнале не найдено}" ;;
+    equip_item_filter_open)
+      fail=$(grep -E "filter: item .* -> failed" <<< "$tail" | head -1 | sed -E 's/^\s+|\s+$//g' | cut -c1-200)
+      if [ -n "$fail" ]; then echo "fail|фильтр вещей не удалось снять: $fail"; return; fi
+      echo "ok|" ;;
+    *) echo "ok|" ;;
+  esac
+}
 # lab_settings_start: before the first scenario the app is told to force auto click (locateAuto, artAuto) on for the run (src/LabRec.cs "settings"; a
 # saved config with auto click off must not stall the run); phase lab_settings waits for its ack
 lab_settings_start() {
@@ -230,7 +264,7 @@ next_scn() {
   write_build_status
   dset last_rec_job ""
   rec_end
-  if [[ "$sc0" == *_hint ]]; then
+  if is_hint "$sc0"; then
     # a hint scenario turned auto click off: the stop command (always sent here) turns it back on; the next scenario waits for the app's ack
     [ -n "$(dget last_rec_job)" ] || { local sj; sj=$(mkjob rec '{"cmd":"stop"}') && dset last_rec_job "$sj" || true; }
     [ -n "$r" ] && [ -n "$t" ] && q -v r="$r" <<< "update public.$t set status = 'cancelled', done_at = now() where id = :'r'::uuid and status = 'pending'" >/dev/null
@@ -254,9 +288,9 @@ rec_end() {
 # rec_tag <id>: the last step names the recording
 rec_tag() { q -v r="$RUN" -v id="$1" <<< "update public.lab_runs set steps = jsonb_set(steps, array[(jsonb_array_length(steps) - 1)::text, 'rec'], to_jsonb(:'id'::text)) where id = :'r'::uuid and jsonb_array_length(steps) > 0" >/dev/null; }
 # scenario -> table of its request
-scn_tbl() { case "$1" in equip_*) echo equip_plans ;; locate*) echo item_locates ;; sell_mark|sell_after_restart) echo sell_plans ;; esac; }
+scn_tbl() { case "$1" in equip_*) echo equip_plans ;; locate*) echo item_locates ;; sell_*) echo sell_plans ;; esac; }
 # the storage cleanup may click only these targets (src/ClickGate.cs, owner Sell); the runner (v11+) reports any other one as "never"
-SELL_OK_RE='click gate Sell: allow (HeroBack|CityInventory|InvEquipTab|InvBulkEnter|InvBulkCell|InvListDrag|OfferClose|UnknownBack|CityBack|EscapeBack|MapClose|ArtTab|ArtBulkEnter|ArtBulkCell|ArtListDrag)\b'
+SELL_OK_RE='click gate Sell: allow (HeroBack|CityInventory|InvEquipTab|InvMaterialsTab|InvBulkEnter|InvBulkCell|InvListDrag|OfferClose|UnknownBack|CityBack|EscapeBack|MapClose|ArtTab|ArtBulkEnter|ArtBulkCell|ArtListDrag)\b'
 # hero_grades keeps an HMAC of the game account (a server secret, never read here), not the account: the newest updated_at of the table
 # stands for the device's account (on staging only the lab's app sends grades as a rule)
 LOGS_WAIT=${LAB_LOGS_WAIT:-60}
@@ -384,6 +418,16 @@ tick() {
         if r=$(mkjob rec "{\"cmd\":\"start\",\"scenario\":\"$sc\",\"run\":\"$RUN\"}"); then dset job "$r"; phase scn_rec; return; fi
         say "recording: the job could not be queued"
       fi
+      # the game to the city before EVERY scenario (the app's own road, rec job "city"), then the scenario's prep (extra scenarios): before the mark, so that
+      # the setup's own log lines are forgotten by it; the recording (started above) shows them
+      if [ "$sc" != explore ] && [ -z "$(dget setup_off)" ] && [ "$(dget setup_for)" != "$i/$(dget sar_ready)" ] && { [ "$sc" != sell_after_restart ] || [ -n "$(dget sar_ready)" ]; }; then
+        dset setup_for "$i/$(dget sar_ready)"; dset prep_note ""
+        mkjob game_front >/dev/null || true   # (the setup clicks only with the game in front)
+        if r=$(mkjob rec '{"cmd":"city"}'); then dset job "$r"; dset setup_stage city; phase scn_setup; return; fi
+        say "setup: the city job could not be queued"
+      elif [ "$sc" != explore ] && [ -n "$(dget setup_off)" ] && [ -n "$(scn_prep "$sc")" ]; then
+        warn "$sc" 0 "подготовка «$(scn_prep "$sc")» не выполнена: приложение или раннер не знает команду (нужны тестовая сборка и раннер v25); сценарий не запускался"; next_scn; return
+      fi
       # strict order: the runner's mark (it forgets the old stop / ready / pilot markers) must be DONE before the request is seeded; a mark that ran
       # after a fast app's first lines (a list already marked in the game ends in ~1 s) wiped them: "no pilot step for 40 s" with the run finished (lab cdc2e581)
       mk="$i/$(dget sar_ready)"
@@ -393,7 +437,7 @@ tick() {
         dset mark_at "$(now)"
         if mj=$(mkjob mark "{\"scn\":\"$sc\"}"); then dset job "$mj"; dset job_timeout ""; phase scn_mark; return; fi
       fi
-      if [ "${sc%_hint}" = equip_city ]; then
+      if [ "$(scn_seed "$sc")" = equip_city ]; then
         # never seed the build the hero already wears (then the app has nothing to change): the other one, whatever the last run did
         pb=$("$HERE/lab-seed.sh" "$dev" --pick "$build" 2>/dev/null) || pb=""
         if [[ "$pb" =~ ^[ab]$ ]] && [ "$pb" != "$build" ]; then
@@ -411,7 +455,7 @@ tick() {
         r=$(mkjob restart_app) && dset job "$r" && dset job_timeout "" && phase scn_restart; return
       fi
       seederr=$(mktemp)
-      row=$("$HERE/lab-seed.sh" "$dev" "${sc%_hint}" "$build" 2>"$seederr") || row=""
+      row=$("$HERE/lab-seed.sh" "$dev" "$(scn_seed "$sc")" "$build" 2>"$seederr") || row=""
       sw=$(grep -m1 WARNING "$seederr" | sed -E 's/^lab-seed: WARNING //'); cat "$seederr" >&2; rm -f "$seederr"
       if [ -z "$row" ] && [ -n "$sw" ]; then warn "$sc" 0 "$sw"; next_scn; return; fi
       if [ -z "$row" ]; then step "$sc" false 0 "seed failed (fixture missing?)"; FAILED=1; next_scn; return; fi
@@ -430,13 +474,54 @@ tick() {
         done) id=$(jres "$j" rec); [[ "$id" =~ $LAB_REC_RX ]] && dset rec_id "$id"; say "recording ${id:-?} started"; phase scenario ;;
         failed|expired|cancelled) say "recording not started: $(jres "$j" error)$(jres "$j" state)"
           # a hint scenario's auto click is turned off by this command only: without its answer the scenario is not run
-          sc=${scenarios[$(dget scn_idx)]}; if [[ "$sc" == *_hint ]]; then warn "$sc" 0 "режим подсказок не включён (команда записи не прошла)"; next_scn; else phase scenario; fi ;;
+          sc=${scenarios[$(dget scn_idx)]}; if is_hint "$sc"; then warn "$sc" 0 "режим подсказок не включён (команда записи не прошла)"; next_scn; else phase scenario; fi ;;
         *) if [ "$(phase_age)" -gt 40 ]; then
              q -v j="$j" <<< "update public.lab_jobs set state = 'cancelled', finished_at = now() where id = :'j'::uuid and state = 'queued'" >/dev/null
              say "recording: no answer in 40 s"
-             sc=${scenarios[$(dget scn_idx)]}; if [[ "$sc" == *_hint ]]; then warn "$sc" 0 "режим подсказок не включён (нет ответа на команду записи)"; next_scn; else phase scenario; fi
+             sc=${scenarios[$(dget scn_idx)]}; if is_hint "$sc"; then warn "$sc" 0 "режим подсказок не включён (нет ответа на команду записи)"; next_scn; else phase scenario; fi
            fi ;;
       esac ;;
+    scn_setup)
+      # the app's answer to "city" / "prep <name>" (it comes when its clicks are over, up to ~100 s; the runner waits 125 s for it)
+      i=$(dget scn_idx); sc=${scenarios[$i]}; j=$(dget job); st=$(jstate "$j"); stage=$(dget setup_stage)
+      case "$st" in
+        done|failed|expired|cancelled) ;;
+        *) if [ "$(phase_age)" -gt 170 ]; then st=expired; else return; fi ;;
+      esac
+      why="$(jres "$j" why)$(jres "$j" error)"; [ -n "$why" ] || why=$st
+      if [ "$stage" = city ]; then
+        if [ "$st" = done ]; then say "city: reached ($sc)"
+        else
+          say "city: NOT reached before $sc: $why"
+          # an old app or runner does not know the command: no setup for the rest of the run (a prep scenario is then skipped below)
+          case "$why" in no_ack*|bad_args*|expired*|cancelled*) dset setup_off 1 ;; esac
+        fi
+        prep=$(scn_prep "$sc")
+        if [ -n "$prep" ]; then
+          if [ -n "$(dget setup_off)" ]; then warn "$sc" 0 "подготовка «$prep» не выполнена: приложение или раннер не знает команду (нужны тестовая сборка и раннер v25); сценарий не запускался"; next_scn; return; fi
+          if r=$(mkjob rec "{\"cmd\":\"prep\",\"name\":\"$prep\"}"); then dset job "$r"; dset setup_stage prep; phase scn_setup; return; fi
+          warn "$sc" 0 "подготовка «$prep»: команду не удалось поставить в очередь; сценарий не запускался"; next_scn; return
+        fi
+        phase scenario
+      else
+        prep=$(scn_prep "$sc")
+        if [ "$st" = done ]; then say "prep $prep: $(jres "$j" why)"; dset prep_note "$(jres "$j" why)"; phase scenario
+        else
+          case "$why" in no_ack*|bad_args*|expired*|cancelled*) dset setup_off 1 ;; esac
+          warn "$sc" 0 "подготовка «$prep» не удалась: ${why:0:160}; сценарий не запускался (приложению нечего показывать, пока игра не в нужном состоянии)"; next_scn
+        fi
+      fi ;;
+    scn_check)
+      # a filter scenario's plan is done: its verdict reads the app's own log (the runner uploaded the newest lines; the lines after the prep's end)
+      i=$(dget scn_idx); sc=${scenarios[$i]}; j=$(dget chk_job); st=$(jstate "$j"); sa=$(dget seeded_at); label=$sc
+      case "$st" in
+        done|failed|expired|cancelled) ;;
+        *) if [ "$(phase_age)" -le 45 ]; then return; fi ;;
+      esac
+      txt=""; [ "$st" = done ] && txt=$(q -v j="$j" <<< "select convert_from(data, 'UTF8') from public.lab_files where job_id = :'j'::uuid order by created_at desc limit 1" 2>/dev/null)
+      verdict=$(scn_log_verdict "$sc" <<< "$txt"); vk=${verdict%%|*}; vn=${verdict#*|}
+      if [ "$vk" = fail ]; then step "$label" false "$(( $(now) - ${sa:-0} ))" "$vn"; FAILED=1; next_scn
+      else step "$label" true "$(( $(now) - ${sa:-0} ))" "$(scn_pass_note "$sc")${vn:+; $vn}"; next_scn; fi ;;
     lab_settings)
       j=$(dget job); st=$(jstate "$j")
       case "$st" in
@@ -502,7 +587,7 @@ tick() {
       tbl=$(scn_tbl "$sc")
       case "$sc" in equip_city) maxs=600; label="$sc (build ${build^^})" ;; equip_*) maxs=600; label="$sc" ;; sell_*) maxs=480; label="$sc" ;; *) maxs=300; label="$sc" ;; esac
       st=$(q -v r="$row" <<< "select status || '|' || coalesce(round(extract(epoch from done_at - created_at))::int, 0) from public.$tbl where id = :'r'::uuid")
-      if [[ "$sc" == *_hint ]]; then
+      if is_hint "$sc"; then
         # hint mode (auto click off, nobody clicks): the frame audit's shots of this scenario (src/FrameAudit.cs) are the verdict. Pass = shots of
         # 3 steps, or at least one and nothing new for FA_QUIET s (the next step waits on the player's click), and no FLAG; then cancelled
         sa=$(dget seeded_at)
@@ -514,7 +599,14 @@ tick() {
           [ "$fn" != "$(dget fa_n)" ] && { dset fa_n "$fn"; dset fa_at "$(now)"; }
           if [ "$fk" -gt 0 ]; then fail_scn "$label" "рамка под подозрением ($fk из $fn): ${ff:0:180}" "$tbl" "$row"; return; fi
           if [ "$fs" -ge 3 ] || { [ "$fn" -ge 1 ] && [ $(( $(now) - $(dget fa_at) )) -ge "$FA_QUIET" ]; }; then
-            step "$label" true "$(( $(now) - ${sa:-0} ))" "рамок проверено $fn (шагов $fs), под подозрением нет; без кликов, запрос отменён"; next_scn; return
+            # equip_hint_filter_open: the hero grid's filter pop-up is open; the control that closes it (the funnel, hero.filter / hero.filterClose) has to carry a
+            # frame - a step label with no frame on it is the bug this scenario looks for (lab 4512f342)
+            if [ "$sc" = equip_hint_filter_open ] && ! bash "$HERE/frame-audit.sh" "$RUN" --targets "$sc" 2>/dev/null | grep -qE '^hero\.filter(Close)?$'; then
+              fail_scn "$label" "панель фильтра героев открыта, подсказка есть, а рамки на кнопке, которая её закрывает, нет (снято рамок: $fn)" "$tbl" "$row"; return
+            fi
+            note="рамок проверено $fn (шагов $fs), под подозрением нет; без кликов, запрос отменён"
+            [ "$sc" = equip_hint_filter_open ] && note="фильтр героев открыт: рамка стоит на кнопке, закрывающей панель (подпись без рамки не найдена); без кликов, запрос отменён. $note"
+            step "$label" true "$(( $(now) - ${sa:-0} ))" "$note"; next_scn; return
           fi
         fi
         if [ "$(phase_age)" -gt "$FA_MAX" ]; then fail_scn "$label" "за $FA_MAX с снято рамок: $(dget fa_n) (нужна хотя бы одна)" "$tbl" "$row"; fi
@@ -561,18 +653,35 @@ tick() {
         elif [ "$(phase_age)" -gt "$maxs" ]; then fail_scn "$label" "not done in ${maxs} s" "$tbl" "$row"; fi
         return
       fi
+      # equip_toggle_auto_late: the plan waits with auto click off; after 10 s the "settings" command turns it on (the page picks the plan up)
+      if [ "$sc" = equip_toggle_auto_late ] && [ -z "$(dget late_sent)" ]; then
+        sa=$(dget seeded_at)
+        if [ "${st%%|*}" = done ]; then fail_scn "$label" "план выполнен при выключенном автоклике: проверка включения ничего не доказала" "$tbl" "$row"; return; fi
+        if [ -n "$sa" ] && [ $(( $(now) - sa )) -ge 10 ]; then
+          if lj=$(mkjob rec '{"cmd":"settings"}'); then dset late_sent "$(now)"; dset late_job "$lj"; say "auto click switched on 10 s after the plan was seeded"
+          else fail_scn "$label" "команду включения автоклика не удалось поставить в очередь" "$tbl" "$row"; fi
+        fi
+        return
+      fi
       case "$st" in
-        done\|*) step "$label" true "${st#*|}" ""; next_scn ;;
+        done\|*) case "$sc" in
+                    equip_hero_filter_open|equip_hero_filter_closed|equip_item_filter_open)
+                      if cj=$(mkjob upload_logs '{"lines":1500}'); then dset chk_job "$cj"; phase scn_check; return; fi ;;
+                  esac
+                  note=$(scn_pass_note "$sc")
+                  [ "$sc" = equip_toggle_auto_late ] && note="$note (план выполнен за $(( $(now) - $(dget late_sent) )) с после включения)"
+                  step "$label" true "${st#*|}" "$note"; next_scn ;;
         cancelled\|*) step "$label" false "$(phase_age)" "the request was cancelled"; FAILED=1; next_scn ;;
         *) sa=$(dget seeded_at); ma=$(dget mark_at); [ -n "$ma" ] || ma=$sa
            # runner v9+: the app reached its final step (the item is selected, the last press is the player's) = Locate passed
            if [ "$tbl" = item_locates ]; then
              fin=$(dstat "coalesce(status->>'done', '')")
              # the final step of each purpose (runner v13+ reports art): ascend = AscendReady, recast = Done, artPromote = ArtPromote
-             case "$sc" in locate) fok='^(ascend|ready)$' ;; locate_recast) fok='^ready$' ;; locate_art) fok='^art$' ;; *) fok='^$' ;; esac
+             case "$sc" in locate|locate_from_bulk_sale) fok='^(ascend|ready)$' ;; locate_recast|locate_recast_item_filter) fok='^ready$' ;; locate_art) fok='^art$' ;; *) fok='^$' ;; esac
              if [ -n "$fin" ] && [[ "$fin" =~ $fok ]]; then
                case "$fin" in ascend) fnote="вещь выбрана в «Вознесении», осталось нажать «Вознести»" ;; art) fnote="копии выбраны в «Мастерской», осталось нажать «Продвинуть»" ;;
-                 *) [ "$sc" = locate_recast ] && fnote="вещь выбрана в «Преобразовании», осталось нажать «Улучшить»" || fnote="вещь найдена, последний шаг за игроком" ;; esac
+                 *) case "$sc" in locate_recast*) fnote="вещь выбрана в «Преобразовании», осталось нажать «Улучшить»" ;; *) fnote="вещь найдена, последний шаг за игроком" ;; esac ;; esac
+               case "$sc" in locate_from_bulk_sale) fnote="$fnote (игра стояла в «Массовой продаже»)" ;; locate_recast_item_filter) fnote="$fnote (фильтр вещей был включён)" ;; esac
                step "$label" true "$(( $(now) - ${sa:-0} ))" "$fnote"; next_scn; return
              fi
            fi

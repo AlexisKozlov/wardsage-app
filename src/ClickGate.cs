@@ -60,6 +60,7 @@ namespace RealmForge {
     AscendDrag,       // a drag that scrolls the Ascension list
     InvCardGem,       // the selected item's card, its «Улучшение самоцветами» button (normal mode; opens the gem screen; «Показать в игре» recast)
     GemFuncRow,       // the gem screen's function list: the row of the wanted recast function (selects it only; «Показать в игре» recast)
+    InvMaterialsTab,  // the inventory's left menu «Материалы» (owner Sell only; the test build's lab setup, src/LabRec.cs LabPrep: puts the game on that tab, nothing else)
     // the inventory's filter for a long search (owner LocateFilter only; src/LocatePilot.cs InvFilterPilot): a button / toggle of the equipment panel's filter (the key in ClickRequest.Form),
     // a set of its pop-up, a drag that scrolls the pop-up's list, a click outside that closes the pop-up / the panel (the filter stays). Never «Продать» or any button of the card
     InvFilterBtn, InvFilterCell, InvFilterDrag, InvFilterClose,
@@ -460,6 +461,7 @@ namespace RealmForge {
             case ClickTarget.HeroBack: return new Rule { Kinds = K(ScreenKind.HeroScreen) };
             case ClickTarget.CityInventory: return new Rule { Kinds = K(ScreenKind.City) };
             case ClickTarget.InvEquipTab: return new Rule { Kinds = K(ScreenKind.Inventory), InvOtherTab = true };
+            case ClickTarget.InvMaterialsTab: return new Rule { Kinds = K(ScreenKind.Inventory) };
             case ClickTarget.InvBulkEnter: return new Rule { Kinds = K(ScreenKind.Inventory), InvNormalEquip = true };
             case ClickTarget.InvBulkCell: return new Rule { Kinds = K(ScreenKind.Inventory), InvBulkEquip = true, Cell = true, NeedScroll = true };
             case ClickTarget.InvListDrag: return new Rule { Kinds = K(ScreenKind.Inventory), InvBulkEquip = true, NeedScroll = true };
@@ -948,6 +950,7 @@ namespace RealmForge {
         case ClickTarget.InvFilterCell: { long su = r.CellUid; return s => s.Kind == ScreenKind.Inventory && s.Inv != null && s.Inv.Filter != null && Array.IndexOf(s.Inv.Filter.Suits, su) >= 0; }
         case ClickTarget.InvFilterClose: { bool suit = r.Func == 1; return s => s.Kind == ScreenKind.Inventory && s.Inv != null && s.Inv.Filter != null && (suit ? !s.Inv.Filter.SuitOpen : !s.Inv.Filter.PanelOpen); }
         case ClickTarget.GemFuncRow: { int fn = r.Func; return s => s.Kind == ScreenKind.Gem && s.GemFunc == fn; }
+        case ClickTarget.InvMaterialsTab: return s => s.Kind == ScreenKind.Inventory && !s.InvEquipTab && !s.InvArtTab;
         case ClickTarget.ArtTab: return s => s.Kind == ScreenKind.Inventory && s.InvArtTab;
         case ClickTarget.ArtBulkEnter: return s => s.Kind == ScreenKind.Inventory && s.InvArtTab && s.InvArtBulk;
         // the game's choice (_btDicSelected) holds the artifact now (or no longer holds it, for a tick taken off)

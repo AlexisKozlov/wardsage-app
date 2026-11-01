@@ -32,7 +32,7 @@ names() { case "$1" in
   online) echo "Ноутбук на связи" ;; update_app*) echo "Обновление тестовой сборки" ;; restart_app) echo "Перезапуск приложения" ;;
   app_ready) echo "Приложение готово" ;; equip_city_hint*) echo "Подсказки без автоклика: надеть из Города${1#equip_city_hint}" ;; locate_hint) echo "Подсказки без автоклика: найти в игре" ;; equip_city*) echo "Надеть сборку из Города${1#equip_city}" ;;
   equip_hide_worn) echo "Надеть вещь другого героя («Скрыть надетое»)" ;; equip_artifact) echo "Надеть артефакт" ;;
-  explore) echo "Обход интерфейса (граф UI)" ;; locate) echo "Найти в игре" ;; locate_recast) echo "Найти в игре: преобразование" ;; locate_art) echo "Найти в игре: продвинуть артефакт" ;; grades) echo "Оценки героев" ;; sell_mark) echo "Чистка склада: выделение" ;; sell_after_restart) echo "Чистка склада после перезапуска" ;; upload_logs) echo "Загрузка логов" ;; screenshot) echo "Скриншот окна" ;; timeout) echo "Время вышло" ;; *) echo "$1" ;; esac; }
+  explore) echo "Обход интерфейса (граф UI)" ;; locate) echo "Найти в игре" ;; locate_recast) echo "Найти в игре: преобразование" ;; locate_art) echo "Найти в игре: продвинуть артефакт" ;; grades) echo "Оценки героев" ;; sell_mark) echo "Чистка склада: выделение" ;; sell_after_restart) echo "Чистка склада после перезапуска" ;; upload_logs) echo "Загрузка логов" ;; screenshot) echo "Скриншот окна" ;; timeout) echo "Время вышло" ;; *) t=$(scn_title "$1"); echo "${t:-$1}" ;; esac; }
 
 lines=""
 while IFS='|' read -r name ok secs note warnf infof recid; do
@@ -49,7 +49,7 @@ if [ "$(q -v r="$run" <<< "select count(*) from public.lab_runs r, jsonb_array_e
    && ! grep -qE 'click gate Equip: allow (EquipConfirm|EquipNav .*slot [0-9])' <<< "$logs"; then nochange=1; fi
 
 # the storage cleanup's safety check on the uploaded log: a Sell click outside its whitelist (there is no target for «Продать» at all)
-SELL_OK_RE='click gate Sell: allow (HeroBack|CityInventory|InvEquipTab|InvBulkEnter|InvBulkCell|InvListDrag|OfferClose|UnknownBack|CityBack|EscapeBack|MapClose|ArtTab|ArtBulkEnter|ArtBulkCell|ArtListDrag)\b'
+SELL_OK_RE='click gate Sell: allow (HeroBack|CityInventory|InvEquipTab|InvMaterialsTab|InvBulkEnter|InvBulkCell|InvListDrag|OfferClose|UnknownBack|CityBack|EscapeBack|MapClose|ArtTab|ArtBulkEnter|ArtBulkCell|ArtListDrag)\b'
 sellbad=$(grep -E 'click gate Sell: allow ' <<< "$logs" | grep -vE "$SELL_OK_RE" | head -3)
 sellclicks=$(grep -cE 'click gate Sell: allow InvBulkCell' <<< "$logs")
 case "$state" in done) head="Лаборатория Wardsage ($devname): всё прошло" ;; timeout) head="Лаборатория Wardsage ($devname): время вышло" ;; *) head="Лаборатория Wardsage ($devname): есть ошибки" ;; esac

@@ -6864,6 +6864,111 @@ static partial class CoreTests {
         Eq(LabRecControl.Act.None, sk.Decide(LabRecCmd.Parse("1700000000100 settings"), 1700000001000L, false, "", out sst), "lab rec: the same settings command again does nothing");
         Eq(LabRecControl.Act.None, sk.Decide(LabRecCmd.Parse("1700000000200 settings"), 1700000000200L + LabRecCmd.StaleMs + 1, false, "", out sst), "lab rec: an old settings command is not acted on");
         Eq("stale", sst, "lab rec: ... and acks stale"); }
+      {   // lab setup: «city» and «prep <name>» (src/LabRec.cs): parsing, the decision, the ack, and every prep walked through a small game sim
+        var lcity = LabRecCmd.Parse("1700000000003 city\r\n");
+        Check(lcity != null && lcity.Op == "city" && lcity.Seq == 1700000000003L, "lab setup: a city line is read");
+        foreach (var pn in LabPrep.Names) {
+          var lp = LabRecCmd.Parse("1700000000004 prep " + pn);
+          Check(lp != null && lp.Op == "prep" && lp.Name == pn && lp.Seq == 1700000000004L, "lab setup: prep " + pn + " is read");
+        }
+        foreach (var lbad3 in new[] { "1 prep", "1 prep x", "1 prep hero_filter x", "1 prep ../hero_filter", "1 prep Hero_filter", "1 prep hero filter", "1 prep sell_all", "1 prep start_bulk_sale_and_sell", "1 city x", "1 City", "city", "1  city", "1 prep  hero_filter" })
+          Check(LabRecCmd.Parse(lbad3) == null, "lab setup: rejected: " + lbad3);
+        { string cst; var ck = new LabRecControl();
+          Eq(LabRecControl.Act.City, ck.Decide(LabRecCmd.Parse("1700000000100 city"), 1700000000500L, true, "lab-20261030-120000-abcdef", out cst), "lab setup: city -> the road to the city, a running recording goes on");
+          Eq("city", cst, "lab setup: city is not acked at once (the host acks at the end)");
+          Eq(LabRecControl.Act.Prep, ck.Decide(LabRecCmd.Parse("1700000000200 prep hero_filter"), 1700000000500L, false, "", out cst), "lab setup: prep -> the prep");
+          Eq(LabRecControl.Act.None, ck.Decide(LabRecCmd.Parse("1700000000200 prep hero_filter"), 1700000000600L, false, "", out cst), "lab setup: the same prep command again does nothing");
+          Eq(LabRecControl.Act.None, ck.Decide(LabRecCmd.Parse("1700000000300 prep start_artifact"), 1700000000300L + LabRecCmd.StaleMs + 1, false, "", out cst), "lab setup: an old prep command is not acted on");
+          Eq("stale", cst, "lab setup: ... and acks stale"); }
+        Check(LabRecCmd.AckSetup(7, "prepfail", "item_filter", "no \"x\"").Equals("{\"seq\":7,\"state\":\"prepfail\",\"rec\":\"\",\"scenario\":\"item_filter\",\"run\":\"\",\"why\":\"no \\\"x\\\"\"}"), "lab setup: the ack carries the state, the prep and the reason");
+        Check(LabRecCmd.IsAutoOffScenario("equip_toggle_auto_late") && !LabRecCmd.IsAutoOffScenario("equip_city") && !LabRecCmd.IsAutoOffScenario(null) && !LabRecCmd.IsHintScenario("equip_toggle_auto_late"), "lab setup: only equip_toggle_auto_late starts with auto click off");
+        Check(LabRecCmd.Parse("1700000000000 start equip_hero_filter_open " + lrun) != null && LabRecCmd.Parse("1700000000000 start equip_hint_filter_open " + lrun) != null, "lab setup: the new scenario names are read");
+        Check(LabRecCmd.IsHintScenario("equip_hint_filter_open") && !LabRecCmd.IsHintScenario("equip_hero_filter_open") && !LabRecCmd.IsHintScenario("equip_toggle_auto_late"), "lab setup: equip_hint_filter_open runs in the hint mode, the other new scenarios click");
+
+        // a game sim per prep: the view comes from the sim's state, a click changes the state by the step's key (LabPrepAct.Why)
+        Func<string, Action<Dictionary<string, object>>, Action<string, Dictionary<string, object>>, string[]> walk = (name, init, effect) => {
+          var st = new Dictionary<string, object>(); init(st);
+          var pr = new LabPrep(name); var keys = new List<string>(); long t = 1000;
+          for (int i = 0; i < 80; i++, t += 700) {
+            var v = new LabPrepView { Now = t, Front = true, W = 1920, H = 1009, U = Ui.Unit(1920, 1009), Kind = (ScreenKind)st["kind"], HeroesButton = true, InvButton = true,
+              CityInvPt = new[] { 1700.0, 900.0 }, ArtTabPt = new[] { 160.0, 300.0 }, MatTabPt = new[] { 160.0, 430.0 }, SlotPt = new[] { 1500.0, 300.0 }, FilterPt = new[] { 100.0, 950.0 } };
+            if (st.ContainsKey("inv")) { var iv = (bool[])st["inv"]; v.InvEquipTab = iv[0]; v.InvArtTab = iv[1]; v.InvBulk = iv[2]; v.InvBulkKnown = iv[3]; v.InvArtBulk = iv[4]; v.InvArtBulkKnown = iv[5]; }
+            if (v.Kind == ScreenKind.HeroScreen) {
+              v.HeroFormOk = true; v.Tab = (int)st["tab"]; v.Part = (int)st["part"]; v.GridFilterOpen = (bool)st["grid"]; v.ChosenCamps = (bool)st["camps"] ? new long[] { 3 } : new long[0];
+              v.FactionList = new long[] { 0, 3, 4, 5 }; v.ClassChosen = (bool)st["class"];
+              v.PanelOpen = (bool)st["panel"]; v.SidePanelOpen = (bool)st["side"]; v.SetPanelOpen = (bool)st["side"]; v.FilterRead = true; v.Suits = (bool)st["suit"] ? new long[] { 9 } : new long[0]; v.HideEquipped = (bool)st["hide"];
+            }
+            var a = pr.Step(v);
+            if (a.Move == LabMove.Done || a.Move == LabMove.Fail) { keys.Add(a.Move + ":" + a.Why); break; }
+            if (a.Move == LabMove.Back) { st["kind"] = ScreenKind.City; keys.Add("back"); continue; }
+            if (a.Move != LabMove.Click) continue;
+            Check(ClickGate.WhitelistText(a.Owner).Contains(a.Target + "@"), "lab setup: " + name + " clicks " + a.Owner + "/" + a.Target + " only through that owner's own whitelist");
+            Check(a.X > 0 && a.Y > 0 && a.X < 1920 && a.Y < 1009, "lab setup: " + name + " clicks inside the window (" + a.Why + " @" + (int)a.X + "," + (int)a.Y + ")");
+            keys.Add(a.Why); effect(a.Why, st);
+          }
+          return keys.ToArray();
+        };
+        Action<Dictionary<string, object>> heroInit = st => { st["kind"] = ScreenKind.City; st["tab"] = 3; st["part"] = -1; st["grid"] = false; st["camps"] = false; st["class"] = false; st["panel"] = false; st["side"] = false; st["suit"] = false; st["hide"] = false; };
+        Action<string, Dictionary<string, object>> heroFx = (k, st) => {
+          switch (k) {
+            case "heroes": st["kind"] = ScreenKind.HeroScreen; break;
+            case "funnel-open": st["grid"] = true; break;
+            case "funnel-close": case "grid-close": st["grid"] = false; break;
+            case "faction": st["camps"] = true; break;
+            case "class-all": st["class"] = false; break;
+            case "back": st["part"] = -1; break;
+            case "gear-tab": st["tab"] = 3; break;
+            case "slot": st["part"] = 0; break;
+            case "filter-open": st["panel"] = true; break;
+            case "set-arrow": st["side"] = true; break;
+            case "set-cell": st["suit"] = true; break;
+            case "side-close": st["side"] = false; break;
+            case "hide-worn": st["hide"] = true; break;
+          }
+        };
+        var wk = walk("hero_filter", heroInit, heroFx);
+        Eq("heroes,funnel-open,faction,Done:the faction is ticked, the panel is open", string.Join(",", wk), "lab setup: hero_filter opens the hero screen, the grid's filter, ticks a faction and leaves the panel open");
+        wk = walk("hero_filter_closed", heroInit, heroFx);
+        Eq("heroes,funnel-open,faction,funnel-close,Done:the faction is ticked, the panel is closed", string.Join(",", wk), "lab setup: hero_filter_closed closes the panel again with the filter still on");
+        wk = walk("hero_filter", st => { heroInit(st); st["kind"] = ScreenKind.HeroScreen; st["class"] = true; st["part"] = 2; }, heroFx);
+        Eq("back,funnel-open,class-all,faction,Done:the faction is ticked, the panel is open", string.Join(",", wk), "lab setup: hero_filter from an open gear list with a class ticked: back, the filter, «Все» of the class, then the faction");
+        wk = walk("item_filter", heroInit, heroFx);
+        Eq("heroes,slot,filter-open,set-arrow,set-cell,side-close,Done:a set is ticked, the pop-up is open", string.Join(",", wk), "lab setup: item_filter opens a slot's list, the gear filter, ticks a set and leaves the pop-up open");
+        wk = walk("hide_worn_on", heroInit, heroFx);
+        Eq("heroes,slot,filter-open,hide-worn,Done:«Скрыть надетое» is ticked", string.Join(",", wk), "lab setup: hide_worn_on ticks «Скрыть надетое»");
+        wk = walk("hero_filter", heroInit, (k, st) => { });
+        Check(wk.Length > 0 && wk[wk.Length - 1].StartsWith("Fail:") && wk[wk.Length - 1].Contains("heroes has no effect"), "lab setup: a click with no effect fails the prep with the step named (" + wk[wk.Length - 1] + ")");
+
+        Action<Dictionary<string, object>> invInit = st => { st["kind"] = ScreenKind.City; st["inv"] = new[] { false, false, false, false, false, false }; };
+        Action<string, Dictionary<string, object>> invFx = (k, st) => {
+          var iv = (bool[])st["inv"];
+          switch (k) {
+            case "inventory": st["kind"] = ScreenKind.Inventory; break;
+            case "equip-tab": iv[0] = true; iv[1] = false; iv[3] = true; break;
+            case "materials": iv[0] = false; iv[1] = false; break;
+            case "bulk-enter": iv[2] = true; break;
+            case "art-tab": iv[0] = false; iv[1] = true; iv[5] = true; break;
+          }
+        };
+        wk = walk("start_inventory_materials", invInit, invFx);
+        Eq("inventory,materials,Done:the inventory is on a tab other than equipment / artifacts", string.Join(",", wk), "lab setup: start_inventory_materials opens the inventory and its materials tab");
+        wk = walk("start_inventory_materials", st => { invInit(st); st["kind"] = ScreenKind.Inventory; st["inv"] = new[] { false, true, false, false, false, true }; }, invFx);
+        Eq("equip-tab,materials,Done:the inventory is on a tab other than equipment / artifacts", string.Join(",", wk), "lab setup: ... from the artifact tab through «Снаряжение» (the gate's one exception there)");
+        wk = walk("start_bulk_sale", invInit, invFx);
+        Eq("inventory,equip-tab,bulk-enter,Done:«Массовая продажа» is open, nothing selected by the lab", string.Join(",", wk), "lab setup: start_bulk_sale opens the inventory, «Снаряжение», «Массовая продажа»; no item is clicked");
+        wk = walk("start_artifact", invInit, invFx);
+        Eq("inventory,art-tab,Done:the artifact tab is open", string.Join(",", wk), "lab setup: start_artifact opens the inventory's artifact tab");
+        wk = walk("start_artifact", st => { invInit(st); st["kind"] = ScreenKind.Inventory; st["inv"] = new[] { false, true, false, false, true, true }; }, invFx);
+        Check(wk.Length == 1 && wk[0].StartsWith("Fail:") && wk[0].Contains("sale mode"), "lab setup: start_artifact in the artifact sale mode fails instead of leaving it (" + string.Join(",", wk) + ")");
+        { var cp = new LabPrep("city"); var vc = new LabPrepView { Now = 5, Front = false, Kind = ScreenKind.Inventory };
+          Eq(LabMove.Back, cp.Step(vc).Move, "lab setup: city on the inventory goes back (the game need not be in front: the gate decides)");
+          vc.Kind = ScreenKind.City; Eq(LabMove.Done, cp.Step(vc).Move, "lab setup: city on the city is done");
+          vc.Kind = ScreenKind.City; vc.Modal = true; Eq(LabMove.Back, new LabPrep("city").Step(vc).Move, "lab setup: city under a pop-up is not done");
+          var cp2 = new LabPrep("city"); vc.Modal = false; vc.Kind = ScreenKind.Foundry; cp2.Step(vc); vc.Now = 5 + LabPrep.CapMs + 1;
+          Eq(LabMove.Fail, cp2.Step(vc).Move, "lab setup: city that never reaches the city fails after the cap"); }
+        { var pf = new LabPrep("hero_filter"); var vf = new LabPrepView { Now = 5, Front = false, Kind = ScreenKind.City, HeroesButton = true, W = 1920, H = 1009, U = Ui.Unit(1920, 1009) };
+          Eq(LabMove.Wait, pf.Step(vf).Move, "lab setup: a prep waits while the game is not in front"); }
+      }
       Check(LabRecCmd.IsLabId(LabRecCmd.NewId(new DateTime(2026, 10, 30, 12, 0, 0), new Random(1))), "lab rec: its ids are lab ids");
       Check(RecNames.IsValidId(LabRecCmd.NewId(new DateTime(2026, 10, 30, 12, 0, 0), new Random(1))), "lab rec: its ids are valid recording ids (the site takes them)");
       Check(!LabRecCmd.IsLabId(RecNames.NewId(new DateTime(2026, 10, 30, 12, 0, 0), new Random(1))), "lab rec: a manual / automatic id is not a lab id");

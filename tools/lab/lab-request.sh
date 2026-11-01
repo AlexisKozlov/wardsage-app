@@ -4,10 +4,12 @@
 #   lab-request.sh <device>                       all scenarios (LAB_SCENARIOS in lab-common.sh), in their order
 #   lab-request.sh <device> --only a,b            only these, in the default order
 #   lab-request.sh <device> <scenario>...         these, in the given order
+#   lab-request.sh <device> --extra               the NON-STANDARD scenarios (LAB_SCENARIOS_EXTRA in lab-common.sh: the game set up by the app's "prep" command first;
+#                                                 filters left open, a tab or a mode other than the start's ...), outside the default run and the build gate
 # Scenarios: equip_city_hint, equip_city, equip_hide_worn, equip_artifact, locate_hint, locate, ... (the _hint ones: auto click off, hints only,
 # the frame audit checks their frames);
 # all: equip_city, equip_hide_worn, equip_artifact, locate, locate_recast, locate_art, sell_mark, sell_after_restart;
-# not in the default run: explore (the explorer over the game's safe UI, ~10 min; e.g. lab-request.sh laptop --only explore).
+# not in the default run: --extra (above), explore (the explorer over the game's safe UI, ~10 min; e.g. lab-request.sh laptop --only explore).
 # The equip build alternates by itself: A, then B, then A ... (fixtures equip_a / equip_b, see lab-fixture.sh).
 set -euo pipefail
 . "$(dirname "$0")/lab-common.sh"
@@ -17,13 +19,16 @@ dev=${1:-}; shift || true
 id=$(dev_id "$dev")
 if [ "${1:-}" = --only ]; then
   want=",${2:-},"; [ "$want" != ",," ] || { echo "--only needs a list" >&2; exit 2; }
-  for s in ${2//,/ }; do case " $LAB_SCENARIOS $LAB_EXTRA_SCENARIOS " in *" $s "*) ;; *) echo "unknown scenario '$s' ($LAB_SCENARIOS $LAB_EXTRA_SCENARIOS)" >&2; exit 2 ;; esac; done
-  sel=(); for s in $LAB_SCENARIOS $LAB_EXTRA_SCENARIOS; do [[ "$want" == *",$s,"* ]] && sel+=("$s"); done
+  for s in ${2//,/ }; do case " $LAB_ALL_SCENARIOS " in *" $s "*) ;; *) echo "unknown scenario '$s' ($LAB_ALL_SCENARIOS)" >&2; exit 2 ;; esac; done
+  sel=(); for s in $LAB_ALL_SCENARIOS; do [[ "$want" == *",$s,"* ]] && sel+=("$s"); done
   set -- "${sel[@]}"
+elif [ "${1:-}" = --extra ]; then
+  [ $# -eq 1 ] || { echo "--extra takes no list (use --only for some of them)" >&2; exit 2; }
+  set -- $LAB_SCENARIOS_EXTRA
 fi
 [ $# -gt 0 ] || set -- $LAB_SCENARIOS
 for s in "$@"; do
-  case " $LAB_SCENARIOS $LAB_EXTRA_SCENARIOS " in *" $s "*) ;; *) echo "unknown scenario '$s' ($LAB_SCENARIOS $LAB_EXTRA_SCENARIOS)" >&2; exit 2 ;; esac
+  case " $LAB_ALL_SCENARIOS " in *" $s "*) ;; *) echo "unknown scenario '$s' ($LAB_ALL_SCENARIOS)" >&2; exit 2 ;; esac
 done
 arr="{$(IFS=,; echo "$*")}"
 

@@ -21,7 +21,11 @@ for (const line of (m ? m[1] : '').split('\n')) {
   const eqs = [...body.matchAll(/-ceq\s+'([^']+)'/g)].map((x) => x[1]);
   schema[k[1]] = (v) => typeof v === 'string' && (rx ? new RegExp(rx[1]).test(v) : eqs.includes(v));
 }
-ok(JSON.stringify(Object.keys(schema).sort()) === '["cmd","run","scenario"]', 'rec takes exactly cmd, scenario, run (' + Object.keys(schema) + ')');
+const valid0 = (args) => Object.entries(args).every(([k, v]) => schema[k] && schema[k](v));
+ok(JSON.stringify(Object.keys(schema).sort()) === '["cmd","name","run","scenario"]', 'rec takes exactly cmd, name, scenario, run (' + Object.keys(schema) + ')');
+ok(valid0({ cmd: 'city' }) && valid0({ cmd: 'prep', name: 'hero_filter' }) && valid0({ cmd: 'prep', name: 'start_bulk_sale' }), 'city and the listed preps pass');
+for (const [args, what] of [[{ cmd: 'prep', name: 'sell_all' }, 'an unlisted prep'], [{ cmd: 'prep', name: 'hero_filter\n1 stop' }, 'a newline in the prep'], [{ cmd: 'prep', name: 'Hero_filter' }, 'an upper case prep'],
+  [{ cmd: 'prep', name: '../x' }, 'a path as the prep'], [{ cmd: 'prep', name: 'hero_filter_x' }, 'a prefix of a listed prep'], [{ cmd: 'city', name: 5 }, 'a number as the name']]) ok(!valid0(args), 'rejected: ' + what);
 const valid = (args) => Object.entries(args).every(([k, v]) => schema[k] && schema[k](v));
 const run = '0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0';
 ok(valid({ cmd: 'start', scenario: 'equip_city', run }), 'start args pass');
@@ -41,6 +45,10 @@ if (lineRx) {
   const rx = new RegExp(lineRx[1].replace(/\\\\/g, '\\'));
   ok(rx.test(Date.now() + ' start equip_city ' + run), 'the runner start line parses in the app');
   ok(rx.test(Date.now() + ' stop'), 'the runner stop line parses in the app');
+  ok(rx.test(Date.now() + ' city') && rx.test(Date.now() + ' prep hero_filter_closed') && !rx.test(Date.now() + ' prep') && !rx.test(Date.now() + ' prep x y'), 'the runner city / prep lines parse in the app');
+  const runnerNames = (ps.match(/\^\(hero_filter\|([^)]+)\)\$/) || [, ''])[1].split('|');
+  const appNames = (cs.match(/Names = \{([^}]+)\}/) || [, ''])[1].match(/"[a-z_]+"/g) || [];
+  ok(appNames.length === 7 && ['hero_filter', ...runnerNames].sort().join() === appNames.map((x) => x.slice(1, -1)).sort().join(), 'the runner and the app list the same preps (' + runnerNames + ')');
 }
 ok(/'mark', 'rec'\)\);/.test(sql), 'the SQL action check allows rec');
 ok(/'rec'\s*\{\s*\$out = Invoke-Rec \$jobArgs\s*\}/.test(ps), 'the runner dispatches rec');
@@ -56,12 +64,13 @@ if (j) {
 // the lab's forced settings reach the page: the state event carries the forced auto click and the lab flag, the page re-checks plans and the sell list
 const hb = readFileSync(new URL('../app/HostBridge.cs', import.meta.url), 'utf8');
 const appjs = readFileSync(new URL('../ui/app.js', import.meta.url), 'utf8');
-ok(/Append\(B\(\(cfg\.AutoClick \|\| labForce\) && !labHintOnly\)\)\.Append\(",\\"lab\\":"\)/.test(hb), 'the state event carries the forced auto click and lab');
-ok(/labForce = true; ApplyAutoClick\(\); SendState\(null\)/.test(hb), 'forcing the settings posts the state to the page');
+ok(/Append\(B\(\(cfg\.AutoClick \|\| labForce\) && !labHintOnly && !labAutoOff\)\)\.Append\(",\\"lab\\":"\)/.test(hb), 'the state event carries the forced auto click (not in the hint / auto-off scenarios) and lab');
+ok(/labForce = true; labAutoOff = false; ApplyAutoClick\(\); SendState\(null\)/.test(hb), 'forcing the settings posts the state to the page (and ends the auto-off scenario)');
 ok(/labHintOnly = hint;[^\n]*ApplyAutoClick\(\); SendState\(null\)/.test(hb), 'the hint mode posts the state to the page');
 ok(/m\.lab && S\.autoClick && !wasAuto\) labRecheck\(\)/.test(appjs) && /function labRecheck\(\)[\s\S]*enqueue\(fresh\)[\s\S]*sellStart\(\)/.test(appjs), 'the page starts pending plans and the sell list when the lab forces auto click');
-ok(/LabRecCmd\.AutoClick\(cfg\.AutoClick, labForce, On\("autoclick"\), labHintOnly\)/.test(hb), 'the host auto click is the pure rule (never in the hint mode)');
-ok(/if \(hint\) \{ overlay\.SetRun\(0\); overlay\.SetSell\(null, null, null, 0\); \}/.test(hb) && /!labHintOnly \? \(long\)h : 0/.test(hb) && /cmd == "sell\.hint" \|\| labHintOnly/.test(hb), 'the hint mode drops a running plan and sell run, and ignores run / sell starts from the page');
+ok(/LabRecCmd\.AutoClick\(cfg\.AutoClick, labForce, On\("autoclick"\), labHintOnly \|\| labAutoOff\)/.test(hb), 'the host auto click is the pure rule (never in the hint mode, nor in the auto-off scenario)');
+ok(/labPrepOn && On\("autoclick"\)/.test(hb) && /if \(!Channel\.IsTest\) \{ LabWrite\("rec\.ack"/.test(hb), 'a lab setup clicks only with the site\'s autoclick switch on, and a release build refuses it');
+ok(/if \(hint\) \{ overlay\.SetRun\(0\); overlay\.SetSell\(null, null, null, 0\); \}/.test(hb) && /!labHintOnly && !labAutoOff \? \(long\)h : 0/.test(hb) && /cmd == "sell\.hint" \|\| labHintOnly/.test(hb), 'the hint mode drops a running plan and sell run, and ignores run / sell starts from the page');
 ok(/wasAuto && !S\.autoClick && m\.autoSync !== undefined\) \{\s*S\.run = null; S\.queue = \[\];/.test(appjs), 'the page stops its run and queue when the host takes auto click away');
 ok(/HintExpired\(labHintAt/.test(hb), 'the hint mode ends by the 10 min cap');
 console.log(`lab rec: ${n - bad}/${n} ok`);

@@ -11,6 +11,8 @@
 #   lab-seed.sh <device> locate_recast        a «Найти в игре» request, purpose recast (a recastable item from the snapshot)
 #   lab-seed.sh <device> locate_art           a «Найти в игре» request, purpose artPromote (a promotable artifact from the snapshot)
 #   lab-seed.sh <device> --pick-hide-worn | --pick-artifact | --pick-recast | --pick-art   dry runs of these pickers
+# The extra (non-standard) scenarios of lab-common.sh LAB_SCENARIOS_EXTRA seed one of these kinds too (scn_seed there: equip_city for the equip ones,
+# locate / locate_recast / sell_mark for the others); the game is put into their start state by the app's "prep" command before the seed, not here.
 # Prints the new row id (a plan / request id, not an account id) on stdout.
 #
 # Why "after the app restart": the app lists the plans of its account through the long poll and starts by itself only a

@@ -10,13 +10,15 @@
 # than $RunnerVersion it downloads WardsageLab.ps1, checks size, sha256 and the RSA signature against the pinned keys (the same
 # check as update_app), replaces its own file atomically and starts itself again. The server cannot send code through a job.
 #
+# Lab setup (v25): the rec job also passes 'city' and 'prep <name>' (name from a fixed list) to the test app unchanged; the app clicks, the runner never does.
+#
 # Input (v24): the runner does NOT look at the user's input at all (no idle wait, no abort, no back-off). status.input is only
 # running (a run job was claimed in the last $LiveMaxMin min, "finish" ends it) or idle.
 #
 # What it never does: click or type anywhere, open a shell for the server, run anything the server sends, or let a job
 # value reach a command line or a file path. The jobs are only:
 #   status | update_app | start_game | restart_app | game_front | update_runner | screenshot | upload_logs | finish | cancel | mark
-# each with a strict argument schema (see $Schemas). The only processes it starts/stops are the configured test app and,
+# each with a strict argument schema (see $Schemas); rec = the test app's recorder / lab setup commands. The only processes it starts/stops are the configured test app and,
 # for start_game, the configured game exe (started directly when the game is not running: no launcher, no clicks).
 #
 # Local kill switch: create the file  %LOCALAPPDATA%\WardsageLab\STOP  (the runner exits at once, even mid-wait).
@@ -26,7 +28,7 @@ Set-StrictMode -Version 2
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$RunnerVersion   = '24'
+$RunnerVersion   = '25'
 $Dir             = Join-Path $env:LOCALAPPDATA 'WardsageLab'
 $StopFile        = Join-Path $Dir 'STOP'
 $LogFile         = Join-Path $Dir 'runner.log'
@@ -178,7 +180,8 @@ $Schemas = @{
     finish      = @{}
     cancel      = @{}
     mark        = @{ scn = { param($v) $v -is [string] -and $v -cmatch '^[a-z_]{1,30}$' } }
-    rec         = @{ cmd = { param($v) $v -is [string] -and ($v -ceq 'start' -or $v -ceq 'stop' -or $v -ceq 'settings') }
+    rec         = @{ cmd = { param($v) $v -is [string] -and ($v -ceq 'start' -or $v -ceq 'stop' -or $v -ceq 'settings' -or $v -ceq 'city' -or $v -ceq 'prep') }
+                     name = { param($v) $v -is [string] -and $v -cmatch '^(hero_filter|hero_filter_closed|item_filter|hide_worn_on|start_inventory_materials|start_bulk_sale|start_artifact)$' }
                      scenario = { param($v) $v -is [string] -and $v -cmatch '^[a-z0-9_]{1,40}$' }
                      run = { param($v) $v -is [string] -and $v -cmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' } }
     explore     = @{ cmd = { param($v) $v -is [string] -and ($v -ceq 'start' -or $v -ceq 'stop' -or $v -ceq 'result') }
@@ -506,7 +509,7 @@ function Get-EpochNow { return [int64][DateTimeOffset]::UtcNow.ToUnixTimeSeconds
 $FinRe = 'locate auto: hint( \([^)]*\))? at step (ascendReady|done)\b|locate decision: (AscendReady|Done)\b|art promote auto: hint( \([^)]*\))? at step artPromote\b|ui: guide .* done|(?<!art )sell: done selected [0-9]+/[0-9]+ missing [0-9]+ extra [0-9]+'
 # the storage cleanup may click only these targets (src/ClickGate.cs, owner Sell): any other allowed Sell click (there is no target for
 # "Sell" (Prodat), "All", a lock or a sell confirm at all) is reported as never (and as a stop)
-$SellOkRe = 'click gate Sell: allow (HeroBack|CityInventory|InvEquipTab|InvBulkEnter|InvBulkCell|InvListDrag|OfferClose|UnknownBack|CityBack|EscapeBack|MapClose|ArtTab|ArtBulkEnter|ArtBulkCell|ArtListDrag)\b'
+$SellOkRe = 'click gate Sell: allow (HeroBack|CityInventory|InvEquipTab|InvMaterialsTab|InvBulkEnter|InvBulkCell|InvListDrag|OfferClose|UnknownBack|CityBack|EscapeBack|MapClose|ArtTab|ArtBulkEnter|ArtBulkCell|ArtListDrag)\b'
 function Reset-LogMarks {
     $script:LogFin = ''; $script:FinLine = ''; $script:LogNever = ''
     $script:LogReady = $false; $script:LogDone = $false; $script:LogSendOk = $false
@@ -585,6 +588,12 @@ function Invoke-Rec($a) {
         $line = [string]$seq + ' start ' + $scn + ' ' + $run
     } elseif ($cmd -ceq 'stop') { $line = [string]$seq + ' stop' }
     elseif ($cmd -ceq 'settings') { $line = [string]$seq + ' settings' }
+    elseif ($cmd -ceq 'city') { $line = [string]$seq + ' city' }
+    elseif ($cmd -ceq 'prep') {
+        $pname = [string](Get-Prop $a 'name')
+        if ($pname -cnotmatch '^(hero_filter|hero_filter_closed|item_filter|hide_worn_on|start_inventory_materials|start_bulk_sale|start_artifact)$') { return @{ ok = $false; res = @{ error = 'bad_args' } } }
+        $line = [string]$seq + ' prep ' + $pname
+    }
     else { return @{ ok = $false; res = @{ error = 'bad_args' } } }
     $dir = Join-Path $env:LOCALAPPDATA 'WardsageTest\lab'
     if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir | Out-Null }
@@ -605,7 +614,8 @@ function Invoke-Rec($a) {
         $e = $lastErr.Exception
         return @{ ok = $false; res = @{ error = 'write_failed'; type = $e.GetType().Name; message = (Get-ShortError $lastErr); cmd = $cmd } }
     }
-    $until = (Get-Date).AddSeconds(15)
+    # city / prep: the app answers when its clicks are done (up to ~100 s), the other commands at once
+    $until = (Get-Date).AddSeconds($(if ($cmd -ceq 'city' -or $cmd -ceq 'prep') { 125 } else { 15 }))
     while ((Get-Date) -lt $until) {
         Start-Sleep -Milliseconds 500
         try {
@@ -617,7 +627,11 @@ function Invoke-Rec($a) {
                     $st = [string](Get-Prop $ack 'state'); $id = [string](Get-Prop $ack 'rec')
                     if ($st -notmatch '^[a-z]{1,12}$') { $st = 'bad' }
                     if ($id -notmatch '^[A-Za-z0-9-]{0,40}$') { $id = '' }
-                    return @{ ok = ($st -eq 'recording' -or $st -eq 'stopped' -or $st -eq 'idle' -or $st -eq 'settings'); res = @{ state = $st; rec = $id; cmd = $cmd } }
+                    $why = [string](Get-Prop $ack 'why'); $nm = [string](Get-Prop $ack 'scenario')
+                    if ($why.Length -gt 200) { $why = $why.Substring(0, 200) }
+                    $why = ($why -replace '[^\x20-\x7E]', '?')
+                    if ($nm -notmatch '^[a-z_]{0,40}$') { $nm = '' }
+                    return @{ ok = ($st -eq 'recording' -or $st -eq 'stopped' -or $st -eq 'idle' -or $st -eq 'settings' -or $st -eq 'city' -or $st -eq 'prepok'); res = @{ state = $st; rec = $id; cmd = $cmd; name = $nm; why = $why } }
                 }
             }
         } catch { }

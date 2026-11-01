@@ -7,6 +7,7 @@
 #   frame-audit.sh <run id|latest> [out.png]       the sheet (default $LAB_DIR/frame-audit-<run8>.png); last line: «рамки: N проверено, K под подозрением»
 #   frame-audit.sh <run id> --summary              "N K" (shots, flagged) only
 #   frame-audit.sh <run id> --count <scenario>     "N K S" for one scenario (shots, flagged, distinct steps) and the first flag (lab-loop.sh)
+#   frame-audit.sh <run id> --targets <scenario>   the distinct frame targets shot in one scenario, one per line (lab-loop.sh equip_hint_filter_open)
 # Uses sharp from ~/wardsage/wardsage-web/node_modules (no new dependency) and jq.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -14,10 +15,10 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 SHARP_FROM=${SHARP_FROM:-$HOME/wardsage/wardsage-web/package.json}
 
 run=${1:-}; mode=sheet; scn=""; out=""
-case "${2:-}" in --summary) mode=summary ;; --count) mode=count; scn=${3:-} ;; "") ;; *) out=$2 ;; esac
+case "${2:-}" in --summary) mode=summary ;; --count) mode=count; scn=${3:-} ;; --targets) mode=targets; scn=${3:-} ;; "") ;; *) out=$2 ;; esac
 if [ "$run" = latest ]; then run=$(q <<< "select id from public.lab_runs where started_at is not null order by started_at desc limit 1"); fi
 [[ "$run" =~ ^[0-9a-f-]{36}$ ]] || { echo "usage: frame-audit.sh <run id|latest> [out.png | --summary | --count <scenario>]" >&2; exit 2; }
-[ "$mode" != count ] || [[ "$scn" =~ ^[a-z0-9_]{1,40}$ ]] || { echo "bad scenario" >&2; exit 2; }
+[ "$mode" != count ] && [ "$mode" != targets ] || [[ "$scn" =~ ^[a-z0-9_]{1,40}$ ]] || { echo "bad scenario" >&2; exit 2; }
 dir=${FA_DIR:-$LAB_DIR/frame-audit-${run:0:8}}
 [ -n "$out" ] || out=$LAB_DIR/frame-audit-${run:0:8}.png
 mkdir -p "$dir/shots"; chmod 700 "$dir" 2>/dev/null || true
@@ -41,6 +42,7 @@ fi
 
 all=$(cat "$dir"/shots/audit_*.json 2>/dev/null | jq -cs --arg r "$run" '[.[] | select(.run == $r)]' 2>/dev/null); [ -n "$all" ] || all='[]'
 case "$mode" in
+  targets) jq -r --arg s "$scn" '[.[] | select(.scenario == $s) | .target] | unique | .[]' <<< "$all"; exit 0 ;;
   summary) jq -r '"\(length) \([.[] | select(.flags | length > 0)] | length)"' <<< "$all"; exit 0 ;;
   count) jq -r --arg s "$scn" '[.[] | select(.scenario == $s)] | "\(length) \([.[] | select(.flags | length > 0)] | length) \([.[].step] | unique | length) \(([.[] | select(.flags | length > 0)][0] // {}) | if .flags then "\(.step) / \(.target): \(.flags[0])" else "" end)"' <<< "$all"; exit 0 ;;
 esac

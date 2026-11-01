@@ -808,6 +808,95 @@ namespace RealmForge {
       exploreCursor = new W32.POINT(sx, sy); exploreCursorSet = true; exploreBusyUntil = now + 400;
     }
 
+    // ---- TEST build: the lab's «city» / «prep <name>» (src/LabRec.cs LabPrep), started by the runner's rec.cmd (app/HostBridge.cs LabSetupStart): the game is put
+    // into a start state by clicks that go ONLY through the click gate (the equip or the sell owner's own whitelist), the pilots idle meanwhile; the end
+    // (ok or why not) goes to LabPrepDone and the host writes the ack
+    LabPrep labPrep; long labPrepBusyUntil, labPrepStartAt;
+    public bool LabPrepRunning { get { return labPrep != null; } }
+    public event Action<string, bool, string> LabPrepDone;
+    public bool LabPrepStart(string name) {
+      if (!Channel.IsTest || labPrep != null || explorer != null) return false;
+      if (name != LabPrep.CityName && !LabPrep.Known(name)) return false;
+      labPrep = new LabPrep(name); labPrepBusyUntil = 0; labPrepStartAt = NowMs();
+      gate.Resume(ClickOwner.Equip); gate.Resume(ClickOwner.Sell);
+      Run();
+      return true;
+    }
+    void LabPrepEnd(bool ok, string why) {
+      var p = labPrep; if (p == null) return;
+      labPrep = null; labPrepBusyUntil = 0;
+      Log.Write("lab prep: " + p.Name + (ok ? " ok" : " FAILED") + ": " + why);
+      var h = LabPrepDone; if (h != null) try { h(p.Name, ok, why); } catch (Exception e) { Log.Write("lab prep: result not handed over: " + e.Message); }
+    }
+    string labPrepSaid = "";
+    void TickLabPrep() {
+      var p = labPrep; long now = NowMs();
+      if (now - labPrepStartAt > LabPrep.CapMs + 5000) { LabPrepEnd(false, "not done in " + LabPrep.CapMs / 1000 + " s (the game window or its screen was not readable)"); return; }
+      if (sending || now < labPrepBusyUntil) return;
+      IntPtr hwnd = GameWindow();
+      if (hwnd == IntPtr.Zero || W32.IsIconic(hwnd)) return;
+      W32.RECT cr; if (!W32.GetClientRect(hwnd, out cr) || cr.B < 200) return;
+      var o = new W32.POINT(0, 0); W32.ClientToScreen(hwnd, ref o);
+      int fp, gp; W32.GetWindowThreadProcessId(W32.GetForegroundWindow(), out fp); W32.GetWindowThreadProcessId(hwnd, out gp);
+      bool front = fp == gp;
+      double W = cr.R, H = cr.B, U = Ui.Unit(W, H);
+      var owner = p.InventoryPrep ? ClickOwner.Sell : ClickOwner.Equip;
+      var scr = screens.Current;
+      if (gate.Halted(owner)) { LabPrepEnd(false, "the click gate stopped " + owner + ": " + gate.HaltReason(owner) + " - " + gate.HaltDetail(owner)); return; }
+      if (front) {
+        var pre = gate.Preflight(owner, scr, now);
+        AnnounceHalts();
+        if (pre.Verdict == GateVerdict.Deny) return;
+        if (pre.Reason == "offer" && OfferStep(owner, scr, o, cr, front, now)) return;
+        if (pre.Reason == "unknown" && UnknownBackStep(owner, scr, o, cr, front, now)) return;
+        if (pre.Verdict == GateVerdict.Wait) return;
+        if (MapStep(owner, scr, o, cr, front, now)) return;
+      }
+      if (scr != null && scr.Held) return;   // (the reads failed this moment and the last screen is shown: nothing is judged or clicked on it)
+      var v = new LabPrepView { Now = now, Front = front, W = W, H = H, U = U, Kind = scr != null ? scr.Kind : ScreenKind.Unknown, Modal = scr == null || scr.ModalOpen || scr.OfferCount > 0 };
+      if (scr != null) {
+        v.InvEquipTab = scr.InvEquipTab; v.InvArtTab = scr.InvArtTab; v.InvBulk = scr.InvBulk; v.InvBulkKnown = scr.InvBulkKnown; v.InvArtBulk = scr.InvArtBulk; v.InvArtBulkKnown = scr.InvArtBulkKnown;
+      }
+      if (front && !p.IsCity) {
+        if (v.Kind == ScreenKind.City) { v.HeroesButton = HeroesButtonSeen(o, W, H); v.InvButton = InventoryButtonSeen(o, W, H); v.CityInvPt = new[] { W - invDX * U, H - hg2.HeroesBtnDY * U }; }
+        if (v.Kind == ScreenKind.Inventory) {
+          var tr = ArtFrames.Rect(Geo.Current, "inventory.leftTab.artifact", W, H, U);
+          double ax = tr != null ? tr.CX : 0.0867 * U, ay = tr != null ? tr.CY : (0.1176 + 2 * 0.1423 + 0.0625) * U;
+          v.ArtTabPt = new[] { ax, ay }; v.MatTabPt = new[] { ax, ay + 0.1423 * U };   // (the left strip: 91 px = 0.1423 U apart; materials the toggle below «Артефакт»)
+        }
+        var hs = screens.Hero;
+        if (v.Kind == ScreenKind.HeroScreen && hs != null) {
+          v.HeroFormOk = hs.FormOk; v.Tab = hs.Tab; v.Part = hs.Part; v.FactionList = hs.FactionList; v.ChosenCamps = hs.ChosenCamps; v.ClassChosen = hs.ClassChosen;
+          v.GridFilterOpen = HeroFilterSeen(o, W, H);
+          var sr = hg.Slot(0, W, H); if (sr != null) v.SlotPt = new[] { sr[0] + sr[2] / 2.0, sr[1] + sr[3] / 2.0 };
+          var fr = hg.Filter(W, H); if (fr != null) v.FilterPt = new[] { fr[0] + fr[2] / 2.0, fr[1] + fr[3] / 2.0 };
+          if (hs.Part >= 0) {
+            v.PanelOpen = Mark(o, fg.X(fg.MainCloseX, W, H), fg.Y(fg.CloseY, W, H), U, ButtonCheck.IsCloseRed);
+            v.SidePanelOpen = Mark(o, fg.X(fg.SideCloseX, W, H), fg.Y(fg.CloseY, W, H), U, ButtonCheck.IsCloseRed);
+            v.SetPanelOpen = v.SidePanelOpen && Mark(o, fg.X(fg.SetButtonsX, W, H), fg.Y(fg.SetButtonsY, W, H), U, ButtonCheck.IsGold);
+            long[] suits, mains, subs; int part; bool foreign, hideEq;
+            if (addrs != null && RFX.ReadFilter(addrs, out suits, out mains, out subs, out part, out foreign, out hideEq)) { v.FilterRead = true; v.Suits = suits; v.HideEquipped = hideEq; }
+          }
+        }
+      }
+      var a = p.Step(v);
+      string said = a.Move + "|" + a.Why; if (said != labPrepSaid) { labPrepSaid = said; Log.Write("lab prep " + p.Name + ": " + a); }
+      switch (a.Move) {
+        case LabMove.Done: LabPrepEnd(true, a.Why); return;
+        case LabMove.Fail: LabPrepEnd(false, a.Why); return;
+        case LabMove.Wait: return;
+        case LabMove.Back:
+          if (!front) return;
+          if (v.Kind == ScreenKind.Unknown) UnknownBackStep(owner, scr, o, cr, front, now); else BackStep(owner, scr, true, o, cr, front, now);
+          return;
+      }
+      int sx = o.X + (int)Math.Round(a.X), sy = o.Y + (int)Math.Round(a.Y);
+      if (sx < o.X || sy < o.Y || sx >= o.X + cr.R || sy >= o.Y + cr.B) { LabPrepEnd(false, a.Why + " lies outside the game window"); return; }
+      var act = new AutoAction { Kind = AutoKind.Click, X = a.X, Y = a.Y };
+      bool sent = a.Owner == ClickOwner.Equip ? EquipSend(a.Target, act, sx, sy, o, front) : SendInside(act, o, cr, a.Owner, a.Target, front);
+      if (sent) labPrepBusyUntil = now + 300;
+    }
+
     /// <summary>TEST build: the recorder starts / stops. Our windows stay in screen captures while it runs (then the screen looks mask them themselves).</summary>
     public void SetRecording(bool on) {
       RecInfo.Active = on; GlowWindow.Capturable = on;
@@ -834,6 +923,7 @@ namespace RealmForge {
       ApplyArtGate();
       ReadScreens(NowMs());   // the game's screen, once per tick: every feature below takes it from here
       if (explorer != null) { TickExplore(); return; }   // (TEST build: the lab's explorer runs alone)
+      if (labPrep != null) { TickLabPrep(); return; }      // (TEST build: the lab's city / prep runs alone)
       UpdateArtStep();
       // the game is minimized / covered / alt-tabbed: nothing of ours stays over the desktop (the features go on reading)
       if (!GameDrawable()) { if (glow.Visible) glow.Hide(); HideTip(); drawnKey = null; }
@@ -862,7 +952,8 @@ namespace RealmForge {
     /// <summary>The gate's artifact rules follow the switches at every tick (a switch turned off mid-run: hints only again, at once).</summary>
     void ApplyArtGate() {
       bool on = ArtAutoOn, artReq = locateReq != null && locateReq.Purpose == "artPromote";
-      gate.NoSellClicks = sellArt && !on; gate.ArtSellAuto = sellArt && on;
+      bool prepArt = labPrep != null && labPrep.Name == "start_artifact" && on;   // (TEST build: the lab's prep opens the artifact tab with the sell owner's own target)
+      gate.NoSellClicks = sellArt && !on; gate.ArtSellAuto = (sellArt && on) || prepArt;
       gate.NoLocateClicks = artReq && !on; gate.ArtLocateAuto = artReq && on;
       gate.ArtEquipAuto = ArtPhase && on;
     }
