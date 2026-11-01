@@ -182,7 +182,7 @@ EXPLORE_POLL=${LAB_EXPLORE_POLL:-30}       # a result job every 30 s
 EXPLORE_MAX=${LAB_EXPLORE_MAX:-2400}       # the app's own cap is 30 min
 NOPROG_DEV=${LAB_NOPROGRESS_DEV:-40}   # 40 s without a pilot line (old runner: a log line) while a scenario waits (runner v17 beats every 5 s)
 REPEAT_N=${LAB_REPEAT_N:-10}           # the same newest pilot line this many times in a row (each a new pilot_at) = a pilot that spins
-READY_DEV=${LAB_READY_DEV:-180}        # the laptop read takes ~50 s
+READY_DEV=${LAB_READY_DEV:-360}        # the laptop read takes ~50 s, 107-190 s on the slow laptop (run d0605ccc: 1.6.66.474 ready 3.5 min after start)
 RP_AT=""; RP_LINE=""; RP_N=0; SG_PLINE=""
 SG_LOGAT=""; SG_SEEN=0; SG_READY=""; SG_STOPAT=0; SG_APPOK=""; SG_APPVER=""; SG_STOP=""; SG_PILOTAT=""
 devsig() {
