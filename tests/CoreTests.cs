@@ -5808,6 +5808,14 @@ static partial class CoreTests {
     // a pop-up nobody knows: no close button to frame - the text with Escape
     var stray = ScreenState.Classify(new ScreenInputs { Inv = inv, Offers = new List<string>(), ShownKnown = "", TopNew = "Form_NobodyKnowsThis" }, 0);
     Check(D(PilotFlow.Sell, stray, false).Kind == HintLeave.Esc, "fallback: an unrecognised pop-up over the inventory: «Esc»");
+    // the hero grid's filter pop-up open: the funnel that closes it is framed, for every flow, whatever step the flow has (never a step frame under it)
+    var hfp = ScreenState.Classify(new ScreenInputs { Hero = new HeroScreen { Hero = 5, FormOk = true, FilterOpen = true }, Offers = new List<string>(), ShownKnown = "" }, 0);
+    Check(hfp.ModalOpen && hfp.ModalWhy == "heroFilter", "fallback: the hero filter pop-up reads as open (" + hfp.ModalWhy + ")");
+    foreach (var f in CityFirst.All) {
+      var fp = D(f, hfp, false);
+      var fn = HintFallback.FunnelRect(H, U);
+      Check(fp.Kind == HintLeave.Close && fp.Rect != null && Math.Abs(fp.Rect.CX - fn.CX) < 1 && Math.Abs(fp.Rect.CY - fn.CY) < 1, "fallback: " + f + " with the hero filter pop-up open: the funnel framed (" + fp.Kind + ")");
+    }
     // a held screen is not judged; a locate request with nothing to drive never goes back
     var held = Unk("Form_ActALinkageMain", ""); held.Held = true;
     Check(D(PilotFlow.Equip, held, false).Kind == HintLeave.None, "fallback: a held screen is not judged");
