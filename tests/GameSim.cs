@@ -72,6 +72,9 @@ static partial class CoreTests {
     /// <summary>--nav: the gear filter's pop-up (its red cross) and the hero grid's filter pop-up over the hero screen: panels that are not forms; they swallow every click but the one that closes them.</summary>
     public bool GearFilter, HeroFilter; public ClickTarget EscapeTarget = ClickTarget.EscapeBack;
     static readonly FilterGeometry NavFg = new FilterGeometry();
+    /// <summary>--nav hide-worn: the plan's item is worn by another hero and the game's «Скрыть надетое» is on, so the list does not show it; FilterOwn = the gear filter's pop-up the filter pilot opened
+    /// (the list beside it takes clicks, the pop-up's toggle switches HideWorn).</summary>
+    public bool HideWorn, ItemElsewhere, FilterOwn;
     public double Row1Top { get { return (ItemGeo.ViewTop + ListGeometry.TopPad) * U; } }
     public double ItemX { get { return (ItemGeo.ColLeft(1) + ItemGeo.CellW / 2) * U; } }
     public double ItemY { get { return Row1Top + (ItemGeo.RowOffset(ItemTypes, 2) + ItemGeo.CellW / 2) * U; } }
@@ -279,6 +282,13 @@ static partial class CoreTests {
       if (c == 'D') { Bad.Add("CLICK ON A DANGEROUS FORM " + top + " @" + (int)x + "," + (int)y + " (" + tg + ")"); return; }
       if (ScreenMap.OnNever(top, x, y, W, H, U)) { Bad.Add("CLICK ON A NEVER-CLICK BUTTON of " + top + " @" + (int)x + "," + (int)y + " (" + tg + ")"); return; }
       Say("click " + tg + " @" + (int)x + "," + (int)y + " on " + top); Acts.Append(Now + " c" + (int)x + "," + (int)y + ";");
+      if (top == SimHero && Full == SimHero && tg == ClickTarget.EquipFilter && !GearFilter && !HeroFilter && Hero.Part >= 0) {
+        long lf = Lat();
+        if (Near(x, y, (0.029 + 0.379 / 2) * U, Ui.FromBottom(0.9275, W, H), 30)) { Later(lf, () => { FilterOwn = !FilterOwn; }); return; }
+        if (FilterOwn && Near(x, y, NavFg.X(NavFg.HideEquippedX, W, H), NavFg.Y(NavFg.HideEquippedY, W, H), 30)) { Later(lf, () => { HideWorn = !HideWorn; }); return; }
+      }
+      if (top == SimHero && Full == SimHero && FilterOwn && tg == ClickTarget.EquipClosePopup && Near(x, y, NavFg.X(NavFg.MainCloseX, W, H), NavFg.Y(NavFg.CloseY, W, H), 20)) { Later(Lat(), () => { FilterOwn = false; }); return; }
+      if (top == SimHero && ItemPhase && ItemElsewhere && HideWorn && tg == ClickTarget.EquipNav && Near(x, y, ItemX, ItemY, 6)) return;   // (the item is not in the list)
       if (top == SimHero && Full == SimHero && (GearFilter || HeroFilter)) {
         long latp = Lat();
         if (GearFilter) { if (tg == ClickTarget.EquipClosePopup && Near(x, y, NavFg.X(NavFg.MainCloseX, W, H), NavFg.Y(NavFg.CloseY, W, H), 20)) Later(latp, () => { GearFilter = false; }); return; }

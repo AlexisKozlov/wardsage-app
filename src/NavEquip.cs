@@ -59,7 +59,7 @@ namespace RealmForge {
       if (fa == null) return null;
       if (fa.Kind == AutoKind.None) return NavStep.Wait(pilot.State == "failed" ? "idle" : "work");
       var act = NavAdapt.ToAct(fa, ClickTarget.EquipFilter, t.Owner, "Form_CharactorMain", NavKeep.GearFilter, "filter: " + pilot.State);
-      string key = t.Key(); act.OnSent = () => { ActedKey = key; };
+      string key = t.Key(); act.OnSent = () => { ActedKey = key; }; act.OnNotSent = pilot.NotSent;
       return NavStep.Of(act, "act:filter");
     }
   }

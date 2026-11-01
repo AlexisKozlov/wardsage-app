@@ -99,6 +99,29 @@ namespace RealmForge {
     // of «closed» right after a read of «open» shut the panel the first click had opened - three times, then «the panel does not stay open»
     long panelSeenAt = long.MinValue; public const int PanelGraceMs = 1500;
     public AutoAction Step(FilterView v) {
+      var before = SaveState();
+      var a = StepCore(v);
+      unsent = a != null && a.Kind != AutoKind.None ? before : null;
+      return a;
+    }
+
+    // The action of the last Step did not go out (the navigator waits for a stable screen, the gate said wait): the pilot is as before it, the click is not counted and not awaited.
+    // (The old host never calls this: its behaviour is unchanged.)
+    sealed class Saved { public long WaitUntil, EqClickAt; public int Clicks, SetTries, StatTries, EqTries, CloseTries, OpenTries, SetDrags, SubTries, SideCloseTries, Passes, Reopens, SetClickRow; public double SetScroll; public bool SetPending, WasSet, SubSkipped, SetSkipped, StatSkipped, Failed; public string State, Side; }
+    Saved unsent;
+    Saved SaveState() {
+      return new Saved { WaitUntil = waitUntil, EqClickAt = eqClickAt, Clicks = clicks, SetTries = setTries, StatTries = statTries, EqTries = eqTries, CloseTries = closeTries, OpenTries = openTries, SetDrags = setDrags, SubTries = subTries,
+        SideCloseTries = sideCloseTries, Passes = passes, Reopens = reopens, SetClickRow = setClickRow, SetScroll = setScroll, SetPending = setPending, WasSet = wasSet, SubSkipped = subSkipped, SetSkipped = setSkipped, StatSkipped = statSkipped, Failed = failed, State = State, Side = side };
+    }
+    public void NotSent() {
+      var x = unsent; unsent = null; if (x == null) return;
+      effect.Drop();
+      waitUntil = x.WaitUntil; eqClickAt = x.EqClickAt; clicks = x.Clicks; setTries = x.SetTries; statTries = x.StatTries; eqTries = x.EqTries; closeTries = x.CloseTries; openTries = x.OpenTries; setDrags = x.SetDrags;
+      subTries = x.SubTries; sideCloseTries = x.SideCloseTries; passes = x.Passes; reopens = x.Reopens; setClickRow = x.SetClickRow; setScroll = x.SetScroll; setPending = x.SetPending; wasSet = x.WasSet;
+      subSkipped = x.SubSkipped; setSkipped = x.SetSkipped; statSkipped = x.StatSkipped; failed = x.Failed; State = x.State; side = x.Side;
+    }
+
+    AutoAction StepCore(FilterView v) {
       if (v.PanelOpen) panelSeenAt = v.NowMs;
       if (v.Item != item) {
         item = v.Item; waitUntil = 0; passes = 0; reopens = 0; failed = false; State = "idle"; effect.Drop();

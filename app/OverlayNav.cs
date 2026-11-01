@@ -109,7 +109,7 @@ namespace RealmForge {
         if (recB != null) { try { recB.Hp = RecView.Line(hv, ha, hpilot.State); } catch (Exception) { } }
         lastHeroView = hv; LogHero(hv);
       };
-      var gf = new GearFilterAction(fpilot, (s, t, n) => NavFilterView(navTickO, navTickCr, navTickV, n), () => hintKind == "filter" || fpilot.State == "work");
+      var gf = new GearFilterAction(fpilot, (s, t, n) => NavFilterView(navTickO, navTickCr, navTickV, n), () => fpilot.State == "work" || (filterItem != 0 && FilterPilot.WantedFor(filterKind, state == "on")));   // (the guide's verdict asks for the filter: far down, hiddenEq, hiddenFilter, notIn - not only the "filter" hint; «Скрыть надетое» with a foreign item has no hint)
       gf.OnStep = (fv, fa) => {
         if (fpilot.State == "failed") {
           if (!filterFailSaid) {

@@ -69,13 +69,21 @@ static partial class CoreTests {
       return v;
     }
 
+    readonly FilterPilot fp = new FilterPilot(new FilterGeometry());
+    FilterView NavFilterView(long n) {
+      bool hidden = G.ItemElsewhere && G.HideWorn;
+      return new FilterView { NowMs = n, Foreground = true, W = W, H = H, Item = SimItem, Suits = new long[0], MainAttrs = new long[0], SubAttrs = new long[0], Wanted = hidden,
+        PanelOpen = (G.FilterOwn || G.GearFilter) && G.Full == SimHero, HideEquipped = G.HideWorn, OnOtherHero = G.ItemElsewhere, ItemListed = !hidden };
+    }
+
     void EnsureNavActions() {
       if (navActs != null) return;
       var hs = new HeroSelectAction(hp, (s, t, n) => NavHeroView(n));
+      var gf = new GearFilterAction(fp, (s, t, n) => NavFilterView(n), () => fp.State == "work" || FilterPilot.WantedFor(G.ItemElsewhere && G.HideWorn ? "hiddenEq" : "pick", true));
       var ia = new ItemPickAction(ip, (s, t, n) => NavItemView(n), (v, a) => {
         var b = v.Button; bool onConfirm = b != null && a.X >= b[0] && a.X <= b[0] + b[2] && a.Y >= b[1] && a.Y <= b[1] + b[3];
         return onConfirm ? ClickTarget.EquipConfirm : ClickTarget.EquipNav;
-      });
+      }, gf);
       ia.OnStep = (v, a) => {
         if (ip.Trace != "" && Environment.GetEnvironmentVariable("SIM_TRACE") != null) Console.WriteLine("  item " + Now + ": " + ip.Trace);
         ip.Trace = "";
@@ -85,7 +93,8 @@ static partial class CoreTests {
         var b = G.Stack.Contains(SimTip) && G.Full == SimHero ? SimGame.Hint.Replace(W, H) : null;
         if (b != null && a.X >= b[0] && a.X <= b[0] + b[2] && a.Y >= b[1] && a.Y <= b[1] + b[3]) Confirms++;
       };
-      navActs = new List<IAtTargetAction> { hs, ia };
+      gf.OnStep = (fv, fa) => { if (Environment.GetEnvironmentVariable("SIM_TRACE") != null) Console.WriteLine("  filter " + Now + ": " + fp.State + " " + fp.Note + " panel=" + fv.PanelOpen + " hide=" + fv.HideEquipped + " -> " + (fa == null ? "null" : fa.Kind + "@" + (int)fa.X + "," + (int)fa.Y)); };
+      navActs = new List<IAtTargetAction> { hs, gf, ia };
     }
 
     void TickEquipNav() {
@@ -141,7 +150,7 @@ static partial class CoreTests {
         switch (what) {
           case "heroesButton": v = h.G.Full == SimCity && h.G.CityClear; break;
           case "heroFilter": v = h.G.HeroFilter && h.G.Full == SimHero; break;
-          case "gearFilterMain": v = h.G.GearFilter && h.G.Full == SimHero; break;
+          case "gearFilterMain": v = (h.G.GearFilter || h.G.FilterOwn) && h.G.Full == SimHero; break;
           case "gearFilterSide": v = false; break;
           case "tipShown": v = h.G.Stack.Contains(SimTip); break;
         }
@@ -156,7 +165,7 @@ static partial class CoreTests {
   // ---------------------------------------------------------------- the acceptance scenarios (nav.*)
   static readonly string[] NavScenarios = {
     "nav.equip.fromAny", "nav.equip.offerChain", "nav.equip.unknownPopup", "nav.equip.tipLeftover", "nav.equip.filterLeftover", "nav.equip.heroFilterOpen",
-    "nav.equip.foreignInvTab", "nav.equip.overFoundry", "nav.equip.bulkSale", "nav.equip.flicker", "nav.equip.lateCells200", "nav.equip.popupDuringEdge", "nav.city.fromAny" };
+    "nav.equip.hideWornForeign", "nav.equip.foreignInvTab", "nav.equip.overFoundry", "nav.equip.bulkSale", "nav.equip.flicker", "nav.equip.lateCells200", "nav.equip.popupDuringEdge", "nav.city.fromAny" };
 
   static readonly string[] NavStartNames = { "City", "Hero (other hero)", "Hero (gear list)", "Inventory", "Inventory (other tab)", "Inventory (bulk)", "Foundry identify", "Foundry ascend",
     "Foundry recast", "Gem", "Artifact workshop", "Guild", "Arena", "Shop", "Popup over City", "Plan" };
@@ -179,6 +188,11 @@ static partial class CoreTests {
         g.Hero.Shown = r.Next(2) == 0 ? other : plan; g.Hero.Tab = 3; g.Hero.Part = r.Next(5); g.Push(SimHero); g.GearFilter = true; break;
       case "nav.equip.heroFilterOpen":
         g.Hero.Shown = other; g.Hero.Tab = 1 + 2 * r.Next(2); g.Hero.Part = -1; g.Push(SimHero); g.HeroFilter = true; break;
+      case "nav.equip.hideWornForeign": {   // «Скрыть надетое» on and the plan's item worn by another hero: the filter pilot has to switch it off before the item can be picked
+        g.HideWorn = true; g.ItemElsewhere = true;
+        if (r.Next(3) != 0) { g.Hero.Shown = r.Next(2) == 0 ? plan : other; g.Hero.Tab = 3; g.Hero.Part = r.Next(3) == 0 ? -1 : 2; g.Push(SimHero); }
+        break;
+      }
       case "nav.equip.foreignInvTab": SimStartAt(g, "Inventory (other tab)", 0); break;
       case "nav.equip.overFoundry": SimStartAt(g, r.Next(2) == 0 ? "Foundry ascend" : "Foundry recast", 0); break;
       case "nav.equip.bulkSale": SimStartAt(g, "Inventory (bulk)", 0); break;
