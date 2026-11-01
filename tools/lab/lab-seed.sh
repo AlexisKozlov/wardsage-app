@@ -153,12 +153,25 @@ arts = pd.get("arts") or []
 spare = {}
 for a in arts:
     if not a.get("h"): spare[a.get("id")] = spare.get(a.get("id"), 0) + 1
+# the copies the site hands the app for this artifact (wardsage-web lib/locate/artifact.ts artPromoteInfo: free copies of the artifact or of a
+# kind copyIds() lists, not the artifact itself; the promotion takes `need` of them, lib/artifact-plan.ts promoCopies). The app auto-clicks a copy
+# only when its uid is in request.art.copies, so an artifact without enough free copies in THIS snapshot would stop at "hint (plan) at step
+# artMatPick": not a target (the request carries only the artifact uid, the site builds the copies from the same snapshot)
+def need(a):
+    r = (plan.get("a") or {}).get(str(a.get("id")))
+    n = (((plan.get("br") or {}).get(str(r[1])) or {}).get("n") or []) if r else []
+    st = int(a.get("st") or 0)
+    return max(1, int(n[st])) if st < len(n) else 1
+def free_copies(a):
+    r = (plan.get("a") or {}).get(str(a.get("id")))
+    ids = [a.get("id")] + (list(r[3:]) if r else [])
+    return [x for x in arts if not x.get("h") and x["u"] != a["u"] and x.get("id") in ids]
 # at its level cap first, then an artifact with a spare copy of its own kind (the promotion takes copies), then not worn, then the highest stage
-c = sorted([a for a in arts if int(a.get("st") or 0) < 5], key=lambda a: (0 if cap(a) > 0 and int(a.get("lv") or 0) >= cap(a) else 1, 0 if spare.get(a.get("id"), 0) - (0 if a.get("h") else 1) > 0 else 1, 1 if a.get("h") else 0, -int(a.get("st") or 0), -int(a.get("lv") or 0), a["u"]))
+c = sorted([a for a in arts if int(a.get("st") or 0) < 5 and len(free_copies(a)) >= need(a)], key=lambda a: (0 if cap(a) > 0 and int(a.get("lv") or 0) >= cap(a) else 1, 0 if spare.get(a.get("id"), 0) - (0 if a.get("h") else 1) > 0 else 1, 1 if a.get("h") else 0, -int(a.get("st") or 0), -int(a.get("lv") or 0), a["u"]))
 if not c: sys.exit(0)
 pool = c[:4]
 a = pool[n % len(pool)]
-print("%s\t%s\t%d\t%s\tlv %d/%d" % (a["u"], (a.get("n") or {}).get("en") or "?", int(a.get("st") or 0), "worn" if a.get("h") else "free", int(a.get("lv") or 0), cap(a)))
+print("%s\t%s\t%d\t%s\tlv %d/%d\tcopies %s" % (a["u"], (a.get("n") or {}).get("en") or "?", int(a.get("st") or 0), "worn" if a.get("h") else "free", int(a.get("lv") or 0), cap(a), ",".join(x["u"] for x in free_copies(a)[:need(a)])))
 '
 # pick_equip <device id> <hide_worn|artifact>: the JSON {hero_uid, hero_name, hero_name_en, items, note} of an equip plan for the hero of
 # the equip fixtures, built from the newest snapshot's page_data (plan items as lib/plans/display.ts stores them: slot, uid, name, setName,
@@ -346,7 +359,11 @@ case "$what" in
       commit;" ;;
   locate_recast|locate_art)
     if [ "$what" = locate_recast ]; then pick=$(pick_recast "$id"); purpose=recast; else pick=$(pick_art "$id"); purpose=artPromote; fi
-    if [ -z "$pick" ]; then echo "lab-seed: WARNING no eligible target ($purpose) in the snapshot, $what skipped" >&2; exit 3; fi
+    if [ -z "$pick" ]; then
+      [ "$what" = locate_art ] && echo "lab-seed: WARNING no artifact with enough free copies to promote in the newest snapshot (the app picks only copies the site lists), locate_art skipped" >&2 \
+        || echo "lab-seed: WARNING no eligible target ($purpose) in the snapshot, $what skipped" >&2
+      exit 3
+    fi
     uid=${pick%%$'\t'*}
     echo "lab-seed: $what target $pick" | tr '\t' ' ' >&2
     [ -n "${LAB_DRY_SEED:-}" ] && { echo "lab-seed: DRY, not inserted" >&2; exit 3; }
