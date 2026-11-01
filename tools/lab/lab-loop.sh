@@ -135,7 +135,7 @@ resume_run() {
   [ -n "$r" ] && [ -n "$t" ] && q -v r="$r" <<< "update public.$t set status = 'cancelled', done_at = now() where id = :'r'::uuid and status = 'pending'" >/dev/null
   rid=$(dget rec_id); [ -n "$rid" ] && dset rec_del "$(dget rec_del) $rid"
   q -v r="$RUN" <<< "update public.lab_jobs set state = 'cancelled', finished_at = now() where run_id = :'r'::uuid and state in ('queued', 'claimed')" >/dev/null
-  dset resume_idx "$idx"; dset rec_id ""; dset row ""; dset rec_for ""; dset setup_for ""; dset setup_stage ""; dset prep_note ""; dset late_sent ""; dset job ""; dset job_timeout ""; dset sar_ready ""; dset sar_at ""
+  dset resume_idx "$idx"; dset rec_id ""; dset row ""; dset rec_for ""; dset setup_for ""; dset kick_for ""; dset setup_stage ""; dset prep_note ""; dset late_sent ""; dset job ""; dset job_timeout ""; dset sar_ready ""; dset sar_at ""
   phase wait_online
 }
 # scn_start: the scenario index a run continues with after app_ready (0, or the interrupted one after a resume)
@@ -227,6 +227,9 @@ fail_scn() {   # $1 = step label, $2 = reason, $3 = table, $4 = row id
   mkjob upload_logs '{"lines":1000}' >/dev/null || true; mkjob screenshot '{"target":"app"}' >/dev/null || true; dset fail_shot 1
   next_scn
 }
+# setup_failed <why>: a city / prep job did not answer. The runner / app is "old" (no setup for the rest of the run) when the runner rejects the arguments, or when
+# no setup command has worked yet in this run; a later silence is a stall of that one command (the app was busy), the next scenario tries again
+setup_failed() { case "$1" in bad_args*) dset setup_off 1 ;; no_ack*|queued*|claimed*|expired*|cancelled*) [ -n "$(dget setup_ok)" ] || dset setup_off 1 ;; esac; }
 # scn_log_verdict <scenario>: stdin = the app's newest log lines; prints "ok|<note>" or "fail|<reason>" (Russian). Only the lines after the end of the scenario's prep
 # are looked at (the app logs "lab: setup <name> ok: ..." there).
 scn_log_verdict() {
@@ -263,14 +266,15 @@ lab_settings_start() {
 # (not 'done': the app did not finish it, the last press is the player's). An equip plan that passed is already 'done' (the app closed it).
 next_scn() {
   local r t sc0; sc0=${scenarios[$(dget scn_idx)]:-}; r=$(dget row); t=$(scn_tbl "$sc0")
-  write_build_status
+  ( write_build_status ) &   # (off the critical path: the next scenario starts at once; end_run writes it again)
   dset last_rec_job ""
   rec_end
   if is_hint "$sc0"; then
-    # a hint scenario turned auto click off: the stop command (always sent here) turns it back on; the next scenario waits for the app's ack
+    # a hint scenario turned auto click off: the stop command (always sent here) turns it back on - NOT waited for: the next scenario's start command (queued after it,
+    # the runner keeps the order) ends the hint mode anyway
     [ -n "$(dget last_rec_job)" ] || { local sj; sj=$(mkjob rec '{"cmd":"stop"}') && dset last_rec_job "$sj" || true; }
     [ -n "$r" ] && [ -n "$t" ] && q -v r="$r" <<< "update public.$t set status = 'cancelled', done_at = now() where id = :'r'::uuid and status = 'pending'" >/dev/null
-    dset row ""; dset last_scn_end "$(now)"; dset scn_idx "$(( $(dget scn_idx) + 1 ))"; dset sar_ready ""; dset job "$(dget last_rec_job)"; phase scn_unhint; return
+    dset row ""; dset last_scn_end "$(now)"; dset scn_idx "$(( $(dget scn_idx) + 1 ))"; dset sar_ready ""; phase scenario; return
   fi
   [ -n "$r" ] && [ -n "$t" ] && q -v r="$r" <<< "update public.$t set status = 'cancelled', done_at = now() where id = :'r'::uuid and status = 'pending'" >/dev/null
   dset row ""; dset last_scn_end "$(now)"; dset scn_idx "$(( $(dget scn_idx) + 1 ))"; dset sar_ready ""; phase scenario
@@ -413,31 +417,33 @@ tick() {
       i=$(dget scn_idx)
       if [ "$i" -ge "${#scenarios[@]}" ]; then phase logs; return; fi
       sc=${scenarios[$i]}
-      # the screen recording starts before anything of the scenario (phase scn_rec waits for the app's answer); sell_after_restart: after
-      # the app's restart (a restart ends any recording)
-      if [ "$(dget rec_for)" != "$i" ] && [[ "$sc" =~ ^[a-z0-9_]{1,40}$ ]] && [ "$sc" != explore ] && { [ "$sc" != sell_after_restart ] || [ -n "$(dget sar_ready)" ]; }; then
-        dset rec_for "$i"
-        if r=$(mkjob rec "{\"cmd\":\"start\",\"scenario\":\"$sc\",\"run\":\"$RUN\"}"); then dset job "$r"; phase scn_rec; return; fi
-        say "recording: the job could not be queued"
-      fi
-      # the game to the city before EVERY scenario (the app's own road, rec job "city"), then the scenario's prep (extra scenarios): before the mark, so that
-      # the setup's own log lines are forgotten by it; the recording (started above) shows them
-      if [ "$sc" != explore ] && [ -z "$(dget setup_off)" ] && [ "$(dget setup_for)" != "$i/$(dget sar_ready)" ] && { [ "$sc" != sell_after_restart ] || [ -n "$(dget sar_ready)" ]; }; then
-        dset setup_for "$i/$(dget sar_ready)"; dset prep_note ""
-        mkjob game_front >/dev/null || true   # (the setup clicks only with the game in front)
-        if r=$(mkjob rec '{"cmd":"city"}'); then dset job "$r"; dset setup_stage city; phase scn_setup; return; fi
-        say "setup: the city job could not be queued"
-      elif [ "$sc" != explore ] && [ -n "$(dget setup_off)" ] && [ -n "$(scn_prep "$sc")" ]; then
-        warn "$sc" 0 "подготовка «$(scn_prep "$sc")» не выполнена: приложение или раннер не знает команду (нужны тестовая сборка и раннер v25); сценарий не запускался"; next_scn; return
-      fi
-      # strict order: the runner's mark (it forgets the old stop / ready / pilot markers) must be DONE before the request is seeded; a mark that ran
-      # after a fast app's first lines (a list already marked in the game ends in ~1 s) wiped them: "no pilot step for 40 s" with the run finished (lab cdc2e581)
+      # ONE kick-off per scenario: the jobs of its start are queued back to back - recording start, game to the front, "city", the prep (extra scenarios), the
+      # runner's mark - and the runner takes them in this order (one claim each, no pause between); only the LAST one (the mark) is waited for (phase scn_kick),
+      # the answers of the others are read then. Strict order kept: the mark (it forgets the old stop / ready / pilot markers, and with it the setup's own log
+      # lines) is DONE before the request is seeded (a mark that ran after a fast app's first lines wiped them: lab cdc2e581). sell_after_restart: its
+      # recording / setup only after the app's restart (a restart ends any recording).
       mk="$i/$(dget sar_ready)"
-      if [ "$(dget mark_for)" != "$mk" ]; then
-        dset mark_for "$mk"
-        mkjob game_front >/dev/null || true   # the game window to the front before each scenario
+      if [ "$(dget kick_for)" != "$mk" ]; then
+        dset kick_for "$mk"; dset mark_for "$mk"; dset prep_note ""; dset rec_job ""; dset city_job ""; dset prep_job ""
+        if [ "$sc" != explore ] && { [ "$sc" != sell_after_restart ] || [ -n "$(dget sar_ready)" ]; }; then
+          prep=$(scn_prep "$sc")
+          if [ -n "$(dget setup_off)" ] && [ -n "$prep" ]; then
+            warn "$sc" 0 "подготовка «$prep» не выполнена: приложение или раннер не знает команду (нужны тестовая сборка и раннер v25); сценарий не запускался"; next_scn; return
+          fi
+          if [[ "$sc" =~ ^[a-z0-9_]{1,40}$ ]]; then
+            dset rec_for "$i"
+            r=$(mkjob rec "{\"cmd\":\"start\",\"scenario\":\"$sc\",\"run\":\"$RUN\"}") && dset rec_job "$r" || say "recording: the job could not be queued"
+          fi
+          mkjob game_front >/dev/null || true   # (the setup clicks only with the game in front)
+          if [ -z "$(dget setup_off)" ]; then
+            r=$(mkjob rec '{"cmd":"city"}') && dset city_job "$r" || say "setup: the city job could not be queued"
+            if [ -n "$prep" ]; then r=$(mkjob rec "{\"cmd\":\"prep\",\"name\":\"$prep\"}") && dset prep_job "$r" || say "setup: the prep job could not be queued"; fi
+          fi
+        else
+          mkjob game_front >/dev/null || true   # the game window to the front before each scenario
+        fi
+        if mj=$(mkjob mark "{\"scn\":\"$sc\"}"); then dset job "$mj"; dset job_timeout ""; phase scn_kick; return; fi
         dset mark_at "$(now)"
-        if mj=$(mkjob mark "{\"scn\":\"$sc\"}"); then dset job "$mj"; dset job_timeout ""; phase scn_mark; return; fi
       fi
       if [ "$(scn_seed "$sc")" = equip_city ]; then
         # never seed the build the hero already wears (then the app has nothing to change): the other one, whatever the last run did
@@ -483,6 +489,42 @@ tick() {
              sc=${scenarios[$(dget scn_idx)]}; if is_hint "$sc"; then warn "$sc" 0 "режим подсказок не включён (нет ответа на команду записи)"; next_scn; else phase scenario; fi
            fi ;;
       esac ;;
+    scn_kick)
+      # the kick-off's last job (the mark) is answered: read the answers of the recording, the city and the prep (queued before it, so they are over)
+      i=$(dget scn_idx); sc=${scenarios[$i]}; j=$(dget job); st=$(jstate "$j")
+      case "$st" in
+        done|failed|expired|cancelled) ;;
+        *) if [ "$(phase_age)" -gt 150 ]; then say "kick-off: no answer in 150 s"; else return; fi ;;
+      esac
+      dset mark_at "$(now)"
+      rj=$(dget rec_job)
+      if [ -n "$rj" ]; then
+        if [ "$(jstate "$rj")" = done ]; then id=$(jres "$rj" rec); [[ "$id" =~ $LAB_REC_RX ]] && dset rec_id "$id"; say "recording ${id:-?} started"
+        else
+          say "recording not started: $(jres "$rj" error)$(jstate "$rj")"
+          # a hint scenario's auto click is turned off by this command only: without its answer the scenario is not run
+          if is_hint "$sc"; then warn "$sc" 0 "режим подсказок не включён (команда записи не прошла)"; next_scn; return; fi
+        fi
+      fi
+      cj=$(dget city_job)
+      if [ -n "$cj" ]; then
+        if [ "$(jstate "$cj")" = done ]; then say "city: reached ($sc)"; dset setup_ok 1
+        else
+          why="$(jres "$cj" why)$(jres "$cj" error)"; [ -n "$why" ] || why=$(jstate "$cj"); say "city: NOT reached before $sc: $why"
+          # an old app or runner does not know the command: no setup for the rest of the run (the prep scenarios are skipped then)
+          setup_failed "$why"
+        fi
+      fi
+      pj=$(dget prep_job); prep=$(scn_prep "$sc")
+      if [ -n "$pj" ]; then
+        if [ "$(jstate "$pj")" = done ]; then say "prep $prep: $(jres "$pj" why)"; dset setup_ok 1; dset prep_note "$(jres "$pj" why)"
+        else
+          why="$(jres "$pj" why)$(jres "$pj" error)"; [ -n "$why" ] || why=$(jstate "$pj")
+          setup_failed "$why"
+          warn "$sc" 0 "подготовка «$prep» не удалась: ${why:0:160}; сценарий не запускался (приложению нечего показывать, пока игра не в нужном состоянии)"; next_scn; return
+        fi
+      fi
+      phase scenario ;;
     scn_setup)
       # the app's answer to "city" / "prep <name>" (it comes when its clicks are over: city 30 s at most, a prep 20 s; the runner waits 45 s for it)
       i=$(dget scn_idx); sc=${scenarios[$i]}; j=$(dget job); st=$(jstate "$j"); stage=$(dget setup_stage)
@@ -496,7 +538,7 @@ tick() {
         else
           say "city: NOT reached before $sc: $why"
           # an old app or runner does not know the command: no setup for the rest of the run (a prep scenario is then skipped below)
-          case "$why" in no_ack*|bad_args*|expired*|cancelled*) dset setup_off 1 ;; esac
+          setup_failed "$why"
         fi
         prep=$(scn_prep "$sc")
         if [ -n "$prep" ]; then
@@ -509,7 +551,7 @@ tick() {
         prep=$(scn_prep "$sc")
         if [ "$st" = done ]; then say "prep $prep: $(jres "$j" why)"; dset prep_note "$(jres "$j" why)"; phase scenario
         else
-          case "$why" in no_ack*|bad_args*|expired*|cancelled*) dset setup_off 1 ;; esac
+          setup_failed "$why"
           warn "$sc" 0 "подготовка «$prep» не удалась: ${why:0:160}; сценарий не запускался (приложению нечего показывать, пока игра не в нужном состоянии)"; next_scn
         fi
       fi ;;

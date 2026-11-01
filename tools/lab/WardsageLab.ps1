@@ -10,6 +10,7 @@
 # than $RunnerVersion it downloads WardsageLab.ps1, checks size, sha256 and the RSA signature against the pinned keys (the same
 # check as update_app), replaces its own file atomically and starts itself again. The server cannot send code through a job.
 #
+# Speed (v27): no loop pause after a job (the next claim follows at once), the heartbeat after a job is due in 4 s (20 a minute are allowed).
 # Speed (v26): while a run is active the loop ticks every second and claims a job as soon as one may be asked for (at most 18 claims in any 60 s: the server allows 20),
 # the rec ack is looked for every 150 ms, city / prep are waited for 45 s.
 #
@@ -31,7 +32,7 @@ Set-StrictMode -Version 2
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$RunnerVersion   = '26'
+$RunnerVersion   = '27'
 $Dir             = Join-Path $env:LOCALAPPDATA 'WardsageLab'
 $StopFile        = Join-Path $Dir 'STOP'
 $LogFile         = Join-Path $Dir 'runner.log'
@@ -993,7 +994,9 @@ $lastClaim = [DateTime]::MinValue
 $lastBounds = Get-Date
 $backoffUntil = [DateTime]::MinValue
 try {
+    $afterJob = $false
     while (-not $script:Exit) {
+        $afterJob = $false
         if (Test-Path $StopFile) { Write-Log 'STOP file found, exiting'; break }
         if (((Get-Date) - $script:Started).TotalHours -gt $MaxRunnerHours) {
             if (-not $Service) { Write-Log 'max lifetime reached, exiting'; break }
@@ -1035,8 +1038,9 @@ try {
                         if ($job -ne $null) {
                             Invoke-Job $job
                             if ($Service -and -not $script:Relaunch) { $script:Exit = $false }      # service mode: "finish" ends the run, not the runner
-                            $lastBeat = [DateTime]::MinValue      # heartbeat right after a job
-                            $lastClaim = [DateTime]::MinValue     # and the next claim at once (the window above keeps the rate)
+                            $lastBeat = (Get-Date).AddSeconds(-($ActiveBeatSec - 4))     # the heartbeat is due 4 s after a job (the server allows 20 a minute)
+                            $lastClaim = [DateTime]::MinValue     # the next claim at once (the window above keeps the rate)
+                            $afterJob = $true
                         }
                     }
                 }
@@ -1057,6 +1061,7 @@ try {
             }
         }
         $t = 0
+        if ($afterJob) { $t = $TickSec }      # no pause after a job: the next one may be waiting
         while ($t -lt $TickSec -and -not $script:Exit -and -not (Test-Path $StopFile)) { Start-Sleep -Seconds 1; $t++ }
     }
 } finally {
