@@ -89,7 +89,7 @@ run_build() { local v; v=$(dget want_version); [ -n "$v" ] || v=$(dget target_ve
 write_build_status() {
   local v n sha js tmp s nstd=0
   # a run of extra (non-standard) scenarios only: it never writes the build gate's file; mixed with the standard ones their lines are listed apart (no OVERALL effect)
-  for s in "${scenarios[@]:-}"; do case " $LAB_SCENARIOS_EXTRA explore " in *" $s "*) ;; *) nstd=1 ;; esac; done
+  for s in "${scenarios[@]:-}"; do case " $LAB_SCENARIOS_EXTRA $LAB_SCENARIOS_FUZZ explore " in *" $s "*) ;; *) nstd=1 ;; esac; done
   [ "$nstd" = 1 ] || return 0
   v=$(run_build); [[ "$v" =~ ^[0-9]{1,9}(\.[0-9]{1,9}){1,3}$ ]] || return 0
   n=${v##*.}
@@ -97,7 +97,7 @@ write_build_status() {
   js=$(q -v r="$RUN" <<< "select jsonb_build_object('state', state, 'scenarios', scenarios, 'steps', steps, 'data', data)::text from public.lab_runs where id = :'r'::uuid") || return 0
   [ -n "$js" ] || return 0
   tmp=$(mktemp "$LAB_DIR/.build-status.XXXXXX") || return 0
-  if jq -r --argjson ex "$(printf '%s\n' $LAB_SCENARIOS_EXTRA | jq -R . | jq -cs .)" --arg ver "$v" --arg sha "${sha:-?}" --arg run "${RUN:0:8}" --arg now "$(date -u +%FT%TZ)" '
+  if jq -r --argjson ex "$(printf '%s\n' $LAB_SCENARIOS_EXTRA $LAB_SCENARIOS_FUZZ | jq -R . | jq -cs .)" --arg ver "$v" --arg sha "${sha:-?}" --arg run "${RUN:0:8}" --arg now "$(date -u +%FT%TZ)" '
       . as $r
       | def st($sc): [$r.steps[] | select(.name == $sc or (.name | startswith($sc + " ")))] | last;
       def verdict($sc): st($sc) as $s | if $s == null then "PENDING" elif $s.ok == false then "FAIL" elif ($s.warn // false) then "SKIP" else "PASS" end;
@@ -227,6 +227,10 @@ fail_scn() {   # $1 = step label, $2 = reason, $3 = table, $4 = row id
   mkjob upload_logs '{"lines":1000}' >/dev/null || true; mkjob screenshot '{"target":"app"}' >/dev/null || true; dset fail_shot 1
   next_scn
 }
+# fuzz_seed <scenario index>: the seed of an equip_random_start (the run's data.fuzz_seed + the earlier ones of them in the run)
+fuzz_seed() { local k n=0 b; b=$(dget fuzz_seed); for (( k = 0; k < $1; k++ )); do [ "${scenarios[$k]}" = equip_random_start ] && n=$((n+1)); done; echo $(( ${b:-1} + n )); }
+# hang_tag <scenario>: the report counts the fuzz's hangs (no progress / not done in time) apart from the halts
+hang_tag() { [ "$1" = equip_random_start ] && printf 'ЗАВИСАНИЕ: '; return 0; }
 # setup_failed <why>: a city / prep job did not answer. The runner / app is "old" (no setup for the rest of the run) when the runner rejects the arguments, or when
 # no setup command has worked yet in this run; a later silence is a stall of that one command (the app was busy), the next scenario tries again
 setup_failed() { case "$1" in bad_args*) dset setup_off 1 ;; no_ack*|queued*|claimed*|expired*|cancelled*) [ -n "$(dget setup_ok)" ] || dset setup_off 1 ;; esac; }
@@ -248,6 +252,11 @@ scn_log_verdict() {
       if [[ "$hero" == *"filter=open"* ]]; then echo "fail|план выполнен, но панель фильтра героев осталась открытой"; return; fi
       last=$(sed -nE 's/.*camps=([0-9,]*) class=(True|False).*/фракции в фильтре: \1, класс: \2/p' <<< "$hero")
       echo "ok|${last:-состояние фильтра в журнале не найдено}" ;;
+    equip_random_start)
+      # a click the gate calls no target of its owner, or one on a never-click button, is a forbidden click even when the plan finished
+      fail=$(grep -E "is not a target .* may click|lies on a (button|dangerous)|never-click" <<< "$tail" | head -1 | sed -E 's/^\s+|\s+$//g' | cut -c1-200)
+      if [ -n "$fail" ]; then echo "fail|запрещённый клик: $fail"; return; fi
+      echo "ok|старт: $(grep -oE 'lab: setup random_start:[0-9]+ ok: .*' <<< "$txt" | tail -1 | sed -E 's/^lab: setup random_start:[0-9]+ ok: random_start:[0-9]+ = //')" ;;
     equip_item_filter_open)
       fail=$(grep -E "filter: item .* -> failed" <<< "$tail" | head -1 | sed -E 's/^\s+|\s+$//g' | cut -c1-200)
       if [ -n "$fail" ]; then echo "fail|фильтр вещей не удалось снять: $fail"; return; fi
@@ -258,8 +267,8 @@ scn_log_verdict() {
 # lab_settings_start: before the first scenario the app is told to force auto click (locateAuto, artAuto) on for the run (src/LabRec.cs "settings"; a
 # saved config with auto click off must not stall the run); phase lab_settings waits for its ack
 lab_settings_start() {
-  local sj
-  if sj=$(mkjob rec '{"cmd":"settings"}'); then dset job "$sj"; phase lab_settings; else say "settings: the job could not be queued"; phase scenario; fi
+  local sj nav; nav=$(dget nav); [[ "$nav" =~ ^(on|off)$ ]] || nav=""   # (--fuzz --nav: the navigator's flag, docs/specs/navigator.md)
+  if sj=$(mkjob rec "{\"cmd\":\"settings\"${nav:+,\"nav\":\"$nav\"}}"); then dset job "$sj"; phase lab_settings; else say "settings: the job could not be queued"; phase scenario; fi
 }
 # next_scn: the scenario ended (pass, fail or skip): its request is closed at once, so the app stops guiding before the next one. The site's
 # long poll returns only pending rows, so the app drops a guide whose row is anything else (app/Overlay.cs locateReq = null); 'cancelled'
@@ -426,7 +435,7 @@ tick() {
       if [ "$(dget kick_for)" != "$mk" ]; then
         dset kick_for "$mk"; dset mark_for "$mk"; dset prep_note ""; dset rec_job ""; dset city_job ""; dset prep_job ""
         if [ "$sc" != explore ] && { [ "$sc" != sell_after_restart ] || [ -n "$(dget sar_ready)" ]; }; then
-          prep=$(scn_prep "$sc")
+          prep=$(scn_prep "$sc" "$(fuzz_seed "$i")")
           if [ -n "$(dget setup_off)" ] && [ -n "$prep" ]; then
             warn "$sc" 0 "подготовка «$prep» не выполнена: приложение или раннер не знает команду (нужны тестовая сборка и раннер v25); сценарий не запускался"; next_scn; return
           fi
@@ -436,7 +445,8 @@ tick() {
           fi
           mkjob game_front >/dev/null || true   # (the setup clicks only with the game in front)
           if [ -z "$(dget setup_off)" ]; then
-            r=$(mkjob rec '{"cmd":"city"}') && dset city_job "$r" || say "setup: the city job could not be queued"
+            # (the random start begins from the city by itself: no city job before it)
+            [ "$sc" = equip_random_start ] || { r=$(mkjob rec '{"cmd":"city"}') && dset city_job "$r" || say "setup: the city job could not be queued"; }
             if [ -n "$prep" ]; then r=$(mkjob rec "{\"cmd\":\"prep\",\"name\":\"$prep\"}") && dset prep_job "$r" || say "setup: the prep job could not be queued"; fi
           fi
         else
@@ -515,7 +525,7 @@ tick() {
           setup_failed "$why"
         fi
       fi
-      pj=$(dget prep_job); prep=$(scn_prep "$sc")
+      pj=$(dget prep_job); prep=$(scn_prep "$sc" "$(fuzz_seed "$i")")
       if [ -n "$pj" ]; then
         if [ "$(jstate "$pj")" = done ]; then say "prep $prep: $(jres "$pj" why)"; dset setup_ok 1; dset prep_note "$(jres "$pj" why)"
         else
@@ -557,7 +567,7 @@ tick() {
       fi ;;
     scn_check)
       # a filter scenario's plan is done: its verdict reads the app's own log (the runner uploaded the newest lines; the lines after the prep's end)
-      i=$(dget scn_idx); sc=${scenarios[$i]}; j=$(dget chk_job); st=$(jstate "$j"); sa=$(dget seeded_at); label=$sc
+      i=$(dget scn_idx); sc=${scenarios[$i]}; j=$(dget chk_job); st=$(jstate "$j"); sa=$(dget seeded_at); label=$sc; [ "$sc" = equip_random_start ] && label="$sc $(fuzz_seed "$i")"
       case "$st" in
         done|failed|expired|cancelled) ;;
         *) if [ "$(phase_age)" -le 45 ]; then return; fi ;;
@@ -629,7 +639,7 @@ tick() {
     wait_scn)
       i=$(dget scn_idx); sc=${scenarios[$i]}; row=$(dget row)
       tbl=$(scn_tbl "$sc")
-      case "$sc" in equip_city) maxs=600; label="$sc (build ${build^^})" ;; equip_*) maxs=600; label="$sc" ;; sell_*) maxs=480; label="$sc" ;; *) maxs=300; label="$sc" ;; esac
+      case "$sc" in equip_city) maxs=600; label="$sc (build ${build^^})" ;; equip_random_start) maxs=180; label="$sc $(fuzz_seed "$i")" ;; equip_*) maxs=600; label="$sc" ;; sell_*) maxs=480; label="$sc" ;; *) maxs=300; label="$sc" ;; esac
       st=$(q -v r="$row" <<< "select status || '|' || coalesce(round(extract(epoch from done_at - created_at))::int, 0) from public.$tbl where id = :'r'::uuid")
       if is_hint "$sc"; then
         # hint mode (auto click off, nobody clicks): the frame audit's shots of this scenario (src/FrameAudit.cs) are the verdict. Pass = shots of
@@ -693,8 +703,8 @@ tick() {
           # before a "no progress" stop: the app's log is uploaded and read once (the runner may have missed the final line)
           dset sl_for "$(dget scn_idx)"; dset sl_at "$(now)"; dset sl_job "$(mkjob upload_logs '{"lines":1000}')"
         elif [ "$w" != 0 ] && ! [[ "$(jstate "$(dget sl_job)")" =~ ^(done|failed|expired|cancelled)$ ]] && [ "$(( $(now) - $(dget sl_at) ))" -le 30 ]; then :   # the log upload is awaited
-        elif [ "$w" != 0 ]; then fail_scn "$label" "$WHY" "$tbl" "$row"
-        elif [ "$(phase_age)" -gt "$maxs" ]; then fail_scn "$label" "not done in ${maxs} s" "$tbl" "$row"; fi
+        elif [ "$w" != 0 ]; then fail_scn "$label" "$(case "$WHY" in "no progress"*) hang_tag "$sc" ;; esac)$WHY" "$tbl" "$row"
+        elif [ "$(phase_age)" -gt "$maxs" ]; then fail_scn "$label" "$(hang_tag "$sc")not done in ${maxs} s" "$tbl" "$row"; fi
         return
       fi
       # equip_toggle_auto_late: the plan waits with auto click off; after 10 s the "settings" command turns it on (the page picks the plan up)
@@ -709,7 +719,7 @@ tick() {
       fi
       case "$st" in
         done\|*) case "$sc" in
-                    equip_hero_filter_open|equip_hero_filter_closed|equip_item_filter_open)
+                    equip_hero_filter_open|equip_hero_filter_closed|equip_item_filter_open|equip_random_start)
                       if cj=$(mkjob upload_logs '{"lines":1500}'); then dset chk_job "$cj"; phase scn_check; return; fi ;;
                   esac
                   note=$(scn_pass_note "$sc")
@@ -732,9 +742,9 @@ tick() {
            dev_watch "${ma:-0}" "${sa:-0}" "$NOPROG_DEV" pilot; w=$?
            if [ "$w" = 9 ]; then watch_logs "${sa:-0}" "${sa:-0}"; w=$?; fi   # old runner
            if [ "$w" = 0 ]; then
-             if [ "$(phase_age)" -gt "$maxs" ]; then fail_scn "$label" "not done in ${maxs} s" "$tbl" "$row"; fi
+             if [ "$(phase_age)" -gt "$maxs" ]; then fail_scn "$label" "$(hang_tag "$sc")not done in ${maxs} s" "$tbl" "$row"; fi
            else
-             fail_scn "$label" "$WHY" "$tbl" "$row"
+             fail_scn "$label" "$(case "$WHY" in "no progress"*) hang_tag "$sc" ;; esac)$WHY" "$tbl" "$row"
            fi ;;
       esac ;;
     logs)

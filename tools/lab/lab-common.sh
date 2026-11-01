@@ -51,24 +51,29 @@ LAB_EXTRA_SCENARIOS="explore"
 # state through the app's own click gate; "city" runs first before EVERY scenario (the app's own road back to the city). The app has to cope; a scenario
 # that fails because of the app is the finding.
 LAB_SCENARIOS_EXTRA="equip_hero_filter_open equip_hero_filter_closed equip_item_filter_open equip_from_materials equip_from_bulk_sale equip_from_artifact locate_from_bulk_sale locate_recast_item_filter sell_from_materials equip_toggle_auto_late equip_hint_filter_open"
+# the random-start fuzz of docs/specs/navigator.md: lab-request.sh <device> --fuzz N [--seed S] [--nav on|off] queues N of these (seeds S .. S+N-1; the run's data holds
+# fuzz_seed and nav). The prep random_start:<seed> (src/LabRec.cs) puts the game on a seeded random safe start; then the normal equip plan, auto click on.
+# PASS = the plan is done, no hang (180 s), no forbidden click. The report's line: «Успешные запуски со случайного экрана: X/N (Y%), зависаний Z».
+LAB_SCENARIOS_FUZZ="equip_random_start"
 # every scenario name the tools accept
-LAB_ALL_SCENARIOS="$LAB_SCENARIOS $LAB_SCENARIOS_EXTRA $LAB_EXTRA_SCENARIOS"
+LAB_ALL_SCENARIOS="$LAB_SCENARIOS $LAB_SCENARIOS_EXTRA $LAB_SCENARIOS_FUZZ $LAB_EXTRA_SCENARIOS"
 
 # is_hint <scenario>: a hint-mode scenario (auto click off, nobody clicks; the frame audit is the verdict): *_hint and equip_hint_* (src/LabRec.cs IsHintScenario)
 is_hint() { case "$1" in *_hint|equip_hint_*) return 0 ;; esac; return 1; }
 # scn_seed <scenario>: the lab-seed.sh kind of the scenario's request
 scn_seed() {
   case "$1" in
-    equip_hero_filter_open|equip_hero_filter_closed|equip_item_filter_open|equip_from_materials|equip_from_bulk_sale|equip_from_artifact|equip_toggle_auto_late|equip_hint_filter_open) echo equip_city ;;
+    equip_hero_filter_open|equip_hero_filter_closed|equip_item_filter_open|equip_from_materials|equip_from_bulk_sale|equip_from_artifact|equip_toggle_auto_late|equip_hint_filter_open|equip_random_start) echo equip_city ;;
     locate_from_bulk_sale) echo locate ;;
     locate_recast_item_filter) echo locate_recast ;;
     sell_from_materials) echo sell_mark ;;
     *) echo "${1%_hint}" ;;
   esac
 }
-# scn_prep <scenario>: the prep the app runs before the seed (empty = none)
+# scn_prep <scenario> [seed]: the prep the app runs before the seed (empty = none); the seed is the fuzz scenario's
 scn_prep() {
   case "$1" in
+    equip_random_start) echo "random_start:${2:-1}" ;;
     equip_hero_filter_open|equip_hint_filter_open) echo hero_filter ;;
     equip_hero_filter_closed) echo hero_filter_closed ;;
     equip_item_filter_open|locate_recast_item_filter) echo item_filter ;;
@@ -80,6 +85,7 @@ scn_prep() {
 # scn_title <scenario>: the line's name in the report (Russian); empty = not an extra scenario
 scn_title() {
   case "$1" in
+    equip_random_start*) echo "Случайный старт игры (seed ${1#equip_random_start }): надеть сборку" ;;
     equip_hero_filter_open) echo "Надеть при открытом фильтре героев" ;;
     equip_hero_filter_closed) echo "Надеть при включённом фильтре героев (панель закрыта)" ;;
     equip_item_filter_open) echo "Надеть при открытом фильтре вещей" ;;
@@ -102,6 +108,7 @@ scn_pass_note() {
     equip_from_materials) echo "игра стояла на вкладке «Материалы»: приложение дошло до героя и довело план до конца" ;;
     equip_from_bulk_sale) echo "игра стояла в «Массовой продаже»: приложение вышло из неё, дошло до героя и довело план до конца" ;;
     equip_from_artifact) echo "игра стояла на экране артефактов: приложение дошло до героя и довело план до конца" ;;
+    equip_random_start) echo "игра была поставлена на случайный безопасный экран: приложение дошло до героя и довело план до конца" ;;
     equip_toggle_auto_late) echo "автоклик был выключен, через 10 с включён командой: приложение подхватило уже идущий план и довело его до конца" ;;
   esac
 }

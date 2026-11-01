@@ -22,10 +22,11 @@ for (const line of (m ? m[1] : '').split('\n')) {
   schema[k[1]] = (v) => typeof v === 'string' && (rx ? new RegExp(rx[1]).test(v) : eqs.includes(v));
 }
 const valid0 = (args) => Object.entries(args).every(([k, v]) => schema[k] && schema[k](v));
-ok(JSON.stringify(Object.keys(schema).sort()) === '["cmd","name","run","scenario"]', 'rec takes exactly cmd, name, scenario, run (' + Object.keys(schema) + ')');
-ok(valid0({ cmd: 'city' }) && valid0({ cmd: 'prep', name: 'hero_filter' }) && valid0({ cmd: 'prep', name: 'start_bulk_sale' }), 'city and the listed preps pass');
+ok(JSON.stringify(Object.keys(schema).sort()) === '["cmd","name","nav","run","scenario"]', 'rec takes exactly cmd, name, nav, scenario, run (' + Object.keys(schema) + ')');
+ok(valid0({ cmd: 'city' }) && valid0({ cmd: 'prep', name: 'hero_filter' }) && valid0({ cmd: 'prep', name: 'start_bulk_sale' }) && valid0({ cmd: 'prep', name: 'random_start:17' }) && valid0({ cmd: 'settings', nav: 'on' }) && valid0({ cmd: 'settings', nav: 'off' }), 'city and the listed preps pass');
 for (const [args, what] of [[{ cmd: 'prep', name: 'sell_all' }, 'an unlisted prep'], [{ cmd: 'prep', name: 'hero_filter\n1 stop' }, 'a newline in the prep'], [{ cmd: 'prep', name: 'Hero_filter' }, 'an upper case prep'],
-  [{ cmd: 'prep', name: '../x' }, 'a path as the prep'], [{ cmd: 'prep', name: 'hero_filter_x' }, 'a prefix of a listed prep'], [{ cmd: 'city', name: 5 }, 'a number as the name']]) ok(!valid0(args), 'rejected: ' + what);
+  [{ cmd: 'prep', name: '../x' }, 'a path as the prep'], [{ cmd: 'prep', name: 'hero_filter_x' }, 'a prefix of a listed prep'], [{ cmd: 'city', name: 5 }, 'a number as the name'], [{ cmd: 'prep', name: 'random_start:' }, 'a random start with no seed'], [{ cmd: 'prep', name: 'random_start:1234567890' }, 'a too long seed'],
+  [{ cmd: 'prep', name: 'random_start:1\n1 stop' }, 'a newline in the seed'], [{ cmd: 'settings', nav: 'maybe' }, 'a nav value other than on / off']]) ok(!valid0(args), 'rejected: ' + what);
 const valid = (args) => Object.entries(args).every(([k, v]) => schema[k] && schema[k](v));
 const run = '0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0';
 ok(valid({ cmd: 'start', scenario: 'equip_city', run }), 'start args pass');
@@ -45,8 +46,9 @@ if (lineRx) {
   const rx = new RegExp(lineRx[1].replace(/\\\\/g, '\\'));
   ok(rx.test(Date.now() + ' start equip_city ' + run), 'the runner start line parses in the app');
   ok(rx.test(Date.now() + ' stop'), 'the runner stop line parses in the app');
+  ok(rx.test(Date.now() + ' prep random_start:12') && rx.test(Date.now() + ' settings nav=on') && !rx.test(Date.now() + ' settings nav=maybe') && !rx.test(Date.now() + ' prep random_start:'), 'the runner random start / nav lines parse in the app');
   ok(rx.test(Date.now() + ' city') && rx.test(Date.now() + ' prep hero_filter_closed') && !rx.test(Date.now() + ' prep') && !rx.test(Date.now() + ' prep x y'), 'the runner city / prep lines parse in the app');
-  const runnerNames = (ps.match(/\^\(hero_filter\|([^)]+)\)\$/) || [, ''])[1].split('|');
+  const runnerNames = (ps.match(/\^\(hero_filter\|([^)]+)\)\$/) || [, ''])[1].split('|').filter((x) => !x.startsWith('random_start'));
   const appNames = (cs.match(/Names = \{([^}]+)\}/) || [, ''])[1].match(/"[a-z_]+"/g) || [];
   ok(appNames.length === 7 && ['hero_filter', ...runnerNames].sort().join() === appNames.map((x) => x.slice(1, -1)).sort().join(), 'the runner and the app list the same preps (' + runnerNames + ')');
 }

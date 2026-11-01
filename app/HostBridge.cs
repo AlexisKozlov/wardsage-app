@@ -449,7 +449,7 @@ namespace RealmForge {
         if (state != "stale" && act != LabRecControl.Act.Settings && act != LabRecControl.Act.City && act != LabRecControl.Act.Prep) LabScenario(cmd);
         switch (act) {
           case LabRecControl.Act.City: case LabRecControl.Act.Prep: LabSetupStart(cmd); break;
-          case LabRecControl.Act.Settings: LabForceSettings(); LabRecAck(cmd, state, cur); break;
+          case LabRecControl.Act.Settings: LabForceSettings(); if (cmd.Nav != "") LabNav(cmd.Nav); LabRecAck(cmd, state, cur); break;
           case LabRecControl.Act.Start: LabRecStart(cmd); break;
           case LabRecControl.Act.StopThenStart: testRec.Stop(); labRecPending = cmd; labRecPendingAt = RecInfo.NowMs(); break;
           case LabRecControl.Act.Stop: testRec.Stop(); LabRecAck(cmd, state, cur); break;
@@ -471,6 +471,10 @@ namespace RealmForge {
       if (hint) labHintAt = RecInfo.NowMs();
       if (hint != labHintOnly) { labHintOnly = hint; if (hint) { overlay.SetRun(0); overlay.SetSell(null, null, null, 0); } ApplyAutoClick(); SendState(null); Log.Write("lab: hint mode " + (hint ? "on (auto click off for " + c.Scenario + ")" : "off")); }
     }
+    /// <summary>TEST build: the navigator's navCore flag as the lab's settings command set it ("on" | "off" | "" = never given: the app's own default). The app has no such flag yet
+    /// (docs/specs/navigator.md): whoever builds the navigator reads this field; off = the current behaviour.</summary>
+    internal string labNav = "";
+    void LabNav(string v) { labNav = v; Log.Write("lab: navCore " + v + " requested (the app " + (Channel.IsTest ? "has no navCore flag yet: no effect" : "ignores it") + ")"); }
     // the lab forces the settings its scenarios need (auto click, locateAuto, artAuto) for this run: in memory, the saved config is not touched
     void LabForceSettings() {
       labForce = true; labAutoOff = false; ApplyAutoClick(); SendState(null);   // the page too: it starts the equip and sell runs
@@ -490,7 +494,7 @@ namespace RealmForge {
       Log.Write("lab: setup " + name + (ok ? " ok" : " FAILED") + ": " + why);
       if (c == null) return;
       string st = c.Op == "city" ? (ok ? "city" : "cityfail") : (ok ? "prepok" : "prepfail");
-      LabWrite("rec.ack", LabRecCmd.AckSetup(c.Seq, st, name, why));
+      LabWrite("rec.ack", LabRecCmd.AckSetup(c.Seq, st, c.Op == "city" ? name : c.Name, why));   // (the command's own name: random_start:<seed>, not the step it ended on)
     }
     void LabRecStart(LabRecCmd c) {
       if (testRec == null) testRec = new ScreenRecorder(() => cfg.Site, () => cfg.Code, s => Log.Write(s), ev => Post(ev), on => OnUi(() => overlay.SetRecording(on)));

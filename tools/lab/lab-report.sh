@@ -68,6 +68,19 @@ if grep -q '"sell_' <<< "$(q -v r="$run" <<< "select scenarios::text from public
 fi
 tot=$(q -v r="$run" <<< "select coalesce(round(extract(epoch from coalesce(finished_at, now()) - started_at))::int, 0) from public.lab_runs where id = :'r'::uuid")
 [ "${tot:-0}" -gt 0 ] && msg+="Всего: $((tot / 60)) мин $((tot % 60)) с"$'\n'
+# the random-start fuzz (docs/specs/navigator.md): the owner's one metric. A hang counts as a failure; a prep that did not run counts as a failure too (and is named)
+fuzzline=""
+fz=$(q -F '|' -v r="$run" <<< "select (select count(*) from unnest(scenarios) u where u = 'equip_random_start'),
+  count(*) filter (where s->>'name' like 'equip_random_start%' and (s->>'ok')::boolean and coalesce(s->>'warn', '') = ''),
+  count(*) filter (where s->>'name' like 'equip_random_start%' and coalesce(s->>'note', '') like 'ЗАВИСАНИЕ%'),
+  count(*) filter (where s->>'name' like 'equip_random_start%' and coalesce(s->>'warn', '') = 'true')
+  from public.lab_runs r left join lateral jsonb_array_elements(r.steps) s on true where r.id = :'r'::uuid group by r.scenarios")
+if [ -n "$fz" ] && [ "${fz%%|*}" -gt 0 ] 2>/dev/null; then
+  IFS='|' read -r fzn fzok fzhang fzwarn <<< "$fz"
+  fuzzline="Успешные запуски со случайного экрана: $fzok/$fzn ($(( fzn > 0 ? fzok * 100 / fzn : 0 ))%), зависаний $fzhang"
+  [ "${fzwarn:-0}" -gt 0 ] && fuzzline+=" (старт не поставился: $fzwarn)"
+  msg+="$fuzzline"$'\n'
+fi
 # the phases of the loop (lab-loop.sh phase(): data.phase_log "<phase>=<s> ..."): seconds per phase, the biggest first
 phases=$(q -v r="$run" <<< "select coalesce(data->>'phase_log', '') from public.lab_runs where id = :'r'::uuid" | tr ' ' '\n' | awk -F= 'NF == 2 { t[$1] += $2; n[$1]++ } END { for (k in t) printf "%d %s %d\n", t[k], k, n[k] }' | sort -rn | awk '{ printf "%s%s %d с%s", (NR > 1 ? ", " : ""), $2, $1, ($3 > 1 ? " (x" $3 ")" : "") }')
 [ -n "$phases" ] && msg+="Фазы: $phases"$'\n'
@@ -94,6 +107,7 @@ if [ -n "$fchecks" ] && [ -n "$shots" ]; then fsheet=$(bash "$(dirname "$0")/fra
   echo "# Test lab report: $devname"
   echo
   echo "- time (UTC+3): $TZ_NOW"
+  [ -n "$fuzzline" ] && echo "- $fuzzline"
   [ "${tot:-0}" -gt 0 ] && echo "- total: $((tot / 60)) min $((tot % 60)) s; phases (s): ${phases:-none}"
   echo "- run: $run (equip build ${build^^}), state: $state$([ "$nochange" = 1 ] && echo ", WARNING: nothing to change (no slot click)")"
   echo

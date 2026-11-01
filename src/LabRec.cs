@@ -20,12 +20,14 @@ namespace RealmForge {
     public string Op = "", Scenario = "", Run = "";
     /// <summary>The prep's name (Op "prep").</summary>
     public string Name = "";
+    /// <summary>The settings command's «nav=on|off» (the navigator's navCore flag, docs/specs/navigator.md; "" = not given: the flag stays as it is).</summary>
+    public string Nav = "";
 
     public const long CapMs = 6 * 60 * 1000;          // a lab recording stops by itself after 6 min
     public const long StaleMs = 2 * 60 * 1000;        // a command older than this is left alone (an app started after the run)
     public const long StartWaitMs = 10000;            // the wait for another recording to stop before a lab one starts
 
-    static readonly Regex LineRx = new Regex("^([0-9]{1,15}) (?:(start) ([a-z0-9_]{1,40}) ([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})|(stop)|(settings)|(city)|(prep) ([a-z_]{1,30}))$");
+    static readonly Regex LineRx = new Regex("^([0-9]{1,15}) (?:(start) ([a-z0-9_]{1,40}) ([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})|(stop)|(settings)(?: nav=(on|off))?|(city)|(prep) ([a-z_]{1,30}(?::[0-9]{1,9})?))$");
     static readonly Regex IdRx = new Regex("^lab-[0-9]{8}-[0-9]{6}-[0-9a-f]{6}$");
 
     /// <summary>The command of the file's text (its first line), null when it is not exactly one of the two forms.</summary>
@@ -39,9 +41,9 @@ namespace RealmForge {
       long seq;
       if (!long.TryParse(m.Groups[1].Value, NumberStyles.None, CultureInfo.InvariantCulture, out seq)) return null;
       if (m.Groups[2].Success) return new LabRecCmd { Seq = seq, Op = "start", Scenario = m.Groups[3].Value, Run = m.Groups[4].Value };
-      if (m.Groups[6].Success) return new LabRecCmd { Seq = seq, Op = "settings" };
-      if (m.Groups[7].Success) return new LabRecCmd { Seq = seq, Op = "city" };
-      if (m.Groups[8].Success) return LabPrep.Known(m.Groups[9].Value) ? new LabRecCmd { Seq = seq, Op = "prep", Name = m.Groups[9].Value } : null;
+      if (m.Groups[6].Success) return new LabRecCmd { Seq = seq, Op = "settings", Nav = m.Groups[7].Value };
+      if (m.Groups[8].Success) return new LabRecCmd { Seq = seq, Op = "city" };
+      if (m.Groups[9].Success) return LabPrep.Known(m.Groups[10].Value) ? new LabRecCmd { Seq = seq, Op = "prep", Name = m.Groups[10].Value } : null;
       return new LabRecCmd { Seq = seq, Op = "stop" };
     }
 
@@ -151,20 +153,51 @@ namespace RealmForge {
   public sealed class LabPrep {
     public static readonly string[] Names = { "hero_filter", "hero_filter_closed", "item_filter", "hide_worn_on", "start_inventory_materials", "start_bulk_sale", "start_artifact" };
     public const string CityName = "city";
-    public static bool Known(string name) { return Array.IndexOf(Names, name) >= 0; }
+    /// <summary>random_start:&lt;seed&gt;: a seeded chain of the preps below (docs/specs/navigator.md, the fuzz scenario equip_random_start).</summary>
+    public const string RandomPrefix = "random_start:";
+    public static bool Known(string name) { return Array.IndexOf(Names, name) >= 0 || RandomSeed(name) >= 0; }
+    /// <summary>The seed of «random_start:N», -1 when the name is not one.</summary>
+    public static long RandomSeed(string name) {
+      long n;
+      if (name == null || !name.StartsWith(RandomPrefix, StringComparison.Ordinal) || name.Length > RandomPrefix.Length + 9) return -1;
+      return long.TryParse(name.Substring(RandomPrefix.Length), NumberStyles.None, CultureInfo.InvariantCulture, out n) ? n : -1;
+    }
+    static readonly string[] Visits = { "visit_heroes", "start_inventory_materials", "start_bulk_sale", "start_artifact" };       // the safe stops (nothing left open on the screen)
+    static readonly string[] Leftovers = { "hero_filter", "hero_filter_closed", "item_filter", "hide_worn_on" };                  // a filter or a pop-up left behind (always the last step)
+    /// <summary>The steps of «random_start:seed»: 1-3 stops, then with p = 0.5 one leftover (or one stop at least). The same seed gives the same chain on every runtime
+    /// (an own generator, not System.Random).</summary>
+    public static string[] RandomChain(long seed) {
+      uint x = (uint)(seed * 0x9E3779B1L + 12345) | 1u;
+      Func<int, int> next = n => { x ^= x << 13; x ^= x >> 17; x ^= x << 5; return (int)(x % (uint)n); };
+      next(7); next(7);
+      var l = new System.Collections.Generic.List<string>();
+      bool leftover = next(2) == 0;
+      int stops = leftover ? next(3) : 1 + next(3);
+      for (int i = 0; i < stops; i++) { string v = Visits[next(Visits.Length)]; if (l.Count == 0 || l[l.Count - 1] != v) l.Add(v); }
+      if (leftover) l.Add(Leftovers[next(Leftovers.Length)]);
+      return l.ToArray();
+    }
     public const long CityCapMs = 30000, PrepCapMs = 20000, GapMs = 1600, SlowGapMs = 3000;   // the lab's speed-up: a prep ends in 20 s, the road to the city in 30 s, or it fails with its step
     public const int SetPick = 3;                 // the set cell the item filter ticks (the 4th of the pop-up's grid: not the first, which a plan's item often is)
 
-    public readonly string Name;
+    readonly string name;
+    /// <summary>The prep's name; for a random start the step it is on now (the host's gate flags follow it).</summary>
+    public string Name { get { return chain != null && cur < chain.Length ? chain[cur].Name : name; } }
+    /// <summary>The name the command gave (random_start:7 for a random start).</summary>
+    public string FullName { get { return name; } }
+    readonly LabPrep[] chain; int cur; string path = "";
     public string Phase = "";
     long t0 = -1, lastAt = -1000000;
     readonly System.Collections.Generic.Dictionary<string, int> tries = new System.Collections.Generic.Dictionary<string, int>();
     readonly HeroGeometry g = new HeroGeometry();
     readonly FilterGeometry fg = new FilterGeometry();
 
-    public LabPrep(string name) { Name = name; }
-    public bool IsCity { get { return Name == CityName; } }
-    public long CapMs { get { return IsCity ? CityCapMs : PrepCapMs; } }
+    public LabPrep(string name) {
+      this.name = name;
+      if (RandomSeed(name) >= 0) { var steps = RandomChain(RandomSeed(name)); chain = new LabPrep[steps.Length]; for (int i = 0; i < steps.Length; i++) chain[i] = new LabPrep(steps[i]); }
+    }
+    public bool IsCity { get { return name == CityName; } }
+    public long CapMs { get { return chain != null ? PrepCapMs * chain.Length + 2000 : IsCity ? CityCapMs : PrepCapMs; } }
     /// <summary>The click owner of the prep's inventory work (the sell owner's whitelist) or of the hero work (the equip owner's).</summary>
     public bool InventoryPrep { get { return Name.StartsWith("start_", StringComparison.Ordinal); } }
 
@@ -184,10 +217,18 @@ namespace RealmForge {
 
     public LabPrepAct Step(LabPrepView v) {
       if (t0 < 0) t0 = v.Now;
+      if (chain != null) {   // a random start: the steps one after the other, each with its own cap; the path is told at the end (the run is reproducible from the seed)
+        var sub = chain[cur].Step(v);
+        if (sub.Move == LabMove.Fail) return Fail(name + " step " + chain[cur].Name + ": " + sub.Why);
+        if (sub.Move != LabMove.Done) { Phase = chain[cur].Phase; return sub; }
+        path += (path == "" ? "" : " > ") + chain[cur].Name; cur++;
+        return cur >= chain.Length ? Done(name + " = " + path) : Wait("next step " + chain[cur].Name);
+      }
       if (v.Now - t0 > CapMs) return Fail("not done in " + CapMs / 1000 + " s (" + (Phase == "" ? "no step" : Phase) + ", screen " + v.Kind + ")");
       if (IsCity) { Phase = "city"; return v.Kind == ScreenKind.City && !v.Modal ? Done("the city") : Back("screen " + v.Kind); }
       if (!v.Front) return Wait("the game is not in front");
       switch (Name) {
+        case "visit_heroes": { var a = ToHeroes(v); return a ?? Done("the hero screen"); }
         case "hero_filter": case "hero_filter_closed": return StepHeroFilter(v, Name == "hero_filter_closed");
         case "item_filter": case "hide_worn_on": return StepGearFilter(v, Name == "hide_worn_on");
         case "start_inventory_materials": case "start_bulk_sale": case "start_artifact": return StepInventory(v);

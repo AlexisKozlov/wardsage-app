@@ -10,6 +10,7 @@
 # than $RunnerVersion it downloads WardsageLab.ps1, checks size, sha256 and the RSA signature against the pinned keys (the same
 # check as update_app), replaces its own file atomically and starts itself again. The server cannot send code through a job.
 #
+# Fuzz (v28): rec prep takes random_start:<seed>, rec settings an optional nav=on|off (the navigator's flag).
 # Speed (v27): no loop pause after a job (the next claim follows at once), the heartbeat after a job is due in 4 s (20 a minute are allowed).
 # Speed (v26): while a run is active the loop ticks every second and claims a job as soon as one may be asked for (at most 18 claims in any 60 s: the server allows 20),
 # the rec ack is looked for every 150 ms, city / prep are waited for 45 s.
@@ -32,7 +33,7 @@ Set-StrictMode -Version 2
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$RunnerVersion   = '27'
+$RunnerVersion   = '28'
 $Dir             = Join-Path $env:LOCALAPPDATA 'WardsageLab'
 $StopFile        = Join-Path $Dir 'STOP'
 $LogFile         = Join-Path $Dir 'runner.log'
@@ -187,7 +188,8 @@ $Schemas = @{
     cancel      = @{}
     mark        = @{ scn = { param($v) $v -is [string] -and $v -cmatch '^[a-z_]{1,30}$' } }
     rec         = @{ cmd = { param($v) $v -is [string] -and ($v -ceq 'start' -or $v -ceq 'stop' -or $v -ceq 'settings' -or $v -ceq 'city' -or $v -ceq 'prep') }
-                     name = { param($v) $v -is [string] -and $v -cmatch '^(hero_filter|hero_filter_closed|item_filter|hide_worn_on|start_inventory_materials|start_bulk_sale|start_artifact)$' }
+                     nav = { param($v) $v -is [string] -and ($v -ceq 'on' -or $v -ceq 'off') }
+                     name = { param($v) $v -is [string] -and $v -cmatch '^(hero_filter|hero_filter_closed|item_filter|hide_worn_on|start_inventory_materials|start_bulk_sale|start_artifact|random_start:[0-9]{1,9})$' }
                      scenario = { param($v) $v -is [string] -and $v -cmatch '^[a-z0-9_]{1,40}$' }
                      run = { param($v) $v -is [string] -and $v -cmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' } }
     explore     = @{ cmd = { param($v) $v -is [string] -and ($v -ceq 'start' -or $v -ceq 'stop' -or $v -ceq 'result') }
@@ -593,11 +595,14 @@ function Invoke-Rec($a) {
         if ($scn -eq '' -or $run -eq '') { return @{ ok = $false; res = @{ error = 'bad_args' } } }
         $line = [string]$seq + ' start ' + $scn + ' ' + $run
     } elseif ($cmd -ceq 'stop') { $line = [string]$seq + ' stop' }
-    elseif ($cmd -ceq 'settings') { $line = [string]$seq + ' settings' }
+    elseif ($cmd -ceq 'settings') {
+        $line = [string]$seq + ' settings'
+        $nav = [string](Get-Prop $a 'nav'); if ($nav -ceq 'on' -or $nav -ceq 'off') { $line += ' nav=' + $nav }
+    }
     elseif ($cmd -ceq 'city') { $line = [string]$seq + ' city' }
     elseif ($cmd -ceq 'prep') {
         $pname = [string](Get-Prop $a 'name')
-        if ($pname -cnotmatch '^(hero_filter|hero_filter_closed|item_filter|hide_worn_on|start_inventory_materials|start_bulk_sale|start_artifact)$') { return @{ ok = $false; res = @{ error = 'bad_args' } } }
+        if ($pname -cnotmatch '^(hero_filter|hero_filter_closed|item_filter|hide_worn_on|start_inventory_materials|start_bulk_sale|start_artifact|random_start:[0-9]{1,9})$') { return @{ ok = $false; res = @{ error = 'bad_args' } } }
         $line = [string]$seq + ' prep ' + $pname
     }
     else { return @{ ok = $false; res = @{ error = 'bad_args' } } }
@@ -636,7 +641,7 @@ function Invoke-Rec($a) {
                     $why = [string](Get-Prop $ack 'why'); $nm = [string](Get-Prop $ack 'scenario')
                     if ($why.Length -gt 200) { $why = $why.Substring(0, 200) }
                     $why = ($why -replace '[^\x20-\x7E]', '?')
-                    if ($nm -notmatch '^[a-z_]{0,40}$') { $nm = '' }
+                    if ($nm -notmatch '^[a-z_0-9:]{0,40}$') { $nm = '' }
                     return @{ ok = ($st -eq 'recording' -or $st -eq 'stopped' -or $st -eq 'idle' -or $st -eq 'settings' -or $st -eq 'city' -or $st -eq 'prepok'); res = @{ state = $st; rec = $id; cmd = $cmd; name = $nm; why = $why } }
                 }
             }

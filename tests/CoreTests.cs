@@ -7015,6 +7015,38 @@ static partial class CoreTests {
         Eq("inventory,art-tab,Done:the artifact tab is open", string.Join(",", wk), "lab setup: start_artifact opens the inventory's artifact tab");
         wk = walk("start_artifact", st => { invInit(st); st["kind"] = ScreenKind.Inventory; st["inv"] = new[] { false, true, false, false, true, true }; }, invFx);
         Check(wk.Length == 1 && wk[0].StartsWith("Fail:") && wk[0].Contains("sale mode"), "lab setup: start_artifact in the artifact sale mode fails instead of leaving it (" + string.Join(",", wk) + ")");
+        {   // random_start:<seed> (docs/specs/navigator.md): parsed, the same chain for the same seed, safe steps only, every chain walked on the sim
+          Check(LabRecCmd.Parse("1700000000004 prep random_start:17").Name == "random_start:17" && LabPrep.RandomSeed("random_start:17") == 17 && LabPrep.RandomSeed("random_start:") < 0 && LabPrep.RandomSeed("random_start:1234567890") < 0 && LabPrep.RandomSeed("random_start:x") < 0 && LabPrep.RandomSeed("hero_filter") < 0, "lab setup: random_start:<seed> is read, a bad seed is not");
+          foreach (var rb in new[] { "1 prep random_start:", "1 prep random_start:a", "1 prep random_start:1 2", "1 prep random_start:-3", "1 prep Random_start:3" }) Check(LabRecCmd.Parse(rb) == null, "lab setup: rejected: " + rb);
+          var sn = LabRecCmd.Parse("1700000000005 settings nav=on"); var sf = LabRecCmd.Parse("1700000000006 settings nav=off"); var s0 = LabRecCmd.Parse("1700000000007 settings");
+          Check(sn != null && sn.Op == "settings" && sn.Nav == "on" && sf.Nav == "off" && s0.Nav == "" && LabRecCmd.Parse("1 settings nav=maybe") == null && LabRecCmd.Parse("1 settings nav=") == null, "lab setup: settings carries nav=on|off");
+          var safe = new HashSet<string>(new[] { "visit_heroes", "start_inventory_materials", "start_bulk_sale", "start_artifact", "hero_filter", "hero_filter_closed", "item_filter", "hide_worn_on" });
+          var leftovers = new HashSet<string>(new[] { "hero_filter", "hero_filter_closed", "item_filter", "hide_worn_on" });
+          bool det = true, onlySafe = true, leftoverLast = true, oneToFour = true; var kinds = new HashSet<string>();
+          for (int sd = 0; sd < 300; sd++) {
+            var c1 = LabPrep.RandomChain(sd); var c2 = LabPrep.RandomChain(sd);
+            if (string.Join(",", c1) != string.Join(",", c2)) det = false;
+            if (c1.Length < 1 || c1.Length > 4) oneToFour = false;
+            for (int i = 0; i < c1.Length; i++) { if (!safe.Contains(c1[i])) onlySafe = false; if (leftovers.Contains(c1[i]) && i != c1.Length - 1) leftoverLast = false; kinds.Add(c1[i]); }
+          }
+          Check(det && onlySafe && leftoverLast && oneToFour && kinds.Count == safe.Count, "lab setup: random chains are repeatable, 1-4 safe steps, a leftover only last, every step kind comes up (" + kinds.Count + " of " + safe.Count + ")");
+          Check(string.Join(",", LabPrep.RandomChain(1)) != string.Join(",", LabPrep.RandomChain(2)) || string.Join(",", LabPrep.RandomChain(2)) != string.Join(",", LabPrep.RandomChain(3)), "lab setup: seeds give different chains");
+          Action<Dictionary<string, object>> bothInit = st => { heroInit(st); st["inv"] = new[] { false, false, false, false, false, false }; };
+          Action<string, Dictionary<string, object>> bothFx = (k, st) => {
+            heroFx(k, st); invFx(k, st);
+            if (k == "heroes") st["kind"] = ScreenKind.HeroScreen;
+            if (k == "inventory") st["kind"] = ScreenKind.Inventory;
+            if (k == "hero-back") st["kind"] = ScreenKind.City;
+          };
+          int okRuns = 0; string badRun = "";
+          for (int sd = 1; sd <= 40; sd++) {
+            var wr = walk("random_start:" + sd, bothInit, bothFx); var last = wr[wr.Length - 1];
+            if (last.StartsWith("Done:random_start:" + sd + " = ")) okRuns++; else if (badRun == "") badRun = sd + ": " + last;
+          }
+          Check(okRuns == 40, "lab setup: 40 random starts end on the sim with their path (" + okRuns + "/40" + (badRun != "" ? ", first bad " + badRun : "") + ")");
+          var rp = new LabPrep("random_start:3");
+          Check(rp.CapMs > LabPrep.PrepCapMs && rp.FullName == "random_start:3", "lab setup: a random start has a cap of its steps");
+        }
         { var cp = new LabPrep("city"); var vc = new LabPrepView { Now = 5, Front = false, Kind = ScreenKind.Inventory };
           Eq(LabMove.Back, cp.Step(vc).Move, "lab setup: city on the inventory goes back (the game need not be in front: the gate decides)");
           vc.Kind = ScreenKind.City; Eq(LabMove.Done, cp.Step(vc).Move, "lab setup: city on the city is done");

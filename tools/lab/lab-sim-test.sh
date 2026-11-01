@@ -7,6 +7,9 @@
 #                                                  equip_toggle_auto_late); the fake app acks "city" / "prep <name>" (prepok; item_filter answers prepfail). Exit 0 when a city job
 #                                                  came before every scenario, the preps ran in order (hero_filter, start_bulk_sale, item_filter), the failed prep is a WARN step with no
 #                                                  request seeded for it, the plan with auto click off waited and the "settings" command followed, and the run finished 'done'
+#   lab-sim-test.sh [max seconds] fuzz             the random-start fuzz: 3 x equip_random_start with data fuzz_seed 5 and nav on (what lab-request.sh --fuzz 3 --seed 5 --nav on queues). Exit 0 when the
+#                                                  preps were random_start:5, :6, :7, no city job came, the settings job carried nav on, the three steps are named «equip_random_start 5..7» and
+#                                                  passed, and the report says «Успешные запуски со случайного экрана: 3/3 (100%), зависаний 0»
 #   lab-sim-test.sh [max seconds] noack            like prep, but the fake app never answers "city" (an old app): the setup is switched off for the run, the prep scenarios are skipped
 #                                                  with a WARN, the others run
 #   lab-sim-test.sh [max seconds] offline          the fake laptop goes offline for ~14 s in the middle (LAB_OFFLINE_SEC=6): exit 0 when the run
@@ -38,8 +41,10 @@ q <<< "
   insert into public.lab_devices (name, enabled) values ('sim-test', true);" >/dev/null
 D=$(dev_id sim-test)
 SCN='{locate,locate_recast,locate_art}'
+FD='{}'
+[ "$mode" = fuzz ] && { SCN='{equip_random_start,equip_random_start,equip_random_start}'; FD='{"fuzz_seed": 5, "nav": "on"}'; }
 case "$mode" in prep|noack) SCN='{equip_hero_filter_open,locate_from_bulk_sale,locate_recast_item_filter,equip_toggle_auto_late}' ;; esac
-q -v d="$D" -v sc="$SCN" <<< "insert into public.lab_runs (device_id, scenarios, build, data) values (:'d'::uuid, :'sc'::text[], 'a', '{\"target_version\": \"9.9.9.1\", \"want_version\": \"9.9.9.1\"}'::jsonb)" >/dev/null
+q -v d="$D" -v sc="$SCN" -v fd="$FD" <<< "insert into public.lab_runs (device_id, scenarios, build, data) values (:'d'::uuid, :'sc'::text[], 'a', '{\"target_version\": \"9.9.9.1\", \"want_version\": \"9.9.9.1\"}'::jsonb || :'fd'::jsonb)" >/dev/null
 # the fake device + app: heartbeat and a fresh pilot line every second, every job done at once, every pending request done after ~4 s
 ( n=0; while :; do
     n=$((n+1)); now=$(date +%s)
@@ -67,7 +72,7 @@ q -v d="$D" -v sc="$SCN" <<< "insert into public.lab_runs (device_id, scenarios,
 t0=$(date +%s)
 # cron passes: one is enough normally; an offline laptop ends the pass (the run waits), the next one resumes it
 while [ $(( $(date +%s) - t0 )) -lt "$max" ]; do
-  LAB_DIR="$W/lab" TEST_FEED="$W/feed" LAB_REC_ROOT="$W/rec" LAB_NO_TG=1 LAB_LOGS_WAIT=3 LAB_OFFLINE_SEC=$([ "$mode" = offline ] && echo 6 || echo 180) LAB_ONLY=sim-test bash "$W/lab-loop.sh" --auto 2>&1 | cut -c1-160
+  LAB_DIR="$W/lab" TEST_FEED="$W/feed" LAB_REC_ROOT="$W/rec" LAB_NO_TG=1 LAB_LOGS_WAIT=3 LAB_OFFLINE_SEC=$([ "$mode" = offline ] && echo 6 || echo 180) LAB_ONLY=sim-test bash "$W/lab-loop.sh" --auto 2>&1 | tee -a "$W/loop.out" | cut -c1-160
   [ "$(q -v d="$D" <<< "select count(*) from public.lab_runs where device_id = :'d'::uuid and state in ('queued', 'running')")" = 0 ] && break
   sleep 3
 done
@@ -81,9 +86,9 @@ lm=$(q -v d="$D" <<< "select count(*) from simtest.item_locates r where exists (
   and j.created_at = (select max(j2.created_at) from public.lab_jobs j2 where j2.device_id = j.device_id and j2.action = 'mark' and j2.created_at < r.created_at) and (j.finished_at is null or j.finished_at > r.created_at))" 2>/dev/null)
 mn=$(q -v d="$D" <<< "select count(*) from public.lab_jobs where device_id = :'d'::uuid and action = 'mark'")
 sf=$(cat "$W/lab/build-1.status" 2>/dev/null); echo "--- build-1.status"; echo "$sf"
-if [ "$mode" = prep ] || [ "$mode" = noack ]; then
+if [ "$mode" = prep ] || [ "$mode" = noack ] || [ "$mode" = fuzz ]; then
   echo "--- jobs"
-  JOBS=$(q -v d="$D" <<< "select action || ' ' || coalesce(args->>'cmd', '') || ' ' || coalesce(args->>'name', '') || ' ' || state from public.lab_jobs where device_id = :'d'::uuid and action = 'rec' and args->>'cmd' in ('city', 'prep', 'settings') order by created_at, id")
+  JOBS=$(q -v d="$D" <<< "select action || ' ' || coalesce(args->>'cmd', '') || ' ' || coalesce(args->>'name', '') || ' ' || coalesce(args->>'nav', '') || ' ' || state from public.lab_jobs where device_id = :'d'::uuid and action = 'rec' and args->>'cmd' in ('city', 'prep', 'settings') order by created_at, id")
   echo "$JOBS"
   echo "--- steps"; STEPS=$(q -v d="$D" <<< "select s->>'name' || ' ok=' || (s->>'ok') || ' warn=' || coalesce(s->>'warn', '') || ' ' || coalesce(s->>'note', '') from public.lab_runs r, jsonb_array_elements(r.steps) s where r.device_id = :'d'::uuid"); echo "$STEPS"
   SEEDED=$(q <<< "select string_agg(kind, ',' order by created_at) from (select kind, created_at from simtest.equip_plans union all select kind, created_at from simtest.item_locates union all select kind, created_at from simtest.sell_plans) x"); echo "seeded: $SEEDED"
@@ -101,6 +106,12 @@ elif [ "$mode" = prep ]; then
     && grep -q '^equip_hero_filter_open ok=true' <<< "$STEPS" && grep -q '^locate_from_bulk_sale ok=true' <<< "$STEPS" \
     && grep -q '^locate_recast_item_filter ok=true warn=true .*item_filter' <<< "$STEPS" && grep -q '^equip_toggle_auto_late ok=true' <<< "$STEPS" \
     && [ "$SEEDED" = equip_city,locate,equip_city ]
+elif [ "$mode" = fuzz ]; then
+  preps=$(grep '^rec prep ' <<< "$JOBS" | awk '{print $3}' | paste -sd,); ncity=$(grep -c '^rec city ' <<< "$JOBS")
+  echo "preps: $preps, city jobs: $ncity, settings with nav on: $(grep -c '^rec settings  on ' <<< "$JOBS")"
+  [ "$st" = done ] && [ "$preps" = random_start:5,random_start:6,random_start:7 ] && [ "$ncity" = 0 ] && grep -q '^rec settings  on ' <<< "$JOBS" \
+    && grep -q '^equip_random_start 5 ok=true warn= ' <<< "$STEPS" && grep -q '^equip_random_start 6 ok=true' <<< "$STEPS" && grep -q '^equip_random_start 7 ok=true' <<< "$STEPS" \
+    && [ "$SEEDED" = equip_city,equip_city,equip_city ] && grep -rqF 'Успешные запуски со случайного экрана: 3/3 (100%), зависаний 0' "$W/lab" "$W/loop.out"
 elif [ "$mode" = noack ]; then
   ncity=$(grep -c '^rec city ' <<< "$JOBS"); npr=$(grep -c '^rec prep ' <<< "$JOBS")
   echo "city jobs: $ncity (the first unanswered switches the setup off), prep jobs: $npr"
