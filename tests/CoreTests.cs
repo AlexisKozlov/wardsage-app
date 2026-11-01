@@ -7123,6 +7123,13 @@ static partial class CoreTests {
             "art hint: columns from the list's width: 8 at the live window, 7 at the authored one, the fallback without a rectangle");
     }
     Check(Math.Abs(tb[0] - 0.0023 * U) <= 1.5 && Math.Abs(tb[1] - 0.4022 * U) <= 1.5 && Math.Abs(tb[2] - 0.1688 * U) <= 1.5 && Math.Abs(tb[3] - 0.125 * U) <= 1.5, "art hint: the «Артефакт» toggle (research numbers) " + string.Join(",", tb));
+    {   // lab 1.6.66.466: the live «Продать» frame 817,624 190x63 stood round a button of 820.4..996.5 x 633.7..676.3 (1366x705): now the sprite's box
+      double U7 = Ui.Unit(1366, 705);
+      var sb = SellHint.SellBtnFromLive("inventory.sellBtn", new double[] { 817, 624, 190, 63 }, U7);
+      Check(Math.Abs(sb[0] - 820.4) <= 1.5 && Math.Abs(sb[1] - 633.7) <= 1.5 && Math.Abs(sb[2] - 176.1) <= 1.5 && Math.Abs(sb[3] - 42.6) <= 1.5, "sell final: the frame on the live «Продать» hugs the sprite (measured numbers) " + string.Join(",", sb));
+      var same = new double[] { 1, 2, 3, 4 };
+      Check(SellHint.SellBtnFromLive("hero.confirm", same, U7) == same && SellHint.SellBtnFromLive("inventory.sellBtn", null, U7) == null, "sell final: other keys and no rect stay as they are");
+    }
     Check(Math.Abs(bb[0] - 0.4728 * U) <= 1.5 && Math.Abs(bb[1] - (H - 0.0983 * U)) <= 1.5 && Math.Abs(bb[2] - 0.2466 * U) <= 1.5 && Math.Abs(bb[3] - 0.0575 * U) <= 1.5, "art hint: «Массовая продажа» (live recording numbers) " + string.Join(",", bb));
     string webGeo = Path.Combine(WebRoot(), "data", "app-geometry", "1.6.39.829.1.json");
     if (File.Exists(webGeo)) {

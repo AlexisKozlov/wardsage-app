@@ -283,6 +283,19 @@ namespace RealmForge {
     }
     public const double SellBtnW = 0.2497, SellBtnH = 0.0606, SellBtnRight = 0.649, SellBtnBottom = 0.0709;
 
+    /// <summary>The live widget of «Продать» (m_BtnSell) is larger than the button the player sees: lab 1.6.66.466 (1366x705) read the frame at 817,624 190x63
+    /// (the widget 819,626 186x59 + 2 px) round a sprite of 820.4..996.5 x 633.7..676.3 (176x43), its centre 3.5 px left of the widget's. The frame goes round
+    /// the sprite: its size (<see cref="SellBtnW"/> x <see cref="SellBtnH"/> U) on the live frame's centre moved by <see cref="SellBtnDX"/> U.
+    /// <paramref name="frame"/> = the live frame {x, y, w, h}; null / not the «Продать» key stays as it is.</summary>
+    public static double[] SellBtnFromLive(string key, double[] frame, double U) {
+      if (key != "inventory.sellBtn" || frame == null || frame.Length < 4 || U <= 0) return frame;
+      double w = SellBtnW * U, h = SellBtnH * U, cx = frame[0] + frame[2] / 2 + SellBtnDX * U, cy = frame[1] + frame[3] / 2;
+      var r = new double[Math.Max(4, frame.Length)]; Array.Copy(frame, r, frame.Length);
+      r[0] = cx - w / 2; r[1] = cy - h / 2; r[2] = w; r[3] = h;
+      return r;
+    }
+    public const double SellBtnDX = -0.005;
+
     /// <summary>The frame of «Массовая продажа» under the list (bottom left), where the auto mode clicks: {x, y, w, h} in client px.</summary>
     public static int[] PressBulkRect(double W, double H, double U) {
       int bw = (int)(0.2 * U), bh = (int)(0.065 * U);

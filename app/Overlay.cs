@@ -4402,12 +4402,12 @@ namespace RealmForge {
       else if (ft.Cell != UiCellKind.None) why = "a list cell (LiveCell)";
       else if (ft.Click != ClickTarget.None) {
         var lv = LiveFrame(ft.Click, null, W, H, U, ft.Visual != "-", layout);
-        if (lv != null) { live = true; FrameLiveSeen(key); lv = FrameSteadyOf(key).Pick(lv); AuditFrameFor(key, layout, lv, true, null); return lv; }
+        if (lv != null) { live = true; FrameLiveSeen(key); lv = SellHint.SellBtnFromLive(key, FrameSteadyOf(key).Pick(lv), U); AuditFrameFor(key, layout, lv, true, null); return lv; }
         var r = RFX.UiButtonFresh(ft.Click, null, W, H, Environment.TickCount, 1000);
         why = r == null ? "no fresh read" : !r.Ok ? "failed at " + r.FailStep : !r.Visible ? "not visible" : "not on top";
       } else {
         var lv = LiveFrameKey(ft, W, H, U, out why);
-        if (lv != null) { live = true; FrameLiveSeen(key); lv = FrameSteadyOf(key).Pick(lv); AuditFrameFor(key, layout, lv, true, null); return lv; }
+        if (lv != null) { live = true; FrameLiveSeen(key); lv = SellHint.SellBtnFromLive(key, FrameSteadyOf(key).Pick(lv), U); AuditFrameFor(key, layout, lv, true, null); return lv; }
       }
       // «Заменить» / «Надеть»: no live rect, no frame (never the layout's: it sat beside the card's real button, the plate covered it)
       if (key == FrameTargets.KeyConfirm) { FrameNoneSay(key, why); AuditFrameFor(key, layout, layout, false, why); return null; }
