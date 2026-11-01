@@ -56,7 +56,7 @@ ok(/'mark', 'rec'\)\);/.test(sql), 'the SQL action check allows rec');
 ok(/'rec'\s*\{\s*\$out = Invoke-Rec \$jobArgs\s*\}/.test(ps), 'the runner dispatches rec');
 ok(!/[^\x00-\x7F]/.test(ps), 'the runner stays ASCII');
 const loop = readFileSync(new URL('../tools/lab/lab-loop.sh', import.meta.url), 'utf8');
-const j = loop.match(/mkjob rec "(\{[^"]*(?:\\"[^"]*)*\})"/);
+const j = loop.match(/mkjob rec "(\{\\"cmd\\":\\"start\\"[^"]*(?:\\"[^"]*)*\})"/);
 ok(!!j, 'the loop queues a rec start');
 if (j) {
   const txt = j[1].replace(/\\"/g, '"').replace('$sc', 'locate').replace('$RUN', run);
