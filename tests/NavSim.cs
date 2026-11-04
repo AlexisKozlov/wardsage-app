@@ -7,7 +7,9 @@ using RealmForge;
 
 static partial class CoreTests {
   /// <summary>The injectors (their own Random streams: the old seeds keep their runs).</summary>
-  sealed class NavCfg { public double FlickerP, FlagFlickerP, LatePopupP; public int CellLatencyMs; public long LockMs, RebuildMs; public bool OwnCover; }
+  sealed class NavCfg { public double FlickerP, FlagFlickerP, LatePopupP; public int CellLatencyMs; public long LockMs, RebuildMs; public bool OwnCover;
+    /// <summary>FilterLookBlind: the hero filter's pixel read is false while the sim pop-up is open; PopupEatsBack: a back press with the pop-up open only closes it; CityBackLatencyMs: the back arrow answers this late.</summary>
+    public bool FilterLookBlind, PopupEatsBack; public long CityBackLatencyMs; }
   static bool SimNavBlocked;
   static bool SimNav, SimNavCity, SimNavChecks; static NavCfg SimNavCfg = new NavCfg(); static long SimNavPlan;
 
@@ -220,7 +222,8 @@ static partial class CoreTests {
   static readonly string[] NavScenarios = {
     "nav.equip.fromAny", "nav.equip.offerChain", "nav.equip.unknownPopup", "nav.equip.tipLeftover", "nav.equip.filterLeftover", "nav.equip.heroFilterOpen",
     "nav.equip.hideWornForeign", "nav.equip.hideWorn", "nav.equip.foreignInvTab", "nav.equip.overFoundry", "nav.equip.bulkSale", "nav.equip.flicker", "nav.equip.lateCells200", "nav.equip.popupDuringEdge", "nav.equip.inputLock", "nav.city.fromAny",
-    "nav.equip.heroFactionHides", "nav.equip.heroFilterBlind", "nav.equip.phantomRedX", "nav.equip.resetMidHero", "nav.equip.heroNotOwned", "nav.equip.ownHintOver", "nav.city.blockedBack" };
+    "nav.equip.heroFactionHides", "nav.equip.heroFilterBlind", "nav.equip.phantomRedX", "nav.equip.resetMidHero", "nav.equip.heroNotOwned", "nav.equip.ownHintOver", "nav.city.blockedBack",
+    "nav.equip.heroFilterBlindEats", "nav.equip.cityBackLate" };
 
   static readonly string[] NavStartNames = { "City", "Hero (other hero)", "Hero (gear list)", "Inventory", "Inventory (other tab)", "Inventory (bulk)", "Foundry identify", "Foundry ascend",
     "Foundry recast", "Gem", "Artifact workshop", "Guild", "Arena", "Shop", "Popup over City", "Plan" };
@@ -248,7 +251,7 @@ static partial class CoreTests {
         if (r.Next(3) != 0) { g.Hero.Shown = r.Next(2) == 0 ? plan : other; g.Hero.Tab = 3; g.Hero.Part = r.Next(3) == 0 ? -1 : 2; g.Push(SimHero); }
         break;
       }
-      case "nav.equip.heroFactionHides": case "nav.equip.heroFilterBlind": case "nav.equip.resetMidHero": case "nav.equip.heroNotOwned": {   // the hero grid's filter model (GameSim.cs EnableHeroModel)
+      case "nav.equip.heroFactionHides": case "nav.equip.heroFilterBlind": case "nav.equip.resetMidHero": case "nav.equip.heroNotOwned": case "nav.equip.heroFilterBlindEats": case "nav.equip.cityBackLate": {   // the hero grid's filter model (GameSim.cs EnableHeroModel)
         bool notOwned = sc == "nav.equip.heroNotOwned";
         g.EnableHeroModel(plan, !notOwned); g.FilterFadeMs = 300 + r.Next(500);
         g.Hero.Shown = g.Hero.CityHero = other; g.Hero.Tab = 1 + 2 * r.Next(2); g.Hero.Part = -1; g.Push(SimHero);
@@ -283,6 +286,8 @@ static partial class CoreTests {
   }
 
   /// <summary>A scenario whose only right end is this one (a hero the player does not own: a named stop).</summary>
+  /// <summary>Scenarios that must end done on every seed: a rule's refusal (gate_dangerous ...) is a failure there.</summary>
+  static bool NavStrict(string sc) { return sc == "nav.equip.heroFilterBlindEats" || sc == "nav.equip.cityBackLate"; }
   static string NavExpect(string sc) { return sc == "nav.equip.heroNotOwned" ? "navhalt:hero_not_in_grid" : sc == "nav.city.blockedBack" ? "navhalt:reset_failed" : null; }
 
   static NavCfg NavCfgOf(string sc) {
@@ -293,6 +298,8 @@ static partial class CoreTests {
     else if (sc == "nav.equip.inputLock") c.LockMs = 350;
     else if (sc == "nav.equip.ownHintOver") c.OwnCover = true;
     else if (sc == "nav.equip.hideWorn") { c.FlagFlickerP = 0.1; c.RebuildMs = 200; }
+    else if (sc == "nav.equip.heroFilterBlindEats") { c.FilterLookBlind = true; c.PopupEatsBack = true; }
+    else if (sc == "nav.equip.cityBackLate") { c.CityBackLatencyMs = 2500; c.FilterLookBlind = true; c.PopupEatsBack = true; }   // (the owner's build 531: the pop-up unseen and eating the first back press, the game answering 2.5 s late; the late answer alone is no failure on the old code either)
     return c;
   }
 
@@ -303,8 +310,9 @@ static partial class CoreTests {
     double failP = r.Next(3) == 0 ? 0.0 : r.NextDouble() * 0.15;
     var g = new SimGame(seed, slow, failP); g.Geo = geo; g.SpawnP = 0.01;
     long plan = 100 + seed % 30;
-    g.LockMs = NavCfgOf(sc).LockMs; g.ListRebuildMs = NavCfgOf(sc).RebuildMs;
+    g.LockMs = NavCfgOf(sc).LockMs; if (NavStrict(sc)) g.SpawnP = 0; g.ListRebuildMs = NavCfgOf(sc).RebuildMs;
     NavStart(sc, g, r, plan);
+    { var cf = NavCfgOf(sc); if (cf.FilterLookBlind) g.Hero.Blind = true; g.PopupEatsBack = cf.PopupEatsBack; g.CityBackLatencyMs = cf.CityBackLatencyMs; }
     SimNav = nav; SimNavBlocked = sc == "nav.city.blockedBack"; SimNavCity = sc.StartsWith("nav.city"); SimNavCfg = NavCfgOf(sc); SimNavPlan = plan;
     var oc = new string[1]; var tmp = new Dictionary<string, int>();
     string e;
@@ -342,8 +350,9 @@ static partial class CoreTests {
         for (int s = from; s < from + per; s++) {
           var a = NavRunOne(sc, s, slow, true, geo, verbose);
           if (Environment.GetEnvironmentVariable("NAV_DIGEST") != null) Console.WriteLine("digest " + sc + (slow ? " slow " : " fast ") + s + " " + a.Hash + " " + a.Outcome);
-          var b = sc.StartsWith("nav.city") || NavExpect(sc) != null ? null : NavRunOne(sc, s, slow, false, geo, false);
+          var b = sc.StartsWith("nav.city") || NavExpect(sc) != null || NavStrict(sc) ? null : NavRunOne(sc, s, slow, false, geo, false);
           if (NavExpect(sc) != null && !a.Outcome.StartsWith(NavExpect(sc)) && !NavRefusal(a.Outcome)) expectMiss++;
+          if (NavStrict(sc) && !a.Outcome.StartsWith("done") && !a.Outcome.StartsWith("wait:item_")) expectMiss++;   // (the item pilot's own verdict is not the navigator's)
           if (a.Outcome.StartsWith("done")) doneNav++;
           else if (a.Outcome.StartsWith("navhalt") || a.Outcome.StartsWith("halt:")) { halts++; int c; why.TryGetValue(a.Outcome, out c); why[a.Outcome] = c + 1; }
           else { int c; why.TryGetValue(a.Outcome, out c); why[a.Outcome] = c + 1; }
@@ -356,12 +365,12 @@ static partial class CoreTests {
           if (a.Bad) { bad++; if (shown++ < 6) Console.WriteLine("  !! " + sc + (slow ? " slow " : " fast ") + "seed " + s + ": " + a.Err.Replace("\n", "\n  ")); }
         }
         double rate = doneNav * 100.0 / Math.Max(1, per - refNav), need = slow ? 97 : 99;
-        bool pass = bad == 0 && hang == 0 && (NavExpect(sc) != null ? expectMiss == 0 : rate >= need && (sc.StartsWith("nav.city") || pairNav >= pairOld));
+        bool pass = bad == 0 && hang == 0 && (NavStrict(sc) ? expectMiss == 0 : NavExpect(sc) != null ? expectMiss == 0 : rate >= need && (sc.StartsWith("nav.city") || pairNav >= pairOld));
         if (!pass) failures++;
         var sb = new StringBuilder();
         foreach (var kv in why) sb.Append(" ").Append(kv.Key).Append("=").Append(kv.Value);
         Console.WriteLine((pass ? "  PASS " : "  FAIL ") + sc.PadRight(28) + (slow ? "slow" : "fast") + " done " + doneNav + "/" + per + " (" + rate.ToString("0.0") + " % of the " + (per - refNav) + " not refused by a rule)"
-          + (NavExpect(sc) != null ? ", expected " + NavExpect(sc) + " missed " + expectMiss : sc.StartsWith("nav.city") ? "" : ", old code " + doneOld + "/" + per + ", paired (neither refused) " + pairNav + "/" + pairN + " vs old " + pairOld + "/" + pairN) + ", rule breaks " + bad + ", hangs " + hang + (sb.Length > 0 ? " |" + sb : ""));
+          + (NavStrict(sc) ? ", must be done, missed " + expectMiss : NavExpect(sc) != null ? ", expected " + NavExpect(sc) + " missed " + expectMiss : sc.StartsWith("nav.city") ? "" : ", old code " + doneOld + "/" + per + ", paired (neither refused) " + pairNav + "/" + pairN + " vs old " + pairOld + "/" + pairN) + ", rule breaks " + bad + ", hangs " + hang + (sb.Length > 0 ? " |" + sb : ""));
       }
     }
     Console.WriteLine("nav sim: " + failures + " scenario rows failed, " + sw.ElapsedMilliseconds + " ms");

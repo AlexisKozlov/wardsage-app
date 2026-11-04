@@ -42,6 +42,7 @@ namespace RealmForge {
       var ha = pilot.Step(hv);
       mark.Note(pilot.Progress + "|" + hv.Hero + "|" + hv.Tab + "|" + hv.Part + "|" + hv.GridPtr + "|" + (hv.ChosenCamps != null ? hv.ChosenCamps.Length : -1) + "|" + hv.ClassChosen + "|" + hv.FilterOpen, now);
       if (OnStep != null) OnStep(hv, ha);
+      if (pilot.FunnelUnseen) t.BlockerMayLie = true;   // (the pop-up may lie over the screen: the way back to the city takes no Escape)
       if (ha == null) return null;
       if (ha.Kind == AutoKind.None && (pilot.State == "notfound" || pilot.State == "failed" || pilot.State == "small")) {
         // the pilot cannot finish: never a wait. The hero is not in an unfiltered grid after a reset already: the player does not have it (a named stop); anything else: back to the city and again

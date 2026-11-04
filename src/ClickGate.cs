@@ -586,6 +586,7 @@ namespace RealmForge {
     /// <summary>The flow each owner runs now (the hosts set it every tick: CityFirst.OfLocate of the request's purpose ...); its work screen gets no Escape.</summary>
     public readonly Dictionary<ClickOwner, PilotFlow> Flows = new Dictionary<ClickOwner, PilotFlow>();
     readonly HashSet<ClickOwner> barRetried = new HashSet<ClickOwner>();                     // «Инвентарь» opened its bar neighbour: pressed again once
+    readonly HashSet<ClickOwner> heroEscapeOk = new HashSet<ClickOwner>();                    // the planner says an Escape on the hero screen closes the hero form and nothing may lie over it
     readonly HashSet<ClickOwner> escapeDue = new HashSet<ClickOwner>();                       // a back press changed nothing: one Escape next
     readonly Dictionary<ClickOwner, int> tipEscapes = new Dictionary<ClickOwner, int>();      // EquipTipEscape presses in this run
     /// <summary>The item tip / compare forms the equip helper closes with EquipTipEscape before a slot step (its own flow forms: ScreenMap.FlowForms).</summary>
@@ -1059,9 +1060,14 @@ namespace RealmForge {
         else if (now > w.Deadline && SearchWait && Unrecognised(s)) { w.Deadline = now + 1000; searchWaited.Add(o); }   // the form is being searched for: its effect may still show
         else if (!StillAwaited(o, w, now)) {
           // a back press that changed nothing: one Escape next (not on the city, at most MaxEscapes a run), else the stop
-          if ((w.Target == ClickTarget.CityBack || w.Target == ClickTarget.UnknownBack) && Escapes(o) < MaxEscapes && s.Kind != ScreenKind.City && !ExitDialogShown(s)) {
+          if ((w.Target == ClickTarget.CityBack || w.Target == ClickTarget.UnknownBack) && Escapes(o) < MaxEscapes && s.Kind != ScreenKind.City && !ExitDialogShown(s) && EscapeAllowed(o, s)) {
             watches.Remove(o); escapeDue.Add(o);
             Note(o, "escape-due:" + w.ArmedAt, w.What + " changed nothing within the time (screen " + s.Brief + ") - one Escape next");
+          }
+          // a back press that changed nothing where no Escape is allowed (the pilot's own hero screen: a pop-up ate the press): no stop - the back arrow is due again (at most MaxCityBacks of them)
+          else if (w.Target == ClickTarget.CityBack && s.Kind != ScreenKind.City && !ExitDialogShown(s) && CityBacks(o) < MaxCityBacks && OwnScreenBlocksEscape(o, s)) {
+            watches.Remove(o);
+            Note(o, "back-again:" + w.ArmedAt, w.What + " changed nothing within the time (screen " + s.Brief + "), no Escape allowed there - the back arrow again (press " + CityBacks(o) + " of " + MaxCityBacks + ")");
           }
           // an Ascension cell placed from a list still moving (a slow PC): the list is read again and the cell placed again, once a run
           else if (w.Target == ClickTarget.AscendCell && s.Kind == ScreenKind.Foundry && cellRetried.Add(o)) {
@@ -1620,6 +1626,34 @@ namespace RealmForge {
       return "";
     }
 
+    /// <summary>The navigator's planner tells the gate whether an Escape on the pilot's own hero screen is a safe close (EscapeKind "close", no blocker that may lie over the screen).</summary>
+    public void HeroEscape(ClickOwner o, bool ok) { if (ok) heroEscapeOk.Add(o); else heroEscapeOk.Remove(o); }
+
+    /// <summary>The hero form is on top, the city's form right below it, no exit dialog and no flow form: an Escape closes the hero form.</summary>
+    static bool HeroCloseShape(ScreenState f) {
+      if (f == null || f.Kind != ScreenKind.HeroScreen || f.Order == null || f.Order.Count < 2) return false;
+      if (f.Order[0] != "Form_CharactorMain" || f.Order[1] != "Form_MainCity" || !string.IsNullOrEmpty(f.Flow)) return false;
+      foreach (var n in f.Order) if (Array.IndexOf(ExitDialogForms, n) >= 0) return false;
+      return !ExitDialogShown(f);
+    }
+
+    /// <summary>The screen is the pilot's own and an Escape there is not the one safe close of the hero form.</summary>
+    bool OwnScreenBlocksEscape(ClickOwner o, ScreenState f) {
+      PilotFlow fl;
+      if (f == null || f.Held) return false;
+      if (!(ScreenMap.PilotScreen(o, f.Kind) || (Flows.TryGetValue(o, out fl) && f.Kind == CityFirst.WorkScreen(fl)))) return false;
+      return !(f.Kind == ScreenKind.HeroScreen && heroEscapeOk.Contains(o) && HeroCloseShape(f));
+    }
+
+    /// <summary>The Escape rung may be tried now: CheckEscape's rules on a tick's state, but it halts nothing (the ladder takes the next rung instead).</summary>
+    public bool EscapeAllowed(ClickOwner o, ScreenState f) {
+      if (f == null || f.Held) return false;   // (a hint run: Check denies it)
+      if (OwnScreenBlocksEscape(o, f)) return false;
+      if (OwnScreenUnread(o, f) != "") return false;
+      if (f.Kind == ScreenKind.City || f.OfferCount > 0 || (f.ModalOpen && !MapEscapeOk(f) && !LatePartsOnly(f)) || !string.IsNullOrEmpty(f.Flow) || ExitDialogShown(f) || Exempt(f.TopForm) || HasForm(f.ShownKnown, BattleForms)) return false;
+      return Escapes(o) < MaxEscapes;
+    }
+
     /// <summary>EscapeBack: only after a back press that changed nothing, on a fresh screen EscapeBlock allows (never the city, a fight, a pop-up,
     /// the exit dialog), at most MaxEscapes a run.</summary>
     GateResult CheckEscape(ClickRequest r, ScreenState f, string tag, long now) {
@@ -1627,8 +1661,7 @@ namespace RealmForge {
       if (HintOnly(o)) return GateResult.Deny("off", tag + ": a hint run clicks nothing");
       tag = "EscapeBack (key)";
       // never on the screen the pilot works on (the hero screen of the equip helper ...): a pop-up there is the pilot's flow or a stop
-      PilotFlow fl;
-      if (f != null && !f.Held && (ScreenMap.PilotScreen(o, f.Kind) || (Flows.TryGetValue(o, out fl) && f.Kind == CityFirst.WorkScreen(fl)))) { escapeDue.Remove(o); return Halt(o, "dangerous", tag + ": never on the pilot's own screen " + f.Brief + " - nothing is pressed"); }
+      if (OwnScreenBlocksEscape(o, f)) { escapeDue.Remove(o); return GateResult.Deny("pilot", tag + ": not on the pilot's own screen " + f.Brief + " (only the hero form over the city closes with it) - nothing is pressed, the next rung"); }
       // the window table shows the pilot's own screen while the memory read does not have it yet (the slow laptop finds the Foundry / the
       // inventory seconds after it opens): the pop-up may lie over that screen - no Escape until it is read (then the rule above stops)
       string own = OwnScreenUnread(o, f);

@@ -303,6 +303,8 @@ static partial class CoreTests {
     /// <summary>A click: judged on what is on top now, its effect shows after the game's latency.</summary>
     /// <summary>--nav blockedBack: the back arrow and Escape do nothing (a game that will not leave its screen): the way back to the city ends in a named stop.</summary>
     public bool BlockBack;
+    /// <summary>--nav: a back-arrow press while the hero grid's filter pop-up is open only closes the pop-up (it eats the press); CityBackLatencyMs: the back arrow's effect shows this late (0 = the game's usual latency).</summary>
+    public bool PopupEatsBack; public long CityBackLatencyMs;
     public void Click(double x, double y, ClickTarget tg) {
       var bc = BeforeClick; if (bc != null) bc(tg);
       if (LockMs > 0 && Now < LockUntil) { LostLocked++; Say("the input is locked: " + tg + " lost"); return; }
@@ -337,8 +339,8 @@ static partial class CoreTests {
       }
       long lat = Lat(); MaybeSpawn();
       if (c == 'F' || c == 'P' || c == 'U') {
-        if (c != 'U' && ScreenMap.OnExit(top, x, y, W, H, U)) Later(lat, () => Pop(top));
-        else if (c == 'U' && OnBack(x, y)) Later(lat, () => Pop(top));
+        if (c != 'U' && ScreenMap.OnExit(top, x, y, W, H, U)) Later(CityBackLatencyMs > 0 && OnBack(x, y) ? CityBackLatencyMs : lat, () => Pop(top));
+        else if (c == 'U' && OnBack(x, y)) Later(CityBackLatencyMs > 0 ? CityBackLatencyMs : lat, () => Pop(top));
         else if (SimGraph) GraphPress(top, x, y, lat, tg);
         return;
       }
@@ -380,10 +382,11 @@ static partial class CoreTests {
       if (top == SimHero) {
         // the gear tab's neighbour «План сборки» (a click a little off it opens the build plan screen)
         if (Near(x, y, W - hg.GearTabDX * U, hg.GearTabY * U, 20) && R.Next(25) == 0) { Later(lat, () => Push("Form_EquipmentPlan")); return; }
-        Later(lat, () => {
+        Later(CityBackLatencyMs > 0 && OnBack(x, y) ? CityBackLatencyMs : lat, () => {
           if (TopForm() != SimHero) return;
           if (HeroModel && Hero.Part < 0) {
             if (Near(x, y, hg.FunnelX * U, H - hg.FunnelDY * U, 20)) { Hero.FilterOpen = !Hero.FilterOpen; if (Hero.FilterOpen) heroFilterAt = Now + FilterFadeMs; return; }
+            if (OnBack(x, y) && PopupEatsBack && Hero.FilterOpen) { Hero.FilterOpen = false; return; }   // (the pop-up takes the press and only closes)
             if (OnBack(x, y)) Hero.FilterOpen = false;   // (assumed: the funnel's pop-up lies over the grid, not over the back arrow - a pop-up the pixels do not see must not block the way to the city; to be checked live)
             if (HeroDead && !Hero.FilterOpen && x < 0.45 * U && y >= hg.ViewTop * U && y <= hg.ViewBottom * U) return;
           }

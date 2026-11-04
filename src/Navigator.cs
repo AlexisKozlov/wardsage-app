@@ -81,7 +81,7 @@ namespace RealmForge {
   public sealed class Navigator {
     /// <summary>Seconds, not minutes (docs/specs/2026-11-04-core-any-scenario.md D5): a step that shows no change of the screen and no progress mark of its action for StepStallMs is reset; NoProgressMs is the watchdog behind it
     /// (new states only: a flicker between two known ones is not progress); a doomed run ends in a named halt within about 60-90 s.</summary>
-    public const int MaxResets = 2, MaxResetsTotal = 5, MaxSweeps = 14, StepStallMs = 8000, RungMs = 2000, MaxRungFails = 4, LadderCapMs = 12000, HideOwnMs = 3000, GateWaitResetMs = 8000, BlindGraceMs = 12000, NoProgressMs = 10000, RunCapMs = 120000, WaitCapMs = 90000, OrderUnreadMs = 15000;
+    public const int MaxResets = 2, MaxResetsTotal = 5, MaxSweeps = 14, StepStallMs = 8000, RungMs = 2000, RungMaxMs = 4000, RungMarginMs = 600, MaxRungFails = 4, LadderCapMs = 12000, HideOwnMs = 3000, GateWaitResetMs = 8000, BlindGraceMs = 12000, NoProgressMs = 10000, RunCapMs = 120000, WaitCapMs = 90000, OrderUnreadMs = 15000;
     /// <summary>idle | work | at_target | done | halted</summary>
     public string State = "idle";
     public string HaltWhy = "";
@@ -99,6 +99,9 @@ namespace RealmForge {
     public readonly ClickOwner Owner;
     public NavTarget Target { get { return target; } }
 
+    long rungMs = RungMs, popSentAt, lateFailAt; string lateFailEdge = "";
+    /// <summary>What a rung gets to show a change: the latest back-arrow answer seen plus a margin (RungMs to RungMaxMs).</summary>
+    public long CurrentRungMs { get { return rungMs; } }
     NavTarget target; IList<IAtTargetAction> actions = new List<IAtTargetAction>();
     NavMemory mem = new NavMemory(); readonly ActClick act = new ActClick();
     long lastDt, popSince, startedAt = -1, lastTickAt = -1, pausedMs, lastProgress, stepProgress, blindMs, gateSince = -1; bool ownHidden, resetTick, hideKeep; long hideAt; string ladKey = ""; int ladDepth; long ladSince; int ladFails; Snapshot lastSnap; bool hotkeyTried; string lastSig = "", logged = "", curEdge = "";
@@ -185,7 +188,7 @@ namespace RealmForge {
       }
       var tgt = target;
       if (popCity) {
-        if (s.Kind == ScreenKind.City && s.Stack.Count == 0 && s.Stable(now)) popCity = false;
+        if (s.Kind == ScreenKind.City && s.Stack.Count == 0 && s.Stable(now)) { popCity = false; if (target != null) target.BlockerMayLie = false; }
         else tgt = new NavTarget { Goal = NavGoal.City, Owner = Owner };
       }
       ICollection<string> atKeep = null, seekKeep = null;
@@ -207,7 +210,7 @@ namespace RealmForge {
         case StepKind.Act:
           StartAct(io, s, step.Act, now); return;
         case StepKind.AtTarget:
-          if (tgt.Goal == NavGoal.City && popCity) { popCity = false; lastProgress = stepProgress = now; blindMs = 0; return; }   // (the way back to the city is done: the real target goes on)
+          if (tgt.Goal == NavGoal.City && popCity) { popCity = false; if (target != null) target.BlockerMayLie = false; lastProgress = stepProgress = now; blindMs = 0; return; }   // (the way back to the city is done: the real target goes on)
           if (tgt.Goal == NavGoal.City) {
             State = "done"; Say = "done"; io.Log("nav: done City " + (now - startedAt) + "ms clicks=" + Clicks + " recoveries=" + Recoveries); return;
           }
@@ -220,7 +223,8 @@ namespace RealmForge {
     /// and the gate give them): while the run is on its way back to the city (popCity) every rung gets RungMs to change the stack depth or the base form; a rung that does not is a failure, MaxRungFails of them - or
     /// LadderCapMs without a change - end the run with the named stop reset_failed:&lt;top form&gt;. Not a failed step and not another reset: the reset is the ladder.</summary>
     void LadderWatch(INavIo io, Snapshot s, long now, long dt) {
-      if (!popCity) { ladKey = ""; ladFails = 0; return; }
+      if (!popCity) { ladKey = ""; ladFails = 0; popSentAt = 0; lateFailAt = 0; return; }
+      if (act.Cur != null && act.SentAt > 0 && act.Cur.Edge.StartsWith("pop:")) popSentAt = act.SentAt;
       foreach (var l in s.Stack) if (l.Role == LayerRole.Wait) { ladSince = now; ladFails = 0; popSince += dt; return; }   // (a result / loading screen the game closes by itself: its own wait, WaitCapMs)
       // (progress = fewer layers, or another base form that is a known screen; a read that flickers between known and unknown is not)
       string key = s.BaseForm + "|" + s.Stack.Count;
@@ -228,16 +232,20 @@ namespace RealmForge {
       else if (key != ladKey) {
         bool better = s.Stack.Count < ladDepth || (s.Kind != ScreenKind.Unknown && s.BaseForm != "" && !ladKey.StartsWith(s.BaseForm + "|"));
         ladKey = key; if (s.Stack.Count < ladDepth) ladDepth = s.Stack.Count;
-        if (better) { ladSince = now; ladFails = 0; }
+        if (better) {
+          ladSince = now; ladFails = 0; lateFailAt = 0;
+          if (popSentAt > 0 && now >= popSentAt) { rungMs = Math.Min(RungMaxMs, Math.Max(RungMs, now - popSentAt + RungMarginMs)); popSentAt = 0; }   // (the game answered this late: the next rung waits as long)
+        }
         return;
       }
+      if (lateFailAt > 0 && now >= lateFailAt) { lateFailAt = 0; LadderFail(io, lateFailEdge, "Timeout", now); if (State == "halted") return; }   // (the gate's watch ran on and the game did not answer in time either: the rung failed)
       if (s.Confidence < NavConfidence.NoOrder || !s.Stable(now)) { ladSince += dt; popSince += dt; return; }   // (an unreadable screen is not the ladder's failure)
       if (now - ladSince > LadderCapMs) LadderHalt(io, s, "no change in " + LadderCapMs / 1000 + " s");
     }
 
     void LadderFail(INavIo io, string edge, string how, long now) {
       ladFails++;
-      io.Log("nav: ladder rung " + edge + " failed (" + how + ": no change in " + RungMs / 1000 + " s) " + ladFails + "/" + MaxRungFails);
+      io.Log("nav: ladder rung " + edge + " failed (" + how + ": no change in " + rungMs + " ms) " + ladFails + "/" + MaxRungFails);
       if (ladFails >= MaxRungFails && lastSnap != null) LadderHalt(io, lastSnap, ladFails + " rungs");
     }
 
@@ -288,7 +296,7 @@ namespace RealmForge {
 
     void StartAct(INavIo io, Snapshot s, Act a, long now) {
       curEdge = a.Edge;
-      if (popCity && a.TimeoutMs == 0 && (a.Edge.StartsWith("pop:") || a.Edge.StartsWith("modal:"))) a.TimeoutMs = RungMs;   // (each rung of the way back gets RungMs to show a change)
+      if (popCity && a.TimeoutMs == 0 && (a.Edge.StartsWith("pop:") || a.Edge.StartsWith("modal:"))) a.TimeoutMs = (int)rungMs;   // (each rung of the way back gets RungMs to show a change)
       if (mem.PhantomUntil.Count > 0) a.Keep = mem.WithPhantoms(a.Keep, now);
       act.Start(a, now);
       var oc = act.Tick(io, s, now);
@@ -367,11 +375,17 @@ namespace RealmForge {
         case ActOutcome.Halted: Halt(io, "gate_" + io.Gate.HaltReason(Owner)); return;
         case ActOutcome.NotSent: GateWait(io, act.Detail, now); return;   // nothing was clicked: the same step runs again on the next tick (a gate wait that lasts is escalated: GateWait)
         case ActOutcome.NoEffect: case ActOutcome.Timeout:
+          // (the gate's own watch for the press still runs - the game may answer late: not a failed rung yet; the gate ends its watch by itself)
+          if (oc == ActOutcome.Timeout && popCity && edge.StartsWith("pop:")) { lateFailEdge = edge; lateFailAt = Math.Max(now, act.SentAt + RungMaxMs); return; }
           if (popCity && edge != "" && (edge.StartsWith("pop:") || edge.StartsWith("modal:"))) { LadderFail(io, edge, oc.ToString(), now); return; }
           // the city's «Герои» did nothing: the game's own hotkey once, if the flag allows (the next plan shows whether it worked)
           if (HotkeyFallback && !hotkeyTried && edge == "graph:hero" && io.Hotkey("heroes")) { hotkeyTried = true; io.Log("nav: " + edge + " did nothing - the heroes hotkey pressed"); return; }
           // a click that went out with the item's tip over the screen was probably taken by the tip (it closes on any click beside it): the step runs again, no trip to the city
           if (act.TipAtSend) { Reset(io, edge != "" ? edge : (a != null ? a.Why : "step"), "WrongScreen", now); return; }
+          Reset(io, edge != "" ? edge : (a != null ? a.Why : "step"), oc.ToString(), now); return;
+        case ActOutcome.Denied:
+          // an Escape the gate refuses on a pop-up over the pilot's own screen, with no other way to close it: every rung is refused - the named stop of the gate, not a failed step to repeat
+          if (a != null && a.Kind == ActKind.Escape && edge.StartsWith("modal:")) { Halt(io, "gate_dangerous"); return; }
           Reset(io, edge != "" ? edge : (a != null ? a.Why : "step"), oc.ToString(), now); return;
         default: Reset(io, edge != "" ? edge : (a != null ? a.Why : "step"), oc.ToString(), now); return;
       }

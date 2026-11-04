@@ -6497,7 +6497,7 @@ static partial class CoreTests {
       Eq(MapMove.Escape, d.Move, "flow: the map still says Escape for a back-key pop-up over the hero screen");
       var g = new ClickGate(); g.MapEscape(ClickOwner.Equip);
       var r = g.Check(new ClickRequest { Owner = ClickOwner.Equip, Target = ClickTarget.EscapeBack, AutoOn = true, Front = true, U = U }, esc, 20000);
-      Check(!r.Allowed && g.Halted(ClickOwner.Equip) && g.HaltDetail(ClickOwner.Equip).Contains("own screen"), "flow: no Escape on the equip pilot's hero screen, a stop (" + g.HaltDetail(ClickOwner.Equip) + ")");
+      Check(!r.Allowed && !g.Halted(ClickOwner.Equip) && !g.EscapeAllowed(ClickOwner.Equip, esc), "flow: no Escape on the equip pilot's hero screen, no stop either (the ladder takes the next rung) (" + g.HaltDetail(ClickOwner.Equip) + ")");
       var g2 = new ClickGate(); g2.MapEscape(ClickOwner.Locate);
       var esc2 = hero("", "Form_AchievementTip"); esc2.ShownKnown = "Form_CharactorMain";
       Check(g2.Check(new ClickRequest { Owner = ClickOwner.Locate, Target = ClickTarget.EscapeBack, AutoOn = true, Front = true, U = U }, esc2, 20000).Allowed, "flow: another pilot may still close it with Escape");
@@ -6786,12 +6786,12 @@ static partial class CoreTests {
     }
     {   // the city on top: never an Escape (it asks to quit the game), the due one is dropped
       var g = new ClickGate(); var fd = Foundry(null);
-      g.CityBackDue(ClickOwner.Locate, fd, 10000);
-      g.Arm(ClickOwner.Locate, ClickTarget.CityBack, ClickGate.Expect(Rq(ClickOwner.Locate), fd), 10000);
+      g.CityBackDue(ClickOwner.Equip, fd, 10000);
+      g.Arm(ClickOwner.Equip, ClickTarget.CityBack, ClickGate.Expect(Rq(ClickOwner.Equip), fd), 10000);
       g.Observe(fd, 10000 + ClickGate.EffectMs + 1);
-      Check(g.EscapePending(ClickOwner.Locate), "escape: due after the back press that changed nothing");
-      Check(!g.Check(Esc(ClickOwner.Locate), City("Form_MainCity"), 20000).Allowed, "escape: never on the city (fresh read)");
-      Check(!g.EscapeDue(ClickOwner.Locate, City(null), 20000) && !g.EscapePending(ClickOwner.Locate), "escape: the city came - nothing due any more");
+      Check(g.EscapePending(ClickOwner.Equip), "escape: due after the back press that changed nothing");
+      Check(!g.Check(Esc(ClickOwner.Equip), City("Form_MainCity"), 20000).Allowed, "escape: never on the city (fresh read)");
+      Check(!g.EscapeDue(ClickOwner.Equip, City(null), 20000) && !g.EscapePending(ClickOwner.Equip), "escape: the city came - nothing due any more");
       Check(ClickGate.EscapeBlock(City("")) != "" && ClickGate.EscapeBlock(City(null)) != "", "escape: blocked on the city whatever the forms say");
       var ub = ScreenState.Classify(new ScreenInputs { CityForm = false, Offers = new List<string>(), TopUnknown = "Form_BattleEnd", ShownKnown = "" }, 0);
       Check(ClickGate.EscapeBlock(ub) != "", "escape: never on a fight's result");
@@ -9334,9 +9334,52 @@ static partial class CoreTests {
       Check(HeroFilterLook.Seen(frame(true, true, true, false), U), "filter pop-up seen: dark strip + Фракция|Фильтр divider + blue «Все» cell, no Класс|Фракция divider (1.6.46)");
       Check(HeroFilterLook.Seen(frame(true, true, false, true), U), "filter pop-up seen: older layout (both dividers, no blue cell)");
       Check(!HeroFilterLook.Seen(frame(true, false, false, false), U), "dark filtered grid without the Фильтр divider: not the pop-up");
-      Check(!HeroFilterLook.Seen(frame(true, false, true, true), U), "no Фильтр divider: not the pop-up even with the other marks");
+      Check(HeroFilterLook.Seen(frame(true, false, true, true), U), "blue class cell + Класс|Фракция divider, no Фильтр divider: 2 marks of 3 = the pop-up");
       Check(!HeroFilterLook.Seen(frame(true, true, false, false), U), "Фильтр divider alone (a grid line): not the pop-up");
       Check(!HeroFilterLook.Seen(frame(false, true, true, true), U), "no dark strip: not the pop-up");
+      {   // game 1.6.47 at 503x283 (U 282.94): the Фракция|Фильтр line is at 0.7705U, none at 0.4836U; blue «Все» in both columns
+        double U3 = 282.94;
+        Func<bool, bool, bool, bool, Func<int, int, int, int, int[]>> f3 = (strip, blue, d1, d2) => (gx, gy, gw, gh) => {
+          var a = new int[gw * gh];
+          for (int j = 0; j < gh; j++) for (int i = 0; i < gw; i++) {
+            int x = gx + i, y = gy + j, c = (30 << 16) | (30 << 8) | 40;
+            if (!strip) c = (120 << 16) | (110 << 8) | 100;
+            if (d1 && Math.Abs(x - 72) <= 1 && y > 0.16 * U3 && y < 0.87 * U3) c = (130 << 16) | (130 << 8) | 130;
+            if (d2 && Math.Abs(x - 218) <= 1 && y > 0.16 * U3 && y < 0.87 * U3) c = (130 << 16) | (130 << 8) | 130;
+            if (blue && ((x > 0.12 * U3 && x < 0.17 * U3) || (x > 0.35 * U3 && x < 0.385 * U3)) && Math.Abs(y - 0.2379 * U3) < 0.04 * U3) c = (30 << 16) | (90 << 8) | 170;
+            a[j * gw + i] = c;
+          }
+          return a;
+        };
+        Check(HeroFilterLook.Seen(f3(true, true, true, true), U3), "503x283: dark strip, blue «Все» in both columns, dividers at x 72 and 218, none at 137: the pop-up");
+        Check(HeroFilterLook.Seen(f3(true, true, false, false), U3), "503x283: both blue cells alone are 2 marks");
+        Check(!HeroFilterLook.Seen(f3(true, false, false, false), U3), "503x283: a closed grid of dark not-owned cards: not the pop-up");
+        Check(!HeroFilterLook.Seen(f3(true, false, true, false), U3), "503x283: one line alone: not the pop-up");
+        Check(!HeroFilterLook.Seen(f3(false, true, true, true), U3), "503x283: no dark strip: not the pop-up");
+      }
+      {   // the real frames of the owner's recording (build 531, game 1.6.47, 503x283): x 0..231, y 40..249 of frames 20, 40 (closed) and 45, 48, 50, 54 (pop-up open), 4 bits per channel
+        string fp = Path.Combine("tests", "fixtures", "herofilter", "rec164843-503x283.bin.gz");
+        if (File.Exists(fp)) {
+          byte[] raw;
+          using (var fs = File.OpenRead(fp)) using (var gz = new GZipStream(fs, CompressionMode.Decompress)) using (var ms = new MemoryStream()) { gz.CopyTo(ms); raw = ms.ToArray(); }
+          const int FW = 232, FH = 210, FY = 40; int per = FW * FH * 3;
+          string[] names = { "closed 20", "closed 40", "open 45", "open 48", "open 50", "open 54" };
+          bool[] open = { false, false, true, true, true, true };
+          for (int k = 0; k < names.Length; k++) {
+            int off = k * per;
+            Func<int, int, int, int, int[]> grabR = (gx, gy, gw, gh) => {
+              var a = new int[gw * gh];
+              for (int j = 0; j < gh; j++) for (int i = 0; i < gw; i++) {
+                int x = gx + i, y = gy + j - FY;
+                if (x < 0 || x >= FW || y < 0 || y >= FH) return null;
+                int q = off + (y * FW + x) * 3; a[j * gw + i] = (raw[q] << 16) | (raw[q + 1] << 8) | raw[q + 2];
+              }
+              return a;
+            };
+            Check(HeroFilterLook.Seen(grabR, 282.94) == open[k], "recorded frame (" + names[k] + ") at 503x283: the filter pop-up is " + (open[k] ? "seen" : "not seen"));
+          }
+        } else Check(false, "fixture " + fp + " is missing");
+      }
     }
     var top = new FakeHeroGame(g, W, H) { Heroes = heroes, Shown = heroes[120] }; top.Scroll = top.MaxScroll;
     Check(RunHero(new HeroPilot(g), top, heroes[0], 3000, out lv) == "done" && top.Shown == heroes[0], "grid at its end, the first hero: up to the top");

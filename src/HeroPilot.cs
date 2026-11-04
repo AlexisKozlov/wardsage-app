@@ -91,6 +91,8 @@ namespace RealmForge {
     long funnelAt; bool funnelPressed;
     /// <summary>The filter pop-up did not show after a funnel press: it cannot be read on this screen. Kept across resets (it is about the game's pixels); the optional filtering of a far hero is skipped then.</summary>
     bool filterBlind;
+    /// <summary>The funnel was pressed (a toggle) and the pop-up was not seen: it may be open over the screen, so the navigator must not trust an Escape to reach the city. Cleared by a reset of the pilot or when the pop-up is seen.</summary>
+    public bool FunnelUnseen;
     int filterPhase, funnelTries, factionTries, clearTries, classResets, doneCloses; bool classClicked, factionDone, classDone, forceClear;
     ulong lastGrid;
     double dragScale = 1; int lastDragSign;   // (the game's drag gain learnt by overshoots; kept across plans, it is the game's)
@@ -287,7 +289,7 @@ namespace RealmForge {
     // the hero gone from the grid, then «Все» undoes it. Null: nothing to do with the filter now.
     AutoAction FilterStep(HeroView v, double H) {
       if (v.Heroes == null) return null;
-      if (v.FilterOpen) funnelPressed = false;   // (the pop-up was seen: the next press is a new one)
+      if (v.FilterOpen) { funnelPressed = false; FunnelUnseen = false; }   // (the pop-up was seen: the next press is a new one)
       int t = Array.IndexOf(v.Heroes, v.Plan);
       bool active = (v.ChosenCamps != null && v.ChosenCamps.Length > 0) || v.ClassChosen;
       // (also a filtered grid whose rows the pilot cannot find: three clicks in the middle brought up no other hero - the player's filter
@@ -353,7 +355,7 @@ namespace RealmForge {
     AutoAction OpenFilter(HeroView v, double H) {
       if (funnelPressed) {
         if (v.NowMs - funnelAt < Late(FunnelSeenMs)) return AutoAction.Nothing;
-        funnelPressed = false; filterBlind = true; State = "notfound"; Why = "filter pop-up not seen after the funnel press";
+        funnelPressed = false; filterBlind = true; FunnelUnseen = true; State = "notfound"; Why = "filter pop-up not seen after the funnel press";
         return AutoAction.Nothing;
       }
       funnelPressed = true; funnelAt = v.NowMs; funnelTries++; waitUntil = v.NowMs + Late(AfterClickMs);
@@ -411,7 +413,7 @@ namespace RealmForge {
     }
 
     void Restart() {
-      effect.Drop();
+      effect.Drop(); FunnelUnseen = false;
       waitUntil = pauseUntil = failedAt = pickAt = 0; funnelAt = 0; funnelPressed = false; seenHero = 0; clicks = drags = backs = tabs = misses = city = total = 0; bestDist = int.MaxValue; has = pending = false; State = "idle";
       lastDragSign = 0;
       Why = ""; filterPhase = funnelTries = factionTries = clearTries = classResets = doneCloses = 0; classClicked = factionDone = classDone = forceClear = false; lastGrid = 0;
@@ -458,25 +460,35 @@ namespace RealmForge {
       }
       if (dark < 0.85 * px.Length) return false;
       // a dark strip is not enough: a filtered grid of not-owned heroes (dark empty cards) looks the same, and a click on the
-      // funnel then OPENS the pop-up again. Its own marks (measured at 1920×1009 and on 1.6.46 at 526×296): the thin light line
-      // between Фракция | Фильтр (x 0.4836·U), and the blue «Все» cell of the class column at row 0 (y 0.2379·U) or the
-      // Класс | Фракция line (x 0.2557·U; absent on 1.6.46)
-      if (!DividerSeen(grab, (int)(0.4836 * U), (int)(0.16 * U), (int)(0.87 * U))) return false;
-      return BlueCellSeen(grab, U) || DividerSeen(grab, (int)(0.2557 * U), (int)(0.16 * U), (int)(0.87 * U));
+      // funnel then OPENS the pop-up again. Its own marks, 2 of 3 (the divider moved between layouts: at 503x283 on game 1.6.47 the
+      // Фракция | Фильтр line is at 0.7705·U and nothing at 0.4836·U; 1920×1009 and 1.6.46 at 526×296 have it at 0.4836·U):
+      // (a) the blue «Все» / chosen cell of the class column, (b) the same in the faction column, (c) a thin light divider at
+      // 0.2557, 0.4836 or 0.7705·U
+      int marks = 0;
+      if (BlueCellSeen(grab, U, 0)) marks++;
+      if (BlueCellSeen(grab, U, 1)) marks++;
+      if (marks < 2) {
+        int lines = 0;   // (two different lines are the pop-up even without a blue cell)
+        foreach (double fx in new[] { 0.2557, 0.4836, 0.7705 }) if (DividerSeen(grab, (int)(fx * U), (int)(0.16 * U), (int)(0.87 * U))) lines++;
+        marks += lines >= 2 ? 2 : lines;
+      }
+      return marks >= 2;
     }
 
-    // a selected cell: a box of the cell's blue between its check box and its text, in any row of the class or faction column
+    /// <summary>Any column.</summary>
+    public static bool BlueCellSeen(Func<int, int, int, int, int[]> grab, double U) { return BlueCellSeen(grab, U, 0) || BlueCellSeen(grab, U, 1); }
+
+    // a selected cell: a box of the cell's blue between its check box and its text, in any row of one column (0 class, 1 faction)
     // («Все» when nothing is chosen, the chosen class / faction otherwise). Calibrated on the 1.6.46 recording at 526×296: the
     // pop-up open 0.87 and more, the closed grid 0.51 at most
-    public static bool BlueCellSeen(Func<int, int, int, int, int[]> grab, double U) {
-      foreach (double[] col in new[] { new[] { 0.12, 0.17 }, new[] { 0.35, 0.385 } }) {
-        for (int r = 0; r < 7; r++) {
-          int x0 = (int)(col[0] * U), x1 = (int)(col[1] * U), yc = (int)((0.2379 + r * 0.1004) * U), hh = (int)(0.03 * U);
-          int[] px = grab(x0, yc - hh, x1 - x0, 2 * hh);
-          if (px == null || px.Length == 0) continue;
-          int n = 0; foreach (int c in px) if (IsBlueRow(c)) n++;
-          if (n >= 0.7 * px.Length) return true;
-        }
+    public static bool BlueCellSeen(Func<int, int, int, int, int[]> grab, double U, int column) {
+      double[] col = column == 0 ? new[] { 0.12, 0.17 } : new[] { 0.35, 0.385 };
+      for (int r = 0; r < 7; r++) {
+        int x0 = (int)(col[0] * U), x1 = (int)(col[1] * U), yc = (int)((0.2379 + r * 0.1004) * U), hh = (int)(0.03 * U);
+        int[] px = grab(x0, yc - hh, x1 - x0, 2 * hh);
+        if (px == null || px.Length == 0) continue;
+        int n = 0; foreach (int c in px) if (IsBlueRow(c)) n++;
+        if (n >= 0.7 * px.Length) return true;
       }
       return false;
     }

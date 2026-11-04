@@ -18,6 +18,8 @@ namespace RealmForge {
     public string RecipeId = "", UpTo = "";
     /// <summary>Resets this run has made so far (the navigator sets it before every action step): a pilot that cannot finish asks for a reset first and halts when a reset did not help.</summary>
     public int Resets;
+    /// <summary>The hero pilot pressed the grid's funnel and did not see the pop-up: a blocker may lie over the screen (cleared when the run is back in the city).</summary>
+    public bool BlockerMayLie;
     public string Key() { return Goal + "|" + Hero + "|" + Slot + "|" + Tab + "|" + RecipeId + "|" + UpTo; }
   }
 
@@ -127,12 +129,12 @@ namespace RealmForge {
 
     static NavStep Pop(Snapshot s, NavTarget t, INavIo io, long now) {
       var gate = io.Gate; var st = s.State;
-      if (gate.EscapeDue(t.Owner, st, now)) {
-        // the Escape rung: only where the stacks say it closes something (kind not known = the gate's own rule stands)
-        string ek = io.EscapeKind;
-        if (ek == "" || ek == "close") return EscapeStep(t.Owner, s, ClickTarget.EscapeBack, "pop:escape");
-        gate.DropEscape(t.Owner);
-      }
+      string ek = io.EscapeKind;
+      // the Escape rung only where the gate would allow it (on the hero screen: a predicted close of the hero form over the city, no blocker that may lie over it)
+      bool heroOk = ek == "close" && !t.BlockerMayLie && !s.Stack.Exists(l => l.Form.StartsWith("panel:"));
+      gate.HeroEscape(t.Owner, heroOk);
+      if (gate.EscapePending(t.Owner) && !(gate.EscapeAllowed(t.Owner, st) && (ek == "" || ek == "close"))) gate.DropEscape(t.Owner);
+      if (gate.EscapeDue(t.Owner, st, now)) return EscapeStep(t.Owner, s, ClickTarget.EscapeBack, "pop:escape");
       if (!gate.CityBackDue(t.Owner, st, now)) return gate.Halted(t.Owner) ? NavStep.Halt("gate_" + gate.HaltReason(t.Owner)) : NavStep.Wait("back to the city not due (" + ClickGate.CityBackBlock(st) + ")");
       string bf = s.BaseForm; var kind = s.Kind; double U = io.U;
       return NavStep.Of(new Act { Owner = t.Owner, Target = ClickTarget.CityBack, Kind = ActKind.Click, X = Hg.BackX * U, Y = Hg.BackY * U, Base = bf, WantKnown = true, Why = "back to the city",
