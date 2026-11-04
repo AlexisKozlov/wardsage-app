@@ -4504,6 +4504,19 @@ static partial class CoreTests {
       Check(Channel.CaptureSettingAvailable(true, false) && Channel.CaptureSettingAvailable(false, true) && !Channel.CaptureSettingAvailable(false, false) && !Channel.IsStreamer && !Channel.CaptureSetting == !Channel.IsTest, "streamer build: the capture setting is open in the test channel and the streamer build only; this build is not the streamer");
       Check(!Channel.UpdatesEnabled(true) && Channel.UpdatesEnabled(false), "streamer build: no self-update; every other build keeps it");
       Check(CaptureAffinity.Allowed(true, true) && !CaptureAffinity.Allowed(true, false) && !CaptureAffinity.Allowed(false, true), "the setting: the test channel only, the config value is ignored in the main channel");
+      Check(CaptureAffinity.Repaint(0x11u, 0u, true, true) && !CaptureAffinity.Repaint(0x11u, 0x11u, true, true) && !CaptureAffinity.Repaint(CaptureAffinity.Never, 0u, true, true) && !CaptureAffinity.Repaint(0x11u, 0u, false, true) && !CaptureAffinity.Repaint(0x11u, 0u, true, false), "affinity change on a shown window: the picture is presented again (the live switch works without a restart); not at the first apply, not when unchanged / hidden / nothing drawn");
+      {
+        bool show = false; var seen = new Dictionary<string, uint>();
+        var set = new WindowSet<string>(w => seen[w] = CaptureAffinity.For(show, false, false));
+        set.Add("glow"); set.Add("cancel");
+        show = true; set.ApplyAll(w => true);
+        bool both = seen["glow"] == 0u && seen["cancel"] == 0u;
+        set.Add("coach");   // created after the switch
+        bool later = seen["coach"] == 0u;
+        set.Add("glow");    // the same window again: still once
+        set.Remove("cancel"); show = false; set.ApplyAll(w => true);
+        Check(both && later && set.ToArray().Length == 2 && seen["glow"] == 0x11u && seen["coach"] == 0x11u && seen["cancel"] == 0u, "window set: the setting reaches every existing window at once and a window added later gets the current state; a removed one is left alone");
+      }
     }
   }
   static int[] half() { var a = new int[100]; for (int i = 0; i < 30; i++) a[i] = ListTracker.Masked; return a; }

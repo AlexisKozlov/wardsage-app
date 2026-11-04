@@ -133,8 +133,7 @@ namespace RealmForge {
       // kept out of screen captures - our own looks at the list included. Older Windows (before 10 2004) cannot: then the
       // looks see our drawings (live 2026-10-14, a 1366x705 laptop: the plates were on the diagnostics screenshots) and
       // mask the parts we drew (Parts) themselves
-      lock (live) if (!live.Contains(this)) live.Add(this);
-      ApplyAffinity();
+      live.Add(this);   // (applies the current affinity too)
       if (!Excluded && !Capturable && !ShowInCapture) Log.Write("overlay: the hint windows cannot be hidden from screen captures on this Windows: the screen looks mask them");
     }
     // a panel the player may move (the boss coach): while it is movable it takes the mouse and drags like a title bar
@@ -186,13 +185,19 @@ namespace RealmForge {
     public static bool ShowInCapture;
     /// <summary>The auto click is working: the windows are hidden from captures again (when the platform can) so the looks that decide its clicks never see them.</summary>
     public static bool PilotHidden;
-    static readonly System.Collections.Generic.List<GlowWindow> live = new System.Collections.Generic.List<GlowWindow>();
+    static readonly WindowSet<GlowWindow> live = new WindowSet<GlowWindow>(w => w.ApplyAffinity());
     int affinityAt = Environment.TickCount - 10000;
+    uint appliedAff = CaptureAffinity.Never;
     public void ApplyAffinity() {
       uint aff = CaptureAffinity.For(ShowInCapture, Capturable, PilotHidden);
       bool was = Excluded;
       try { Excluded = CaptureAffinity.Hidden(W32.SetWindowDisplayAffinity(Handle, aff), aff); } catch (Exception) { Excluded = false; }
       if (Excluded != was) affinityAt = Environment.TickCount;
+      uint prev = appliedAff; appliedAff = aff;
+      // a window that shows a picture is not captured differently until the compositor gets a new frame: present it again
+      if (CaptureAffinity.Repaint(prev, aff, Visible, putBmp != null)) {
+        try { PutNow(putBmp, putX, putY); W32.SetWindowPos(Handle, IntPtr.Zero, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0004 | 0x0010 | 0x0020); } catch (Exception) { }   // SWP_NOSIZE | NOMOVE | NOZORDER | NOACTIVATE | FRAMECHANGED
+      }
     }
     /// <summary>The windows are settled as hidden from captures: hidden, and not changed within the last half second (the compositor takes a moment to honour the change).</summary>
     public bool Settled { get { return Excluded && unchecked(Environment.TickCount - affinityAt) > 500; } }
@@ -200,12 +205,11 @@ namespace RealmForge {
     public bool MaskNeeded { get { return !Settled; } }
     /// <summary>Every window with a handle is settled as hidden from captures: only then does the dimming around a hint stay (it would cover the whole game in a recording and in the looks).</summary>
     public static bool AllExcluded() {
-      GlowWindow[] all; lock (live) all = live.ToArray();
-      foreach (var w in all) if (w.IsHandleCreated && !w.IsDisposed && !w.Settled) return false;
+      foreach (var w in live.ToArray()) if (w.IsHandleCreated && !w.IsDisposed && !w.Settled) return false;
       return true;
     }
     /// <summary>The windows that exist now (a copy).</summary>
-    public static GlowWindow[] Live() { lock (live) return live.ToArray(); }
+    public static GlowWindow[] Live() { return live.ToArray(); }
     /// <summary>What a screen look masks of this window (screen px): the parts it drew, else the whole window.</summary>
     public System.Collections.Generic.List<int[]> MaskRects() {
       if (Parts.Count > 0) return Parts;
@@ -224,10 +228,9 @@ namespace RealmForge {
       ReapplyAll();
     }
     static void ReapplyAll() {
-      GlowWindow[] all; lock (live) all = live.ToArray();
-      foreach (var w in all) if (w.IsHandleCreated && !w.IsDisposed) w.ApplyAffinity();
+      live.ApplyAll(w => w.IsHandleCreated && !w.IsDisposed);
     }
-    protected override void OnHandleDestroyed(EventArgs e) { lock (live) live.Remove(this); base.OnHandleDestroyed(e); }
+    protected override void OnHandleDestroyed(EventArgs e) { live.Remove(this); base.OnHandleDestroyed(e); }
     /// <summary>What it shows now: its parts in screen px {x, y, w, h} (empty when hidden).</summary>
     public System.Collections.Generic.List<int[]> Parts = new System.Collections.Generic.List<int[]>();
     protected override void OnVisibleChanged(EventArgs e) { base.OnVisibleChanged(e); if (!Visible) Parts.Clear(); }

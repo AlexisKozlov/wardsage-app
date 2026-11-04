@@ -214,5 +214,23 @@ namespace RealmForge {
     public static bool DimOn(bool wanted, bool allHidden) { return wanted && allHidden; }
     /// <summary>The setting «show hints in recordings and streams» works only in the test build (and the one-off streamer build); in the main channel the config value is ignored.</summary>
     public static bool Allowed(bool configOn, bool testChannel) { return configOn && testChannel; }
+    /// <summary>A window that already shows a picture keeps its old capture state until the compositor gets a new frame (live 2026-11-04: the setting switched on
+    /// in the running streamer build, the hints stayed out of screenshots until a restart): after an affinity change on a shown window the picture is presented again.</summary>
+    public static bool Repaint(uint previous, uint now, bool visible, bool hasPicture) { return previous != Never && previous != now && visible && hasPicture; }
+    /// <summary>The "no affinity applied yet" marker of a window.</summary>
+    public const uint Never = 0xFFFFFFFFu;
+  }
+
+  /// <summary>The windows that exist (with a handle): a change of the setting goes to every one of them now, and a window added later gets the
+  /// current state at once (<paramref name="apply"/> is called for it by Add).</summary>
+  public sealed class WindowSet<T> where T : class {
+    readonly System.Collections.Generic.List<T> items = new System.Collections.Generic.List<T>();
+    readonly Action<T> apply;
+    public WindowSet(Action<T> apply) { this.apply = apply; }
+    public void Add(T w) { lock (items) { if (!items.Contains(w)) items.Add(w); } apply(w); }
+    public void Remove(T w) { lock (items) items.Remove(w); }
+    public T[] ToArray() { lock (items) return items.ToArray(); }
+    /// <summary>Applies the current state to every window in the set (only those <paramref name="alive"/> says are usable).</summary>
+    public void ApplyAll(Func<T, bool> alive) { foreach (var w in ToArray()) if (alive(w)) apply(w); }
   }
 }
