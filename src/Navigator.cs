@@ -14,6 +14,8 @@ namespace RealmForge {
     double H { get; }
     double U { get; }
     bool Slow { get; }
+    /// <summary>The game's input is open: no UILocker slot, no stack transition or animation (RFX.NavInputOpen). Clicks and Escape wait for it instead of fixed pauses; true when it cannot be read.</summary>
+    bool InputOpen { get; }
     GameGeometry Geo { get; }
     ScreenState Fresh(bool wantCity, bool wantKnown);
     double[] LiveRect(string form, string field);

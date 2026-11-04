@@ -39,6 +39,7 @@ namespace RealmForge {
       try { NpStacks(ga, l); } catch (Exception e) { l.Add("stacks: exception " + e.Message); }
       try { NpExitDialog(ga, l); } catch (Exception e) { l.Add("exit dialog: exception " + e.Message); }
       try { NpScroll(l); } catch (Exception e) { l.Add("scroll: exception " + e.Message); }
+      try { NpGeometry(ga, l); } catch (Exception e) { l.Add("geometry: exception " + e.Message); }
       return l;
     }
 
@@ -172,7 +173,12 @@ namespace RealmForge {
     }
 
     // ---------------------------------------------------------------- the stacks
+    static readonly Dictionary<string, IList<StackForm>> npStackForms = new Dictionary<string, IList<StackForm>>();
+    static readonly HashSet<string> npShownNames = new HashSet<string>();
+    static bool npLockRead; static bool npLockOpen = true; static int npLockAt;
+
     static void NpStacks(ulong ga, List<string> l) {
+      npStackForms.Clear(); npShownNames.Clear();
       ulong k = NpClass(ga, "UI.UIStatic"); if (k == 0) { l.Add("stacks: UI.UIStatic not found yet"); return; }
       ulong sf = Ptr(k + 0xB8); if (sf == 0) { l.Add("stacks: no static block"); return; }
       for (int s = 0; s < NpStackNames.Length; s++) {
@@ -181,6 +187,8 @@ namespace RealmForge {
         if (ClassName(Ptr(st)) != "UI.UIStack") { l.Add("stack " + NpStackNames[s] + ": not a UIStack (" + ClassName(Ptr(st)) + ")"); continue; }
         NpOneStack(NpStackNames[s], st, l);
       }
+      var pr = EscapePredictor.Predict(npStackForms);
+      l.Add("predict: Escape now → " + pr + (npShownNames.Contains("Form_SystemTips") ? " [Form_SystemTips is in a stack: the quit dialog is up]" : ""));
     }
 
     static void NpOneStack(string name, ulong st, List<string> l) {
@@ -203,8 +211,11 @@ namespace RealmForge {
           ids.Add(NpI32(nb, 0x28)); node = BitConverter.ToUInt64(nb, 0x18);
         }
       }
-      var sb = new StringBuilder();
-      for (int i = 0; i < ids.Count; i++) sb.Append(i > 0 ? " > " : "").Append(NpForm(uis, ids[i]));
+      var sb = new StringBuilder(); var forms = new List<StackForm>(); npStackForms[name] = forms;
+      for (int i = 0; i < ids.Count; i++) {
+        var sf = new StackForm(); sb.Append(i > 0 ? " > " : "").Append(NpForm(uis, ids[i], sf)); forms.Add(sf);
+        if (sf.Name != "") npShownNames.Add(sf.Name);
+      }
       l.Add("stack " + name + " (list head→tail; the top is the end the game's GetTopUI takes): n=" + ids.Count + " " + trans + " nested=" + nq + " showAnims=" + shq + " hideAnims=" + hdq + note + (ids.Count > 0 ? " | " + sb : ""));
     }
 
@@ -216,15 +227,17 @@ namespace RealmForge {
     }
 
     /// <summary>One form of a stack: name, full screen / pop-up, active, back delegate, the map's back behaviour, loading, animation, transition.</summary>
-    static string NpForm(ulong uis, int id) {
+    static string NpForm(ulong uis, int id, StackForm sf) {
       string name = NpName(id);
       var e = ScreenMap.ByName(name);
       string back = e != null ? (e.Esc ?? "?") : "?";
+      sf.Name = name; sf.Back = e != null ? (e.Esc ?? "default") : "default";
       ulong obj = NpFormObject(uis, id);
       if (obj == 0) return name + "[no object, back=" + back + "]";
       var b = Read(obj, 0x180); if (b == null) return name + "[unreadable]";
       bool hasBack = BitConverter.ToUInt64(b, 0x48) != 0, hasBehav = BitConverter.ToUInt64(b, 0xA0) != 0;
       bool active = b[0xE0] != 0, full = b[0x121] != 0, animValid = b[0x122] != 0, inited = b[0x109] != 0, loading = b[0x170] != 0, preloading = b[0x171] != 0;
+      sf.Active = active; sf.HasDelegate = hasBack; sf.Full = full;
       int animLock = NpI32(b, 0x154); string trans = b[0x174] != 0 ? NpI32(b, 0x178).ToString() : "-";
       return name + "[" + (full ? "FULL" : "pop") + (active ? "" : " inactive") + " back=" + back + (hasBehav ? "(lua)" : "") + " delegate=" + (hasBack ? 1 : 0) + (inited ? "" : " !inited")
         + (loading || preloading ? " LOADING" : "") + (animValid ? " anim(lock " + animLock + ")" : "") + " trans=" + trans + "]";
@@ -243,8 +256,62 @@ namespace RealmForge {
     // ---------------------------------------------------------------- the exit dialog
     static void NpExitDialog(ulong ga, List<string> l) {
       ulong k = NpClass(ga, "Form_SystemTips"); if (k == 0) { l.Add("exit dialog: Form_SystemTips not found yet"); return; }
-      ulong sf = Ptr(k + 0xB8); var b = sf != 0 ? Read(sf, 4) : null;
-      l.Add("exit dialog: m_isShow=" + (b != null ? b[0].ToString() : "?"));
+      ulong sf = Ptr(k + 0xB8); var b = sf != 0 ? Read(sf, 8) : null;
+      var hex = new StringBuilder(); if (b != null) for (int i = 0; i < b.Length; i++) hex.Append(i > 0 ? " " : "").Append(b[i].ToString("X2"));
+      // (the first byte read 1 on every screen: not the dialog's flag; the dialog is told by Form_SystemTips standing in a stack, see "predict")
+      l.Add("exit dialog: static bytes " + (b != null ? hex.ToString() : "?") + " inStack=" + (npShownNames.Contains("Form_SystemTips") ? "yes" : "no"));
+    }
+
+    // ---------------------------------------------------------------- the canvas scale (the research 12): UIStatic.m_mainGroup -> UIGroup.<CanvasScaler> -> CanvasScalerRoot
+    /// <summary>Client size of the game window, set by the host before a probe read (0 = unknown).</summary>
+    public static double NavProbeClientW, NavProbeClientH;
+    static void NpGeometry(ulong ga, List<string> l) {
+      ulong k = NpClass(ga, "UI.UIStatic"); if (k == 0) return;
+      ulong sf = Ptr(k + 0xB8); ulong grp = sf != 0 ? Ptr(sf) : 0;
+      if (grp == 0) { l.Add("geometry: m_mainGroup null"); return; }
+      string gn = ClassName(Ptr(grp)); ulong sc = Ptr(grp + 0x38);
+      string sn = sc != 0 ? ClassName(Ptr(sc)) : null;
+      var b = sc != 0 ? Read(sc, 0x40) : null;
+      if (b == null) { l.Add("geometry: CanvasScaler unreadable (group " + gn + ", scaler " + sn + ")"); return; }
+      double w = NavProbeClientW, h = NavProbeClientH;
+      l.Add("geometry: scaler " + sn + " scale=" + BitConverter.ToSingle(b, 0x20).ToString("0.####", NpInv) + " ref=(" + BitConverter.ToSingle(b, 0x24).ToString("0", NpInv) + "x" + BitConverter.ToSingle(b, 0x28).ToString("0", NpInv)
+        + ") padding=(" + BitConverter.ToSingle(b, 0x18).ToString("0.##", NpInv) + "," + BitConverter.ToSingle(b, 0x1C).ToString("0.##", NpInv) + ") designScale=" + BitConverter.ToSingle(b, 0x38).ToString("0.####", NpInv)
+        + (w > 0 ? " | client " + w.ToString("0", NpInv) + "x" + h.ToString("0", NpInv) + " Ui.Unit=" + Ui.Unit(w, h).ToString("0.##", NpInv) : ""));
+    }
+
+    // ---------------------------------------------------------------- the input gate (the research 2): any UILocker slot with an id, a stack transition or an animation queued = input closed
+    /// <summary>Is the game's input open? true = open, false = locked (clicks land on the blocker, Escape is dropped), null = not readable (the caller keeps its timers).
+    /// Read at most every 40 ms.</summary>
+    public static bool? NavInputOpen() {
+      int now = Environment.TickCount;
+      if (npLockRead && unchecked(now - npLockAt) < 40) return npLockOpen;
+      try {
+        if (TestMemory == null && (Layout.Current == null || GameInfo.GamePidFresh(1000) == 0)) return null;
+        ulong ga = RootGa(); if (ga == 0) return null;
+        ulong kl = ClassAt(ga, "UI.UILocker"), ks = ClassAt(ga, "UI.UIStatic");
+        if (kl == 0 || ks == 0) return null;
+        ulong sfl = Ptr(kl + 0xB8), inst = sfl != 0 ? Ptr(sfl) : 0, d = inst != 0 ? Ptr(inst + 0x10) : 0;
+        var db = d != 0 ? Read(d, 0x28) : null; if (db == null) return null;
+        int count = NpI32(db, 0x20); ulong entries = BitConverter.ToUInt64(db, 0x18);
+        if (count < 0 || count > 200) return null;
+        bool open = true;
+        if (count > 0 && entries != 0) {
+          var eb = Read(entries + 0x20, count * 16); if (eb == null) return null;
+          for (int i = 0; i < count; i++) if (NpI32(eb, i * 16 + 8) != 0) { open = false; break; }
+        }
+        if (open) {
+          ulong sfs = Ptr(ks + 0xB8);
+          if (sfs == 0) return null;
+          foreach (int off in new[] { 0x10, 0x18, 0x20, 0x28 }) {   // Main, Flow, Popup, Top
+            ulong st = Ptr(sfs + (ulong)off); if (st == 0) continue;
+            var tb = Read(st + 0x38, 0x10);
+            if (tb != null && (tb[0] != 0 || tb[8] != 0)) { open = false; break; }
+            if (NpQueue(Ptr(st + 0x60)) > 0 || NpQueue(Ptr(st + 0x58)) > 0) { open = false; break; }
+          }
+        }
+        npLockRead = true; npLockOpen = open; npLockAt = now;
+        return open;
+      } catch (Exception) { return null; }
     }
 
     // ---------------------------------------------------------------- the lists' ScrollRects
@@ -264,7 +331,9 @@ namespace RealmForge {
       var b = Read(rect, 0xC8); if (b == null) { l.Add("scroll " + what + ": unreadable"); return; }
       l.Add("scroll " + what + ": pos=(" + BitConverter.ToSingle(b, 0xBC).ToString("0.0", NpInv) + "," + BitConverter.ToSingle(b, 0xC0).ToString("0.0", NpInv) + ") velocity=("
         + BitConverter.ToSingle(b, 0xB0).ToString("0.0", NpInv) + "," + BitConverter.ToSingle(b, 0xB4).ToString("0.0", NpInv) + ") dragging=" + b[0xB8] + " sensitivity=" + BitConverter.ToSingle(b, 0x34).ToString("0.##", NpInv)
-        + " movement=" + NpI32(b, 0x24) + " inertia=" + b[0x2C]);
+        + " movement=" + NpI32(b, 0x24) + " inertia=" + b[0x2C]
+        + " content.center=(" + BitConverter.ToSingle(b, 0x80).ToString("0.0", NpInv) + "," + BitConverter.ToSingle(b, 0x84).ToString("0.0", NpInv) + ") view.center=("
+        + BitConverter.ToSingle(b, 0x98).ToString("0.0", NpInv) + "," + BitConverter.ToSingle(b, 0x9C).ToString("0.0", NpInv) + ")");
     }
   }
 }

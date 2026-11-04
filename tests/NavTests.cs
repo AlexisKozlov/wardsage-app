@@ -17,6 +17,8 @@ static partial class CoreTests {
     public double H { get { return 1009; } }
     public double U { get { return 1009; } }
     public bool Slow { get { return false; } }
+    public bool Open = true;
+    public bool InputOpen { get { return Open; } }
     public GameGeometry Geo { get { return null; } }
     public ClickGate Gate { get { return Gt; } }
     public ScreenState Fresh(bool c, bool k) { return FreshState; }
@@ -158,6 +160,36 @@ static partial class CoreTests {
       var cityT = new NavTarget { Goal = NavGoal.City };
       Eq("Act:pop:Form_CharactorMain", edge(mk(NavState(ScreenKind.HeroScreen, 7, 3, -1, "", new[] { H, C }), null), cityT), "nav plan: to the city from the hero screen: the back arrow");
       Eq("AtTarget:at_target", edge(mk(NavState(ScreenKind.City, 0, 0, 0, "", new[] { C }), null), cityT), "nav plan: in the city already");
+    }
+    // the predicted Escape from the stacks (the order seen in the owner's log of 1.6.47: the top is the END of the list; Flow keeps Form_LeftTip, back=Ignore)
+    {
+      Func<string, string, bool, bool, StackForm> F = (n, b, d, act) => new StackForm { Name = n, Back = b, HasDelegate = d, Active = act };
+      var st = new Dictionary<string, IList<StackForm>>();
+      st["Main"] = new List<StackForm> { F("Form_MainCity", "Handle", true, false), F("Form_CharactorMain", "Handle", true, true), F("Form_CharactorEquipTip", "Handle", true, true) };
+      st["Flow"] = new List<StackForm> { F("Form_LeftTip", "Ignore", true, true) };
+      var pr = EscapePredictor.Predict(st);
+      Check(pr.Kind == "close" && pr.Form == "Form_CharactorEquipTip", "nav escape: the tip on top of the hero screen is what Escape closes (" + pr + ")");
+      st["Main"].RemoveAt(2); pr = EscapePredictor.Predict(st);
+      Check(pr.Kind == "close" && pr.Form == "Form_CharactorMain", "nav escape: then the hero screen (" + pr + ")");
+      st["Main"] = new List<StackForm> { F("Form_MainCity", "Handle", true, true) }; pr = EscapePredictor.Predict(st);
+      Check(pr.Kind == "exit-dialog", "nav escape: on the bare city Escape opens the quit dialog - never sent (" + pr + ")");
+      st["Main"] = new List<StackForm> { F("Form_MainCity", "Handle", true, true), F("Form_BattleEnd", "Block", false, true) }; pr = EscapePredictor.Predict(st);
+      Check(pr.Kind == "block" && pr.Form == "Form_BattleEnd", "nav escape: a Block form stops the search (" + pr + ")");
+      st["Main"] = new List<StackForm> { F("Form_MainCity", "Handle", true, true), F("Form_X", "Handle", false, true) }; pr = EscapePredictor.Predict(st);
+      Check(pr.Kind == "swallowed", "nav escape: Handle with no back delegate swallows the key (" + pr + ")");
+      st["Main"] = new List<StackForm> { F("Form_MainCity", "Handle", true, true), F("Form_Y", "default", false, true) }; pr = EscapePredictor.Predict(st);
+      Check(pr.Kind == "exit-dialog", "nav escape: a default form with no delegate passes the key down (" + pr + ")");
+      st["Popup"] = new List<StackForm> { F("Form_Pop", "Handle", true, true) }; pr = EscapePredictor.Predict(st);
+      Check(pr.Kind == "close" && pr.Form == "Form_Pop" && pr.Stack == "Popup", "nav escape: a Popup-stack form is searched before Main (" + pr + ")");
+    }
+    // the input gate: nothing is sent into a locked input
+    {
+      var io = new FakeNavIo(); io.Open = false; var rdr = new ScreenReader(); var cs = NavState(ScreenKind.City, 0, 0, 0, "", new[] { "Form_MainCity" }); io.FreshState = cs;
+      var sn2 = ScreenReader.Build(cs, io.NowMs, null); sn2.StableSinceMs = io.NowMs - 1000;
+      var ac = new ActClick(); ac.Start(new Act { Target = ClickTarget.EquipNav, Kind = ActKind.Click, X = 10, Y = 10, Base = "Form_MainCity" }, io.NowMs);
+      Check(ac.Tick(io, sn2, io.NowMs) == ActOutcome.NotSent && io.Sent.Count == 0, "nav act: not sent while the game's input is locked");
+      io.Open = true; ac.Start(new Act { Target = ClickTarget.EquipNav, Kind = ActKind.Click, X = 10, Y = 10, Base = "Form_MainCity" }, io.NowMs);
+      Check(ac.Tick(io, sn2, io.NowMs) == ActOutcome.Running && io.Sent.Count == 1, "nav act: sent as soon as the input is open");
     }
     // the game is raised over a browser or our own window only, once per run; never over a launcher or a system dialog
     Check(FrontPolicy.IsBrowser("chrome") && FrontPolicy.IsBrowser("msedge") && FrontPolicy.IsBrowser("Firefox") && !FrontPolicy.IsBrowser("moontonlauncher") && !FrontPolicy.IsBrowser("PlariumPlay") && !FrontPolicy.IsBrowser("Telegram") && !FrontPolicy.IsBrowser(""), "front: browsers are told from launchers and chats");

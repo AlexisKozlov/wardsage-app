@@ -90,6 +90,7 @@ namespace RealmForge {
     ActOutcome TickBeforeSend(INavIo io, Snapshot s, long now) {
       var a = Cur;
       if (s.Confidence < NavConfidence.NoOrder || !s.Stable(now)) return NotSent(a, "snapshot not stable");
+      if (!io.InputOpen) return NotSent(a, "the game's input is locked");
       if (a.Forward && s.Confidence < NavConfidence.Sure) return NotSent(a, "no order for a forward edge");
       if (a.Base != "" && s.BaseForm != a.Base) return End(ActOutcome.WrongScreen, "base " + s.BaseForm + " != " + a.Base);
       if (a.Closing != "") { if (!s.Has(a.Closing)) return End(ActOutcome.WrongScreen, a.Closing + " is gone"); }
