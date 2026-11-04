@@ -49,6 +49,9 @@ namespace RealmForge {
     public long SentAt { get; private set; }
     /// <summary>The click went out with the item's tip over the screen (passed through): the tip's tap catcher may have taken it - no effect is then no failure of the step.</summary>
     public bool TipAtSend { get; private set; }
+    /// <summary>The default effect budget is stretched while the game is busy (BusyGraceMs after the last busy read), at most BusyCapMs after the send.</summary>
+    public const int BusyGraceMs = 1500, BusyCapMs = 9000;
+    long busyAt;
     bool sent; long startAt; string layersAtSend = ""; HashSet<string> formsAtSend = new HashSet<string>();
 
     public bool Active { get { return Cur != null && Outcome == ActOutcome.Running; } }
@@ -76,6 +79,8 @@ namespace RealmForge {
       if (!sent) return TickBeforeSend(io, s, now);
       // sent: the effect is awaited
       if (s.Confidence >= NavConfidence.NoOrder && !s.State.Held) {
+        // a pop-up close whose panel the game's memory says is closed is done at once, whatever the pictures (or the debounce of the snapshot) still show
+        if (a.Closing != "" && s.MemClosed.Contains(a.Closing)) return End(ActOutcome.Done, "closed in memory");
         if (a.Expect != null && s.Stable(now) && a.Expect(s)) return End(ActOutcome.Done, "effect");
         // a close whose layer is gone is done even if the next pop-up of a chain is already there
         if (a.Closing != "" && a.Expect != null && s.Stable(now) && a.Expect(s)) return End(ActOutcome.Done, "closed");
@@ -86,9 +91,15 @@ namespace RealmForge {
         }
       }
       int to = a.TimeoutMs > 0 ? a.TimeoutMs : (io.Slow ? ClickGate.SlowEffectMs : ClickGate.EffectMs);
+      // the game is still answering (its input locked by a transition / a load, or the screen read not standing still): the default budget runs from the last moment it moved, up to BusyCapMs from the send
+      // (live 538: «graph:hero NoEffect 3531 ms» reset a cold open of the hero grid that showed its screen half a second later)
+      bool busy = !io.InputOpen || !s.Stable(now);
+      if (busy) busyAt = now;
+      if (a.TimeoutMs == 0 && now - SentAt > to && now - SentAt <= BusyCapMs && now - busyAt <= BusyGraceMs && a.Expect != null) return ActOutcome.Running;
       if (a.Expect == null) { if (!io.Gate.Pending(a.Owner)) return End(ActOutcome.Done, "no watch"); }
       if (now - SentAt > to) {
         if (a.Expect == null) return End(ActOutcome.Done, "late");
+
         return End(io.Gate.Pending(a.Owner) ? ActOutcome.Timeout : ActOutcome.NoEffect, (now - SentAt) + " ms");
       }
       return ActOutcome.Running;
@@ -119,7 +130,7 @@ namespace RealmForge {
         if (io.Gate.Halted(a.Owner)) return End(ActOutcome.Halted, io.Gate.HaltReason(a.Owner));
         return End(ActOutcome.Denied, res.Reason + ": " + res.Detail);
       }
-      sent = true; SentAt = now; layersAtSend = s.LayerKey();
+      sent = true; SentAt = now; busyAt = 0; layersAtSend = s.LayerKey();
       formsAtSend = new HashSet<string>(); foreach (var l in s.Stack) formsAtSend.Add(l.Form);
       TipAtSend = s.HasTip() && a.Closing == "";
       if (a.OnSent != null) a.OnSent();

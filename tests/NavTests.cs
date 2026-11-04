@@ -24,7 +24,8 @@ static partial class CoreTests {
     public ScreenState Fresh(bool c, bool k) { return FreshState; }
     public double[] LiveRect(string f, string fl) { return null; }
     public double[] LiveFor(ClickTarget t, string f) { return null; }
-    public bool Picture(string w) { return w == "heroesButton" && HeroesBtn; }
+    public bool GearPic;
+    public bool Picture(string w) { return (w == "heroesButton" && HeroesBtn) || (w == "gearFilterMain" && GearPic); }
     public GateResult Send(Act a, ScreenState fresh) {
       if (Verdict == GateVerdict.Allow) { Sent.Add(a); return GateResult.Allow("ok"); }
       return Verdict == GateVerdict.Wait ? GateResult.Wait(WaitReason, "w") : GateResult.Deny("d", "d");

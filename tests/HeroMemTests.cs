@@ -79,5 +79,116 @@ static partial class CoreTests {
       Check(!gc.FilterOpen && !hp.FilterDirty, "cleanup: the flag says open (pixels blind): the pop-up is closed (open " + gc.FilterOpen + ")");
       NavNotes.Take();
     }
+    GearMemTests();
+  }
+
+  // ---------------------------------------------------------------- the gear filter from the game's memory (docs/specs/2026-11-04-memory-first-state.md P2-P4, build 538 live log)
+  static ScreenState GearState(int tab, int part, Mem3 open, Mem3 side, Mem3 heroFilter) {
+    var hs = new HeroScreen { Hero = 7, FormOk = true, Tab = tab, Part = part, FilterMem = heroFilter, Gear = new GearMem { Open = open, Side = side, SetPanel = side == Mem3.Unknown ? Mem3.Unknown : Mem3.No } };
+    var st = ScreenState.Classify(new ScreenInputs { Offers = new List<string>(), ShownKnown = "Form_CharactorMain", Hero = hs, Order = new List<string> { "Form_CharactorMain", "Form_MainCity" } }, 0);
+    st.SinceMs = 0; return st;
+  }
+
+  static void GearMemTests() {
+    var g = new FilterGeometry(); double W = 1920, H = 1009;
+    Func<List<string>, string, int> count = (l, part) => { int n = 0; foreach (var x in l) if (x.IndexOf(part, StringComparison.Ordinal) >= 0) n++; return n; };
+    {   // the owner's build 538: the game's flag turns on 300 ms after the bar press and the picture shows it 1 s later: ONE press with the flag, the old pixel-only path presses the toggle again and shuts it
+      Func<bool, int> run = useMem => {
+        var game = new FakeFilterGame(g, W, H) { SetList = new long[] { 721500, 721600 }, StatList = new long[] { 1, 13 } };
+        var p = new FilterPilot(g); int bar = 0; var pend = new List<KeyValuePair<long, double[]>>(); var hist = new List<KeyValuePair<long, bool>>();
+        double by = Ui.FromBottom(0.9275, W, H);
+        for (long t = 0; t < 6000; t += 100) {
+          hist.Add(new KeyValuePair<long, bool>(t, game.Open));
+          foreach (var q in pend.ToArray()) if (q.Key <= t) { game.Click(q.Value[0], q.Value[1]); pend.Remove(q); }
+          bool pix = false; foreach (var h in hist) if (h.Key <= t - 1000) pix = h.Value;
+          var v = new FilterView { NowMs = t, Foreground = true, W = W, H = H, Item = 5, Wanted = true, SetId = 721500, StatId = 13, SetIndex = 0, StatIndex = 1, Suits = game.Suits.ToArray(), MainAttrs = game.Mains.ToArray(), HideEquipped = game.HideEq, SetOrder = game.SetList,
+            SubOrder = new long[0], SubAttrs = new long[0], PanelOpen = pix, PanelMem = useMem ? (game.Open ? Mem3.Yes : Mem3.No) : Mem3.Unknown, SideMem = useMem ? (game.Open && game.Side ? Mem3.Yes : Mem3.No) : Mem3.Unknown, SetMem = useMem ? (game.Open && game.Side && game.SetSide ? Mem3.Yes : Mem3.No) : Mem3.Unknown };
+          var a = p.Step(v);
+          if (a != null && a.Kind == AutoKind.Click) { if (Math.Abs(a.Y - by) < 3) bar++; pend.Add(new KeyValuePair<long, double[]>(t + 300, new[] { a.X, a.Y })); }
+        }
+        return bar;
+      };
+      NavNotes.Take();
+      int withMem = run(true), pixOnly = run(false);
+      Check(withMem == 1, "gear filter: the flag leads the picture by 1 s: ONE press of the filter bar (" + withMem + ")");
+      Check(pixOnly >= 2, "gear filter (old pixel-only path, the proof the case bites): the bar is pressed again before the picture shows it (" + pixOnly + " presses)");
+      NavNotes.Take();
+    }
+    {   // the pilot puts the flag over the pictures, one note per disagreement episode; Unknown leaves the pictures; the sets panel is m_ButtonStates[1]
+      NavNotes.Take(); var p = new FilterPilot(g);
+      for (int i = 0; i < 4; i++) { var v = new FilterView { NowMs = i * 100, Foreground = true, Item = 0, PanelOpen = false, PanelMem = Mem3.Yes }; p.Step(v); if (i == 0) Check(v.PanelOpen, "gear filter: flag yes over a picture of no -> open"); }
+      var notes = NavNotes.Take();
+      Check(count(notes, "filter open: mem=yes pix=no") == 1, "gear filter: ONE 'filter open: mem=yes pix=no' line for the episode (" + string.Join(" | ", notes.ToArray()) + ")");
+      var vu = new FilterView { NowMs = 1000, Foreground = true, Item = 0, PanelOpen = true, SidePanelOpen = true, SetPanelOpen = true }; p.Step(vu);
+      Check(vu.PanelOpen && vu.SidePanelOpen && vu.SetPanelOpen, "gear filter: flags Unknown leave the pictures alone");
+      var vs = new FilterView { NowMs = 1100, Foreground = true, Item = 0, PanelOpen = false, PanelMem = Mem3.Yes, SideMem = Mem3.Yes, SetMem = Mem3.No, SidePanelOpen = false, SetPanelOpen = true }; p.Step(vs);
+      Check(vs.PanelOpen && vs.SidePanelOpen && !vs.SetPanelOpen, "gear filter: the side panel is open but not the sets (m_ButtonStates[1] = 0): stats, not sets");
+      var vt = new FilterView { NowMs = 1200, Foreground = true, Item = 0, PanelMem = Mem3.Yes, SideMem = Mem3.Yes, SetMem = Mem3.Yes }; p.Step(vt);
+      Check(vt.SetPanelOpen, "gear filter: m_ButtonStates[1] = 1: the sets panel");
+      NavNotes.Take();
+    }
+    {   // the snapshot is memory first: the flag answers (the picture is not even asked), the picture decides only when the flag is Unknown; hero tab 1 can have no gear layer
+      int asked = 0; Func<string, bool> yes = w => { asked++; return true; }, no = w => { asked++; return false; };
+      var sn = ScreenReader.Build(GearState(3, 2, Mem3.No, Mem3.No, Mem3.Unknown), 0, yes);
+      Check(!sn.Has("panel:gearFilter") && !sn.Has("panel:gearSide") && sn.MemClosed.Contains("panel:gearFilter"), "snapshot: flag no + a red picture: no gear layer, closed in memory (" + sn.LayerKey() + ")");
+      sn = ScreenReader.Build(GearState(3, 2, Mem3.Yes, Mem3.No, Mem3.Unknown), 0, no);
+      Check(sn.Has("panel:gearFilter") && !sn.Has("panel:gearSide"), "snapshot: flag yes + no picture: the gear layer is there (" + sn.LayerKey() + ")");
+      asked = 0; ScreenReader.Build(GearState(3, 2, Mem3.Yes, Mem3.No, Mem3.No), 0, yes);
+      Check(asked == 0, "snapshot: every flag answers: no picture is asked (" + asked + ")");
+      sn = ScreenReader.Build(GearState(3, 2, Mem3.Unknown, Mem3.Unknown, Mem3.Unknown), 0, w => w == "gearFilterMain");
+      Check(sn.Has("panel:gearFilter"), "snapshot: flag Unknown + picture yes: the layer (the fallback)");
+      sn = ScreenReader.Build(GearState(1, -1, Mem3.Yes, Mem3.Yes, Mem3.Unknown), 0, yes);
+      Check(!sn.Has("panel:gearFilter") && !sn.Has("panel:gearSide"), "snapshot: hero tab 1 (no gear list): no gear layer, whatever the flag or the picture says (" + sn.LayerKey() + ")");
+      sn = ScreenReader.Build(GearState(1, -1, Mem3.Unknown, Mem3.Unknown, Mem3.No), 0, yes);
+      Check(!sn.Has("panel:heroFilter") && sn.MemClosed.Contains("panel:heroFilter"), "snapshot: hero grid flag no + a picture of yes: no hero filter layer");
+      sn = ScreenReader.Build(GearState(1, -1, Mem3.Unknown, Mem3.Unknown, Mem3.Yes), 0, no);
+      Check(sn.Has("panel:heroFilter"), "snapshot: hero grid flag yes + a picture of no: the layer");
+    }
+    {   // the click gate: a state the flag answers is KNOWN whatever its covered picture says; the picture counts only with the flag Unknown
+      Check(!LookPolicy.Blocks(Mem3.No, Seen3.Unknown) && !LookPolicy.Blocks(Mem3.Yes, Seen3.Unknown) && LookPolicy.Blocks(Mem3.Unknown, Seen3.Unknown) && !LookPolicy.Blocks(Mem3.Unknown, Seen3.Yes) && !LookPolicy.Blocks(Mem3.Unknown, Seen3.No), "look policy: only an Unknown look of an Unknown flag blocks a click");
+      var ul = new UnknownLooks();
+      for (long t = 0; t < 20000; t += 200) { ul.Note("hero filter", LookPolicy.Blocks(Mem3.No, Seen3.Unknown), t); ul.Note("mark@x", LookPolicy.Blocks(Mem3.Yes, Seen3.Unknown), t); }
+      Check(ul.Blocking(19900) == null && ul.Overdue(19900) == null, "look policy: a picture covered for 20 s under an exact flag never blocks nor reports");
+      var ub = new UnknownLooks();
+      for (long t = 0; t < 3000; t += 200) ub.Note("hero filter", LookPolicy.Blocks(Mem3.Unknown, Seen3.Unknown), t);
+      Check(ub.Blocking(2900) == "hero filter", "look policy: with the flag Unknown the covered picture still blocks (the old protection)");
+    }
+    {   // a pop-up close whose panel the flag already says is closed is Done, not NoEffect (the debounced snapshot still carries the old layer)
+      var io = new FakeNavIo { GearPic = true }; var rd = new ScreenReader();
+      Func<Mem3, ScreenState> st = m => GearState(3, 2, m, Mem3.Unknown, Mem3.Unknown);
+      long t0 = io.NowMs; Snapshot sn = null;
+      for (int k = 0; k < 8; k++) sn = rd.Update(st(Mem3.Unknown), t0 + k * 100, w => w == "gearFilterMain");
+      Check(sn.Has("panel:gearFilter"), "close: the picture-only layer is in the stack");
+      io.FreshState = st(Mem3.Unknown);
+      var act = new Act { Target = ClickTarget.EquipClosePopup, Kind = ActKind.Click, X = 10, Y = 10, Closing = "panel:gearFilter", Edge = "modal:panel:gearFilter", Expect = n => !n.Has("panel:gearFilter") };
+      var ac = new ActClick(); ac.Start(act, t0 + 800); ac.Tick(io, sn, t0 + 800);
+      for (long t = t0 + 900; t < t0 + 4200; t += 100) { sn = rd.Update(st(Mem3.Unknown), t, w => w == "gearFilterMain"); ac.Tick(io, sn, t); }
+      var o1 = ac.Tick(io, sn, t0 + 4400);
+      Check(o1 == ActOutcome.NoEffect, "close: with the flag Unknown and the picture stuck on: NoEffect after the budget (" + o1 + ")");
+      var ac2 = new ActClick(); ac2.Start(act, t0 + 800); ac2.Tick(io, sn, t0 + 800);   // (the same close, the flag says closed in the last read before the budget ends)
+      rd = new ScreenReader(); for (int k = 0; k < 8; k++) sn = rd.Update(st(Mem3.Unknown), t0 + k * 100, w => w == "gearFilterMain");
+      var sm = rd.Update(st(Mem3.No), t0 + 4400, w => w == "gearFilterMain");
+      Check(sm.MemClosed.Contains("panel:gearFilter") && sm.Has("panel:gearFilter"), "close: the debounced snapshot still has the layer but knows the flag says closed (" + sm.LayerKey() + ")");
+      var o2 = ac2.Tick(io, sm, t0 + 4400);
+      Check(o2 == ActOutcome.Done && ac2.Detail.IndexOf("memory", StringComparison.Ordinal) >= 0, "close: NoEffect with the flag already closed counts Done, no reset (" + o2 + " " + ac2.Detail + ")");
+    }
+    {   // the effect budget runs on while the game is busy (live 538: graph:hero NoEffect 3531 ms, the screen came half a second later)
+      var io = new FakeNavIo(); const string C = "Form_MainCity", HF = "Form_CharactorMain";
+      var cs = NavState(ScreenKind.City, 0, 0, 0, "", new[] { C }); io.FreshState = cs;
+      Func<Act> mk = () => new Act { Target = ClickTarget.EquipNav, Kind = ActKind.Click, X = 10, Y = 10, Base = C, Edge = "graph:hero", Expect = n => n.Kind == ScreenKind.HeroScreen };
+      var snap = ScreenReader.Build(cs, io.NowMs, null); snap.StableSinceMs = io.NowMs - 100000;
+      var ac = new ActClick(); ac.Start(mk(), io.NowMs); ac.Tick(io, snap, io.NowMs);
+      io.Open = true; var late = ac.Tick(io, snap, io.NowMs + ClickGate.EffectMs + 50);
+      Check(late == ActOutcome.NoEffect, "act budget: a quiet game gives NoEffect at the default budget (" + late + ")");
+      ac = new ActClick(); ac.Start(mk(), io.NowMs); ac.Tick(io, snap, io.NowMs);
+      io.Open = false; var o3 = ac.Tick(io, snap, io.NowMs + ClickGate.EffectMs + 50);
+      Check(o3 == ActOutcome.Running, "act budget: input locked (the game is loading) at the budget: still running (" + o3 + ")");
+      io.Open = true; var o4 = ac.Tick(io, snap, io.NowMs + ClickGate.EffectMs + 50 + ActClick.BusyGraceMs + 50);
+      Check(o4 == ActOutcome.NoEffect, "act budget: ... NoEffect once the game has been quiet for the grace (" + o4 + ")");
+      ac = new ActClick(); ac.Start(mk(), io.NowMs); ac.Tick(io, snap, io.NowMs);
+      io.Open = false; var o5 = ac.Tick(io, snap, io.NowMs + ActClick.BusyCapMs + 100);
+      Check(o5 == ActOutcome.NoEffect, "act budget: a game busy for ever is cut at the cap (" + o5 + ")");
+      io.Open = true;
+    }
   }
 }

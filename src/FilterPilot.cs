@@ -57,13 +57,19 @@ namespace RealmForge {
     public bool Foreign;            // other filters are on (level, sub stats): they could hide the item
     public bool ItemListed;         // the guide sees the item in the game's list (its verdict is not «hidden by worn»): the game applied the untick even if the read is stale
     public bool HideEquipped, OnOtherHero;   // OnOtherHero: the plan takes it from that hero on purpose (the guide skips others)
-    public bool PanelOpen, SidePanelOpen, SetPanelOpen;   // from the screen
+    public bool PanelOpen, SidePanelOpen, SetPanelOpen;   // from the screen (the pictures; the pilot replaces them with the game's flags where those are known: FilterPilot.Resolve)
+    /// <summary>The same three from the game's memory (EquipScan.ReadGearMem): Yes / No are exact, Unknown = not readable (the pictures stand). The pop-up, its side panel, the sets panel (m_ButtonStates[1] = Suit, the set-vs-stats test).</summary>
+    public Mem3 PanelMem = Mem3.Unknown, SideMem = Mem3.Unknown, SetMem = Mem3.Unknown;
+    public bool Resolved;
   }
 
   public sealed class FilterPilot {
+    /// <summary>After the click that opens the pop-up the pilot waits this long for the game's flag to turn on before it presses the (toggle) bar again.</summary>
+    public const int MemOpenWaitMs = 2000;
     public const int MaxClicks = 26, AfterClickMs = 550, PartTries = 2, EqConfirmMs = 2000, SetTries = 4, MaxSetDrags = 4, MaxSubs = 4, MaxPasses = 3, MaxReopens = 3;
     readonly FilterGeometry g;
-    long item = -1, waitUntil;
+    long item = -1, waitUntil, openWaitUntil;
+    bool disagree; int disagreeN;
     long eqClickAt;
     int clicks, setTries, statTries, eqTries, closeTries, openTries, setDrags, subTries, sideCloseTries;
     // the filter was complete once for this item (wasSet); the game may drop it afterwards (the hero screen opened again):
@@ -99,30 +105,47 @@ namespace RealmForge {
     // of «closed» right after a read of «open» shut the panel the first click had opened - three times, then «the panel does not stay open»
     long panelSeenAt = long.MinValue; public const int PanelGraceMs = 1500;
     public AutoAction Step(FilterView v) {
+      Resolve(v);
       var before = SaveState();
       var a = StepCore(v);
       unsent = a != null && a.Kind != AutoKind.None ? before : null;
       return a;
     }
 
+    /// <summary>Memory first: the pop-up, its side panel and the sets panel are the game's flags where those answer; the pictures (what the host put in PanelOpen ...) only where the flag is Unknown. A disagreement of the
+    /// pop-up is told once per episode (NavNotes: «filter open: mem=.. pix=..»), memory trusted.</summary>
+    void Resolve(FilterView v) {
+      if (v.Resolved) return;
+      v.Resolved = true;
+      if (v.PanelMem != Mem3.Unknown) {
+        bool mem = v.PanelMem == Mem3.Yes;
+        if (v.Foreground && mem != v.PanelOpen) {
+          if (!disagree) { disagree = true; NavNotes.Add("filter open: mem=" + (mem ? "yes" : "no") + " pix=" + (v.PanelOpen ? "yes" : "no") + " (gear filter, episode " + (++disagreeN) + ", memory trusted)"); }
+        } else disagree = false;
+        v.PanelOpen = mem;
+      } else disagree = false;
+      if (v.SideMem != Mem3.Unknown) v.SidePanelOpen = v.SideMem == Mem3.Yes;
+      if (v.SetMem != Mem3.Unknown) v.SetPanelOpen = v.SetMem == Mem3.Yes && v.SidePanelOpen;
+    }
+
     // The action of the last Step did not go out (the navigator waits for a stable screen, the gate said wait): the pilot is as before it, the click is not counted and not awaited.
     // (The old host never calls this: its behaviour is unchanged.)
-    sealed class Saved { public long WaitUntil, EqClickAt; public int Clicks, SetTries, StatTries, EqTries, CloseTries, OpenTries, SetDrags, SubTries, SideCloseTries, Passes, Reopens, SetClickRow; public double SetScroll; public bool SetPending, WasSet, SubSkipped, SetSkipped, StatSkipped, Failed; public string State, Side; }
+    sealed class Saved { public long WaitUntil, OpenWaitUntil, EqClickAt; public int Clicks, SetTries, StatTries, EqTries, CloseTries, OpenTries, SetDrags, SubTries, SideCloseTries, Passes, Reopens, SetClickRow; public double SetScroll; public bool SetPending, WasSet, SubSkipped, SetSkipped, StatSkipped, Failed; public string State, Side; }
     Saved unsent;
     Saved SaveState() {
-      return new Saved { WaitUntil = waitUntil, EqClickAt = eqClickAt, Clicks = clicks, SetTries = setTries, StatTries = statTries, EqTries = eqTries, CloseTries = closeTries, OpenTries = openTries, SetDrags = setDrags, SubTries = subTries,
+      return new Saved { WaitUntil = waitUntil, OpenWaitUntil = openWaitUntil, EqClickAt = eqClickAt, Clicks = clicks, SetTries = setTries, StatTries = statTries, EqTries = eqTries, CloseTries = closeTries, OpenTries = openTries, SetDrags = setDrags, SubTries = subTries,
         SideCloseTries = sideCloseTries, Passes = passes, Reopens = reopens, SetClickRow = setClickRow, SetScroll = setScroll, SetPending = setPending, WasSet = wasSet, SubSkipped = subSkipped, SetSkipped = setSkipped, StatSkipped = statSkipped, Failed = failed, State = State, Side = side };
     }
     public void NotSent() {
       var x = unsent; unsent = null; if (x == null) return;
       effect.Drop();
-      waitUntil = x.WaitUntil; eqClickAt = x.EqClickAt; clicks = x.Clicks; setTries = x.SetTries; statTries = x.StatTries; eqTries = x.EqTries; closeTries = x.CloseTries; openTries = x.OpenTries; setDrags = x.SetDrags;
+      waitUntil = x.WaitUntil; openWaitUntil = x.OpenWaitUntil; eqClickAt = x.EqClickAt; clicks = x.Clicks; setTries = x.SetTries; statTries = x.StatTries; eqTries = x.EqTries; closeTries = x.CloseTries; openTries = x.OpenTries; setDrags = x.SetDrags;
       subTries = x.SubTries; sideCloseTries = x.SideCloseTries; passes = x.Passes; reopens = x.Reopens; setClickRow = x.SetClickRow; setScroll = x.SetScroll; setPending = x.SetPending; wasSet = x.WasSet;
       subSkipped = x.SubSkipped; setSkipped = x.SetSkipped; statSkipped = x.StatSkipped; failed = x.Failed; State = x.State; side = x.Side;
     }
 
     AutoAction StepCore(FilterView v) {
-      if (v.PanelOpen) panelSeenAt = v.NowMs;
+      if (v.PanelOpen && v.PanelMem == Mem3.Unknown) panelSeenAt = v.NowMs;
       if (v.Item != item) {
         item = v.Item; waitUntil = 0; passes = 0; reopens = 0; failed = false; State = "idle"; effect.Drop();
         NewPass();
@@ -186,12 +209,15 @@ namespace RealmForge {
 
       double W = v.W, H = v.H;
       if (!v.PanelOpen) {
-        if (panelSeenAt != long.MinValue && v.NowMs - panelSeenAt < PanelGraceMs && !failed) return AutoAction.Nothing;   // (it was just seen open: the read flickers, no toggling click)
+        if (v.PanelMem == Mem3.Unknown && panelSeenAt != long.MinValue && v.NowMs - panelSeenAt < PanelGraceMs && !failed) return AutoAction.Nothing;   // (it was just seen open: the read flickers, no toggling click; a memory flag does not flicker)
+        // the bar is a toggle: pressed once, the game's flag is awaited (it leads the pictures) before another press
+        if (v.PanelMem != Mem3.Unknown && v.NowMs < openWaitUntil && !failed) return AutoAction.Nothing;
         if (++openTries > PartTries) {
           if (reopens >= MaxReopens) { failed = true; State = "failed"; Note = "the filter panel does not stay open (" + reopens + " retries)"; return null; }
           reopens++; NewPass(); openTries = 1; Note = "the panel closed without a filter: opening it again (" + reopens + ")";
         }
         // the «Фильтр» bar under the list (HintGeometry.Filter): left edge, bottom
+        if (v.PanelMem != Mem3.Unknown) openWaitUntil = v.NowMs + MemOpenWaitMs;
         return Click(v, (0.029 + 0.379 / 2) * Ui.Unit(W, H), Ui.FromBottom(0.9275, W, H));
       }
       // the panel is open: close it only when this pilot gave up (the list then shows everything again)
@@ -264,7 +290,7 @@ namespace RealmForge {
     // the tries of one pass (setScroll stays: the game keeps the sets list scrolled)
     void NewPass() {
       clicks = setTries = statTries = eqTries = closeTries = openTries = setDrags = subTries = sideCloseTries = 0;
-      Note = ""; wasSet = false;
+      Note = ""; wasSet = false; openWaitUntil = 0;
       subSkipped = false; side = "";
       setClickRow = -1; setPending = false;
       setSkipped = statSkipped = false;

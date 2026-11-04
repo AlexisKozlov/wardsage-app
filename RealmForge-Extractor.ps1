@@ -2968,6 +2968,14 @@ namespace RealmForge {
   /// <summary>A state read from the game's memory: it is told (Yes / No) or it is not (Unknown: a nil table, a panel still loading). Unknown is never closed.</summary>
   public enum Mem3 { No = 0, Yes = 1, Unknown = 2 }
 
+  /// <summary>The gear filter's state from the game's memory (docs/specs/2026-11-04-memory-first-state.md P2-P4): the pop-up (m_bShow), the side panel (any m_ButtonStates[1..3] above 0) and the sets panel (m_ButtonStates[1] = 1). Every field Unknown
+  /// until the panel table is built and readable (EquipPanel absent on hero tab 1 = Unknown too, never No).</summary>
+  public sealed class GearMem {
+    public Mem3 Open = Mem3.Unknown, Side = Mem3.Unknown, SetPanel = Mem3.Unknown;
+    public string Why = "unread";
+    public override string ToString() { return "open=" + Open + " side=" + Side + " set=" + SetPanel; }
+  }
+
   public sealed class HeroScreen {
     public long Hero;            // EquipData.m_CurrentSelectHeroUid: hero shown; 0 = the hero screen is closed
     public bool FormOk;          // the form table was read
@@ -2981,6 +2989,8 @@ namespace RealmForge {
     /// <summary>The filter pop-up as the game's script holds it: Form_CharactorMain.m_Panels.Charactor_FilterOrder.m_IsActive (Yes / No). Unknown = the panel
     /// is not built yet or the flag is not set (nil / the prefab still loading): never read as closed, the pixels decide then.</summary>
     public Mem3 FilterMem = Mem3.Unknown;
+    /// <summary>The gear filter pop-up and its side panel as the game's script holds them (Panel_EquipFilterWidget_Charactor: m_bShow, m_ButtonStates[1..3]); Unknown when absent / unreadable, never closed.</summary>
+    public GearMem Gear = new GearMem();
     public long[] FactionList;   // its faction column, top down (0 = «Все"), null until it was opened once
     public int ClassCount;       // entries of its class column («Все» included), 0 = unknown
     public long[] ChosenCamps;   // factions the grid is filtered by now (empty = all)
@@ -3239,6 +3249,7 @@ namespace RealmForge {
       h.SmallCards = Field(a.Form, "m_IsUseSmallCard", out v, out tt) && tt == T_BOOL && v != 0;
       ulong pd; int pdt;
       if (Field(a.Form, "m_PanelDatas", out pd, out pdt) && pdt == T_TABLE && IntKey(pd, 3, out v, out tt) && tt == T_INT) h.Part = (int)(long)v;
+      h.Gear = ReadGearMem(a.Form);
       long artGoal = ArtGoalUid;
       if (artGoal > 0) { var lt0 = live; ReadHeroArt(a.Form, lt0 != null ? lt0.ArtOwner : 0, ArtGoalHero, artGoal, h, prev); }
       ulong proxy, data; int t1, t2;
@@ -3270,6 +3281,36 @@ namespace RealmForge {
       if (!Field(p, "m_IsActive", out v, out t3) || t3 != T_BOOL) { why = "m_IsActive " + (t3 == 0 ? "nil" : "tt" + t3.ToString("X")); return Mem3.Unknown; }
       bool on = (v & 0xFFFFFFFF) != 0; why = "m_IsActive " + (on ? "true" : "false");
       return on ? Mem3.Yes : Mem3.No;
+    }
+
+    /// <summary>The gear filter widget of the hero screen: m_Panels.EquipPanel.m_Panel_EquipFilterWidget_Charactor. m_bShow bool = pop-up open / closed (Show() / Hide()); m_ButtonStates[1..3] ints (1 = that side
+    /// content is open: sets, main stat, sub stat). Panel / widget absent, not a table or the flag not a bool = Unknown. A closed pop-up has no side panel.</summary>
+    public static GearMem ReadGearMem(ulong form) {
+      var g = new GearMem();
+      if (form == 0) { g.Why = "no form"; return g; }
+      ulong panels, ep, w, v, bs; int t1, t2, tt, bt;
+      if (!Field(form, "m_Panels", out panels, out t1) || t1 != T_TABLE) { g.Why = "m_Panels unreadable"; return g; }
+      if (!Field(panels, "EquipPanel", out ep, out t2) || t2 != T_TABLE) { g.Why = "EquipPanel " + (t2 == 0 ? "absent" : "tt" + t2.ToString("X")); return g; }
+      if (!Field(ep, "m_Panel_EquipFilterWidget_Charactor", out w, out t2) || t2 != T_TABLE) { g.Why = "filter widget " + (t2 == 0 ? "absent" : "tt" + t2.ToString("X")); return g; }
+      if (!Field(w, "m_bShow", out v, out tt) || tt != T_BOOL) { g.Why = "m_bShow " + (tt == 0 ? "nil" : "tt" + tt.ToString("X")); return g; }
+      bool show = (v & 0xFFFFFFFF) != 0;
+      g.Open = show ? Mem3.Yes : Mem3.No; g.Why = "m_bShow " + (show ? "true" : "false");
+      if (!show) { g.Side = Mem3.No; g.SetPanel = Mem3.No; return g; }
+      if (!Field(w, "m_ButtonStates", out bs, out bt) || bt != T_TABLE) return g;
+      bool any = false, all = true; long s1 = -1;
+      for (int i = 1; i <= 3; i++) {
+        if (!IntKey(bs, i, out v, out tt) || tt != T_INT) { all = false; continue; }
+        if ((long)v > 0) any = true;
+        if (i == 1) s1 = (long)v;
+      }
+      g.Side = any ? Mem3.Yes : all ? Mem3.No : Mem3.Unknown;
+      g.SetPanel = s1 > 0 ? Mem3.Yes : s1 == 0 ? Mem3.No : Mem3.Unknown;
+      return g;
+    }
+    /// <summary>A fresh read of the gear filter (the host's per-tick view): Unknown while the hero screen's form is not shown.</summary>
+    public static GearMem ReadGearMemNow(EquipAddrs a) {
+      if (a == null || a.Form == 0 || !FormActive(a.Form)) return new GearMem { Why = "form not shown" };
+      try { return ReadGearMem(a.Form); } catch (Exception) { return new GearMem { Why = "exception" }; }
     }
 
     /// <summary>The grid's filter choice from m_PanelDatas[6] (Hero_Filter): the factions chosen (empty = all) and whether a class is chosen (which one is not readable: game config objects).</summary>

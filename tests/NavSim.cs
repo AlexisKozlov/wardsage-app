@@ -9,8 +9,10 @@ static partial class CoreTests {
   /// <summary>The injectors (their own Random streams: the old seeds keep their runs).</summary>
   sealed class NavCfg { public double FlickerP, FlagFlickerP, LatePopupP; public int CellLatencyMs; public long LockMs, RebuildMs; public bool OwnCover, OwnStrip, OwnTimer; public long AwayMs;
     /// <summary>FilterLookBlind: the hero filter's pixel read is false while the sim pop-up is open; PopupEatsBack: a back press with the pop-up open only closes it; CityBackLatencyMs: the back arrow answers this late.</summary>
-    public bool FilterLookBlind, PopupEatsBack; public long CityBackLatencyMs; }
-  static bool SimNavBlocked, NavBaseline; static int SimNavResets, SimNavFunnel;
+    public bool FilterLookBlind, PopupEatsBack; public long CityBackLatencyMs;
+    /// <summary>GearMem: the gear filter's flag is readable (off = the pixel-only old path); GearPixLagMs / GearPixStuck: see SimGame; HeroMem: the hero grid's flag is exact; OwnGearCover: the gear red-cross look is masked by our hint for ever.</summary>
+    public bool GearMem, GearPixStuck, HeroMem, OwnGearCover; public long GearPixLagMs; }
+  static bool SimNavBlocked, NavBaseline; static int SimNavResets, SimNavFunnel, SimNavOwnRefusals, SimNavCloseNoEffect, SimNavBarPresses, NavTwinRuns, NavTwinBroke; static readonly SortedDictionary<string, int[]> NavTwinBy = new SortedDictionary<string, int[]>();
   static bool SimNav, SimNavCity, SimNavChecks; static NavCfg SimNavCfg = new NavCfg(); static long SimNavPlan;
 
   sealed partial class SimHost {
@@ -92,7 +94,7 @@ static partial class CoreTests {
       var hv = new HeroView {
         NowMs = n, Foreground = true, W = W, H = U, ClientH = H, Plan = plan, Hero = heroScreen.FormOk ? heroScreen.Hero : 0, Tab = heroScreen.Tab, Part = heroScreen.Part,
         SmallCards = heroScreen.SmallCards, Heroes = heroScreen.Heroes, HeroesButton = false, FilterOpen = OwnFilterLook((G.HeroFilter && G.Full == SimHero) || G.HeroFilterSeen),
-        ClassChosen = heroScreen.ClassChosen, FactionList = heroScreen.FactionList, ChosenCamps = heroScreen.ChosenCamps, ClassCount = heroScreen.ClassCount, GridPtr = heroScreen.GridPtr,
+        FilterMem = HeroView.MemOf(heroScreen), ClassChosen = heroScreen.ClassChosen, FactionList = heroScreen.FactionList, ChosenCamps = heroScreen.ChosenCamps, ClassCount = heroScreen.ClassCount, GridPtr = heroScreen.GridPtr,
         InputOpen = n >= G.LockUntil
       };
       if (G.HeroModel) { var tg = SimGame.SimTags(plan); hv.HeroClass = tg[0]; hv.HeroCamps = new[] { tg[1] }; }
@@ -118,8 +120,10 @@ static partial class CoreTests {
     readonly FilterPilot fp = new FilterPilot(new FilterGeometry());
     FilterView NavFilterView(long n) {
       bool hidden = G.ItemElsewhere && G.HideWorn;
+      var gm = G.GearMemNow(); if (Cfg.OwnGearCover) ownLooks.Note("mark@gear", LookPolicy.Blocks(gm, Seen3.Unknown), Now + FreshLagMs);   // (the host's GearMain: the covered red-cross look blocks the gate only while the flag is Unknown)
       return new FilterView { NowMs = n, Foreground = true, W = W, H = H, Item = SimItem, Suits = new long[0], MainAttrs = new long[0], SubAttrs = new long[0], Wanted = hidden,
-        PanelOpen = (G.FilterOwn || G.GearFilter) && G.Full == SimHero, HideEquipped = G.HideWorn ^ (Cfg.FlagFlickerP > 0 && navR != null && navR.NextDouble() < Cfg.FlagFlickerP), OnOtherHero = G.ItemElsewhere, ItemListed = !hidden };
+        PanelMem = gm, SideMem = gm == Mem3.Unknown ? Mem3.Unknown : Mem3.No, SetMem = gm == Mem3.Unknown ? Mem3.Unknown : Mem3.No,
+        PanelOpen = G.GearPix(G.GearOpenTruth), HideEquipped = G.HideWorn ^ (Cfg.FlagFlickerP > 0 && navR != null && navR.NextDouble() < Cfg.FlagFlickerP), OnOtherHero = G.ItemElsewhere, ItemListed = !hidden };
     }
 
     void EnsureNavActions() {
@@ -162,7 +166,7 @@ static partial class CoreTests {
     }
 
     /// <summary>--nav ownHintOver: our own hint covers the looks (from OwnCoverFrom on, for ever) - every send waits on it ("own") until the navigator hides our windows (INavIo.HideOwn), which frees them for 20 s.</summary>
-    long ownHiddenUntil, ownCoverFrom = -1; public int OwnHides;
+    long ownHiddenUntil, ownCoverFrom = -1; public int OwnHides, OwnRefusals;
     /// <summary>The host's UnknownLooks (the one the real code uses): a look our hint covers is noted at the fresh clock, a few ms AFTER the tick-start clock the io (and the send) read - as OverlayController does.</summary>
     readonly UnknownLooks ownLooks = new UnknownLooks();
     const long FreshLagMs = 4;
@@ -182,16 +186,16 @@ static partial class CoreTests {
         return a;
       };
       var l = HeroFilterLook.Look(frame, U);
-      ownLooks.Note("hero filter", l == Seen3.Unknown, Now + FreshLagMs);
+      ownLooks.Note("hero filter", LookPolicy.Blocks(G.HeroFilterMemNow(), l), Now + FreshLagMs);
       return l == Seen3.Yes;
     }
     /// <summary>--nav userAway: the player reaches for the mouse at the first click the navigator is about to send (the ladder is running by then) and keeps it for AwayMs.</summary>
     long awayFrom = -1;
     GateResult NavSend(Act a, ScreenState fresh) {
       if (Cfg.AwayMs > 0 && awayFrom < 0) { awayFrom = Now; G.Note("the player takes the mouse"); return GateResult.Wait("unsent", "the player took the mouse"); }
-      if (Cfg.OwnStrip) {
+      if (Cfg.OwnStrip || Cfg.OwnGearCover) {
         string cov = ownLooks.Blocking(Now);
-        if (cov != null) { G.Note("send refused: " + a.Target + " - a look is covered by our hint (" + cov + ")"); return GateResult.Wait("own", "a look is covered by our own hint"); }
+        if (cov != null) { SimNavOwnRefusals++; G.Note("send refused: " + a.Target + " - a look is covered by our hint (" + cov + ")"); return GateResult.Wait("own", "a look is covered by our own hint"); }
       }
       if (Cfg.OwnCover) {
         if (ownCoverFrom < 0) ownCoverFrom = Now + navR.Next(3000);
@@ -235,7 +239,7 @@ static partial class CoreTests {
         switch (what) {
           case "heroesButton": v = h.G.Full == SimCity && h.G.CityClear; break;
           case "heroFilter": v = h.OwnFilterLook((h.G.HeroFilter && h.G.Full == SimHero) || h.G.HeroFilterSeen); break;
-          case "gearFilterMain": v = ((h.G.GearFilter || h.G.FilterOwn) && h.G.Full == SimHero) || (h.G.PhantomGear && h.G.Full == SimHero && h.G.Hero.Part < 0); break;
+          case "gearFilterMain": v = h.G.GearPix(((h.G.GearFilter || h.G.FilterOwn) && h.G.Full == SimHero) || (h.G.PhantomGear && h.G.Full == SimHero && h.G.Hero.Part < 0)); break;
           case "gearFilterSide": v = false; break;
           case "tipShown": v = h.G.Stack.Contains(SimTip); break;
         }
@@ -245,7 +249,7 @@ static partial class CoreTests {
       public string EscapeKind { get { return ""; } }
       public bool Hotkey(string name) { return false; }
       public void HideOwn() { h.ownHiddenUntil = h.Now + 20000; h.OwnHides++; h.G.Note("hide own windows"); }
-      public void Log(string line) { if (line.StartsWith("nav: reset ")) SimNavResets++; h.G.Note(line); }
+      public void Log(string line) { if (line.StartsWith("nav: reset ")) SimNavResets++; if (line.StartsWith("nav: act EquipClosePopup") && line.Contains("NoEffect")) SimNavCloseNoEffect++; h.G.Note(line); }
       public void Problem(string kind, string message) { h.G.Note("problem " + kind + ": " + message); }
     }
   }
@@ -255,7 +259,8 @@ static partial class CoreTests {
     "nav.equip.fromAny", "nav.equip.offerChain", "nav.equip.unknownPopup", "nav.equip.tipLeftover", "nav.equip.filterLeftover", "nav.equip.heroFilterOpen",
     "nav.equip.hideWornForeign", "nav.equip.hideWorn", "nav.equip.foreignInvTab", "nav.equip.overFoundry", "nav.equip.bulkSale", "nav.equip.flicker", "nav.equip.lateCells200", "nav.equip.popupDuringEdge", "nav.equip.inputLock", "nav.city.fromAny",
     "nav.equip.heroFactionHides", "nav.equip.heroFilterBlind", "nav.equip.phantomRedX", "nav.equip.resetMidHero", "nav.equip.heroNotOwned", "nav.equip.ownHintOver", "nav.city.blockedBack",
-    "nav.equip.heroFilterBlindEats", "nav.equip.cityBackLate", "nav.equip.ownHintOverNoHide", "nav.equip.ownTimerOver", "nav.city.userAway" };
+    "nav.equip.heroFilterBlindEats", "nav.equip.cityBackLate", "nav.equip.ownHintOverNoHide", "nav.equip.ownTimerOver", "nav.city.userAway",
+    "nav.equip.gearFilterMemLead", "nav.equip.gearFilterRedXNoEffect", "nav.equip.ownHintOverMem" };
 
   static readonly string[] NavStartNames = { "City", "Hero (other hero)", "Hero (gear list)", "Inventory", "Inventory (other tab)", "Inventory (bulk)", "Foundry identify", "Foundry ascend",
     "Foundry recast", "Gem", "Artifact workshop", "Guild", "Arena", "Shop", "Popup over City", "Plan" };
@@ -278,12 +283,14 @@ static partial class CoreTests {
         g.Hero.Shown = r.Next(2) == 0 ? other : plan; g.Hero.Tab = 3; g.Hero.Part = r.Next(5); g.Push(SimHero); g.GearFilter = true; break;
       case "nav.equip.heroFilterOpen":
         g.Hero.Shown = other; g.Hero.Tab = 1 + 2 * r.Next(2); g.Hero.Part = -1; g.Push(SimHero); g.HeroFilter = true; break;
-      case "nav.equip.hideWorn": case "nav.equip.hideWornForeign": {   // «Скрыть надетое» on and the plan's item worn by another hero: the filter pilot has to switch it off before the item can be picked
+      case "nav.equip.hideWorn": case "nav.equip.hideWornForeign": case "nav.equip.gearFilterMemLead": case "nav.equip.gearFilterRedXNoEffect": {   // «Скрыть надетое» on and the plan's item worn by another hero: the filter pilot has to switch it off before the item can be picked
         g.HideWorn = true; g.ItemElsewhere = true;
+        if (sc == "nav.equip.gearFilterRedXNoEffect") { g.Hero.Shown = other; g.Hero.Tab = 3; g.Hero.Part = 2; g.Push(SimHero); g.FilterOwn = true; break; }   // (another hero's gear pop-up is left open: the red cross closes it; its look reads true for ever)
+        if (sc == "nav.equip.gearFilterMemLead") { g.Hero.Shown = plan; g.Hero.Tab = 3; g.Hero.Part = 2; g.Push(SimHero); break; }   // (the gear list is open, the pilot opens the pop-up itself)
         if (r.Next(3) != 0) { g.Hero.Shown = r.Next(2) == 0 ? plan : other; g.Hero.Tab = 3; g.Hero.Part = r.Next(3) == 0 ? -1 : 2; g.Push(SimHero); }
         break;
       }
-      case "nav.equip.heroFactionHides": case "nav.equip.heroFilterBlind": case "nav.equip.resetMidHero": case "nav.equip.heroNotOwned": case "nav.equip.heroFilterBlindEats": case "nav.equip.cityBackLate": case "nav.equip.ownHintOverNoHide": case "nav.equip.ownTimerOver": {   // the hero grid's filter model (GameSim.cs EnableHeroModel)
+      case "nav.equip.heroFactionHides": case "nav.equip.heroFilterBlind": case "nav.equip.resetMidHero": case "nav.equip.heroNotOwned": case "nav.equip.heroFilterBlindEats": case "nav.equip.cityBackLate": case "nav.equip.ownHintOverNoHide": case "nav.equip.ownTimerOver": case "nav.equip.ownHintOverMem": {   // the hero grid's filter model (GameSim.cs EnableHeroModel)
         bool notOwned = sc == "nav.equip.heroNotOwned";
         g.EnableHeroModel(plan, !notOwned); g.FilterFadeMs = 300 + r.Next(500);
         g.Hero.Shown = g.Hero.CityHero = other; g.Hero.Tab = 1 + 2 * r.Next(2); g.Hero.Part = -1; g.Push(SimHero);
@@ -295,6 +302,7 @@ static partial class CoreTests {
           g.HeroFilterBy(k != 0 ? fac : 0, k != 1 ? cls : 0);
         }
         if (sc == "nav.equip.heroFilterBlind") g.Hero.Blind = true;
+        if (sc == "nav.equip.ownHintOverMem") { g.Hero.MemMode = 1; g.HideWorn = true; g.ItemElsewhere = true; }   // (both flags exact; our hint covers the pictures of both pop-ups for ever)
         break;
       }
       case "nav.city.blockedBack": {   // the back arrow and Escape do nothing: the trip to the city ends in reset_failed:<form> within 30 s
@@ -323,7 +331,8 @@ static partial class CoreTests {
 
   /// <summary>A scenario whose only right end is this one (a hero the player does not own: a named stop).</summary>
   /// <summary>Scenarios that must end done on every seed: a rule's refusal (gate_dangerous ...) is a failure there.</summary>
-  static bool NavStrict(string sc) { return sc == "nav.equip.heroFilterBlindEats" || sc == "nav.equip.cityBackLate" || sc == "nav.equip.ownHintOverNoHide" || sc == "nav.equip.ownTimerOver" || sc == "nav.city.userAway"; }
+  static bool NavStrict(string sc) { return sc == "nav.equip.heroFilterBlindEats" || sc == "nav.equip.cityBackLate" || sc == "nav.equip.ownHintOverNoHide" || sc == "nav.equip.ownTimerOver" || sc == "nav.city.userAway"
+    || sc == "nav.equip.gearFilterMemLead" || sc == "nav.equip.gearFilterRedXNoEffect" || sc == "nav.equip.ownHintOverMem"; }
   static string NavExpect(string sc) { return sc == "nav.equip.heroNotOwned" ? "navhalt:hero_not_in_grid" : sc == "nav.city.blockedBack" ? "navhalt:reset_failed" : null; }
 
   static NavCfg NavCfgOf(string sc) {
@@ -336,6 +345,9 @@ static partial class CoreTests {
     else if (sc == "nav.equip.ownHintOverNoHide") c.OwnStrip = !NavBaseline;
     else if (sc == "nav.equip.ownTimerOver") { c.OwnStrip = !NavBaseline; c.OwnTimer = true; }
     else if (sc == "nav.city.userAway") { c.AwayMs = 13000; }
+    else if (sc == "nav.equip.gearFilterMemLead") { c.GearMem = !NavBaseline; c.GearPixLagMs = 1000; c.RebuildMs = 0; }   // (NavBaseline: the same world with no flag read = the pixel-only old path)
+    else if (sc == "nav.equip.gearFilterRedXNoEffect") { c.GearMem = !NavBaseline; c.GearPixStuck = true; }
+    else if (sc == "nav.equip.ownHintOverMem") { c.OwnStrip = true; c.OwnGearCover = true; c.GearMem = !NavBaseline; c.HeroMem = !NavBaseline; }
     else if (sc == "nav.equip.hideWorn") { c.FlagFlickerP = 0.1; c.RebuildMs = 200; }
     else if (sc == "nav.equip.heroFilterBlindEats") { c.FilterLookBlind = true; c.PopupEatsBack = true; }
     else if (sc == "nav.equip.cityBackLate") { c.CityBackLatencyMs = 2500; c.FilterLookBlind = true; c.PopupEatsBack = true; }   // (the owner's build 531: the pop-up unseen and eating the first back press, the game answering 2.5 s late; the late answer alone is no failure on the old code either)
@@ -350,7 +362,8 @@ static partial class CoreTests {
     var g = new SimGame(seed, slow, failP); g.Geo = geo; g.SpawnP = 0.01;
     long plan = 100 + seed % 30;
     g.LockMs = NavCfgOf(sc).LockMs; if (NavStrict(sc)) g.SpawnP = 0; g.ListRebuildMs = NavCfgOf(sc).RebuildMs;
-    NavStart(sc, g, r, plan); SimNavResets = 0;
+    NavStart(sc, g, r, plan); SimNavResets = 0; SimNavOwnRefusals = 0; SimNavCloseNoEffect = 0;
+    { var cf = NavCfgOf(sc); g.GearMemMode = cf.GearMem ? 1 : 0; g.GearPixLagMs = cf.GearPixLagMs; g.GearPixStuck = cf.GearPixStuck; if (sc == "nav.equip.ownHintOverMem" && !cf.HeroMem) g.Hero.MemMode = 0; }
     { var cf = NavCfgOf(sc); if (cf.FilterLookBlind) g.Hero.Blind = true; g.PopupEatsBack = cf.PopupEatsBack; g.CityBackLatencyMs = cf.CityBackLatencyMs; }
     SimNav = nav; SimNavBlocked = sc == "nav.city.blockedBack"; SimNavCity = sc.StartsWith("nav.city"); SimNavCfg = NavCfgOf(sc); SimNavPlan = plan;
     var oc = new string[1]; var tmp = new Dictionary<string, int>();
@@ -365,6 +378,26 @@ static partial class CoreTests {
       int fp0 = g.FunnelPresses, rs0 = SimNavResets; NavBaseline = true;
       try { var bl = NavRunOne(sc, seed, slow, nav, geo, false); if (bl.Outcome.StartsWith("done") && SimNavFunnel <= 2 && SimNavResets == 0) res.Outcome = "wrong: done with " + fp0 + " funnel presses, " + rs0 + " resets with the mask, " + SimNavFunnel + " / " + SimNavResets + " without"; }
       finally { NavBaseline = false; }
+    }
+    SimNavBarPresses = g.FilterBarPresses;
+    // the memory scenarios (docs/specs/2026-11-04-memory-first-state.md): what must hold with the flags read - and the same world with no flag read (the old, pixel-only path) is run beside it to show the scenario breaks without them
+    bool memSc = sc == "nav.equip.gearFilterMemLead" || sc == "nav.equip.gearFilterRedXNoEffect" || sc == "nav.equip.ownHintOverMem";
+    if (memSc) {
+      string bad = null; int own = SimNavOwnRefusals, bar = g.FilterBarPresses;
+      if (o0.StartsWith("done") || o0.StartsWith("wait:item_")) {
+        if (sc == "nav.equip.gearFilterMemLead" && bar > 2) bad = bar + " presses of the filter bar (the flag answers: one to open, one more at most)";
+        if (sc == "nav.equip.ownHintOverMem" && own > 0) bad = own + " sends refused by 'own' although both flags answer";
+        if (sc == "nav.equip.gearFilterRedXNoEffect" && SimNavCloseNoEffect > 0) bad = SimNavCloseNoEffect + " NoEffect of the pop-up close (the flag says it closed)";
+      }
+      if (!NavBaseline) {
+        if (bad != null) res.Outcome = "wrong: " + bad;
+        NavBaseline = true; int resets0 = SimNavResets;
+        try {
+          var tw = NavRunOne(sc, seed, slow, nav, geo, false); NavTwinRuns++;
+          bool twBad = !(tw.Outcome.StartsWith("done") || tw.Outcome.StartsWith("wait:item_")) || (sc == "nav.equip.gearFilterMemLead" && SimNavBarPresses > 2) || (sc == "nav.equip.ownHintOverMem" && SimNavOwnRefusals > 0) || (sc == "nav.equip.gearFilterRedXNoEffect" && SimNavCloseNoEffect > 0);
+          int[] by; if (!NavTwinBy.TryGetValue(sc, out by)) NavTwinBy[sc] = by = new int[2]; by[0]++; if (twBad) { NavTwinBroke++; by[1]++; }
+        } finally { NavBaseline = false; }
+      }
     }
     res.Bad = e.Contains("\n    !! ") && !e.Contains("no end within");
     res.Hang = e.Contains("no end within");
@@ -418,6 +451,8 @@ static partial class CoreTests {
           + (NavStrict(sc) ? ", must be done, missed " + expectMiss : NavExpect(sc) != null ? ", expected " + NavExpect(sc) + " missed " + expectMiss : sc.StartsWith("nav.city") ? "" : ", old code " + doneOld + "/" + per + ", paired (neither refused) " + pairNav + "/" + pairN + " vs old " + pairOld + "/" + pairN) + ", rule breaks " + bad + ", hangs " + hang + (sb.Length > 0 ? " |" + sb : ""));
       }
     }
+    if (NavTwinRuns > 0) Console.WriteLine("nav sim: the memory scenarios without the flags read (pixel-only, the old path): " + NavTwinBroke + " of " + NavTwinRuns + " runs break (presses / own waits / resets / no end)");
+    foreach (var kv in NavTwinBy) Console.WriteLine("nav sim:   " + kv.Key + ": " + kv.Value[1] + " of " + kv.Value[0] + " pixel-only runs break");
     Console.WriteLine("nav sim: " + failures + " scenario rows failed, " + sw.ElapsedMilliseconds + " ms");
     return failures == 0 ? 0 : 1;
   }

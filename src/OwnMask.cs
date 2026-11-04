@@ -74,6 +74,12 @@ namespace RealmForge {
     }
   }
 
+  /// <summary>Which look answers count as «not known» for the click gate (docs/specs/2026-11-04-memory-first-state.md): a state the game's own flag answers (Yes / No) is KNOWN whatever its picture says - a picture our hint covers
+  /// never makes a click wait ('own'); the picture only matters while the flag is Unknown.</summary>
+  public static class LookPolicy {
+    public static bool Blocks(Mem3 mem, Seen3 look) { return mem == Mem3.Unknown && look == Seen3.Unknown; }
+  }
+
   /// <summary>The looks that came back «not known» (covered by our own hint): while one is, the pilot does not click; one that stays
   /// unknown for <see cref="TimeoutMs"/> is a problem to report (never a guess). A look not repeated for <see cref="StaleMs"/> no longer holds
   /// the pilot back (the flow moved on).</summary>

@@ -944,14 +944,13 @@ namespace RealmForge {
         var hs = screens.Hero;
         if (v.Kind == ScreenKind.HeroScreen && hs != null) {
           v.HeroFormOk = hs.FormOk; v.Tab = hs.Tab; v.Part = hs.Part; v.FactionList = hs.FactionList; v.ChosenCamps = hs.ChosenCamps; v.ClassChosen = hs.ClassChosen;
-          v.GridFilterOpen = HeroFilterSeen(o, W, H);
+          v.GridFilterOpen = HeroFilterSeen(o, W, H, hs.FilterMem);
           var sr = hg.Slot(0, W, H); if (sr != null) v.SlotPt = new[] { sr[0] + sr[2] / 2.0, sr[1] + sr[3] / 2.0 };
           var fr = hg.Filter(W, H); if (fr != null) v.FilterPt = new[] { fr[0] + fr[2] / 2.0, fr[1] + fr[3] / 2.0 };
           if (hs.Part >= 0) {
-            v.PanelOpen = Mark(o, fg.X(fg.MainCloseX, W, H), fg.Y(fg.CloseY, W, H), U, ButtonCheck.IsCloseRed);
-            v.SidePanelOpen = Mark(o, fg.X(fg.SideCloseX, W, H), fg.Y(fg.CloseY, W, H), U, ButtonCheck.IsCloseRed);
-            v.SetPanelOpen = v.SidePanelOpen && Mark(o, fg.X(fg.SetButtonsX, W, H), fg.Y(fg.SetButtonsY, W, H), U, ButtonCheck.IsGold);
-            RFX.NavProbeSetPix("gear", v.PanelOpen ? "yes" : "no"); RFX.NavProbeSetPix("gearSide", v.SidePanelOpen ? "yes" : "no");
+            v.PanelOpen = GearMain(o, W, H, U);
+            v.SidePanelOpen = GearSide(o, W, H, U);
+            v.SetPanelOpen = GearSets(o, W, H, U, v.SidePanelOpen);
             long[] suits, mains, subs; int part; bool foreign, hideEq;
             if (addrs != null && RFX.ReadFilter(addrs, out suits, out mains, out subs, out part, out foreign, out hideEq)) { v.FilterRead = true; v.Suits = suits; v.HideEquipped = hideEq; }
           }
@@ -1243,7 +1242,7 @@ namespace RealmForge {
       if (hs == null || !hs.FormOk || hs.Hero == 0) { hpilot.FilterDirty = false; return; }
       int fp, gp; W32.GetWindowThreadProcessId(W32.GetForegroundWindow(), out fp); W32.GetWindowThreadProcessId(hwnd, out gp);
       var hv = new HeroView { NowMs = NowMs(), Foreground = fp == gp, UserBusy = (W32.GetAsyncKeyState(0x01) & 0x8000) != 0 || (W32.GetAsyncKeyState(0x02) & 0x8000) != 0 || NowMs() - lastMoveMs < 700, W = cr.R, H = Ui.Unit(cr.R, cr.B), ClientH = cr.B,
-        FilterOpen = fp == gp && HeroFilterSeen(o, cr.R, cr.B), FilterMem = HeroView.MemOf(hs), ClassChosen = hs.ClassChosen, ChosenCamps = hs.ChosenCamps };
+        FilterOpen = fp == gp && HeroFilterSeen(o, cr.R, cr.B, HeroView.MemOf(hs)), FilterMem = HeroView.MemOf(hs), ClassChosen = hs.ClassChosen, ChosenCamps = hs.ChosenCamps };
       var a = hpilot.Cleanup(hv);
       if (a == null || a.Kind != AutoKind.Click) return;
       int x = o.X + (int)Math.Round(a.X), y = o.Y + (int)Math.Round(a.Y);
@@ -1502,7 +1501,7 @@ namespace RealmForge {
       // the gear filter pop-up (its red ×) while an item is to be framed
       if (target != 0) {
         double fx = fg.X(fg.MainCloseX, W, H), fy = fg.Y(fg.CloseY, W, H);
-        filterOpen = Mark(o, fx, fy, U, ButtonCheck.IsCloseRed);
+        filterOpen = GearMain(o, W, H, U);
         if (filterOpen) {
           bool pilot = AutoEnabled && fpilot.State == "work";
           // the plan wants the filter (its filter step, or the item far down - the page's «faster» tip): what to pick in it
@@ -1536,7 +1535,7 @@ namespace RealmForge {
       if (hintKind == "") { HideTip(); return; }
       // the next slot with the filter pop-up open: the pop-up covers the hero's slots, but its own row «Выбрать часть» switches
       // the list to that slot (the icons in slot order, measured at 1366x705 and 1920x1009)
-      if (hintKind == "slot" && hintSlot >= 0 && hintSlot < PartIconX.Length && Mark(o, fg.X(fg.MainCloseX, W, H), fg.Y(fg.CloseY, W, H), U, ButtonCheck.IsCloseRed)) {
+      if (hintKind == "slot" && hintSlot >= 0 && hintSlot < PartIconX.Length && GearMain(o, W, H, U)) {
         int s = (int)(0.1 * U), cx = (int)fg.X(PartIconX[hintSlot], W, H), cy = (int)fg.Y(PartIconY, W, H);
         var pl = new System.Collections.Generic.List<string>(hintLines); if (pl.Count > 1) pl.RemoveAt(1); if (Tx("slotInFilter") != "") pl.Add(Tx("slotInFilter"));
         DrawTip(o.X + cx - s / 2, o.Y + cy - s / 2, s, s, pl.ToArray(), H);
@@ -1574,7 +1573,7 @@ namespace RealmForge {
       if (!anchor.Has || types == null || frameRow <= 0 || frameCol <= 0) return false;
       double W = cr.R, H = cr.B, top = anchor.RowTop(g, types, frameRow, U), left = g.ColLeft(frameCol) * U, w = g.CellW * U;
       if (top + w < g.ViewTop * U || top > g.ViewBottom * U) return false;   // not in view anyway
-      bool side = Mark(o, fg.X(fg.SideCloseX, W, H), fg.Y(fg.CloseY, W, H), U, ButtonCheck.IsCloseRed);
+      bool side = GearSide(o, W, H, U);
       double x0 = W / 2 - 0.452 * U, x1 = W / 2 + (side ? 0.87 : 0.335) * U;
       return left + w > x0 && left < x1;
     }
@@ -2212,7 +2211,7 @@ namespace RealmForge {
         if (screens.Hero != null) heroScreen = screens.Hero;   // the screen of this tick (ReadScreens)
         // the gear filter pop-up left open (the last item's) stays over the hero grid and takes its clicks: closed first
         if (heroScreen.FormOk && heroScreen.Hero > 0 && heroScreen.Hero != runHero && v.Foreground && !v.UserBusy && now >= slotCloseAfter
-            && Mark(o, fg.X(fg.MainCloseX, cr.R, cr.B), fg.Y(fg.CloseY, cr.R, cr.B), Ui.Unit(cr.R, cr.B), ButtonCheck.IsCloseRed)) {
+            && GearMain(o, cr.R, cr.B, Ui.Unit(cr.R, cr.B))) {
           slotCloseAfter = now + 900;
           Log.Write("hero: a pop-up (the gear filter or an item card) is over the grid - closing it");
           EquipSend(ClickTarget.EquipClosePopup, new AutoAction { Kind = AutoKind.Click }, o.X + (int)Math.Round(fg.X(fg.MainCloseX, cr.R, cr.B)), o.Y + (int)Math.Round(fg.Y(fg.CloseY, cr.R, cr.B)), o, v.Foreground);
@@ -2223,7 +2222,7 @@ namespace RealmForge {
           Plan = runHero, Hero = heroScreen.FormOk ? heroScreen.Hero : 0, Tab = ArtPhase ? HeroGeometry.GearTab : heroScreen.Tab, Part = heroScreen.Part, SmallCards = heroScreen.SmallCards,
           Heroes = heroScreen.Heroes,
           HeroesButton = heroScreen.Hero == 0 && v.Foreground && HeroesButtonSeen(o, cr.R, cr.B),
-          FilterOpen = v.Foreground && HeroFilterSeen(o, cr.R, cr.B), FilterMem = HeroView.MemOf(heroScreen), ClassChosen = heroScreen.ClassChosen, FactionList = heroScreen.FactionList,
+          FilterOpen = v.Foreground && HeroFilterSeen(o, cr.R, cr.B, HeroView.MemOf(heroScreen)), FilterMem = HeroView.MemOf(heroScreen), ClassChosen = heroScreen.ClassChosen, FactionList = heroScreen.FactionList,
           ChosenCamps = heroScreen.ChosenCamps, ClassCount = heroScreen.ClassCount, GridPtr = heroScreen.GridPtr
         };
         long[] tags = HeroTags(runHero);
@@ -2293,7 +2292,7 @@ namespace RealmForge {
       // the next slot: an open filter pop-up covers the hero's slots - close it first (the filter was for the item that is
       // on now; the next one gets its own)
       if (v.Slot != null && v.Foreground && !v.UserBusy && now >= slotCloseAfter
-          && Mark(o, fg.X(fg.MainCloseX, cr.R, cr.B), fg.Y(fg.CloseY, cr.R, cr.B), Ui.Unit(cr.R, cr.B), ButtonCheck.IsCloseRed)) {
+          && GearMain(o, cr.R, cr.B, Ui.Unit(cr.R, cr.B))) {
         slotCloseAfter = now + ClosePopupAgainMs; pilot.Reset();   // (a slow laptop closes it 0.6-1.5 s later: not pressed twice meanwhile)
         int cx = o.X + (int)Math.Round(fg.X(fg.MainCloseX, cr.R, cr.B)), cy = o.Y + (int)Math.Round(fg.Y(fg.CloseY, cr.R, cr.B));
         EquipSend(ClickTarget.EquipClosePopup, new AutoAction { Kind = AutoKind.Click }, cx, cy, o, v.Foreground);
@@ -3633,7 +3632,7 @@ namespace RealmForge {
       if (hold && owner == ClickOwner.Equip && scr != null && scr.Kind == ScreenKind.HeroScreen && now >= cityTipAfter) {
         double W1 = cr.R, H1 = cr.B, U1 = Ui.Unit(W1, H1);
         if (EquipTipShown() && ClickGate.OnlyTip(scr)) { cityTipAfter = now + 1200; if (TipEscapeSend(cr, front)) Log.Write("back: the item's tip is open - closed with Escape first"); return true; }
-        if (Mark(o, fg.X(fg.MainCloseX, W1, H1), fg.Y(fg.CloseY, W1, H1), U1, ButtonCheck.IsCloseRed)) {
+        if (GearMain(o, W1, H1, U1)) {
           cityTipAfter = now + 1200; Log.Write("back: the gear filter's pop-up is open - closing it first");
           EquipSend(ClickTarget.EquipClosePopup, new AutoAction { Kind = AutoKind.Click }, o.X + (int)Math.Round(fg.X(fg.MainCloseX, W1, H1)), o.Y + (int)Math.Round(fg.Y(fg.CloseY, W1, H1)), o, front);
           return true;
@@ -4357,12 +4356,12 @@ namespace RealmForge {
       }
       long owner = RFX.ReadOwner(addrs, filterItem);
       fv.OnOtherHero = owner > 0 && hintHero > 0 && owner != hintHero;
+      var gm = GearMemNow(); fv.PanelMem = gm.Open; fv.SideMem = gm.Side; fv.SetMem = gm.SetPanel;   // (the pilot settles the pictures against the flags: FilterPilot.Resolve)
       if (front) {
         double W = cr.R, H = cr.B, U = Ui.Unit(W, H);
-        fv.PanelOpen = Mark(o, fg.X(fg.MainCloseX, W, H), fg.Y(fg.CloseY, W, H), U, ButtonCheck.IsCloseRed);
-        fv.SidePanelOpen = Mark(o, fg.X(fg.SideCloseX, W, H), fg.Y(fg.CloseY, W, H), U, ButtonCheck.IsCloseRed);
-        fv.SetPanelOpen = fv.SidePanelOpen && Mark(o, fg.X(fg.SetButtonsX, W, H), fg.Y(fg.SetButtonsY, W, H), U, ButtonCheck.IsGold);
-        RFX.NavProbeSetPix("gear", fv.PanelOpen ? "yes" : "no"); RFX.NavProbeSetPix("gearSide", fv.SidePanelOpen ? "yes" : "no");   // (probe only: pix= next to mem=)
+        bool px; GearMain(o, W, H, U, out px); fv.PanelOpen = px;   // (the picture; FilterPilot.Resolve puts the flag over it and tells a disagreement once)
+        fv.SidePanelOpen = GearSide(o, W, H, U);
+        fv.SetPanelOpen = GearSets(o, W, H, U, fv.SidePanelOpen);
       }
       return fv;
     }
@@ -4371,10 +4370,10 @@ namespace RealmForge {
 
     /// <summary>The hero grid's filter pop-up is on the screen: its dark background (or a chosen row's blue) left of the class
     /// check boxes: 0.93 of the strip when open, at most 0.73 over the hero cards.</summary>
-    bool HeroFilterSeen(W32.POINT o, double W, double H) {
+    bool HeroFilterSeen(W32.POINT o, double W, double H, Mem3 mem = Mem3.Unknown) {
       double U = Ui.Unit(W, H);
       var l = HeroFilterLook.Look((x, y, w, h) => Grab(o.X + x, o.Y + y, w, h), U);
-      LookUnknown("hero filter", l == Seen3.Unknown);
+      LookUnknown("hero filter", LookPolicy.Blocks(mem, l));   // (the game's flag answers: a covered picture is no unknown look, no click waits for it)
       return l == Seen3.Yes;
     }
 
@@ -4883,11 +4882,38 @@ namespace RealmForge {
     }
 
     /// <summary>A small square (about 2% of the height) around a client point: is it mostly that mark?</summary>
-    bool Mark(W32.POINT o, double x, double y, double H, Func<int, bool> test) {
+    bool Mark(W32.POINT o, double x, double y, double H, Func<int, bool> test, bool memKnown = false) {
       int r = Math.Max(4, (int)(H * 0.01));
       var l = ButtonCheck.Look(Grab(o.X + (int)x - r, o.Y + (int)y - r, 2 * r, 2 * r), test, ButtonCheck.MinMarkShare);
-      LookUnknown("mark@" + (int)x + "," + (int)y, l == Seen3.Unknown);
+      LookUnknown("mark@" + (int)x + "," + (int)y, LookPolicy.Blocks(memKnown ? Mem3.Yes : Mem3.Unknown, l));   // (memKnown: the game's flag answers, the picture is only for the log)
       return l == Seen3.Yes;
+    }
+
+    // ---- the gear filter from the game's memory first (EquipScan.ReadGearMem); the pictures only where the flag is Unknown
+    GearMem gearMemCache; int gearMemAt;
+    GearMem GearMemNow() {
+      int t = Environment.TickCount;
+      if (gearMemCache == null || unchecked(t - gearMemAt) > 40) { gearMemCache = RFX.ReadGearMemNow(addrs); gearMemAt = t; }
+      return gearMemCache;
+    }
+    /// <summary>The gear filter pop-up is open: the game's m_bShow, else the red × on the picture.</summary>
+    bool GearMain(W32.POINT o, double W, double H, double U) { bool px; return GearMain(o, W, H, U, out px); }
+    bool GearMain(W32.POINT o, double W, double H, double U, out bool px) {
+      var m = GearMemNow().Open; px = Mark(o, fg.X(fg.MainCloseX, W, H), fg.Y(fg.CloseY, W, H), U, ButtonCheck.IsCloseRed, m != Mem3.Unknown);
+      RFX.NavProbeSetPix("gear", px ? "yes" : "no");
+      return m != Mem3.Unknown ? m == Mem3.Yes : px;
+    }
+    /// <summary>The side panel (sets / stats) is open: any of m_ButtonStates[1..3], else the red × on the picture.</summary>
+    bool GearSide(W32.POINT o, double W, double H, double U) {
+      var m = GearMemNow().Side; var px = Mark(o, fg.X(fg.SideCloseX, W, H), fg.Y(fg.CloseY, W, H), U, ButtonCheck.IsCloseRed, m != Mem3.Unknown);
+      RFX.NavProbeSetPix("gearSide", px ? "yes" : "no");
+      return m != Mem3.Unknown ? m == Mem3.Yes : px;
+    }
+    /// <summary>The side panel is the sets list: m_ButtonStates[1], else the gold buttons on the picture.</summary>
+    bool GearSets(W32.POINT o, double W, double H, double U, bool side) {
+      var m = GearMemNow().SetPanel;
+      if (m != Mem3.Unknown) return side && m == Mem3.Yes;
+      return side && Mark(o, fg.X(fg.SetButtonsX, W, H), fg.Y(fg.SetButtonsY, W, H), U, ButtonCheck.IsGold);
     }
 
     /// <summary>The confirm button the game shows now: «Заменить» (two cards) or «Надеть» (one card, the slot is empty) -
@@ -4901,6 +4927,12 @@ namespace RealmForge {
       int[] rep = FindBlue(o, hg.Replace(W, H), H), eq = FindBlue(o, hg.Equip(W, H), H);
       LookUnknown("confirm button", blueUnk);   // (a spot our hint covers: the button may be there, or a second one - not known, no click)
       confirmBlueNone = rep == null && eq == null && !blueUnk;
+      // the game's own cards (two = «Заменить», one = «Надеть») settle a tie of the pictures; told once per item next to what the pictures saw (to check the fields on a live run)
+      if (target != confirmTipLogged && (rep != null || eq != null) && !blueUnk) {
+        int tk = RFX.ReadTipKind(); confirmTipLogged = target;
+        Log.Write("confirm: tip memory=" + (tk == 1 ? "replace" : tk == 2 ? "equip" : "unknown") + " pix=" + (rep != null && eq != null ? "both" : rep != null ? "replace" : "equip") + " item " + target);
+        if (rep != null && eq != null) { if (tk == 1) eq = null; else if (tk == 2) rep = null; }
+      }
       // the item a single button was found for is on the hero now: that button kind is the one at this window size
       if (confirmChoice.PendingItem > 0 && addrs != null && hintHero > 0 && RFX.ReadOwner(addrs, confirmChoice.PendingItem) == hintHero) confirmChoice.Worn(confirmChoice.PendingItem);
       int[] btn = confirmChoice.Pick(rep, eq, target, W, H);
@@ -4938,7 +4970,7 @@ namespace RealmForge {
       return ConfirmText.ForButton(hintLines, true);
     }
     bool confirmBlueNone;   // the last confirm search saw no blue button at all (AutoView.BlueNone)
-    long confirmMissLogged, confirmFoundLogged, confirmMissSince, confirmMissFor, confirmTieLogged;
+    long confirmTipLogged, confirmMissLogged, confirmFoundLogged, confirmMissSince, confirmMissFor, confirmTieLogged;
     readonly ConfirmChoice confirmChoice = new ConfirmChoice();
 
     /// <summary>What the confirm search saw (for the report): the window, both buttons' usual rects and their blue share

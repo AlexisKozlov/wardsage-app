@@ -38,6 +38,8 @@ namespace RealmForge {
     /// <summary>The signature without the layers: the screen and its facets (a pop-up that flickers is no progress).</summary>
     public string StateKey = "";
     public bool Blocking;
+    /// <summary>The pseudo-layers the game's memory says are closed now (a close of one of them is done at once, however the pictures lag).</summary>
+    public readonly HashSet<string> MemClosed = new HashSet<string>();
     public long StableForMs(long now) { return now - StableSinceMs; }
     public bool Stable(long now) { return now - StableSinceMs >= NeedMs; }
     public Layer Top { get { return Stack.Count > 0 ? Stack[0] : null; } }
@@ -94,7 +96,7 @@ namespace RealmForge {
         r.StableSinceMs = candSince; Current = r; candReads = 0; candSig = ""; return r;
       }
       // not yet: the old picture stands, with the new read's quality (and its state, so the latest facts are there)
-      cur.Confidence = r.Confidence; cur.NeedMs = StableMs; cur.StableSinceMs = now;   // (a read that differs: the picture is in flux, nothing is acted on until it stands still)
+      cur.Confidence = r.Confidence; cur.NeedMs = StableMs; cur.MemClosed.Clear(); foreach (var m in r.MemClosed) cur.MemClosed.Add(m); cur.StableSinceMs = now;   // (a read that differs: the picture is in flux, nothing is acted on until it stands still)
       return cur;
     }
 
@@ -166,9 +168,14 @@ namespace RealmForge {
         // a layer told by pixels alone needs what the memory says about the screen: the gear filter's pop-ups only over an open gear list (tab 3, a slot), the hero grid's pop-up only with the grid showing
         // (live 522: a red pixel on hero tab 1 was taken for the gear filter's cross and clicked for ever)
         bool gearList = s.HeroTab == 3 && s.HeroSlot >= 0, gridShown = s.HeroSlot < 0;
-        if (gearList && pic != null && pic("gearFilterSide")) pseudo.Add(new Layer { Form = "panel:gearSide", Class = 'P', Role = LayerRole.Panel });
-        if (gearList && !filterForm && pic != null && pic("gearFilterMain")) pseudo.Add(new Layer { Form = "panel:gearFilter", Class = 'P', Role = LayerRole.Panel });
-        if (s.ModalWhy == "heroFilter" || (gridShown && pic != null && pic("heroFilter"))) pseudo.Add(new Layer { Form = "panel:heroFilter", Class = 'P', Role = LayerRole.Panel });
+        // memory first (docs/specs/2026-11-04-memory-first-state.md): a panel the game's flag answers (Yes / No) is not looked at; the picture decides only while the flag is Unknown (nil / still loading)
+        Func<Mem3, string, bool> shown = (mem, key) => mem == Mem3.Yes || (mem == Mem3.Unknown && pic != null && pic(key));
+        if (gearList && shown(s.GearSideMem, "gearFilterSide")) pseudo.Add(new Layer { Form = "panel:gearSide", Class = 'P', Role = LayerRole.Panel });
+        if (gearList && !filterForm && shown(s.GearOpenMem, "gearFilterMain")) pseudo.Add(new Layer { Form = "panel:gearFilter", Class = 'P', Role = LayerRole.Panel });
+        if ((s.ModalWhy == "heroFilter" && s.HeroFilterMem != Mem3.No) || (gridShown && shown(s.HeroFilterMem, "heroFilter"))) pseudo.Add(new Layer { Form = "panel:heroFilter", Class = 'P', Role = LayerRole.Panel });
+        if (s.GearOpenMem == Mem3.No) { sn.MemClosed.Add("panel:gearFilter"); sn.MemClosed.Add("panel:gearSide"); }
+        else if (s.GearSideMem == Mem3.No) sn.MemClosed.Add("panel:gearSide");
+        if (s.HeroFilterMem == Mem3.No) sn.MemClosed.Add("panel:heroFilter");
         int at = 0; while (at < sn.Stack.Count && sn.Stack[at].Role != LayerRole.Flow) at++;
         sn.Stack.InsertRange(at, pseudo);
       }

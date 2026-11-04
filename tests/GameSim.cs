@@ -94,6 +94,20 @@ static partial class CoreTests {
     /// <summary>--nav hide-worn: the plan's item is worn by another hero and the game's «Скрыть надетое» is on, so the list does not show it; FilterOwn = the gear filter's pop-up the filter pilot opened
     /// (the list beside it takes clicks, the pop-up's toggle switches HideWorn).</summary>
     public bool HideWorn, ItemElsewhere, FilterOwn;
+    /// <summary>--nav gear-filter memory (docs/specs/2026-11-04-memory-first-state.md P2): GearMemMode 1 = the hero screen's reader gives Panel_EquipFilterWidget_Charactor.m_bShow (exact, Unknown with no gear list open), 0 = unreadable (old behaviour).
+    /// GearPixLagMs: the pictures show a change of the pop-up this long after the game's flag (memory leads the pixels); GearPixStuck: the red-cross look reads true for ever on the open gear list (a red pixel that is no cross).</summary>
+    public int GearMemMode; public long GearPixLagMs; public bool GearPixStuck; public int FilterBarPresses; bool gearPixLast; long gearPixAt = -1000000;
+    public bool GearOpenTruth { get { return (FilterOwn || GearFilter) && Full == SimHero; } }
+    public Mem3 GearMemNow() { if (GearMemMode == 0 || Full != SimHero || Hero.Part < 0) return Mem3.Unknown; return GearOpenTruth ? Mem3.Yes : Mem3.No; }
+    /// <summary>The gear pop-up as the red-cross look sees it (lagging the game's flag).</summary>
+    public bool GearPix(bool truth) {
+      if (GearPixStuck && Full == SimHero && Hero.Part >= 0) return true;
+      if (GearPixLagMs <= 0) return truth;
+      if (truth != gearPixLast) { gearPixLast = truth; gearPixAt = Now; }
+      return Now - gearPixAt >= GearPixLagMs ? truth : !truth;
+    }
+    /// <summary>--nav hero filter memory: Hero.MemMode (FakeHeroGame.MemAt) plus the leftover pop-up flag.</summary>
+    public Mem3 HeroFilterMemNow() { if (!HeroModel || Hero.MemMode == 0 || Full != SimHero) return Mem3.Unknown; return HeroFilter ? Mem3.Yes : Hero.MemAt(Now); }
     /// <summary>--nav hideWorn: the list is rebuilt this long after the «Скрыть надетое» toggle (a pick then is lost); ListGen counts the rebuilds (the host's list signature).</summary>
     public long ListRebuildMs, RebuildUntil; public int ListGen;
     /// <summary>--nav inputLock: the game's input is locked LockMs after every push / pop of a form (the UILocker): a click then lands on the blocker, an Escape is dropped (LostLocked).</summary>
@@ -251,6 +265,7 @@ static partial class CoreTests {
     bool Fail() { return R.NextDouble() < FailP; }
 
     /// <summary>What the app's readers give this tick (memory: the known forms; the window table: the offers).</summary>
+    GearMem GearMemSim() { var m = GearMemNow(); return new GearMem { Open = m, Side = m == Mem3.Unknown ? Mem3.Unknown : Mem3.No, SetPanel = m == Mem3.Unknown ? Mem3.Unknown : Mem3.No }; }
     public ScreenInputs Read() {
       var i = new ScreenInputs { Offers = Fail() ? null : new List<string>(), ShownKnown = "" };
       if (i.Offers != null) foreach (var f in Stack) if (OfferForms.IsOffer(f)) i.Offers.Add(f);
@@ -258,7 +273,7 @@ static partial class CoreTests {
       i.CityForm = full == SimCity;
       bool heroOn = full == SimHero;
       // (a failed read of the hero screen is no reading, never "no hero screen")
-      if (Stack.Contains(SimHero)) { if (!Fail()) i.Hero = new HeroScreen { Hero = Hero.Shown, FormOk = heroOn, Tab = Hero.Tab, Part = Hero.Part, Heroes = Hero.Heroes, GridPtr = Hero.Grid, FactionList = HeroModel ? FakeHeroGame.FactionList : null, ChosenCamps = HeroModel ? Hero.Camps.ToArray() : null, ClassChosen = HeroModel && Hero.Class > 0, ClassCount = HeroModel ? 7 : 0 }; }
+      if (Stack.Contains(SimHero)) { if (!Fail()) i.Hero = new HeroScreen { Hero = Hero.Shown, FormOk = heroOn, Tab = Hero.Tab, Part = Hero.Part, Heroes = Hero.Heroes, GridPtr = Hero.Grid, FactionList = HeroModel ? FakeHeroGame.FactionList : null, ChosenCamps = HeroModel ? Hero.Camps.ToArray() : null, ClassChosen = HeroModel && Hero.Class > 0, ClassCount = HeroModel ? 7 : 0, FilterMem = HeroFilterMemNow(), Gear = GearMemSim() }; }
       else if (!Fail()) i.Hero = new HeroScreen { Hero = 0, FormOk = false };
       if ((full == SimInv || full == SimFoundry) && Found(SimInv) && !Fail())
         i.Inv = Inv();
@@ -315,7 +330,7 @@ static partial class CoreTests {
       Say("click " + tg + " @" + (int)x + "," + (int)y + " on " + top); Acts.Append(Now + " c" + (int)x + "," + (int)y + ";");
       if (top == SimHero && Full == SimHero && tg == ClickTarget.EquipFilter && !GearFilter && !HeroFilter && Hero.Part >= 0) {
         long lf = 250 + R2.Next(150);   // (the pop-up's own animation, not the game's server latency)
-        if (Near(x, y, (0.029 + 0.379 / 2) * U, Ui.FromBottom(0.9275, W, H), 30)) { Later(lf, () => { FilterOwn = !FilterOwn; }); return; }
+        if (Near(x, y, (0.029 + 0.379 / 2) * U, Ui.FromBottom(0.9275, W, H), 30)) { FilterBarPresses++; Later(lf, () => { FilterOwn = !FilterOwn; }); return; }
         if (FilterOwn && Near(x, y, NavFg.X(NavFg.HideEquippedX, W, H), NavFg.Y(NavFg.HideEquippedY, W, H), 30)) { Later(lf, () => { HideWorn = !HideWorn; ListGen++; if (ListRebuildMs > 0) { RebuildUntil = Now + ListRebuildMs; Later(ListRebuildMs, () => { ListGen++; }); } }); return; }
       }
       if (top == SimHero && Full == SimHero && FilterOwn && tg == ClickTarget.EquipClosePopup && Near(x, y, NavFg.X(NavFg.MainCloseX, W, H), NavFg.Y(NavFg.CloseY, W, H), 20)) { Later(Lat(), () => { FilterOwn = false; }); return; }

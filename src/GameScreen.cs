@@ -81,6 +81,8 @@ namespace RealmForge {
     // HeroScreen
     public long Hero;
     public int HeroTab = -1, HeroSlot = -1;
+    /// <summary>The hero screen's panels as the game's memory has them (Unknown = not readable: the pictures decide, ScreenReader.Build): the grid's filter pop-up, the gear filter pop-up, its side panel and the sets panel.</summary>
+    public Mem3 HeroFilterMem = Mem3.Unknown, GearOpenMem = Mem3.Unknown, GearSideMem = Mem3.Unknown, GearSetMem = Mem3.Unknown;
     // Foundry (FoundryTab: 0 forge, 1 identify, 2 ascend, 3 recast, 4 reforge, -1 unknown)
     public int FoundryTab = -1;
     public bool FoundryPopup;         // the Ascension list's filter pop-up
@@ -245,6 +247,7 @@ namespace RealmForge {
         s.InvSelKey = inv.Selected.Count + ":" + sum;
       } else if (heroUp) {
         s.Kind = ScreenKind.HeroScreen; s.Hero = h.Hero; s.HeroTab = h.Tab; s.HeroSlot = h.Part;
+        s.HeroFilterMem = h.FilterMem; if (h.Gear != null) { s.GearOpenMem = h.Gear.Open; s.GearSideMem = h.Gear.Side; s.GearSetMem = h.Gear.SetPanel; }
         if (h.FilterOpen) { s.ModalOpen = true; s.ModalWhy = "heroFilter"; }
       } else if (i.CityForm == true || i.CitySeen) {
         s.Kind = ScreenKind.City;
@@ -439,7 +442,7 @@ namespace RealmForge {
     static ScreenState ShallowCopy(ScreenState s) {
       var c = new ScreenState();
       c.Kind = s.Kind; c.InvEquipTab = s.InvEquipTab; c.InvBulk = s.InvBulk; c.InvBulkKnown = s.InvBulkKnown; c.InvArtTab = s.InvArtTab; c.InvArtBulk = s.InvArtBulk; c.InvArtBulkKnown = s.InvArtBulkKnown; c.InvArtMode = s.InvArtMode; c.InvArtSelected = s.InvArtSelected; c.ArtWsTab = s.ArtWsTab; c.ArtWsUid = s.ArtWsUid; c.ArtWsKey = s.ArtWsKey; c.InvSelected = s.InvSelected; c.InvSelKey = s.InvSelKey;
-      c.Hero = s.Hero; c.HeroTab = s.HeroTab; c.HeroSlot = s.HeroSlot;
+      c.Hero = s.Hero; c.HeroTab = s.HeroTab; c.HeroSlot = s.HeroSlot; c.HeroFilterMem = s.HeroFilterMem; c.GearOpenMem = s.GearOpenMem; c.GearSideMem = s.GearSideMem; c.GearSetMem = s.GearSetMem;
       c.FoundryTab = s.FoundryTab; c.FoundryPopup = s.FoundryPopup; c.FoundrySel = s.FoundrySel; c.FoundryKey = s.FoundryKey;
       c.GemFunc = s.GemFunc; c.GemSel = s.GemSel; c.ModalOpen = s.ModalOpen; c.ModalWhy = s.ModalWhy;
       c.Offer = s.Offer; c.OfferCount = s.OfferCount; c.OfferRead = s.OfferRead; c.OfferTopKnown = s.OfferTopKnown; c.TopForm = s.TopForm; c.Top = s.Top; c.TopClass = s.TopClass; c.Flow = s.Flow; c.Order = s.Order;
