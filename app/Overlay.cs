@@ -3082,6 +3082,7 @@ namespace RealmForge {
     }
 
     // the auto click for the artifact steps (src/ArtEquip.cs ArtEquipPilot): only with ArtAutoOn; «Заменить» of the card and of the pop-up also need the player's auto confirm.
+    double[] artReplaceLive;
     void TickArtEquip(W32.POINT o, W32.RECT cr, AutoView v) {
       var step = artEqStep;
       if (step == null || !ArtAutoOn) { artEqAutoSaid = ""; return; }
@@ -3092,12 +3093,20 @@ namespace RealmForge {
         if (pre.Reason == "offer" && OfferStep(ClickOwner.Equip, screens.Current, o, cr, v.Foreground, v.NowMs)) return;
         if (artEq.Stopped || pre.Verdict != GateVerdict.Allow) return;   // the last click's effect is awaited / the screen is not recognised yet
       }
-      bool btnSeen = false;
+      bool btnSeen = false; artReplaceLive = null;
       if (step.Kind == ArtEquipKind.PressReplace && v.Foreground) {
-        var rr = ArtFrames.Rect(Geo.Current, ArtEquipFrames.KeyReplace, W, H, U);
-        btnSeen = rr != null && IsBlueButton(o, new[] { (int)rr.X, (int)rr.Y, (int)rr.W, (int)rr.H });
+        // the game's memory first (the widget's live rect, visible, on the top form): our own hint lies over the button and covers its picture, which made the look «not known» for ever (live lab 513ac0)
+        RFX.UiButtonWant(ClickTarget.ArtReplace, null, W, H, U);
+        var lr = RFX.UiButtonFresh(ClickTarget.ArtReplace, null, W, H, Environment.TickCount, RFX.UiFreshMs);
+        double lx, ly; string lwhy;
+        if (lr != null && lr.Ok) {
+          if (RFX.UiLivePoint(lr, W, H, Environment.TickCount, out lx, out ly, out lwhy) && RFX.UiTopIs(ClickTarget.ArtReplace, null, screens.Current)) { btnSeen = true; artReplaceLive = new[] { lr.X, lr.Y, lr.W, lr.H }; }
+        } else {
+          var rr = ArtFrames.Rect(Geo.Current, ArtEquipFrames.KeyReplace, W, H, U);
+          btnSeen = rr != null && IsBlueButton(o, new[] { (int)rr.X, (int)rr.Y, (int)rr.W, (int)rr.H });
+        }
       }
-      var view = new ArtEquipView { NowMs = v.NowMs, Foreground = v.Foreground, UserBusy = v.UserBusy, UserClicked = v.UserClicked, W = W, H = H, U = U, Step = step, Hero = screens.Hero,
+      var view = new ArtEquipView { ReplaceLive = artReplaceLive, NowMs = v.NowMs, Foreground = v.Foreground, UserBusy = v.UserBusy, UserClicked = v.UserClicked, W = W, H = H, U = U, Step = step, Hero = screens.Hero,
                                     Geometry = Geo.Current, AutoConfirm = AutoConfirm, ReplaceBtnSeen = btnSeen };
       if (step.Kind == ArtEquipKind.PickCell && !step.Filter) view.CellLive = ArtCellLive(W, H, U);
       if (step.Filter) view.FilterLive = ArtFilterLive(W, H, U);
@@ -5094,6 +5103,8 @@ namespace RealmForge {
       if (late != null) {
         Log.Write("auto: the look stayed covered by our hint for " + (UnknownLooks.TimeoutMs / 1000) + " s (" + late + ") - stopping, no guess");
         RaiseProblem("pilot.look_covered", "the look \"" + late + "\" stayed covered by our own hint for " + (UnknownLooks.TimeoutMs / 1000) + " s; target " + req.Target);
+        // a named stop with the diagnosis, not a wait that holds every later click (the way back to the city included) for ever
+        gate.Halt(req.Owner, "look", "the look \"" + late + "\" stayed covered by our own hint for " + (UnknownLooks.TimeoutMs / 1000) + " s - no guess; target " + req.Target); AnnounceHalts();
       }
       return true;
     }

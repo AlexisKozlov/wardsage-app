@@ -8226,6 +8226,14 @@ static partial class CoreTests {
     var m5b = p5.Step(V(sRep, hRep, true, false, 10)); Check(m5b.State == "hint" && m5b.Why == "button", "art pilot: «Заменить» not seen as the game's blue button -> no click");
     var m5c = p5.Step(V(sRep, hRep, true, true, 20));
     Check(m5c.Todo == ArtEquipTodo.Replace && Math.Abs(m5c.Action.X - 521) <= 1.5 && Math.Abs(m5c.Action.Y - 576.1) <= 1.5, "art pilot: with the auto confirm and the button seen -> «Заменить» (centre 521, 576)");
+    // live lab 513ac0 (23:09:06): the card is open, our own hint «Нажмите «Заменить»» lies over the button, the picture of it is not known; the game's memory has the button's rect: pressed there, no wait
+    var p5L = new ArtEquipPilot(); var vL = V(sRep, hRep, true, true, 0); vL.ReplaceLive = new[] { 465.0, 540.0, 154.0, 58.0 };
+    var m5L = p5L.Step(vL);
+    Check(m5L.Todo == ArtEquipTodo.Replace && Math.Abs(m5L.Action.X - 542) <= 1 && Math.Abs(m5L.Action.Y - 569) <= 1, "art pilot (lab 513ac0): «Заменить» is pressed at the live rect the game's memory gives, not the layout's (" + m5L.Action.X + "," + m5L.Action.Y + ")");
+    // the button never seen (no live read, the picture covered): a named stop after ButtonWaitMs, never a wait for ever
+    var p5S = new ArtEquipPilot(); ArtEquipMove m5S = null;
+    for (long t5 = 0; t5 <= 9000 && !p5S.Stopped; t5 += 500) m5S = p5S.Step(V(sRep, hRep, true, false, t5));
+    Check(p5S.Stopped && p5S.Reason == "button" && m5S.State == "stopped", "art pilot (lab 513ac0): the card's button never seen -> stopped 'button' within " + (ArtEquipPilot.ButtonWaitMs / 1000) + " s (" + p5S.Reason + ")");
     var hPop = HS(7, true, 9004, other, 9001, u5); var sPop = N(hPop, true);
     var p6 = new ArtEquipPilot(); var m6 = p6.Step(V(sPop, hPop, false, false, 0));
     Check(m6.State == "hint" && m6.Why == "player", "art pilot: the pop-up's «Заменить» without the auto confirm is the player's");

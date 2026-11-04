@@ -209,6 +209,8 @@ namespace RealmForge {
     public bool AutoConfirm;
     /// <summary>The card's button is seen on the picture as the game's blue button (so the click cannot land on a neighbour).</summary>
     public bool ReplaceBtnSeen;
+    /// <summary>The card's «Заменить» / «Надеть» as the game's memory has it (the widget's live rect: x, y, w, h client px), fresh, visible, on the top form; null = no live read (the picture decides). Memory answers: our own hint over the button is no reason to wait (live lab 513ac0).</summary>
+    public double[] ReplaceLive;
     /// <summary>The artifact's cell where the game has put it (its picture, client px: x, y, w, h), fresh and wholly in the viewport; null = not seen live (the layout's place).</summary>
     public double[] CellLive;
     /// <summary>The «Скрыть надетое» toggle's live rect (client px), fresh and on the form on top; null = the geometry's.</summary>
@@ -232,6 +234,9 @@ namespace RealmForge {
     public const int UserPauseMs = 4000, AfterTabMs = 1500, AfterOpenMs = 2200, AfterConfirmMs = 2500, SettleMs = 700;
     public const int MaxStepClicks = 4, MaxActions = 60, MaxClicks = 12, MaxDrags = 40, MaxWorkMs = 4 * 60 * 1000;
     public const double MinDragPx = 24;
+    /// <summary>The card's button not seen this long (no live rect, the picture covered): a named stop, never a wait for ever.</summary>
+    public const int ButtonWaitMs = 8000;
+    long btnMissSince;
     /// <summary>The filter toggle's answer (the game rebuilds the list at once); two presses without it and the pilot scrolls instead.</summary>
     public const int AfterFilterMs = 900, MaxFilterClicks = 2;
     /// <summary>After a drag: the scroll's first move is awaited up to DragLandMs (none: the list did not move), then still = two equal reads StillMs apart; never longer than DragMaxMs.</summary>
@@ -251,7 +256,7 @@ namespace RealmForge {
     public string Trace = "";
 
     public void Reset() {
-      latched = ""; waitUntil = pauseUntil = workSince = 0; kind = ArtEquipTodo.Nothing; kindClicks = actions = clicks = drags = 0; dragFrom = double.NaN; dragStill = 0; Trace = "";
+      latched = ""; btnMissSince = 0; waitUntil = pauseUntil = workSince = 0; kind = ArtEquipTodo.Nothing; kindClicks = actions = clicks = drags = 0; dragFrom = double.NaN; dragStill = 0; Trace = "";
       dragWait = dragMoved = false; dragAt = stillAt = 0; stillY = double.NaN; filterClicks = 0; filterWant = -1; filterSpent = false; actedKey = "";
     }
     /// <summary>The filter step is over (set, given up after MaxFilterClicks, or switched off by the knob): the host shows the cell, the pilot scrolls.</summary>
@@ -298,6 +303,10 @@ namespace RealmForge {
       if (v.FilterSpent && v.Step != null && v.Step.Filter && v.Step.Kind == ArtEquipKind.PickCell) v.Step.Filter = false;   // done with the filter: the cell's own frame
       string why;
       var todo = Decide(v, out why);
+      if (todo == ArtEquipTodo.Hint && why == "button" && v.Foreground && !v.UserBusy) {
+        if (btnMissSince == 0) btnMissSince = v.NowMs;
+        if (v.NowMs - btnMissSince > ButtonWaitMs) { Trace = "the card's button is not seen for " + (v.NowMs - btnMissSince) / 1000 + " s (live rect " + (v.ReplaceLive != null ? "read" : "none") + ", picture not known): stopped, the player presses it"; return Abort(m, "button"); }
+      } else btnMissSince = 0;
       if (todo == ArtEquipTodo.Nothing || todo == ArtEquipTodo.Hint) { m.State = "hint"; m.Why = why; kind = ArtEquipTodo.Nothing; kindClicks = 0; return m; }
       if (v.UserClicked) pauseUntil = v.NowMs + UserPauseMs;
       if (!v.Foreground) { m.State = "background"; workSince = 0; return m; }
@@ -315,6 +324,8 @@ namespace RealmForge {
       var step = v.Step;
       string key = ArtEquipFrames.KeyOf(step.Kind, step.HasWorn);
       var r = ArtFrames.Rect(v.Geometry, key, v.W, v.H, v.U);
+      if (todo == ArtEquipTodo.Replace && v.ReplaceLive != null && v.ReplaceLive.Length >= 4 && v.ReplaceLive[2] > 4 && v.ReplaceLive[3] > 4)   // the button where the game has put it
+        return Click(m, v, new AutoAction { Kind = AutoKind.Click, X = v.ReplaceLive[0] + v.ReplaceLive[2] / 2.0, Y = v.ReplaceLive[1] + v.ReplaceLive[3] / 2.0 }, AfterConfirmMs, key);
       if (r == null) return Abort(m, "screen");
       return Click(m, v, Center(r), todo == ArtEquipTodo.Tab ? AfterTabMs : todo == ArtEquipTodo.OpenList ? AfterOpenMs : AfterConfirmMs, key);
     }

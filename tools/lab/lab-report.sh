@@ -43,10 +43,10 @@ while IFS='|' read -r name ok secs note warnf infof recid; do
   lines+="$txt"$'\n'
 done < <(q -F '|' -v r="$run" <<< "select s->>'name', ((s->>'ok')::boolean)::text::text, s->>'seconds', s->>'note', coalesce(s->>'warn', ''), coalesce(s->>'info', ''), coalesce(s->>'rec', '') from public.lab_runs r, jsonb_array_elements(r.steps) s where r.id = :'r'::uuid" | sed -E 's/\|true\|/|t|/; s/\|false\|/|f|/')
 
-# the equip plan finished without a single slot / «Заменить» click: the build was already worn, nothing was tested (a warning, not a pass)
+# the equip plan finished without a single slot / «Заменить» click (an artifact plan counts its ArtHeroCell / ArtReplace clicks and its PressReplace step): the build was already worn, nothing was tested (a warning, not a pass)
 nochange=0
 if [ "$(q -v r="$run" <<< "select count(*) from public.lab_runs r, jsonb_array_elements(r.steps) s where r.id = :'r'::uuid and s->>'name' like 'equip_city%' and s->>'name' not like '%hint%' and (s->>'ok')::boolean")" -gt 0 ] \
-   && ! grep -qE 'click gate Equip: allow (EquipConfirm|EquipNav .*slot [0-9])' <<< "$logs"; then nochange=1; fi
+   && ! grep -qE 'click gate Equip: allow (EquipConfirm|ArtReplace|ArtHeroCell|EquipNav .*slot [0-9])|art equip auto: .*PressReplace' <<< "$logs"; then nochange=1; fi
 
 # the storage cleanup's safety check on the uploaded log: a Sell click outside its whitelist (there is no target for «Продать» at all)
 SELL_OK_RE='click gate Sell: allow (HeroBack|CityInventory|InvEquipTab|InvMaterialsTab|InvBulkEnter|InvBulkCell|InvListDrag|OfferClose|UnknownBack|CityBack|EscapeBack|MapClose|ArtTab|ArtBulkEnter|ArtBulkCell|ArtListDrag)\b'
