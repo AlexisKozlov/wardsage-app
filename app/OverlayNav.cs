@@ -34,6 +34,7 @@ namespace RealmForge {
       if (esc && !npEsc) Log.Write("navprobe player key Escape" + (sending ? " (while our own input is on its way)" : ""));
       if (c && !npC) Log.Write("navprobe player key C"); if (b && !npB) Log.Write("navprobe player key B"); if (lb && !npLeft) Log.Write("navprobe player mouse left");
       npEsc = esc; npC = c; npB = b; npLeft = lb;
+      { IntPtr gw = GameWindow(); W32.RECT gcr; if (gw != IntPtr.Zero && W32.GetClientRect(gw, out gcr)) { RFX.NavProbeClientW = gcr.R; RFX.NavProbeClientH = gcr.B; } }
       var lines = RFX.NavProbeLines();
       if (lines == null) return;
       bool full = now - npFullAt >= 1000; if (full) npFullAt = now;
@@ -59,6 +60,7 @@ namespace RealmForge {
       public double H { get { return Cr.B; } }
       public double U { get { return Ui.Unit(Cr.R, Cr.B); } }
       public bool Slow { get { return false; } }
+      public bool InputOpen { get { return RFX.NavInputOpen() ?? true; } }
       public GameGeometry Geo { get { return RealmForge.Geo.Current; } }
       public ClickGate Gate { get { return c.gate; } }
       public ScreenState Fresh(bool wantCity, bool wantKnown) { return c.FreshScreen(wantCity, wantKnown); }

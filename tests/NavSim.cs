@@ -7,7 +7,7 @@ using RealmForge;
 
 static partial class CoreTests {
   /// <summary>The injectors (their own Random streams: the old seeds keep their runs).</summary>
-  sealed class NavCfg { public double FlickerP, FlagFlickerP, LatePopupP; public int CellLatencyMs; }
+  sealed class NavCfg { public double FlickerP, FlagFlickerP, LatePopupP; public int CellLatencyMs; public long LockMs; }
   static bool SimNav, SimNavCity; static NavCfg SimNavCfg = new NavCfg(); static long SimNavPlan;
 
   sealed partial class SimHost {
@@ -140,6 +140,7 @@ static partial class CoreTests {
       public double H { get { return h.G.H; } }
       public double U { get { return h.G.U; } }
       public bool Slow { get { return h.G.Slow; } }
+      public bool InputOpen { get { return h.Now >= h.G.LockUntil; } }
       public GameGeometry Geo { get { return h.geo; } }
       public ClickGate Gate { get { return h.Gate; } }
       public ScreenState Fresh(bool wantCity, bool wantKnown) { return h.Fresh(wantCity, wantKnown); }
@@ -165,7 +166,7 @@ static partial class CoreTests {
   // ---------------------------------------------------------------- the acceptance scenarios (nav.*)
   static readonly string[] NavScenarios = {
     "nav.equip.fromAny", "nav.equip.offerChain", "nav.equip.unknownPopup", "nav.equip.tipLeftover", "nav.equip.filterLeftover", "nav.equip.heroFilterOpen",
-    "nav.equip.hideWornForeign", "nav.equip.foreignInvTab", "nav.equip.overFoundry", "nav.equip.bulkSale", "nav.equip.flicker", "nav.equip.lateCells200", "nav.equip.popupDuringEdge", "nav.city.fromAny" };
+    "nav.equip.hideWornForeign", "nav.equip.foreignInvTab", "nav.equip.overFoundry", "nav.equip.bulkSale", "nav.equip.flicker", "nav.equip.lateCells200", "nav.equip.popupDuringEdge", "nav.equip.inputLock", "nav.city.fromAny" };
 
   static readonly string[] NavStartNames = { "City", "Hero (other hero)", "Hero (gear list)", "Inventory", "Inventory (other tab)", "Inventory (bulk)", "Foundry identify", "Foundry ascend",
     "Foundry recast", "Gem", "Artifact workshop", "Guild", "Arena", "Shop", "Popup over City", "Plan" };
@@ -212,6 +213,7 @@ static partial class CoreTests {
     if (sc == "nav.equip.flicker") { c.FlickerP = 0.1; c.FlagFlickerP = 0.05; }
     else if (sc == "nav.equip.lateCells200") c.CellLatencyMs = 200;
     else if (sc == "nav.equip.popupDuringEdge") c.LatePopupP = 0.15;
+    else if (sc == "nav.equip.inputLock") c.LockMs = 350;
     return c;
   }
 
@@ -222,6 +224,7 @@ static partial class CoreTests {
     double failP = r.Next(3) == 0 ? 0.0 : r.NextDouble() * 0.15;
     var g = new SimGame(seed, slow, failP); g.Geo = geo; g.SpawnP = 0.01;
     long plan = 100 + seed % 30;
+    g.LockMs = NavCfgOf(sc).LockMs;
     NavStart(sc, g, r, plan);
     SimNav = nav; SimNavCity = sc.StartsWith("nav.city"); SimNavCfg = NavCfgOf(sc); SimNavPlan = plan;
     var oc = new string[1]; var tmp = new Dictionary<string, int>();

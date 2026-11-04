@@ -75,6 +75,8 @@ static partial class CoreTests {
     /// <summary>--nav hide-worn: the plan's item is worn by another hero and the game's «Скрыть надетое» is on, so the list does not show it; FilterOwn = the gear filter's pop-up the filter pilot opened
     /// (the list beside it takes clicks, the pop-up's toggle switches HideWorn).</summary>
     public bool HideWorn, ItemElsewhere, FilterOwn;
+    /// <summary>--nav inputLock: the game's input is locked LockMs after every push / pop of a form (the UILocker): a click then lands on the blocker, an Escape is dropped (LostLocked).</summary>
+    public long LockMs, LockUntil; public int LostLocked;
     public double Row1Top { get { return (ItemGeo.ViewTop + ListGeometry.TopPad) * U; } }
     public double ItemX { get { return (ItemGeo.ColLeft(1) + ItemGeo.CellW / 2) * U; } }
     public double ItemY { get { return Row1Top + (ItemGeo.RowOffset(ItemTypes, 2) + ItemGeo.CellW / 2) * U; } }
@@ -186,6 +188,7 @@ static partial class CoreTests {
       return new[] { cx + (r.X - cx) * k, cy + (r.Y - cy) * k, r.W * k, r.H * k };
     }
     public void Push(string f) {
+      if (LockMs > 0) LockUntil = Now + LockMs;
       Stack.Add(f); Say("open " + f); openAt[f] = Now;
       if (ScreenMap.ClassOf(f) == 'W') { long ms = 2000 + R.Next(8000); Later(ms, () => Remove(f)); }   // a loading / result screen goes by itself
       if (f == SimFoundry) FoundryBuilt = true;
@@ -194,7 +197,7 @@ static partial class CoreTests {
       if ((f == SimHero || f == SimInv || f == SimFoundry) && R.Next(3) == 0) { latePart[f] = f + "_SimPart"; latePartAt[f] = Now + 200 + R.Next(2500); }
       else if (f == SimHero || f == SimInv || f == SimFoundry) latePart.Remove(f);
     }
-    void Pop(string f) { int i = Stack.LastIndexOf(f); if (i > 0) { Stack.RemoveAt(i); Say("close " + f); Rebuilt(f); var pp = Popped; if (pp != null) pp(f); } }
+    void Pop(string f) { int i = Stack.LastIndexOf(f); if (i > 0) { if (LockMs > 0) LockUntil = Now + LockMs; Stack.RemoveAt(i); Say("close " + f); Rebuilt(f); var pp = Popped; if (pp != null) pp(f); } }
     /// <summary>A form was closed by a click (the login chain scenario opens the next pop-up then).</summary>
     public Action<string> Popped;
     /// <summary>Called before a click is judged (a pop-up the game opens in that very moment takes the click).</summary>
@@ -278,6 +281,7 @@ static partial class CoreTests {
     /// <summary>A click: judged on what is on top now, its effect shows after the game's latency.</summary>
     public void Click(double x, double y, ClickTarget tg) {
       var bc = BeforeClick; if (bc != null) bc(tg);
+      if (LockMs > 0 && Now < LockUntil) { LostLocked++; Say("the input is locked: " + tg + " lost"); return; }
       string top = TopForm(); char c = ScreenMap.ClassOf(top);
       if (c == 'D') { Bad.Add("CLICK ON A DANGEROUS FORM " + top + " @" + (int)x + "," + (int)y + " (" + tg + ")"); return; }
       if (ScreenMap.OnNever(top, x, y, W, H, U)) { Bad.Add("CLICK ON A NEVER-CLICK BUTTON of " + top + " @" + (int)x + "," + (int)y + " (" + tg + ")"); return; }
@@ -457,6 +461,7 @@ static partial class CoreTests {
 
     /// <summary>The Escape key: closes an E / P / F form (and the app's screens); on the city the game asks to quit.</summary>
     public void Escape() {
+      if (LockMs > 0 && Now < LockUntil) { LostLocked++; Say("the input is locked: Escape dropped"); return; }
       string top = TopForm(); char c = ScreenMap.ClassOf(top);
       Say("ESCAPE on " + top); Acts.Append(Now + " e;");
       if (c == 'D') { Bad.Add("ESCAPE ON A DANGEROUS FORM " + top); return; }
@@ -1183,6 +1188,7 @@ static partial class CoreTests {
     if (h.Gate.HaltReason(owner) == "nochange" && h.Gate.HaltDetail(owner).StartsWith("AscendCell") && h.Gate.HaltDetail(owner).Contains("(screen Foundry") && !h.Gate.HaltDetail(owner).Contains("modal(")) g.Bad.Add("ASCENSION CELL CLICK WITHOUT EFFECT: " + h.Gate.HaltDetail(owner));
     if (h.Done != "" && flow == PilotFlow.Equip && !g.Worn && !(SimNav && SimNavCity)) g.Bad.Add("EQUIP DONE WITHOUT THE ITEM ON (" + h.Confirms + " EquipConfirm presses)");
     var errs = new List<string>(g.Bad);
+    if (h.Nav && g.LostLocked > 0) errs.Add("THE NAVIGATOR SENT INTO A LOCKED INPUT " + g.LostLocked + " times");
     if (outcome == "TIMEOUT") errs.Add("no end within " + cap / 1000 + " s (silent waiting): " + h.PilotState);
     int n0, tries = 1 + h.Gate.Retries(owner);   // (each retry of the policy starts the run's counts over: the caps hold for each try)
     if (h.Gate.Retries(owner) > ClickGate.MaxRetriesRun) errs.Add(h.Gate.Retries(owner) + " retries");
