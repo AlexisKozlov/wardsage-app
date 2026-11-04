@@ -206,6 +206,13 @@ namespace RealmForge {
     /// <summary>The window is really hidden from captures only when the call worked and the affinity is not 0; otherwise the
     /// screen looks mask our drawn parts themselves (OverlayController.MaskOwn reads !Excluded).</summary>
     public static bool Hidden(bool callOk, uint affinity) { return callOk && affinity != 0; }
-    public static uint For(bool showInCapture, bool capturable) { return showInCapture || capturable ? 0u : 0x11u; }
+    public static uint For(bool showInCapture, bool capturable) { return For(showInCapture, capturable, false); }
+    /// <summary>While the auto click works (<paramref name="pilot"/>) the player's setting gives way: hidden (0x11) again, so no look that decides a
+    /// click sees our windows. The test build's recorder (<paramref name="capturable"/>) keeps them visible.</summary>
+    public static uint For(bool showInCapture, bool capturable, bool pilot) { return capturable || (showInCapture && !pilot) ? 0u : 0x11u; }
+    /// <summary>The dimming around a hint is drawn only while every hint window is hidden from captures (shown to a recording or to a look it would cover the whole game).</summary>
+    public static bool DimOn(bool wanted, bool allHidden) { return wanted && allHidden; }
+    /// <summary>The setting «show hints in recordings and streams» works only in the test build for now; in the main channel the config value is ignored.</summary>
+    public static bool Allowed(bool configOn, bool testChannel) { return configOn && testChannel; }
   }
 }

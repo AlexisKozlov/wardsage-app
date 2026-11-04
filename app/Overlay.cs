@@ -184,14 +184,46 @@ namespace RealmForge {
     public static bool Capturable;
     /// <summary>The player's setting «show hints in recordings and streams» (AppConfig.ShowInCapture): the windows stay in captures.</summary>
     public static bool ShowInCapture;
+    /// <summary>The auto click is working: the windows are hidden from captures again (when the platform can) so the looks that decide its clicks never see them.</summary>
+    public static bool PilotHidden;
     static readonly System.Collections.Generic.List<GlowWindow> live = new System.Collections.Generic.List<GlowWindow>();
+    int affinityAt = Environment.TickCount - 10000;
     public void ApplyAffinity() {
-      uint aff = CaptureAffinity.For(ShowInCapture, Capturable);
+      uint aff = CaptureAffinity.For(ShowInCapture, Capturable, PilotHidden);
+      bool was = Excluded;
       try { Excluded = CaptureAffinity.Hidden(W32.SetWindowDisplayAffinity(Handle, aff), aff); } catch (Exception) { Excluded = false; }
+      if (Excluded != was) affinityAt = Environment.TickCount;
     }
-    /// <summary>Sets the setting and re-applies the affinity to every window that has a handle (UI thread).</summary>
+    /// <summary>The windows are settled as hidden from captures: hidden, and not changed within the last half second (the compositor takes a moment to honour the change).</summary>
+    public bool Settled { get { return Excluded && unchecked(Environment.TickCount - affinityAt) > 500; } }
+    /// <summary>The screen looks must mask this window's drawing: it can be in a capture (or just stopped being).</summary>
+    public bool MaskNeeded { get { return !Settled; } }
+    /// <summary>Every window with a handle is settled as hidden from captures: only then does the dimming around a hint stay (it would cover the whole game in a recording and in the looks).</summary>
+    public static bool AllExcluded() {
+      GlowWindow[] all; lock (live) all = live.ToArray();
+      foreach (var w in all) if (w.IsHandleCreated && !w.IsDisposed && !w.Settled) return false;
+      return true;
+    }
+    /// <summary>The windows that exist now (a copy).</summary>
+    public static GlowWindow[] Live() { lock (live) return live.ToArray(); }
+    /// <summary>What a screen look masks of this window (screen px): the parts it drew, else the whole window.</summary>
+    public System.Collections.Generic.List<int[]> MaskRects() {
+      if (Parts.Count > 0) return Parts;
+      W32.RECT wr; var l = new System.Collections.Generic.List<int[]>();
+      if (IsHandleCreated && W32.GetWindowRect(Handle, out wr)) l.Add(new[] { wr.L, wr.T, wr.R - wr.L, wr.B - wr.T });
+      return l;
+    }
+    /// <summary>Sets the setting and re-applies the affinity to every window that has a handle (UI thread). Only the test channel has it.</summary>
     public static void SetShowInCapture(bool on) {
-      ShowInCapture = on;
+      ShowInCapture = CaptureAffinity.Allowed(on, Channel.IsTest);
+      ReapplyAll();
+    }
+    public static void SetPilotHidden(bool on) {
+      if (PilotHidden == on) return;
+      PilotHidden = on;
+      ReapplyAll();
+    }
+    static void ReapplyAll() {
       GlowWindow[] all; lock (live) all = live.ToArray();
       foreach (var w in all) if (w.IsHandleCreated && !w.IsDisposed) w.ApplyAffinity();
     }
@@ -724,6 +756,7 @@ namespace RealmForge {
 
     // the screen recorder (TEST build): what this tick decided, collected while a recording runs and published at its end
     RecInfo recB;
+    long pilotHiddenUntil;
     void Tick() {
       pendingRects.Clear();
       var cv = covered;
@@ -946,6 +979,8 @@ namespace RealmForge {
       if (timer.Interval != wantInterval) timer.Interval = wantInterval;
       loadMode = !ScreensWanted() ? "idle" : !twShown || !twFront ? "away" : effect || EquipClicking || SellClicking || (LocateWins && LocateClicking) ? "pilot" : "hint";
       if (Channel.IsTest) { long tn = NowMs(); if (modeAt != 0 && tn - modeAt > 0 && tn - modeAt < 5000) modeMs[loadMode == "away" ? 0 : loadMode == "hint" ? 1 : loadMode == "pilot" ? 2 : 3] += tn - modeAt; modeAt = tn; }
+      // the setting «show hints in recordings»: while the auto click works the windows are hidden from captures again (where the platform can), so no look that decides a click sees them
+      { long pn = NowMs(); if (loadMode == "pilot") pilotHiddenUntil = pn + 4000; GlowWindow.SetPilotHidden(GlowWindow.ShowInCapture && pn < pilotHiddenUntil); }
       ApplyArtGate();
       ReadScreens(NowMs());   // the game's screen, once per tick: every feature below takes it from here
       if (explorer != null) { TickExplore(); return; }   // (TEST build: the lab's explorer runs alone)
@@ -1338,15 +1373,14 @@ namespace RealmForge {
       int w = sw + 2 * M;
       int[] px = Grab(o.X + sx - M, o.Y + sy, w, sh);
       if (px == null) return false;
-      MaskOwn(px, o.X + sx - M, o.Y + sy, w, sh);
       var xs = new int[ListGeometry.Columns * 2];
       for (int c = 1; c <= ListGeometry.Columns; c++) {
         double l = (g.ColLeft(c) - g.StripLeft) * H + M;
         xs[(c - 1) * 2] = (int)(l + g.CellW * H * 0.12); xs[(c - 1) * 2 + 1] = (int)(l + g.CellW * H * 0.88);
       }
       float[] sig = ListTracker.LineSig(px, w, sh, xs, SigSegs);
-      double ph, conf;
-      bool hasPhase = ListTracker.FindPhase(ListTracker.BarProfile(px, w, sh, xs), pitch, g.BarTop * H, g.BarBottom * H, out ph, out conf);
+      double ph = 0, conf = 0;
+      bool hasPhase = !OwnMask.Covered(px) && ListTracker.FindPhase(ListTracker.BarProfile(px, w, sh, xs), pitch, g.BarTop * H, g.BarBottom * H, out ph, out conf);   // (covered by our own drawing: no phase, not a guess)
       lookPhase = hasPhase; lookPhaseY = sy + ph; lookConf = conf;
       // where the game says its list is scrolled: exact, whatever the pixels show (they only put it on the pixel)
       double scrollY;
@@ -1633,7 +1667,6 @@ namespace RealmForge {
       int vt = (int)(hg2.ViewTop * U), vb = (int)(H - (1 - hg2.ViewBottom) * U);
       int x0 = (int)((hg2.Col1X - 0.06) * U), x1 = (int)((hg2.Col1X + 2 * hg2.PitchX + 0.06) * U), w = x1 - x0, h = vb - vt;
       int[] px = h > 40 && w > 20 ? Grab(o.X + x0, o.Y + vt, w, h) : null;
-      MaskOwn(px, o.X + x0, o.Y + vt, w, h);
       if (px == null) { HideTip(); return; }
       var xs = new int[6];
       for (int c = 0; c < 3; c++) { double cx = hg2.ColX(c) * U - x0; xs[2 * c] = (int)(cx - 0.045 * U); xs[2 * c + 1] = (int)(cx + 0.045 * U); }
@@ -1641,20 +1674,21 @@ namespace RealmForge {
       var prof = new double[h];
       int bw = Math.Max(1, (int)(0.012 * U));
       for (int y = 0; y < h; y++) {
-        int n = 0, c = 0;
+        int n = 0, c = 0, hid = 0;
         for (int k = 0; k < 3; k++) {
           double cx = hg2.ColX(k) * U - x0;
           foreach (double e in new[] { cx - 0.057 * U, cx + 0.057 * U })
             for (int x = (int)(e - bw); x <= (int)(e + bw); x++) {
               if (x < 0 || x >= w) continue;
               int p = px[y * w + x], pr = (p >> 16) & 255, pg = (p >> 8) & 255, pb = p & 255;
+              if (p == ListTracker.Masked) { hid++; continue; }   // (our own drawing: not known)
               n++; if (pr >= 150 && pg >= 100 && pr >= pb + 50 && pg >= pb + 20) c++;
             }
         }
-        prof[y] = n > 0 ? c / (double)n : 0;
+        prof[y] = n > 0 ? c / (double)n : hid > 0 ? -1 : 0;
       }
-      double ph, conf;
-      bool hasPhase = ListTracker.CardPhase(prof, pitch, card, out ph, out conf);
+      double ph = 0, conf = 0;
+      bool hasPhase = !OwnMask.Covered(px) && ListTracker.CardPhase(prof, pitch, card, out ph, out conf);
       float[] sig = ListTracker.LineSig(px, w, h, xs, SigSegs);
       double top0 = hg2.Row1Top * U;
       int rowsN = (hs.Heroes.Length + HeroGeometry.Columns - 1) / HeroGeometry.Columns;
@@ -1832,7 +1866,7 @@ namespace RealmForge {
       // game's client with the dimming, every tick a hint was shown); the picture is drawn again only when what it shows changes
       float pulse = HintPulse ? (float)(0.6 + 0.4 * Math.Sin(frame * 0.45)) : 1f;
       // the new highlight (switch guideStyle): a frame with a Hl is drawn by PaintGuide; off = the old frame, nothing below changes
-      bool ng = GuideStyle && hl != null && frameR != null, dim = ng && !hl.Important;
+      bool ng = GuideStyle && hl != null && frameR != null, dim = CaptureAffinity.DimOn(ng && !hl.Important, GlowWindow.AllExcluded());   // (the dimming only while the windows are hidden from captures: shown to a recording or a look it would cover the whole game)
       // the old frame (guideStyle off) follows a round / bevelled button's outline; rect shapes and targets without geometry keep the rectangle
       bool oldShape = !GuideStyle && hl != null && frameR != null && GuideShape.FrameOutline(hl.Rect, hl.Shape, hl.Inset, 2) != null;
       long tms = (uint)Environment.TickCount;
@@ -2003,18 +2037,6 @@ namespace RealmForge {
         els.Add(pe);
       }
       return els;
-    }
-
-    /// <summary>Where our own windows showed something that a screen look sees (only when they cannot be hidden from
-    /// captures): those pixels of a grab at (x, y) w × h are set to the dark background, so they are no bars, no glow, no cells.</summary>
-    void MaskOwn(int[] px, int x, int y, int w, int h) {
-      if (px == null) return;
-      foreach (var win in new[] { glow, tip, glowPulse, tipPulse, recWin })
-        if (!win.Excluded && win.Visible)
-          foreach (var r in win.Parts) {
-            int ax = Math.Max(x, r[0]), ay = Math.Max(y, r[1]), bx = Math.Min(x + w, r[0] + r[2]), by = Math.Min(y + h, r[1] + r[3]);
-            for (int yy = ay; yy < by; yy++) for (int xx = ax; xx < bx; xx++) px[(yy - y) * w + (xx - x)] = ListTracker.Masked;
-          }
     }
 
     // the pulse: one small window beside the scene window, repainted at most 15 times a second, only while a frame is shown
@@ -2950,7 +2972,10 @@ namespace RealmForge {
       int x = (int)(rr.X + rr.W * 0.06), w = (int)(rr.W * 0.88), y = (int)(rr.Y + rr.H * 0.12), h = (int)(rr.H * 0.55);
       int mx = (int)(W - x - w);   // the left button is the right one mirrored about the box's centre
       var gold = Grab(o.X + x, o.Y + y, w, h); var blue = Grab(o.X + mx, o.Y + y, w, h);
-      return gold != null && blue != null && ButtonCheck.Share(gold, ButtonCheck.IsGold) >= ButtonCheck.MinShare && ButtonCheck.BlueShare(blue) >= ButtonCheck.MinShare;
+      if (gold == null || blue == null) return false;
+      var l = OwnMask.And(ButtonCheck.Look(gold, ButtonCheck.IsGold, ButtonCheck.MinShare), ButtonCheck.BlueLook(blue));
+      LookUnknown("art popup", l == Seen3.Unknown);
+      return l == Seen3.Yes;
     }
 
     Hl HlArtEq(LocateFrame lf, ArtEquipStep st, W32.POINT o) {
@@ -3685,6 +3710,7 @@ namespace RealmForge {
     bool GatedSend(ClickRequest req, ScreenState fresh, AutoAction a, int sx, int sy) {
       long now = NowMs();
       if (FormsUnread(fresh)) return false;
+      if (ClickWaitsForLook(req)) return false;   // a look that decides this click is covered by our own hint: not known is never a yes
       var res = gate.Check(req, fresh, now); navLastGate = res;
       AnnounceHalts();
       if (!res.Allowed) return false;
@@ -3775,8 +3801,7 @@ namespace RealmForge {
       int sx, sy, sw, sh; artPicRow1 = double.NaN;
       if (!ArtGridPicture.Strip(g, cr.R, cr.B, U, out sx, out sy, out sw, out sh)) return double.NaN;
       int[] px = Grab(o.X + sx, o.Y + sy, sw, sh);
-      if (px == null) return double.NaN;
-      MaskOwn(px, o.X + sx, o.Y + sy, sw, sh);
+      if (px == null || OwnMask.Covered(px)) return double.NaN;
       double r; int rows = (inv.Uids.Count + g.Columns - 1) / g.Columns;
       if (artPic.Update(px, sw, sh, sx, sy, g, cr.R, U, rows, inv.ListPtr, now, out r, clickRow, artPicCursorY)) artPicRow1 = r;
       string st = double.IsNaN(artPicRow1) ? "unsure" : "ok";
@@ -3944,14 +3969,13 @@ namespace RealmForge {
       int w = x1 - x0, h = y1 - y0;
       int[] px = Grab(o.X + x0, o.Y + y0, w, h);
       if (px == null) return double.NaN;
-      MaskOwn(px, o.X + x0, o.Y + y0, w, h);
       var xs = new int[sg.Columns * 2];
       for (int c = 1; c <= sg.Columns; c++) {
         double l = (c - 1) * sg.PitchX * U;
         xs[(c - 1) * 2] = (int)(l + sg.CellW * U * 0.12); xs[(c - 1) * 2 + 1] = (int)(l + sg.CellW * U * 0.88);
       }
       double ph, conf, pitch = sg.PitchY * U;
-      if (!ListTracker.FindPhase(ListTracker.BarProfile(px, w, h, xs), pitch, sg.BarTop * U, sg.BarBottom * U, out ph, out conf)) return double.NaN;
+      if (OwnMask.Covered(px) || !ListTracker.FindPhase(ListTracker.BarProfile(px, w, h, xs), pitch, sg.BarTop * U, sg.BarBottom * U, out ph, out conf)) return double.NaN;
       double c0 = (y0 + ph) % pitch; return c0 < 0 ? c0 + pitch : c0;
     }
 
@@ -3963,6 +3987,7 @@ namespace RealmForge {
       if (x1 - x0 < 200 || y1 - y0 < 100) return 0;
       int w = x1 - x0, h = y1 - y0;
       int[] px = Grab(o.X + x0, o.Y + y0, w, h);
+      LookUnknown("inventory columns", px != null && OwnMask.Covered(px));
       return px == null ? 0 : ListTracker.GridColumns(px, w, h);
     }
 
@@ -4327,7 +4352,10 @@ namespace RealmForge {
     /// <summary>The hero grid's filter pop-up is on the screen: its dark background (or a chosen row's blue) left of the class
     /// check boxes: 0.93 of the strip when open, at most 0.73 over the hero cards.</summary>
     bool HeroFilterSeen(W32.POINT o, double W, double H) {
-      return HeroFilterLook.Seen((x, y, w, h) => Grab(o.X + x, o.Y + y, w, h), Ui.Unit(W, H));
+      double U = Ui.Unit(W, H);
+      var l = OwnMask.Read(grab => HeroFilterLook.Seen(grab, U), (x, y, w, h) => Grab(o.X + x, o.Y + y, w, h));
+      LookUnknown("hero filter", l == Seen3.Unknown);
+      return l == Seen3.Yes;
     }
 
     // hero base id -> class id, faction ids (app/res/hero_tags.json, built from the site's game data)
@@ -4399,6 +4427,9 @@ namespace RealmForge {
         if (span < 0 || gy < 0 || gy + gh > H) return false;
         int[] px = Grab(o.X + gx, o.Y + gy, gw, gh);
         if (px == null) return false;
+        bool hidden = OwnMask.Count(px) > 0;   // our own drawing in the search window: the picture cannot be told apart, not known
+        LookUnknown("button picture " + res, hidden);
+        if (hidden) return false;
         var grey = new float[px.Length];
         for (int i = 0; i < px.Length; i++) { int c = px[i]; grey[i] = 0.299f * ((c >> 16) & 255) + 0.587f * ((c >> 8) & 255) + 0.114f * (c & 255); }
         double tm = 0; foreach (var t in scaled) tm += t; tm /= scaled.Length;
@@ -4834,7 +4865,9 @@ namespace RealmForge {
     /// <summary>A small square (about 2% of the height) around a client point: is it mostly that mark?</summary>
     bool Mark(W32.POINT o, double x, double y, double H, Func<int, bool> test) {
       int r = Math.Max(4, (int)(H * 0.01));
-      return ButtonCheck.Share(Grab(o.X + (int)x - r, o.Y + (int)y - r, 2 * r, 2 * r), test) >= ButtonCheck.MinMarkShare;
+      var l = ButtonCheck.Look(Grab(o.X + (int)x - r, o.Y + (int)y - r, 2 * r, 2 * r), test, ButtonCheck.MinMarkShare);
+      LookUnknown("mark@" + (int)x + "," + (int)y, l == Seen3.Unknown);
+      return l == Seen3.Yes;
     }
 
     /// <summary>The confirm button the game shows now: «Заменить» (two cards) or «Надеть» (one card, the slot is empty) -
@@ -4844,8 +4877,10 @@ namespace RealmForge {
     /// <summary>The item's tip is among the shown forms (a flow form of the hero screen).</summary>
     public bool EquipTipShown() { var cs = screens.Current; return cs != null && ((cs.Flow ?? "") + "," + (cs.ModalWhy ?? "")).Contains(EquipTipForm); }
     int[] ConfirmButton(W32.POINT o, double W, double H) {
+      blueUnk = false;
       int[] rep = FindBlue(o, hg.Replace(W, H), H), eq = FindBlue(o, hg.Equip(W, H), H);
-      confirmBlueNone = rep == null && eq == null;
+      LookUnknown("confirm button", blueUnk);   // (a spot our hint covers: the button may be there, or a second one - not known, no click)
+      confirmBlueNone = rep == null && eq == null && !blueUnk;
       // the item a single button was found for is on the hero now: that button kind is the one at this window size
       if (confirmChoice.PendingItem > 0 && addrs != null && hintHero > 0 && RFX.ReadOwner(addrs, confirmChoice.PendingItem) == hintHero) confirmChoice.Worn(confirmChoice.PendingItem);
       int[] btn = confirmChoice.Pick(rep, eq, target, W, H);
@@ -4854,8 +4889,8 @@ namespace RealmForge {
         confirmTieLogged = target;
         Log.Write("confirm: both blue, using the " + confirmChoice.Learned(W, H) + " place that worked at " + ConfirmChoice.SizeKey(W, H) + ", item " + target);
       }
-      if (btn != null || hintKind != "replace") confirmMissSince = 0;
-      if (btn == null && hintKind == "replace") {
+      if (btn != null || hintKind != "replace" || blueUnk) confirmMissSince = 0;
+      if (btn == null && hintKind == "replace" && !blueUnk) {
         // (the journal: why «Заменить» is not pressed - once per selected item). Right after a press the card closes while
         // the game still shows the item selected for a moment: only a miss that lasts 2.5 s and leaves the item off the
         // hero is one
@@ -4910,26 +4945,36 @@ namespace RealmForge {
     /// button lower (27.09: an item with more extras was not put on) - searched from a bit above down to 0.14 of the
     /// height below, in steps of a third of the button.</summary>
     int[] FindBlue(W32.POINT o, int[] rc, double H) {
-      if (IsBlueButton(o, rc)) return rc;
+      var l0 = BlueAt(o, rc);
+      if (l0 == Seen3.Unknown) blueUnk = true;
+      if (l0 == Seen3.Yes) return rc;
       int step = Math.Max(4, rc[3] / 3), up = (int)(0.03 * H), down = (int)(0.14 * H);
       for (int d = step; d <= down; d += step) {
         var r2 = new[] { rc[0], rc[1] + d, rc[2], rc[3] };
-        if (r2[1] + r2[3] < H && IsBlueButton(o, r2)) return r2;
+        if (r2[1] + r2[3] < H) { var l1 = BlueAt(o, r2); if (l1 == Seen3.Unknown) blueUnk = true; if (l1 == Seen3.Yes) return r2; }
       }
       for (int d = step; d <= up; d += step) {
         var r2 = new[] { rc[0], rc[1] - d, rc[2], rc[3] };
-        if (r2[1] > 0 && IsBlueButton(o, r2)) return r2;
+        if (r2[1] > 0) { var l2 = BlueAt(o, r2); if (l2 == Seen3.Unknown) blueUnk = true; if (l2 == Seen3.Yes) return r2; }
       }
       return null;
     }
 
     bool IsBlueButton(W32.POINT o, int[] rc) {
+      var l = BlueAt(o, rc);
+      LookUnknown("blue button", l == Seen3.Unknown);
+      return l == Seen3.Yes;
+    }
+    Seen3 BlueAt(W32.POINT o, int[] rc) {
       int x = rc[0] + rc[2] * 15 / 100, y = rc[1] + rc[3] / 5, w = rc[2] * 70 / 100, h = rc[3] * 3 / 5;
       int[] px = Grab(o.X + x, o.Y + y, w, h);
-      return px != null && ButtonCheck.BlueShare(px) >= ButtonCheck.MinShare;
+      return px == null ? Seen3.No : ButtonCheck.BlueLook(px);
     }
+    bool blueUnk;   // a FindBlue look came back not known (the search in progress)
 
-    /// <summary>Screen pixels (ARGB, row by row) of a screen rectangle; our own windows are not in it (display affinity).</summary>
+    /// <summary>Screen pixels (ARGB, row by row) of a screen rectangle. Our own windows are not in it (display affinity); where one can be (the
+    /// setting «show hints in recordings», the recorder, Windows older than 10 2004, or just changed) what it shows is set to ListTracker.Masked:
+    /// the ONE mask of every look, and every reader treats those pixels as «not known».</summary>
     static int[] Grab(int x, int y, int w, int h) {
       if (w < 4 || h < 4) return null;
       using (var bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb)) {
@@ -4940,8 +4985,29 @@ namespace RealmForge {
           if (data.Stride == w * 4) Marshal.Copy(data.Scan0, px, 0, px.Length);
           else for (int r = 0; r < h; r++) Marshal.Copy(data.Scan0 + r * data.Stride, px, r * w, w);
         } finally { bmp.UnlockBits(data); }
+        foreach (var win in GlowWindow.Live())
+          if (win.IsHandleCreated && !win.IsDisposed && win.Visible && win.MaskNeeded) OwnMask.Apply(px, x, y, w, h, win.MaskRects());
         return px;
       }
+    }
+
+    // ---- looks our own hint covers: «not known» never leads to a click
+    /// <summary>The looks that came back not known (covered by our hint) lately: while one is, GatedSend refuses (the last known state stays); one that lasts too long is a problem to report.</summary>
+    static readonly UnknownLooks unknownLooks = new UnknownLooks();
+    static void LookUnknown(string kind, bool unknown) { unknownLooks.Note(kind, unknown, NowMs()); }
+    string lookWaitSaid = "";
+    /// <summary>True = a look the click depends on is not known now: no click on this tick (journal, then a problem report after the timeout).</summary>
+    bool ClickWaitsForLook(ClickRequest req) {
+      long now = NowMs();
+      string k = unknownLooks.Blocking(now);
+      if (k == null) { lookWaitSaid = ""; return false; }
+      if (lookWaitSaid != k) { lookWaitSaid = k; Log.Write("auto: look covered by our hint, waiting (" + k + ") - no click for " + req.Target); }
+      string late = unknownLooks.Overdue(now);
+      if (late != null) {
+        Log.Write("auto: the look stayed covered by our hint for " + (UnknownLooks.TimeoutMs / 1000) + " s (" + late + ") - stopping, no guess");
+        RaiseProblem("pilot.look_covered", "the look \"" + late + "\" stayed covered by our own hint for " + (UnknownLooks.TimeoutMs / 1000) + " s; target " + req.Target);
+      }
+      return true;
     }
 
     /// <summary>A pilot run is starting and the game is not in front while our window is (or covers the game): the app brings the game forward

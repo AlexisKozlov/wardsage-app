@@ -90,12 +90,27 @@ namespace RealmForge {
 
     public const double MinMarkShare = 0.25;
 
+    /// <summary>The share of the grab that matches (a masked pixel, our own drawing, never matches and is not a game pixel: the share is
+    /// the lowest the game's own pixels allow). NaN when more than OwnMask.MaxShare of the grab is masked: not known.</summary>
     public static double Share(int[] px, Func<int, bool> test) {
       if (px == null || px.Length == 0) return 0;
-      int n = 0;
-      foreach (int p in px) if (test(p)) n++;
+      int n = 0, m = 0;
+      foreach (int p in px) { if (p == ListTracker.Masked) m++; else if (test(p)) n++; }
+      if (m > OwnMask.MaxShare * px.Length) return double.NaN;
       return n / (double)px.Length;
     }
+
+    /// <summary>Is the grab at least <paramref name="min"/> that mark? Unknown when our mask hides enough of it that the answer could go either way
+    /// (the masked pixels might all have matched): the result is never the opposite of what the unmasked game would give.</summary>
+    public static Seen3 Look(int[] px, Func<int, bool> test, double min) {
+      if (px == null || px.Length == 0) return Seen3.No;
+      int n = 0, m = 0;
+      foreach (int p in px) { if (p == ListTracker.Masked) m++; else if (test(p)) n++; }
+      if (n / (double)px.Length >= min) return Seen3.Yes;
+      return (n + m) / (double)px.Length >= min ? Seen3.Unknown : Seen3.No;
+    }
+
+    public static Seen3 BlueLook(int[] px) { return Look(px, IsBlueFill, MinShare); }
   }
 
   public static class ListTracker {
@@ -115,10 +130,10 @@ namespace RealmForge {
     public static double[] BarProfile(int[] px, int w, int h, int[] xs) {
       var prof = new double[h];
       for (int y = 0; y < h; y++) {
-        int n = 0, all = 0, row = y * w;
+        int n = 0, all = 0, hidden = 0, row = y * w;
         for (int k = 0; k + 1 < xs.Length; k += 2)
-          for (int x = Math.Max(0, xs[k]); x < Math.Min(w, xs[k + 1]); x++) { all++; if (IsBar(px[row + x])) n++; }
-        prof[y] = all > 0 ? n / (double)all : 0;
+          for (int x = Math.Max(0, xs[k]); x < Math.Min(w, xs[k + 1]); x++) { int p = px[row + x]; if (p == Masked) { hidden++; continue; } all++; if (IsBar(p)) n++; }
+        prof[y] = all > 0 ? n / (double)all : hidden > 0 ? -1 : 0;   // (-1: a line wholly under our own drawing, not known)
       }
       return prof;
     }
@@ -135,6 +150,7 @@ namespace RealmForge {
       for (int p = 0; p < steps; p++) {
         double inS = 0, outS = 0; int inN = 0, outN = 0;
         for (int y = 0; y < h; y++) {
+          if (prof[y] < 0) continue;
           double t = (y - p) % pitch; if (t < 0) t += pitch;
           if (t >= barTop + 1 && t < barBottom - 1) { inS += prof[y]; inN++; }
           else if (t < barTop - 2 || t >= barBottom + 2) { outS += prof[y]; outN++; }
@@ -163,6 +179,7 @@ namespace RealmForge {
       for (int p = 0; p < steps; p++) {
         double a = 0, b = 0; int na = 0, nb = 0;
         for (int y = 0; y < h; y++) {
+          if (prof[y] < 0) continue;
           double t = (y - p) % pitch; if (t < 0) t += pitch;
           if (t >= 0.05 * card && t < 0.95 * card) { a += prof[y]; na++; }
           else if (t >= card + 1 && t < pitch - 1) { b += prof[y]; nb++; }
@@ -179,6 +196,7 @@ namespace RealmForge {
     /// equal ones the larger: half the count correlates at twice the step too). 0 = no bars seen. Checked on the
     /// inventory at 1920×1009, 1600×1000 and 1300×1000 (8 columns, bars broken by the icons and numbers in them).</summary>
     public static int GridColumns(int[] px, int w, int h, int min = 4, int max = 16) {
+      if (OwnMask.Covered(px)) return 0;   // under our own drawing: not known (0 = keep the last)
       var col = new double[w]; int lines = 0;
       for (int y = 0; y < h; y++) {
         int row = y * w, n = 0;
@@ -225,9 +243,9 @@ namespace RealmForge {
           int a = Math.Max(0, xs[2 * c]), b = Math.Min(w, xs[2 * c + 1]);
           for (int s = 0; s < segs; s++, k++) {
             int x0 = a + (b - a) * s / segs, x1 = a + (b - a) * (s + 1) / segs;
-            double sum = 0;
-            for (int x = x0; x < x1; x++) { int p = px[row + x]; sum += ((p >> 16) & 255) + ((p >> 8) & 255) + (p & 255); }
-            raw[y * n + k] = x1 > x0 ? (float)(sum / (3.0 * (x1 - x0))) : 0f;
+            double sum = 0; int cnt = 0;
+            for (int x = x0; x < x1; x++) { int p = px[row + x]; if (p == Masked) continue; cnt++; sum += ((p >> 16) & 255) + ((p >> 8) & 255) + (p & 255); }
+            raw[y * n + k] = cnt > 0 ? (float)(sum / (3.0 * cnt)) : 0f;
           }
         }
       }

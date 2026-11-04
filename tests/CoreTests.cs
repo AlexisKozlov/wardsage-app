@@ -8,6 +8,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.IO.Compression;
 using System.Net;
 using System.Security.Cryptography;
@@ -1712,7 +1713,7 @@ static partial class CoreTests {
   }
 
   static void UiButtonTests() {
-    UiIconTests(); HintSizeTests(); SpriteArtTests(); FrameTargetTests();
+    UiIconTests(); HintSizeTests(); SpriteArtTests(); FrameTargetTests(); OwnMaskTests();
     ScreenTopTests();
     Console.WriteLine("A button's live rect by name (src/UiButtons.cs):");
     var m = new FakeLua(4 << 20); RFX.TestMemory = m; RFX.ForgetLive(); RFX.ForgetClasses();
@@ -4371,6 +4372,137 @@ static partial class CoreTests {
     Check(ButtonCheck.BlueShare(new[] { blue, blue, white, dark, blue, dark, white, blue }) >= ButtonCheck.MinShare, "a button with text: enough blue");
     Check(ButtonCheck.BlueShare(new[] { gold, gold, white, dark, dark, dark }) < ButtonCheck.MinShare, "«Улучшить» / background: no");
   }
+
+  // ---- the one mask of the screen looks (src/OwnMask.cs): read(mask(F + S)) is read(F) or «not known», never another definite value
+  static void OwnMaskTests() {
+    Console.WriteLine("Own hints in a look: masked = not known, never a click");
+    const int Mk = ListTracker.Masked;
+    // the mask itself
+    {
+      var px = new int[10 * 10]; for (int i = 0; i < px.Length; i++) px[i] = Argb(200, 200, 200);
+      OwnMask.Apply(px, 100, 50, 10, 10, new[] { new[] { 104, 52, 3, 2 }, new[] { 0, 0, 5, 5 }, new[] { 108, 58, 10, 10 } });
+      Eq(3 * 2 + 2 * 2, OwnMask.Count(px), "mask: a part inside the grab, one outside it, one cut at the edge");
+      Check(px[2 * 10 + 4] == Mk && px[2 * 10 + 3] != Mk && px[9 * 10 + 9] == Mk, "mask: the right pixels");
+      Check(!OwnMask.Covered(new int[100]) && OwnMask.Covered(null) && OwnMask.Covered(new int[0]), "covered: none masked = no, no grab = yes");
+      var half = new int[100]; for (int i = 0; i < 21; i++) half[i] = Mk;
+      Check(OwnMask.Covered(half) && !OwnMask.Covered(half, 0.25), "covered: more than 20 % masked");
+      var none = new int[100]; for (int i = 0; i < none.Length; i++) none[i] = Argb(9, 9, 9);
+      var before = (int[])none.Clone(); OwnMask.Apply(none, 0, 0, 10, 10, new List<int[]>());
+      Check(before.SequenceEqual(none), "no window to mask (all hidden from captures): the grab is as it was");
+    }
+    // ButtonCheck: a button's blue and a mark, tri-state, for every position of our scene over it
+    {
+      int blue = unchecked((int)0xFF5160B3), dark = unchecked((int)0xFF49423F), gold = unchecked((int)0xFFC98F3A), white = unchecked((int)0xFFF0F0F0), red = Argb(210, 40, 40);
+      Func<int, int[]> button = k => { var a = new int[24 * 14]; for (int i = 0; i < a.Length; i++) a[i] = (i % 24 < 9) ? blue : (i % 7 == 0 ? white : dark); return k == 0 ? a : Array.ConvertAll(a, v => v == blue ? gold : v); };
+      int bad = 0, unk = 0, tot = 0;
+      for (int variant = 0; variant < 2; variant++) {
+        var f = button(variant);
+        Seen3 truth = ButtonCheck.BlueLook(f);
+        for (int sx = -8; sx < 28; sx += 3) for (int sy = -6; sy < 16; sy += 3) for (int sw = 2; sw <= 18; sw += 4) {
+          var g = (int[])f.Clone(); OwnMask.Apply(g, 0, 0, 24, 14, new[] { new[] { sx, sy, sw, sw / 2 + 1 } });
+          Seen3 r = ButtonCheck.BlueLook(g); tot++;
+          if (r == Seen3.Unknown) unk++; else if (r != truth) bad++;
+        }
+        Check(truth == (variant == 0 ? Seen3.Yes : Seen3.No), "button look F: blue button = yes, gold one = no");
+      }
+      Check(bad == 0 && unk > 0 && unk < tot, "button look: " + tot + " scenes over it - never the other answer (" + bad + "), sometimes not known (" + unk + ")");
+      var m = new int[100]; for (int i = 0; i < m.Length; i++) m[i] = (i < 40 ? red : dark);
+      Check(ButtonCheck.Look(m, ButtonCheck.IsCloseRed, ButtonCheck.MinMarkShare) == Seen3.Yes, "mark: a red cross = yes");
+      for (int i = 0; i < 30; i++) m[i] = Mk;
+      Check(ButtonCheck.Look(m, ButtonCheck.IsCloseRed, ButtonCheck.MinMarkShare) == Seen3.Unknown, "mark: 30 of 40 red pixels under our scene = not known (it may or may not be there)");
+      var none = new int[100]; for (int i = 0; i < none.Length; i++) none[i] = dark; for (int i = 0; i < 10; i++) none[i] = Mk;
+      Check(ButtonCheck.Look(none, ButtonCheck.IsCloseRed, ButtonCheck.MinMarkShare) == Seen3.No, "mark: a few masked pixels over nothing red = no");
+      Check(double.IsNaN(ButtonCheck.Share(half(), ButtonCheck.IsGold)) && !double.IsNaN(ButtonCheck.Share(new[] { gold, dark, dark, dark }, ButtonCheck.IsGold)), "share: NaN when more than 20 % is covered");
+    }
+    // HeroFilterLook through OwnMask.Read: the pop-up open / closed, with our scene over any part of the strips
+    {
+      double U = 295.875;
+      Func<bool, Func<int, int, int, int, int[]>> frame = open => (gx, gy, gw, gh) => {
+        var a = new int[gw * gh];
+        for (int j = 0; j < gh; j++) for (int i = 0; i < gw; i++) {
+          int x = gx + i, y = gy + j, c = open ? (30 << 16) | (30 << 8) | 40 : (120 << 16) | (110 << 8) | 100;
+          if (open && Math.Abs(x - (int)(0.4836 * U)) <= 1 && y > 0.16 * U && y < 0.87 * U) c = (130 << 16) | (130 << 8) | 130;
+          if (open && x > 0.04 * U && x < 0.04 * U + 0.2 * U && Math.Abs(y - 0.2379 * U) < 0.05 * U) c = (30 << 16) | (90 << 8) | 170;
+          a[j * gw + i] = c;
+        }
+        return a;
+      };
+      Func<Func<int, int, int, int, int[]>, int[], Func<int, int, int, int, int[]>> over = (f, r) => (gx, gy, gw, gh) => { var a = f(gx, gy, gw, gh); OwnMask.Apply(a, gx, gy, gw, gh, new[] { r }); return a; };
+      int bad = 0, unk = 0, yes = 0, tot = 0;
+      foreach (bool open in new[] { true, false }) {
+        var f = frame(open);
+        Seen3 truth = OwnMask.Read(g => HeroFilterLook.Seen(g, U), f);
+        Check(truth == (open ? Seen3.Yes : Seen3.No), "hero filter F: open = yes, closed = no");
+        for (int sx = 0; sx < (int)U; sx += 17) for (int sy = 0; sy < (int)U; sy += 23) {
+          var r = OwnMask.Read(g => HeroFilterLook.Seen(g, U), over(f, new[] { sx, sy, 40, 40 })); tot++;
+          if (r == Seen3.Unknown) unk++; else if (r != truth) bad++; if (r == Seen3.Yes) yes++;
+        }
+      }
+      Check(bad == 0 && unk > 0, "hero filter look: " + tot + " scenes over it - never the other answer (" + bad + "), not known " + unk + ", yes " + yes);
+    }
+    // the list's phase, the grid's columns and the slots: unchanged or not known
+    {
+      var geo = new ListGeometry(); double HH = 1058; int fw, fh; int[] img = FakeList(geo, HH, 120.0, out fw, out fh);
+      var xs = new int[6];
+      for (int c = 1; c <= 3; c++) { double l = (geo.ColLeft(c) - geo.StripLeft) * HH; xs[(c - 1) * 2] = (int)(l + 12); xs[(c - 1) * 2 + 1] = (int)(l + geo.CellW * HH - 12); }
+      double ph0, cf0, pitchPx = geo.PitchY * HH;
+      bool f0 = ListTracker.FindPhase(ListTracker.BarProfile(img, fw, fh, xs), pitchPx, geo.BarTop * HH, geo.BarBottom * HH, out ph0, out cf0);
+      int cols0 = ListTracker.GridColumns(img, fw, fh);
+      int bad = 0, known = 0, tot = 0;
+      for (int sy = 0; sy < fh - 40; sy += 61) for (int sx = 0; sx < fw - 40; sx += 97) {
+        var g = (int[])img.Clone(); OwnMask.Apply(g, 0, 0, fw, fh, new[] { new[] { sx, sy, 60, 40 } });
+        double ph, cf; bool f = ListTracker.FindPhase(ListTracker.BarProfile(g, fw, fh, xs), pitchPx, geo.BarTop * HH, geo.BarBottom * HH, out ph, out cf); tot++;
+        double d = Math.Abs(ph - ph0); d = Math.Min(d, pitchPx - d);
+        if (!OwnMask.Covered(g)) { known++; if (!f0 || !f || d > 1.5) bad++; }
+        int cols = ListTracker.GridColumns(g, fw, fh);
+        if (cols != 0 && cols != cols0) bad++;
+      }
+      Check(f0 && bad == 0 && known > 0, "list phase / grid columns: a small scene over the strip changes neither (" + known + " of " + tot + " looks, " + bad + " off)");
+      var big = (int[])img.Clone(); OwnMask.Apply(big, 0, 0, fw, fh, new[] { new[] { 0, 0, fw, fh / 2 } });
+      Check(OwnMask.Covered(big) && ListTracker.GridColumns(big, fw, fh) == 0, "list covered over 20 %: the look is not known (columns 0 = keep the last)");
+      // the slots: every slot is as without the scene or -1
+      double cellPx = geo.CellW * HH; int sx0 = (int)(cellPx * 0.1), sx1 = (int)(cellPx * 0.9); double[] tops;
+      int[] rows = FakeRows(geo, HH, 0, false, out fw, out fh, 40);
+      double sph = ((6 - 0) % pitchPx + pitchPx) % pitchPx;
+      int[] truth = ListTracker.SlotCells(rows, fw, fh, sx0, sx1, sph, pitchPx, cellPx, out tops);
+      int sbad = 0, sunk = 0;
+      for (int sy = 0; sy < fh - 50; sy += 37) for (int w2 = 20; w2 <= fw; w2 += 90) {
+        var g = (int[])rows.Clone(); OwnMask.Apply(g, 0, 0, fw, fh, new[] { new[] { 0, sy, w2, 70 } });
+        int[] got = ListTracker.SlotCells(g, fw, fh, sx0, sx1, sph, pitchPx, cellPx, out tops);
+        for (int i = 0; i < got.Length; i++) { if (got[i] == -1 && truth[i] != -1) sunk++; else if (got[i] != truth[i]) sbad++; }
+      }
+      Check(sbad == 0 && sunk > 0, "slots under a scene: as without it or -1 (" + sbad + " other answers, " + sunk + " not known)");
+    }
+    // the unknown looks: no click while one is, a timeout ends in a report
+    {
+      var u = new UnknownLooks();
+      Check(u.Blocking(0) == null, "unknown looks: none, nothing held back");
+      u.Note("confirm button", true, 1000);
+      Check(u.Blocking(1100) == "confirm button" && u.Blocking(1000 + UnknownLooks.StaleMs + 1) == null, "unknown look: no click while it is fresh, the flow that moved on is not held back");
+      u.Note("confirm button", false, 1200);
+      Check(u.Blocking(1210) == null, "a known look clears it");
+      long t = 10000; string late = null;
+      for (int i = 0; i < 100 && late == null; i++, t += 100) { u.Note("confirm button", true, t); if (u.Blocking(t) == null) { late = "free"; break; } late = u.Overdue(t); }
+      Check(late == "confirm button" && t - 10000 >= UnknownLooks.TimeoutMs - 100 && t - 10000 <= UnknownLooks.TimeoutMs + 200, "a look unknown for the whole timeout (" + (t - 10000) + " ms) is reported, not guessed");
+      Check(u.Overdue(t) == null, "reported once");
+      // the confirm look: unknown in every tick for the whole timeout never lets a click through and ends in one report
+      var conf = new UnknownLooks(); int clicks = 0, reports = 0;
+      for (long now = 0; now < 20000; now += 100) {
+        conf.Note("confirm button", true, now);                     // (the look, covered by our hint, every tick)
+        if (conf.Blocking(now) == null) clicks++;                    // (what GatedSend asks before every click)
+        else if (conf.Overdue(now) != null) reports++;
+      }
+      Check(clicks == 0 && reports == 1, "confirm-look-covered: " + clicks + " clicks in 20 s, " + reports + " report");
+    }
+    // the platform side: the affinity, the dimming, the channel
+    {
+      Check(CaptureAffinity.For(false, false, false) == 0x11u && CaptureAffinity.For(true, false, false) == 0u && CaptureAffinity.For(true, false, true) == 0x11u && CaptureAffinity.For(false, false, true) == 0x11u, "affinity: hidden, shown by the setting, hidden again while the auto click works");
+      Check(CaptureAffinity.For(false, true, true) == 0u && CaptureAffinity.For(true, true, false) == 0u, "affinity: the test build's recorder keeps them visible");
+      Check(CaptureAffinity.DimOn(true, true) && !CaptureAffinity.DimOn(true, false) && !CaptureAffinity.DimOn(false, true), "dimming: only while every window is hidden from captures (the setting on = windows visible = no dimming)");
+      Check(CaptureAffinity.Allowed(true, true) && !CaptureAffinity.Allowed(true, false) && !CaptureAffinity.Allowed(false, true), "the setting: the test channel only, the config value is ignored in the main channel");
+    }
+  }
+  static int[] half() { var a = new int[100]; for (int i = 0; i < 30; i++) a[i] = ListTracker.Masked; return a; }
 
   static string Sha256(string s) {
     using (var sha = SHA256.Create()) {

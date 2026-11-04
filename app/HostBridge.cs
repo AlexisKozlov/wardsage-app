@@ -57,7 +57,7 @@ namespace RealmForge {
     public HostBridge(AppWindow win, CoreWebView2 core) {
       this.win = win; this.core = core;
       cfg = AppConfig.Load();
-      GlowWindow.ShowInCapture = cfg.ShowInCapture;
+      GlowWindow.ShowInCapture = CaptureAffinity.Allowed(cfg.ShowInCapture, Channel.IsTest);   // (test builds only; ignored in the main channel)
       SyncClient.App = Program.Version;
       SyncClient.LastPlayer = cfg.LastPlayer;
       TakeInstallLang();
@@ -581,7 +581,7 @@ namespace RealmForge {
           case "setAutoUpdate": cfg.AutoUpdate = MiniJson.GetBool(m, "on", true); Save(); break;
           case "setSendCodes": cfg.SendCodes = MiniJson.GetBool(m, "on", true); Save(); break;
           case "setBossHints": cfg.BossHints = MiniJson.GetBool(m, "on", true); if (!cfg.BossHints && coach.Running) coach.Stop(); Save(); break;
-          case "setShowInCapture": cfg.ShowInCapture = MiniJson.GetBool(m, "on", false); GlowWindow.SetShowInCapture(cfg.ShowInCapture); Save(); break;
+          case "setShowInCapture": if (!Channel.IsTest) break; cfg.ShowInCapture = MiniJson.GetBool(m, "on", false); GlowWindow.SetShowInCapture(cfg.ShowInCapture); Save(); break;
           case "setTray": cfg.Tray = MiniJson.GetBool(m, "on", true); win.TrayEnabled = cfg.Tray; Save(); break;
           case "setAutostart": Autostart.Set(MiniJson.GetBool(m, "on", false)); SendState(null); break;
           case "setErrorReports": cfg.ErrorReports = MiniJson.GetBool(m, "on", false); Save(); Log.Write("error reports " + (cfg.ErrorReports ? "on" : "off")); break;
@@ -828,7 +828,7 @@ namespace RealmForge {
       sb.Append(",\"saveCopy\":").Append(B(cfg.SaveCopy));
       sb.Append(",\"autoSync\":").Append(B(cfg.AutoSync)).Append(",\"autoClick\":").Append(B((cfg.AutoClick || labForce) && !labHintOnly && !labAutoOff)).Append(",\"lab\":").Append(B(labForce))
         .Append(",\"autoConfirm\":").Append(B(cfg.AutoConfirm)).Append(",\"errorReports\":").Append(B(cfg.ErrorReports)).Append(",\"autoUpdate\":").Append(B(cfg.AutoUpdate))
-        .Append(",\"tray\":").Append(B(cfg.Tray)).Append(",\"bossHints\":").Append(B(cfg.BossHints)).Append(",\"showInCapture\":").Append(B(cfg.ShowInCapture)).Append(",\"sendCodes\":").Append(B(cfg.SendCodes)).Append(",\"recButton\":").Append(B(cfg.RecButton)).Append(",\"guideStyle\":").Append(S(cfg.GuideStyle)).Append(",\"autostart\":").Append(B(Autostart.IsOn()));
+        .Append(",\"tray\":").Append(B(cfg.Tray)).Append(",\"bossHints\":").Append(B(cfg.BossHints)).Append(",\"showInCapture\":").Append(B(CaptureAffinity.Allowed(cfg.ShowInCapture, Channel.IsTest))).Append(",\"sendCodes\":").Append(B(cfg.SendCodes)).Append(",\"recButton\":").Append(B(cfg.RecButton)).Append(",\"guideStyle\":").Append(S(cfg.GuideStyle)).Append(",\"autostart\":").Append(B(Autostart.IsOn()));
       win.TrayEnabled = cfg.Tray;
       win.SetTrayLang(cfg.Lang);
       sb.Append(",\"last\":").Append(LastJson());
