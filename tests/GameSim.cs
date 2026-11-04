@@ -1466,6 +1466,7 @@ static partial class CoreTests {
     SimLeftoverFilter();
     TipOverSlots();
     NavTests();
+    TwoHeroesTests();
     EquipStepTiming();
     // (9) a list is settled after two equal reads; a moving one (a glide after a drag, a slot filter) is not, an unreadable one neither
     {
