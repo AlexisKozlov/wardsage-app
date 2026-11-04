@@ -8,12 +8,51 @@ using RealmForge;
 static partial class CoreTests {
   /// <summary>The injectors (their own Random streams: the old seeds keep their runs).</summary>
   sealed class NavCfg { public double FlickerP, FlagFlickerP, LatePopupP; public int CellLatencyMs; public long LockMs, RebuildMs; }
-  static bool SimNav, SimNavCity; static NavCfg SimNavCfg = new NavCfg(); static long SimNavPlan;
+  static bool SimNav, SimNavCity, SimNavChecks; static NavCfg SimNavCfg = new NavCfg(); static long SimNavPlan;
 
   sealed partial class SimHost {
     public bool Nav, NavCity; public NavCfg Cfg = new NavCfg(); public bool InNavSend; public int NavSends;
     Navigator nav; readonly ScreenReader reader = new ScreenReader(); SimNavIo nio; List<IAtTargetAction> navActs; Random navR; int flickerLeft;
     readonly List<KeyValuePair<long, long[]>> latHist = new List<KeyValuePair<long, long[]>>();
+    // --- the global checks of docs/specs/2026-11-04-core-any-scenario.md 4 (every --nav run): 1 no 8 s without a state change or a reset / halt; 2 no click at one point 3 times with no state change (grid picks and drags excepted);
+    // 3 after every reset every action's State is idle; 4 the end is done or a named halt within 120 s; 5 halts only from the allowed set
+    static readonly long NavStallMs = Environment.GetEnvironmentVariable("NAV_STALL_MS") != null ? long.Parse(Environment.GetEnvironmentVariable("NAV_STALL_MS")) : 20000;
+    public readonly List<string> NavErrs = new List<string>();
+    string chkFp = "", lastClickFp = ""; long chkAt; int chkRec, sameN, lastRec; double lastX = -999, lastY = -999; bool stallSaid;
+    string NavFp() {
+      var g = G;
+      return string.Join(">", g.Stack.ToArray()) + "|" + g.Hero.Shown + "/" + g.Hero.Tab + "/" + g.Hero.Part + "/" + g.Hero.Grid + "/" + g.Hero.FilterOpen + "/" + (int)g.Hero.Scroll + "|" + g.GearFilter + g.FilterOwn + g.HeroFilter + g.HideWorn + g.ItemSel + g.Worn + "|" + g.ListGen + "/" + (int)g.Row1Top;
+    }
+    public void NavCheck(long t) {
+      if (nav == null) return;
+      string fp = NavFp();
+      if (nav.Recoveries != lastRec) {   // check 3 (a reset ran in this tick: no action may keep an old state)
+        lastRec = nav.Recoveries;
+        if (hp.State != "idle" || fp0State() != "idle" || ip.State != "idle") NavErrs.Add("after a reset an action's state is not idle: hero " + hp.State + ", filter " + fp0State() + ", item " + ip.State + " (t=" + t + ")");
+      }
+      bool gameWaits = false; foreach (var f in G.Stack) if (ScreenMap.ClassOf(f) == 'W') gameWaits = true;   // (a loading / result screen the game closes by itself is the game's wait, not a stall)
+      if (gameWaits || fp != chkFp || nav.Recoveries != chkRec || nav.State == "halted" || nav.State == "done") { chkFp = fp; chkRec = nav.Recoveries; chkAt = t; stallSaid = false; }
+      else if (t - chkAt > NavStallMs && !stallSaid) { stallSaid = true; NavErrs.Add("no state change, reset or halt for " + (t - chkAt) / 1000 + " s (nav " + nav.Say + ", t=" + t + ")"); }
+    }
+    string fp0State() { return this.fp.State; }
+    void NavSameCheck(Act a) {
+      string f = NavFp();
+      if (a.Kind != ActKind.Click || (a.Edge ?? "").StartsWith("seek:")) { sameN = 0; lastX = lastY = -999; return; }
+      if (Math.Abs(a.X - lastX) <= 2 && Math.Abs(a.Y - lastY) <= 2 && f == lastClickFp) { if (++sameN >= 3) NavErrs.Add("click at " + (int)a.X + "," + (int)a.Y + " " + sameN + " times with no state change (" + a.Edge + ")"); }
+      else sameN = 1;
+      lastX = a.X; lastY = a.Y; lastClickFp = f;
+    }
+    public List<string> NavEndChecks(long t, string outcome) {
+      var l = new List<string>(NavErrs);
+      bool named = outcome == "done" || outcome.StartsWith("navhalt:") || NavRefusal(outcome);
+      if (!named) l.Add("the run ends in no done / named halt: " + outcome);
+      else if (t > 120000) l.Add("the run took " + t / 1000 + " s of sim time (more than 120 s)");
+      if (outcome.StartsWith("navhalt:")) {
+        string w = outcome.Substring(8);
+        if (!(w == "hero_not_in_grid" || w == "danger" || w == "reset_failed" || w == "phantom_layer" || w.StartsWith("gate_") || w == "unknown_popup" || w == "unknown_screen")) l.Add("a halt outside the allowed set: " + w);
+      }
+      return l;
+    }
     public string NavHalt { get { return nav != null && nav.State == "halted" ? nav.HaltWhy : ""; } }
 
     /// <summary>The injectors that do not depend on the navigator (late pop-ups, late cells): also on the old code, so the two are compared in the same world.</summary>
@@ -47,10 +86,11 @@ static partial class CoreTests {
     HeroView NavHeroView(long n) {
       var hv = new HeroView {
         NowMs = n, Foreground = true, W = W, H = U, ClientH = H, Plan = plan, Hero = heroScreen.FormOk ? heroScreen.Hero : 0, Tab = heroScreen.Tab, Part = heroScreen.Part,
-        SmallCards = heroScreen.SmallCards, Heroes = heroScreen.Heroes, HeroesButton = false, FilterOpen = G.HeroFilter && G.Full == SimHero,
+        SmallCards = heroScreen.SmallCards, Heroes = heroScreen.Heroes, HeroesButton = false, FilterOpen = (G.HeroFilter && G.Full == SimHero) || G.HeroFilterSeen,
         ClassChosen = heroScreen.ClassChosen, FactionList = heroScreen.FactionList, ChosenCamps = heroScreen.ChosenCamps, ClassCount = heroScreen.ClassCount, GridPtr = heroScreen.GridPtr,
         InputOpen = n >= G.LockUntil
       };
+      if (G.HeroModel) { var tg = SimGame.SimTags(plan); hv.HeroClass = tg[0]; hv.HeroCamps = new[] { tg[1] }; }
       if (!heroScreen.FormOk) hv.Hero = 0;
       return hv;
     }
@@ -126,7 +166,7 @@ static partial class CoreTests {
         }
       } finally { InNavSend = false; }
       if (!ok) return lastGate != null && lastGate.Verdict != GateVerdict.Allow ? lastGate : GateResult.Wait("unsent", "not sent");
-      NavSends++;
+      NavSends++; NavSameCheck(a);
       return GateResult.Allow("sent");
     }
 
@@ -151,8 +191,8 @@ static partial class CoreTests {
         bool v = false;
         switch (what) {
           case "heroesButton": v = h.G.Full == SimCity && h.G.CityClear; break;
-          case "heroFilter": v = h.G.HeroFilter && h.G.Full == SimHero; break;
-          case "gearFilterMain": v = (h.G.GearFilter || h.G.FilterOwn) && h.G.Full == SimHero; break;
+          case "heroFilter": v = (h.G.HeroFilter && h.G.Full == SimHero) || h.G.HeroFilterSeen; break;
+          case "gearFilterMain": v = ((h.G.GearFilter || h.G.FilterOwn) && h.G.Full == SimHero) || (h.G.PhantomGear && h.G.Full == SimHero && h.G.Hero.Part < 0); break;
           case "gearFilterSide": v = false; break;
           case "tipShown": v = h.G.Stack.Contains(SimTip); break;
         }
@@ -167,7 +207,8 @@ static partial class CoreTests {
   // ---------------------------------------------------------------- the acceptance scenarios (nav.*)
   static readonly string[] NavScenarios = {
     "nav.equip.fromAny", "nav.equip.offerChain", "nav.equip.unknownPopup", "nav.equip.tipLeftover", "nav.equip.filterLeftover", "nav.equip.heroFilterOpen",
-    "nav.equip.hideWornForeign", "nav.equip.hideWorn", "nav.equip.foreignInvTab", "nav.equip.overFoundry", "nav.equip.bulkSale", "nav.equip.flicker", "nav.equip.lateCells200", "nav.equip.popupDuringEdge", "nav.equip.inputLock", "nav.city.fromAny" };
+    "nav.equip.hideWornForeign", "nav.equip.hideWorn", "nav.equip.foreignInvTab", "nav.equip.overFoundry", "nav.equip.bulkSale", "nav.equip.flicker", "nav.equip.lateCells200", "nav.equip.popupDuringEdge", "nav.equip.inputLock", "nav.city.fromAny",
+    "nav.equip.heroFactionHides", "nav.equip.heroFilterBlind", "nav.equip.phantomRedX", "nav.equip.resetMidHero", "nav.equip.heroNotOwned" };
 
   static readonly string[] NavStartNames = { "City", "Hero (other hero)", "Hero (gear list)", "Inventory", "Inventory (other tab)", "Inventory (bulk)", "Foundry identify", "Foundry ascend",
     "Foundry recast", "Gem", "Artifact workshop", "Guild", "Arena", "Shop", "Popup over City", "Plan" };
@@ -195,6 +236,22 @@ static partial class CoreTests {
         if (r.Next(3) != 0) { g.Hero.Shown = r.Next(2) == 0 ? plan : other; g.Hero.Tab = 3; g.Hero.Part = r.Next(3) == 0 ? -1 : 2; g.Push(SimHero); }
         break;
       }
+      case "nav.equip.heroFactionHides": case "nav.equip.heroFilterBlind": case "nav.equip.resetMidHero": case "nav.equip.heroNotOwned": {   // the hero grid's filter model (GameSim.cs EnableHeroModel)
+        bool notOwned = sc == "nav.equip.heroNotOwned";
+        g.EnableHeroModel(plan, !notOwned); g.FilterFadeMs = 300 + r.Next(500);
+        g.Hero.Shown = other; g.Hero.Tab = 1 + 2 * r.Next(2); g.Hero.Part = -1; g.Push(SimHero);
+        var pt = SimGame.SimTags(plan);
+        if (sc == "nav.equip.resetMidHero") g.HeroDead = true;
+        else if (!notOwned || r.Next(2) == 0) {   // a faction (or class) that is not the plan hero's
+          int k = r.Next(3);   // 0: a class, 1: a faction, 2: both
+          long fac = 101 + (pt[1] - 101 + 1 + r.Next(5)) % 6, cls = HeroGeometry.ClassOrder[(Array.IndexOf(HeroGeometry.ClassOrder, pt[0]) + 1 + r.Next(5)) % 6];
+          g.HeroFilterBy(k != 0 ? fac : 0, k != 1 ? cls : 0);
+        }
+        if (sc == "nav.equip.heroFilterBlind") g.Hero.Blind = true;
+        break;
+      }
+      case "nav.equip.phantomRedX":
+        g.PhantomGear = true; g.Hero.Shown = other; g.Hero.Tab = 1 + r.Next(2); g.Hero.Part = -1; g.Push(SimHero); break;
       case "nav.equip.foreignInvTab": SimStartAt(g, "Inventory (other tab)", 0); break;
       case "nav.equip.overFoundry": SimStartAt(g, r.Next(2) == 0 ? "Foundry ascend" : "Foundry recast", 0); break;
       case "nav.equip.bulkSale": SimStartAt(g, "Inventory (bulk)", 0); break;
@@ -208,6 +265,9 @@ static partial class CoreTests {
       }
     }
   }
+
+  /// <summary>A scenario whose only right end is this one (a hero the player does not own: a named stop).</summary>
+  static string NavExpect(string sc) { return sc == "nav.equip.heroNotOwned" ? "navhalt:hero_not_in_grid" : null; }
 
   static NavCfg NavCfgOf(string sc) {
     var c = new NavCfg();
@@ -231,8 +291,9 @@ static partial class CoreTests {
     SimNav = nav; SimNavCity = sc.StartsWith("nav.city"); SimNavCfg = NavCfgOf(sc); SimNavPlan = plan;
     var oc = new string[1]; var tmp = new Dictionary<string, int>();
     string e;
+    SimNavChecks = nav;
     try { e = SimDrive(g, PilotFlow.Equip, slow, failP, r, seed, verbose, tmp, geo, null, false, null, oc); }
-    finally { SimNav = false; SimNavCity = false; SimNavPlan = 0; SimNavCfg = new NavCfg(); }
+    finally { SimNavChecks = false; SimNav = false; SimNavCity = false; SimNavPlan = 0; SimNavCfg = new NavCfg(); }
     string o0 = oc[0] ?? ""; int pi = o0.IndexOf(" ("); if (pi > 0 && !verbose) o0 = o0.Substring(0, pi);
     var res = new NavRes { Outcome = o0 };
     res.Bad = e.Contains("\n    !! ") && !e.Contains("no end within");
@@ -260,11 +321,12 @@ static partial class CoreTests {
     int failures = 0; var sw = System.Diagnostics.Stopwatch.StartNew(); int shown = 0;
     foreach (var sc in NavScenarios) {
       foreach (bool slow in new[] { false, true }) {
-        int doneNav = 0, doneOld = 0, hang = 0, bad = 0, halts = 0, refNav = 0, refOld = 0, pairN = 0, pairNav = 0, pairOld = 0; var why = new SortedDictionary<string, int>();
+        int doneNav = 0, doneOld = 0, hang = 0, bad = 0, halts = 0, refNav = 0, refOld = 0, pairN = 0, pairNav = 0, pairOld = 0, expectMiss = 0; var why = new SortedDictionary<string, int>();
         for (int s = from; s < from + per; s++) {
           var a = NavRunOne(sc, s, slow, true, geo, verbose);
           if (Environment.GetEnvironmentVariable("NAV_DIGEST") != null) Console.WriteLine("digest " + sc + (slow ? " slow " : " fast ") + s + " " + a.Hash + " " + a.Outcome);
-          var b = sc.StartsWith("nav.city") ? null : NavRunOne(sc, s, slow, false, geo, false);
+          var b = sc.StartsWith("nav.city") || NavExpect(sc) != null ? null : NavRunOne(sc, s, slow, false, geo, false);
+          if (NavExpect(sc) != null && !a.Outcome.StartsWith(NavExpect(sc))) expectMiss++;
           if (a.Outcome.StartsWith("done")) doneNav++;
           else if (a.Outcome.StartsWith("navhalt") || a.Outcome.StartsWith("halt:")) { halts++; int c; why.TryGetValue(a.Outcome, out c); why[a.Outcome] = c + 1; }
           else { int c; why.TryGetValue(a.Outcome, out c); why[a.Outcome] = c + 1; }
@@ -277,12 +339,12 @@ static partial class CoreTests {
           if (a.Bad) { bad++; if (shown++ < 6) Console.WriteLine("  !! " + sc + (slow ? " slow " : " fast ") + "seed " + s + ": " + a.Err.Replace("\n", "\n  ")); }
         }
         double rate = doneNav * 100.0 / Math.Max(1, per - refNav), need = slow ? 97 : 99;
-        bool pass = bad == 0 && hang == 0 && rate >= need && (sc.StartsWith("nav.city") || pairNav >= pairOld);
+        bool pass = bad == 0 && hang == 0 && (NavExpect(sc) != null ? expectMiss == 0 : rate >= need && (sc.StartsWith("nav.city") || pairNav >= pairOld));
         if (!pass) failures++;
         var sb = new StringBuilder();
         foreach (var kv in why) sb.Append(" ").Append(kv.Key).Append("=").Append(kv.Value);
         Console.WriteLine((pass ? "  PASS " : "  FAIL ") + sc.PadRight(28) + (slow ? "slow" : "fast") + " done " + doneNav + "/" + per + " (" + rate.ToString("0.0") + " % of the " + (per - refNav) + " not refused by a rule)"
-          + (sc.StartsWith("nav.city") ? "" : ", old code " + doneOld + "/" + per + ", paired (neither refused) " + pairNav + "/" + pairN + " vs old " + pairOld + "/" + pairN) + ", rule breaks " + bad + ", hangs " + hang + (sb.Length > 0 ? " |" + sb : ""));
+          + (NavExpect(sc) != null ? ", expected " + NavExpect(sc) + " missed " + expectMiss : sc.StartsWith("nav.city") ? "" : ", old code " + doneOld + "/" + per + ", paired (neither refused) " + pairNav + "/" + pairN + " vs old " + pairOld + "/" + pairN) + ", rule breaks " + bad + ", hangs " + hang + (sb.Length > 0 ? " |" + sb : ""));
       }
     }
     Console.WriteLine("nav sim: " + failures + " scenario rows failed, " + sw.ElapsedMilliseconds + " ms");

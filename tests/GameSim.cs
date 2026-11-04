@@ -71,6 +71,25 @@ static partial class CoreTests {
     public bool ItemPhase, ItemSel, Worn;
     /// <summary>--nav: the gear filter's pop-up (its red cross) and the hero grid's filter pop-up over the hero screen: panels that are not forms; they swallow every click but the one that closes them.</summary>
     public bool GearFilter, HeroFilter; public ClickTarget EscapeTarget = ClickTarget.EscapeBack;
+    /// <summary>--nav hero-grid filter model (docs/specs/2026-11-04-core-any-scenario.md, T8): every hero has a class and a faction, the funnel opens / closes the pop-up (it shows in pixels only FilterFadeMs after
+    /// the press, never with Hero.Blind), a faction / class cell filters the grid, and the game clears the filter when the hero screen is closed and opened again. PhantomGear: the gear filter's red-cross
+    /// pixel test reads true on the hero screen with no gear list open (a click on it does nothing). HeroDead: the grid's cards take no click until the hero screen is reopened.</summary>
+    public bool HeroModel, PhantomGear, HeroDead; public long FilterFadeMs; long heroFilterAt;
+    public static long[] SimTags(long u) { return new[] { HeroGeometry.ClassOrder[(int)(u % 6)], 101 + (u / 6) % 6 }; }
+    public void EnableHeroModel(long plan, bool owned) {
+      HeroModel = true; Hero.Tags = new Dictionary<long, long[]>();
+      foreach (var u in Hero.All) Hero.Tags[u] = SimTags(u);
+      if (!owned) { var l = new List<long>(Hero.All); l.Remove(plan); Hero.All = l.ToArray(); Hero.Heroes = Hero.All; Hero.Grid++; }
+      Hero.SelectFirst = true;
+    }
+    /// <summary>The grid filtered by a faction and / or a class (0 = not).</summary>
+    public void HeroFilterBy(long faction, long cls) {
+      Hero.Camps.Clear(); if (faction > 0) Hero.Camps.Add(faction); Hero.Class = cls;
+      bool sf = Hero.SelectFirst; Hero.SelectFirst = false; Hero.Refilter(); Hero.SelectFirst = sf;
+    }
+    void ClearHeroModelFilter() { if (HeroModel) { Hero.FilterOpen = false; HeroDead = false; HeroFilterBy(0, 0); } }
+    /// <summary>The filter pop-up as the pixels see it.</summary>
+    public bool HeroFilterSeen { get { return HeroModel && Hero.FilterOpen && !Hero.Blind && Now >= heroFilterAt && Full == SimHero; } }
     static readonly FilterGeometry NavFg = new FilterGeometry();
     /// <summary>--nav hide-worn: the plan's item is worn by another hero and the game's «Скрыть надетое» is on, so the list does not show it; FilterOwn = the gear filter's pop-up the filter pilot opened
     /// (the list beside it takes clicks, the pop-up's toggle switches HideWorn).</summary>
@@ -199,7 +218,7 @@ static partial class CoreTests {
       if ((f == SimHero || f == SimInv || f == SimFoundry) && R.Next(3) == 0) { latePart[f] = f + "_SimPart"; latePartAt[f] = Now + 200 + R.Next(2500); }
       else if (f == SimHero || f == SimInv || f == SimFoundry) latePart.Remove(f);
     }
-    void Pop(string f) { int i = Stack.LastIndexOf(f); if (i > 0) { if (LockMs > 0) LockUntil = Now + LockMs; Stack.RemoveAt(i); Say("close " + f); Rebuilt(f); var pp = Popped; if (pp != null) pp(f); } }
+    void Pop(string f) { int i = Stack.LastIndexOf(f); if (i > 0) { if (f == SimHero) ClearHeroModelFilter(); if (LockMs > 0) LockUntil = Now + LockMs; Stack.RemoveAt(i); Say("close " + f); Rebuilt(f); var pp = Popped; if (pp != null) pp(f); } }
     /// <summary>A form was closed by a click (the login chain scenario opens the next pop-up then).</summary>
     public Action<string> Popped;
     /// <summary>Called before a click is judged (a pop-up the game opens in that very moment takes the click).</summary>
@@ -238,7 +257,7 @@ static partial class CoreTests {
       i.CityForm = full == SimCity;
       bool heroOn = full == SimHero;
       // (a failed read of the hero screen is no reading, never "no hero screen")
-      if (Stack.Contains(SimHero)) { if (!Fail()) i.Hero = new HeroScreen { Hero = Hero.Shown, FormOk = heroOn, Tab = Hero.Tab, Part = Hero.Part, Heroes = Hero.Heroes, GridPtr = Hero.Grid }; }
+      if (Stack.Contains(SimHero)) { if (!Fail()) i.Hero = new HeroScreen { Hero = Hero.Shown, FormOk = heroOn, Tab = Hero.Tab, Part = Hero.Part, Heroes = Hero.Heroes, GridPtr = Hero.Grid, FactionList = HeroModel ? FakeHeroGame.FactionList : null, ChosenCamps = HeroModel ? Hero.Camps.ToArray() : null, ClassChosen = HeroModel && Hero.Class > 0, ClassCount = HeroModel ? 7 : 0 }; }
       else if (!Fail()) i.Hero = new HeroScreen { Hero = 0, FormOk = false };
       if ((full == SimInv || full == SimFoundry) && Found(SimInv) && !Fail())
         i.Inv = Inv();
@@ -359,6 +378,10 @@ static partial class CoreTests {
         if (Near(x, y, W - hg.GearTabDX * U, hg.GearTabY * U, 20) && R.Next(25) == 0) { Later(lat, () => Push("Form_EquipmentPlan")); return; }
         Later(lat, () => {
           if (TopForm() != SimHero) return;
+          if (HeroModel && Hero.Part < 0) {
+            if (Near(x, y, hg.FunnelX * U, H - hg.FunnelDY * U, 20)) { Hero.FilterOpen = !Hero.FilterOpen; if (Hero.FilterOpen) heroFilterAt = Now + FilterFadeMs; return; }
+            if (HeroDead && !Hero.FilterOpen && x < 0.45 * U && y >= hg.ViewTop * U && y <= hg.ViewBottom * U) return;
+          }
           Hero.City = false; Hero.Blocked = false; Hero.Click(x, y);
           if (Hero.Shown == 0) Pop(SimHero);
         });
@@ -1156,6 +1179,7 @@ static partial class CoreTests {
     while (t < cap) {
       g.Advance(t);
       if (t >= h.SendingUntil) { h.ReadScreens(t); h.Tick(); }
+      if (h.Nav && SimNavChecks) h.NavCheck(t);
       if (g.Bad.Count > 0 || h.Done != "" || h.NavHalt != "" || h.Gate.Halted(owner) || h.PilotState == "item_unconfirmed" || h.PilotState == "item_failed") break;   // (the item pilot's own ends)
       string say = h.PilotState + "|" + string.Join(">", g.Stack.ToArray());
       if (say != lastSay) { lastSay = say; lastChange = t; }
@@ -1190,6 +1214,7 @@ static partial class CoreTests {
     if (h.Gate.HaltReason(owner) == "nochange" && h.Gate.HaltDetail(owner).StartsWith("AscendCell") && h.Gate.HaltDetail(owner).Contains("(screen Foundry") && !h.Gate.HaltDetail(owner).Contains("modal(")) g.Bad.Add("ASCENSION CELL CLICK WITHOUT EFFECT: " + h.Gate.HaltDetail(owner));
     if (h.Done != "" && flow == PilotFlow.Equip && !g.Worn && !(SimNav && SimNavCity)) g.Bad.Add("EQUIP DONE WITHOUT THE ITEM ON (" + h.Confirms + " EquipConfirm presses)");
     var errs = new List<string>(g.Bad);
+    if (h.Nav && SimNavChecks) errs.AddRange(h.NavEndChecks(t, outcome));
     if (h.Nav && g.LostLocked > 0) errs.Add("THE NAVIGATOR SENT INTO A LOCKED INPUT " + g.LostLocked + " times");
     if (outcome == "TIMEOUT") errs.Add("no end within " + cap / 1000 + " s (silent waiting): " + h.PilotState);
     int n0, tries = 1 + h.Gate.Retries(owner);   // (each retry of the policy starts the run's counts over: the caps hold for each try)
