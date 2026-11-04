@@ -57,7 +57,7 @@ else
   echo "SKIPPED: $FX45 not found (install mono-devel for the .NET Framework reference assemblies)"
 fi
 
-CORE="src/ScreenMap.cs src/ScreenMapData.cs src/UiGraph.cs src/UiGraphData.cs src/SpriteArt.cs src/SpriteArtData.cs src/Explorer.cs src/ArenaClient.cs src/ArenaOpponents.cs src/ArtEquip.cs src/ArtGridPicture.cs src/AutoPilot.cs src/NavSnapshot.cs src/NavAct.cs src/NavModal.cs src/NavPlan.cs src/Navigator.cs src/NavEquip.cs src/NavProbe.cs src/NavEscape.cs src/BattleCapture.cs src/BattleClock.cs src/BattleTimeline.cs src/Channel.cs src/Config.cs src/EquipGuide.cs src/EquipScan.cs src/ErrorReport.cs src/Extractor.cs src/FolderMigration.cs src/ScreenRecorder.cs src/RecInputs.cs src/FightPlanClient.cs src/FilterPilot.cs src/GameInfo.cs src/GamePacks.cs src/GameScreen.cs src/OfferForms.cs src/OfferScan.cs src/AutoRec.cs src/LabRec.cs src/FrameAudit.cs src/ClickGate.cs src/GuildData.cs src/GvgData.cs src/HeroPilot.cs src/Geometry.cs src/Layout.cs src/ListTracker.cs src/HintLayout.cs src/GuideShape.cs src/LiveTables.cs src/LuaRoot.cs src/UiButtons.cs src/FrameTargets.cs src/LocateClient.cs src/LocateFrames.cs src/LocateGuide.cs src/LocatePilot.cs src/MemoryReader.cs src/KlassScan.cs src/MiniJson.cs src/NewsClient.cs src/PlansClient.cs src/PlansWait.cs src/RecastScan.cs src/RemoteConfig.cs src/SellClient.cs src/SellHint.cs src/SellPilot.cs src/SellScan.cs src/Strings.cs src/SyncClient.cs src/TimelineBuilder.cs src/TestLog.cs src/TraceUpload.cs src/UpdateKeys.cs src/CodeWatch.cs src/CodeReport.cs src/WebViewRecovery.cs src/HeroGrades.cs src/LoadPlan.cs app/HintGeometry.cs"
+CORE="src/ScreenMap.cs src/ScreenMapData.cs src/UiGraph.cs src/UiGraphData.cs src/SpriteArt.cs src/SpriteArtData.cs src/Explorer.cs src/ArenaClient.cs src/ArenaOpponents.cs src/ArtEquip.cs src/ArtGridPicture.cs src/AutoPilot.cs src/NavSnapshot.cs src/NavAct.cs src/NavModal.cs src/NavPlan.cs src/Navigator.cs src/NavEquip.cs src/NavProbe.cs src/NavEscape.cs src/NavRecipe.cs src/NavRecipesData.cs src/BattleCapture.cs src/BattleClock.cs src/BattleTimeline.cs src/Channel.cs src/Config.cs src/EquipGuide.cs src/EquipScan.cs src/ErrorReport.cs src/Extractor.cs src/FolderMigration.cs src/ScreenRecorder.cs src/RecInputs.cs src/FightPlanClient.cs src/FilterPilot.cs src/GameInfo.cs src/GamePacks.cs src/GameScreen.cs src/OfferForms.cs src/OfferScan.cs src/AutoRec.cs src/LabRec.cs src/FrameAudit.cs src/ClickGate.cs src/GuildData.cs src/GvgData.cs src/HeroPilot.cs src/Geometry.cs src/Layout.cs src/ListTracker.cs src/HintLayout.cs src/GuideShape.cs src/LiveTables.cs src/LuaRoot.cs src/UiButtons.cs src/FrameTargets.cs src/LocateClient.cs src/LocateFrames.cs src/LocateGuide.cs src/LocatePilot.cs src/MemoryReader.cs src/KlassScan.cs src/MiniJson.cs src/NewsClient.cs src/PlansClient.cs src/PlansWait.cs src/RecastScan.cs src/RemoteConfig.cs src/SellClient.cs src/SellHint.cs src/SellPilot.cs src/SellScan.cs src/Strings.cs src/SyncClient.cs src/TimelineBuilder.cs src/TestLog.cs src/TraceUpload.cs src/UpdateKeys.cs src/CodeWatch.cs src/CodeReport.cs src/WebViewRecovery.cs src/HeroGrades.cs src/LoadPlan.cs app/HintGeometry.cs"
 
 step "3. Core (no WinForms) compiles as C# 5 for .NET 8; tests build"
 NET8_REFS=$(for f in "$NET8"/*.dll; do printf -- '-r:%s ' "$f"; done)
@@ -70,6 +70,10 @@ cat > "$OUT/CoreTests.runtimeconfig.json" <<EOF
 { "runtimeOptions": { "tfm": "net8.0", "framework": { "name": "Microsoft.NETCore.App", "version": "$NET8_RT" } } }
 EOF
 echo "built $OUT/CoreTests.dll"
+
+step "3b. Recipes (tools/recipes/*.json): valid against the UI graph and the code's registries, src/NavRecipesData.cs up to date"
+RECIPE_REGISTRY=1 dotnet exec --runtimeconfig "$OUT/CoreTests.runtimeconfig.json" "$OUT/CoreTests.dll" --sim 1 > "$OUT/recipe-registry.txt"
+node tools/recipes.mjs --check --registry "$OUT/recipe-registry.txt"
 
 step "4. Mock server on :$PORT"
 node tests/mock-server.mjs $PORT & MOCK=$!

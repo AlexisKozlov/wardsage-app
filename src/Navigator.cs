@@ -75,6 +75,12 @@ namespace RealmForge {
     readonly List<string> recent = new List<string>();
     public Navigator(ClickOwner owner) { Owner = owner; }
 
+    /// <summary>Run a recipe (src/NavRecipe.cs) with its parameters: the hero and the slot of the equip recipe. The pilots (actions) are the ones its action steps name.</summary>
+    public void SetRecipe(Recipe r, IDictionary<string, long> args, IList<IAtTargetAction> acts) {
+      long hero = 0, slot = -1; args.TryGetValue("hero", out hero); if (!args.TryGetValue("slot", out slot)) slot = -1;
+      SetTarget(new NavTarget { Goal = r.Id == "city" ? NavGoal.City : NavGoal.HeroEquip, Hero = hero, Slot = (int)slot, Owner = Owner, RecipeId = r.Id }, acts);
+    }
+
     public void SetTarget(NavTarget t, IList<IAtTargetAction> acts) {
       actions = acts ?? new List<IAtTargetAction>();
       if (target != null && t.Key() == target.Key()) { target = t; return; }

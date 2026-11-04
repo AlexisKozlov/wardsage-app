@@ -226,6 +226,20 @@ static partial class CoreTests {
       io.Open = true; ac.Start(new Act { Target = ClickTarget.EquipNav, Kind = ActKind.Click, X = 10, Y = 10, Base = "Form_MainCity" }, io.NowMs);
       Check(ac.Tick(io, sn2, io.NowMs) == ActOutcome.Running && io.Sent.Count == 1, "nav act: sent as soon as the input is open");
     }
+    // the recipes (tools/recipes/*.json compiled into NavRecipesData.cs): the steps, the conditions, the compiled waypoints
+    {
+      var rq = NavRecipes.Get("equip");
+      Check(rq != null && rq.Steps.Count == 7 && rq.Steps[0].Id == "heroes" && rq.Steps[2].IsSeek && rq.Steps[5].IsAction && !rq.Steps[5].IsSeek && rq.Params.Length == 2, "nav recipe: equip has its seven steps (" + (rq != null ? rq.Steps.Count.ToString() : "-") + ")");
+      var hsn = ScreenReader.Build(NavState(ScreenKind.HeroScreen, 7, 3, 2, "", new[] { "Form_CharactorMain", "Form_MainCity" }), 0, null);
+      var args = new Dictionary<string, long> { { "hero", 9 }, { "slot", 2 } };
+      Check(NavFacets.Eval("Hero!=$hero && HeroSlot>=0", hsn, args, false) && !NavFacets.Eval("Hero==$hero", hsn, args, false) && NavFacets.Eval("HeroTab==gear", hsn, args, false) && NavFacets.Eval("$slot>=0", hsn, args, false), "nav recipe: conditions read the facets and the parameters");
+      var unread = ScreenReader.Build(NavState(ScreenKind.HeroScreen, 7, -1, -1, "", new[] { "Form_CharactorMain", "Form_MainCity" }), 0, null);
+      Check(NavFacets.Eval("HeroTab==gear", unread, args, true) && !NavFacets.Eval("HeroTab==gear", unread, args, false), "nav recipe: an unread tab passes the hold test but not the click's own check");
+      var wps = NavRecipes.Compile(rq, args, "", ClickOwner.Equip);
+      Check(wps.Count == 5, "nav recipe: the navigation steps become waypoints (" + wps.Count + ")");
+      Check(NavRecipes.Compile(rq, args, "gearTab", ClickOwner.Equip).Count == 4 && NavRecipes.Compile(rq, args, "heroes", ClickOwner.Equip).Count == 1, "nav recipe: a goal ends at its step");
+      Check(NavRecipes.Get("city").Steps.Count == 1 && NavRecipes.Get("nothing") == null, "nav recipe: the city recipe, an unknown id is null");
+    }
     // the game is raised over a browser or our own window only, once per run; never over a launcher or a system dialog
     Check(FrontPolicy.IsBrowser("chrome") && FrontPolicy.IsBrowser("msedge") && FrontPolicy.IsBrowser("Firefox") && !FrontPolicy.IsBrowser("moontonlauncher") && !FrontPolicy.IsBrowser("PlariumPlay") && !FrontPolicy.IsBrowser("Telegram") && !FrontPolicy.IsBrowser(""), "front: browsers are told from launchers and chats");
     Check(FrontPolicy.ShouldRaiseOverBrowser(true, true, false, false, false, 5000, 10, 0, true, false), "front: a waiting pilot raises the game over an idle browser once");

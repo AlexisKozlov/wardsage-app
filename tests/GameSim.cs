@@ -2209,6 +2209,7 @@ static partial class CoreTests {
   }
 
   static int SimMain(string[] args) {
+    if (Environment.GetEnvironmentVariable("RECIPE_REGISTRY") != null) { foreach (var l in NavRecipes.RegistryLines()) Console.WriteLine(l); return 0; }
     if (Environment.GetEnvironmentVariable("TWO_SEED") != null) { TwoHeroesOne(int.Parse(Environment.GetEnvironmentVariable("TWO_SEED")), Environment.GetEnvironmentVariable("TWO_NAV") != null, Environment.GetEnvironmentVariable("TWO_FAR") != null); return 0; }
     Layout.Use(TestLayout());
     int seeds = 500, from = 0; bool slowOnly = false, verbose = false, real = false, scan = false, timing = false, matrix = false; string list = null;
