@@ -189,7 +189,7 @@ namespace RealmForge {
     int affinityAt = Environment.TickCount - 10000;
     uint appliedAff = CaptureAffinity.Never;
     public void ApplyAffinity() {
-      uint aff = CaptureAffinity.For(ShowInCapture, Capturable, PilotHidden);
+      uint aff = CaptureAffinity.For(ShowInCapture, Capturable, PilotHidden && !KeepCaptureState);
       bool was = Excluded;
       try { Excluded = CaptureAffinity.Hidden(W32.SetWindowDisplayAffinity(Handle, aff), aff); } catch (Exception) { Excluded = false; }
       if (Excluded != was) affinityAt = Environment.TickCount;
@@ -222,11 +222,19 @@ namespace RealmForge {
       ShowInCapture = CaptureAffinity.Allowed(on, Channel.CaptureSetting);
       ReapplyAll();
     }
+    /// <summary>The recorder's timer window: the pilot does not flip its affinity and HideOwn never hides it (live 2026-11-04: it blinked).</summary>
+    public bool KeepCaptureState;
+    static int pilotFlipAt = Environment.TickCount - 100000;
+    /// <summary>The pilot's hide goes at once; the way back waits (CaptureAffinity.PilotNext: at most one flip in 5 s, no re-present of the hints at every pilot start / stop).</summary>
     public static void SetPilotHidden(bool on) {
-      if (PilotHidden == on) return;
-      PilotHidden = on;
+      int now = Environment.TickCount;
+      bool next = CaptureAffinity.PilotNext(PilotHidden, on, unchecked(now - pilotFlipAt));
+      if (PilotHidden == next) return;
+      PilotHidden = next; pilotFlipAt = now;
       ReapplyAll();
     }
+    /// <summary>The navigator asked our hint windows to stay away (INavIo.HideOwn): they show nothing, and are hidden once, not at every tick. Never the recorder's timer.</summary>
+    public static bool OwnAway;
     static void ReapplyAll() {
       live.ApplyAll(w => w.IsHandleCreated && !w.IsDisposed);
     }
@@ -237,6 +245,7 @@ namespace RealmForge {
 
     /// <summary>Shows the bitmap (32-bit ARGB) at the screen position, in physical pixels.</summary>
     public void Put(Bitmap bmp, int x, int y) {
+      if (OwnAway && !KeepCaptureState) { if (Visible) Hide(); return; }
       // the same picture again (the callers keep a bitmap while its key stays): nothing to copy; only moved = the window is moved
       if (Visible && ReferenceEquals(bmp, putBmp)) {
         if (x != putX || y != putY) { W32.SetWindowPos(Handle, IntPtr.Zero, x, y, 0, 0, 0x0001 | 0x0004 | 0x0010); putX = x; putY = y; }   // SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
@@ -330,7 +339,7 @@ namespace RealmForge {
     public event Action SellCancelPressed;
     string cancelDrawn; Bitmap cancelBmp;
     // TEST build: the record button over the game (left edge, mid-height); a clickable window like cancelWin, drawn only while the central gate allows
-    readonly GlowWindow recWin = new GlowWindow(true);
+    readonly GlowWindow recWin = new GlowWindow(true) { KeepCaptureState = true };
     readonly Timer recBtnTimer = new Timer();
     readonly Stopwatch recSw = new Stopwatch();
     string recDrawn; Bitmap recBmp; bool recOn; long recToggleAt;

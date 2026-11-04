@@ -221,6 +221,8 @@ namespace RealmForge {
     /// <summary>A window that already shows a picture keeps its old capture state until the compositor gets a new frame (live 2026-11-04: the setting switched on
     /// in the running streamer build, the hints stayed out of screenshots until a restart): after an affinity change on a shown window the picture is presented again.</summary>
     public static bool Repaint(uint previous, uint now, bool visible, bool hasPicture) { return previous != Never && previous != now && visible && hasPicture; }
+    /// <summary>The pilot's hide of the windows from captures: on at once (no look may see our hint), off only 5 s after the last flip (every flip presents the windows again).</summary>
+    public static bool PilotNext(bool current, bool want, int sinceFlipMs) { return want ? true : current && sinceFlipMs < 5000; }
     /// <summary>The "no affinity applied yet" marker of a window.</summary>
     public const uint Never = 0xFFFFFFFFu;
   }

@@ -51,8 +51,10 @@ namespace RealmForge {
     long navOwnHideUntil;
     internal void NavHideOwn(long now) { navOwnHideUntil = now + 20000; NavOwnHideTick(); }
     void NavOwnHideTick() {
-      if (NowMs() >= navOwnHideUntil) return;
-      foreach (var w in GlowWindow.Live()) if (w.IsHandleCreated && !w.IsDisposed && w.Visible) w.Hide();
+      bool away = NowMs() < navOwnHideUntil;
+      bool was = GlowWindow.OwnAway; GlowWindow.OwnAway = away;
+      if (!away || was) return;   // (hidden once; the hint windows draw nothing while away, so they do not blink)
+      foreach (var w in GlowWindow.Live()) if (w.IsHandleCreated && !w.IsDisposed && w.Visible && !w.KeepCaptureState) w.Hide();
     }
 
     void NavRestart() { navEquip.Restart(); navLab.Restart(); navReader.Reset(); }
