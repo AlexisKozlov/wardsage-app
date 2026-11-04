@@ -322,6 +322,7 @@ static partial class CoreTests {
       Check(nv2.State == "halted" && nv2.HaltWhy.StartsWith("recipe_stuck:graph:hero:NoEffect") && io2.Sent.Count == Navigator.MaxResets + 1, "nav reset: a step with no effect is retried after a reset " + Navigator.MaxResets + " times, then a named stop (" + nv2.HaltWhy + ", " + io2.Sent.Count + " clicks)");
     }
     BuildPlannerTests();
+    BuildSimTests();
     AtomTests();
   }
 
@@ -383,6 +384,63 @@ static partial class CoreTests {
       for (int i = 0; i < 200 && reset == ""; i++) { io.NowMs += 200; var sn = rd.Update(st, io.NowMs); var ns = ia.Step(sn, t0, io, io.NowMs); if (ns != null && ns.Kind == StepKind.Reset) reset = ns.Why; }
       Check(reset.StartsWith("item_limit ") && io.NowMs - first >= 6000 && io.NowMs - first <= 9000, "planner: an item that takes past its 6 s norm is a reset with its diagnosis (" + reset + ", after " + (io.NowMs - first) + " ms)");
     }
+  }
+
+  // ---------------------------------------------------------------- S4: the build on the planner in the sim (the pilot runs every item on the game's list model, the filter and the artifact are costed by the planner's own norms)
+  sealed class BuildRunResult { public long Ms; public int Drags, Blind, Refused, Resets, Filters; public string Fail = ""; public BuildPlan Plan; public string Line = ""; }
+
+  /// <summary>The whole build in sim time: <paramref name="overheadMs"/> (city -> heroes, the hero, the gear tab, and the way back to the city when the run starts elsewhere), then the plan's steps in the planner's order. Items in view or scrolled run on the real
+  /// AutoPilot over the list model (AtomListSim: threshold, inertia 12 %); a filtered item is the list the filter leaves (its row 1-3) after the planner's cost of opening / changing the set; the artifact is its norm. A flag to clear costs a toggle at the start and one at the end.</summary>
+  static BuildRunResult BuildRun(List<BuildItem> items, long overheadMs, bool flagWorn) {
+    var r = new BuildRunResult(); var plan = BuildPlanner.Plan(items, flagWorn, false, false); r.Plan = plan; r.Ms = overheadMs;
+    if (plan.Flags.Any) r.Ms += 2 * BuildPlanner.SetChangeMs;
+    var inGroup = new Dictionary<int, int>();
+    foreach (var st in plan.Steps) {
+      if (st.Mode == SlotMode.Skip) continue;
+      if (st.Item.Artifact) { r.Ms += BuildPlanner.ArtifactMs; continue; }
+      int row = st.Item.Row > 0 ? st.Item.Row : 1;
+      if (st.Mode == SlotMode.Filter) {
+        int n; inGroup.TryGetValue(st.Group, out n); inGroup[st.Group] = n + 1;
+        row = 1 + n % 3; r.Ms += st.EstimateMs - BuildPlanner.ItemMs; r.Filters += st.EstimateMs > BuildPlanner.ItemMs ? 1 : 0;
+      }
+      var sim = new AtomListSim { Gain = 0.9, TargetRow = row, Inertia = 0.12 };
+      AutoPilot p; long doneAt; int clicks; string res = AtomListRun(sim, true, out p, out doneAt, out clicks);
+      if (res != "done") { r.Fail = "slot " + st.Item.Slot + ": " + res; return r; }
+      r.Ms += doneAt; r.Drags += sim.Drags; r.Blind += sim.Blind; r.Refused += p.Atoms.Refused;
+      if (doneAt > BuildPlanner.ItemLimitMs + sim.Drags * ItemPickAction.DragAllowMs) r.Resets++;
+    }
+    r.Line = plan.ToString() + " | " + r.Ms + " ms, " + r.Drags + " drags, " + r.Filters + " filter openings";
+    return r;
+  }
+
+  static void BuildSimTests() {
+    Console.WriteLine("Build in the sim (S4)");
+    int city = 1000 + 3000 + 700, fromElsewhere = city + 3500;
+    Func<int, long, long, int, bool, BuildItem> it = (slot, uid, set, row, art) => new BuildItem { Slot = slot, Uid = uid, SetId = set, Row = row, Artifact = art };
+    // 1. every item in view
+    var s1 = new List<BuildItem> { it(1, 11, 5, 1, false), it(2, 12, 5, 2, false), it(3, 13, 6, 3, false), it(4, 14, 6, 4, false), it(5, 15, 7, 2, false), it(9, 16, 0, 0, true) };
+    var r1 = BuildRun(s1, city, false);
+    Check(r1.Fail == "" && r1.Ms <= 20000 && r1.Blind == 0 && r1.Refused == 0 && r1.Resets == 0 && r1.Drags == 0 && r1.Filters == 0, "build sim 1: everything in view: " + r1.Line + " (budget 20 s, blind " + r1.Blind + ", repeats " + r1.Refused + ", resets " + r1.Resets + ") " + r1.Fail);
+    // 2. a group of 3 and of 2 far down, one free, the artifact
+    var s2 = new List<BuildItem> { it(1, 21, 8, 30, false), it(2, 22, 9, 28, false), it(3, 23, 8, 45, false), it(4, 24, 9, 60, false), it(5, 25, 8, 35, false), it(6, 26, 4, 2, false), it(9, 27, 0, 0, true) };
+    var r2 = BuildRun(s2, city, false);
+    Check(r2.Fail == "" && r2.Ms <= 30000 && r2.Blind == 0 && r2.Refused == 0 && r2.Resets == 0 && r2.Filters == 2 && r2.Plan.FilterOpens == 2, "build sim 2: two set groups: " + r2.Line + " (budget 30 s, blind " + r2.Blind + ", repeats " + r2.Refused + ", resets " + r2.Resets + ") " + r2.Fail);
+    // 3. one item far with no set (no filter can bring it): computed drags, within the norm plus its drags
+    var s3 = new List<BuildItem> { it(1, 31, 5, 2, false), it(2, 32, 0, 40, false), it(3, 33, 6, 3, false), it(4, 34, 6, 4, false), it(5, 35, 7, 1, false), it(9, 36, 0, 0, true) };
+    var r3 = BuildRun(s3, city, false);
+    Check(r3.Fail == "" && r3.Ms <= 30000 && r3.Blind == 0 && r3.Refused == 0 && r3.Resets == 0 && r3.Drags <= BuildPlanner.DragsFor(40) + 2, "build sim 3: an item far of no set: " + r3.Line + " (budget 30 s, blind " + r3.Blind + ", repeats " + r3.Refused + ", resets " + r3.Resets + ") " + r3.Fail);
+    // 4. an item hidden by «Скрыть надетое» (worn by another hero): the flag is cleared once for the build and put back
+    var s4 = new List<BuildItem> { it(1, 41, 5, 1, false), new BuildItem { Slot = 2, Uid = 42, SetId = 5, Row = 0, HiddenByWorn = true }, it(3, 43, 6, 3, false), it(9, 44, 0, 0, true) };
+    var r4 = BuildRun(s4, city, true);
+    var kp = new BuildFlagKeeper(); kp.Begin(1, 0, r4.Plan.Flags); string c1 = kp.ClearDue(1, 0); kp.Cleared(c1); string rs = kp.RestoreDue(0, 0);
+    Check(r4.Fail == "" && r4.Plan.Flags.ClearWorn && c1 == "worn" && rs == "worn" && r4.Ms <= 30000 && r4.Blind == 0 && r4.Refused == 0, "build sim 4: a hidden item: " + r4.Line + " (flags " + r4.Plan.Flags + "cleared once, restored: " + rs + ") " + r4.Fail);
+    // 5. two heroes of one class (the same sets): each build is planned and run by itself, the second one does not lean on the first one's filter
+    var h1 = BuildRun(s2, city, false); var h2 = BuildRun(s2, 3000 + 700, false);
+    Check(h1.Fail == "" && h2.Fail == "" && h1.Plan.FilterOpens == 2 && h2.Plan.FilterOpens == 2 && h1.Ms <= 30000 && h2.Ms <= 30000 && h1.Blind + h2.Blind == 0, "build sim 5: two heroes of one class: " + h1.Ms + " ms and " + h2.Ms + " ms, " + (h1.Plan.FilterOpens + h2.Plan.FilterOpens) + " filter openings in all");
+    // 6. the run starts away from the city (a pop-up, another screen): the way back costs more, the budget holds
+    var r6 = BuildRun(s2, fromElsewhere, false); var r6b = BuildRun(s1, fromElsewhere, false);
+    Check(r6.Fail == "" && r6b.Fail == "" && r6.Ms <= 30000 && r6b.Ms <= 30000 && r6.Blind + r6b.Blind == 0, "build sim 6: the start not from the city: " + r6.Ms + " ms (two groups), " + r6b.Ms + " ms (all in view)");
+    Console.WriteLine("  budget table (sim ms, with the way to the gear tab): all in view " + r1.Ms + " | two set groups " + r2.Ms + " | far item " + r3.Ms + " | hidden item " + r4.Ms + " | two heroes " + h1.Ms + "+" + h2.Ms + " | not from the city " + r6.Ms + "/" + r6b.Ms + " | the norms: item " + BuildPlanner.ItemLimitMs + ", filter " + BuildPlanner.FilterLimitMs + ", build 30000");
   }
 
   // ---------------------------------------------------------------- the atoms (docs/specs/2026-11-04-game-atoms.md A1 / A2): the replay of the recording 464e21 (tests/fixtures/rec-464e21-atoms.txt)
