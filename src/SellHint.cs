@@ -56,6 +56,19 @@ namespace RealmForge {
     public static bool ShouldMoveSelf(bool selfVisible, bool selfMinimized, bool selfOverlaps) { return selfVisible && !selfMinimized && selfOverlaps; }
     public static bool Overlaps(int al, int at, int ar, int ab, int bl, int bt, int br, int bb) { return al < br && bl < ar && at < bb && bt < ab; }
 
+    /// <summary>Programs the game may be brought forward over (the web page of the helper lives there): the browsers. Never another program (the game's launcher, a chat, a system dialog).</summary>
+    public static bool IsBrowser(string processName) {
+      if (string.IsNullOrEmpty(processName)) return false;
+      switch (processName.ToLowerInvariant()) {
+        case "chrome": case "msedge": case "firefox": case "opera": case "opera_gx": case "brave": case "vivaldi": case "browser": case "iexplore": case "arc": case "chromium": case "yandex": return true;
+      }
+      return false;
+    }
+    /// <summary>The waiting pilot may bring the game forward over the foreground program: once per run, over a browser only (the idle rule of ShouldRaiseIdle, narrowed).</summary>
+    public static bool ShouldRaiseOverBrowser(bool hasGame, bool pilotWaiting, bool gameFront, bool gameMinimized, bool buttonDown, long userIdleMs, long now, long notBefore, bool foregroundIsBrowser, bool raisedThisRun) {
+      return foregroundIsBrowser && !raisedThisRun && ShouldRaiseIdle(hasGame, pilotWaiting, gameFront, gameMinimized, buttonDown, userIdleMs, now, notBefore);
+    }
+
     /// <summary>The player gave no input this long: an auto pilot that waits for the game may bring it forward over another program.</summary>
     public const long IdleRaiseMs = 3000;
     /// <summary>An auto pilot waits only because another program is in front of the game (Telegram over it): the game is brought forward

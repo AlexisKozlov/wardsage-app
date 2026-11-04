@@ -4937,8 +4937,11 @@ namespace RealmForge {
     /// window off the game when it covers it. Never when no pilot run is starting (FrontPolicy). <paramref name="pilotWaiting"/>: an auto pilot
     /// waits only for the game to come forward - then another program on top (Telegram) gives way too, once the player gave no input for
     /// FrontPolicy.IdleRaiseMs (GetLastInputInfo, our own clicks and keys left out; never while the player is active). Returns true when it raised.</summary>
+    bool raisedRun, raiseWasStarting; string raiseHeldSaid = "";
     bool RaiseGame(IntPtr hwnd, bool pilotStarting, long now, bool pilotWaiting) {
       if (hwnd == IntPtr.Zero) return false;
+      if (pilotStarting && !raiseWasStarting) raisedRun = false;   // a new run: one raise at its start
+      raiseWasStarting = pilotStarting;
       IntPtr f = W32.GetForegroundWindow();
       int fp; W32.GetWindowThreadProcessId(f, out fp);
       IntPtr self = AppWindowHandle();
@@ -4948,12 +4951,22 @@ namespace RealmForge {
         over = FrontPolicy.Overlaps(sr.L, sr.T, sr.R, sr.B, gr.L, gr.T, gr.R, gr.B);
       bool gameFront = !W32.IsIconic(hwnd) && IsForeground(hwnd);
       long idle = -1;
-      if (!FrontPolicy.ShouldRaise(true, pilotStarting, gameFront, fp == SelfPid, over, now, focusAfter)) {
+      // the game is raised once at the start of a run, and only over our own window or a browser; never over another program (the game's launcher, a chat, a system dialog):
+      // the pilot waits ("background") and the log says who is in front
+      string fname = "?"; if (!gameFront && fp != SelfPid) { try { using (var pr0 = Process.GetProcessById(fp)) fname = pr0.ProcessName; } catch { } }
+      bool fgOk = fp == SelfPid || FrontPolicy.IsBrowser(fname);
+      if (!raisedRun && fgOk && FrontPolicy.ShouldRaise(true, pilotStarting, gameFront, fp == SelfPid, over, now, focusAfter)) { /* our own window or a browser on top: raise */ }
+      else {
         if (!pilotWaiting || gameFront) return false;
         bool down = (W32.GetAsyncKeyState(0x01) & 0x8000) != 0 || (W32.GetAsyncKeyState(0x02) & 0x8000) != 0;
         idle = UserIdleMs();
-        if (!FrontPolicy.ShouldRaiseIdle(true, pilotWaiting, gameFront, W32.IsIconic(hwnd), down, idle, now, focusAfter)) return false;
+        bool browser = FrontPolicy.IsBrowser(fname);
+        if (!FrontPolicy.ShouldRaiseOverBrowser(true, pilotWaiting, gameFront, W32.IsIconic(hwnd), down, idle, now, focusAfter, browser, raisedRun)) {
+          if (!browser && fp != SelfPid && raiseHeldSaid != fname) { raiseHeldSaid = fname; Log.Write("front: " + fname + " is in front of the game - the pilot waits, the game is not raised over another program"); }
+          return false;
+        }
       }
+      raisedRun = true;
       focusAfter = now + 3000;
       string was = "?"; try { var pr = Process.GetProcessById(fp); was = pr.ProcessName; } catch { }
       if (W32.IsIconic(hwnd)) W32.ShowWindow(hwnd, 9);   // SW_RESTORE (only when minimized)
