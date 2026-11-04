@@ -5191,6 +5191,17 @@ namespace RealmForge {
 
 
 namespace RealmForge {
+
+  /// <summary>Whether the navigator core is on (app/HostBridge.cs). Release: only the site's switch (after auto click). Test build: on unless auto click is off or the lab's settings command (labNav "on"/"off") says off; config.json "navCore" "off" and "lab" are ignored there.</summary>
+  public static class NavCoreRule {
+    public static bool Decide(bool isTest, bool autoClick, string labNav, string cfgNav, bool siteSwitch, out string reason) {
+      if (!autoClick) { reason = "autoclick off"; return false; }
+      if (!isTest) { reason = siteSwitch ? "site switch on" : "site switch off"; return siteSwitch; }
+      if (!string.IsNullOrEmpty(labNav)) { reason = "lab command"; return labNav == "on"; }
+      reason = cfgNav == "off" ? "config off ignored" : cfgNav == "lab" ? "config lab ignored" : "default on";
+      return true;
+    }
+  }
   public sealed class AppConfig {
     public string Site = SyncClient.DefaultSite;
     const string OldSite = "https://realmforge-wor.vercel.app";
@@ -5208,7 +5219,7 @@ namespace RealmForge {
     public double CoachX = -1, CoachY = -1;
     public string TermsAccepted = "";   // version of the Terms of Use the player accepted on the first-run card (Config.TermsVersion)
     public const string TermsVersion = "2026-10-17";
-    public string NavCore = "site";   // TEST build: the navigator core for the auto-equip gear phase, "site" (the site's navCore switch, off by default) | "on" | "lab" (on when the lab's settings command forces the settings) | "off"
+    public string NavCore = "site";   // TEST build: "on" or "site" (default on); "off" and "lab" are ignored in test builds (NavCoreRule); release builds ignore it
     public string GuideStyle = "auto";   // TEST build: the new button highlight, "auto" (the site's switch) | "on" | "off"
     public bool RecButton = true;   // TEST build: the record button over the game (app/Overlay.cs)
     public bool SendCodes = true;   // promo codes the player enters in the game, with the game's answer, go to the site (app/CodeWatch.cs; the player can turn it off)

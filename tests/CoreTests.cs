@@ -4819,6 +4819,16 @@ static partial class CoreTests {
     Check(v.Step.Kind == LocateKind.ClosePopup && mv.Action.Kind == AutoKind.None && mv.State == "hint", "cover: the auto pilot under a pop-up clicks nothing (the back arrow included)");
     Check(!LabRecCmd.AutoClick(true, true, true, true) && !LabRecCmd.AutoClick(true, false, true, true) && LabRecCmd.AutoClick(false, true, true, false) && LabRecCmd.AutoClick(true, false, true, false) && !LabRecCmd.AutoClick(true, true, false, false),
       "lab: hint mode -> auto click off whatever is forced or saved; a non-hint run forced -> on; the site's switch still rules");
+    { string r; bool on;
+      on = NavCoreRule.Decide(true, true, "", "off", false, out r); bool t1 = on && r == "config off ignored";
+      on = NavCoreRule.Decide(true, true, "", "lab", false, out r); bool t2 = on && r == "config lab ignored";
+      on = NavCoreRule.Decide(true, true, "", "site", false, out r); bool t3 = on && r == "default on";
+      on = NavCoreRule.Decide(true, true, "off", "on", true, out r); bool t4 = !on && r == "lab command";
+      on = NavCoreRule.Decide(true, true, "on", "off", false, out r); bool t5 = on && r == "lab command";
+      on = NavCoreRule.Decide(true, false, "on", "on", true, out r); bool t6 = !on && r == "autoclick off";
+      on = NavCoreRule.Decide(false, true, "on", "on", false, out r); bool t7 = !on;
+      on = NavCoreRule.Decide(false, true, "", "off", true, out r); bool t8 = on;
+      Check(t1 && t2 && t3 && t4 && t5 && t6 && t7 && t8, "navCore rule: test build on unless auto click off or the lab command says off (config off/lab ignored); release = site switch only"); }
     long t0 = 1000000;
     Check(!LabRecCmd.HintExpired(t0, t0 + 180000 + 60000) && !LabRecCmd.HintExpired(t0, t0 + LabRecCmd.HintMaxMs) && LabRecCmd.HintExpired(t0, t0 + LabRecCmd.HintMaxMs + 1), "lab: the hint mode outlives the runner's 3 minute scenario (10 min cap)");
     // hint mode: ten ticks of a locate request with auto off - the pilot is not driven at all (Overlay.TickLocateDrive: AutoEnabled / LocateAutoEnabled), so no clicks

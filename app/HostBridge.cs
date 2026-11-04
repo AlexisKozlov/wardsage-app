@@ -140,18 +140,16 @@ namespace RealmForge {
     bool ArtAutoOn() { return AutoClickOn() && (labForce || labPrepOn || On("artAuto")); }
     /// <summary>The new button highlight: only the site's "guideStyle" switch.</summary>
     void ApplyGuideStyle() { overlay.GuideStyle = remote.Allows("guideStyle"); }
-    /// <summary>The navigator core (src/Nav*.cs) for the auto-equip gear phase: off unless the site's "navCore" switch is on; the test build's config "navCore": "on" forces it, "lab" forces it when the lab's settings command (or a lab setup) is running, "off" never.</summary>
-    bool NavCoreOn() {
-      if (!AutoClickOn()) return false;
-      if (Channel.IsTest && labNav != "") return labNav == "on";   // the lab's settings command (settings nav=on|off) rules in a test build
-      string m = Channel.IsTest ? cfg.NavCore : "site";
-      if (m == "off") return false;
-      if (Channel.IsTest && m != "lab") return true;   // test builds: on by default ("site" = the default); config "navCore":"off" is the escape hatch; "lab" = only when the lab's settings command forces it
-      if (m == "on") return true;
-      if (m == "lab" && (labForce || labPrepOn)) return true;
-      return On("navCore");
+    /// <summary>The navigator core (src/Nav*.cs) for the auto-equip gear phase. Release: only the site's "navCore" switch. Test build: on unless the lab's settings command said off (config.json "navCore" off / lab are ignored); see NavCoreRule.</summary>
+    bool NavCoreOn(out string reason) {
+      return NavCoreRule.Decide(Channel.IsTest, AutoClickOn(), labNav, cfg.NavCore, On("navCore"), out reason);
     }
-    void ApplyAutoClick() { overlay.NavCoreEnabled = NavCoreOn(); overlay.AutoEnabled = AutoClickOn(); overlay.LocateAutoEnabled = LocateAutoOn(); overlay.ArtAutoEnabled = ArtAutoOn(); }
+    int navCoreLast = -1;
+    void ApplyAutoClick() {
+      string why; bool nav = NavCoreOn(out why);
+      if ((nav ? 1 : 0) != navCoreLast) { navCoreLast = nav ? 1 : 0; Log.Write("navcore: " + (nav ? "on" : "off") + " (reason: " + why + ")"); }
+      overlay.NavCoreEnabled = nav; overlay.AutoEnabled = AutoClickOn(); overlay.LocateAutoEnabled = LocateAutoOn(); overlay.ArtAutoEnabled = ArtAutoOn();
+    }
 
     // the features that read the game's screens and fights need the layout data for the running game version
     // (src/Layout.cs); the account sync, the guild and the update packs do not
