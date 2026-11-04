@@ -329,7 +329,7 @@ static partial class CoreTests {
   /// <summary>The game's gear list as the recording shows it (client 1366x705): rows of one cell pitch, the cells the game made (first..last, with a buffer of rows beyond the viewport), a drag that moves the content by Gain of the pointer's move,
   /// a click on a cell that selects its item (the card opens, the list is located to it), a click on the item that is selected already that does nothing (_OnEquipClicked), a click on the card's button that puts the item on the hero.</summary>
   sealed class AtomListSim {
-    public readonly ListGeometry G = new ListGeometry(); public double H = 705, Pitch, Cell, VT, VB, Scroll, Gain = 0.9;
+    public readonly ListGeometry G = new ListGeometry(); public double H = 705, Pitch, Cell, VT, VB, Scroll, Gain = 0.9, Thr = 8, Inertia = 0; public bool Mem = true;
     public int Rows = 60, TargetRow = 38; public long Target = 19993, Sel, TipUid; public bool Tip, Worn;
     public int Drags, Blind, OnSelected, OnTarget, OnNb, Confirms; public long FirstClickAt = -1, WornAt = -1; public string FirstClick = "";
     readonly List<KeyValuePair<long, Action>> due = new List<KeyValuePair<long, Action>>();
@@ -343,7 +343,9 @@ static partial class CoreTests {
     public bool Made(int row) { return row - 1 >= First && row - 1 <= Last; }
     public void At(long t, Action a) { due.Add(new KeyValuePair<long, Action>(t, a)); }
     public void Advance(long t) { foreach (var e in due.ToArray()) if (e.Key <= t) { due.Remove(e); e.Value(); } }
-    public void Locate(int row) { Scroll = Math.Max(0, Math.Min((Rows - 1) * Pitch, (row - 3) * Pitch)); }
+    /// <summary>How far the list can scroll (px): all rows and the top pad, less the view.</summary>
+    public double MaxScroll { get { return Math.Max(0, Rows * Pitch + ListGeometry.TopPad * H - (VB - VT)); } }
+    public void Locate(int row) { Scroll = Math.Max(0, Math.Min(MaxScroll, (row - 3) * Pitch)); }
     void Select(long uid) {
       if (uid == Sel) { OnSelected++; return; }   // the game: nothing happens
       Sel = uid; Tip = true; TipUid = uid; Locate(RowOf(uid));
@@ -355,6 +357,7 @@ static partial class CoreTests {
         Row1Top = (VT + VB) / 2 - (TargetRow - 1) * Pitch - Cell / 2 + 0 * real, Types = types, AutoConfirm = true, Hero = 5, ScreenHero = 5, Owner = Worn ? 5 : 0, TipKnown = true, TipShown = Tip, TipUid = Tip ? TipUid : 0,
         BlueNone = !Tip, Button = Tip && Sel == Target ? new[] { 500, 520, 150, 52 } : null, ButtonStill = true, ListSig = 7, InputOpen = true,
         LiveGrid = true, LiveFirst = First, LiveLast = Last, LiveViewTop = VT, LiveViewBottom = VB };
+      if (Mem) v.LiveScroll = Scroll / Pitch * 100;
       if (Made(TargetRow)) v.LiveCellY = CellY(TargetRow);
       if (Made(TargetRow) && Whole(TargetRow)) { v.LiveTarget = true; v.LiveX = G.ColLeft(1) * H + Cell / 2; v.LiveY = CellY(TargetRow); }
       if (nb) for (int r = First + 1; r <= Last + 1; r++) if (r != TargetRow && Whole(r)) { v.LiveNb = true; v.LiveNbUid = UidOf(r); v.LiveNbX = G.ColLeft(1) * H + Cell / 2; v.LiveNbY = CellY(r); break; }
@@ -362,7 +365,12 @@ static partial class CoreTests {
     }
     /// <summary>What the pilot did reaches the game (client px; Cell = the item whose live cell the host clicks).</summary>
     public void Do(AutoAction a, long t) {
-      if (a.Kind == AutoKind.Drag) { Drags++; double dy = a.DY; At(t + 250, () => { Scroll = Math.Max(0, Math.Min((Rows - 1) * Pitch, Scroll - dy * Gain)); }); return; }
+      if (a.Kind == AutoKind.Drag) {   // the game swallows the drag threshold at the start; the content follows the pointer by Gain; the release coasts by Inertia of the move, 450 ms later
+        Drags++; double eff = a.DY - Math.Sign(a.DY) * Thr;
+        At(t + 250, () => { Scroll = Math.Max(0, Math.Min(MaxScroll, Scroll - eff * Gain)); });
+        if (Inertia > 0) At(t + 700, () => { Scroll = Math.Max(0, Math.Min(MaxScroll, Scroll - eff * Gain * Inertia)); });
+        return;
+      }
       if (a.Kind != AutoKind.Click) return;
       if (FirstClickAt < 0) { FirstClickAt = t; FirstClick = a.Cell > 0 ? "cell " + a.Cell : "point " + (int)a.X + "," + (int)a.Y; }
       if (a.X >= 500 && a.X <= 650 && a.Y >= 520 && a.Y <= 572 && Tip && Sel == Target) { Confirms++; At(t + 400, () => { Worn = true; WornAt = t + 400; Sel = 0; Tip = false; TipUid = 0; }); return; }
@@ -418,6 +426,22 @@ static partial class CoreTests {
       AutoPilot p; long doneAt; int clicks; string r = AtomListRun(sim, true, out p, out doneAt, out clicks);
       Check(r == "done" && sim.Blind == 0 && sim.OnSelected == 0 && sim.Confirms == 1 && sim.Drags >= 4 && sim.Drags <= 16 && doneAt <= 30000 && p.Atoms.Refused == 0,
         "atoms A1 (recording window A): item 19993 at row " + row19993 + " is picked and put on in " + doneAt + " ms with " + sim.Drags + " drags, " + clicks + " clicks, " + sim.Blind + " blind clicks, " + sim.OnSelected + " on the selected item, " + sim.Confirms + " confirm (" + r + ", gain " + Math.Round(gain, 2) + ")");
+    }
+    // ---- A3: ScrollTo from the game's memory (content position, viewport, row heights): the drags are the computed ones - screenfuls the item is away, one when it is within a screen - the game swallows the drag threshold and the
+    // release coasts 12% further, the pilot waits for the list to stand still, no blind click, no drag more than one over the arithmetic
+    foreach (int trow in new[] { 8, 20, 38 }) {
+      var sim = new AtomListSim { Gain = gain, TargetRow = trow, Inertia = 0.12 };
+      AutoPilot p; long doneAt; int clicks; string r = AtomListRun(sim, true, out p, out doneAt, out clicks);
+      double span = sim.VB - sim.VT - sim.Cell / 2 - AutoPilot.DragThresholdPx, need = Math.Max(0, Math.Min(sim.MaxScroll, (trow - 1) * sim.Pitch + sim.Cell / 2 - (sim.VB - sim.VT) / 2));
+      int bound = (int)Math.Ceiling(need / (span * gain)) + 1;
+      Check(r == "done" && sim.Blind == 0 && sim.OnSelected == 0 && sim.Drags <= bound && (trow > 8 || sim.Drags <= 1) && p.Atoms.Refused == 0,
+        "atoms A3: item at row " + trow + " by the content position: " + sim.Drags + " drags (at most " + bound + "), " + sim.Blind + " blind clicks, done in " + doneAt + " ms (" + r + ")");
+    }
+    // the list position unread (no content position): the made cells' way as before, the same result
+    {
+      var sim = new AtomListSim { Gain = gain, TargetRow = 20, Mem = false };
+      AutoPilot p; long doneAt; int clicks; string r = AtomListRun(sim, true, out p, out doneAt, out clicks);
+      Check(r == "done" && sim.Blind == 0 && sim.Drags <= 16, "atoms A3: without the content position the made cells still bring the item (" + sim.Drags + " drags, " + r + ")");
     }
     // ---- A1: window B: the item is selected, its card is closed (our Escape, the player): a click on it does nothing - another cell is clicked first, then the item
     {

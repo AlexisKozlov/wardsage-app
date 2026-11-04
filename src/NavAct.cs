@@ -149,15 +149,15 @@ namespace RealmForge {
     public long Sel, TipUid, Want, Hero, ScreenHero, Owner, ListSig;
     public bool TipShown, TipKnown, InputOpen = true, LiveGrid, LiveTarget, LiveNb, Foreground = true;
     public int ListFirst = -1, ListLast = -1;
-    public double CellY = double.NaN, TargetX, TargetY, NbX, NbY, ViewTop = double.NaN, ViewBottom = double.NaN;
+    public double CellY = double.NaN, Scroll = double.NaN, TargetX, TargetY, NbX, NbY, ViewTop = double.NaN, ViewBottom = double.NaN;
     public long NbUid;
     public static GameFacts Of(AutoView v) {
       return new GameFacts { Sel = v.Sel, TipUid = v.TipUid, Want = v.Target, Hero = v.Hero, ScreenHero = v.ScreenHero, Owner = v.Owner, ListSig = v.ListSig, TipShown = v.TipShown, TipKnown = v.TipKnown,
-        InputOpen = v.InputOpen, LiveGrid = v.LiveGrid, LiveTarget = v.LiveTarget, LiveNb = v.LiveNb, Foreground = v.Foreground, ListFirst = v.LiveFirst, ListLast = v.LiveLast, CellY = v.LiveCellY,
+        InputOpen = v.InputOpen, LiveGrid = v.LiveGrid, LiveTarget = v.LiveTarget, LiveNb = v.LiveNb, Foreground = v.Foreground, ListFirst = v.LiveFirst, ListLast = v.LiveLast, CellY = v.LiveCellY, Scroll = v.LiveScroll,
         TargetX = v.LiveX, TargetY = v.LiveY, NbX = v.LiveNbX, NbY = v.LiveNbY, NbUid = v.LiveNbUid, ViewTop = v.LiveViewTop, ViewBottom = v.LiveViewBottom };
     }
     /// <summary>Where the list stands (its first and last made cell, the target's cell row on the screen): a change = the list moved.</summary>
-    public string PosKey() { return ListFirst + ":" + ListLast + ":" + (double.IsNaN(CellY) ? "-" : ((int)Math.Round(CellY / 3)).ToString()); }
+    public string PosKey() { return ListFirst + ":" + ListLast + ":" + (double.IsNaN(CellY) ? "-" : ((int)Math.Round(CellY / 3)).ToString()) + (double.IsNaN(Scroll) ? "" : ":" + (int)Math.Round(Scroll)); }
     /// <summary>What the facts say now, as a key: an atom that failed is not done again while this is the same (the diagnosis did not change).</summary>
     public string DiagKey() { return Sel + "|" + TipUid + "|" + TipShown + "|" + PosKey() + "|" + ListSig + "|" + LiveTarget; }
     public override string ToString() {

@@ -4627,6 +4627,7 @@ namespace RealmForge {
       // the game's own list position: the cells it made (first / last), the viewport, the target's cell when made (even partly in view)
       v.LiveFirst = s.First; v.LiveLast = s.Last; v.LiveViewTop = s.VY; v.LiveViewBottom = s.VY + s.VH;
       var tc = s.Of(target); if (tc != null && tc.Active) v.LiveCellY = tc.Y + tc.H / 2;
+      { double sy; if (RFX.ReadScrollY(addrs, false, out sy)) v.LiveScroll = sy; }   // (the content position, the list's own units: the pilot's ScrollTo computes the drag from it)
       if (pilot.WantNeighbour) {   // another cell, wholly in view, nearest the middle of the list
         UiCell best = null; double mid = s.VY + s.VH / 2;
         foreach (var c in s.Cells) {

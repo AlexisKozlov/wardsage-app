@@ -70,6 +70,9 @@ namespace RealmForge {
     /// (client px, NaN = no cell of it) and the viewport's top and bottom. With these the pilot scrolls by what the game says, never by row math.</summary>
     public int LiveFirst = -1, LiveLast = -1;
     public double LiveCellY = double.NaN, LiveViewTop = double.NaN, LiveViewBottom = double.NaN;
+    /// <summary>The game's content position of the list (ScrollRect content.anchoredPosition.y, the list's own units: an item row is 100, a title 44, an empty row 60), NaN = not read.
+    /// With it and the viewport the pilot computes the drag to a row from memory (ScrollTo), never from the made cells' guess.</summary>
+    public double LiveScroll = double.NaN;
     /// <summary>Another cell than the target's, wholly in view (LiveNbUid, its centre): the way to re-select when the selected item's card is not open (the game's click on a selected item does nothing). The host reads it only while WantNeighbour.</summary>
     public bool LiveNb; public double LiveNbX, LiveNbY; public long LiveNbUid;
     /// <summary>The item whose card stands (Form_CharactorEquipTip.m_SelectEquipInfo.iItemUid), 0 = none / unread.</summary>
@@ -116,13 +119,19 @@ namespace RealmForge {
     /// <summary>The item selected with its tip known closed this long: the item is clicked again (at most TipReopens times an item).</summary>
     public const int TipReopenMs = 2500, TipReopens = 2;   // item card opening; the server's answer to «Заменить»
     public const double MinDragPx = 24;   // shorter moves would count as a click in the game
+    /// <summary>The pixels a drag loses at its start (EventSystem.pixelDragThreshold: the content follows the pointer from where the drag began, not from the press); a computed drag is that much longer.</summary>
+    public const double DragThresholdPx = 8;
+    /// <summary>The list position must stand still this long (two equal reads) before the next drag is computed: a drag coasts (inertia) after the release.</summary>
+    public const int ScrollSettleMs = 250;
+    /// <summary>Content units of one item row (the game's template height), a title row and an empty row are 44 / 60 of it.</summary>
+    public const double RowUnits = 100;
 
     readonly ListGeometry g;
     /// <summary>The atom executor (src/NavAct.cs): every list click and drag of the live path goes through it; its lines are the host's «atom: ...» log lines.</summary>
     public readonly AtomRunner Atoms = new AtomRunner();
     /// <summary>The pilot needs a neighbour cell of the target (a selected item whose card is closed is re-selected through another cell): the host reads the whole list's cells while this is on.</summary>
     public bool WantNeighbour { get { return wantNb; } }
-    bool wantNb, curLive, dragPending; string dragPos = ""; double dragDy, dragCell0 = double.NaN; long dragAt, swapWaitSince, liveNoPosSince; int noMove, swaps; bool altStrip;
+    bool wantNb, curLive, dragPending; string dragPos = ""; double dragDy, dragCell0 = double.NaN, dragScroll0 = double.NaN, scrollSeen = double.NaN; long scrollSeenAt; long dragAt, swapWaitSince, liveNoPosSince; int noMove, swaps; bool altStrip;
     public const int MaxSwaps = 3, SwapWaitMs = 3000, LivePosWaitMs = 15000;
     string goal = "";
     long waitUntil, pauseUntil;
@@ -445,6 +454,8 @@ namespace RealmForge {
     AutoAction LiveScroll(AutoView v) {
       double H = v.H, cell = g.CellW * H, pitch = g.PitchY * H;
       var f = GameFacts.Of(v);
+      if (!double.IsNaN(v.LiveScroll) && v.Types != null && v.Row > 0 && !double.IsNaN(v.LiveViewTop) && !double.IsNaN(v.LiveViewBottom)) return MemScroll(v, f);
+      dragScroll0 = double.NaN;
       if (dragPending) {
         dragPending = false; string now = f.PosKey();
         if (now == dragPos) {
@@ -484,6 +495,49 @@ namespace RealmForge {
       if (!Atoms.Begin("list.drag", "to" + v.Target + (dy < 0 ? "up" : "down") + (altStrip ? "b" : "a"), "viewport[" + (int)vt + ".." + (int)vb + "] dy=" + (int)dy + " src=live", "list position changed", ff => ff.PosKey() != pos0, 1500, f, v.NowMs))
         return Fail("the drag " + (dy < 0 ? "up" : "down") + " moved nothing before and the facts are the same (" + f + ")");
       drags++; dragPending = true; dragPos = pos0; dragDy = dy; dragCell0 = v.LiveCellY; dragAt = v.NowMs;
+      waitUntil = v.NowMs + AfterDragMs; effect.Arm(curKey, v.NowMs);
+      return new AutoAction { Kind = AutoKind.Drag, X = x0, Y = y0, DY = dy };
+    }
+
+    /// <summary>ScrollTo from the game's memory (docs/specs/2026-11-04-game-atoms.md A3): the list's content position, the viewport and the row heights (item 100, title 44, empty 60) say the position that puts the target's row
+    /// in the middle: y* = clamp(rowTop - viewH/2, 0, contentH - viewH). One drag of (y* - y) px (+ the drag threshold the game swallows), the pointer rests before the release; the position then read again once it stands still (a coast
+    /// after the release is waited for), and the miss (a coast, a gain off) is one more computed drag - never a guess. A drag that moved nothing is diagnosed (another place of the strip once, then a named failure).</summary>
+    AutoAction MemScroll(AutoView v, GameFacts f) {
+      double H = v.H, cell = g.CellW * H, pitch = g.PitchY * H, k = pitch / RowUnits;
+      // the position stands still on two reads (a drag coasts after the release)
+      if (double.IsNaN(scrollSeen) || Math.Abs(scrollSeen - v.LiveScroll) > 0.25) { scrollSeen = v.LiveScroll; scrollSeenAt = v.NowMs; }
+      if (v.NowMs - scrollSeenAt < ScrollSettleMs) return AutoAction.Nothing;
+      if (dragPending) {
+        dragPending = false;
+        double moved = -(v.LiveScroll - dragScroll0) * k, cmd = dragDy - Math.Sign(dragDy) * DragThresholdPx;   // (px the content went in the pointer's direction; the drag that counted)
+        if (Math.Abs(v.LiveScroll - dragScroll0) < 0.5) {
+          noMove++;
+          Trace = "the list did not move after the drag (content " + v.LiveScroll.ToString("0.#") + ", " + noMove + " in a row)" + (noMove < 2 ? ": another place of the strip" : "");
+          if (noMove >= 2) return Fail("the list does not move: its content position " + v.LiveScroll.ToString("0.#") + " is the same after " + noMove + " drags (" + f + ")");
+          altStrip = !altStrip;
+        } else {
+          noMove = 0;
+          if (Math.Abs(cmd) >= MinDragPx / 2) { double gain = moved / cmd; if (gain > 0.3 && gain < 2.5) Gain = gain; }
+        }
+      }
+      if (!v.InputOpen) { Atoms.PreFails("list.drag", "input locked", f); return AutoAction.Nothing; }
+      double vt = v.LiveViewTop, vb = v.LiveViewBottom, viewU = (vb - vt) / k;
+      double padU = ListGeometry.TopPad / g.PitchY * RowUnits, unit = RowUnits / g.PitchY;
+      double rowTop = padU + g.RowOffset(v.Types, v.Row) * unit, contentU = padU + g.RowOffset(v.Types, v.Types.Length) * unit;
+      double want = Math.Max(0, Math.Min(Math.Max(0, contentU - viewU), rowTop + RowUnits / 2 - viewU / 2));
+      double delta = want - v.LiveScroll;   // > 0: later rows have to come up (the content goes up with the pointer)
+      if (drags >= DragTries) return Fail("the item is not reached after " + drags + " drags");
+      double span = vb - vt - cell / 2 - DragThresholdPx;   // (the drag may start on a cell: it drags the list)
+      double dy = -delta * k / GainOr1;
+      dy = Math.Max(-span, Math.Min(span, dy));
+      if (Math.Abs(dy) < MinDragPx) dy = dy < 0 ? -MinDragPx : MinDragPx;
+      dy += Math.Sign(dy) * DragThresholdPx;
+      double x0 = altStrip ? (g.StripLeft + (g.StripRight - g.StripLeft) * 0.2) * H : (g.StripLeft + g.StripRight) / 2 * H, y0 = dy < 0 ? vb - cell / 4 : vt + cell / 4;
+      string pos0 = v.LiveScroll.ToString("0.#");
+      string posKey0 = f.PosKey();
+      if (!Atoms.Begin("list.drag", "to" + v.Target + (dy < 0 ? "up" : "down") + (altStrip ? "b" : "a"), "viewport[" + (int)vt + ".." + (int)vb + "] dy=" + (int)dy + " src=mem content " + pos0 + "->" + want.ToString("0.#"), "list position changed", ff => ff.PosKey() != posKey0, 1500, f, v.NowMs))
+        return Fail("the drag " + (dy < 0 ? "up" : "down") + " moved nothing before and the facts are the same (" + f + ")");
+      drags++; dragPending = true; dragScroll0 = v.LiveScroll; dragDy = dy; dragAt = v.NowMs;
       waitUntil = v.NowMs + AfterDragMs; effect.Arm(curKey, v.NowMs);
       return new AutoAction { Kind = AutoKind.Drag, X = x0, Y = y0, DY = dy };
     }
