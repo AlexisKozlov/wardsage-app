@@ -115,7 +115,7 @@ namespace RealmForge {
         Plan = runHero, Hero = heroScreen.FormOk ? heroScreen.Hero : 0, Tab = heroScreen.Tab, Part = heroScreen.Part, SmallCards = heroScreen.SmallCards,
         Heroes = heroScreen.Heroes, HeroesButton = false,
         FilterOpen = v.Foreground && HeroFilterSeen(o, cr.R, cr.B), ClassChosen = heroScreen.ClassChosen, FactionList = heroScreen.FactionList,
-        ChosenCamps = heroScreen.ChosenCamps, ClassCount = heroScreen.ClassCount, GridPtr = heroScreen.GridPtr
+        ChosenCamps = heroScreen.ChosenCamps, ClassCount = heroScreen.ClassCount, GridPtr = heroScreen.GridPtr, InputOpen = RFX.NavInputOpen() ?? true
       };
       long[] tags = HeroTags(runHero);
       if (tags != null) { hv.HeroClass = tags[0]; hv.HeroCamps = new long[tags.Length - 1]; Array.Copy(tags, 1, hv.HeroCamps, 0, tags.Length - 1); }
@@ -155,7 +155,7 @@ namespace RealmForge {
         if (fview.PanelOpen && fview.SidePanelOpen) vv.SideClose = new[] { fg.X(fg.SideCloseX, navTickCr.R, navTickCr.B), fg.Y(fg.CloseY, navTickCr.R, navTickCr.B) };
         vv.FilterAt = filterTouchAt; vv.ListSig = typesPtr != 0 ? (long)typesPtr * 31 + (types != null ? types.Length : 0) : 0;
         LiveGearView(vv, navTickCr);
-        vv.Slot = null;
+        vv.Slot = null; vv.InputOpen = RFX.NavInputOpen() ?? true;
         return vv;
       }, (vv, a) => {
         bool onConfirm = confirmBtn != null && a.X >= confirmBtn[0] && a.X <= confirmBtn[0] + confirmBtn[2] && a.Y >= confirmBtn[1] && a.Y <= confirmBtn[1] + confirmBtn[3];

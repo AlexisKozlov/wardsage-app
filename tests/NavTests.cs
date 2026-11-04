@@ -182,6 +182,41 @@ static partial class CoreTests {
       st["Popup"] = new List<StackForm> { F("Form_Pop", "Handle", true, true) }; pr = EscapePredictor.Predict(st);
       Check(pr.Kind == "close" && pr.Form == "Form_Pop" && pr.Stack == "Popup", "nav escape: a Popup-stack form is searched before Main (" + pr + ")");
     }
+    // build 502's log: Flow holds Form_LeftTip (Ignore, a Lua override), Main = the bare city, then the quit dialog appears in Top (no delegate, no name)
+    {
+      Func<string, string, bool, bool, bool, StackForm> G2 = (n, b, d, act, lua) => new StackForm { Name = n, Back = b, HasDelegate = d, Active = act, LuaBehav = lua };
+      var st = new Dictionary<string, IList<StackForm>>();
+      st["Main"] = new List<StackForm> { G2("Form_MainCity", "Handle", true, true, false) };
+      st["Flow"] = new List<StackForm> { G2("Form_LeftTip", "Ignore", true, true, true) };
+      var pr = EscapePredictor.Predict(st);
+      Check(pr.Kind == "exit-dialog", "nav escape: LeftTip in Flow is Ignore, Escape on the bare city opens the quit dialog (" + pr + ")");
+      st["Flow"] = new List<StackForm> { G2("id:-538304093", "default", true, true, true) }; pr = EscapePredictor.Predict(st);
+      Check(pr.Kind == "unknown", "nav escape: an unnamed Flow form with a Lua behaviour is not guessed (" + pr + ")");
+      st["Flow"] = new List<StackForm> { G2("Form_Block1", "Block", false, true, true) }; pr = EscapePredictor.Predict(st);
+      Check(pr.Kind == "exit-dialog", "nav escape: a Block form in Flow ends only Flow's walk, Main is still searched (" + pr + ")");
+      st["Main"] = new List<StackForm> { G2("Form_MainCity", "Handle", true, true, false), G2("Form_CharactorMain", "Handle", true, true, false) }; pr = EscapePredictor.Predict(st);
+      Check(pr.Kind == "close" && pr.Form == "Form_CharactorMain", "nav escape: ... and the hero screen is what Escape closes (" + pr + ")");
+      st["Top"] = new List<StackForm> { G2("id:212616562", "default", false, true, false) }; pr = EscapePredictor.Predict(st);
+      Check(pr.Kind == "exit-dialog-up", "nav escape: a nameless Top form with no back delegate is the quit dialog (" + pr + ")");
+    }
+    // the canvas scale of build 502: 1920x1009 client, scaler 1.5766 for a 1136x640 reference = fitted by height
+    Eq("height", RFX.NavFit(1.5766, 1136, 640, 1920, 1009), "nav geometry: the canvas scale fits by height (1009/640)");
+    Eq("none", RFX.NavFit(1.2, 1136, 640, 1920, 1009), "nav geometry: a scale that is neither is told");
+    Check(Math.Abs(Ui.Unit(1920, 1009) - 1009) < 0.001, "nav geometry: Ui.Unit equals the client height on 1920x1009");
+    // the hero pilot starts no action while the game's input is locked, and loses no try
+    {
+      var gm = new HeroGeometry(); var game = new FakeHeroGame(gm, 1920, 1009) { Heroes = new long[40], Shown = 1 };
+      for (int i = 0; i < 40; i++) game.Heroes[i] = 500 + i;
+      var pl = new HeroPilot(gm); int lockedActs = 0; string last = "";
+      for (long t = 0; t < 60000; t += 100) {
+        bool open = (t / 700) % 2 == 0;
+        var v = new HeroView { NowMs = t, Foreground = true, W = 1920, H = 1009, Plan = 520, Hero = game.Shown, Tab = game.Tab, Part = game.Part, Heroes = game.Heroes, ClientH = 1009, GridPtr = game.Grid, InputOpen = open };
+        var act = pl.Step(v); last = pl.State;
+        if (act == null) break;
+        if (act.Kind != AutoKind.None) { if (!open) lockedActs++; if (act.Kind == AutoKind.Click) game.Click(act.X, act.Y); else game.Drag(act.DY); }
+      }
+      Check(lockedActs == 0 && last == "done" && game.Shown == 520, "nav pilot: no action into a locked input, the hero is found all the same (" + lockedActs + " locked acts, " + last + ")");
+    }
     // the input gate: nothing is sent into a locked input
     {
       var io = new FakeNavIo(); io.Open = false; var rdr = new ScreenReader(); var cs = NavState(ScreenKind.City, 0, 0, 0, "", new[] { "Form_MainCity" }); io.FreshState = cs;

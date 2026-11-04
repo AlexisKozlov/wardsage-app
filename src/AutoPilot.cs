@@ -50,6 +50,8 @@ namespace RealmForge {
     public bool SlotOpen;          // the screen read shows the gear list of Slot's part open
     /// <summary>The navigator owns the way to the slot (src/NavEquip.cs): the pilot never opens a slot, it works on the open one. Default off: the old path unchanged.</summary>
     public bool NavOwned;
+    /// <summary>The game's input is open (RFX.NavInputOpen): the pilot starts no click or drag while it is locked. Default true.</summary>
+    public bool InputOpen = true;
     public bool PanelNone;         // no gear list panel exists yet (it is created when a slot is first opened): click the slot
     public bool PanelOk = true;
     /// <summary>The game's window table was read for this hero screen (the shown forms are known) and whether the item's tip
@@ -200,6 +202,7 @@ namespace RealmForge {
         if (v.Sel <= 0) { State = "unconfirmed"; Why = "no selection after the confirm press, owner " + v.Owner + ", hero " + v.Hero; Trace = "unconfirmed: " + Why; return AutoAction.Nothing; }
       }
       if (selected) return ConfirmStep(v);
+      if (!v.InputOpen) return AutoAction.Nothing;
       return v.Slot != null ? SlotStep(v) : ItemStep(v);
     }
 
