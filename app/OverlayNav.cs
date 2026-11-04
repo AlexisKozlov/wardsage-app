@@ -34,7 +34,7 @@ namespace RealmForge {
       if (esc && !npEsc) Log.Write("navprobe player key Escape" + (sending ? " (while our own input is on its way)" : ""));
       if (c && !npC) Log.Write("navprobe player key C"); if (b && !npB) Log.Write("navprobe player key B"); if (lb && !npLeft) Log.Write("navprobe player mouse left");
       npEsc = esc; npC = c; npB = b; npLeft = lb;
-      { IntPtr gw = GameWindow(); W32.RECT gcr; if (gw != IntPtr.Zero && W32.GetClientRect(gw, out gcr)) { RFX.NavProbeClientW = gcr.R; RFX.NavProbeClientH = gcr.B; } }
+      { IntPtr gw = GameWindow(); W32.RECT gcr; if (gw != IntPtr.Zero && W32.GetClientRect(gw, out gcr)) { RFX.NavProbeClientW = gcr.R; RFX.NavProbeClientH = gcr.B; W32.POINT cur; var org = new W32.POINT(0, 0); W32.ClientToScreen(gw, ref org); if (W32.GetCursorPos(out cur)) { RFX.NavProbeCursorX = cur.X - org.X; RFX.NavProbeCursorY = cur.Y - org.Y; } } }
       var lines = RFX.NavProbeLines();
       if (lines == null) return;
       bool full = now - npFullAt >= 1000; if (full) npFullAt = now;
