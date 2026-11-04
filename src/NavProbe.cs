@@ -30,7 +30,7 @@ namespace RealmForge {
 
     /// <summary>The probe's lines (null = no game / no layout data). Never throws.</summary>
     public static List<string> NavProbeLines() {
-      var l = new List<string>();
+      var l = new List<string>(); npNameBudget = 12;
       if (TestMemory == null && (Layout.Current == null || GameInfo.GamePidFresh(1000) == 0)) return null;
       ulong ga;
       try { ga = RootGa(); } catch (Exception e) { l.Add("root: " + e.Message); return l; }
@@ -40,6 +40,7 @@ namespace RealmForge {
       try { NpExitDialog(ga, l); } catch (Exception e) { l.Add("exit dialog: exception " + e.Message); }
       try { NpScroll(l); } catch (Exception e) { l.Add("scroll: exception " + e.Message); }
       try { NpGeometry(ga, l); } catch (Exception e) { l.Add("geometry: exception " + e.Message); }
+      try { NpPointer(ga, l); } catch (Exception e) { l.Add("pointer: exception " + e.Message); }
       return l;
     }
 
@@ -221,9 +222,31 @@ namespace RealmForge {
 
     static int NpQueue(ulong q) { if (q == 0) return 0; var b = Read(q, 0x28); return b != null ? NpI32(b, 0x20) : -1; }   // Queue<T>._size
 
+    // form id -> class name: the window table's names (the same source the screen state and the z-order use), else the form's own table found by its id in UIInstance
+    static readonly Dictionary<int, string> npNames = new Dictionary<int, string>(); static ulong npUiAt; static int npNameBudget;
     static string NpName(int id) {
       string n; lock (formNames) { if (formNames.TryGetValue(id, out n)) return n; }
+      if (npNames.TryGetValue(id, out n)) return n;
+      if (npNameBudget > 0) {
+        npNameBudget--;
+        try {
+          ulong env, ui; string why;
+          if (UiRoots(out env, out ui, out why)) {
+            if (ui != npUiAt) { npNames.Clear(); npUiAt = ui; }
+            ulong f; int tt;
+            if (IntKey(ui, id, out f, out tt) && tt == T_TABLE) { n = FormClassName(f, out why); if (!string.IsNullOrEmpty(n)) { npNames[id] = n; return n; } }
+          }
+        } catch (Exception) { }
+      }
       return "id:" + id;
+    }
+
+    /// <summary>How the canvas scale fits the client: "height" (scale = client height / reference height), "width", "both", "none".</summary>
+    public static string NavFit(double scale, double refW, double refH, double clientW, double clientH) {
+      if (scale <= 0 || refW <= 0 || refH <= 0 || clientW <= 0 || clientH <= 0) return "?";
+      double byH = clientH / refH, byW = clientW / refW;
+      bool h = Math.Abs(scale - byH) < 0.002 * byH, w = Math.Abs(scale - byW) < 0.002 * byW;
+      return h && w ? "both" : h ? "height" : w ? "width" : "none";
     }
 
     /// <summary>One form of a stack: name, full screen / pop-up, active, back delegate, the map's back behaviour, loading, animation, transition.</summary>
@@ -237,7 +260,7 @@ namespace RealmForge {
       var b = Read(obj, 0x180); if (b == null) return name + "[unreadable]";
       bool hasBack = BitConverter.ToUInt64(b, 0x48) != 0, hasBehav = BitConverter.ToUInt64(b, 0xA0) != 0;
       bool active = b[0xE0] != 0, full = b[0x121] != 0, animValid = b[0x122] != 0, inited = b[0x109] != 0, loading = b[0x170] != 0, preloading = b[0x171] != 0;
-      sf.Active = active; sf.HasDelegate = hasBack; sf.Full = full;
+      sf.Active = active; sf.HasDelegate = hasBack; sf.Full = full; sf.LuaBehav = hasBehav;
       int animLock = NpI32(b, 0x154); string trans = b[0x174] != 0 ? NpI32(b, 0x178).ToString() : "-";
       return name + "[" + (full ? "FULL" : "pop") + (active ? "" : " inactive") + " back=" + back + (hasBehav ? "(lua)" : "") + " delegate=" + (hasBack ? 1 : 0) + (inited ? "" : " !inited")
         + (loading || preloading ? " LOADING" : "") + (animValid ? " anim(lock " + animLock + ")" : "") + " trans=" + trans + "]";
@@ -276,7 +299,30 @@ namespace RealmForge {
       double w = NavProbeClientW, h = NavProbeClientH;
       l.Add("geometry: scaler " + sn + " scale=" + BitConverter.ToSingle(b, 0x20).ToString("0.####", NpInv) + " ref=(" + BitConverter.ToSingle(b, 0x24).ToString("0", NpInv) + "x" + BitConverter.ToSingle(b, 0x28).ToString("0", NpInv)
         + ") padding=(" + BitConverter.ToSingle(b, 0x18).ToString("0.##", NpInv) + "," + BitConverter.ToSingle(b, 0x1C).ToString("0.##", NpInv) + ") designScale=" + BitConverter.ToSingle(b, 0x38).ToString("0.####", NpInv)
-        + (w > 0 ? " | client " + w.ToString("0", NpInv) + "x" + h.ToString("0", NpInv) + " Ui.Unit=" + Ui.Unit(w, h).ToString("0.##", NpInv) : ""));
+        + (w > 0 ? " fit=" + NavFit(BitConverter.ToSingle(b, 0x20), BitConverter.ToSingle(b, 0x24), BitConverter.ToSingle(b, 0x28), w, h) + " | client " + w.ToString("0", NpInv) + "x" + h.ToString("0", NpInv) + " Ui.Unit=" + Ui.Unit(w, h).ToString("0.##", NpInv) : ""));
+    }
+
+    // ---------------------------------------------------------------- the game's own pointer (the research 10): what the EventSystem says is under the cursor, and the last press
+    static void NpPointer(ulong ga, List<string> l) {
+      ulong k = NpClass(ga, "UnityEngine.EventSystems.EventSystem"); if (k == 0) { l.Add("pointer: EventSystem not found yet"); return; }
+      ulong sf = Ptr(k + 0xB8), list = sf != 0 ? Ptr(sf) : 0;   // static m_EventSystems (List<EventSystem>)
+      var lb = list != 0 ? Read(list, 0x20) : null; if (lb == null || NpI32(lb, 0x18) < 1) { l.Add("pointer: no EventSystem in the list"); return; }
+      ulong arr = BitConverter.ToUInt64(lb, 0x10), es = arr != 0 ? Ptr(arr + 0x20) : 0;
+      if (es == 0) { l.Add("pointer: EventSystem[0] null"); return; }
+      ulong module = Ptr(es + 0x20); if (module == 0) { l.Add("pointer: no input module"); return; }
+      ulong dict = Ptr(module + 0x48); var db = dict != 0 ? Read(dict, 0x28) : null; if (db == null) { l.Add("pointer: m_PointerData unreadable"); return; }
+      int count = NpI32(db, 0x20); ulong entries = BitConverter.ToUInt64(db, 0x18);
+      if (count <= 0 || count > 64 || entries == 0) { l.Add("pointer: m_PointerData count " + count); return; }
+      var eb = Read(entries + 0x20, count * 24); ulong ped = 0;
+      if (eb != null) for (int i = 0; i < count; i++) if (NpI32(eb, i * 24 + 8) == -1) ped = BitConverter.ToUInt64(eb, i * 24 + 16);
+      if (ped == 0) { l.Add("pointer: no mouse pointer (key -1) among " + count); return; }
+      var pb = Read(ped, 0x130); if (pb == null) { l.Add("pointer: PointerEventData unreadable"); return; }
+      ulong enter = BitConverter.ToUInt64(pb, 0x20), press = BitConverter.ToUInt64(pb, 0x28), last = BitConverter.ToUInt64(pb, 0x30), ray = BitConverter.ToUInt64(pb, 0x48);
+      // the UILocker's blocker image: the game's raycast hits it while the input is locked
+      ulong locker = 0; ulong kl = ClassAt(ga, "UI.UILocker"); if (kl != 0) { ulong sfl = Ptr(kl + 0xB8), inst = sfl != 0 ? Ptr(sfl) : 0; locker = inst != 0 ? Ptr(inst + 0x18) : 0; }
+      l.Add("pointer: position=(" + BitConverter.ToSingle(pb, 0xE8).ToString("0.0", NpInv) + "," + BitConverter.ToSingle(pb, 0xEC).ToString("0.0", NpInv) + ") raycast=" + NpHex(ray) + " enter=" + NpHex(enter)
+        + " press=" + NpHex(press) + " lastPress=" + NpHex(last) + " clickTime=" + BitConverter.ToSingle(pb, 0x118).ToString("0.00", NpInv) + " clickCount=" + NpI32(pb, 0x11C)
+        + " hitsLocker=" + (ray != 0 && ray == locker ? "yes" : "no") + " dragging=" + pb[0x129]);
     }
 
     // ---------------------------------------------------------------- the input gate (the research 2): any UILocker slot with an id, a stack transition or an animation queued = input closed

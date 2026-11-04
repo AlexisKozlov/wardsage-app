@@ -60,6 +60,8 @@ namespace RealmForge {
     public long[] HeroCamps;
     /// <summary>The navigator owns the way to the hero grid (src/NavEquip.cs): the pilot does not click «Герои», the gear tab or the gear list's back arrow; it only finds the hero in the grid. Default off: the old path unchanged.</summary>
     public bool NavOwned;
+    /// <summary>The game's input is open (RFX.NavInputOpen: no UILocker slot, no transition): the pilot starts no action while it is locked, instead of a fixed pause. Default true.</summary>
+    public bool InputOpen = true;
   }
 
   public sealed class HeroPilot {
@@ -191,6 +193,7 @@ namespace RealmForge {
       if (v.UserBusy || v.NowMs < pauseUntil) { State = "paused"; return AutoAction.Nothing; }
       State = "work";
       if (v.NowMs < waitUntil) return AutoAction.Nothing;
+      if (!v.InputOpen) return AutoAction.Nothing;   // the game's input is locked: nothing is sent into it, no try is spent
       double H = v.H;
       if (v.Hero == 0) {
         city++; waitUntil = v.NowMs + Late(3000);
