@@ -185,6 +185,7 @@ namespace RealmForge {
       ip.OnSent = a => { if (cellLivePt != null) pilot.LivePoint(cellLivePt[0], cellLivePt[1]); equipClickAt = NowMs(); };
       navActions = new List<IAtTargetAction> { hs, gf, ip };
     }
+    readonly BuildFlagKeeper flagKeeper = new BuildFlagKeeper(); long flagsRun = -1; bool flagsRead;
     AutoView navTickV; W32.POINT navTickO; W32.RECT navTickCr; bool navTickConfirm;
 
     /// <summary>The gear phase of a started plan with the navigator: the target is the plan's hero (and the slot the guide asks for), the navigator brings the game
@@ -193,6 +194,12 @@ namespace RealmForge {
       var io = NavIo(o, cr, v.Foreground, v.UserBusy, now);
       navFviewMade = false; navFview = null;
       NavBuildActions(v, o, cr, confirm);
+      // the player's list flags are read once per run (memory): what the build changes of them is the build's to put back (BuildFlagKeeper)
+      if (flagsRun != runHero) { flagsRun = runHero; flagsRead = false; flagKeeper.End(); }
+      if (!flagsRead) {
+        int fw, fe, fx;
+        if (RFX.ReadListFlags(addrs, out fw, out fe, out fx)) { flagsRead = true; flagKeeper.Begin(fw, fx, new BuildFlags()); Log.Write("build: the player's list flags at the start - hide worn " + fw + ", hide enhanced " + fe + ", only exclusive " + fx + " (" + flagKeeper + ")"); }
+      }
       var scr = screens.Current;
       var snap = navReader.Update(scr, now, io.Picture);
       snap.WantUid = target; snap.TipUid = snap.HasTip() ? RFX.ReadTipUid() : 0;   // (the card of the item this step works on is never closed by the plan)

@@ -356,6 +356,20 @@ static partial class CoreTests {
     var hid = new List<BuildItem> { BI(1, 11, 5, 0), new BuildItem { Slot = 2, Uid = 12, HiddenByWorn = true }, new BuildItem { Slot = 3, Uid = 13, HiddenByEnhanced = true } };
     Check(BuildPlanner.Plan(hid, true, false, false).Flags.ClearWorn && !BuildPlanner.Plan(hid, true, false, false).Flags.ClearEnhanced && BuildPlanner.Plan(hid, true, true, true).Flags.ToString() == "worn enhanced " && !BuildPlanner.Plan(hid, false, false, false).Flags.Any,
       "planner: the hide flags are cleared only where an item of the build is hidden by one that is on");
+    // S3: the flags the build switched off are put back at its end, the ones it did not touch are left alone
+    {
+      var k = new BuildFlagKeeper(); var need = new BuildFlags { ClearWorn = true };
+      Check(k.ClearDue(1, 0) == "" && k.RestoreDue(0, 0) == "", "flags: nothing before the build begins");
+      k.Begin(1, 0, need);
+      Check(k.ClearDue(1, 0) == "worn" && k.RestoreDue(1, 0) == "", "flags: «Скрыть надетое» on and needed: cleared first, nothing to restore yet");
+      k.Cleared("worn");
+      Check(k.ClearDue(0, 0) == "" && k.RestoreDue(0, 0) == "worn" && k.RestoreDue(1, 0) == "", "flags: cleared once; at the end it is put back, and not when the player switched it on himself");
+      k.End(); Check(k.RestoreDue(0, 0) == "", "flags: nothing is restored after the build ended");
+      var k2 = new BuildFlagKeeper(); k2.Begin(0, 0, need);
+      Check(k2.ClearDue(0, 0) == "" && k2.RestoreDue(0, 0) == "", "flags: a flag that was off is never switched on");
+      var k3 = new BuildFlagKeeper(); k3.Begin(1, 1, new BuildFlags());
+      Check(k3.ClearDue(1, 1) == "", "flags: no item needs a flag cleared: they are not touched");
+    }
     // the norms are the recipe's budgets
     Check(BuildPlanner.NormMs("build", "pick", 0) == BuildPlanner.ItemLimitMs && BuildPlanner.NormMs("build", "filter", 0) == BuildPlanner.FilterLimitMs && BuildPlanner.NormMs("build", "hero", 0) == 8000 && BuildPlanner.NormMs("equip", "pick", 0) == BuildPlanner.ItemLimitMs,
       "planner: the norms (item 6 s, filter 4 s, hero 8 s) are the build recipe's budgets, no 60 s");

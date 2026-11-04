@@ -153,6 +153,35 @@ namespace RealmForge {
     }
   }
 
+  /// <summary>The player's list flags during one build (S3): read once at its start from the game's memory, what the build's items need cleared is cleared once, and what was cleared is put back at the end - the player's own settings are
+  /// never left changed. Pure: the host feeds it the flags it read (-1 unread) and does the clicks it asks for.</summary>
+  public sealed class BuildFlagKeeper {
+    public bool Begun, ClearedWorn, ClearedExclusive;
+    public int WornWas = -1, ExclusiveWas = -1;
+    BuildFlags need = new BuildFlags();
+    /// <summary>The start of a build: the flags as read (1 on, 0 off, -1 unread) and what the plan's items need (BuildPlan.Flags). Enhanced cannot be switched here: the game's widget hides that toggle for the hero list.</summary>
+    public void Begin(int worn, int exclusive, BuildFlags needed) {
+      Begun = true; WornWas = worn; ExclusiveWas = exclusive; need = needed ?? new BuildFlags(); ClearedWorn = ClearedExclusive = false;
+    }
+    /// <summary>The flag to switch off now ("" = none): once, at the start, only when an item needs it and the read says it is on.</summary>
+    public string ClearDue(int wornNow, int exclusiveNow) {
+      if (!Begun) return "";
+      if (need.ClearWorn && !ClearedWorn && wornNow == 1) return "worn";
+      if (need.ClearExclusive && !ClearedExclusive && exclusiveNow == 1) return "exclusive";
+      return "";
+    }
+    public void Cleared(string flag) { if (flag == "worn") ClearedWorn = true; else if (flag == "exclusive") ClearedExclusive = true; }
+    /// <summary>The flag to switch on again at the end of the build ("" = none): only one this build switched off, and only while it is still off.</summary>
+    public string RestoreDue(int wornNow, int exclusiveNow) {
+      if (!Begun) return "";
+      if (ClearedWorn && WornWas == 1 && wornNow == 0) return "worn";
+      if (ClearedExclusive && ExclusiveWas == 1 && exclusiveNow == 0) return "exclusive";
+      return "";
+    }
+    public void End() { Begun = false; ClearedWorn = ClearedExclusive = false; }
+    public override string ToString() { return "flags worn=" + WornWas + " exclusive=" + ExclusiveWas + " need " + need + (ClearedWorn ? "cleared-worn " : "") + (ClearedExclusive ? "cleared-exclusive" : ""); }
+  }
+
   /// <summary>HeroPilot with NavOwned: finds the plan's hero in the grid (scroll, class / faction filter, picks). Not the city button, the gear tab or the list's back arrow.</summary>
   public sealed class HeroSelectAction : IAtTargetAction {
     readonly HeroPilot pilot; readonly Func<Snapshot, NavTarget, long, HeroView> view;

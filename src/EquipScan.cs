@@ -556,6 +556,20 @@ namespace RealmForge {
       return r.ToArray();
     }
 
+    /// <summary>The player's flags that hide items from the hero's gear list, as the game saves them (EquipData.m_EquipFilterConfigs: IsEquipedInCharactor = «Скрыть надетое»,
+    /// IsEnhanceInCharactor = «Скрыть заточенные», IsOnlyExclusiveInCharactor = «только эксклюзив»): 1 on, 0 off (a key the game has not set yet), -1 not readable. False = the table is not there.</summary>
+    public static bool ReadListFlags(EquipAddrs a, out int worn, out int enhanced, out int exclusive) {
+      worn = enhanced = exclusive = -1;
+      if (a == null || a.EquipData == 0) return false;
+      ulong cfg; int t1;
+      if (!Field(a.EquipData, "m_EquipFilterConfigs", out cfg, out t1) || t1 != T_TABLE) return false;
+      var d = ParseTable(cfg, 1, new HashSet<ulong>());
+      if (d == null) return false;
+      Func<string, int> flag = k => d.ContainsKey(k) && d[k] is bool ? ((bool)d[k] ? 1 : 0) : 0;
+      worn = flag("IsEquipedInCharactor"); enhanced = flag("IsEnhanceInCharactor"); exclusive = flag("IsOnlyExclusiveInCharactor");
+      return true;
+    }
+
     /// <summary>The sets in the order the game's filter lists them for a gear slot: EquipData.m_EquipFilterConfigs.SuitListWithPart,
     /// the weapon's list for slots 0–1 and the bracer's for 2–4 (Panel_EquipFilterWidget_Common:_CalculateSuitIdsBySelectPart),
     /// sorted by m_SuitSort. Null until the game has built it.</summary>
