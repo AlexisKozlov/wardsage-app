@@ -62,6 +62,10 @@ static partial class CoreTests {
       Check(v1.FilterOpen && !v2.FilterOpen && v3.FilterOpen, "tri-state: Unknown keeps the pixels, No / Yes win over them (" + v1.FilterOpen + " " + v2.FilterOpen + " " + v3.FilterOpen + ")");
       NavNotes.Take();
     }
+    {   // the host's mapping HeroScreen -> HeroView.FilterMem (HeroView.MemOf): the screen's verdict goes through, no screen = Unknown
+      var hs = new HeroScreen { FilterMem = Mem3.Yes };
+      Check(HeroView.MemOf(hs) == Mem3.Yes && HeroView.MemOf(new HeroScreen { FilterMem = Mem3.No }) == Mem3.No && HeroView.MemOf(new HeroScreen()) == Mem3.Unknown && HeroView.MemOf(null) == Mem3.Unknown, "host mapping: HeroView carries HeroScreen.FilterMem, null screen / default = Unknown");
+    }
     {   // cleanup of a pop-up the pilot left open: memory says open while the pixels do not see it, it is still closed
       var all = new long[60]; var tags = new Dictionary<long, long[]>();
       for (int i = 0; i < all.Length; i++) { all[i] = (200100 + i) * 100000L; tags[all[i]] = new long[] { HeroGeometry.ClassOrder[i % 6], FakeHeroGame.FactionList[1 + i % 10] }; }

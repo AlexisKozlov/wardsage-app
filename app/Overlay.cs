@@ -951,6 +951,7 @@ namespace RealmForge {
             v.PanelOpen = Mark(o, fg.X(fg.MainCloseX, W, H), fg.Y(fg.CloseY, W, H), U, ButtonCheck.IsCloseRed);
             v.SidePanelOpen = Mark(o, fg.X(fg.SideCloseX, W, H), fg.Y(fg.CloseY, W, H), U, ButtonCheck.IsCloseRed);
             v.SetPanelOpen = v.SidePanelOpen && Mark(o, fg.X(fg.SetButtonsX, W, H), fg.Y(fg.SetButtonsY, W, H), U, ButtonCheck.IsGold);
+            RFX.NavProbeSetPix("gear", v.PanelOpen ? "yes" : "no"); RFX.NavProbeSetPix("gearSide", v.SidePanelOpen ? "yes" : "no");
             long[] suits, mains, subs; int part; bool foreign, hideEq;
             if (addrs != null && RFX.ReadFilter(addrs, out suits, out mains, out subs, out part, out foreign, out hideEq)) { v.FilterRead = true; v.Suits = suits; v.HideEquipped = hideEq; }
           }
@@ -1242,7 +1243,7 @@ namespace RealmForge {
       if (hs == null || !hs.FormOk || hs.Hero == 0) { hpilot.FilterDirty = false; return; }
       int fp, gp; W32.GetWindowThreadProcessId(W32.GetForegroundWindow(), out fp); W32.GetWindowThreadProcessId(hwnd, out gp);
       var hv = new HeroView { NowMs = NowMs(), Foreground = fp == gp, UserBusy = (W32.GetAsyncKeyState(0x01) & 0x8000) != 0 || (W32.GetAsyncKeyState(0x02) & 0x8000) != 0 || NowMs() - lastMoveMs < 700, W = cr.R, H = Ui.Unit(cr.R, cr.B), ClientH = cr.B,
-        FilterOpen = fp == gp && HeroFilterSeen(o, cr.R, cr.B), ClassChosen = hs.ClassChosen, ChosenCamps = hs.ChosenCamps };
+        FilterOpen = fp == gp && HeroFilterSeen(o, cr.R, cr.B), FilterMem = HeroView.MemOf(hs), ClassChosen = hs.ClassChosen, ChosenCamps = hs.ChosenCamps };
       var a = hpilot.Cleanup(hv);
       if (a == null || a.Kind != AutoKind.Click) return;
       int x = o.X + (int)Math.Round(a.X), y = o.Y + (int)Math.Round(a.Y);
@@ -2191,7 +2192,7 @@ namespace RealmForge {
       };
       { var cs = screens.Current;   // the item's tip among the shown forms (a pilot's flow form of the hero screen: ScreenMap.FlowForms)
         v.TipKnown = RFX.UiKnown && !formsUnread && cs != null && !cs.Held && cs.Kind == ScreenKind.HeroScreen && cs.OfferRead && formsKind == ScreenKind.HeroScreen;
-        v.TipShown = EquipTipShown();
+        v.TipShown = EquipTipShown(); RFX.NavProbeSetPix("tip", !v.TipKnown ? "unknown" : v.TipShown ? "yes" : "no");   // (probe only; the host has no tip pixel look: this is the screens flow verdict)
         v.BlueNone = confirm && confirmBlueNone; v.ButtonStill = confirm && confirmBtn != null && confirmStill; }
       userClick = false; lastAutoView = v; lastClientW = cr.R; lastClientH = cr.B;
       // the navigator core (src/Nav*.cs, behind the navCore switch, off by default): the gear phase of a started plan; none of the preamble below runs for it
@@ -2222,7 +2223,7 @@ namespace RealmForge {
           Plan = runHero, Hero = heroScreen.FormOk ? heroScreen.Hero : 0, Tab = ArtPhase ? HeroGeometry.GearTab : heroScreen.Tab, Part = heroScreen.Part, SmallCards = heroScreen.SmallCards,
           Heroes = heroScreen.Heroes,
           HeroesButton = heroScreen.Hero == 0 && v.Foreground && HeroesButtonSeen(o, cr.R, cr.B),
-          FilterOpen = v.Foreground && HeroFilterSeen(o, cr.R, cr.B), ClassChosen = heroScreen.ClassChosen, FactionList = heroScreen.FactionList,
+          FilterOpen = v.Foreground && HeroFilterSeen(o, cr.R, cr.B), FilterMem = HeroView.MemOf(heroScreen), ClassChosen = heroScreen.ClassChosen, FactionList = heroScreen.FactionList,
           ChosenCamps = heroScreen.ChosenCamps, ClassCount = heroScreen.ClassCount, GridPtr = heroScreen.GridPtr
         };
         long[] tags = HeroTags(runHero);
@@ -4361,6 +4362,7 @@ namespace RealmForge {
         fv.PanelOpen = Mark(o, fg.X(fg.MainCloseX, W, H), fg.Y(fg.CloseY, W, H), U, ButtonCheck.IsCloseRed);
         fv.SidePanelOpen = Mark(o, fg.X(fg.SideCloseX, W, H), fg.Y(fg.CloseY, W, H), U, ButtonCheck.IsCloseRed);
         fv.SetPanelOpen = fv.SidePanelOpen && Mark(o, fg.X(fg.SetButtonsX, W, H), fg.Y(fg.SetButtonsY, W, H), U, ButtonCheck.IsGold);
+        RFX.NavProbeSetPix("gear", fv.PanelOpen ? "yes" : "no"); RFX.NavProbeSetPix("gearSide", fv.SidePanelOpen ? "yes" : "no");   // (probe only: pix= next to mem=)
       }
       return fv;
     }

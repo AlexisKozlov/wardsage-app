@@ -130,7 +130,7 @@ namespace RealmForge {
         NowMs = now, Foreground = v.Foreground, UserBusy = v.UserBusy, UserClicked = v.UserClicked, W = cr.R, H = Ui.Unit(cr.R, cr.B), ClientH = cr.B,
         Plan = runHero, Hero = heroScreen.FormOk ? heroScreen.Hero : 0, Tab = heroScreen.Tab, Part = heroScreen.Part, SmallCards = heroScreen.SmallCards,
         Heroes = heroScreen.Heroes, HeroesButton = false,
-        FilterOpen = v.Foreground && HeroFilterSeen(o, cr.R, cr.B), ClassChosen = heroScreen.ClassChosen, FactionList = heroScreen.FactionList,
+        FilterOpen = v.Foreground && HeroFilterSeen(o, cr.R, cr.B), FilterMem = HeroView.MemOf(heroScreen), ClassChosen = heroScreen.ClassChosen, FactionList = heroScreen.FactionList,
         ChosenCamps = heroScreen.ChosenCamps, ClassCount = heroScreen.ClassCount, GridPtr = heroScreen.GridPtr, InputOpen = RFX.NavInputOpen() ?? true
       };
       long[] tags = HeroTags(runHero);

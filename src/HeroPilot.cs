@@ -56,6 +56,8 @@ namespace RealmForge {
     public bool FilterOpen, ClassChosen;
     /// <summary>The pop-up as the game's script holds it (HeroScreen.FilterMem): Yes / No decide, Unknown (panel not built, flag nil) leaves the pixels' FilterOpen.</summary>
     public Mem3 FilterMem = Mem3.Unknown;
+    /// <summary>What the host puts into FilterMem: the screen read's verdict, Unknown without one.</summary>
+    public static Mem3 MemOf(HeroScreen s) { return s == null ? Mem3.Unknown : s.FilterMem; }
     /// <summary>Set by the pilot once FilterOpen has been settled against FilterMem for this view.</summary>
     public bool FilterResolved;
     public long[] FactionList, ChosenCamps;
