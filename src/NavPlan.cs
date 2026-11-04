@@ -44,6 +44,9 @@ namespace RealmForge {
     ICollection<string> Keep { get; }
     /// <summary>This action has work for the target now (the gear filter only while the guide asks for it).</summary>
     bool Wants(Snapshot s, NavTarget t);
+    /// <summary>When this action last made progress that is not a state change of the screen (a grid drag that moved the search on, an accepted pick, a list scroll): a pilot's click is "sent", never progress by itself
+    /// (docs/specs/2026-11-04-core-any-scenario.md D5). 0 = never. The navigator's stall clock reads it.</summary>
+    long ProgressAt { get; }
     NavStep Step(Snapshot s, NavTarget t, INavIo io, long now);
     void Reset();
   }

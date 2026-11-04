@@ -12,6 +12,12 @@ namespace RealmForge {
     public static readonly string[] ItemPickNoFilter = { "Form_CharactorEquipTip", "Form_EquipedCompared", "Form_EquipPopUp", "Form_EquipSellPopup" };
   }
 
+  /// <summary>An action's progress mark (IAtTargetAction.ProgressAt): the time its signature last changed.</summary>
+  sealed class ProgressMark {
+    string sig = ""; public long At;
+    public void Note(string s, long now) { if (s != sig) { sig = s; At = now; } }
+  }
+
   static class NavAdapt {
     public static Act ToAct(AutoAction a, ClickTarget target, ClickOwner owner, string baseForm, ICollection<string> keep, string why) {
       return new Act { Owner = owner, Target = target, Kind = a.Kind == AutoKind.Drag ? ActKind.Drag : ActKind.Click, X = a.X, Y = a.Y, DY = a.DY, Cell = a.Cell,
@@ -29,9 +35,12 @@ namespace RealmForge {
     public ICollection<string> Keep { get { return NavKeep.HeroSeek; } }
     public bool Wants(Snapshot s, NavTarget t) { return true; }
     public void Reset() { pilot.Reset(); }
+    readonly ProgressMark mark = new ProgressMark();
+    public long ProgressAt { get { return mark.At; } }
     public NavStep Step(Snapshot s, NavTarget t, INavIo io, long now) {
       var hv = view(s, t, now); hv.NavOwned = true;
       var ha = pilot.Step(hv);
+      mark.Note(pilot.Progress + "|" + hv.Hero + "|" + hv.Tab + "|" + hv.Part + "|" + hv.GridPtr + "|" + (hv.ChosenCamps != null ? hv.ChosenCamps.Length : -1) + "|" + hv.ClassChosen + "|" + hv.FilterOpen, now);
       if (OnStep != null) OnStep(hv, ha);
       if (ha == null) return null;
       if (ha.Kind == AutoKind.None && (pilot.State == "notfound" || pilot.State == "failed" || pilot.State == "small")) {
@@ -57,9 +66,12 @@ namespace RealmForge {
     public ICollection<string> Keep { get { return NavKeep.GearFilter; } }
     public bool Wants(Snapshot s, NavTarget t) { return wanted == null || wanted(); }
     public void Reset() { pilot.Reset(); }
+    readonly ProgressMark mark = new ProgressMark();
+    public long ProgressAt { get { return mark.At; } }
     public NavStep Step(Snapshot s, NavTarget t, INavIo io, long now) {
       var fv = view(s, t, now);
       var fa = pilot.Step(fv);
+      mark.Note(pilot.State + "|" + pilot.Note, now);
       if (OnStep != null) OnStep(fv, fa);
       if (pilot.State == "failed" && pilot.Note != "" && fa == null) return NavStep.Reset("filter: " + pilot.Note);   // a toggle that does not read back: verify-or-reset
       if (fa == null) return null;
@@ -83,8 +95,11 @@ namespace RealmForge {
     public ICollection<string> Keep { get { return filter != null && filter.ActedKey == key ? NavKeep.ItemPick : NavKeep.ItemPickNoFilter; } }
     public bool Wants(Snapshot s, NavTarget t) { key = t.Key(); return true; }
     public void Reset() { pilot.Reset(); }
+    readonly ProgressMark mark = new ProgressMark();
+    public long ProgressAt { get { return mark.At; } }
     public NavStep Step(Snapshot s, NavTarget t, INavIo io, long now) {
       var v = view(s, t, now); v.NavOwned = true;
+      mark.Note(v.ListSig + "|" + (int)v.Row1Top + "|" + v.Sel + "|" + v.SelRow + "|" + v.SelCol + "|" + v.SlotOpen + "|" + v.TipShown + "|" + pilot.Drags + "|" + pilot.State, now);
       if (v.ListSig != lastSig) { lastSig = v.ListSig; sigAt = now; }
       if (filter != null && filter.ActedKey == key) {
         if (now - sigAt < ListSettleMs) {

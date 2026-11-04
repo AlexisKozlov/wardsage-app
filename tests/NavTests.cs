@@ -33,6 +33,19 @@ static partial class CoreTests {
     public void Problem(string kind, string message) { }
   }
 
+  sealed class StubAction : IAtTargetAction {
+    public bool Marks; public FakeNavIo Io; long mark; long lastMark;
+    public string Name { get { return "stub"; } }
+    public ICollection<string> Keep { get { return null; } }
+    public bool Wants(Snapshot s, NavTarget t) { return true; }
+    public long ProgressAt { get { return mark; } }
+    public void Reset() { }
+    public NavStep Step(Snapshot s, NavTarget t, INavIo io, long now) {
+      if (Marks && now - lastMark >= 1000) { lastMark = now; mark = now; }
+      return NavStep.Of(new Act { Owner = t.Owner, Target = ClickTarget.EquipNav, Kind = ActKind.Click, X = 10, Y = 10, Base = "Form_CharactorMain", Fire = true, Why = "stub" }, "act:stub");
+    }
+  }
+
   static ScreenState NavState(ScreenKind kind, long hero, int tab, int part, string flow, string[] order, string offer = null, long now = 0) {
     var inp = new ScreenInputs { Offers = new List<string>(), ShownKnown = "", Flow = flow ?? "" };
     if (offer != null) inp.Offers.Add(offer);
@@ -251,13 +264,27 @@ static partial class CoreTests {
     Check(!FrontPolicy.ShouldRaiseOverBrowser(true, true, false, false, false, 5000, 10, 0, true, true), "front: ... not a second time in the run");
     Check(!FrontPolicy.ShouldRaiseOverBrowser(true, true, false, false, false, 5000, 10, 0, false, false), "front: ... never over another program (the launcher)");
     Check(!FrontPolicy.ShouldRaiseOverBrowser(true, true, false, false, false, 100, 10, 0, true, false), "front: ... never while the player is active");
+    // D5: a pilot's fire click is "sent", not progress; only its own ProgressAt (or a new screen state) keeps the step clock going
+    {
+      Func<bool, string> run = marks => {
+        var io = new FakeNavIo(); var rdr = new ScreenReader(); var nv = new Navigator(ClickOwner.Equip);
+        var st = NavState(ScreenKind.HeroScreen, 7, 3, 2, "", new[] { "Form_CharactorMain", "Form_MainCity" }); io.FreshState = st;
+        var stub = new StubAction { Marks = marks, Io = io };
+        nv.SetTarget(new NavTarget { Goal = NavGoal.HeroGear, Hero = 7 }, new List<IAtTargetAction> { stub });
+        for (int i = 0; i < 400 && nv.State != "halted" && nv.Recoveries == 0; i++) { io.NowMs += 100; nv.Tick(io, rdr.Update(st, io.NowMs)); }
+        return nv.State + "/" + nv.Recoveries + "/" + io.Sent.Count;
+      };
+      string noMarks = run(false), withMarks = run(true);
+      Check(noMarks.StartsWith("work/1/") || noMarks.StartsWith("at_target/1/"), "nav stall: a pilot that only sends clicks, with no progress mark, is reset after " + Navigator.StepStallMs + " ms (" + noMarks + ")");
+      Check(withMarks.EndsWith("/0/") == false && withMarks.Split('/')[1] == "0", "nav stall: the same pilot with a progress mark every second is never reset in 40 s (" + withMarks + ")");
+    }
     // the navigator's watchdog: a run always ends
     {
       var io = new FakeNavIo(); var rdr = new ScreenReader(); var nv = new Navigator(ClickOwner.Equip);
       var wait = NavState(ScreenKind.City, 0, 0, 0, "", new[] { C }); wait.Held = true;
       nv.SetTarget(new NavTarget { Goal = NavGoal.HeroGear, Hero = 7 }, new List<IAtTargetAction>());
       for (int i = 0; i < 2500 && nv.State != "halted"; i++) { io.NowMs += 100; nv.Tick(io, rdr.Update(wait, io.NowMs)); }
-      Check(nv.State == "halted" && nv.HaltWhy.StartsWith("recipe_stuck:watchdog"), "nav watchdog: a screen that never reads is three resets, then a named stop (" + nv.State + " " + nv.HaltWhy + ")");
+      Check(nv.State == "halted" && nv.HaltWhy.StartsWith("recipe_stuck:stall"), "nav stall: a screen that never reads is " + Navigator.MaxResets + " resets (the clocks stand still for the grace of the unreadable screen), then a named stop (" + nv.State + " " + nv.HaltWhy + ")");
       // verify-or-reset: a click whose effect never shows is a reset (back to the city, then the step again), MaxResets times, then recipe_stuck:<step>:<outcome>
       var io2 = new FakeNavIo(); var rd2 = new ScreenReader(); var nv2 = new Navigator(ClickOwner.Equip);
       var cityS2 = NavState(ScreenKind.City, 0, 0, 0, "", new[] { "Form_MainCity" }); io2.FreshState = cityS2;

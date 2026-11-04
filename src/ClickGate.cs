@@ -746,11 +746,23 @@ namespace RealmForge {
       if (s.Kind == ScreenKind.Unknown) return "the screen is not recognised";
       if (s.Held) return "the screen is held";
       if (s.OfferCount > 0) return "an offer pop-up is open";
-      if (s.ModalOpen && !FullScreensOver(s)) return "a pop-up is open (" + s.ModalWhy + ")";
+      if (s.ModalOpen && !FullScreensOver(s) && !LatePartsOnly(s)) return "a pop-up is open (" + s.ModalWhy + ")";
       if (!string.IsNullOrEmpty(s.Flow)) return FlowBlock + s.Flow;
       if (HasForm(s.ShownKnown, BattleForms)) return "a fight's form is shown";
       if (ExitDialogShown(s)) return "the exit dialog is shown";
       return "";
+    }
+
+    /// <summary>The "pop-up" over the known screen is forms the map does not know at all (a part the screen builds late looks like this; the navigator's snapshot takes none of them for a layer): the back arrow
+    /// is the same press with or without them, a real pop-up that eats it shows as a press with no effect (a reset, the press cap) - the way back to the city does not wait on a form nobody can close.</summary>
+    /// <summary>Set by the navigator for the length of its tick (and cleared after it): its snapshot takes no unmapped form over a known screen for a layer, so the gate's checks it triggers do not either; the older pilots keep the strict rule.</summary>
+    [ThreadStatic] public static bool NavLateParts;
+    static bool LatePartsOnly(ScreenState s) { return NavLateParts && OnlyUnmappedForms(s); }
+    static bool OnlyUnmappedForms(ScreenState s) {
+      if (s.OfferCount > 0 || s.ModalWhy == null || !s.ModalWhy.StartsWith("form:")) return false;
+      var l = ShownForms(s); if (l.Count == 0) return false;
+      foreach (var n in l) if (ScreenMap.ByName(n) != null) return false;
+      return true;
     }
 
     /// <summary>The "pop-up" over the known screen is full screens only (the map's F: each left by the standard back arrow top left) - the window
@@ -770,7 +782,7 @@ namespace RealmForge {
       if (s.Kind == ScreenKind.City) return "the city is on top (Escape asks to quit the game there)";
       if (s.Held) return "the screen is held";
       if (s.OfferCount > 0) return "an offer pop-up is open";
-      if (s.ModalOpen && !MapEscapeOk(s)) return "a pop-up is open (" + s.ModalWhy + ")";
+      if (s.ModalOpen && !MapEscapeOk(s) && !LatePartsOnly(s)) return "a pop-up is open (" + s.ModalWhy + ")";
       if (!string.IsNullOrEmpty(s.Flow)) return FlowBlock + s.Flow;
       if (ExitDialogShown(s)) return "the exit dialog is shown";
       if (Exempt(s.TopForm)) return "a fight's result";
@@ -802,7 +814,7 @@ namespace RealmForge {
       if (s != null && s.Kind == ScreenKind.City) { escapeDue.Remove(o); return false; }
       if (halted.ContainsKey(o) || watches.ContainsKey(o) || SearchWait || HintOnly(o)) return false;
       // (a tick's state has no shown forms read: the fresh one Check judges has them)
-      if (s == null || s.Held || (s.ModalOpen && !MapEscapeOk(s)) || !string.IsNullOrEmpty(s.Flow) || s.OfferCount > 0 || ExitDialogShown(s) || Exempt(s.TopForm) || HasForm(s.ShownKnown, BattleForms)) return false;
+      if (s == null || s.Held || (s.ModalOpen && !MapEscapeOk(s) && !LatePartsOnly(s)) || !string.IsNullOrEmpty(s.Flow) || s.OfferCount > 0 || ExitDialogShown(s) || Exempt(s.TopForm) || HasForm(s.ShownKnown, BattleForms)) return false;
       long t; if (cityTried.TryGetValue(o, out t) && now - t < UnknownBackRetryMs) return false;
       cityTried[o] = now;
       return true;
@@ -1644,7 +1656,7 @@ namespace RealmForge {
     public static bool OnlyTip(ScreenState s) {
       if (s == null || string.IsNullOrEmpty(s.Flow)) return false;
       foreach (var n in s.Flow.Split(',')) if (n != "" && Array.IndexOf(TipForms, n) < 0) return false;
-      return !s.ModalOpen || Array.IndexOf(TipForms, s.ModalWhy ?? "") >= 0;
+      return !s.ModalOpen || LatePartsOnly(s) || Array.IndexOf(TipForms, s.ModalWhy ?? "") >= 0;
     }
 
     /// <summary>EquipTipEscape: the next step needs the hero's slots and the item's tip (a flow form of the equip helper) lies over them. The

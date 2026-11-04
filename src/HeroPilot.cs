@@ -107,6 +107,10 @@ namespace RealmForge {
 
     public HeroPilot(HeroGeometry g) { this.g = g; }
 
+    /// <summary>Counts what really moved the search on (a hero other than the one shown brought up by a grid pick, a pick closer to the plan's hero, a drag of the grid, a filter press): the navigator's stall clock
+    /// reads it (HeroSelectAction.ProgressAt) - a pick that changes nothing is not progress, however often it is sent. Kept over Reset (a counter only).</summary>
+    public int Progress;
+
     /// <summary>Start over on the next step (the player pressed «Надеть» again).</summary>
     /// <summary>(What the pilot learnt about the game stays: the drag gain and the latest answer time.)</summary>
     public void Reset() { plan = -1; Restart(); retries = 0; unsent = null; unsentRun = 0; }
@@ -270,7 +274,7 @@ namespace RealmForge {
       lastDragSign = sg;
       if (dragScale < 1) { dy *= dragScale; if (Math.Abs(dy) < MinDragPx) dy = sg * MinDragPx; }
       double y0 = dy < 0 ? bottom - card * 0.3 : top + card * 0.3;
-      drags++; total++; waitUntil = v.NowMs + Late(AfterDragMs);
+      drags++; total++; Progress++; waitUntil = v.NowMs + Late(AfterDragMs);
       // the grid moved by about dy; the ends of the grid stop it, so the next click checks
       lo += dy; hi += dy; double slack = Math.Abs(dy) * 0.08 + 6; lo -= slack; hi += slack;
       if (hi - lo > 2.5 * card) has = false;
@@ -357,6 +361,7 @@ namespace RealmForge {
     }
 
     AutoAction Funnel(HeroView v, double H) {
+      Progress++;
       double ch = v.ClientH > 0 ? v.ClientH : H;
       return Click(g.FunnelX * H, ch - g.FunnelDY * H);
     }
@@ -378,7 +383,7 @@ namespace RealmForge {
       return Funnel(v, H);
     }
 
-    AutoAction Cell(double x, int row, double H) { FilterDirty = true; return Click(x * H, (g.FilterRow0 + row * g.FilterPitch) * H); }
+    AutoAction Cell(double x, int row, double H) { FilterDirty = true; Progress++; return Click(x * H, (g.FilterRow0 + row * g.FilterPitch) * H); }
 
     // a click brought up hero i (or nobody new): the top of i's row is in [y - card, y]
     void Learn(HeroView v) {
@@ -387,12 +392,12 @@ namespace RealmForge {
       // (the hero already shown: its own card or a gap between cards - which one is not known, so nothing is learnt)
       if (v.Heroes == null || v.Hero == heroBefore) { if (++misses >= 2) has = false; return; }
       int i = Array.IndexOf(v.Heroes, v.Hero); if (i < 0) return;
-      misses = 0;
+      misses = 0; Progress++;
       // closer to the plan's hero than any click before: the way is being made, the tries start anew
       int pi = Array.IndexOf(v.Heroes, v.Plan);
       if (pi >= 0) {
         int dist = Math.Abs(i / HeroGeometry.Columns - pi / HeroGeometry.Columns);
-        if (dist < bestDist) { bestDist = dist; clicks = 0; drags = 0; }
+        if (dist < bestDist) { bestDist = dist; clicks = 0; drags = 0; Progress++; }
       }
       double pitch = pitchF * v.H, card = cardF * v.H, off = (i / HeroGeometry.Columns) * pitch;
       double nlo = clickY - card - off, nhi = clickY - off;

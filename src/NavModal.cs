@@ -91,7 +91,8 @@ namespace RealmForge {
       var lr = io.LiveFor(ClickTarget.OfferClose, form);   // (its cross read while it opens)
       if (form != m.OfferLiveForm) { m.OfferLiveForm = form; m.OfferLive.Reset(); }
       bool still = m.OfferLive.Note(lr, now);
-      if (!OfferForms.Settled(st, now, still)) return NavStep.Wait("offer still opening");
+      // (settled = the screen read has stood still for SettleMs, or this offer has been in the stack that long: a read that flickers - the screen state's clock starts over each time - never keeps a close waiting for ever)
+      if (!OfferForms.Settled(st, now, still) && now - m.Seen(form, now) < OfferForms.SettleMs) return NavStep.Wait("offer still opening");
       var pt = OfferForms.ClosePoint(io.Geo, form, W, H, U);
       if (pt == null) {
         gate.Halt(owner, "offer", "the offer pop-up " + form + (OfferForms.IsOffer(form) ? " has no known close button" : " is not on the list") + " - not clicked");

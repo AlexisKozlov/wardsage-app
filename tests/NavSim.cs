@@ -16,9 +16,10 @@ static partial class CoreTests {
     readonly List<KeyValuePair<long, long[]>> latHist = new List<KeyValuePair<long, long[]>>();
     // --- the global checks of docs/specs/2026-11-04-core-any-scenario.md 4 (every --nav run): 1 no 8 s without a state change or a reset / halt; 2 no click at one point 3 times with no state change (grid picks and drags excepted);
     // 3 after every reset every action's State is idle; 4 the end is done or a named halt within 120 s; 5 halts only from the allowed set
-    static readonly long NavStallMs = Environment.GetEnvironmentVariable("NAV_STALL_MS") != null ? long.Parse(Environment.GetEnvironmentVariable("NAV_STALL_MS")) : 20000;
+    // (the navigator's own step stall, Navigator.StepStallMs, counts from the snapshot that stood still after the game's last change: NavSlackMs is that lag, the stretch the harness flags is the stall plus it)
+    static readonly long NavStallMs = Environment.GetEnvironmentVariable("NAV_STALL_MS") != null ? long.Parse(Environment.GetEnvironmentVariable("NAV_STALL_MS")) : Navigator.StepStallMs, NavSlackMs = 1200;
     public readonly List<string> NavErrs = new List<string>();
-    string chkFp = "", lastClickFp = ""; long chkAt; int chkRec, sameN, lastRec; double lastX = -999, lastY = -999; bool stallSaid;
+    string chkFp = "", lastClickFp = ""; long chkAt, chkProg, chkBlind; int chkRec, sameN, lastRec; double lastX = -999, lastY = -999; bool stallSaid;
     string NavFp() {
       var g = G;
       return string.Join(">", g.Stack.ToArray()) + "|" + g.Hero.Shown + "/" + g.Hero.Tab + "/" + g.Hero.Part + "/" + g.Hero.Grid + "/" + g.Hero.FilterOpen + "/" + (int)g.Hero.Scroll + "|" + g.GearFilter + g.FilterOwn + g.HeroFilter + g.HideWorn + g.ItemSel + g.Worn + "|" + g.ListGen + "/" + (int)g.Row1Top;
@@ -31,8 +32,8 @@ static partial class CoreTests {
         if (hp.State != "idle" || fp0State() != "idle" || ip.State != "idle") NavErrs.Add("after a reset an action's state is not idle: hero " + hp.State + ", filter " + fp0State() + ", item " + ip.State + " (t=" + t + ")");
       }
       bool gameWaits = false; foreach (var f in G.Stack) if (ScreenMap.ClassOf(f) == 'W') gameWaits = true;   // (a loading / result screen the game closes by itself is the game's wait, not a stall)
-      if (gameWaits || fp != chkFp || nav.Recoveries != chkRec || nav.State == "halted" || nav.State == "done") { chkFp = fp; chkRec = nav.Recoveries; chkAt = t; stallSaid = false; }
-      else if (t - chkAt > NavStallMs && !stallSaid) { stallSaid = true; NavErrs.Add("no state change, reset or halt for " + (t - chkAt) / 1000 + " s (nav " + nav.Say + ", t=" + t + ")"); }
+      if (gameWaits || fp != chkFp || nav.ProgressAt != chkProg || nav.BlindMs != chkBlind || nav.Recoveries != chkRec || nav.State == "halted" || nav.State == "done") { chkFp = fp; chkProg = nav.ProgressAt; chkBlind = nav.BlindMs; chkRec = nav.Recoveries; chkAt = t; stallSaid = false; }
+      else if (t - chkAt > NavStallMs + NavSlackMs && !stallSaid) { stallSaid = true; NavErrs.Add("no state change, reset or halt for " + (t - chkAt) / 1000 + " s (nav " + nav.Say + ", t=" + t + ")"); }
     }
     string fp0State() { return this.fp.State; }
     void NavSameCheck(Act a) {

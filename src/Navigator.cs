@@ -72,20 +72,26 @@ namespace RealmForge {
   }
 
   public sealed class Navigator {
-    public const int MaxResets = 3, MaxResetsTotal = 8, MaxSweeps = 14, NoProgressMs = 20000, RunCapMs = 180000, WaitCapMs = 90000, OrderUnreadMs = 15000;
+    /// <summary>Seconds, not minutes (docs/specs/2026-11-04-core-any-scenario.md D5): a step that shows no change of the screen and no progress mark of its action for StepStallMs is reset; NoProgressMs is the watchdog behind it
+    /// (new states only: a flicker between two known ones is not progress); a doomed run ends in a named halt within about 60-90 s.</summary>
+    public const int MaxResets = 2, MaxResetsTotal = 5, MaxSweeps = 14, StepStallMs = 8000, BlindGraceMs = 12000, NoProgressMs = 10000, RunCapMs = 120000, WaitCapMs = 90000, OrderUnreadMs = 15000;
     /// <summary>idle | work | at_target | done | halted</summary>
     public string State = "idle";
     public string HaltWhy = "";
     /// <summary>What the navigator is doing or waiting for now (for the status line and the log).</summary>
     public string Say = "";
     public int Clicks, Recoveries;
+    /// <summary>How long (within BlindGraceMs) the screen could not be read (held / partial reads, a picture that does not stand still) since the run last moved: the stall clocks stand still meanwhile - nothing can be verified, nothing is the step's fault. Past the grace they run again.</summary>
+    public long BlindMs { get { return blindMs; } }
+    /// <summary>The latest progress mark of the pilots (IAtTargetAction.ProgressAt): what the sim's stall check counts besides the game's own changes.</summary>
+    public long ProgressAt { get { long m = 0; foreach (var a in actions) if (a.ProgressAt > m) m = a.ProgressAt; return m; } }
     public readonly ClickOwner Owner;
     public NavTarget Target { get { return target; } }
 
     NavTarget target; IList<IAtTargetAction> actions = new List<IAtTargetAction>();
     NavMemory mem = new NavMemory(); readonly ActClick act = new ActClick();
-    long startedAt = -1, lastTickAt = -1, pausedMs, lastProgress; string lastSig = "", logged = "", curEdge = "";
-    bool popCity, needResume, tipSeen, unknownWatch; string unknownWhy = "";
+    long startedAt = -1, lastTickAt = -1, pausedMs, lastProgress, stepProgress, blindMs; string lastSig = "", logged = "", curEdge = "";
+    bool lastHeld, popCity, needResume, tipSeen, unknownWatch; string unknownWhy = "";
     readonly List<string> recent = new List<string>();
     public Navigator(ClickOwner owner) { Owner = owner; }
 
@@ -113,25 +119,37 @@ namespace RealmForge {
     }
 
     public void Tick(INavIo io, Snapshot s) {
+      ClickGate.NavLateParts = true;
+      try { TickCore(io, s); } finally { ClickGate.NavLateParts = false; }
+    }
+
+    void TickCore(INavIo io, Snapshot s) {
       long now = io.Now;
       long dt = lastTickAt >= 0 ? Math.Min(now - lastTickAt, 5000) : 0; lastTickAt = now;
       if (target == null || State == "idle" || State == "halted" || State == "done") return;
-      if (startedAt < 0) { startedAt = now; lastProgress = now; }
+      if (startedAt < 0) { startedAt = now; lastProgress = now; stepProgress = now; }
       if (needResume) { needResume = false; if (!io.Gate.Halted(Owner)) io.Gate.Resume(Owner); }
       if (io.Gate.Halted(Owner)) { Halt(io, "gate_" + io.Gate.HaltReason(Owner)); return; }
       if (io.UserBusy || !io.Front) {   // a pause is not a failure and does not count toward the no-progress clock
-        Say = io.UserBusy ? "paused" : "background"; pausedMs += dt; lastProgress += dt; return;
+        Say = io.UserBusy ? "paused" : "background"; pausedMs += dt; lastProgress += dt; stepProgress += dt; return;
       }
       if (s == null) return;
+      if ((s.Confidence < NavConfidence.NoOrder || !s.Stable(now)) && blindMs < BlindGraceMs) { blindMs += dt; lastProgress += dt; stepProgress += dt; }   // (see BlindMs)
       if (s.HasTip()) tipSeen = true; else if (tipSeen) { tipSeen = false; io.Gate.ResetTipEscapes(Owner); }
       mem.Prune(s, now);
+      foreach (var l in s.Stack) if (l.Role == LayerRole.Wait) { lastProgress = stepProgress = now; break; }   // (a loading / result screen the game closes by itself is the game's wait: its own cap, WaitCapMs, ends it)
       WatchReturns(io, s, now);
       if (State == "halted") return;
+      foreach (var a in actions) if (a.ProgressAt > stepProgress) { stepProgress = a.ProgressAt; if (stepProgress > lastProgress) lastProgress = stepProgress; blindMs = 0; }   // (a pilot's own mark: a click that was only sent is not one)
       if (s.StateKey != lastSig) {   // a new state is progress; a state seen a moment ago (a flicker between two) is not
         lastSig = s.StateKey;
-        if (!recent.Contains(lastSig)) lastProgress = now;
+        if (!recent.Contains(lastSig)) {
+          lastProgress = now;
+          if (s.Confidence != NavConfidence.Held && !lastHeld) { stepProgress = now; blindMs = 0; }   // (a held read - the memory reads failing - that comes back with details is no change of the game)
+        }
         recent.Add(lastSig); if (recent.Count > 8) recent.RemoveAt(0);
       }
+      lastHeld = s.Confidence == NavConfidence.Held;
       // the window table's order: 15 s without it is a stop with a reason
       if (s.Confidence == NavConfidence.NoOrder) { if (mem.NoOrderSince < 0) mem.NoOrderSince = now; if (now - mem.NoOrderSince > OrderUnreadMs) { Halt(io, "order_unread"); return; } }
       else mem.NoOrderSince = -1;
@@ -144,7 +162,10 @@ namespace RealmForge {
       if (State == "work" && now - startedAt - pausedMs > RunCapMs) { Halt(io, "run_cap"); return; }
       if (State == "work" && now - lastProgress > NoProgressMs) {
         Reset(io, "watchdog", "no_progress:" + (Say == "" ? "?" : Say), now); lastProgress = now;
-        if (State == "halted") return;
+        return;   // (a reset is a clean slate: nothing else runs in this tick)
+      } else if ((State == "work" || State == "at_target") && now - stepProgress > StepStallMs) {
+        Reset(io, "stall:" + (stepKey == "" ? "?" : stepKey), "stall:" + (Say == "" ? "?" : Say), now);
+        return;
       }
       var tgt = target;
       if (popCity) {
@@ -167,7 +188,7 @@ namespace RealmForge {
         case StepKind.Act:
           StartAct(io, s, step.Act, now); return;
         case StepKind.AtTarget:
-          if (tgt.Goal == NavGoal.City && popCity) { popCity = false; lastProgress = now; return; }   // (the way back to the city is done: the real target goes on)
+          if (tgt.Goal == NavGoal.City && popCity) { popCity = false; lastProgress = stepProgress = now; blindMs = 0; return; }   // (the way back to the city is done: the real target goes on)
           if (tgt.Goal == NavGoal.City) {
             State = "done"; Say = "done"; io.Log("nav: done City " + (now - startedAt) + "ms clicks=" + Clicks + " recoveries=" + Recoveries); return;
           }
@@ -175,8 +196,10 @@ namespace RealmForge {
       }
     }
 
+    string stepKey = "";
     void Note(INavIo io, NavStep step) {
       string k = step.Kind + "|" + step.Edge;
+      stepKey = step.Edge != "" ? step.Edge : step.Kind.ToString();
       Say = step.Edge != "" ? step.Edge : step.Why;
       if (k == logged || step.Kind == StepKind.Wait) return;
       logged = k;
@@ -218,14 +241,16 @@ namespace RealmForge {
         return;
       }
       int n; mem.Resets.TryGetValue(edge, out n); n++; mem.Resets[edge] = n; mem.TotalResets++; Recoveries++;
-      if (edge == "watchdog" && why.StartsWith("no_progress:unknown screen")) { unknownWatch = true; unknownWhy = why.Substring("no_progress:unknown screen".Length).Trim(); }
+      bool clock = edge == "watchdog" || edge.StartsWith("stall:");
+      if (clock && why.StartsWith("no_progress:unknown screen")) { unknownWatch = true; unknownWhy = why.Substring("no_progress:unknown screen".Length).Trim(); }
+      else if (clock && why.StartsWith("stall:unknown screen")) { unknownWatch = true; unknownWhy = why.Substring("stall:unknown screen".Length).Trim(); }
       if (n > MaxResets || mem.TotalResets > MaxResetsTotal) {
         // (a screen nobody knows that the gate will not let us leave: named by its form, not as a stuck step)
-        if (edge == "watchdog" && unknownWatch) Halt(io, "unknown_screen:" + unknownWhy);
+        if (clock && unknownWatch) Halt(io, "unknown_screen:" + unknownWhy);
         else Halt(io, "recipe_stuck:" + edge + ":" + why);
         return;
       }
-      popCity = true; lastProgress = now; recent.Clear();
+      popCity = true; lastProgress = stepProgress = now; blindMs = 0; recent.Clear();
       ClearRunState();   // a reset is a clean slate: only the run's counters (resets, sweeps) and what the pilots learnt about the game (drag gain, late answers) stay
       io.Log("nav: reset " + edge + " (" + why + ") #" + n + "/" + mem.TotalResets);
     }
@@ -266,7 +291,8 @@ namespace RealmForge {
       if (oc != ActOutcome.NotSent) io.Log("nav: act " + (a != null ? a.Target.ToString() : "?") + " " + (edge != "" ? edge : (a != null ? a.Why : "")) + " -> " + oc + " " + (now - act.SentAt) + "ms" + (act.Detail != "" ? " (" + act.Detail + ")" : ""));
       switch (oc) {
         case ActOutcome.Done:
-          if (act.SentAt > 0 || (a != null && a.Fire)) { Clicks++; lastProgress = now; }
+          // (a click that was only sent by a pilot - Fire - is not progress: the pilot's own mark says so, IAtTargetAction.ProgressAt; a verified click is)
+          if (act.SentAt > 0 || (a != null && a.Fire)) { Clicks++; if (a == null || !a.Fire) { lastProgress = stepProgress = now; blindMs = 0; } }
           if (a != null && a.Closing != "") mem.ClosedAt[a.Closing] = now;
           if (edge != "") mem.Resets.Remove(edge);
           return;

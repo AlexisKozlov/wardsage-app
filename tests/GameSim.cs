@@ -166,7 +166,8 @@ static partial class CoreTests {
       return inv;
     }
     double InvRow1 { get { return InvGeo.ViewTopPx(U) + InvGeo.TopPad * U - InvScrollY * InvPitch / InvRowUnits; } }
-    void Say(string t) { Log.Add(Now + " " + t); if (Log.Count > 60) Log.RemoveAt(0); }
+    static readonly int LogMax = Environment.GetEnvironmentVariable("SIM_LOGMAX") != null ? int.Parse(Environment.GetEnvironmentVariable("SIM_LOGMAX")) : 60;   // (SIM_LOGMAX=2000: a whole run's trace)
+    void Say(string t) { Log.Add(Now + " " + t); if (Log.Count > LogMax) Log.RemoveAt(0); }
     public void Note(string t) { Say(t); }
     public long Lat() { return Slow ? 600 + R.Next(900) : 80 + R.Next(170); }   // the game's answer (the fast PC: within the click's own send time)
     // the reader's costs (the slow laptop): DISCOVERY = finding a form the game just built - a region scan (--scan, the reader before the
