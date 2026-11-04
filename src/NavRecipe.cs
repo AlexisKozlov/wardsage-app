@@ -166,7 +166,7 @@ namespace RealmForge {
           var p = GeoPoint(step.Fallback != "" ? step.Fallback : step.Widget, io, args); if (p == null) return null;
           ClickTarget tg = (ClickTarget)Enum.Parse(typeof(ClickTarget), step.Target);
           var act = new Act { Owner = t.Owner, Target = tg, Kind = ActKind.Click, X = p[0], Y = p[1], Base = step.From, Expect = n => Expect(step, n, args, false), Why = step.Why != "" ? step.Why : step.Id,
-            Edge = step.Key, Forward = true, WantCity = true };
+            Edge = step.Key, Forward = true, WantCity = true, Keep = ClickGate.TipForms };
           if (step.TimeoutMs > 0) act.TimeoutMs = step.TimeoutMs;
           return act;
         };

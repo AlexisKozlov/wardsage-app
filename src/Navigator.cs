@@ -33,7 +33,7 @@ namespace RealmForge {
   public sealed class NavMemory {
     public readonly Dictionary<string, int> Rung = new Dictionary<string, int>();
     public readonly Dictionary<string, int> Resets = new Dictionary<string, int>();
-    public int TotalResets;
+    public int TotalResets, Sweeps;
     public readonly Dictionary<string, long> NextAt = new Dictionary<string, long>();
     public readonly Dictionary<string, long> SeenAt = new Dictionary<string, long>();
     public readonly Dictionary<string, long> WaitSince = new Dictionary<string, long>();
@@ -58,7 +58,7 @@ namespace RealmForge {
   }
 
   public sealed class Navigator {
-    public const int MaxResets = 3, MaxResetsTotal = 8, NoProgressMs = 20000, RunCapMs = 180000, WaitCapMs = 90000, OrderUnreadMs = 15000;
+    public const int MaxResets = 3, MaxResetsTotal = 8, MaxSweeps = 14, NoProgressMs = 20000, RunCapMs = 180000, WaitCapMs = 90000, OrderUnreadMs = 15000;
     /// <summary>idle | work | at_target | done | halted</summary>
     public string State = "idle";
     public string HaltWhy = "";
@@ -192,6 +192,13 @@ namespace RealmForge {
     /// <summary>Verify-or-reset (docs/specs/navigator.md 6b.1): a step either shows its effect or the run goes back to the city (the modal sweep and the exits are the same
     /// pop ladder as ever) and re-enters from the first step that does not hold. A step that fails MaxResets times, or MaxResetsTotal resets in a run: a named stop.</summary>
     void Reset(INavIo io, string edge, string why, long now) {
+      // a pop-up came over the step (Diverted) or the screen is not the step's (WrongScreen): the modal sweep that opens every plan clears it and the step runs again from
+      // where the game is - no trip to the city. Counted apart (MaxSweeps a run), not as a failed step.
+      if (why == "Diverted" || why == "WrongScreen") {
+        if (++mem.Sweeps > MaxSweeps) { Halt(io, "recipe_stuck:" + edge + ":" + why + " x" + mem.Sweeps); return; }
+        io.Log("nav: sweep " + edge + " (" + why + ") #" + mem.Sweeps);
+        return;
+      }
       int n; mem.Resets.TryGetValue(edge, out n); n++; mem.Resets[edge] = n; mem.TotalResets++; Recoveries++;
       if (edge == "watchdog" && why.StartsWith("no_progress:unknown screen")) { unknownWatch = true; unknownWhy = why.Substring("no_progress:unknown screen".Length).Trim(); }
       if (n > MaxResets || mem.TotalResets > MaxResetsTotal) {
@@ -214,6 +221,10 @@ namespace RealmForge {
           return;
         case ActOutcome.Halted: Halt(io, "gate_" + io.Gate.HaltReason(Owner)); return;
         case ActOutcome.NotSent: return;   // nothing was clicked: the same step runs again on the next tick
+        case ActOutcome.NoEffect: case ActOutcome.Timeout:
+          // a click that went out with the item's tip over the screen was probably taken by the tip (it closes on any click beside it): the step runs again, no trip to the city
+          if (act.TipAtSend) { Reset(io, edge != "" ? edge : (a != null ? a.Why : "step"), "WrongScreen", now); return; }
+          Reset(io, edge != "" ? edge : (a != null ? a.Why : "step"), oc.ToString(), now); return;
         default: Reset(io, edge != "" ? edge : (a != null ? a.Why : "step"), oc.ToString(), now); return;
       }
     }

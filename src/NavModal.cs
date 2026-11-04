@@ -14,7 +14,7 @@ namespace RealmForge {
   public static class ModalHandler {
     static readonly HeroGeometry Hg = new HeroGeometry();
     static readonly FilterGeometry Fg = new FilterGeometry();
-    public const int TipStillMs = 600, TipAgainMs = 3000, FunnelAgainMs = 1200, RedXAgainMs = 900;
+    public const int TipStillMs = 600, TipAgainMs = 3000, TipPassMs = 4000, FunnelAgainMs = 1200, RedXAgainMs = 900;
 
     /// <summary>The fixed table (hand-written, small) and the offer rule; everything else is None (the screen map decides in Next).</summary>
     public static CloseRecipe RecipeOf(Layer l, Snapshot s) {
@@ -61,7 +61,12 @@ namespace RealmForge {
           return NavStep.Of(new Act { Owner = owner, Target = rc.Target, Kind = ActKind.Click, X = Fg.X(fx, W, H), Y = Fg.Y(Fg.CloseY, W, H), Closing = closing, Expect = gone, Why = rc.Why }, "modal:" + closing);
         }
         case CloseHow.TipEscape: {
-          if (!ClickGate.OnlyTip(st)) return NavStep.Wait("tip with another form over it");
+          if (!ClickGate.OnlyTip(st)) {
+            // the gate lets an Escape close the tip only when nothing but the tip is read as a flow form. When that read does not come (or something else is over it) for a few seconds
+            // the tip is passed through: the next click beside it closes it (its tap catcher takes the click), as the pilots have always counted on
+            if (now - m.Seen(closing, now) >= TipPassMs) return NavStep.Nothing;
+            return NavStep.Wait("tip with another form over it");
+          }
           if (now - m.Seen(closing, now) < TipStillMs) return NavStep.Wait("tip: waiting to see if it closes by itself");
           if (!m.Due("tip", now, TipAgainMs)) return NavStep.Wait("tip escape just sent");
           io.Log("nav: modal " + closing + " how=TipEscape");

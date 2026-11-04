@@ -47,6 +47,8 @@ namespace RealmForge {
     public ActOutcome Outcome { get; private set; }
     public string Detail = "";
     public long SentAt { get; private set; }
+    /// <summary>The click went out with the item's tip over the screen (passed through): the tip's tap catcher may have taken it - no effect is then no failure of the step.</summary>
+    public bool TipAtSend { get; private set; }
     bool sent; long startAt; string layersAtSend = ""; HashSet<string> formsAtSend = new HashSet<string>();
 
     public bool Active { get { return Cur != null && Outcome == ActOutcome.Running; } }
@@ -116,6 +118,7 @@ namespace RealmForge {
       }
       sent = true; SentAt = now; layersAtSend = s.LayerKey();
       formsAtSend = new HashSet<string>(); foreach (var l in s.Stack) formsAtSend.Add(l.Form);
+      TipAtSend = s.HasTip() && a.Closing == "";
       if (a.OnSent != null) a.OnSent();
       if (a.Fire) return End(ActOutcome.Done, "sent");
       return ActOutcome.Running;
