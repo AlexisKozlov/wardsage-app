@@ -411,7 +411,7 @@ static partial class CoreTests {
         Later(CityBackLatencyMs > 0 && OnBack(x, y) ? CityBackLatencyMs : lat, () => {
           if (TopForm() != SimHero) return;
           if (HeroModel && Hero.Part < 0) {
-            if (Near(x, y, hg.FunnelX * U, H - hg.FunnelDY * U, 20)) { FunnelPresses++; Hero.FilterOpen = !Hero.FilterOpen; if (Hero.FilterOpen) heroFilterAt = Now + FilterFadeMs; return; }
+            if (Near(x, y, hg.FunnelX * U, H - hg.FunnelDY * U, 20)) { FunnelPresses++; Hero.FilterOpen = !Hero.FilterOpen; Hero.Built = true; Hero.ToggledAt = Now; if (Hero.FilterOpen) heroFilterAt = Now + FilterFadeMs; return; }
             if (OnBack(x, y) && PopupEatsBack && Hero.FilterOpen) { Hero.FilterOpen = false; return; }   // (the pop-up takes the press and only closes)
             if (OnBack(x, y)) Hero.FilterOpen = false;   // (assumed: the funnel's pop-up lies over the grid, not over the back arrow - a pop-up the pixels do not see must not block the way to the city; to be checked live)
             if (HeroDead && !Hero.FilterOpen && x < 0.45 * U && y >= hg.ViewTop * U && y <= hg.ViewBottom * U) return;

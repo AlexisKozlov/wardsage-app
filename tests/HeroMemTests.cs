@@ -87,6 +87,7 @@ static partial class CoreTests {
     GearMemTests();
     MemGapTests();
     DisagreeTests();
+    HeroFilterMemOnlyTests();
   }
 
   // ---------------------------------------------------------------- the gear filter from the game's memory (docs/specs/2026-11-04-memory-first-state.md P2-P4, build 538 live log)
@@ -283,5 +284,21 @@ static partial class CoreTests {
       d.Update("x", "yes", "no", 10000); d.Update("x", "no", "yes", 11000);
       Check(d.Update("x", "no", "yes", 12400) == null && d.Update("x", "no", "yes", 12500) != null, "disagree: a flipped pair restarts the 1.5 s clock");
     }
+  }
+
+  // ---------------------------------------------------------------- E3: the hero grid's filter pop-up entirely from memory (A1)
+  static void HeroFilterMemOnlyTests() {
+    Check(HeroFilterLook.Open(Mem3.Yes, Seen3.No) && HeroFilterLook.Open(Mem3.Yes, Seen3.Unknown) && !HeroFilterLook.Open(Mem3.No, Seen3.Yes) && !HeroFilterLook.Open(Mem3.No, Seen3.Unknown), "hero filter: memory Yes / No decides whatever the picture says (also a covered one)");
+    Check(HeroFilterLook.Open(Mem3.Unknown, Seen3.Yes) && !HeroFilterLook.Open(Mem3.Unknown, Seen3.No) && !HeroFilterLook.Open(Mem3.Unknown, Seen3.Unknown), "hero filter: memory Unknown: the picture decides (the fallback)");
+    Check(!HeroFilterLook.LogLookDue(Mem3.Unknown, 0, 5000), "hero filter: memory Unknown: no log-only look (the real look runs anyway)");
+    Check(HeroFilterLook.LogLookDue(Mem3.Yes, 0, 5000) && !HeroFilterLook.LogLookDue(Mem3.No, 4500, 5000) && HeroFilterLook.LogLookDue(Mem3.No, 4000, 5000), "hero filter: memory answers: the picture is looked at once a second, for the probe's pix= only");
+    var g = new HeroGeometry(); double W = 1920, H = 1009;
+    var heroes = new long[130]; for (int i = 0; i < heroes.Length; i++) heroes[i] = (200100 + i) * 100000L;
+    var tags = new Dictionary<long, long[]>(); var rt = new Random(9);
+    foreach (var u in heroes) tags[u] = new long[] { HeroGeometry.ClassOrder[rt.Next(6)], FakeHeroGame.FactionList[1 + rt.Next(10)] };
+    var f = new FakeHeroGame(g, W, H) { All = heroes, Tags = tags, Shown = heroes[2], Blind = true, MemMode = 3 }; f.Refilter();
+    HeroView lv; long far = heroes[125];
+    string s = RunHero(new HeroPilot(g), f, far, 3000, out lv, tags[far]);
+    Check(s == "done" && f.Funnels == 2 && !f.FilterOpen, "hero filter all from memory (pictures blind, prefab loads 800 ms): the pilot filters with two presses and closes it (" + s + ", " + f.Funnels + ")");
   }
 }

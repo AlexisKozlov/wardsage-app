@@ -4372,9 +4372,11 @@ namespace RealmForge {
     /// check boxes: 0.93 of the strip when open, at most 0.73 over the hero cards.</summary>
     bool HeroFilterSeen(W32.POINT o, double W, double H, Mem3 mem = Mem3.Unknown) {
       double U = Ui.Unit(W, H);
-      var l = HeroFilterLook.Look((x, y, w, h) => Grab(o.X + x, o.Y + y, w, h), U);
+      if (mem == Mem3.Unknown) mem = HeroView.MemOf(heroScreen);   // (every caller: the game's flag first)
+      if (mem != Mem3.Unknown && !HeroFilterLook.LogLookDue(mem, HeroFilterLook.LastLookAt, Environment.TickCount)) return mem == Mem3.Yes;   // (memory answers: no picture is needed for the decision)
+      var l = HeroFilterLook.Look((x, y, w, h) => Grab(o.X + x, o.Y + y, w, h), U);   // (with memory known this one look is only for the probe's pix= line)
       LookUnknown("hero filter", LookPolicy.Blocks(mem, l));   // (the game's flag answers: a covered picture is no unknown look, no click waits for it)
-      return l == Seen3.Yes;
+      return HeroFilterLook.Open(mem, l);
     }
 
     // hero base id -> class id, faction ids (app/res/hero_tags.json, built from the site's game data)

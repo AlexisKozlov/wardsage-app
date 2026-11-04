@@ -533,6 +533,10 @@ namespace RealmForge {
     /// withhold rule of <see cref="OwnMask.Read"/> (a grab with a masked pixel is not used).</summary>
     /// <summary>The latest look's verdict and when (Environment.TickCount; 0 = none): the navigator's probe prints it next to the game's flag (mem vs pix in one recording).</summary>
     public static Seen3 LastLook = Seen3.Unknown; public static int LastLookAt;
+    /// <summary>Is the grid's filter pop-up open: the game's flag when it answers (Yes / No), the pixel look only when memory is Unknown (E3, docs/specs/2026-11-04-memory-everywhere-plan.md A1).</summary>
+    public static bool Open(Mem3 mem, Seen3 look) { return mem != Mem3.Unknown ? mem == Mem3.Yes : look == Seen3.Yes; }
+    /// <summary>Whether the host still looks at the picture while memory answers: only to keep the probe's pix= (and the E2 comparison) fresh, once a second; never for a decision.</summary>
+    public static bool LogLookDue(Mem3 mem, int lastLookAt, int nowTick) { return mem != Mem3.Unknown && (lastLookAt == 0 || unchecked(nowTick - lastLookAt) >= 1000); }
     public static Seen3 Look(Func<int, int, int, int, int[]> grab, double U) {
       Seen3 r = LookRaw(grab, U);
       LastLook = r; LastLookAt = Environment.TickCount | 1;

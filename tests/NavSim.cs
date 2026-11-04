@@ -187,7 +187,7 @@ static partial class CoreTests {
       };
       var l = HeroFilterLook.Look(frame, U);
       ownLooks.Note("hero filter", LookPolicy.Blocks(G.HeroFilterMemNow(), l), Now + FreshLagMs);
-      return l == Seen3.Yes;
+      return HeroFilterLook.Open(HeroView.MemOf(heroScreen), l);   // (the host's HeroFilterSeen: the game's flag first, the look only when it is Unknown)
     }
     /// <summary>--nav userAway: the player reaches for the mouse at the first click the navigator is about to send (the ladder is running by then) and keeps it for AwayMs.</summary>
     long awayFrom = -1;
@@ -260,7 +260,7 @@ static partial class CoreTests {
     "nav.equip.hideWornForeign", "nav.equip.hideWorn", "nav.equip.foreignInvTab", "nav.equip.overFoundry", "nav.equip.bulkSale", "nav.equip.flicker", "nav.equip.lateCells200", "nav.equip.popupDuringEdge", "nav.equip.inputLock", "nav.city.fromAny",
     "nav.equip.heroFactionHides", "nav.equip.heroFilterBlind", "nav.equip.phantomRedX", "nav.equip.resetMidHero", "nav.equip.heroNotOwned", "nav.equip.ownHintOver", "nav.city.blockedBack",
     "nav.equip.heroFilterBlindEats", "nav.equip.cityBackLate", "nav.equip.ownHintOverNoHide", "nav.equip.ownTimerOver", "nav.city.userAway",
-    "nav.equip.gearFilterMemLead", "nav.equip.gearFilterRedXNoEffect", "nav.equip.ownHintOverMem" };
+    "nav.equip.gearFilterMemLead", "nav.equip.gearFilterRedXNoEffect", "nav.equip.ownHintOverMem", "nav.equip.heroFilterMem" };
 
   static readonly string[] NavStartNames = { "City", "Hero (other hero)", "Hero (gear list)", "Inventory", "Inventory (other tab)", "Inventory (bulk)", "Foundry identify", "Foundry ascend",
     "Foundry recast", "Gem", "Artifact workshop", "Guild", "Arena", "Shop", "Popup over City", "Plan" };
@@ -290,7 +290,7 @@ static partial class CoreTests {
         if (r.Next(3) != 0) { g.Hero.Shown = r.Next(2) == 0 ? plan : other; g.Hero.Tab = 3; g.Hero.Part = r.Next(3) == 0 ? -1 : 2; g.Push(SimHero); }
         break;
       }
-      case "nav.equip.heroFactionHides": case "nav.equip.heroFilterBlind": case "nav.equip.resetMidHero": case "nav.equip.heroNotOwned": case "nav.equip.heroFilterBlindEats": case "nav.equip.cityBackLate": case "nav.equip.ownHintOverNoHide": case "nav.equip.ownTimerOver": case "nav.equip.ownHintOverMem": {   // the hero grid's filter model (GameSim.cs EnableHeroModel)
+      case "nav.equip.heroFactionHides": case "nav.equip.heroFilterBlind": case "nav.equip.resetMidHero": case "nav.equip.heroNotOwned": case "nav.equip.heroFilterBlindEats": case "nav.equip.cityBackLate": case "nav.equip.ownHintOverNoHide": case "nav.equip.ownTimerOver": case "nav.equip.ownHintOverMem": case "nav.equip.heroFilterMem": {   // the hero grid's filter model (GameSim.cs EnableHeroModel)
         bool notOwned = sc == "nav.equip.heroNotOwned";
         g.EnableHeroModel(plan, !notOwned); g.FilterFadeMs = 300 + r.Next(500);
         g.Hero.Shown = g.Hero.CityHero = other; g.Hero.Tab = 1 + 2 * r.Next(2); g.Hero.Part = -1; g.Push(SimHero);
@@ -302,6 +302,7 @@ static partial class CoreTests {
           g.HeroFilterBy(k != 0 ? fac : 0, k != 1 ? cls : 0);
         }
         if (sc == "nav.equip.heroFilterBlind") g.Hero.Blind = true;
+        if (sc == "nav.equip.heroFilterMem") { g.Hero.Blind = true; g.Hero.MemMode = NavBaseline ? 0 : 3; }   // (E3: the pictures never see the pop-up, the flag is built by the first press and loads 800 ms; with no flag read it is the old blind path)
         if (sc == "nav.equip.ownHintOverMem") { g.Hero.MemMode = 1; g.HideWorn = true; g.ItemElsewhere = true; }   // (both flags exact; our hint covers the pictures of both pop-ups for ever)
         break;
       }
@@ -332,7 +333,7 @@ static partial class CoreTests {
   /// <summary>A scenario whose only right end is this one (a hero the player does not own: a named stop).</summary>
   /// <summary>Scenarios that must end done on every seed: a rule's refusal (gate_dangerous ...) is a failure there.</summary>
   static bool NavStrict(string sc) { return sc == "nav.equip.heroFilterBlindEats" || sc == "nav.equip.cityBackLate" || sc == "nav.equip.ownHintOverNoHide" || sc == "nav.equip.ownTimerOver" || sc == "nav.city.userAway"
-    || sc == "nav.equip.gearFilterMemLead" || sc == "nav.equip.gearFilterRedXNoEffect" || sc == "nav.equip.ownHintOverMem"; }
+    || sc == "nav.equip.gearFilterMemLead" || sc == "nav.equip.gearFilterRedXNoEffect" || sc == "nav.equip.ownHintOverMem" || sc == "nav.equip.heroFilterMem"; }
   static string NavExpect(string sc) { return sc == "nav.equip.heroNotOwned" ? "navhalt:hero_not_in_grid" : sc == "nav.city.blockedBack" ? "navhalt:reset_failed" : null; }
 
   static NavCfg NavCfgOf(string sc) {
@@ -381,7 +382,7 @@ static partial class CoreTests {
     }
     SimNavBarPresses = g.FilterBarPresses;
     // the memory scenarios (docs/specs/2026-11-04-memory-first-state.md): what must hold with the flags read - and the same world with no flag read (the old, pixel-only path) is run beside it to show the scenario breaks without them
-    bool memSc = sc == "nav.equip.gearFilterMemLead" || sc == "nav.equip.gearFilterRedXNoEffect" || sc == "nav.equip.ownHintOverMem";
+    bool memSc = sc == "nav.equip.gearFilterMemLead" || sc == "nav.equip.gearFilterRedXNoEffect" || sc == "nav.equip.ownHintOverMem" || sc == "nav.equip.heroFilterMem";
     if (memSc) {
       string bad = null; int own = SimNavOwnRefusals, bar = g.FilterBarPresses;
       if (o0.StartsWith("done") || o0.StartsWith("wait:item_")) {
