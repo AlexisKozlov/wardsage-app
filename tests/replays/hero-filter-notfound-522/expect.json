@@ -1,0 +1,26 @@
+{
+  "name": "hero-filter-notfound-522",
+  "source": "20261104-133802-7d5188 (build 522, scenario 3), trimmed to the hero pilot views",
+  "kind": "equip",
+  "status": "pass",
+  "text": "the plan hero hidden by a faction filter, the funnel pop-up never seen: the pilot said nothing for 20 s and the sticky notfound survived the reset (docs/specs/2026-11-04-core-any-scenario.md 1a)",
+  "checks": [
+    {
+      "id": "cantdo-reset-in-5s",
+      "text": "the pilot reports that it cannot finish (the navigator resets) within 5 s of the filter hiding the plan hero - the recorded run waited 20 s",
+      "type": "hero-cantdo-reset",
+      "ms": 5000
+    },
+    {
+      "id": "pick-after-reset",
+      "text": "after the reset the unfiltered grid shows the plan hero at place 13: the pilot goes for it within 3 s, no sticky notfound",
+      "type": "hero-pick-after-reset",
+      "ms": 3000
+    },
+    {
+      "id": "no-phantom-gear-layer",
+      "text": "no gear filter layer from the picture on hero tab 1 (the red cross at 342,26 was clicked three times)",
+      "type": "no-phantom-gear-layer"
+    }
+  ]
+}

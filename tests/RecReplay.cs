@@ -197,7 +197,7 @@ static class RecReplay {
         mode = ctx != null ? ctx.Mode : "";
         long tn = (long)Num(inn, "tn", 0);
         if (ticks != null) {
-          tk = new ReplayCheck.Tick { T = t, Tn = tn, Screen = screenRep, Step = stepRec, Mode = mode, Front = ctx != null && ctx.Front };
+          tk = new ReplayCheck.Tick { T = t, Tn = tn, Screen = screenRep, ScreenRec = screenRec, Step = stepRec, Mode = mode, Front = ctx != null && ctx.Front };
           double srow = Get(inn, "sr") is double ? Num(inn, "sr", double.NaN) : double.NaN;
           pilots.Run(tk, inn, ctx, tickSlots, j, w, h, U, srow);
           ticks.Add(tk);

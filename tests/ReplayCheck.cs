@@ -14,6 +14,13 @@
 //   no-click-empty   {}                             every item-pilot click while the live grid is read names a cell (Cell != 0): never a click on an empty cell
 //   max-idle         {pilot:"item"|"hero", ms}      the pilot, while it has work (target / plan, game in front, player idle, not done or failed), is never
 //                                                   without a click or a drag for longer than ms
+//   hero-cantdo-reset {ms}                         (build 522, nothing moved for 20 s) the hero pilot replayed NavOwned on the recorded hero views, with the plan hero hidden by a faction filter: it reports "cannot finish"
+//                                                   (notfound / failed / small - HeroSelectAction turns it into a navigator reset) within ms of the first view that shows the filter hiding the plan hero
+//   hero-pick-after-reset {ms}                     then the pilot is reset (as the navigator does) and fed the later views: once the unfiltered grid shows the plan hero it clicks / drags toward it within ms
+//                                                   (a click names the column of the hero's place), never sits in a terminal state
+//   no-phantom-gear-layer {}                       on every recorded hero view whose gear list is not open (tab != 3 or no slot) the navigator's snapshot has no gear filter layer even if the red-cross picture says so
+//   nav-own-wait-escalates {ms}                    (build 521: the click waited for ever on a look our own hint covered) the navigator on the recorded hero screen, every click answered "covered by our hint", hides our windows
+//                                                   within 4 s and resets the step by ms at the latest
 //   frame-on-card    {}                             (artifact list: the frame on the named card) needs the cards' real place: always "no data" for now
 //   sell-done-sticky {}                             once the storage cleanup is done, the pilot stays done while the selection stays complete
 //                                                   (mouse moves, clicks and the game behind must not take the final step away: the frame on «Продать»)
@@ -29,7 +36,7 @@ static class ReplayCheck {
   /// <summary>NAV_REPLAY=1: the recorded pilot views are run with NavOwned on (the navigator owns the way to the slot and the hero screen).</summary>
   static readonly bool NavOwnedRun = Environment.GetEnvironmentVariable("NAV_REPLAY") == "1";
   public sealed class Tick {
-    public long T, Tn; public string Screen = "-", Step = "-", Mode = ""; public bool Front;
+    public long T, Tn; public string Screen = "-", ScreenRec = "-", Step = "-", Mode = ""; public bool Front;
     public bool Busy;                                   // the player moved the mouse in the last 700 ms (as the overlay's UserBusy)
     public AutoView Item; public AutoAction ItemRec, ItemRep; public string ItemRecState, ItemRepState;
     public HeroView Hero; public AutoAction HeroRec, HeroRep; public string HeroRecState, HeroRepState;
@@ -124,6 +131,86 @@ static class ReplayCheck {
     return 0;
   }
 
+  static ScreenState HeroState(HeroView v, long now) {
+    var inp = new ScreenInputs { Offers = new List<string>(), ShownKnown = "Form_CharactorMain", Flow = "", Order = new List<string> { "Form_CharactorMain", "Form_MainCity" },
+      Hero = new HeroScreen { Hero = v.Hero, FormOk = true, Tab = v.Tab, Part = v.Part } };
+    var s = ScreenState.Classify(inp, now); s.SinceMs = 0; return s;
+  }
+
+  static bool CantDo(HeroPilot p) { return p.State == "notfound" || p.State == "failed" || p.State == "small"; }
+
+  /// <summary>The hero pilot on the recorded hero views, NavOwned, reset as the navigator does when it cannot finish.</summary>
+  static void HeroReplay(Dictionary<string, object> c, List<Tick> ticks, Result r, bool afterReset) {
+    long ms = (long)Num(c, "ms", 5000);
+    var p = new HeroPilot(new HeroGeometry());
+    long hiddenAt = -1, resetAt = -1, pickAt = -1, readyAt = -1; int n = 0; string note = "";
+    foreach (var k in ticks) {
+      if (k.Hero == null) continue; n++;
+      var v = k.Hero; v.NavOwned = true;
+      int idx = v.Heroes != null ? Array.IndexOf(v.Heroes, v.Plan) : -1;
+      bool hidden = idx < 0 && HeroPilot.FilterActive(v);
+      if (hiddenAt < 0 && hidden && v.Hero != 0) hiddenAt = k.Tn;
+      if (resetAt >= 0 && readyAt < 0 && idx >= 0 && !HeroPilot.FilterActive(v) && v.Part < 0 && v.Hero != 0) readyAt = k.Tn;
+      if (resetAt >= 0 && readyAt < 0) continue;   // (the trip to the city: the navigator does not step the pilot on it)
+      var a = p.Step(v);
+      if (resetAt < 0) {
+        if (hiddenAt >= 0 && CantDo(p)) { resetAt = k.Tn; p.Reset(); }
+        continue;
+      }
+      if (readyAt >= 0 && pickAt < 0 && a != null && (a.Kind == AutoKind.Click || a.Kind == AutoKind.Drag)) {
+        pickAt = k.Tn;
+        if (a.Kind == AutoKind.Click) {
+          double H = v.H, want = new HeroGeometry().ColX(idx % HeroGeometry.Columns) * H;
+          if (Math.Abs(a.X - want) > 2) note = "the click is at x " + (int)a.X + ", the hero's column is at " + (int)want;
+        }
+      }
+      if (readyAt >= 0 && pickAt < 0 && CantDo(p)) note = "the pilot is in " + p.State + " (" + p.Why + ") on the unfiltered grid at " + k.Tn + ", hero " + v.Hero + " tab " + v.Tab + " part " + v.Part + " idx " + idx;
+    }
+    if (n == 0) { r.Ok = false; r.Note = "no data: the recording has no hero pilot views (hp)"; return; }
+    if (!afterReset) {
+      r.Ok = hiddenAt >= 0 && resetAt >= 0 && resetAt - hiddenAt <= ms;
+      if (!r.Ok) r.Note = hiddenAt < 0 ? "the plan hero was never hidden by a filter in the views" : resetAt < 0 ? "the pilot never reported that it cannot finish (" + (ticks[ticks.Count - 1].Tn - hiddenAt) + " ms)" : "it took " + (resetAt - hiddenAt) + " ms, limit " + ms;
+    } else {
+      r.Ok = resetAt >= 0 && readyAt >= 0 && pickAt >= 0 && pickAt - readyAt <= ms && note == "";
+      if (!r.Ok) r.Note = resetAt < 0 ? "no reset to follow" : readyAt < 0 ? "the unfiltered grid with the plan hero never came" : note != "" ? note : pickAt < 0 ? "no pick after the grid showed the hero (" + (ticks[ticks.Count - 1].Tn - readyAt) + " ms)" : "the pick came " + (pickAt - readyAt) + " ms after, limit " + ms;
+    }
+  }
+
+  /// <summary>The navigator's io in the 0d0bf6 check: every click waits on "a look covered by our own hint" until the windows are hidden (which is never enough for the check: they come back).</summary>
+  sealed class OwnWaitIo : INavIo {
+    public long NowMs = 100000; public readonly ClickGate Gt = new ClickGate(); public ScreenState FreshState; public int Hid;
+    public long Now { get { return NowMs; } }
+    public bool Front { get { return true; } }
+    public bool UserBusy { get { return false; } }
+    public double W { get { return 503; } }
+    public double H { get { return 283; } }
+    public double U { get { return 283; } }
+    public bool Slow { get { return false; } }
+    public bool InputOpen { get { return true; } }
+    public GameGeometry Geo { get { return null; } }
+    public ClickGate Gate { get { return Gt; } }
+    public ScreenState Fresh(bool c, bool k) { return FreshState; }
+    public double[] LiveRect(string f, string fl) { return null; }
+    public double[] LiveFor(ClickTarget t, string f) { return null; }
+    public bool Picture(string w) { return false; }
+    public GateResult Send(Act a, ScreenState fresh) { return GateResult.Wait("own", "a look is covered by our own hint"); }
+    public void HideOwn() { Hid++; }
+    public string EscapeKind { get { return ""; } }
+    public bool Hotkey(string name) { return false; }
+    public void Log(string line) { }
+    public void Problem(string kind, string message) { }
+  }
+  sealed class OwnWaitAction : IAtTargetAction {
+    public string Name { get { return "stub"; } }
+    public ICollection<string> Keep { get { return null; } }
+    public bool Wants(Snapshot s, NavTarget t) { return true; }
+    public long ProgressAt { get { return 0; } }
+    public void Reset() { }
+    public NavStep Step(Snapshot s, NavTarget t, INavIo io, long now) {
+      return NavStep.Of(new Act { Owner = t.Owner, Target = ClickTarget.EquipNav, Kind = ActKind.Click, X = 10, Y = 10, Base = "Form_CharactorMain", Fire = true, Why = "stub" }, "act:stub");
+    }
+  }
+
   static void Eval(Dictionary<string, object> c, List<Tick> ticks, int mismatches, Result r) {
     string type = Str(c, "type");
     r.Ok = true;
@@ -177,6 +264,35 @@ static class ReplayCheck {
       if (n == 0) { r.Ok = false; r.Note = "no data: the recording has no sell screen with a list of wanted items"; return; }
       if (Environment.GetEnvironmentVariable("REPLAY_DEBUG") != null) { var sb = new StringBuilder(); foreach (var k in ticks) if (k.SellState != null) sb.Append(k.Tn + ":" + k.SellState + "/" + k.SellControl + (k.Busy ? "b" : "") + " "); Console.Error.WriteLine(sb); }
       r.Ok = drops == 0; if (!r.Ok) r.Note = "the finished run left done " + drops + " times (first at " + firstDrop + ": " + what + ")";
+    } else if (type == "hero-cantdo-reset" || type == "hero-pick-after-reset") {
+      HeroReplay(c, ticks, r, type == "hero-pick-after-reset");
+    } else if (type == "no-phantom-gear-layer") {
+      int n = 0, bad = 0; long first = -1;
+      foreach (var k in ticks) {
+        if (k.Hero == null || k.Hero.Hero == 0) continue;
+        var v = k.Hero; if (v.Tab == HeroGeometry.GearTab && v.Part >= 0) continue; n++;
+        var snap = ScreenReader.Build(HeroState(v, k.Tn), k.Tn, w => w == "gearFilterMain" || w == "gearFilterSide");
+        foreach (var l in snap.Stack) if (l.Form == "panel:gearFilter" || l.Form == "panel:gearSide") { bad++; if (first < 0) first = k.Tn; }
+      }
+      if (n == 0) { r.Ok = false; r.Note = "no data: the recording has no hero views off the gear list (hp)"; return; }
+      r.Ok = bad == 0; if (!r.Ok) r.Note = bad + " of " + n + " views build a gear filter layer from the picture alone (first at " + first + ")";
+    } else if (type == "nav-own-wait-escalates") {
+      long ms = (long)Num(c, "ms", 9000);
+      Tick at = null; foreach (var k in ticks) if (k.ScreenRec.StartsWith("HeroScreen hero ") && k.ScreenRec.Contains(" tab 3 slot ") && !k.ScreenRec.Contains("flow(")) at = k;
+      if (at == null) { r.Ok = false; r.Note = "no data: the recording has no hero screen on the gear tab with a slot"; return; }
+      var parts = at.ScreenRec.Split(' '); long hero = long.Parse(parts[2], CultureInfo.InvariantCulture); int slot = int.Parse(parts[parts.Length - 1], CultureInfo.InvariantCulture);
+      var io = new OwnWaitIo(); var rdr = new ScreenReader(); var nv = new Navigator(ClickOwner.Equip);
+      var st = HeroState(new HeroView { Hero = hero, Tab = HeroGeometry.GearTab, Part = slot }, 0);
+      io.FreshState = st;
+      nv.SetTarget(new NavTarget { Goal = NavGoal.HeroGear, Hero = hero }, new List<IAtTargetAction> { new OwnWaitAction() });
+      long t0 = io.NowMs, hidAt = -1, resetAt = -1;
+      for (int i = 0; i < 400 && resetAt < 0; i++) {
+        io.NowMs += 100; nv.Tick(io, rdr.Update(st, io.NowMs));
+        if (io.Hid > 0 && hidAt < 0) hidAt = io.NowMs - t0;
+        if (nv.Recoveries > 0) resetAt = io.NowMs - t0;
+      }
+      r.Ok = hidAt >= 0 && hidAt <= 4000 && resetAt >= 0 && resetAt <= ms;
+      if (!r.Ok) r.Note = "windows hidden at " + hidAt + " ms (limit 4000), step reset at " + resetAt + " ms (limit " + ms + ")";
     } else if (type == "frame-on-card") {
       r.Ok = false; r.Note = "no data: where the artifact list's cards really are is only in the picture (fixtures keep none) and the recorder keeps no read of the cards' rects";
     } else { r.Ok = false; r.Note = "unknown check type '" + type + "'"; }

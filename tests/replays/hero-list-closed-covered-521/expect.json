@@ -1,0 +1,15 @@
+{
+  "name": "hero-list-closed-covered-521",
+  "source": "20261104-124650-0d0bf6 (build 521), trimmed to screen and step lines",
+  "kind": "equip",
+  "status": "pass",
+  "text": "after the item tip and the list closed the click waited 30 s on «look covered by our hint» until the owner cancelled",
+  "checks": [
+    {
+      "id": "own-wait-escalates",
+      "text": "a click that waits on our own hint hides our windows within 4 s and the step is reset by 9 s (the recorded run waited 30 s)",
+      "type": "nav-own-wait-escalates",
+      "ms": 9000
+    }
+  ]
+}
