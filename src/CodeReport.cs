@@ -35,16 +35,47 @@ namespace RealmForge {
       return Unknown;
     }
 
-    /// <summary>The language of a message: "ru" for Cyrillic, "en" for Latin only, null otherwise (sent as the report's region).</summary>
+    // game hints that are not an answer to a redeem (the clipboard copy confirmation), in the game's languages
+    static readonly Regex NotAnswer = R(@"\u0441\u043a\u043e\u043f\u0438\u0440\u043e\u0432\u0430\u043d|copied|copiat|copiad|kopiert|copi\u00e9|skopiowan|kopyalan|disalin|\u0111\u00e3 sao ch\u00e9p|\u30b3\u30d4\u30fc|\ubcf5\uc0ac|\u590d\u5236|\u8907\u88fd|\u0e04\u0e31\u0e14\u0e25\u0e2d\u0e01");
+
+    /// <summary>True when the message is a known game hint that is not the answer to a redeem and no redeem rule matches it.</summary>
+    public static bool IsNotAnswer(string message) {
+      if (string.IsNullOrWhiteSpace(message)) return false;
+      return Classify(message) == Unknown && NotAnswer.IsMatch(message);
+    }
+
+    // cheap per-language signals for Latin text: words of the redeem toasts and letters typical of the language
+    static readonly KeyValuePair<string, Regex>[] Latin = {
+      new KeyValuePair<string, Regex>("vi", R(@"[\u0111\u01b0\u01a1\u1ea0-\u1ef9]")),
+      new KeyValuePair<string, Regex>("pl", R(@"[\u0105\u0119\u0142\u0144\u015b\u017a\u017c\u0107]|\bjeszcze\b|\bnie jest\b|nieprawid|\bkod\b.{0,40}(jest|zosta)")),
+      new KeyValuePair<string, Regex>("tr", R(@"[\u0131\u011f\u015f\u0130]|ge\u00e7ersiz|\bzaten\b|hen\u00fcz|s\u00fcresi|kullan")),
+      new KeyValuePair<string, Regex>("de", R(@"\bcode\b.{0,30}\b(ist|wurde)\b|ung\u00fcltig|eingel\u00f6st|abgelaufen|\bbereits\b|\bnoch nicht\b|erfolgreich|\bder code\b|[\u00df\u00e4]")),
+      new KeyValuePair<string, Regex>("id", R(@"\bkode\b|\bsudah\b|\bbelum\b|\btidak\b|berhasil|ditukar|kedaluwarsa")),
+      new KeyValuePair<string, Regex>("pt", R(@"resgat|n\u00e3o|[\u00e3\u00f5]|\bo c\u00f3digo\b|\bainda\b|expirou|\bfoi\b|parab\u00e9ns")),
+      new KeyValuePair<string, Regex>("es", R(@"canje|\u00f1|[\u00a1\u00bf]|\bel c\u00f3digo\b|\bno es\b|\ba\u00fan\b|felicidades|vencido|\bha sido\b")),
+      new KeyValuePair<string, Regex>("fr", R(@"\u00e9chang|n.est\b|\bce code\b|d\u00e9j\u00e0|\bpas encore\b|disponible|f\u00e9licitations|expir\u00e9|\u00e7u\b")),
+      new KeyValuePair<string, Regex>("it", R(@"\bcodice\b|non \u00e8|\b\u00e8\b|riscatt|scadut|\bgi\u00e0\b|\bancora\b|\bil codice\b|\bnon esiste\b")),
+    };
+
+    /// <summary>The language of a message (sent as the report's region): "ru" for Cyrillic; for Latin text one of
+    /// it/es/pt/de/fr/pl/tr/id/vi by cheap signals, "en" when none stands out; null for anything else.</summary>
     public static string LanguageOf(string message) {
       if (string.IsNullOrEmpty(message)) return null;
       bool cyr = false, lat = false, other = false;
       foreach (char c in message) {
-        if (c >= 'Ѐ' && c <= 'ӿ') cyr = true;
+        if (c >= '\u0400' && c <= '\u04ff') cyr = true;
         else if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) lat = true;
-        else if (c > 'ɏ') other = true;
+        else if (c > '\u024f' && !(c >= '\u1e00' && c <= '\u1eff')) other = true;
       }
-      return other ? null : cyr ? "ru" : lat ? "en" : null;
+      if (other) return null;
+      if (cyr) return "ru";
+      if (!lat) return null;
+      string best = "en"; int bestN = 0;
+      foreach (var l in Latin) {
+        int n = l.Value.Matches(message).Count;
+        if (n > bestN) { bestN = n; best = l.Key; }
+      }
+      return best;
     }
   }
 

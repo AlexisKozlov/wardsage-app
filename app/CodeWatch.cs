@@ -119,6 +119,7 @@ namespace RealmForge {
     void Report(string code, string message, DateTime now) {
       if (!enabled() || !CodeText.Looks(code)) return;
       code = code.Trim();
+      if (CodeResult.IsNotAnswer(message)) { Log.Write("promo codes: not a redeem answer, dropped"); return; }
       string result = CodeResult.Classify(message);
       if (!gate.ShouldSend(code, result, now)) return;
       string key = syncCode();

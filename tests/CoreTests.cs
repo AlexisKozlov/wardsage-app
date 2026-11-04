@@ -2823,6 +2823,16 @@ static partial class CoreTests {
     Eq(CodeResult.Unknown, CodeResult.Classify(null), "promo result: no message is unknown");
     Eq("ru", CodeResult.LanguageOf("\u041d\u0435\u0432\u0435\u0440\u043d\u044b\u0439 \u043a\u043e\u0434"), "promo language: Russian");
     Eq("en", CodeResult.LanguageOf("Invalid code"), "promo language: English");
+    foreach (var lt in langs) if ("it es pt de fr pl tr id vi".Contains(lt[2])) Eq(lt[2], CodeResult.LanguageOf(lt[1]), "promo language: " + lt[2] + " text \"" + lt[1] + "\"");
+    Eq("en", CodeResult.LanguageOf("Code already redeemed"), "promo language: English with the word code");
+    Eq("it", CodeResult.LanguageOf("Il codice non \u00e8 valido"), "promo language: Italian toast is it, not en");
+    Check(CodeResult.LanguageOf("\u65e5\u672c\u8a9e") == null, "promo language: non-Latin, non-Cyrillic stays null");
+    // a game hint that is not a redeem answer is not reported (prod: result=unknown for the clipboard hint)
+    var hints = new[] { "\u0421\u043e\u0434\u0435\u0440\u0436\u0438\u043c\u043e\u0435 \u0441\u043a\u043e\u043f\u0438\u0440\u043e\u0432\u0430\u043d\u043e \u0432 \u0431\u0443\u0444\u0435\u0440 \u043e\u0431\u043c\u0435\u043d\u0430...", "Copied to clipboard", "Contenuto copiato negli appunti", "Contenido copiado", "Conte\u00fado copiado", "In die Zwischenablage kopiert", "Copi\u00e9 dans le presse-papiers", "Skopiowano do schowka", "Panoya kopyaland\u0131", "Disalin ke papan klip", "\u0110\u00e3 sao ch\u00e9p v\u00e0o b\u1ed9 nh\u1edb t\u1ea1m", "\u30af\u30ea\u30c3\u30d7\u30dc\u30fc\u30c9\u306b\u30b3\u30d4\u30fc\u3057\u307e\u3057\u305f", "\ud074\ub9bd\ubcf4\ub4dc\uc5d0 \ubcf5\uc0ac\ub428", "\u5df2\u590d\u5236\u5230\u526a\u8d34\u677f", "\u5df2\u8907\u88fd", "\u0e04\u0e31\u0e14\u0e25\u0e2d\u0e01\u0e41\u0e25\u0e49\u0e27" };
+    foreach (var h in hints) Check(CodeResult.IsNotAnswer(h), "promo hint dropped: " + h);
+    Check(!CodeResult.IsNotAnswer("The Redeem Code has expired."), "promo hint: a redeem answer is kept");
+    Check(!CodeResult.IsNotAnswer("Code copied but already redeemed"), "promo hint: a matching redeem rule wins");
+    Check(!CodeResult.IsNotAnswer("Network busy") && !CodeResult.IsNotAnswer(null), "promo hint: other unknown texts are kept");
     var g = new CodeReportGate(); var t0 = new DateTime(2026, 10, 27, 12, 0, 0, DateTimeKind.Utc);
     Check(g.ShouldSend("Gift2026", CodeResult.Ok, t0), "promo debounce: the first report goes");
     Check(!g.ShouldSend("gift2026", CodeResult.Ok, t0.AddMinutes(9)), "promo debounce: same code and result within 10 minutes is dropped (case ignored)");
