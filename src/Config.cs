@@ -43,6 +43,7 @@ namespace RealmForge {
     public bool RecButton = true;   // TEST build: the record button over the game (app/Overlay.cs)
     public bool SendCodes = true;   // promo codes the player enters in the game, with the game's answer, go to the site (app/CodeWatch.cs; the player can turn it off)
     public bool BossHints = true;   // the boss coach's panel over the game during boss fights (app/BattleCoach.cs)
+    public bool ShowInCapture;      // the player's choice: hint windows stay in recordings / streams / screenshots (off by default: they are hidden from captures)
     // last successful sync (shown on the start screen; the busts of the strongest heroes decorate the banner)
     public string LastAt;                       // ISO 8601 UTC or null
     public int LastHeroes = -1, LastItems = -1, LastArtifacts = -1;
@@ -128,6 +129,7 @@ namespace RealmForge {
       sb.Append(",\n  \"recButton\": ").Append(RecButton ? "true" : "false");
       sb.Append(",\n  \"sendCodes\": ").Append(SendCodes ? "true" : "false");
       sb.Append(",\n  \"bossHints\": ").Append(BossHints ? "true" : "false");
+      sb.Append(",\n  \"showInCapture\": ").Append(ShowInCapture ? "true" : "false");
       if (CoachX >= 0 && CoachY >= 0)
         sb.Append(",\n  \"coach\": [").Append(CoachX.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture))
           .Append(", ").Append(CoachY.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture)).Append("]");
@@ -165,6 +167,7 @@ namespace RealmForge {
       c.AutoUpdate = MiniJson.GetBool(d, "autoUpdate", true);
       c.Tray = MiniJson.GetBool(d, "tray", true);
       c.BossHints = MiniJson.GetBool(d, "bossHints", true);
+      c.ShowInCapture = MiniJson.GetBool(d, "showInCapture", false);
       c.SendCodes = MiniJson.GetBool(d, "sendCodes", true);
       c.RecButton = MiniJson.GetBool(d, "recButton", true);
       string nc = MiniJson.GetString(d, "navCore"); c.NavCore = nc == "on" || nc == "off" || nc == "lab" ? nc : "site";
@@ -194,5 +197,15 @@ namespace RealmForge {
       }
       return c;
     }
+  }
+}
+
+namespace RealmForge {
+  /// <summary>What SetWindowDisplayAffinity gets for the hint windows: 0 = captures see them, 0x11 (WDA_EXCLUDEFROMCAPTURE) = hidden.</summary>
+  public static class CaptureAffinity {
+    /// <summary>The window is really hidden from captures only when the call worked and the affinity is not 0; otherwise the
+    /// screen looks mask our drawn parts themselves (OverlayController.MaskOwn reads !Excluded).</summary>
+    public static bool Hidden(bool callOk, uint affinity) { return callOk && affinity != 0; }
+    public static uint For(bool showInCapture, bool capturable) { return showInCapture || capturable ? 0u : 0x11u; }
   }
 }

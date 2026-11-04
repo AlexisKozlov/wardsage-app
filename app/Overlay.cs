@@ -133,8 +133,9 @@ namespace RealmForge {
       // kept out of screen captures - our own looks at the list included. Older Windows (before 10 2004) cannot: then the
       // looks see our drawings (live 2026-10-14, a 1366x705 laptop: the plates were on the diagnostics screenshots) and
       // mask the parts we drew (Parts) themselves
+      lock (live) if (!live.Contains(this)) live.Add(this);
       ApplyAffinity();
-      if (!Excluded && !Capturable) Log.Write("overlay: the hint windows cannot be hidden from screen captures on this Windows: the screen looks mask them");
+      if (!Excluded && !Capturable && !ShowInCapture) Log.Write("overlay: the hint windows cannot be hidden from screen captures on this Windows: the screen looks mask them");
     }
     // a panel the player may move (the boss coach): while it is movable it takes the mouse and drags like a title bar
     bool movable;
@@ -181,9 +182,20 @@ namespace RealmForge {
     public bool Excluded = true;
     /// <summary>TEST build, while the screen recorder runs: the windows are left in screen captures (so the recording shows them).</summary>
     public static bool Capturable;
+    /// <summary>The player's setting «show hints in recordings and streams» (AppConfig.ShowInCapture): the windows stay in captures.</summary>
+    public static bool ShowInCapture;
+    static readonly System.Collections.Generic.List<GlowWindow> live = new System.Collections.Generic.List<GlowWindow>();
     public void ApplyAffinity() {
-      try { Excluded = W32.SetWindowDisplayAffinity(Handle, Capturable ? 0u : 0x11u) && !Capturable; } catch (Exception) { Excluded = false; }
+      uint aff = CaptureAffinity.For(ShowInCapture, Capturable);
+      try { Excluded = CaptureAffinity.Hidden(W32.SetWindowDisplayAffinity(Handle, aff), aff); } catch (Exception) { Excluded = false; }
     }
+    /// <summary>Sets the setting and re-applies the affinity to every window that has a handle (UI thread).</summary>
+    public static void SetShowInCapture(bool on) {
+      ShowInCapture = on;
+      GlowWindow[] all; lock (live) all = live.ToArray();
+      foreach (var w in all) if (w.IsHandleCreated && !w.IsDisposed) w.ApplyAffinity();
+    }
+    protected override void OnHandleDestroyed(EventArgs e) { lock (live) live.Remove(this); base.OnHandleDestroyed(e); }
     /// <summary>What it shows now: its parts in screen px {x, y, w, h} (empty when hidden).</summary>
     public System.Collections.Generic.List<int[]> Parts = new System.Collections.Generic.List<int[]>();
     protected override void OnVisibleChanged(EventArgs e) { base.OnVisibleChanged(e); if (!Visible) Parts.Clear(); }

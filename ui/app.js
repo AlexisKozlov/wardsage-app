@@ -17,7 +17,7 @@
     sync: { phase: 'idle', stage: null, seconds: 0, result: null, error: null },
     plans: { status: 'idle', list: [], err: null }, sel: 0,
     scan: { status: 'idle', panel: false }, live: null, reported: {}, compact: false, overlay: 'off', ovFar: false, hl: '',
-    more: {}, autoSync: true, autoClick: false, autoConfirm: false, errorReports: false, autoUpdate: true, bossHints: true, sendCodes: true, recButton: true, plansWait: false, tray: true, autostart: false, auto: 'idle', autoAt: null,
+    more: {}, autoSync: true, autoClick: false, autoConfirm: false, errorReports: false, autoUpdate: true, bossHints: true, showInCapture: false, sendCodes: true, recButton: true, plansWait: false, tray: true, autostart: false, auto: 'idle', autoAt: null,
     news: { status: 'idle', feed: null, filter: 'all', at: 0 },
     forum: { status: 'idle', reply: null, at: 0 },
     run: null, seen: null, bootAt: Date.now(), bootLoad: false, runKey: '', queue: [], takeOver: {},
@@ -903,6 +903,7 @@
         row(t('setAutoUpdate'), t('setAutoUpdateS'), sw('autoUpdate', S.autoUpdate), { more: 'setAutoUpdateP', key: 'autoUpdate' })
         + row(t('setSendCodes'), t('setSendCodesS'), sw('sendCodes', S.sendCodes), { more: 'setSendCodesP', key: 'sendCodes' })
         + row(t('setBossHints'), t('setBossHintsS'), sw('bossHints', S.bossHints), { more: 'setBossHintsP', key: 'bossHints' })
+        + row(t('setShowInCapture'), t(S.showInCapture ? 'setShowInCaptureOn' : 'setShowInCaptureS'), sw('showInCapture', S.showInCapture))
         + row(t('setTray'), t('setTrayS'), sw('tray', S.tray), { more: 'setTrayP', key: 'tray' })
         + row(t('setAutostart'), t('setAutostartS'), sw('autostart', S.autostart), { more: 'setAutostartP', key: 'autostart' })),
       sec(t('secHelp'),
@@ -1015,6 +1016,7 @@
     else if (a === 'recButton') { S.recButton = !S.recButton; host.send({ cmd: 'setRecButton', on: S.recButton }); render(); }
     else if (a === 'sendCodes') { S.sendCodes = !S.sendCodes; host.send({ cmd: 'setSendCodes', on: S.sendCodes }); render(); }
     else if (a === 'bossHints') { S.bossHints = !S.bossHints; host.send({ cmd: 'setBossHints', on: S.bossHints }); render(); }
+    else if (a === 'showInCapture') { S.showInCapture = !S.showInCapture; host.send({ cmd: 'setShowInCapture', on: S.showInCapture }); render(); }
     else if (a === 'tray') { S.tray = !S.tray; host.send({ cmd: 'setTray', on: S.tray }); render(); }
     else if (a === 'autostart') { S.autostart = !S.autostart; host.send({ cmd: 'setAutostart', on: S.autostart }); render(); }
     else if (a === 'autoUpdate') { S.autoUpdate = !S.autoUpdate; host.send({ cmd: 'setAutoUpdate', on: S.autoUpdate }); render(); }
@@ -1084,7 +1086,7 @@
       case 'state':
         Object.assign(S, { lang: m.lang, version: m.version, channel: m.channel || 'main', navCore: !!m.navCore, site: m.site, defaultSite: m.defaultSite, termsOk: m.termsOk !== false, hasCode: m.hasCode, codePrefix: m.codePrefix, saveCopy: m.saveCopy, last: m.last || S.last });
         const wasAuto = S.autoClick;
-        if (m.autoSync !== undefined) { S.autoSync = m.autoSync; S.autoClick = m.autoClick; S.autoConfirm = !!m.autoConfirm; S.errorReports = !!m.errorReports; S.autoUpdate = m.autoUpdate !== false; S.tray = m.tray !== false; S.bossHints = m.bossHints !== false; S.sendCodes = m.sendCodes !== false; S.recButton = m.recButton !== false; S.autostart = !!m.autostart; }
+        if (m.autoSync !== undefined) { S.autoSync = m.autoSync; S.autoClick = m.autoClick; S.autoConfirm = !!m.autoConfirm; S.errorReports = !!m.errorReports; S.autoUpdate = m.autoUpdate !== false; S.tray = m.tray !== false; S.bossHints = m.bossHints !== false; S.showInCapture = !!m.showInCapture; S.sendCodes = m.sendCodes !== false; S.recButton = m.recButton !== false; S.autostart = !!m.autostart; }
         if (m.game) S.game = m.game;
         // auto click taken away by the host (the lab's hint mode, the site's switch): the running build, the queue and a sell run stop at once, nothing starts by itself
         if (wasAuto && !S.autoClick && m.autoSync !== undefined) {

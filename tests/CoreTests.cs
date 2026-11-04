@@ -426,6 +426,9 @@ static partial class CoreTests {
     }
     Check(AppConfig.FromJson("{\"coach\":[3,0.5]}").CoachX < 0, "coach panel: a place off the window is ignored");
     Check(AppConfig.FromJson("{}").BossHints && !AppConfig.FromJson(new AppConfig { BossHints = false }.ToJson()).BossHints, "boss hints: on by default, off round-trips");
+    Check(!AppConfig.FromJson("{}").ShowInCapture && AppConfig.FromJson(new AppConfig { ShowInCapture = true }.ToJson()).ShowInCapture, "show in capture: off by default, on round-trips");
+    Check(CaptureAffinity.For(false, false) == 0x11u && CaptureAffinity.For(true, false) == 0u && CaptureAffinity.For(false, true) == 0u && CaptureAffinity.For(true, true) == 0u, "capture affinity: hidden (0x11) unless the setting or the recorder says visible (0)");
+    Check(CaptureAffinity.Hidden(true, CaptureAffinity.For(false, false)) && !CaptureAffinity.Hidden(true, CaptureAffinity.For(true, false)) && !CaptureAffinity.Hidden(true, CaptureAffinity.For(false, true)) && !CaptureAffinity.Hidden(false, 0x11u), "capture affinity: shown in captures (setting / recorder) or a failed call = not Excluded, so the screen looks mask our parts");
     var def = AppConfig.FromJson("not json");
     Check(def.Site == SyncClient.DefaultSite && def.Lang == AppConfig.SystemLang() && def.Code == "" && !def.SaveCopy, "broken config -> defaults");
     Eq("", AppConfig.FromJson("{\"code\":\"" + Tok('A') + "\"}").Code, "plain-text code in config is ignored");
