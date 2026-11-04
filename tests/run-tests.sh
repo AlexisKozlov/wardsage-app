@@ -65,7 +65,7 @@ NET8_REFS=$(for f in "$NET8"/*.dll; do printf -- '-r:%s ' "$f"; done)
 $CSC -langversion:5 -target:library -nostdlib -warnaserror -nowarn:SYSLIB0014 $NET8_REFS \
   -out:"$OUT/RealmForge.Core.dll" $CORE tests/CodeProtectorStub.cs
 $CSC -target:exe -nostdlib -nowarn:SYSLIB0014 $NET8_REFS -r:"$OUT/RealmForge.Core.dll" \
-  -out:"$OUT/CoreTests.dll" tests/CoreTests.cs tests/FrameStyleTests.cs tests/GameSim.cs tests/NavSim.cs tests/NavTests.cs tests/NavTwoHeroes.cs tests/GuidePaths.cs tests/EquipBench.cs
+  -out:"$OUT/CoreTests.dll" tests/CoreTests.cs tests/FrameStyleTests.cs tests/GameSim.cs tests/NavSim.cs tests/NavTests.cs tests/NavTwoHeroes.cs tests/GuidePaths.cs tests/RecipeFrom.cs tests/EquipBench.cs
 cat > "$OUT/CoreTests.runtimeconfig.json" <<EOF
 { "runtimeOptions": { "tfm": "net8.0", "framework": { "name": "Microsoft.NETCore.App", "version": "$NET8_RT" } } }
 EOF
@@ -74,6 +74,8 @@ echo "built $OUT/CoreTests.dll"
 step "3b. Recipes (tools/recipes/*.json): valid against the UI graph and the code's registries, src/NavRecipesData.cs up to date"
 RECIPE_REGISTRY=1 dotnet exec --runtimeconfig "$OUT/CoreTests.runtimeconfig.json" "$OUT/CoreTests.dll" --sim 1 > "$OUT/recipe-registry.txt"
 node tools/recipes.mjs --check --registry "$OUT/recipe-registry.txt"
+
+node tests/recipe-extract.test.mjs   # (the extractor tools/rec-to-recipe.mjs on a recorded equip_city: the draft equals tools/recipes/equip.json in its navigation steps)
 
 step "4. Mock server on :$PORT"
 node tests/mock-server.mjs $PORT & MOCK=$!
