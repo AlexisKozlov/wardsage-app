@@ -101,7 +101,8 @@ namespace RealmForge {
     public HeroPilot(HeroGeometry g) { this.g = g; }
 
     /// <summary>Start over on the next step (the player pressed «Надеть» again).</summary>
-    public void Reset() { plan = -1; }
+    /// <summary>(What the pilot learnt about the game stays: the drag gain and the latest answer time.)</summary>
+    public void Reset() { plan = -1; Restart(); retries = 0; unsent = null; unsentRun = 0; }
 
     /// <summary>The click or drag to make, <see cref="AutoAction.Nothing"/> to wait, or null: the hero screen shows the
     /// plan's hero with the gear tab (or there is nothing to do), the gear pilots go on.</summary>

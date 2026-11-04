@@ -151,7 +151,7 @@ namespace RealmForge {
     public AutoPilot(ListGeometry g) { this.g = g; }
 
     /// <summary>Start over on the next step (the list was changed under it: the filter).</summary>
-    public void Reset() { goal = "\u0001"; }
+    public void Reset() { goal = "\u0001"; State = "idle"; }
 
     /// <summary>The host did not send the last action (the click gate's wait, the shown forms unread): a «Заменить» press or a click for the
     /// item's tip is not counted (live 1.6.66.348 sim: the press that met the tip's first read was taken for made, the retry met a failed read - unconfirmed).</summary>

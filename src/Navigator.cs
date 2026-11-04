@@ -208,7 +208,15 @@ namespace RealmForge {
         return;
       }
       popCity = true; lastProgress = now; recent.Clear();
+      ClearRunState();   // a reset is a clean slate: only the run's counters (resets, sweeps) and what the pilots learnt about the game (drag gain, late answers) stay
       io.Log("nav: reset " + edge + " (" + why + ") #" + n + "/" + mem.TotalResets);
+    }
+
+    /// <summary>The click in flight, every action's pilot state (a "notfound" / "failed" is not carried into the next try), the timers of the click helpers and the ladder's rungs.</summary>
+    void ClearRunState() {
+      act.Start(null, 0); curEdge = "";
+      foreach (var a in actions) a.Reset();
+      mem.NextAt.Clear(); mem.Rung.Clear(); mem.WaitSince.Clear();
     }
 
     void Handle(INavIo io, ActOutcome oc, long now) {

@@ -91,7 +91,7 @@ namespace RealmForge {
     }
 
     /// <summary>Start over on the next step (the player pressed «Надеть» again).</summary>
-    public void Reset() { item = -1; }
+    public void Reset() { item = -1; State = "idle"; Note = ""; }
 
     /// <summary>The click to make, <see cref="AutoAction.Nothing"/> to wait, or null: nothing to do with the filter
     /// (the item pilot goes on).</summary>
