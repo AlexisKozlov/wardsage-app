@@ -39,6 +39,20 @@ namespace RealmForge {
     public readonly Dictionary<string, long> WaitSince = new Dictionary<string, long>();
     public readonly LiveStill OfferLive = new LiveStill(); public string OfferLiveForm = "";
     public long NoOrderSince = -1;
+    /// <summary>A layer closed and back (docs/specs/2026-11-04-core-any-scenario.md D4): when each closed layer's close was counted done, the strikes of the ones that came back within ReturnWindowMs, and the pixel
+    /// layers taken for phantoms (ignored until the time).</summary>
+    public readonly Dictionary<string, long> ClosedAt = new Dictionary<string, long>(), PhantomUntil = new Dictionary<string, long>();
+    public readonly Dictionary<string, int> Strikes = new Dictionary<string, int>();
+    public int Phantoms;
+    public const int ReturnWindowMs = 3000, PhantomMs = 10000, MaxPhantoms = 3;
+    /// <summary>The keep set with the phantom layers added: they are tolerated, never closed again.</summary>
+    public ICollection<string> WithPhantoms(ICollection<string> keep, long now) {
+      HashSet<string> add = null;
+      foreach (var kv in PhantomUntil) if (kv.Value > now) { if (add == null) add = new HashSet<string>(); add.Add(kv.Key); }
+      if (add == null) return keep;
+      if (keep != null) foreach (var k in keep) add.Add(k);
+      return add;
+    }
     /// <summary>One try per key and gap: true = go ahead.</summary>
     public bool Due(string key, long now, int gapMs) {
       long t; if (NextAt.TryGetValue(key, out t) && now < t) return false;
@@ -111,6 +125,8 @@ namespace RealmForge {
       if (s == null) return;
       if (s.HasTip()) tipSeen = true; else if (tipSeen) { tipSeen = false; io.Gate.ResetTipEscapes(Owner); }
       mem.Prune(s, now);
+      WatchReturns(io, s, now);
+      if (State == "halted") return;
       if (s.StateKey != lastSig) {   // a new state is progress; a state seen a moment ago (a flicker between two) is not
         lastSig = s.StateKey;
         if (!recent.Contains(lastSig)) lastProgress = now;
@@ -170,6 +186,7 @@ namespace RealmForge {
     void RunActions(INavIo io, Snapshot s, NavTarget tgt, NavStep step, long now) {
       bool seek = step.Edge.StartsWith("seek:");
       State = seek ? "work" : "at_target";
+      tgt.Resets = mem.TotalResets;
       foreach (var a in actions) {
         if (seek ? a.Name != step.Edge.Substring(5) : (a.Name == "hero" || !a.Wants(s, tgt))) continue;
         var r = a.Step(s, tgt, io, now);
@@ -184,6 +201,7 @@ namespace RealmForge {
 
     void StartAct(INavIo io, Snapshot s, Act a, long now) {
       curEdge = a.Edge;
+      if (mem.PhantomUntil.Count > 0) a.Keep = mem.WithPhantoms(a.Keep, now);
       act.Start(a, now);
       var oc = act.Tick(io, s, now);
       if (oc != ActOutcome.Running) Handle(io, oc, now);
@@ -212,6 +230,30 @@ namespace RealmForge {
       io.Log("nav: reset " + edge + " (" + why + ") #" + n + "/" + mem.TotalResets);
     }
 
+    /// <summary>A layer whose close was counted done and that is back within ReturnWindowMs: twice in a row it is not closing. A pixel-only layer is a phantom (ignored for PhantomMs, logged; MaxPhantoms
+    /// in a run is a named stop); a real form that keeps coming back is a failed step (reset).</summary>
+    void WatchReturns(INavIo io, Snapshot s, long now) {
+      if (mem.ClosedAt.Count == 0 || !s.Stable(now)) return;
+      string back = null;
+      foreach (var l in s.Stack) { long at; if (mem.ClosedAt.TryGetValue(l.Form, out at) && now - at <= NavMemory.ReturnWindowMs && !(mem.PhantomUntil.ContainsKey(l.Form) && mem.PhantomUntil[l.Form] > now)) { back = l.Form; break; } }
+      if (back == null) {
+        var old = new List<string>(); foreach (var kv in mem.ClosedAt) if (now - kv.Value > NavMemory.ReturnWindowMs) old.Add(kv.Key);
+        foreach (var k in old) { mem.ClosedAt.Remove(k); mem.Strikes.Remove(k); }
+        return;
+      }
+      mem.ClosedAt.Remove(back);
+      int n; mem.Strikes.TryGetValue(back, out n); mem.Strikes[back] = ++n;
+      if (n < 2) return;
+      mem.Strikes.Remove(back);
+      if (back.StartsWith("panel:")) {
+        mem.PhantomUntil[back] = now + NavMemory.PhantomMs;
+        io.Log("nav: " + back + " came back after " + n + " closes - a phantom (told by pixels alone), ignored for " + NavMemory.PhantomMs / 1000 + " s #" + (mem.Phantoms + 1));
+        if (++mem.Phantoms >= NavMemory.MaxPhantoms) Halt(io, "phantom_layer:" + back);
+        return;
+      }
+      Reset(io, "layer:" + back, "LayerBack", now);
+    }
+
     /// <summary>The click in flight, every action's pilot state (a "notfound" / "failed" is not carried into the next try), the timers of the click helpers and the ladder's rungs.</summary>
     void ClearRunState() {
       act.Start(null, 0); curEdge = "";
@@ -225,6 +267,7 @@ namespace RealmForge {
       switch (oc) {
         case ActOutcome.Done:
           if (act.SentAt > 0 || (a != null && a.Fire)) { Clicks++; lastProgress = now; }
+          if (a != null && a.Closing != "") mem.ClosedAt[a.Closing] = now;
           if (edge != "") mem.Resets.Remove(edge);
           return;
         case ActOutcome.Halted: Halt(io, "gate_" + io.Gate.HaltReason(Owner)); return;

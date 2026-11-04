@@ -163,9 +163,12 @@ namespace RealmForge {
       if (s.Kind == ScreenKind.HeroScreen) {
         bool filterForm = sn.Has("Form_EquipFilterWidget");
         var pseudo = new List<Layer>();
-        if (pic != null && pic("gearFilterSide")) pseudo.Add(new Layer { Form = "panel:gearSide", Class = 'P', Role = LayerRole.Panel });
-        if (!filterForm && pic != null && pic("gearFilterMain")) pseudo.Add(new Layer { Form = "panel:gearFilter", Class = 'P', Role = LayerRole.Panel });
-        if (s.ModalWhy == "heroFilter" || (pic != null && pic("heroFilter"))) pseudo.Add(new Layer { Form = "panel:heroFilter", Class = 'P', Role = LayerRole.Panel });
+        // a layer told by pixels alone needs what the memory says about the screen: the gear filter's pop-ups only over an open gear list (tab 3, a slot), the hero grid's pop-up only with the grid showing
+        // (live 522: a red pixel on hero tab 1 was taken for the gear filter's cross and clicked for ever)
+        bool gearList = s.HeroTab == 3 && s.HeroSlot >= 0, gridShown = s.HeroSlot < 0;
+        if (gearList && pic != null && pic("gearFilterSide")) pseudo.Add(new Layer { Form = "panel:gearSide", Class = 'P', Role = LayerRole.Panel });
+        if (gearList && !filterForm && pic != null && pic("gearFilterMain")) pseudo.Add(new Layer { Form = "panel:gearFilter", Class = 'P', Role = LayerRole.Panel });
+        if (s.ModalWhy == "heroFilter" || (gridShown && pic != null && pic("heroFilter"))) pseudo.Add(new Layer { Form = "panel:heroFilter", Class = 'P', Role = LayerRole.Panel });
         int at = 0; while (at < sn.Stack.Count && sn.Stack[at].Role != LayerRole.Flow) at++;
         sn.Stack.InsertRange(at, pseudo);
       }

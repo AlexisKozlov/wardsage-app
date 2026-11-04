@@ -34,6 +34,11 @@ namespace RealmForge {
       var ha = pilot.Step(hv);
       if (OnStep != null) OnStep(hv, ha);
       if (ha == null) return null;
+      if (ha.Kind == AutoKind.None && (pilot.State == "notfound" || pilot.State == "failed" || pilot.State == "small")) {
+        // the pilot cannot finish: never a wait. The hero is not in an unfiltered grid after a reset already: the player does not have it (a named stop); anything else: back to the city and again
+        if (pilot.State == "notfound" && !HeroPilot.FilterActive(hv) && t.Resets > 0 && hv.Heroes != null && hv.Heroes.Length > 0 && Array.IndexOf(hv.Heroes, hv.Plan) < 0) return NavStep.Halt("hero_not_in_grid");
+        return NavStep.Reset("hero_" + pilot.State + (pilot.Why != "" ? ": " + pilot.Why : ""));
+      }
       if (ha.Kind == AutoKind.None) return NavStep.Wait(pilot.State == "work" || pilot.State == "paused" || pilot.State == "background" ? pilot.State : "hero_" + pilot.State);
       var act = NavAdapt.ToAct(ha, hv.FilterOpen ? ClickTarget.EquipFilter : ClickTarget.EquipNav, t.Owner, "Form_CharactorMain", NavKeep.HeroSeek, "hero: " + pilot.State);
       act.OnNotSent = pilot.NotSent;

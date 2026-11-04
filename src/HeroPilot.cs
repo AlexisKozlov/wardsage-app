@@ -67,11 +67,15 @@ namespace RealmForge {
   public sealed class HeroPilot {
     // MaxClicks / MaxDrags count the tries WITHOUT progress (every click that brings the plan's hero closer starts them anew, a long
     // grid takes dozens of drags); MaxTotal is the hard stop
+    /// <summary>NavOwned: this many grid clicks in a row that brought up no other hero (the grid takes no click) are a can't, not 24 slow tries: the navigator resets.</summary>
+    public const int MaxNavMisses = 8;
     public const int MaxClicks = 24, MaxDrags = 30, MaxTotal = 240, MaxBack = 3, MaxTab = 3, MaxCity = 2;
     // a failed hero is tried again after a pause (something may have been over the grid meanwhile), this many times
     public const int RetryMs = 6000, MaxRetries = 2;
     public const int FarRows = 5;   // the hero further down than this: filter the grid first
     public const int FilterClickMs = 1000;   // after a class / faction click: the game applies it before the pop-up closes
+    /// <summary>After a funnel press (it is a toggle): the pop-up has to show within this (the game's answer 0.6-1.5 s on a slow laptop plus the pop-up's own fade); not seen = no second press, the pilot gives up (notfound) and the navigator resets.</summary>
+    public const int FunnelSeenMs = 2600;
     public const int AfterClickMs = 500, AfterDragMs = 700, AfterBackMs = 900, UserPauseMs = 4000;   // each click is checked in memory
     public const double MinDragPx = 24;
     // a game slower than AfterClickMs (a slow laptop: 0.6-1.5 s): a hero brought up after the click's wait ran out is a late answer, the waits grow to
@@ -84,6 +88,9 @@ namespace RealmForge {
     long lateMs, pickAt; long seenHero;
     int clicks, drags, backs, tabs, misses, city, total, bestDist = int.MaxValue;
     // the grid filter: 0 not started, 1 filtering, 2 done (or given up); clearing a filter that hides the hero
+    long funnelAt; bool funnelPressed;
+    /// <summary>The filter pop-up did not show after a funnel press: it cannot be read on this screen. Kept across resets (it is about the game's pixels); the optional filtering of a far hero is skipped then.</summary>
+    bool filterBlind;
     int filterPhase, funnelTries, factionTries, clearTries, classResets, doneCloses; bool classClicked, factionDone, classDone, forceClear;
     ulong lastGrid;
     double dragScale = 1; int lastDragSign;   // (the game's drag gain learnt by overshoots; kept across plans, it is the game's)
@@ -103,6 +110,9 @@ namespace RealmForge {
     /// <summary>Start over on the next step (the player pressed «Надеть» again).</summary>
     /// <summary>(What the pilot learnt about the game stays: the drag gain and the latest answer time.)</summary>
     public void Reset() { plan = -1; Restart(); retries = 0; unsent = null; unsentRun = 0; }
+
+    /// <summary>The grid is filtered by a faction or a class (what the memory shows).</summary>
+    public static bool FilterActive(HeroView v) { return (v.ChosenCamps != null && v.ChosenCamps.Length > 0) || v.ClassChosen; }
 
     /// <summary>The click or drag to make, <see cref="AutoAction.Nothing"/> to wait, or null: the hero screen shows the
     /// plan's hero with the gear tab (or there is nothing to do), the gear pilots go on.</summary>
@@ -136,16 +146,16 @@ namespace RealmForge {
     public const int MaxUnsent = 60;
     int unsentRun;
 
-    sealed class Saved { public long WaitUntil, HeroBefore, PickAt; public int Clicks, Drags, Backs, Tabs, Misses, City, Total, BestDist, FilterPhase, FunnelTries, FactionTries, ClearTries, ClassResets, DoneCloses;
+    sealed class Saved { public long WaitUntil, HeroBefore, PickAt, FunnelAt; public bool FunnelPressed; public int Clicks, Drags, Backs, Tabs, Misses, City, Total, BestDist, FilterPhase, FunnelTries, FactionTries, ClearTries, ClassResets, DoneCloses;
                          public bool Has, Pending, ClassClicked, FactionDone, ClassDone; public double Lo, Hi, ClickY; }
     Saved unsent;
     Saved Save() {
-      return new Saved { WaitUntil = waitUntil, HeroBefore = heroBefore, PickAt = pickAt, Clicks = clicks, Drags = drags, Backs = backs, Tabs = tabs, Misses = misses, City = city, Total = total,
+      return new Saved { FunnelAt = funnelAt, FunnelPressed = funnelPressed, WaitUntil = waitUntil, HeroBefore = heroBefore, PickAt = pickAt, Clicks = clicks, Drags = drags, Backs = backs, Tabs = tabs, Misses = misses, City = city, Total = total,
                          BestDist = bestDist, FilterPhase = filterPhase, FunnelTries = funnelTries, FactionTries = factionTries, ClearTries = clearTries, ClassResets = classResets,
                          DoneCloses = doneCloses, Has = has, Pending = pending, ClassClicked = classClicked, FactionDone = factionDone, ClassDone = classDone, Lo = lo, Hi = hi, ClickY = clickY };
     }
     void Load(Saved x) {
-      effect.Drop();
+      effect.Drop(); funnelAt = x.FunnelAt; funnelPressed = x.FunnelPressed;
       waitUntil = x.WaitUntil; heroBefore = x.HeroBefore; pickAt = x.PickAt; clicks = x.Clicks; drags = x.Drags; backs = x.Backs; tabs = x.Tabs; misses = x.Misses; city = x.City; total = x.Total;
       bestDist = x.BestDist; filterPhase = x.FilterPhase; funnelTries = x.FunnelTries; factionTries = x.FactionTries; clearTries = x.ClearTries; classResets = x.ClassResets;
       doneCloses = x.DoneCloses; has = x.Has; pending = x.Pending; classClicked = x.ClassClicked; factionDone = x.FactionDone; classDone = x.ClassDone; lo = x.Lo; hi = x.Hi; clickY = x.ClickY;
@@ -233,6 +243,7 @@ namespace RealmForge {
       double ch = v.ClientH > 0 ? v.ClientH : H;
       double pitch = pitchF * H, card = cardF * H, top = g.ViewTop * H, bottom = ch - (1 - g.ViewBottom) * H, mid = (top + bottom) / 2;
       if (!has) {                                     // nothing known: a card near the middle tells where the rows are
+        if (v.NavOwned && misses >= MaxNavMisses) return Fail(misses + " grid clicks in a row brought up no other hero");
         if (clicks >= MaxClicks || total >= MaxTotal) return Fail("no click near the grid's middle brings up another hero (" + clicks + " clicks, " + misses + " misses)");
         double y = mid + (misses % 3 == 1 ? 0.5 : misses % 3 == 2 ? -0.5 : 0) * pitch;
         // not the shown hero's column: a click on its own card changes nothing (live 27.09: Элизия in the middle column
@@ -242,6 +253,7 @@ namespace RealmForge {
       }
       double row1 = (lo + hi) / 2, cy = row1 + (t / HeroGeometry.Columns) * pitch + card / 2;
       if (cy >= top + card * 0.3 && cy <= bottom - card * 0.3) {
+        if (v.NavOwned && misses >= MaxNavMisses) return Fail(misses + " grid clicks in a row brought up no other hero");
         if (clicks >= MaxClicks || total >= MaxTotal) return Fail("the plan's hero at place " + t + " is not brought up by " + clicks + " clicks");
         return Pick(v, g.ColX(t % HeroGeometry.Columns) * H, cy);
       }
@@ -271,6 +283,7 @@ namespace RealmForge {
     // the hero gone from the grid, then «Все» undoes it. Null: nothing to do with the filter now.
     AutoAction FilterStep(HeroView v, double H) {
       if (v.Heroes == null) return null;
+      if (v.FilterOpen) funnelPressed = false;   // (the pop-up was seen: the next press is a new one)
       int t = Array.IndexOf(v.Heroes, v.Plan);
       bool active = (v.ChosenCamps != null && v.ChosenCamps.Length > 0) || v.ClassChosen;
       // (also a filtered grid whose rows the pilot cannot find: three clicks in the middle brought up no other hero - the player's filter
@@ -279,19 +292,18 @@ namespace RealmForge {
       if ((t < 0 || forceClear) && active) {              // hidden by a filter, or its rows not found: clear it
         if (classClicked && !classDone) { classDone = true; }      // our class click hid it: «Все» below undoes it
         if (clearTries >= 3) return null;
-        if (!v.FilterOpen) { if (++funnelTries > 4) return null; waitUntil = v.NowMs + Late(AfterClickMs); return Funnel(v, H); }
+        if (!v.FilterOpen) return OpenFilter(v, H);
         clearTries++; waitUntil = v.NowMs + Late(AfterClickMs);
         return v.ClassChosen ? Cell(g.ClassX, 0, H) : Cell(g.FactionX, 0, H);
       }
       if (t < 0 || filterPhase == 2) return null;
       bool known = v.HeroClass > 0 || (v.HeroCamps != null && v.HeroCamps.Length > 0);
-      if (filterPhase == 0 && (!known || !FarFromView(v, t))) return null;
+      if (filterPhase == 0 && (!known || filterBlind || !FarFromView(v, t))) return null;
       filterPhase = 1;
       if (!v.FilterOpen) {
         // the pop-up was never seen after the funnel clicks: a grid click now could land inside it (a wrong class filter),
         // so stop here - a misdetection costs a stop, never a click
-        if (++funnelTries > 3) { filterPhase = 2; return Fail("gear filter pop-up not recognised after " + (funnelTries - 1) + " funnel clicks - stopping, no grid click"); }
-        waitUntil = v.NowMs + Late(AfterClickMs); return Funnel(v, H);
+        return OpenFilter(v, H);
       }
       if (!factionDone) {
         int row = FactionRow(v);
@@ -330,6 +342,18 @@ namespace RealmForge {
       int i = Array.IndexOf(HeroGeometry.ClassOrder, v.HeroClass);
       if (i < 0 || i + 1 >= v.ClassCount || i + 1 >= HeroGeometry.FilterRows) return -1;   // not in the column (Tactician hidden)
       return i + 1;
+    }
+
+    /// <summary>The funnel is a toggle: one press, then the pop-up has to show (pixels) within FunnelSeenMs. Never a second press on a pop-up not seen (it would shut the one the first press opened);
+    /// not seen = the pilot cannot go on (notfound, the navigator resets: the game clears the filter when the hero screen is opened again).</summary>
+    AutoAction OpenFilter(HeroView v, double H) {
+      if (funnelPressed) {
+        if (v.NowMs - funnelAt < Late(FunnelSeenMs)) return AutoAction.Nothing;
+        funnelPressed = false; filterBlind = true; State = "notfound"; Why = "filter pop-up not seen after the funnel press";
+        return AutoAction.Nothing;
+      }
+      funnelPressed = true; funnelAt = v.NowMs; funnelTries++; waitUntil = v.NowMs + Late(AfterClickMs);
+      return Funnel(v, H);
     }
 
     AutoAction Funnel(HeroView v, double H) {
@@ -383,7 +407,7 @@ namespace RealmForge {
 
     void Restart() {
       effect.Drop();
-      waitUntil = pauseUntil = failedAt = pickAt = 0; seenHero = 0; clicks = drags = backs = tabs = misses = city = total = 0; bestDist = int.MaxValue; has = pending = false; State = "idle";
+      waitUntil = pauseUntil = failedAt = pickAt = 0; funnelAt = 0; funnelPressed = false; seenHero = 0; clicks = drags = backs = tabs = misses = city = total = 0; bestDist = int.MaxValue; has = pending = false; State = "idle";
       lastDragSign = 0;
       Why = ""; filterPhase = funnelTries = factionTries = clearTries = classResets = doneCloses = 0; classClicked = factionDone = classDone = forceClear = false; lastGrid = 0;
     }

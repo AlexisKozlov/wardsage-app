@@ -16,6 +16,8 @@ namespace RealmForge {
     public ClickOwner Owner = ClickOwner.Equip;
     /// <summary>The recipe this target runs (src/NavRecipe.cs; "" = the one of the goal) and the step it ends at ("" = all navigation steps).</summary>
     public string RecipeId = "", UpTo = "";
+    /// <summary>Resets this run has made so far (the navigator sets it before every action step): a pilot that cannot finish asks for a reset first and halts when a reset did not help.</summary>
+    public int Resets;
     public string Key() { return Goal + "|" + Hero + "|" + Slot + "|" + Tab + "|" + RecipeId + "|" + UpTo; }
   }
 
@@ -98,7 +100,7 @@ namespace RealmForge {
       var wps = NavRoutes.Of(t);
       int first = -1;
       for (int i = 0; i < wps.Count; i++) if (!wps[i].Holds(s, t)) { first = i; break; }
-      ICollection<string> keep = first < 0 ? atTargetKeep : wps[first].Seek != "" ? seekKeep : null;
+      ICollection<string> keep = m.WithPhantoms(first < 0 ? atTargetKeep : wps[first].Seek != "" ? seekKeep : null, now);
       var md = ModalHandler.Next(s, keep, m, io, t.Owner);
       if (md.Kind != StepKind.None) return md;
       if (s.Kind == ScreenKind.Unknown) return UnknownScreen(s, t, m, io, now);
