@@ -148,8 +148,10 @@ namespace RealmForge {
     int navCoreLast = -1;
     void ApplyAutoClick() {
       string why; bool nav = NavCoreOn(out why);
-      if ((nav ? 1 : 0) != navCoreLast) { navCoreLast = nav ? 1 : 0; Log.Write("navcore: " + (nav ? "on" : "off") + " (reason: " + why + ")"); }
+      bool navChanged = false;
+      if ((nav ? 1 : 0) != navCoreLast) { navChanged = navCoreLast >= 0; navCoreLast = nav ? 1 : 0; Log.Write("navcore: " + (nav ? "on" : "off") + " (reason: " + why + ")"); }
       overlay.NavCoreEnabled = nav; overlay.AutoEnabled = AutoClickOn(); overlay.LocateAutoEnabled = LocateAutoOn(); overlay.ArtAutoEnabled = ArtAutoOn();
+      if (navChanged && Channel.IsTest) SendState(null);   // the page's version line («ядро: вкл») reads navCore from the state message
     }
 
     // the features that read the game's screens and fights need the layout data for the running game version
@@ -579,9 +581,9 @@ namespace RealmForge {
           case "setAutoUpdate": cfg.AutoUpdate = MiniJson.GetBool(m, "on", true); Save(); break;
           case "setSendCodes": cfg.SendCodes = MiniJson.GetBool(m, "on", true); Save(); break;
           case "setBossHints": cfg.BossHints = MiniJson.GetBool(m, "on", true); if (!cfg.BossHints && coach.Running) coach.Stop(); Save(); break;
+          case "setShowInCapture": cfg.ShowInCapture = MiniJson.GetBool(m, "on", false); GlowWindow.SetShowInCapture(cfg.ShowInCapture); Save(); break;
           case "setTray": cfg.Tray = MiniJson.GetBool(m, "on", true); win.TrayEnabled = cfg.Tray; Save(); break;
           case "setAutostart": Autostart.Set(MiniJson.GetBool(m, "on", false)); SendState(null); break;
-          case "setShowInCapture": cfg.ShowInCapture = MiniJson.GetBool(m, "on", false); GlowWindow.SetShowInCapture(cfg.ShowInCapture); Save(); break;
           case "setErrorReports": cfg.ErrorReports = MiniJson.GetBool(m, "on", false); Save(); Log.Write("error reports " + (cfg.ErrorReports ? "on" : "off")); break;
           case "setSite": {
             string err; string site = SyncClient.NormalizeSite(MiniJson.GetString(m, "site"), out err);
