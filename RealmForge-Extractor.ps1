@@ -5403,8 +5403,9 @@ namespace RealmForge {
     public static bool Hidden(bool callOk, uint affinity) { return callOk && affinity != 0; }
     public static uint For(bool showInCapture, bool capturable) { return For(showInCapture, capturable, false); }
     /// <summary>While the auto click works (<paramref name="pilot"/>) the player's setting gives way: hidden (0x11) again, so no look that decides a
-    /// click sees our windows. The test build's recorder (<paramref name="capturable"/>) keeps them visible.</summary>
-    public static uint For(bool showInCapture, bool capturable, bool pilot) { return capturable || (showInCapture && !pilot) ? 0u : 0x11u; }
+    /// click sees our windows (a look that our own hint covers is not known and the click waits: live 2026-11-04, the recorder on, the click deadlocked).
+    /// The pilot wins over the test build's recorder (<paramref name="capturable"/>) and over the setting alike; without the pilot (hints only) both keep them visible.</summary>
+    public static uint For(bool showInCapture, bool capturable, bool pilot) { return !pilot && (capturable || showInCapture) ? 0u : 0x11u; }
     /// <summary>The dimming around a hint is drawn only while every hint window is hidden from captures (shown to a recording or to a look it would cover the whole game).</summary>
     public static bool DimOn(bool wanted, bool allHidden) { return wanted && allHidden; }
     /// <summary>The setting «show hints in recordings and streams» works only in the test build (and the one-off streamer build); in the main channel the config value is ignored.</summary>

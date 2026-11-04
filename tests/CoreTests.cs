@@ -4499,7 +4499,9 @@ static partial class CoreTests {
     // the platform side: the affinity, the dimming, the channel
     {
       Check(CaptureAffinity.For(false, false, false) == 0x11u && CaptureAffinity.For(true, false, false) == 0u && CaptureAffinity.For(true, false, true) == 0x11u && CaptureAffinity.For(false, false, true) == 0x11u, "affinity: hidden, shown by the setting, hidden again while the auto click works");
-      Check(CaptureAffinity.For(false, true, true) == 0u && CaptureAffinity.For(true, true, false) == 0u, "affinity: the test build's recorder keeps them visible");
+      Check(CaptureAffinity.For(false, true, false) == 0u && CaptureAffinity.For(true, true, false) == 0u, "affinity: the test build's recorder keeps them visible (hints only)");
+      Check(CaptureAffinity.For(false, true, true) == 0x11u && CaptureAffinity.For(true, true, true) == 0x11u, "affinity: the pilot wins over the recorder and the setting: hidden");
+      Check(CaptureAffinity.Hidden(true, CaptureAffinity.For(false, true, true)) && !OwnMask.Covered(new int[100]) , "pilot working, recorder on: windows hidden (Excluded), so no mask and the look is not covered");
       Check(CaptureAffinity.DimOn(true, true) && !CaptureAffinity.DimOn(true, false) && !CaptureAffinity.DimOn(false, true), "dimming: only while every window is hidden from captures (the setting on = windows visible = no dimming)");
       Check(Channel.CaptureSettingAvailable(true, false) && Channel.CaptureSettingAvailable(false, true) && !Channel.CaptureSettingAvailable(false, false) && !Channel.IsStreamer && !Channel.CaptureSetting == !Channel.IsTest, "streamer build: the capture setting is open in the test channel and the streamer build only; this build is not the streamer");
       Check(!Channel.UpdatesEnabled(true) && Channel.UpdatesEnabled(false), "streamer build: no self-update; every other build keeps it");

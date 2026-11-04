@@ -183,7 +183,7 @@ namespace RealmForge {
     public static bool Capturable;
     /// <summary>The player's setting «show hints in recordings and streams» (AppConfig.ShowInCapture): the windows stay in captures.</summary>
     public static bool ShowInCapture;
-    /// <summary>The auto click is working: the windows are hidden from captures again (when the platform can) so the looks that decide its clicks never see them.</summary>
+    /// <summary>The auto click is working (or was within 4 s): the windows are hidden from captures again, even for the recorder (when the platform can) so the looks that decide its clicks never see them.</summary>
     public static bool PilotHidden;
     static readonly WindowSet<GlowWindow> live = new WindowSet<GlowWindow>(w => w.ApplyAffinity());
     int affinityAt = Environment.TickCount - 10000;
@@ -982,8 +982,8 @@ namespace RealmForge {
       if (timer.Interval != wantInterval) timer.Interval = wantInterval;
       loadMode = !ScreensWanted() ? "idle" : !twShown || !twFront ? "away" : effect || EquipClicking || SellClicking || (LocateWins && LocateClicking) ? "pilot" : "hint";
       if (Channel.IsTest) { long tn = NowMs(); if (modeAt != 0 && tn - modeAt > 0 && tn - modeAt < 5000) modeMs[loadMode == "away" ? 0 : loadMode == "hint" ? 1 : loadMode == "pilot" ? 2 : 3] += tn - modeAt; modeAt = tn; }
-      // the setting «show hints in recordings»: while the auto click works the windows are hidden from captures again (where the platform can), so no look that decides a click sees them
-      { long pn = NowMs(); if (loadMode == "pilot") pilotHiddenUntil = pn + 4000; GlowWindow.SetPilotHidden(GlowWindow.ShowInCapture && pn < pilotHiddenUntil); }
+      // the setting «show hints in recordings» and the test build's recorder: while the auto click works the windows are hidden from captures again (where the platform can), so no look that decides a click sees them
+      { long pn = NowMs(); if (loadMode == "pilot") pilotHiddenUntil = pn + 4000; GlowWindow.SetPilotHidden(pn < pilotHiddenUntil); }
       ApplyArtGate();
       ReadScreens(NowMs());   // the game's screen, once per tick: every feature below takes it from here
       if (explorer != null) { TickExplore(); return; }   // (TEST build: the lab's explorer runs alone)
@@ -4754,7 +4754,7 @@ namespace RealmForge {
         Log.Write("frame audit: " + (flags.Count > 0 ? "suspect " : "ok ") + FrameAudit.Key(s) + " source=" + s.Source + " frame=[" + string.Join(",", Array.ConvertAll(fr, v => ((int)Math.Round(v)).ToString())) + "]"
           + " (" + auditShots + " checked, " + auditFlags + " suspect in this app run)");
         if (auditSink == null) auditSink = new FrameAuditSink(AuditSite, AuditCode, m => Log.Write(m));
-        auditSink.Add(s, sceneX, sceneY, sceneW, sceneH, GlowWindow.Capturable);
+        auditSink.Add(s, sceneX, sceneY, sceneW, sceneH, GlowWindow.Capturable && !GlowWindow.PilotHidden);   // (the hints are in the shot only when the recorder shows them: not while the pilot hides them)
       }
     }
 
