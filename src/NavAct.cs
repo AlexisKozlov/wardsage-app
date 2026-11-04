@@ -72,7 +72,9 @@ namespace RealmForge {
       // sent: the effect is awaited
       if (s.Confidence >= NavConfidence.NoOrder && !s.State.Held) {
         if (a.Expect != null && s.Stable(now) && a.Expect(s)) return End(ActOutcome.Done, "effect");
-        foreach (var l in s.Stack) {
+        // a close whose layer is gone is done even if the next pop-up of a chain is already there
+        if (a.Closing != "" && a.Expect != null && a.Expect(s)) return End(ActOutcome.Done, "closed");
+        if (s.Stable(now)) foreach (var l in s.Stack) {   // (a layer that is there for one read - a picture flicker - is no divert)
           if (formsAtSend.Contains(l.Form)) continue;
           if (a.Keep != null && a.Keep.Contains(l.Form)) continue;
           return End(ActOutcome.Diverted, "new layer " + l.Form);

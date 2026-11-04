@@ -7,7 +7,7 @@ using RealmForge;
 
 static partial class CoreTests {
   /// <summary>The injectors (their own Random streams: the old seeds keep their runs).</summary>
-  sealed class NavCfg { public double FlickerP, FlagFlickerP, LatePopupP; public int CellLatencyMs; public long LockMs; }
+  sealed class NavCfg { public double FlickerP, FlagFlickerP, LatePopupP; public int CellLatencyMs; public long LockMs, RebuildMs; }
   static bool SimNav, SimNavCity; static NavCfg SimNavCfg = new NavCfg(); static long SimNavPlan;
 
   sealed partial class SimHost {
@@ -62,7 +62,7 @@ static partial class CoreTests {
       var v = new AutoView {
         NowMs = n, Foreground = true, H = U, Target = SimItem, Row = 2, Col = 1, Sel = G.ItemSel ? SimItem : 0, SelRow = G.ItemSel ? 2 : 0, SelCol = G.ItemSel ? 1 : 0,
         AnchorHas = true, Row1Top = G.Row1Top, Types = SimGame.ItemTypes, AutoConfirm = true, Button = tip ? SimGame.Hint.Replace(W, H) : null,
-        Hero = plan, ScreenHero = heroScreen.FormOk ? heroScreen.Hero : 0, Owner = G.Worn ? plan : 0, InputOpen = n >= G.LockUntil
+        Hero = plan, ScreenHero = heroScreen.FormOk ? heroScreen.Hero : 0, Owner = G.Worn ? plan : 0, InputOpen = n >= G.LockUntil, ListSig = G.ListGen * 31L + 7
       };
       v.TipKnown = !formsUnread && scr != null && !scr.Held && scr.Kind == ScreenKind.HeroScreen && scr.OfferRead && formsKind == ScreenKind.HeroScreen;
       v.TipShown = scr != null && ((scr.Flow ?? "") + "," + (scr.ModalWhy ?? "")).Contains(SimTip);
@@ -74,7 +74,7 @@ static partial class CoreTests {
     FilterView NavFilterView(long n) {
       bool hidden = G.ItemElsewhere && G.HideWorn;
       return new FilterView { NowMs = n, Foreground = true, W = W, H = H, Item = SimItem, Suits = new long[0], MainAttrs = new long[0], SubAttrs = new long[0], Wanted = hidden,
-        PanelOpen = (G.FilterOwn || G.GearFilter) && G.Full == SimHero, HideEquipped = G.HideWorn, OnOtherHero = G.ItemElsewhere, ItemListed = !hidden };
+        PanelOpen = (G.FilterOwn || G.GearFilter) && G.Full == SimHero, HideEquipped = G.HideWorn ^ (Cfg.FlagFlickerP > 0 && navR != null && navR.NextDouble() < Cfg.FlagFlickerP), OnOtherHero = G.ItemElsewhere, ItemListed = !hidden };
     }
 
     void EnsureNavActions() {
@@ -167,7 +167,7 @@ static partial class CoreTests {
   // ---------------------------------------------------------------- the acceptance scenarios (nav.*)
   static readonly string[] NavScenarios = {
     "nav.equip.fromAny", "nav.equip.offerChain", "nav.equip.unknownPopup", "nav.equip.tipLeftover", "nav.equip.filterLeftover", "nav.equip.heroFilterOpen",
-    "nav.equip.hideWornForeign", "nav.equip.foreignInvTab", "nav.equip.overFoundry", "nav.equip.bulkSale", "nav.equip.flicker", "nav.equip.lateCells200", "nav.equip.popupDuringEdge", "nav.equip.inputLock", "nav.city.fromAny" };
+    "nav.equip.hideWornForeign", "nav.equip.hideWorn", "nav.equip.foreignInvTab", "nav.equip.overFoundry", "nav.equip.bulkSale", "nav.equip.flicker", "nav.equip.lateCells200", "nav.equip.popupDuringEdge", "nav.equip.inputLock", "nav.city.fromAny" };
 
   static readonly string[] NavStartNames = { "City", "Hero (other hero)", "Hero (gear list)", "Inventory", "Inventory (other tab)", "Inventory (bulk)", "Foundry identify", "Foundry ascend",
     "Foundry recast", "Gem", "Artifact workshop", "Guild", "Arena", "Shop", "Popup over City", "Plan" };
@@ -190,7 +190,7 @@ static partial class CoreTests {
         g.Hero.Shown = r.Next(2) == 0 ? other : plan; g.Hero.Tab = 3; g.Hero.Part = r.Next(5); g.Push(SimHero); g.GearFilter = true; break;
       case "nav.equip.heroFilterOpen":
         g.Hero.Shown = other; g.Hero.Tab = 1 + 2 * r.Next(2); g.Hero.Part = -1; g.Push(SimHero); g.HeroFilter = true; break;
-      case "nav.equip.hideWornForeign": {   // «Скрыть надетое» on and the plan's item worn by another hero: the filter pilot has to switch it off before the item can be picked
+      case "nav.equip.hideWorn": case "nav.equip.hideWornForeign": {   // «Скрыть надетое» on and the plan's item worn by another hero: the filter pilot has to switch it off before the item can be picked
         g.HideWorn = true; g.ItemElsewhere = true;
         if (r.Next(3) != 0) { g.Hero.Shown = r.Next(2) == 0 ? plan : other; g.Hero.Tab = 3; g.Hero.Part = r.Next(3) == 0 ? -1 : 2; g.Push(SimHero); }
         break;
@@ -215,17 +215,18 @@ static partial class CoreTests {
     else if (sc == "nav.equip.lateCells200") c.CellLatencyMs = 200;
     else if (sc == "nav.equip.popupDuringEdge") c.LatePopupP = 0.15;
     else if (sc == "nav.equip.inputLock") c.LockMs = 350;
+    else if (sc == "nav.equip.hideWorn") { c.FlagFlickerP = 0.1; c.RebuildMs = 200; }
     return c;
   }
 
-  sealed class NavRes { public string Outcome = ""; public bool Bad, Hang; public string Err = ""; public long Ms; }
+  sealed class NavRes { public string Outcome = ""; public bool Bad, Hang; public string Err = ""; public long Ms; public string Hash = ""; }
 
   static NavRes NavRunOne(string sc, int seed, bool slow, bool nav, GameGeometry geo, bool verbose) {
     var r = new Random(seed * 7919 + 13);
     double failP = r.Next(3) == 0 ? 0.0 : r.NextDouble() * 0.15;
     var g = new SimGame(seed, slow, failP); g.Geo = geo; g.SpawnP = 0.01;
     long plan = 100 + seed % 30;
-    g.LockMs = NavCfgOf(sc).LockMs;
+    g.LockMs = NavCfgOf(sc).LockMs; g.ListRebuildMs = NavCfgOf(sc).RebuildMs;
     NavStart(sc, g, r, plan);
     SimNav = nav; SimNavCity = sc.StartsWith("nav.city"); SimNavCfg = NavCfgOf(sc); SimNavPlan = plan;
     var oc = new string[1]; var tmp = new Dictionary<string, int>();
@@ -237,6 +238,7 @@ static partial class CoreTests {
     res.Bad = e.Contains("\n    !! ") && !e.Contains("no end within");
     res.Hang = e.Contains("no end within");
     res.Err = e;
+    { ulong hsh = 14695981039346656037UL; foreach (char ch in g.Acts.ToString()) { hsh ^= ch; hsh *= 1099511628211UL; } res.Hash = hsh.ToString("x16"); }
     return res;
   }
 
@@ -261,6 +263,7 @@ static partial class CoreTests {
         int doneNav = 0, doneOld = 0, hang = 0, bad = 0, halts = 0, refNav = 0, refOld = 0; var why = new SortedDictionary<string, int>();
         for (int s = from; s < from + per; s++) {
           var a = NavRunOne(sc, s, slow, true, geo, verbose);
+          if (Environment.GetEnvironmentVariable("NAV_DIGEST") != null) Console.WriteLine("digest " + sc + (slow ? " slow " : " fast ") + s + " " + a.Hash + " " + a.Outcome);
           var b = sc.StartsWith("nav.city") ? null : NavRunOne(sc, s, slow, false, geo, false);
           if (a.Outcome.StartsWith("done")) doneNav++;
           else if (a.Outcome.StartsWith("navhalt") || a.Outcome.StartsWith("halt:")) { halts++; int c; why.TryGetValue(a.Outcome, out c); why[a.Outcome] = c + 1; }

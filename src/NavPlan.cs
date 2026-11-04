@@ -17,7 +17,7 @@ namespace RealmForge {
     public string Key() { return Goal + "|" + Hero + "|" + Slot + "|" + Tab; }
   }
 
-  public enum StepKind { None, Wait, Act, AtTarget, Halt }
+  public enum StepKind { None, Wait, Act, AtTarget, Halt, Reset }
 
   public sealed class NavStep {
     public StepKind Kind;
@@ -28,6 +28,8 @@ namespace RealmForge {
     public static readonly NavStep Nothing = new NavStep { Kind = StepKind.None };
     public static NavStep Wait(string why) { return new NavStep { Kind = StepKind.Wait, Why = why }; }
     public static NavStep Halt(string why) { return new NavStep { Kind = StepKind.Halt, Why = why }; }
+    /// <summary>The step cannot go on (an in-place action failed its own check): the run goes back to the city and re-enters (Navigator.Reset).</summary>
+    public static NavStep Reset(string why) { return new NavStep { Kind = StepKind.Reset, Why = why }; }
     public static NavStep Of(Act a, string edge) { a.Edge = a.Edge != "" ? a.Edge : edge; return new NavStep { Kind = StepKind.Act, Act = a, Edge = edge, Why = a.Why }; }
   }
 
@@ -156,13 +158,8 @@ namespace RealmForge {
       var gate = io.Gate; var st = s.State;
       if (gate.UnknownStall(t.Owner, st, now)) return NavStep.Halt("unknown_screen:" + (st.TopForm ?? ""));
       if (gate.EscapeDue(t.Owner, st, now)) return EscapeStep(t.Owner, s, ClickTarget.EscapeBack, "pop:escape");
-      if (!gate.UnknownBackDue(t.Owner, st, now)) {
-        // the gate's back press is not allowed here (a pilot's flow form under it, a known screen's form shown ...) or not due: a few seconds, then a stop with the form's name
-        long since; if (!m.WaitSince.TryGetValue("unknown-screen", out since)) { since = now; m.WaitSince["unknown-screen"] = now; }
-        if (now - since > 15000 && gate.UnknownBacks(t.Owner) < ClickGate.MaxUnknownBacks) return NavStep.Halt("unknown_screen:" + (st.TopForm ?? ""));
-        return NavStep.Wait("unknown screen " + st.TopForm);
-      }
-      m.WaitSince.Remove("unknown-screen");
+      if (!gate.UnknownBackDue(t.Owner, st, now)) return NavStep.Wait("unknown screen " + st.TopForm);   // (the gate's UnknownStall and the watchdog end it by name)
+
       double W = io.W, H = io.H, U = io.U;
       var md = ClickGate.MapExit(st, W, H, U);
       double bx = md.Move == MapMove.Back && md.Point != null ? md.Point.X : Hg.BackX * U, by = md.Move == MapMove.Back && md.Point != null ? md.Point.Y : Hg.BackY * U;

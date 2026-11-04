@@ -98,7 +98,7 @@ static partial class CoreTests {
       // a layer that comes while the effect is awaited
       io.Verdict = GateVerdict.Allow; io.FreshState = cs; var snapC = ScreenReader.Build(cs, io.NowMs, null); snapC.StableSinceMs = io.NowMs - 1000;
       ac = new ActClick(); ac.Start(act, io.NowMs); Check(ac.Tick(io, snapC, io.NowMs) == ActOutcome.Running, "nav act: sent again for a new start");
-      var pop = ScreenReader.Build(popS, io.NowMs + 300, null);
+      var pop = ScreenReader.Build(popS, io.NowMs + 300, null); pop.StableSinceMs = io.NowMs - 1000;
       var dv = ac.Tick(io, pop, io.NowMs + 300);
       Check(dv == ActOutcome.Diverted, "nav act: a new layer during the wait is a divert, not a failure (" + dv + " " + ac.Detail + ")");
       // the wrong screen is never clicked
@@ -237,8 +237,14 @@ static partial class CoreTests {
       var io = new FakeNavIo(); var rdr = new ScreenReader(); var nv = new Navigator(ClickOwner.Equip);
       var wait = NavState(ScreenKind.City, 0, 0, 0, "", new[] { C }); wait.Held = true;
       nv.SetTarget(new NavTarget { Goal = NavGoal.HeroGear, Hero = 7 }, new List<IAtTargetAction>());
-      for (int i = 0; i < 700 && nv.State != "halted"; i++) { io.NowMs += 100; nv.Tick(io, rdr.Update(wait, io.NowMs)); }
-      Check(nv.State == "halted" && nv.HaltWhy.StartsWith("no_progress"), "nav watchdog: a screen that never reads ends in a named stop (" + nv.State + " " + nv.HaltWhy + ")");
+      for (int i = 0; i < 2500 && nv.State != "halted"; i++) { io.NowMs += 100; nv.Tick(io, rdr.Update(wait, io.NowMs)); }
+      Check(nv.State == "halted" && nv.HaltWhy.StartsWith("recipe_stuck:watchdog"), "nav watchdog: a screen that never reads is three resets, then a named stop (" + nv.State + " " + nv.HaltWhy + ")");
+      // verify-or-reset: a click whose effect never shows is a reset (back to the city, then the step again), MaxResets times, then recipe_stuck:<step>:<outcome>
+      var io2 = new FakeNavIo(); var rd2 = new ScreenReader(); var nv2 = new Navigator(ClickOwner.Equip);
+      var cityS2 = NavState(ScreenKind.City, 0, 0, 0, "", new[] { "Form_MainCity" }); io2.FreshState = cityS2;
+      nv2.SetTarget(new NavTarget { Goal = NavGoal.HeroGear, Hero = 7 }, new List<IAtTargetAction>());
+      for (int i = 0; i < 1500 && nv2.State != "halted"; i++) { io2.NowMs += 100; nv2.Tick(io2, rd2.Update(cityS2, io2.NowMs)); }
+      Check(nv2.State == "halted" && nv2.HaltWhy.StartsWith("recipe_stuck:graph:hero:NoEffect") && io2.Sent.Count == Navigator.MaxResets + 1, "nav reset: a step with no effect is retried after a reset " + Navigator.MaxResets + " times, then a named stop (" + nv2.HaltWhy + ", " + io2.Sent.Count + " clicks)");
     }
   }
 }

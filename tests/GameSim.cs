@@ -75,6 +75,8 @@ static partial class CoreTests {
     /// <summary>--nav hide-worn: the plan's item is worn by another hero and the game's «Скрыть надетое» is on, so the list does not show it; FilterOwn = the gear filter's pop-up the filter pilot opened
     /// (the list beside it takes clicks, the pop-up's toggle switches HideWorn).</summary>
     public bool HideWorn, ItemElsewhere, FilterOwn;
+    /// <summary>--nav hideWorn: the list is rebuilt this long after the «Скрыть надетое» toggle (a pick then is lost); ListGen counts the rebuilds (the host's list signature).</summary>
+    public long ListRebuildMs, RebuildUntil; public int ListGen;
     /// <summary>--nav inputLock: the game's input is locked LockMs after every push / pop of a form (the UILocker): a click then lands on the blocker, an Escape is dropped (LostLocked).</summary>
     public long LockMs, LockUntil; public int LostLocked;
     public double Row1Top { get { return (ItemGeo.ViewTop + ListGeometry.TopPad) * U; } }
@@ -287,12 +289,12 @@ static partial class CoreTests {
       if (ScreenMap.OnNever(top, x, y, W, H, U)) { Bad.Add("CLICK ON A NEVER-CLICK BUTTON of " + top + " @" + (int)x + "," + (int)y + " (" + tg + ")"); return; }
       Say("click " + tg + " @" + (int)x + "," + (int)y + " on " + top); Acts.Append(Now + " c" + (int)x + "," + (int)y + ";");
       if (top == SimHero && Full == SimHero && tg == ClickTarget.EquipFilter && !GearFilter && !HeroFilter && Hero.Part >= 0) {
-        long lf = Lat();
+        long lf = 250 + R2.Next(150);   // (the pop-up's own animation, not the game's server latency)
         if (Near(x, y, (0.029 + 0.379 / 2) * U, Ui.FromBottom(0.9275, W, H), 30)) { Later(lf, () => { FilterOwn = !FilterOwn; }); return; }
-        if (FilterOwn && Near(x, y, NavFg.X(NavFg.HideEquippedX, W, H), NavFg.Y(NavFg.HideEquippedY, W, H), 30)) { Later(lf, () => { HideWorn = !HideWorn; }); return; }
+        if (FilterOwn && Near(x, y, NavFg.X(NavFg.HideEquippedX, W, H), NavFg.Y(NavFg.HideEquippedY, W, H), 30)) { Later(lf, () => { HideWorn = !HideWorn; ListGen++; if (ListRebuildMs > 0) { RebuildUntil = Now + ListRebuildMs; Later(ListRebuildMs, () => { ListGen++; }); } }); return; }
       }
       if (top == SimHero && Full == SimHero && FilterOwn && tg == ClickTarget.EquipClosePopup && Near(x, y, NavFg.X(NavFg.MainCloseX, W, H), NavFg.Y(NavFg.CloseY, W, H), 20)) { Later(Lat(), () => { FilterOwn = false; }); return; }
-      if (top == SimHero && ItemPhase && ItemElsewhere && HideWorn && tg == ClickTarget.EquipNav && Near(x, y, ItemX, ItemY, 6)) return;   // (the item is not in the list)
+      if (top == SimHero && ItemPhase && ((ItemElsewhere && HideWorn) || Now < RebuildUntil) && tg == ClickTarget.EquipNav && Near(x, y, ItemX, ItemY, 6)) return;   // (the item is not in the list)
       if (top == SimHero && Full == SimHero && (GearFilter || HeroFilter)) {
         long latp = Lat();
         if (GearFilter) { if (tg == ClickTarget.EquipClosePopup && Near(x, y, NavFg.X(NavFg.MainCloseX, W, H), NavFg.Y(NavFg.CloseY, W, H), 20)) Later(latp, () => { GearFilter = false; }); return; }
@@ -1473,6 +1475,7 @@ static partial class CoreTests {
     TipOverSlots();
     NavTests();
     TwoHeroesTests();
+    GuidePathTests();
     EquipStepTiming();
     // (9) a list is settled after two equal reads; a moving one (a glide after a drag, a slot filter) is not, an unreadable one neither
     {

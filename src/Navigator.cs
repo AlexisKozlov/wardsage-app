@@ -32,12 +32,12 @@ namespace RealmForge {
 
   public sealed class NavMemory {
     public readonly Dictionary<string, int> Rung = new Dictionary<string, int>();
-    public readonly Dictionary<string, int> EdgeFails = new Dictionary<string, int>();
+    public readonly Dictionary<string, int> Resets = new Dictionary<string, int>();
+    public int TotalResets;
     public readonly Dictionary<string, long> NextAt = new Dictionary<string, long>();
     public readonly Dictionary<string, long> SeenAt = new Dictionary<string, long>();
     public readonly Dictionary<string, long> WaitSince = new Dictionary<string, long>();
     public readonly LiveStill OfferLive = new LiveStill(); public string OfferLiveForm = "";
-    public int Replans;
     public long NoOrderSince = -1;
     /// <summary>One try per key and gap: true = go ahead.</summary>
     public bool Due(string key, long now, int gapMs) {
@@ -58,7 +58,7 @@ namespace RealmForge {
   }
 
   public sealed class Navigator {
-    public const int MaxEdgeFails = 3, MaxReplans = 3, NoProgressMs = 20000, RunCapMs = 180000, WaitCapMs = 90000, OrderUnreadMs = 15000;
+    public const int MaxResets = 3, MaxResetsTotal = 8, NoProgressMs = 20000, RunCapMs = 180000, WaitCapMs = 90000, OrderUnreadMs = 15000;
     /// <summary>idle | work | at_target | done | halted</summary>
     public string State = "idle";
     public string HaltWhy = "";
@@ -71,7 +71,8 @@ namespace RealmForge {
     NavTarget target; IList<IAtTargetAction> actions = new List<IAtTargetAction>();
     NavMemory mem = new NavMemory(); readonly ActClick act = new ActClick();
     long startedAt = -1, lastTickAt = -1, pausedMs, lastProgress; string lastSig = "", logged = "", curEdge = "";
-    bool popCity, needResume, tipSeen;
+    bool popCity, needResume, tipSeen, unknownWatch; string unknownWhy = "";
+    readonly List<string> recent = new List<string>();
     public Navigator(ClickOwner owner) { Owner = owner; }
 
     public void SetTarget(NavTarget t, IList<IAtTargetAction> acts) {
@@ -104,7 +105,11 @@ namespace RealmForge {
       if (s == null) return;
       if (s.HasTip()) tipSeen = true; else if (tipSeen) { tipSeen = false; io.Gate.ResetTipEscapes(Owner); }
       mem.Prune(s, now);
-      if (s.StateKey != lastSig) { lastSig = s.StateKey; lastProgress = now; }
+      if (s.StateKey != lastSig) {   // a new state is progress; a state seen a moment ago (a flicker between two) is not
+        lastSig = s.StateKey;
+        if (!recent.Contains(lastSig)) lastProgress = now;
+        recent.Add(lastSig); if (recent.Count > 8) recent.RemoveAt(0);
+      }
       // the window table's order: 15 s without it is a stop with a reason
       if (s.Confidence == NavConfidence.NoOrder) { if (mem.NoOrderSince < 0) mem.NoOrderSince = now; if (now - mem.NoOrderSince > OrderUnreadMs) { Halt(io, "order_unread"); return; } }
       else mem.NoOrderSince = -1;
@@ -116,8 +121,8 @@ namespace RealmForge {
       }
       if (State == "work" && now - startedAt - pausedMs > RunCapMs) { Halt(io, "run_cap"); return; }
       if (State == "work" && now - lastProgress > NoProgressMs) {
-        if (mem.Replans == 0 && !popCity) { mem.Replans++; popCity = true; Recoveries++; lastProgress = now; io.Log("nav: recover R2 no_progress:" + Say); }
-        else { Halt(io, "no_progress:" + (Say == "" ? "?" : Say)); return; }
+        Reset(io, "watchdog", "no_progress:" + (Say == "" ? "?" : Say), now); lastProgress = now;
+        if (State == "halted") return;
       }
       var tgt = target;
       if (popCity) {
@@ -136,6 +141,7 @@ namespace RealmForge {
         case StepKind.Wait: Say = step.Why; return;
         case StepKind.None: return;
         case StepKind.Halt: Halt(io, step.Why); return;
+        case StepKind.Reset: Reset(io, step.Edge != "" ? step.Edge : "step", step.Why, now); return;
         case StepKind.Act:
           StartAct(io, s, step.Act, now); return;
         case StepKind.AtTarget:
@@ -163,6 +169,7 @@ namespace RealmForge {
         var r = a.Step(s, tgt, io, now);
         if (r == null) continue;
         if (r.Kind == StepKind.Halt) { Halt(io, r.Why); return; }
+        if (r.Kind == StepKind.Reset) { Reset(io, "act:" + a.Name, r.Why, now); return; }
         if (r.Kind == StepKind.Act) { StartAct(io, s, r.Act, now); return; }
         Say = r.Why; return;
       }
@@ -170,11 +177,25 @@ namespace RealmForge {
     }
 
     void StartAct(INavIo io, Snapshot s, Act a, long now) {
-      if (a.Edge != "" && mem.Blocked("retry:" + a.Edge, now)) { Say = "retry wait " + a.Edge; return; }
       curEdge = a.Edge;
       act.Start(a, now);
       var oc = act.Tick(io, s, now);
       if (oc != ActOutcome.Running) Handle(io, oc, now);
+    }
+
+    /// <summary>Verify-or-reset (docs/specs/navigator.md 6b.1): a step either shows its effect or the run goes back to the city (the modal sweep and the exits are the same
+    /// pop ladder as ever) and re-enters from the first step that does not hold. A step that fails MaxResets times, or MaxResetsTotal resets in a run: a named stop.</summary>
+    void Reset(INavIo io, string edge, string why, long now) {
+      int n; mem.Resets.TryGetValue(edge, out n); n++; mem.Resets[edge] = n; mem.TotalResets++; Recoveries++;
+      if (edge == "watchdog" && why.StartsWith("no_progress:unknown screen")) { unknownWatch = true; unknownWhy = why.Substring("no_progress:unknown screen".Length).Trim(); }
+      if (n > MaxResets || mem.TotalResets > MaxResetsTotal) {
+        // (a screen nobody knows that the gate will not let us leave: named by its form, not as a stuck step)
+        if (edge == "watchdog" && unknownWatch) Halt(io, "unknown_screen:" + unknownWhy);
+        else Halt(io, "recipe_stuck:" + edge + ":" + why);
+        return;
+      }
+      popCity = true; lastProgress = now; recent.Clear();
+      io.Log("nav: reset " + edge + " (" + why + ") #" + n + "/" + mem.TotalResets);
     }
 
     void Handle(INavIo io, ActOutcome oc, long now) {
@@ -183,19 +204,11 @@ namespace RealmForge {
       switch (oc) {
         case ActOutcome.Done:
           if (act.SentAt > 0 || (a != null && a.Fire)) { Clicks++; lastProgress = now; }
-          if (edge != "") mem.EdgeFails.Remove(edge);
+          if (edge != "") mem.Resets.Remove(edge);
           return;
         case ActOutcome.Halted: Halt(io, "gate_" + io.Gate.HaltReason(Owner)); return;
-        case ActOutcome.NoEffect: case ActOutcome.Timeout: case ActOutcome.Denied:
-          if (edge == "") return;
-          int n; mem.EdgeFails.TryGetValue(edge, out n); n++; mem.EdgeFails[edge] = n;
-          mem.Hold("retry:" + edge, now + ClickGate.RetrySettleMs);
-          if (n < MaxEdgeFails) { Recoveries++; io.Log("nav: recover R0 " + edge + " try " + n); return; }
-          mem.EdgeFails.Remove(edge);
-          if (++mem.Replans > MaxReplans) { Halt(io, "nav_stuck:" + edge + ":" + oc); return; }
-          Recoveries++; popCity = true; io.Log("nav: recover R2 " + edge);
-          return;
-        default: return;   // Diverted / WrongScreen / NotSent: nothing is counted; the next plan starts from the new snapshot
+        case ActOutcome.NotSent: return;   // nothing was clicked: the same step runs again on the next tick
+        default: Reset(io, edge != "" ? edge : (a != null ? a.Why : "step"), oc.ToString(), now); return;
       }
     }
   }
