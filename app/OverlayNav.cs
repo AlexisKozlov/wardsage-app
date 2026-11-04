@@ -180,8 +180,7 @@ namespace RealmForge {
       var snap = navReader.Update(scr, now, io.Picture);
       int slot = hintKind == "slot" ? hintSlot
                : scr != null && scr.Kind == ScreenKind.HeroScreen && scr.Hero == runHero && scr.HeroTab == HeroGeometry.GearTab && scr.HeroSlot >= 0 ? scr.HeroSlot : -1;
-      var t = new NavTarget { Goal = slot >= 0 ? NavGoal.HeroEquip : NavGoal.HeroGear, Hero = runHero, Slot = slot, Owner = ClickOwner.Equip };
-      navEquip.SetTarget(t, navActions);
+      navEquip.SetRecipe(NavRecipes.Get("equip"), new Dictionary<string, long> { { "hero", runHero }, { "slot", slot } }, navActions);
       navEquip.Tick(io, snap);
       string say;
       if (navEquip.State == "halted") say = navEquip.HaltWhy.StartsWith("gate_") ? navEquip.HaltWhy : "nav_" + navEquip.HaltWhy;

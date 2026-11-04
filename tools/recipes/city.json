@@ -1,0 +1,7 @@
+{
+  "id": "city", "v": 1, "game": "1.6.47.841.1", "owner": "Equip", "params": [],
+  "note": "Back to the city: no click of its own, the reset ladder (the modal sweep and the exits) does it.",
+  "steps": [
+    { "id": "city", "from": "Form_MainCity", "expect": { "form": "Form_MainCity" } }
+  ]
+}

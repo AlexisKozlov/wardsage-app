@@ -14,7 +14,9 @@ namespace RealmForge {
     public int Slot = -1;
     public int Tab = -1;
     public ClickOwner Owner = ClickOwner.Equip;
-    public string Key() { return Goal + "|" + Hero + "|" + Slot + "|" + Tab; }
+    /// <summary>The recipe this target runs (src/NavRecipe.cs; "" = the one of the goal) and the step it ends at ("" = all navigation steps).</summary>
+    public string RecipeId = "", UpTo = "";
+    public string Key() { return Goal + "|" + Hero + "|" + Slot + "|" + Tab + "|" + RecipeId + "|" + UpTo; }
   }
 
   public enum StepKind { None, Wait, Act, AtTarget, Halt, Reset }
@@ -53,9 +55,6 @@ namespace RealmForge {
   }
 
   public static class NavRoutes {
-    static readonly HeroGeometry Hg = new HeroGeometry();
-    static readonly HintGeometry Slots = new HintGeometry();
-
     /// <summary>The graph's path key of a goal (UiGraph.PathOf), null = the city itself.</summary>
     public static string GraphKey(NavGoal g) {
       switch (g) {
@@ -75,38 +74,14 @@ namespace RealmForge {
       return UiGraph.Chain(UiGraph.PathOf(k));
     }
 
-    static Act Nav(NavTarget t, INavIo io, string edge, double x, double y, string baseForm, Func<Snapshot, bool> exp, string why) {
-      return new Act { Owner = t.Owner, Target = ClickTarget.EquipNav, Kind = ActKind.Click, X = x, Y = y, Base = baseForm, Expect = exp, Why = why, Edge = edge, Forward = true, WantCity = true };
-    }
-
+    /// <summary>The target's navigation as waypoints: the steps of its recipe (data: tools/recipes/*.json), up to the step the goal ends at.</summary>
     public static List<Waypoint> Of(NavTarget t) {
-      var l = new List<Waypoint>();
-      if (t.Goal == NavGoal.City) {
-        l.Add(new Waypoint { Key = "city", Form = "Form_MainCity", Holds = (s, g) => s.Kind == ScreenKind.City });
-        return l;
-      }
-      if (t.Goal != NavGoal.HeroScreen && t.Goal != NavGoal.HeroGear && t.Goal != NavGoal.HeroEquip) return l;
-      // City -> «Герои»
-      l.Add(new Waypoint { Key = "graph:hero", Form = "Form_CharactorMain", Holds = (s, g) => s.Kind == ScreenKind.HeroScreen,
-        Edge = (s, g, io) => {
-          if (s.Kind != ScreenKind.City || !io.Picture("heroesButton")) return null;
-          return Nav(g, io, "graph:hero", io.W - Hg.HeroesBtnDX * io.U, io.H - Hg.HeroesBtnDY * io.U, "Form_MainCity", n => n.Kind == ScreenKind.HeroScreen, "city: Heroes");
-        } });
-      if (t.Goal == NavGoal.HeroScreen) return l;
-      // the gear list of another hero covers the grid: its back arrow closes it
-      l.Add(new Waypoint { Key = "facet:listClosed", Form = "Form_CharactorMain", Holds = (s, g) => s.State.Hero == g.Hero || s.State.HeroSlot < 0,
-        Edge = (s, g, io) => Nav(g, io, "facet:listClosed", Hg.BackX * io.U, Hg.BackY * io.U, "Form_CharactorMain", n => n.State.HeroSlot < 0, "hero: close the gear list") });
-      l.Add(new Waypoint { Key = "seek:hero", Form = "Form_CharactorMain", Holds = (s, g) => s.State.Hero == g.Hero, Seek = "hero" });
-      l.Add(new Waypoint { Key = "facet:gearTab", Form = "Form_CharactorMain", Holds = (s, g) => s.State.HeroTab == HeroGeometry.GearTab || s.State.HeroTab < 0,
-        Edge = (s, g, io) => Nav(g, io, "facet:gearTab", io.W - Hg.GearTabDX * io.U, Hg.GearTabY * io.U, "Form_CharactorMain", n => n.State.HeroTab == HeroGeometry.GearTab, "hero: gear tab") });
-      if (t.Goal == NavGoal.HeroGear || t.Slot < 0) return l;
-      l.Add(new Waypoint { Key = "facet:slot", Form = "Form_CharactorMain", Holds = (s, g) => s.State.HeroSlot == g.Slot,
-        Edge = (s, g, io) => {
-          var r = Slots.Slot(g.Slot, io.W, io.H); if (r == null) return null;
-          int sl = g.Slot;
-          return Nav(g, io, "facet:slot", r[0] + r[2] / 2.0, r[1] + r[3] / 2.0, "Form_CharactorMain", n => n.State.HeroSlot == sl, "hero: slot " + sl);
-        } });
-      return l;
+      string id = t.RecipeId != "" ? t.RecipeId : t.Goal == NavGoal.City ? "city" : t.Goal == NavGoal.HeroScreen || t.Goal == NavGoal.HeroGear || t.Goal == NavGoal.HeroEquip ? "equip" : "";
+      var r = id != "" ? NavRecipes.Get(id) : null;
+      if (r == null) return new List<Waypoint>();
+      string upTo = t.UpTo != "" ? t.UpTo : t.Goal == NavGoal.HeroScreen ? "heroes" : t.Goal == NavGoal.HeroGear ? "gearTab" : "";
+      var args = new Dictionary<string, long> { { "hero", t.Hero }, { "slot", t.Slot } };
+      return NavRecipes.Compile(r, args, upTo, t.Owner);
     }
   }
 
