@@ -37,7 +37,9 @@
 //                 "raw":[[frame,ctl,wave,active,monsters,ignore,state]]},
 //        "dmgT":{"<controller>:<unit>":[[frame,damage,heal,taken]]},            (v3: the statistics about every second, on change)
 //        "units":{"<entity uid>":{"unit":U,"c":C,["tower":1,]"max":M,"pts":[[frame,x100,y100,z100,hp‰,face]],["gone":F]}},
-//        "unitsCut":{"units":N,"pts":M}}                                          (v3, arena only; what the caps cut)
+//        "unitsCut":{"units":N,"pts":M},                                          (v3, arena only; what the caps cut)
+//        "atk":{"<hero key>":{"unit":U,"c":C,"s0":S0,"s1":S1,"ev":[[castFrame,skill,kind,n,cdMax,runFrames|-1,flags]],"nT":[[frame,nAttackCD]]}},
+//        "atkMeta":{"pollMs":P,"polls":N,"torn":T,"fpp":{"0":a,"1":b,"2":c,"3+":d},"cut":X}}   (test build only: src/AttackLog.cs)
 // v3 adds "dmgT" and "units" (and "unitsCut" when something was cut); every v2 field is as before. dmgT: per (controller,
 // unit) the cumulative damage / heal / taken (StatLine) at the frame of each reading, a point only when a value changed.
 // units: every unit with a position on the arena's field (heroes' towers, monsters, bases ...) about every 0.4 s: its unit
@@ -46,6 +48,8 @@
 // than 0.05 or the HP‰ or the face changed (the first and the last sample are always kept); "gone" = the frame of the first
 // sample the entity was no longer listed in. At most MaxUnits (400) units and MaxPts (4000) points each.
 // exact = 1 for a placement from a command, 0 for a sampled one (tile from the map's tower grid, frame ≤ ~3 late).
+// atk / atkMeta (test build only, AttackLog set): each hero's derived basic attacks, ultimates and other casts by frame, with the attack
+// cooldown's changes; its keys are the same as "heroes". Like dmgT and units they are trace: StripTrace removes them from the account snapshot.
 // v1 files (before 1.6.24) have no "c": every hero by uid, both arena sides merged.
 using System;
 using System.Collections.Generic;
@@ -145,6 +149,8 @@ namespace RealmForge {
     /// <summary>The map's tower grid width (arena): the tiles of the non-player sides are mirrored with it. 0 = none.</summary>
     public int GridW;
     public int Commands { get { return cmds.Count; } }
+    /// <summary>The attack event log (test build only; null = none): written after "units" as "atk" and "atkMeta".</summary>
+    public AttackLog Atk;
 
     static ulong HeroKey(uint c, uint uid) { return ((ulong)c << 32) | uid; }
     /// <summary>A builder for the layout data in force (src/Layout.cs; there is none: nothing records a fight).</summary>
@@ -338,10 +344,10 @@ namespace RealmForge {
       if (unitsCutSet.Count > 0 || ptsCut > 0) sb.Append(",\"unitsCut\":{\"units\":").Append(unitsCutSet.Count).Append(",\"pts\":").Append(ptsCut).Append('}');
     }
 
-    /// <summary>The timeline's JSON without the v3 trace ("dmgT", "units", "unitsCut"): what goes to the site for now.</summary>
+    /// <summary>The timeline's JSON without the v3 trace ("dmgT", "units", "unitsCut", "atk", "atkMeta"): what goes to the site for now.</summary>
     public static string StripTrace(string json) {
       if (string.IsNullOrEmpty(json)) return json;
-      foreach (var key in new[] { ",\"dmgT\":{", ",\"units\":{", ",\"unitsCut\":{" }) {
+      foreach (var key in new[] { ",\"dmgT\":{", ",\"units\":{", ",\"unitsCut\":{", ",\"atk\":{", ",\"atkMeta\":{" }) {
         int at = json.IndexOf(key, StringComparison.Ordinal);
         if (at < 0) continue;
         int depth = 0, i = at + key.Length - 1, end = -1;
@@ -666,6 +672,8 @@ namespace RealmForge {
         sb.Append('}');
       }
       if (unitTracks.Count > 0) UnitsJson(sb);
+      var atk = Atk;
+      if (atk != null && atk.HasData) atk.AppendJson(sb, primary);
       return sb.Append('}').ToString();
     }
 

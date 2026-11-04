@@ -48,7 +48,12 @@ namespace RealmForge {
       // the code-redeem window's input text and the tip form's lists (src/CodeWatch.cs, test build)
       "InputField.m_Text", "Form_CommonTips.m_MoveTips", "Form_CommonTips.m_ShowTips", "Form_CommonTips.m_DisappearTips", "Form_CommonTips.CommonData.str",
       // per-skill battle statistics (src/BattleTimeline.cs ReadSkillStats; test build)
-      "StatisticsComponent.m_vSkillDamage", "SkillDamageStatisticsData.vDamageAmount" };
+      "StatisticsComponent.m_vSkillDamage", "SkillDamageStatisticsData.vDamageAmount",
+      // the attack event log (src/AttackLog.cs, src/BattleTimeline.cs ReadAttackState; test build) and the base attributes' skill arrays (BaseAttrs)
+      "SkillComponent.cUseSkill", "SkillComponent.vSkillConvertRelations", "SkillComponent.vSkillCDs", "SkillComponent.ArraySlots",
+      "StateScript.m_bRunning", "StateScript.m_skillId", "SkillCDData.iSkillID", "SkillCDData.iCoolDown", "SkillCDData.iCoolDownMax",
+      "SkillCDData.iLastTime", "SkillCDData.bPause", "BattleAttributeData.m_nAttackCD",
+      "stBattleBaseAttr.iSkills", "stBattleBaseAttr.iSkillLevels" };
 
     public string Game { get; private set; }
     /// <summary>The data's "asm" fingerprint (null = none).</summary>

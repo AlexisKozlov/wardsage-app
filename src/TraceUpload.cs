@@ -1,4 +1,4 @@
-// RealmForge — the arena and boss fights' detailed record (the v3 timeline: "dmgT", "units", src/TimelineBuilder.cs) to the site, once
+// RealmForge — the arena and boss fights' detailed record (the v3 timeline: "dmgT", "units", "atk" (test build), src/TimelineBuilder.cs) to the site, once
 // per fight. The snapshot upload strips the trace (BattleCapture.BattlesJson); here the whole kept fight file goes, gzipped.
 //
 // Contract (implemented by the site, lib/battleTrace/handler.ts):
@@ -79,15 +79,20 @@ namespace RealmForge {
 
     /// <summary>The request body for a kept fight file's JSON, or null with the reason: neither an arena, a boss nor a Malric fight
     /// (no stage, or another stage), no timeline v3 with a trace ("units", "dmgT" or the heroes' skill damage), or over the size limit.</summary>
-    public static string BuildPayload(string fileJson, out string skip) {
+    public static string BuildPayload(string fileJson, out string skip) { return BuildPayload(fileJson, Channel.IsTest, out skip); }
+
+    /// <summary>As above; <paramref name="atkAllowed"/> (the test build): a fight with an attack event log ("atk") counts as a trace and
+    /// is sent whatever its 7-digit stage is.</summary>
+    public static string BuildPayload(string fileJson, bool atkAllowed, out string skip) {
       skip = null;
       var o = MiniJson.AsObject(MiniJson.TryParse(fileJson));
       if (o == null) { skip = "not a fight file"; return null; }
       int stage = Count(o, "stage");
-      if (stage < 1000000 || stage > 9999999 || (!IsArenaStage(stage) && !IsMalrikStage(stage) && !IsBossFight(stage, MiniJson.GetString(o, "screen")))) { skip = "not an arena, boss or Malric fight"; return null; }
       var tl = Obj(o, "timeline");
+      bool atk = atkAllowed && tl != null && HasEntries(tl, "atk");
+      if (stage < 1000000 || stage > 9999999 || (!atk && !IsArenaStage(stage) && !IsMalrikStage(stage) && !IsBossFight(stage, MiniJson.GetString(o, "screen")))) { skip = "not an arena, boss or Malric fight"; return null; }
       if (tl == null || Count(tl, "v") < 3) { skip = "no timeline v3"; return null; }
-      if (!HasEntries(tl, "units") && !HasEntries(tl, "dmgT") && !HasSkills(tl)) { skip = "no trace in the timeline"; return null; }
+      if (!atk && !HasEntries(tl, "units") && !HasEntries(tl, "dmgT") && !HasSkills(tl)) { skip = "no trace in the timeline"; return null; }
       string at = MiniJson.GetString(o, "at");
       DateTime t;
       if (string.IsNullOrEmpty(at) || !DateTime.TryParse(at, CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out t)) { skip = "no time"; return null; }

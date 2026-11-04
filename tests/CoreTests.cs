@@ -893,6 +893,8 @@ static partial class CoreTests {
 
     Console.WriteLine("Fight timeline (src/TimelineBuilder.cs: samples of the running fight + its command record):");
     TimelineTests();
+    Console.WriteLine("Attack event log (src/AttackLog.cs, test build only: the cooldown decode, caps, upload, offsets):");
+    AttackLogTests.Run(Check);
 
     Console.WriteLine("Error reports (src/ErrorReport.cs: opt-in, scrubbed, deduped, capped):");
     ErrorReportTests(mock);
@@ -2448,7 +2450,7 @@ static partial class CoreTests {
     string v39 = Path.Combine(web, "1.6.39.829.1.json");
     if (File.Exists(v39)) {
       var l39 = GameLayout.Parse(File.ReadAllText(v39, Encoding.UTF8), "1.6.39.829.1");
-      bool all = l39 != null; if (all) foreach (var k in GameLayout.FieldKeys) if (!k.StartsWith("StatisticsComponent.") && !k.StartsWith("SkillDamage") && l39.FieldOffset(k) <= 0) all = false;
+      bool all = l39 != null; if (all) foreach (var k in GameLayout.FieldKeys) if (!k.StartsWith("StatisticsComponent.") && !k.StartsWith("Skill") && !k.StartsWith("StateScript.") && !k.StartsWith("BattleAttributeData.") && !k.StartsWith("stBattleBaseAttr.") && l39.FieldOffset(k) <= 0) all = false;
       Check(all, "the site's layout file 1.6.39.829.1 has the list grid's field offsets");
     }
     LayoutChecksums();

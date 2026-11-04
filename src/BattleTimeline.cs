@@ -48,6 +48,10 @@
 //     Not verified on a live arena fight yet.
 //   Unit trace (arena, ReadUnits): every PositionComponent of the world -> _entity 0x18 -> Entity <m_uID> 0x10; once per
 //     entity: its AttributeComponent (m_tableData m_ID, m_battleAttr) and OwnerRelation cUid.
+//   Attack log (test build, FightRecorder.AttackLog, src/AttackLog.cs; ReadAttackState): SkillComponent cUseSkill 0x48 (StateScript:
+//     m_bRunning 0x49, m_skillId 0x4C), vSkillConvertRelations 0x80, vSkillCDs 0xA0 (Dictionary<int, SkillCDData>), ArraySlots 0xA8
+//     (int[]: [0] basic attack, [1] ultimate); SkillCDData: iSkillID 0x10, iCoolDown 0x18, iCoolDownMax 0x1C, iLastTime 0x20, bPause
+//     0x28; BattleAttributeData m_nAttackCD 0x25C. Layout "field" section (RFX.AtkOffsets), built-in only for 1.6.46 / 1.6.47.
 //   .NET collections: Dictionary entries 0x18, count 0x20; Entry<int|uint, ref> = {hashCode, next, key, value@8};
 //     Entry<uint, int> = {hashCode, next, key, value}; List<T> _items 0x10, _size 0x18.
 using System;
@@ -90,14 +94,36 @@ namespace RealmForge {
       d[-1] = BitConverter.ToUInt32(b, 0x130);  // iPower
       d[-2] = Fix(b, 0xB8);                     // iCritResistance
       d[-3] = Fix(b, 0xE8);                     // iAttackAngerHedging
-      // iSkills 0x180 / iSkillLevels 0x188 (int[]): the skills the hero fights with — its own, its gear sets' and its
-      // artifact's, the opponent's too (the opponents' list has only their stats): -100-i = skill id, -200-i = its level
-      int[] ids = IntArray(BitConverter.ToUInt64(b, 0x180), 40), lvs = IntArray(BitConverter.ToUInt64(b, 0x188), 40);
+      // iSkills / iSkillLevels (int[]; m_attr relative): the skills the hero fights with — its own, its gear sets' and its
+      // artifact's, the opponent's too (the opponents' list has only their stats): -100-i = skill id, -200-i = its level.
+      // Their offsets moved with the game build (see SkillArrayOffsets): none known = the skills are left out
+      int oIds, oLvs;
+      int[] ids = null, lvs = null;
+      if (SkillArrayOffsets(Layout.Current, out oIds, out oLvs) && oLvs + 8 <= b.Length) {
+        ids = IntArray(BitConverter.ToUInt64(b, oIds), 40); lvs = IntArray(BitConverter.ToUInt64(b, oLvs), 40);
+      }
       for (int i = 0; ids != null && i < ids.Length; i++) {
         d[-100 - i] = ids[i];
         d[-200 - i] = lvs != null && i < lvs.Length ? lvs[i] : 0;
       }
       return d.ContainsKey(2) && d[2] > 0 ? d : null;
+    }
+
+    /// <summary>The builds whose stBattleBaseAttr skill arrays were checked in the game's dumps: game version -> {iSkills, iSkillLevels}
+    /// offsets (bIsHiddenShape took 0x180 in 1.6.46, the arrays moved by 8). The layout's "field" section wins over this table.</summary>
+    static readonly Dictionary<string, int[]> SkillArrayBuilds = new Dictionary<string, int[]> {
+      { "1.6.38.829.1", new[] { 0x180, 0x188 } }, { "1.6.39.829.1", new[] { 0x180, 0x188 } },
+      { "1.6.46.841.1", new[] { 0x188, 0x190 } }, { "1.6.47.841.1", new[] { 0x188, 0x190 } } };
+
+    /// <summary>The offsets of stBattleBaseAttr.iSkills and iSkillLevels (relative to m_attr): the layout's "field" section
+    /// (stBattleBaseAttr.iSkills / .iSkillLevels), else the table of the checked builds; false = not known for this build.</summary>
+    public static bool SkillArrayOffsets(GameLayout ly, out int iSkills, out int iSkillLevels) {
+      iSkills = -1; iSkillLevels = -1;
+      if (ly == null) return false;
+      iSkills = ly.FieldOffset("stBattleBaseAttr.iSkills"); iSkillLevels = ly.FieldOffset("stBattleBaseAttr.iSkillLevels");
+      int[] built;
+      if ((iSkills < 0 || iSkillLevels < 0) && ly.Game != null && SkillArrayBuilds.TryGetValue(ly.Game, out built)) { iSkills = built[0]; iSkillLevels = built[1]; }
+      return iSkills >= 0 && iSkillLevels >= 0;
     }
 
     /// <summary>An int[], null when unreadable or longer than max.</summary>
@@ -298,6 +324,140 @@ namespace RealmForge {
         res.Add(s);
       }
       return res;
+    }
+
+    /// <summary>The offsets the attack log reads (layout "field" keys, see tools/app-offsets.mjs).</summary>
+    public sealed class AtkOff {
+      public int Use, Convert, CDs, Slots, Running, UseSkill, CdId, Cd, CdMax, CdLast, CdPause, AtkCd;
+    }
+    static readonly string[] AtkKeys = {
+      "SkillComponent.cUseSkill", "SkillComponent.vSkillConvertRelations", "SkillComponent.vSkillCDs", "SkillComponent.ArraySlots",
+      "StateScript.m_bRunning", "StateScript.m_skillId", "SkillCDData.iSkillID", "SkillCDData.iCoolDown", "SkillCDData.iCoolDownMax",
+      "SkillCDData.iLastTime", "SkillCDData.bPause", "BattleAttributeData.m_nAttackCD" };
+    // the same values in the dumps of 1.6.46.841.1 and 1.6.47.841.1 (the only builds checked for them)
+    static readonly int[] AtkBuilt = { 0x48, 0x80, 0xA0, 0xA8, 0x49, 0x4C, 0x10, 0x18, 0x1C, 0x20, 0x28, 0x25C };
+    static readonly string[] AtkBuilds = { "1.6.46.841.1", "1.6.47.841.1" };
+
+    /// <summary>The attack log's offsets for a layout: its "field" section, a missing key from the built-in table for a checked
+    /// build only; null = not known (the log stays off).</summary>
+    public static AtkOff AtkOffsets(GameLayout ly) {
+      if (ly == null) return null;
+      bool built = Array.IndexOf(AtkBuilds, ly.Game) >= 0;
+      var v = new int[AtkKeys.Length];
+      for (int i = 0; i < v.Length; i++) {
+        v[i] = ly.FieldOffset(AtkKeys[i]);
+        if (v[i] < 0 && built) v[i] = AtkBuilt[i];
+        if (v[i] < 0) return null;
+      }
+      return new AtkOff { Use = v[0], Convert = v[1], CDs = v[2], Slots = v[3], Running = v[4], UseSkill = v[5], CdId = v[6], Cd = v[7], CdMax = v[8], CdLast = v[9], CdPause = v[10], AtkCd = v[11] };
+    }
+
+    /// <summary>One hero the attack poller follows: its card, tower and the addresses read again and again.</summary>
+    public sealed class AtkHero {
+      public ulong Card, Skill, Battle; public uint C, Uid, Tower; public int Unit;
+      public List<KeyValuePair<uint, ulong>> Cds; public int S0, S1; public Dictionary<int, int> Conv; public int Polls;
+    }
+
+    /// <summary>What the attack poller keeps between polls (one thread uses it).</summary>
+    public sealed class AttackRefs {
+      public List<AtkHero> Heroes = new List<AtkHero>();
+      public AtkOff Off; public int Cycle;
+      public readonly Dictionary<ulong, uint> Owners = new Dictionary<ulong, uint>();
+    }
+
+    sealed class AtkPending {
+      public AtkHero H; public List<CdSnap> Cds = new List<CdSnap>(); public UseSnap Use; public int AttackCd = -1;
+    }
+
+    /// <summary>The cards of the fight's heroes with a stable address (the hero's tower and its components are resolved later).</summary>
+    static void AtkCards(ulong sim, List<int[]> heroes, AttackRefs refs) {
+      ulong world = P64(sim + 0x28); if (world == 0) return;
+      var have = new Dictionary<ulong, AtkHero>();
+      foreach (var h in refs.Heroes) have[h.Card] = h;
+      var list = new List<AtkHero>();
+      foreach (var card in WorldComps(world, CT("Card"), 128)) {
+        var cb = Read(card, Span("CardComponent")); if (cb == null) continue;
+        if (!IsKlass(BitConverter.ToUInt64(cb, Hdr("klass")), ClsCard)) continue;
+        if (BitConverter.ToInt32(cb, 0x50) != Layout.Current.Const("ECardEntityType.Normal")) continue;
+        AtkHero h;
+        if (!have.TryGetValue(card, out h)) h = new AtkHero { Card = card };
+        h.Uid = BitConverter.ToUInt32(cb, 0x20);
+        uint own;
+        if (!refs.Owners.TryGetValue(card, out own)) { own = OwnerOf(CompNodes(BitConverter.ToUInt64(cb, 0x18))); if (own != 0) refs.Owners[card] = own; }
+        h.C = own;
+        int[] hi = HeroOf(heroes, h.Uid, h.C);
+        if (hi != null) { h.Unit = hi[1]; if (h.C == 0) h.C = (uint)hi[4]; }
+        list.Add(h);
+      }
+      refs.Heroes = list;
+    }
+
+    /// <summary>The hero's tower entity -> its skill and attribute components (Skill = 0 when it is not on the field).</summary>
+    static void AtkResolve(ulong world, AtkHero h, uint tower, ref Dictionary<uint, ulong> ents) {
+      h.Tower = tower; h.Skill = 0; h.Battle = 0; h.Cds = null;
+      if (tower == 0) return;
+      if (ents == null) {
+        ents = new Dictionary<uint, ulong>();
+        foreach (var kv in DictRefs(P64(world + 0x20), 100000)) ents[kv.Key] = kv.Value;
+      }
+      ulong te;
+      if (!ents.TryGetValue(tower, out te) || te == 0) return;
+      var nodes = CompNodes(te);
+      ulong sk = Comp(nodes, CT("Skill")), at = Comp(nodes, CT("Attribute"));
+      if (sk == 0 || !IsA(sk, ClsSkill)) return;
+      h.Skill = sk; h.Battle = at != 0 ? P64(at + 0x28) : 0;
+    }
+
+    /// <summary>One poll of the attack log: the clock, every hero's cooldowns, cast script and attack cooldown, the clock again;
+    /// a poll in which the clock moved is dropped (log.NoteTorn). Only cached addresses are read (the hero's card for its tower,
+    /// its components, the cooldown objects), the cooldown dictionary and the skill slots again every 30 polls and when the tower
+    /// changes; the cards every 300 polls. False = nothing logged (torn, no clock, no offsets).</summary>
+    public static bool ReadAttackState(ulong sim, List<int[]> heroes, AttackRefs refs, AttackLog log, out uint frame) {
+      frame = 0;
+      var ly = Layout.Current; if (ly == null) return false;
+      if (refs.Off == null) { refs.Off = AtkOffsets(ly); if (refs.Off == null) return false; }
+      var o = refs.Off;
+      uint f1; int st1;
+      if (!SimClock(sim, out f1, out st1) || st1 != SimRunning) return false;
+      ulong world = P64(sim + 0x28); if (world == 0) return false;
+      if (refs.Cycle++ % (refs.Heroes.Count == 0 ? 30 : 300) == 0) AtkCards(sim, heroes, refs);
+      Dictionary<uint, ulong> ents = null;
+      var pend = new List<AtkPending>();
+      int cdSize = Math.Max(Math.Max(Math.Max(o.CdId, o.Cd), Math.Max(o.CdMax, o.CdLast)), o.CdPause) + 4;
+      int useLo = Math.Min(o.Running, o.UseSkill), useHi = Math.Max(o.Running, o.UseSkill) + 4;
+      foreach (var h in refs.Heroes) {
+        var tb = Read(h.Card + 0x4C, 4); if (tb == null) continue;
+        uint tower = BitConverter.ToUInt32(tb, 0);
+        if (tower != h.Tower || (tower != 0 && h.Skill == 0 && h.Polls % 30 == 0)) AtkResolve(world, h, tower, ref ents);
+        h.Polls++;
+        if (h.Skill == 0) continue;
+        if (h.Cds == null || h.Polls % 30 == 0) {
+          h.Cds = DictRefs(P64(h.Skill + (ulong)o.CDs), 64);
+          var sl = IntArray(P64(h.Skill + (ulong)o.Slots), 8);
+          h.S0 = sl != null && sl.Length > 0 ? sl[0] : 0; h.S1 = sl != null && sl.Length > 1 ? sl[1] : 0;
+          var cv = DictInts(P64(h.Skill + (ulong)o.Convert), 64);
+          h.Conv = new Dictionary<int, int>();
+          foreach (var kv in cv) h.Conv[(int)kv.Key] = kv.Value;
+        }
+        var p = new AtkPending { H = h };
+        foreach (var kv in h.Cds) {
+          var cb = Read(kv.Value, cdSize); if (cb == null) continue;
+          p.Cds.Add(new CdSnap((int)kv.Key, BitConverter.ToInt32(cb, o.CdId), BitConverter.ToInt32(cb, o.Cd), BitConverter.ToInt32(cb, o.CdMax),
+                               BitConverter.ToInt32(cb, o.CdLast), cb[o.CdPause] != 0));
+        }
+        ulong us = P64(h.Skill + (ulong)o.Use);
+        var ub = us != 0 ? Read(us + (ulong)useLo, useHi - useLo) : null;
+        if (ub != null) p.Use = new UseSnap(ub[o.Running - useLo] != 0, us, BitConverter.ToInt32(ub, o.UseSkill - useLo));
+        var ab = h.Battle != 0 ? Read(h.Battle + (ulong)o.AtkCd, 4) : null;
+        if (ab != null) p.AttackCd = BitConverter.ToInt32(ab, 0);
+        pend.Add(p);
+      }
+      uint f2; int st2;
+      if (!SimClock(sim, out f2, out st2) || f2 != f1) { log.NoteTorn(); return false; }
+      foreach (var p in pend) log.Feed(p.H.C, p.H.Uid, p.H.Unit, f1, p.Cds, p.Use, p.H.S0, p.H.S1, p.H.Conv, p.AttackCd);
+      log.NotePoll(f1);
+      frame = f1;
+      return true;
     }
 
     /// <summary>A hero of <see cref="BattleHeroList"/> by uid and controller; a controller not known (0): the hero when
@@ -612,6 +772,8 @@ namespace RealmForge {
   public sealed class FightRecorder {
     public readonly ulong Sim; public readonly int Stage; public readonly DateTime StartedUtc = DateTime.UtcNow;
     public int IntervalMs = 200;
+    /// <summary>The per-frame attack event log (src/AttackLog.cs): off unless the host sets it before Start (the test build only).</summary>
+    public bool AttackLog;
     public Action<string> Log;
     public Action<uint, List<HeroSample>> OnSample;   // diagnostics
     readonly TimelineBuilder tl = new TimelineBuilder();
@@ -624,7 +786,8 @@ namespace RealmForge {
     readonly Dictionary<ulong, RFX.UnitCache> unitCache = new Dictionary<ulong, RFX.UnitCache>();
     readonly HashSet<uint> towerSet = new HashSet<uint>();
     long tracePassMs; int tracePasses;
-    Thread th;
+    Thread th, atkTh;
+    RealmForge.AttackLog atkLog;
 
     public FightRecorder(ulong sim, int stage) { Sim = sim; Stage = stage; }
     /// <summary>An arena stage (attack 6001xxx, the defence run 6002xxx): its waves and bases are recorded too.</summary>
@@ -636,6 +799,12 @@ namespace RealmForge {
       running = true;
       th = new Thread(Loop) { IsBackground = true, Name = "fight-recorder" };
       th.Start();
+      if (AttackLog) {
+        atkLog = new RealmForge.AttackLog();
+        tl.Atk = atkLog;
+        atkTh = new Thread(AtkLoop) { IsBackground = true, Name = "fight-atk" };   // a light poller: only cached addresses, Sleep(5)
+        atkTh.Start();
+      }
     }
     public void Stop() { stop = true; }
 
@@ -658,6 +827,28 @@ namespace RealmForge {
       sw.Stop();
       tracePassMs += sw.ElapsedMilliseconds; tracePasses++;
       lock (gate) tl.AddUnitSample(fr, us);
+    }
+
+    /// <summary>The attack log's poller (read-only): about every few ms while the fight runs.</summary>
+    void AtkLoop() {
+      var refs = new RFX.AttackRefs(); var hl = new List<int[]>();
+      var sw = Stopwatch.StartNew(); long tries = 0; int errors = 0;
+      try {
+        while (!stop && running) {
+          try {
+            if (hl.Count == 0) hl = RFX.BattleHeroList(Sim);
+            uint f;
+            RFX.ReadAttackState(Sim, hl, refs, atkLog, out f);
+            if (refs.Off == null) { Say("attack log: no offsets for this game build (layout field section), off"); break; }
+          } catch (Exception e) { if (errors++ < 3) Say("attack log: " + e.Message); }
+          tries++;
+          if ((tries & 127) == 0) atkLog.PollMs = sw.ElapsedMilliseconds / (double)tries;
+          Thread.Sleep(5);
+        }
+      } finally {
+        if (tries > 0) atkLog.PollMs = sw.ElapsedMilliseconds / (double)tries;
+        Say("attack log: " + atkLog.Polls + " polls, " + atkLog.EventCount + " events, torn " + atkLog.Torn + ", " + atkLog.PollMs.ToString("0.0") + " ms/poll");
+      }
     }
 
     void Loop() {
@@ -716,7 +907,11 @@ namespace RealmForge {
                                              + (tl.UnitsCut > 0 || tl.PointsCut > 0 ? ", cut " + tl.UnitsCut + " units / " + tl.PointsCut + " points" : ""));
         lock (gate) Say("fight recorder: ended at frame " + tl.Frames + ", " + tl.Samples + " samples, " + tl.Commands + " commands");
       } catch (Exception e) { Say("fight recorder: " + e.Message); }
-      finally { running = false; EndedUtc = DateTime.UtcNow; done.Set(); }
+      finally {
+        running = false;
+        var at = atkTh; if (at != null) try { at.Join(1000); } catch (Exception) { }
+        EndedUtc = DateTime.UtcNow; done.Set();
+      }
     }
 
     /// <summary>The timeline as JSON; waits up to <paramref name="waitMs"/> for the fight to end first (a capture made
