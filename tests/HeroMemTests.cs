@@ -18,7 +18,7 @@ static partial class CoreTests {
       NavNotes.Take(); var gm = mk(); gm.Blind = true; gm.MemMode = 1; var hp = new HeroPilot(g);
       string s = go(gm, hp); var notes = NavNotes.Take();
       Check(s == "done" && gm.Shown == far && gm.Funnels == 2 && !gm.FilterOpen && !hp.FunnelUnseen, "memory exact, pixels blind: the pilot filters and closes the pop-up (" + s + ", " + gm.Funnels + " funnel presses, " + hp.Why + ")");
-      Check(count(notes, "filter open: mem=yes pix=no") == 1, "memory yes / pixels no: ONE disagreement line for the whole episode (" + notes.Count + " notes: " + string.Join(" | ", notes.ToArray()) + ")");
+      Check(count(notes, "disagree:") == 0, "memory yes / pixels blind, the pop-up open under 1.5 s: no disagreement line, the memory is trusted (" + notes.Count + " notes: " + string.Join(" | ", notes.ToArray()) + ")");
     }
     {   // the panel is built by the first press (before it: never built = closed, E1), exact after: the real order of the game
       var gm = mk(); gm.Blind = true; gm.MemMode = 2; var hp = new HeroPilot(g);
@@ -44,7 +44,7 @@ static partial class CoreTests {
       NavNotes.Take(); var gm = mk(); gm.MemMode = 1; gm.FadeMs = 700; var hp = new HeroPilot(g);
       string s = go(gm, hp); var notes = NavNotes.Take();
       Check(s == "done" && gm.Shown == far && gm.Funnels == 2 && !gm.FilterOpen, "delayed fade: done with two presses (" + s + ", " + gm.Funnels + ")");
-      Check(count(notes, "filter open: mem=no pix=yes") == 1, "fade: one disagreement line (mem=no pix=yes) (" + string.Join(" | ", notes.ToArray()) + ")");
+      Check(count(notes, "disagree:") == 0, "fade of 700 ms (picture lag): no disagreement line, it does not last 1.5 s (" + string.Join(" | ", notes.ToArray()) + ")");
     }
     {   // memory and pixels agree: no note
       NavNotes.Take(); var gm = mk(); gm.MemMode = 1; var hp = new HeroPilot(g);
@@ -86,6 +86,7 @@ static partial class CoreTests {
     }
     GearMemTests();
     MemGapTests();
+    DisagreeTests();
   }
 
   // ---------------------------------------------------------------- the gear filter from the game's memory (docs/specs/2026-11-04-memory-first-state.md P2-P4, build 538 live log)
@@ -122,9 +123,9 @@ static partial class CoreTests {
     }
     {   // the pilot puts the flag over the pictures, one note per disagreement episode; Unknown leaves the pictures; the sets panel is m_ButtonStates[1]
       NavNotes.Take(); var p = new FilterPilot(g);
-      for (int i = 0; i < 4; i++) { var v = new FilterView { NowMs = i * 100, Foreground = true, Item = 0, PanelOpen = false, PanelMem = Mem3.Yes }; p.Step(v); if (i == 0) Check(v.PanelOpen, "gear filter: flag yes over a picture of no -> open"); }
+      for (int i = 0; i < 20; i++) { var v = new FilterView { NowMs = i * 100, Foreground = true, Item = 0, PanelOpen = false, PanelMem = Mem3.Yes }; p.Step(v); if (i == 0) Check(v.PanelOpen, "gear filter: flag yes over a picture of no -> open"); }
       var notes = NavNotes.Take();
-      Check(count(notes, "filter open: mem=yes pix=no") == 1, "gear filter: ONE 'filter open: mem=yes pix=no' line for the episode (" + string.Join(" | ", notes.ToArray()) + ")");
+      Check(count(notes, "disagree: gear filter mem=yes pix=no for=") == 1, "gear filter: ONE 'disagree: gear filter mem=yes pix=no for=..' line for the episode of 1.9 s (" + string.Join(" | ", notes.ToArray()) + ")");
       var vu = new FilterView { NowMs = 1000, Foreground = true, Item = 0, PanelOpen = true, SidePanelOpen = true, SetPanelOpen = true }; p.Step(vu);
       Check(vu.PanelOpen && vu.SidePanelOpen && vu.SetPanelOpen, "gear filter: flags Unknown leave the pictures alone");
       var vs = new FilterView { NowMs = 1100, Foreground = true, Item = 0, PanelOpen = false, PanelMem = Mem3.Yes, SideMem = Mem3.Yes, SetMem = Mem3.No, SidePanelOpen = false, SetPanelOpen = true }; p.Step(vs);
@@ -254,4 +255,33 @@ static partial class CoreTests {
     }
   }
   sealed class GearFacts0 { public RFX.GearFacts F; }
+
+  // ---------------------------------------------------------------- E2: memory against pixels, only what lasts over 1.5 s is a disagreement (539: pairs a second apart were the picture's lag)
+  static void DisagreeTests() {
+    {   // the hero pilot: a flag that says yes while the picture stays no for 2 s: ONE line 'disagree: hero filter mem=yes pix=no for=..', memory trusted
+      NavNotes.Take(); var p = new HeroPilot(new HeroGeometry());
+      for (long t = 0; t <= 2000; t += 100) { var v = new HeroView { NowMs = t, Foreground = true, W = 1920, H = 1009, ClientH = 1009, FilterMem = Mem3.Yes, FilterOpen = false, InputOpen = false }; p.Step(v); if (t == 0) Check(v.FilterOpen, "hero filter: flag yes over a picture of no -> open"); }
+      var notes = NavNotes.Take(); int n = 0; foreach (var x in notes) if (x.StartsWith("disagree: hero filter mem=yes pix=no for=", StringComparison.Ordinal)) n++;
+      Check(n == 1, "hero pilot: a 2 s disagreement gives ONE explicit line (" + string.Join(" | ", notes.ToArray()) + ")");
+    }
+    {   // the 539 shape: mem=yes pix=no, then mem=no pix=yes a second later (probe step 1 s): no line
+      var d = new DisagreeTracker(); var lines = new List<string>(); string r;
+      long[] ts = { 0, 1000, 2000, 3000, 4000, 5000 };
+      string[] mem = { "yes", "no", "no", "yes", "yes", "no" }, pix = { "no", "yes", "no", "no", "yes", "no" };
+      for (int i = 0; i < ts.Length; i++) { r = d.Update("hero filter", mem[i], pix[i], ts[i]); if (r != null) lines.Add(r); }
+      Check(lines.Count == 0, "disagree: single pairs a second apart (539 shape) give no line (" + string.Join(" | ", lines.ToArray()) + ")");
+    }
+    {   // the same pair for 2 s: ONE explicit line with for=<ms>, then silence until it breaks
+      var d = new DisagreeTracker(); var lines = new List<string>();
+      for (long t = 0; t <= 4000; t += 500) { var r = d.Update("gear filter", "yes", "no", t); if (r != null) lines.Add(r); }
+      Check(lines.Count == 1 && lines[0] == "disagree: gear filter mem=yes pix=no for=1500", "disagree: held pair gives ONE line 'disagree: <name> mem=.. pix=.. for=<ms>' (" + string.Join(" | ", lines.ToArray()) + ")");
+      Check(d.Update("gear filter", "yes", "yes", 4500) == null && d.Update("gear filter", "yes", "no", 5000) == null && d.Update("gear filter", "yes", "no", 6600) != null, "disagree: it ends on agreement, a new episode counts from its start");
+    }
+    {   // unknown / n/a on either side is no comparison; a flip of the pair restarts the clock
+      var d = new DisagreeTracker();
+      Check(d.Update("x", "yes", "n/a", 0) == null && d.Update("x", "yes", "n/a", 3000) == null && d.Update("x", "unknown", "no", 6000) == null, "disagree: unknown / n/a is not a disagreement");
+      d.Update("x", "yes", "no", 10000); d.Update("x", "no", "yes", 11000);
+      Check(d.Update("x", "no", "yes", 12400) == null && d.Update("x", "no", "yes", 12500) != null, "disagree: a flipped pair restarts the 1.5 s clock");
+    }
+  }
 }

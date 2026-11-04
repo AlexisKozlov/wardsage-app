@@ -422,6 +422,12 @@ namespace RealmForge {
       if (HeroFilterLook.LastLookAt == 0 || unchecked(Environment.TickCount - HeroFilterLook.LastLookAt) > 1500) return "n/a";
       return HeroFilterLook.LastLook == Seen3.Yes ? "yes" : HeroFilterLook.LastLook == Seen3.No ? "no" : "unknown";
     }
+    // the probe's own memory-vs-picture check: one «disagree: ..» line per episode that lasts over 1.5 s (a pair a second apart is the picture's lag, not a conflict)
+    static readonly Dictionary<string, DisagreeTracker> npDis = new Dictionary<string, DisagreeTracker>();
+    static void NpDisagree(List<string> l, string name, string mem, string pix) {
+      DisagreeTracker d; if (!npDis.TryGetValue(name, out d)) { d = new DisagreeTracker(); npDis[name] = d; }
+      string line = d.Update(name, mem, pix, Environment.TickCount); if (line != null) l.Add(line);
+    }
     static string NpTri(Mem3 m) { return m == Mem3.Yes ? "yes" : m == Mem3.No ? "no" : "unknown"; }
 
     static void NpHeroGear(List<string> l) {
@@ -447,6 +453,7 @@ namespace RealmForge {
       if (Field(f, "m_InfinityGridProxy", out proxy, out t1) && t1 == T_TABLE && Field(proxy, "m_Data", out data, out t2) && t2 == T_TABLE) grid = EntryCount(data).ToString(NpInv);
       string tab = Field(f, "m_LastType", out v, out tt) && tt == T_INT ? ((long)v).ToString(NpInv) : "?";
       string part = Field(f, "m_PanelDatas", out pd, out t1) && t1 == T_TABLE && IntKey(pd, 3, out v, out tt) && tt == T_INT ? ((long)v).ToString(NpInv) : "-";
+      NpDisagree(l, "hero filter", NpTri(mem), NpHeroPix());
       NpEmit(l, "hero", "hero filter: mem=" + NpTri(mem) + " (" + mw + ") pix=" + NpHeroPix() + " rootGo " + root + " " + choice + " grid=" + grid + " tab=" + tab + " part=" + part, true);
 
       // ---- the gear filter (hero screen's gear tab): Panel_EquipBase.m_Panel_EquipFilterWidget_Charactor
@@ -463,6 +470,7 @@ namespace RealmForge {
         string open = Field(w, "m_bOpenFilterContent", out v, out tt) && tt == T_BOOL ? ((v & 0xFFFFFFFF) != 0 ? "yes" : "no") : "?";
         gear = "mem=" + show + " (m_bShow) states[1..3]=" + st + " contentOpen=" + open;
       }
+      NpDisagree(l, "gear filter", gear.StartsWith("mem=yes") ? "yes" : gear.StartsWith("mem=no") ? "no" : "unknown", NpPix("gear"));
       NpEmit(l, "gear", "gear filter: " + gear + " pix=" + NpPix("gear") + (NpPix("gearSide") != "n/a" ? " side-pix=" + NpPix("gearSide") : ""), true);
       NpTipLine(env, ui, l);
     }

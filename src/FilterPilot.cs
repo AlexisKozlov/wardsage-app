@@ -71,7 +71,7 @@ namespace RealmForge {
     public const int MaxClicks = 26, AfterClickMs = 550, PartTries = 2, EqConfirmMs = 2000, SetTries = 4, MaxSetDrags = 4, MaxSubs = 4, MaxPasses = 3, MaxReopens = 3;
     readonly FilterGeometry g;
     long item = -1, waitUntil, openWaitUntil;
-    bool disagree; int disagreeN;
+    readonly DisagreeTracker disagree = new DisagreeTracker();
     long eqClickAt;
     int clicks, setTries, statTries, eqTries, closeTries, openTries, setDrags, subTries, sideCloseTries;
     // the filter was complete once for this item (wasSet); the game may drop it afterwards (the hero screen opened again):
@@ -115,17 +115,18 @@ namespace RealmForge {
     }
 
     /// <summary>Memory first: the pop-up, its side panel and the sets panel are the game's flags where those answer; the pictures (what the host put in PanelOpen ...) only where the flag is Unknown. A disagreement of the
-    /// pop-up is told once per episode (NavNotes: «filter open: mem=.. pix=..»), memory trusted.</summary>
+    /// pop-up is told once per episode that lasts over 1.5 s (NavNotes: «disagree: gear filter mem=.. pix=.. for=..»), memory trusted.</summary>
     void Resolve(FilterView v) {
       if (v.Resolved) return;
       v.Resolved = true;
       if (v.PanelMem != Mem3.Unknown) {
         bool mem = v.PanelMem == Mem3.Yes;
-        if (v.Foreground && mem != v.PanelOpen) {
-          if (!disagree) { disagree = true; NavNotes.Add("filter open: mem=" + (mem ? "yes" : "no") + " pix=" + (v.PanelOpen ? "yes" : "no") + " (gear filter, episode " + (++disagreeN) + ", memory trusted)"); }
-        } else disagree = false;
+        if (v.Foreground) {
+          var line = disagree.Update("gear filter", mem ? "yes" : "no", v.PanelOpen ? "yes" : "no", v.NowMs);
+          if (line != null) NavNotes.Add(line + " (memory trusted)");
+        } else disagree.Reset();
         v.PanelOpen = mem;
-      } else disagree = false;
+      } else disagree.Reset();
       if (v.SideMem != Mem3.Unknown) v.SidePanelOpen = v.SideMem == Mem3.Yes;
       if (v.SetMem != Mem3.Unknown) v.SetPanelOpen = v.SetMem == Mem3.Yes && v.SidePanelOpen;
     }

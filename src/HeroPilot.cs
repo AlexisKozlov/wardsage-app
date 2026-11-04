@@ -127,18 +127,19 @@ namespace RealmForge {
     public void Reset() { plan = -1; Restart(); retries = 0; unsent = null; unsentRun = 0; }
 
     /// <summary>Memory first: the pop-up's state is the game's flag (FilterMem Yes / No); the pixels (FilterOpen as the host saw them) only when memory does not know.
-    /// A disagreement is trusted to memory and told once per episode (NavNotes: «filter open: mem=.. pix=..»).</summary>
+    /// A disagreement is trusted to memory and told once per episode that lasts over 1.5 s (NavNotes: «disagree: hero filter mem=.. pix=.. for=..»).</summary>
     void ResolveFilter(HeroView v) {
       if (v.FilterResolved) return;
       v.FilterResolved = true;
-      if (v.FilterMem == Mem3.Unknown) { disagree = false; return; }
+      if (v.FilterMem == Mem3.Unknown) { disagree.Reset(); return; }
       bool mem = v.FilterMem == Mem3.Yes;
-      if (v.Foreground && mem != v.FilterOpen) {   // (not in front: the pixels were not looked at)
-        if (!disagree) { disagree = true; NavNotes.Add("filter open: mem=" + (mem ? "yes" : "no") + " pix=" + (v.FilterOpen ? "yes" : "no") + " (episode " + (++disagreeN) + ", memory trusted)"); }
-      } else disagree = false;
+      if (v.Foreground) {   // (not in front: the pixels were not looked at)
+        var line = disagree.Update("hero filter", mem ? "yes" : "no", v.FilterOpen ? "yes" : "no", v.NowMs);
+        if (line != null) NavNotes.Add(line + " (memory trusted)");
+      } else disagree.Reset();
       v.FilterOpen = mem;
     }
-    bool disagree; int disagreeN;
+    readonly DisagreeTracker disagree = new DisagreeTracker();
     /// <summary>The funnel is pressed again after this many presses at most when memory says closed throughout (a press that did not reach the game); with the pop-up unreadable never.</summary>
     public const int MaxMemFunnels = 2;
 
@@ -475,6 +476,24 @@ namespace RealmForge {
 
 namespace RealmForge {
   /// <summary>Lines the pure pilots want in the test log (the probe's lines carry them out: RFX.NavProbeLines drains this). At most 20 wait.</summary>
+  /// <summary>Memory against pixels, told only when it lasts: a pair that differs is a disagreement only after HoldMs (1.5 s) without a break (the picture lags the game's flag by the window's fade, 0.3-0.8 s, and
+  /// the probe samples once a second: a lone pair is no conflict). One line per episode: «disagree: &lt;name&gt; mem=.. pix=.. for=&lt;ms&gt;». Memory and picture are "yes" / "no"; anything else (unknown, n/a) is no comparison and ends the episode.</summary>
+  public sealed class DisagreeTracker {
+    public const long HoldMs = 1500;
+    string key; long since; bool said;
+    public void Reset() { key = null; said = false; }
+    /// <summary>The line to log now, or null.</summary>
+    public string Update(string name, string mem, string pix, long nowMs) {
+      bool cmp = (mem == "yes" || mem == "no") && (pix == "yes" || pix == "no") && mem != pix;
+      if (!cmp) { Reset(); return null; }
+      string k = mem + "/" + pix;
+      if (k != key || nowMs < since) { key = k; since = nowMs; said = false; }
+      if (said || nowMs - since < HoldMs) return null;
+      said = true;
+      return "disagree: " + name + " mem=" + mem + " pix=" + pix + " for=" + (nowMs - since);
+    }
+  }
+
   public static class NavNotes {
     static readonly System.Collections.Generic.Queue<string> q = new System.Collections.Generic.Queue<string>();
     public static void Add(string s) { lock (q) { q.Enqueue(s); while (q.Count > 20) q.Dequeue(); } }
