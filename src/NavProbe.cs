@@ -7,6 +7,7 @@
 // line that says what failed, never an exception.
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Text;
 
 namespace RealmForge {
@@ -14,6 +15,15 @@ namespace RealmForge {
     // UI.UIStatic static fields (the Il2CppClass static block): StackBase 0x8, StackMain 0x10, StackFlow 0x18, StackPopup 0x20, StackTop 0x28
     static readonly string[] NpStackNames = { "Base", "Main", "Flow", "Popup", "Top" };
     static readonly int[] NpStackOff = { 0x8, 0x10, 0x18, 0x20, 0x28 };
+
+    static readonly CultureInfo NpInv = CultureInfo.InvariantCulture;
+
+    /// <summary>A class of the game by its full name; not known yet = a scan for it is asked for (the probe needs classes the layout data has no address for).</summary>
+    static ulong NpClass(ulong ga, string name) {
+      ulong k = ClassAt(ga, name);
+      if (k == 0) RequestScan(ga, name);
+      return k;
+    }
 
     static string NpHex(ulong v) { return "0x" + v.ToString("X"); }
     static int NpI32(byte[] b, int o) { return o + 4 <= b.Length ? BitConverter.ToInt32(b, o) : 0; }
@@ -51,10 +61,37 @@ namespace RealmForge {
             ulong cache; int ct;
             if (Field(up, "m_cache", out cache, out ct) && ct == T_TABLE) { found = true; l.Add("hotkeys rebinds: " + NpTableFilter(cache, "KeyCode", 60)); }
           }
-          if (!found) l.Add("hotkeys rebinds: mtPlayerRecord has no m_cache upvalue table");
+          if (!found) {
+            var kinds = new List<string>();
+            foreach (var up in NpUpvalueTables(cl)) kinds.Add("{" + NpTable(up, 8, 0) + "}");
+            l.Add("hotkeys rebinds: mtPlayerRecord has no m_cache upvalue table; its upvalue tables: " + (kinds.Count > 0 ? string.Join(" ", kinds.ToArray()) : "none"));
+          }
         } else l.Add("hotkeys rebinds: mtPlayerRecord " + (ctt == 0 ? "missing" : "tt " + ctt));
       } catch (Exception e) { l.Add("hotkeys: exception " + e.Message); }
+      try { l.Add("hotkeys rebinds (PlayerPrefs in the registry): " + NpPrefs()); } catch (Exception e) { l.Add("hotkeys rebinds (registry): exception " + e.Message); }
       return l;
+    }
+
+    /// <summary>The player's PlayerPrefs of the game (HKCU\Software\&lt;company&gt;\Watcher of Realms): the values whose name starts with KeyCodeOpen (Unity adds "_h&lt;hash&gt;" to each name).</summary>
+    static string NpPrefs() {
+      var sb = new StringBuilder(); int n = 0, keys = 0;
+      using (var sw = Microsoft.Win32.Registry.CurrentUser.OpenSubKey("Software")) {
+        if (sw == null) return "no HKCU\\Software";
+        foreach (var comp in sw.GetSubKeyNames()) {
+          using (var k = sw.OpenSubKey(comp + "\\Watcher of Realms")) {
+            if (k == null) continue;
+            foreach (var name in k.GetValueNames()) {
+              keys++;
+              if (name.IndexOf("KeyCodeOpen", StringComparison.Ordinal) < 0) continue;
+              int cut = name.LastIndexOf("_h", StringComparison.Ordinal);
+              object v = k.GetValue(name);
+              sb.Append(n++ > 0 ? ", " : "").Append(cut > 0 ? name.Substring(0, cut) : name).Append('=').Append(v is byte[] ? Encoding.UTF8.GetString((byte[])v).TrimEnd('\0') : Convert.ToString(v, NpInv));
+              if (n >= 40) break;
+            }
+          }
+        }
+      }
+      return n == 0 ? "(no KeyCodeOpen values among " + keys + ")" : sb.ToString();
     }
 
     static List<ulong> NpUpvalueTables(ulong cl) {
@@ -74,13 +111,13 @@ namespace RealmForge {
       int kt = BitConverter.ToInt32(nb, o + 24);
       if (kt == T_INT) return BitConverter.ToInt64(nb, o + 16).ToString();
       if (kt == T_SSTR) return ShortText(BitConverter.ToUInt64(nb, o + 16)) ?? "?";
-      if (kt == T_FLT) return BitConverter.Int64BitsToDouble(BitConverter.ToInt64(nb, o + 16)).ToString("0.##");
+      if (kt == T_FLT) return BitConverter.Int64BitsToDouble(BitConverter.ToInt64(nb, o + 16)).ToString("0.##", NpInv);
       return "k" + kt.ToString("X");
     }
     static string NpVal(byte[] nb, int o, int depth) {
       int vt = BitConverter.ToInt32(nb, o + 8); ulong v = BitConverter.ToUInt64(nb, o);
       if (vt == T_INT) return ((long)v).ToString();
-      if (vt == T_FLT) return BitConverter.Int64BitsToDouble((long)v).ToString("0.##");
+      if (vt == T_FLT) return BitConverter.Int64BitsToDouble((long)v).ToString("0.##", NpInv);
       if (vt == T_BOOL) return (v & 0xFFFFFFFF) != 0 ? "true" : "false";
       if (vt == T_SSTR) return "'" + (ShortText(v) ?? "?") + "'";
       if (vt == T_TABLE) return depth > 0 ? "{" + NpTable(v, 12, depth - 1) + "}" : "{..}";
@@ -121,7 +158,7 @@ namespace RealmForge {
 
     // ---------------------------------------------------------------- UILocker
     static void NpLocker(ulong ga, List<string> l) {
-      ulong k = ClassAt(ga, "UI.UILocker"); if (k == 0) { l.Add("locker: class not found yet"); return; }
+      ulong k = NpClass(ga, "UI.UILocker"); if (k == 0) { l.Add("locker: class not found yet"); return; }
       ulong sf = Ptr(k + 0xB8); ulong inst = sf != 0 ? Ptr(sf) : 0;
       if (inst == 0 || ClassName(Ptr(inst)) != "UI.UILocker") { l.Add("locker: no instance (" + NpHex(inst) + ")"); return; }
       ulong d = Ptr(inst + 0x10);
@@ -130,13 +167,13 @@ namespace RealmForge {
       if (count < 0 || count > 200) { l.Add("locker: count " + count + " out of range"); return; }
       var sb = new StringBuilder();
       var eb = count > 0 && entries != 0 ? Read(entries + 0x20, count * 16) : null;   // Dictionary<int,float>: {hash, next, key, value}
-      if (eb != null) for (int i = 0; i < count; i++) sb.Append(i > 0 ? ", " : "").Append(NpI32(eb, i * 16 + 8)).Append("@").Append(BitConverter.ToSingle(eb, i * 16 + 12).ToString("0.00"));
+      if (eb != null) for (int i = 0; i < count; i++) sb.Append(i > 0 ? ", " : "").Append(NpI32(eb, i * 16 + 8)).Append("@").Append(BitConverter.ToSingle(eb, i * 16 + 12).ToString("0.00", NpInv));
       l.Add("locker: count=" + count + (sb.Length > 0 ? " [id@expiry " + sb + "]" : ""));
     }
 
     // ---------------------------------------------------------------- the stacks
     static void NpStacks(ulong ga, List<string> l) {
-      ulong k = ClassAt(ga, "UI.UIStatic"); if (k == 0) { l.Add("stacks: UI.UIStatic not found yet"); return; }
+      ulong k = NpClass(ga, "UI.UIStatic"); if (k == 0) { l.Add("stacks: UI.UIStatic not found yet"); return; }
       ulong sf = Ptr(k + 0xB8); if (sf == 0) { l.Add("stacks: no static block"); return; }
       for (int s = 0; s < NpStackNames.Length; s++) {
         ulong st = Ptr(sf + (ulong)NpStackOff[s]);
@@ -205,7 +242,7 @@ namespace RealmForge {
 
     // ---------------------------------------------------------------- the exit dialog
     static void NpExitDialog(ulong ga, List<string> l) {
-      ulong k = ClassAt(ga, "Form_SystemTips"); if (k == 0) { l.Add("exit dialog: Form_SystemTips not found yet"); return; }
+      ulong k = NpClass(ga, "Form_SystemTips"); if (k == 0) { l.Add("exit dialog: Form_SystemTips not found yet"); return; }
       ulong sf = Ptr(k + 0xB8); var b = sf != 0 ? Read(sf, 4) : null;
       l.Add("exit dialog: m_isShow=" + (b != null ? b[0].ToString() : "?"));
     }
@@ -225,8 +262,8 @@ namespace RealmForge {
       ulong rect = ScriptObject(f, field, "UnityEngine.UI.ScrollRect", pid);
       if (rect == 0) { l.Add("scroll " + what + ": " + field + " not readable"); return; }
       var b = Read(rect, 0xC8); if (b == null) { l.Add("scroll " + what + ": unreadable"); return; }
-      l.Add("scroll " + what + ": pos=(" + BitConverter.ToSingle(b, 0xBC).ToString("0.0") + "," + BitConverter.ToSingle(b, 0xC0).ToString("0.0") + ") velocity=("
-        + BitConverter.ToSingle(b, 0xB0).ToString("0.0") + "," + BitConverter.ToSingle(b, 0xB4).ToString("0.0") + ") dragging=" + b[0xB8] + " sensitivity=" + BitConverter.ToSingle(b, 0x34).ToString("0.##")
+      l.Add("scroll " + what + ": pos=(" + BitConverter.ToSingle(b, 0xBC).ToString("0.0", NpInv) + "," + BitConverter.ToSingle(b, 0xC0).ToString("0.0", NpInv) + ") velocity=("
+        + BitConverter.ToSingle(b, 0xB0).ToString("0.0", NpInv) + "," + BitConverter.ToSingle(b, 0xB4).ToString("0.0", NpInv) + ") dragging=" + b[0xB8] + " sensitivity=" + BitConverter.ToSingle(b, 0x34).ToString("0.##", NpInv)
         + " movement=" + NpI32(b, 0x24) + " inertia=" + b[0x2C]);
     }
   }

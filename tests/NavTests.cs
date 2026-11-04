@@ -159,6 +159,12 @@ static partial class CoreTests {
       Eq("Act:pop:Form_CharactorMain", edge(mk(NavState(ScreenKind.HeroScreen, 7, 3, -1, "", new[] { H, C }), null), cityT), "nav plan: to the city from the hero screen: the back arrow");
       Eq("AtTarget:at_target", edge(mk(NavState(ScreenKind.City, 0, 0, 0, "", new[] { C }), null), cityT), "nav plan: in the city already");
     }
+    // the game is raised over a browser or our own window only, once per run; never over a launcher or a system dialog
+    Check(FrontPolicy.IsBrowser("chrome") && FrontPolicy.IsBrowser("msedge") && FrontPolicy.IsBrowser("Firefox") && !FrontPolicy.IsBrowser("moontonlauncher") && !FrontPolicy.IsBrowser("PlariumPlay") && !FrontPolicy.IsBrowser("Telegram") && !FrontPolicy.IsBrowser(""), "front: browsers are told from launchers and chats");
+    Check(FrontPolicy.ShouldRaiseOverBrowser(true, true, false, false, false, 5000, 10, 0, true, false), "front: a waiting pilot raises the game over an idle browser once");
+    Check(!FrontPolicy.ShouldRaiseOverBrowser(true, true, false, false, false, 5000, 10, 0, true, true), "front: ... not a second time in the run");
+    Check(!FrontPolicy.ShouldRaiseOverBrowser(true, true, false, false, false, 5000, 10, 0, false, false), "front: ... never over another program (the launcher)");
+    Check(!FrontPolicy.ShouldRaiseOverBrowser(true, true, false, false, false, 100, 10, 0, true, false), "front: ... never while the player is active");
     // the navigator's watchdog: a run always ends
     {
       var io = new FakeNavIo(); var rdr = new ScreenReader(); var nv = new Navigator(ClickOwner.Equip);
