@@ -52,7 +52,12 @@ namespace RealmForge {
     public long[] Heroes;          // the grid in display order
     public bool HeroesButton;      // the city's «Герои» button is on the screen, nothing over it (checked on the pixels)
     // the grid's filter (HeroScreen) and the plan hero's class and factions (app/res/hero_tags.json; 0 / empty = unknown)
+    /// <summary>The pop-up is open. The host fills it from the pixels (HeroFilterSeen); the pilot replaces it by the memory's verdict when there is one (FilterMem).</summary>
     public bool FilterOpen, ClassChosen;
+    /// <summary>The pop-up as the game's script holds it (HeroScreen.FilterMem): Yes / No decide, Unknown (panel not built, flag nil) leaves the pixels' FilterOpen.</summary>
+    public Mem3 FilterMem = Mem3.Unknown;
+    /// <summary>Set by the pilot once FilterOpen has been settled against FilterMem for this view.</summary>
+    public bool FilterResolved;
     public long[] FactionList, ChosenCamps;
     public int ClassCount;
     public ulong GridPtr;
@@ -117,12 +122,29 @@ namespace RealmForge {
     /// <summary>(What the pilot learnt about the game stays: the drag gain and the latest answer time.)</summary>
     public void Reset() { plan = -1; Restart(); retries = 0; unsent = null; unsentRun = 0; }
 
+    /// <summary>Memory first: the pop-up's state is the game's flag (FilterMem Yes / No); the pixels (FilterOpen as the host saw them) only when memory does not know.
+    /// A disagreement is trusted to memory and told once per episode (NavNotes: «filter open: mem=.. pix=..»).</summary>
+    void ResolveFilter(HeroView v) {
+      if (v.FilterResolved) return;
+      v.FilterResolved = true;
+      if (v.FilterMem == Mem3.Unknown) { disagree = false; return; }
+      bool mem = v.FilterMem == Mem3.Yes;
+      if (v.Foreground && mem != v.FilterOpen) {   // (not in front: the pixels were not looked at)
+        if (!disagree) { disagree = true; NavNotes.Add("filter open: mem=" + (mem ? "yes" : "no") + " pix=" + (v.FilterOpen ? "yes" : "no") + " (episode " + (++disagreeN) + ", memory trusted)"); }
+      } else disagree = false;
+      v.FilterOpen = mem;
+    }
+    bool disagree; int disagreeN;
+    /// <summary>The funnel is pressed again after this many presses at most when memory says closed throughout (a press that did not reach the game); with the pop-up unreadable never.</summary>
+    public const int MaxMemFunnels = 2;
+
     /// <summary>The grid is filtered by a faction or a class (what the memory shows).</summary>
     public static bool FilterActive(HeroView v) { return (v.ChosenCamps != null && v.ChosenCamps.Length > 0) || v.ClassChosen; }
 
     /// <summary>The click or drag to make, <see cref="AutoAction.Nothing"/> to wait, or null: the hero screen shows the
     /// plan's hero with the gear tab (or there is nothing to do), the gear pilots go on.</summary>
     public AutoAction Step(HeroView v) {
+      ResolveFilter(v);
       if (unsent != null) unsentRun = 0;   // the last action went out
       var before = Save();
       fade = false;
@@ -304,7 +326,7 @@ namespace RealmForge {
       }
       if (t < 0 || filterPhase == 2) return null;
       bool known = v.HeroClass > 0 || (v.HeroCamps != null && v.HeroCamps.Length > 0);
-      if (filterPhase == 0 && (!known || filterBlind || !FarFromView(v, t))) return null;
+      if (filterPhase == 0 && (!known || (filterBlind && v.FilterMem == Mem3.Unknown) || !FarFromView(v, t))) return null;   // (blind only on pixels: a memory flag reads the pop-up)
       filterPhase = 1;
       if (!v.FilterOpen) {
         // the pop-up was never seen after the funnel clicks: a grid click now could land inside it (a wrong class filter),
@@ -355,8 +377,14 @@ namespace RealmForge {
     AutoAction OpenFilter(HeroView v, double H) {
       if (funnelPressed) {
         if (v.NowMs - funnelAt < Late(FunnelSeenMs)) return AutoAction.Nothing;
-        funnelPressed = false; filterBlind = true; FunnelUnseen = true; State = "notfound"; Why = "filter pop-up not seen after the funnel press";
-        return AutoAction.Nothing;
+        funnelPressed = false;
+        if (v.FilterMem != Mem3.Unknown) {
+          // the game says closed (it was not open on the pixels either way): a toggle press that did not reach it. The state is known, so a second press is no blind toggle - at most MaxMemFunnels in all
+          if (funnelTries >= MaxMemFunnels) { State = "notfound"; Why = "filter pop-up still closed in memory after " + funnelTries + " funnel presses"; return AutoAction.Nothing; }
+        } else {
+          filterBlind = true; FunnelUnseen = true; State = "notfound"; Why = "filter pop-up not seen after the funnel press";
+          return AutoAction.Nothing;
+        }
       }
       funnelPressed = true; funnelAt = v.NowMs; funnelTries++; waitUntil = v.NowMs + Late(AfterClickMs);
       return Funnel(v, H);
@@ -374,6 +402,7 @@ namespace RealmForge {
     int cleanTries; long cleanAt;
     /// <summary>With no plan to run: leave the hero grid's filter as found or cleared («Все» in both columns) and the pop-up closed. Null = nothing to do now.</summary>
     public AutoAction Cleanup(HeroView v) {
+      ResolveFilter(v);
       if (!FilterDirty) { cleanTries = 0; return null; }
       if (!v.Foreground || v.UserBusy || v.NowMs - cleanAt < 700) return null;
       double H = v.H;
@@ -430,7 +459,7 @@ namespace RealmForge {
       if (v == null) return "-";
       int pi = v.Heroes != null ? Array.IndexOf(v.Heroes, v.Plan) : -2, si = v.Heroes != null ? Array.IndexOf(v.Heroes, v.Hero) : -2;
       return "state " + State + " plan@" + pi + " shown@" + si + " grid " + (v.Heroes != null ? v.Heroes.Length : -1) + " tab " + v.Tab + " part " + v.Part
-        + " filterOpen " + v.FilterOpen + " small " + v.SmallCards + " clicks " + clicks + " drags " + drags + " backs " + backs + " tabs " + tabs
+        + " filterOpen " + v.FilterOpen + " mem " + v.FilterMem + " small " + v.SmallCards + " clicks " + clicks + " drags " + drags + " backs " + backs + " tabs " + tabs
         + " misses " + misses + " total " + total + " filterPhase " + filterPhase + " funnel " + funnelTries + " doneCloses " + doneCloses
         + " row1 " + (has ? (int)lo + ".." + (int)hi : "unknown") + " retries " + retries + " late " + lateMs;
     }
@@ -440,6 +469,13 @@ namespace RealmForge {
 }
 
 namespace RealmForge {
+  /// <summary>Lines the pure pilots want in the test log (the probe's lines carry them out: RFX.NavProbeLines drains this). At most 20 wait.</summary>
+  public static class NavNotes {
+    static readonly System.Collections.Generic.Queue<string> q = new System.Collections.Generic.Queue<string>();
+    public static void Add(string s) { lock (q) { q.Enqueue(s); while (q.Count > 20) q.Dequeue(); } }
+    public static System.Collections.Generic.List<string> Take() { lock (q) { var r = new System.Collections.Generic.List<string>(q); q.Clear(); return r; } }
+  }
+
   /// <summary>The hero grid's filter pop-up on a grabbed frame: a dark strip left of the class check boxes, the Faction|Filter
   /// divider, and a second mark that grid lines cannot fake: a blue selected cell of the class / faction columns or,
   /// on older layouts, the Class|Faction divider. Pure: the pixels come from <c>grab(x, y, w, h)</c> in client px.</summary>
@@ -471,7 +507,15 @@ namespace RealmForge {
     /// <summary>The same on a grab that may hold masked pixels (our own hint): the dark strip is judged on its known pixels (a few masked rows
     /// cannot make it «not known» when the rest already says no / yes; a strip that is no ends the look as a definite no); the marks keep the
     /// withhold rule of <see cref="OwnMask.Read"/> (a grab with a masked pixel is not used).</summary>
+    /// <summary>The latest look's verdict and when (Environment.TickCount; 0 = none): the navigator's probe prints it next to the game's flag (mem vs pix in one recording).</summary>
+    public static Seen3 LastLook = Seen3.Unknown; public static int LastLookAt;
     public static Seen3 Look(Func<int, int, int, int, int[]> grab, double U) {
+      Seen3 r = LookRaw(grab, U);
+      LastLook = r; LastLookAt = Environment.TickCount | 1;
+      return r;
+    }
+
+    static Seen3 LookRaw(Func<int, int, int, int, int[]> grab, double U) {
       int x0, y0, w, h; StripBox(U, out x0, out y0, out w, out h);
       int[] px = grab(x0, y0, w, h);
       if (px == null) return Seen3.No;

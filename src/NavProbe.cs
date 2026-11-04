@@ -42,6 +42,8 @@ namespace RealmForge {
       try { NpGeometry(ga, l); } catch (Exception e) { l.Add("geometry: exception " + e.Message); }
       try { NpPointer(ga, l); } catch (Exception e) { l.Add("pointer: exception " + e.Message); }
       try { NpClickables(ga, l); } catch (Exception e) { l.Add("clickables: exception " + e.Message); }
+      try { NpHeroGear(l); } catch (Exception e) { l.Add("hero filter: exception " + e.Message); }
+      foreach (var n in NavNotes.Take()) l.Add(n);   // (the pilots' own notes, e.g. «filter open: mem=.. pix=..»)
       return l;
     }
 
@@ -398,6 +400,85 @@ namespace RealmForge {
         npLockRead = true; npLockOpen = open; npLockAt = now;
         return open;
       } catch (Exception) { return null; }
+    }
+
+    // ---------------------------------------------------------------- memory vs pixels (docs/specs/2026-11-04-memory-first-state.md): the hero grid's filter pop-up, the gear filter and the compare card.
+    // Each line pairs the game's own flag (mem=) with the pixel look of the same moment (pix=) so one recording shows where they differ. An unreadable / not built panel is Unknown, never closed.
+    // A line is returned when it changed, and every 2 s while the screen is shown (the host logs what it gets at once).
+    static readonly Dictionary<string, string> npEmitLast = new Dictionary<string, string>(); static readonly Dictionary<string, int> npEmitAt = new Dictionary<string, int>();
+    static void NpEmit(List<string> l, string key, string line, bool periodic) {
+      int now = Environment.TickCount; string old; int at;
+      bool changed = !npEmitLast.TryGetValue(key, out old) || old != line;
+      if (changed || (periodic && npEmitAt.TryGetValue(key, out at) && unchecked(now - at) >= 2000)) { l.Add(line); npEmitLast[key] = line; npEmitAt[key] = now; }
+    }
+    static readonly Dictionary<string, string> npPix = new Dictionary<string, string>(); static readonly Dictionary<string, int> npPixAt = new Dictionary<string, int>();
+    /// <summary>The host's pixel verdict for a state the probe also reads from memory (key "gear" | "gearSide" | "tip"; text such as "yes" / "no" / "unknown"), shown as pix= while younger than 1.5 s.</summary>
+    public static void NavProbeSetPix(string key, string verdict) { lock (npPix) { npPix[key] = verdict; npPixAt[key] = Environment.TickCount | 1; } }
+    static string NpPix(string key) {
+      lock (npPix) { string v; int at; if (npPix.TryGetValue(key, out v) && npPixAt.TryGetValue(key, out at) && unchecked(Environment.TickCount - at) < 1500) return v; }
+      return "n/a";
+    }
+    static string NpHeroPix() {
+      if (HeroFilterLook.LastLookAt == 0 || unchecked(Environment.TickCount - HeroFilterLook.LastLookAt) > 1500) return "n/a";
+      return HeroFilterLook.LastLook == Seen3.Yes ? "yes" : HeroFilterLook.LastLook == Seen3.No ? "no" : "unknown";
+    }
+    static string NpTri(Mem3 m) { return m == Mem3.Yes ? "yes" : m == Mem3.No ? "no" : "unknown"; }
+
+    static void NpHeroGear(List<string> l) {
+      string why; ulong env, ui;
+      if (!UiRoots(out env, out ui, out why)) { NpEmit(l, "hero", "hero filter: no Lua root (" + why + ")", false); return; }
+      bool shown; int copies; var r = new UiButtonInfo();
+      ulong f = FormOf(env, ui, "Form_CharactorMain", r, out shown, out copies);
+      if (f == 0 || !shown) { NpEmit(l, "hero", "hero filter: Form_CharactorMain not shown", false); NpEmit(l, "gear", "gear filter: Form_CharactorMain not shown", false); NpTipLine(env, ui, l); return; }
+      // ---- the hero grid's filter pop-up
+      string mw; Mem3 mem = ReadHeroFilterMem(f, out mw);
+      ulong panels, p = 0, v, pd; int t1, t2, tt;
+      string root = "-";
+      if (Field(f, "m_Panels", out panels, out t1) && t1 == T_TABLE && Field(panels, "Charactor_FilterOrder", out p, out t2) && t2 == T_TABLE) {
+        ulong ud; int ut;
+        if (Field(p, "m_RootGo", out ud, out ut) && (ut & 0x0F) == 7 && ud != 0) {
+          string cls; var rr = new UiButtonInfo(); ulong nat = NativeOf(env, ud, "rootGo", rr, out cls);
+          var gb = nat != 0 ? Read(nat + GoActiveSelf, 2) : null;
+          root = gb == null ? "unreadable" : "self=" + gb[0] + " hier=" + (gb[1] == 0xFF ? "?" : gb[1].ToString());
+        } else root = "m_RootGo " + (ut == 0 ? "nil" : "tt" + ut.ToString("X"));
+      }
+      long[] camps; bool cc; string choice = ReadHeroChoice(f, out camps, out cc) ? "camps=[" + string.Join(",", Array.ConvertAll(camps, x => x.ToString(NpInv))) + "] class=" + (cc ? "chosen" : "all") : "choice unreadable";
+      string grid = "?"; ulong proxy, data;
+      if (Field(f, "m_InfinityGridProxy", out proxy, out t1) && t1 == T_TABLE && Field(proxy, "m_Data", out data, out t2) && t2 == T_TABLE) grid = EntryCount(data).ToString(NpInv);
+      string tab = Field(f, "m_LastType", out v, out tt) && tt == T_INT ? ((long)v).ToString(NpInv) : "?";
+      string part = Field(f, "m_PanelDatas", out pd, out t1) && t1 == T_TABLE && IntKey(pd, 3, out v, out tt) && tt == T_INT ? ((long)v).ToString(NpInv) : "-";
+      NpEmit(l, "hero", "hero filter: mem=" + NpTri(mem) + " (" + mw + ") pix=" + NpHeroPix() + " rootGo " + root + " " + choice + " grid=" + grid + " tab=" + tab + " part=" + part, true);
+
+      // ---- the gear filter (hero screen's gear tab): Panel_EquipBase.m_Panel_EquipFilterWidget_Charactor
+      string gear; ulong ep, w;
+      if (!(Field(f, "m_Panels", out panels, out t1) && t1 == T_TABLE)) gear = "mem=unknown (m_Panels unreadable)";
+      else if (!Field(panels, "EquipPanel", out ep, out t2) || t2 != T_TABLE) gear = "mem=unknown (EquipPanel " + (t2 == 0 ? "absent" : "tt" + t2.ToString("X")) + ")";
+      else if (!Field(ep, "m_Panel_EquipFilterWidget_Charactor", out w, out t2) || t2 != T_TABLE) gear = "mem=unknown (filter widget " + (t2 == 0 ? "absent" : "tt" + t2.ToString("X")) + ")";
+      else {
+        string show = Field(w, "m_bShow", out v, out tt) && tt == T_BOOL ? ((v & 0xFFFFFFFF) != 0 ? "yes" : "no") : "unknown";
+        var st = new StringBuilder(); ulong bs; int bt;
+        if (Field(w, "m_ButtonStates", out bs, out bt) && bt == T_TABLE)
+          for (int i = 1; i <= 3; i++) st.Append(i > 1 ? "," : "").Append(IntKey(bs, i, out v, out tt) && tt == T_INT ? ((long)v).ToString(NpInv) : "?");
+        else st.Append("?");
+        string open = Field(w, "m_bOpenFilterContent", out v, out tt) && tt == T_BOOL ? ((v & 0xFFFFFFFF) != 0 ? "yes" : "no") : "?";
+        gear = "mem=" + show + " (m_bShow) states[1..3]=" + st + " contentOpen=" + open;
+      }
+      NpEmit(l, "gear", "gear filter: " + gear + " pix=" + NpPix("gear") + (NpPix("gearSide") != "n/a" ? " side-pix=" + NpPix("gearSide") : ""), true);
+      NpTipLine(env, ui, l);
+    }
+
+    // ---- the item tip / compare card (Form_CharactorEquipTip): which cards it holds
+    static void NpTipLine(ulong env, ulong ui, List<string> l) {
+      bool shown; int copies; var r = new UiButtonInfo();
+      ulong f = FormOf(env, ui, "Form_CharactorEquipTip", r, out shown, out copies);
+      if (f == 0 || !shown) { NpEmit(l, "tip", "tip card: form not shown", false); return; }
+      NpEmit(l, "tip", "tip card: select=" + NpInfo(f, "m_SelectEquipInfo") + " current=" + NpInfo(f, "m_CurrentEquipInfo") + " one=" + NpInfo(f, "m_OneEquipInfo") + " pix=" + NpPix("tip"), true);
+    }
+    static string NpInfo(ulong form, string field) {
+      ulong t, v; int tt, ut;
+      if (!Field(form, field, out t, out tt) || tt == T_NIL) return "-";
+      if (tt != T_TABLE) return "tt" + tt.ToString("X");
+      return Field(t, "iItemUid", out v, out ut) && ut == T_INT ? ((long)v).ToString(NpInv) : "table";
     }
 
     // ---------------------------------------------------------------- the lists' ScrollRects

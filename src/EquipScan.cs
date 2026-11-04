@@ -52,6 +52,9 @@ namespace RealmForge {
   }
 
   /// <summary>The hero screen (Form_CharactorMain) now.</summary>
+  /// <summary>A state read from the game's memory: it is told (Yes / No) or it is not (Unknown: a nil table, a panel still loading). Unknown is never closed.</summary>
+  public enum Mem3 { No = 0, Yes = 1, Unknown = 2 }
+
   public sealed class HeroScreen {
     public long Hero;            // EquipData.m_CurrentSelectHeroUid: hero shown; 0 = the hero screen is closed
     public bool FormOk;          // the form table was read
@@ -61,7 +64,10 @@ namespace RealmForge {
     public long[] Heroes;        // the grid in display order (hero uids), null = unreadable
     public ulong GridPtr;        // m_InfinityGridProxy.m_Data: a new table when the grid is sorted / filtered again
     // the grid's filter (Panel_CharactorFilterOrder, m_PanelDatas[6] = Hero_Filter)
-    public bool FilterOpen;      // the filter pop-up is on the screen (PanelBase.m_IsActive)
+    public bool FilterOpen;      // (not set by the reader: the pop-up's state is FilterMem; the host's pixel look fills HeroView.FilterOpen)
+    /// <summary>The filter pop-up as the game's script holds it: Form_CharactorMain.m_Panels.Charactor_FilterOrder.m_IsActive (Yes / No). Unknown = the panel
+    /// is not built yet or the flag is not set (nil / the prefab still loading): never read as closed, the pixels decide then.</summary>
+    public Mem3 FilterMem = Mem3.Unknown;
     public long[] FactionList;   // its faction column, top down (0 = «Все"), null until it was opened once
     public int ClassCount;       // entries of its class column («Все» included), 0 = unknown
     public long[] ChosenCamps;   // factions the grid is filtered by now (empty = all)
@@ -337,25 +343,47 @@ namespace RealmForge {
       return h;
     }
 
+    /// <summary>Is the hero grid's filter pop-up open, from the game's script: m_Panels.Charactor_FilterOrder.m_IsActive (PanelBase:SetActive, set at once: the panel has no
+    /// animator timer). The panel table missing or a bool false (the prefab is loading) or the flag nil / not a bool = Unknown, never No. <paramref name="why"/> says what was
+    /// read, for the probe's line.</summary>
+    public static Mem3 ReadHeroFilterMem(ulong form, out string why) {
+      why = "no form";
+      if (form == 0) return Mem3.Unknown;
+      ulong panels, p, v; int t1, t2, t3;
+      if (!Field(form, "m_Panels", out panels, out t1) || t1 != T_TABLE) { why = "m_Panels " + (t1 == 0 ? "nil" : "tt" + t1.ToString("X")); return Mem3.Unknown; }
+      bool ok = Field(panels, "Charactor_FilterOrder", out p, out t2);
+      if (!ok || t2 == T_NIL) { why = "panel absent"; return Mem3.Unknown; }
+      if (t2 != T_TABLE) { why = t2 == T_BOOL ? "panel loading (false)" : "panel tt" + t2.ToString("X"); return Mem3.Unknown; }
+      if (!Field(p, "m_IsActive", out v, out t3) || t3 != T_BOOL) { why = "m_IsActive " + (t3 == 0 ? "nil" : "tt" + t3.ToString("X")); return Mem3.Unknown; }
+      bool on = (v & 0xFFFFFFFF) != 0; why = "m_IsActive " + (on ? "true" : "false");
+      return on ? Mem3.Yes : Mem3.No;
+    }
+
+    /// <summary>The grid's filter choice from m_PanelDatas[6] (Hero_Filter): the factions chosen (empty = all) and whether a class is chosen (which one is not readable: game config objects).</summary>
+    public static bool ReadHeroChoice(ulong form, out long[] camps, out bool classChosen) {
+      camps = new long[0]; classChosen = false;
+      ulong v, pd; int tt, pdt;
+      if (!Field(form, "m_PanelDatas", out pd, out pdt) || pdt != T_TABLE || !IntKey(pd, 6, out v, out tt) || tt != T_TABLE) return false;
+      ulong cs, cls; int ct, lt;
+      if (IntKey(v, 3, out cs, out ct) && ct == T_TABLE) { var c = IntArray(cs); var l = new List<long>(); foreach (var x in c) if (x > 0) l.Add(x); camps = l.ToArray(); }
+      // the class column's choice: its «Все» is a script table with m_ProfessionID -1, a class is the game's config object
+      if (IntKey(v, 1, out cls, out lt) && lt == T_TABLE)
+        for (int i = 1; i <= 8; i++) {
+          ulong e, pid; int et, pt;
+          if (!IntKey(cls, i, out e, out et)) break;
+          if (et == T_TABLE && Field(e, "m_ProfessionID", out pid, out pt) && pt == T_INT && (long)pid == -1) continue;
+          classChosen = true; break;
+        }
+      return true;
+    }
+
     static void ReadHeroFilter(EquipAddrs a, HeroScreen h) {
-      ulong v; int tt;
-      h.ChosenCamps = new long[0];
-      ulong pd; int pdt;
-      if (Field(a.Form, "m_PanelDatas", out pd, out pdt) && pdt == T_TABLE && IntKey(pd, 6, out v, out tt) && tt == T_TABLE) {
-        ulong camps, cls; int ct, lt;
-        if (IntKey(v, 3, out camps, out ct) && ct == T_TABLE) { var c = IntArray(camps); var l = new List<long>(); foreach (var x in c) if (x > 0) l.Add(x); h.ChosenCamps = l.ToArray(); }
-        // the class column's choice: its «Все» is a script table with m_ProfessionID -1, a class is the game's config object
-        if (IntKey(v, 1, out cls, out lt) && lt == T_TABLE)
-          for (int i = 1; i <= 8; i++) {
-            ulong e, pid; int et, pt;
-            if (!IntKey(cls, i, out e, out et)) break;
-            if (et == T_TABLE && Field(e, "m_ProfessionID", out pid, out pt) && pt == T_INT && (long)pid == -1) continue;
-            h.ClassChosen = true; break;
-          }
-      }
+      string memWhy; h.FilterMem = ReadHeroFilterMem(a.Form, out memWhy);
+      long[] camps; bool cc;
+      ReadHeroChoice(a.Form, out camps, out cc); h.ChosenCamps = camps; h.ClassChosen = cc;
       ulong panels, p; int t1, t2;
       if (!Field(a.Form, "m_Panels", out panels, out t1) || t1 != T_TABLE || !Field(panels, "Charactor_FilterOrder", out p, out t2) || t2 != T_TABLE) return;
-      // (whether the pop-up is on the screen is seen on the pixels: the game shows and hides it on the C# side)
+      // (whether the pop-up is open: FilterMem above; the pixels only when that is Unknown)
       ulong fp, fd, mp, md; int f1, f2, m1, m2;
       if (Field(p, "m_FactionInfinityGridProxy", out fp, out f1) && f1 == T_TABLE && Field(fp, "m_Data", out fd, out f2) && f2 == T_TABLE) h.FactionList = IntArray(fd);
       if (Field(p, "m_MainInfinityGridProxy", out mp, out m1) && m1 == T_TABLE && Field(mp, "m_Data", out md, out m2) && m2 == T_TABLE) h.ClassCount = EntryCount(md);
