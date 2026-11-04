@@ -101,7 +101,7 @@ namespace RealmForge {
 
     NavTarget target; IList<IAtTargetAction> actions = new List<IAtTargetAction>();
     NavMemory mem = new NavMemory(); readonly ActClick act = new ActClick();
-    long popSince, startedAt = -1, lastTickAt = -1, pausedMs, lastProgress, stepProgress, blindMs, gateSince = -1; bool ownHidden, resetTick, hideKeep; long hideAt; string ladKey = ""; int ladDepth; long ladSince; int ladFails; Snapshot lastSnap; bool hotkeyTried; string lastSig = "", logged = "", curEdge = "";
+    long lastDt, popSince, startedAt = -1, lastTickAt = -1, pausedMs, lastProgress, stepProgress, blindMs, gateSince = -1; bool ownHidden, resetTick, hideKeep; long hideAt; string ladKey = ""; int ladDepth; long ladSince; int ladFails; Snapshot lastSnap; bool hotkeyTried; string lastSig = "", logged = "", curEdge = "";
     bool lastHeld, popCity, needResume, tipSeen, unknownWatch; string unknownWhy = "";
     readonly List<string> recent = new List<string>();
     public Navigator(ClickOwner owner) { Owner = owner; }
@@ -136,7 +136,7 @@ namespace RealmForge {
 
     void TickCore(INavIo io, Snapshot s) {
       long now = io.Now; resetTick = false;
-      long dt = lastTickAt >= 0 ? Math.Min(now - lastTickAt, 5000) : 0; lastTickAt = now;
+      long dt = lastTickAt >= 0 ? Math.Min(now - lastTickAt, 5000) : 0; lastTickAt = now; lastDt = dt;
       if (target == null || State == "idle" || State == "halted" || State == "done") return;
       if (startedAt < 0) { startedAt = now; lastProgress = now; stepProgress = now; }
       if (needResume) { needResume = false; if (!io.Gate.Halted(Owner)) io.Gate.Resume(Owner); }
@@ -145,7 +145,7 @@ namespace RealmForge {
         Say = io.UserBusy ? "paused" : "background"; pausedMs += dt; lastProgress += dt; stepProgress += dt; return;
       }
       if (s == null) return;
-      if ((s.Confidence < NavConfidence.NoOrder || !s.Stable(now)) && blindMs < BlindGraceMs) { blindMs += dt; lastProgress += dt; stepProgress += dt; }   // (see BlindMs)
+      if ((s.Confidence < NavConfidence.NoOrder || !s.Stable(now)) && blindMs < BlindGraceMs) { blindMs += dt; lastProgress += dt; stepProgress += dt; pausedMs += dt; }   // (see BlindMs; the run cap counts working time)
       if (s.HasTip()) tipSeen = true; else if (tipSeen) { tipSeen = false; io.Gate.ResetTipEscapes(Owner); }
       mem.Prune(s, now); lastSnap = s;
       LadderWatch(io, s, now, dt);
@@ -174,7 +174,7 @@ namespace RealmForge {
       }
       if (hideKeep && now - hideAt > 10000) { hideAt = now; io.HideOwn(); }   // (once our windows had to be hidden they stay hidden for the run)
       if (State == "work" && now - startedAt - pausedMs > RunCapMs) { Halt(io, "run_cap"); return; }
-      if (popCity && now - popSince > 2 * LadderCapMs) { LadderHalt(io, s, "the way back to the city takes " + (now - popSince) / 1000 + " s"); return; }
+      if (popCity && !(s.Kind == ScreenKind.City && s.Stack.Count == 0) && now - popSince > 2 * LadderCapMs) { LadderHalt(io, s, "the way back to the city takes " + (now - popSince) / 1000 + " s"); return; }
       // (on the way back to the city the ladder is the clock: RungMs a rung, LadderCapMs without a change)
       if (!popCity && State == "work" && now - lastProgress > NoProgressMs) {
         Reset(io, "watchdog", "no_progress:" + (Say == "" ? "?" : Say), now); lastProgress = now;
@@ -221,6 +221,7 @@ namespace RealmForge {
     /// LadderCapMs without a change - end the run with the named stop reset_failed:&lt;top form&gt;. Not a failed step and not another reset: the reset is the ladder.</summary>
     void LadderWatch(INavIo io, Snapshot s, long now, long dt) {
       if (!popCity) { ladKey = ""; ladFails = 0; return; }
+      foreach (var l in s.Stack) if (l.Role == LayerRole.Wait) { ladSince = now; ladFails = 0; popSince += dt; return; }   // (a result / loading screen the game closes by itself: its own wait, WaitCapMs)
       // (progress = fewer layers, or another base form that is a known screen; a read that flickers between known and unknown is not)
       string key = s.BaseForm + "|" + s.Stack.Count;
       if (ladKey == "") { ladKey = key; ladSince = now; ladFails = 0; ladDepth = s.Stack.Count; }
@@ -230,7 +231,7 @@ namespace RealmForge {
         if (better) { ladSince = now; ladFails = 0; }
         return;
       }
-      if (s.Confidence < NavConfidence.NoOrder || !s.Stable(now)) { ladSince += dt; return; }   // (an unreadable screen is not the ladder's failure)
+      if (s.Confidence < NavConfidence.NoOrder || !s.Stable(now)) { ladSince += dt; popSince += dt; return; }   // (an unreadable screen is not the ladder's failure)
       if (now - ladSince > LadderCapMs) LadderHalt(io, s, "no change in " + LadderCapMs / 1000 + " s");
     }
 
@@ -250,6 +251,8 @@ namespace RealmForge {
     /// GateWaitResetMs it is a failed step whatever the cause (a reset, which hides them anyway). A wait is never a failure by itself, but it never lasts for ever.</summary>
     void GateWait(INavIo io, string why, long now) {
       if (gateSince < 0) gateSince = now;
+      // (the host could not send because it could not read - the forms or a look are unread, no verdict of the gate: the same blind time as an unreadable screen, within its grace)
+      if (why == "not sent" && blindMs < BlindGraceMs) { blindMs += lastDt; lastProgress += lastDt; stepProgress += lastDt; gateSince += lastDt; pausedMs += lastDt; }
       long d = now - gateSince;
       if (d > HideOwnMs && !ownHidden && why != null && why.StartsWith("own")) { ownHidden = true; io.Log("nav: gate wait " + d + " ms (" + why + ") - our own windows hidden"); hideKeep = true; hideAt = now; io.HideOwn(); }
       if (d > GateWaitResetMs) {

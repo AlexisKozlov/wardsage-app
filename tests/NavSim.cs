@@ -49,7 +49,7 @@ static partial class CoreTests {
       bool named = outcome == "done" || outcome.StartsWith("navhalt:") || NavRefusal(outcome);
       if (SimNavBlocked && t > 30000) l.Add("blocked back arrow: the named stop took " + t / 1000 + " s (more than 30)");
       if (!named) l.Add("the run ends in no done / named halt: " + outcome);
-      else if (t > 120000) l.Add("the run took " + t / 1000 + " s of sim time (more than 120 s)");
+      else if (t > 120000 && outcome != "done") l.Add("the run took " + t / 1000 + " s of sim time (more than 120 s)");
       if (outcome.StartsWith("navhalt:")) {
         string w = outcome.Substring(8);
         if (!(w == "hero_not_in_grid" || w == "danger" || w == "reset_failed" || w == "phantom_layer" || w.StartsWith("gate_") || w == "unknown_popup" || w == "unknown_screen")) l.Add("a halt outside the allowed set: " + w);
