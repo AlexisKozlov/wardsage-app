@@ -88,6 +88,7 @@ static partial class CoreTests {
     MemGapTests();
     DisagreeTests();
     HeroFilterMemOnlyTests();
+    TipKindTests();
   }
 
   // ---------------------------------------------------------------- the gear filter from the game's memory (docs/specs/2026-11-04-memory-first-state.md P2-P4, build 538 live log)
@@ -300,5 +301,25 @@ static partial class CoreTests {
     HeroView lv; long far = heroes[125];
     string s = RunHero(new HeroPilot(g), f, far, 3000, out lv, tags[far]);
     Check(s == "done" && f.Funnels == 2 && !f.FilterOpen, "hero filter all from memory (pictures blind, prefab loads 800 ms): the pilot filters with two presses and closes it (" + s + ", " + f.Funnels + ")");
+  }
+
+  // ---------------------------------------------------------------- E4: the item card's button kind from memory (A6)
+  static void TipKindTests() {
+    string line; var t = new TipKindTracker();
+    Check(t.Decide(1, 0, 0, out line) == 1 && t.Decide(2, 0, 100, out line) == 2, "tip kind: memory replace / equip decides when the picture sees no single button (a tie, none)");
+    Check(t.Decide(1, 1, 200, out line) == 1 && t.Decide(2, 2, 300, out line) == 2 && line == null, "tip kind: picture agrees: memory kind, no line");
+    Check(t.Decide(0, 1, 400, out line) == 0 && t.Decide(0, 0, 500, out line) == 0, "tip kind: memory unknown: the pictures decide (0 = rep / eq as found)");
+    {   // the picture says equip, memory replace: memory leads for 1.5 s, then the picture takes over and ONE line says so
+      var d = new TipKindTracker(); int k0 = d.Decide(1, 2, 10000, out line); string first = line; int k1 = d.Decide(1, 2, 11400, out line); string mid = line;
+      int k2 = d.Decide(1, 2, 11600, out line); string told = line; int k3 = d.Decide(1, 2, 12000, out line);
+      Check(k0 == 1 && k1 == 1 && first == null && mid == null, "tip kind: a fresh contradiction: memory still leads (" + k0 + "," + k1 + ")");
+      Check(k2 == 0 && told != null && told.StartsWith("disagree: tip card mem=replace pix=equip for=", StringComparison.Ordinal) && k3 == 0 && line == null, "tip kind: after 1.5 s the picture takes over, one line (" + told + ")");
+      Check(d.Decide(1, 1, 12100, out line) == 1, "tip kind: the picture agrees again: memory leads again");
+    }
+    {   // a new item: the contradiction clock restarts once the kinds agree or memory is unknown between
+      var d = new TipKindTracker(); d.Decide(1, 2, 0, out line); d.Decide(1, 2, 1600, out line);
+      d.Decide(0, 2, 1700, out line);
+      Check(d.Decide(1, 2, 1800, out line) == 1, "tip kind: memory unknown in between restarts the 1.5 s clock");
+    }
   }
 }

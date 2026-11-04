@@ -85,8 +85,8 @@ namespace RealmForge {
         switch (what) {
           case "heroesButton": return c.HeroesButtonSeen(O, W, H);
           case "heroFilter": return c.HeroFilterSeen(O, W, H);
-          case "gearFilterMain": return c.Mark(O, c.fg.X(c.fg.MainCloseX, W, H), c.fg.Y(c.fg.CloseY, W, H), U, ButtonCheck.IsCloseRed);
-          case "gearFilterSide": return c.Mark(O, c.fg.X(c.fg.SideCloseX, W, H), c.fg.Y(c.fg.CloseY, W, H), U, ButtonCheck.IsCloseRed);
+          case "gearFilterMain": return c.GearMain(O, W, H, U);   // (the game's m_bShow first, the red cross only when it is Unknown)
+          case "gearFilterSide": return c.GearSide(O, W, H, U);
           case "tipShown": return c.EquipTipShown();
         }
         return false;

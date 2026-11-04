@@ -11,7 +11,7 @@ static partial class CoreTests {
     /// <summary>FilterLookBlind: the hero filter's pixel read is false while the sim pop-up is open; PopupEatsBack: a back press with the pop-up open only closes it; CityBackLatencyMs: the back arrow answers this late.</summary>
     public bool FilterLookBlind, PopupEatsBack; public long CityBackLatencyMs;
     /// <summary>GearMem: the gear filter's flag is readable (off = the pixel-only old path); GearPixLagMs / GearPixStuck: see SimGame; HeroMem: the hero grid's flag is exact; OwnGearCover: the gear red-cross look is masked by our hint for ever.</summary>
-    public bool GearMem, GearPixStuck, HeroMem, OwnGearCover; public long GearPixLagMs; }
+    public bool GearMem, GearPixStuck, HeroMem, OwnGearCover, GearLoad; public long GearPixLagMs; }
   static bool SimNavBlocked, NavBaseline; static int SimNavResets, SimNavFunnel, SimNavOwnRefusals, SimNavCloseNoEffect, SimNavBarPresses, NavTwinRuns, NavTwinBroke; static readonly SortedDictionary<string, int[]> NavTwinBy = new SortedDictionary<string, int[]>();
   static bool SimNav, SimNavCity, SimNavChecks; static NavCfg SimNavCfg = new NavCfg(); static long SimNavPlan;
 
@@ -347,7 +347,7 @@ static partial class CoreTests {
     else if (sc == "nav.equip.ownTimerOver") { c.OwnStrip = !NavBaseline; c.OwnTimer = true; }
     else if (sc == "nav.city.userAway") { c.AwayMs = 13000; }
     else if (sc == "nav.equip.gearFilterMemLead") { c.GearMem = !NavBaseline; c.GearPixLagMs = 1000; c.RebuildMs = 0; }   // (NavBaseline: the same world with no flag read = the pixel-only old path)
-    else if (sc == "nav.equip.gearFilterRedXNoEffect") { c.GearMem = !NavBaseline; c.GearPixStuck = true; }
+    else if (sc == "nav.equip.gearFilterRedXNoEffect") { c.GearMem = !NavBaseline; c.GearPixStuck = true; c.GearLoad = true; }   // (E1: the widget's prefab loads 800 ms: Unknown, pending, then exact)
     else if (sc == "nav.equip.ownHintOverMem") { c.OwnStrip = true; c.OwnGearCover = true; c.GearMem = !NavBaseline; c.HeroMem = !NavBaseline; }
     else if (sc == "nav.equip.hideWorn") { c.FlagFlickerP = 0.1; c.RebuildMs = 200; }
     else if (sc == "nav.equip.heroFilterBlindEats") { c.FilterLookBlind = true; c.PopupEatsBack = true; }
@@ -364,7 +364,7 @@ static partial class CoreTests {
     long plan = 100 + seed % 30;
     g.LockMs = NavCfgOf(sc).LockMs; if (NavStrict(sc)) g.SpawnP = 0; g.ListRebuildMs = NavCfgOf(sc).RebuildMs;
     NavStart(sc, g, r, plan); SimNavResets = 0; SimNavOwnRefusals = 0; SimNavCloseNoEffect = 0;
-    { var cf = NavCfgOf(sc); g.GearMemMode = cf.GearMem ? 1 : 0; g.GearPixLagMs = cf.GearPixLagMs; g.GearPixStuck = cf.GearPixStuck; if (sc == "nav.equip.ownHintOverMem" && !cf.HeroMem) g.Hero.MemMode = 0; }
+    { var cf = NavCfgOf(sc); g.GearMemMode = cf.GearMem ? (cf.GearLoad ? 2 : 1) : 0; g.GearPixLagMs = cf.GearPixLagMs; g.GearPixStuck = cf.GearPixStuck; if (sc == "nav.equip.ownHintOverMem" && !cf.HeroMem) g.Hero.MemMode = 0; }
     { var cf = NavCfgOf(sc); if (cf.FilterLookBlind) g.Hero.Blind = true; g.PopupEatsBack = cf.PopupEatsBack; g.CityBackLatencyMs = cf.CityBackLatencyMs; }
     SimNav = nav; SimNavBlocked = sc == "nav.city.blockedBack"; SimNavCity = sc.StartsWith("nav.city"); SimNavCfg = NavCfgOf(sc); SimNavPlan = plan;
     var oc = new string[1]; var tmp = new Dictionary<string, int>();

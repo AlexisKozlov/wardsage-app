@@ -484,14 +484,34 @@ namespace RealmForge {
     public void Reset() { key = null; said = false; }
     /// <summary>The line to log now, or null.</summary>
     public string Update(string name, string mem, string pix, long nowMs) {
-      bool cmp = (mem == "yes" || mem == "no") && (pix == "yes" || pix == "no") && mem != pix;
-      if (!cmp) { Reset(); return null; }
+      bool ok = (mem == "yes" || mem == "no") && (pix == "yes" || pix == "no");
+      return Compare(name, ok ? mem : null, ok ? pix : null, nowMs);
+    }
+    /// <summary>True once the current disagreement has lasted HoldMs (the line was given).</summary>
+    public bool Held { get { return said; } }
+    /// <summary>The same for any two words (null = not known: no comparison).</summary>
+    public string Compare(string name, string mem, string pix, long nowMs) {
+      if (mem == null || pix == null || mem == pix) { Reset(); return null; }
       string k = mem + "/" + pix;
       if (k != key || nowMs < since) { key = k; since = nowMs; said = false; }
       if (said || nowMs - since < HoldMs) return null;
       said = true;
       return "disagree: " + name + " mem=" + mem + " pix=" + pix + " for=" + (nowMs - since);
     }
+  }
+
+  /// <summary>The item card's button kind (E4, plan A6): «Заменить» (two cards: m_CurrentEquipInfo set) or «Надеть» (one card). Memory leads; the picture's single blue button only checks it. A picture that contradicts
+  /// memory for over 1.5 s (the fields were not cleared between items: a stale m_CurrentEquipInfo) takes over again, told once as «disagree: tip card ..». Kinds: 1 = replace, 2 = equip, 0 = not known / no single button.</summary>
+  public sealed class TipKindTracker {
+    readonly DisagreeTracker dis = new DisagreeTracker();
+    static string Name(int k) { return k == 1 ? "replace" : k == 2 ? "equip" : null; }
+    /// <summary>The kind to use (1 / 2) or 0 = memory does not decide, the pictures do (rep / eq as found). <paramref name="line"/>: a log line, or null.</summary>
+    public int Decide(int memKind, int pixKind, long nowMs, out string line) {
+      line = dis.Compare("tip card", Name(memKind), Name(pixKind), nowMs);
+      if (memKind == 0) return 0;
+      return dis.Held ? 0 : memKind;
+    }
+    public void Reset() { dis.Reset(); }
   }
 
   public static class NavNotes {

@@ -4929,12 +4929,15 @@ namespace RealmForge {
       int[] rep = FindBlue(o, hg.Replace(W, H), H), eq = FindBlue(o, hg.Equip(W, H), H);
       LookUnknown("confirm button", blueUnk);   // (a spot our hint covers: the button may be there, or a second one - not known, no click)
       confirmBlueNone = rep == null && eq == null && !blueUnk;
-      // the game's own cards (two = «Заменить», one = «Надеть») settle a tie of the pictures; told once per item next to what the pictures saw (to check the fields on a live run)
-      if (target != confirmTipLogged && (rep != null || eq != null) && !blueUnk) {
-        int tk = RFX.ReadTipKind(); confirmTipLogged = target;
-        Log.Write("confirm: tip memory=" + (tk == 1 ? "replace" : tk == 2 ? "equip" : "unknown") + " pix=" + (rep != null && eq != null ? "both" : rep != null ? "replace" : "equip") + " item " + target);
-        if (rep != null && eq != null) { if (tk == 1) eq = null; else if (tk == 2) rep = null; }
-      }
+      // the game's own cards (two = «Заменить», one = «Надеть») are the kind of the button (E4: memory leads, the picture finds where it is); a picture that contradicts it over 1.5 s takes over (TipKindTracker);
+      // told once per item next to what the pictures saw
+      if ((rep != null || eq != null) && !blueUnk) {
+        int tk = RFX.ReadTipKind(), pk = rep != null && eq == null ? 1 : eq != null && rep == null ? 2 : 0;
+        string tline; int use = confirmKinds.Decide(tk, pk, NowMs(), out tline);
+        if (tline != null) Log.Write(tline + " (memory " + (tk == 1 ? "replace" : "equip") + ", picture " + (pk == 1 ? "replace" : "equip") + ") item " + target);
+        if (target != confirmTipLogged) { confirmTipLogged = target; Log.Write("confirm: tip memory=" + (tk == 1 ? "replace" : tk == 2 ? "equip" : "unknown") + " pix=" + (rep != null && eq != null ? "both" : rep != null ? "replace" : "equip") + " item " + target + " src=" + (use != 0 ? "mem" : "pix")); }
+        if (use == 1) eq = null; else if (use == 2) rep = null;
+      } else confirmKinds.Reset();
       // the item a single button was found for is on the hero now: that button kind is the one at this window size
       if (confirmChoice.PendingItem > 0 && addrs != null && hintHero > 0 && RFX.ReadOwner(addrs, confirmChoice.PendingItem) == hintHero) confirmChoice.Worn(confirmChoice.PendingItem);
       int[] btn = confirmChoice.Pick(rep, eq, target, W, H);
@@ -4971,6 +4974,7 @@ namespace RealmForge {
       if (hintKind != "replace" || !confirmIsEquip) return hintLines;
       return ConfirmText.ForButton(hintLines, true);
     }
+    readonly TipKindTracker confirmKinds = new TipKindTracker();
     bool confirmBlueNone;   // the last confirm search saw no blue button at all (AutoView.BlueNone)
     long confirmTipLogged, confirmMissLogged, confirmFoundLogged, confirmMissSince, confirmMissFor, confirmTieLogged;
     readonly ConfirmChoice confirmChoice = new ConfirmChoice();
