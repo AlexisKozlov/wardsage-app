@@ -7,7 +7,7 @@ using RealmForge;
 
 static partial class CoreTests {
   /// <summary>The injectors (their own Random streams: the old seeds keep their runs).</summary>
-  sealed class NavCfg { public double FlickerP, FlagFlickerP, LatePopupP; public int CellLatencyMs; public long LockMs, RebuildMs; }
+  sealed class NavCfg { public double FlickerP, FlagFlickerP, LatePopupP; public int CellLatencyMs; public long LockMs, RebuildMs; public bool OwnCover; }
   static bool SimNav, SimNavCity, SimNavChecks; static NavCfg SimNavCfg = new NavCfg(); static long SimNavPlan;
 
   sealed partial class SimHost {
@@ -157,7 +157,13 @@ static partial class CoreTests {
       if (nav.State == "done") Done = "done";
     }
 
+    /// <summary>--nav ownHintOver: our own hint covers the looks (from OwnCoverFrom on, for ever) - every send waits on it ("own") until the navigator hides our windows (INavIo.HideOwn), which frees them for 20 s.</summary>
+    long ownHiddenUntil, ownCoverFrom = -1; public int OwnHides;
     GateResult NavSend(Act a, ScreenState fresh) {
+      if (Cfg.OwnCover) {
+        if (ownCoverFrom < 0) ownCoverFrom = Now + navR.Next(3000);
+        if (Now >= ownCoverFrom && Now >= ownHiddenUntil) { G.Note("send refused: " + a.Target + " - a look is covered by our hint"); return GateResult.Wait("own", "a look is covered by our own hint"); }
+      }
       InNavSend = true; lastGate = null; bool ok;
       try {
         if (a.Kind == ActKind.Escape) ok = EscapeSend(a.Target);
@@ -200,6 +206,7 @@ static partial class CoreTests {
         return what == "heroesButton" ? v : v ^ flip;
       }
       public GateResult Send(Act a, ScreenState fresh) { return h.NavSend(a, fresh); }
+      public void HideOwn() { h.ownHiddenUntil = h.Now + 20000; h.OwnHides++; h.G.Note("hide own windows"); }
       public void Log(string line) { h.G.Note(line); }
       public void Problem(string kind, string message) { h.G.Note("problem " + kind + ": " + message); }
     }
@@ -209,7 +216,7 @@ static partial class CoreTests {
   static readonly string[] NavScenarios = {
     "nav.equip.fromAny", "nav.equip.offerChain", "nav.equip.unknownPopup", "nav.equip.tipLeftover", "nav.equip.filterLeftover", "nav.equip.heroFilterOpen",
     "nav.equip.hideWornForeign", "nav.equip.hideWorn", "nav.equip.foreignInvTab", "nav.equip.overFoundry", "nav.equip.bulkSale", "nav.equip.flicker", "nav.equip.lateCells200", "nav.equip.popupDuringEdge", "nav.equip.inputLock", "nav.city.fromAny",
-    "nav.equip.heroFactionHides", "nav.equip.heroFilterBlind", "nav.equip.phantomRedX", "nav.equip.resetMidHero", "nav.equip.heroNotOwned" };
+    "nav.equip.heroFactionHides", "nav.equip.heroFilterBlind", "nav.equip.phantomRedX", "nav.equip.resetMidHero", "nav.equip.heroNotOwned", "nav.equip.ownHintOver" };
 
   static readonly string[] NavStartNames = { "City", "Hero (other hero)", "Hero (gear list)", "Inventory", "Inventory (other tab)", "Inventory (bulk)", "Foundry identify", "Foundry ascend",
     "Foundry recast", "Gem", "Artifact workshop", "Guild", "Arena", "Shop", "Popup over City", "Plan" };
@@ -276,6 +283,7 @@ static partial class CoreTests {
     else if (sc == "nav.equip.lateCells200") c.CellLatencyMs = 200;
     else if (sc == "nav.equip.popupDuringEdge") c.LatePopupP = 0.15;
     else if (sc == "nav.equip.inputLock") c.LockMs = 350;
+    else if (sc == "nav.equip.ownHintOver") c.OwnCover = true;
     else if (sc == "nav.equip.hideWorn") { c.FlagFlickerP = 0.1; c.RebuildMs = 200; }
     return c;
   }

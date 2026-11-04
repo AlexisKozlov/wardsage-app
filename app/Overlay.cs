@@ -774,6 +774,7 @@ namespace RealmForge {
       finally {
         try { TickFramesOne(); } catch (Exception e) { Log.Write("frames: " + e.Message); }
         try { AuditEnd(); } catch (Exception e) { Log.Write("frame audit: " + e.Message); }
+        try { NavOwnHideTick(); } catch (Exception e) { Log.Write("nav hide own: " + e.Message); }
         if (recB != null) { var b = recB; recB = null; b.Screen = screens.Current != null ? screens.Current.Brief : "-"; RecOverlayNow(b); RecInputs(b); RecInfo.Publish(b); }
       }
     }

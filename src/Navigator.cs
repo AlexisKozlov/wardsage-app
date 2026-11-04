@@ -26,6 +26,9 @@ namespace RealmForge {
     /// <summary>Builds the request, gate.Check, Arm, send. Allow = sent; Wait = not sent; Deny (maybe a halt).</summary>
     GateResult Send(Act a, ScreenState fresh);
     ClickGate Gate { get; }
+    /// <summary>Our own hint / mask windows stop covering the game's looks for a few seconds (hidden, not just excluded from captures): a gate wait that our own UI causes, or a reset, never waits on them
+    /// (docs/specs/2026-11-04-core-any-scenario.md D6). The host redraws them afterwards.</summary>
+    void HideOwn();
     void Log(string line);
     void Problem(string kind, string message);
   }
@@ -74,7 +77,7 @@ namespace RealmForge {
   public sealed class Navigator {
     /// <summary>Seconds, not minutes (docs/specs/2026-11-04-core-any-scenario.md D5): a step that shows no change of the screen and no progress mark of its action for StepStallMs is reset; NoProgressMs is the watchdog behind it
     /// (new states only: a flicker between two known ones is not progress); a doomed run ends in a named halt within about 60-90 s.</summary>
-    public const int MaxResets = 2, MaxResetsTotal = 5, MaxSweeps = 14, StepStallMs = 8000, BlindGraceMs = 12000, NoProgressMs = 10000, RunCapMs = 120000, WaitCapMs = 90000, OrderUnreadMs = 15000;
+    public const int MaxResets = 2, MaxResetsTotal = 5, MaxSweeps = 14, StepStallMs = 8000, HideOwnMs = 3000, GateWaitResetMs = 8000, BlindGraceMs = 12000, NoProgressMs = 10000, RunCapMs = 120000, WaitCapMs = 90000, OrderUnreadMs = 15000;
     /// <summary>idle | work | at_target | done | halted</summary>
     public string State = "idle";
     public string HaltWhy = "";
@@ -90,7 +93,7 @@ namespace RealmForge {
 
     NavTarget target; IList<IAtTargetAction> actions = new List<IAtTargetAction>();
     NavMemory mem = new NavMemory(); readonly ActClick act = new ActClick();
-    long startedAt = -1, lastTickAt = -1, pausedMs, lastProgress, stepProgress, blindMs; string lastSig = "", logged = "", curEdge = "";
+    long startedAt = -1, lastTickAt = -1, pausedMs, lastProgress, stepProgress, blindMs, gateSince = -1; bool ownHidden; string lastSig = "", logged = "", curEdge = "";
     bool lastHeld, popCity, needResume, tipSeen, unknownWatch; string unknownWhy = "";
     readonly List<string> recent = new List<string>();
     public Navigator(ClickOwner owner) { Owner = owner; }
@@ -142,7 +145,7 @@ namespace RealmForge {
       if (State == "halted") return;
       foreach (var a in actions) if (a.ProgressAt > stepProgress) { stepProgress = a.ProgressAt; if (stepProgress > lastProgress) lastProgress = stepProgress; blindMs = 0; }   // (a pilot's own mark: a click that was only sent is not one)
       if (s.StateKey != lastSig) {   // a new state is progress; a state seen a moment ago (a flicker between two) is not
-        lastSig = s.StateKey;
+        lastSig = s.StateKey; gateSince = -1; ownHidden = false;
         if (!recent.Contains(lastSig)) {
           lastProgress = now;
           if (s.Confidence != NavConfidence.Held && !lastHeld) { stepProgress = now; blindMs = 0; }   // (a held read - the memory reads failing - that comes back with details is no change of the game)
@@ -181,7 +184,10 @@ namespace RealmForge {
       Note(io, step);
       if (step.Kind != StepKind.AtTarget && State == "at_target") State = "work";
       switch (step.Kind) {
-        case StepKind.Wait: Say = step.Why; return;
+        case StepKind.Wait:
+          Say = step.Why;
+          if (popCity && step.Why.StartsWith("back to the city not due")) GateWait(io, step.Why, now);
+          return;
         case StepKind.None: return;
         case StepKind.Halt: Halt(io, step.Why); return;
         case StepKind.Reset: Reset(io, step.Edge != "" ? step.Edge : "step", step.Why, now); return;
@@ -197,6 +203,18 @@ namespace RealmForge {
     }
 
     string stepKey = "";
+    /// <summary>A gate wait (a click not sent, the way back to the city not due) on the same step: after HideOwnMs our own windows are hidden if they are the cause (the host says so with "own"), after
+    /// GateWaitResetMs it is a failed step whatever the cause (a reset, which hides them anyway). A wait is never a failure by itself, but it never lasts for ever.</summary>
+    void GateWait(INavIo io, string why, long now) {
+      if (gateSince < 0) gateSince = now;
+      long d = now - gateSince;
+      if (d > HideOwnMs && !ownHidden && why != null && why.StartsWith("own")) { ownHidden = true; io.Log("nav: gate wait " + d + " ms (" + why + ") - our own windows hidden"); io.HideOwn(); }
+      if (d > GateWaitResetMs) {
+        string wh = why ?? "?"; gateSince = -1;
+        Reset(io, "gate:" + (stepKey == "" ? "?" : stepKey), "gate_wait:" + wh, now);
+      }
+    }
+
     void Note(INavIo io, NavStep step) {
       string k = step.Kind + "|" + step.Edge;
       stepKey = step.Edge != "" ? step.Edge : step.Kind.ToString();
@@ -250,7 +268,8 @@ namespace RealmForge {
         else Halt(io, "recipe_stuck:" + edge + ":" + why);
         return;
       }
-      popCity = true; lastProgress = stepProgress = now; blindMs = 0; recent.Clear();
+      popCity = true; lastProgress = stepProgress = now; blindMs = 0; gateSince = -1; ownHidden = true; recent.Clear();
+      io.HideOwn();   // (during a reset our own windows never block a look)
       ClearRunState();   // a reset is a clean slate: only the run's counters (resets, sweeps) and what the pilots learnt about the game (drag gain, late answers) stay
       io.Log("nav: reset " + edge + " (" + why + ") #" + n + "/" + mem.TotalResets);
     }
@@ -291,13 +310,14 @@ namespace RealmForge {
       if (oc != ActOutcome.NotSent) io.Log("nav: act " + (a != null ? a.Target.ToString() : "?") + " " + (edge != "" ? edge : (a != null ? a.Why : "")) + " -> " + oc + " " + (now - act.SentAt) + "ms" + (act.Detail != "" ? " (" + act.Detail + ")" : ""));
       switch (oc) {
         case ActOutcome.Done:
+          gateSince = -1; ownHidden = false;
           // (a click that was only sent by a pilot - Fire - is not progress: the pilot's own mark says so, IAtTargetAction.ProgressAt; a verified click is)
           if (act.SentAt > 0 || (a != null && a.Fire)) { Clicks++; if (a == null || !a.Fire) { lastProgress = stepProgress = now; blindMs = 0; } }
           if (a != null && a.Closing != "") mem.ClosedAt[a.Closing] = now;
           if (edge != "") mem.Resets.Remove(edge);
           return;
         case ActOutcome.Halted: Halt(io, "gate_" + io.Gate.HaltReason(Owner)); return;
-        case ActOutcome.NotSent: return;   // nothing was clicked: the same step runs again on the next tick
+        case ActOutcome.NotSent: GateWait(io, act.Detail, now); return;   // nothing was clicked: the same step runs again on the next tick (a gate wait that lasts is escalated: GateWait)
         case ActOutcome.NoEffect: case ActOutcome.Timeout:
           // a click that went out with the item's tip over the screen was probably taken by the tip (it closes on any click beside it): the step runs again, no trip to the city
           if (act.TipAtSend) { Reset(io, edge != "" ? edge : (a != null ? a.Why : "step"), "WrongScreen", now); return; }

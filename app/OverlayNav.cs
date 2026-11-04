@@ -47,6 +47,14 @@ namespace RealmForge {
       }
     }
 
+    /// <summary>The navigator asks for our own windows to stop covering the looks (INavIo.HideOwn): the hint windows are hidden at the end of every tick for 20 s (the looks of the next tick see the bare game).</summary>
+    long navOwnHideUntil;
+    internal void NavHideOwn(long now) { navOwnHideUntil = now + 20000; NavOwnHideTick(); }
+    void NavOwnHideTick() {
+      if (NowMs() >= navOwnHideUntil) return;
+      foreach (var w in GlowWindow.Live()) if (w.IsHandleCreated && !w.IsDisposed && w.Visible) w.Hide();
+    }
+
     void NavRestart() { navEquip.Restart(); navLab.Restart(); navReader.Reset(); }
 
     sealed class OverlayNavIo : INavIo {
@@ -81,6 +89,7 @@ namespace RealmForge {
         }
         return false;
       }
+      public void HideOwn() { c.NavHideOwn(NowMs); }
       public void Log(string line) { RealmForge.Log.Write(line); }
       public void Problem(string kind, string message) { c.RaiseProblem(kind, message, new Dictionary<string, string>()); }
       public GateResult Send(Act a, ScreenState fresh) {
@@ -98,7 +107,10 @@ namespace RealmForge {
         c.AnnounceHalts();
         if (ok) return GateResult.Allow("sent");
         var g = c.navLastGate;
-        return g != null && g.Verdict != GateVerdict.Allow ? g : GateResult.Wait("unsent", "not sent");
+        if (g != null && g.Verdict != GateVerdict.Allow) return g;
+        // (the click waited for a look our own hint covers: said so, so that the navigator can hide our windows - Navigator.GateWait)
+        string cov = unknownLooks.Blocking(NowMs);
+        return cov != null ? GateResult.Wait("own", "a look is covered by our own hint (" + cov + ")") : GateResult.Wait("unsent", "not sent");
       }
     }
 

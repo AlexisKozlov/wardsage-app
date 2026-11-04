@@ -27,8 +27,10 @@ static partial class CoreTests {
     public bool Picture(string w) { return w == "heroesButton" && HeroesBtn; }
     public GateResult Send(Act a, ScreenState fresh) {
       if (Verdict == GateVerdict.Allow) { Sent.Add(a); return GateResult.Allow("ok"); }
-      return Verdict == GateVerdict.Wait ? GateResult.Wait("w", "w") : GateResult.Deny("d", "d");
+      return Verdict == GateVerdict.Wait ? GateResult.Wait(WaitReason, "w") : GateResult.Deny("d", "d");
     }
+    public int Hid; public string WaitReason = "w";
+    public void HideOwn() { Hid++; }
     public void Log(string line) { Lines.Add(line); }
     public void Problem(string kind, string message) { }
   }
@@ -277,6 +279,20 @@ static partial class CoreTests {
       string noMarks = run(false), withMarks = run(true);
       Check(noMarks.StartsWith("work/1/") || noMarks.StartsWith("at_target/1/"), "nav stall: a pilot that only sends clicks, with no progress mark, is reset after " + Navigator.StepStallMs + " ms (" + noMarks + ")");
       Check(withMarks.EndsWith("/0/") == false && withMarks.Split('/')[1] == "0", "nav stall: the same pilot with a progress mark every second is never reset in 40 s (" + withMarks + ")");
+    }
+    // D6: a gate wait that lasts is escalated - our own windows hidden after 3 s when they are the cause, a reset by 8 s whatever the cause (a reset hides them too)
+    {
+      Func<string, string> run = reason => {
+        var io = new FakeNavIo { Verdict = GateVerdict.Wait, WaitReason = reason }; var rdr = new ScreenReader(); var nv = new Navigator(ClickOwner.Equip);
+        var st = NavState(ScreenKind.HeroScreen, 7, 3, 2, "", new[] { "Form_CharactorMain", "Form_MainCity" }); io.FreshState = st;
+        nv.SetTarget(new NavTarget { Goal = NavGoal.HeroGear, Hero = 7 }, new List<IAtTargetAction> { new StubAction { Io = io } });
+        long t0 = io.NowMs; int hidAt3 = -1;
+        for (int i = 0; i < 200 && nv.Recoveries == 0; i++) { io.NowMs += 100; nv.Tick(io, rdr.Update(st, io.NowMs)); if (io.NowMs - t0 >= 3600 && hidAt3 < 0) hidAt3 = io.Hid; }
+        return hidAt3 + "/" + nv.Recoveries + "/" + (io.NowMs - t0) + "/" + io.Hid;
+      };
+      string own = run("own"), other = run("screen");
+      Check(own.StartsWith("1/1/") && long.Parse(own.Split('/')[2]) <= 9500, "nav gate wait: a click waiting on our own hint hides our windows after 3 s and the step is reset by 9 s (" + own + ")");
+      Check(other.StartsWith("0/1/") && long.Parse(other.Split('/')[2]) <= 9500, "nav gate wait: any other cause is a reset by 9 s, our windows are not hidden before it (" + other + ")");
     }
     // the navigator's watchdog: a run always ends
     {
