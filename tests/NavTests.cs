@@ -321,7 +321,54 @@ static partial class CoreTests {
       for (int i = 0; i < 1500 && nv2.State != "halted"; i++) { io2.NowMs += 100; nv2.Tick(io2, rd2.Update(cityS2, io2.NowMs)); }
       Check(nv2.State == "halted" && nv2.HaltWhy.StartsWith("recipe_stuck:graph:hero:NoEffect") && io2.Sent.Count == Navigator.MaxResets + 1, "nav reset: a step with no effect is retried after a reset " + Navigator.MaxResets + " times, then a named stop (" + nv2.HaltWhy + ", " + io2.Sent.Count + " clicks)");
     }
+    BuildPlannerTests();
     AtomTests();
+  }
+
+  // ---------------------------------------------------------------- the build planner (docs/specs/2026-11-04-shortest-paths.md 2): modes, order, flags, norms
+  static BuildItem BI(int slot, long uid, long set, int row, bool worn = false) { return new BuildItem { Slot = slot, Uid = uid, SetId = set, Row = row, Worn = worn }; }
+  static string Order(BuildPlan p) { var l = new List<string>(); foreach (var st in p.Steps) l.Add(st.Item.Slot + ":" + st.Mode); return string.Join(" ", l.ToArray()); }
+
+  static void BuildPlannerTests() {
+    Console.WriteLine("Build planner");
+    int overhead = 1000 + 3000 + 700;   // city -> heroes, the hero, the gear tab
+    // all five in the first screenful: no filter, no drag, within the 18 s of the plan (with the artifact)
+    var all = new List<BuildItem> { BI(1, 11, 5, 1), BI(2, 12, 5, 2), BI(3, 13, 6, 3), BI(4, 14, 6, 4), BI(5, 15, 7, 2), new BuildItem { Slot = 9, Uid = 16, Artifact = true } };
+    var p = BuildPlanner.Plan(all, false, false, false);
+    Check(p.FilterOpens == 0 && !p.Steps.Exists(x => x.Mode == SlotMode.Filter || x.Mode == SlotMode.Scroll) && p.Steps[p.Steps.Count - 1].Item.Artifact && p.EstimateMs + overhead <= 20000,
+      "planner: everything in view is direct, no filter, the artifact last, " + (p.EstimateMs + overhead) + " ms (" + Order(p) + ")");
+    // the worn slot costs nothing and goes first
+    p = BuildPlanner.Plan(new List<BuildItem> { BI(1, 11, 5, 1, true), BI(2, 12, 5, 3) }, false, false, false);
+    Check(p.Steps[0].Mode == SlotMode.Skip && p.Steps[0].EstimateMs == 0 && p.EstimateMs == BuildPlanner.ItemMs, "planner: an item already on the hero is skipped (" + Order(p) + ")");
+    // an item a screen or two away: computed drags, no filter (1-3 drags cost less than the filter's opening); one far of no set: drags as well
+    p = BuildPlanner.Plan(new List<BuildItem> { BI(1, 11, 5, 9), BI(2, 12, 0, 40) }, false, false, false);
+    Check(p.Steps[0].Mode == SlotMode.Scroll && p.Steps[1].Mode == SlotMode.Scroll && p.FilterOpens == 0, "planner: a nearby row and a far item of no set are scrolled, never filtered (" + Order(p) + ")");
+    // a far lone item of a set: the filter (more than 3 s of drags)
+    p = BuildPlanner.Plan(new List<BuildItem> { BI(2, 12, 7, 40) }, false, false, false);
+    Check(p.Steps[0].Mode == SlotMode.Filter && p.Steps[0].SuitId == 7 && p.FilterOpens == 1, "planner: a far item of a set takes the set filter (" + Order(p) + ")");
+    // the spec's case: a group of 3, a group of 2, one in view, the artifact: no-filter slots first, then the 3, then the 2, the artifact last, one opening per group, 22-27 s in all
+    var two = new List<BuildItem> { BI(1, 21, 8, 30), BI(2, 22, 9, 28), BI(3, 23, 8, 45), BI(4, 24, 9, 60), BI(5, 25, 8, 35), BI(6, 26, 4, 2), new BuildItem { Slot = 9, Uid = 27, Artifact = true } };
+    p = BuildPlanner.Plan(two, false, false, false);
+    string ord = Order(p);
+    Check(ord == "6:Direct 1:Filter 3:Filter 5:Filter 2:Filter 4:Filter 9:Direct" && p.FilterOpens == 2 && p.Steps[1].Group == 1 && p.Steps[4].Group == 2 && p.EstimateMs + overhead >= 20000 && p.EstimateMs + overhead <= 30000,
+      "planner: the free slot, the group of 3, the group of 2, the artifact last, two filter openings, " + (p.EstimateMs + overhead) + " ms (" + ord + ")");
+    // the player's flags that hide an item are cleared only when an item needs it
+    var hid = new List<BuildItem> { BI(1, 11, 5, 0), new BuildItem { Slot = 2, Uid = 12, HiddenByWorn = true }, new BuildItem { Slot = 3, Uid = 13, HiddenByEnhanced = true } };
+    Check(BuildPlanner.Plan(hid, true, false, false).Flags.ClearWorn && !BuildPlanner.Plan(hid, true, false, false).Flags.ClearEnhanced && BuildPlanner.Plan(hid, true, true, true).Flags.ToString() == "worn enhanced " && !BuildPlanner.Plan(hid, false, false, false).Flags.Any,
+      "planner: the hide flags are cleared only where an item of the build is hidden by one that is on");
+    // the norms are the recipe's budgets
+    Check(BuildPlanner.NormMs("build", "pick", 0) == BuildPlanner.ItemLimitMs && BuildPlanner.NormMs("build", "filter", 0) == BuildPlanner.FilterLimitMs && BuildPlanner.NormMs("build", "hero", 0) == 8000 && BuildPlanner.NormMs("equip", "pick", 0) == BuildPlanner.ItemLimitMs,
+      "planner: the norms (item 6 s, filter 4 s, hero 8 s) are the build recipe's budgets, no 60 s");
+    // an item pick that works past its norm is reset with a diagnosis, not repeated
+    {
+      var io = new FakeNavIo(); var pl = new AutoPilot(new ListGeometry());
+      var ia = new ItemPickAction(pl, (s, t, n) => new AutoView { NowMs = n, Foreground = true, H = 705, Target = 5, Row = 3, Col = 1, Sel = 0, AnchorHas = true, Types = new[] { 0, 1, 1, 1 }, Row1Top = 100, Hero = 5, ScreenHero = 5, Owner = 0, InputOpen = false },
+        (v, a) => ClickTarget.EquipNav);
+      var t0 = new NavTarget { Goal = NavGoal.HeroEquip, Hero = 5, Slot = 2 }; var rd = new ScreenReader(); var st = NavState(ScreenKind.HeroScreen, 5, 3, 2, "", new[] { "Form_CharactorMain", "Form_MainCity" }); io.FreshState = st;
+      string reset = ""; long first = io.NowMs;
+      for (int i = 0; i < 200 && reset == ""; i++) { io.NowMs += 200; var sn = rd.Update(st, io.NowMs); var ns = ia.Step(sn, t0, io, io.NowMs); if (ns != null && ns.Kind == StepKind.Reset) reset = ns.Why; }
+      Check(reset.StartsWith("item_limit ") && io.NowMs - first >= 6000 && io.NowMs - first <= 9000, "planner: an item that takes past its 6 s norm is a reset with its diagnosis (" + reset + ", after " + (io.NowMs - first) + " ms)");
+    }
   }
 
   // ---------------------------------------------------------------- the atoms (docs/specs/2026-11-04-game-atoms.md A1 / A2): the replay of the recording 464e21 (tests/fixtures/rec-464e21-atoms.txt)

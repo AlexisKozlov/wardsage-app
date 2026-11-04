@@ -150,7 +150,7 @@ static partial class CoreTests {
     void TickEquipNav() {
       EnsureNavActions(); nio.BeginTick();
       var snap = reader.Update(Flicker(Screens.Current), Now, nio.Picture);
-      nav.SetRecipe(NavRecipes.Get("equip"), new Dictionary<string, long> { { "hero", plan }, { "slot", 2 } }, navActs);
+      nav.SetRecipe(NavRecipes.Get("build"), new Dictionary<string, long> { { "hero", plan }, { "slot", 2 } }, navActs);
       nav.Tick(nio, snap);
       PilotState = nav.State == "halted" ? "nav_halt" : nav.State == "at_target" ? "item_" + ip.State : "nav_" + nav.Say;
     }

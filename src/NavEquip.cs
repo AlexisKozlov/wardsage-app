@@ -31,6 +31,128 @@ namespace RealmForge {
     }
   }
 
+  /// <summary>How the plan's slot is handled (docs/specs/2026-11-04-shortest-paths.md 2): Skip = already on the hero, Direct = the item is in the first screenful, Scroll = computed drags (A3), Filter = the gear filter's set first.</summary>
+  public enum SlotMode { Skip, Direct, Scroll, Filter }
+
+  /// <summary>One item of the build as the planner sees it, read from the game's memory before the first click.</summary>
+  public sealed class BuildItem {
+    public long Uid; public int Slot; public long SetId;
+    /// <summary>The artifact (its own tab, its own list): always last.</summary>
+    public bool Artifact;
+    /// <summary>Already on the hero.</summary>
+    public bool Worn;
+    /// <summary>Its row (1-based) in its slot's list now, 0 = not known (the list of that slot is not open: it counts as in view, the live row decides when the slot opens).</summary>
+    public int Row;
+    /// <summary>The player's flags that hide it from its list: worn by another hero («Скрыть надетое»), enhanced («Скрыть заточенные»), «только эксклюзив».</summary>
+    public bool HiddenByWorn, HiddenByEnhanced, HiddenByExclusive;
+  }
+
+  public sealed class BuildStep {
+    public BuildItem Item; public SlotMode Mode; public long SuitId; public int Group; public int EstimateMs; public string Why = "";
+  }
+
+  /// <summary>The player's list flags the build clears once at its start and puts back at its end (S3): what is on now and what the items need.</summary>
+  public sealed class BuildFlags {
+    public bool ClearWorn, ClearEnhanced, ClearExclusive;
+    public bool Any { get { return ClearWorn || ClearEnhanced || ClearExclusive; } }
+    public override string ToString() { return (ClearWorn ? "worn " : "") + (ClearEnhanced ? "enhanced " : "") + (ClearExclusive ? "exclusive " : "") ; }
+  }
+
+  public sealed class BuildPlan {
+    public readonly List<BuildStep> Steps = new List<BuildStep>();
+    public BuildFlags Flags = new BuildFlags();
+    public int EstimateMs;
+    public int FilterOpens;   // how many times the filter widget is opened for the build (one per set group's first item)
+    public override string ToString() {
+      var sb = new System.Text.StringBuilder();
+      foreach (var s in Steps) sb.Append(s.Item.Slot).Append(':').Append(s.Mode).Append(s.Mode == SlotMode.Filter ? "(" + s.SuitId + ")" : "").Append(' ');
+      return sb.ToString().TrimEnd();
+    }
+  }
+
+  /// <summary>The build planner (docs/specs/2026-11-04-shortest-paths.md 2.2-2.4; pure): from the plan's items and what the game's memory says of them, the mode of every slot and the order that makes the build short:
+  /// slots without the filter first (while the filter is empty), then the set groups (3 items before 2), the filter opened once per group and the set changed inside it without the ×, the artifact last. A slot costs the
+  /// cheaper of the computed drags (0.9 s each) and the set filter (3 s the first item of a group, 0 the rest of it); the list flags that hide an item are cleared once for the whole build.</summary>
+  public static class BuildPlanner {
+    /// <summary>The costs, in ms (docs/specs/2026-11-04-shortest-paths.md 1, 2): a drag with its stop, the filter's first opening, a set change inside the open widget, the item itself (click, card, «Заменить»).</summary>
+    public const int DragMs = 900, FilterOpenMs = 3000, SetChangeMs = 1200, ItemMs = 2200, ArtifactMs = 3200;
+    /// <summary>The norms the pilots are judged by: one item (the slot to the confirm), its filter. Twice that is a reset of the step with its diagnosis, never a repeat (the slow PC doubles them).</summary>
+    public const int ItemLimitMs = 6000, FilterLimitMs = 4000;
+    /// <summary>The rows of the gear list in view (VISIBLE_ROWS of ui/guide.js: the 1080p window shows about 4.5) and the rows one drag brings.</summary>
+    public const int ViewRows = 4;
+
+    /// <summary>The norm of a recipe's step (its budgetMs, tools/recipes/*.json), <paramref name="dflt"/> when the recipe or its budget is not there.</summary>
+    public static int NormMs(string recipe, string step, int dflt) {
+      var r = NavRecipes.Get(recipe);
+      if (r != null) foreach (var st in r.Steps) if (st.Id == step && st.BudgetMs > 0) return st.BudgetMs;
+      return dflt;
+    }
+
+    /// <summary>The drags (A3) to bring a row into view: the rows beyond the first screenful, a drag moves a screenful less one row.</summary>
+    public static int DragsFor(int row) {
+      if (row <= ViewRows) return 0;
+      return (row - ViewRows + (ViewRows - 1) - 1) / (ViewRows - 1);
+    }
+
+    /// <summary>True when the filter costs less than the drags for this row (the single-item test the page's guide uses as well: ui/guide.js farRow).</summary>
+    public static bool FilterBeatsScroll(int row) { return DragsFor(row) * DragMs > FilterOpenMs; }
+
+    public static BuildFlags FlagsFor(IList<BuildItem> items, bool worn, bool enhanced, bool exclusive) {
+      var f = new BuildFlags();
+      foreach (var it in items) {
+        if (it.Worn) continue;
+        if (it.HiddenByWorn && worn) f.ClearWorn = true;
+        if (it.HiddenByEnhanced && enhanced) f.ClearEnhanced = true;
+        if (it.HiddenByExclusive && exclusive) f.ClearExclusive = true;
+      }
+      return f;
+    }
+
+    /// <summary><paramref name="items"/> in the plan's order, the player's three flags as they are now (worn / enhanced / exclusive-only hide).</summary>
+    public static BuildPlan Plan(IList<BuildItem> items, bool flagWorn, bool flagEnhanced, bool flagExclusive) {
+      var plan = new BuildPlan();
+      plan.Flags = FlagsFor(items, flagWorn, flagEnhanced, flagExclusive);
+      var gear = new List<BuildStep>(); BuildStep art = null;
+      foreach (var it in items) {
+        var st = new BuildStep { Item = it };
+        if (it.Worn) { st.Mode = SlotMode.Skip; st.Why = "on the hero"; }
+        else {
+          int drags = DragsFor(it.Row);
+          st.Mode = drags == 0 ? SlotMode.Direct : SlotMode.Scroll;
+          st.EstimateMs = ItemMs + drags * DragMs; st.Why = it.Row > 0 ? "row " + it.Row : "row unknown";
+        }
+        if (it.Artifact) { st.EstimateMs = ArtifactMs; art = st; continue; }
+        gear.Add(st);
+      }
+      // a set group (2 or 3 items of one set) takes the filter when its items' drags cost more than one opening of it (the first of the group pays it); a lone item when its own drags do
+      var bySet = new Dictionary<long, List<BuildStep>>();
+      foreach (var st in gear) if (st.Mode != SlotMode.Skip && st.Item.SetId > 0) { List<BuildStep> l; if (!bySet.TryGetValue(st.Item.SetId, out l)) bySet[st.Item.SetId] = l = new List<BuildStep>(); l.Add(st); }
+      var groups = new List<List<BuildStep>>();
+      foreach (var kv in bySet) {
+        int scroll = 0; var members = new List<BuildStep>();
+        foreach (var st in kv.Value) if (st.Mode == SlotMode.Scroll) { scroll += DragsFor(st.Item.Row) * DragMs; members.Add(st); }
+        if (members.Count == 0 || scroll <= FilterOpenMs) continue;
+        foreach (var st in members) { st.Mode = SlotMode.Filter; st.SuitId = kv.Key; st.EstimateMs = ItemMs; st.Why += ", set " + kv.Key + " filter"; }
+        groups.Add(members);
+      }
+      // the order: the slots with no filter, then the groups of 3 before the groups of 2 (the plan's slot order inside and between equals), Skip kept first (it costs nothing)
+      var ordered = new List<BuildStep>();
+      foreach (var st in gear) if (st.Mode == SlotMode.Skip) ordered.Add(st);
+      foreach (var st in gear) if (st.Mode == SlotMode.Direct || st.Mode == SlotMode.Scroll) ordered.Add(st);
+      var gl = new List<List<BuildStep>>(groups);
+      gl.Sort((a, b) => { int c = b.Count.CompareTo(a.Count); return c != 0 ? c : gear.IndexOf(a[0]).CompareTo(gear.IndexOf(b[0])); });
+      int gi = 0;
+      foreach (var grp in gl) {
+        gi++; plan.FilterOpens++;
+        for (int i = 0; i < grp.Count; i++) { grp[i].Group = gi; if (i == 0) grp[i].EstimateMs += plan.FilterOpens == 1 ? FilterOpenMs : SetChangeMs; ordered.Add(grp[i]); }
+      }
+      if (art != null) ordered.Add(art);
+      plan.Steps.AddRange(ordered);
+      foreach (var st in ordered) plan.EstimateMs += st.EstimateMs;
+      return plan;
+    }
+  }
+
   /// <summary>HeroPilot with NavOwned: finds the plan's hero in the grid (scroll, class / faction filter, picks). Not the city button, the gear tab or the list's back arrow.</summary>
   public sealed class HeroSelectAction : IAtTargetAction {
     readonly HeroPilot pilot; readonly Func<Snapshot, NavTarget, long, HeroView> view;
@@ -97,15 +219,29 @@ namespace RealmForge {
     /// <summary>After the filter acted for this target the item list is rebuilt (the «Скрыть надетое» toggle, the set): no pick until its signature has stood still this long; the list that never settles is a reset.</summary>
     public const int ListSettleMs = 300, ListSettleCapMs = 6000;
     long lastSig = long.MinValue, sigAt, settleFrom;
+    /// <summary>The time this item has taken while the pilot was working on it (not the player's pauses, the background, the settle of a rebuilt list): past the norm (BuildPlanner.ItemLimitMs, twice on a slow PC) the step is reset with its diagnosis, never repeated blind.</summary>
+    long workMs, lastTickAt; string workKey = "";
+    public const int DragAllowMs = 1200;
+    public int LimitMs = BuildPlanner.NormMs("build", "pick", BuildPlanner.ItemLimitMs);
     public ItemPickAction(AutoPilot p, Func<Snapshot, NavTarget, long, AutoView> v, Func<AutoView, AutoAction, ClickTarget> targetOf, GearFilterAction filter = null) { pilot = p; view = v; this.targetOf = targetOf; this.filter = filter; }
     public string Name { get { return "item"; } }
     public ICollection<string> Keep { get { return filter != null && filter.ActedKey == key ? NavKeep.ItemPick : NavKeep.ItemPickNoFilter; } }
     public bool Wants(Snapshot s, NavTarget t) { key = t.Key(); return true; }
-    public void Reset() { pilot.Reset(); }
+    public void Reset() { pilot.Reset(); workMs = 0; lastTickAt = 0; }
     readonly ProgressMark mark = new ProgressMark();
     public long ProgressAt { get { return mark.At; } }
     public NavStep Step(Snapshot s, NavTarget t, INavIo io, long now) {
       var v = view(s, t, now); v.NavOwned = true;
+      // the item's norm: the time of the pilot's own work on it (one tick at most 1 s: a stalled host clock is not the item's time)
+      string wk = t.Key();
+      if (wk != workKey) { workKey = wk; workMs = 0; lastTickAt = 0; }
+      if (lastTickAt > 0 && pilot.State == "work") workMs += Math.Min(1000, now - lastTickAt);
+      lastTickAt = now;
+      int limit = (LimitMs + pilot.Drags * DragAllowMs) * (io.Slow ? 2 : 1);   // (every drag of the list is progress: a far item of no set takes its drags' time on top of the norm)
+      if (workMs > limit && pilot.State == "work") {
+        long ms = workMs; workMs = 0; lastTickAt = 0;
+        return NavStep.Reset("item_limit " + ms + " ms (norm " + limit + "): " + pilot.State + " sel " + v.Sel + " target " + v.Target + " live " + (v.LiveGrid ? (v.LiveTarget ? "target" : "no target cell") : "none") + " drags " + pilot.Drags + " clicks " + pilot.Clicks + (pilot.Why != "" ? " why " + pilot.Why : ""));
+      }
       mark.Note(v.ListSig + "|" + (int)v.Row1Top + "|" + v.Sel + "|" + v.SelRow + "|" + v.SelCol + "|" + v.SlotOpen + "|" + v.TipShown + "|" + pilot.Drags + "|" + pilot.State, now);
       if (v.ListSig != lastSig) { lastSig = v.ListSig; sigAt = now; }
       if (filter != null && filter.ActedKey == key) {

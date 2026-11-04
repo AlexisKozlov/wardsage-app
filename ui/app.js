@@ -710,7 +710,8 @@
     let now = labels.length;
     if (hero && !done) now = 0;
     else if (!done) {
-      const j = p.items.findIndex((it) => g.states[it.uid] !== 'done' && g.states[it.uid] !== 'taken');
+      let j = p.items.findIndex((it) => g.states[it.uid] === 'now');
+      if (j < 0) j = p.items.findIndex((it) => g.states[it.uid] !== 'done' && g.states[it.uid] !== 'taken');
       now = g.kind === 'art' || j < 0 ? (p.artifact && !g.artDone ? labels.length - 1 : labels.length) : j + 1;
     }
     k.segs = segState(labels, now).map((x, j) => ({ ...x, l: (j + 1) + '. ' + x.l }));

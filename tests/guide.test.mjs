@@ -21,6 +21,17 @@ ok(g.kind === 'pick' && g.row === 3 && g.col === 2 && g.item.uid === 6423, 'pick
 g = G.next(plan, live({ rows: { 6423: [103, 1] } }));
 ok(g.kind === 'filter' && g.row === 103, 'far down a long list -> narrow it with the filter');
 ok(G.next(plan, live({ rows: { 6423: [7, 2] }, filterActive: true })).kind === 'pick', 'filtered list: pick (scroll hint)');
+ok(G.next(plan, live({ rows: { 6423: [9, 2] } })).kind === 'pick' && G.next(plan, live({ rows: { 6423: [13, 2] } })).kind === 'pick' && G.next(plan, live({ rows: { 6423: [14, 2] } })).kind === 'filter', 'a row within three drags is scrolled, from the 14th the filter (BuildPlanner cost model)');
+ok(G.dragsFor(4) === 0 && G.dragsFor(5) === 1 && G.dragsFor(7) === 1 && G.dragsFor(8) === 2 && G.farRow(13) === false && G.farRow(14) === true, 'drags per row');
+{
+  const it = (slot, uid, setId) => ({ slot, uid, setId, level: 0, fromHeroUid: 0 });
+  const items = [it(1, 1, 8), it(2, 2, 9), it(3, 3, 8), it(4, 4, 9), it(5, 5, 8), it(6, 6, 4), it(7, 7, 0)];
+  ok(G.ordered(items).map((x) => x.uid).join() === '6,7,1,3,5,2,4', 'the build order: no-group slots, the group of 3, the group of 2');
+  ok(G.ordered([it(1, 1, 0), it(2, 2, 0)]).map((x) => x.uid).join() === '1,2', 'no sets: the plan order');
+  const bp = { id: 'b', heroUid: 214700000, heroName: 'h', items };
+  ok(G.next(bp, live({ part: 6 })).item.uid === 6, 'the free slot is the first step');
+  ok(G.next(bp, live({ part: 1, owner: { 6: 214700000, 7: 214700000 } })).item.uid === 1, 'then the set of three');
+}
 ok(G.statOf('ОЗ 750') === 'ОЗ' && G.statOf('Крит. УРН 80%') === 'Крит. УРН' && G.statOf('Бонус к АТК 12,5%') === 'Бонус к АТК', 'stat name');
 ok(g.states[6423] === 'now' && g.states[33] === 'wait', 'states');
 g = G.next(plan, live({ hideEquipped: true }));

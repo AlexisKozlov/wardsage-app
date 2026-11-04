@@ -6,15 +6,15 @@
       "need": "pic:heroesButton", "expect": { "form": "Form_CharactorMain" } },
     { "id": "listClosed", "key": "facet:listClosed", "why": "hero: close the gear list", "from": "Form_CharactorMain", "when": "Hero!=$hero && HeroSlot>=0", "widget": "std:back", "target": "EquipNav", "fallback": "std:back",
       "expect": { "facet": "HeroSlot<0" } },
-    { "id": "hero", "from": "Form_CharactorMain", "action": "hero.select", "keep": ["panel:heroFilter"], "budgetMs": 60000, "expect": { "facet": "Hero==$hero" } },
+    { "id": "hero", "from": "Form_CharactorMain", "action": "hero.select", "keep": ["panel:heroFilter"], "budgetMs": 8000, "expect": { "facet": "Hero==$hero" } },
     { "id": "gearTab", "key": "facet:gearTab", "why": "hero: gear tab", "from": "Form_CharactorMain", "widget": "m_Main_Frame/m_Right/m_ToggleGroup/m_Toggle_Equip", "target": "EquipNav", "fallback": "geo:hero.gearTab",
       "expect": { "facet": "HeroTab==gear" } },
     { "id": "slot", "key": "facet:slot", "why": "hero: slot", "from": "Form_CharactorMain", "when": "$slot>=0", "target": "EquipNav", "fallback": "geo:hero.slot($slot)",
       "expect": { "facet": "HeroSlot==$slot" } },
     { "id": "filter", "from": "Form_CharactorMain", "action": "gear.filter", "keep": ["Form_EquipFilterWidget", "panel:gearFilter", "panel:gearSide", "Form_ArtifactFilter"],
-      "budgetMs": 30000, "expect": { "action": "done" } },
+      "budgetMs": 4000, "expect": { "action": "done" } },
     { "id": "pick", "from": "Form_CharactorMain", "action": "gear.pick",
       "keep": ["Form_EquipFilterWidget", "panel:gearFilter", "panel:gearSide", "Form_ArtifactFilter", "Form_CharactorEquipTip", "Form_EquipedCompared", "Form_EquipPopUp", "Form_EquipSellPopup"],
-      "budgetMs": 60000, "expect": { "action": "done" } }
+      "budgetMs": 6000, "expect": { "action": "done" } }
   ]
 }

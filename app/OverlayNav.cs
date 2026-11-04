@@ -198,7 +198,7 @@ namespace RealmForge {
       snap.WantUid = target; snap.TipUid = snap.HasTip() ? RFX.ReadTipUid() : 0;   // (the card of the item this step works on is never closed by the plan)
       int slot = hintKind == "slot" ? hintSlot
                : scr != null && scr.Kind == ScreenKind.HeroScreen && scr.Hero == runHero && scr.HeroTab == HeroGeometry.GearTab && scr.HeroSlot >= 0 ? scr.HeroSlot : -1;
-      navEquip.SetRecipe(NavRecipes.Get("equip"), new Dictionary<string, long> { { "hero", runHero }, { "slot", slot } }, navActions);
+      navEquip.SetRecipe(NavRecipes.Get("build"), new Dictionary<string, long> { { "hero", runHero }, { "slot", slot } }, navActions);
       navEquip.Tick(io, snap);
       string say;
       if (navEquip.State == "halted") say = navEquip.HaltWhy.StartsWith("gate_") ? navEquip.HaltWhy : "nav_" + navEquip.HaltWhy;

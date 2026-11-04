@@ -9,6 +9,25 @@
 (function (root) {
   // rows of the gear list visible without scrolling in the game (1080p: about 4.5)
   const VISIBLE_ROWS = 4;
+  // the cost model of BuildPlanner (src/NavEquip.cs): a computed drag with its stop 0.9 s brings VISIBLE_ROWS - 1 rows, the set filter costs 3 s to open:
+  // a row is «far» (narrow the list with the filter) only when its drags cost more than that, i.e. from the 14th row
+  const DRAG_MS = 900, FILTER_MS = 3000;
+  function dragsFor(row) { return row <= VISIBLE_ROWS ? 0 : Math.ceil((row - VISIBLE_ROWS) / (VISIBLE_ROWS - 1)); }
+  function farRow(row) { return dragsFor(row) * DRAG_MS > FILTER_MS; }
+
+  // The order the build is done in (BuildPlanner): the slots that need no set group first (the filter stays empty), then the sets that hold 3 items, then 2 (the filter is
+  // opened once per group and the set changed inside it); equals keep the plan's order. The artifact is not an item: it comes after them.
+  function ordered(items) {
+    const size = {};
+    for (const it of items) if (it.setId > 0) size[it.setId] = (size[it.setId] || 0) + 1;
+    const rank = (it) => (it.setId > 0 && size[it.setId] >= 2 ? 10 - Math.min(size[it.setId], 9) : 0);   // 0: free; 3 items: 7; 2 items: 8 (a bigger group sorts before a smaller one)
+    const first = {};
+    items.forEach((it, i) => { if (it.setId > 0 && first[it.setId] === undefined) first[it.setId] = i; });
+    return items.map((it, i) => ({ it, i })).sort((a, b) => {
+      const d = rank(a.it) - rank(b.it); if (d) return d;
+      const f = rank(a.it) ? first[a.it.setId] - first[b.it.setId] : 0; return f || a.i - b.i;
+    }).map((x) => x.it);
+  }
 
   // plans whose artifact was seen on the hero: a later live event without `art` (the host drops it once the page says done) does not undo it
   const artSeen = {};
@@ -17,7 +36,7 @@
     const g = { kind: null, item: null, row: 0, col: 0, other: null, states: {}, done: 0, taken: 0 };
     const owner = (live && live.owner) || {};
     let cur = null;
-    for (const it of plan.items) {
+    for (const it of ordered(plan.items)) {
       const own = owner[it.uid];
       const on = own === plan.heroUid;
       // on a hero the plan did not count on (put on someone after the plan was made): never taken away from them.
@@ -54,7 +73,7 @@
       // the player already selected it in the game list
       if (live.selUid > 0 && live.selUid === cur.uid) { g.kind = 'selected'; return g; }
       // far down a long list: narrow it with the game's filter first (set + main stat) instead of scrolling
-      const far = pos[0] > VISIBLE_ROWS && !live.filterActive;
+      const far = farRow(pos[0]) && !live.filterActive;
       // another item is selected: say where the right one is from there (unless that is still a long way)
       if (live.selRow > 0) {
         g.dr = pos[0] - live.selRow;
@@ -219,7 +238,7 @@
     return a > 10 && a < 20 ? many : b === 1 ? one : b >= 2 && b <= 4 ? few : many;
   }
 
-  const api = { next, sticky, stepNo, artStep, pickPlan, freshPlan, freshPlans, freshSell, nextQueued, takeOver, highlightUid, plural, bustUrl, headUrl, itemUrl, setUrl, rankOf, statOf, statId, statUrl, VISIBLE_ROWS };
+  const api = { next, ordered, farRow, dragsFor, sticky, stepNo, artStep, pickPlan, freshPlan, freshPlans, freshSell, nextQueued, takeOver, highlightUid, plural, bustUrl, headUrl, itemUrl, setUrl, rankOf, statOf, statId, statUrl, VISIBLE_ROWS };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.RFGuide = api;
 })(typeof window !== 'undefined' ? window : globalThis);
