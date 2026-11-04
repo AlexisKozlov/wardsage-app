@@ -861,6 +861,7 @@ static partial class CoreTests {
 
     Console.WriteLine("HeroPilot (the plan's hero on the hero screen):");
     HeroPilotTests();
+    HeroMemTests();
     SellPilotTests();
     FightPlanTests();
     LocateTests();
@@ -4518,6 +4519,15 @@ static partial class CoreTests {
       Check(CaptureAffinity.For(false, true, false) == 0u && CaptureAffinity.For(true, true, false) == 0u, "affinity: the test build's recorder keeps them visible (hints only)");
       Check(CaptureAffinity.For(false, true, true) == 0x11u && CaptureAffinity.For(true, true, true) == 0x11u, "affinity: the pilot wins over the recorder and the setting: hidden");
       Check(CaptureAffinity.Hidden(true, CaptureAffinity.For(false, true, true)) && !OwnMask.Covered(new int[100]) , "pilot working, recorder on: windows hidden (Excluded), so no mask and the look is not covered");
+      {   // the decision table: (setting, recorder, pilot) x (hint window, never-captured window like the recorder's timer)
+        bool all = true;
+        foreach (bool st in new[] { false, true }) foreach (bool rc in new[] { false, true }) foreach (bool pl in new[] { false, true }) {
+          all &= CaptureAffinity.For(st, rc, pl, true) == 0x11u;
+          all &= CaptureAffinity.For(st, rc, pl, false) == CaptureAffinity.For(st, rc, pl);
+        }
+        Check(all, "affinity: a never-captured window (the recorder's timer) is 0x11 in every mode; the others follow the old table");
+        Check(CaptureAffinity.Hidden(true, CaptureAffinity.For(true, true, false, true)) && !CaptureAffinity.Hidden(true, CaptureAffinity.For(true, false, false, false)), "affinity: the timer is Excluded (no mask) even with the recorder and the setting on");
+      }
       Check(CaptureAffinity.DimOn(true, true) && !CaptureAffinity.DimOn(true, false) && !CaptureAffinity.DimOn(false, true), "dimming: only while every window is hidden from captures (the setting on = windows visible = no dimming)");
       Check(Channel.CaptureSettingAvailable(true, false) && Channel.CaptureSettingAvailable(false, true) && !Channel.CaptureSettingAvailable(false, false) && !Channel.IsStreamer && !Channel.CaptureSetting == !Channel.IsTest, "streamer build: the capture setting is open in the test channel and the streamer build only; this build is not the streamer");
       Check(!Channel.UpdatesEnabled(true) && Channel.UpdatesEnabled(false), "streamer build: no self-update; every other build keeps it");
@@ -4591,8 +4601,16 @@ static partial class CoreTests {
     double PY { get { return Small ? g.SmallPitchY : g.PitchY; } }
     double CH { get { return Small ? g.SmallCardH : g.CardH; } }   // the main city (the hero screen closed): its «Герои» opens CityHero
     readonly HeroGeometry g; readonly double W, H;
-    public int Clicks, Drags, Backs;
+    public int Clicks, Drags, Backs, Funnels; public long Now, ClosedAt = -100000;
     public bool Blind;   // the filter pop-up is not recognised: the host reports it closed whatever it shows
+    /// <summary>The game's flag for the pop-up (Charactor_FilterOrder.m_IsActive) as the host reads it: 0 = not readable (Unknown), 1 = exact, 2 = Unknown until the first funnel press (the panel is built then), exact after.
+    /// FadeMs: the pixels show the pop-up this long after it closed (the fade) while the flag is already off. MemLagMs: the flag turns on this long after the press (the game answers late).</summary>
+    public int MemMode, DropFunnel; public long FadeMs, MemLagMs; public bool Built; public long ToggledAt = -1;
+    public Mem3 MemAt(long t) {
+      if (MemMode == 0 || (MemMode == 2 && !Built)) return Mem3.Unknown;
+      bool on = FilterOpen && (MemLagMs <= 0 || ToggledAt < 0 || t >= ToggledAt + MemLagMs);
+      return on ? Mem3.Yes : Mem3.No;
+    }
     public List<double[]> Pts = new List<double[]>();
     public bool DeadWhileFiltered;   // the grid takes no card click while a class / faction filter is on (live 1.6.66.452: the clicks brought up no hero)
     public bool Blocked;   // something over the grid takes the clicks (a pop-up left open)
@@ -4601,7 +4619,7 @@ static partial class CoreTests {
     public void Click(double x, double y) {
       Clicks++; Pts.Add(new[] { x, y });
       if (Blocked) return;
-      if (Tags != null && Math.Abs(x - g.FunnelX * H) < 20 && Math.Abs(y - (H - g.FunnelDY * H)) < 20) { FilterOpen = !FilterOpen; return; }
+      if (Tags != null && Math.Abs(x - g.FunnelX * H) < 20 && Math.Abs(y - (H - g.FunnelDY * H)) < 20) { if (DropFunnel > 0) { DropFunnel--; Funnels++; return; } FilterOpen = !FilterOpen; Built = true; Funnels++; if (!FilterOpen) ClosedAt = Now; ToggledAt = Now; return; }
       if (FilterOpen) {
         int r = (int)Math.Round((y / H - g.FilterRow0) / g.FilterPitch);
         if (r < 0 || r >= HeroGeometry.FilterRows) return;
@@ -4631,9 +4649,10 @@ static partial class CoreTests {
   static string RunHero(HeroPilot p, FakeHeroGame game, long plan, int maxSteps, out HeroView last, long[] tags) {
     last = null;
     for (long t = 0; t < maxSteps * 100L; t += 100) {
+      game.Now = t;
       var v = new HeroView { NowMs = t, Foreground = true, W = 1920, H = 1009, Plan = plan, Hero = game.Shown, Tab = game.Tab,
         Part = game.Part, Heroes = game.Part >= 0 ? game.Heroes : game.Heroes, HeroesButton = game.City, ClientH = 1009, SmallCards = game.Small,
-        FilterOpen = game.FilterOpen && !game.Blind, ChosenCamps = game.Camps.ToArray(), ClassChosen = game.Class > 0, GridPtr = game.Grid,
+        FilterMem = game.MemAt(t), FilterOpen = (game.FilterOpen || (game.FadeMs > 0 && t >= game.ClosedAt && t < game.ClosedAt + game.FadeMs)) && !game.Blind, ChosenCamps = game.Camps.ToArray(), ClassChosen = game.Class > 0, GridPtr = game.Grid,
         FactionList = game.Tags != null ? FakeHeroGame.FactionList : null, ClassCount = 7 };
       if (tags != null) { v.HeroClass = tags[0]; v.HeroCamps = new long[tags.Length - 1]; Array.Copy(tags, 1, v.HeroCamps, 0, tags.Length - 1); }
       last = v;

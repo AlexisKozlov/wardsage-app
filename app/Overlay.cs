@@ -134,7 +134,7 @@ namespace RealmForge {
       // looks see our drawings (live 2026-10-14, a 1366x705 laptop: the plates were on the diagnostics screenshots) and
       // mask the parts we drew (Parts) themselves
       live.Add(this);   // (applies the current affinity too)
-      if (!Excluded && !(RecorderOn && KeepCaptureState) && !ShowInCapture) Log.Write("overlay: the hint windows cannot be hidden from screen captures on this Windows: the screen looks mask them");
+      if (!Excluded && !ShowInCapture) Log.Write("overlay: the hint windows cannot be hidden from screen captures on this Windows: the screen looks mask them");
     }
     // a panel the player may move (the boss coach): while it is movable it takes the mouse and drags like a title bar
     bool movable;
@@ -179,8 +179,8 @@ namespace RealmForge {
 
     /// <summary>Hidden from screen captures (false: the screen looks see what this window shows).</summary>
     public bool Excluded = true;
-    /// <summary>TEST build, while the screen recorder runs. Only the recorder's timer window (KeepCaptureState) stays in screen captures; the hint windows stay hidden
-    /// (0x11) so no look sees them, and the recorder draws the hints onto its frames itself (OverlayPaint.Composite).</summary>
+    /// <summary>TEST build, while the screen recorder runs. No window of ours stays in screen captures because of it (the timer window is NeverCaptured, 0x11, too): no look sees
+    /// any of them, and the recorder draws the hints onto its frames itself (OverlayPaint.Composite).</summary>
     public static bool RecorderOn;
     /// <summary>The player's setting «show hints in recordings and streams» (AppConfig.ShowInCapture): the windows stay in captures.</summary>
     public static bool ShowInCapture;
@@ -192,7 +192,7 @@ namespace RealmForge {
     /// <summary>The affinity last applied (0xFFFFFFFF = none yet), for the journal.</summary>
     public uint AppliedAffinity { get { return appliedAff; } }
     public void ApplyAffinity() {
-      uint aff = CaptureAffinity.For(ShowInCapture, RecorderOn && KeepCaptureState, PilotHidden && !KeepCaptureState);
+      uint aff = CaptureAffinity.For(ShowInCapture, false, PilotHidden, NeverCaptured);
       bool was = Excluded;
       try { Excluded = CaptureAffinity.Hidden(W32.SetWindowDisplayAffinity(Handle, aff), aff); } catch (Exception) { Excluded = false; }
       if (Excluded != was) affinityAt = Environment.TickCount;
@@ -227,6 +227,8 @@ namespace RealmForge {
     }
     /// <summary>The recorder's timer window: the pilot does not flip its affinity and HideOwn never hides it (live 2026-11-04: it blinked).</summary>
     public bool KeepCaptureState;
+    /// <summary>Always hidden from screen captures (0x11) whatever the mode: no look of the pilot or the navigator ever sees (or has to mask) this window. The recorder's timer window.</summary>
+    public bool NeverCaptured;
     static int pilotFlipAt = Environment.TickCount - 100000;
     /// <summary>The pilot's hide goes at once; the way back waits (CaptureAffinity.PilotNext: at most one flip in 5 s, no re-present of the hints at every pilot start / stop).</summary>
     public static void SetPilotHidden(bool on) {
@@ -342,7 +344,7 @@ namespace RealmForge {
     public event Action SellCancelPressed;
     string cancelDrawn; Bitmap cancelBmp;
     // TEST build: the record button over the game (left edge, mid-height); a clickable window like cancelWin, drawn only while the central gate allows
-    readonly GlowWindow recWin = new GlowWindow(true) { Name = "recWin", KeepCaptureState = true };
+    readonly GlowWindow recWin = new GlowWindow(true) { Name = "recWin", KeepCaptureState = true, NeverCaptured = true };
     readonly Timer recBtnTimer = new Timer();
     readonly Stopwatch recSw = new Stopwatch();
     string recDrawn; Bitmap recBmp; bool recOn; long recToggleAt;
@@ -5012,7 +5014,7 @@ namespace RealmForge {
     }
 
     static bool maskSaid;
-    /// <summary>Once per app run, the first time a look is masked while the pilot works: which window, its flags and the rectangle that overlaps the grab (why a window was masked at all with affinity 0x11 expected).</summary>
+    /// <summary>PilotMaskLog: once per app run, the first time a look is masked while the pilot works: which window, its flags and the rectangle that overlaps the grab (why a window was masked at all with affinity 0x11 expected).</summary>
     static bool PilotMaskLog(GlowWindow win, int x, int y, int w, int h, List<int[]> rects) {
       if (!GlowWindow.PilotHidden) return false;
       foreach (var r in rects) {
