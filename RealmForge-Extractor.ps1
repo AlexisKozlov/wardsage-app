@@ -86,6 +86,20 @@ namespace RealmForge {
     public const string FeedPath = "/downloads/latest.json";
     public const string StagedPrefix = "RealmForge-";
 #endif
+
+#if STREAMER
+    // tools/build-app.sh --streamer: the MAIN channel (folders, site, sync) for one streamer who tests the capture setting; no self-update
+    public static readonly bool IsStreamer = true;
+#else
+    public static readonly bool IsStreamer = false;
+#endif
+
+    /// <summary>Is the setting «show hints in recordings and streams» available (the test channel, or the one-off streamer build)?</summary>
+    public static bool CaptureSettingAvailable(bool test, bool streamer) { return test || streamer; }
+    public static readonly bool CaptureSetting = CaptureSettingAvailable(IsTest, IsStreamer);
+
+    /// <summary>Does this build check for, download and install updates (not the streamer build)?</summary>
+    public static bool UpdatesEnabled(bool streamer) { return !streamer; }
   }
 }
 
@@ -5393,7 +5407,7 @@ namespace RealmForge {
     public static uint For(bool showInCapture, bool capturable, bool pilot) { return capturable || (showInCapture && !pilot) ? 0u : 0x11u; }
     /// <summary>The dimming around a hint is drawn only while every hint window is hidden from captures (shown to a recording or to a look it would cover the whole game).</summary>
     public static bool DimOn(bool wanted, bool allHidden) { return wanted && allHidden; }
-    /// <summary>The setting «show hints in recordings and streams» works only in the test build for now; in the main channel the config value is ignored.</summary>
+    /// <summary>The setting «show hints in recordings and streams» works only in the test build (and the one-off streamer build); in the main channel the config value is ignored.</summary>
     public static bool Allowed(bool configOn, bool testChannel) { return configOn && testChannel; }
   }
 }

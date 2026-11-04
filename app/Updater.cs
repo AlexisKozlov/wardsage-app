@@ -144,6 +144,7 @@ namespace RealmForge {
     /// <summary>At start, before anything else: puts a waiting build in place of this exe and starts it. True = this
     /// process must exit now. Also removes the leftovers of the previous update.</summary>
     public static bool ApplyAtStart(Action beforeStart) {
+      if (!Channel.UpdatesEnabled(Channel.IsStreamer)) return false;   // the streamer build never installs a staged update
       string exe = Application.ExecutablePath;
       try { if (File.Exists(exe + ".old")) File.Delete(exe + ".old"); } catch (Exception) { }
       var u = Waiting();

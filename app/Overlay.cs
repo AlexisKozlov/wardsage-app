@@ -215,7 +215,7 @@ namespace RealmForge {
     }
     /// <summary>Sets the setting and re-applies the affinity to every window that has a handle (UI thread). Only the test channel has it.</summary>
     public static void SetShowInCapture(bool on) {
-      ShowInCapture = CaptureAffinity.Allowed(on, Channel.IsTest);
+      ShowInCapture = CaptureAffinity.Allowed(on, Channel.CaptureSetting);
       ReapplyAll();
     }
     public static void SetPilotHidden(bool on) {

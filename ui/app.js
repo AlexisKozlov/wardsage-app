@@ -12,7 +12,7 @@
 
   const CODE_RE = /^rf_[0-9A-Za-z]{32}$/;
   const S = {
-    notice: null, offline: false, down: {}, rec: { on: false, sec: 0, sent: 0, total: 0, why: '' }, ready: false, termsOk: true, lang: 'ru', version: '', channel: 'main', navCore: false, site: '', defaultSite: '', hasCode: false, codePrefix: '', saveCopy: false,
+    notice: null, offline: false, down: {}, rec: { on: false, sec: 0, sent: 0, total: 0, why: '' }, ready: false, termsOk: true, lang: 'ru', version: '', channel: 'main', streamer: false, navCore: false, site: '', defaultSite: '', hasCode: false, codePrefix: '', saveCopy: false,
     game: { running: false, version: null }, last: null, page: 'sync', editCode: false,
     sync: { phase: 'idle', stage: null, seconds: 0, result: null, error: null },
     plans: { status: 'idle', list: [], err: null }, sel: 0,
@@ -33,7 +33,7 @@
 
   // ---------------------------------------------------------------- helpers
   // the version players see: inside the app counts 1.6.N (an update must have a higher number), in beta it shows as 0.N
-  const shownVer = (v) => { const m = /^1\.6\.(\d+)((?:\.\d+)?)$/.exec(String(v || '')); return m ? '0.' + m[1] + m[2] : String(v || ''); };
+  const shownVer = (v) => { const m = /^1\.6\.(\d+)((?:\.\d+)?)(-streamer)?$/.exec(String(v || '')); return m ? '0.' + m[1] + m[2] + (m[3] || '') : String(v || ''); };
   const t = (k, ...a) => {
     let s = (T[S.lang] && T[S.lang][k]) || T.ru[k] || k;
     a.forEach((v, i) => { s = s.split('{' + i + '}').join(v); });
@@ -150,7 +150,7 @@
       <div class="rail-foot">
         ${S.update && S.updDismissed ? `<button class="btn-line" data-act="updOpen">${I.reload}<span>${esc(t('updAvail', shownVer(S.update.version)))}</span></button>` : ''}
         <div class="game-state"><span class="dot ${S.game.running ? 'on' : ''}"></span><div>${esc(S.game.running ? t('gameOn') : t('gameOff'))}
-          ${S.game.running && S.game.version ? `<small>${esc(t('gameVer', S.game.version))}</small>` : ''}${S.version ? `<small>${esc(t('appVer', shownVer(S.version)))}${S.channel === 'test' && S.navCore ? ' · ядро: вкл' : ''}</small>` : ''}</div></div>
+          ${S.game.running && S.game.version ? `<small>${esc(t('gameVer', S.game.version))}</small>` : ''}${S.version ? `<small>${esc(t('appVer', shownVer(S.version)))}${S.channel === 'test' && S.navCore ? ' · ядро: вкл' : ''}${S.streamer ? ' · стример' : ''}</small>` : ''}</div></div>
       </div>`;
   }
 
@@ -903,7 +903,7 @@
         row(t('setAutoUpdate'), t('setAutoUpdateS'), sw('autoUpdate', S.autoUpdate), { more: 'setAutoUpdateP', key: 'autoUpdate' })
         + row(t('setSendCodes'), t('setSendCodesS'), sw('sendCodes', S.sendCodes), { more: 'setSendCodesP', key: 'sendCodes' })
         + row(t('setBossHints'), t('setBossHintsS'), sw('bossHints', S.bossHints), { more: 'setBossHintsP', key: 'bossHints' })
-        + (S.channel === 'test' ? row(t('setShowInCapture'), t(S.showInCapture ? 'setShowInCaptureOn' : 'setShowInCaptureS'), sw('showInCapture', S.showInCapture)) : '')   // (test builds only for now; the host ignores the command and the config value elsewhere)
+        + (S.channel === 'test' || S.streamer ? row(t('setShowInCapture'), t(S.showInCapture ? 'setShowInCaptureOn' : 'setShowInCaptureS'), sw('showInCapture', S.showInCapture)) : '')   // (test and streamer builds only for now; the host ignores the command and the config value elsewhere)
         + row(t('setTray'), t('setTrayS'), sw('tray', S.tray), { more: 'setTrayP', key: 'tray' })
         + row(t('setAutostart'), t('setAutostartS'), sw('autostart', S.autostart), { more: 'setAutostartP', key: 'autostart' })),
       sec(t('secHelp'),
@@ -1016,7 +1016,7 @@
     else if (a === 'recButton') { S.recButton = !S.recButton; host.send({ cmd: 'setRecButton', on: S.recButton }); render(); }
     else if (a === 'sendCodes') { S.sendCodes = !S.sendCodes; host.send({ cmd: 'setSendCodes', on: S.sendCodes }); render(); }
     else if (a === 'bossHints') { S.bossHints = !S.bossHints; host.send({ cmd: 'setBossHints', on: S.bossHints }); render(); }
-    else if (a === 'showInCapture' && S.channel === 'test') { S.showInCapture = !S.showInCapture; host.send({ cmd: 'setShowInCapture', on: S.showInCapture }); render(); }
+    else if (a === 'showInCapture' && (S.channel === 'test' || S.streamer)) { S.showInCapture = !S.showInCapture; host.send({ cmd: 'setShowInCapture', on: S.showInCapture }); render(); }
     else if (a === 'tray') { S.tray = !S.tray; host.send({ cmd: 'setTray', on: S.tray }); render(); }
     else if (a === 'autostart') { S.autostart = !S.autostart; host.send({ cmd: 'setAutostart', on: S.autostart }); render(); }
     else if (a === 'autoUpdate') { S.autoUpdate = !S.autoUpdate; host.send({ cmd: 'setAutoUpdate', on: S.autoUpdate }); render(); }
@@ -1084,7 +1084,7 @@
     if (!m || !m.ev) return;
     switch (m.ev) {
       case 'state':
-        Object.assign(S, { lang: m.lang, version: m.version, channel: m.channel || 'main', navCore: !!m.navCore, site: m.site, defaultSite: m.defaultSite, termsOk: m.termsOk !== false, hasCode: m.hasCode, codePrefix: m.codePrefix, saveCopy: m.saveCopy, last: m.last || S.last });
+        Object.assign(S, { lang: m.lang, version: m.version, channel: m.channel || 'main', streamer: !!m.streamer, navCore: !!m.navCore, site: m.site, defaultSite: m.defaultSite, termsOk: m.termsOk !== false, hasCode: m.hasCode, codePrefix: m.codePrefix, saveCopy: m.saveCopy, last: m.last || S.last });
         const wasAuto = S.autoClick;
         if (m.autoSync !== undefined) { S.autoSync = m.autoSync; S.autoClick = m.autoClick; S.autoConfirm = !!m.autoConfirm; S.errorReports = !!m.errorReports; S.autoUpdate = m.autoUpdate !== false; S.tray = m.tray !== false; S.bossHints = m.bossHints !== false; S.showInCapture = !!m.showInCapture; S.sendCodes = m.sendCodes !== false; S.recButton = m.recButton !== false; S.autostart = !!m.autostart; }
         if (m.game) S.game = m.game;

@@ -5,11 +5,14 @@
 #
 #   tools/build-app.sh            -> dist/Wardsage.exe
 #   tools/build-app.sh --test     -> dist/Wardsage-Test.exe (the test build: own folders, mutex, update feed, site; src/Channel.cs)
+#   tools/build-app.sh --streamer -> dist/Wardsage-Streamer.exe (one-off, unsigned, never published: the MAIN channel plus the capture setting,
+#                                    no self-update, version suffix -streamer; define STREAMER, src/Channel.cs)
 #   APP_VERSION=1.6.58.123 tools/build-app.sh --test   builds with that version (patched in a copy of app/Program.cs; the source is untouched)
 set -euo pipefail
 cd "$(dirname "$0")/.."
-DEFS=(); EXE=Wardsage
+DEFS=(); EXE=Wardsage; STREAMER=""
 if [ "${1:-}" = "--test" ]; then DEFS=(-define:TESTBUILD); EXE=Wardsage-Test; fi
+if [ "${1:-}" = "--streamer" ]; then DEFS=(-define:STREAMER); EXE=Wardsage-Streamer; STREAMER=1; fi
 
 # Linux: the .NET SDK's Roslyn + the NuGet package's 4.8 reference assemblies. Windows (Git Bash): the installed .NET SDK's Roslyn +
 # the reference assemblies of the NuGet package Microsoft.NETFramework.ReferenceAssemblies.net48 (FX=... to point at them).
@@ -60,6 +63,15 @@ if [ -n "${APP_VERSION:-}" ]; then
     grep -q "${k%%:*}(\"${k#*:}\")" "$OUT/src/AssemblyInfo.cs" || { echo "could not set ${k%%:*}" >&2; exit 1; }
   done
   APP="${APP/app\/AssemblyInfo.cs/$OUT/src/AssemblyInfo.cs}"
+fi
+
+if [ -n "$STREAMER" ]; then
+  mkdir -p "$OUT/src"
+  PSRC=app/Program.cs; [ -f "$OUT/src/Program.cs" ] && PSRC="$OUT/src/Program.cs"
+  sed -E 's/(public const string Version = "[0-9.]+)(")/\1-streamer\2/' "$PSRC" > "$OUT/src/Program.streamer.cs"
+  grep -q 'Version = "[0-9.]*-streamer"' "$OUT/src/Program.streamer.cs" || { echo "could not set the streamer version" >&2; exit 1; }
+  mv "$OUT/src/Program.streamer.cs" "$OUT/src/Program.cs"
+  APP="${APP/app\/Program.cs/$OUT/src/Program.cs}"
 fi
 
 "${CSC[@]}" -langversion:7.3 -target:winexe -platform:x64 -optimize+ -deterministic -nostdlib -warnaserror -nowarn:1701,1702 \

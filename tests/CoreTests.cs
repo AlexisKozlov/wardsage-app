@@ -4499,6 +4499,8 @@ static partial class CoreTests {
       Check(CaptureAffinity.For(false, false, false) == 0x11u && CaptureAffinity.For(true, false, false) == 0u && CaptureAffinity.For(true, false, true) == 0x11u && CaptureAffinity.For(false, false, true) == 0x11u, "affinity: hidden, shown by the setting, hidden again while the auto click works");
       Check(CaptureAffinity.For(false, true, true) == 0u && CaptureAffinity.For(true, true, false) == 0u, "affinity: the test build's recorder keeps them visible");
       Check(CaptureAffinity.DimOn(true, true) && !CaptureAffinity.DimOn(true, false) && !CaptureAffinity.DimOn(false, true), "dimming: only while every window is hidden from captures (the setting on = windows visible = no dimming)");
+      Check(Channel.CaptureSettingAvailable(true, false) && Channel.CaptureSettingAvailable(false, true) && !Channel.CaptureSettingAvailable(false, false) && !Channel.IsStreamer && !Channel.CaptureSetting == !Channel.IsTest, "streamer build: the capture setting is open in the test channel and the streamer build only; this build is not the streamer");
+      Check(!Channel.UpdatesEnabled(true) && Channel.UpdatesEnabled(false), "streamer build: no self-update; every other build keeps it");
       Check(CaptureAffinity.Allowed(true, true) && !CaptureAffinity.Allowed(true, false) && !CaptureAffinity.Allowed(false, true), "the setting: the test channel only, the config value is ignored in the main channel");
     }
   }

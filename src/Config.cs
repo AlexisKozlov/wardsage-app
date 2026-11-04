@@ -212,7 +212,7 @@ namespace RealmForge {
     public static uint For(bool showInCapture, bool capturable, bool pilot) { return capturable || (showInCapture && !pilot) ? 0u : 0x11u; }
     /// <summary>The dimming around a hint is drawn only while every hint window is hidden from captures (shown to a recording or to a look it would cover the whole game).</summary>
     public static bool DimOn(bool wanted, bool allHidden) { return wanted && allHidden; }
-    /// <summary>The setting «show hints in recordings and streams» works only in the test build for now; in the main channel the config value is ignored.</summary>
+    /// <summary>The setting «show hints in recordings and streams» works only in the test build (and the one-off streamer build); in the main channel the config value is ignored.</summary>
     public static bool Allowed(bool configOn, bool testChannel) { return configOn && testChannel; }
   }
 }
