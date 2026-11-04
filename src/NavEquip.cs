@@ -56,6 +56,7 @@ namespace RealmForge {
       var fv = view(s, t, now);
       var fa = pilot.Step(fv);
       if (OnStep != null) OnStep(fv, fa);
+      if (pilot.State == "failed" && pilot.Note != "" && fa == null) return NavStep.Reset("filter: " + pilot.Note);   // a toggle that does not read back: verify-or-reset
       if (fa == null) return null;
       if (fa.Kind == AutoKind.None) return NavStep.Wait(pilot.State == "failed" ? "idle" : "work");
       var act = NavAdapt.ToAct(fa, ClickTarget.EquipFilter, t.Owner, "Form_CharactorMain", NavKeep.GearFilter, "filter: " + pilot.State);
@@ -69,6 +70,9 @@ namespace RealmForge {
     readonly AutoPilot pilot; readonly Func<Snapshot, NavTarget, long, AutoView> view; readonly Func<AutoView, AutoAction, ClickTarget> targetOf;
     public Action<AutoView, AutoAction> OnStep; public Action<AutoAction> OnSent;
     readonly GearFilterAction filter; string key = "";
+    /// <summary>After the filter acted for this target the item list is rebuilt (the «Скрыть надетое» toggle, the set): no pick until its signature has stood still this long; the list that never settles is a reset.</summary>
+    public const int ListSettleMs = 300, ListSettleCapMs = 6000;
+    long lastSig = long.MinValue, sigAt, settleFrom;
     public ItemPickAction(AutoPilot p, Func<Snapshot, NavTarget, long, AutoView> v, Func<AutoView, AutoAction, ClickTarget> targetOf, GearFilterAction filter = null) { pilot = p; view = v; this.targetOf = targetOf; this.filter = filter; }
     public string Name { get { return "item"; } }
     public ICollection<string> Keep { get { return filter != null && filter.ActedKey == key ? NavKeep.ItemPick : NavKeep.ItemPickNoFilter; } }
@@ -76,6 +80,15 @@ namespace RealmForge {
     public void Reset() { pilot.Reset(); }
     public NavStep Step(Snapshot s, NavTarget t, INavIo io, long now) {
       var v = view(s, t, now); v.NavOwned = true;
+      if (v.ListSig != lastSig) { lastSig = v.ListSig; sigAt = now; }
+      if (filter != null && filter.ActedKey == key) {
+        if (now - sigAt < ListSettleMs) {
+          if (settleFrom == 0) settleFrom = now;
+          if (now - settleFrom > ListSettleCapMs) { settleFrom = 0; return NavStep.Reset("the item list does not settle after the filter"); }
+          return NavStep.Wait("list settling");
+        }
+        settleFrom = 0;
+      }
       var a = pilot.Step(v);
       if (OnStep != null) OnStep(v, a);
       if (a.Kind == AutoKind.None) return NavStep.Wait(pilot.State);

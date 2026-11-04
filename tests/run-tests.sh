@@ -65,7 +65,7 @@ NET8_REFS=$(for f in "$NET8"/*.dll; do printf -- '-r:%s ' "$f"; done)
 $CSC -langversion:5 -target:library -nostdlib -warnaserror -nowarn:SYSLIB0014 $NET8_REFS \
   -out:"$OUT/RealmForge.Core.dll" $CORE tests/CodeProtectorStub.cs
 $CSC -target:exe -nostdlib -nowarn:SYSLIB0014 $NET8_REFS -r:"$OUT/RealmForge.Core.dll" \
-  -out:"$OUT/CoreTests.dll" tests/CoreTests.cs tests/FrameStyleTests.cs tests/GameSim.cs tests/NavSim.cs tests/NavTests.cs tests/NavTwoHeroes.cs tests/EquipBench.cs
+  -out:"$OUT/CoreTests.dll" tests/CoreTests.cs tests/FrameStyleTests.cs tests/GameSim.cs tests/NavSim.cs tests/NavTests.cs tests/NavTwoHeroes.cs tests/GuidePaths.cs tests/EquipBench.cs
 cat > "$OUT/CoreTests.runtimeconfig.json" <<EOF
 { "runtimeOptions": { "tfm": "net8.0", "framework": { "name": "Microsoft.NETCore.App", "version": "$NET8_RT" } } }
 EOF
