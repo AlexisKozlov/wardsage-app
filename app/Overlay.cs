@@ -4609,11 +4609,23 @@ namespace RealmForge {
     void LiveGearView(AutoView v, W32.RECT cr) {
       if (target <= 0 || cr.R <= 0 || cr.B <= 0) return;
       double W = cr.R, Hc = cr.B, U = Ui.Unit(cr.R, cr.B);
-      RFX.UiCellWant(UiCellKind.HeroGear, new[] { target }, W, Hc, U);
+      // (the whole list's cells only while the pilot asks for a neighbour of the target: the read costs a cell more each)
+      RFX.UiCellWant(UiCellKind.HeroGear, pilot.WantNeighbour ? null : new[] { target }, W, Hc, U);
       var s = RFX.UiCellFresh(UiCellKind.HeroGear, target, W, Hc, Environment.TickCount, RFX.UiFrameFreshMs);   // (the ticks are ~200 ms apart: a 200 ms limit left most ticks without a read)
       if (s == null || !s.Ok || !s.Visible || s.Rotated || s.Copies != 1 || s.VW < 4 || s.VH < 4) return;
       if (!RFX.UiCellTopIs(UiCellKind.HeroGear, screens.Current)) return;
       v.LiveGrid = true;
+      // the game's own list position: the cells it made (first / last), the viewport, the target's cell when made (even partly in view)
+      v.LiveFirst = s.First; v.LiveLast = s.Last; v.LiveViewTop = s.VY; v.LiveViewBottom = s.VY + s.VH;
+      var tc = s.Of(target); if (tc != null && tc.Active) v.LiveCellY = tc.Y + tc.H / 2;
+      if (pilot.WantNeighbour) {   // another cell, wholly in view, nearest the middle of the list
+        UiCell best = null; double mid = s.VY + s.VH / 2;
+        foreach (var c in s.Cells) {
+          if (c.Uid == target || !c.Active || c.InView < 0.95 || c.W < 4 || c.H < 4) continue;
+          if (best == null || Math.Abs(c.Y + c.H / 2 - mid) < Math.Abs(best.Y + best.H / 2 - mid)) best = c;
+        }
+        if (best != null) { v.LiveNb = true; v.LiveNbUid = best.Uid; v.LiveNbX = best.X + best.W / 2; v.LiveNbY = best.Y + best.H / 2; }
+      }
       double x, y; string why;
       if (RFX.UiCellPoint(s, target, W, Hc, Environment.TickCount, out x, out y, out why)) { v.LiveTarget = true; v.LiveX = x; v.LiveY = y; }
     }

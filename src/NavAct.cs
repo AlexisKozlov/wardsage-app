@@ -141,3 +141,85 @@ namespace RealmForge {
     ActOutcome NotSent(Act a, string why) { return End(ActOutcome.NotSent, why); }
   }
 }
+
+namespace RealmForge {
+  /// <summary>ONE snapshot of the game's fields an atom reads (docs/specs/2026-11-04-game-atoms.md 2-3), taken from the pilot's view of the tick: the selection, the card, the list's live position, the target's live cell, a neighbour cell.
+  /// Preconditions, targets and effects of every atom are judged on it and on nothing else (no second read half a tick later).</summary>
+  public sealed class GameFacts {
+    public long Sel, TipUid, Want, Hero, ScreenHero, Owner, ListSig;
+    public bool TipShown, TipKnown, InputOpen = true, LiveGrid, LiveTarget, LiveNb, Foreground = true;
+    public int ListFirst = -1, ListLast = -1;
+    public double CellY = double.NaN, TargetX, TargetY, NbX, NbY, ViewTop = double.NaN, ViewBottom = double.NaN;
+    public long NbUid;
+    public static GameFacts Of(AutoView v) {
+      return new GameFacts { Sel = v.Sel, TipUid = v.TipUid, Want = v.Target, Hero = v.Hero, ScreenHero = v.ScreenHero, Owner = v.Owner, ListSig = v.ListSig, TipShown = v.TipShown, TipKnown = v.TipKnown,
+        InputOpen = v.InputOpen, LiveGrid = v.LiveGrid, LiveTarget = v.LiveTarget, LiveNb = v.LiveNb, Foreground = v.Foreground, ListFirst = v.LiveFirst, ListLast = v.LiveLast, CellY = v.LiveCellY,
+        TargetX = v.LiveX, TargetY = v.LiveY, NbX = v.LiveNbX, NbY = v.LiveNbY, NbUid = v.LiveNbUid, ViewTop = v.LiveViewTop, ViewBottom = v.LiveViewBottom };
+    }
+    /// <summary>Where the list stands (its first and last made cell, the target's cell row on the screen): a change = the list moved.</summary>
+    public string PosKey() { return ListFirst + ":" + ListLast + ":" + (double.IsNaN(CellY) ? "-" : ((int)Math.Round(CellY / 3)).ToString()); }
+    /// <summary>What the facts say now, as a key: an atom that failed is not done again while this is the same (the diagnosis did not change).</summary>
+    public string DiagKey() { return Sel + "|" + TipUid + "|" + TipShown + "|" + PosKey() + "|" + ListSig + "|" + LiveTarget; }
+    public override string ToString() {
+      return "sel=" + Sel + " tip=" + (TipShown ? TipUid.ToString() : "-") + " list=" + ListFirst + ".." + ListLast + " cellY=" + (double.IsNaN(CellY) ? "-" : ((int)CellY).ToString()) + " target=" + (LiveTarget ? "live" : "none") + " owner=" + Owner;
+    }
+  }
+
+  public enum AtomResult { Running, Done, NoEffect }
+
+  /// <summary>The atom executor of the pilots (docs/specs/2026-11-04-game-atoms.md 3): precondition -> a target from the game's live rect -> ONE click or drag -> the awaited field with a timeout -> a diagnosis (the line «atom ...» of the log)
+  /// and a change of method. The one rule that makes it an executor and not a counter: an atom that ended without its effect is never done again while the facts are the same (a new diagnosis is the only licence to repeat).</summary>
+  public sealed class AtomRunner {
+    public readonly List<string> Lines = new List<string>();
+    string name = "", target = "", eff = ""; long startAt; int timeoutMs; Func<GameFacts, bool> effect; string key = "";
+    readonly Dictionary<string, string> failedAt = new Dictionary<string, string>();
+    public bool Active { get { return effect != null; } }
+    public string Name { get { return name; } }
+    /// <summary>Atoms refused for a repeat without a new diagnosis (the tests' and the sim's global check: it stays 0 on a good run).</summary>
+    public int Refused;
+
+    void Say(string line) { Lines.Add(line); if (Lines.Count > 60) Lines.RemoveAt(0); }
+
+    /// <summary>The atoms done since the last call, as one text for the host's log line (without the "atom: " tag); "" = none.</summary>
+    public string Take() { if (Lines.Count == 0) return ""; var s = string.Join(" | ", Lines.ToArray()); Lines.Clear(); return s; }
+
+    /// <summary>Starts the atom <paramref name="name"/> on <paramref name="targetKey"/> (what it is aimed at: an item, a direction) with its live target text <paramref name="desc"/> (never a point from the screen's fractions), the
+    /// effect to await (<paramref name="effName"/>: the field it changes) within <paramref name="timeoutMs"/>. False = refused: it failed before on these very facts (a repeat with no new diagnosis); the caller changes the method.</summary>
+    public bool Begin(string name, string targetKey, string desc, string effName, Func<GameFacts, bool> effect, int timeoutMs, GameFacts f, long now, bool guard = true) {
+      string k = name + "@" + targetKey, dk = f.DiagKey(), was;
+      if (guard && failedAt.TryGetValue(k, out was) && was == dk) {
+        Refused++; Say(name + " pre=ok target=" + desc + " REFUSED: it ended without " + effName + " on these same facts (" + f + "), no new diagnosis - another method");
+        return false;
+      }
+      if (this.effect != null) Finish(f, now, "superseded", false);
+      this.name = name; this.target = desc; this.eff = effName; this.effect = effect; this.timeoutMs = timeoutMs; startAt = now; key = k;
+      return true;
+    }
+
+    /// <summary>Called with the tick's facts: the effect seen = Done (a line), the time out = NoEffect (a line with the diagnosis, the repeat guard armed on these facts).</summary>
+    public AtomResult Poll(GameFacts f, long now) {
+      if (effect == null) return AtomResult.Running;
+      if (effect(f)) { Finish(f, now, "Done", true); return AtomResult.Done; }
+      if (now - startAt >= timeoutMs) { Finish(f, now, "NoEffect", false); return AtomResult.NoEffect; }
+      return AtomResult.Running;
+    }
+
+    void Finish(GameFacts f, long now, string how, bool ok) {
+      Say(name + " pre=ok target=" + target + " eff=" + eff + " " + (now - startAt) + "ms -> " + how + " diag=" + f);
+      if (ok) failedAt.Remove(key); else if (how == "NoEffect") failedAt[key] = f.DiagKey();
+      effect = null;
+    }
+
+    /// <summary>A precondition that does not hold, as a line of the log (nothing is done; the caller waits for the field or changes the method).</summary>
+    public void PreFails(string name, string why, GameFacts f) { string l = name + " pre=" + why + " (" + f + ")"; if (Lines.Count == 0 || Lines[Lines.Count - 1] != l) Say(l); }
+
+    /// <summary>The action of the last Begin did not go out (the gate waited): it is not awaited and counts for nothing.</summary>
+    public void Abort() { effect = null; }
+
+    /// <summary>A click from the layout's / row math's point (no live rect of its target - the old way, only where the game's cells are not read at all): never silent.</summary>
+    public void Geo(string name, double x, double y) { Say(name + " pre=ok target=geo[" + (int)x + "," + (int)y + "] src=geo (no live rect: the game's cells are not read)"); }
+
+    /// <summary>A new run: nothing is awaited, the guard is cleared.</summary>
+    public void Clear() { effect = null; failedAt.Clear(); }
+  }
+}

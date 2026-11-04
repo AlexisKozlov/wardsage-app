@@ -490,6 +490,20 @@ namespace RealmForge {
       } catch (Exception) { return 0; }
     }
 
+    /// <summary>The item whose card (Form_CharactorEquipTip) stands: m_SelectEquipInfo.iItemUid (the card of the item just chosen), else m_OneEquipInfo (the one-card form); 0 = the form is not shown / not readable.</summary>
+    public static long ReadTipUid() {
+      try {
+        string why; ulong env, ui; if (!UiRoots(out env, out ui, out why)) return 0;
+        bool shown; int copies; var r = new UiButtonInfo();
+        ulong f = FormOf(env, ui, "Form_CharactorEquipTip", r, out shown, out copies);
+        if (f == 0 || !shown) return 0;
+        ulong t, v; int tt, ut;
+        foreach (var name in new[] { "m_SelectEquipInfo", "m_OneEquipInfo" })
+          if (Field(f, name, out t, out tt) && tt == T_TABLE && Field(t, "iItemUid", out v, out ut) && ut == T_INT) return (long)v;
+        return 0;
+      } catch (Exception) { return 0; }
+    }
+
     // ---- the item tip / compare card (Form_CharactorEquipTip): which cards it holds
     static void NpTipLine(ulong env, ulong ui, List<string> l) {
       bool shown; int copies; var r = new UiButtonInfo();

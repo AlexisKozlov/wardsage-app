@@ -321,5 +321,171 @@ static partial class CoreTests {
       for (int i = 0; i < 1500 && nv2.State != "halted"; i++) { io2.NowMs += 100; nv2.Tick(io2, rd2.Update(cityS2, io2.NowMs)); }
       Check(nv2.State == "halted" && nv2.HaltWhy.StartsWith("recipe_stuck:graph:hero:NoEffect") && io2.Sent.Count == Navigator.MaxResets + 1, "nav reset: a step with no effect is retried after a reset " + Navigator.MaxResets + " times, then a named stop (" + nv2.HaltWhy + ", " + io2.Sent.Count + " clicks)");
     }
+    AtomTests();
+  }
+
+  // ---------------------------------------------------------------- the atoms (docs/specs/2026-11-04-game-atoms.md A1 / A2): the replay of the recording 464e21 (tests/fixtures/rec-464e21-atoms.txt)
+
+  /// <summary>The game's gear list as the recording shows it (client 1366x705): rows of one cell pitch, the cells the game made (first..last, with a buffer of rows beyond the viewport), a drag that moves the content by Gain of the pointer's move,
+  /// a click on a cell that selects its item (the card opens, the list is located to it), a click on the item that is selected already that does nothing (_OnEquipClicked), a click on the card's button that puts the item on the hero.</summary>
+  sealed class AtomListSim {
+    public readonly ListGeometry G = new ListGeometry(); public double H = 705, Pitch, Cell, VT, VB, Scroll, Gain = 0.9;
+    public int Rows = 60, TargetRow = 38; public long Target = 19993, Sel, TipUid; public bool Tip, Worn;
+    public int Drags, Blind, OnSelected, OnTarget, OnNb, Confirms; public long FirstClickAt = -1, WornAt = -1; public string FirstClick = "";
+    readonly List<KeyValuePair<long, Action>> due = new List<KeyValuePair<long, Action>>();
+    public AtomListSim() { Pitch = G.PitchY * H; Cell = G.CellW * H; VT = G.ViewTop * H; VB = G.ViewBottom * H; }
+    public long UidOf(int row) { return row == TargetRow ? Target : 1000 + row; }
+    public int RowOf(long uid) { return uid == Target ? TargetRow : (int)(uid - 1000); }
+    public double CellY(int row) { return VT + Cell / 2 + (row - 1) * Pitch - Scroll; }
+    public bool Whole(int row) { double y = CellY(row); return y - Cell / 2 >= VT && y + Cell / 2 <= VB; }
+    public int First { get { return Math.Max(0, (int)Math.Floor(Scroll / Pitch) - 1); } }
+    public int Last { get { return Math.Min(Rows - 1, (int)Math.Floor((Scroll + VB - VT) / Pitch) + 2); } }
+    public bool Made(int row) { return row - 1 >= First && row - 1 <= Last; }
+    public void At(long t, Action a) { due.Add(new KeyValuePair<long, Action>(t, a)); }
+    public void Advance(long t) { foreach (var e in due.ToArray()) if (e.Key <= t) { due.Remove(e); e.Value(); } }
+    public void Locate(int row) { Scroll = Math.Max(0, Math.Min((Rows - 1) * Pitch, (row - 3) * Pitch)); }
+    void Select(long uid) {
+      if (uid == Sel) { OnSelected++; return; }   // the game: nothing happens
+      Sel = uid; Tip = true; TipUid = uid; Locate(RowOf(uid));
+    }
+    public AutoView View(long t, bool nb) {
+      var types = new int[Rows + 1]; for (int i = 1; i <= Rows; i++) types[i] = 1;
+      double real = G.ViewTop * H;   // (the row math is stale on purpose: it puts row 38 in the middle of the view, as the recording's shadow did - visible=T)
+      var v = new AutoView { NowMs = t, Foreground = true, H = H, Target = Target, Row = TargetRow, Col = 1, Sel = Sel, SelRow = Sel > 0 ? RowOf(Sel) : 0, SelCol = Sel > 0 ? 1 : 0, AnchorHas = true,
+        Row1Top = (VT + VB) / 2 - (TargetRow - 1) * Pitch - Cell / 2 + 0 * real, Types = types, AutoConfirm = true, Hero = 5, ScreenHero = 5, Owner = Worn ? 5 : 0, TipKnown = true, TipShown = Tip, TipUid = Tip ? TipUid : 0,
+        BlueNone = !Tip, Button = Tip && Sel == Target ? new[] { 500, 520, 150, 52 } : null, ButtonStill = true, ListSig = 7, InputOpen = true,
+        LiveGrid = true, LiveFirst = First, LiveLast = Last, LiveViewTop = VT, LiveViewBottom = VB };
+      if (Made(TargetRow)) v.LiveCellY = CellY(TargetRow);
+      if (Made(TargetRow) && Whole(TargetRow)) { v.LiveTarget = true; v.LiveX = G.ColLeft(1) * H + Cell / 2; v.LiveY = CellY(TargetRow); }
+      if (nb) for (int r = First + 1; r <= Last + 1; r++) if (r != TargetRow && Whole(r)) { v.LiveNb = true; v.LiveNbUid = UidOf(r); v.LiveNbX = G.ColLeft(1) * H + Cell / 2; v.LiveNbY = CellY(r); break; }
+      return v;
+    }
+    /// <summary>What the pilot did reaches the game (client px; Cell = the item whose live cell the host clicks).</summary>
+    public void Do(AutoAction a, long t) {
+      if (a.Kind == AutoKind.Drag) { Drags++; double dy = a.DY; At(t + 250, () => { Scroll = Math.Max(0, Math.Min((Rows - 1) * Pitch, Scroll - dy * Gain)); }); return; }
+      if (a.Kind != AutoKind.Click) return;
+      if (FirstClickAt < 0) { FirstClickAt = t; FirstClick = a.Cell > 0 ? "cell " + a.Cell : "point " + (int)a.X + "," + (int)a.Y; }
+      if (a.X >= 500 && a.X <= 650 && a.Y >= 520 && a.Y <= 572 && Tip && Sel == Target) { Confirms++; At(t + 400, () => { Worn = true; WornAt = t + 400; Sel = 0; Tip = false; TipUid = 0; }); return; }
+      if (a.Cell > 0) {   // the host clicks the cell's live rect when it is whole in view
+        int row = RowOf(a.Cell);
+        if (Made(row) && Whole(row)) { if (a.Cell == Target) OnTarget++; else OnNb++; long u = a.Cell; At(t + 400, () => Select(u)); return; }
+        Blind++; return;   // (refused by the host: no click on a layout's point)
+      }
+      Blind++;   // a click on a point of the pilot's own math
+      double yy = a.Y; int hit = (int)Math.Floor((yy - VT + Scroll) / Pitch) + 1; if (hit >= 1 && hit <= Rows) { long u = UidOf(hit); At(t + 400, () => Select(u)); }
+    }
+  }
+
+  static string AtomListRun(AtomListSim sim, bool wantNb, out AutoPilot p, out long doneAt, out int clicks) {
+    p = new AutoPilot(new ListGeometry()); doneAt = -1; clicks = 0;
+    for (long t = 0; t < 40000; t += 100) {
+      sim.Advance(t);
+      var v = sim.View(t, wantNb && p.WantNeighbour);
+      var a = p.Step(v);
+      if (p.State == "done" && sim.Worn) { doneAt = t; return "done"; }
+      if (p.State == "failed" || p.State == "unconfirmed") return p.State + ": " + p.Why;
+      if (a.Kind == AutoKind.Click) clicks++;
+      sim.Do(a, t);
+    }
+    return "timeout (state " + p.State + ")";
+  }
+
+  static void AtomTests() {
+    Console.WriteLine("Atoms (the recording 464e21: items 19993)");
+    var lines = System.IO.File.ReadAllLines("tests/fixtures/rec-464e21-atoms.txt");
+    // ---- the recording itself: what window A and window B show
+    var rx = new System.Text.RegularExpressions.Regex(@"^2026-11-04 (\d\d:\d\d:\d\d)  (.*)$");
+    int blindA = 0; var calcY = new List<int>(); int row19993 = 0, cells0 = -1, last0 = -1; string bAt = null, bEsc = null;
+    foreach (var l in lines) {
+      var m = rx.Match(l); if (!m.Success) continue; string tm = m.Groups[1].Value, txt = m.Groups[2].Value;
+      if (string.CompareOrdinal(tm, "22:29:54") >= 0 && string.CompareOrdinal(tm, "22:30:16") <= 0 && txt.StartsWith("nav: act EquipNav act:item -> Done")) blindA++;
+      var cm = System.Text.RegularExpressions.Regex.Match(txt, @"^uibtn cell: HeroGear 19993 live=none \(cells (\d+), (\d+)\.\.(\d+)\) calc=\[28,(\d+),");
+      if (cm.Success && string.CompareOrdinal(tm, "22:29:54") >= 0 && string.CompareOrdinal(tm, "22:30:16") <= 0) { int y = int.Parse(cm.Groups[4].Value); if (calcY.Count == 0 || calcY[calcY.Count - 1] != y) calcY.Add(y); }
+      var rm = System.Text.RegularExpressions.Regex.Match(txt, @"^auto: (?:work|idle) item 19993 row (\d+)/1"); if (rm.Success && row19993 == 0) row19993 = int.Parse(rm.Groups[1].Value);
+      var c0 = System.Text.RegularExpressions.Regex.Match(txt, @"^uibtn cell: HeroGear 19993 live=none \(cells (\d+), 0\.\.(\d+)\)"); if (c0.Success && cells0 < 0) { cells0 = int.Parse(c0.Groups[1].Value); last0 = int.Parse(c0.Groups[2].Value); }
+      if (txt.StartsWith("navprobe CHANGE tip card: select=19993") && bAt == null && string.CompareOrdinal(tm, "22:30:24") >= 0) bAt = tm;
+      if (txt.StartsWith("nav: modal Form_CharactorEquipTip how=TipEscape") && bAt != null && bEsc == null && string.CompareOrdinal(tm, bAt) >= 0) bEsc = tm;
+    }
+    Check(blindA >= 10 && row19993 == 38 && cells0 == 8 && last0 == 7 && calcY.Count >= 5, "atoms recording: window A is " + blindA + " item clicks/drags on the fixed points, the item at row " + row19993 + " with " + cells0 + " cells made (0.." + last0 + "), the row math's y " + string.Join(",", calcY.ToArray()));
+    Check(bAt != null && bEsc != null && string.CompareOrdinal(bEsc, bAt) <= 0 || (bAt != null && bEsc != null && TimeSpan.Parse(bEsc).TotalSeconds - TimeSpan.Parse(bAt).TotalSeconds <= 2), "atoms recording: window B is the card of item 19993 opened at " + bAt + " and closed by our Escape at " + bEsc);
+    // the gain of one recorded drag (a 430 px pointer move: 577 -> 147) from the row math's y after each: the model's list follows the pointer that much
+    double step = 0; int n = 0; for (int i = 1; i + 1 < calcY.Count && n < 3; i++) { if (calcY[i] > calcY[i + 1] && calcY[i] - calcY[i + 1] > 300) { step += calcY[i] - calcY[i + 1]; n++; } }
+    double gain = n > 0 ? Math.Min(1.0, step / n / 430.0) : 0.9;
+
+    // ---- A1: window A on the new pilot: no click on any point of its own, one drag per screenful, the item selected at its live cell, the card, «Заменить»
+    {
+      var sim = new AtomListSim { Gain = gain, TargetRow = row19993 };
+      AutoPilot p; long doneAt; int clicks; string r = AtomListRun(sim, true, out p, out doneAt, out clicks);
+      Check(r == "done" && sim.Blind == 0 && sim.OnSelected == 0 && sim.Confirms == 1 && sim.Drags >= 4 && sim.Drags <= 16 && doneAt <= 30000 && p.Atoms.Refused == 0,
+        "atoms A1 (recording window A): item 19993 at row " + row19993 + " is picked and put on in " + doneAt + " ms with " + sim.Drags + " drags, " + clicks + " clicks, " + sim.Blind + " blind clicks, " + sim.OnSelected + " on the selected item, " + sim.Confirms + " confirm (" + r + ", gain " + Math.Round(gain, 2) + ")");
+    }
+    // ---- A1: window B: the item is selected, its card is closed (our Escape, the player): a click on it does nothing - another cell is clicked first, then the item
+    {
+      var sim = new AtomListSim { Gain = gain, TargetRow = 2, Sel = 19993, Tip = false };
+      sim.Scroll = 0;
+      AutoPilot p; long doneAt; int clicks; string r = AtomListRun(sim, true, out p, out doneAt, out clicks);
+      Check(r == "done" && sim.OnSelected == 0 && sim.OnNb >= 1 && sim.OnTarget == 1 && sim.Confirms == 1 && doneAt <= 15000,
+        "atoms A1 (recording window B): the selected item's card is closed: another cell " + sim.OnNb + "x, then the item " + sim.OnTarget + "x, no click on the selected item (" + sim.OnSelected + "), «Заменить» " + sim.Confirms + "x in " + doneAt + " ms (" + r + ")");
+    }
+    // ---- A1: the item at hand (its live cell in view): one click, the card, «Заменить» - no drag, no other click
+    {
+      var sim = new AtomListSim { Gain = gain, TargetRow = 2 };
+      AutoPilot p; long doneAt; int clicks; string r = AtomListRun(sim, true, out p, out doneAt, out clicks);
+      Check(r == "done" && sim.Blind == 0 && sim.Drags == 0 && sim.OnTarget == 1 && sim.OnNb == 0 && doneAt <= 8000, "atoms A1: the item at hand is one click on its live cell (" + sim.Drags + " drags, " + sim.OnTarget + " clicks on it, " + sim.OnNb + " on others, " + doneAt + " ms, " + r + ")");
+    }
+    // ---- A2: the executor - a repeat without a new diagnosis is refused, a new diagnosis allows it; the log line
+    {
+      var ar = new AtomRunner(); var f0 = new GameFacts { Sel = 5, ListFirst = 3, ListLast = 11, CellY = 900 };
+      bool b1 = ar.Begin("list.drag", "to7up", "viewport[100..600] dy=-400 src=live", "list position changed", ff => ff.PosKey() != f0.PosKey(), 1500, f0, 0);
+      Check(b1 && ar.Active && ar.Poll(f0, 1000) == AtomResult.Running && ar.Poll(f0, 1600) == AtomResult.NoEffect && !ar.Active, "atoms A2: an atom runs until its field changes or its time is out (NoEffect)");
+      Check(!ar.Begin("list.drag", "to7up", "viewport[100..600] dy=-400 src=live", "list position changed", ff => ff.PosKey() != f0.PosKey(), 1500, f0, 1700) && ar.Refused == 1, "atoms A2: the same atom on the same facts is refused (no repeat without a new diagnosis)");
+      var f1 = new GameFacts { Sel = 5, ListFirst = 3, ListLast = 11, CellY = 900, TipUid = 5, TipShown = true };
+      Check(ar.Begin("list.drag", "to7up", "viewport[100..600] dy=-400 src=live", "list position changed", ff => ff.PosKey() != f0.PosKey(), 1500, f1, 1800), "atoms A2: a changed fact (a new diagnosis) allows it again");
+      var f2 = new GameFacts { Sel = 5, ListFirst = 5, ListLast = 13, CellY = 700 };
+      string line = ""; Check(ar.Poll(f2, 2000) == AtomResult.Done && (line = ar.Take()).Contains("list.drag pre=ok target=viewport[100..600] dy=-400 src=live eff=list position changed") && line.Contains("-> Done") && line.Contains("-> NoEffect") && line.Contains("REFUSED"), "atoms A2: the log line names the atom, its target, the awaited field, the time, the result and the facts (" + line + ")");
+    }
+    // ---- B (navigator): the card of the item the step works on is kept, whatever action holds the keep list; a card of another item is closed as before
+    {
+      Func<long, int> escapes = tipUid => {
+        var io = new FakeNavIo(); var rdr = new ScreenReader(); var nv = new Navigator(ClickOwner.Equip);
+        var st = NavState(ScreenKind.HeroScreen, 7, 3, 2, "Form_CharactorEquipTip", new[] { "Form_CharactorEquipTip", "Form_CharactorMain", "Form_MainCity" }); io.FreshState = st;
+        nv.SetTarget(new NavTarget { Goal = NavGoal.HeroEquip, Hero = 7, Slot = 2, RecipeId = "equip", Owner = ClickOwner.Equip }, new List<IAtTargetAction> { new KeepOnlyFilterAction() });
+        for (int i = 0; i < 80; i++) { io.NowMs += 100; var sn = rdr.Update(st, io.NowMs); sn.WantUid = 19993; sn.TipUid = tipUid; nv.Tick(io, sn); }
+        int e = 0; foreach (var a in io.Sent) if (a.Target == ClickTarget.EquipTipEscape) e++;
+        if (tipUid == 19993) { bool said = false; foreach (var l in io.Lines) if (l.StartsWith("atom: the card of item 19993")) said = true; if (!said) e += 100; }
+        return e;
+      };
+      Check(escapes(19993) == 0, "atoms B (recording window B): the card of the item the step works on is not closed by our Escape, though the filter action (stale kind) holds a keep list without it (" + escapes(19993) + ")");
+      Check(escapes(555) >= 1, "atoms B: the card of another item (a leftover) is still closed by one Escape (" + escapes(555) + ")");
+    }
+    // ---- «Заменить»: our own hint over its button is moved away at the first refusal, not after 3 s (the recording: eight presses refused in 3.3 s)
+    {
+      var io = new FakeNavIo { Verdict = GateVerdict.Wait, WaitReason = "own" }; var rdr = new ScreenReader(); var nv = new Navigator(ClickOwner.Equip);
+      var st = NavState(ScreenKind.HeroScreen, 7, 3, 2, "", new[] { "Form_CharactorMain", "Form_MainCity" }); io.FreshState = st;
+      nv.SetTarget(new NavTarget { Goal = NavGoal.HeroEquip, Hero = 7, Slot = 2, RecipeId = "equip", Owner = ClickOwner.Equip }, new List<IAtTargetAction> { new ConfirmAction() });
+      long t0 = io.NowMs; int hidAt = -1;
+      for (int i = 0; i < 30 && hidAt < 0; i++) { io.NowMs += 100; nv.Tick(io, rdr.Update(st, io.NowMs)); if (io.Hid > 0) hidAt = (int)(io.NowMs - t0); }
+      Check(hidAt >= 0 && hidAt <= 800, "atoms A1: «Заменить» refused for our own window: the windows are hidden at the first refusal (" + hidAt + " ms; was 3000)");
+    }
+  }
+
+  /// <summary>The gear filter action as the host has it just after the filter was set: the guide's kind still wants it (its keep list has no card), it has nothing to click.</summary>
+  sealed class KeepOnlyFilterAction : IAtTargetAction {
+    public string Name { get { return "filter"; } }
+    public ICollection<string> Keep { get { return NavKeep.GearFilter; } }
+    public bool Wants(Snapshot s, NavTarget t) { return true; }
+    public long ProgressAt { get { return 0; } }
+    public void Reset() { }
+    public NavStep Step(Snapshot s, NavTarget t, INavIo io, long now) { return null; }
+  }
+  sealed class ConfirmAction : IAtTargetAction {
+    public string Name { get { return "item"; } }
+    public ICollection<string> Keep { get { return NavKeep.ItemPickNoFilter; } }
+    public bool Wants(Snapshot s, NavTarget t) { return true; }
+    public long ProgressAt { get { return 0; } }
+    public void Reset() { }
+    public NavStep Step(Snapshot s, NavTarget t, INavIo io, long now) {
+      return NavStep.Of(new Act { Owner = t.Owner, Target = ClickTarget.EquipConfirm, Kind = ActKind.Click, X = 541, Y = 592, Base = "Form_CharactorMain", Fire = true, Why = "confirm" }, "act:item");
+    }
   }
 }

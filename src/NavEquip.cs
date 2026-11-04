@@ -10,6 +10,12 @@ namespace RealmForge {
     /// <summary>The item pick keeps the filter pop-up open only when this target's filter pilot set it (its × drops the filter); a filter left from before is closed.</summary>
     public static readonly string[] ItemPick = { "Form_EquipFilterWidget", "panel:gearFilter", "panel:gearSide", "Form_ArtifactFilter", "Form_CharactorEquipTip", "Form_EquipedCompared", "Form_EquipPopUp", "Form_EquipSellPopup" };
     public static readonly string[] ItemPickNoFilter = { "Form_CharactorEquipTip", "Form_EquipedCompared", "Form_EquipPopUp", "Form_EquipSellPopup" };
+    /// <summary><paramref name="keep"/> plus the item card's forms (null keep = the card alone): the card of the item the step works on stays open whatever action wants the screen.</summary>
+    public static ICollection<string> WithTip(ICollection<string> keep) {
+      var l = new List<string>(); if (keep != null) l.AddRange(keep);
+      foreach (var f in ClickGate.TipForms) if (!l.Contains(f)) l.Add(f);
+      return l;
+    }
   }
 
   /// <summary>An action's progress mark (IAtTargetAction.ProgressAt): the time its signature last changed.</summary>
@@ -109,6 +115,12 @@ namespace RealmForge {
           return NavStep.Wait("list settling");
         }
         settleFrom = 0;
+      }
+      // the filter FIRST (it closes the item's card, and a list of 700 rows takes a dozen drags): the item is not at hand - no live cell of it, nothing selected - and the filter pilot is asked whatever the guide's kind says;
+      // what it answers (a click, a wait) is this tick's step, no pick or drag is started under it. Nothing to do for it (null) = the pick goes on.
+      if (filter != null && v.Sel != v.Target && !(v.LiveGrid && v.LiveTarget)) {
+        var fs = filter.Step(s, t, io, now);
+        if (fs != null) return fs;
       }
       var a = pilot.Step(v);
       if (OnStep != null) OnStep(v, a);

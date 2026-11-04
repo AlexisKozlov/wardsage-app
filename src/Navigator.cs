@@ -201,6 +201,12 @@ namespace RealmForge {
         if (a.Name == "hero") seekKeep = a.Keep;
         else if (atKeep == null && a.Wants(s, tgt)) atKeep = a.Keep;
       }
+      // the card of the item this step works on is the pick's own result: never closed by the plan (live 464e21 22:30:26: the filter action still «wanted» by the guide's stale kind, its keep has no card, one Escape closed the card the click had just opened,
+      // and the selected item's card never opens again on a second click)
+      if (s.OwnTip()) {
+        atKeep = NavKeep.WithTip(atKeep);
+        if (ownTipSaid != s.TipUid) { ownTipSaid = s.TipUid; io.Log("atom: the card of item " + s.TipUid + " is this step's own - kept open, no Escape"); }
+      } else ownTipSaid = 0;
       var step = NavPlanner.Plan(s, tgt, atKeep, mem, io, seekKeep);
       Note(io, step);
       if (step.Kind != StepKind.AtTarget && State == "at_target") State = "work";
@@ -223,7 +229,7 @@ namespace RealmForge {
       }
     }
 
-    string stepKey = "";
+    string stepKey = ""; long ownTipSaid;
     /// <summary>The recovery ladder of the trip back to the city (docs/specs/2026-11-04-core-any-scenario.md D7; the rungs are the modal sweep, the Escape the stacks predict to close, the back arrow / map exit, in the order the planner
     /// and the gate give them): while the run is on its way back to the city (popCity) every rung gets RungMs to change the stack depth or the base form; a rung that does not is a failure, MaxRungFails of them - or
     /// LadderCapMs without a change - end the run with the named stop reset_failed:&lt;top form&gt;. Not a failed step and not another reset: the reset is the ladder.</summary>
@@ -267,7 +273,9 @@ namespace RealmForge {
       // (the host could not send because it could not read - the forms or a look are unread, no verdict of the gate: the same blind time as an unreadable screen, within its grace)
       if (why == "not sent" && blindMs < BlindGraceMs) { blindMs += lastDt; lastProgress += lastDt; stepProgress += lastDt; gateSince += lastDt; pausedMs += lastDt; }
       long d = now - gateSince;
-      if (d > HideOwnMs && !ownHidden && why != null && why.StartsWith("own")) { ownHidden = true; io.Log("nav: gate wait " + d + " ms (" + why + ") - our own windows hidden"); hideKeep = true; hideAt = now; io.HideOwn(); }
+      // «Заменить» is the step's last click and the card that holds it is the pick's result: our own hint over its button is moved away at the first refusal, not after HideOwnMs (live 464e21: eight presses refused in 3.3 s)
+      bool quick = act.Cur != null && act.Cur.Target == ClickTarget.EquipConfirm;
+      if ((quick || d > HideOwnMs) && !ownHidden && why != null && why.StartsWith("own")) { ownHidden = true; io.Log("nav: gate wait " + d + " ms (" + why + ") - our own windows hidden"); hideKeep = true; hideAt = now; io.HideOwn(); }
       if (d > GateWaitResetMs) {
         string wh = why ?? "?"; gateSince = -1;
         Reset(io, "gate:" + (stepKey == "" ? "?" : stepKey), "gate_wait:" + wh, now);
@@ -302,6 +310,7 @@ namespace RealmForge {
     void StartAct(INavIo io, Snapshot s, Act a, long now) {
       curEdge = a.Edge;
       if (popCity && a.TimeoutMs == 0 && (a.Edge.StartsWith("pop:") || a.Edge.StartsWith("modal:"))) a.TimeoutMs = (int)rungMs;   // (each rung of the way back gets RungMs to show a change)
+      if (a.Fire && s.OwnTip()) a.Keep = NavKeep.WithTip(a.Keep);   // (a pilot's click while the step's own card stands: the card is no reason to refuse it)
       if (mem.PhantomUntil.Count > 0) a.Keep = mem.WithPhantoms(a.Keep, now);
       act.Start(a, now);
       var oc = act.Tick(io, s, now);

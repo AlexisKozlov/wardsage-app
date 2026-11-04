@@ -44,6 +44,10 @@ namespace RealmForge {
     public bool Stable(long now) { return now - StableSinceMs >= NeedMs; }
     public Layer Top { get { return Stack.Count > 0 ? Stack[0] : null; } }
     public bool Has(string form) { foreach (var l in Stack) if (l.Form == form) return true; return false; }
+    /// <summary>The item whose card (Form_CharactorEquipTip) stands, from the game's m_SelectEquipInfo.iItemUid (0 = no card / unread), and the item the pilots work on now (0 = none); the host sets both each tick.</summary>
+    public long TipUid, WantUid;
+    /// <summary>The card on the screen is the one of the item this step works on: its click opened it, a second click on the selected item never opens it again (live 464e21), so it is not closed.</summary>
+    public bool OwnTip() { return WantUid > 0 && TipUid == WantUid && HasTip(); }
     public bool HasTip() { foreach (var l in Stack) if (Array.IndexOf(ClickGate.TipForms, l.Form) >= 0) return true; return false; }
     /// <summary>The layers as a joined list (the fresh check compares these).</summary>
     public string LayerKey() {

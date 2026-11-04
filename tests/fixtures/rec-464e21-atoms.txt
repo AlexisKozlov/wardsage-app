@@ -1,0 +1,264 @@
+# Recording 20261104-222910-464e21 (app 1.6.66.539, applog 013.zip), the item 19993 of the hero build: window A 22:29:48-22:30:16 (twelve item drags/clicks, the list does not move) and window B 22:30:24-22:30:51 (the card opened by our click closed by our own Escape).
+# Lines of the applog kept as they are (navprobe pointer / stack noise left out): the replay test reads the item's row, the live list position per drag and the plan's decisions from here.
+2026-11-04 22:29:48  nav: plan HeroEquip step=facet:slot why=hero: slot
+2026-11-04 22:29:48  click gate Equip: allow EquipNav @868,383 on HeroScreen hero 235300001 tab 3 slot 2
+2026-11-04 22:29:48  navprobe own click EquipNav @868,383 owner Equip
+2026-11-04 22:29:48  live: hero 235300001 part 3 sel 0 owners 53763>235300001 10644>235300001 3251>235300001 19993>0 35414>235300001
+2026-11-04 22:29:48  zorder: Form_PowerChangeTips > Form_LeftTip > Form_CharactorEquipTip > Form_CharactorMain
+2026-11-04 22:29:48  screen: HeroScreen hero 235300001 tab 3 slot 3 flow(Form_CharactorEquipTip)
+2026-11-04 22:29:48  navprobe CHANGE tip card: select=- current=69214 one=69214 pix=yes
+2026-11-04 22:29:48  uibtn cell: HeroGear 19993 live=none (cells 8, 0..7) calc=[28,4155,79,102] visible=T in 18 ms [shadow]
+2026-11-04 22:29:48  nav: act EquipNav facet:slot -> Done 828ms (effect)
+2026-11-04 22:29:49  zorder: Form_LeftTip > Form_CharactorEquipTip > Form_CharactorMain
+2026-11-04 22:29:49  nav: modal Form_CharactorEquipTip how=TipEscape
+2026-11-04 22:29:49  nav: plan HeroEquip step=modal:Form_CharactorEquipTip why=item tip: one Escape
+2026-11-04 22:29:49  click gate Equip: allow EquipTipEscape (key) on HeroScreen hero 235300001 tab 3 slot 3 flow(Form_CharactorEquipTip) (1 of 2)
+2026-11-04 22:29:49  navprobe own key Escape owner Equip
+2026-11-04 22:29:49  zorder: Form_LeftTip > Form_CharactorMain
+2026-11-04 22:29:50  nav: act EquipTipEscape modal:Form_CharactorEquipTip -> Done 750ms (effect)
+2026-11-04 22:29:50  nav: plan HeroEquip step=at_target why=
+2026-11-04 22:29:50  filter: item 19993 kind=pick wanted=True set=722400@8 stat=13@3 subs=25,19,1,29 now suits= subs= stats= hideEq=True otherHero=False panel=False/False/False -> done (closing the side panel (1))
+2026-11-04 22:29:50  auto: done item 19993 row 38/1 anchor=True
+2026-11-04 22:29:50  filter: item 19993 kind=pick wanted=True set=722400@8 stat=13@3 subs=25,19,1,29 now suits= subs= stats= hideEq=True otherHero=False panel=False/False/False -> done
+2026-11-04 22:29:50  nav: reset act:filter (filter: the filter was dropped 3 times) #1/1
+2026-11-04 22:29:50  auto: idle item 19993 row 38/1 anchor=True
+2026-11-04 22:29:50  screen: HeroScreen hero 235300001 tab 3 slot 3
+2026-11-04 22:29:50  click gate Equip: EquipTipEscape took effect
+2026-11-04 22:29:50  auto: work item 19993 row 38/1 anchor=True
+2026-11-04 22:29:51  nav: plan HeroEquip step=pop:Form_CharactorMain why=back to the city
+2026-11-04 22:29:51  click gate Equip: allow CityBack @36,25 on HeroScreen hero 235300001 tab 3 slot 3 (back to the city, press 1 of 4)
+2026-11-04 22:29:51  navprobe own click CityBack @36,25 owner Equip
+2026-11-04 22:29:51  screen: HeroScreen hero 235300001 tab 3 slot -1
+2026-11-04 22:29:51  click gate Equip: CityBack took effect
+2026-11-04 22:29:52  live: hero 235300001 part -1 sel 0 owners 53763>235300001 10644>235300001 3251>235300001 19993>0 35414>235300001
+2026-11-04 22:29:52  nav: plan HeroEquip step=facet:slot why=hero: slot
+2026-11-04 22:29:52  click gate Equip: allow EquipNav @868,383 on HeroScreen hero 235300001 tab 3 slot -1
+2026-11-04 22:29:52  navprobe own click EquipNav @868,383 owner Equip
+2026-11-04 22:29:52  live: hero 235300001 part -1 sel 69214 owners 53763>235300001 10644>235300001 3251>235300001 19993>0 35414>235300001
+2026-11-04 22:29:52  zorder: Form_LeftTip > Form_CharactorEquipTip > Form_CharactorMain
+2026-11-04 22:29:52  screen: HeroScreen hero 235300001 tab 3 slot 3 flow(Form_CharactorEquipTip)
+2026-11-04 22:29:52  nav: act EquipNav facet:slot -> Done 641ms (effect)
+2026-11-04 22:29:52  nav: plan HeroEquip step=at_target why=
+2026-11-04 22:29:52  filter: item 19993 kind=slot wanted=False set=0@-1 stat=0@-1 subs= now suits= subs= stats= hideEq=False otherHero=False panel=False/False/False -> idle
+2026-11-04 22:29:52  auto: idle
+2026-11-04 22:29:53  live: hero 235300001 part 3 sel 69214 owners 53763>235300001 10644>235300001 3251>235300001 19993>0 35414>235300001
+2026-11-04 22:29:53  auto: work item 19993 row 38/1 anchor=True
+2026-11-04 22:29:53  nav: modal Form_CharactorEquipTip how=TipEscape
+2026-11-04 22:29:53  nav: plan HeroEquip step=modal:Form_CharactorEquipTip why=item tip: one Escape
+2026-11-04 22:29:53  click gate Equip: allow EquipTipEscape (key) on HeroScreen hero 235300001 tab 3 slot 3 flow(Form_CharactorEquipTip) (1 of 2)
+2026-11-04 22:29:53  navprobe own key Escape owner Equip
+2026-11-04 22:29:53  zorder: Form_LeftTip > Form_CharactorMain
+2026-11-04 22:29:53  navprobe tip card: form not shown
+2026-11-04 22:29:53  nav: act EquipTipEscape modal:Form_CharactorEquipTip -> Done 468ms (effect)
+2026-11-04 22:29:53  nav: plan HeroEquip step=at_target why=
+2026-11-04 22:29:54  filter: item 19993 kind=filter wanted=True set=722400@8 stat=13@3 subs=25,19,1,29 now suits= subs= stats= hideEq=True otherHero=False panel=False/False/False -> idle
+2026-11-04 22:29:54  auto: idle item 19993 row 38/1 anchor=True
+2026-11-04 22:29:54  auto: work item 19993 row 38/1 anchor=True
+2026-11-04 22:29:54  screen: HeroScreen hero 235300001 tab 3 slot 3
+2026-11-04 22:29:54  click gate Equip: EquipTipEscape took effect
+2026-11-04 22:29:55  click gate Equip: allow EquipNav @156,577 on HeroScreen hero 235300001 tab 3 slot 3
+2026-11-04 22:29:55  navprobe own click EquipNav @156,577 owner Equip
+2026-11-04 22:29:55  nav: act EquipNav act:item -> Done 0ms (sent)
+2026-11-04 22:29:55  uibtn cell: HeroGear 19993 live=none (cells 8, 0..7) calc=[28,4127,79,102] visible=T in 6 ms [shadow]
+2026-11-04 22:29:56  navprobe own click EquipNav @156,577 owner Equip
+2026-11-04 22:29:56  nav: act EquipNav act:item -> Done 0ms (sent)
+2026-11-04 22:29:56  uibtn cell: HeroGear 19993 live=none (cells 9, 2..10) calc=[28,3747,79,102] visible=T in 7 ms [shadow]
+2026-11-04 22:29:57  uibtn cell: HeroGear 19993 live=none (cells 9, 6..14) calc=[28,3341,79,102] visible=T in 11 ms [shadow]
+2026-11-04 22:29:57  navprobe own click EquipNav @156,577 owner Equip
+2026-11-04 22:29:57  nav: act EquipNav act:item -> Done 0ms (sent)
+2026-11-04 22:29:58  uibtn cell: HeroGear 19993 live=none (cells 9, 9..17) calc=[28,2932,79,102] visible=T in 9 ms [shadow]
+2026-11-04 22:29:59  navprobe own click EquipNav @156,577 owner Equip
+2026-11-04 22:29:59  nav: act EquipNav act:item -> Done 0ms (sent)
+2026-11-04 22:29:59  uibtn cell: HeroGear 19993 live=none (cells 9, 11..19) calc=[28,2766,79,102] visible=T in 7 ms [shadow]
+2026-11-04 22:30:00  navprobe own click EquipNav @67,348 owner Equip
+2026-11-04 22:30:00  nav: act EquipNav act:item -> Done 0ms (sent)
+2026-11-04 22:30:00  uibtn cell: HeroGear 19993 live=none (cells 10, 13..22) calc=[28,2520,79,102] visible=T in 8 ms [shadow]
+2026-11-04 22:30:00  live: hero 235300001 part 3 sel 84229 owners 53763>235300001 10644>235300001 3251>235300001 19993>0 35414>235300001
+2026-11-04 22:30:00  navprobe CHANGE tip card: select=84229 current=69214 one=69214 pix=no
+2026-11-04 22:30:00  zorder: Form_LeftTip > Form_CharactorEquipTip > Form_CharactorMain
+2026-11-04 22:30:01  screen: HeroScreen hero 235300001 tab 3 slot 3 flow(Form_CharactorEquipTip)
+2026-11-04 22:30:01  navprobe CHANGE tip card: select=84229 current=69214 one=69214 pix=yes
+2026-11-04 22:30:01  nav: modal Form_CharactorEquipTip how=TipEscape
+2026-11-04 22:30:01  nav: plan HeroEquip step=modal:Form_CharactorEquipTip why=item tip: one Escape
+2026-11-04 22:30:01  click gate Equip: allow EquipTipEscape (key) on HeroScreen hero 235300001 tab 3 slot 3 flow(Form_CharactorEquipTip) (1 of 2)
+2026-11-04 22:30:01  navprobe own key Escape owner Equip
+2026-11-04 22:30:01  zorder: Form_LeftTip > Form_CharactorMain
+2026-11-04 22:30:02  nav: act EquipTipEscape modal:Form_CharactorEquipTip -> Done 391ms (effect)
+2026-11-04 22:30:02  nav: plan HeroEquip step=at_target why=
+2026-11-04 22:30:03  screen: HeroScreen hero 235300001 tab 3 slot 3
+2026-11-04 22:30:03  click gate Equip: EquipTipEscape took effect
+2026-11-04 22:30:03  click gate Equip: allow EquipNav @156,577 on HeroScreen hero 235300001 tab 3 slot 3
+2026-11-04 22:30:03  navprobe own click EquipNav @156,577 owner Equip
+2026-11-04 22:30:03  nav: act EquipNav act:item -> Done 0ms (sent)
+2026-11-04 22:30:03  uibtn cell: HeroGear 19993 live=none (cells 9, 14..22) calc=[28,2466,79,102] visible=T in 7 ms [shadow]
+2026-11-04 22:30:04  navprobe own click EquipNav @67,376 owner Equip
+2026-11-04 22:30:04  nav: act EquipNav act:item -> Done 0ms (sent)
+2026-11-04 22:30:04  uibtn cell: HeroGear 19993 live=none (cells 9, 17..25) calc=[28,2111,79,102] visible=T in 9 ms [shadow]
+2026-11-04 22:30:05  live: hero 235300001 part 3 sel 23578 owners 53763>235300001 10644>235300001 3251>235300001 19993>0 35414>235300001
+2026-11-04 22:30:05  zorder: Form_LeftTip > Form_CharactorEquipTip > Form_CharactorMain
+2026-11-04 22:30:05  navprobe CHANGE tip card: select=23578 current=69214 one=69214 pix=no
+2026-11-04 22:30:05  screen: HeroScreen hero 235300001 tab 3 slot 3 flow(Form_CharactorEquipTip)
+2026-11-04 22:30:05  nav: modal Form_CharactorEquipTip how=TipEscape
+2026-11-04 22:30:05  nav: plan HeroEquip step=modal:Form_CharactorEquipTip why=item tip: one Escape
+2026-11-04 22:30:05  click gate Equip: allow EquipTipEscape (key) on HeroScreen hero 235300001 tab 3 slot 3 flow(Form_CharactorEquipTip) (1 of 2)
+2026-11-04 22:30:05  navprobe own key Escape owner Equip
+2026-11-04 22:30:05  zorder: Form_LeftTip > Form_CharactorMain
+2026-11-04 22:30:06  nav: act EquipTipEscape modal:Form_CharactorEquipTip -> Done 484ms (effect)
+2026-11-04 22:30:06  nav: plan HeroEquip step=at_target why=
+2026-11-04 22:30:07  screen: HeroScreen hero 235300001 tab 3 slot 3
+2026-11-04 22:30:07  click gate Equip: EquipTipEscape took effect
+2026-11-04 22:30:07  auto: the list does not move up (row 1 top -1986): taken at its end, row 1 at -4044
+2026-11-04 22:30:07  click gate Equip: allow EquipNav @156,147 on HeroScreen hero 235300001 tab 3 slot 3
+2026-11-04 22:30:07  navprobe own click EquipNav @156,147 owner Equip
+2026-11-04 22:30:07  nav: act EquipNav act:item -> Done 0ms (sent)
+2026-11-04 22:30:07  uibtn cell: HeroGear 19993 live=none (cells 9, 17..25) calc=[28,2128,79,102] visible=T in 11 ms [shadow]
+2026-11-04 22:30:08  navprobe own click EquipNav @67,315 owner Equip
+2026-11-04 22:30:08  nav: act EquipNav act:item -> Done 0ms (sent)
+2026-11-04 22:30:08  uibtn cell: HeroGear 19993 live=none (cells 9, 15..23) calc=[28,2379,79,102] visible=T in 7 ms [shadow]
+2026-11-04 22:30:09  navprobe CHANGE tip card: select=40944 current=69214 one=69214 pix=no
+2026-11-04 22:30:09  live: hero 235300001 part 3 sel 40944 owners 53763>235300001 10644>235300001 3251>235300001 19993>0 35414>235300001
+2026-11-04 22:30:09  zorder: Form_LeftTip > Form_CharactorEquipTip > Form_CharactorMain
+2026-11-04 22:30:09  screen: HeroScreen hero 235300001 tab 3 slot 3 flow(Form_CharactorEquipTip)
+2026-11-04 22:30:09  nav: modal Form_CharactorEquipTip how=TipEscape
+2026-11-04 22:30:09  nav: plan HeroEquip step=modal:Form_CharactorEquipTip why=item tip: one Escape
+2026-11-04 22:30:09  click gate Equip: allow EquipTipEscape (key) on HeroScreen hero 235300001 tab 3 slot 3 flow(Form_CharactorEquipTip) (1 of 2)
+2026-11-04 22:30:09  navprobe own key Escape owner Equip
+2026-11-04 22:30:09  zorder: Form_LeftTip > Form_CharactorMain
+2026-11-04 22:30:10  nav: act EquipTipEscape modal:Form_CharactorEquipTip -> Done 469ms (effect)
+2026-11-04 22:30:10  nav: plan HeroEquip step=at_target why=
+2026-11-04 22:30:11  screen: HeroScreen hero 235300001 tab 3 slot 3
+2026-11-04 22:30:11  click gate Equip: EquipTipEscape took effect
+2026-11-04 22:30:11  click gate Equip: allow EquipNav @67,350 on HeroScreen hero 235300001 tab 3 slot 3
+2026-11-04 22:30:11  navprobe own click EquipNav @67,350 owner Equip
+2026-11-04 22:30:11  nav: act EquipNav act:item -> Done 0ms (sent)
+2026-11-04 22:30:13  navprobe own click EquipNav @67,405 owner Equip
+2026-11-04 22:30:13  nav: act EquipNav act:item -> Done 0ms (sent)
+2026-11-04 22:30:13  live: hero 235300001 part 3 sel 46486 owners 53763>235300001 10644>235300001 3251>235300001 19993>0 35414>235300001
+2026-11-04 22:30:13  zorder: Form_LeftTip > Form_CharactorEquipTip > Form_CharactorMain
+2026-11-04 22:30:13  navprobe CHANGE tip card: select=46486 current=69214 one=69214 pix=no
+2026-11-04 22:30:15  screen: HeroScreen hero 235300001 tab 3 slot 3 flow(Form_CharactorEquipTip)
+2026-11-04 22:30:15  nav: modal Form_CharactorEquipTip how=TipEscape
+2026-11-04 22:30:15  nav: plan HeroEquip step=modal:Form_CharactorEquipTip why=item tip: one Escape
+2026-11-04 22:30:15  click gate Equip: allow EquipTipEscape (key) on HeroScreen hero 235300001 tab 3 slot 3 flow(Form_CharactorEquipTip) (1 of 2)
+2026-11-04 22:30:15  navprobe own key Escape owner Equip
+2026-11-04 22:30:15  zorder: Form_LeftTip > Form_CharactorMain
+2026-11-04 22:30:16  nav: act EquipTipEscape modal:Form_CharactorEquipTip -> Done 391ms (effect)
+2026-11-04 22:30:16  nav: plan HeroEquip step=at_target why=
+2026-11-04 22:30:16  auto: failed: the list does not move (row 1 top -1718, 12 drags up)
+2026-11-04 22:30:16  auto: failed item 19993 row 38/1 anchor=True
+2026-11-04 22:30:24  auto: work item 19993 row 2/1 anchor=False
+2026-11-04 22:30:24  filter: item 19993 kind=filter wanted=True set=722400@8 stat=13@3 subs=25,19,1,29 now suits=722400 subs=1,25,29,19 stats=13 hideEq=True otherHero=False panel=True/False/False -> work (closing the side panel (1
+2026-11-04 22:30:24  auto: idle item 19993 row 2/1 anchor=False
+2026-11-04 22:30:24  uibtn cell: HeroGear 19993 live=[23,164,88,88] calc=[28,165,79,102] diff=9px icon=c_Frame idx=1 col=1 inview=100% visible=T scale=canvas in 11 ms [shadow]
+2026-11-04 22:30:24  filter: item 19993 kind=filter wanted=True set=722400@8 stat=13@3 subs=25,19,1,29 now suits=722400 subs=1,25,29,19 stats=13 hideEq=True otherHero=False panel=True/False/False -> done (closing the side panel (1
+2026-11-04 22:30:24  auto: work item 19993 row 2/1 anchor=True
+2026-11-04 22:30:25  uibtn cell: HeroGear 19993 live=[23,164,88,88] calc=[67,208] diff=0px icon=c_Frame idx=1 col=1 inview=100% visible=T scale=canvas in 17 ms [click: live @67,208]
+2026-11-04 22:30:25  click gate Equip: allow EquipNav @67,207 on HeroScreen hero 235300001 tab 3 slot 3
+2026-11-04 22:30:25  navprobe own click EquipNav @67,207 owner Equip
+2026-11-04 22:30:25  nav: act EquipNav act:item -> Done 0ms (sent)
+2026-11-04 22:30:25  auto: step ms: slot=- pick=516 selected=- confirm=-
+2026-11-04 22:30:25  auto: done item 19993 row 2/1 anchor=True
+2026-11-04 22:30:25  navprobe CHANGE tip card: select=19993 current=69214 one=69214 pix=no
+2026-11-04 22:30:25  zorder: Form_LeftTip > Form_CharactorEquipTip > Form_CharactorMain
+2026-11-04 22:30:25  auto: work item 19993 row 2/1 anchor=True
+2026-11-04 22:30:25  screen: HeroScreen hero 235300001 tab 3 slot 3 flow(Form_CharactorEquipTip)
+2026-11-04 22:30:26  navprobe CHANGE tip card: select=19993 current=69214 one=69214 pix=yes
+2026-11-04 22:30:26  nav: modal Form_CharactorEquipTip how=TipEscape
+2026-11-04 22:30:26  nav: plan HeroEquip step=modal:Form_CharactorEquipTip why=item tip: one Escape
+2026-11-04 22:30:26  click gate Equip: allow EquipTipEscape (key) on HeroScreen hero 235300001 tab 3 slot 3 flow(Form_CharactorEquipTip) (1 of 2)
+2026-11-04 22:30:26  navprobe own key Escape owner Equip
+2026-11-04 22:30:26  zorder: Form_LeftTip > Form_CharactorMain
+2026-11-04 22:30:27  nav: act EquipTipEscape modal:Form_CharactorEquipTip -> Done 547ms (effect)
+2026-11-04 22:30:27  nav: plan HeroEquip step=at_target why=
+2026-11-04 22:30:27  auto: done item 19993 row 2/1 anchor=True
+2026-11-04 22:30:27  live: hero 235300001 part 3 sel 19993 owners 53763>235300001 10644>235300001 3251>235300001 19993>0 35414>235300001
+2026-11-04 22:30:27  screen: HeroScreen hero 235300001 tab 3 slot 3
+2026-11-04 22:30:27  click gate Equip: EquipTipEscape took effect
+2026-11-04 22:30:28  filter: item 19993 kind=selected wanted=False set=722400@8 stat=13@3 subs=25,19,1,29 now suits=722400 subs=1,25,29,19 stats=13 hideEq=True otherHero=False panel=True/False/False -> done (closing the side panel
+2026-11-04 22:30:28  auto: the tip of item 19993 is still not open: the rows are anchored again
+2026-11-04 22:30:28  auto: work item 19993 row 2/1 anchor=False
+2026-11-04 22:30:31  auto: the tip of item 19993 is still not open: the rows are anchored again
+2026-11-04 22:30:33  auto: unconfirmed: the item's tip does not open (2 clicks for it)
+2026-11-04 22:30:33  auto: unconfirmed item 19993 row 2/1 anchor=False
+2026-11-04 22:30:40  auto: work item 19993 row 2/1 anchor=False
+2026-11-04 22:30:41  nav: plan HeroEquip step=at_target why=
+2026-11-04 22:30:41  filter: item 19993 kind=selected wanted=False set=722400@8 stat=13@3 subs=25,19,1,29 now suits=722400 subs=1,25,29,19 stats=13 hideEq=True otherHero=False panel=True/False/False -> idle
+2026-11-04 22:30:44  auto: the tip of item 19993 is still not open: the rows are anchored again
+2026-11-04 22:30:47  auto: the tip of item 19993 is still not open: the rows are anchored again
+2026-11-04 22:30:50  auto: unconfirmed: the item's tip does not open (2 clicks for it)
+2026-11-04 22:30:50  auto: unconfirmed item 19993 row 2/1 anchor=False
+2026-11-04 22:30:51  nav: reset stall:at_target (stall:unconfirmed) #1/1
+2026-11-04 22:30:51  auto: idle item 19993 row 2/1 anchor=False
+2026-11-04 22:30:51  nav: modal panel:gearFilter how=RedX
+2026-11-04 22:30:51  nav: plan HeroEquip step=modal:panel:gearFilter why=gear filter: its red cross
+2026-11-04 22:30:51  click gate Equip: allow EquipClosePopup @907,64 on HeroScreen hero 235300001 tab 3 slot 3
+2026-11-04 22:30:51  navprobe own click EquipClosePopup @907,64 owner Equip
+2026-11-04 22:30:51  auto: work item 19993 row 2/1 anchor=False
+2026-11-04 22:30:52  nav: act EquipClosePopup modal:panel:gearFilter -> Done 1062ms (closed in memory)
+2026-11-04 22:30:53  nav: plan HeroEquip step=pop:Form_CharactorMain why=back to the city
+2026-11-04 22:30:53  click gate Equip: allow CityBack @36,25 on HeroScreen hero 235300001 tab 3 slot 3 (back to the city, press 1 of 4)
+2026-11-04 22:30:53  navprobe own click CityBack @36,25 owner Equip
+2026-11-04 22:30:54  screen: HeroScreen hero 235300001 tab 3 slot -1
+2026-11-04 22:30:54  click gate Equip: CityBack took effect
+2026-11-04 22:30:55  nav: plan HeroEquip step=at_target why=
+2026-11-04 22:30:55  filter: item 19993 kind=selected wanted=False set=0@-1 stat=0@-1 subs= now suits= subs= stats= hideEq=False otherHero=False panel=False/False/False -> idle
+2026-11-04 22:30:55  live: hero 235300001 part -1 sel 19993 owners 53763>235300001 10644>235300001 3251>235300001 19993>0 35414>235300001
+2026-11-04 22:30:55  nav: plan HeroEquip step=facet:slot why=hero: slot
+2026-11-04 22:30:55  click gate Equip: allow EquipNav @868,383 on HeroScreen hero 235300001 tab 3 slot -1
+2026-11-04 22:30:55  navprobe own click EquipNav @868,383 owner Equip
+2026-11-04 22:30:56  live: hero 235300001 part -1 sel 69214 owners 53763>235300001 10644>235300001 3251>235300001 19993>0 35414>235300001
+2026-11-04 22:30:56  zorder: Form_LeftTip > Form_CharactorEquipTip > Form_CharactorMain
+2026-11-04 22:30:56  screen: HeroScreen hero 235300001 tab 3 slot 3
+2026-11-04 22:30:56  navprobe CHANGE tip card: select=- current=69214 one=69214 pix=no
+2026-11-04 22:30:56  live: hero 235300001 part 3 sel 69214 owners 53763>235300001 10644>235300001 3251>235300001 19993>0 35414>235300001
+2026-11-04 22:30:56  nav: act EquipNav facet:slot -> Done 969ms (effect)
+2026-11-04 22:30:57  screen: HeroScreen hero 235300001 tab 3 slot 3 flow(Form_CharactorEquipTip)
+2026-11-04 22:30:57  nav: modal Form_CharactorEquipTip how=TipEscape
+2026-11-04 22:30:57  nav: plan HeroEquip step=modal:Form_CharactorEquipTip why=item tip: one Escape
+2026-11-04 22:30:57  click gate Equip: allow EquipTipEscape (key) on HeroScreen hero 235300001 tab 3 slot 3 flow(Form_CharactorEquipTip) (1 of 2)
+2026-11-04 22:30:57  navprobe own key Escape owner Equip
+2026-11-04 22:30:57  zorder: Form_LeftTip > Form_CharactorMain
+2026-11-04 22:30:57  nav: act EquipTipEscape modal:Form_CharactorEquipTip -> Done 390ms (effect)
+2026-11-04 22:30:57  nav: plan HeroEquip step=at_target why=
+2026-11-04 22:30:58  filter: item 19993 kind=filter wanted=True set=722400@8 stat=13@3 subs=25,19,1,29 now suits= subs= stats= hideEq=True otherHero=False panel=False/False/False -> idle
+2026-11-04 22:30:59  screen: HeroScreen hero 235300001 tab 3 slot 3
+2026-11-04 22:30:59  click gate Equip: EquipTipEscape took effect
+2026-11-04 22:30:59  click gate Equip: allow EquipFilter @154,654 on HeroScreen hero 235300001 tab 3 slot 3
+2026-11-04 22:30:59  navprobe own click EquipFilter @154,654 owner Equip
+2026-11-04 22:30:59  nav: act EquipFilter act:filter -> Done 0ms (sent)
+2026-11-04 22:31:00  filter: item 19993 kind=pick wanted=True set=722400@8 stat=13@3 subs=25,19,1,29 now suits= subs= stats= hideEq=True otherHero=False panel=True/False/False -> work
+2026-11-04 22:31:00  navprobe own click EquipFilter @848,249 owner Equip
+2026-11-04 22:31:00  nav: act EquipFilter act:filter -> Done 0ms (sent)
+2026-11-04 22:31:01  filter: item 19993 kind=pick wanted=True set=722400@8 stat=13@3 subs=25,19,1,29 now suits= subs= stats= hideEq=True otherHero=False panel=True/True/True -> work
+2026-11-04 22:31:01  navprobe own click EquipFilter @1027,361 owner Equip
+2026-11-04 22:31:01  nav: act EquipFilter act:filter -> Done 0ms (sent)
+2026-11-04 22:31:01  filter: item 19993 kind=pick wanted=True set=722400@8 stat=13@3 subs=25,19,1,29 now suits=722400 subs= stats= hideEq=True otherHero=False panel=True/True/True -> work
+2026-11-04 22:31:01  navprobe own click EquipFilter @848,437 owner Equip
+2026-11-04 22:31:01  nav: act EquipFilter act:filter -> Done 0ms (sent)
+2026-11-04 22:31:02  filter: item 19993 kind=pick wanted=True set=722400@8 stat=13@3 subs=25,19,1,29 now suits=722400 subs= stats= hideEq=True otherHero=False panel=True/True/False -> work
+2026-11-04 22:31:02  navprobe own click EquipFilter @1190,215 owner Equip
+2026-11-04 22:31:02  nav: act EquipFilter act:filter -> Done 0ms (sent)
+2026-11-04 22:31:02  filter: item 19993 kind=pick wanted=True set=722400@8 stat=13@3 subs=25,19,1,29 now suits=722400 subs= stats=13 hideEq=True otherHero=False panel=True/True/False -> work
+2026-11-04 22:31:02  navprobe own click EquipFilter @848,528 owner Equip
+2026-11-04 22:31:02  nav: act EquipFilter act:filter -> Done 0ms (sent)
+2026-11-04 22:31:03  navprobe own click EquipFilter @1023,361 owner Equip
+2026-11-04 22:31:03  nav: act EquipFilter act:filter -> Done 0ms (sent)
+2026-11-04 22:31:03  filter: item 19993 kind=pick wanted=True set=722400@8 stat=13@3 subs=25,19,1,29 now suits=722400 subs=25 stats=13 hideEq=True otherHero=False panel=True/True/False -> work
+2026-11-04 22:31:03  navprobe own click EquipFilter @1190,263 owner Equip
+2026-11-04 22:31:03  nav: act EquipFilter act:filter -> Done 0ms (sent)
+2026-11-04 22:31:04  filter: item 19993 kind=pick wanted=True set=722400@8 stat=13@3 subs=25,19,1,29 now suits=722400 subs=19,25 stats=13 hideEq=True otherHero=False panel=True/True/False -> work
+2026-11-04 22:31:04  navprobe own click EquipFilter @1023,166 owner Equip
+2026-11-04 22:31:04  nav: act EquipFilter act:filter -> Done 0ms (sent)
+2026-11-04 22:31:04  filter: item 19993 kind=pick wanted=True set=722400@8 stat=13@3 subs=25,19,1,29 now suits=722400 subs=1,19,25 stats=13 hideEq=True otherHero=False panel=True/True/False -> work
+2026-11-04 22:31:04  navprobe own click EquipFilter @1023,409 owner Equip
+2026-11-04 22:31:04  nav: act EquipFilter act:filter -> Done 0ms (sent)
+2026-11-04 22:31:05  filter: item 19993 kind=pick wanted=True set=722400@8 stat=13@3 subs=25,19,1,29 now suits=722400 subs=1,25,29,19 stats=13 hideEq=True otherHero=False panel=True/True/False -> work
+2026-11-04 22:31:05  navprobe own click EquipFilter @1285,64 owner Equip
+2026-11-04 22:31:05  nav: act EquipFilter act:filter -> Done 0ms (sent)
+2026-11-04 22:31:05  filter: item 19993 kind=pick wanted=True set=722400@8 stat=13@3 subs=25,19,1,29 now suits=722400 subs=1,25,29,19 stats=13 hideEq=True otherHero=False panel=True/False/False -> work (closing the side panel (1))
+2026-11-04 22:31:06  filter: item 19993 kind=pick wanted=False set=722400@8 stat=13@3 subs=25,19,1,29 now suits=722400 subs=1,25,29,19 stats=13 hideEq=True otherHero=False panel=True/False/False -> done (closing the side panel (1)
+2026-11-04 22:31:06  uibtn cell: HeroGear 19993 live=[23,164,88,88] calc=[67,208] diff=0px icon=c_Frame idx=1 col=1 inview=100% visible=T scale=canvas in 10 ms [click: live @67,208]
+2026-11-04 22:31:06  click gate Equip: allow EquipNav @67,207 on HeroScreen hero 235300001 tab 3 slot 3
+2026-11-04 22:31:06  navprobe own click EquipNav @67,207 owner Equip
+2026-11-04 22:31:06  nav: act EquipNav act:item -> Done 0ms (sent)
+2026-11-04 22:31:06  live: hero 235300001 part 3 sel 19993 owners 53763>235300001 10644>235300001 3251>235300001 19993>0 35414>235300001

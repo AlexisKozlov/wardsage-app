@@ -66,6 +66,14 @@ namespace RealmForge {
     public bool LiveGrid, LiveTarget; public double LiveX, LiveY;
     /// <summary>Which list the rows belong to now (the host: its pointer and length); a change = the list was rebuilt (a filter, a toggle): clicks wait for two equal reads.</summary>
     public long ListSig;
+    /// <summary>The game's own list position (the host's live read of the cells it made, memory only): the first and last made cell (0-based list index, -1 = not read), the target's cell centre y when it is made
+    /// (client px, NaN = no cell of it) and the viewport's top and bottom. With these the pilot scrolls by what the game says, never by row math.</summary>
+    public int LiveFirst = -1, LiveLast = -1;
+    public double LiveCellY = double.NaN, LiveViewTop = double.NaN, LiveViewBottom = double.NaN;
+    /// <summary>Another cell than the target's, wholly in view (LiveNbUid, its centre): the way to re-select when the selected item's card is not open (the game's click on a selected item does nothing). The host reads it only while WantNeighbour.</summary>
+    public bool LiveNb; public double LiveNbX, LiveNbY; public long LiveNbUid;
+    /// <summary>The item whose card stands (Form_CharactorEquipTip.m_SelectEquipInfo.iItemUid), 0 = none / unread.</summary>
+    public long TipUid;
     /// <summary>When the filter was last touched (a pilot click on it, its panel closing; host clock, 0 = never): the list is rebuilding after it.</summary>
     public long FilterAt;
   }
@@ -110,6 +118,12 @@ namespace RealmForge {
     public const double MinDragPx = 24;   // shorter moves would count as a click in the game
 
     readonly ListGeometry g;
+    /// <summary>The atom executor (src/NavAct.cs): every list click and drag of the live path goes through it; its lines are the host's «atom: ...» log lines.</summary>
+    public readonly AtomRunner Atoms = new AtomRunner();
+    /// <summary>The pilot needs a neighbour cell of the target (a selected item whose card is closed is re-selected through another cell): the host reads the whole list's cells while this is on.</summary>
+    public bool WantNeighbour { get { return wantNb; } }
+    bool wantNb, curLive, dragPending; string dragPos = ""; double dragDy, dragCell0 = double.NaN; long dragAt, swapWaitSince, liveNoPosSince; int noMove, swaps; bool altStrip;
+    public const int MaxSwaps = 3, SwapWaitMs = 3000, LivePosWaitMs = 15000;
     string goal = "";
     long waitUntil, pauseUntil;
     int clicks, drags, calibs, stuck, calibMiss;
@@ -129,8 +143,8 @@ namespace RealmForge {
     // the list rebuilt by a filter / toggle (live 1.6.66.442 «Скрыть надетое»: the re-anchoring click on the old rows picked a random item, the
     // item itself was clicked a second later): no click until the filter has rested ListSettleMs, the list's sign and the target's live cell are
     // the same on two reads; with live cells the item is clicked only at its live cell, a calibration click on the row math never
-    long listSig = long.MinValue, listSigAt, liveWaitSince, liveSeenAt; double liveSeenX = double.NaN, liveSeenY;
-    public const int ListSettleMs = 450, LiveWaitMs = 5000;
+    long listSig = long.MinValue, listSigAt, liveSeenAt; double liveSeenX = double.NaN, liveSeenY;
+    public const int ListSettleMs = 450;
     /// <summary>List clicks with no effect for one item before the pilot stops; the same point at most this often in a row.</summary>
     public const int NoEffectTries = 3, SamePointMax = 2;
     /// <summary>What the last step did (the app's log), empty when nothing new.</summary>
@@ -160,7 +174,7 @@ namespace RealmForge {
       else if (lastAct == 2) { tipReopens--; waitUntil = 0; calibPending = false; }
       // a list click not sent: its result is not waited for, its point was not clicked
       if (listSent) { listSent = false; itemPending = calibPending = false; if (samePt > 0) samePt--; if (samePt == 0) lastPtX = lastPtY = double.NaN; waitUntil = 0; }
-      lastAct = 0; effect.Drop();
+      lastAct = 0; effect.Drop(); Atoms.Abort();
     }
 
     public AutoAction Step(AutoView v) {
@@ -176,10 +190,12 @@ namespace RealmForge {
         selSince = 0; confirmed = false; confirmRetries = 0; tipReopens = 0; lastRetry = false; State = "idle"; Why = "";
         slotWaits = afterClicks = wrongs = 0; lastSlotClick = 0; itemPending = false; row1Fix = double.NaN;
         row1Off = double.NaN; noEffect = samePt = 0; typesLen = -1; lastPtX = lastPtY = double.NaN; lastNoEffect = false;
-        listSig = long.MinValue; liveWaitSince = 0; liveSeenX = double.NaN;
+        listSig = long.MinValue; liveSeenX = double.NaN;
+        wantNb = dragPending = altStrip = false; noMove = swaps = 0; swapWaitSince = liveNoPosSince = 0; Atoms.Clear();
       }
       if (key == "") { State = "idle"; return AutoAction.Nothing; }
-      curSel = v.Sel; nowMs = v.NowMs; curKey = Key(v); curTip = v.TipKnown && v.TipShown;
+      curSel = v.Sel; nowMs = v.NowMs; curKey = Key(v); curTip = v.TipKnown && v.TipShown; curLive = v.LiveGrid;
+      Atoms.Poll(GameFacts.Of(v), v.NowMs);
       bool selected = v.Slot == null && v.Sel == v.Target;
       if (!selected) selSince = 0; else if (selSince == 0) { selSince = v.NowMs; if (selAt == 0) selAt = v.NowMs; }
       if (selected) itemPending = false;
@@ -221,6 +237,12 @@ namespace RealmForge {
       // (only for that known reason: no blue button at all and the window table read without the tip form)
       if (v.Button == null && v.BlueNone && v.TipKnown && !v.TipShown && v.NowMs - selSince >= TipReopenMs) {
         if (tipReopens >= TipReopens) { State = "unconfirmed"; Why = "the item's tip does not open (" + tipReopens + " clicks for it)"; Trace = "unconfirmed: " + Why; return AutoAction.Nothing; }
+        if (v.LiveGrid) {
+          // the game's click on the item that is selected already does nothing (_OnEquipClicked opens the card only when the selection changes: live 464e21): another cell is clicked, then the item again
+          var sw = SwapStep(v, "the selected item's card is closed");
+          if (sw.Kind == AutoKind.Click) { tipReopens++; selSince = v.NowMs; lastAct = 2; Trace = "the tip of item " + v.Target + " is not open and a click on it opens nothing: another cell is clicked first"; }
+          return sw;
+        }
         tipReopens++; selSince = v.NowMs; lastAct = 2;
         var pt = tipReopens == 1 ? ItemPoint(v) : null;
         if (pt != null) {
@@ -328,29 +350,28 @@ namespace RealmForge {
         if ((v.Sel == selAtCalib || v.Sel <= 0) && calibMiss < 3) { calibMiss++; needCalib = true; }
         else calibMiss = 0;
       }
-      // the game's own cells are readable: the item is clicked at its live cell (the same point on two reads), nothing else on the list is clicked
-      // (the rows from the row math are only for a drag that brings the cell into view); no cell of it for LiveWaitMs: the old way
-      bool liveOnly = false;
+      // the game's own cells are readable: the item is clicked at its live cell (the same point on two reads), nothing else on the list is clicked: no calibration click, no click on a point from the row math,
+      // however long the live cell takes to show (live 464e21: twelve of them picked other items, each opened a card and the game scrolled the list back to it). The list is brought to the item by what the game says of its position.
       if (v.LiveGrid) {
         if (v.LiveTarget) {
-          liveWaitSince = 0;
+          liveNoPosSince = 0; dragPending = false; noMove = 0;
           // (the host reads the cells about every 200 ms: a tick between two reads may see none - a gap keeps what was seen, a moved cell starts over)
           bool same = !double.IsNaN(liveSeenX) && Math.Abs(v.LiveX - liveSeenX) < 1.5 && Math.Abs(v.LiveY - liveSeenY) < 1.5;
           if (!same) { liveSeenAt = v.NowMs; liveSeenX = v.LiveX; liveSeenY = v.LiveY; }
           if (v.NowMs - liveSeenAt < EffectWait.StableMs || v.NowMs - listSigAt < EffectWait.StableMs) return AutoAction.Nothing;   // the same place on reads 50 ms apart first
           needCalib = calibPending = false; wrongs = 0;
+          long tg = v.Target;
+          if (!Atoms.Begin("item.click", "u" + tg, "live[" + (int)v.LiveX + "," + (int)v.LiveY + "] src=live", "sel=" + tg, ff => ff.Sel == tg, JudgeMs, GameFacts.Of(v), v.NowMs)) return SwapStep(v, "the click on the live cell changed nothing and the facts are the same");
           if (confirmed) { if (afterClicks >= AfterConfirmClicks) { State = "unconfirmed"; Why = "the item is not selected again after the confirm press (sel " + v.Sel + ", owner " + v.Owner + ")"; Trace = "unconfirmed: " + Why; return AutoAction.Nothing; } afterClicks++; }
           else if (clicks >= ClickTries) return Fail("item " + v.Target + " not selected after " + clicks + " clicks (sel " + v.Sel + ")");
-          clicks++; waitUntil = v.NowMs + AfterClickMs;
+          clicks++; waitUntil = v.NowMs + AfterClickMs; wantNb = false;
           itemPending = true; clickX = v.LiveX; clickY = v.LiveY;
           // (the point is the live cell's: a second click on it is a new try, not the same stale point)
           lastPtX = lastPtY = double.NaN; samePt = 0;
           var lc = ListClick(v.LiveX, v.LiveY); if (lc.Kind == AutoKind.Click) lc.Cell = v.Target;
           return lc;
         }
-        if (liveWaitSince == 0) liveWaitSince = v.NowMs;
-        liveOnly = v.NowMs - liveWaitSince < LiveWaitMs;
-        if (liveOnly) { needCalib = calibPending = false; if (!v.AnchorHas) return AutoAction.Nothing; }
+        return LiveScroll(v);
       }
       // no idea where the rows are: click an item in the middle, the game says which one it is
       if (!v.AnchorHas || needCalib) {
@@ -395,7 +416,6 @@ namespace RealmForge {
       double row1 = double.IsNaN(row1Fix) ? v.Row1Top + Off : row1Fix;
       double top = row1 + g.RowOffset(v.Types, v.Row) * H, cy = top + cell / 2, cx = g.ColLeft(v.Col) * H + cell / 2;
       if (cy >= viewTop + cell * 0.45 && cy <= viewBottom - cell * 0.45) {
-        if (liveOnly) return AutoAction.Nothing;   // the row math puts it in view, its live cell is not there (yet): no click on the estimate
         // the same point selected another item before: look for the rows again instead of clicking it
         if (wrongs > 0 && Math.Abs(cx - clickX) < 2 && Math.Abs(cy - clickY) < 2) { row1Fix = double.NaN; needCalib = true; return AutoAction.Nothing; }
         // after «Заменить» the item clicks have a budget of their own (the confirm is not repeated by clicking)
@@ -420,6 +440,74 @@ namespace RealmForge {
       return new AutoAction { Kind = AutoKind.Drag, X = (g.StripLeft + g.StripRight) / 2 * H, Y = y0, DY = dy };
     }
 
+    /// <summary>The target's cell is not in view (or not whole): the list is moved by what the game says of its position (the cells it made: first / last, the target's cell y, the viewport). ONE drag at a time, its effect
+    /// the live position changing; a drag that moved nothing is diagnosed (another place of the strip once, then a named failure), never repeated blind. No click is made here.</summary>
+    AutoAction LiveScroll(AutoView v) {
+      double H = v.H, cell = g.CellW * H, pitch = g.PitchY * H;
+      var f = GameFacts.Of(v);
+      if (dragPending) {
+        dragPending = false; string now = f.PosKey();
+        if (now == dragPos) {
+          noMove++;
+          Trace = "the list did not move after the drag (live position " + now + ", " + noMove + " in a row)" + (noMove < 2 ? ": another place of the strip" : "");
+          if (noMove >= 2) return Fail("the list does not move: its live position " + now + " is the same after " + noMove + " drags (" + f + ")");
+          altStrip = !altStrip;
+        } else {
+          noMove = 0;
+          // the gain of the drag from where the target's cell was and is (both made); else the last one stands
+          if (!double.IsNaN(dragCell0) && !double.IsNaN(v.LiveCellY) && Math.Abs(dragDy) >= MinDragPx) {
+            double gain = (v.LiveCellY - dragCell0) / dragDy;
+            if (gain > 0.3 && gain < 2.5) Gain = gain;
+          }
+        }
+      }
+      if (!v.InputOpen) { Atoms.PreFails("list.drag", "input locked", f); return AutoAction.Nothing; }
+      if (v.Row <= 0) { Atoms.PreFails("list.drag", "the target's row is not known", f); return AutoAction.Nothing; }
+      if (v.LiveFirst < 0) {
+        // the cells are read but not the list's place: nothing to scroll by, nothing to click - waited for, then a named stop
+        if (liveNoPosSince == 0) liveNoPosSince = v.NowMs;
+        Atoms.PreFails("list.drag", "no live list position", f);
+        if (v.NowMs - liveNoPosSince > LivePosWaitMs) return Fail("the game's list position is not readable for " + (v.NowMs - liveNoPosSince) / 1000 + " s (no live cell of item " + v.Target + ")");
+        return AutoAction.Nothing;
+      }
+      liveNoPosSince = 0;
+      double vt = !double.IsNaN(v.LiveViewTop) ? v.LiveViewTop : g.ViewTop * H, vb = !double.IsNaN(v.LiveViewBottom) ? v.LiveViewBottom : g.ViewBottom * H, mid = (vt + vb) / 2;
+      int idx = v.Row - 1; double dist;
+      if (!double.IsNaN(v.LiveCellY)) dist = v.LiveCellY - mid;                                 // the cell is made: its own place
+      else dist = (idx - (v.LiveFirst + v.LiveLast) / 2.0) * pitch;                              // not made: rows from the middle of the made ones
+      if (drags >= DragTries) return Fail("the item is not reached after " + drags + " drags");
+      double span = vb - vt - cell;
+      double dy = Math.Max(-span, Math.Min(span, -dist / GainOr1));
+      if (Math.Abs(dy) < MinDragPx) dy = dy < 0 ? -MinDragPx : MinDragPx;
+      double x0 = altStrip ? (g.StripLeft + (g.StripRight - g.StripLeft) * 0.2) * H : (g.StripLeft + g.StripRight) / 2 * H, y0 = dy < 0 ? vb - cell / 2 : vt + cell / 2;
+      string pos0 = f.PosKey();
+      if (!Atoms.Begin("list.drag", "to" + v.Target + (dy < 0 ? "up" : "down") + (altStrip ? "b" : "a"), "viewport[" + (int)vt + ".." + (int)vb + "] dy=" + (int)dy + " src=live", "list position changed", ff => ff.PosKey() != pos0, 1500, f, v.NowMs))
+        return Fail("the drag " + (dy < 0 ? "up" : "down") + " moved nothing before and the facts are the same (" + f + ")");
+      drags++; dragPending = true; dragPos = pos0; dragDy = dy; dragCell0 = v.LiveCellY; dragAt = v.NowMs;
+      waitUntil = v.NowMs + AfterDragMs; effect.Arm(curKey, v.NowMs);
+      return new AutoAction { Kind = AutoKind.Drag, X = x0, Y = y0, DY = dy };
+    }
+
+    /// <summary>Another cell is clicked so that the next click on the target's cell changes the selection (a click on the selected item opens no card; a click that changed nothing on the same facts is not repeated).
+    /// The neighbour is the host's live cell; none yet = it is asked for (WantNeighbour) and waited for, SwapWaitMs at most.</summary>
+    AutoAction SwapStep(AutoView v, string why) {
+      var f = GameFacts.Of(v);
+      wantNb = true;
+      if (!v.LiveNb) {
+        if (swapWaitSince == 0) swapWaitSince = v.NowMs;
+        Atoms.PreFails("item.swap", "no neighbour cell in view yet", f);
+        if (v.NowMs - swapWaitSince > SwapWaitMs) return Fail("no other cell of the list is in view to re-select by (" + why + "; " + f + ")");
+        return AutoAction.Nothing;
+      }
+      swapWaitSince = 0;
+      if (++swaps > MaxSwaps) return Fail("the item " + v.Target + " could not be re-selected through another cell in " + MaxSwaps + " tries (" + why + "; " + f + ")");
+      long nb = v.LiveNbUid;
+      Atoms.Begin("item.swap", "nb" + nb, "live[" + (int)v.LiveNbX + "," + (int)v.LiveNbY + "] src=live (" + why + ")", "sel=" + nb, ff => ff.Sel == nb, JudgeMs, f, v.NowMs, false);
+      wantNb = false; itemPending = calibPending = false; lastPtX = lastPtY = double.NaN; samePt = 0; waitUntil = v.NowMs + AfterClickMs;
+      var lc = ListClick(v.LiveNbX, v.LiveNbY); if (lc.Kind == AutoKind.Click) lc.Cell = nb;
+      return lc;
+    }
+
     double Off { get { return double.IsNaN(row1Off) ? 0 : row1Off; } }
 
     /// <summary>The click at <paramref name="y"/> selected the item of row SelRow: when the rows as thought put that row's cell elsewhere,
@@ -439,6 +527,7 @@ namespace RealmForge {
       if (Math.Abs(x - lastPtX) < 2 && Math.Abs(y - lastPtY) < 2) { if (++samePt > SamePointMax) { itemPending = calibPending = false; return Fail("the same point " + (int)x + "," + (int)y + " would be clicked a " + samePt + "rd time in a row"); } }
       else samePt = 1;
       if (pickAt == 0) pickAt = nowMs;
+      if (!curLive) Atoms.Geo("item.click", x, y);   // (only where the game's cells are not read at all: the old way, told in the log)
       lastPtX = x; lastPtY = y; selBefore = curSel; tipAtClick = curTip; clickAt = nowMs; listSent = true; effect.Arm(curKey, nowMs);
       return Click(x, y);
     }
@@ -459,7 +548,7 @@ namespace RealmForge {
     /// <summary>The last finished step's durations (see above); "" = none yet.</summary>
     public string StepLine = "";
     // what a click of this pilot changes: the selection, the slot open, the tip, the list (its length)
-    static string Key(AutoView v) { return v.Sel + "|" + v.SlotOpen + "|" + v.TipShown + "|" + (v.Types != null ? v.Types.Length : -1); }
+    static string Key(AutoView v) { return v.Sel + "|" + v.SlotOpen + "|" + v.TipShown + "|" + (v.Types != null ? v.Types.Length : -1) + "|" + (v.LiveGrid ? v.LiveFirst + ":" + v.LiveLast + ":" + (double.IsNaN(v.LiveCellY) ? "-" : ((int)Math.Round(v.LiveCellY / 3)).ToString()) : ""); }
     long curSel, nowMs, clickAt; bool listSent, curTip, tipAtClick;
     /// <summary>How long a list click gets to change the selection before it counts as one that changed nothing.</summary>
     public const int JudgeMs = 1800;
