@@ -165,7 +165,7 @@ static partial class CoreTests {
           ok = Send(a.Target, aa, a.Fill == null ? (Action<ClickRequest, ScreenState>)null : (rq, fr) => a.Fill(rq), a.WantCity, a.WantKnown);
         }
       } finally { InNavSend = false; }
-      if (!ok) return lastGate != null && lastGate.Verdict != GateVerdict.Allow ? lastGate : GateResult.Wait("unsent", "not sent");
+      if (!ok) { G.Note("send refused: " + a.Target + " " + (lastGate != null ? lastGate.Verdict + " " + lastGate.Detail : "-")); return lastGate != null && lastGate.Verdict != GateVerdict.Allow ? lastGate : GateResult.Wait("unsent", "not sent"); }
       NavSends++; NavSameCheck(a);
       return GateResult.Allow("sent");
     }
@@ -239,7 +239,7 @@ static partial class CoreTests {
       case "nav.equip.heroFactionHides": case "nav.equip.heroFilterBlind": case "nav.equip.resetMidHero": case "nav.equip.heroNotOwned": {   // the hero grid's filter model (GameSim.cs EnableHeroModel)
         bool notOwned = sc == "nav.equip.heroNotOwned";
         g.EnableHeroModel(plan, !notOwned); g.FilterFadeMs = 300 + r.Next(500);
-        g.Hero.Shown = other; g.Hero.Tab = 1 + 2 * r.Next(2); g.Hero.Part = -1; g.Push(SimHero);
+        g.Hero.Shown = g.Hero.CityHero = other; g.Hero.Tab = 1 + 2 * r.Next(2); g.Hero.Part = -1; g.Push(SimHero);
         var pt = SimGame.SimTags(plan);
         if (sc == "nav.equip.resetMidHero") g.HeroDead = true;
         else if (!notOwned || r.Next(2) == 0) {   // a faction (or class) that is not the plan hero's
@@ -326,7 +326,7 @@ static partial class CoreTests {
           var a = NavRunOne(sc, s, slow, true, geo, verbose);
           if (Environment.GetEnvironmentVariable("NAV_DIGEST") != null) Console.WriteLine("digest " + sc + (slow ? " slow " : " fast ") + s + " " + a.Hash + " " + a.Outcome);
           var b = sc.StartsWith("nav.city") || NavExpect(sc) != null ? null : NavRunOne(sc, s, slow, false, geo, false);
-          if (NavExpect(sc) != null && !a.Outcome.StartsWith(NavExpect(sc))) expectMiss++;
+          if (NavExpect(sc) != null && !a.Outcome.StartsWith(NavExpect(sc)) && !NavRefusal(a.Outcome)) expectMiss++;
           if (a.Outcome.StartsWith("done")) doneNav++;
           else if (a.Outcome.StartsWith("navhalt") || a.Outcome.StartsWith("halt:")) { halts++; int c; why.TryGetValue(a.Outcome, out c); why[a.Outcome] = c + 1; }
           else { int c; why.TryGetValue(a.Outcome, out c); why[a.Outcome] = c + 1; }

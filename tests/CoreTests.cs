@@ -9284,7 +9284,35 @@ static partial class CoreTests {
     var hp4 = new HeroPilot(g);
     string s4 = RunHero(hp4, fg4, blindHero, 3000, out lv, tagsAll[blindHero]);
     int inPop = 0; foreach (var pt in fg4.Pts) if (!(Math.Abs(pt[0] - g.FunnelX * H) < 20 && Math.Abs(pt[1] - (H - g.FunnelDY * H)) < 20) && pt[0] < 0.73 * H && pt[1] > 0.16 * H && pt[1] < 0.87 * H) inPop++;
-    Check(s4 == "failed" && fg4.Clicks == 3 && inPop == 0 && hp4.Why != "", "pop-up never recognised: 3 funnel clicks, then a stop, no click inside the pop-up area (" + s4 + ", " + fg4.Clicks + " clicks, " + inPop + " inside)");
+    Check(s4 == "notfound" && fg4.Clicks == 1 && inPop == 0 && hp4.Why != "", "pop-up never recognised: one funnel press (it is a toggle), then a stop, no click inside the pop-up area (" + s4 + ", " + fg4.Clicks + " clicks, " + inPop + " inside, " + hp4.Why + ")");
+    {   // the pop-up fades in for up to 800 ms: one press only, the cells are clicked once it shows (the funnel pressed every 500 ms shut the pop-up it had opened - live 522)
+      var fg5 = mk(); fg5.Camps.Add(tagsAll[heroes[40]][1] == 101 ? 102 : 101); fg5.Refilter(); long hid5 = heroes[40];
+      if (Array.IndexOf(fg5.Heroes, hid5) >= 0) { fg5.Camps.Clear(); fg5.Camps.Add(tagsAll[hid5][1] == 101 ? 102 : 101); fg5.Refilter(); }
+      var hp5 = new HeroPilot(g); long openedAt = -1; int funnels = 0; string res5 = "timeout";
+      for (long t = 0; t < 30000; t += 100) {
+        var v5 = new HeroView { NowMs = t, Foreground = true, W = W, H = H, Plan = hid5, Hero = fg5.Shown, Tab = 3, Part = -1, Heroes = fg5.Heroes, ClientH = H, NavOwned = true,
+          FilterOpen = fg5.FilterOpen && openedAt >= 0 && t >= openedAt + 800, ChosenCamps = fg5.Camps.ToArray(), ClassChosen = fg5.Class > 0, GridPtr = fg5.Grid, FactionList = FakeHeroGame.FactionList, ClassCount = 7 };
+        var a5 = hp5.Step(v5);
+        if (a5 == null) { res5 = hp5.State; break; }
+        if (a5.Kind == AutoKind.Click) {
+          bool fun = Math.Abs(a5.X - g.FunnelX * H) < 20 && Math.Abs(a5.Y - (H - g.FunnelDY * H)) < 20;
+          if (fun) { funnels++; if (!fg5.FilterOpen) openedAt = t; }
+          fg5.Click(a5.X, a5.Y);
+        } else if (a5.Kind == AutoKind.Drag) fg5.Drag(a5.DY);
+        if (hp5.State == "notfound" || hp5.State == "failed") { res5 = hp5.State; break; }
+      }
+      Check(funnels == 2 && Array.IndexOf(fg5.Heroes, hid5) >= 0 && fg5.Camps.Count == 0 && !fg5.FilterOpen, "grid filter hides the hero, pop-up fades in 800 ms: one press to open and one to close, «Все» in between (" + funnels + " funnel presses, " + res5 + ", factions " + fg5.Camps.Count + ")");
+    }
+    {   // a reset: the pilot that gave up (notfound) is idle again, finds the hero in the unfiltered grid, keeps what it learnt about the game
+      var fg6 = mk(); long far6 = heroes[60]; var hp6 = new HeroPilot(g); fg6.Blind = true; fg6.Camps.Add(tagsAll[far6][1] == 101 ? 102 : 101); fg6.Refilter();
+      if (Array.IndexOf(fg6.Heroes, far6) >= 0) { fg6.Camps.Clear(); fg6.Camps.Add(tagsAll[far6][1] == 101 ? 102 : 101); fg6.Refilter(); }
+      string s6 = RunHero(hp6, fg6, far6, 3000, out lv, null);
+      Check(s6 == "notfound", "hero hidden by a filter whose pop-up is blind: the pilot gives up (" + s6 + ")");
+      hp6.Reset(); Check(hp6.State == "idle", "a reset returns the pilot to idle (" + hp6.State + ")");
+      fg6.Blind = false; fg6.Camps.Clear(); fg6.FilterOpen = false; fg6.Refilter();   // (the game cleared its filter when the hero screen was opened again)
+      s6 = RunHero(hp6, fg6, far6, 3000, out lv, null);
+      Check(s6 == "done" && fg6.Shown == far6, "... and picks the hero from the unfiltered grid (" + s6 + ")");
+    }
     {   // HeroFilterLook: 1.6.46 at 526×296 - no Class|Faction divider, a blue «Все» cell in the class column
       double U = 295.875;
       Func<bool, bool, bool, bool, double, double, Func<int, int, int, int, int[]>> frame2 = (strip, filterDiv, blueCell, classDiv, blueX0, blueRow) => (gx, gy, gw, gh) => {

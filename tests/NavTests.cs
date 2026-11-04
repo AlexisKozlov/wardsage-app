@@ -61,7 +61,12 @@ static partial class CoreTests {
     Check(sn.Stack.Count == 1 && sn.Top.Role == LayerRole.Offer, "nav snapshot: an offer over the city is an Offer layer");
     var plain = NavState(ScreenKind.HeroScreen, 7, 3, -1, "", new[] { H, C });
     sn = ScreenReader.Build(plain, 0, w => w == "gearFilterMain" || w == "heroFilter");
-    Check(sn.Stack.Count == 2 && sn.Has("panel:gearFilter") && sn.Has("panel:heroFilter"), "nav snapshot: the pictures make the panels layers (" + sn.LayerKey() + ")");
+    Check(sn.Stack.Count == 1 && sn.Has("panel:heroFilter") && !sn.Has("panel:gearFilter"), "nav snapshot: the hero grid's pop-up picture is a layer with the grid showing, the gear filter's cross picture is not (no gear list open) (" + sn.LayerKey() + ")");
+    var gearOpen = NavState(ScreenKind.HeroScreen, 7, 3, 2, "", new[] { H, C });
+    sn = ScreenReader.Build(gearOpen, 0, w => w == "gearFilterMain" || w == "heroFilter");
+    Check(sn.Stack.Count == 1 && sn.Has("panel:gearFilter") && !sn.Has("panel:heroFilter"), "nav snapshot: the gear filter's cross picture is a layer over an open gear list only (" + sn.LayerKey() + ")");
+    var tab1 = NavState(ScreenKind.HeroScreen, 7, 1, -1, "", new[] { H, C });
+    Check(ScreenReader.Build(tab1, 0, w => w == "gearFilterMain" || w == "gearFilterSide").Stack.Count == 0, "nav snapshot: a red cross seen on hero tab 1 (no gear list) is no layer");
     var noOrder = NavState(ScreenKind.HeroScreen, 7, 3, -1, "", null);
     Check(ScreenReader.Build(noOrder, 0, null).Confidence == NavConfidence.NoOrder, "nav snapshot: no window-table order = NoOrder");
     // the debounce: worse at once, better after StableMs and two reads, a one-read flicker leaves the picture as it was
@@ -111,7 +116,7 @@ static partial class CoreTests {
     {
       var io = new FakeNavIo(); var m = new NavMemory();
       Func<ScreenState, Func<string, bool>, Snapshot> mk = (st, pic) => { var q = ScreenReader.Build(st, io.NowMs, pic); q.StableSinceMs = io.NowMs - 5000; return q; };
-      var s1 = mk(NavState(ScreenKind.HeroScreen, 7, 3, -1, "", new[] { H, C }), w => w == "gearFilterMain");
+      var s1 = mk(NavState(ScreenKind.HeroScreen, 7, 3, 2, "", new[] { H, C }), w => w == "gearFilterMain");
       var st1 = ModalHandler.Next(s1, null, m, io, ClickOwner.Equip);
       Check(st1.Kind == StepKind.Act && st1.Act.Target == ClickTarget.EquipClosePopup && st1.Act.Closing == "panel:gearFilter", "nav modal: the gear filter's pop-up is closed by its red cross (EquipClosePopup)");
       Check(ModalHandler.Next(s1, new[] { "panel:gearFilter" }, new NavMemory(), io, ClickOwner.Equip).Kind == StepKind.None, "nav modal: a kept layer is left alone");
