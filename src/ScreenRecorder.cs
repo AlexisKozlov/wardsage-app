@@ -3,6 +3,7 @@
 //
 // Contract (implemented by the site, staging only):
 //   POST {site}/api/extractor/test-recording?rec=<id>&part=<n>   Authorization: Bearer <sync code>, X-RF-Player (as test-log)
+//   The log text around a recording goes as one more part of it (RecLogPart: applog.txt inside, same endpoint, so it lands next to the other parts).
 //        body application/zip <= 8 MB (frame_0001.jpg ... and frames.jsonl); rec [A-Za-z0-9-]{8,40}, part 0..119
 //        200 ok | 404 (the endpoint is off: stop uploading, keep the files) | 413 (part over the limit: drop that part, log it)
 //        | 429 (quota: stop uploading this recording, keep the files) | 401/5xx/no connection: keep the part, retry later
@@ -215,6 +216,89 @@ namespace RealmForge {
         File.Move(tmp, path);
         return path;
       } catch (Exception) { try { File.Delete(tmp); } catch (Exception) { } return null; }
+    }
+  }
+
+  /// <summary>TEST build: the app's own log text covering a recording (60 s before it started to 60 s after it stopped), sent as one more zip part
+  /// of the recording (entry applog.txt; the site stores it next to the other parts, so nothing new is needed there). Pure text work, no I/O but the zip.</summary>
+  public static class RecLogPart {
+    public const int MarginSeconds = 60;
+    public const int MaxZipBytes = 2 * 1024 * 1024;
+    public const string EntryName = "applog.txt";
+    static readonly string[] Quiet = { "locker", "stack", "exit dialog", "scroll" };
+
+    /// <summary>The kind of a repeating navprobe line ("locker", "stack", "exit dialog", "scroll"), null for any other line.</summary>
+    static string QuietKind(string text) {
+      if (text.IndexOf("navprobe", StringComparison.Ordinal) < 0) return null;
+      foreach (var k in Quiet) if (text.IndexOf(k, StringComparison.OrdinalIgnoreCase) >= 0) return k;
+      return null;
+    }
+
+    /// <summary>The log lines whose time is within [from - 60 s, to + 60 s] (lines without a time go with the line before them); a navprobe
+    /// locker / stack / exit dialog / scroll line equal to the last one of its kind (time apart) is dropped.</summary>
+    public static List<string> Select(IEnumerable<string> all, DateTime from, DateTime to) {
+      var res = new List<string>();
+      DateTime lo = from.AddSeconds(-MarginSeconds), hi = to.AddSeconds(MarginSeconds);
+      bool inside = false;
+      var last = new Dictionary<string, string>();
+      foreach (var line in all) {
+        if (line == null) continue;
+        DateTime t;
+        string text = line;
+        if (line.Length >= 19 && DateTime.TryParseExact(line.Substring(0, 19), "yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture, DateTimeStyles.None, out t)) {
+          inside = t >= lo && t <= hi;
+          text = line.Substring(19).Trim();
+          if (inside) {
+            string kind = QuietKind(text);
+            if (kind != null) {
+              string prev;
+              if (last.TryGetValue(kind, out prev) && prev == text) { inside = false; continue; }
+              last[kind] = text;
+            }
+          }
+        }
+        if (inside) res.Add(line);
+      }
+      return res;
+    }
+
+    /// <summary>Reads wardsage.log (shared, it is being appended to) and selects the lines.</summary>
+    public static List<string> FromFile(string logPath, DateTime from, DateTime to) {
+      var all = new List<string>();
+      try {
+        using (var fs = new FileStream(logPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+        using (var r = new StreamReader(fs, new UTF8Encoding(false))) { string l; while ((l = r.ReadLine()) != null) all.Add(l); }
+      } catch (Exception) { }
+      return Select(all, from, to);
+    }
+
+    /// <summary>Writes the zip part (dir/part_NNN.zip with applog.txt); the oldest lines are dropped until it is at most MaxZipBytes. Null = nothing to send.
+    /// <paramref name="kept"/> = the number of lines in it.</summary>
+    public static string Write(string dir, int part, List<string> lines, out int kept) {
+      kept = 0;
+      if (lines == null || lines.Count == 0) return null;
+      Directory.CreateDirectory(dir);
+      string path = Path.Combine(dir, RecNames.PartFile(part)), tmp = path + ".tmp";
+      int skip = 0;
+      while (skip < lines.Count) {
+        var sb = new StringBuilder();
+        for (int i = skip; i < lines.Count; i++) sb.Append(lines[i]).Append('\n');
+        using (var fs = new FileStream(tmp, FileMode.Create, FileAccess.Write))
+        using (var zip = new ZipArchive(fs, ZipArchiveMode.Create, false)) {
+          var e = zip.CreateEntry(EntryName, CompressionLevel.Optimal);
+          var b = new UTF8Encoding(false).GetBytes(sb.ToString());
+          using (var s = e.Open()) s.Write(b, 0, b.Length);
+        }
+        if (new FileInfo(tmp).Length <= MaxZipBytes) {
+          if (File.Exists(path)) File.Delete(path);
+          File.Move(tmp, path);
+          kept = lines.Count - skip;
+          return path;
+        }
+        skip += Math.Max(1, lines.Count / 10);
+      }
+      try { File.Delete(tmp); } catch (Exception) { }
+      return null;
     }
   }
 

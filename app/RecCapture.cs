@@ -96,6 +96,7 @@ namespace RealmForge {
       string dir = Path.Combine(AppConfig.DefaultDir, "recordings", rec);
       var up = new RecUploader(rec, site, code, log);
       var sw = Stopwatch.StartNew();
+      DateTime startedAt = DateTime.Now;
       int part = 0, frameNo = 0, parts = 0, lastSec = -1;
       long closedBytes = 0, partStart = 0, nextFg = 0, nextBg = 0;
       RecPartWriter w = null;
@@ -135,6 +136,7 @@ namespace RealmForge {
       if (w != null) Finish(ref w, ref part, ref parts, up);
       FreeBuffers();
       up.Close();
+      SendLogPart(rec, dir, part, startedAt, DateTime.Now);
       log("recording " + rec + ": stopped, " + parts + " parts" + (stopWhy != "" ? " (" + stopWhy + " limit)" : ""));
       on = false;
       setActive(false);
@@ -150,6 +152,23 @@ namespace RealmForge {
         if (!on) post(RecJson.State(false, (int)(sw.ElapsedMilliseconds / 1000), up.Sent, up.Total, up.Off ? "off" : stopWhy));
         if (why != null) log("rec: auto " + why + " " + (up.Idle && !up.Off && up.Sent > 0 ? "sent " + rec + " (" + up.Sent + " parts)" : "not sent " + rec + " (" + up.Sent + "/" + up.Total + " parts" + (up.Off ? ", the site takes no recordings" : "") + ")"));
       } catch (Exception) { }
+    }
+
+    /// <summary>The app's log from 60 s before the start to 60 s after the stop goes up as one more part of the recording (after the 60 s, on its own thread).</summary>
+    void SendLogPart(string rec, string dir, int part, DateTime from, DateTime to) {
+      if (part > RecNames.MaxPart) return;
+      var th = new Thread(() => {
+        try {
+          double wait = (to.AddSeconds(RecLogPart.MarginSeconds) - DateTime.Now).TotalMilliseconds;
+          if (wait > 0) Thread.Sleep((int)wait + 500);
+          int kept; string path = RecLogPart.Write(dir, part, RecLogPart.FromFile(Log.Path, from, to), out kept);
+          if (path == null) return;
+          log("rec: log of " + kept + " lines sent with the recording");
+          var lu = new RecUploader(rec, site, code, log);
+          lu.Add(part, path); lu.Close();
+        } catch (Exception e) { log("rec: log part failed: " + e.Message); }
+      }) { IsBackground = true, Name = "rec-log" };
+      th.Start();
     }
 
     void Finish(ref RecPartWriter w, ref int part, ref int parts, RecUploader up) {

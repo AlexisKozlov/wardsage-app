@@ -2242,6 +2242,22 @@ static partial class CoreTests {
         Check(z.GetEntry("frame_0002.jpg").Length == 2, "zip part: frame bytes");
       }
       Check(new RecPartWriter(dir, 4).Close() == null && !File.Exists(Path.Combine(dir, "part_004.zip")), "zip part: empty part leaves no file");
+      // the log part: 60 s around the recording, repeating navprobe lines dropped, bounded zip
+      var lg = new List<string> {
+        "2026-11-04 10:00:00  too early", "2026-11-04 10:59:30  in margin", "2026-11-04 11:00:00  navprobe locker open=1",
+        "continuation line", "2026-11-04 11:00:01  navprobe locker open=1", "2026-11-04 11:00:02  navprobe locker open=2",
+        "2026-11-04 11:00:03  navprobe locker open=1", "2026-11-04 11:00:04  navprobe other x", "2026-11-04 11:00:05  navprobe other x",
+        "2026-11-04 11:10:50  after stop", "2026-11-04 11:11:30  too late" };
+      var sel = RecLogPart.Select(lg, new DateTime(2026, 11, 4, 11, 0, 0), new DateTime(2026, 11, 4, 11, 10, 0));
+      Eq(8, sel.Count, "log part: window + dedup of identical navprobe locker lines");
+      Check(sel[0].EndsWith("in margin") && sel[sel.Count - 1].EndsWith("after stop") && !sel.Contains(lg[4]), "log part: first, last, duplicate dropped");
+      int kept; string lp = RecLogPart.Write(dir, 7, sel, out kept);
+      Check(lp != null && Path.GetFileName(lp) == "part_007.zip" && kept == 8, "log part: written as part_007.zip");
+      using (var z = ZipFile.OpenRead(lp)) Check(z.GetEntry("applog.txt") != null, "log part: applog.txt inside");
+      var big = new List<string>(); var rnd = new Random(1);
+      for (int i = 0; i < 200000; i++) big.Add("2026-11-04 11:00:00  " + rnd.Next().ToString() + rnd.Next().ToString() + rnd.Next().ToString());
+      int kept2; string bp = RecLogPart.Write(dir, 8, big, out kept2);
+      Check(bp != null && new FileInfo(bp).Length <= RecLogPart.MaxZipBytes && kept2 < big.Count && kept2 > 0, "log part: bounded to 2 MB, oldest dropped");
       // the upload queue: a part that fails stays and goes again; 404 stops and keeps the files
       var logs = new List<string>(); int calls = 0;
       var up = new RecUploader(id, () => "http://x", () => "c", s => { lock (logs) logs.Add(s); }) { RetryMs = 50 };
