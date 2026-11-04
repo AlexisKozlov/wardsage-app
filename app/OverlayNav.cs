@@ -17,6 +17,35 @@ namespace RealmForge {
     GateResult navLastGate;
     FilterView navFview; bool navFviewMade;
 
+    // ---- TEST build: the navigator's probe (src/NavProbe.cs, docs/specs/game-nav-research.md): the game's own UI state read-only, logged as «navprobe» once a second
+    // and at once when a line changes, with our own clicks / keys and the player's Esc / C / B presses, so the owner's hand-run can be compared with what the game said
+    readonly System.Windows.Forms.Timer npTimer = new System.Windows.Forms.Timer(); long npFullAt, npHotAt; readonly Dictionary<string, string> npLast = new Dictionary<string, string>(); bool npEsc, npC, npB, npLeft;
+    void NavProbeStart() {
+      npTimer.Interval = 250;
+      npTimer.Tick += (s, e) => { try { NavProbeTick(); } catch (Exception ex) { Log.Write("navprobe: " + ex.Message); } };
+      npTimer.Start();
+      Log.Write("navprobe: on (test build; read-only; one line per state a second and at every change)");
+    }
+    internal void NavProbeOwn(string what) { Log.Write("navprobe own " + what); }
+    void NavProbeTick() {
+      long now = NowMs();
+      // the player's keys (edges only)
+      bool esc = (W32.GetAsyncKeyState(0x1B) & 0x8000) != 0, c = (W32.GetAsyncKeyState(0x43) & 0x8000) != 0, b = (W32.GetAsyncKeyState(0x42) & 0x8000) != 0, lb = (W32.GetAsyncKeyState(0x01) & 0x8000) != 0;
+      if (esc && !npEsc) Log.Write("navprobe player key Escape" + (sending ? " (while our own input is on its way)" : ""));
+      if (c && !npC) Log.Write("navprobe player key C"); if (b && !npB) Log.Write("navprobe player key B"); if (lb && !npLeft) Log.Write("navprobe player mouse left");
+      npEsc = esc; npC = c; npB = b; npLeft = lb;
+      var lines = RFX.NavProbeLines();
+      if (lines == null) return;
+      bool full = now - npFullAt >= 1000; if (full) npFullAt = now;
+      if (now - npHotAt >= 30000) { npHotAt = now; var hk = RFX.NavProbeHotkeys(); if (hk != null) foreach (var h in hk) Log.Write("navprobe " + h); }
+      foreach (var ln in lines) {
+        string key = ln.Length > 14 ? ln.Substring(0, 14) : ln; string old;
+        bool same = npLast.TryGetValue(key, out old) && old == ln;
+        if (full || !same) Log.Write("navprobe " + (full && same ? "" : same ? "" : "CHANGE ") + ln);
+        npLast[key] = ln;
+      }
+    }
+
     void NavRestart() { navEquip.Restart(); navLab.Restart(); navReader.Reset(); }
 
     sealed class OverlayNavIo : INavIo {

@@ -403,6 +403,7 @@ namespace RealmForge {
       gate.FormFound = t => t == ClickTarget.CityInventory ? !RFX.InvFormMissing() : t == ClickTarget.FoundryButton && !RFX.FoundryFormMissing();
       gate.DangerLive = (form, field, w, h, u) => RFX.UiFieldReadNow(form, field, w, h, u);   // (a dangerous widget of a form over the click's one, where the game has it now)
       LoadMeter.Hook();   // (the memory passes and the forms checks counted in the load line)
+      if (Channel.IsTest) NavProbeStart();
       RFX.LiveLog = s => Log.Write(s);   // the live reads' lines (the lists' scroll binding ...) reach the app's log
       pilot = new AutoPilot(g);
       fpilot = new FilterPilot(fg);
@@ -3651,6 +3652,7 @@ namespace RealmForge {
     /// <summary>VK_ESCAPE down and up, off the UI thread, only while the game's window is in front (else no key, the owner stops: "covered").</summary>
     void SendEscapeKey(ClickOwner owner) {   // ONLY called by EscapeSend, TipEscapeSend and TickExplore (each after the gate's yes)
       sending = true; userIdle.OwnStart((uint)Environment.TickCount);
+      if (Channel.IsTest) NavProbeOwn("key Escape owner " + owner);
       IntPtr game = GameWindow();
       var t = new System.Threading.Thread(() => {
         try {
@@ -3686,6 +3688,7 @@ namespace RealmForge {
       else if (req.Target == ClickTarget.FoundryButton) { openClickAt = now; openClickWhat = "foundry"; foundryBuiltPid = GamePid(GameWindow()); }
       else if (req.Target == ClickTarget.EquipNav && fresh != null && fresh.Kind == ScreenKind.City) { openClickAt = now; openClickWhat = "heroes"; }
       RFX.UiButtonClicked(req.Target, req.Form, req.X, req.Y, req.W, req.H, req.U);   // (the test build reads it again a minute on: uibtn ... [minute])
+      if (Channel.IsTest) NavProbeOwn("click " + req.Target + " @" + (int)req.X + "," + (int)req.Y + (req.Form != null && req.Form != "" ? " " + req.Form : "") + " owner " + req.Owner);
       Send(a, sx, sy, req.Owner, req.Target, req.Form, freshOffers, unknownForms);
       // the form this click opens was never found: its search starts with the click (a slow PC needs every second of it)
       if ((req.Target == ClickTarget.CityInventory && RFX.InvFormMissing()) || (req.Target == ClickTarget.FoundryButton && RFX.FoundryFormMissing())) RFX.RequestFormSearch("opened by the pilot's click", 0);

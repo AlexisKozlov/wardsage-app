@@ -84,6 +84,7 @@ namespace RealmForge {
     // the grid filter: 0 not started, 1 filtering, 2 done (or given up); clearing a filter that hides the hero
     int filterPhase, funnelTries, factionTries, clearTries, classResets, doneCloses; bool classClicked, factionDone, classDone, forceClear;
     ulong lastGrid;
+    double dragScale = 1; int lastDragSign;   // (the game's drag gain learnt by overshoots; kept across plans, it is the game's)
     // row 1's top (client px) lies in [lo, hi]; has = known
     bool has; double lo, hi;
     double pitchF = 0.1856, cardF = 0.1625;   // the grid's layout now (big or small cards)
@@ -246,6 +247,12 @@ namespace RealmForge {
       double maxUp = bottom - card * 0.3 - 0.03 * H, maxDown = ch - 0.03 * H - (top + card * 0.3);
       double dy = Math.Max(-maxUp, Math.Min(maxDown, mid - cy));
       if (Math.Abs(dy) < MinDragPx) dy = dy < 0 ? -MinDragPx : MinDragPx;
+      // the game's grid follows the pointer by its own gain (live 2026-10-18: about twice as far): a drag that overshoots turns the next one back, each turn
+      // shortens the drags (x0.6) until they land - without it a hero 30 rows down in a grid with a gain far from 1 swings back and forth until the tries run out
+      int sg = dy < 0 ? -1 : 1;
+      if (lastDragSign != 0 && sg != lastDragSign) dragScale = Math.Max(0.15, dragScale * 0.6);
+      lastDragSign = sg;
+      if (dragScale < 1) { dy *= dragScale; if (Math.Abs(dy) < MinDragPx) dy = sg * MinDragPx; }
       double y0 = dy < 0 ? bottom - card * 0.3 : top + card * 0.3;
       drags++; total++; waitUntil = v.NowMs + Late(AfterDragMs);
       // the grid moved by about dy; the ends of the grid stop it, so the next click checks
@@ -373,6 +380,7 @@ namespace RealmForge {
     void Restart() {
       effect.Drop();
       waitUntil = pauseUntil = failedAt = pickAt = 0; seenHero = 0; clicks = drags = backs = tabs = misses = city = total = 0; bestDist = int.MaxValue; has = pending = false; State = "idle";
+      lastDragSign = 0;
       Why = ""; filterPhase = funnelTries = factionTries = clearTries = classResets = doneCloses = 0; classClicked = factionDone = classDone = forceClear = false; lastGrid = 0;
     }
 

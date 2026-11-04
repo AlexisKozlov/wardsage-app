@@ -1466,6 +1466,7 @@ static partial class CoreTests {
     SimLeftoverFilter();
     TipOverSlots();
     NavTests();
+    TwoHeroesTests();
     EquipStepTiming();
     // (9) a list is settled after two equal reads; a moving one (a glide after a drag, a slot filter) is not, an unreadable one neither
     {
@@ -2199,6 +2200,7 @@ static partial class CoreTests {
   }
 
   static int SimMain(string[] args) {
+    if (Environment.GetEnvironmentVariable("TWO_SEED") != null) { TwoHeroesOne(int.Parse(Environment.GetEnvironmentVariable("TWO_SEED")), Environment.GetEnvironmentVariable("TWO_NAV") != null, Environment.GetEnvironmentVariable("TWO_FAR") != null); return 0; }
     Layout.Use(TestLayout());
     int seeds = 500, from = 0; bool slowOnly = false, verbose = false, real = false, scan = false, timing = false, matrix = false; string list = null;
     for (int i = 1; i < args.Length; i++) {
