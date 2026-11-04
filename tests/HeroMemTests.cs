@@ -20,10 +20,15 @@ static partial class CoreTests {
       Check(s == "done" && gm.Shown == far && gm.Funnels == 2 && !gm.FilterOpen && !hp.FunnelUnseen, "memory exact, pixels blind: the pilot filters and closes the pop-up (" + s + ", " + gm.Funnels + " funnel presses, " + hp.Why + ")");
       Check(count(notes, "filter open: mem=yes pix=no") == 1, "memory yes / pixels no: ONE disagreement line for the whole episode (" + notes.Count + " notes: " + string.Join(" | ", notes.ToArray()) + ")");
     }
-    {   // the panel is built by the first press (nil before: Unknown, the pixels decide), exact after: the real order of the game
+    {   // the panel is built by the first press (before it: never built = closed, E1), exact after: the real order of the game
       var gm = mk(); gm.Blind = true; gm.MemMode = 2; var hp = new HeroPilot(g);
       string s = go(gm, hp);
-      Check(s == "done" && gm.Shown == far && gm.Funnels == 2, "flag unknown until the first press, then exact; pixels blind: done with two presses (" + s + ", " + gm.Funnels + ")");
+      Check(s == "done" && gm.Shown == far && gm.Funnels == 2, "flag No (never built) until the first press, then exact; pixels blind: done with two presses (" + s + ", " + gm.Funnels + ")");
+    }
+    {   // the prefab loads 800 ms after the press (slot false = Unknown, pending): no second press meanwhile, the pilot goes on once it answers
+      var gm = mk(); gm.MemMode = 3; var hp = new HeroPilot(g);
+      string s = go(gm, hp);
+      Check(s == "done" && gm.Shown == far && gm.Funnels == 2 && !gm.FilterOpen, "panel prefab loading: one press to open, done (" + s + ", " + gm.Funnels + ")");
     }
     {   // no memory at all (Unknown always) and blind pixels: the old protection, one press and a stop
       var gm = mk(); gm.Blind = true; gm.MemMode = 0; var hp = new HeroPilot(g);
@@ -80,6 +85,7 @@ static partial class CoreTests {
       NavNotes.Take();
     }
     GearMemTests();
+    MemGapTests();
   }
 
   // ---------------------------------------------------------------- the gear filter from the game's memory (docs/specs/2026-11-04-memory-first-state.md P2-P4, build 538 live log)
@@ -191,4 +197,61 @@ static partial class CoreTests {
       io.Open = true;
     }
   }
+
+  // ---------------------------------------------------------------- E1: Unknown -> No for lazily built panels (docs/specs/2026-11-04-memory-everywhere-plan.md §5)
+  static void MemGapTests() {
+    string why; MemGap gap;
+    Func<MemSlot, MemSlot, MemSlot, bool, bool, Mem3> hero = (panels, panel, active, on, standing) => RFX.DecideHeroFilter(new RFX.HeroFilterFacts { Panels = panels, Panel = panel, Active = active, ActiveOn = on, Standing = standing }, out why, out gap);
+    Check(hero(MemSlot.Table, MemSlot.Nil, MemSlot.Nil, false, true) == Mem3.No, "hero filter: form stands, m_Panels a table, panel absent = never built = No");
+    RFX.DecideHeroFilter(new RFX.HeroFilterFacts { Panels = MemSlot.Table, Panel = MemSlot.Nil }, out why, out gap);
+    Check(gap == MemGap.NeverBuilt && why.IndexOf("never built", StringComparison.Ordinal) >= 0, "hero filter: the reason says never built (" + why + ")");
+    Check(hero(MemSlot.Table, MemSlot.Table, MemSlot.Nil, false, true) == Mem3.No, "hero filter: panel built but m_IsActive nil (PanelBase.lua:10) = No");
+    Check(hero(MemSlot.Table, MemSlot.Nil, MemSlot.Nil, false, false) == Mem3.Unknown, "hero filter: input locked (a transition): panel absent stays Unknown");
+    RFX.DecideHeroFilter(new RFX.HeroFilterFacts { Panels = MemSlot.Table, Panel = MemSlot.Nil, Standing = false }, out why, out gap);
+    Check(gap == MemGap.Loading, "hero filter: input locked gap = Loading (bounded)");
+    Check(hero(MemSlot.Table, MemSlot.Bool, MemSlot.Nil, false, true) == Mem3.Unknown, "hero filter: prefab loading (slot false) = Unknown");
+    RFX.DecideHeroFilter(new RFX.HeroFilterFacts { Panels = MemSlot.Table, Panel = MemSlot.Bool }, out why, out gap);
+    Check(gap == MemGap.Loading, "hero filter: prefab loading gap = Loading");
+    Check(hero(MemSlot.Nil, MemSlot.Nil, MemSlot.Nil, false, true) == Mem3.Unknown, "hero filter: m_Panels nil = Unknown (the screen is being built)");
+    RFX.DecideHeroFilter(new RFX.HeroFilterFacts { Panels = MemSlot.Nil }, out why, out gap);
+    Check(gap == MemGap.TableNil, "hero filter: m_Panels nil gap = TableNil");
+    Check(hero(MemSlot.Table, MemSlot.Table, MemSlot.Bool, true, true) == Mem3.Yes && hero(MemSlot.Table, MemSlot.Table, MemSlot.Bool, false, true) == Mem3.No, "hero filter: the flag itself is exact");
+
+    Func<GearFacts0, Mem3> gear = f => RFX.DecideGear(f.F).Open;
+    Func<MemSlot, MemSlot, MemSlot, int, bool, GearFacts0> gf = (ep, w, show, tab, standing) => new GearFacts0 { F = new RFX.GearFacts { Panels = MemSlot.Table, EquipPanel = ep, Widget = w, Show = show, Tab = tab, Standing = standing } };
+    Check(gear(gf(MemSlot.Nil, MemSlot.Nil, MemSlot.Nil, 3, true)) == Mem3.No, "gear filter: tab 3, EquipPanel absent = No");
+    Check(gear(gf(MemSlot.Table, MemSlot.Nil, MemSlot.Nil, 3, true)) == Mem3.No, "gear filter: filter widget absent (built by the first bar press) = No");
+    Check(gear(gf(MemSlot.Table, MemSlot.Table, MemSlot.Nil, 3, true)) == Mem3.No, "gear filter: m_bShow nil = No");
+    Check(gear(gf(MemSlot.Table, MemSlot.Table, MemSlot.Bool, 1, true)) == Mem3.No, "gear filter: tab 1 = No whatever the widget holds");
+    var gt = RFX.DecideGear(new RFX.GearFacts { Panels = MemSlot.Table, EquipPanel = MemSlot.Table, Widget = MemSlot.Table, Show = MemSlot.Bool, ShowOn = true, Tab = 1 });
+    Check(gt.Open == Mem3.No && gt.Side == Mem3.No && gt.SetPanel == Mem3.No, "gear filter: tab 1 closes side and sets too");
+    Check(gear(gf(MemSlot.Nil, MemSlot.Nil, MemSlot.Nil, 3, false)) == Mem3.Unknown, "gear filter: input locked = Unknown");
+    var gl = RFX.DecideGear(new RFX.GearFacts { Panels = MemSlot.Table, EquipPanel = MemSlot.Table, Widget = MemSlot.Bool, Tab = 3 });
+    Check(gl.Open == Mem3.Unknown && gl.Gap == MemGap.Loading, "gear filter: widget slot false (prefab loading) = Unknown, Loading");
+    var gn = RFX.DecideGear(new RFX.GearFacts { Panels = MemSlot.Nil, Tab = 3 });
+    Check(gn.Open == Mem3.Unknown && gn.Gap == MemGap.TableNil, "gear filter: m_Panels nil = Unknown, TableNil");
+    var gy = RFX.DecideGear(new RFX.GearFacts { Panels = MemSlot.Table, EquipPanel = MemSlot.Table, Widget = MemSlot.Table, Show = MemSlot.Bool, ShowOn = true, Tab = 3, States = new long[] { 1, 0, 0 } });
+    Check(gy.Open == Mem3.Yes && gy.Side == Mem3.Yes && gy.SetPanel == Mem3.Yes, "gear filter: open with the sets panel (states 1,0,0)");
+
+    {   // the latch: Unknown stays pending for 1.5 s from the first sight, then the fallback decides; a different answer starts it over
+      var l = new MemGapLatch();
+      Check(l.Pending(MemGap.Loading, 1000) && l.Pending(MemGap.Loading, 2499) && !l.Pending(MemGap.Loading, 2500) && !l.Pending(MemGap.Loading, 9000), "latch: pending 1.5 s, then not (TableNil / Loading)");
+      Check(!l.Pending(MemGap.None, 9100) && l.Pending(MemGap.TableNil, 9200) && !l.Pending(MemGap.NeverBuilt, 9300), "latch: an answer resets it, NeverBuilt is never pending");
+    }
+    {   // the pilots hold still while pending, then act on the fallback
+      var hg = new HeroGeometry(); var hp = new HeroPilot(hg);
+      var tags = new Dictionary<long, long[]>(); long far = 900100;
+      var v = new HeroView { NowMs = 0, Foreground = true, W = 1920, H = 1009, ClientH = 1009, Plan = far, Hero = 1, Heroes = new long[] { 1, 2, 3 }, FilterMem = Mem3.Unknown, FilterPending = true, HeroClass = 3, HeroCamps = new long[] { 101 }, FactionList = FakeHeroGame.FactionList, ClassCount = 7 };
+      var a = hp.Step(v);
+      Check(a == null || a.Kind != AutoKind.Click || Math.Abs(a.X - hg.FunnelX * 1009) > 20, "hero pilot: panel loading (pending): the funnel is not pressed");
+      var fg = new FilterGeometry(); var fp = new FilterPilot(fg);
+      var fv = new FilterView { NowMs = 0, Foreground = true, W = 1920, H = 1009, Item = 5, Wanted = true, SetId = 721500, StatId = 13, SetIndex = 0, StatIndex = 1, Suits = new long[0], MainAttrs = new long[0], SubOrder = new long[0], SubAttrs = new long[0], PanelMem = Mem3.Unknown, MemPending = true };
+      var fa = fp.Step(fv);
+      Check(fa == null || fa.Kind != AutoKind.Click, "gear filter pilot: panel loading (pending): the filter bar is not pressed");
+      var fv2 = new FilterView { NowMs = 2000, Foreground = true, W = 1920, H = 1009, Item = 5, Wanted = true, SetId = 721500, StatId = 13, SetIndex = 0, StatIndex = 1, Suits = new long[0], MainAttrs = new long[0], SubOrder = new long[0], SubAttrs = new long[0], PanelMem = Mem3.Unknown, MemPending = false };
+      var fa2 = fp.Step(fv2);
+      Check(fa2 != null && fa2.Kind == AutoKind.Click, "gear filter pilot: pending over, memory still Unknown: the pictures decide, the bar is pressed");
+    }
+  }
+  sealed class GearFacts0 { public RFX.GearFacts F; }
 }

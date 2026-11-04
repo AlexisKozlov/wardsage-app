@@ -56,6 +56,8 @@ namespace RealmForge {
     public bool FilterOpen, ClassChosen;
     /// <summary>The pop-up as the game's script holds it (HeroScreen.FilterMem): Yes / No decide, Unknown (panel not built, flag nil) leaves the pixels' FilterOpen.</summary>
     public Mem3 FilterMem = Mem3.Unknown;
+    /// <summary>FilterMem is Unknown only because the panel prefab loads / m_Panels is nil (HeroScreen.FilterPending, at most 1.5 s): the funnel is not pressed meanwhile.</summary>
+    public bool FilterPending;
     /// <summary>What the host puts into FilterMem: the screen read's verdict, Unknown without one.</summary>
     public static Mem3 MemOf(HeroScreen s) { return s == null ? Mem3.Unknown : s.FilterMem; }
     /// <summary>Set by the pilot once FilterOpen has been settled against FilterMem for this view.</summary>
@@ -377,6 +379,7 @@ namespace RealmForge {
     /// <summary>The funnel is a toggle: one press, then the pop-up has to show (pixels) within FunnelSeenMs. Never a second press on a pop-up not seen (it would shut the one the first press opened);
     /// not seen = the pilot cannot go on (notfound, the navigator resets: the game clears the filter when the hero screen is opened again).</summary>
     AutoAction OpenFilter(HeroView v, double H) {
+      if (!funnelPressed && v.FilterPending && v.FilterMem == Mem3.Unknown) return AutoAction.Nothing;   // (the screen is still being built: a press now could be lost or toggle the half-built panel)
       if (funnelPressed) {
         if (v.NowMs - funnelAt < Late(FunnelSeenMs)) return AutoAction.Nothing;
         funnelPressed = false;

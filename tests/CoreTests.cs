@@ -4606,10 +4606,19 @@ static partial class CoreTests {
     /// <summary>The game's flag for the pop-up (Charactor_FilterOrder.m_IsActive) as the host reads it: 0 = not readable (Unknown), 1 = exact, 2 = Unknown until the first funnel press (the panel is built then), exact after.
     /// FadeMs: the pixels show the pop-up this long after it closed (the fade) while the flag is already off. MemLagMs: the flag turns on this long after the press (the game answers late).</summary>
     public int MemMode, DropFunnel; public long FadeMs, MemLagMs; public bool Built; public long ToggledAt = -1;
+    /// <summary>MemMode 2: the panel is built by the first funnel press (before it the slot is nil: never built = No, E1); MemMode 3: as 2 and its prefab then loads LoadMs (the slot holds false = Unknown, PendingNow for 1.5 s at most).
+    /// The decision is the host's own (RFX.DecideHeroFilter).</summary>
+    public long LoadMs = 800; public bool PendingNow; readonly MemGapLatch latch = new MemGapLatch();
     public Mem3 MemAt(long t) {
-      if (MemMode == 0 || (MemMode == 2 && !Built)) return Mem3.Unknown;
+      if (MemMode == 0) { PendingNow = false; return Mem3.Unknown; }
       bool on = FilterOpen && (MemLagMs <= 0 || ToggledAt < 0 || t >= ToggledAt + MemLagMs);
-      return on ? Mem3.Yes : Mem3.No;
+      var f = new RFX.HeroFilterFacts { Panels = MemSlot.Table };
+      if (MemMode >= 2 && !Built) f.Panel = MemSlot.Nil;
+      else if (MemMode == 3 && ToggledAt >= 0 && t < ToggledAt + LoadMs) f.Panel = MemSlot.Bool;
+      else { f.Panel = MemSlot.Table; f.Active = MemSlot.Bool; f.ActiveOn = on; }
+      string why; MemGap gap; var m = RFX.DecideHeroFilter(f, out why, out gap);
+      PendingNow = latch.Pending(gap, t);
+      return m;
     }
     public List<double[]> Pts = new List<double[]>();
     public bool DeadWhileFiltered;   // the grid takes no card click while a class / faction filter is on (live 1.6.66.452: the clicks brought up no hero)
@@ -4652,7 +4661,7 @@ static partial class CoreTests {
       game.Now = t;
       var v = new HeroView { NowMs = t, Foreground = true, W = 1920, H = 1009, Plan = plan, Hero = game.Shown, Tab = game.Tab,
         Part = game.Part, Heroes = game.Part >= 0 ? game.Heroes : game.Heroes, HeroesButton = game.City, ClientH = 1009, SmallCards = game.Small,
-        FilterMem = game.MemAt(t), FilterOpen = (game.FilterOpen || (game.FadeMs > 0 && t >= game.ClosedAt && t < game.ClosedAt + game.FadeMs)) && !game.Blind, ChosenCamps = game.Camps.ToArray(), ClassChosen = game.Class > 0, GridPtr = game.Grid,
+        FilterMem = game.MemAt(t), FilterPending = game.PendingNow, FilterOpen = (game.FilterOpen || (game.FadeMs > 0 && t >= game.ClosedAt && t < game.ClosedAt + game.FadeMs)) && !game.Blind, ChosenCamps = game.Camps.ToArray(), ClassChosen = game.Class > 0, GridPtr = game.Grid,
         FactionList = game.Tags != null ? FakeHeroGame.FactionList : null, ClassCount = 7 };
       if (tags != null) { v.HeroClass = tags[0]; v.HeroCamps = new long[tags.Length - 1]; Array.Copy(tags, 1, v.HeroCamps, 0, tags.Length - 1); }
       last = v;

@@ -2968,11 +2968,29 @@ namespace RealmForge {
   /// <summary>A state read from the game's memory: it is told (Yes / No) or it is not (Unknown: a nil table, a panel still loading). Unknown is never closed.</summary>
   public enum Mem3 { No = 0, Yes = 1, Unknown = 2 }
 
+  /// <summary>Why a memory read had no answer (docs/specs/2026-11-04-memory-everywhere-plan.md §5): None = answered; NeverBuilt = the form stands, its panel table is readable and the panel / widget / flag
+  /// simply does not exist yet (the game builds them lazily: a window that is not there cannot be open); Loading = the panel's prefab is loading (the table slot is false) or the input is locked; TableNil = m_Panels is nil (the screen is being built).</summary>
+  public enum MemSlot { Nil = 0, Bool = 1, Table = 2, Other = 3 }
+  public enum MemGap { None = 0, NeverBuilt = 1, Loading = 2, TableNil = 3 }
+
+  /// <summary>Keeps a Loading / TableNil gap "pending" for at most PendingMs from the first read of it; a different answer starts it over. After that the gap is no longer waited for: the fallback (the pixels) decides.</summary>
+  public sealed class MemGapLatch {
+    public const long PendingMs = 1500;
+    long since = long.MinValue;
+    public bool Pending(MemGap gap, long nowMs) {
+      if (gap != MemGap.Loading && gap != MemGap.TableNil) { since = long.MinValue; return false; }
+      if (since == long.MinValue || nowMs < since) since = nowMs;
+      return nowMs - since < PendingMs;
+    }
+  }
+
   /// <summary>The gear filter's state from the game's memory (docs/specs/2026-11-04-memory-first-state.md P2-P4): the pop-up (m_bShow), the side panel (any m_ButtonStates[1..3] above 0) and the sets panel (m_ButtonStates[1] = 1). Every field Unknown
   /// until the panel table is built and readable (EquipPanel absent on hero tab 1 = Unknown too, never No).</summary>
   public sealed class GearMem {
     public Mem3 Open = Mem3.Unknown, Side = Mem3.Unknown, SetPanel = Mem3.Unknown;
     public string Why = "unread";
+    public MemGap Gap = MemGap.None;   // why Open is Unknown (None when it answers)
+    public bool Pending;               // Gap is Loading / TableNil and younger than MemGapLatch.PendingMs: the pilot waits, it does not click
     public override string ToString() { return "open=" + Open + " side=" + Side + " set=" + SetPanel; }
   }
 
@@ -2989,6 +3007,9 @@ namespace RealmForge {
     /// <summary>The filter pop-up as the game's script holds it: Form_CharactorMain.m_Panels.Charactor_FilterOrder.m_IsActive (Yes / No). Unknown = the panel
     /// is not built yet or the flag is not set (nil / the prefab still loading): never read as closed, the pixels decide then.</summary>
     public Mem3 FilterMem = Mem3.Unknown;
+    public MemGap FilterGap = MemGap.None;
+    /// <summary>FilterMem is Unknown only because the panel is loading / m_Panels is nil, for less than MemGapLatch.PendingMs: the pilot waits.</summary>
+    public bool FilterPending;
     /// <summary>The gear filter pop-up and its side panel as the game's script holds them (Panel_EquipFilterWidget_Charactor: m_bShow, m_ButtonStates[1..3]); Unknown when absent / unreadable, never closed.</summary>
     public GearMem Gear = new GearMem();
     public long[] FactionList;   // its faction column, top down (0 = «Все"), null until it was opened once
@@ -3249,7 +3270,7 @@ namespace RealmForge {
       h.SmallCards = Field(a.Form, "m_IsUseSmallCard", out v, out tt) && tt == T_BOOL && v != 0;
       ulong pd; int pdt;
       if (Field(a.Form, "m_PanelDatas", out pd, out pdt) && pdt == T_TABLE && IntKey(pd, 3, out v, out tt) && tt == T_INT) h.Part = (int)(long)v;
-      h.Gear = ReadGearMem(a.Form);
+      h.Gear = ReadGearMem(a.Form); h.Gear.Pending = gearGapLatch.Pending(h.Gear.Gap, Environment.TickCount);
       long artGoal = ArtGoalUid;
       if (artGoal > 0) { var lt0 = live; ReadHeroArt(a.Form, lt0 != null ? lt0.ArtOwner : 0, ArtGoalHero, artGoal, h, prev); }
       ulong proxy, data; int t1, t2;
@@ -3270,47 +3291,115 @@ namespace RealmForge {
     /// <summary>Is the hero grid's filter pop-up open, from the game's script: m_Panels.Charactor_FilterOrder.m_IsActive (PanelBase:SetActive, set at once: the panel has no
     /// animator timer). The panel table missing or a bool false (the prefab is loading) or the flag nil / not a bool = Unknown, never No. <paramref name="why"/> says what was
     /// read, for the probe's line.</summary>
-    public static Mem3 ReadHeroFilterMem(ulong form, out string why) {
-      why = "no form";
-      if (form == 0) return Mem3.Unknown;
-      ulong panels, p, v; int t1, t2, t3;
-      if (!Field(form, "m_Panels", out panels, out t1) || t1 != T_TABLE) { why = "m_Panels " + (t1 == 0 ? "nil" : "tt" + t1.ToString("X")); return Mem3.Unknown; }
-      bool ok = Field(panels, "Charactor_FilterOrder", out p, out t2);
-      if (!ok || t2 == T_NIL) { why = "panel absent"; return Mem3.Unknown; }
-      if (t2 != T_TABLE) { why = t2 == T_BOOL ? "panel loading (false)" : "panel tt" + t2.ToString("X"); return Mem3.Unknown; }
-      if (!Field(p, "m_IsActive", out v, out t3) || t3 != T_BOOL) { why = "m_IsActive " + (t3 == 0 ? "nil" : "tt" + t3.ToString("X")); return Mem3.Unknown; }
-      bool on = (v & 0xFFFFFFFF) != 0; why = "m_IsActive " + (on ? "true" : "false");
-      return on ? Mem3.Yes : Mem3.No;
+    public static Mem3 ReadHeroFilterMem(ulong form, out string why) { MemGap gap; return ReadHeroFilterMem(form, out why, out gap); }
+    public static Mem3 ReadHeroFilterMem(ulong form, out string why, out MemGap gap) {
+      if (form == 0) { why = "no form"; gap = MemGap.None; return Mem3.Unknown; }
+      var f = new HeroFilterFacts();
+      ulong panels, p, v; int t1, t2 = 0, t3 = 0;
+      f.Panels = SlotOf(Field(form, "m_Panels", out panels, out t1), t1);
+      if (f.Panels == MemSlot.Table) {
+        f.Panel = SlotOf(Field(panels, "Charactor_FilterOrder", out p, out t2), t2);
+        if (f.Panel == MemSlot.Table) { f.Active = SlotOf(Field(p, "m_IsActive", out v, out t3), t3); f.ActiveOn = f.Active == MemSlot.Bool && (v & 0xFFFFFFFF) != 0; }
+      }
+      f.Standing = f.Panels == MemSlot.Table && (f.Panel == MemSlot.Nil || (f.Panel == MemSlot.Table && f.Active == MemSlot.Nil)) ? StandingNow() : true;
+      return DecideHeroFilter(f, out why, out gap);
     }
+    static MemSlot SlotOf(bool ok, int tt) { return !ok && tt == 0 ? MemSlot.Nil : tt == T_NIL ? MemSlot.Nil : tt == T_BOOL ? MemSlot.Bool : tt == T_TABLE ? MemSlot.Table : MemSlot.Other; }
+
+    /// <summary>What a read of the hero filter's panel found, by slot kind (the pure decision below is shared with the simulator).</summary>
+    public sealed class HeroFilterFacts { public MemSlot Panels, Panel, Active; public bool ActiveOn; public bool Standing = true; }
+
+    /// <summary>The pop-up's state from what was found. A panel (or its flag) that does not exist while the form stands (shown, input open) and m_Panels is a table is "never built" = No: the game builds the panel at
+    /// the first funnel press (PanelBase.lua:10 leaves m_IsActive nil till then). A prefab still loading (false) and m_Panels nil stay Unknown (gap Loading / TableNil, bounded by MemGapLatch).</summary>
+    public static Mem3 DecideHeroFilter(HeroFilterFacts f, out string why, out MemGap gap) {
+      gap = MemGap.None; why = "";
+      if (f.Panels != MemSlot.Table) { why = "m_Panels " + (f.Panels == MemSlot.Nil ? "nil" : "not a table"); if (f.Panels == MemSlot.Nil) gap = MemGap.TableNil; return Mem3.Unknown; }
+      if (f.Panel == MemSlot.Nil) return NeverBuilt(f.Standing, ref why, "panel absent", ref gap);
+      if (f.Panel != MemSlot.Table) { why = f.Panel == MemSlot.Bool ? "panel loading (false)" : "panel not a table"; if (f.Panel == MemSlot.Bool) gap = MemGap.Loading; return Mem3.Unknown; }
+      if (f.Active == MemSlot.Nil) return NeverBuilt(f.Standing, ref why, "m_IsActive nil", ref gap);
+      if (f.Active != MemSlot.Bool) { why = "m_IsActive not a bool"; return Mem3.Unknown; }
+      why = "m_IsActive " + (f.ActiveOn ? "true" : "false");
+      return f.ActiveOn ? Mem3.Yes : Mem3.No;
+    }
+
+    /// <summary>A not-yet-built panel: No when the screen stands (input open, no transition), else Unknown with gap Loading.</summary>
+    static Mem3 NeverBuilt(bool standing, ref string why, string what, ref MemGap gap) {
+      why = "";
+      if (standing) { why = what + " (never built)"; gap = MemGap.NeverBuilt; return Mem3.No; }
+      why = what + " (input locked)"; gap = MemGap.Loading; return Mem3.Unknown;
+    }
+    static bool StandingNow() { try { return NavInputOpen() ?? true; } catch (Exception) { return true; } }
 
     /// <summary>The gear filter widget of the hero screen: m_Panels.EquipPanel.m_Panel_EquipFilterWidget_Charactor. m_bShow bool = pop-up open / closed (Show() / Hide()); m_ButtonStates[1..3] ints (1 = that side
     /// content is open: sets, main stat, sub stat). Panel / widget absent, not a table or the flag not a bool = Unknown. A closed pop-up has no side panel.</summary>
     public static GearMem ReadGearMem(ulong form) {
-      var g = new GearMem();
-      if (form == 0) { g.Why = "no form"; return g; }
+      if (form == 0) return new GearMem { Why = "no form" };
+      var f = new GearFacts();
       ulong panels, ep, w, v, bs; int t1, t2, tt, bt;
-      if (!Field(form, "m_Panels", out panels, out t1) || t1 != T_TABLE) { g.Why = "m_Panels unreadable"; return g; }
-      if (!Field(panels, "EquipPanel", out ep, out t2) || t2 != T_TABLE) { g.Why = "EquipPanel " + (t2 == 0 ? "absent" : "tt" + t2.ToString("X")); return g; }
-      if (!Field(ep, "m_Panel_EquipFilterWidget_Charactor", out w, out t2) || t2 != T_TABLE) { g.Why = "filter widget " + (t2 == 0 ? "absent" : "tt" + t2.ToString("X")); return g; }
-      if (!Field(w, "m_bShow", out v, out tt) || tt != T_BOOL) { g.Why = "m_bShow " + (tt == 0 ? "nil" : "tt" + tt.ToString("X")); return g; }
-      bool show = (v & 0xFFFFFFFF) != 0;
-      g.Open = show ? Mem3.Yes : Mem3.No; g.Why = "m_bShow " + (show ? "true" : "false");
-      if (!show) { g.Side = Mem3.No; g.SetPanel = Mem3.No; return g; }
-      if (!Field(w, "m_ButtonStates", out bs, out bt) || bt != T_TABLE) return g;
-      bool any = false, all = true; long s1 = -1;
-      for (int i = 1; i <= 3; i++) {
-        if (!IntKey(bs, i, out v, out tt) || tt != T_INT) { all = false; continue; }
-        if ((long)v > 0) any = true;
-        if (i == 1) s1 = (long)v;
+      f.Panels = SlotOf(Field(form, "m_Panels", out panels, out t1), t1);
+      if (f.Panels == MemSlot.Table) {
+        ulong tv; int ttab; if (Field(form, "m_LastType", out tv, out ttab) && ttab == T_INT) f.Tab = (int)(long)tv;
+        f.EquipPanel = SlotOf(Field(panels, "EquipPanel", out ep, out t2), t2);
+        if (f.EquipPanel == MemSlot.Table) {
+          f.Widget = SlotOf(Field(ep, "m_Panel_EquipFilterWidget_Charactor", out w, out t2), t2);
+          if (f.Widget == MemSlot.Table) {
+            f.Show = SlotOf(Field(w, "m_bShow", out v, out tt), tt); f.ShowOn = f.Show == MemSlot.Bool && (v & 0xFFFFFFFF) != 0;
+            if (f.ShowOn && Field(w, "m_ButtonStates", out bs, out bt) && bt == T_TABLE) {
+              f.States = new long[3];
+              for (int i = 1; i <= 3; i++) f.States[i - 1] = IntKey(bs, i, out v, out tt) && tt == T_INT ? (long)v : long.MinValue;
+            }
+          }
+        }
+        bool lazy = f.Tab != 3 && f.Tab >= 0 || f.EquipPanel == MemSlot.Nil || (f.EquipPanel == MemSlot.Table && (f.Widget == MemSlot.Nil || (f.Widget == MemSlot.Table && f.Show == MemSlot.Nil)));
+        if (lazy) f.Standing = StandingNow();
+      }
+      return DecideGear(f);
+    }
+
+    /// <summary>What a read of the gear filter found, by slot kind (Tab = m_LastType or -1; States = m_ButtonStates[1..3], long.MinValue unreadable, null when the table is unreadable or the pop-up is closed).
+    /// The decision below is pure, shared with the simulator.</summary>
+    public sealed class GearFacts { public MemSlot Panels, EquipPanel, Widget, Show; public bool ShowOn; public int Tab = -1; public long[] States; public bool Standing = true; }
+
+    /// <summary>The gear filter from what was found. Tab other than 3: the gear panel is hidden, closed. The panel / widget / flag missing while m_Panels is a table = never built = closed (No) when the screen stands
+    /// (shown, input open), else Unknown (Loading). A slot holding false = the prefab loads: Unknown (Loading). m_Panels nil: Unknown (TableNil).</summary>
+    public static GearMem DecideGear(GearFacts f) {
+      var g = new GearMem();
+      if (f.Panels != MemSlot.Table) { g.Why = "m_Panels unreadable"; if (f.Panels == MemSlot.Nil) g.Gap = MemGap.TableNil; return g; }
+      if (f.Tab >= 0 && f.Tab != 3) {
+        if (!f.Standing) { g.Why = "tab " + f.Tab + " (input locked)"; g.Gap = MemGap.Loading; return g; }
+        return GearClosed(g, "tab " + f.Tab + " (gear panel hidden)", MemGap.None);
+      }
+      if (f.EquipPanel != MemSlot.Table) return GearGap(g, f, f.EquipPanel, "EquipPanel");
+      if (f.Widget != MemSlot.Table) return GearGap(g, f, f.Widget, "filter widget");
+      if (f.Show != MemSlot.Bool) return GearGap(g, f, f.Show, "m_bShow");
+      g.Open = f.ShowOn ? Mem3.Yes : Mem3.No; g.Why = "m_bShow " + (f.ShowOn ? "true" : "false");
+      if (!f.ShowOn) { g.Side = Mem3.No; g.SetPanel = Mem3.No; return g; }
+      if (f.States == null) return g;
+      bool any = false, all = true; long s1 = long.MinValue;
+      for (int i = 0; i < 3; i++) {
+        if (f.States[i] == long.MinValue) { all = false; continue; }
+        if (f.States[i] > 0) any = true;
+        if (i == 0) s1 = f.States[0];
       }
       g.Side = any ? Mem3.Yes : all ? Mem3.No : Mem3.Unknown;
       g.SetPanel = s1 > 0 ? Mem3.Yes : s1 == 0 ? Mem3.No : Mem3.Unknown;
       return g;
     }
+    static GearMem GearGap(GearMem g, GearFacts f, MemSlot slot, string what) {
+      if (slot == MemSlot.Nil) {
+        if (f.Standing) return GearClosed(g, what + " absent (never built)", MemGap.NeverBuilt);
+        g.Why = what + " absent (input locked)"; g.Gap = MemGap.Loading; return g;
+      }
+      g.Why = what + (slot == MemSlot.Bool ? " loading (false)" : " not a table / bool"); if (slot == MemSlot.Bool && what != "m_bShow") g.Gap = MemGap.Loading;
+      return g;
+    }
+    static GearMem GearClosed(GearMem g, string why, MemGap gap) {
+      g.Open = Mem3.No; g.Side = Mem3.No; g.SetPanel = Mem3.No; g.Why = why; g.Gap = gap; return g;
+    }
     /// <summary>A fresh read of the gear filter (the host's per-tick view): Unknown while the hero screen's form is not shown.</summary>
     public static GearMem ReadGearMemNow(EquipAddrs a) {
       if (a == null || a.Form == 0 || !FormActive(a.Form)) return new GearMem { Why = "form not shown" };
-      try { return ReadGearMem(a.Form); } catch (Exception) { return new GearMem { Why = "exception" }; }
+      try { var g = ReadGearMem(a.Form); g.Pending = gearGapLatch.Pending(g.Gap, Environment.TickCount); return g; } catch (Exception) { return new GearMem { Why = "exception" }; }
     }
 
     /// <summary>The grid's filter choice from m_PanelDatas[6] (Hero_Filter): the factions chosen (empty = all) and whether a class is chosen (which one is not readable: game config objects).</summary>
@@ -3331,8 +3420,10 @@ namespace RealmForge {
       return true;
     }
 
+    static readonly MemGapLatch heroGapLatch = new MemGapLatch(), gearGapLatch = new MemGapLatch();
     static void ReadHeroFilter(EquipAddrs a, HeroScreen h) {
-      string memWhy; h.FilterMem = ReadHeroFilterMem(a.Form, out memWhy);
+      string memWhy; h.FilterMem = ReadHeroFilterMem(a.Form, out memWhy, out h.FilterGap);
+      h.FilterPending = heroGapLatch.Pending(h.FilterGap, Environment.TickCount);
       long[] camps; bool cc;
       ReadHeroChoice(a.Form, out camps, out cc); h.ChosenCamps = camps; h.ClassChosen = cc;
       ulong panels, p; int t1, t2;

@@ -60,6 +60,8 @@ namespace RealmForge {
     public bool PanelOpen, SidePanelOpen, SetPanelOpen;   // from the screen (the pictures; the pilot replaces them with the game's flags where those are known: FilterPilot.Resolve)
     /// <summary>The same three from the game's memory (EquipScan.ReadGearMem): Yes / No are exact, Unknown = not readable (the pictures stand). The pop-up, its side panel, the sets panel (m_ButtonStates[1] = Suit, the set-vs-stats test).</summary>
     public Mem3 PanelMem = Mem3.Unknown, SideMem = Mem3.Unknown, SetMem = Mem3.Unknown;
+    /// <summary>PanelMem is Unknown only because the panel prefab loads / m_Panels is nil (GearMem.Pending, at most 1.5 s): the filter bar is not pressed meanwhile.</summary>
+    public bool MemPending;
     public bool Resolved;
   }
 
@@ -209,6 +211,7 @@ namespace RealmForge {
 
       double W = v.W, H = v.H;
       if (!v.PanelOpen) {
+        if (v.PanelMem == Mem3.Unknown && v.MemPending && !failed) return AutoAction.Nothing;   // (the screen is still being built)
         if (v.PanelMem == Mem3.Unknown && panelSeenAt != long.MinValue && v.NowMs - panelSeenAt < PanelGraceMs && !failed) return AutoAction.Nothing;   // (it was just seen open: the read flickers, no toggling click; a memory flag does not flicker)
         // the bar is a toggle: pressed once, the game's flag is awaited (it leads the pictures) before another press
         if (v.PanelMem != Mem3.Unknown && v.NowMs < openWaitUntil && !failed) return AutoAction.Nothing;

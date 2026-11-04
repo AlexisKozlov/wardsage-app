@@ -1242,7 +1242,7 @@ namespace RealmForge {
       if (hs == null || !hs.FormOk || hs.Hero == 0) { hpilot.FilterDirty = false; return; }
       int fp, gp; W32.GetWindowThreadProcessId(W32.GetForegroundWindow(), out fp); W32.GetWindowThreadProcessId(hwnd, out gp);
       var hv = new HeroView { NowMs = NowMs(), Foreground = fp == gp, UserBusy = (W32.GetAsyncKeyState(0x01) & 0x8000) != 0 || (W32.GetAsyncKeyState(0x02) & 0x8000) != 0 || NowMs() - lastMoveMs < 700, W = cr.R, H = Ui.Unit(cr.R, cr.B), ClientH = cr.B,
-        FilterOpen = fp == gp && HeroFilterSeen(o, cr.R, cr.B, HeroView.MemOf(hs)), FilterMem = HeroView.MemOf(hs), ClassChosen = hs.ClassChosen, ChosenCamps = hs.ChosenCamps };
+        FilterOpen = fp == gp && HeroFilterSeen(o, cr.R, cr.B, HeroView.MemOf(hs)), FilterMem = HeroView.MemOf(hs), FilterPending = hs.FilterPending, ClassChosen = hs.ClassChosen, ChosenCamps = hs.ChosenCamps };
       var a = hpilot.Cleanup(hv);
       if (a == null || a.Kind != AutoKind.Click) return;
       int x = o.X + (int)Math.Round(a.X), y = o.Y + (int)Math.Round(a.Y);
@@ -2222,7 +2222,7 @@ namespace RealmForge {
           Plan = runHero, Hero = heroScreen.FormOk ? heroScreen.Hero : 0, Tab = ArtPhase ? HeroGeometry.GearTab : heroScreen.Tab, Part = heroScreen.Part, SmallCards = heroScreen.SmallCards,
           Heroes = heroScreen.Heroes,
           HeroesButton = heroScreen.Hero == 0 && v.Foreground && HeroesButtonSeen(o, cr.R, cr.B),
-          FilterOpen = v.Foreground && HeroFilterSeen(o, cr.R, cr.B, HeroView.MemOf(heroScreen)), FilterMem = HeroView.MemOf(heroScreen), ClassChosen = heroScreen.ClassChosen, FactionList = heroScreen.FactionList,
+          FilterOpen = v.Foreground && HeroFilterSeen(o, cr.R, cr.B, HeroView.MemOf(heroScreen)), FilterMem = HeroView.MemOf(heroScreen), FilterPending = heroScreen.FilterPending, ClassChosen = heroScreen.ClassChosen, FactionList = heroScreen.FactionList,
           ChosenCamps = heroScreen.ChosenCamps, ClassCount = heroScreen.ClassCount, GridPtr = heroScreen.GridPtr
         };
         long[] tags = HeroTags(runHero);
@@ -4356,7 +4356,7 @@ namespace RealmForge {
       }
       long owner = RFX.ReadOwner(addrs, filterItem);
       fv.OnOtherHero = owner > 0 && hintHero > 0 && owner != hintHero;
-      var gm = GearMemNow(); fv.PanelMem = gm.Open; fv.SideMem = gm.Side; fv.SetMem = gm.SetPanel;   // (the pilot settles the pictures against the flags: FilterPilot.Resolve)
+      var gm = GearMemNow(); fv.PanelMem = gm.Open; fv.SideMem = gm.Side; fv.SetMem = gm.SetPanel; fv.MemPending = gm.Pending;   // (the pilot settles the pictures against the flags: FilterPilot.Resolve)
       if (front) {
         double W = cr.R, H = cr.B, U = Ui.Unit(W, H);
         bool px; GearMain(o, W, H, U, out px); fv.PanelOpen = px;   // (the picture; FilterPilot.Resolve puts the flag over it and tells a disagreement once)

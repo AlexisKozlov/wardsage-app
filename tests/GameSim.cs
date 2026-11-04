@@ -98,7 +98,19 @@ static partial class CoreTests {
     /// GearPixLagMs: the pictures show a change of the pop-up this long after the game's flag (memory leads the pixels); GearPixStuck: the red-cross look reads true for ever on the open gear list (a red pixel that is no cross).</summary>
     public int GearMemMode; public long GearPixLagMs; public bool GearPixStuck; public int FilterBarPresses; bool gearPixLast; long gearPixAt = -1000000;
     public bool GearOpenTruth { get { return (FilterOwn || GearFilter) && Full == SimHero; } }
-    public Mem3 GearMemNow() { if (GearMemMode == 0 || Full != SimHero || Hero.Part < 0) return Mem3.Unknown; return GearOpenTruth ? Mem3.Yes : Mem3.No; }
+    /// <summary>The reader's facts as the game builds its panels LAZILY (E1: RFX.DecideGear is the host's own decision): EquipPanel does not exist until a slot's list was opened, the filter widget until the first bar press opened the
+    /// pop-up (mode 2: then its prefab loads GearLoadMs: the slot holds false, Unknown). Before that the flag is No (never built), not Unknown.</summary>
+    public long GearLoadMs = 800; bool equipPanelBuilt, gearWidgetBuilt; long gearBuiltAt = -1; readonly MemGapLatch gearLatch = new MemGapLatch();
+    public GearMem GearMemSim() {
+      if (GearMemMode == 0 || Full != SimHero) return new GearMem();
+      if (Hero.Part >= 0) equipPanelBuilt = true;
+      if (equipPanelBuilt && GearOpenTruth && !gearWidgetBuilt) { gearWidgetBuilt = true; gearBuiltAt = Now; }
+      var f = new RFX.GearFacts { Panels = MemSlot.Table, Tab = Hero.Tab, EquipPanel = equipPanelBuilt ? MemSlot.Table : MemSlot.Nil,
+        Widget = !gearWidgetBuilt ? MemSlot.Nil : GearMemMode == 2 && Now < gearBuiltAt + GearLoadMs ? MemSlot.Bool : MemSlot.Table, Show = MemSlot.Bool, ShowOn = GearOpenTruth };
+      if (f.ShowOn) f.States = new long[] { 0, 0, 0 };
+      var g = RFX.DecideGear(f); g.Pending = gearLatch.Pending(g.Gap, Now); return g;
+    }
+    public Mem3 GearMemNow() { return GearMemSim().Open; }
     /// <summary>The gear pop-up as the red-cross look sees it (lagging the game's flag).</summary>
     public bool GearPix(bool truth) {
       if (GearPixStuck && Full == SimHero && Hero.Part >= 0) return true;
@@ -265,7 +277,6 @@ static partial class CoreTests {
     bool Fail() { return R.NextDouble() < FailP; }
 
     /// <summary>What the app's readers give this tick (memory: the known forms; the window table: the offers).</summary>
-    GearMem GearMemSim() { var m = GearMemNow(); return new GearMem { Open = m, Side = m == Mem3.Unknown ? Mem3.Unknown : Mem3.No, SetPanel = m == Mem3.Unknown ? Mem3.Unknown : Mem3.No }; }
     public ScreenInputs Read() {
       var i = new ScreenInputs { Offers = Fail() ? null : new List<string>(), ShownKnown = "" };
       if (i.Offers != null) foreach (var f in Stack) if (OfferForms.IsOffer(f)) i.Offers.Add(f);
@@ -273,7 +284,7 @@ static partial class CoreTests {
       i.CityForm = full == SimCity;
       bool heroOn = full == SimHero;
       // (a failed read of the hero screen is no reading, never "no hero screen")
-      if (Stack.Contains(SimHero)) { if (!Fail()) i.Hero = new HeroScreen { Hero = Hero.Shown, FormOk = heroOn, Tab = Hero.Tab, Part = Hero.Part, Heroes = Hero.Heroes, GridPtr = Hero.Grid, FactionList = HeroModel ? FakeHeroGame.FactionList : null, ChosenCamps = HeroModel ? Hero.Camps.ToArray() : null, ClassChosen = HeroModel && Hero.Class > 0, ClassCount = HeroModel ? 7 : 0, FilterMem = HeroFilterMemNow(), Gear = GearMemSim() }; }
+      if (Stack.Contains(SimHero)) { if (!Fail()) i.Hero = new HeroScreen { Hero = Hero.Shown, FormOk = heroOn, Tab = Hero.Tab, Part = Hero.Part, Heroes = Hero.Heroes, GridPtr = Hero.Grid, FactionList = HeroModel ? FakeHeroGame.FactionList : null, ChosenCamps = HeroModel ? Hero.Camps.ToArray() : null, ClassChosen = HeroModel && Hero.Class > 0, ClassCount = HeroModel ? 7 : 0, FilterMem = HeroFilterMemNow(), FilterPending = HeroModel && Hero.MemMode != 0 && !HeroFilter && Hero.PendingNow, Gear = GearMemSim() }; }
       else if (!Fail()) i.Hero = new HeroScreen { Hero = 0, FormOk = false };
       if ((full == SimInv || full == SimFoundry) && Found(SimInv) && !Fail())
         i.Inv = Inv();

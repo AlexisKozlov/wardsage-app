@@ -94,7 +94,7 @@ static partial class CoreTests {
       var hv = new HeroView {
         NowMs = n, Foreground = true, W = W, H = U, ClientH = H, Plan = plan, Hero = heroScreen.FormOk ? heroScreen.Hero : 0, Tab = heroScreen.Tab, Part = heroScreen.Part,
         SmallCards = heroScreen.SmallCards, Heroes = heroScreen.Heroes, HeroesButton = false, FilterOpen = OwnFilterLook((G.HeroFilter && G.Full == SimHero) || G.HeroFilterSeen),
-        FilterMem = HeroView.MemOf(heroScreen), ClassChosen = heroScreen.ClassChosen, FactionList = heroScreen.FactionList, ChosenCamps = heroScreen.ChosenCamps, ClassCount = heroScreen.ClassCount, GridPtr = heroScreen.GridPtr,
+        FilterMem = HeroView.MemOf(heroScreen), FilterPending = heroScreen.FilterPending, ClassChosen = heroScreen.ClassChosen, FactionList = heroScreen.FactionList, ChosenCamps = heroScreen.ChosenCamps, ClassCount = heroScreen.ClassCount, GridPtr = heroScreen.GridPtr,
         InputOpen = n >= G.LockUntil
       };
       if (G.HeroModel) { var tg = SimGame.SimTags(plan); hv.HeroClass = tg[0]; hv.HeroCamps = new[] { tg[1] }; }
@@ -122,7 +122,7 @@ static partial class CoreTests {
       bool hidden = G.ItemElsewhere && G.HideWorn;
       var gm = G.GearMemNow(); if (Cfg.OwnGearCover) ownLooks.Note("mark@gear", LookPolicy.Blocks(gm, Seen3.Unknown), Now + FreshLagMs);   // (the host's GearMain: the covered red-cross look blocks the gate only while the flag is Unknown)
       return new FilterView { NowMs = n, Foreground = true, W = W, H = H, Item = SimItem, Suits = new long[0], MainAttrs = new long[0], SubAttrs = new long[0], Wanted = hidden,
-        PanelMem = gm, SideMem = gm == Mem3.Unknown ? Mem3.Unknown : Mem3.No, SetMem = gm == Mem3.Unknown ? Mem3.Unknown : Mem3.No,
+        MemPending = G.GearMemSim().Pending, PanelMem = gm, SideMem = gm == Mem3.Unknown ? Mem3.Unknown : Mem3.No, SetMem = gm == Mem3.Unknown ? Mem3.Unknown : Mem3.No,
         PanelOpen = G.GearPix(G.GearOpenTruth), HideEquipped = G.HideWorn ^ (Cfg.FlagFlickerP > 0 && navR != null && navR.NextDouble() < Cfg.FlagFlickerP), OnOtherHero = G.ItemElsewhere, ItemListed = !hidden };
     }
 
