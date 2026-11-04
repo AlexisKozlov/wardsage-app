@@ -301,9 +301,12 @@ static partial class CoreTests {
     bool OnBack(double x, double y) { return Near(x, y, hg.BackX * U, hg.BackY * U, 15); }
 
     /// <summary>A click: judged on what is on top now, its effect shows after the game's latency.</summary>
+    /// <summary>--nav blockedBack: the back arrow and Escape do nothing (a game that will not leave its screen): the way back to the city ends in a named stop.</summary>
+    public bool BlockBack;
     public void Click(double x, double y, ClickTarget tg) {
       var bc = BeforeClick; if (bc != null) bc(tg);
       if (LockMs > 0 && Now < LockUntil) { LostLocked++; Say("the input is locked: " + tg + " lost"); return; }
+      if (BlockBack && OnBack(x, y)) { Say("click " + tg + " @" + (int)x + "," + (int)y + ": the back arrow does nothing (blocked)"); Acts.Append(Now + " c" + (int)x + "," + (int)y + ";"); return; }
       string top = TopForm(); char c = ScreenMap.ClassOf(top);
       if (c == 'D') { Bad.Add("CLICK ON A DANGEROUS FORM " + top + " @" + (int)x + "," + (int)y + " (" + tg + ")"); return; }
       if (ScreenMap.OnNever(top, x, y, W, H, U)) { Bad.Add("CLICK ON A NEVER-CLICK BUTTON of " + top + " @" + (int)x + "," + (int)y + " (" + tg + ")"); return; }
@@ -489,6 +492,7 @@ static partial class CoreTests {
     /// <summary>The Escape key: closes an E / P / F form (and the app's screens); on the city the game asks to quit.</summary>
     public void Escape() {
       if (LockMs > 0 && Now < LockUntil) { LostLocked++; Say("the input is locked: Escape dropped"); return; }
+      if (BlockBack) { Say("ESCAPE: does nothing (blocked)"); Acts.Append(Now + " e;"); return; }
       string top = TopForm(); char c = ScreenMap.ClassOf(top);
       Say("ESCAPE on " + top); Acts.Append(Now + " e;");
       if (c == 'D') { Bad.Add("ESCAPE ON A DANGEROUS FORM " + top); return; }

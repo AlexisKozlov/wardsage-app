@@ -90,6 +90,8 @@ namespace RealmForge {
         return false;
       }
       public void HideOwn() { c.NavHideOwn(NowMs); }
+      public string EscapeKind { get { return RFX.NavEscapeKind(); } }
+      public bool Hotkey(string name) { return false; }   // (not wired: a key press needs a gate target and the live check, docs/specs/2026-11-04-core-any-scenario.md 5.4)
       public void Log(string line) { RealmForge.Log.Write(line); }
       public void Problem(string kind, string message) { c.RaiseProblem(kind, message, new Dictionary<string, string>()); }
       public GateResult Send(Act a, ScreenState fresh) {

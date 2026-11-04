@@ -31,6 +31,9 @@ static partial class CoreTests {
     }
     public int Hid; public string WaitReason = "w";
     public void HideOwn() { Hid++; }
+    public string EscKind = ""; public int Keys;
+    public string EscapeKind { get { return EscKind; } }
+    public bool Hotkey(string name) { Keys++; return true; }
     public void Log(string line) { Lines.Add(line); }
     public void Problem(string kind, string message) { }
   }
@@ -293,6 +296,15 @@ static partial class CoreTests {
       string own = run("own"), other = run("screen");
       Check(own.StartsWith("1/1/") && long.Parse(own.Split('/')[2]) <= 9500, "nav gate wait: a click waiting on our own hint hides our windows after 3 s and the step is reset by 9 s (" + own + ")");
       Check(other.StartsWith("0/1/") && long.Parse(other.Split('/')[2]) <= 9500, "nav gate wait: any other cause is a reset by 9 s, our windows are not hidden before it (" + other + ")");
+    }
+    // D7: the way back to the city is a ladder; a back arrow that does nothing ends in the named stop reset_failed:<form> within 40 s, not in a wait
+    {
+      var io = new FakeNavIo(); var rdr = new ScreenReader(); var nv = new Navigator(ClickOwner.Equip);
+      var inv = NavState(ScreenKind.Inventory, 0, 0, 0, "", new[] { "Form_BackpackIntegration", "Form_MainCity" }); io.FreshState = inv;
+      nv.SetTarget(new NavTarget { Goal = NavGoal.City }, new List<IAtTargetAction>());
+      long t0 = io.NowMs;
+      for (int i = 0; i < 600 && nv.State != "halted"; i++) { io.NowMs += 100; nv.Tick(io, rdr.Update(inv, io.NowMs)); }
+      Check(nv.State == "halted" && nv.HaltWhy.StartsWith("reset_failed:") && io.NowMs - t0 <= 40000, "nav ladder: a back arrow that does nothing ends in reset_failed:<form> (" + nv.State + " " + nv.HaltWhy + " after " + (io.NowMs - t0) + " ms)");
     }
     // the navigator's watchdog: a run always ends
     {

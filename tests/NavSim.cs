@@ -8,6 +8,7 @@ using RealmForge;
 static partial class CoreTests {
   /// <summary>The injectors (their own Random streams: the old seeds keep their runs).</summary>
   sealed class NavCfg { public double FlickerP, FlagFlickerP, LatePopupP; public int CellLatencyMs; public long LockMs, RebuildMs; public bool OwnCover; }
+  static bool SimNavBlocked;
   static bool SimNav, SimNavCity, SimNavChecks; static NavCfg SimNavCfg = new NavCfg(); static long SimNavPlan;
 
   sealed partial class SimHost {
@@ -32,13 +33,13 @@ static partial class CoreTests {
         if (hp.State != "idle" || fp0State() != "idle" || ip.State != "idle") NavErrs.Add("after a reset an action's state is not idle: hero " + hp.State + ", filter " + fp0State() + ", item " + ip.State + " (t=" + t + ")");
       }
       bool gameWaits = false; foreach (var f in G.Stack) if (ScreenMap.ClassOf(f) == 'W') gameWaits = true;   // (a loading / result screen the game closes by itself is the game's wait, not a stall)
-      if (gameWaits || fp != chkFp || nav.ProgressAt != chkProg || nav.BlindMs != chkBlind || nav.Recoveries != chkRec || nav.State == "halted" || nav.State == "done") { chkFp = fp; chkProg = nav.ProgressAt; chkBlind = nav.BlindMs; chkRec = nav.Recoveries; chkAt = t; stallSaid = false; }
+      if (gameWaits || nav.OnLadder || fp != chkFp || nav.ProgressAt != chkProg || nav.BlindMs != chkBlind || nav.Recoveries != chkRec || nav.State == "halted" || nav.State == "done") { chkFp = fp; chkProg = nav.ProgressAt; chkBlind = nav.BlindMs; chkRec = nav.Recoveries; chkAt = t; stallSaid = false; }
       else if (t - chkAt > NavStallMs + NavSlackMs && !stallSaid) { stallSaid = true; NavErrs.Add("no state change, reset or halt for " + (t - chkAt) / 1000 + " s (nav " + nav.Say + ", t=" + t + ")"); }
     }
     string fp0State() { return this.fp.State; }
     void NavSameCheck(Act a) {
       string f = NavFp();
-      if (a.Kind != ActKind.Click || (a.Edge ?? "").StartsWith("seek:")) { sameN = 0; lastX = lastY = -999; return; }
+      if (a.Kind != ActKind.Click || (a.Edge ?? "").StartsWith("seek:") || SimNavBlocked) { sameN = 0; lastX = lastY = -999; return; }
       if (Math.Abs(a.X - lastX) <= 2 && Math.Abs(a.Y - lastY) <= 2 && f == lastClickFp) { if (++sameN >= 3) NavErrs.Add("click at " + (int)a.X + "," + (int)a.Y + " " + sameN + " times with no state change (" + a.Edge + ")"); }
       else sameN = 1;
       lastX = a.X; lastY = a.Y; lastClickFp = f;
@@ -46,6 +47,7 @@ static partial class CoreTests {
     public List<string> NavEndChecks(long t, string outcome) {
       var l = new List<string>(NavErrs);
       bool named = outcome == "done" || outcome.StartsWith("navhalt:") || NavRefusal(outcome);
+      if (SimNavBlocked && t > 30000) l.Add("blocked back arrow: the named stop took " + t / 1000 + " s (more than 30)");
       if (!named) l.Add("the run ends in no done / named halt: " + outcome);
       else if (t > 120000) l.Add("the run took " + t / 1000 + " s of sim time (more than 120 s)");
       if (outcome.StartsWith("navhalt:")) {
@@ -206,6 +208,8 @@ static partial class CoreTests {
         return what == "heroesButton" ? v : v ^ flip;
       }
       public GateResult Send(Act a, ScreenState fresh) { return h.NavSend(a, fresh); }
+      public string EscapeKind { get { return ""; } }
+      public bool Hotkey(string name) { return false; }
       public void HideOwn() { h.ownHiddenUntil = h.Now + 20000; h.OwnHides++; h.G.Note("hide own windows"); }
       public void Log(string line) { h.G.Note(line); }
       public void Problem(string kind, string message) { h.G.Note("problem " + kind + ": " + message); }
@@ -216,7 +220,7 @@ static partial class CoreTests {
   static readonly string[] NavScenarios = {
     "nav.equip.fromAny", "nav.equip.offerChain", "nav.equip.unknownPopup", "nav.equip.tipLeftover", "nav.equip.filterLeftover", "nav.equip.heroFilterOpen",
     "nav.equip.hideWornForeign", "nav.equip.hideWorn", "nav.equip.foreignInvTab", "nav.equip.overFoundry", "nav.equip.bulkSale", "nav.equip.flicker", "nav.equip.lateCells200", "nav.equip.popupDuringEdge", "nav.equip.inputLock", "nav.city.fromAny",
-    "nav.equip.heroFactionHides", "nav.equip.heroFilterBlind", "nav.equip.phantomRedX", "nav.equip.resetMidHero", "nav.equip.heroNotOwned", "nav.equip.ownHintOver" };
+    "nav.equip.heroFactionHides", "nav.equip.heroFilterBlind", "nav.equip.phantomRedX", "nav.equip.resetMidHero", "nav.equip.heroNotOwned", "nav.equip.ownHintOver", "nav.city.blockedBack" };
 
   static readonly string[] NavStartNames = { "City", "Hero (other hero)", "Hero (gear list)", "Inventory", "Inventory (other tab)", "Inventory (bulk)", "Foundry identify", "Foundry ascend",
     "Foundry recast", "Gem", "Artifact workshop", "Guild", "Arena", "Shop", "Popup over City", "Plan" };
@@ -258,6 +262,10 @@ static partial class CoreTests {
         if (sc == "nav.equip.heroFilterBlind") g.Hero.Blind = true;
         break;
       }
+      case "nav.city.blockedBack": {   // the back arrow and Escape do nothing: the trip to the city ends in reset_failed:<form> within 30 s
+        string[] from = { "Hero (other hero)", "Inventory", "Inventory (other tab)", "Foundry identify", "Gem", "Guild", "Arena", "Shop" };
+        SimStartAt(g, from[r.Next(from.Length)], other); g.BlockBack = true; break;
+      }
       case "nav.equip.phantomRedX":
         g.PhantomGear = true; g.Hero.Shown = other; g.Hero.Tab = 1 + r.Next(2); g.Hero.Part = -1; g.Push(SimHero); break;
       case "nav.equip.foreignInvTab": SimStartAt(g, "Inventory (other tab)", 0); break;
@@ -275,7 +283,7 @@ static partial class CoreTests {
   }
 
   /// <summary>A scenario whose only right end is this one (a hero the player does not own: a named stop).</summary>
-  static string NavExpect(string sc) { return sc == "nav.equip.heroNotOwned" ? "navhalt:hero_not_in_grid" : null; }
+  static string NavExpect(string sc) { return sc == "nav.equip.heroNotOwned" ? "navhalt:hero_not_in_grid" : sc == "nav.city.blockedBack" ? "navhalt:reset_failed" : null; }
 
   static NavCfg NavCfgOf(string sc) {
     var c = new NavCfg();
@@ -297,7 +305,7 @@ static partial class CoreTests {
     long plan = 100 + seed % 30;
     g.LockMs = NavCfgOf(sc).LockMs; g.ListRebuildMs = NavCfgOf(sc).RebuildMs;
     NavStart(sc, g, r, plan);
-    SimNav = nav; SimNavCity = sc.StartsWith("nav.city"); SimNavCfg = NavCfgOf(sc); SimNavPlan = plan;
+    SimNav = nav; SimNavBlocked = sc == "nav.city.blockedBack"; SimNavCity = sc.StartsWith("nav.city"); SimNavCfg = NavCfgOf(sc); SimNavPlan = plan;
     var oc = new string[1]; var tmp = new Dictionary<string, int>();
     string e;
     SimNavChecks = nav;

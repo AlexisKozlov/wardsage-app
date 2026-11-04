@@ -127,7 +127,12 @@ namespace RealmForge {
 
     static NavStep Pop(Snapshot s, NavTarget t, INavIo io, long now) {
       var gate = io.Gate; var st = s.State;
-      if (gate.EscapeDue(t.Owner, st, now)) return EscapeStep(t.Owner, s, ClickTarget.EscapeBack, "pop:escape");
+      if (gate.EscapeDue(t.Owner, st, now)) {
+        // the Escape rung: only where the stacks say it closes something (kind not known = the gate's own rule stands)
+        string ek = io.EscapeKind;
+        if (ek == "" || ek == "close") return EscapeStep(t.Owner, s, ClickTarget.EscapeBack, "pop:escape");
+        gate.DropEscape(t.Owner);
+      }
       if (!gate.CityBackDue(t.Owner, st, now)) return gate.Halted(t.Owner) ? NavStep.Halt("gate_" + gate.HaltReason(t.Owner)) : NavStep.Wait("back to the city not due (" + ClickGate.CityBackBlock(st) + ")");
       string bf = s.BaseForm; var kind = s.Kind; double U = io.U;
       return NavStep.Of(new Act { Owner = t.Owner, Target = ClickTarget.CityBack, Kind = ActKind.Click, X = Hg.BackX * U, Y = Hg.BackY * U, Base = bf, WantKnown = true, Why = "back to the city",

@@ -5233,6 +5233,7 @@ namespace RealmForge {
     public double CoachX = -1, CoachY = -1;
     public string TermsAccepted = "";   // version of the Terms of Use the player accepted on the first-run card (Config.TermsVersion)
     public const string TermsVersion = "2026-10-17";
+    public bool NavHotkey;   // the navigator may press the game's own hotkey («C» = the heroes screen) when a click on its button does nothing; off until the live check (docs/specs/game-nav-research.md)
     public string NavCore = "site";   // TEST build: "on" or "site" (default on); "off" and "lab" are ignored in test builds (NavCoreRule); release builds ignore it
     public string GuideStyle = "auto";   // TEST build: the new button highlight, "auto" (the site's switch) | "on" | "off"
     public bool RecButton = true;   // TEST build: the record button over the game (app/Overlay.cs)
@@ -5321,6 +5322,7 @@ namespace RealmForge {
       sb.Append(",\n  \"termsAccepted\": ").Append(MiniJson.Quote(TermsAccepted ?? ""));
       sb.Append(",\n  \"guideStyle\": ").Append(MiniJson.Quote(GuideStyle));
       if (NavCore != "site") sb.Append(",\n  \"navCore\": ").Append(MiniJson.Quote(NavCore));
+      if (NavHotkey) sb.Append(",\n  \"navHotkey\": true");
       sb.Append(",\n  \"recButton\": ").Append(RecButton ? "true" : "false");
       sb.Append(",\n  \"sendCodes\": ").Append(SendCodes ? "true" : "false");
       sb.Append(",\n  \"bossHints\": ").Append(BossHints ? "true" : "false");
@@ -5365,6 +5367,7 @@ namespace RealmForge {
       c.ShowInCapture = MiniJson.GetBool(d, "showInCapture", false);
       c.SendCodes = MiniJson.GetBool(d, "sendCodes", true);
       c.RecButton = MiniJson.GetBool(d, "recButton", true);
+      c.NavHotkey = MiniJson.GetBool(d, "navHotkey", false);
       string nc = MiniJson.GetString(d, "navCore"); c.NavCore = nc == "on" || nc == "off" || nc == "lab" ? nc : "site";
       string gs = MiniJson.GetString(d, "guideStyle"); c.GuideStyle = gs == "on" || gs == "off" ? gs : "auto";
       c.TermsAccepted = MiniJson.GetString(d, "termsAccepted") ?? "";
