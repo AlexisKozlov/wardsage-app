@@ -41,6 +41,7 @@ namespace RealmForge {
       try { NpScroll(l); } catch (Exception e) { l.Add("scroll: exception " + e.Message); }
       try { NpGeometry(ga, l); } catch (Exception e) { l.Add("geometry: exception " + e.Message); }
       try { NpPointer(ga, l); } catch (Exception e) { l.Add("pointer: exception " + e.Message); }
+      try { NpClickables(ga, l); } catch (Exception e) { l.Add("clickables: exception " + e.Message); }
       return l;
     }
 
@@ -288,6 +289,8 @@ namespace RealmForge {
     // ---------------------------------------------------------------- the canvas scale (the research 12): UIStatic.m_mainGroup -> UIGroup.<CanvasScaler> -> CanvasScalerRoot
     /// <summary>Client size of the game window, set by the host before a probe read (0 = unknown).</summary>
     public static double NavProbeClientW, NavProbeClientH;
+    /// <summary>The cursor in client px (top left origin) as the host sees it (GetCursorPos - the client's origin): the game's own pointer position is compared with it (the mapping check, research 10.3).</summary>
+    public static double NavProbeCursorX = double.NaN, NavProbeCursorY = double.NaN;
     static void NpGeometry(ulong ga, List<string> l) {
       ulong k = NpClass(ga, "UI.UIStatic"); if (k == 0) return;
       ulong sf = Ptr(k + 0xB8); ulong grp = sf != 0 ? Ptr(sf) : 0;
@@ -320,9 +323,43 @@ namespace RealmForge {
       ulong enter = BitConverter.ToUInt64(pb, 0x20), press = BitConverter.ToUInt64(pb, 0x28), last = BitConverter.ToUInt64(pb, 0x30), ray = BitConverter.ToUInt64(pb, 0x48);
       // the UILocker's blocker image: the game's raycast hits it while the input is locked
       ulong locker = 0; ulong kl = ClassAt(ga, "UI.UILocker"); if (kl != 0) { ulong sfl = Ptr(kl + 0xB8), inst = sfl != 0 ? Ptr(sfl) : 0; locker = inst != 0 ? Ptr(inst + 0x18) : 0; }
-      l.Add("pointer: position=(" + BitConverter.ToSingle(pb, 0xE8).ToString("0.0", NpInv) + "," + BitConverter.ToSingle(pb, 0xEC).ToString("0.0", NpInv) + ") raycast=" + NpHex(ray) + " enter=" + NpHex(enter)
+      // (Unity's screen origin is the bottom left: the game's y counts up from the bottom of the client; a negative y is a cursor below the client)
+      double px = BitConverter.ToSingle(pb, 0xE8), py = BitConverter.ToSingle(pb, 0xEC), h2 = NavProbeClientH;
+      string cal = "";
+      if (h2 > 0 && !double.IsNaN(NavProbeCursorX)) cal = " client=(" + px.ToString("0.0", NpInv) + "," + (h2 - py).ToString("0.0", NpInv) + ") ours=(" + NavProbeCursorX.ToString("0.0", NpInv) + "," + NavProbeCursorY.ToString("0.0", NpInv)
+        + ") delta=(" + (px - NavProbeCursorX).ToString("0.0", NpInv) + "," + ((h2 - py) - NavProbeCursorY).ToString("0.0", NpInv) + ") inClient=" + (px >= 0 && px < NavProbeClientW && py >= 0 && py < h2 ? "yes" : "no");
+      l.Add("pointer: position=(" + px.ToString("0.0", NpInv) + "," + py.ToString("0.0", NpInv) + ")" + cal + " raycast=" + NpHex(ray) + " enter=" + NpHex(enter)
         + " press=" + NpHex(press) + " lastPress=" + NpHex(last) + " clickTime=" + BitConverter.ToSingle(pb, 0x118).ToString("0.00", NpInv) + " clickCount=" + NpI32(pb, 0x11C)
         + " hitsLocker=" + (ray != 0 && ray == locker ? "yes" : "no") + " dragging=" + pb[0x129]);
+    }
+
+    // ---------------------------------------------------------------- live clickables (the research 11): the game's own list of every enabled Selectable, interactable, group-allowed;
+    // the canvases whose GraphicRaycasterEx sleeps take no clicks. Read once a second (a few hundred small reads).
+    static string npClickLine = ""; static int npClickAt; const int NpMaxSel = 1500;
+    static void NpClickables(ulong ga, List<string> l) {
+      int now = Environment.TickCount;
+      if (npClickLine != "" && unchecked(now - npClickAt) < 1000) { l.Add(npClickLine); return; }
+      ulong k = NpClass(ga, "UnityEngine.UI.Selectable"); if (k == 0) { l.Add("clickables: Selectable not found yet"); return; }
+      ulong sf = Ptr(k + 0xB8); var sb0 = sf != 0 ? Read(sf, 0x10) : null; if (sb0 == null) { l.Add("clickables: no static block"); return; }
+      ulong arr = BitConverter.ToUInt64(sb0, 0); int count = NpI32(sb0, 8);
+      if (arr == 0 || count < 0 || count > 20000) { l.Add("clickables: s_Selectables " + NpHex(arr) + " count " + count); return; }
+      int n = Math.Min(count, NpMaxSel);
+      var ab = n > 0 ? Read(arr + 0x20, n * 8) : new byte[0]; if (ab == null) { l.Add("clickables: array unreadable"); return; }
+      int interact = 0, groupBlocked = 0, off = 0, inside = 0, down = 0; var kinds = new Dictionary<string, int>(); var hover = new List<string>();
+      for (int i = 0; i < n; i++) {
+        ulong o = BitConverter.ToUInt64(ab, i * 8); if (o == 0) continue;
+        var b = Read(o + 0xD0, 0x1A); if (b == null) continue;   // m_Interactable 0xD0 .. isPointerDown 0xE9
+        bool inter = b[0] != 0, grp = b[0x10] != 0, pin = b[0x18] != 0, pdn = b[0x19] != 0;
+        if (!inter) off++; else if (!grp) groupBlocked++; else interact++;
+        if (pin) { inside++; string cn = ClassName(Ptr(o)) ?? "?"; if (hover.Count < 4) hover.Add(cn + (inter && grp ? "" : "(not clickable)")); }
+        if (pdn) down++;
+      }
+      // the canvases' raycasters: a sleeping one takes no clicks (GraphicRaycasterEx: sleep 0x40, m_workable 0x41)
+      string rc = "";
+      ulong kr = ClassAt(ga, "GraphicRaycasterEx"); if (kr == 0) kr = ClassAt(ga, "UI.GraphicRaycasterEx");
+      rc = kr == 0 ? " raycasterEx=class not found" : " raycasterEx=class found (instances are read through the hover/forms later)";
+      npClickLine = "clickables: selectables=" + count + (count > n ? " (read " + n + ")" : "") + " clickable=" + interact + " notInteractable=" + off + " blockedByGroup=" + groupBlocked + " pointerInside=" + inside + (hover.Count > 0 ? " [" + string.Join(", ", hover.ToArray()) + "]" : "") + " pointerDown=" + down + rc;
+      npClickAt = now; l.Add(npClickLine);
     }
 
     // ---------------------------------------------------------------- the input gate (the research 2): any UILocker slot with an id, a stack transition or an animation queued = input closed
