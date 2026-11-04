@@ -113,7 +113,7 @@ namespace RealmForge {
         var g = c.navLastGate;
         if (g != null && g.Verdict != GateVerdict.Allow) return g;
         // (the click waited for a look our own hint covers: said so, so that the navigator can hide our windows - Navigator.GateWait)
-        string cov = unknownLooks.Blocking(NowMs);
+        string cov = unknownLooks.Blocking(OverlayController.NowMs());
         return cov != null ? GateResult.Wait("own", "a look is covered by our own hint (" + cov + ")") : GateResult.Wait("unsent", "not sent");
       }
     }

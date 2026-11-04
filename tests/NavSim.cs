@@ -7,10 +7,10 @@ using RealmForge;
 
 static partial class CoreTests {
   /// <summary>The injectors (their own Random streams: the old seeds keep their runs).</summary>
-  sealed class NavCfg { public double FlickerP, FlagFlickerP, LatePopupP; public int CellLatencyMs; public long LockMs, RebuildMs; public bool OwnCover;
+  sealed class NavCfg { public double FlickerP, FlagFlickerP, LatePopupP; public int CellLatencyMs; public long LockMs, RebuildMs; public bool OwnCover, OwnStrip; public long AwayMs;
     /// <summary>FilterLookBlind: the hero filter's pixel read is false while the sim pop-up is open; PopupEatsBack: a back press with the pop-up open only closes it; CityBackLatencyMs: the back arrow answers this late.</summary>
     public bool FilterLookBlind, PopupEatsBack; public long CityBackLatencyMs; }
-  static bool SimNavBlocked;
+  static bool SimNavBlocked, NavBaseline; static int SimNavResets, SimNavFunnel;
   static bool SimNav, SimNavCity, SimNavChecks; static NavCfg SimNavCfg = new NavCfg(); static long SimNavPlan;
 
   sealed partial class SimHost {
@@ -35,7 +35,7 @@ static partial class CoreTests {
         if (hp.State != "idle" || fp0State() != "idle" || ip.State != "idle") NavErrs.Add("after a reset an action's state is not idle: hero " + hp.State + ", filter " + fp0State() + ", item " + ip.State + " (t=" + t + ")");
       }
       bool gameWaits = false; foreach (var f in G.Stack) if (ScreenMap.ClassOf(f) == 'W') gameWaits = true;   // (a loading / result screen the game closes by itself is the game's wait, not a stall)
-      if (gameWaits || nav.OnLadder || fp != chkFp || nav.ProgressAt != chkProg || nav.BlindMs != chkBlind || nav.Recoveries != chkRec || nav.State == "halted" || nav.State == "done") { chkFp = fp; chkProg = nav.ProgressAt; chkBlind = nav.BlindMs; chkRec = nav.Recoveries; chkAt = t; stallSaid = false; }
+      if (gameWaits || nav.OnLadder || nav.Say == "paused" || nav.Say == "background" || fp != chkFp || nav.ProgressAt != chkProg || nav.BlindMs != chkBlind || nav.Recoveries != chkRec || nav.State == "halted" || nav.State == "done") { chkFp = fp; chkProg = nav.ProgressAt; chkBlind = nav.BlindMs; chkRec = nav.Recoveries; chkAt = t; stallSaid = false; }
       else if (t - chkAt > NavStallMs + NavSlackMs && !stallSaid) { stallSaid = true; NavErrs.Add("no state change, reset or halt for " + (t - chkAt) / 1000 + " s (nav " + nav.Say + ", t=" + t + ")"); }
     }
     string fp0State() { return this.fp.State; }
@@ -91,7 +91,7 @@ static partial class CoreTests {
     HeroView NavHeroView(long n) {
       var hv = new HeroView {
         NowMs = n, Foreground = true, W = W, H = U, ClientH = H, Plan = plan, Hero = heroScreen.FormOk ? heroScreen.Hero : 0, Tab = heroScreen.Tab, Part = heroScreen.Part,
-        SmallCards = heroScreen.SmallCards, Heroes = heroScreen.Heroes, HeroesButton = false, FilterOpen = (G.HeroFilter && G.Full == SimHero) || G.HeroFilterSeen,
+        SmallCards = heroScreen.SmallCards, Heroes = heroScreen.Heroes, HeroesButton = false, FilterOpen = OwnFilterLook((G.HeroFilter && G.Full == SimHero) || G.HeroFilterSeen),
         ClassChosen = heroScreen.ClassChosen, FactionList = heroScreen.FactionList, ChosenCamps = heroScreen.ChosenCamps, ClassCount = heroScreen.ClassCount, GridPtr = heroScreen.GridPtr,
         InputOpen = n >= G.LockUntil
       };
@@ -163,10 +163,42 @@ static partial class CoreTests {
 
     /// <summary>--nav ownHintOver: our own hint covers the looks (from OwnCoverFrom on, for ever) - every send waits on it ("own") until the navigator hides our windows (INavIo.HideOwn), which frees them for 20 s.</summary>
     long ownHiddenUntil, ownCoverFrom = -1; public int OwnHides;
+    /// <summary>The host's UnknownLooks (the one the real code uses): a look our hint covers is noted at the fresh clock, a few ms AFTER the tick-start clock the io (and the send) read - as OverlayController does.</summary>
+    readonly UnknownLooks ownLooks = new UnknownLooks();
+    const long FreshLagMs = 4;
+    /// <summary>--nav ownHintOverNoHide: our hint's frame mask lies over the last rows of the hero filter's dark strip (and over nothing else), from t=0; HideOwn does nothing. The look is the real HeroFilterLook.Look on a synthetic frame.</summary>
+    bool OwnFilterLook(bool truth) {
+      if (!Cfg.OwnStrip) return truth;
+      double U = G.U; int sx0 = (int)(0.030 * U), sx1 = (int)(0.058 * U), sy1 = (int)(0.87 * U);
+      Func<int, int, int, int, int[]> frame = (gx, gy, gw, gh) => {
+        var a = new int[gw * gh];
+        for (int j = 0; j < gh; j++) for (int i = 0; i < gw; i++) {
+          int x = gx + i, y = gy + j, c = truth ? (30 << 16) | (30 << 8) | 40 : (120 << 16) | (110 << 8) | 100;
+          if (truth && Math.Abs(x - (int)(0.4836 * U)) <= 1 && y > 0.16 * U && y < 0.87 * U) c = (130 << 16) | (130 << 8) | 130;
+          if (truth && x > 0.04 * U && x < 0.24 * U && Math.Abs(y - 0.2379 * U) < 0.05 * U) c = (30 << 16) | (90 << 8) | 170;
+          a[j * gw + i] = c;
+        }
+        OwnMask.Apply(a, gx, gy, gw, gh, new[] { new[] { sx0 - 2, sy1 - 4, sx1 - sx0 + 4, 12 } });
+        return a;
+      };
+      var l = HeroFilterLook.Look(frame, U);
+      ownLooks.Note("hero filter", l == Seen3.Unknown, Now + FreshLagMs);
+      return l == Seen3.Yes;
+    }
+    /// <summary>--nav userAway: the player reaches for the mouse at the first click the navigator is about to send (the ladder is running by then) and keeps it for AwayMs.</summary>
+    long awayFrom = -1;
     GateResult NavSend(Act a, ScreenState fresh) {
+      if (Cfg.AwayMs > 0 && awayFrom < 0) { awayFrom = Now; G.Note("the player takes the mouse"); return GateResult.Wait("unsent", "the player took the mouse"); }
+      if (Cfg.OwnStrip) {
+        string cov = ownLooks.Blocking(Now);
+        if (cov != null) { G.Note("send refused: " + a.Target + " - a look is covered by our hint (" + cov + ")"); return GateResult.Wait("own", "a look is covered by our own hint"); }
+      }
       if (Cfg.OwnCover) {
         if (ownCoverFrom < 0) ownCoverFrom = Now + navR.Next(3000);
-        if (Now >= ownCoverFrom && Now >= ownHiddenUntil) { G.Note("send refused: " + a.Target + " - a look is covered by our hint"); return GateResult.Wait("own", "a look is covered by our own hint"); }
+        bool cover = Now >= ownCoverFrom && Now >= ownHiddenUntil;
+        ownLooks.Note("hero filter", cover, Now + FreshLagMs);
+        string cov = ownLooks.Blocking(Now);
+        if (cover) { G.Note("send refused: " + a.Target + " - a look is covered by our hint"); return cov != null ? GateResult.Wait("own", "a look is covered by our own hint") : GateResult.Wait("unsent", "not sent"); }
       }
       InNavSend = true; lastGate = null; bool ok;
       try {
@@ -187,7 +219,7 @@ static partial class CoreTests {
       public void BeginTick() { flip = h.Cfg.FlagFlickerP > 0 && h.navR.NextDouble() < h.Cfg.FlagFlickerP; }
       public long Now { get { return h.Now; } }
       public bool Front { get { return true; } }
-      public bool UserBusy { get { return false; } }
+      public bool UserBusy { get { return h.awayFrom >= 0 && h.Now >= h.awayFrom && h.Now < h.awayFrom + h.Cfg.AwayMs; } }   // (nav.city.userAway: the player has the mouse)
       public double W { get { return h.G.W; } }
       public double H { get { return h.G.H; } }
       public double U { get { return h.G.U; } }
@@ -202,7 +234,7 @@ static partial class CoreTests {
         bool v = false;
         switch (what) {
           case "heroesButton": v = h.G.Full == SimCity && h.G.CityClear; break;
-          case "heroFilter": v = (h.G.HeroFilter && h.G.Full == SimHero) || h.G.HeroFilterSeen; break;
+          case "heroFilter": v = h.OwnFilterLook((h.G.HeroFilter && h.G.Full == SimHero) || h.G.HeroFilterSeen); break;
           case "gearFilterMain": v = ((h.G.GearFilter || h.G.FilterOwn) && h.G.Full == SimHero) || (h.G.PhantomGear && h.G.Full == SimHero && h.G.Hero.Part < 0); break;
           case "gearFilterSide": v = false; break;
           case "tipShown": v = h.G.Stack.Contains(SimTip); break;
@@ -213,7 +245,7 @@ static partial class CoreTests {
       public string EscapeKind { get { return ""; } }
       public bool Hotkey(string name) { return false; }
       public void HideOwn() { h.ownHiddenUntil = h.Now + 20000; h.OwnHides++; h.G.Note("hide own windows"); }
-      public void Log(string line) { h.G.Note(line); }
+      public void Log(string line) { if (line.StartsWith("nav: reset ")) SimNavResets++; h.G.Note(line); }
       public void Problem(string kind, string message) { h.G.Note("problem " + kind + ": " + message); }
     }
   }
@@ -223,7 +255,7 @@ static partial class CoreTests {
     "nav.equip.fromAny", "nav.equip.offerChain", "nav.equip.unknownPopup", "nav.equip.tipLeftover", "nav.equip.filterLeftover", "nav.equip.heroFilterOpen",
     "nav.equip.hideWornForeign", "nav.equip.hideWorn", "nav.equip.foreignInvTab", "nav.equip.overFoundry", "nav.equip.bulkSale", "nav.equip.flicker", "nav.equip.lateCells200", "nav.equip.popupDuringEdge", "nav.equip.inputLock", "nav.city.fromAny",
     "nav.equip.heroFactionHides", "nav.equip.heroFilterBlind", "nav.equip.phantomRedX", "nav.equip.resetMidHero", "nav.equip.heroNotOwned", "nav.equip.ownHintOver", "nav.city.blockedBack",
-    "nav.equip.heroFilterBlindEats", "nav.equip.cityBackLate" };
+    "nav.equip.heroFilterBlindEats", "nav.equip.cityBackLate", "nav.equip.ownHintOverNoHide", "nav.city.userAway" };
 
   static readonly string[] NavStartNames = { "City", "Hero (other hero)", "Hero (gear list)", "Inventory", "Inventory (other tab)", "Inventory (bulk)", "Foundry identify", "Foundry ascend",
     "Foundry recast", "Gem", "Artifact workshop", "Guild", "Arena", "Shop", "Popup over City", "Plan" };
@@ -251,7 +283,7 @@ static partial class CoreTests {
         if (r.Next(3) != 0) { g.Hero.Shown = r.Next(2) == 0 ? plan : other; g.Hero.Tab = 3; g.Hero.Part = r.Next(3) == 0 ? -1 : 2; g.Push(SimHero); }
         break;
       }
-      case "nav.equip.heroFactionHides": case "nav.equip.heroFilterBlind": case "nav.equip.resetMidHero": case "nav.equip.heroNotOwned": case "nav.equip.heroFilterBlindEats": case "nav.equip.cityBackLate": {   // the hero grid's filter model (GameSim.cs EnableHeroModel)
+      case "nav.equip.heroFactionHides": case "nav.equip.heroFilterBlind": case "nav.equip.resetMidHero": case "nav.equip.heroNotOwned": case "nav.equip.heroFilterBlindEats": case "nav.equip.cityBackLate": case "nav.equip.ownHintOverNoHide": {   // the hero grid's filter model (GameSim.cs EnableHeroModel)
         bool notOwned = sc == "nav.equip.heroNotOwned";
         g.EnableHeroModel(plan, !notOwned); g.FilterFadeMs = 300 + r.Next(500);
         g.Hero.Shown = g.Hero.CityHero = other; g.Hero.Tab = 1 + 2 * r.Next(2); g.Hero.Part = -1; g.Push(SimHero);
@@ -268,6 +300,10 @@ static partial class CoreTests {
       case "nav.city.blockedBack": {   // the back arrow and Escape do nothing: the trip to the city ends in reset_failed:<form> within 30 s
         string[] from = { "Hero (other hero)", "Inventory", "Inventory (other tab)", "Foundry identify", "Gem", "Guild", "Arena", "Shop" };
         SimStartAt(g, from[r.Next(from.Length)], other); g.BlockBack = true; break;
+      }
+      case "nav.city.userAway": {   // the player takes the mouse at the first click for 13 s (more than the ladder's cap): the ladder's clock must not run meanwhile
+        string[] from = { "Hero (other hero)", "Inventory", "Foundry identify", "Gem", "Guild", "Arena", "Shop" };
+        SimStartAt(g, from[r.Next(from.Length)], other); break;
       }
       case "nav.equip.phantomRedX":
         g.PhantomGear = true; g.Hero.Shown = other; g.Hero.Tab = 1 + r.Next(2); g.Hero.Part = -1; g.Push(SimHero); break;
@@ -287,7 +323,7 @@ static partial class CoreTests {
 
   /// <summary>A scenario whose only right end is this one (a hero the player does not own: a named stop).</summary>
   /// <summary>Scenarios that must end done on every seed: a rule's refusal (gate_dangerous ...) is a failure there.</summary>
-  static bool NavStrict(string sc) { return sc == "nav.equip.heroFilterBlindEats" || sc == "nav.equip.cityBackLate"; }
+  static bool NavStrict(string sc) { return sc == "nav.equip.heroFilterBlindEats" || sc == "nav.equip.cityBackLate" || sc == "nav.equip.ownHintOverNoHide" || sc == "nav.city.userAway"; }
   static string NavExpect(string sc) { return sc == "nav.equip.heroNotOwned" ? "navhalt:hero_not_in_grid" : sc == "nav.city.blockedBack" ? "navhalt:reset_failed" : null; }
 
   static NavCfg NavCfgOf(string sc) {
@@ -297,6 +333,8 @@ static partial class CoreTests {
     else if (sc == "nav.equip.popupDuringEdge") c.LatePopupP = 0.15;
     else if (sc == "nav.equip.inputLock") c.LockMs = 350;
     else if (sc == "nav.equip.ownHintOver") c.OwnCover = true;
+    else if (sc == "nav.equip.ownHintOverNoHide") c.OwnStrip = !NavBaseline;
+    else if (sc == "nav.city.userAway") { c.AwayMs = 13000; }
     else if (sc == "nav.equip.hideWorn") { c.FlagFlickerP = 0.1; c.RebuildMs = 200; }
     else if (sc == "nav.equip.heroFilterBlindEats") { c.FilterLookBlind = true; c.PopupEatsBack = true; }
     else if (sc == "nav.equip.cityBackLate") { c.CityBackLatencyMs = 2500; c.FilterLookBlind = true; c.PopupEatsBack = true; }   // (the owner's build 531: the pop-up unseen and eating the first back press, the game answering 2.5 s late; the late answer alone is no failure on the old code either)
@@ -311,7 +349,7 @@ static partial class CoreTests {
     var g = new SimGame(seed, slow, failP); g.Geo = geo; g.SpawnP = 0.01;
     long plan = 100 + seed % 30;
     g.LockMs = NavCfgOf(sc).LockMs; if (NavStrict(sc)) g.SpawnP = 0; g.ListRebuildMs = NavCfgOf(sc).RebuildMs;
-    NavStart(sc, g, r, plan);
+    NavStart(sc, g, r, plan); SimNavResets = 0;
     { var cf = NavCfgOf(sc); if (cf.FilterLookBlind) g.Hero.Blind = true; g.PopupEatsBack = cf.PopupEatsBack; g.CityBackLatencyMs = cf.CityBackLatencyMs; }
     SimNav = nav; SimNavBlocked = sc == "nav.city.blockedBack"; SimNavCity = sc.StartsWith("nav.city"); SimNavCfg = NavCfgOf(sc); SimNavPlan = plan;
     var oc = new string[1]; var tmp = new Dictionary<string, int>();
@@ -320,7 +358,13 @@ static partial class CoreTests {
     try { e = SimDrive(g, PilotFlow.Equip, slow, failP, r, seed, verbose, tmp, geo, null, false, null, oc); }
     finally { SimNavChecks = false; SimNav = false; SimNavCity = false; SimNavPlan = 0; SimNavCfg = new NavCfg(); }
     string o0 = oc[0] ?? ""; int pi = o0.IndexOf(" ("); if (pi > 0 && !verbose) o0 = o0.Substring(0, pi);
-    var res = new NavRes { Outcome = o0 };
+    var res = new NavRes { Outcome = o0 }; SimNavFunnel = g.FunnelPresses;
+    if (sc == "nav.city.userAway" && o0.StartsWith("done") && SimNavResets > 0) res.Outcome = "wrong: done with " + SimNavResets + " resets (the player's pause is no failure of the way back)";
+    if (sc == "nav.equip.ownHintOverNoHide" && !slow && o0.StartsWith("done") && (g.FunnelPresses > 2 || SimNavResets > 0) && !NavBaseline) {   // (fast game only - the slow one opens and closes the pop-up more often with or without our mask; 2 presses = opened and closed again; a seed that resets without any mask too is not the mask's doing)
+      int fp0 = g.FunnelPresses, rs0 = SimNavResets; NavBaseline = true;
+      try { var bl = NavRunOne(sc, seed, slow, nav, geo, false); if (bl.Outcome.StartsWith("done") && SimNavFunnel <= 2 && SimNavResets == 0) res.Outcome = "wrong: done with " + fp0 + " funnel presses, " + rs0 + " resets with the mask, " + SimNavFunnel + " / " + SimNavResets + " without"; }
+      finally { NavBaseline = false; }
+    }
     res.Bad = e.Contains("\n    !! ") && !e.Contains("no end within");
     res.Hang = e.Contains("no end within");
     res.Err = e;

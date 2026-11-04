@@ -134,7 +134,7 @@ namespace RealmForge {
       // looks see our drawings (live 2026-10-14, a 1366x705 laptop: the plates were on the diagnostics screenshots) and
       // mask the parts we drew (Parts) themselves
       live.Add(this);   // (applies the current affinity too)
-      if (!Excluded && !Capturable && !ShowInCapture) Log.Write("overlay: the hint windows cannot be hidden from screen captures on this Windows: the screen looks mask them");
+      if (!Excluded && !(RecorderOn && KeepCaptureState) && !ShowInCapture) Log.Write("overlay: the hint windows cannot be hidden from screen captures on this Windows: the screen looks mask them");
     }
     // a panel the player may move (the boss coach): while it is movable it takes the mouse and drags like a title bar
     bool movable;
@@ -179,8 +179,9 @@ namespace RealmForge {
 
     /// <summary>Hidden from screen captures (false: the screen looks see what this window shows).</summary>
     public bool Excluded = true;
-    /// <summary>TEST build, while the screen recorder runs: the windows are left in screen captures (so the recording shows them).</summary>
-    public static bool Capturable;
+    /// <summary>TEST build, while the screen recorder runs. Only the recorder's timer window (KeepCaptureState) stays in screen captures; the hint windows stay hidden
+    /// (0x11) so no look sees them, and the recorder draws the hints onto its frames itself (OverlayPaint.Composite).</summary>
+    public static bool RecorderOn;
     /// <summary>The player's setting «show hints in recordings and streams» (AppConfig.ShowInCapture): the windows stay in captures.</summary>
     public static bool ShowInCapture;
     /// <summary>The auto click is working (or was within 4 s): the windows are hidden from captures again, even for the recorder (when the platform can) so the looks that decide its clicks never see them.</summary>
@@ -188,8 +189,10 @@ namespace RealmForge {
     static readonly WindowSet<GlowWindow> live = new WindowSet<GlowWindow>(w => w.ApplyAffinity());
     int affinityAt = Environment.TickCount - 10000;
     uint appliedAff = CaptureAffinity.Never;
+    /// <summary>The affinity last applied (0xFFFFFFFF = none yet), for the journal.</summary>
+    public uint AppliedAffinity { get { return appliedAff; } }
     public void ApplyAffinity() {
-      uint aff = CaptureAffinity.For(ShowInCapture, Capturable, PilotHidden && !KeepCaptureState);
+      uint aff = CaptureAffinity.For(ShowInCapture, RecorderOn && KeepCaptureState, PilotHidden && !KeepCaptureState);
       bool was = Excluded;
       try { Excluded = CaptureAffinity.Hidden(W32.SetWindowDisplayAffinity(Handle, aff), aff); } catch (Exception) { Excluded = false; }
       if (Excluded != was) affinityAt = Environment.TickCount;
@@ -321,13 +324,13 @@ namespace RealmForge {
   sealed partial class OverlayController : IDisposable {
     readonly Timer timer = new Timer();
     readonly Timer lookTimer = new Timer();   // quick looks at the gear list between the ticks (LookFast)
-    readonly GlowWindow glow = new GlowWindow();
-    readonly GlowWindow tip = new GlowWindow();     // hint on the game's own buttons (filter, «Заменить», next slot)
-    readonly GlowWindow glowPulse = new GlowWindow(), tipPulse = new GlowWindow();   // the frames' pulse lines: a small window of their own beside each of the two
+    readonly GlowWindow glow = new GlowWindow { Name = "glow" };
+    readonly GlowWindow tip = new GlowWindow { Name = "tip" };     // hint on the game's own buttons (filter, «Заменить», next slot)
+    readonly GlowWindow glowPulse = new GlowWindow { Name = "glowPulse" }, tipPulse = new GlowWindow { Name = "tipPulse" };   // the frames' pulse lines: a small window of their own beside each of the two
     readonly Timer pulseTimer = new Timer();   // runs only while a frame is shown
     // «Отменить надевание» over the game while a build is being put on: the player's clicks in the game send our
     // window to the back, so the way to call it off is where the player looks
-    readonly GlowWindow cancelWin = new GlowWindow(true);
+    readonly GlowWindow cancelWin = new GlowWindow(true) { Name = "cancelWin" };
     /// <summary>The player pressed «Отменить надевание» over the game.</summary>
     public event Action CancelPressed;
     /// <summary>The button's text in the interface language.</summary>
@@ -339,7 +342,7 @@ namespace RealmForge {
     public event Action SellCancelPressed;
     string cancelDrawn; Bitmap cancelBmp;
     // TEST build: the record button over the game (left edge, mid-height); a clickable window like cancelWin, drawn only while the central gate allows
-    readonly GlowWindow recWin = new GlowWindow(true) { KeepCaptureState = true };
+    readonly GlowWindow recWin = new GlowWindow(true) { Name = "recWin", KeepCaptureState = true };
     readonly Timer recBtnTimer = new Timer();
     readonly Stopwatch recSw = new Stopwatch();
     string recDrawn; Bitmap recBmp; bool recOn; long recToggleAt;
@@ -971,7 +974,7 @@ namespace RealmForge {
 
     /// <summary>TEST build: the recorder starts / stops. Our windows stay in screen captures while it runs (then the screen looks mask them themselves).</summary>
     public void SetRecording(bool on) {
-      RecInfo.Active = on; GlowWindow.Capturable = on;
+      RecInfo.Active = on; GlowWindow.RecorderOn = on;   // (the hint windows stay out of screen captures: the recorder composites them onto every frame itself, RecCapture / OverlayPaint.Composite)
       recOn = on; if (on) recSw.Restart(); else recSw.Reset();
       if (on) RecReads.Clear();
       foreach (var w in new[] { glow, tip, glowPulse, tipPulse, cancelWin, recWin }) if (w.IsHandleCreated) w.ApplyAffinity();
@@ -4366,7 +4369,7 @@ namespace RealmForge {
     /// check boxes: 0.93 of the strip when open, at most 0.73 over the hero cards.</summary>
     bool HeroFilterSeen(W32.POINT o, double W, double H) {
       double U = Ui.Unit(W, H);
-      var l = OwnMask.Read(grab => HeroFilterLook.Seen(grab, U), (x, y, w, h) => Grab(o.X + x, o.Y + y, w, h));
+      var l = HeroFilterLook.Look((x, y, w, h) => Grab(o.X + x, o.Y + y, w, h), U);
       LookUnknown("hero filter", l == Seen3.Unknown);
       return l == Seen3.Yes;
     }
@@ -4764,7 +4767,7 @@ namespace RealmForge {
         Log.Write("frame audit: " + (flags.Count > 0 ? "suspect " : "ok ") + FrameAudit.Key(s) + " source=" + s.Source + " frame=[" + string.Join(",", Array.ConvertAll(fr, v => ((int)Math.Round(v)).ToString())) + "]"
           + " (" + auditShots + " checked, " + auditFlags + " suspect in this app run)");
         if (auditSink == null) auditSink = new FrameAuditSink(AuditSite, AuditCode, m => Log.Write(m));
-        auditSink.Add(s, sceneX, sceneY, sceneW, sceneH, GlowWindow.Capturable && !GlowWindow.PilotHidden);   // (the hints are in the shot only when the recorder shows them: not while the pilot hides them)
+        auditSink.Add(s, sceneX, sceneY, sceneW, sceneH, GlowWindow.ShowInCapture && !GlowWindow.PilotHidden);   // (the hints are in the shot only when the setting shows them: not while the pilot hides them)
       }
     }
 
@@ -4999,9 +5002,27 @@ namespace RealmForge {
           else for (int r = 0; r < h; r++) Marshal.Copy(data.Scan0 + r * data.Stride, px, r * w, w);
         } finally { bmp.UnlockBits(data); }
         foreach (var win in GlowWindow.Live())
-          if (win.IsHandleCreated && !win.IsDisposed && win.Visible && win.MaskNeeded) OwnMask.Apply(px, x, y, w, h, win.MaskRects());
+          if (win.IsHandleCreated && !win.IsDisposed && win.Visible && win.MaskNeeded) {
+            var rects = win.MaskRects();
+            if (!maskSaid && PilotMaskLog(win, x, y, w, h, rects)) maskSaid = true;
+            OwnMask.Apply(px, x, y, w, h, rects);
+          }
         return px;
       }
+    }
+
+    static bool maskSaid;
+    /// <summary>Once per app run, the first time a look is masked while the pilot works: which window, its flags and the rectangle that overlaps the grab (why a window was masked at all with affinity 0x11 expected).</summary>
+    static bool PilotMaskLog(GlowWindow win, int x, int y, int w, int h, List<int[]> rects) {
+      if (!GlowWindow.PilotHidden) return false;
+      foreach (var r in rects) {
+        if (r == null || r.Length < 4) continue;
+        if (Math.Min(x + w, r[0] + r[2]) <= Math.Max(x, r[0]) || Math.Min(y + h, r[1] + r[3]) <= Math.Max(y, r[1])) continue;
+        Log.Write("auto: a pilot look is masked by window " + win.Name + " (Excluded " + win.Excluded + ", PilotHidden " + GlowWindow.PilotHidden + ", affinity 0x" + win.AppliedAffinity.ToString("X") + ", settled " + win.Settled
+          + ") rect [" + r[0] + "," + r[1] + "," + r[2] + "," + r[3] + "] grab [" + x + "," + y + "," + w + "," + h + "]");
+        return true;
+      }
+      return false;
     }
 
     // ---- looks our own hint covers: «not known» never leads to a click

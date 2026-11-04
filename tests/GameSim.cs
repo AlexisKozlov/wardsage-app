@@ -74,7 +74,7 @@ static partial class CoreTests {
     /// <summary>--nav hero-grid filter model (docs/specs/2026-11-04-core-any-scenario.md, T8): every hero has a class and a faction, the funnel opens / closes the pop-up (it shows in pixels only FilterFadeMs after
     /// the press, never with Hero.Blind), a faction / class cell filters the grid, and the game clears the filter when the hero screen is closed and opened again. PhantomGear: the gear filter's red-cross
     /// pixel test reads true on the hero screen with no gear list open (a click on it does nothing). HeroDead: the grid's cards take no click until the hero screen is reopened.</summary>
-    public bool HeroModel, PhantomGear, HeroDead; public long FilterFadeMs; long heroFilterAt;
+    public int FunnelPresses; public bool HeroModel, PhantomGear, HeroDead; public long FilterFadeMs; long heroFilterAt;
     public static long[] SimTags(long u) { return new[] { HeroGeometry.ClassOrder[(int)(u % 6)], 101 + (u / 6) % 6 }; }
     public void EnableHeroModel(long plan, bool owned) {
       HeroModel = true; Hero.Tags = new Dictionary<long, long[]>();
@@ -385,7 +385,7 @@ static partial class CoreTests {
         Later(CityBackLatencyMs > 0 && OnBack(x, y) ? CityBackLatencyMs : lat, () => {
           if (TopForm() != SimHero) return;
           if (HeroModel && Hero.Part < 0) {
-            if (Near(x, y, hg.FunnelX * U, H - hg.FunnelDY * U, 20)) { Hero.FilterOpen = !Hero.FilterOpen; if (Hero.FilterOpen) heroFilterAt = Now + FilterFadeMs; return; }
+            if (Near(x, y, hg.FunnelX * U, H - hg.FunnelDY * U, 20)) { FunnelPresses++; Hero.FilterOpen = !Hero.FilterOpen; if (Hero.FilterOpen) heroFilterAt = Now + FilterFadeMs; return; }
             if (OnBack(x, y) && PopupEatsBack && Hero.FilterOpen) { Hero.FilterOpen = false; return; }   // (the pop-up takes the press and only closes)
             if (OnBack(x, y)) Hero.FilterOpen = false;   // (assumed: the funnel's pop-up lies over the grid, not over the back arrow - a pop-up the pixels do not see must not block the way to the city; to be checked live)
             if (HeroDead && !Hero.FilterOpen && x < 0.45 * U && y >= hg.ViewTop * U && y <= hg.ViewBottom * U) return;

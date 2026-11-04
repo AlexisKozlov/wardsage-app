@@ -449,16 +449,40 @@ namespace RealmForge {
       return b >= r + 25 && b >= g + 10 && b >= 70 && r < 140;
     }
 
+    static bool IsStripDark(int c) {
+      int r = (c >> 16) & 255, g = (c >> 8) & 255, b = c & 255;
+      return (r + g + b < 170 && Math.Max(r, Math.Max(g, b)) - Math.Min(r, Math.Min(g, b)) < 45) || IsBlueRow(c);
+    }
+
+    static void StripBox(double U, out int x0, out int y0, out int w, out int h) {
+      x0 = (int)(0.030 * U); int x1 = (int)(0.058 * U); y0 = (int)(0.30 * U); int y1 = (int)(0.87 * U); w = x1 - x0; h = y1 - y0;
+    }
+
     public static bool Seen(Func<int, int, int, int, int[]> grab, double U) {
-      int x0 = (int)(0.030 * U), x1 = (int)(0.058 * U), y0 = (int)(0.30 * U), y1 = (int)(0.87 * U);
-      int[] px = grab(x0, y0, x1 - x0, y1 - y0);
+      int x0, y0, w, h; StripBox(U, out x0, out y0, out w, out h);
+      int[] px = grab(x0, y0, w, h);
       if (px == null) return false;
       int dark = 0;
-      foreach (int c in px) {
-        int r = (c >> 16) & 255, g = (c >> 8) & 255, b = c & 255;
-        if ((r + g + b < 170 && Math.Max(r, Math.Max(g, b)) - Math.Min(r, Math.Min(g, b)) < 45) || IsBlueRow(c)) dark++;
-      }
+      foreach (int c in px) if (IsStripDark(c)) dark++;
       if (dark < 0.85 * px.Length) return false;
+      return Marks(grab, U);
+    }
+
+    /// <summary>The same on a grab that may hold masked pixels (our own hint): the dark strip is judged on its known pixels (a few masked rows
+    /// cannot make it «not known» when the rest already says no / yes; a strip that is no ends the look as a definite no); the marks keep the
+    /// withhold rule of <see cref="OwnMask.Read"/> (a grab with a masked pixel is not used).</summary>
+    public static Seen3 Look(Func<int, int, int, int, int[]> grab, double U) {
+      int x0, y0, w, h; StripBox(U, out x0, out y0, out w, out h);
+      int[] px = grab(x0, y0, w, h);
+      if (px == null) return Seen3.No;
+      Seen3 strip = OwnMask.ShareAtLeast(px, IsStripDark, 0.85);
+      if (strip == Seen3.No) return Seen3.No;
+      Seen3 marks = OwnMask.Read(g => Marks(g, U), grab);
+      if (marks == Seen3.No) return Seen3.No;
+      return strip == Seen3.Yes ? marks : Seen3.Unknown;
+    }
+
+    static bool Marks(Func<int, int, int, int, int[]> grab, double U) {
       // a dark strip is not enough: a filtered grid of not-owned heroes (dark empty cards) looks the same, and a click on the
       // funnel then OPENS the pop-up again. Its own marks, 2 of 3 (the divider moved between layouts: at 503x283 on game 1.6.47 the
       // Фракция | Фильтр line is at 0.7705·U and nothing at 0.4836·U; 1920×1009 and 1.6.46 at 526×296 have it at 0.4836·U):

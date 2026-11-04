@@ -55,6 +55,9 @@ namespace RealmForge {
 
     public void Start(Act a, long now) { Cur = a; Outcome = ActOutcome.Running; Detail = ""; sent = false; startAt = now; SentAt = 0; }
 
+    /// <summary>The run was paused (the player has the mouse / the game is behind) for <paramref name="dt"/> ms: the click's own clocks stand still.</summary>
+    public void Pause(long dt) { startAt += dt; if (SentAt > 0) SentAt += dt; }
+
     ActOutcome End(ActOutcome o, string why) {
       Outcome = o; Detail = why;
       if (!sent && o != ActOutcome.Done && Cur != null && Cur.OnNotSent != null) Cur.OnNotSent();   // (a pilot's action that did not go out is taken back)

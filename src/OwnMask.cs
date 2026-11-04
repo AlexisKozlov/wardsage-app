@@ -50,6 +50,17 @@ namespace RealmForge {
       return yes ? Seen3.Yes : withheld ? Seen3.Unknown : Seen3.No;
     }
 
+    /// <summary>Whether at least <paramref name="min"/> of the grab matches <paramref name="pred"/>, with masked pixels unknown: yes when the known
+    /// matches alone reach min * N; no when the matches plus every masked pixel still fall short; else not known. A null grab is no.</summary>
+    public static Seen3 ShareAtLeast(int[] px, Func<int, bool> pred, double min) {
+      if (px == null || px.Length == 0) return Seen3.No;
+      int m = 0, k = 0;
+      foreach (int p in px) { if (p == ListTracker.Masked) k++; else if (pred(p)) m++; }
+      double need = min * px.Length;
+      if (m >= need) return Seen3.Yes;
+      return m + k < need ? Seen3.No : Seen3.Unknown;
+    }
+
     /// <summary>Both must be yes for yes; one no is no; else not known.</summary>
     public static Seen3 And(Seen3 a, Seen3 b) {
       if (a == Seen3.No || b == Seen3.No) return Seen3.No;
@@ -79,16 +90,20 @@ namespace RealmForge {
       last[kind] = now;
     }
 
+    /// <summary>Two clocks read a few ms apart (the tick start, the fresh read): a note up to SkewMs ahead of <paramref name="now"/> is still fresh.</summary>
+    public const long SkewMs = 250;
+    static bool Fresh(long now, long last) { return now - last <= StaleMs && last - now <= SkewMs; }
+
     /// <summary>The kind of a look that is unknown now (and fresh), or null: no click this tick.</summary>
     public string Blocking(long now) {
-      foreach (var kv in last) if (now >= kv.Value && now - kv.Value <= StaleMs) return kv.Key;
+      foreach (var kv in last) if (Fresh(now, kv.Value)) return kv.Key;
       return null;
     }
 
     /// <summary>The kind unknown for the whole timeout, once; null otherwise.</summary>
     public string Overdue(long now) {
       foreach (var kv in last) {
-        if (now < kv.Value || now - kv.Value > StaleMs || reported.Contains(kv.Key)) continue;
+        if (!Fresh(now, kv.Value) || reported.Contains(kv.Key)) continue;
         long s; if (since.TryGetValue(kv.Key, out s) && now - s >= TimeoutMs) { reported.Add(kv.Key); return kv.Key; }
       }
       return null;

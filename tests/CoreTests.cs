@@ -4441,6 +4441,21 @@ static partial class CoreTests {
         }
       }
       Check(bad == 0 && unk > 0, "hero filter look: " + tot + " scenes over it - never the other answer (" + bad + "), not known " + unk + ", yes " + yes);
+      // Look: the strip is judged on its known pixels. A 50x50 mask at the funnel (x-7, y243), clipping the strip's last rows: closed grid = no, open = yes, never the opposite
+      int bad2 = 0, hit = 0, yes2 = 0, no2 = 0;
+      foreach (bool open in new[] { true, false }) {
+        var f = frame(open);
+        for (int dx = -30; dx <= 30; dx += 6) for (int dy = -30; dy <= 30; dy += 6) {
+          var r = HeroFilterLook.Look(over(f, new[] { -7 + dx, 243 + dy, 50, 50 }), U);
+          if (r == Seen3.Yes) { yes2++; if (!open) bad2++; } else if (r == Seen3.No) { no2++; if (open) bad2++; }
+          hit++;
+        }
+        var at = HeroFilterLook.Look(over(f, new[] { -7, 243, 50, 50 }), U);
+        Check(at == (open ? Seen3.Yes : Seen3.No), "hero filter look: a 50x50 mask at the funnel (-7, 243), pop-up " + (open ? "open" : "closed") + " -> " + at);
+      }
+      Check(bad2 == 0 && yes2 > 0 && no2 > 0, "hero filter look over " + hit + " masks at the funnel: never the opposite (" + bad2 + "), yes " + yes2 + ", no " + no2);
+      Check(OwnMask.ShareAtLeast(new[] { 1, 1, 1, ListTracker.Masked }, p => p == 1, 0.7) == Seen3.Yes && OwnMask.ShareAtLeast(new[] { 1, 0, 0, ListTracker.Masked }, p => p == 1, 0.7) == Seen3.No
+        && OwnMask.ShareAtLeast(new[] { 1, 1, 0, ListTracker.Masked }, p => p == 1, 0.7) == Seen3.Unknown && OwnMask.ShareAtLeast(null, p => true, 0.5) == Seen3.No, "ShareAtLeast: yes / no / not known");
     }
     // the list's phase, the grid's columns and the slots: unchanged or not known
     {
@@ -4480,6 +4495,7 @@ static partial class CoreTests {
       var u = new UnknownLooks();
       Check(u.Blocking(0) == null, "unknown looks: none, nothing held back");
       u.Note("confirm button", true, 1000);
+      Check(u.Blocking(990) == "confirm button" && u.Blocking(1000 - UnknownLooks.SkewMs - 1) == null && u.Overdue(990) == null, "unknown look noted by a clock a few ms ahead of the reader's is still fresh (the tick-start clock vs the fresh one)");
       Check(u.Blocking(1100) == "confirm button" && u.Blocking(1000 + UnknownLooks.StaleMs + 1) == null, "unknown look: no click while it is fresh, the flow that moved on is not held back");
       u.Note("confirm button", false, 1200);
       Check(u.Blocking(1210) == null, "a known look clears it");

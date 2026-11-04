@@ -145,7 +145,12 @@ namespace RealmForge {
       if (needResume) { needResume = false; if (!io.Gate.Halted(Owner)) io.Gate.Resume(Owner); }
       if (io.Gate.Halted(Owner)) { Halt(io, "gate_" + io.Gate.HaltReason(Owner)); return; }
       if (io.UserBusy || !io.Front) {   // a pause is not a failure and does not count toward the no-progress clock
-        Say = io.UserBusy ? "paused" : "background"; pausedMs += dt; lastProgress += dt; stepProgress += dt; return;
+        Say = io.UserBusy ? "paused" : "background"; pausedMs += dt; lastProgress += dt; stepProgress += dt;
+        // (the ladder's and the gate wait's clocks stand still too: live 2026-11-04 build 533, the player reached for the mouse right after a reset and the way back "was closed (no change in 12 s)" with no press ever sent)
+        if (popCity) { ladSince += dt; popSince += dt; if (lateFailAt > 0) lateFailAt += dt; }
+        if (gateSince >= 0) gateSince += dt;
+        if (act.Active) act.Pause(dt);
+        return;
       }
       if (s == null) return;
       if ((s.Confidence < NavConfidence.NoOrder || !s.Stable(now)) && blindMs < BlindGraceMs) { blindMs += dt; lastProgress += dt; stepProgress += dt; pausedMs += dt; }   // (see BlindMs; the run cap counts working time)
