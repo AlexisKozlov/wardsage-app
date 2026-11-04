@@ -245,7 +245,7 @@ static partial class CoreTests {
   /// <summary>Runs that end because a rule of the gate refused (a dangerous form, an Escape on the pilot's own screen, a pop-up with no known cross, a form nobody knows) or the unchanged item pilot gave its own verdict (item_failed / item_unconfirmed: the list work is not the navigator's): the correct stop, named; the sim's
   /// done-rate gate is taken over the other runs (the lab's metric counts them as failures and names them).</summary>
   static bool NavRefusal(string o) {
-    return o.StartsWith("navhalt:danger") || o.StartsWith("navhalt:gate_dangerous") || o.StartsWith("navhalt:gate_offer") || o.StartsWith("navhalt:gate_target")
+    return o.StartsWith("navhalt:danger") || o.StartsWith("navhalt:gate_dangerous") || o.StartsWith("navhalt:gate_offer") || o.StartsWith("navhalt:gate_unknown") || o.StartsWith("navhalt:gate_target")
         || o.StartsWith("navhalt:unknown_popup") || o.StartsWith("navhalt:unknown_screen") || o.StartsWith("wait:item_failed") || o.StartsWith("wait:item_unconfirmed") || o.StartsWith("halt:dangerous") || o.StartsWith("halt:offer") || o.StartsWith("halt:target");
   }
 
@@ -260,7 +260,7 @@ static partial class CoreTests {
     int failures = 0; var sw = System.Diagnostics.Stopwatch.StartNew(); int shown = 0;
     foreach (var sc in NavScenarios) {
       foreach (bool slow in new[] { false, true }) {
-        int doneNav = 0, doneOld = 0, hang = 0, bad = 0, halts = 0, refNav = 0, refOld = 0; var why = new SortedDictionary<string, int>();
+        int doneNav = 0, doneOld = 0, hang = 0, bad = 0, halts = 0, refNav = 0, refOld = 0, pairN = 0, pairNav = 0, pairOld = 0; var why = new SortedDictionary<string, int>();
         for (int s = from; s < from + per; s++) {
           var a = NavRunOne(sc, s, slow, true, geo, verbose);
           if (Environment.GetEnvironmentVariable("NAV_DIGEST") != null) Console.WriteLine("digest " + sc + (slow ? " slow " : " fast ") + s + " " + a.Hash + " " + a.Outcome);
@@ -269,18 +269,20 @@ static partial class CoreTests {
           else if (a.Outcome.StartsWith("navhalt") || a.Outcome.StartsWith("halt:")) { halts++; int c; why.TryGetValue(a.Outcome, out c); why[a.Outcome] = c + 1; }
           else { int c; why.TryGetValue(a.Outcome, out c); why[a.Outcome] = c + 1; }
           if (b != null && b.Outcome.StartsWith("done")) doneOld++;
+          if (Environment.GetEnvironmentVariable("NAV_WORSE") != null && b != null && b.Outcome.StartsWith("done") && !a.Outcome.StartsWith("done")) Console.WriteLine("worse " + sc + (slow ? " slow " : " fast ") + s + " nav=" + a.Outcome + " old=done");
           if (NavRefusal(a.Outcome)) refNav++; if (b != null && NavRefusal(b.Outcome)) refOld++;
+          if (b != null && !NavRefusal(a.Outcome) && !NavRefusal(b.Outcome)) { pairN++; if (a.Outcome.StartsWith("done")) pairNav++; if (b.Outcome.StartsWith("done")) pairOld++; }   // (the seeds neither path was stopped by a rule on: the paths compared on the same world)
           if (Environment.GetEnvironmentVariable("NAV_LIST") != null && !a.Outcome.StartsWith("done")) Console.WriteLine("    " + sc + (slow ? " slow" : " fast") + " seed " + s + ": " + a.Outcome);
           if (a.Hang) hang++;
           if (a.Bad) { bad++; if (shown++ < 6) Console.WriteLine("  !! " + sc + (slow ? " slow " : " fast ") + "seed " + s + ": " + a.Err.Replace("\n", "\n  ")); }
         }
         double rate = doneNav * 100.0 / Math.Max(1, per - refNav), need = slow ? 97 : 99;
-        bool pass = bad == 0 && hang == 0 && rate >= need && (sc.StartsWith("nav.city") || per - doneNav - refNav <= per - doneOld - refOld + 1);
+        bool pass = bad == 0 && hang == 0 && rate >= need && (sc.StartsWith("nav.city") || pairNav >= pairOld);
         if (!pass) failures++;
         var sb = new StringBuilder();
         foreach (var kv in why) sb.Append(" ").Append(kv.Key).Append("=").Append(kv.Value);
         Console.WriteLine((pass ? "  PASS " : "  FAIL ") + sc.PadRight(28) + (slow ? "slow" : "fast") + " done " + doneNav + "/" + per + " (" + rate.ToString("0.0") + " % of the " + (per - refNav) + " not refused by a rule)"
-          + (sc.StartsWith("nav.city") ? "" : ", old code " + doneOld + "/" + per) + ", rule breaks " + bad + ", hangs " + hang + (sb.Length > 0 ? " |" + sb : ""));
+          + (sc.StartsWith("nav.city") ? "" : ", old code " + doneOld + "/" + per + ", paired (neither refused) " + pairNav + "/" + pairN + " vs old " + pairOld + "/" + pairN) + ", rule breaks " + bad + ", hangs " + hang + (sb.Length > 0 ? " |" + sb : ""));
       }
     }
     Console.WriteLine("nav sim: " + failures + " scenario rows failed, " + sw.ElapsedMilliseconds + " ms");

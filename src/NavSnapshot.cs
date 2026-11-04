@@ -33,7 +33,7 @@ namespace RealmForge {
     public NavConfidence Confidence;
     public long ReadAtMs, StableSinceMs;
     /// <summary>How long the signature must stay the same before the snapshot may be acted on (ScreenReader.StableMs).</summary>
-    public int NeedMs = 250;
+    public int NeedMs = 150;
     public string Signature = "";
     /// <summary>The signature without the layers: the screen and its facets (a pop-up that flickers is no progress).</summary>
     public string StateKey = "";
@@ -53,8 +53,8 @@ namespace RealmForge {
   }
 
   public sealed class ScreenReader {
-    /// <summary>Adaptive: max(250, 1.5 * the observed read gap p50), capped at 800 (Observe).</summary>
-    public int StableMs = 250;
+    /// <summary>Adaptive: max(150, 1.5 * the observed read gap p50), capped at 800 (Observe).</summary>
+    public int StableMs = 150;
     public Snapshot Current { get; private set; }
 
     Snapshot raw;
@@ -67,7 +67,7 @@ namespace RealmForge {
         gaps.Add(now - lastReadAt); if (gaps.Count > 9) gaps.RemoveAt(0);
         var s = new List<long>(gaps); s.Sort();
         long p50 = s[s.Count / 2];
-        StableMs = (int)Math.Max(250, Math.Min(800, p50 * 3 / 2));
+        StableMs = (int)Math.Max(150, Math.Min(800, p50 * 3 / 2));
       }
       lastReadAt = now;
     }
@@ -152,8 +152,9 @@ namespace RealmForge {
         else if (c == 'P' || c == 'E' || c == 'F') role = LayerRole.Popup;
         else if (c == 'K') continue;
         else {
-          // nobody knows it: a layer only when the screen's own read counted it as a pop-up (a part the screen builds late is none)
-          if (!modal.Contains(n) && !(s.Kind == ScreenKind.Unknown && !string.IsNullOrEmpty(s.TopForm) && Array.IndexOf(s.TopForm.Split(','), n) >= 0)) continue;
+          // nobody knows it: over a known screen it is no layer (a part the screen builds late looks like this; a real pop-up that eats the clicks is told by the
+          // step's missing effect, the reset and the gate); on an unknown screen it is the screen's own top form
+          if (s.Kind != ScreenKind.Unknown || string.IsNullOrEmpty(s.TopForm) || Array.IndexOf(s.TopForm.Split(','), n) < 0) continue;
           role = LayerRole.Unknown;
         }
         sn.Stack.Add(new Layer { Form = n, Class = c, Role = role });
