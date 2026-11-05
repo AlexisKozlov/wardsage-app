@@ -858,6 +858,7 @@ static partial class CoreTests {
 
     Console.WriteLine("FilterPilot (the game's gear filter: set + main stat):");
     FilterPilotTests();
+    FilterReplayTests();
 
     Console.WriteLine("HeroPilot (the plan's hero on the hero screen):");
     HeroPilotTests();
@@ -9566,6 +9567,57 @@ static partial class CoreTests {
       else if (a.Kind == AutoKind.Drag) game.Drag(a.DY);
     }
     return clicks;
+  }
+
+
+  // Live 1.6.66.572 (applog_008, 10:29:01-10:29:44): what the filter pilot did with the bar (gear.filterBtn) and with the item changes.
+  static FilterView ReplayView(long now, long item, Mem3 mem, bool pix, bool wanted) {
+    return new FilterView { NowMs = now, Foreground = true, W = 1920, H = 1009, Item = item, Wanted = wanted, SetId = 722800, StatId = 13, SetIndex = 2, StatIndex = 3,
+      Suits = new long[0], MainAttrs = new long[0], SubAttrs = new long[0], SetOrder = new long[] { 723000, 722900, 722800, 722600 },
+      PanelMem = mem, PanelOpen = pix };
+  }
+  static void FilterReplayTests() {
+    var g = new FilterGeometry();
+    // the bar is a toggle: one press, then the game's flag is awaited (it showed the pop-up 1 s later), the pictures flickering (mem=yes pix=no, 7 times in the log) are not read
+    var p = new FilterPilot(g); int bar = 0, other = 0; long t = 0;
+    for (; t < 600; t += 100) { var a = p.Step(ReplayView(t, 10677, Mem3.No, false, true)); if (a != null && a.Kind == AutoKind.Click) { if (a.Widget == FrameTargets.KeyGearFilter) bar++; else other++; } }
+    for (; t < 6000; t += 100) {
+      var a = p.Step(ReplayView(t, 10677, Mem3.Yes, (t / 100) % 2 == 0, true));
+      if (a != null && a.Kind == AutoKind.Click && a.Widget == FrameTargets.KeyGearFilter) bar++;
+    }
+    Check(bar == 1 && other == 0, "filter replay: the bar pressed once (memory said no for 0.6 s, then yes with a flickering picture): " + bar + " bar presses");
+    // the flag stays «closed» for over 1.5 s after the press: the second press is allowed then (and not before)
+    p = new FilterPilot(g); var pressAt = new System.Collections.Generic.List<long>();
+    for (t = 0; t < 5000; t += 100) { var a = p.Step(ReplayView(t, 10677, Mem3.No, false, true)); if (a != null && a.Kind == AutoKind.Click && a.Widget == FrameTargets.KeyGearFilter) pressAt.Add(t); }
+    Check(pressAt.Count >= 2 && pressAt[1] - pressAt[0] >= FilterPilot.MemOpenWaitMs && FilterPilot.MemOpenWaitMs <= 1500, "filter replay: the second press only after the flag stood closed " + FilterPilot.MemOpenWaitMs + " ms (" + string.Join(",", pressAt) + ")");
+    // item 33643: the first tick of the new item sends a click that does not go out (the navigator waits for a stable screen) - NotSent rolls back; the old item's finished state must not
+    // come back under the new item (it counted «drops» until «dropped 3 times»)
+    p = new FilterPilot(g);
+    var game = new FakeFilterGame(g, 1920, 1009) { SetList = new long[] { 723000, 722900, 722800, 722600, 722500, 722200, 711300, 722100, 723100, 722400 }, StatList = new long[] { 1, 2, 7, 13, 14, 19, 23, 25, 27 } };
+    t = 0;
+    for (int k = 0; k < 600; k++, t += 100) {
+      var v = new FilterView { NowMs = t, Foreground = true, W = 1920, H = 1009, Item = 56120, Wanted = k < 5 || !game.Suits.Contains(722800), SetId = 722800, StatId = 13, SetIndex = 2, StatIndex = 3, SetOrder = game.SetList,
+        Suits = game.Suits.ToArray(), MainAttrs = game.Mains.ToArray(), SubAttrs = game.Subs.ToArray(), PanelOpen = game.Open, SidePanelOpen = game.Open && game.Side, SetPanelOpen = game.Open && game.Side && game.SetSide };
+      var a = p.Step(v); if (a == null) break;
+      if (a.Kind == AutoKind.Click) game.Click(a.X, a.Y);
+    }
+    Check(p.State == "done" && game.Open, "filter replay: item 56120 done, pop-up open (" + p.State + ")");
+    game.Open = game.Side = game.SetSide = game.SubSide = false; game.Suits.Clear(); game.Mains.Clear(); game.Subs.Clear();   // the plan closes the pop-up (its x drops the filter)
+    for (int k = 0; k < 8; k++, t += 700) {
+      var v = new FilterView { NowMs = t, Foreground = true, W = 1920, H = 1009, Item = 33643, Wanted = true, SetId = 711300, StatId = 0, SetIndex = 6, StatIndex = -1, SetOrder = game.SetList,
+        Suits = new long[0], MainAttrs = new long[0], SubAttrs = new long[0] };
+      var a = p.Step(v);
+      if (k >= 3) Check(a != null && a.Kind == AutoKind.Click && p.State == "work", "filter replay: tick " + k + " of the new item asks for the bar (" + p.State + " " + p.Note + ")");   // (the first 1.5 s: the pop-up was just seen open, the read may flicker)
+      p.NotSent();
+    }
+    Check(p.State != "failed" && !p.DroppedGiveUp, "filter replay: not sent 8 times in a row on a new item: no «dropped 3 times» (" + p.State + " " + p.Note + ")");
+    // a closed pop-up that needed nothing (no set, no stat) was never «set»: it cannot be «dropped» three times
+    p = new FilterPilot(g);
+    for (int k = 0; k < 40; k++) {
+      var v = new FilterView { NowMs = 10000 + k * 700, Foreground = true, W = 1920, H = 1009, Item = 7, Wanted = k % 2 == 0, SetId = 0, StatId = 0, Suits = new long[0], MainAttrs = new long[0], SubAttrs = new long[0], PanelMem = Mem3.No };
+      p.Step(v);
+    }
+    Check(p.State != "failed" && !p.DroppedGiveUp, "filter replay: a filter that needs nothing is never «dropped» (" + p.State + " " + p.Note + ")");
   }
 
   static void FilterPilotTests() {

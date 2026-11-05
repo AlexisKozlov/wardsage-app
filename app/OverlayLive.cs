@@ -8,11 +8,20 @@ namespace RealmForge {
   sealed partial class OverlayController {
     /// <summary>The click of <paramref name="req"/> by its widget key: the live rect read fresh (at most UiFreshMs old, else one read now), the form on top of the fresh screen. A live point is set
     /// into the request (X, Y, Live, LiveRect) and the screen point (<paramref name="sx"/>, <paramref name="sy"/>); else nothing changes (the pilot's point). One log line per click.</summary>
+    // the same "uibtn key" line is a lookup the pilot repeats every tick while the navigator holds its click back (gate / stable screen): one line per second, not nine (applog_008 10:29:02: 56 lines, 40 real clicks)
+    string lastKeyLine = ""; int lastKeyLineAt; int keyLineSkipped;
+    void LogKeyLine(string line) {
+      int now = Environment.TickCount;
+      if (line == lastKeyLine && unchecked(now - lastKeyLineAt) < 1000) { keyLineSkipped++; return; }
+      if (keyLineSkipped > 0) { Log.Write("uibtn key: " + keyLineSkipped + " same lookups left out"); keyLineSkipped = 0; }
+      lastKeyLine = line; lastKeyLineAt = now; Log.Write(line);
+    }
+
     bool LiveClickKey(ClickRequest req, ScreenState fresh, W32.POINT o, ref int sx, ref int sy) {
       string key = req.WidgetKey;
       if (string.IsNullOrEmpty(key) || req.W <= 0 || req.H <= 0) return false;
       var ft = FrameTargets.Of(key); var w = FrameTargets.Widget(ft);
-      if (w == null) { Log.Write(RFX.KeyClickLine(key, null, false, 0, 0, "no widget for the key")); return false; }
+      if (w == null) { LogKeyLine(RFX.KeyClickLine(key, null, false, 0, 0, "no widget for the key")); return false; }
       int now = Environment.TickCount;
       var r = RFX.UiTargetFresh(key, req.W, req.H, now, RFX.UiFreshMs) ?? RFX.UiTargetReadNow(key, w, req.W, req.H, req.U);
       double x, y; double[] box; string why;
@@ -23,7 +32,7 @@ namespace RealmForge {
         req.X = x; req.Y = y; req.Live = true; req.LiveRect = rect;
         sx = o.X + (int)Math.Round(x); sy = o.Y + (int)Math.Round(y);
       } else if (why == null) why = r != null && !r.Ok ? "failed at " + r.FailStep : "no read";
-      Log.Write(RFX.KeyClickLine(key, rect, live, x, y, why));
+      LogKeyLine(RFX.KeyClickLine(key, rect, live, x, y, why));
       return live;
     }
 
@@ -43,7 +52,7 @@ namespace RealmForge {
         req.X = x; req.Y = y; req.Live = true; req.LiveRect = rect;
         sx = o.X + (int)Math.Round(x); sy = o.Y + (int)Math.Round(y);
       } else if (why == null) why = s != null && !s.Ok ? "failed at " + s.FailStep : "no read";
-      Log.Write(RFX.KeyClickLine(key, rect, live, x, y, why));
+      LogKeyLine(RFX.KeyClickLine(key, rect, live, x, y, why));
       return live;
     }
 

@@ -69,7 +69,7 @@ namespace RealmForge {
 
   public sealed class FilterPilot {
     /// <summary>After the click that opens the pop-up the pilot waits this long for the game's flag to turn on before it presses the (toggle) bar again.</summary>
-    public const int MemOpenWaitMs = 2000;
+    public const int MemOpenWaitMs = 1500;
     public const int MaxClicks = 26, AfterClickMs = 550, PartTries = 2, EqConfirmMs = 2000, SetTries = 4, MaxSetDrags = 4, MaxSubs = 4, MaxPasses = 3, MaxReopens = 3;
     readonly FilterGeometry g;
     long item = -1, waitUntil, openWaitUntil;
@@ -94,6 +94,8 @@ namespace RealmForge {
     public string State = "idle";
     /// <summary>Why the pilot gave up or what it is doing besides the filter (for the journal).</summary>
     public string Note = "";
+    /// <summary>The pilot gave up because the game dropped its filter again and again: the item is picked without the filter (no reset of the step, no trip to the city: live 1.6.66.572 item 33643).</summary>
+    public bool DroppedGiveUp;
 
     public FilterPilot(FilterGeometry g) { this.g = g; }
 
@@ -138,11 +140,11 @@ namespace RealmForge {
 
     // The action of the last Step did not go out (the navigator waits for a stable screen, the gate said wait): the pilot is as before it, the click is not counted and not awaited.
     // (The old host never calls this: its behaviour is unchanged.)
-    sealed class Saved { public long WaitUntil, OpenWaitUntil, EqClickAt, SubLastId, SubLastAt; public long[] SubBefore; public int Clicks, SetTries, StatTries, EqTries, CloseTries, OpenTries, SetDrags, SubTries, SideCloseTries, Passes, Reopens, SetClickRow; public double SetScroll; public bool SetPending, WasSet, SubSkipped, SetSkipped, StatSkipped, Failed; public string State, Side; }
+    sealed class Saved { public long WaitUntil, OpenWaitUntil, EqClickAt, SubLastId, SubLastAt; public long[] SubBefore; public int Clicks, SetTries, StatTries, EqTries, CloseTries, OpenTries, SetDrags, SubTries, SideCloseTries, Passes, Reopens, SetClickRow; public double SetScroll; public bool SetPending, WasSet, SubSkipped, SetSkipped, StatSkipped, Failed; public string State, Side, Note; public long Item; }
     Saved unsent;
     Saved SaveState() {
       return new Saved { SubLastId = subLastId, SubLastAt = subLastAt, SubBefore = subBefore, WaitUntil = waitUntil, OpenWaitUntil = openWaitUntil, EqClickAt = eqClickAt, Clicks = clicks, SetTries = setTries, StatTries = statTries, EqTries = eqTries, CloseTries = closeTries, OpenTries = openTries, SetDrags = setDrags, SubTries = subTries,
-        SideCloseTries = sideCloseTries, Passes = passes, Reopens = reopens, SetClickRow = setClickRow, SetScroll = setScroll, SetPending = setPending, WasSet = wasSet, SubSkipped = subSkipped, SetSkipped = setSkipped, StatSkipped = statSkipped, Failed = failed, State = State, Side = side };
+        SideCloseTries = sideCloseTries, Passes = passes, Reopens = reopens, SetClickRow = setClickRow, SetScroll = setScroll, SetPending = setPending, WasSet = wasSet, SubSkipped = subSkipped, SetSkipped = setSkipped, StatSkipped = statSkipped, Failed = failed, State = State, Side = side, Note = Note, Item = item };
     }
     public void NotSent() {
       var x = unsent; unsent = null; if (x == null) return;
@@ -150,13 +152,14 @@ namespace RealmForge {
       subLastId = x.SubLastId; subLastAt = x.SubLastAt; subBefore = x.SubBefore;
       waitUntil = x.WaitUntil; openWaitUntil = x.OpenWaitUntil; eqClickAt = x.EqClickAt; clicks = x.Clicks; setTries = x.SetTries; statTries = x.StatTries; eqTries = x.EqTries; closeTries = x.CloseTries; openTries = x.OpenTries; setDrags = x.SetDrags;
       subTries = x.SubTries; sideCloseTries = x.SideCloseTries; passes = x.Passes; reopens = x.Reopens; setClickRow = x.SetClickRow; setScroll = x.SetScroll; setPending = x.SetPending; wasSet = x.WasSet;
-      subSkipped = x.SubSkipped; setSkipped = x.SetSkipped; statSkipped = x.StatSkipped; failed = x.Failed; State = x.State; side = x.Side;
+      subSkipped = x.SubSkipped; setSkipped = x.SetSkipped; statSkipped = x.StatSkipped; failed = x.Failed; State = x.State; side = x.Side; Note = x.Note;
+      item = x.Item;   // (the item too: a click that did not go out on the first tick of a NEW item put the old item's finished state back under the new item, and the next ticks counted its "drops" - live 1.6.66.572 item 33643: «dropped 3 times» -> reset -> the city and back)
     }
 
     AutoAction StepCore(FilterView v) {
       if (v.PanelOpen && v.PanelMem == Mem3.Unknown) panelSeenAt = v.NowMs;
       if (v.Item != item) {
-        item = v.Item; waitUntil = 0; passes = 0; reopens = 0; failed = false; State = "idle"; effect.Drop();
+        item = v.Item; waitUntil = 0; passes = 0; reopens = 0; failed = false; DroppedGiveUp = false; State = "idle"; effect.Drop();
         NewPass();
       }
       if (v.Item <= 0 || v.Suits == null || v.MainAttrs == null) { State = "idle"; effect.Drop(); return null; }
@@ -186,7 +189,7 @@ namespace RealmForge {
       // set: leave the pop-up open (its × would drop the filter); the item pilot picks the item from the list beside it
       // (the side panel of sets / stats stays open after the last pick and swallows the item list's clicks: closed first)
       if (satisfied) {
-        wasSet = true;
+        if (v.PanelOpen) wasSet = true;   // (set = seen on in the game's pop-up; a closed pop-up that needed nothing was never set, so nothing can be «dropped»)
         if (v.PanelOpen && v.SidePanelOpen && (State == "work" || State == "done")) {
           if (!v.Foreground || v.UserBusy) return AutoAction.Nothing;
           if (v.NowMs < waitUntil) return AutoAction.Nothing;
@@ -210,7 +213,7 @@ namespace RealmForge {
       // the filter was set for this item and is gone now (the game dropped it): set it again with fresh tries
       // (the tries left from the first pass made the second give up halfway - live 10.10)
       if (State != "work" && wasSet) {
-        if (++passes >= MaxPasses) { failed = true; State = "failed"; Note = "the filter was dropped " + passes + " times"; return null; }
+        if (++passes >= MaxPasses) { failed = true; State = "failed"; Note = "the filter was dropped " + passes + " times"; DroppedGiveUp = true; return null; }
         NewPass();
       }
       State = "work";

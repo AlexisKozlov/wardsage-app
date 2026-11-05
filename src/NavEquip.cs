@@ -228,7 +228,7 @@ namespace RealmForge {
       var fa = pilot.Step(fv);
       mark.Note(pilot.State + "|" + pilot.Note, now);
       if (OnStep != null) OnStep(fv, fa);
-      if (pilot.State == "failed" && pilot.Note != "" && fa == null) return NavStep.Reset("filter: " + pilot.Note);   // a toggle that does not read back: verify-or-reset
+      if (pilot.State == "failed" && pilot.Note != "" && fa == null && !pilot.DroppedGiveUp) return NavStep.Reset("filter: " + pilot.Note);   // a toggle that does not read back: verify-or-reset
       if (fa == null) return null;
       if (fa.Kind == AutoKind.None) return NavStep.Wait(pilot.State == "failed" ? "idle" : "work");
       var act = NavAdapt.ToAct(fa, ClickTarget.EquipFilter, t.Owner, "Form_CharactorMain", NavKeep.GearFilter, "filter: " + pilot.State);
