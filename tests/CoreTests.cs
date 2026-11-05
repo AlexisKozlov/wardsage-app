@@ -4149,6 +4149,7 @@ static partial class CoreTests {
   static void AutoPilotTests(ListGeometry geo, double H) {
     var types = new int[41]; for (int i = 1; i <= 40; i++) types[i] = 1;
     double pitch = geo.PitchY * H, cell = geo.CellW * H;
+    Check(!LookPolicy.ConfirmBlocks(true, true) && !LookPolicy.ConfirmBlocks(true, false) && LookPolicy.ConfirmBlocks(false, true) && !LookPolicy.ConfirmBlocks(false, false), "look policy: the live rect of «Заменить» answers: a covered picture is no unknown look (lab 552: 2 s of waiting)");
     {   // lab 552 (build A, 82b837): "no other cell of the list is in view to re-select by (sel=0 tip=- list=0..8 cellY=148 target=live)": the click on the live cell changed nothing and no neighbour is in view.
         // Once more the same live cell (its rect standing still again), then the list moved by one row, and only then a named failure - never the failure straight away
       var pg = new AutoPilot(geo); double H5 = 705, cell5 = geo.CellW * H5; int nClick = 0, nDrag = 0; var order = new List<string>();

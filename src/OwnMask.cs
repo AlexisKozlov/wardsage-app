@@ -78,6 +78,8 @@ namespace RealmForge {
   /// never makes a click wait ('own'); the picture only matters while the flag is Unknown.</summary>
   public static class LookPolicy {
     public static bool Blocks(Mem3 mem, Seen3 look) { return mem == Mem3.Unknown && look == Seen3.Unknown; }
+    /// <summary>«Заменить» / «Надеть»: the card's live rect (m_RightBtn) answers where the button is, so the covered picture is no unknown look and no click waits for it (lab 552: 'look covered by our hint, waiting' ~2 s).</summary>
+    public static bool ConfirmBlocks(bool liveRect, bool pictureUnknown) { return Blocks(liveRect ? Mem3.Yes : Mem3.Unknown, pictureUnknown ? Seen3.Unknown : Seen3.No); }
   }
 
   /// <summary>The looks that came back «not known» (covered by our own hint): while one is, the pilot does not click; one that stays

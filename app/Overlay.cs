@@ -4952,8 +4952,16 @@ namespace RealmForge {
     public bool EquipTipShown() { var cs = screens.Current; return cs != null && ((cs.Flow ?? "") + "," + (cs.ModalWhy ?? "")).Contains(EquipTipForm); }
     int[] ConfirmButton(W32.POINT o, double W, double H) {
       blueUnk = false;
+      {   // the card's own button read live (m_RightBtn): the click point and the kind (memory) come from it at once, no picture search under our hint
+        bool lcl; var lc = FrameForI(FrameTargets.KeyConfirm, hg.Replace(W, H), W, H, Ui.Unit(W, H), out lcl);
+        if (lcl && lc != null) {
+          LookUnknown("confirm button", LookPolicy.ConfirmBlocks(true, false));
+          confirmBlueNone = false; confirmMissSince = 0; confirmIsEquip = RFX.ReadTipKind() == 2;
+          return lc;
+        }
+      }
       int[] rep = FindBlue(o, hg.Replace(W, H), H), eq = FindBlue(o, hg.Equip(W, H), H);
-      LookUnknown("confirm button", blueUnk);   // (a spot our hint covers: the button may be there, or a second one - not known, no click)
+      LookUnknown("confirm button", LookPolicy.ConfirmBlocks(false, blueUnk));   // (a spot our hint covers: the button may be there, or a second one - not known, no click)
       confirmBlueNone = rep == null && eq == null && !blueUnk;
       // the game's own cards (two = «Заменить», one = «Надеть») are the kind of the button (E4: memory leads, the picture finds where it is); a picture that contradicts it over 1.5 s takes over (TipKindTracker);
       // told once per item next to what the pictures saw
