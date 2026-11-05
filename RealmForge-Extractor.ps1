@@ -3015,7 +3015,9 @@ namespace RealmForge {
     public long[] FactionList;   // its faction column, top down (0 = «Все"), null until it was opened once
     public int ClassCount;       // entries of its class column («Все» included), 0 = unknown
     public long[] ChosenCamps;   // factions the grid is filtered by now (empty = all)
-    public bool ClassChosen;     // the grid is filtered by a class now (which one is not readable: game config objects)
+    public bool ClassChosen;     // the grid is filtered by a class now
+    public long ChosenClass;     // its id (the class config's m_ProfessionID: 1 / 2 / 4 / 8 / 16 / 256); 0 = no class chosen, or chosen and not known (ClassSrc says)
+    public string ClassSrc = ""; // where ChosenClass came from: "all" (no class), "cfg" (the config object), "mem(row)" (its row in the class column), "unknown" (chosen, id not read), "unread"
     // the «Артефакт» tab (read only while the host guides an artifact: RFX.SetArtGoal, src/ArtEquip.cs)
     public bool ArtRead;         // the artifact fields below were read
     public bool ArtListOpen;     // m_PanelDatas[10]: the artifact list is open
@@ -3402,30 +3404,110 @@ namespace RealmForge {
       try { var g = ReadGearMem(a.Form); g.Pending = gearGapLatch.Pending(g.Gap, Environment.TickCount); return g; } catch (Exception) { return new GearMem { Why = "exception" }; }
     }
 
-    /// <summary>The grid's filter choice from m_PanelDatas[6] (Hero_Filter): the factions chosen (empty = all) and whether a class is chosen (which one is not readable: game config objects).</summary>
+    /// <summary>The grid's filter choice from m_PanelDatas[6] (Hero_Filter): the factions chosen (empty = all) and whether a class is chosen
+    /// (which one: <see cref="ReadHeroChoiceIds"/>).</summary>
     public static bool ReadHeroChoice(ulong form, out long[] camps, out bool classChosen) {
-      camps = new long[0]; classChosen = false;
+      var c = ReadHeroChoiceIds(form);
+      camps = c.Camps; classChosen = c.ClassChosen;
+      return c.Read;
+    }
+
+    /// <summary>What a read of the hero filter's choice found (the decision below is pure, shared with the tests). EntryIds: the entries of m_PanelDatas[6][1] in order,
+    /// each the class config's m_ProfessionID (-1 = «Все»), long.MinValue = an entry whose id was not read; EntryRows: the same entries' rows in the class column
+    /// (0 = «Все», 1 = the first class ...), -1 = not found there (the pop-up was never opened, the column holds other objects).</summary>
+    public sealed class HeroChoiceFacts { public bool Read; public long[] Camps = new long[0]; public long[] EntryIds = new long[0]; public int[] EntryRows = new int[0]; }
+
+    /// <summary>The choice as the game holds it: the factions, the class chosen and its id. ClassId > 0 = the id (ClassSrc cfg: read from the config object; mem(row): taken from
+    /// the class column's row through HeroGeometry.ClassOrder), 0 = no class or chosen and unknown. Never guessed: an unknown id stays 0 with ClassSrc "unknown".</summary>
+    public sealed class HeroChoice {
+      public bool Read; public long[] Camps = new long[0]; public bool ClassChosen; public long ClassId; public string ClassSrc = "unread";
+      public override string ToString() { return Read ? "camps=[" + string.Join(",", Array.ConvertAll(Camps, x => x.ToString())) + "] class=" + (ClassChosen ? (ClassId > 0 ? ClassId.ToString() : "?") : "all") + " src=" + ClassSrc : "unreadable"; }
+    }
+
+    public static HeroChoice DecideHeroChoice(HeroChoiceFacts f) {
+      var c = new HeroChoice();
+      if (f == null || !f.Read) return c;
+      c.Read = true; c.Camps = f.Camps ?? new long[0]; c.ClassSrc = "all";
+      for (int i = 0; i < f.EntryIds.Length; i++) {
+        long id = f.EntryIds[i];
+        if (id == -1) continue;
+        c.ClassChosen = true;
+        int row = f.EntryRows != null && i < f.EntryRows.Length ? f.EntryRows[i] : -1;
+        if (id != long.MinValue && id > 0) { c.ClassId = id; c.ClassSrc = "cfg"; }
+        else if (row >= 1 && row <= HeroGeometry.ClassOrder.Length) { c.ClassId = HeroGeometry.ClassOrder[row - 1]; c.ClassSrc = "mem(" + row + ")"; }
+        else c.ClassSrc = "unknown";
+        break;
+      }
+      return c;
+    }
+
+    /// <summary>Test seam: the class id of a script handle (null = read the game's object). Set only by the tests.</summary>
+    public static Func<ulong, long> HeroClassIdHook;
+    // CData_Profession_Element.m_ProfessionID (checked by tools/app-offsets.mjs)
+    const int ProfessionIdOffset = 0x14;
+
+    static long ProfessionOfHandle(ulong ud, int pid) {
+      if (HeroClassIdHook != null) return HeroClassIdHook(ud);
+      ulong obj = ScriptObjectAt(ud, "CData_Profession_Element", pid);
+      var b = obj != 0 ? Read(obj + (ulong)ProfessionIdOffset, 4) : null;
+      return b == null ? long.MinValue : BitConverter.ToInt32(b, 0);
+    }
+    static long HandleOf(ulong ud) { var ib = ud != 0 ? Read(ud + 40, 4) : null; return ib == null ? -1 : BitConverter.ToInt32(ib, 0); }
+
+    /// <summary>Reads m_PanelDatas[6] of the hero screen: factions, the class entries and their ids (see <see cref="DecideHeroChoice"/>).</summary>
+    public static HeroChoice ReadHeroChoiceIds(ulong form) {
+      var f = new HeroChoiceFacts();
       ulong v, pd; int tt, pdt;
-      if (!Field(form, "m_PanelDatas", out pd, out pdt) || pdt != T_TABLE || !IntKey(pd, 6, out v, out tt) || tt != T_TABLE) return false;
+      if (form == 0 || !Field(form, "m_PanelDatas", out pd, out pdt) || pdt != T_TABLE || !IntKey(pd, 6, out v, out tt) || tt != T_TABLE) return DecideHeroChoice(f);
+      f.Read = true;
       ulong cs, cls; int ct, lt;
-      if (IntKey(v, 3, out cs, out ct) && ct == T_TABLE) { var c = IntArray(cs); var l = new List<long>(); foreach (var x in c) if (x > 0) l.Add(x); camps = l.ToArray(); }
-      // the class column's choice: its «Все» is a script table with m_ProfessionID -1, a class is the game's config object
-      if (IntKey(v, 1, out cls, out lt) && lt == T_TABLE)
+      if (IntKey(v, 3, out cs, out ct) && ct == T_TABLE) { var l = new List<long>(); foreach (var x in IntArray(cs)) if (x > 0) l.Add(x); f.Camps = l.ToArray(); }
+      if (IntKey(v, 1, out cls, out lt) && lt == T_TABLE) {
+        var ids = new List<long>(); var hs = new List<long>(); int pid = 0; bool unknown = false;
         for (int i = 1; i <= 8; i++) {
-          ulong e, pid; int et, pt;
+          ulong e, pv; int et, pt;
           if (!IntKey(cls, i, out e, out et)) break;
-          if (et == T_TABLE && Field(e, "m_ProfessionID", out pid, out pt) && pt == T_INT && (long)pid == -1) continue;
-          classChosen = true; break;
+          long id = long.MinValue, h = -1;
+          if (et == T_TABLE) { if (Field(e, "m_ProfessionID", out pv, out pt) && pt == T_INT) id = (long)pv; }
+          else if ((et & 0x0F) == 7 && e != 0) { if (pid == 0) pid = ListPid(); h = HandleOf(e); id = ProfessionOfHandle(e, pid); }
+          if (id == long.MinValue) unknown = true;
+          ids.Add(id); hs.Add(h);
         }
-      return true;
+        f.EntryIds = ids.ToArray(); f.EntryRows = new int[ids.Count];
+        for (int i = 0; i < f.EntryRows.Length; i++) f.EntryRows[i] = -1;
+        if (unknown) ColumnRows(form, hs, f.EntryRows);
+      }
+      return DecideHeroChoice(f);
+    }
+
+    // the rows of the class column (Charactor_FilterOrder.m_MainInfinityGridProxy.m_Data, row 1 = «Все») that hold the handles <paramref name="hs"/>: rows[i] = 0-based row or -1
+    static void ColumnRows(ulong form, List<long> hs, int[] rows) {
+      ulong panels, p, mp, md; int t1, t2, m1, m2;
+      if (!Field(form, "m_Panels", out panels, out t1) || t1 != T_TABLE || !Field(panels, "Charactor_FilterOrder", out p, out t2) || t2 != T_TABLE) return;
+      if (!Field(p, "m_MainInfinityGridProxy", out mp, out m1) || m1 != T_TABLE || !Field(mp, "m_Data", out md, out m2) || m2 != T_TABLE) return;
+      for (int r = 1; r <= 12; r++) {
+        ulong e; int et;
+        if (!IntKey(md, r, out e, out et)) break;
+        if ((et & 0x0F) != 7 || e == 0) continue;
+        long h = HandleOf(e);
+        for (int i = 0; i < rows.Length; i++) if (h >= 0 && hs[i] == h) rows[i] = r - 1;
+      }
+    }
+
+    /// <summary>«Скрыть надетое» of the hero's gear list: 1 on, 0 off, -1 not readable. The list panel's own filter (m_FilterConfig.IsHideEquiped, applied at once) first, else the flag the
+    /// game saved (EquipData.m_EquipFilterConfigs.IsEquipedInCharactor). The gear list must have been opened once (the panel exists).</summary>
+    public static int ReadHideWorn(EquipAddrs a) {
+      long[] s, m, u; int part; bool foreign, hide;
+      if (ReadFilter(a, out s, out m, out u, out part, out foreign, out hide)) return hide ? 1 : 0;
+      int worn, enh, exc;
+      return ReadListFlags(a, out worn, out enh, out exc) ? worn : -1;
     }
 
     static readonly MemGapLatch heroGapLatch = new MemGapLatch(), gearGapLatch = new MemGapLatch();
     static void ReadHeroFilter(EquipAddrs a, HeroScreen h) {
       string memWhy; h.FilterMem = ReadHeroFilterMem(a.Form, out memWhy, out h.FilterGap);
       h.FilterPending = heroGapLatch.Pending(h.FilterGap, Environment.TickCount);
-      long[] camps; bool cc;
-      ReadHeroChoice(a.Form, out camps, out cc); h.ChosenCamps = camps; h.ClassChosen = cc;
+      var ch = ReadHeroChoiceIds(a.Form); h.ChosenCamps = ch.Camps; h.ClassChosen = ch.ClassChosen; h.ChosenClass = ch.ClassId; h.ClassSrc = ch.ClassSrc;
       ulong panels, p; int t1, t2;
       if (!Field(a.Form, "m_Panels", out panels, out t1) || t1 != T_TABLE || !Field(panels, "Charactor_FilterOrder", out p, out t2) || t2 != T_TABLE) return;
       // (whether the pop-up is open: FilterMem above; the pixels only when that is Unknown)
@@ -3722,6 +3804,13 @@ namespace RealmForge {
       if (ly == null || t == 0) return 0;
       ulong ud; int tt;
       if (!Field(t, field, out ud, out tt) || (tt & 0x0F) != 7 || ud == 0) return 0;
+      return ScriptObjectAt(ud, cls, pid);
+    }
+
+    // the object behind a script handle (a userdata value), 0 = none or not of the class
+    static ulong ScriptObjectAt(ulong ud, string cls, int pid) {
+      var ly = Layout.Current;
+      if (ly == null || ud == 0) return 0;
       var ib = Read(ud + 40, 4);   // the handle: an int after the handle object's 40-byte header
       if (ib == null) return 0;
       int idx = BitConverter.ToInt32(ib, 0);
