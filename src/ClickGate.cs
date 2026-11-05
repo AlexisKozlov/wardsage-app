@@ -53,7 +53,8 @@ namespace RealmForge {
     InvListCell,      // an item's cell in the inventory list, normal mode (selects it; «Показать в игре»)
     InvBulkCell,      // an item's cell in the inventory list, bulk-sale mode (toggles its choice; the storage cleanup only)
     InvListDrag,      // a drag that scrolls the inventory list
-    FoundryButton,    // «Литейная» of the inventory's equipment tab (never on the hero screen)
+    FoundryButton,    // «Литейная» of the inventory's equipment tab
+    HeroFoundry,      // «Литейная» of the hero screen's gear tab (the round button bottom right; only while the game's memory shows it, nothing over it)
     AscendTab,        // the Foundry's «Вознесение» tab
     SlotTab,          // the Ascension list's slot tab
     AscendCell,       // an item's cell in the Ascension list (selects it)
@@ -462,6 +463,7 @@ namespace RealmForge {
       public bool InvOtherTab;      // on the Inventory: NOT the equipment tab
       public int FoundryTab = -2;   // -2 any, else the tab it must be on
       public int FoundryNotTab = -2;// -2 none, else the tab it must not be on
+      public bool HeroNoCover;      // the hero screen's own button: no gear filter pop-up / side panel / item card over it (the game's memory)
       public int HeroTab = -1;      // on the hero screen: the tab it must be on (3 = gear), -1 any
       public bool SelItem;          // the item selected on the screen (inventory card / gem screen) must be one of the items meant
       public bool GemFuncWanted;    // gem screen: the click selects the wanted function, which must not be the selected one yet
@@ -494,6 +496,9 @@ namespace RealmForge {
             case ClickTarget.InvListDrag: return new Rule { Kinds = K(ScreenKind.Inventory), InvNormalEquip = true };
             // the inventory's only: the hero screen covers the city and the inventory (live 2026-10-29: its own «Литейная» is gone with a gear list open)
             case ClickTarget.FoundryButton: return new Rule { Kinds = K(ScreenKind.Inventory), InvNormalEquip = true, FoundryClosed = true };
+            // the hero screen's own «Литейная» (gear tab): clicked straight when the game shows it (src/LocatePilot.cs LocateAuto.Decide); the pilot sends it
+            // only with its live rect read, so a gear list that hides it (live 2026-10-29) is never a click
+            case ClickTarget.HeroFoundry: return new Rule { Kinds = K(ScreenKind.HeroScreen), HeroTab = 3, HeroNoCover = true };
             case ClickTarget.AscendTab: return new Rule { Kinds = K(ScreenKind.Foundry), FoundryNotTab = 2 };
             case ClickTarget.SlotTab: return new Rule { Kinds = K(ScreenKind.Foundry), FoundryTab = 2 };
             case ClickTarget.AscendCell: return new Rule { Kinds = K(ScreenKind.Foundry), FoundryTab = 2, Cell = true };
@@ -967,7 +972,7 @@ namespace RealmForge {
       if (t == ClickTarget.EquipTipEscape) { int n; tipEscapes.TryGetValue(o, out n); tipEscapes[o] = n + 1; }
       if (t == ClickTarget.MapClose) mapMoves[o] = MapMoves(o) + 1;
       if (done == null) { watches.Remove(o); return; }
-      int ms = t == ClickTarget.CityInventory || t == ClickTarget.FoundryButton || t == ClickTarget.ArtWorkshop || t == ClickTarget.ArtReplace || t == ClickTarget.ArtTakeOverConfirm ? SlowEffectMs : t == ClickTarget.InvCardGem || t == ClickTarget.GemFuncRow || t == ClickTarget.ArtMatCell ? GemEffectMs : t == ClickTarget.ArtBulkCell ? ArtTickMs : EffectMs;
+      int ms = t == ClickTarget.CityInventory || t == ClickTarget.FoundryButton || t == ClickTarget.HeroFoundry || t == ClickTarget.ArtWorkshop || t == ClickTarget.ArtReplace || t == ClickTarget.ArtTakeOverConfirm ? SlowEffectMs : t == ClickTarget.InvCardGem || t == ClickTarget.GemFuncRow || t == ClickTarget.ArtMatCell ? GemEffectMs : t == ClickTarget.ArtBulkCell ? ArtTickMs : EffectMs;
       watches[o] = new Watch { Done = done, Deadline = now + ms, What = t == ClickTarget.OfferClose && offer != null ? "OfferClose(" + offer + ")" : t.ToString(), Offer = t == ClickTarget.OfferClose ? offer ?? "" : null, Target = t, ArmedAt = now, ModalBefore = modalChecked.Contains(o) };
     }
 
@@ -1003,7 +1008,7 @@ namespace RealmForge {
         case ClickTarget.InvBulkEnter: return s => s.Kind == ScreenKind.Inventory && s.InvBulk;
         case ClickTarget.InvListCell: return s => s.Kind == ScreenKind.Inventory && s.InvSelected == uid;
         case ClickTarget.InvBulkCell: return s => s.Kind == ScreenKind.Inventory && s.InvSelKey != selKey;
-        case ClickTarget.FoundryButton: return s => s.Kind == ScreenKind.Foundry;
+        case ClickTarget.FoundryButton: case ClickTarget.HeroFoundry: return s => s.Kind == ScreenKind.Foundry;
         case ClickTarget.AscendTab: return s => s.Kind == ScreenKind.Foundry && s.FoundryTab == 2;
         case ClickTarget.SlotTab: return s => s.Kind == ScreenKind.Foundry && s.FoundryKey != fkey;
         case ClickTarget.AscendCell: return s => s.Kind == ScreenKind.Foundry && s.FoundrySel == uid;
@@ -1107,7 +1112,7 @@ namespace RealmForge {
     /// <summary>Is the click's effect still awaited at <paramref name="now"/>? Its deadline; for CityInventory / FoundryButton also the search for its
     /// form that runs when the deadline passes (a slow PC): then the deadline follows the search, and its end plus SearchGraceMs, up to SearchCapMs.</summary>
     bool StillAwaited(ClickOwner o, Watch w, long now) {
-      if (w.Target != ClickTarget.CityInventory && w.Target != ClickTarget.FoundryButton) return now <= w.Deadline;
+      if (w.Target != ClickTarget.CityInventory && w.Target != ClickTarget.FoundryButton && w.Target != ClickTarget.HeroFoundry) return now <= w.Deadline;
       long cap = w.ArmedAt + SearchCapMs;
       if (w.Search == 1) {   // the search runs: the deadline follows it; once it ended, its result is read for SearchGraceMs
         if (now >= cap) return false;
@@ -1335,6 +1340,8 @@ namespace RealmForge {
         foundryWait.Remove(r.Owner);
       }
       if (f.Kind == ScreenKind.HeroScreen && rule.HeroTab >= 0 && f.HeroTab != rule.HeroTab) return Halt(r.Owner, "screen", tag + ": the hero screen is on tab " + f.HeroTab);
+      if (f.Kind == ScreenKind.HeroScreen && rule.HeroNoCover && (f.GearOpenMem == Mem3.Yes || f.GearSideMem == Mem3.Yes || OnlyTip(f)))
+        return GateResult.Wait("screen", tag + ": something lies over the hero screen's buttons (gear filter mem=" + f.GearOpenMem + " side=" + f.GearSideMem + ", tip " + OnlyTip(f) + ") - closed first");
       if (f.Kind == ScreenKind.Foundry) {
         if (rule.FoundryTab != -2 && f.FoundryTab != rule.FoundryTab) return Halt(r.Owner, "screen", tag + ": the Foundry is on " + f.FoundryTabName);
         if (rule.FoundryNotTab != -2 && f.FoundryTab == rule.FoundryNotTab) return Halt(r.Owner, "screen", tag + ": the Foundry is already on " + f.FoundryTabName);

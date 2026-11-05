@@ -5492,6 +5492,22 @@ static partial class CoreTests {
     Check(!(Math.Abs(m.Action.X - wk.CX) < 1 && Math.Abs(m.Action.Y - wk.CY) < 1), "foundry auto: ... not the hero screen's «Литейная»");
     m = p.Step(v); Check(m.Action.Kind == AutoKind.None, "foundry auto: ... then it waits for the screen to change");
     v.NowMs = LocatePilot.AfterBackMs + 1; m = p.Step(v); Check(m.Todo == LocateTodo.BackToCity && m.Action.Kind == AutoKind.Click, "foundry auto: ... still the hero screen (the gear list closed): the back arrow again");
+    // owner 2026-11-05 (build 578): the hero gear screen shows its own round «Литейная» (the game's memory, live rect) -> pressed straight, no trip to the inventory
+    v = V(new LocateStep { Kind = LocateKind.OpenFoundry, OnGear = true }, null); v.OtherFormOpen = false; v.HeroScreenOpen = true; v.Inv = null; v.HeroFoundryLive = true; v.HeroFoundryX = 296; v.HeroFoundryY = 243;
+    Eq(LocateTodo.HeroFoundry, LocateAuto.Decide(v, out why), "foundry auto: the gear screen's own «Литейная» is live -> click it, no back to the city");
+    p = new LocatePilot(); m = p.Step(v);
+    Check(m.State == "work" && m.Todo == LocateTodo.HeroFoundry && m.Action.Kind == AutoKind.Click && Math.Abs(m.Action.X - 296) < 0.5 && Math.Abs(m.Action.Y - 243) < 0.5, "foundry auto: ... the first click is the live button's centre");
+    v.HeroFoundryLive = false; Eq(LocateTodo.BackToCity, LocateAuto.Decide(v, out why), "foundry auto: the button is not shown by the memory (a gear list over it) -> back to the city, then the inventory");
+    v.HeroFoundryLive = true; v.Step = new LocateStep { Kind = LocateKind.OpenFoundry, OnGear = false }; v.Inv = null;
+    Eq(LocateTodo.BackToCity, LocateAuto.Decide(v, out why), "foundry auto: the live button counts only on the gear tab (step OnGear)");
+    {   // the gate: the hero screen's gear tab, nothing over the button
+      var hg1 = new ClickGate();
+      var hsc = new ScreenState { Kind = ScreenKind.HeroScreen, Hero = 7, HeroTab = 3, HeroSlot = -1 };
+      var hrq = new ClickRequest { Owner = ClickOwner.Locate, Target = ClickTarget.HeroFoundry, AutoOn = true, Front = true, X = 296, Y = 243 };
+      Check(hg1.Check(hrq, hsc, 10000).Allowed, "gate: the hero gear screen's «Литейная» is allowed on the gear tab");
+      hsc.HeroTab = 0; Check(!new ClickGate().Check(hrq, hsc, 10100).Allowed, "gate: ... not on another hero tab");
+      hsc.HeroTab = 3; hsc.GearOpenMem = Mem3.Yes; Check(!new ClickGate().Check(hrq, hsc, 10200).Allowed, "gate: ... not with the gear filter open over it (closed first)");
+    }
     v = V(new LocateStep { Kind = LocateKind.OpenFoundry, OnGear = true }, null); v.OtherFormOpen = false; v.HeroScreenOpen = true; v.Geometry = null;
     Eq(LocateTodo.Hint, LocateAuto.Decide(v, out why), "foundry auto: the hero gear screen without the geometry -> a hint, no click");
     v = V(new LocateStep { Kind = LocateKind.OpenFoundry }, null); v.OtherFormOpen = true; Eq(LocateTodo.Hint, LocateAuto.Decide(v, out why), "foundry auto: the gem screen on top -> no click");

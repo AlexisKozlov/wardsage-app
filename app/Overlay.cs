@@ -3796,7 +3796,7 @@ namespace RealmForge {
       gate.Arm(req.Owner, req.Target, ClickGate.Expect(req, fresh), now, req.Form);
       // measurement only: the pilot's click that opens the Inventory / Heroes screen, timed to the first reading of that screen (ReadScreens)
       if (req.Target == ClickTarget.CityInventory) { openClickAt = now; openClickWhat = "inventory"; }
-      else if (req.Target == ClickTarget.FoundryButton) { openClickAt = now; openClickWhat = "foundry"; foundryBuiltPid = GamePid(GameWindow()); }
+      else if (req.Target == ClickTarget.FoundryButton || req.Target == ClickTarget.HeroFoundry) { openClickAt = now; openClickWhat = "foundry"; foundryBuiltPid = GamePid(GameWindow()); }
       else if (req.Target == ClickTarget.EquipNav && fresh != null && fresh.Kind == ScreenKind.City) { openClickAt = now; openClickWhat = "heroes"; }
       RFX.UiButtonClicked(req.Target, req.Form, req.X, req.Y, req.W, req.H, req.U);   // (the test build reads it again a minute on: uibtn ... [minute])
       if (Channel.IsTest) NavProbeOwn("click " + req.Target + " @" + (int)req.X + "," + (int)req.Y + (req.Form != null && req.Form != "" ? " " + req.Form : "") + " owner " + req.Owner);
@@ -3963,6 +3963,7 @@ namespace RealmForge {
       // (a pop-up over the target: BackStep above closes it by the screen map's × / Escape through the gate; the «close the window» step is the hint mode's only)
       var view = new LocateView { NowMs = now, Foreground = gameFront, UserBusy = busy, UserClicked = uc, W = W, H = H, U = U, Step = dstep, Inv = inv, Cols = locateCols,
         HeroScreenOpen = heroOpen, OtherFormOpen = formOpen, InvDX = invDX, Geometry = Geo.Current, Rs = locateRs, Item = req.Item, Purpose = req.Purpose };
+      if (heroOpen && dstep.Kind == LocateKind.OpenFoundry && dstep.OnGear) HeroFoundryNow(view, scr, W, H, U);   // the gear screen's own «Литейная» by the game's memory: pressed straight
       if (gameFront && !busy && LocateAuto.NeedsCityButton(dstep, heroOpen, formOpen)) { view.CityButton = InventoryButtonNow(o, W, H); view.InvDX = invDX; }   // the place the bar search may have found just now
       if (gameFront && !busy && dstep.Kind == LocateKind.InList) {
         var pg = SellGeometry.Inventory(W, U, locateCols);
@@ -3993,6 +3994,20 @@ namespace RealmForge {
       if (lpilot.Stopped) { step.Auto = "stopped"; step.AutoWhy = lpilot.Reason; locateDriving = false; LocateDiagSay("locate auto", "stopped", lpilot.Reason, scr); return; }
       step.Auto = mv.State; step.AutoWhy = mv.Why;
       locateDriving = mv.State == "work" || mv.State == "paused" || mv.State == "background";
+    }
+
+    /// <summary>The hero gear screen's «Литейная» read live (the round button's own widget, FrameTargets "hero.workshop"): fresh, shown, inside the client, the hero form on top and
+    /// no gear filter / side panel over it (the game's flags) -> view.HeroFoundryLive and its centre (client px).</summary>
+    void HeroFoundryNow(LocateView view, ScreenState scr, double W, double H, double U) {
+      var ft = FrameTargets.Of("hero.workshop"); var w = FrameTargets.Widget(ft);
+      if (w == null) return;
+      RFX.UiTargetWant(ft.Key, w, W, H, U);
+      int now = Environment.TickCount;
+      var r = RFX.UiTargetFresh(ft.Key, W, H, now, RFX.UiFrameFreshMs);
+      double x, y; string why;
+      if (!RFX.UiLivePoint(r, W, H, now, out x, out y, out why, RFX.UiFrameFreshMs) || !RFX.UiFormTopIs(ft.Form, scr)) return;
+      if (scr == null || scr.GearOpenMem == Mem3.Yes || scr.GearSideMem == Mem3.Yes || scr.ModalOpen) return;
+      view.HeroFoundryLive = true; view.HeroFoundryX = x; view.HeroFoundryY = y;
     }
 
     /// <summary>The inventory's filter for a long search (src/LocatePilot.cs InvFilterPilot): what the game shows now. Wanted = the item is in the list but off the first
@@ -4187,7 +4202,7 @@ namespace RealmForge {
           gate.Halt(owner, "target", target + " @" + (int)a.X + "," + (int)a.Y + " lies on a button the artifact steps never press"); AnnounceHalts(); return false;
         }
       }
-      var fresh = FreshScreen(target == ClickTarget.CityInventory, target == ClickTarget.UnknownBack || target == ClickTarget.CityBack || target == ClickTarget.FoundryButton);   // (FoundryButton: the Foundry's form shown unread, ClickGate)
+      var fresh = FreshScreen(target == ClickTarget.CityInventory, target == ClickTarget.UnknownBack || target == ClickTarget.CityBack || target == ClickTarget.FoundryButton || target == ClickTarget.HeroFoundry);   // (FoundryButton: the Foundry's form shown unread, ClickGate)
       var req = new ClickRequest { Owner = owner, Target = target, AutoOn = artT ? ArtAutoOn : owner == ClickOwner.Locate || owner == ClickOwner.LocateFilter ? LocateAutoOn : AutoEnabled, Front = front, X = a.X, Y = a.Y };
       if (fill != null) fill(req, fresh);
       if (req.U <= 0) { req.W = cr.R; req.H = cr.B; req.U = Ui.Unit(cr.R, cr.B); }
@@ -4229,6 +4244,7 @@ namespace RealmForge {
             if (rq.FoundryUnread) RFX.RequestFormSearch("foundry not readable before «Литейная»", 2000);
           };
           break;
+        case LocateTodo.HeroFoundry: tg = ClickTarget.HeroFoundry; break;   // (the live centre of the button is the action's point)
         case LocateTodo.AscendTab: tg = ClickTarget.AscendTab; break;
         case LocateTodo.SlotTab: tg = ClickTarget.SlotTab; break;
         case LocateTodo.CardGem: case LocateTodo.GemFunc: {

@@ -33,7 +33,8 @@ namespace RealmForge {
     InventoryButton,   // the city: «Инвентарь»
     EquipTab,          // the inventory is on another tab: «Снаряжение»
     PickItem,          // the item is in the inventory's list: scroll to it and click it
-    FoundryButton,     // «Литейная» of the inventory (the hero gear screen's one is only pointed at: the hero screen is closed first)
+    FoundryButton,     // «Литейная» of the inventory
+    HeroFoundry,       // «Литейная» of the hero's gear screen, straight from there (the game's memory shows the button: no trip to the inventory)
     AscendTab,         // the Foundry is open on another tab: «Вознесение»
     SlotTab,           // the Ascension list: the item's slot tab (the filter itself is never touched)
     CardGem,           // recast: the selected item's card, the gem button («Улучшение самоцветами»)
@@ -56,6 +57,8 @@ namespace RealmForge {
     public int Cols = 8;              // columns of the inventory's grid
     public bool HeroScreenOpen;       // the hero screen (its gear list too) is shown
     public bool OtherFormOpen;        // the Foundry or the gem screen is shown
+    /// <summary>The hero gear screen's own «Литейная» is shown by the game's memory (live rect read, visible, inside the client, the hero form on top, nothing over it) and where (client px).</summary>
+    public bool HeroFoundryLive; public double HeroFoundryX, HeroFoundryY;
     public bool CityButton;           // «Инвентарь» is seen in the city's bottom bar (looked for only when asked: see NeedsCityButton)
     public double InvDX = 0.5222 + 0.9316;   // its place from the right edge, UI units
     public double Row1 = double.NaN;  // row 1's top from the game's own scroll reading (InvScroll), NaN = unreadable
@@ -132,10 +135,10 @@ namespace RealmForge {
           if (v.OtherFormOpen) { why = "form"; return LocateTodo.Hint; }   // the gem screen is on top: the button is not there
           var f = LocateFrames.For(st, v.Item, v.Rs, v.FoundryTabs, v.Geometry, v.W, v.H, v.U);
           if (f == null || !f.Clickable) { why = "foundry"; return LocateTodo.Hint; }
-          // the hero screen covers the city: its back arrow first (an open gear list closes with it too), then the city's «Инвентарь»
-          // and the inventory's «Литейная». The gear screen's own «Литейная» is never clicked (with a slot's gear list open it is not
-          // there: live 2026-10-29); it stays framed for the player.
-          if (v.HeroScreenOpen) return LocateTodo.BackToCity;
+          // the hero's gear screen shows its own «Литейная»: pressed straight (owner 2026-11-05: no trip to the inventory). Only while the game's
+          // memory shows the button (with a slot's gear list open it is not there: live 2026-10-29); else the hero screen covers the city: its back
+          // arrow first (an open gear list closes with it too), then the city's «Инвентарь» and the inventory's «Литейная».
+          if (v.HeroScreenOpen) return st.OnGear && v.HeroFoundryLive ? LocateTodo.HeroFoundry : LocateTodo.BackToCity;
           if (st.OnGear ? !v.HeroScreenOpen : (v.Inv == null || !v.Inv.Open || !v.Inv.EquipTab)) { why = "screen"; return LocateTodo.Stop; }
           return LocateTodo.FoundryButton;
         }
@@ -269,6 +272,10 @@ namespace RealmForge {
           if (f == null || !f.Clickable) return Abort(m, "screen");
           return Click(m, v, f.ClickX, f.ClickY, todo == LocateTodo.FoundryButton ? AfterButtonMs : AfterTabMs, todo == LocateTodo.FoundryButton ? "foundry" : todo == LocateTodo.AscendTab ? "ascend tab" : "slot tab");
         }
+        case LocateTodo.HeroFoundry:
+          if (++kindClicks > MaxStepClicks) return Abort(m, "stuck");
+          if (!v.HeroFoundryLive) return Abort(m, "screen");
+          return Click(m, v, v.HeroFoundryX, v.HeroFoundryY, AfterButtonMs, "foundry");
         case LocateTodo.CardGem: case LocateTodo.GemFunc: {
           // the filter this pilot set for the search is cleared before the card's button leaves the inventory (the game keeps it when the player comes back)
           if (todo == LocateTodo.CardGem && v.Filter != null) { var cm = FilterMove(m, v, true); if (cm != null) return cm; }
