@@ -34,7 +34,7 @@ Set-StrictMode -Version 2
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$RunnerVersion   = '29'
+$RunnerVersion   = '30'
 $Dir             = Join-Path $env:LOCALAPPDATA 'WardsageLab'
 $StopFile        = Join-Path $Dir 'STOP'
 $LogFile         = Join-Path $Dir 'runner.log'
@@ -979,6 +979,28 @@ $script:Killed = $false
 $script:LogOff = [int64]-1; $script:LogAt = [int64]0; $script:LogCount = 0; $script:MarkAt = [int64]0; $script:LogErr = ''
 Reset-LogMarks
 Update-LogWatch      # baseline: the end of the file now
+# autostart: the runner is elevated here (checked above). If the task "Wardsage Lab" is missing or not with -Service, register it the
+# same way as setup-lab.ps1 -Autostart (at logon, highest privileges, no UAC, never sleep / screen off on mains) and continue as a service
+$auto = 'failed:unknown'
+try {
+    $tk0 = Get-ScheduledTask -TaskName 'Wardsage Lab' -ErrorAction SilentlyContinue
+    if ($tk0 -and $tk0.Actions.Count -gt 0 -and ([string]$tk0.Actions[0].Arguments) -match '-Service') {
+        $auto = 'already'
+    } else {
+        $ps0 = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        $act0 = New-ScheduledTaskAction -Execute $ps0 -Argument ('-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $PSCommandPath + '" -Service') -WorkingDirectory $Dir
+        $usr0 = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+        $trg0 = New-ScheduledTaskTrigger -AtLogOn -User $usr0
+        $prn0 = New-ScheduledTaskPrincipal -UserId $usr0 -LogonType Interactive -RunLevel Highest
+        $set0 = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
+        Register-ScheduledTask -TaskName 'Wardsage Lab' -Action $act0 -Trigger $trg0 -Principal $prn0 -Settings $set0 -Force | Out-Null
+        & powercfg /change standby-timeout-ac 0
+        & powercfg /change monitor-timeout-ac 0
+        $auto = 'registered'
+    }
+} catch { $auto = 'failed:' + (Get-ShortError $_) }
+Write-Log ('autostart: ' + $auto)
+if (-not $auto.StartsWith('failed')) { $Service = [switch]$true }
 $mode = 'one run'; if ($Service) { $mode = 'service' }
 Write-Log ('runner ' + $RunnerVersion + ' started (device ' + $Cfg.device + ', ' + $mode + '). To stop it at once create ' + $StopFile)
 if ($Service) {
