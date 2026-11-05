@@ -46,5 +46,11 @@ static partial class CoreTests {
       if (chosen == 2) Check(qa != null && qa.Kind == AutoKind.Click && qa.Widget == FrameTargets.KeyGridFunnel && qa.CellKind == UiCellKind.None, "the grid is filtered by the hero's class already (id 2): no class click, the pop-up closes");
       else Check(qa != null && qa.CellKind == UiCellKind.HeroClass && qa.CellId == HeroPilot.ClassAll, "another class chosen (id 4): «Все» of the class column first");
     }
+  
+    Console.WriteLine("Confirm button: the kind from memory, one search:");
+    Check(LookPolicy.FirstIsReplace(1) && !LookPolicy.SecondSearch(1, true), "memory: replace - its spot alone when found");
+    Check(!LookPolicy.FirstIsReplace(2) && !LookPolicy.SecondSearch(2, true), "memory: equip - its spot alone when found");
+    Check(LookPolicy.SecondSearch(1, false) && LookPolicy.SecondSearch(2, false), "the named spot found nothing: the other kind is looked at too (memory may be stale)");
+    Check(LookPolicy.FirstIsReplace(0) && LookPolicy.SecondSearch(0, true), "memory unknown: both spots, as before");
   }
 }

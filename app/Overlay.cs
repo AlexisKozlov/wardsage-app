@@ -4962,7 +4962,12 @@ namespace RealmForge {
           return lc;
         }
       }
-      int[] rep = FindBlue(o, hg.Replace(W, H), H), eq = FindBlue(o, hg.Equip(W, H), H);
+      int[] rep = null, eq = null;
+      {   // memory names the kind of the button: its spot alone is searched (the other only when that finds nothing), not both pictures every tick
+        TipState tip0; int tk0 = TipButtonNow(W, H, out tip0);
+        if (LookPolicy.FirstIsReplace(tk0)) { rep = FindBlue(o, hg.Replace(W, H), H); if (LookPolicy.SecondSearch(tk0, rep != null)) eq = FindBlue(o, hg.Equip(W, H), H); }
+        else { eq = FindBlue(o, hg.Equip(W, H), H); if (LookPolicy.SecondSearch(tk0, eq != null)) rep = FindBlue(o, hg.Replace(W, H), H); }
+      }
       LookUnknown("confirm button", LookPolicy.ConfirmBlocks(false, blueUnk));   // (a spot our hint covers: the button may be there, or a second one - not known, no click)
       confirmBlueNone = rep == null && eq == null && !blueUnk;
       // the game's own cards (two = «Заменить», one = «Надеть») are the kind of the button (E4: memory leads, the picture finds where it is); a picture that contradicts it over 1.5 s takes over (TipKindTracker);
