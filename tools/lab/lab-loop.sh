@@ -264,7 +264,10 @@ scn_log_verdict() {
       if [ "$1" = equip_hide_worn_restore ]; then
         fl=$(grep -E "flags: hideWorn before=" <<< "$txt" | tail -1 | sed -E 's/^\s+|\s+$//g' | cut -c1-200)
         if [ -z "$fl" ]; then echo "fail|в журнале нет строки «flags: hideWorn ...»: флаг не возвращён или не проверен"; return; fi
-        if [[ "$fl" != *"restored=yes"* ]]; then echo "fail|«Скрыть надетое» не возвращено: $fl"; return; fi
+        if [[ "$fl" != *"action=cleared"* && "$fl" != *"action=kept"* ]]; then echo "fail|строка flags: без action=cleared|kept: $fl"; return; fi
+        # the plan done within 35 s: the build's own time (the runner's scenario time) must be known; the flag is never put back
+        if grep -qE "flags: hideWorn before=.* restored=|toggle.*put back" <<< "$txt"; then echo "fail|флаг возвращали (больше не нужно): $fl"; return; fi
+        if [[ "$fl" == *"before=off"* && "$fl" == *"action=cleared"* ]]; then echo "fail|флаг был выключен, но «очищен»: $fl"; return; fi
         echo "ok|$fl"; return
       fi
       echo "ok|" ;;

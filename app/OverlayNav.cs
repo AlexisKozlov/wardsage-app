@@ -186,31 +186,18 @@ namespace RealmForge {
       navActions = new List<IAtTargetAction> { hs, gf, ip };
     }
     readonly BuildFlagKeeper flagKeeper = new BuildFlagKeeper(); long flagsRun = -1; bool flagsRead;
-    bool flagsLogged; int flagsWornNow = -1; long flagsPollAt; readonly HideWornRestorer wornRestore = new HideWornRestorer();
-    /// <summary>The flags of a build (S3): notes «Скрыть надетое» switched off by the filter pilot; with the build done («Готово») puts it back through the gear filter's pop-up, then writes
-    /// "flags: hideWorn before=.. after=.. restored=yes|no". True while the restore owns the tick.</summary>
+    bool flagsLogged; int flagsWornNow = -1; long flagsPollAt;
+    /// <summary>The flags of a build (S3): notes «Скрыть надетое» switched off by the filter pilot (only when an item needs it; never put back); with the build done («Готово») writes
+    /// "flags: hideWorn before=.. action=cleared|kept". Never clicks.</summary>
     bool NavFlagsTick(W32.POINT o, W32.RECT cr, AutoView v, long now) {
       if (now - flagsPollAt >= 400) { flagsPollAt = now; int fw, fe, fx; if (RFX.ReadListFlags(addrs, out fw, out fe, out fx)) flagsWornNow = fw; }
-      if (flagsWornNow == 0 && !flagKeeper.ClearedWorn && flagKeeper.WornWas == 1) { flagKeeper.Cleared("worn"); Log.Write("build: «Скрыть надетое» was switched off for the build (to be put back at its end)"); }
+      if (flagsWornNow == 0 && !flagKeeper.ClearedWorn && flagKeeper.WornWas == 1) { flagKeeper.Cleared("worn"); Log.Write("build: «Скрыть надетое» was switched off for the build (kept off)"); }
       if (hintKind != "done") return false;
-      string due = flagKeeper.RestoreDue(flagsWornNow, -1);
-      if (due == "") { Log.Write(BuildFlagKeeper.Line(flagKeeper.WornWas, flagsWornNow, flagKeeper.ClearedWorn && flagsWornNow == 1)); flagsLogged = true; flagKeeper.End(); return false; }
-      var hs = screens.Hero;
-      var fv = new FilterView { NowMs = now, Foreground = v.Foreground, UserBusy = v.UserBusy, W = cr.R, H = cr.B };
-      long[] su, ma, sb; int part; bool fo, he;
-      if (addrs != null && RFX.ReadFilter(addrs, out su, out ma, out sb, out part, out fo, out he)) fv.HideEquipped = he;
-      if (v.Foreground) { double W = cr.R, H = cr.B, U = Ui.Unit(W, H); fv.PanelOpen = GearMain(o, W, H, U); fv.SidePanelOpen = GearSide(o, W, H, U); }
-      var a = wornRestore.Step(fv, hs != null && hs.FormOk && hs.Part >= 0);
-      if (wornRestore.State == "failed") { Log.Write("build: «Скрыть надетое» not put back: " + wornRestore.Note); Log.Write(BuildFlagKeeper.Line(flagKeeper.WornWas, flagsWornNow, false)); flagsLogged = true; flagKeeper.End(); return false; }
-      if (a != null) {
-        int sx = o.X + (int)Math.Round(a.X), sy = o.Y + (int)Math.Round(a.Y);
-        EquipSend(ClickTarget.EquipFilter, a, sx, sy, o, v.Foreground);
-      }
-      return true;
+      Log.Write(BuildFlagKeeper.Line(flagKeeper.WornWas, flagKeeper.ClearedWorn)); flagsLogged = true; flagKeeper.End(); return false;
     }
-    /// <summary>The plan ended (hero 0) with the flag still to be put back: the line says it was not.</summary>
+    /// <summary>The plan ended (hero 0) before «Готово»: the line is still written.</summary>
     void NavFlagsAbandoned() {
-      if (flagKeeper.Begun && !flagsLogged && flagKeeper.ClearedWorn) { flagsLogged = true; Log.Write(BuildFlagKeeper.Line(flagKeeper.WornWas, flagsWornNow, false)); flagKeeper.End(); }
+      if (flagKeeper.Begun && !flagsLogged) { flagsLogged = true; Log.Write(BuildFlagKeeper.Line(flagKeeper.WornWas, flagKeeper.ClearedWorn)); flagKeeper.End(); }
     }
     AutoView navTickV; W32.POINT navTickO; W32.RECT navTickCr; bool navTickConfirm;
 
@@ -221,7 +208,7 @@ namespace RealmForge {
       navFviewMade = false; navFview = null;
       NavBuildActions(v, o, cr, confirm);
       // the player's list flags are read once per run (memory): what the build changes of them is the build's to put back (BuildFlagKeeper)
-      if (flagsRun != runHero) { flagsRun = runHero; flagsRead = false; flagsLogged = false; flagsWornNow = -1; flagsPollAt = 0; wornRestore.Reset(); flagKeeper.End(); }
+      if (flagsRun != runHero) { flagsRun = runHero; flagsRead = false; flagsLogged = false; flagsWornNow = -1; flagsPollAt = 0; flagKeeper.End(); }
       if (!flagsRead) {
         int fw, fe, fx;
         // (the filter pilot switches «Скрыть надетое» off when an item of the plan is hidden by it: the keeper only watches that and puts the flag back at the end)

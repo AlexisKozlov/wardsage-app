@@ -357,40 +357,19 @@ static partial class CoreTests {
     var hid = new List<BuildItem> { BI(1, 11, 5, 0), new BuildItem { Slot = 2, Uid = 12, HiddenByWorn = true }, new BuildItem { Slot = 3, Uid = 13, HiddenByEnhanced = true } };
     Check(BuildPlanner.Plan(hid, true, false, false).Flags.ClearWorn && !BuildPlanner.Plan(hid, true, false, false).Flags.ClearEnhanced && BuildPlanner.Plan(hid, true, true, true).Flags.ToString() == "worn enhanced " && !BuildPlanner.Plan(hid, false, false, false).Flags.Any,
       "planner: the hide flags are cleared only where an item of the build is hidden by one that is on");
-    // S3: the flags the build switched off are put back at its end, the ones it did not touch are left alone
+    // S3: the flag is cleared once only where an item needs it, never put back; the applog line says what was done
     {
       var k = new BuildFlagKeeper(); var need = new BuildFlags { ClearWorn = true };
-      Check(k.ClearDue(1, 0) == "" && k.RestoreDue(0, 0) == "", "flags: nothing before the build begins");
+      Check(k.ClearDue(1, 0) == "", "flags: nothing before the build begins");
       k.Begin(1, 0, need);
-      Check(k.ClearDue(1, 0) == "worn" && k.RestoreDue(1, 0) == "", "flags: «Скрыть надетое» on and needed: cleared first, nothing to restore yet");
+      Check(k.ClearDue(1, 0) == "worn", "flags: «Скрыть надетое» on and needed: cleared first");
       k.Cleared("worn");
-      Check(k.ClearDue(0, 0) == "" && k.RestoreDue(0, 0) == "worn" && k.RestoreDue(1, 0) == "", "flags: cleared once; at the end it is put back, and not when the player switched it on himself");
-      k.End(); Check(k.RestoreDue(0, 0) == "", "flags: nothing is restored after the build ended");
+      Check(k.ClearDue(0, 0) == "", "flags: cleared once, not again");
       var k2 = new BuildFlagKeeper(); k2.Begin(0, 0, need);
-      Check(k2.ClearDue(0, 0) == "" && k2.RestoreDue(0, 0) == "", "flags: a flag that was off is never switched on");
+      Check(k2.ClearDue(0, 0) == "", "flags: a flag that was off is never switched");
       var k3 = new BuildFlagKeeper(); k3.Begin(1, 1, new BuildFlags());
       Check(k3.ClearDue(1, 1) == "", "flags: no item needs a flag cleared: they are not touched");
-    }
-    // S3: the restorer puts «Скрыть надетое» back through the gear filter's pop-up, the applog line says how it ended
-    {
-      Check(BuildFlagKeeper.Line(1, 1, true) == "flags: hideWorn before=on after=on restored=yes" && BuildFlagKeeper.Line(1, 0, false) == "flags: hideWorn before=on after=off restored=no" && BuildFlagKeeper.Line(-1, -1, false) == "flags: hideWorn before=unread after=unread restored=no", "flags: the applog line");
-      var hr = new HideWornRestorer(); var fg0 = new FilterGeometry(); long tn = 1000;
-      Func<bool, bool, bool, FilterView> V = (panel, side, on) => new FilterView { NowMs = tn, Foreground = true, W = 1920, H = 1009, PanelOpen = panel, SidePanelOpen = side, HideEquipped = on };
-      var c0 = hr.Step(V(false, false, false), true); tn += 2000;
-      Check(c0 != null && c0.Kind == AutoKind.Click && c0.X < 400 && c0.Y > 800, "restore: the pop-up is opened first (the «Фильтр» bar)");
-      var c1x = hr.Step(V(true, true, false), true); tn += 2000;
-      Check(c1x != null && Math.Abs(c1x.X - fg0.X(fg0.SideCloseX, 1920, 1009)) < 1, "restore: an open side panel is closed first");
-      var c2 = hr.Step(V(true, false, false), true); tn += 2000;
-      Check(c2 != null && Math.Abs(c2.X - fg0.X(fg0.HideEquippedX, 1920, 1009)) < 1 && Math.Abs(c2.Y - fg0.Y(fg0.HideEquippedY, 1920, 1009)) < 1, "restore: the toggle is clicked once the flag reads off");
-      Check(hr.Step(new FilterView { NowMs = tn - 1500, Foreground = true, W = 1920, H = 1009, PanelOpen = true, HideEquipped = false }, true) == null, "restore: no second click inside the settle wait");
-      var c3 = hr.Step(V(true, false, true), true); tn += 2000;
-      Check(c3 != null && Math.Abs(c3.X - fg0.X(fg0.MainCloseX, 1920, 1009)) < 1 && hr.State == "work", "restore: flag on again: the pop-up is closed");
-      Check(hr.Step(V(false, false, true), true) == null && hr.State == "done", "restore: done when the flag is on and the pop-up closed");
-      var hr2 = new HideWornRestorer(); tn = 1000;
-      Check(hr2.Step(V(false, false, false), false) == null && hr2.State == "failed", "restore: no gear list open: a named failure, no blind click");
-      var hr3 = new HideWornRestorer(); tn = 1000; int nc = 0;
-      for (int i = 0; i < 8; i++, tn += 2000) if (hr3.Step(V(true, false, false), true) != null) nc++;
-      Check(hr3.State == "failed" && nc == HideWornRestorer.MaxClicks, "restore: a toggle with no effect stops after " + HideWornRestorer.MaxClicks + " clicks (" + nc + ")");
+      Check(BuildFlagKeeper.Line(1, true) == "flags: hideWorn before=on action=cleared" && BuildFlagKeeper.Line(1, false) == "flags: hideWorn before=on action=kept" && BuildFlagKeeper.Line(-1, false) == "flags: hideWorn before=unread action=kept", "flags: the applog line");
     }
     // the norms are the recipe's budgets
     Check(BuildPlanner.NormMs("build", "pick", 0) == BuildPlanner.ItemLimitMs && BuildPlanner.NormMs("build", "filter", 0) == BuildPlanner.FilterLimitMs && BuildPlanner.NormMs("build", "hero", 0) == 8000 && BuildPlanner.NormMs("equip", "pick", 0) == BuildPlanner.ItemLimitMs,
@@ -450,11 +429,11 @@ static partial class CoreTests {
     var s3 = new List<BuildItem> { it(1, 31, 5, 2, false), it(2, 32, 0, 40, false), it(3, 33, 6, 3, false), it(4, 34, 6, 4, false), it(5, 35, 7, 1, false), it(9, 36, 0, 0, true) };
     var r3 = BuildRun(s3, city, false);
     Check(r3.Fail == "" && r3.Ms <= 30000 && r3.Blind == 0 && r3.Refused == 0 && r3.Resets == 0 && r3.Drags <= BuildPlanner.DragsFor(40) + 2, "build sim 3: an item far of no set: " + r3.Line + " (budget 30 s, blind " + r3.Blind + ", repeats " + r3.Refused + ", resets " + r3.Resets + ") " + r3.Fail);
-    // 4. an item hidden by «Скрыть надетое» (worn by another hero): the flag is cleared once for the build and put back
+    // 4. an item hidden by «Скрыть надетое» (worn by another hero): the flag is cleared once for the build and not put back
     var s4 = new List<BuildItem> { it(1, 41, 5, 1, false), new BuildItem { Slot = 2, Uid = 42, SetId = 5, Row = 0, HiddenByWorn = true }, it(3, 43, 6, 3, false), it(9, 44, 0, 0, true) };
     var r4 = BuildRun(s4, city, true);
-    var kp = new BuildFlagKeeper(); kp.Begin(1, 0, r4.Plan.Flags); string c1 = kp.ClearDue(1, 0); kp.Cleared(c1); string rs = kp.RestoreDue(0, 0);
-    Check(r4.Fail == "" && r4.Plan.Flags.ClearWorn && c1 == "worn" && rs == "worn" && r4.Ms <= 30000 && r4.Blind == 0 && r4.Refused == 0, "build sim 4: a hidden item: " + r4.Line + " (flags " + r4.Plan.Flags + "cleared once, restored: " + rs + ") " + r4.Fail);
+    var kp = new BuildFlagKeeper(); kp.Begin(1, 0, r4.Plan.Flags); string c1 = kp.ClearDue(1, 0); kp.Cleared(c1);
+    Check(r4.Fail == "" && r4.Plan.Flags.ClearWorn && c1 == "worn" && r4.Ms <= 30000 && r4.Blind == 0 && r4.Refused == 0, "build sim 4: a hidden item: " + r4.Line + " (flags " + r4.Plan.Flags + "cleared once, never put back) " + r4.Fail);
     // 5. two heroes of one class (the same sets): each build is planned and run by itself, the second one does not lean on the first one's filter
     var h1 = BuildRun(s2, city, false); var h2 = BuildRun(s2, 3000 + 700, false);
     Check(h1.Fail == "" && h2.Fail == "" && h1.Plan.FilterOpens == 2 && h2.Plan.FilterOpens == 2 && h1.Ms <= 30000 && h2.Ms <= 30000 && h1.Blind + h2.Blind == 0, "build sim 5: two heroes of one class: " + h1.Ms + " ms and " + h2.Ms + " ms, " + (h1.Plan.FilterOpens + h2.Plan.FilterOpens) + " filter openings in all");
