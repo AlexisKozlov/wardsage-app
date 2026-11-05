@@ -109,5 +109,39 @@ namespace RealmForge {
       }
       if (listMemSide != null && listMemSide.Has) fv.SideListMoving = listMemSide.Moving;
     }
+
+    // ---- a click on the target's live cell that hit nothing (the game's raycast 0x0): the pilot asks for a regrid (AutoPilot.RegridSeq) and, when the rect stayed the same after it, a look for the layer over the list
+    int regridDone, blockerDone;
+
+    /// <summary>The pilot's view gets the game's pointer while a click on a live cell awaits its judgement.</summary>
+    void FillRay(AutoView v) {
+      v.RegridDone = regridDone;
+      if (!pilot.WantRay) return;
+      var p = RFX.ReadPointer();
+      if (!p.Ok) { if (rayWhySaid != p.Why) { rayWhySaid = p.Why; Log.Write("pointer: not read (" + p.Why + ") - a click that hits nothing cannot be told"); } return; }
+      v.RayKnown = true; v.RayNone = p.HitNothing;
+    }
+    string rayWhySaid = "";
+
+    /// <summary>The regrid the pilot asked for: the readers' caches dropped, the whole gear grid read now (every cell made, new addresses), told in the log. The next tick's view is built on it.</summary>
+    void RegridIfAsked(double W, double H, double U) {
+      if (pilot.RegridSeq == regridDone) return;
+      regridDone = pilot.RegridSeq;
+      var sw = System.Diagnostics.Stopwatch.StartNew();
+      RFX.RegridForget(); listMemGearAt = 0; listMemHeroAt = 0;
+      var s = RFX.UiCellReadNow(UiCellKind.HeroGear, null, W, H, U);   // (no want list: the whole grid)
+      var c = s != null ? s.Of(target) : null;
+      Log.Write("atom: regrid #" + regridDone + " src=mem: caches dropped, the whole gear grid read again in " + sw.ElapsedMilliseconds + " ms - " + (s == null ? "no game" : !s.Ok ? "failed at " + s.FailStep + " (" + s.FailValue + ")" : "cells " + s.Created + " (" + s.First + ".." + s.Last + ") kept " + s.Cells.Count + ", item " + target + (c != null ? " at [" + (int)c.X + "," + (int)c.Y + " " + (int)c.W + "x" + (int)c.H + "]" + (c.Active ? "" : " switched off") : " has no cell")));
+    }
+
+    /// <summary>The rect stayed the same after the regrid and the pointer still hits nothing: what lies over the list, from the memory's facts, once per ask; the forms are searched again (the addresses may be old).</summary>
+    void BlockerIfAsked() {
+      if (pilot.BlockerSeq == blockerDone) return;
+      blockerDone = pilot.BlockerSeq;
+      var sc = screens.Current; var gm = GearMemNow(); bool? open = RFX.NavInputOpen();
+      Log.Write("blocker look: " + pilot.BlockerNote + " | screen " + (sc != null ? sc.Brief + " top=" + sc.Top + " modal=" + (sc.ModalOpen ? sc.ModalWhy : "no") + " offers=" + sc.OfferCount + " flow=" + sc.Flow : "not read")
+        + " | input " + (open == null ? "unread" : open.Value ? "open" : "LOCKED") + " | gear filter open=" + gm.Open + " side=" + gm.Side + " sets=" + gm.SetPanel + " pending=" + gm.Pending + " | " + RFX.ReadPointer());
+      RFX.RequestFormSearch("regrid: raycast 0x0 and the cell's rect unchanged", 1500);
+    }
   }
 }

@@ -78,6 +78,10 @@ namespace RealmForge {
     /// <summary>The gear list as the game's ScrollRect and grid hold it (RFX.ReadListMem, package P5): ListKnown = read; ListMoving = dragged, scrolling or still coasting (|speed| above the standing limit); the content and view heights in
     /// the list's own units (the bounds: the longest position is content - view); the game's drag threshold in px (EventSystem.m_DragThreshold), 0 = not read (the pilot keeps its constant).</summary>
     public bool ListKnown, ListMoving; public double ListContentH, ListViewH, ListThrPx;
+    /// <summary>The game's own pointer (RFX.ReadPointer): what is under the cursor now, read while a click on a live cell awaits its judgement (WantRay). RayNone = the raycast hit nothing: the click went into the void.</summary>
+    public bool RayKnown, RayNone;
+    /// <summary>How many regrids the host has done (a full re-read of the gear grid, new cell and scroll-rect addresses): the pilot's RegridSeq it has caught up with.</summary>
+    public int RegridDone;
     /// <summary>Another cell than the target's, wholly in view (LiveNbUid, its centre): the way to re-select when the selected item's card is not open (the game's click on a selected item does nothing). The host reads it only while WantNeighbour.</summary>
     public bool LiveNb; public double LiveNbX, LiveNbY; public long LiveNbUid;
     /// <summary>The item whose card stands (Form_CharactorEquipTip.m_SelectEquipInfo.iItemUid), 0 = none / unread.</summary>
@@ -206,6 +210,7 @@ namespace RealmForge {
         row1Off = double.NaN; noEffect = samePt = 0; typesLen = -1; lastPtX = lastPtY = double.NaN; lastNoEffect = false;
         listSig = long.MinValue; liveSeenX = double.NaN;
         wantNb = dragPending = altStrip = sameRetried = retryOk = false; noMove = swaps = nudges = 0; swapWaitSince = liveNoPosSince = 0; Atoms.Clear();
+        regrids = 0; regridPending = false;
       }
       if (key == "") { State = "idle"; return AutoAction.Nothing; }
       curSel = v.Sel; nowMs = v.NowMs; curKey = Key(v); curTip = v.TipKnown && v.TipShown; curLive = v.LiveGrid;
@@ -339,6 +344,14 @@ namespace RealmForge {
         if (v.Sel == selBefore && v.NowMs - clickAt < JudgeMs) return AutoAction.Nothing;
         lastNoEffect = v.Sel == selBefore;
         if (lastNoEffect) {
+          // the click on the live cell hit nothing at all (the game's pointer: raycast 0x0): the cell's rect is not where the game has the cell (a pooled / rebuilt grid read through old addresses): the grid is read again whole
+          // and the click goes to the UPDATED rect, never to the same one (lab 559: 21 clicks at live[67,148], raycast 0x0, the same cellY every time)
+          if (v.LiveGrid && itemPending && v.RayKnown && v.RayNone && regrids < MaxRegrids && !double.IsNaN(clickX)) {
+            regrids++; RegridSeq++; regridPending = true; missX = clickX; missY = clickY; regridAt = v.NowMs; itemPending = calibPending = false;
+            Atoms.Note("item.click pre=ok target=live[" + (int)clickX + "," + (int)clickY + "] src=live eff=sel=" + v.Target + " " + (v.NowMs - clickAt) + "ms -> NoEffect diag=" + GameFacts.Of(v) + " | atom: raycast=0x0 -> regrid #" + regrids + " (the cells and the scroll rect are read again, the next click goes to the updated rect)");
+            retryOk = true; liveSeenX = double.NaN; lastPtX = lastPtY = double.NaN; samePt = 0; waitUntil = v.NowMs + EffectWait.StableMs; effect.Drop();
+            return AutoAction.Nothing;
+          }
           if (++noEffect >= NoEffectTries) { itemPending = calibPending = false; return Fail(noEffect + " clicks on the list changed nothing (sel " + v.Sel + ", last at " + (int)lastPtX + "," + (int)lastPtY + ")"); }
           if (!v.LiveGrid) needCalib = true;
         }
@@ -374,6 +387,18 @@ namespace RealmForge {
           bool same = !double.IsNaN(liveSeenX) && Math.Abs(v.LiveX - liveSeenX) < 1.5 && Math.Abs(v.LiveY - liveSeenY) < 1.5;
           if (!same) { liveSeenAt = v.NowMs; liveSeenX = v.LiveX; liveSeenY = v.LiveY; }
           if (v.NowMs - liveSeenAt < EffectWait.StableMs || v.NowMs - listSigAt < EffectWait.StableMs) return AutoAction.Nothing;   // the same place on reads 50 ms apart first
+          if (regridPending) {
+            // the host's full re-read first (RegridDone), at most RegridWaitMs; then the rect against the one that hit nothing
+            if (v.RegridDone < RegridSeq && v.NowMs - regridAt < RegridWaitMs) return AutoAction.Nothing;
+            regridPending = false;
+            bool moved = Math.Abs(v.LiveX - missX) >= 1.5 || Math.Abs(v.LiveY - missY) >= 1.5;
+            if (moved) Atoms.Note("regrid #" + regrids + ": the cell's rect moved [" + (int)missX + "," + (int)missY + "] -> [" + (int)v.LiveX + "," + (int)v.LiveY + "]" + (v.RegridDone < RegridSeq ? " (the host did not answer)" : "") + ": the click goes to the updated rect");
+            else {
+              BlockerSeq++; BlockerNote = "raycast=0x0 at live[" + (int)missX + "," + (int)missY + "], the rect is the same after the regrid";
+              Atoms.Note("regrid #" + regrids + ": the rect is the same [" + (int)v.LiveX + "," + (int)v.LiveY + "] and the pointer hit nothing -> a layer over the list: the host looks for it (modal / panel / locker), the list is moved by a row meanwhile");
+              if (nudges < 2 && v.LiveFirst >= 0 && !double.IsNaN(v.LiveViewTop) && !double.IsNaN(v.LiveViewBottom) && v.InputOpen) return Nudge(v, GameFacts.Of(v));
+            }
+          }
           needCalib = calibPending = false; wrongs = 0;
           long tg = v.Target;
           if (!Atoms.Begin("item.click", "u" + tg, "live[" + (int)v.LiveX + "," + (int)v.LiveY + "] src=live", "sel=" + tg, ff => ff.Sel == tg, JudgeMs, GameFacts.Of(v), v.NowMs, !retryOk)) return SwapStep(v, "the click on the live cell changed nothing and the facts are the same");
@@ -648,6 +673,16 @@ namespace RealmForge {
     public bool Polling(long now) { return (effect.Armed && now < waitUntil) || (itemPending && curSel == selBefore && now - clickAt < JudgeMs); }
     // the durations of the step (the host's log: "step ms: slot=… pick=… selected=… confirm=…"; - = not part of this step)
     long movingSince; public const int MovingCapMs = 3000;
+    // a click on the target's live cell that hit nothing (the game's raycast 0x0): the grid is read again (new cell and scroll-rect addresses) and the click goes to the updated rect; the same rect after it = a layer over the list
+    int regrids; bool regridPending; double missX, missY; long regridAt;
+    public const int MaxRegrids = 3, RegridWaitMs = 2500;
+    /// <summary>The pilot asks the host for a full re-read of the gear grid (counts up); the host answers with AutoView.RegridDone.</summary>
+    public int RegridSeq { get; private set; }
+    /// <summary>The pilot found the click's rect unchanged after a regrid with the pointer hitting nothing: counts up, BlockerNote says what; the host looks for the layer over the list and closes it.</summary>
+    public int BlockerSeq { get; private set; }
+    public string BlockerNote = "";
+    /// <summary>The host reads the game's pointer now: a click on a live cell awaits its judgement.</summary>
+    public bool WantRay { get { return itemPending; } }
     long goalAt, pickAt, selAt, confirmAt, slotMs = -1; bool stepSaid;
     void StepSay(long now) {
       if (stepSaid || goalAt == 0) return;

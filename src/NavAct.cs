@@ -153,17 +153,19 @@ namespace RealmForge {
     public int ListFirst = -1, ListLast = -1;
     public double CellY = double.NaN, Scroll = double.NaN, TargetX, TargetY, NbX, NbY, ViewTop = double.NaN, ViewBottom = double.NaN;
     public long NbUid;
+    /// <summary>What the game's own pointer says is under the cursor (RayKnown: read; RayNone: its raycast hit nothing, 0x0): after a click on a live cell, nothing under it means the click went into the void.</summary>
+    public bool RayKnown, RayNone;
     public static GameFacts Of(AutoView v) {
       return new GameFacts { Sel = v.Sel, TipUid = v.TipUid, Want = v.Target, Hero = v.Hero, ScreenHero = v.ScreenHero, Owner = v.Owner, ListSig = v.ListSig, TipShown = v.TipShown, TipKnown = v.TipKnown,
         InputOpen = v.InputOpen, LiveGrid = v.LiveGrid, LiveTarget = v.LiveTarget, LiveNb = v.LiveNb, Foreground = v.Foreground, ListFirst = v.LiveFirst, ListLast = v.LiveLast, CellY = v.LiveCellY, Scroll = v.LiveScroll,
-        TargetX = v.LiveX, TargetY = v.LiveY, NbX = v.LiveNbX, NbY = v.LiveNbY, NbUid = v.LiveNbUid, ViewTop = v.LiveViewTop, ViewBottom = v.LiveViewBottom };
+        TargetX = v.LiveX, TargetY = v.LiveY, NbX = v.LiveNbX, NbY = v.LiveNbY, NbUid = v.LiveNbUid, ViewTop = v.LiveViewTop, ViewBottom = v.LiveViewBottom, RayKnown = v.RayKnown, RayNone = v.RayNone };
     }
     /// <summary>Where the list stands (its first and last made cell, the target's cell row on the screen): a change = the list moved.</summary>
     public string PosKey() { return ListFirst + ":" + ListLast + ":" + (double.IsNaN(CellY) ? "-" : ((int)Math.Round(CellY / 3)).ToString()) + (double.IsNaN(Scroll) ? "" : ":" + (int)Math.Round(Scroll)); }
     /// <summary>What the facts say now, as a key: an atom that failed is not done again while this is the same (the diagnosis did not change).</summary>
-    public string DiagKey() { return Sel + "|" + TipUid + "|" + TipShown + "|" + PosKey() + "|" + ListSig + "|" + LiveTarget; }
+    public string DiagKey() { return Sel + "|" + TipUid + "|" + TipShown + "|" + PosKey() + "|" + ListSig + "|" + LiveTarget + (RayKnown ? (RayNone ? "|raycast0" : "|raycast1") : ""); }
     public override string ToString() {
-      return "sel=" + Sel + " tip=" + (TipShown ? TipUid.ToString() : "-") + " list=" + ListFirst + ".." + ListLast + " cellY=" + (double.IsNaN(CellY) ? "-" : ((int)CellY).ToString()) + " target=" + (LiveTarget ? "live" : "none") + " owner=" + Owner;
+      return "sel=" + Sel + " tip=" + (TipShown ? TipUid.ToString() : "-") + " list=" + ListFirst + ".." + ListLast + " cellY=" + (double.IsNaN(CellY) ? "-" : ((int)CellY).ToString()) + " target=" + (LiveTarget ? "live" : "none") + " owner=" + Owner + (RayKnown && RayNone ? " raycast=0x0" : "");
     }
   }
 
@@ -211,6 +213,9 @@ namespace RealmForge {
       if (ok) failedAt.Remove(key); else if (how == "NoEffect") failedAt[key] = f.DiagKey();
       effect = null;
     }
+
+    /// <summary>A diagnosis line of the pilot's own (a regrid, a blocker): into the log with the atoms' lines.</summary>
+    public void Note(string line) { Say(line); }
 
     /// <summary>A precondition that does not hold, as a line of the log (nothing is done; the caller waits for the field or changes the method).</summary>
     public void PreFails(string name, string why, GameFacts f) { string l = name + " pre=" + why + " (" + f + ")"; if (Lines.Count == 0 || Lines[Lines.Count - 1] != l) Say(l); }

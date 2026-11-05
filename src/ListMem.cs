@@ -359,5 +359,61 @@ namespace RealmForge {
     }
     /// <summary>Forgets the cached threshold (tests, a new game process).</summary>
     public static void ForgetDragThreshold() { dragThr = -1; dragThrAt = 0; }
+
+    // ---- the game's own pointer (EventSystem -> the standalone input module's m_PointerData, key -1): where the cursor is for the game and what its raycast hit. Offsets as NavProbe's pointer line.
+    const int PdEnter = 0x20, PdRay = 0x48, PdPosX = 0xE8, PdPosY = 0xEC, PdSize = 0x130;
+    /// <summary>One read of the mouse pointer: Ok, the position in the game's units (y up), the object its raycast hit (0 = nothing: the click went into the void), the UILocker's blocker (the raycast hits it while the input is locked).</summary>
+    public sealed class PointerRead {
+      public bool Ok; public double X, Y; public ulong Ray, Enter, Locker; public string Why = "";
+      public bool HitNothing { get { return Ok && Ray == 0; } }
+      public bool HitsLocker { get { return Ok && Ray != 0 && Ray == Locker; } }
+      public override string ToString() { return Ok ? "pointer=(" + X.ToString("0.#", CultureInfo.InvariantCulture) + "," + Y.ToString("0.#", CultureInfo.InvariantCulture) + ") raycast=0x" + Ray.ToString("X") + (HitsLocker ? " (the locker)" : "") : "pointer unread (" + Why + ")"; }
+    }
+    /// <summary>The PointerEventData bytes -> the facts (a pure decision, tests feed it a buffer).</summary>
+    public static PointerRead PointerOf(byte[] pb, ulong locker) {
+      var r = new PointerRead();
+      if (pb == null || pb.Length < PdSize) { r.Why = "PointerEventData unreadable"; return r; }
+      double x = LmF(pb, PdPosX), y = LmF(pb, PdPosY);
+      if (!LmOk(x, 1e6) || !LmOk(y, 1e6)) { r.Why = "position not plausible"; return r; }
+      r.X = x; r.Y = y; r.Ray = BitConverter.ToUInt64(pb, PdRay); r.Enter = BitConverter.ToUInt64(pb, PdEnter); r.Locker = locker; r.Ok = true;
+      return r;
+    }
+    static long ptrAt; static PointerRead ptrLast;
+    /// <summary>The mouse pointer of the game's EventSystem now (read at most every 60 ms; passive memory reads only).</summary>
+    public static PointerRead ReadPointer() {
+      long now = Environment.TickCount;
+      if (ptrLast != null && now >= ptrAt && now - ptrAt < 60) return ptrLast;
+      var r = new PointerRead();
+      try {
+        int pid = ListPid(); ulong ga = pid != 0 ? GameAssemblyOf(pid) : 0;
+        ulong k = ga != 0 ? ClassAt(ga, "UnityEngine.EventSystems.EventSystem") : 0;
+        if (k == 0) { r.Why = "EventSystem class not found"; }
+        else {
+          ulong sf = Ptr(k + 0xB8), list = sf != 0 ? Ptr(sf) : 0;
+          var lb = list != 0 ? Read(list, 0x20) : null;
+          if (lb == null || LmI(lb, 0x18) < 1) r.Why = "no EventSystem in the list";
+          else {
+            ulong arr = BitConverter.ToUInt64(lb, 0x10), es = arr != 0 ? Ptr(arr + (ulong)ArrData) : 0, module = es != 0 ? Ptr(es + 0x20) : 0, dict = module != 0 ? Ptr(module + 0x48) : 0;
+            var db = dict != 0 ? Read(dict, 0x28) : null;
+            int count = db != null ? LmI(db, 0x20) : 0; ulong entries = db != null ? BitConverter.ToUInt64(db, 0x18) : 0;
+            if (count <= 0 || count > 64 || entries == 0) r.Why = "m_PointerData count " + count;
+            else {
+              var eb = Read(entries + 0x20, count * 24); ulong ped = 0;
+              if (eb != null) for (int i = 0; i < count; i++) if (LmI(eb, i * 24 + 8) == -1) ped = BitConverter.ToUInt64(eb, i * 24 + 16);
+              if (ped == 0) r.Why = "no mouse pointer (key -1)";
+              else {
+                ulong locker = 0, kl = ClassAt(ga, "UI.UILocker");
+                if (kl != 0) { ulong sfl = Ptr(kl + 0xB8), inst = sfl != 0 ? Ptr(sfl) : 0; locker = inst != 0 ? Ptr(inst + 0x18) : 0; }
+                r = PointerOf(Read(ped, PdSize), locker);
+              }
+            }
+          }
+        }
+      } catch (Exception e) { r = new PointerRead { Why = "exception " + e.Message }; }
+      ptrAt = now; ptrLast = r;
+      return r;
+    }
+    /// <summary>The caches of the readers' field nodes and the kept cell reads are dropped: the next reads walk the script objects again (a grid or scroll rect rebuilt under the old addresses).</summary>
+    public static void RegridForget() { ForgetFieldSlots(); UiCellReset(); }
   }
 }

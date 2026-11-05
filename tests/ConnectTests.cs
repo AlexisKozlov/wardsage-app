@@ -54,6 +54,7 @@ static partial class CoreTests {
     Check(LookPolicy.FirstIsReplace(0) && LookPolicy.SecondSearch(0, true), "memory unknown: both spots, as before");
  
     ListMemHookTests();
+    Lab559RegridTests();
   }
 
   // ---------------------------------------------------------------- C5: the lists' own scroll (standing, bounds, the drag threshold) in the pilots
@@ -101,5 +102,40 @@ static partial class CoreTests {
       v.NowMs = 2000; v.Resolved = false; v.SideListMoving = false; a = fp.Step(v);
       Check(a != null && a.Kind == AutoKind.Click && a.CellKind == UiCellKind.GearSuit, "it stands: the set's cell is clicked");
     }
+  }
+
+  // ---------------------------------------------------------------- C6: lab 559 - a click on the target's live cell hits nothing (raycast 0x0), the cell's rect is stale
+  static void Lab559RegridTests() {
+    Console.WriteLine("Lab 559 (a click that hit nothing: regrid, the click on the updated rect):");
+    var geo = new ListGeometry(); double H = 705, cell = geo.CellW * H, lx = geo.ColLeft(1) * H + cell / 2;
+    foreach (bool rectMoves in new[] { true, false }) {
+      var pg = new AutoPilot(geo); double rectY = 148, staleY = 148; int regridHost = 0; var clicks = new List<double>(); int drags = 0, hostRegrids = 0; long sel = 54835; double lastClickY = double.NaN; var log = new List<string>();
+      for (long t = 0; t < 30000 && pg.State != "failed" && pg.State != "done"; t += 100) {
+        if (pg.RegridSeq != regridHost) { regridHost = pg.RegridSeq; hostRegrids++; if (rectMoves) rectY = 262; }   // the host reads the grid whole: the cell stands elsewhere (or not)
+        var v = new AutoView { NowMs = t, Foreground = true, H = H, Target = 55070, Row = 2, Col = 1, Sel = sel, SelRow = 0, SelCol = 0, AnchorHas = true, Row1Top = 120, Types = new[] { 0, 1, 1, 1, 1, 1, 1, 1, 1, 1 }, TipKnown = true, TipShown = false,
+          Hero = 5, ScreenHero = 5, Owner = 0, InputOpen = true, LiveGrid = true, LiveTarget = true, LiveX = lx, LiveY = rectY, LiveFirst = 0, LiveLast = 8, LiveCellY = rectY, LiveScroll = 54, LiveViewTop = 107, LiveViewBottom = 615,
+          LiveNb = pg.WantNeighbour, LiveNbX = lx, LiveNbY = 300, LiveNbUid = 77, ListSig = 1, RegridDone = hostRegrids };
+        if (pg.WantRay && !double.IsNaN(lastClickY)) { v.RayKnown = true; v.RayNone = Math.Abs(lastClickY - staleY) < 2; }   // (the click at the stale rect hit nothing)
+        var a = pg.Step(v);
+        if (a != null && a.Kind == AutoKind.Click) { clicks.Add(a.Y); lastClickY = a.Y; if (a.Cell == 55070 && Math.Abs(a.Y - 262) < 2) sel = 55070; }
+        else if (a != null && a.Kind == AutoKind.Drag) { drags++; if (!rectMoves) rectY = 190; }   // (the list moved by a row: the cell stands elsewhere)
+        string at = pg.Atoms.Take(); if (at != "") log.Add(at);
+      }
+      string all = string.Join(" ## ", log.ToArray());
+      if (rectMoves) {
+        Check(clicks.Count >= 2 && Math.Abs(clicks[0] - 148) < 2 && Math.Abs(clicks[1] - 262) < 2 && pg.State == "done", "lab 559 regrid: first click at the stale rect (y 148), raycast 0x0, the grid read again, the second at the updated one (y " + (clicks.Count > 1 ? clicks[1].ToString("0") : "-") + "), state " + pg.State + " (" + clicks.Count + " clicks)");
+        Check(all.Contains("raycast=0x0 -> regrid #1") && all.Contains("the cell's rect moved [67,148]") && hostRegrids == 1, "lab 559 regrid: the log says 'raycast=0x0 -> regrid' and the rect move (" + hostRegrids + " host regrids)");
+      } else {
+        Check(pg.BlockerSeq >= 1 && all.Contains("a layer over the list") && drags >= 1 && clicks.Count >= 1 && !(clicks.Count >= 2 && Math.Abs(clicks[1] - clicks[0]) < 2 && drags == 0), "lab 559 regrid: the rect stays the same after the regrid: a layer over the list is named (blocker seq " + pg.BlockerSeq + "), the list is moved (" + drags + " drags), not the same rect clicked again at once");
+      }
+    }
+    // the pointer's bytes: nothing under it / the locker
+    var pb = new byte[0x130]; BitConverter.GetBytes(67f).CopyTo(pb, 0xE8); BitConverter.GetBytes(557f).CopyTo(pb, 0xEC);
+    var p0 = RFX.PointerOf(pb, 0x1234);
+    Check(p0.Ok && p0.HitNothing && !p0.HitsLocker && Math.Abs(p0.X - 67) < 0.01, "the game's pointer with raycast 0x0 = nothing under the click");
+    BitConverter.GetBytes((ulong)0x1234).CopyTo(pb, 0x48);
+    var p1 = RFX.PointerOf(pb, 0x1234);
+    Check(p1.Ok && !p1.HitNothing && p1.HitsLocker, "a raycast on the UILocker's image is the locker, not a hit on a cell");
+    Check(!RFX.PointerOf(new byte[10], 0).Ok, "a short buffer is no pointer");
   }
 }

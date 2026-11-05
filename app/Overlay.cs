@@ -4627,6 +4627,7 @@ namespace RealmForge {
     void LiveGearView(AutoView v, W32.RECT cr) {
       if (target <= 0 || cr.R <= 0 || cr.B <= 0) return;
       double W = cr.R, Hc = cr.B, U = Ui.Unit(cr.R, cr.B);
+      BlockerIfAsked(); RegridIfAsked(W, Hc, U); FillRay(v);   // (a click that hit nothing: the grid read again whole, the layer over the list looked for)
       // (the whole list's cells only while the pilot asks for a neighbour of the target: the read costs a cell more each)
       RFX.UiCellWant(UiCellKind.HeroGear, pilot.WantNeighbour ? null : new[] { target }, W, Hc, U);
       var s = RFX.UiCellFresh(UiCellKind.HeroGear, target, W, Hc, Environment.TickCount, RFX.UiFrameFreshMs);   // (the ticks are ~200 ms apart: a 200 ms limit left most ticks without a read)
