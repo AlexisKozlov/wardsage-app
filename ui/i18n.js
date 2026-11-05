@@ -40,6 +40,7 @@ window.RF_TEXTS = {
     aSlotFailed: 'Слот не открывается — возможно, он ещё закрыт в игре', aSlotFailedP: 'Браслет, амулет и кольцо игра открывает после этапа сюжета. Откройте слот сами — дальше программа продолжит.',
     aFailed: 'Не получилось нажать вещь автоматически — найдите её сами по подсказкам', aFailedP: 'Подсказки и рамка в игре остаются.',
 
+    errNotWindows: 'Игра запущена не в Windows-версии', errNotWindowsP: 'Игра запущена не в Windows-версии (эмулятор или трансляция с телефона). Программа читает только версию игры для ПК — установите её и запустите, затем нажмите «Синхронизировать».',
     errNotRunning: 'Игра не найдена', errNotRunningP: 'Запустите Watcher of Realms, дождитесь главного экрана и нажмите «Синхронизировать» ещё раз.',
     errAccess: 'Нет прав на чтение памяти игры', errAccessP: 'Игра запущена от администратора. Перезапустите Wardsage и нажмите «Да» в окне Windows.',
     errLoading: 'Игра ещё загружается', errLoadingP: 'Игра ещё загружается — войдите в игру и нажмите «Синхронизировать» через полминуты.',
@@ -285,6 +286,7 @@ window.RF_TEXTS = {
     aSlotFailed: 'The slot does not open — it may still be closed in the game', aSlotFailedP: 'The game opens bracer, amulet and ring after a story stage. Open the slot yourself — the program goes on from there.',
     aFailed: 'Could not click the item automatically — find it with the hints', aFailedP: 'The hints and the frame in the game stay on.',
 
+    errNotWindows: 'The game is not running as the Windows version', errNotWindowsP: 'The game is running outside the Windows version (an emulator or a stream from a phone). The program reads only the PC version of the game — install and start it, then press “Sync”.',
     errNotRunning: 'Game not found', errNotRunningP: 'Start Watcher of Realms, wait for the main screen and press “Sync” again.',
     errAccess: 'No permission to read the game', errAccessP: 'The game runs as administrator. Restart Wardsage and press “Yes” in the Windows prompt.',
     errLoading: 'The game is still loading', errLoadingP: 'The game is still loading — enter the game and press «Sync» again in half a minute.',

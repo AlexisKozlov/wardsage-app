@@ -4452,6 +4452,51 @@ namespace RealmForge {
       return title.IndexOf(WindowTitle, StringComparison.OrdinalIgnoreCase) >= 0 || title.IndexOf(WindowTitleKo, StringComparison.Ordinal) >= 0;
     }
 
+    /// <summary>The game was started by other means than the Windows client (an emulator, Phone Link, a stream from a phone):
+    /// no client process was found (<paramref name="gamePid"/> == 0) but a visible window titled like the game exists whose
+    /// process is not a browser, not this program and not a launcher. Pure decision over (title, process name) pairs.</summary>
+    public static bool ForeignGameWindow(int gamePid, string[] titles, string[] procNames) {
+      if (gamePid != 0 || titles == null) return false;
+      for (int i = 0; i < titles.Length; i++) {
+        if (!TitleIsGame(titles[i])) continue;
+        string n = procNames != null && i < procNames.Length ? (procNames[i] ?? "") : "";
+        string l = n.ToLowerInvariant();
+        if (l.Length > 0 && (l.Contains("launcher") || l.Contains("realmforge") || l.Contains("wardsage") || l == "chrome" || l == "msedge" || l == "firefox"
+            || l == "opera" || l == "brave" || l == "vivaldi" || l == "explorer" || l == "notepad" || l == "code")) continue;
+        return true;
+      }
+      return false;
+    }
+
+    [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc cb, IntPtr lp);
+    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowTextW(IntPtr h, StringBuilder sb, int max);
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+    delegate bool EnumProc(IntPtr h, IntPtr lp);
+
+    /// <summary>Read-only: true when no game client runs but a visible top-level window is titled like the game (an emulator or
+    /// a phone mirror). Only EnumWindows / GetWindowText / GetWindowThreadProcessId; the windows are not touched.</summary>
+    public static bool ForeignGameWindowPresent() {
+      try {
+        var titles = new System.Collections.Generic.List<string>(); var names = new System.Collections.Generic.List<string>();
+        int self = Process.GetCurrentProcess().Id;
+        EnumWindows(delegate(IntPtr h, IntPtr lp) {
+          try {
+            if (!IsWindowVisible(h)) return true;
+            var sb = new StringBuilder(256);
+            if (GetWindowTextW(h, sb, 256) <= 0 || !TitleIsGame(sb.ToString())) return true;
+            uint pid; GetWindowThreadProcessId(h, out pid);
+            if (pid == (uint)self) return true;
+            string name = "";
+            try { using (var p = Process.GetProcessById((int)pid)) name = p.ProcessName; } catch (Exception) { }
+            titles.Add(sb.ToString()); names.Add(name);
+          } catch (Exception) { }
+          return true;
+        }, IntPtr.Zero);
+        return ForeignGameWindow(FindGameProcess(), titles.ToArray(), names.ToArray());
+      } catch (Exception) { return false; }
+    }
+
     /// <summary>The hex SHA-256 of the GameAssembly.dll next to the exe (null when there is none or it cannot be read).</summary>
     public static string TryHashAssembly(string exePath) {
       try {

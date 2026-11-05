@@ -2422,6 +2422,10 @@ static partial class CoreTests {
     try { Directory.Delete(asmDir, true); } catch (Exception) { }
     Check(GameInfo.TitleIsGame("Watcher of Realms") && GameInfo.TitleIsGame("Watcher of Realms - US") && GameInfo.TitleIsGame("[Store] Watcher of Realms")
           && GameInfo.TitleIsGame("워처 오브 렐름") && !GameInfo.TitleIsGame("Watcher") && !GameInfo.TitleIsGame(""), "window title: the name anywhere, or the Korean one");
+    Check(GameInfo.ForeignGameWindow(0, new[] { "Watcher of Realms - Alex" }, new[] { "ApplicationFrameHost" }), "foreign window: an emulator-like window and no client -> hint");
+    Check(!GameInfo.ForeignGameWindow(1234, new[] { "Watcher of Realms - Alex" }, new[] { "HD-Player" }), "foreign window: the client runs -> no hint");
+    Check(!GameInfo.ForeignGameWindow(0, new[] { "Watcher of Realms forum - Chrome", "Notes" }, new[] { "chrome", "notepad" }) && !GameInfo.ForeignGameWindow(0, null, null)
+          && !GameInfo.ForeignGameWindow(0, new string[0], new string[0]), "foreign window: a browser tab, other windows or none -> no hint");
     string lowDir = Path.Combine(Path.GetTempPath(), "rf-low-" + Guid.NewGuid().ToString("N"));
     Directory.CreateDirectory(Path.Combine(lowDir, "Other Co", "Other Game")); Directory.CreateDirectory(Path.Combine(lowDir, "Pub", "Watcher of Realms US"));
     File.WriteAllText(Path.Combine(lowDir, "Other Co", "Other Game", "Player.log"), "Initialize engine version\nsomething else", Encoding.UTF8);

@@ -1200,7 +1200,7 @@ namespace RealmForge {
       SyncEv("error", ",\"error\":{\"kind\":\"" + kind + "\",\"detail\":" + S(detail) + ",\"retryAfter\":" + N(retryAfter) + "}");
       // reported: reading and sending failures. Not: the site's rate limit, the game not running (the player's state) and
       // a rejected code (the report would be rejected the same way)
-      if (report && kind != "rate" && kind != "not_running" && kind != "token" && kind != "paused")
+      if (report && kind != "rate" && kind != "not_running" && kind != "not_windows" && kind != "token" && kind != "paused")
         Report("sync." + kind, "sync: " + kind + (string.IsNullOrEmpty(detail) ? "" : ": " + detail), Ctx("auto", autoRun ? "true" : "false"));
     }
 
@@ -1211,7 +1211,7 @@ namespace RealmForge {
       int pid = Extractor.FindGame(out version);
       if (pid == 0) {
         if (!isAuto) { try { Log.Write("sync: the game is not found; similar processes: " + GameInfo.DescribeCandidates()); } catch (Exception) { } }
-        SyncError("not_running", null, 0); return;
+        SyncError(GameInfo.ForeignGameWindowPresent() ? "not_windows" : "not_running", null, 0); return;
       }
       var started = DateTime.UtcNow;
       SyncEv("read", ",\"seconds\":0");
