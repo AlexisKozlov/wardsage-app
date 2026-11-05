@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Downloads the screen recordings of a lab run's failed scenarios (their step's "rec", lab-loop.sh rec_end) from the staging recordings
-# folder (owned by deploy, read as deploy) to ~/wardsage/work/recordings-ro/lab/<id>/, replays each with tests/RecReplay and prints the
+# folder (on the lab server, read as root over ssh; in local mode owned by deploy, read as deploy) to ~/wardsage/work/recordings-ro/lab/<id>/, replays each with tests/RecReplay and prints the
 # start of its summary: the steps timeline's end, the first mismatches, the tags (an automatic halt during the scenario) and lab.json.
 #   lab-rec.sh <run id|latest> [--no-replay]
 # RecReplay.dll: build/RecReplay.dll of this checkout (tests/run-tests.sh builds it); RECREPLAY_DIR=<dir> for another one.
@@ -23,7 +23,7 @@ while IFS='|' read -r name id note; do
   if [ -z "$src" ]; then echo "  not on the server (deleted, or no part arrived)"; continue; fi
   dst=$OUT/$id; mkdir -p "$dst"
   # the part files only (NNN.zip), copied out as deploy, written as the current user
-  sudo -n -u deploy sh -c 'cd "$1" && tar -cf - [0-9][0-9][0-9].zip' sh "$src" 2>/dev/null | tar -C "$dst" -xf - || { echo "  copy failed"; continue; }
+  rec_run sh -c 'cd "$1" && tar -cf - [0-9][0-9][0-9].zip' sh "$src" 2>/dev/null </dev/null | tar -C "$dst" -xf - || { echo "  copy failed"; continue; }
   echo "  $(ls "$dst" | grep -c '\.zip$') part(s) in $dst"
   n=$((n+1))
   unzip -p "$dst/000.zip" lab.json 2>/dev/null | head -c 400 | sed 's/^/  lab.json: /'; echo

@@ -3,17 +3,33 @@
 # Never prints tokens, ids of users or accounts.
 
 LAB_DB_CONTAINER=wardsage-staging-db           # the ONLY database these tools talk to
+# Where the lab lives. DEFAULT: the test server (docker, the staging Supabase, the recordings and the test feed are there; reached over ONE multiplexed
+# ssh connection). LAB_SSH="" (empty) = the old local mode: docker / sudo / files on THIS host. LAB_SSH=user@host = another remote.
+LAB_SSH=${LAB_SSH-root@13.140.221.207}
+LAB_SSH_KEY=${LAB_SSH_KEY:-$HOME/.ssh/id_lab_ed25519}
+LAB_SSH_OPTS=(-o ControlMaster=auto -o "ControlPath=$HOME/.ssh/cm-lab" -o ControlPersist=600 -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=20 -i "$LAB_SSH_KEY")
 LAB_DIR=${LAB_DIR:-$HOME/wardsage/work/lab}
-LAB_ENV=/srv/wardsage/staging/supabase/.env     # staging Supabase env (JWT secret, anon key)
+LAB_ENV=/srv/wardsage/staging/supabase/.env     # staging Supabase env (JWT secret, anon key; on the lab server, or here in local mode)
 mkdir -p "$LAB_DIR"
 
 case "$LAB_DB_CONTAINER" in *prod*) echo "lab: refusing to use a prod container" >&2; exit 2 ;; esac
 
+# rsh <command and args...>: runs on the lab server (ssh, every argument quoted for the remote shell; stdin passes through).
+# Without LAB_SSH (local mode) the command runs here under sudo (docker, root-only files).
+rsh() {
+  if [ -n "$LAB_SSH" ]; then
+    local c; c=$(printf '%q ' "$@")
+    ssh "${LAB_SSH_OPTS[@]}" "$LAB_SSH" "$c"
+  else
+    sudo -n "$@"
+  fi
+}
+
 # q [psql args]: SQL from stdin, plain unaligned output. Use -v name=value and :'name' for values.
-q() { sudo docker exec -i "$LAB_DB_CONTAINER" psql -U supabase_admin -d postgres -X -q -At -v ON_ERROR_STOP=1 "$@"; }
+q() { rsh docker exec -i "$LAB_DB_CONTAINER" psql -U supabase_admin -d postgres -X -q -At -v ON_ERROR_STOP=1 "$@"; }
 
 # env_get KEY: one value of the staging env file (printed to stdout only for the caller's variable; never echo it)
-env_get() { sudo grep -E "^$1=" "$LAB_ENV" | head -1 | cut -d= -f2- | tr -d "\"' \r"; }
+env_get() { rsh grep -E "^$1=" "$LAB_ENV" | head -1 | cut -d= -f2- | tr -d "\"' \r"; }
 
 # dev_id <device name>: the device uuid; fails when unknown
 dev_id() {
@@ -129,13 +145,36 @@ scn_pass_note() {
 LAB_REC_ROOT=${LAB_REC_ROOT:-/srv/wardsage/staging/recordings}
 LAB_REC_RX='^lab-[0-9]{8}-[0-9]{6}-[0-9a-f]{6}$'
 # rec_dir <id>: the recording's folder (empty when it is not there)
-rec_dir() { [[ "$1" =~ $LAB_REC_RX ]] || return 1; sudo -n -u deploy find "$LAB_REC_ROOT" -mindepth 3 -maxdepth 3 -type d -name "$1" -print -quit 2>/dev/null; }
+# rec_run <command...>: runs where the recordings are: as root on the lab server (ssh), or locally as deploy
+rec_run() { if [ -n "$LAB_SSH" ]; then rsh "$@"; else sudo -n -u deploy "$@"; fi; }
+rec_dir() { [[ "$1" =~ $LAB_REC_RX ]] || return 1; rec_run find "$LAB_REC_ROOT" -mindepth 3 -maxdepth 3 -type d -name "$1" -print -quit 2>/dev/null </dev/null; }
 # rec_delete <id>...: deletes these lab recordings (a passed scenario's)
-rec_delete() { local id; for id in "$@"; do [[ "$id" =~ $LAB_REC_RX ]] || continue; sudo -n -u deploy find "$LAB_REC_ROOT" -mindepth 3 -maxdepth 3 -type d -name "$id" -prune -exec rm -rf -- {} + 2>/dev/null || true; done; }
+rec_delete() { local id; for id in "$@"; do [[ "$id" =~ $LAB_REC_RX ]] || continue; rec_run find "$LAB_REC_ROOT" -mindepth 3 -maxdepth 3 -type d -name "$id" -prune -exec rm -rf -- {} + 2>/dev/null </dev/null || true; done; }
 # rec_prune [days]: deletes lab recordings whose last part is older than <days> (default 2); with LAB_REC_PRUNE_ALL=1 every staging recording
 # that old (the RecReplay fixtures are copies in the repo / ~/wardsage/work/recordings-ro, never under LAB_REC_ROOT)
 rec_prune() {
   local min=$(( ${1:-2} * 1440 )) pat='lab-*'
   [ "${LAB_REC_PRUNE_ALL:-1}" = 1 ] && pat='*'
-  sudo -n -u deploy find "$LAB_REC_ROOT" -mindepth 3 -maxdepth 3 -type d -name "$pat" -mmin +"$min" -prune -exec rm -rf -- {} + 2>/dev/null || true
+  rec_run find "$LAB_REC_ROOT" -mindepth 3 -maxdepth 3 -type d -name "$pat" -mmin +"$min" -prune -exec rm -rf -- {} + 2>/dev/null </dev/null || true
+}
+
+# ---- the test feed (latest.json, update/*.exe, Wardsage-Test-Setup.exe, lab/WardsageLab.{ps1,json}): Caddy serves /downloads/test/* from
+# /srv/wardsage/test-feed on the lab server. TEST_FEED set = a local directory (tests, the old local mode); unset with LAB_SSH = the lab server.
+LAB_FEED_REMOTE=/srv/wardsage/test-feed
+feed_is_remote() { [ -n "$LAB_SSH" ] && [ -z "${TEST_FEED:-}" ]; }
+# feed_cat <path in the feed>: the file's bytes (failure when missing)
+feed_cat() { if feed_is_remote; then rsh cat "$LAB_FEED_REMOTE/$1" </dev/null; else cat "${TEST_FEED:-$LAB_FEED_REMOTE}/$1"; fi; }
+# feed_put <local file> <path in the feed> [mode]: atomically (temp name, then mv); the feed's folders are made
+feed_put() {
+  local src=$1 dst=$2 mode=${3:-644} d b base
+  d=$(dirname "$dst"); b=$(basename "$dst")
+  if feed_is_remote; then
+    base=$LAB_FEED_REMOTE
+    rsh mkdir -p "$base/$d" </dev/null || return 1
+    rsync -e "ssh ${LAB_SSH_OPTS[*]}" --chmod="F$mode" "$src" "$LAB_SSH:$base/$d/.$b.tmp" || return 1
+    rsh mv -f "$base/$d/.$b.tmp" "$base/$dst" </dev/null
+  else
+    base=${TEST_FEED:-$LAB_FEED_REMOTE}
+    mkdir -p "$base/$d" && cp "$src" "$base/$d/.$b.tmp" && chmod "$mode" "$base/$d/.$b.tmp" && mv -f "$base/$d/.$b.tmp" "$base/$dst"
+  fi
 }

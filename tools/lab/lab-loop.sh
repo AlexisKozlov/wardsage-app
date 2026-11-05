@@ -7,7 +7,7 @@
 #                                                       running; nothing starts by itself (no run for a new test build, no start_game, no explorer: that one only
 #                                                       with lab-request.sh <device> --only explore). A run in progress advances (the same state machine, state in
 #                                                       lab_runs). Always exits 0.
-#                                                       Env: TEST_FEED (feed dir, default /srv/wardsage/test-feed), LAB_NO_TG=1 (print instead of Telegram), LAB_ONLY=<device> (tests).
+#                                                       Env: LAB_SSH (default root@13.140.221.207 = the lab server; empty = local mode), TEST_FEED (a local feed dir; default the lab server's /srv/wardsage/test-feed), LAB_NO_TG=1 (print instead of Telegram), LAB_ONLY=<device> (tests).
 #
 # Per-build result: $LAB_DIR/build-<N>.status (N = 4th part of the version the run tested: PASS / FAIL / SKIP / PENDING per scenario, frame_audit, OVERALL),
 # rewritten after every scenario of a run.
@@ -39,7 +39,6 @@ while [ $# -gt 0 ]; do
 done
 { [ -n "$dev" ] || [ "$auto" = 1 ]; } && { [ -z "$dev" ] || [ "$auto" = 0 ]; } || { echo "$USAGE" >&2; exit 2; }
 [[ "$timeout_min" =~ ^[0-9]{1,3}$ ]] && [[ "$tick" =~ ^[0-9]{1,3}$ ]] || { echo "bad number" >&2; exit 2; }
-FEED=${TEST_FEED:-/srv/wardsage/test-feed}
 TEST_LOG=${LAB_TEST_LOG:-$HOME/wardsage/work/test-autorelease.log}   # tools/test-autorelease.sh: "<time> published 1.6.66.N (sha8)"
 
 say() { echo "$(date -u +%H:%M:%S) $*"; }
@@ -851,7 +850,7 @@ auto_dev() {   # $1 = device name
   local gr st rv rn
   gr=$(dstat "coalesce(status->>'game_running', 'false')")
   # a newer published runner than the one the laptop reports -> ask it to update (one job at a time)
-  rv=$(jq -r '.version // empty' "$FEED/lab/WardsageLab.json" 2>/dev/null); rn=$(dstat "coalesce(status->>'runner', '')")
+  rv=$(feed_cat lab/WardsageLab.json 2>/dev/null | jq -r '.version // empty' 2>/dev/null); rn=$(dstat "coalesce(status->>'runner', '')")
   if [[ "$rv" =~ ^[0-9]{1,9}$ ]] && [[ "$rn" =~ ^[0-9]{1,9}$ ]] && [ "$rv" -gt "$rn" ]; then
     q -v d="$DEV" <<< "insert into public.lab_jobs (device_id, action, args, expires_at)
       select :'d'::uuid, 'update_runner', '{}'::jsonb, now() + interval '20 minutes'

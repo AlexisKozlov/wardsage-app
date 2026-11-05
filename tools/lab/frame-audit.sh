@@ -29,15 +29,15 @@ if [ -z "${FA_LOCAL:-}" ]; then
     [ -n "$src" ] || continue
     id=$(basename "$src"); [[ "$id" =~ $LAB_REC_RX ]] || continue
     mkdir -p "$dir/$id"
-    for z in $(sudo -n -u deploy ls "$src" 2>/dev/null | grep -E '^[0-9]{3}\.zip$'); do
+    for z in $(rec_run ls "$src" 2>/dev/null </dev/null | grep -E '^[0-9]{3}\.zip$'); do
       [ -s "$dir/$id/$z" ] && continue
-      sudo -n -u deploy cat "$src/$z" > "$dir/$id/$z.tmp" 2>/dev/null && mv "$dir/$id/$z.tmp" "$dir/$id/$z" || rm -f "$dir/$id/$z.tmp"
+      rec_run cat "$src/$z" > "$dir/$id/$z.tmp" 2>/dev/null </dev/null && mv "$dir/$id/$z.tmp" "$dir/$id/$z" || rm -f "$dir/$id/$z.tmp"
       # a part of this run only (audit.json names it): its shot and sidecar
       if [ "$(unzip -p "$dir/$id/$z" audit.json 2>/dev/null | jq -r '.run // ""' 2>/dev/null)" = "$run" ]; then
         unzip -o -q -j "$dir/$id/$z" 'audit_*' -d "$dir/shots" 2>/dev/null || true
       fi
     done
-  done < <(sudo -n -u deploy find "$LAB_REC_ROOT" -mindepth 3 -maxdepth 3 -type d -name "lab-*-${run:0:6}" 2>/dev/null)
+  done < <(rec_run find "$LAB_REC_ROOT" -mindepth 3 -maxdepth 3 -type d -name "lab-*-${run:0:6}" 2>/dev/null </dev/null)
 fi
 
 all=$(cat "$dir"/shots/audit_*.json 2>/dev/null | jq -cs --arg r "$run" '[.[] | select(.run == $r)]' 2>/dev/null); [ -n "$all" ] || all='[]'
