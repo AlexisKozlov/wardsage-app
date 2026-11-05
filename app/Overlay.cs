@@ -3775,6 +3775,7 @@ namespace RealmForge {
       if (hwnd != IntPtr.Zero && W32.GetClientRect(hwnd, out cr)) {   // (the client size: the live read needs it - live 2026-10-30 "uibtn ... failed at window (no size)")
         req.W = cr.R; req.H = cr.B; req.U = Ui.Unit(cr.R, cr.B);
         if (a.Kind == AutoKind.Click) LiveClick(req, fresh, o, ref sx, ref sy);
+        LiveWidgetClick(req, a, fresh, o, ref sx, ref sy);
         if (a.Kind == AutoKind.Click && a.Cell > 0 && t == ClickTarget.EquipNav) LiveCellClick(req, fresh, a.Cell, o, ref sx, ref sy); else { cellLivePt = null; cellRefused = false; }
       } else { cellLivePt = null; cellRefused = false; }
       if (cellRefused) { cellRefused = false; Log.Write("auto: the item's live cell is not in view now - no click on the layout's point"); return false; }
@@ -4148,6 +4149,7 @@ namespace RealmForge {
       if (req.U <= 0) { req.W = cr.R; req.H = cr.B; req.U = Ui.Unit(cr.R, cr.B); }
       req.Shown = unknownForms;   // (every unknown form shown, a screen's own ones too: ClickGate)
       if (a.Kind == AutoKind.Click) LiveClick(req, fresh, o, ref x, ref y);
+      LiveWidgetClick(req, a, fresh, o, ref x, ref y);
       if (a.Kind == AutoKind.Click && a.Cell > 0) LiveCellClick(req, fresh, a.Cell, o, ref x, ref y); else cellLivePt = null;
       return GatedSend(req, fresh, a, x, y);
     }

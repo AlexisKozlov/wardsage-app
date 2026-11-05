@@ -333,7 +333,7 @@ namespace RealmForge {
         if (clearTries >= 3) return null;
         if (!v.FilterOpen) return OpenFilter(v, H);
         clearTries++; waitUntil = v.NowMs + Late(AfterClickMs);
-        return v.ClassChosen ? Cell(g.ClassX, 0, H) : Cell(g.FactionX, 0, H);
+        return v.ClassChosen ? Cell(g.ClassX, 0, H, UiCellKind.HeroClass, ClassAll) : Cell(g.FactionX, 0, H, UiCellKind.HeroFaction, FactionAll);
       }
       if (t < 0 || filterPhase == 2) return null;
       bool known = v.HeroClass > 0 || (v.HeroCamps != null && v.HeroCamps.Length > 0);
@@ -348,14 +348,14 @@ namespace RealmForge {
         int row = FactionRow(v);
         if (row < 1 || factionTries >= 2) factionDone = true;
         else if (Array.IndexOf(v.ChosenCamps ?? new long[0], v.FactionList[row]) >= 0) factionDone = true;
-        else { factionTries++; waitUntil = v.NowMs + Late(FilterClickMs); return Cell(g.FactionX, row, H); }
+        else { factionTries++; waitUntil = v.NowMs + Late(FilterClickMs); return Cell(g.FactionX, row, H, UiCellKind.HeroFaction, v.FactionList[row]); }
       }
       if (!classDone) {
         int row = ClassRow(v);
         if (row < 1 || classClicked) classDone = true;
         // a class chosen already (the player's): «Все» first - a class clicked then would be added to it, not replace it
-        else if (v.ClassChosen) { if (++classResets > 2) classDone = true; else { waitUntil = v.NowMs + Late(AfterClickMs); return Cell(g.ClassX, 0, H); } }
-        else { classClicked = true; waitUntil = v.NowMs + Late(FilterClickMs); return Cell(g.ClassX, row, H); }
+        else if (v.ClassChosen) { if (++classResets > 2) classDone = true; else { waitUntil = v.NowMs + Late(AfterClickMs); return Cell(g.ClassX, 0, H, UiCellKind.HeroClass, ClassAll); } }
+        else { classClicked = true; waitUntil = v.NowMs + Late(FilterClickMs); return Cell(g.ClassX, row, H, UiCellKind.HeroClass, HeroGeometry.ClassOrder[row - 1]); }
       }
       filterPhase = 2; FilterDirty = false; waitUntil = v.NowMs + Late(AfterClickMs + 700); fade = true;   // it fades out: no grid click through it meanwhile
       return Funnel(v, H);                                         // close the pop-up: the grid is filtered
@@ -405,7 +405,7 @@ namespace RealmForge {
     AutoAction Funnel(HeroView v, double H) {
       Progress++;
       double ch = v.ClientH > 0 ? v.ClientH : H;
-      return Click(g.FunnelX * H, ch - g.FunnelDY * H);
+      var a = Click(g.FunnelX * H, ch - g.FunnelDY * H); a.Widget = FrameTargets.KeyGridFunnel; return a;
     }
 
     /// <summary>The pilot clicked in the grid's filter pop-up and has not closed it itself: if the plan goes away now (cancelled, another scenario) the
@@ -420,13 +420,16 @@ namespace RealmForge {
       double H = v.H;
       if (!v.FilterOpen || cleanTries >= 4) { FilterDirty = false; cleanTries = 0; return null; }
       cleanAt = v.NowMs; cleanTries++;
-      if (v.ChosenCamps != null && v.ChosenCamps.Length > 0 && cleanTries <= 2) return Click(g.FactionX * H, (g.FilterRow0) * H);
-      if (v.ClassChosen && cleanTries <= 3) return Click(g.ClassX * H, (g.FilterRow0) * H);
+      if (v.ChosenCamps != null && v.ChosenCamps.Length > 0 && cleanTries <= 2) return CellAt(Click(g.FactionX * H, (g.FilterRow0) * H), UiCellKind.HeroFaction, FactionAll);
+      if (v.ClassChosen && cleanTries <= 3) return CellAt(Click(g.ClassX * H, (g.FilterRow0) * H), UiCellKind.HeroClass, ClassAll);
       FilterDirty = false; cleanTries = 0;
       return Funnel(v, H);
     }
 
-    AutoAction Cell(double x, int row, double H) { FilterDirty = true; Progress++; return Click(x * H, (g.FilterRow0 + row * g.FilterPitch) * H); }
+    /// <summary>«Все» of the class column (the game's id -1) and of the faction column (0): the ids the live cell reads carry (UiCellKind.HeroClass / HeroFaction).</summary>
+    public const long ClassAll = -1, FactionAll = 0;
+    static AutoAction CellAt(AutoAction a, UiCellKind kind, long id) { a.CellKind = kind; a.CellId = id; return a; }
+    AutoAction Cell(double x, int row, double H, UiCellKind kind, long id) { FilterDirty = true; Progress++; return CellAt(Click(x * H, (g.FilterRow0 + row * g.FilterPitch) * H), kind, id); }
 
     // a click brought up hero i (or nobody new): the top of i's row is in [y - card, y]
     void Learn(HeroView v) {

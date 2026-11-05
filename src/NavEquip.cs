@@ -26,7 +26,7 @@ namespace RealmForge {
 
   static class NavAdapt {
     public static Act ToAct(AutoAction a, ClickTarget target, ClickOwner owner, string baseForm, ICollection<string> keep, string why) {
-      return new Act { Owner = owner, Target = target, Kind = a.Kind == AutoKind.Drag ? ActKind.Drag : ActKind.Click, X = a.X, Y = a.Y, DY = a.DY, Cell = a.Cell,
+      return new Act { Owner = owner, Target = target, Kind = a.Kind == AutoKind.Drag ? ActKind.Drag : ActKind.Click, X = a.X, Y = a.Y, DY = a.DY, Cell = a.Cell, Widget = a.Widget, CellKind = a.CellKind, CellId = a.CellId,
         Base = baseForm, Keep = keep, Fire = true, Why = why };
     }
   }

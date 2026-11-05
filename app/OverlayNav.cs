@@ -103,7 +103,7 @@ namespace RealmForge {
         } else {
           int sx = O.X + (int)Math.Round(a.X), sy = O.Y + (int)Math.Round(a.Y);
           if (sx < O.X || sy < O.Y || sx >= O.X + Cr.R || sy >= O.Y + Cr.B) return GateResult.Wait("outside", "the point lies outside the game window");
-          var aa = new AutoAction { Kind = a.Kind == ActKind.Drag ? AutoKind.Drag : AutoKind.Click, X = a.X, Y = a.Y, DY = a.DY, Cell = a.Cell };
+          var aa = new AutoAction { Kind = a.Kind == ActKind.Drag ? AutoKind.Drag : AutoKind.Click, X = a.X, Y = a.Y, DY = a.DY, Cell = a.Cell, Widget = a.Widget, CellKind = a.CellKind, CellId = a.CellId };
           bool equipT = a.Target == ClickTarget.EquipNav || a.Target == ClickTarget.EquipFilter || a.Target == ClickTarget.EquipClosePopup || a.Target == ClickTarget.EquipConfirm;
           if (a.Owner == ClickOwner.Equip && equipT) ok = c.EquipSend(a.Target, aa, sx, sy, O, FrontNow);
           else ok = c.SendInside(aa, O, Cr, a.Owner, a.Target, FrontNow, a.Fill == null ? (Action<ClickRequest, ScreenState>)null : (rq, fr) => a.Fill(rq));

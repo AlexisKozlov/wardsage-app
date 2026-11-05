@@ -21,6 +21,8 @@ namespace RealmForge {
     public double X, Y;       // client px: where the cursor goes (Drag: where the button goes down)
     public double DY;         // Drag: pointer move in client px; < 0 = up (the content follows: later rows come into view)
     public long Cell;         // Click: the item whose list cell it picks (0 = none): the host clicks the cell's live rect when it is fresh
+    public string Widget;     // Click: the widget it presses (a src/FrameTargets.cs key, e.g. "hero.gridFunnel", "gear.reset"): the host clicks its live rect when it is settled; X, Y (the geometry) stay the fallback
+    public UiCellKind CellKind; public long CellId;   // Click: the list cell it presses (a filter's set / stat / sub stat, a hero class / faction, by its id): the same, by the cell's live rect
     public static readonly AutoAction Nothing = new AutoAction();
   }
 

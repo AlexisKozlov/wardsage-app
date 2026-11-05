@@ -868,6 +868,7 @@ static partial class CoreTests {
     TipMemTests();
     ListMemTests();
     SimMemoryTests();
+    ConnectTests();
     SellPilotTests();
     FightPlanTests();
     LocateTests();

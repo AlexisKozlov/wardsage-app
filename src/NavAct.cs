@@ -20,6 +20,8 @@ namespace RealmForge {
     /// <summary>Client px; DY: a drag's move.</summary>
     public double X, Y, DY;
     public long Cell;
+    /// <summary>The pilot's live-click names (AutoAction.Widget / CellKind / CellId): carried to the host, which presses the live rect.</summary>
+    public string Widget; public UiCellKind CellKind; public long CellId;
     /// <summary>The edge's own success test on stable snapshots; null = none (with Fire: done once sent).</summary>
     public Func<Snapshot, bool> Expect;
     public int TimeoutMs;

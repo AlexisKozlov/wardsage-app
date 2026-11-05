@@ -193,7 +193,7 @@ namespace RealmForge {
             return null;
           }
           sideCloseTries++; State = "work"; Note = "closing the side panel (" + sideCloseTries + ")";
-          return Click(v, g.X(g.SideCloseX, v.W, v.H), g.Y(g.CloseY, v.W, v.H));
+          return Click(v, g.X(g.SideCloseX, v.W, v.H), g.Y(g.CloseY, v.W, v.H), FrameTargets.KeyGearSideClose);
         }
         if (State == "work") State = "done";
         return null;
@@ -226,7 +226,7 @@ namespace RealmForge {
         }
         // the «Фильтр» bar under the list (HintGeometry.Filter): left edge, bottom
         if (v.PanelMem != Mem3.Unknown) openWaitUntil = v.NowMs + MemOpenWaitMs;
-        return Click(v, (0.029 + 0.379 / 2) * Ui.Unit(W, H), Ui.FromBottom(0.9275, W, H));
+        return Click(v, (0.029 + 0.379 / 2) * Ui.Unit(W, H), Ui.FromBottom(0.9275, W, H), FrameTargets.KeyGearFilter);
       }
       // the panel is open: close it only when this pilot gave up (the list then shows everything again)
       if (failed) {
@@ -244,11 +244,11 @@ namespace RealmForge {
       }
       // (the game keeps the sets list where it was when the panel is closed and opened again, also after «Сбросить»:
       // the scroll learned from a wrong click stays - live test 2026-09-26)
-      if (!clean) return Click(v, g.X(g.ResetX, W, H), g.Y(g.ResetY, W, H));
+      if (!clean) return Click(v, g.X(g.ResetX, W, H), g.Y(g.ResetY, W, H), FrameTargets.KeyGearReset);
       if (!setOk) {
         int count = v.SetOrder != null ? v.SetOrder.Length : 2 * FilterGeometry.SetRows;
         if (v.SetIndex < 0 || v.SetIndex >= count || setTries >= SetTries) { setSkipped = true; return AutoAction.Nothing; }
-        if (!v.SetPanelOpen) return Click(v, g.X(g.SetArrowX, W, H), g.Y(g.SetArrowY, W, H));
+        if (!v.SetPanelOpen) return Click(v, g.X(g.SetArrowX, W, H), g.Y(g.SetArrowY, W, H), FrameTargets.KeyGearSetArrow);
         int row = v.SetIndex / 2, rows = (count + 1) / 2;
         if (rows <= FilterGeometry.SetRows) setScroll = 0;   // everything fits: the list cannot scroll
         double onScreen = row - setScroll;
@@ -264,15 +264,15 @@ namespace RealmForge {
         setTries++;
         setClickRow = (int)Math.Round(onScreen); setPending = true;
         var c = g.SetCell(setClickRow * 2 + v.SetIndex % 2, W, H);
-        return Click(v, c[0], c[1]);
+        return Click(v, c[0], c[1], null, UiCellKind.GearSuit, v.SetId);
       }
       if (!statOk) {
         if (v.StatIndex < 0 || v.StatIndex >= 2 * FilterGeometry.StatRows || statTries >= PartTries) { statSkipped = true; return AutoAction.Nothing; }
         // the stats panel: a side panel without the sets panel's gold buttons
-        if (!v.SidePanelOpen || v.SetPanelOpen || side != "stat") { side = "stat"; return Click(v, g.X(g.StatArrowX, W, H), g.Y(g.StatArrowY, W, H)); }
+        if (!v.SidePanelOpen || v.SetPanelOpen || side != "stat") { side = "stat"; return Click(v, g.X(g.StatArrowX, W, H), g.Y(g.StatArrowY, W, H), FrameTargets.KeyGearStatArrow); }
         statTries++;
         var c = g.StatCell(v.StatIndex, W, H);
-        return Click(v, c[0], c[1]);
+        return Click(v, c[0], c[1], null, UiCellKind.GearStat, v.StatId);
       }
       if (!subOk && subLastId != 0) {
         // the last sub stat click is checked in the filter's memory before the next one: a stat of the filter that is gone was toggled off by it (the list is not where it was assumed): the sub stats stop here, the set alone stays
@@ -286,21 +286,21 @@ namespace RealmForge {
         int idx = v.SubOrder != null ? Array.IndexOf(v.SubOrder, missing) : -1;
         if (idx < 0 || idx >= 2 * FilterGeometry.StatRows || subTries >= subs.Count + 2) { subSkipped = true; return AutoAction.Nothing; }
         // its panel looks like the main stats' one: which one is open is remembered from the arrow clicked last
-        if (!v.SidePanelOpen || v.SetPanelOpen || side != "sub") { side = "sub"; return Click(v, g.X(g.SubArrowX, W, H), g.Y(g.SubArrowY, W, H)); }
+        if (!v.SidePanelOpen || v.SetPanelOpen || side != "sub") { side = "sub"; return Click(v, g.X(g.SubArrowX, W, H), g.Y(g.SubArrowY, W, H), FrameTargets.KeyGearSubArrow); }
         subTries++; subLastId = missing; subLastAt = v.NowMs; subBefore = (long[])chosen.Clone();
         var c = g.StatCell(idx, W, H);
-        return Click(v, c[0], c[1]);
+        return Click(v, c[0], c[1], null, UiCellKind.GearSub, missing);
       }
       // «Скрыть надетое» off: the item is on another hero. A side panel still open (the sub stats' one stays after the last
       // pick) swallows the click: closed first, and the filter is not done while the item stays hidden (live 1.6.64)
       if (v.SidePanelOpen) {
         if (sideCloseTries >= PartTries) { failed = true; State = "failed"; Note = "the side panel stays open after " + sideCloseTries + " closing clicks (hide worn)"; return null; }
         sideCloseTries++; Note = "closing the side panel (" + sideCloseTries + ")";
-        return Click(v, g.X(g.SideCloseX, W, H), g.Y(g.CloseY, W, H));
+        return Click(v, g.X(g.SideCloseX, W, H), g.Y(g.CloseY, W, H), FrameTargets.KeyGearSideClose);
       }
       if (eqTries > 0) return AutoAction.Nothing;   // clicked once: waits for the game, never toggles back
       eqTries++; eqClickAt = v.NowMs;
-      return Click(v, g.X(g.HideEquippedX, W, H), g.Y(g.HideEquippedY, W, H));
+      return Click(v, g.X(g.HideEquippedX, W, H), g.Y(g.HideEquippedY, W, H), FrameTargets.KeyGearHideWorn);
     }
 
     // the tries of one pass (setScroll stays: the game keeps the sets list scrolled)
@@ -312,9 +312,9 @@ namespace RealmForge {
       setSkipped = statSkipped = false;
     }
 
-    AutoAction Click(FilterView v, double x, double y) {
+    AutoAction Click(FilterView v, double x, double y, string widget = null, UiCellKind cell = UiCellKind.None, long cellId = 0) {
       clicks++; waitUntil = v.NowMs + AfterClickMs; effect.Arm(Key(v), v.NowMs);
-      return new AutoAction { Kind = AutoKind.Click, X = x, Y = y };
+      return new AutoAction { Kind = AutoKind.Click, X = x, Y = y, Widget = widget, CellKind = cell, CellId = cellId };   // (Widget / cell: the host presses its live rect, the point is the fallback)
     }
 
     /// <summary>The pilot waits for its last click's effect (the host reads at its effect rate meanwhile).</summary>

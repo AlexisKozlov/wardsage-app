@@ -46,5 +46,13 @@ namespace RealmForge {
       Log.Write(RFX.KeyClickLine(key, rect, live, x, y, why));
       return live;
     }
+
+    /// <summary>A pilot's click by what it names (AutoAction.Widget = a key, AutoAction.CellKind + CellId = a list cell): the live rect's centre instead of the geometry's point when the read is settled
+    /// (LiveClickKey / LiveClickCell; the log says "src=live" or "src=geo why="). Nothing to do for a click that names neither or already has a live point.</summary>
+    void LiveWidgetClick(ClickRequest req, AutoAction a, ScreenState fresh, W32.POINT o, ref int sx, ref int sy) {
+      if (a == null || a.Kind != AutoKind.Click || req.Live) return;
+      if (a.CellKind != UiCellKind.None) LiveClickCell(req, fresh, a.CellKind, a.CellId, o, ref sx, ref sy);
+      else if (!string.IsNullOrEmpty(a.Widget)) { req.WidgetKey = a.Widget; LiveClickKey(req, fresh, o, ref sx, ref sy); }
+    }
   }
 }
