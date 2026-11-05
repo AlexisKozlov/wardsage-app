@@ -83,7 +83,7 @@ namespace RealmForge {
       public bool Picture(string what) {
         if (!FrontNow) return false;
         switch (what) {
-          case "heroesButton": return c.HeroesButtonSeen(O, W, H);
+          case "heroesButton": return c.HeroesButtonNow(O, W, H);
           case "heroFilter": return c.HeroFilterSeen(O, W, H);
           case "gearFilterMain": return c.GearMain(O, W, H, U);   // (the game's m_bShow first, the red cross only when it is Unknown)
           case "gearFilterSide": return c.GearSide(O, W, H, U);

@@ -935,7 +935,7 @@ namespace RealmForge {
         v.InvEquipTab = scr.InvEquipTab; v.InvArtTab = scr.InvArtTab; v.InvBulk = scr.InvBulk; v.InvBulkKnown = scr.InvBulkKnown; v.InvArtBulk = scr.InvArtBulk; v.InvArtBulkKnown = scr.InvArtBulkKnown;
       }
       if (front && !p.IsCity) {
-        if (v.Kind == ScreenKind.City) { v.HeroesButton = HeroesButtonSeen(o, W, H); v.InvButton = InventoryButtonSeen(o, W, H); v.CityInvPt = new[] { W - invDX * U, H - hg2.HeroesBtnDY * U }; }
+        if (v.Kind == ScreenKind.City) { v.HeroesButton = HeroesButtonNow(o, W, H); v.InvButton = InventoryButtonNow(o, W, H); v.CityInvPt = new[] { W - invDX * U, H - hg2.HeroesBtnDY * U }; }
         if (v.Kind == ScreenKind.Inventory) {
           var tr = ArtFrames.Rect(Geo.Current, "inventory.leftTab.artifact", W, H, U);
           double ax = tr != null ? tr.CX : 0.0867 * U, ay = tr != null ? tr.CY : (0.1176 + 2 * 0.1423 + 0.0625) * U;
@@ -1665,7 +1665,7 @@ namespace RealmForge {
       // the hero screen hidden behind another one (the inventory ...) keeps its hero set: it is not on, no hero hints over that screen
       if (hs == null || hs.Hero == 0 || !hs.FormOk) {
         heroShownWas = 0; heroAnchor.Has = false; heroDiag = "screen closed";
-        if (HeroesButtonSeen(o, W, H)) {
+        if (HeroesButtonNow(o, W, H)) {
           int s = (int)(0.1 * U); bool hl;
           var hb = FrameForI(FrameTargets.KeyCityHeroes, new[] { (int)(W - hg2.HeroesBtnDX * U) - s / 2, (int)(H - 0.1156 * U) - s / 2, s, s }, W, H, U, out hl);
           DrawTip(o.X + hb[0], o.Y + hb[1], hb[2], hb[3], HeroTip(4), H, false, false, true);
@@ -2225,7 +2225,7 @@ namespace RealmForge {
           NowMs = now, Foreground = v.Foreground, UserBusy = v.UserBusy, UserClicked = v.UserClicked, W = cr.R, H = Ui.Unit(cr.R, cr.B), ClientH = cr.B,
           Plan = runHero, Hero = heroScreen.FormOk ? heroScreen.Hero : 0, Tab = ArtPhase ? HeroGeometry.GearTab : heroScreen.Tab, Part = heroScreen.Part, SmallCards = heroScreen.SmallCards,
           Heroes = heroScreen.Heroes,
-          HeroesButton = heroScreen.Hero == 0 && v.Foreground && HeroesButtonSeen(o, cr.R, cr.B),
+          HeroesButton = heroScreen.Hero == 0 && v.Foreground && HeroesButtonNow(o, cr.R, cr.B),
           FilterOpen = v.Foreground && HeroFilterSeen(o, cr.R, cr.B, HeroView.MemOf(heroScreen)), FilterMem = HeroView.MemOf(heroScreen), FilterPending = heroScreen.FilterPending, ClassChosen = heroScreen.ClassChosen, FactionList = heroScreen.FactionList,
           ChosenCamps = heroScreen.ChosenCamps, ClassCount = heroScreen.ClassCount, GridPtr = heroScreen.GridPtr
         };
@@ -2395,7 +2395,7 @@ namespace RealmForge {
         return;
       }
       // the city: «Инвентарь» in the bottom bar (found by its picture, as «Герои»)
-      if (scr != null && scr.Kind == ScreenKind.City && InventoryButtonSeen(o, W, H)) {
+      if (scr != null && scr.Kind == ScreenKind.City && InventoryButtonNow(o, W, H)) {
         SellSay("open");
         if (now - sellBtnAt < 2500) return;
         sellBtnAt = now;
@@ -3200,7 +3200,7 @@ namespace RealmForge {
       bool formOpen = scr != null && (scr.Kind == ScreenKind.Foundry || scr.Kind == ScreenKind.Gem);
       var view = new ArtView { NowMs = now, Foreground = gameFront, UserBusy = busy, UserClicked = uc, W = W, H = H, U = U, Step = step, Inv = inv, Ws = ws, Art = req.Art, Geometry = Geo.Current,
         HeroScreenOpen = heroOpen, OtherFormOpen = formOpen, InvDX = invDX };
-      if (gameFront && !busy && ArtLocateAuto.NeedsCityButton(step, heroOpen, formOpen)) { view.CityButton = InventoryButtonSeen(o, W, H); view.InvDX = invDX; }
+      if (gameFront && !busy && ArtLocateAuto.NeedsCityButton(step, heroOpen, formOpen)) { view.CityButton = InventoryButtonNow(o, W, H); view.InvDX = invDX; }
       // city first: the Foundry / the gem screen (an earlier request left it) or the step's screen not on top: back with its arrow first
       if (gameFront && !busy && BackStep(ClickOwner.Locate, scr, CityFirst.NeedsCity(PilotFlow.LocateArtPromote, scr, step.Kind, ArtLocateAuto.NeedsCityBack(view)), o, cr, gameFront, now)) { step.Auto = "work"; step.AutoWhy = ""; return; }
       var mv = artPilot.Step(view);
@@ -3325,8 +3325,8 @@ namespace RealmForge {
       invSettle.Update(ik, now); rsSettle.Update(rk, now);
       listMoving = (ik != null && !invSettle.Settled) || (rk != null && rk != "" && !rsSettle.Settled);
       ReadOffersInto(inp, front, now);
-      if (front && inp.CityForm != true && ScreenState.NeedsCityPicture(ScreenState.Classify(inp, now).Kind, inp.CityForm)) {   // the city form is not readable or reads closed: the city's bottom bar (a picture, at most every 400 ms)
-        if (now - cityAt >= 400) { cityAt = now; cityNow = CityVisible(hwnd); }
+      if (front && inp.CityForm != true && ScreenState.NeedsCityPicture(ScreenState.Classify(inp, now).Kind, inp.CityForm, inp.Screens != null)) {   // the city form is not readable or reads closed: the city's bottom bar (a picture, at most every 400 ms)
+        if (now - cityAt >= 400) { cityAt = now; cityNow = CityNow(hwnd, inp.Screens, inp.Order); }
         inp.CitySeen = cityNow;
       } else cityNow = false;
       if (RecInfo.Active) RecReads.Add(now, inp);   // the recorder: what the tracker is given (src/RecInputs.cs)
@@ -3461,8 +3461,8 @@ namespace RealmForge {
         if (fl != null && ScreenMap.Newcomers(unknownForms, fl) != "") { unknownForms = fl; unknownFormsAt = now; formsUnread = true; }
       }
       // a click on a city button also needs the picture of the bar (the form alone is not enough for a click)
-      if (wantCity && ScreenState.NeedsCityPicture(st.Kind, inp.CityForm)) {
-        bool seen = CityVisible(GameWindow());
+      if (wantCity && ScreenState.NeedsCityPicture(st.Kind, inp.CityForm, inp.Screens != null)) {
+        bool seen = CityNow(GameWindow(), inp.Screens, inp.Order);
         if (inp.CityForm == true && !seen) inp.CityForm = false;
         inp.CitySeen = seen; st = ScreenState.Classify(inp, now);
       }
@@ -3920,7 +3920,7 @@ namespace RealmForge {
       // (a pop-up over the target: BackStep above closes it by the screen map's × / Escape through the gate; the «close the window» step is the hint mode's only)
       var view = new LocateView { NowMs = now, Foreground = gameFront, UserBusy = busy, UserClicked = uc, W = W, H = H, U = U, Step = dstep, Inv = inv, Cols = locateCols,
         HeroScreenOpen = heroOpen, OtherFormOpen = formOpen, InvDX = invDX, Geometry = Geo.Current, Rs = locateRs, Item = req.Item, Purpose = req.Purpose };
-      if (gameFront && !busy && LocateAuto.NeedsCityButton(dstep, heroOpen, formOpen)) { view.CityButton = InventoryButtonSeen(o, W, H); view.InvDX = invDX; }   // the place the bar search may have found just now
+      if (gameFront && !busy && LocateAuto.NeedsCityButton(dstep, heroOpen, formOpen)) { view.CityButton = InventoryButtonNow(o, W, H); view.InvDX = invDX; }   // the place the bar search may have found just now
       if (gameFront && !busy && dstep.Kind == LocateKind.InList) {
         var pg = SellGeometry.Inventory(W, U, locateCols);
         view.Row1 = locateScroll.Row1(pg, inv != null ? inv.List : null, double.NaN, U, now);   // the game's scroll (the constant is learned by the frame)
@@ -4075,7 +4075,7 @@ namespace RealmForge {
           SendInside(new AutoAction { Kind = AutoKind.Click, X = hg2.BackX * U, Y = hg2.BackY * U }, o, cr, ClickOwner.Sell, ClickTarget.HeroBack, front);
           return;
         }
-        if (scr != null && scr.Kind == ScreenKind.City && InventoryButtonSeen(o, W, H)) {
+        if (scr != null && scr.Kind == ScreenKind.City && InventoryButtonNow(o, W, H)) {
           if (now - artSellBtnAt < 2500) return;
           artSellBtnAt = now;
           SendInside(new AutoAction { Kind = AutoKind.Click, X = W - invDX * U, Y = H - hg2.HeroesBtnDY * U }, o, cr, ClickOwner.Sell, ClickTarget.CityInventory, front);
@@ -4547,7 +4547,7 @@ namespace RealmForge {
     bool cityBtnLive;   // the last CityInventoryButton rect is the live one (its icon's frame, 2 px out), not the layout's hit area
     bool CityInventoryButton(W32.POINT o, double W, double H, double U, out int[] r) {
       long now = NowMs();
-      if (now - cityInvAt >= 400) { cityInvAt = now; cityInvSeen = InventoryButtonSeen(o, W, H); }
+      if (now - cityInvAt >= 400) { cityInvAt = now; cityInvSeen = InventoryButtonNow(o, W, H); }
       var cb = LocateFrames.CityButton(Geo.Current, W, H, U, invDX, hg2.HeroesBtnDY);   // the bar's button size from the geometry (else the estimate)
       r = new[] { o.X + cb[0], o.Y + cb[1], cb[2], cb[3] };
       var lv = LiveFrame(ClickTarget.CityInventory, null, W, H, U, true, new double[] { cb[0], cb[1], cb[2], cb[3] });   // where the game has put it (live rect, fresh; its icon, the label left out) wins
