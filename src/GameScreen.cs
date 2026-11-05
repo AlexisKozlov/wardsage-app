@@ -29,7 +29,7 @@ namespace RealmForge {
     public HeroScreen Hero;
     /// <summary>The artifact workshop («Мастерская»); null = not read (only read while an artifact request is guided).</summary>
     public ArtWorkshopScreen ArtWs;
-    /// <summary>The city's bottom bar button was seen (a picture; looked for only when no form is open).</summary>
+    /// <summary>The city's bottom bar button was seen (a picture; looked for only when no form is open). Counts only while <see cref="Screens"/> is null (the window table not read): memory first.</summary>
     public bool CitySeen;
     /// <summary>The city's form is shown (read from memory like the other forms); null = unknown (no form id / node not found): the picture decides then.</summary>
     public bool? CityForm;
@@ -68,6 +68,10 @@ namespace RealmForge {
     /// <summary>Is the picture of the city's bottom bar needed to judge the screen? Yes for City, and for Unknown unless the city form reads open.</summary>
     public static bool NeedsCityPicture(ScreenKind kind, bool? cityForm) {
       return kind == ScreenKind.City || (kind == ScreenKind.Unknown && cityForm != true);
+    }
+    /// <summary>The same with the window table's state: a table that was read (<paramref name="tableRead"/>) decides the city alone (CityMem), the picture is wanted only while the stack is Unknown.</summary>
+    public static bool NeedsCityPicture(ScreenKind kind, bool? cityForm, bool tableRead) {
+      return !tableRead && NeedsCityPicture(kind, cityForm);
     }
 
     public ScreenKind Kind = ScreenKind.Unknown;
@@ -249,7 +253,7 @@ namespace RealmForge {
         s.Kind = ScreenKind.HeroScreen; s.Hero = h.Hero; s.HeroTab = h.Tab; s.HeroSlot = h.Part;
         s.HeroFilterMem = h.FilterMem; if (h.Gear != null) { s.GearOpenMem = h.Gear.Open; s.GearSideMem = h.Gear.Side; s.GearSetMem = h.Gear.SetPanel; }
         if (h.FilterOpen) { s.ModalOpen = true; s.ModalWhy = "heroFilter"; }
-      } else if (i.CityForm == true || i.CitySeen) {
+      } else if (i.CityForm == true || (i.CitySeen && i.Screens == null)) {   // (the picture only while the window table is not read: memory first, the bar's picture is the stack's Unknown)
         s.Kind = ScreenKind.City;
       }
       // the window table's top screen comes first: a reader that failed (null) or still has an older form never makes it Unknown or a

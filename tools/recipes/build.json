@@ -3,7 +3,7 @@
   "note": "A hero's whole build (5 gear items, the artifact after them): the same steps as equip, run for every item of the plan in the order of BuildPlanner (slots with no filter first, the set groups after, the artifact last). The budgets are the norms of docs/specs/2026-11-04-shortest-paths.md: hero 8 s, filter 4 s, one item 6 s (twice on a slow PC); past them the step is reset with its diagnosis, never repeated blind. The filter step runs only when the cost model asks for it (more than three drags away, a hidden item); the list flags that hide an item are cleared once for the build.",
   "steps": [
     { "id": "heroes", "key": "graph:hero", "why": "city: Heroes", "from": "Form_MainCity", "widget": "BottomPanel/Image/m_Down_Layout/m_Button_Heros", "target": "EquipNav", "fallback": "geo:hero.heroesBtn",
-      "need": "pic:heroesButton", "expect": { "form": "Form_CharactorMain" } },
+      "need": "mem:cityHeroes", "expect": { "form": "Form_CharactorMain" } },
     { "id": "listClosed", "key": "facet:listClosed", "why": "hero: close the gear list", "from": "Form_CharactorMain", "when": "Hero!=$hero && HeroSlot>=0", "widget": "std:back", "target": "EquipNav", "fallback": "std:back",
       "expect": { "facet": "HeroSlot<0" } },
     { "id": "hero", "from": "Form_CharactorMain", "action": "hero.select", "keep": ["panel:heroFilter"], "budgetMs": 8000, "expect": { "facet": "Hero==$hero" } },

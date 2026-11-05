@@ -3,7 +3,7 @@
   "note": "Auto-equip of one gear slot: the city's heroes button, close the other hero's gear list, find the hero in the grid, the gear tab, the slot, then the gear filter and the item pick. The 'steps' before the first terminal action are the navigation; the terminal actions run at the target.",
   "steps": [
     { "id": "heroes", "key": "graph:hero", "why": "city: Heroes", "from": "Form_MainCity", "widget": "BottomPanel/Image/m_Down_Layout/m_Button_Heros", "target": "EquipNav", "fallback": "geo:hero.heroesBtn",
-      "need": "pic:heroesButton", "expect": { "form": "Form_CharactorMain" } },
+      "need": "mem:cityHeroes", "expect": { "form": "Form_CharactorMain" } },
     { "id": "listClosed", "key": "facet:listClosed", "why": "hero: close the gear list", "from": "Form_CharactorMain", "when": "Hero!=$hero && HeroSlot>=0", "widget": "std:back", "target": "EquipNav", "fallback": "std:back",
       "expect": { "facet": "HeroSlot<0" } },
     { "id": "hero", "from": "Form_CharactorMain", "action": "hero.select", "keep": ["panel:heroFilter"], "budgetMs": 8000, "expect": { "facet": "Hero==$hero" } },

@@ -77,7 +77,9 @@ namespace RealmForge {
     // the names the code knows: the validator checks every recipe against them (CoreTests dumps them with RECIPE_REGISTRY=1)
     public static readonly string[] ActionIds = { "hero.select", "gear.filter", "gear.pick" };
     public static readonly string[] GeoKeys = { "geo:hero.heroesBtn", "geo:hero.gearTab", "geo:hero.slot($slot)", "std:back" };
-    public static readonly string[] Pictures = { "pic:heroesButton" };
+    /// <summary>What a step needs before its click: "mem:cityHeroes" = the city's «Герои» button is usable (the game's memory first, OverlayCity.HeroesButtonNow; the host answers the picture only while memory is Unknown);
+    /// "pic:heroesButton" = the picture alone (older recipes).</summary>
+    public static readonly string[] Pictures = { "pic:heroesButton", "mem:cityHeroes" };
     /// <summary>The navigator's action name of a recipe action id (IAtTargetAction.Name).</summary>
     public static string ActionName(string id) {
       switch (id) { case "hero.select": return "hero"; case "gear.filter": return "filter"; case "gear.pick": return "item"; }
@@ -147,7 +149,7 @@ namespace RealmForge {
 
     static bool HasPicture(string need, INavIo io) {
       if (need == "") return true;
-      if (need == "pic:heroesButton") return io.Picture("heroesButton");
+      if (need == "pic:heroesButton" || need == "mem:cityHeroes") return io.Picture("heroesButton");   // (the host's answer: memory first for the mem: key)
       return false;
     }
 
