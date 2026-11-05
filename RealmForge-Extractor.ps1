@@ -835,6 +835,8 @@ namespace RealmForge {
       return lt;
     }
 
+    static bool playerLogged;
+
     /// <summary>The game account of the live tables becomes SyncClient.Player as soon as they are found (the hints, the
     /// equip scan, the start of an account read), not only at the end of a full read: the plan and sell-list requests wait
     /// for it. Not from tables of an unknown or mixed login.</summary>
@@ -842,7 +844,11 @@ namespace RealmForge {
       try {
         if (lt == null || lt.Ambiguous || MixedState(lt) != null) return;
         long uid = PlayerUid(lt);
-        if (uid > 0 && SyncClient.Player != uid) { L("Player of the live tables: " + uid + (SyncClient.Player > 0 ? " (was " + SyncClient.Player + ")" : "")); SyncClient.Player = uid; }
+        if (uid > 0 && (SyncClient.Player != uid || !playerLogged)) {
+          // once per process even when the saved Player already equals uid (the lab waits for this line)
+          L("Player of the live tables: " + uid + (SyncClient.Player > 0 && SyncClient.Player != uid ? " (was " + SyncClient.Player + ")" : ""));
+          playerLogged = true; SyncClient.Player = uid;
+        }
       } catch (Exception) { }
     }
 
