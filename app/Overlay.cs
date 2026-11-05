@@ -3095,7 +3095,7 @@ namespace RealmForge {
     }
 
     // the auto click for the artifact steps (src/ArtEquip.cs ArtEquipPilot): only with ArtAutoOn; «Заменить» of the card and of the pop-up also need the player's auto confirm.
-    double[] artReplaceLive;
+    double[] artReplaceLive; int artReplaceLiveAt; const int ArtLiveKnownMs = 4000;
     void TickArtEquip(W32.POINT o, W32.RECT cr, AutoView v) {
       var step = artEqStep;
       if (step == null || !ArtAutoOn) { artEqAutoSaid = ""; return; }
@@ -3113,10 +3113,12 @@ namespace RealmForge {
         var lr = RFX.UiButtonFresh(ClickTarget.ArtReplace, null, W, H, Environment.TickCount, RFX.UiFreshMs);
         double lx, ly; string lwhy;
         if (lr != null && lr.Ok) {
-          if (RFX.UiLivePoint(lr, W, H, Environment.TickCount, out lx, out ly, out lwhy) && RFX.UiTopIs(ClickTarget.ArtReplace, null, screens.Current)) { btnSeen = true; artReplaceLive = new[] { lr.X, lr.Y, lr.W, lr.H }; }
+          if (RFX.UiLivePoint(lr, W, H, Environment.TickCount, out lx, out ly, out lwhy) && RFX.UiTopIs(ClickTarget.ArtReplace, null, screens.Current)) { btnSeen = true; artReplaceLive = new[] { lr.X, lr.Y, lr.W, lr.H }; artReplaceLiveAt = Environment.TickCount; }
         } else {
+          // no fresh read this tick: the picture is the fallback; if the memory gave the rect a moment ago, a picture our hint covers is no unknown look (LookPolicy.ConfirmBlocks) - no 8 s stop (lab 2026-11-05 22:50)
           var rr = ArtFrames.Rect(Geo.Current, ArtEquipFrames.KeyReplace, W, H, U);
-          btnSeen = rr != null && IsBlueButton(o, new[] { (int)rr.X, (int)rr.Y, (int)rr.W, (int)rr.H });
+          bool liveKnown = artReplaceLiveAt != 0 && Environment.TickCount - artReplaceLiveAt <= ArtLiveKnownMs;
+          btnSeen = rr != null && IsBlueButton(o, new[] { (int)rr.X, (int)rr.Y, (int)rr.W, (int)rr.H }, liveKnown);
         }
       }
       var view = new ArtEquipView { ReplaceLive = artReplaceLive, NowMs = v.NowMs, Foreground = v.Foreground, UserBusy = v.UserBusy, UserClicked = v.UserClicked, W = W, H = H, U = U, Step = step, Hero = screens.Hero,
@@ -5152,9 +5154,9 @@ namespace RealmForge {
       return null;
     }
 
-    bool IsBlueButton(W32.POINT o, int[] rc) {
+    bool IsBlueButton(W32.POINT o, int[] rc, bool liveKnown = false) {
       var l = BlueAt(o, rc);
-      LookUnknown("blue button", l == Seen3.Unknown);
+      LookUnknown("blue button", LookPolicy.ConfirmBlocks(liveKnown, l == Seen3.Unknown));
       return l == Seen3.Yes;
     }
     Seen3 BlueAt(W32.POINT o, int[] rc) {
