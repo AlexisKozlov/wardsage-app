@@ -83,6 +83,7 @@ namespace RealmForge {
         return 2;
       }
       if (ServicePointManager.DefaultConnectionLimit < 10) ServicePointManager.DefaultConnectionLimit = 10;   // before the first WebRequest.Create
+      SyncClient.EnableTls12();   // also sets TCP keep-alive and the idle time of pooled connections
       Autostart.Refresh();
       if (!Channel.IsTest) ThreadPool.QueueUserWorkItem(delegate { ShortcutMigration.Run(); });
       using (var w = new AppWindow(startInTray)) Application.Run(w);

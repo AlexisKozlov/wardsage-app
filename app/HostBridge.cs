@@ -1706,7 +1706,7 @@ namespace RealmForge {
       });
     }
 
-    // Reports a finished / cancelled request to the site from a pool thread; never blocks the page or the next job. A «cancelled» that
+    // Reports a finished / cancelled request to the site from a pool thread; never blocks the page or the next job. A «done» / «cancelled» that
     // did not get through (site busy or unreachable) is repeated every 10 s for up to 5 min (a newer report of the same request replaces it).
     readonly Dictionary<string, int> finishGen = new Dictionary<string, int>();
     PlansStatus FinishBackground(string kind, string id, bool done, Func<PlansStatus> send) {
@@ -1716,7 +1716,7 @@ namespace RealmForge {
       while (true) {
         st = send(); n++;
         Log.Write(key + " " + (done ? "done" : "cancelled") + ": " + st + (n > 1 ? " (try " + n + ")" : ""));
-        if (done || !PlansClient.RetryableCancel(st) || sw.ElapsedMilliseconds + PlansClient.CancelRetryMs > PlansClient.CancelRetryTotalMs) break;
+        if (!PlansClient.ShouldRetryFinish(st, sw.ElapsedMilliseconds)) break;
         Thread.Sleep(PlansClient.CancelRetryMs);
         int cur; lock (finishGen) { if (!finishGen.TryGetValue(key, out cur) || cur != gen) return st; }   // superseded by a newer report
       }

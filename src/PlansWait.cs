@@ -53,6 +53,11 @@ namespace RealmForge {
 
     /// <summary>One long request; false when the site was not reached.</summary>
     public static bool Request(string site, string code, string since, Action<HttpWebRequest> started, out int http, out string text) {
+      return Request(site, code, since, started, false, out http, out text);
+    }
+
+    /// <summary>fresh: a new connection (no keep-alive, its own group) - the retry after a pooled connection turned out dead.</summary>
+    public static bool Request(string site, string code, string since, Action<HttpWebRequest> started, bool fresh, out int http, out string text) {
       http = 0; text = null; LastClosed = false;
       try {
         SyncClient.EnableTls12();
@@ -60,6 +65,7 @@ namespace RealmForge {
         var req = (HttpWebRequest)WebRequest.Create(site + "/api/extractor/plans/wait?since=" + Uri.EscapeDataString(since));
         req.Method = "GET"; req.Accept = "application/json"; req.UserAgent = SyncClient.UserAgent;
         req.ConnectionGroupName = "wait";   // its own connections: the 25 s hold must not block the plan list
+        if (fresh) { req.KeepAlive = false; req.ConnectionGroupName = "fresh-" + Guid.NewGuid().ToString("N"); }   // never the dead pooled one
         req.Headers["Authorization"] = "Bearer " + code; req.Headers["X-RF-Extractor"] = SyncClient.Version;
         SyncClient.AddPlanPlayer(req);
         req.Timeout = TimeoutMs; req.ReadWriteTimeout = TimeoutMs; req.AllowAutoRedirect = false;
@@ -112,10 +118,11 @@ namespace RealmForge {
 
     void Run(int my) {
       string since = "", s0 = site(), c0 = code();
-      int fails = 0; bool ok = false, lastUp = true;
+      int fails = 0; bool ok = false, lastUp = true, fresh = false;
       while (my == gen) {
         int http; string text;
-        bool reached = PlansWait.Request(s0, c0, PlansWait.Since(since, DateTime.UtcNow), r0 => { pending = r0; if (my != gen) try { r0.Abort(); } catch (Exception) { } }, out http, out text);
+        bool reached = PlansWait.Request(s0, c0, PlansWait.Since(since, DateTime.UtcNow), r0 => { pending = r0; if (my != gen) try { r0.Abort(); } catch (Exception) { } }, fresh, out http, out text);
+        fresh = false;
         if (my != gen) return;
         var r = reached ? PlansWait.Interpret(http, text) : new WaitReply { Kind = WaitKind.Error };
         if (r.Kind == WaitKind.Ok) {
@@ -129,7 +136,7 @@ namespace RealmForge {
         if (r.Kind == WaitKind.NotDeployed) { Dead = true; on = false; log("plans wait: the site has no long poll, the timer polling stays"); return; }
         fails++;
         // an idle keep-alive connection the server dropped: once more on a fresh one, no pause
-        if (fails == 1 && !reached && PlansWait.LastClosed) continue;
+        if (fails == 1 && !reached && PlansWait.LastClosed) { fresh = true; continue; }
         int wait = PlansWait.Backoff(fails);
         if (fails == 1 || fails % 10 == 0) log("plans wait: " + r.Kind + (reached ? " (HTTP " + http + ")" : " (no connection)") + ", retry in " + wait / 1000 + " s");
         for (int t = 0; t < wait && my == gen; t += 100) Thread.Sleep(100);

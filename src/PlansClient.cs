@@ -114,6 +114,10 @@ namespace RealmForge {
   public static class PlansClient {
     /// <summary>A «cancelled» report that did not get through (site unreachable or busy) is worth repeating; any other answer is final.</summary>
     public static bool RetryableCancel(PlansStatus s) { return s == PlansStatus.Unreachable || s == PlansStatus.ServerError; }
+    /// <summary>A «done» / «cancelled» report that did not get through is repeated (the site answers 404 to a repeated one it already took: no harm).</summary>
+    public static bool ShouldRetryFinish(PlansStatus s, long elapsedMs) { return RetryableCancel(s) && elapsedMs + CancelRetryMs <= CancelRetryTotalMs; }
+    /// <summary>A GET whose pooled connection was closed under it is sent once more on a fresh one; a POST never (it may have been processed).</summary>
+    public static bool ShouldRetryGet(string method, bool closed, bool fresh) { return method == "GET" && closed && !fresh; }
     public const int CancelRetryMs = 10000, CancelRetryTotalMs = 5 * 60 * 1000;
 
     const int MaxReplyBytes = 1024 * 1024;
@@ -142,7 +146,15 @@ namespace RealmForge {
     /// <summary>The same; <paramref name="forPlans"/>: a plan / sell-list / locate request, named for SyncClient.PlanPlayer
     /// (the account last read on this install while the game's one is not read yet). Data read from the game never is.</summary>
     internal static bool Send(string method, string url, string code, string body, bool forPlans, out int http, out string text, out string err) {
-      http = 0; text = null; err = null;
+      bool closed;
+      if (SendOnce(method, url, code, body, forPlans, false, out closed, out http, out text, out err)) return true;
+      // a GET on an idle keep-alive connection the server dropped: once more on a fresh connection
+      if (ShouldRetryGet(method, closed, false)) return SendOnce(method, url, code, body, forPlans, true, out closed, out http, out text, out err);
+      return false;
+    }
+
+    static bool SendOnce(string method, string url, string code, string body, bool forPlans, bool fresh, out bool closed, out int http, out string text, out string err) {
+      http = 0; text = null; err = null; closed = false;
       try {
         SyncClient.EnableTls12();
         ServicePointManager.Expect100Continue = false;
@@ -156,6 +168,7 @@ namespace RealmForge {
         req.Timeout = 30000;
         req.ReadWriteTimeout = 30000;
         req.AllowAutoRedirect = false;
+        if (fresh) { req.KeepAlive = false; req.ConnectionGroupName = "fresh-" + Guid.NewGuid().ToString("N"); }
         req.AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate;
         if (body != null) {
           byte[] b = new UTF8Encoding(false).GetBytes(body);
@@ -168,7 +181,7 @@ namespace RealmForge {
       } catch (WebException e) {
         var resp = e.Response as HttpWebResponse;
         if (resp != null) using (resp) { http = (int)resp.StatusCode; text = ReadBody(resp); return true; }
-        err = e.Message; return false;
+        err = e.Message; closed = SyncClient.IsConnectionClosed(e); return false;
       } catch (Exception e) {
         err = e.Message; return false;
       }
