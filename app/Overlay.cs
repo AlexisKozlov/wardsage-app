@@ -943,7 +943,7 @@ namespace RealmForge {
         }
         var hs = screens.Hero;
         if (v.Kind == ScreenKind.HeroScreen && hs != null) {
-          v.HeroFormOk = hs.FormOk; v.Tab = hs.Tab; v.Part = hs.Part; v.FactionList = hs.FactionList; v.ChosenCamps = hs.ChosenCamps; v.ClassChosen = hs.ClassChosen;
+          v.HeroFormOk = hs.FormOk; v.Tab = hs.Tab; v.Part = hs.Part; v.FactionList = hs.FactionList; v.ChosenCamps = hs.ChosenCamps; v.ClassChosen = hs.ClassChosen; v.ChosenClass = hs.ChosenClass; v.ClassSrc = hs.ClassSrc;
           v.ClassCount = hs.ClassCount; { long[] ctg = HeroTags(runHero); if (ctg != null && ctg.Length > 0) v.AvoidClass = ctg[0]; }
           v.GridFilterOpen = HeroFilterSeen(o, W, H, hs.FilterMem);
           var sr = hg.Slot(0, W, H); if (sr != null) v.SlotPt = new[] { sr[0] + sr[2] / 2.0, sr[1] + sr[3] / 2.0 };
@@ -1246,7 +1246,7 @@ namespace RealmForge {
       if (hs == null || !hs.FormOk || hs.Hero == 0) { hpilot.FilterDirty = false; return; }
       int fp, gp; W32.GetWindowThreadProcessId(W32.GetForegroundWindow(), out fp); W32.GetWindowThreadProcessId(hwnd, out gp);
       var hv = new HeroView { NowMs = NowMs(), Foreground = fp == gp, UserBusy = (W32.GetAsyncKeyState(0x01) & 0x8000) != 0 || (W32.GetAsyncKeyState(0x02) & 0x8000) != 0 || NowMs() - lastMoveMs < 700, W = cr.R, H = Ui.Unit(cr.R, cr.B), ClientH = cr.B,
-        FilterOpen = fp == gp && HeroFilterSeen(o, cr.R, cr.B, HeroView.MemOf(hs)), FilterMem = HeroView.MemOf(hs), FilterPending = hs.FilterPending, ClassChosen = hs.ClassChosen, ChosenCamps = hs.ChosenCamps };
+        FilterOpen = fp == gp && HeroFilterSeen(o, cr.R, cr.B, HeroView.MemOf(hs)), FilterMem = HeroView.MemOf(hs), FilterPending = hs.FilterPending, ClassChosen = hs.ClassChosen, ChosenClass = hs.ChosenClass, ClassSrc = hs.ClassSrc, ChosenCamps = hs.ChosenCamps };
       var a = hpilot.Cleanup(hv);
       if (a == null || a.Kind != AutoKind.Click) return;
       int x = o.X + (int)Math.Round(a.X), y = o.Y + (int)Math.Round(a.Y);
@@ -2226,7 +2226,7 @@ namespace RealmForge {
           Plan = runHero, Hero = heroScreen.FormOk ? heroScreen.Hero : 0, Tab = ArtPhase ? HeroGeometry.GearTab : heroScreen.Tab, Part = heroScreen.Part, SmallCards = heroScreen.SmallCards,
           Heroes = heroScreen.Heroes,
           HeroesButton = heroScreen.Hero == 0 && v.Foreground && HeroesButtonNow(o, cr.R, cr.B),
-          FilterOpen = v.Foreground && HeroFilterSeen(o, cr.R, cr.B, HeroView.MemOf(heroScreen)), FilterMem = HeroView.MemOf(heroScreen), FilterPending = heroScreen.FilterPending, ClassChosen = heroScreen.ClassChosen, FactionList = heroScreen.FactionList,
+          FilterOpen = v.Foreground && HeroFilterSeen(o, cr.R, cr.B, HeroView.MemOf(heroScreen)), FilterMem = HeroView.MemOf(heroScreen), FilterPending = heroScreen.FilterPending, ClassChosen = heroScreen.ClassChosen, ChosenClass = heroScreen.ChosenClass, ClassSrc = heroScreen.ClassSrc, FactionList = heroScreen.FactionList,
           ChosenCamps = heroScreen.ChosenCamps, ClassCount = heroScreen.ClassCount, GridPtr = heroScreen.GridPtr
         };
         long[] tags = HeroTags(runHero);
@@ -4890,7 +4890,7 @@ namespace RealmForge {
     void LogHero(HeroView v) {
       int i = v.Heroes != null ? Array.IndexOf(v.Heroes, v.Plan) : -2, j = v.Heroes != null ? Array.IndexOf(v.Heroes, v.Hero) : -2;
       string line = "hero: plan " + v.Plan + "@" + i + " shown " + v.Hero + "@" + j + " tab=" + v.Tab + " list=" + v.Part
-        + " filter=" + (v.FilterOpen ? "open" : "closed") + " camps=" + string.Join(",", v.ChosenCamps ?? new long[0]) + " class=" + v.ClassChosen
+        + " filter=" + (v.FilterOpen ? "open" : "closed") + " camps=" + string.Join(",", v.ChosenCamps ?? new long[0]) + " class=" + v.ClassChosen + (v.ClassChosen ? "#" + v.ChosenClass + "(" + v.ClassSrc + ")" : "")
         + " small=" + v.SmallCards + " grid=" + (v.Heroes != null ? v.Heroes.Length : -1) + " -> " + hpilot.State + (hpilot.Why != "" ? " (" + hpilot.Why + ")" : "");
       if (line == heroLogged) return;
       heroLogged = line;

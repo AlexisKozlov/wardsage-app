@@ -144,7 +144,7 @@ namespace RealmForge {
     public double[] ArtTabPt, MatTabPt;          // the left menu's «Артефакт» / «Материалы» toggles {x, y}
     // the hero screen
     public bool HeroFormOk; public int Tab = -1, Part = -1;
-    public bool GridFilterOpen; public long[] FactionList, ChosenCamps; public bool ClassChosen;
+    public bool GridFilterOpen; public long[] FactionList, ChosenCamps; public bool ClassChosen; public long ChosenClass; public string ClassSrc = "";
     public long AvoidClass; public int ClassCount;   // class_filter_gear: the class of the plan's hero when the app knows it (0 = not known), and the class column's length (0 = not read)
     public double[] SlotPt, FilterPt;            // the first gear slot / the gear list's filter button {x, y}
     // the gear list's filter pop-up

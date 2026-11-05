@@ -36,5 +36,15 @@ static partial class CoreTests {
     hv.NowMs = 9000; hv.ChosenCamps = new long[] { 7 };
     a = hp.Step(hv);
     Check(a != null && a.CellKind == UiCellKind.HeroClass && a.CellId == 2, "the class row is named by its id (HeroClass 2)");
+
+    Console.WriteLine("Hero grid filter: the chosen class by its id:");
+    foreach (long chosen in new long[] { 2, 4 }) {
+      var hq = new HeroPilot(new HeroGeometry());
+      var hw = new HeroView { NowMs = 1000, Foreground = true, W = W, H = H, ClientH = H, Plan = heroes[30], Hero = heroes[0], Tab = 3, Part = -1, Heroes = heroes, HeroClass = 2, HeroCamps = new long[] { 7 }, FactionList = new long[] { 0, 5, 7, 9 }, ClassCount = 7,
+        FilterMem = Mem3.Yes, ClassChosen = true, ChosenClass = chosen, ChosenCamps = new long[] { 7 } };
+      var qa = hq.Step(hw);   // (the pop-up open, the faction already chosen: the class decides)
+      if (chosen == 2) Check(qa != null && qa.Kind == AutoKind.Click && qa.Widget == FrameTargets.KeyGridFunnel && qa.CellKind == UiCellKind.None, "the grid is filtered by the hero's class already (id 2): no class click, the pop-up closes");
+      else Check(qa != null && qa.CellKind == UiCellKind.HeroClass && qa.CellId == HeroPilot.ClassAll, "another class chosen (id 4): «Все» of the class column first");
+    }
   }
 }

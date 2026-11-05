@@ -60,6 +60,8 @@ namespace RealmForge {
     // the grid's filter (HeroScreen) and the plan hero's class and factions (app/res/hero_tags.json; 0 / empty = unknown)
     /// <summary>The pop-up is open. The host fills it from the pixels (HeroFilterSeen); the pilot replaces it by the memory's verdict when there is one (FilterMem).</summary>
     public bool FilterOpen, ClassChosen;
+    /// <summary>The class the grid is filtered by, its id (HeroScreen.ChosenClass: the class config's m_ProfessionID, or its row in the class column); 0 = none or chosen and not known (then only ClassChosen is known). ClassSrc: where it came from.</summary>
+    public long ChosenClass; public string ClassSrc = "";
     /// <summary>The pop-up as the game's script holds it (HeroScreen.FilterMem): Yes / No decide, Unknown (panel not built, flag nil) leaves the pixels' FilterOpen.</summary>
     public Mem3 FilterMem = Mem3.Unknown;
     /// <summary>FilterMem is Unknown only because the panel prefab loads / m_Panels is nil (HeroScreen.FilterPending, at most 1.5 s): the funnel is not pressed meanwhile.</summary>
@@ -173,7 +175,7 @@ namespace RealmForge {
     // what a click of the hero pilot changes: the hero shown, the tab, the gear list, the grid filter (pop-up, factions, class, the grid)
     string Key(HeroView v) {
       if (pickKey) return v.Hero.ToString();
-      return v.Hero + "|" + v.Tab + "|" + v.Part + "|" + v.FilterOpen + "|" + (v.ChosenCamps != null ? string.Join(",", Array.ConvertAll(v.ChosenCamps, x => x.ToString())) : "-") + "|" + v.ClassChosen + "|" + v.GridPtr;
+      return v.Hero + "|" + v.Tab + "|" + v.Part + "|" + v.FilterOpen + "|" + (v.ChosenCamps != null ? string.Join(",", Array.ConvertAll(v.ChosenCamps, x => x.ToString())) : "-") + "|" + v.ClassChosen + "|" + v.ChosenClass + "|" + v.GridPtr;
     }
 
     /// <summary>The action of the last Step did not go out (the gate waited, a read failed before the click): it does not count as a try, and its
@@ -353,6 +355,8 @@ namespace RealmForge {
       if (!classDone) {
         int row = ClassRow(v);
         if (row < 1 || classClicked) classDone = true;
+        // the grid is filtered by this very class already (its id read from the game): no click at all, never «Все» and the same class again
+        else if (v.ClassChosen && v.ChosenClass > 0 && v.ChosenClass == v.HeroClass) classDone = true;
         // a class chosen already (the player's): «Все» first - a class clicked then would be added to it, not replace it
         else if (v.ClassChosen) { if (++classResets > 2) classDone = true; else { waitUntil = v.NowMs + Late(AfterClickMs); return Cell(g.ClassX, 0, H, UiCellKind.HeroClass, ClassAll); } }
         else { classClicked = true; waitUntil = v.NowMs + Late(FilterClickMs); return Cell(g.ClassX, row, H, UiCellKind.HeroClass, HeroGeometry.ClassOrder[row - 1]); }
