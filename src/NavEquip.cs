@@ -315,6 +315,9 @@ namespace RealmForge {
         var fs = filter.Step(s, t, io, now);
         if (fs != null) { lastWasFilter = true; return fs; }
       }
+      // the last press of this owner has not shown its effect yet (the item's card closed with Escape, the gate's watch: the window table shows the card 1-2 s after the game closed it, live 578 122804):
+      // a click now would be refused by the gate - the pilot waits for the watch, it never spends tries on refused clicks
+      if (io.Gate.Pending(t.Owner)) return NavStep.Wait("the last press's effect is awaited");
       var a = pilot.Step(v);
       if (OnStep != null) OnStep(v, a);
       if (a.Kind == AutoKind.None) return NavStep.Wait(pilot.State);

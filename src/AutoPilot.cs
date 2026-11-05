@@ -191,13 +191,16 @@ namespace RealmForge {
       if (lastAct == 1) { confirmed = lastRetry; if (lastRetry) confirmRetries--; waitUntil = 0; }
       else if (lastAct == 2) { tipReopens--; waitUntil = 0; calibPending = false; }
       // a list click not sent: its result is not waited for, its point was not clicked
+      // (the click budget too: a click the gate did not let out - the last Escape's effect still awaited, live 578 122804: five refused ticks in one second
+      // were five "clicks", "not selected after 5 clicks", a failed step and a 7 s watchdog - is no try)
+      if (listSent) { if (counted > 0 && clicks > 0) clicks--; if (counted == 2 && afterClicks > 0) afterClicks--; counted = 0; }
       if (listSent) { listSent = false; itemPending = calibPending = false; if (samePt > 0) samePt--; if (samePt == 0) lastPtX = lastPtY = double.NaN; waitUntil = 0; }
       lastAct = 0; effect.Drop(); Atoms.Abort();
     }
 
     public AutoAction Step(AutoView v) {
       if (v.NavOwned) v.Slot = null;   // the navigator opened the slot (NavPlan's facet:slot): the item steps only
-      lastAct = 0; listSent = false;
+      lastAct = 0; listSent = false; counted = 0;
       string key = v.Slot != null ? "slot:" + v.Slot[0] + ":" + v.Slot[1] : v.Target > 0 && (v.Row > 0 || (v.AutoConfirm && v.Sel == v.Target)) ? "item:" + v.Target : "";
       if (key != goal) {
         // the step before ended: a slot step's duration is noted for the item step's line
@@ -346,9 +349,10 @@ namespace RealmForge {
         if (lastNoEffect) {
           // the click on the live cell hit nothing at all (the game's pointer: raycast 0x0): the cell's rect is not where the game has the cell (a pooled / rebuilt grid read through old addresses): the grid is read again whole
           // and the click goes to the UPDATED rect, never to the same one (lab 559: 21 clicks at live[67,148], raycast 0x0, the same cellY every time)
-          if (v.LiveGrid && itemPending && v.RayKnown && v.RayNone && regrids < MaxRegrids && !double.IsNaN(clickX)) {
+          if (v.LiveGrid && itemPending && ((v.RayKnown && v.RayNone) || (regrids == 0 && noEffect == 0 && v.Sel <= 0 && !v.TipShown)) && regrids < MaxRegrids && !double.IsNaN(clickX)) {
+            softRegrid = !(v.RayKnown && v.RayNone);
             regrids++; RegridSeq++; regridPending = true; missX = clickX; missY = clickY; regridAt = v.NowMs; itemPending = calibPending = false;
-            Atoms.Note("item.click pre=ok target=live[" + (int)clickX + "," + (int)clickY + "] src=live eff=sel=" + v.Target + " " + (v.NowMs - clickAt) + "ms -> NoEffect diag=" + GameFacts.Of(v) + " | atom: raycast=0x0 -> regrid #" + regrids + " (the cells and the scroll rect are read again, the next click goes to the updated rect)");
+            Atoms.Note("item.click pre=ok target=live[" + (int)clickX + "," + (int)clickY + "] src=live eff=sel=" + v.Target + " " + (v.NowMs - clickAt) + "ms -> NoEffect diag=" + GameFacts.Of(v) + " | atom: " + (v.RayKnown && v.RayNone ? "raycast=0x0" : "first no effect, nothing selected, no card") + " -> regrid #" + regrids + " (the cells and the scroll rect are read again, the next click goes to the updated rect)");
             retryOk = true; liveSeenX = double.NaN; lastPtX = lastPtY = double.NaN; samePt = 0; waitUntil = v.NowMs + EffectWait.StableMs; effect.Drop();
             return AutoAction.Nothing;
           }
@@ -393,6 +397,7 @@ namespace RealmForge {
             regridPending = false;
             bool moved = Math.Abs(v.LiveX - missX) >= 1.5 || Math.Abs(v.LiveY - missY) >= 1.5;
             if (moved) Atoms.Note("regrid #" + regrids + ": the cell's rect moved [" + (int)missX + "," + (int)missY + "] -> [" + (int)v.LiveX + "," + (int)v.LiveY + "]" + (v.RegridDone < RegridSeq ? " (the host did not answer)" : "") + ": the click goes to the updated rect");
+            else if (softRegrid) Atoms.Note("regrid #" + regrids + ": the rect is the same [" + (int)v.LiveX + "," + (int)v.LiveY + "] (no pointer evidence of a layer over the list): the click again at once");
             else {
               BlockerSeq++; BlockerNote = "raycast=0x0 at live[" + (int)missX + "," + (int)missY + "], the rect is the same after the regrid";
               Atoms.Note("regrid #" + regrids + ": the rect is the same [" + (int)v.LiveX + "," + (int)v.LiveY + "] and the pointer hit nothing -> a layer over the list: the host looks for it (modal / panel / locker), the list is moved by a row meanwhile");
@@ -403,8 +408,9 @@ namespace RealmForge {
           long tg = v.Target;
           if (!Atoms.Begin("item.click", "u" + tg, "live[" + (int)v.LiveX + "," + (int)v.LiveY + "] src=live", "sel=" + tg, ff => ff.Sel == tg, JudgeMs, GameFacts.Of(v), v.NowMs, !retryOk)) return SwapStep(v, "the click on the live cell changed nothing and the facts are the same");
           retryOk = false;
-          if (confirmed) { if (afterClicks >= AfterConfirmClicks) { State = "unconfirmed"; Why = "the item is not selected again after the confirm press (sel " + v.Sel + ", owner " + v.Owner + ")"; Trace = "unconfirmed: " + Why; return AutoAction.Nothing; } afterClicks++; }
+          if (confirmed) { if (afterClicks >= AfterConfirmClicks) { State = "unconfirmed"; Why = "the item is not selected again after the confirm press (sel " + v.Sel + ", owner " + v.Owner + ")"; Trace = "unconfirmed: " + Why; return AutoAction.Nothing; } afterClicks++; counted = 2; }
           else if (clicks >= ClickTries) return Fail("item " + v.Target + " not selected after " + clicks + " clicks (sel " + v.Sel + ")");
+          if (counted == 0) counted = 1;
           clicks++; waitUntil = v.NowMs + AfterClickMs; wantNb = false;
           itemPending = true; clickX = v.LiveX; clickY = v.LiveY;
           // (the point is the live cell's: a second click on it is a new try, not the same stale point)
@@ -460,8 +466,9 @@ namespace RealmForge {
         // the same point selected another item before: look for the rows again instead of clicking it
         if (wrongs > 0 && Math.Abs(cx - clickX) < 2 && Math.Abs(cy - clickY) < 2) { row1Fix = double.NaN; needCalib = true; return AutoAction.Nothing; }
         // after «Заменить» the item clicks have a budget of their own (the confirm is not repeated by clicking)
-        if (confirmed) { if (afterClicks >= AfterConfirmClicks) { State = "unconfirmed"; Why = "the item is not selected again after the confirm press (sel " + v.Sel + ", owner " + v.Owner + ")"; Trace = "unconfirmed: " + Why; return AutoAction.Nothing; } afterClicks++; }
+        if (confirmed) { if (afterClicks >= AfterConfirmClicks) { State = "unconfirmed"; Why = "the item is not selected again after the confirm press (sel " + v.Sel + ", owner " + v.Owner + ")"; Trace = "unconfirmed: " + Why; return AutoAction.Nothing; } afterClicks++; counted = 2; }
         else if (clicks >= ClickTries) return Fail("item " + v.Target + " not selected after " + clicks + " clicks (sel " + v.Sel + ")");
+        if (counted == 0) counted = 1;
         clicks++; waitUntil = v.NowMs + AfterClickMs;
         itemPending = true; clickX = cx; clickY = cy;
         var ic = ListClick(cx, cy); if (ic.Kind == AutoKind.Click) ic.Cell = v.Target;
@@ -697,6 +704,8 @@ namespace RealmForge {
     // what a click of this pilot changes: the selection, the slot open, the tip, the list (its length)
     static string Key(AutoView v) { return v.Sel + "|" + v.SlotOpen + "|" + v.TipShown + "|" + (v.Types != null ? v.Types.Length : -1) + "|" + (v.LiveGrid ? v.LiveFirst + ":" + v.LiveLast + ":" + (double.IsNaN(v.LiveCellY) ? "-" : ((int)Math.Round(v.LiveCellY / 3)).ToString()) : ""); }
     long curSel, nowMs, clickAt; bool listSent, curTip, tipAtClick;
+    bool softRegrid;   // the regrid was asked for by a first click with nothing selected and no card, not by the pointer's raycast 0x0: the same rect after it is clicked again, no layer is looked for
+    int counted;   // what the last list click was counted in: 1 clicks, 2 clicks and afterClicks (NotSent takes it back)
     /// <summary>How long a list click gets to change the selection before it counts as one that changed nothing.</summary>
     public const int JudgeMs = 1800;
 

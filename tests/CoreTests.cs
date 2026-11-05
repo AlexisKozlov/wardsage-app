@@ -4172,7 +4172,22 @@ static partial class CoreTests {
         var a5 = pg.Step(v5);
         if (a5 != null && a5.Kind == AutoKind.Click) { nClick++; order.Add("click"); } else if (a5 != null && a5.Kind == AutoKind.Drag) { nDrag++; order.Add("drag"); }
       }
-      Check(pg.State == "failed" && string.Join(",", order.ToArray()) == "click,click,drag" && pg.Why.Contains("re-select"), "pilot: the live cell's click changed nothing, no neighbour in view (lab 552: list=0..8, sel=0, tip=-, cellY=148): the same cell once more, the list moved by a row, then the named failure (" + string.Join(",", order.ToArray()) + ", " + pg.State + ")");
+      Check(pg.State == "failed" && string.Join(",", order.ToArray()) == "click,click,click,drag" && pg.Why.Contains("re-select"), "pilot: the live cell's click changed nothing, no neighbour in view (lab 552: list=0..8, sel=0, tip=-, cellY=148): the grid is read again at the first miss (one click on the updated rect), the same cell once more, the list moved by a row, then the named failure (" + string.Join(",", order.ToArray()) + ", " + pg.State + ")");
+    }
+    {   // live 578, record 122804 (second item, slot 0 -> 1): the item's card was closed with Escape, the gate's watch for it stayed 1-2 s (the window table lags); the pilot's clicks
+        // were refused as "pending" five ticks in a second, each counted as a try: "not selected after 5 clicks (sel 0)", a failed step, the 7 s watchdog, the retry at once worked
+      var pg = new AutoPilot(geo); double H6 = 705, cell6 = geo.CellW * H6; double lx = geo.ColLeft(1) * H6 + cell6 / 2; int refused = 0;
+      Func<long, int, AutoView> V6 = (t, regridDone) => new AutoView { NowMs = t, Foreground = true, H = H6, Target = 42405, Row = 1, Col = 1, Sel = 0, AnchorHas = true, Row1Top = 120, Types = new[] { 0, 1, 1, 1, 1, 1, 1, 1, 1, 1 }, TipKnown = true, TipShown = false, Hero = 5, ScreenHero = 5, Owner = 0, InputOpen = true,
+        LiveGrid = true, LiveTarget = true, LiveX = lx, LiveY = 152, LiveFirst = 0, LiveLast = 6, LiveCellY = 152, LiveScroll = 0, LiveViewTop = 110, LiveViewBottom = 640, LiveNb = false, ListSig = 1, FilterAt = 0, RegridDone = regridDone };
+      for (long t = 0; t < 4000; t += 150) { var zq0 = pg.Step(V6(t, 0)); if (zq0 != null && zq0.Kind == AutoKind.Click) { refused++; pg.NotSent(); } }
+      Check(pg.State != "failed" && pg.Clicks == 0 && refused >= 8, "pilot: clicks the gate refused (the last press's effect awaited) are no tries - after " + refused + " refused clicks: " + pg.State + ", " + pg.Clicks + " counted");
+      var pr = new AutoPilot(geo); long tSent = -1, tAgain = -1; bool regridSaid = false;
+      for (long t = 0; t < 9000 && tAgain < 0 && pr.State != "failed"; t += 100) {
+        var zq1 = pr.Step(V6(t, pr.RegridSeq));   // (the host answers a regrid at once)
+        if (pr.RegridSeq > 0) regridSaid = true;
+        if (zq1 != null && zq1.Kind == AutoKind.Click) { if (tSent < 0) tSent = t; else tAgain = t; }
+      }
+      Check(regridSaid && tAgain > 0 && pr.State != "failed" && tAgain - tSent <= AutoPilot.JudgeMs + 800, "pilot: the first click with nothing selected and no card (sel=0 tip=-) -> the grid is read again and the next click goes at once (" + (tAgain - tSent) + " ms after the first, " + pr.State + ")");
     }
     double top = ScrollAnchor.TopRow1(geo, H), maxScroll = 36 * pitch;   // real row 1 top on the screen
     int targetRow = 23, targetCol = 2; long target = 9023;
