@@ -147,6 +147,7 @@ namespace RealmForge {
     /// (the account last read on this install while the game's one is not read yet). Data read from the game never is.</summary>
     internal static bool Send(string method, string url, string code, string body, bool forPlans, out int http, out string text, out string err) {
       bool closed;
+      NetBackoff.Reset();
       if (SendOnce(method, url, code, body, forPlans, false, out closed, out http, out text, out err)) return true;
       // a GET on an idle keep-alive connection the server dropped: once more on a fresh connection
       if (ShouldRetryGet(method, closed, false)) return SendOnce(method, url, code, body, forPlans, true, out closed, out http, out text, out err);
@@ -176,11 +177,11 @@ namespace RealmForge {
           req.ContentLength = b.Length;
           using (Stream s = req.GetRequestStream()) s.Write(b, 0, b.Length);
         }
-        using (var resp = (HttpWebResponse)req.GetResponse()) { http = (int)resp.StatusCode; text = ReadBody(resp); }
+        using (var resp = (HttpWebResponse)req.GetResponse()) { http = (int)resp.StatusCode; NetBackoff.Record(http, resp.Headers["Retry-After"]); text = ReadBody(resp); }
         return true;
       } catch (WebException e) {
         var resp = e.Response as HttpWebResponse;
-        if (resp != null) using (resp) { http = (int)resp.StatusCode; text = ReadBody(resp); return true; }
+        if (resp != null) using (resp) { http = (int)resp.StatusCode; NetBackoff.Record(http, resp.Headers["Retry-After"]); text = ReadBody(resp); return true; }
         err = e.Message; closed = SyncClient.IsConnectionClosed(e); return false;
       } catch (Exception e) {
         err = e.Message; return false;

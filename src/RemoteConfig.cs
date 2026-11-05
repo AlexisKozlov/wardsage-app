@@ -170,9 +170,11 @@ namespace RealmForge {
         req.Timeout = 8000;
         req.ReadWriteTimeout = 8000;
         req.AllowAutoRedirect = false;
+        NetBackoff.Reset();
         using (var resp = (HttpWebResponse)req.GetResponse())
         using (var s = resp.GetResponseStream())
         using (var ms = new MemoryStream()) {
+          NetBackoff.Record((int)resp.StatusCode, resp.Headers["Retry-After"]);
           reached = (int)resp.StatusCode < 500;
           var buf = new byte[4096]; int n;
           while ((n = s.Read(buf, 0, buf.Length)) > 0) {
@@ -183,7 +185,7 @@ namespace RealmForge {
         }
       } catch (WebException e) {
         var resp = e.Response as HttpWebResponse;
-        if (resp != null) { reached = (int)resp.StatusCode < 500; resp.Close(); }
+        if (resp != null) { reached = (int)resp.StatusCode < 500; NetBackoff.Record((int)resp.StatusCode, resp.Headers["Retry-After"]); resp.Close(); }
         return null;
       } catch (Exception) { return null; }
     }

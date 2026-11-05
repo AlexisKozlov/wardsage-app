@@ -241,11 +241,13 @@ namespace RealmForge {
         req.ReadWriteTimeout = 10000;
         req.AllowAutoRedirect = false;
         HttpWebResponse resp;
+        NetBackoff.Reset();
         try { resp = (HttpWebResponse)req.GetResponse(); }
         catch (WebException e) {
           resp = e.Response as HttpWebResponse;
           if (resp == null) return Reply.NoReply;
         }
+        NetBackoff.Record((int)resp.StatusCode, resp.Headers["Retry-After"]);
         using (resp)
         using (var s = resp.GetResponseStream())
         using (var ms = new MemoryStream()) {

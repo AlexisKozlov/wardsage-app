@@ -12,6 +12,7 @@ namespace RealmForge {
     readonly Func<string> site, code;
     readonly Action<string> hint;   // the page's guild hint: "noSelf" / "ok"; may be null
     volatile bool busy, afterSync;
+    readonly NetBackoff bo = new NetBackoff();
     string lastHash; DateTime lastTry = DateTime.MinValue; DateTime pauseUntil = DateTime.MinValue; bool missLogged; string skipShown;
 
     public GuildWatch(Func<string> site, Func<string> code, Action<string> hint = null) { this.site = site; this.code = code; this.hint = hint; }
@@ -22,7 +23,7 @@ namespace RealmForge {
     public void AfterSync() { afterSync = true; }
 
     public void Tick(bool gameRunning) {
-      if (!gameRunning || busy || DateTime.UtcNow < pauseUntil) return;
+      if (!gameRunning || busy || DateTime.UtcNow < pauseUntil || bo.Blocked(DateTime.UtcNow)) return;
       string c = code(), s = site();
       if (!SyncClient.IsValidCode(c) || string.IsNullOrEmpty(s)) return;
       long self = SyncClient.Player;
@@ -53,6 +54,7 @@ namespace RealmForge {
           if (!GuildPayload.ShouldSend(hash, lastHash, soon)) return;
           string details;
           var st = GuildClient.Send(s, c, json, out details);
+          if (bo.NoteLast(DateTime.UtcNow)) Log.Write("guild: the site is busy or not reachable; next try in " + (int)(bo.Until - DateTime.UtcNow).TotalSeconds + " s");
           Log.Write("guild: " + count + " участников (" + json.Length + " байт) -> сайт " + st + (details != null ? " " + details : ""));
           if (st == PlansStatus.Ok) { lastHash = hash; if (skipShown != null) { skipShown = null; Hint("ok"); } }
           else if (st == PlansStatus.InvalidToken) pauseUntil = DateTime.UtcNow.AddMinutes(5);

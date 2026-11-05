@@ -160,13 +160,17 @@ namespace RealmForge {
     /// <summary>A feature may run: the site's switch is on and, when it needs it, the layout data is there.</summary>
     bool On(string feature) { return remote.Allows(feature) && (!NeedsLayout.Contains(feature) || Layout.Current != null); }
 
+    readonly NetBackoff remoteBo = new NetBackoff(), geoBo = new NetBackoff(), layoutBo = new NetBackoff(), forumBo = new NetBackoff(), sellBo = new NetBackoff();
+    DateTime forumAskedAt = DateTime.MinValue, sellAskedAt = DateTime.MinValue; string forumLast, sellLast;
+
     void FetchRemote() {
       string site = cfg.Site;
       Task.Factory.StartNew(() => {
         bool reached;
         var r = RemoteSwitches.Fetch(site, out reached);
+        remoteBo.NoteLast(DateTime.UtcNow);
         if (r == null) {   // no usable reply: the switches held (and the saved announcement) stay; ask again soon; the page says "no connection" only when the site was not reached
-          OnUi(() => { remoteTimer.Interval = 20000; Post("{\"ev\":\"site\",\"ok\":" + B(reached) + "}"); });
+          OnUi(() => { remoteTimer.Interval = remoteBo.Blocked(DateTime.UtcNow) ? (int)Math.Max(5000, (remoteBo.Until - DateTime.UtcNow).TotalMilliseconds) : 20000; Post("{\"ev\":\"site\",\"ok\":" + B(reached) + "}"); });
           return;
         }
         r.SaveCache(RemoteSwitches.CachePath);
@@ -258,6 +262,7 @@ namespace RealmForge {
       Task.Factory.StartNew(() => {
         GameGeometry g = null; string json = null; var r = Layout.Reply.NoReply;
         try { r = Geo.Fetch(site, code, v, out g, out json); } catch (Exception) { r = Layout.Reply.NoReply; }
+        if (geoBo.NoteLast(DateTime.UtcNow) && geoBo.Until > geoRetryAt) geoRetryAt = geoBo.Until;
         if (r == Layout.Reply.Got) Geo.SaveCache(Geo.CacheDir, v, json);
         OnUi(() => {
           geoFetching = false;
@@ -280,6 +285,7 @@ namespace RealmForge {
       Task.Factory.StartNew(() => {
         GameLayout l = null; string json = null; var r = Layout.Reply.NoReply;
         try { r = Layout.Fetch(site, code, v, out l, out json); } catch (Exception) { r = Layout.Reply.NoReply; }
+        if (layoutBo.NoteLast(DateTime.UtcNow) && layoutBo.Until > layoutRetryAt) layoutRetryAt = layoutBo.Until;
         if (r == Layout.Reply.Got) Layout.SaveCache(Layout.CacheDir, v, json);
         OnUi(() => {
           layoutFetching = false;
@@ -1335,7 +1341,17 @@ namespace RealmForge {
     // new replies in the player's community topics; the page never sees the sync code
     void LoadForum() {
       string site = cfg.Site, code = cfg.Code;
-      Task.Factory.StartNew(() => { Post("{\"ev\":\"forum\",\"r\":" + NewsClient.Unread(site, code) + "}"); });
+      DateTime now = DateTime.UtcNow;
+      // while the game is not running (or backing off after a failure) the last reply is shown again instead of a call
+      if (forumLast != null && (NetBackoff.IdleThrottled(gameRunning, forumAskedAt, now) || forumBo.Blocked(now))) { Post("{\"ev\":\"forum\",\"r\":" + forumLast + "}"); return; }
+      if (forumBo.Blocked(now)) { Post("{\"ev\":\"forum\",\"r\":{\"ok\":false,\"error\":\"error\"}}"); return; }
+      forumAskedAt = now;
+      Task.Factory.StartNew(() => {
+        string r = NewsClient.Unread(site, code);
+        forumBo.NoteLast(DateTime.UtcNow);
+        if (r.StartsWith("{\"ok\":true")) forumLast = r;
+        Post("{\"ev\":\"forum\",\"r\":" + r + "}");
+      });
     }
 
     // Plans and the sell list are asked for the game account (X-RF-Player). While the game runs and the account is not
@@ -1674,8 +1690,13 @@ namespace RealmForge {
       if (!SyncClient.IsValidCode(code)) { Post("{\"ev\":\"sell\",\"status\":\"invalid_token\"}"); return; }
       if (!PollAllowed()) { heldSellLang = lang; return; }
       sellFor = SyncClient.PlanPlayer(SyncClient.Player, SyncClient.LastPlayer); shownSellLang = lang;
+      DateTime now = DateTime.UtcNow;
+      if (sellLast != null && (NetBackoff.IdleThrottled(gameRunning, sellAskedAt, now) || sellBo.Blocked(now))) { Post(sellLast); return; }
+      if (sellBo.Blocked(now)) { Post("{\"ev\":\"sell\",\"status\":\"error\",\"detail\":\"busy, retrying later\"}"); return; }
+      sellAskedAt = now;
       Task.Factory.StartNew(() => {
         var r = SellClient.Get(site, code, lang == "en" ? "en" : "ru");
+        sellBo.NoteLast(DateTime.UtcNow);
         if (r.Status != PlansStatus.Ok) {
           Post("{\"ev\":\"sell\",\"status\":" + S(r.Status == PlansStatus.InvalidToken ? "invalid_token" : "error") + ",\"detail\":" + S(r.Details ?? ("HTTP " + r.HttpCode)) + "}");
           return;
@@ -1693,11 +1714,13 @@ namespace RealmForge {
           }
           sb.Append("]}");
         }
-        Post(sb.Append('}').ToString());
+        sellLast = sb.Append('}').ToString();
+        Post(sellLast);
       });
     }
 
     void FinishSell(string id, bool done) {
+      sellAskedAt = DateTime.MinValue;   // the list changes: the next load goes to the site
       string site = cfg.Site, code = cfg.Code;
       if (string.IsNullOrEmpty(id) || !SyncClient.IsValidCode(code)) return;
       Task.Factory.StartNew(() => {

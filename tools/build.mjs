@@ -17,7 +17,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 // Order matters only for readability of the generated script.
 export const SOURCES = [
   'Channel.cs', 'MemoryReader.cs', 'LiveTables.cs', 'BattleCapture.cs', 'BattleClock.cs', 'EquipScan.cs', 'MiniJson.cs', 'GameInfo.cs', 'Extractor.cs', 'SyncClient.cs',
-  'PlansClient.cs', 'EquipGuide.cs', 'CodeProtector.cs', 'Config.cs', 'Strings.cs', 'MainForm.cs', 'HelperForm.cs', 'App.cs',
+  'PlansClient.cs', 'NetBackoff.cs', 'EquipGuide.cs', 'CodeProtector.cs', 'Config.cs', 'Strings.cs', 'MainForm.cs', 'HelperForm.cs', 'App.cs',
 ];
 
 const USING = /^using [A-Za-z0-9_.]+;\s*$/;

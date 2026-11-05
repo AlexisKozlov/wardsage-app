@@ -14,6 +14,14 @@ using System.Collections.Generic;
 
 namespace RealmForge {
   public static class ArenaClient {
+    /// <summary>A pulse is sent at least this often even when the opponents did not change (the site sees the reading is fresh).</summary>
+    public const int PulseSeconds = 600;
+
+    /// <summary>The same snapshot (<paramref name="sig"/> = the hash of the last one the site accepted) is not sent again before the pulse is due.</summary>
+    public static bool ShouldSend(string sig, string lastSentSig, DateTime lastSentUtc, DateTime nowUtc) {
+      return sig != lastSentSig || (nowUtc - lastSentUtc).TotalSeconds >= PulseSeconds;
+    }
+
     public static PlansStatus Send(string site, string code, string json, out string details) {
       int http; string text, err;
       details = null;

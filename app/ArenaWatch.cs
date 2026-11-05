@@ -1,7 +1,7 @@
 // RealmForge — the arena's opponents to the site while the game's arena screen is open (src/ArenaOpponents.cs reads them,
 // read-only; src/ArenaClient.cs sends them). Ticked by HostBridge's game timer (every 2 s): when Form_PVPMain is open, the
-// list is read off the interface thread and sent when it changed (and at least every 60 s while the screen stays open, so
-// the site knows the reading is fresh). Every send logs what was read.
+// list is read off the interface thread and sent when it changed (and at least every 10 min while the screen stays open, so
+// the site knows the reading is fresh; never twice the same hash in between; backs off after 429 / 5xx / no answer). Every send logs what was read.
 using System;
 using System.Threading.Tasks;
 
@@ -10,13 +10,14 @@ namespace RealmForge {
     readonly Func<string> site, code;
     volatile bool busy;
     string lastSig; DateTime lastSent = DateTime.MinValue; bool lastOpen; int failures;
+    readonly NetBackoff bo = new NetBackoff();
     DateTime pauseUntil = DateTime.MinValue, lastBlind = DateTime.MinValue; bool blindLogged, missLogged;
 
     public ArenaWatch(Func<string> site, Func<string> code) { this.site = site; this.code = code; }
 
     /// <summary>One look (cheap unless the arena screen is open); call on the game timer.</summary>
     public void Tick(bool gameRunning) {
-      if (!gameRunning || busy || DateTime.UtcNow < pauseUntil) return;
+      if (!gameRunning || busy || DateTime.UtcNow < pauseUntil || bo.Blocked(DateTime.UtcNow)) return;
       string c = code(), s = site();
       if (!SyncClient.IsValidCode(c) || string.IsNullOrEmpty(s)) return;
       bool? open;
@@ -35,12 +36,13 @@ namespace RealmForge {
           string json = RFX.ReadArenaOpponents(30000, out sig);
           if (json == null) { if (!missLogged) { missLogged = true; Log.Write("arena: the arena's data (PVPData) not found yet (open the arena once)"); } pauseUntil = DateTime.UtcNow.AddSeconds(30); return; }
           missLogged = false;
-          if (sig == lastSig && (DateTime.UtcNow - lastSent).TotalSeconds < 60) return;
+          if (!ArenaClient.ShouldSend(sig, lastSig, lastSent, DateTime.UtcNow)) return;
           bool changed = sig != lastSig;
           if (changed) KeepList(json);
           string body = ArenaClient.WithFights(json, ArenaOpp.FightRecords(RFX.BattlesDir));
           string details;
           var st = ArenaClient.Send(s, c, body, out details);
+          if (bo.NoteLast(DateTime.UtcNow)) Log.Write("arena: the site is busy or not reachable; next try in " + (int)(bo.Until - DateTime.UtcNow).TotalSeconds + " s");
           if (changed) Log.Write("arena: opponents read (" + json.Length + " bytes): " + Summary(json) + " -> site " + st + (details != null ? " " + details : ""));
           if (st == PlansStatus.Ok) { lastSig = sig; lastSent = DateTime.UtcNow; failures = 0; }
           else if (st == PlansStatus.InvalidToken) pauseUntil = DateTime.UtcNow.AddMinutes(5);

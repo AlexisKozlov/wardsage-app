@@ -525,6 +525,42 @@ static partial class CoreTests {
     Check(PlansClient.Interpret(404, "{}", false).Status == PlansStatus.NotFound, "404");
     Check(PlansClient.Interpret(200, "{\"ok\":false}", true).Status == PlansStatus.Unexpected, "ok:false");
     Check(PlansClient.Interpret(502, "<html>", true).Status == PlansStatus.ServerError, "502");
+    // NetBackoff: exponential 5 s .. 5 min, +-20% jitter, Retry-After first, reset on success
+    Eq(5000, NetBackoff.DelayMs(1, -1, 0.5), "backoff: first failure 5 s");
+    Eq(10000, NetBackoff.DelayMs(2, -1, 0.5), "backoff: second 10 s");
+    Eq(300000, NetBackoff.DelayMs(20, -1, 0.5), "backoff: capped at 5 min");
+    Eq(4000, NetBackoff.DelayMs(1, -1, 0.0), "backoff: jitter low bound -20%");
+    Eq(6000, NetBackoff.DelayMs(1, -1, 1.0), "backoff: jitter high bound +20%");
+    Check(NetBackoff.DelayMs(30, -1, 1.0) <= 360000 && NetBackoff.DelayMs(30, -1, 0.0) >= 240000, "backoff: jitter around the cap");
+    Eq(5000, NetBackoff.DelayMs(0, -1, 0.5), "backoff: failure 0 treated as the first");
+    Eq(42000, NetBackoff.DelayMs(5, 42, 0.0), "backoff: Retry-After wins, no jitter");
+    Eq(3600000, NetBackoff.DelayMs(1, 999999, 0.5), "backoff: Retry-After clamped to 1 h");
+    Eq(1000, NetBackoff.DelayMs(3, 0, 0.5), "backoff: Retry-After 0 -> 1 s");
+    Eq(30, NetBackoff.ParseRetryAfter("30", DateTime.UtcNow), "Retry-After seconds");
+    Eq(-1, NetBackoff.ParseRetryAfter("soon", DateTime.UtcNow), "Retry-After junk");
+    Eq(-1, NetBackoff.ParseRetryAfter(null, DateTime.UtcNow), "Retry-After absent");
+    Eq(90, NetBackoff.ParseRetryAfter("Wed, 21 Oct 2015 07:29:30 GMT", new DateTime(2015, 10, 21, 7, 28, 0, DateTimeKind.Utc)), "Retry-After HTTP date");
+    Check(NetBackoff.IsFailure(0) && NetBackoff.IsFailure(429) && NetBackoff.IsFailure(503) && NetBackoff.IsFailure(500) && !NetBackoff.IsFailure(200) && !NetBackoff.IsFailure(401) && !NetBackoff.IsFailure(404), "backoff: 429 / 5xx / no answer are failures");
+    {
+      var bo = new NetBackoff(); var t0 = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+      Check(!bo.Blocked(t0), "backoff: not blocked at the start");
+      Check(bo.Note(503, -1, t0, 0.5) && bo.Blocked(t0.AddSeconds(4)) && !bo.Blocked(t0.AddSeconds(5)), "backoff: blocked 5 s after the first failure");
+      bo.Note(0, -1, t0, 0.5); Check(bo.Failures == 2 && bo.Blocked(t0.AddSeconds(9)) && !bo.Blocked(t0.AddSeconds(10)), "backoff: 10 s after the second");
+      bo.Note(429, 120, t0, 0.5); Check(bo.Blocked(t0.AddSeconds(119)) && !bo.Blocked(t0.AddSeconds(120)), "backoff: Retry-After 120 s");
+      Check(!bo.Note(200, -1, t0, 0.5) && bo.Failures == 0 && !bo.Blocked(t0), "backoff: success resets");
+    }
+    Check(NetBackoff.IdleThrottled(false, new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc), new DateTime(2026, 1, 1, 0, 4, 0, DateTimeKind.Utc))
+      && !NetBackoff.IdleThrottled(false, new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc), new DateTime(2026, 1, 1, 0, 5, 0, DateTimeKind.Utc))
+      && !NetBackoff.IdleThrottled(true, new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc), new DateTime(2026, 1, 1, 0, 1, 0, DateTimeKind.Utc))
+      && !NetBackoff.IdleThrottled(false, DateTime.MinValue, DateTime.UtcNow), "idle polls: at most once per 5 min while the game is not running");
+    // arena snapshot dedup: same hash only as a pulse every 10 min
+    {
+      var a0 = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+      Check(ArenaClient.ShouldSend("h1", null, DateTime.MinValue, a0), "arena: first snapshot is sent");
+      Check(!ArenaClient.ShouldSend("h1", "h1", a0, a0.AddSeconds(599)), "arena: same hash within 10 min is not sent");
+      Check(ArenaClient.ShouldSend("h1", "h1", a0, a0.AddSeconds(600)), "arena: pulse after 10 min");
+      Check(ArenaClient.ShouldSend("h2", "h1", a0, a0.AddSeconds(1)), "arena: changed hash is sent at once");
+    }
     Check(PlansClient.RetryableCancel(PlansStatus.Unreachable) && PlansClient.RetryableCancel(PlansStatus.ServerError) && !PlansClient.RetryableCancel(PlansStatus.Ok) && !PlansClient.RetryableCancel(PlansStatus.NotFound) && !PlansClient.RetryableCancel(PlansStatus.InvalidToken), "a cancel to the site is repeated only when the site was not reached / was busy");
     Check(PlansClient.CancelRetryMs == 10000 && PlansClient.CancelRetryTotalMs == 300000, "cancel retries: every 10 s for 5 min");
     Check(PlansClient.ShouldRetryFinish(PlansStatus.Unreachable, 0) && PlansClient.ShouldRetryFinish(PlansStatus.ServerError, 100000) && !PlansClient.ShouldRetryFinish(PlansStatus.Ok, 0) && !PlansClient.ShouldRetryFinish(PlansStatus.NotFound, 0) && !PlansClient.ShouldRetryFinish(PlansStatus.Unreachable, 295000), "done / cancelled reports are repeated while the site is not reached, within 5 min");
