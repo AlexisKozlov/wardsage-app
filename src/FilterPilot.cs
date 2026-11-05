@@ -80,6 +80,9 @@ namespace RealmForge {
     // the panel closed before anything was applied (a screen read failed, the game hiccuped): it is opened again, a few
     // times per item, before the pilot gives up
     int reopens;
+    // the sub stat clicked last (a toggle) with the chosen ones before it: the next click waits for the game's read to show it, and a click that dropped another sub stat ends the sub stat part (never re-clicked)
+    long subLastId, subLastAt; long[] subBefore;
+    public const int SubSettleMs = 1500;
     bool subSkipped; string side = "";   // the side panel this pilot opened last: "stat" or "sub" (both look alike)
     // the sets list scrolls (20+ sets, 9 rows fit): rows it is scrolled by (as far as known), the row on the screen
     // clicked last (a set clicked there that is not the wanted one tells the real scroll)
@@ -133,15 +136,16 @@ namespace RealmForge {
 
     // The action of the last Step did not go out (the navigator waits for a stable screen, the gate said wait): the pilot is as before it, the click is not counted and not awaited.
     // (The old host never calls this: its behaviour is unchanged.)
-    sealed class Saved { public long WaitUntil, OpenWaitUntil, EqClickAt; public int Clicks, SetTries, StatTries, EqTries, CloseTries, OpenTries, SetDrags, SubTries, SideCloseTries, Passes, Reopens, SetClickRow; public double SetScroll; public bool SetPending, WasSet, SubSkipped, SetSkipped, StatSkipped, Failed; public string State, Side; }
+    sealed class Saved { public long WaitUntil, OpenWaitUntil, EqClickAt, SubLastId, SubLastAt; public long[] SubBefore; public int Clicks, SetTries, StatTries, EqTries, CloseTries, OpenTries, SetDrags, SubTries, SideCloseTries, Passes, Reopens, SetClickRow; public double SetScroll; public bool SetPending, WasSet, SubSkipped, SetSkipped, StatSkipped, Failed; public string State, Side; }
     Saved unsent;
     Saved SaveState() {
-      return new Saved { WaitUntil = waitUntil, OpenWaitUntil = openWaitUntil, EqClickAt = eqClickAt, Clicks = clicks, SetTries = setTries, StatTries = statTries, EqTries = eqTries, CloseTries = closeTries, OpenTries = openTries, SetDrags = setDrags, SubTries = subTries,
+      return new Saved { SubLastId = subLastId, SubLastAt = subLastAt, SubBefore = subBefore, WaitUntil = waitUntil, OpenWaitUntil = openWaitUntil, EqClickAt = eqClickAt, Clicks = clicks, SetTries = setTries, StatTries = statTries, EqTries = eqTries, CloseTries = closeTries, OpenTries = openTries, SetDrags = setDrags, SubTries = subTries,
         SideCloseTries = sideCloseTries, Passes = passes, Reopens = reopens, SetClickRow = setClickRow, SetScroll = setScroll, SetPending = setPending, WasSet = wasSet, SubSkipped = subSkipped, SetSkipped = setSkipped, StatSkipped = statSkipped, Failed = failed, State = State, Side = side };
     }
     public void NotSent() {
       var x = unsent; unsent = null; if (x == null) return;
       effect.Drop();
+      subLastId = x.SubLastId; subLastAt = x.SubLastAt; subBefore = x.SubBefore;
       waitUntil = x.WaitUntil; openWaitUntil = x.OpenWaitUntil; eqClickAt = x.EqClickAt; clicks = x.Clicks; setTries = x.SetTries; statTries = x.StatTries; eqTries = x.EqTries; closeTries = x.CloseTries; openTries = x.OpenTries; setDrags = x.SetDrags;
       subTries = x.SubTries; sideCloseTries = x.SideCloseTries; passes = x.Passes; reopens = x.Reopens; setClickRow = x.SetClickRow; setScroll = x.SetScroll; setPending = x.SetPending; wasSet = x.WasSet;
       subSkipped = x.SubSkipped; setSkipped = x.SetSkipped; statSkipped = x.StatSkipped; failed = x.Failed; State = x.State; side = x.Side;
@@ -270,12 +274,20 @@ namespace RealmForge {
         var c = g.StatCell(v.StatIndex, W, H);
         return Click(v, c[0], c[1]);
       }
+      if (!subOk && subLastId != 0) {
+        // the last sub stat click is checked in the filter's memory before the next one: a stat of the filter that is gone was toggled off by it (the list is not where it was assumed): the sub stats stop here, the set alone stays
+        bool lost = false; foreach (var b in subBefore ?? new long[0]) if (Array.IndexOf(chosen, b) < 0) lost = true;
+        bool took = Array.IndexOf(chosen, subLastId) >= 0;
+        if (lost) { subSkipped = true; subLastId = 0; Note = "a sub stat click toggled another one off: the sub stats stop"; return AutoAction.Nothing; }
+        if (!took && v.NowMs - subLastAt < SubSettleMs) return AutoAction.Nothing;   // (the read may still be the old one: a second click would toggle it off)
+        subLastId = 0;
+      }
       if (!subOk) {
         int idx = v.SubOrder != null ? Array.IndexOf(v.SubOrder, missing) : -1;
         if (idx < 0 || idx >= 2 * FilterGeometry.StatRows || subTries >= subs.Count + 2) { subSkipped = true; return AutoAction.Nothing; }
         // its panel looks like the main stats' one: which one is open is remembered from the arrow clicked last
         if (!v.SidePanelOpen || v.SetPanelOpen || side != "sub") { side = "sub"; return Click(v, g.X(g.SubArrowX, W, H), g.Y(g.SubArrowY, W, H)); }
-        subTries++;
+        subTries++; subLastId = missing; subLastAt = v.NowMs; subBefore = (long[])chosen.Clone();
         var c = g.StatCell(idx, W, H);
         return Click(v, c[0], c[1]);
       }
@@ -295,7 +307,7 @@ namespace RealmForge {
     void NewPass() {
       clicks = setTries = statTries = eqTries = closeTries = openTries = setDrags = subTries = sideCloseTries = 0;
       Note = ""; wasSet = false; openWaitUntil = 0;
-      subSkipped = false; side = "";
+      subSkipped = false; side = ""; subLastId = 0; subBefore = null;
       setClickRow = -1; setPending = false;
       setSkipped = statSkipped = false;
     }

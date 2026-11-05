@@ -9656,6 +9656,28 @@ static partial class CoreTests {
     game.Subs.Sort();
     Check(game.Suits.Count == 1 && game.Mains.Count == 0 && string.Join(",", game.Subs) == "7,13,25,29" && game.Open,
           "set + the item's 4 sub stats chosen, the pop-up open (" + ns + " clicks)");
+    // lab 552 (the item filter open, 79 s): the sub stats' clicks 13,29,13,25,29,19 instead of 13,29,25,19. The game's read of the chosen sub stats LAGS behind the click (here 900 ms): a sub stat clicked last
+    // is not clicked again before the read shows it (a second click toggles it off), and the whole set + 4 sub stats takes the minimum of clicks
+    {
+      var lagGame = new FakeFilterGame(g, W, H) { SetList = sets, StatList = stats, SubList = subList };
+      var lp = new FilterPilot(g); var hist = new List<KeyValuePair<long, long[]>>(); int subClicks = 0; int[] cnt = new int[40]; long[] want = { 13, 29, 25, 19 };
+      for (long t = 0; t < 60000; t += 100) {
+        hist.Add(new KeyValuePair<long, long[]>(t, lagGame.Subs.ToArray()));
+        long[] stale = new long[0]; foreach (var h in hist) if (h.Key <= t - 900) stale = h.Value;
+        var lv2 = new FilterView { NowMs = t, Foreground = true, W = W, H = H, Item = 5, Wanted = true, SetId = 721500, StatId = 0, SetIndex = Array.IndexOf(sets, 721500L), StatIndex = -1,
+          Suits = lagGame.Suits.ToArray(), MainAttrs = lagGame.Mains.ToArray(), HideEquipped = lagGame.HideEq, SetOrder = sets, SubIds = want, SubOrder = subList, SubAttrs = stale,
+          PanelOpen = lagGame.Open, SidePanelOpen = lagGame.Open && lagGame.Side, SetPanelOpen = lagGame.Open && lagGame.Side && lagGame.SetSide };
+        var la = lp.Step(lv2);
+        if (la == null) break;
+        if (la.Kind == AutoKind.Click) {
+          var before = lagGame.Subs.ToArray(); lagGame.Click(la.X, la.Y);
+          foreach (var sId in lagGame.Subs) if (Array.IndexOf(before, sId) < 0) { subClicks++; cnt[Array.IndexOf(subList, sId)]++; }
+          foreach (var sId in before) if (!lagGame.Subs.Contains(sId)) subClicks += 10;   // a sub stat toggled off by a re-click
+        }
+      }
+      var fin = lagGame.Subs.ToArray(); Array.Sort(fin);
+      Check(string.Join(",", fin) == "13,19,25,29" && subClicks == 4 && lagGame.Suits.Count == 1 && lp.State == "done", "sub stats with a lagging read: each clicked once, none toggled off (" + subClicks + ", " + lp.State + ")");
+    }
     // the set alone brings the item into the list's view (the guide's verdict is «pick» now, live 1.6.66.417): no main stat, no sub stat clicked
     game = new FakeFilterGame(g, W, H) { SetList = sets, StatList = stats, SubList = subList };
     int nv = RunFilter(new FilterPilot(g), game, 721500, 0, false, true, new long[] { 25, 13, 7, 29 }, true);
