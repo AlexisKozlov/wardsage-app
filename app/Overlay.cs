@@ -625,7 +625,7 @@ namespace RealmForge {
       if (now - cityRunSince > CityRunCapMs) { flag = true; Log.Write("auto: the city was not reached in " + CityRunCapMs / 1000 + " s - the run goes on from this screen"); return false; }
       return scr != null && scr.Kind != ScreenKind.Unknown;
     }
-    public void SetRun(long hero) { if (hero == runHero) return; if (hero > 0) { ResumeClicks(ClickOwner.Equip); cityRunEquip = false; cityRunSince = 0; } bool was = PlanOn; if (hero > 0) artLatch.NewPlan(); runHero = hero; PlanStamp(was); Run(); }
+    public void SetRun(long hero) { if (hero == runHero) return; if (hero == 0) NavFlagsAbandoned(); if (hero > 0) { ResumeClicks(ClickOwner.Equip); cityRunEquip = false; cityRunSince = 0; } bool was = PlanOn; if (hero > 0) artLatch.NewPlan(); runHero = hero; PlanStamp(was); Run(); }
 
     // ---- «Надеть в игре» with an artifact (src/ArtEquip.cs): after the gear the guide puts the plan's artifact on the hero (hint kind "art")
     long artHero, artUid;
@@ -944,6 +944,7 @@ namespace RealmForge {
         var hs = screens.Hero;
         if (v.Kind == ScreenKind.HeroScreen && hs != null) {
           v.HeroFormOk = hs.FormOk; v.Tab = hs.Tab; v.Part = hs.Part; v.FactionList = hs.FactionList; v.ChosenCamps = hs.ChosenCamps; v.ClassChosen = hs.ClassChosen;
+          v.ClassCount = hs.ClassCount; { long[] ctg = HeroTags(runHero); if (ctg != null && ctg.Length > 0) v.AvoidClass = ctg[0]; }
           v.GridFilterOpen = HeroFilterSeen(o, W, H, hs.FilterMem);
           var sr = hg.Slot(0, W, H); if (sr != null) v.SlotPt = new[] { sr[0] + sr[2] / 2.0, sr[1] + sr[3] / 2.0 };
           var fr = hg.Filter(W, H); if (fr != null) v.FilterPt = new[] { fr[0] + fr[2] / 2.0, fr[1] + fr[3] / 2.0 };

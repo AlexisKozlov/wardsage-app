@@ -7292,6 +7292,7 @@ static partial class CoreTests {
             case "funnel-open": st["grid"] = true; break;
             case "funnel-close": case "grid-close": st["grid"] = false; break;
             case "faction": st["camps"] = true; break;
+            case "class": st["class"] = true; break;
             case "class-all": st["class"] = false; break;
             case "back": st["part"] = -1; break;
             case "gear-tab": st["tab"] = 3; break;
@@ -7313,6 +7314,17 @@ static partial class CoreTests {
         Eq("heroes,slot,filter-open,set-arrow,set-cell,side-close,Done:a set is ticked, the pop-up is open", string.Join(",", wk), "lab setup: item_filter opens a slot's list, the gear filter, ticks a set and leaves the pop-up open");
         wk = walk("hide_worn_on", heroInit, heroFx);
         Eq("heroes,slot,filter-open,hide-worn,Done:«Скрыть надетое» is ticked", string.Join(",", wk), "lab setup: hide_worn_on ticks «Скрыть надетое»");
+        wk = walk("class_filter_gear", heroInit, heroFx);
+        Eq("heroes,funnel-open,class,funnel-close,slot,filter-open,set-arrow,set-cell,side-close,Done:a set is ticked, the pop-up is open", string.Join(",", wk), "lab setup: class_filter_gear ticks a class in the grid's filter, closes it, then leaves the gear filter open with a set ticked");
+        {   // the class is never the plan hero's: the first row is taken unless it is the hero's class
+          var pc = new LabPrep("class_filter_gear"); long tc = 1000; string cell = "";
+          for (int i = 0; i < 12 && cell == ""; i++, tc += 700) {
+            var vc = new LabPrepView { Now = tc, Front = true, W = 1920, H = 1009, U = Ui.Unit(1920, 1009), Kind = ScreenKind.HeroScreen, HeroFormOk = true, Tab = 3, Part = -1, GridFilterOpen = true, ChosenCamps = new long[0], AvoidClass = HeroGeometry.ClassOrder[0], ClassCount = 7 };
+            var ac = pc.Step(vc); if (ac.Move == LabMove.Click) cell = ac.Why + "@" + (int)Math.Round(ac.Y);
+          }
+          var hgc = new HeroGeometry();
+          Eq("class@" + (int)Math.Round((hgc.FilterRow0 + 2 * hgc.FilterPitch) * Ui.Unit(1920, 1009)), cell, "lab setup: class_filter_gear skips the plan hero's class (the second row is ticked, not the first)");
+        }
         wk = walk("hero_filter", heroInit, (k, st) => { });
         Check(wk.Length > 0 && wk[wk.Length - 1].StartsWith("Fail:") && wk[wk.Length - 1].Contains("heroes has no effect"), "lab setup: a click with no effect fails the prep with the step named (" + wk[wk.Length - 1] + ")");
 

@@ -179,7 +179,50 @@ namespace RealmForge {
       return "";
     }
     public void End() { Begun = false; ClearedWorn = ClearedExclusive = false; }
+    /// <summary>The applog line of the build's end (the lab checks it): «Скрыть надетое» as the build found it, as it is now, and whether the build put it back.</summary>
+    public static string Line(int before, int after, bool restored) {
+      Func<int, string> s = n => n == 1 ? "on" : n == 0 ? "off" : "unread";
+      return "flags: hideWorn before=" + s(before) + " after=" + s(after) + " restored=" + (restored ? "yes" : "no");
+    }
     public override string ToString() { return "flags worn=" + WornWas + " exclusive=" + ExclusiveWas + " need " + need + (ClearedWorn ? "cleared-worn " : "") + (ClearedExclusive ? "cleared-exclusive" : ""); }
+  }
+
+  /// <summary>Puts «Скрыть надетое» back on at the end of a build (S3): on the hero's gear list it opens the gear filter's pop-up (the «Фильтр» bar), closes the side panel when it is open, ticks the toggle once the
+  /// game's flag says it is off, and closes the pop-up. Every click is one the filter pilot makes (the same places); pure: the host feeds the read and sends the click.</summary>
+  public sealed class HideWornRestorer {
+    public const int MaxClicks = 3, MaxOpens = 3; public const long GapMs = 1500, CapMs = 20000;
+    public string State = "idle", Note = "";   // idle | work | done | failed
+    readonly FilterGeometry g = new FilterGeometry();
+    int tickClicks, opens, sideCloses, closes; long t0 = -1, waitUntil;
+    public void Reset() { State = "idle"; Note = ""; tickClicks = opens = sideCloses = closes = 0; t0 = -1; waitUntil = 0; }
+    AutoAction Click(double x, double y) { return new AutoAction { Kind = AutoKind.Click, X = x, Y = y }; }
+    AutoAction Fail(string why) { State = "failed"; Note = why; return null; }
+    /// <summary>The next click (null = none now; State tells done / failed). <paramref name="listOpen"/>: a gear slot's list is open; v.HideEquipped is the game's flag (false = off), v.PanelOpen / SidePanelOpen the pop-up.</summary>
+    public AutoAction Step(FilterView v, bool listOpen) {
+      if (State == "done" || State == "failed") return null;
+      if (t0 < 0) t0 = v.NowMs;
+      State = "work";
+      if (v.NowMs - t0 > CapMs) return Fail("not done in " + CapMs / 1000 + " s");
+      if (v.HideEquipped) {   // on again: the pop-up is closed (its x), then done
+        if (!v.PanelOpen || closes >= 2) { State = "done"; return null; }
+        if (!v.Foreground || v.UserBusy || v.NowMs < waitUntil) return null;
+        closes++; waitUntil = v.NowMs + GapMs; return Click(g.X(g.MainCloseX, v.W, v.H), g.Y(g.CloseY, v.W, v.H));
+      }
+      if (!v.Foreground || v.UserBusy || v.NowMs < waitUntil) return null;
+      if (!v.PanelOpen) {
+        if (!listOpen) return Fail("no gear list is open to put the flag back on");
+        if (++opens > MaxOpens) return Fail("the filter pop-up does not open");
+        waitUntil = v.NowMs + GapMs;
+        return Click((0.029 + 0.379 / 2) * Ui.Unit(v.W, v.H), Ui.FromBottom(0.9275, v.W, v.H));
+      }
+      if (v.SidePanelOpen) {
+        if (++sideCloses > MaxClicks) return Fail("the side panel stays open");
+        waitUntil = v.NowMs + GapMs; return Click(g.X(g.SideCloseX, v.W, v.H), g.Y(g.CloseY, v.W, v.H));
+      }
+      if (tickClicks >= MaxClicks) return Fail("the toggle has no effect after " + tickClicks + " clicks");
+      tickClicks++; waitUntil = v.NowMs + GapMs;
+      return Click(g.X(g.HideEquippedX, v.W, v.H), g.Y(g.HideEquippedY, v.W, v.H));
+    }
   }
 
   /// <summary>HeroPilot with NavOwned: finds the plan's hero in the grid (scroll, class / faction filter, picks). Not the city button, the gear tab or the list's back arrow.</summary>

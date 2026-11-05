@@ -145,13 +145,14 @@ namespace RealmForge {
     // the hero screen
     public bool HeroFormOk; public int Tab = -1, Part = -1;
     public bool GridFilterOpen; public long[] FactionList, ChosenCamps; public bool ClassChosen;
+    public long AvoidClass; public int ClassCount;   // class_filter_gear: the class of the plan's hero when the app knows it (0 = not known), and the class column's length (0 = not read)
     public double[] SlotPt, FilterPt;            // the first gear slot / the gear list's filter button {x, y}
     // the gear list's filter pop-up
     public bool PanelOpen, SidePanelOpen, SetPanelOpen, FilterRead, HideEquipped; public long[] Suits;
   }
 
   public sealed class LabPrep {
-    public static readonly string[] Names = { "hero_filter", "hero_filter_closed", "item_filter", "hide_worn_on", "start_inventory_materials", "start_bulk_sale", "start_artifact" };
+    public static readonly string[] Names = { "hero_filter", "hero_filter_closed", "item_filter", "hide_worn_on", "class_filter_gear", "start_inventory_materials", "start_bulk_sale", "start_artifact" };
     public const string CityName = "city";
     /// <summary>random_start:&lt;seed&gt;: a seeded chain of the preps below (docs/specs/navigator.md, the fuzz scenario equip_random_start).</summary>
     public const string RandomPrefix = "random_start:";
@@ -197,7 +198,7 @@ namespace RealmForge {
       if (RandomSeed(name) >= 0) { var steps = RandomChain(RandomSeed(name)); chain = new LabPrep[steps.Length]; for (int i = 0; i < steps.Length; i++) chain[i] = new LabPrep(steps[i]); }
     }
     public bool IsCity { get { return name == CityName; } }
-    public long CapMs { get { return chain != null ? PrepCapMs * chain.Length + 2000 : IsCity ? CityCapMs : PrepCapMs; } }
+    public long CapMs { get { return chain != null ? PrepCapMs * chain.Length + 2000 : IsCity ? CityCapMs : name == "class_filter_gear" ? PrepCapMs * 2 : PrepCapMs; } }   // (class_filter_gear is two preps in one)
     /// <summary>The click owner of the prep's inventory work (the sell owner's whitelist) or of the hero work (the equip owner's).</summary>
     public bool InventoryPrep { get { return Name.StartsWith("start_", StringComparison.Ordinal); } }
 
@@ -231,6 +232,7 @@ namespace RealmForge {
         case "visit_heroes": { var a = ToHeroes(v); return a ?? Done("the hero screen"); }
         case "hero_filter": case "hero_filter_closed": return StepHeroFilter(v, Name == "hero_filter_closed");
         case "item_filter": case "hide_worn_on": return StepGearFilter(v, Name == "hide_worn_on");
+        case "class_filter_gear": return StepClassGear(v);
         case "start_inventory_materials": case "start_bulk_sale": case "start_artifact": return StepInventory(v);
       }
       return Fail("unknown prep " + Name);
@@ -263,6 +265,22 @@ namespace RealmForge {
       }
       if (chosen && closed) return Done("the faction is ticked, the panel is closed");
       return Funnel(v, false, "funnel-open", 4);
+    }
+
+    // class_filter_gear: the hero grid filtered by ONE class that is not the plan's hero's (the pop-up closed, the filter stays on), then the gear filter of the first slot's list
+    // opened with a set ticked (the item_filter way): both leftovers at once. The class is the first of the column other than AvoidClass; rows come from the live pop-up's layout.
+    LabPrepAct StepClassGear(LabPrepView v) {
+      if (!v.ClassChosen) {
+        var a = ToHeroes(v); if (a != null) return a;
+        if (v.Part >= 0 && !v.GridFilterOpen) return Click(v, ClickOwner.Equip, ClickTarget.EquipNav, g.BackX * v.U, g.BackY * v.U, "back", 4, GapMs + 600);
+        if (!v.GridFilterOpen) return Funnel(v, false, "funnel-open", 4);
+        int rows = v.ClassCount > 0 ? Math.Min(v.ClassCount, HeroGeometry.FilterRows) : HeroGeometry.FilterRows, row = -1;
+        for (int i = 0; i < HeroGeometry.ClassOrder.Length && i + 1 < rows; i++) if (HeroGeometry.ClassOrder[i] != v.AvoidClass) { row = i + 1; break; }
+        if (row < 0) return Fail("no class other than the hero's is in the filter's column");
+        return GridFilterCell(v, g.ClassX, row, "class", 3);
+      }
+      if (v.GridFilterOpen) return Funnel(v, true, "funnel-close", 3);
+      return StepGearFilter(v, false);
     }
 
     // item_filter / hide_worn_on: on the first gear slot's item list, the gear filter's pop-up: a set ticked (the side panel closed, the pop-up left open),

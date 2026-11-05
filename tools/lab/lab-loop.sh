@@ -259,8 +259,14 @@ scn_log_verdict() {
       echo "ok|старт: $(grep -oE 'lab: setup random_start:[0-9]+ ok: .*' <<< "$txt" | tail -1 | sed -E 's/^lab: setup random_start:[0-9]+ ok: random_start:[0-9]+ = //')" ;;
     equip_class_filter_gear|equip_two_same_class|equip_hide_worn_restore)
       # PASS: no navigator halt, no reset_failed, no blind drag (a drag the navigator makes with no reading of the list)
-      fail=$(grep -E "nav: halt |reset_failed|blind (drag|swipe|scroll)|(drag|swipe|scroll)[a-z ]* blind" <<< "$tail" | head -1 | sed -E 's/^\s+|\s+$//g' | cut -c1-200)
-      if [ -n "$fail" ]; then echo "fail|halt / reset_failed / слепая протяжка в журнале: $fail"; return; fi
+      fail=$(grep -E "nav: halt |reset_failed|src=geo" <<< "$tail" | head -1 | sed -E 's/^\s+|\s+$//g' | cut -c1-200)
+      if [ -n "$fail" ]; then echo "fail|halt / reset_failed / протяжка или клик без live-rect (src=geo) в журнале: $fail"; return; fi
+      if [ "$1" = equip_hide_worn_restore ]; then
+        fl=$(grep -E "flags: hideWorn before=" <<< "$txt" | tail -1 | sed -E 's/^\s+|\s+$//g' | cut -c1-200)
+        if [ -z "$fl" ]; then echo "fail|в журнале нет строки «flags: hideWorn ...»: флаг не возвращён или не проверен"; return; fi
+        if [[ "$fl" != *"restored=yes"* ]]; then echo "fail|«Скрыть надетое» не возвращено: $fl"; return; fi
+        echo "ok|$fl"; return
+      fi
       echo "ok|" ;;
     equip_item_filter_open)
       fail=$(grep -E "filter: item .* -> failed" <<< "$tail" | head -1 | sed -E 's/^\s+|\s+$//g' | cut -c1-200)

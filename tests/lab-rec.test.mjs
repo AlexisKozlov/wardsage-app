@@ -50,7 +50,7 @@ if (lineRx) {
   ok(rx.test(Date.now() + ' city') && rx.test(Date.now() + ' prep hero_filter_closed') && !rx.test(Date.now() + ' prep') && !rx.test(Date.now() + ' prep x y'), 'the runner city / prep lines parse in the app');
   const runnerNames = (ps.match(/\^\(hero_filter\|([^)]+)\)\$/) || [, ''])[1].split('|').filter((x) => !x.startsWith('random_start'));
   const appNames = (cs.match(/Names = \{([^}]+)\}/) || [, ''])[1].match(/"[a-z_]+"/g) || [];
-  ok(appNames.length === 7 && ['hero_filter', ...runnerNames].sort().join() === appNames.map((x) => x.slice(1, -1)).sort().join(), 'the runner and the app list the same preps (' + runnerNames + ')');
+  ok(appNames.length === 8 && ['hero_filter', ...runnerNames].sort().join() === appNames.map((x) => x.slice(1, -1)).sort().join(), 'the runner and the app list the same preps (' + runnerNames + ')');
 }
 ok(/'mark', 'rec'\)\);/.test(sql), 'the SQL action check allows rec');
 ok(/'rec'\s*\{\s*\$out = Invoke-Rec \$jobArgs\s*\}/.test(ps), 'the runner dispatches rec');

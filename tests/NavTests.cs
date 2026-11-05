@@ -371,6 +371,27 @@ static partial class CoreTests {
       var k3 = new BuildFlagKeeper(); k3.Begin(1, 1, new BuildFlags());
       Check(k3.ClearDue(1, 1) == "", "flags: no item needs a flag cleared: they are not touched");
     }
+    // S3: the restorer puts «Скрыть надетое» back through the gear filter's pop-up, the applog line says how it ended
+    {
+      Check(BuildFlagKeeper.Line(1, 1, true) == "flags: hideWorn before=on after=on restored=yes" && BuildFlagKeeper.Line(1, 0, false) == "flags: hideWorn before=on after=off restored=no" && BuildFlagKeeper.Line(-1, -1, false) == "flags: hideWorn before=unread after=unread restored=no", "flags: the applog line");
+      var hr = new HideWornRestorer(); var fg0 = new FilterGeometry(); long tn = 1000;
+      Func<bool, bool, bool, FilterView> V = (panel, side, on) => new FilterView { NowMs = tn, Foreground = true, W = 1920, H = 1009, PanelOpen = panel, SidePanelOpen = side, HideEquipped = on };
+      var c0 = hr.Step(V(false, false, false), true); tn += 2000;
+      Check(c0 != null && c0.Kind == AutoKind.Click && c0.X < 400 && c0.Y > 800, "restore: the pop-up is opened first (the «Фильтр» bar)");
+      var c1x = hr.Step(V(true, true, false), true); tn += 2000;
+      Check(c1x != null && Math.Abs(c1x.X - fg0.X(fg0.SideCloseX, 1920, 1009)) < 1, "restore: an open side panel is closed first");
+      var c2 = hr.Step(V(true, false, false), true); tn += 2000;
+      Check(c2 != null && Math.Abs(c2.X - fg0.X(fg0.HideEquippedX, 1920, 1009)) < 1 && Math.Abs(c2.Y - fg0.Y(fg0.HideEquippedY, 1920, 1009)) < 1, "restore: the toggle is clicked once the flag reads off");
+      Check(hr.Step(new FilterView { NowMs = tn - 1500, Foreground = true, W = 1920, H = 1009, PanelOpen = true, HideEquipped = false }, true) == null, "restore: no second click inside the settle wait");
+      var c3 = hr.Step(V(true, false, true), true); tn += 2000;
+      Check(c3 != null && Math.Abs(c3.X - fg0.X(fg0.MainCloseX, 1920, 1009)) < 1 && hr.State == "work", "restore: flag on again: the pop-up is closed");
+      Check(hr.Step(V(false, false, true), true) == null && hr.State == "done", "restore: done when the flag is on and the pop-up closed");
+      var hr2 = new HideWornRestorer(); tn = 1000;
+      Check(hr2.Step(V(false, false, false), false) == null && hr2.State == "failed", "restore: no gear list open: a named failure, no blind click");
+      var hr3 = new HideWornRestorer(); tn = 1000; int nc = 0;
+      for (int i = 0; i < 8; i++, tn += 2000) if (hr3.Step(V(true, false, false), true) != null) nc++;
+      Check(hr3.State == "failed" && nc == HideWornRestorer.MaxClicks, "restore: a toggle with no effect stops after " + HideWornRestorer.MaxClicks + " clicks (" + nc + ")");
+    }
     // the norms are the recipe's budgets
     Check(BuildPlanner.NormMs("build", "pick", 0) == BuildPlanner.ItemLimitMs && BuildPlanner.NormMs("build", "filter", 0) == BuildPlanner.FilterLimitMs && BuildPlanner.NormMs("build", "hero", 0) == 8000 && BuildPlanner.NormMs("equip", "pick", 0) == BuildPlanner.ItemLimitMs,
       "planner: the norms (item 6 s, filter 4 s, hero 8 s) are the build recipe's budgets, no 60 s");
