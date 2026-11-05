@@ -17,8 +17,8 @@
 // inventory.cardLeft/Solo     Form_BackpackIntegration ...Root/LeftLayout/m_Info/c_Button/c_LeftBtn
 // inventory.cardRight         Form_BackpackIntegration ...Root/LeftLayout/m_Info/c_Button/c_RightBtn
 // inventory.artWorkshop       Form_BackpackIntegration.m_PanelContentCur.m_BtnIntensify (pilot read ArtWorkshop)
-// hero.workshop / hero.gem    Form_CharactorMain ...Panel_Equip_Simple/Content/GameObject/m_BtnSubliming / m_BtnEquipGem   Icon
-// hero.switching              Form_CharactorMain ...Panel_Equip_Simple/Content/GameObject/m_BtnSwitching («Быстрая смена»)   Icon
+// hero.workshop / hero.gem    Form_CharactorMain ...Panel_Equip_Simple/Content/GameObject/m_BtnSubliming / m_BtnEquipGem   - (the round button's root: exact rect, circle)
+// hero.switching              Form_CharactorMain ...Panel_Equip_Simple/Content/GameObject/m_BtnSwitching («Быстрая смена»)   - (the same)
 // hero.tab.equip              Form_CharactorMain m_Main_Frame/m_Right/m_ToggleGroup/m_Toggle_Equip                    - (the whole tab: icon and label)
 // hero.artifactTab            Form_CharactorMain m_Main_Frame/m_Right/m_ToggleGroup/m_Toggle_Artifact                 (picked)
 // hero.slot.0..4              Form_CharactorMain ...EquipPanel/m_EquipGrid/m_LeftGrid|m_RightGrid/m_EquipPart_N       (picked)
@@ -71,6 +71,8 @@ namespace RealmForge {
     public UiCellKind Cell = UiCellKind.None;
     /// <summary>Not read live, and why (the layout's rect is the frame).</summary>
     public string Layout;
+    /// <summary>A round button without a plate, framed on its own root widget (never its icon child): the frame is the widget's exact rect, drawn as the geometry file's circle.</summary>
+    public bool Round;
   }
 
   public static class FrameTargets {
@@ -93,6 +95,10 @@ namespace RealmForge {
     }
     static void P(string key, string form, ClickTarget t, string tree, string visual = "", string src = "graph") {
       Add(new FrameTarget { Key = key, Form = form, Click = t, Tree = tree, Visual = visual, Src = src });
+    }
+    // a round button on its root widget (Visual "-": the whole widget, no icon child), outlined as a circle
+    static void R(string key, string form, string tree) {
+      Add(new FrameTarget { Key = key, Form = form, Tree = tree, Visual = "-", Round = true, Src = "graph" });
     }
     static void C(string key, string form, UiCellKind k, string tree) { Add(new FrameTarget { Key = key, Form = form, Cell = k, Tree = tree, Visual = "root" }); }
     static void L(string key, string form, string why) { Add(new FrameTarget { Key = key, Form = form, Layout = why, Src = "layout" }); }
@@ -132,9 +138,9 @@ namespace RealmForge {
       C("cell.InvSuit", "Form_BackpackIntegration", UiCellKind.InvSuit, "m_CachedContentPanels.[-9998].m_SuitFilterGridProxy.m_Data (the filter pop-up's set list)");
       C("cell.InvArt", "Form_BackpackIntegration", UiCellKind.InvArt, "m_CachedContentPanels.[-9997] (the artifact tab's list)");
       // the hero screen
-      B("hero.workshop", "Form_CharactorMain", Hero + "m_Right/Panel_Equip_Simple/Content/GameObject/m_BtnSubliming", "Icon");
-      B("hero.gem", "Form_CharactorMain", Hero + "m_Right/Panel_Equip_Simple/Content/GameObject/m_BtnEquipGem", "Icon");
-      B("hero.switching", "Form_CharactorMain", Hero + "m_Right/Panel_Equip_Simple/Content/GameObject/m_BtnSwitching", "Icon");
+      R("hero.workshop", "Form_CharactorMain", Hero + "m_Right/Panel_Equip_Simple/Content/GameObject/m_BtnSubliming");
+      R("hero.gem", "Form_CharactorMain", Hero + "m_Right/Panel_Equip_Simple/Content/GameObject/m_BtnEquipGem");
+      R("hero.switching", "Form_CharactorMain", Hero + "m_Right/Panel_Equip_Simple/Content/GameObject/m_BtnSwitching");
       B("hero.tab.equip", "Form_CharactorMain", "m_Main_Frame/m_Right/m_ToggleGroup/m_Toggle_Equip", "-");
       B("hero.artifactTab", "Form_CharactorMain", "m_Main_Frame/m_Right/m_ToggleGroup/m_Toggle_Artifact", "-");
       for (int i = 0; i < 5; i++) B("hero.slot." + i, "Form_CharactorMain", Hero + "m_EquipGrid/" + (i < 2 ? "m_LeftGrid" : "m_RightGrid") + "/m_EquipPart_" + i);

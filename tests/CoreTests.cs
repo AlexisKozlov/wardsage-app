@@ -1520,7 +1520,8 @@ static partial class CoreTests {
     var hf = FrameTargets.Widget(FrameTargets.Of("hero.filter"));
     Check(hf != null && hf.Trees.Length == 1 && hf.Trees[0].EndsWith("/m_BtnFilter", StringComparison.Ordinal), "«Фильтр» framed on m_BtnFilter (the bar with its label), not its m_FilterOff icon");
     var rw = FrameTargets.Widget(FrameTargets.Of("hero.workshop")); var ch = FrameTargets.Widget(FrameTargets.Of("city.heroes"));
-    Check(rw != null && rw.Icon && rw.IconChild == "Icon" && ch != null && ch.Icon, "round icon buttons without a plate keep the contour");
+    Check(rw != null && !rw.Icon && rw.IconChild == null && FrameTargets.Of("hero.workshop").Round && ch != null && ch.Icon, "the hero gear row's round buttons («Литейная») are framed on their own root widget, never the icon child; the city bar keeps the contour");
+    foreach (var rk in new[] { "hero.workshop", "hero.gem", "hero.switching" }) Check(FrameTargets.Of(rk).Round && FrameTargets.Of(rk).Visual == "-", "round button " + rk + " is on its root widget (Round)");
     // the hero card: the live cell of the hero grid, only when the read binds this hero to one cell at its place in the list
     var hc = FrameTargets.Of("hero.card");
     Check(hc != null && hc.Cell == UiCellKind.HeroList && hc.Layout == null && FrameTargets.KeyOf(UiCellKind.HeroList) == "hero.card", "the hero card is read live (the hero grid's cell), never the layout's rect");
@@ -7222,6 +7223,14 @@ static partial class CoreTests {
         Eq(0, FrameAudit.Flags(hw).Count, "frame audit: a named visual child's size is not compared with the whole widget's layout (its centre still is)");
         hw.Live = new double[] { 826 + 40, 580, 50, 44 };
         Check(FrameAudit.Flags(hw).Exists(f => f.StartsWith("live vs layout centre")), "frame audit: a child visual off the layout's centre is still flagged");
+      }
+      { // owner 2026-11-05, record 122804-aedfbd (client 503x283): hero.workshop live icon child 20x18 against the layout's button 36x37 -> the frame sat on the icon
+        var old = new FrameAuditShot { Step = "s", Target = "hero.workshop", Frame = new double[] { 286, 232, 22, 20 }, Live = new double[] { 286, 233, 20, 18 }, Layout = new double[] { 278, 225, 36, 37 }, ClientW = 503, ClientH = 283 };
+        Check(FrameAudit.Flags(old).Exists(f => f.StartsWith("live vs layout size")), "frame audit (record 122804): the icon child (20x18) against the button's layout (36x37) is flagged by size");
+        var fr = UiIcon.RoundFrame(278, 225, 36, 37, 503, 283);
+        Eq(36, (int)fr[2], "round frame: the button's own width"); Eq(37, (int)fr[3], "round frame: the button's own height"); Eq(18, (int)fr[4], "round frame: radius half the short side (circle)");
+        var now = new FrameAuditShot { Step = "s", Target = "hero.workshop", Frame = fr, Live = new double[] { 278, 225, 36, 37 }, Layout = new double[] { 278, 225, 36, 37 }, ClientW = 503, ClientH = 283 };
+        Eq(0, FrameAudit.Flags(now).Count, "frame audit (record 122804): the root widget's rect (tolerance 12x12) is clean");
       }
       var fa = clean(); fa.Live = new double[] { 100 + 12, 100, 80, 40 };
       Eq(0, FrameAudit.Flags(fa).Count, "frame audit: 12 px off (tolerance 12) is clean");

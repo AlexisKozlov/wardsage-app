@@ -4923,9 +4923,9 @@ namespace RealmForge {
       var r = RFX.UiTargetFresh(ft.Key, W, H, now, RFX.UiFrameFreshMs);
       double x, y; string pw; var sc = screens.Current;
       bool ok = RFX.UiLivePoint(r, W, H, now, out x, out y, out pw, RFX.UiFrameFreshMs), top = RFX.UiFormTopIs(ft.Form, sc);
-      var art = ok && top ? SpriteArt.Of(r.Sprite) : null;
+      var art = ok && top && !ft.Round ? SpriteArt.Of(r.Sprite) : null;
       var fit = art != null ? (r.IW > 0 ? SpriteArt.FrameOf(art, r.Art, r.IX, r.IY, r.IW, r.IH, W, H) : SpriteArt.FrameOf(art, r.Art, r.X, r.Y, r.W, r.H, W, H)) : null;
-      double[] f = ok && top ? (fit != null ? fit.Frame : r.IW > 0 ? UiIcon.Frame(r.IX, r.IY, r.IW, r.IH, W, H) : UiIcon.Frame(r.X, r.Y, r.W, r.H, W, H)) : null;
+      double[] f = ok && top ? (fit != null ? fit.Frame : ft.Round ? UiIcon.RoundFrame(r.X, r.Y, r.W, r.H, W, H) : r.IW > 0 ? UiIcon.Frame(r.IX, r.IY, r.IW, r.IH, W, H) : UiIcon.Frame(r.X, r.Y, r.W, r.H, W, H)) : null;
       if (f != null) {
         if (fit != null) liveShapes.Put(f, fit.Box, fit.Shape, NowMs());
         FrameCheck(ft.Key, r.Form + "." + r.Widget, r.Sprite, r.Art, fit, f, r.IW > 0 ? new[] { r.IX, r.IY, r.IW, r.IH } : new[] { r.X, r.Y, r.W, r.H }, "live", r.Sprite == "" ? r.ArtWhy : art == null ? "not in the table" : null);

@@ -158,6 +158,12 @@ namespace RealmForge {
       double l = Math.Max(0, cx - r), t = Math.Max(0, cy - r), rr = Math.Min(W, cx + r), b = Math.Min(H, cy + r);
       return new[] { l, t, rr - l, b - t, Math.Round(Math.Min(rr - l, b - t) / 2) };
     }
+    /// <summary>The frame of a round button's own widget rect (no padding: the geometry file's circle and inset are applied to it, as to the layout's rect),
+    /// kept inside the client; the radius is half the short side.</summary>
+    public static double[] RoundFrame(double x, double y, double w, double h, double W, double H) {
+      double l = Math.Max(0, x), t = Math.Max(0, y), r = Math.Min(W, x + w), b = Math.Min(H, y + h);
+      return new[] { l, t, r - l, b - t, Math.Round(Math.Min(r - l, b - t) / 2) };
+    }
     /// <summary>The frame round the icon (x, y, w, h, corner radius), client px, within W x H.</summary>
     public static double[] Frame(double x, double y, double w, double h, double W, double H) {
       double l = Math.Max(0, x - FramePad), t = Math.Max(0, y - FramePad), r = Math.Min(W, x + w + FramePad), b = Math.Min(H, y + h + FramePad);
