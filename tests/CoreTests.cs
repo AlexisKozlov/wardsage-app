@@ -862,6 +862,12 @@ static partial class CoreTests {
     Console.WriteLine("HeroPilot (the plan's hero on the hero screen):");
     HeroPilotTests();
     HeroMemTests();
+    CityMemTests();
+    LiveClickTests();
+    HeroChoiceTests();
+    TipMemTests();
+    ListMemTests();
+    SimMemoryTests();
     SellPilotTests();
     FightPlanTests();
     LocateTests();
