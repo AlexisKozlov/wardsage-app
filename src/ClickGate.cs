@@ -139,6 +139,9 @@ namespace RealmForge {
     public string Form;
     /// <summary>The explorer's targets: the UI graph's widget path on <see cref="Form"/> ("" = an exit of the screen map); its live rect (x, y, w, h) when read.</summary>
     public string Widget = ""; public double[] LiveRect;
+    /// <summary>The click presses a widget of src/FrameTargets.cs by its key (hero.gridFunnel, gear.setArrow, ...; "" = none): with <see cref="Live"/> the point is the centre of its live rect
+    /// (<see cref="LiveRect"/>), which the gate holds inside the rect shrunk by 20 % on the key's form; without it the geometry's point stands (the host logs "src=geo why=").</summary>
+    public string WidgetKey = "";
     public double W, H, U;
     public GameGeometry Geo;
     /// <summary>The point is the centre of the button's live rect (read by name on the form on top, fresh: src/UiButtons.cs), not the geometry's.</summary>
@@ -1166,6 +1169,22 @@ namespace RealmForge {
       try { stepNow[r.Owner] = r.Target; return CheckStep(r, f, now); } finally { stepNow.Remove(r.Owner); }
     }
 
+    /// <summary>A click by a widget key (<see cref="ClickRequest.WidgetKey"/>): the key is one of src/FrameTargets.cs; a live point lies inside the live rect shrunk by 20 % (never on its edge, never
+    /// off the widget the key names) and the key's form is on top of the fresh screen (a pop-up over it: wait). Null = nothing against it. A key click without a live point is a geometry click: its own checks.</summary>
+    GateResult CheckWidgetKey(ClickRequest r, ScreenState f, string tag) {
+      if (string.IsNullOrEmpty(r.WidgetKey)) return null;
+      var ft = FrameTargets.Of(r.WidgetKey);
+      if (ft == null || ft.Cell != UiCellKind.None) return Halt(r.Owner, "target", tag + ": '" + r.WidgetKey + "' is no widget key");
+      if (!r.Live) return null;
+      var lr = r.LiveRect;
+      if (lr == null || lr.Length < 4 || lr[2] <= 0 || lr[3] <= 0) return Halt(r.Owner, "target", tag + ": [" + r.WidgetKey + "] a live click without the widget's live rect");
+      var b = RFX.InnerBox(lr[0], lr[1], lr[2], lr[3]);
+      if (r.X < b[0] - 0.5 || r.X > b[0] + b[2] + 0.5 || r.Y < b[1] - 0.5 || r.Y > b[1] + b[3] + 0.5)
+        return Halt(r.Owner, "target", tag + ": the point is outside the live rect of " + r.WidgetKey + " [" + (int)lr[0] + "," + (int)lr[1] + " " + (int)lr[2] + "x" + (int)lr[3] + "] shrunk by 20 %");
+      if (f != null && !RFX.UiFormTopIs(ft.Form, f)) return GateResult.Wait("screen", tag + ": [" + r.WidgetKey + "] " + ft.Form + " is not on top (" + f.Brief + ")");
+      return null;
+    }
+
     GateResult CheckStep(ClickRequest r, ScreenState f, long now) {
       string tag = r.Target + " @" + (int)r.X + "," + (int)r.Y;
       long until;
@@ -1195,6 +1214,7 @@ namespace RealmForge {
       if (heroArt && r.Owner == ClickOwner.Equip && !ArtEquipAuto) return Halt(r.Owner, "artifact", tag + ": the artifact steps are hints only");
       var rule = RuleOf(r.Owner, r.Target);
       if (rule == null) return Halt(r.Owner, "target", tag + " is not a target " + r.Owner + " may click");
+      var wk = CheckWidgetKey(r, f, tag); if (wk != null) return wk;
       if (r.Owner == ClickOwner.LocateFilter && (NoLocateClicks || ArtLocateAuto)) return Halt(r.Owner, "artifact", tag + ": a hint run / the artifact guide presses no filter");
       if (f == null || f.Kind == ScreenKind.Unknown) return UnknownWait(r, f, now, tag + ": the screen is not recognised" + (f != null && f.TopForm != "" ? " (top form " + f.TopForm + " not in the list)" : ""));
       // the window table shows the screen but its reader gave no reading of it: its details (tab, mode, selection) are not known - waited for as

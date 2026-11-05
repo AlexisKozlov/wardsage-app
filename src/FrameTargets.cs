@@ -43,6 +43,10 @@
 // artifact.tab.promote/enhance Form_EquipArtifactIntensify m_RightTab/GameObject/m_ToggleBreak / m_ToggleEnhance
 // artifact.promoteBtn         Form_EquipArtifactIntensify Panel_Equip_Artifact_Break/root/m_CouldBreak/Middle/m_BreakInfo/m_Break/m_ButtonBreak (made in code)   Button_Special_3
 // cell.*, hero.card           the lists' live cells (src/UiButtons.cs UiCellRead): the whole cell (icon with stat plate, the card)   cell root   (live)
+// gear.* / hero.gridFunnel    the pilots' live-click keys (package P2; not hint frames): the hero grid's funnel, the gear filter's arrows (set / main stat / sub stat: the shown one of
+//                             the Off / On pair), «Сбросить», «Скрыть надетое», the side panel's red × and the gear filter's funnel; kept apart from <see cref="FrameTargets.All"/> (LiveKeys), their
+//                             trees are checked against the prefab dump in tests/LiveClickTests.cs
+// cell.GearSuit/GearStat/GearSub, cell.HeroClass/HeroFaction   the gear filter's side-panel cells and the hero list's filter pop-up cells (src/UiButtons.cs UiCellRead)
 // A tab or a button with a label (a plate) is framed whole ("-"); the sprite's contour only on round icon buttons without a plate.
 // layout only (a reason each): the gem function rows, the filter's set cells, the artifact tab's and the workshop's lists,
 // the gear filter's part icons and rows (no live reader of those lists yet).
@@ -78,7 +82,10 @@ namespace RealmForge {
     const string Flt = "Root/m_Root/";
     const string GemBtn = "/c_GemBottom/EquipGemBottom/GameObject/c_BtnReforge";
 
+    const string FltW = "m_Main_Frame/m_Right/m_PanelContent/m_EquipPanel/EquipPanel/m_Middle/m_PanelFilter/Panel_EquipFilterWidget_Charactor/";
+
     static readonly List<FrameTarget> all = new List<FrameTarget>();
+    static readonly List<FrameTarget> liveKeys = new List<FrameTarget>();
     static readonly Dictionary<string, FrameTarget> byKey = new Dictionary<string, FrameTarget>(StringComparer.Ordinal);
 
     static void B(string key, string form, string tree, string visual = "", string sprite = "", string src = "graph") {
@@ -90,6 +97,17 @@ namespace RealmForge {
     static void C(string key, string form, UiCellKind k, string tree) { Add(new FrameTarget { Key = key, Form = form, Cell = k, Tree = tree, Visual = "root" }); }
     static void L(string key, string form, string why) { Add(new FrameTarget { Key = key, Form = form, Layout = why, Src = "layout" }); }
     static void Add(FrameTarget t) { all.Add(t); byKey[t.Key] = t; }
+    // a live-click key (the pilots press it by its widget; no hint frame is drawn on it): found by Of(), listed in LiveKeys, not in All
+    static void K(string key, string form, string tree, string visual = "-") {
+      var t = new FrameTarget { Key = key, Form = form, Tree = tree, Visual = visual, Src = "prefab" };
+      liveKeys.Add(t); byKey[key] = t;
+    }
+    static void KC(string key, string form, UiCellKind k, string tree) {
+      var t = new FrameTarget { Key = key, Form = form, Cell = k, Tree = tree, Visual = "root", Src = "prefab" };
+      liveKeys.Add(t); byKey[key] = t;
+    }
+    // the gear filter widget of the hero equip panel (the public-IP hero's copy is another form, Form_PublicIPHero: not the pilots')
+    static string Fw(string tail) { return FltW + tail; }
 
     static FrameTargets() {
       // the city
@@ -170,6 +188,21 @@ namespace RealmForge {
       B("artifact.promoteBtn", "Form_EquipArtifactIntensify", "Panel_Equip_Artifact_Break/root/m_CouldBreak/Middle/m_BreakInfo/m_Break/m_ButtonBreak/Button_Special_3", "-", "", "prefab");
       L("artifact.matList", "Form_EquipArtifactIntensify", "the copies list area (its cells are placed from the game's scroll)");
       L("artifact.matCell", "Form_EquipArtifactIntensify", "the workshop's copies list cells are not read live");
+      // the pilots' live-click keys (package P2): the hero grid's funnel (opens / closes the class and faction pop-up: a switch), the gear filter's funnel, its three arrows (the Off or
+      // the On button of the pair, whichever is shown), «Сбросить», «Скрыть надетое» (the whole toggle), the side panel's red ×; the filter pop-up's cells
+      K("hero.gridFunnel", "Form_CharactorMain", "m_Main_Frame/m_Left/m_Left_Go/m_FilterRoot/m_Btn_Filter");
+      K("gear.filterBtn", "Form_CharactorMain", Hero + "m_Left/Panel_Equip_Filter/m_BtnFilter/m_FilterOff|" + Hero + "m_Left/Panel_Equip_Filter/m_BtnFilter/m_FilterOn");
+      K("gear.setArrow", "Form_CharactorMain", Fw("MainFrame/MainFrame/SuitContent/FilterBtn/m_BtnSuitOff") + "|" + Fw("MainFrame/MainFrame/SuitContent/FilterBtn/m_BtnSuitOn"));
+      K("gear.statArrow", "Form_CharactorMain", Fw("MainFrame/MainFrame/MainAttrContent/FilterBtn/m_BtnMainAttrOff") + "|" + Fw("MainFrame/MainFrame/MainAttrContent/FilterBtn/m_BtnMainAttrOn"));
+      K("gear.subArrow", "Form_CharactorMain", Fw("MainFrame/MainFrame/SubAttrContent/FilterBtn/m_BtnSubAttrOff") + "|" + Fw("MainFrame/MainFrame/SubAttrContent/FilterBtn/m_BtnSubAttrOn"));
+      K("gear.reset", "Form_CharactorMain", Fw("MainFrame/MainFrame/BottomContent/m_BtnReset"));
+      K("gear.hideWorn", "Form_CharactorMain", Fw("MainFrame/MainFrame/BottomContent/m_HideEquipedToggle"));
+      K("gear.sideClose", "Form_CharactorMain", Fw("FilterFrame/RectMask/m_FilterContent/m_BtnFilterClose"));
+      KC("cell.GearSuit", "Form_CharactorMain", UiCellKind.GearSuit, "m_Panels.EquipPanel.m_Panel_EquipFilterWidget_Charactor.m_SuitFilterGridProxy.m_Data (the set list of the side panel)");
+      KC("cell.GearStat", "Form_CharactorMain", UiCellKind.GearStat, "m_Panels.EquipPanel.m_Panel_EquipFilterWidget_Charactor.m_MainAttrFilterGridProxy.m_Data (the main stats)");
+      KC("cell.GearSub", "Form_CharactorMain", UiCellKind.GearSub, "m_Panels.EquipPanel.m_Panel_EquipFilterWidget_Charactor.m_SubAttrFilterGridProxy.m_Data (the sub stats)");
+      KC("cell.HeroClass", "Form_CharactorMain", UiCellKind.HeroClass, "m_Panels.Charactor_FilterOrder.m_MainInfinityGridProxy.m_Data (the class column)");
+      KC("cell.HeroFaction", "Form_CharactorMain", UiCellKind.HeroFaction, "m_Panels.Charactor_FilterOrder.m_FactionInfinityGridProxy.m_Data (the faction column)");
     }
 
     public const string KeyCityHeroes = "city.heroes", KeyHeroBack = "hero.back", KeyConfirm = "hero.confirm";
@@ -178,6 +211,10 @@ namespace RealmForge {
       "inventory.bulkSell", "inventory.artBulkSell", "inventory.leftTab.equip", "inventory.sellBtn", "inventory.artSellBtn", "inventory.leftTab.artifact", "hero.slot.0", "hero.slot.1", "hero.slot.2", "hero.slot.3", "hero.slot.4" };
 
     public static IList<FrameTarget> All { get { return all; } }
+    /// <summary>The pilots' live-click keys (hero.gridFunnel, gear.*, cell.Gear* / cell.Hero{Class,Faction}): <see cref="Of"/> finds them, <see cref="All"/> (the hint frames) does not list them.</summary>
+    public static IList<FrameTarget> LiveKeys { get { return liveKeys; } }
+    public const string KeyGridFunnel = "hero.gridFunnel", KeyGearFilter = "gear.filterBtn", KeyGearSetArrow = "gear.setArrow", KeyGearStatArrow = "gear.statArrow", KeyGearSubArrow = "gear.subArrow",
+      KeyGearReset = "gear.reset", KeyGearHideWorn = "gear.hideWorn", KeyGearSideClose = "gear.sideClose";
     public static FrameTarget Of(string key) { FrameTarget t; return key != null && byKey.TryGetValue(key, out t) ? t : null; }
     /// <summary>The key a pilot button's frame is checked under (null = none).</summary>
     public static string KeyOf(ClickTarget c) { if (c == ClickTarget.None) return null; foreach (var t in all) if (t.Click == c) return t.Key; return null; }

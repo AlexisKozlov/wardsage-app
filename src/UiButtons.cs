@@ -54,6 +54,9 @@ namespace RealmForge {
     public string Sprite = "", ArtWhy = ""; public SpriteArt.Draw Art;
     /// <summary>The last ChainRect's pivot (y up), client px per local unit and flips of its last transform (the Image's drawing).</summary>
     internal double CPivX = 0.5, CPivY = 0.5, CPx; internal bool CFlipX, CFlipY;
+    /// <summary>The product of the local scales on the chain below the canvas (the form's root down to the widget): 1 at rest, off 1 while a pop-up or
+    /// a panel tweens in (read by the last main ChainRect). A click is made only on a settled rect (<see cref="RFX.UiKeyPoint"/>).</summary>
+    public double ScaleX = 1, ScaleY = 1;
     public bool Ok { get { return FailStep == null; } }
     internal UiButtonInfo Fail(string step, string value) { FailStep = step; FailValue = value; return this; }
   }
@@ -523,6 +526,7 @@ namespace RealmForge {
       w = Math.Abs(sx * pw) * k2; h = Math.Abs(sy * ph) * k2;
       x = W / 2 + cx * k2 - w / 2; y = H / 2 - cy * k2 - h / 2;
       r.CPivX = rt[n - 1][8]; r.CPivY = rt[n - 1][9]; r.CPx = Math.Abs(sx) * k2; r.CFlipX = sx < 0; r.CFlipY = sy < 0;
+      if (main) { r.ScaleX = Math.Abs(sx); r.ScaleY = Math.Abs(sy); }
       return true;
     }
 
@@ -1064,7 +1068,11 @@ namespace RealmForge {
   // InfinityGrid (dump 1.6.46.841.1): m_crtFirstInstanceIndex 0xD0, m_crtLastInstanceIndex 0xD4, m_crtItems 0xD8, viewport 0xC8;
   // InfinityGridV2: 0xF8, 0xFC, 0x100, viewport 0xF0. .NET Dictionary: entries 0x18, count 0x20; Entry {hashCode, next, key 0x8, value 0x10}.
   //   Form_CharactorMain (the hero list)  the form's one *_InfinityGrid   .m_InfinityGridProxy.m_Data[idx + 1].iHeroId (the card: the cell itself)
-  public enum UiCellKind { None, Inventory, Ascend, Recast, HeroGear, HeroArt, HeroList, InvSuit, InvArt }
+  // The hero screen's gear filter side panels (Panel_EquipFilterWidget_Charactor, a Lua widget of m_Panels.EquipPanel: m_SuitFilterGridProxy / m_MainAttrFilterGridProxy /
+  // m_SubAttrFilterGridProxy, the proxies' m_Data = the set / attribute ids, cell child c_Select) and the hero list's filter pop-up (Charactor_FilterOrder:
+  // m_MainInfinityGridProxy = the classes, m_FactionInfinityGridProxy = the factions, cell child c_Button). A class row whose id is not readable is keyed by its
+  // list index (RFX.IndexUid), never guessed.
+  public enum UiCellKind { None, Inventory, Ascend, Recast, HeroGear, HeroArt, HeroList, InvSuit, InvArt, GearSuit, GearStat, GearSub, HeroClass, HeroFaction }
 
   /// <summary>One item cell the grid has made now: the item, its list index (0-based) and row column (HeroGear, 1-based), its picture's rect (client px).</summary>
   public sealed class UiCell {
@@ -1075,6 +1083,8 @@ namespace RealmForge {
     public double InView;
     /// <summary>The whole cell (client px): the cell root with its picture, the icon and the stat plate under it; the frame is drawn on it.</summary>
     public double BX, BY, BW, BH;
+    /// <summary>How far the picture's chain scale is from 1 (a pop-up tweening in: the rect is not where it will stay).</summary>
+    public double ScaleDev;
   }
 
   /// <summary>The cells of a list read at once (the wanted items only), the viewport, or the step the read stopped at.</summary>
@@ -1088,13 +1098,14 @@ namespace RealmForge {
     public bool Ok { get { return FailStep == null; } }
     internal UiCellSet Fail(string step, string value) { FailStep = step; FailValue = value; return this; }
     public UiCell Of(long uid) { foreach (var c in Cells) if (c.Uid == uid) return c; return null; }
+    public UiCell OfIndex(int index) { foreach (var c in Cells) if (c.Index == index) return c; return null; }
   }
 
   /// <summary>What a live cell read says about an item: not known (the layout's estimate stands), shown (its frame), hidden (no cell in view, or covered).</summary>
   public enum UiCellSee { Unknown, Shown, Hidden }
 
   public static partial class RFX {
-    sealed class CellSpec { public string Form, Owner, Grid, Uids, Child, UidKey = "iItemUid"; public bool V2, Rows, Tables; }
+    sealed class CellSpec { public string Form, Owner, Grid, Uids, Child, UidKey = "iItemUid"; public bool V2, Rows, Tables, AnyId; }
     static CellSpec SpecOf(UiCellKind k) {
       switch (k) {
         case UiCellKind.Inventory: return new CellSpec { Form = "Form_BackpackIntegration", Owner = "", Grid = "m_Content_InfinityGrid", Uids = "m_CachedContentPanels.[-9998].m_FilterAndSortEquipUidList", Child = "c_Item" };
@@ -1111,9 +1122,38 @@ namespace RealmForge {
         // the cell's card is BackpackItemArtifact: c_CardHide 80 x 110 units (the picture), c_CardSelected the game's selection frame
         case UiCellKind.InvArt: return new CellSpec { Form = "Form_BackpackIntegration", Owner = "m_CachedContentPanels.[-9997]", Grid = "m_ListArtifact_InfinityGrid", Uids = "m_CachedContentPanels.[-9997]._listDataCur", Child = "c_CardHide", Tables = true };
         case UiCellKind.InvSuit: return new CellSpec { Form = "Form_BackpackIntegration", Owner = "m_CachedContentPanels.[-9998]", Grid = "m_SuitFilterGrid_InfinityGrid", Uids = "m_CachedContentPanels.[-9998].m_SuitFilterGridProxy.m_Data", Child = "c_Select" };
+        // the hero screen's gear filter side panels: the widget is a Lua table of the equip panel (Panel_EquipBase.m_Panel_EquipFilterWidget_Charactor, made at the first press of
+        // the funnel), its three grids' proxies hold the ids flat (m_Data = m_ShowSuitIds / m_ShowMainAttrIds / m_ShowSubAttrIds); the cell's button is c_Select (a set's grid cell: Content/c_Select)
+        case UiCellKind.GearSuit: return GearSpec("m_SuitFilterGrid_InfinityGrid", "m_SuitFilterGridProxy");
+        case UiCellKind.GearStat: return GearSpec("m_MainAttrFilterGrid_InfinityGrid", "m_MainAttrFilterGridProxy");
+        case UiCellKind.GearSub: return GearSpec("m_SubAttrFilterGrid_InfinityGrid", "m_SubAttrFilterGridProxy");
+        // the hero list's filter pop-up (m_Panels.Charactor_FilterOrder, made at the first press of the grid's funnel): the classes (m_Data rows are the profession configs: m_ProfessionID,
+        // -1 = «Все»; a row whose id cannot be read is keyed by its index) and the factions (flat ids, 0 = «Все»); the cell's button is c_Button
+        case UiCellKind.HeroClass: return new CellSpec { Form = "Form_CharactorMain", Owner = "m_Panels.Charactor_FilterOrder", Grid = "m_MainList_InfinityGrid", Uids = "m_Panels.Charactor_FilterOrder.m_MainInfinityGridProxy.m_Data", Child = "c_Button", Tables = true, UidKey = "m_ProfessionID", AnyId = true };
+        case UiCellKind.HeroFaction: return new CellSpec { Form = "Form_CharactorMain", Owner = "m_Panels.Charactor_FilterOrder", Grid = "m_FactionList_InfinityGrid", Uids = "m_Panels.Charactor_FilterOrder.m_FactionInfinityGridProxy.m_Data", Child = "c_Button", AnyId = true };
       }
       return null;
     }
+    const string GearWidget = "m_Panels.EquipPanel.m_Panel_EquipFilterWidget_Charactor";
+    static CellSpec GearSpec(string grid, string proxy) {
+      return new CellSpec { Form = "Form_CharactorMain", Owner = GearWidget, Grid = grid, Uids = GearWidget + "." + proxy + ".m_Data", Child = "c_Select", AnyId = true };
+    }
+    /// <summary>The id a cell of an unreadable row is keyed by: its list index, far below any game id (class ids 1..256, -1 = «Все»).</summary>
+    public const long IndexUidBase = -(1L << 40);
+    public static long IndexUid(int index) { return IndexUidBase - index; }
+    public static bool IsIndexUid(long uid) { return uid <= IndexUidBase && uid > IndexUidBase - 100000; }
+    public static int IndexOfUid(long uid) { return IsIndexUid(uid) ? (int)(IndexUidBase - uid) : -1; }
+    const long NoId = long.MinValue;
+    /// <summary>The list's entry <paramref name="idx"/> (0-based) as an id that may be 0 or negative (a filter's «Все»): an integer, or for a row table its <paramref name="key"/> field,
+    /// else (a row that is no table or has no readable id) the index id; NoId = no such entry / not an id.</summary>
+    static long CellIdOf(ulong list, int idx, bool tables, string key) {
+      ulong v; int tt;
+      if (!IntKey(list, idx + 1, out v, out tt)) return NoId;
+      if (tt == T_INT) return (long)v;
+      if (!tables) return NoId;
+      long u; return tt == T_TABLE && ArtInt(v, key, out u) ? u : IndexUid(idx);
+    }
+
     /// <summary>The list a cell click target picks in (None = not an item pick).</summary>
     public static UiCellKind UiCellKindOf(ClickTarget t) {
       switch (t) {
@@ -1255,8 +1295,8 @@ namespace RealmForge {
         ulong gnat = Ptr(mgo + CachedPtr); if (gnat == 0) continue;
         ulong cgo, ctr; if (!GoAndTransform(gnat, "UnityEngine.GameObject", "cell", new UiButtonInfo(), out cgo, out ctr)) continue;
         for (int col = sp.Rows ? 1 : 0; col <= (sp.Rows ? 6 : 0); col++) {
-          long uid = CellUidOf(list, idx, col, sp.Rows, sp.Tables, sp.UidKey);
-          if (uid <= 0) { if (sp.Rows) break; continue; }
+          long uid = sp.AnyId ? CellIdOf(list, idx, sp.Tables, sp.UidKey) : CellUidOf(list, idx, col, sp.Rows, sp.Tables, sp.UidKey);
+          if (sp.AnyId ? uid == NoId : uid <= 0) { if (sp.Rows) break; continue; }
           if (want != null && !want.Contains(uid)) continue;
           var path = new List<ulong>();
           ulong item = sp.Child == "" ? 0 : ChildNamed(ctr, sp.Rows ? sp.Child + col : sp.Child, 2, path);
@@ -1269,7 +1309,7 @@ namespace RealmForge {
           var cb = new UiButtonInfo();
           if (!RectUnder(pic, rtr, above, canvas, W, H, U, cb, true, out x, out y, out w, out h)) continue;
           if (cb.Rotated) r.Rotated = true;
-          var c = new UiCell { Uid = uid, Index = idx, Col = col, X = x, Y = y, W = w, H = h, Icon = icon, Active = TrActive(ctr) && TrActive(pic) };
+          var c = new UiCell { Uid = uid, Index = idx, Col = col, X = x, Y = y, W = w, H = h, Icon = icon, Active = TrActive(ctr) && TrActive(pic), ScaleDev = Math.Max(Math.Abs(cb.ScaleX - 1), Math.Abs(cb.ScaleY - 1)) };
           // the whole cell: the cell root (its item child for a row) with the picture - the icon with its stat plate, one frame for all of it
           c.BX = x; c.BY = y; c.BW = w; c.BH = h;
           double ax, ay, aw, ah;
@@ -1395,12 +1435,55 @@ namespace RealmForge {
       x = cx; y = cy; return true;
     }
 
+    /// <summary>The lists of the hero screen's gear filter (set, main stat, sub stat) and of the hero list's filter pop-up (class, faction).</summary>
+    public static bool IsHeroFilterKind(UiCellKind k) { return k == UiCellKind.GearSuit || k == UiCellKind.GearStat || k == UiCellKind.GearSub || k == UiCellKind.HeroClass || k == UiCellKind.HeroFaction; }
+
+    // ---- the pilots' live click (package P2): the centre of the widget's rect, the click kept off the edges (the rect shrunk by LiveShrink, the point is its centre and the gate
+    // holds the point inside it), and only on a settled rect: a pop-up or a panel tweening in has a scale off 1 on its chain and no click lands on it
+    public const double LiveShrink = 0.2, ScaleTol = 0.02;
+    /// <summary>The rect (x, y, w, h) shrunk by <see cref="LiveShrink"/> (half of it off each side).</summary>
+    public static double[] InnerBox(double x, double y, double w, double h) {
+        double dx = w * LiveShrink / 2, dy = h * LiveShrink / 2;
+        return new[] { x + dx, y + dy, w - 2 * dx, h - 2 * dy };
+    }
+    public static bool ScaleSettled(double sx, double sy) { return Math.Abs(sx - 1) <= ScaleTol && Math.Abs(sy - 1) <= ScaleTol; }
+
+    /// <summary>The click point of a widget by its key from the live read <paramref name="r"/> (UiLivePoint's rules: ok, fresh, visible, unrotated, the form's one copy, the centre in the client)
+    /// and a settled scale; <paramref name="box"/> = the rect shrunk by 20 % the point lies in. False = <paramref name="why"/> (the geometry's point then, logged "src=geo why=...").</summary>
+    public static bool UiKeyPoint(UiButtonInfo r, double W, double H, int now, out double x, out double y, out double[] box, out string why, int maxAge = UiFreshMs) {
+      box = null;
+      if (!UiLivePoint(r, W, H, now, out x, out y, out why, maxAge)) return false;
+      if (!ScaleSettled(r.ScaleX, r.ScaleY)) { why = "scale " + F2(r.ScaleX) + "x" + F2(r.ScaleY) + " (the widget is tweening)"; x = y = 0; return false; }
+      if (r.W < 4 || r.H < 4) { why = "size " + N0(r.W) + "x" + N0(r.H); x = y = 0; return false; }
+      box = InnerBox(r.X, r.Y, r.W, r.H);
+      return true;
+    }
+
+    /// <summary>The click point of cell <paramref name="uid"/> of a list read (UiCellPoint's rules: shown, fresh, nearly wholly in view) and a settled scale; <paramref name="box"/> = the picture's
+    /// rect shrunk by 20 %.</summary>
+    public static bool UiCellKeyPoint(UiCellSet s, long uid, double W, double H, int now, out double x, out double y, out double[] box, out string why) {
+      box = null;
+      if (!UiCellPoint(s, uid, W, H, now, out x, out y, out why)) return false;
+      var c = s.Of(uid);
+      if (c.ScaleDev > ScaleTol) { why = "scale off 1 by " + F2(c.ScaleDev) + " (the list is tweening)"; x = y = 0; return false; }
+      box = InnerBox(c.X, c.Y, c.W, c.H);
+      return true;
+    }
+
+    /// <summary>The log line of a click by a widget key: "uibtn key: gear.reset src=live @x,y rect=[x,y,w,h]" or "uibtn key: gear.reset src=geo why=..." (the geometry's point; the reason
+    /// the live rect could not be used). <paramref name="rect"/> = the read's rect (null = none).</summary>
+    public static string KeyClickLine(string key, double[] rect, bool live, double x, double y, string why) {
+      string rc = rect != null && rect.Length >= 4 ? " rect=[" + N0(rect[0]) + "," + N0(rect[1]) + "," + N0(rect[2]) + "," + N0(rect[3]) + "]" : "";
+      return "uibtn key: " + key + (live ? " src=live @" + N0(x) + "," + N0(y) + rc : " src=geo why=" + (why ?? "no read") + rc);
+    }
+
     /// <summary>Is the list's form on top of the game now (no pop-up, no modal over it)? Covered = no live frame, no live click.</summary>
     public static bool UiCellTopIs(UiCellKind k, ScreenState s) {
       var sp = SpecOf(k);
       if (sp == null || s == null || s.Held || s.OfferCount > 0 || s.ModalOpen) return false;
       if (k == UiCellKind.HeroGear) return s.Kind == ScreenKind.HeroScreen;   // (the item's tip is the equip helper's own flow form over it)
       if (k == UiCellKind.HeroArt) return s.Kind == ScreenKind.HeroScreen && s.Top == sp.Form;   // (no pop-up: Form_EquipPopUp or the sort form cover the list)
+      if (IsHeroFilterKind(k)) return s.Kind == ScreenKind.HeroScreen && s.Top == sp.Form;   // (the gear filter's side panels and the hero list's filter pop-up are parts of the form itself)
       return s.Top == sp.Form;
     }
 
