@@ -246,26 +246,33 @@ namespace RealmForge {
     public const int ListSettleMs = 300, ListSettleCapMs = 6000;
     long lastSig = long.MinValue, sigAt, settleFrom;
     /// <summary>The time this item has taken while the pilot was working on it (not the player's pauses, the background, the settle of a rebuilt list): past the norm (BuildPlanner.ItemLimitMs, twice on a slow PC) the step is reset with its diagnosis, never repeated blind.</summary>
-    long workMs, lastTickAt; string workKey = "";
+    long workMs, lastTickAt, filterMs; string workKey = ""; bool lastWasFilter;
+    /// <summary>The time of the filter's own work on this item (its clicks, the wait for the list to settle after it) is its own budget, not the pick's: eight filter clicks (lab 552: set + 4 sub stats) are 5-6 s and used to run the pick's 6 s out, which sent the pilot
+    /// to the city and back for the same slot again. Past this (twice on a slow PC) the step is reset with its diagnosis.</summary>
+    public const int FilterAllowMs = 9000;
     public const int DragAllowMs = 1200;
     public int LimitMs = BuildPlanner.NormMs("build", "pick", BuildPlanner.ItemLimitMs);
     public ItemPickAction(AutoPilot p, Func<Snapshot, NavTarget, long, AutoView> v, Func<AutoView, AutoAction, ClickTarget> targetOf, GearFilterAction filter = null) { pilot = p; view = v; this.targetOf = targetOf; this.filter = filter; }
     public string Name { get { return "item"; } }
     public ICollection<string> Keep { get { return filter != null && filter.ActedKey == key ? NavKeep.ItemPick : NavKeep.ItemPickNoFilter; } }
     public bool Wants(Snapshot s, NavTarget t) { key = t.Key(); return true; }
-    public void Reset() { pilot.Reset(); workMs = 0; lastTickAt = 0; }
+    public void Reset() { pilot.Reset(); workMs = 0; filterMs = 0; lastTickAt = 0; lastWasFilter = false; }
     readonly ProgressMark mark = new ProgressMark();
     public long ProgressAt { get { return mark.At; } }
     public NavStep Step(Snapshot s, NavTarget t, INavIo io, long now) {
       var v = view(s, t, now); v.NavOwned = true;
       // the item's norm: the time of the pilot's own work on it (one tick at most 1 s: a stalled host clock is not the item's time)
       string wk = t.Key();
-      if (wk != workKey) { workKey = wk; workMs = 0; lastTickAt = 0; }
-      if (lastTickAt > 0 && pilot.State == "work") workMs += Math.Min(1000, now - lastTickAt);
-      lastTickAt = now;
+      if (wk != workKey) { workKey = wk; workMs = 0; filterMs = 0; lastTickAt = 0; lastWasFilter = false; }
+      if (lastTickAt > 0) { long dt = Math.Min(1000, now - lastTickAt); if (lastWasFilter) filterMs += dt; else if (pilot.State == "work") workMs += dt; }
+      lastTickAt = now; lastWasFilter = false;
+      if (filterMs > FilterAllowMs * (io.Slow ? 2 : 1)) {
+        long fm = filterMs; filterMs = 0; workMs = 0; lastTickAt = 0;
+        return NavStep.Reset("filter_limit " + fm + " ms (norm " + FilterAllowMs + "): the item's filter did not finish");
+      }
       int limit = (LimitMs + pilot.Drags * DragAllowMs) * (io.Slow ? 2 : 1);   // (every drag of the list is progress: a far item of no set takes its drags' time on top of the norm)
       if (workMs > limit && pilot.State == "work") {
-        long ms = workMs; workMs = 0; lastTickAt = 0;
+        long ms = workMs; workMs = 0; filterMs = 0; lastTickAt = 0;
         return NavStep.Reset("item_limit " + ms + " ms (norm " + limit + "): " + pilot.State + " sel " + v.Sel + " target " + v.Target + " live " + (v.LiveGrid ? (v.LiveTarget ? "target" : "no target cell") : "none") + " drags " + pilot.Drags + " clicks " + pilot.Clicks + (pilot.Why != "" ? " why " + pilot.Why : ""));
       }
       mark.Note(v.ListSig + "|" + (int)v.Row1Top + "|" + v.Sel + "|" + v.SelRow + "|" + v.SelCol + "|" + v.SlotOpen + "|" + v.TipShown + "|" + pilot.Drags + "|" + pilot.State, now);
@@ -274,7 +281,7 @@ namespace RealmForge {
         if (now - sigAt < ListSettleMs) {
           if (settleFrom == 0) settleFrom = now;
           if (now - settleFrom > ListSettleCapMs) { settleFrom = 0; return NavStep.Reset("the item list does not settle after the filter"); }
-          return NavStep.Wait("list settling");
+          lastWasFilter = true; return NavStep.Wait("list settling");
         }
         settleFrom = 0;
       }
@@ -282,7 +289,7 @@ namespace RealmForge {
       // what it answers (a click, a wait) is this tick's step, no pick or drag is started under it. Nothing to do for it (null) = the pick goes on.
       if (filter != null && v.Sel != v.Target && !(v.LiveGrid && v.LiveTarget)) {
         var fs = filter.Step(s, t, io, now);
-        if (fs != null) return fs;
+        if (fs != null) { lastWasFilter = true; return fs; }
       }
       var a = pilot.Step(v);
       if (OnStep != null) OnStep(v, a);

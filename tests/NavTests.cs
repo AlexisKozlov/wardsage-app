@@ -384,6 +384,18 @@ static partial class CoreTests {
       for (int i = 0; i < 200 && reset == ""; i++) { io.NowMs += 200; var sn = rd.Update(st, io.NowMs); var ns = ia.Step(sn, t0, io, io.NowMs); if (ns != null && ns.Kind == StepKind.Reset) reset = ns.Why; }
       Check(reset.StartsWith("item_limit ") && io.NowMs - first >= 6000 && io.NowMs - first <= 9000, "planner: an item that takes past its 6 s norm is a reset with its diagnosis (" + reset + ", after " + (io.NowMs - first) + " ms)");
     }
+    // lab 552 (312cc9: the item filter open): the filter's own clicks and waits ran the pick's 6 s norm out -> item_limit -> the city and back for the same slot, three times. The filter has its own budget
+    {
+      var io = new FakeNavIo(); var pl = new AutoPilot(new ListGeometry());
+      var fpl = new FilterPilot(new FilterGeometry());
+      var gfa = new GearFilterAction(fpl, (s0, t1, n) => new FilterView { NowMs = n, Foreground = true, W = 1366, H = 705, Item = 5, Wanted = true, SetId = 721500, SetIndex = 3, Suits = new long[0], MainAttrs = new long[0], PanelMem = Mem3.Unknown, MemPending = true }, null);
+      var ia = new ItemPickAction(pl, (s0, t1, n) => new AutoView { NowMs = n, Foreground = true, H = 705, Target = 5, Row = 3, Col = 1, Sel = 0, AnchorHas = true, Types = new[] { 0, 1, 1, 1 }, Row1Top = 100, Hero = 5, ScreenHero = 5, Owner = 0, InputOpen = false },
+        (v, a) => ClickTarget.EquipNav, gfa);
+      var t0 = new NavTarget { Goal = NavGoal.HeroEquip, Hero = 5, Slot = 2 }; var rd = new ScreenReader(); var st = NavState(ScreenKind.HeroScreen, 5, 3, 2, "", new[] { "Form_CharactorMain", "Form_MainCity" }); io.FreshState = st;
+      string reset = ""; long first = io.NowMs;
+      for (int i = 0; i < 200 && reset == ""; i++) { io.NowMs += 200; var sn = rd.Update(st, io.NowMs); var ns = ia.Step(sn, t0, io, io.NowMs); if (ns != null && ns.Kind == StepKind.Reset) reset = ns.Why; }
+      Check(reset.StartsWith("filter_limit ") && io.NowMs - first >= ItemPickAction.FilterAllowMs && io.NowMs - first <= ItemPickAction.FilterAllowMs + 3000, "planner: the filter's time is its own budget (not the pick's 6 s): a reset only past " + ItemPickAction.FilterAllowMs + " ms (" + reset + ", after " + (io.NowMs - first) + " ms)");
+    }
   }
 
   // ---------------------------------------------------------------- S4: the build on the planner in the sim (the pilot runs every item on the game's list model, the filter and the artifact are costed by the planner's own norms)
