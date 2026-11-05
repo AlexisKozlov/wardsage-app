@@ -636,6 +636,20 @@ namespace RealmForge {
     public bool Halted(ClickOwner o) { return halted.ContainsKey(o); }
     /// <summary>A click is still waiting to show its effect.</summary>
     public bool Pending(ClickOwner o) { return watches.ContainsKey(o); }
+    /// <summary>The navigator ended the click's wait itself (the game's memory showed no reaction at all): its watch is dropped, no stop (the navigator's recovery decides what is next).</summary>
+    public void CancelWatch(ClickOwner o) { watches.Remove(o); }
+    /// <summary>The wait after which a plain local open (the default budget) with no reaction in the game's memory is taken as lost (0 = a slow or server click: the budget only).</summary>
+    public static int QuickNoEffectMs(ClickTarget t) {
+      switch (t) {
+        case ClickTarget.CityInventory: case ClickTarget.FoundryButton: case ClickTarget.HeroFoundry: case ClickTarget.ArtWorkshop: case ClickTarget.ArtReplace: case ClickTarget.ArtTakeOverConfirm:
+        case ClickTarget.InvCardGem: case ClickTarget.GemFuncRow: case ClickTarget.ArtMatCell: case ClickTarget.ArtBulkCell: return 0;
+      }
+      // how fast this game has answered so far (the confirms of the session): a fast one (three or more, the slowest under 700 ms) is cut at three times its slowest, at least 1.2 s;
+      // before any history the wait is 2.2 s; a game that has answered slowly gets no quick cut (the budget only: a slow PC's open with no memory sign is not lost)
+      long n = System.Threading.Interlocked.Read(ref ReadTiming.SessionConfirmN), mx = System.Threading.Interlocked.Read(ref ReadTiming.SessionConfirmMax);
+      if (n < 3) return 2200;
+      return mx < 700 ? (int)System.Math.Max(1200, 3 * mx) : 0;
+    }
     /// <summary>Some owner's click is on its way (its effect awaited): the screen is read often then (event confirmation).</summary>
     public bool AnyPending { get { return watches.Count > 0; } }
     readonly Dictionary<ClickOwner, long> effectAt = new Dictionary<ClickOwner, long>();

@@ -122,7 +122,7 @@ namespace RealmForge {
     public const int SlotTries = 3, ClickTries = 5, DragTries = 60, CalibTries = 4, WrongTries = 2, AfterConfirmClicks = 2, SlotWaits = 40;
     public const int AfterSlotMs = 900, AfterClickMs = 500, AfterDragMs = 800, UserPauseMs = 4000;
     public const int SlotGraceMs = 2500;   // the last slot click gets this long to show its effect before the slot counts as closed
-    public const int ConfirmSettleMs = 600, AfterConfirmMs = 3000;
+    public const int ConfirmSettleMs = 600, AfterConfirmMs = 3000, ConfirmServerCapMs = 9000;
     /// <summary>The selection this long with the button's live rect held still: the card is open, «Заменить» is pressed (else ConfirmSettleMs).</summary>
     public const int ConfirmLiveMs = 150;
     /// <summary>The item selected with its tip known closed this long: the item is clicked again (at most TipReopens times an item).</summary>
@@ -237,6 +237,8 @@ namespace RealmForge {
       // the game, a missed press) - item clicks would only select it again and fail, the player looks at the game
       if (confirmed && !selected && v.Slot == null) {
         if (v.Hero > 0 && v.Owner == v.Hero) { State = "done"; StepSay(v.NowMs); return AutoAction.Nothing; }
+        // (the game's server answers the press in its own time - live 582 130417: the owner came 3.0 s after the press, exactly at the end of the fixed wait, and the step was called "unconfirmed" a tick before it: the memory's answer is waited for up to ConfirmServerCapMs, the owner seen ends it at once above)
+        if (v.Sel <= 0 && confirmAt > 0 && v.NowMs - confirmAt < ConfirmServerCapMs) return AutoAction.Nothing;
         if (v.Sel <= 0) { State = "unconfirmed"; Why = "no selection after the confirm press, owner " + v.Owner + ", hero " + v.Hero; Trace = "unconfirmed: " + Why; return AutoAction.Nothing; }
       }
       if (selected) return ConfirmStep(v);

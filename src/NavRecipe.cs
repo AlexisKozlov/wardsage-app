@@ -171,7 +171,7 @@ namespace RealmForge {
           ClickTarget tg = (ClickTarget)Enum.Parse(typeof(ClickTarget), step.Target);
           var act = new Act { Owner = t.Owner, Target = tg, Kind = ActKind.Click, X = p[0], Y = p[1], Base = step.From, Expect = n => Expect(step, n, args, false), Why = step.Why != "" ? step.Why : step.Id,
             Edge = step.Key, Forward = true, WantCity = true, Keep = ClickGate.TipForms };
-          if (step.TimeoutMs > 0) act.TimeoutMs = step.TimeoutMs;
+          if (step.TimeoutMs > 0) act.TimeoutMs = step.TimeoutMs; else act.QuickMs = ClickGate.QuickNoEffectMs(tg);
           return act;
         };
         l.Add(w);

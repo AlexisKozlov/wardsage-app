@@ -25,6 +25,9 @@ namespace RealmForge {
     /// <summary>The edge's own success test on stable snapshots; null = none (with Fire: done once sent).</summary>
     public Func<Snapshot, bool> Expect;
     public int TimeoutMs;
+    /// <summary>A click whose effect is a plain local open (default budget): with the game's memory showing no reaction at all (the same state, input open, never busy, nothing stirred) this long after the send it is NoEffect now,
+    /// not after the whole budget (live 582: «graph:hero NoEffect 3516 ms» of a click that was lost). 0 = the budget only.</summary>
+    public int QuickMs;
     public string Why = "";
     public Action<ClickRequest> Fill;
     /// <summary>The base form the snapshot must have ("" = any).</summary>
@@ -53,7 +56,7 @@ namespace RealmForge {
     public bool TipAtSend { get; private set; }
     /// <summary>The default effect budget is stretched while the game is busy (BusyGraceMs after the last busy read), at most BusyCapMs after the send.</summary>
     public const int BusyGraceMs = 1500, BusyCapMs = 9000;
-    long busyAt;
+    long busyAt; string keyAtSend = "";
     bool sent; long startAt; string layersAtSend = ""; HashSet<string> formsAtSend = new HashSet<string>();
 
     public bool Active { get { return Cur != null && Outcome == ActOutcome.Running; } }
@@ -97,6 +100,11 @@ namespace RealmForge {
       // (live 538: «graph:hero NoEffect 3531 ms» reset a cold open of the hero grid that showed its screen half a second later)
       bool busy = !io.InputOpen || !s.Stable(now);
       if (busy) busyAt = now;
+      // (memory first: the effect is judged on facts, a click the game did not react to at all is not waited for by the clock: the same state key, the input open, no busy read since the send)
+      if (a.QuickMs > 0 && a.TimeoutMs == 0 && a.Expect != null && busyAt == 0 && s.Confidence >= NavConfidence.NoOrder && !s.State.Held && s.Stable(now) && now - SentAt >= a.QuickMs && s.StateKey == keyAtSend) {
+        io.Gate.CancelWatch(a.Owner);
+        return End(ActOutcome.NoEffect, (now - SentAt) + " ms (quick: memory shows no reaction)");
+      }
       if (a.TimeoutMs == 0 && now - SentAt > to && now - SentAt <= BusyCapMs && now - busyAt <= BusyGraceMs && a.Expect != null) return ActOutcome.Running;
       if (a.Expect == null) { if (!io.Gate.Pending(a.Owner)) return End(ActOutcome.Done, "no watch"); }
       if (now - SentAt > to) {
@@ -132,7 +140,7 @@ namespace RealmForge {
         if (io.Gate.Halted(a.Owner)) return End(ActOutcome.Halted, io.Gate.HaltReason(a.Owner));
         return End(ActOutcome.Denied, res.Reason + ": " + res.Detail);
       }
-      sent = true; SentAt = now; busyAt = 0; layersAtSend = s.LayerKey();
+      sent = true; SentAt = now; busyAt = 0; layersAtSend = s.LayerKey(); keyAtSend = s.StateKey;
       formsAtSend = new HashSet<string>(); foreach (var l in s.Stack) formsAtSend.Add(l.Form);
       TipAtSend = s.HasTip() && a.Closing == "";
       if (a.OnSent != null) a.OnSent();

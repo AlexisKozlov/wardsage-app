@@ -1874,6 +1874,8 @@ static partial class CoreTests {
         double px, py; string why;
         Check(RFX.UiLivePoint(r, w2, h2, r.At + 150, out px, out py, out why) && Near(px, w2 / 2 + 100 * kc) && Near(py, h2 / 2 + 50 * kc), "live point: the rect's centre when fresh (" + why + ")");
         Check(!RFX.UiLivePoint(r, w2, h2, r.At + RFX.UiFreshMs + 1, out px, out py, out why) && why.StartsWith("old"), "  ... not when older than 200 ms: " + why);
+        Check(RFX.UiLivePoint(r, w2, h2, r.At - 16, out px, out py, out why) && Near(px, w2 / 2 + 100 * kc), "  ... a read that finished 16 ms AFTER the caller's clock is fresh (live 582 why=old (-16 ms)): " + why);
+        Check(!RFX.UiLivePoint(r, w2, h2, r.At - RFX.UiFutureMs - 1, out px, out py, out why) && why.StartsWith("old"), "  ... a read from far in the future is not: " + why);
         Check(!RFX.UiLivePoint(r, 1280, 720, r.At, out px, out py, out why) && why == "another window size", "  ... not for another window size");
         Check(!RFX.UiLivePoint(null, w2, h2, 0, out px, out py, out why), "  ... no read: the layout");
         WF(m, fu.Trs(fbtn), 900, -50, 0);

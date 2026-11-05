@@ -977,6 +977,8 @@ namespace RealmForge {
     public const int UiLiveMs = 90000;
     /// <summary>How old a live rect may be to be clicked or framed (else the layout's place).</summary>
     public const int UiFreshMs = 200;
+    /// <summary>A read that finished after the caller took its clock (the background task answers some ms later) is not old: age down to -UiFutureMs counts as fresh (live 582: «uibtn key ... src=geo why=old (-16 ms)» four times, the live rect was thrown away for a read made a moment after the caller's clock).</summary>
+    public const int UiFutureMs = 300;
     /// <summary>How old a live read may be to place a FRAME (never a click): the screen read of a calm hint runs every 250 ms (src/LoadPlan.cs), so
     /// a read is up to that old at the next tick; a frame is not hidden for it (owner, 1.6.66.435: the frame went away when he stopped touching).</summary>
     public const int UiFrameFreshMs = 900;
@@ -1045,7 +1047,7 @@ namespace RealmForge {
       if (r == null) { why = "no read"; return false; }
       if (!r.Ok) { why = "failed at " + r.FailStep; return false; }
       int age = unchecked(now - r.At);
-      if (age < 0 || age > maxAge) { why = "old (" + age + " ms)"; return false; }
+      if (age < -UiFutureMs || age > maxAge) { why = "old (" + age + " ms)"; return false; }
       if (Math.Abs(r.ForW - W) > 0.5 || Math.Abs(r.ForH - H) > 0.5) { why = "another window size"; return false; }
       if (!r.Visible) { why = "not visible"; return false; }
       if (r.Rotated) { why = "rotated"; return false; }
@@ -1410,7 +1412,7 @@ namespace RealmForge {
       if (s == null) { why = "no read"; return UiCellSee.Unknown; }
       if (!s.Ok) { why = "failed at " + s.FailStep; return UiCellSee.Unknown; }
       int age = unchecked(now - s.At);
-      if (age < 0 || age > maxAge) { why = "old (" + age + " ms)"; return UiCellSee.Unknown; }
+      if (age < -UiFutureMs || age > maxAge) { why = "old (" + age + " ms)"; return UiCellSee.Unknown; }
       if (Math.Abs(s.ForW - W) > 0.5 || Math.Abs(s.ForH - H) > 0.5) { why = "another window size"; return UiCellSee.Unknown; }
       if (!s.Visible) { why = "form not shown"; return UiCellSee.Unknown; }
       if (s.Rotated) { why = "rotated"; return UiCellSee.Unknown; }

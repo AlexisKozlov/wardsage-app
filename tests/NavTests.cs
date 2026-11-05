@@ -333,6 +333,7 @@ static partial class CoreTests {
     BuildPlannerTests();
     BuildSimTests();
     AtomTests();
+    ConfirmServerTests();
     Lab559Tests();
   }
 
@@ -556,6 +557,27 @@ static partial class CoreTests {
       sim.Do(a, t);
     }
     return "timeout (state " + p.State + ")";
+  }
+
+  // live 582 (130417): the item's server took 3.0 s to put it on the hero; the pilot's fixed wait ended in the same tick and called the step unconfirmed
+  static void ConfirmServerTests() {
+    Console.WriteLine("Confirm: the server's time (live 582, item 17087)");
+    var pl = new AutoPilot(new ListGeometry());
+    Func<long, long, AutoView> view = (n, owner) => new AutoView { NowMs = n, Foreground = true, H = 705, Target = 17087, Row = 3, Col = 1, Sel = 17087, SelRow = 3, SelCol = 1, AnchorHas = true, Types = new[] { 0, 1, 1, 1 }, Row1Top = 100, Hero = 229000000, ScreenHero = 229000000, Owner = owner, AutoConfirm = true, Button = new[] { 186, 226, 62, 23 }, ButtonStill = true, TipKnown = true, TipShown = true, InputOpen = true };
+    long t = 1000; AutoAction a = null;
+    for (int i = 0; i < 20 && !(a != null && a.Kind == AutoKind.Click); i++) { t += 100; a = pl.Step(view(t, 0)); }
+    Check(a != null && a.Kind == AutoKind.Click, "confirm: the press goes out");
+    long press = t;
+    var gone = new AutoView { NowMs = 0, Foreground = true, H = 705, Target = 17087, Row = 3, Col = 1, Sel = 0, AnchorHas = true, Types = new[] { 0, 1, 1, 1 }, Row1Top = 100, Hero = 229000000, ScreenHero = 229000000, Owner = 0, AutoConfirm = true, InputOpen = true };
+    for (t = press + 100; t <= press + 3100; t += 100) { gone.NowMs = t; pl.Step(gone); }
+    Check(pl.State != "unconfirmed", "confirm: selection gone, owner not yet there at 3.1 s: still waiting for the server, not unconfirmed (" + pl.State + " " + pl.Why + ")");
+    gone.NowMs = press + 3200; gone.Owner = 229000000; pl.Step(gone);
+    Check(pl.State == "done", "confirm: the owner seen in memory ends it at once (" + pl.State + ")");
+    var p2 = new AutoPilot(new ListGeometry()); a = null; t = 1000;
+    for (int i = 0; i < 20 && !(a != null && a.Kind == AutoKind.Click); i++) { t += 100; a = p2.Step(view(t, 0)); }
+    press = t; gone.Owner = 0;
+    for (t = press + 100; t <= press + AutoPilot.ConfirmServerCapMs + 200; t += 100) { gone.NowMs = t; p2.Step(gone); }
+    Check(p2.State == "unconfirmed", "confirm: no answer of the server for the cap: unconfirmed with its reason (" + p2.State + ")");
   }
 
   static void AtomTests() {

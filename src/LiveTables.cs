@@ -33,6 +33,8 @@ namespace RealmForge {
   /// <see cref="Take"/>.</summary>
   public static class ReadTiming {
     public static long TableN, TableTicks, ScanN, ScanTicks, CheckN, CheckTicks, FieldN, FieldTicks, SettleN, SettleMs, ConfirmN, ConfirmMs, ConfirmMax;
+    /// <summary>The whole session's confirm count and slowest (never reset by Take): how fast THIS game answers a click, for the navigator's quick no-effect wait (ClickGate.QuickNoEffectMs).</summary>
+    public static long SessionConfirmN, SessionConfirmMax;
     internal static void Add(ref long n, ref long sum, long v) { Interlocked.Increment(ref n); Interlocked.Add(ref sum, v); }
     /// <summary>One tick's field reads of the screen took <paramref name="ticks"/> (Stopwatch ticks).</summary>
     public static void Field(long ticks) { Add(ref FieldN, ref FieldTicks, ticks); }
@@ -41,6 +43,8 @@ namespace RealmForge {
     /// <summary>A pilot's click showed its effect <paramref name="ms"/> after it was sent.</summary>
     public static void Confirm(long ms) {
       Add(ref ConfirmN, ref ConfirmMs, ms);
+      Interlocked.Increment(ref SessionConfirmN);
+      long sm0; do sm0 = Interlocked.Read(ref SessionConfirmMax); while (ms > sm0 && Interlocked.CompareExchange(ref SessionConfirmMax, ms, sm0) != sm0);
       long m; do m = Interlocked.Read(ref ConfirmMax); while (ms > m && Interlocked.CompareExchange(ref ConfirmMax, ms, m) != m);
     }
     static double Us(long ticks, long n) { return n == 0 ? 0 : ticks * 1e6 / Stopwatch.Frequency / n; }

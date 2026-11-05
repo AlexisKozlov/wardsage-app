@@ -199,6 +199,27 @@ static partial class CoreTests {
       Check(o5 == ActOutcome.NoEffect, "act budget: a game busy for ever is cut at the cap (" + o5 + ")");
       io.Open = true;
     }
+    Check(ClickGate.QuickNoEffectMs(ClickTarget.CityInventory) == 0 && ClickGate.QuickNoEffectMs(ClickTarget.FoundryButton) == 0 && ClickGate.QuickNoEffectMs(ClickTarget.EquipNav) != 1, "quick no effect: the slow (server) clicks keep their whole budget");
+    {   // live 582 (130350, graph:hero NoEffect 3516 ms): a lost click on a plain open is NoEffect by the memory at QuickMs (no reaction, never busy), not after the whole budget; the real effect still ends it at once
+      var io = new FakeNavIo(); const string C = "Form_MainCity";
+      var cs = NavState(ScreenKind.City, 0, 0, 0, "", new[] { C }); io.FreshState = cs; io.Open = true;
+      Func<int, Act> mk = q => new Act { Target = ClickTarget.EquipNav, Kind = ActKind.Click, X = 10, Y = 10, Base = C, Edge = "graph:hero", QuickMs = q, Expect = n => n.Kind == ScreenKind.HeroScreen };
+      var snap = ScreenReader.Build(cs, io.NowMs, null); snap.StableSinceMs = io.NowMs - 100000;
+      var ac = new ActClick(); ac.Start(mk(1200), io.NowMs); ac.Tick(io, snap, io.NowMs);
+      Check(ac.Tick(io, snap, io.NowMs + 600) == ActOutcome.Running, "quick no effect: before QuickMs the click is still awaited");
+      var q1 = ac.Tick(io, snap, io.NowMs + 1250);
+      Check(q1 == ActOutcome.NoEffect && ac.Detail.Contains("quick") && !io.Gate.Pending(ClickOwner.Equip), "quick no effect: the memory shows nothing moved, input open, never busy: NoEffect at 1.25 s, no gate watch left (" + q1 + " " + ac.Detail + ")");
+      ac = new ActClick(); ac.Start(mk(0), io.NowMs); ac.Tick(io, snap, io.NowMs);
+      Check(ac.Tick(io, snap, io.NowMs + 1250) == ActOutcome.Running, "quick no effect: an act without QuickMs waits its whole budget");
+      ac = new ActClick(); ac.Start(mk(1200), io.NowMs); ac.Tick(io, snap, io.NowMs);
+      io.Open = false; ac.Tick(io, snap, io.NowMs + 300); io.Open = true;
+      Check(ac.Tick(io, snap, io.NowMs + 1250) == ActOutcome.Running, "quick no effect: a game that was busy (input locked) after the send is not cut early");
+      var hs = NavState(ScreenKind.HeroScreen, 5, 3, 2, "", new[] { "Form_CharactorMain", C }); 
+      ac = new ActClick(); ac.Start(mk(1200), io.NowMs); ac.Tick(io, snap, io.NowMs); io.FreshState = hs;
+      var sh = ScreenReader.Build(hs, io.NowMs + 400, null); sh.StableSinceMs = io.NowMs - 100000;
+      var dn = ac.Tick(io, sh, io.NowMs + 400);
+      Check(dn == ActOutcome.Done, "quick no effect: the screen that came is Done at once (the fact, not the clock) (" + dn + " " + ac.Detail + ")");
+    }
   }
 
   // ---------------------------------------------------------------- E1: Unknown -> No for lazily built panels (docs/specs/2026-11-04-memory-everywhere-plan.md §5)
