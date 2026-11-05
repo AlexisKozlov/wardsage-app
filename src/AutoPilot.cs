@@ -364,6 +364,7 @@ namespace RealmForge {
       if (v.LiveGrid) {
         if (v.LiveTarget) {
           liveNoPosSince = 0; dragPending = false; noMove = 0;
+          if (Atoms.Active && Atoms.Name == "list.drag") return AutoAction.Nothing;   // (a drag of ours is still moving the list: the cell is clicked where it stands after it)
           // (the host reads the cells about every 200 ms: a tick between two reads may see none - a gap keeps what was seen, a moved cell starts over)
           bool same = !double.IsNaN(liveSeenX) && Math.Abs(v.LiveX - liveSeenX) < 1.5 && Math.Abs(v.LiveY - liveSeenY) < 1.5;
           if (!same) { liveSeenAt = v.NowMs; liveSeenX = v.LiveX; liveSeenY = v.LiveY; }
@@ -457,6 +458,7 @@ namespace RealmForge {
       var f = GameFacts.Of(v);
       if (!double.IsNaN(v.LiveScroll) && v.Types != null && v.Row > 0 && !double.IsNaN(v.LiveViewTop) && !double.IsNaN(v.LiveViewBottom)) return MemScroll(v, f);
       dragScroll0 = double.NaN;
+      if (dragPending && Atoms.Active && Atoms.Name == "list.drag") return AutoAction.Nothing;
       if (dragPending) {
         dragPending = false; string now = f.PosKey();
         if (now == dragPos) {
@@ -508,6 +510,9 @@ namespace RealmForge {
       // the position stands still on two reads (a drag coasts after the release)
       if (double.IsNaN(scrollSeen) || Math.Abs(scrollSeen - v.LiveScroll) > 0.25) { scrollSeen = v.LiveScroll; scrollSeenAt = v.NowMs; }
       if (v.NowMs - scrollSeenAt < ScrollSettleMs) return AutoAction.Nothing;
+      // the drag is judged only when its atom has ended (the effect seen, or its 1.5 s out): the host's drag takes a second or more on a loaded PC, the pointer is still moving at the 0.8 s the wait ends
+      // (lab 559: «position changed 1328 ms -> superseded», the second drag started under the first, two reads of the old position = «the list does not move» after 4 s)
+      if (dragPending && Atoms.Active && Atoms.Name == "list.drag") return AutoAction.Nothing;
       if (dragPending) {
         dragPending = false;
         double moved = -(v.LiveScroll - dragScroll0) * k, cmd = dragDy - Math.Sign(dragDy) * DragThresholdPx;   // (px the content went in the pointer's direction; the drag that counted)
@@ -547,6 +552,21 @@ namespace RealmForge {
     /// The neighbour is the host's live cell; none yet = it is asked for (WantNeighbour) and waited for, SwapWaitMs at most.</summary>
     AutoAction SwapStep(AutoView v, string why) {
       var f = GameFacts.Of(v);
+      // another item is selected and the click on the target's own live cell did not take it (lab 559: sel 54835, target 55070, 26 refused clicks, 6 s idle, a reset every 40 s): a click on a NEIGHBOUR
+      // would only select a third item. The list is moved by a row at once (the cell then stands elsewhere: a new diagnosis, the click on it is allowed), never a neighbour clicked, never 3 s waited for one.
+      if (v.Sel > 0 && v.Sel != v.Target && v.LiveTarget) {
+        wantNb = false;
+        if (nudges < 2 && v.LiveFirst >= 0 && !double.IsNaN(v.LiveViewTop) && !double.IsNaN(v.LiveViewBottom) && v.InputOpen) {
+          Trace = "the click on the live cell of item " + v.Target + " selected nothing (sel " + v.Sel + "): the list is moved by a row, no other cell is clicked (" + f + ")";
+          return Nudge(v, f);
+        }
+        if (!sameRetried) {
+          sameRetried = true; retryOk = true; swapWaitSince = 0; liveSeenAt = v.NowMs; listSigAt = v.NowMs;
+          Trace = "the list moved, the click on the live cell of item " + v.Target + " is repeated once when its rect stands still (" + f + ")";
+          return AutoAction.Nothing;
+        }
+        return Fail("item " + v.Target + " is not selected by its live cell (sel " + v.Sel + ", list moved by a row " + nudges + " times, the cell clicked again " + (sameRetried ? "yes" : "no") + "; " + f + ")");
+      }
       wantNb = true;
       if (!v.LiveNb) {
         if (swapWaitSince == 0) swapWaitSince = v.NowMs;
@@ -560,17 +580,7 @@ namespace RealmForge {
             Trace = "no neighbour cell in view: the live cell is clicked once more when its rect stands still (" + f + ")";
             return AutoAction.Nothing;
           }
-          if (v.LiveTarget && nudges < 1 && v.LiveFirst >= 0 && !double.IsNaN(v.LiveViewTop) && !double.IsNaN(v.LiveViewBottom) && v.InputOpen) {
-            nudges++; swapWaitSince = 0; dragPending = false;
-            double H = v.H, cell = g.CellW * H, pitch = g.PitchY * H, vt = v.LiveViewTop, vb = v.LiveViewBottom;
-            double dy = Math.Max(MinDragPx, Math.Min(pitch, vb - vt - cell)) * (v.LiveCellY > (vt + vb) / 2 ? -1 : 1);   // one row toward the middle
-            string posKey0 = f.PosKey();
-            Atoms.Begin("list.drag", "nudge" + v.Target, "viewport[" + (int)vt + ".." + (int)vb + "] dy=" + (int)dy + " src=live (one row, the click on the live cell changed nothing)", "list position changed", ff => ff.PosKey() != posKey0, 1500, f, v.NowMs, false);
-            double x0 = (g.StripLeft + g.StripRight) / 2 * H, y0 = dy < 0 ? vb - cell / 2 : vt + cell / 2;
-            drags++; dragPending = true; dragPos = posKey0; dragDy = dy; dragCell0 = v.LiveCellY; dragAt = v.NowMs;
-            waitUntil = v.NowMs + AfterDragMs; effect.Arm(curKey, v.NowMs);
-            return new AutoAction { Kind = AutoKind.Drag, X = x0, Y = y0, DY = dy };
-          }
+          if (v.LiveTarget && nudges < 1 && v.LiveFirst >= 0 && !double.IsNaN(v.LiveViewTop) && !double.IsNaN(v.LiveViewBottom) && v.InputOpen) return Nudge(v, f);
           return Fail("no other cell of the list is in view to re-select by (" + why + "; " + f + "; the same cell was clicked again " + (sameRetried ? "yes" : "no") + ", list moved by a row " + (nudges > 0 ? "yes" : "no") + ")");
         }
         return AutoAction.Nothing;
@@ -582,6 +592,19 @@ namespace RealmForge {
       wantNb = false; itemPending = calibPending = false; lastPtX = lastPtY = double.NaN; samePt = 0; waitUntil = v.NowMs + AfterClickMs;
       var lc = ListClick(v.LiveNbX, v.LiveNbY); if (lc.Kind == AutoKind.Click) lc.Cell = nb;
       return lc;
+    }
+
+    /// <summary>One drag of one row toward the middle of the list (the click on the target's live cell changed nothing): its effect the list position changing; the list then stands elsewhere and the click on the cell is a new try.</summary>
+    AutoAction Nudge(AutoView v, GameFacts f) {
+      nudges++; swapWaitSince = 0; dragPending = false;
+      double H = v.H, cell = g.CellW * H, pitch = g.PitchY * H, vt = v.LiveViewTop, vb = v.LiveViewBottom;
+      double dy = Math.Max(MinDragPx, Math.Min(pitch, vb - vt - cell)) * ((nudges % 2 == 1) == (v.LiveCellY > (vt + vb) / 2) ? -1 : 1);   // one row toward the middle (the second nudge the other way: the first may have hit the end)
+      string posKey0 = f.PosKey();
+      Atoms.Begin("list.drag", "nudge" + v.Target + nudges, "viewport[" + (int)vt + ".." + (int)vb + "] dy=" + (int)dy + " src=live (one row, the click on the live cell changed nothing)", "list position changed", ff => ff.PosKey() != posKey0, 1500, f, v.NowMs, false);
+      double x0 = (g.StripLeft + g.StripRight) / 2 * H, y0 = dy < 0 ? vb - cell / 2 : vt + cell / 2;
+      drags++; dragPending = true; dragPos = posKey0; dragDy = dy; dragCell0 = v.LiveCellY; dragAt = v.NowMs;
+      waitUntil = v.NowMs + AfterDragMs; effect.Arm(curKey, v.NowMs);
+      return new AutoAction { Kind = AutoKind.Drag, X = x0, Y = y0, DY = dy };
     }
 
     double Off { get { return double.IsNaN(row1Off) ? 0 : row1Off; } }

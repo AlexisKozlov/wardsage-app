@@ -324,6 +324,7 @@ static partial class CoreTests {
     BuildPlannerTests();
     BuildSimTests();
     AtomTests();
+    Lab559Tests();
   }
 
   // ---------------------------------------------------------------- the build planner (docs/specs/2026-11-04-shortest-paths.md 2): modes, order, flags, norms
@@ -641,6 +642,51 @@ static partial class CoreTests {
     public void Reset() { }
     public NavStep Step(Snapshot s, NavTarget t, INavIo io, long now) {
       return NavStep.Of(new Act { Owner = t.Owner, Target = ClickTarget.EquipConfirm, Kind = ActKind.Click, X = 541, Y = 592, Base = "Form_CharactorMain", Fire = true, Why = "confirm" }, "act:item");
+    }
+  }
+  // ---------------------------------------------------------------- lab 559 (recording 409391, windows w1..w3): the list clicks and drags of the item pick
+  static void Lab559Tests() {
+    Console.WriteLine("Lab 559 (item pick: foreign cells, progress budget, slow drag)");
+    var geo = new ListGeometry(); double H = 705, cell = geo.CellW * H; double lx = geo.ColLeft(1) * H + cell / 2;
+    // R1: item 55070 is made at its live cell, item 54835 stays selected whatever is clicked (the list takes no click: raycast 0x0). A neighbour cell (uid 77) is in view. No click on any other cell than
+    // the target's, the list is moved (a drag) at once after the first refused click - not 3 s later, not after a reset
+    {
+      var pg = new AutoPilot(geo); int foreign = 0, targetClicks = 0, drags = 0; long firstDragAt = -1, firstClickAt = -1;
+      for (long t = 0; t < 40000 && pg.State != "failed"; t += 100) {
+        var v = new AutoView { NowMs = t, Foreground = true, H = H, Target = 55070, Row = 2, Col = 1, Sel = 54835, SelRow = 0, SelCol = 0, AnchorHas = true, Row1Top = 120, Types = new[] { 0, 1, 1, 1, 1, 1, 1, 1, 1, 1 }, TipKnown = true, TipShown = false,
+          Hero = 5, ScreenHero = 5, Owner = 0, InputOpen = true, LiveGrid = true, LiveTarget = true, LiveX = lx, LiveY = 148, LiveFirst = 0, LiveLast = 8, LiveCellY = 148, LiveScroll = 54, LiveViewTop = 107, LiveViewBottom = 615,
+          LiveNb = pg.WantNeighbour, LiveNbX = lx, LiveNbY = 300, LiveNbUid = 77, ListSig = 1 };
+        var a = pg.Step(v);
+        if (a != null && a.Kind == AutoKind.Click) { if (a.Cell == 77) foreign++; else targetClicks++; if (firstClickAt < 0) firstClickAt = t; }
+        else if (a != null && a.Kind == AutoKind.Drag) { drags++; if (firstDragAt < 0) firstDragAt = t; }
+      }
+      Check(foreign == 0 && targetClicks >= 1 && drags >= 1 && firstDragAt - firstClickAt <= 3000 && pg.Atoms.Refused <= 6,
+        "lab 559 R1: sel 54835 stays, the cell of 55070 is made: " + foreign + " clicks on foreign cells, " + targetClicks + " on the target, first drag " + (firstDragAt - firstClickAt) + " ms after the first click, " + drags + " drags, refused " + pg.Atoms.Refused + " (" + pg.State + ")");
+    }
+    // R2: the norm runs from the last progress. The content position changes every 3 s for 15 s (a legal scroll): no item_limit; then it stands still: the reset comes about 6 s after the last change
+    {
+      var io = new FakeNavIo(); var pl = new AutoPilot(new ListGeometry());
+      long t00 = io.NowMs;
+      var ia = new ItemPickAction(pl, (s0, t1, n) => new AutoView { NowMs = n, Foreground = true, H = 705, Target = 5, Row = 3, Col = 1, Sel = 0, AnchorHas = true, Types = new[] { 0, 1, 1, 1 }, Row1Top = 100, Hero = 5, ScreenHero = 5, Owner = 0, InputOpen = false,
+          LiveGrid = true, LiveFirst = 0, LiveLast = 8, LiveScroll = 50 + 100 * Math.Min(5, (n - t00) / 3000) }, (v, a) => ClickTarget.EquipNav);
+      var t0 = new NavTarget { Goal = NavGoal.HeroEquip, Hero = 5, Slot = 2 }; var rd = new ScreenReader(); var st = NavState(ScreenKind.HeroScreen, 5, 3, 2, "", new[] { "Form_CharactorMain", "Form_MainCity" }); io.FreshState = st;
+      string reset = ""; long first = io.NowMs;
+      for (int i = 0; i < 300 && reset == ""; i++) { io.NowMs += 200; var sn = rd.Update(st, io.NowMs); var ns = ia.Step(sn, t0, io, io.NowMs); if (ns != null && ns.Kind == StepKind.Reset) reset = ns.Why; }
+      long ms = io.NowMs - first;
+      Check(reset.StartsWith("item_limit ") && ms >= 20000 && ms <= 24500, "lab 559 R2: the content position moved every 3 s for 15 s: no reset from the step's start (6 s), one 6 s after the last progress (" + reset + ", after " + ms + " ms)");
+    }
+    // R3: a drag the host needs 1.4 s for (a loaded PC): the position is read after the drag atom ended, no second drag under the first, no «the list does not move» while it is moving
+    {
+      var pg = new AutoPilot(geo); var types = new int[41]; for (int i = 1; i <= 40; i++) types[i] = 1;
+      int drags = 0; long d1 = -1, d2 = -1; double scroll = 54; long moveAt = -1;
+      for (long t = 0; t < 12000 && pg.State != "failed" && d2 < 0; t += 100) {
+        if (moveAt >= 0 && t >= moveAt) { scroll = 900; }
+        var v = new AutoView { NowMs = t, Foreground = true, H = H, Target = 55070, Row = 21, Col = 3, Sel = 54835, AnchorHas = true, Row1Top = 120, Types = types, TipKnown = true, TipShown = false, Hero = 5, ScreenHero = 5, Owner = 0, InputOpen = true,
+          LiveGrid = true, LiveTarget = false, LiveFirst = scroll > 54 ? 8 : 0, LiveLast = scroll > 54 ? 16 : 7, LiveScroll = scroll, LiveViewTop = 107, LiveViewBottom = 615, ListSig = 1 };
+        var a = pg.Step(v);
+        if (a != null && a.Kind == AutoKind.Drag) { drags++; if (d1 < 0) { d1 = t; moveAt = t + 1400; } else if (d2 < 0) d2 = t; }
+      }
+      Check(d1 >= 0 && pg.State != "failed" && (d2 < 0 || d2 - d1 >= 1400), "lab 559 R3: the host's drag takes 1.4 s: the second drag starts " + (d2 < 0 ? "never" : (d2 - d1) + " ms") + " after the first, state " + pg.State + " (" + pg.Why + ")");
     }
   }
 }

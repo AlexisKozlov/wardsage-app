@@ -246,7 +246,7 @@ namespace RealmForge {
     public const int ListSettleMs = 300, ListSettleCapMs = 6000;
     long lastSig = long.MinValue, sigAt, settleFrom;
     /// <summary>The time this item has taken while the pilot was working on it (not the player's pauses, the background, the settle of a rebuilt list): past the norm (BuildPlanner.ItemLimitMs, twice on a slow PC) the step is reset with its diagnosis, never repeated blind.</summary>
-    long workMs, lastTickAt, filterMs; string workKey = ""; bool lastWasFilter;
+    long workMs, lastTickAt, filterMs, totalMs, lastTickAt0; string workKey = "", progSig = ""; bool lastWasFilter;
     /// <summary>The time of the filter's own work on this item (its clicks, the wait for the list to settle after it) is its own budget, not the pick's: eight filter clicks (lab 552: set + 4 sub stats) are 5-6 s and used to run the pick's 6 s out, which sent the pilot
     /// to the city and back for the same slot again. Past this (twice on a slow PC) the step is reset with its diagnosis.</summary>
     public const int FilterAllowMs = 9000;
@@ -256,21 +256,28 @@ namespace RealmForge {
     public string Name { get { return "item"; } }
     public ICollection<string> Keep { get { return filter != null && filter.ActedKey == key ? NavKeep.ItemPick : NavKeep.ItemPickNoFilter; } }
     public bool Wants(Snapshot s, NavTarget t) { key = t.Key(); return true; }
-    public void Reset() { pilot.Reset(); workMs = 0; filterMs = 0; lastTickAt = 0; lastWasFilter = false; }
+    public void Reset() { pilot.Reset(); workMs = 0; filterMs = 0; lastTickAt = 0; lastWasFilter = false; totalMs = 0; lastTickAt0 = 0; progSig = ""; }
     readonly ProgressMark mark = new ProgressMark();
     public long ProgressAt { get { return mark.At; } }
     public NavStep Step(Snapshot s, NavTarget t, INavIo io, long now) {
       var v = view(s, t, now); v.NavOwned = true;
       // the item's norm: the time of the pilot's own work on it (one tick at most 1 s: a stalled host clock is not the item's time)
       string wk = t.Key();
-      if (wk != workKey) { workKey = wk; workMs = 0; filterMs = 0; lastTickAt = 0; lastWasFilter = false; }
+      if (wk != workKey) { workKey = wk; workMs = 0; filterMs = 0; lastTickAt = 0; lastWasFilter = false; totalMs = 0; lastTickAt0 = 0; progSig = ""; }
       if (lastTickAt > 0) { long dt = Math.Min(1000, now - lastTickAt); if (lastWasFilter) filterMs += dt; else if (pilot.State == "work") workMs += dt; }
       lastTickAt = now; lastWasFilter = false;
       if (filterMs > FilterAllowMs * (io.Slow ? 2 : 1)) {
         long fm = filterMs; filterMs = 0; workMs = 0; lastTickAt = 0;
         return NavStep.Reset("filter_limit " + fm + " ms (norm " + FilterAllowMs + "): the item's filter did not finish");
       }
+      // the norm runs from the last real progress, not from the start of the step (lab 559: a legal scroll to the item and the filter's work were cut by the 6 s from the start, the step went back to the city
+      // and began again): a change of the list's content position, of the made cells, of the selection or of the card, or a drag made, is progress. Only 6 s with none is a reset; the whole step is capped at 4 norms.
+      string prog = v.Sel + "|" + (double.IsNaN(v.LiveScroll) ? "-" : ((int)Math.Round(v.LiveScroll)).ToString()) + "|" + v.LiveFirst + ":" + v.LiveLast + "|" + pilot.Drags + "|" + v.TipShown + "|" + v.SlotOpen;
+      if (prog != progSig) { if (progSig != "" && workMs > 0) workMs = 0; progSig = prog; }
       int limit = (LimitMs + pilot.Drags * DragAllowMs) * (io.Slow ? 2 : 1);   // (every drag of the list is progress: a far item of no set takes its drags' time on top of the norm)
+      if (pilot.State == "work" && lastTickAt0 > 0) { long dt0 = Math.Min(1000, now - lastTickAt0); totalMs += dt0; }
+      lastTickAt0 = now;
+      if (pilot.State == "work" && totalMs > 4L * limit) { long ms = totalMs; totalMs = 0; workMs = 0; filterMs = 0; lastTickAt = 0; return NavStep.Reset("item_limit " + ms + " ms (the whole step, norm " + limit + " from the last progress): " + pilot.State + " sel " + v.Sel + " target " + v.Target + " drags " + pilot.Drags + " clicks " + pilot.Clicks); }
       if (workMs > limit && pilot.State == "work") {
         long ms = workMs; workMs = 0; filterMs = 0; lastTickAt = 0;
         return NavStep.Reset("item_limit " + ms + " ms (norm " + limit + "): " + pilot.State + " sel " + v.Sel + " target " + v.Target + " live " + (v.LiveGrid ? (v.LiveTarget ? "target" : "no target cell") : "none") + " drags " + pilot.Drags + " clicks " + pilot.Clicks + (pilot.Why != "" ? " why " + pilot.Why : ""));
