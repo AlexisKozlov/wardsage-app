@@ -67,7 +67,7 @@ static partial class CoreTests {
     }
     Check(bad.Count == 0, "keys: the 8 widget keys exist and every alternative's path is one of the prefab dump (" + alts + " paths)" + (bad.Count > 0 ? ": " + string.Join("; ", bad.ToArray()) : ""));
     var inAll = new List<string>(); foreach (var t in FrameTargets.All) if (Array.IndexOf(LiveKeyNames, t.Key) >= 0 || t.Key.StartsWith("cell.Gear", StringComparison.Ordinal) || t.Key.StartsWith("cell.HeroClass", StringComparison.Ordinal) || t.Key.StartsWith("cell.HeroFaction", StringComparison.Ordinal)) inAll.Add(t.Key);
-    Check(inAll.Count == 0 && FrameTargets.LiveKeys.Count == 13, "keys: the pilots' keys are kept apart from the hint frames (All has none of them), 13 live keys (" + FrameTargets.LiveKeys.Count + ")");
+    Check(inAll.Count == 0 && FrameTargets.LiveKeys.Count == 14, "keys: the pilots' keys are kept apart from the hint frames (All has none of them), 14 live keys (" + FrameTargets.LiveKeys.Count + ")");
     var kinds = new[] { UiCellKind.GearSuit, UiCellKind.GearStat, UiCellKind.GearSub, UiCellKind.HeroClass, UiCellKind.HeroFaction }; bool cellsOk = true;
     foreach (var k in kinds) { var ft = FrameTargets.Of(FrameTargets.KeyOf(k)); if (ft == null || ft.Cell != k || ft.Form != "Form_CharactorMain" || FrameTargets.Widget(ft) != null) cellsOk = false; }
     Check(cellsOk, "keys: each new cell kind has its key cell.<Kind> on the hero screen's form (a cell, read by UiCellRead, no widget)");

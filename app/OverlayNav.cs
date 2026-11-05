@@ -139,6 +139,12 @@ namespace RealmForge {
       return hv;
     }
 
+    /// <summary>The filter item's row in the game's list by memory (0 = not read / not in the list).</summary>
+    int FilterItemRow() {
+      if (addrs == null || filterItem <= 0) return 0;
+      int c; ulong l; int r = RFX.RowOfUid(addrs, filterItem, out c, out l); return r > 0 ? r : 0;
+    }
+
     FilterView NavFilterView(W32.POINT o, W32.RECT cr, AutoView v, long now) {
       if (!navFviewMade) {
         navFviewMade = true; navFview = FilterViewNow(o, cr, now, v.Foreground, v.UserBusy);
@@ -157,7 +163,7 @@ namespace RealmForge {
         if (recB != null) { try { recB.Hp = RecView.Line(hv, ha, hpilot.State); } catch (Exception) { } }
         lastHeroView = hv; LogHero(hv);
       };
-      var gf = new GearFilterAction(fpilot, (s, t, n) => NavFilterView(navTickO, navTickCr, navTickV, n), () => fpilot.State == "work" || (filterItem != 0 && FilterPilot.WantedFor(filterKind, state == "on")));   // (the guide's verdict asks for the filter: far down, hiddenEq, hiddenFilter, notIn - not only the "filter" hint; «Скрыть надетое» with a foreign item has no hint)
+      var gf = new GearFilterAction(fpilot, (s, t, n) => { var fvw = NavFilterView(navTickO, navTickCr, navTickV, n); fvw.WantPart = t.Slot >= 0 ? t.Slot : -1; return fvw; }, () => fpilot.State == "work" || (filterItem != 0 && FilterPilot.WantedFor(filterKind, state == "on", FilterItemRow())));   // (the guide's verdict asks for the filter: far down, hiddenEq, hiddenFilter, notIn - not only the "filter" hint; «Скрыть надетое» with a foreign item has no hint)
       gf.OnStep = (fv, fa) => {
         if (fpilot.State == "failed") {
           if (!filterFailSaid) {

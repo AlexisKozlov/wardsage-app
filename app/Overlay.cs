@@ -4368,11 +4368,12 @@ namespace RealmForge {
       if (filterItem <= 0 || addrs == null) return fv;
       long[] suits, mains, subAttrs; int part; bool foreign, hideEq;
       if (!RFX.ReadFilter(addrs, out suits, out mains, out subAttrs, out part, out foreign, out hideEq)) return fv;
-      fv.Item = filterItem; fv.Suits = suits; fv.MainAttrs = mains; fv.SubAttrs = subAttrs; fv.Foreign = foreign; fv.HideEquipped = hideEq; fv.ItemListed = ListedKind(filterKind);
+      fv.Item = filterItem; fv.Part = part; fv.Suits = suits; fv.MainAttrs = mains; fv.SubAttrs = subAttrs; fv.Foreign = foreign; fv.HideEquipped = hideEq; fv.ItemListed = ListedKind(filterKind);
       // the item is not on the screen: the filter (set + main stat) brings it to the first rows at once. Scrolling a long
       // list back from wherever the last item left it took the pilot up to a minute (live test 2026-09-26)
       bool onScreen = state == "on";
-      fv.Wanted = FilterPilot.WantedFor(filterKind, onScreen);
+      { int rc; ulong rl; int rr = RFX.RowOfUid(addrs, filterItem, out rc, out rl); fv.ItemRow = rr > 0 ? rr : 0; }   // (the item's row in the game's list by memory: the filter stops at the set when it is in the first page)
+      fv.Wanted = FilterPilot.WantedFor(filterKind, onScreen, fv.ItemRow);
       long[] info;
       if (itemInfo.TryGetValue(filterItem, out info) && part >= 0) {
         // weapons and chest armour have one main stat each: filtering by it narrows nothing, two clicks saved

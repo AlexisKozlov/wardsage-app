@@ -357,12 +357,31 @@ static partial class CoreTests {
     // a far lone item of a set: the filter (more than 3 s of drags)
     p = BuildPlanner.Plan(new List<BuildItem> { BI(2, 12, 7, 40) }, false, false, false);
     Check(p.Steps[0].Mode == SlotMode.Filter && p.Steps[0].SuitId == 7 && p.FilterOpens == 1, "planner: a far item of a set takes the set filter (" + Order(p) + ")");
-    // the spec's case: a group of 3, a group of 2, one in view, the artifact: no-filter slots first, then the 3, then the 2, the artifact last, one opening per group, 22-27 s in all
+    // the spec's case: a group of 3, a group of 2, one in view, the artifact: no-filter slots first, then the 3, then the 2, the artifact last, the pop-up opened once and the part changed inside it (the owner's screenshot: its own «Выбрать часть» row)
     var two = new List<BuildItem> { BI(1, 21, 8, 30), BI(2, 22, 9, 28), BI(3, 23, 8, 45), BI(4, 24, 9, 60), BI(5, 25, 8, 35), BI(6, 26, 4, 2), new BuildItem { Slot = 9, Uid = 27, Artifact = true } };
     p = BuildPlanner.Plan(two, false, false, false);
     string ord = Order(p);
-    Check(ord == "6:Direct 1:Filter 3:Filter 5:Filter 2:Filter 4:Filter 9:Direct" && p.FilterOpens == 2 && p.Steps[1].Group == 1 && p.Steps[4].Group == 2 && p.EstimateMs + overhead >= 20000 && p.EstimateMs + overhead <= 30000,
-      "planner: the free slot, the group of 3, the group of 2, the artifact last, two filter openings, " + (p.EstimateMs + overhead) + " ms (" + ord + ")");
+    Check(ord == "6:Direct 1:Filter 3:Filter 5:Filter 2:Filter 4:Filter 9:Direct" && p.FilterOpens == 2 && p.Steps[1].Group == 1 && p.Steps[4].Group == 2 && p.Steps[1].EstimateMs == BuildPlanner.ItemMs + BuildPlanner.FilterOpenMs && p.Steps[2].EstimateMs == BuildPlanner.ItemMs + BuildPlanner.PartChangeMs
+        && p.Steps[4].EstimateMs == BuildPlanner.ItemMs + BuildPlanner.SetChangeMs + BuildPlanner.PartChangeMs && p.EstimateMs + overhead >= 20000 && p.EstimateMs + overhead <= 30000,
+      "planner: the free slot, the group of 3, the group of 2, the artifact last, one opening (2 s), a part change 0.6 s per further item, a set change 1.8 s, " + (p.EstimateMs + overhead) + " ms (" + ord + ")");
+    // the rows around the limit: 13 by drags (3 drags = 2.7 s), 14 by the set filter; unknown row = in view
+    Check(BuildPlanner.DirectMaxRow == 13 && !BuildPlanner.FilterBeatsScroll(BuildPlanner.DirectMaxRow) && BuildPlanner.FilterBeatsScroll(BuildPlanner.DirectMaxRow + 1) && BuildPlanner.FilterOpenMs == 2000 && BuildPlanner.PartChangeMs == 600 && BuildPlanner.FilterFullMs == 6000,
+      "planner: the filter is taken from the 14th row (the set-only filter 2 s, a part change 0.6 s, the full filter 6 s)");
+    p = BuildPlanner.Plan(new List<BuildItem> { BI(1, 31, 5, 13) }, false, false, false); var p14 = BuildPlanner.Plan(new List<BuildItem> { BI(2, 32, 5, 14), BI(3, 33, 0, 14) }, false, false, false);
+    Check(Order(p) == "1:Scroll" && Order(p14) == "3:Scroll 2:Filter", "planner: row 13 of a set is scrolled, row 14 takes the filter, row 14 of no set is scrolled (" + Order(p) + " | " + Order(p14) + ")");
+    p = BuildPlanner.Plan(new List<BuildItem> { BI(1, 31, 5, 30), BI(2, 32, 5, 33), BI(3, 33, 0, 14) }, false, false, false);
+    Check(Order(p) == "3:Scroll 1:Filter 2:Filter", "planner: two far items of a set take the group's filter, the far item of no set is scrolled (" + Order(p) + ")");
+    // F6b (owner's screenshot): the gear filter pop-up has its own part row, so while it is open on the gear list the 'slot' step holds (the hero screen's slot icons are covered) and the filter action is the way to the target's slot
+    {
+      var tg = new NavTarget { Goal = NavGoal.HeroEquip, Hero = 7, Slot = 4 };
+      Func<Mem3, Snapshot> snap = open => { var st = GearState(3, 2, open, Mem3.No, Mem3.No); return new ScreenReader().Update(st, 1000); };
+      Func<Snapshot, bool> slotHolds = sn => { foreach (var w in NavRoutes.Of(tg)) if (w.Key == "facet:slot") return w.Holds(sn, tg); return false; };
+      var sOpen = snap(Mem3.Yes); var sShut = snap(Mem3.No);
+      Check(NavFacets.Read("GearFilter", sOpen) == 1 && NavFacets.Read("GearFilter", sShut) == 0 && NavFacets.Read("HeroSlot", sOpen) == 2, "F6b: the GearFilter facet is the game's flag on a shown gear list");
+      Check(slotHolds(sOpen) && !slotHolds(sShut), "F6b: the slot step holds while the pop-up is open (another slot wanted), and presses the hero slot icon when it is shut");
+      var fa = new GearFilterAction(new FilterPilot(new FilterGeometry()), (s0, t0, n) => new FilterView { NowMs = n }, () => false);
+      Check(fa.Wants(sOpen, tg) && !fa.Wants(sShut, tg), "F6b: an open pop-up that is not this target's yet: the filter action wants the tick (its part row), a shut one with no verdict does not");
+    }
     // the player's flags that hide an item are cleared only when an item needs it
     var hid = new List<BuildItem> { BI(1, 11, 5, 0), new BuildItem { Slot = 2, Uid = 12, HiddenByWorn = true }, new BuildItem { Slot = 3, Uid = 13, HiddenByEnhanced = true } };
     Check(BuildPlanner.Plan(hid, true, false, false).Flags.ClearWorn && !BuildPlanner.Plan(hid, true, false, false).Flags.ClearEnhanced && BuildPlanner.Plan(hid, true, true, true).Flags.ToString() == "worn enhanced " && !BuildPlanner.Plan(hid, false, false, false).Flags.Any,
@@ -423,7 +442,7 @@ static partial class CoreTests {
       int row = st.Item.Row > 0 ? st.Item.Row : 1;
       if (st.Mode == SlotMode.Filter) {
         int n; inGroup.TryGetValue(st.Group, out n); inGroup[st.Group] = n + 1;
-        row = 1 + n % 3; r.Ms += st.EstimateMs - BuildPlanner.ItemMs; r.Filters += st.EstimateMs > BuildPlanner.ItemMs ? 1 : 0;
+        row = 1 + n % 3; r.Ms += st.EstimateMs - BuildPlanner.ItemMs; r.Filters += n == 0 ? 1 : 0;
       }
       var sim = new AtomListSim { Gain = 0.9, TargetRow = row, Inertia = 0.12 };
       AutoPilot p; long doneAt; int clicks; string res = AtomListRun(sim, true, out p, out doneAt, out clicks);

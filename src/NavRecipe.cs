@@ -25,12 +25,14 @@ namespace RealmForge {
 
   /// <summary>The facets a recipe can test, read from the stable snapshot (the registry the validator checks names against).</summary>
   public static class NavFacets {
-    public static readonly string[] Names = { "Hero", "HeroTab", "HeroSlot" };
+    public static readonly string[] Names = { "Hero", "HeroTab", "HeroSlot", "GearFilter" };
     public static long Read(string facet, Snapshot s) {
       switch (facet) {
         case "Hero": return s.State.Hero;
         case "HeroTab": return s.State.HeroTab;
         case "HeroSlot": return s.State.HeroSlot;
+        // the gear filter pop-up is open on a shown gear list (the game's flag, m_bShow): the part row inside it changes the slot, the hero screen's slot icons are covered
+        case "GearFilter": return s.State.GearOpenMem == Mem3.Yes && s.State.HeroSlot >= 0 ? 1 : 0;
       }
       throw new ArgumentException("facet " + facet);
     }

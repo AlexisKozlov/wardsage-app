@@ -859,6 +859,8 @@ static partial class CoreTests {
     Console.WriteLine("FilterPilot (the game's gear filter: set + main stat):");
     FilterPilotTests();
     FilterReplayTests();
+    FilterMinimalTests();
+    FilterPartTests();
 
     Console.WriteLine("HeroPilot (the plan's hero on the hero screen):");
     HeroPilotTests();
@@ -9509,6 +9511,9 @@ static partial class CoreTests {
   // The game's filter pop-up as the pilot sees it: clicks at the measured places toggle what they toggle in the game.
   sealed class FakeFilterGame {
     public bool Open, Side, SetSide, SubSide, HideEq;
+    public int Part;   // the slot the pop-up's list shows (its «Выбрать часть» row changes it)
+    public bool PartKeepsSet = true;   // the game keeps the filter when the part changes (false: it is dropped)
+    public int PartClicks;
     public List<long> Suits = new List<long>(), Mains = new List<long>(), Subs = new List<long>();
     public long[] SubList;
     public long[] SetList, StatList;
@@ -9529,6 +9534,7 @@ static partial class CoreTests {
       // the × drops the filter (the game applies it only while the pop-up is open)
       if (Near(x, y, g.X(g.MainCloseX, W, H), g.Y(g.CloseY, W, H))) { Open = Side = SetSide = SubSide = false; Suits.Clear(); Mains.Clear(); Subs.Clear(); return; }
       if (Side && Near(x, y, g.X(g.SideCloseX, W, H), g.Y(g.CloseY, W, H))) { Side = SetSide = SubSide = false; return; }   // keeps the filter
+      if (!Side) for (int i = 0; i < 5; i++) { var pc = g.PartCell(i, W, H); if (Near(x, y, pc[0], pc[1])) { PartClicks++; if (i != Part) { Part = i; if (!PartKeepsSet) { Suits.Clear(); Mains.Clear(); Subs.Clear(); } } return; } }
       if (Near(x, y, g.X(g.ResetX, W, H), g.Y(g.ResetY, W, H))) { Suits.Clear(); Mains.Clear(); Subs.Clear(); return; }
       if (Near(x, y, g.X(g.SubArrowX, W, H), g.Y(g.SubArrowY, W, H))) { bool was = Side && SubSide; Side = SubSide = !was; SetSide = false; return; }
       if (Near(x, y, g.X(g.SetArrowX, W, H), g.Y(g.SetArrowY, W, H))) { bool was = Side && SetSide; Side = SetSide = !was; return; }   // the list stays scrolled
@@ -9569,6 +9575,82 @@ static partial class CoreTests {
     return clicks;
   }
 
+
+  // F6b (owner's screenshot): the pop-up's own part row changes the slot, the pop-up stays open from slot to slot of a set group
+  static void FilterPartTests() {
+    var g = new FilterGeometry(); double W = 1920, H = 1009;
+    long[] sets = { 723000, 722900, 722800, 722600, 722500, 722200, 722100, 723100, 722400, 722300, 722000, 721900, 721600, 721500 };
+    long[] stats = { 1, 2, 7, 13, 14, 19, 23, 25, 27 };
+    // the geometry against the screenshot (1896 x 1006 shown, the × at 1281,95): the five icons at y 210 and x 589, 723, 919, 1053, 1189
+    var c0 = g.PartCell(0, W, H); var c4 = g.PartCell(4, W, H); var cl = new[] { g.X(g.MainCloseX, W, H), g.Y(g.CloseY, W, H) };
+    double sc = 1009.0 / 1006;
+    Check(Math.Abs((cl[0] - c0[0]) - (1281 - 589) * sc * 1.0) < 40 && Math.Abs((cl[0] - c4[0]) - (1281 - 1189) * sc) < 40 && Math.Abs((c0[1] - cl[1]) - (210 - 95) * sc) < 25, "part row: the icons sit where the screenshot has them, relative to the × (" + Math.Round(cl[0] - c0[0]) + " / " + Math.Round(cl[0] - c4[0]) + " px left of it, " + Math.Round(c0[1] - cl[1]) + " px below)");
+    // the pilot changes the slot inside the pop-up with one click and leaves the pop-up open (then reads the filter from memory)
+    foreach (bool keeps in new[] { true, false }) {
+      var game = new FakeFilterGame(g, W, H) { SetList = sets, StatList = stats, Open = true, Part = 3, PartKeepsSet = keeps };
+      game.Suits.Add(721500);
+      var p = new FilterPilot(g); int clicks = 0; long doneAt = -1;
+      for (long t = 0; t < 30000 && doneAt < 0; t += 100) {
+        var v = new FilterView { NowMs = t, Foreground = true, W = W, H = H, Item = 5, Wanted = !(game.Part == 4 && game.Suits.Contains(721500)), Part = game.Part, WantPart = 4, SetId = 721500, SetIndex = Array.IndexOf(sets, 721500), StatId = 0, SetOrder = sets, Suits = game.Suits.ToArray(), MainAttrs = game.Mains.ToArray(),
+          SubAttrs = new long[0], PanelOpen = game.Open, SidePanelOpen = game.Open && game.Side, SetPanelOpen = game.Open && game.Side && game.SetSide, PanelMem = game.Open ? Mem3.Yes : Mem3.No,
+          ItemRow = game.Part == 4 && game.Suits.Contains(721500) ? 2 : 60 };
+        var a = p.Step(v);
+        if (a == null) { if (game.Part == 4) doneAt = t; continue; }
+        if (a.Kind == AutoKind.Click) { clicks++; game.Click(a.X, a.Y); Check(a.CellKind == UiCellKind.GearPart ? a.CellId == 4 : true, "part row: the click names its cell (GearPart 4)"); }
+      }
+      Check(doneAt >= 0 && game.Part == 4 && game.Open && game.PartClicks == 1 && (keeps ? clicks == 1 && game.Suits.Count == 1 : game.Suits.Count == 1 && clicks <= 5),
+        "part row: slot 3 -> 4 inside the open pop-up, one click on the part icon, the pop-up stays open" + (keeps ? ", the set kept (" + clicks + " click)" : ", the game dropped the set: set again (" + clicks + " clicks)") + " done at " + doneAt + " ms");
+    }
+    // no part change when the want is unknown or the part is the same; a part that never switches fails with its reason after MaxPartTries
+    {
+      var game = new FakeFilterGame(g, W, H) { SetList = sets, StatList = stats, Open = true, Part = 2 }; var p = new FilterPilot(g);
+      var v = new FilterView { NowMs = 0, Foreground = true, W = W, H = H, Item = 5, Wanted = false, Part = 2, WantPart = 2, SetId = 0, Suits = new long[0], MainAttrs = new long[0], SubAttrs = new long[0], PanelOpen = true, PanelMem = Mem3.Yes };
+      var a = p.Step(v); Check(a == null, "part row: the same slot: no click");
+      var q = new FilterPilot(g); int n = 0; string note = "";
+      for (long t = 0; t < 20000; t += 100) {
+        var vv = new FilterView { NowMs = t, Foreground = true, W = W, H = H, Item = 6, Wanted = false, Part = 1, WantPart = 3, SetId = 0, Suits = new long[0], MainAttrs = new long[0], SubAttrs = new long[0], PanelOpen = true, PanelMem = Mem3.Yes };
+        var aa = q.Step(vv); if (aa != null && aa.Kind == AutoKind.Click) n++; if (q.State == "failed") { note = q.Note; break; }
+      }
+      Check(n == FilterPilot.MaxPartTries && note.IndexOf("part row did not switch", StringComparison.Ordinal) >= 0, "part row: a list that never switches: " + n + " clicks, then a named failure (" + note + ")");
+    }
+  }
+
+  // F6a (lab 572: eleven clicks, 6 s, per item): the filter is the minimum that brings the item into the first page by the game's memory. The row model: the item's row after the set, after the stat, after the sub stats.
+  static int RunMinFilter(FakeFilterGame game, long set, long stat, long[] subIds, int rowNone, int rowSet, int rowStat, int rowSubs, out int stepsAt) {
+    var g = new FilterGeometry(); var p = new FilterPilot(g); int clicks = 0; stepsAt = 0;
+    for (long t = 0; t < 60000; t += 100) {
+      bool hasSet = game.Suits.Contains(set), hasStat = game.Mains.Contains(stat), hasSubs = game.Subs.Count > 0;
+      int row = hasSubs ? rowSubs : hasStat ? rowStat : hasSet ? rowSet : rowNone;
+      var v = new FilterView { NowMs = t, Foreground = true, W = 1920, H = 1009, Item = 5, Wanted = row <= 0 || row > BuildPlanner.DirectMaxRow, ItemRow = row,
+        SetId = set, StatId = stat, SetIndex = Array.IndexOf(game.SetList, set), StatIndex = Array.IndexOf(game.StatList, stat),
+        Suits = game.Suits.ToArray(), MainAttrs = game.Mains.ToArray(), HideEquipped = game.HideEq, SetOrder = game.SetList, SubIds = subIds, SubOrder = game.SubList, SubAttrs = game.Subs.ToArray(),
+        PanelOpen = game.Open, SidePanelOpen = game.Open && game.Side, SetPanelOpen = game.Open && game.Side && game.SetSide };
+      var a = p.Step(v);
+      if (a == null) { stepsAt = (int)t; break; }
+      if (a.Kind == AutoKind.Click) { clicks++; game.Click(a.X, a.Y); }
+    }
+    return clicks;
+  }
+  static void FilterMinimalTests() {
+    var g = new FilterGeometry();
+    long[] sets = { 723000, 722900, 722800, 722600, 722500, 722200, 722100, 723100, 722400, 722300, 722000, 721900, 721600, 721500 };
+    long[] stats = { 1, 2, 7, 13, 14, 19, 23, 25, 27 };
+    Func<FakeFilterGame> mk = () => new FakeFilterGame(g, 1920, 1009) { SetList = sets, StatList = stats, SubList = new long[] { 24, 25, 13, 7, 29, 30 } };
+    int at; var game = mk();
+    int n = RunMinFilter(game, 721500, 13, new long[] { 24, 25, 13, 7 }, 60, 5, 3, 2, out at);
+    Check(game.Suits.Count == 1 && game.Mains.Count == 0 && game.Subs.Count == 0 && n <= 4 && at > 0, "F6a: the set brings the item to row 5: the set only, no stat, no sub stats (" + n + " clicks, the pilot lets go at " + at + " ms)");
+    game = mk();
+    n = RunMinFilter(game, 721500, 13, new long[] { 24, 25, 13, 7 }, 60, 40, 3, 2, out at);
+    Check(game.Suits.Count == 1 && game.Mains.Count == 1 && game.Subs.Count == 0 && at > 0, "F6a: row 40 after the set: the stat is added, and the sub stats are not once it is at row 3 (" + n + " clicks)");
+    game = mk();
+    n = RunMinFilter(game, 721500, 13, new long[] { 24, 25, 13, 7 }, 60, 40, 30, 2, out at);
+    Check(game.Suits.Count == 1 && game.Mains.Count == 1 && game.Subs.Count > 0 && at > 0, "F6a: still far after the set and the stat: the sub stats follow (" + game.Subs.Count + " of them, " + n + " clicks)");
+    game = mk();
+    n = RunMinFilter(game, 721500, 13, new long[] { 24, 25, 13, 7 }, 60, 0, 0, 0, out at);
+    Check(game.Suits.Count == 1 && game.Mains.Count == 1 && at > 0, "F6a: the row is not read after the set: after 0.9 s it counts as far, the stat follows");
+    Check(FilterPilot.WantedFor("pick", false, 10) == false && FilterPilot.WantedFor("pick", false, 14) && FilterPilot.WantedFor("pick", false, 0) && FilterPilot.WantedFor("rel", false, 13) == false && FilterPilot.WantedFor("filter", false, 5) && FilterPilot.WantedFor("hiddenEq", false, 0) && !FilterPilot.WantedFor("pick", true, 99),
+      "F6a: an item in the first 13 rows is found by drags, no filter for it; farther, hidden or unread: the filter");
+  }
 
   // Live 1.6.66.572 (applog_008, 10:29:01-10:29:44): what the filter pilot did with the bar (gear.filterBtn) and with the item changes.
   static FilterView ReplayView(long now, long item, Mem3 mem, bool pix, bool wanted) {

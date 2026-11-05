@@ -62,7 +62,7 @@ namespace RealmForge {
     public readonly List<BuildStep> Steps = new List<BuildStep>();
     public BuildFlags Flags = new BuildFlags();
     public int EstimateMs;
-    public int FilterOpens;   // how many times the filter widget is opened for the build (one per set group's first item)
+    public int FilterOpens;   // how many set groups use the filter (the first opens the pop-up, the next change the set inside it)
     public override string ToString() {
       var sb = new System.Text.StringBuilder();
       foreach (var s in Steps) sb.Append(s.Item.Slot).Append(':').Append(s.Mode).Append(s.Mode == SlotMode.Filter ? "(" + s.SuitId + ")" : "").Append(' ');
@@ -70,16 +70,21 @@ namespace RealmForge {
     }
   }
 
-  /// <summary>The build planner (docs/specs/2026-11-04-shortest-paths.md 2.2-2.4; pure): from the plan's items and what the game's memory says of them, the mode of every slot and the order that makes the build short:
-  /// slots without the filter first (while the filter is empty), then the set groups (3 items before 2), the filter opened once per group and the set changed inside it without the ×, the artifact last. A slot costs the
-  /// cheaper of the computed drags (0.9 s each) and the set filter (3 s the first item of a group, 0 the rest of it); the list flags that hide an item are cleared once for the whole build.</summary>
+  /// <summary>The build planner (docs/specs/2026-11-04-shortest-paths.md 2.2-2.4; pure; the prices of lab 572 and of the owner's screenshot: the filter pop-up has its OWN row «Выбрать часть» with the five slot icons, and the item list on the left stays clickable
+  /// while it is open, so the filter is built once per set group and the slot is changed inside it): from the plan's items and what the game's memory says of them, the mode of every slot and the order that makes the build short:
+  /// slots without the filter first (while the filter is empty), then the set groups (3 items before 2), the filter opened once per group, the part changed inside it by one click (the set is read back from memory after it, set again when the game dropped it),
+  /// the artifact last. A slot costs the cheaper of the computed drags (0.9 s each) and the set filter (2 s the first group, a set change 1.8 s, a part change 0.6 s); the list flags that hide an item are cleared once for the whole build.</summary>
   public static class BuildPlanner {
-    /// <summary>The costs, in ms (docs/specs/2026-11-04-shortest-paths.md 1, 2): a drag with its stop, the filter's first opening, a set change inside the open widget, the item itself (click, card, «Заменить»).</summary>
-    public const int DragMs = 900, FilterOpenMs = 3000, SetChangeMs = 1200, ItemMs = 2200, ArtifactMs = 3200;
+    /// <summary>The costs, in ms: a drag with its stop, the first opening of the filter with its set (bar, set arrow, set, side panel closed: set only), a set change inside the open pop-up (reset, arrow, set, close side), a part change inside it (one click on the part row),
+    /// the full filter (set, stat, 4 sub stats), the item itself (click, card, «Заменить»).</summary>
+    public const int DragMs = 900, FilterOpenMs = 2000, SetChangeMs = 1800, PartChangeMs = 600, FilterFullMs = 6000, FilterSlackMs = 1000, ItemMs = 2200, ArtifactMs = 3200;
     /// <summary>The norms the pilots are judged by: one item (the slot to the confirm), its filter. Twice that is a reset of the step with its diagnosis, never a repeat (the slow PC doubles them).</summary>
     public const int ItemLimitMs = 6000, FilterLimitMs = 4000;
     /// <summary>The rows of the gear list in view (VISIBLE_ROWS of ui/guide.js: the 1080p window shows about 4.5) and the rows one drag brings.</summary>
     public const int ViewRows = 4;
+    /// <summary>The last row that is found by drags and not by the filter: its drags cost no more than the set filter plus its expected share of the fallbacks (FilterOpenMs + FilterSlackMs): 3 drags = 2.7 s, row 13 (the 14th row needs 4). Mirrored by ui/guide.js farRow;
+    /// the filter pilot stops at the set when the item is in the first DirectMaxRow rows by the game's memory.</summary>
+    public const int DirectMaxRow = 13;
 
     /// <summary>The norm of a recipe's step (its budgetMs, tools/recipes/*.json), <paramref name="dflt"/> when the recipe or its budget is not there.</summary>
     public static int NormMs(string recipe, string step, int dflt) {
@@ -94,8 +99,8 @@ namespace RealmForge {
       return (row - ViewRows + (ViewRows - 1) - 1) / (ViewRows - 1);
     }
 
-    /// <summary>True when the filter costs less than the drags for this row (the single-item test the page's guide uses as well: ui/guide.js farRow).</summary>
-    public static bool FilterBeatsScroll(int row) { return DragsFor(row) * DragMs > FilterOpenMs; }
+    /// <summary>True when the set filter costs less than the drags for this row (the single-item test the page's guide uses as well: ui/guide.js farRow).</summary>
+    public static bool FilterBeatsScroll(int row) { return DragsFor(row) * DragMs > FilterOpenMs + FilterSlackMs; }
 
     public static BuildFlags FlagsFor(IList<BuildItem> items, bool worn, bool enhanced, bool exclusive) {
       var f = new BuildFlags();
@@ -124,14 +129,14 @@ namespace RealmForge {
         if (it.Artifact) { st.EstimateMs = ArtifactMs; art = st; continue; }
         gear.Add(st);
       }
-      // a set group (2 or 3 items of one set) takes the filter when its items' drags cost more than one opening of it (the first of the group pays it); a lone item when its own drags do
+      // a set group (2 or 3 items of one set) takes the filter when its items' drags cost more than one opening of it (and the part changes inside it); a lone item when its own drags do
       var bySet = new Dictionary<long, List<BuildStep>>();
       foreach (var st in gear) if (st.Mode != SlotMode.Skip && st.Item.SetId > 0) { List<BuildStep> l; if (!bySet.TryGetValue(st.Item.SetId, out l)) bySet[st.Item.SetId] = l = new List<BuildStep>(); l.Add(st); }
       var groups = new List<List<BuildStep>>();
       foreach (var kv in bySet) {
         int scroll = 0; var members = new List<BuildStep>();
         foreach (var st in kv.Value) if (st.Mode == SlotMode.Scroll) { scroll += DragsFor(st.Item.Row) * DragMs; members.Add(st); }
-        if (members.Count == 0 || scroll <= FilterOpenMs) continue;
+        if (members.Count == 0 || scroll <= FilterOpenMs + FilterSlackMs + (members.Count - 1) * PartChangeMs) continue;
         foreach (var st in members) { st.Mode = SlotMode.Filter; st.SuitId = kv.Key; st.EstimateMs = ItemMs; st.Why += ", set " + kv.Key + " filter"; }
         groups.Add(members);
       }
@@ -144,7 +149,13 @@ namespace RealmForge {
       int gi = 0;
       foreach (var grp in gl) {
         gi++; plan.FilterOpens++;
-        for (int i = 0; i < grp.Count; i++) { grp[i].Group = gi; if (i == 0) grp[i].EstimateMs += plan.FilterOpens == 1 ? FilterOpenMs : SetChangeMs; ordered.Add(grp[i]); }
+        // the pop-up stays open from group to group: the first group opens it, the next one changes the set; every item after the first of its group (and the first of a later group) changes the part
+        for (int i = 0; i < grp.Count; i++) {
+          grp[i].Group = gi;
+          if (i == 0) grp[i].EstimateMs += plan.FilterOpens == 1 ? FilterOpenMs : SetChangeMs + PartChangeMs;
+          else grp[i].EstimateMs += PartChangeMs;
+          ordered.Add(grp[i]);
+        }
       }
       if (art != null) ordered.Add(art);
       plan.Steps.AddRange(ordered);
@@ -219,7 +230,11 @@ namespace RealmForge {
     public GearFilterAction(FilterPilot p, Func<Snapshot, NavTarget, long, FilterView> v, Func<bool> wanted) { pilot = p; view = v; this.wanted = wanted; }
     public string Name { get { return "filter"; } }
     public ICollection<string> Keep { get { return NavKeep.GearFilter; } }
-    public bool Wants(Snapshot s, NavTarget t) { return wanted == null || wanted(); }
+    public bool Wants(Snapshot s, NavTarget t) {
+      if (wanted == null || wanted()) return true;
+      // the pop-up is open on a shown gear list and not yet this target's: its part row is the way to the target's slot (the hero screen's slot icons are covered), and an open pop-up that the item can be picked beside is kept
+      return s.State.GearOpenMem == Mem3.Yes && s.State.HeroSlot >= 0 && t.Slot >= 0 && (s.State.HeroSlot != t.Slot || ActedKey != t.Key());
+    }
     public void Reset() { pilot.Reset(); }
     readonly ProgressMark mark = new ProgressMark();
     public long ProgressAt { get { return mark.At; } }
@@ -228,6 +243,8 @@ namespace RealmForge {
       var fa = pilot.Step(fv);
       mark.Note(pilot.State + "|" + pilot.Note, now);
       if (OnStep != null) OnStep(fv, fa);
+      // the pop-up that stands open with the item in its list is this target's own: the pick keeps it (its keep list), the sweep does not close it
+      if (fa == null && fv.PanelOpen && fv.ItemRow > 0 && pilot.State != "failed") ActedKey = t.Key();
       if (pilot.State == "failed" && pilot.Note != "" && fa == null && !pilot.DroppedGiveUp) return NavStep.Reset("filter: " + pilot.Note);   // a toggle that does not read back: verify-or-reset
       if (fa == null) return null;
       if (fa.Kind == AutoKind.None) return NavStep.Wait(pilot.State == "failed" ? "idle" : "work");

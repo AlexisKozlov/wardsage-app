@@ -201,6 +201,7 @@ namespace RealmForge {
       KC("cell.GearSuit", "Form_CharactorMain", UiCellKind.GearSuit, "m_Panels.EquipPanel.m_Panel_EquipFilterWidget_Charactor.m_SuitFilterGridProxy.m_Data (the set list of the side panel)");
       KC("cell.GearStat", "Form_CharactorMain", UiCellKind.GearStat, "m_Panels.EquipPanel.m_Panel_EquipFilterWidget_Charactor.m_MainAttrFilterGridProxy.m_Data (the main stats)");
       KC("cell.GearSub", "Form_CharactorMain", UiCellKind.GearSub, "m_Panels.EquipPanel.m_Panel_EquipFilterWidget_Charactor.m_SubAttrFilterGridProxy.m_Data (the sub stats)");
+      KC("cell.GearPart", "Form_CharactorMain", UiCellKind.GearPart, "the gear filter pop-up's «Выбрать часть» row: five slot icons (no list read of its own yet: the geometry's point; the live rect needs a dump of the row's toggles)");
       KC("cell.HeroClass", "Form_CharactorMain", UiCellKind.HeroClass, "m_Panels.Charactor_FilterOrder.m_MainInfinityGridProxy.m_Data (the class column)");
       KC("cell.HeroFaction", "Form_CharactorMain", UiCellKind.HeroFaction, "m_Panels.Charactor_FilterOrder.m_FactionInfinityGridProxy.m_Data (the faction column)");
     }

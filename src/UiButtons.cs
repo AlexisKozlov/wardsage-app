@@ -1072,7 +1072,8 @@ namespace RealmForge {
   // m_SubAttrFilterGridProxy, the proxies' m_Data = the set / attribute ids, cell child c_Select) and the hero list's filter pop-up (Charactor_FilterOrder:
   // m_MainInfinityGridProxy = the classes, m_FactionInfinityGridProxy = the factions, cell child c_Button). A class row whose id is not readable is keyed by its
   // list index (RFX.IndexUid), never guessed.
-  public enum UiCellKind { None, Inventory, Ascend, Recast, HeroGear, HeroArt, HeroList, InvSuit, InvArt, GearSuit, GearStat, GearSub, HeroClass, HeroFaction }
+  public enum UiCellKind { None, Inventory, Ascend, Recast, HeroGear, HeroArt, HeroList, InvSuit, InvArt, GearSuit, GearStat, GearSub, HeroClass, HeroFaction, GearPart }
+  // (GearPart: the five slot icons of the gear filter pop-up's «Выбрать часть» row, id = the part 0..4; no list read of its own yet: the click is the geometry's point, the log says src=geo)
 
   /// <summary>One item cell the grid has made now: the item, its list index (0-based) and row column (HeroGear, 1-based), its picture's rect (client px).</summary>
   public sealed class UiCell {

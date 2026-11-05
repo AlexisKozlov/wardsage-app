@@ -9,14 +9,14 @@
 (function (root) {
   // rows of the gear list visible without scrolling in the game (1080p: about 4.5)
   const VISIBLE_ROWS = 4;
-  // the cost model of BuildPlanner (src/NavEquip.cs): a computed drag with its stop 0.9 s brings VISIBLE_ROWS - 1 rows, the set filter costs 3 s to open:
-  // a row is «far» (narrow the list with the filter) only when its drags cost more than that, i.e. from the 14th row
-  const DRAG_MS = 900, FILTER_MS = 3000;
+  // the cost model of BuildPlanner (src/NavEquip.cs): a computed drag with its stop 0.9 s brings VISIBLE_ROWS - 1 rows, the set filter costs 2 s to open (its pop-up has its own «Выбрать часть» row: a further slot of the group costs
+  // one click, 0.6 s) plus 1 s for its expected fallbacks (stat / sub stats): a row is «far» (narrow the list with the filter) only when its drags cost more than that, i.e. from the 14th row
+  const DRAG_MS = 900, FILTER_MS = 2000, FILTER_SLACK_MS = 1000;
   function dragsFor(row) { return row <= VISIBLE_ROWS ? 0 : Math.ceil((row - VISIBLE_ROWS) / (VISIBLE_ROWS - 1)); }
-  function farRow(row) { return dragsFor(row) * DRAG_MS > FILTER_MS; }
+  function farRow(row) { return dragsFor(row) * DRAG_MS > FILTER_MS + FILTER_SLACK_MS; }
 
   // The order the build is done in (BuildPlanner): the slots that need no set group first (the filter stays empty), then the sets that hold 3 items, then 2 (the filter is
-  // opened once per group and the set changed inside it); equals keep the plan's order. The artifact is not an item: it comes after them.
+  // opened once per group, the part changed in its pop-up's own row, the set changed inside it); equals keep the plan's order. The artifact is not an item: it comes after them.
   function ordered(items) {
     const size = {};
     for (const it of items) if (it.setId > 0) size[it.setId] = (size[it.setId] || 0) + 1;

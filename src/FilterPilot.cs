@@ -25,6 +25,9 @@ namespace RealmForge {
     public double SetColX0 = 0.4876, SetColX1 = 0.7235, SetRow0 = 0.2497, SetPitch = 0.0656;   // sets: 2 columns
     public double StatColX0 = 0.4817, StatColX1 = 0.7185, StatRow0 = 0.2359, StatPitch = 0.0689; // main stats: 2 columns
     public double SubArrowX = 0.2339, SubArrowY = 0.7493;    // «Выбрать второстепенные хар-ки» › (its panel: the main stats' layout)
+    // «Выбрать часть»: the pop-up's own row of the five slot icons (two weapon / armour slots, a divider, three accessory slots; the current one lit), measured on the owner's screenshot of the
+    // 1.6.66 client (the icons' centres against the × and the set arrow): x from the window centre like the others, y in the same fraction of the client height
+    public double[] PartX = { -0.343, -0.215, -0.028, 0.100, 0.230 }; public double PartY = 0.2042;
     // rows fully visible without scrolling the side panel: 10 (live 2026-09-26: all 19 weapon sets and all 20 bracer /
     // amulet / ring sets show at once, the 10th row fully)
     public const int SetRows = 10, StatRows = 9;
@@ -32,6 +35,8 @@ namespace RealmForge {
     // the pop-up is anchored to the window centre (x and y), sizes scale with the UI unit (Ui.Unit)
     public double X(double fx, double W, double H) { return W / 2 + fx * Ui.Unit(W, H); }
     public double Y(double fy, double W, double H) { return Ui.FromMiddle(fy, W, H); }
+    /// <summary>The icon of part <paramref name="part"/> (0..4) in the pop-up's «Выбрать часть» row.</summary>
+    public double[] PartCell(int part, double W, double H) { return new[] { X(PartX[part], W, H), Y(PartY, W, H) }; }
     public double[] SetCell(int index, double W, double H) {
       return new[] { X(index % 2 == 0 ? SetColX0 : SetColX1, W, H), Y(SetRow0 + index / 2 * SetPitch, W, H) };
     }
@@ -54,6 +59,8 @@ namespace RealmForge {
     public long[] SubOrder;         // the sub stats list of the filter, in its order
     public long[] SubAttrs;         // sub stats chosen in the filter now (null = none)
     public long[] Suits, MainAttrs; // the filter now; null = unreadable
+    public int Part = -1, WantPart = -1;   // the slot the pop-up's list shows now (m_FilterConfig.Part) and the item's slot (-1 = not known: no part change)
+    public int ItemRow;             // the item's row in the game's list now, from memory (m_EquipIdToIndex, 1-based; 0 = not in the list / not read): the filter stops at the set when it is in the first page
     public bool Foreign;            // other filters are on (level, sub stats): they could hide the item
     public bool ItemListed;         // the guide sees the item in the game's list (its verdict is not «hidden by worn»): the game applied the untick even if the read is stale
     public bool HideEquipped, OnOtherHero;   // OnOtherHero: the plan takes it from that hero on purpose (the guide skips others)
@@ -70,12 +77,15 @@ namespace RealmForge {
   public sealed class FilterPilot {
     /// <summary>After the click that opens the pop-up the pilot waits this long for the game's flag to turn on before it presses the (toggle) bar again.</summary>
     public const int MemOpenWaitMs = 1500;
+    /// <summary>After the filter's content changed (the set, the stat) the game's list is rebuilt: the item's row is read within this time; a row that stays far or unread past it counts as «not in the first page» (the stat / sub stats follow).</summary>
+    public const int ListReadMs = 900;
+    public const int MaxPartTries = 3;
     public const int MaxClicks = 26, AfterClickMs = 550, PartTries = 2, EqConfirmMs = 3500, SetTries = 4, MaxSetDrags = 4, MaxSubs = 4, MaxPasses = 3, MaxReopens = 3;
     readonly FilterGeometry g;
     long item = -1, waitUntil, openWaitUntil;
     readonly DisagreeTracker disagree = new DisagreeTracker();
     long eqClickAt, lastNowMs;   // lastNowMs: the clock of the toggle's wait stands still while the player has the mouse / the game is behind (live 572 df57b5: «auto: paused» ate the wait)
-    int clicks, setTries, statTries, eqTries, closeTries, openTries, setDrags, subTries, sideCloseTries;
+    int partTries; int clicks, setTries, statTries, eqTries, closeTries, openTries, setDrags, subTries, sideCloseTries;
     // the filter was complete once for this item (wasSet); the game may drop it afterwards (the hero screen opened again):
     // the next pass starts its tries over, a few passes at most
     int passes; bool wasSet;
@@ -90,6 +100,7 @@ namespace RealmForge {
     // clicked last (a set clicked there that is not the wanted one tells the real scroll)
     double setScroll; int setClickRow = -1; bool setPending;
     bool setSkipped, statSkipped, failed;
+    string fsig = ""; long fsigAt;   // the filter's content (set / stats / sub stats) as last seen and when it changed: the list read after a change is awaited
     /// <summary>idle | work | done | failed</summary>
     public string State = "idle";
     /// <summary>Why the pilot gave up or what it is doing besides the filter (for the journal).</summary>
@@ -101,8 +112,9 @@ namespace RealmForge {
 
     /// <summary>The guide's verdict (ui/guide.js kind) asks for the filter: the item is far down, hidden or not in the list (a
     /// «Скрыть улучшенное» verdict does not: the filter cannot show it).</summary>
-    public static bool WantedFor(string kind, bool onScreen) {
-      return kind == "filter" || kind == "hiddenEq" || kind == "hiddenFilter" || kind == "notIn" || ((kind == "pick" || kind == "rel") && !onScreen);
+    public static bool WantedFor(string kind, bool onScreen, int row = 0) {
+      // an item in the first page (row <= BuildPlanner.DirectMaxRow by memory) is found by the list's own drags: no filter for it (lab 572: eleven clicks, 6 s, for an item a few drags away)
+      return kind == "filter" || kind == "hiddenEq" || kind == "hiddenFilter" || kind == "notIn" || ((kind == "pick" || kind == "rel") && !onScreen && (row <= 0 || row > BuildPlanner.DirectMaxRow));
     }
 
     /// <summary>Start over on the next step (the player pressed «Надеть» again).</summary>
@@ -140,17 +152,17 @@ namespace RealmForge {
 
     // The action of the last Step did not go out (the navigator waits for a stable screen, the gate said wait): the pilot is as before it, the click is not counted and not awaited.
     // (The old host never calls this: its behaviour is unchanged.)
-    sealed class Saved { public long WaitUntil, OpenWaitUntil, EqClickAt, SubLastId, SubLastAt; public long[] SubBefore; public int Clicks, SetTries, StatTries, EqTries, CloseTries, OpenTries, SetDrags, SubTries, SideCloseTries, Passes, Reopens, SetClickRow; public double SetScroll; public bool SetPending, WasSet, SubSkipped, SetSkipped, StatSkipped, Failed; public string State, Side, Note; public long Item; }
+    sealed class Saved { public long WaitUntil, OpenWaitUntil, EqClickAt, SubLastId, SubLastAt; public long[] SubBefore; public int PartTries, Clicks, SetTries, StatTries, EqTries, CloseTries, OpenTries, SetDrags, SubTries, SideCloseTries, Passes, Reopens, SetClickRow; public double SetScroll; public bool SetPending, WasSet, SubSkipped, SetSkipped, StatSkipped, Failed; public string State, Side, Note; public long Item; }
     Saved unsent;
     Saved SaveState() {
-      return new Saved { SubLastId = subLastId, SubLastAt = subLastAt, SubBefore = subBefore, WaitUntil = waitUntil, OpenWaitUntil = openWaitUntil, EqClickAt = eqClickAt, Clicks = clicks, SetTries = setTries, StatTries = statTries, EqTries = eqTries, CloseTries = closeTries, OpenTries = openTries, SetDrags = setDrags, SubTries = subTries,
+      return new Saved { PartTries = partTries, SubLastId = subLastId, SubLastAt = subLastAt, SubBefore = subBefore, WaitUntil = waitUntil, OpenWaitUntil = openWaitUntil, EqClickAt = eqClickAt, Clicks = clicks, SetTries = setTries, StatTries = statTries, EqTries = eqTries, CloseTries = closeTries, OpenTries = openTries, SetDrags = setDrags, SubTries = subTries,
         SideCloseTries = sideCloseTries, Passes = passes, Reopens = reopens, SetClickRow = setClickRow, SetScroll = setScroll, SetPending = setPending, WasSet = wasSet, SubSkipped = subSkipped, SetSkipped = setSkipped, StatSkipped = statSkipped, Failed = failed, State = State, Side = side, Note = Note, Item = item };
     }
     public void NotSent() {
       var x = unsent; unsent = null; if (x == null) return;
       effect.Drop();
       subLastId = x.SubLastId; subLastAt = x.SubLastAt; subBefore = x.SubBefore;
-      waitUntil = x.WaitUntil; openWaitUntil = x.OpenWaitUntil; eqClickAt = x.EqClickAt; clicks = x.Clicks; setTries = x.SetTries; statTries = x.StatTries; eqTries = x.EqTries; closeTries = x.CloseTries; openTries = x.OpenTries; setDrags = x.SetDrags;
+      waitUntil = x.WaitUntil; openWaitUntil = x.OpenWaitUntil; eqClickAt = x.EqClickAt; partTries = x.PartTries; clicks = x.Clicks; setTries = x.SetTries; statTries = x.StatTries; eqTries = x.EqTries; closeTries = x.CloseTries; openTries = x.OpenTries; setDrags = x.SetDrags;
       subTries = x.SubTries; sideCloseTries = x.SideCloseTries; passes = x.Passes; reopens = x.Reopens; setClickRow = x.SetClickRow; setScroll = x.SetScroll; setPending = x.SetPending; wasSet = x.WasSet;
       subSkipped = x.SubSkipped; setSkipped = x.SetSkipped; statSkipped = x.StatSkipped; failed = x.Failed; State = x.State; side = x.Side; Note = x.Note;
       item = x.Item;   // (the item too: a click that did not go out on the first tick of a NEW item put the old item's finished state back under the new item, and the next ticks counted its "drops" - live 1.6.66.572 item 33643: «dropped 3 times» -> reset -> the city and back)
@@ -170,6 +182,13 @@ namespace RealmForge {
 
       bool setOk = v.SetId <= 0 || setSkipped || Only(v.Suits, v.SetId);
       bool statOk = v.StatId <= 0 || statSkipped || Only(v.MainAttrs, v.StatId);
+      // F6a: the set alone narrows the list; the stat and the sub stats are added ONLY when the item is not in the first page by the game's memory (never «just in case»)
+      string sg = J(v.Suits) + "|" + J(v.MainAttrs) + "|" + J(v.SubAttrs);
+      if (sg != fsig) { fsig = sg; fsigAt = v.NowMs; }
+      bool narrowed = v.SetId > 0 && !setSkipped && Only(v.Suits, v.SetId) && State == "work";
+      bool inPage = v.ItemRow > 0 && v.ItemRow <= BuildPlanner.DirectMaxRow;
+      bool waitList = narrowed && !inPage && v.NowMs - fsigAt < ListReadMs;
+      if (narrowed && inPage) { statOk = true; statSkipped = true; subSkipped = true; }
       // the read of «Скрыть надетое» is stale while the panel is open: one click per pass, never again for an unconfirmed read
       if (eqTries > 0 && v.OnOtherHero && v.HideEquipped && !v.ItemListed && v.NowMs - eqClickAt > EqConfirmMs) {
         failed = true; State = "failed"; Note = "«Скрыть надетое» did not switch off"; DroppedGiveUp = true; return null;   // (quiet: the toggle may still take effect, the pick goes on - no reset, no trip to the city)
@@ -186,10 +205,17 @@ namespace RealmForge {
       bool clean = !v.Foreign && OnlyOrNone(v.Suits, v.SetId) && OnlyOrNone(v.MainAttrs, v.StatId) && (subsClean || subSkipped);
       // the guide sees the item in the list's view now (its verdict no longer asks for the filter: live 1.6.66.417, the set alone brought the
       // weapon up, and the main stat and four sub stats were still clicked, 4 s): what is set is enough, the rest is not clicked
-      bool enough = !v.Wanted && State == "work" && v.PanelOpen && eqOk && !failed;
-      bool satisfied = (setOk && statOk && subOk && eqOk && clean) || enough;
+      // the pop-up shows another slot's list than the item's: its own «Выбрать часть» row changes it (the pop-up stays open from slot to slot of a set group; the game's list, the sets and the filter are read back after it)
+      bool partOff = v.PanelOpen && v.WantPart >= 0 && v.Part >= 0 && v.Part != v.WantPart && !failed;
+      bool wantFilter = v.Wanted || partOff;
+      bool enough = !v.Wanted && State == "work" && v.PanelOpen && eqOk && !failed && !partOff;
+      bool satisfied = ((setOk && statOk && subOk && eqOk && clean) || enough) && !partOff;
       // set: leave the pop-up open (its × would drop the filter); the item pilot picks the item from the list beside it
       // (the side panel of sets / stats stays open after the last pick and swallows the item list's clicks: closed first)
+      if (waitList && !partOff && v.PanelOpen && eqOk && !failed && v.Foreground && !v.UserBusy) {
+        // the list is rebuilt after the set: its read is awaited (the side panel stays as it is: the next part of the filter is opened in it)
+        return AutoAction.Nothing;
+      }
       if (satisfied) {
         if (v.PanelOpen) wasSet = true;   // (set = seen on in the game's pop-up; a closed pop-up that needed nothing was never set, so nothing can be «dropped»)
         if (v.PanelOpen && v.SidePanelOpen && (State == "work" || State == "done")) {
@@ -206,9 +232,9 @@ namespace RealmForge {
         return null;
       }
 
-      if (!v.PanelOpen && (satisfied || failed || !v.Wanted)) { if (State == "work") State = "done"; return null; }
+      if (!v.PanelOpen && (satisfied || failed || !wantFilter)) { if (State == "work") State = "done"; return null; }
       // a panel the player opened himself is his: only a filter this pilot started is continued
-      if (State != "work" && !v.Wanted) return null;
+      if (State != "work" && !wantFilter) return null;
       if (State == "failed") return null;
       if (!v.Foreground || v.UserBusy) return AutoAction.Nothing;
       if (v.NowMs < waitUntil) return AutoAction.Nothing;
@@ -239,6 +265,17 @@ namespace RealmForge {
       if (failed) {
         if (++closeTries > PartTries) { failed = true; State = "failed"; return null; }
         return Click(v, g.X(g.MainCloseX, W, H), g.Y(g.CloseY, W, H));
+      }
+      if (partOff) {
+        // the part row is in the pop-up itself; the side panel (sets / stats) is closed first (it may lie over it)
+        if (v.SidePanelOpen && sideCloseTries < PartTries) {
+          sideCloseTries++; Note = "closing the side panel (" + sideCloseTries + ")";
+          return Click(v, g.X(g.SideCloseX, W, H), g.Y(g.CloseY, W, H), FrameTargets.KeyGearSideClose);
+        }
+        if (partTries >= MaxPartTries) { failed = true; State = "failed"; Note = "the part row did not switch the list to slot " + v.WantPart + " (" + partTries + " clicks, the list shows " + v.Part + ")"; return null; }
+        partTries++; Note = "slot " + v.Part + " -> " + v.WantPart + " in the pop-up's part row";
+        var pc = g.PartCell(Math.Min(4, v.WantPart), W, H);
+        return Click(v, pc[0], pc[1], null, UiCellKind.GearPart, v.WantPart);
       }
       // the last set click chose another set: that set's row was where the click went, so the list is scrolled by the
       // difference (then «Сбросить» clears it below and the wanted one is clicked where it really is)
@@ -326,7 +363,7 @@ namespace RealmForge {
 
     // the tries of one pass (setScroll stays: the game keeps the sets list scrolled)
     void NewPass() {
-      clicks = setTries = statTries = eqTries = closeTries = openTries = setDrags = subTries = sideCloseTries = 0;
+      partTries = clicks = setTries = statTries = eqTries = closeTries = openTries = setDrags = subTries = sideCloseTries = 0;
       Note = ""; wasSet = false; openWaitUntil = 0;
       subSkipped = false; side = ""; subLastId = 0; subBefore = null;
       setClickRow = -1; setPending = false;
@@ -343,7 +380,7 @@ namespace RealmForge {
     readonly EffectWait effect = new EffectWait();
     // what a filter click changes: the chosen set / stats / sub stats, the panels open, «Скрыть надетое»
     static string Key(FilterView v) {
-      return J(v.Suits) + "|" + J(v.MainAttrs) + "|" + J(v.SubAttrs) + "|" + v.PanelOpen + v.SidePanelOpen + v.SetPanelOpen + v.HideEquipped;
+      return v.Part + "|" + J(v.Suits) + "|" + J(v.MainAttrs) + "|" + J(v.SubAttrs) + "|" + v.PanelOpen + v.SidePanelOpen + v.SetPanelOpen + v.HideEquipped;
     }
     static string J(long[] a) { return a == null ? "-" : string.Join(",", Array.ConvertAll(a, x => x.ToString())); }
 
