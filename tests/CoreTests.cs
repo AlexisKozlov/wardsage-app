@@ -884,6 +884,7 @@ static partial class CoreTests {
     LocateGemAndListTests();
     SellHintTests();
     ArtifactSellTests();
+    Live577Tests();
     CityGateAndPanelTests();
     Console.WriteLine("Offer pop-ups over the city (OfferForms, OfferClose, the window table, the automatic recording):");
     OfferTests();
@@ -7524,6 +7525,36 @@ static partial class CoreTests {
     Eq(0UL, RFX.PanelAfterForm(0x1000UL, 0x10UL, 0x20UL, 0), "panel: the form changed, no EquipFilter found -> 0");
     Eq(0x1000UL, RFX.PanelAfterForm(0x1000UL, 0x10UL, 0x10UL, 0), "panel: same form -> kept");
     Eq(0x2000UL, RFX.PanelAfterForm(0x1000UL, 0x10UL, 0x20UL, 0x2000UL), "panel: the new form's panel found -> it");
+  }
+
+  // live 1.6.66.577 (recordings 120445-6d76a8, 120622-d3f1ed): the facts as they stood in the log
+  static void Live577Tests() {
+    Console.WriteLine("Live 577: artifact phase without the city, locate path over the item card + gear filter");
+    // G1: after the last item (12:05:04) the screen is HeroScreen hero 223700000 tab 3: the artifact steps go on from it, the city is not the way
+    var heroScr = new ScreenState { Kind = ScreenKind.HeroScreen, Hero = 223700000, HeroTab = 3, HeroSlot = 0 };
+    Check(ArtCityStart.Settled(true, ScreenKind.HeroScreen), "577 G1: artifact phase on the hero screen -> the city-first flag is settled");
+    Check(!ArtCityStart.Settled(true, ScreenKind.City) && !ArtCityStart.Settled(false, ScreenKind.HeroScreen), "577 G1: ... not on the city, not in the gear phase");
+    Check(!CityFirst.NeedsCity(PilotFlow.ArtEquip, heroScr), "577 G1: CityFirst: the hero screen is a continuation of the artifact flow (no CityBack)");
+    // the gear filter still open when the art step starts (log 12:05:04 gear filter mem=yes): closed first, then nothing is in the way of the tab
+    Check(HeroCover.Next(true, false, false, Mem3.Yes, Mem3.No, false) == CoverMove.ClosePopup, "577 G1: gear filter mem=yes -> its x first");
+    Check(HeroCover.Next(true, false, false, Mem3.No, Mem3.No, false) == CoverMove.None, "577 G1: filter closed (mem=no) -> nothing to close, the tab is clicked");
+    // G2: HeroScreen + Form_CharactorEquipTip + gear filter mem=yes on the way to openFoundry: the card (Escape), then the filter (x), then the back arrow - no stop
+    var scr = new ScreenState { Kind = ScreenKind.HeroScreen, Hero = 229000000, HeroTab = 3, HeroSlot = 3, Flow = "Form_CharactorEquipTip", GearOpenMem = Mem3.Yes };
+    var step = new LocateStep { Kind = LocateKind.OpenFoundry, OnGear = true };
+    string gp577 = Path.Combine("tests", "fixtures", "screens", "_geometry.json");
+    var geo577 = File.Exists(gp577) ? GameGeometry.Parse(File.ReadAllText(gp577, Encoding.UTF8), "1.6.39.829.1") : null;
+    var lv = new LocateView { Foreground = true, NowMs = 100000, W = 1350, H = 689, U = Ui.Unit(1350, 689), Step = step, HeroScreenOpen = true, Geometry = geo577 };
+    string why; Check(geo577 == null || LocateAuto.Decide(lv, out why) == LocateTodo.BackToCity, "577 G2: openFoundry on the hero screen -> the pilot's todo is the back arrow (not a stop)");
+    var m1 = HeroCover.Next(true, ClickGate.OnlyTip(scr), true, Mem3.Yes, Mem3.No, false);
+    Check(m1 == CoverMove.TipEscape, "577 G2: the item card is closed with one Escape first (" + m1 + ")");
+    var m2 = HeroCover.Next(true, true, false, Mem3.Yes, Mem3.No, false);
+    Check(m2 == CoverMove.ClosePopup, "577 G2: then the gear filter's x (" + m2 + ")");
+    var m3 = HeroCover.Next(true, true, false, Mem3.No, Mem3.Yes, false);
+    Check(m3 == CoverMove.CloseSide, "577 G2: the side panel too (" + m3 + ")");
+    Check(HeroCover.Next(true, true, false, Mem3.No, Mem3.No, false) == CoverMove.None, "577 G2: nothing over the screen -> the back arrow (BackToCity)");
+    Check(HeroCover.Next(true, true, false, Mem3.Unknown, Mem3.Unknown, false) == CoverMove.None && HeroCover.Next(false, true, true, Mem3.Yes, Mem3.Yes, true) == CoverMove.None, "577 G2: unknown memory / not the hero screen closes nothing");
+    string d = HeroCover.Diagnosis(scr.Brief, scr.Flow, Mem3.Yes, Mem3.No, true, 11631, false);
+    Check(d.StartsWith("diagnosis:") && d.Contains("Form_CharactorEquipTip") && d.Contains("gear filter mem=yes") && d.Contains("uid 11631") && d.Contains("input locked"), "577 G2: a pause / stop carries a diagnosis line: " + d);
   }
 
   static void ArtifactSellTests() {

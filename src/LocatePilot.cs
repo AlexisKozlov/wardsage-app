@@ -784,4 +784,27 @@ namespace RealmForge {
       return Wait();
     }
   }
+  public enum CoverMove { None, TipEscape, ClosePopup, CloseSide, GridFunnel }
+
+  /// <summary>What lies over the hero screen and has to go before the locate path can leave it (the back arrow to the city, the Foundry button): the item card
+  /// (Form_CharactorEquipTip, its one Escape), the gear filter (its x), the filter's side panel, the hero grid's filter pop-up. All from the game's
+  /// memory (the flags are Yes); a flag that is Unknown or No closes nothing. Live 1.6.66.577 (120622-d3f1ed): the filter and the card stopped
+  /// "Show in game" on the hero screen.</summary>
+  public static class HeroCover {
+    public static CoverMove Next(bool heroScreen, bool onlyTip, bool tipShown, Mem3 gearOpen, Mem3 gearSide, bool gridFilter) {
+      if (!heroScreen) return CoverMove.None;
+      if (tipShown && onlyTip) return CoverMove.TipEscape;
+      if (gearOpen == Mem3.Yes) return CoverMove.ClosePopup;
+      if (gearSide == Mem3.Yes) return CoverMove.CloseSide;
+      if (gridFilter) return CoverMove.GridFunnel;
+      return CoverMove.None;
+    }
+
+    /// <summary>The "diagnosis:" line of a pause / stop: the forms that are open, the gear filter (memory), the item card's uid, the input lock.</summary>
+    public static string Diagnosis(string screen, string flow, Mem3 gearOpen, Mem3 gearSide, bool tipShown, long tipUid, bool? inputOpen) {
+      return "diagnosis: screen " + (screen ?? "none") + ", forms " + (string.IsNullOrEmpty(flow) ? "-" : flow) + ", gear filter mem=" + Mem(gearOpen) + " side mem=" + Mem(gearSide)
+        + ", tip " + (tipShown ? "shown uid " + tipUid : "no") + ", input " + (inputOpen == null ? "unknown" : inputOpen.Value ? "open" : "locked");
+    }
+    static string Mem(Mem3 m) { return m == Mem3.Yes ? "yes" : m == Mem3.No ? "no" : "unknown"; }
+  }
 }

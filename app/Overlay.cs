@@ -2201,15 +2201,20 @@ namespace RealmForge {
         v.BlueNone = confirm && confirmBlueNone; v.ButtonStill = confirm && confirmBtn != null && confirmStill; }
       userClick = false; lastAutoView = v; lastClientW = cr.R; lastClientH = cr.B;
       // the navigator core (src/Nav*.cs, behind the navCore switch, off by default): the gear phase of a started plan; none of the preamble below runs for it
-      if (NavCoreOn && runHero > 0 && !ArtPhase) { TickAutoNav(o, cr, v, now, confirm); return; }
+      // (the navigator drives the gear phase from wherever the game stands: the old "city first" start is over for the run - else the artifact phase would go back through the city)
+      if (NavCoreOn && runHero > 0 && !ArtPhase) { if (screens.Current != null && (screens.Current.Kind == ScreenKind.City || screens.Current.Kind == ScreenKind.HeroScreen)) cityRunEquip = true; TickAutoNav(o, cr, v, now, confirm); return; }
       // an offer pop-up over the city is closed before the plan's next step (the equip helper has no preflight of its own here)
       if ((runHero > 0 || target > 0) && v.Foreground && !v.UserBusy && OfferStep(ClickOwner.Equip, screens.Current, o, cr, v.Foreground, now)) return;
       // a screen nobody knows for 20 s (or one a form search did not find): stop instead of waiting for ever
       // a full-screen screen nobody knows: its back arrow top left (at most 3 presses a run, each has to change the screen)
       if ((runHero > 0 || target > 0) && v.Foreground && !v.UserBusy && UnknownBackStep(ClickOwner.Equip, screens.Current, o, cr, v.Foreground, now)) return;
       // a known screen the plan cannot start from (the Foundry, the inventory, the gem screen ...): back to the city with its arrow top left
+      // (the artifact steps go on from the hero screen the gear steps left: no city first there, only the card / filter over it closed - ArtCityStart)
+      bool artHere = screens.Current != null && ArtCityStart.Settled(ArtPhase, screens.Current.Kind);
+      if (artHere) cityRunEquip = true;
       bool cityEq = runHero > 0 && CityStartDue(ref cityRunEquip, screens.Current, now);
-      if (runHero > 0 && v.Foreground && !v.UserBusy && BackStep(ClickOwner.Equip, screens.Current, cityEq || CityFirst.NeedsCity(ArtPhase ? PilotFlow.ArtEquip : PilotFlow.Equip, screens.Current), o, cr, v.Foreground, now, cityEq)) { AutoSay("work"); return; }
+      bool artCover = artHere && (EquipTipShown() || GearMemNow().Open != Mem3.No || GearMemNow().Side == Mem3.Yes);
+      if (runHero > 0 && v.Foreground && !v.UserBusy && BackStep(ClickOwner.Equip, screens.Current, cityEq || CityFirst.NeedsCity(ArtPhase ? PilotFlow.ArtEquip : PilotFlow.Equip, screens.Current), o, cr, v.Foreground, now, cityEq || artCover)) { AutoSay("work"); return; }
       if ((runHero > 0 || target > 0) && v.Foreground && !v.UserBusy && gate.UnknownStall(ClickOwner.Equip, screens.Current, now)) { AnnounceHalts(); return; }
       // first the plan's hero on the hero screen (a started plan only), then the game's filter (the item far down or
       // hidden), then the item itself
@@ -3206,14 +3211,15 @@ namespace RealmForge {
         HeroScreenOpen = heroOpen, OtherFormOpen = formOpen, InvDX = invDX };
       if (gameFront && !busy && ArtLocateAuto.NeedsCityButton(step, heroOpen, formOpen)) { view.CityButton = InventoryButtonNow(o, W, H); view.InvDX = invDX; }
       // city first: the Foundry / the gem screen (an earlier request left it) or the step's screen not on top: back with its arrow first
-      if (gameFront && !busy && BackStep(ClickOwner.Locate, scr, CityFirst.NeedsCity(PilotFlow.LocateArtPromote, scr, step.Kind, ArtLocateAuto.NeedsCityBack(view)), o, cr, gameFront, now)) { step.Auto = "work"; step.AutoWhy = ""; return; }
+      if (gameFront && !busy && BackStep(ClickOwner.Locate, scr, CityFirst.NeedsCity(PilotFlow.LocateArtPromote, scr, step.Kind, ArtLocateAuto.NeedsCityBack(view)), o, cr, gameFront, now, heroOpen)) { step.Auto = "work"; step.AutoWhy = ""; return; }
       var mv = artPilot.Step(view);
       if (artPilot.Trace != "") { Log.Write("art promote auto: " + artPilot.Trace); artPilot.Trace = ""; }
       string said = mv.State + "|" + mv.Why + "|" + step.Key;
       if (said != artAutoSaid) { artAutoSaid = said; Log.Write("art promote auto: " + mv.State + (mv.Why != "" ? " (" + mv.Why + ")" : "") + " at step " + step.Key + (mv.Why == "plan" && ws != null && req.Art != null ? " (the site's copies [" + string.Join(",", req.Art.Copies) + "] via " + req.Art.Via + ", the workshop's list [" + string.Join(",", ws.Mats) + "])" : "")); }
       if (mv.State == "background") RaiseGame(hwnd, true, now, true);
       if (mv.Action.Kind != AutoKind.None) SendArt(mv, req, ws, o, cr, gameFront, W, H, U);
-      if (artPilot.Stopped) { step.Auto = "stopped"; step.AutoWhy = artPilot.Reason; }
+      LocateDiagSay("art promote auto", mv.State, mv.Why + "@" + step.Key, scr);
+      if (artPilot.Stopped) { step.Auto = "stopped"; step.AutoWhy = artPilot.Reason; LocateDiagSay("art promote auto", "stopped", artPilot.Reason, scr); }
     }
 
     // the artifact pilot's action -> the gate's target (and for a list cell the item that has to be under the click)
@@ -3483,7 +3489,7 @@ namespace RealmForge {
         if (why == "") continue;
         Log.Write("auto click stopped (" + o + "): " + why);
         RaiseAutoRec(AutoRecPolicy.HaltTag(o.ToString(), why, gate.HaltDetail(o)));
-        if (o == ClickOwner.Locate) { lpilot.Halt(why); artPilot.Halt(why); }
+        if (o == ClickOwner.Locate) { lpilot.Halt(why); artPilot.Halt(why); Log.Write("locate auto: stopped (" + why + ") - " + LocateDiagnosis(screens.Current)); }
         else if (o == ClickOwner.LocateFilter) lpilot.FilterHalt(why);   // (its own stop: the search goes on without the filter)
         else if (o == ClickOwner.Sell) { if (!sellArt) SellSay("gate_" + why); }   // (the artifact cleanup is a hint run for the page: the stop is in the log only)
         else { artEq.Halt(why); AutoSay("gate_" + why); }
@@ -3631,11 +3637,13 @@ namespace RealmForge {
     long heroFunnelCloseAfter, cityTipAfter;
     bool BackStep(ClickOwner owner, ScreenState scr, bool need, W32.POINT o, W32.RECT cr, bool front, long now, bool hold = false) {
       if (MapStep(owner, scr, o, cr, front, now)) return true;   // a pop-up over the screen (or the city) first
+      if (!front || sending) { if (!need) { if (scr != null && scr.Kind != ScreenKind.Unknown) gate.DropEscape(owner); return false; } return false; }
+      // (the hero screen is where the pilot goes on from, but the item card / the gear filter over it are closed first: HeroCoverStep)
+      if (!need && hold && HeroCoverStep(owner, scr, o, cr, front, now)) return true;
       if (!need) { if (scr != null && scr.Kind != ScreenKind.Unknown) gate.DropEscape(owner); return false; }
-      if (!front || sending) return false;
       // the hero grid's filter pop-up is open over the hero screen (the player's, an interrupted run's): the gate does not let «back» through it
       // (lab b3da8af5: «city, screen HeroScreen» for 100 s) - the funnel under the grid closes it first, once a second
-      if (scr != null && scr.Kind == ScreenKind.HeroScreen && owner == ClickOwner.Equip && now >= heroFunnelCloseAfter && HeroFilterSeen(o, cr.R, cr.B)) {
+      if (scr != null && scr.Kind == ScreenKind.HeroScreen && (owner == ClickOwner.Equip || owner == ClickOwner.Locate) && now >= heroFunnelCloseAfter && HeroFilterSeen(o, cr.R, cr.B)) {
         heroFunnelCloseAfter = now + 1200;
         double U0 = Ui.Unit(cr.R, cr.B); int fx = o.X + (int)Math.Round(hg2.FunnelX * U0), fy = o.Y + (int)Math.Round(cr.B - hg2.FunnelDY * U0);
         Log.Write("back: the hero grid's filter pop-up is open - closing it first");
@@ -3646,20 +3654,50 @@ namespace RealmForge {
       // (the screen is not the flow's: the pilot never goes on from it - it waits for the press, the screen to settle, the retry time)
       // (a block of the press - a pop-up over the screen, the screen held - leaves the pilot its own reason: it clicks nothing past the gate)
       // the item's tip (a flow form) or the gear filter's main pop-up over the hero screen block «back»: closed first (the tip with one Escape, the pop-up by its ×)
-      if (hold && owner == ClickOwner.Equip && scr != null && scr.Kind == ScreenKind.HeroScreen && now >= cityTipAfter) {
-        double W1 = cr.R, H1 = cr.B, U1 = Ui.Unit(W1, H1);
-        if (EquipTipShown() && ClickGate.OnlyTip(scr)) { cityTipAfter = now + 1200; if (TipEscapeSend(cr, front)) Log.Write("back: the item's tip is open - closed with Escape first"); return true; }
-        if (GearMain(o, W1, H1, U1)) {
-          cityTipAfter = now + 1200; Log.Write("back: the gear filter's pop-up is open - closing it first");
-          EquipSend(ClickTarget.EquipClosePopup, new AutoAction { Kind = AutoKind.Click }, o.X + (int)Math.Round(fg.X(fg.MainCloseX, W1, H1)), o.Y + (int)Math.Round(fg.Y(fg.CloseY, W1, H1)), o, front);
-          return true;
-        }
-      }
+      if (hold && HeroCoverStep(owner, scr, o, cr, front, now)) return true;
       if (!gate.CityBackDue(owner, scr, now)) { AnnounceHalts(); return !gate.Halted(owner) && (hold || ClickGate.CityBackBlock(scr) == ""); }
       double W = cr.R, H = cr.B, U = Ui.Unit(W, H);
       SendInside(new AutoAction { Kind = AutoKind.Click, X = hg2.BackX * U, Y = hg2.BackY * U }, o, cr, owner, ClickTarget.CityBack, front, (rq, fr) => { rq.U = U; });
       AnnounceHalts();
       return true;
+    }
+
+    /// <summary>What lies over the hero screen before the pilot goes on (the game's memory: HeroCover.Next): the item card with one Escape, the gear filter by its
+    /// x, the filter's side panel, then (the grid's filter pop-up is BackStep's own). Only the Equip pilot and the locate paths; the presses are the Equip owner's
+    /// targets (EquipTipEscape / EquipClosePopup), through the gate. True = a close was tried this tick (once per 1.2 s).</summary>
+    bool HeroCoverStep(ClickOwner owner, ScreenState scr, W32.POINT o, W32.RECT cr, bool front, long now) {
+      if ((owner != ClickOwner.Equip && owner != ClickOwner.Locate) || scr == null || scr.Kind != ScreenKind.HeroScreen || now < cityTipAfter) return false;
+      double W1 = cr.R, H1 = cr.B, U1 = Ui.Unit(W1, H1);
+      var gm = GearMemNow();
+      var mv = HeroCover.Next(true, ClickGate.OnlyTip(scr), EquipTipShown(), GearMain(o, W1, H1, U1) ? Mem3.Yes : Mem3.No, gm.Side, false);
+      if (mv == CoverMove.None) return false;
+      cityTipAfter = now + 1200;
+      if (mv == CoverMove.TipEscape) { if (TipEscapeSend(cr, front)) Log.Write("back: the item's tip is open - closed with Escape first (" + owner + ")"); return true; }
+      if (mv == CoverMove.CloseSide) {
+        Log.Write("back: the gear filter's side panel is open - closing it first (" + owner + ")");
+        EquipSend(ClickTarget.EquipClosePopup, new AutoAction { Kind = AutoKind.Click }, o.X + (int)Math.Round(fg.X(fg.SideCloseX, W1, H1)), o.Y + (int)Math.Round(fg.Y(fg.CloseY, W1, H1)), o, front);
+        return true;
+      }
+      Log.Write("back: the gear filter's pop-up is open - closing it first (" + owner + ")");
+      EquipSend(ClickTarget.EquipClosePopup, new AutoAction { Kind = AutoKind.Click }, o.X + (int)Math.Round(fg.X(fg.MainCloseX, W1, H1)), o.Y + (int)Math.Round(fg.Y(fg.CloseY, W1, H1)), o, front);
+      return true;
+    }
+
+    /// <summary>The "diagnosis:" line of a locate pause / stop: forms, gear filter (memory), the card's uid, the input lock.</summary>
+    string LocateDiagnosis(ScreenState scr) {
+      var gm = GearMemNow(); TipState tip = null; double W = lastClientW, H = lastClientH;
+      try { tip = RFX.ReadTipMem(W, H, W > 0 && H > 0 ? Ui.Unit(W, H) : 0); } catch (Exception) { }
+      bool? open = null; try { open = RFX.NavInputOpen(); } catch (Exception) { }
+      return HeroCover.Diagnosis(scr != null ? scr.Brief : null, scr != null ? scr.Flow : "", gm.Open, gm.Side, tip != null && tip.Shown, tip != null ? tip.SelectUid : 0, open);
+    }
+    string locateDiagSaid = "";
+    /// <summary>A locate pause / stop is never silent: one diagnosis line per distinct state.</summary>
+    void LocateDiagSay(string who, string state, string why, ScreenState scr) {
+      if (state != "paused" && state != "stopped" && state != "background") { locateDiagSaid = ""; return; }
+      string k = who + "|" + state + "|" + why;
+      if (k == locateDiagSaid) return;
+      locateDiagSaid = k;
+      Log.Write(who + ": " + state + (why != "" ? " (" + why + ")" : "") + " - " + LocateDiagnosis(scr));
     }
 
     /// <summary>The screen map's exit of the form on top (ClickGate.MapExit), shared by every pilot: a dangerous form stops the pilot, a fight /
@@ -3938,7 +3976,7 @@ namespace RealmForge {
       if (!ReferenceEquals(req, locateRunSeen)) { locateRunSeen = req; cityRunLocate = false; cityRunSince = 0; }
       bool cityLoc = CityStartDue(ref cityRunLocate, scr, now);
       bool needBack = cityLoc || CityFirst.NeedsCity(CityFirst.OfLocate(req.Purpose), scr, dstep.Kind, LocateAuto.NeedsCityBack(view));
-      if (gameFront && !busy && BackStep(ClickOwner.Locate, scr, needBack, o, cr, gameFront, now, cityLoc)) { step.Auto = "work"; step.AutoWhy = ""; locateDriving = true; return; }
+      if (gameFront && !busy && BackStep(ClickOwner.Locate, scr, needBack, o, cr, gameFront, now, cityLoc || (heroOpen && (dstep.Kind == LocateKind.OpenFoundry || dstep.Kind == LocateKind.OpenInventory)))) { step.Auto = "work"; step.AutoWhy = ""; locateDriving = true; return; }
       if (gameFront && !busy && dstep.Kind == LocateKind.AscendPick && req.Item != null && req.Item.Uid > 0) FillAscendLive(view, req.Item.Uid, scr, W, H, U);   // (the game's own cell of the item: the pilot clicks it when it is wholly in view, whatever the layout's estimate says)
       if (gate.CellAgainDue.Remove(ClickOwner.Locate)) lpilot.CellAgain();   // (ClickGate.Observe: a cell click without effect, placed again once)
       // a list step on a list that still moves: the next read (the click point from a settled one)
@@ -3948,10 +3986,11 @@ namespace RealmForge {
       locateMoveState = mv.State; locateMoveWhy = mv.Why;
       string said = mv.State + "|" + mv.Why + "|" + dstep.Key;
       if (said != locateAutoSaid) { locateAutoSaid = said; Log.Write("locate auto: " + mv.State + (mv.Why != "" ? " (" + mv.Why + ")" : "") + " at step " + dstep.Key); }
+      LocateDiagSay("locate auto", mv.State, mv.Why + "@" + dstep.Key, scr);
       // started from our own window: the game comes forward (and is restored), never over another program
       if (mv.State == "background") RaiseGame(hwnd, true, now, true);
       if (mv.Action.Kind != AutoKind.None) SendLocate(mv, req, o, cr, gameFront, now, W, H, U);
-      if (lpilot.Stopped) { step.Auto = "stopped"; step.AutoWhy = lpilot.Reason; locateDriving = false; return; }
+      if (lpilot.Stopped) { step.Auto = "stopped"; step.AutoWhy = lpilot.Reason; locateDriving = false; LocateDiagSay("locate auto", "stopped", lpilot.Reason, scr); return; }
       step.Auto = mv.State; step.AutoWhy = mv.Why;
       locateDriving = mv.State == "work" || mv.State == "paused" || mv.State == "background";
     }

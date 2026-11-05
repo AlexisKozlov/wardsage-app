@@ -411,4 +411,12 @@ namespace RealmForge {
 
     void Say(string t) { Trace = Trace == "" ? t : Trace + "; " + t; }
   }
+  /// <summary>«City first» for the artifact steps: the gear steps (the navigator core) leave the hero screen on the gear tab, the artifact steps go on from
+  /// THERE (the hero screen is the flow's own screen: ClickGate CityFirst.EquipSet). The old start-from-the-city rule (a run's first moments) never
+  /// applies to it - live 1.6.66.577 (120445-6d76a8): after the last item the pilot pressed the back arrow twice, went through the city and the
+  /// "Heroes" button again just to open the artifact tab of the same hero.</summary>
+  public static class ArtCityStart {
+    /// <summary>True = the artifact phase stands on the hero screen: the city-first flag of the run is settled (no back to the city).</summary>
+    public static bool Settled(bool artPhase, ScreenKind kind) { return artPhase && kind == ScreenKind.HeroScreen; }
+  }
 }
