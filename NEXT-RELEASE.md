@@ -235,28 +235,4 @@ version …: from the site» или «saved copy»). Без файла оста�
 
 ## RU
 
-- Автоматические действия начинаются с любого экрана: программа сама возвращается в город и закрывает рекламу и окна наград.
-- «Надеть в игре», «Найти в игре» (вознесение, преобразование, улучшение артефакта) и чистка склада стали заметно быстрее и надёжнее, в том числе на слабых компьютерах и в маленьком окне.
-- Артефакты надеваются быстрее: программа сама снимает лишние фильтры списка и не берёт вещь, которую герой надеть не может.
-- «Найти в игре» (Преобразование): в длинном Инвентаре программа сама включает фильтр игры по комплекту и редкости вещи, поиск в разы быстрее; на чужом экране первая подсказка — «назад».
-- Работа на широких мониторах 21:9 и с двумя аккаунтами.
-- Если шаг не получился, программа пробует ещё раз, а не останавливается сразу.
-- Рамки подсказок точно ложатся на кнопки и значки, сами подсказки стали компактнее.
-- Меньше нагрузка на процессор, программа никогда не нажимает рядом с кнопками покупки; когда она берётся за работу, окно игры выходит на передний план.
-- Раздел «Переодевание» стал «Поручения»: сверху крупно идёт текущее задание (герой или вещь, шаг, подсказка, шаги полосой), ниже — очередь остальных: надеть сборку, найти вещь, артефакт, очистка склада; кнопки и режимы те же.
-- Подсказки без автонажатия: если игра на экране, который программа не узнаёт (или с которого шаг не продолжить), или поверх открыто неизвестное окно, везде одна подсказка «Вернитесь в город» с рамкой на стрелке «назад» (или на крестике окна), а если рамку поставить не на что — только строка «Нажмите Esc»; метка шага для экрана, где его не сделать, больше не показывается.
-
 ## EN
-
-- Auto actions now start from any screen: the app goes back to the city on its own and closes ads and reward pop-ups.
-- «Equip in game», «Find in game» (ascension, recast, artifact upgrade) and storage cleanup are much faster and more reliable, including on slow PCs and small windows.
-- Artifacts are equipped faster: the app clears leftover list filters and skips items the hero can't wear.
-- «Find in game» (recast): in a long Inventory the app sets the game's own filter by the item's set and rarity first, the search is several times faster; on a screen the way does not go on from, the first hint is «back».
-- Works on wide 21:9 monitors and with two accounts.
-- If a step fails, the app tries again instead of stopping right away.
-- Highlight frames sit exactly on buttons and icons, and hints are more compact.
-- Lower CPU load, and the app never clicks near purchase buttons; when it starts working, the game window comes to the front.
-- Storage cleanup: once everything is marked (by the app or by you) the app says «Done: N selected — press «Sell»» and frames the «Sell» button (you press it); item frames match the cells and no longer overlap; the list's scroll bar shows a marker for every remaining item; a wrongly marked item gets a red frame with a ✕; hints no longer blink out while the mouse is still.
-- Storage cleanup: with the inventory open on another tab (e.g. «Materials») the frame stands on the «Equipment» tab; item frames are bright and clear (the brand gold frame, one owl on the top one); scroll bar markers merge into groups (at most 12, with the item count).
-- The «Equip» section is now «Tasks»: the current task is shown large on top (hero or item, the step, the hint, the steps as a bar) and the rest of the queue below: equip a build, find an item, artifact, storage cleanup; the buttons and modes are the same.
-- Hints without auto click: when the game shows a screen the app does not recognise (or one the step cannot continue from), or an unknown pop-up is open, every flow now gives the same hint «Go back to the city» with a frame on the back arrow (or the pop-up's close button), or just the line «Press Esc» when there is nothing to frame; a step label is no longer shown for a step the screen cannot do.
