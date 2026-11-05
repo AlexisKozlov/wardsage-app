@@ -673,6 +673,7 @@ namespace RealmForge {
       switch (s.Status) {
         case SyncStatus.Ok: return null;
         case SyncStatus.InvalidToken: main = delegate { return Strings.Get("err_token"); }; break;
+        case SyncStatus.Forgotten: main = delegate { return Strings.Get("err_forgotten"); }; break;
         case SyncStatus.RateLimited:
           main = delegate {
             return s.RetryAfterSeconds > 0 ? Strings.Format("err_rate", Strings.Wait(s.RetryAfterSeconds)) : Strings.Get("err_rate_nowait");

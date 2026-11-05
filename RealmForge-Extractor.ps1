@@ -4828,7 +4828,7 @@ namespace RealmForge {
 //   X-RF-Extractor: 0.5                      User-Agent: RealmForge-Extractor/0.5
 // Replies (JSON):
 //   200 {ok:true, snapshotId, heroes, items, artifacts, viewUrl}
-//   401 invalid_token | 413 too_large | 415 | 422 {error:"invalid_payload", details} | 429 rate_limited | 500
+//   401 invalid_token | 409 {error:"account_forgotten"} | 413 too_large | 415 | 422 {error:"invalid_payload", details} | 429 rate_limited | 500
 // Nothing else is sent anywhere: no telemetry, no third-party services (error reports, src/ErrorReport.cs, go to the
 // same site and only when the player turns them on).
 
@@ -4836,7 +4836,19 @@ namespace RealmForge {
 namespace RealmForge {
   public enum SyncStatus {
     Ok, InvalidToken, TooLarge, UnsupportedMedia, InvalidPayload, RateLimited, ServerError,
-    Redirect, Timeout, Unreachable, Unexpected
+    Redirect, Timeout, Unreachable, Unexpected,
+    /// <summary>409 {error:"account_forgotten"}: the account was deleted on the site. No retries; see SyncGate.</summary>
+    Forgotten
+  }
+
+  /// <summary>The sync code the site said belongs to a forgotten account (409 account_forgotten from /api/sync). While the current code is
+  /// that code every periodic loop (long poll, sync timer, watches, lists) stays still, later 401s do not mean "code outdated", and the code
+  /// is neither erased nor reset. It ends by a manual sync (Clear) or by another code (the mark is for one code only).</summary>
+  public static class SyncGate {
+    static volatile string code;
+    public static void Mark(string c) { code = c; }
+    public static void Clear() { code = null; }
+    public static bool IsForgotten(string c) { string m = code; return m != null && m == c; }
   }
 
   public sealed class SyncResult {
@@ -5025,6 +5037,7 @@ namespace RealmForge {
       }
       switch (code) {
         case 401: r.Status = SyncStatus.InvalidToken; break;
+        case 409: r.Status = MiniJson.GetString(obj, "error") == "account_forgotten" ? SyncStatus.Forgotten : SyncStatus.Unexpected; break;
         case 413: r.Status = SyncStatus.TooLarge; break;
         case 415: r.Status = SyncStatus.UnsupportedMedia; break;
         case 400:
@@ -5909,6 +5922,8 @@ namespace RealmForge {
       { "err_failed",         new[] { "Не удалось прочитать память игры: {0}", "Could not read the game memory: {0}" } },
       { "err_token",          new[] { "Код синхронизации не принят (401). Скопируйте код на сайте заново и вставьте его сюда.",
                                       "The sync code was rejected (401). Copy the code from the site again and paste it here." } },
+      { "err_forgotten",      new[] { "Аккаунт удалён на сайте. Привяжите программу к аккаунту заново: возьмите новый код синхронизации на сайте.",
+                                      "The account was deleted on the site. Link the app to an account again: take a new sync code on the site." } },
       { "err_rate",           new[] { "Слишком частая синхронизация (429). Повторите через {0}.", "Syncing too often (429). Try again in {0}." } },
       { "err_rate_nowait",    new[] { "Слишком частая синхронизация (429). Подождите несколько минут.", "Syncing too often (429). Wait a few minutes." } },
       { "err_too_large",      new[] { "Сайт отклонил данные: слишком большой объём (413). Сохраните копию и сообщите разработчикам.",
@@ -6664,6 +6679,7 @@ namespace RealmForge {
       switch (s.Status) {
         case SyncStatus.Ok: return null;
         case SyncStatus.InvalidToken: main = delegate { return Strings.Get("err_token"); }; break;
+        case SyncStatus.Forgotten: main = delegate { return Strings.Get("err_forgotten"); }; break;
         case SyncStatus.RateLimited:
           main = delegate {
             return s.RetryAfterSeconds > 0 ? Strings.Format("err_rate", Strings.Wait(s.RetryAfterSeconds)) : Strings.Get("err_rate_nowait");

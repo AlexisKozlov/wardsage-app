@@ -58,6 +58,8 @@ namespace RealmForge {
       { "err_failed",         new[] { "Не удалось прочитать память игры: {0}", "Could not read the game memory: {0}" } },
       { "err_token",          new[] { "Код синхронизации не принят (401). Скопируйте код на сайте заново и вставьте его сюда.",
                                       "The sync code was rejected (401). Copy the code from the site again and paste it here." } },
+      { "err_forgotten",      new[] { "Аккаунт удалён на сайте. Привяжите программу к аккаунту заново: возьмите новый код синхронизации на сайте.",
+                                      "The account was deleted on the site. Link the app to an account again: take a new sync code on the site." } },
       { "err_rate",           new[] { "Слишком частая синхронизация (429). Повторите через {0}.", "Syncing too often (429). Try again in {0}." } },
       { "err_rate_nowait",    new[] { "Слишком частая синхронизация (429). Подождите несколько минут.", "Syncing too often (429). Wait a few minutes." } },
       { "err_too_large",      new[] { "Сайт отклонил данные: слишком большой объём (413). Сохраните копию и сообщите разработчикам.",

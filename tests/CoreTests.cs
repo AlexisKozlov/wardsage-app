@@ -289,6 +289,21 @@ static partial class CoreTests {
     Eq(SyncStatus.Unexpected, SyncClient.Interpret(200, "{\"ok\":false}", null, null, "https://x.app").Status, "200 without ok:true");
     Eq(SyncStatus.Unexpected, SyncClient.Interpret(200, "<html>", null, null, "https://x.app").Status, "200 html");
     Eq(SyncStatus.InvalidToken, SyncClient.Interpret(401, "{\"ok\":false,\"error\":\"invalid_token\"}", null, null, "https://x.app").Status, "401");
+    Eq(SyncStatus.Forgotten, SyncClient.Interpret(409, "{\"ok\":false,\"error\":\"account_forgotten\"}", null, null, "https://x.app").Status, "409 account_forgotten");
+    Eq(SyncStatus.Unexpected, SyncClient.Interpret(409, "{\"ok\":false,\"error\":\"conflict\"}", null, null, "https://x.app").Status, "409 other");
+    Eq(SyncStatus.Unexpected, SyncClient.Interpret(409, null, null, null, "https://x.app").Status, "409 no body");
+    {   // forgotten state: for that code only; a later 401 changes nothing here; ends by Clear (manual sync) or another code
+      string c1 = "rf_" + new string('a', 32), c2 = "rf_" + new string('b', 32);
+      SyncGate.Clear();
+      Eq(false, SyncGate.IsForgotten(c1), "gate off");
+      SyncGate.Mark(c1);
+      Eq(true, SyncGate.IsForgotten(c1), "gate on");
+      Eq(false, SyncGate.IsForgotten(c2), "gate: another code");
+      Eq(SyncStatus.InvalidToken, SyncClient.Interpret(401, "{\"ok\":false,\"error\":\"invalid_token\"}", null, null, "https://x.app").Status, "401 while forgotten stays a plain 401 result");
+      Eq(true, SyncGate.IsForgotten(c1), "gate not touched by a 401");
+      SyncGate.Clear();
+      Eq(false, SyncGate.IsForgotten(c1), "gate cleared");
+    }
     Eq(SyncStatus.TooLarge, SyncClient.Interpret(413, null, null, null, "https://x.app").Status, "413");
     Eq(SyncStatus.UnsupportedMedia, SyncClient.Interpret(415, "", null, null, "https://x.app").Status, "415");
     r = SyncClient.Interpret(422, "{\"ok\":false,\"error\":\"invalid_payload\",\"details\":[\"a\",{\"path\":\"heroes\",\"message\":\"bad\"}]}", null, null, "https://x.app");

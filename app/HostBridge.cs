@@ -74,8 +74,9 @@ namespace RealmForge {
         PollGateTick();
         if (On("battle")) WatchBattleEnd();
         WatchStall();
-        arenaWatch.Tick(gameRunning && On("battle")); guildWatch.Tick(gameRunning && On("guild")); packsWatch.Tick(gameRunning); bool away = overlay.GameAway();
-        codeWatch.Tick(gameRunning, away); gradeWatch.Tick(gameRunning, away);
+        bool live = gameRunning && !SyncGate.IsForgotten(cfg.Code);
+        arenaWatch.Tick(live && On("battle")); guildWatch.Tick(live && On("guild")); packsWatch.Tick(live); bool away = overlay.GameAway();
+        codeWatch.Tick(live, away); gradeWatch.Tick(live, away);
         TraceStartTick(); TryAutoUpdate(); LayoutTick();
         LoadMeter.Done(LoadMeter.Game, gt0);
       }; gameTimer.Start();
@@ -535,7 +536,7 @@ namespace RealmForge {
     // the long poll runs while the game runs and a valid code is set; a new site / code restarts it; the page learns whether it works
     // (then its own polling slows down). A site without the endpoint (404) is left alone for this run
     void SyncPlansWait() {
-      bool want = gameRunning && SyncClient.IsValidCode(cfg.Code);
+      bool want = gameRunning && SyncClient.IsValidCode(cfg.Code) && !SyncGate.IsForgotten(cfg.Code);
       string key = want ? cfg.Site + "|" + cfg.Code : "";
       if (plansWait == null) plansWait = new PlansWaiter(() => cfg.Site, () => cfg.Code, PlansChanged, (ok, reach) => Post("{\"ev\":\"plansWait\",\"ok\":" + B(ok) + ",\"reach\":" + B(reach) + "}"), s => Log.Write(s));
       if (key != plansWaitKey) {
@@ -1159,7 +1160,7 @@ namespace RealmForge {
 
     void AutoSyncTick() {
       if (!gameRunning) gameSeenAt = DateTime.MinValue;
-      if (!cfg.AutoSync || !gameRunning || !remote.ReadEnabled || !(SyncClient.IsValidCode(cfg.Code))) return;
+      if (!cfg.AutoSync || !gameRunning || !remote.ReadEnabled || !(SyncClient.IsValidCode(cfg.Code)) || SyncGate.IsForgotten(cfg.Code)) return;
       var now = DateTime.UtcNow;
       if (gameSeenAt == DateTime.MinValue) gameSeenAt = now;
       if (now - gameSeenAt < TimeSpan.FromSeconds(FirstSyncDelaySec)) return;   // the game is still loading / at the login screen
@@ -1182,6 +1183,8 @@ namespace RealmForge {
     void StartSync(bool saveOnly, bool auto) {
       if (syncing) return;
       if (!remote.ReadEnabled) { if (!auto) SyncError("paused", null, 0); return; }   // the site's switch: no game reading
+      if (auto && SyncGate.IsForgotten(cfg.Code)) return;   // the account is forgotten on the site: only a manual sync tries again
+      if (!auto) SyncGate.Clear();
       bool upload = !saveOnly && SyncClient.IsValidCode(cfg.Code);
       if (auto && !upload) return;
       string code = cfg.Code, site = cfg.Site; bool copy = !auto && (cfg.SaveCopy || !upload);
@@ -1255,6 +1258,7 @@ namespace RealmForge {
         switch (r.Status) {
           case SyncStatus.Ok: break;
           case SyncStatus.InvalidToken: SyncError("token", null, 0); return;
+          case SyncStatus.Forgotten: SyncGate.Mark(code); autoDue = DateTime.MaxValue; SyncError("forgotten", null, 0, report: false); return;
           case SyncStatus.RateLimited: {
             int after = r.RetryAfterSeconds > 0 ? r.RetryAfterSeconds : 30;
             if (autoRun) win.BeginInvoke((Action)(() => RequestAutoSync(after + 1)));
@@ -1342,6 +1346,7 @@ namespace RealmForge {
     void LoadForum() {
       string site = cfg.Site, code = cfg.Code;
       DateTime now = DateTime.UtcNow;
+      if (SyncGate.IsForgotten(code)) { Post("{\"ev\":\"forum\",\"r\":{\"ok\":false,\"error\":\"error\"}}"); return; }
       // while the game is not running (or backing off after a failure) the last reply is shown again instead of a call
       if (forumLast != null && (NetBackoff.IdleThrottled(gameRunning, forumAskedAt, now) || forumBo.Blocked(now))) { Post("{\"ev\":\"forum\",\"r\":" + forumLast + "}"); return; }
       if (forumBo.Blocked(now)) { Post("{\"ev\":\"forum\",\"r\":{\"ok\":false,\"error\":\"error\"}}"); return; }
@@ -1398,6 +1403,7 @@ namespace RealmForge {
     void LoadPlans(string lang) {
       string site = cfg.Site, code = cfg.Code;
       if (!SyncClient.IsValidCode(code)) { Post("{\"ev\":\"plans\",\"status\":\"invalid_token\"}"); return; }
+      if (SyncGate.IsForgotten(code)) { Post("{\"ev\":\"plans\",\"status\":\"error\",\"detail\":\"account_forgotten\"}"); return; }
       if (!PollAllowed()) { heldPlansLang = lang; return; }
       plansFor = SyncClient.PlanPlayer(SyncClient.Player, SyncClient.LastPlayer); shownPlansLang = lang;
       Task.Factory.StartNew(() => {
@@ -1688,6 +1694,7 @@ namespace RealmForge {
     void LoadSell(string lang) {
       string site = cfg.Site, code = cfg.Code;
       if (!SyncClient.IsValidCode(code)) { Post("{\"ev\":\"sell\",\"status\":\"invalid_token\"}"); return; }
+      if (SyncGate.IsForgotten(code)) { Post("{\"ev\":\"sell\",\"status\":\"error\",\"detail\":\"account_forgotten\"}"); return; }
       if (!PollAllowed()) { heldSellLang = lang; return; }
       sellFor = SyncClient.PlanPlayer(SyncClient.Player, SyncClient.LastPlayer); shownSellLang = lang;
       DateTime now = DateTime.UtcNow;

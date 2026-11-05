@@ -365,13 +365,13 @@
     const e = S.sync.error || {};
     const map = {
       not_running: ['errNotRunning', 'errNotRunningP'], not_windows: ['errNotWindows', 'errNotWindowsP'], access: ['errAccess', 'errAccessP'], read: ['errRead', 'errReadP'], loading: ['errLoading', 'errLoadingP'],
-      token: ['errToken', 'errTokenP'], rate: ['errRate', 'errRateP'], net: ['errNet', 'errNetP'], server: ['errServer', 'errServerP'],
+      token: ['errToken', 'errTokenP'], forgotten: ['errForgotten', 'errForgottenP'], rate: ['errRate', 'errRateP'], net: ['errNet', 'errNetP'], server: ['errServer', 'errServerP'],
       payload: ['errPayload', 'errPayloadP'], paused: ['remoteOff', 'remoteOffP'],
     };
     const [h, p] = map[e.kind] || ['errRead', 'errReadP'];
     const arg = e.kind === 'rate' ? (e.retryAfter || 30) : e.detail || '';
     return `<div class="alert">${I.warn}<div><b>${esc(t(h))}</b><p>${esc(t(p, arg))}</p><div class="row">
-      ${e.kind === 'token' ? codeBtns() : ''}
+      ${e.kind === 'token' || e.kind === 'forgotten' ? codeBtns() : ''}
       <button class="btn-line" data-act="openLog">${esc(t('showLog'))}</button>
       <button class="btn-line" data-act="open" data-url="${DISCORD}">${I.ext}${esc(t('reportBug'))}</button></div></div></div>`;
   }
