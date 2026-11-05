@@ -1021,7 +1021,7 @@ namespace RealmForge {
     // «Отменить надевание»: top centre of the game (free on the hero screen and in the gear list), only while a started
     // build is on and the game is in front
     /// <summary>The fallback hint's texts (the interface language, set by the host like the cancel texts): the line and the key to press when no frame is possible.</summary>
-    public string BackCityText = "Вернитесь в город", EscText = "Нажмите Esc";
+    public string BackCityText = "Вернитесь в город", EscText = "Нажмите Esc", CloseGearFilterText = "Закройте фильтр";
     string hintFbSaid = "";
 
     /// <summary>The ONE hint-mode fallback of every flow (equip, find item / locate, artifact, storage cleanup; src/ClickGate.cs HintFallback): the game shows a
@@ -1069,7 +1069,7 @@ namespace RealmForge {
         if (!kl && FramePending(plan.Key)) { DrawTipTop(new[] { BackCityText }, ""); return true; }   // (the live read is awaited, up to FramePendingMs: the plate alone, no layout frame first)
       }
       frame++;
-      DrawTip(o.X + r[0], o.Y + r[1], r[2], r[3], new[] { BackCityText }, U, false, false, false, "");
+      DrawTip(o.X + r[0], o.Y + r[1], r[2], r[3], new[] { plan.Text == "closeFilter" ? CloseGearFilterText : BackCityText }, U, false, false, false, "");
       return true;
     }
 
@@ -3939,6 +3939,7 @@ namespace RealmForge {
       bool cityLoc = CityStartDue(ref cityRunLocate, scr, now);
       bool needBack = cityLoc || CityFirst.NeedsCity(CityFirst.OfLocate(req.Purpose), scr, dstep.Kind, LocateAuto.NeedsCityBack(view));
       if (gameFront && !busy && BackStep(ClickOwner.Locate, scr, needBack, o, cr, gameFront, now, cityLoc)) { step.Auto = "work"; step.AutoWhy = ""; locateDriving = true; return; }
+      if (gameFront && !busy && dstep.Kind == LocateKind.AscendPick && req.Item != null && req.Item.Uid > 0) FillAscendLive(view, req.Item.Uid, scr, W, H, U);   // (the game's own cell of the item: the pilot clicks it when it is wholly in view, whatever the layout's estimate says)
       if (gate.CellAgainDue.Remove(ClickOwner.Locate)) lpilot.CellAgain();   // (ClickGate.Observe: a cell click without effect, placed again once)
       // a list step on a list that still moves: the next read (the click point from a settled one)
       if (gameFront && !busy && ((dstep.Kind == LocateKind.InList && !invSettle.Settled) || (dstep.Kind == LocateKind.AscendPick && !rsSettle.Settled))) { step.Auto = "work"; step.AutoWhy = ""; locateDriving = true; return; }
@@ -4615,6 +4616,21 @@ namespace RealmForge {
     /// tick while framed) - Shown: <paramref name="fr"/> = the item's picture 2 px out (x, y, w, h, radius, client px); Hidden: no cell of it in the
     /// viewport, or the list covered by another form; Unknown: no fresh read (the layout's frame). <paramref name="calc"/> (the layout's rect) and
     /// <paramref name="run"/> (the pilot run) for the shadow log of the run's first minute.</summary>
+    /// <summary>The Ascension list's live cell of <paramref name="uid"/> into the locate pilot's view: made, wholly in view (95 %), the Foundry on top (UiCellPoint / UiCellTopIs, as for a click); else the reason.</summary>
+    void FillAscendLive(LocateView view, long uid, ScreenState scr, double W, double H, double U) {
+      RFX.UiCellWant(UiCellKind.Ascend, new[] { uid }, W, H, U);
+      int now = Environment.TickCount;
+      var s = RFX.UiCellFresh(UiCellKind.Ascend, uid, W, H, now, RFX.UiFrameFreshMs);
+      view.LiveSeen = s != null && s.Ok;
+      if (s == null) { view.LiveWhy = "no fresh read"; return; }
+      if (!s.Ok) { view.LiveWhy = "read failed at " + s.FailStep; return; }
+      var c = s.Of(uid); if (c != null) view.LiveInView = c.InView;
+      double x, y; string why;
+      if (!RFX.UiCellPoint(s, uid, W, H, now, out x, out y, out why)) { view.LiveWhy = why ?? "not shown"; return; }
+      if (!RFX.UiCellTopIs(UiCellKind.Ascend, scr)) { view.LiveWhy = "the Foundry is not on top"; return; }
+      view.LiveCell = true; view.LiveX = x; view.LiveY = y;
+    }
+
     UiCellSee LiveCell(UiCellKind k, long uid, ICollection<long> want, double W, double H, double U, double[] calc, string run, out double[] fr) {
       fr = null;
       if (uid <= 0) return UiCellSee.Unknown;

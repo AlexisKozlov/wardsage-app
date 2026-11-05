@@ -222,6 +222,8 @@ namespace RealmForge {
     public HintLeave Kind; public GeoRect Rect; public string Why = "";
     /// <summary>The frame target's key when the rect is that target's layout (the host reads its live rect through FrameFor, so the frame is reported to the audit): "" = none.</summary>
     public string Key = "";
+    /// <summary>What the plate says: "" = «Вернитесь в город», "closeFilter" = the gear filter pop-up is open (the game's flag): «Закройте фильтр» on its red × (a way back to the city is not the first thing).</summary>
+    public string Text = "";
   }
 
   /// <summary>The ONE hint-mode fallback for every flow (equip, find item / locate, artifact, storage cleanup; owner rule 2026-11-01): when the app cannot
@@ -251,6 +253,11 @@ namespace RealmForge {
       bool away = !unk && !CityFirst.Continues(f, s, step);
       bool stray = !unk && form && md.Move == MapMove.None;   // a pop-up over the screen that the map does not know
       if (!unk && !away && !stray) return p;
+      // the gear filter pop-up (the game's flag m_bShow = yes) covers the hero screen and the flow cannot go on from it: the hint says to close it, with its red × framed (live 10:5x scenario 10: «Вернитесь в город» over an open filter)
+      if (s.Kind == ScreenKind.HeroScreen && s.GearOpenMem == Mem3.Yes && f != PilotFlow.Equip && f != PilotFlow.ArtEquip) {
+        var fg = new FilterGeometry(); double d = 0.06 * U, cx = fg.X(fg.MainCloseX, W, H), cy = fg.Y(fg.CloseY, W, H);
+        p.Kind = HintLeave.Close; p.Rect = new GeoRect { X = cx - d / 2, Y = cy - d / 2, W = d, H = d }; p.Text = "closeFilter"; p.Why = "the gear filter pop-up is open (memory): its red ×"; return p;
+      }
       bool pop = s.ModalOpen || s.OfferCount > 0;
       if (md.Move == MapMove.Close && md.Point != null) { var r = ScreenMap.ExitRect(md.Form, W, H, U); if (r != null) { p.Kind = HintLeave.Close; p.Rect = r; p.Why = "pop-up " + md.Form; return p; } }
       if (md.Move == MapMove.Escape) { p.Kind = HintLeave.Esc; p.Why = "pop-up " + md.Form + " closes with the back key"; return p; }

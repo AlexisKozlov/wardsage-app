@@ -65,6 +65,8 @@ namespace RealmForge {
     public PlanItem Item;             // the item looked for
     public string Purpose = "";       // the request's purpose: recast | ascend
     public bool[] FoundryTabs;        // which of the Foundry's tabs are shown (null = all assumed)
+    /// <summary>The Ascension list's own cells (the game's memory, RFX.UiCellRead): the item's cell is made, wholly in view (>= 95 %) and the Foundry on top; its centre in client px. LiveSeen: the cells are read at all (a diagnosis line says so).</summary>
+    public bool LiveCell, LiveSeen; public double LiveX, LiveY, LiveInView; public string LiveWhy = "";
     public InvFilterView Filter;      // the inventory's filter for a long search (null = the host does not offer it: the list is scrolled as before)
   }
 
@@ -206,7 +208,7 @@ namespace RealmForge {
     public void Reset() {
       latched = ""; waitUntil = pauseUntil = workSince = 0; kind = LocateTodo.Nothing; kindClicks = actions = clicks = drags = 0;
       list.Reset(); geoW = geoH = 0; geoCols = 0; Trace = ""; dragFrom = double.NaN; dragStill = 0; waitKind = LocateKind.None; waitSince = waitSeen = 0; filt.Reset();
-      cellSy = cellX = cellY = double.NaN; cellSame = 0;
+      cellSy = cellX = cellY = double.NaN; cellSame = 0; liveSeenY = double.NaN;
       unsentOk = false; unsentRun = 0; clickedAt = 0; confirmWait = false;
     }
 
@@ -342,28 +344,42 @@ namespace RealmForge {
       var f = LocateFrames.For(v.Step, v.Item, v.Rs, v.FoundryTabs, v.Geometry, v.W, v.H, v.U);
       if (f == null || v.Rs == null || v.Rs.AscendList == null || f.ViewH <= 0) return Abort(m, "screen");
       double sy = v.Rs.AscendList.ScrollY;
+      // the item's own cell is live and wholly in view (live 1.6.66 10:53:37: the list was at its end, the drags moved no scroll, the layout's estimate cut the cell (38 of 46 px) while the game's cell stood
+      // whole at y 152-187; two "unmoved" drags ended the search as 'lost' with the cell in view): the click goes on that cell, the drag count is not held against a visible cell
+      bool live = v.LiveCell;
       if (!double.IsNaN(dragFrom)) {
-        if (Math.Abs(sy - dragFrom) < 0.5) { if (++dragStill >= 2) return Abort(m, "lost"); } else dragStill = 0;
+        if (Math.Abs(sy - dragFrom) < 0.5 && !live) { if (++dragStill >= 2) return Abort(m, "lost", Diag(v, f, sy)); } else dragStill = 0;
         dragFrom = double.NaN;
       }
-      if (f.Clickable) {
-        // the list's place from two equal reads: a read that differs from the last one waits for the next
-        if (double.IsNaN(cellSy) || Math.Abs(sy - cellSy) >= 0.5) { cellSy = sy; waitUntil = v.NowMs + CellReadMs; return m; }
-        bool same = Math.Abs(f.ClickX - cellX) < 2 && Math.Abs(f.ClickY - cellY) < 2;
-        if (same && cellSame >= CellSameMax) return Abort(m, "lost");
-        cellSame = same ? cellSame + 1 : 1; cellX = f.ClickX; cellY = f.ClickY; cellSy = double.NaN;
-        if (++kindClicks > MaxStepClicks) return Abort(m, "stuck");
-        if (++clicks > MaxClicks) return Abort(m, "lost");
-        return Click(m, v, f.ClickX, f.ClickY, AfterTabMs, "cell");
+      if (f.Clickable || live) {
+        double cx = live ? v.LiveX : f.ClickX, cy = live ? v.LiveY : f.ClickY;
+        // the list's place from two equal reads: a read that differs from the last one waits for the next (the scroll position, or the cell's own place when it is read live: the list may coast)
+        double mark = live ? cy : sy, was = live ? liveSeenY : cellSy;
+        if (double.IsNaN(was) || Math.Abs(mark - was) >= (live ? 1.5 : 0.5)) { if (live) liveSeenY = cy; else cellSy = sy; waitUntil = v.NowMs + (live ? LiveReadMs : CellReadMs); return m; }
+        bool same = Math.Abs(cx - cellX) < 2 && Math.Abs(cy - cellY) < 2;
+        if (same && cellSame >= CellSameMax) return Abort(m, "lost", Diag(v, f, sy));
+        cellSame = same ? cellSame + 1 : 1; cellX = cx; cellY = cy; cellSy = double.NaN; liveSeenY = double.NaN;
+        if (++kindClicks > MaxStepClicks) return Abort(m, "stuck", Diag(v, f, sy));
+        if (++clicks > MaxClicks) return Abort(m, "lost", Diag(v, f, sy));
+        if (live) Say("cell in view (live " + (int)v.LiveX + "," + (int)v.LiveY + ", " + Math.Round(v.LiveInView * 100) + " % in)");
+        return Click(m, v, cx, cy, AfterTabMs, "cell");
       }
       double dy = Math.Max(-0.8 * f.ViewH, Math.Min(0.8 * f.ViewH, f.ScrollPx));   // content follows the pointer: + = later rows move down
       if (Math.Abs(dy) < MinDragPx) dy = dy < 0 ? -MinDragPx : MinDragPx;
-      if (++drags > MaxDrags) return Abort(m, "lost");
-      actions++; dragFrom = sy; cellSy = double.NaN;
+      if (++drags > MaxDrags) return Abort(m, "lost", Diag(v, f, sy));
+      actions++; dragFrom = sy; cellSy = double.NaN; liveSeenY = double.NaN;
       waitUntil = v.NowMs + SettleMs + 300;
       Say("scroll " + (int)dy);
       m.Action = new AutoAction { Kind = AutoKind.Drag, X = f.ViewX + f.ViewW / 2, Y = f.ViewY + f.ViewH / 2 - dy / 2, DY = dy };
       return m;
+    }
+
+    double liveSeenY = double.NaN;
+    public const int LiveReadMs = 350;
+    /// <summary>The diagnosis a 'lost' stop carries (the memory: the cells read, the scroll, the layout's view of the cell, the drags): one line in the log.</summary>
+    string Diag(LocateView v, LocateFrame f, double sy) {
+      return "diagnosis: live cells " + (v.LiveSeen ? "read" : "not read") + ", target cell " + (v.LiveCell ? "in view @" + (int)v.LiveX + "," + (int)v.LiveY + " " + Math.Round(v.LiveInView * 100) + " %" : "not usable (" + (v.LiveWhy == "" ? "none" : v.LiveWhy) + ")")
+        + "; scroll " + Math.Round(sy, 1) + " (dragFrom " + (double.IsNaN(dragFrom) ? "-" : Math.Round(dragFrom, 1).ToString()) + ", unmoved drags " + dragStill + "); layout clickable=" + f.Clickable + " scrollPx=" + Math.Round(f.ScrollPx) + "; drags " + drags + ", clicks " + clicks + ", same-point " + cellSame;
     }
 
     // a button / tab click the host could not send (the gate refused it: a pop-up or wait form came, the forms unread): taken back, so a wait
@@ -384,8 +400,9 @@ namespace RealmForge {
     /// <summary>A click went out (the host sent it): the refusals in a row start over.</summary>
     public void Sent() { unsentRun = 0; unsentOk = false; }
 
-    LocateMove Abort(LocateMove m, string why) {
+    LocateMove Abort(LocateMove m, string why, string diag = null) {
       latched = why; m.State = "stopped"; m.Why = why; m.Action = AutoAction.Nothing;
+      if (diag != null) Say(diag);
       Say("stop: " + why);
       return m;
     }

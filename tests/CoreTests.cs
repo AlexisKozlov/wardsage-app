@@ -5540,6 +5540,22 @@ static partial class CoreTests {
     p = new LocatePilot(); { int still = 0; long t = 0; string last = "";
       for (int i = 0; i < 10; i++, t += 2500) { v = V(new LocateStep { Kind = LocateKind.AscendPick, Pos = 41 }, R(100)); v.NowMs = t; m = p.Step(v); last = m.State + "/" + m.Why; if (m.Action.Kind == AutoKind.Drag) still++; if (m.State == "stopped") break; }
       Check(p.Stopped && p.Reason == "lost" && still <= 3, "foundry auto: a list that does not move on drags stops the pilot (" + still + " drags, " + last + ")"); }
+    // F7 (live 10:53:31-49, record 105430-9b0235: index 19 of 20, the list at its end): the drags move no scroll, the layout cuts the cell, but the game's own cell stands whole in view: the click goes on it, the search is not 'lost'
+    {
+      p = new LocatePilot(); int drags2 = 0, clicks2 = 0; long t = 0; string last = ""; bool stopped = false;
+      for (int i = 0; i < 12; i++, t += 2500) {
+        v = V(new LocateStep { Kind = LocateKind.AscendPick, Pos = 41 }, R(100)); v.NowMs = t;
+        if (i >= 2) { v.LiveSeen = true; v.LiveCell = true; v.LiveX = 162 + 17; v.LiveY = 152 + 17; v.LiveInView = 1; }   // from the third read on the live cell is in view (the list coasted into place)
+        m = p.Step(v); last = m.State + "/" + m.Why;
+        if (m.Action.Kind == AutoKind.Drag) drags2++; if (m.Action.Kind == AutoKind.Click) { clicks2++; Check(Math.Abs(m.Action.X - 179) < 1 && Math.Abs(m.Action.Y - 169) < 1, "F7: the click is on the live cell's centre (" + m.Action.X + "," + m.Action.Y + ")"); break; }
+        if (m.State == "stopped") { stopped = true; break; }
+      }
+      Check(clicks2 == 1 && !stopped && drags2 <= 2, "F7: two drags that moved no scroll, then the live cell in view: ONE click on it, no 'lost' (" + drags2 + " drags, " + clicks2 + " clicks, " + last + ")");
+      // without a live cell the stop stays, and carries its diagnosis (memory: cells read or not, scroll, layout, drags)
+      p = new LocatePilot(); t = 0; string tr = "";
+      for (int i = 0; i < 10; i++, t += 2500) { v = V(new LocateStep { Kind = LocateKind.AscendPick, Pos = 41 }, R(100)); v.NowMs = t; v.LiveSeen = true; v.LiveWhy = "no cell of the item"; m = p.Step(v); tr += p.Trace; if (m.State == "stopped") break; }
+      Check(p.Stopped && p.Reason == "lost" && tr.IndexOf("diagnosis: live cells read, target cell not usable (no cell of the item)", StringComparison.Ordinal) >= 0 && tr.IndexOf("unmoved drags 2", StringComparison.Ordinal) >= 0, "F7: a 'lost' stop names its reason (" + tr.Substring(Math.Max(0, tr.IndexOf("diagnosis", StringComparison.Ordinal))) + ")");
+    }
     // the item is in the long all-slots list and off the screen: the slot tab first, then the scroll and the cell (the filter is never needed)
     v = V(new LocateStep { Kind = LocateKind.AscendPick, Pos = 41, Scroll = "below", ScrollRows = 4, Missing = new[] { "slot" } }, R(0));
     Eq(LocateTodo.SlotTab, LocateAuto.Decide(v, out why), "foundry auto: item in the list but off screen and the slot not set -> the slot tab first");
@@ -6130,6 +6146,25 @@ static partial class CoreTests {
     var foundry = ScreenState.Classify(new ScreenInputs { Rs = new RecastScreen { SublimingOpen = true }, Offers = new List<string>(), ShownKnown = "" }, 0);
     Func<PilotFlow, ScreenState, bool, HintFallbackPlan> D = (f, sc, live) => HintFallback.Decide(f, sc, LocateKind.None, live, W, H, U);
     Func<GeoRect, bool> onBack = r => r != null && Math.Abs(r.CX - bx) <= 0.03 * U + 1 && Math.Abs(r.CY - by) <= 0.03 * U + 1;
+    // scenario 10 (live 10:5x): the gear filter pop-up is open (the game's flag, gear filter mem=yes) on the hero screen and the flow cannot go on from it: «Закройте фильтр» on its red ×, not «Вернитесь в город»
+    {
+      Func<Mem3, ScreenState> gearHero = open => { var gs = ScreenState.Classify(new ScreenInputs { Hero = new HeroScreen { Hero = 5, FormOk = true, Tab = HeroGeometry.GearTab, Part = 2, Gear = new GearMem { Open = open, Side = Mem3.No, SetPanel = Mem3.No } }, Offers = new List<string>(), ShownKnown = "Form_CharactorMain" }, 0);
+        if (open == Mem3.Yes) { gs.ModalOpen = true; gs.ModalWhy = "form:Form_EquipFilterWidget"; } return gs; };   // (the pop-up as a form nobody of the map names: a stray one)
+      var fgm = new FilterGeometry(); double xx = fgm.X(fgm.MainCloseX, W, H), yy = fgm.Y(fgm.CloseY, W, H);
+      foreach (var f in new[] { PilotFlow.LocateAscend, PilotFlow.LocateRecast, PilotFlow.Sell }) {
+        var pl = D(f, gearHero(Mem3.Yes), false);
+        Check(pl.Kind == HintLeave.Close && pl.Text == "closeFilter" && pl.Rect != null && Math.Abs(pl.Rect.CX - xx) < 2 && Math.Abs(pl.Rect.CY - yy) < 2, "fallback: " + f + " with the gear filter open (mem=yes): the plate says to close the filter, its × framed (" + pl.Kind + " '" + pl.Text + "')");
+        var pn = D(f, gearHero(Mem3.No), false);
+        Check(pn.Text == "", "fallback: " + f + " with the gear filter shut: not the filter's text (" + pn.Kind + ")");
+      }
+      Check(D(PilotFlow.Equip, gearHero(Mem3.Yes), false).Text != "closeFilter", "fallback: the equip flow's own open gear filter is not told to be closed by this plate");
+      // the page's step: the open gear filter covers the hero screen's buttons: «close the filter window» with the × key of the gear filter, whatever coverable step it hides
+      foreach (var k in new[] { LocateKind.OpenFoundry, LocateKind.OpenInventory }) {
+        var stp = new LocateStep { Kind = k, OnGear = true }; bool rep = LocateGuide.CoverStep(stp, gearHero(Mem3.Yes));
+        Check(rep && stp.Kind == LocateKind.ClosePopup && stp.Covered == k && stp.PopupTitle == "filter" && stp.PopupClose == "hero.filterClose", "locate step " + k + ": the gear filter open (mem=yes): the step is «close the filter window» on its ×, not the way back (" + stp.Kind + ")");
+        Check(!LocateGuide.CoverStep(new LocateStep { Kind = k, OnGear = true }, gearHero(Mem3.No)), "locate step " + k + ": the gear filter shut: the step stays");
+      }
+    }
     // an unknown screen whose form the map knows with a back arrow: the arrow framed (every flow alike)
     foreach (var f in CityFirst.All) {
       var pl = D(f, Unk("Form_ActALinkageMain", ""), false);

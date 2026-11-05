@@ -132,6 +132,9 @@ namespace RealmForge {
       string why = sc.ModalWhy ?? "";
       if (sc.ModalOpen && why == "heroFilter" && sc.Kind == ScreenKind.HeroScreen && st.Kind == LocateKind.OpenFoundry && st.OnGear)
         return new PopupCover { Form = "Form_CharactorMain", Title = "filter", Close = "hero.filterClose" };
+      // the gear filter pop-up open (the game's flag, m_bShow) covers the hero screen's buttons and bottom row: «close the filter window» with its × framed, whatever the step is
+      if (sc.Kind == ScreenKind.HeroScreen && sc.GearOpenMem == Mem3.Yes)
+        return new PopupCover { Form = "Form_CharactorMain", Title = "filter", Close = "hero.filterClose" };
       // only a pop-up of its own counts: never a form of the screen's pilot flows (the tip, the filters, the confirms: the screen's sub-state), never the
       // screen's own form or its sub-panels (the gem function panel, the workshop's tabs: forms the screen map does not list as pop-ups)
       var list = new List<string>();
@@ -168,6 +171,12 @@ namespace RealmForge {
       var k = st.Kind;
       if ((sc.Kind == ScreenKind.Foundry || sc.Kind == ScreenKind.Gem) && (k == LocateKind.OpenInventory || k == LocateKind.OpenEquipTab || k == LocateKind.InList || k == LocateKind.OpenFoundry)) away = true;
       if (!CityFirst.NeedsCity(CityFirst.OfLocate(purpose), sc, k, away)) return false;
+      // the gear filter pop-up is open on the hero screen: the first hint is to close it (its red ×), not the way back to the city
+      if (sc.Kind == ScreenKind.HeroScreen && sc.GearOpenMem == Mem3.Yes) {
+        st.Covered = st.Kind; st.Kind = LocateKind.ClosePopup; st.Popup = "Form_CharactorMain"; st.PopupTitle = "filter"; st.PopupClose = "hero.filterClose";
+        st.Pos = st.Row = st.Col = st.Count = 0; st.Missing = new string[0]; st.FilterGo = ""; st.Scroll = "";
+        return true;
+      }
       st.Covered = st.Kind; st.Kind = LocateKind.BackToCity; st.Popup = ""; st.PopupTitle = ""; st.PopupClose = "";
       st.Pos = st.Row = st.Col = st.Count = 0; st.Missing = new string[0]; st.FilterGo = ""; st.Scroll = "";
       return true;
