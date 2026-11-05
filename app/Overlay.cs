@@ -41,6 +41,8 @@ namespace RealmForge {
     [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr h, int index);
     [DllImport("user32.dll")] public static extern int SetWindowLong(IntPtr h, int index, int value);
     [DllImport("user32.dll")] public static extern IntPtr WindowFromPoint(POINT p);
+    [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr h, uint flags);
+    [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr h, uint cmd);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassName(IntPtr h, System.Text.StringBuilder s, int max);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
     [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
@@ -4246,11 +4248,17 @@ namespace RealmForge {
       bool hidden = false, wasTop = false;
       W32.RECT wr;
       const uint NoMoveSizeActivate = 0x0002 | 0x0001 | 0x0010;   // SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE
+      IntPtr above = IntPtr.Zero;   // the window just over ours before the flip: it goes back right under it, not to the top (a window that was under the game must stay under it)
       if (self != IntPtr.Zero && W32.IsWindowVisible(self) && W32.GetWindowRect(self, out wr)) {
         int y2 = y + (a.Kind == AutoKind.Drag ? (int)Math.Round(a.DY) : 0);
-        bool over = x >= wr.L && x < wr.R && Math.Max(y, y2) >= wr.T && Math.Min(y, y2) < wr.B;
+        // only a click that our window would catch: the window the system finds at the point (and at the drag's end) is ours; nothing else is touched (no z-order, no style)
+        bool ownAt = OwnRootAt(self, x, y) || (y2 != y && OwnRootAt(self, x, y2));
+        bool over = FrontPolicy.ClickNeedsOwnAside(true, W32.IsIconic(self), wr.L, wr.T, wr.R, wr.B, x, y, y2, ownAt);
         if (over) {
           wasTop = (W32.GetWindowLong(self, -20) & 0x00000008) != 0;   // GWL_EXSTYLE, WS_EX_TOPMOST
+          above = wasTop ? IntPtr.Zero : W32.GetWindow(self, 3);   // GW_HWNDPREV
+          string zl = zflip.Line(Environment.TickCount, "own window at the click (" + x + "," + y + ") rect=[" + wr.L + "," + wr.T + "," + (wr.R - wr.L) + "," + (wr.B - wr.T) + "] " + (wasTop ? "topmost" : "normal"));
+          if (zl != null) Log.Write(zl);
           W32.SetWindowPos(self, (IntPtr)1, 0, 0, 0, 0, NoMoveSizeActivate);   // HWND_BOTTOM
           hidden = true;
         }
@@ -4288,7 +4296,7 @@ namespace RealmForge {
         } catch (Exception e) { Log.Write("auto: " + e.Message); }
         finally {
           // back over the game: topmost again when it was («Поверх игры»), else just above it
-          if (hidden) W32.SetWindowPos(self, wasTop ? (IntPtr)(-1) : IntPtr.Zero, 0, 0, 0, 0, NoMoveSizeActivate | 0x4000);   // SWP_ASYNCWINDOWPOS
+          if (hidden) W32.SetWindowPos(self, wasTop ? (IntPtr)(-1) : above != IntPtr.Zero ? above : IntPtr.Zero, 0, 0, 0, 0, NoMoveSizeActivate | 0x4000);   // SWP_ASYNCWINDOWPOS (back right under what was over it)
           foreach (var w in through) try { PassThrough(w, false); } catch (Exception) { }
           userIdle.OwnEnd((uint)Environment.TickCount);
           sending = false;
@@ -4302,6 +4310,15 @@ namespace RealmForge {
     // a pilot click not pressed: a pop-up came on top right before the press (set by the click thread, turned into a retry by Tick)
     volatile Tuple<ClickOwner, string> lateTop;
     List<string> freshOffers;   // the offers of the last fresh read (FreshScreen): the click thread's re-check compares with them
+
+    readonly ZFlipLog zflip = new ZFlipLog();
+    /// <summary>Is the top-level window the system finds at the screen point our main window?</summary>
+    static bool OwnRootAt(IntPtr self, int x, int y) {
+      IntPtr h = W32.WindowFromPoint(new W32.POINT(x, y));
+      if (h == IntPtr.Zero) return false;
+      IntPtr root = W32.GetAncestor(h, 2);   // GA_ROOT
+      return h == self || root == self;
+    }
 
     static void PassThrough(GlowWindow w, bool on) {   // WS_EX_TRANSPARENT on a layered window: the mouse goes to what is under it
       int ex = W32.GetWindowLong(w.Handle, -20);

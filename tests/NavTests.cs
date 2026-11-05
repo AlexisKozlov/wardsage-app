@@ -268,6 +268,15 @@ static partial class CoreTests {
     Check(FrontPolicy.IsBrowser("chrome") && FrontPolicy.IsBrowser("msedge") && FrontPolicy.IsBrowser("Firefox") && !FrontPolicy.IsBrowser("moontonlauncher") && !FrontPolicy.IsBrowser("PlariumPlay") && !FrontPolicy.IsBrowser("Telegram") && !FrontPolicy.IsBrowser(""), "front: browsers are told from launchers and chats");
     Check(FrontPolicy.ShouldRaiseOverBrowser(true, true, false, false, false, 5000, 10, 0, true, false), "front: a waiting pilot raises the game over an idle browser once");
     Check(!FrontPolicy.ShouldRaiseOverBrowser(true, true, false, false, false, 5000, 10, 0, true, true), "front: ... not a second time in the run");
+    // the program window and the pilot's click: the window is put aside only for a click it would catch (it is the window at the point), never for one it lies under
+    Check(FrontPolicy.ClickNeedsOwnAside(true, false, 100, 100, 600, 500, 300, 300, 300, true), "window aside: a click on our window at the point: yes");
+    Check(!FrontPolicy.ClickNeedsOwnAside(true, false, 100, 100, 600, 500, 300, 300, 300, false), "window aside: the rect covers the point but the game is over it: no flip (was the flash after every click)");
+    Check(!FrontPolicy.ClickNeedsOwnAside(true, false, 100, 100, 600, 500, 900, 300, 900, true), "window aside: the point is outside our rect: no");
+    Check(!FrontPolicy.ClickNeedsOwnAside(true, true, 100, 100, 600, 500, 300, 300, 300, true) && !FrontPolicy.ClickNeedsOwnAside(false, false, 100, 100, 600, 500, 300, 300, 300, true), "window aside: minimized / hidden window: no");
+    Check(FrontPolicy.ClickNeedsOwnAside(true, false, 100, 100, 600, 500, 300, 50, 300, true) && !FrontPolicy.ClickNeedsOwnAside(true, false, 100, 100, 600, 500, 300, 50, 80, true), "window aside: a drag that reaches the window counts, one that stays above it does not");
+    var zl = new ZFlipLog();
+    string l1 = zl.Line(1000, "own window"), l2 = zl.Line(1300, "own window"), l3 = zl.Line(1700, "own window"), l4 = zl.Line(2100, "own window");
+    Check(l1 != null && l1.StartsWith("win: z-order flip reason=own window") && l2 == null && l3 == null && l4 != null && l4.Contains("+2 more"), "window flip log: once a second, the rest counted: " + l4);
     Check(!FrontPolicy.ShouldRaiseOverBrowser(true, true, false, false, false, 5000, 10, 0, false, false), "front: ... never over another program (the launcher)");
     Check(!FrontPolicy.ShouldRaiseOverBrowser(true, true, false, false, false, 100, 10, 0, true, false), "front: ... never while the player is active");
     // D5: a pilot's fire click is "sent", not progress; only its own ProgressAt (or a new screen state) keeps the step clock going

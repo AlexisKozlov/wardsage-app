@@ -42,6 +42,18 @@ namespace RealmForge {
     public string FullKey { get { return StateKey + "|" + Below + "|" + Above; } }
   }
 
+  /// <summary>The journal line "win: z-order flip reason=..." at most once per interval (a flip per click would fill it); the flips left out are counted into the next line.</summary>
+  public sealed class ZFlipLog {
+    public const long EveryMs = 1000;
+    long lastAt = long.MinValue; int skipped;
+    /// <summary>The line to write now, or null (too soon: counted).</summary>
+    public string Line(long now, string reason) {
+      if (lastAt != long.MinValue && now - lastAt < EveryMs) { skipped++; return null; }
+      lastAt = now; int n = skipped; skipped = 0;
+      return "win: z-order flip reason=" + reason + (n > 0 ? " (+" + n + " more flips in the last second)" : "");
+    }
+  }
+
   /// <summary>When the app itself brings the game window forward (live 2026-10-30: after a restart our window stayed over the game, the
   /// runner's foreground call only made it flicker, so no auto click could run). Pure, tests: tests/CoreTests.cs.</summary>
   public static class FrontPolicy {
@@ -55,6 +67,14 @@ namespace RealmForge {
     /// <summary>Move our main window off the game: only when it is not minimized and really covers the game's client.</summary>
     public static bool ShouldMoveSelf(bool selfVisible, bool selfMinimized, bool selfOverlaps) { return selfVisible && !selfMinimized && selfOverlaps; }
     public static bool Overlaps(int al, int at, int ar, int ab, int bl, int bt, int br, int bb) { return al < br && bl < ar && at < bb && bt < ab; }
+
+    /// <summary>Does a pilot's click (a drag from y to y2) have to put our main window aside for a moment? Only when it is visible, not minimized, the point(s) are inside its rect AND the window
+    /// the system finds at the point is ours (<paramref name="ownAtPoint"/>): a window that lies UNDER the game at that point (the game is in front) does not catch the click, and moving it
+    /// made it jump above the game after every click (live 1.6.66.572: «the program window flashes after each click over the game»).</summary>
+    public static bool ClickNeedsOwnAside(bool selfVisible, bool selfMinimized, int l, int t, int r, int b, int x, int y, int y2, bool ownAtPoint) {
+      if (!selfVisible || selfMinimized || !ownAtPoint) return false;
+      return x >= l && x < r && Math.Max(y, y2) >= t && Math.Min(y, y2) < b;
+    }
 
     /// <summary>Programs the game may be brought forward over (the web page of the helper lives there): the browsers. Never another program (the game's launcher, a chat, a system dialog).</summary>
     public static bool IsBrowser(string processName) {
