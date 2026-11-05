@@ -6135,8 +6135,12 @@ static partial class CoreTests {
     Check(hfp.ModalOpen && hfp.ModalWhy == "heroFilter", "fallback: the hero filter pop-up reads as open (" + hfp.ModalWhy + ")");
     foreach (var f in CityFirst.All) {
       var fp = D(f, hfp, false);
-      var fn = HintFallback.FunnelRect(H, U);
-      Check(fp.Kind == HintLeave.Close && fp.Rect != null && Math.Abs(fp.Rect.CX - fn.CX) < 1 && Math.Abs(fp.Rect.CY - fn.CY) < 1, "fallback: " + f + " with the hero filter pop-up open: the funnel framed (" + fp.Kind + ")");
+      var fn = new HeroGeometry().GridBarRect(W, H);
+      Check(fp.Kind == HintLeave.Close && fp.Rect != null && Math.Abs(fp.Rect.CX - fn.CX) < 1 && Math.Abs(fp.Rect.CY - fn.CY) < 1, "fallback: " + f + " with the hero filter pop-up open: the filter bar framed (" + fp.Kind + ")");
+    }
+    {   // lab 552 equip_hint_filter_open (frame audit): the Equip fallback's layout of hero.filter was the funnel square [16,641,56,56]; the live m_BtnFilter is [3,637,275,40] at 1366x705
+      double W2 = 1366, H2 = 705, U2 = Ui.Unit(W2, H2); var fq = HintFallback.Decide(PilotFlow.Equip, hfp, LocateKind.None, false, W2, H2, U2); int[] lv = { 3, 637, 275, 40 };
+      Check(fq.Kind == HintLeave.Close && fq.Key == "hero.filter" && Math.Abs(fq.Rect.CX - (lv[0] + lv[2] / 2.0)) <= 12 && Math.Abs(fq.Rect.CY - (lv[1] + lv[3] / 2.0)) <= 12 && Math.Abs(fq.Rect.W - lv[2]) <= 12 && Math.Abs(fq.Rect.H - lv[3]) <= 12, "fallback: hero.filter layout vs the audit's live rect (lab 552): the whole bar (" + fq.Rect.X + "," + fq.Rect.Y + "," + fq.Rect.W + "x" + fq.Rect.H + ")");
     }
     // live state of the lab run: the game's own flag not read (ModalWhy empty) but the pop-up is on the picture: the same funnel
     var hnf = ScreenState.Classify(new ScreenInputs { Hero = new HeroScreen { Hero = 5, FormOk = true }, Offers = new List<string>(), ShownKnown = "" }, 0);

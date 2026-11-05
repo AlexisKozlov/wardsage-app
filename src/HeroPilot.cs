@@ -29,6 +29,12 @@ namespace RealmForge {
     // the grid's filter: its button under the grid (left edge, from the bottom) and the pop-up's class / faction columns
     // (left / top), rows from «Все» down, 7 visible without scrolling (1920×1009 measured)
     public double FunnelX = 0.0634, FunnelDY = 0.0505;
+    // the hero grid's bottom bar (funnel, sort, direction): the game's m_BtnFilter, whole; measured by the live read at 1366x705 (lab 548: 3,637,275x40). The ONE layout of hero.filter (every hint path)
+    public double GridBarX0 = 0.0043, GridBarW = 0.39, GridBarY0 = 0.9035, GridBarH = 0.0567;
+    public GeoRect GridBarRect(double W, double H) {
+      double U = Ui.Unit(W, H);
+      return new GeoRect { X = Math.Round(GridBarX0 * U), Y = Math.Round(Ui.FromBottom(GridBarY0, W, H)), W = Math.Round(GridBarW * U), H = Math.Round(GridBarH * U) };
+    }
     public double ClassX = 0.0942, FactionX = 0.321, FilterRow0 = 0.2379, FilterPitch = 0.1004;
     public const int FilterRows = 7;
     /// <summary>Class ids of the class column after «Все», in its order (by id; Tactician only when the game shows it).</summary>

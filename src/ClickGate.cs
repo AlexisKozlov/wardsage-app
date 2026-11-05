@@ -241,7 +241,7 @@ namespace RealmForge {
       bool locate = f == PilotFlow.LocateAscend || f == PilotFlow.LocateRecast || f == PilotFlow.LocateArtPromote;
       if (locate && (step == LocateKind.NoItem || step == LocateKind.OtherAccount)) return p;   // nothing to drive: it never goes back
       // an open pop-up always wins over the flow's step: the hero grid's filter pop-up (its own screen, the flows go on from it) is closed with the funnel
-      if (s.Kind == ScreenKind.HeroScreen && ((s.ModalOpen && s.ModalWhy == "heroFilter") || heroFilterPic)) { p.Kind = HintLeave.Close; p.Rect = FunnelRect(H, U); p.Key = "hero.filter"; p.Why = "the hero grid's filter pop-up: its funnel"; return p; }
+      if (s.Kind == ScreenKind.HeroScreen && ((s.ModalOpen && s.ModalWhy == "heroFilter") || heroFilterPic)) { p.Kind = HintLeave.Close; p.Rect = new HeroGeometry().GridBarRect(W, H); p.Key = "hero.filter"; p.Why = "the hero grid's filter pop-up: its filter bar (the funnel)"; return p; }
       var md = ClickGate.MapExit(s, W, H, U);
       if (md.Move == MapMove.Wait || md.Move == MapMove.Stop) return p;   // a fight / loading / a dangerous form: not the hint's to judge
       bool form = s.ModalWhy != null && s.ModalWhy.StartsWith("form:") && s.OfferCount == 0;
@@ -255,12 +255,6 @@ namespace RealmForge {
       if (pop) { p.Kind = HintLeave.Esc; p.Why = "pop-up with no known close button"; return p; }
       if (!unk || backLive) { p.Kind = HintLeave.Back; p.Rect = BackRect(U); p.Why = unk ? "back arrow read live" : "back arrow of " + s.Kind; return p; }
       p.Kind = HintLeave.Esc; p.Why = "unknown screen, no back arrow read"; return p;
-    }
-
-    /// <summary>The funnel that opens / closes the hero grid's filter pop-up (HeroGeometry.FunnelX / FunnelDY), client px; <paramref name="H"/> = the client height.</summary>
-    public static GeoRect FunnelRect(double H, double U) {
-      var g = new HeroGeometry(); double fr = Math.Max(10, 0.04 * U), fx = g.FunnelX * U, fy = H - g.FunnelDY * U;
-      return new GeoRect { X = fx - fr, Y = fy - fr, W = 2 * fr, H = 2 * fr };
     }
 
     /// <summary>The standard back arrow's frame (HeroBack's spot, the same one the pilots press), client px.</summary>

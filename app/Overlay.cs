@@ -1062,7 +1062,10 @@ namespace RealmForge {
       if (plan.Kind == HintLeave.Esc) { DrawTipTop(new[] { BackCityText, EscText }, ""); return true; }
       int[] r = plan.Kind == HintLeave.Back && bf != null && bf.Mark != null ? new[] { bf.Mark.X, bf.Mark.Y, bf.Mark.W, bf.Mark.H }
         : new[] { (int)Math.Round(plan.Rect.X), (int)Math.Round(plan.Rect.Y), (int)Math.Round(plan.Rect.W), (int)Math.Round(plan.Rect.H) };
-      if (plan.Key != "") { bool kl; r = FrameForI(plan.Key, r, W, H, U, out kl) ?? r; }   // the target's live rect (the funnel widget), reported to the frame audit
+      if (plan.Key != "") {
+        bool kl; r = FrameForI(plan.Key, r, W, H, U, out kl) ?? r;   // the target's live rect (the filter bar widget), reported to the frame audit
+        if (!kl && FramePending(plan.Key)) { DrawTipTop(new[] { BackCityText }, ""); return true; }   // (the live read is awaited, up to FramePendingMs: the plate alone, no layout frame first)
+      }
       frame++;
       DrawTip(o.X + r[0], o.Y + r[1], r[2], r[3], new[] { BackCityText }, U, false, false, false, "");
       return true;
