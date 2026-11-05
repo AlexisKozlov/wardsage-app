@@ -71,6 +71,9 @@ namespace RealmForge {
     /// <summary>Set by the pilot once FilterOpen has been settled against FilterMem for this view.</summary>
     public bool FilterResolved;
     public long[] FactionList, ChosenCamps;
+    /// <summary>The hero grid as the game's ScrollRect holds it (RFX.ReadHeroGridMem, package P5): ListKnown = read, ListMoving = dragged / coasting (no click or drag now), ListPos / ListMax = content position and its longest value (units),
+    /// ListThrPx = the game's drag threshold in px (0 = not read).</summary>
+    public bool ListKnown, ListMoving; public double ListPos, ListMax, ListThrPx;
     public int ClassCount;
     public ulong GridPtr;
     public long HeroClass;
@@ -95,6 +98,10 @@ namespace RealmForge {
     public const int FunnelSeenMs = 2600;
     public const int AfterClickMs = 500, AfterDragMs = 700, AfterBackMs = 900, UserPauseMs = 4000;   // each click is checked in memory
     public const double MinDragPx = 24;
+    /// <summary>A drag is at least this long: the game's own drag threshold (HeroView.ListThrPx) and as much again, else MinDragPx (a shorter move is a click or loses its start to the threshold).</summary>
+    public static double MinDrag(HeroView v) { return v.ListThrPx > 0 ? Math.Max(MinDragPx, v.ListThrPx * 2 + 8) : MinDragPx; }
+    public const int MovingCapMs = 3000, MaxBoundResets = 3;
+    long movingSince; int boundResets;
     // a game slower than AfterClickMs (a slow laptop: 0.6-1.5 s): a hero brought up after the click's wait ran out is a late answer, the waits grow to
     // the latest answer seen plus this margin (never above MaxLateMs); a fast PC never answers that late, its waits stay as they are
     public const int LateMarginMs = 400, MaxLateMs = 4000;
@@ -263,6 +270,11 @@ namespace RealmForge {
         has = false; waitUntil = v.NowMs + Late(AfterBackMs);
         return Click(g.BackX * H, g.BackY * H);
       }
+      // the game's own word that the grid stands (not dragged, no coast left): neither a click nor a drag starts on a moving grid; a speed that never reads zero holds the pilot for MovingCapMs at most
+      if (v.ListKnown && v.ListMoving) {
+        if (movingSince == 0) movingSince = v.NowMs;
+        if (v.NowMs - movingSince < MovingCapMs) return AutoAction.Nothing;
+      } else movingSince = 0;
       pitchF = v.SmallCards ? g.SmallPitchY : g.PitchY; cardF = v.SmallCards ? g.SmallCardH : g.CardH;
       if (v.GridPtr != lastGrid) {   // sorted / filtered again: the game shows the new grid from its top
         bool first = lastGrid == 0; lastGrid = v.GridPtr;
@@ -303,13 +315,19 @@ namespace RealmForge {
       // the pointer may leave the grid while dragging (the game keeps following it): up to near the window's edge
       double maxUp = bottom - card * 0.3 - 0.03 * H, maxDown = ch - 0.03 * H - (top + card * 0.3);
       double dy = Math.Max(-maxUp, Math.Min(maxDown, mid - cy));
-      if (Math.Abs(dy) < MinDragPx) dy = dy < 0 ? -MinDragPx : MinDragPx;
+      double minDrag = MinDrag(v);
+      if (Math.Abs(dy) < minDrag) dy = dy < 0 ? -minDrag : minDrag;
+      // the grid is already at the end the drag goes to (the game's content position: 0 = the top, ListMax = the end): the rows are not where the pilot thinks - they are learnt again from a click, not dragged against the end
+      if (v.ListKnown && boundResets < MaxBoundResets && ((dy > 0 && v.ListPos <= 0.5) || (dy < 0 && v.ListMax > 0 && v.ListPos >= v.ListMax - 0.5))) {
+        boundResets++; has = false; misses = 0; Progress++;
+        return AutoAction.Nothing;
+      }
       // the game's grid follows the pointer by its own gain (live 2026-10-18: about twice as far): a drag that overshoots turns the next one back, each turn
       // shortens the drags (x0.6) until they land - without it a hero 30 rows down in a grid with a gain far from 1 swings back and forth until the tries run out
       int sg = dy < 0 ? -1 : 1;
       if (lastDragSign != 0 && sg != lastDragSign) dragScale = Math.Max(0.15, dragScale * 0.6);
       lastDragSign = sg;
-      if (dragScale < 1) { dy *= dragScale; if (Math.Abs(dy) < MinDragPx) dy = sg * MinDragPx; }
+      if (dragScale < 1) { dy *= dragScale; if (Math.Abs(dy) < minDrag) dy = sg * minDrag; }
       double y0 = dy < 0 ? bottom - card * 0.3 : top + card * 0.3;
       drags++; total++; Progress++; waitUntil = v.NowMs + Late(AfterDragMs);
       // the grid moved by about dy; the ends of the grid stop it, so the next click checks
@@ -463,7 +481,7 @@ namespace RealmForge {
     void Restart() {
       effect.Drop(); FunnelUnseen = false;
       waitUntil = pauseUntil = failedAt = pickAt = 0; funnelAt = 0; funnelPressed = false; seenHero = 0; clicks = drags = backs = tabs = misses = city = total = 0; bestDist = int.MaxValue; has = pending = false; State = "idle";
-      lastDragSign = 0;
+      lastDragSign = 0; movingSince = 0; boundResets = 0;
       Why = ""; filterPhase = funnelTries = factionTries = clearTries = classResets = doneCloses = 0; classClicked = factionDone = classDone = forceClear = false; lastGrid = 0;
     }
 

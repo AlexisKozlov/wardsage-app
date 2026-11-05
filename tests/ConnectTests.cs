@@ -52,5 +52,54 @@ static partial class CoreTests {
     Check(!LookPolicy.FirstIsReplace(2) && !LookPolicy.SecondSearch(2, true), "memory: equip - its spot alone when found");
     Check(LookPolicy.SecondSearch(1, false) && LookPolicy.SecondSearch(2, false), "the named spot found nothing: the other kind is looked at too (memory may be stale)");
     Check(LookPolicy.FirstIsReplace(0) && LookPolicy.SecondSearch(0, true), "memory unknown: both spots, as before");
+ 
+    ListMemHookTests();
+  }
+
+  // ---------------------------------------------------------------- C5: the lists' own scroll (standing, bounds, the drag threshold) in the pilots
+  static void ListMemHookTests() {
+    Console.WriteLine("Pilots use the lists' memory (standing, threshold, bounds):");
+    var geo = new ListGeometry(); double H = 705;
+    var types = new int[41]; for (int i = 1; i <= 40; i++) types[i] = 1;
+    Func<double, bool, double, AutoView> mk = (thr, moving, now) => new AutoView { NowMs = (long)now, Foreground = true, H = H, Target = 55070, Row = 5, Col = 3, Sel = 54835, AnchorHas = true, Row1Top = 120, Types = types, TipKnown = true, TipShown = false, Hero = 5, ScreenHero = 5, Owner = 0,
+      InputOpen = true, LiveGrid = true, LiveTarget = false, LiveFirst = 0, LiveLast = 7, LiveScroll = 54, LiveViewTop = 107, LiveViewBottom = 615, ListSig = 1, ListKnown = true, ListMoving = moving, ListThrPx = thr, ListContentH = 4400, ListViewH = 508 / (geo.PitchY * H / AutoPilot.RowUnits) };
+    // the drag is longer by the game's own threshold than by the constant
+    double dyOf(double thr) {
+      var pg = new AutoPilot(geo);
+      for (long t = 0; t < 3000; t += 100) { var a = pg.Step(mk(thr, false, t)); if (a != null && a.Kind == AutoKind.Drag) return a.DY; }
+      return double.NaN;
+    }
+    double d8 = dyOf(0), d30 = dyOf(30);
+    Check(!double.IsNaN(d8) && !double.IsNaN(d30) && Math.Abs(Math.Abs(d30) - Math.Abs(d8) - 22) < 0.01, "the drag carries the game's threshold (30 px) instead of the constant 8: " + d8.ToString("0.#") + " -> " + d30.ToString("0.#"));
+    // a moving list: no drag for the cap, then the pilot goes on
+    {
+      var pg = new AutoPilot(geo); long firstDrag = -1;
+      for (long t = 0; t < 8000 && firstDrag < 0; t += 100) { var a = pg.Step(mk(0, true, t)); if (a != null && a.Kind == AutoKind.Drag) firstDrag = t; }
+      Check(firstDrag >= AutoPilot.MovingCapMs - 200 && firstDrag <= AutoPilot.MovingCapMs + 1200, "a list the game says moves is not dragged for " + AutoPilot.MovingCapMs + " ms (first drag at " + firstDrag + ")");
+    }
+    {
+      var pg = new AutoPilot(geo); long firstDrag = -1;
+      for (long t = 0; t < 3000 && firstDrag < 0; t += 100) { var a = pg.Step(mk(0, t < 1000, t)); if (a != null && a.Kind == AutoKind.Drag) firstDrag = t; }
+      Check(firstDrag >= 1000 && firstDrag <= 2000, "it stops: the drag follows within a second of the stop (at " + firstDrag + ")");
+    }
+    // the hero grid: moving = no click, the drag minimum from the threshold
+    {
+      var hp = new HeroPilot(new HeroGeometry()); var heroes = new long[40]; for (int i = 0; i < heroes.Length; i++) heroes[i] = 100 + i;
+      Func<long, bool, HeroView> hvOf = (t, moving) => new HeroView { NowMs = t, Foreground = true, W = 1920, H = 1009, ClientH = 1009, Plan = heroes[30], Hero = heroes[0], Tab = 3, Part = -1, Heroes = heroes, FilterMem = Mem3.No, ListKnown = true, ListMoving = moving, ListThrPx = 20 };
+      var a = hp.Step(hvOf(1000, true));
+      Check(a == AutoAction.Nothing || (a != null && a.Kind == AutoKind.None), "the hero grid moves: no click, no drag");
+      a = hp.Step(hvOf(5000, true));
+      Check(a != null && a.Kind != AutoKind.None, "a grid that never reads zero speed holds the pilot for " + HeroPilot.MovingCapMs + " ms only");
+      Check(HeroPilot.MinDrag(new HeroView { ListThrPx = 20 }) == 48 && HeroPilot.MinDrag(new HeroView()) == HeroPilot.MinDragPx, "the shortest drag is twice the game's threshold and a margin (else 24)");
+    }
+    // the filter's side list moves: no cell is clicked
+    {
+      var fp = new FilterPilot(new FilterGeometry());
+      var v = new FilterView { NowMs = 1000, Foreground = true, W = 1920, H = 1009, Item = 5, Wanted = true, SetId = 721500, StatId = 13, SetIndex = 0, StatIndex = 1, Suits = new long[0], MainAttrs = new long[0], SubAttrs = new long[0], PanelMem = Mem3.Yes, SideMem = Mem3.Yes, SetMem = Mem3.Yes, SetOrder = new long[] { 721500, 1 }, SideListMoving = true };
+      var a = fp.Step(v);
+      Check(a == AutoAction.Nothing, "the sets list moves: no set cell is clicked");
+      v.NowMs = 2000; v.Resolved = false; v.SideListMoving = false; a = fp.Step(v);
+      Check(a != null && a.Kind == AutoKind.Click && a.CellKind == UiCellKind.GearSuit, "it stands: the set's cell is clicked");
+    }
   }
 }

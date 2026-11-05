@@ -173,6 +173,8 @@ namespace RealmForge {
   public sealed class ListMemRead {
     public ScrollState Scroll; public GridState Grid; public double ThresholdPx = -1; public string Why = "";
     public bool Has { get { return Scroll != null && Scroll.Valid && Grid != null && Grid.Valid; } }
+    /// <summary>The list is dragged or still coasting (a speed at or above ScrollMath.StandV): no click or drag is started on it now.</summary>
+    public bool Moving { get { return Scroll != null && Scroll.Valid && (Scroll.Dragging || Math.Abs(Scroll.VelX) >= ScrollMath.StandV || Math.Abs(Scroll.VelY) >= ScrollMath.StandV); } }
     /// <summary>The way to scroll to the cell <paramref name="index"/> (V1 rows: index / Cols). padTop = the top padding of the content in units (the pad total is Scroll.ContentH - rows * line, see
     /// ScrollMath.PadTotal; the padding object itself is native). thresholdFallbackPx is used only when the game's threshold was not read.</summary>
     public ScrollMath.DragPlan PlanTo(int index, double padTop, double pxPerUnit, double gain, double minPx, double maxPx, double thresholdFallbackPx) {
@@ -310,6 +312,15 @@ namespace RealmForge {
       return r;
     }
 
+    /// <summary>The hero's gear list (the equip panel: m_EquipList_ScrollRect / m_EquipList_InfinityGrid, V2).</summary>
+    public static ListMemRead ReadGearListMem(ulong panel) { return ReadListMem(panel, "m_EquipList_ScrollRect", "m_EquipList_InfinityGrid"); }
+    /// <summary>A list of the gear filter's side panel: which = "suit" / "stat" / "sub" (the widget's three grids). The widget is made at the first press of the funnel: not built = Has false.</summary>
+    public static ListMemRead ReadGearSideListMem(ulong form, string which) {
+      ulong owner; int tt;
+      if (form == 0 || !LuaPathX(form, GearWidget, out owner, out tt) || tt != T_TABLE) return new ListMemRead { Why = "the filter widget is not built" };
+      string n = which == "stat" ? "m_MainAttrFilterGrid" : which == "sub" ? "m_SubAttrFilterGrid" : "m_SuitFilterGrid";
+      return ReadListMem(owner, n + "_ScrollRect", n + "_InfinityGrid");
+    }
     /// <summary>The hero grid of Form_CharactorMain (m_CharactorGrid_ScrollRect / m_CharactorGrid_InfinityGrid).</summary>
     public static ListMemRead ReadHeroGridMem(ulong form) { return ReadListMem(form, "m_CharactorGrid_ScrollRect", "m_CharactorGrid_InfinityGrid"); }
     /// <summary>The gear-set list of the filter (F6): the owner holds m_SuitFilterGrid_ScrollRect / m_SuitFilterGrid_InfinityGrid.</summary>

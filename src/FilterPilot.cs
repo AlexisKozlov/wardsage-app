@@ -62,6 +62,8 @@ namespace RealmForge {
     public Mem3 PanelMem = Mem3.Unknown, SideMem = Mem3.Unknown, SetMem = Mem3.Unknown;
     /// <summary>PanelMem is Unknown only because the panel prefab loads / m_Panels is nil (GearMem.Pending, at most 1.5 s): the filter bar is not pressed meanwhile.</summary>
     public bool MemPending;
+    /// <summary>The side panel's list (sets / main stats / sub stats) is dragged or coasting, from the game's own ScrollRect (RFX.ReadGearSideListMem): no cell is clicked on it meanwhile (a coast moves the cell away). False = standing or not read.</summary>
+    public bool SideListMoving;
     public bool Resolved;
   }
 
@@ -249,6 +251,7 @@ namespace RealmForge {
         int count = v.SetOrder != null ? v.SetOrder.Length : 2 * FilterGeometry.SetRows;
         if (v.SetIndex < 0 || v.SetIndex >= count || setTries >= SetTries) { setSkipped = true; return AutoAction.Nothing; }
         if (!v.SetPanelOpen) return Click(v, g.X(g.SetArrowX, W, H), g.Y(g.SetArrowY, W, H), FrameTargets.KeyGearSetArrow);
+        if (SideMoving(v)) return AutoAction.Nothing;
         int row = v.SetIndex / 2, rows = (count + 1) / 2;
         if (rows <= FilterGeometry.SetRows) setScroll = 0;   // everything fits: the list cannot scroll
         double onScreen = row - setScroll;
@@ -270,6 +273,7 @@ namespace RealmForge {
         if (v.StatIndex < 0 || v.StatIndex >= 2 * FilterGeometry.StatRows || statTries >= PartTries) { statSkipped = true; return AutoAction.Nothing; }
         // the stats panel: a side panel without the sets panel's gold buttons
         if (!v.SidePanelOpen || v.SetPanelOpen || side != "stat") { side = "stat"; return Click(v, g.X(g.StatArrowX, W, H), g.Y(g.StatArrowY, W, H), FrameTargets.KeyGearStatArrow); }
+        if (SideMoving(v)) return AutoAction.Nothing;
         statTries++;
         var c = g.StatCell(v.StatIndex, W, H);
         return Click(v, c[0], c[1], null, UiCellKind.GearStat, v.StatId);
@@ -287,6 +291,7 @@ namespace RealmForge {
         if (idx < 0 || idx >= 2 * FilterGeometry.StatRows || subTries >= subs.Count + 2) { subSkipped = true; return AutoAction.Nothing; }
         // its panel looks like the main stats' one: which one is open is remembered from the arrow clicked last
         if (!v.SidePanelOpen || v.SetPanelOpen || side != "sub") { side = "sub"; return Click(v, g.X(g.SubArrowX, W, H), g.Y(g.SubArrowY, W, H), FrameTargets.KeyGearSubArrow); }
+        if (SideMoving(v)) return AutoAction.Nothing;
         subTries++; subLastId = missing; subLastAt = v.NowMs; subBefore = (long[])chosen.Clone();
         var c = g.StatCell(idx, W, H);
         return Click(v, c[0], c[1], null, UiCellKind.GearSub, missing);
@@ -301,6 +306,17 @@ namespace RealmForge {
       if (eqTries > 0) return AutoAction.Nothing;   // clicked once: waits for the game, never toggles back
       eqTries++; eqClickAt = v.NowMs;
       return Click(v, g.X(g.HideEquippedX, W, H), g.Y(g.HideEquippedY, W, H), FrameTargets.KeyGearHideWorn);
+    }
+
+    /// <summary>Which side panel this pilot opened last ("stat" or "sub"; "" = none / the sets panel): the host reads that panel's list.</summary>
+    public string Side { get { return side; } }
+    /// <summary>The side list moves: waited for, at most MovingCapMs (a speed that never reads zero does not hold the pilot for ever).</summary>
+    public const int MovingCapMs = 3000;
+    long sideMovingSince;
+    bool SideMoving(FilterView v) {
+      if (!v.SideListMoving) { sideMovingSince = 0; return false; }
+      if (sideMovingSince == 0) sideMovingSince = v.NowMs;
+      return v.NowMs - sideMovingSince < MovingCapMs;
     }
 
     // the tries of one pass (setScroll stays: the game keeps the sets list scrolled)

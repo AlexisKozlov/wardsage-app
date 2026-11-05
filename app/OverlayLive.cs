@@ -54,5 +54,60 @@ namespace RealmForge {
       if (a.CellKind != UiCellKind.None) LiveClickCell(req, fresh, a.CellKind, a.CellId, o, ref sx, ref sy);
       else if (!string.IsNullOrEmpty(a.Widget)) { req.WidgetKey = a.Widget; LiveClickKey(req, fresh, o, ref sx, ref sy); }
     }
+
+    // ---- the lists as the game's ScrollRect / grid hold them (package P5, src/ListMem.cs): position, speed, bounds, the drag threshold; read at most every 100 ms and only while a pilot asks
+    const int ListMemReuseMs = 100;
+    long listMemGearAt, listMemHeroAt; ListMemRead listMemGear, listMemHero;
+
+    ListMemRead GearListMemNow() {
+      long now = NowMs();
+      if (listMemGearAt != 0 && now - listMemGearAt < ListMemReuseMs && now >= listMemGearAt) return listMemGear;
+      listMemGearAt = now; listMemGear = null;
+      try { if (addrs != null && addrs.Panel != 0) listMemGear = RFX.ReadGearListMem(addrs.Panel); } catch (Exception e) { Log.Write("list mem: gear list read failed - " + e.Message); }
+      ListMemSay("gear list", listMemGear);
+      return listMemGear;
+    }
+    ListMemRead HeroListMemNow() {
+      long now = NowMs();
+      if (listMemHeroAt != 0 && now - listMemHeroAt < ListMemReuseMs && now >= listMemHeroAt) return listMemHero;
+      listMemHeroAt = now; listMemHero = null;
+      try { if (addrs != null && addrs.Form != 0) listMemHero = RFX.ReadHeroGridMem(addrs.Form); } catch (Exception e) { Log.Write("list mem: hero grid read failed - " + e.Message); }
+      ListMemSay("hero grid", listMemHero);
+      return listMemHero;
+    }
+    /// <summary>One line when the answer of a list read changes between read and not read (never every tick).</summary>
+    void ListMemSay(string what, ListMemRead r) {
+      string key = what + (r != null && r.Has ? " read" : " none: " + (r != null ? r.Why : "no read"));
+      string was; if (listMemSayDic.TryGetValue(what, out was) && was == key) return;
+      listMemSayDic[what] = key;
+      Log.Write("list mem: " + what + (r != null && r.Has ? " " + r + " src=mem" : " not read (" + (r != null ? r.Why : "no addresses") + ") - the pilot keeps its own numbers"));
+    }
+    readonly System.Collections.Generic.Dictionary<string, string> listMemSayDic = new System.Collections.Generic.Dictionary<string, string>();
+
+    /// <summary>The item pilot's view of the gear list from the game's own scroll (ListKnown, ListMoving, bounds, threshold).</summary>
+    void FillGearListMem(AutoView v) {
+      var r = GearListMemNow();
+      if (r == null || !r.Has) return;
+      v.ListKnown = true; v.ListMoving = r.Moving; v.ListContentH = r.Scroll.ContentH; v.ListViewH = r.Scroll.ViewH; v.ListThrPx = r.ThresholdPx > 0 ? r.ThresholdPx : 0;
+    }
+    /// <summary>The hero pilot's view of the hero grid from the game's own scroll.</summary>
+    void FillHeroListMem(HeroView hv) {
+      var r = HeroListMemNow();
+      if (r == null || !r.Has) return;
+      hv.ListKnown = true; hv.ListMoving = r.Moving; hv.ListPos = r.Scroll.PosY; hv.ListMax = r.Scroll.MaxPos; hv.ListThrPx = r.ThresholdPx > 0 ? r.ThresholdPx : 0;
+    }
+    long listMemSideAt; ListMemRead listMemSide; string listMemSideWhich = "";
+    /// <summary>The filter pilot's view of the side panel's list: moving or standing (the sets list while the sets panel is open, else the stat / sub stat list the pilot opened last).</summary>
+    void FillSideListMem(FilterView fv, string sideName) {
+      bool side = fv.SideMem != Mem3.Unknown ? fv.SideMem == Mem3.Yes : fv.SidePanelOpen, sets = fv.SetMem != Mem3.Unknown ? fv.SetMem == Mem3.Yes && side : fv.SetPanelOpen;
+      if (!side || addrs == null || addrs.Form == 0) return;
+      string which = sets ? "suit" : sideName == "sub" ? "sub" : "stat"; long now = NowMs();
+      if (which != listMemSideWhich || now - listMemSideAt >= ListMemReuseMs || now < listMemSideAt) {
+        listMemSideWhich = which; listMemSideAt = now; listMemSide = null;
+        try { listMemSide = RFX.ReadGearSideListMem(addrs.Form, which); } catch (Exception e) { Log.Write("list mem: side list read failed - " + e.Message); }
+        ListMemSay("gear " + which + " list", listMemSide);
+      }
+      if (listMemSide != null && listMemSide.Has) fv.SideListMoving = listMemSide.Moving;
+    }
   }
 }

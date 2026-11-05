@@ -75,6 +75,9 @@ namespace RealmForge {
     /// <summary>The game's content position of the list (ScrollRect content.anchoredPosition.y, the list's own units: an item row is 100, a title 44, an empty row 60), NaN = not read.
     /// With it and the viewport the pilot computes the drag to a row from memory (ScrollTo), never from the made cells' guess.</summary>
     public double LiveScroll = double.NaN;
+    /// <summary>The gear list as the game's ScrollRect and grid hold it (RFX.ReadListMem, package P5): ListKnown = read; ListMoving = dragged, scrolling or still coasting (|speed| above the standing limit); the content and view heights in
+    /// the list's own units (the bounds: the longest position is content - view); the game's drag threshold in px (EventSystem.m_DragThreshold), 0 = not read (the pilot keeps its constant).</summary>
+    public bool ListKnown, ListMoving; public double ListContentH, ListViewH, ListThrPx;
     /// <summary>Another cell than the target's, wholly in view (LiveNbUid, its centre): the way to re-select when the selected item's card is not open (the game's click on a selected item does nothing). The host reads it only while WantNeighbour.</summary>
     public bool LiveNb; public double LiveNbX, LiveNbY; public long LiveNbUid;
     /// <summary>The item whose card stands (Form_CharactorEquipTip.m_SelectEquipInfo.iItemUid), 0 = none / unread.</summary>
@@ -512,12 +515,18 @@ namespace RealmForge {
       // the position stands still on two reads (a drag coasts after the release)
       if (double.IsNaN(scrollSeen) || Math.Abs(scrollSeen - v.LiveScroll) > 0.25) { scrollSeen = v.LiveScroll; scrollSeenAt = v.NowMs; }
       if (v.NowMs - scrollSeenAt < ScrollSettleMs) return AutoAction.Nothing;
+      // the game's own word that the list stands (not dragged, not scrolling, no coast left): a coasting list is waited for, at most MovingCapMs (a speed that never reads zero is not a reason to stand for ever)
+      if (v.ListKnown && v.ListMoving) {
+        if (movingSince == 0) movingSince = v.NowMs;
+        if (v.NowMs - movingSince < MovingCapMs) { Atoms.PreFails("list.drag", "the list is moving (memory: dragged / scrolling / coasting)", f); return AutoAction.Nothing; }
+      } else movingSince = 0;
+      double thr = v.ListThrPx > 0 ? v.ListThrPx : DragThresholdPx;   // (the game's own drag threshold from memory, else the measured constant)
       // the drag is judged only when its atom has ended (the effect seen, or its 1.5 s out): the host's drag takes a second or more on a loaded PC, the pointer is still moving at the 0.8 s the wait ends
       // (lab 559: «position changed 1328 ms -> superseded», the second drag started under the first, two reads of the old position = «the list does not move» after 4 s)
       if (dragPending && Atoms.Active && Atoms.Name == "list.drag") return AutoAction.Nothing;
       if (dragPending) {
         dragPending = false;
-        double moved = -(v.LiveScroll - dragScroll0) * k, cmd = dragDy - Math.Sign(dragDy) * DragThresholdPx;   // (px the content went in the pointer's direction; the drag that counted)
+        double moved = -(v.LiveScroll - dragScroll0) * k, cmd = dragDy - Math.Sign(dragDy) * thr;   // (px the content went in the pointer's direction; the drag that counted)
         if (Math.Abs(v.LiveScroll - dragScroll0) < 0.5) {
           noMove++;
           Trace = "the list did not move after the drag (content " + v.LiveScroll.ToString("0.#") + ", " + noMove + " in a row)" + (noMove < 2 ? ": another place of the strip" : "");
@@ -532,14 +541,15 @@ namespace RealmForge {
       double vt = v.LiveViewTop, vb = v.LiveViewBottom, viewU = (vb - vt) / k;
       double padU = ListGeometry.TopPad / g.PitchY * RowUnits, unit = RowUnits / g.PitchY;
       double rowTop = padU + g.RowOffset(v.Types, v.Row) * unit, contentU = padU + g.RowOffset(v.Types, v.Types.Length) * unit;
+      if (v.ListKnown && v.ListContentH > 0 && v.ListViewH > 0) { contentU = v.ListContentH; viewU = v.ListViewH; }   // (the bounds from the game: its content and view heights, not the row math's)
       double want = Math.Max(0, Math.Min(Math.Max(0, contentU - viewU), rowTop + RowUnits / 2 - viewU / 2));
       double delta = want - v.LiveScroll;   // > 0: later rows have to come up (the content goes up with the pointer)
       if (drags >= DragTries) return Fail("the item is not reached after " + drags + " drags");
-      double span = vb - vt - cell / 2 - DragThresholdPx;   // (the drag may start on a cell: it drags the list)
+      double span = vb - vt - cell / 2 - thr;   // (the drag may start on a cell: it drags the list)
       double dy = -delta * k / GainOr1;
       dy = Math.Max(-span, Math.Min(span, dy));
       if (Math.Abs(dy) < MinDragPx) dy = dy < 0 ? -MinDragPx : MinDragPx;
-      dy += Math.Sign(dy) * DragThresholdPx;
+      dy += Math.Sign(dy) * thr;
       double x0 = altStrip ? (g.StripLeft + (g.StripRight - g.StripLeft) * 0.2) * H : (g.StripLeft + g.StripRight) / 2 * H, y0 = dy < 0 ? vb - cell / 4 : vt + cell / 4;
       string pos0 = v.LiveScroll.ToString("0.#");
       string posKey0 = f.PosKey();
@@ -637,6 +647,7 @@ namespace RealmForge {
     /// <summary>(An item click whose selection is not seen yet is polled at the same rate until the judging time: the selected uid is a hot field.)</summary>
     public bool Polling(long now) { return (effect.Armed && now < waitUntil) || (itemPending && curSel == selBefore && now - clickAt < JudgeMs); }
     // the durations of the step (the host's log: "step ms: slot=… pick=… selected=… confirm=…"; - = not part of this step)
+    long movingSince; public const int MovingCapMs = 3000;
     long goalAt, pickAt, selAt, confirmAt, slotMs = -1; bool stepSaid;
     void StepSay(long now) {
       if (stepSaid || goalAt == 0) return;

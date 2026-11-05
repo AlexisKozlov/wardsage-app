@@ -135,6 +135,7 @@ namespace RealmForge {
       };
       long[] tags = HeroTags(runHero);
       if (tags != null) { hv.HeroClass = tags[0]; hv.HeroCamps = new long[tags.Length - 1]; Array.Copy(tags, 1, hv.HeroCamps, 0, tags.Length - 1); }
+      FillHeroListMem(hv);
       return hv;
     }
 
@@ -171,6 +172,7 @@ namespace RealmForge {
         if (fview.PanelOpen && fview.SidePanelOpen) vv.SideClose = new[] { fg.X(fg.SideCloseX, navTickCr.R, navTickCr.B), fg.Y(fg.CloseY, navTickCr.R, navTickCr.B) };
         vv.FilterAt = filterTouchAt; vv.ListSig = typesPtr != 0 ? (long)typesPtr * 31 + (types != null ? types.Length : 0) : 0;
         LiveGearView(vv, navTickCr);
+        if (vv.LiveGrid) FillGearListMem(vv);
         vv.Slot = null; vv.InputOpen = RFX.NavInputOpen() ?? true;
         return vv;
       }, (vv, a) => {
