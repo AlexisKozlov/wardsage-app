@@ -34,7 +34,7 @@ Set-StrictMode -Version 2
 $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$RunnerVersion   = '30'
+$RunnerVersion   = '31'
 $Dir             = Join-Path $env:LOCALAPPDATA 'WardsageLab'
 $StopFile        = Join-Path $Dir 'STOP'
 $LogFile         = Join-Path $Dir 'runner.log'
@@ -512,7 +512,7 @@ function Test-RunnerUpdateDue {
 # the runner started or the last mark / restart_app (file offset, never the line's own time; or after a truncation / rotation) are looked at.
 # mark_at / pilot_line / log_off / log_err are diagnostics: when pilot_at is 0 they show whether a mark came after the pilot lines.
 $StopRe  = 'auto click stopped|auto click is off|click gate .*: HALT|click gate .*: STOP|auto: (failed|slot_failed|unconfirmed|hero_failed|stopped)|aborted'
-$ReadyRe = 'Player of the live tables: [0-9]+'
+$ReadyRe = 'Player of the live tables: [0-9]+|read: field |load: cpu '
 $PilotRe = 'ui: step (?!stands still)|ui: guide |click gate .*: (allow |.* took effect)|locate auto:|live: hero|sell:|hero: plan|art (equip|promote) auto:|offer: closed'
 function Get-EpochNow { return [int64][DateTimeOffset]::UtcNow.ToUnixTimeSeconds() }
 $FinRe = 'locate auto: hint( \([^)]*\))? at step (ascendReady|done)\b|locate decision: (AscendReady|Done)\b|art promote auto: hint( \([^)]*\))? at step artPromote\b|ui: guide .* done|(?<!art )sell: done selected [0-9]+/[0-9]+ missing [0-9]+ extra [0-9]+'
@@ -734,6 +734,7 @@ function Invoke-RestartApp {
         try { $p.Kill() } catch { Write-Log ('restart_app: kill failed: ' + (Get-ShortError $_)) }
     }
     Start-Sleep -Seconds 2
+    Update-LogWatch; Reset-LogMarks; $script:MarkAt = Get-EpochNow      # the old app's last lines do not count; the offset is fixed BEFORE the new app starts
     # when a staged update is waiting, the app swaps its own exe at start (Updater.ApplyAtStart) and starts again
     try {
         $psi = New-Object Diagnostics.ProcessStartInfo($AppExe)
@@ -745,7 +746,6 @@ function Invoke-RestartApp {
         Write-Log ('restart_app: start failed: ' + $m)
         return @{ ok = $false; res = @{ error = 'start_failed'; message = $m } }
     }
-    Update-LogWatch; Reset-LogMarks; $script:MarkAt = Get-EpochNow      # the old app's last lines do not count for the new one
     Start-Sleep -Seconds 5
     [void](Set-GameFront)      # the test app took the focus: the game goes back to the front
     return @{ ok = $true; res = @{ started = $true } }
