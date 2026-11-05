@@ -2754,8 +2754,8 @@ namespace RealmForge {
       // the hero grid's filter pop-up covers the hero screen and the step has no frame: the funnel that closes it is framed (hint mode, never a label alone)
       if (front && !hold && !LocateAutoOn && screens.Current != null && screens.Current.Kind == ScreenKind.HeroScreen
           && LocateHintExit(step.Kind, lf != null, o, W, H)) {
-        var hgx = new HeroGeometry(); int fr = Math.Max(10, (int)(0.04 * U)); double fx = hgx.FunnelX * U, fy = H - hgx.FunnelDY * U;
-        lf = new LocateFrame { Target = "hero.filter", Mark = new LocateMark { Kind = "box", X = (int)Math.Round(fx - fr), Y = (int)Math.Round(fy - fr), W = 2 * fr, H = 2 * fr }, Raw = new GeoRect { X = fx - fr, Y = fy - fr, W = 2 * fr, H = 2 * fr } };
+        var gb = hg.GridBar(W, H);   // the layout is the game's whole bar (the live m_BtnFilter rect replaces it), not the funnel's square
+        lf = new LocateFrame { Target = "hero.filter", Mark = new LocateMark { Kind = "box", X = gb[0], Y = gb[1], W = gb[2], H = gb[3] }, Raw = new GeoRect { X = gb[0], Y = gb[1], W = gb[2], H = gb[3] } };
       }
       // every button / tab of the step framed where the game has put it (FrameFor: live rect, its sprite's outline; the layout's when unread)
       bool lfLive = LiveInto(lf, W, H, U);

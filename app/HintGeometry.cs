@@ -26,6 +26,14 @@ namespace RealmForge {
       return new[] { (int)(FilterX0 * U), (int)Ui.FromBottom(FilterY0, W, H), (int)((FilterX1 - FilterX0) * U), (int)((FilterY1 - FilterY0) * U) };
     }
 
+    // the hero grid's bottom bar (funnel, sort, direction): the game's m_BtnFilter, whole; measured by the live read at 1366x705 (lab 548: 3,637,275x40)
+    public double GridBarX0 = 0.0043, GridBarW = 0.39, GridBarY0 = 0.9035, GridBarH = 0.0567;
+    /// <summary>The layout (fallback) rect of the hero grid's filter bar {x, y, w, h}; the live rect of hero.filter replaces it.</summary>
+    public int[] GridBar(double W, double H) {
+      double U = Ui.Unit(W, H);
+      return new[] { (int)System.Math.Round(GridBarX0 * U), (int)System.Math.Round(Ui.FromBottom(GridBarY0, W, H)), (int)System.Math.Round(GridBarW * U), (int)System.Math.Round(GridBarH * U) };
+    }
+
     public int[] Equip(double W, double H) {   // the single card is centred in the window (x and y; 1600×1000 checked)
       double U = Ui.Unit(W, H);
       return new[] { (int)(W / 2 + EquipDx0 * U), (int)Ui.FromMiddle(EquipY0, W, H), (int)((EquipDx1 - EquipDx0) * U), (int)((EquipY1 - EquipY0) * U) };

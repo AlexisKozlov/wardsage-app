@@ -914,6 +914,11 @@ static partial class CoreTests {
       Check(Math.Abs(eqb[0] + eqb[2] / 2.0 - 896) < 8 && Math.Abs(eqb[1] + eqb[3] / 2.0 - 824) < 8, "«Надеть» of the single card (centred): 896,824");
       var fb = hgx.Filter(W, H);
       Check(Math.Abs(fb[1] + fb[3] / 2.0 - 936) < 6, "«Фильтр» bar (bottom): y 936");
+      {   // lab 548 equip_hint_filter_open: live m_BtnFilter 3,637,275x40 at 1366x705; the layout of hero.filter (frame audit) within 12x12 of it
+        var gbr = hgx.GridBar(1366, 705); int[] liveR = { 3, 637, 275, 40 };
+        Check(Math.Abs((gbr[0] + gbr[2] / 2.0) - (liveR[0] + liveR[2] / 2.0)) <= 12 && Math.Abs((gbr[1] + gbr[3] / 2.0) - (liveR[1] + liveR[3] / 2.0)) <= 12
+          && Math.Abs(gbr[2] - liveR[2]) <= 12 && Math.Abs(gbr[3] - liveR[3]) <= 12, "hero.filter layout vs live rect (lab 548): in the audit's 12x12 tolerance (" + string.Join(",", gbr) + ")");
+      }
       var hgeo = new HeroGeometry();
       Check(Math.Abs(hgeo.PitchY * 900 - 167) < 2 && Math.Abs(hgeo.Row1Top * 900 - 149) < 3, "hero grid: rows every 167 px from 149");
     }
