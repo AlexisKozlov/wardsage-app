@@ -9611,6 +9611,14 @@ static partial class CoreTests {
       p.NotSent();
     }
     Check(p.State != "failed" && !p.DroppedGiveUp, "filter replay: not sent 8 times in a row on a new item: no «dropped 3 times» (" + p.State + " " + p.Note + ")");
+    // live 572 df57b5 (10:45:54-57): «Скрыть надетое» pressed, the read stays «on» for 2-3 s, the player moves the mouse (paused): the wait is 3.5 s of the pilot's own time, a give-up is quiet (no reset)
+    p = new FilterPilot(g); var hv = new FilterView { NowMs = 0, Foreground = true, W = 1920, H = 1009, Item = 23715, Wanted = true, SetId = 0, StatId = 0, HideEquipped = true, OnOtherHero = true,
+      Suits = new long[0], MainAttrs = new long[0], SubAttrs = new long[0], PanelMem = Mem3.Yes, PanelOpen = true };
+    var pa = p.Step(hv); int hideClicks2 = pa != null && pa.Kind == AutoKind.Click ? 1 : 0;
+    for (long tt = 100; tt <= 3000; tt += 100) { hv.NowMs = tt; hv.UserBusy = tt >= 1000 && tt < 2000; pa = p.Step(hv); if (pa != null && pa.Kind == AutoKind.Click) hideClicks2++; }
+    Check(hideClicks2 == 1 && p.State != "failed", "filter replay: hide-worn read still «on» 3 s after the click (1 s of it the player's mouse): no give-up, no second click (" + p.State + ", " + hideClicks2 + " clicks)");
+    for (long tt = 3100; tt <= 6000; tt += 100) { hv.NowMs = tt; hv.UserBusy = false; p.Step(hv); }
+    Check(p.State == "failed" && p.DroppedGiveUp, "filter replay: still «on» after 3.5 s of own time: a quiet give-up, no reset of the step (" + p.State + ")");
     // a closed pop-up that needed nothing (no set, no stat) was never «set»: it cannot be «dropped» three times
     p = new FilterPilot(g);
     for (int k = 0; k < 40; k++) {
@@ -9696,7 +9704,7 @@ static partial class CoreTests {
       }
       Check(hideClicks == 1 && hideClicksAfterOn == 0 && !game.HideEq, "stale hide-worn read (item listed turns " + listed + "): exactly one click, the game's toggle stays off (" + hideClicks + " clicks)");
       if (listed) Check(doneStale && fpst.State == "done", "stale hide-worn read, item listed after the click: the filter finishes (" + fpst.State + ")");
-      else Check(!doneStale && fpst.State == "failed" && fpst.Note.Contains("did not switch off"), "stale read and the item never listed: failed after 2 s with a note, no second click (" + fpst.State + ": " + fpst.Note + ")");
+      else Check(!doneStale && fpst.State == "failed" && fpst.Note.Contains("did not switch off"), "stale read and the item never listed: failed with a note, no second click (" + fpst.State + ": " + fpst.Note + ")");
     }
 
     {   // live 1.6.66: the item on another hero is listed under the filter (the guide says «pick»), the read of «Скрыть надетое» stays

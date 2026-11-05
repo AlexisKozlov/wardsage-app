@@ -70,11 +70,11 @@ namespace RealmForge {
   public sealed class FilterPilot {
     /// <summary>After the click that opens the pop-up the pilot waits this long for the game's flag to turn on before it presses the (toggle) bar again.</summary>
     public const int MemOpenWaitMs = 1500;
-    public const int MaxClicks = 26, AfterClickMs = 550, PartTries = 2, EqConfirmMs = 2000, SetTries = 4, MaxSetDrags = 4, MaxSubs = 4, MaxPasses = 3, MaxReopens = 3;
+    public const int MaxClicks = 26, AfterClickMs = 550, PartTries = 2, EqConfirmMs = 3500, SetTries = 4, MaxSetDrags = 4, MaxSubs = 4, MaxPasses = 3, MaxReopens = 3;
     readonly FilterGeometry g;
     long item = -1, waitUntil, openWaitUntil;
     readonly DisagreeTracker disagree = new DisagreeTracker();
-    long eqClickAt;
+    long eqClickAt, lastNowMs;   // lastNowMs: the clock of the toggle's wait stands still while the player has the mouse / the game is behind (live 572 df57b5: «auto: paused» ate the wait)
     int clicks, setTries, statTries, eqTries, closeTries, openTries, setDrags, subTries, sideCloseTries;
     // the filter was complete once for this item (wasSet); the game may drop it afterwards (the hero screen opened again):
     // the next pass starts its tries over, a few passes at most
@@ -95,7 +95,7 @@ namespace RealmForge {
     /// <summary>Why the pilot gave up or what it is doing besides the filter (for the journal).</summary>
     public string Note = "";
     /// <summary>The pilot gave up because the game dropped its filter again and again: the item is picked without the filter (no reset of the step, no trip to the city: live 1.6.66.572 item 33643).</summary>
-    public bool DroppedGiveUp;
+    public bool DroppedGiveUp;   // (also the toggle of «Скрыть надетое» that did not read back)
 
     public FilterPilot(FilterGeometry g) { this.g = g; }
 
@@ -163,6 +163,8 @@ namespace RealmForge {
         NewPass();
       }
       if (v.Item <= 0 || v.Suits == null || v.MainAttrs == null) { State = "idle"; effect.Drop(); return null; }
+      if (eqTries > 0 && lastNowMs > 0 && (v.UserBusy || !v.Foreground)) eqClickAt += Math.Max(0, v.NowMs - lastNowMs);
+      lastNowMs = v.NowMs;
       // the last click's effect in the filter's memory / panels, held still for two reads: its fixed wait ends now
       if (v.NowMs < waitUntil && effect.Seen(Key(v), v.NowMs)) waitUntil = v.NowMs;
 
@@ -170,7 +172,7 @@ namespace RealmForge {
       bool statOk = v.StatId <= 0 || statSkipped || Only(v.MainAttrs, v.StatId);
       // the read of «Скрыть надетое» is stale while the panel is open: one click per pass, never again for an unconfirmed read
       if (eqTries > 0 && v.OnOtherHero && v.HideEquipped && !v.ItemListed && v.NowMs - eqClickAt > EqConfirmMs) {
-        failed = true; State = "failed"; Note = "«Скрыть надетое» did not switch off"; return null;
+        failed = true; State = "failed"; Note = "«Скрыть надетое» did not switch off"; DroppedGiveUp = true; return null;   // (quiet: the toggle may still take effect, the pick goes on - no reset, no trip to the city)
       }
       // the guide sees the item in the list: the game shows it whatever the read says, so a click would only switch «Скрыть
       // надетое» ON and hide it (live 1.6.66: the item listed for 5 s under the set filter with the read "on", the one click
