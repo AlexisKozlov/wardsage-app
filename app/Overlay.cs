@@ -2981,7 +2981,7 @@ namespace RealmForge {
     void FillArtPopup(ScreenInputs inp, IntPtr hwnd) {
       var hs = inp.Hero;
       if (!ArtPhase || hs == null || !hs.FormOk || hs.Tab != RFX.HeroArtTab || !hs.ArtListOpen || hs.ArtSel != artUid) return;
-      if (ArtPopupSeen(hwnd)) { inp.ModalExtra = true; inp.ModalExtraWhy = ClickGate.ModalEquipPopup; }
+      if (ArtPopupNow(hwnd)) { inp.ModalExtra = true; inp.ModalExtraWhy = ClickGate.ModalEquipPopup; }
     }
 
     bool ArtPopupSeen(IntPtr hwnd) {
@@ -4956,7 +4956,7 @@ namespace RealmForge {
         bool lcl; var lc = FrameForI(FrameTargets.KeyConfirm, hg.Replace(W, H), W, H, Ui.Unit(W, H), out lcl);
         if (lcl && lc != null) {
           LookUnknown("confirm button", LookPolicy.ConfirmBlocks(true, false));
-          confirmBlueNone = false; confirmMissSince = 0; confirmIsEquip = RFX.ReadTipKind() == 2;
+          confirmBlueNone = false; confirmMissSince = 0; { TipState tip; confirmIsEquip = TipButtonNow(W, H, out tip) == 2; }
           return lc;
         }
       }
@@ -4966,7 +4966,7 @@ namespace RealmForge {
       // the game's own cards (two = «Заменить», one = «Надеть») are the kind of the button (E4: memory leads, the picture finds where it is); a picture that contradicts it over 1.5 s takes over (TipKindTracker);
       // told once per item next to what the pictures saw
       if ((rep != null || eq != null) && !blueUnk) {
-        int tk = RFX.ReadTipKind(), pk = rep != null && eq == null ? 1 : eq != null && rep == null ? 2 : 0;
+        TipState tip2; int tk = TipButtonNow(W, H, out tip2), pk = rep != null && eq == null ? 1 : eq != null && rep == null ? 2 : 0;
         string tline; int use = confirmKinds.Decide(tk, pk, NowMs(), out tline);
         if (tline != null) Log.Write(tline + " (memory " + (tk == 1 ? "replace" : "equip") + ", picture " + (pk == 1 ? "replace" : "equip") + ") item " + target);
         if (target != confirmTipLogged) { confirmTipLogged = target; Log.Write("confirm: tip memory=" + (tk == 1 ? "replace" : tk == 2 ? "equip" : "unknown") + " pix=" + (rep != null && eq != null ? "both" : rep != null ? "replace" : "equip") + " item " + target + " src=" + (use != 0 ? "mem" : "pix")); }

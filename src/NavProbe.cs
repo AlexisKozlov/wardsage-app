@@ -478,16 +478,7 @@ namespace RealmForge {
     /// <summary>The item tip's cards from the game's script (Form_CharactorEquipTip, Lua fields only): 1 = two cards (m_SelectEquipInfo and m_CurrentEquipInfo: «Заменить»), 2 = one card (no current item: «Надеть»), 0 = form not shown / unreadable.
     /// The kind of the confirm button (E4: memory leads, TipKindTracker); a picture that contradicts it for over 1.5 s (the fields were not cleared between items) takes over.</summary>
     public static int ReadTipKind() {
-      try {
-        string why; ulong env, ui; if (!UiRoots(out env, out ui, out why)) return 0;
-        bool shown; int copies; var r = new UiButtonInfo();
-        ulong f = FormOf(env, ui, "Form_CharactorEquipTip", r, out shown, out copies);
-        if (f == 0 || !shown) return 0;
-        ulong t; int tt;
-        bool sel = Field(f, "m_SelectEquipInfo", out t, out tt) && tt == T_TABLE, cur = Field(f, "m_CurrentEquipInfo", out t, out tt) && tt == T_TABLE, one = Field(f, "m_OneEquipInfo", out t, out tt) && tt == T_TABLE;
-        if (sel && cur) return 1;
-        return (sel || one) && !cur ? 2 : 0;
-      } catch (Exception) { return 0; }
+      try { return ReadTipKindMem(); } catch (Exception) { return 0; }   // (src/TipMem.cs)
     }
 
     /// <summary>The item whose card (Form_CharactorEquipTip) stands: m_SelectEquipInfo.iItemUid (the card of the item just chosen), else m_OneEquipInfo (the one-card form); 0 = the form is not shown / not readable.</summary>
