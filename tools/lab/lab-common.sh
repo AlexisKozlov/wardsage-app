@@ -50,7 +50,7 @@ LAB_EXTRA_SCENARIOS="explore"
 # Each = [prep] + seed + verdict. The prep (the test app's recorder command "prep <name>", src/LabRec.cs LabPrep; runner v25+) puts the game into the start
 # state through the app's own click gate; "city" runs first before EVERY scenario (the app's own road back to the city). The app has to cope; a scenario
 # that fails because of the app is the finding.
-LAB_SCENARIOS_EXTRA="equip_hero_filter_open equip_hero_filter_closed equip_item_filter_open equip_from_materials equip_from_bulk_sale equip_from_artifact locate_from_bulk_sale locate_recast_item_filter sell_from_materials equip_toggle_auto_late equip_hint_filter_open"
+LAB_SCENARIOS_EXTRA="equip_hero_filter_open equip_hero_filter_closed equip_item_filter_open equip_from_materials equip_from_bulk_sale equip_from_artifact locate_from_bulk_sale locate_recast_item_filter sell_from_materials equip_toggle_auto_late equip_hint_filter_open equip_class_filter_gear equip_two_same_class equip_hide_worn_restore"
 # the random-start fuzz of docs/specs/navigator.md: lab-request.sh <device> --fuzz N [--seed S] [--nav on|off] queues N of these (seeds S .. S+N-1; the run's data holds
 # fuzz_seed and nav). The prep random_start:<seed> (src/LabRec.cs) puts the game on a seeded random safe start; then the normal equip plan, auto click on.
 # PASS = the plan is done, no hang (180 s), no forbidden click. The report's line: «Успешные запуски со случайного экрана: X/N (Y%), зависаний Z».
@@ -63,7 +63,8 @@ is_hint() { case "$1" in *_hint|equip_hint_*) return 0 ;; esac; return 1; }
 # scn_seed <scenario>: the lab-seed.sh kind of the scenario's request
 scn_seed() {
   case "$1" in
-    equip_hero_filter_open|equip_hero_filter_closed|equip_item_filter_open|equip_from_materials|equip_from_bulk_sale|equip_from_artifact|equip_toggle_auto_late|equip_hint_filter_open|equip_random_start) echo equip_city ;;
+    equip_hero_filter_open|equip_hero_filter_closed|equip_item_filter_open|equip_from_materials|equip_from_bulk_sale|equip_from_artifact|equip_toggle_auto_late|equip_hint_filter_open|equip_random_start|equip_class_filter_gear|equip_two_same_class) echo equip_city ;;
+    equip_hide_worn_restore) echo equip_hide_worn ;;
     locate_from_bulk_sale) echo locate ;;
     locate_recast_item_filter) echo locate_recast ;;
     sell_from_materials) echo sell_mark ;;
@@ -80,8 +81,12 @@ scn_prep() {
     equip_from_materials|sell_from_materials) echo start_inventory_materials ;;
     equip_from_bulk_sale|locate_from_bulk_sale) echo start_bulk_sale ;;
     equip_from_artifact) echo start_artifact ;;
+    equip_class_filter_gear) echo class_filter_gear ;;   # NEW prep (runner v29 whitelist; the app's LabPrep must know it too)
+    equip_hide_worn_restore) echo hide_worn_on ;;
   esac
 }
+# scn_limit <scenario>: the PASS time limit in seconds of one plan (empty = none): the 3 navigator scenarios of the equip-hardening set
+scn_limit() { case "$1" in equip_class_filter_gear|equip_two_same_class|equip_hide_worn_restore) echo 35 ;; esac; }
 # scn_title <scenario>: the line's name in the report (Russian); empty = not an extra scenario
 scn_title() {
   case "$1" in
@@ -97,6 +102,9 @@ scn_title() {
     sell_from_materials) echo "Чистка склада со вкладки «Материалы»" ;;
     equip_toggle_auto_late) echo "Автоклик включён позже, когда план уже ждёт" ;;
     equip_hint_filter_open) echo "Подсказки без автоклика: открытый фильтр героев" ;;
+    equip_class_filter_gear) echo "Надеть при фильтре героев по чужому классу и открытом фильтре вещей" ;;
+    equip_two_same_class) echo "Надеть двух героев одного класса и фракции подряд" ;;
+    equip_hide_worn_restore) echo "Надеть при включённом «Скрыть надетое»: флаг возвращён" ;;
   esac
 }
 # scn_pass_note <scenario>: the one-line human reason of a PASS (Russian)
@@ -110,6 +118,9 @@ scn_pass_note() {
     equip_from_artifact) echo "игра стояла на экране артефактов: приложение дошло до героя и довело план до конца" ;;
     equip_random_start) echo "игра была поставлена на случайный безопасный экран: приложение дошло до героя и довело план до конца" ;;
     equip_toggle_auto_late) echo "автоклик был выключен, через 10 с включён командой: приложение подхватило уже идущий план и довело его до конца" ;;
+    equip_class_filter_gear) echo "фильтр героев по классу не подходил герою, фильтр вещей был открыт с чужим выбором: сборка пройдена, без halt / reset_failed и слепых протяжек" ;;
+    equip_two_same_class) echo "два героя одного класса и фракции подряд: оба плана выполнены, без halt / reset_failed и слепых протяжек" ;;
+    equip_hide_worn_restore) echo "«Скрыть надетое» было включено до старта: приложение собрало героя без halt / reset_failed и слепых протяжек" ;;
   esac
 }
 

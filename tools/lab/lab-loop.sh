@@ -257,6 +257,11 @@ scn_log_verdict() {
       fail=$(grep -E "is not a target .* may click|lies on a (button|dangerous)|never-click" <<< "$tail" | head -1 | sed -E 's/^\s+|\s+$//g' | cut -c1-200)
       if [ -n "$fail" ]; then echo "fail|запрещённый клик: $fail"; return; fi
       echo "ok|старт: $(grep -oE 'lab: setup random_start:[0-9]+ ok: .*' <<< "$txt" | tail -1 | sed -E 's/^lab: setup random_start:[0-9]+ ok: random_start:[0-9]+ = //')" ;;
+    equip_class_filter_gear|equip_two_same_class|equip_hide_worn_restore)
+      # PASS: no navigator halt, no reset_failed, no blind drag (a drag the navigator makes with no reading of the list)
+      fail=$(grep -E "nav: halt |reset_failed|blind (drag|swipe|scroll)|(drag|swipe|scroll)[a-z ]* blind" <<< "$tail" | head -1 | sed -E 's/^\s+|\s+$//g' | cut -c1-200)
+      if [ -n "$fail" ]; then echo "fail|halt / reset_failed / слепая протяжка в журнале: $fail"; return; fi
+      echo "ok|" ;;
     equip_item_filter_open)
       fail=$(grep -E "filter: item .* -> failed" <<< "$tail" | head -1 | sed -E 's/^\s+|\s+$//g' | cut -c1-200)
       if [ -n "$fail" ]; then echo "fail|фильтр вещей не удалось снять: $fail"; return; fi
@@ -639,7 +644,7 @@ tick() {
     wait_scn)
       i=$(dget scn_idx); sc=${scenarios[$i]}; row=$(dget row)
       tbl=$(scn_tbl "$sc")
-      case "$sc" in equip_city) maxs=600; label="$sc (build ${build^^})" ;; equip_random_start) maxs=180; label="$sc $(fuzz_seed "$i")" ;; equip_*) maxs=600; label="$sc" ;; sell_*) maxs=480; label="$sc" ;; *) maxs=300; label="$sc" ;; esac
+      case "$sc" in equip_city) maxs=600; label="$sc (build ${build^^})" ;; equip_random_start) maxs=180; label="$sc $(fuzz_seed "$i")" ;; equip_class_filter_gear|equip_two_same_class|equip_hide_worn_restore) maxs=90; label="$sc" ;; equip_*) maxs=600; label="$sc" ;; sell_*) maxs=480; label="$sc" ;; *) maxs=300; label="$sc" ;; esac
       st=$(q -v r="$row" <<< "select status || '|' || coalesce(round(extract(epoch from done_at - created_at))::int, 0) from public.$tbl where id = :'r'::uuid")
       if is_hint "$sc"; then
         # hint mode (auto click off, nobody clicks): the frame audit's shots of this scenario (src/FrameAudit.cs) are the verdict. Pass = shots of
@@ -719,7 +724,17 @@ tick() {
       fi
       case "$st" in
         done\|*) case "$sc" in
-                    equip_hero_filter_open|equip_hero_filter_closed|equip_item_filter_open|equip_random_start)
+                    equip_hero_filter_open|equip_hero_filter_closed|equip_item_filter_open|equip_random_start|equip_class_filter_gear|equip_two_same_class|equip_hide_worn_restore)
+                      lim=$(scn_limit "$sc"); dset last_secs "${st#*|}"
+                      if [ -n "$lim" ] && [ "$sc" = equip_two_same_class ] && [ "$(dget second_for)" != "$i" ]; then
+                        # the first hero is done: the second one of the same class / faction is seeded at once (its own plan, the same game session)
+                        dset first_secs "${st#*|}"; dset second_for "$i"
+                        if [ "${st#*|}" -le "$lim" ] && r2=$("$HERE/lab-seed.sh" "$dev" equip_second "$build" 2>/dev/null) && [ -n "$r2" ]; then
+                          dset row "$r2"; dset seeded_at "$(now)"; dset phase_at "$(now)"; say "second hero of the same class seeded"; return
+                        fi
+                        fail_scn "$label" "$([ "${st#*|}" -gt "$lim" ] && echo "первый герой за ${st#*|} с (лимит $lim с)" || echo "второго героя того же класса не удалось засеять (нет в снимке)")" "$tbl" "$row"; return
+                      fi
+                      if [ -n "$lim" ] && [ "${st#*|}" -gt "$lim" ]; then fail_scn "$label" "план выполнен за ${st#*|} с, лимит $lim с" "$tbl" "$row"; return; fi
                       if cj=$(mkjob upload_logs '{"lines":1500}'); then dset chk_job "$cj"; phase scn_check; return; fi ;;
                   esac
                   note=$(scn_pass_note "$sc")

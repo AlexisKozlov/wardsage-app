@@ -7,6 +7,8 @@
 #   lab-seed.sh <device> sell_mark            a new «Чистка склада» list of junk gear from the newest snapshot (see pick_sell)
 #   lab-seed.sh <device> --pick-sell          dry run: prints the sell list it would seed (inserts nothing)
 #   lab-seed.sh <device> equip_hide_worn      an equip plan of ONE item worn by another hero (the app unticks «Скрыть надетое»), from the snapshot
+#   lab-seed.sh <device> equip_second         an equip plan for a SECOND hero of the fixture hero's class and faction (snapshot fields c, f), one item worn by a
+#                                             third hero (equip_two_same_class: seeded right after the first hero's plan is done)
 #   lab-seed.sh <device> equip_artifact       an equip plan of the hero's worn gear + an artifact it does not wear (only the artifact changes)
 #   lab-seed.sh <device> locate_recast        a «Найти в игре» request, purpose recast (a recastable item from the snapshot)
 #   lab-seed.sh <device> locate_art           a «Найти в игре» request, purpose artPromote (a promotable artifact from the snapshot)
@@ -192,10 +194,11 @@ pool = c[:4]
 a = pool[n % len(pool)]
 print("%s\t%s\t%d\t%s\tlv %d/%d\tcopies %s" % (a["u"], (a.get("n") or {}).get("en") or "?", int(a.get("st") or 0), "worn" if a.get("h") else "free", int(a.get("lv") or 0), cap(a), ",".join(x["u"] for x in free_copies(a)[:need(a)])))
 '
-# pick_equip <device id> <hide_worn|artifact>: the JSON {hero_uid, hero_name, hero_name_en, items, note} of an equip plan for the hero of
+# pick_equip <device id> <hide_worn|artifact|second>: the JSON {hero_uid, hero_name, hero_name_en, items, note} of an equip plan for the hero of
 # the equip fixtures, built from the newest snapshot's page_data (plan items as lib/plans/display.ts stores them: slot, uid, name, setName,
 # setId, level, stars, mainStat, fromHeroUid, fromHeroName, icon, cur).
 #   hide_worn: ONE item worn by ANOTHER hero (the app unticks «Скрыть надетое» to find it); the strongest one, rotating among 4.
+#   second:    like hide_worn, but for ANOTHER hero of the fixture hero's class and faction (heroes[].c, .f): the plan's hero is that one; rotating among 3.
 #   artifact:  the hero's own 5 worn items (nothing to change) + an artifact the hero does not wear (items[0].artifact {uid, id}, as the
 #              site's POST /api/plans): only the artifact goes on. Only one the hero CAN wear (the site's canWear, lib/artifacts.ts, on
 #              data/artifact-fx.json: an exclusive one only for its own hero, else no class mask or the hero's class in it) and free (worn by
@@ -207,6 +210,14 @@ afx = json.load(open(sys.argv[4] + "/data/artifact-fx.json")) if len(sys.argv) >
 pd = json.load(sys.stdin) or {}
 hero = int(fx["hero_uid"]); sets = pd.get("sets") or {}
 names = {int(h["u"]): h.get("n") or {} for h in pd.get("heroes") or [] if h.get("u") is not None}
+first = hero
+if mode == "second":
+    h0 = next((h for h in pd.get("heroes") or [] if int(h.get("u") or 0) == first), None)
+    if h0 is None: sys.exit(0)
+    twins = sorted([h for h in pd.get("heroes") or [] if int(h.get("u") or 0) not in (0, first) and h.get("c") == h0.get("c") and h.get("f") == h0.get("f")], key=lambda h: int(h["u"]))
+    if not twins: sys.exit(0)
+    t = twins[:3][n % len(twins[:3])]
+    hero = int(t["u"]); fx = dict(fx, hero_uid=hero, hero_name=(names.get(hero) or {}).get("ru"), hero_name_en=(names.get(hero) or {}).get("en"))
 SL = [("Weapon", "Оружие"), ("Armor", "Броня"), ("Bracer", "Наручи"), ("Amulet", "Амулет"), ("Ring", "Кольцо")]
 def lt(o): o = o or {}; return {"ru": o.get("ru") or o.get("en") or "", "en": o.get("en") or o.get("ru") or ""}
 items = [i for i in pd.get("items") or [] if isinstance(i.get("sl"), int) and 0 <= i["sl"] < 5]
@@ -219,8 +230,8 @@ def plan_item(i, frm):
     c = mine.get(i["sl"])
     if c is not None and int(c["u"]) != int(i["u"]): it["cur"] = {"uid": int(c["u"]), "name": lt(c.get("n")), "level": int(c.get("lv") or 0), "stars": int(c.get("st") or 0)}
     return it
-if mode == "hide_worn":
-    c = sorted([i for i in items if int(i.get("h") or 0) not in (0, hero)], key=lambda i: (-int(i.get("st") or 0), -int(i.get("lv") or 0), int(i["u"])))
+if mode in ("hide_worn", "second"):
+    c = sorted([i for i in items if int(i.get("h") or 0) not in (0, hero, first)], key=lambda i: (-int(i.get("st") or 0), -int(i.get("lv") or 0), int(i["u"])))
     if not c: sys.exit(0)
     i = c[:4][n % len(c[:4])]
     out = [plan_item(i, int(i["h"]))]
@@ -291,7 +302,7 @@ print(json.dumps(out, ensure_ascii=False))
 case "$what" in
   --pick-recast) r=$(pick_recast "$(dev_id "$dev")"); echo "${r:-no recastable item in the newest snapshot}"; exit 0 ;;
   --pick-art) r=$(pick_art "$(dev_id "$dev")"); echo "${r:-no promotable artifact in the newest snapshot}"; exit 0 ;;
-  --pick-hide-worn|--pick-artifact) m=${what#--pick-}; m=${m//-/_}; r=$(pick_equip "$(dev_id "$dev")" "$m")
+  --pick-hide-worn|--pick-artifact|--pick-second) m=${what#--pick-}; m=${m//-/_}; r=$(pick_equip "$(dev_id "$dev")" "$m")
     [ -n "$r" ] && python3 -I -c 'import sys,json; p=json.load(sys.stdin); print(p["note"]); [print("  slot %d uid %d from %s%s" % (i["slot"], i["uid"], i["fromHeroUid"], " artifact %s" % i["artifact"] if "artifact" in i else "")) for i in p["items"]]' <<< "$r" || echo "nothing to seed"
     exit 0 ;;
 esac
@@ -315,7 +326,7 @@ fi
 id=$(dev_id "$dev")
 
 # nothing is cancelled unless there is something to insert
-case "$what" in equip_city|equip_hide_worn|equip_artifact) names="'equip_a','equip_b'" ;; locate) names="'locate'" ;; locate_recast|locate_art|sell_mark|sell_after_restart) names="" ;; *) echo "unknown scenario" >&2; exit 2 ;; esac
+case "$what" in equip_city|equip_hide_worn|equip_artifact|equip_second) names="'equip_a','equip_b'" ;; locate) names="'locate'" ;; locate_recast|locate_art|sell_mark|sell_after_restart) names="" ;; *) echo "unknown scenario" >&2; exit 2 ;; esac
 if [ -n "$names" ]; then
   have=$(q -v d="$id" <<< "select count(*) from public.lab_devices dv join public.lab_fixtures x on x.device_id = dv.id
     where dv.id = :'d'::uuid and dv.account_id is not null and x.name in ($names)")
@@ -361,7 +372,7 @@ case "$what" in
         where dv.id = :'d'::uuid
         returning id;
       commit;" ;;
-  equip_hide_worn|equip_artifact)
+  equip_hide_worn|equip_artifact|equip_second)
     plan=$(pick_equip "$id" "${what#equip_}")
     if [ -z "$plan" ]; then echo "lab-seed: WARNING nothing in the snapshot for $what, skipped" >&2; exit 3; fi
     echo "lab-seed: $what $(python3 -I -c 'import sys,json; print(json.load(sys.stdin)["note"])' <<< "$plan")" >&2
