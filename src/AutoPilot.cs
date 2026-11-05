@@ -131,7 +131,7 @@ namespace RealmForge {
     public readonly AtomRunner Atoms = new AtomRunner();
     /// <summary>The pilot needs a neighbour cell of the target (a selected item whose card is closed is re-selected through another cell): the host reads the whole list's cells while this is on.</summary>
     public bool WantNeighbour { get { return wantNb; } }
-    bool wantNb, curLive, dragPending; string dragPos = ""; double dragDy, dragCell0 = double.NaN, dragScroll0 = double.NaN, scrollSeen = double.NaN; long scrollSeenAt; long dragAt, swapWaitSince, liveNoPosSince; int noMove, swaps; bool altStrip;
+    bool wantNb, curLive, dragPending; string dragPos = ""; double dragDy, dragCell0 = double.NaN, dragScroll0 = double.NaN, scrollSeen = double.NaN; long scrollSeenAt; long dragAt, swapWaitSince, liveNoPosSince; int noMove, swaps, nudges; bool altStrip, sameRetried, retryOk;
     public const int MaxSwaps = 3, SwapWaitMs = 3000, LivePosWaitMs = 15000;
     string goal = "";
     long waitUntil, pauseUntil;
@@ -200,7 +200,7 @@ namespace RealmForge {
         slotWaits = afterClicks = wrongs = 0; lastSlotClick = 0; itemPending = false; row1Fix = double.NaN;
         row1Off = double.NaN; noEffect = samePt = 0; typesLen = -1; lastPtX = lastPtY = double.NaN; lastNoEffect = false;
         listSig = long.MinValue; liveSeenX = double.NaN;
-        wantNb = dragPending = altStrip = false; noMove = swaps = 0; swapWaitSince = liveNoPosSince = 0; Atoms.Clear();
+        wantNb = dragPending = altStrip = sameRetried = retryOk = false; noMove = swaps = nudges = 0; swapWaitSince = liveNoPosSince = 0; Atoms.Clear();
       }
       if (key == "") { State = "idle"; return AutoAction.Nothing; }
       curSel = v.Sel; nowMs = v.NowMs; curKey = Key(v); curTip = v.TipKnown && v.TipShown; curLive = v.LiveGrid;
@@ -370,7 +370,8 @@ namespace RealmForge {
           if (v.NowMs - liveSeenAt < EffectWait.StableMs || v.NowMs - listSigAt < EffectWait.StableMs) return AutoAction.Nothing;   // the same place on reads 50 ms apart first
           needCalib = calibPending = false; wrongs = 0;
           long tg = v.Target;
-          if (!Atoms.Begin("item.click", "u" + tg, "live[" + (int)v.LiveX + "," + (int)v.LiveY + "] src=live", "sel=" + tg, ff => ff.Sel == tg, JudgeMs, GameFacts.Of(v), v.NowMs)) return SwapStep(v, "the click on the live cell changed nothing and the facts are the same");
+          if (!Atoms.Begin("item.click", "u" + tg, "live[" + (int)v.LiveX + "," + (int)v.LiveY + "] src=live", "sel=" + tg, ff => ff.Sel == tg, JudgeMs, GameFacts.Of(v), v.NowMs, !retryOk)) return SwapStep(v, "the click on the live cell changed nothing and the facts are the same");
+          retryOk = false;
           if (confirmed) { if (afterClicks >= AfterConfirmClicks) { State = "unconfirmed"; Why = "the item is not selected again after the confirm press (sel " + v.Sel + ", owner " + v.Owner + ")"; Trace = "unconfirmed: " + Why; return AutoAction.Nothing; } afterClicks++; }
           else if (clicks >= ClickTries) return Fail("item " + v.Target + " not selected after " + clicks + " clicks (sel " + v.Sel + ")");
           clicks++; waitUntil = v.NowMs + AfterClickMs; wantNb = false;
@@ -550,7 +551,28 @@ namespace RealmForge {
       if (!v.LiveNb) {
         if (swapWaitSince == 0) swapWaitSince = v.NowMs;
         Atoms.PreFails("item.swap", "no neighbour cell in view yet", f);
-        if (v.NowMs - swapWaitSince > SwapWaitMs) return Fail("no other cell of the list is in view to re-select by (" + why + "; " + f + ")");
+        if (v.NowMs - swapWaitSince > SwapWaitMs) {
+          // no neighbour cell in view (sel 0, no card after the click on the live cell: the first click missed, the cell was not interactive yet, the list was animating): ONE more click on the same live cell once its rect
+          // stands still again (the list's position read from memory has not changed since: no new diagnosis, so the repeat is allowed once on purpose), then the list is moved by one row and the new live cell clicked;
+          // a failure only after both, with the memory's diagnosis
+          if (v.LiveTarget && !sameRetried) {
+            sameRetried = true; retryOk = true; swapWaitSince = 0; liveSeenAt = v.NowMs; listSigAt = v.NowMs;
+            Trace = "no neighbour cell in view: the live cell is clicked once more when its rect stands still (" + f + ")";
+            return AutoAction.Nothing;
+          }
+          if (v.LiveTarget && nudges < 1 && v.LiveFirst >= 0 && !double.IsNaN(v.LiveViewTop) && !double.IsNaN(v.LiveViewBottom) && v.InputOpen) {
+            nudges++; swapWaitSince = 0; dragPending = false;
+            double H = v.H, cell = g.CellW * H, pitch = g.PitchY * H, vt = v.LiveViewTop, vb = v.LiveViewBottom;
+            double dy = Math.Max(MinDragPx, Math.Min(pitch, vb - vt - cell)) * (v.LiveCellY > (vt + vb) / 2 ? -1 : 1);   // one row toward the middle
+            string posKey0 = f.PosKey();
+            Atoms.Begin("list.drag", "nudge" + v.Target, "viewport[" + (int)vt + ".." + (int)vb + "] dy=" + (int)dy + " src=live (one row, the click on the live cell changed nothing)", "list position changed", ff => ff.PosKey() != posKey0, 1500, f, v.NowMs, false);
+            double x0 = (g.StripLeft + g.StripRight) / 2 * H, y0 = dy < 0 ? vb - cell / 2 : vt + cell / 2;
+            drags++; dragPending = true; dragPos = posKey0; dragDy = dy; dragCell0 = v.LiveCellY; dragAt = v.NowMs;
+            waitUntil = v.NowMs + AfterDragMs; effect.Arm(curKey, v.NowMs);
+            return new AutoAction { Kind = AutoKind.Drag, X = x0, Y = y0, DY = dy };
+          }
+          return Fail("no other cell of the list is in view to re-select by (" + why + "; " + f + "; the same cell was clicked again " + (sameRetried ? "yes" : "no") + ", list moved by a row " + (nudges > 0 ? "yes" : "no") + ")");
+        }
         return AutoAction.Nothing;
       }
       swapWaitSince = 0;

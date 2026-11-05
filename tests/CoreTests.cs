@@ -4149,6 +4149,18 @@ static partial class CoreTests {
   static void AutoPilotTests(ListGeometry geo, double H) {
     var types = new int[41]; for (int i = 1; i <= 40; i++) types[i] = 1;
     double pitch = geo.PitchY * H, cell = geo.CellW * H;
+    {   // lab 552 (build A, 82b837): "no other cell of the list is in view to re-select by (sel=0 tip=- list=0..8 cellY=148 target=live)": the click on the live cell changed nothing and no neighbour is in view.
+        // Once more the same live cell (its rect standing still again), then the list moved by one row, and only then a named failure - never the failure straight away
+      var pg = new AutoPilot(geo); double H5 = 705, cell5 = geo.CellW * H5; int nClick = 0, nDrag = 0; var order = new List<string>();
+      double lx = geo.ColLeft(1) * H5 + cell5 / 2;
+      for (long t = 0; t < 40000 && pg.State != "failed"; t += 200) {
+        var v5 = new AutoView { NowMs = t, Foreground = true, H = H5, Target = 9001, Row = 1, Col = 1, Sel = 0, AnchorHas = true, Row1Top = 120, Types = new[] { 0, 1, 1, 1, 1, 1, 1, 1, 1, 1 }, TipKnown = true, TipShown = false, Hero = 5, ScreenHero = 5, Owner = 0, InputOpen = true,
+          LiveGrid = true, LiveTarget = true, LiveX = lx, LiveY = 148 + cell5 / 2, LiveFirst = 0, LiveLast = 8, LiveCellY = 148, LiveScroll = 0, LiveViewTop = 110, LiveViewBottom = 640, LiveNb = false, ListSig = 1, FilterAt = 0 };
+        var a5 = pg.Step(v5);
+        if (a5 != null && a5.Kind == AutoKind.Click) { nClick++; order.Add("click"); } else if (a5 != null && a5.Kind == AutoKind.Drag) { nDrag++; order.Add("drag"); }
+      }
+      Check(pg.State == "failed" && string.Join(",", order.ToArray()) == "click,click,drag" && pg.Why.Contains("re-select"), "pilot: the live cell's click changed nothing, no neighbour in view (lab 552: list=0..8, sel=0, tip=-, cellY=148): the same cell once more, the list moved by a row, then the named failure (" + string.Join(",", order.ToArray()) + ", " + pg.State + ")");
+    }
     double top = ScrollAnchor.TopRow1(geo, H), maxScroll = 36 * pitch;   // real row 1 top on the screen
     int targetRow = 23, targetCol = 2; long target = 9023;
     Func<double, double, long> itemAt = (x, y) => {
