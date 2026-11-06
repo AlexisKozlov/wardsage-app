@@ -904,7 +904,7 @@
         row(t('setAutoUpdate'), t('setAutoUpdateS'), sw('autoUpdate', S.autoUpdate), { more: 'setAutoUpdateP', key: 'autoUpdate' })
         + row(t('setSendCodes'), t('setSendCodesS'), sw('sendCodes', S.sendCodes), { more: 'setSendCodesP', key: 'sendCodes' })
         + row(t('setBossHints'), t('setBossHintsS'), sw('bossHints', S.bossHints), { more: 'setBossHintsP', key: 'bossHints' })
-        + (S.channel === 'test' || S.streamer ? row(t('setShowInCapture'), t(S.showInCapture ? 'setShowInCaptureOn' : 'setShowInCaptureS'), sw('showInCapture', S.showInCapture)) : '')   // (test and streamer builds only for now; the host ignores the command and the config value elsewhere)
+        + row(t('setShowInCapture'), t(S.showInCapture ? 'setShowInCaptureOn' : 'setShowInCaptureS'), sw('showInCapture', S.showInCapture))
         + row(t('setTray'), t('setTrayS'), sw('tray', S.tray), { more: 'setTrayP', key: 'tray' })
         + row(t('setAutostart'), t('setAutostartS'), sw('autostart', S.autostart), { more: 'setAutostartP', key: 'autostart' })),
       sec(t('secHelp'),
@@ -1017,7 +1017,7 @@
     else if (a === 'recButton') { S.recButton = !S.recButton; host.send({ cmd: 'setRecButton', on: S.recButton }); render(); }
     else if (a === 'sendCodes') { S.sendCodes = !S.sendCodes; host.send({ cmd: 'setSendCodes', on: S.sendCodes }); render(); }
     else if (a === 'bossHints') { S.bossHints = !S.bossHints; host.send({ cmd: 'setBossHints', on: S.bossHints }); render(); }
-    else if (a === 'showInCapture' && (S.channel === 'test' || S.streamer)) { S.showInCapture = !S.showInCapture; host.send({ cmd: 'setShowInCapture', on: S.showInCapture }); render(); }
+    else if (a === 'showInCapture') { S.showInCapture = !S.showInCapture; host.send({ cmd: 'setShowInCapture', on: S.showInCapture }); render(); }
     else if (a === 'tray') { S.tray = !S.tray; host.send({ cmd: 'setTray', on: S.tray }); render(); }
     else if (a === 'autostart') { S.autostart = !S.autostart; host.send({ cmd: 'setAutostart', on: S.autostart }); render(); }
     else if (a === 'autoUpdate') { S.autoUpdate = !S.autoUpdate; host.send({ cmd: 'setAutoUpdate', on: S.autoUpdate }); render(); }

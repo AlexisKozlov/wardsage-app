@@ -94,8 +94,8 @@ namespace RealmForge {
     public static readonly bool IsStreamer = false;
 #endif
 
-    /// <summary>Is the setting «show hints in recordings and streams» available (the test channel, or the one-off streamer build)?</summary>
-    public static bool CaptureSettingAvailable(bool test, bool streamer) { return test || streamer; }
+    /// <summary>Is the setting «show hints in recordings and streams» available? In every channel since 1.6.68 (off by default; the pilot still hides the windows).</summary>
+    public static bool CaptureSettingAvailable(bool test, bool streamer) { return true; }
     public static readonly bool CaptureSetting = CaptureSettingAvailable(IsTest, IsStreamer);
 
     /// <summary>Does this build check for, download and install updates (not the streamer build)?</summary>
@@ -5838,8 +5838,8 @@ namespace RealmForge {
     public static uint For(bool showInCapture, bool capturable, bool pilot, bool never) { return !never && !pilot && (capturable || showInCapture) ? 0u : 0x11u; }
     /// <summary>The dimming around a hint is drawn only while every hint window is hidden from captures (shown to a recording or to a look it would cover the whole game).</summary>
     public static bool DimOn(bool wanted, bool allHidden) { return wanted && allHidden; }
-    /// <summary>The setting «show hints in recordings and streams» works only in the test build (and the one-off streamer build); in the main channel the config value is ignored.</summary>
-    public static bool Allowed(bool configOn, bool testChannel) { return configOn && testChannel; }
+    /// <summary>The setting «show hints in recordings and streams» (off by default) counts only where the channel offers it (every channel since 1.6.68).</summary>
+    public static bool Allowed(bool configOn, bool available) { return configOn && available; }
     /// <summary>A window that already shows a picture keeps its old capture state until the compositor gets a new frame (live 2026-11-04: the setting switched on
     /// in the running streamer build, the hints stayed out of screenshots until a restart): after an affinity change on a shown window the picture is presented again.</summary>
     public static bool Repaint(uint previous, uint now, bool visible, bool hasPicture) { return previous != Never && previous != now && visible && hasPicture; }
