@@ -7,7 +7,9 @@
 // After the file is complete the caller checks size, SHA-256 and the RSA signature as before (Updater.Verify), then moves it into place.
 // Only five failed attempts in a row without a single new byte stop the round (Stalled); the caller waits UpdateRetry's backoff then.
 using System;
+using System.Globalization;
 using System.IO;
+using System.Net;
 
 namespace RealmForge {
   /// <summary>Which hosts the update file may come from.</summary>
@@ -114,6 +116,56 @@ namespace RealmForge {
       res.Have = have; res.Complete = have == size && !res.Mismatch;
       if (!res.Complete && res.Why == "") res.Why = "incomplete";
       return res;
+    }
+  }
+
+  /// <summary>The real HTTP opener of the update download (HttpWebRequest); the tests run it against a local listener.</summary>
+  public static class RangeHttp {
+    /// <summary>The player's PC cannot tell the update from a normal page: a stalled connection is dropped after ChunkedDownload.IdleReadMs, not 60 s.</summary>
+    public static RangeReply Open(string url, long offset, long length) {
+      const SecurityProtocolType Tls12 = (SecurityProtocolType)3072;
+      try { ServicePointManager.SecurityProtocol |= Tls12; } catch (NotSupportedException) { }
+      var req = (HttpWebRequest)WebRequest.Create(url);
+      req.Method = "GET"; req.UserAgent = SyncClient.UserAgent; req.Timeout = 15000; req.ReadWriteTimeout = ChunkedDownload.IdleReadMs;
+      req.AllowAutoRedirect = false; req.KeepAlive = false;   // (a new connection for every request)
+      req.Headers["Cache-Control"] = "no-cache";
+      req.AddRange(offset, offset + length - 1);   // Range is restricted: Headers["Range"] throws ArgumentException on .NET Framework
+      HttpWebResponse resp;
+      try { resp = (HttpWebResponse)req.GetResponse(); }
+      catch (WebException we) {
+        var er = we.Response as HttpWebResponse;
+        if (er == null) throw;
+        int code = (int)er.StatusCode; er.Close();
+        return new RangeReply { Status = code, Body = new MemoryStream(new byte[0]) };
+      }
+      var r = new RangeReply { Status = (int)resp.StatusCode, Body = resp.GetResponseStream() };
+      if (r.Status == 206) {
+        // Content-Range: bytes 0-262143/6810624
+        string cr = resp.Headers["Content-Range"] ?? "";
+        int dash = cr.IndexOf('-'), slash = cr.IndexOf('/'); long a, tot;
+        if (cr.StartsWith("bytes ", StringComparison.Ordinal) && dash > 6 && slash > dash
+            && long.TryParse(cr.Substring(6, dash - 6), NumberStyles.None, CultureInfo.InvariantCulture, out a)
+            && long.TryParse(cr.Substring(slash + 1), NumberStyles.None, CultureInfo.InvariantCulture, out tot)) { r.RangeStart = a; r.Total = tot; }
+        else r.RangeStart = -1;
+      } else if (r.Status == 200) r.Total = resp.ContentLength;
+      return new RangeReply { Status = r.Status, RangeStart = r.RangeStart, Total = r.Total, Body = new ResponseBody(resp, r.Body) };
+    }
+
+    /// <summary>Closes the response together with its stream.</summary>
+    sealed class ResponseBody : Stream {
+      readonly HttpWebResponse resp; readonly Stream s;
+      public ResponseBody(HttpWebResponse r, Stream st) { resp = r; s = st; }
+      public override int Read(byte[] b, int o, int c) { return s.Read(b, o, c); }
+      public override void Write(byte[] b, int o, int c) { throw new NotSupportedException(); }
+      public override void Flush() { }
+      public override long Seek(long o, SeekOrigin so) { throw new NotSupportedException(); }
+      public override void SetLength(long v) { throw new NotSupportedException(); }
+      public override bool CanRead { get { return true; } }
+      public override bool CanSeek { get { return false; } }
+      public override bool CanWrite { get { return false; } }
+      public override long Length { get { throw new NotSupportedException(); } }
+      public override long Position { get { throw new NotSupportedException(); } set { throw new NotSupportedException(); } }
+      protected override void Dispose(bool d) { if (d) { try { s.Dispose(); } catch (Exception) { } try { resp.Close(); } catch (Exception) { } } base.Dispose(d); }
     }
   }
 }

@@ -91,53 +91,6 @@ namespace RealmForge {
         + ",\"notes\":{\"ru\":" + MiniJson.Quote(u.NotesRu ?? "") + ",\"en\":" + MiniJson.Quote(u.NotesEn ?? "") + "}}";
     }
 
-    /// <summary>The player's PC cannot tell the update from a normal page: a stalled connection is dropped after IdleReadMs, not 60 s.</summary>
-    static RangeReply OpenRange(string url, long offset, long length) {
-      const SecurityProtocolType Tls12 = (SecurityProtocolType)3072;
-      try { ServicePointManager.SecurityProtocol |= Tls12; } catch (NotSupportedException) { }
-      var req = (HttpWebRequest)WebRequest.Create(url);
-      req.Method = "GET"; req.UserAgent = SyncClient.UserAgent; req.Timeout = 15000; req.ReadWriteTimeout = ChunkedDownload.IdleReadMs;
-      req.AllowAutoRedirect = false; req.KeepAlive = false;   // (a new connection for every request)
-      req.Headers["Cache-Control"] = "no-cache";
-      req.Headers["Range"] = "bytes=" + offset.ToString(CultureInfo.InvariantCulture) + "-" + (offset + length - 1).ToString(CultureInfo.InvariantCulture);
-      HttpWebResponse resp;
-      try { resp = (HttpWebResponse)req.GetResponse(); }
-      catch (WebException we) {
-        var er = we.Response as HttpWebResponse;
-        if (er == null) throw;
-        int code = (int)er.StatusCode; er.Close();
-        return new RangeReply { Status = code, Body = new MemoryStream(new byte[0]) };
-      }
-      var r = new RangeReply { Status = (int)resp.StatusCode, Body = resp.GetResponseStream() };
-      if (r.Status == 206) {
-        // Content-Range: bytes 0-262143/6810624
-        string cr = resp.Headers["Content-Range"] ?? "";
-        int dash = cr.IndexOf('-'), slash = cr.IndexOf('/'); long a, tot;
-        if (cr.StartsWith("bytes ", StringComparison.Ordinal) && dash > 6 && slash > dash
-            && long.TryParse(cr.Substring(6, dash - 6), NumberStyles.None, CultureInfo.InvariantCulture, out a)
-            && long.TryParse(cr.Substring(slash + 1), NumberStyles.None, CultureInfo.InvariantCulture, out tot)) { r.RangeStart = a; r.Total = tot; }
-        else r.RangeStart = -1;
-      } else if (r.Status == 200) r.Total = resp.ContentLength;
-      return new RangeReply { Status = r.Status, RangeStart = r.RangeStart, Total = r.Total, Body = new ResponseBody(resp, r.Body) };
-    }
-
-    /// <summary>Closes the response together with its stream.</summary>
-    sealed class ResponseBody : Stream {
-      readonly HttpWebResponse resp; readonly Stream s;
-      public ResponseBody(HttpWebResponse r, Stream st) { resp = r; s = st; }
-      public override int Read(byte[] b, int o, int c) { return s.Read(b, o, c); }
-      public override void Write(byte[] b, int o, int c) { throw new NotSupportedException(); }
-      public override void Flush() { }
-      public override long Seek(long o, SeekOrigin so) { throw new NotSupportedException(); }
-      public override void SetLength(long v) { throw new NotSupportedException(); }
-      public override bool CanRead { get { return true; } }
-      public override bool CanSeek { get { return false; } }
-      public override bool CanWrite { get { return false; } }
-      public override long Length { get { throw new NotSupportedException(); } }
-      public override long Position { get { throw new NotSupportedException(); } set { throw new NotSupportedException(); } }
-      protected override void Dispose(bool d) { if (d) { try { s.Dispose(); } catch (Exception) { } try { resp.Close(); } catch (Exception) { } } base.Dispose(d); }
-    }
-
     static byte[] Fetch(string url, long max) {
       const SecurityProtocolType Tls12 = (SecurityProtocolType)3072;
       try { ServicePointManager.SecurityProtocol |= Tls12; } catch (NotSupportedException) { }
@@ -170,7 +123,7 @@ namespace RealmForge {
         Uri file; if (!Uri.TryCreate(baseUri, u.Url, out file) || !UpdateHosts.Allowed(baseUri, file)) return null;
         Directory.CreateDirectory(Dir);
         string part = PartPath(u), url = file.AbsoluteUri;
-        var dl = ChunkedDownload.Run((off, len) => OpenRange(url, off, len), part, u.Size, ChunkedDownload.ChunkBytes, ChunkedDownload.MaxNoProgress,
+        var dl = ChunkedDownload.Run((off, len) => RangeHttp.Open(url, off, len), part, u.Size, ChunkedDownload.ChunkBytes, ChunkedDownload.MaxNoProgress,
           n => System.Threading.Thread.Sleep(Math.Min(3000, 500 * n)), Log.Write);
         if (dl.Mismatch) { try { File.Delete(part); } catch (Exception) { } Log.Write("update " + u.Version + ": the file on the server is not the one the feed describes"); LastFailed = true; return null; }
         if (!dl.Complete) { Log.Write("update " + u.Version + ": download " + dl.Why + " at " + dl.Have + " of " + u.Size + " (kept for the next try)"); LastFailed = true; return null; }

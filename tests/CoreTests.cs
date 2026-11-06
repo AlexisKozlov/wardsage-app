@@ -914,6 +914,7 @@ static partial class CoreTests {
     SimMemoryTests();
     FightPlanTests();
     UpdateDownloadTests();
+    RealRangeOpenerTests();
     Backoff409Tests();
     ScreenTopTests();
     ScreenMapTests();
@@ -4656,6 +4657,64 @@ static partial class CoreTests {
       r = ChunkedDownload.Run((off, len) => new RangeReply { Status = 416, Body = new System.IO.MemoryStream(new byte[0]) }, System.IO.Path.Combine(dir, "i.part"), data.Length, 256 * 1024, 3, null, null);
       Check(!r.Complete && r.Why == "stalled", "an error status counts as a failed attempt");
     } finally { try { System.IO.Directory.Delete(dir, true); } catch (Exception) { } }
+  }
+
+  /// <summary>The REAL opener (HttpWebRequest, not the fake one): a local HttpListener answers 206 with Content-Range by the Range header and
+  /// hangs after 20 000 bytes of its first connection. Catches what the fakes cannot: restricted headers (Headers["Range"] throws on .NET Framework).</summary>
+  static void RealRangeOpenerTests() {
+    Console.WriteLine("Update download: the real HttpWebRequest opener against a local server");
+    var data = new byte[90000]; new Random(11).NextBytes(data);
+    var listener = new System.Net.HttpListener(); int port = 0; bool started = false;
+    for (int i = 0; i < 20 && !started; i++) {
+      port = 20000 + new Random(Guid.NewGuid().GetHashCode()).Next(30000);
+      listener.Prefixes.Clear(); listener.Prefixes.Add("http://127.0.0.1:" + port + "/");
+      try { listener.Start(); started = true; } catch (Exception) { }
+    }
+    Check(started, "real opener: the local listener started");
+    if (!started) return;
+    int conns = 0; string lastRange = null; var stop = new System.Threading.ManualResetEvent(false);
+    var loop = new System.Threading.Thread(() => {
+      while (listener.IsListening) {
+        System.Net.HttpListenerContext ctx;
+        try { ctx = listener.GetContext(); } catch (Exception) { return; }
+        var c = ctx;
+        new System.Threading.Thread(() => {
+          try {
+            int n = System.Threading.Interlocked.Increment(ref conns);
+            string rg = c.Request.Headers["Range"]; lastRange = rg;
+            long a = 0, b = data.Length - 1;
+            if (rg != null && rg.StartsWith("bytes=")) {
+              var p = rg.Substring(6).Split('-'); a = long.Parse(p[0]); b = Math.Min(long.Parse(p[1]), data.Length - 1);
+              c.Response.StatusCode = 206;
+              c.Response.AddHeader("Content-Range", "bytes " + a + "-" + b + "/" + data.Length);
+            }
+            c.Response.ContentLength64 = b - a + 1;
+            int send = (int)(b - a + 1); bool hang = n == 1 && send > 20000; if (hang) send = 20000;
+            c.Response.OutputStream.Write(data, (int)a, send); c.Response.OutputStream.Flush();
+            if (hang) { stop.WaitOne(30000); c.Response.Abort(); } else c.Response.Close();
+          } catch (Exception) { }
+        }).Start();
+      }
+    });
+    loop.IsBackground = true; loop.Start();
+    string dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "rf-real-" + Guid.NewGuid().ToString("N")); System.IO.Directory.CreateDirectory(dir);
+    try {
+      string url = "http://127.0.0.1:" + port + "/a.exe";
+      // one request on its own: the Range header reaches the server as sent
+      using (var rep = RangeHttp.Open(url, 1000, 500)) {
+        var ms = new System.IO.MemoryStream(); var buf = new byte[4096]; int k;
+        while ((k = rep.Body.Read(buf, 0, buf.Length)) > 0) ms.Write(buf, 0, k);
+        Check(rep.Status == 206 && rep.RangeStart == 1000 && rep.Total == data.Length && ms.Length == 500, "real opener: a ranged request gives 206, Content-Range parsed, 500 bytes");
+      }
+      Eq("bytes=1000-1499", lastRange, "real opener: the Range header the server saw");
+      // the whole download: the first connection stalls after 20 000 bytes, the idle timeout drops it, the next one continues
+      conns = 0; string part = System.IO.Path.Combine(dir, "a.part");
+      var res = ChunkedDownload.Run((off, len) => RangeHttp.Open(url, off, len), part, data.Length, 40000, 5, null, null);
+      Check(res.Complete && res.Stalls >= 1 && BitConverter.ToString(System.IO.File.ReadAllBytes(part)) == BitConverter.ToString(data), "real opener: a stalled connection, then a complete file with the same bytes (stalls " + res.Stalls + ", conns " + conns + ")");
+    } finally {
+      stop.Set(); try { listener.Stop(); } catch (Exception) { }
+      try { System.IO.Directory.Delete(dir, true); } catch (Exception) { }
+    }
   }
 
   static void Backoff409Tests() {
