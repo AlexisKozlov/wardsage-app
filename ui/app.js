@@ -1222,6 +1222,11 @@
         line1 = g.item.setName ? t('hSet', g.item.setName) : '';
         const st = G.statOf(g.item.mainStat); line2 = st ? t('hStat', st) : '';
       } else if (g.kind === 'selected') { hint = 'replace'; line1 = t('pReplace'); }
+      else if (G.filterHint(g)) {
+        hint = G.filterHint(g);
+        line1 = g.item.setName ? t('hSet', g.item.setName) : '';
+        const st = g.item.slot > 1 ? G.statOf(g.item.mainStat) : ''; line2 = st ? t('hStat', st) : '';
+      }
       else if (g.kind === 'done') { hint = 'done'; }
       else if (g.kind === 'bulk') { hint = 'bulk'; }
       else if (g.kind === 'hero') {
@@ -1247,7 +1252,7 @@
       if (it) { texts.pick = t('pPick', it.name + (it.level ? ' +' + it.level : '')); texts.wrongSub = t('pWrongSub', it.name + (it.level ? ' +' + it.level : '')); }
       Object.assign(texts, { then: t('pThen'), pillDown: t('pPillDown'), pillUp: t('pPillUp'), rows1: t('pRows1'), rows2: t('pRows2'), rows5: t('pRows5'),
         unknown: t('pUnknown'), unknownSub: t('pUnknownSub'), done: t('pDone'), wrong: t('hWrong'),
-        slotInFilter: t('pSlotInFilter'), filterCovered: t('pFilterCovered'), bulkExit: t('gBulk') });
+        slotInFilter: t('pSlotInFilter'), filterFix: t('pFilterFix'), filterScroll: t('pFilterScroll'), filterCovered: t('pFilterCovered'), bulkExit: t('gBulk') });
     }
     // the gear is on, the plan's artifact is next: the host guides it on the hero screen (its step comes back as live.art)
     let artUid = 0;

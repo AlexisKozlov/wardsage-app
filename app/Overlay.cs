@@ -1162,19 +1162,24 @@ namespace RealmForge {
       }
       if (hintKind == "hero") { TickHeroHint(o, W, H); return; }
       if (hintKind == "art") { TickArtHint(o, W, H); return; }
+      // a set / main stat / sub stat left in the filter by the previous item hides this one (slot step, or the guide's «hiddenFilter»)
+      if (filterItem > 0 && (hintKind == "fixfilter" || hintKind == "slot") && FixFilterTick(o, cr, W, H, U)) return;
       // the gear filter pop-up (its red ×) while an item is to be framed
       if (target != 0) {
         double fx = fg.X(fg.MainCloseX, W, H), fy = fg.Y(fg.CloseY, W, H);
         filterOpen = GearMain(o, W, H, U);
         // the player works with a slot: the pop-up's own «Выбрать часть» row switches it (drawn below) - never «close the filter» then
-        bool slotInFilter = filterOpen && GearFilterHint.Decide(hintKind, hintSlot, PartIconX.Length, false) == GearFilterMove.SlotInFilter;
+        long fitUid = filterItem > 0 ? filterItem : target;
+        bool slotInFilter = filterOpen && GearFilterHint.Decide(hintKind, hintSlot, PartIconX.Length, false, FilterFitsItem(fitUid)) == GearFilterMove.SlotInFilter;
+        // the filter keeps the previous item's choice: what is to be picked is lit (the guide for the plan's filter step does the same)
+        bool misfit = filterOpen && !slotInFilter && FilterHasChoice() && !FilterFitsItem(fitUid);
         if (filterOpen && !slotInFilter) {
 
           // the plan wants the filter (its filter step, or the item far down - the page's «faster» tip): what to pick in it
           // is lit; once it is set the frame goes on in the list beside the pop-up (its × would drop the filter again)
           // (far: reported by the frame, or the item's row alone - the frame may not know where the list is yet)
           bool far = (farFor != 0 && farFor == target) || frameRow > 3 * g.VisibleRows;
-          int[] gr = null; string[] gl = null; int guide = hintKind == "filter" || far ? FilterGuideTip(o, cr, hintKind == "filter", out gr, out gl) : -1;
+          int[] gr = null; string[] gl = null; int guide = hintKind == "filter" || far || misfit ? FilterGuideTip(o, cr, hintKind == "filter" || misfit, out gr, out gl) : -1;
           if (guide >= 0) {
 
             if (guide == 1) {
@@ -1185,7 +1190,7 @@ namespace RealmForge {
             // set as wanted: the list beside the pop-up is followed and framed as usual - unless the pop-up covers the item
             if (!CoveredByFilter(o, cr, U)) filterOpen = false;
             else { CloseFilterTip(o, fx, fy, U, H, Tx("filterCovered")); return; }
-          } else if (FilterHasChoice()) {
+          } else if (FilterHasChoice() && !misfit) {
             // the filter narrows the list now: closing the pop-up drops that again (live 2026-10-14, twice: the set went
             // from the filter and the item back from row 4 to row 18) - the list beside the pop-up is framed as usual,
             // unless the pop-up covers the item
@@ -1251,6 +1256,47 @@ namespace RealmForge {
       int rr = Math.Max(8, (int)(0.028 * U)); bool cl;
       var cr = FrameForI("hero.filterClose", new[] { (int)fx - rr, (int)fy - rr, 2 * rr, 2 * rr }, sceneW, H, U, out cl);
       DrawTip(o.X + cr[0], o.Y + cr[1], cr[2], cr[3], string.IsNullOrEmpty(text) ? new string[0] : new[] { text }, H);
+    }
+
+    /// <summary>The filter's set / main stat / sub stat choice lets the item <paramref name="uid"/> through (no choice, or nothing known about the item = yes).
+    /// For the slot step the main stat is judged by the slot the player goes to (the pop-up still shows the old one).</summary>
+    bool FilterFitsItem(long uid) {
+      long[] info, suits, mains, subs; int part; bool foreign, hideEq;
+      if (uid <= 0 || addrs == null || !itemInfo.TryGetValue(uid, out info)) return true;
+      if (!RFX.ReadFilter(addrs, out suits, out mains, out subs, out part, out foreign, out hideEq)) return true;
+      int itemPart = hintKind == "slot" && hintSlot >= 0 ? hintSlot : part;
+      return GearFilterHint.Fits(suits, mains, subs, info[0], itemPart <= 1 ? 0 : info[1], RFX.ReadSubIds(addrs, uid));
+    }
+
+    /// <summary>The filter step of the hint «fixfilter» / «slot»: true = the tip was drawn (the caller returns). The pop-up open with the old choice: what to
+    /// pick is lit; the pop-up closed but the choice kept: the filter button; the choice fits and the item is not in the list: scroll.</summary>
+    bool FixFilterTick(W32.POINT o, W32.RECT cr, double W, double H, double U) {
+      bool open = GearMain(o, W, H, U);
+      bool fits = FilterFitsItem(filterItem);
+      if (hintKind == "slot") {
+        if (!open || GearFilterHint.Decide(hintKind, hintSlot, PartIconX.Length, false, fits) != GearFilterMove.FixFilter) return false;
+      } else if (fits) {
+        // the choice is not what hides it: the item is further down the list (or on another hero)
+        if (Tx("filterScroll") == "") { HideTip(); return true; }
+        DrawTipTop(new[] { Tx("filterScroll") }); return true;
+      }
+      if (open) {
+        int[] gr; string[] gl;
+        if (FilterGuideTip(o, cr, true, out gr, out gl) == 1) {
+          filterState = "filter_guide";
+          DrawTip(o.X + gr[0], o.Y + gr[1], gr[2], gr[3], gl, H, false, gr[1] < 0.3 * H, gr[0] > W / 2);
+          return true;
+        }
+        // nothing known to light (a sub stat only): the text alone
+        if (Tx("filterFix") == "") { HideTip(); return true; }
+        DrawTipTop(new[] { Tx("filterFix") }); return true;
+      }
+      // the pop-up is closed while its choice hides the item: its button
+      bool rl; var fr = FrameForI("hero.filter", hg.Filter(W, H), W, H, U, out rl);
+      var lines = new System.Collections.Generic.List<string>(hintLines); if (Tx("filterFix") != "") lines.Add(Tx("filterFix"));
+      if (fr == null) { if (lines.Count == 0) HideTip(); else DrawTipTop(lines.ToArray()); return true; }
+      DrawTip(o.X + fr[0], o.Y + fr[1], fr[2], fr[3], lines.ToArray(), H);
+      return true;
     }
 
     /// <summary>The game's gear filter has a set or a main stat chosen now.</summary>

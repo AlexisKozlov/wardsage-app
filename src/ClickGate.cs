@@ -136,13 +136,25 @@ namespace RealmForge {
     /// <summary>The pop-up covers the item's cell: the tip points at its red ×.</summary>
     Close,
     /// <summary>The item is beside the pop-up: the frame goes on in the list, the pop-up is left alone.</summary>
-    ListBeside
+    ListBeside,
+    /// <summary>The pop-up still holds a set / main stat / sub stat of the previous item (it hides this one): the tip lights what to pick.</summary>
+    FixFilter
   }
 
   public static class GearFilterHint {
-    public static GearFilterMove Decide(string hintKind, int hintSlot, int slotIcons, bool coveredByFilter) {
-      if (hintKind == "slot" && hintSlot >= 0 && hintSlot < slotIcons) return GearFilterMove.SlotInFilter;
+    /// <param name="filterFits">the pop-up's choice suits the step's item (or the pop-up has no choice): see <see cref="Fits"/></param>
+    public static GearFilterMove Decide(string hintKind, int hintSlot, int slotIcons, bool coveredByFilter, bool filterFits = true) {
+      if (hintKind == "slot" && hintSlot >= 0 && hintSlot < slotIcons) return filterFits ? GearFilterMove.SlotInFilter : GearFilterMove.FixFilter;
       return coveredByFilter ? GearFilterMove.Close : GearFilterMove.ListBeside;
+    }
+
+    /// <summary>The filter's choice lets the item through: no set chosen or the item's set among them (unknown set = no verdict), the same for the main
+    /// stat (statId 0 = the slot has one main stat or it is unknown), and every chosen sub stat is one of the item's (itemSubs null = unknown).</summary>
+    public static bool Fits(long[] suits, long[] mains, long[] subs, long setId, long statId, long[] itemSubs) {
+      if (suits != null && suits.Length > 0 && setId > 0 && Array.IndexOf(suits, setId) < 0) return false;
+      if (mains != null && mains.Length > 0 && statId > 0 && Array.IndexOf(mains, statId) < 0) return false;
+      if (subs != null && subs.Length > 0 && itemSubs != null) foreach (var x in subs) if (Array.IndexOf(itemSubs, x) < 0) return false;
+      return true;
     }
   }
 

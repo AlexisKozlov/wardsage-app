@@ -39,6 +39,7 @@ ok(g.kind === 'hiddenEq' && g.other === 'Байек', 'hidden: worn by another h
 ok(G.next(plan, live({ hideEquipped: true, owner: { 6423: 0 } })).kind === 'notIn', 'in the bag now: not hidden by that filter');
 ok(G.next(plan, live({ hideEnhanced: true })).kind === 'hiddenEnh', 'enhanced hidden');
 ok(G.next(plan, live({ filterActive: true })).kind === 'hiddenFilter', 'filter');
+ok(G.filterHint(G.next(plan, live({ filterActive: true }))) === 'fixfilter' && G.filterHint(G.next(plan, live({ rows: { 6423: [3, 2] } }))) === '' && G.filterHint(null) === '', 'hiddenFilter asks the host for a hint (not silent); other kinds do not');
 ok(G.next(plan, live({ filterActive: true, hideEnhanced: true })).kind === 'hiddenFilter', 'a filter left on and «Скрыть улучшенное» read on: the filter first (lab 1.6.66.417)');
 ok(G.next(plan, live()).kind === 'notIn', 'not in list');
 g = G.next(plan, live({ owner: { 6423: 214700000 } }));

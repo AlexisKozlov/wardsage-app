@@ -230,6 +230,9 @@
   // The artifact step's text key (i18n artS_<step>) and its line for the plates: pick names the artifact when the site sent a name.
   const ART_STEPS = { hero: 1, wait: 1, tab: 1, open: 1, openAdd: 1, pick: 1, missing: 1, filter: 1, unfit: 1, unfitEx: 1, replace: 1, equip: 1, confirm: 1, done: 1 };
   function artStep(g) { const s = g && g.art && g.art.step; return ART_STEPS[s] ? s : 'wait'; }
+  // The game-side hint the step asks for beyond the item frame: a filter left on (the last item's set / stat) hides this item - the host lights
+  // what to change in it ('fixfilter'); '' = none from here (the other kinds are mapped in app.js).
+  function filterHint(g) { return g && g.item && g.kind === 'hiddenFilter' ? 'fixfilter' : ''; }
   function highlightUid(g) { return g && g.item && HIGHLIGHT[g.kind] ? g.item.uid : 0; }
 
   // Russian plural: 1 ряд, 2 ряда, 5 рядов.
@@ -238,7 +241,7 @@
     return a > 10 && a < 20 ? many : b === 1 ? one : b >= 2 && b <= 4 ? few : many;
   }
 
-  const api = { next, ordered, farRow, dragsFor, sticky, stepNo, artStep, pickPlan, freshPlan, freshPlans, freshSell, nextQueued, takeOver, highlightUid, plural, bustUrl, headUrl, itemUrl, setUrl, rankOf, statOf, statId, statUrl, VISIBLE_ROWS };
+  const api = { next, ordered, farRow, dragsFor, sticky, stepNo, artStep, pickPlan, freshPlan, freshPlans, freshSell, nextQueued, takeOver, highlightUid, filterHint, plural, bustUrl, headUrl, itemUrl, setUrl, rankOf, statOf, statId, statUrl, VISIBLE_ROWS };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.RFGuide = api;
 })(typeof window !== 'undefined' ? window : globalThis);

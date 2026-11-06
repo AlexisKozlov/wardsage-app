@@ -5398,6 +5398,14 @@ static partial class CoreTests {
       Check(GearFilterHint.Decide("pick", -1, 5, false) == GearFilterMove.ListBeside, "filter hint: open, nothing picked, the item visible beside it: no close tip");
       Check(GearFilterHint.Decide("pick", -1, 5, true) == GearFilterMove.Close, "filter hint: the pop-up covers the item's cell: close it");
       Check(GearFilterHint.Decide("slot", 2, 5, false) == GearFilterMove.SlotInFilter && GearFilterHint.Decide("slot", 2, 5, true) == GearFilterMove.SlotInFilter, "filter hint: the slot step: the slot row in the filter, covered or not");
+      Check(GearFilterHint.Decide("slot", 2, 5, false, false) == GearFilterMove.FixFilter && GearFilterHint.Decide("slot", 2, 5, true, false) == GearFilterMove.FixFilter, "filter hint: the slot step with another item's set left in the filter: fix the filter, no frame on the slot row");
+      Check(GearFilterHint.Decide("slot", 2, 5, false, true) == GearFilterMove.SlotInFilter, "filter hint: the slot step with a fitting filter: the slot row");
+      Check(GearFilterHint.Decide("pick", -1, 5, false, false) == GearFilterMove.ListBeside, "filter hint: only the slot step cares about the fit");
+      Check(GearFilterHint.Fits(new long[0], new long[0], new long[0], 8, 3, null) && GearFilterHint.Fits(null, null, null, 8, 3, null), "filter fits: an empty filter lets everything through");
+      Check(!GearFilterHint.Fits(new long[] { 5 }, null, null, 8, 3, null) && GearFilterHint.Fits(new long[] { 5, 8 }, null, null, 8, 3, null), "filter fits: the item's set must be among the chosen");
+      Check(!GearFilterHint.Fits(null, new long[] { 2 }, null, 8, 3, null) && GearFilterHint.Fits(null, new long[] { 3 }, null, 8, 3, null) && GearFilterHint.Fits(null, new long[] { 2 }, null, 8, 0, null), "filter fits: the main stat (0 = not judged)");
+      Check(!GearFilterHint.Fits(null, null, new long[] { 9 }, 8, 3, new long[] { 1, 2 }) && GearFilterHint.Fits(null, null, new long[] { 1 }, 8, 3, new long[] { 1, 2 }) && GearFilterHint.Fits(null, null, new long[] { 9 }, 8, 3, null), "filter fits: the sub stats");
+      Check(GearFilterHint.Fits(new long[] { 8 }, new long[] { 3 }, null, 0, 0, null), "filter fits: nothing known about the item: no verdict");
       Check(GearFilterHint.Decide("slot", 7, 5, false) == GearFilterMove.ListBeside, "filter hint: a slot out of the icons' range is not framed in the filter");
       Check(D(PilotFlow.Equip, gearHero(Mem3.Yes), false).Text != "closeFilter", "fallback: the equip flow's own open gear filter is not told to be closed by this plate");
       // the page's step: the open gear filter covers the hero screen's buttons: «close the filter window» with the × key of the gear filter, whatever coverable step it hides
