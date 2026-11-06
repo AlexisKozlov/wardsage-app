@@ -943,6 +943,9 @@ static partial class CoreTests {
       Check(Math.Abs(Ui.Unit(W, H) - 900) < 0.01 && Math.Abs(Ui.Unit(1920, 1009) - 1009) < 0.01, "UI unit: 900 at 1600×1000, the height at 1920×1009");
       var fgx = new FilterGeometry();
       Check(Math.Abs(fgx.X(fgx.MainCloseX, W, H) - 1088) < 4 && Math.Abs(fgx.Y(fgx.CloseY, W, H) - 130) < 4, "filter pop-up × (centred): 1088,130");
+      Check(!FilterGeometry.SetBelowView(19) && FilterGeometry.SetBelowView(20) && FilterGeometry.SetBelowView(25), "set list: index 20+ is below the visible rows (no cell is lit)");
+      { var lr = fgx.SetListRect(W, H, 100, 50); var c0 = fgx.SetCell(0, W, H); var c19 = fgx.SetCell(19, W, H);
+        Check(lr[0] <= c0[0] && lr[1] <= c0[1] && lr[0] + lr[2] >= c19[0] && lr[1] + lr[3] >= c19[1], "set list rect holds the first and the last visible cell"); }
       var hgx = new HintGeometry(); var sl = hgx.Slot(0, W, H);
       Check(Math.Abs(sl[0] + sl[2] / 2.0 - 481) < 4 && Math.Abs(sl[1] + sl[3] / 2.0 - 540) < 6, "weapon slot (centred): 481,540");
       var rpx = hgx.Replace(W, H);

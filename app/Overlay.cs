@@ -1270,9 +1270,21 @@ namespace RealmForge {
 
     /// <summary>The filter step of the hint «fixfilter» / «slot»: true = the tip was drawn (the caller returns). The pop-up open with the old choice: what to
     /// pick is lit; the pop-up closed but the choice kept: the filter button; the choice fits and the item is not in the list: scroll.</summary>
+    // one diagnostic line per change of state (not per frame): tag -> the last line logged for it
+    readonly System.Collections.Generic.Dictionary<string, string> stateLog = new System.Collections.Generic.Dictionary<string, string>();
+    void StateLog(string tag, string line) {
+      string last; if (stateLog.TryGetValue(tag, out last) && last == line) return;
+      stateLog[tag] = line; Log.Write(tag + ": " + line);
+    }
+    static string Ids(long[] a) { return a == null ? "null" : "[" + string.Join(",", Array.ConvertAll(a, x => x.ToString())) + "]"; }
+
     bool FixFilterTick(W32.POINT o, W32.RECT cr, double W, double H, double U) {
       bool open = GearMain(o, W, H, U);
       bool fits = FilterFitsItem(filterItem);
+      {
+        long[] ds, dm, du; int dp; bool df, dh; bool rd = RFX.ReadFilter(addrs, out ds, out dm, out du, out dp, out df, out dh);
+        StateLog("fixfilter", "uid=" + filterItem + " kind=" + hintKind + " target=" + target + " slot=" + hintSlot + " open=" + open + " read=" + rd + " suits=" + Ids(ds) + " mains=" + Ids(dm) + " subs=" + Ids(du) + " hideEq=" + dh + " fits=" + fits);
+      }
       if (hintKind == "slot") {
         if (!open || GearFilterHint.Decide(hintKind, hintSlot, PartIconX.Length, false, fits) != GearFilterMove.FixFilter) return false;
       } else if (fits) {
@@ -1322,15 +1334,19 @@ namespace RealmForge {
     int FilterGuideTip(W32.POINT o, W32.RECT cr, bool both, out int[] rect, out string[] lines) {
       rect = null; lines = new string[0];
       var fv = FilterViewNow(o, cr, NowMs(), true, false);
-      if (fv.Item <= 0 || fv.Suits == null || fv.MainAttrs == null) return -1;
+      StateLog("filterguide", "uid=" + fv.Item + " setId=" + fv.SetId + " statId=" + fv.StatId + " setIndex=" + fv.SetIndex + " statIndex=" + fv.StatIndex + " setPanel=" + fv.SetPanelOpen + " side=" + fv.SidePanelOpen
+        + " setOrder=" + (fv.SetOrder != null ? fv.SetOrder.Length.ToString() : "null") + " suits=" + Ids(fv.Suits) + " mains=" + Ids(fv.MainAttrs) + " subs=" + Ids(fv.SubAttrs) + " hideEq=" + fv.HideEquipped
+        + " hintKind=" + hintKind + " target=" + target + " hintSlot=" + hintSlot + " both=" + both);
+      if (fv.Item <= 0 || fv.Suits == null || fv.MainAttrs == null) { StateLog("filterguide.ret", "-1 no filter read (item=" + fv.Item + " suits=" + (fv.Suits != null) + " mains=" + (fv.MainAttrs != null) + ")"); return -1; }
       double W = cr.R, H = cr.B, U = Ui.Unit(W, H);
       int setCount = fv.SetOrder != null ? fv.SetOrder.Length : 2 * FilterGeometry.SetRows;
       bool setWanted = fv.SetId > 0 && fv.SetIndex >= 0 && fv.SetIndex < setCount;
       bool statWanted = fv.StatId > 0 && fv.StatIndex >= 0 && fv.StatIndex < 2 * FilterGeometry.StatRows;
       bool setOn = fv.SetId > 0 && Array.IndexOf(fv.Suits, fv.SetId) >= 0, statOn = fv.StatId > 0 && Array.IndexOf(fv.MainAttrs, fv.StatId) >= 0;
-      if (!setWanted && !statWanted) return -1;   // nothing known to pick: the filter does not help
+      if (!setWanted && !statWanted) { StateLog("filterguide.ret", "-1 nothing known to pick (setId=" + fv.SetId + " setIndex=" + fv.SetIndex + " statId=" + fv.StatId + " statIndex=" + fv.StatIndex + ")"); return -1; }   // nothing known to pick: the filter does not help
       bool done = both ? (setOn || !setWanted) && (statOn || !statWanted) : setOn || statOn;
-      if (done) { guideSide = ""; return 0; }
+      if (done) { guideSide = ""; StateLog("filterguide.ret", "0 done (setOn=" + setOn + " statOn=" + statOn + ")"); return 0; }
+      StateLog("filterguide.ret", "1 setWanted=" + setWanted + " setOn=" + setOn + " statWanted=" + statWanted + " statOn=" + statOn);
       int s = Math.Max(10, (int)(0.03 * U)), cw = (int)(0.2 * U), ch = (int)(0.055 * U);
       Func<double, double, int[]> spot = (x, y) => new[] { (int)x - s, (int)y - s, 2 * s, 2 * s };
       Func<double[], int[]> cell = (c) => new[] { (int)c[0] - cw / 2, (int)c[1] - ch / 2, cw, ch };
@@ -1339,7 +1355,14 @@ namespace RealmForge {
         if (fv.SetPanelOpen) {
           // the sets list shows 10 rows; further down it has to be scrolled (where it is scrolled is not known: the row is
           // lit as if it were not, the text names the set)
-          int row = Math.Min(fv.SetIndex / 2, FilterGeometry.SetRows - 1);
+          if (FilterGeometry.SetBelowView(fv.SetIndex)) {
+            // the set is below the visible rows: another set's cell is not lit - the list is, and the text says to scroll it
+            rect = fg.SetListRect(W, H, cw, ch);
+            string below = Tx("filterSetBelow"); lines = new[] { below != "" ? below : (string.IsNullOrEmpty(FilterSetText) ? "" : FilterSetText) };
+            if (lines[0] == "") lines = new string[0];
+            guideSide = "set"; return 1;
+          }
+          int row = fv.SetIndex / 2;
           rect = cell(fg.SetCell(row * 2 + fv.SetIndex % 2, W, H)); guideSide = "set";
         } else rect = spot(fg.X(fg.SetArrowX, W, H), fg.Y(fg.SetArrowY, W, H));
         return 1;

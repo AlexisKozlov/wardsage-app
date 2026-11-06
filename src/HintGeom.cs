@@ -113,6 +113,13 @@ namespace RealmForge {
     public double[] SetCell(int index, double W, double H) {
       return new[] { X(index % 2 == 0 ? SetColX0 : SetColX1, W, H), Y(SetRow0 + index / 2 * SetPitch, W, H) };
     }
+    /// <summary>The set is further down than the visible rows: it needs the list scrolled (no cell of it is on screen).</summary>
+    public static bool SetBelowView(int setIndex) { return setIndex >= 2 * SetRows; }
+    /// <summary>The whole visible sets list (both columns, all rows) as x, y, w, h around the cells of cell size cw x ch.</summary>
+    public int[] SetListRect(double W, double H, int cw, int ch) {
+      var c0 = SetCell(0, W, H); var c1 = SetCell(1, W, H); var cl = SetCell(2 * (SetRows - 1), W, H);
+      return new[] { (int)c0[0] - cw / 2, (int)c0[1] - ch / 2, (int)(c1[0] - c0[0]) + cw, (int)(cl[1] - c0[1]) + ch };
+    }
     public double[] StatCell(int index, double W, double H) {
       return new[] { X(index % 2 == 0 ? StatColX0 : StatColX1, W, H), Y(StatRow0 + index / 2 * StatPitch, W, H) };
     }

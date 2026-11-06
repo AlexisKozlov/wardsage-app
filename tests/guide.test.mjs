@@ -37,6 +37,8 @@ ok(g.states[6423] === 'now' && g.states[33] === 'wait', 'states');
 g = G.next(plan, live({ hideEquipped: true }));
 ok(g.kind === 'hiddenEq' && g.other === 'Байек', 'hidden: worn by another hero');
 ok(G.next(plan, live({ hideEquipped: true, owner: { 6423: 0 } })).kind === 'notIn', 'in the bag now: not hidden by that filter');
+ok(G.next(plan, live({ hideEquipped: true, filterActive: true })).kind === 'hiddenFilter' && G.filterHint(G.next(plan, live({ hideEquipped: true, filterActive: true }))) === 'fixfilter', 'worn by another hero with a filter on: the filter first (lab 1.6.68.604)');
+ok(G.next(plan, live({ hideEquipped: true, filterActive: false })).kind === 'hiddenEq', 'worn by another hero, no filter: hiddenEq');
 ok(G.next(plan, live({ hideEnhanced: true })).kind === 'hiddenEnh', 'enhanced hidden');
 ok(G.next(plan, live({ filterActive: true })).kind === 'hiddenFilter', 'filter');
 ok(G.filterHint(G.next(plan, live({ filterActive: true }))) === 'fixfilter' && G.filterHint(G.next(plan, live({ rows: { 6423: [3, 2] } }))) === '' && G.filterHint(null) === '', 'hiddenFilter asks the host for a hint (not silent); other kinds do not');

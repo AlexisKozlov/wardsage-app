@@ -83,7 +83,9 @@
       return g;
     }
     const who = owner[cur.uid] !== undefined ? owner[cur.uid] : cur.fromHeroUid;
-    if (who > 0 && who !== plan.heroUid && live.hideEquipped) {
+    // (a filter on goes first even when the item is worn by another hero and «Скрыть надетое» reads on: the filter is what the player can fix now,
+    // lab 1.6.68.604 Арача step 8: the other hero's set in the filter gave 'hiddenEq' and no hint at all)
+    if (who > 0 && who !== plan.heroUid && live.hideEquipped && !live.filterActive) {
       g.kind = 'hiddenEq';
       g.other = who === cur.fromHeroUid ? cur.fromHeroName : null;
       return g;

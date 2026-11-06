@@ -1252,7 +1252,7 @@
       if (it) { texts.pick = t('pPick', it.name + (it.level ? ' +' + it.level : '')); texts.wrongSub = t('pWrongSub', it.name + (it.level ? ' +' + it.level : '')); }
       Object.assign(texts, { then: t('pThen'), pillDown: t('pPillDown'), pillUp: t('pPillUp'), rows1: t('pRows1'), rows2: t('pRows2'), rows5: t('pRows5'),
         unknown: t('pUnknown'), unknownSub: t('pUnknownSub'), done: t('pDone'), wrong: t('hWrong'),
-        slotInFilter: t('pSlotInFilter'), filterFix: t('pFilterFix'), filterScroll: t('pFilterScroll'), filterCovered: t('pFilterCovered'), bulkExit: t('gBulk') });
+        slotInFilter: t('pSlotInFilter'), filterFix: t('pFilterFix'), filterScroll: t('pFilterScroll'), filterSetBelow: it && it.setName ? t('pFilterSetBelow', it.setName) : '', filterCovered: t('pFilterCovered'), bulkExit: t('gBulk') });
     }
     // the gear is on, the plan's artifact is next: the host guides it on the hero screen (its step comes back as live.art)
     let artUid = 0;
