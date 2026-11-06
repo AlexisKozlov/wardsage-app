@@ -12,12 +12,12 @@
 
   const CODE_RE = /^rf_[0-9A-Za-z]{32}$/;
   const S = {
-    notice: null, offline: false, down: {}, rec: { on: false, sec: 0, sent: 0, total: 0, why: '' }, ready: false, termsOk: true, lang: 'ru', version: '', channel: 'main', streamer: false, navCore: false, site: '', defaultSite: '', hasCode: false, codePrefix: '', saveCopy: false,
+    notice: null, offline: false, down: {}, rec: { on: false, sec: 0, sent: 0, total: 0, why: '' }, ready: false, termsOk: true, lang: 'ru', version: '', channel: 'main', streamer: false, site: '', defaultSite: '', hasCode: false, codePrefix: '', saveCopy: false,
     game: { running: false, version: null }, last: null, page: 'sync', editCode: false,
     sync: { phase: 'idle', stage: null, seconds: 0, result: null, error: null },
     plans: { status: 'idle', list: [], err: null }, sel: 0,
     scan: { status: 'idle', panel: false }, live: null, reported: {}, compact: false, overlay: 'off', ovFar: false, hl: '',
-    more: {}, autoSync: true, autoClick: false, autoConfirm: false, errorReports: false, autoUpdate: true, bossHints: true, showInCapture: false, sendCodes: true, recButton: true, plansWait: false, tray: true, autostart: false, auto: 'idle', autoAt: null,
+    more: {}, autoSync: true, errorReports: false, autoUpdate: true, bossHints: true, showInCapture: false, sendCodes: true, recButton: true, plansWait: false, tray: true, autostart: false, auto: 'idle', autoAt: null,
     news: { status: 'idle', feed: null, filter: 'all', at: 0 },
     forum: { status: 'idle', reply: null, at: 0 },
     run: null, seen: null, bootAt: Date.now(), bootLoad: false, runKey: '', queue: [], takeOver: {},
@@ -419,11 +419,10 @@
     else if (!tasks.length) note = emptyBox(t('plansNone'), t('plansNoneP'), `<button class="btn-line" data-act="open" data-url="${esc(S.site + '/app/optimizer')}">${I.ext}${esc(t('openOptimizer'))}</button>`);
     if (S.sell.list) sellAutoHint();
     let body = (tasks.length ? taskPanel(tasks) : '') + note;
-    body = remoteNote(['equip', 'autoclick', 'locate']) + body;
+    body = remoteNote(['equip', 'locate']) + body;
     return `
       <div class="head"><div><h1>${esc(t('equipTitle'))}</h1><p class="lead">${esc(t('equipLead'))}</p></div>
         <div class="row">
-          ${P.list.length > 1 && S.autoClick ? `<button class="btn-line" data-act="runAll">${esc(t('runAll'))}</button>` : ''}
           ${P.list.length ? `<button class="btn-line" data-act="compact">${I.pin}${esc(t('overlay'))}</button>` : ''}
           ${S.hasCode ? `<button class="btn-line" data-act="reload" ${P.status === 'loading' ? 'disabled' : ''}>${I.reload}${esc(t('reload'))}</button>` : ''}
         </div></div>
@@ -433,17 +432,15 @@
   // «Выделить в игре» / «Остановить» / «Показать рамки» of the cleanup list
   function sellRunBtns(L, art) {
     return L.run ? `<button class="btn-line" data-act="sellStop">${esc(t('stopBtn'))}</button>`
-      : art ? `<button class="btn-gold" data-act="sellRun" ${S.game.running ? '' : 'disabled'}>${esc(t('sellShowArt'))}</button>`
-      : S.autoClick ? `<button class="btn-gold" data-act="sellRun" ${S.game.running ? '' : 'disabled'}>${esc(t('sellRun'))}</button>`
-      : `<button class="btn-line" data-act="sellAuto" ${S.game.running ? '' : 'disabled'}>${esc(t('sellAutoRun'))}</button>`;
+      : `<button class="btn-gold" data-act="sellRun" ${S.game.running ? '' : 'disabled'}>${esc(t('sellShowArt'))}</button>`;
   }
   // «Чистка склада»: the list from the site; the app selects it on the game's sell screen, the player presses «Продать»
   function sellCard() {
     const L = S.sell, n = L.list.items.length;
     const art = L.list.kind === 'artifact';   // artifacts: frames only, whatever the auto click setting says
-    const hintMode = art || (L.run ? L.hint : !S.autoClick);   // auto click off: the program only shows frames, the player selects
+    const hintMode = true;   // the program only shows frames, the player selects
     const hd = L.run && L.hint ? SH.describe(L.hs, t, art ? 'artifact' : 'equip') : null;
-    const st = hd ? [hd.head].concat(hd.lines).join(' · ') : L.run ? (L.state === 'done' ? t('sellDone', L.selected) : L.state === 'failed' ? t('sellFailed') : (L.state || '').indexOf('gate_') === 0 ? t('gateStop', t('gateWhy_' + L.state.slice(5))) : L.state === 'no_city' ? t('sellNoCity')
+    const st = hd ? [hd.head].concat(hd.lines).join(' · ') : L.run ? (L.state === 'done' ? t('sellDone', L.selected) : L.state === 'failed' ? t('sellFailed') : L.state === 'no_city' ? t('sellNoCity')
       : L.state === 'open' ? t('sellOpening') : L.state === 'background' ? t('sellBack') : L.state === 'paused' ? t('sellPaused') : t('sellWork', L.selected, n)) : '';
     const hs = hd ? L.hs : null;
     const warn = hd ? [hs && hs.missing ? t('sellMissing', hs.missing) : '', hs && hs.extra && hs.step !== 'select' ? t('sellExtra', hs.extra) : ''].filter(Boolean).join(' ')
@@ -463,7 +460,7 @@
     const checked = L.step && L.step.subs && (L.step.step === 'selected' || L.step.step === 'done' || L.step.step === 'recastPick' || L.step.step === 'inList');
     return `<div class="card loc ${d.tone}">
       <div class="row" style="justify-content:space-between;align-items:flex-start">
-        <div><h3>${esc(t('locTitle'))}</h3><div class="meta">${esc(t(L.step && L.step.auto ? 'locLeadAuto' : 'locLead'))}</div></div>
+        <div><h3>${esc(t('locTitle'))}</h3><div class="meta">${esc(t('locLead'))}</div></div>
         <div class="row">${r.item || r.art ? `<button class="btn-line" data-act="locFound">${esc(t('locFound'))}</button>` : ''}
           <button class="btn-line" data-act="locCancel">${esc(t('locCancel'))}</button></div></div>
       ${r.item ? findCard(r.item, { row: 0, col: 0 }, compact) : r.art ? `<div class="meta"><b>${esc(r.art.name || '')}</b></div>` : ''}
@@ -482,14 +479,6 @@
     render();
   }
 
-  function sellStart() {
-    const L = S.sell; if (!L.list) return;
-    if (L.list.kind === 'artifact') { sellHintStart(); return; }   // an artifact list is never run with clicks
-    L.run = true; L.hint = false; L.state = 'work';
-    host.send({ cmd: 'sell.run', uids: L.list.items.map((x) => x.uid), slots: [...new Set(L.list.items.map((x) => x.slot))], levels: L.list.items.map((x) => x.level || 0) });
-    render();
-  }
-
   // «Отменить список» here or the on-screen «Отменить чистку склада»: the run ends at once, the site is told in the background (the app repeats it
   // while the site is busy); the list stays hidden here even if the site still returns it meanwhile (dead)
   function sellCancelList() {
@@ -503,7 +492,7 @@
   // Sent once per list (hintFor): not again on every render, but again when a new list comes in.
   function sellAutoHint() {
     const L = S.sell;
-    if (!L.list || (S.autoClick && L.list.kind !== 'artifact') || !S.game.running) return;
+    if (!L.list || !S.game.running) return;
     if (L.run && L.hint && L.hintFor === L.list.id) return;
     sellHintStart();
   }
@@ -608,18 +597,13 @@
       case 'taken': return sayBox('warn', I.warn, t('gTaken', g.taken), t('gTakenP'),
         `<div class="row" style="margin-top:10px"><button class="btn-line" data-act="takeOver">${esc(t('takeOverBtn'))}</button></div>`);
       case 'hero': {
-        if (S.run === p.id && S.autoClick) {
-          const hs = S.auto && S.auto.indexOf('hero_') === 0 ? S.auto : '';
-          if (hs) return sayBox('warn', I.warn, t(hs, p.heroName), t(hs + 'P')) + findCard(it, g, S.compact);
-          return sayBox('', I.hand, S.auto === 'paused' || S.auto === 'background' ? autoHead() : t('hWork', p.heroName), '') + findCard(it, g, S.compact);
-        }
         // another hero is open in the game: say so; without the auto click the whole way (hero, gear, slot) is named
-        const sub = S.autoClick ? t('gOpenHeroP') : '';
+        const sub = '';
         if (S.live && S.live.heroUid > 0) return sayBox('', I.hand, t('gOtherHero', p.heroName), sub) + findCard(it, g, S.compact);
-        const head = !S.autoClick && it ? t('gOpenHeroSlot', p.heroName, it.slotName || t('slot' + it.slot)) : t('gOpenHero', p.heroName);
+        const head = it ? t('gOpenHeroSlot', p.heroName, it.slotName || t('slot' + it.slot)) : t('gOpenHero', p.heroName);
         return sayBox('', I.hand, head, sub) + findCard(it, g, S.compact);
       }
-      case 'slot': return sayBox('', I.hand, autoHead() || (S.live && S.live.tab >= 0 && S.live.tab !== 3 ? t('hGearTab') : t('gOpenSlot', it.slotName || t('slot' + it.slot))), S.autoClick ? autoSub() : t('gOpenSlotLit')) + findCard(it, g, S.compact);
+      case 'slot': return sayBox('', I.hand, autoHead() || (S.live && S.live.tab >= 0 && S.live.tab !== 3 ? t('hGearTab') : t('gOpenSlot', it.slotName || t('slot' + it.slot))), t('gOpenSlotLit')) + findCard(it, g, S.compact);
       case 'pick': {
         // what to do right now, by what the frame over the game is doing
         const head = autoHead() || { on: t('fOn'), below: t('fBelow'), above: t('fAbove'), need_click: t('fNeedClick'), filter_open: t('fFilterOpen'), filter_guide: t('fGuide') }[S.overlay] || t('fLook');
@@ -654,20 +638,12 @@
   }
   function artSay(p, g) {
     const s = G.artStep(g), sk = 'artSub_' + s, sub = t(sk) !== sk ? t(sk) : '';
-    const auto = S.run === p.id && S.autoClick ? autoHead() : '';
-    return sayBox(s === 'missing' ? 'warn' : '', s === 'missing' ? I.warn : I.hand, auto || artText(p, g), auto ? autoSub() : sub);
+    return sayBox(s === 'missing' ? 'warn' : '', s === 'missing' ? I.warn : I.hand, artText(p, g), sub);
   }
   // what the frame over the game is doing (host «overlay» events)
-  // what the auto-pilot (the app opening the slot and clicking the item) is doing; '' = it is off or idle
-  function autoHead() {
-    if (!S.autoClick) return '';
-    if (S.auto && S.auto.indexOf('gate_') === 0) return t('gateStop', t('gateWhy_' + S.auto.slice(5)));
-    return { work: t('aWork'), paused: t('aPaused'), background: t('aBackground'), failed: t('aFailed'), slot_failed: t('aSlotFailed'), unconfirmed: t('aUnconfirmed') }[S.auto] || '';
-  }
-  function autoSub() {
-    if (!S.autoClick) return '';
-    return S.auto === 'work' ? t(S.autoConfirm ? 'aWorkPAuto' : 'aWorkP') : S.auto === 'failed' ? t('aFailedP') : S.auto === 'slot_failed' ? t('aSlotFailedP') : S.auto === 'unconfirmed' ? t('aUnconfirmedP') : '';
-  }
+  // the program presses nothing in the game: no pilot state to show
+  function autoHead() { return ''; }
+  function autoSub() { return ''; }
 
   function ovText() {
     return { need_click: t('ovNeedClick'), on: t('ovOn'), above: t('ovAbove'), below: t('ovBelow'), filter_open: t('fFilterOpen'), filter_guide: t('fGuide') }[S.overlay] || '';
@@ -689,19 +665,15 @@
   // shows the running task (else the picked one, else the first); the others are slim rows. All actions are the old ones (data-act).
   const TK_ICON = { equip: 'img/ti_equip.png', find: 'img/ti_find.png', art: 'img/ti_art.png', sell: 'img/ti_sell.png' };
   const tkBtn = (act, label, cls, i, extra = '') => `<button class="${cls}" data-act="${act}"${i === undefined ? '' : ` data-i="${i}"`} ${extra}>${esc(label)}</button>`;
-  // the auto-pilot gave up (or the game state needs the player): the task shows «Остановлено»
-  const autoStopped = () => !!S.autoClick && !!S.auto && (/^(gate_|hero_)/.test(S.auto) || ['failed', 'slot_failed', 'unconfirmed'].includes(S.auto));
   const segState = (list, now) => list.map((l, i) => ({ l, s: now < 0 ? '' : i < now ? 'done' : i === now ? 'now' : '' }));
 
   function planTask(p, i, full) {
     const g = guideOf(p), n = p.items.length;
     const done = g.kind === 'done', run = S.run === p.id;
-    const st = foreign(p) ? 'stop' : done ? 'done' : run ? (autoStopped() ? 'stop' : 'run') : 'wait';
+    const st = foreign(p) ? 'stop' : done ? 'done' : run ? 'run' : 'wait';
     const k = { key: 'p' + p.id, kind: 'equip', word: t('tkEquip'), name: p.heroName, st, stText: foreign(p) ? t('otherAccount') : '', n: g.done, m: n, plan: p, i, g };
     k.thumbs = p.items.map((it) => cell(it.icon, it.stars, it.level, it.slot, 'new' + (g.states[it.uid] === 'done' ? ' dn' : ''), it.setIcon, it.uid + ':new'));
-    const showRun = S.autoClick && !done && g.kind !== 'taken' && g.kind !== 'closed';
-    k.btns = (showRun ? (run ? tkBtn('stopRun', t('stopBtn'), 'btn-line', i) : tkBtn('run', st === 'stop' ? t('tkRetry') : t('runBtn'), 'btn-gold', i, foreign(p) ? 'disabled' : '')) : '')
-      + tkBtn('removePlan', t('cancelPlan'), 'btn-line', i, `title="${esc(t('cancelPlanTip'))}"`);
+    k.btns = tkBtn('removePlan', t('cancelPlan'), 'btn-line', i, `title="${esc(t('cancelPlanTip'))}"`);
     if (!full) return k;
     k.art = bust(p, 'lg xl');
     // the step bar: the hero, one per slot, the artifact
@@ -765,12 +737,12 @@
     const step = hd ? ({ openInventory: 0, openEquipTab: 0, openArtTab: 0, pressBulk: 1, needPosition: 1, allSelected: 4 }[L.hs && L.hs.step] ?? (L.hs && L.hs.step ? 2 : 0)) : (L.state === 'done' ? 4 : L.state === 'open' ? 0 : 2);
     const labels = [t('tkSell1'), t('tkSell2'), t('tkSell3'), t('tkSell4')];
     k.segs = segState(labels, L.run ? (step === undefined ? 2 : step) : -1).map((x, j) => ({ ...x, l: (j + 1) + '. ' + x.l }));
-    const text = hd ? [hd.head].concat(hd.lines).join(' · ') : L.run ? (L.state === 'done' ? t('sellDone', L.selected) : L.state === 'failed' ? t('sellFailed') : (L.state || '').indexOf('gate_') === 0 ? t('gateStop', t('gateWhy_' + L.state.slice(5))) : L.state === 'no_city' ? t('sellNoCity')
+    const text = hd ? [hd.head].concat(hd.lines).join(' · ') : L.run ? (L.state === 'done' ? t('sellDone', L.selected) : L.state === 'failed' ? t('sellFailed') : L.state === 'no_city' ? t('sellNoCity')
       : L.state === 'open' ? t('sellOpening') : L.state === 'background' ? t('sellBack') : L.state === 'paused' ? t('sellPaused') : t('sellWork', L.selected, items.length)) : '';
     const hs = hd ? L.hs : null;
     const warn = hd ? [hs && hs.missing ? t('sellMissing', hs.missing) : '', hs && hs.extra && hs.step !== 'select' ? t('sellExtra', hs.extra) : ''].filter(Boolean).join(' ')
       : [L.missing ? t('sellMissing', L.missing) : '', L.extra ? t('sellExtra', L.extra) : ''].filter(Boolean).join(' ');
-    const hintMode = art || (L.run ? L.hint : !S.autoClick);
+    const hintMode = true;
     k.head = text || t(art ? 'sellHintLeadArt' : hintMode ? 'sellHintLead' : 'sellLead');
     k.sub = [t('sellCount', items.length), warn].filter(Boolean).join(' · ');
     k.tone = warn || bad ? 'warn' : st === 'done' ? 'ok' : '';
@@ -827,45 +799,21 @@
     if (!p) return `<div class="compact-view">${S.locate.req ? locateCard(true) : ''}${sc}<div class="row" style="justify-content:space-between"><b>${esc(t('plansNone'))}</b>
       <button class="icon-btn" data-act="compact" title="${esc(t('expand'))}">${I.expand}</button></div></div>`;
     const g = guideOf(p);
-    return `<div class="compact-view">${remoteNote(['equip', 'autoclick'])}${S.locate.req ? locateCard(true) : ''}${sc}
+    return `<div class="compact-view">${remoteNote(['equip'])}${S.locate.req ? locateCard(true) : ''}${sc}
       <div class="compact-top">${bust(p)}<div><b>${esc(p.heroName)}</b><span>${esc(t('itemsOn', g.done, p.items.length))}</span>
         <div class="mini-bar"><i style="width:${Math.round((g.done / p.items.length) * 100)}%"></i></div></div>
         <button class="icon-btn" data-act="compact" title="${esc(t('expand'))}">${I.expand}</button></div>
-      ${say(p, g)}<div class="row" style="margin:8px 0">${runButton(p, g)}${cancelButton()}</div>${slotList(p, g)}</div>`;
-  }
-
-  // «Надеть»: the program opens the hero and puts the items on by itself (a started plan); «Остановить» while it runs
-  function runButton(p, g) {
-    if (!S.autoClick || g.kind === 'done' || g.kind === 'taken' || g.kind === 'closed') return '';
-    return S.run === p.id ? `<button class="btn-line" data-act="stopRun">${esc(t('stopBtn'))}</button>`
-      : `<button class="btn-gold" data-act="run">${esc(t('runBtn'))}</button>`;
+      ${say(p, g)}<div class="row" style="margin:8px 0">${cancelButton()}</div>${slotList(p, g)}</div>`;
   }
 
   // «Отменить»: stops putting the build on and drops it (the site marks it cancelled) - in both views, so a build the
   // program started by itself can be called off without the site
   const cancelButton = () => `<button class="btn-ghost" data-act="removePlan" title="${esc(t('cancelPlanTip'))}">${esc(t('cancelPlan'))}</button>`;
 
-  // queue plans (ids) after the running one; start the first when none runs
-  function enqueue(plans) {
-    for (const p of plans) if (p.id !== S.run && !S.queue.includes(p.id)) S.queue.push(p.id);
-    if (!S.run) runNext();
-  }
   // a plan for a hero not on the account in the game now (the player switched accounts): never run, marked in the list
   // (hero uids repeat across accounts - base id × 100000 + n - so the plan's items decide: none of them on this account)
   const foreign = (p) => !!(S.accHeroes && p && (!S.accHeroes.has(p.heroUid)
     || (S.accItems && S.accItems.size && p.items.length && !p.items.some((it) => S.accItems.has(it.uid)))));
-  function runNext() {
-    const p = G.nextQueued(S.queue.filter((id) => !foreign(S.plans.list.find((x) => x.id === id))), S.plans.list, S.live);
-    S.queue = p ? S.queue.slice(S.queue.indexOf(p.id) + 1) : [];
-    if (p) startRun(p);
-  }
-
-  function startRun(p) {
-    S.run = p.id; S.sel = S.plans.list.indexOf(p); S.focusKey = null;
-    host.send({ cmd: 'equip.run', hero: p.heroUid, restart: true }); S.runKey = String(p.heroUid);
-    watchPlans(true);
-  }
-
   // ---------------------------------------------------------------- settings
   const recClock = (s) => Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
   const recLabel = () => S.rec.on ? t('recStop', recClock(S.rec.sec)) : t('recStart');
@@ -894,11 +842,7 @@
       sec(t('secSync'),
         row(t('setAutoSync'), t('setAutoSyncS'), sw('autoSync', S.autoSync), { more: 'setAutoSyncP', key: 'autoSync' })
         + row(t('setCopy'), t('setCopyP'), sw('copy', S.saveCopy))),
-      rec,
-      sec(t('secEquip'),
-        row(t('setAutoClick'), t('setAutoClickS'), sw('autoClick', S.autoClick), { more: 'setAutoClickP', key: 'autoClick' })
-        + row(t('setAutoConfirm'), t(S.autoClick ? 'setAutoConfirmS' : 'setAutoConfirmOff'), sw('autoConfirm', S.autoConfirm, !S.autoClick),
-          { more: 'setAutoConfirmP', key: 'autoConfirm', dep: true, off: !S.autoClick }))].join('');
+      rec].join('');
     const right = [
       sec(t('secApp'),
         row(t('setAutoUpdate'), t('setAutoUpdateS'), sw('autoUpdate', S.autoUpdate), { more: 'setAutoUpdateP', key: 'autoUpdate' })
@@ -1023,17 +967,6 @@
     else if (a === 'autoUpdate') { S.autoUpdate = !S.autoUpdate; host.send({ cmd: 'setAutoUpdate', on: S.autoUpdate }); render(); }
     else if (a === 'errorReports') { S.errorReports = !S.errorReports; host.send({ cmd: 'setErrorReports', on: S.errorReports }); if (S.errorReports) toast(t(S.hasCode ? 'reportsOn' : 'reportsNoCode'), 6000); render(); }
     else if (a === 'autoSync') { S.autoSync = !S.autoSync; host.send({ cmd: 'setAutoSync', on: S.autoSync }); render(); }
-    else if (a === 'autoClick') {
-      S.autoClick = !S.autoClick; host.send({ cmd: 'setAutoClick', on: S.autoClick });
-      // switched on with a plan made a moment ago waiting (it came while auto click was off): it starts now, as if it had come with the setting on
-      if (S.autoClick) labRecheck();
-      syncHighlight(); render();
-    }
-    else if (a === 'autoConfirm') {
-      S.autoConfirm = !S.autoConfirm; host.send({ cmd: 'setAutoConfirm', on: S.autoConfirm });
-      if (S.autoConfirm) toast(t('autoConfirmOn'));
-      render();
-    }
     else if (a === 'saveSite') host.send({ cmd: 'setSite', site: $('#site').value });
     else if (a === 'resetSite') host.send({ cmd: 'setSite', site: S.defaultSite });
     else if (a === 'reload') { S.refreshStart = true; loadPlans(); }
@@ -1045,27 +978,15 @@
     else if (a === 'rescan') scan();
     else if (a === 'pick') { S.sel = Number(el.dataset.i); render(); }
     else if (a === 'focus') { S.focusKey = el.dataset.k; if (el.dataset.i !== undefined) S.sel = Number(el.dataset.i); render(); }
-    else if (a === 'run') { const p = current(); if (!p || foreign(p)) return; startRun(p); if (!S.autoConfirm) toast(t('runNoConfirm'), 6000); render(); }
     else if (a === 'locFound') locateEnd(true, false);
     else if (a === 'locCancel') locateEnd(false, false);
-    else if (a === 'sellRun') sellStart();
-    // storage cleanup clicks in the game: it needs «Автонажатие» (off by default) — this button is the player's explicit choice
-    else if (a === 'sellAuto') { S.autoClick = true; host.send({ cmd: 'setAutoClick', on: true }); sellStart(); }
+    else if (a === 'sellRun') sellHintStart();
     else if (a === 'sellStop') { S.sell.run = false; host.send({ cmd: 'sell.stop' }); render(); }
     else if (a === 'sellCancel') sellCancelList();
     else if (a === 'takeOver') {
       // the player asked to take the items off the heroes wearing them now (only this plan)
       const p = current(); if (!p) return;
       S.takeOver[p.id] = true; G.takeOver(S.plans.list, S.live && S.live.owner, S.takeOver);
-      if (S.autoClick && S.game.running) enqueue([p]);
-      render();
-    }
-    else if (a === 'stopRun') { S.run = null; S.queue = []; syncHighlight(); render(); }
-    else if (a === 'runAll') {
-      const todo = S.plans.list.filter((p) => { const k = G.next(p, S.live).kind; return k !== 'done' && k !== 'taken' && !foreign(p); });
-      if (!todo.length) return;
-      if (S.run) enqueue(todo); else { S.queue = todo.map((p) => p.id); runNext(); }
-      if (!S.autoConfirm) toast(t('runNoConfirm'), 6000);
       render();
     }
     else if (a === 'compact') { S.compact = !S.compact; host.send({ cmd: 'compact', on: S.compact }); render(); }
@@ -1085,17 +1006,9 @@
     if (!m || !m.ev) return;
     switch (m.ev) {
       case 'state':
-        Object.assign(S, { lang: m.lang, version: m.version, channel: m.channel || 'main', streamer: !!m.streamer, navCore: !!m.navCore, site: m.site, defaultSite: m.defaultSite, termsOk: m.termsOk !== false, hasCode: m.hasCode, codePrefix: m.codePrefix, saveCopy: m.saveCopy, last: m.last || S.last });
-        const wasAuto = S.autoClick;
-        if (m.autoSync !== undefined) { S.autoSync = m.autoSync; S.autoClick = m.autoClick; S.autoConfirm = !!m.autoConfirm; S.errorReports = !!m.errorReports; S.autoUpdate = m.autoUpdate !== false; S.tray = m.tray !== false; S.bossHints = m.bossHints !== false; S.showInCapture = !!m.showInCapture; S.sendCodes = m.sendCodes !== false; S.recButton = m.recButton !== false; S.autostart = !!m.autostart; }
+        Object.assign(S, { lang: m.lang, version: m.version, channel: m.channel || 'main', streamer: !!m.streamer, site: m.site, defaultSite: m.defaultSite, termsOk: m.termsOk !== false, hasCode: m.hasCode, codePrefix: m.codePrefix, saveCopy: m.saveCopy, last: m.last || S.last });
+        if (m.autoSync !== undefined) { S.autoSync = m.autoSync; S.errorReports = !!m.errorReports; S.autoUpdate = m.autoUpdate !== false; S.tray = m.tray !== false; S.bossHints = m.bossHints !== false; S.showInCapture = !!m.showInCapture; S.sendCodes = m.sendCodes !== false; S.recButton = m.recButton !== false; S.autostart = !!m.autostart; }
         if (m.game) S.game = m.game;
-        // auto click taken away by the host (the lab's hint mode, the site's switch): the running build, the queue and a sell run stop at once, nothing starts by itself
-        if (wasAuto && !S.autoClick && m.autoSync !== undefined) {
-          S.run = null; S.queue = [];
-          if (S.sell.run && !S.sell.hint) { S.sell.run = false; host.send({ cmd: 'sell.stop' }); }
-          syncHighlight();
-        }
-        if (m.lab && S.autoClick && !wasAuto) labRecheck();   // lab (test build): auto click forced on in memory, the pending plans and the sell list start as if the switch was toggled
         if (m.codeSaved) { S.editCode = false; toast(t('saved')); if (S.page === 'equip' || S.plans.status !== 'idle') loadPlans(); }
         if (m.siteSaved) toast(t('saved'));
         if (S.hasCode && !S.bootLoad && S.plans.status === 'idle') { S.bootLoad = true; loadPlans(); }   // the first listing must not wait for the slow poll
@@ -1154,7 +1067,6 @@
           const fresh = G.freshPlans(S.plans.list, S.refreshStart ? {} : S.seen, Date.now()).filter((p) => !S.refreshStart || (S.run !== p.id && !S.queue.includes(p.id)));
           S.refreshStart = false;
           S.seen = S.seen || {}; S.plans.list.forEach((p) => { S.seen[p.id] = true; });
-          if (fresh.length && S.autoClick && S.game.running) { enqueue(fresh); if (!S.compact) S.page = 'equip'; }
           watchPlans(fresh.length > 0);
         } else S.plans = { status: 'error', list: S.plans.list, err: m.status === 'invalid_token' ? 'token' : m.detail || '' };
         render(); break;
@@ -1169,7 +1081,7 @@
         const gk = p ? G.next(p, S.live).kind : '';
         if (p && S.run === p.id && (gk === 'done' || gk === 'taken' || gk === 'closed')) {
           S.run = null;
-          if (gk === 'closed') S.queue = []; else if (S.queue.length) setTimeout(runNext, 1500);   // the next build in the queue
+          if (gk === 'closed') S.queue = [];
         }
         if (p && !S.reported[p.id] && gk === 'done') {
           S.reported[p.id] = true; host.send({ cmd: 'equip.finish', id: p.id, done: true });
@@ -1179,7 +1091,6 @@
       }
       case 'overlay': S.overlay = m.state; S.ovFar = !!m.far; if (S.page === 'equip' || S.compact) render(); break;
       case 'update': if (!S.update || S.update.version !== m.version) S.updDismissed = false; S.update = { version: m.version, ru: m.notesRu || '', en: m.notesEn || '' }; render(); break;
-      case 'auto': S.auto = m.state; if (S.page === 'equip' || S.compact) render(); break;
       case 'guild': if (m.state === 'noSelf' || m.state === 'short') toast(t(m.state === 'short' ? 'guildShort' : 'guildNoSelf'), 12000); break;
       case 'remote': S.remote = { readEnabled: m.readEnabled !== false, off: Array.isArray(m.off) ? m.off : [] }; S.notice = m.announcement && typeof m.announcement === 'object' ? m.announcement : null; render(); break;
       case 'site': siteState('cfg', m.ok === true); break;
@@ -1200,18 +1111,6 @@
         break;
       }
       case 'battle': toast(t(m.ok === false ? 'battleNone' : 'battleKept'), 6000); break;
-      case 'cancelRun': {
-        // «Отменить надевание» over the game: the running build is dropped (as «Отменить» here) and the queue stops
-        const p = (S.run ? S.plans.list.find((x) => x.id === S.run) : null) || (S.autoClick ? current() : null);   // (auto click switched on mid-job: the build the player is shown)
-        S.run = null; S.queue = [];
-        if (p) {
-          host.send({ cmd: 'equip.finish', id: p.id, done: false });
-          const i = S.plans.list.indexOf(p); S.plans.list.splice(i, 1);
-          S.sel = Math.max(0, Math.min(S.sel, S.plans.list.length - 1));
-          toast(t('cancelledOver', p.heroName), 5000);
-        }
-        syncHighlight(); render(); break;
-      }
       case 'locate': {
         // the site's «Найти в игре» request (it rides on the plans reply): new -> the overlay starts showing it
         const L = S.locate, r = m.req;
@@ -1260,7 +1159,7 @@
           if (L.run) host.send({ cmd: 'sell.stop' });
           L.run = false;
           // a fresh list from the site opens the equip page and starts at once; clicks only with auto click on, and never for artifacts
-          if (fresh && S.game.running) { if (S.autoClick || m.list.kind === 'artifact') sellStart(); else sellHintStart(); if (!S.compact) S.page = 'equip'; }
+          if (fresh && S.game.running) { sellHintStart(); if (!S.compact) S.page = 'equip'; }
           // an older list on the first load after the start is not started, but shown: the equip page is where it is
           else if (first && !S.compact) S.page = 'equip';
         }
@@ -1296,21 +1195,12 @@
         S.accHeroes = new Set(m.uids || []); S.accItems = new Set(m.items || []);
         // the running plan's hero is not on this account: stop it and go on with the queue
         const cur = S.plans.list.find((x) => x.id === S.run);
-        if (cur && foreign(cur)) { S.run = null; syncHighlight(); if (S.queue.length) runNext(); }
+        if (cur && foreign(cur)) { S.run = null; syncHighlight(); }
         if (S.page === 'equip' || S.compact) render();
         break;
       }
     }
   });
-
-  // auto click switched on (the setting, or the lab forcing it) after the plans / the list had come in: start them as if they had come with it on
-  function labRecheck() {
-    if (!S.game.running) return;
-    const fresh = G.freshPlans(S.plans.list, {}, Date.now()).filter((p) => S.run !== p.id && !S.queue.includes(p.id));
-    if (fresh.length) { enqueue(fresh); if (!S.compact) S.page = 'equip'; }
-    const L = S.sell;
-    if (L.list && L.list.kind !== 'artifact' && (!L.run || L.hint)) { if (L.run) host.send({ cmd: 'sell.stop' }); sellStart(); if (!S.compact) S.page = 'equip'; }
-  }
 
   // tell the host which item to frame in the game
   function syncHighlight() {
@@ -1334,7 +1224,7 @@
       } else if (g.kind === 'selected') { hint = 'replace'; line1 = t('pReplace'); }
       else if (g.kind === 'done') { hint = 'done'; }
       else if (g.kind === 'bulk') { hint = 'bulk'; }
-      else if (g.kind === 'hero' && !(S.run === p.id && S.autoClick)) {
+      else if (g.kind === 'hero') {
         hint = 'hero';
         heroTips = [t('hHeroPick', p.heroName), t('hHeroFind', p.heroName), t('hHeroUp', p.heroName), t('hHeroDown', p.heroName), t('hHeroesBtn'), t('hHeroBack')];
       } else if (g.kind === 'slot' && S.live && (S.live.panelOk || S.live.form)) {
@@ -1373,25 +1263,12 @@
     const wrong = !!(g && g.wrong);
     const key = [uid, hint, slot, line1, line2, hero, item, kind, closeTip, setTip, statTip, heroTips.join('/'), JSON.stringify(texts), wrong, artUid].join('|');
     if (key !== S.hl) { S.hl = key; host.send({ cmd: 'highlight', uid, hint, slot, line1, line2, hero, item, kind, closeTip, setTip, statTip, heroTips, texts, wrong, artUid }); }
-    // the started plan's hero (0 = none): the host brings it up on the hero screen
-    const run = p && S.run === p.id && S.autoClick ? String(p.heroUid) : '0';
-    if (run !== S.runKey) { S.runKey = run; host.send({ cmd: 'equip.run', hero: Number(run) }); }
-    // a started plan standing still: the same step for 10 s with the helper idle - the game may have rebuilt its tables
-    // (an item put on and not seen until a restart, live 27.09): the host reads them again
-    const step = run !== '0' ? [p.id, item, kind].join('|') : '';
-    if (step !== S.stepKey) { S.stepKey = step; S.stepAt = Date.now(); host.send({ cmd: 'log', text: 'step ' + (step || '-') + ' (' + (g ? g.kind : '-') + ')' }); }
   }
   // the window hidden (tray, minimized, covered) or not the one in use (the player is in the game): the endless animations (the game's dot,
   // the step's shine, the spinner) stand still - each kept the page repainting many times a second on the player's PC
   const still = () => document.body.classList.toggle('still', document.hidden || !document.hasFocus());
   document.addEventListener('visibilitychange', still); window.addEventListener('blur', still); window.addEventListener('focus', still);
   setTimeout(still, 0);
-
-  setInterval(() => {
-    if (!S.stepKey || !S.game.running || Date.now() - S.stepAt < 10000) return;
-    if (S.auto === 'work' || S.auto === 'paused' || S.auto === 'background') return;
-    S.stepAt = Date.now(); host.send({ cmd: 'log', text: 'step stands still: ' + S.stepKey + ' auto ' + S.auto }); host.send({ cmd: 'equip.rescan' });
-  }, 2000);
 
   // plans and sell lists made on the site meanwhile, while the game runs: every 8 s while the helper is on screen or
   // working (a «Надеть в игре» starts here within seconds), else every 48 s — each poll is a call to the site, and
@@ -1400,7 +1277,7 @@
   // with the host's long poll working (event plansWait) the timer is a fallback: every 30 s busy / 120 s idle
   setInterval(() => {
     if (!S.hasCode || !S.game.running || S.plans.status === 'loading') return;
-    const busy = S.page === 'equip' || !!S.run || S.queue.length > 0 || S.auto === 'work' || S.sell.run || !!S.locate.req;
+    const busy = S.page === 'equip' || !!S.run || S.queue.length > 0 || S.sell.run || !!S.locate.req;
     pollTick++;
     if (S.plansWait ? pollTick % (busy ? 4 : 15) === 0 : (busy || pollTick % 6 === 0)) loadPlans();
   }, 8000);

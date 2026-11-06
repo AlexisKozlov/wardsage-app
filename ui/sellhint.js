@@ -1,4 +1,4 @@
-// Wardsage desktop — storage cleanup without auto click: the text for each step the host reports (src/SellHint.cs).
+// Wardsage desktop — storage cleanup hints: the text for each step the host reports (src/SellHint.cs).
 // Pure logic (tests: tests/sellhint.test.mjs).
 //
 // st: {step, selected, total, missing, extra, below, above}   (total = list items in the inventory's grid now)
