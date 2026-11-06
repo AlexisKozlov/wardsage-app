@@ -128,6 +128,24 @@ namespace RealmForge {
   /// <summary>How the hint leaves a screen no flow can continue from: its back arrow, a pop-up's close button, or the Escape key (text only).</summary>
   public enum HintLeave { None, Back, Close, Esc }
 
+  /// <summary>What an open gear filter pop-up means for the frame's hint when the plan has no use of it (live 2026-11-06 1.6.68.600: the pop-up
+  /// stood in the middle, the item was in the list on the left, the slots switch in the pop-up - «close the filter» was wrong). Pure (tests/CoreTests.cs).</summary>
+  public enum GearFilterMove {
+    /// <summary>The player works with a slot: the pop-up's own «Выбрать часть» row switches it - frame that icon.</summary>
+    SlotInFilter,
+    /// <summary>The pop-up covers the item's cell: the tip points at its red ×.</summary>
+    Close,
+    /// <summary>The item is beside the pop-up: the frame goes on in the list, the pop-up is left alone.</summary>
+    ListBeside
+  }
+
+  public static class GearFilterHint {
+    public static GearFilterMove Decide(string hintKind, int hintSlot, int slotIcons, bool coveredByFilter) {
+      if (hintKind == "slot" && hintSlot >= 0 && hintSlot < slotIcons) return GearFilterMove.SlotInFilter;
+      return coveredByFilter ? GearFilterMove.Close : GearFilterMove.ListBeside;
+    }
+  }
+
   /// <summary>The fallback hint's plan: what to show (Kind) and the frame's rect in client px (Back / Close; null = the standard back spot).</summary>
   public sealed class HintFallbackPlan {
     public HintLeave Kind; public GeoRect Rect; public string Why = "";

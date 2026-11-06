@@ -1166,7 +1166,9 @@ namespace RealmForge {
       if (target != 0) {
         double fx = fg.X(fg.MainCloseX, W, H), fy = fg.Y(fg.CloseY, W, H);
         filterOpen = GearMain(o, W, H, U);
-        if (filterOpen) {
+        // the player works with a slot: the pop-up's own «Выбрать часть» row switches it (drawn below) - never «close the filter» then
+        bool slotInFilter = filterOpen && GearFilterHint.Decide(hintKind, hintSlot, PartIconX.Length, false) == GearFilterMove.SlotInFilter;
+        if (filterOpen && !slotInFilter) {
 
           // the plan wants the filter (its filter step, or the item far down - the page's «faster» tip): what to pick in it
           // is lit; once it is set the frame goes on in the list beside the pop-up (its × would drop the filter again)
@@ -1190,9 +1192,10 @@ namespace RealmForge {
             if (!CoveredByFilter(o, cr, U)) filterOpen = false;
             else { CloseFilterTip(o, fx, fy, U, H, Tx("filterCovered")); return; }
           } else {
-            // a filter the plan does not need over the list: the tip points at its ×
-            CloseFilterTip(o, fx, fy, U, H, CloseFilterText);
-            return;
+            // a filter the plan does not need: in the way only when it covers the item (live 2026-11-06 1.6.68.600: the pop-up stood in
+            // the middle, the item was in the list on the left, the slots are switched in the pop-up - no «close the filter» then)
+            if (GearFilterHint.Decide(hintKind, hintSlot, PartIconX.Length, CoveredByFilter(o, cr, U)) == GearFilterMove.ListBeside) filterOpen = false;
+            else { CloseFilterTip(o, fx, fy, U, H, CloseFilterText); return; }
           }
         }
       }
@@ -1254,7 +1257,7 @@ namespace RealmForge {
     bool FilterHasChoice() {
       long[] suits, mains, subs; int part; bool foreign, hideEq;
       return RFX.ReadFilter(addrs, out suits, out mains, out subs, out part, out foreign, out hideEq)
-        && ((suits != null && suits.Length > 0) || (mains != null && mains.Length > 0));
+        && ((suits != null && suits.Length > 0) || (mains != null && mains.Length > 0) || (subs != null && subs.Length > 0));
     }
 
     // the frame's state while the filter pop-up is open: "" (none, or set as wanted), filter_open (not needed: close it),

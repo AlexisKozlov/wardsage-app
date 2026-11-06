@@ -5335,6 +5335,11 @@ static partial class CoreTests {
         var pn = D(f, gearHero(Mem3.No), false);
         Check(pn.Text == "", "fallback: " + f + " with the gear filter shut: not the filter's text (" + pn.Kind + ")");
       }
+      // live 2026-11-06 1.6.68.600: the filter open with no pick, the item in the list on the left: no «close the filter»; covered: close; a slot: the row in the filter
+      Check(GearFilterHint.Decide("pick", -1, 5, false) == GearFilterMove.ListBeside, "filter hint: open, nothing picked, the item visible beside it: no close tip");
+      Check(GearFilterHint.Decide("pick", -1, 5, true) == GearFilterMove.Close, "filter hint: the pop-up covers the item's cell: close it");
+      Check(GearFilterHint.Decide("slot", 2, 5, false) == GearFilterMove.SlotInFilter && GearFilterHint.Decide("slot", 2, 5, true) == GearFilterMove.SlotInFilter, "filter hint: the slot step: the slot row in the filter, covered or not");
+      Check(GearFilterHint.Decide("slot", 7, 5, false) == GearFilterMove.ListBeside, "filter hint: a slot out of the icons' range is not framed in the filter");
       Check(D(PilotFlow.Equip, gearHero(Mem3.Yes), false).Text != "closeFilter", "fallback: the equip flow's own open gear filter is not told to be closed by this plate");
       // the page's step: the open gear filter covers the hero screen's buttons: «close the filter window» with the × key of the gear filter, whatever coverable step it hides
       foreach (var k in new[] { LocateKind.OpenFoundry, LocateKind.OpenInventory }) {
