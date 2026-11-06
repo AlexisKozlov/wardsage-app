@@ -115,7 +115,7 @@ namespace RealmForge {
       if (hwnd == IntPtr.Zero || W32.IsIconic(hwnd) || fp != gp || !W32.GetClientRect(hwnd, out cr) || cr.B < 200) { win.Movable = false; if (win.Visible) win.Hide(); if (mapWin.Visible) mapWin.Hide(); return; }
       // Ctrl held: the panel takes the mouse and can be dragged out of the way (a right click puts it back); otherwise
       // the clicks go through to the game
-      bool move = (W32.GetAsyncKeyState(0x11) & 0x8000) != 0;
+      bool move = (System.Windows.Forms.Control.ModifierKeys & System.Windows.Forms.Keys.Control) != 0;
       win.Movable = move;
       double t = RFX.FrameSeconds(frames);
       string title, main, next; Lines(t, out title, out main, out next, out bool alarm);

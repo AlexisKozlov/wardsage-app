@@ -1,8 +1,8 @@
 // Wardsage - the site's switches for the app: GET {site}/api/extractor/app-config (public, no code).
-//   200 {"readEnabled":true,"features":{"guild":true,"gvg":true,"battle":true,"autoclick":true,"equip":true,"locate":true,"locateAuto":false,"guideStyle":false,"artAuto":false},"at":"<ISO>"}
+//   200 {"readEnabled":true,"features":{"guild":true,"gvg":true,"battle":true,"equip":true,"locate":true,"guideStyle":false},"at":"<ISO>"}
 // Asked at start and every 10 minutes (the test build every 2). The last good reply is kept in app-config.json in the app's
 // data folder and used while the site cannot be reached; with no copy at all everything is on, except the features that start OFF
-// (DefaultOff: "locateAuto", the auto clicks of «Показать в игре», "artAuto", the auto clicks of the two artifact flows (storage cleanup, promotion), and "guideStyle", the dimming-and-hand highlight of buttons, until the owner switches them on). A missing or odd field is on,
+// (DefaultOff: "guideStyle", the dimming-and-hand highlight of buttons, until the owner switches them on). A missing or odd field is on,
 // and for a feature that starts off it is off (only a plain true switches it on).
 using System;
 using System.Collections.Generic;
@@ -58,9 +58,9 @@ namespace RealmForge {
   }
 
   public sealed class RemoteSwitches {
-    public static readonly string[] Features = { "guild", "gvg", "battle", "autoclick", "equip", "locate", "locateAuto", "guideStyle", "artAuto", "navCore" };
+    public static readonly string[] Features = { "guild", "gvg", "battle", "equip", "locate", "guideStyle" };
     /// <summary>Features that are off until the site says true (a missing or odd value, no reply and no saved copy all mean off).</summary>
-    public static readonly string[] DefaultOff = { "locateAuto", "guideStyle", "artAuto", "navCore" };
+    public static readonly string[] DefaultOff = { "guideStyle" };
     public static bool StartsOff(string feature) { return Array.IndexOf(DefaultOff, feature) >= 0; }
     const int MaxBytes = 16 * 1024;
 

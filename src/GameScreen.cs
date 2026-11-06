@@ -1,7 +1,7 @@
 // Wardsage - which screen of the game is open, decided in ONE place.
 //
 // Every feature that needs to know where the player is (the equip helper, «Показать в игре», the storage cleanup, and every
-// auto click) takes it from the ScreenState of the overlay's tick, not from a check of its own. The state is made of the
+// hints) take it from the ScreenState of the overlay's tick, not from a check of its own. The state is made of the
 // existing readers (the hero screen, the inventory incl. its bulk-sale mode, the Foundry and the gem screen, the city's form, else its bottom bar),
 // only the decision is central:
 //

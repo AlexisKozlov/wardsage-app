@@ -18,14 +18,10 @@ Wardsage 1.5
 ЧТО ПРОГРАММА ДЕЛАЕТ С ИГРОЙ
 * Программа только ЧИТАЕТ память игры (ReadProcessMemory) и картинку экрана. Она ничего не записывает в игру,
   не меняет файлы игры и не обращается к серверам игры.
-* Автонажатие (Настройки, включено по умолчанию): после «Надеть в игре» на сайте программа сама открывает героя,
-  выставляет фильтр игры и выбирает нужные вещи — обычными движениями мыши, как игрок, и только пока окно игры
-  впереди, а вы не двигаете мышь. Вещи, надетые на других героев, снимаются, только если вы нажали «Снять с других
-  героев и надеть». Кнопку «Заменить» нажимаете вы — или программа, если включить «Автоматически подтверждать замену»
-  (выключено по умолчанию).
-* Чистка склада: программа открывает «Инвентарь» → «Массовая продажа» и выделяет вещи, отмеченные на сайте.
+* Подсказки: «Надеть в игре», «Найти в игре» и чистка склада показывают рамкой, рукой и плашкой, какую кнопку или ячейку
+  нажать в игре. Все нажатия делаете вы сами: программа не нажимает мышь и клавиши в игре и ничего не посылает окну игры.
+* Чистка склада: программа показывает рамками вещи, отмеченные на сайте, в «Инвентарь» → «Массовая продажа».
   «Продать» нажимаете только вы.
-* Правила игры могут запрещать автоматизацию — если не хотите рисковать, выключите автонажатие.
 * Автосинхронизация (Настройки, включена по умолчанию): после смены снаряжения и раз в 5 минут, пока игра запущена,
   программа сама отправляет снимок аккаунта на сайт.
 * Сетевые запросы — только на адрес сайта Wardsage. Никакой телеметрии. Отчёты об ошибках (тип сбоя, версии,
@@ -48,9 +44,6 @@ Install Wardsage-Setup.exe; the app then updates itself. Windows SmartScreen may
 allow administrator rights: the game runs as administrator, so reading its memory needs them too. On the site sign in
 (e-mail and password, or Google/Discord), create the sync code in Settings, paste it into the app and press "Save".
 The program only READS game memory and the screen, never writes to the game and talks only to the Wardsage site.
-Auto click (Settings, on by default): after "Equip in game" on the site it opens the hero, sets the game's filter and
-picks the items with the mouse like a player, only while the game is in front and you leave the mouse alone. "Replace"
-is pressed by you, or by the app if you turn on auto-confirm (off by default). Storage cleanup only selects the items
-in the game's bulk sale; you press "Sell". The game's rules may forbid automation - turn auto click off if you do not
-want the risk. Auto sync (on by default) sends the account after gear changes and every 5 minutes while the game runs.
+Hints: "Equip in game", "Find in game" and the storage cleanup show with a frame, a hand and a plate which button or cell to press in the game. You make
+every press yourself: the program presses no mouse button or key in the game and sends nothing to the game window. Auto sync (on by default) sends the account after gear changes and every 5 minutes while the game runs.
 Uninstall: Windows Settings -> Apps -> Wardsage. Source: https://github.com/AlexisKozlov/wardsage-app

@@ -2,16 +2,11 @@
 
 Reads a Watcher of Realms account (heroes, gear, artifacts, faction rewards) from the memory of the
 running game and sends it to the Wardsage site (https://wardsage.com). Windows only; the game's memory is only read (`ReadProcessMemory`).
-The desktop app's equip helper can also put a build on by itself with the mouse, as a player would (Settings →
-«Автонажатие», off by default — the player turns it on): for a build the player started («Надеть» in the app, «Надеть в игре» on the site a moment
-ago) it brings up the hero on the hero screen (`src/HeroPilot.cs`: from the city, filtering the hero
-grid by the hero's faction and class — `app/res/hero_tags.json`, rebuilt with `node tools/hero-tags.mjs` after a game
-patch — so it is in the first rows), opens the slot, sets the game's
-gear filter to the item's set, main stat and sub stats so it is in the first row (`src/FilterPilot.cs`), clicks it
-(`src/AutoPilot.cs`) and — with Settings → «Автоматически подтверждать замену», off by default — presses «Заменить» /
-«Надеть» once per item after memory checks. Every click is checked against the game's memory. Positions follow the game's
-UI scale on any window shape (`Ui` in `src/ListTracker.cs`: 16:9 reference, width-fitted below 16:9; checked at 1920×1009,
-1600×1000, 1320×990, 1900×800).
+The desktop app shows the player where to press (frames, a hand and plates over the game's own buttons: the hero grid, the gear
+filter, the slot, the item, «Заменить», the inventory and the Foundry) for «Надеть в игре», «Найти в игре» and the storage
+cleanup; the player presses every button himself. The program sends nothing to the game: no mouse, no keyboard, no window
+messages (`tests/no-input.test.mjs` checks the sources and the built exe for the APIs that could). Positions follow the game's
+UI scale on any window shape (`Ui` in `src/ListTracker.cs`: 16:9 reference, width-fitted below 16:9).
 The account is read from the game's live tables, found once per game session (`src/LiveTables.cs`: ~3 s, then ~0.3 s per
 sync) and sent by itself after gear changes (Settings → «Автосинхронизация»).
 Player instructions (RU/EN): [README.txt](README.txt).
@@ -27,7 +22,7 @@ Player instructions (RU/EN): [README.txt](README.txt).
 - **Kept on the PC**: `%APPDATA%\RealmForge` (settings with the sync code encrypted by Windows DPAPI, the log, recent
   fight records and opponents lists).
 - **Updates** are downloaded from the site and applied only if signed with the project's key (`app/Updater.cs`).
-- **Input**: the equip helper's clicks (above) — only for a build the player started; nothing else is clicked.
+- **Input**: none. The program presses nothing in the game (no mouse, keyboard or window messages); it only draws hints.
 
 What players get (`dist/Wardsage.zip`, installer `Wardsage-Setup.exe`): **`Wardsage.exe`** — one file (≈1.3 MB), .NET Framework 4.8,
 x64, asks for administrator rights (the game runs elevated). The interface is HTML/CSS (`ui/`) rendered by the

@@ -41,6 +41,7 @@ namespace RealmForge {
     // automatic updates (app/Updater.cs): first check shortly after start, then every 6 hours
     readonly System.Windows.Forms.Timer updateTimer = new System.Windows.Forms.Timer();
     string updateReady;   // JSON of the downloaded update for the page, or null
+    int updateFailures; readonly Random updateRng = new Random();   // failed update rounds in a row
     string updateReadyVersion;   // its version
     // the site's switches (src/RemoteConfig.cs): asked at start and every 10 min (test build 2); the saved copy until then
     RemoteSwitches remote = RemoteSwitches.LoadCache(RemoteSwitches.CachePath) ?? RemoteSwitches.Permissive();
@@ -49,10 +50,6 @@ namespace RealmForge {
     bool testLogSending;
     PlansWaiter plansWait; string plansWaitKey = "";   // the long poll for new work from the site (src/PlansWait.cs)
     ScreenRecorder testRec;   // TEST build only: the screen recorder (app/RecCapture.cs), made at the first «Записать»
-    // TEST build only: the lab runner's recorder commands (src/LabRec.cs), read four times a second
-    readonly System.Windows.Forms.Timer labRecTimer = new System.Windows.Forms.Timer();
-    readonly LabRecControl labRec = new LabRecControl();
-    DateTime labRecStamp = DateTime.MinValue; LabRecCmd labRecPending; long labRecPendingAt;
 
     public HostBridge(AppWindow win, CoreWebView2 core) {
       this.win = win; this.core = core;
@@ -73,7 +70,6 @@ namespace RealmForge {
         SyncPlansWait();
         PollGateTick();
         if (On("battle")) WatchBattleEnd();
-        WatchStall();
         bool live = gameRunning && !SyncGate.IsForgotten(cfg.Code);
         arenaWatch.Tick(live && On("battle")); guildWatch.Tick(live && On("guild")); packsWatch.Tick(live); bool away = overlay.GameAway();
         codeWatch.Tick(live, away); gradeWatch.Tick(live, away);
@@ -86,21 +82,15 @@ namespace RealmForge {
         LoadMeter.Done(LoadMeter.Live, lt0);
         int want = overlay.LivePollMs(); if (liveTimer.Enabled && liveTimer.Interval != want) liveTimer.Interval = want;   // 400 ms with a guide on, 2 s without or with the game away (src/LoadPlan.cs)
       };
-      overlay = new OverlayController((st, far) => Post("{\"ev\":\"overlay\",\"state\":" + S(st) + ",\"far\":" + (far ? "true" : "false") + "}"),
-                                      st => { Post("{\"ev\":\"auto\",\"state\":" + S(st) + "}"); OnAutoState(st); },
-                                      (p, st) => Post("{\"ev\":\"sell.state\",\"state\":" + S(st) + ",\"selected\":" + p.Selected + ",\"missing\":" + p.Missing + ",\"extra\":" + p.Extra + "}"));
-      ApplyAutoClick(); ApplyGuideStyle(); overlay.GuideSite = cfg.Site;
+      overlay = new OverlayController((st, far) => Post("{\"ev\":\"overlay\",\"state\":" + S(st) + ",\"far\":" + (far ? "true" : "false") + "}"));
       RFX.SkipGvg = !On("gvg");
-      overlay.AutoConfirm = cfg.AutoConfirm;
       overlay.RecButton = Channel.IsTest && cfg.RecButton;
+      overlay.BackCityText = BackCityText(cfg.Lang); overlay.EscText = EscText(cfg.Lang); overlay.CloseGearFilterText = CloseGearFilterText(cfg.Lang);
       overlay.RecPressed += () => { Log.Write("record button pressed over the game"); ToggleRec(); };
       overlay.AutoRec += tag => StartAutoRec(tag);
-      overlay.CancelText = CancelText(cfg.Lang); overlay.LocateCancelText = LocateCancelText(cfg.Lang); overlay.SellCancelText = SellCancelText(cfg.Lang); overlay.SellDoneText = SellDoneText(cfg.Lang); overlay.BackCityText = BackCityText(cfg.Lang); overlay.EscText = EscText(cfg.Lang); overlay.CloseGearFilterText = CloseGearFilterText(cfg.Lang);
       coach.Lang = cfg.Lang;
       coach.PlaceX = cfg.CoachX; coach.PlaceY = cfg.CoachY;
       coach.PlaceChanged = (x, y) => { cfg.CoachX = x; cfg.CoachY = y; Save(); };
-      // «Отменить надевание» over the game: the interface drops the running build (as its own «Отменить»)
-      overlay.CancelPressed += () => { Log.Write("cancel pressed over the game"); Post("{\"ev\":\"cancelRun\"}"); };
       overlay.LocateChanged += (step, subs) => PostLocateState(step, subs);
       overlay.LocateFinished += (id, what) => {
         FinishLocate(id, true, true);   // reported done; the overlay shows its plate a few seconds and ends the hints itself
@@ -108,56 +98,24 @@ namespace RealmForge {
         Post("{\"ev\":\"locate.done\",\"id\":" + S(id) + ",\"what\":" + S(what) + "}");
       };
       overlay.SellHintChanged += st => PostSellHint(st);
-      // «Отменить чистку склада» over the game: the run ends at once here (clicks and hints), the page drops the list and tells the site in the background
-      overlay.SellCancelPressed += () => { overlay.SetSell(null, null, null, 0); Post("{\"ev\":\"sell.cancelRun\"}"); };
       overlay.Problem += (kind, message, ctx) => Report(kind, message, ctx);
       Program.FatalReport = ReportFatal;
       autoTimer.Interval = 1000; autoTimer.Tick += (s, e) => AutoSyncTick(); autoTimer.Start();
       updateTimer.Interval = 20000; updateTimer.Tick += (s, e) => { updateTimer.Interval = (Channel.IsTest ? 2 : 5) * 60 * 1000; if (updateReady == null || Channel.IsTest) CheckUpdate(); }; updateTimer.Start();
       remoteTimer.Interval = 3000; remoteTimer.Tick += (s, e) => { remoteTimer.Interval = RemoteSwitches.EveryMinutes(Channel.IsTest) * 60 * 1000; FetchRemote(); }; remoteTimer.Start();
       if (Channel.IsTest) { testLogTimer.Interval = 30000; testLogTimer.Tick += (s, e) => { testLogTimer.Interval = 120000; SendTestLog(); }; testLogTimer.Start(); }
-      if (Channel.IsTest) overlay.LabPrepDone += (name, ok, why) => OnUi(() => LabSetupDone(name, ok, why));
-      if (Channel.IsTest) overlay.ExploreDone += json => { LabWrite("explore.json", json); Log.Write("explore: result written (" + json.Length + " bytes)"); };
-      if (Channel.IsTest) { labRecTimer.Interval = 250; labRecTimer.Tick += (s, e) => LabRecTick(); labRecTimer.Start(); }
       Log.Write(Channel.ProductName + " " + Program.Version + " started");
       Log.Write("switches (saved copy or defaults): " + remote.ToJson());
     }
 
     // ------------------------------------------------------------------ the site's switches
 
-    /// <summary>The app's own clicks: the player's setting and the site's "autoclick" switch.</summary>
-    bool AutoClickOn() { return (labPrepOn && On("autoclick")) || LabRecCmd.AutoClick(cfg.AutoClick, labForce, On("autoclick"), labHintOnly || labAutoOff); }
-    /// <summary>TEST build: a lab setup («city» / «prep <name>», src/LabRec.cs) runs: the overlay's own gate clicks are allowed for it alone (the site's autoclick switch still rules), whatever the hint mode or the player's setting.</summary>
-    bool labPrepOn;
-    /// <summary>TEST build: a scenario that starts with auto click off (LabRecCmd.IsAutoOffScenario); the «settings» command (LabForceSettings) turns it on.</summary>
-    bool labAutoOff;
-    LabRecCmd labSetupCmd;
-    /// <summary>TEST build: a lab scenario «..._hint» runs (its recorder command named it): auto click is off as for a player without it, hints only.</summary>
-    bool labHintOnly; long labHintAt;
-    /// <summary>TEST build: the lab forces auto click, locateAuto and artAuto on for this app run (in memory, never saved: cfg.AutoClick stays the player's); the hint mode (labHintOnly) is in memory too.</summary>
-    bool labForce;
-    /// <summary>«Показать в игре» clicks by itself only with its own switch on (off by default until the owner enables it), on top of the player's setting.</summary>
-    bool LocateAutoOn() { return AutoClickOn() && (labForce || labPrepOn || On("locateAuto")); }
-    /// <summary>The artifact flows (storage cleanup, promotion) click by themselves only with the site's "artAuto" switch on (off by default), on top of the player's setting.</summary>
-    bool ArtAutoOn() { return AutoClickOn() && (labForce || labPrepOn || On("artAuto")); }
     /// <summary>The new button highlight: only the site's "guideStyle" switch.</summary>
     void ApplyGuideStyle() { overlay.GuideStyle = remote.Allows("guideStyle"); }
-    /// <summary>The navigator core (src/Nav*.cs) for the auto-equip gear phase. Release: only the site's "navCore" switch. Test build: on unless the lab's settings command said off (config.json "navCore" off / lab are ignored); see NavCoreRule.</summary>
-    bool NavCoreOn(out string reason) {
-      return NavCoreRule.Decide(Channel.IsTest, AutoClickOn(), labNav, cfg.NavCore, On("navCore"), out reason);
-    }
-    int navCoreLast = -1;
-    void ApplyAutoClick() {
-      string why; bool nav = NavCoreOn(out why);
-      bool navChanged = false;
-      if ((nav ? 1 : 0) != navCoreLast) { navChanged = navCoreLast >= 0; navCoreLast = nav ? 1 : 0; Log.Write("navcore: " + (nav ? "on" : "off") + " (reason: " + why + ")"); }
-      overlay.NavCoreEnabled = nav; overlay.AutoEnabled = AutoClickOn(); overlay.LocateAutoEnabled = LocateAutoOn(); overlay.ArtAutoEnabled = ArtAutoOn();
-      if (navChanged && Channel.IsTest) SendState(null);   // the page's version line («ядро: вкл») reads navCore from the state message
-    }
 
     // the features that read the game's screens and fights need the layout data for the running game version
     // (src/Layout.cs); the account sync, the guild and the update packs do not
-    static readonly HashSet<string> NeedsLayout = new HashSet<string> { "battle", "equip", "locate", "autoclick", "locateAuto", "artAuto" };
+    static readonly HashSet<string> NeedsLayout = new HashSet<string> { "battle", "equip", "locate" };
     /// <summary>A feature may run: the site's switch is on and, when it needs it, the layout data is there.</summary>
     bool On(string feature) { return remote.Allows(feature) && (!NeedsLayout.Contains(feature) || Layout.Current != null); }
 
@@ -188,10 +146,9 @@ namespace RealmForge {
 
     /// <summary>Puts the switches in force at once: what is off stops now, not at its next start.</summary>
     void ApplyRemote() {
-      ApplyAutoClick(); ApplyGuideStyle();
       RFX.SkipGvg = !On("gvg");
       if (!On("locate")) overlay.SetLocate(null);
-      if (!On("equip")) { overlay.SetRun(0); overlay.SetTarget(0); overlay.SetHint("", -1, new string[0], 0); }
+      if (!On("equip")) { overlay.SetTarget(0); overlay.SetHint("", -1, new string[0], 0); }
       if (!On("battle")) {
         if (coach.Running) coach.Stop();
         var rec = recorder; if (rec != null) { rec.Stop(); recorder = null; }
@@ -300,8 +257,7 @@ namespace RealmForge {
             if (l != null && l.RvaDropped) LogOtherBuild(v, l);
             ApplyRemote();
             PostLayout();
-            // the game's screens found in memory now (as at the game's start)
-            if (!was && gameRunning && addrs == null && !scanning && AutoClickOn()) StartScan(watch, true);
+
           } else if (Layout.Current == null && !layoutNoneLogged) {
             layoutNoneLogged = true;
             if (r == Layout.Reply.OtherBuild) Log.Write("layout data for game version " + v + ": the build fingerprint in the layout data is malformed; the data is not used");
@@ -321,9 +277,6 @@ namespace RealmForge {
       Post("{\"ev\":\"layout\",\"missing\":" + B(gameRunning && Layout.Current == null) + ",\"noCode\":" + B(layoutDenied) + ",\"game\":" + S(gameVersion) + "}");
     }
 
-    static string CancelText(string lang) { return lang == "en" ? "Cancel equipping" : "Отменить надевание"; }
-    static string LocateCancelText(string lang) { return lang == "en" ? "Stop auto click" : "Остановить автонажатие"; }
-    static string SellCancelText(string lang) { return lang == "en" ? "Cancel storage cleanup" : "Отменить чистку склада"; }
     /// <summary>The storage cleanup's final plate ({0} = marked items); the same words as the interface's shAll.</summary>
     static string BackCityText(string lang) { return lang == "en" ? "Go back to the city" : "Вернитесь в город"; }
     static string CloseGearFilterText(string lang) { return lang == "en" ? "Close the filter" : "Закройте фильтр"; }
@@ -332,7 +285,7 @@ namespace RealmForge {
 
     public void Dispose() {
       Program.FatalReport = null;
-      gameTimer.Dispose(); liveTimer.Dispose(); autoTimer.Dispose(); updateTimer.Dispose(); remoteTimer.Dispose(); testLogTimer.Dispose(); labRecTimer.Dispose(); if (testRec != null) testRec.Stop(); if (plansWait != null) plansWait.Stop(); overlay.Dispose();
+      gameTimer.Dispose(); liveTimer.Dispose(); autoTimer.Dispose(); updateTimer.Dispose(); remoteTimer.Dispose(); testLogTimer.Dispose(); if (testRec != null) testRec.Stop(); if (plansWait != null) plansWait.Stop(); overlay.Dispose();
     }
 
     // «Обновлять автоматически» (on by default): a downloaded update is put in place by restarting in a quiet moment — no
@@ -375,8 +328,15 @@ namespace RealmForge {
       string site = cfg.Site;
       Task.Factory.StartNew(() => {
         var u = Updater.CheckAndDownload(site);
-        // a dropped connection: look again in 20 s instead of waiting for the next round
-        if (Updater.LastFailed) { OnUi(() => { updateTimer.Stop(); updateTimer.Interval = 20000; updateTimer.Start(); }); return; }
+        // a failed download: the next try after 1, 5, 30 minutes (+-20 %), six in a row at most, then the long timer (src/UpdateDownload.cs UpdateRetry); no loop every 20 s
+        if (Updater.LastFailed) {
+          int wait = ++updateFailures >= UpdateRetry.MaxRounds ? UpdateRetry.GiveUpWaitMs : UpdateRetry.DelayMs(updateFailures, updateRng.NextDouble());
+          if (updateFailures >= UpdateRetry.MaxRounds) updateFailures = 0;
+          Log.Write("update: next try in " + wait / 60000 + " min");
+          OnUi(() => { updateTimer.Stop(); updateTimer.Interval = wait; updateTimer.Start(); });
+          return;
+        }
+        updateFailures = 0;
         if (u == null) return;
         if (updateReady != null && !Updater.Newer(u.Version, updateReadyVersion)) return;   // test builds keep looking: only a newer one replaces the downloaded one
         updateReadyVersion = u.Version;
@@ -398,139 +358,13 @@ namespace RealmForge {
     void StartAutoRec(string tag) {
       if (!Channel.IsTest) return;
       string why;
-      // a lab recording runs: the trigger only tags it (src/LabRec.cs)
-      if (testRec != null && LabRecControl.TagInstead(testRec.On, testRec.Id)) { testRec.Tag(tag); Log.Write("rec: auto " + tag + " tagged the lab recording " + testRec.Id); return; }
+
       if (!autoRec.Want(true, testRec != null && testRec.On, RecInfo.NowMs(), out why)) { Log.Write("rec: auto " + tag + " skipped (" + why + ")"); return; }
       if (testRec == null) testRec = new ScreenRecorder(() => cfg.Site, () => cfg.Code, s => Log.Write(s), ev => Post(ev), on => OnUi(() => overlay.SetRecording(on)));
       string id = testRec.StartAuto(tag, AutoRecPolicy.RecordMs);
       Log.Write("rec: auto " + tag + " recording " + (id != "" ? id : "(not started)") + " for " + AutoRecPolicy.RecordMs / 1000 + " s");
     }
-    // TEST build: the lab runner's command file (src/LabRec.cs). Only the time stamp is looked at until it changes
-    static string LabRecDir { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), Channel.FolderName, "lab"); } }
-    // TEST build: the lab runner's explorer command (src/Explorer.cs): explore.cmd -> overlay.ExploreStart / ExploreStop, explore.ack, and the
-    // result explore.json when the run ends (the runner uploads it)
-    DateTime exploreStamp = DateTime.MinValue; long exploreSeq = -1; string exploreRun = "";
-    void ExploreTick() {
-      try {
-        string f = Path.Combine(LabRecDir, "explore.cmd");
-        if (!File.Exists(f)) return;
-        var at = File.GetLastWriteTimeUtc(f);
-        if (at == exploreStamp) return;
-        exploreStamp = at;
-        string text; using (var fs = new FileStream(f, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete)) using (var rd = new StreamReader(fs)) { var buf = new char[256]; int n = rd.Read(buf, 0, buf.Length); text = new string(buf, 0, n); }
-        var cmd = ExploreCmd.Parse(text);
-        if (cmd == null) { Log.Write("explore: lab command not understood"); return; }
-        if (cmd.Seq <= exploreSeq) return;
-        exploreSeq = cmd.Seq;
-        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        if (Math.Abs(nowMs - cmd.Seq) > LabRecCmd.StaleMs) { LabWrite("explore.ack", ExploreCmd.Ack(cmd.Seq, "stale", cmd.Run)); return; }
-        Log.Write("explore: lab " + cmd.Op + (cmd.Op == "start" ? " budget " + cmd.Budget + " rotation " + cmd.Rot : ""));
-        if (cmd.Op == "start") {
-          try { File.Delete(Path.Combine(LabRecDir, "explore.json")); } catch (Exception) { }
-          exploreRun = cmd.Run; overlay.ExploreApp = Program.Version; overlay.ExploreGame = gameVersion ?? "";
-          overlay.ExploreStart(cmd.Budget, cmd.Rot, cmd.Run);
-          LabWrite("explore.ack", ExploreCmd.Ack(cmd.Seq, "running", cmd.Run));
-        } else {
-          bool on = overlay.ExploreRunning; overlay.ExploreStop("the lab's stop");
-          LabWrite("explore.ack", ExploreCmd.Ack(cmd.Seq, on ? "stopped" : "idle", exploreRun));
-        }
-      } catch (Exception e) { Log.Write("explore: lab command failed: " + e.Message); }
-    }
-    void LabWrite(string name, string text) {
-      try {
-        string dir = LabRecDir; Directory.CreateDirectory(dir);
-        string f = Path.Combine(dir, name), tmp = f + ".tmp";
-        File.WriteAllText(tmp, text, new UTF8Encoding(false));
-        if (File.Exists(f)) File.Replace(tmp, f, null); else File.Move(tmp, f);
-      } catch (Exception e) { Log.Write("lab: " + name + " not written: " + e.Message); }
-    }
-    void LabRecTick() {
-      ExploreTick();
-      // the hint mode never outlives 10 minutes: auto click comes back by itself even if the lab's stop command is lost
-      if (labHintOnly && LabRecCmd.HintExpired(labHintAt, RecInfo.NowMs())) { labHintOnly = false; ApplyAutoClick(); SendState(null); Log.Write("lab: hint mode off (10 min timeout)"); }
-      try {
-        if (labRecPending != null) {
-          // another recording was asked to stop first: start once it is off, give up after a while
-          if (testRec == null || !testRec.On) { var c = labRecPending; labRecPending = null; LabRecStart(c); }
-          else if (RecInfo.NowMs() - labRecPendingAt > LabRecCmd.StartWaitMs) { var c = labRecPending; labRecPending = null; LabRecAck(c, "busy", testRec.Id); Log.Write("rec: lab start " + c.Scenario + " gave up, another recording does not stop"); }
-        }
-        string f = Path.Combine(LabRecDir, "rec.cmd");
-        if (!File.Exists(f)) return;
-        var at = File.GetLastWriteTimeUtc(f);
-        if (at == labRecStamp) return;
-        labRecStamp = at;
-        string text; using (var fs = new FileStream(f, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete)) using (var rd = new StreamReader(fs)) { var buf = new char[256]; int n = rd.Read(buf, 0, buf.Length); text = new string(buf, 0, n); }
-        var cmd = LabRecCmd.Parse(text);
-        if (cmd == null) { Log.Write("rec: lab command not understood"); return; }
-        bool on = testRec != null && testRec.On; string cur = testRec != null ? testRec.Id : "";
-        string state;
-        var act = labRec.Decide(cmd, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), on, cur, out state);
-        if (state == null) return;
-        Log.Write("rec: lab " + cmd.Op + (cmd.Op == "start" ? " " + cmd.Scenario : "") + " -> " + act + " (" + state + ")");
-        if (state != "stale" && act != LabRecControl.Act.Settings && act != LabRecControl.Act.City && act != LabRecControl.Act.Prep) LabScenario(cmd);
-        switch (act) {
-          case LabRecControl.Act.City: case LabRecControl.Act.Prep: LabSetupStart(cmd); break;
-          case LabRecControl.Act.Settings: LabForceSettings(); if (cmd.Nav != "") LabNav(cmd.Nav); LabRecAck(cmd, state, cur); break;
-          case LabRecControl.Act.Start: LabRecStart(cmd); break;
-          case LabRecControl.Act.StopThenStart: testRec.Stop(); labRecPending = cmd; labRecPendingAt = RecInfo.NowMs(); break;
-          case LabRecControl.Act.Stop: testRec.Stop(); LabRecAck(cmd, state, cur); break;
-          default: LabRecAck(cmd, state, cur); break;
-        }
-      } catch (Exception e) { Log.Write("rec: lab command failed: " + e.Message); }
-    }
-    // the lab scenario the recorder command names: the frame audit runs for it (src/FrameAudit.cs), and a «..._hint» one turns auto click off
-    // until the next command (the lab never clicks for it: the app shows its hints, the audit checks their frames)
-    void LabScenario(LabRecCmd c) {
-      bool start = c.Op == "start";
-      overlay.AuditSite = () => cfg.Site; overlay.AuditCode = () => cfg.Code;
-      overlay.AuditScenario = start ? c.Scenario : ""; if (start) overlay.AuditRun = c.Run;
-      bool hint = start && LabRecCmd.IsHintScenario(c.Scenario);
-      bool autoOff = start && LabRecCmd.IsAutoOffScenario(c.Scenario);
-      if (start && !hint && !autoOff && !labForce) LabForceSettings();   // every non-hint scenario: the settings it needs are on
-      if (!autoOff && labAutoOff) { labAutoOff = false; ApplyAutoClick(); SendState(null); Log.Write("lab: auto click back (" + (start ? c.Scenario : "scenario over") + ")"); }
-      if (autoOff) { labAutoOff = true; labForce = true; ApplyAutoClick(); SendState(null); Log.Write("lab: auto click OFF for " + c.Scenario + " until the settings command"); }
-      if (hint) labHintAt = RecInfo.NowMs();
-      if (hint != labHintOnly) { labHintOnly = hint; if (hint) { overlay.SetRun(0); overlay.SetSell(null, null, null, 0); } ApplyAutoClick(); SendState(null); Log.Write("lab: hint mode " + (hint ? "on (auto click off for " + c.Scenario + ")" : "off")); }
-    }
-    /// <summary>TEST build: the navigator's navCore flag as the lab's settings command set it ("on" | "off" | "" = never given: the app's own default). The app has no such flag yet
-    /// (docs/specs/navigator.md): whoever builds the navigator reads this field; off = the current behaviour.</summary>
-    internal string labNav = "";
-    void LabNav(string v) { labNav = v; Log.Write("lab: navCore " + v + (Channel.IsTest ? " (the navigator core is switched " + v + " for this app run)" : " ignored: not a test build")); ApplyAutoClick(); }
-    // the lab forces the settings its scenarios need (auto click, locateAuto, artAuto) for this run: in memory, the saved config is not touched
-    void LabForceSettings() {
-      labForce = true; labAutoOff = false; ApplyAutoClick(); SendState(null);   // the page too: it starts the equip and sell runs
-      Log.Write("lab: settings forced auto=on locateAuto=on artAuto=on (saved config: autoClick=" + (cfg.AutoClick ? "on" : "off") + ", not changed)");
-    }
     // the lab's «city» / «prep <name>» (src/LabRec.cs): the overlay's TickLabPrep does the clicks through the gate and tells the end; the ack is written then
-    void LabSetupStart(LabRecCmd c) {
-      string name = c.Op == "city" ? LabPrep.CityName : c.Name;
-      if (!Channel.IsTest) { LabWrite("rec.ack", LabRecCmd.AckSetup(c.Seq, c.Op == "city" ? "cityfail" : "prepfail", name, "not a test build")); return; }
-      if (labSetupCmd != null || overlay.LabPrepRunning) { LabWrite("rec.ack", LabRecCmd.AckSetup(c.Seq, c.Op == "city" ? "cityfail" : "prepfail", name, "another setup is running")); return; }
-      labSetupCmd = c; labPrepOn = true; ApplyAutoClick();
-      Log.Write("lab: setup " + name + " starts");
-      if (!overlay.LabPrepStart(name)) { labPrepOn = false; ApplyAutoClick(); labSetupCmd = null; LabWrite("rec.ack", LabRecCmd.AckSetup(c.Seq, c.Op == "city" ? "cityfail" : "prepfail", name, "the overlay refused it")); }
-    }
-    void LabSetupDone(string name, bool ok, string why) {
-      var c = labSetupCmd; labSetupCmd = null; labPrepOn = false; ApplyAutoClick();
-      Log.Write("lab: setup " + name + (ok ? " ok" : " FAILED") + ": " + why);
-      if (c == null) return;
-      string st = c.Op == "city" ? (ok ? "city" : "cityfail") : (ok ? "prepok" : "prepfail");
-      LabWrite("rec.ack", LabRecCmd.AckSetup(c.Seq, st, c.Op == "city" ? name : c.Name, why));   // (the command's own name: random_start:<seed>, not the step it ended on)
-    }
-    void LabRecStart(LabRecCmd c) {
-      if (testRec == null) testRec = new ScreenRecorder(() => cfg.Site, () => cfg.Code, s => Log.Write(s), ev => Post(ev), on => OnUi(() => overlay.SetRecording(on)));
-      string id = testRec.StartLab(c.Scenario, c.Run);
-      Log.Write("rec: lab " + c.Scenario + " recording " + (id != "" ? id : "(not started)"));
-      LabRecAck(c, id != "" ? "recording" : "busy", id != "" ? id : testRec.Id);
-    }
-    void LabRecAck(LabRecCmd c, string state, string rec) {
-      try {
-        string dir = LabRecDir; Directory.CreateDirectory(dir);
-        string f = Path.Combine(dir, "rec.ack"), tmp = f + ".tmp";
-        File.WriteAllText(tmp, LabRecCmd.Ack(c.Seq, state, rec, c.Scenario, c.Run), new UTF8Encoding(false));
-        if (File.Exists(f)) File.Replace(tmp, f, null); else File.Move(tmp, f);
-      } catch (Exception e) { Log.Write("rec: lab ack failed: " + e.Message); }
-    }
     void ToggleRec() { if (testRec != null && testRec.On) testRec.Stop(); else StartRec(); }
 
     // the long poll runs while the game runs and a valid code is set; a new site / code restarts it; the page learns whether it works
@@ -572,7 +406,7 @@ namespace RealmForge {
         switch (cmd) {
           case "init": win.PageReady(); SendState(null); CheckGame(true); PostRemote(); PostLayout(); if (updateReady != null) Post(updateReady); break;
           case "acceptTerms": cfg.TermsAccepted = AppConfig.TermsVersion; Save(); Log.Write("terms accepted: " + AppConfig.TermsVersion); break;
-          case "setLang": cfg.Lang = MiniJson.GetString(m, "lang") == "en" ? "en" : "ru"; overlay.CancelText = CancelText(cfg.Lang); overlay.LocateCancelText = LocateCancelText(cfg.Lang); overlay.SellCancelText = SellCancelText(cfg.Lang); overlay.SellDoneText = SellDoneText(cfg.Lang); overlay.BackCityText = BackCityText(cfg.Lang); overlay.EscText = EscText(cfg.Lang); overlay.CloseGearFilterText = CloseGearFilterText(cfg.Lang); coach.Lang = cfg.Lang; Save(); break;
+          case "setLang": cfg.Lang = MiniJson.GetString(m, "lang") == "en" ? "en" : "ru"; overlay.BackCityText = BackCityText(cfg.Lang); overlay.EscText = EscText(cfg.Lang); overlay.CloseGearFilterText = CloseGearFilterText(cfg.Lang); coach.Lang = cfg.Lang; Save(); break;
           case "setCode": {
             string code = SyncClient.ExtractCode(MiniJson.GetString(m, "code") ?? "");
             if (SyncClient.IsValidCode(code)) {
@@ -585,8 +419,6 @@ namespace RealmForge {
           case "clearCode": cfg.Code = ""; Save(); SendState(null); break;
           case "setSaveCopy": cfg.SaveCopy = MiniJson.GetBool(m, "on", false); Save(); break;
           case "setAutoSync": cfg.AutoSync = MiniJson.GetBool(m, "on", true); Save(); if (cfg.AutoSync) RequestAutoSync(0); break;
-          case "setAutoClick": cfg.AutoClick = MiniJson.GetBool(m, "on", true); ApplyAutoClick(); if (AutoClickOn() && overlay.HasJob && addrs == null && !scanning) StartScan(watch, true); Save(); break;   // (switched on mid-job: the pilots need the game found)
-          case "setAutoConfirm": cfg.AutoConfirm = MiniJson.GetBool(m, "on", false); overlay.AutoConfirm = cfg.AutoConfirm; Save(); break;
           case "setAutoUpdate": cfg.AutoUpdate = MiniJson.GetBool(m, "on", true); Save(); break;
           case "setSendCodes": cfg.SendCodes = MiniJson.GetBool(m, "on", true); Save(); break;
           case "setBossHints": cfg.BossHints = MiniJson.GetBool(m, "on", true); if (!cfg.BossHints && coach.Running) coach.Stop(); Save(); break;
@@ -619,8 +451,7 @@ namespace RealmForge {
             var lr = lastLocate; string lid = MiniJson.GetString(m, "id");
             if (lr != null && (lr.Item != null || lr.Art != null) && lr.Id == lid) {
               RFX.EnsureLiveForGuides();
-              overlay.SetLocate(lr); Log.Write("locate: show " + (lr.Item != null ? "item " + lr.Item.Uid : "artifact " + lr.Art.Uid + (ArtAutoOn() ? " (promotion, auto click for artifacts on)" : " (promotion, hints only)")) + (lr.Item == null ? "" : LocateAutoOn() ? " (auto click on)" : AutoClickOn() ? " (auto click is on, but the site's locateAuto switch is off: hints only)" : ""));
-              if (addrs == null && !scanning && AutoClickOn()) StartScan(watch, true);   // the auto steps need the game's screens found
+              overlay.SetLocate(lr); Log.Write("locate: show " + (lr.Item != null ? "item " + lr.Item.Uid : "artifact " + lr.Art.Uid) + " (hints only)");
             }
             break;
           }
@@ -654,16 +485,13 @@ namespace RealmForge {
             var ll = m.TryGetValue("levels", out lv) ? lv as List<object> : null;
             if (ll != null) for (int i = 0; i < ll.Count && i < uids.Count; i++) if (ll[i] is double) levels[uids[i]] = (int)Math.Max(0, Math.Min(99, (double)ll[i]));
             long hero = addrs != null ? RFX.ReadHero(addrs) : 0; if (hero <= 0) hero = RFX.AnyHeroUid();
-            bool hintOnly = cmd == "sell.hint" || labHintOnly;
+            bool hintOnly = true;   // the program only shows frames; every press is the player's
             // an artifact list is always a hint run (frames on the artifact tab's «Массовая продажа»); the clicks come on top of it only with the player's auto click AND the site's "artAuto" switch (Overlay.TickArtSellAuto)
             bool artifact = MiniJson.GetString(m, "kind") == "artifact";
             if (artifact) hintOnly = true;
             RFX.EnsureLiveForGuides();
             overlay.SetSell(uids, parts, levels.Count == uids.Count ? levels : null, hero, hintOnly, artifact);
-            Log.Write((artifact ? "art sell: " : "sell: ") + (hintOnly ? "hint" : "run") + " " + uids.Count + " items, hero " + hero + (artifact ? (ArtAutoOn() ? " (auto click for artifacts on)" : AutoClickOn() ? " (auto click is on, but the site's artAuto switch is off: hints only)" : "") : ""));
-            if (hintOnly) break;
-            if (!AutoClickOn()) Log.Write("sell: waiting - auto click is off" + (cfg.AutoClick ? " (the site's switch)" : ""));
-            if (addrs == null && !scanning && AutoClickOn()) StartScan(watch, true);   // the pilot needs the game's screens found
+            Log.Write((artifact ? "art sell: " : "sell: ") + "hint " + uids.Count + " items, hero " + hero);
             break;
           }
           case "sell.tip": {
@@ -677,7 +505,7 @@ namespace RealmForge {
           }
           case "sell.stop": overlay.SetSell(null, null, null, 0); break;
           case "sell.finish": FinishSell(MiniJson.GetString(m, "id"), MiniJson.GetBool(m, "done", false)); break;
-          case "equip.scan": case "equip.watch": case "equip.run": case "equip.rescan": case "highlight":
+          case "equip.scan": case "equip.watch": case "equip.rescan": case "highlight":
             if (!On("equip")) break;   // the site's switch: the equip helper is off
             OnEquip(cmd, m); break;
           case "log": Log.Write("ui: " + (MiniJson.GetString(m, "text") ?? "")); break;
@@ -701,18 +529,11 @@ namespace RealmForge {
         switch (cmd) {
           case "equip.scan": if (scanning) watch = Uids(m); else StartScan(Uids(m)); break;   // (the scan ahead is running: its result serves these items too)
           case "equip.watch": Watch(Uids(m), MiniJson.GetBool(m, "fresh", false)); break;
-          case "equip.run": {
-            // the plan the player started («Надеть»): its hero is brought up on the hero screen
-            object v; double h = m.TryGetValue("hero", out v) && v is double ? (double)v : 0;
-            overlay.SetRun(h > 0 && h < 9e15 && !labHintOnly && !labAutoOff ? (long)h : 0);   // (the lab's hint mode: no run, whatever the page says)
-            if (MiniJson.GetBool(m, "restart", false)) overlay.RestartPilots();
-            break;
-          }
           case "equip.rescan":
             // the page's plan stands still: the game's tables are read again (20 s, then less often while they come out the same: StallRescan)
             if (addrs != null && !scanning && DateTime.UtcNow > rescanAfter && DateTime.UtcNow > stallNextAt) {
               StallRescan(); Log.Write("equip scan again: the plan stands still");
-              StartScan(watch, false, true); overlay.RestartPilots();
+              StartScan(watch, false, true);
             }
             break;
           case "highlight": {
@@ -796,15 +617,6 @@ namespace RealmForge {
       Log.Write("error report unhandled: " + st);
     }
 
-    /// <summary>The equip pilot's state (Overlay AutoSay, on every change): its failures are reported.</summary>
-    void OnAutoState(string st) {
-      if (st == "failed" || st == "slot_failed" || st == "unconfirmed" || st == "hero_failed") {
-        var ctx = Ctx("state", st);
-        string why = "";
-        foreach (var kv in overlay.AutoDetail) { ctx[kv.Key] = kv.Value; if (kv.Key == "why") why = kv.Value; }
-        Report("pilot." + st, "auto: " + st + (why != "" ? " - " + why : ""), ctx);
-      }
-    }
 
     static List<long> Uids(Dictionary<string, object> m) {
       var r = new List<long>(); object v;
@@ -828,7 +640,7 @@ namespace RealmForge {
       sb.Append(",\"version\":").Append(S(Program.Version));
       sb.Append(",\"channel\":").Append(S(Channel.IsTest ? "test" : "main"));
       if (Channel.IsStreamer) sb.Append(",\"streamer\":true");
-      if (Channel.IsTest) sb.Append(",\"navCore\":").Append(B(overlay.NavCoreEnabled));   // (the bottom-left version line says «ядро: вкл»)
+
       sb.Append(",\"site\":").Append(S(cfg.Site));
       sb.Append(",\"defaultSite\":").Append(S(SyncClient.DefaultSite));
       bool has = SyncClient.IsValidCode(cfg.Code);
@@ -836,8 +648,7 @@ namespace RealmForge {
       sb.Append(",\"hasCode\":").Append(B(has));
       sb.Append(",\"codePrefix\":").Append(S(has ? cfg.Code.Substring(0, 8) : ""));
       sb.Append(",\"saveCopy\":").Append(B(cfg.SaveCopy));
-      sb.Append(",\"autoSync\":").Append(B(cfg.AutoSync)).Append(",\"autoClick\":").Append(B((cfg.AutoClick || labForce) && !labHintOnly && !labAutoOff)).Append(",\"lab\":").Append(B(labForce))
-        .Append(",\"autoConfirm\":").Append(B(cfg.AutoConfirm)).Append(",\"errorReports\":").Append(B(cfg.ErrorReports)).Append(",\"autoUpdate\":").Append(B(cfg.AutoUpdate))
+      sb.Append(",\"autoSync\":").Append(B(cfg.AutoSync))        .Append(",\"errorReports\":").Append(B(cfg.ErrorReports)).Append(",\"autoUpdate\":").Append(B(cfg.AutoUpdate))
         .Append(",\"tray\":").Append(B(cfg.Tray)).Append(",\"bossHints\":").Append(B(cfg.BossHints)).Append(",\"showInCapture\":").Append(B(CaptureAffinity.Allowed(cfg.ShowInCapture, Channel.CaptureSetting))).Append(",\"sendCodes\":").Append(B(cfg.SendCodes)).Append(",\"recButton\":").Append(B(cfg.RecButton)).Append(",\"guideStyle\":").Append(S(cfg.GuideStyle)).Append(",\"autostart\":").Append(B(Autostart.IsOn()));
       win.TrayEnabled = cfg.Tray;
       win.SetTrayLang(cfg.Lang);
@@ -894,7 +705,7 @@ namespace RealmForge {
       if (!running && addrs != null) { addrs = null; overlay.SetAddrs(null); liveTimer.Stop(); lastLive = null; }
       // the game's screens are found in memory at once (tens of seconds), not when the first «Надеть» comes: then the
       // equip starts right away
-      if (running && addrs == null && !scanning && AutoClickOn()) StartScan(watch, true);
+
     }
 
     // ------------------------------------------------------------------ boss fights
@@ -1560,7 +1371,7 @@ namespace RealmForge {
     // A fresh search for a plan that stands still costs a core for seconds on a slow PC (lab 1.6.66.409: 14 s each, every 20 s while a
     // hint waited for the player): the next one waits 20, 60, 120, then 300 s while the searches find the same tables; a search that finds
     // other tables, another plan or another stall starts over at 20 s (src/LoadPlan.cs StallRescanSec)
-    int stallStreak; string stallTables, stallPlan, stallSeen; DateTime stallNextAt = DateTime.MinValue;
+    int stallStreak; string stallTables, stallPlan; DateTime stallNextAt = DateTime.MinValue;
     void StallRescan() {
       rescanAfter = DateTime.UtcNow.AddSeconds(20);   // (any search, as before)
       stallNextAt = DateTime.UtcNow.AddSeconds(LoadPlan.StallRescanSec(stallStreak));   // (the next fresh one for a plan standing still)
@@ -1597,18 +1408,7 @@ namespace RealmForge {
 
     // A started plan standing still (the same step 10 s, no pilot clicking): the game's tables are searched afresh -
     // live 27.09 an item put on was not seen until the app was restarted
-    string stallKey, pollError, ownersLogged; DateTime stallAt;
-    void WatchStall() {
-      string k = overlay.StallKey();
-      if (k == null || k != stallKey) {
-        if (k != null && k != stallSeen) { stallSeen = k; stallStreak = 0; stallNextAt = DateTime.MinValue; }   // another step stands still (a step gone for a moment and back is the same one)
-        stallKey = k; stallAt = DateTime.UtcNow; return;
-      }
-      if ((DateTime.UtcNow - stallAt).TotalSeconds < 10 || addrs == null || scanning || DateTime.UtcNow <= rescanAfter || DateTime.UtcNow <= stallNextAt) return;
-      stallAt = DateTime.UtcNow; StallRescan();
-      Log.Write("equip scan again: the plan stands still (" + k + ")");
-      StartScan(watch, false, true); overlay.RestartPilots();
-    }
+    string pollError, ownersLogged;
 
     // The plan stands on «open the hero» while the game's hero screen is open (another hero, or none read): after 10 s the
     // game's tables are read again, with or without the auto-click (live 1.6.61: the hero was not seen until a restart)

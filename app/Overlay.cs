@@ -1,12 +1,9 @@
-// RealmForge.exe — highlight over the game: a click-through, always-on-top frame around the item to put on, and the
-// auto-pilot that opens the gear slot, drags the list and clicks the item (src/AutoPilot.cs).
+// Wardsage.exe - highlight over the game: click-through, always-on-top frames, hand and plates that show the player where to press.
 //
 // The game's memory is only read (which item is selected, list rows), the screen is only looked at (a screenshot of
 // the list area, see src/ListTracker.cs), and the frame is a separate transparent window of ours that lets every
-// click through to the game. The auto-pilot moves the mouse like a player would (SendInput: a click on the slot or
-// the item, a drag over the list) and only while the game is in front and the player is not using the mouse;
-// «Заменить» only with Settings → «Автоматически подтверждать замену» (see src/AutoPilot.cs for the checks).
-// Nothing is written into the game.
+// click through to the game. The program sends nothing to the game: no mouse, no keyboard, no window messages.
+// Every press is the player's own.
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -31,26 +28,15 @@ namespace RealmForge {
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out int pid);
     [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
-    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
-    [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr h);
-    [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint a, uint b, bool attach);
-    [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
-    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int cmd);
-    [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr h, int cmd);
     [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
     [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr h, int index);
     [DllImport("user32.dll")] public static extern int SetWindowLong(IntPtr h, int index, int value);
-    [DllImport("user32.dll")] public static extern IntPtr WindowFromPoint(POINT p);
-    [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr h, uint flags);
-    [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr h, uint cmd);
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassName(IntPtr h, System.Text.StringBuilder s, int max);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
     [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
     [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p);
-    [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
     [StructLayout(LayoutKind.Sequential)] public struct LASTINPUTINFO { public uint cbSize; public uint dwTime; }
     [DllImport("user32.dll")] public static extern bool GetLastInputInfo(ref LASTINPUTINFO i);
-    /// <summary>ms since the last mouse / keyboard input of anyone (SendInput included); -1 = not known.</summary>
+    /// <summary>ms since the last mouse / keyboard input of anyone (read only: GetLastInputInfo); -1 = not known.</summary>
     public static long InputAgeMs() {
       var li = new LASTINPUTINFO { cbSize = (uint)Marshal.SizeOf(typeof(LASTINPUTINFO)) };
       if (!GetLastInputInfo(ref li)) return -1;
@@ -59,15 +45,6 @@ namespace RealmForge {
     public delegate void WinEventProc(IntPtr hook, uint ev, IntPtr hwnd, int idObject, int idChild, uint thread, uint time);
     [DllImport("user32.dll")] public static extern IntPtr SetWinEventHook(uint min, uint max, IntPtr mod, WinEventProc proc, uint pid, uint thread, uint flags);
     [DllImport("user32.dll")] public static extern bool UnhookWinEvent(IntPtr hook);
-    [DllImport("user32.dll")] public static extern short GetAsyncKeyState(int vk);
-    [DllImport("user32.dll", SetLastError = true)] public static extern uint SendInput(uint n, INPUT[] inputs, int size);
-    [StructLayout(LayoutKind.Sequential)] public struct MOUSEINPUT { public int dx, dy; public uint mouseData, dwFlags, time; public IntPtr extra; }
-    [StructLayout(LayoutKind.Sequential)] public struct INPUT { public uint type; public MOUSEINPUT mi; }   // type 0 = mouse; 40 bytes on x64
-    public const uint LEFTDOWN = 0x0002, LEFTUP = 0x0004, WHEEL = 0x0800;
-    [DllImport("user32.dll", SetLastError = true, EntryPoint = "SendInput")] public static extern uint SendKeyInput(uint n, KINPUT[] inputs, int size);
-    [StructLayout(LayoutKind.Sequential)] public struct KEYBDINPUT { public ushort vk, scan; public uint dwFlags, time; public IntPtr extra; }
-    [StructLayout(LayoutKind.Sequential)] public struct KINPUT { public uint type; public KEYBDINPUT ki; public uint pad1, pad2; }   // type 1 = keyboard; padded to the mouse INPUT's size (40 bytes on x64)
-    public const uint KEYUP = 0x0002;
     [DllImport("user32.dll")] public static extern bool SetWindowDisplayAffinity(IntPtr h, uint affinity);
     [DllImport("user32.dll")] public static extern IntPtr GetDC(IntPtr h);
     [DllImport("user32.dll")] public static extern int ReleaseDC(IntPtr h, IntPtr dc);
@@ -186,15 +163,13 @@ namespace RealmForge {
     public static bool RecorderOn;
     /// <summary>The player's setting «show hints in recordings and streams» (AppConfig.ShowInCapture): the windows stay in captures.</summary>
     public static bool ShowInCapture;
-    /// <summary>The auto click is working (or was within 4 s): the windows are hidden from captures again, even for the recorder (when the platform can) so the looks that decide its clicks never see them.</summary>
-    public static bool PilotHidden;
     static readonly WindowSet<GlowWindow> live = new WindowSet<GlowWindow>(w => w.ApplyAffinity());
     int affinityAt = Environment.TickCount - 10000;
     uint appliedAff = CaptureAffinity.Never;
     /// <summary>The affinity last applied (0xFFFFFFFF = none yet), for the journal.</summary>
     public uint AppliedAffinity { get { return appliedAff; } }
     public void ApplyAffinity() {
-      uint aff = CaptureAffinity.For(ShowInCapture, false, PilotHidden, NeverCaptured);
+      uint aff = CaptureAffinity.For(ShowInCapture, false, false, NeverCaptured);
       bool was = Excluded;
       try { Excluded = CaptureAffinity.Hidden(W32.SetWindowDisplayAffinity(Handle, aff), aff); } catch (Exception) { Excluded = false; }
       if (Excluded != was) affinityAt = Environment.TickCount;
@@ -231,17 +206,7 @@ namespace RealmForge {
     public bool KeepCaptureState;
     /// <summary>Always hidden from screen captures (0x11) whatever the mode: no look of the pilot or the navigator ever sees (or has to mask) this window. The recorder's timer window.</summary>
     public bool NeverCaptured;
-    static int pilotFlipAt = Environment.TickCount - 100000;
-    /// <summary>The pilot's hide goes at once; the way back waits (CaptureAffinity.PilotNext: at most one flip in 5 s, no re-present of the hints at every pilot start / stop).</summary>
-    public static void SetPilotHidden(bool on) {
-      int now = Environment.TickCount;
-      bool next = CaptureAffinity.PilotNext(PilotHidden, on, unchecked(now - pilotFlipAt));
-      if (PilotHidden == next) return;
-      PilotHidden = next; pilotFlipAt = now;
-      ReapplyAll();
-    }
     /// <summary>The navigator asked our hint windows to stay away (INavIo.HideOwn): they show nothing, and are hidden once, not at every tick. Never the recorder's timer.</summary>
-    public static bool OwnAway;
     static void ReapplyAll() {
       live.ApplyAll(w => w.IsHandleCreated && !w.IsDisposed);
     }
@@ -252,7 +217,6 @@ namespace RealmForge {
 
     /// <summary>Shows the bitmap (32-bit ARGB) at the screen position, in physical pixels.</summary>
     public void Put(Bitmap bmp, int x, int y) {
-      if (OwnAway && !KeepCaptureState) { if (Visible) Hide(); return; }
       // the same picture again (the callers keep a bitmap while its key stays): nothing to copy; only moved = the window is moved
       if (Visible && ReferenceEquals(bmp, putBmp)) {
         if (x != putX || y != putY) { W32.SetWindowPos(Handle, IntPtr.Zero, x, y, 0, 0, 0x0001 | 0x0004 | 0x0010); putX = x; putY = y; }   // SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE
@@ -332,20 +296,7 @@ namespace RealmForge {
     readonly GlowWindow tip = new GlowWindow { Name = "tip" };     // hint on the game's own buttons (filter, «Заменить», next slot)
     readonly GlowWindow glowPulse = new GlowWindow { Name = "glowPulse" }, tipPulse = new GlowWindow { Name = "tipPulse" };   // the frames' pulse lines: a small window of their own beside each of the two
     readonly Timer pulseTimer = new Timer();   // runs only while a frame is shown
-    // «Отменить надевание» over the game while a build is being put on: the player's clicks in the game send our
-    // window to the back, so the way to call it off is where the player looks
-    readonly GlowWindow cancelWin = new GlowWindow(true) { Name = "cancelWin" };
-    /// <summary>The player pressed «Отменить надевание» over the game.</summary>
-    public event Action CancelPressed;
-    /// <summary>The button's text in the interface language.</summary>
-    public string CancelText = "Отменить надевание";
-    /// <summary>The same button while «Показать в игре» clicks by itself: it only stops that.</summary>
-    public string LocateCancelText = "Остановить автонажатие";
-    public string SellCancelText = "Отменить чистку склада";
-    /// <summary>The on-screen button during the storage cleanup's auto click: the player ends the whole cleanup run (the page cancels the list).</summary>
-    public event Action SellCancelPressed;
-    string cancelDrawn; Bitmap cancelBmp;
-    // TEST build: the record button over the game (left edge, mid-height); a clickable window like cancelWin, drawn only while the central gate allows
+    // TEST build: the record button over the game (left edge, mid-height); a clickable window, drawn only while the central gate allows
     readonly GlowWindow recWin = new GlowWindow(true) { Name = "recWin", KeepCaptureState = true, NeverCaptured = true };
     readonly Timer recBtnTimer = new Timer();
     readonly Stopwatch recSw = new Stopwatch();
@@ -354,7 +305,7 @@ namespace RealmForge {
     public bool RecButton;
     /// <summary>The player pressed the record button over the game: the host toggles the recorder.</summary>
     public event Action RecPressed;
-    /// <summary>TEST build: something went wrong (a pilot stopped, an unknown form on top, an offer not closed): the host may record the screen (src/AutoRec.cs). The tag says why.</summary>
+    /// <summary>TEST build: something went wrong (an unknown form on top, an offer not closed): the host may record the screen (src/AutoRec.cs). The tag says why.</summary>
     public event Action<string> AutoRec;
     readonly ListGeometry g = new ListGeometry();
     readonly HintGeometry hg = new HintGeometry();
@@ -365,43 +316,28 @@ namespace RealmForge {
     /// <summary>The text of the tip at the filter's × (in the interface language, from the page).</summary>
     public string CloseFilterText = "";
     readonly Action<string, bool> report;
-    readonly Action<string> autoReport;
-    readonly AutoPilot pilot;
     readonly FilterGeometry fg = new FilterGeometry();
-    readonly FilterPilot fpilot;
     readonly HeroGeometry heroG = new HeroGeometry();
     HeroGeometry hg2 { get { return heroG; } }
-    readonly HeroPilot hpilot;
     HeroScreen heroScreen;
     /// <summary>The plan the player started («Надеть»): its hero is brought up on the hero screen; 0 = none.</summary>
-    long runHero;
-    long focusAfter, slotCloseAfter;
     const int TipStillMs = 600, TipAgainMs = 3000;
-    string tipSeenKey; long tipSeenAt, tipEscapedAt; int tipEscapes;   // the item's tip over the next slot: seen unchanged since, Escapes pressed for it
     // the item the guide looks for and what it says about it (the filter pilot), and what the plans say about items
     long filterItem; string filterKind = "";
     readonly System.Collections.Generic.Dictionary<long, long[]> itemInfo = new System.Collections.Generic.Dictionary<long, long[]>();
     readonly System.Collections.Generic.Dictionary<int, long[]> suitOrder = new System.Collections.Generic.Dictionary<int, long[]>();
     readonly System.Collections.Generic.Dictionary<int, long[]> statOrder = new System.Collections.Generic.Dictionary<int, long[]>();
     readonly System.Collections.Generic.Dictionary<int, long[]> subOrder = new System.Collections.Generic.Dictionary<int, long[]>();
-    /// <summary>Settings → «Автонажатие»: the pilot acts only when this is on.</summary>
-    public bool AutoEnabled;
-    /// <summary>Settings → «Автоматически подтверждать замену»: the pilot may also press «Заменить».</summary>
-    public bool AutoConfirm;
+    
+
     /// <summary>A build being put on or a sell run going: no restart for an update now.</summary>
-    public bool Busy { get { return runHero != 0 || target != 0 || (sellWanted != null && !sellHint) || sending; } }
+    public bool Busy { get { return target != 0 || (sellWanted != null && !sellHint); } }
     // what the frame tick found this tick (for the pilot)
     int curRow, curCol; long curSel;
-    // for the error report of a pilot failure (AutoDetail): what the pilot was given and did last
-    AutoView lastAutoView; FilterView lastFilterView; HeroView lastHeroView; string lastPilotTrace = ""; int lastClientW, lastClientH;
     /// <summary>Public to the host: set PanelOk from the live poll (the game's panel table is readable).</summary>
     public bool PanelOk = true;
     /// <summary>Public to the host: no gear list panel yet (the game creates it when a slot is first opened).</summary>
     public bool PanelNone;
-    /// <summary>What the report of a pilot failure says about it (no account or user data): filled when the state changes to a failure.</summary>
-    public System.Collections.Generic.Dictionary<string, string> AutoDetail = new System.Collections.Generic.Dictionary<string, string>();
-    // player activity: the cursor moved by someone else than the pilot, or a mouse button went down
-    volatile bool sending; W32.POINT seen; bool seenSet; long lastMoveMs; bool btnWasDown, userClick; string autoSaid = "";
     EquipAddrs addrs; long target; int[] types; ulong typesPtr; long lastSel = -1;
     string state = "off"; int frame; string drawnKey;
     // diagnostics (Settings → «Диагностика рамки»): screenshots and list data into debug\ for a few minutes
@@ -410,9 +346,7 @@ namespace RealmForge {
     int[] confirmHintRect;   // the live rect of «Заменить» the hint frames (held still), this tick
     int[] confirmBtn;   // «Заменить» / «Надеть» found on the screen this tick (TickHint), for the pilot
     // storage cleanup: the items to select on the game's sell screen (null = no run); the hero whose gear screen leads there
-    readonly SellPilot spilot;
-    readonly Action<SellPilot, string> sellReport;
-    System.Collections.Generic.HashSet<long> sellWanted; System.Collections.Generic.HashSet<int> sellParts; System.Collections.Generic.Dictionary<long, int> sellLevels; long sellHero; long sellBtnAt; string sellSaid = "";
+    System.Collections.Generic.HashSet<long> sellWanted; System.Collections.Generic.HashSet<int> sellParts; System.Collections.Generic.Dictionary<long, int> sellLevels; long sellHero;
 
     // storage cleanup without auto click («Подсказать в игре»): the same list, but the program only reads the inventory and
     // draws frames on the cells to select; every click is the player's
@@ -455,22 +389,15 @@ namespace RealmForge {
       geomLine = line;
       Log.Write("game geometry: " + line);
     }
-    bool filterFailSaid; string tickError;
+    string tickError;
 
-    public OverlayController(Action<string, bool> report, Action<string> autoReport, Action<SellPilot, string> sellReport) {
-      this.report = report; this.autoReport = autoReport; this.sellReport = sellReport;
-      spilot = new SellPilot(SellGeometry.Inventory(1920, 1009, 8));
-      screens.Sink = s => Log.Write(s); gate.Sink = s => Log.Write(s);
-      // a slow PC: the effect of «Инвентарь» / «Литейная» is awaited while the search for its form still runs (ClickGate.SearchCapMs)
-      gate.FormSearchPending = t => RFX.FormSearchRunning && (t == ClickTarget.CityInventory ? RFX.InvFormMissing() : t == ClickTarget.FoundryButton && RFX.FoundryFormMissing());
-      gate.FormFound = t => t == ClickTarget.CityInventory ? !RFX.InvFormMissing() : t == ClickTarget.FoundryButton && !RFX.FoundryFormMissing();
-      gate.DangerLive = (form, field, w, h, u) => RFX.UiFieldReadNow(form, field, w, h, u);   // (a dangerous widget of a form over the click's one, where the game has it now)
+    public OverlayController(Action<string, bool> report) {
+      this.report = report;
+      screens.Sink = s => Log.Write(s);
       LoadMeter.Hook();   // (the memory passes and the forms checks counted in the load line)
-      if (Channel.IsTest) NavProbeStart();
+
       RFX.LiveLog = s => Log.Write(s);   // the live reads' lines (the lists' scroll binding ...) reach the app's log
-      pilot = new AutoPilot(g);
-      fpilot = new FilterPilot(fg);
-      hpilot = new HeroPilot(heroG);
+
       pulseTimer.Interval = FrameStyle.PulseMs; pulseTimer.Tick += (s, e) => { long pt0 = LoadMeter.Now(); try { PulseTick(); } catch (Exception ex) { pulseTimer.Stop(); Log.Write("overlay: pulse: " + ex.Message); } finally { LoadMeter.Done(LoadMeter.Pulse, pt0); } };
       timer.Interval = 100; timer.Tick += (s, e) => {
         long lt0 = LoadMeter.Now();
@@ -510,12 +437,6 @@ namespace RealmForge {
         winHookFg = W32.SetWinEventHook(0x0003, 0x0003, IntPtr.Zero, winEventProc, 0, 0, 0x0000 | 0x0002);   // EVENT_SYSTEM_FOREGROUND, WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS
         winHookMin = W32.SetWinEventHook(0x0017, 0x0017, IntPtr.Zero, winEventProc, 0, 0, 0x0000 | 0x0002);  // EVENT_SYSTEM_MINIMIZEEND
       } catch (Exception) { }
-      cancelWin.Pressed += () => {
-        cancelWin.Hide();
-        if (SellClicking) { Log.Write("sell: cancelled over the game"); var sc = SellCancelPressed; if (sc != null) sc(); return; }   // storage cleanup: the whole run ends (clicks and hints), the page cancels the list
-        if (LocateWins && runHero <= 0) { lpilot.Cancel(); artPilot.Cancel(); Log.Write("locate auto: stopped over the game"); return; }   // «Показать в игре»: only the clicks stop
-        var c = CancelPressed; if (c != null) c();
-      };
     }
 
     readonly Timer loadTimer = new Timer();
@@ -524,7 +445,7 @@ namespace RealmForge {
     public void Dispose() {
       if (winHookFg != IntPtr.Zero) W32.UnhookWinEvent(winHookFg); if (winHookMin != IntPtr.Zero) W32.UnhookWinEvent(winHookMin);
       winHookFg = winHookMin = IntPtr.Zero; loadTimer.Dispose(); pulseTimer.Dispose(); glowPulse.Dispose(); tipPulse.Dispose();
-      timer.Dispose(); lookTimer.Dispose(); glow.Dispose(); tip.Dispose(); cancelWin.Dispose(); recBtnTimer.Dispose(); recWin.Dispose(); }
+      timer.Dispose(); lookTimer.Dispose(); glow.Dispose(); tip.Dispose(); recBtnTimer.Dispose(); recWin.Dispose(); }
 
     public void StartDiag(int minutes) {
       // one folder per run: a second run must not overwrite the first one's files
@@ -605,7 +526,7 @@ namespace RealmForge {
 
     // Overlay owner when an equip plan and a locate request are both on: the one started later (OverlayPriority).
     long planSince, locateSince;
-    bool PlanOn { get { return runHero != 0 || target != 0 || hintKind != ""; } }
+    bool PlanOn { get { return target != 0 || hintKind != ""; } }
     void PlanStamp(bool was) { if (!was && PlanOn) planSince = Stamp(); }
     static long Stamp() { return DateTime.UtcNow.Ticks / 10000; }
     /// <summary>«Показать в игре» owns the overlay now (its request is on and no later plan took it over).</summary>
@@ -615,24 +536,10 @@ namespace RealmForge {
     public void SetItemInfo(long uid, long setId, long statId) { if (uid > 0 && (setId > 0 || statId > 0)) itemInfo[uid] = new[] { setId, statId }; }
 
     /// <summary>The started plan's hero (0 = none): the pilot opens that hero's gear on the hero screen.</summary>
-    // owner rule: every auto-click run starts from the city (back arrow / Escape / pop-up closes until the screen is the city); false = this run has not been in the city yet
-    object sellRunSeen; LocateRequest locateRunSeen;
-    bool cityRunEquip = true, cityRunSell = true, cityRunLocate = true; long cityRunSince;
-    const int CityRunCapMs = 25000;
-    /// <summary>The run's city-first rule: true = the run must still go back to the city (a known screen other than the city is up). Held for CityRunCapMs at most.</summary>
-    bool CityStartDue(ref bool flag, ScreenState scr, long now) {
-      if (flag) return false;
-      if (scr != null && scr.Kind == ScreenKind.City) { flag = true; return false; }
-      if (cityRunSince == 0) cityRunSince = now;
-      if (now - cityRunSince > CityRunCapMs) { flag = true; Log.Write("auto: the city was not reached in " + CityRunCapMs / 1000 + " s - the run goes on from this screen"); return false; }
-      return scr != null && scr.Kind != ScreenKind.Unknown;
-    }
-    public void SetRun(long hero) { if (hero == runHero) return; if (hero == 0) NavFlagsAbandoned(); if (hero > 0) { ResumeClicks(ClickOwner.Equip); cityRunEquip = false; cityRunSince = 0; } bool was = PlanOn; if (hero > 0) artLatch.NewPlan(); runHero = hero; PlanStamp(was); Run(); }
-
+    
     // ---- «Надеть в игре» with an artifact (src/ArtEquip.cs): after the gear the guide puts the plan's artifact on the hero (hint kind "art")
     long artHero, artUid;
-    readonly ArtEquipPilot artEq = new ArtEquipPilot();
-    ArtEquipStep artEqStep; long artWaitSince; string artEqSaid = "", artEqAutoSaid = "";
+    ArtEquipStep artEqStep; long artWaitSince; string artEqSaid = "";
     /// <summary>The artifact steps are on: the gear of the plan is done and the page asks for the artifact (hint "art" with the hero and the artifact).</summary>
     bool ArtPhase { get { return hintKind == "art" && artUid != 0 && artHero != 0 && !artLatch.IsDone; } }
     readonly ArtGoalLatch artLatch = new ArtGoalLatch();
@@ -644,7 +551,7 @@ namespace RealmForge {
       if (hero == artHero && uid == artUid) return;
       artHero = hero; artUid = uid;
       RFX.SetArtGoal(hero, uid);
-      artEq.Reset(); artEqStep = null; artEqSaid = ""; artEqAutoSaid = "";
+      artEqStep = null; artEqSaid = "";
       Log.Write(uid != 0 ? "art equip: goal artifact " + uid + " for hero " + hero : "art equip: no goal");
     }
 
@@ -659,14 +566,9 @@ namespace RealmForge {
     /// <summary>What the helper is at while a started plan runs (null = no plan, or a pilot is clicking / waiting for the
     /// player): the same key for long means the plan stands still.</summary>
     /// <summary>The hero the plan wants opened while its step is «open the hero» (the hint, or the started plan); 0 = none.</summary>
-    public long HeroStepHero() { return hintKind == "hero" ? hintHero : (hintKind == "" || hintKind == "bulk" ? runHero : 0); }
+    public long HeroStepHero() { return hintKind == "hero" ? hintHero : (false ? 0 : 0); }
 
-    public string StallKey() {
-      if (runHero <= 0 || autoSaid == "work" || autoSaid == "paused" || autoSaid == "background") return null;
-      return runHero + "|" + target + "|" + filterItem + "|" + filterKind + "|" + hintKind + "|" + autoSaid + (ArtPhase && artEqStep != null ? "|" + artEqStep.Key : "");
-    }
 
-    public void RestartPilots() { NavRestart(); cityRunEquip = false; cityRunSince = 0; RFX.LuaRootShadow("pilot start"); pilot.Reset(); fpilot.Reset(); hpilot.Reset(); artEq.Reset(); ResumeClicks(ClickOwner.Equip); }
 
     /// <summary>Item to highlight (0 = none).</summary>
     public void SetTarget(long uid) {
@@ -700,8 +602,6 @@ namespace RealmForge {
       bool nowArt = artifact && run;
       if (nowArt != sellArt) { shCols = 8; shGeo = null; }   // the artifact and the gear list have 8 columns at a 1.9:1 window (7 artifacts at the authored width: refined from the list's width at run time)
       sellArt = nowArt;
-      ApplyArtGate();
-      artSellBtnAt = 0; artSellSaid = "";
       if (wasHint || sellHint) {
         // a hint run starts (or ends) clean: no frames, no plate, the rows' place unknown
         sgrid.Reset(); shInv = null; shHave = false; shReadSig = ""; shReadAt = 0; shFrames = null; shKey = ""; shLast = null; shUnkSince = -1; shHold = false; shLastMarks = null; shLastStrip = null; shLastPill = null; shLastPt = null;
@@ -712,7 +612,7 @@ namespace RealmForge {
       sellLevels = levels;
       sellWanted = uids != null && uids.Count > 0 ? new System.Collections.Generic.HashSet<long>(uids) : null;
       sellParts = parts != null && parts.Count > 0 ? new System.Collections.Generic.HashSet<int>(parts) : null;
-      sellHero = hero; sellSaid = ""; cellRunN++; spilot.Reset(); hpilot.Reset(); ResumeClicks(ClickOwner.Sell); sellBtnAt = 0; sellScanOnce = true;
+      sellHero = hero; cellRunN++; sellScanOnce = true;
       Run();
     }
 
@@ -723,14 +623,14 @@ namespace RealmForge {
       bool artReq = locateReq != null && locateReq.Purpose == "artPromote";
       RFX.InvFilterWanted = locateReq != null && !artReq && locateReq.Purpose != "ascend";   // the recast's long inventory search filters the list (ascend: the Foundry's own list; artPromote: the artifact tab)
       if (!RFX.InvFilterWanted) { RFX.InvFilterW = RFX.InvFilterH = RFX.InvFilterU = 0; }
-      RFX.ArtListWanted = artReq; ApplyArtGate();   // an artifact request is hints only unless ArtAutoOn (the site's artAuto switch and the player's auto click): then only its Art* targets
-      artPilot.Reset(); artAutoSaid = "";
+      RFX.ArtListWanted = artReq;   // an artifact request is hints only unless ArtAutoOn (the site's artAuto switch and the player's auto click): then only its Art* targets
+
       artFin.Reset(); artStep = null; artKey = ""; artSaid = ""; artFormAskedAt = 0;
       locateDoneUntil = 0; locateLive = null; lfin.Reset();
       locateSince = Stamp(); locateCaps = ""; locateLines = new string[0];
       locateStep = null; locateSubs = null; locateKey = ""; locateReadAt = 0; locateLastCur = -1; locateSubsAt = 0; lgrid.Reset();
       locateScreensSaid = ""; locateMarkerSaid = ""; locateCardSaid = ""; locateListSig = ""; locateDecisionSaid = ""; locatePlaceSaid = "";
-      lpilot.Reset(); ResumeClicks(ClickOwner.Locate); ResumeClicks(ClickOwner.LocateFilter); lpilot.ItemUid = locateReq != null ? (artReq ? locateReq.Art.Uid : locateReq.Item.Uid) : 0; locateDriving = false; locateAutoSaid = "";
+
       Hide("off"); HideTip(); locHint.Reset();
       Run();
     }
@@ -749,8 +649,8 @@ namespace RealmForge {
     public void SetLocateTip(string[] lines, string caps, Dictionary<string, string> texts = null) { locateLines = lines ?? new string[0]; locateCaps = caps ?? ""; if (texts != null) locateTexts = texts; }
 
     void Run() {
-      if (target != 0 || locateReq != null || filterItem != 0 || hintKind != "" || runHero != 0 || sellWanted != null || DateTime.Now < diagUntil || RecInfo.Active) { timer.Start(); if (target != 0) lookTimer.Start(); else lookTimer.Stop(); return; }
-      timer.Stop(); lookTimer.Stop(); HideTip(); if (cancelWin.Visible) cancelWin.Hide();
+      if (target != 0 || locateReq != null || filterItem != 0 || hintKind != "" || sellWanted != null || DateTime.Now < diagUntil || RecInfo.Active) { timer.Start(); if (target != 0) lookTimer.Start(); else lookTimer.Stop(); return; }
+      timer.Stop(); lookTimer.Stop(); HideTip();
     }
 
     void HideTip() { if (tip.Visible) tip.Hide(); tipKey = null; frameWins.Remove(tip); }
@@ -775,13 +675,8 @@ namespace RealmForge {
 
     // the screen recorder (TEST build): what this tick decided, collected while a recording runs and published at its end
     RecInfo recB;
-    long pilotHiddenUntil;
     void Tick() {
       pendingRects.Clear();
-      var cv = covered;
-      if (cv != null) { covered = null; gate.Halt(cv.Item1, "covered", "the click point is covered by " + cv.Item2 + ", not the game - no press"); AnnounceHalts(); }
-      var lt = lateTop;
-      if (lt != null) { lateTop = null; Log.Write("click gate " + lt.Item1 + ": not pressed - " + lt.Item2); gate.Halt(lt.Item1, "popup", lt.Item2 + " - not pressed"); AnnounceHalts(); }
       recB = RecInfo.Active ? new RecInfo() : null;
       RFX.LuaRootShadowTick();
       RFX.UiButtonShadowTick();
@@ -790,7 +685,6 @@ namespace RealmForge {
       finally {
         try { TickFramesOne(); } catch (Exception e) { Log.Write("frames: " + e.Message); }
         try { AuditEnd(); } catch (Exception e) { Log.Write("frame audit: " + e.Message); }
-        try { NavOwnHideTick(); } catch (Exception e) { Log.Write("nav hide own: " + e.Message); }
         if (recB != null) { var b = recB; recB = null; b.Screen = screens.Current != null ? screens.Current.Brief : "-"; RecOverlayNow(b); RecInputs(b); RecInfo.Publish(b); }
       }
     }
@@ -820,169 +714,12 @@ namespace RealmForge {
       } catch (Exception) { }
     }
 
-    // ---- TEST build: the explorer (src/Explorer.cs), started by the lab runner's explore.cmd (app/HostBridge.cs): it walks the game's safe UI
-    // over the UI graph, every press through the click gate (owner Explore), and gives its result (explore.json) to ExploreDone
-    Explorer explorer; long exploreBusyUntil; W32.POINT exploreCursor; bool exploreCursorSet;
-    public bool ExploreRunning { get { return explorer != null; } }
-    /// <summary>The run's result JSON when it ended (done or stopped).</summary>
-    public event Action<string> ExploreDone;
-    public string ExploreApp = "", ExploreGame = "";
-    public void ExploreStart(int budget, int rot, string run) {
-      if (!Channel.IsTest) return;
-      if (explorer != null) ExploreStop("a new explore command");
-      gate.Resume(ClickOwner.Explore); gate.ExploreOn = true; exploreCursorSet = false; exploreBusyUntil = 0;
-      explorer = new Explorer(budget, rot, run);
-      foreach (var l in explorer.Lines) Log.Write(l); explorer.Lines.Clear();
-      Run();
-    }
-    public void ExploreStop(string why) {
-      var ex = explorer; if (ex == null) return;
-      ex.Stop(why); ExploreEnd(ex);
-    }
-    void ExploreEnd(Explorer ex) {
-      foreach (var l in ex.Lines) Log.Write(l); ex.Lines.Clear();
-      explorer = null; gate.ExploreOn = false;
-      string json = ex.Json(NowMs(), ExploreApp, ExploreGame);
-      var h = ExploreDone; if (h != null) try { h(json); } catch (Exception e) { Log.Write("explore: result not written: " + e.Message); }
-    }
-    void TickExplore() {
-      var ex = explorer; long now = NowMs();
-      if (gate.Halted(ClickOwner.Explore) && !ex.Over) ex.Stop("the click gate stopped: " + gate.HaltReason(ClickOwner.Explore) + " - " + gate.HaltDetail(ClickOwner.Explore));
-      if (ex.Over) { ExploreEnd(ex); return; }
-      if (sending || now < exploreBusyUntil) return;
-      IntPtr hwnd = GameWindow();
-      if (hwnd == IntPtr.Zero || W32.IsIconic(hwnd)) return;
-      W32.RECT cr; if (!W32.GetClientRect(hwnd, out cr) || cr.B < 200) return;
-      var o = new W32.POINT(0, 0); W32.ClientToScreen(hwnd, ref o);
-      bool front = IsForeground(hwnd);
-      // the player's own mouse: the cursor left the explorer's last point (or a button is down) - the run stops at once
-      W32.POINT c;
-      if (W32.GetCursorPos(out c)) {
-        bool down = (W32.GetAsyncKeyState(0x01) & 0x8000) != 0 || (W32.GetAsyncKeyState(0x02) & 0x8000) != 0;
-        if (exploreCursorSet && (c.X != exploreCursor.X || c.Y != exploreCursor.Y || down)) { ex.Stop("the player's own input"); ExploreEnd(ex); return; }
-      }
-      double W = cr.R, H = cr.B, U = Ui.Unit(W, H);
-      var v = new ExploreView { Now = now, Front = front, Order = RFX.UiKnown ? RFX.ReadShownOrder() : null, W = W, H = H, U = U,
-                                Live = (f, fld) => RFX.UiFieldReadNow(f, fld, W, H, U), OfferClose = f => OfferForms.ClosePoint(Geo.Current, f, W, H, U) };
-      var a = ex.Tick(v);
-      foreach (var l in ex.Lines) Log.Write(l); ex.Lines.Clear();
-      if (ex.Over) { ExploreEnd(ex); return; }
-      if (a.Kind != ExploreKind.Click && a.Kind != ExploreKind.Escape) return;
-      if (!front) return;   // (the game behind another window: waited for - the run's cap ends it)
-      var fresh = FreshScreen(false);
-      var req = new ClickRequest { Owner = ClickOwner.Explore, Target = a.Target, AutoOn = AutoEnabled, Front = front, X = a.X, Y = a.Y, W = W, H = H, U = U,
-                                   Form = a.Form, Widget = a.Widget ?? "", LiveRect = a.LiveRect, Geo = Geo.Current };
-      var res = gate.Check(req, fresh, now);
-      if (!res.Allowed) { ex.Denied(a, res, gate.Halted(ClickOwner.Explore), now); foreach (var l in ex.Lines) Log.Write(l); ex.Lines.Clear(); return; }
-      if (a.Kind == ExploreKind.Escape) {
-        ex.Sent(a, now); Log.Write("explore: press " + a);
-        SendEscapeKey(ClickOwner.Explore); exploreBusyUntil = now + 400; return;
-      }
-      int sx = o.X + (int)Math.Round(a.X), sy = o.Y + (int)Math.Round(a.Y);
-      var vs = SystemInformation.VirtualScreen;
-      if (!OwnButtons.AllInside(new[] { vs.X, vs.Y, vs.Width, vs.Height }, sx, sy, sy)) { ex.Stop(a + " lies off the screen (the game window is larger than the screen)"); ExploreEnd(ex); return; }
-      ex.Sent(a, now); Log.Write("explore: press " + a);
-      Send(new AutoAction { Kind = AutoKind.Click, X = a.X, Y = a.Y }, sx, sy, ClickOwner.Explore, a.Target, a.Form, freshOffers, unknownForms);
-      exploreCursor = new W32.POINT(sx, sy); exploreCursorSet = true; exploreBusyUntil = now + 400;
-    }
-
-    // ---- TEST build: the lab's «city» / «prep <name>» (src/LabRec.cs LabPrep), started by the runner's rec.cmd (app/HostBridge.cs LabSetupStart): the game is put
-    // into a start state by clicks that go ONLY through the click gate (the equip or the sell owner's own whitelist), the pilots idle meanwhile; the end
-    // (ok or why not) goes to LabPrepDone and the host writes the ack
-    LabPrep labPrep; long labPrepBusyUntil, labPrepStartAt;
-    public bool LabPrepRunning { get { return labPrep != null; } }
-    public event Action<string, bool, string> LabPrepDone;
-    public bool LabPrepStart(string name) {
-      if (!Channel.IsTest || labPrep != null || explorer != null) return false;
-      if (name != LabPrep.CityName && !LabPrep.Known(name)) return false;
-      labPrep = new LabPrep(name); labPrepBusyUntil = 0; labPrepStartAt = NowMs();
-      gate.Resume(ClickOwner.Equip); gate.Resume(ClickOwner.Sell);
-      Run();
-      return true;
-    }
-    void LabPrepEnd(bool ok, string why) {
-      var p = labPrep; if (p == null) return;
-      labPrep = null; labPrepBusyUntil = 0;
-      Log.Write("lab prep: " + p.Name + (ok ? " ok" : " FAILED") + ": " + why);
-      var h = LabPrepDone; if (h != null) try { h(p.Name, ok, why); } catch (Exception e) { Log.Write("lab prep: result not handed over: " + e.Message); }
-    }
-    string labPrepSaid = "";
-    void TickLabPrep() {
-      var p = labPrep; long now = NowMs();
-      if (now - labPrepStartAt > p.CapMs + 3000) { LabPrepEnd(false, "not done in " + p.CapMs / 1000 + " s (the game window or its screen was not readable)"); return; }
-      if (sending || now < labPrepBusyUntil) return;
-      IntPtr hwnd = GameWindow();
-      if (hwnd == IntPtr.Zero || W32.IsIconic(hwnd)) return;
-      W32.RECT cr; if (!W32.GetClientRect(hwnd, out cr) || cr.B < 200) return;
-      var o = new W32.POINT(0, 0); W32.ClientToScreen(hwnd, ref o);
-      int fp, gp; W32.GetWindowThreadProcessId(W32.GetForegroundWindow(), out fp); W32.GetWindowThreadProcessId(hwnd, out gp);
-      bool front = fp == gp;
-      double W = cr.R, H = cr.B, U = Ui.Unit(W, H);
-      var owner = p.InventoryPrep ? ClickOwner.Sell : ClickOwner.Equip;
-      var scr = screens.Current;
-      if (gate.Halted(owner)) { LabPrepEnd(false, "the click gate stopped " + owner + ": " + gate.HaltReason(owner) + " - " + gate.HaltDetail(owner)); return; }
-      if (p.IsCity && NavCoreOn) { TickLabPrepNav(p, o, cr, front, now); return; }
-      if (front) {
-        var pre = gate.Preflight(owner, scr, now);
-        AnnounceHalts();
-        if (pre.Verdict == GateVerdict.Deny) return;
-        if (pre.Reason == "offer" && OfferStep(owner, scr, o, cr, front, now)) return;
-        if (pre.Reason == "unknown" && UnknownBackStep(owner, scr, o, cr, front, now)) return;
-        if (pre.Verdict == GateVerdict.Wait) return;
-        if (MapStep(owner, scr, o, cr, front, now)) return;
-      }
-      if (scr != null && scr.Held) return;   // (the reads failed this moment and the last screen is shown: nothing is judged or clicked on it)
-      var v = new LabPrepView { Now = now, Front = front, W = W, H = H, U = U, Kind = scr != null ? scr.Kind : ScreenKind.Unknown, Modal = scr == null || scr.ModalOpen || scr.OfferCount > 0 };
-      if (scr != null) {
-        v.InvEquipTab = scr.InvEquipTab; v.InvArtTab = scr.InvArtTab; v.InvBulk = scr.InvBulk; v.InvBulkKnown = scr.InvBulkKnown; v.InvArtBulk = scr.InvArtBulk; v.InvArtBulkKnown = scr.InvArtBulkKnown;
-      }
-      if (front && !p.IsCity) {
-        if (v.Kind == ScreenKind.City) { v.HeroesButton = HeroesButtonNow(o, W, H); v.InvButton = InventoryButtonNow(o, W, H); v.CityInvPt = new[] { W - invDX * U, H - hg2.HeroesBtnDY * U }; }
-        if (v.Kind == ScreenKind.Inventory) {
-          var tr = ArtFrames.Rect(Geo.Current, "inventory.leftTab.artifact", W, H, U);
-          double ax = tr != null ? tr.CX : 0.0867 * U, ay = tr != null ? tr.CY : (0.1176 + 2 * 0.1423 + 0.0625) * U;
-          v.ArtTabPt = new[] { ax, ay }; v.MatTabPt = new[] { ax, ay + 0.1423 * U };   // (the left strip: 91 px = 0.1423 U apart; materials the toggle below «Артефакт»)
-        }
-        var hs = screens.Hero;
-        if (v.Kind == ScreenKind.HeroScreen && hs != null) {
-          v.HeroFormOk = hs.FormOk; v.Tab = hs.Tab; v.Part = hs.Part; v.FactionList = hs.FactionList; v.ChosenCamps = hs.ChosenCamps; v.ClassChosen = hs.ClassChosen; v.ChosenClass = hs.ChosenClass; v.ClassSrc = hs.ClassSrc;
-          v.ClassCount = hs.ClassCount; { long[] ctg = HeroTags(runHero); if (ctg != null && ctg.Length > 0) v.AvoidClass = ctg[0]; }
-          v.GridFilterOpen = HeroFilterSeen(o, W, H, hs.FilterMem);
-          var sr = hg.Slot(0, W, H); if (sr != null) v.SlotPt = new[] { sr[0] + sr[2] / 2.0, sr[1] + sr[3] / 2.0 };
-          var fr = hg.Filter(W, H); if (fr != null) v.FilterPt = new[] { fr[0] + fr[2] / 2.0, fr[1] + fr[3] / 2.0 };
-          if (hs.Part >= 0) {
-            v.PanelOpen = GearMain(o, W, H, U);
-            v.SidePanelOpen = GearSide(o, W, H, U);
-            v.SetPanelOpen = GearSets(o, W, H, U, v.SidePanelOpen);
-            long[] suits, mains, subs; int part; bool foreign, hideEq;
-            if (addrs != null && RFX.ReadFilter(addrs, out suits, out mains, out subs, out part, out foreign, out hideEq)) { v.FilterRead = true; v.Suits = suits; v.HideEquipped = hideEq; }
-          }
-        }
-      }
-      var a = p.Step(v);
-      string said = a.Move + "|" + a.Why; if (said != labPrepSaid) { labPrepSaid = said; Log.Write("lab prep " + p.Name + ": " + a); }
-      switch (a.Move) {
-        case LabMove.Done: LabPrepEnd(true, a.Why); return;
-        case LabMove.Fail: LabPrepEnd(false, a.Why); return;
-        case LabMove.Wait: return;
-        case LabMove.Back:
-          if (!front) return;
-          if (v.Kind == ScreenKind.Unknown) UnknownBackStep(owner, scr, o, cr, front, now); else BackStep(owner, scr, true, o, cr, front, now);
-          return;
-      }
-      int sx = o.X + (int)Math.Round(a.X), sy = o.Y + (int)Math.Round(a.Y);
-      if (sx < o.X || sy < o.Y || sx >= o.X + cr.R || sy >= o.Y + cr.B) { LabPrepEnd(false, a.Why + " lies outside the game window"); return; }
-      var act = new AutoAction { Kind = AutoKind.Click, X = a.X, Y = a.Y };
-      bool sent = a.Owner == ClickOwner.Equip ? EquipSend(a.Target, act, sx, sy, o, front) : SendInside(act, o, cr, a.Owner, a.Target, front);
-      if (sent) labPrepBusyUntil = now + 300;
-    }
-
     /// <summary>TEST build: the recorder starts / stops. Our windows stay in screen captures while it runs (then the screen looks mask them themselves).</summary>
     public void SetRecording(bool on) {
       RecInfo.Active = on; GlowWindow.RecorderOn = on;   // (the hint windows stay out of screen captures: the recorder composites them onto every frame itself, RecCapture / OverlayPaint.Composite)
       recOn = on; if (on) recSw.Restart(); else recSw.Reset();
       if (on) RecReads.Clear();
-      foreach (var w in new[] { glow, tip, glowPulse, tipPulse, cancelWin, recWin }) if (w.IsHandleCreated) w.ApplyAffinity();
+      foreach (var w in new[] { glow, tip, glowPulse, tipPulse, recWin }) if (w.IsHandleCreated) w.ApplyAffinity();
       Run();
     }
 
@@ -995,27 +732,22 @@ namespace RealmForge {
       inputAge = W32.InputAgeMs();
       IntPtr tw = GameWindow();
       bool twShown = tw != IntPtr.Zero && W32.IsWindowVisible(tw) && !W32.IsIconic(tw), twFront = twShown && IsForeground(tw);
-      bool effect = gate.AnyPending || SellPolling || EquipHot;
+      bool effect = false;
       int wantInterval = LoadPlan.OverlayMs(ScreensWanted(), DateTime.Now < diagUntil, effect, twShown, twFront, LocateWins || (sellHint && sellWanted != null), listMoving, inputAge, SellGuideShown);
       if (timer.Interval != wantInterval) timer.Interval = wantInterval;
-      loadMode = !ScreensWanted() ? "idle" : !twShown || !twFront ? "away" : effect || EquipClicking || SellClicking || (LocateWins && LocateClicking) ? "pilot" : "hint";
+      loadMode = !ScreensWanted() ? "idle" : !twShown || !twFront ? "away" : "hint";
       if (Channel.IsTest) { long tn = NowMs(); if (modeAt != 0 && tn - modeAt > 0 && tn - modeAt < 5000) modeMs[loadMode == "away" ? 0 : loadMode == "hint" ? 1 : loadMode == "pilot" ? 2 : 3] += tn - modeAt; modeAt = tn; }
       // the setting «show hints in recordings» and the test build's recorder: while the auto click works the windows are hidden from captures again (where the platform can), so no look that decides a click sees them
-      { long pn = NowMs(); if (loadMode == "pilot") pilotHiddenUntil = pn + 4000; GlowWindow.SetPilotHidden(pn < pilotHiddenUntil); }
-      ApplyArtGate();
+
       ReadScreens(NowMs());   // the game's screen, once per tick: every feature below takes it from here
-      if (explorer != null) { TickExplore(); return; }   // (TEST build: the lab's explorer runs alone)
-      if (labPrep != null) { TickLabPrep(); return; }      // (TEST build: the lab's city / prep runs alone)
+
       UpdateArtStep();
       // the game is minimized / covered / alt-tabbed: nothing of ours stays over the desktop (the features go on reading)
       if (!GameDrawable()) { if (glow.Visible) glow.Hide(); HideTip(); drawnKey = null; }
       if (TickHintFallback()) return;   // hint mode on a screen no flow can go on from: one hint for every flow (back to the city)
-      if (LocateWins) { TickLocate(); TickCancel(); return; }
-      if (sellHint && sellWanted != null) { TickSellHint(); TickArtSellAuto(); TickCancel(); return; }
-      if (sellWanted != null && spilot.State == "done") { TickAuto(); TickSellFinalAuto(); TickCancel(); return; }   // the auto run marked everything: the final plate and the frame on «Продать»
+      if (LocateWins) { TickLocate(); return; }
+      if (sellHint && sellWanted != null) { TickSellHint(); return; }
       TickFrame();
-      TickAuto();
-      TickCancel();
     }
 
     // «Отменить надевание»: top centre of the game (free on the hero screen and in the gear list), only while a started
@@ -1032,14 +764,14 @@ namespace RealmForge {
       PilotFlow flow; var step = LocateKind.None;
       if (LocateWins) {
         var rq = locateReq;
-        if (rq == null || locateDoneUntil != 0 || LocateAutoOn) { hintFbSaid = ""; return false; }
+        if (rq == null || locateDoneUntil != 0) { hintFbSaid = ""; return false; }
         flow = CityFirst.OfLocate(rq.Purpose);
         var ls = rq.Purpose == "artPromote" ? artStep : locateStep;
         if (ls != null) step = ls.Kind == LocateKind.BackToCity || ls.Kind == LocateKind.ClosePopup ? ls.Covered : ls.Kind;
       } else if (sellHint && sellWanted != null) {
-        if (sellArt && ArtAutoOn) { hintFbSaid = ""; return false; }
+
         flow = sellArt ? PilotFlow.ArtSell : PilotFlow.Sell;
-      } else if (sellWanted == null && !AutoEnabled && (runHero > 0 || target != 0 || (hintKind != "" && hintKind != "done" && hintKind != "bulk"))) {
+      } else if (sellWanted == null && (target != 0 || (hintKind != "" && hintKind != "done" && hintKind != "bulk"))) {
         flow = ArtPhase ? PilotFlow.ArtEquip : PilotFlow.Equip;
       } else { hintFbSaid = ""; return false; }
       IntPtr hwnd = GameWindow();
@@ -1074,71 +806,16 @@ namespace RealmForge {
     }
 
     /// <summary>A storage cleanup guide is on the screen (the hint's frames and plates, or the final plate after the auto run): its reads stay active (LoadPlan), nothing hides for idleness.</summary>
-    bool SellGuideShown { get { return sellWanted != null && (sellHint || spilot.State == "done"); } }
+    bool SellGuideShown { get { return sellWanted != null && sellHint; } }
 
-    /// <summary>The storage cleanup's auto click is running (not halted, not finished): the stop button is shown for it.</summary>
-    bool SellClicking { get { return sellWanted != null && !sellFinal && (!sellHint || (sellArt && ArtAutoOn)) && runHero <= 0 && !LocateWins && !gate.Halted(ClickOwner.Sell) && spilot.State != "done" && spilot.State != "failed"; } }
 
-    /// <summary>The artifact flows (storage cleanup, promotion) may click: the player's auto click AND the site's "artAuto" switch (off by default).</summary>
-    public bool ArtAutoEnabled;
-    bool ArtAutoOn { get { return AutoEnabled && ArtAutoEnabled; } }
-    /// <summary>The Locate owner's way clicks (back arrows, «Инвентарь», Escape): an artifact request follows the artifact switch, the others the locateAuto one.</summary>
-    bool LocateAutoOn { get { return locateReq != null && locateReq.Purpose == "artPromote" ? ArtAutoOn : AutoEnabled && LocateAutoEnabled; } }
 
-    /// <summary>The gate's artifact rules follow the switches at every tick (a switch turned off mid-run: hints only again, at once).</summary>
-    void ApplyArtGate() {
-      bool on = ArtAutoOn, artReq = locateReq != null && locateReq.Purpose == "artPromote";
-      bool prepArt = labPrep != null && labPrep.Name == "start_artifact" && on;   // (TEST build: the lab's prep opens the artifact tab with the sell owner's own target)
-      gate.NoSellClicks = sellArt && !on; gate.ArtSellAuto = (sellArt && on) || prepArt;
-      gate.NoLocateClicks = artReq && !on; gate.ArtLocateAuto = artReq && on;
-      gate.ArtEquipAuto = ArtPhase && on;
-    }
 
-    /// <summary>«Показать в игре» with auto click enabled for it: the stop button shows during the WHOLE run (not only while a click is being made),
-    /// until the pilot stops (gate, cancel, stuck), the job is done or the last step (the player's own button) is reached.</summary>
-    bool LocateClicking {
-      get {
-        if (locateReq != null && locateReq.Purpose == "artPromote") {
-          // the artifact promotion: the stop button shows until the pilot stops, the job is done or the step is the player's own (the final «Продвинуть», «Улучшить» first ...)
-          if (!ArtAutoOn || artPilot.Stopped || gate.Halted(ClickOwner.Locate) || locateDoneUntil != 0) return false;
-          var ak = artStep != null ? artStep.Kind : LocateKind.None;
-          return ak != LocateKind.ArtPromote && ak != LocateKind.ArtLevelFirst && ak != LocateKind.ArtMatNone && ak != LocateKind.ArtMatGuess && ak != LocateKind.ArtWrongArtifact && ak != LocateKind.NoItem && ak != LocateKind.None;
-        }
-        if (locateReq == null || !AutoEnabled || !LocateAutoEnabled || lpilot.Stopped || gate.Halted(ClickOwner.Locate) || locateDoneUntil != 0) return false;
-        var k = locateStep != null ? locateStep.Kind : LocateKind.None;
-        return k != LocateKind.Done && k != LocateKind.AscendReady && k != LocateKind.NoItem && k != LocateKind.OtherAccount;
-      }
-    }
 
-    /// <summary>The equip pilots may click: a started build, or (auto click switched on while the job was already shown) the hint of a build with the game scanned.
-    /// Follows AutoEnabled at every tick, so the stop button shows when auto click is switched on mid-job and hides when it is switched off.</summary>
-    bool EquipClicking { get { return AutoEnabled && (runHero > 0 || (addrs != null && !LocateWins && sellWanted == null && (target != 0 || (hintKind != "" && hintKind != "done" && hintKind != "bulk")))); } }
 
-    /// <summary>Something is shown or running that auto click could take over (the host starts the game scan for it when auto click is switched on).</summary>
+
     public bool HasJob { get { return PlanOn || locateReq != null || sellWanted != null; } }
 
-    void TickCancel() {
-      IntPtr hwnd = GameWindow();
-      int fp = 0, gp = 0;
-      if (hwnd != IntPtr.Zero) { W32.GetWindowThreadProcessId(W32.GetForegroundWindow(), out fp); W32.GetWindowThreadProcessId(hwnd, out gp); }
-      W32.RECT cr;
-      if (!(EquipClicking || (LocateWins && LocateClicking) || SellClicking) || !AutoEnabled || hwnd == IntPtr.Zero || W32.IsIconic(hwnd) || fp != gp || !W32.GetClientRect(hwnd, out cr) || cr.B < 200) {
-        if (cancelWin.Visible) cancelWin.Hide();
-        return;
-      }
-      var o = new W32.POINT(0, 0); W32.ClientToScreen(hwnd, ref o);
-      double U = Ui.Unit(cr.R, cr.B);
-      int w = (int)(0.25 * U), h = (int)(0.058 * U);
-      string cancelText = runHero > 0 ? CancelText : SellClicking ? SellCancelText : LocateWins && LocateClicking ? LocateCancelText : CancelText;   // (here only for a build, for «Показать в игре» or for the storage cleanup)
-      var mp = Control.MousePosition; var cx = o.X + cr.R / 2 - w / 2; var cy = o.Y + (int)(0.012 * U);
-      bool hot = mp.X >= cx && mp.X < cx + w && mp.Y >= cy && mp.Y < cy + h, down = hot && (Control.MouseButtons & MouseButtons.Left) != 0;
-      string key = cancelText + "|" + w + "x" + h + "|" + (down ? "d" : hot ? "h" : "n");
-      if (key != cancelDrawn || cancelBmp == null) {
-        if (cancelBmp != null) cancelBmp.Dispose();
-        cancelBmp = CancelBitmap(w, h, cancelText, hot, down); cancelDrawn = key;
-      }
-      cancelWin.Put(cancelBmp, o.X + cr.R / 2 - w / 2, o.Y + (int)(0.012 * U));
-    }
 
     // the record button (TEST build): a round gold-rimmed dark button on the game's left edge at mid-height (d = 0.034 U): a red dot when idle,
     // a red rounded square while recording, with a plate «0:42» beside it. The central gate (GameDrawable) decides, as for every overlay drawing
@@ -1238,29 +915,10 @@ namespace RealmForge {
 
     static string Num(double v) { return v >= 1e9 ? "-" : v.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture); }
 
-    /// <summary>The plan went away (cancelled, another scenario) while the hero pilot had the grid's filter pop-up open: it is cleared («Все») and closed (src/HeroPilot.cs Cleanup).</summary>
-    void HeroFilterCleanup() {
-      if (!AutoEnabled || runHero > 0 || !hpilot.FilterDirty || sending) return;
-      IntPtr hwnd = GameWindow(); W32.RECT cr;
-      if (hwnd == IntPtr.Zero || W32.IsIconic(hwnd) || !W32.GetClientRect(hwnd, out cr) || cr.B < 200) return;
-      var o = new W32.POINT(0, 0); W32.ClientToScreen(hwnd, ref o);
-      var hs = screens.Hero ?? heroScreen;
-      if (hs == null || !hs.FormOk || hs.Hero == 0) { hpilot.FilterDirty = false; return; }
-      int fp, gp; W32.GetWindowThreadProcessId(W32.GetForegroundWindow(), out fp); W32.GetWindowThreadProcessId(hwnd, out gp);
-      var hv = new HeroView { NowMs = NowMs(), Foreground = fp == gp, UserBusy = (W32.GetAsyncKeyState(0x01) & 0x8000) != 0 || (W32.GetAsyncKeyState(0x02) & 0x8000) != 0 || NowMs() - lastMoveMs < 700, W = cr.R, H = Ui.Unit(cr.R, cr.B), ClientH = cr.B,
-        FilterOpen = fp == gp && HeroFilterSeen(o, cr.R, cr.B, HeroView.MemOf(hs)), FilterMem = HeroView.MemOf(hs), FilterPending = hs.FilterPending, ClassChosen = hs.ClassChosen, ChosenClass = hs.ChosenClass, ClassSrc = hs.ClassSrc, ChosenCamps = hs.ChosenCamps };
-      var a = hpilot.Cleanup(hv);
-      if (a == null || a.Kind != AutoKind.Click) return;
-      int x = o.X + (int)Math.Round(a.X), y = o.Y + (int)Math.Round(a.Y);
-      if (x < o.X || y < o.Y || x >= o.X + cr.R || y >= o.Y + cr.B) return;
-      Log.Write("hero: the plan is gone with the grid's filter pop-up open - clearing it");
-      EquipSend(ClickTarget.EquipFilter, a, x, y, o, hv.Foreground);
-    }
 
     void FrameStep() {
       diagInfo = "";
       TickHint();
-      HeroFilterCleanup();
       // the held «selected» step (hint "replace", the page's guide state): «Заменить» is the only frame; the item's frame and its «pick» plate never come back
       // from the list tracking (they alternated with it on mouse moves, 1.6.66.439)
       // (the pilot still needs the item's row and the game's selection to press «Заменить»: read here, nothing drawn)
@@ -1509,14 +1167,14 @@ namespace RealmForge {
         double fx = fg.X(fg.MainCloseX, W, H), fy = fg.Y(fg.CloseY, W, H);
         filterOpen = GearMain(o, W, H, U);
         if (filterOpen) {
-          bool pilot = AutoEnabled && fpilot.State == "work";
+
           // the plan wants the filter (its filter step, or the item far down - the page's «faster» tip): what to pick in it
           // is lit; once it is set the frame goes on in the list beside the pop-up (its × would drop the filter again)
           // (far: reported by the frame, or the item's row alone - the frame may not know where the list is yet)
           bool far = (farFor != 0 && farFor == target) || frameRow > 3 * g.VisibleRows;
           int[] gr = null; string[] gl = null; int guide = hintKind == "filter" || far ? FilterGuideTip(o, cr, hintKind == "filter", out gr, out gl) : -1;
           if (guide >= 0) {
-            if (pilot) { filterState = "filter_guide"; HideTip(); return; }
+
             if (guide == 1) {
               filterState = "filter_guide";
               DrawTip(o.X + gr[0], o.Y + gr[1], gr[2], gr[3], gl, H, false, gr[1] < 0.3 * H, gr[0] > W / 2);
@@ -1531,11 +1189,11 @@ namespace RealmForge {
             // unless the pop-up covers the item
             if (!CoveredByFilter(o, cr, U)) filterOpen = false;
             else { CloseFilterTip(o, fx, fy, U, H, Tx("filterCovered")); return; }
-          } else if (!pilot) {
+          } else {
             // a filter the plan does not need over the list: the tip points at its ×
             CloseFilterTip(o, fx, fy, U, H, CloseFilterText);
             return;
-          } else filterState = "filter_open";
+          }
         }
       }
       if (hintKind == "") { HideTip(); return; }
@@ -1659,7 +1317,7 @@ namespace RealmForge {
     /// in the hero list (where the list is scrolled is found like in the gear list: a fresh list at its top, a click on a
     /// hero, the cards' row phase and the list's picture between looks).</summary>
     void TickHeroHint(W32.POINT o, double W, double H) {
-      if (AutoEnabled && runHero > 0) { HideTip(); return; }   // the auto-pilot brings the hero up itself
+
       long now = NowMs();
       if (screens.Hero != null) heroScreen = screens.Hero;   // the screen of this tick (ReadScreens)
       else if (heroScreen == null || now - heroReadAt >= 250 || now < heroReadAt) { heroScreen = RFX.ReadHeroScreen(addrs, heroScreen); heroReadAt = now; }
@@ -2125,294 +1783,10 @@ namespace RealmForge {
       }
     }
 
-    // ---------------------------------------------------------------- auto-pilot
-
     static long NowMs() { return Environment.TickCount & 0x7FFFFFFF; }
 
-    void AutoDetailFor(string st) {
-      var d = new System.Collections.Generic.Dictionary<string, string>();
-      var v = lastAutoView; var f = lastFilterView;
-      string tr = pilot.Trace != "" ? pilot.Trace : lastPilotTrace;
-      // (a hero pilot's stop: its own reason, not the item pilot's last line - that was the previous item's)
-      bool heroSt = st == "hero_failed";
-      string why = heroSt ? hpilot.Why : pilot.Why;
-      if (heroSt) tr = "hero: " + hpilot.Why;
-      d["why"] = why;
-      d["item"] = target.ToString();
-      d["place"] = "row " + curRow + "/" + curCol + " slot " + hintSlot + " guide " + hintKind;
-      d["trace"] = tr;
-      d["tries"] = "clicks " + pilot.Clicks + " drags " + pilot.Drags;
-      d["sel"] = "sel " + curSel + " owner " + (v != null ? v.Owner : -1) + " hero " + hintHero + " screen hero " + (v != null ? v.ScreenHero : 0);
-      d["filter"] = f == null ? "-" : "hideEq " + f.HideEquipped + " otherHero " + f.OnOtherHero + " panel " + f.PanelOpen + "/" + f.SidePanelOpen + " note " + fpilot.Note
-        + " kind " + filterKind + " listed " + f.ItemListed + " state " + fpilot.State + " suits " + (f.Suits != null ? f.Suits.Length : -1) + " subs " + (f.SubAttrs != null ? f.SubAttrs.Length : -1);
-      d["client"] = lastClientW + "x" + lastClientH + " row1top " + (v != null ? ((int)v.Row1Top).ToString() : "-") + " anchor " + anchor.Has + " src " + (anchorSrc == "" ? "-" : anchorSrc) + " panelok " + PanelOk
-        + " toprow1 " + (int)ScrollAnchor.TopRow1(g, Ui.Unit(Math.Max(1, lastClientW), Math.Max(1, lastClientH))) + " rows " + (types != null ? types.Length - 1 : -1);
-      // the hero pilot (the plan's hero on the hero screen, its grid filter pop-up): the slot's and the hero's stops need it
-      d["hero"] = hpilot.Detail(lastHeroView);
-      // the item pilot's slot step: the slot rect and what the screen read said
-      d["slot"] = v == null ? "-" : (v.Slot != null ? "rect " + v.Slot[0] + "," + v.Slot[1] + "," + v.Slot[2] + "x" + v.Slot[3] : "none") + " open " + v.SlotOpen + " panelNone " + v.PanelNone + " panelOk " + v.PanelOk;
-      AutoDetail = d;
-    }
 
-    void AutoSay(string st) { if (st != autoSaid) { autoSaid = st; AutoDetailFor(st); autoReport(st); Log.Write("auto: " + st + (target != 0 ? " item " + target + " row " + curRow + "/" + curCol + " anchor=" + anchor.Has : "")); } }
 
-    /// <summary>The pilot's step for this tick: gather what the game shows, ask src/AutoPilot.cs, do the action.</summary>
-    void TickAuto() {
-      if (!AutoEnabled || addrs == null || sending) { if (!AutoEnabled) AutoSay("off"); return; }
-      long now = NowMs();
-      // the player's own mouse use (the pilot's moves are remembered in `seen`)
-      W32.POINT c;
-      if (W32.GetCursorPos(out c)) {
-        if (seenSet && (c.X != seen.X || c.Y != seen.Y)) lastMoveMs = now;
-        seen = c; seenSet = true;
-      }
-      bool down = (W32.GetAsyncKeyState(0x01) & 0x8000) != 0 || (W32.GetAsyncKeyState(0x02) & 0x8000) != 0;
-      if (down && !btnWasDown) userClick = true;
-      btnWasDown = down;
-
-      IntPtr hwnd = GameWindow();
-      // a started plan («Надеть» here or on the site): the player's click left our window in front, so
-      // the game is brought forward (and restored) - only from our own window, never over another program
-      if (RaiseGame(hwnd, runHero > 0 || sellWanted != null, now, (runHero > 0 && AutoEnabled) || SellClicking)) return;
-      if (hwnd == IntPtr.Zero || W32.IsIconic(hwnd)) { AutoSay("idle"); return; }
-      W32.RECT cr; if (!W32.GetClientRect(hwnd, out cr) || cr.B < 200) { AutoSay("idle"); return; }
-      var o = new W32.POINT(0, 0); W32.ClientToScreen(hwnd, ref o);
-      int fp, gp; W32.GetWindowThreadProcessId(W32.GetForegroundWindow(), out fp); W32.GetWindowThreadProcessId(hwnd, out gp);
-      if (sellWanted != null) { bool busy = down || now - lastMoveMs < 700; bool uc = userClick; userClick = false; TickSell(o, cr, now, fp == gp, busy, uc); return; }
-      // the click gate stopped the equip pilot (an unexpected screen, no effect of a click ...): hints only until the next «Надеть»
-      if (gate.Halted(ClickOwner.Equip)) { AutoSay("gate_" + gate.HaltReason(ClickOwner.Equip)); return; }
-
-      // «Заменить»: the guide says the right item is selected; the pilot re-checks hero and owner in memory right now
-      bool confirm = AutoConfirm && hintKind == "replace" && target > 0;
-      // the button is looked for only with the game in front (TickHint): the screen shows the game then
-      var v = new AutoView {
-        NowMs = now, Foreground = fp == gp, UserBusy = down || now - lastMoveMs < 700, UserClicked = userClick, H = Ui.Unit(cr.R, cr.B),
-        Slot = hintKind == "slot" ? hg.Slot(hintSlot, cr.R, cr.B) : null,
-        Target = target, Row = curRow, Col = curCol, Sel = curSel, SelRow = selRow, SelCol = selCol,
-        SlotOpen = hintKind == "slot" && screens.Hero != null && screens.Hero.FormOk && screens.Hero.Tab == HeroGeometry.GearTab && screens.Hero.Part == hintSlot,
-        PanelOk = PanelOk, PanelNone = PanelNone,
-        AnchorHas = anchor.Has && !follow.Unsure && types != null && typesPtr != 0, Row1Top = anchor.Row1Top, Types = types,
-        AutoConfirm = confirm, Button = confirm ? confirmBtn : null, Hero = hintHero,
-        ScreenHero = confirm ? RFX.ReadHero(addrs) : 0, Owner = AutoConfirm && target > 0 ? RFX.ReadOwner(addrs, target) : -1
-      };
-      { var cs = screens.Current;   // the item's tip among the shown forms (a pilot's flow form of the hero screen: ScreenMap.FlowForms)
-        v.TipKnown = RFX.UiKnown && !formsUnread && cs != null && !cs.Held && cs.Kind == ScreenKind.HeroScreen && cs.OfferRead && formsKind == ScreenKind.HeroScreen;
-        v.TipShown = EquipTipShown(); RFX.NavProbeSetPix("tip", !v.TipKnown ? "unknown" : v.TipShown ? "yes" : "no");   // (probe only; the host has no tip pixel look: this is the screens flow verdict)
-        v.BlueNone = confirm && confirmBlueNone; v.ButtonStill = confirm && confirmBtn != null && confirmStill; }
-      userClick = false; lastAutoView = v; lastClientW = cr.R; lastClientH = cr.B;
-      // the navigator core (src/Nav*.cs, behind the navCore switch, off by default): the gear phase of a started plan; none of the preamble below runs for it
-      // (the navigator drives the gear phase from wherever the game stands: the old "city first" start is over for the run - else the artifact phase would go back through the city)
-      if (NavCoreOn && runHero > 0 && !ArtPhase) { if (screens.Current != null && (screens.Current.Kind == ScreenKind.City || screens.Current.Kind == ScreenKind.HeroScreen)) cityRunEquip = true; TickAutoNav(o, cr, v, now, confirm); return; }
-      // an offer pop-up over the city is closed before the plan's next step (the equip helper has no preflight of its own here)
-      if ((runHero > 0 || target > 0) && v.Foreground && !v.UserBusy && OfferStep(ClickOwner.Equip, screens.Current, o, cr, v.Foreground, now)) return;
-      // a screen nobody knows for 20 s (or one a form search did not find): stop instead of waiting for ever
-      // a full-screen screen nobody knows: its back arrow top left (at most 3 presses a run, each has to change the screen)
-      if ((runHero > 0 || target > 0) && v.Foreground && !v.UserBusy && UnknownBackStep(ClickOwner.Equip, screens.Current, o, cr, v.Foreground, now)) return;
-      // a known screen the plan cannot start from (the Foundry, the inventory, the gem screen ...): back to the city with its arrow top left
-      // (the artifact steps go on from the hero screen the gear steps left: no city first there, only the card / filter over it closed - ArtCityStart)
-      bool artHere = screens.Current != null && ArtCityStart.Settled(ArtPhase, screens.Current.Kind);
-      if (artHere) cityRunEquip = true;
-      bool cityEq = runHero > 0 && CityStartDue(ref cityRunEquip, screens.Current, now);
-      bool artCover = artHere && (EquipTipShown() || GearMemNow().Open != Mem3.No || GearMemNow().Side == Mem3.Yes);
-      if (runHero > 0 && v.Foreground && !v.UserBusy && BackStep(ClickOwner.Equip, screens.Current, cityEq || CityFirst.NeedsCity(ArtPhase ? PilotFlow.ArtEquip : PilotFlow.Equip, screens.Current), o, cr, v.Foreground, now, cityEq || artCover)) { AutoSay("work"); return; }
-      if ((runHero > 0 || target > 0) && v.Foreground && !v.UserBusy && gate.UnknownStall(ClickOwner.Equip, screens.Current, now)) { AnnounceHalts(); return; }
-      // first the plan's hero on the hero screen (a started plan only), then the game's filter (the item far down or
-      // hidden), then the item itself
-      if (runHero > 0) {
-        if (screens.Hero != null) heroScreen = screens.Hero;   // the screen of this tick (ReadScreens)
-        // the gear filter pop-up left open (the last item's) stays over the hero grid and takes its clicks: closed first
-        if (heroScreen.FormOk && heroScreen.Hero > 0 && heroScreen.Hero != runHero && v.Foreground && !v.UserBusy && now >= slotCloseAfter
-            && GearMain(o, cr.R, cr.B, Ui.Unit(cr.R, cr.B))) {
-          slotCloseAfter = now + 900;
-          Log.Write("hero: a pop-up (the gear filter or an item card) is over the grid - closing it");
-          EquipSend(ClickTarget.EquipClosePopup, new AutoAction { Kind = AutoKind.Click }, o.X + (int)Math.Round(fg.X(fg.MainCloseX, cr.R, cr.B)), o.Y + (int)Math.Round(fg.Y(fg.CloseY, cr.R, cr.B)), o, v.Foreground);
-          return;
-        }
-        var hv = new HeroView {
-          NowMs = now, Foreground = v.Foreground, UserBusy = v.UserBusy, UserClicked = v.UserClicked, W = cr.R, H = Ui.Unit(cr.R, cr.B), ClientH = cr.B,
-          Plan = runHero, Hero = heroScreen.FormOk ? heroScreen.Hero : 0, Tab = ArtPhase ? HeroGeometry.GearTab : heroScreen.Tab, Part = heroScreen.Part, SmallCards = heroScreen.SmallCards,
-          Heroes = heroScreen.Heroes,
-          HeroesButton = heroScreen.Hero == 0 && v.Foreground && HeroesButtonNow(o, cr.R, cr.B),
-          FilterOpen = v.Foreground && HeroFilterSeen(o, cr.R, cr.B, HeroView.MemOf(heroScreen)), FilterMem = HeroView.MemOf(heroScreen), FilterPending = heroScreen.FilterPending, ClassChosen = heroScreen.ClassChosen, ChosenClass = heroScreen.ChosenClass, ClassSrc = heroScreen.ClassSrc, FactionList = heroScreen.FactionList,
-          ChosenCamps = heroScreen.ChosenCamps, ClassCount = heroScreen.ClassCount, GridPtr = heroScreen.GridPtr
-        };
-        long[] tags = HeroTags(runHero);
-        if (tags != null) { hv.HeroClass = tags[0]; hv.HeroCamps = new long[tags.Length - 1]; Array.Copy(tags, 1, hv.HeroCamps, 0, tags.Length - 1); }
-        FillHeroListMem(hv);
-        var ha = hpilot.Step(hv);
-        if (recB != null) { try { recB.Hp = RecView.Line(hv, ha, hpilot.State); } catch (Exception) { } }
-        lastHeroView = hv;
-        LogHero(hv);
-        if (ha != null) {
-          pilot.Reset();
-          AutoSay(hpilot.State == "work" || hpilot.State == "paused" || hpilot.State == "background" ? hpilot.State : "hero_" + hpilot.State);
-          if (ha.Kind == AutoKind.None) return;
-          int hx = o.X + (int)Math.Round(ha.X), hy = o.Y + (int)Math.Round(ha.Y), hy2 = hy + (int)Math.Round(ha.DY);
-          if (hx < o.X || hy < o.Y || hx >= o.X + cr.R || hy >= o.Y + cr.B || hy2 < o.Y || hy2 >= o.Y + cr.B) return;
-          if (!EquipSend(hv.FilterOpen ? ClickTarget.EquipFilter : ClickTarget.EquipNav, ha, hx, hy, o, v.Foreground)) hpilot.NotSent();   // not counted as a try
-          return;
-        }
-      }
-      // the plan's gear is on: the artifact steps (the gear pilots below stay idle)
-      if (ArtPhase) { TickArtEquip(o, cr, v); return; }
-      var fview = FilterViewNow(o, cr, now, v.Foreground, v.UserBusy);
-      // (the list rebuilds under the filter's side panel and after it closes: the item pilot waits for it; PanelOpen alone stays true through the item picks - live 1.6.66.450: the pilot waited for ever)
-      if (fview.PanelOpen && fview.SidePanelOpen) filterTouchAt = now;
-      var fa = fpilot.Step(fview);
-      LogFilter(fview); lastFilterView = fview;
-      if (fview.PanelOpen && fview.SidePanelOpen) v.SideClose = new[] { fg.X(fg.SideCloseX, cr.R, cr.B), fg.Y(fg.CloseY, cr.R, cr.B) };
-      if (fpilot.State == "failed") {
-        if (!filterFailSaid) {
-          filterFailSaid = true;
-          AutoDetailFor("filter_failed");
-          var fc = new System.Collections.Generic.Dictionary<string, string>(AutoDetail);
-          fc["why"] = fpilot.Note;
-          RaiseProblem("pilot.filter_failed", "filter failed: the game's gear filter could not be set for item " + fview.Item + " (kind " + filterKind + ")" + (fpilot.Note != "" ? " - " + fpilot.Note : ""), fc);
-        }
-      } else filterFailSaid = false;
-      if (fa != null) {
-        pilot.Reset();
-        AutoSay(fpilot.State == "failed" ? "idle" : "work");
-        if (fa.Kind == AutoKind.None) return;
-        int fx = o.X + (int)Math.Round(fa.X), fy = o.Y + (int)Math.Round(fa.Y);
-        if (fx < o.X || fy < o.Y || fx >= o.X + cr.R || fy >= o.Y + cr.B) return;
-        // the item's tip (the card of the slot's item, Form_CharactorEquipTip) stands over the list: its tap catcher takes the click on the «Фильтр» bar and only closes
-        // the tip (lab f5516fa2: two of three bar clicks went under it, «the filter panel does not stay open»): one Escape closes the tip first, the click comes after
-        if (!fview.PanelOpen && v.Foreground && !v.UserBusy && EquipTipShown() && ClickGate.OnlyTip(screens.Current) && filterTipEscN < 3) {
-          if (now >= filterTipEscAfter) {
-            filterTipEscAfter = now + 1500; filterTipEscN++;
-            if (TipEscapeSend(cr, v.Foreground)) Log.Write("filter: the item's tip is over the list - closing it before the filter bar is clicked");
-          }
-          return;
-        }
-        if (EquipSend(ClickTarget.EquipFilter, fa, fx, fy, o, v.Foreground)) { filterTouchAt = now; if (!EquipTipShown()) filterTipEscN = 0; }
-        return;
-      }
-      // the next slot with the item's tip / compare still open over the slots (live 1.6.66.354: the pilot clicked the compare card where the
-      // slot is behind it): the tip usually closes by itself after «Заменить»; if it stays 600 ms unchanged ONE Escape closes it (a second only
-      // after 3 s), the slot is not clicked meanwhile
-      if (v.Slot != null && v.TipKnown && v.TipShown && ClickGate.OnlyTip(screens.Current)) {
-        var tcs = screens.Current; string tk = (tcs.Flow ?? "") + "|" + (tcs.ModalWhy ?? "");
-        if (tk != tipSeenKey) { tipSeenKey = tk; tipSeenAt = now; }
-        pilot.Reset();
-        if (v.Foreground && !v.UserBusy && now - tipSeenAt >= TipStillMs && (tipEscapes == 0 || (tipEscapes < 2 && now - tipEscapedAt >= TipAgainMs))) {
-          if (TipEscapeSend(cr, v.Foreground)) { tipEscapes++; tipEscapedAt = now; Log.Write("auto: the item's tip is open over the slots - closing it (Escape " + tipEscapes + ")"); }
-        }
-        return;
-      }
-      if (tipEscapes > 0 || tipSeenKey != null) { tipEscapes = 0; tipSeenKey = null; gate.ResetTipEscapes(ClickOwner.Equip); }
-      // the next slot: an open filter pop-up covers the hero's slots - close it first (the filter was for the item that is
-      // on now; the next one gets its own)
-      if (v.Slot != null && v.Foreground && !v.UserBusy && now >= slotCloseAfter
-          && GearMain(o, cr.R, cr.B, Ui.Unit(cr.R, cr.B))) {
-        slotCloseAfter = now + ClosePopupAgainMs; pilot.Reset();   // (a slow laptop closes it 0.6-1.5 s later: not pressed twice meanwhile)
-        int cx = o.X + (int)Math.Round(fg.X(fg.MainCloseX, cr.R, cr.B)), cy = o.Y + (int)Math.Round(fg.Y(fg.CloseY, cr.R, cr.B));
-        EquipSend(ClickTarget.EquipClosePopup, new AutoAction { Kind = AutoKind.Click }, cx, cy, o, v.Foreground);
-        return;
-      }
-      v.FilterAt = filterTouchAt; v.ListSig = typesPtr != 0 ? (long)typesPtr * 31 + (types != null ? types.Length : 0) : 0;
-      LiveGearView(v, cr);
-      if (v.LiveGrid) FillGearListMem(v);   // (the game's own scroll: standing, bounds, drag threshold)
-      var a = pilot.Step(v);
-      if (recB != null) { try { recB.Ap = RecView.Line(v, a, pilot.State); } catch (Exception) { } }   // (the recorder keeps the view and the answer: tests/ReplayCheck.cs runs the pilot on them again)
-      AutoSay(pilot.State);
-      if (pilot.Trace != "") { Log.Write("auto: " + pilot.Trace); lastPilotTrace = pilot.Trace; pilot.Trace = ""; }
-      if (a.Kind == AutoKind.None) return;
-      int x = o.X + (int)Math.Round(a.X), y = o.Y + (int)Math.Round(a.Y), y2 = y + (int)Math.Round(a.DY);
-      if (x < o.X || y < o.Y || x >= o.X + cr.R || y >= o.Y + cr.B) return;   // never outside the game's client area
-      if (y2 < o.Y || y2 >= o.Y + cr.B) return;
-      // «Заменить» (the player's auto confirm) is its own target; everything else of the item pilot is the gear list
-      bool onConfirm = confirmBtn != null && a.X >= confirmBtn[0] && a.X <= confirmBtn[0] + confirmBtn[2] && a.Y >= confirmBtn[1] && a.Y <= confirmBtn[1] + confirmBtn[3];
-      if (!EquipSend(confirm && onConfirm ? ClickTarget.EquipConfirm : ClickTarget.EquipNav, a, x, y, o, v.Foreground)) pilot.NotSent();
-      else if (cellLivePt != null) pilot.LivePoint(cellLivePt[0], cellLivePt[1]);   // (clicked on the cell's live rect: the pilot learns from there)
-    }
-
-    // Storage cleanup, in the inventory: the city's «Инвентарь» → «Снаряжение» → «Массовая продажа», then the sell
-    // pilot selects the items. Only known screens are clicked; elsewhere the player is asked to open the city.
-    void TickSell(W32.POINT o, W32.RECT cr, long now, bool front, bool busy, bool userClicked) {
-      double W = cr.R, H = cr.B, U = Ui.Unit(W, H);
-      // the screen of this tick (ReadScreens) and the click gate (src/ClickGate.cs): the pilot stops on anything unexpected and clicks
-      // only what the whitelist of the screen allows (in «Массовая продажа»: the list's cells the run is after, nothing else)
-      var scr = screens.Current;
-      if (gate.Halted(ClickOwner.Sell)) { SellSay("gate_" + gate.HaltReason(ClickOwner.Sell)); return; }
-      if (front && !busy) {
-        var pre = gate.Preflight(ClickOwner.Sell, scr, now);
-        AnnounceHalts();
-        if (pre.Verdict == GateVerdict.Deny) return;
-        if (pre.Reason == "offer" && OfferStep(ClickOwner.Sell, scr, o, cr, front, now)) { SellSay("open"); return; }
-        if (pre.Reason == "unknown" && UnknownBackStep(ClickOwner.Sell, scr, o, cr, front, now)) { SellSay("open"); return; }
-        if (pre.Verdict == GateVerdict.Wait) { if (pre.Reason == "unknown") SellSay("no_city"); return; }   // pending: the last click's effect is awaited
-        // a pop-up over the inventory (a wait, a notice that came while marking): closed / waited for first, as on every other screen
-        if (MapStep(ClickOwner.Sell, scr, o, cr, front, now)) { SellSay("open"); return; }
-      }
-      // owner rule: the run starts from the city (the inventory too: back arrow / Escape until the city)
-      if (!ReferenceEquals(sellWanted, sellRunSeen)) { sellRunSeen = sellWanted; cityRunSell = false; cityRunSince = 0; }
-      if (front && !busy && CityStartDue(ref cityRunSell, scr, now) && BackStep(ClickOwner.Sell, scr, true, o, cr, front, now, true)) { SellSay("open"); return; }
-      var inv = screens.Inv;
-      if (scr != null && scr.Kind == ScreenKind.Inventory && inv != null) {
-        if (!inv.EquipTab || !inv.Bulk) {
-          SellSay(front ? "open" : "background");
-          if (!front || busy || now - sellBtnAt < 2000) return;
-          sellBtnAt = now;
-          // the left menu's «Снаряжение» (top left); «Массовая продажа» under the list (bottom left)
-          var a0 = !inv.EquipTab ? new AutoAction { Kind = AutoKind.Click, X = 0.085 * U, Y = 0.315 * U }
-                                 : new AutoAction { Kind = AutoKind.Click, X = 0.5867 * U, Y = H - 0.0723 * U };
-          SendInside(a0, o, cr, ClickOwner.Sell, !inv.EquipTab ? ClickTarget.InvEquipTab : ClickTarget.InvBulkEnter, front);
-          return;
-        }
-        int cols = inv.List != null && inv.List.Cols > 0 ? inv.List.Cols : front && !busy ? InvColumns(o, cr, U) : 0;
-        if (cols > 0) sellCols = cols;
-        if (sellGeoW != W || sellGeoH != H || sellGeoCols != sellCols) {
-          sellGeoW = W; sellGeoH = H; sellGeoCols = sellCols;
-          spilot.Geometry = SellGeometry.Inventory(W, U, sellCols);
-        }
-        // the rows' place: the game's own scroll reading (the picture only learns its constant; it is the last resort without it)
-        double sph = front && !busy && sellScroll.WantPhase(now) ? SellPhase(o, cr, U) : double.NaN;
-        double srow1 = sellScroll.Row1(spilot.Geometry, inv.List, sph, U);
-        if (double.IsNaN(srow1)) { sph = front && !busy ? (double.IsNaN(sph) ? SellPhase(o, cr, U) : sph) : double.NaN; if (gridSaid != "sellpilot:px") { gridSaid = "sellpilot:px"; Log.Write("sell: the inventory's scroll cannot be read (" + (inv.List == null ? RFX.ListWhy : "list read, no scroll value") + ") - the picture is the fallback (the gate will not let a cell be clicked without the exact scroll)"); } }
-        else sph = double.NaN;
-        if (!invSettle.Settled) return;   // the list still moves (or this tick's read failed): the cells are judged on a settled read only
-        var a = spilot.Step(new SellView { NowMs = now, Foreground = front, UserBusy = busy, UserClicked = userClicked, W = W, H = H, U = U,
-                                           Screen = inv.AsSell(sellCols), Wanted = sellWanted, Phase = sph, Row1 = srow1, NeedExact = true });
-        if (spilot.State == "failed" && spilot.FailWhy == "scroll") { gate.Halt(ClickOwner.Sell, "scroll", "the inventory's exact scroll stayed unreadable - no cell was clicked on the picture's estimate"); AnnounceHalts(); }
-        SellSay(spilot.State);
-        if (spilot.Trace != "") { Log.Write("sell: " + spilot.Trace); spilot.Trace = ""; }
-        if (a.Kind != AutoKind.None) {
-          // a cell click must hit a cell of an item the run is after (or one it ticked, to take it off again): the item under the
-          // click point from the fresh list order and the game's exact scroll
-          int ccols = sellCols; var geo = spilot.Geometry;
-          bool sent = SendInside(a, o, cr, ClickOwner.Sell, a.Kind == AutoKind.Drag ? ClickTarget.InvListDrag : ClickTarget.InvBulkCell, front, (rq, fr) => {
-            rq.CellUid = ClickGate.InvCellUid(fr.Inv, geo, sellScroll.Row1(geo, fr.Inv != null ? fr.Inv.List : null, double.NaN, U, now), ccols, rq.X, rq.Y, W, U);
-            var ok = new System.Collections.Generic.HashSet<long>(sellWanted);
-            if (fr.Inv != null) foreach (var u in fr.Inv.Selected) ok.Add(u);
-            rq.CellOk = ok;
-            rq.NoScroll = fr.Inv == null || fr.Inv.List == null || !fr.Inv.List.Has;
-          });
-          if (sent) { if (cellLivePt != null) spilot.LivePoint(cellLivePt[0], cellLivePt[1]); spilot.Sent(); } else spilot.NotSent();   // a refused click / drag is taken back: no miss, no drag the list ignored
-        }
-        return;
-      }
-      if (!front || busy) { SellSay(front ? "paused" : "background"); return; }
-      // the Foundry, the gem screen, the workshop: back with the arrow top left (towards the inventory / the city)
-      if (BackStep(ClickOwner.Sell, scr, CityFirst.NeedsCity(PilotFlow.Sell, scr), o, cr, front, now)) { SellSay("open"); return; }
-      // the hero screen (the gear screen as well): back to the city with the arrow top left
-      if (scr != null && scr.Kind == ScreenKind.HeroScreen) {
-        SellSay("open");
-        if (now - sellBtnAt < 2000) return;
-        sellBtnAt = now;
-        SendInside(new AutoAction { Kind = AutoKind.Click, X = hg2.BackX * U, Y = hg2.BackY * U }, o, cr, ClickOwner.Sell, ClickTarget.HeroBack, front);
-        return;
-      }
-      // the city: «Инвентарь» in the bottom bar (found by its picture, as «Герои»)
-      if (scr != null && scr.Kind == ScreenKind.City && InventoryButtonNow(o, W, H)) {
-        SellSay("open");
-        if (now - sellBtnAt < 2500) return;
-        sellBtnAt = now;
-        SendInside(new AutoAction { Kind = AutoKind.Click, X = W - invDX * U, Y = H - hg2.HeroesBtnDY * U }, o, cr, ClickOwner.Sell, ClickTarget.CityInventory, front);
-        return;
-      }
-      SellSay("no_city");
-    }
 
     // Storage cleanup without auto click: nothing is clicked. The inventory's «Массовая продажа» grid is read (as the sell
     // pilot reads it), the rows' place on the screen is followed like «Найти в игре» does, and every list item in view gets
@@ -2580,20 +1954,6 @@ namespace RealmForge {
     }
 
     // The auto run ended (the pilot's state is «done»): the same final step as the hint's, from the screen read of this tick; nothing is clicked.
-    void TickSellFinalAuto() {
-      IntPtr hwnd = GameWindow(); W32.RECT cr = new W32.RECT();
-      if (hwnd == IntPtr.Zero || W32.IsIconic(hwnd) || !W32.GetClientRect(hwnd, out cr) || cr.B < 200) { SellHintHide(); return; }
-      var o = new W32.POINT(0, 0); W32.ClientToScreen(hwnd, ref o);
-      double W = cr.R, H = cr.B, U = Ui.Unit(W, H);
-      SceneArea(o, cr);
-      var scr = screens.Current; var inv = scr != null && scr.Kind == ScreenKind.Inventory ? screens.Inv : null;
-      var step = SellHint.Classify(inv, sellWanted, false);
-      sellFinal = SellHint.IsFinal(step);
-      if (!sellFinal || !GameDrawable(true)) { if (glow.Visible) glow.Hide(); drawnKey = null; HideTip(); return; }
-      if (glow.Visible) glow.Hide();
-      drawnKey = null;
-      DrawSellFinal(o, W, H, U, false, step.Selected, null);
-    }
 
     // ---------------------------------------------------------------- «Найти в игре»
 
@@ -2651,14 +2011,14 @@ namespace RealmForge {
     }
 
     // the job is done in the game (src/LocateGuide.cs LocateFinish): a short plate, the request is reported (LocateFinished), then the hints end
-    readonly LocateFinish lfin = new LocateFinish(); long[][] locateLive; long locateDoneUntil, locateDoneCap; bool locateDoneAuto; string locateDoneWhat = "", locateSuccessSaid = "";
+    readonly LocateFinish lfin = new LocateFinish(); long[][] locateLive; long locateDoneUntil, locateDoneCap; string locateDoneWhat = "";
     /// <summary>The job of the request is done in the game: request id and what ("ascend" | "recast").</summary>
     public event Action<string, string> LocateFinished;
 
     void FinishLocateJob(string what, long now) {
       var req = locateReq; if (req == null) return;
       Log.Write("locate: job done (" + what + ") for " + (req.Item != null ? "item " + req.Item.Uid : "artifact " + (req.Art != null ? req.Art.Uid : 0)));
-      locateDoneUntil = now + 4000; locateDoneCap = now + 15000; locateDoneAuto = LocateAutoOn; locateDoneWhat = what; locateDriving = false; lpilot.Cancel();
+      locateDoneUntil = now + 4000; locateDoneCap = now + 15000; locateDoneWhat = what;
       var h = LocateFinished; if (h != null) h(req.Id, what);
     }
 
@@ -2674,11 +2034,6 @@ namespace RealmForge {
       IntPtr hwnd = GameWindow(); W32.RECT cr;
       if (hwnd == IntPtr.Zero || W32.IsIconic(hwnd) || !FrontSteady(hwnd) || !W32.GetClientRect(hwnd, out cr) || cr.B < 200) { LocateHide(); return; }
       var o = new W32.POINT(0, 0); W32.ClientToScreen(hwnd, ref o); SceneArea(o, cr);
-      if (succ && locateDoneAuto && scr.TopClass == 'P' && !sending) {
-        string said = scr.Top + "|" + scr.SinceMs;
-        if (said != locateSuccessSaid) { locateSuccessSaid = said; Log.Write("locate: result form " + scr.Top + " on " + scr.Brief + " - closed by its tap"); }
-        MapStep(ClickOwner.Locate, scr, o, cr, IsForeground(hwnd), now);
-      }
       if (glow.Visible) glow.Hide(); drawnKey = null;
       string txt = Tx(what == "artPromote" ? "doneArtPromote" : what == "ascend" ? "doneAscend" : "doneRecast");
       DrawTipTop(new[] { txt != "" ? txt : (what == "artPromote" ? "Готово: артефакт продвинут" : what == "ascend" ? "Готово: вещь вознесена" : "Готово: вещь преобразована") }, locateCaps);
@@ -2743,12 +2098,12 @@ namespace RealmForge {
         if (fin != "") { FinishLocateJob(fin, now); return; }
         // the step's target lies under a shown pop-up (the gear filter over the hero screen, a flow form): «close the pop-up» is the step shown until it
         // is closed, then the step comes back; no frame on the hidden target
-        if (!LocateAutoOn && LocateGuide.CoverStep(st, screens.Current)) {
+        if (LocateGuide.CoverStep(st, screens.Current)) {
           string cov = st.Covered + "|" + st.Popup;
           if (cov != locateCoverSaid) { locateCoverSaid = cov; Log.Write("locate: step " + st.Covered + " is covered by " + st.Popup + " (z-order " + (screens.Current.Order != null ? string.Join(",", screens.Current.Order.ToArray()) : "unknown") + ") - close it first"); }
         } else locateCoverSaid = "";
         // hint mode, city first (the auto pilot's BackStep does the same): a screen the purpose's flow does not go on from - the first hint is its back arrow
-        if (!LocateAutoOn && LocateGuide.CityFirstStep(st, req.Purpose, screens.Current)) {
+        if (LocateGuide.CityFirstStep(st, req.Purpose, screens.Current)) {
           string cf = st.Covered + "|" + screens.Current.Kind;
           if (cf != locateCitySaid) { locateCitySaid = cf; Log.Write("locate: step " + st.Covered + " is not for the screen " + screens.Current.Brief + " (city first) - back first"); }
         } else locateCitySaid = "";
@@ -2757,15 +2112,12 @@ namespace RealmForge {
       }
       var step = locateStep;
       if (recB != null) recB.Step = step.Kind.ToString();
-      TickLocateDrive(step, req, hwnd, o, cr, now, W, H, U);   // auto click on: the app opens the item itself
-      { string rw = gate.RetryShown(ClickOwner.Locate, now); if (rw != "" && step.Auto != "stopped" && step.Auto != "") { step.Auto = "retry"; step.AutoWhy = rw; } }   // a step retried: the window says why
-      FoundryScrollNow(step, now);
       // the step's frame from the screen geometry (the site's file, src/LocateFrames.cs): «Литейная», the tabs, the slot, the list cell, the final button
       LocateFrame lf = front && !hold && step.Kind == LocateKind.BackToCity ? BackFrame(screens.Current, W, H, U)
         : front && !hold && step.Kind == LocateKind.ClosePopup ? PopupCloseFrame(step, W, H, U)
         : front && !hold && step.Kind != LocateKind.InList ? LocateFrames.For(step, req.Item, locateRs, null, Geo.Current, W, H, U) : null;
       // the hero grid's filter pop-up covers the hero screen and the step has no frame: the funnel that closes it is framed (hint mode, never a label alone)
-      if (front && !hold && !LocateAutoOn && screens.Current != null && screens.Current.Kind == ScreenKind.HeroScreen
+      if (front && !hold && screens.Current != null && screens.Current.Kind == ScreenKind.HeroScreen
           && LocateHintExit(step.Kind, lf != null, o, W, H)) {
         var gb = hg.GridBar(W, H);   // the layout is the game's whole bar (the live m_BtnFilter rect replaces it), not the funnel's square
         lf = new LocateFrame { Target = "hero.filter", Mark = new LocateMark { Kind = "box", X = gb[0], Y = gb[1], W = gb[2], H = gb[3] }, Raw = new GeoRect { X = gb[0], Y = gb[1], W = gb[2], H = gb[3] } };
@@ -2918,7 +2270,6 @@ namespace RealmForge {
       var step = artStep;
       if (step == null) { LocateHide(); return; }
       if (recB != null) recB.Step = step.Kind.ToString();
-      TickArtDrive(step, inv, ws, hold, hwnd, o, cr, now, W, H, U);
       LocateFrame lf = front && !hold ? ArtFrames.For(step, inv, ws, Geo.Current, W, H, U) : null;
       bool afLive = LiveInto(lf, W, H, U);   // «Мастерская», the tabs, «Продвинуть»: where the game has put them (FrameFor)
       double[] artStrip = null;
@@ -2971,12 +2322,12 @@ namespace RealmForge {
         }
       } else artWaitSince = 0;
       // the list's own filter is the auto click's step before a long scroll; the hints (and the pilot once it is done with it) show the cell
-      if (step.Filter && step.Kind == ArtEquipKind.PickCell && (!ArtAutoOn || artEq.FilterSpent)) step.Filter = false;
+      if (step.Filter && step.Kind == ArtEquipKind.PickCell && false) step.Filter = false;
       artEqStep = step;
       var hs = screens.Hero;
       if (step.Kind == ArtEquipKind.Done) {
         Log.Write("art equip: step " + step.Key + " owner " + step.Owner + " - done for artifact " + artUid + ", not armed again");
-        artLatch.MarkDone(artHero, artUid); artEq.Reset(); RFX.SetArtGoal(0, 0);
+        artLatch.MarkDone(artHero, artUid); RFX.SetArtGoal(0, 0);
         return;
       }
       string sig = step.Key + "|" + step.Why + "|" + step.Owner;
@@ -3094,64 +2445,7 @@ namespace RealmForge {
       artReplaceSaid = k; Log.Write(k);
     }
 
-    // the auto click for the artifact steps (src/ArtEquip.cs ArtEquipPilot): only with ArtAutoOn; «Заменить» of the card and of the pop-up also need the player's auto confirm.
-    double[] artReplaceLive; int artReplaceLiveAt; const int ArtLiveKnownMs = 4000;
-    void TickArtEquip(W32.POINT o, W32.RECT cr, AutoView v) {
-      var step = artEqStep;
-      if (step == null || !ArtAutoOn) { artEqAutoSaid = ""; return; }
-      double W = cr.R, H = cr.B, U = Ui.Unit(W, H);
-      if (v.Foreground && !v.UserBusy) {
-        var pre = gate.Preflight(ClickOwner.Equip, screens.Current, v.NowMs);
-        AnnounceHalts();
-        if (pre.Reason == "offer" && OfferStep(ClickOwner.Equip, screens.Current, o, cr, v.Foreground, v.NowMs)) return;
-        if (artEq.Stopped || pre.Verdict != GateVerdict.Allow) return;   // the last click's effect is awaited / the screen is not recognised yet
-      }
-      bool btnSeen = false; artReplaceLive = null;
-      if (step.Kind == ArtEquipKind.PressReplace && v.Foreground) {
-        // the game's memory first (the widget's live rect, visible, on the top form): our own hint lies over the button and covers its picture, which made the look «not known» for ever (live lab 513ac0)
-        RFX.UiButtonWant(ClickTarget.ArtReplace, null, W, H, U);
-        var lr = RFX.UiButtonFresh(ClickTarget.ArtReplace, null, W, H, Environment.TickCount, RFX.UiFreshMs);
-        double lx, ly; string lwhy;
-        if (lr != null && lr.Ok) {
-          if (RFX.UiLivePoint(lr, W, H, Environment.TickCount, out lx, out ly, out lwhy) && RFX.UiTopIs(ClickTarget.ArtReplace, null, screens.Current)) { btnSeen = true; artReplaceLive = new[] { lr.X, lr.Y, lr.W, lr.H }; artReplaceLiveAt = Environment.TickCount; }
-        } else {
-          // no fresh read this tick: the picture is the fallback; if the memory gave the rect a moment ago, a picture our hint covers is no unknown look (LookPolicy.ConfirmBlocks) - no 8 s stop (lab 2026-11-05 22:50)
-          var rr = ArtFrames.Rect(Geo.Current, ArtEquipFrames.KeyReplace, W, H, U);
-          bool liveKnown = artReplaceLiveAt != 0 && Environment.TickCount - artReplaceLiveAt <= ArtLiveKnownMs;
-          btnSeen = rr != null && IsBlueButton(o, new[] { (int)rr.X, (int)rr.Y, (int)rr.W, (int)rr.H }, liveKnown);
-        }
-      }
-      var view = new ArtEquipView { ReplaceLive = artReplaceLive, NowMs = v.NowMs, Foreground = v.Foreground, UserBusy = v.UserBusy, UserClicked = v.UserClicked, W = W, H = H, U = U, Step = step, Hero = screens.Hero,
-                                    Geometry = Geo.Current, AutoConfirm = AutoConfirm, ReplaceBtnSeen = btnSeen };
-      if (step.Kind == ArtEquipKind.PickCell && !step.Filter) view.CellLive = ArtCellLive(W, H, U);
-      if (step.Filter) view.FilterLive = ArtFilterLive(W, H, U);
-      var mv = artEq.Step(view);
-      if (artEq.Trace != "") { Log.Write("art equip auto: " + artEq.Trace); artEq.Trace = ""; }
-      string said = mv.State + "|" + mv.Why + "|" + step.Key;
-      if (said != artEqAutoSaid) { artEqAutoSaid = said; Log.Write("art equip auto: " + mv.State + (mv.Why != "" ? " (" + mv.Why + ")" : "") + " at step " + step.Key); AutoSay(mv.State == "stopped" ? "failed" : mv.State == "hint" ? "idle" : mv.State); }
-      if (mv.Action.Kind == AutoKind.None) return;
-      long hero = artHero, uid = artUid; bool drag = mv.Drag; var geo = Geo.Current;
-      ClickTarget tg;
-      switch (mv.Todo) {
-        case ArtEquipTodo.Tab: tg = ClickTarget.ArtHeroTab; break;
-        case ArtEquipTodo.OpenList: tg = ClickTarget.ArtOpenList; break;
-        case ArtEquipTodo.Cell: tg = drag ? ClickTarget.ArtHeroDrag : ClickTarget.ArtHeroCell; break;
-        case ArtEquipTodo.Replace: tg = ClickTarget.ArtReplace; break;
-        case ArtEquipTodo.Confirm: tg = ClickTarget.ArtTakeOverConfirm; break;
-        case ArtEquipTodo.Filter: tg = ClickTarget.ArtHideWorn; break;
-        default: return;
-      }
-      bool filterOff = screens.Hero != null && screens.Hero.ArtHideWorn == 1;
-      if ((tg == ClickTarget.ArtReplace || tg == ClickTarget.ArtTakeOverConfirm) && !AutoConfirm) { gate.Halt(ClickOwner.Equip, "target", "«Заменить» without the player's auto confirm"); AnnounceHalts(); return; }
-      SendInside(mv.Action, o, cr, ClickOwner.Equip, tg, v.Foreground, (rq, fr) => {
-        rq.Hero = hero; rq.ArtUid = uid; rq.CellOk = new[] { uid };
-        if (tg == ClickTarget.ArtHideWorn) rq.Untick = filterOff;
-        if (tg == ClickTarget.ArtHeroCell) {
-          int i = fr.HeroScr != null ? ClickGate.ListCardIndexAt(geo, ArtEquipFrames.KeyList, fr.HeroScr.ArtList, 3, 116, rq.X, rq.Y, W, H, U) : -1;
-          rq.CellUid = i >= 0 && fr.HeroScr != null && i < fr.HeroScr.ArtUids.Count ? fr.HeroScr.ArtUids[i] : 0;
-        }
-      });
-    }
+    const int ArtLiveKnownMs = 4000;
 
     /// <summary>The artifact's card where the game has put it (client px x, y, w, h), when the live read is fresh, the card wholly in the viewport and the list on top; else null.</summary>
     double[] ArtCellLive(double W, double H, double U) {
@@ -3175,104 +2469,13 @@ namespace RealmForge {
       return new[] { r.X, r.Y, r.W, r.H };
     }
 
-    // ---- auto click for the artifact promotion (src/LocatePilot.cs ArtPilot): only with ArtAutoOn. The pilot opens the «Артефакт» tab, selects the artifact's cell,
-    // «Мастерская», the «Продвинуть» tab and the planned copy; the final «Продвинуть» (and «Улучшить») is the player's. Every click goes through the gate.
-    readonly ArtPilot artPilot = new ArtPilot();
-    string artAutoSaid = "";
 
-    void TickArtDrive(LocateStep step, InventoryScreen inv, ArtWorkshopScreen ws, bool hold, IntPtr hwnd, W32.POINT o, W32.RECT cr, long now, double W, double H, double U) {
-      step.Auto = ""; step.AutoWhy = "";
-      if (!ArtAutoOn || hold || locateReq == null || locateReq.Art == null) return;
-      if (sending) return;   // a click is on its way: the screens are read after it
-      W32.POINT c;
-      if (W32.GetCursorPos(out c)) {
-        if (seenSet && (c.X != seen.X || c.Y != seen.Y)) lastMoveMs = now;
-        seen = c; seenSet = true;
-      }
-      bool down = (W32.GetAsyncKeyState(0x01) & 0x8000) != 0 || (W32.GetAsyncKeyState(0x02) & 0x8000) != 0;
-      if (down && !btnWasDown) userClick = true;
-      btnWasDown = down;
-      if (artPilot.Stopped) { step.Auto = "stopped"; step.AutoWhy = artPilot.Reason; return; }
-      bool busy = down || now - lastMoveMs < 700, uc = userClick; userClick = false;
-      int fp, gp; W32.GetWindowThreadProcessId(W32.GetForegroundWindow(), out fp); W32.GetWindowThreadProcessId(hwnd, out gp);
-      bool gameFront = fp == gp;
-      var scr = screens.Current;
-      if (gameFront && !busy) {
-        var pre = gate.Preflight(ClickOwner.Locate, scr, now);
-        AnnounceHalts();
-        if (artPilot.Stopped) { step.Auto = "stopped"; step.AutoWhy = artPilot.Reason; return; }
-        if (pre.Reason == "offer" && OfferStep(ClickOwner.Locate, scr, o, cr, gameFront, now)) return;
-        if (pre.Reason == "unknown" && UnknownBackStep(ClickOwner.Locate, scr, o, cr, gameFront, now)) { step.Auto = "work"; step.AutoWhy = ""; return; }
-        if (pre.Verdict != GateVerdict.Allow) return;   // the last click's effect is awaited / the screen is not recognised yet
-      }
-      var req = locateReq;
-      gate.Flows[ClickOwner.Locate] = PilotFlow.LocateArtPromote;   // (its work screen, the workshop: never an Escape there)
-      bool heroOpen = scr != null && scr.Kind == ScreenKind.HeroScreen;
-      bool formOpen = scr != null && (scr.Kind == ScreenKind.Foundry || scr.Kind == ScreenKind.Gem);
-      var view = new ArtView { NowMs = now, Foreground = gameFront, UserBusy = busy, UserClicked = uc, W = W, H = H, U = U, Step = step, Inv = inv, Ws = ws, Art = req.Art, Geometry = Geo.Current,
-        HeroScreenOpen = heroOpen, OtherFormOpen = formOpen, InvDX = invDX };
-      if (gameFront && !busy && ArtLocateAuto.NeedsCityButton(step, heroOpen, formOpen)) { view.CityButton = InventoryButtonNow(o, W, H); view.InvDX = invDX; }
-      // city first: the Foundry / the gem screen (an earlier request left it) or the step's screen not on top: back with its arrow first
-      if (gameFront && !busy && BackStep(ClickOwner.Locate, scr, CityFirst.NeedsCity(PilotFlow.LocateArtPromote, scr, step.Kind, ArtLocateAuto.NeedsCityBack(view)), o, cr, gameFront, now, heroOpen)) { step.Auto = "work"; step.AutoWhy = ""; return; }
-      var mv = artPilot.Step(view);
-      if (artPilot.Trace != "") { Log.Write("art promote auto: " + artPilot.Trace); artPilot.Trace = ""; }
-      string said = mv.State + "|" + mv.Why + "|" + step.Key;
-      if (said != artAutoSaid) { artAutoSaid = said; Log.Write("art promote auto: " + mv.State + (mv.Why != "" ? " (" + mv.Why + ")" : "") + " at step " + step.Key + (mv.Why == "plan" && ws != null && req.Art != null ? " (the site's copies [" + string.Join(",", req.Art.Copies) + "] via " + req.Art.Via + ", the workshop's list [" + string.Join(",", ws.Mats) + "])" : "")); }
-      if (mv.State == "background") RaiseGame(hwnd, true, now, true);
-      if (mv.Action.Kind != AutoKind.None) SendArt(mv, req, ws, o, cr, gameFront, W, H, U);
-      LocateDiagSay("art promote auto", mv.State, mv.Why + "@" + step.Key, scr);
-      if (artPilot.Stopped) { step.Auto = "stopped"; step.AutoWhy = artPilot.Reason; LocateDiagSay("art promote auto", "stopped", artPilot.Reason, scr); }
-    }
 
     // the artifact pilot's action -> the gate's target (and for a list cell the item that has to be under the click)
-    void SendArt(ArtMove mv, LocateRequest req, ArtWorkshopScreen ws, W32.POINT o, W32.RECT cr, bool front, double W, double H, double U) {
-      var art = req.Art; bool drag = mv.Drag;
-      ClickTarget tg = ClickTarget.None;
-      Action<ClickRequest, ScreenState> fill = null;
-      var geo = Geo.Current;
-      switch (mv.Todo) {
-        case ArtTodo.HeroBack: tg = ClickTarget.HeroBack; break;
-        case ArtTodo.InventoryButton: tg = ClickTarget.CityInventory; break;
-        case ArtTodo.ArtTab: tg = ClickTarget.ArtTab; break;
-        case ArtTodo.Workshop: tg = ClickTarget.ArtWorkshop; fill = (rq, fr) => { rq.CellOk = new[] { art.Uid }; }; break;
-        case ArtTodo.PromoteTab: tg = ClickTarget.ArtPromoteTab; fill = (rq, fr) => { rq.CellOk = new[] { art.Uid }; }; break;
-        case ArtTodo.Cell:
-          tg = drag ? ClickTarget.ArtListDrag : ClickTarget.ArtCell;
-          fill = (rq, fr) => {
-            int i = fr.Inv != null ? ClickGate.ListCardIndexAt(geo, "inventory.artList", fr.Inv.List, LocateGuide.ArtInvCols, 116, rq.X, rq.Y, W, H, U) : -1;
-            rq.CellUid = i >= 0 && fr.Inv != null && i < fr.Inv.Uids.Count ? fr.Inv.Uids[i] : 0;
-            rq.CellOk = new[] { art.Uid };
-            rq.NoScroll = fr.Inv == null || fr.Inv.List == null || !fr.Inv.List.Has;
-          };
-          break;
-        case ArtTodo.MatCell: {
-          tg = drag ? ClickTarget.ArtMatDrag : ClickTarget.ArtMatCell;
-          // the essence the pilot planned (its item id from the read it decided on); a copy is judged by its uid against the plan
-          var itemOk = new List<int>();
-          if (art.Via == "essence" && ws != null && mv.MatIndex >= 1 && mv.MatIndex <= ws.MatItemIds.Count && mv.MatIndex <= ws.Mats.Count && ws.Mats[mv.MatIndex - 1] == 0) itemOk.Add(ws.MatItemIds[mv.MatIndex - 1]);
-          fill = (rq, fr) => {
-            if (drag) { rq.CellOk = new[] { art.Uid }; return; }   // (the rule needs the open artifact only)
-            var w2 = fr.ArtWs;
-            int i = w2 != null ? ClickGate.ListCardIndexAt(geo, "artifact.matList", w2.MatList, LocateGuide.ArtMatCols, 114, rq.X, rq.Y, W, H, U) : -1;
-            rq.MatIndex = i >= 0 && w2 != null && i < w2.Mats.Count ? i + 1 : 0;
-            rq.CellUid = rq.MatIndex > 0 ? w2.Mats[i] : 0;
-            var copies = new List<long>(art.Copies); copies.Add(art.Uid);   // (CellOk also names the open artifact for the workshop check)
-            rq.CellOk = copies; rq.ItemOk = itemOk;
-          };
-          break;
-        }
-      }
-      SendInside(mv.Action, o, cr, ClickOwner.Locate, tg, front, fill);
-    }
 
-    // ---- auto click for «Показать в игре» (src/LocatePilot.cs): the app opens the Inventory, the «Снаряжение» tab and the item
-    // itself, and stops where the places of the next buttons are not known (those steps stay hints). The last button of the
-    // game (and every confirmation) is the player's. Off without «Автонажатие».
-    readonly LocatePilot lpilot = new LocatePilot();
-
+    // ---- the game's screen (src/GameScreen.cs): ONE read per tick
     // ---- the game's screen (src/GameScreen.cs) and the click gate (src/ClickGate.cs): ONE read per tick, ONE gate for every click
     readonly ScreenTracker screens = new ScreenTracker();
-    readonly ClickGate gate = new ClickGate();
     /// <summary>The screen as of this tick (null before the first read).</summary>
     public ScreenState Screen { get { return screens.Current; } }
     /// <summary>The name of the screen for the page (the equip helper's live event), "" when it was not read lately.</summary>
@@ -3282,10 +2485,8 @@ namespace RealmForge {
       bulk = s.Kind == ScreenKind.Inventory && s.InvEquipTab && s.InvBulk;
       return s.Kind.ToString().ToLowerInvariant();
     }
-    /// <summary>«Показать в игре» may click: the player's auto click and the site's "locateAuto" switch (off until the owner enables it).</summary>
-    public bool LocateAutoEnabled;
+
     long screenReadAt, cityAt; bool cityNow; long locUnkSince = -1, shUnkSince = -1; SellHintStep shLast; bool shHold;
-    readonly Dictionary<ClickOwner, string> haltSaid = new Dictionary<ClickOwner, string>();
 
     /// <summary>The game is gone, minimized or behind another window (the watches look less often then).</summary>
     public bool GameAway() {
@@ -3296,10 +2497,10 @@ namespace RealmForge {
     public int LivePollMs() {
       IntPtr h = GameWindow();
       bool sh = h != IntPtr.Zero && W32.IsWindowVisible(h) && !W32.IsIconic(h);
-      return LoadPlan.LivePollMs(ScreensWanted(), sh, sh && IsForeground(h), EquipLiveHot);
+      return LoadPlan.LivePollMs(ScreensWanted(), sh, sh && IsForeground(h), false);
     }
 
-    bool ScreensWanted() { return labPrep != null || target != 0 || locateReq != null || filterItem != 0 || hintKind != "" || runHero != 0 || sellWanted != null; }
+    bool ScreensWanted() { return target != 0 || locateReq != null || filterItem != 0 || hintKind != "" || sellWanted != null; }
 
     /// <summary>THE read of the game's screens, once per tick (at most every 120 ms). The equip helper, «Показать в игре», the storage
     /// cleanup and the click gate take the screen from here (a short read failure is held for 1.5 s, see ScreenTracker).</summary>
@@ -3308,7 +2509,7 @@ namespace RealmForge {
       RFX.EnsureLiveForGuides();   // the readers' basis (handle, regions, live tables) without waiting for the first account read; throttled and off-thread
       // every 120 ms; 50 ms while a pilot's click awaits its effect (the expected field is polled until it changes); once a second while the
       // game is minimised or gone (nothing to click, nothing to draw)
-      int readGap = LoadPlan.ReadGapMs(gameAway, gate.AnyPending || SellPolling || EquipHot, listMoving, inputAge, SellGuideShown);   // (a list that moves: read until it settles; nobody touching anything: 240 ms)
+      int readGap = LoadPlan.ReadGapMs(gameAway, false, listMoving, inputAge, SellGuideShown);   // (a list that moves: read until it settles; nobody touching anything: 240 ms)
       if (screens.Current != null && now >= screenReadAt && now - screenReadAt < readGap) return;
       screenReadAt = now;
       long rs0 = LoadMeter.Now();
@@ -3324,7 +2525,7 @@ namespace RealmForge {
       long readT0 = System.Diagnostics.Stopwatch.GetTimestamp();
       // the form searches (a full pass, ~1 s) run on a worker thread, never here: the readers below only use the nodes found so far.
       // A form the game never built is searched for at the start of a storage run and after a click that opens it
-      if ((sellScanOnce || now - sellBtnAt < 8000) && front && RFX.InvFormMissing()) RFX.RequestFormSearch("storage run, inventory not built", 1500);
+      if (sellScanOnce && front && RFX.InvFormMissing()) RFX.RequestFormSearch("storage run, inventory not built", 1500);
       sellScanOnce = false;
       var inp = new ScreenInputs { Inv = RFX.ReadInventory(-1), Rs = RFX.ReadRecastScreenSafe(-1), Hero = RFX.ReadHeroScreen(addrs, screens.Hero) };
       if (front) FillArtPopup(inp, hwnd);
@@ -3369,37 +2570,15 @@ namespace RealmForge {
       // a known form moved and is searched for again: the gate waits for the search (and the next one, which may be the one that starts) at most 40 s
       bool sw = lostSearchAt != 0 && now - lostSearchAt < 40000 && (now - lostSearchAt < 2500 || (RFX.FormSearchRunning && RFX.FormSearchGeneration <= lostSearchGen + 1));
       if (!sw) lostSearchAt = 0;
-      if (gate.SearchWait != sw) { gate.SearchWait = sw; if (sw) Log.Write("screen: a known form is searched for - the pilots wait for the search"); }
       if (screens.Hero != null) heroScreen = screens.Hero;
       if (foundryBuiltPid != GamePid(hwnd) && !RFX.FoundryFormMissing()) foundryBuiltPid = GamePid(hwnd);
-      gate.Observe(st, now);
       // a city «Инвентарь» press changed nothing (the gate lets it be pressed once more): the bar's place is dropped and searched again first
-      if (gate.CityAgainDue.Count > 0) { gate.CityAgainDue.Clear(); cityBar.Drop(); cityInvAt = 0; Log.Write("city bar: «Инвентарь» changed nothing - the bar is searched again"); }
-      // the gate retries a failed step (a pop-up took the press, nothing changed ...): what is kept of the screen is read again, the step's tries start over
-      if (gate.RetryDue.Count > 0) {
-        foreach (var ro in new List<ClickOwner>(gate.RetryDue)) {
-          if (ro == ClickOwner.Locate) { lpilot.StepAgain(); artPilot.StepAgain(); }
-          else if (ro == ClickOwner.Equip) hpilot.StepAgain();
-        }
-        gate.RetryDue.Clear(); cityBar.Drop(); cityInvAt = 0;
-      }
-      // event confirmation: the gate saw the effect of the locate pilot's button / tab click - its fixed wait after the click ends soon
-      long le = gate.EffectAt(ClickOwner.Locate); if (le != locEffectSeen) { locEffectSeen = le; lpilot.Confirmed(now); }
-      AnnounceHalts();
     }
 
     const int ConfirmPollMs = 50;
-    /// <summary>The storage cleanup's pilot awaits its click's answer or its drag's move: the game is read every 50 ms.</summary>
-    bool SellPolling { get { return sellWanted != null && !sellHint && spilot.Polling; } }
-    /// <summary>An equip pilot awaits its click's effect, or clicked within LoadPlan.EquipHotMs: the hot fields (the hero, the slot, the selection,
-    /// the filter, the tip, the owners) are read at the effect rate, so each step follows its effect instead of a fixed wait.</summary>
-    bool EquipHot { get { long n = NowMs(); return runHero > 0 && AutoEnabled && (hpilot.Polling(n) || fpilot.Polling(n) || pilot.Polling(n)); } }
-    /// <summary>The live poll (the guide's step) at the effect rate also for LoadPlan.EquipHotMs after an equip click: its effect moves the step.</summary>
-    bool EquipLiveHot { get { return EquipHot || (runHero > 0 && AutoEnabled && NowMs() - equipClickAt < LoadPlan.EquipHotMs); } }
-    long equipClickAt = -100000;
     const int ClosePopupAgainMs = 2000;
-    readonly LiveStill offerLive = new LiveStill(), confirmLive = new LiveStill(); string offerLiveForm = ""; bool confirmStill;
-    bool gameAway, listMoving; long locEffectSeen;
+    readonly LiveStill offerLive = new LiveStill(), confirmLive = new LiveStill(); bool confirmStill;
+    bool gameAway, listMoving;
     // the lists the pilots click into: their list steps run on a settled list only (two equal reads in a row, see ListSettle)
     readonly ListSettle invSettle = new ListSettle(), rsSettle = new ListSettle();
 
@@ -3456,7 +2635,6 @@ namespace RealmForge {
       long now = NowMs();
       var inp = new ScreenInputs { Inv = RFX.ReadInventory(-1), Rs = RFX.ReadRecastScreenSafe(-1), Hero = RFX.ReadHeroScreen(addrs, screens.Hero), CityForm = RFX.CityShown(), Offers = offerOrder.Note(RFX.ReadOffers()) }; inp.OfferTopKnown = offerOrder.TopKnown; freshOffers = inp.Offers;
       if (RFX.UiKnown) { inp.Screens = RFX.ReadShownScreens(); inp.Order = RFX.ReadShownOrder(); NoteOrder(inp.Order); }   // (the click gate reads every shown form by its place)
-      gate.OrderRead = RFX.UiKnown;   // (the window table read: its z-order is expected - without it no click where the top is not certain)
       if (wantKnownForms) inp.ShownKnown = RFX.ReadShownKnownForms();   // the unknown-screen back press: no known screen's form (the battle among them) may be shown
       { IntPtr gw = GameWindow(); if (gw != IntPtr.Zero && !W32.IsIconic(gw) && IsForeground(gw)) FillArtPopup(inp, gw); }
       if (WantArtWs(inp)) inp.ArtWs = RFX.ReadArtWorkshop();   // the artifact guide's clicks are judged by the workshop too
@@ -3481,25 +2659,7 @@ namespace RealmForge {
       return st;
     }
 
-    /// <summary>A pilot was stopped by the gate (or by a click that changed nothing): each owner's pilot shows it once and goes on as hints only.</summary>
-    void AnnounceHalts() {
-      foreach (var o in new[] { ClickOwner.Locate, ClickOwner.Sell, ClickOwner.Equip, ClickOwner.LocateFilter }) {
-        string why = gate.HaltReason(o), said;
-        haltSaid.TryGetValue(o, out said);
-        if (why == (said ?? "")) continue;
-        haltSaid[o] = why;
-        if (why == "") continue;
-        Log.Write("auto click stopped (" + o + "): " + why);
-        RaiseAutoRec(AutoRecPolicy.HaltTag(o.ToString(), why, gate.HaltDetail(o)));
-        if (o == ClickOwner.Locate) { lpilot.Halt(why); artPilot.Halt(why); Log.Write("locate auto: stopped (" + why + ") - " + LocateDiagnosis(screens.Current)); }
-        else if (o == ClickOwner.LocateFilter) lpilot.FilterHalt(why);   // (its own stop: the search goes on without the filter)
-        else if (o == ClickOwner.Sell) { if (!sellArt) SellSay("gate_" + why); }   // (the artifact cleanup is a hint run for the page: the stop is in the log only)
-        else { artEq.Halt(why); AutoSay("gate_" + why); }
-      }
-    }
 
-    /// <summary>A new request / run of this owner: it may click again.</summary>
-    void ResumeClicks(ClickOwner o) { gate.Resume(o); haltSaid.Remove(o); }
 
     void RaiseAutoRec(string tag) { if (!Channel.IsTest) return; var a = AutoRec; if (a != null) { try { a(tag); } catch (Exception e) { Log.Write("rec: auto failed: " + e.Message); } } }
 
@@ -3589,137 +2749,15 @@ namespace RealmForge {
       } else { unknownForms = null; unknownFormsAt = 0; }   // (an offer list on top: the forms are read again the moment it goes - a pop-up that came under it lies on top)
     }
 
-    /// <summary>Before a pilot's step: an offer pop-up on top is closed first (its ×, through the gate). True = the tick is taken (a close was
-    /// sent, its effect is awaited, the pop-up is still opening, or the pilot stopped on it); false = no pop-up, the pilot goes on.</summary>
-    bool OfferStep(ClickOwner owner, ScreenState scr, W32.POINT o, W32.RECT cr, bool front, long now) {
-      if (scr == null || scr.OfferCount == 0) return false;
-      if (gate.Halted(owner)) return true;
-      if (gate.Pending(owner) || sending) return true;
-      double W = cr.R, H = cr.B, U = Ui.Unit(W, H);
-      string form = scr.Offer;
-      RFX.UiButtonWant(ClickTarget.OfferClose, form, W, H, U);   // its × read while it opens: the click takes the live rect (fresh)
-      // still opening (its scale-in animation): its × live and held still ends the wait early (LiveStill), else OfferForms.SettleMs
-      if (form != offerLiveForm) { offerLiveForm = form; offerLive.Reset(); }
-      var olr = RFX.UiButtonFresh(ClickTarget.OfferClose, form, W, H, Environment.TickCount, RFX.UiFreshMs);
-      bool ostill = offerLive.Note(olr != null ? new[] { olr.X, olr.Y, olr.W, olr.H } : null, now);
-      if (!OfferForms.Settled(scr, now, ostill)) return true;
-      var pt = OfferForms.ClosePoint(Geo.Current, form, W, H, U);
-      { var cr0 = OfferForms.CloseRect(Geo.Current, form, W, H, U); LiveFrame(ClickTarget.OfferClose, form, W, H, U, true, cr0 != null ? new[] { cr0.X, cr0.Y, cr0.W, cr0.H } : null); }   // (the test build's frame line of the ×)
-      if (pt == null) {
-        gate.Halt(owner, "offer", "the offer pop-up " + form + (OfferForms.IsOffer(form) ? " has no known close button" : " is not on the list") + " - not clicked");
-        AnnounceHalts();
-        return true;
-      }
-      var g = Geo.Current;
-      SendInside(new AutoAction { Kind = AutoKind.Click, X = pt.X, Y = pt.Y }, o, cr, owner, ClickTarget.OfferClose, front, (rq, fr) => { rq.Form = form; rq.W = W; rq.H = H; rq.U = U; rq.Geo = g; });
-      return true;
-    }
 
-    /// <summary>Before a pilot's step on a screen nobody knows: the game's back arrow top left (HeroBack's spot), through the gate (UnknownBack:
-    /// no pop-up, no known screen's form shown, not the city or a fight, at most ClickGate.MaxUnknownBacks a run, each press has to change the
-    /// screen). True = a press was tried this tick; false = not due, the pilot goes on (it waits on the unknown screen as before).</summary>
-    bool UnknownBackStep(ClickOwner owner, ScreenState scr, W32.POINT o, W32.RECT cr, bool front, long now) {
-      if (MapStep(owner, scr, o, cr, front, now)) return true;
-      // the last back press changed nothing: one Escape instead (EscapeBack; never on the city or in a fight)
-      if (front && !sending && scr != null && scr.Kind == ScreenKind.Unknown && gate.EscapeDue(owner, scr, now)) { EscapeSend(owner, cr, front); AnnounceHalts(); return true; }
-      if (!front || sending || !gate.UnknownBackDue(owner, scr, now)) return false;
-      double W = cr.R, H = cr.B, U = Ui.Unit(W, H);
-      // the screen map's back arrow of the form on top (the standard one top left for nearly every form)
-      var md = ClickGate.MapExit(scr, W, H, U);
-      double bx = md.Move == MapMove.Back && md.Point != null ? md.Point.X : hg2.BackX * U, by = md.Move == MapMove.Back && md.Point != null ? md.Point.Y : hg2.BackY * U;
-      SendInside(new AutoAction { Kind = AutoKind.Click, X = bx, Y = by }, o, cr, owner, ClickTarget.UnknownBack, front, (rq, fr) => { rq.U = U; rq.W = W; rq.H = H; });
-      AnnounceHalts();
-      return true;
-    }
 
     /// <summary>Back to the city, shared by every pilot: the pilot cannot go on from this known screen (<paramref name="need"/>) - the game's back
     /// arrow top left (CityBack, through the gate: no pop-up, not the city or a fight, at most ClickGate.MaxCityBacks a run, each press has to
     /// change the screen). A press that changed nothing is followed by ONE Escape key press (EscapeBack, at most ClickGate.MaxEscapes a run).
     /// True = a press was tried this tick, or one is due on this screen and the pilot waits for it (city first); false = the pilot goes on.</summary>
-    long heroFunnelCloseAfter, cityTipAfter;
-    bool BackStep(ClickOwner owner, ScreenState scr, bool need, W32.POINT o, W32.RECT cr, bool front, long now, bool hold = false) {
-      if (MapStep(owner, scr, o, cr, front, now)) return true;   // a pop-up over the screen (or the city) first
-      if (!front || sending) { if (!need) { if (scr != null && scr.Kind != ScreenKind.Unknown) gate.DropEscape(owner); return false; } return false; }
-      // (the hero screen is where the pilot goes on from, but the item card / the gear filter over it are closed first: HeroCoverStep)
-      if (!need && hold && HeroCoverStep(owner, scr, o, cr, front, now)) return true;
-      if (!need) { if (scr != null && scr.Kind != ScreenKind.Unknown) gate.DropEscape(owner); return false; }
-      // the hero grid's filter pop-up is open over the hero screen (the player's, an interrupted run's): the gate does not let «back» through it
-      // (lab b3da8af5: «city, screen HeroScreen» for 100 s) - the funnel under the grid closes it first, once a second
-      if (scr != null && scr.Kind == ScreenKind.HeroScreen && (owner == ClickOwner.Equip || owner == ClickOwner.Locate) && now >= heroFunnelCloseAfter && HeroFilterSeen(o, cr.R, cr.B)) {
-        heroFunnelCloseAfter = now + 1200;
-        double U0 = Ui.Unit(cr.R, cr.B); int fx = o.X + (int)Math.Round(hg2.FunnelX * U0), fy = o.Y + (int)Math.Round(cr.B - hg2.FunnelDY * U0);
-        Log.Write("back: the hero grid's filter pop-up is open - closing it first");
-        EquipSend(ClickTarget.EquipFilter, new AutoAction { Kind = AutoKind.Click, X = fx - o.X, Y = fy - o.Y }, fx, fy, o, front);
-        return true;
-      }
-      if (gate.EscapeDue(owner, scr, now)) { EscapeSend(owner, cr, front); AnnounceHalts(); return true; }
-      // (the screen is not the flow's: the pilot never goes on from it - it waits for the press, the screen to settle, the retry time)
-      // (a block of the press - a pop-up over the screen, the screen held - leaves the pilot its own reason: it clicks nothing past the gate)
-      // the item's tip (a flow form) or the gear filter's main pop-up over the hero screen block «back»: closed first (the tip with one Escape, the pop-up by its ×)
-      if (hold && HeroCoverStep(owner, scr, o, cr, front, now)) return true;
-      if (!gate.CityBackDue(owner, scr, now)) { AnnounceHalts(); return !gate.Halted(owner) && (hold || ClickGate.CityBackBlock(scr) == ""); }
-      double W = cr.R, H = cr.B, U = Ui.Unit(W, H);
-      SendInside(new AutoAction { Kind = AutoKind.Click, X = hg2.BackX * U, Y = hg2.BackY * U }, o, cr, owner, ClickTarget.CityBack, front, (rq, fr) => { rq.U = U; });
-      AnnounceHalts();
-      return true;
-    }
 
-    /// <summary>What lies over the hero screen before the pilot goes on (the game's memory: HeroCover.Next): the item card with one Escape, the gear filter by its
-    /// x, the filter's side panel, then (the grid's filter pop-up is BackStep's own). Only the Equip pilot and the locate paths; the presses are the Equip owner's
-    /// targets (EquipTipEscape / EquipClosePopup), through the gate. True = a close was tried this tick (once per 1.2 s).</summary>
-    bool HeroCoverStep(ClickOwner owner, ScreenState scr, W32.POINT o, W32.RECT cr, bool front, long now) {
-      if ((owner != ClickOwner.Equip && owner != ClickOwner.Locate) || scr == null || scr.Kind != ScreenKind.HeroScreen || now < cityTipAfter) return false;
-      double W1 = cr.R, H1 = cr.B, U1 = Ui.Unit(W1, H1);
-      var gm = GearMemNow();
-      var mv = HeroCover.Next(true, ClickGate.OnlyTip(scr), EquipTipShown(), GearMain(o, W1, H1, U1) ? Mem3.Yes : Mem3.No, gm.Side, false);
-      if (mv == CoverMove.None) return false;
-      cityTipAfter = now + 1200;
-      if (mv == CoverMove.TipEscape) { if (TipEscapeSend(cr, front)) Log.Write("back: the item's tip is open - closed with Escape first (" + owner + ")"); return true; }
-      if (mv == CoverMove.CloseSide) {
-        Log.Write("back: the gear filter's side panel is open - closing it first (" + owner + ")");
-        EquipSend(ClickTarget.EquipClosePopup, new AutoAction { Kind = AutoKind.Click }, o.X + (int)Math.Round(fg.X(fg.SideCloseX, W1, H1)), o.Y + (int)Math.Round(fg.Y(fg.CloseY, W1, H1)), o, front);
-        return true;
-      }
-      Log.Write("back: the gear filter's pop-up is open - closing it first (" + owner + ")");
-      EquipSend(ClickTarget.EquipClosePopup, new AutoAction { Kind = AutoKind.Click }, o.X + (int)Math.Round(fg.X(fg.MainCloseX, W1, H1)), o.Y + (int)Math.Round(fg.Y(fg.CloseY, W1, H1)), o, front);
-      return true;
-    }
 
-    /// <summary>The "diagnosis:" line of a locate pause / stop: forms, gear filter (memory), the card's uid, the input lock.</summary>
-    string LocateDiagnosis(ScreenState scr) {
-      var gm = GearMemNow(); TipState tip = null; double W = lastClientW, H = lastClientH;
-      try { tip = RFX.ReadTipMem(W, H, W > 0 && H > 0 ? Ui.Unit(W, H) : 0); } catch (Exception) { }
-      bool? open = null; try { open = RFX.NavInputOpen(); } catch (Exception) { }
-      return HeroCover.Diagnosis(scr != null ? scr.Brief : null, scr != null ? scr.Flow : "", gm.Open, gm.Side, tip != null && tip.Shown, tip != null ? tip.SelectUid : 0, open);
-    }
-    string locateDiagSaid = "";
-    /// <summary>A locate pause / stop is never silent: one diagnosis line per distinct state.</summary>
-    void LocateDiagSay(string who, string state, string why, ScreenState scr) {
-      if (state != "paused" && state != "stopped" && state != "background") { locateDiagSaid = ""; return; }
-      string k = who + "|" + state + "|" + why;
-      if (k == locateDiagSaid) return;
-      locateDiagSaid = k;
-      Log.Write(who + ": " + state + (why != "" ? " (" + why + ")" : "") + " - " + LocateDiagnosis(scr));
-    }
 
-    /// <summary>The screen map's exit of the form on top (ClickGate.MapExit), shared by every pilot: a dangerous form stops the pilot, a fight /
-    /// loading waits (the tick is taken), a pop-up is closed with its × (MapClose, through the gate) or with one Escape (never on the city).
-    /// A back arrow and the rest: false, the older steps decide (UnknownBack / CityBack).</summary>
-    bool MapStep(ClickOwner owner, ScreenState scr, W32.POINT o, W32.RECT cr, bool front, long now) {
-      if (scr == null || !front) return false;
-      double W = cr.R, H = cr.B, U = Ui.Unit(W, H);
-      var d = ClickGate.MapExit(scr, W, H, U);
-      if (d.Move == MapMove.None || d.Move == MapMove.Back) return false;
-      if (d.Move == MapMove.Wait || gate.Halted(owner) || sending) return true;
-      if (gate.EscapeDue(owner, scr, now)) { EscapeSend(owner, cr, front); AnnounceHalts(); return true; }
-      if (!gate.MapDue(owner, scr, now)) { AnnounceHalts(); return true; }
-      if (d.Move == MapMove.Stop) { gate.MapStop(owner, d, scr); AnnounceHalts(); return true; }
-      if (d.Move == MapMove.Escape) { gate.MapEscape(owner); EscapeSend(owner, cr, front); AnnounceHalts(); return true; }
-      string form = d.Form;
-      SendInside(new AutoAction { Kind = AutoKind.Click, X = d.Point.X, Y = d.Point.Y }, o, cr, owner, ClickTarget.MapClose, front, (rq, fr) => { rq.Form = form; rq.W = W; rq.H = H; rq.U = U; });
-      AnnounceHalts();
-      return true;
-    }
 
     /// <summary>The window table (the offers, the shown forms) was not read this tick or for the fresh state: a dialog over the screen is not ruled out.</summary>
     /// A known screen the tick took for another one (its read failed then): the forms over it were not read as its pop-ups either.
@@ -3732,101 +2770,13 @@ namespace RealmForge {
     /// pilots' step was made without it - no click now, the pilots close it or wait for it first (a gate check now would stop the run on it).</summary>
     internal static bool TickBehind(ScreenState fresh, ScreenState tick) { return fresh != null && fresh.ModalOpen && (tick == null || !tick.ModalOpen || tick.Held); }
 
-    /// <summary>The one Escape key press (EscapeBack): the gate judges a fresh read (never the city - it asks to quit the game there -, a fight, a
-    /// pop-up, the exit dialog); the key goes only to the game in front.</summary>
-    bool EscapeSend(ClickOwner owner, W32.RECT cr, bool front) {
-      long now = NowMs();
-      var fresh = FreshScreen(false, true);
-      if (FormsUnread(fresh)) return false;
-      var req = new ClickRequest { Owner = owner, Target = ClickTarget.EscapeBack, AutoOn = owner == ClickOwner.Locate ? LocateAutoOn : AutoEnabled, Front = front, U = Ui.Unit(cr.R, cr.B) };
-      var res = gate.Check(req, fresh, now); navLastGate = res;
-      AnnounceHalts();
-      if (!res.Allowed) return false;
-      gate.Arm(owner, ClickTarget.EscapeBack, ClickGate.Expect(req, fresh), now);
-      SendEscapeKey(owner);
-      return true;
-    }
 
-    /// <summary>EquipTipEscape: the item's tip over the slots of the next step, closed with one Escape (the gate: only the tip shown, at most 2 a run).</summary>
-    bool TipEscapeSend(W32.RECT cr, bool front) {
-      long now = NowMs();
-      var fresh = FreshScreen(false, true);
-      if (FormsUnread(fresh)) return false;
-      var req = new ClickRequest { Owner = ClickOwner.Equip, Target = ClickTarget.EquipTipEscape, AutoOn = AutoEnabled, Front = front, U = Ui.Unit(cr.R, cr.B) };
-      var res = gate.Check(req, fresh, now); navLastGate = res;
-      AnnounceHalts();
-      if (!res.Allowed) return false;
-      gate.Arm(ClickOwner.Equip, ClickTarget.EquipTipEscape, ClickGate.Expect(req, fresh), now);
-      SendEscapeKey(ClickOwner.Equip);
-      return true;
-    }
 
-    /// <summary>VK_ESCAPE down and up, off the UI thread, only while the game's window is in front (else no key, the owner stops: "covered").</summary>
-    void SendEscapeKey(ClickOwner owner) {   // ONLY called by EscapeSend, TipEscapeSend and TickExplore (each after the gate's yes)
-      sending = true; userIdle.OwnStart((uint)Environment.TickCount);
-      if (Channel.IsTest) NavProbeOwn("key Escape owner " + owner);
-      IntPtr game = GameWindow();
-      var t = new System.Threading.Thread(() => {
-        try {
-          if (game == IntPtr.Zero || !IsForeground(game)) { covered = Tuple.Create(owner, "another window in front of the game (no Escape sent)"); return; }
-          int sz = Marshal.SizeOf(typeof(W32.KINPUT));
-          W32.SendKeyInput(1, new[] { new W32.KINPUT { type = 1, ki = new W32.KEYBDINPUT { vk = 0x1B, scan = 0x01 } } }, sz);
-          System.Threading.Thread.Sleep(60);
-          W32.SendKeyInput(1, new[] { new W32.KINPUT { type = 1, ki = new W32.KEYBDINPUT { vk = 0x1B, scan = 0x01, dwFlags = W32.KEYUP } } }, sz);
-          System.Threading.Thread.Sleep(30);
-        } catch (Exception e) { Log.Write("auto: " + e.Message); }
-        finally { userIdle.OwnEnd((uint)Environment.TickCount); sending = false; }
-      });
-      t.IsBackground = true; t.Start();
-    }
 
-    /// <summary>THE way a click leaves the app: the gate says yes (the target is on the whitelist of the screen the game shows right now,
-    /// no pop-up, the cell is the item's, the last click showed its effect), then it is sent and its effect is awaited.</summary>
-    bool GatedSend(ClickRequest req, ScreenState fresh, AutoAction a, int sx, int sy) {
-      long now = NowMs();
-      if (FormsUnread(fresh)) return false;
-      if (ClickWaitsForLook(req)) return false;   // a look that decides this click is covered by our own hint: not known is never a yes
-      var res = gate.Check(req, fresh, now); navLastGate = res;
-      AnnounceHalts();
-      if (!res.Allowed) return false;
-      // a game window larger than the screen (not maximized, live 2026-10-29): a point off the desktop is never sent (the cursor would land on the edge)
-      var vs = SystemInformation.VirtualScreen;
-      int sy2 = sy + (a.Kind == AutoKind.Drag ? (int)Math.Round(a.DY) : 0);
-      if (!OwnButtons.AllInside(new[] { vs.X, vs.Y, vs.Width, vs.Height }, sx, sy, sy2)) {
-        gate.Halt(req.Owner, "offscreen", req.Target + " @" + (int)req.X + "," + (int)req.Y + " lies off the screen (the game window is larger than the screen)"); AnnounceHalts(); return false;
-      }
-      gate.Arm(req.Owner, req.Target, ClickGate.Expect(req, fresh), now, req.Form);
-      // measurement only: the pilot's click that opens the Inventory / Heroes screen, timed to the first reading of that screen (ReadScreens)
-      if (req.Target == ClickTarget.CityInventory) { openClickAt = now; openClickWhat = "inventory"; }
-      else if (req.Target == ClickTarget.FoundryButton || req.Target == ClickTarget.HeroFoundry) { openClickAt = now; openClickWhat = "foundry"; foundryBuiltPid = GamePid(GameWindow()); }
-      else if (req.Target == ClickTarget.EquipNav && fresh != null && fresh.Kind == ScreenKind.City) { openClickAt = now; openClickWhat = "heroes"; }
-      RFX.UiButtonClicked(req.Target, req.Form, req.X, req.Y, req.W, req.H, req.U);   // (the test build reads it again a minute on: uibtn ... [minute])
-      if (Channel.IsTest) NavProbeOwn("click " + req.Target + " @" + (int)req.X + "," + (int)req.Y + (req.Form != null && req.Form != "" ? " " + req.Form : "") + " owner " + req.Owner);
-      Send(a, sx, sy, req.Owner, req.Target, req.Form, freshOffers, unknownForms);
-      // the form this click opens was never found: its search starts with the click (a slow PC needs every second of it)
-      if ((req.Target == ClickTarget.CityInventory && RFX.InvFormMissing()) || (req.Target == ClickTarget.FoundryButton && RFX.FoundryFormMissing())) RFX.RequestFormSearch("opened by the pilot's click", 0);
-      return true;
-    }
     long openClickAt; string openClickWhat = "";
     long shownDiagAt, shownDiagSaidAt; string shownDiagSaid = "";
 
-    /// <summary>An equip helper click (screen px). Target: what it presses (city / hero / gear list = EquipNav, the filter pop-up, its ×, «Заменить»).</summary>
-    bool EquipSend(ClickTarget t, AutoAction a, int sx, int sy, W32.POINT o, bool front) {
-      if (t == ClickTarget.EquipConfirm && !AutoConfirm) { gate.Halt(ClickOwner.Equip, "target", "«Заменить» without the player's auto confirm"); AnnounceHalts(); return false; }
-      var fresh = FreshScreen(t == ClickTarget.EquipNav);
-      var req = new ClickRequest { Owner = ClickOwner.Equip, Target = t, AutoOn = AutoEnabled, Front = front, X = sx - o.X, Y = sy - o.Y };
-      W32.RECT cr; IntPtr hwnd = GameWindow();
-      if (hwnd != IntPtr.Zero && W32.GetClientRect(hwnd, out cr)) {   // (the client size: the live read needs it - live 2026-10-30 "uibtn ... failed at window (no size)")
-        req.W = cr.R; req.H = cr.B; req.U = Ui.Unit(cr.R, cr.B);
-        if (a.Kind == AutoKind.Click) LiveClick(req, fresh, o, ref sx, ref sy);
-        LiveWidgetClick(req, a, fresh, o, ref sx, ref sy);
-        if (a.Kind == AutoKind.Click && a.Cell > 0 && t == ClickTarget.EquipNav) LiveCellClick(req, fresh, a.Cell, o, ref sx, ref sy); else { cellLivePt = null; cellRefused = false; }
-      } else { cellLivePt = null; cellRefused = false; }
-      if (cellRefused) { cellRefused = false; Log.Write("auto: the item's live cell is not in view now - no click on the layout's point"); return false; }
-      if (!GatedSend(req, fresh, a, sx, sy)) return false;
-      equipClickAt = NowMs(); return true;
-    }
-    RecastScreen locateRs; int locateOnAccount = -1; bool locateDriving;
+    RecastScreen locateRs; int locateOnAccount = -1;
     readonly InvScroll locateScroll = new InvScroll(), sellScroll = new InvScroll();
     string gridSaid = "", listSaid = "";
 
@@ -3903,147 +2853,14 @@ namespace RealmForge {
       string t = who + ":" + (l == null ? "none" : l.Has ? "ok" : "unreadable");
       if (t != listSaid) { listSaid = t; Log.Write("locate: the " + who + " list's reading: " + (l == null ? "none" : l.ToString())); }
     }
-    string locateMoveState = "", locateMoveWhy = "", locateAutoSaid = "";
 
-    /// <summary>The Foundry list's scroll read anew and eased, for the frame of a list cell (the screen look is only a few times
-    /// a second): the cell's frame follows the list smoothly while it scrolls.</summary>
-    void FoundryScrollNow(LocateStep step, long now) {
-      var rs = locateRs;
-      bool asc = step.Kind == LocateKind.AscendPick;
-      if (rs == null || (!asc && step.Kind != LocateKind.RecastPick)) { locListSmooth.Reset(); return; }
-      var l = asc ? rs.AscendList : rs.RecastList;
-      var live = RFX.ReadFoundryListLive(asc);
-      if (live != null && live.Has) l = live;
-      if (l == null || !l.Has) { locListSmooth.Reset(); return; }
-      double y = locListSmooth.Step(l.ScrollY, now, 4 * (l.RowUnits > 0 ? l.RowUnits : 120));
-      if (recB != null) { recB.FdRaw = l.ScrollY; recB.FdSmooth = y; }
-      var sm = new RFX.ListRead { ScrollY = y, Cols = l.Cols, RowUnits = l.RowUnits, First = l.First, Last = l.Last, FinalRowUnits = l.FinalRowUnits, FitScale = l.FitScale };
-      if (recB != null) recB.Fd = "{\"asc\":" + (asc ? "true" : "false") + ",\"l\":" + RecIn.List(sm) + "}";
-      if (asc) rs.AscendList = sm; else rs.RecastList = sm;
-    }
 
-    void TickLocateDrive(LocateStep step, LocateRequest req, IntPtr hwnd, W32.POINT o, W32.RECT cr, long now, double W, double H, double U) {
-      locateDriving = false;
-      if (!AutoEnabled || !LocateAutoEnabled) { step.Auto = ""; step.AutoWhy = ""; return; }   // hints only (the site's locateAuto switch is off by default)
-      if (sending) {   // a click is on its way (its button press is not the player's): the screens are read after it
-        step.Auto = locateMoveState == "" ? "work" : locateMoveState; step.AutoWhy = locateMoveWhy; locateDriving = true;
-        return;
-      }
-      // the player's own mouse use (the pilot's moves are remembered in `seen`); the normal tick does not run during a request
-      W32.POINT c;
-      if (W32.GetCursorPos(out c)) {
-        if (seenSet && (c.X != seen.X || c.Y != seen.Y)) lastMoveMs = now;
-        seen = c; seenSet = true;
-      }
-      bool down = (W32.GetAsyncKeyState(0x01) & 0x8000) != 0 || (W32.GetAsyncKeyState(0x02) & 0x8000) != 0;
-      if (down && !btnWasDown) userClick = true;
-      btnWasDown = down;
-      if (lpilot.Stopped) { step.Auto = "stopped"; step.AutoWhy = lpilot.Reason; return; }
-      gate.Flows[ClickOwner.Locate] = CityFirst.OfLocate(req.Purpose);   // (its work screen - the Foundry, the gem screen - never an Escape there)
-      bool busy = down || now - lastMoveMs < 700, uc = userClick; userClick = false;
-      int fp, gp; W32.GetWindowThreadProcessId(W32.GetForegroundWindow(), out fp); W32.GetWindowThreadProcessId(hwnd, out gp);
-      bool gameFront = fp == gp;
-      // the screen of this tick (ReadScreens); the click gate judges the pilot's last click and every new one by it
-      var scr = screens.Current;
-      var inv = screens.Inv;
-      if (screens.Rs != null) locateRs = screens.Rs;
-      if (gameFront && !busy) {
-        var pre = gate.Preflight(ClickOwner.Locate, scr, now);
-        AnnounceHalts();
-        if (lpilot.Stopped) { step.Auto = "stopped"; step.AutoWhy = lpilot.Reason; return; }
-        if (pre.Reason == "offer" && OfferStep(ClickOwner.Locate, scr, o, cr, gameFront, now)) { step.Auto = "work"; step.AutoWhy = ""; locateDriving = true; return; }
-        if (pre.Reason == "unknown" && UnknownBackStep(ClickOwner.Locate, scr, o, cr, gameFront, now)) { step.Auto = "work"; step.AutoWhy = ""; locateDriving = true; return; }
-        if (pre.Verdict == GateVerdict.Wait) {
-          if (pre.Reason == "pending") { step.Auto = "work"; step.AutoWhy = ""; locateDriving = true; }   // the last click's effect is awaited
-          else { step.Auto = "hint"; step.AutoWhy = "no_city"; }                                          // the screen is not recognised yet: hints only
-          return;
-        }
-      }
-      bool heroOpen = scr != null && scr.Kind == ScreenKind.HeroScreen;
-      bool formOpen = scr != null && (scr.Kind == ScreenKind.Foundry || scr.Kind == ScreenKind.Gem);
-      var dstep = LocateGuide.Next(req, inv, locateRs, heroScreen, locateCols, locateOnAccount);
-      // (a pop-up over the target: BackStep above closes it by the screen map's × / Escape through the gate; the «close the window» step is the hint mode's only)
-      var view = new LocateView { NowMs = now, Foreground = gameFront, UserBusy = busy, UserClicked = uc, W = W, H = H, U = U, Step = dstep, Inv = inv, Cols = locateCols,
-        HeroScreenOpen = heroOpen, OtherFormOpen = formOpen, InvDX = invDX, Geometry = Geo.Current, Rs = locateRs, Item = req.Item, Purpose = req.Purpose };
-      if (heroOpen && dstep.Kind == LocateKind.OpenFoundry && dstep.OnGear) HeroFoundryNow(view, scr, W, H, U);   // the gear screen's own «Литейная» by the game's memory: pressed straight
-      if (gameFront && !busy && LocateAuto.NeedsCityButton(dstep, heroOpen, formOpen)) { view.CityButton = InventoryButtonNow(o, W, H); view.InvDX = invDX; }   // the place the bar search may have found just now
-      if (gameFront && !busy && dstep.Kind == LocateKind.InList) {
-        var pg = SellGeometry.Inventory(W, U, locateCols);
-        view.Row1 = locateScroll.Row1(pg, inv != null ? inv.List : null, double.NaN, U, now);   // the game's scroll (the constant is learned by the frame)
-        if (double.IsNaN(view.Row1)) view.Phase = PhaseCached(pg, o, cr, U, now);                    // last resort
-      }
-      if (RFX.InvFilterWanted && !gate.Halted(ClickOwner.LocateFilter) && inv != null && inv.Open && inv.EquipTab && !inv.Bulk && (dstep.Kind == LocateKind.InList || dstep.Kind == LocateKind.Selected))
-        view.Filter = FilterView(inv, dstep, req, gameFront, busy, now, W, H, U);
-      // city first: a screen the purpose's flow does not go on from (the workshop, the gem screen for an Ascension, the Foundry for a recast), or
-      // the step is the inventory's while the Foundry / the gem screen is on top: back with its arrow first
-      if (!ReferenceEquals(req, locateRunSeen)) { locateRunSeen = req; cityRunLocate = false; cityRunSince = 0; }
-      bool cityLoc = CityStartDue(ref cityRunLocate, scr, now);
-      bool needBack = cityLoc || CityFirst.NeedsCity(CityFirst.OfLocate(req.Purpose), scr, dstep.Kind, LocateAuto.NeedsCityBack(view));
-      if (gameFront && !busy && BackStep(ClickOwner.Locate, scr, needBack, o, cr, gameFront, now, cityLoc || (heroOpen && (dstep.Kind == LocateKind.OpenFoundry || dstep.Kind == LocateKind.OpenInventory)))) { step.Auto = "work"; step.AutoWhy = ""; locateDriving = true; return; }
-      if (gameFront && !busy && dstep.Kind == LocateKind.AscendPick && req.Item != null && req.Item.Uid > 0) FillAscendLive(view, req.Item.Uid, scr, W, H, U);   // (the game's own cell of the item: the pilot clicks it when it is wholly in view, whatever the layout's estimate says)
-      if (gate.CellAgainDue.Remove(ClickOwner.Locate)) lpilot.CellAgain();   // (ClickGate.Observe: a cell click without effect, placed again once)
-      // a list step on a list that still moves: the next read (the click point from a settled one)
-      if (gameFront && !busy && ((dstep.Kind == LocateKind.InList && !invSettle.Settled) || (dstep.Kind == LocateKind.AscendPick && !rsSettle.Settled))) { step.Auto = "work"; step.AutoWhy = ""; locateDriving = true; return; }
-      var mv = lpilot.Step(view);
-      if (lpilot.Trace != "") { Log.Write("locate auto: " + lpilot.Trace); lpilot.Trace = ""; }
-      locateMoveState = mv.State; locateMoveWhy = mv.Why;
-      string said = mv.State + "|" + mv.Why + "|" + dstep.Key;
-      if (said != locateAutoSaid) { locateAutoSaid = said; Log.Write("locate auto: " + mv.State + (mv.Why != "" ? " (" + mv.Why + ")" : "") + " at step " + dstep.Key); }
-      LocateDiagSay("locate auto", mv.State, mv.Why + "@" + dstep.Key, scr);
-      // started from our own window: the game comes forward (and is restored), never over another program
-      if (mv.State == "background") RaiseGame(hwnd, true, now, true);
-      if (mv.Action.Kind != AutoKind.None) SendLocate(mv, req, o, cr, gameFront, now, W, H, U);
-      if (lpilot.Stopped) { step.Auto = "stopped"; step.AutoWhy = lpilot.Reason; locateDriving = false; LocateDiagSay("locate auto", "stopped", lpilot.Reason, scr); return; }
-      step.Auto = mv.State; step.AutoWhy = mv.Why;
-      locateDriving = mv.State == "work" || mv.State == "paused" || mv.State == "background";
-    }
 
-    /// <summary>The hero gear screen's «Литейная» read live (the round button's own widget, FrameTargets "hero.workshop"): fresh, shown, inside the client, the hero form on top and
-    /// no gear filter / side panel over it (the game's flags) -> view.HeroFoundryLive and its centre (client px).</summary>
-    void HeroFoundryNow(LocateView view, ScreenState scr, double W, double H, double U) {
-      var ft = FrameTargets.Of("hero.workshop"); var w = FrameTargets.Widget(ft);
-      if (w == null) return;
-      RFX.UiTargetWant(ft.Key, w, W, H, U);
-      int now = Environment.TickCount;
-      var r = RFX.UiTargetFresh(ft.Key, W, H, now, RFX.UiFrameFreshMs);
-      double x, y; string why;
-      if (!RFX.UiLivePoint(r, W, H, now, out x, out y, out why, RFX.UiFrameFreshMs) || !RFX.UiFormTopIs(ft.Form, scr)) return;
-      if (scr == null || scr.GearOpenMem == Mem3.Yes || scr.GearSideMem == Mem3.Yes || scr.ModalOpen) return;
-      view.HeroFoundryLive = true; view.HeroFoundryX = x; view.HeroFoundryY = y;
-    }
 
-    /// <summary>The inventory's filter for a long search (src/LocatePilot.cs InvFilterPilot): what the game shows now. Wanted = the item is in the list but off the first
-    /// screen of cells (the game's own cell indices when read, else its row).</summary>
-    InvFilterView FilterView(InventoryScreen inv, LocateStep dstep, LocateRequest req, bool gameFront, bool busy, long now, double W, double H, double U) {
-      RFX.InvFilterW = W; RFX.InvFilterH = H; RFX.InvFilterU = U;
-      var fv = new InvFilterView { NowMs = now, Foreground = gameFront, UserBusy = busy, W = W, H = H, U = U, Item = req.Item, F = inv.Filter };
-      var l = inv.List; int idx = dstep.Pos - 1;
-      bool shown = idx >= 0 && l != null && l.First >= 0 && l.Last >= l.First && idx >= l.First && idx <= l.Last;
-      fv.Wanted = dstep.Kind == LocateKind.InList && idx >= 0 && !shown && dstep.Row > InvFilterPilot.MinRow;
-      var f = inv.Filter;
-      if (f != null && f.Known && f.SuitOpen && req.Item != null && req.Item.SetId > 0) {
-        var cs = RFX.UiCellFresh(UiCellKind.InvSuit, req.Item.SetId, W, H, Environment.TickCount, RFX.UiFreshMs);
-        RFX.UiCellWant(UiCellKind.InvSuit, new[] { req.Item.SetId }, W, H, U);
-        double[] fr; string why; var st = RFX.UiCellState(cs, req.Item.SetId, W, H, Environment.TickCount, out fr, out why, RFX.UiFreshMs);
-        if (cs != null && cs.Ok) { fv.GridView = new[] { cs.VX, cs.VY, cs.VW, cs.VH }; fv.CellFirst = cs.First; fv.CellLast = cs.Last; }
-        fv.SuitCell = st == UiCellSee.Shown && fr != null ? 1 : cs != null && cs.Ok ? 2 : 0;
-        if (fv.SuitCell == 1) fv.CellRect = fr;
-        var wr = RFX.UiKeyRead("grid", W, H, U);
-        if (wr != null && wr.Ok && wr.Visible && fv.GridView == null) fv.GridView = new[] { wr.X, wr.Y, wr.W, wr.H };
-      }
-      return fv;
-    }
 
-    /// <summary>A filter button's click point: the live rect of its widget (read now) when it is visible and inside the client, else the prefab's layout point the pilot gave.</summary>
-    void FilterLivePoint(LocateMove mv, double W, double H, double U) {
-      var r = RFX.UiKeyRead(mv.FilterKey, W, H, U); double x, y; string why;
-      bool live = RFX.UiLivePoint(r, W, H, Environment.TickCount, out x, out y, out why);
-      if (live) { mv.Action.X = x; mv.Action.Y = y; }
-      Log.Write("uibtn: filter " + mv.FilterKey + (r != null ? " " + (r.Ok ? "[" + (int)r.X + "," + (int)r.Y + " " + (int)r.W + "x" + (int)r.H + (r.Visible ? "" : " hidden") + "]" : "failed at " + r.FailStep) : " no read") + (live ? " [click: live @" + (int)x + "," + (int)y + "]" : " [click: layout, " + why + "]"));
-    }
 
     const double InvBtnDX = CityBar.DefaultDX;   // «Инвентарь»: 0.9316 left of «Герои» in the city's bottom bar
-    int sellCols = 8, sellGeoCols; double sellGeoW, sellGeoH; bool sellScanOnce;
+    bool sellScanOnce;
 
     // the rows' phase on the screen: the stat bars under the cells (client px mod the row step), NaN = unclear
     long phaseAt; double phaseVal = double.NaN;
@@ -4052,8 +2869,6 @@ namespace RealmForge {
       if (now - phaseAt >= 100 || phaseAt == 0) { phaseAt = now; phaseVal = PhaseOf(sg, o, cr, U); }
       return phaseVal;
     }
-
-    double SellPhase(W32.POINT o, W32.RECT cr, double U) { return PhaseOf(spilot.Geometry, o, cr, U); }
 
     double PhaseOf(SellGeometry sg, W32.POINT o, W32.RECT cr, double U) {
       int x0 = (int)Math.Round(sg.X(sg.X0, cr.R, U)), x1 = (int)Math.Round(sg.X(sg.X0 + (sg.Columns - 1) * sg.PitchX + sg.CellW, cr.R, U));
@@ -4084,326 +2899,26 @@ namespace RealmForge {
       return px == null ? 0 : ListTracker.GridColumns(px, w, h);
     }
 
-    void SellSay(string st) {
-      string key = st + "|" + spilot.Selected + "|" + spilot.Missing + "|" + spilot.Extra;
-      if (key == sellSaid) return;
-      sellSaid = key; sellReport(spilot, st);
-      Log.Write("sell: " + st + " selected " + spilot.Selected + "/" + (sellWanted != null ? sellWanted.Count : 0) + " missing " + spilot.Missing + " extra " + spilot.Extra);
-    }
 
     // ---- the artifact storage cleanup's clicks (only with ArtAutoOn; the frames and plates of TickSellHint go on). The pilot opens the «Артефакт» tab and
     // «Массовая продажа», then SellPilot (with the artifact list's geometry) ticks the wanted cards, scrolling the list by dragging it, and takes a wrong tick off.
     // Never «Продать», «Все» (select all), a lock icon or anything else; every cell click is judged by the gate on a fresh read (the card under the click is the
     // one meant, and the game's choice must hold it within 1 s).
-    long artSellBtnAt; string artSellSaid = "";
 
-    void TickArtSellAuto() {
-      if (!sellArt || sellWanted == null || !ArtAutoOn || sending || runHero > 0) return;
-      long now = NowMs();
-      W32.POINT c;
-      if (W32.GetCursorPos(out c)) {
-        if (seenSet && (c.X != seen.X || c.Y != seen.Y)) lastMoveMs = now;
-        seen = c; seenSet = true;
-      }
-      bool down = (W32.GetAsyncKeyState(0x01) & 0x8000) != 0 || (W32.GetAsyncKeyState(0x02) & 0x8000) != 0;
-      if (down && !btnWasDown) userClick = true;
-      btnWasDown = down;
-      IntPtr hwnd = GameWindow();
-      int fp, gp;
-      if (hwnd == IntPtr.Zero) return;
-      W32.GetWindowThreadProcessId(W32.GetForegroundWindow(), out fp); W32.GetWindowThreadProcessId(hwnd, out gp);
-      // started from our own window: the game comes forward (and is restored), never over another program
-      if (RaiseGame(hwnd, true, now, true)) return;
-      if (W32.IsIconic(hwnd)) return;
-      W32.RECT cr; if (!W32.GetClientRect(hwnd, out cr) || cr.B < 200) return;
-      var o = new W32.POINT(0, 0); W32.ClientToScreen(hwnd, ref o);
-      double W = cr.R, H = cr.B, U = Ui.Unit(W, H);
-      bool front = fp == gp, busy = down || now - lastMoveMs < 700, uc = userClick; userClick = false;
-      if (gate.Halted(ClickOwner.Sell)) return;
-      var scr = screens.Current;
-      if (front && !busy) {
-        var pre = gate.Preflight(ClickOwner.Sell, scr, now);
-        AnnounceHalts();
-        if (pre.Reason == "offer" && OfferStep(ClickOwner.Sell, scr, o, cr, front, now)) return;
-        if (pre.Reason == "unknown" && UnknownBackStep(ClickOwner.Sell, scr, o, cr, front, now)) return;
-        if (pre.Verdict != GateVerdict.Allow) return;
-        // city first: the Foundry, the gem screen, the workshop ... back with the arrow top left
-        bool eqBulk = scr != null && scr.Kind == ScreenKind.Inventory && scr.InvEquipTab && scr.InvBulkKnown && scr.InvBulk;   // the equipment sale: never clicked in
-        if (BackStep(ClickOwner.Sell, scr, CityFirst.NeedsCity(PilotFlow.ArtSell, scr, LocateKind.None, eqBulk), o, cr, front, now)) return;
-        // then the normal way to the inventory: the hero screen's back arrow, the city's «Инвентарь»
-        if (scr != null && scr.Kind == ScreenKind.HeroScreen) {
-          if (now - artSellBtnAt < 2000) return;
-          artSellBtnAt = now;
-          SendInside(new AutoAction { Kind = AutoKind.Click, X = hg2.BackX * U, Y = hg2.BackY * U }, o, cr, ClickOwner.Sell, ClickTarget.HeroBack, front);
-          return;
-        }
-        if (scr != null && scr.Kind == ScreenKind.City && InventoryButtonNow(o, W, H)) {
-          if (now - artSellBtnAt < 2500) return;
-          artSellBtnAt = now;
-          SendInside(new AutoAction { Kind = AutoKind.Click, X = W - invDX * U, Y = H - hg2.HeroesBtnDY * U }, o, cr, ClickOwner.Sell, ClickTarget.CityInventory, front);
-          return;
-        }
-      }
-      if (scr == null || scr.Kind != ScreenKind.Inventory || screens.Inv == null) return;   // not the city's bar (a fight, a covered city): the hint says so
-      var inv = screens.Inv;
-      if (!front || busy) return;
-      if (!inv.ArtTab) {
-        if (inv.EquipTab && (!inv.BulkKnown || inv.Bulk)) return;   // the equipment sale is left by the player
-        if (now - artSellBtnAt < 2000) return;
-        artSellBtnAt = now;
-        var tr = ArtFrames.Rect(Geo.Current, "inventory.leftTab.artifact", W, H, U);
-        if (tr != null) SendInside(new AutoAction { Kind = AutoKind.Click, X = tr.CX, Y = tr.CY }, o, cr, ClickOwner.Sell, ClickTarget.ArtTab, front);
-        return;
-      }
-      if (!inv.ArtBulkKnown) return;
-      if (!inv.ArtBulk) {
-        if (inv.ArtMode != -1) return;   // «Масс. организовать»: the player leaves it
-        if (now - artSellBtnAt < 2000) return;
-        artSellBtnAt = now;
-        var pb = SellHint.ArtBulkRect(W, H, U);
-        SendInside(new AutoAction { Kind = AutoKind.Click, X = pb[0] + pb[2] / 2.0, Y = pb[1] + pb[3] / 2.0 }, o, cr, ClickOwner.Sell, ClickTarget.ArtBulkEnter, front);
-        return;
-      }
-      // «Массовая продажа» of the artifact tab: the geometry and the columns are the hint's (TickSellHint keeps them); no cell without the game's exact scroll
-      var geo = shGeo; int cols = shCols;
-      if (geo == null || shGeoW != W || shGeoH != H || shGeoCols != cols || inv.List == null || !inv.List.Has) return;
-      spilot.Geometry = geo;
-      double row1 = sellScroll.Row1(geo, inv.List, double.NaN, U, now);
-      if (double.IsNaN(row1)) return;
-      var a = spilot.Step(new SellView { NowMs = now, Foreground = front, UserBusy = busy, UserClicked = uc, W = W, H = H, U = U, Screen = inv.AsSellArt(cols), Wanted = sellWanted, Phase = double.NaN, Row1 = row1 });
-      if (spilot.Trace != "") { Log.Write("art sell auto: " + spilot.Trace); spilot.Trace = ""; }
-      string key = spilot.State + "|" + spilot.Selected + "|" + spilot.Missing + "|" + spilot.Extra;
-      if (key != artSellSaid) { artSellSaid = key; Log.Write("art sell auto: " + spilot.State + " selected " + spilot.Selected + "/" + sellWanted.Count + " missing " + spilot.Missing + " extra " + spilot.Extra); }
-      if (a.Kind == AutoKind.None) return;
-      var wanted = sellWanted;
-      SendInside(a, o, cr, ClickOwner.Sell, a.Kind == AutoKind.Drag ? ClickTarget.ArtListDrag : ClickTarget.ArtBulkCell, front, (rq, fr) => {
-        if (a.Kind == AutoKind.Drag) return;
-        rq.CellUid = ClickGate.InvCellUid(fr.Inv, geo, sellScroll.Row1(geo, fr.Inv != null ? fr.Inv.List : null, double.NaN, U, now), cols, rq.X, rq.Y, W, U);
-        rq.CellOk = wanted;
-        rq.Untick = rq.CellUid > 0 && !wanted.Contains(rq.CellUid);   // a ticked card that is not wanted comes off; the gate checks both ways
-      });
-    }
 
     // a pilot action at client px, never outside the game's client area
     // the click gate decides (src/ClickGate.cs): <paramref name="fill"/> adds what only the fresh read can say (the item under a cell click)
-    bool SendInside(AutoAction a, W32.POINT o, W32.RECT cr, ClickOwner owner, ClickTarget target, bool front, Action<ClickRequest, ScreenState> fill = null) {
-      int x = o.X + (int)Math.Round(a.X), y = o.Y + (int)Math.Round(a.Y), y2 = y + (int)Math.Round(a.DY);
-      if (x < o.X || y < o.Y || x >= o.X + cr.R || y >= o.Y + cr.B || y2 < o.Y || y2 >= o.Y + cr.B) return false;
-      bool artT = ClickGate.IsArtTarget(target);
-      // an artifact flow never presses «Продвинуть» / «Улучшить»: on the workshop no click or drag point may lie inside those buttons
-      if (ClickGate.IsWorkshopTarget(target)) {
-        double aw = cr.R, ah = cr.B, au = Ui.Unit(aw, ah);
-        if (ClickGate.OnNeverButton(Geo.Current, a.X, a.Y, aw, ah, au) || (a.Kind == AutoKind.Drag && ClickGate.OnNeverButton(Geo.Current, a.X, a.Y + a.DY, aw, ah, au))) {
-          gate.Halt(owner, "target", target + " @" + (int)a.X + "," + (int)a.Y + " lies on a button the artifact flows never press"); AnnounceHalts(); return false;
-        }
-      }
-      // the artifact steps of the hero screen never press the card's sell icon or «Быстро надеть»
-      if (ClickGate.IsHeroArtTarget(target)) {
-        double aw = cr.R, ah = cr.B, au = Ui.Unit(aw, ah);
-        if (ArtEquipFrames.OnNeverButton(Geo.Current, a.X, a.Y, aw, ah, au) || (a.Kind == AutoKind.Drag && ArtEquipFrames.OnNeverButton(Geo.Current, a.X, a.Y + a.DY, aw, ah, au))) {
-          gate.Halt(owner, "target", target + " @" + (int)a.X + "," + (int)a.Y + " lies on a button the artifact steps never press"); AnnounceHalts(); return false;
-        }
-      }
-      var fresh = FreshScreen(target == ClickTarget.CityInventory, target == ClickTarget.UnknownBack || target == ClickTarget.CityBack || target == ClickTarget.FoundryButton || target == ClickTarget.HeroFoundry);   // (FoundryButton: the Foundry's form shown unread, ClickGate)
-      var req = new ClickRequest { Owner = owner, Target = target, AutoOn = artT ? ArtAutoOn : owner == ClickOwner.Locate || owner == ClickOwner.LocateFilter ? LocateAutoOn : AutoEnabled, Front = front, X = a.X, Y = a.Y };
-      if (fill != null) fill(req, fresh);
-      if (req.U <= 0) { req.W = cr.R; req.H = cr.B; req.U = Ui.Unit(cr.R, cr.B); }
-      req.Shown = unknownForms;   // (every unknown form shown, a screen's own ones too: ClickGate)
-      if (a.Kind == AutoKind.Click) LiveClick(req, fresh, o, ref x, ref y);
-      LiveWidgetClick(req, a, fresh, o, ref x, ref y);
-      if (a.Kind == AutoKind.Click && a.Cell > 0) LiveCellClick(req, fresh, a.Cell, o, ref x, ref y); else cellLivePt = null;
-      return GatedSend(req, fresh, a, x, y);
-    }
 
-    /// <summary>A pilot button's click (HeroBack, OfferClose, EquipConfirm, CityInventory, FoundryButton, AscendTab): the centre of its live rect
-    /// (src/UiButtons.cs) when the read is fresh (at most 200 ms; else one read now), visible, inside the client and on the form on top of the
-    /// fresh screen - the click lands on the real button at any window size; otherwise the geometry's point. One log line per click.</summary>
-    void LiveClick(ClickRequest req, ScreenState fresh, W32.POINT o, ref int sx, ref int sy) {
-      if (RFX.UiWidgetOf(req.Target, req.Form) == null || req.W <= 0 || req.H <= 0) return;
-      var r = RFX.UiButtonFresh(req.Target, req.Form, req.W, req.H, Environment.TickCount, RFX.UiFreshMs) ?? RFX.UiButtonReadNow(req.Target, req.Form, req.W, req.H, req.U);
-      double lx = req.X, ly = req.Y, x, y; string why;
-      bool live = RFX.UiLivePoint(r, req.W, req.H, Environment.TickCount, out x, out y, out why);
-      if (live && !RFX.UiTopIs(req.Target, req.Form, fresh)) { live = false; why = "the form on top is " + (fresh != null ? fresh.Top + " (" + fresh.Brief + ")" : "not read"); }
-      if (live) { req.X = x; req.Y = y; req.Live = true; sx = o.X + (int)Math.Round(x); sy = o.Y + (int)Math.Round(y); }
-      if (r != null) Log.Write(RFX.UiButtonLine(r, lx, ly) + (live ? " [click: live @" + (int)Math.Round(x) + "," + (int)Math.Round(y) + "]" : " [click: layout, " + why + "]"));
-      else Log.Write("uibtn: " + req.Target + " [click: layout, no read]");
-    }
 
-    // «Показать в игре»: the pilot's action -> the gate's target (and for a list cell the item that has to be under the click)
-    void SendLocate(LocateMove mv, LocateRequest req, W32.POINT o, W32.RECT cr, bool front, long now, double W, double H, double U) {
-      bool drag = mv.Action.Kind == AutoKind.Drag;
-      ClickTarget tg = ClickTarget.None;
-      Action<ClickRequest, ScreenState> fill = null;
-      switch (mv.Todo) {
-        case LocateTodo.BackToCity: tg = ClickTarget.HeroBack; break;
-        case LocateTodo.InventoryButton: tg = ClickTarget.CityInventory; break;
-        case LocateTodo.EquipTab: tg = ClickTarget.InvEquipTab; break;
-        case LocateTodo.FoundryButton:
-          tg = ClickTarget.FoundryButton;
-          // the Foundry built before in this game but not readable now: it may be open over the inventory unseen (the gate waits; a search is asked for)
-          fill = (rq, fr) => {
-            rq.FoundryUnread = foundryBuiltPid != 0 && foundryBuiltPid == GamePid(GameWindow()) && (fr.Rs == null || RFX.FoundryFormMissing());
-            if (rq.FoundryUnread) RFX.RequestFormSearch("foundry not readable before «Литейная»", 2000);
-          };
-          break;
-        case LocateTodo.HeroFoundry: tg = ClickTarget.HeroFoundry; break;   // (the live centre of the button is the action's point)
-        case LocateTodo.AscendTab: tg = ClickTarget.AscendTab; break;
-        case LocateTodo.SlotTab: tg = ClickTarget.SlotTab; break;
-        case LocateTodo.CardGem: case LocateTodo.GemFunc: {
-          bool gemBtn = mv.Todo == LocateTodo.CardGem;
-          tg = gemBtn ? ClickTarget.InvCardGem : ClickTarget.GemFuncRow;
-          fill = (rq, fr) => { rq.CellOk = new[] { req.Item.Uid }; rq.Func = GemRows.FuncOfQuality(req.Item.Quality); };   // the screen's selected item has to be this one
-          break;
-        }
-        case LocateTodo.InvFilter: case LocateTodo.InvFilterCell: case LocateTodo.InvFilterDrag: case LocateTodo.InvFilterClose: {
-          // the inventory's filter (owner LocateFilter: its own gate stop): a toggle of the panel, a set of the pop-up, a drag on its list, the click outside
-          if (mv.Todo == LocateTodo.InvFilter) FilterLivePoint(mv, W, H, U);
-          var ftg = mv.Todo == LocateTodo.InvFilter ? ClickTarget.InvFilterBtn : mv.Todo == LocateTodo.InvFilterCell ? ClickTarget.InvFilterCell : mv.Todo == LocateTodo.InvFilterDrag ? ClickTarget.InvFilterDrag : ClickTarget.InvFilterClose;
-          long fset = req.Item != null ? req.Item.SetId : 0; string fkey = mv.FilterKey; int farg = (int)mv.FilterArg; int ffn = mv.Todo == LocateTodo.InvFilterClose ? farg : 0;
-          bool fsent = SendInside(mv.Action, o, cr, ClickOwner.LocateFilter, ftg, front, (rq, fr) => {
-            rq.Form = fkey; rq.W = W; rq.H = H; rq.U = U; rq.Func = ffn;
-            if (ftg == ClickTarget.InvFilterCell) rq.CellOk = new[] { fset };   // (the set under the click: LiveCellClick names it from the live cell; none = the gate stops the filter)
-          });
-          if (!fsent) lpilot.FilterNotSent(); else lpilot.Sent();
-          return;
-        }
-        case LocateTodo.PickItem:
-          tg = drag ? ClickTarget.InvListDrag : ClickTarget.InvListCell;
-          fill = (rq, fr) => {
-            var g2 = SellGeometry.Inventory(W, U, locateCols);
-            rq.CellUid = ClickGate.InvCellUid(fr.Inv, g2, locateScroll.Row1(g2, fr.Inv != null ? fr.Inv.List : null, double.NaN, U, now), locateCols, rq.X, rq.Y, W, U);
-            rq.CellOk = new[] { req.Item.Uid };
-            rq.NoScroll = fr.Inv == null || fr.Inv.List == null || !fr.Inv.List.Has;
-          };
-          break;
-        case LocateTodo.AscendCell:
-          tg = drag ? ClickTarget.AscendDrag : ClickTarget.AscendCell;
-          fill = (rq, fr) => { rq.CellUid = ClickGate.AscendCellUid(Geo.Current, fr.Rs, rq.X, rq.Y, W, H, U); rq.CellOk = new[] { req.Item.Uid }; };
-          break;
-      }
-      if (!drag && (mv.Todo == LocateTodo.PickItem || mv.Todo == LocateTodo.AscendCell) && req.Item != null) mv.Action.Cell = req.Item.Uid;   // (its live cell is clicked when fresh)
-      if (SendInside(mv.Action, o, cr, ClickOwner.Locate, tg, front, fill)) lpilot.Sent(); else lpilot.NotSent();   // ClickTarget.None is on nobody's whitelist: stopped
-    }
 
-    /// <summary>Moves the cursor and clicks / drags there, off the UI thread (short pauses let the game see the pointer
-    /// over the button first). A drag moves in small steps and rests before the release, so the list does not coast.</summary>
-    void Send(AutoAction a, int x, int y, ClickOwner owner, ClickTarget target, string form, List<string> offersBefore, List<string> formsBefore) {   // ONLY called by GatedSend and TickExplore (each after the gate's yes)
-      var ob = offersBefore != null ? new List<string>(offersBefore) : null; var fb = formsBefore != null ? new List<string>(formsBefore) : null; bool uiKnown = RFX.UiKnown;
-      sending = true;
-      int dy2 = y + (a.Kind == AutoKind.Drag ? (int)Math.Round(a.DY) : 0);
-      // our own buttons over the game (the TEST build's record button lies on the back arrow at every size, live 2026-10-29:
-      // Locate's HeroBack click started a recording) let this click through to the game, until it is done
-      var through = new List<GlowWindow>();
-      foreach (var w in new[] { recWin, cancelWin })
-        if (w.Visible && w.IsHandleCreated && OwnButtons.Covers(w.Parts, x, y, dy2)) { PassThrough(w, true); through.Add(w); }
-      IntPtr game = GameWindow(); int gamePid = 0;
-      if (game != IntPtr.Zero) W32.GetWindowThreadProcessId(game, out gamePid);
-      seen = new W32.POINT(x, y); seenSet = true;
-      // our own window (the compact one over the game) must not catch the click: for the moment it goes under the
-      // game (z-order only: hiding it made its taskbar button vanish and come back on every click, 27.09) and back on
-      // top after, without taking the focus
-      IntPtr self = AppWindowHandle();
-      bool hidden = false, wasTop = false;
-      W32.RECT wr;
-      const uint NoMoveSizeActivate = 0x0002 | 0x0001 | 0x0010;   // SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE
-      IntPtr above = IntPtr.Zero;   // the window just over ours before the flip: it goes back right under it, not to the top (a window that was under the game must stay under it)
-      if (self != IntPtr.Zero && W32.IsWindowVisible(self) && W32.GetWindowRect(self, out wr)) {
-        int y2 = y + (a.Kind == AutoKind.Drag ? (int)Math.Round(a.DY) : 0);
-        // only a click that our window would catch: the window the system finds at the point (and at the drag's end) is ours; nothing else is touched (no z-order, no style)
-        bool ownAt = OwnRootAt(self, x, y) || (y2 != y && OwnRootAt(self, x, y2));
-        bool over = FrontPolicy.ClickNeedsOwnAside(true, W32.IsIconic(self), wr.L, wr.T, wr.R, wr.B, x, y, y2, ownAt);
-        if (over) {
-          wasTop = (W32.GetWindowLong(self, -20) & 0x00000008) != 0;   // GWL_EXSTYLE, WS_EX_TOPMOST
-          above = wasTop ? IntPtr.Zero : W32.GetWindow(self, 3);   // GW_HWNDPREV
-          string zl = zflip.Line(Environment.TickCount, "own window at the click (" + x + "," + y + ") rect=[" + wr.L + "," + wr.T + "," + (wr.R - wr.L) + "," + (wr.B - wr.T) + "] " + (wasTop ? "topmost" : "normal"));
-          if (zl != null) Log.Write(zl);
-          W32.SetWindowPos(self, (IntPtr)1, 0, 0, 0, 0, NoMoveSizeActivate);   // HWND_BOTTOM
-          hidden = true;
-        }
-      }
-      userIdle.OwnStart((uint)Environment.TickCount);
-      var t = new System.Threading.Thread(() => {
-        try {
-          if (hidden) System.Threading.Thread.Sleep(120);
-          W32.SetCursorPos(x, y);
-          System.Threading.Thread.Sleep(60);
-          // the press goes only to the game: another window at the point (a foreign one, or ours that did not step aside) = no press, the pilot stops
-          string cov = CoveredBy(x, y, gamePid);
-          if (cov != null) { covered = Tuple.Create(owner, cov); return; }
-          // the top form checked again right before the press (a pop-up of the game's chain may come while the cursor moves): no press, a retry
-          if (uiKnown && a.Kind == AutoKind.Click) {
-            var on = RFX.ReadOffers(); var fn = on != null && on.Count == 0 && fb != null ? RFX.ReadUnknownShownForms(4) : null;
-            string late = ClickGate.LateTop(target, form, ob, on, fb, fn);
-            if (late != null) { lateTop = Tuple.Create(owner, target + ": " + late); return; }
-          }
-          if (a.Kind == AutoKind.Click) {
-            Mouse(W32.LEFTDOWN, 0);
-            System.Threading.Thread.Sleep(60);
-            Mouse(W32.LEFTUP, 0);
-          } else {
-            Mouse(W32.LEFTDOWN, 0);
-            System.Threading.Thread.Sleep(80);
-            const int Steps = 16;
-            int yEnd = y + (int)Math.Round(a.DY);
-            for (int i = 1; i <= Steps; i++) { W32.SetCursorPos(x, y + (int)Math.Round(a.DY * i / Steps)); System.Threading.Thread.Sleep(20); }
-            seen = new W32.POINT(x, yEnd);          // the pilot's own move, not the player's
-            System.Threading.Thread.Sleep(350);     // at rest: the ScrollRect's velocity decays, no coasting after the release
-            Mouse(W32.LEFTUP, 0);
-          }
-          System.Threading.Thread.Sleep(30);
-        } catch (Exception e) { Log.Write("auto: " + e.Message); }
-        finally {
-          // back over the game: topmost again when it was («Поверх игры»), else just above it
-          if (hidden) W32.SetWindowPos(self, wasTop ? (IntPtr)(-1) : above != IntPtr.Zero ? above : IntPtr.Zero, 0, 0, 0, 0, NoMoveSizeActivate | 0x4000);   // SWP_ASYNCWINDOWPOS (back right under what was over it)
-          foreach (var w in through) try { PassThrough(w, false); } catch (Exception) { }
-          userIdle.OwnEnd((uint)Environment.TickCount);
-          sending = false;
-        }
-      });
-      t.IsBackground = true; t.Start();
-    }
 
-    // a pilot click that found another window over the game's point (set by the click thread, turned into a halt by Tick)
-    volatile Tuple<ClickOwner, string> covered;
-    // a pilot click not pressed: a pop-up came on top right before the press (set by the click thread, turned into a retry by Tick)
-    volatile Tuple<ClickOwner, string> lateTop;
     List<string> freshOffers;   // the offers of the last fresh read (FreshScreen): the click thread's re-check compares with them
 
     readonly ZFlipLog zflip = new ZFlipLog();
-    /// <summary>Is the top-level window the system finds at the screen point our main window?</summary>
-    static bool OwnRootAt(IntPtr self, int x, int y) {
-      IntPtr h = W32.WindowFromPoint(new W32.POINT(x, y));
-      if (h == IntPtr.Zero) return false;
-      IntPtr root = W32.GetAncestor(h, 2);   // GA_ROOT
-      return h == self || root == self;
-    }
 
-    static void PassThrough(GlowWindow w, bool on) {   // WS_EX_TRANSPARENT on a layered window: the mouse goes to what is under it
-      int ex = W32.GetWindowLong(w.Handle, -20);
-      W32.SetWindowLong(w.Handle, -20, on ? ex | 0x20 : ex & ~0x20);
-    }
 
-    /// <summary>Null when the window at the screen point belongs to the game's process; else what is there (class and process name).</summary>
-    static string CoveredBy(int x, int y, int gamePid) {
-      if (gamePid == 0) return null;   // the game's window is unknown here: the gate has already checked the screen
-      IntPtr h = W32.WindowFromPoint(new W32.POINT(x, y));
-      if (h == IntPtr.Zero) return "no window";
-      int pid; W32.GetWindowThreadProcessId(h, out pid);
-      if (pid == gamePid) return null;
-      var cls = new System.Text.StringBuilder(128); W32.GetClassName(h, cls, cls.Capacity);
-      string proc = "?";
-      try { using (var p = Process.GetProcessById(pid)) proc = p.ProcessName; } catch (Exception) { }
-      return "the window «" + cls + "» of " + proc;
-    }
 
-    static IntPtr AppWindowHandle() {
-      try { return Process.GetCurrentProcess().MainWindowHandle; } catch (Exception) { return IntPtr.Zero; }
-    }
 
-    static void Mouse(uint flags, uint data) {
-      var inp = new[] { new W32.INPUT { type = 0, mi = new W32.MOUSEINPUT { dwFlags = flags, mouseData = data } } };
-      W32.SendInput(1, inp, Marshal.SizeOf(typeof(W32.INPUT)));
-    }
 
     IntPtr gameWnd; int gameWndAge;
     IntPtr GameWindow() {
@@ -4419,7 +2934,8 @@ namespace RealmForge {
     /// <summary>The guide's verdicts that mean the item is in the game's list now (it found its row).</summary>
     internal static bool ListedKind(string kind) { return kind == "pick" || kind == "rel" || kind == "filter" || kind == "selected"; }
 
-    /// <summary>What the filter pilot needs this tick: the filter in memory, the set / stat places in the game's lists, the
+
+    /// <summary>What the filter hint needs this tick: the filter in memory, the set / stat places in the game's lists, the
     /// open panels on the screen (only looked at with the game in front).</summary>
     FilterView FilterViewNow(W32.POINT o, W32.RECT cr, long now, bool front, bool busy) {
       var fv = new FilterView { NowMs = now, Foreground = front, UserBusy = busy, W = cr.R, H = cr.B };
@@ -4427,21 +2943,18 @@ namespace RealmForge {
       long[] suits, mains, subAttrs; int part; bool foreign, hideEq;
       if (!RFX.ReadFilter(addrs, out suits, out mains, out subAttrs, out part, out foreign, out hideEq)) return fv;
       fv.Item = filterItem; fv.Part = part; fv.Suits = suits; fv.MainAttrs = mains; fv.SubAttrs = subAttrs; fv.Foreign = foreign; fv.HideEquipped = hideEq; fv.ItemListed = ListedKind(filterKind);
-      // the item is not on the screen: the filter (set + main stat) brings it to the first rows at once. Scrolling a long
-      // list back from wherever the last item left it took the pilot up to a minute (live test 2026-09-26)
       bool onScreen = state == "on";
-      { int rc; ulong rl; int rr = RFX.RowOfUid(addrs, filterItem, out rc, out rl); fv.ItemRow = rr > 0 ? rr : 0; }   // (the item's row in the game's list by memory: the filter stops at the set when it is in the first page)
-      fv.Wanted = FilterPilot.WantedFor(filterKind, onScreen, fv.ItemRow);
+      { int rc; ulong rl; int rr = RFX.RowOfUid(addrs, filterItem, out rc, out rl); fv.ItemRow = rr > 0 ? rr : 0; }
+      fv.Wanted = FilterWant.WantedFor(filterKind, onScreen, fv.ItemRow);
       long[] info;
       if (itemInfo.TryGetValue(filterItem, out info) && part >= 0) {
-        // weapons and chest armour have one main stat each: filtering by it narrows nothing, two clicks saved
+        // weapons and chest armour have one main stat each: filtering by it narrows nothing
         fv.SetId = info[0]; fv.StatId = part <= 1 ? 0 : info[1];
         long[] so, mo;
         if (!suitOrder.TryGetValue(part, out so) || so == null) suitOrder[part] = so = RFX.ReadSuitOrder(addrs, part);
         if (!statOrder.TryGetValue(part, out mo) || mo == null) statOrder[part] = mo = RFX.ReadMainAttrOrder(addrs, part);
         if (so != null && fv.SetId > 0) fv.SetIndex = Array.IndexOf(so, fv.SetId);
         fv.SetOrder = so;
-        // the item's sub stats straight from the game (its live table), the filter's list of them for this slot
         long[] subo;
         if (!subOrder.TryGetValue(part, out subo) || subo == null) subOrder[part] = subo = RFX.ReadSubAttrOrder(addrs, part);
         fv.SubOrder = subo; fv.SubIds = RFX.ReadSubIds(addrs, filterItem);
@@ -4449,14 +2962,13 @@ namespace RealmForge {
       }
       long owner = RFX.ReadOwner(addrs, filterItem);
       fv.OnOtherHero = owner > 0 && hintHero > 0 && owner != hintHero;
-      var gm = GearMemNow(); fv.PanelMem = gm.Open; fv.SideMem = gm.Side; fv.SetMem = gm.SetPanel; fv.MemPending = gm.Pending;   // (the pilot settles the pictures against the flags: FilterPilot.Resolve)
+      var gm = GearMemNow(); fv.PanelMem = gm.Open; fv.SideMem = gm.Side; fv.SetMem = gm.SetPanel; fv.MemPending = gm.Pending;
       if (front) {
         double W = cr.R, H = cr.B, U = Ui.Unit(W, H);
-        bool px; GearMain(o, W, H, U, out px); fv.PanelOpen = px;   // (the picture; FilterPilot.Resolve puts the flag over it and tells a disagreement once)
+        bool px; GearMain(o, W, H, U, out px); fv.PanelOpen = px;
         fv.SidePanelOpen = GearSide(o, W, H, U);
         fv.SetPanelOpen = GearSets(o, W, H, U, fv.SidePanelOpen);
       }
-      FillSideListMem(fv, fpilot.Side);   // (the side list's own scroll: no click on a moving list)
       return fv;
     }
 
@@ -4466,7 +2978,7 @@ namespace RealmForge {
     /// check boxes: 0.93 of the strip when open, at most 0.73 over the hero cards.</summary>
     bool HeroFilterSeen(W32.POINT o, double W, double H, Mem3 mem = Mem3.Unknown) {
       double U = Ui.Unit(W, H);
-      if (mem == Mem3.Unknown) mem = HeroView.MemOf(heroScreen);   // (every caller: the game's flag first)
+      if (mem == Mem3.Unknown) mem = HeroMem.Of(heroScreen);   // (every caller: the game's flag first)
       if (mem != Mem3.Unknown && !HeroFilterLook.LogLookDue(mem, HeroFilterLook.LastLookAt, Environment.TickCount)) return mem == Mem3.Yes;   // (memory answers: no picture is needed for the decision)
       var l = HeroFilterLook.Look((x, y, w, h) => Grab(o.X + x, o.Y + y, w, h), U);   // (with memory known this one look is only for the probe's pix= line)
       LookUnknown("hero filter", LookPolicy.Blocks(mem, l));   // (the game's flag answers: a covered picture is no unknown look, no click waits for it)
@@ -4669,24 +3181,6 @@ namespace RealmForge {
     }
     readonly Dictionary<string, FrameStick> frameStick = new Dictionary<string, FrameStick>();
 
-    /// <summary>An item cell's frame where the game has put it: the live read of the list's cells (src/UiButtons.cs UiCellRead; asked again every
-    /// tick while framed) - Shown: <paramref name="fr"/> = the item's picture 2 px out (x, y, w, h, radius, client px); Hidden: no cell of it in the
-    /// viewport, or the list covered by another form; Unknown: no fresh read (the layout's frame). <paramref name="calc"/> (the layout's rect) and
-    /// <paramref name="run"/> (the pilot run) for the shadow log of the run's first minute.</summary>
-    /// <summary>The Ascension list's live cell of <paramref name="uid"/> into the locate pilot's view: made, wholly in view (95 %), the Foundry on top (UiCellPoint / UiCellTopIs, as for a click); else the reason.</summary>
-    void FillAscendLive(LocateView view, long uid, ScreenState scr, double W, double H, double U) {
-      RFX.UiCellWant(UiCellKind.Ascend, new[] { uid }, W, H, U);
-      int now = Environment.TickCount;
-      var s = RFX.UiCellFresh(UiCellKind.Ascend, uid, W, H, now, RFX.UiFrameFreshMs);
-      view.LiveSeen = s != null && s.Ok;
-      if (s == null) { view.LiveWhy = "no fresh read"; return; }
-      if (!s.Ok) { view.LiveWhy = "read failed at " + s.FailStep; return; }
-      var c = s.Of(uid); if (c != null) view.LiveInView = c.InView;
-      double x, y; string why;
-      if (!RFX.UiCellPoint(s, uid, W, H, now, out x, out y, out why)) { view.LiveWhy = why ?? "not shown"; return; }
-      if (!RFX.UiCellTopIs(UiCellKind.Ascend, scr)) { view.LiveWhy = "the Foundry is not on top"; return; }
-      view.LiveCell = true; view.LiveX = x; view.LiveY = y;
-    }
 
     UiCellSee LiveCell(UiCellKind k, long uid, ICollection<long> want, double W, double H, double U, double[] calc, string run, out double[] fr) {
       fr = null;
@@ -4711,54 +3205,6 @@ namespace RealmForge {
     readonly CellFrame.Hold cellHold = new CellFrame.Hold();
 
     /// <summary>The point of the last item pick clicked on its live cell (client px), null = the layout's (the pilot is told where it went).</summary>
-    double[] cellLivePt;
-    long filterTouchAt, filterTipEscAfter; int filterTipEscN;
-    int cellRefuseN; bool cellRefused;   // the last LiveCellClick refused: the gear list's live cells are read but not the one asked for (never the layout's point then)
-    /// <summary>The pilot's view of the game's own gear cells: readable now (LiveGrid), the plan's item among them and wholly in view (LiveTarget, its centre).</summary>
-    void LiveGearView(AutoView v, W32.RECT cr) {
-      if (target <= 0 || cr.R <= 0 || cr.B <= 0) return;
-      double W = cr.R, Hc = cr.B, U = Ui.Unit(cr.R, cr.B);
-      BlockerIfAsked(); RegridIfAsked(W, Hc, U); FillRay(v);   // (a click that hit nothing: the grid read again whole, the layer over the list looked for)
-      // (the whole list's cells only while the pilot asks for a neighbour of the target: the read costs a cell more each)
-      RFX.UiCellWant(UiCellKind.HeroGear, pilot.WantNeighbour ? null : new[] { target }, W, Hc, U);
-      var s = RFX.UiCellFresh(UiCellKind.HeroGear, target, W, Hc, Environment.TickCount, RFX.UiFrameFreshMs);   // (the ticks are ~200 ms apart: a 200 ms limit left most ticks without a read)
-      if (s == null || !s.Ok || !s.Visible || s.Rotated || s.Copies != 1 || s.VW < 4 || s.VH < 4) return;
-      if (!RFX.UiCellTopIs(UiCellKind.HeroGear, screens.Current)) return;
-      v.LiveGrid = true;
-      // the game's own list position: the cells it made (first / last), the viewport, the target's cell when made (even partly in view)
-      v.LiveFirst = s.First; v.LiveLast = s.Last; v.LiveViewTop = s.VY; v.LiveViewBottom = s.VY + s.VH;
-      var tc = s.Of(target); if (tc != null && tc.Active) v.LiveCellY = tc.Y + tc.H / 2;
-      { double sy; if (RFX.ReadScrollY(addrs, false, out sy)) v.LiveScroll = sy; }   // (the content position, the list's own units: the pilot's ScrollTo computes the drag from it)
-      if (pilot.WantNeighbour) {   // another cell, wholly in view, nearest the middle of the list
-        UiCell best = null; double mid = s.VY + s.VH / 2;
-        foreach (var c in s.Cells) {
-          if (c.Uid == target || !c.Active || c.InView < 0.95 || c.W < 4 || c.H < 4) continue;
-          if (best == null || Math.Abs(c.Y + c.H / 2 - mid) < Math.Abs(best.Y + best.H / 2 - mid)) best = c;
-        }
-        if (best != null) { v.LiveNb = true; v.LiveNbUid = best.Uid; v.LiveNbX = best.X + best.W / 2; v.LiveNbY = best.Y + best.H / 2; }
-      }
-      double x, y; string why;
-      if (RFX.UiCellPoint(s, target, W, Hc, Environment.TickCount, out x, out y, out why)) { v.LiveTarget = true; v.LiveX = x; v.LiveY = y; }
-    }
-    /// <summary>An item pick (<paramref name="uid"/>) clicks its cell's live rect when the read is fresh (at most 200 ms, else one read now), the cell
-    /// holds that item, is wholly in the viewport and the list's form is on top; the item under the click is then that one. Else the layout's point.</summary>
-    void LiveCellClick(ClickRequest req, ScreenState fresh, long uid, W32.POINT o, ref int sx, ref int sy) {
-      cellLivePt = null; cellRefused = false;
-      var k = RFX.UiCellKindOf(req.Target); if (k == UiCellKind.None || uid <= 0 || req.W <= 0 || req.H <= 0) return;
-      var s = RFX.UiCellFresh(k, uid, req.W, req.H, Environment.TickCount, RFX.UiFreshMs) ?? RFX.UiCellReadNow(k, new[] { uid }, req.W, req.H, req.U);
-      double lx = req.X, ly = req.Y, x, y; string why;
-      bool live = RFX.UiCellPoint(s, uid, req.W, req.H, Environment.TickCount, out x, out y, out why);
-      if (live && !RFX.UiCellTopIs(k, fresh)) { live = false; why = "the form on top is " + (fresh != null ? fresh.Top + " (" + fresh.Brief + ")" : "not read"); }
-      if (live) {
-        cellRefuseN = 0;
-        req.X = x; req.Y = y; req.Live = true; if (req.CellOk != null) req.CellUid = uid;
-        sx = o.X + (int)Math.Round(x); sy = o.Y + (int)Math.Round(y); cellLivePt = new[] { x, y };
-      }
-      // the grid is read (its form shown, its viewport known) but the item's cell is not wholly in view / not that item: never the layout's point
-      // (live 1.6.66.442: a click on stale rows picked another item after a filter rebuilt the list)
-      if (!live && k == UiCellKind.HeroGear && req.Target == ClickTarget.EquipNav && s != null && s.Ok && s.Visible && s.Copies == 1 && s.VW >= 4 && cellRefuseN++ < 12) cellRefused = true;   // (twelve in a row at most: a cell that never shows is the old way's)
-      if (s != null) Log.Write(RFX.UiCellLine(s, uid, new[] { lx, ly }) + (live ? " [click: live @" + (int)Math.Round(x) + "," + (int)Math.Round(y) + "]" : " [click: layout, " + why + "]"));
-    }
     int cellRunN;
 
     /// <summary>The test build's line of a pilot button's frame, once per change: "frame: Form.widget rect=[x,y,w,h] source=live|layout".</summary>
@@ -4895,7 +3341,7 @@ namespace RealmForge {
         Log.Write("frame audit: " + (flags.Count > 0 ? "suspect " : "ok ") + FrameAudit.Key(s) + " source=" + s.Source + " frame=[" + string.Join(",", Array.ConvertAll(fr, v => ((int)Math.Round(v)).ToString())) + "]"
           + " (" + auditShots + " checked, " + auditFlags + " suspect in this app run)");
         if (auditSink == null) auditSink = new FrameAuditSink(AuditSite, AuditCode, m => Log.Write(m));
-        auditSink.Add(s, sceneX, sceneY, sceneW, sceneH, GlowWindow.ShowInCapture && !GlowWindow.PilotHidden);   // (the hints are in the shot only when the setting shows them: not while the pilot hides them)
+        auditSink.Add(s, sceneX, sceneY, sceneW, sceneH, GlowWindow.ShowInCapture);   // (the hints are in the shot only when the setting shows them: not while the pilot hides them)
       }
     }
 
@@ -4980,31 +3426,7 @@ namespace RealmForge {
       return new[] { (int)Math.Round(f[0]), (int)Math.Round(f[1]), (int)Math.Round(f[2]), (int)Math.Round(f[3]) };
     }
 
-    string heroLogged;
-    /// <summary>One journal line whenever the hero pilot's view or state changes.</summary>
-    void LogHero(HeroView v) {
-      int i = v.Heroes != null ? Array.IndexOf(v.Heroes, v.Plan) : -2, j = v.Heroes != null ? Array.IndexOf(v.Heroes, v.Hero) : -2;
-      string line = "hero: plan " + v.Plan + "@" + i + " shown " + v.Hero + "@" + j + " tab=" + v.Tab + " list=" + v.Part
-        + " filter=" + (v.FilterOpen ? "open" : "closed") + " camps=" + string.Join(",", v.ChosenCamps ?? new long[0]) + " class=" + v.ClassChosen + (v.ClassChosen ? "#" + v.ChosenClass + "(" + v.ClassSrc + ")" : "")
-        + " small=" + v.SmallCards + " grid=" + (v.Heroes != null ? v.Heroes.Length : -1) + " -> " + hpilot.State + (hpilot.Why != "" ? " (" + hpilot.Why + ")" : "");
-      if (line == heroLogged) return;
-      heroLogged = line;
-      Log.Write(line);
-    }
 
-    string filterLogged;
-    /// <summary>One journal line whenever what the filter pilot knows or does changes (why the filter was or was not set).</summary>
-    void LogFilter(FilterView v) {
-      if (v.Item <= 0) return;
-      string line = "filter: item " + v.Item + " kind=" + filterKind + " wanted=" + v.Wanted + " set=" + v.SetId + "@" + v.SetIndex
-        + " stat=" + v.StatId + "@" + v.StatIndex + " subs=" + string.Join(",", v.SubIds ?? new long[0])
-        + " now suits=" + string.Join(",", v.Suits ?? new long[0]) + " subs=" + string.Join(",", v.SubAttrs ?? new long[0])
-        + " stats=" + string.Join(",", v.MainAttrs ?? new long[0]) + " hideEq=" + v.HideEquipped + " otherHero=" + v.OnOtherHero
-        + " panel=" + v.PanelOpen + "/" + v.SidePanelOpen + "/" + v.SetPanelOpen + " -> " + fpilot.State + (string.IsNullOrEmpty(fpilot.Note) ? "" : " (" + fpilot.Note + ")");
-      if (line == filterLogged) return;
-      filterLogged = line;
-      Log.Write(line);
-    }
 
     /// <summary>A small square (about 2% of the height) around a client point: is it mostly that mark?</summary>
     bool Mark(W32.POINT o, double x, double y, double H, Func<int, bool> test, bool memKnown = false) {
@@ -5096,7 +3518,7 @@ namespace RealmForge {
           string miss = "confirm: no single blue button (replace " + (rep != null) + ", equip " + (eq != null) + ") for item " + target;
           Log.Write(miss);
           // reported only with the auto-confirm on: then the program cannot press «Заменить»; without it only the hint moves
-          if (AutoConfirm && AutoEnabled) RaiseProblem("pilot.confirm_no_button", miss, ConfirmMissDetail(o, W, H, rep, eq));
+
         }
       } else if (btn != null && (btn[1] != hg.Replace(W, H)[1] && btn[1] != hg.Equip(W, H)[1]) && confirmFoundLogged != target) {
         confirmFoundLogged = target;
@@ -5182,106 +3604,17 @@ namespace RealmForge {
         foreach (var win in GlowWindow.Live())
           if (win.IsHandleCreated && !win.IsDisposed && win.Visible && win.MaskNeeded) {
             var rects = win.MaskRects();
-            if (!maskSaid && PilotMaskLog(win, x, y, w, h, rects)) maskSaid = true;
             OwnMask.Apply(px, x, y, w, h, rects);
           }
         return px;
       }
     }
 
-    static bool maskSaid;
-    /// <summary>PilotMaskLog: once per app run, the first time a look is masked while the pilot works: which window, its flags and the rectangle that overlaps the grab (why a window was masked at all with affinity 0x11 expected).</summary>
-    static bool PilotMaskLog(GlowWindow win, int x, int y, int w, int h, List<int[]> rects) {
-      if (!GlowWindow.PilotHidden) return false;
-      foreach (var r in rects) {
-        if (r == null || r.Length < 4) continue;
-        if (Math.Min(x + w, r[0] + r[2]) <= Math.Max(x, r[0]) || Math.Min(y + h, r[1] + r[3]) <= Math.Max(y, r[1])) continue;
-        Log.Write("auto: a pilot look is masked by window " + win.Name + " (Excluded " + win.Excluded + ", PilotHidden " + GlowWindow.PilotHidden + ", affinity 0x" + win.AppliedAffinity.ToString("X") + ", settled " + win.Settled
-          + ") rect [" + r[0] + "," + r[1] + "," + r[2] + "," + r[3] + "] grab [" + x + "," + y + "," + w + "," + h + "]");
-        return true;
-      }
-      return false;
-    }
 
-    // ---- looks our own hint covers: «not known» never leads to a click
-    /// <summary>The looks that came back not known (covered by our hint) lately: while one is, GatedSend refuses (the last known state stays); one that lasts too long is a problem to report.</summary>
+    // ---- looks our own hint covers: a «not known» look is no verdict
+    /// <summary>The looks that came back not known (covered by our hint) lately: while one is, the last known state stays; one that lasts too long is a problem to report.</summary>
     static readonly UnknownLooks unknownLooks = new UnknownLooks();
     static void LookUnknown(string kind, bool unknown) { unknownLooks.Note(kind, unknown, NowMs()); }
-    string lookWaitSaid = "";
-    /// <summary>True = a look the click depends on is not known now: no click on this tick (journal, then a problem report after the timeout).</summary>
-    bool ClickWaitsForLook(ClickRequest req) {
-      long now = NowMs();
-      string k = unknownLooks.Blocking(now);
-      if (k == null) { lookWaitSaid = ""; return false; }
-      if (lookWaitSaid != k) { lookWaitSaid = k; Log.Write("auto: look covered by our hint, waiting (" + k + ") - no click for " + req.Target); }
-      string late = unknownLooks.Overdue(now);
-      if (late != null) {
-        Log.Write("auto: the look stayed covered by our hint for " + (UnknownLooks.TimeoutMs / 1000) + " s (" + late + ") - stopping, no guess");
-        RaiseProblem("pilot.look_covered", "the look \"" + late + "\" stayed covered by our own hint for " + (UnknownLooks.TimeoutMs / 1000) + " s; target " + req.Target);
-        // a named stop with the diagnosis, not a wait that holds every later click (the way back to the city included) for ever
-        gate.Halt(req.Owner, "look", "the look \"" + late + "\" stayed covered by our own hint for " + (UnknownLooks.TimeoutMs / 1000) + " s - no guess; target " + req.Target); AnnounceHalts();
-      }
-      return true;
-    }
-
-    /// <summary>A pilot run is starting and the game is not in front while our window is (or covers the game): the app brings the game forward
-    /// itself (allowed: we are the foreground process; fallback AttachThreadInput to the foreground thread; never a key press) and steps our main
-    /// window off the game when it covers it. Never when no pilot run is starting (FrontPolicy). <paramref name="pilotWaiting"/>: an auto pilot
-    /// waits only for the game to come forward - then another program on top (Telegram) gives way too, once the player gave no input for
-    /// FrontPolicy.IdleRaiseMs (GetLastInputInfo, our own clicks and keys left out; never while the player is active). Returns true when it raised.</summary>
-    bool raisedRun, raiseWasStarting; string raiseHeldSaid = "";
-    bool RaiseGame(IntPtr hwnd, bool pilotStarting, long now, bool pilotWaiting) {
-      if (hwnd == IntPtr.Zero) return false;
-      if (pilotStarting && !raiseWasStarting) raisedRun = false;   // a new run: one raise at its start
-      raiseWasStarting = pilotStarting;
-      IntPtr f = W32.GetForegroundWindow();
-      int fp; W32.GetWindowThreadProcessId(f, out fp);
-      IntPtr self = AppWindowHandle();
-      bool selfVis = self != IntPtr.Zero && W32.IsWindowVisible(self), selfMin = selfVis && W32.IsIconic(self), over = false;
-      W32.RECT sr, gr;
-      if (selfVis && !selfMin && W32.GetWindowRect(self, out sr) && W32.GetWindowRect(hwnd, out gr))
-        over = FrontPolicy.Overlaps(sr.L, sr.T, sr.R, sr.B, gr.L, gr.T, gr.R, gr.B);
-      bool gameFront = !W32.IsIconic(hwnd) && IsForeground(hwnd);
-      long idle = -1;
-      // the game is raised once at the start of a run, and only over our own window or a browser; never over another program (the game's launcher, a chat, a system dialog):
-      // the pilot waits ("background") and the log says who is in front
-      string fname = "?"; if (!gameFront && fp != SelfPid) { try { using (var pr0 = Process.GetProcessById(fp)) fname = pr0.ProcessName; } catch { } }
-      bool fgOk = fp == SelfPid || FrontPolicy.IsBrowser(fname);
-      if (!raisedRun && fgOk && FrontPolicy.ShouldRaise(true, pilotStarting, gameFront, fp == SelfPid, over, now, focusAfter)) { /* our own window or a browser on top: raise */ }
-      else {
-        if (!pilotWaiting || gameFront) return false;
-        bool down = (W32.GetAsyncKeyState(0x01) & 0x8000) != 0 || (W32.GetAsyncKeyState(0x02) & 0x8000) != 0;
-        idle = UserIdleMs();
-        bool browser = FrontPolicy.IsBrowser(fname);
-        if (!FrontPolicy.ShouldRaiseOverBrowser(true, pilotWaiting, gameFront, W32.IsIconic(hwnd), down, idle, now, focusAfter, browser, raisedRun)) {
-          if (!browser && fp != SelfPid && raiseHeldSaid != fname) { raiseHeldSaid = fname; Log.Write("front: " + fname + " is in front of the game - the pilot waits, the game is not raised over another program"); }
-          return false;
-        }
-      }
-      raisedRun = true;
-      focusAfter = now + 3000;
-      string was = "?"; try { var pr = Process.GetProcessById(fp); was = pr.ProcessName; } catch { }
-      if (W32.IsIconic(hwnd)) W32.ShowWindow(hwnd, 9);   // SW_RESTORE (only when minimized)
-      bool ok = W32.SetForegroundWindow(hwnd);
-      if (!ok || !IsForeground(hwnd)) {
-        int d; uint ft = W32.GetWindowThreadProcessId(f, out d), me = W32.GetCurrentThreadId();
-        bool att = ft != 0 && ft != me && W32.AttachThreadInput(me, ft, true);
-        try { W32.BringWindowToTop(hwnd); W32.SetForegroundWindow(hwnd); }
-        finally { if (att) W32.AttachThreadInput(me, ft, false); }
-      }
-      if (FrontPolicy.ShouldMoveSelf(selfVis, selfMin, over) && (W32.GetWindowLong(self, -20) & 0x00000008) == 0)
-        W32.SetWindowPos(self, (IntPtr)1, 0, 0, 0, 0, 0x0002 | 0x0001 | 0x0010);   // HWND_BOTTOM, no move / size / activate: our window goes under the game
-      Log.Write("front: game raised by the app (was " + was + (idle >= 0 ? ", the pilot waited, no input for " + (idle / 1000) + " s" : "") + ")");
-      return true;
-    }
-
-    // the player's last input (GetLastInputInfo), our own injected clicks / keys left out (UserIdle: the time of our sends)
-    readonly UserIdle userIdle = new UserIdle();
-    long UserIdleMs() {
-      var li = new W32.LASTINPUTINFO { cbSize = (uint)Marshal.SizeOf(typeof(W32.LASTINPUTINFO)) };
-      if (!W32.GetLastInputInfo(ref li)) return 0;
-      return userIdle.IdleMs(li.dwTime, (uint)Environment.TickCount);
-    }
 
     static readonly int SelfPid = Process.GetCurrentProcess().Id;
     internal static bool IsForeground(IntPtr game) {

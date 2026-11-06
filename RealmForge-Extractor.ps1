@@ -5439,7 +5439,7 @@ namespace RealmForge {
 
 // ===== src/NetBackoff.cs =====
 // Wardsage - a small backoff for the app's periodic calls to the site (no threads, no timers of its own): after a failure
-// (no answer, 429, 503, any 5xx) the next call waits 5 s, 10 s, 20 s ... up to 5 min, +-20% jitter; a Retry-After the site
+// (no answer, 429, 409, any 5xx) the next call waits 5 s, 10 s, 20 s ... up to 5 min, +-20% jitter; a Retry-After the site
 // sent wins over that (clamped to 1 s .. 1 h, no jitter); one good answer resets it. Callers ask Blocked() before a call and
 // tell Note() the outcome (http 0 = the site was not reached).
 
@@ -5460,8 +5460,9 @@ namespace RealmForge {
     public static int LastHttp { get { return lastHttp; } }
     public static int LastRetryAfterSec { get { return lastRetryAfter; } }
 
-    /// <summary>A reply worth backing off for: no answer at all (0), 429 or a 5xx.</summary>
-    public static bool IsFailure(int http) { return http == 0 || http == 429 || http >= 500; }
+    /// <summary>A reply worth backing off for: no answer at all (0), 429, a 5xx, or 409 (a refusal: asking again at once changes nothing). The one exception is
+    /// /api/sync's 409 account_forgotten: that is SyncClient's own answer (SyncStatus.Forgotten, SyncGate), it never goes through this class.</summary>
+    public static bool IsFailure(int http) { return http == 0 || http == 429 || http == 409 || http >= 500; }
 
     /// <summary>Retry-After as seconds (a number, or an HTTP date relative to <paramref name="now"/>); -1 = absent or unreadable.</summary>
     public static int ParseRetryAfter(string h, DateTime now) {
@@ -5630,16 +5631,6 @@ namespace RealmForge {
 
 namespace RealmForge {
 
-  /// <summary>Whether the navigator core is on (app/HostBridge.cs). Release: only the site's switch (after auto click). Test build: on unless auto click is off or the lab's settings command (labNav "on"/"off") says off; config.json "navCore" "off" and "lab" are ignored there.</summary>
-  public static class NavCoreRule {
-    public static bool Decide(bool isTest, bool autoClick, string labNav, string cfgNav, bool siteSwitch, out string reason) {
-      if (!autoClick) { reason = "autoclick off"; return false; }
-      if (!isTest) { reason = siteSwitch ? "site switch on" : "site switch off"; return siteSwitch; }
-      if (!string.IsNullOrEmpty(labNav)) { reason = "lab command"; return labNav == "on"; }
-      reason = cfgNav == "off" ? "config off ignored" : cfgNav == "lab" ? "config lab ignored" : "default on";
-      return true;
-    }
-  }
   public sealed class AppConfig {
     public string Site = SyncClient.DefaultSite;
     const string OldSite = "https://realmforge-wor.vercel.app";
@@ -5647,8 +5638,6 @@ namespace RealmForge {
     public string Lang = SystemLang();   // until the player picks one: Windows's language (Russian for ru/uk/be/kk, else English)
     public bool SaveCopy;
     public bool AutoSync = true;    // send the account to the site by itself after gear changes and every few minutes
-    public bool AutoClick;          // equip helper: open the slot, scroll the list and click the item in the game (off by default: the player turns it on)
-    public bool AutoConfirm;        // ...and press «Заменить» itself (off by default: the player's explicit choice)
     public bool ErrorReports;       // send failures to the site with the journal's last lines (src/ErrorReport.cs; off by default)
     public bool Tray = true;        // minimizing hides the window in the tray (app/Tray.cs)
     public bool AutoUpdate = true;  // put a downloaded update in place by restarting in a quiet moment (HostBridge.TryAutoUpdate)
@@ -5657,8 +5646,6 @@ namespace RealmForge {
     public double CoachX = -1, CoachY = -1;
     public string TermsAccepted = "";   // version of the Terms of Use the player accepted on the first-run card (Config.TermsVersion)
     public const string TermsVersion = "2026-10-17";
-    public bool NavHotkey;   // the navigator may press the game's own hotkey («C» = the heroes screen) when a click on its button does nothing; off until the live check (docs/specs/game-nav-research.md)
-    public string NavCore = "site";   // TEST build: "on" or "site" (default on); "off" and "lab" are ignored in test builds (NavCoreRule); release builds ignore it
     public string GuideStyle = "auto";   // TEST build: the new button highlight, "auto" (the site's switch) | "on" | "off"
     public bool RecButton = true;   // TEST build: the record button over the game (app/Overlay.cs)
     public bool SendCodes = true;   // promo codes the player enters in the game, with the game's answer, go to the site (app/CodeWatch.cs; the player can turn it off)
@@ -5738,15 +5725,11 @@ namespace RealmForge {
       sb.Append(",\n  \"lang\": ").Append(MiniJson.Quote(Lang == "en" ? "en" : "ru"));
       sb.Append(",\n  \"saveCopy\": ").Append(SaveCopy ? "true" : "false");
       sb.Append(",\n  \"autoSync\": ").Append(AutoSync ? "true" : "false");
-      sb.Append(",\n  \"autoClick\": ").Append(AutoClick ? "true" : "false");
-      sb.Append(",\n  \"autoConfirm\": ").Append(AutoConfirm ? "true" : "false");
       sb.Append(",\n  \"errorReports\": ").Append(ErrorReports ? "true" : "false");
       sb.Append(",\n  \"autoUpdate\": ").Append(AutoUpdate ? "true" : "false");
       sb.Append(",\n  \"tray\": ").Append(Tray ? "true" : "false");
       sb.Append(",\n  \"termsAccepted\": ").Append(MiniJson.Quote(TermsAccepted ?? ""));
       sb.Append(",\n  \"guideStyle\": ").Append(MiniJson.Quote(GuideStyle));
-      if (NavCore != "site") sb.Append(",\n  \"navCore\": ").Append(MiniJson.Quote(NavCore));
-      if (NavHotkey) sb.Append(",\n  \"navHotkey\": true");
       sb.Append(",\n  \"recButton\": ").Append(RecButton ? "true" : "false");
       sb.Append(",\n  \"sendCodes\": ").Append(SendCodes ? "true" : "false");
       sb.Append(",\n  \"bossHints\": ").Append(BossHints ? "true" : "false");
@@ -5782,8 +5765,6 @@ namespace RealmForge {
       c.Lang = lang == "en" ? "en" : lang == "ru" ? "ru" : SystemLang();
       c.SaveCopy = MiniJson.GetBool(d, "saveCopy", false);
       c.AutoSync = MiniJson.GetBool(d, "autoSync", true);
-      c.AutoClick = MiniJson.GetBool(d, "autoClick", false);
-      c.AutoConfirm = MiniJson.GetBool(d, "autoConfirm", false);
       c.ErrorReports = MiniJson.GetBool(d, "errorReports", false);
       c.AutoUpdate = MiniJson.GetBool(d, "autoUpdate", true);
       c.Tray = MiniJson.GetBool(d, "tray", true);
@@ -5791,8 +5772,6 @@ namespace RealmForge {
       c.ShowInCapture = MiniJson.GetBool(d, "showInCapture", false);
       c.SendCodes = MiniJson.GetBool(d, "sendCodes", true);
       c.RecButton = MiniJson.GetBool(d, "recButton", true);
-      c.NavHotkey = MiniJson.GetBool(d, "navHotkey", false);
-      string nc = MiniJson.GetString(d, "navCore"); c.NavCore = nc == "on" || nc == "off" || nc == "lab" ? nc : "site";
       string gs = MiniJson.GetString(d, "guideStyle"); c.GuideStyle = gs == "on" || gs == "off" ? gs : "auto";
       c.TermsAccepted = MiniJson.GetString(d, "termsAccepted") ?? "";
       long lp; string lps = MiniJson.GetString(d, "lastPlayer");

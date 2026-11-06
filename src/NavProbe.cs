@@ -179,9 +179,7 @@ namespace RealmForge {
     // ---------------------------------------------------------------- the stacks
     static readonly Dictionary<string, IList<StackForm>> npStackForms = new Dictionary<string, IList<StackForm>>();
     static readonly HashSet<string> npShownNames = new HashSet<string>();
-    static string npEscKind = ""; static int npEscAt;
     /// <summary>What the game's Escape would do now (EscapePredictor kind) from the last probe read, "" = not known (no probe, or older than 2 s).</summary>
-    public static string NavEscapeKind() { return unchecked(Environment.TickCount - npEscAt) < 2000 ? npEscKind : ""; }
     static bool npLockRead; static bool npLockOpen = true; static int npLockAt;
 
     static void NpStacks(ulong ga, List<string> l) {
@@ -194,8 +192,6 @@ namespace RealmForge {
         if (ClassName(Ptr(st)) != "UI.UIStack") { l.Add("stack " + NpStackNames[s] + ": not a UIStack (" + ClassName(Ptr(st)) + ")"); continue; }
         NpOneStack(NpStackNames[s], st, l);
       }
-      var pr = EscapePredictor.Predict(npStackForms); npEscKind = pr.Kind; npEscAt = Environment.TickCount;
-      l.Add("predict: Escape now → " + pr + (npShownNames.Contains("Form_SystemTips") ? " [Form_SystemTips is in a stack: the quit dialog is up]" : ""));
     }
 
     static void NpOneStack(string name, ulong st, List<string> l) {
