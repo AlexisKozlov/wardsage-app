@@ -8,6 +8,9 @@
 // Only a file signed with the project's update key is ever installed: RSA-3072, PKCS#1 v1.5 over SHA-256 of the whole
 // exe (tools/release-app.mjs signs; the private key never leaves the release PC). Size and SHA-256 are checked too.
 // A hacked site or CDN therefore cannot push a different program to the players.
+//
+// The download itself: Range requests of 256 KB on a new connection each, a 9 s idle read timeout, a .part file that is kept between attempts and
+// runs, the file written atomically (the complete .part is verified, then renamed) - src/UpdateDownload.cs. Redirects are not followed.
 using System;
 using System.Diagnostics;
 using System.Globalization;
@@ -29,6 +32,15 @@ namespace RealmForge {
 
     static string Dir { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), Channel.FolderName, "update"); } }
     static string StagedExe(string v) { return Path.Combine(Dir, Channel.StagedPrefix + v + ".exe"); }
+    /// <summary>The unfinished download: the version and the start of the hash in its name, so another build never continues it.</summary>
+    static string PartPath(UpdateInfo u) { string h = (u.Sha256 ?? "").ToLowerInvariant(); return Path.Combine(Dir, Channel.StagedPrefix + u.Version + "-" + (h.Length >= 8 ? h.Substring(0, 8) : "x") + ".part"); }
+    /// <summary>The version a staged file's name starts with (1.6.68 from "rf-1.6.68-ab12cd34.part"), "" when none.</summary>
+    static string VersionOfFile(string path) {
+      string n = Path.GetFileName(path); if (!n.StartsWith(Channel.StagedPrefix, StringComparison.Ordinal)) return "";
+      n = n.Substring(Channel.StagedPrefix.Length); int i = 0;
+      while (i < n.Length && (char.IsDigit(n[i]) || n[i] == '.')) i++;
+      return n.Substring(0, i).TrimEnd('.');
+    }
     static string StagedMeta(string v) { return Path.Combine(Dir, Channel.StagedPrefix + v + ".json"); }
 
     /// <summary>Is <paramref name="candidate"/> a later version than <paramref name="current"/> (1.3.0 style; missing
@@ -79,6 +91,53 @@ namespace RealmForge {
         + ",\"notes\":{\"ru\":" + MiniJson.Quote(u.NotesRu ?? "") + ",\"en\":" + MiniJson.Quote(u.NotesEn ?? "") + "}}";
     }
 
+    /// <summary>The player's PC cannot tell the update from a normal page: a stalled connection is dropped after IdleReadMs, not 60 s.</summary>
+    static RangeReply OpenRange(string url, long offset, long length) {
+      const SecurityProtocolType Tls12 = (SecurityProtocolType)3072;
+      try { ServicePointManager.SecurityProtocol |= Tls12; } catch (NotSupportedException) { }
+      var req = (HttpWebRequest)WebRequest.Create(url);
+      req.Method = "GET"; req.UserAgent = SyncClient.UserAgent; req.Timeout = 15000; req.ReadWriteTimeout = ChunkedDownload.IdleReadMs;
+      req.AllowAutoRedirect = false; req.KeepAlive = false;   // (a new connection for every request)
+      req.Headers["Cache-Control"] = "no-cache";
+      req.Headers["Range"] = "bytes=" + offset.ToString(CultureInfo.InvariantCulture) + "-" + (offset + length - 1).ToString(CultureInfo.InvariantCulture);
+      HttpWebResponse resp;
+      try { resp = (HttpWebResponse)req.GetResponse(); }
+      catch (WebException we) {
+        var er = we.Response as HttpWebResponse;
+        if (er == null) throw;
+        int code = (int)er.StatusCode; er.Close();
+        return new RangeReply { Status = code, Body = new MemoryStream(new byte[0]) };
+      }
+      var r = new RangeReply { Status = (int)resp.StatusCode, Body = resp.GetResponseStream() };
+      if (r.Status == 206) {
+        // Content-Range: bytes 0-262143/6810624
+        string cr = resp.Headers["Content-Range"] ?? "";
+        int dash = cr.IndexOf('-'), slash = cr.IndexOf('/'); long a, tot;
+        if (cr.StartsWith("bytes ", StringComparison.Ordinal) && dash > 6 && slash > dash
+            && long.TryParse(cr.Substring(6, dash - 6), NumberStyles.None, CultureInfo.InvariantCulture, out a)
+            && long.TryParse(cr.Substring(slash + 1), NumberStyles.None, CultureInfo.InvariantCulture, out tot)) { r.RangeStart = a; r.Total = tot; }
+        else r.RangeStart = -1;
+      } else if (r.Status == 200) r.Total = resp.ContentLength;
+      return new RangeReply { Status = r.Status, RangeStart = r.RangeStart, Total = r.Total, Body = new ResponseBody(resp, r.Body) };
+    }
+
+    /// <summary>Closes the response together with its stream.</summary>
+    sealed class ResponseBody : Stream {
+      readonly HttpWebResponse resp; readonly Stream s;
+      public ResponseBody(HttpWebResponse r, Stream st) { resp = r; s = st; }
+      public override int Read(byte[] b, int o, int c) { return s.Read(b, o, c); }
+      public override void Write(byte[] b, int o, int c) { throw new NotSupportedException(); }
+      public override void Flush() { }
+      public override long Seek(long o, SeekOrigin so) { throw new NotSupportedException(); }
+      public override void SetLength(long v) { throw new NotSupportedException(); }
+      public override bool CanRead { get { return true; } }
+      public override bool CanSeek { get { return false; } }
+      public override bool CanWrite { get { return false; } }
+      public override long Length { get { throw new NotSupportedException(); } }
+      public override long Position { get { throw new NotSupportedException(); } set { throw new NotSupportedException(); } }
+      protected override void Dispose(bool d) { if (d) { try { s.Dispose(); } catch (Exception) { } try { resp.Close(); } catch (Exception) { } } base.Dispose(d); }
+    }
+
     static byte[] Fetch(string url, long max) {
       const SecurityProtocolType Tls12 = (SecurityProtocolType)3072;
       try { ServicePointManager.SecurityProtocol |= Tls12; } catch (NotSupportedException) { }
@@ -107,13 +166,23 @@ namespace RealmForge {
         var u = FromJson(Encoding.UTF8.GetString(Fetch(site.TrimEnd('/') + Channel.FeedPath, 64 * 1024)));
         if (u == null || !Newer(u.Version, Program.Version)) return null;
         if (Staged(u.Version) != null) return u;
-        // the build comes from the same site only
-        Uri file; if (!Uri.TryCreate(baseUri, u.Url, out file) || file.Host != baseUri.Host || file.Scheme != baseUri.Scheme) return null;
-        var bytes = Fetch(file.AbsoluteUri, MaxSize);
-        if (!Verify(bytes, u)) { Log.Write("update " + u.Version + ": signature / hash check FAILED, not installed"); return null; }
+        // the build comes from the same site (host and scheme), or from a listed mirror host (UpdateHosts.Mirrors)
+        Uri file; if (!Uri.TryCreate(baseUri, u.Url, out file) || !UpdateHosts.Allowed(baseUri, file)) return null;
         Directory.CreateDirectory(Dir);
-        File.WriteAllBytes(StagedExe(u.Version), bytes);
-        File.WriteAllText(StagedMeta(u.Version), ToJson(u), new UTF8Encoding(false));
+        string part = PartPath(u), url = file.AbsoluteUri;
+        var dl = ChunkedDownload.Run((off, len) => OpenRange(url, off, len), part, u.Size, ChunkedDownload.ChunkBytes, ChunkedDownload.MaxNoProgress,
+          n => System.Threading.Thread.Sleep(Math.Min(3000, 500 * n)), Log.Write);
+        if (dl.Mismatch) { try { File.Delete(part); } catch (Exception) { } Log.Write("update " + u.Version + ": the file on the server is not the one the feed describes"); LastFailed = true; return null; }
+        if (!dl.Complete) { Log.Write("update " + u.Version + ": download " + dl.Why + " at " + dl.Have + " of " + u.Size + " (kept for the next try)"); LastFailed = true; return null; }
+        var bytes = File.ReadAllBytes(part);
+        if (!Verify(bytes, u)) { try { File.Delete(part); } catch (Exception) { } Log.Write("update " + u.Version + ": signature / hash check FAILED, not installed"); return null; }
+        // atomic: the verified .part becomes the staged exe by one rename, the meta file by temp + rename
+        string exe = StagedExe(u.Version), meta = StagedMeta(u.Version), tmp = meta + ".tmp";
+        if (File.Exists(exe)) File.Delete(exe);
+        File.Move(part, exe);
+        File.WriteAllText(tmp, ToJson(u), new UTF8Encoding(false));
+        if (File.Exists(meta)) File.Delete(meta);
+        File.Move(tmp, meta);
         Log.Write("update " + u.Version + ": downloaded and verified");
         return u;
       } catch (Exception e) { Log.Write("update check: " + e.Message); LastFailed = true; return null; }
@@ -164,7 +233,7 @@ namespace RealmForge {
       try {
         if (!Directory.Exists(Dir)) return;
         foreach (var f in Directory.GetFiles(Dir, Channel.StagedPrefix + "*.*")) {
-          string v = Path.GetFileNameWithoutExtension(f).Substring(Channel.StagedPrefix.Length);
+          string v = VersionOfFile(f);
           if (!Newer(v, Program.Version)) try { File.Delete(f); } catch (Exception) { }
         }
       } catch (Exception) { }

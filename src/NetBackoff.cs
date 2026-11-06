@@ -1,5 +1,5 @@
 // Wardsage - a small backoff for the app's periodic calls to the site (no threads, no timers of its own): after a failure
-// (no answer, 429, 503, any 5xx) the next call waits 5 s, 10 s, 20 s ... up to 5 min, +-20% jitter; a Retry-After the site
+// (no answer, 429, 409, any 5xx) the next call waits 5 s, 10 s, 20 s ... up to 5 min, +-20% jitter; a Retry-After the site
 // sent wins over that (clamped to 1 s .. 1 h, no jitter); one good answer resets it. Callers ask Blocked() before a call and
 // tell Note() the outcome (http 0 = the site was not reached).
 using System;
@@ -21,8 +21,9 @@ namespace RealmForge {
     public static int LastHttp { get { return lastHttp; } }
     public static int LastRetryAfterSec { get { return lastRetryAfter; } }
 
-    /// <summary>A reply worth backing off for: no answer at all (0), 429 or a 5xx.</summary>
-    public static bool IsFailure(int http) { return http == 0 || http == 429 || http >= 500; }
+    /// <summary>A reply worth backing off for: no answer at all (0), 429, a 5xx, or 409 (a refusal: asking again at once changes nothing). The one exception is
+    /// /api/sync's 409 account_forgotten: that is SyncClient's own answer (SyncStatus.Forgotten, SyncGate), it never goes through this class.</summary>
+    public static bool IsFailure(int http) { return http == 0 || http == 429 || http == 409 || http >= 500; }
 
     /// <summary>Retry-After as seconds (a number, or an HTTP date relative to <paramref name="now"/>); -1 = absent or unreadable.</summary>
     public static int ParseRetryAfter(string h, DateTime now) {
