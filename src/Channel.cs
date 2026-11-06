@@ -41,8 +41,8 @@ namespace RealmForge {
     public static readonly bool IsStreamer = false;
 #endif
 
-    /// <summary>Is the setting «show hints in recordings and streams» available (the test channel, or the one-off streamer build)?</summary>
-    public static bool CaptureSettingAvailable(bool test, bool streamer) { return test || streamer; }
+    /// <summary>Is the setting «show hints in recordings and streams» available? In every channel since 1.6.68 (off by default; the pilot still hides the windows).</summary>
+    public static bool CaptureSettingAvailable(bool test, bool streamer) { return true; }
     public static readonly bool CaptureSetting = CaptureSettingAvailable(IsTest, IsStreamer);
 
     /// <summary>Does this build check for, download and install updates (not the streamer build)?</summary>

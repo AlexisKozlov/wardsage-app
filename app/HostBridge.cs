@@ -57,7 +57,7 @@ namespace RealmForge {
     public HostBridge(AppWindow win, CoreWebView2 core) {
       this.win = win; this.core = core;
       cfg = AppConfig.Load();
-      GlowWindow.ShowInCapture = CaptureAffinity.Allowed(cfg.ShowInCapture, Channel.CaptureSetting);   // (test builds only; ignored in the main channel)
+      GlowWindow.ShowInCapture = CaptureAffinity.Allowed(cfg.ShowInCapture, Channel.CaptureSetting);   // (every channel; off by default)
       SyncClient.App = Program.Version;
       SyncClient.LastPlayer = cfg.LastPlayer;
       TakeInstallLang();
