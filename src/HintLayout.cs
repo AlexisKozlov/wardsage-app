@@ -222,7 +222,31 @@ namespace RealmForge {
     }
     public static double MinPx(int which) { return which == 0 ? MinCaps : which == 1 ? MinMain : MinSub; }
     public static double Pad(double U) { return Math.Max(MinPad, 0.012 * U); }
-    public static int MaxWidth(double W) { return (int)Math.Max(100, MaxWidthFrac * W); }
+    /// <summary>The plate's widest size: 40 % of the client, at least <see cref="MinMaxWidth"/> px (a narrow client has room for readable lines), never wider than the client less its margins.</summary>
+    public static int MaxWidth(double W) { return (int)Math.Max(100, Math.Min(W - 2 * HintLayout.Margin, Math.Max(MinMaxWidth, MaxWidthFrac * W))); }
+    public const double MinMaxWidth = 360;
+    /// <summary>The most lines a plate's action / next-step text takes (longer is cut with «…» at the end of the last line).</summary>
+    public const int MaxTextLines = 3;
+    /// <summary><paramref name="s"/> broken at spaces into lines at most <paramref name="maxW"/> px wide (by <paramref name="measure"/>), at most <paramref name="maxLines"/>
+    /// of them: what does not fit ends the last line with «…»; a word wider than a line is broken by letters. Empty text = no line.</summary>
+    public static string[] Wrap(string s, double maxW, int maxLines, Func<string, double> measure) {
+      var lines = new System.Collections.Generic.List<string>();
+      if (string.IsNullOrEmpty(s)) return new string[0];
+      if (maxLines < 1) maxLines = 1;
+      var words = new System.Collections.Generic.List<string>(s.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries));
+      string cur = "";
+      for (int i = 0; i < words.Count; i++) {
+        string w = words[i], t = cur == "" ? w : cur + " " + w;
+        if (measure(t) <= maxW) { cur = t; continue; }
+        if (lines.Count == maxLines - 1) { lines.Add(Ellipsize((cur == "" ? "" : cur + " ") + string.Join(" ", words.GetRange(i, words.Count - i).ToArray()), maxW, measure)); return lines.ToArray(); }
+        if (cur != "") { lines.Add(cur); cur = ""; i--; continue; }
+        int n = 1;   // a single word wider than a line: its longest prefix that fits, the rest goes on
+        while (n < w.Length - 1 && measure(w.Substring(0, n + 1)) <= maxW) n++;
+        lines.Add(w.Substring(0, n)); words[i] = w.Substring(n); i--;
+      }
+      if (cur != "") lines.Add(cur);
+      return lines.ToArray();
+    }
     public static bool Compact(double U) { return U < CompactBelowU; }
     /// <summary>"N/M" from a caps line that ends with its step numbers («… · шаг 1 из 6», «… · step 1 of 6»); "" when it has none.</summary>
     public static string StepShort(string caps) {

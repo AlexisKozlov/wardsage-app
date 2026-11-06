@@ -141,6 +141,10 @@ namespace RealmForge {
     FixFilter
   }
 
+  /// <summary>What the gear filter holds from the previous item that hides this one (flags).</summary>
+  [Flags]
+  public enum FilterExtra { None = 0, Set = 1, Stat = 2, Sub = 4 }
+
   public static class GearFilterHint {
     /// <param name="filterFits">the pop-up's choice suits the step's item (or the pop-up has no choice): see <see cref="Fits"/></param>
     public static GearFilterMove Decide(string hintKind, int hintSlot, int slotIcons, bool coveredByFilter, bool filterFits = true) {
@@ -151,11 +155,26 @@ namespace RealmForge {
     /// <summary>The filter's choice lets the item through: no set chosen or the item's set among them (unknown set = no verdict), the same for the main
     /// stat (statId 0 = the slot has one main stat or it is unknown), and every chosen sub stat is one of the item's (itemSubs null = unknown).</summary>
     public static bool Fits(long[] suits, long[] mains, long[] subs, long setId, long statId, long[] itemSubs) {
-      if (suits != null && suits.Length > 0 && setId > 0 && Array.IndexOf(suits, setId) < 0) return false;
-      if (mains != null && mains.Length > 0 && statId > 0 && Array.IndexOf(mains, statId) < 0) return false;
-      if (subs != null && subs.Length > 0 && itemSubs != null) foreach (var x in subs) if (Array.IndexOf(itemSubs, x) < 0) return false;
-      return true;
+      return Extra(suits, mains, subs, setId, statId, itemSubs) == FilterExtra.None;
     }
+
+    /// <summary>What the filter holds that hides the item (the same verdict as <see cref="Fits"/>): a chosen set the item is not in (also when the item has
+    /// no set in the filter's list: then no set may be chosen at all), a main stat other than the item's, a sub stat the item lacks. Unknown item values
+    /// (0 / null) give no verdict.</summary>
+    public static FilterExtra Extra(long[] suits, long[] mains, long[] subs, long setId, long statId, long[] itemSubs) {
+      var e = FilterExtra.None;
+      if (suits != null && suits.Length > 0 && setId > 0 && Array.IndexOf(suits, setId) < 0) e |= FilterExtra.Set;
+      if (mains != null && mains.Length > 0 && statId > 0 && Array.IndexOf(mains, statId) < 0) e |= FilterExtra.Stat;
+      if (subs != null && subs.Length > 0 && itemSubs != null) foreach (var x in subs) if (Array.IndexOf(itemSubs, x) < 0) { e |= FilterExtra.Sub; break; }
+      return e;
+    }
+
+    /// <summary>The one thing to undo first: the set, then the main stat, then the sub stats (None = nothing).</summary>
+    public static FilterExtra First(FilterExtra e) {
+      return (e & FilterExtra.Set) != 0 ? FilterExtra.Set : (e & FilterExtra.Stat) != 0 ? FilterExtra.Stat : (e & FilterExtra.Sub) != 0 ? FilterExtra.Sub : FilterExtra.None;
+    }
+    /// <summary>More than one kind of leftover: the filter's «Сбросить» clears them all at once.</summary>
+    public static bool Several(FilterExtra e) { int n = 0; for (int b = 1; b <= 4; b <<= 1) if (((int)e & b) != 0) n++; return n > 1; }
   }
 
   /// <summary>The fallback hint's plan: what to show (Kind) and the frame's rect in client px (Back / Close; null = the standard back spot).</summary>

@@ -1500,7 +1500,7 @@ static partial class CoreTests {
     double Us = Ui.Unit(526, 296), Ub = Ui.Unit(1920, 1080);
     Check(HintSize.FontPx(1, false, Us) == HintSize.MinMain && HintSize.FontPx(0, false, Us) == HintSize.MinCaps && HintSize.Pad(Us) == HintSize.MinPad, "plate on 526x296: fonts and padding at the readable minimum (" + HintSize.FontPx(1, false, Us) + " px)");
     Check(Math.Abs(HintSize.FontPx(1, false, Ub) - 0.026 * Ub) < 1e-9 && HintSize.FontPx(1, false, Ub) > 2.5 * HintSize.MinMain, "plate on 1920x1080: fonts in U (" + HintSize.FontPx(1, false, Ub).ToString("0.0") + " px)");
-    Check(HintSize.MaxWidth(526) == 210 && HintSize.MaxWidth(1920) == 768, "plate: at most 40 % of the client wide");
+    Check(HintSize.MaxWidth(526) == 360 && HintSize.MaxWidth(1136) == 454 && HintSize.MaxWidth(1920) == 768 && HintSize.MaxWidth(300) == 288, "plate: at most 40 % of the client wide, at least 360 px, inside the client");
     Check(HintSize.Compact(Us) && !HintSize.Compact(Ub) && !HintSize.Compact(Ui.Unit(1280, 720)), "plate: one compact line on a small client only");
     Check(HintSize.StepShort("Показать в игре · Браслет «Ночной ужас» · шаг 1 из 6") == "1/6" && HintSize.StepShort("Show in game · Ring · step 12 of 14") == "12/14" && HintSize.StepShort("Показать в игре · Браслет") == "", "plate: the step number from the caps line");
     Check(HintSize.CompactLine("Показать в игре · Браслет · шаг 1 из 6", "Откройте Инвентарь") == "1/6 · Откройте Инвентарь" && HintSize.CompactLine("", "Откройте") == "Откройте", "plate: the compact line is the step and the action");
@@ -1509,6 +1509,35 @@ static partial class CoreTests {
     string el = HintSize.Ellipsize("Программа открывает вещь сама", 100, m6);
     Check(m6(el) <= 100 && el.EndsWith("…") && el.StartsWith("Программа"), "plate: a long line cut with «…» to the width (" + el + ")");
     Check(HintSize.Ellipsize("Коротко", 100, m6) == "Коротко" && HintSize.Ellipsize("", 10, m6) == "", "plate: a short line stays whole");
+    // live 1.6.68.605: «В фильтре остался выбор от прошлой вещи — смен…» was cut to one line: now broken at spaces into up to 3 lines, «…» only past the third
+    { string longT = "В фильтре остался выбор от прошлой вещи — смените комплект и главный стат";
+      Func<string, double> m13 = t => 13.0 * t.Length;   // about the 26 px font of a 1920x1009 plate
+      Func<string, double> m9 = t => 9.0 * t.Length;     // the 1136x640 plate's font
+      foreach (var sz in new[] { new[] { 1920, 1009, 13 }, new[] { 1136, 640, 9 } }) {
+        Func<string, double> m = sz[2] == 13 ? m13 : m9;
+        double room = HintSize.MaxWidth(sz[0]) - 2 * HintSize.Pad(Ui.Unit(sz[0], sz[1]));
+        var ls = HintSize.Wrap(longT, room, HintSize.MaxTextLines, m);
+        bool fitsAll = true; foreach (var l in ls) if (m(l) > room) fitsAll = false;
+        Check(ls.Length >= 1 && ls.Length <= 3 && fitsAll && string.Join(" ", ls) == longT, "plate on " + sz[0] + "x" + sz[1] + ": the long filter text is broken into " + ls.Length + " lines, whole, each within the width");
+        var two = HintSize.Wrap(longT, 150, 2, m);
+        Check(two.Length == 2 && two[1].EndsWith("…") && m(two[1]) <= 150 && m(two[0]) <= 150, "plate: text past the last line ends it with «…» (" + two[1] + ")");
+      }
+      var one = HintSize.Wrap("Коротко", 400, 3, m6);
+      Check(one.Length == 1 && one[0] == "Коротко" && HintSize.Wrap("", 100, 3, m6).Length == 0, "plate: a short text is one line, an empty one none");
+      var chop = HintSize.Wrap("Абвгдеёжзийклмнопрстуфхцчшщ", 60, 3, m6);
+      Check(chop.Length == 3 && m6(chop[0]) <= 60 && m6(chop[1]) <= 60 && m6(chop[2]) <= 60, "plate: a word wider than the plate is broken by letters (" + string.Join("|", chop) + ")");
+      // the plate beside the filter pop-up (1920x1009: panel x 504..1298, side panel to 1830): off it, inside the client, room 484 px at most
+      foreach (var sz in new[] { new[] { 1920, 1009 }, new[] { 1136, 640 } }) {
+        double Uf = Ui.Unit(sz[0], sz[1]);
+        foreach (bool side in new[] { false, true }) {
+          int px0 = (int)(sz[0] / 2 - 0.452 * Uf), px1 = (int)(sz[0] / 2 + (side ? 0.87 : 0.335) * Uf); int[] pop = { px0, 0, px1 - px0, sz[1] };
+          int avail = Math.Max(pop[0], sz[0] - px1) - HintLayout.Gap - HintLayout.Margin, pw = Math.Min(HintSize.MaxWidth(sz[0]), Math.Max(160, avail)), ph = (int)(0.2 * Uf); char sd;
+          var pos = HintLayout.Place(pop, null, pw, ph, sz[0], sz[1], out sd);
+          bool offPop = pos[0] + pw <= pop[0] || pos[0] >= pop[0] + pop[2];
+          Check(offPop && pos[0] >= 0 && pos[0] + pw <= sz[0] && pos[1] >= 0 && pos[1] + ph <= sz[1], "plate on " + sz[0] + "x" + sz[1] + (side ? " (side panel open)" : "") + ": beside the filter pop-up, not over it (" + pos[0] + "," + pos[1] + " " + pw + "x" + ph + ")");
+        }
+      }
+    }
     // live 1.6.66.400 (rec2 frame_0141, 526x296): the compact plate beside «Инвентарь» (frame 111,246,44,44) lay over Одиссея / Демон..;
     // with the bar's row (button top to the client's bottom) to keep off, it goes above the row, near the button
     { char sd; int[] bt = { 111, 246, 44, 44 }; int[][] band = { new[] { 0, 244, 526, 52 } };
@@ -5410,6 +5439,19 @@ static partial class CoreTests {
       Check(!GearFilterHint.Fits(null, null, new long[] { 9 }, 8, 3, new long[] { 1, 2 }) && GearFilterHint.Fits(null, null, new long[] { 1 }, 8, 3, new long[] { 1, 2 }) && GearFilterHint.Fits(null, null, new long[] { 9 }, 8, 3, null), "filter fits: the sub stats");
       Check(GearFilterHint.Fits(new long[] { 8 }, new long[] { 3 }, null, 0, 0, null), "filter fits: nothing known about the item: no verdict");
       Check(GearFilterHint.Decide("slot", 7, 5, false) == GearFilterMove.ListBeside, "filter hint: a slot out of the icons' range is not framed in the filter");
+      // live 1.6.68.605 (item 55032, slot 0): the filter held another item's set 721900, the item's set 711500 is not in the filter's list; the main stat 1 is chosen
+      { long[] su = { 721900 }, no = new long[0];
+        Check(GearFilterHint.Extra(su, no, no, 711500, 0, null) == FilterExtra.Set && !GearFilterHint.Fits(su, no, no, 711500, 0, null), "filter extra: another item's set left in the filter = a set to clear");
+        Check(GearFilterHint.Extra(su, new long[] { 1 }, no, 711500, 0, null) == FilterExtra.Set, "filter extra: a one-stat slot's main stat is not judged: still only the set");
+        Check(GearFilterHint.Extra(no, no, no, 711500, 0, null) == FilterExtra.None && GearFilterHint.Fits(no, no, no, 711500, 0, null), "filter extra: an empty filter holds nothing (the item has no set in the list: none needed)");
+        Check(GearFilterHint.Extra(no, new long[] { 2 }, no, 8, 3, null) == FilterExtra.Stat, "filter extra: another main stat = a stat to clear");
+        Check(GearFilterHint.Extra(no, new long[] { 3 }, no, 8, 3, null) == FilterExtra.None, "filter extra: the item's own main stat is no leftover");
+        Check(GearFilterHint.Extra(no, no, new long[] { 9 }, 8, 3, new long[] { 1, 2 }) == FilterExtra.Sub && GearFilterHint.Extra(no, no, new long[] { 1 }, 8, 3, new long[] { 1, 2 }) == FilterExtra.None, "filter extra: a sub stat the item lacks");
+        var all = GearFilterHint.Extra(su, new long[] { 2 }, new long[] { 9 }, 8, 3, new long[] { 1 });
+        Check(all == (FilterExtra.Set | FilterExtra.Stat | FilterExtra.Sub) && GearFilterHint.Several(all) && GearFilterHint.First(all) == FilterExtra.Set, "filter extra: several leftovers = «Сбросить»; the set is the first of them");
+        Check(!GearFilterHint.Several(FilterExtra.Stat) && !GearFilterHint.Several(FilterExtra.None) && GearFilterHint.First(FilterExtra.Stat | FilterExtra.Sub) == FilterExtra.Stat && GearFilterHint.First(FilterExtra.None) == FilterExtra.None, "filter extra: one leftover is named alone; then the stat before the sub stats");
+        Check(GearFilterHint.Decide("slot", 0, 5, false, GearFilterHint.Fits(su, no, no, 711500, 0, null)) == GearFilterMove.FixFilter, "filter extra: the slot step with the set left in the filter fixes the filter");
+      }
       Check(D(PilotFlow.Equip, gearHero(Mem3.Yes), false).Text != "closeFilter", "fallback: the equip flow's own open gear filter is not told to be closed by this plate");
       // the page's step: the open gear filter covers the hero screen's buttons: «close the filter window» with the × key of the gear filter, whatever coverable step it hides
       foreach (var k in new[] { LocateKind.OpenFoundry, LocateKind.OpenInventory }) {

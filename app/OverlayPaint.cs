@@ -95,7 +95,7 @@ namespace RealmForge {
       }
       if (p.Main != "") {
         if (p.Arrow != 0) {   // the direction of the item: a gold arrow before the text
-          float aw = mainH * 0.8f, acx = tx + aw / 2, acy = ty + mainH / 2, ah = mainH * 0.6f, dir = p.Arrow < 0 ? -1 : 1;
+          float lh = fMain.Height, aw = lh * 0.8f, acx = tx + aw / 2, acy = ty + lh / 2, ah = lh * 0.6f, dir = p.Arrow < 0 ? -1 : 1;
           var tri = new[] { new PointF(acx, acy + dir * ah / 2), new PointF(acx - aw / 2, acy - dir * ah / 2), new PointF(acx + aw / 2, acy - dir * ah / 2) };
           using (var br = new SolidBrush(Color.FromArgb(255, 255, 214, 110))) gr.FillPolygon(br, tri);
           using (var pen = new Pen(Color.FromArgb(230, 60, 36, 6), 1.5f)) gr.DrawPolygon(pen, tri);

@@ -1184,7 +1184,7 @@ namespace RealmForge {
 
             if (guide == 1) {
               filterState = "filter_guide";
-              DrawTip(o.X + gr[0], o.Y + gr[1], gr[2], gr[3], gl, H, false, gr[1] < 0.3 * H, gr[0] > W / 2);
+              DrawTip(o.X + gr[0], o.Y + gr[1], gr[2], gr[3], gl, H, false, gr[1] < 0.3 * H, gr[0] > W / 2, null, false, null, null, guideKeepOut);
               return;
             }
             // set as wanted: the list beside the pop-up is followed and framed as usual - unless the pop-up covers the item
@@ -1296,7 +1296,7 @@ namespace RealmForge {
         int[] gr; string[] gl;
         if (FilterGuideTip(o, cr, true, out gr, out gl) == 1) {
           filterState = "filter_guide";
-          DrawTip(o.X + gr[0], o.Y + gr[1], gr[2], gr[3], gl, H, false, gr[1] < 0.3 * H, gr[0] > W / 2);
+          DrawTip(o.X + gr[0], o.Y + gr[1], gr[2], gr[3], gl, H, false, gr[1] < 0.3 * H, gr[0] > W / 2, null, false, null, null, guideKeepOut);
           return true;
         }
         // nothing known to light (a sub stat only): the text alone
@@ -1328,20 +1328,70 @@ namespace RealmForge {
     public string FilterSetText = "", FilterStatText = "";
     string guideSide = "";   // the side panel the guide pointed at last ("set" / "stat")
 
+    // the gear filter pop-up's rect (screen px) the hint's plate keeps off: the filter panel, with its side panel (sets / stats) when open (all measured from the window centre)
+    int[] guideKeepOut;
+    static string[] TextLines(string t) { return string.IsNullOrEmpty(t) ? new string[0] : new[] { t }; }
+    int[] FilterPopupRect(W32.POINT o, double W, double H, double U, bool side) {
+      int x0 = (int)(W / 2 - 0.452 * U), x1 = (int)(W / 2 + (side ? 0.87 : 0.335) * U);
+      return new[] { o.X + x0, o.Y, x1 - x0, (int)H };
+    }
+
+    /// <summary>What the filter holds that hides the item, judged like <see cref="FilterFitsItem"/> (the slot step goes by the slot the player goes to).</summary>
+    FilterExtra FilterExtraOf(FilterView fv) {
+      long[] info; if (fv.Item <= 0 || !itemInfo.TryGetValue(fv.Item, out info)) return FilterExtra.None;
+      int itemPart = hintKind == "slot" && hintSlot >= 0 ? hintSlot : fv.Part;
+      return GearFilterHint.Extra(fv.Suits, fv.MainAttrs, fv.SubAttrs, info[0], itemPart <= 1 ? 0 : info[1], fv.SubIds);
+    }
+
+    /// <summary>The filter holds something that hides the item: the frame is on what to undo and the plate says so. Several kinds at once: «Сбросить»;
+    /// one: the set (its chosen icon when the sets list is open and shows it, else «Выбрать комплект»), the main stat or the sub stats, in that order.</summary>
+    int FilterUndoTip(FilterView fv, FilterExtra extra, double W, double H, double U, out int[] rect, out string[] lines) {
+      int s = Math.Max(10, (int)(0.03 * U)), cw = (int)(0.2 * U), ch = (int)(0.055 * U);
+      Func<double, double, int[]> spot = (x, y) => new[] { (int)x - s, (int)y - s, 2 * s, 2 * s };
+      string what; string text;
+      if (GearFilterHint.Several(extra)) {
+        what = "reset"; text = Tx("filterReset"); guideSide = "";
+        rect = new[] { (int)fg.X(fg.ResetX, W, H) - cw / 2, (int)fg.Y(fg.ResetY, W, H) - ch / 2, cw, ch };
+      } else if (extra == FilterExtra.Set) {
+        what = "set"; guideSide = "";
+        int idx = fv.SetOrder != null && fv.Suits.Length > 0 ? Array.IndexOf(fv.SetOrder, fv.Suits[0]) : -1;
+        if (fv.SetPanelOpen && idx >= 0 && !FilterGeometry.SetBelowView(idx)) {
+          var c = fg.SetCell(idx, W, H); rect = new[] { (int)c[0] - cw / 2, (int)c[1] - ch / 2, cw, ch }; text = Tx("filterDropSetPanel");
+        } else { rect = spot(fg.X(fg.SetArrowX, W, H), fg.Y(fg.SetArrowY, W, H)); text = Tx("filterDropSet"); }
+      } else if (extra == FilterExtra.Stat) {
+        what = "stat"; text = Tx("filterDropStat"); guideSide = "stat";
+        rect = spot(fg.X(fg.StatArrowX, W, H), fg.Y(fg.StatArrowY, W, H));
+      } else {
+        what = "sub"; text = Tx("filterDropSub"); guideSide = "";
+        rect = spot(fg.X(fg.SubArrowX, W, H), fg.Y(fg.SubArrowY, W, H));
+      }
+      if (text == "") text = Tx("filterFix");
+      lines = TextLines(text);
+      StateLog("filterguide.ret", "1 extra=" + what + " (suits=" + Ids(fv.Suits) + " mains=" + Ids(fv.MainAttrs) + " subs=" + Ids(fv.SubAttrs) + ")");
+      return 1;
+    }
+
     /// <summary>Where in the open filter pop-up the next pick is (client px rect) and its text; false = nothing to pick (the
     /// filter has the item's set / main stat - both for the plan's filter step, either for the «faster» tip - or they are
     /// not known).</summary>
     int FilterGuideTip(W32.POINT o, W32.RECT cr, bool both, out int[] rect, out string[] lines) {
-      rect = null; lines = new string[0];
+      rect = null; lines = new string[0]; guideKeepOut = null;
       var fv = FilterViewNow(o, cr, NowMs(), true, false);
       StateLog("filterguide", "uid=" + fv.Item + " setId=" + fv.SetId + " statId=" + fv.StatId + " setIndex=" + fv.SetIndex + " statIndex=" + fv.StatIndex + " setPanel=" + fv.SetPanelOpen + " side=" + fv.SidePanelOpen
         + " setOrder=" + (fv.SetOrder != null ? fv.SetOrder.Length.ToString() : "null") + " suits=" + Ids(fv.Suits) + " mains=" + Ids(fv.MainAttrs) + " subs=" + Ids(fv.SubAttrs) + " hideEq=" + fv.HideEquipped
         + " hintKind=" + hintKind + " target=" + target + " hintSlot=" + hintSlot + " both=" + both);
       if (fv.Item <= 0 || fv.Suits == null || fv.MainAttrs == null) { StateLog("filterguide.ret", "-1 no filter read (item=" + fv.Item + " suits=" + (fv.Suits != null) + " mains=" + (fv.MainAttrs != null) + ")"); return -1; }
       double W = cr.R, H = cr.B, U = Ui.Unit(W, H);
+      guideKeepOut = FilterPopupRect(o, W, H, U, fv.SidePanelOpen);   // the plate stands beside the pop-up: never over its titles
+      // what the filter holds from the previous item comes first: that is what hides this one (the pick below is of what is still missing)
+      if (both) {
+        var extra = FilterExtraOf(fv);
+        if (extra != FilterExtra.None) return FilterUndoTip(fv, extra, W, H, U, out rect, out lines);
+      }
       int setCount = fv.SetOrder != null ? fv.SetOrder.Length : 2 * FilterGeometry.SetRows;
       bool setWanted = fv.SetId > 0 && fv.SetIndex >= 0 && fv.SetIndex < setCount;
       bool statWanted = fv.StatId > 0 && fv.StatIndex >= 0 && fv.StatIndex < 2 * FilterGeometry.StatRows;
+      if (hintKind == "slot" && hintSlot >= 0 && hintSlot <= 1) statWanted = false;   // the slot has one main stat: the filter does not judge it (FilterFitsItem)
       bool setOn = fv.SetId > 0 && Array.IndexOf(fv.Suits, fv.SetId) >= 0, statOn = fv.StatId > 0 && Array.IndexOf(fv.MainAttrs, fv.StatId) >= 0;
       if (!setWanted && !statWanted) { StateLog("filterguide.ret", "-1 nothing known to pick (setId=" + fv.SetId + " setIndex=" + fv.SetIndex + " statId=" + fv.StatId + " statIndex=" + fv.StatIndex + ")"); return -1; }   // nothing known to pick: the filter does not help
       bool done = both ? (setOn || !setWanted) && (statOn || !statWanted) : setOn || statOn;
@@ -1351,14 +1401,14 @@ namespace RealmForge {
       Func<double, double, int[]> spot = (x, y) => new[] { (int)x - s, (int)y - s, 2 * s, 2 * s };
       Func<double[], int[]> cell = (c) => new[] { (int)c[0] - cw / 2, (int)c[1] - ch / 2, cw, ch };
       if (setWanted && !setOn) {
-        lines = string.IsNullOrEmpty(FilterSetText) ? new string[0] : new[] { FilterSetText };
+        lines = TextLines(string.IsNullOrEmpty(FilterSetText) ? Tx("filterPickSet") : FilterSetText);   // (a plate is always drawn with a frame)
         if (fv.SetPanelOpen) {
           // the sets list shows 10 rows; further down it has to be scrolled (where it is scrolled is not known: the row is
           // lit as if it were not, the text names the set)
           if (FilterGeometry.SetBelowView(fv.SetIndex)) {
             // the set is below the visible rows: another set's cell is not lit - the list is, and the text says to scroll it
             rect = fg.SetListRect(W, H, cw, ch);
-            string below = Tx("filterSetBelow"); lines = new[] { below != "" ? below : (string.IsNullOrEmpty(FilterSetText) ? "" : FilterSetText) };
+            string below = Tx("filterSetBelow"); lines = new[] { below != "" ? below : (string.IsNullOrEmpty(FilterSetText) ? Tx("filterPickSet") : FilterSetText) };
             if (lines[0] == "") lines = new string[0];
             guideSide = "set"; return 1;
           }
@@ -1367,7 +1417,7 @@ namespace RealmForge {
         } else rect = spot(fg.X(fg.SetArrowX, W, H), fg.Y(fg.SetArrowY, W, H));
         return 1;
       }
-      lines = string.IsNullOrEmpty(FilterStatText) ? new string[0] : new[] { FilterStatText };
+      lines = TextLines(string.IsNullOrEmpty(FilterStatText) ? Tx("filterPickStat") : FilterStatText);
       // the main stats' side panel looks like the sub stats' one: its cell is lit only after the guide pointed at its arrow
       if (fv.SidePanelOpen && !fv.SetPanelOpen && guideSide == "stat") rect = cell(fg.StatCell(fv.StatIndex, W, H));
       else { rect = spot(fg.X(fg.StatArrowX, W, H), fg.Y(fg.StatArrowY, W, H)); guideSide = "stat"; }
@@ -1534,28 +1584,31 @@ namespace RealmForge {
     }
 
     /// <param name="avoid">the step's other click targets (screen px {x, y, w, h}): the plate is never put over them (nor over the target)</param>
-    void DrawTip(int x, int y, int w, int h, string[] lines, double H, bool plateOnly = false, bool below = false, bool right = false, string caps = null, bool warn = false, Hl hl = null, int[][] avoid = null) {
+    void DrawTip(int x, int y, int w, int h, string[] lines, double H, bool plateOnly = false, bool below = false, bool right = false, string caps = null, bool warn = false, Hl hl = null, int[][] avoid = null, int[] keepOut = null) {
       var p = lines != null && lines.Length > 0 ? new Plate { Caps = caps ?? Tx("caps"), Main = lines[0], Sub = lines.Length > 1 ? lines[1] : "", Warn = warn } : null;
       if (hl == null && !GuideStyle && !plateOnly) hl = HlLive(x, y, w, h);   // a live frame with its sprite's outline (LiveFrame / LiveCell)
-      Scene(tip, ref tipKey, plateOnly ? null : new[] { x, y, w, h }, p, new[] { x, y, w, h }, null, null, hl, avoid);
+      Scene(tip, ref tipKey, plateOnly ? null : new[] { x, y, w, h }, p, new[] { x, y, w, h }, null, null, hl, avoid, keepOut);
     }
 
     // the plate's sizes tried in turn when it does not fit beside its target (the smallest is taken anyway)
     static readonly float[] PlateScales = { 1f, 0.85f, 0.72f, 0.6f };
 
 
-    // the plate's texts cut with «…» so that it is at most maxW px wide (0 = no limit); the plate itself is not changed
+    // the plate's texts fitted to at most maxW px wide (0 = no limit): the action and the next step broken at spaces into up to 3 lines (joined by
+    // "\n": DrawString and MeasureString take them as lines), «…» only when even 3 lines do not hold the text; the caps line stays one line
     static Plate FitPlate(Plate p, Font fCaps, Font fMain, Font fSub, float pad, int maxW, Graphics pg) {
       if (p == null || maxW <= 0) return p;
       float owl = fCaps.Height * 1.5f, room = maxW - 2 * pad;
       float arrow = p.Arrow != 0 && p.Main != "" ? fMain.Height * 0.8f + 10 : 0;
       return new Plate {
         Caps = p.Caps == "" ? "" : HintSize.Ellipsize(p.Caps.ToUpperInvariant(), room - owl - 6, t => pg.MeasureString(t, fCaps).Width),
-        Main = HintSize.Ellipsize(p.Main, room - arrow, t => pg.MeasureString(t, fMain).Width),
-        Sub = HintSize.Ellipsize(p.Sub, room, t => pg.MeasureString(t, fSub).Width),
+        Main = string.Join("\n", HintSize.Wrap(p.Main, room - arrow, HintSize.MaxTextLines, t => pg.MeasureString(t, fMain).Width)),
+        Sub = string.Join("\n", HintSize.Wrap(p.Sub, room, HintSize.MaxTextLines, t => pg.MeasureString(t, fSub).Width)),
         Pill = p.Pill, Warn = p.Warn, Arrow = p.Arrow
       };
     }
+
+    static int LineCount(string s) { int n = 1; foreach (char c in s) if (c == '\n') n++; return n; }
 
     static Plate PlateSize(Plate p, Font fCaps, Font fMain, Font fSub, float pad, int maxW, out int pw, out int ph, out float owl, out float capsH, out float mainH, out float subH) {
       owl = fCaps.Height * 1.5f;
@@ -1563,7 +1616,7 @@ namespace RealmForge {
         p = FitPlate(p, fCaps, fMain, fSub, pad, maxW, pg);
         float cw = p.Caps != "" ? owl + 6 + pg.MeasureString(p.Caps.ToUpperInvariant(), fCaps).Width : 0;
         float mw = p.Main != "" ? pg.MeasureString(p.Main, fMain).Width : 0, sw = p.Sub != "" ? pg.MeasureString(p.Sub, fSub).Width : 0;
-        capsH = p.Caps != "" ? Math.Max(owl, fCaps.Height) : 0; mainH = p.Main != "" ? fMain.Height : 0; subH = p.Sub != "" ? fSub.Height : 0;
+        capsH = p.Caps != "" ? Math.Max(owl, fCaps.Height) : 0; mainH = p.Main != "" ? fMain.Height * LineCount(p.Main) : 0; subH = p.Sub != "" ? fSub.Height * LineCount(p.Sub) : 0;
         if (p.Arrow != 0 && p.Main != "") mw += fMain.Height * 0.8f + 10;   // the arrow before the text
         pw = (int)(Math.Max(cw, Math.Max(mw, sw)) + 2 * pad);
         ph = (int)(pad * (p.Pill ? 1.0f : 2f) + capsH + mainH + subH + (capsH > 0 ? 2 : 0) + (subH > 0 ? 2 : 0));
@@ -1606,7 +1659,7 @@ namespace RealmForge {
       frameWinTick = null; sceneWins.Clear();
     }
 
-    void Scene(GlowWindow win, ref string key, int[] frameR, Plate p, int[] target, double[] strip, List<int[]> marks = null, Hl hl = null, int[][] avoid = null) {
+    void Scene(GlowWindow win, ref string key, int[] frameR, Plate p, int[] target, double[] strip, List<int[]> marks = null, Hl hl = null, int[][] avoid = null, int[] keepOut = null) {
       if (strip == null && PendingFrame(frameR)) { frameR = null; hl = null; }   // the target's live frame is awaited: the plate alone, the frame comes once, live
       if (!GameDrawable()) { if (win.Visible) win.Hide(); key = null; frameWins.Remove(win); return; }
       // one frame at a time: the first frame of a tick is drawn, a second window's own frame waits (its plate stays); the window of an older frame
@@ -1633,32 +1686,37 @@ namespace RealmForge {
         + (ng ? "|g" + guideLvl + "," + bob + (hand != null ? "h" : "") + (hl.Important ? "i" : "") + (hl.Shape != null ? hl.Shape.K : "") : GuideStyle && marks != null && marks.Count > 0 ? "|g" + guideLvl : "")
         + (oldShape ? "|o" + hl.Shape.K + (int)hl.Rect.X + "," + (int)hl.Rect.Y + "," + (int)hl.Rect.W + "," + (int)hl.Rect.H : "")
         + (marks != null && marks.Count > 0 ? "|m" + string.Join(";", marks.ConvertAll(m => string.Join(",", m))) : "")
-        + (avoid != null && avoid.Length > 0 ? "|a" + string.Join(";", Array.ConvertAll(avoid, a => a != null ? string.Join(",", a) : "-")) : "");
+        + (avoid != null && avoid.Length > 0 ? "|a" + string.Join(";", Array.ConvertAll(avoid, a => a != null ? string.Join(",", a) : "-")) : "")
+        + (keepOut != null ? "|k" + string.Join(",", keepOut) : "");
       if (k == key) return;
       key = k;
       long d0 = LoadMeter.Now();
-      try { SceneDraw(win, frameR, p, target, strip, marks, hl, avoid, pulse, ng, dim, oldShape, hand, bob); } finally { LoadMeter.Done(LoadMeter.Draw, d0); }
+      try { SceneDraw(win, frameR, p, target, strip, marks, hl, avoid, pulse, ng, dim, oldShape, hand, bob, keepOut); } finally { LoadMeter.Done(LoadMeter.Draw, d0); }
     }
 
-    void SceneDraw(GlowWindow win, int[] frameR, Plate p, int[] target, double[] strip, List<int[]> marks, Hl hl, int[][] avoid, float pulse, bool ng, bool dim, bool oldShape, Image hand, int bob) {
+    void SceneDraw(GlowWindow win, int[] frameR, Plate p, int[] target, double[] strip, List<int[]> marks, Hl hl, int[][] avoid, float pulse, bool ng, bool dim, bool oldShape, Image hand, int bob, int[] keepOut = null) {
       double U = Ui.Unit(Math.Max(1, sceneW), Math.Max(1, sceneH));
       SetPulse(win, null); var pulseSpecs = new List<FrameSpecT>();
       // the step's other click targets in client px (the plate keeps off them and off its own target)
       int[][] av = avoid == null ? null : Array.ConvertAll(avoid, a => a == null ? null : new[] { a[0] - sceneX, a[1] - sceneY, a[2], a[3] });
       int[] tcl = target != null ? new[] { target[0] - sceneX, target[1] - sceneY, target[2], target[3] } : null;
+      // keepOut (the gear filter pop-up, screen px): the plate stands beside it, never over its titles; the pointer still aims at the real target
+      int[] kcl = keepOut != null ? new[] { keepOut[0] - sceneX, keepOut[1] - sceneY, keepOut[2], keepOut[3] } : null;
+      int[] ptl = kcl ?? tcl;   // what the plate is placed beside
       // a small game window: one short line (the step and the action); the app's window has the whole text
       string stepId = p != null ? p.Caps + "|" + (p.Pill ? "pill" : "") + "|" + sceneW + "x" + sceneH : null;
       if (p != null && !p.Pill && HintSize.Compact(U)) p = new Plate { Main = HintSize.CompactLine(p.Caps, p.Main != "" ? p.Main : p.Sub), Warn = p.Warn, Arrow = p.Arrow };
       int maxW = p != null && !p.Pill ? HintSize.MaxWidth(sceneW) : 0;
+      if (maxW > 0 && kcl != null) maxW = Math.Max(160, Math.Min(maxW, Math.Max(kcl[0], sceneW - kcl[0] - kcl[2]) - HintLayout.Gap - HintLayout.Margin));   // the room beside the pop-up
       // the layout held for this step (same target and neighbours within a few px): scale and place stay, only the text is drawn anew
       PlateHold hold; if (!plateHold.TryGetValue(win, out hold)) plateHold[win] = hold = new PlateHold();
-      bool held = p != null && strip == null && hold.Keep(stepId, tcl, av);
+      bool held = p != null && strip == null && hold.Keep(stepId, ptl, av);
       // the plate's size: full, or smaller steps until it fits beside the target without covering a button (a tiny game window)
       float sc = held ? hold.Scale : 1f;
-      if (!held && p != null && strip == null && tcl != null) {
+      if (!held && p != null && strip == null && ptl != null) {
         foreach (float s in PlateScales) {
           sc = s; int tw, th; MeasurePlate(p, U, s, maxW, out tw, out th);
-          char sd; if (HintLayout.TryPlace(tcl, av, tw, th, sceneW, sceneH, out sd) != null) break;
+          char sd; if (HintLayout.TryPlace(ptl, av, tw, th, sceneW, sceneH, out sd) != null) break;
         }
       }
       float pad = PlatePad(U, sc);
@@ -1678,13 +1736,14 @@ namespace RealmForge {
             pos = new[] { px, Math.Max(HintLayout.Margin, Math.Min(sceneH - ph - HintLayout.Margin, py)) };
           } else {
             var tc = target != null ? new[] { target[0] - sceneX, target[1] - sceneY, target[2], target[3] } : new[] { sceneW / 2, (int)(0.3 * sceneH), 0, 0 };
-            if (held) { pos = new[] { hold.Pos[0], hold.Pos[1] }; side = hold.Side; if (target != null && HintLayout.OnTarget(pos[0], pos[1], pw, ph, tc)) { held = false; pos = HintLayout.Place(tc, av, pw, ph, sceneW, sceneH, out side); } }
+            var pc = ptl ?? tc;
+            if (held) { pos = new[] { hold.Pos[0], hold.Pos[1] }; side = hold.Side; if (target != null && HintLayout.OnTarget(pos[0], pos[1], pw, ph, pc)) { held = false; pos = HintLayout.Place(pc, av, pw, ph, sceneW, sceneH, out side); } }
             else if (target == null) pos = HintLayout.TopPlateFree(pw, ph, sceneW, sceneH, U, av);   // no target: top centre (off the step's buttons)
-            else pos = HintLayout.Place(tc, av, pw, ph, sceneW, sceneH, out side);
+            else pos = HintLayout.Place(pc, av, pw, ph, sceneW, sceneH, out side);
             // the text grew on a held place: kept inside the window
             pos[0] = Math.Max(HintLayout.Margin, Math.Min(sceneW - pw - HintLayout.Margin, pos[0])); pos[1] = Math.Max(HintLayout.Margin, Math.Min(sceneH - ph - HintLayout.Margin, pos[1]));
             if (target != null && (frameR != null || tc[2] > 0)) ptr = HintLayout.Pointer(pos, pw, ph, side, tc, Math.Max(7, 0.01 * U));
-            if (!held && hold.Made(stepId, tcl, av, sc, new[] { pos[0], pos[1] }, side) && hold.LastStep != null)
+            if (!held && hold.Made(stepId, ptl, av, sc, new[] { pos[0], pos[1] }, side) && hold.LastStep != null)
               Log.Write("hint layouts: " + hold.LastCount + " for step «" + hold.LastStep + "»");   // 1 = laid out once, never moved
           }
         }
