@@ -77,44 +77,6 @@ for (const lang of ['ru', 'en']) {
   ok(L.describe(areq, st({ step: 'ascendReady' }), t).tone === 'done' && L.describe(areq, st({ step: 'ascendNotInList' }), t).tone === 'warn', lang + ': ascend ready / not in list');
 }
 
-// auto click: the app works on the steps it clicks itself, says why it stopped, and leaves the other steps as they are
-for (const lang of ['ru', 'en']) {
-  const t = tr(lang);
-  const plain = L.describe(req, st({ step: 'inList' }), t);
-  const work = L.describe(req, st({ step: 'inList', auto: 'work' }), t);
-  ok(work.head === T[lang].locAutoWork && work.lines[0] === plain.head, lang + ': auto at work on the list: the program is opening it');
-  ok(L.describe(req, st({ step: 'openInventory', auto: 'work' }), t).head === T[lang].locAutoWork, lang + ': auto opens the inventory');
-  ok(L.describe(req, st({ step: 'selected', auto: 'hint' }), t).head === T[lang].locSelected, lang + ': the last steps stay the player\'s');
-  // recast: the plate says what the program presses / chooses (the last button, «Улучшить», is never announced as a program action)
-  const aGem = L.describe({ ...req, purpose: 'recast' }, st({ step: 'selected', auto: 'work' }), t);
-  ok(aGem.head === T[lang].locAutoGem && aGem.head.includes(lang === 'ru' ? 'Улучшение самоцветами' : 'Gem Enhancement') && aGem.lines[0] === T[lang].locSelected, lang + ': auto at the card: names the gem button');
-  ok(L.describe({ ...req, purpose: 'ascend' }, st({ step: 'selected', auto: 'work' }), t).head === T[lang].locSelected, lang + ': ascend: no gem button announcement');
-  const aRec = L.describe(req, st({ step: 'gemFunction', func: 7, auto: 'work' }), t), aAdv = L.describe(req, st({ step: 'gemFunction', func: 8, auto: 'work' }), t);
-  ok(aRec.head === T[lang].locAutoFuncRec && aRec.head.includes(lang === 'ru' ? '«Преобразование»' : '«Recast»') && aAdv.head === T[lang].locAutoFuncAdv && aAdv.head.includes(lang === 'ru' ? 'Продв.' : 'Advanced'), lang + ': auto at the gem list: names the function');
-  ok(L.describe(req, st({ step: 'gemFunction', func: 0, auto: 'work' }), t).head !== T[lang].locAutoFuncRec, lang + ': unknown function: nothing is announced');
-  ok(L.describe(req, st({ step: 'done', onGem: true, auto: 'work' }), t).head === T[lang].locDone, lang + ': the final step is never "auto work"');
-  ok([aGem, aRec, aAdv].every((d) => d.tip.length <= 3 && d.tip.every((x) => x.length <= 90)), lang + ': auto plates are short');
-  ok(L.describe(req, st({ step: 'recastPick', auto: 'work' }), t).head !== T[lang].locAutoWork, lang + ': the Foundry steps are never "auto work"');
-  ok(L.describe(req, st({ step: 'inList', auto: 'paused' }), t).head === plain.head, lang + ': paused: the normal hint');
-  // the click gate's stops (src/ClickGate.cs): «Автонажатие остановлено: <причина>», the step's own hint after it
-  for (const why of ['unknown', 'screen', 'modal', 'bulk', 'cell', 'target', 'nochange']) {
-    const d = L.describe(req, st({ step: 'inList', auto: 'stopped', autoWhy: why }), t);
-    ok(d.head === t('gateStop', t('gateWhy_' + why)) && !/\{0\}|^gate/.test(d.head) && d.lines[0] === t('locAutoRest') && d.lines[1] === plain.head && d.tone === 'warn', lang + ': gate stop (' + why + ') says why and keeps the hint');
-    ok(d.tip.length <= 3 && d.tip.every((x) => x.length <= 90), lang + ': gate stop (' + why + ') plate is short');
-  }
-  // «Массовая продажа»: the step is to leave it, and the program clicks nothing
-  const eb = L.describe(req, st({ step: 'exitBulk', auto: 'hint', autoWhy: 'bulk' }), t);
-  ok(eb.head === T[lang].locExitBulk && eb.tone === 'warn' && eb.lines[0] === T[lang].locExitBulkP, lang + ': bulk sale: leave it');
-  ok(L.describe(req, st({ step: 'exitBulk', auto: 'work' }), t).head === T[lang].locExitBulk, lang + ': bulk sale is never "auto work"');
-  for (const why of ['lost', 'stuck', 'cancelled', 'loading', 'notinlist', 'hidden']) {
-    const d = L.describe(req, st({ step: 'inList', auto: 'stopped', autoWhy: why }), t);
-    ok(d.head === T[lang].locAutoStop && d.lines.length >= 2 && !/^loc[A-Z]/.test(d.lines[0]) && d.lines[1] === plain.head, lang + ': stopped (' + why + ') says why and keeps the hint');
-    ok(d.tip.length <= 3 && d.tip.every((x) => x.length <= 90), lang + ': stopped (' + why + ') plate is short');
-  }
-  for (const [why, key] of [['loading', 'locAutoLoading'], ['notinlist', 'locAutoNotInList'], ['hidden', 'locAutoHidden']]) ok(T[lang][key] && L.describe(req, st({ step: 'ascendNotInList', auto: 'stopped', autoWhy: why }), t).lines[0] === T[lang][key], lang + ': stopped (' + why + ') names its own reason');
-  ok(L.describe(req, st({ step: 'inList', auto: 'stopped', autoWhy: 'lost' }), t).tone === 'warn' && L.describe(req, st({ step: 'inList', auto: 'stopped', autoWhy: 'cancelled' }), t).tone === 'info', lang + ': stop tones');
-  ok(T[lang].locLeadAuto && T[lang].locLeadAuto !== T[lang].locLead, lang + ': the lead changes with auto click');
-}
 // «Продвинуть» артефакт: every step has texts and a short plate, in both languages; the artifact's name rides on the plate's header
 const areq = { id: 'a1', purpose: 'artPromote', item: null, art: { uid: 5001, id: 200088, name: 'Клинок', lv: 10, cap: 10, st: 0, need: 2, via: 'copy' } };
 for (const lang of ['ru', 'en']) {
@@ -134,7 +96,6 @@ for (const lang of ['ru', 'en']) {
   ok(L.caps(areq, { step: 'artPromote' }, t).includes('Клинок') && L.stepNo(areq, { step: 'artPromote' }).n === 7, lang + ': plate header names the artifact, the button is step 7');
   ok(L.pillTexts(t, lang).doneArtPromote === T[lang].locJobArtPromote, lang + ': the done plate text');
 }
-ok(L.AUTO_STEPS.every((k) => L.KINDS.indexOf(k) >= 0), 'auto steps are known steps');
 
 // the text keys exist in both languages
 const locKeys = (l) => Object.keys(T[l]).filter((k) => k.startsWith('loc')).sort();

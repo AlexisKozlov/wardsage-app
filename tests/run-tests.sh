@@ -57,7 +57,7 @@ else
   echo "SKIPPED: $FX45 not found (install mono-devel for the .NET Framework reference assemblies)"
 fi
 
-CORE="src/ScreenMap.cs src/ScreenMapData.cs src/UiGraph.cs src/UiGraphData.cs src/SpriteArt.cs src/SpriteArtData.cs src/Explorer.cs src/ArenaClient.cs src/ArenaOpponents.cs src/ArtEquip.cs src/ArtGridPicture.cs src/AutoPilot.cs src/NavSnapshot.cs src/NavAct.cs src/NavModal.cs src/NavPlan.cs src/Navigator.cs src/NavEquip.cs src/NavProbe.cs src/NavEscape.cs src/NavRecipe.cs src/NavRecipesData.cs src/BattleCapture.cs src/BattleClock.cs src/AttackLog.cs src/BattleTimeline.cs src/Channel.cs src/Config.cs src/EquipGuide.cs src/EquipScan.cs src/ErrorReport.cs src/Extractor.cs src/FolderMigration.cs src/ScreenRecorder.cs src/RecInputs.cs src/FightPlanClient.cs src/FilterPilot.cs src/GameInfo.cs src/GamePacks.cs src/GameScreen.cs src/OfferForms.cs src/OfferScan.cs src/AutoRec.cs src/LabRec.cs src/FrameAudit.cs src/ClickGate.cs src/GuildData.cs src/GvgData.cs src/HeroPilot.cs src/Geometry.cs src/Layout.cs src/ListTracker.cs src/OwnMask.cs src/HintLayout.cs src/GuideShape.cs src/LiveTables.cs src/LuaRoot.cs src/UiButtons.cs src/FrameTargets.cs src/LocateClient.cs src/LocateFrames.cs src/LocateGuide.cs src/LocatePilot.cs src/MemoryReader.cs src/KlassScan.cs src/MiniJson.cs src/NewsClient.cs src/PlansClient.cs src/NetBackoff.cs src/PlansWait.cs src/RecastScan.cs src/RemoteConfig.cs src/SellClient.cs src/SellHint.cs src/SellPilot.cs src/SellScan.cs src/Strings.cs src/SyncClient.cs src/TimelineBuilder.cs src/TestLog.cs src/TraceUpload.cs src/UpdateKeys.cs src/CodeWatch.cs src/CodeReport.cs src/WebViewRecovery.cs src/HeroGrades.cs src/LoadPlan.cs src/CityMem.cs src/TipMem.cs src/ListMem.cs src/HostCore.cs app/HintGeometry.cs"
+CORE="src/ScreenMap.cs src/ScreenMapData.cs src/UiGraph.cs src/UiGraphData.cs src/SpriteArt.cs src/SpriteArtData.cs src/ArenaClient.cs src/ArenaOpponents.cs src/ArtEquip.cs src/ArtGridPicture.cs src/NavSnapshot.cs src/NavProbe.cs src/BattleCapture.cs src/BattleClock.cs src/AttackLog.cs src/BattleTimeline.cs src/Channel.cs src/Config.cs src/EquipGuide.cs src/EquipScan.cs src/ErrorReport.cs src/Extractor.cs src/FolderMigration.cs src/ScreenRecorder.cs src/RecInputs.cs src/FightPlanClient.cs src/GameInfo.cs src/GamePacks.cs src/GameScreen.cs src/OfferForms.cs src/OfferScan.cs src/AutoRec.cs src/LabRec.cs src/FrameAudit.cs src/ClickGate.cs src/GuildData.cs src/GvgData.cs src/Geometry.cs src/Layout.cs src/ListTracker.cs src/OwnMask.cs src/HintLayout.cs src/HintGeom.cs src/GuideShape.cs src/LiveTables.cs src/LuaRoot.cs src/UiButtons.cs src/FrameTargets.cs src/LocateClient.cs src/LocateFrames.cs src/LocateGuide.cs src/MemoryReader.cs src/KlassScan.cs src/MiniJson.cs src/NewsClient.cs src/PlansClient.cs src/NetBackoff.cs src/PlansWait.cs src/RecastScan.cs src/RemoteConfig.cs src/SellClient.cs src/SellHint.cs src/SellScan.cs src/Strings.cs src/SyncClient.cs src/TimelineBuilder.cs src/TestLog.cs src/TraceUpload.cs src/UpdateKeys.cs src/UpdateDownload.cs src/CodeWatch.cs src/CodeReport.cs src/WebViewRecovery.cs src/HeroGrades.cs src/LoadPlan.cs src/CityMem.cs src/TipMem.cs src/ListMem.cs src/HostCore.cs app/HintGeometry.cs"
 
 step "3. Core (no WinForms) compiles as C# 5 for .NET 8; tests build"
 NET8_REFS=$(for f in "$NET8"/*.dll; do printf -- '-r:%s ' "$f"; done)
@@ -65,17 +65,11 @@ NET8_REFS=$(for f in "$NET8"/*.dll; do printf -- '-r:%s ' "$f"; done)
 $CSC -langversion:5 -target:library -nostdlib -warnaserror -nowarn:SYSLIB0014 $NET8_REFS \
   -out:"$OUT/RealmForge.Core.dll" $CORE tests/CodeProtectorStub.cs
 $CSC -target:exe -nostdlib -nowarn:SYSLIB0014 $NET8_REFS -r:"$OUT/RealmForge.Core.dll" \
-  -out:"$OUT/CoreTests.dll" tests/CoreTests.cs tests/FrameStyleTests.cs tests/AttackLogTests.cs tests/GameSim.cs tests/HeroMemTests.cs tests/NavSim.cs tests/NavTests.cs tests/NavTwoHeroes.cs tests/GuidePaths.cs tests/RecipeFrom.cs tests/EquipBench.cs tests/CityMemTests.cs tests/LiveClickTests.cs tests/HeroChoiceTests.cs tests/TipMemTests.cs tests/ListMemTests.cs tests/SimMemory.cs tests/SimMemoryTests.cs tests/ConnectTests.cs
+  -out:"$OUT/CoreTests.dll" tests/CoreTests.cs tests/FrameStyleTests.cs tests/AttackLogTests.cs tests/CityMemTests.cs tests/HeroChoiceTests.cs tests/TipMemTests.cs tests/ListMemTests.cs tests/SimMemory.cs tests/SimMemoryTests.cs
 cat > "$OUT/CoreTests.runtimeconfig.json" <<EOF
 { "runtimeOptions": { "tfm": "net8.0", "framework": { "name": "Microsoft.NETCore.App", "version": "$NET8_RT" } } }
 EOF
 echo "built $OUT/CoreTests.dll"
-
-step "3b. Recipes (tools/recipes/*.json): valid against the UI graph and the code's registries, src/NavRecipesData.cs up to date"
-RECIPE_REGISTRY=1 dotnet exec --runtimeconfig "$OUT/CoreTests.runtimeconfig.json" "$OUT/CoreTests.dll" --sim 1 > "$OUT/recipe-registry.txt"
-node tools/recipes.mjs --check --registry "$OUT/recipe-registry.txt"
-
-node tests/recipe-extract.test.mjs   # (the extractor tools/rec-to-recipe.mjs on a recorded equip_city: the draft equals tools/recipes/equip.json in its navigation steps)
 
 step "4. Mock server on :$PORT"
 node tests/mock-server.mjs $PORT & MOCK=$!
@@ -85,52 +79,11 @@ for i in $(seq 1 50); do curl -s -o /dev/null "http://127.0.0.1:$PORT/__last" &&
 step "5. Tests on .NET 8"
 dotnet exec --runtimeconfig "$OUT/CoreTests.runtimeconfig.json" "$OUT/CoreTests.dll" "http://localhost:$PORT" $ACCOUNT
 
-step "5a. Game sim: 3000 seeds of a random start + task through the real screen state, click gate and pilots (tests/GameSim.cs; longer: tests/run-sim.sh --soak N)"
-dotnet exec --runtimeconfig "$OUT/CoreTests.runtimeconfig.json" "$OUT/CoreTests.dll" --sim 3000
-
-step "5a2. Game sim driven by the UI graph (src/UiGraphData.cs): starts on safe paths from the city, the game's own pop-ups, presses do what the client's code does; with the graph's report"
-# (a gate: any rule break fails the run - the window table's z-order and the gate's read of every shown form; tests/run-sim.sh --soak N --graph for a long run)
-dotnet exec --runtimeconfig "$OUT/CoreTests.runtimeconfig.json" "$OUT/CoreTests.dll" --sim 1000 --graph > "$OUT/graph-sim.txt" || { grep -v '^ *[0-9]*  [A-Z]' "$OUT/graph-sim.txt"; echo "graph-driven sim: rule breaks found"; exit 1; }
-grep -v '^ *[0-9]*  [A-Z]' "$OUT/graph-sim.txt"
-step "5a3. The explorer (src/Explorer.cs) on the graph-driven sim: one run visits 50+ forms by safe presses and comes back to the city; 20 runs with the game's pop-ups keep every rule"
-dotnet exec --runtimeconfig "$OUT/CoreTests.runtimeconfig.json" "$OUT/CoreTests.dll" --sim 20 --explore
-
-step "5b. Screen state + click gate: replay of recorded screens (tests/fixtures/screens)"
-$CSC -target:exe -nostdlib -nowarn:SYSLIB0014 $NET8_REFS -r:"$OUT/RealmForge.Core.dll" -out:"$OUT/ScreenReplay.dll" tests/ScreenReplay.cs
-cp "$OUT/CoreTests.runtimeconfig.json" "$OUT/ScreenReplay.runtimeconfig.json"
-dotnet exec --runtimeconfig "$OUT/ScreenReplay.runtimeconfig.json" "$OUT/ScreenReplay.dll" tests/fixtures/screens
-
-step "5c. Recording replay: a synthetic recording (tests/RecReplay.cs makes it with the recorder's own writers) is replayed, its drawing script runs"
-$CSC -target:exe -nostdlib -nowarn:SYSLIB0014 $NET8_REFS -r:"$OUT/RealmForge.Core.dll" -out:"$OUT/RecReplay.dll" tests/RecReplay.cs tests/ReplayCheck.cs
-cp "$OUT/CoreTests.runtimeconfig.json" "$OUT/RecReplay.runtimeconfig.json"
-rm -rf "$OUT/rec-fixture" "$OUT/rec-out" "$OUT/rec-png"
-dotnet exec --runtimeconfig "$OUT/RecReplay.runtimeconfig.json" "$OUT/RecReplay.dll" --make-fixture "$OUT/rec-fixture" tests/fixtures/screens/_geometry.json
-dotnet exec --runtimeconfig "$OUT/RecReplay.runtimeconfig.json" "$OUT/RecReplay.dll" "$OUT/rec-fixture" "$OUT/rec-out" > /dev/null
-test -s "$OUT/rec-out/summary.txt" && test -s "$OUT/rec-out/frame_0001.json" || { echo "RecReplay wrote no summary"; exit 1; }
-grep -q "^mismatches: 1\$" "$OUT/rec-out/summary.txt" || { echo "RecReplay: expected exactly the one planted mismatch"; cat "$OUT/rec-out/summary.txt"; exit 1; }
-echo "replay ok (the planted mismatch found, the other frames agree)"
-SHARP=/home/dev/wardsage/wardsage-web/node_modules/sharp
-if [ -d "$SHARP" ]; then node tests/rec-draw.mjs "$OUT/rec-fixture" "$OUT/rec-out" "$OUT/rec-png" && test -s "$OUT/rec-png/frame_0001.png" && echo "rec-draw ok"; else echo "rec-draw SKIPPED (sharp not found)"; fi
-
-step "5d. Regression replays of the owner's recordings (tests/replays/*: made by tools/rec-to-test.mjs; the real guide / pilot code runs on the recorded inputs, expect.json says what must happen; status pending = a known open bug that must still fail)"
-replay_bad=0
-for d in tests/replays/*/; do
-  [ -f "$d/expect.json" ] || continue
-  dotnet exec --runtimeconfig "$OUT/RecReplay.runtimeconfig.json" "$OUT/RecReplay.dll" --check "$d" || replay_bad=1
-done
-[ "$replay_bad" = 0 ] || { echo "recording replays: a regression (or a pending one that now passes)"; exit 1; }
-# the same fixtures with the pilot views run NavOwned (the navigator owns the way to the slot / the hero screen)
-for d in tests/replays/*/; do
-  [ -f "$d/expect.json" ] || continue
-  NAV_REPLAY=1 dotnet exec --runtimeconfig "$OUT/RecReplay.runtimeconfig.json" "$OUT/RecReplay.dll" --check "$d" || replay_bad=1
-done
-[ "$replay_bad" = 0 ] || { echo "recording replays with NavOwned: a regression"; exit 1; }
-
 if command -v mono >/dev/null && [ -f "$FX45/System.dll" ]; then
   step "6. Same tests on Mono (.NET Framework 4.5 API, HttpWebRequest of the Framework family, real DPAPI class)"
   $CSC -langversion:5 -nostdlib -target:exe -warnaserror -nowarn:618 \
     -r:$FX45/mscorlib.dll -r:$FX45/System.dll -r:$FX45/System.Core.dll -r:$FX45/System.Security.dll -r:$FX45/System.IO.Compression.dll \
-    -out:"$OUT/CoreTests-mono.exe" $CORE src/CodeProtector.cs tests/CoreTests.cs tests/FrameStyleTests.cs tests/AttackLogTests.cs tests/GameSim.cs tests/HeroMemTests.cs tests/NavSim.cs tests/NavTests.cs tests/EquipBench.cs tests/CityMemTests.cs tests/LiveClickTests.cs tests/HeroChoiceTests.cs tests/TipMemTests.cs tests/ListMemTests.cs tests/SimMemory.cs tests/SimMemoryTests.cs tests/ConnectTests.cs
+    -out:"$OUT/CoreTests-mono.exe" $CORE src/CodeProtector.cs tests/CoreTests.cs tests/FrameStyleTests.cs tests/AttackLogTests.cs tests/CityMemTests.cs tests/HeroChoiceTests.cs tests/TipMemTests.cs tests/ListMemTests.cs tests/SimMemory.cs tests/SimMemoryTests.cs
   LANG=C.UTF-8 mono "$OUT/CoreTests-mono.exe" "http://localhost:$PORT" $ACCOUNT
 fi
 
@@ -140,7 +93,6 @@ node tests/news.test.mjs
 node tests/forum.test.mjs
 node tests/locate.test.mjs
 node tests/sellhint.test.mjs
-node tests/lab-rec.test.mjs
 for f in ui/*.js; do node --check "$f"; done && echo "ui scripts: syntax ok"
 
 step "8b. Recording overlay: OverlayPaint.Composite draws a fake frame and hint box onto a bitmap (tests/RecOverlayPixels.cs; compiled always, run when Mono's GDI+ is there)"
@@ -154,6 +106,9 @@ if command -v mono >/dev/null 2>&1 && ldconfig -p 2>/dev/null | grep -q libgdipl
 
 step "8. Wardsage.exe builds (C# 7.3, .NET Framework 4.8, WebView2 SDK checksums)"
 bash tools/build-app.sh
+
+step "9. No input to the game: the sources and the built exe have none of the APIs that could send it"
+node tests/no-input.test.mjs
 
 echo
 echo "ALL CHECKS PASSED"

@@ -189,12 +189,9 @@ static partial class CoreTests {
   static string Tok(char c) { return "rf_" + new string(c, 32); }
 
   static int Main(string[] args) {
-    if (args.Length > 0 && args[0] == "--sim") return SimMain(args);
     if (args.Length > 0 && args[0] == "--load-bench") { LoadBench(); return 0; }
     string mock = args.Length > 0 ? args[0] : "http://localhost:3999";
     string realAccount = args.Length > 1 ? args[1] : null;
-    // the checks below test single gate verdicts (one failure = the stop); the retry policy has its own tests (ResilienceTests) and the sim runs with it
-    ClickGate.DefaultResilient = false;
     // the fight timeline and the battle reading take their game values from the layout data (src/Layout.cs): a test copy
     Layout.Use(TestLayout());
 
@@ -906,55 +903,30 @@ static partial class CoreTests {
     }
 
     Console.WriteLine("AutoPilot (open the slot, scroll, click the item):");
-    AutoPilotTests(geo, HH);
-    AutoPilotGroupedListTests(geo, HH);
 
     Console.WriteLine("FilterPilot (the game's gear filter: set + main stat):");
-    FilterPilotTests();
-    FilterReplayTests();
-    FilterMinimalTests();
-    FilterPartTests();
 
     Console.WriteLine("HeroPilot (the plan's hero on the hero screen):");
-    HeroPilotTests();
-    HeroMemTests();
     CityMemTests();
-    LiveClickTests();
     HeroChoiceTests();
     TipMemTests();
     ListMemTests();
     SimMemoryTests();
-    ConnectTests();
-    SellPilotTests();
     FightPlanTests();
-    LocateTests();
+    UpdateDownloadTests();
+    Backoff409Tests();
+    ScreenTopTests();
+    ScreenMapTests();
+    SellHintTests();
     OwnButtonTests();
     ConfirmChoiceTests();
-    LocatePilotTests();
     GeometryTests();
     GuideShapeTests();
-    LocateFoundryPilotTests();
     LocateGemAndListTests();
-    SellHintTests();
-    ArtifactSellTests();
-    Live577Tests();
-    CityGateAndPanelTests();
     Console.WriteLine("Offer pop-ups over the city (OfferForms, OfferClose, the window table, the automatic recording):");
-    OfferTests();
-    PlanScreenTests();
     WindowTableTests();
-    UnknownBackTests();
     HintFallbackTests();
-    CityBackTests();
-    ScreenMapTests();
-    ScreenMapScenarios();
-    SimRegressionTests();
-    ResilienceTests();
-    FlowFormTests();
     ArtGridPictureTests();
-    ArtPromoteTests();
-    ArtAutoTests();
-    ArtEquipTests();
 
     Console.WriteLine("Fight timeline (src/TimelineBuilder.cs: samples of the running fight + its command record):");
     TimelineTests();
@@ -994,7 +966,6 @@ static partial class CoreTests {
     FieldNodeTests();
     HeroFormFollowTests();
     FormSearchPolicyTests();
-    LocateAuditTests();
     GamePacksTests();
     CodeTextTests();
     CodeReportTests();
@@ -1266,75 +1237,6 @@ static partial class CoreTests {
     public void Kids(ulong t, params ulong[] kids) { ulong a = M.Alloc(8 * kids.Length); for (int i = 0; i < kids.Length; i++) M.W64(a + (ulong)(8 * i), kids[i]); M.W64(t + 0x70, a); M.W64(t + 0x80, (ulong)kids.Length); }
   }
 
-  /// <summary>Live 1.6.66.397 (a 526x296 client): the screen's kind from the window table's shown forms, the readers failing; one frame source per
-  /// button; the canvas scale of the small client.</summary>
-  static void ScreenTopTests() {
-    Console.WriteLine("The screen from the window table's top form, frame sources, the small client's scale (src/GameScreen.cs, src/UiButtons.cs):");
-    Check(ScreenState.KindOfForm("Form_MainCity") == ScreenKind.City && ScreenState.KindOfForm("Form_BackpackIntegration") == ScreenKind.Inventory
-      && ScreenState.KindOfForm("Form_EquipSubliming") == ScreenKind.Foundry && ScreenState.KindOfForm("Form_CharactorMain") == ScreenKind.HeroScreen
-      && ScreenState.KindOfForm("Form_UnionBoss") == ScreenKind.Unknown, "table kind: the forms the app reads map to their screens, others to none");
-    Check(ScreenState.TopKind(new[] { "Form_MainCity", "Form_BackpackIntegration" }) == ScreenKind.Inventory && ScreenState.TopKind(new[] { "Form_BackpackIntegration", "Form_EquipSubliming" }) == ScreenKind.Foundry
-      && ScreenState.TopKind(new string[0]) == ScreenKind.Unknown && ScreenState.TopKind(null) == ScreenKind.Unknown, "table kind: a screen opened from another is on top");
-    // lab 1.6.66.403: the workshop on top with no artifact request - read all the same (held, it got no back press: the storage run waited for good)
-    var wsTop = new List<string> { "Form_BackpackIntegration", "Form_EquipArtifactIntensify" };
-    Check(ScreenState.WantArtWs(false, wsTop) && ScreenState.WantArtWs(true, null) && !ScreenState.WantArtWs(false, new List<string> { "Form_BackpackIntegration" }) && !ScreenState.WantArtWs(false, null),
-      "workshop read: while an artifact request is guided, or the window table shows it on top - not else");
-    var wsSt = ScreenState.Classify(new ScreenInputs { CityForm = false, Offers = new List<string>(), Screens = wsTop, ArtWs = new ArtWorkshopScreen { Open = true, Tab = 1, Uid = 7 } }, 0);
-    var wsNo = ScreenState.Classify(new ScreenInputs { CityForm = false, Offers = new List<string>(), Screens = wsTop }, 0);
-    Check(wsSt.Kind == ScreenKind.ArtWorkshop && !wsSt.Held && ClickGate.CityBackBlock(wsSt) == "" && wsNo.Held && ClickGate.CityBackBlock(wsNo) != "",
-      "workshop read: read, the workshop takes the back press (" + wsSt.Brief + "); unread it is held and blocks it (" + wsNo.Brief + ")");
-    // the log: City, then the inventory opened and its reader failing for seconds - the table names it: Inventory (details unknown, held), never Unknown
-    var tr = new ScreenTracker(); long t = 0;
-    var cityIn = new ScreenInputs { CityForm = true, Offers = new List<string>(), Screens = new List<string> { "Form_MainCity" } };
-    Check(tr.Update(cityIn, t).Kind == ScreenKind.City, "table kind: the city");
-    bool stable = true, unknown = false; ScreenState st = null;
-    for (t = 100; t <= 6000; t += 100) {
-      st = tr.Update(new ScreenInputs { CityForm = false, Offers = new List<string>(), Screens = new List<string> { "Form_BackpackIntegration", "Form_LeftTip" } }, t);
-      if (st.Kind != ScreenKind.Inventory) stable = false;
-      if (st.Kind == ScreenKind.Unknown) unknown = true;
-    }
-    Check(stable && !unknown && st.Partial && st.Held && st.FromTable && st.Brief == "Inventory details?", "table kind: the inventory's reader failing for 6 s - Inventory all along, its details unknown and held (" + st.Brief + ")");
-    // the reader back: its details, no longer held
-    var inv = new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true };
-    st = tr.Update(new ScreenInputs { Inv = inv, CityForm = false, Offers = new List<string>(), Screens = new List<string> { "Form_BackpackIntegration" } }, 6100);
-    Check(st.Kind == ScreenKind.Inventory && !st.Partial && !st.Held && st.InvNormalEquip, "table kind: the reader back - the details, not held (" + st.Brief + ")");
-    // a sub-read failing every other tick: the kind and its details stay (the last good reading stands in), the brief never changes
-    string b0 = st.Brief; bool same = true;
-    for (t = 6200; t <= 9000; t += 100) {
-      var x = tr.Update(new ScreenInputs { Inv = (t / 100) % 2 == 0 ? inv : null, CityForm = false, Offers = new List<string>(), Screens = new List<string> { "Form_BackpackIntegration" } }, t);
-      if (x.Brief != b0) same = false;
-    }
-    Check(same, "table kind: a sub-read failing every other tick changes nothing (" + b0 + ")");
-    // the table not read (null): the readers alone, as before (a failing inventory read held 1.5 s, then Unknown)
-    var tr2 = new ScreenTracker();
-    tr2.Update(new ScreenInputs { Inv = inv, Offers = new List<string>() }, 0);
-    Check(tr2.Update(new ScreenInputs { Offers = new List<string>() }, 1000).Kind == ScreenKind.Inventory && tr2.Update(new ScreenInputs { Offers = new List<string>() }, 3000).Kind == ScreenKind.Unknown,
-      "table kind: no window table - the readers decide alone (held 1.5 s, then Unknown)");
-    // a reader that reads its own screen open above the table's top keeps it (the table names a new form a moment later)
-    var rs = new RecastScreen { SublimingOpen = true, CurType = 2, AscendParts = new int[0], AscendEquips = new long[0], SelectParts = new int[0], Equips = new long[0] };
-    Check(ScreenState.Classify(new ScreenInputs { Rs = rs, Inv = inv, Screens = new List<string> { "Form_BackpackIntegration" } }, 0).Kind == ScreenKind.Foundry, "table kind: the Foundry read open over the table's inventory stays the Foundry");
-    Check(ScreenState.Classify(new ScreenInputs { Inv = inv, CityForm = true, Screens = new List<string> { "Form_EquipSubliming", "Form_BackpackIntegration" } }, 0).Kind == ScreenKind.Foundry, "table kind: the table's Foundry over a reader's inventory");
-
-    // frames: one source per button
-    var fs = new FrameStick(); var live = new double[] { 111, 238, 44, 44, 8 };
-    Check(fs.Pick(null, false, 526, 296, 0) == null, "frame source: nothing read yet - the layout's");
-    Check(fs.Pick(live, false, 526, 296, 100) == live, "frame source: a live read - the live frame");
-    bool kept = true;
-    for (long ft = 200; ft <= 1600; ft += 100) if (fs.Pick(ft % 300 == 0 ? live : null, false, 526, 296, ft) != live) kept = false;
-    Check(kept, "frame source: live reads missing now and then - the live frame all along, never the layout's");
-    Check(fs.Pick(null, false, 526, 296, 1500 + FrameStick.HoldMs - 1) != null && fs.Pick(null, false, 526, 296, 1600 + FrameStick.HoldMs + 1) == null, "frame source: 1.5 s without a live read - the layout's");
-    fs.Pick(live, false, 526, 296, 5000);
-    Check(fs.Pick(null, true, 526, 296, 5100) == null && fs.Pick(null, false, 526, 296, 5200) == null, "frame source: the button gone (hidden / covered) - dropped at once");
-    fs.Pick(live, false, 526, 296, 6000);
-    Check(fs.Pick(null, false, 1280, 720, 6100) == null, "frame source: another window size - no old frame");
-    // the small client's scale: the canvas has the client's shape, both ways give the same px a unit (0.46 on 526x296)
-    double byH, k = UiIcon.CanvasScale(526, 296, 526 / (296 / 640.0), 640, out byH);
-    Check(Math.Abs(k - byH) < 1e-9 && Math.Abs(k - 296 / 640.0) < 1e-9 && Math.Abs(k - Ui.Unit(526, 296) / 640) < 0.01, "small client: the canvas scale by width = by height = the unit's (" + k.ToString("0.000") + ")");
-    // the live rect of the city's «Инвентарь» on 526x296 (113,240,40,40: its centre 133) and the bar's place it gives: the layout's click on it
-    double U = Ui.Unit(526, 296), dx = (526 - (113 + 20)) / U;
-    Check(Math.Abs(dx - 1.320) < 0.01 && Math.Abs(dx - CityBar.DefaultDX) * U > 30, "small client: the live «Инвентарь» is 1.32 U from the right (the bar search's 136 px), the default offset " + Math.Round(Math.Abs(dx - CityBar.DefaultDX) * U) + " px off");
-    Check(UiIcon.Pick(new List<UiIcon.Cand> { new UiIcon.Cand { Name = "BtnHitArea", X = 116, Y = 243, W = 34, H = 34, Active = true, Depth = 1 } }, 113, 240, 40, 40) == -1, "icon: the touch area (BtnHitArea) is no picture");
-  }
 
   /// <summary>The bar buttons' frames hug the icon (UiIcon): the picture child picked by name / shape, the label, a red dot, the backdrop left
   /// out; the frame 2 px round the icon, inside the client, above the label.</summary>
@@ -1787,7 +1689,6 @@ static partial class CoreTests {
 
   static void UiButtonTests() {
     UiIconTests(); HintSizeTests(); SpriteArtTests(); FrameTargetTests(); OwnMaskTests();
-    ScreenTopTests();
     Console.WriteLine("A button's live rect by name (src/UiButtons.cs):");
     var m = new FakeLua(4 << 20); RFX.TestMemory = m; RFX.ForgetLive(); RFX.ForgetClasses();
     try {
@@ -3491,196 +3392,6 @@ static partial class CoreTests {
     Check(FormSearchPolicy.OwnOpenGapMs >= 1000, "policy: the gap stays >= 1000 ms");
   }
 
-  // the read-only audit of «Показать в игре» (2026-10-29, the lab laptop: one form search ~17 s): slow form searches, the long Ascension list,
-  // the inventory's «Литейная» inside the Foundry's «Вознести», the fixed «Массовая продажа» point
-  static void LocateAuditTests() {
-    Console.WriteLine("Locate audit: slow form searches, waits with a cap, the hidden «Вознести» overlap, the bulk-sale point");
-    var invNormal = ScreenState.Classify(new ScreenInputs { Inv = new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true }, CityForm = false }, 0);
-    var city = ScreenState.Classify(new ScreenInputs { CityForm = true }, 0);
-    var foundry = ScreenState.Classify(new ScreenInputs { Inv = new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true }, Rs = new RecastScreen { SublimingOpen = true, CurType = 1 } }, 0);
-    Func<ClickTarget, ScreenState, ClickRequest> Rq = (t, f) => new ClickRequest { Owner = ClickOwner.Locate, Target = t, AutoOn = true, Front = true };
-    // (1) the effect deadline: unchanged without a search ...
-    foreach (var hooked in new[] { false, true }) {
-      foreach (var tg in new[] { ClickTarget.CityInventory, ClickTarget.FoundryButton }) {
-        var g = new ClickGate(); if (hooked) g.FormSearchPending = x => false;
-        var before = tg == ClickTarget.CityInventory ? city : invNormal;
-        g.Arm(ClickOwner.Locate, tg, ClickGate.Expect(Rq(tg, before), before), 0);
-        g.Observe(before, ClickGate.SlowEffectMs - 10); Check(!g.Halted(ClickOwner.Locate), "audit fast: " + tg + " still awaited just inside " + ClickGate.SlowEffectMs + " ms (hook " + hooked + ")");
-        g.Observe(before, ClickGate.SlowEffectMs + 20);
-        if (tg == ClickTarget.CityInventory) {   // (on the city: the bar read again and «Инвентарь» pressed once more first)
-          Check(!g.Halted(ClickOwner.Locate) && !g.Pending(ClickOwner.Locate) && g.CityAgainDue.Contains(ClickOwner.Locate), "audit fast: «Инвентарь» without effect on the city: pressed again once, no stop yet (hook " + hooked + ")");
-          g.CityAgainDue.Clear(); g.Arm(ClickOwner.Locate, tg, ClickGate.Expect(Rq(tg, before), before), 10000); g.Observe(before, 10000 + ClickGate.SlowEffectMs + 20);
-        }
-        Eq("nochange", g.HaltReason(ClickOwner.Locate), "audit fast: " + tg + " with no search running: nochange right after " + ClickGate.SlowEffectMs + " ms as before (hook " + hooked + ")");
-        g = new ClickGate(); if (hooked) g.FormSearchPending = x => false;
-        g.Arm(ClickOwner.Locate, tg, ClickGate.Expect(Rq(tg, before), before), 0);
-        g.Observe(tg == ClickTarget.CityInventory ? invNormal : foundry, 900);
-        Check(!g.Halted(ClickOwner.Locate) && !g.Pending(ClickOwner.Locate), "audit fast: " + tg + " that shows its effect in time is done (hook " + hooked + ")");
-      }
-    }
-    {   // ... a slow PC: the search started with the click ends at 17 s, the screen is read right after it
-      bool busy = true; var g = new ClickGate(); var log = new List<string>(); g.Sink = x => log.Add(x);
-      ClickTarget asked = ClickTarget.None; g.FormSearchPending = x => { asked = x; return busy; };
-      g.Arm(ClickOwner.Locate, ClickTarget.CityInventory, ClickGate.Expect(Rq(ClickTarget.CityInventory, city), city), 0);
-      var unk = new ScreenState();
-      long t = 0; for (; t < 17000; t += 100) g.Observe(unk, t);
-      Check(!g.Halted(ClickOwner.Locate) && g.Pending(ClickOwner.Locate) && asked == ClickTarget.CityInventory, "audit slow: no stop while the search for the inventory runs (17 s > " + ClickGate.SlowEffectMs + " ms)");
-      Check(g.Preflight(ClickOwner.Locate, unk, t).Reason == "pending", "audit slow: ... the pilot waits for it (pending), no new click");
-      busy = false; g.Observe(unk, t); g.Observe(invNormal, t + 200);
-      Check(!g.Halted(ClickOwner.Locate) && !g.Pending(ClickOwner.Locate), "audit slow: the inventory read right after the search ended = the click's effect");
-      int said = 0; foreach (var l in log) if (l.Contains("form search still runs")) said++;
-      Eq(1, said, "audit slow: the wait for the search is logged once");
-    }
-    {   // ... the search ends and finds nothing: a stop a moment later (its result read once)
-      bool busy = true; var g = new ClickGate(); g.FormSearchPending = x => busy;
-      g.Arm(ClickOwner.Locate, ClickTarget.FoundryButton, ClickGate.Expect(Rq(ClickTarget.FoundryButton, invNormal), invNormal), 0);
-      long t = 0; for (; t < 12000; t += 100) g.Observe(invNormal, t);
-      busy = false;
-      for (; t <= 12000 + ClickGate.SearchGraceMs - 100; t += 100) g.Observe(invNormal, t);
-      Check(!g.Halted(ClickOwner.Locate), "audit slow: the search's end is followed by " + ClickGate.SearchGraceMs + " ms for its result");
-      for (; t <= 12000 + ClickGate.SearchGraceMs + 300 && !g.Halted(ClickOwner.Locate); t += 100) g.Observe(invNormal, t);
-      Eq("nochange", g.HaltReason(ClickOwner.Locate), "audit slow: ... then nochange (the search found no Foundry)");
-      // a later search does not extend again
-      busy = true; g = new ClickGate(); g.FormSearchPending = x => busy;
-      g.Arm(ClickOwner.Locate, ClickTarget.FoundryButton, ClickGate.Expect(Rq(ClickTarget.FoundryButton, invNormal), invNormal), 0);
-      for (t = 0; t < 8000; t += 100) g.Observe(invNormal, t);
-      busy = false; for (; t < 8000 + ClickGate.SearchGraceMs - 200; t += 100) g.Observe(invNormal, t);
-      busy = true; for (; t < 12000 && !g.Halted(ClickOwner.Locate); t += 100) g.Observe(invNormal, t);
-      Check(g.HaltReason(ClickOwner.Locate) == "nochange" && t <= 8000 + ClickGate.SearchGraceMs + 200, "audit slow: a second search does not move the deadline again (stop at " + t + " ms)");
-    }
-    {   // ... the form was FOUND by the search: the screen is awaited up to the cap (lab 22:40: found 1 s after the deadline, Foundry read 6 s later)
-      foreach (var tg in new[] { ClickTarget.FoundryButton, ClickTarget.CityInventory }) {
-        bool busy = true, found = false; var g = new ClickGate(); g.FormSearchPending = x => busy; g.FormFound = x => found;
-        var bf = tg == ClickTarget.CityInventory ? city : invNormal; var unk = new ScreenState();
-        g.Arm(ClickOwner.Locate, tg, ClickGate.Expect(Rq(tg, bf), bf), 0);
-        long t = 0; for (; t < 9000; t += 100) g.Observe(unk, t);
-        busy = false; found = true;
-        for (; t < 20000; t += 100) g.Observe(unk, t);
-        Check(!g.Halted(ClickOwner.Locate), "audit found: " + tg + " still awaited long after the search ended with the form found");
-        g.Observe(tg == ClickTarget.CityInventory ? invNormal : foundry, t);
-        Check(!g.Halted(ClickOwner.Locate) && !g.Pending(ClickOwner.Locate), "audit found: " + tg + " done when the screen is read");
-        g = new ClickGate(); g.FormSearchPending = x => busy; g.FormFound = x => true; busy = true;
-        g.Arm(ClickOwner.Locate, tg, ClickGate.Expect(Rq(tg, bf), bf), 0);
-        for (t = 0; t < 9000; t += 100) g.Observe(unk, t);
-        busy = false;
-        for (; t <= ClickGate.SearchCapMs + 200 && !g.Halted(ClickOwner.Locate); t += 100) g.Observe(unk, t);
-        Check(g.HaltReason(ClickOwner.Locate) == "nochange" && t <= ClickGate.SearchCapMs + 200, "audit found: " + tg + " stops at the cap when the screen never shows");
-      }
-      // no search ran: a found form does not extend the fast path
-      var gf = new ClickGate(); gf.FormSearchPending = x => false; gf.FormFound = x => true;
-      gf.Arm(ClickOwner.Locate, ClickTarget.FoundryButton, ClickGate.Expect(Rq(ClickTarget.FoundryButton, invNormal), invNormal), 0);
-      gf.Observe(invNormal, ClickGate.SlowEffectMs + 20);
-      Eq("nochange", gf.HaltReason(ClickOwner.Locate), "audit found: no search ran = the fast path is unchanged");
-    }
-    {   // ... the cap
-      var g = new ClickGate(); g.FormSearchPending = x => true;
-      g.Arm(ClickOwner.Locate, ClickTarget.CityInventory, ClickGate.Expect(Rq(ClickTarget.CityInventory, city), city), 0);
-      long t = 0; for (; t < ClickGate.SearchCapMs - 100; t += 100) g.Observe(city, t);
-      Check(!g.Halted(ClickOwner.Locate), "audit slow: waited while the search runs, up to the cap");
-      for (; t <= ClickGate.SearchCapMs + 200 && !g.Halted(ClickOwner.Locate) && !g.CityAgainDue.Contains(ClickOwner.Locate); t += 100) g.Observe(city, t);
-      Check(g.CityAgainDue.Contains(ClickOwner.Locate) && !g.Halted(ClickOwner.Locate) && t <= ClickGate.SearchCapMs + 200, "audit slow: at the cap, still on the city: «Инвентарь» pressed again once");
-      g.CityAgainDue.Clear(); long t0 = t; g.Arm(ClickOwner.Locate, ClickTarget.CityInventory, ClickGate.Expect(Rq(ClickTarget.CityInventory, city), city), t0);
-      for (; t <= t0 + ClickGate.SearchCapMs + 200 && !g.Halted(ClickOwner.Locate); t += 100) g.Observe(city, t);
-      t -= t0;
-      Check(g.HaltReason(ClickOwner.Locate) == "nochange" && t <= ClickGate.SearchCapMs + 200, "audit slow: ... a stop at the cap (" + ClickGate.SearchCapMs + " ms) even with a search running");
-      Check(ClickGate.SearchCapMs <= 30000, "audit slow: the cap is at most 30 s");
-    }
-    foreach (var tg in new[] { ClickTarget.InvEquipTab, ClickTarget.AscendTab, ClickTarget.ArtWorkshop }) {   // only the two clicks that open a searched-for form
-      var g = new ClickGate(); g.FormSearchPending = x => true; g.ArtLocateAuto = true;
-      g.Arm(ClickOwner.Locate, tg, s => false, 0);
-      g.Observe(invNormal, (tg == ClickTarget.ArtWorkshop ? ClickGate.SlowEffectMs : ClickGate.EffectMs) + 20);
-      Eq("nochange", g.HaltReason(ClickOwner.Locate), "audit slow: " + tg + " is not extended by a search");
-    }
-    {   // the search window of the pilot's open click
-      int gap; string w;
-      w = FormSearchPolicy.Want(ScreenKind.Inventory, false, 6000, true, out gap);
-      Check(w != null && gap == FormSearchPolicy.OwnOpenGapMs, "audit policy: the form not found yet: searches go on after 6 s");
-      w = FormSearchPolicy.Want(ScreenKind.Inventory, false, FormSearchPolicy.SlowOpenWindowMs, true, out gap);
-      Check(w == null, "audit policy: ... up to the cap only");
-      w = FormSearchPolicy.Want(ScreenKind.Inventory, false, 6000, false, out gap);
-      Check(w == null, "audit policy: the form found (a fast PC): the 6 s window as before");
-      Check(FormSearchPolicy.Want(ScreenKind.City, false, 6000, out gap) == null && FormSearchPolicy.Want(ScreenKind.City, false, 5999, out gap) != null, "audit policy: the old overload is unchanged");
-    }
-    // (5) «Литейная» needs a read where the Foundry is NOT open
-    {
-      string gp = Path.Combine("tests", "fixtures", "screens", "_geometry.json");
-      if (File.Exists(gp)) {
-        var geo = GameGeometry.Parse(File.ReadAllText(gp, Encoding.UTF8), "1.6.39.829.1");
-        foreach (var wh in new[] { new[] { 1920.0, 1009 }, new[] { 1366.0, 705 }, new[] { 1920.0, 1080 } }) {   // 16:9-ish (on ultrawide the two part)
-          double W = wh[0], H = wh[1], U = Ui.Unit(W, H);
-          var wk = geo.Rect("inventory.workshop", W, H, U); var asc = geo.Rect("ascend.button", W, H, U);
-          Check(wk != null && asc != null && wk.CX >= asc.X && wk.CX <= asc.Right && wk.CY >= asc.Y && wk.CY <= asc.Bottom, "audit overlap: at " + W + "x" + H + " the inventory's «Литейная» centre lies inside the Foundry's «Вознести» (why the Foundry must read closed)");
-        }
-      } else Console.WriteLine("  (skip: no " + gp + ")");
-      var g = new ClickGate();
-      Check(g.Check(Rq(ClickTarget.FoundryButton, invNormal), invNormal, 0).Allowed, "audit foundry: the first open (the Foundry never built: nothing to read) is allowed as before");
-      var invRsClosed = ScreenState.Classify(new ScreenInputs { Inv = new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true }, Rs = new RecastScreen { SublimingOpen = false } }, 0);
-      Check(new ClickGate().Check(Rq(ClickTarget.FoundryButton, invRsClosed), invRsClosed, 0).Allowed, "audit foundry: the Foundry read closed -> allowed");
-      var rf = new ClickGate().Check(Rq(ClickTarget.FoundryButton, foundry), foundry, 0);
-      Check(rf.Verdict == GateVerdict.Deny && rf.Reason == "screen", "audit foundry: the Foundry read open -> never (the click would be «Вознести»)");
-      g = new ClickGate(); var rq = Rq(ClickTarget.FoundryButton, invNormal); rq.FoundryUnread = true;
-      var r1 = g.Check(rq, invNormal, 0);
-      Check(r1.Verdict == GateVerdict.Wait && r1.Reason == "unknown", "audit foundry: built before but not readable now -> wait (it may be open unseen)");
-      var r2 = g.Check(rq, invNormal, ClickGate.SearchCapMs - 100);
-      Check(r2.Verdict == GateVerdict.Wait, "audit foundry: ... waited for while a search can find it");
-      rq.FoundryUnread = false; Check(g.Check(rq, invRsClosed, ClickGate.SearchCapMs - 50).Allowed, "audit foundry: ... read closed again -> allowed");
-      g = new ClickGate(); rq = Rq(ClickTarget.FoundryButton, invNormal); rq.FoundryUnread = true;
-      g.Check(rq, invNormal, 0); var r3 = g.Check(rq, invNormal, ClickGate.SearchCapMs + 100);
-      Check(r3.Verdict == GateVerdict.Deny && g.HaltReason(ClickOwner.Locate) == "unknown", "audit foundry: ... unreadable past the cap -> stop");
-      g.Resume(ClickOwner.Locate); rq.FoundryUnread = true; Check(g.Check(rq, invNormal, ClickGate.SearchCapMs + 200).Verdict == GateVerdict.Wait, "audit foundry: a new request starts the wait over");
-      foreach (var tg in new[] { ClickTarget.InvListCell, ClickTarget.InvEquipTab, ClickTarget.CityInventory }) {
-        var rr = Rq(tg, invNormal); rr.FoundryUnread = true;
-        var gr = new ClickGate().Check(rr, tg == ClickTarget.CityInventory ? city : invNormal, 0);
-        Check(gr.Reason != "unknown", "audit foundry: " + tg + " does not look at the Foundry flag");
-      }
-    }
-    // (6) the fixed «Массовая продажа» point (app/Overlay.cs TickSell: 0.5867 U, H - 0.0723 U). In bulk-sale mode the game shows (Panel_BackpackEquipPanel
-    // _RefreshBottomButtons, state BulkSales) the left group's «Назад» only, and in the right group «Быстрый выбор» + «Продать» (m_BtnSell, from the right edge:
-    // x R-0.7761..R-0.5125, y B-0.1124..B-0.0282 U; «Быстрый выбор» R-1.049..R-0.7855): nothing at the point, so no never-press zone is needed there.
-    {
-      string gp = Path.Combine("tests", "fixtures", "screens", "_geometry.json");
-      if (File.Exists(gp)) {
-        var geo = GameGeometry.Parse(File.ReadAllText(gp, Encoding.UTF8), "1.6.39.829.1");
-        foreach (var wh in new[] { new[] { 1920.0, 1009 }, new[] { 1366.0, 705 }, new[] { 1280.0, 800 }, new[] { 2560.0, 1080 }, new[] { 3440.0, 1440 } }) {
-          double W = wh[0], H = wh[1], U = Ui.Unit(W, H), x = 0.5867 * U, y = H - 0.0723 * U;
-          var bs = geo.Rect("inventory.bulkSell", W, H, U); var back = geo.Rect("inventory.bulkBack", W, H, U);
-          Check(bs != null && x >= bs.X && x <= bs.Right && y >= bs.Y && y <= bs.Bottom, "audit bulk point: at " + W + "x" + H + " it is on «Массовая продажа» (normal mode)");
-          Check(back != null && x > back.Right, "audit bulk point: ... right of the bulk mode's «Назад»");
-          double sellX0 = W - 0.7761 * U, quickX0 = W - 1.049 * U;
-          Check(x < quickX0 && x < sellX0, "audit bulk point: ... left of «Быстрый выбор» / «Продать» of the bulk mode (" + (int)x + " < " + (int)quickX0 + ")");
-        }
-      } else Console.WriteLine("  (skip: no " + gp + ")");
-    }
-    // (3) the pilot never waits forever: a list that does not load, an item not in the list, a filter that hides it
-    {
-      var item = LocItem(777, 3, 720100, 12, 5, 7, 9, 3);
-      Func<LocateKind, long, LocateView> V = (k, now) => new LocateView { NowMs = now, Foreground = true, W = 2000, H = 1000, U = 1000, Step = new LocateStep { Kind = k }, Cols = 8, Item = item,
-        Rs = new RecastScreen { SublimingOpen = true, AscendShown = true, CurType = 2 }, OtherFormOpen = k != LocateKind.HiddenFilter, Inv = new InventoryScreen { Open = true, EquipTab = true } };
-      foreach (var c in new[] { new object[] { LocateKind.AscendLoading, LocatePilot.LoadingCapMs, "loading" }, new object[] { LocateKind.AscendNotInList, LocatePilot.SettledMs, "notinlist" }, new object[] { LocateKind.HiddenFilter, LocatePilot.SettledMs, "hidden" } }) {
-        var k = (LocateKind)c[0]; int cap = (int)c[1]; string why = (string)c[2];
-        var p = new LocatePilot(); LocateMove m = null; long t = 1000;
-        for (; t < 1000 + cap; t += 200) { m = p.Step(V(k, t)); if (m.State != "hint") break; }
-        Check(m.State == "hint" && !p.Stopped, "audit wait: " + k + " is a hint (waited for) up to " + cap + " ms");
-        m = p.Step(V(k, 1000 + cap));
-        Check(m.State == "stopped" && m.Why == why && p.Reason == why && m.Action.Kind == AutoKind.None, "audit wait: " + k + " -> a stop with the reason '" + why + "' after " + cap + " ms");
-        p.Reset(); Check(!p.Stopped && p.Step(V(k, 1000 + cap + 100)).State == "hint", "audit wait: " + k + ": a new request starts over");
-        p = new LocatePilot(); p.Step(V(k, 0)); m = p.Step(V(k, cap + 100));
-        Check(m.State == "hint", "audit wait: " + k + ": a gap (the gate held the pilot) starts the clock over");
-      }
-      {   // a list rebuilt after the slot tab says "not in the list" for a moment: no stop
-        var p = new LocatePilot();
-        for (long t = 0; t < 1200; t += 200) p.Step(V(LocateKind.AscendNotInList, t));
-        p.Step(V(LocateKind.AscendLoading, 1200));
-        for (long t = 1400; t < 1400 + LocatePilot.SettledMs - 200; t += 200) p.Step(V(LocateKind.AscendNotInList, t));
-        Check(!p.Stopped, "audit wait: a short 'not in the list' (each run under " + LocatePilot.SettledMs + " ms) is no stop");
-      }
-      {   // the normal path keeps going: a step the pilot clicks is not timed
-        var p = new LocatePilot(); var v = V(LocateKind.OpenAscendTab, 0); v.Rs = new RecastScreen { SublimingOpen = true, CurType = 0 }; v.Geometry = GameGeometry.Parse(GeoJson(), GeoGame);
-        var m = p.Step(v); Check(m.State == "work" && m.Todo == LocateTodo.AscendTab, "audit wait: a clickable step works as before");
-        v.NowMs = LocatePilot.LoadingCapMs + 10; m = p.Step(v); Check(!p.Stopped, "audit wait: ... and is never stopped by the wait caps");
-      }
-    }
-  }
 
   static void LiveStateTests() {
     Console.WriteLine("Live tables: re-login and account switch");
@@ -4157,329 +3868,8 @@ static partial class CoreTests {
     return sb.Append(']').ToString();
   }
 
-  // A grouped, short gear list (the sub stats filter: a section title, then item rows; live report 2026-10-18, Guan Yu, row 6 of 6):
-  // a drag moves the list with the pointer but not past its ends; a click on an item selects it, on the selected one again clears the
-  // selection, on nothing changes nothing. The host re-anchors only from a newly selected item (no scroll reading).
-  static string GroupedListRun(ListGeometry geo, double H, int[] types, int targetRow, int targetCol, bool barHit, double gain, bool exactScroll, out int drags, out int clicks) {
-    int n = types.Length - 1;
-    double pitch = geo.PitchY * H, cell = geo.CellW * H, bar = geo.BarBottom * H;
-    double topMax = ScrollAnchor.TopRow1(geo, H);
-    double topMin = Math.Min(topMax, geo.ViewBottom * H - ListGeometry.TopPad * H - geo.RowOffset(types, types.Length) * H);
-    double top = topMax;
-    long target = 9000 + targetRow * 10 + targetCol;
-    Func<double, double, long> itemAt = (x, y) => {
-      int col = geo.ColumnAt(x / H); if (col == 0) return 0;
-      if (y < geo.ViewTop * H || y > geo.ViewBottom * H) return 0;
-      for (int r = 1; r <= n; r++) {
-        if (types[r] != 1) continue;
-        double rt = top + geo.RowOffset(types, r) * H;
-        if (y >= rt && y <= rt + (barHit ? bar : cell)) return 9000 + r * 10 + col;
-      }
-      return 0;
-    };
-    var p = new AutoPilot(geo); var anchor = new ScrollAnchor(); long sel = 0; long now = 0; drags = clicks = 0;
-    for (int tick = 0; tick < 600 && sel != target && p.State != "failed"; tick++, now += 100) {
-      if (exactScroll) { anchor.Row1Top = top; anchor.Has = true; }
-      var a = p.Step(new AutoView { NowMs = now, Foreground = true, H = H, Target = target, Row = targetRow, Col = targetCol, Sel = sel,
-                                    AnchorHas = anchor.Has, Row1Top = anchor.Row1Top, Types = types });
-      if (a.Kind == AutoKind.Click) {
-        clicks++;
-        long hit = itemAt(a.X, a.Y);
-        if (hit != 0 && hit == sel) sel = 0;
-        else if (hit != 0) {
-          sel = hit; int row = (int)((hit - 9000) / 10);
-          anchor.FromClick(geo, types, row, a.Y, H, 1);
-          anchor.Track(geo, types, row, top + geo.RowOffset(types, row) * H, H);
-        }
-      } else if (a.Kind == AutoKind.Drag) {
-        drags++;
-        top = Math.Max(topMin, Math.Min(topMax, top + a.DY * gain));
-      }
-    }
-    p.Step(new AutoView { NowMs = now, Foreground = true, H = H, Target = target, Row = targetRow, Col = targetCol, Sel = sel, AnchorHas = anchor.Has, Row1Top = anchor.Row1Top, Types = types });
-    return sel == target ? "ok" : p.State;
-  }
 
-  static void AutoPilotGroupedListTests(ListGeometry geo, double H) {
-    foreach (int rows in new[] { 6, 7, 8, 10 }) {
-      foreach (bool barHit in new[] { false, true }) foreach (bool exact in new[] { false, true }) foreach (double gain in new[] { 0.93, 1.0 }) {
-        var types = new int[rows + 1]; types[1] = 2; for (int i = 2; i <= rows; i++) types[i] = 1;
-        int d, c; string r = GroupedListRun(geo, H, types, rows, 2, barHit, gain, exact, out d, out c);
-        Check(r == "ok", "grouped list, " + rows + " rows, target in the last row, bar " + barHit + ", exact scroll " + exact + ", gain " + gain + ": " + r + " (" + d + " drags, " + c + " clicks)");
-      }
-    }
-    // two sections (full / partial match) with an empty-section row between, the item in the last row
-    var sec = new[] { 0, 2, 1, 1, 2, 1, 1, 1, 3, 2, 1, 1 };
-    foreach (bool barHit in new[] { false, true }) foreach (bool exact in new[] { false, true }) {
-      int d, c; string r = GroupedListRun(geo, H, sec, 11, 2, barHit, 0.93, exact, out d, out c);
-      Check(r == "ok", "grouped list with three sections, target in the last row, bar " + barHit + ", exact scroll " + exact + ": " + r + " (" + d + " drags, " + c + " clicks)");
-    }
-  }
 
-  // A simulated game list: 40 item rows; a drag moves it with the pointer (gain 0.93); clicking a cell selects the item there.
-  static void AutoPilotTests(ListGeometry geo, double H) {
-    var types = new int[41]; for (int i = 1; i <= 40; i++) types[i] = 1;
-    double pitch = geo.PitchY * H, cell = geo.CellW * H;
-    Check(!LookPolicy.ConfirmBlocks(true, true) && !LookPolicy.ConfirmBlocks(true, false) && LookPolicy.ConfirmBlocks(false, true) && !LookPolicy.ConfirmBlocks(false, false), "look policy: the live rect of «Заменить» answers: a covered picture is no unknown look (lab 552: 2 s of waiting)");
-    Check(!LookPolicy.ConfirmBlocks(true, true) && LookPolicy.ConfirmBlocks(false, true), "look policy: art card «Заменить»: live rect known + picture Unknown = click allowed; no live rect + Unknown = wait (then the 8 s stop)");
-    {   // lab 552 (build A, 82b837): "no other cell of the list is in view to re-select by (sel=0 tip=- list=0..8 cellY=148 target=live)": the click on the live cell changed nothing and no neighbour is in view.
-        // Once more the same live cell (its rect standing still again), then the list moved by one row, and only then a named failure - never the failure straight away
-      var pg = new AutoPilot(geo); double H5 = 705, cell5 = geo.CellW * H5; int nClick = 0, nDrag = 0; var order = new List<string>();
-      double lx = geo.ColLeft(1) * H5 + cell5 / 2;
-      for (long t = 0; t < 40000 && pg.State != "failed"; t += 200) {
-        var v5 = new AutoView { NowMs = t, Foreground = true, H = H5, Target = 9001, Row = 1, Col = 1, Sel = 0, AnchorHas = true, Row1Top = 120, Types = new[] { 0, 1, 1, 1, 1, 1, 1, 1, 1, 1 }, TipKnown = true, TipShown = false, Hero = 5, ScreenHero = 5, Owner = 0, InputOpen = true,
-          LiveGrid = true, LiveTarget = true, LiveX = lx, LiveY = 148 + cell5 / 2, LiveFirst = 0, LiveLast = 8, LiveCellY = 148, LiveScroll = 0, LiveViewTop = 110, LiveViewBottom = 640, LiveNb = false, ListSig = 1, FilterAt = 0 };
-        var a5 = pg.Step(v5);
-        if (a5 != null && a5.Kind == AutoKind.Click) { nClick++; order.Add("click"); } else if (a5 != null && a5.Kind == AutoKind.Drag) { nDrag++; order.Add("drag"); }
-      }
-      Check(pg.State == "failed" && string.Join(",", order.ToArray()) == "click,click,click,drag" && pg.Why.Contains("re-select"), "pilot: the live cell's click changed nothing, no neighbour in view (lab 552: list=0..8, sel=0, tip=-, cellY=148): the grid is read again at the first miss (one click on the updated rect), the same cell once more, the list moved by a row, then the named failure (" + string.Join(",", order.ToArray()) + ", " + pg.State + ")");
-    }
-    {   // live 578, record 122804 (second item, slot 0 -> 1): the item's card was closed with Escape, the gate's watch for it stayed 1-2 s (the window table lags); the pilot's clicks
-        // were refused as "pending" five ticks in a second, each counted as a try: "not selected after 5 clicks (sel 0)", a failed step, the 7 s watchdog, the retry at once worked
-      var pg = new AutoPilot(geo); double H6 = 705, cell6 = geo.CellW * H6; double lx = geo.ColLeft(1) * H6 + cell6 / 2; int refused = 0;
-      Func<long, int, AutoView> V6 = (t, regridDone) => new AutoView { NowMs = t, Foreground = true, H = H6, Target = 42405, Row = 1, Col = 1, Sel = 0, AnchorHas = true, Row1Top = 120, Types = new[] { 0, 1, 1, 1, 1, 1, 1, 1, 1, 1 }, TipKnown = true, TipShown = false, Hero = 5, ScreenHero = 5, Owner = 0, InputOpen = true,
-        LiveGrid = true, LiveTarget = true, LiveX = lx, LiveY = 152, LiveFirst = 0, LiveLast = 6, LiveCellY = 152, LiveScroll = 0, LiveViewTop = 110, LiveViewBottom = 640, LiveNb = false, ListSig = 1, FilterAt = 0, RegridDone = regridDone };
-      for (long t = 0; t < 4000; t += 150) { var zq0 = pg.Step(V6(t, 0)); if (zq0 != null && zq0.Kind == AutoKind.Click) { refused++; pg.NotSent(); } }
-      Check(pg.State != "failed" && pg.Clicks == 0 && refused >= 8, "pilot: clicks the gate refused (the last press's effect awaited) are no tries - after " + refused + " refused clicks: " + pg.State + ", " + pg.Clicks + " counted");
-      var pr = new AutoPilot(geo); long tSent = -1, tAgain = -1; bool regridSaid = false;
-      for (long t = 0; t < 9000 && tAgain < 0 && pr.State != "failed"; t += 100) {
-        var zq1 = pr.Step(V6(t, pr.RegridSeq));   // (the host answers a regrid at once)
-        if (pr.RegridSeq > 0) regridSaid = true;
-        if (zq1 != null && zq1.Kind == AutoKind.Click) { if (tSent < 0) tSent = t; else tAgain = t; }
-      }
-      Check(regridSaid && tAgain > 0 && pr.State != "failed" && tAgain - tSent <= AutoPilot.JudgeMs + 800, "pilot: the first click with nothing selected and no card (sel=0 tip=-) -> the grid is read again and the next click goes at once (" + (tAgain - tSent) + " ms after the first, " + pr.State + ")");
-    }
-    double top = ScrollAnchor.TopRow1(geo, H), maxScroll = 36 * pitch;   // real row 1 top on the screen
-    int targetRow = 23, targetCol = 2; long target = 9023;
-    Func<double, double, long> itemAt = (x, y) => {
-      int col = geo.ColumnAt(x / H); if (col == 0) return 0;
-      int row = (int)Math.Floor((y - top) / pitch) + 1;
-      double inRow = y - (top + (row - 1) * pitch);
-      return row >= 1 && row <= 40 && inRow <= cell ? 9000 + row + (col == targetCol && row == targetRow ? 0 : col * 100) : 0;
-    };
-    var p = new AutoPilot(geo);
-    var anchor = new ScrollAnchor(); long sel = 0; long now = 0; int clicks = 0, drags = 0; double gain = 0.93;   // the list lags the pointer a little
-    for (int tick = 0; tick < 400 && sel != target; tick++, now += 100) {
-      var a = p.Step(new AutoView { NowMs = now, Foreground = true, H = H, Target = target, Row = targetRow, Col = targetCol, Sel = sel,
-                                    AnchorHas = anchor.Has, Row1Top = anchor.Row1Top, Types = types });
-      if (a.Kind != AutoKind.None && Environment.GetEnvironmentVariable("AP_DEBUG") != null) Console.WriteLine("    t=" + now + " " + a.Kind + " x=" + a.X.ToString("0") + " y=" + a.Y.ToString("0") + " dy=" + a.DY.ToString("0") + " top=" + top.ToString("0") + " anchor=" + anchor.Row1Top.ToString("0") + " sel=" + sel);
-      if (a.Kind == AutoKind.Click) {
-        clicks++;
-        long hit = itemAt(a.X, a.Y);
-        if (hit != 0 && hit != sel) {
-          sel = hit; int row = (int)(hit % 100);
-          anchor.FromClick(geo, types, row, a.Y, H, 1);
-          anchor.Track(geo, types, row, top + (row - 1) * pitch, H);   // the stat bars on the screen snap it exactly
-        }
-      } else if (a.Kind == AutoKind.Drag) {
-        drags++;
-        Check(a.Y >= geo.ViewTop * H && a.Y + a.DY <= geo.ViewBottom * H && a.Y + a.DY >= geo.ViewTop * H, "drag stays over the list");
-        top = Math.Max(ScrollAnchor.TopRow1(geo, H) - maxScroll, Math.Min(ScrollAnchor.TopRow1(geo, H), top + a.DY * gain));
-      }
-    }
-    p.Step(new AutoView { NowMs = now, Foreground = true, H = H, Target = target, Row = targetRow, Col = targetCol, Sel = sel, AnchorHas = anchor.Has, Row1Top = anchor.Row1Top, Types = types });
-    Eq(target, sel, "the target item gets selected (row 23 of 40, list dragged)");
-    Check(drags <= 7 && clicks <= 10, "few drags and clicks (" + drags + " drags, " + clicks + " clicks)");
-    Check(Math.Abs(p.Gain - gain) < 0.05, "drag gain measured: " + p.Gain.ToString("0.00"));
-    Eq("done", p.State, "state after the selection");
-
-    // the player uses the mouse: the pilot waits; background window: nothing happens
-    var q = new AutoPilot(geo);
-    var busy = q.Step(new AutoView { NowMs = 0, Foreground = true, UserBusy = true, H = H, Target = 5, Row = 1, Col = 1, Types = types, AnchorHas = true, Row1Top = ScrollAnchor.TopRow1(geo, H) });
-    Check(busy.Kind == AutoKind.None && q.State == "paused", "mouse in use -> pause");
-    var bg = q.Step(new AutoView { NowMs = 100, Foreground = false, H = H, Target = 5, Row = 1, Col = 1, Types = types, AnchorHas = true, Row1Top = ScrollAnchor.TopRow1(geo, H) });
-    Check(bg.Kind == AutoKind.None && q.State == "background", "game not in front -> nothing");
-    var click = q.Step(new AutoView { NowMs = 200, Foreground = true, H = H, Target = 5, Row = 1, Col = 1, Types = types, AnchorHas = true, Row1Top = ScrollAnchor.TopRow1(geo, H) });
-    Check(click.Kind == AutoKind.Click && Math.Abs(click.Y - (ScrollAnchor.TopRow1(geo, H) + cell / 2)) < 0.01, "visible item -> click its centre");
-    var user = q.Step(new AutoView { NowMs = 1200, Foreground = true, UserClicked = true, H = H, Target = 5, Row = 1, Col = 1, Types = types, AnchorHas = true, Row1Top = ScrollAnchor.TopRow1(geo, H) });
-    Check(user.Kind == AutoKind.None && q.State == "paused", "the player clicked himself -> the pilot steps back");
-
-    // slot: click its centre, give up after 3 tries
-    var r = new AutoPilot(geo); int slotClicks = 0;
-    for (long t = 0; t < 10000; t += 100) {
-      var a = r.Step(new AutoView { NowMs = t, Foreground = true, H = H, Slot = new[] { 100, 200, 60, 60 } });
-      if (a.Kind == AutoKind.Click) { slotClicks++; Check(a.X == 130 && a.Y == 230, "slot centre"); }
-    }
-    Eq(3, slotClicks, "slot: 3 tries");
-    Eq("slot_failed", r.State, "slot that does not open (closed until a story stage) -> slot_failed");
-
-    // the end of the list: a drag does not move it -> give up instead of dragging forever
-    var e = new AutoPilot(geo); double stuckTop = ScrollAnchor.TopRow1(geo, H); int w2 = 0;
-    for (long t = 0; t < 30000 && e.State != "failed"; t += 100) {
-      var a = e.Step(new AutoView { NowMs = t, Foreground = true, H = H, Target = 7, Row = 30, Col = 1, Sel = 1, Types = types, AnchorHas = true, Row1Top = stuckTop });
-      if (a.Kind == AutoKind.Drag) w2++;
-    }
-    Check(e.State == "failed" && w2 <= 4, "list does not scroll -> failed after " + w2 + " drags");
-
-    {   // live 1.6.66 (3440x1440 and 1920x1051): after the filter the list is short and sits at its top, the scroll read says row 1 is
-        // at -223 px (stale): the item at row 2 looks above the view, the drags down do nothing -> "the list does not move". The list
-        // is taken at its top then, and the item is clicked there.
-      var st = new[] { 0, 1, 1, 1 }; double pitchS = geo.PitchY * H, cellS = geo.CellW * H, realTop = ScrollAnchor.TopRow1(geo, H), stale = realTop - 3.4 * pitchS;
-      long tgt = 9021; long selS = 0; int dragsS = 0;
-      Func<double, double, long> at = (x, y) => {
-        int col = geo.ColumnAt(x / H); if (col == 0) return 0;
-        int row = (int)Math.Floor((y - realTop) / pitchS) + 1; double inRow = y - (realTop + (row - 1) * pitchS);
-        return row >= 1 && row <= 3 && inRow <= cellS ? 9000 + row * 10 + col : 0;
-      };
-      var ps = new AutoPilot(geo);
-      for (long t = 0; t < 30000 && selS != tgt && ps.State != "failed"; t += 100) {
-        var a = ps.Step(new AutoView { NowMs = t, Foreground = true, H = H, Target = tgt, Row = 2, Col = 1, Sel = selS, SelRow = selS > 0 ? (int)((selS - 9000) / 10) : 0,
-                                       AnchorHas = true, Row1Top = stale, Types = st });
-        if (a.Kind == AutoKind.Drag) dragsS++;
-        else if (a.Kind == AutoKind.Click) { long hit = at(a.X, a.Y); if (hit != 0) selS = hit == selS ? 0 : hit; }
-      }
-      Check(selS == tgt, "stale scroll read on a short list at its top: the item is clicked after " + dragsS + " drags (" + ps.State + ", " + ps.Why + ")");
-    }
-
-    // as in the live test: row 119 of 130, column 3 (the wheel could not get there at all)
-    var lt = new int[131]; for (int i = 1; i <= 130; i++) lt[i] = 1;
-    double ltop = ScrollAnchor.TopRow1(geo, H), lmax = 126 * pitch; long lsel = 0; int ldrags = 0, lclicks = 0;
-    var la = new ScrollAnchor(); var lp = new AutoPilot(geo);
-    Func<double, double, long> lat = (x, y) => {
-      int col = geo.ColumnAt(x / H); if (col == 0) return 0;
-      int row = (int)Math.Floor((y - ltop) / pitch) + 1;
-      double inRow = y - (ltop + (row - 1) * pitch);
-      return row >= 1 && row <= 130 && inRow <= cell ? (col == 3 && row == 119 ? 7119 : 10000 * col + row) : 0;
-    };
-    long lt0 = 0;
-    for (; lt0 < 300000 && lsel != 7119 && lp.State != "failed"; lt0 += 100) {
-      var a = lp.Step(new AutoView { NowMs = lt0, Foreground = true, H = H, Target = 7119, Row = 119, Col = 3, Sel = lsel,
-                                     AnchorHas = la.Has, Row1Top = la.Row1Top, Types = lt });
-      if (a.Kind == AutoKind.Click) {
-        lclicks++;
-        long hit = lat(a.X, a.Y);
-        if (hit != 0 && hit != lsel) {
-          lsel = hit; int row = hit == 7119 ? 119 : (int)(hit % 10000);
-          la.FromClick(geo, lt, row, a.Y, H, 1);
-          la.Track(geo, lt, row, ltop + (row - 1) * pitch, H);
-        }
-      } else if (a.Kind == AutoKind.Drag) {
-        ldrags++;
-        ltop = Math.Max(ScrollAnchor.TopRow1(geo, H) - lmax, Math.Min(ScrollAnchor.TopRow1(geo, H), ltop + a.DY * 0.93));
-      }
-    }
-    Eq(7119, lsel, "row 119 of 130 reached by dragging (" + ldrags + " drags, " + lclicks + " clicks, " + (lt0 / 1000) + " s)");
-    Check(ldrags < AutoPilot.DragTries, "within the drag budget");
-
-    // «Заменить» (auto-confirm): once, only for the selected item on the plan's hero screen, never on an item that hero wears
-    int[] rep = { 900, 600, 280, 40 };
-    double row1 = ScrollAnchor.TopRow1(geo, H);
-    Func<long, long, long, int[], AutoView> cv = (t, owner, screen, button) => new AutoView {
-      NowMs = t, Foreground = true, H = H, Target = 5, Row = 1, Col = 1, Sel = 5, Types = types, AnchorHas = true, Row1Top = row1,
-      AutoConfirm = button != null, Button = button, Hero = 77, ScreenHero = screen, Owner = owner };
-    var c1 = new AutoPilot(geo); int presses = 0; AutoAction first = null;
-    for (long t = 0; t < 10000; t += 100) {
-      var a = c1.Step(cv(t, 0, 77, rep));
-      if (a.Kind == AutoKind.Click) { presses++; if (first == null) { first = a; Check(t >= AutoPilot.ConfirmSettleMs, "waits for the item card (" + t + " ms)"); } }
-    }
-    Check(first != null && first.X == 1040 && first.Y == 620, "presses the centre of «Заменить»");
-    Check(WebViewRecovery.IsUiaMissing(new DllNotFoundException("UIAutomationCore.dll assembly:<unknown assembly> type:<unknown type> member:(null)")) && WebViewRecovery.IsUiaMissing(new AggregateException(new InvalidOperationException("x", new DllNotFoundException("Unable to load UIAutomationCore.dll")))) && !WebViewRecovery.IsUiaMissing(new DllNotFoundException("WebView2Loader.dll")) && !WebViewRecovery.IsUiaMissing(new InvalidOperationException("UIAutomationCore")) && !WebViewRecovery.IsUiaMissing(null), "a missing UIAutomationCore.dll is recognised (only that one)");
-    Check(SyncClient.IsConnectionClosed(new WebException("x", WebExceptionStatus.KeepAliveFailure)) && SyncClient.IsConnectionClosed(new WebException("Базовое соединение закрыто", WebExceptionStatus.ConnectionClosed))
-          && SyncClient.IsConnectionClosed(new Exception("outer", new WebException("y", WebExceptionStatus.KeepAliveFailure)))
-          && SyncClient.IsConnectionClosed(new System.IO.IOException("reset", new System.Net.Sockets.SocketException((int)System.Net.Sockets.SocketError.ConnectionReset)))
-          && !SyncClient.IsConnectionClosed(new WebException("t", WebExceptionStatus.Timeout)) && !SyncClient.IsConnectionClosed(new WebException("n", WebExceptionStatus.NameResolutionFailure))
-          && !SyncClient.IsConnectionClosed(new WebException("The underlying connection was closed", WebExceptionStatus.TrustFailure)) && !SyncClient.IsConnectionClosed(new Exception("kept alive")) && !SyncClient.IsConnectionClosed(null),
-          "sync: a closed idle connection is told by the status (not the localized text) and retried; timeouts and other failures are not");
-    Eq(1 + AutoPilot.ConfirmRetries, presses, "one press per item, one more when it did not go on, then it stops");
-    Eq("unconfirmed", c1.State, "did not go on twice -> unconfirmed, the player looks");
-    Check(c1.Trace.StartsWith("confirm "), "the confirm press is traced for the journal (" + c1.Trace + ")");
-
-    // auto-confirm regression (lab 1.6.66.441): the held «replace» step draws no list frame, so the item's row is 0 - «Заменить» is still pressed fast on the live rect
-    {
-      var ac = new AutoPilot(geo); long firstAt = -1; int n = 0;
-      for (long t = 0; t < 3000; t += 50) {
-        // the guide still said «pick» for the first 200 ms (no auto confirm yet), then «replace»; the previous item's tip is closing until 100 ms
-        bool conf = t >= 200;
-        var av = new AutoView { NowMs = t, Foreground = true, H = H, Target = 5, Row = 0, Col = 0, Sel = 5, Types = types, AnchorHas = true, Row1Top = row1,
-          AutoConfirm = conf, Button = conf && t >= 100 ? rep : null, ButtonStill = true, Hero = 77, ScreenHero = 77, Owner = 0 };
-        var a = ac.Step(av);
-        if (a.Kind == AutoKind.Click) { n++; if (firstAt < 0) firstAt = t; }
-      }
-      Check(firstAt >= 0 && firstAt <= 200 + AutoPilot.ConfirmLiveMs + 100, "auto: «Заменить» pressed within ~300 ms of the tip with no list row (" + firstAt + " ms)");
-      Eq(1, n, "auto: one press");
-    }
-    var c2 = new AutoPilot(geo); int p2 = 0;
-    for (long t = 0; t < 3000; t += 100) if (c2.Step(cv(t, 77, 77, rep)).Kind != AutoKind.None) p2++;
-    Check(p2 == 0 && c2.State == "done", "the hero already wears it (the button would be «Снять») -> never pressed");
-
-    var c3 = new AutoPilot(geo); int p3 = 0;
-    for (long t = 0; t < 3000; t += 100) if (c3.Step(cv(t, 0, 12, rep)).Kind != AutoKind.None) p3++;
-    Check(p3 == 0 && c3.State == "work", "another hero's screen in the game -> waits, no press");
-
-    var c4 = new AutoPilot(geo); int p4 = 0;
-    for (long t = 0; t < 3000; t += 100) if (c4.Step(cv(t, -1, 77, rep)).Kind != AutoKind.None) p4++;
-    Check(p4 == 0, "owner unreadable -> no press");
-
-    var c5 = new AutoPilot(geo); int p5 = 0;
-    for (long t = 0; t < 3000; t += 100) if (c5.Step(cv(t, 0, 77, null)).Kind != AutoKind.None) p5++;
-    Check(p5 == 0 && c5.State == "done", "auto-confirm off -> the player presses «Заменить»");
-
-    var c6 = new AutoPilot(geo); long owner6 = 0; int p6 = 0;
-    for (long t = 0; t < 10000; t += 100) {
-      var a = c6.Step(cv(t, owner6, 77, rep));
-      if (a.Kind == AutoKind.Click) { p6++; owner6 = 77; }   // the server puts it on
-    }
-    Check(p6 == 1 && c6.State == "done", "pressed once, the item goes on -> done (the guide moves to the next slot)");
-
-    // the button is not on the screen yet (the card is opening): wait, then press the one that appears («Надеть» here)
-    var c7 = new AutoPilot(geo); int p7 = 0; AutoAction a7 = null; int[] equipBtn = { 980, 640, 190, 50 };
-    for (long t = 0; t < 4000; t += 100) {
-      var v7 = cv(t, 0, 77, rep); v7.Button = t < 2000 ? null : equipBtn;
-      var a = c7.Step(v7);
-      if (a.Kind == AutoKind.Click) { p7++; a7 = a; Check(t >= 2000, "no press before the button is seen"); }
-    }
-    Check(p7 == 1 && a7.X == 1075 && a7.Y == 665, "presses the button found on the screen («Надеть» of the single card)");
-
-    // the click selected ANOTHER item: the rows are not where the pilot thinks; never the same point again, then stop with the reason
-    double wtop = ScrollAnchor.TopRow1(geo, H);
-    Func<long, long, int, AutoView> wv = (t, wsel, wrow) => new AutoView { NowMs = t, Foreground = true, H = H, Target = 5, Row = 3, Col = 1, Sel = wsel,
-      SelRow = wrow, SelCol = wrow > 0 ? 1 : 0, Types = types, AnchorHas = true, Row1Top = wtop };
-    var w1 = new AutoPilot(geo);
-    var wa = w1.Step(wv(0, 0, 0));
-    var wb = w1.Step(wv(1000, 66, 4));
-    Check(wa.Kind == AutoKind.Click && wb.Kind == AutoKind.Click && (Math.Abs(wa.X - wb.X) > 2 || Math.Abs(wa.Y - wb.Y) > 2) && w1.State == "work",
-          "another item selected: re-anchored from its row, not the same point again");
-    w1.Step(wv(2000, 67, 5));
-    Eq("failed", w1.State, "a second wrong item -> failed, no more toggling");
-    Check(w1.Why.StartsWith("wrong item 67 at row 5/1"), "the reason names the item and its place (" + w1.Why + ")");
-    var wr2 = new AutoPilot(geo);
-    var wr2a = wr2.Step(wv(0, 0, 0)); var wr2b = wr2.Step(wv(1000, 66, 0));
-    Check(wr2b.Kind != AutoKind.Click || Math.Abs(wr2a.X - wr2b.X) > 2 || Math.Abs(wr2a.Y - wr2b.Y) > 2, "another item whose row is unknown: calibrates, not the same point again (" + wr2a.X + "," + wr2a.Y + " -> " + wr2b.Kind + " " + wr2b.X + "," + wr2b.Y + ")");
-
-    // «Заменить» pressed, the selection went away and the item is not on the hero: no item clicks, the player is asked
-    var c8 = new AutoPilot(geo); int p8 = 0, after8 = 0; bool pressed8 = false;
-    for (long t = 0; t < 10000; t += 100) {
-      var v8 = cv(t, 0, 77, rep); if (pressed8) v8.Sel = 0;
-      var a = c8.Step(v8);
-      if (a.Kind == AutoKind.Click) { if (pressed8) after8++; else { p8++; pressed8 = true; } }
-    }
-    Check(p8 == 1 && after8 == 0, "selection gone after the press: no item click (" + after8 + ")");
-    Eq("unconfirmed", c8.State, "selection gone after the press, item not on the hero -> unconfirmed, not failed");
-    Check(c8.Why != "", "unconfirmed says why (" + c8.Why + ")");
-
-    // a slot the screen read shows open, or the addresses being read again: not a try; the tries still end in slot_failed
-    var s1 = new AutoPilot(geo); int s1Clicks = 0; long st1 = 0;
-    for (; st1 < 10000; st1 += 100) if (s1.Step(new AutoView { NowMs = st1, Foreground = true, H = H, Slot = new[] { 100, 200, 60, 60 }, SlotOpen = true }).Kind == AutoKind.Click) s1Clicks++;
-    for (; st1 < 20000; st1 += 100) if (s1.Step(new AutoView { NowMs = st1, Foreground = true, H = H, Slot = new[] { 100, 200, 60, 60 }, PanelOk = false }).Kind == AutoKind.Click) s1Clicks++;
-    Check(s1Clicks == 0 && s1.State == "work", "slot shown open / addresses being scanned: no click, no try, not failed");
-    for (; st1 < 30000; st1 += 100) if (s1.Step(new AutoView { NowMs = st1, Foreground = true, H = H, Slot = new[] { 100, 200, 60, 60 } }).Kind == AutoKind.Click) s1Clicks++;
-    Eq(AutoPilot.SlotTries, s1Clicks, "slot: the tries start when it is not shown open");
-    Eq("slot_failed", s1.State, "slot that stays closed -> slot_failed");
-    {   // no panel yet (the game creates it when a slot is first opened): the slot is clicked; a panel known but stale: waits
-      var sn = new AutoPilot(geo); bool clickedNone = false;
-      for (long t = 0; t < 1000 && !clickedNone; t += 100) if (sn.Step(new AutoView { NowMs = t, Foreground = true, H = H, Slot = new[] { 100, 200, 60, 60 }, PanelOk = false, PanelNone = true }).Kind == AutoKind.Click) clickedNone = true;
-      Check(clickedNone, "no panel yet (PanelOk false, PanelNone true): the slot is clicked within 1 s");
-      var sw = new AutoPilot(geo); int swClicks = 0;
-      for (long t = 0; t < 3000; t += 100) if (sw.Step(new AutoView { NowMs = t, Foreground = true, H = H, Slot = new[] { 100, 200, 60, 60 }, PanelOk = false, PanelNone = false }).Kind == AutoKind.Click) swClicks++;
-      Check(swClicks == 0 && sw.State == "work", "a panel known but stale (PanelOk false, PanelNone false): waits, no click");
-    }
-
-    Console.WriteLine("Blue button test (measured on the live game)");
-    int blue = unchecked((int)0xFF5160B3), dark = unchecked((int)0xFF49423F), gold = unchecked((int)0xFFC98F3A), white = unchecked((int)0xFFF0F0F0);
-    Check(ButtonCheck.IsBlueFill(blue) && !ButtonCheck.IsBlueFill(dark) && !ButtonCheck.IsBlueFill(gold) && !ButtonCheck.IsBlueFill(white), "blue fill vs background, gold button, text");
-    Check(ButtonCheck.BlueShare(new[] { blue, blue, white, dark, blue, dark, white, blue }) >= ButtonCheck.MinShare, "a button with text: enough blue");
-    Check(ButtonCheck.BlueShare(new[] { gold, gold, white, dark, dark, dark }) < ButtonCheck.MinShare, "«Улучшить» / background: no");
-  }
 
   // ---- the one mask of the screen looks (src/OwnMask.cs): read(mask(F + S)) is read(F) or «not known», never another definite value
   static void OwnMaskTests() {
@@ -4684,1759 +4074,81 @@ static partial class CoreTests {
   }
 
   // The hero screen as the pilot sees it: a grid of cards that scrolls (stopping at its ends), the gear list over it, tabs.
-  sealed class FakeHeroGame {
-    public long[] Heroes; public long Shown; public int Tab = 3, Part = -1; public double Scroll;   // Scroll: px the grid is moved up
-    public double Gain = 1;   // how far the grid follows the pointer
-    public bool City; public long CityHero;
-    public bool Small;   // small cards: shorter rows
-    // the grid's filter: the funnel opens the pop-up; class / faction columns (row 0 = «Все»)
-    public bool FilterOpen; public List<long> Camps = new List<long>(); public long Class; public ulong Grid = 1;
-    public long[] All; public Dictionary<long, long[]> Tags;   // every hero, uid -> [class, factions...]
-    public static readonly long[] FactionList = { 0, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110 };
-    public void Refilter() {
-      var l = new List<long>();
-      foreach (var u in All) {
-        long[] t; Tags.TryGetValue(u, out t);
-        if (Class > 0 && (t == null || t[0] != Class)) continue;
-        if (Camps.Count > 0) { bool any = false; if (t != null) for (int i = 1; i < t.Length; i++) if (Camps.Contains(t[i])) any = true; if (!any) continue; }
-        l.Add(u);
-      }
-      Heroes = l.ToArray(); Scroll = 0; Grid++;
-      if (SelectFirst && Heroes.Length > 0) Shown = Heroes[0];
-    }
-    public bool SelectFirst;   // as the game does: a grid filtered again shows its first hero
-    double PY { get { return Small ? g.SmallPitchY : g.PitchY; } }
-    double CH { get { return Small ? g.SmallCardH : g.CardH; } }   // the main city (the hero screen closed): its «Герои» opens CityHero
-    readonly HeroGeometry g; readonly double W, H;
-    public int Clicks, Drags, Backs, Funnels; public long Now, ClosedAt = -100000;
-    public bool Blind;   // the filter pop-up is not recognised: the host reports it closed whatever it shows
-    /// <summary>The game's flag for the pop-up (Charactor_FilterOrder.m_IsActive) as the host reads it: 0 = not readable (Unknown), 1 = exact, 2 = Unknown until the first funnel press (the panel is built then), exact after.
-    /// FadeMs: the pixels show the pop-up this long after it closed (the fade) while the flag is already off. MemLagMs: the flag turns on this long after the press (the game answers late).</summary>
-    public int MemMode, DropFunnel; public long FadeMs, MemLagMs; public bool Built; public long ToggledAt = -1;
-    /// <summary>MemMode 2: the panel is built by the first funnel press (before it the slot is nil: never built = No, E1); MemMode 3: as 2 and its prefab then loads LoadMs (the slot holds false = Unknown, PendingNow for 1.5 s at most).
-    /// The decision is the host's own (RFX.DecideHeroFilter).</summary>
-    public long LoadMs = 800; public bool PendingNow; readonly MemGapLatch latch = new MemGapLatch();
-    public Mem3 MemAt(long t) {
-      if (MemMode == 0) { PendingNow = false; return Mem3.Unknown; }
-      bool on = FilterOpen && (MemLagMs <= 0 || ToggledAt < 0 || t >= ToggledAt + MemLagMs);
-      var f = new RFX.HeroFilterFacts { Panels = MemSlot.Table };
-      if (MemMode >= 2 && !Built) f.Panel = MemSlot.Nil;
-      else if (MemMode == 3 && ToggledAt >= 0 && t < ToggledAt + LoadMs) f.Panel = MemSlot.Bool;
-      else { f.Panel = MemSlot.Table; f.Active = MemSlot.Bool; f.ActiveOn = on; }
-      string why; MemGap gap; var m = RFX.DecideHeroFilter(f, out why, out gap);
-      PendingNow = latch.Pending(gap, t);
-      return m;
-    }
-    public List<double[]> Pts = new List<double[]>();
-    public bool DeadWhileFiltered;   // the grid takes no card click while a class / faction filter is on (live 1.6.66.452: the clicks brought up no hero)
-    public bool Blocked;   // something over the grid takes the clicks (a pop-up left open)
-    public FakeHeroGame(HeroGeometry g, double W, double H) { this.g = g; this.W = W; this.H = H; }
-    public double MaxScroll { get { int rows = (Heroes.Length + 2) / 3; return Math.Max(0, g.Row1Top * H + rows * PY * H - g.ViewBottom * H + 10); } }
-    public void Click(double x, double y) {
-      Clicks++; Pts.Add(new[] { x, y });
-      if (Blocked) return;
-      if (Tags != null && Math.Abs(x - g.FunnelX * H) < 20 && Math.Abs(y - (H - g.FunnelDY * H)) < 20) { if (DropFunnel > 0) { DropFunnel--; Funnels++; return; } FilterOpen = !FilterOpen; Built = true; Funnels++; if (!FilterOpen) ClosedAt = Now; ToggledAt = Now; return; }
-      if (FilterOpen) {
-        int r = (int)Math.Round((y / H - g.FilterRow0) / g.FilterPitch);
-        if (r < 0 || r >= HeroGeometry.FilterRows) return;
-        if (Math.Abs(x - g.ClassX * H) < 25) { Class = r == 0 ? 0 : HeroGeometry.ClassOrder[r - 1]; Refilter(); }
-        else if (Math.Abs(x - g.FactionX * H) < 25) { if (r == 0) Camps.Clear(); else if (Camps.Contains(FactionList[r])) Camps.Remove(FactionList[r]); else Camps.Add(FactionList[r]); Refilter(); }
-        return;   // the pop-up covers the grid
-      }
-      if (City) { if (Math.Abs(x - (W - g.HeroesBtnDX * H)) < 20 && Math.Abs(y - (H - g.HeroesBtnDY * H)) < 20) { City = false; Shown = CityHero; } return; }
-      if (Math.Abs(x - g.BackX * H) < 15 && Math.Abs(y - g.BackY * H) < 15) { if (Part >= 0) Part = -1; else Shown = 0; Backs++; return; }
-      if (Math.Abs(x - (W - g.GearTabDX * H)) < 30 && Math.Abs(y - g.GearTabY * H) < 30) { Tab = 3; return; }
-      if (Part >= 0 || y < g.ViewTop * H || y > g.ViewBottom * H) return;
-      if (DeadWhileFiltered && (Camps.Count > 0 || Class > 0)) return;
-      for (int c = 0; c < 3; c++) {
-        if (Math.Abs(x - g.ColX(c) * H) > 0.109 * H / 2) continue;
-        double rel = y - (g.Row1Top * H - Scroll);
-        int row = (int)Math.Floor(rel / (PY * H));
-        if (rel - row * PY * H > CH * H) return;   // the gap between rows
-        int i = row * 3 + c;
-        if (i >= 0 && i < Heroes.Length) Shown = Heroes[i];
-        return;
-      }
-    }
-    public void Drag(double dy) { Drags++; Scroll = Math.Max(0, Math.Min(MaxScroll, Scroll - dy * Gain)); }
-  }
 
-  static string RunHero(HeroPilot p, FakeHeroGame game, long plan, int maxSteps, out HeroView last) { return RunHero(p, game, plan, maxSteps, out last, null); }
-  static string RunHero(HeroPilot p, FakeHeroGame game, long plan, int maxSteps, out HeroView last, long[] tags) {
-    last = null;
-    for (long t = 0; t < maxSteps * 100L; t += 100) {
-      game.Now = t;
-      var v = new HeroView { NowMs = t, Foreground = true, W = 1920, H = 1009, Plan = plan, Hero = game.Shown, Tab = game.Tab,
-        Part = game.Part, Heroes = game.Part >= 0 ? game.Heroes : game.Heroes, HeroesButton = game.City, ClientH = 1009, SmallCards = game.Small,
-        FilterMem = game.MemAt(t), FilterPending = game.PendingNow, FilterOpen = (game.FilterOpen || (game.FadeMs > 0 && t >= game.ClosedAt && t < game.ClosedAt + game.FadeMs)) && !game.Blind, ChosenCamps = game.Camps.ToArray(), ClassChosen = game.Class > 0, GridPtr = game.Grid,
-        FactionList = game.Tags != null ? FakeHeroGame.FactionList : null, ClassCount = 7 };
-      if (tags != null) { v.HeroClass = tags[0]; v.HeroCamps = new long[tags.Length - 1]; Array.Copy(tags, 1, v.HeroCamps, 0, tags.Length - 1); }
-      last = v;
-      var a = p.Step(v);
-      if (a == null) return p.State;
-      if (a.Kind == AutoKind.Click) game.Click(a.X, a.Y);
-      else if (a.Kind == AutoKind.Drag) game.Drag(a.DY);
-      if (p.State == "failed" || p.State == "notfound" || p.State == "noscreen" || p.State == "small") return p.State;
-    }
-    return "timeout:" + p.State;
-  }
 
   // The game's sell screen: rows of 6 items with title rows; a click toggles the item's selection and shows it as
   // m_CurrentEquipUid; a drag moves the list by gain × pointer move; the part icons filter the list (and clear the choice,
   // as the game does), «Сбросить» clears the filter.
-  sealed class FakeSellGame {
-    public SellGeometry G; public double W = 1920, H = 1009, U = 1009, Gain = 1.12, GainDown = 0.84, Scroll;   // the list follows drags down less (live)   // Scroll: px the list is moved up
-    public int[] Types; public Dictionary<long, int[]> Pos = new Dictionary<long, int[]>();
-    public HashSet<long> Sel = new HashSet<long>(); public long Cur; public ulong Ptr = 7; public int Clicks, Drags, FilterClicks;
-    public Dictionary<long, int> PartOf = new Dictionary<long, int>(); public HashSet<int> Parts = new HashSet<int>();
-    public bool Hidden;   // the player's own filter hides the first rows' items until «Сбросить»
-    // «Быстрое улучшение» after a click on an item below +16 (every third): over the lower middle of the list; a click on it
-    // is a disaster (DangerClicks), the empty spot right of the list closes it
-    public bool Popup, Shown, HasPopup = true; public int DangerClicks;   // HasPopup: the sell screen has one, the inventory not
-    public int RealCols = 6; public double? RealX0, RealPitchX;   // the game's own columns (a wrong guess of the pilot's)
-    public static int Level(long uid) { return uid % 3 == 0 ? 16 : (int)(uid % 4) * 4; }   // Popup: the game's m_bShow (stays set), Shown: on the screen
-    readonly List<long> all = new List<long>(); readonly int titleEvery;
-    public FakeSellGame(SellGeometry g, int rows, int titleEvery, int cols = 6) {
-      G = g; this.titleEvery = titleEvery; RealCols = cols;
-      for (int k = 0; k < rows * cols; k++) { long u = 5000 + k; all.Add(u); PartOf[u] = k % 5; }
-      Build();
+
+
+  static void ScreenTopTests() {
+    Console.WriteLine("The screen from the window table's top form, frame sources, the small client's scale (src/GameScreen.cs, src/UiButtons.cs):");
+    Check(ScreenState.KindOfForm("Form_MainCity") == ScreenKind.City && ScreenState.KindOfForm("Form_BackpackIntegration") == ScreenKind.Inventory
+      && ScreenState.KindOfForm("Form_EquipSubliming") == ScreenKind.Foundry && ScreenState.KindOfForm("Form_CharactorMain") == ScreenKind.HeroScreen
+      && ScreenState.KindOfForm("Form_UnionBoss") == ScreenKind.Unknown, "table kind: the forms the app reads map to their screens, others to none");
+    Check(ScreenState.TopKind(new[] { "Form_MainCity", "Form_BackpackIntegration" }) == ScreenKind.Inventory && ScreenState.TopKind(new[] { "Form_BackpackIntegration", "Form_EquipSubliming" }) == ScreenKind.Foundry
+      && ScreenState.TopKind(new string[0]) == ScreenKind.Unknown && ScreenState.TopKind(null) == ScreenKind.Unknown, "table kind: a screen opened from another is on top");
+    // lab 1.6.66.403: the workshop on top with no artifact request - read all the same (held, it got no back press: the storage run waited for good)
+    var wsTop = new List<string> { "Form_BackpackIntegration", "Form_EquipArtifactIntensify" };
+    Check(ScreenState.WantArtWs(false, wsTop) && ScreenState.WantArtWs(true, null) && !ScreenState.WantArtWs(false, new List<string> { "Form_BackpackIntegration" }) && !ScreenState.WantArtWs(false, null),
+      "workshop read: while an artifact request is guided, or the window table shows it on top - not else");
+    var wsSt = ScreenState.Classify(new ScreenInputs { CityForm = false, Offers = new List<string>(), Screens = wsTop, ArtWs = new ArtWorkshopScreen { Open = true, Tab = 1, Uid = 7 } }, 0);
+    var wsNo = ScreenState.Classify(new ScreenInputs { CityForm = false, Offers = new List<string>(), Screens = wsTop }, 0);
+    Check(wsSt.Kind == ScreenKind.ArtWorkshop && !wsSt.Held && wsNo.Held,
+      "workshop read: read, the workshop takes the back press (" + wsSt.Brief + "); unread it is held and blocks it (" + wsNo.Brief + ")");
+    // the log: City, then the inventory opened and its reader failing for seconds - the table names it: Inventory (details unknown, held), never Unknown
+    var tr = new ScreenTracker(); long t = 0;
+    var cityIn = new ScreenInputs { CityForm = true, Offers = new List<string>(), Screens = new List<string> { "Form_MainCity" } };
+    Check(tr.Update(cityIn, t).Kind == ScreenKind.City, "table kind: the city");
+    bool stable = true, unknown = false; ScreenState st = null;
+    for (t = 100; t <= 6000; t += 100) {
+      st = tr.Update(new ScreenInputs { CityForm = false, Offers = new List<string>(), Screens = new List<string> { "Form_BackpackIntegration", "Form_LeftTip" } }, t);
+      if (st.Kind != ScreenKind.Inventory) stable = false;
+      if (st.Kind == ScreenKind.Unknown) unknown = true;
     }
-    public void Build() {
-      Pos.Clear(); var t = new List<int> { 0 }; int n = 0; var items = new List<long>();
-      foreach (var u in all) if ((Parts.Count == 0 || Parts.Contains(PartOf[u])) && !(Hidden && u < 5012)) items.Add(u);
-      for (int r = 1; n < items.Count; r++) {
-        if (titleEvery > 0 && r % titleEvery == 1) { t.Add(2); continue; }
-        t.Add(1); for (int c = 1; c <= RealCols && n < items.Count; c++) Pos[items[n++]] = new[] { t.Count - 1, c };
-      }
-      Types = t.ToArray(); Scroll = 0; Ptr++; Sel.Clear(); Cur = 0;
-    }
-    public double Row1 { get { return G.ViewTopPx(U) + G.TopPad * U - Scroll; } }
-    // the list stops when its last row reaches the bottom of the view
-    public double MaxScroll { get { return Math.Max(0, G.RowOffset(Types, Types.Length) * U + G.TopPad * U - (G.ViewBottomPx(H, U) - G.ViewTopPx(U))); } }
-    public double Phase() {   // the row tops of the item rows on the screen, mod the row step
-      double pitch = G.PitchY * U; int r = 1; while (r < Types.Length && Types[r] != 1) r++;
-      double y = Row1 + G.RowOffset(Types, r) * U; double ph = y % pitch; return ph < 0 ? ph + pitch : ph;
-    }
-    public SellScreen Screen() {
-      var s = new SellScreen { Open = true, ListPtr = Ptr, Types = Types, Current = Cur, Popup = Popup };
-      foreach (var kv in Pos) s.Pos[kv.Key] = kv.Value; foreach (var u in Sel) s.Selected.Add(u); foreach (var p in Parts) s.Parts.Add(p);
-      return s;
-    }
-    public void Act(AutoAction a) {
-      if (a.Kind == AutoKind.Drag) { Drags++; Scroll = Math.Max(0, Math.Min(MaxScroll, Scroll - a.DY * (a.DY > 0 ? GainDown : Gain))); return; }
-      if (a.Kind != AutoKind.Click) return;
-      Clicks++;
-      var cl = G.Close(W, H, U); if (Math.Abs(a.X - cl[0]) < 20 && Math.Abs(a.Y - cl[1]) < 20) { Shown = false; return; }
-      if (Shown && a.X > W / 2 - 0.19 * U && a.X < W / 2 + 0.32 * U && a.Y > 0.505 * U && a.Y < 0.892 * U) { DangerClicks++; return; }
-      for (int p = 0; p <= 4; p++) { var c = G.Part(p, W, H, U); if (Math.Abs(a.X - c[0]) < 20 && Math.Abs(a.Y - c[1]) < 20) { FilterClicks++; if (!Parts.Remove(p)) Parts.Add(p); Build(); return; } }
-      var rs = G.Reset(W, H, U); if (Math.Abs(a.X - rs[0]) < 20 && Math.Abs(a.Y - rs[1]) < 20) { FilterClicks++; Parts.Clear(); Hidden = false; Build(); return; }
-      if (a.Y < G.ViewTopPx(U) || a.Y > G.ViewBottomPx(H, U)) return;
-      double y = a.Y - Row1; int row = 0; double top = 0;
-      for (int r = 1; r < Types.Length; r++) { double h = G.RowHeight(Types[r]) * U; if (y >= top && y < top + h) { row = r; break; } top += h; }
-      if (row == 0 || Types[row] != 1 || y - top > G.CellHeight * U) return;    // a title, a gap under the cells
-      double xr = (a.X - W / 2) / U - (RealX0 ?? G.X0), px = RealPitchX ?? G.PitchX; int col = (int)Math.Floor(xr / px) + 1;
-      if (col < 1 || col > RealCols || xr - (col - 1) * px > G.CellW) return;
-      foreach (var kv in Pos) if (kv.Value[0] == row && kv.Value[1] == col) {
-        if (!Sel.Remove(kv.Key)) Sel.Add(kv.Key);
-        Cur = Cur == kv.Key ? 0 : kv.Key; Popup = Shown = HasPopup && Level(kv.Key) < 16; return;
-      }
-    }
-  }
-
-  static string RunSell(SellPilot p, FakeSellGame game, ICollection<long> wanted, int maxSteps, bool phase = true) {
-    long now = 0; var traces = new List<string>(); var parts = new HashSet<int>(); foreach (var u in wanted) { int pt; if (game.PartOf.TryGetValue(u, out pt)) parts.Add(pt); }
-    for (int i = 0; i < maxSteps; i++) {
-      var lv = new Dictionary<long, int>(); foreach (var u in wanted) lv[u] = FakeSellGame.Level(u);
-      var a = p.Step(new SellView { NowMs = now, Foreground = true, W = game.W, H = game.H, U = game.U, Screen = game.Screen(), Wanted = wanted,
-                                    Parts = parts, Levels = lv, Phase = phase ? game.Phase() : double.NaN });
-      if (p.Trace != "") { traces.Add(p.Trace); if (traces.Count > 8) traces.RemoveAt(0); p.Trace = ""; }
-      game.Act(a); now += 100;   // (a stopped pilot may still take a stray item back: the app performs that click)
-      if ((p.State == "done" || p.State == "failed") && a.Kind == AutoKind.None) { if (p.State == "failed") Console.WriteLine("    last steps: " + string.Join(" | ", traces)); return p.State; }
-    }
-    return "timeout";
-  }
-
-  static void FightPlanTests() {
-    Console.WriteLine("Fight plans");
-    string body = "{\"ok\":true,\"plans\":[{\"v\":1,\"boss\":\"guild-7\",\"stage\":5001007,\"name\":{\"ru\":\"Кошмар\",\"en\":\"Nightmare\"},"
-      + "\"field\":{\"w\":3,\"h\":2,\"t\":[32,32,2,2,36,36],\"boss\":[1,1],\"half\":[0,0]},"
-      + "\"steps\":[{\"u\":200,\"id\":2380,\"n\":{\"ru\":\"Ригар\",\"en\":\"Rigar\"},\"sq\":1,\"why\":\"leader\",\"x\":0,\"y\":0,\"dir\":1},"
-      + "{\"u\":300,\"id\":2147,\"n\":{\"ru\":\"Сунь Укун\",\"en\":\"Sun\"},\"sq\":1,\"why\":\"dmg\",\"x\":2,\"y\":1,\"dir\":3},"
-      + "{\"u\":100,\"id\":2001,\"n\":{\"ru\":\"Мика\",\"en\":\"Mika\"},\"sq\":1,\"why\":\"bench\",\"x\":null,\"y\":null,\"dir\":null}],"
-      + "\"hold\":10,\"holdU\":[300],\"pts\":8726},"
-      + "{\"boss\":\"bad\",\"stage\":0,\"steps\":[]}]}";
-    var r = FightPlanClient.Interpret(200, body);
-    Check(r.Status == PlansStatus.Ok && r.Plans.Count == 1, "one good plan, the malformed one skipped");
-    var p = r.Plans[0];
-    Check(p.Stage == 5001007 && p.W == 3 && p.H == 2 && p.Cell(2, 1) == 36 && p.BossX == 1, "field and stage");
-    Check(p.Steps.Count == 3 && p.Steps[0].X == 0 && p.Steps[0].Dir == 1 && p.Steps[2].Bench && p.Steps[2].X == -1, "steps with tiles, reserve without");
-    Check(p.Hold == 10 && p.HoldU.Contains(300) && p.Pts == 8726, "ultimate advice");
-    Eq(PlansStatus.InvalidToken, FightPlanClient.Interpret(401, "{}").Status, "401");
-    var feedOk = "[{\"v\":132,\"date\":\"2026-10-11\",\"items\":[{\"text\":\"x\",\"kind\":\"site\"}]}]";
-    Check(NewsClient.Interpret(200, feedOk) == feedOk && NewsClient.Interpret(500, feedOk) == null && NewsClient.Interpret(200, "{}") == null
-      && NewsClient.Interpret(200, "[]") == null && NewsClient.Interpret(200, "[{\"v\":1}]") == null && NewsClient.Interpret(200, "<html>") == null, "news feed parsing");
-    var unreadOk = "{\"ok\":true,\"total\":2,\"topics\":[],\"newTopicUrl\":\"https://x/community/new?kind=bug&area=app\"}";
-    Check(NewsClient.InterpretUnread(200, unreadOk) == unreadOk && NewsClient.InterpretUnread(401, "{}").Contains("invalid_token")
-      && NewsClient.InterpretUnread(500, unreadOk).Contains("\"error\":\"error\"") && NewsClient.InterpretUnread(200, "<html>").Contains("\"ok\":false")
-      && NewsClient.Unread("https://x", "").Contains("no_code"), "forum unread parsing");
-    Check(FightPlanClient.For(r.Plans, 5001007, new HashSet<long> { 200 }) == p && FightPlanClient.For(r.Plans, 1, null) == null, "plan by stage");
-
-    FightStep next, wrong; int wx, wy;
-    FightPlanClient.State(p, new List<HeroSample>(), out next, out wrong, out wx, out wy);
-    Check(next == p.Steps[0] && wrong == null, "nothing placed: step 1");
-    var hs = new List<HeroSample> { new HeroSample { Uid = 200, OnField = true, X = 0, Y = 0 } };
-    FightPlanClient.State(p, hs, out next, out wrong, out wx, out wy);
-    Check(next == p.Steps[1], "step 1 placed: step 2");
-    hs.Add(new HeroSample { Uid = 300, OnField = true, X = 1, Y = 0 });
-    FightPlanClient.State(p, hs, out next, out wrong, out wx, out wy);
-    Check(next == null && wrong == p.Steps[1] && wx == 1 && wy == 0, "all placed, one off its tile");
-    hs[1] = new HeroSample { Uid = 300, OnField = false, CardState = 2 };
-    FightPlanClient.State(p, hs, out next, out wrong, out wx, out wy);
-    Check(next == p.Steps[2], "a hero fell: the reserve is next");
-  }
-
-  static PlanItem LocItem(long uid, int slot, long setId, int main, params int[] subs) {
-    var it = new PlanItem { Uid = uid, Slot = slot, SetId = setId };
-    if (main > 0) it.Main.Add(new SubStat { Text = "m", Stat = main });
-    foreach (var x in subs) it.Subs.Add(new SubStat { Text = "s", Stat = x });
-    return it;
-  }
-
-  // «Показать в игре» with auto click: which steps the app clicks itself, which stay hints, and the safety stops
-  static void LocatePilotTests() {
-    Console.WriteLine("Locate pilot (auto click up to the last button)");
-    const double W = 1920, H = 1009, U = 1009;
-    var item = LocItem(777, 4, 720100, 12, 5, 7, 9, 3);
-    Func<LocateKind, LocateView> V = k => new LocateView { NowMs = 0, Foreground = true, W = W, H = H, U = U, Step = new LocateStep { Kind = k }, Cols = 8 };
-    Func<InventoryScreen> inv = () => new InventoryScreen { Open = true, EquipTab = true, Uids = new List<long>(new long[] { 1, 2, 777 }) };
-    string why; LocateView v;
-
-    // the decision per step
-    v = V(LocateKind.None); Eq(LocateTodo.Nothing, LocateAuto.Decide(v, out why), "auto: no request -> nothing");
-    v = V(LocateKind.OpenInventory); v.CityButton = true; Eq(LocateTodo.InventoryButton, LocateAuto.Decide(v, out why), "auto: the city with its button -> press «Инвентарь»");
-    v = V(LocateKind.OpenInventory); v.HeroScreenOpen = true; Eq(LocateTodo.BackToCity, LocateAuto.Decide(v, out why), "auto: the hero screen -> back to the city");
-    v = V(LocateKind.OpenInventory); Eq(LocateTodo.Hint, LocateAuto.Decide(v, out why), "auto: not the city -> the player brings it up"); Eq("no_city", why, "auto: ... and why");
-    v = V(LocateKind.OpenInventory); v.CityButton = true; v.OtherFormOpen = true; Eq(LocateTodo.Hint, LocateAuto.Decide(v, out why), "auto: the Foundry is open -> no click");
-    v = V(LocateKind.OpenEquipTab); Eq(LocateTodo.EquipTab, LocateAuto.Decide(v, out why), "auto: the inventory on another tab -> «Снаряжение»");
-    v = V(LocateKind.OpenEquipTab); v.OtherFormOpen = true; Eq(LocateTodo.Hint, LocateAuto.Decide(v, out why), "auto: another tab behind the Foundry -> no click");
-    v = V(LocateKind.InList); v.Inv = inv(); Eq(LocateTodo.PickItem, LocateAuto.Decide(v, out why), "auto: item in the list -> pick it");
-    v = V(LocateKind.InList); v.Inv = inv(); v.Inv.Bulk = true; Eq(LocateTodo.Stop, LocateAuto.Decide(v, out why), "auto: bulk sale -> stop (a click toggles a sale)"); Eq("bulk", why, "auto: ... bulk");
-    v = V(LocateKind.InList); v.Inv = inv(); v.OtherFormOpen = true; Eq(LocateTodo.Hint, LocateAuto.Decide(v, out why), "auto: the list behind the Foundry is not clicked");
-    v = V(LocateKind.InList); v.Inv = null; Eq(LocateTodo.Stop, LocateAuto.Decide(v, out why), "auto: the inventory vanished -> stop");
-    v = V(LocateKind.InList); v.Inv = inv(); v.Inv.EquipTab = false; Eq(LocateTodo.Stop, LocateAuto.Decide(v, out why), "auto: not on the equipment tab -> stop");
-    // everything after the item is selected stays the player's: the Foundry button, tabs, lists, the final buttons, the pop-ups
-    foreach (LocateKind k in Enum.GetValues(typeof(LocateKind))) {
-      if (k == LocateKind.OpenInventory || k == LocateKind.OpenEquipTab || k == LocateKind.InList || k == LocateKind.None) continue;
-      v = V(k); v.Inv = inv(); v.HeroScreenOpen = true; v.CityButton = true;
-      var todo = LocateAuto.Decide(v, out why);
-      Check(todo == LocateTodo.Hint, "auto: step " + k + " is a hint, never a click (" + todo + ")");
-    }
-    Check(LocateAuto.NeedsCityButton(new LocateStep { Kind = LocateKind.OpenInventory }, false, false) && !LocateAuto.NeedsCityButton(new LocateStep { Kind = LocateKind.InList }, false, false)
-      && !LocateAuto.NeedsCityButton(new LocateStep { Kind = LocateKind.OpenInventory }, true, false), "auto: the city button is looked for only when needed");
-
-    // the clicks and their places
-    var hg = new HeroGeometry();
-    var p = new LocatePilot();
-    v = V(LocateKind.OpenEquipTab); var m = p.Step(v);
-    Check(m.State == "work" && m.Action.Kind == AutoKind.Click && Math.Abs(m.Action.X - 0.085 * U) < 1 && Math.Abs(m.Action.Y - 0.315 * U) < 1, "auto: «Снаряжение» at the storage cleanup's spot");
-    v = V(LocateKind.OpenEquipTab); v.NowMs = 100; Eq(AutoKind.None, p.Step(v).Action.Kind, "auto: waits for the game after a click");
-    // event confirmation: the gate saw the tab click's effect - the fixed wait after it ends a short settle later
-    p.Confirmed(400);
-    v = V(LocateKind.OpenEquipTab); v.NowMs = 400 + LocatePilot.SettleAfterEffectMs - 1; Eq(AutoKind.None, p.Step(v).Action.Kind, "auto: after the effect, a short settle first");
-    v = V(LocateKind.OpenEquipTab); v.NowMs = 400 + LocatePilot.SettleAfterEffectMs; Eq(AutoKind.Click, p.Step(v).Action.Kind, "auto: the effect seen ends the fixed wait (not " + LocatePilot.AfterTabMs + " ms)");
-    // a click the gate refused (a wait form came) is taken back: it does not use up the step's tries
-    p = new LocatePilot(); long tn = 0;
-    for (int i = 0; i < LocatePilot.MaxStepClicks + 6; i++) { v = V(LocateKind.OpenEquipTab); v.NowMs = tn; m = p.Step(v); tn += 100; if (m.Action.Kind == AutoKind.Click) p.NotSent(); }
-    Check(!p.Stopped, "auto: refused clicks do not end the step as stuck (" + p.Reason + ")");
-    p = new LocatePilot(); tn = 0;
-    for (int i = 0; i < LocatePilot.MaxStepClicks + 1; i++) { v = V(LocateKind.OpenEquipTab); v.NowMs = tn; m = p.Step(v); tn += LocatePilot.AfterTabMs; if (m.Action.Kind == AutoKind.Click) p.Sent(); }
-    Eq("stuck", p.Reason, "auto: sent clicks that change nothing still end the step as stuck");
-    p = new LocatePilot(); v = V(LocateKind.OpenInventory); v.CityButton = true; m = p.Step(v);
-    Check(m.Action.Kind == AutoKind.Click && Math.Abs(m.Action.X - (W - v.InvDX * U)) < 1 && Math.Abs(m.Action.Y - (H - hg.HeroesBtnDY * U)) < 1, "auto: «Инвентарь» in the city's bar");
-    p = new LocatePilot(); v = V(LocateKind.OpenInventory); v.HeroScreenOpen = true; m = p.Step(v);
-    Check(m.Action.Kind == AutoKind.Click && Math.Abs(m.Action.X - hg.BackX * U) < 1 && Math.Abs(m.Action.Y - hg.BackY * U) < 1, "auto: the back arrow of the hero screen");
-    p = new LocatePilot(); v = V(LocateKind.Done); m = p.Step(v);
-    Check(m.State == "hint" && m.Action.Kind == AutoKind.None && m.Why == "foundry", "auto: the final step: a hint, no click");
-
-    // recast: the item is selected -> the card's gem button; the gem screen holds it -> the wanted function's row; Done -> nothing
-    {
-      var gg = GameGeometry.Parse(GeoJson(), GeoGame);
-      var recastItem = LocItem(777, 4, 0, 0); recastItem.Quality = 8;
-      Func<LocateKind, LocateView> RV = k => { var x = V(k); x.Geometry = gg; x.Item = recastItem; x.Purpose = "recast"; return x; };
-      v = RV(LocateKind.Selected); v.Step.Worn = true; v.Inv = inv(); v.Inv.Current = 777;
-      Eq(LocateTodo.CardGem, LocateAuto.Decide(v, out why), "auto: recast, item selected -> the card's gem button");
-      p = new LocatePilot(); m = p.Step(v); var cardF = LocateFrames.For(v.Step, recastItem, null, null, gg, W, H, U);
-      Check(m.State == "work" && m.Todo == LocateTodo.CardGem && m.Action.Kind == AutoKind.Click && Math.Abs(m.Action.X - cardF.ClickX) < 1 && Math.Abs(m.Action.Y - cardF.ClickY) < 1, "auto: ... clicks the frame's rect (cardLeft for a worn item)");
-      v.NowMs = 100; Eq(AutoKind.None, p.Step(v).Action.Kind, "auto: ... and waits for the gem screen");
-      v = RV(LocateKind.Selected); v.Inv = inv(); v.Inv.Current = 777; p = new LocatePilot(); m = p.Step(v);
-      Check(m.Action.Kind == AutoKind.Click && Math.Abs(m.Action.X - LocateFrames.For(v.Step, recastItem, null, null, gg, W, H, U).ClickX) < 1 && LocateFrames.For(v.Step, recastItem, null, null, gg, W, H, U).Target == "inventory.cardSolo", "auto: not worn -> the lone gem button (cardSolo)");
-      v = RV(LocateKind.Selected); v.Purpose = "ascend"; v.Inv = inv(); v.Inv.Current = 777; Eq(LocateTodo.Hint, LocateAuto.Decide(v, out why), "auto: Ascension never clicks the card");
-      v = RV(LocateKind.Selected); v.Inv = inv(); v.Inv.Current = 778; Eq(LocateTodo.Hint, LocateAuto.Decide(v, out why), "auto: another item selected -> no click");
-      v = RV(LocateKind.Selected); v.Inv = inv(); v.Inv.Current = 777; v.Inv.Bulk = true; Eq(LocateTodo.Hint, LocateAuto.Decide(v, out why), "auto: bulk sale -> no click on the card");
-      v = RV(LocateKind.Selected); v.Inv = inv(); v.Inv.Current = 777; v.Geometry = null; Eq(LocateTodo.Hint, LocateAuto.Decide(v, out why), "auto: no geometry -> hint");
-      v = RV(LocateKind.Selected); v.Inv = inv(); v.Inv.Current = 777; v.OtherFormOpen = true; Eq(LocateTodo.Hint, LocateAuto.Decide(v, out why), "auto: a form on top -> no click on the card");
-      // the gem screen
-      Func<int, RecastScreen> gemRs = fn => new RecastScreen { GemOpen = true, GemFunc = fn, GemSel = 777 };
-      v = RV(LocateKind.GemFunction); v.Step.Func = 8; v.Rs = gemRs(-1);
-      Eq(LocateTodo.GemFunc, LocateAuto.Decide(v, out why), "auto: gem screen with the item and no function -> the wanted row");
-      p = new LocatePilot(); m = p.Step(v); var rowF = LocateFrames.GemRow(gg, v.Rs, 8, W, H, U, true);
-      Check(m.Todo == LocateTodo.GemFunc && m.Action.Kind == AutoKind.Click && Math.Abs(m.Action.X - rowF.ClickX) < 1 && Math.Abs(m.Action.Y - rowF.ClickY) < 1, "auto: ... clicks the row of Advanced Recast (the frame's rect)");
-      v = RV(LocateKind.GemFunction); v.Step.Func = 7; v.Rs = gemRs(8); v.Step.WrongFunc = true; Eq(LocateTodo.GemFunc, LocateAuto.Decide(v, out why), "auto: the other recast function selected -> the wanted row");
-      p = new LocatePilot(); m = p.Step(v); Check(Math.Abs(m.Action.Y - LocateFrames.GemRow(gg, v.Rs, 7, W, H, U, true).ClickY) < 1 && m.Action.Y < rowF.ClickY, "auto: ... Recast is the row above Advanced Recast");
-      v = RV(LocateKind.GemFunction); v.Step.Func = 8; v.Rs = gemRs(8); Eq(LocateTodo.Hint, LocateAuto.Decide(v, out why), "auto: the wanted function is already selected -> nothing");
-      v = RV(LocateKind.GemFunction); v.Step.Func = 0; v.Rs = gemRs(-1); Eq(LocateTodo.Hint, LocateAuto.Decide(v, out why), "auto: quality unknown (no wanted function) -> hint, no guess");
-      v = RV(LocateKind.GemFunction); v.Step.Func = 8; v.Rs = gemRs(-1); v.Rs.GemSel = 5; Eq(LocateTodo.Hint, LocateAuto.Decide(v, out why), "auto: another item on the gem screen -> no click");
-      v = RV(LocateKind.GemFunction); v.Step.Func = 8; v.Rs = gemRs(-1); v.Rs.GemFuncList = new RFX.ListRead { ScrollY = 5000, Cols = 1, RowUnits = 110, First = 3, Last = 8 };
-      Eq(LocateTodo.Hint, LocateAuto.Decide(v, out why), "auto: the function list scrolled so the row is out of view -> hint");
-      // after the function is selected (step Done) and at the final steps: no click, whatever the screen
-      v = RV(LocateKind.Done); v.Rs = gemRs(8); v.Step.OnGem = true; p = new LocatePilot(); m = p.Step(v);
-      Check(m.State == "hint" && m.Action.Kind == AutoKind.None, "auto: the gem screen done -> the pilot stops clicking («Улучшить» is the player's)");
-      foreach (LocateKind k in new[] { LocateKind.Done, LocateKind.AscendReady }) { v = RV(k); v.Rs = gemRs(8); p = new LocatePilot(); Eq(AutoKind.None, p.Step(v).Action.Kind, "auto: final step " + k + " never clicks"); }
-      // the click targets of the pilot's moves are the recast ones only
-      Check(!Enum.IsDefined(typeof(LocateTodo), "GemButton") && !Enum.IsDefined(typeof(LocateTodo), "Upgrade") && !Enum.IsDefined(typeof(LocateTodo), "Recast") && !Enum.IsDefined(typeof(LocateTodo), "Ascend"), "auto: no todo names a final button");
-    }
-
-    // the player and the game window come first
-    p = new LocatePilot(); v = V(LocateKind.OpenEquipTab); v.Foreground = false; m = p.Step(v);
-    Check(m.State == "background" && m.Action.Kind == AutoKind.None, "auto: the game is not in front -> nothing");
-    v = V(LocateKind.OpenEquipTab); v.UserBusy = true; m = p.Step(v);
-    Check(m.State == "paused" && m.Action.Kind == AutoKind.None, "auto: the player moves the mouse -> paused");
-    v = V(LocateKind.OpenEquipTab); v.NowMs = 1000; v.UserClicked = true; m = p.Step(v);
-    Check(m.State == "paused", "auto: the player clicked -> paused");
-    v = V(LocateKind.OpenEquipTab); v.NowMs = 4000; m = p.Step(v); Eq("paused", m.State, "auto: ... for a few seconds");
-    v = V(LocateKind.OpenEquipTab); v.NowMs = 5200; m = p.Step(v); Check(m.State == "work" && m.Action.Kind == AutoKind.Click, "auto: ... then goes on");
-
-    // a step that does not move on stops after a few clicks; cancel stops for good
-    p = new LocatePilot(); int n = 0; long t = 0;
-    for (int i = 0; i < 20; i++, t += 3000) { v = V(LocateKind.OpenEquipTab); v.NowMs = t; m = p.Step(v); if (m.Action.Kind == AutoKind.Click) n++; if (m.State == "stopped") break; }
-    Check(n == LocatePilot.MaxStepClicks && p.Stopped && p.Reason == "stuck", "auto: the tab never opens -> " + n + " clicks, then stop (" + p.Reason + ")");
-    v = V(LocateKind.OpenEquipTab); v.NowMs = t + 99999; m = p.Step(v);
-    Check(m.State == "stopped" && m.Action.Kind == AutoKind.None, "auto: stopped stays stopped");
-    p.Reset(); v = V(LocateKind.OpenEquipTab); v.NowMs = 0; Eq("work", p.Step(v).State, "auto: a new request starts again");
-    p.Cancel(); m = p.Step(V(LocateKind.OpenEquipTab));
-    Check(m.State == "stopped" && m.Why == "cancelled" && m.Action.Kind == AutoKind.None, "auto: the overlay's cancel stops the clicks");
-    p = new LocatePilot(); v = V(LocateKind.InList); v.Inv = inv(); v.Inv.Bulk = true; m = p.Step(v);
-    Check(m.State == "stopped" && m.Why == "bulk" && m.Action.Kind == AutoKind.None, "auto: bulk sale -> stopped without a click");
-
-    // the whole way in a fake inventory: the item deep in the list, the list scrolled a bit, then it is selected and the pilot stops clicking
-    foreach (double offset in new[] { 0.0, 0.6 }) {
-      var g = SellGeometry.Inventory(W, U, 8);
-      var game = new FakeSellGame(g, 60, 0, 8) { HasPopup = false }; game.Scroll = offset * g.PitchY * U;
-      long target = 5000 + 8 * 41 + 3;
-      var rq = new LocateRequest { Id = "x", Purpose = "recast", Item = new PlanItem { Uid = target, Slot = 1 } };
-      var lp = new LocatePilot { ItemUid = target };
-      var order = new List<KeyValuePair<long, int[]>>(game.Pos);
-      order.Sort((a, b) => a.Value[0] != b.Value[0] ? a.Value[0].CompareTo(b.Value[0]) : a.Value[1].CompareTo(b.Value[1]));
-      int acts = 0, afterSelected = 0, quiet = 0; bool selected = false; string last = "";
-      for (long now = 0; now < 600 * 100; now += 100) {
-        var iv = new InventoryScreen { Open = true, EquipTab = true, Current = game.Cur };
-        foreach (var kv in order) iv.Uids.Add(kv.Key);
-        var st = LocateGuide.Next(rq, iv, null, null, 8, 1);
-        var mv = lp.Step(new LocateView { NowMs = now, Foreground = true, W = W, H = H, U = U, Step = st, Inv = iv, Cols = 8, Phase = game.Phase() });
-        last = mv.State + "/" + mv.Why;
-        if (st.Kind == LocateKind.Selected) { selected = true; if (mv.Action.Kind != AutoKind.None) afterSelected++; if (++quiet > 30) break; continue; }
-        if (mv.State == "stopped") break;
-        if (mv.Action.Kind != AutoKind.None) acts++;
-        game.Act(mv.Action);
-      }
-      Check(selected && afterSelected == 0 && !lp.Stopped, "auto: the item (row 42 of 60, list offset " + offset + ") is selected by the pilot, then no more clicks (" + acts + " actions, " + game.Drags + " drags, " + last + ")");
-      Check(game.Drags >= 1 && acts < 60, "auto: ... scrolling by drags, a handful of actions (" + acts + ")");
-    }
-  }
-
-  // ------------------------------------------------------------------ screen geometry (src/Geometry.cs) and the frames built on it (src/LocateFrames.cs)
-  // ------------------------------------------------------------------ the hero gear tab's bottom row (lab 1.6.66.424, client 1350x689)
-  static void HeroGearRowTests() {
-    // the live «Литейная» icon at [824,567,47,43] (frame check), «Улучшение самоцветами» ~750, «Быстрая смена» ~942; the site's data (prefab state,
-    // the column slid off the screen) put the frame at [1177,548,87,89], right of «Быстро надеть»
-    string gp = Path.Combine("tests", "fixtures", "screens", "_geometry.json");
-    if (!File.Exists(gp)) { Console.WriteLine("  (skip: no " + gp + ")"); return; }
-    var geo = GameGeometry.Parse(File.ReadAllText(gp, Encoding.UTF8), "1.6.39.829.1");
-    double W = 1350, H = 689, U = Ui.Unit(W, H);
-    var wk = geo.Rect("hero.workshop", W, H, U); var gem = geo.Rect("hero.gem", W, H, U); var sw = geo.Rect("hero.switching", W, H, U);
-    Check(wk != null && Math.Abs(wk.CX - 847.5) < 6 && Math.Abs(wk.CY - 588.5) < 8, "hero row: «Литейная» on the live icon (" + (wk != null ? wk.CX + "," + wk.CY : "none") + " vs 847.5,588.5)");
-    Check(wk != null && wk.X <= 824 && wk.Right >= 871 && wk.Y <= 567 && wk.Bottom >= 610, "hero row: «Литейная» rect holds the live icon");
-    Check(gem != null && Math.Abs(gem.CX - 750) < 10 && sw != null && Math.Abs(sw.CX - 942) < 10, "hero row: «Улучшение самоцветами» and «Быстрая смена» on theirs (" + (gem != null ? gem.CX : 0) + ", " + (sw != null ? sw.CX : 0) + ")");
-    // data already of the shown state (the generator fixed) is not moved again
-    var fixedJson = "{\"game\":\"9.8.7.6.5\",\"v\":1,\"rects\":{" + GeoBox("hero.workshop", "R:-0.7937", "R:-0.6671", "M:0.2948", "M:0.4245", 0.1266, 0.1297) + "}}";
-    var g2 = GameGeometry.Parse(fixedJson, "9.8.7.6.5"); var wk2 = g2 != null ? g2.Rect("hero.workshop", W, H, U) : null;
-    Check(wk2 != null && Math.Abs(wk2.CX - 847.5) < 6, "hero row: data of the shown state stays (" + (wk2 != null ? wk2.CX : 0) + ")");
-    // the step plate (~450x70) beside «Литейная»: off the target, the row's buttons, the quick buttons and the right tab column
-    var st = new LocateStep { Kind = LocateKind.OpenFoundry, OnGear = true };
-    var av = new List<int[]>();
-    foreach (var k in LocateFrames.AvoidKeys(st)) { var r = geo.Rect(k, W, H, U); if (r != null) av.Add(new[] { (int)r.X, (int)r.Y, (int)Math.Ceiling(r.W), (int)Math.Ceiling(r.H) }); }
-    foreach (var r in LocateFrames.AvoidAreas(st, geo, W, H, U)) av.Add(new[] { (int)r.X, (int)r.Y, (int)Math.Ceiling(r.W), (int)Math.Ceiling(r.H) });
-    int[] target = { 824, 567, 47, 43 }; char side;
-    foreach (var pw in new[] { 450, 560 }) {
-      var pos = HintLayout.Place(target, av.ToArray(), pw, 70, (int)W, (int)H, out side);
-      Func<int[], bool> hit = r => pos[0] < r[0] + r[2] && r[0] < pos[0] + pw && pos[1] < r[1] + r[3] && r[1] < pos[1] + 70;
-      bool clear = !hit(target);
-      int[][] keep = { new[] { (int)gem.X, (int)gem.Y, (int)gem.W, (int)gem.H }, new[] { (int)sw.X, (int)sw.Y, (int)sw.W, (int)sw.H },
-        new[] { (int)(W - 0.1656 * U), 0, (int)(0.1656 * U), (int)H }, new[] { 980, 630, 263, 40 } };   // the tab column; «Быстро снять / надеть» (client px off the shot)
-      foreach (var r in keep) clear &= !hit(r);
-      Check(side == 't' && pos[0] <= 847 && pos[0] + pw >= 847 && pos[1] + 70 <= 548, "hero row: the " + pw + " px plate stands above «Литейная» and its row (" + pos[0] + "," + pos[1] + " " + side + ")");
-      Check(clear, "hero row: a " + pw + " px plate leaves «Литейная», the row, the quick buttons and the tab column free (at " + pos[0] + "," + pos[1] + " side " + side + ")");
-    }
-    Check(LocateFrames.AvoidAreas(new LocateStep { Kind = LocateKind.OpenFoundry }, geo, W, H, U).Length == 0, "hero row: no hero areas on the inventory's «Литейная» step");
-    PopupCoverTests(geo, W, H, U);
-  }
-
-  // the step's target under a shown pop-up: «close the window» (the frame on the pop-up's ×, never on the hidden target); hint mode: no pilot click
-  static void PopupCoverTests(GameGeometry geo, double W, double H, double U) {
-    Console.WriteLine("Covered target: close the pop-up first");
-    Func<LocateKind, LocateStep> mk = k => new LocateStep { Kind = k, OnGear = true };
-    var hero = new ScreenState { Kind = ScreenKind.HeroScreen, ModalOpen = true, ModalWhy = "heroFilter" };
-    var st = mk(LocateKind.OpenFoundry);
-    Check(LocateGuide.CoverStep(st, hero) && st.Kind == LocateKind.ClosePopup && st.Covered == LocateKind.OpenFoundry && st.PopupTitle == "filter" && st.PopupClose == "hero.filterClose" && st.Key == "closePopup",
-      "cover: «Литейная» under the gear filter -> the step is «close the filter window» (the original is kept)");
-    Check(LocateFrames.For(st, null, null, null, geo, W, H, U) == null, "cover: ... and the step has no target frame (the frame goes on the pop-up's ×)");
-    Check(FrameTargets.Of("hero.filterClose") != null && FrameTargets.Of("popup.exit") != null, "cover: the × keys are mapped");
-    st = mk(LocateKind.OpenFoundry); hero.ModalOpen = false; hero.ModalWhy = "";
-    Check(!LocateGuide.CoverStep(st, hero) && st.Kind == LocateKind.OpenFoundry, "cover: the filter closed -> the original step is back");
-    st = mk(LocateKind.OpenFoundry); st.OnGear = false;
-    Check(!LocateGuide.CoverStep(st, new ScreenState { Kind = ScreenKind.HeroScreen, ModalOpen = true, ModalWhy = "heroFilter" }), "cover: the gear filter does not cover the inventory's «Литейная»");
-    // a flow form (the pilot's own tip / question / filter) is the screen's sub-state: it never covers; a pop-up of the screen map does, the topmost by the z-order
-    var inv = new ScreenState { Kind = ScreenKind.Inventory, Flow = "Form_CharactorEquipTip,Form_EquipPopUp", Order = new List<string> { "Form_EquipPopUp", "Form_CharactorEquipTip", "Form_BackpackIntegration" } };
-    st = mk(LocateKind.OpenFoundry); st.OnGear = false;
-    Check(!LocateGuide.CoverStep(st, inv) && st.Kind == LocateKind.OpenFoundry, "cover: the inventory's own flow forms (tip, question) never cover the step");
-    var popL = new List<string>(); foreach (var e in ScreenMap.All) if (e.Class == 'P' && popL.Count < 2 && ScreenState.KindOfForm(e.Name) == ScreenKind.Unknown && !ScreenMap.IsFlow(ScreenKind.Inventory, e.Name)) popL.Add(e.Name);
-    string[] pops = popL.ToArray();
-    inv = new ScreenState { Kind = ScreenKind.Inventory, ModalOpen = true, ModalWhy = "form:" + pops[0] + "," + pops[1], Order = new List<string> { pops[1], pops[0], "Form_BackpackIntegration" } };
-    st = mk(LocateKind.OpenFoundry); st.OnGear = false;
-    Check(LocateGuide.CoverStep(st, inv) && st.Popup == pops[1], "cover: two map pop-ups over the inventory -> the one on top is closed first");
-    inv.Order = new List<string> { pops[0], pops[1], "Form_BackpackIntegration" };
-    st = mk(LocateKind.OpenEquipTab); LocateGuide.CoverStep(st, inv); Eq(pops[0], st.Popup, "cover: ... the z-order decides");
-    st = mk(LocateKind.OpenFoundry); st.OnGear = false;
-    Check(!LocateGuide.CoverStep(st, inv, f => false) && st.Kind == LocateKind.OpenFoundry, "cover: the live rects say the pop-up is beside the target -> no cover");
-    // the recast / promotion screens' own panels, an overlay: never a cover (the lab regression: no pilot step for 40 s)
-    foreach (var sk in new[] { ScreenKind.Gem, ScreenKind.ArtWorkshop, ScreenKind.Foundry, ScreenKind.HeroScreen }) {
-      var own = new ScreenState { Kind = sk, ModalOpen = true, ModalWhy = "form:Form_EquipGemFunction,Form_LeftTip,Form_ArtifactBreakPanel" };
-      st = mk(LocateKind.GemFunction); st.OnGear = false;
-      Check(!LocateGuide.CoverStep(st, own) && st.Kind == LocateKind.GemFunction, "cover: " + sk + " with its own panels shown -> the step stays (recast / artPromote reach the final step)");
-      st = mk(LocateKind.OpenInventory); Check(!LocateGuide.CoverStep(st, own) && st.Kind == LocateKind.OpenInventory, "cover: " + sk + " panels never turn the inventory step into a close step");
-    }
-    st = mk(LocateKind.Selected); Check(!LocateGuide.CoverStep(st, inv), "cover: the item card step is never covered by its own tip");
-    st = mk(LocateKind.AscendReady); Check(!LocateGuide.CoverStep(st, inv), "cover: the final button is the player's: no cover step");
-    st = mk(LocateKind.OpenFoundry); inv.Held = true; Check(!LocateGuide.CoverStep(st, inv), "cover: a held (unread) screen changes nothing");
-    // the auto pilot and the hint mode: the cover step is a hint, nothing is clicked; the lab's hint mode never has auto click
-    var v = new LocateView { NowMs = 0, Foreground = true, W = W, H = H, U = U, Step = new LocateStep { Kind = LocateKind.OpenFoundry, OnGear = true }, Cols = 8, HeroScreenOpen = true, Geometry = geo };
-    LocateGuide.CoverStep(v.Step, new ScreenState { Kind = ScreenKind.HeroScreen, ModalOpen = true, ModalWhy = "heroFilter" });
-    var pil = new LocatePilot(); var mv = pil.Step(v);
-    Check(v.Step.Kind == LocateKind.ClosePopup && mv.Action.Kind == AutoKind.None && mv.State == "hint", "cover: the auto pilot under a pop-up clicks nothing (the back arrow included)");
-    Check(!LabRecCmd.AutoClick(true, true, true, true) && !LabRecCmd.AutoClick(true, false, true, true) && LabRecCmd.AutoClick(false, true, true, false) && LabRecCmd.AutoClick(true, false, true, false) && !LabRecCmd.AutoClick(true, true, false, false),
-      "lab: hint mode -> auto click off whatever is forced or saved; a non-hint run forced -> on; the site's switch still rules");
-    { string r; bool on;
-      on = NavCoreRule.Decide(true, true, "", "off", false, out r); bool t1 = on && r == "config off ignored";
-      on = NavCoreRule.Decide(true, true, "", "lab", false, out r); bool t2 = on && r == "config lab ignored";
-      on = NavCoreRule.Decide(true, true, "", "site", false, out r); bool t3 = on && r == "default on";
-      on = NavCoreRule.Decide(true, true, "off", "on", true, out r); bool t4 = !on && r == "lab command";
-      on = NavCoreRule.Decide(true, true, "on", "off", false, out r); bool t5 = on && r == "lab command";
-      on = NavCoreRule.Decide(true, false, "on", "on", true, out r); bool t6 = !on && r == "autoclick off";
-      on = NavCoreRule.Decide(false, true, "on", "on", false, out r); bool t7 = !on;
-      on = NavCoreRule.Decide(false, true, "", "off", true, out r); bool t8 = on;
-      Check(t1 && t2 && t3 && t4 && t5 && t6 && t7 && t8, "navCore rule: test build on unless auto click off or the lab command says off (config off/lab ignored); release = site switch only"); }
-    long t0 = 1000000;
-    Check(!LabRecCmd.HintExpired(t0, t0 + 180000 + 60000) && !LabRecCmd.HintExpired(t0, t0 + LabRecCmd.HintMaxMs) && LabRecCmd.HintExpired(t0, t0 + LabRecCmd.HintMaxMs + 1), "lab: the hint mode outlives the runner's 3 minute scenario (10 min cap)");
-    // hint mode: ten ticks of a locate request with auto off - the pilot is not driven at all (Overlay.TickLocateDrive: AutoEnabled / LocateAutoEnabled), so no clicks
-    int clicks = 0;
-    for (int i = 0; i < 10; i++) { bool auto = LabRecCmd.AutoClick(true, true, true, true); if (auto) { var p2 = new LocatePilot(); if (p2.Step(v).Action.Kind != AutoKind.None) clicks++; } }
-    Eq(0, clicks, "lab: hint mode -> zero pilot clicks");
-    CityFirstHintTests();
-  }
-
-  // hint mode, city first (live 1.6.66.442: a recast started on the Foundry's Ascension tab: the first hint said to open a tab on the right, which that screen
-  // does not have, and only then «go to the city»): on a screen the purpose's flow does not go on from the first hint is the back arrow
-  static void CityFirstHintTests() {
-    Console.WriteLine("Hint mode: city first");
-    var req = new LocateRequest { Id = "r1", Purpose = "recast", Item = new PlanItem { Uid = 77, Slot = 3, SetId = 5, Quality = 6 } };
-    // the Foundry on the Ascension tab, a recast request: the step of the Foundry's own list says «open the recast tab»; the first hint is the back arrow
-    var rs = new RecastScreen { SublimingOpen = true, CurType = 2 };
-    var st = LocateGuide.Next(req, null, rs, null, 8, 1);
-    Check(st.Kind == LocateKind.OpenRecastTab, "city first: the plain step of the Foundry's Ascension tab for a recast is OpenRecastTab");
-    var fo = new ScreenState { Kind = ScreenKind.Foundry, FoundryTab = 2 };
-    Check(LocateGuide.CityFirstStep(st, "recast", fo) && st.Kind == LocateKind.BackToCity && st.Covered == LocateKind.OpenRecastTab && st.Key == "backToCity", "city first: ... a recast on the Foundry's Ascension tab: the first hint is BackToCity");
-    Check(FrameTargets.Of("foundry.back") != null && FrameTargets.Of("hero.back") != null && FrameTargets.Of("inventory.back") != null && FrameTargets.Of("popup.exit") != null, "city first: the back arrow keys are mapped");
-    // an Ascension request on that tab goes on (the Foundry is its continuation screen)
-    var reqA = new LocateRequest { Id = "r2", Purpose = "ascend", Item = req.Item };
-    var rsA = new RecastScreen { SublimingOpen = true, CurType = 2, AscendShown = true };
-    st = LocateGuide.Next(reqA, null, rsA, null, 8, 1);
-    Check(!LocateGuide.CityFirstStep(st, "ascend", fo) && st.Kind != LocateKind.BackToCity, "city first: an Ascension request on the Ascension tab is not sent back");
-    // the gem screen for an Ascension request: not a continuation screen -> back first
-    st = new LocateStep { Kind = LocateKind.OpenInventory };
-    Check(LocateGuide.CityFirstStep(st, "ascend", new ScreenState { Kind = ScreenKind.Gem }) && st.Kind == LocateKind.BackToCity, "city first: the gem screen for an Ascension request -> back first");
-    // the recast with the Foundry over the inventory's own step (the sub-state): back first
-    st = new LocateStep { Kind = LocateKind.InList };
-    Check(LocateGuide.CityFirstStep(st, "recast", fo) && st.Kind == LocateKind.BackToCity, "city first: the inventory's step under the Foundry -> back first");
-    // the city, the hero screen, the inventory: the flow's own screens, nothing changes; no item / another account: never a back step
-    foreach (var k in new[] { ScreenKind.City, ScreenKind.HeroScreen, ScreenKind.Inventory }) {
-      st = new LocateStep { Kind = LocateKind.OpenInventory };
-      Check(!LocateGuide.CityFirstStep(st, "recast", new ScreenState { Kind = k }) && st.Kind == LocateKind.OpenInventory, "city first: " + k + " is a continuation screen of the recast: no back step");
-    }
-    st = new LocateStep { Kind = LocateKind.NoItem }; Check(!LocateGuide.CityFirstStep(st, "recast", fo), "city first: no item: no back step");
-    st = new LocateStep { Kind = LocateKind.OtherAccount }; Check(!LocateGuide.CityFirstStep(st, "recast", fo), "city first: another account: no back step");
-    st = new LocateStep { Kind = LocateKind.OpenRecastTab }; Check(!LocateGuide.CityFirstStep(st, "recast", new ScreenState { Kind = ScreenKind.Unknown }) && !LocateGuide.CityFirstStep(st, "recast", new ScreenState { Kind = ScreenKind.Foundry, Held = true }), "city first: an unknown or held screen changes nothing");
-    // after the back press the city is shown: the original step is there again (the step is recomputed every tick)
-    st = new LocateStep { Kind = LocateKind.OpenInventory };
-    Check(!LocateGuide.CityFirstStep(st, "recast", new ScreenState { Kind = ScreenKind.City }), "city first: back in the city -> the original step");
-  }
-
-  static string GeoBox(string key, string x0, string x1, string y0, string y1, double w, double h) {
-    // "L:0.1" style edges
-    Func<string, string> e = s => "[\"" + s.Split(':')[0] + "\"," + s.Split(':')[1] + "]";
-    return "\"" + key + "\":{\"x0\":" + e(x0) + ",\"x1\":" + e(x1) + ",\"y0\":" + e(y0) + ",\"y1\":" + e(y1) + ",\"w\":" + w.ToString(System.Globalization.CultureInfo.InvariantCulture) + ",\"h\":" + h.ToString(System.Globalization.CultureInfo.InvariantCulture) + "}";
-  }
-  const string GeoGame = "9.8.7.6.5";
-  static string GeoJson(string game = GeoGame, int v = 1) {
-    var b = new List<string> {
-      GeoBox("foundry.tab.forge", "R:-0.159", "R:0.0066", "T:0.0328", "T:0.1578", 0.1656, 0.125),
-      GeoBox("ascend.slot.3", "L:0.443", "L:0.5695", "M:-0.3969", "M:-0.3312", 0.1266, 0.0656),
-      GeoBox("ascend.filter", "L:0.4531", "L:0.6969", "M:-0.3136", "M:-0.2573", 0.2438, 0.0563),
-      GeoBox("ascend.button", "C:0.1039", "C:0.4414", "M:0.3488", "M:0.4581", 0.3375, 0.1093),
-      GeoBox("ascend.list", "L:0.1", "L:0.6", "T:0.2", "T:0.7", 0.5, 0.5),
-      GeoBox("ascend.cell", "L:0.3", "L:0.4", "T:0.3", "T:0.4625", 0.1, 0.1625),
-      GeoBox("inventory.workshop", "R:-0.6565", "R:-0.5125", "B:-0.1205", "B:-0.0201", 0.144, 0.1004),
-      GeoBox("hero.workshop", "R:-0.2515", "R:-0.1249", "M:0.2948", "M:0.4245", 0.1266, 0.1297),
-      GeoBox("inventory.cardLeft", "R:-0.4797", "R:-0.2578", "T:0.8505", "T:0.9333", 0.2219, 0.0828),
-      GeoBox("inventory.cardSolo", "R:-0.3688", "R:-0.1469", "B:-0.103", "B:-0.0202", 0.2219, 0.0828),
-      GeoBox("gem.list", "C:-0.8438", "C:-0.0938", "M:-0.3312", "M:0.4003", 0.75, 0.7316),
-      GeoBox("gem.cell", "L:-0.7703", "L:-0.0422", "T:0.1094", "T:0.2687", 0.7281, 0.1594),
-      GeoBox("gem.button", "R:-0.3688", "R:-0.1469", "B:-0.103", "B:-0.0202", 0.2219, 0.0828),
-      GeoBox("city.barButton", "L:0.0672", "L:0.2016", "B:0.3306", "B:0.465", 0.1344, 0.1344) };
-    return "{\"game\":\"" + game + "\",\"v\":" + v + ",\"rects\":{" + string.Join(",", b.ToArray()) + "},\"grids\":{\"ascend.list\":{\"cols\":5,\"lineSize\":108,\"padding\":[0,-10,0,0]},\"gem.list\":{\"cols\":1,\"lineSize\":110,\"padding\":[0,0,0,0]}}}";
-  }
-
-  // ------------------------------------------------------------------ the outline of a button (src/GuideShape.cs)
-  static void GuideShapeTests() {
-    Console.WriteLine("Button outlines (shape + inset from the geometry)");
-    string extra = ",\"shape\":{\"k\":\"bevel\",\"c\":0.1,\"cy\":0.2},\"inset\":{\"l\":0.1,\"t\":0,\"r\":0.1,\"b\":0.2}";
-    string j = GeoJson().Replace("\"w\":0.3375,\"h\":0.1093}", "\"w\":0.3375,\"h\":0.1093" + extra + "}");
-    var g = GameGeometry.Parse(j, GeoGame);
-    var sh = g != null ? g.Shape("ascend.button") : null; var ins = g != null ? g.Inset("ascend.button") : null;
-    Check(sh != null && sh.K == "bevel" && Math.Abs(sh.CX - 0.1) < 1e-9 && Math.Abs(sh.CY - 0.2) < 1e-9, "shape parsed (cx falls back to c)");
-    Check(ins != null && Math.Abs(ins.L - 0.1) < 1e-9 && Math.Abs(ins.B - 0.2) < 1e-9, "inset parsed");
-    var plain = GameGeometry.Parse(GeoJson(), GeoGame);
-    Check(plain.Shape("ascend.button") == null && plain.Inset("ascend.button") == null && plain.Shape("nope") == null, "missing shape / inset: a rectangle, no inset");
-    Check(GameGeometry.Parse(GeoJson().Replace("\"h\":0.1093}", "\"h\":0.1093,\"shape\":{\"k\":\"blob\"},\"inset\":{\"l\":\"x\"}}"), GeoGame) != null, "an odd shape / inset does not refuse the file");
-    var rect = new GeoRect { X = 100, Y = 50, W = 200, H = 100 };
-    var o = GuideShape.Outline(rect, null, null);
-    Eq(4, o.Count, "rect: 4 points"); Check(o[0].X == 100 && o[0].Y == 50 && o[2].X == 300 && o[2].Y == 150, "rect: the corners");
-    var art = GuideShape.ArtBox(rect, new GeoInset { L = 0.1, T = 0, R = 0.1, B = 0.2 });
-    Check(Math.Abs(art.X - 120) < 1e-9 && Math.Abs(art.W - 160) < 1e-9 && Math.Abs(art.H - 80) < 1e-9, "inset: the art box");
-    var neg = GuideShape.ArtBox(rect, new GeoInset { L = -0.1, T = -0.1, R = -0.1, B = -0.1 });
-    Check(Math.Abs(neg.X - 80) < 1e-9 && Math.Abs(neg.Y - 40) < 1e-9 && Math.Abs(neg.W - 240) < 1e-9 && Math.Abs(neg.H - 120) < 1e-9, "negative inset: the art sticks out");
-    var c = GuideShape.Outline(rect, new GeoShape { K = "circle" }, null);
-    Eq(48, c.Count, "circle: 48 points");
-    bool onCircle = true; foreach (var p in c) onCircle &= Math.Abs(Math.Sqrt((p.X - 200) * (p.X - 200) + (p.Y - 100) * (p.Y - 100)) - 50) < 1e-6;
-    Check(onCircle, "circle: diameter = the shorter side, centred");
-    var b = GuideShape.Outline(rect, new GeoShape { K = "bevel", CX = 0.1, CY = 0.2 }, null);
-    Eq(8, b.Count, "bevel: an octagon"); Check(Math.Abs(b[0].X - 110) < 1e-9 && b[0].Y == 50 && b[2].X == 300 && Math.Abs(b[2].Y - 70) < 1e-9, "bevel: cuts cx*h across, cy*h down");
-    var rd = GuideShape.Outline(rect, new GeoShape { K = "round", R = 0.3 }, null);
-    Eq(4 * (GuideShape.CornerSteps + 1), rd.Count, "round: arcs at the four corners");
-    bool inside = true; foreach (var p in rd) inside &= p.X >= 100 - 1e-9 && p.X <= 300 + 1e-9 && p.Y >= 50 - 1e-9 && p.Y <= 150 + 1e-9;
-    Check(inside, "round: inside the rectangle");
-    Check(GuideShape.Outline(new GeoRect { X = 0, Y = 0, W = 0, H = 10 }, null, null).Count == 0, "an empty box: no outline");
-    var hp = GuideShape.HandPos(5, 10, 40, 60, 0.5, 0.9, 1000, 500);
-    Check(hp.X == 0 && hp.Y == 0, "hand: kept inside the client");
-    var hp2 = GuideShape.HandPos(500, 300, 40, 60, 0.5, 0.9, 1000, 500);
-    Check(Math.Abs(hp2.X - 480) < 1e-9 && Math.Abs(hp2.Y - 246) < 1e-9, "hand: the fingertip lands on the point");
-    Check(GuideShape.FrameOutline(rect, null, null, 2) == null && GuideShape.FrameOutline(rect, new GeoShape { K = "rect" }, null, 2) == null && GuideShape.FrameOutline(rect, new GeoShape { K = "blob" }, null, 2) == null, "old frame: a rect / missing / unknown shape keeps the rectangle (null)");
-    var fo = GuideShape.FrameOutline(rect, new GeoShape { K = "circle" }, new GeoInset { L = 0.25, T = 0, R = 0.25, B = 0 }, 2);
-    bool onFo = fo != null; if (onFo) foreach (var p in fo) onFo &= Math.Abs(Math.Sqrt((p.X - 200) * (p.X - 200) + (p.Y - 100) * (p.Y - 100)) - 52) < 1e-6;
-    Check(onFo, "old frame: the circle of the inset art, grown by the margin");
-    var gr = GuideShape.Grow(rect, 5); Check(gr.X == 95 && gr.W == 210, "grown by a margin");
-    var rs = RemoteSwitches.Parse("{\"features\":{\"guideStyle\":true}}");
-    Check(rs.Allows("guideStyle") && !RemoteSwitches.Permissive().Allows("guideStyle") && !RemoteSwitches.Parse("{}").Allows("guideStyle"), "guideStyle: off until the site says true");
-    Check(AppConfig.FromJson("{\"guideStyle\":\"on\"}").GuideStyle == "on" && AppConfig.FromJson("{\"guideStyle\":\"x\"}").GuideStyle == "auto" && AppConfig.FromJson("{}").GuideStyle == "auto", "config: guideStyle auto / on / off");
-  }
-
-  static void GeometryTests() {
-    Console.WriteLine("Screen geometry (the site's file per game version, frames and Foundry clicks)");
-    const double W = 2000, H = 1000, U = 1000;
-    var g = GameGeometry.Parse(GeoJson(), GeoGame);
-    Check(g != null && g.Game == GeoGame && g.Count == 14, "geometry: the fixture parses");
-    var r = g.Rect("ascend.button", W, H, U);
-    Check(r != null && Math.Abs(r.X - (W / 2 + 0.1039 * U)) < 0.01 && Math.Abs(r.W - 0.3375 * U) < 0.01 && Math.Abs(r.Y - (H / 2 + 0.3488 * U)) < 0.01 && Math.Abs(r.H - 0.1093 * U) < 0.01, "geometry: C / M anchors from the centre");
-    r = g.Rect("inventory.workshop", W, H, U);
-    Check(Math.Abs(r.X - (W - 0.6565 * U)) < 0.01 && Math.Abs(r.Y - (H - 0.1205 * U)) < 0.01, "geometry: R / B anchors from the right and bottom edges");
-    r = g.Rect("ascend.list", W, H, U); Check(Math.Abs(r.X - 100) < 0.01 && Math.Abs(r.Y - 200) < 0.01 && Math.Abs(r.W - 500) < 0.01, "geometry: L / T anchors");
-    var r2 = g.Rect("ascend.list", 1000, 562, 562); Check(Math.Abs(r2.X - 56.2) < 0.01 && Math.Abs(r2.H - 281) < 0.01, "geometry: another window size scales with U");
-    Check(g.Rect("nope", W, H, U) == null && g.Rect(null, W, H, U) == null, "geometry: an unknown key -> null");
-    Eq(5, g.Grid("ascend.list").Cols, "geometry: the grid's columns"); Eq(-10.0, g.Grid("ascend.list").PadTop, "geometry: the grid's top padding"); Check(g.Grid("x") == null, "geometry: no such grid");
-    // parse refusals
-    Check(GameGeometry.Parse(GeoJson(), "9.8.7.6.4") == null, "geometry: another version is not used");
-    Check(GameGeometry.Parse(GeoJson(GeoGame, 2), GeoGame) == null, "geometry: another format is not used");
-    Check(GameGeometry.Parse(GeoJson().Replace("\"R\",-0.159", "\"Q\",-0.159"), GeoGame) == null, "geometry: an unknown anchor is refused");
-    Check(GameGeometry.Parse(GeoJson().Replace("\"w\":0.1656", "\"w\":\"x\""), GeoGame) == null, "geometry: a non-number size is refused");
-    Check(GameGeometry.Parse("{\"game\":\"" + GeoGame + "\",\"v\":1,\"rects\":{}}", GeoGame) == null, "geometry: no rectangles -> not used");
-    Check(GameGeometry.Parse("[1]", GeoGame) == null && GameGeometry.Parse("<html>", GeoGame) == null && GameGeometry.Parse(null, GeoGame) == null && GameGeometry.Parse("", GeoGame) == null, "geometry: not an object -> null");
-    Check(GameGeometry.Parse(GeoJson().Replace("\"game\"", "\"pad\":\"" + new string('x', 140000) + "\",\"game\""), GeoGame) == null, "geometry: an oversized reply is refused");
-    Check(GameGeometry.Parse(GeoJson().Replace("\"cols\":5", "\"cols\":0"), GeoGame).Grid("ascend.list") == null, "geometry: a bad grid is left out");
-    GameGeometry got;
-    Eq(Layout.Reply.Got, Geo.Interpret(200, GeoJson(), GeoGame, out got), "geometry reply 200: got"); Check(got != null, "  ... and parsed");
-    Eq(Layout.Reply.None, Geo.Interpret(404, "{}", GeoGame, out got), "geometry reply 404: none for this version");
-    Eq(Layout.Reply.Denied, Geo.Interpret(401, "{}", GeoGame, out got), "geometry reply 401: no valid code");
-    Eq(Layout.Reply.NoReply, Geo.Interpret(500, GeoJson(), GeoGame, out got), "geometry reply 5xx: no reply (what is held stays)");
-    Eq(Layout.Reply.NoReply, Geo.Interpret(200, "{}", GeoGame, out got), "geometry reply 200 with junk: no reply");
-    // the saved copies, per version
-    string dir = Path.Combine(Path.GetTempPath(), "rf-geo-" + Guid.NewGuid().ToString("N"));
-    Check(Geo.LoadCache(dir, GeoGame) == null, "geometry: no saved copy -> null");
-    Geo.SaveCache(dir, GeoGame, GeoJson());
-    Check(Geo.LoadCache(dir, GeoGame) != null, "geometry: the saved copy loads (offline use)");
-    Check(Geo.LoadCache(dir, "9.8.7.6.4") == null, "geometry: a copy of another version is not used");
-    File.WriteAllText(Path.Combine(dir, GeoGame + ".json"), "{broken");
-    Check(Geo.LoadCache(dir, GeoGame) == null, "geometry: a broken saved copy -> null, no crash");
-    Check(Geo.LoadCache(dir, "../x") == null, "geometry: a bad version is no path");
-    try { Directory.Delete(dir, true); } catch (Exception) { }
-    var heldGeo = Geo.Current;
-    Geo.Use(null); Check(Geo.Rect("ascend.list", W, H, U) == null, "geometry: none in force -> every rectangle is null (text hints)");
-    Geo.Use(g); Check(Geo.Rect("ascend.list", W, H, U) != null, "geometry: in force -> the accessor places it");
-    Geo.Use(heldGeo);
-
-    // tabs: the k-th shown tab sits k tab heights below the first position
-    Eq(2, FoundryPlace.TabIndex(null, "ascend"), "tabs: all shown -> Ascension is third");
-    Eq(1, FoundryPlace.TabIndex(new[] { true, false, true, true, true }, "ascend"), "tabs: Identify hidden -> Ascension moves up");
-    Eq(-1, FoundryPlace.TabIndex(new[] { true, true, false, true, true }, "ascend"), "tabs: Ascension hidden -> -1");
-    Eq(2, FoundryPlace.TabIndex(new[] { true, true, true, false, false }, "ascend"), "tabs: Recast / Reforge hidden do not move Ascension");
-    Eq(3, FoundryPlace.TabIndex(null, "recast"), "tabs: Recast is fourth");
-    Eq(-1, FoundryPlace.TabIndex(null, "nope"), "tabs: unknown name");
-    var tr = FoundryPlace.Tab(g, "ascend", null, W, H, U);
-    Check(tr != null && Math.Abs(tr.Y - (0.0328 + 2 * 0.125) * U) < 0.01 && Math.Abs(tr.X - (W - 0.159 * U)) < 0.01, "tabs: Ascension = the first position + 2 tab heights");
-    tr = FoundryPlace.Tab(g, "ascend", new[] { true, false, true, true, true }, W, H, U); Check(Math.Abs(tr.Y - (0.0328 + 0.125) * U) < 0.01, "tabs: one hidden before it -> one height");
-    Check(FoundryPlace.Tab(g, "ascend", new[] { true, true, false, true, true }, W, H, U) == null && FoundryPlace.Tab(null, "ascend", null, W, H, U) == null, "tabs: hidden or no geometry -> null");
-
-    // the list cell from the game's own scroll reading: 5 columns, row = 108 canvas units = 168.75 px at U 1000, the list at (100, 200) 500 x 500
-    Func<double, RFX.ListRead> L = s => new RFX.ListRead { ScrollY = s, Cols = 5, RowUnits = 108, First = 0, Last = 14 };
-    var c = FoundryPlace.Cell(g, "ascend", L(0), 7, W, H, U);   // row 1, column 2
-    Check(c != null && c.Mark.Kind == "box" && Math.Abs(c.Mark.X - 300) <= 1 && Math.Abs(c.Mark.Y - 387.5) <= 1 && c.Mark.W == 100 && Math.Abs(c.Mark.H - 162.5) <= 1, "cell: index 7 at scroll 0 -> column 2, row 2 (" + (c != null ? c.Mark.Kind + " " + c.Mark.X + "," + c.Mark.Y + " " + c.Mark.W + "x" + c.Mark.H : "null") + ")");
-    Check(c.Clickable && Math.Abs(c.ClickX - 350) <= 1 && Math.Abs(c.ClickY - (387.5 + 81.25)) <= 1, "cell: clickable at its centre");
-    c = FoundryPlace.Cell(g, "ascend", L(0), 0, W, H, U); Check(Math.Abs(c.Mark.X - 100) <= 1 && Math.Abs(c.Mark.Y - 218.75) <= 1, "cell: index 0 = the first cell, at the list's top + the padding");
-    c = FoundryPlace.Cell(g, "ascend", L(40), 7, W, H, U);   // scrolled by 40 units = 62.5 px: the frame moves exactly with the scrolling
-    Check(Math.Abs(c.Mark.Y - (387.5 - 62.5)) <= 1, "cell: the frame moves exactly with the scroll (" + c.Mark.Y + ")");
-    c = FoundryPlace.Cell(g, "ascend", L(640), 7, W, H, U); Check(c.Mark.Kind == "up" && c.Mark.Rows == 5 && c.ScrollPx > 0 && !c.Clickable, "cell: far above -> 'up', 5 rows, the content has to move down (" + c.Mark.Kind + " " + c.Mark.Rows + ")");
-    c = FoundryPlace.Cell(g, "ascend", L(0), 40, W, H, U); Check(c.Mark.Kind == "down" && c.Mark.Rows == 7 && c.ScrollPx < 0 && !c.Clickable, "cell: far below -> 'down', 7 rows, the content has to move up (" + c.Mark.Kind + " " + c.Mark.Rows + ")");
-    c = FoundryPlace.Cell(g, "ascend", L(0), 12, W, H, U);   // row 2: top at 215.6 + 337.5 = 553: bottom 715 is past the view's end (700): cut, not clickable
-    Check(c.Mark.Kind == "box" && !c.Clickable && c.Mark.Y + c.Mark.H <= 700, "cell: cut by the viewport edge -> clipped box, scrolled in before a click (" + c.Mark.H + ")");
-    var l2 = L(0); l2.Cols = 0; l2.RowUnits = 0; c = FoundryPlace.Cell(g, "ascend", l2, 7, W, H, U); Check(c != null && c.Mark.Kind == "box", "cell: columns / row size missing in the reading -> the authored numbers");
-    Check(FoundryPlace.Cell(g, "ascend", new RFX.ListRead(), 7, W, H, U) == null && FoundryPlace.Cell(g, "ascend", null, 7, W, H, U) == null && FoundryPlace.Cell(null, "ascend", L(0), 7, W, H, U) == null && FoundryPlace.Cell(g, "recast", L(0), 7, W, H, U) == null,
-      "cell: unreadable scroll / no geometry / no recast entry -> null");
-
-    // frames per step
-    var item = LocItem(777, 3, 720100, 12, 5, 7, 9, 3);
-    var rs = new RecastScreen { SublimingOpen = true, AscendShown = true, CurType = 2, AscendList = L(0) };
-    Func<LocateKind, LocateStep> S = k => new LocateStep { Kind = k };
-    var f = LocateFrames.For(S(LocateKind.OpenAscendTab), item, rs, null, g, W, H, U);
-    Check(f != null && f.Clickable && Math.Abs(f.ClickY - (0.0328 + 0.25 + 0.0625) * U) < 0.01, "frame: the «Вознесение» tab, clickable");
-    f = LocateFrames.For(new LocateStep { Kind = LocateKind.OpenFoundry }, item, rs, null, g, W, H, U); Check(f != null && f.Clickable && f.Target == "inventory.workshop", "frame: «Литейная» in the inventory, clickable");
-    f = LocateFrames.For(new LocateStep { Kind = LocateKind.OpenFoundry, OnGear = true }, item, rs, null, g, W, H, U); Check(f != null && f.Clickable && f.Target == "hero.workshop", "frame: «Литейная» on the hero's gear screen, clickable");
-    HeroGearRowTests();
-    f = LocateFrames.For(new LocateStep { Kind = LocateKind.AscendFilter, Missing = new[] { "slot", "main" } }, item, rs, null, g, W, H, U); Check(f != null && f.Clickable && f.Target == "ascend.slot.3", "frame: the item's slot tab first, clickable");
-    f = LocateFrames.For(new LocateStep { Kind = LocateKind.AscendFilter, Missing = new[] { "main", "subs" } }, item, rs, null, g, W, H, U); Check(f != null && !f.Clickable && f.Target == "ascend.filter", "frame: the filter button is only pointed at");
-    f = LocateFrames.For(S(LocateKind.AscendReady), item, rs, null, g, W, H, U); Check(f != null && !f.Clickable && f.Target == "ascend.button", "frame: «Вознести», never clickable");
-    f = LocateFrames.For(new LocateStep { Kind = LocateKind.Selected, Worn = true }, item, rs, null, g, W, H, U); Check(f != null && f.Clickable && f.Target == "inventory.cardLeft", "frame: the card's gem button (worn item), clickable for the recast path");
-    f = LocateFrames.For(new LocateStep { Kind = LocateKind.Selected }, item, rs, null, g, W, H, U); Check(f != null && f.Clickable && f.Target == "inventory.cardSolo", "frame: the card's gem button alone (not worn), clickable");
-    f = LocateFrames.For(new LocateStep { Kind = LocateKind.Done, OnGem = true }, item, rs, null, g, W, H, U); Check(f != null && !f.Clickable && f.Target == "gem.button", "frame: «Улучшить» on the gem screen, never clickable");
-    f = LocateFrames.For(new LocateStep { Kind = LocateKind.GemFunction, Func = 8 }, item, new RecastScreen { GemOpen = true }, null, g, W, H, U); Check(f != null && !f.Clickable, "frame: the gem function row as a hint, not clickable");
-    f = LocateFrames.GemRow(g, new RecastScreen { GemOpen = true }, 8, W, H, U, true); Check(f != null && f.Clickable && f.ClickY > 0, "frame: the gem function row, clickable when asked and in view");
-    f = LocateFrames.GemRow(g, new RecastScreen { GemOpen = true, GemFuncList = new RFX.ListRead { ScrollY = 5000, Cols = 1, RowUnits = 110, First = 3, Last = 8 } }, 8, W, H, U, true); Check(f != null && !f.Clickable, "frame: the gem function row scrolled out of the list is not clicked");
-    f = LocateFrames.For(new LocateStep { Kind = LocateKind.AscendPick, Pos = 8 }, item, rs, null, g, W, H, U); Check(f != null && f.Clickable && f.ViewH > 0, "frame: the item's cell in the Ascension list, clickable");
-    f = LocateFrames.For(new LocateStep { Kind = LocateKind.AscendPick, Pos = 8 }, item, new RecastScreen { SublimingOpen = true }, null, g, W, H, U); Check(f == null, "frame: the list is unreadable and the game's cell range is unknown -> none");
-    f = LocateFrames.For(new LocateStep { Kind = LocateKind.AscendPick, Pos = 8, Scroll = "below", ScrollRows = 3 }, item, new RecastScreen { SublimingOpen = true }, null, g, W, H, U); Check(f != null && f.Mark.Kind == "down" && f.Mark.Rows == 3 && !f.Clickable, "frame: scroll not readable but the cell range says 'below' -> only the pill");
-    f = LocateFrames.For(new LocateStep { Kind = LocateKind.RecastPick, Pos = 1 }, item, rs, null, g, W, H, U); Check(f == null, "frame: no recast rectangles in the data -> none");
-    f = LocateFrames.For(S(LocateKind.AscendReady), item, rs, null, null, W, H, U); Check(f == null, "frame: no geometry -> none (text hints)");
-    f = LocateFrames.For(S(LocateKind.InList), item, rs, null, g, W, H, U); Check(f == null, "frame: the inventory list keeps its own placement");
-    var cs = LocateFrames.CityButtonSize(g, U); Check(Math.Abs(cs[0] - 134.4) < 0.01 && Math.Abs(cs[1] - 134.4) < 0.01, "frame: the city button's size from the geometry");
-    cs = LocateFrames.CityButtonSize(null, U); Check(Math.Abs(cs[0] - 110) < 0.01 && Math.Abs(cs[1] - 130) < 0.01, "frame: ... else the old estimate");
-
-    // the real file the site serves (the web repo next to this one): everything the frames use is in it and sits where the app's older constants say
-    string real = Path.Combine(WebRoot(), "data", "app-geometry");
-    if (Directory.Exists(real)) {
-      int n = 0;
-      foreach (var p in Directory.GetFiles(real, "*.json")) {
-        string v = Path.GetFileNameWithoutExtension(p);
-        var rg = GameGeometry.Parse(File.ReadAllText(p, Encoding.UTF8), v);
-        Check(rg != null, "the site's geometry file " + v + " parses");
-        if (rg == null) continue;
-        n++;
-        bool all = true; foreach (var k in new[] { "foundry.tab.forge", "ascend.list", "ascend.cell", "ascend.filter", "ascend.button", "ascend.slot.0", "ascend.slot.4", "recast.list", "recast.cell", "recast.button",
-                                                    "inventory.workshop", "hero.workshop", "inventory.cardLeft", "city.barButton" }) if (!rg.Has(k)) { all = false; Console.WriteLine("    missing " + k); }
-        Check(all && rg.Grid("ascend.list") != null && rg.Grid("recast.list") != null, "the site's geometry file " + v + " has every rectangle and grid the frames use");
-        var il = rg.Rect("inventory.list", 1920, 1009, 1009);
-        Check(il != null && Math.Abs(il.Y / 1009 - 0.190) < 0.003, "the site's geometry file " + v + ": the inventory list top agrees with the app's constant (" + (il != null ? (il.Y / 1009).ToString("0.0000") : "-") + ")");
-        var cell = FoundryPlace.Cell(rg, "ascend", L(0), 0, 1920, 1009, 1009); var vw = rg.Rect("ascend.list", 1920, 1009, 1009);
-        Check(cell != null && cell.Mark.Kind == "box" && cell.Mark.X >= vw.X - 1 && cell.Mark.X + cell.Mark.W <= vw.Right + 1 && cell.Mark.Y >= vw.Y - 1, "the site's geometry file " + v + ": the first Ascension cell sits inside the list");
-        // the filter pop-up: its frames sit to the right of the filter button, the set cell inside the set grid
-        if (rg.Has("filter.root")) {
-          var fbtn = rg.Rect("ascend.filter", 1920, 1009, 1009);
-          var pstep = new LocateStep { Kind = LocateKind.AscendFilter, Missing = new[] { "suit" }, FilterGo = "suitRow" };
-          var pf = LocateFrames.For(pstep, item, null, null, rg, 1920, 1009, 1009);
-          Check(pf != null && pf.Target == "filter.suitOpen" && !pf.Clickable && pf.Mark.X >= fbtn.Right - 1 && pf.Mark.Y > 0, "pop-up: the set row's button sits right of the filter button, never clickable");
-          pstep.FilterGo = "reset"; pf = LocateFrames.For(pstep, item, null, null, rg, 1920, 1009, 1009); Check(pf != null && pf.Target == "filter.reset" && pf.Mark.X >= fbtn.Right - 1, "pop-up: «Сбросить» frame");
-          pstep.FilterGo = "suitTab"; pstep.SuitTab = 1; var tab1 = LocateFrames.For(pstep, item, null, null, rg, 1920, 1009, 1009); pstep.SuitTab = 0; var tab0 = LocateFrames.For(pstep, item, null, null, rg, 1920, 1009, 1009);
-          Check(tab0 != null && tab1 != null && tab1.Mark.X > tab0.Mark.X && tab1.Mark.Y == tab0.Mark.Y, "pop-up: the 3-piece tab is right of the 2-piece tab");
-          var prs = new RecastScreen { FilterSuitGrid = new RFX.ListRead { ScrollY = 0, Cols = 2, RowUnits = 42, First = 0, Last = 17 } };
-          pstep.FilterGo = "suitCell"; pstep.SuitIndex = 0; var c0 = LocateFrames.For(pstep, item, prs, null, rg, 1920, 1009, 1009);
-          pstep.SuitIndex = 3; var c3 = LocateFrames.For(pstep, item, prs, null, rg, 1920, 1009, 1009);
-          Check(c0 != null && c3 != null && !c0.Clickable && c3.Mark.X > c0.Mark.X && c3.Mark.Y > c0.Mark.Y, "pop-up: set cells fill the grid two per row (index 3 = second row, right column)");
-          prs.FilterSuitGrid = null; pstep.SuitIndex = 3; var fb = LocateFrames.For(pstep, item, prs, null, rg, 1920, 1009, 1009); Check(fb != null && fb.Target == "ascend.filter", "pop-up: set grid unreadable -> only the filter button is pointed at");
-        }
-        var ab = LocateFrames.For(new LocateStep { Kind = LocateKind.AscendReady }, item, null, null, rg, 1920, 1009, 1009); var abr = rg.Rect("ascend.button", 1920, 1009, 1009);
-        Check(ab != null && ab.Mark.H < abr.H - 5 && ab.Mark.Y > abr.Y && ab.Mark.Y + ab.Mark.H < abr.Bottom, "«Вознести»: the frame hugs the visible picture, inside the image rectangle");
-        var t3 = FoundryPlace.Tab(rg, "ascend", null, 1920, 1009, 1009); Check(t3 != null && t3.X > 1920 / 2 && t3.Right <= 1920 + 10, "the site's geometry file " + v + ": the Ascension tab is at the right edge");
-      }
-      Check(n > 0, "the site has geometry files");
-    } else Console.WriteLine("  (no ../wardsage-web: the site's geometry files not checked)");
-  }
-
-  // the recast path through the card's gem button, the gem screen's function list, the item's mark on the inventory's scroll bar
-  static void LocateGemAndListTests() {
-    Console.WriteLine("Locate: card button, gem function rows and steps, the list's scroll bar mark");
-    // function rows: the config order, locked functions drop out
-    Eq(0, GemRows.Index(7), "gem rows: Recast is the first row");
-    Eq(1, GemRows.Index(8), "gem rows: Advanced Recast the second");
-    Eq(2, GemRows.Index(5), "gem rows: Refine the third");
-    Eq(8, GemRows.Index(4), "gem rows: the last function is the ninth row");
-    Eq(-1, GemRows.Index(99), "gem rows: an unknown function is not in the list");
-    Eq(0, GemRows.Index(8, new[] { 7 }), "gem rows: Recast locked -> Advanced Recast moves up to the first row");
-    Eq(-1, GemRows.Index(7, new[] { 7 }), "gem rows: a locked function has no row");
-    Eq(7, GemRows.FuncOfQuality(6), "gem func: mythic -> Recast"); Eq(7, GemRows.FuncOfQuality(10), "gem func: variant of mythic's table row (10) -> Recast");
-    Eq(8, GemRows.FuncOfQuality(8), "gem func: ancient mythic -> Advanced Recast"); Eq(8, GemRows.FuncOfQuality(11), "gem func: 11 -> Advanced Recast");
-    Eq(8, GemRows.FuncOfQuality(12), "gem func: 12 -> Advanced Recast"); Eq(8, GemRows.FuncOfQuality(13), "gem func: 13 -> Advanced Recast");
-    Eq(0, GemRows.FuncOfQuality(0), "gem func: quality unknown -> either function"); Eq(0, GemRows.FuncOfQuality(3), "gem func: a lower quality has no recast");
-
-    // steps on the gem screen: the function the item needs; done as soon as it is chosen (no press of «Улучшить» waited for)
-    var mythic = LocItem(777, 4, 720100, 12, 5, 7, 9, 3); mythic.Quality = 6;
-    var ancient = LocItem(778, 4, 720100, 12, 5, 7, 9, 3); ancient.Quality = 8;
-    var rq = new LocateRequest { Id = "g1", Purpose = "recast", Item = mythic, HeroUid = 0 };
-    var ra = new LocateRequest { Id = "g2", Purpose = "recast", Item = ancient, HeroUid = 0 };
-    var gm = new RecastScreen { GemOpen = true, GemSel = 777, GemFunc = -1 };
-    var st = LocateGuide.Next(rq, null, gm, null, 8, 1);
-    Check(st.Kind == LocateKind.GemFunction && st.Func == 7 && !st.WrongFunc, "gem step: mythic, no function chosen -> «Преобразование»");
-    gm.GemFunc = 8; st = LocateGuide.Next(rq, null, gm, null, 8, 1);
-    Check(st.Kind == LocateKind.GemFunction && st.Func == 7 && st.WrongFunc, "gem step: mythic with Advanced Recast chosen -> still choosing, the other function is named");
-    gm.GemFunc = 7; st = LocateGuide.Next(rq, null, gm, null, 8, 1);
-    Check(st.Kind == LocateKind.Done && st.OnGem && st.Func == 7, "gem step: mythic with Recast chosen -> done at once");
-    gm.GemSel = 778; gm.GemFunc = 7; st = LocateGuide.Next(ra, null, gm, null, 8, 1);
-    Check(st.Kind == LocateKind.GemFunction && st.Func == 8 && st.WrongFunc, "gem step: ancient mythic with Recast chosen -> not done, «Продв. преобразование» is named");
-    gm.GemFunc = 8; st = LocateGuide.Next(ra, null, gm, null, 8, 1);
-    Check(st.Kind == LocateKind.Done && st.OnGem && st.Func == 8, "gem step: ancient mythic with Advanced Recast chosen -> done at once");
-    gm.GemFunc = 1; st = LocateGuide.Next(ra, null, gm, null, 8, 1);
-    Check(st.Kind == LocateKind.GemFunction && !st.WrongFunc, "gem step: a gem enhancement chosen -> choose the recast (not 'the other recast')");
-    gm.GemFunc = 8; gm.GemSel = 5; gm.GemList = new long[] { 5, 778 }; st = LocateGuide.Next(ra, null, gm, null, 8, 1);
-    Check(st.Kind == LocateKind.GemPick && st.Pos == 2, "gem step: the function is chosen but another item is on the screen -> pick the item in the pop-up");
-    // the card: both buttons for a worn item, the gem button alone otherwise
-    var invS = new InventoryScreen { Open = true, EquipTab = true, Uids = new List<long>(new long[] { 777 }), Current = 777 };
-    st = LocateGuide.Next(rq, invS, null, null, 8, 1); Check(st.Kind == LocateKind.Selected && !st.Worn, "card step: an item that is not worn -> the gem button is alone");
-    st = LocateGuide.Next(new LocateRequest { Id = "g3", Purpose = "recast", Item = mythic, HeroUid = 200 }, invS, null, null, 8, 1); Check(st.Kind == LocateKind.Selected && st.Worn, "card step: a worn item -> both buttons");
-
-    // frames on a fixture: the gem rows and the button
-    const double W = 2000, H = 1000, U = 1000;
-    var j = "{\"game\":\"" + GeoGame + "\",\"v\":1,\"rects\":{" + string.Join(",", new[] {
-      GeoBox("gem.list", "L:0.1", "L:0.58", "T:0.2", "T:0.7", 0.48, 0.5), GeoBox("gem.cell", "L:0", "L:0.45", "T:0.3", "T:0.4", 0.45, 0.1),
-      GeoBox("gem.button", "C:-0.17", "C:0.17", "M:0.345", "M:0.455", 0.34, 0.11),
-      GeoBox("inventory.cardLeft", "R:-0.48", "R:-0.26", "B:-0.1", "B:-0.02", 0.22, 0.08), GeoBox("inventory.cardSolo", "R:-0.37", "R:-0.15", "B:-0.1", "B:-0.02", 0.22, 0.08),
-      GeoBox("inventory.scrollbar", "L:0.8", "L:0.815", "T:0.2", "T:0.8", 0.015, 0.6), GeoBox("inventory.listView", "L:0.1", "L:0.8", "T:0.2", "T:0.75", 0.7, 0.55) })
-      + "},\"grids\":{\"gem.list\":{\"cols\":1,\"lineSize\":110,\"padding\":[0,0,0,0]}}}";
-    var g = GameGeometry.Parse(j, GeoGame);
-    var f7 = LocateFrames.For(new LocateStep { Kind = LocateKind.GemFunction, Func = 7 }, mythic, new RecastScreen { GemOpen = true }, null, g, W, H, U);
-    var f8 = LocateFrames.For(new LocateStep { Kind = LocateKind.GemFunction, Func = 8 }, ancient, new RecastScreen { GemOpen = true }, null, g, W, H, U);
-    double pitch = 110.0 / 640 * U;
-    Check(f7 != null && f8 != null && f7.Mark.Kind == "box" && !f7.Clickable, "gem frame: the function's row is framed, a hint only");
-    Check(Math.Abs((f7.Mark.Y) - (200 + (pitch - 100) / 2)) <= 1 && Math.Abs(f8.Mark.Y - f7.Mark.Y - pitch) <= 1 && f7.Mark.H == 100, "gem frame: the rows follow each other by the list's line size (Recast row 1, Advanced Recast row 2)");
-    Check(Math.Abs(f7.Mark.X - (100 + (480 - 450) / 2.0)) <= 1 && f7.Mark.W == 450, "gem frame: the row sits centred in the list's width");
-    var scr = new RecastScreen { GemOpen = true, GemFuncList = new RFX.ListRead { ScrollY = 220, Cols = 1, RowUnits = 110, First = 2, Last = 6 } };
-    var f7s = LocateFrames.For(new LocateStep { Kind = LocateKind.GemFunction, Func = 7 }, mythic, scr, null, g, W, H, U);
-    Check(f7s != null && f7s.Mark.Kind == "up" && f7s.Mark.Rows >= 1, "gem frame: the list scrolled past the row -> the pill says which way");
-    scr.GemFuncList.ScrollY = 110; var f8s = LocateFrames.For(new LocateStep { Kind = LocateKind.GemFunction, Func = 8 }, ancient, scr, null, g, W, H, U);
-    Check(f8s != null && Math.Abs(f8s.Mark.Y - (200 + (pitch - 100) / 2)) <= 1, "gem frame: the list's own scroll moves the rows (one row down = the second function is where the first was)");
-    Check(LocateFrames.For(new LocateStep { Kind = LocateKind.GemFunction, Func = 7 }, mythic, null, null, null, W, H, U) == null, "gem frame: no geometry -> none");
-    var fb = LocateFrames.For(new LocateStep { Kind = LocateKind.Done, OnGem = true, Func = 7 }, mythic, new RecastScreen(), null, g, W, H, U);
-    var br = g.Rect("gem.button", W, H, U);
-    Check(fb != null && fb.Target == "gem.button" && !fb.Clickable && fb.Mark.X == (int)Math.Round(br.X) && fb.Mark.W == (int)Math.Round(br.W), "gem frame: done -> «Улучшить» is framed, never clicked");
-    var fw = LocateFrames.For(new LocateStep { Kind = LocateKind.Selected, Worn = true }, mythic, null, null, g, W, H, U);
-    var fs2 = LocateFrames.For(new LocateStep { Kind = LocateKind.Selected, Worn = false }, mythic, null, null, g, W, H, U);
-    Check(fw != null && fs2 != null && fw.Target == "inventory.cardLeft" && fs2.Target == "inventory.cardSolo" && fs2.Mark.X > fw.Mark.X, "card frame: worn = left of the row, not worn = the centred button");
-    Check(fw.Mark.Y + fw.Mark.H == (int)Math.Round(H - 0.02 * U) || Math.Abs(fw.Mark.Y + fw.Mark.H - (H - 0.02 * U)) <= 1, "card frame: it sits on the card's bottom edge");
-
-    // the item's mark on the list's scroll bar: the bar is 600 px, the content 20 rows of 100 + 12 padding twice
-    double pad = 12, vt = 200, p100 = 100;
-    var mk = LocateFrames.ListMarker(g, vt + pad, vt, pad, p100, 20, 20, W, H, U);   // scrolled to the top, the item in the last row
-    double total = 20 * p100 + 2 * pad;
-    Check(mk != null && Math.Abs(mk[0] - (0.8 + 0.0075) * U) < 1 && mk[1] == 200 && mk[2] == 800, "list mark: on the bar's middle line, over the bar's whole height");
-    Check(Math.Abs(mk[3] - (200 + 600 * (pad + 19.5 * p100) / total)) < 0.5, "list mark: the dot at the item's share of the whole list (" + (mk != null ? mk[3].ToString("0.0") : "-") + ")");
-    Check(Math.Abs(mk[4] - 200) < 0.5 && Math.Abs(mk[5] - (200 + 600 * 550 / total)) < 0.5, "list mark: the bracket shows the part on the screen (top of the list)");
-    var mk1 = LocateFrames.ListMarker(g, vt + pad, vt, pad, p100, 20, 1, W, H, U);
-    Check(mk1[3] < mk[3] && Math.Abs(mk1[3] - (200 + 600 * (pad + 0.5 * p100) / total)) < 0.5, "list mark: the first row's dot is near the top");
-    var mk2 = LocateFrames.ListMarker(g, vt + pad - 500, vt, pad, p100, 20, 20, W, H, U);   // scrolled down by 500 px
-    Check(Math.Abs(mk2[4] - (200 + 600 * 500 / total)) < 0.5 && Math.Abs(mk2[3] - mk[3]) < 0.01, "list mark: scrolling moves the bracket, not the item's dot");
-    Check(LocateFrames.ListMarker(g, vt + pad, vt, pad, p100, 20, 21, W, H, U) == null && LocateFrames.ListMarker(g, vt + pad, vt, pad, p100, 20, 0, W, H, U) == null, "list mark: a row outside the list -> none");
-    Check(LocateFrames.ListMarker(null, vt + pad, vt, pad, p100, 20, 5, W, H, U) == null, "list mark: no geometry -> none (only the pill)");
-    {   // the storage cleanup's strip: the viewport's bracket and a dot for EACH target still to mark (a row of two targets = two dots)
-      var rowsT = new List<int> { 1, 5, 5, 20 };
-      var sv = LocateFrames.ListStrip(g, vt + pad - 500, vt, pad, p100, 20, rowsT, 20, W, H, U);
-      Check(sv != null && sv.Length == 7 + 2 * 3 && sv[6] == 1 && sv[8] == 1 && sv[10] == 2 && sv[12] == 1, "scroll strip: 4 targets, the two of one row merge into one marker with a count (" + (sv != null ? (sv.Length - 7).ToString() : "-") + ")");
-      var mkL = LocateFrames.ListMarker(g, vt + pad - 500, vt, pad, p100, 20, 20, W, H, U);
-      Check(sv != null && Math.Abs(sv[3] - mkL[3]) < 0.01 && Math.Abs(sv[4] - mkL[4]) < 0.01 && Math.Abs(sv[5] - mkL[5]) < 0.01 && Math.Abs(sv[7] - LocateFrames.ListMarker(g, vt + pad - 500, vt, pad, p100, 20, 1, W, H, U)[3]) < 0.01 && sv[7] > sv[1],
-        "scroll strip: the viewport's bracket and the lead dot as the single marker's; every marker at its row's share");
-      {   // 100 targets: clustered, at most 12 markers, all inside the bar, counts add up
-        var many = new List<int>(); for (int i = 1; i <= 20; i++) for (int jj = 0; jj < 5; jj++) many.Add(i);
-        var sm = LocateFrames.ListStrip(g, vt + pad, vt, pad, p100, 20, many, 1, W, H, U);
-        int nm = sm != null ? (sm.Length - 7) / 2 : -1, tot = 0; bool inside = sm != null, asc = true;
-        for (int i = 7; sm != null && i + 1 < sm.Length; i += 2) { tot += (int)sm[i + 1]; inside &= sm[i] >= sm[1] && sm[i] <= sm[2]; if (i > 7 && sm[i] < sm[i - 2]) asc = false; }
-        Check(sm != null && nm >= 1 && nm <= 12 && tot == 100 && inside && asc, "scroll strip: 100 targets -> " + nm + " markers (max 12), counts sum to 100, inside the bar");
-        var cl = LocateFrames.ClusterMarks(new List<double> { 100, 104, 109, 300 }, 50, 400);
-        Check(cl.Count == 2 && (int)cl[0][1] == 3 && (int)cl[1][1] == 1, "scroll strip: markers within 10 px merge");
-        var cl2 = LocateFrames.ClusterMarks(new List<double> { 0, 500 }, 50, 400);
-        Check(cl2[0][0] >= 50 && cl2[1][0] <= 400, "scroll strip: a marker is kept inside the bar");
-      }
-      Check(LocateFrames.ListStrip(g, vt + pad, vt, pad, p100, 20, new List<int>(), 1, W, H, U) == null && LocateFrames.ListStrip(null, vt + pad, vt, pad, p100, 20, rowsT, 1, W, H, U) == null, "scroll strip: no targets or no bar geometry -> none");
-    }
-
-    // the side scroll strip of a live list (ListStrip): view 200..800, 20 rows of 100 px, row 0's top now at the view's top
-    var ls0 = ListStrip.Of(500, 200, 800, 200, 100, 20, 19);
-    Check(ls0 != null && ls0[0] == 500 && ls0[1] == 200 && ls0[2] == 800, "list strip: the track beside the viewport, over its whole height");
-    Check(Math.Abs(ls0[3] - (200 + 600 * 1950.0 / 2000)) < 0.01 && Math.Abs(ls0[4] - 200) < 0.01 && Math.Abs(ls0[5] - (200 + 600 * 600.0 / 2000)) < 0.01, "list strip: the last row's dot near the bottom, the bracket the top 600 of 2000 px");
-    var ls1 = ListStrip.Of(500, 200, 800, 200 - 700, 100, 20, 19);   // scrolled down 700 px
-    Check(Math.Abs(ls1[4] - (200 + 600 * 700.0 / 2000)) < 0.01 && Math.Abs(ls1[5] - (200 + 600 * 1300.0 / 2000)) < 0.01 && Math.Abs(ls1[3] - ls0[3]) < 0.01, "list strip: the scroll moves the bracket, the dot stays on the item");
-    var ls2 = ListStrip.Of(500, 200, 800, 200 - 5000, 100, 20, 0);   // past the end: clamped inside the track
-    Check(Math.Abs(ls2[4] - (200 + 600 * 1400.0 / 2000)) < 0.01 && Math.Abs(ls2[5] - 800) < 0.01 && Math.Abs(ls2[3] - (200 + 600 * 50.0 / 2000)) < 0.01, "list strip: an overscroll stays on the track, the first row's dot at the top");
-    var ls3 = ListStrip.Of(500, 200, 800, 200, 100, 3, 1);   // a list shorter than the view: the bracket covers the track
-    Check(Math.Abs(ls3[4] - 200) < 0.01 && Math.Abs(ls3[5] - 800) < 0.01 && Math.Abs(ls3[3] - (200 + 150)) < 0.01, "list strip: a short list -> the whole track bracketed, the dot at the row's place");
-    Check(ListStrip.Of(500, 200, 800, 200, 100, 20, 20) == null && ListStrip.Of(500, 200, 800, 200, 100, 0, 0) == null && ListStrip.Of(500, 200, 800, double.NaN, 100, 20, 1) == null, "list strip: a row outside / no rows / no scroll -> none");
-    var lv0 = new GeoRect { X = 10, Y = 200, W = 300, H = 600 };
-    var lf0 = ListStrip.For(lv0, 200, 100, 3, 59, 58, 1000, 1000);   // 59 items in 3 columns: 20 rows, the last item in row 19
-    Check(lf0 != null && Math.Abs(lf0[0] - (310 + 12)) < 0.01 && Math.Abs(lf0[3] - ls0[3]) < 0.01, "list strip: a grid's item index -> its row (index / columns), the track 0.012 H right of the view");
-    Check(ListStrip.For(lv0, 200, 100, 3, 59, 59, 1000, 1000) == null && Math.Abs(ListStrip.For(lv0, 200, 100, 3, 59, 0, 315, 1000)[0] - 309) < 0.01, "list strip: an index past the list -> none; the track kept inside the client");
-    // the hero screen's artifact list (ArtFrames.Strip): the same rows as its card frames (ArtFrames.Cell)
-    var arl = new RFX.ListRead { ScrollY = 232, Cols = 3, RowUnits = 116 };
-    var ars = ArtFrames.Strip(null, ArtEquipFrames.KeyList, arl, 30, 29, 3, 116, W, H, U);
-    var arv = ArtFrames.Rect(null, ArtEquipFrames.KeyList, W, H, U); double ak = U / GameGeometry.CanvasH;
-    Check(ars != null && Math.Abs(ars[1] - arv.Y) < 0.01 && Math.Abs(ars[2] - arv.Bottom) < 0.01, "art list strip: the track over the artifact list's viewport");
-    Check(Math.Abs(ars[3] - (arv.Y + arv.H * 9.5 / 10)) < 0.01 && Math.Abs(ars[4] - (arv.Y + arv.H * Math.Min(1, 232 * ak / (10 * 116 * ak)))) < 0.01, "art list strip: 30 cards = 10 rows, the last card's dot in row 10, the bracket at the scroll (2 rows down)");
-    Check(ArtFrames.Strip(null, ArtEquipFrames.KeyList, new RFX.ListRead(), 30, 1, 3, 116, W, H, U) == null && ArtFrames.Strip(null, ArtEquipFrames.KeyList, arl, 30, 30, 3, 116, W, H, U) == null, "art list strip: no scroll reading / an index past the list -> none");
-    Check(FoundryPlace.Strip(null, "ascend", arl, 30, 1, W, H, U) == null, "ascension strip: no geometry -> none (the pill alone)");
-    // the find step's still list: framed once the scroll has not moved for ScrollStill.StillMs
-    var ss = new ScrollStill();
-    Check(ss.Note(100, 1000), "scroll still: the first reading counts as still (the card framed at once)");
-    Check(!ss.Note(140, 1100) && !ss.Note(180, 1200) && !ss.Note(180.3, 1200 + ScrollStill.StillMs - 1) && ss.Note(180, 1200 + ScrollStill.StillMs), "scroll still: moving -> the steady plate; held StillMs -> still");
-    Check(ss.Note(double.NaN, 1300), "scroll still: no reading -> still (nothing to wait for)");
-    ss.Reset(); Check(ss.Note(5, 9000), "scroll still: after a reset the next reading is still again");
-
-    // the real file: the card's button sits on the card's bottom edge at any window height, the bar next to the list
-    string real = Path.Combine(WebRoot(), "data", "app-geometry");
-    if (Directory.Exists(real)) foreach (var p in Directory.GetFiles(real, "*.json")) {
-      string v = Path.GetFileNameWithoutExtension(p);
-      var rg = GameGeometry.Parse(File.ReadAllText(p, Encoding.UTF8), v);
-      if (rg == null) continue;
-      bool all = true; foreach (var k in new[] { "inventory.cardSolo", "inventory.listView", "inventory.scrollbar", "gem.list", "gem.cell", "gem.button" }) if (!rg.Has(k)) { all = false; Console.WriteLine("    missing " + k); }
-      Check(all && rg.Grid("gem.list") != null, "the site's geometry file " + v + " has the card's solo button, the list's scroll bar and the gem screen");
-      foreach (var hh in new[] { 640.0, 1009.0, 1440.0 }) {
-        double ww = hh * 16 / 9, uu = hh;
-        var l = rg.Rect("inventory.cardLeft", ww, hh, uu); var r = rg.Rect("inventory.cardRight", ww, hh, uu); var so = rg.Rect("inventory.cardSolo", ww, hh, uu);
-        Check(Math.Abs(l.Bottom - (hh - 12.9 / 640 * uu)) < 1 && Math.Abs(so.CY - l.CY) < 0.5, "the site's geometry file " + v + ": the card's buttons sit on the card's bottom edge at " + hh + " px (" + l.Bottom.ToString("0.0") + ")");
-        Check(Math.Abs(so.CX - (l.X + r.Right) / 2) < 1.5, "the site's geometry file " + v + ": the lone button is in the middle of the pair's span");
-        var bar = rg.Rect("inventory.scrollbar", ww, hh, uu); var lv = rg.Rect("inventory.listView", ww, hh, uu);
-        Check(bar != null && lv != null && Math.Abs(bar.Y - lv.Y) < 1 && bar.X > lv.Right - 25 && bar.X < lv.Right + 25 && bar.Bottom > lv.Bottom - 5, "the site's geometry file " + v + ": the scroll bar runs beside the list at its right edge");
-        var gl = rg.Rect("gem.list", ww, hh, uu); var gb = rg.Rect("gem.button", ww, hh, uu);
-        Check(gl != null && gb != null && gb.CX > gl.CX && gb.Y > hh * 0.7 && gb.CX > ww * 0.5 && gb.CX < ww * 0.85, "the site's geometry file " + v + ": the function list is left of «Улучшить» (bottom right of the centre)");
-        var gf = FoundryPlace.Cell(rg, "gem", new RFX.ListRead { ScrollY = 0, Cols = 1, RowUnits = 110 }, GemRows.Index(8), ww, hh, uu);
-        Check(gf != null && gf.Mark.Kind == "box" && gf.Mark.Y >= gl.Y && gf.Mark.Y + gf.Mark.H <= gl.Bottom + 1, "the site's geometry file " + v + ": the second function's row is inside the list at the top");
-      }
-    }
-  }
-
-  // the pilot's Foundry steps (src/LocatePilot.cs) on the fixture geometry
-  static void LocateFoundryPilotTests() {
-    Console.WriteLine("Locate pilot in the Foundry (tabs, slot, list cell: clicks; the final buttons and the filter: never)");
-    const double W = 2000, H = 1000, U = 1000;
-    var g = GameGeometry.Parse(GeoJson(), GeoGame);
-    var item = LocItem(777, 3, 720100, 12, 5, 7, 9, 3);
-    Func<double, RFX.ListRead> L = s => new RFX.ListRead { ScrollY = s, Cols = 5, RowUnits = 108, First = 0, Last = 14 };
-    Func<double, RecastScreen> R = s => new RecastScreen { SublimingOpen = true, AscendShown = true, CurType = 2, AscendList = L(s) };
-    Func<LocateStep, RecastScreen, LocateView> V = (st, rs) => new LocateView { NowMs = 0, Foreground = true, W = W, H = H, U = U, Step = st, Cols = 8, Geometry = g, Rs = rs, Item = item,
-      Inv = new InventoryScreen { Open = true, EquipTab = true }, OtherFormOpen = rs != null && rs.SublimingOpen };
-    string why; LocateView v; LocatePilot p; LocateMove m;
-
-    // «Литейная»
-    v = V(new LocateStep { Kind = LocateKind.OpenFoundry }, null); v.OtherFormOpen = false;
-    Eq(LocateTodo.FoundryButton, LocateAuto.Decide(v, out why), "foundry auto: the inventory's «Литейная» -> click it");
-    p = new LocatePilot(); m = p.Step(v); var wk = g.Rect("inventory.workshop", W, H, U);
-    Check(m.State == "work" && m.Action.Kind == AutoKind.Click && Math.Abs(m.Action.X - wk.CX) < 1 && Math.Abs(m.Action.Y - wk.CY) < 1, "foundry auto: ... at the button's centre from the geometry");
-    // the hero gear screen on top (live 2026-10-29: the equip helper left it open with a slot's gear list): back to the city first, never its «Литейная»
-    v = V(new LocateStep { Kind = LocateKind.OpenFoundry, OnGear = true }, null); v.OtherFormOpen = false; v.HeroScreenOpen = true; v.Inv = null;
-    Eq(LocateTodo.BackToCity, LocateAuto.Decide(v, out why), "foundry auto: the hero gear screen on top -> back to the city, not «Литейная»");
-    p = new LocatePilot(); m = p.Step(v); var hgeo = new HeroGeometry(); wk = g.Rect("hero.workshop", W, H, U);
-    Check(m.State == "work" && m.Todo == LocateTodo.BackToCity && m.Action.Kind == AutoKind.Click && Math.Abs(m.Action.X - hgeo.BackX * U) < 1 && Math.Abs(m.Action.Y - hgeo.BackY * U) < 1, "foundry auto: ... the first click is the hero screen's back arrow");
-    Check(!(Math.Abs(m.Action.X - wk.CX) < 1 && Math.Abs(m.Action.Y - wk.CY) < 1), "foundry auto: ... not the hero screen's «Литейная»");
-    m = p.Step(v); Check(m.Action.Kind == AutoKind.None, "foundry auto: ... then it waits for the screen to change");
-    v.NowMs = LocatePilot.AfterBackMs + 1; m = p.Step(v); Check(m.Todo == LocateTodo.BackToCity && m.Action.Kind == AutoKind.Click, "foundry auto: ... still the hero screen (the gear list closed): the back arrow again");
-    // owner 2026-11-05 (build 578): the hero gear screen shows its own round «Литейная» (the game's memory, live rect) -> pressed straight, no trip to the inventory
-    v = V(new LocateStep { Kind = LocateKind.OpenFoundry, OnGear = true }, null); v.OtherFormOpen = false; v.HeroScreenOpen = true; v.Inv = null; v.HeroFoundryLive = true; v.HeroFoundryX = 296; v.HeroFoundryY = 243;
-    Eq(LocateTodo.HeroFoundry, LocateAuto.Decide(v, out why), "foundry auto: the gear screen's own «Литейная» is live -> click it, no back to the city");
-    p = new LocatePilot(); m = p.Step(v);
-    Check(m.State == "work" && m.Todo == LocateTodo.HeroFoundry && m.Action.Kind == AutoKind.Click && Math.Abs(m.Action.X - 296) < 0.5 && Math.Abs(m.Action.Y - 243) < 0.5, "foundry auto: ... the first click is the live button's centre");
-    v.HeroFoundryLive = false; Eq(LocateTodo.BackToCity, LocateAuto.Decide(v, out why), "foundry auto: the button is not shown by the memory (a gear list over it) -> back to the city, then the inventory");
-    v.HeroFoundryLive = true; v.Step = new LocateStep { Kind = LocateKind.OpenFoundry, OnGear = false }; v.Inv = null;
-    Eq(LocateTodo.BackToCity, LocateAuto.Decide(v, out why), "foundry auto: the live button counts only on the gear tab (step OnGear)");
-    {   // the gate: the hero screen's gear tab, nothing over the button
-      var hg1 = new ClickGate();
-      var hsc = new ScreenState { Kind = ScreenKind.HeroScreen, Hero = 7, HeroTab = 3, HeroSlot = -1 };
-      var hrq = new ClickRequest { Owner = ClickOwner.Locate, Target = ClickTarget.HeroFoundry, AutoOn = true, Front = true, X = 296, Y = 243 };
-      Check(hg1.Check(hrq, hsc, 10000).Allowed, "gate: the hero gear screen's «Литейная» is allowed on the gear tab");
-      hsc.HeroTab = 0; Check(!new ClickGate().Check(hrq, hsc, 10100).Allowed, "gate: ... not on another hero tab");
-      hsc.HeroTab = 3; hsc.GearOpenMem = Mem3.Yes; Check(!new ClickGate().Check(hrq, hsc, 10200).Allowed, "gate: ... not with the gear filter open over it (closed first)");
-    }
-    v = V(new LocateStep { Kind = LocateKind.OpenFoundry, OnGear = true }, null); v.OtherFormOpen = false; v.HeroScreenOpen = true; v.Geometry = null;
-    Eq(LocateTodo.Hint, LocateAuto.Decide(v, out why), "foundry auto: the hero gear screen without the geometry -> a hint, no click");
-    v = V(new LocateStep { Kind = LocateKind.OpenFoundry }, null); v.OtherFormOpen = true; Eq(LocateTodo.Hint, LocateAuto.Decide(v, out why), "foundry auto: the gem screen on top -> no click");
-    v = V(new LocateStep { Kind = LocateKind.OpenFoundry }, null); v.OtherFormOpen = false; v.Geometry = null; Eq(LocateTodo.Hint, LocateAuto.Decide(v, out why), "foundry auto: no geometry -> a hint");
-    v = V(new LocateStep { Kind = LocateKind.OpenFoundry }, null); v.OtherFormOpen = false; v.Inv.EquipTab = false; Eq(LocateTodo.Stop, LocateAuto.Decide(v, out why), "foundry auto: «Литейная» is not on this inventory tab -> stop");
-
-    // the tab
-    v = V(new LocateStep { Kind = LocateKind.OpenAscendTab }, new RecastScreen { SublimingOpen = true, CurType = 0 });
-    Eq(LocateTodo.AscendTab, LocateAuto.Decide(v, out why), "foundry auto: the Foundry on another tab -> «Вознесение»");
-    p = new LocatePilot(); m = p.Step(v); var tab = FoundryPlace.Tab(g, "ascend", null, W, H, U);
-    Check(m.Action.Kind == AutoKind.Click && Math.Abs(m.Action.X - tab.CX) < 1 && Math.Abs(m.Action.Y - tab.CY) < 1, "foundry auto: ... at the third tab's centre");
-    v.FoundryTabs = new[] { true, false, true, true, true }; p = new LocatePilot(); m = p.Step(v); tab = FoundryPlace.Tab(g, "ascend", v.FoundryTabs, W, H, U);
-    Check(Math.Abs(m.Action.Y - tab.CY) < 1, "foundry auto: ... a hidden tab before it moves the click up");
-    v = V(new LocateStep { Kind = LocateKind.OpenAscendTab }, new RecastScreen { SublimingOpen = false }); Eq(LocateTodo.Hint, LocateAuto.Decide(v, out why), "foundry auto: the Foundry is not shown -> no click");
-
-    // the slot tab; the filter is never touched
-    v = V(new LocateStep { Kind = LocateKind.AscendFilter, Missing = new[] { "slot", "subs" } }, R(0));
-    Eq(LocateTodo.SlotTab, LocateAuto.Decide(v, out why), "foundry auto: the slot is not set -> the slot tab");
-    p = new LocatePilot(); m = p.Step(v); var st3 = g.Rect("ascend.slot.3", W, H, U); Check(Math.Abs(m.Action.X - st3.CX) < 1 && Math.Abs(m.Action.Y - st3.CY) < 1, "foundry auto: ... the item's slot (3)");
-    foreach (var miss in new[] { new[] { "suit" }, new[] { "main" }, new[] { "subs" }, new[] { "main", "subs" } }) {
-      v = V(new LocateStep { Kind = LocateKind.AscendFilter, Missing = miss }, R(0));
-      Eq(LocateTodo.Hint, LocateAuto.Decide(v, out why), "foundry auto: missing " + string.Join("+", miss) + " -> the filter is the player's, no click");
-    }
-
-    // the cell: click when in view, drag when not, stop when the list does not move
-    v = V(new LocateStep { Kind = LocateKind.AscendPick, Pos = 8 }, R(0));
-    Eq(LocateTodo.AscendCell, LocateAuto.Decide(v, out why), "foundry auto: the item in the Ascension list -> its cell");
-    p = new LocatePilot(); m = p.Step(v);
-    Check(m.Action == null || m.Action.Kind == AutoKind.None, "foundry auto: ... in view: the list read once more first (two equal reads before the cell click)");
-    v.NowMs += LocatePilot.CellReadMs; m = p.Step(v);
-    Check(m.Action.Kind == AutoKind.Click && Math.Abs(m.Action.X - 350) <= 1 && Math.Abs(m.Action.Y - (387.5 + 81.25)) <= 1, "foundry auto: ... in view: one click on the cell's centre");
-    v = V(new LocateStep { Kind = LocateKind.AscendPick, Pos = 41 }, R(0)); p = new LocatePilot(); m = p.Step(v);
-    Check(m.Action.Kind == AutoKind.Drag && m.Action.DY < 0 && m.Action.Y > 200 && m.Action.Y + m.Action.DY < 700 && m.Action.Y + m.Action.DY > 200, "foundry auto: ... far below: a drag up inside the list (later rows come in)");
-    v = V(new LocateStep { Kind = LocateKind.AscendPick, Pos = 8 }, R(640)); p = new LocatePilot(); m = p.Step(v);
-    Check(m.Action.Kind == AutoKind.Drag && m.Action.DY > 0, "foundry auto: ... far above: a drag down");
-    // a fake list: the pilot scrolls to the item, then clicks it once
-    {
-      double scroll = 0; int drags = 0, clicks = 0; bool clicked = false; p = new LocatePilot(); long t = 0; string trace = "";
-      for (int i = 0; i < 80 && !clicked; i++, t += 2500) {
-        v = V(new LocateStep { Kind = LocateKind.AscendPick, Pos = 43 }, R(scroll)); v.NowMs = t;
-        v.Step.Pos = 43; m = p.Step(v);
-        if (m.State == "stopped") { trace = m.Why; break; }
-        if (m.Action.Kind == AutoKind.Drag) { drags++; scroll = Math.Max(0, Math.Min(900, scroll - m.Action.DY * 640 / U * 0.9)); }   // the content follows the pointer (a bit less), the list ends at 900
-        else if (m.Action.Kind == AutoKind.Click) { clicks++; clicked = true; }
-      }
-      Check(clicked && clicks == 1 && drags >= 1 && drags < 12, "foundry auto: scrolls to the item by dragging (" + drags + " drags), then clicks it once (" + clicks + ", " + trace + ")");
-    }
-    p = new LocatePilot(); { int still = 0; long t = 0; string last = "";
-      for (int i = 0; i < 10; i++, t += 2500) { v = V(new LocateStep { Kind = LocateKind.AscendPick, Pos = 41 }, R(100)); v.NowMs = t; m = p.Step(v); last = m.State + "/" + m.Why; if (m.Action.Kind == AutoKind.Drag) still++; if (m.State == "stopped") break; }
-      Check(p.Stopped && p.Reason == "lost" && still <= 3, "foundry auto: a list that does not move on drags stops the pilot (" + still + " drags, " + last + ")"); }
-    // F7 (live 10:53:31-49, record 105430-9b0235: index 19 of 20, the list at its end): the drags move no scroll, the layout cuts the cell, but the game's own cell stands whole in view: the click goes on it, the search is not 'lost'
-    {
-      p = new LocatePilot(); int drags2 = 0, clicks2 = 0; long t = 0; string last = ""; bool stopped = false;
-      for (int i = 0; i < 12; i++, t += 2500) {
-        v = V(new LocateStep { Kind = LocateKind.AscendPick, Pos = 41 }, R(100)); v.NowMs = t;
-        if (i >= 2) { v.LiveSeen = true; v.LiveCell = true; v.LiveX = 162 + 17; v.LiveY = 152 + 17; v.LiveInView = 1; }   // from the third read on the live cell is in view (the list coasted into place)
-        m = p.Step(v); last = m.State + "/" + m.Why;
-        if (m.Action.Kind == AutoKind.Drag) drags2++; if (m.Action.Kind == AutoKind.Click) { clicks2++; Check(Math.Abs(m.Action.X - 179) < 1 && Math.Abs(m.Action.Y - 169) < 1, "F7: the click is on the live cell's centre (" + m.Action.X + "," + m.Action.Y + ")"); break; }
-        if (m.State == "stopped") { stopped = true; break; }
-      }
-      Check(clicks2 == 1 && !stopped && drags2 <= 2, "F7: two drags that moved no scroll, then the live cell in view: ONE click on it, no 'lost' (" + drags2 + " drags, " + clicks2 + " clicks, " + last + ")");
-      // without a live cell the stop stays, and carries its diagnosis (memory: cells read or not, scroll, layout, drags)
-      p = new LocatePilot(); t = 0; string tr = "";
-      for (int i = 0; i < 10; i++, t += 2500) { v = V(new LocateStep { Kind = LocateKind.AscendPick, Pos = 41 }, R(100)); v.NowMs = t; v.LiveSeen = true; v.LiveWhy = "no cell of the item"; m = p.Step(v); tr += p.Trace; if (m.State == "stopped") break; }
-      Check(p.Stopped && p.Reason == "lost" && tr.IndexOf("diagnosis: live cells read, target cell not usable (no cell of the item)", StringComparison.Ordinal) >= 0 && tr.IndexOf("unmoved drags 2", StringComparison.Ordinal) >= 0, "F7: a 'lost' stop names its reason (" + tr.Substring(Math.Max(0, tr.IndexOf("diagnosis", StringComparison.Ordinal))) + ")");
-    }
-    // the item is in the long all-slots list and off the screen: the slot tab first, then the scroll and the cell (the filter is never needed)
-    v = V(new LocateStep { Kind = LocateKind.AscendPick, Pos = 41, Scroll = "below", ScrollRows = 4, Missing = new[] { "slot" } }, R(0));
-    Eq(LocateTodo.SlotTab, LocateAuto.Decide(v, out why), "foundry auto: item in the list but off screen and the slot not set -> the slot tab first");
-    p = new LocatePilot(); m = p.Step(v);
-    Check(m.Action.Kind == AutoKind.Click && Math.Abs(m.Action.X - st3.CX) < 1 && Math.Abs(m.Action.Y - st3.CY) < 1, "foundry auto: ... the click is on the item's slot tab, not on the list");
-    v = V(new LocateStep { Kind = LocateKind.AscendPick, Pos = 8, Scroll = "visible", Missing = new[] { "slot" } }, R(0));
-    Eq(LocateTodo.AscendCell, LocateAuto.Decide(v, out why), "foundry auto: the item is on the screen already -> its cell, no slot tab");
-    v = V(new LocateStep { Kind = LocateKind.AscendPick, Pos = 41, Scroll = "below", ScrollRows = 4, Missing = new string[0] }, R(0));
-    Eq(LocateTodo.AscendCell, LocateAuto.Decide(v, out why), "foundry auto: the slot is set, the item is far below -> scroll to it");
-    v = V(new LocateStep { Kind = LocateKind.AscendLoading }, R(0)); Eq(LocateTodo.Hint, LocateAuto.Decide(v, out why), "foundry auto: the list is being read -> wait, no click");
-    v = V(new LocateStep { Kind = LocateKind.AscendFilter, Missing = new[] { "suit" }, FilterGo = "suitRow" }, R(0));
-    Eq(LocateTodo.Hint, LocateAuto.Decide(v, out why), "foundry auto: the pop-up's buttons are the player's");
-    v = V(new LocateStep { Kind = LocateKind.AscendPick, Pos = 8 }, new RecastScreen { SublimingOpen = true, AscendShown = true, CurType = 2, AscendList = new RFX.ListRead() });
-    Eq(LocateTodo.Hint, LocateAuto.Decide(v, out why), "foundry auto: the list's scroll is unreadable -> a hint");
-
-    // never clicked, whatever else is true: the final buttons, the card's button, the recast picks and every confirmation
-    foreach (LocateKind k in Enum.GetValues(typeof(LocateKind))) {
-      if (k == LocateKind.None || k == LocateKind.OpenInventory || k == LocateKind.OpenEquipTab || k == LocateKind.InList || k == LocateKind.OpenFoundry || k == LocateKind.OpenAscendTab || k == LocateKind.AscendPick) continue;
-      v = V(new LocateStep { Kind = k, Missing = new[] { "main" }, Pos = 8 }, R(0)); v.HeroScreenOpen = true; v.OtherFormOpen = false;
-      var todo = LocateAuto.Decide(v, out why);
-      Check(todo == LocateTodo.Hint, "foundry auto: step " + k + " stays a hint with the geometry (" + todo + ")");
-    }
-    // the player and the window come first
-    v = V(new LocateStep { Kind = LocateKind.OpenAscendTab }, new RecastScreen { SublimingOpen = true }); v.Foreground = false; p = new LocatePilot(); m = p.Step(v);
-    Check(m.State == "background" && m.Action.Kind == AutoKind.None, "foundry auto: the game is not in front -> no click");
-    v = V(new LocateStep { Kind = LocateKind.OpenAscendTab }, new RecastScreen { SublimingOpen = true }); v.UserBusy = true; m = p.Step(v); Check(m.State == "paused" && m.Action.Kind == AutoKind.None, "foundry auto: the player moves the mouse -> paused");
-  }
-
-  static void OwnButtonTests() {
-    Console.WriteLine("Own buttons over the game (record button vs the back arrow, off-screen points):");
-    var hg = new HeroGeometry();
-    // live 2026-10-29 (laptop, game window not maximized): Locate's HeroBack @39,28 started a recording instead of pressing the game's arrow
-    var hint = new HintGeometry(); var fg = new FilterGeometry(); var sg = new SellGeometry(); var lg = new ListGeometry();
-    foreach (double U in new[] { 600.0, 757.0, 1009.0, 1440.0 }) {
-      foreach (double asp in new[] { 16.0 / 9, 1.6, 4.0 / 3 }) {
-        double H = U, W = Math.Round(H * asp);
-        if (Ui.Unit(W, H) != U) continue;
-        int[] rb0 = OwnButtons.RecBox(W, H);
-        var one = new List<int[]> { rb0 };
-        int bx = (int)Math.Round(hg.BackX * U), by = (int)Math.Round(hg.BackY * U);
-        string at = "U " + U + " W " + W + ": ";
-        Check(!OwnButtons.Covers(one, bx, by, by), at + "the record button does not cover the back arrow");
-        Check(rb0[0] >= 0 && rb0[1] >= 0 && rb0[0] + rb0[2] <= W && rb0[1] + rb0[3] <= H, at + "the record button lies in the client area");
-        // every known target box: the gear screen's, the hero grid's, the filter, the sell screen's and the list's, left edge / centre anchored
-        var boxes = new List<int[]> { hint.Filter(W, H), hint.Replace(W, H), hint.Equip(W, H) };
-        for (int sl = 0; sl < 5; sl++) boxes.Add(hint.Slot(sl, W, H));
-        double hx = hg.ColX(0) * U, cw = hg.PitchX * U * 0.9;
-        boxes.Add(new[] { (int)(hx - cw / 2), (int)(hg.ViewTop * H), (int)(cw * 3), (int)((hg.ViewBottom - hg.ViewTop) * H) });                       // the hero grid
-        boxes.Add(new[] { (int)(lg.X0 * U), (int)(lg.ViewTop * H), (int)(lg.CellW * U), (int)((lg.ViewBottom - lg.ViewTop) * H) });                   // the list's first column
-        boxes.Add(new[] { (int)(sg.SellBtnX * U) - 4, (int)(sg.SellBtnY * U) - 4, 8, 8 });
-        var pts = new List<double[]> {
-          new[] { hg.BackX * U, hg.BackY * U },
-          new[] { hg.FunnelX * U, H - hg.FunnelDY * U },
-          new[] { hg.ClassX * U, hg.FilterRow0 * U }, new[] { hg.FactionX * U, hg.FilterRow0 * U },
-          new[] { W - hg.GearTabDX * U, hg.GearTabY * U },
-          new[] { W - hg.HeroesBtnDX * U, H - hg.HeroesBtnDY * U },
-          new[] { W / 2 + fg.MainCloseX * U, fg.CloseY * U }, new[] { W / 2 + fg.SideCloseX * U, fg.CloseY * U },
-          new[] { W / 2 + fg.ResetX * U, Ui.FromMiddle(fg.ResetY, W, H) }, new[] { W / 2 + fg.HideEquippedX * U, Ui.FromMiddle(fg.HideEquippedY, W, H) },
-          new[] { W / 2 + sg.ResetX * U, Ui.FromMiddle(sg.ResetY, W, H) }, new[] { W / 2 + sg.CloseX * U, sg.CloseY * U },
-        };
-        for (int pi = 0; pi < 5; pi++) pts.Add(new[] { W / 2 + (sg.PartX0 + pi * sg.PartPitch) * U, Ui.FromMiddle(sg.PartY, W, H) });
-        for (int bi = 0; bi < boxes.Count; bi++) {
-          var bb = boxes[bi];
-          bool hit = bb[0] < rb0[0] + rb0[2] && rb0[0] < bb[0] + bb[2] && bb[1] < rb0[1] + rb0[3] && rb0[1] < bb[1] + bb[3];
-          Check(!hit, at + "the record button misses known box #" + bi);
-        }
-        for (int pi = 0; pi < pts.Count; pi++) {
-          int px = (int)Math.Round(pts[pi][0]), py = (int)Math.Round(pts[pi][1]);
-          Check(!OwnButtons.Covers(one, px, py, py), at + "the record button misses known click point #" + pi);
-        }
-      }
-    }
-    int[] rb = OwnButtons.RecBox(1346, 757);
-    Check(rb[0] == 0 && rb[2] == 28, "record box at U 757: flush with the left edge, 25 + 3 px");
-    Check(Math.Abs(rb[1] + rb[2] / 2 - 757 / 2) <= 1, "record box centred at mid-height");
-    Check(OwnButtons.Covers(new List<int[]> { rb }, 10, 378, 378), "a point on it is covered");
-    Check(!OwnButtons.Covers(new List<int[]> { rb }, 39, 28, 28) && !OwnButtons.Covers(new List<int[]> { rb }, 60, 378, 378), "the back arrow's live point and points beside it are free");
-    Check(OwnButtons.Covers(new List<int[]> { new[] { 100, 100, 20, 20 } }, 105, 50, 300), "a drag crossing a part touches it");
-    Check(!OwnButtons.Covers(new List<int[]>(), 1, 1, 1) && !OwnButtons.Covers(null, 1, 1, 1), "no parts: nothing covered");
-    int[] desk = { 0, 0, 1366, 768 };
-    Check(OwnButtons.AllInside(desk, 39, 28, 28), "on the desktop");
-    Check(!OwnButtons.AllInside(desk, 1400, 28, 28) && !OwnButtons.AllInside(desk, 100, 700, 800) && !OwnButtons.AllInside(desk, -1, 5, 5), "off the desktop (a window larger than the screen): refused");
-  }
-
-  static void LocateTests() {
-    Console.WriteLine("Locate (\u00abНайти в игре\u00bb: request parsing, steps, list place):");
-    string body = "{\"ok\":true,\"plans\":[],\"locate\":{\"id\":\"l1\",\"purpose\":\"recast\",\"createdAt\":\"2026-10-12T10:00:00Z\",\"item\":{\"slot\":4,\"uid\":777,\"slotName\":\"Кольцо\"," +
-      "\"name\":\"Кольцо\",\"setId\":720100,\"setName\":\"Проклятие\",\"level\":16,\"stars\":6,\"icon\":\"Item_1\",\"heroUid\":214700000,\"heroName\":\"Байек\"," +
-      "\"main\":[{\"name\":\"Крит\",\"value\":\"64%\",\"stat\":12}],\"subs\":[{\"text\":\"АТК\",\"rolls\":2,\"stat\":5},{\"text\":\"СКР\",\"rolls\":1,\"stat\":7}]}}}";
-    var lr = PlansClient.Interpret(200, body, true);
-    Check(lr.Status == PlansStatus.Ok && lr.Locate != null && lr.Locate.Id == "l1" && lr.Locate.Purpose == "recast", "locate parsed");
-    Check(lr.Locate.Item != null && lr.Locate.Item.Uid == 777 && lr.Locate.Item.Slot == 4 && lr.Locate.Item.SetId == 720100, "locate item");
-    Check(lr.Locate.HeroUid == 214700000 && lr.Locate.HeroName == "Байек", "locate hero");
-    Check(lr.Locate.Item.Main.Count == 1 && lr.Locate.Item.Main[0].Stat == 12 && lr.Locate.Item.Subs.Count == 2 && lr.Locate.Item.Subs[1].Stat == 7, "locate stats");
-    Check(PlansClient.Interpret(200, "{\"ok\":true,\"plans\":[]}", true).Locate == null, "no locate field");
-    Check(PlansClient.Interpret(200, "{\"ok\":true,\"locate\":null}", true).Locate == null, "locate null");
-    Check(PlansClient.Interpret(200, "{\"ok\":true,\"locate\":{\"id\":\"\",\"item\":null}}", true).Locate == null, "locate without id dropped");
-    Check(PlansClient.Interpret(200, "{\"ok\":true,\"locate\":{\"id\":\"x\",\"purpose\":\"other\",\"item\":null}}", true).Locate == null, "unknown purpose dropped");
-    var noItem = PlansClient.Interpret(200, "{\"ok\":true,\"locate\":{\"id\":\"x\",\"purpose\":\"recast\",\"item\":null}}", true).Locate;
-    Check(noItem != null && noItem.Item == null, "item gone from the snapshot: request kept, item null");
-    var badItem = PlansClient.Interpret(200, "{\"ok\":true,\"locate\":{\"id\":\"x\",\"item\":{\"slot\":9,\"uid\":5}}}", true).Locate;
-    Check(badItem != null && badItem.Item == null, "bad slot: item dropped");
-    Check(PlansClient.Interpret(200, "{\"ok\":true,\"locate\":{\"id\":\"x\",\"item\":{\"slot\":1,\"uid\":-3}}}", true).Locate.Item == null, "uid <= 0 dropped");
-    Check(PlansClient.Interpret(200, "{\"ok\":true,\"locate\":{\"id\":\"x\",\"item\":{\"slot\":1,\"uid\":3,\"icon\":\"../a\"}}}", true).Locate.Item.Icon == "", "locate icon name sanitised");
-    Check(LocateClient.Finish("http://x", "c", "", true).Status == PlansStatus.NotFound, "finish: empty id");
-
-    // Position
-    var l9 = new long[] { 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20 };
-    int[] ps = LocateGuide.Position(l9, 19, 9);
-    Check(ps != null && ps[0] == 10 && ps[1] == 2 && ps[2] == 1, "position 10th of 9 columns: row 2, place 1");
-    ps = LocateGuide.Position(l9, 15, 6); Check(ps[1] == 1 && ps[2] == 6, "6th of 6 columns: row 1, place 6");
-    ps = LocateGuide.Position(l9, 17, 6); Check(ps[1] == 2 && ps[2] == 2, "8th of 6 columns: row 2, place 2");
-    ps = LocateGuide.Position(l9, 20, 8); Check(ps[0] == 11 && ps[1] == 2 && ps[2] == 3, "11th of 8 columns: row 2, place 3");
-    Check(LocateGuide.Position(l9, 99, 8) == null && LocateGuide.Position(null, 1, 8) == null && LocateGuide.Position(l9, 0, 8) == null, "position: absent");
-    ps = LocateGuide.Position(l9, 12, 0); Check(ps[1] == 3, "position: zero columns count as one");
-
-    // steps
-    var item = LocItem(777, 4, 720100, 12, 5, 7, 9, 3);
-    var req = new LocateRequest { Id = "l1", Purpose = "recast", Item = item, HeroUid = 200 };
-    Func<InventoryScreen> inv = () => new InventoryScreen { Open = true, EquipTab = true, Uids = new List<long>(new long[] { 1, 2, 3, 4, 5, 6, 7, 8, 9, 777 }) };
-    Eq(LocateKind.None, LocateGuide.Next(null, null, null, null, 8, -1).Kind, "step: no request");
-    Eq(LocateKind.NoItem, LocateGuide.Next(new LocateRequest { Id = "x" }, null, null, null, 8, -1).Kind, "step: item gone from the snapshot");
-    Eq(LocateKind.OtherAccount, LocateGuide.Next(req, inv(), null, null, 8, 0).Kind, "step: another account in the game");
-    var st = LocateGuide.Next(req, null, null, null, 8, 1);
-    Check(st.Kind == LocateKind.OpenInventory && !st.OnHero, "step: nothing open -> open the inventory");
-    st = LocateGuide.Next(req, new InventoryScreen { Open = false }, null, new HeroScreen { Hero = 200, Tab = 3 }, 8, 1);
-    Check(st.Kind == LocateKind.OpenInventory && st.OnHero, "step: the item's hero is open -> press the slot there");
-    st = LocateGuide.Next(req, new InventoryScreen { Open = false }, null, new HeroScreen { Hero = 300, Tab = 3 }, 8, 1);
-    Check(!st.OnHero, "step: another hero is open");
-    Eq(LocateKind.OpenEquipTab, LocateGuide.Next(req, new InventoryScreen { Open = true, EquipTab = false }, null, null, 8, 1).Kind, "step: inventory on another tab");
-    st = LocateGuide.Next(req, inv(), null, null, 8, 1);
-    Check(st.Kind == LocateKind.InList && st.Pos == 10 && st.Row == 2 && st.Col == 2 && st.Count == 10, "step: in the list, row 2 place 2");
-    var iv = inv(); iv.Uids.Remove(777);
-    Eq(LocateKind.HiddenFilter, LocateGuide.Next(req, iv, null, null, 8, 1).Kind, "step: not in the list but on the account -> a filter hides it");
-    Eq(LocateKind.HiddenFilter, LocateGuide.Next(req, iv, null, null, 8, -1).Kind, "step: not in the list, account unknown");
-    iv = inv(); iv.Current = 777;
-    Eq(LocateKind.Selected, LocateGuide.Next(req, iv, null, null, 8, 1).Kind, "step: selected in the inventory");
-    iv.Current = 5;
-    Eq(LocateKind.InList, LocateGuide.Next(req, iv, null, null, 8, 1).Kind, "step: another item selected -> still in the list");
-
-    // the overlay's owner when a plan and a locate request are both on: the later one wins
-    Eq("none", OverlayPriority.Winner(false, 0, false, 0), "priority: nothing on");
-    Eq("plan", OverlayPriority.Winner(true, 5, false, 0), "priority: only a plan");
-    Eq("locate", OverlayPriority.Winner(false, 0, true, 5), "priority: only a locate request");
-    Eq("locate", OverlayPriority.Winner(true, 100, true, 200), "priority: locate started after the plan -> locate");
-    Eq("plan", OverlayPriority.Winner(true, 300, true, 200), "priority: plan started after locate -> plan");
-    Eq("locate", OverlayPriority.Winner(true, 200, true, 200), "priority: same moment -> locate");
-
-    // recast path: the gem screen holds the item, its function is still to choose; the card's button comes first
-    var gs = new RecastScreen { GemOpen = true, GemSel = 777, GemFunc = 1 };
-    Eq(LocateKind.GemFunction, LocateGuide.Next(req, null, gs, null, 8, 1).Kind, "step: gem screen with the item, function not chosen -> choose «Преобразование»");
-    gs.GemFunc = 7;
-    st = LocateGuide.Next(req, null, gs, null, 8, 1);
-    Check(st.Kind == LocateKind.Done && st.OnGem, "step: gem screen with Recast chosen and the item -> done (press «Улучшить»)");
-    var arq = new LocateRequest { Id = "a", Purpose = "ascend", Item = req.Item };
-    iv = inv(); iv.Current = 777;
-    Eq(LocateKind.OpenFoundry, LocateGuide.Next(arq, iv, null, null, 8, 1).Kind, "step: ascend with the item selected in the inventory -> the Foundry button (never the card's buttons)");
-
-    // the foundry
-    Func<RecastScreen> fr = () => new RecastScreen { SublimingOpen = true, PanelShown = true, CurType = 3 };
-    var rs = fr(); rs.CurType = 2;
-    Eq(LocateKind.OpenRecastTab, LocateGuide.Next(req, null, rs, null, 8, 1).Kind, "step: foundry on another tab");
-    rs = fr(); rs.Equips = new long[40]; for (int i = 0; i < 40; i++) rs.Equips[i] = 100 + i; rs.Equips[30] = 777;
-    st = LocateGuide.Next(req, null, rs, null, 8, 1);
-    Check(st.Kind == LocateKind.RecastFilter && st.Missing.Length == 4 && st.Missing[0] == "slot" && st.Missing[3] == "subs" && st.Pos == 31 && st.Count == 40, "step: long list, nothing set -> filter (all four parts missing)");
-    rs.SelectParts = new[] { 4 }; rs.Suits = new long[] { 720100 }; rs.MainAttrs = new long[] { 12 }; rs.SubAttrs = new long[] { 5, 7 };
-    st = LocateGuide.Next(req, null, rs, null, 8, 1);
-    Check(st.Kind == LocateKind.RecastFilter && st.Missing.Length == 1 && st.Missing[0] == "subs", "step: only the sub stats missing (the other parts are marked done)");
-    rs.SubAttrs = new long[] { 5, 7, 9, 3 };
-    Eq(LocateKind.RecastPick, LocateGuide.Next(req, null, rs, null, 8, 1).Kind, "step: filter complete, long list -> pick");
-    rs.Equips = new long[] { 100, 777 };
-    st = LocateGuide.Next(req, null, rs, null, 8, 1);
-    Check(st.Kind == LocateKind.RecastPick && st.Pos == 2 && st.Count == 2, "step: short list -> position 2 of 2");
-    rs.Equips = new long[] { 100, 101 };
-    Eq(LocateKind.RecastNotInList, LocateGuide.Next(req, null, rs, null, 8, 1).Kind, "step: filter set but the item is not in the list");
-    rs.SubAttrs = new long[] { 5 }; rs.Equips = new long[] { 777, 100 };
-    Eq(LocateKind.RecastPick, LocateGuide.Next(req, null, rs, null, 8, 1).Kind, "step: short list with an incomplete filter -> pick");
-    rs.Equips = new long[] { 100, 101 };
-    Eq(LocateKind.RecastFilter, LocateGuide.Next(req, null, rs, null, 8, 1).Kind, "step: not in the list and filter incomplete -> filter");
-    rs.ChoosePending = true;
-    Eq(LocateKind.ChoosePending, LocateGuide.Next(req, null, rs, null, 8, 1).Kind, "step: a recast result waits for the choice");
-    rs = fr(); rs.Sel = 777; rs.Equips = new long[] { 777 };
-    Eq(LocateKind.Done, LocateGuide.Next(req, null, rs, null, 8, 1).Kind, "step: the foundry has the item selected -> done");
-    rs.Sel = 5; rs.Equips = new long[] { 777, 5 };
-    Eq(LocateKind.RecastPick, LocateGuide.Next(req, null, rs, null, 8, 1).Kind, "step: another item selected in the foundry");
-    rs = fr(); rs.PanelShown = false;
-    Eq(LocateKind.OpenInventory, LocateGuide.Next(req, null, rs, null, 8, 1).Kind, "step: foundry form without its panel on screen is not the recast screen");
-
-    // the gem screen
-    var gm = new RecastScreen { GemOpen = true, GemFunc = 7, GemSel = 5, GemList = new long[] { 5, 6, 777 } };
-    st = LocateGuide.Next(req, inv(), gm, null, 8, 1);
-    Check(st.Kind == LocateKind.GemPick && st.Pos == 3 && st.Count == 3, "step: gem screen, other item selected -> pick it in the pop-up");
-    gm.GemSel = 777; Eq(LocateKind.Done, LocateGuide.Next(req, inv(), gm, null, 8, 1).Kind, "step: gem screen with the item -> done");
-    gm.GemSel = 5; gm.GemFunc = 8; gm.GemList = new long[] { 5, 6 };
-    Eq(LocateKind.RecastNotInList, LocateGuide.Next(req, inv(), gm, null, 8, 1).Kind, "step: gem screen, the item is not in the pop-up's list");
-    gm.GemFunc = 3; gm.GemSel = 777;
-    Eq(LocateKind.GemFunction, LocateGuide.Next(req, inv(), gm, null, 8, 1).Kind, "step: gem screen holds the item, another function -> choose the recast function");
-    gm.GemSel = 5;
-    Eq(LocateKind.InList, LocateGuide.Next(req, inv(), gm, null, 8, 1).Kind, "step: another gem function and another item -> the inventory's step");
-    Eq("inList", LocateGuide.Next(req, inv(), null, null, 8, 1).Key, "step key");
-    Eq("openRecastTab", new LocateStep { Kind = LocateKind.OpenRecastTab }.Key, "step key camel case");
-
-    // Ascension (purpose "ascend")
-    var areq = new LocateRequest { Id = "a1", Purpose = "ascend", Item = item, HeroUid = 200 };
-    Func<RecastScreen> ar = () => new RecastScreen { SublimingOpen = true, AscendShown = true, CurType = 2, AscendEquips = new long[] { 100, 777, 101 } };
-    var ars = ar();
-    st = LocateGuide.Next(areq, null, ars, null, 8, 1);
-    Check(st.Kind == LocateKind.AscendPick && st.Pos == 2 && st.Count == 3, "ascend: item in the Ascension list -> pick");
-    ars.AscendSel = 777; Eq(LocateKind.AscendReady, LocateGuide.Next(areq, null, ars, null, 8, 1).Kind, "ascend: selected -> press Ascend");
-    ars.AscendSel = 5; ars.AscendEquips = new long[] { 100 }; ars.AscendList = new RFX.ListRead { ScrollY = 0, Cols = 5, RowUnits = 108, First = 0, Last = 0 };
-    ars.AscendParts = new[] { 4 }; ars.AscendSuits = new long[] { 720100 }; ars.AscendMainAttrs = new long[] { 12 }; ars.AscendSubAttrs = new long[] { 5, 7, 9, 3 };
-    Eq(LocateKind.AscendNotInList, LocateGuide.Next(areq, null, ars, null, 8, 1).Kind, "ascend: not in the list (filter complete)");
-    ars = ar(); ars.CurType = 3; ars.AscendShown = false;
-    Eq(LocateKind.OpenAscendTab, LocateGuide.Next(areq, null, ars, null, 8, 1).Kind, "ascend: foundry on another tab");
-    ars = ar(); ars.AscendShown = false;
-    Eq(LocateKind.OpenAscendTab, LocateGuide.Next(areq, null, ars, null, 8, 1).Kind, "ascend: tab switching, panel not on screen yet -> tab step");
-    // regression: the filter pop-up fields are all absent (pop-up closed, Forge tab): the foundry is still open, never the inventory step
-    ars = new RecastScreen { SublimingOpen = true, CurType = 3, PanelShown = true };   // Forge tab, defaults everywhere else
-    Check(!ars.AscendFilterOpen && ars.FilterPanel == 0 && ars.FilterShowSuits.Length == 0 && ars.AscendList == null && ars.GemFuncList == null, "foundry state: optional pop-up / gem fields default to empty");
-    Eq(LocateKind.OpenAscendTab, LocateGuide.Next(areq, null, ars, null, 8, 1).Kind, "ascend: Foundry on the Forge tab, no pop-up fields -> open the Ascension tab");
-    Eq(LocateKind.OpenAscendTab, LocateGuide.Next(areq, inv(), ars, null, 8, 1).Kind, "ascend: Foundry on the Forge tab with the inventory still open -> the tab step, not step 1");
-    ars = new RecastScreen { SublimingOpen = true, CurType = 2, AscendShown = true, AscendEquips = new long[] { 100, 777 } };   // Ascend tab, pop-up fields absent, list unread
-    Eq(LocateKind.AscendPick, LocateGuide.Next(areq, null, ars, null, 8, 1).Kind, "ascend: Ascension tab, pop-up fields absent, item in the list -> pick");
-    ars.AscendEquips = new long[] { 100 };
-    Eq(LocateKind.AscendLoading, LocateGuide.Next(areq, null, ars, null, 8, 1).Kind, "ascend: Ascension tab, pop-up fields absent, list not read -> loading");
-    // regression: the gem screen with its optional list fields absent still reads as the gem screen (never the inventory step)
-    var rreq = new LocateRequest { Id = "g1", Purpose = "recast", Item = item, HeroUid = 200 };
-    var gsOnly = new RecastScreen { GemOpen = true, GemFunc = -1, GemSel = 777 };
-    Eq(LocateKind.GemFunction, LocateGuide.Next(rreq, null, gsOnly, null, 8, 1).Kind, "recast: gem screen, function list fields absent, item selected -> choose the function");
-    // the way to the foundry: nothing is chosen before it, the item is never framed in the inventory
-    Eq(LocateKind.OpenInventory, LocateGuide.Next(areq, null, null, null, 8, 1).Kind, "ascend: nothing open (item in the bag) -> open the inventory");
-    Eq(LocateKind.OpenFoundry, LocateGuide.Next(areq, inv(), null, null, 8, 1).Kind, "ascend: inventory on the equipment tab -> the Foundry button, not the item's cell");
-    // the job done: Ascension (ready -> the item is gone from the shrunk list) and recast (sub stats changed / a result waits)
-    {
-      var flist = new RFX.ListRead { ScrollY = 0, Cols = 5, RowUnits = 108, First = 0, Last = 0 };
-      var fnz = new LocateFinish();
-      var fre = ar(); fre.AscendSel = 777; fre.AscendList = flist; fre.AscendParts = new[] { 4 };
-      Eq("", fnz.Update(true, 777, LocateKind.AscendReady, fre, null), "finish: ready is not done");
-      var gne = ar(); gne.AscendEquips = new long[] { 100, 101 }; gne.AscendList = flist; gne.AscendParts = new[] { 4 };
-      Eq("", fnz.Update(true, 777, LocateKind.AscendLoading, gne, null, 1000), "finish: gone on the first read only -> wait");
-      Eq("", fnz.Update(true, 777, LocateKind.AscendLoading, gne, null, 1100), "finish: gone, second read too close -> wait");
-      Eq("ascend", fnz.Update(true, 777, LocateKind.AscendLoading, gne, null, 1300), "finish: ready, then the item stays gone from the shorter list -> done");
-      fnz.Reset(); fnz.Update(true, 777, LocateKind.AscendReady, fre, null);
-      Eq("", fnz.Update(true, 777, LocateKind.AscendLoading, gne, null, 1000), "finish: blip start");
-      Eq("", fnz.Update(true, 777, LocateKind.AscendReady, fre, null, 1300), "finish: the item is back (one-read blip) -> not done");
-      Eq("", fnz.Update(true, 777, LocateKind.AscendLoading, gne, null, 1600), "finish: gone again, the clock starts over");
-      Eq("", fnz.Update(true, 777, LocateKind.AscendLoading, gne, null, 1700), "finish: ... still waiting");
-      fnz.Reset(); fnz.Update(true, 777, LocateKind.AscendReady, fre, null);
-      var fch = ar(); fch.AscendEquips = new long[] { 100, 101 }; fch.AscendList = flist; fch.AscendParts = new[] { 4 }; fch.AscendSuits = new long[] { 720100 };
-      fnz.Update(true, 777, LocateKind.AscendFilter, fch, null, 1000);
-      Eq("", fnz.Update(true, 777, LocateKind.AscendFilter, fch, null, 1400), "finish: the set filter changed -> not done");
-      fnz.Reset(); fnz.Update(true, 777, LocateKind.AscendReady, fre, null);
-      var tabx = ar(); tabx.AscendEquips = new long[] { 100 }; tabx.AscendList = flist; tabx.AscendParts = new[] { 2 };
-      Eq("", fnz.Update(true, 777, LocateKind.AscendNotInList, tabx, null), "finish: another slot tab (the list changed) is not done");
-      fnz.Reset();
-      Eq("", fnz.Update(true, 777, LocateKind.AscendFilter, gne, null), "finish: never ready -> not done");
-      fnz.Reset(); fnz.Update(true, 777, LocateKind.AscendReady, fre, null);
-      var unrd = ar(); unrd.AscendEquips = new long[0];
-      Eq("", fnz.Update(true, 777, LocateKind.AscendLoading, unrd, null), "finish: the list is not readable -> wait");
-      var rcf = new LocateFinish();
-      var subs0 = new[] { new long[] { 5, 10 }, new long[] { 7, 20 } };
-      Eq("", rcf.Update(false, 777, LocateKind.GemPick, null, subs0), "finish: recast, the Done step not reached yet");
-      Eq("", rcf.Update(false, 777, LocateKind.Done, null, subs0), "finish: Done reached, subs the same");
-      Eq("", rcf.Update(false, 777, LocateKind.RecastPick, null, subs0), "finish: left the Done step, subs the same -> wait");
-      Eq("recast", rcf.Update(false, 777, LocateKind.RecastPick, null, new[] { new long[] { 5, 10 }, new long[] { 9, 20 } }), "finish: sub stats differ -> done");
-      rcf.Reset(); rcf.Update(false, 777, LocateKind.Done, null, subs0);
-      Eq("recast", rcf.Update(false, 777, LocateKind.ChoosePending, new RecastScreen { ChoosePending = true }, subs0), "finish: a result waits for the choice -> done");
-      // the game's result form after the player's own press (live 1.6.66.401: Form_EquipRecastSuccess over the gem screen, the job never done)
-      rcf.Reset();
-      Eq("", rcf.Update(false, 777, LocateKind.GemPick, null, subs0, 0, true), "finish: a recast result before the item was ready on the screen is not this job's");
-      Eq("recast", rcf.Update(false, 777, LocateKind.Done, null, subs0, 0, true), "finish: Done reached and Form_EquipRecastSuccess shown (subs unchanged until the choice) -> done");
-      rcf.Reset(); rcf.Update(false, 777, LocateKind.Done, null, subs0);
-      Eq("recast", rcf.Update(false, 777, LocateKind.Done, null, subs0, 300, true), "finish: the result form a tick after Done -> done");
-      fnz.Reset();
-      Eq("", fnz.Update(true, 777, LocateKind.AscendFilter, gne, null, 0, true), "finish: an ascension result without the item ready -> not this job's");
-      Eq("ascend", fnz.Update(true, 777, LocateKind.AscendReady, fre, null, 100, true), "finish: ready and Form_EquipSublimedSuccess shown -> done");
-      fnz.Reset(); fnz.Update(true, 777, LocateKind.AscendReady, fre, null);
-      Eq("ascend", fnz.Update(true, 777, LocateKind.AscendLoading, unrd, null, 200, true), "finish: ready, the list unreadable under the result form -> done by the form");
-    }
-    iv = inv(); iv.Current = 777;
-    Eq(LocateKind.OpenFoundry, LocateGuide.Next(areq, iv, null, null, 8, 1).Kind, "ascend: the item selected in the inventory does not matter (the foundry starts empty)");
-    iv = inv(); iv.EquipTab = false;
-    Eq(LocateKind.OpenEquipTab, LocateGuide.Next(areq, iv, null, null, 8, 1).Kind, "ascend: inventory on another tab -> the equipment tab");
-    var gearHero = new HeroScreen { Hero = 200, Tab = 3 };
-    st = LocateGuide.Next(areq, null, null, gearHero, 8, 1);
-    Check(st.Kind == LocateKind.OpenFoundry && st.OnGear && st.OnHero, "ascend: worn item, hero gear screen open -> the Foundry button there (the card has no Ascension button)");
-    Eq(LocateKind.OpenFoundry, LocateGuide.Next(areq, inv(), null, gearHero, 8, 1).Kind, "ascend: the inventory is open too -> its button (the screen the player is on)");
-    Eq(LocateKind.OpenInventory, LocateGuide.Next(areq, null, null, new HeroScreen { Hero = 200, Tab = 1 }, 8, 1).Kind, "ascend: hero screen on another tab -> back to the inventory way");
-    // the foundry's own list: columns, the game's rows on screen, the filter
-    ars = ar(); ars.AscendEquips = new long[] { 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 777 };
-    ars.AscendList = new RFX.ListRead { ScrollY = 0, Cols = 4, RowUnits = 100, First = 0, Last = 7 };
-    st = LocateGuide.Next(areq, null, ars, null, 8, 1);
-    Check(st.Kind == LocateKind.AscendPick && st.Pos == 12 && st.Row == 3 && st.Col == 4 && st.Scroll == "below" && st.ScrollRows == 1 && st.Missing.Length > 0, "ascend: long list, item in it, filter unset -> pick anyway (not the filter); item at row 3 place 4, one row below the cells on screen");
-    ars.AscendParts = new[] { 4 }; ars.AscendSuits = new long[] { 720100 }; ars.AscendMainAttrs = new long[] { 12 }; ars.AscendSubAttrs = new long[] { 5, 7, 9, 3 };
-    st = LocateGuide.Next(areq, null, ars, null, 8, 1);
-    Check(st.Kind == LocateKind.AscendPick && st.Scroll == "below" && st.ScrollRows == 1, "ascend: filter set -> pick, with the rows to scroll");
-    ars.AscendList = new RFX.ListRead { ScrollY = 200, Cols = 4, RowUnits = 100, First = 8, Last = 15 };
-    Eq("visible", LocateGuide.Next(areq, null, ars, null, 8, 1).Scroll, "ascend: item among the cells on screen");
-    ars.AscendList = new RFX.ListRead { ScrollY = 500, Cols = 4, RowUnits = 100, First = 20, Last = 27 };
-    st = LocateGuide.Next(areq, null, ars, null, 8, 1);
-    Check(st.Scroll == "above" && st.ScrollRows == 3, "ascend: item above the cells on screen -> rows to scroll up");
-    {   // a long list (3+ screens), the item off the screen: the slot tab, then the pick (the scroll); the set filter is never a step here (the pilot could not go on from it)
-      var lg = ar(); var ids = new List<long>(); for (int q = 0; q < 112; q++) ids.Add(1000 + q); ids.Insert(90, 777); lg.AscendEquips = ids.ToArray();
-      lg.AscendList = new RFX.ListRead { ScrollY = 0, Cols = 5, RowUnits = 100, First = 0, Last = 14 };
-      lg.AscendParts = new int[0]; lg.AscendSuits = new long[0]; lg.AscendMainAttrs = new long[0]; lg.AscendSubAttrs = new long[0];
-      st = LocateGuide.Next(areq, null, lg, null, 8, 1);
-      Check(st.Kind == LocateKind.AscendFilter && st.Pos == 91 && st.Missing.Length == 1 && st.Missing[0] == "slot", "ascend: 113 items, item off the screen, nothing set -> the slot tab only (not the set; main / subs not asked)");
-      string fwhy;
-      lg.AscendParts = new[] { item.Slot };
-      st = LocateGuide.Next(areq, null, lg, null, 8, 1);
-      Check(st.Kind == LocateKind.AscendPick && st.Pos == 91 && Array.IndexOf(st.Missing, "suit") >= 0, "ascend: slot set, set missing, still long -> pick (scroll to it), not the set filter (live audit: the pilot waited forever there)");
-      Eq(LocateTodo.AscendCell, LocateAuto.Decide(new LocateView { Step = st, Rs = lg, Item = item, W = 2000, H = 1000, U = 1000, Geometry = GameGeometry.Parse(GeoJson(), GeoGame), Foreground = true }, out fwhy), "ascend: ... the pilot scrolls the list (AscendCell), it does not wait at the filter");
-      lg.AscendSuits = new long[] { item.SetId };
-      Eq(LocateKind.AscendPick, LocateGuide.Next(areq, null, lg, null, 8, 1).Kind, "ascend: slot and set set -> pick (main / sub stats are not asked before the scroll)");
-      lg.AscendParts = new int[0]; lg.AscendSuits = new long[0]; lg.AscendList = new RFX.ListRead { ScrollY = 9000, Cols = 5, RowUnits = 100, First = 85, Last = 99 };
-      Eq(LocateKind.AscendPick, LocateGuide.Next(areq, null, lg, null, 8, 1).Kind, "ascend: the item is on the screen -> pick at once, no filters");
-      lg.AscendList = new RFX.ListRead { ScrollY = 0, Cols = 5, RowUnits = 100, First = 0, Last = 59 };
-      Eq(LocateKind.AscendPick, LocateGuide.Next(areq, null, lg, null, 8, 1).Kind, "ascend: the list is at most two screens -> pick (scroll)");
-    }
-    ars.AscendList = null;
-    st = LocateGuide.Next(areq, null, ars, null, 8, 1);
-    Check(st.Kind == LocateKind.AscendPick && st.Scroll == "" && st.Pos == 12 && st.Col == 1, "ascend: list not readable -> position only");
-    ars.AscendEquips = new long[] { 100, 101 };
-    Eq(LocateKind.AscendLoading, LocateGuide.Next(areq, null, ars, null, 8, 1).Kind, "ascend: the list is not readable yet and the item is not in it -> wait, no filter advice");
-    ars.AscendList = new RFX.ListRead { ScrollY = 0, Cols = 4, RowUnits = 100, First = 0, Last = 1 };
-    Eq(LocateKind.AscendNotInList, LocateGuide.Next(areq, null, ars, null, 8, 1).Kind, "ascend: filter complete, item not in the list -> not ascendable / extra stat");
-    ars.AscendSubAttrs = new long[0];
-    Eq(LocateKind.AscendNotInList, LocateGuide.Next(areq, null, ars, null, 8, 1).Kind, "ascend: not in the list, a filter part unset (it only narrows) -> not in the list, no filter hint");
-    ars.AscendSuits = new long[] { 999 };
-    Eq(LocateKind.AscendFilter, LocateGuide.Next(areq, null, ars, null, 8, 1).Kind, "ascend: not in the list and another set chosen -> filter hint");
-    {   // live 2026-10-29 (1.6.66.334): a T2 item, chest list of 17 narrowed by the slot, no set chosen -> not in the list; the pilot stops (it waited at «Фильтр» forever)
-      var lv = ar(); var ids17 = new List<long>(); for (int q = 0; q < 17; q++) ids17.Add(5000 + q); lv.AscendEquips = ids17.ToArray();
-      lv.AscendList = new RFX.ListRead { ScrollY = 0, Cols = 5, RowUnits = 100, First = 0, Last = 16 };
-      lv.AscendParts = new[] { item.Slot }; lv.AscendSuits = new long[0]; lv.AscendMainAttrs = new long[0]; lv.AscendSubAttrs = new long[0];
-      var lst = LocateGuide.Next(areq, null, lv, null, 8, 1);
-      Check(lst.Kind == LocateKind.AscendNotInList && Array.IndexOf(lst.Missing, "suit") >= 0, "ascend live: slot set, set unset, item not in the 17 -> not in the list (no set filter step)");
-      var lp = new LocatePilot(); LocateMove lm = null;
-      for (long t = 0; t <= LocatePilot.SettledMs + 400; t += 200) lm = lp.Step(new LocateView { Step = lst, Rs = lv, Item = item, Purpose = "ascend", NowMs = t, Foreground = true });
-      Check(lm != null && lm.State == "stopped" && lm.Why == "notinlist", "ascend live: the pilot stops with «not in the list», not a wait at the filter");
-    }
-    ars.AscendSuits = new long[] { 720100 };
-    ars.AscendSel = 777; ars.AscendEquips = new long[] { 100 };
-    Check(LocateGuide.Next(areq, null, ars, null, 8, 1).Kind != LocateKind.AscendReady, "ascend: a stale selection that the list does not hold is not 'ready'");
-    // the filter pop-up: what to press (the filter is hints only)
-    {
-      var pr = ar(); pr.AscendEquips = new long[] { 100 }; pr.AscendList = new RFX.ListRead { ScrollY = 0, Cols = 5, RowUnits = 108, First = 0, Last = 0 };
-      pr.AscendParts = new[] { 4 }; pr.AscendSuits = new long[] { 999 }; pr.AscendMainAttrs = new long[] { 12 }; pr.AscendSubAttrs = new long[] { 5, 7, 9, 3 };
-      pr.FilterLeftSuits = new long[] { 720200 }; pr.FilterRightSuits = new long[] { 720100, 720101 }; pr.FilterShowSuits = new long[] { 720101, 720100 };
-      st = LocateGuide.Next(areq, null, pr, null, 8, 1);
-      Check(st.Kind == LocateKind.AscendFilter && st.FilterGo == "" && Array.IndexOf(st.Missing, "suit") >= 0, "pop-up closed: the filter step, nothing to press inside");
-      pr.AscendFilterOpen = true; pr.FilterPanel = 0;
-      Eq("suitRow", LocateGuide.Next(areq, null, pr, null, 8, 1).FilterGo, "pop-up open, set panel closed -> the set row");
-      pr.FilterPanel = 1; pr.FilterShowSuits = new long[] { 720200 };
-      st = LocateGuide.Next(areq, null, pr, null, 8, 1);
-      Check(st.FilterGo == "suitTab" && st.SuitTab == 1, "set panel shows the 2-piece tab, the item's set is 3-piece -> the 3-piece tab");
-      pr.FilterShowSuits = new long[] { 720101, 720100 };
-      st = LocateGuide.Next(areq, null, pr, null, 8, 1);
-      Check(st.FilterGo == "suitCell" && st.SuitTab == 1 && st.SuitIndex == 1, "right tab shown -> the set's cell, its place in the grid");
-      pr.AscendSuits = new long[] { 720100 }; pr.AscendSubAttrs = new long[] { 5, 7, 9, 3, 99 };
-      st = LocateGuide.Next(areq, null, pr, null, 8, 1);
-      Check(st.Kind == LocateKind.AscendFilter && st.FilterGo == "reset", "a sub stat the item lacks hides it -> «Сбросить»");
-      pr.AscendParts = new[] { 0 };
-      Eq("", LocateGuide.Next(areq, null, pr, null, 8, 1).FilterGo, "the slot is still wrong -> the slot first, nothing in the pop-up");
-      pr.AscendParts = new[] { 4 }; pr.AscendSubAttrs = new long[] { 5, 7, 9, 3 }; pr.AscendMainAttrs = new long[] { 99 };
-      Eq("mainRow", LocateGuide.Next(areq, null, pr, null, 8, 1).FilterGo, "set chosen, main stat missing -> the main stat row");
-      pr.AscendEquips = new long[] { 100, 777 };
-      Eq(LocateKind.AscendPick, LocateGuide.Next(areq, null, pr, null, 8, 1).Kind, "the item shows in the list -> pick, the pop-up is no longer needed");
-    }
-    // the list math with fake data
-    var wl = new LocateStep(); LocateGuide.Where(wl, new RFX.ListRead { Cols = 8, First = 16, Last = 40 }, 100);
-    Check(wl.Scroll == "below" && wl.ScrollRows == 7, "list math: index 100 of 8 columns = row 12, cells end at row 5 -> 7 rows below");
-    wl = new LocateStep(); LocateGuide.Where(wl, new RFX.ListRead { Cols = 8, First = -1, Last = -1 }, 3);
-    Eq("", wl.Scroll, "list math: cells unknown -> nothing said");
-    // the inventory grid's row 1 from the game's scroll (no picture): scrolled 2.5 rows of 118 units
-    var isg = SellGeometry.Inventory(1920, 1009, 8); var iscr = new InvScroll();
-    double r1 = iscr.Row1(isg, new RFX.ListRead { ScrollY = 295, Cols = 8, RowUnits = 118 }, double.NaN, 1009);
-    Check(Math.Abs(r1 - (isg.ViewTopPx(1009) + isg.TopPad * 1009 - 2.5 * isg.PitchY * 1009)) < 1e-6, "inventory scroll: row 1 = list top minus the scrolled rows");
-    Check(double.IsNaN(iscr.Row1(isg, null, double.NaN, 1009)) && double.IsNaN(iscr.Row1(isg, new RFX.ListRead(), double.NaN, 1009)), "inventory scroll: unreadable -> NaN (the picture is the fallback)");
-    double r1b = new InvScroll().Row1(isg, new RFX.ListRead { ScrollY = 118, Cols = 8 }, double.NaN, 1009);
-    Check(Math.Abs((isg.ViewTopPx(1009) + isg.TopPad * 1009 - r1b) - isg.PitchY * 1009) < 1e-6, "inventory scroll: row units unknown -> 118 per row");
-    var sv = new LocateGrid(); sv.FromScroll(-340.5, 42);
-    Check(sv.Has && sv.Exact && sv.Row1 == -340.5 && sv.ListPtr == 42, "grid: placed from the scroll"); sv.Reset(); Check(!sv.Has && !sv.Exact, "grid: reset");
-    // the exact row 1 drives the sell pilot: it clicks the item's cell with no drag when the scroll says it is in view
-    {
-      var gg = SellGeometry.Inventory(1920, 1009, 8); var sp2 = new SellPilot(gg);
-      var uidsL = new List<long>(); for (int k = 1; k <= 40; k++) uidsL.Add(9000 + k);
-      var scr2 = new InventoryScreen { Open = true, EquipTab = true, Bulk = true, ListPtr = 5 }; scr2.Uids.AddRange(uidsL);
-      double row1Want = gg.ViewTopPx(1009) + gg.TopPad * 1009 - 1.0 * gg.PitchY * 1009;   // scrolled one row down
-      var act = sp2.Step(new SellView { NowMs = 10000, Foreground = true, W = 1920, H = 1080, U = 1009, Screen = scr2.AsSell(8), Wanted = new HashSet<long> { 9020 }, Row1 = row1Want });
-      double wantY = row1Want + gg.RowOffset(null, 3) * 1009 + gg.CellHeight * 1009 / 2;
-      Check(act.Kind == AutoKind.Click && Math.Abs(act.Y - wantY) < 1, "sell pilot: with the game's scroll it clicks the item's row where the scroll puts it (no drag)");
-    }
-    {   // the finished run (everything marked) stays «done» while the player moves the mouse / clicks / the game is behind: the final frame on «Продать» never blinks out
-      var gd = SellGeometry.Inventory(1920, 1009, 8); var pd = new SellPilot(gd);
-      var scd = new InventoryScreen { Open = true, EquipTab = true, Bulk = true, ListPtr = 5 }; for (int k = 1; k <= 40; k++) scd.Uids.Add(9000 + k); scd.Selected.Add(9020);
-      double r1d = gd.ViewTopPx(1009) + gd.TopPad * 1009;
-      Func<long, bool, bool, bool, string> stp = (t, busy, fg, clicked) => { pd.Step(new SellView { NowMs = t, Foreground = fg, UserBusy = busy, UserClicked = clicked, W = 1920, H = 1080, U = 1009, Screen = scd.AsSell(8), Wanted = new HashSet<long> { 9020 }, Row1 = r1d }); return pd.State; };
-      Eq("done", stp(1000, false, true, false), "sell pilot: everything marked -> done");
-      Eq("done", stp(1100, true, true, false), "sell pilot: done stays done while the mouse moves (the final frame stays)");
-      Eq("done", stp(1200, false, true, true), "sell pilot: done stays done after a click of the player");
-      Eq("done", stp(1300, false, false, false), "sell pilot: done stays done while the game is behind");
-      Eq("done", stp(1400, true, true, false), "sell pilot: done still, mouse moving again");
-    }
-    Eq(LocateKind.OtherAccount, LocateGuide.Next(areq, inv(), ar(), null, 8, 0).Kind, "ascend: another account");
-    var gmA = new RecastScreen { GemOpen = true, GemFunc = 7, GemSel = 777, GemList = new long[] { 777 } };
-    Eq(LocateKind.OpenFoundry, LocateGuide.Next(areq, inv(), gmA, null, 8, 1).Kind, "ascend: the gem screen is not part of it");
-    Eq(LocateKind.AscendReady, LocateGuide.Next(areq, null, new RecastScreen { SublimingOpen = true, AscendShown = true, CurType = 2, AscendSel = 777, AscendEquips = new long[] { 777 } }, null, 8, 1).Kind, "ascend: ready needs the item selected and in the shown list");
-    Check(LocateGuide.Next(areq, null, new RecastScreen { SublimingOpen = true, AscendShown = true, CurType = 2, AscendSel = 777 }, null, 8, 1).Kind != LocateKind.AscendReady, "ascend: a selection the list does not hold (stale right after the tab opens) is not ready");
-    var aj = PlansClient.Interpret(200, "{\"ok\":true,\"locate\":{\"id\":\"a1\",\"purpose\":\"ascend\",\"item\":null}}", true).Locate;
-    Check(aj != null && aj.Purpose == "ascend", "locate: purpose ascend accepted");
-    Eq("ascendReady", new LocateStep { Kind = LocateKind.AscendReady }.Key, "ascend: step key");
-
-    // sub stats against the game's
-    var chk = LocateGuide.CheckSubs(item, new[] { new long[] { 5, 10 }, new long[] { 7, 0 }, new long[] { 9, 0 }, new long[] { 3, 0 } });
-    Check(chk.Match.Length == 4 && chk.Match[0] && chk.Match[3] && !chk.Changed, "sub check: same four stats");
-    chk = LocateGuide.CheckSubs(item, new[] { new long[] { 5, 10 }, new long[] { 7, 0 }, new long[] { 9, 0 }, new long[] { 8, 0 } });
-    Check(chk.Match[2] && !chk.Match[3] && chk.Changed, "sub check: a stat changed after the snapshot");
-    Check(LocateGuide.CheckSubs(item, null).Match.Length == 0, "sub check: unreadable");
-
-    // the inventory's grid: row positions from the stat bars
-    {
-      double W = 1920, H = 1009, U = Ui.Unit(W, H);
-      var g = SellGeometry.Inventory(W, U, 8);
-      var grid = new LocateGrid();
-      double top = g.ViewTopPx(U) + g.TopPad * U, pitch = g.PitchY * U;
-      Check(grid.FromTop(g, top, U, 5), "grid: bars at the top -> anchored");
-      Check(Math.Abs(grid.Row1 - top) < 0.01 && grid.ListPtr == 5, "grid: row 1 at the top");
-      var mk = grid.Place(g, 1, 3, W, H, U);
-      Check(mk.Kind == "box" && mk.X == (int)g.X(g.X0 + 2 * g.PitchX, W, U) && mk.Y == (int)top, "grid: box around row 1, place 3");
-      mk = grid.Place(g, 30, 1, W, H, U);
-      Check(mk.Kind == "down" && mk.Rows >= 20, "grid: far down -> arrow with the rows to scroll (" + mk.Rows + ")");
-      var g2 = new LocateGrid(); g2.FromTop(g, top, U, 1);
-      g2.Row1 -= 10 * pitch;   // scrolled 10 rows
-      mk = g2.Place(g, 2, 1, W, H, U);
-      Check(mk.Kind == "up" && mk.Rows == 9, "grid: scrolled past -> arrow up (" + mk.Rows + ")");
-      Check(!new LocateGrid().FromTop(g, top + pitch * 0.4, U, 1), "grid: bars not where the top would put them -> no anchor");
-      var g3 = new LocateGrid(); g3.FromTop(g, top, U, 1);
-      g3.Row1 -= 3 * pitch + 7;   // the list moved by 3 rows and a bit; the bars say where
-      int rr = g3.VisibleRow(g, 20, W, H, U);
-      Check(rr > 0, "grid: a visible row to take the phase from");
-      double truth = top - 3 * pitch;   // the real position (an estimate off by 7 px)
-      g3.Track(g, rr, ((truth % pitch) + pitch) % pitch, U);
-      Check(Math.Abs(g3.Row1 - truth) < 0.5, "grid: the bars' phase corrects the estimate (" + g3.Row1.ToString("0.0") + " vs " + truth.ToString("0.0") + ")");
-      var g4 = new LocateGrid(); g4.FromClick(g, 4, 500, U, 9);
-      Check(g4.Has && g4.ListPtr == 9 && Math.Abs(g4.RowTop(g, 4, U) - (500 - g.BarBottom * U / 2)) < 0.01, "grid: a click on row 4 anchors the list");
-      g4.Reset(); Check(!g4.Has, "grid: reset");
-    }
-  }
-
-  // the game's window table (UIInstance) and its twin of the same shape, UIFormClass (form id -> the form's class): which one is read, the names,
-  // the shown flag, the reasons the log gives (live 2026-10-29: the finder took UIFormClass, no form name was ever read)
-  static void WindowTableTests() {
-    Console.WriteLine("Window table: UIInstance, not UIFormClass");
-    var m = new FakeLua(1 << 21); RFX.TestMemory = m; RFX.ForgetLive();
-    try {
-      var fs = new FakeState(m); long inst = 20001;
-      Func<string, FTab> Cls = nm => fs.T("__cname", nm, "ctor", 0L, "__index", 0L);
-      var cCity = Cls("Form_MainCity"); var cPlan = Cls("Form_EquipmentPlan"); var cHero = Cls("Form_CharactorMain"); var cBattle = Cls("Form_Battle");
-      Func<FTab, bool, FTab> Obj = (c, shown) => shown ? fs.T("m_LuaLogicActive", true, "class", c, "____instanceId", inst++) : fs.T("m_InitOK", true, "class", c, "____instanceId", inst++);
-      const long idCity = -1796900587, idPlan = 657588872, idHero = 1456276573, idBattle = -1008207313;
-      var classes = fs.T(idCity, cCity, idPlan, cPlan, idHero, cHero, idBattle, cBattle);                        // UIFormClass: every form file loaded
-      var forms = fs.T(idCity, Obj(cCity, false), idPlan, Obj(cPlan, true));                                    // UIInstance: the city (covered) and the plan screen
-      var ids = new[] { idHero, idBattle, idCity };
-      Check(RFX.PickUiTableForTest(new[] { classes.A, forms.A }, ids) == forms.A, "window table: of the two tables keyed by form ids the one with form objects is taken");
-      Check(RFX.PickUiTableForTest(new[] { forms.A, classes.A }, ids) == forms.A, "window table: ... whatever order the scan found them in");
-      Eq(0UL, RFX.PickUiTableForTest(new[] { classes.A }, ids), "window table: the class table alone is never taken");
-      Check(RFX.PickUiTableForTest(new[] { classes.A, forms.A }, new[] { idHero, idBattle }) == 0, "window table: no anchor form object (only the classes hold them): nothing is taken");
-      // read from the class table (the old bug): nothing shown, no names, and the log line says why
-      RFX.SetUiTableForTest(classes.A);
-      var off0 = RFX.ReadOffers();
-      Check(off0 != null && off0.Count == 0, "window table (class table): no offer read - what the lab saw");
-      string d0 = RFX.ShownFormsDiag(8);
-      Check(d0.Contains("0 shown") && d0.Contains("no form objects"), "window table (class table): the log line says it holds no form objects (" + d0 + ")");
-      // read from UIInstance: the build plan screen is the shown offer, its name is in the log line
-      RFX.SetUiTableForTest(forms.A);
-      var off = RFX.ReadOffers();
-      Check(off != null && off.Count == 1 && off[0] == "Form_EquipmentPlan", "window table: the build plan screen is read by its class name (" + (off == null ? "null" : string.Join(",", off.ToArray())) + ")");
-      string d1 = RFX.ShownFormsDiag(8);
-      Check(d1 == "window table: 2 forms, 1 shown: Form_EquipmentPlan", "window table: the log line lists the shown forms (" + d1 + ")");
-      Eq("", RFX.ReadShownKnownForms(), "window table: no known screen's form is shown (the city is covered)");
-      // a shown form without a class field: named by its key and the reason; the known-forms read is "not sure" (null)
-      var odd = fs.T(idCity, Obj(cCity, false), 777L, fs.T("m_LuaLogicActive", true, "m_Foo", 1L));
-      RFX.SetUiTableForTest(odd.A);
-      string d2 = RFX.ShownFormsDiag(8);
-      Check(d2.Contains("id:777(no class field)"), "window table: a form without a name is listed with the reason (" + d2 + ")");
-      Check(RFX.ReadShownKnownForms() == null, "window table: a shown form without a name: the known forms are not sure (null)");
-      // the battle and the hero screen shown are known screens (the back press is never made then); the tip toast is not one
-      var cTips = Cls("Form_CommonTips");
-      var fight = fs.T(idBattle, Obj(cBattle, true), 99L, Obj(cTips, true));
-      RFX.SetUiTableForTest(fight.A);
-      Eq("Form_Battle", RFX.ReadShownKnownForms(), "window table: the battle shown is a known screen's form, the tip toast is not");
-      // more forms without a name than one call may read: the ones after them are named on the next call (a miss is not read again for 10 s)
-      var many = new List<object>();
-      for (int i = 0; i < 30; i++) { many.Add((long)(1000 + i)); many.Add(fs.T("m_LuaLogicActive", true, "m_X", 1L)); }
-      many.Add(idPlan); many.Add(Obj(cPlan, true));
-      RFX.SetUiTableForTest(fs.T(many.ToArray()).A);
-      RFX.ReadOffers(); var off2 = RFX.ReadOffers();
-      Check(off2 != null && off2.Contains("Form_EquipmentPlan"), "window table: 30 nameless forms before it do not hide the plan screen for good (" + (off2 == null ? "null" : string.Join(",", off2.ToArray())) + ")");
-      // a form's id is the hash of its name (UIDefines): every screen-map form is an anchor of the search
-      Eq(idCity, RFX.FormIdOf("Form_MainCity"), "form id: the city's id from its name");
-      Eq(idHero, RFX.FormIdOf("Form_CharactorMain"), "form id: the hero screen's id from its name");
-      Eq(idBattle, RFX.FormIdOf("Form_Battle"), "form id: the battle's id from its name");
-      Eq(idPlan, RFX.FormIdOf("Form_EquipmentPlan"), "form id: the build plan's id from its name (odd length)");
-      // the full search from any screen (the scans over the test memory): the layout's anchors are the city, the hero screen and the battle
-      {
-        var m2 = new FakeLua(1 << 21); RFX.TestMemory = m2; RFX.ForgetLive();
-        var fs2 = new FakeState(m2); long inst2 = 30001;
-        Func<string, FTab> Cls2 = nm => fs2.T("__cname", nm, "ctor", 0L, "__index", 0L);
-        const long idGuild = -1859031432, idFoundry = -1395031855, idChat = 748358717, idPrivacy = -1015447067, idOdd = 123456789;
-        var k2City = Cls2("Form_MainCity"); var k2Guild = Cls2("Form_Union"); var k2Chat = Cls2("Form_MinChat");
-        // live 2026-10-30, the game on the guild after the app restarted: UIFormClass kept 3 classes (the city's and two never opened;
-        // the game cleared the destroyed forms' classes and a form required again is never registered again), the city destroyed
-        var cls2 = fs2.T(idCity, k2City, idPrivacy, Cls2("Form_PopupPrivacy"), idOdd, Cls2("Form_Something"), 1L, 0L);
-        var guildOnly = fs2.T(idGuild, fs2.T("m_LuaLogicActive", true, "class", k2Guild, "____instanceId", inst2++),
-                              idChat, fs2.T("m_LuaLogicActive", false, "class", k2Chat, "____instanceId", inst2++), 1L, 0L, 2L, 0L);   // UIInstance: the guild and the chat
-        var notForms = fs2.T(idFoundry, fs2.T("m_LuaLogicActive", true, "class", Cls2("UIStackItem"), "____instanceId", inst2++), 1L, 0L, 2L, 0L, 3L, 0L);   // keyed by a form id, not a form
-        string said;
-        ulong got = RFX.FindUiTableForTest(ids, out said);
-        Check(got == guildOnly.A, "window table: found on the guild with the city destroyed and UIFormClass nearly empty, by the screen map's form ids (" + said + ")");
-        Check(said.StartsWith("forms: window table found from Form_Union"), "window table: the log line names the screen it was found from (" + said + ")");
-        Check(!said.Contains("\n"), "window table found: no diagnostic lines");
-        // the test build's diagnostic of a failed search: each candidate's size, first keys and value marks
-        string dg = RFX.UiCandidatesDiagForTest(new[] { cls2.A, guildOnly.A }, ids, 40);
-        Check(dg.Contains("2 candidate table(s)") && dg.Contains("cname=Form_PopupPrivacy") && dg.Contains("class=Form_Union") && dg.Contains("inst") && dg.Contains("active=1"),
-              "window table diagnostic: sizes, keys and marks of the candidates (" + dg.Replace("\n", " | ") + ")");
-        Check(RFX.UiCandidatesDiagForTest(new[] { cls2.A, guildOnly.A, notForms.A }, ids, 2).Split('\n').Length <= 3, "window table diagnostic: capped");
-        Eq(0UL, RFX.PickUiTableForTest(new[] { notForms.A }, new[] { idFoundry }), "window table: objects whose class is not a Form_ are not forms");
-        // live 2026-10-30 (1.6.66.346): UIInstance shrunk to one or two nodes (the guild alone, the rest destroyed): a table of any size is a candidate
-        foreach (int n in new[] { 1, 2 }) {
-          var m5 = new FakeLua(1 << 21); RFX.TestMemory = m5; RFX.ForgetLive();
-          var fs5 = new FakeState(m5); long inst5 = 50001;
-          Func<string, FTab> Cls5 = nm => fs5.T("__cname", nm, "ctor", 0L, "__index", 0L);
-          var k5Guild = Cls5("Form_Union");
-          var cls5 = fs5.T(idCity, Cls5("Form_MainCity"), RFX.FormIdOf("Form_Login"), Cls5("Form_Login"), 631657439L, Cls5("Form_UnionAdd"));
-          var g5 = fs5.T("m_LuaLogicActive", true, "class", k5Guild, "____instanceId", inst5++);
-          var small = n == 1 ? fs5.T(idGuild, g5) : fs5.T(idGuild, g5, idChat, fs5.T("m_LuaLogicActive", false, "class", Cls5("Form_MinChat"), "____instanceId", inst5++));
-          got = RFX.FindUiTableForTest(ids, out said);
-          Check(got == small.A, "window table: UIInstance of " + n + " node(s) is found (" + said.Replace("\n", " | ") + ")");
-          Check(said.StartsWith("forms: window table found from Form_Union"), "window table: the small table names the guild (" + said + ")");
-          string nd = RFX.UiNodesDiagForTest(ids);
-          Check(nd.StartsWith("  form id nodes: ") && nd.Contains(", 0 outside the candidates"), "window table diagnostic: every form id node lies in a candidate (" + nd + ")");
-        }
-        // a node whose table header is not found: named in the diagnostic by its form name and its value's marks
-        {
-          var m6 = new FakeLua(1 << 21); RFX.TestMemory = m6; RFX.ForgetLive();
-          var fs6 = new FakeState(m6);
-          var lost = fs6.T(idGuild, fs6.T("m_LuaLogicActive", true, "class", fs6.T("__cname", "Form_Union"), "____instanceId", 60001L));
-          m6.Mem[lost.A - FakeLua.Base + 8] = 0;   // the header unreadable as a table: the node alone remains
-          string nd = RFX.UiNodesDiagForTest(ids);
-          Check(nd.Contains(", 1 outside the candidates") && nd.Contains("Form_Union") && nd.Contains("class=Form_Union") && nd.Contains("active=1"),
-                "window table diagnostic: a node outside the candidates is named with its marks (" + nd.Replace("\n", " | ") + ")");
-        }
-        // the city open: found in the first round, as before
-        var m3 = new FakeLua(1 << 21); RFX.TestMemory = m3; RFX.ForgetLive();
-        var fs3 = new FakeState(m3); long inst3 = 40001;
-        Func<string, FTab> Cls3 = nm => fs3.T("__cname", nm, "ctor", 0L, "__index", 0L);
-        var k3City = Cls3("Form_MainCity"); var k3Guild = Cls3("Form_Union");
-        var cls3 = fs3.T(idCity, k3City, idGuild, k3Guild, 1L, 0L, 2L, 0L);
-        var city = fs3.T(idCity, fs3.T("m_LuaLogicActive", true, "class", k3City, "____instanceId", inst3++), 1L, 0L, 2L, 0L, 3L, 0L);
-        got = RFX.FindUiTableForTest(ids, out said);
-        Check(got == city.A, "window table: found with the city open (" + said + ")");
-        Check(said.StartsWith("forms: window table found from Form_MainCity"), "window table: the city open (" + said + ")");
-        // only UIFormClass in memory (no form open at all): it is never taken
-        var m4 = new FakeLua(1 << 21); RFX.TestMemory = m4; RFX.ForgetLive();
-        var fs4 = new FakeState(m4);
-        var cls4 = fs4.T(idCity, fs4.T("__cname", "Form_MainCity", "ctor", 0L), idGuild, fs4.T("__cname", "Form_Union", "ctor", 0L), 1L, 0L, 2L, 0L);
-        got = RFX.FindUiTableForTest(ids, out said);
-        Eq(0UL, got, "window table: not fooled by UIFormClass (" + said + ")");
-        Check(said.StartsWith("forms: window table not found"), "window table: not found is logged (" + said + ")");
-        RFX.TestMemory = m; RFX.ForgetLive();
-      }
-      RFX.SetUiTableForTest(0);
-      Eq("window table not found yet", RFX.ShownFormsDiag(8), "window table: not found - the log line says so");
-      Check(RFX.ReadShownKnownForms() == null, "window table not found: the known forms are not read (null)");
-    } finally { RFX.SetUiTableForTest(0); RFX.TestMemory = null; RFX.ForgetLive(); }
-  }
-
-  // the hint-mode fallback of every flow (HintFallback): an unknown screen / a screen the flow does not continue from / a pop-up nobody knows -> «back to the city»
-  static void HintFallbackTests() {
-    Console.WriteLine("Hint fallback: back to the city");
-    const double W = 1366, H = 705; double U = Ui.Unit(W, H);
-    var hg = new HeroGeometry(); double bx = hg.BackX * U, by = hg.BackY * U;
-    Func<string, string, ScreenState> Unk = (top, known) => ScreenState.Classify(new ScreenInputs { CityForm = false, Offers = new List<string>(), TopUnknown = top, ShownKnown = known }, 0);
+    Check(stable && !unknown && st.Partial && st.Held && st.FromTable && st.Brief == "Inventory details?", "table kind: the inventory's reader failing for 6 s - Inventory all along, its details unknown and held (" + st.Brief + ")");
+    // the reader back: its details, no longer held
     var inv = new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true };
-    var invS = ScreenState.Classify(new ScreenInputs { Inv = inv, Offers = new List<string>(), ShownKnown = "" }, 0);
-    var city = ScreenState.Classify(new ScreenInputs { CityForm = true, Offers = new List<string>(), ShownKnown = "" }, 0);
-    var heroS = ScreenState.Classify(new ScreenInputs { Hero = new HeroScreen { Hero = 5, FormOk = true }, Offers = new List<string>(), ShownKnown = "" }, 0);
-    var foundry = ScreenState.Classify(new ScreenInputs { Rs = new RecastScreen { SublimingOpen = true }, Offers = new List<string>(), ShownKnown = "" }, 0);
-    Func<PilotFlow, ScreenState, bool, HintFallbackPlan> D = (f, sc, live) => HintFallback.Decide(f, sc, LocateKind.None, live, W, H, U);
-    Func<GeoRect, bool> onBack = r => r != null && Math.Abs(r.CX - bx) <= 0.03 * U + 1 && Math.Abs(r.CY - by) <= 0.03 * U + 1;
-    // scenario 10 (live 10:5x): the gear filter pop-up is open (the game's flag, gear filter mem=yes) on the hero screen and the flow cannot go on from it: «Закройте фильтр» on its red ×, not «Вернитесь в город»
-    {
-      Func<Mem3, ScreenState> gearHero = open => { var gs = ScreenState.Classify(new ScreenInputs { Hero = new HeroScreen { Hero = 5, FormOk = true, Tab = HeroGeometry.GearTab, Part = 2, Gear = new GearMem { Open = open, Side = Mem3.No, SetPanel = Mem3.No } }, Offers = new List<string>(), ShownKnown = "Form_CharactorMain" }, 0);
-        if (open == Mem3.Yes) { gs.ModalOpen = true; gs.ModalWhy = "form:Form_EquipFilterWidget"; } return gs; };   // (the pop-up as a form nobody of the map names: a stray one)
-      var fgm = new FilterGeometry(); double xx = fgm.X(fgm.MainCloseX, W, H), yy = fgm.Y(fgm.CloseY, W, H);
-      foreach (var f in new[] { PilotFlow.LocateAscend, PilotFlow.LocateRecast, PilotFlow.Sell }) {
-        var pl = D(f, gearHero(Mem3.Yes), false);
-        Check(pl.Kind == HintLeave.Close && pl.Text == "closeFilter" && pl.Rect != null && Math.Abs(pl.Rect.CX - xx) < 2 && Math.Abs(pl.Rect.CY - yy) < 2, "fallback: " + f + " with the gear filter open (mem=yes): the plate says to close the filter, its × framed (" + pl.Kind + " '" + pl.Text + "')");
-        var pn = D(f, gearHero(Mem3.No), false);
-        Check(pn.Text == "", "fallback: " + f + " with the gear filter shut: not the filter's text (" + pn.Kind + ")");
-      }
-      Check(D(PilotFlow.Equip, gearHero(Mem3.Yes), false).Text != "closeFilter", "fallback: the equip flow's own open gear filter is not told to be closed by this plate");
-      // the page's step: the open gear filter covers the hero screen's buttons: «close the filter window» with the × key of the gear filter, whatever coverable step it hides
-      foreach (var k in new[] { LocateKind.OpenFoundry, LocateKind.OpenInventory }) {
-        var stp = new LocateStep { Kind = k, OnGear = true }; bool rep = LocateGuide.CoverStep(stp, gearHero(Mem3.Yes));
-        Check(rep && stp.Kind == LocateKind.ClosePopup && stp.Covered == k && stp.PopupTitle == "filter" && stp.PopupClose == "hero.filterClose", "locate step " + k + ": the gear filter open (mem=yes): the step is «close the filter window» on its ×, not the way back (" + stp.Kind + ")");
-        Check(!LocateGuide.CoverStep(new LocateStep { Kind = k, OnGear = true }, gearHero(Mem3.No)), "locate step " + k + ": the gear filter shut: the step stays");
-      }
+    st = tr.Update(new ScreenInputs { Inv = inv, CityForm = false, Offers = new List<string>(), Screens = new List<string> { "Form_BackpackIntegration" } }, 6100);
+    Check(st.Kind == ScreenKind.Inventory && !st.Partial && !st.Held && st.InvNormalEquip, "table kind: the reader back - the details, not held (" + st.Brief + ")");
+    // a sub-read failing every other tick: the kind and its details stay (the last good reading stands in), the brief never changes
+    string b0 = st.Brief; bool same = true;
+    for (t = 6200; t <= 9000; t += 100) {
+      var x = tr.Update(new ScreenInputs { Inv = (t / 100) % 2 == 0 ? inv : null, CityForm = false, Offers = new List<string>(), Screens = new List<string> { "Form_BackpackIntegration" } }, t);
+      if (x.Brief != b0) same = false;
     }
-    // an unknown screen whose form the map knows with a back arrow: the arrow framed (every flow alike)
-    foreach (var f in CityFirst.All) {
-      var pl = D(f, Unk("Form_ActALinkageMain", ""), false);
-      Check(pl.Kind == HintLeave.Back && onBack(pl.Rect), "fallback: " + f + " on a screen with a back arrow: the arrow framed (" + pl.Kind + ")");
-    }
-    // an unknown screen nobody has in the map: the arrow when the host read it live, else the text alone with Escape (no frame)
-    var odd = Unk("Form_Odd", "");
-    Check(D(PilotFlow.Equip, odd, true).Kind == HintLeave.Back && onBack(D(PilotFlow.Equip, odd, true).Rect), "fallback: an unknown screen, back arrow read live: framed");
-    var esc = D(PilotFlow.Sell, odd, false);
-    Check(esc.Kind == HintLeave.Esc && esc.Rect == null, "fallback: an unknown screen, nothing read: «Esc», no frame");
-    // a known screen the flow does not go on from: the screen's back arrow (every flow has its own set)
-    Check(D(PilotFlow.Equip, foundry, false).Kind == HintLeave.Back && onBack(D(PilotFlow.Equip, foundry, false).Rect), "fallback: equip on the Foundry: back arrow");
-    Check(D(PilotFlow.LocateRecast, ScreenState.Classify(new ScreenInputs { Rs = new RecastScreen { GemOpen = true }, Offers = new List<string>(), ShownKnown = "" }, 0), false).Kind == HintLeave.None, "fallback: the recast flow goes on from the gem screen: no fallback");
-    Check(D(PilotFlow.LocateRecast, foundry, false).Kind == HintLeave.Back, "fallback: the recast flow on the Foundry's tab: back arrow");
-    // screens the flow goes on from, and the city: never
-    Check(D(PilotFlow.Sell, invS, false).Kind == HintLeave.None && D(PilotFlow.Equip, heroS, false).Kind == HintLeave.None && D(PilotFlow.Equip, city, false).Kind == HintLeave.None && D(PilotFlow.Equip, null, false).Kind == HintLeave.None, "fallback: a screen the flow goes on from, the city, no screen: nothing");
-    // a pop-up with a known close button over a screen: the close button framed (not the back arrow, it is covered)
-    var pop = ScreenState.Classify(new ScreenInputs { Rs = new RecastScreen { SublimingOpen = true }, Offers = new List<string>(), ShownKnown = "", TopNew = "Form_AccountInfo" }, 0);
-    var pc = D(PilotFlow.Equip, pop, false);
-    Check(pc.Kind == HintLeave.Close && pc.Rect != null && !onBack(pc.Rect), "fallback: a known pop-up over a screen the flow leaves: its close button framed (" + pc.Kind + ")");
-    // a pop-up nobody knows: no close button to frame - the text with Escape
-    var stray = ScreenState.Classify(new ScreenInputs { Inv = inv, Offers = new List<string>(), ShownKnown = "", TopNew = "Form_NobodyKnowsThis" }, 0);
-    Check(D(PilotFlow.Sell, stray, false).Kind == HintLeave.Esc, "fallback: an unrecognised pop-up over the inventory: «Esc»");
-    // the hero grid's filter pop-up open: the funnel that closes it is framed, for every flow, whatever step the flow has (never a step frame under it)
-    var hfp = ScreenState.Classify(new ScreenInputs { Hero = new HeroScreen { Hero = 5, FormOk = true, FilterOpen = true }, Offers = new List<string>(), ShownKnown = "" }, 0);
-    Check(hfp.ModalOpen && hfp.ModalWhy == "heroFilter", "fallback: the hero filter pop-up reads as open (" + hfp.ModalWhy + ")");
-    foreach (var f in CityFirst.All) {
-      var fp = D(f, hfp, false);
-      var fn = new HeroGeometry().GridBarRect(W, H);
-      Check(fp.Kind == HintLeave.Close && fp.Rect != null && Math.Abs(fp.Rect.CX - fn.CX) < 1 && Math.Abs(fp.Rect.CY - fn.CY) < 1, "fallback: " + f + " with the hero filter pop-up open: the filter bar framed (" + fp.Kind + ")");
-    }
-    {   // lab 552 equip_hint_filter_open (frame audit): the Equip fallback's layout of hero.filter was the funnel square [16,641,56,56]; the live m_BtnFilter is [3,637,275,40] at 1366x705
-      double W2 = 1366, H2 = 705, U2 = Ui.Unit(W2, H2); var fq = HintFallback.Decide(PilotFlow.Equip, hfp, LocateKind.None, false, W2, H2, U2); int[] lv = { 3, 637, 275, 40 };
-      Check(fq.Kind == HintLeave.Close && fq.Key == "hero.filter" && Math.Abs(fq.Rect.CX - (lv[0] + lv[2] / 2.0)) <= 12 && Math.Abs(fq.Rect.CY - (lv[1] + lv[3] / 2.0)) <= 12 && Math.Abs(fq.Rect.W - lv[2]) <= 12 && Math.Abs(fq.Rect.H - lv[3]) <= 12, "fallback: hero.filter layout vs the audit's live rect (lab 552): the whole bar (" + fq.Rect.X + "," + fq.Rect.Y + "," + fq.Rect.W + "x" + fq.Rect.H + ")");
-    }
-    // live state of the lab run: the game's own flag not read (ModalWhy empty) but the pop-up is on the picture: the same funnel
-    var hnf = ScreenState.Classify(new ScreenInputs { Hero = new HeroScreen { Hero = 5, FormOk = true }, Offers = new List<string>(), ShownKnown = "" }, 0);
-    Check(!hnf.ModalOpen && HintFallback.Decide(PilotFlow.Equip, hnf, LocateKind.None, false, W, H, U).Kind == HintLeave.None && HintFallback.Decide(PilotFlow.Equip, hnf, LocateKind.None, false, W, H, U, true).Kind == HintLeave.Close, "fallback: the hero filter pop-up seen on the picture only: the funnel framed; nothing when it is closed");
-    Check(HintFallback.Decide(PilotFlow.Equip, hnf, LocateKind.None, false, W, H, U, true).Key == "hero.filter" && FrameTargets.Of("hero.filter") != null, "fallback: the funnel frame carries the key hero.filter (FrameFor reads its live rect, the audit sees it)");
-    // a held screen is not judged; a locate request with nothing to drive never goes back
-    var held = Unk("Form_ActALinkageMain", ""); held.Held = true;
-    Check(D(PilotFlow.Equip, held, false).Kind == HintLeave.None, "fallback: a held screen is not judged");
-    Check(HintFallback.Decide(PilotFlow.LocateRecast, foundry, LocateKind.NoItem, false, W, H, U).Kind == HintLeave.None, "fallback: nothing to drive: no back");
+    Check(same, "table kind: a sub-read failing every other tick changes nothing (" + b0 + ")");
+    // the table not read (null): the readers alone, as before (a failing inventory read held 1.5 s, then Unknown)
+    var tr2 = new ScreenTracker();
+    tr2.Update(new ScreenInputs { Inv = inv, Offers = new List<string>() }, 0);
+    Check(tr2.Update(new ScreenInputs { Offers = new List<string>() }, 1000).Kind == ScreenKind.Inventory && tr2.Update(new ScreenInputs { Offers = new List<string>() }, 3000).Kind == ScreenKind.Unknown,
+      "table kind: no window table - the readers decide alone (held 1.5 s, then Unknown)");
+    // a reader that reads its own screen open above the table's top keeps it (the table names a new form a moment later)
+    var rs = new RecastScreen { SublimingOpen = true, CurType = 2, AscendParts = new int[0], AscendEquips = new long[0], SelectParts = new int[0], Equips = new long[0] };
+    Check(ScreenState.Classify(new ScreenInputs { Rs = rs, Inv = inv, Screens = new List<string> { "Form_BackpackIntegration" } }, 0).Kind == ScreenKind.Foundry, "table kind: the Foundry read open over the table's inventory stays the Foundry");
+    Check(ScreenState.Classify(new ScreenInputs { Inv = inv, CityForm = true, Screens = new List<string> { "Form_EquipSubliming", "Form_BackpackIntegration" } }, 0).Kind == ScreenKind.Foundry, "table kind: the table's Foundry over a reader's inventory");
+
+    // frames: one source per button
+    var fs = new FrameStick(); var live = new double[] { 111, 238, 44, 44, 8 };
+    Check(fs.Pick(null, false, 526, 296, 0) == null, "frame source: nothing read yet - the layout's");
+    Check(fs.Pick(live, false, 526, 296, 100) == live, "frame source: a live read - the live frame");
+    bool kept = true;
+    for (long ft = 200; ft <= 1600; ft += 100) if (fs.Pick(ft % 300 == 0 ? live : null, false, 526, 296, ft) != live) kept = false;
+    Check(kept, "frame source: live reads missing now and then - the live frame all along, never the layout's");
+    Check(fs.Pick(null, false, 526, 296, 1500 + FrameStick.HoldMs - 1) != null && fs.Pick(null, false, 526, 296, 1600 + FrameStick.HoldMs + 1) == null, "frame source: 1.5 s without a live read - the layout's");
+    fs.Pick(live, false, 526, 296, 5000);
+    Check(fs.Pick(null, true, 526, 296, 5100) == null && fs.Pick(null, false, 526, 296, 5200) == null, "frame source: the button gone (hidden / covered) - dropped at once");
+    fs.Pick(live, false, 526, 296, 6000);
+    Check(fs.Pick(null, false, 1280, 720, 6100) == null, "frame source: another window size - no old frame");
+    // the small client's scale: the canvas has the client's shape, both ways give the same px a unit (0.46 on 526x296)
+    double byH, k = UiIcon.CanvasScale(526, 296, 526 / (296 / 640.0), 640, out byH);
+    Check(Math.Abs(k - byH) < 1e-9 && Math.Abs(k - 296 / 640.0) < 1e-9 && Math.Abs(k - Ui.Unit(526, 296) / 640) < 0.01, "small client: the canvas scale by width = by height = the unit's (" + k.ToString("0.000") + ")");
+    // the live rect of the city's «Инвентарь» on 526x296 (113,240,40,40: its centre 133) and the bar's place it gives: the layout's click on it
+    double U = Ui.Unit(526, 296), dx = (526 - (113 + 20)) / U;
+    Check(Math.Abs(dx - 1.320) < 0.01 && Math.Abs(dx - CityBar.DefaultDX) * U > 30, "small client: the live «Инвентарь» is 1.32 U from the right (the bar search's 136 px), the default offset " + Math.Round(Math.Abs(dx - CityBar.DefaultDX) * U) + " px off");
+    Check(UiIcon.Pick(new List<UiIcon.Cand> { new UiIcon.Cand { Name = "BtnHitArea", X = 116, Y = 243, W = 34, H = 34, Active = true, Depth = 1 } }, 113, 240, 40, 40) == -1, "icon: the touch area (BtnHitArea) is no picture");
   }
 
-  // the unknown-screen back press (ClickTarget.UnknownBack): only on a full-screen screen nobody knows, at most 3 a run, each has to change the screen
-  static void UnknownBackTests() {
-    Console.WriteLine("Unknown screen: the back arrow");
-    const double W = 1366, H = 705; double U = Ui.Unit(W, H);
-    var hg = new HeroGeometry(); double bx = hg.BackX * U, by = hg.BackY * U;
-    Func<string, string, ScreenState> Unk = (top, known) => { var s = ScreenState.Classify(new ScreenInputs { CityForm = false, Offers = new List<string>(), TopUnknown = top, ShownKnown = known }, 0); return s; };
-    Func<ClickOwner, ClickRequest> Rq = o => new ClickRequest { Owner = o, Target = ClickTarget.UnknownBack, AutoOn = true, Front = true, X = bx, Y = by, U = U };
-    var plain = Unk("Form_Odd", "");
-    Eq("", ClickGate.UnknownBackBlock(plain), "unknown back: a full-screen unknown screen without a pop-up allows it");
-    Check(ClickGate.OnBackArrow(bx, by, U) && !ClickGate.OnBackArrow(bx + 0.05 * U, by, U) && !ClickGate.OnBackArrow(W / 2, H / 2, U), "unknown back: the point is the hero screen's back arrow, nothing else");
-    // known screens and everything else that is not "a full-screen unknown screen" never get it
-    var inv = new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true };
-    var known = new Dictionary<string, ScreenState> {
-      { "City (form)", ScreenState.Classify(new ScreenInputs { CityForm = true, Offers = new List<string>(), ShownKnown = "" }, 0) },
-      { "City (picture)", ScreenState.Classify(new ScreenInputs { CityForm = false, CitySeen = true, Offers = new List<string>(), ShownKnown = "" }, 0) },
-      { "Inventory", ScreenState.Classify(new ScreenInputs { Inv = inv, Offers = new List<string>(), ShownKnown = "" }, 0) },
-      { "HeroScreen", ScreenState.Classify(new ScreenInputs { Hero = new HeroScreen { Hero = 5, FormOk = true }, Offers = new List<string>(), ShownKnown = "" }, 0) },
-      { "Foundry", ScreenState.Classify(new ScreenInputs { Rs = new RecastScreen { SublimingOpen = true }, Offers = new List<string>(), ShownKnown = "" }, 0) },
-      { "Gem", ScreenState.Classify(new ScreenInputs { Rs = new RecastScreen { GemOpen = true }, Offers = new List<string>(), ShownKnown = "" }, 0) },
-      { "ArtWorkshop", ScreenState.Classify(new ScreenInputs { ArtWs = new ArtWorkshopScreen { Open = true }, Offers = new List<string>(), ShownKnown = "" }, 0) },
-      { "an offer over the city", ScreenState.Classify(new ScreenInputs { CityForm = true, Offers = new List<string> { "Form_PopUpShop" }, ShownKnown = "" }, 0) },
-      { "an offer on an unknown screen", ScreenState.Classify(new ScreenInputs { CityForm = false, Offers = new List<string> { "Form_EquipmentPlan" }, ShownKnown = "" }, 0) },
-      { "a pop-up seen on the picture", ScreenState.Classify(new ScreenInputs { CityForm = false, Offers = new List<string>(), ModalExtra = true, ModalExtraWhy = "popup", ShownKnown = "" }, 0) },
-      { "the battle shown", Unk("", "Form_Battle") },
-      { "the hero screen's form shown", Unk("", "Form_CharactorMain") },
-      { "the known forms not read", Unk("Form_Odd", null) },
-      { "the window table not read", ScreenState.Classify(new ScreenInputs { CityForm = false, Offers = null, ShownKnown = "" }, 0) },
-      { "a fight's result", Unk("Form_BattleEnd", "") },
-    };
-    foreach (var kv in known) {
-      var s = kv.Value; s.SinceMs = 0;
-      Check(ClickGate.UnknownBackBlock(s) != "", "unknown back: never on " + kv.Key + " (" + ClickGate.UnknownBackBlock(s) + ")");
-      foreach (ClickOwner o in new[] { ClickOwner.Equip, ClickOwner.Locate, ClickOwner.Sell }) {
-        var g = new ClickGate();
-        var r = g.Check(Rq(o), s, 10000);
-        Check(!r.Allowed && !g.Halted(o), "unknown back: " + o + " gets no press on " + kv.Key + " (" + r.Reason + ")");
-        if (s.Kind != ScreenKind.Unknown || s.ModalOpen || s.OfferCount > 0 || !s.OfferRead) Check(!g.UnknownBackDue(o, s, 10000), "unknown back: " + o + " is never due on " + kv.Key);
-      }
-    }
-    // a new form's name not readable yet is tried again soon (live 1.6.66.391: once in 10 s left the screen unnamed for 9 s), then ever more seldom
-    Check(RFX.NameRetryDelay(1) <= 100 && RFX.NameRetryDelay(2) <= 200 && RFX.NameRetryDelay(3) <= 400 && RFX.NameRetryDelay(20) == 10000 && RFX.NameRetryDelay(8) <= 10000,
-      "forms: an unreadable name retried after 100, 200, 400 ms ... at most 10 s (" + RFX.NameRetryDelay(1) + ", " + RFX.NameRetryDelay(4) + ", " + RFX.NameRetryDelay(20) + ")");
-    {   // the city «Инвентарь»'s live rect: pressed once two reads at least 100 ms apart hold the same rect
-      var ls = new LiveStill(); var rc = new double[] { 1700, 900, 60, 60 };
-      Check(!ls.Note(rc, 1000) && !ls.Note(rc, 1050) && ls.Note(rc, 1100), "live still: the same rect over 100 ms is still (not before)");
-      Check(!ls.Note(new double[] { 1700, 905, 60, 60 }, 1200) && !ls.Note(new double[] { 1700, 905.5, 60, 60 }, 1250) && ls.Note(new double[] { 1700, 905, 60, 60 }, 1300), "live still: a moved rect starts again, within 1 px it is the same");
-      Check(!ls.Note(null, 1400) && !ls.Fresh && !ls.Note(rc, 1450) && ls.Fresh, "live still: no fresh rect forgets the stillness; a fresh moving one is Fresh (waited for)");
-    }
-    var held = Unk("Form_Odd", ""); held.Held = true;
-    Check(ClickGate.UnknownBackBlock(held) != "" && !new ClickGate().UnknownBackDue(ClickOwner.Locate, held, 10000), "unknown back: never on a screen held from a known one");
-    // due only after the screen settled, not twice within a second, not in a hint run, not while a form search runs
-    {
-      var g = new ClickGate();
-      // (a named top form: a short stillness; one not named yet - "id:" or none - the long one)
-      Check(ClickGate.UnknownBackSettle(plain) == ClickGate.UnknownBackNamedSettleMs && ClickGate.UnknownBackNamedSettleMs <= 500, "unknown back: a named top form settles in at most 500 ms");
-      Check(ClickGate.UnknownBackSettle(Unk("id:4242", "")) == ClickGate.UnknownBackSettleMs && ClickGate.UnknownBackSettle(Unk("Form_Odd,id:7", "")) == ClickGate.UnknownBackSettleMs
-        && ClickGate.UnknownBackSettle(Unk("", "")) == ClickGate.UnknownBackSettleMs, "unknown back: an unnamed top form waits the long settle");
-      int st = ClickGate.UnknownBackSettle(plain);
-      Check(!g.UnknownBackDue(ClickOwner.Locate, plain, st - 1), "unknown back: not before the screen settled");
-      Check(g.UnknownBackDue(ClickOwner.Locate, plain, st), "unknown back: due once it settled");
-      Check(!g.UnknownBackDue(ClickOwner.Locate, plain, st + 500), "unknown back: not again within a second");
-      var gid = new ClickGate(); var unnamed = Unk("id:4242", "");
-      Check(!gid.UnknownBackDue(ClickOwner.Locate, unnamed, ClickGate.UnknownBackSettleMs - 1) && gid.UnknownBackDue(ClickOwner.Locate, unnamed, ClickGate.UnknownBackSettleMs), "unknown back: an unnamed screen after the long settle");
-      var gh = new ClickGate { NoLocateClicks = true };
-      Check(!gh.UnknownBackDue(ClickOwner.Locate, plain, 10000) && gh.Check(Rq(ClickOwner.Locate), plain, 10000).Reason == "off", "unknown back: a hint run never presses");
-      var gs = new ClickGate { SearchWait = true };
-      Check(!gs.UnknownBackDue(ClickOwner.Locate, plain, 10000), "unknown back: not while a form search runs");
-      var go = new ClickGate();
-      Check(!go.Check(new ClickRequest { Owner = ClickOwner.Locate, Target = ClickTarget.UnknownBack, AutoOn = true, Front = true, X = W / 2, Y = H / 2, U = U }, plain, 10000).Allowed && go.HaltReason(ClickOwner.Locate) == "target", "unknown back: a point off the arrow is a stop");
-    }
-    // the press changes the screen: to the city (done, no more presses), to another unknown form (the next press may follow, no own-click stop)
-    {
-      var g = new ClickGate(); var rq = Rq(ClickOwner.Locate);
-      Check(g.Check(rq, plain, 10000).Allowed, "unknown back: allowed on the unknown screen");
-      g.Arm(ClickOwner.Locate, ClickTarget.UnknownBack, ClickGate.Expect(rq, plain), 10000);
-      var city = ScreenState.Classify(new ScreenInputs { CityForm = true, Offers = new List<string>() }, 10500);
-      g.Observe(city, 10500);
-      Check(!g.Pending(ClickOwner.Locate) && !g.Halted(ClickOwner.Locate) && g.UnknownBacks(ClickOwner.Locate) == 1, "unknown back: back in the city is its effect");
-      Check(!g.UnknownBackDue(ClickOwner.Locate, city, 20000) && g.Preflight(ClickOwner.Locate, city, 10600).Allowed, "unknown back: the city is known - no more presses, the pilot goes on");
-      var g2 = new ClickGate();
-      g2.Arm(ClickOwner.Sell, ClickTarget.UnknownBack, ClickGate.Expect(Rq(ClickOwner.Sell), plain), 10000);
-      var other = Unk("Form_Other", ""); other.SinceMs = 10400;
-      g2.Observe(other, 10400);
-      Check(!g2.Pending(ClickOwner.Sell) && !g2.Halted(ClickOwner.Sell), "unknown back: another unknown form on top is a change");
-      var pf = g2.Preflight(ClickOwner.Sell, other, 10500);
-      Check(pf.Verdict == GateVerdict.Wait && !g2.Halted(ClickOwner.Sell), "unknown back: the next unknown screen right after it is waited for, no own-click stop (" + pf.Reason + ")");
-      Check(!g2.UnknownBackDue(ClickOwner.Sell, other, 10500) && g2.UnknownBackDue(ClickOwner.Sell, other, 10400 + ClickGate.UnknownBackSettle(other)), "unknown back: the next press once that screen settled");
-    }
-    // a press that changes nothing: "nochange"
-    {
-      var g = new ClickGate(); var rq = Rq(ClickOwner.Equip);
-      g.Arm(ClickOwner.Equip, ClickTarget.UnknownBack, ClickGate.Expect(rq, plain), 10000);
-      g.Observe(plain, 11000);
-      Check(g.Pending(ClickOwner.Equip) && !g.Halted(ClickOwner.Equip), "unknown back: the effect is awaited for a moment");
-      g.Observe(plain, 10000 + ClickGate.EffectMs + 1);
-      Check(!g.Halted(ClickOwner.Equip) && g.EscapePending(ClickOwner.Equip), "unknown back: the same screen after the press: one Escape next, no stop yet");
-      var gn = new ClickGate(); var nameless = Unk("", "");
-      gn.Arm(ClickOwner.Equip, ClickTarget.UnknownBack, ClickGate.Expect(Rq(ClickOwner.Equip), nameless), 0);
-      gn.Observe(nameless, ClickGate.EffectMs + 1);
-      Check(!gn.Halted(ClickOwner.Equip) && gn.EscapePending(ClickOwner.Equip), "unknown back: an unknown screen without a name before and after is no change either (one Escape next)");
-      // the Escape changes nothing as well: the stop
-      var er = new ClickRequest { Owner = ClickOwner.Equip, Target = ClickTarget.EscapeBack, AutoOn = true, Front = true, U = U };
-      Check(gn.EscapeDue(ClickOwner.Equip, nameless, 10000) && !gn.Check(er, Unk("", null), 10000).Allowed, "unknown back: no Escape while the shown forms are not read (the unknown-back rules)");
-      Check(g.EscapeDue(ClickOwner.Equip, plain, 20000) && g.Check(er, plain, 20000).Allowed, "unknown back: the Escape on that full-screen unknown screen");
-      g.Arm(ClickOwner.Equip, ClickTarget.EscapeBack, ClickGate.Expect(er, plain), 20000);
-      g.Observe(plain, 20000 + ClickGate.EffectMs + 1);
-      Eq("nochange", g.HaltReason(ClickOwner.Equip), "unknown back: an Escape that changes nothing is a stop");
-    }
-    // at most MaxUnknownBacks presses a run; a new run starts the count again
-    {
-      var g = new ClickGate(); int n = 0; long t = 10000;
-      for (int i = 0; i < ClickGate.MaxUnknownBacks + 2; i++, t += 5000) {
-        var s = Unk("Form_" + i, ""); s.SinceMs = t - ClickGate.UnknownBackSettleMs;
-        if (!g.UnknownBackDue(ClickOwner.Locate, s, t)) break;
-        var rq = Rq(ClickOwner.Locate);
-        if (!g.Check(rq, s, t).Allowed) break;
-        g.Arm(ClickOwner.Locate, ClickTarget.UnknownBack, ClickGate.Expect(rq, s), t); n++;
-        g.Observe(Unk("Form_" + (i + 1), ""), t + 300);
-      }
-      Eq(ClickGate.MaxUnknownBacks, n, "unknown back: presses in one run");
-      var last = Unk("Form_x", ""); last.SinceMs = 0;
-      Check(!g.UnknownBackDue(ClickOwner.Locate, last, t + 10000), "unknown back: none due after the last one");
-      var r = g.Check(Rq(ClickOwner.Locate), last, t + 10000);
-      Check(!r.Allowed && g.HaltReason(ClickOwner.Locate) == "unknown", "unknown back: a fourth press is a stop (" + g.HaltDetail(ClickOwner.Locate) + ")");
-      g.Resume(ClickOwner.Locate);
-      Check(g.UnknownBacks(ClickOwner.Locate) == 0 && g.UnknownBackDue(ClickOwner.Locate, last, t + 20000), "unknown back: a new run may press again");
-    }
-  }
-
-  // back to the city (ClickTarget.CityBack) from a known screen the pilot cannot start from, and the one Escape after a back press that changed nothing
-  // the screen map (src/ScreenMap.cs, src/ScreenMapData.cs): every form of the game has a class; every pop-up / full screen an exit that is not
-  // one of its never-click buttons; a dangerous form never gets a click
   static void ScreenMapTests() {
     Console.WriteLine("Screen map: every form's exit");
     int n = 0, bad = 0, never = 0; var seen = new HashSet<string>();
@@ -6459,7 +4171,6 @@ static partial class CoreTests {
           bool ok = d.Form == e.Name && (e.Class == 'F' ? d.Move == MapMove.Back : d.Move == MapMove.Close) && d.Point != null
                     && d.Point.X >= 0 && d.Point.X <= W && d.Point.Y >= 0 && d.Point.Y <= H
                     && ScreenMap.OnExit(e.Name, d.Point.X, d.Point.Y, W, H, U) && !ScreenMap.OnNever(e.Name, d.Point.X, d.Point.Y, W, H, U);
-          if (e.Class == 'F' && ok) ok = ClickGate.UnknownBackBlock(s) == "";
           if (!ok) { fails++; if (fails <= 5) Console.WriteLine("  no exit: " + e.Name + " " + d); }
           if (e.NearNever.Length > 0) never++;
         } else if (e.Class == 'D') {
@@ -6469,16 +4180,7 @@ static partial class CoreTests {
             ScreenState.Classify(new ScreenInputs { CityForm = true, Offers = new List<string>(), TopCity = e.Name, ShownKnown = "" }, 0),
             ScreenState.Classify(new ScreenInputs { Inv = new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true }, Offers = new List<string>(), TopNew = e.Name, ShownKnown = "" }, 0) }) {
             var d = ClickGate.MapExit(s, W, H, U);
-            if (d.Move != MapMove.Stop || d.Point != null || ClickGate.UnknownBackBlock(s) == "") { fails++; Console.WriteLine("  dangerous not a stop: " + e.Name + " on " + s.Brief + " " + d); }
-            // no click of any kind is let through on it: the map's × (there is none), a click on any of its never-click buttons
-            foreach (var f in e.NearNever) {
-              var r = ScreenMap.Place(f, W, H, U);
-              var g = new ClickGate();
-              var res = g.Check(new ClickRequest { Owner = ClickOwner.Sell, Target = ClickTarget.MapClose, AutoOn = true, Front = true, X = r.CX, Y = r.CY, W = W, H = H, U = U, Form = e.Name }, s, 10000);
-              if (res.Allowed) { fails++; Console.WriteLine("  a never-click button of " + e.Name + " allowed"); }
-            }
-            var g2 = new ClickGate();
-            if (g2.Check(new ClickRequest { Owner = ClickOwner.Sell, Target = ClickTarget.MapClose, AutoOn = true, Front = true, X = W / 2, Y = H / 2, W = W, H = H, U = U, Form = e.Name }, s, 10000).Allowed) { fails++; Console.WriteLine("  a click on " + e.Name + " allowed"); }
+            if (d.Move != MapMove.Stop || d.Point != null) { fails++; Console.WriteLine("  dangerous not a stop: " + e.Name + " on " + s.Brief + " " + d); }
           }
         }
       }
@@ -6525,7 +4227,6 @@ static partial class CoreTests {
     var cov = ScreenState.Classify(new ScreenInputs { CityForm = true, Offers = new List<string>(), TopCity = "Form_AccountInfo", ShownKnown = "" }, 0);
     Check(cov.Kind == ScreenKind.City && cov.ModalOpen && cov.Top == "Form_AccountInfo", "top form: a pop-up over the city makes it modal (" + cov.Brief + ")");
     var odd = ScreenState.Classify(new ScreenInputs { CityForm = false, Offers = new List<string>(), TopUnknown = "Form_NotInTheGame", ShownKnown = "" }, 0);
-    Eq("", ClickGate.UnknownBackBlock(odd), "screen map: a form not in the map keeps the older back press");
     Eq(MapMove.None, ClickGate.MapExit(odd, 1920, 1080, 1080).Move, "screen map: a form not in the map gets no map exit");
     var sold = ScreenState.Classify(new ScreenInputs { CityForm = false, Offers = new List<string>(), TopUnknown = "Form_SoldierDetail", ShownKnown = "" }, 0);
     Eq(MapMove.Back, ClickGate.MapExit(sold, 1920, 1080, 1080).Move, "screen map: the demon soldier's details leave by the back arrow");
@@ -6533,2383 +4234,8 @@ static partial class CoreTests {
     string ecity = null; foreach (var e in ScreenMap.All) if (e.Class == 'E') { ecity = e.Name; break; }
     var ec = ScreenState.Classify(new ScreenInputs { CityForm = true, Offers = new List<string>(), TopCity = ecity, ShownKnown = "" }, 0);
     Eq(MapMove.Stop, ClickGate.MapExit(ec, 1920, 1080, 1080).Move, "screen map: a back-key-only pop-up over the city stops (no Escape on the city)");
-    Check(ClickGate.EscapeBlock(ec) != "", "screen map: Escape stays blocked on the city");
   }
 
-  // a small model of the game's form stack: the bottom form first; a full screen (F / K) hides what lies under it
-  // the laptop 2026-10-30 (test 1.6.66.347): the equip pilot selected an item, the game opened its tip (Form_CharactorEquipTip), the app took it for
-  // an unknown pop-up over the hero screen, sent the map's Escape twice and stopped («Escape was pressed 2 times already ... HeroScreen»)
-  /// <summary>The retry policy (src/ClickGate.cs header, live 1.6.66.393): a step failure is retried, the stop comes on the third failure of the
-  /// same step in a row, a dangerous form / a click not allowed stop at once; a pop-up in the click's time is a retry that does not count; after a
-  /// pop-up was closed the next one of the chain is waited for; several offers: the newest on top; the tap-to-close rewards; the live close
-  /// button's pick and the frames' visual child.</summary>
-  static void ResilienceTests() {
-    Console.WriteLine("Click gate: the retry policy, the login pop-up chain, the live close button and the frames:");
-    bool was = ClickGate.DefaultResilient; ClickGate.DefaultResilient = true;
-    try {
-      double W = 1920, H = 1009, U = Ui.Unit(W, H);
-      Func<string[], bool, ScreenState> St = (offers, city) => ScreenState.Classify(new ScreenInputs { CityForm = city, Offers = offers == null ? null : new List<string>(offers) }, 0);
-      var city = St(new string[0], true);
-      var log = new List<string>();
-      var g = new ClickGate(); g.Sink = x => log.Add(x);
-      var inv = new ClickRequest { Owner = ClickOwner.Locate, Target = ClickTarget.CityInventory, AutoOn = true, Front = true };
-      long t = 0;
-      Func<long, GateResult> PressAndLose = at => {   // «Инвентарь» allowed, sent, and nothing changes within its time
-        var r = g.Check(inv, city, at);
-        if (!r.Allowed) return r;
-        g.Arm(ClickOwner.Locate, ClickTarget.CityInventory, ClickGate.Expect(inv, city), at);
-        g.Observe(city, at + ClickGate.SlowEffectMs + ClickGate.SearchCapMs + 10);
-        return r;
-      };
-      // the gate's own one-time «Инвентарь» retry first (city-again), then the policy's
-      PressAndLose(t); t += 40000; g.CityAgainDue.Clear();
-      Check(!g.Halted(ClickOwner.Locate), "retry: the first «Инвентарь» without effect is pressed again (the gate's city-again)");
-      PressAndLose(t); t += 40000;
-      Check(!g.Halted(ClickOwner.Locate) && g.Retries(ClickOwner.Locate) == 1 && log.Exists(l => l.Contains("RETRY 1/3 of CityInventory (nochange)")), "retry: «Инвентарь» changed nothing again -> RETRY 1/3, no stop");
-      Check(g.RetryDue.Contains(ClickOwner.Locate), "retry: the host is told (the city bar dropped, the pilot's step tries start over)");
-      Check(g.RetryShown(ClickOwner.Locate, t - 40000 + ClickGate.SlowEffectMs + ClickGate.SearchCapMs + 100).StartsWith("nochange/1"), "retry: the window shows the retry and its reason");
-      var rw = g.Check(inv, city, g.Retries(ClickOwner.Locate) > 0 ? t - 40000 + ClickGate.SlowEffectMs + ClickGate.SearchCapMs + 20 : 0);
-      Eq("retry", rw.Reason, "retry: nothing is clicked for RetrySettleMs after a retry (the screen read again)");
-      PressAndLose(t); t += 40000;
-      Check(!g.Halted(ClickOwner.Locate) && g.Retries(ClickOwner.Locate) == 2, "retry: the second failure in a row -> RETRY 2/3");
-      PressAndLose(t); t += 40000;
-      Check(g.Halted(ClickOwner.Locate) && g.HaltReason(ClickOwner.Locate) == "nochange" && log.Exists(l => l.Contains("STOP (nochange)") && l.Contains("failure 3 of CityInventory in a row")), "retry: the third failure of the same step in a row stops the owner, with the count");
-      // a step that went on in between starts the count over
-      var g2 = new ClickGate(); var inv2 = new ClickRequest { Owner = ClickOwner.Sell, Target = ClickTarget.InvEquipTab, AutoOn = true, Front = true };
-      var invScr = ScreenState.Classify(new ScreenInputs { Offers = new List<string>(), Inv = new InventoryScreen { Open = true, EquipTab = false, BulkKnown = true } }, 0);
-      var invEq = ScreenState.Classify(new ScreenInputs { Offers = new List<string>(), Inv = new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true } }, 0);
-      long t2 = 0;
-      for (int k = 0; k < 2; k++) { g2.Arm(ClickOwner.Sell, ClickTarget.InvEquipTab, ClickGate.Expect(inv2, invScr), t2); g2.Observe(invScr, t2 + ClickGate.EffectMs + 10); t2 += 5000; }
-      g2.Arm(ClickOwner.Sell, ClickTarget.InvEquipTab, ClickGate.Expect(inv2, invScr), t2); g2.Observe(invEq, t2 + 300); t2 += 5000;
-      g2.Arm(ClickOwner.Sell, ClickTarget.InvEquipTab, ClickGate.Expect(inv2, invScr), t2); g2.Observe(invScr, t2 + ClickGate.EffectMs + 10); t2 += 5000;
-      Check(!g2.Halted(ClickOwner.Sell) && g2.Retries(ClickOwner.Sell) == 3, "retry: a step that took effect in between starts its count over (3 retries, no stop)");
-      // a pop-up that came in the click's time: a retry that does not count against the step
-      var g3 = new ClickGate(); var log3 = new List<string>(); g3.Sink = x => log3.Add(x);
-      var ann = St(new[] { "Form_AnnouncementHall" }, true);
-      for (int k = 0; k < 4; k++) {
-        long at = k * 10000;
-        Check(g3.Check(inv, city, at).Allowed || k > 0, "retry: «Инвентарь» allowed on the clear city");
-        g3.Arm(ClickOwner.Locate, ClickTarget.CityInventory, ClickGate.Expect(inv, city), at);
-        g3.Observe(ann, at + ClickGate.SearchCapMs + 10);
-      }
-      Check(!g3.Halted(ClickOwner.Locate) && log3.Exists(l => l.Contains("(popup)") && l.Contains("a pop-up came in its time")), "retry: a pop-up that took the press is a retry (popup), not a stop - four in a row");
-      // the reasons that stop at once
-      var g4 = new ClickGate();
-      g4.Halt(ClickOwner.Equip, "dangerous", "Form_ShopBuyTips: dangerous");
-      Check(g4.Halted(ClickOwner.Equip) && g4.Retries(ClickOwner.Equip) == 0, "retry: a dangerous form stops at once");
-      var g5 = new ClickGate(); g5.Halt(ClickOwner.Sell, "target", "not allowed"); g5.Halt(ClickOwner.Locate, "covered", "another window");
-      Check(g5.Halted(ClickOwner.Sell) && g5.Halted(ClickOwner.Locate), "retry: a click not allowed, the player's window in front: stops at once");
-      var g6 = new ClickGate(); g6.Resilient = false; g6.Halt(ClickOwner.Sell, "nochange", "x");
-      Check(g6.Halted(ClickOwner.Sell), "retry: Resilient off = the old rule (every failure a stop)");
-      var g7 = new ClickGate(); int n7 = 0;
-      for (int k = 0; k < 20 && !g7.Halted(ClickOwner.Sell); k++) { g7.Arm(ClickOwner.Sell, k % 2 == 0 ? ClickTarget.InvEquipTab : ClickTarget.InvBulkEnter, null, k * 3000); g7.Halt(ClickOwner.Sell, k % 2 == 0 ? "screen" : "cell", "alternating steps"); n7++; }
-      Check(g7.Halted(ClickOwner.Sell) && g7.Retries(ClickOwner.Sell) == ClickGate.MaxRetriesRun, "retry: at most MaxRetriesRun retries a run (" + n7 + " failures)");
-      g7.Resume(ClickOwner.Sell);
-      Check(!g7.Halted(ClickOwner.Sell) && g7.Retries(ClickOwner.Sell) == 0, "retry: a new request starts the retries over");
-      // the chain: after a pop-up was closed, nothing else for OfferChainMs; another pop-up's × is pressed meanwhile
-      var g8 = new ClickGate(); var c = OfferForms.ClosePoint(null, "Form_AnnouncementHall", W, H, U);
-      var rq = new ClickRequest { Owner = ClickOwner.Locate, Target = ClickTarget.OfferClose, AutoOn = true, Front = true, Form = "Form_AnnouncementHall", X = c.X, Y = c.Y, W = W, H = H, U = U };
-      Check(g8.Check(rq, ann, 0).Allowed, "chain: the pop-up's × allowed");
-      g8.Arm(ClickOwner.Locate, ClickTarget.OfferClose, ClickGate.Expect(rq, ann), 0, "Form_AnnouncementHall"); g8.Observe(city, 300);
-      Check(g8.RetryDue.Contains(ClickOwner.Locate), "chain: a closed pop-up starts the pilot's step tries over (it may have taken the last press)");
-      Eq("chain", g8.Preflight(ClickOwner.Locate, city, 800).Reason, "chain: the next pop-up of the chain is waited for (preflight)");
-      Eq("chain", g8.Check(inv, city, 900).Reason, "chain: no other click within OfferChainMs");
-      var nh = St(new[] { "Form_ActPopupNewHero" }, true); var c2 = OfferForms.ClosePoint(null, "Form_ActPopupNewHero", W, H, U);
-      var rq2 = new ClickRequest { Owner = ClickOwner.Locate, Target = ClickTarget.OfferClose, AutoOn = true, Front = true, Form = "Form_ActPopupNewHero", X = c2.X, Y = c2.Y, W = W, H = H, U = U };
-      Check(g8.Check(rq2, nh, 900).Allowed, "chain: the next pop-up's × may be pressed meanwhile");
-      // several offers: the one that came last (alone) is on top; two in the same read: not known, none pressed
-      var ord = new OfferForms.Order();
-      ord.Note(new List<string> { "Form_ItemReward" });
-      var both = ord.Note(new List<string> { "Form_ItemReward", "Form_AnnouncementHall" });
-      Check(ord.TopKnown && both[0] == "Form_AnnouncementHall", "offers: the newest of two is on top (" + string.Join(",", both.ToArray()) + ")");
-      var s2 = ScreenState.Classify(new ScreenInputs { CityForm = true, Offers = both, OfferTopKnown = ord.TopKnown }, 0);
-      var c3 = OfferForms.ClosePoint(null, "Form_AnnouncementHall", W, H, U);
-      var rq3 = new ClickRequest { Owner = ClickOwner.Sell, Target = ClickTarget.OfferClose, AutoOn = true, Front = true, Form = "Form_AnnouncementHall", X = c3.X, Y = c3.Y, W = W, H = H, U = U };
-      Check(new ClickGate().Check(rq3, s2, 0).Allowed, "offers: the × of the one on top is pressed");
-      var ord2 = new OfferForms.Order(); ord2.Note(new List<string> { "Form_ItemReward", "Form_AnnouncementHall" });
-      Check(!ord2.TopKnown, "offers: two that came in the same read: the top is not known");
-      var g9 = new ClickGate(); g9.Resilient = false;
-      Eq("modal", g9.Check(rq3, ScreenState.Classify(new ScreenInputs { CityForm = true, Offers = new List<string> { "Form_ItemReward", "Form_AnnouncementHall" } }, 0), 0).Reason, "offers: ... then none is pressed");
-      // Form_ItemReward (tap to close): an offer, its tap strip at the bottom centre, on no other button; the screen map agrees
-      Check(OfferForms.IsOffer("Form_ItemReward") && OfferForms.IsOffer("Form_SpecialItemReward"), "reward: the tap-to-close rewards are on the offer list");
-      var tap = OfferForms.CloseRect(null, "Form_ItemReward", W, H, U);
-      Check(tap != null && Math.Abs(tap.CX - W / 2) < 1 && tap.Bottom < H && tap.Y > H - 0.08 * U, "reward: the tap strip lies at the bottom centre (" + (tap == null ? "none" : (int)tap.X + "," + (int)tap.Y + "," + (int)tap.W + "x" + (int)tap.H) + ")");
-      Check(ScreenMap.ClassOf("Form_ItemReward") == 'P' && ScreenMap.ClassOf("Form_SpecialItemReward") == 'P', "reward: the screen map has them as pop-ups closed by their tap (class P)");
-      var rew = St(new[] { "Form_ItemReward" }, true);
-      var rqr = new ClickRequest { Owner = ClickOwner.Locate, Target = ClickTarget.OfferClose, AutoOn = true, Front = true, Form = "Form_ItemReward", X = tap.CX, Y = tap.CY, W = W, H = H, U = U };
-      Check(new ClickGate().Check(rqr, rew, 0).Allowed, "reward: the tap is allowed over the city");
-      // the live close button: by name, in the top right, not on a never-click button; the top-right-most of several
-      var cands = new List<UiIcon.Cand> {
-        new UiIcon.Cand { Name = "Button_Close", X = 1700, Y = 60, W = 70, H = 70, Active = true },
-        new UiIcon.Cand { Name = "m_BtnClose", X = 1600, Y = 120, W = 60, H = 60, Active = true },
-        new UiIcon.Cand { Name = "Btn_Get", X = 1750, Y = 20, W = 60, H = 60, Active = true },
-        new UiIcon.Cand { Name = "Button_Close", X = 200, Y = 60, W = 70, H = 70, Active = true },
-        new UiIcon.Cand { Name = "BtnExit", X = 1800, Y = 40, W = 60, H = 60, Active = false } };
-      Eq(0, RFX.UiClosePick("Form_DailyCheckIn", cands, W, H, U), "live ×: the top-right-most close-named button that is shown");
-      Check(RFX.CloseName.IsMatch("Button_Close") && RFX.CloseName.IsMatch("m_BtnClose") && RFX.CloseName.IsMatch("BtnExit") && RFX.CloseName.IsMatch("Btn_Close") && !RFX.CloseName.IsMatch("Click2Close") && !RFX.CloseName.IsMatch("m_BtnGet"),
-            "live ×: the close names of the prefabs (btnClose / Btn_Close / BtnExit ...), never a tap layer or a claim button");
-      Eq(-1, RFX.UiClosePick("Form_DailyCheckIn", new List<UiIcon.Cand> { new UiIcon.Cand { Name = "Button_Close", X = 200, Y = 800, W = 70, H = 70, Active = true } }, W, H, U), "live ×: none in the top right -> none (the layout's point)");
-      Check(RFX.UiWidgetOf(ClickTarget.OfferClose, "Form_DailyCheckIn").Discover && !RFX.UiWidgetOf(ClickTarget.CityInventory, null).Discover, "live ×: the offer's close button is looked for live when its field is missing");
-      // frames: the visual child of a wide button (its hit area larger, the label beside it), 2 px out; the line of the test build
-      var vis = new List<UiIcon.Cand> { new UiIcon.Cand { Name = "Text", X = 100, Y = 100, W = 200, H = 60, Active = true }, new UiIcon.Cand { Name = "Bg", X = 110, Y = 105, W = 180, H = 50, Active = true } };
-      Eq(-1, UiIcon.Pick(vis, 100, 100, 200, 60), "frame: a wide button has no icon");
-      Eq(1, UiIcon.PickVisual(vis, 100, 100, 200, 60), "frame: ... its visual child is framed (the label left out)");
-      var fr = UiIcon.Frame(110, 105, 180, 50, W, H);
-      Check(fr[0] == 108 && fr[1] == 103 && fr[2] == 184 && fr[3] == 54, "frame: 2 px round the visual child");
-      Eq("frame: Form_MainCity.m_Button_Backpack rect=[108,103,184,54] source=live", UiIcon.FrameLine("Form_MainCity.m_Button_Backpack", fr, true), "frame: the test build's line");
-      foreach (ClickTarget tg in new[] { ClickTarget.HeroBack, ClickTarget.CityInventory, ClickTarget.FoundryButton, ClickTarget.AscendTab, ClickTarget.EquipConfirm, ClickTarget.OfferClose })
-        Check(RFX.UiWidgetOf(tg, "Form_DailyCheckIn").Icon, "frame: " + tg + " is framed on its picture, not its hit area");
-    } finally { ClickGate.DefaultResilient = was; }
-  }
-
-  static void FlowFormTests() {
-    Console.WriteLine("Flow forms: the pilots' own pop-ups are a sub-state of their screen");
-    const double W = 1350, H = 689; double U = Ui.Unit(W, H);
-    Check(ScreenMap.IsFlow(ScreenKind.HeroScreen, "Form_CharactorEquipTip") && ScreenMap.IsFlow(ScreenKind.Inventory, "Form_CharactorEquipTip"), "flow: the item tip is the hero screen's and the inventory's flow");
-    Check(!ScreenMap.IsFlow(ScreenKind.City, "Form_CharactorEquipTip") && !ScreenMap.IsFlow(ScreenKind.Unknown, "Form_CharactorEquipTip") && !ScreenMap.IsFlow(ScreenKind.HeroScreen, "Form_AchievementTip"),
-          "flow: never on the city / an unknown screen, never another form");
-    foreach (var f in ScreenMap.FlowForms) {
-      Check(ScreenMap.ByName(f.Name) != null, "flow: " + f.Name + " is in the screen map");
-      Check(ScreenMap.ClassOf(f.Name) != 'D' && ScreenMap.ClassOf(f.Name) != 'W' && !OfferForms.IsOffer(f.Name), "flow: " + f.Name + " is no dangerous dialog, wait or offer");
-      Check(ScreenMap.PilotScreen(f.Owner, f.Screen), "flow: " + f.Screen + " is " + f.Owner + "'s own screen");
-    }
-    Check(ScreenMap.PilotScreen(ClickOwner.Equip, ScreenKind.HeroScreen) && !ScreenMap.PilotScreen(ClickOwner.Equip, ScreenKind.Foundry) && !ScreenMap.PilotScreen(ClickOwner.Sell, ScreenKind.HeroScreen),
-          "flow: the pilots' own screens");
-    Func<string, string, ScreenState> hero = (flow, topNew) => {
-      var s = ScreenState.Classify(new ScreenInputs { Hero = new HeroScreen { Hero = 204200000, FormOk = true, Tab = 3, Part = 0 }, Offers = new List<string>(), ShownKnown = "Form_CharactorMain", Flow = flow, TopNew = topNew }, 0);
-      s.SinceMs = 0; return s;
-    };
-    var tip = hero("Form_CharactorEquipTip", "");
-    Eq(ScreenKind.HeroScreen, tip.Kind, "flow: the tip keeps the hero screen");
-    Check(!tip.ModalOpen && tip.Flow == "Form_CharactorEquipTip" && tip.Brief.Contains("flow(Form_CharactorEquipTip)"), "flow: the tip is the screen's sub-state, no modal (" + tip.Brief + ")");
-    Eq(MapMove.None, ClickGate.MapExit(tip, W, H, U).Move, "flow: the map has no exit to take on the tip");
-    Check(ClickGate.EscapeBlock(tip) != "" && ClickGate.CityBackBlock(tip) != "", "flow: no Escape or back press with the tip shown");
-    {
-      var g = new ClickGate();
-      Check(!g.EscapeDue(ClickOwner.Equip, tip, 20000) && !g.CityBackDue(ClickOwner.Equip, tip, 20000), "flow: nothing is due on the tip");
-      var r = g.Check(new ClickRequest { Owner = ClickOwner.Equip, Target = ClickTarget.EquipNav, AutoOn = true, Front = true, X = 152, Y = 564 }, tip, 20000);
-      Check(r.Allowed, "flow: the pilot's next item click with the tip shown (" + r.Detail + ")");
-    }
-    // the unknown moment of a failing read with the tip shown: no back press, no map exit on it
-    {
-      var un = ScreenState.Classify(new ScreenInputs { CityForm = false, Offers = new List<string>(), ShownKnown = "", Flow = "Form_CharactorEquipTip" }, 0); un.SinceMs = 0;
-      Check(ClickGate.UnknownBackBlock(un) != "" && ClickGate.MapExit(un, W, H, U).Move == MapMove.None && !new ClickGate().UnknownBackDue(ClickOwner.Equip, un, 60000),
-            "flow: no unknown back / map exit with the tip on an unread screen (" + ClickGate.UnknownBackBlock(un) + ")");
-    }
-    // an Escape form over the pilot's own screen: never an Escape there (a stop with the reason), elsewhere as before
-    {
-      var esc = hero("", "Form_AchievementTip");
-      var d = ClickGate.MapExit(esc, W, H, U);
-      Eq(MapMove.Escape, d.Move, "flow: the map still says Escape for a back-key pop-up over the hero screen");
-      var g = new ClickGate(); g.MapEscape(ClickOwner.Equip);
-      var r = g.Check(new ClickRequest { Owner = ClickOwner.Equip, Target = ClickTarget.EscapeBack, AutoOn = true, Front = true, U = U }, esc, 20000);
-      Check(!r.Allowed && !g.Halted(ClickOwner.Equip) && !g.EscapeAllowed(ClickOwner.Equip, esc), "flow: no Escape on the equip pilot's hero screen, no stop either (the ladder takes the next rung) (" + g.HaltDetail(ClickOwner.Equip) + ")");
-      var g2 = new ClickGate(); g2.MapEscape(ClickOwner.Locate);
-      var esc2 = hero("", "Form_AchievementTip"); esc2.ShownKnown = "Form_CharactorMain";
-      Check(g2.Check(new ClickRequest { Owner = ClickOwner.Locate, Target = ClickTarget.EscapeBack, AutoOn = true, Front = true, U = U }, esc2, 20000).Allowed, "flow: another pilot may still close it with Escape");
-    }
-    // the laptop 1.6.66.348: the item left selected with its tip closed - «no single blue button», no step for 2 min. The item is clicked again
-    {
-      var lg = new ListGeometry(); double UH = 689; var types = new[] { 0, 1, 1, 1 };
-      Func<long, bool, bool, int[], AutoView> av = (t, known, shown, btn) => new AutoView { NowMs = t, Foreground = true, H = UH, Target = 55070, Row = 2, Col = 1, Sel = 55070, SelRow = 2, SelCol = 1,
-        AnchorHas = true, Row1Top = (lg.ViewTop + ListGeometry.TopPad) * UH, Types = types, AutoConfirm = true, Button = btn, Hero = 204200000, ScreenHero = 204200000, Owner = 0, TipKnown = known, TipShown = shown, BlueNone = btn == null };
-      var p = new AutoPilot(lg);
-      Eq(AutoKind.None, p.Step(av(1000, true, false, null)).Kind, "tip: the selected item with no tip: a moment first");
-      Eq(AutoKind.None, p.Step(av(1000 + AutoPilot.TipReopenMs + 1, false, false, null)).Kind, "tip: never while the shown forms are not read");
-      var a1 = p.Step(av(1000 + AutoPilot.TipReopenMs + 2, true, false, null));
-      double cx = (lg.ColLeft(1) + lg.CellW / 2) * UH, cy = (lg.ViewTop + ListGeometry.TopPad + lg.PitchY + lg.CellW / 2) * UH;
-      Check(a1.Kind == AutoKind.Click && Math.Abs(a1.X - cx) < 1 && Math.Abs(a1.Y - cy) < 1, "tip: closed for " + AutoPilot.TipReopenMs + " ms: the item clicked again (" + a1.X + "," + a1.Y + ")");
-      var p2 = new AutoPilot(lg); p2.Step(av(1000, true, true, null));
-      Eq(AutoKind.None, p2.Step(av(1000 + 10 * AutoPilot.TipReopenMs, true, true, null)).Kind, "tip: shown (its button not seen yet): no click on the item");
-      var btn = new[] { 700, 800, 200, 54 };
-      var c1 = p2.Step(av(1000 + 10 * AutoPilot.TipReopenMs + 1, true, true, btn));
-      Check(c1.Kind == AutoKind.Click && Math.Abs(c1.X - 800) < 1, "tip: shown with its button: «Заменить» pressed");
-      p2.NotSent();
-      var c2 = p2.Step(av(1000 + 10 * AutoPilot.TipReopenMs + 2, true, true, btn));
-      Check(c2.Kind == AutoKind.Click && Math.Abs(c2.X - 800) < 1, "tip: a press the gate held back is not counted: pressed on the next step");
-      // live 1.6.66.349 (1350x689): the click on the selected item changed nothing twice - the second try anchors the rows again (the
-      // list's middle), never the same point; a tie of two blue buttons (no BlueNone) is no reason to click at all
-      {
-        var p4 = new AutoPilot(lg); p4.Step(av(1000, true, false, null));
-        var k1 = p4.Step(av(1000 + AutoPilot.TipReopenMs + 1, true, false, null));
-        var k2 = p4.Step(av(1000 + 2 * AutoPilot.TipReopenMs + 2, true, false, null));
-        double mid = (lg.ViewTop + lg.ViewBottom) / 2 * UH;
-        Check(k1.Kind == AutoKind.Click && k2.Kind == AutoKind.Click && Math.Abs(k2.Y - k1.Y) > 5 && Math.Abs(k2.Y - mid) < lg.PitchY * UH,
-              "tip: the second try clicks the list's middle to anchor the rows again (" + (int)k1.X + "," + (int)k1.Y + " then " + (int)k2.X + "," + (int)k2.Y + ")");
-        var k3 = p4.Step(av(1000 + 2 * AutoPilot.TipReopenMs + 600, true, false, null)); var v5 = av(1000 + 2 * AutoPilot.TipReopenMs + 1200, true, false, null); v5.Sel = 55681; v5.SelRow = 3; v5.SelCol = 1;
-        var k4 = p4.Step(v5);
-        Check(k4.Kind == AutoKind.Click && p4.State == "work", "tip: another item selected by it: the plan's item is clicked as any (" + k4.Kind + " " + p4.State + ")");
-        var p5 = new AutoPilot(lg); p5.Step(av(1000, true, false, null)); var tie = av(1000 + AutoPilot.TipReopenMs + 1, true, false, null); tie.BlueNone = false;
-        Eq(AutoKind.None, p5.Step(tie).Kind, "tip: two blue buttons (a tie) are no closed tip: no click");
-      }
-      var p3 = new AutoPilot(lg); p3.Step(av(0, true, false, null)); int n = 0;
-      for (long t = AutoPilot.TipReopenMs + 1; t < 60000; t += 300) if (p3.Step(av(t, true, false, null)).Kind == AutoKind.Click) n++;
-      Check(n == AutoPilot.TipReopens && p3.State == "unconfirmed", "tip: at most " + AutoPilot.TipReopens + " clicks, then unconfirmed (" + n + ", " + p3.State + ")");
-    }
-    // the sim: the item tip after the item select on the slow laptop, never escaped
-    {
-      var geo = GameGeometry.Parse(GeoJson(), GeoGame); int done = 0, runs = 0;
-      for (int seed = 0; seed < 400 && runs < 40; seed++) {
-        var oc = new Dictionary<string, int>(); string e = SimRun(seed, true, false, oc, geo);
-        string key = string.Join(",", new List<string>(oc.Keys).ToArray());
-        if (!key.StartsWith("Equip ")) continue;
-        runs++; if (key.EndsWith(" done")) done++;
-        Check(e == "", "flow: sim seed " + seed + " (slow, equip with the item tip) keeps every rule" + (e != "" ? ": " + e.Split('\n')[0] + " " + (e.Split('\n').Length > 1 ? e.Split('\n')[1].Trim() : "") : ""));
-      }
-      Check(runs >= 20 && done * 2 >= runs, "flow: the slow equip runs reach the item tip and end (" + done + " of " + runs + ")");
-    }
-  }
-
-  static ScreenState MapModel(List<string> stack) {
-    int fi = stack.Count - 1;
-    while (fi > 0 && "FKU".IndexOf(ScreenMap.ClassOf(stack[fi])) < 0) fi--;
-    string full = stack[fi];
-    var above = stack.GetRange(fi + 1, stack.Count - fi - 1);
-    var i = new ScreenInputs { CityForm = false, Offers = new List<string>(), ShownKnown = "" };
-    var inv = new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true };
-    switch (full) {
-      case "Form_MainCity": i.CityForm = true; i.CitySeen = true; i.TopCity = string.Join(",", above.ToArray()); break;
-      case "Form_BackpackIntegration": i.Inv = inv; i.ShownKnown = full; i.TopNew = string.Join(",", above.ToArray()); break;
-      case "Form_EquipSubliming": i.Inv = inv; i.Rs = new RecastScreen { SublimingOpen = true, CurType = 1 }; i.ShownKnown = "Form_BackpackIntegration,Form_EquipSubliming"; i.TopNew = string.Join(",", above.ToArray()); break;
-      case "Form_CharactorMain": i.Hero = new HeroScreen { Hero = 5, FormOk = true }; i.ShownKnown = full; i.TopNew = string.Join(",", above.ToArray()); break;
-      default: { var l = new List<string> { full }; l.AddRange(above); i.TopUnknown = string.Join(",", l.ToArray()); break; }
-    }
-    var s = ScreenState.Classify(i, 0); s.SinceMs = 0;
-    return s;
-  }
-
-  // start a pilot from any screen: the map's exits (and the back to the city on a known screen) lead to the city, then the pilot's first click
-  static void ScreenMapScenarios() {
-    Console.WriteLine("Screen map: pilots from any screen");
-    const double W = 1366, H = 705; double U = Ui.Unit(W, H);
-    var hg = new HeroGeometry();
-    string popE = null; foreach (var e in ScreenMap.All) if (e.Class == 'E' && e.Name.Contains("Tip")) { popE = e.Name; break; }
-    var cases = new[] {
-      new[] { "the guild", "Form_MainCity", "Form_Union" },
-      new[] { "the Foundry", "Form_MainCity", "Form_BackpackIntegration", "Form_EquipSubliming" },
-      new[] { "the inventory", "Form_MainCity", "Form_BackpackIntegration" },
-      new[] { "the arena", "Form_MainCity", "Form_PVPMain" },
-      new[] { "the shop", "Form_MainCity", "Form_Shop" },
-      new[] { "a pop-up over the city", "Form_MainCity", "Form_AccountInfo" },
-      new[] { "a pop-up over the guild", "Form_MainCity", "Form_Union", "Form_AccountInfo" },
-      new[] { "a back-key pop-up over the Foundry", "Form_MainCity", "Form_BackpackIntegration", "Form_EquipSubliming", popE },
-      new[] { "the arena over the guild", "Form_MainCity", "Form_Union", "Form_PVPMain" },
-    };
-    foreach (var c in cases) {
-      var o = ClickOwner.Equip;
-      var g = new ClickGate(); long t = 100000;
-      var stack = new List<string>(c); stack.RemoveAt(0);
-      var moves = new List<string>(); bool ok = true; string why = "";
-      for (int step = 0; step < 10 && ok; step++) {
-        var s = MapModel(stack);
-        if (s.Kind == ScreenKind.City && !s.ModalOpen) break;
-        t += 5000;
-        var d = ClickGate.MapExit(s, W, H, U);
-        ClickRequest rq;
-        if (d.Move == MapMove.Close) {
-          if (!g.MapDue(o, s, t)) { ok = false; why = "× not due"; break; }
-          rq = new ClickRequest { Owner = o, Target = ClickTarget.MapClose, AutoOn = true, Front = true, X = d.Point.X, Y = d.Point.Y, W = W, H = H, U = U, Form = d.Form };
-        } else if (d.Move == MapMove.Escape) {
-          if (!g.MapDue(o, s, t)) { ok = false; why = "Escape not due"; break; }
-          g.MapEscape(o);
-          rq = new ClickRequest { Owner = o, Target = ClickTarget.EscapeBack, AutoOn = true, Front = true, U = U };
-        } else if (d.Move == MapMove.Back) {
-          if (!g.UnknownBackDue(o, s, t)) { ok = false; why = "back not due"; break; }
-          rq = new ClickRequest { Owner = o, Target = ClickTarget.UnknownBack, AutoOn = true, Front = true, X = d.Point.X, Y = d.Point.Y, W = W, H = H, U = U };
-        } else if (d.Move == MapMove.None && ClickGate.AwayFromStart(o, s)) {
-          if (!g.CityBackDue(o, s, t)) { ok = false; why = "city back not due"; break; }
-          rq = new ClickRequest { Owner = o, Target = ClickTarget.CityBack, AutoOn = true, Front = true, X = hg.BackX * U, Y = hg.BackY * U, U = U };
-        } else { ok = false; why = "no way on " + s.Brief + " (" + d + ")"; break; }
-        var res = g.Check(rq, s, t);
-        if (!res.Allowed) { ok = false; why = rq.Target + " refused on " + s.Brief + ": " + res.Reason + " " + res.Detail; break; }
-        g.Arm(o, rq.Target, ClickGate.Expect(rq, s), t);
-        moves.Add(rq.Target + (rq.Form != null ? "(" + rq.Form + ")" : ""));
-        stack.RemoveAt(stack.Count - 1);
-        g.Observe(MapModel(stack), t + 300);
-        if (g.Pending(o) || g.Halted(o)) { ok = false; why = rq.Target + " showed no effect (" + g.HaltDetail(o) + ")"; }
-      }
-      var end = MapModel(stack);
-      ok = ok && end.Kind == ScreenKind.City && !end.ModalOpen;
-      // the pilot's first click in the city: Equip's «Герои», Sell's «Инвентарь»
-      if (ok) {
-        t += 5000;
-        var r1 = g.Check(new ClickRequest { Owner = ClickOwner.Equip, Target = ClickTarget.EquipNav, AutoOn = true, Front = true, X = W * 0.9, Y = H * 0.9, U = U }, end, t);
-        var r2 = new ClickGate().Check(new ClickRequest { Owner = ClickOwner.Sell, Target = ClickTarget.CityInventory, AutoOn = true, Front = true, X = W * 0.9, Y = H * 0.9, U = U }, end, t);
-        if (!r1.Allowed || !r2.Allowed) { ok = false; why = "first click refused: " + r1.Detail + " / " + r2.Detail; }
-      }
-      Check(ok, "from " + c[0] + " to the city in " + moves.Count + " (" + string.Join(", ", moves.ToArray()) + "), then the pilot's first click" + (why != "" ? " - " + why : ""));
-    }
-    // a dangerous form on the way: the pilot stops, nothing is pressed
-    {
-      var g = new ClickGate();
-      var s = MapModel(new List<string> { "Form_MainCity", "Form_Union", "Form_BuyPopup" });
-      var d = ClickGate.MapExit(s, W, H, U);
-      Eq(MapMove.Stop, d.Move, "a buy dialog over the guild: stop");
-      Check(!g.UnknownBackDue(ClickOwner.Locate, s, 100000), "a buy dialog over the guild: no back press under it");
-      g.MapStop(ClickOwner.Locate, d, s);
-      Check(g.Halted(ClickOwner.Locate) && g.HaltReason(ClickOwner.Locate) == "dangerous", "a buy dialog over the guild: the pilot stops with the reason (" + g.HaltDetail(ClickOwner.Locate) + ")");
-    }
-    // a fight: wait, no stop for the unknown screen, no press
-    {
-      var g = new ClickGate();
-      var s = MapModel(new List<string> { "Form_MainCity", "Form_BattleLoading" });
-      Eq(MapMove.Wait, ClickGate.MapExit(s, W, H, U).Move, "a loading screen: wait");
-      Check(!g.UnknownBackDue(ClickOwner.Equip, s, 100000) && !g.UnknownStall(ClickOwner.Equip, s, 100000) && !g.UnknownStall(ClickOwner.Equip, s, 100000 + ClickGate.UnknownStallMs + 1000), "a loading screen: no back press, no unknown-screen stop");
-    }
-  }
-
-  static void CityBackTests() {
-    Console.WriteLine("Back to the city: the back arrow, then Escape");
-    const double W = 1366, H = 705; double U = Ui.Unit(W, H);
-    var hg = new HeroGeometry(); double bx = hg.BackX * U, by = hg.BackY * U;
-    Func<string, ScreenInputs> In = known => new ScreenInputs { Offers = new List<string>(), ShownKnown = known, CityForm = false };
-    Func<string, ScreenState> City = known => { var i = In(known); i.CityForm = true; return ScreenState.Classify(i, 0); };
-    Func<string, ScreenState> Inv = known => { var i = In(known); i.Inv = new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true }; return ScreenState.Classify(i, 0); };
-    Func<string, ScreenState> Foundry = known => { var i = In(known); i.Inv = new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true }; i.Rs = new RecastScreen { SublimingOpen = true, CurType = 1 }; return ScreenState.Classify(i, 0); };
-    Func<string, ScreenState> Gem = known => { var i = In(known); i.Rs = new RecastScreen { GemOpen = true }; return ScreenState.Classify(i, 0); };
-    Func<string, ScreenState> Hero = known => { var i = In(known); i.Hero = new HeroScreen { Hero = 5, FormOk = true }; return ScreenState.Classify(i, 0); };
-    Func<ClickOwner, ClickRequest> Rq = o => new ClickRequest { Owner = o, Target = ClickTarget.CityBack, AutoOn = true, Front = true, X = bx, Y = by, U = U };
-    Func<ClickOwner, ClickRequest> Esc = o => new ClickRequest { Owner = o, Target = ClickTarget.EscapeBack, AutoOn = true, Front = true, U = U };
-    const string fdForms = "Form_BackpackIntegration,Form_EquipSubliming";
-    Check(Foundry(null).Kind == ScreenKind.Foundry && Gem(null).Kind == ScreenKind.Gem && Inv(null).Kind == ScreenKind.Inventory && Hero(null).Kind == ScreenKind.HeroScreen && City(null).Kind == ScreenKind.City, "city back: the test screens are read as meant");
-
-    // who needs it: the pilot's start screen never (the fast paths stay), every other known screen does
-    Check(!ClickGate.AwayFromStart(ClickOwner.Equip, City(null)) && !ClickGate.AwayFromStart(ClickOwner.Equip, Hero(null)), "city back: equip starts in the city / on the hero screen as before");
-    foreach (var s in new[] { Foundry(null), Inv(null), Gem(null) }) Check(ClickGate.AwayFromStart(ClickOwner.Equip, s), "city back: equip on " + s.Kind + " goes back first");
-    Check(!ClickGate.AwayFromStart(ClickOwner.Sell, Inv(null)) && !ClickGate.AwayFromStart(ClickOwner.Sell, City(null)) && !ClickGate.AwayFromStart(ClickOwner.Sell, Hero(null)), "city back: sell starts in the inventory / the city / with its own hero back as before");
-    Check(ClickGate.AwayFromStart(ClickOwner.Sell, Foundry(null)) && ClickGate.AwayFromStart(ClickOwner.Sell, Gem(null)), "city back: sell on the Foundry / the gem screen goes back first");
-    Check(!ClickGate.AwayFromStart(ClickOwner.Equip, ScreenState.Classify(In(""), 0)), "city back: an unknown screen is the unknown back's");
-    {   // the declared continuation sets (CityFirst): every flow goes on from the city; a known screen outside its set goes back first
-      Func<string, ScreenState> Ws = known => { var i = In(known); i.ArtWs = new ArtWorkshopScreen { Open = true, Tab = 1 }; return ScreenState.Classify(i, 0); };
-      var screensK = new[] { City(null), Hero(null), Inv(null), Foundry(null), Gem(null), Ws(null) };
-      var want = new Dictionary<PilotFlow, string> {   // the screens it goes on from, by kind
-        { PilotFlow.Equip, "City,HeroScreen" }, { PilotFlow.ArtEquip, "City,HeroScreen" }, { PilotFlow.Sell, "City,HeroScreen,Inventory" }, { PilotFlow.ArtSell, "City,HeroScreen,Inventory" },
-        { PilotFlow.LocateAscend, "City,HeroScreen,Inventory,Foundry" }, { PilotFlow.LocateRecast, "City,HeroScreen,Inventory,Gem" }, { PilotFlow.LocateArtPromote, "City,HeroScreen,Inventory,ArtWorkshop" } };
-      foreach (var f in CityFirst.All) foreach (var sc in screensK) {
-        bool on = ("," + want[f] + ",").Contains("," + sc.Kind + ",");
-        Check(CityFirst.NeedsCity(f, sc, LocateKind.InList) == !on, "city first: " + f + " on " + sc.Kind + (on ? " goes on" : " goes back to the city first"));
-      }
-      Check(!CityFirst.NeedsCity(PilotFlow.LocateAscend, Gem(null), LocateKind.NoItem) && !CityFirst.NeedsCity(PilotFlow.LocateRecast, ScreenState.Classify(In(""), 0), LocateKind.InList), "city first: no item to drive / an unknown screen: not this step's");
-      Check(CityFirst.NeedsCity(PilotFlow.Sell, Inv(null), LocateKind.None, true), "city first: a sub-state the flow cannot go on from goes back");
-      Check(CityFirst.OfLocate("ascend") == PilotFlow.LocateAscend && CityFirst.OfLocate("artPromote") == PilotFlow.LocateArtPromote && CityFirst.OfLocate("recast") == PilotFlow.LocateRecast && CityFirst.OfLocate("") == PilotFlow.LocateRecast, "city first: the purposes' flows");
-    }
-    {   // Locate: the inventory's steps with the Foundry / the gem screen on top; never the recast's own gem steps, never the hero screen (its HeroBack)
-      Func<LocateKind, bool, bool, bool> L = (k, form, hero) => LocateAuto.NeedsCityBack(new LocateView { Step = new LocateStep { Kind = k }, OtherFormOpen = form, HeroScreenOpen = hero, W = W, H = H, U = U });
-      foreach (var k in new[] { LocateKind.OpenInventory, LocateKind.OpenEquipTab, LocateKind.InList }) Check(L(k, true, false), "city back: locate step " + k + " with the Foundry on top goes back");
-      Check(!L(LocateKind.OpenInventory, false, false) && !L(LocateKind.OpenInventory, false, true) && !L(LocateKind.InList, false, false), "city back: locate on its own screens / the hero screen: as before");
-      Check(!L(LocateKind.GemFunction, true, false) && !L(LocateKind.Selected, true, false) && !L(LocateKind.AscendPick, true, false), "city back: never in the recast's / ascension's own steps");
-      // a recast after an Ascension request left the Foundry open on its Ascension tab (lab 1.6.66.377: the pilot waited at openRecastTab)
-      var rsAsc = new RecastScreen { SublimingOpen = true, CurType = 2 };
-      var recReq = new LocateRequest { Id = "r", Purpose = "recast", Item = LocItem(777, 4, 0, 0) }; recReq.Item.Quality = 8;
-      var recStep = LocateGuide.Next(recReq, null, rsAsc, null, 8, 1);
-      // (the shared city-first table: the Foundry is not the recast's screen, CityFirst; the inventory steps under the Foundry: NeedsCityBack)
-      Func<LocateStep, string, bool, bool> R = (st, pur, shown) => CityFirst.NeedsCity(CityFirst.OfLocate(pur), shown ? ScreenState.Classify(new ScreenInputs { Offers = new List<string>(), ShownKnown = null, CityForm = false, Rs = rsAsc }, 0) : Inv(null), st.Kind,
-        LocateAuto.NeedsCityBack(new LocateView { Step = st, OtherFormOpen = shown, Rs = shown ? rsAsc : null, Purpose = pur, W = W, H = H, U = U }));
-      Check(recStep.Kind == LocateKind.OpenRecastTab && R(recStep, "recast", true), "city back: recast with the Foundry on the Ascension tab goes back (the inventory's recast path)");
-      foreach (var k in new[] { LocateKind.RecastFilter, LocateKind.RecastPick, LocateKind.RecastNotInList }) Check(R(new LocateStep { Kind = k }, "recast", true), "city back: recast step " + k + " in the Foundry goes back");
-      Check(!R(recStep, "ascend", true) && !R(new LocateStep { Kind = LocateKind.OpenAscendTab }, "ascend", true), "city back: the Ascension's Foundry steps stay");
-      Check(!R(new LocateStep { Kind = LocateKind.Done }, "recast", true) && !R(new LocateStep { Kind = LocateKind.ChoosePending }, "recast", true), "city back: a recast finished on the Foundry's recast tab stays (the player's)");
-      Check(!R(recStep, "recast", false), "city back: ... only with the Foundry shown");
-    }
-
-    // from the Foundry: back (-> the inventory), back (-> the city), then the normal first click
-    {
-      var g = new ClickGate(); long t = 10000;
-      var fd = Foundry(null); fd.SinceMs = t - ClickGate.CityBackSettleMs;
-      var fresh0 = Foundry(null); fresh0.SinceMs = t - 10;
-      Check(!g.CityBackDue(ClickOwner.Equip, fresh0, t), "city back: not before the screen settled");
-      Check(g.CityBackDue(ClickOwner.Equip, fd, t), "city back: due on the Foundry");
-      Check(!g.CityBackDue(ClickOwner.Equip, fd, t + 200), "city back: not again within a second");
-      var r = g.Check(Rq(ClickOwner.Equip), Foundry(fdForms), t);
-      Check(r.Allowed, "city back: the back arrow on the Foundry (" + r.Detail + ")");
-      Check(!new ClickGate().Check(new ClickRequest { Owner = ClickOwner.Equip, Target = ClickTarget.CityBack, AutoOn = true, Front = true, X = W / 2, Y = H / 2, U = U }, Foundry(fdForms), t).Allowed, "city back: never a point off the arrow");
-      g.Arm(ClickOwner.Equip, ClickTarget.CityBack, ClickGate.Expect(Rq(ClickOwner.Equip), fd), t);
-      Eq("pending", g.Preflight(ClickOwner.Equip, fd, t + 300).Reason, "city back: its effect is awaited");
-      var iv = Inv(null); iv.SinceMs = t + 500;
-      g.Observe(iv, t + 500);
-      Check(!g.Pending(ClickOwner.Equip) && !g.Halted(ClickOwner.Equip), "city back: the inventory is its effect");
-      Check(!g.CityBackDue(ClickOwner.Equip, iv, t + 600), "city back: the inventory settles first");
-      t = t + 500 + ClickGate.CityBackSettleMs;
-      Check(g.CityBackDue(ClickOwner.Equip, iv, t) && g.Check(Rq(ClickOwner.Equip), Inv("Form_BackpackIntegration"), t).Allowed, "city back: the second press, on the inventory");
-      g.Arm(ClickOwner.Equip, ClickTarget.CityBack, ClickGate.Expect(Rq(ClickOwner.Equip), iv), t);
-      var city = City(null); city.SinceMs = t + 400;
-      g.Observe(city, t + 400);
-      Check(!g.Pending(ClickOwner.Equip) && g.CityBacks(ClickOwner.Equip) == 2, "city back: the city came after 2 presses");
-      Check(!g.CityBackDue(ClickOwner.Equip, city, t + 5000) && !g.Check(Rq(ClickOwner.Equip), City(""), t + 5000).Allowed, "city back: never a press on the city");
-      Check(!g.Halted(ClickOwner.Equip), "city back: not stopped by its own press on the city (" + g.HaltDetail(ClickOwner.Equip) + ")");
-      var nav = new ClickRequest { Owner = ClickOwner.Equip, Target = ClickTarget.EquipNav, AutoOn = true, Front = true, X = W - hg.HeroesBtnDX * U, Y = H - hg.HeroesBtnDY * U };
-      var nr = g.Check(nav, City(""), t + 5000);
-      Check(nr.Allowed, "city back: then the normal first click («Герои» of the city): " + nr.Reason + " " + nr.Detail);
-      Check(!g.EscapePending(ClickOwner.Equip) && g.Escapes(ClickOwner.Equip) == 0, "city back: no Escape on the way");
-    }
-    // from the gem screen (sell) and the hero screen of another flow (its gear list closing counts)
-    {
-      var g = new ClickGate(); var gm = Gem(null);
-      Check(g.CityBackDue(ClickOwner.Sell, gm, 10000) && g.Check(Rq(ClickOwner.Sell), Gem("Form_EquipGemMain"), 10000).Allowed, "city back: sell on the gem screen");
-      g.Arm(ClickOwner.Sell, ClickTarget.CityBack, ClickGate.Expect(Rq(ClickOwner.Sell), gm), 10000);
-      g.Observe(Inv(null), 10400);
-      Check(!g.Pending(ClickOwner.Sell) && !ClickGate.AwayFromStart(ClickOwner.Sell, Inv(null)), "city back: sell is in the inventory after one press, its own steps go on");
-      var gh = new ClickGate(); var hs = Hero(null); hs.HeroSlot = 2;
-      Check(gh.CityBackDue(ClickOwner.Locate, hs, 10000) && gh.Check(Rq(ClickOwner.Locate), hs, 10000).Allowed, "city back: allowed on a hero screen");
-      gh.Arm(ClickOwner.Locate, ClickTarget.CityBack, ClickGate.Expect(Rq(ClickOwner.Locate), hs), 10000);
-      var hs2 = Hero(null); hs2.HeroSlot = -1;
-      gh.Observe(hs2, 10300);
-      Check(!gh.Pending(ClickOwner.Locate) && !gh.Halted(ClickOwner.Locate), "city back: a gear list closing on the hero screen is a change");
-    }
-    // never: a pop-up, an offer, a held screen, a fight's form, a hint run
-    {
-      var md = Foundry(null); md.ModalOpen = true; md.ModalWhy = "form:Form_X";
-      var hd = Foundry(null); hd.Held = true;
-      var bt = Foundry("Form_Battle");
-      foreach (var s in new[] { md, hd, bt }) {
-        Check(ClickGate.CityBackBlock(s) != "" && !new ClickGate().CityBackDue(ClickOwner.Equip, s, 10000), "city back: never on " + s.Brief + " (" + ClickGate.CityBackBlock(s) + ")");
-        Check(!new ClickGate().Check(Rq(ClickOwner.Equip), s, 10000).Allowed, "city back: the gate waits on " + s.Brief);
-      }
-      var gl = new ClickGate { NoLocateClicks = true };
-      Check(!gl.CityBackDue(ClickOwner.Locate, Foundry(null), 10000) && !gl.Check(Rq(ClickOwner.Locate), Foundry(fdForms), 10000).Allowed, "city back: a hint run never presses");
-    }
-    // a back press that changes nothing: ONE Escape (never before such a press, never on the city or in a fight), then the stop
-    {
-      var g = new ClickGate(); long t = 10000; var fd = Foundry(null);
-      Check(!g.EscapeDue(ClickOwner.Equip, fd, t), "escape: never without a back press that changed nothing");
-      Eq("target", new ClickGate().Check(Esc(ClickOwner.Equip), Foundry(fdForms), t).Reason, "escape: the gate refuses one that was not due");
-      Check(g.CityBackDue(ClickOwner.Equip, fd, t) && g.Check(Rq(ClickOwner.Equip), Foundry(fdForms), t).Allowed, "escape: first the back arrow");
-      g.Arm(ClickOwner.Equip, ClickTarget.CityBack, ClickGate.Expect(Rq(ClickOwner.Equip), fd), t);
-      g.Observe(fd, t + ClickGate.EffectMs + 1);
-      Check(!g.Halted(ClickOwner.Equip) && g.EscapePending(ClickOwner.Equip), "escape: the back press changed nothing - an Escape is next, no stop");
-      t += ClickGate.EffectMs + 2000;
-      Check(!g.CityBackDue(ClickOwner.Equip, fd, t), "escape: no other back press while the Escape is due");
-      Check(g.EscapeDue(ClickOwner.Equip, fd, t), "escape: due on the same Foundry");
-      Check(!g.Check(Esc(ClickOwner.Equip), Foundry(null), t).Allowed && !g.Halted(ClickOwner.Equip), "escape: not without the shown forms read (a fight could be on)");
-      Check(!g.Check(Esc(ClickOwner.Equip), Foundry(fdForms + ",Form_Battle"), t).Allowed, "escape: never with the fight's form shown");
-      var r = g.Check(Esc(ClickOwner.Equip), Foundry(fdForms), t);
-      Check(r.Allowed, "escape: one Escape on the Foundry (" + r.Detail + ")");
-      g.Arm(ClickOwner.Equip, ClickTarget.EscapeBack, ClickGate.Expect(Esc(ClickOwner.Equip), fd), t);
-      Check(!g.EscapePending(ClickOwner.Equip) && g.Escapes(ClickOwner.Equip) == 1, "escape: one sent");
-      g.Observe(Inv(null), t + 300);
-      Check(!g.Pending(ClickOwner.Equip) && !g.Halted(ClickOwner.Equip), "escape: the inventory is its effect");
-      Check(!g.EscapeDue(ClickOwner.Equip, Inv(null), t + 5000), "escape: only one per back press that changed nothing");
-    }
-    {   // the city on top: never an Escape (it asks to quit the game), the due one is dropped
-      var g = new ClickGate(); var fd = Foundry(null);
-      g.CityBackDue(ClickOwner.Equip, fd, 10000);
-      g.Arm(ClickOwner.Equip, ClickTarget.CityBack, ClickGate.Expect(Rq(ClickOwner.Equip), fd), 10000);
-      g.Observe(fd, 10000 + ClickGate.EffectMs + 1);
-      Check(g.EscapePending(ClickOwner.Equip), "escape: due after the back press that changed nothing");
-      Check(!g.Check(Esc(ClickOwner.Equip), City("Form_MainCity"), 20000).Allowed, "escape: never on the city (fresh read)");
-      Check(!g.EscapeDue(ClickOwner.Equip, City(null), 20000) && !g.EscapePending(ClickOwner.Equip), "escape: the city came - nothing due any more");
-      Check(ClickGate.EscapeBlock(City("")) != "" && ClickGate.EscapeBlock(City(null)) != "", "escape: blocked on the city whatever the forms say");
-      var ub = ScreenState.Classify(new ScreenInputs { CityForm = false, Offers = new List<string>(), TopUnknown = "Form_BattleEnd", ShownKnown = "" }, 0);
-      Check(ClickGate.EscapeBlock(ub) != "", "escape: never on a fight's result");
-    }
-    {   // the game's exit question after an Escape: the stop, nothing of it pressed
-      var g = new ClickGate(); var un = ScreenState.Classify(new ScreenInputs { CityForm = false, Offers = new List<string>(), TopUnknown = "Form_Odd", ShownKnown = "" }, 0);
-      g.Arm(ClickOwner.Sell, ClickTarget.UnknownBack, ClickGate.Expect(new ClickRequest { Owner = ClickOwner.Sell, Target = ClickTarget.UnknownBack, U = U }, un), 0);
-      g.Observe(un, ClickGate.EffectMs + 1);
-      Check(g.EscapeDue(ClickOwner.Sell, un, 10000) && g.Check(Esc(ClickOwner.Sell), un, 10000).Allowed, "exit dialog: the Escape on an unknown full-screen form");
-      g.Arm(ClickOwner.Sell, ClickTarget.EscapeBack, ClickGate.Expect(Esc(ClickOwner.Sell), un), 10000);
-      var ex = ScreenState.Classify(new ScreenInputs { CityForm = false, Offers = new List<string>(), TopUnknown = "Form_SystemTips", ShownKnown = "" }, 0);
-      Check(ClickGate.ExitDialogShown(ex) && ClickGate.EscapeBlock(ex) != "", "exit dialog: seen, no Escape on it");
-      g.Observe(ex, 10300);
-      Eq("exitdialog", g.HaltReason(ClickOwner.Sell), "exit dialog: after the Escape it stops the pilot");
-    }
-    // caps: MaxCityBacks presses a run (each changing the screen without reaching the city), MaxEscapes Escapes a run
-    {
-      var g = new ClickGate(); long t = 10000; int n = 0;
-      Func<int, ScreenState> Alt = i => i % 2 == 0 ? Foundry(null) : Gem(null);
-      for (int i = 0; i < ClickGate.MaxCityBacks + 2; i++, t += 5000) {
-        var s = Alt(i); s.SinceMs = t - ClickGate.CityBackSettleMs;
-        if (!g.CityBackDue(ClickOwner.Locate, s, t)) break;
-        if (!g.Check(Rq(ClickOwner.Locate), s, t).Allowed) break;
-        g.Arm(ClickOwner.Locate, ClickTarget.CityBack, ClickGate.Expect(Rq(ClickOwner.Locate), s), t); n++;
-        g.Observe(Alt(i + 1), t + 300);
-      }
-      Eq(ClickGate.MaxCityBacks, n, "city back: presses in one run");
-      Eq("nochange", g.HaltReason(ClickOwner.Locate), "city back: the next one due is a stop (" + g.HaltDetail(ClickOwner.Locate) + ")");
-      g.Resume(ClickOwner.Locate);
-      Check(g.CityBacks(ClickOwner.Locate) == 0 && g.CityBackDue(ClickOwner.Locate, Foundry(null), t + 20000), "city back: a new run may press again");
-    }
-    {
-      var g = new ClickGate(); long t = 10000; int esc = 0;
-      for (int i = 0; i < 4 && !g.Halted(ClickOwner.Equip); i++, t += 20000) {
-        var s = i % 2 == 0 ? Foundry(null) : Gem(null); s.SinceMs = 0;
-        if (!g.CityBackDue(ClickOwner.Equip, s, t)) break;
-        g.Check(Rq(ClickOwner.Equip), s, t);
-        g.Arm(ClickOwner.Equip, ClickTarget.CityBack, ClickGate.Expect(Rq(ClickOwner.Equip), s), t);
-        g.Observe(s, t + ClickGate.EffectMs + 1);   // the back changes nothing
-        if (g.Halted(ClickOwner.Equip)) break;
-        long te = t + ClickGate.EffectMs + 2000;
-        if (!g.EscapeDue(ClickOwner.Equip, s, te)) break;
-        if (!g.Check(Esc(ClickOwner.Equip), i % 2 == 0 ? Foundry(fdForms) : Gem("Form_EquipGemMain"), te).Allowed) break;
-        g.Arm(ClickOwner.Equip, ClickTarget.EscapeBack, ClickGate.Expect(Esc(ClickOwner.Equip), s), te); esc++;
-        g.Observe(i % 2 == 0 ? Gem(null) : Foundry(null), te + 300);   // the Escape changed the screen
-      }
-      Eq(ClickGate.MaxEscapes, esc, "escape: at most this many a run");
-      Eq("nochange", g.HaltReason(ClickOwner.Equip), "escape: a back press that changes nothing with no Escape left is a stop");
-    }
-  }
-
-  // Storage cleanup of ARTIFACTS (the artifact tab's «Массовая продажа»): the panel reader on fake tables, the screen state, the steps and frames, no clicks
-  // the build plan screen a wrong click opened (laptop, 1366x705), the unknown-screen stop, the form search wait, a pop-up over a known screen
-  static void PlanScreenTests() {
-    const double W = 1366, H = 705; double U = Ui.Unit(W, H);
-    // «План сборки»: left with its back arrow (top left, where the photo of the laptop shows it), never its plan buttons
-    var bk = OfferForms.ClosePoint(null, "Form_EquipmentPlan", W, H, U);
-    Check(bk != null && bk.X > 20 && bk.X < 75 && bk.Y > 10 && bk.Y < 45, "plan screen: the back arrow at the top left (" + (bk == null ? "-" : (int)bk.X + "," + (int)bk.Y) + ")");
-    var plan = ScreenState.Classify(new ScreenInputs { CityForm = false, Offers = new List<string> { "Form_EquipmentPlan" } }, 0);
-    Check(plan.Kind == ScreenKind.Unknown && plan.ModalWhy == "offer:Form_EquipmentPlan", "plan screen: read as the pop-up on top (" + plan.Brief + ")");
-    Func<double, double, ClickRequest> Back = (x, y) => new ClickRequest { Owner = ClickOwner.Equip, Target = ClickTarget.OfferClose, AutoOn = true, Front = true, Form = "Form_EquipmentPlan", X = x, Y = y, W = W, H = H, U = U };
-    var g0 = new ClickGate();
-    Eq("offer", g0.Preflight(ClickOwner.Equip, plan, 0).Reason, "plan screen: the pilot's preflight leaves it first");
-    Check(g0.Check(Back(bk.X, bk.Y), plan, 0).Allowed, "plan screen: its back arrow may be pressed");
-    foreach (var p in new[] { new[] { 0.3 * U, 0.04 * U }, new[] { 0.13 * U, 0.18 * U }, new[] { W / 2, H - 0.05 * U }, new[] { W - 0.3 * U, H - 0.05 * U } })
-      Check(!new ClickGate().Check(Back(p[0], p[1]), plan, 0).Allowed, "plan screen: never a point off the arrow (" + (int)p[0] + "," + (int)p[1] + ")");
-    var gb = new ClickGate(); gb.Arm(ClickOwner.Equip, ClickTarget.OfferClose, ClickGate.Expect(Back(bk.X, bk.Y), plan), 0, "Form_EquipmentPlan");
-    gb.Observe(ScreenState.Classify(new ScreenInputs { CityForm = true, Offers = new List<string>() }, 0), 800);
-    Check(!gb.Pending(ClickOwner.Equip) && !gb.Halted(ClickOwner.Equip), "plan screen: back in the city = the effect, the pilot goes on");
-
-    // the unknown-screen stop: 20 s on the same unrecognised screen, the pilot running
-    Func<string, ScreenState> Unk = top => ScreenState.Classify(new ScreenInputs { CityForm = false, Offers = new List<string>(), TopUnknown = top }, 0);
-    {
-      var g = new ClickGate(); var log = new List<string>(); g.Sink = x => log.Add(x);
-      bool hit = false; long t;
-      for (t = 0; t <= ClickGate.UnknownStallMs + 500 && !hit; t += 200) hit = g.UnknownStall(ClickOwner.Equip, Unk(""), t);
-      Check(hit && t > ClickGate.UnknownStallMs && g.HaltReason(ClickOwner.Equip) == "unknown" && g.HaltDetail(ClickOwner.Equip).StartsWith("unknown screen ?"), "unknown stop: 20 s on an unknown screen stops the pilot (" + g.HaltDetail(ClickOwner.Equip) + ")");
-      Check(log.Exists(l => l.Contains("click gate Equip: STOP (unknown) unknown screen")), "unknown stop: the lab's stop pattern is in the log");
-      var g2 = new ClickGate(); bool h2 = false;
-      for (t = 0; t <= ClickGate.UnknownStallMs + 2000 && !h2; t += 200) h2 = g2.UnknownStall(ClickOwner.Locate, Unk("Form_Odd"), t);
-      Check(h2 && g2.HaltDetail(ClickOwner.Locate).StartsWith("unknown screen Form_Odd"), "unknown stop: the form's name is in the reason");
-      // Preflight (Locate / Sell / the artifact steps) stops the same way
-      var g3 = new ClickGate(); GateResult r3 = null;
-      for (t = 0; t <= ClickGate.UnknownStallMs + 500; t += 200) { r3 = g3.Preflight(ClickOwner.Sell, Unk("Form_Odd"), t); if (r3.Verdict == GateVerdict.Deny) break; }
-      Check(r3.Verdict == GateVerdict.Deny && g3.HaltReason(ClickOwner.Sell) == "unknown" && t >= ClickGate.UnknownStallMs, "unknown stop: Preflight waits 20 s, then stops");
-      // a gap (background / the player busy) or another unknown screen starts the count again
-      var g4 = new ClickGate();
-      for (t = 0; t < 15000; t += 200) g4.UnknownStall(ClickOwner.Equip, Unk(""), t);
-      for (t = 18000; t < 30000; t += 200) g4.UnknownStall(ClickOwner.Equip, Unk(""), t);
-      Check(!g4.Halted(ClickOwner.Equip), "unknown stop: a gap of the calls starts the count again");
-      var g5 = new ClickGate();
-      for (t = 0; t < 15000; t += 200) g5.UnknownStall(ClickOwner.Equip, Unk("Form_A"), t);
-      for (t = 15000; t < 30000; t += 200) g5.UnknownStall(ClickOwner.Equip, Unk("Form_B"), t);
-      Check(!g5.Halted(ClickOwner.Equip), "unknown stop: a change of the unknown screen is progress");
-      g5.Resume(ClickOwner.Equip);
-    }
-    {   // screens the pilots handle never count, however long
-      var hero = new HeroScreen { FormOk = true, Hero = 204200000, Tab = 1, Part = -1 };
-      var known = new Dictionary<string, ScreenState> {
-        { "city", ScreenState.Classify(new ScreenInputs { CityForm = true, Offers = new List<string>() }, 0) },
-        { "city by picture", ScreenState.Classify(new ScreenInputs { CitySeen = true }, 0) },
-        { "hero screen", ScreenState.Classify(new ScreenInputs { Hero = hero }, 0) },
-        { "inventory", ScreenState.Classify(new ScreenInputs { Inv = new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true } }, 0) },
-        { "sell list", ScreenState.Classify(new ScreenInputs { Inv = new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true, Bulk = true } }, 0) },
-        { "foundry", ScreenState.Classify(new ScreenInputs { Rs = new RecastScreen { SublimingOpen = true, CurType = 2 } }, 0) },
-        { "gem", ScreenState.Classify(new ScreenInputs { Rs = new RecastScreen { GemOpen = true, GemFunc = 7 } }, 0) },
-        { "offer", ScreenState.Classify(new ScreenInputs { Offers = new List<string> { "Form_PopUpShop" } }, 0) },
-        { "plan screen", plan },
-        { "fight result", Unk("Form_BattleEnd") },
-        { "arena result", Unk("Form_PvpBattleEnd") },
-        { "hero filter pop-up", ScreenState.Classify(new ScreenInputs { Hero = new HeroScreen { FormOk = true, Hero = 204200000, Tab = 1, Part = -1, FilterOpen = true } }, 0) },
-      };
-      foreach (var kv in known) {
-        var g = new ClickGate(); bool any = false;
-        for (long t = 0; t <= 3 * ClickGate.UnknownStallMs; t += 200) any |= g.UnknownStall(ClickOwner.Equip, kv.Value, t);
-        Check(!any && !g.Halted(ClickOwner.Equip), "unknown stop: never on " + kv.Key + " (" + kv.Value.Brief + ")");
-        var gp = new ClickGate(); GateResult last = null;
-        for (long t = 0; t <= 3 * ClickGate.UnknownStallMs; t += 200) last = gp.Preflight(ClickOwner.Locate, kv.Value, t);
-        Check(!gp.Halted(ClickOwner.Locate), "unknown stop: Preflight never stops on " + kv.Key + " (" + last.Reason + ")");
-      }
-      // a held screen (the reads fail for a moment) is the known one
-      var tr = new ScreenTracker(); tr.Update(new ScreenInputs { Hero = hero }, 0);
-      var held = tr.Update(new ScreenInputs(), 1000);
-      Check(held.Held && held.Kind == ScreenKind.HeroScreen && !new ClickGate().UnknownStall(ClickOwner.Equip, held, 1000), "unknown stop: never on a held screen");
-    }
-    {   // a known form moved: while the host's search for it runs, an unknown screen is waited for (no own-click stop, no effect timeout, no 20 s count)
-      var unk = Unk("");
-      var g = new ClickGate { SearchWait = true };
-      g.Arm(ClickOwner.Locate, ClickTarget.AscendTab, null, 0);
-      Eq("search", g.Preflight(ClickOwner.Locate, unk, 1700).Reason, "form search: an unknown screen right after the pilot's click waits for the search");
-      for (long t = 1700; t < 40000; t += 200) g.UnknownStall(ClickOwner.Locate, unk, t);
-      Check(!g.Halted(ClickOwner.Locate), "form search: no unknown-screen stop while it runs");
-      var rq = new ClickRequest { Owner = ClickOwner.Locate, Target = ClickTarget.CityInventory, AutoOn = true, Front = true };
-      Eq("search", g.Check(rq, unk, 40000).Reason, "form search: a click on an unknown screen waits for it");
-      g.SearchWait = false;
-      var rf = g.Preflight(ClickOwner.Locate, unk, 40200);
-      Check(rf.Verdict == GateVerdict.Deny && g.HaltDetail(ClickOwner.Locate).Contains("form search ended without finding"), "form search: ended, the screen still unknown -> stop (" + g.HaltDetail(ClickOwner.Locate) + ")");
-      // found: the screen is known again, nothing stops
-      var gf = new ClickGate { SearchWait = true }; gf.Arm(ClickOwner.Locate, ClickTarget.AscendTab, null, 0);
-      gf.Preflight(ClickOwner.Locate, unk, 1700);
-      gf.SearchWait = false;
-      var foundry = ScreenState.Classify(new ScreenInputs { Rs = new RecastScreen { SublimingOpen = true, CurType = 2 } }, 0);
-      Check(gf.Preflight(ClickOwner.Locate, foundry, 18000).Allowed && !gf.Halted(ClickOwner.Locate), "form search: found = the pilot goes on");
-      // a click's effect is not timed out while the search runs, and is after it
-      var ge = new ClickGate { SearchWait = true };
-      ge.Arm(ClickOwner.Locate, ClickTarget.AscendTab, s => s.Kind == ScreenKind.Foundry && s.FoundryTab == 2, 0);
-      ge.Observe(unk, ClickGate.EffectMs + 10000);
-      Check(ge.Pending(ClickOwner.Locate) && !ge.Halted(ClickOwner.Locate), "form search: the click's effect is still awaited while it runs");
-      ge.Observe(foundry, ClickGate.EffectMs + 17000);
-      Check(!ge.Pending(ClickOwner.Locate) && !ge.Halted(ClickOwner.Locate), "form search: the screen found = the click's effect");
-      var gn = new ClickGate { SearchWait = true };
-      gn.Arm(ClickOwner.Locate, ClickTarget.AscendTab, s => s.Kind == ScreenKind.Foundry, 0);
-      gn.Observe(unk, ClickGate.EffectMs + 10000); gn.SearchWait = false;
-      gn.Observe(unk, ClickGate.EffectMs + 12000);
-      Eq("nochange", gn.HaltReason(ClickOwner.Locate), "form search: ended without the screen -> the click changed nothing");
-      // without a search the old rules stand: unknown right after the own click stops
-      var go = new ClickGate(); go.Arm(ClickOwner.Locate, ClickTarget.AscendTab, null, 0);
-      Check(go.Preflight(ClickOwner.Locate, unk, 1700).Verdict == GateVerdict.Deny && go.HaltReason(ClickOwner.Locate) == "unknown", "form search: none running -> the own-click rule as before");
-    }
-    {   // a form nobody knows that came over a known screen is a pop-up on top: the gate stops instead of clicking under it
-      var inv = new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true };
-      var top = ScreenState.Classify(new ScreenInputs { Inv = inv, TopNew = "Form_ItemReward" }, 0);
-      Check(top.Kind == ScreenKind.Inventory && top.ModalOpen && top.ModalWhy == "form:Form_ItemReward", "pop-up on top: modal over the inventory (" + top.Brief + ")");
-      var rq = new ClickRequest { Owner = ClickOwner.Locate, Target = ClickTarget.InvEquipTab, AutoOn = true, Front = true };
-      var r = new ClickGate().Check(rq, top, 0);
-      Check(r.Verdict == GateVerdict.Deny && r.Reason == "modal", "pop-up on top: a click under it stops the pilot (" + r.Reason + ")");
-      Check(!ScreenState.Classify(new ScreenInputs { Inv = inv }, 0).ModalOpen, "pop-up on top: none = no modal");
-      Check(!ScreenState.Classify(new ScreenInputs { CityForm = true, TopNew = "Form_X" }, 0).ModalOpen, "pop-up on top: the city keeps its old rules");
-      var f = ScreenState.Classify(new ScreenInputs { Rs = new RecastScreen { SublimingOpen = true, CurType = 2, AscendFilterOpen = true }, TopNew = "Form_X" }, 0);
-      Eq("filter", f.ModalWhy, "pop-up on top: a modal the readers know keeps its name");
-      var tr = new ScreenTracker(); var st = tr.Update(new ScreenInputs { Inv = inv, TopNew = "Form_X" }, 0);
-      Check(st.ModalOpen && st.ModalWhy == "form:Form_X", "pop-up on top: the tracker passes it on");
-    }
-  }
-
-  static void OfferTests() {
-    const double W = 1920, H = 1009; double U = Ui.Unit(W, H);
-    // the list: the game's pop-up queue, 34 forms, and the build plan screen; the × known for 32 of them, and never on another button of the form
-    foreach (var n in new[] { "Form_LeftTip", "Form_Marquee", "Form_MiniSystemTip", "Form_PowerChangeTips", "Form_IntegralRewardTip" })
-      Check(OfferForms.IsIgnoredOverlay(n) && !OfferForms.IsOffer(n) && Array.IndexOf(OfferForms.KnownScreens, n) < 0, "overlay forms: " + n + " is ignored (not an offer, not a known screen)");
-    Check(!OfferForms.IsIgnoredOverlay("Form_ItemReward") && !OfferForms.IsIgnoredOverlay("Form_Dialog") && !OfferForms.IsIgnoredOverlay(null), "overlay forms: other forms still count");
-    Eq(37, OfferForms.All.Length, "offer list: the forms of the game's pop-up queue, the tap-to-close rewards and the build plan");
-    int closable = 0;
-    foreach (var e in OfferForms.All) {
-      var r = OfferForms.CloseRect(null, e.Name, W, H, U);
-      if (r == null) continue;
-      closable++;
-      Check(r.X >= 0 && r.Right <= W && r.Y >= 0 && r.Bottom <= H && r.W > 20 && r.H > 20, "offer list: the × of " + e.Name + " lies in the window");
-      Check(!OfferForms.OnNeverButton(e.Name, r.CX, r.CY, W, H, U), "offer list: the × of " + e.Name + " is on none of its other buttons");
-    }
-    Eq(36, closable, "offer list: forms with a known × (or tap strip)");
-    foreach (var nm in new[] { "Form_Feedback" }) Check(OfferForms.IsOffer(nm) && OfferForms.CloseRect(null, nm, W, H, U) == null, "offer list: " + nm + " has no × known: never clicked");
-    Check(!OfferForms.IsOffer("Form_MainCity") && !OfferForms.IsOffer("Form_BackpackIntegration"), "offer list: the game's screens are not offers");
-
-    Func<string[], bool, ScreenState> St = (offers, city) => ScreenState.Classify(new ScreenInputs { CityForm = city, Offers = offers == null ? null : new List<string>(offers) }, 0);
-    var shop = St(new[] { "Form_PopUpShop" }, true);
-    Check(shop.Kind == ScreenKind.City && shop.ModalOpen && shop.ModalWhy == "offer:Form_PopUpShop" && shop.Brief.Contains("modal(offer:Form_PopUpShop)"), "screen: an offer over the city is the modal offer:<Form> (" + shop.Brief + ")");
-    Check(!St(new string[0], true).ModalOpen && St(null, true).Kind == ScreenKind.City && !St(null, true).OfferRead, "screen: no offer / the table not read = no modal");
-    var two = St(new[] { "Form_GiftPush", "Form_DailyCheckIn" }, true);
-    Check(two.OfferCount == 2 && two.ModalWhy == "offer:Form_GiftPush+1", "screen: two offers at once are counted");
-    var unkTop = ScreenState.Classify(new ScreenInputs { TopUnknown = "Form_ItemReward" }, 0);
-    Check(unkTop.Kind == ScreenKind.Unknown && unkTop.TopForm == "Form_ItemReward" && unkTop.Brief.Contains("top(Form_ItemReward)"), "screen: an unknown form on an unrecognised screen is named");
-
-    Func<ClickOwner, string, double, double, ClickRequest> Rq = (ow, form, x, y) => new ClickRequest { Owner = ow, Target = ClickTarget.OfferClose, AutoOn = true, Front = true, Form = form, X = x, Y = y, W = W, H = H, U = U };
-    var c = OfferForms.ClosePoint(null, "Form_PopUpShop", W, H, U);
-    {   // the × is allowed for every owner; the effect is the pop-up gone, logged "offer: closed <Form>"; then the pilot's own click
-      foreach (ClickOwner ow in Enum.GetValues(typeof(ClickOwner))) Check(new ClickGate().Check(Rq(ow, "Form_PopUpShop", c.X, c.Y), shop, 0).Allowed, "offer close: " + ow + " may close the pop-up by its ×");
-      var g = new ClickGate(); var log = new List<string>(); g.Sink = x => log.Add(x);
-      var rq = Rq(ClickOwner.Locate, "Form_PopUpShop", c.X, c.Y);
-      Eq("offer", g.Preflight(ClickOwner.Locate, shop, 0).Reason, "offer close: the pilot's preflight waits for the offer to be closed");
-      var inv = new ClickRequest { Owner = ClickOwner.Locate, Target = ClickTarget.CityInventory, AutoOn = true, Front = true };
-      var r0 = g.Check(inv, shop, 0);
-      Check(r0.Verdict == GateVerdict.Wait && r0.Reason == "offer" && !g.Halted(ClickOwner.Locate), "offer close: the city button waits under an offer (no click, no stop)");
-      Check(g.Check(rq, shop, 0).Allowed, "offer close: allowed");
-      g.Arm(ClickOwner.Locate, ClickTarget.OfferClose, ClickGate.Expect(rq, shop), 0, "Form_PopUpShop");
-      g.Observe(St(new string[0], true), 500);
-      Check(!g.Pending(ClickOwner.Locate) && log.Exists(l => l == "offer: closed Form_PopUpShop"), "offer close: the pop-up gone = its effect, logged");
-      Eq("chain", g.Check(inv, St(new string[0], true), 600).Reason, "offer close: the next pop-up of the chain is waited for (no other click within OfferChainMs)");
-      Check(g.Check(inv, St(new string[0], true), 500 + ClickGate.OfferChainMs + 10).Allowed, "offer close: then the pilot's own first click");
-      // a failed read of the table is not the effect
-      var g2 = new ClickGate(); g2.Arm(ClickOwner.Sell, ClickTarget.OfferClose, ClickGate.Expect(Rq(ClickOwner.Sell, "Form_PopUpShop", c.X, c.Y), shop), 0, "Form_PopUpShop");
-      g2.Observe(St(null, true), 500); Check(g2.Pending(ClickOwner.Sell), "offer close: an unread table is no effect");
-      g2.Observe(St(new[] { "Form_PopUpShop" }, true), ClickGate.EffectMs + 10);
-      Check(g2.HaltReason(ClickOwner.Sell) == "nochange", "offer close: the pop-up still there after the time -> nochange stop");
-    }
-    {   // never the buy / go / claim buttons; never off the ×; not on another screen; not an unknown form; one at a time
-      var lot = St(new[] { "Form_ActPopupLottery" }, true);
-      var go = OfferForms.All[Array.FindIndex(OfferForms.All, e => e.Name == "Form_ActPopupLottery")].Never[0];
-      double gx = W / 2 + ((double)go[1] + (double)go[3]) / 2 * U, gy = H / 2 + ((double)go[5] + (double)go[7]) / 2 * U;
-      Check(OfferForms.OnNeverButton("Form_ActPopupLottery", gx, gy, W, H, U), "offer close: the lottery's «GO» is a never-click button");
-      var g = new ClickGate(); var r = g.Check(Rq(ClickOwner.Equip, "Form_ActPopupLottery", gx, gy), lot, 0);
-      Check(r.Verdict == GateVerdict.Deny && r.Reason == "target", "offer close: a click on the «GO» button is never allowed");
-      foreach (var e in OfferForms.All) foreach (var f in e.Never) {
-        double fx = (f[0].Equals('L') ? 0 : f[0].Equals('C') ? W / 2 : W) + (double)f[1] * U, fy = (f[4].Equals('T') ? 0 : f[4].Equals('M') ? H / 2 : H) + (double)f[5] * U;
-        double fx1 = (f[2].Equals('L') ? 0 : f[2].Equals('C') ? W / 2 : W) + (double)f[3] * U, fy1 = (f[6].Equals('T') ? 0 : f[6].Equals('M') ? H / 2 : H) + (double)f[7] * U;
-        var st = St(new[] { e.Name }, true);
-        if (!new ClickGate().Check(Rq(ClickOwner.Sell, e.Name, (fx + fx1) / 2, (fy + fy1) / 2), st, 0).Allowed) continue;
-        Check(false, "offer close: " + e.Name + " has a button that could be clicked as its ×");
-      }
-      r = new ClickGate().Check(Rq(ClickOwner.Sell, "Form_PopUpShop", c.X - 60, c.Y + 40), shop, 0);
-      Check(r.Verdict == GateVerdict.Deny && r.Reason == "target", "offer close: a point off the × is refused");
-      var overInv = ScreenState.Classify(new ScreenInputs { Inv = new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true }, Offers = new List<string> { "Form_PopUpShop" } }, 0);
-      Eq("screen", new ClickGate().Check(Rq(ClickOwner.Sell, "Form_PopUpShop", c.X, c.Y), overInv, 0).Reason, "offer close: not over another screen than the city");
-      Eq("modal", new ClickGate().Check(Rq(ClickOwner.Sell, "Form_GiftPush", c.X, c.Y), two, 0).Reason, "offer close: two offers at once -> stop (which is on top is not known)");
-      Eq("offer", new ClickGate().Check(Rq(ClickOwner.Sell, "Form_Feedback", c.X, c.Y), St(new[] { "Form_Feedback" }, true), 0).Reason, "offer close: a form with no known × -> stop with its name");
-      Eq("cell", new ClickGate().Check(Rq(ClickOwner.Sell, "Form_GiftPush", c.X, c.Y), shop, 0).Reason, "offer close: the form shown is another one -> stop");
-      Eq("off", new ClickGate { NoSellClicks = true }.Check(Rq(ClickOwner.Sell, "Form_PopUpShop", c.X, c.Y), shop, 0).Reason, "offer close: a hint run never clicks");
-      var unk = ScreenState.Classify(new ScreenInputs { Offers = new List<string> { "Form_PopUpShop" } }, 0);
-      Check(new ClickGate().Check(Rq(ClickOwner.Locate, "Form_PopUpShop", c.X, c.Y), unk, 0).Allowed, "offer close: over a hidden city (screen unknown) it is allowed");
-      var gu = new ClickGate(); gu.Arm(ClickOwner.Locate, ClickTarget.OfferClose, null, 0);
-      Eq("offer", gu.Preflight(ClickOwner.Locate, unk, 500).Reason, "offer close: an unknown screen with an offer right after the pilot's click is no 'unknown' stop");
-      var gt = new ClickGate(); gt.Arm(ClickOwner.Locate, ClickTarget.OfferClose, null, 0);
-      Check(gt.Preflight(ClickOwner.Locate, unkTop, 500).Detail.Contains("Form_ItemReward") && gt.HaltReason(ClickOwner.Locate) == "unknown", "offer close: an unknown top form after the pilot's click stops with its name");
-    }
-    {   // the loop cap: MaxOfferCloses in a row, then a stop; a click of the pilot's own resets the count
-      var g = new ClickGate();
-      int n = 0;
-      for (int i = 0; i < ClickGate.MaxOfferCloses + 2; i++) {
-        var rq = Rq(ClickOwner.Equip, "Form_PopUpShop", c.X, c.Y);
-        var r = g.Check(rq, shop, i * 5000);
-        if (!r.Allowed) break;
-        n++; g.Arm(ClickOwner.Equip, ClickTarget.OfferClose, ClickGate.Expect(rq, shop), i * 5000, "Form_PopUpShop");
-        g.Observe(St(new string[0], true), i * 5000 + 100);
-      }
-      Eq(ClickGate.MaxOfferCloses, n, "offer loop: closes allowed in a row");
-      Eq("offers", g.HaltReason(ClickOwner.Equip), "offer loop: then a stop");
-      var g2 = new ClickGate();
-      for (int i = 0; i < ClickGate.MaxOfferCloses; i++) g2.Arm(ClickOwner.Equip, ClickTarget.OfferClose, null, i, "x");
-      g2.Arm(ClickOwner.Equip, ClickTarget.EquipNav, null, 100);
-      Check(g2.Check(Rq(ClickOwner.Equip, "Form_PopUpShop", c.X, c.Y), shop, 200).Allowed && g2.OfferRun(ClickOwner.Equip) == 0, "offer loop: the pilot's own click resets the count");
-    }
-    {   // the window table: a shown offer by its class name, a closed one not, an unknown shown form named
-      var m = new FakeLua(1 << 20); RFX.TestMemory = m; RFX.ForgetLive();
-      try {
-        var fs = new FakeState(m);
-        Func<string, FTab> Cls = nm => fs.T("__cname", nm);
-        var city = fs.T("m_LuaLogicActive", true, "class", Cls("Form_MainCity"));
-        var shopF = fs.T("m_LuaLogicActive", true, "class", Cls("Form_PopUpShop"));
-        var giftF = fs.T("m_InitOK", true, "class", Cls("Form_GiftPush"));   // closed: m_LuaLogicActive nil
-        var odd = fs.T("m_LuaLogicActive", true, "class", Cls("Form_StageInfoOdd"));
-        var ui = fs.T(11L, city, 22L, shopF, 33L, giftF, 44L, odd);
-        RFX.SetUiTableForTest(ui.A);
-        var offers = RFX.ReadOffers();
-        Check(offers != null && offers.Count == 1 && offers[0] == "Form_PopUpShop", "window table: the shown offer is read by its class (" + (offers == null ? "null" : string.Join(",", offers.ToArray())) + ")");
-        var unknown = RFX.ReadUnknownShownForms(4);
-        Check(unknown != null && unknown.Count == 1 && unknown[0] == "Form_StageInfoOdd", "window table: the unknown shown form is named, the city and the offers are not");
-        RFX.SetUiTableForTest(0);
-        Check(RFX.ReadOffers() == null, "window table not known: offers not read (null)");
-      } finally { RFX.SetUiTableForTest(0); RFX.TestMemory = null; RFX.ForgetLive(); }
-    }
-    {   // the automatic recording (TEST build): what is recorded and how often
-      var p = new AutoRecPolicy(); string why;
-      Check(!p.Want(false, false, 0, out why), "auto rec: never in the normal build");
-      Check(p.Want(true, false, 1000, out why), "auto rec: the first event records");
-      Check(!p.Want(true, false, 1000 + AutoRecPolicy.MinGapMs - 1, out why), "auto rec: not again within 2 minutes (" + why + ")");
-      Check(!p.Want(true, true, 1000 + AutoRecPolicy.MinGapMs * 3, out why), "auto rec: not while a recording runs");
-      int got = 1; long t = 1000;
-      for (int i = 0; i < 20; i++) { t += AutoRecPolicy.MinGapMs; if (p.Want(true, false, t, out why)) got++; }
-      Eq(AutoRecPolicy.MaxPerHour, got, "auto rec: an event every 2 minutes for 40 minutes records " + AutoRecPolicy.MaxPerHour + " times");
-      var q = new AutoRecPolicy(); int inHour = 0;
-      for (long ms = 0; ms < AutoRecPolicy.HourMs; ms += 60000) if (q.Want(true, false, ms, out why)) inHour++;
-      Check(inHour <= AutoRecPolicy.MaxPerHour, "auto rec: at most " + AutoRecPolicy.MaxPerHour + " an hour (" + inHour + ")");
-      Check(q.Want(true, false, AutoRecPolicy.HourMs + 5 * 60000, out why), "auto rec: an hour later again");
-      Eq("offer-fail Form_PopUpShop nochange", AutoRecPolicy.HaltTag("Sell", "nochange", "OfferClose(Form_PopUpShop) changed nothing within the time (screen City)"), "auto rec: a failed offer close is tagged by its form");
-      Eq("offer-fail Form_Feedback offer", AutoRecPolicy.HaltTag("Locate", "offer", "the offer pop-up Form_Feedback has no known close button - not clicked"), "auto rec: an offer without × is tagged by its form");
-      Check(AutoRecPolicy.HaltTag("Equip", "screen", "EquipNav @1,2 needs City").StartsWith("halt Equip screen: "), "auto rec: any other stop is tagged by owner and reason");
-      Eq("unknown-form Form_ItemReward", AutoRecPolicy.UnknownFormTag("Form_ItemReward"), "auto rec: an unknown form on top is tagged by its name");
-    }
-    {   // the frame audit (src/FrameAudit.cs): the flag rules, the stability, the sidecar
-      Func<FrameAuditShot> clean = () => new FrameAuditShot { Step = "s", Target = "t", Frame = new double[] { 100, 100, 80, 40 }, Live = new double[] { 102, 101, 76, 38 }, Layout = new double[] { 100, 100, 80, 40 }, ClientW = 1280, ClientH = 720 };
-      Eq(0, FrameAudit.Flags(clean()).Count, "frame audit: a frame on its widget, inside the client, alone, off the plate is clean");
-      { // lab 1.6.66.463 hero.workshop: the live rect is the button's Icon (50 x 44), the layout's the whole button (89 x 91); same centre
-        var hw = new FrameAuditShot { Step = "s", Target = "hero.workshop", Frame = new double[] { 828, 581, 48, 44 }, Live = new double[] { 826, 580, 50, 44 }, Layout = new double[] { 806, 560, 89, 91 }, ClientW = 1366, ClientH = 705 };
-        Check(FrameAudit.Flags(hw).Exists(f => f.StartsWith("live vs layout size dw=-39")), "frame audit: a child visual against the whole button's layout is flagged by size (the old rule)");
-        hw.ChildVisual = true;
-        Eq(0, FrameAudit.Flags(hw).Count, "frame audit: a named visual child's size is not compared with the whole widget's layout (its centre still is)");
-        hw.Live = new double[] { 826 + 40, 580, 50, 44 };
-        Check(FrameAudit.Flags(hw).Exists(f => f.StartsWith("live vs layout centre")), "frame audit: a child visual off the layout's centre is still flagged");
-      }
-      { // owner 2026-11-05, record 122804-aedfbd (client 503x283): hero.workshop live icon child 20x18 against the layout's button 36x37 -> the frame sat on the icon
-        var old = new FrameAuditShot { Step = "s", Target = "hero.workshop", Frame = new double[] { 286, 232, 22, 20 }, Live = new double[] { 286, 233, 20, 18 }, Layout = new double[] { 278, 225, 36, 37 }, ClientW = 503, ClientH = 283 };
-        Check(FrameAudit.Flags(old).Exists(f => f.StartsWith("live vs layout size")), "frame audit (record 122804): the icon child (20x18) against the button's layout (36x37) is flagged by size");
-        var fr = UiIcon.RoundFrame(278, 225, 36, 37, 503, 283);
-        Eq(36, (int)fr[2], "round frame: the button's own width"); Eq(37, (int)fr[3], "round frame: the button's own height"); Eq(18, (int)fr[4], "round frame: radius half the short side (circle)");
-        var now = new FrameAuditShot { Step = "s", Target = "hero.workshop", Frame = fr, Live = new double[] { 278, 225, 36, 37 }, Layout = new double[] { 278, 225, 36, 37 }, ClientW = 503, ClientH = 283 };
-        Eq(0, FrameAudit.Flags(now).Count, "frame audit (record 122804): the root widget's rect (tolerance 12x12) is clean");
-      }
-      var fa = clean(); fa.Live = new double[] { 100 + 12, 100, 80, 40 };
-      Eq(0, FrameAudit.Flags(fa).Count, "frame audit: 12 px off (tolerance 12) is clean");
-      fa.Live = new double[] { 100 + 13, 100, 80, 40 };
-      Check(FrameAudit.Flags(fa).Exists(f => f.StartsWith("live vs layout centre dx=13")), "frame audit: 13 px off is flagged");
-      fa = clean(); fa.Layout = new double[] { 0, 0, 200, 100 }; fa.Live = new double[] { 25, 0, 200, 100 };
-      Eq(0, FrameAudit.Flags(fa).Count, "frame audit: 25 px off a 200 px widget (15 % = 30) is clean");
-      fa.Live = new double[] { 0, 0, 240, 100 };
-      Check(FrameAudit.Flags(fa).Exists(f => f.StartsWith("live vs layout size dw=40")), "frame audit: 40 px wider than a 200 px layout is flagged");
-      fa = clean(); fa.Live = null;
-      Eq(0, FrameAudit.Flags(fa).Count, "frame audit: no live rect, no disagreement check");
-      fa = clean(); fa.Frame = new double[] { 1250, 100, 80, 40 };
-      Check(FrameAudit.Flags(fa).Exists(f => f.StartsWith("outside the client")), "frame audit: past the client's right edge is flagged");
-      fa.Frame = new double[] { -1, 0, 80, 40 };
-      Check(!FrameAudit.Flags(fa).Exists(f => f.StartsWith("outside")), "frame audit: 1 px past the edge is tolerated");
-      fa = clean(); fa.Plates.Add(new double[] { 170, 130, 200, 80 });
-      Check(FrameAudit.Flags(fa).Exists(f => f.StartsWith("overlaps the hint box by 10x10")), "frame audit: a plate over the frame is flagged");
-      fa = clean(); fa.Plates.Add(new double[] { 180, 100, 200, 80 });
-      Eq(0, FrameAudit.Flags(fa).Count, "frame audit: a plate touching the frame's edge is clean");
-      fa = clean(); fa.FramesNow = 2;
-      Check(FrameAudit.Flags(fa).Contains("2 frames at once"), "frame audit: two frames at once are flagged");
-      // lab 1.6.66.427: «Заменить» framed from the layout over the gear filter pop-up; the tab's plate against the icon square
-      Check(FrameTargets.PopupOver("Form_CharactorEquipTip", "Form_EquipFilterWidget", false, ""), "frame audit: the gear filter pop-up is a pop-up over the tip's target");
-      Check(!FrameTargets.PopupOver("Form_CharactorEquipTip", "Form_CharactorEquipTip", false, "") && !FrameTargets.PopupOver("Form_CharactorEquipTip", "", false, ""), "frame audit: the target's own form / nothing shown is no pop-up");
-      Check(FrameTargets.PopupOver("Form_CharactorMain", "", true, "form:Form_X") && !FrameTargets.PopupOver("Form_CharactorMain", "", true, "form:Form_CharactorMain"), "frame audit: a modal pop-up is one, the target's own form is not");
-      {
-        var tabT = FrameTargets.Of("hero.tab.equip"); double pW = 1366, pH = 705, pU = Ui.Unit(pW, pH);
-        var pl = FrameTargets.PlateLayout(tabT, pW, pH, pU);
-        Check(pl != null && Math.Abs(pl[2] - 0.1656 * pU) < 2 && pl[3] > 80 && pl[0] + pl[2] <= pW + 1, "frame audit: the tab's plate layout comes from the graph (" + (pl == null ? "null" : string.Join(",", pl)) + ")");
-        var tl = clean(); tl.Live = new double[] { 1236, 200, 114, 86 }; tl.Frame = tl.Live; tl.Layout = FrameTargets.PlateLayout(tabT, 1350, 689, Ui.Unit(1350, 689)); tl.PlateLayout = true; tl.ClientW = 1350; tl.ClientH = 689;
-        Check(pl != null && !FrameAudit.Flags(tl).Exists(f => f.StartsWith("live vs layout")), "frame audit: the live plate against the layout plate is clean");
-        tl.Layout = new double[] { 1256, 196, 68, 68 }; tl.PlateLayout = false;
-        Check(FrameAudit.Flags(tl).Exists(f => f.StartsWith("live vs layout size")), "frame audit: the same plate against the icon square was the false flag");
-        Check(FrameTargets.PlateLayout(FrameTargets.Of("hero.slot.0"), pW, pH, pU) == null, "frame audit: a target framed by its icon has no plate layout");
-      }
-      bool fh, fc;
-      FrameAudit.HiddenOrCovered("not visible", out fh, out fc); Check(fh && !fc, "frame audit: not visible = hidden");
-      FrameAudit.HiddenOrCovered("form not on top", out fh, out fc); Check(!fh && fc, "frame audit: form not on top = covered");
-      FrameAudit.HiddenOrCovered("no fresh read", out fh, out fc); Check(!fh && !fc, "frame audit: no read is neither");
-      fa = clean(); fa.Covered = true; fa.Why = "not on top";
-      Check(FrameAudit.Flags(fa).Contains("on a covered widget (not on top)"), "frame audit: a covered widget is flagged");
-      fa = clean(); fa.Hidden = true; fa.Covered = true;
-      Check(FrameAudit.Flags(fa).Contains("on a hidden widget") && !FrameAudit.Flags(fa).Exists(f => f.StartsWith("on a covered")), "frame audit: hidden wins over covered");
-      Eq("frame audit: FLAG s / t 2 frames at once", FrameAudit.FlagLine(clean(), "2 frames at once"), "frame audit: the flag line");
-      Eq("ШАГ # ИЗ # Нажмите «Инвентарь»", FrameAudit.StepKey("ШАГ 1 ИЗ 5", "Нажмите  «Инвентарь»"), "frame audit: the step key drops digits, folds spaces");
-      Eq(60, FrameAudit.StepKey(new string('a', 80), "").Length, "frame audit: the step key is at most 60 chars");
-      Eq("lab-20261031-120000-0f1e2d", FrameAudit.RecId(new DateTime(2026, 10, 31, 12, 0, 0), "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0"), "frame audit: its recording id carries the run");
-      Check(LabRecCmd.IsLabId(FrameAudit.RecId(DateTime.Now, "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0")) && RecNames.IsValidId(FrameAudit.RecId(DateTime.Now, "x")), "frame audit: its id is a lab recording id");
-      var fj = FrameAudit.Json(clean(), new List<string> { "a \"b\"" });
-      Check(fj.Contains("\"frame\":[100,100,80,40]") && fj.Contains("\"disagree\":[0,0,-4,-2]") && fj.Contains("\"flags\":[\"a \\\"b\\\"\"]") && fj.Contains("\"plates\":[]"), "frame audit: the sidecar JSON");
-      Check(MiniJson.Parse(fj) != null, "frame audit: the sidecar is valid JSON");
-      var ft = new FrameAuditTracker(); ft.Run("r1"); var fr0 = new double[] { 10, 10, 50, 50 };
-      Check(!ft.Observe("k", fr0, 1000), "frame audit: first sight is not stable");
-      Check(!ft.Observe("k", fr0, 1300), "frame audit: 300 ms is not stable");
-      Check(ft.Observe("k", new double[] { 12, 10, 50, 50 }, 1400), "frame audit: 400 ms within 3 px is stable");
-      Check(!ft.Observe("k", fr0, 2000), "frame audit: checked once per run");
-      Check(!ft.Observe("k2", fr0, 3000) && !ft.Observe("k2", new double[] { 20, 10, 50, 50 }, 3300) && !ft.Observe("k2", new double[] { 20, 10, 50, 50 }, 3600), "frame audit: a move restarts the wait");
-      Check(ft.Observe("k2", new double[] { 20, 10, 50, 50 }, 3700), "frame audit: then stable");
-      Check(!ft.Observe("k3", fr0, 5000) && !ft.Observe("k3", fr0, 6200) && !ft.Observe("k3", fr0, 6500), "frame audit: a gap over 1 s restarts the wait");
-      ft.Run("r2"); Check(!ft.Observe("k", fr0, 9000) && ft.Observe("k", fr0, 9400), "frame audit: a new run checks again");
-      Check(LabRecCmd.IsHintScenario("equip_city_hint") && LabRecCmd.IsHintScenario("locate_hint") && !LabRecCmd.IsHintScenario("equip_city") && !LabRecCmd.IsHintScenario(null), "lab: the hint scenarios");
-      Check(LabRecCmd.Parse("1700000000000 start equip_city_hint 0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0") != null, "lab rec: a hint scenario's start is read");
-    }
-    {   // the lab'lsc recorder commands (src/LabRec.cs): parsing and the decision
-      const string lrun = "0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0";
-      var lc = LabRecCmd.Parse("1700000000000 start equip_city " + lrun + "\r\n");
-      Check(lc != null && lc.Op == "start" && lc.Scenario == "equip_city" && lc.Run == lrun && lc.Seq == 1700000000000L, "lab rec: a start line is read (CRLF ignored)");
-      var lsc = LabRecCmd.Parse("1700000000001 stop");
-      Check(lsc != null && lsc.Op == "stop" && lsc.Scenario == "" && lsc.Seq == 1700000000001L, "lab rec: a stop line is read");
-      foreach (var lbad in new[] { null, "", "start equip_city " + lrun, "1 start Equip " + lrun, "1 start ../x " + lrun, "1 start equip_city " + lrun.ToUpperInvariant(), "1 start equip_city " + lrun + " x",
-                                  "1 start equip_city", "1  stop", "1 stop lnow", "1 keep fail", "1 discard", "x stop", "1234567890123456 stop", "1 start " + new string('a', 41) + " " + lrun, new string('1', 300) })
-        Check(LabRecCmd.Parse(lbad) == null, "lab rec: rejected: " + (lbad == null ? "null" : lbad.Length > 60 ? lbad.Substring(0, 60) + "..." : lbad));
-      var lset = LabRecCmd.Parse("1700000000002 settings\r\n");
-      Check(lset != null && lset.Op == "settings" && lset.Seq == 1700000000002L && lset.Scenario == "", "lab rec: a settings line is read");
-      foreach (var lbad2 in new[] { "1 settings x", "1 settings auto=off", "settings", "1  settings", "1 Settings" })
-        Check(LabRecCmd.Parse(lbad2) == null, "lab rec: rejected: " + lbad2);
-      { string sst; var sk = new LabRecControl();
-        Eq(LabRecControl.Act.Settings, sk.Decide(LabRecCmd.Parse("1700000000100 settings"), 1700000000500L, true, "lab-20261030-120000-abcdef", out sst), "lab rec: settings -> force the settings, a running recording goes on");
-        Eq("settings", sst, "lab rec: settings acks 'settings'");
-        Eq(LabRecControl.Act.None, sk.Decide(LabRecCmd.Parse("1700000000100 settings"), 1700000001000L, false, "", out sst), "lab rec: the same settings command again does nothing");
-        Eq(LabRecControl.Act.None, sk.Decide(LabRecCmd.Parse("1700000000200 settings"), 1700000000200L + LabRecCmd.StaleMs + 1, false, "", out sst), "lab rec: an old settings command is not acted on");
-        Eq("stale", sst, "lab rec: ... and acks stale"); }
-      {   // lab setup: «city» and «prep <name>» (src/LabRec.cs): parsing, the decision, the ack, and every prep walked through a small game sim
-        var lcity = LabRecCmd.Parse("1700000000003 city\r\n");
-        Check(lcity != null && lcity.Op == "city" && lcity.Seq == 1700000000003L, "lab setup: a city line is read");
-        foreach (var pn in LabPrep.Names) {
-          var lp = LabRecCmd.Parse("1700000000004 prep " + pn);
-          Check(lp != null && lp.Op == "prep" && lp.Name == pn && lp.Seq == 1700000000004L, "lab setup: prep " + pn + " is read");
-        }
-        foreach (var lbad3 in new[] { "1 prep", "1 prep x", "1 prep hero_filter x", "1 prep ../hero_filter", "1 prep Hero_filter", "1 prep hero filter", "1 prep sell_all", "1 prep start_bulk_sale_and_sell", "1 city x", "1 City", "city", "1  city", "1 prep  hero_filter" })
-          Check(LabRecCmd.Parse(lbad3) == null, "lab setup: rejected: " + lbad3);
-        { string cst; var ck = new LabRecControl();
-          Eq(LabRecControl.Act.City, ck.Decide(LabRecCmd.Parse("1700000000100 city"), 1700000000500L, true, "lab-20261030-120000-abcdef", out cst), "lab setup: city -> the road to the city, a running recording goes on");
-          Eq("city", cst, "lab setup: city is not acked at once (the host acks at the end)");
-          Eq(LabRecControl.Act.Prep, ck.Decide(LabRecCmd.Parse("1700000000200 prep hero_filter"), 1700000000500L, false, "", out cst), "lab setup: prep -> the prep");
-          Eq(LabRecControl.Act.None, ck.Decide(LabRecCmd.Parse("1700000000200 prep hero_filter"), 1700000000600L, false, "", out cst), "lab setup: the same prep command again does nothing");
-          Eq(LabRecControl.Act.None, ck.Decide(LabRecCmd.Parse("1700000000300 prep start_artifact"), 1700000000300L + LabRecCmd.StaleMs + 1, false, "", out cst), "lab setup: an old prep command is not acted on");
-          Eq("stale", cst, "lab setup: ... and acks stale"); }
-        Check(LabRecCmd.AckSetup(7, "prepfail", "item_filter", "no \"x\"").Equals("{\"seq\":7,\"state\":\"prepfail\",\"rec\":\"\",\"scenario\":\"item_filter\",\"run\":\"\",\"why\":\"no \\\"x\\\"\"}"), "lab setup: the ack carries the state, the prep and the reason");
-        Check(LabRecCmd.IsAutoOffScenario("equip_toggle_auto_late") && !LabRecCmd.IsAutoOffScenario("equip_city") && !LabRecCmd.IsAutoOffScenario(null) && !LabRecCmd.IsHintScenario("equip_toggle_auto_late"), "lab setup: only equip_toggle_auto_late starts with auto click off");
-        Check(LabRecCmd.Parse("1700000000000 start equip_hero_filter_open " + lrun) != null && LabRecCmd.Parse("1700000000000 start equip_hint_filter_open " + lrun) != null, "lab setup: the new scenario names are read");
-        Check(LabRecCmd.IsHintScenario("equip_hint_filter_open") && !LabRecCmd.IsHintScenario("equip_hero_filter_open") && !LabRecCmd.IsHintScenario("equip_toggle_auto_late"), "lab setup: equip_hint_filter_open runs in the hint mode, the other new scenarios click");
-
-        // a game sim per prep: the view comes from the sim's state, a click changes the state by the step's key (LabPrepAct.Why)
-        Func<string, Action<Dictionary<string, object>>, Action<string, Dictionary<string, object>>, string[]> walk = (name, init, effect) => {
-          var st = new Dictionary<string, object>(); init(st);
-          var pr = new LabPrep(name); var keys = new List<string>(); long t = 1000;
-          for (int i = 0; i < 80; i++, t += 700) {
-            var v = new LabPrepView { Now = t, Front = true, W = 1920, H = 1009, U = Ui.Unit(1920, 1009), Kind = (ScreenKind)st["kind"], HeroesButton = true, InvButton = true,
-              CityInvPt = new[] { 1700.0, 900.0 }, ArtTabPt = new[] { 160.0, 300.0 }, MatTabPt = new[] { 160.0, 430.0 }, SlotPt = new[] { 1500.0, 300.0 }, FilterPt = new[] { 100.0, 950.0 } };
-            if (st.ContainsKey("inv")) { var iv = (bool[])st["inv"]; v.InvEquipTab = iv[0]; v.InvArtTab = iv[1]; v.InvBulk = iv[2]; v.InvBulkKnown = iv[3]; v.InvArtBulk = iv[4]; v.InvArtBulkKnown = iv[5]; }
-            if (v.Kind == ScreenKind.HeroScreen) {
-              v.HeroFormOk = true; v.Tab = (int)st["tab"]; v.Part = (int)st["part"]; v.GridFilterOpen = (bool)st["grid"]; v.ChosenCamps = (bool)st["camps"] ? new long[] { 3 } : new long[0];
-              v.FactionList = new long[] { 0, 3, 4, 5 }; v.ClassChosen = (bool)st["class"];
-              v.PanelOpen = (bool)st["panel"]; v.SidePanelOpen = (bool)st["side"]; v.SetPanelOpen = (bool)st["side"]; v.FilterRead = true; v.Suits = (bool)st["suit"] ? new long[] { 9 } : new long[0]; v.HideEquipped = (bool)st["hide"];
-            }
-            var a = pr.Step(v);
-            if (a.Move == LabMove.Done || a.Move == LabMove.Fail) { keys.Add(a.Move + ":" + a.Why); break; }
-            if (a.Move == LabMove.Back) { st["kind"] = ScreenKind.City; keys.Add("back"); continue; }
-            if (a.Move != LabMove.Click) continue;
-            Check(ClickGate.WhitelistText(a.Owner).Contains(a.Target + "@"), "lab setup: " + name + " clicks " + a.Owner + "/" + a.Target + " only through that owner's own whitelist");
-            Check(a.X > 0 && a.Y > 0 && a.X < 1920 && a.Y < 1009, "lab setup: " + name + " clicks inside the window (" + a.Why + " @" + (int)a.X + "," + (int)a.Y + ")");
-            keys.Add(a.Why); effect(a.Why, st);
-          }
-          return keys.ToArray();
-        };
-        Action<Dictionary<string, object>> heroInit = st => { st["kind"] = ScreenKind.City; st["tab"] = 3; st["part"] = -1; st["grid"] = false; st["camps"] = false; st["class"] = false; st["panel"] = false; st["side"] = false; st["suit"] = false; st["hide"] = false; };
-        Action<string, Dictionary<string, object>> heroFx = (k, st) => {
-          switch (k) {
-            case "heroes": st["kind"] = ScreenKind.HeroScreen; break;
-            case "funnel-open": st["grid"] = true; break;
-            case "funnel-close": case "grid-close": st["grid"] = false; break;
-            case "faction": st["camps"] = true; break;
-            case "class": st["class"] = true; break;
-            case "class-all": st["class"] = false; break;
-            case "back": st["part"] = -1; break;
-            case "gear-tab": st["tab"] = 3; break;
-            case "slot": st["part"] = 0; break;
-            case "filter-open": st["panel"] = true; break;
-            case "set-arrow": st["side"] = true; break;
-            case "set-cell": st["suit"] = true; break;
-            case "side-close": st["side"] = false; break;
-            case "hide-worn": st["hide"] = true; break;
-          }
-        };
-        var wk = walk("hero_filter", heroInit, heroFx);
-        Eq("heroes,funnel-open,faction,Done:the faction is ticked, the panel is open", string.Join(",", wk), "lab setup: hero_filter opens the hero screen, the grid's filter, ticks a faction and leaves the panel open");
-        wk = walk("hero_filter_closed", heroInit, heroFx);
-        Eq("heroes,funnel-open,faction,funnel-close,Done:the faction is ticked, the panel is closed", string.Join(",", wk), "lab setup: hero_filter_closed closes the panel again with the filter still on");
-        wk = walk("hero_filter", st => { heroInit(st); st["kind"] = ScreenKind.HeroScreen; st["class"] = true; st["part"] = 2; }, heroFx);
-        Eq("back,funnel-open,class-all,faction,Done:the faction is ticked, the panel is open", string.Join(",", wk), "lab setup: hero_filter from an open gear list with a class ticked: back, the filter, «Все» of the class, then the faction");
-        wk = walk("item_filter", heroInit, heroFx);
-        Eq("heroes,slot,filter-open,set-arrow,set-cell,side-close,Done:a set is ticked, the pop-up is open", string.Join(",", wk), "lab setup: item_filter opens a slot's list, the gear filter, ticks a set and leaves the pop-up open");
-        wk = walk("hide_worn_on", heroInit, heroFx);
-        Eq("heroes,slot,filter-open,hide-worn,Done:«Скрыть надетое» is ticked", string.Join(",", wk), "lab setup: hide_worn_on ticks «Скрыть надетое»");
-        wk = walk("class_filter_gear", heroInit, heroFx);
-        Eq("heroes,funnel-open,class,funnel-close,slot,filter-open,set-arrow,set-cell,side-close,Done:a set is ticked, the pop-up is open", string.Join(",", wk), "lab setup: class_filter_gear ticks a class in the grid's filter, closes it, then leaves the gear filter open with a set ticked");
-        {   // the class is never the plan hero's: the first row is taken unless it is the hero's class
-          var pc = new LabPrep("class_filter_gear"); long tc = 1000; string cell = "";
-          for (int i = 0; i < 12 && cell == ""; i++, tc += 700) {
-            var vc = new LabPrepView { Now = tc, Front = true, W = 1920, H = 1009, U = Ui.Unit(1920, 1009), Kind = ScreenKind.HeroScreen, HeroFormOk = true, Tab = 3, Part = -1, GridFilterOpen = true, ChosenCamps = new long[0], AvoidClass = HeroGeometry.ClassOrder[0], ClassCount = 7 };
-            var ac = pc.Step(vc); if (ac.Move == LabMove.Click) cell = ac.Why + "@" + (int)Math.Round(ac.Y);
-          }
-          var hgc = new HeroGeometry();
-          Eq("class@" + (int)Math.Round((hgc.FilterRow0 + 2 * hgc.FilterPitch) * Ui.Unit(1920, 1009)), cell, "lab setup: class_filter_gear skips the plan hero's class (the second row is ticked, not the first)");
-        }
-        wk = walk("hero_filter", heroInit, (k, st) => { });
-        Check(wk.Length > 0 && wk[wk.Length - 1].StartsWith("Fail:") && wk[wk.Length - 1].Contains("heroes has no effect"), "lab setup: a click with no effect fails the prep with the step named (" + wk[wk.Length - 1] + ")");
-
-        Action<Dictionary<string, object>> invInit = st => { st["kind"] = ScreenKind.City; st["inv"] = new[] { false, false, false, false, false, false }; };
-        Action<string, Dictionary<string, object>> invFx = (k, st) => {
-          var iv = (bool[])st["inv"];
-          switch (k) {
-            case "inventory": st["kind"] = ScreenKind.Inventory; break;
-            case "equip-tab": iv[0] = true; iv[1] = false; iv[3] = true; break;
-            case "materials": iv[0] = false; iv[1] = false; break;
-            case "bulk-enter": iv[2] = true; break;
-            case "art-tab": iv[0] = false; iv[1] = true; iv[5] = true; break;
-          }
-        };
-        wk = walk("start_inventory_materials", invInit, invFx);
-        Eq("inventory,materials,Done:the inventory is on a tab other than equipment / artifacts", string.Join(",", wk), "lab setup: start_inventory_materials opens the inventory and its materials tab");
-        wk = walk("start_inventory_materials", st => { invInit(st); st["kind"] = ScreenKind.Inventory; st["inv"] = new[] { false, true, false, false, false, true }; }, invFx);
-        Eq("equip-tab,materials,Done:the inventory is on a tab other than equipment / artifacts", string.Join(",", wk), "lab setup: ... from the artifact tab through «Снаряжение» (the gate's one exception there)");
-        wk = walk("start_bulk_sale", invInit, invFx);
-        Eq("inventory,equip-tab,bulk-enter,Done:«Массовая продажа» is open, nothing selected by the lab", string.Join(",", wk), "lab setup: start_bulk_sale opens the inventory, «Снаряжение», «Массовая продажа»; no item is clicked");
-        wk = walk("start_artifact", invInit, invFx);
-        Eq("inventory,art-tab,Done:the artifact tab is open", string.Join(",", wk), "lab setup: start_artifact opens the inventory's artifact tab");
-        wk = walk("start_artifact", st => { invInit(st); st["kind"] = ScreenKind.Inventory; st["inv"] = new[] { false, true, false, false, true, true }; }, invFx);
-        Check(wk.Length == 1 && wk[0].StartsWith("Fail:") && wk[0].Contains("sale mode"), "lab setup: start_artifact in the artifact sale mode fails instead of leaving it (" + string.Join(",", wk) + ")");
-        {   // random_start:<seed> (docs/specs/navigator.md): parsed, the same chain for the same seed, safe steps only, every chain walked on the sim
-          Check(LabRecCmd.Parse("1700000000004 prep random_start:17").Name == "random_start:17" && LabPrep.RandomSeed("random_start:17") == 17 && LabPrep.RandomSeed("random_start:") < 0 && LabPrep.RandomSeed("random_start:1234567890") < 0 && LabPrep.RandomSeed("random_start:x") < 0 && LabPrep.RandomSeed("hero_filter") < 0, "lab setup: random_start:<seed> is read, a bad seed is not");
-          foreach (var rb in new[] { "1 prep random_start:", "1 prep random_start:a", "1 prep random_start:1 2", "1 prep random_start:-3", "1 prep Random_start:3" }) Check(LabRecCmd.Parse(rb) == null, "lab setup: rejected: " + rb);
-          var sn = LabRecCmd.Parse("1700000000005 settings nav=on"); var sf = LabRecCmd.Parse("1700000000006 settings nav=off"); var s0 = LabRecCmd.Parse("1700000000007 settings");
-          Check(sn != null && sn.Op == "settings" && sn.Nav == "on" && sf.Nav == "off" && s0.Nav == "" && LabRecCmd.Parse("1 settings nav=maybe") == null && LabRecCmd.Parse("1 settings nav=") == null, "lab setup: settings carries nav=on|off");
-          var safe = new HashSet<string>(new[] { "visit_heroes", "start_inventory_materials", "start_bulk_sale", "start_artifact", "hero_filter", "hero_filter_closed", "item_filter", "hide_worn_on" });
-          var leftovers = new HashSet<string>(new[] { "hero_filter", "hero_filter_closed", "item_filter", "hide_worn_on" });
-          bool det = true, onlySafe = true, leftoverLast = true, oneToFour = true; var kinds = new HashSet<string>();
-          for (int sd = 0; sd < 300; sd++) {
-            var c1 = LabPrep.RandomChain(sd); var c2 = LabPrep.RandomChain(sd);
-            if (string.Join(",", c1) != string.Join(",", c2)) det = false;
-            if (c1.Length < 1 || c1.Length > 4) oneToFour = false;
-            for (int i = 0; i < c1.Length; i++) { if (!safe.Contains(c1[i])) onlySafe = false; if (leftovers.Contains(c1[i]) && i != c1.Length - 1) leftoverLast = false; kinds.Add(c1[i]); }
-          }
-          Check(det && onlySafe && leftoverLast && oneToFour && kinds.Count == safe.Count, "lab setup: random chains are repeatable, 1-4 safe steps, a leftover only last, every step kind comes up (" + kinds.Count + " of " + safe.Count + ")");
-          Check(string.Join(",", LabPrep.RandomChain(1)) != string.Join(",", LabPrep.RandomChain(2)) || string.Join(",", LabPrep.RandomChain(2)) != string.Join(",", LabPrep.RandomChain(3)), "lab setup: seeds give different chains");
-          Action<Dictionary<string, object>> bothInit = st => { heroInit(st); st["inv"] = new[] { false, false, false, false, false, false }; };
-          Action<string, Dictionary<string, object>> bothFx = (k, st) => {
-            heroFx(k, st); invFx(k, st);
-            if (k == "heroes") st["kind"] = ScreenKind.HeroScreen;
-            if (k == "inventory") st["kind"] = ScreenKind.Inventory;
-            if (k == "hero-back") st["kind"] = ScreenKind.City;
-          };
-          int okRuns = 0; string badRun = "";
-          for (int sd = 1; sd <= 40; sd++) {
-            var wr = walk("random_start:" + sd, bothInit, bothFx); var last = wr[wr.Length - 1];
-            if (last.StartsWith("Done:random_start:" + sd + " = ")) okRuns++; else if (badRun == "") badRun = sd + ": " + last;
-          }
-          Check(okRuns == 40, "lab setup: 40 random starts end on the sim with their path (" + okRuns + "/40" + (badRun != "" ? ", first bad " + badRun : "") + ")");
-          var rp = new LabPrep("random_start:3");
-          Check(rp.CapMs > LabPrep.PrepCapMs && rp.FullName == "random_start:3", "lab setup: a random start has a cap of its steps");
-        }
-        { var cp = new LabPrep("city"); var vc = new LabPrepView { Now = 5, Front = false, Kind = ScreenKind.Inventory };
-          Eq(LabMove.Back, cp.Step(vc).Move, "lab setup: city on the inventory goes back (the game need not be in front: the gate decides)");
-          vc.Kind = ScreenKind.City; Eq(LabMove.Done, cp.Step(vc).Move, "lab setup: city on the city is done");
-          vc.Kind = ScreenKind.City; vc.Modal = true; Eq(LabMove.Back, new LabPrep("city").Step(vc).Move, "lab setup: city under a pop-up is not done");
-          var cp2 = new LabPrep("city"); vc.Modal = false; vc.Kind = ScreenKind.Foundry; cp2.Step(vc); vc.Now = 5 + LabPrep.CityCapMs + 1;
-          Eq(LabMove.Fail, cp2.Step(vc).Move, "lab setup: city that never reaches the city fails after the cap"); }
-        { var pf = new LabPrep("hero_filter"); var vf = new LabPrepView { Now = 5, Front = false, Kind = ScreenKind.City, HeroesButton = true, W = 1920, H = 1009, U = Ui.Unit(1920, 1009) };
-          Eq(LabMove.Wait, pf.Step(vf).Move, "lab setup: a prep waits while the game is not in front"); }
-      }
-      Check(LabRecCmd.IsLabId(LabRecCmd.NewId(new DateTime(2026, 10, 30, 12, 0, 0), new Random(1))), "lab rec: its ids are lab ids");
-      Check(RecNames.IsValidId(LabRecCmd.NewId(new DateTime(2026, 10, 30, 12, 0, 0), new Random(1))), "lab rec: its ids are valid recording ids (the site takes them)");
-      Check(!LabRecCmd.IsLabId(RecNames.NewId(new DateTime(2026, 10, 30, 12, 0, 0), new Random(1))), "lab rec: a manual / automatic id is not a lab id");
-      Check(LabRecCmd.LabJson("locate", lrun, "1.6.1").Contains("\"scenario\":\"locate\"") && LabRecCmd.LabJson("locate", lrun, "1.6.1").Contains(lrun), "lab rec: lab.json names the scenario and the run");
-      Check(LabRecCmd.Ack(5, "recording", "lab-x", "locate", lrun).StartsWith("{\"seq\":5,\"state\":\"recording\",\"rec\":\"lab-x\""), "lab rec: the ack");
-
-      long lnow = 1700000000000L; string lst; var lk = new LabRecControl();
-      Eq(LabRecControl.Act.Start, lk.Decide(LabRecCmd.Parse(lnow + " start locate " + lrun), lnow + 500, false, "", out lst), "lab rec: start with nothing recording starts");
-      Eq("recording", lst, "lab rec: start acks recording");
-      Eq(LabRecControl.Act.None, lk.Decide(LabRecCmd.Parse(lnow + " start locate " + lrun), lnow + 1500, true, "lab-20261030-120000-abcdef", out lst), "lab rec: the same command again does nothing");
-      Check(lst == null, "lab rec: the same command is not acked again");
-      Eq(LabRecControl.Act.Stop, lk.Decide(LabRecCmd.Parse((lnow + 1) + " stop"), lnow + 2000, true, "lab-20261030-120000-abcdef", out lst), "lab rec: stop stops a lab recording");
-      Eq("stopped", lst, "lab rec: stop acks stopped");
-      Eq(LabRecControl.Act.None, lk.Decide(LabRecCmd.Parse((lnow + 2) + " stop"), lnow + 2000, true, "20261030-120000-abcdef", out lst), "lab rec: stop leaves a manual recording alone");
-      Eq("idle", lst, "lab rec: stop without a lab recording acks idle");
-      Eq(LabRecControl.Act.StopThenStart, lk.Decide(LabRecCmd.Parse((lnow + 3) + " start sell_mark " + lrun), lnow + 2000, true, "20261030-120000-abcdef", out lst), "lab rec: start while another recording runs stops it first");
-      Eq(LabRecControl.Act.None, lk.Decide(LabRecCmd.Parse((lnow + 2) + " stop"), lnow + 2000, true, "lab-20261030-120000-abcdef", out lst), "lab rec: an older command after a newer one does nothing");
-      var lk2 = new LabRecControl();
-      Eq(LabRecControl.Act.None, lk2.Decide(LabRecCmd.Parse(lnow + " start locate " + lrun), lnow + LabRecCmd.StaleMs + 1, false, "", out lst), "lab rec: a stale file (the app started after the run) is not acted on");
-      Eq("stale", lst, "lab rec: a stale command acks stale");
-      Eq(LabRecControl.Act.None, lk2.Decide(null, lnow, false, "", out lst), "lab rec: no command, nothing");
-      Check(LabRecControl.TagInstead(true, "lab-20261030-120000-abcdef"), "lab rec: an automatic trigger during a lab recording tags it");
-      Check(!LabRecControl.TagInstead(true, "20261030-120000-abcdef") && !LabRecControl.TagInstead(false, "lab-20261030-120000-abcdef"), "lab rec: otherwise the automatic recording decides as before");
-    }
-  }
-
-  static void CityGateAndPanelTests() {
-    Check(ScreenState.NeedsCityPicture(ScreenKind.Unknown, false), "city picture: Unknown with the city form reading closed needs the picture");
-    Check(!ScreenState.NeedsCityPicture(ScreenKind.Unknown, true), "city picture: Unknown with the city form open does not");
-    Check(ScreenState.NeedsCityPicture(ScreenKind.Unknown, null), "city picture: Unknown with the form unreadable needs the picture");
-    Check(ScreenState.NeedsCityPicture(ScreenKind.City, false) && ScreenState.NeedsCityPicture(ScreenKind.City, true), "city picture: City needs it");
-    Check(!ScreenState.NeedsCityPicture(ScreenKind.Inventory, false), "city picture: another screen does not");
-    {   // the pilot loop: Preflight on a held City every tick, Check on an Unknown fresh state: ends in the unknown halt, not an endless Wait
-      var gate = new ClickGate(); var log = new List<string>(); gate.Sink = x => log.Add(x);
-      var city = ScreenState.Classify(new ScreenInputs { CityForm = true }, 0);
-      var unk = new ScreenState();
-      var rq = new ClickRequest { Owner = ClickOwner.Sell, Target = ClickTarget.CityInventory, AutoOn = true, Front = true };
-      GateResult res = null; bool halted = false; long t = 0;
-      for (; t <= ClickGate.UnknownGraceMs + 600 && !halted; t += 100) {
-        gate.Preflight(ClickOwner.Sell, city, t);
-        res = gate.Check(rq, unk, t);
-        halted = res.Verdict == GateVerdict.Deny;
-      }
-      Check(halted && gate.HaltReason(ClickOwner.Sell) == "unknown", "gate loop: Preflight(City) + Check(Unknown) past the grace -> halt unknown");
-      int waits = 0; foreach (var l in log) if (l.Contains("wait (unknown)")) waits++;
-      Eq(1, waits, "gate loop: the unknown wait is logged once");
-    }
-    {   // the hero screen covers the city (live 2026-10-29: «Литейная» allowed on HeroScreen tab 3 slot 0, nothing changed): no city / Foundry button on it
-      var heroUp = ScreenState.Classify(new ScreenInputs { Hero = new HeroScreen { Hero = 204200000, FormOk = true, Tab = 3, Part = 0 }, CityForm = true, CitySeen = true }, 0);
-      Eq(ScreenKind.HeroScreen, heroUp.Kind, "city gate: the hero screen over an open city form is the hero screen");
-      foreach (ClickTarget ct in new[] { ClickTarget.FoundryButton, ClickTarget.CityInventory }) {
-        var g1 = new ClickGate(); var res = g1.Check(new ClickRequest { Owner = ClickOwner.Locate, Target = ct, AutoOn = true, Front = true }, heroUp, 0);
-        Check(res.Verdict == GateVerdict.Deny && res.Reason == "screen", "city gate: " + ct + " refused while the hero screen is on top, the city open beneath");
-        g1 = new ClickGate(); res = g1.Check(new ClickRequest { Owner = ClickOwner.Sell, Target = ct, AutoOn = true, Front = true }, heroUp, 0);
-        Check(!res.Allowed, "city gate: " + ct + " refused for the storage cleanup too");
-      }
-      var heroGrid = ScreenState.Classify(new ScreenInputs { Hero = new HeroScreen { Hero = 204200000, FormOk = true, Tab = 3, Part = -1 } }, 0);
-      Check(!new ClickGate().Check(new ClickRequest { Owner = ClickOwner.Locate, Target = ClickTarget.FoundryButton, AutoOn = true, Front = true }, heroGrid, 0).Allowed, "city gate: the hero gear screen's «Литейная» is not a target either");
-      var g2 = new ClickGate(); var back = new ClickRequest { Owner = ClickOwner.Locate, Target = ClickTarget.HeroBack, AutoOn = true, Front = true };
-      Check(g2.Check(back, heroUp, 0).Allowed, "city gate: the back arrow is allowed on the hero screen");
-      var exp = ClickGate.Expect(back, heroUp);
-      Check(exp(heroGrid), "city gate: the back arrow closing the gear list is its effect (the hero grid shows again)");
-      Check(exp(ScreenState.Classify(new ScreenInputs { CityForm = true }, 0)), "city gate: ... and so is the city");
-      Check(!exp(heroUp), "city gate: ... the gear list still open is no effect");
-      var expGrid = ClickGate.Expect(back, heroGrid);
-      Check(!expGrid(heroGrid) && expGrid(ScreenState.Classify(new ScreenInputs { CityForm = true }, 0)), "city gate: from the hero grid only leaving the hero screen counts");
-      var city = ScreenState.Classify(new ScreenInputs { CityForm = true }, 0);
-      Check(new ClickGate().Check(new ClickRequest { Owner = ClickOwner.Locate, Target = ClickTarget.CityInventory, AutoOn = true, Front = true }, city, 0).Allowed, "city gate: «Инвентарь» on the city still allowed");
-    }
-    Eq(0UL, RFX.PanelAfterForm(0x1000UL, 0x10UL, 0x20UL, 0), "panel: the form changed, no EquipFilter found -> 0");
-    Eq(0x1000UL, RFX.PanelAfterForm(0x1000UL, 0x10UL, 0x10UL, 0), "panel: same form -> kept");
-    Eq(0x2000UL, RFX.PanelAfterForm(0x1000UL, 0x10UL, 0x20UL, 0x2000UL), "panel: the new form's panel found -> it");
-  }
-
-  // live 1.6.66.577 (recordings 120445-6d76a8, 120622-d3f1ed): the facts as they stood in the log
-  static void Live577Tests() {
-    Console.WriteLine("Live 577: artifact phase without the city, locate path over the item card + gear filter");
-    // G1: after the last item (12:05:04) the screen is HeroScreen hero 223700000 tab 3: the artifact steps go on from it, the city is not the way
-    var heroScr = new ScreenState { Kind = ScreenKind.HeroScreen, Hero = 223700000, HeroTab = 3, HeroSlot = 0 };
-    Check(ArtCityStart.Settled(true, ScreenKind.HeroScreen), "577 G1: artifact phase on the hero screen -> the city-first flag is settled");
-    Check(!ArtCityStart.Settled(true, ScreenKind.City) && !ArtCityStart.Settled(false, ScreenKind.HeroScreen), "577 G1: ... not on the city, not in the gear phase");
-    Check(!CityFirst.NeedsCity(PilotFlow.ArtEquip, heroScr), "577 G1: CityFirst: the hero screen is a continuation of the artifact flow (no CityBack)");
-    // the gear filter still open when the art step starts (log 12:05:04 gear filter mem=yes): closed first, then nothing is in the way of the tab
-    Check(HeroCover.Next(true, false, false, Mem3.Yes, Mem3.No, false) == CoverMove.ClosePopup, "577 G1: gear filter mem=yes -> its x first");
-    Check(HeroCover.Next(true, false, false, Mem3.No, Mem3.No, false) == CoverMove.None, "577 G1: filter closed (mem=no) -> nothing to close, the tab is clicked");
-    // G2: HeroScreen + Form_CharactorEquipTip + gear filter mem=yes on the way to openFoundry: the card (Escape), then the filter (x), then the back arrow - no stop
-    var scr = new ScreenState { Kind = ScreenKind.HeroScreen, Hero = 229000000, HeroTab = 3, HeroSlot = 3, Flow = "Form_CharactorEquipTip", GearOpenMem = Mem3.Yes };
-    var step = new LocateStep { Kind = LocateKind.OpenFoundry, OnGear = true };
-    string gp577 = Path.Combine("tests", "fixtures", "screens", "_geometry.json");
-    var geo577 = File.Exists(gp577) ? GameGeometry.Parse(File.ReadAllText(gp577, Encoding.UTF8), "1.6.39.829.1") : null;
-    var lv = new LocateView { Foreground = true, NowMs = 100000, W = 1350, H = 689, U = Ui.Unit(1350, 689), Step = step, HeroScreenOpen = true, Geometry = geo577 };
-    string why; Check(geo577 == null || LocateAuto.Decide(lv, out why) == LocateTodo.BackToCity, "577 G2: openFoundry on the hero screen -> the pilot's todo is the back arrow (not a stop)");
-    var m1 = HeroCover.Next(true, ClickGate.OnlyTip(scr), true, Mem3.Yes, Mem3.No, false);
-    Check(m1 == CoverMove.TipEscape, "577 G2: the item card is closed with one Escape first (" + m1 + ")");
-    var m2 = HeroCover.Next(true, true, false, Mem3.Yes, Mem3.No, false);
-    Check(m2 == CoverMove.ClosePopup, "577 G2: then the gear filter's x (" + m2 + ")");
-    var m3 = HeroCover.Next(true, true, false, Mem3.No, Mem3.Yes, false);
-    Check(m3 == CoverMove.CloseSide, "577 G2: the side panel too (" + m3 + ")");
-    Check(HeroCover.Next(true, true, false, Mem3.No, Mem3.No, false) == CoverMove.None, "577 G2: nothing over the screen -> the back arrow (BackToCity)");
-    Check(HeroCover.Next(true, true, false, Mem3.Unknown, Mem3.Unknown, false) == CoverMove.None && HeroCover.Next(false, true, true, Mem3.Yes, Mem3.Yes, true) == CoverMove.None, "577 G2: unknown memory / not the hero screen closes nothing");
-    string d = HeroCover.Diagnosis(scr.Brief, scr.Flow, Mem3.Yes, Mem3.No, true, 11631, false);
-    Check(d.StartsWith("diagnosis:") && d.Contains("Form_CharactorEquipTip") && d.Contains("gear filter mem=yes") && d.Contains("uid 11631") && d.Contains("input locked"), "577 G2: a pause / stop carries a diagnosis line: " + d);
-  }
-
-  static void ArtifactSellTests() {
-    Console.WriteLine("Artifact storage cleanup (hints only)");
-    // --- the panel reader (READ ONLY) on fake script tables
-    var m = new FakeLua(1 << 20); RFX.TestMemory = m; RFX.ForgetLive();
-    try {
-      var st = new FakeState(m);
-      Func<long, FTab> art = uid => st.T("iItemUid", uid, "iItemId", 100L + uid % 7, "iLevel", 1L, "iStageLvl", 0L, "iHeroId", 0L, "m_AfCfg", st.T("m_Id", 5L));
-      Func<long, bool, long, FTab, FTab, FTab> panelOf = (flag, active, cols, list, sel) => st.T("_isInited", true, "_isActive", active, "_btFlagBatch", flag, "_countCol", cols, "_listDataCur", list, "_btDicSelected", sel);
-      var list3 = st.T(1L, art(9001), 2L, art(9002), 3L, art(9003));
-      var sel = st.T(9002L, true, 9001L, false, 9003L, true);   // a deselected artifact stays with false
-      var panels = st.T(-9998L, st.T("m_CurrentBottomButtonState", 1L), -9997L, panelOf(2, true, 7, list3, sel));
-      var s = new InventoryScreen { Open = true, ArtTab = true };
-      RFX.ReadArtifactPanel(panels.A, s);
-      Check(s.ArtBulkKnown && s.ArtBulk, "art panel: _btFlagBatch 2 = bulk sale");
-      Eq("9001,9002,9003", string.Join(",", s.Uids), "art panel: the list in screen order (iItemUid of _listDataCur)");
-      Eq("9002,9003", string.Join(",", new SortedSet<long>(s.Selected)), "art panel: only the true entries of _btDicSelected are selected");
-      Check(s.ListPtr == list3.A && !s.EquipTab && !s.Bulk, "art panel: the list table is the list pointer; the gear fields stay off");
-      // normal mode: known, not bulk, no list read
-      s = new InventoryScreen { Open = true, ArtTab = true };
-      RFX.ReadArtifactPanel(st.T(-9997L, panelOf(-1, true, 7, list3, sel)).A, s);
-      Check(s.ArtBulkKnown && !s.ArtBulk && s.Uids.Count == 0 && s.Selected.Count == 0, "art panel: normal mode (-1): not bulk, nothing read");
-      // arrange mode (1) is not bulk sale
-      s = new InventoryScreen { Open = true, ArtTab = true };
-      RFX.ReadArtifactPanel(st.T(-9997L, panelOf(1, true, 7, list3, sel)).A, s);
-      Check(s.ArtBulkKnown && !s.ArtBulk, "art panel: «Масс. организовать» (1) is not the sale mode");
-      // a panel that is not shown yet: the mode is not known (never assumed)
-      s = new InventoryScreen { Open = true, ArtTab = true };
-      RFX.ReadArtifactPanel(st.T(-9997L, panelOf(2, false, 7, list3, sel)).A, s);
-      Check(!s.ArtBulkKnown && !s.ArtBulk && s.Uids.Count == 0, "art panel: _isActive false -> mode unknown, no list");
-      // no panel for the tab: nothing changes
-      s = new InventoryScreen { Open = true, ArtTab = true };
-      RFX.ReadArtifactPanel(st.T(-9998L, st.T("x", 1L)).A, s);
-      Check(!s.ArtBulkKnown && !s.ArtBulk && s.Uids.Count == 0, "art panel: no panel for -9997 -> nothing read");
-      // a hole in the array ends the list (a script array is 1..n)
-      s = new InventoryScreen { Open = true, ArtTab = true };
-      RFX.ReadArtifactPanel(st.T(-9997L, panelOf(2, true, 7, st.T(1L, art(9001), 3L, art(9003)), st.T())).A, s);
-      Eq("9001", string.Join(",", s.Uids), "art panel: a gap in the array ends the list");
-      // uids the script holds as strings or whole floats, a choice keyed by strings (the live list read nothing: the types are not known)
-      var artS = st.T("iItemUid", "9101", "iHeroId", 0L); var artF = st.T("iItemUid", 9102.0, "iHeroId", 0L);
-      s = new InventoryScreen { Open = true, ArtTab = true };
-      RFX.ReadArtifactPanel(st.T(-9997L, panelOf(2, true, 8, st.T(1L, artS, 2L, artF, 3L, art(9103)), st.T("9101", true, "9102", false, "9103", true))).A, s);
-      Eq("9101,9102,9103", string.Join(",", s.Uids), "art panel: string and float uids are read");
-      Eq("9101,9103", string.Join(",", new SortedSet<long>(s.Selected)), "art panel: a choice keyed by strings counts its true entries");
-      // the diagnostics line: the panel's fields with their types and the entry counts of tables
-      var diag = RFX.ArtDiagText(st.T("m_Content_InfinityGrid", 1L, "m_Other", 2L).A, st.T(-9997L, panelOf(2, true, 8, list3, sel)).A);
-      Check(diag != null && diag.StartsWith("art panel fields: ") && diag.Contains("_listDataCur=table[3]") && diag.Contains("_btFlagBatch=num") && diag.Contains("m_Content_InfinityGrid=num") && diag.Contains("_listDataCur[1]: ") && diag.Contains("iItemUid=num") && diag.Length <= 1500, "art diag: panel fields with type and count (" + diag + ")");
-      Check(RFX.ArtDiagText(0, st.T(-9998L, st.T("x", 1L)).A) == null, "art diag: no panel -> no line");
-    } finally { RFX.TestMemory = null; RFX.ForgetLive(); }
-
-    // --- the screen state
-    var artInv = new InventoryScreen { Open = true, ArtTab = true, ArtBulk = true, ArtBulkKnown = true, ListPtr = 5 }; artInv.Uids.AddRange(new long[] { 1, 2, 3 }); artInv.Selected.Add(2);
-    var scr = ScreenState.Classify(new ScreenInputs { Inv = artInv }, 0);
-    Check(scr.Kind == ScreenKind.Inventory && scr.InvArtTab && scr.InvArtBulk && scr.InvArtBulkKnown && !scr.InvEquipTab && !scr.InvBulk, "art screen: the inventory on the artifact tab, bulk sale");
-    Check(scr.Brief.Contains("artifact") && scr.Brief.Contains("ART-BULK-SALE") && !scr.Brief.Contains(" BULK-SALE") && scr.InvSelKey == "1:2", "art screen: brief says artifact bulk sale, the choice key counts the selection (" + scr.Brief + ")");
-    var scrN = ScreenState.Classify(new ScreenInputs { Inv = new InventoryScreen { Open = true, ArtTab = true, ArtBulkKnown = true } }, 0);
-    Check(scrN.Brief.Contains("artifact normal") && scrN.Key != scr.Key, "art screen: normal mode has its own key");
-    var tr = new ScreenTracker(); tr.Update(new ScreenInputs { Inv = artInv }, 0);
-    var held = tr.Update(new ScreenInputs(), 500);
-    Check(held.Held && held.InvArtTab && held.InvArtBulk, "art screen: a short read failure keeps the artifact tab");
-
-    // --- no clicks, whatever the auto click says
-    {
-      var gate = new ClickGate();
-      Func<ClickTarget, ClickRequest> R = tg => new ClickRequest { Owner = ClickOwner.Sell, Target = tg, AutoOn = true, Front = true, CellUid = 2, CellOk = new HashSet<long> { 2 } };
-      var res = gate.Check(R(ClickTarget.InvBulkCell), scr, 0);
-      Check(!res.Allowed && gate.HaltReason(ClickOwner.Sell) == "artifact", "art gate: a cell click on the artifact tab is stopped even with the auto click on (" + res.Reason + ")");
-      gate = new ClickGate(); res = gate.Check(R(ClickTarget.InvBulkEnter), scrN, 0);
-      Check(!res.Allowed && gate.HaltReason(ClickOwner.Sell) == "artifact", "art gate: «Массовая продажа» is never pressed on the artifact tab");
-      gate = new ClickGate(); gate.NoSellClicks = true;
-      var eq = ScreenState.Classify(new ScreenInputs { Inv = new InventoryScreen { Open = true, EquipTab = true, Bulk = true, BulkKnown = true } }, 0);
-      res = gate.Check(R(ClickTarget.InvBulkCell), eq, 0);
-      Check(!res.Allowed && gate.HaltReason(ClickOwner.Sell) == "artifact", "art gate: while an artifact cleanup runs the Sell owner never clicks, on any screen");
-      // the list's exact scroll cannot be read (the layout data has no list fields): the drag is refused before anything is scrolled, with its own reason
-      var eqBulk = ScreenState.Classify(new ScreenInputs { Inv = new InventoryScreen { Open = true, EquipTab = true, Bulk = true, BulkKnown = true } }, 0);
-      gate = new ClickGate(); res = gate.Check(new ClickRequest { Owner = ClickOwner.Sell, Target = ClickTarget.InvListDrag, AutoOn = true, Front = true, NoScroll = true }, eqBulk, 0);
-      Check(!res.Allowed && gate.HaltReason(ClickOwner.Sell) == "scroll", "sell gate: a list drag without a readable scroll stops the run as 'scroll' (" + res.Reason + ")");
-      gate = new ClickGate(); res = gate.Check(new ClickRequest { Owner = ClickOwner.Sell, Target = ClickTarget.InvListDrag, AutoOn = true, Front = true }, eqBulk, 0);
-      Check(res.Allowed, "sell gate: a list drag with a readable scroll is allowed (" + res.Reason + ")");
-      // a cell click with an unreadable scroll: the item under it cannot be told - the reason is the scroll, not "the click would hit another item"
-      gate = new ClickGate(); res = gate.Check(new ClickRequest { Owner = ClickOwner.Sell, Target = ClickTarget.InvBulkCell, AutoOn = true, Front = true, NoScroll = true, CellUid = 0, CellOk = new HashSet<long> { 2 } }, eqBulk, 0);
-      Check(!res.Allowed && gate.HaltReason(ClickOwner.Sell) == "scroll", "sell gate: a bulk-sale cell click without a readable scroll stops as 'scroll', not 'cell' (" + res.Reason + ")");
-      gate = new ClickGate(); res = gate.Check(new ClickRequest { Owner = ClickOwner.Sell, Target = ClickTarget.InvBulkCell, AutoOn = true, Front = true, CellUid = 7, CellOk = new HashSet<long> { 2 } }, eqBulk, 0);
-      Check(!res.Allowed && gate.HaltReason(ClickOwner.Sell) == "cell", "sell gate: a readable scroll and a wrong item stays 'cell' (" + res.Reason + ")");
-      gate = new ClickGate(); res = gate.Check(new ClickRequest { Owner = ClickOwner.Sell, Target = ClickTarget.InvBulkCell, AutoOn = true, Front = true, CellUid = 2, CellOk = new HashSet<long> { 2 } }, eqBulk, 0);
-      Check(res.Allowed, "sell gate: a bulk-sale cell click with the exact scroll and a wanted item is allowed (" + res.Reason + ")");
-      // the pilot: the game's scroll unreadable on every tick -> it waits, never sends a cell click, and stops as 'scroll'
-      {
-        var gs = new SellGeometry(); var fg = new FakeSellGame(gs, 40, 0); var ws = new HashSet<long> { 5000, 5001, 5002 };
-        var ps = new SellPilot(gs); long ts = 0; int cellClicks = 0;
-        for (int i = 0; i < 100 && ps.State != "failed"; i++, ts += 100) {
-          var a = ps.Step(new SellView { NowMs = ts, Foreground = true, W = fg.W, H = fg.H, U = fg.U, Screen = fg.Screen(), Wanted = ws, Phase = fg.Phase(), NeedExact = true });
-          if (a.Kind == AutoKind.Click) cellClicks++;
-          fg.Act(a);
-        }
-        Check(cellClicks == 0 && ps.State == "failed" && ps.FailWhy == "scroll", "sell pilot: Row1 NaN on every tick: no cell click, ends 'scroll' (clicks " + cellClicks + ", " + ps.State + "/" + ps.FailWhy + ")");
-        Check(ts >= SellPilot.ScrollWaitMs, "sell pilot: it re-reads the scroll for about " + SellPilot.ScrollWaitMs + " ms first (" + ts + " ms)");
-        var pe = new SellPilot(gs); var fe = new FakeSellGame(gs, 40, 0);
-        var ae = pe.Step(new SellView { NowMs = 0, Foreground = true, W = fe.W, H = fe.H, U = fe.U, Screen = fe.Screen(), Wanted = ws, Phase = double.NaN, Row1 = gs.ViewTopPx(fe.U) + gs.TopPad * fe.U, NeedExact = true });
-        Check(ae.Kind == AutoKind.Click && pe.State == "work", "sell pilot: with an exact Row1 the cell click goes out (" + ae.Kind + ", " + pe.State + ")");
-        var pl = new SellPilot(gs);   // a scroll that comes back in time: no stop
-        var al = pl.Step(new SellView { NowMs = 0, Foreground = true, W = fg.W, H = fg.H, U = fg.U, Screen = fe.Screen(), Wanted = ws, Phase = double.NaN, NeedExact = true });
-        al = pl.Step(new SellView { NowMs = 800, Foreground = true, W = fg.W, H = fg.H, U = fg.U, Screen = fe.Screen(), Wanted = ws, Phase = double.NaN, Row1 = gs.ViewTopPx(fe.U) + gs.TopPad * fe.U, NeedExact = true });
-        Check(al.Kind == AutoKind.Click && pl.FailWhy == "", "sell pilot: a scroll read that comes back within the wait lets the click go (" + al.Kind + ")");
-      }
-      // a pause in the middle of the scroll wait: the wait starts over, no instant "scroll" fail
-      {
-        var gs = new SellGeometry(); var fg = new FakeSellGame(gs, 40, 0); var ws = new HashSet<long> { 5000, 5001, 5002 };
-        var pp = new SellPilot(gs); long tp = 0;
-        Func<bool, bool, SellView> vw = (busy, front) => new SellView { NowMs = tp, Foreground = front, UserBusy = busy, W = fg.W, H = fg.H, U = fg.U, Screen = fg.Screen(), Wanted = ws, Phase = fg.Phase(), NeedExact = true };
-        for (int i = 0; i < 8; i++, tp += 100) fg.Act(pp.Step(vw(false, true)));
-        Check(pp.State != "failed", "sell pilot: waiting for the scroll, not failed yet");
-        for (int i = 0; i < 60; i++, tp += 100) pp.Step(vw(true, true));   // the player works for 6 s
-        pp.Step(vw(false, false)); tp += 100;                                // then the window is in the background
-        pp.Step(vw(false, true));
-        Check(pp.State != "failed" && pp.FailWhy == "", "sell pilot: after a pause the scroll wait starts over (" + pp.State + "/" + pp.FailWhy + ")");
-        for (int i = 0; i < 100 && pp.State != "failed"; i++, tp += 100) fg.Act(pp.Step(vw(false, true)));
-        Check(pp.State == "failed" && pp.FailWhy == "scroll", "sell pilot: an unreadable scroll still ends 'scroll' after a full wait");
-      }
-      gate = new ClickGate();
-      res = gate.Check(new ClickRequest { Owner = ClickOwner.Sell, Target = ClickTarget.InvEquipTab, AutoOn = true, Front = true }, scrN, 0);
-      Check(res.Allowed, "art gate: a gear cleanup (not an artifact run) may still go from the artifact tab back to «Снаряжение»");
-      Check(!ClickGate.WhitelistText(ClickOwner.Equip).Contains("ArtTab") && !ClickGate.WhitelistText(ClickOwner.Equip).Contains("ArtBulk") && !ClickGate.WhitelistText(ClickOwner.Equip).Contains("ArtCell") && !ClickGate.WhitelistText(ClickOwner.Equip).Contains("ArtWorkshop") && !ClickGate.WhitelistText(ClickOwner.Equip).Contains("ArtMat") && !ClickGate.WhitelistText(ClickOwner.Equip).Contains("ArtPromote") && !ClickGate.WhitelistText(ClickOwner.Equip).Contains("ArtListDrag"), "art gate: the equip helper has none of the inventory / workshop artifact targets on its whitelist (only its own hero-screen ones, see ArtEquipTests; the others have theirs, behind ArtSellAuto / ArtLocateAuto)");
-    }
-
-    // --- the steps
-    double W = 1136, H = 640, U = Ui.Unit(W, H);
-    var g = SellGeometry.Artifacts(W, H, U, 7);
-    var uids = new List<long>(); for (long i = 1; i <= 56; i++) uids.Add(9000 + i);   // 8 rows of 7
-    Func<InventoryScreen> bulk = () => new InventoryScreen { Open = true, ArtTab = true, ArtBulk = true, ArtBulkKnown = true, ListPtr = 7, Uids = new List<long>(uids) };
-    var wanted = new HashSet<long> { 9001, 9003, 9009, 9050 };   // rows 1, 1, 2, 8
-    Eq(SellHintKind.OpenInventory, SellHint.Classify(null, wanted, true).Kind, "art hint: no inventory -> open it");
-    Eq(SellHintKind.OpenArtTab, SellHint.Classify(new InventoryScreen { Open = true, EquipTab = true, Bulk = true }, wanted, true).Kind, "art hint: the gear tab (even in its bulk sale) -> open the «Артефакт» tab");
-    Eq(SellHintKind.PressBulk, SellHint.Classify(new InventoryScreen { Open = true, ArtTab = true }, wanted, true).Kind, "art hint: artifact tab, normal mode -> press «Массовая продажа»");
-    Eq(SellHintKind.OpenEquipTab, SellHint.Classify(new InventoryScreen { Open = true, ArtTab = true }, wanted).Kind, "gear hint is unchanged: the artifact tab is just another tab for it");
-    Eq("openArtTab", SellHint.Classify(new InventoryScreen { Open = true }, wanted, true).Key, "art hint: page key of the tab step");
-
-    // frames: the cell geometry from the research numbers (1136 x 640: list 125..801 x 123..550.4, 7 columns, row 116, card 80 x 110 centred)
-    var gr = new LocateGrid(); gr.FromScroll(g.ViewTopPx(U) + g.TopPad * U, 7);
-    var step = SellHint.Build(bulk(), wanted, 7, gr, g, W, H, U, true);
-    Check(step.Kind == SellHintKind.Select && step.Total == 4 && step.Selected == 0, "art hint: nothing ticked: 0 of 4");
-    var f1 = step.Frames.Find(fr => fr.Uid == 9001); var f3 = step.Frames.Find(fr => fr.Uid == 9003);
-    double cellW = (1136 - (0.5231 + 0.195) * 640) / 7;
-    Check(f1 != null && Math.Abs(f1.X - (124.8 + (cellW - 80) / 2)) <= 1.5 && Math.Abs(f1.Y - 126) <= 1.5 && Math.Abs(f1.W - 80) <= 1.5 && Math.Abs(f1.H - 110) <= 1.5,
-          "art hint: the frame of cell 1 is the 80 x 110 card, centred in the 97 px cell (" + (f1 == null ? "none" : f1.X + "," + f1.Y + " " + f1.W + "x" + f1.H) + ")");
-    Check(f3 != null && Math.Abs(f3.X - f1.X - 2 * cellW) <= 1.5, "art hint: cell 3 is two cells to the right");
-    var f9 = step.Frames.Find(fr => fr.Uid == 9009);
-    Check(f9 != null && Math.Abs(f9.Y - f1.Y - 116) <= 1.5 && Math.Abs(f9.X - f1.X - 1 * cellW) <= 1.5, "art hint: item 9 is row 2, column 2 (one row = 116 units)");
-    Check(step.Frames.Count == 3 && step.Below == 1, "art hint: three in view, one below (frames " + step.Frames.Count + ", below " + step.Below + ")");
-    // scrolled: the content moved up by 3 rows (ScrollY = 3 x 116 canvas units)
-    var scroll = new InvScroll();
-    double row1 = scroll.Row1(g, new RFX.ListRead { ScrollY = 3 * 116, Cols = 7, RowUnits = 116 }, double.NaN, U);
-    var stS = SellHint.BuildExact(bulk(), wanted, 7, row1, g, W, H, U, true);
-    Check(stS.Above == 3 && stS.Below == 1 && stS.Frames.Count == 0, "art hint: scrolled down 3 rows -> the first three are above, the last one still below (above " + stS.Above + ", below " + stS.Below + ")");
-    double row1b = scroll.Row1(g, new RFX.ListRead { ScrollY = 58, Cols = 7, RowUnits = 116 }, double.NaN, U);
-    var stH = SellHint.BuildExact(bulk(), wanted, 7, row1b, g, W, H, U, true);
-    var f1h = stH.Frames.Find(fr => fr.Uid == 9001);
-    Check(f1h != null && Math.Abs((f1.Y - f1h.Y) - 58 * U / 640) <= 1.01, "art hint: the frame moves with ScrollY exactly (58 units = 58 px at 640)");
-    var nx = SellHint.BuildExact(bulk(), wanted, 7, double.NaN, g, W, H, U, true);
-    Check(nx.Kind == SellHintKind.Select && nx.Frames.Count == 0 && nx.Total == 4, "art hint: no exact scroll -> no frames, the counts stay");
-
-    // ticks and strays
-    var inv = bulk(); inv.Selected.Add(9003);
-    step = SellHint.Build(inv, wanted, 7, gr, g, W, H, U, true);
-    Check(step.Selected == 1 && step.Frames.Find(fr => fr.Uid == 9003).Style == "done" && step.Frames.Find(fr => fr.Uid == 9001).Style == "todo", "art hint: a ticked artifact gets the checked frame (1 of 4)");
-    inv.Selected.Add(9002);   // not on the list
-    step = SellHint.Build(inv, wanted, 7, gr, g, W, H, U, true);
-    Check(step.Extra == 1 && step.Frames.Find(fr => fr.Uid == 9002).Style == "extra" && SellHint.Warn(step), "art hint: a wrongly ticked artifact: red frame and the warning");
-    var allT = bulk(); foreach (var u in wanted) allT.Selected.Add(u);
-    Eq(SellHintKind.AllSelected, SellHint.Classify(allT, wanted, true).Kind, "art hint: all ticked -> press «Продать»");
-    var noneT = bulk(); noneT.Uids.RemoveAll(u => wanted.Contains(u));
-    Eq(SellHintKind.NoneHere, SellHint.Classify(noneT, wanted, true).Kind, "art hint: none of the list in the storage list");
-
-    // the rectangles: research numbers, or the site's geometry
-    var tb = SellHint.ArtTabRect(W, H, U); var bb = SellHint.ArtBulkRect(W, H, U);
-    {   // the inventory open on another tab (materials) during the cleanup: the step is «open Equipment» and its frame is the live «Снаряжение» toggle, above «Артефакт»
-      Eq(SellHintKind.OpenEquipTab, SellHint.Classify(new InventoryScreen { Open = true, EquipTab = false }, wanted).Kind, "sell hint: the inventory on another tab -> open the «Снаряжение» tab");
-      var eb = SellHint.EquipTabRect(W, H, U);
-      Check(eb[2] == tb[2] && eb[3] == tb[3] && eb[1] < tb[1] && eb[1] + eb[3] <= tb[1] + 2 && Math.Abs(eb[1] - (0.2772 * U)) <= 1.5, "sell hint: the «Снаряжение» toggle's frame above «Артефакт» " + string.Join(",", eb));
-      Check(Array.IndexOf(FrameTargets.OverlayKeys, "inventory.leftTab.equip") >= 0, "sell hint: the equip tab's key is framed by the overlay");
-    }
-    {
-      Check(SellGeometry.ArtCols(new GeoRect { X = 0.195 * 705, Y = 0, W = (1366.0 / 705 - 0.5231 - 0.195) * 705, H = 400 }, 705, 7) == 8 && SellGeometry.ArtCols(new GeoRect { X = 0.195 * U, Y = 0, W = (W / U - 0.5231 - 0.195) * U, H = 400 }, U, 8) == 7 && SellGeometry.ArtCols(null, U, 8) == 8,
-            "art hint: columns from the list's width: 8 at the live window, 7 at the authored one, the fallback without a rectangle");
-    }
-    Check(Math.Abs(tb[0] - 0.0023 * U) <= 1.5 && Math.Abs(tb[1] - 0.4022 * U) <= 1.5 && Math.Abs(tb[2] - 0.1688 * U) <= 1.5 && Math.Abs(tb[3] - 0.125 * U) <= 1.5, "art hint: the «Артефакт» toggle (research numbers) " + string.Join(",", tb));
-    {   // lab 1.6.66.466: the live «Продать» frame 817,624 190x63 stood round a button of 820.4..996.5 x 633.7..676.3 (1366x705): now the sprite's box
-      double U7 = Ui.Unit(1366, 705);
-      var sb = SellHint.SellBtnFromLive("inventory.sellBtn", new double[] { 817, 624, 190, 63 }, U7);
-      Check(Math.Abs(sb[0] - 820.4) <= 1.5 && Math.Abs(sb[1] - 633.7) <= 1.5 && Math.Abs(sb[2] - 176.1) <= 1.5 && Math.Abs(sb[3] - 42.6) <= 1.5, "sell final: the frame on the live «Продать» hugs the sprite (measured numbers) " + string.Join(",", sb));
-      var same = new double[] { 1, 2, 3, 4 };
-      Check(SellHint.SellBtnFromLive("hero.confirm", same, U7) == same && SellHint.SellBtnFromLive("inventory.sellBtn", null, U7) == null, "sell final: other keys and no rect stay as they are");
-    }
-    Check(Math.Abs(bb[0] - 0.4728 * U) <= 1.5 && Math.Abs(bb[1] - (H - 0.0983 * U)) <= 1.5 && Math.Abs(bb[2] - 0.2466 * U) <= 1.5 && Math.Abs(bb[3] - 0.0575 * U) <= 1.5, "art hint: «Массовая продажа» (live recording numbers) " + string.Join(",", bb));
-    string webGeo = Path.Combine(WebRoot(), "data", "app-geometry", "1.6.39.829.1.json");
-    if (File.Exists(webGeo)) {
-      var rg = GameGeometry.Parse(File.ReadAllText(webGeo, Encoding.UTF8), "1.6.39.829.1");
-      Check(rg != null && rg.Has("inventory.leftTab.artifact") && rg.Has("inventory.artBulkSell") && rg.Has("inventory.artList") && rg.Grid("inventory.artList") != null && rg.Grid("inventory.artList").Cols == 8 && Math.Abs(rg.Grid("inventory.artList").LineSize - 116) < 0.01,
-            "art hint: the site's geometry file has the tab, the button, the list and the 8 x 116 grid");
-      if (rg != null) {
-        var lr = rg.Rect("inventory.artList", W, H, U); var tr2 = rg.Rect("inventory.leftTab.artifact", W, H, U); var br = rg.Rect("inventory.artBulkSell", W, H, U);
-        Check(Math.Abs(lr.X - 124.8) <= 1 && Math.Abs(lr.Y - 123) <= 1 && Math.Abs(lr.Right - 801.2) <= 1.5 && Math.Abs(lr.Bottom - 550.4) <= 1, "art hint: the list rectangle from the file (125..801 x 123..550)");
-        Check(Math.Abs(tr2.Y - 257.4) <= 1 && Math.Abs(br.X - 302.6) <= 1, "art hint: the tab and the button from the file");
-        var ga = SellGeometry.Artifacts(W, H, U, 7, lr);
-        Check(Math.Abs(ga.PitchX - g.PitchX) < 0.002 && Math.Abs(ga.ViewTop - g.ViewTop) < 0.002 && Math.Abs(ga.ViewBottomPx(H, U) - g.ViewBottomPx(H, U)) < 1.5, "art hint: the geometry from the file agrees with the research numbers");
-      }
-    }
-    // other window shapes: the game's 8 columns (floor((width - 6) / 90) of canvas units) stay inside the list and the list's right edge follows the window
-    foreach (var wh in new[] { new[] { 1920.0, 1009.0 }, new[] { 1366.0, 705.0 } }) {
-      double u2 = Ui.Unit(wh[0], wh[1]); var g2 = SellGeometry.Artifacts(wh[0], wh[1], u2, 8);
-      double right = g2.X(g2.X0 + 7 * g2.PitchX + g2.CellW, wh[0], u2);
-      Check(right <= wh[0] - 0.5231 * u2 + 1 && g2.ViewTopPx(u2) > 0 && g2.ViewBottomPx(wh[1], u2) < wh[1], "art hint: " + wh[0] + "x" + wh[1] + ": the columns end inside the list");
-    }
-  }
-
-  // the artifact list's rows from the picture (the fallback of the game's own scroll): a drawn list at 1920 x 1009 (dark background, a dark gap of 6 canvas units between
-  // the rows, a card = a red body under a bright crest line), looked at as the overlay does (the strip of the list's viewport)
-  static int[] ArtListPicture(SellGeometry g, double W, double H, double U, double row1, int rowsN, out int sx, out int sy, out int sw, out int sh) {
-    ArtGridPicture.Strip(g, W, H, U, out sx, out sy, out sw, out sh);
-    var px = new int[sw * sh];
-    int bg = (33 << 16) | (36 << 8) | 43, body = (120 << 16) | (50 << 8) | 45, crest = (215 << 16) | (185 << 8) | 110;
-    for (int i = 0; i < px.Length; i++) px[i] = bg;
-    double pitch = g.PitchY * U, card = g.CellHeight * U, cardW = g.CellW * U;
-    for (int r = 0; r < rowsN; r++) {
-      double top = row1 + r * pitch;
-      for (int c = 0; c < g.Columns; c++) {
-        double left = g.X(g.X0 + c * g.PitchX, W, U) - sx;
-        for (int y = (int)Math.Round(top) - sy; y < (int)Math.Round(top + card) - sy; y++) {
-          if (y < 0 || y >= sh) continue;
-          int col = y < (int)Math.Round(top) - sy + 5 ? crest : body;
-          for (int x = (int)left; x < (int)(left + cardW); x++) if (x >= 0 && x < sw) px[y * sw + x] = col;
-        }
-      }
-    }
-    return px;
-  }
-
-  static void ArtGridPictureTests() {
-    double W = 1920, H = 1009, U = Ui.Unit(W, H);
-    var g = SellGeometry.Artifacts(W, H, U, 8);
-    double top0 = g.ViewTopPx(U) + g.TopPad * U, pitch = g.PitchY * U; int rowsN = 40;
-    int sx, sy, sw, sh;
-    var pic = new ArtGridPicture(); double r1;
-    // a list just built is at its top: row 1 where the geometry says, to a pixel
-    var px = ArtListPicture(g, W, H, U, top0, rowsN, out sx, out sy, out sw, out sh);
-    Check(pic.Update(px, sw, sh, sx, sy, g, W, U, rowsN, 7, 1000, out r1) && Math.Abs(r1 - top0) <= 1.5, "art picture: a new list is placed at its top (" + r1.ToString("0.0") + " of " + top0.ToString("0.0") + "; " + pic.Note + ")");
-    // the list moves by 41 px, then by 60: followed (the rows' phase gives the exact place)
-    px = ArtListPicture(g, W, H, U, top0 - 41, rowsN, out sx, out sy, out sw, out sh);
-    Check(pic.Update(px, sw, sh, sx, sy, g, W, U, rowsN, 7, 1030, out r1) && Math.Abs(r1 - (top0 - 41)) <= 1.5, "art picture: followed after a move of 41 px (" + r1.ToString("0.0") + "; " + pic.Note + ")");
-    px = ArtListPicture(g, W, H, U, top0 - 101, rowsN, out sx, out sy, out sw, out sh);
-    Check(pic.Update(px, sw, sh, sx, sy, g, W, U, rowsN, 7, 1060, out r1) && Math.Abs(r1 - (top0 - 101)) <= 1.5, "art picture: followed after another 60 px (" + r1.ToString("0.0") + "; " + pic.Note + ")");
-    // the same list opened already scrolled (no top seen): no place from the picture alone ...
-    var pic2 = new ArtGridPicture();
-    double far = top0 - 7 * pitch - 23;
-    px = ArtListPicture(g, W, H, U, far, rowsN, out sx, out sy, out sw, out sh);
-    Check(!pic2.Update(px, sw, sh, sx, sy, g, W, U, rowsN, 8, 3000, out r1) && double.IsNaN(r1), "art picture: a list first seen scrolled far down has no place by itself");
-    // ... until the player ticks a card: row 10 (0-based 9) under the pointer
-    int clickRow = 9; double rowTop = far + clickRow * pitch, cursorY = rowTop + 60;
-    Check(pic2.Update(px, sw, sh, sx, sy, g, W, U, rowsN, 8, 3100, out r1, clickRow, cursorY) && Math.Abs(r1 - far) <= 1.5, "art picture: the player's tick of row 10 places the list (" + r1.ToString("0.0") + " of " + far.ToString("0.0") + ")");
-    // the picture's list reading drives the same card frames as the game's: ScrollY from row 1
-    var lr = ArtGridPicture.ToListRead(g, U, far);
-    Check(Math.Abs(lr.ScrollY * U / 640 - (top0 - far)) <= 0.01 && lr.Cols == 8 && Math.Abs(lr.RowUnits - 116) <= 0.01, "art picture: ToListRead gives the scroll in canvas units (" + lr.ScrollY.ToString("0.0") + ")");
-    // nothing but background (another screen): no place
-    var pic3 = new ArtGridPicture(); var blank = new int[sw * sh]; for (int i = 0; i < blank.Length; i++) blank[i] = (33 << 16) | (36 << 8) | 43;
-    Check(!pic3.Update(blank, sw, sh, sx, sy, g, W, U, rowsN, 9, 5000, out r1), "art picture: an empty list strip gives no place");
-    // the recorder's replay draws the artifact cleanup with the artifact list's geometry (ctx.Art), cards 80 x 110 units
-    var rinv = new InventoryScreen { Open = true, ArtTab = true, ArtBulk = true, ArtBulkKnown = true, ListPtr = 5 }; for (long i = 1; i <= 16; i++) rinv.Uids.Add(500 + i);
-    var rctx = new RecCtx { Mode = "sell", Front = true, ShCols = 8, Art = true, Want = new long[] { 501, 509 } };
-    SellHintStep rstep; var rrects = RecScenes.Sell(rctx, rinv, null, top0, W, H, U, out rstep);
-    Check(rstep.Kind == SellHintKind.Select && rrects.Count == 2 && Math.Abs(rrects[0].H - 110.0 / 640 * U) <= 2 && Math.Abs(rrects[1].Y - rrects[0].Y - pitch) <= 2, "replay: the artifact cleanup's frames use the artifact list's geometry (" + rrects.Count + " frames)");
-    Check(RecCtx.Parse(MiniJson.Parse(rctx.ToJson())).Art, "replay: the context keeps the artifact flag");
-  }
-
-  // «Показать в игре» for an ARTIFACT promotion (purpose artPromote): the request, the readers on fake tables, the screen, the steps, the frames, the finish; never a click
-  static void ArtPromoteTests() {
-    Console.WriteLine("Artifact promotion guide (hints only)");
-    // --- the request from the site
-    var body = "{\"ok\":true,\"plans\":[],\"locate\":{\"id\":\"r1\",\"purpose\":\"artPromote\",\"createdAt\":\"2026-10-18T10:00:00Z\",\"item\":null,\"art\":{\"uid\":5001,\"id\":200088,\"name\":\"Клинок\",\"lv\":10,\"cap\":10,\"st\":0,\"need\":2,\"via\":\"copy\",\"copy\":5002,\"copies\":[5002,5003]}}}";
-    var pr = PlansClient.Interpret(200, body, true);
-    Check(pr.Locate != null && pr.Locate.Purpose == "artPromote" && pr.Locate.Item == null && pr.Locate.Art != null && pr.Locate.Art.Uid == 5001 && pr.Locate.Art.Need == 2 && pr.Locate.Art.Cap == 10
-          && pr.Locate.Art.Copy == 5002 && pr.Locate.Art.Copies.Count == 2 && pr.Locate.Art.Via == "copy" && pr.Locate.Art.Name == "Клинок", "art request: parsed with its copies");
-    var none = PlansClient.Interpret(200, "{\"ok\":true,\"plans\":[],\"locate\":{\"id\":\"r2\",\"purpose\":\"artPromote\",\"item\":null,\"art\":null}}", true);
-    Check(none.Locate != null && none.Locate.Art == null && none.Locate.Item == null, "art request: an artifact the snapshot lacks stays a request without a card");
-    Check(PlansClient.Interpret(200, "{\"ok\":true,\"plans\":[],\"locate\":{\"id\":\"r3\",\"purpose\":\"mystery\"}}", true).Locate == null, "art request: an unknown purpose is dropped");
-    var req = pr.Locate;
-
-    // --- the readers on fake tables
-    var m = new FakeLua(1 << 20); RFX.TestMemory = m; RFX.ForgetLive();
-    try {
-      var st = new FakeState(m);
-      Func<long, long, FTab> art = (uid, lv) => st.T("iItemUid", uid, "iItemId", 200088L, "iLevel", lv, "iStageLvl", 0L, "iHeroId", 0L);
-      Func<long, bool, long, long, FTab, FTab, FTab> panelOf = (flag, active, sel, cols, list, dic) => st.T("_isInited", true, "_isActive", active, "_btFlagBatch", flag, "_selectedIndexMain", sel, "_countCol", cols, "_listDataCur", list, "_btDicSelected", dic);
-      var list3 = st.T(1L, art(5001, 10), 2L, art(5002, 1), 3L, art(5003, 1));
-      // normal mode is not read unless a guide wants it
-      RFX.ArtListWanted = false;
-      var s0 = new InventoryScreen { Open = true, ArtTab = true };
-      RFX.ReadArtifactPanel(st.T(-9997L, panelOf(-1, true, 2, 7, list3, st.T())).A, s0);
-      Check(s0.ArtBulkKnown && s0.ArtMode == -1 && s0.Uids.Count == 0 && s0.ArtSel == 0, "art guide reader: normal mode, nothing read while no guide wants it");
-      RFX.ArtListWanted = true;
-      try {
-        var s1 = new InventoryScreen { Open = true, ArtTab = true };
-        RFX.ReadArtifactPanel(st.T(-9997L, panelOf(-1, true, 2, 7, list3, st.T())).A, s1);
-        Eq("5001,5002,5003", string.Join(",", s1.Uids), "art guide reader: the list in screen order in normal mode");
-        Check(s1.ArtSelKnown && s1.ArtSel == 2 && !s1.ArtBulk && s1.ArtMode == -1, "art guide reader: _selectedIndexMain = the open card's place");
-        var s2 = new InventoryScreen { Open = true, ArtTab = true };
-        RFX.ReadArtifactPanel(st.T(-9997L, panelOf(1, true, 1, 7, list3, st.T())).A, s2);
-        Check(s2.ArtMode == 1 && !s2.ArtBulk && s2.Uids.Count == 3, "art guide reader: «Масс. организовать» is mode 1");
-        var s3 = new InventoryScreen { Open = true, ArtTab = true };
-        RFX.ReadArtifactPanel(st.T(-9997L, panelOf(-1, true, 9, 7, list3, st.T())).A, s3);
-        Check(s3.ArtSelKnown && s3.ArtSel == 0, "art guide reader: a selected index outside the list is no selection");
-        var s4 = new InventoryScreen { Open = true, ArtTab = true };
-        RFX.ReadArtifactPanel(st.T(-9997L, panelOf(-1, false, 2, 7, list3, st.T())).A, s4);
-        Check(!s4.ArtBulkKnown && s4.Uids.Count == 0, "art guide reader: a panel that is not shown reads nothing");
-      } finally { RFX.ArtListWanted = false; }
-
-      // the workshop form
-      Func<bool, long, long, long, long, long, FTab, FTab> formOf = (active, tab, uid, lv, stage, x, brk) => st.T("m_LuaLogicActive", active, "m_iItemType", tab,
-        "m_ArtifactData", st.T("iItemUid", uid, "iItemId", 200088L, "iLevel", lv, "iStageLvl", stage), "m_PanelEquipBreak", brk);
-      var mats = st.T(1L, st.T("iItemUid", 5002L, "iItemId", 200088L, "iLevel", 1L), 2L, st.T("iItemUid", 5003L, "iItemId", 200088L, "iLevel", 7L), 3L, st.T("iItemId", 16100L));
-      var brk0 = st.T("m_vMatData", mats, "m_vMatSelect", st.T(2L, true, 1L, false, 3L, true));
-      var ws = new ArtWorkshopScreen();
-      RFX.ReadArtWorkshopForm(formOf(true, 2, 5001, 10, 0, 0, brk0).A, ws);
-      Check(ws.Open && ws.Tab == 2 && ws.Uid == 5001 && ws.Level == 10 && ws.Stage == 0 && ws.ItemId == 200088, "art workshop reader: tab, artifact, level and stage");
-      Eq("5002,5003,0", string.Join(",", ws.Mats), "art workshop reader: copies first, an essence stub has no uid");
-      Eq("1,7,-1", string.Join(",", ws.MatLevels), "art workshop reader: the copies' levels");
-      Eq("200088,200088,16100", string.Join(",", ws.MatItemIds), "art workshop reader: every entry's item id (an essence stub has only that)");
-      Eq("2,3", string.Join(",", new SortedSet<int>(ws.MatSel)), "art workshop reader: only the true entries of m_vMatSelect (indices)");
-      var wsT = new ArtWorkshopScreen();
-      RFX.ReadArtWorkshopForm(formOf(true, 1, 5001, 8, 0, 0, brk0).A, wsT);
-      Check(wsT.Tab == 1 && wsT.Mats.Count == 0 && !wsT.PanelKnown, "art workshop reader: the promote panel is read on its own tab only");
-      var wsC = new ArtWorkshopScreen();
-      RFX.ReadArtWorkshopForm(formOf(false, 2, 5001, 10, 0, 0, brk0).A, wsC);
-      Check(!wsC.Open && wsC.Uid == 0 && wsC.Mats.Count == 0, "art workshop reader: a form that is not shown reads nothing");
-      Check(ws.Diag.Contains("m_PanelEquipBreak=table") && ws.Diag.Contains("m_vMatData=3 entries") && ws.Diag.Contains("2 copies, 1 essences") && ws.Diag.Contains("m_vMatSelect=2 chosen") && ws.Diag.Contains("m_ArtifactData.iItemUid=read"), "art workshop reader: the diagnostics line names the bound fields and counts (" + ws.Diag + ")");
-      // uids the script holds as strings: the open artifact and the copies are still read
-      var matsS = st.T(1L, st.T("iItemUid", "5002", "iItemId", 200088L, "iLevel", 1L), 2L, st.T("iItemId", 16100L));
-      var wsS = new ArtWorkshopScreen();
-      RFX.ReadArtWorkshopForm(st.T("m_LuaLogicActive", true, "m_iItemType", 2L, "m_ArtifactData", st.T("iItemUid", "5001", "iLevel", 10L), "m_PanelEquipBreak", st.T("m_vMatData", matsS, "m_vMatSelect", st.T())).A, wsS);
-      Check(wsS.Uid == 5001 && wsS.PanelKnown && string.Join(",", wsS.Mats) == "5002,0", "art workshop reader: uids written as strings are read (" + wsS.Diag + ")");
-      // the promote panel not built yet / its list under another name: nothing to read, the line says what the form holds
-      var wsNoPanel = new ArtWorkshopScreen();
-      RFX.ReadArtWorkshopForm(st.T("m_LuaLogicActive", true, "m_iItemType", 2L, "m_ArtifactData", st.T("iItemUid", 5001L, "iLevel", 10L), "m_PanelEquipEnhanced", st.T("x", 1L)).A, wsNoPanel);
-      Check(wsNoPanel.Open && wsNoPanel.Tab == 2 && !wsNoPanel.PanelKnown && wsNoPanel.Diag.Contains("m_PanelEquipBreak=missing") && wsNoPanel.Diag.Contains("m_PanelEquipEnhanced:table"), "art workshop reader: no promote panel yet -> the line lists the form's panels (" + wsNoPanel.Diag + ")");
-      var wsN = new ArtWorkshopScreen();
-      RFX.ReadArtWorkshopForm(st.T("m_LuaLogicActive", true, "m_iItemType", 2L, "m_ArtifactData", st.T("iItemUid", 5001L), "m_PanelEquipBreak", st.T("m_vOtherData", mats, "m_vMatSelect", st.T())).A, wsN);
-      Check(!wsN.PanelKnown && wsN.Diag.Contains("m_vMatData=missing") && wsN.Diag.Contains("m_vOtherData"), "art workshop reader: the list under another name is named in the line (" + wsN.Diag + ")");
-      var wsU = new ArtWorkshopScreen();
-      RFX.ReadArtWorkshopForm(st.T("m_LuaLogicActive", true, "m_iItemType", 2L, "m_PanelEquipBreak", brk0).A, wsU);
-      Check(wsU.Uid == 0 && wsU.PanelKnown && wsU.Mats.Count == 3 && wsU.Diag.Contains("m_ArtifactData=missing"), "art workshop reader: no artifact data on the form, the list is still read");
-    } finally { RFX.TestMemory = null; RFX.ForgetLive(); }
-
-    // --- the screen state
-    var wsOpen = new ArtWorkshopScreen { Open = true, Tab = 2, Uid = 5001, Level = 10, Stage = 0 };
-    var scr = ScreenState.Classify(new ScreenInputs { ArtWs = wsOpen, Inv = new InventoryScreen { Open = true, ArtTab = true, ArtBulkKnown = true, ArtMode = -1 } }, 0);
-    Check(scr.Kind == ScreenKind.ArtWorkshop && scr.ArtWsTab == 2 && scr.ArtWsUid == 5001 && scr.Brief.Contains("ArtWorkshop tab 2"), "art screen: the workshop sits above the inventory (" + scr.Brief + ")");
-    var invN = new InventoryScreen { Open = true, ArtTab = true, ArtBulkKnown = true, ArtMode = -1, ArtSelKnown = true, ArtSel = 2 }; invN.Uids.AddRange(new long[] { 5001, 5002, 5003 });
-    var scrI = ScreenState.Classify(new ScreenInputs { Inv = invN, ArtWs = new ArtWorkshopScreen { Open = false } }, 0);
-    Check(scrI.Kind == ScreenKind.Inventory && scrI.InvArtSelected == 5002 && scrI.InvArtMode == -1, "art screen: a closed workshop leaves the inventory; the open card's uid");
-    var tr = new ScreenTracker(); tr.Update(new ScreenInputs { ArtWs = wsOpen }, 0);
-    var held = tr.Update(new ScreenInputs(), 500);
-    Check(held.Kind == ScreenKind.ArtWorkshop && tr.ArtWs != null, "art screen: a short read failure keeps the workshop");
-    var gone = tr.Update(new ScreenInputs(), 5000);
-    Check(gone.Kind == ScreenKind.Unknown && tr.ArtWs == null, "art screen: gone for good after the hold");
-
-    // --- the steps
-    Func<long[], int, int, int, InventoryScreen> inv = (uids, sel, mode, scroll) => { var i = new InventoryScreen { Open = true, ArtTab = true, ArtBulkKnown = true, ArtMode = mode, ArtBulk = mode == 2, ArtSelKnown = true, ArtSel = sel, ListPtr = 7,
-      List = new RFX.ListRead { ScrollY = scroll, Cols = 7, RowUnits = 116, First = 0, Last = 27 } }; i.Uids.AddRange(uids); return i; };
-    var u3 = new long[] { 5010, 5001, 5002 };
-    Eq(LocateKind.NoItem, LocateGuide.NextArt(new LocateRequest { Purpose = "artPromote" }, null, null).Kind, "art guide: an artifact the snapshot lacks");
-    Eq(LocateKind.OpenInventory, LocateGuide.NextArt(req, null, null).Kind, "art guide: nothing open -> open the inventory");
-    Eq(LocateKind.OpenInventory, LocateGuide.NextArt(req, new InventoryScreen { Open = false }, null).Kind, "art guide: inventory closed -> open it");
-    Eq(LocateKind.ArtOpenTab, LocateGuide.NextArt(req, new InventoryScreen { Open = true, EquipTab = true }, null).Kind, "art guide: the gear tab -> «Артефакт»");
-    Eq(LocateKind.ArtExitMode, LocateGuide.NextArt(req, inv(u3, 0, 2, 0), null).Kind, "art guide: bulk sale -> leave it");
-    Eq(LocateKind.ArtExitMode, LocateGuide.NextArt(req, inv(u3, 0, 1, 0), null).Kind, "art guide: arrange mode -> leave it");
-    Eq(LocateKind.ArtListLoading, LocateGuide.NextArt(req, inv(new long[0], 0, -1, 0), null).Kind, "art guide: an empty read is a list not read yet");
-    Eq(LocateKind.ArtNotInList, LocateGuide.NextArt(req, inv(new long[] { 5010, 5011 }, 0, -1, 0), null).Kind, "art guide: not in the tab's list (a filter hides it)");
-    var stL = LocateGuide.NextArt(req, inv(u3, 1, -1, 0), null);
-    Check(stL.Kind == LocateKind.ArtInList && stL.Pos == 2 && stL.Row == 1 && stL.Col == 2 && stL.Scroll == "visible", "art guide: in the list -> its cell (place 2, row 1, column 2)");
-    Eq(LocateKind.ArtSelected, LocateGuide.NextArt(req, inv(u3, 2, -1, 0), null).Kind, "art guide: its card is open -> «Мастерская»");
-    var far = new long[60]; for (int i = 0; i < 60; i++) far[i] = 6000 + i; far[50] = 5001;
-    var stF = LocateGuide.NextArt(req, new InventoryScreen { Open = true, ArtTab = true, ArtBulkKnown = true, ArtMode = -1, ArtSelKnown = true, ArtSel = 1, Uids = new List<long>(far), List = new RFX.ListRead { ScrollY = 0, Cols = 7, RowUnits = 116, First = 0, Last = 27 } }, null);
-    Check(stF.Kind == LocateKind.ArtInList && stF.Scroll == "below" && stF.ScrollRows >= 1 && stF.Row == 8, "art guide: far down the list -> scroll below (" + stF.Scroll + " " + stF.ScrollRows + ")");
-
-    // the inventory's artifact list frame (live 1.6.66.452 recording, 1366x705, U 705, the site's geometry file): the game's own selection frame of the card in column 6 of 8 had its lines at
-    // x 687.0..767.7 (80.7 wide) and y 340.9..461.8 (120.9 tall); ours was x 697 w 88 (the file's list rectangle runs 18 px past the scroll bar's left edge, 109.9 px columns instead of 107.6)
-    {
-      const double AW = 1366, AH = 705, AU = 705;
-      var ag = GameGeometry.Parse("{\"game\":\"" + GeoGame + "\",\"v\":1,\"rects\":{" + GeoBox("inventory.artList", "L:0.1938", "R:-0.4969", "T:0.1922", "B:-0.14", 1.0844, 0.6678) + ","
-        + GeoBox("inventory.scrollbar", "R:-0.5231", "R:-0.5024", "T:0.1906", "B:-0.1405", 0.0208, 0.6689) + "},\"grids\":{\"inventory.artList\":{\"cols\":1,\"lineSize\":116,\"padding\":[0,0,0,0]}}}", GeoGame);
-      var agl = new RFX.ListRead { ScrollY = 48.6, Cols = 8, RowUnits = 116, First = 0, Last = 40 };
-      var agc = ArtFrames.InvCell(ag, agl, 2 * 8 + 5, 8, AW, AH, AU);
-      Check(agc != null && agc.Mark.Kind == "box" && Math.Abs(agc.Mark.X - 687.0) <= 1.5 && Math.Abs(agc.Mark.W - 80.7) <= 1.5 && Math.Abs(agc.Mark.Y - 340.9) <= 1.5 && Math.Abs(agc.Mark.H - 120.9) <= 1.5,
-        "art list cell: the card of column 6 sits on the game's selection frame (x 687, w 80.7, y 340.9, h 120.9): " + (agc != null ? agc.Mark.X + "," + agc.Mark.Y + " " + agc.Mark.W + "x" + agc.Mark.H : "none"));
-      var agv = ArtFrames.InvView(ag, AW, AH, AU);
-      Check(Math.Abs(agv.Right - (AW - 0.5231 * AU)) < 0.01 && Math.Abs(agv.X - 0.1938 * AU) < 0.01, "art list cell: the list ends under the scroll bar's left edge (997.2), not 18 px past it");
-      var agOld = ArtFrames.Cell(ag, "inventory.artList", agl, 2 * 8 + 5, 8, 116, AW, AH, AU);
-      Check(agOld != null && agOld.Mark.X == 697 && agOld.Mark.W == 88, "art list cell: the old layout (the file's rectangle, 80 units) stood at x 697 w 88 - the shift the owner saw");
-      // the cell read: the picture (c_CardHide) 88.1 x 121.2 centred in column 6 (x 683.3), the game's selection rect, or the measured offsets from the picture
-      var pc = new UiCell { X = 683.3, Y = 340.9, W = 88.1, H = 121.2 };
-      RFX.InvArtFallback(pc);
-      Check(Math.Abs(pc.BX - 687.0) < 0.1 && Math.Abs(pc.BW - 80.7) < 0.1 && Math.Abs(pc.BY - 340.9) < 0.01 && Math.Abs(pc.BH - 121.2) < 0.01, "art card: without the game's rect the frame is 0.916 of the picture's width, centred, its height: x 687.0 w 80.7");
-      var pg = new UiCell { X = 683.3, Y = 340.9, W = 88.1, H = 121.2 };
-      Check(RFX.InvArtSelected(pg, 687.0, 340.9, 80.7, 120.9) && pg.BX == 687.0 && pg.BW == 80.7 && pg.BH == 120.9, "art card: the game's selection rect of the measured size is the card's box");
-      var pwh = new UiCell { X = 683.3, Y = 340.9, W = 88.1, H = 121.2 };
-      Check(!RFX.InvArtSelected(pwh, 673.0, 330, 107.6, 127.8) && !RFX.InvArtSelected(pwh, 800, 340, 80.7, 121), "art card: the whole cell (107.6 x 127.8) or a rect beside the picture is not the card's box");
-      // the scroll bar marker: 100 cards = 13 rows of 127.8 px, the card 21 in row 3, the view scrolled 53.5 px
-      var ast = ArtFrames.InvStrip(ag, agl, 100, 21, 8, null, AW, AH, AU);
-      double abY = 0.1906 * AU, abH = 0.6689 * AU, ap = 116 * AU / 640, adot = abY + abH * (2.5 * ap) / (13 * ap);
-      Check(ast != null && Math.Abs(ast[0] - (AW - 0.5126 * AU)) < 0.5 && Math.Abs(ast[1] - abY) < 0.5 && Math.Abs(ast[3] - adot) < 0.5 && ast.Length == 9 && ast[6] == 1 && Math.Abs(ast[7] - adot) < 0.5 && ast[8] == 1,
-        "art list strip: the marker on the scroll bar (x " + (ast != null ? ast[0].ToString("0.0") : "-") + ", dot y " + (ast != null ? ast[3].ToString("0.0") : "-") + " of " + adot.ToString("0.0") + ")");
-      { var so = LocateFrames.StripAt(new double[] { 1000, 134, 606, 225, 190, 300, 1, 225, 1, 400, 3 }, 80, 40);   // a window at (80, 40): the count 3 stays 3
-        Check(so[0] == 1080 && so[1] == 174 && so[3] == 265 && so[6] == 1 && so[7] == 265 && so[8] == 1 && so[9] == 440 && so[10] == 3, "scroll strip on the screen: the window's origin moves x and the y's, never the flag or the marker counts"); }
-      Check(ArtFrames.InvStrip(null, agl, 100, 21, 8, null, AW, AH, AU) == null && ArtFrames.InvStrip(ag, new RFX.ListRead(), 100, 21, 8, null, AW, AH, AU) == null, "art list strip: no bar geometry / no scroll reading -> none");
-    }
-
-    Func<long, int, int, int, long[], long[], int[], ArtWorkshopScreen> W = (uid, tab, lv, stage, mats, levels, sel) => { var w = new ArtWorkshopScreen { Open = true, Tab = tab, Uid = uid, Level = lv, Stage = stage, PanelKnown = mats != null };
-      if (mats != null) { w.Mats.AddRange(mats); foreach (var l in levels) w.MatLevels.Add((int)l); foreach (var x in sel) w.MatSel.Add(x); w.MatList = new RFX.ListRead { ScrollY = 0, Cols = 3, RowUnits = 114, First = 0, Last = 8 }; } return w; };
-    var matsA = new long[] { 5003, 5002, 0 }; var lvA = new long[] { 7, 1, -1 };
-    Eq(LocateKind.ArtWrongArtifact, LocateGuide.NextArt(req, null, W(9999, 2, 10, 0, matsA, lvA, new int[0])).Kind, "art guide: the workshop holds another artifact");
-    var stLv = LocateGuide.NextArt(req, null, W(5001, 1, 8, 0, null, null, null));
-    Check(stLv.Kind == LocateKind.ArtLevelFirst && stLv.ArtCap == 10 && stLv.ArtLevel == 8, "art guide: below the cap -> level it first (cap 10, now 8)");
-    Eq(LocateKind.ArtOpenPromote, LocateGuide.NextArt(req, null, W(5001, 1, 10, 0, null, null, null)).Kind, "art guide: at the cap on «Улучшить» -> open «Продвинуть»");
-    Eq(LocateKind.ArtMatLoading, LocateGuide.NextArt(req, null, W(5001, 2, 10, 0, null, null, null)).Kind, "art guide: the copy list not read yet");
-    // need 2: the planned copies are 5002 (place 2) and 5003 (place 1), in that order
-    var p1 = LocateGuide.NextArt(req, null, W(5001, 2, 10, 0, matsA, lvA, new int[0]));
-    Check(p1.Kind == LocateKind.ArtMatPick && p1.Pos == 2 && p1.MatKind == "copy" && p1.MatNeed == 2 && p1.MatChosen == 0 && !p1.MatWrong && p1.Row == 1 && p1.Col == 2, "art guide: the planned copy first (place 2), 2 needed");
-    var p2 = LocateGuide.NextArt(req, null, W(5001, 2, 10, 0, matsA, lvA, new[] { 2 }));
-    Check(p2.Kind == LocateKind.ArtMatPick && p2.Pos == 1 && p2.MatChosen == 1, "art guide: then the next planned copy");
-    Eq(LocateKind.ArtPromote, LocateGuide.NextArt(req, null, W(5001, 2, 10, 0, matsA, lvA, new[] { 2, 1 })).Kind, "art guide: all chosen -> «Продвинуть» is the player's");
-    var pw = LocateGuide.NextArt(req, null, W(5001, 2, 10, 0, matsA, lvA, new[] { 2, 3 }));
-    Check(pw.Kind == LocateKind.ArtMatPick && pw.MatWrong && pw.Pos == 3 && pw.MatKind == "essence", "art guide: an essence ticked while copies were planned -> untick it");
-    var reqOne = new LocateRequest { Id = "r", Purpose = "artPromote", Art = new ArtPromoteInfo { Uid = 5001, Need = 1, Cap = 10, Via = "copy", Copy = 5002, Copies = { 5002 } } };
-    var pl = LocateGuide.NextArt(reqOne, null, W(5001, 2, 10, 0, matsA, lvA, new[] { 1 }));
-    Check(pl.Kind == LocateKind.ArtMatPick && pl.MatWrong && pl.Pos == 1, "art guide: a levelled copy ticked instead of the planned one -> untick it");
-    var reqEss = new LocateRequest { Id = "r", Purpose = "artPromote", Art = new ArtPromoteInfo { Uid = 5001, Need = 1, Cap = 10, Via = "essence" } };
-    var pe = LocateGuide.NextArt(reqEss, null, W(5001, 2, 10, 0, matsA, lvA, new int[0]));
-    Check(pe.Kind == LocateKind.ArtMatPick && pe.Pos == 3 && pe.MatKind == "essence", "art guide: the plan spends an essence -> the essence stub");
-    var reqNo = new LocateRequest { Id = "r", Purpose = "artPromote", Art = new ArtPromoteInfo { Uid = 5001, Need = 1, Cap = 10, Via = "none" } };
-    Eq(LocateKind.ArtMatNone, LocateGuide.NextArt(reqNo, null, W(5001, 2, 10, 0, new long[0], new long[0], new int[0])).Kind, "art guide: no copy and no essence in the list");
-    var pAny = LocateGuide.NextArt(reqNo, null, W(5001, 2, 10, 0, matsA, lvA, new int[0]));
-    Check(pAny.Kind == LocateKind.ArtMatPick && pAny.Pos == 2, "art guide: no plan -> the first copy that was never levelled");
-    Eq("artMatPick", p1.Key, "art guide: page key of the pick step");
-    // the form's artifact uid unreadable (0) on the promote tab: the list still decides, the request's artifact is the target
-    var pNoUid = LocateGuide.NextArt(req, null, W(0, 2, 10, 0, matsA, lvA, new int[0]));
-    Check(pNoUid.Kind == LocateKind.ArtMatPick && pNoUid.Pos == 2, "art guide: workshop uid unreadable but the list read -> the planned copy (" + pNoUid.Key + ")");
-    Eq(LocateKind.ArtMatLoading, LocateGuide.NextArt(req, null, W(0, 0, -1, -1, null, null, null)).Kind, "art guide: tab and uid unreadable -> loading");
-    // the unreadable workshop: after the wait the list's area is framed (no cell), the plate says to pick the copy / essence
-    var wsWait = W(5001, 2, 10, 0, null, null, null);
-    var stWait = LocateGuide.NextArt(req, null, wsWait);
-    Check(LocateGuide.ArtWsWaiting(stWait, wsWait) && !LocateGuide.ArtWsWaiting(p1, W(5001, 2, 10, 0, matsA, lvA, new int[0])) && !LocateGuide.ArtWsWaiting(stWait, null), "art guide: only an open workshop with no list waits");
-    var stGuess = LocateGuide.ArtWsGuess(stWait, wsWait);
-    Eq("artMatGuess", stGuess.Key, "art guide: the geometry hint after the wait");
-    Eq(LocateKind.ArtOpenPromote, LocateGuide.ArtWsGuess(new LocateStep { Kind = LocateKind.ArtMatLoading }, W(5001, 1, 10, 0, null, null, null)).Kind, "art guide: the geometry hint on another tab asks for «Продвинуть»");
-    Eq(LocateKind.ArtMatGuess, LocateGuide.ArtWsGuess(new LocateStep { Kind = LocateKind.ArtMatLoading }, W(0, 0, -1, -1, null, null, null)).Kind, "art guide: tab not read -> the list's area");
-    var gfr = ArtFrames.For(stGuess, null, wsWait, null, 1136, 640, Ui.Unit(1136, 640));
-    Check(gfr != null && gfr.Mark.Kind == "box" && gfr.Mark.W > 100 && gfr.Mark.H > 100 && gfr.Target == "artifact.matList", "art frames: the guess frames the whole copy list area");
-    Eq("artOpenTab", LocateGuide.NextArt(req, new InventoryScreen { Open = true, EquipTab = true }, null).Key, "art guide: page key of the tab step");
-
-    // --- the job is done when the stage rises (over two reads)
-    var fin = new ArtFinish();
-    Check(!fin.Update(5001, W(5001, 2, 10, 0, matsA, lvA, new[] { 2, 1 }), 0), "art finish: the first reading is the baseline");
-    Check(!fin.Update(5001, W(5001, 2, 10, 0, matsA, lvA, new[] { 2, 1 }), 100), "art finish: the same stage is not done");
-    Check(!fin.Update(5001, W(5001, 2, 10, 1, matsA, lvA, new int[0]), 200), "art finish: a first read of a higher stage waits for a second");
-    Check(!fin.Update(5001, new ArtWorkshopScreen { Open = false }, 300), "art finish: not readable now -> nothing is known");
-    Check(fin.Update(5001, W(5001, 2, 10, 1, matsA, lvA, new int[0]), 500), "art finish: the stage rose over two reads -> done");
-    var fin3 = new ArtFinish();
-    Check(!fin3.Update(5001, null, 0, true), "art finish: a promotion result before the artifact was seen in the workshop is not this job's");
-    fin3.Update(5001, W(5001, 2, 10, 0, matsA, lvA, new[] { 2, 1 }), 100);
-    Check(fin3.Update(5001, null, 200, true), "art finish: the artifact seen, then Form_ArtifactBreakSuccess shown -> done (the workshop under it unread)");
-    var fin2 = new ArtFinish(); fin2.Update(5001, W(5001, 2, 10, 3, matsA, lvA, new int[0]), 0);
-    Check(!fin2.Update(5001, W(9999, 2, 10, 5, matsA, lvA, new int[0]), 400) && !fin2.Update(5001, W(5001, 2, 10, 3, matsA, lvA, new int[0]), 800), "art finish: another artifact's stage does not count, a stale site stage is no baseline");
-
-    // --- the frames: the research numbers stand in when the site's file lacks the keys; the cells follow the game's scroll
-    double Wd = 1136, Hd = 640, U = Ui.Unit(Wd, Hd);
-    var fTab = ArtFrames.For(LocateGuide.NextArt(req, new InventoryScreen { Open = true, EquipTab = true }, null), null, null, null, Wd, Hd, U);
-    Check(fTab != null && Math.Abs(fTab.Mark.Y - 257.4) <= 1.5 && Math.Abs(fTab.Mark.X - 1.5) <= 1.5, "art frames: the «Артефакт» toggle (research numbers)");
-    var iv = inv(u3, 1, -1, 0);
-    var fCell = ArtFrames.For(stL, iv, null, null, Wd, Hd, U);
-    double cellW = (1136 - (0.5231 + 0.195) * 640) / 7;
-    Check(fCell != null && fCell.Mark.Kind == "box" && Math.Abs(fCell.Mark.X - (124.8 + cellW + (cellW - 73.3) / 2)) <= 1.5 && Math.Abs(fCell.Mark.Y - 126) <= 1.5 && Math.Abs(fCell.Mark.W - 73.3) <= 1.5 && Math.Abs(fCell.Mark.H - 110) <= 1.5,
-          "art frames: the cell of place 2 is the card as the game's selection frame (73.3 x 110), centred in its column (" + (fCell == null ? "none" : fCell.Mark.X + "," + fCell.Mark.Y + " " + fCell.Mark.W + "x" + fCell.Mark.H) + ")");
-    var ivS = inv(u3, 1, -1, 3);
-    var fS = ArtFrames.For(stL, ivS, null, null, Wd, Hd, U);
-    Check(fS != null && Math.Abs((fCell.Mark.Y - fS.Mark.Y) - 3) <= 1.01 && !fCell.Clickable, "art frames: the frame moves with ScrollY exactly, and is never clickable");
-    var stFar = LocateGuide.NextArt(req, new InventoryScreen { Open = true, ArtTab = true, ArtBulkKnown = true, ArtMode = -1, Uids = new List<long>(far), List = new RFX.ListRead { ScrollY = 0, Cols = 7, RowUnits = 116 } }, null);
-    var fFar = ArtFrames.For(stFar, new InventoryScreen { List = new RFX.ListRead { ScrollY = 0, Cols = 7, RowUnits = 116 } }, null, null, Wd, Hd, U);
-    Check(fFar != null && fFar.Mark.Kind == "down" && fFar.Mark.Rows >= 1, "art frames: a cell below the list -> the pill at its edge");
-    Check(ArtFrames.For(stL, new InventoryScreen { List = null }, null, null, Wd, Hd, U) == null, "art frames: the list's scroll unreadable -> no cell frame (the plate stays)");
-    var fWs = ArtFrames.For(LocateGuide.NextArt(req, iv = inv(u3, 2, -1, 0), null), iv, null, null, Wd, Hd, U);
-    Check(fWs != null && Math.Abs(fWs.Mark.X - 972) <= 1.5 && Math.Abs(fWs.Mark.Y - 574.1) <= 1.5, "art frames: «Мастерская» (972, 574)");
-    var fPt = ArtFrames.For(LocateGuide.NextArt(req, null, W(5001, 1, 10, 0, null, null, null)), null, W(5001, 1, 10, 0, null, null, null), null, Wd, Hd, U);
-    Check(fPt != null && Math.Abs(fPt.Mark.X - 1030.6) <= 2 && Math.Abs(fPt.Mark.Y - 80) <= 1.5, "art frames: the «Продвинуть» tab (right strip, second)");
-    var wsP = W(5001, 2, 10, 0, matsA, lvA, new[] { 2, 1 });
-    var fBt = ArtFrames.For(LocateGuide.NextArt(req, null, wsP), null, wsP, null, Wd, Hd, U);
-    Check(fBt != null && Math.Abs(fBt.Mark.X - 369) <= 1.5 && Math.Abs(fBt.Mark.W - 231) <= 1.5, "art frames: «Продвинуть» (369..600)");
-    var wsM = W(5001, 2, 10, 0, matsA, lvA, new int[0]);
-    var fMat = ArtFrames.For(LocateGuide.NextArt(req, null, wsM), null, wsM, null, Wd, Hd, U);
-    double slotW = 245.0 / 3;
-    Check(fMat != null && fMat.Mark.Kind == "box" && Math.Abs(fMat.Mark.X - (18.5 + slotW + (slotW - 80) / 2)) <= 1.5 && Math.Abs(fMat.Mark.Y - (73 + 2)) <= 1.5, "art frames: place 2 of the copy list: column 2, row 1 (" + (fMat == null ? "none" : fMat.Mark.X + "," + fMat.Mark.Y) + ")");
-    string webGeo = Path.Combine(WebRoot(), "data", "app-geometry", "1.6.39.829.1.json");
-    if (File.Exists(webGeo)) {
-      var rg = GameGeometry.Parse(File.ReadAllText(webGeo, Encoding.UTF8), "1.6.39.829.1");
-      Check(rg != null && rg.Has("inventory.artWorkshop") && rg.Has("artifact.tab.promote") && rg.Has("artifact.promoteBtn") && rg.Has("artifact.matList") && rg.Grid("artifact.matList") != null && rg.Grid("artifact.matList").Cols == 3 && Math.Abs(rg.Grid("artifact.matList").LineSize - 114) < 0.01,
-            "art frames: the site's geometry file has the workshop button, the promote tab and button, the 3 x 114 copy list");
-      if (rg != null) {
-        var a1 = ArtFrames.Rect(rg, "inventory.artWorkshop", Wd, Hd, U); var a2 = ArtFrames.Rect(null, "inventory.artWorkshop", Wd, Hd, U);
-        var b1 = ArtFrames.Rect(rg, "artifact.promoteBtn", Wd, Hd, U); var b2 = ArtFrames.Rect(null, "artifact.promoteBtn", Wd, Hd, U);
-        var c1 = ArtFrames.Rect(rg, "artifact.matList", Wd, Hd, U); var c2 = ArtFrames.Rect(null, "artifact.matList", Wd, Hd, U);
-        Check(Math.Abs(a1.X - a2.X) <= 1 && Math.Abs(a1.Y - a2.Y) <= 1 && Math.Abs(b1.X - b2.X) <= 1 && Math.Abs(b1.W - b2.W) <= 1 && Math.Abs(c1.X - c2.X) <= 1 && Math.Abs(c1.H - c2.H) <= 1, "art frames: the file and the research numbers agree");
-      }
-    }
-
-    // --- no clicks, whatever the auto click says
-    {
-      var gate = new ClickGate(); gate.NoLocateClicks = true;
-      var res = gate.Check(new ClickRequest { Owner = ClickOwner.Locate, Target = ClickTarget.InvEquipTab, AutoOn = true, Front = true }, scrI, 0);
-      Check(!res.Allowed && gate.HaltReason(ClickOwner.Locate) == "artifact", "art gate: the Locate owner never clicks while an artifact request runs (" + res.Reason + ")");
-      gate = new ClickGate();
-      res = gate.Check(new ClickRequest { Owner = ClickOwner.Locate, Target = ClickTarget.InvEquipTab, AutoOn = true, Front = true }, scrI, 0);
-      Check(gate.HaltReason(ClickOwner.Locate) != "artifact", "art gate: a normal request is not stopped by the artifact rule");
-      Check(!ClickGate.WhitelistText(ClickOwner.Equip).Contains("ArtTab") && !ClickGate.WhitelistText(ClickOwner.Equip).Contains("ArtBulk") && !ClickGate.WhitelistText(ClickOwner.Equip).Contains("ArtCell") && !ClickGate.WhitelistText(ClickOwner.Equip).Contains("ArtWorkshop") && !ClickGate.WhitelistText(ClickOwner.Equip).Contains("ArtMat") && !ClickGate.WhitelistText(ClickOwner.Equip).Contains("ArtPromote") && !ClickGate.WhitelistText(ClickOwner.Equip).Contains("ArtListDrag"), "art gate: the equip helper has none of the inventory / workshop artifact targets on its whitelist (only its own hero-screen ones, see ArtEquipTests; the others have theirs, behind ArtSellAuto / ArtLocateAuto)");
-    }
-  }
-
-  // The artifact flows with auto click (the site's artAuto switch): the gate's whitelist checks, the switch gating, the pilots' decisions
-  // «Надеть в игре» with an artifact: the plan's artifact, the hero screen's artifact fields on fake tables, the steps, the frames, the pilot and the gate (src/ArtEquip.cs)
-  static void ArtEquipTests() {
-    Console.WriteLine("Equip plan with an artifact (plan reader, hero screen fields, steps, frames, pilot, gate)");
-    // --- the plan: the artifact rides on the reply (the site sends it only to an app that asked with art=1)
-    string pj = "{\"ok\":true,\"plans\":[{\"id\":\"p1\",\"heroUid\":214700000,\"heroName\":\"Hero\",\"createdAt\":\"2026-10-17T10:00:00Z\",\"items\":[{\"slot\":0,\"uid\":11,\"name\":\"Sword\"}]ART}]}";
-    var pr = PlansClient.Interpret(200, pj.Replace("ART", ",\"artifact\":{\"uid\":9005,\"id\":3012}"), true);
-    Check(pr.Status == PlansStatus.Ok && pr.Plans.Count == 1 && pr.Plans[0].Artifact != null && pr.Plans[0].Artifact.Uid == 9005 && pr.Plans[0].Artifact.Id == 3012 && pr.Plans[0].Artifact.Name == "", "art plan: {uid, id} of the artifact is read");
-    pr = PlansClient.Interpret(200, pj.Replace("ART", ",\"artifact\":{\"uid\":9005,\"id\":3012,\"name\":\"Ring\"}"), true);
-    Check(pr.Plans[0].Artifact != null && pr.Plans[0].Artifact.Name == "Ring", "art plan: an optional name is kept");
-    pr = PlansClient.Interpret(200, pj.Replace("ART", ""), true);
-    Check(pr.Plans.Count == 1 && pr.Plans[0].Artifact == null, "art plan: no artifact -> none (a plan of an older site)");
-    foreach (var bad in new[] { ",\"artifact\":{\"uid\":0,\"id\":1}", ",\"artifact\":{\"uid\":\"x\",\"id\":1}", ",\"artifact\":7", ",\"artifact\":null", ",\"artifact\":{\"uid\":-5,\"id\":1}" }) {
-      pr = PlansClient.Interpret(200, pj.Replace("ART", bad), true);
-      Check(pr.Plans.Count == 1 && pr.Plans[0].Artifact == null, "art plan: an odd artifact " + bad + " is ignored, the gear plan stays");
-    }
-    string src = File.ReadAllText(Path.Combine("src", "PlansClient.cs"));
-    Check(src.Contains("&art=1"), "art plan: the app asks the site with art=1");
-
-    // --- the hero screen's artifact fields on fake script tables
-    var m = new FakeLua(1 << 20); RFX.TestMemory = m; RFX.ForgetLive(); RFX.ArtScanMs = 0;
-    const long hero = 214700000, other = 200100000;
-    try {
-      var st = new FakeState(m);
-      Func<long, long, FTab> art = (uid, owner) => st.T("iItemUid", uid, "iItemId", 3000L + uid % 7, "iHeroId", owner);
-      Func<long[], long[], FTab> artsOf = (uids, owners) => {
-        var kv = new List<object>(); for (int i = 0; i < uids.Length; i++) { kv.Add(uids[i]); kv.Add(art(uids[i], owners[i])); }
-        return st.T("m_vArtifacts", st.T(kv.ToArray()), "class", st.T("__cname", "ArtifactData"));
-      };
-      var arts = artsOf(new long[] { 9001, 9002, 9003, 9004 }, new long[] { 0, other, hero, 0 });
-      var artsNone = artsOf(new long[] { 9001, 9002, 9004 }, new long[] { 0, other, 0 });
-      Func<object, object, FTab, FTab> form = (open, sel, rows) => {
-        var pd = new List<object> { 3L, 5L };
-        if (open != null) { pd.Add(10L); pd.Add(open); }
-        if (sel != null) { pd.Add(11L); pd.Add(sel); }
-        return st.T("m_PanelDatas", st.T(pd.ToArray()), "m_Panels", st.T("EquipArtifact", st.T("m_InfinityGridProxy", st.T("m_Data", rows))));
-      };
-      var rows = st.T(1L, art(9004, 0), 2L, art(9002, other), 3L, art(9001, 0), 4L, art(9003, hero));   // the list in screen order
-      var h = new HeroScreen { Hero = hero, FormOk = true, Tab = 7 };
-      RFX.ReadHeroArt(form(true, null, rows).A, arts.A, hero, 9002, h, null);
-      Check(h.ArtRead && h.ArtListOpen && h.ArtSel == 0, "art fields: [10] true = the list is open, [11] nil = nothing selected");
-      Eq("9004,9002,9001,9003", string.Join(",", h.ArtUids), "art fields: the list in screen order (m_Data)");
-      Check(h.ArtTargetOwner == other && h.ArtWorn == 9003, "art fields: the goal is worn by another hero (" + h.ArtTargetOwner + "), the hero wears 9003 (" + h.ArtWorn + ")");
-      h = new HeroScreen { Hero = hero, FormOk = true, Tab = 7 };
-      RFX.ReadHeroArt(form(true, 9002L, rows).A, arts.A, hero, 9002, h, null);
-      Check(h.ArtSel == 9002, "art fields: [11] = the selected artifact's uid");
-      h = new HeroScreen { Hero = hero, FormOk = true, Tab = 7 };
-      RFX.ReadHeroArt(form(true, 9002.0, rows).A, arts.A, hero, 9002, h, null);
-      Check(h.ArtSel == 9002, "art fields: a whole float uid is read");
-      // the list closed: nothing of the list is read, the owner comes from the account's table
-      h = new HeroScreen { Hero = hero, FormOk = true, Tab = 7 };
-      RFX.ReadHeroArt(form(null, null, rows).A, arts.A, hero, 9002, h, null);
-      Check(h.ArtRead && !h.ArtListOpen && h.ArtUids.Count == 0 && h.ArtTargetOwner == other && h.ArtWorn == 9003, "art fields: list closed -> no rows; owner and worn artifact from m_vArtifacts");
-      h = new HeroScreen { Hero = hero, FormOk = true, Tab = 7 };
-      RFX.ReadHeroArt(form(false, null, rows).A, arts.A, hero, 9002, h, null);
-      Check(!h.ArtListOpen, "art fields: [10] false = closed");
-      h = new HeroScreen { Hero = hero, FormOk = true, Tab = 7 };
-      RFX.ReadHeroArt(form(null, null, rows).A, artsNone.A, hero, 9002, h, null);
-      Check(h.ArtRead && h.ArtWorn == 0 && h.ArtTargetOwner == other, "art fields: the hero wears nothing -> worn 0 (the empty slot)");
-      // the goal worn by the hero: the owner is the hero (the step machine skips it)
-      h = new HeroScreen { Hero = hero, FormOk = true, Tab = 7 };
-      RFX.ReadHeroArt(form(null, null, rows).A, arts.A, hero, 9003, h, null);
-      Check(h.ArtTargetOwner == hero && h.ArtWorn == 9003, "art fields: the goal on the hero -> owner = hero");
-      // an artifact the account does not hold: unreadable, not 'free'
-      h = new HeroScreen { Hero = hero, FormOk = true, Tab = 7 };
-      RFX.ReadHeroArt(form(null, null, rows).A, arts.A, hero, 7777, h, null);
-      Check(!h.ArtRead && h.ArtTargetOwner == -1, "art fields: the goal is not in the account's table -> not read");
-      // live 2026-10-18: the server leaves iHeroId out of a FREE artifact (the script reads the default 0): that is "free", not "unreadable"
-      var freeArt = st.T("iItemUid", 9010L, "iItemId", 3001L);
-      var artsFree = st.T("m_vArtifacts", st.T(1L, art(9001, 0), 2L, freeArt, 3L, art(9003, hero)), "class", st.T("__cname", "ArtifactData"));   // an array, as the game keeps it
-      h = new HeroScreen { Hero = hero, FormOk = true, Tab = 3 };
-      RFX.ReadHeroArt(form(null, null, rows).A, artsFree.A, hero, 9010, h, null);
-      Check(h.ArtRead && h.ArtTargetOwner == 0, "art fields: an artifact with no iHeroId key is free (owner 0), the data is read (" + h.ArtTargetOwner + ")");
-      h = new HeroScreen { Hero = hero, FormOk = true, Tab = 7 };
-      RFX.ReadHeroArt(form(null, null, rows).A, artsFree.A, hero, 9010, h, null);
-      Check(h.ArtRead && h.ArtTargetOwner == 0 && h.ArtWorn == 9003, "art fields: the free artifact is found by the scan and the hero's worn artifact too");
-      var rowsFree = st.T(1L, art(9004, 0), 2L, freeArt);
-      h = new HeroScreen { Hero = hero, FormOk = true, Tab = 7 };
-      RFX.ReadHeroArt(form(true, null, rowsFree).A, artsFree.A, hero, 9010, h, null);
-      Check(h.ArtRead && h.ArtTargetOwner == 0 && h.ArtUids.Count == 2, "art fields: a free goal's list row without iHeroId is owner 0");
-      h = new HeroScreen { Hero = hero, FormOk = true, Tab = 3 };
-      RFX.ReadHeroArt(form(null, null, rows).A, arts.A, hero, 9002, h, null);
-      Check(h.ArtRead && h.ArtWorn == -1 && h.ArtTargetOwner == other, "art fields: on the gear tab the worn artifact is not looked for");
-      // a later read with the list open carries the worn artifact over and keeps the rows while the goal's row holds
-      var prev = new HeroScreen { Hero = hero, FormOk = true, Tab = 7, ArtWorn = 9003 };
-      h = new HeroScreen { Hero = hero, FormOk = true, Tab = 7 };
-      RFX.ReadHeroArt(form(true, null, rows).A, arts.A, hero, 9002, h, prev);
-      Check(h.ArtWorn == 9003, "art fields: the worn artifact is carried over while the list is open");
-      var prevRows = new HeroScreen(); prevRows.ArtListPtr = h.ArtListPtr; prevRows.ArtRows = h.ArtRows; prevRows.ArtUids.AddRange(h.ArtUids);
-      var h2 = new HeroScreen { Hero = hero, FormOk = true, Tab = 7 };
-      RFX.ReadHeroArt(form(true, null, rows).A, arts.A, hero, 9002, h2, prevRows);
-      Eq("9004,9002,9001,9003", string.Join(",", h2.ArtUids), "art fields: the same table and the goal's row verified -> the rows are reused");
-      var stale = new HeroScreen(); stale.ArtListPtr = prevRows.ArtListPtr; stale.ArtRows = prevRows.ArtRows; stale.ArtUids.AddRange(new long[] { 9002, 9004, 9001, 9003 });   // the goal moved
-      // a cache of the SAME table object is refused when the goal's row differs (the list was sorted)
-      stale.ArtListPtr = h.ArtListPtr;
-      var h4 = new HeroScreen { Hero = hero, FormOk = true, Tab = 7 };
-      RFX.ReadHeroArt(form(true, null, rows).A, arts.A, hero, 9002, h4, stale);
-      Eq("9004,9002,9001,9003", string.Join(",", h4.ArtUids), "art fields: the goal moved in the list -> the rows are read again");
-      // uids written as text (the game compares them with tostring): the account's entries and the selected uid
-      Func<string, long, FTab> artT = (uid, owner) => st.T("iItemUid", uid, "iItemId", 3001L, "iHeroId", owner);
-      var artsText = st.T("m_vArtifacts", st.T(1L, artT("9001", 0), 2L, artT("9002", other), 3L, artT("9004", 0)));
-      h = new HeroScreen { Hero = hero, FormOk = true, Tab = 7 };
-      RFX.ReadHeroArt(form(null, null, rows).A, artsText.A, hero, 9002, h, null);
-      Check(h.ArtRead && h.ArtTargetOwner == other, "art fields: entries with a text iItemUid are found by the scan");
-      h = new HeroScreen { Hero = hero, FormOk = true, Tab = 7 };
-      RFX.ReadHeroArt(form(true, "9004", rows).A, arts.A, hero, 9004, h, null);
-      Check(h.ArtSel == 9004, "art fields: the selected uid written as text is read");
-      // the list's rows are not in the grid proxy's m_Data: an array of artifact entries in another field of the panel is found
-      var panelAlt = st.T("m_Other", st.T("m_Output", rows), "m_InfinityGridProxy", st.T("m_Data", st.T()));
-      var formAlt = st.T("m_PanelDatas", st.T(3L, 5L, 10L, true), "m_Panels", st.T("EquipArtifact", panelAlt));
-      h = new HeroScreen { Hero = hero, FormOk = true, Tab = 7 };
-      RFX.ReadHeroArt(formAlt.A, arts.A, hero, 9002, h, null);
-      Eq("9004,9002,9001,9003", string.Join(",", h.ArtUids), "art fields: the rows are found in another table field when the proxy's m_Data is empty");
-      Check(h.ArtTargetOwner == other, "art fields: and the goal's owner is read from them");
-      // the structure dump: field names with value types, no values
-      string keys = RFX.KeysOf(art(9002, other).A, 20);
-      Check(keys.Contains("iItemUid:int") && keys.Contains("iHeroId:int") && !keys.Contains("9002"), "art dump: keys with Lua types, no values (" + keys + ")");
-      long tv; Check(RFX.LuaIntText(" 1284195435405 ", out tv) && tv == 1284195435405L && !RFX.LuaIntText("x1", out tv) && !RFX.LuaIntText("", out tv), "art fields: a uid written as text is a number");
-    } finally { RFX.TestMemory = null; RFX.ForgetLive(); RFX.ArtScanMs = 800; }
-
-    // --- the steps
-    var list = new RFX.ListRead { ScrollY = 0, Cols = 3, RowUnits = 116 };
-    Func<int, bool, long, long, long, long[], HeroScreen> HS = (tab, open, sel, owner, worn, uids) => {
-      var x = new HeroScreen { Hero = hero, FormOk = true, Tab = tab, ArtRead = true, ArtListOpen = open, ArtSel = sel, ArtTargetOwner = owner, ArtWorn = worn, ArtList = list };
-      if (uids != null) x.ArtUids.AddRange(uids);
-      return x;
-    };
-    var u5 = new long[] { 9001, 9002, 9003, 9004, 9005 };
-    Func<HeroScreen, bool, ArtEquipStep> N = (hs, popup) => ArtEquipGuide.Next(hero, 9004, hs, popup);
-    Check(N(null, false).Kind == ArtEquipKind.Hero && N(new HeroScreen { FormOk = false, Hero = hero }, false).Kind == ArtEquipKind.Hero, "art steps: no hero screen -> open the hero");
-    Check(N(new HeroScreen { FormOk = true, Hero = 5 }, false).Kind == ArtEquipKind.Hero, "art steps: another hero is open -> open the hero");
-    Check(N(HS(3, false, 0, hero, 9004, null), false).Kind == ArtEquipKind.Done && N(HS(7, true, 0, hero, 9004, u5), false).Kind == ArtEquipKind.Done, "art steps: the artifact is on the hero -> done, whatever the tab (skipped when it was there before)");
-    Check(N(new HeroScreen { Hero = hero, FormOk = true, Tab = 3, ArtRead = false }, false).Kind == ArtEquipKind.Wait, "art steps: the artifact data not read -> wait");
-    Check(N(HS(3, false, 0, 0, 9001, null), false).Kind == ArtEquipKind.ArtTab, "art steps: the gear tab -> the «Артефакт» tab");
-    var s1 = N(HS(7, false, 0, 0, 9001, null), false);
-    Check(s1.Kind == ArtEquipKind.OpenList && s1.HasWorn && s1.Name == "open", "art steps: the tab is on, the hero wears one -> the worn card's button");
-    var s2 = N(HS(7, false, 0, 0, 0, null), false);
-    Check(s2.Kind == ArtEquipKind.OpenList && !s2.HasWorn && s2.Name == "openAdd", "art steps: an empty slot -> the «+»");
-    Check(N(HS(7, false, 0, 0, -1, null), false).Kind == ArtEquipKind.Wait, "art steps: the worn artifact unknown -> wait (no guess between the two buttons)");
-    var s3 = N(HS(7, true, 0, other, 9001, u5), false);
-    Check(s3.Kind == ArtEquipKind.PickCell && s3.Pos == 4 && s3.Key == "PickCell:4", "art steps: the list is open -> the artifact's cell, place 4");
-    Check(N(HS(7, true, 9001, other, 9001, u5), false).Kind == ArtEquipKind.PickCell, "art steps: another artifact selected -> pick the right one");
-    var s4 = N(HS(7, true, 9004, other, 9001, u5), false);
-    Check(s4.Kind == ArtEquipKind.PressReplace && s4.HasWorn && s4.Name == "replace", "art steps: its card is open -> «Заменить»");
-    Check(N(HS(7, true, 9004, other, 0, u5), false).Name == "equip", "art steps: the hero wears none -> «Надеть»");
-    Check(N(HS(7, true, 9004, other, 9001, u5), true).Kind == ArtEquipKind.ConfirmTakeOver, "art steps: the pop-up with the artifact selected -> its «Заменить»");
-    Check(N(HS(7, true, 9001, other, 9001, u5), true).Kind == ArtEquipKind.Wait, "art steps: a pop-up with another artifact selected -> wait (not ours)");
-    Check(N(HS(7, true, 0, other, 9001, new long[] { 9001, 9002 }), false).Kind == ArtEquipKind.NotInList, "art steps: the list has no such artifact -> the player's filter");
-    Check(N(HS(7, true, 0, other, 9001, new long[0]), false).Kind == ArtEquipKind.Wait, "art steps: the list is still empty -> wait (it fills after the panel slides in)");
-
-    // --- unreadable artifact data: after the wait the screen's geometry gives the hint, never a click
-    var wt = N(new HeroScreen { Hero = hero, FormOk = true, Tab = 3, ArtRead = false }, false);
-    Check(ArtEquipFallback.Waiting(wt) && !ArtEquipFallback.Waiting(N(HS(7, true, 9001, other, 9001, u5), true)), "art guess: only data waits are guessed (a foreign pop-up is not)");
-    var g1 = ArtEquipFallback.Guess(9004, new HeroScreen { Hero = hero, FormOk = true, Tab = 3, ArtRead = false, ArtWorn = -1 }, wt);
-    Check(g1.Guess && g1.Kind == ArtEquipKind.ArtTab && g1.Name == "tab" && g1.Key.StartsWith("guess:"), "art guess: another tab -> the «Артефакт» tab");
-    var g2 = ArtEquipFallback.Guess(9004, new HeroScreen { Hero = hero, FormOk = true, Tab = 7, ArtRead = false, ArtWorn = -1 }, wt);
-    Check(g2.Kind == ArtEquipKind.OpenList && g2.HasWorn && g2.Name == "open", "art guess: the tab is on, list closed -> the worn card's button");
-    var g3 = ArtEquipFallback.Guess(9004, new HeroScreen { Hero = hero, FormOk = true, Tab = 7, ArtListOpen = true, ArtSel = 0 }, wt);
-    Check(g3.Kind == ArtEquipKind.PickCell && g3.Pos == 0 && ArtEquipFrames.For(g3, new HeroScreen(), null, 1136, 640, Ui.Unit(1136, 640)) != null && ArtEquipFrames.For(g3, new HeroScreen(), null, 1136, 640, Ui.Unit(1136, 640)).Target == ArtEquipFrames.KeyList, "art guess: the list is open -> pick it, the list's area is framed for a cell it cannot place");
-    var g4 = ArtEquipFallback.Guess(9004, new HeroScreen { Hero = hero, FormOk = true, Tab = 7, ArtListOpen = true, ArtSel = 9004 }, wt);
-    Check(g4.Kind == ArtEquipKind.PressReplace, "art guess: its card is selected -> «Заменить»");
-    var gf = ArtEquipFrames.For(g1, null, null, 1136, 640, Ui.Unit(1136, 640));
-    Check(gf != null && gf.Mark.Kind == "box", "art guess: the tab step has its frame");
-    string gwhy;
-    Check(ArtEquipPilot.Decide(new ArtEquipView { Step = g1, Hero = new HeroScreen { Hero = hero, FormOk = true } }, out gwhy) == ArtEquipTodo.Hint && gwhy == "guess", "art guess: the pilot never clicks on a guess");
-    Check(ArtEquipFallback.Guess(9004, null, wt).Kind == ArtEquipKind.Wait, "art guess: no hero screen -> still waiting");
-
-    // --- the frames: the built-in numbers (no geometry) and the site's file
-    double Wd = 1136, Hd = 640, U = Ui.Unit(Wd, Hd);
-    var tabF = ArtEquipFrames.For(N(HS(3, false, 0, 0, 9001, null), false), null, null, Wd, Hd, U);
-    Check(tabF != null && Math.Abs(tabF.Mark.X - 1030) <= 1.5 && Math.Abs(tabF.Mark.Y - 478) <= 1.5 && Math.Abs(tabF.Mark.W - 106) <= 1.5 && Math.Abs(tabF.Mark.H - 80) <= 1.5, "art frames: the «Артефакт» tab 1030..1136 x 478..558");
-    var openF = ArtEquipFrames.For(s1, null, null, Wd, Hd, U); var addF = ArtEquipFrames.For(s2, null, null, Wd, Hd, U);
-    Check(openF != null && Math.Abs(openF.Mark.X - 947) <= 1.5 && Math.Abs(openF.Mark.Y - 126) <= 1.5 && Math.Abs(openF.Mark.W - 43) <= 1.5, "art frames: the worn card's swap icon 947..990 x 126..168 (the art inside it matches the live recording 1920x1009: x 1629..1687, y 202..262)");
-    { var of2 = ArtEquipFrames.For(s1, null, null, 1920, 1009, Ui.Unit(1920, 1009)); Check(of2 != null && Math.Abs(of2.Mark.X + of2.Mark.W / 2 - 1658) <= 4 && Math.Abs(of2.Mark.Y + of2.Mark.H / 2 - 232) <= 4, "art frames: at 1920x1009 the swap icon is where the live screen has it (1658,232)"); }
-    Check(addF != null && Math.Abs(addF.Mark.X - 814) <= 1.5 && Math.Abs(addF.Mark.Y - 64) <= 1.5 && Math.Abs(addF.Mark.W - 78) <= 1.5 && Math.Abs(addF.Mark.H - 104) <= 1.5, "art frames: the empty slot's «+» 814..892 x 64..169 (beside the shown panel's right edge 1011)");
-    var repF = ArtEquipFrames.For(s4, null, null, Wd, Hd, U);
-    Check(repF != null && Math.Abs(repF.Mark.X - 450) <= 1.5 && Math.Abs(repF.Mark.Y - 549.6) <= 1.5 && Math.Abs(repF.Mark.W - 142) <= 1.5 && Math.Abs(repF.Mark.H - 53) <= 1.5, "art frames: the card's «Заменить» 450..592 x 549.6..602.6");
-    var popF = ArtEquipFrames.For(N(HS(7, true, 9004, other, 9001, u5), true), null, null, Wd, Hd, U);
-    Check(popF != null && Math.Abs(popF.Mark.X - 570) <= 1.5 && Math.Abs(popF.Mark.Y - 356) <= 1.5 && Math.Abs(popF.Mark.W - 231) <= 1.5 && Math.Abs(popF.Mark.H - 76) <= 1.5, "art frames: the pop-up's «Заменить» 570..801 x 356..432");
-    var cellF = ArtEquipFrames.For(s3, HS(7, true, 0, other, 9001, u5), null, Wd, Hd, U);
-    double slotW = 245.0 / 3;   // the list's viewport 18.5..263.5
-    Check(cellF != null && cellF.Mark.Kind == "box" && Math.Abs(cellF.Mark.X - (18.5 + (slotW - 80) / 2)) <= 1.5 && Math.Abs(cellF.Mark.Y - (103 + 116 + 3)) <= 1.5, "art frames: place 4 is column 1 of row 2");
-    var cell1 = ArtEquipFrames.For(new ArtEquipStep { Kind = ArtEquipKind.PickCell, Pos = 1 }, HS(7, true, 0, other, 9001, u5), null, Wd, Hd, U);
-    var cell5 = ArtEquipFrames.For(new ArtEquipStep { Kind = ArtEquipKind.PickCell, Pos = 5 }, HS(7, true, 0, other, 9001, u5), null, Wd, Hd, U);
-    Check(cell1 != null && cell5 != null && cell1.Mark.Kind == "box" && Math.Abs(cell1.Mark.X - (18.5 + (slotW - 80) / 2)) <= 1.5 && Math.Abs(cell1.Mark.Y - (103 + 3)) <= 1.5, "art frames: place 1 is column 1, row 1 of the list viewport");
-    Check(cell5 != null && Math.Abs(cell5.Mark.X - (18.5 + slotW + (slotW - 80) / 2)) <= 1.5 && Math.Abs(cell5.Mark.Y - (103 + 116 + 3)) <= 1.5, "art frames: place 5 is column 2, row 2 (3 columns, 116 per row)");
-    var scrolled = HS(7, true, 0, other, 9001, u5); scrolled.ArtList = new RFX.ListRead { ScrollY = 116, Cols = 3, RowUnits = 116 };
-    var cellS = ArtEquipFrames.For(new ArtEquipStep { Kind = ArtEquipKind.PickCell, Pos = 5 }, scrolled, null, Wd, Hd, U);
-    Check(cellS != null && Math.Abs((cell5.Mark.Y - cellS.Mark.Y) - 116) <= 1.01, "art frames: the cell follows the list's scroll exactly");
-    var far = new long[60]; for (int i = 0; i < far.Length; i++) far[i] = 8000 + i;
-    var farH = HS(7, true, 0, other, 9001, far);
-    var farF = ArtEquipFrames.For(new ArtEquipStep { Kind = ArtEquipKind.PickCell, Pos = 55 }, farH, null, Wd, Hd, U);
-    Check(farF != null && farF.Mark.Kind == "down" && farF.Mark.Rows >= 1 && farF.ScrollPx < 0, "art frames: a cell far below -> the pill at the list's edge, the list is to be dragged up");
-    var noScroll = HS(7, true, 0, other, 9001, u5); noScroll.ArtList = null;
-    Check(ArtEquipFrames.For(s3, noScroll, null, Wd, Hd, U) == null, "art frames: the list's scroll unreadable -> no cell frame (the plate stays)");
-    string webGeo = Path.Combine(WebRoot(), "data", "app-geometry", "1.6.39.829.1.json");
-    if (File.Exists(webGeo)) {
-      var rg = GameGeometry.Parse(File.ReadAllText(webGeo, Encoding.UTF8), "1.6.39.829.1");
-      Check(rg != null && rg.Has("hero.artifactTab") && rg.Has("hero.artOpenList") && rg.Has("hero.artAdd") && rg.Has("hero.artList") && rg.Has("hero.artReplace") && rg.Has("popup.equipReplace") && rg.Has("hero.artSell") && rg.Has("hero.artQuickEquip"), "art frames: the site's geometry file has every key");
-      if (rg != null) {
-        Check(rg.Grid("hero.artList") != null && rg.Grid("hero.artList").Cols == 3 && Math.Abs(rg.Grid("hero.artList").LineSize - 116) < 0.01, "art frames: the file's list grid is 3 x 116");
-        foreach (var kv in new[] { ArtEquipFrames.KeyTab, ArtEquipFrames.KeyOpenList, ArtEquipFrames.KeyAdd, ArtEquipFrames.KeyList, ArtEquipFrames.KeyReplace, ArtEquipFrames.KeyPopup, ArtEquipFrames.KeySell, ArtEquipFrames.KeyQuick }) {
-          var a = rg.Rect(kv, Wd, Hd, U); var b = ArtFrames.Rect(null, kv, Wd, Hd, U);
-          Check(a != null && b != null && Math.Abs(a.X - b.X) <= 0.6 && Math.Abs(a.Y - b.Y) <= 0.6 && Math.Abs(a.W - b.W) <= 0.6 && Math.Abs(a.H - b.H) <= 0.6, "art frames: " + kv + " in the file = the built-in numbers");
-        }
-        var fr2 = ArtEquipFrames.For(s4, null, rg, Wd, Hd, U);
-        Check(fr2 != null && Math.Abs(fr2.Mark.X - repF.Mark.X) <= 1, "art frames: «Заменить» from the file");
-      }
-    }
-    // the buttons never pressed
-    Check(ArtEquipFrames.OnNeverButton(null, 596, 188, Wd, Hd, U) && ArtEquipFrames.OnNeverButton(null, 780, 600, Wd, Hd, U), "art never: the card's sell icon and «Быстро надеть» are never pressed");
-    Check(!ArtEquipFrames.OnNeverButton(null, 521, 576, Wd, Hd, U) && !ArtEquipFrames.OnNeverButton(null, 969, 147, Wd, Hd, U) && !ArtEquipFrames.OnNeverButton(null, 1083, 518, Wd, Hd, U), "art never: «Заменить», the list button and the tab are not on them");
-    foreach (var step in new[] { s1, s2, s4, N(HS(7, true, 9004, other, 9001, u5), true), N(HS(3, false, 0, 0, 9001, null), false) }) {
-      var fr = ArtEquipFrames.For(step, null, null, Wd, Hd, U);
-      Check(fr != null && !ArtEquipFrames.OnNeverButton(null, fr.Mark.X + fr.Mark.W / 2.0, fr.Mark.Y + fr.Mark.H / 2.0, Wd, Hd, U), "art never: the centre of the " + step.Kind + " frame is not on a never-pressed button");
-    }
-
-    // --- Done is final for the goal (the page re-sends the "art" hint while the plan stays open)
-    var latch = new ArtGoalLatch();
-    Check(!latch.Ignores(231, 9004), "art latch: before Done the goal is taken");
-    latch.MarkDone(231, 9004);
-    Check(latch.Ignores(231, 9004) && latch.Ignores(0, 0) && latch.Ignores(231, 9004), "art latch: after Done the same goal and its clearing are ignored");
-    Check(!latch.Ignores(231, 9005) && !latch.IsDone, "art latch: another artifact opens it");
-    Check(ArtGoalLatch.LiveShown(false, true) && ArtGoalLatch.LiveShown(true, false) && !ArtGoalLatch.LiveShown(false, false), "art latch: the live step shows while the goal runs and after it is latched, whatever the hint (art or done)");
-    latch.MarkDone(231, 9004); latch.NewPlan();
-    Check(!latch.Ignores(231, 9004), "art latch: a new plan takes the same artifact again");
-
-    // --- the pilot
-    Func<ArtEquipStep, HeroScreen, bool, bool, long, ArtEquipView> V = (step, hs, autoConfirm, btnSeen, now) => new ArtEquipView { NowMs = now, Foreground = true, W = Wd, H = Hd, U = U, Step = step, Hero = hs, AutoConfirm = autoConfirm, ReplaceBtnSeen = btnSeen };
-    var hTab = HS(3, false, 0, 0, 9001, null);
-    var p1 = new ArtEquipPilot(); var m1 = p1.Step(V(N(hTab, false), hTab, false, false, 0));
-    Check(m1.State == "work" && m1.Todo == ArtEquipTodo.Tab && m1.Action.Kind == AutoKind.Click && Math.Abs(m1.Action.X - 1083) <= 1.5 && Math.Abs(m1.Action.Y - 518) <= 1.5, "art pilot: the tab -> a click on the tab's centre");
-    Check(p1.Step(V(N(hTab, false), hTab, false, false, 100)).Action.Kind == AutoKind.None, "art pilot: a second click waits for the first one's effect");
-    var hOpen = HS(7, false, 0, 0, 9001, null);
-    var p2 = new ArtEquipPilot(); var m2 = p2.Step(V(N(hOpen, false), hOpen, false, false, 0));
-    Check(m2.Todo == ArtEquipTodo.OpenList && Math.Abs(m2.Action.X - 969.4) <= 1.5 && Math.Abs(m2.Action.Y - 147.6) <= 1.5, "art pilot: the worn card's swap icon (centre 969.4, 147.6)");
-    var hEmpty = HS(7, false, 0, 0, 0, null);
-    var p2b = new ArtEquipPilot(); var m2b = p2b.Step(V(N(hEmpty, false), hEmpty, false, false, 0));
-    Check(m2b.Todo == ArtEquipTodo.OpenList && Math.Abs(m2b.Action.X - 853) <= 1.5 && Math.Abs(m2b.Action.Y - 116.5) <= 1.5, "art pilot: the empty slot's «+» (centre 853, 116.5)");
-    var hPick = HS(7, true, 0, other, 9001, u5);
-    var p3 = new ArtEquipPilot(); var m3 = p3.Step(V(N(hPick, false), hPick, false, false, 0));
-    var f4 = ArtEquipFrames.For(N(hPick, false), hPick, null, Wd, Hd, U);
-    Check(m3.Todo == ArtEquipTodo.Cell && m3.Action.Kind == AutoKind.Click && Math.Abs(m3.Action.X - (f4.Mark.X + f4.Mark.W / 2.0)) <= 1 && Math.Abs(m3.Action.Y - (f4.Mark.Y + f4.Mark.H / 2.0)) <= 1, "art pilot: the artifact's cell in view -> a click on its centre");
-    var hFar = HS(7, true, 0, other, 9001, far); var sFar = new ArtEquipStep { Kind = ArtEquipKind.PickCell, Pos = 55 };
-    var p4 = new ArtEquipPilot(); var m4 = p4.Step(V(sFar, hFar, false, false, 0));
-    Check(m4.Todo == ArtEquipTodo.Cell && m4.Action.Kind == AutoKind.Drag && m4.Action.DY < 0 && m4.Action.X > 18 && m4.Action.X < 264, "art pilot: a cell far below -> a drag up inside the list (" + m4.Action.DY + ")");
-    // a list that does not move on two drags -> stop
-    var p4b = new ArtEquipPilot(); long tt = 0; ArtEquipMove last = null;
-    for (int i = 0; i < 6 && !p4b.Stopped; i++) { last = p4b.Step(V(sFar, hFar, false, false, tt)); tt += 2500; }
-    Check(p4b.Stopped && p4b.Reason == "lost", "art pilot: the list does not move on the drags -> stop 'lost'");
-    var hRep = HS(7, true, 9004, other, 9001, u5); var sRep = N(hRep, false);
-    var p5 = new ArtEquipPilot(); var m5 = p5.Step(V(sRep, hRep, false, true, 0));
-    Check(m5.State == "hint" && m5.Why == "player" && m5.Action.Kind == AutoKind.None, "art pilot: «Заменить» without the player's auto confirm is the player's");
-    var m5b = p5.Step(V(sRep, hRep, true, false, 10)); Check(m5b.State == "hint" && m5b.Why == "button", "art pilot: «Заменить» not seen as the game's blue button -> no click");
-    var m5c = p5.Step(V(sRep, hRep, true, true, 20));
-    Check(m5c.Todo == ArtEquipTodo.Replace && Math.Abs(m5c.Action.X - 521) <= 1.5 && Math.Abs(m5c.Action.Y - 576.1) <= 1.5, "art pilot: with the auto confirm and the button seen -> «Заменить» (centre 521, 576)");
-    // live lab 513ac0 (23:09:06): the card is open, our own hint «Нажмите «Заменить»» lies over the button, the picture of it is not known; the game's memory has the button's rect: pressed there, no wait
-    var p5L = new ArtEquipPilot(); var vL = V(sRep, hRep, true, true, 0); vL.ReplaceLive = new[] { 465.0, 540.0, 154.0, 58.0 };
-    var m5L = p5L.Step(vL);
-    Check(m5L.Todo == ArtEquipTodo.Replace && Math.Abs(m5L.Action.X - 542) <= 1 && Math.Abs(m5L.Action.Y - 569) <= 1, "art pilot (lab 513ac0): «Заменить» is pressed at the live rect the game's memory gives, not the layout's (" + m5L.Action.X + "," + m5L.Action.Y + ")");
-    // the button never seen (no live read, the picture covered): a named stop after ButtonWaitMs, never a wait for ever
-    var p5S = new ArtEquipPilot(); ArtEquipMove m5S = null;
-    for (long t5 = 0; t5 <= 9000 && !p5S.Stopped; t5 += 500) m5S = p5S.Step(V(sRep, hRep, true, false, t5));
-    Check(p5S.Stopped && p5S.Reason == "button" && m5S.State == "stopped", "art pilot (lab 513ac0): the card's button never seen -> stopped 'button' within " + (ArtEquipPilot.ButtonWaitMs / 1000) + " s (" + p5S.Reason + ")");
-    var hPop = HS(7, true, 9004, other, 9001, u5); var sPop = N(hPop, true);
-    var p6 = new ArtEquipPilot(); var m6 = p6.Step(V(sPop, hPop, false, false, 0));
-    Check(m6.State == "hint" && m6.Why == "player", "art pilot: the pop-up's «Заменить» without the auto confirm is the player's");
-    var m6b = p6.Step(V(sPop, hPop, true, false, 10));
-    Check(m6b.Todo == ArtEquipTodo.Confirm && Math.Abs(m6b.Action.X - 685.5) <= 1.5 && Math.Abs(m6b.Action.Y - 394) <= 1.5, "art pilot: the pop-up's «Заменить» (centre 685.5, 394)");
-    Check(new ArtEquipPilot().Step(V(N(HS(7, true, 0, other, 9001, new long[] { 9001 }), false), HS(7, true, 0, other, 9001, new long[] { 9001 }), true, true, 0)).State == "hint", "art pilot: the artifact not in the list -> hints only");
-    var pb = new ArtEquipPilot(); var vb = V(N(hTab, false), hTab, false, false, 0); vb.Foreground = false;
-    Check(pb.Step(vb).State == "background", "art pilot: the game is not in front -> waits");
-    var pu = new ArtEquipPilot(); var vu = V(N(hTab, false), hTab, false, false, 0); vu.UserBusy = true;
-    Check(pu.Step(vu).State == "paused", "art pilot: the player moves the mouse -> waits");
-    var ps = new ArtEquipPilot(); long ts = 0; int n = 0;
-    while (!ps.Stopped && n++ < 20) { ps.Step(V(N(hTab, false), hTab, false, false, ts)); ts += 2000; }
-    Check(ps.Stopped && ps.Reason == "stuck", "art pilot: the same step again and again -> stop 'stuck'");
-    ps.Reset(); Check(!ps.Stopped, "art pilot: a new run starts again");
-
-    // --- the list's own filter, the game's fit rule, the live cell, the scroll's stillness
-    Func<long[], long, int, int, HeroScreen> HF = (uids, owner, hide, wornAhead) => { var x = HS(7, true, 0, owner, 9001, uids); x.ArtHideWorn = hide; x.ArtWornBefore = wornAhead; x.ArtGoalFit = 1; return x; };
-    var long60 = new long[60]; for (int i = 0; i < 60; i++) long60[i] = i == 54 ? 9004 : 8000 + i;
-    var sf = N(HF(long60, 0, 0, 50), false);
-    Check(sf.Kind == ArtEquipKind.PickCell && sf.Filter && sf.Name == "filter" && sf.Key.EndsWith(":filter"), "art filter: a free artifact far down with worn rows ahead -> «Скрыть надетое» first");
-    Check(!N(HF(long60, other, 0, 50), false).Filter, "art filter: an artifact another hero wears -> no «Скрыть надетое» (it would hide it)");
-    Check(!N(HF(long60, 0, 1, 50), false).Filter && !N(HF(long60, 0, 0, 2), false).Filter && !N(HF(u5, 0, 0, 3), false).Filter && !N(HF(long60, 0, -1, 50), false).Filter, "art filter: already on, under a row of worn ahead, in the first view, flag unread -> no filter");
-    var sfOff = N(HF(new long[] { 9001, 9002 }, other, 1, 0), false);
-    Check(sfOff.Kind == ArtEquipKind.NotInList && sfOff.Filter, "art filter: «Скрыть надетое» on hides the artifact another hero wears -> off");
-    Check(!N(HF(new long[] { 9001, 9002 }, 0, 1, 0), false).Filter, "art filter: a free artifact missing with the filter on is not the filter's doing");
-    var fFr = ArtEquipFrames.For(sf, HF(long60, 0, 0, 50), null, Wd, Hd, U);
-    Check(fFr != null && fFr.Target == ArtEquipFrames.KeyHideWorn && fFr.Mark.Kind == "box" && fFr.Mark.X < 60 && fFr.Mark.Y > Hd * 0.7, "art filter: the frame is on the toggle under the list (" + (fFr != null ? fFr.Mark.X + "," + fFr.Mark.Y : "none") + ")");
-    var hUnfit = HF(u5, 0, 0, 0); hUnfit.ArtGoalFit = 0;
-    var su = N(hUnfit, false); Check(su.Kind == ArtEquipKind.Unfit && su.Name == "unfit", "art fit: bCanEquip false -> unfit (another class)");
-    hUnfit.ArtGoalExclusive = true; Check(N(hUnfit, false).Name == "unfitEx", "art fit: an exclusive artifact of another hero -> unfitEx");
-    hUnfit.ArtSel = 9004; Check(N(hUnfit, false).Kind == ArtEquipKind.Unfit, "art fit: its card open -> still unfit, never «Заменить»");
-    Check(new ArtEquipPilot().Step(V(N(hUnfit, false), hUnfit, true, true, 0)).State == "hint", "art fit: the pilot never clicks an unfit artifact (no loop of «Заменить» and the game's tip)");
-    var hNoFit = HF(u5, 0, 0, 0); hNoFit.ArtGoalFit = -1; Check(N(hNoFit, false).Kind == ArtEquipKind.PickCell, "art fit: unread -> the cell as before (the game's own tip is the guard)");
-    // the pilot presses the toggle (live rect first), waits for the flag, then goes on to the cell
-    var hf0 = HF(long60, 0, 0, 50); var pf = new ArtEquipPilot();
-    var vf = V(N(hf0, false), hf0, false, false, 0); vf.FilterLive = new double[] { 30, 540, 200, 40 };
-    var mf = pf.Step(vf);
-    Check(mf.Todo == ArtEquipTodo.Filter && mf.Action.Kind == AutoKind.Click && Math.Abs(mf.Action.X - 130) < 1 && Math.Abs(mf.Action.Y - 560) < 1, "art filter: the pilot clicks the toggle's live centre");
-    var hf1 = HF(new long[] { 8001, 8002, 8003, 9004 }, 0, 1, 0);
-    var mf2 = pf.Step(V(N(hf1, false), hf1, false, false, 200));
-    Check(pf.FilterSpent && mf2.Action.Kind == AutoKind.None, "art filter: the flag on -> done with the filter, the short wait before the cell");
-    var mf3 = pf.Step(V(N(hf1, false), hf1, false, false, 200 + ArtEquipPilot.EffectSettleMs + 10));
-    Check(mf3.Todo == ArtEquipTodo.Cell && mf3.Action.Kind == AutoKind.Click && mf3.Action.Cell == 9004, "art filter: then the artifact's cell (it carries the uid for the live click)");
-    var pf2 = new ArtEquipPilot(); long tf = 0; int fclicks = 0;
-    ArtEquipMove mlast = null;
-    for (int i = 0; i < 3; i++) { mlast = pf2.Step(V(N(hf0, false), hf0, false, false, tf)); if (mlast.Todo == ArtEquipTodo.Filter && mlast.Action.Kind == AutoKind.Click) fclicks++; tf += 1000; }
-    Check(fclicks == ArtEquipPilot.MaxFilterClicks && pf2.FilterSpent && !pf2.Stopped && mlast.Drag, "art filter: no effect -> two presses, then the scroll (no blind loop, no stop): " + pf2.Trace);
-    var pNo = new ArtEquipPilot { NoFilter = true }; var vNo = V(N(hf0, false), hf0, false, false, 0); vNo.FilterSpent = pNo.FilterSpent;
-    Check(pNo.Step(vNo).Todo == ArtEquipTodo.Cell, "art filter: the bench's old way skips the filter");
-    // the live cell wins over the layout's place
-    var pl = new ArtEquipPilot(); var vl = V(N(hPick, false), hPick, false, false, 0); vl.CellLive = new double[] { 100, 200, 80, 110 };
-    var ml = pl.Step(vl);
-    Check(ml.Todo == ArtEquipTodo.Cell && Math.Abs(ml.Action.X - 140) < 1 && Math.Abs(ml.Action.Y - 255) < 1 && ml.Action.Cell == 9004, "art cell: the live card's centre is clicked");
-    var vl2 = V(sFar, hFar, false, false, 0); vl2.CellLive = new double[] { 100, 200, 80, 110 };
-    Check(new ArtEquipPilot().Step(vl2).Action.Kind == AutoKind.Click, "art cell: a live card in view is clicked even where the layout puts it far away");
-    // after a drag: no fixed wait, the scroll's own answer (moved, then two equal reads)
-    var pd = new ArtEquipPilot(); var ld = new RFX.ListRead { ScrollY = 0, Cols = 3, RowUnits = 116 };
-    var hd = HS(7, true, 0, other, 9001, far); hd.ArtList = ld;
-    var md = pd.Step(V(sFar, hd, false, false, 0)); Check(md.Drag, "art still: a drag first");
-    hd.ArtList = new RFX.ListRead { ScrollY = 0, Cols = 3, RowUnits = 116 }; Check(pd.Step(V(sFar, hd, false, false, 60)).Action.Kind == AutoKind.None, "art still: not moved yet -> wait");
-    hd.ArtList = new RFX.ListRead { ScrollY = 200, Cols = 3, RowUnits = 116 }; Check(pd.Step(V(sFar, hd, false, false, 120)).Action.Kind == AutoKind.None, "art still: moving -> wait");
-    hd.ArtList = new RFX.ListRead { ScrollY = 300, Cols = 3, RowUnits = 116 }; Check(pd.Step(V(sFar, hd, false, false, 170)).Action.Kind == AutoKind.None, "art still: still moving -> wait");
-    var mdn = pd.Step(V(sFar, hd, false, false, 230));
-    Check(mdn.Drag, "art still: two equal reads 60 ms apart -> the next drag at 230 ms (was 1000 ms)");
-    var pdf = new ArtEquipPilot { FixedDragWait = true }; hd.ArtList = ld; pdf.Step(V(sFar, hd, false, false, 0));
-    hd.ArtList = new RFX.ListRead { ScrollY = 300, Cols = 3, RowUnits = 116 };
-    Check(pdf.Step(V(sFar, hd, false, false, 500)).Action.Kind == AutoKind.None && pdf.Step(V(sFar, hd, false, false, 1001)).Drag, "art still: the bench's old way waits 1000 ms");
-
-    // --- the gate: the Equip owner's artifact targets
-    Func<HeroScreen, bool, ScreenState> SC = (hs, popup) => ScreenState.Classify(new ScreenInputs { Hero = hs, ModalExtra = popup, ModalExtraWhy = popup ? ClickGate.ModalEquipPopup : "" }, 0);
-    Func<ClickTarget, ClickRequest> RQ = tg => new ClickRequest { Owner = ClickOwner.Equip, Target = tg, AutoOn = true, Front = true, Hero = hero, ArtUid = 9004, CellOk = new HashSet<long> { 9004 } };
-    Func<ClickGate> GOn = () => new ClickGate { ArtEquipAuto = true };
-    var gOff = new ClickGate(); var rOff = gOff.Check(RQ(ClickTarget.ArtHeroTab), SC(hTab, false), 0);
-    Check(!rOff.Allowed && gOff.HaltReason(ClickOwner.Equip) == "artifact", "art gate: the switch / the auto click off -> hints only (" + rOff.Reason + ")");
-    Check(GOn().Check(RQ(ClickTarget.ArtHeroTab), SC(hTab, false), 0).Allowed, "art gate: the tab from the gear tab -> allowed");
-    var g = GOn(); var r = g.Check(RQ(ClickTarget.ArtHeroTab), SC(hOpen, false), 0);
-    Check(!r.Allowed && r.Reason == "screen", "art gate: the tab while on it already -> stop");
-    g = GOn(); r = g.Check(RQ(ClickTarget.ArtHeroTab), SC(HS(3, false, 0, hero, 9004, null), false), 0);
-    Check(!r.Allowed && r.Reason == "screen", "art gate: the artifact is on the hero already -> stop");
-    g = GOn(); var rr0 = RQ(ClickTarget.ArtHeroTab); rr0.Hero = 5;
-    r = g.Check(rr0, SC(hTab, false), 0); Check(!r.Allowed && r.Reason == "screen", "art gate: the screen shows another hero -> stop");
-    g = GOn(); r = g.Check(RQ(ClickTarget.ArtHeroTab), SC(new HeroScreen { Hero = hero, FormOk = true, Tab = 3, ArtRead = false }, false), 0);
-    Check(r.Verdict == GateVerdict.Wait, "art gate: the artifact fields unreadable -> waited for");
-    Check(GOn().Check(RQ(ClickTarget.ArtOpenList), SC(hOpen, false), 0).Allowed, "art gate: the list button on the artifact tab with the list closed -> allowed");
-    g = GOn(); r = g.Check(RQ(ClickTarget.ArtOpenList), SC(hTab, false), 0); Check(!r.Allowed && r.Reason == "screen", "art gate: the list button on the gear tab -> stop");
-    g = GOn(); r = g.Check(RQ(ClickTarget.ArtOpenList), SC(hPick, false), 0); Check(!r.Allowed && r.Reason == "screen", "art gate: the list button with the list open -> stop");
-    // the cell: the uid under the click is the plan's
-    Func<long, ClickRequest> CellQ = uid => { var q = RQ(ClickTarget.ArtHeroCell); q.CellUid = uid; return q; };
-    Check(GOn().Check(CellQ(9004), SC(hPick, false), 0).Allowed, "art gate: the cell of the plan's artifact -> allowed");
-    g = GOn(); r = g.Check(CellQ(9003), SC(hPick, false), 0); Check(!r.Allowed && r.Reason == "cell", "art gate: a neighbour's cell -> stop");
-    g = GOn(); r = g.Check(CellQ(0), SC(hPick, false), 0); Check(!r.Allowed && r.Reason == "cell", "art gate: the cell under the click not worked out -> stop");
-    g = GOn(); r = g.Check(CellQ(9004), SC(hOpen, false), 0); Check(!r.Allowed && r.Reason == "screen", "art gate: a cell click with the list closed -> stop");
-    g = GOn(); r = g.Check(CellQ(9004), SC(HS(7, true, 9004, other, 9001, u5), false), 0); Check(r.Verdict == GateVerdict.Wait, "art gate: the artifact is selected already -> nothing to click");
-    Check(GOn().Check(RQ(ClickTarget.ArtHeroDrag), SC(hPick, false), 0).Allowed, "art gate: scrolling the open list -> allowed");
-    g = GOn(); r = g.Check(RQ(ClickTarget.ArtHeroDrag), SC(hOpen, false), 0); Check(!r.Allowed && r.Reason == "screen", "art gate: scrolling with the list closed -> stop");
-    // «Заменить» of the card: the plan's artifact selected
-    Check(GOn().Check(RQ(ClickTarget.ArtReplace), SC(hRep, false), 0).Allowed, "art gate: «Заменить» with the plan's artifact selected -> allowed");
-    g = GOn(); r = g.Check(RQ(ClickTarget.ArtReplace), SC(HS(7, true, 9001, other, 9001, u5), false), 0); Check(!r.Allowed && r.Reason == "cell", "art gate: «Заменить» of another artifact's card -> stop");
-    g = GOn(); r = g.Check(RQ(ClickTarget.ArtReplace), SC(hPick, false), 0); Check(!r.Allowed && r.Reason == "cell", "art gate: «Заменить» with nothing selected -> stop");
-    g = GOn(); r = g.Check(RQ(ClickTarget.ArtReplace), SC(hRep, true), 0); Check(!r.Allowed && r.Reason == "modal", "art gate: «Заменить» of the card under the pop-up -> stop");
-    // the pop-up's «Заменить»
-    Check(GOn().Check(RQ(ClickTarget.ArtTakeOverConfirm), SC(hRep, true), 0).Allowed, "art gate: the pop-up of the plan's artifact (worn by another hero) -> its «Заменить» allowed");
-    g = GOn(); r = g.Check(RQ(ClickTarget.ArtTakeOverConfirm), SC(hRep, false), 0); Check(!r.Allowed && r.Reason == "modal", "art gate: no pop-up -> stop");
-    g = GOn(); r = g.Check(RQ(ClickTarget.ArtTakeOverConfirm), SC(HS(7, true, 9001, other, 9001, u5), true), 0); Check(!r.Allowed && r.Reason == "cell", "art gate: a pop-up while another artifact is selected -> stop");
-    g = GOn(); r = g.Check(RQ(ClickTarget.ArtTakeOverConfirm), SC(HS(7, true, 9004, 0, 9001, u5), true), 0); Check(!r.Allowed && r.Reason == "cell", "art gate: a pop-up for an artifact worn by nobody is not the expected one -> stop");
-    g = GOn(); r = g.Check(RQ(ClickTarget.ArtTakeOverConfirm), SC(new HeroScreen { Hero = hero, FormOk = true, Tab = 7, FilterOpen = true, ArtRead = true, ArtListOpen = true, ArtSel = 9004, ArtTargetOwner = other, ArtWorn = 9001 }, false), 0);
-    Check(!r.Allowed, "art gate: another pop-up (the hero filter) is not the artifact's");
-    // the other owners never click them
-    foreach (var tg in new[] { ClickTarget.ArtHeroTab, ClickTarget.ArtOpenList, ClickTarget.ArtHeroCell, ClickTarget.ArtHeroDrag, ClickTarget.ArtReplace, ClickTarget.ArtTakeOverConfirm }) {
-      foreach (var ow in new[] { ClickOwner.Locate, ClickOwner.Sell }) {
-        g = new ClickGate { ArtEquipAuto = true, ArtLocateAuto = true, ArtSellAuto = true };
-        var q = RQ(tg); q.Owner = ow; q.CellUid = 9004;
-        Check(!g.Check(q, SC(hRep, true), 0).Allowed, "art gate: " + ow + " never clicks " + tg);
-      }
-    }
-    // the effects
-    {
-      var rq = RQ(ClickTarget.ArtHeroTab); var gE = GOn();
-      gE.Arm(ClickOwner.Equip, ClickTarget.ArtHeroTab, ClickGate.Expect(rq, SC(hTab, false)), 0);
-      gE.Observe(SC(hTab, false), ClickGate.EffectMs + 20);
-      Check(gE.HaltReason(ClickOwner.Equip) == "nochange", "art gate: the tab does not switch within the time -> stop");
-      gE = GOn(); gE.Arm(ClickOwner.Equip, ClickTarget.ArtHeroTab, ClickGate.Expect(rq, SC(hTab, false)), 0); gE.Observe(SC(hOpen, false), 500);
-      Check(!gE.Pending(ClickOwner.Equip) && !gE.Halted(ClickOwner.Equip), "art gate: the tab is on -> done");
-      rq = RQ(ClickTarget.ArtOpenList); gE = GOn(); gE.Arm(ClickOwner.Equip, ClickTarget.ArtOpenList, ClickGate.Expect(rq, SC(hOpen, false)), 0); gE.Observe(SC(hPick, false), 600);
-      Check(!gE.Pending(ClickOwner.Equip), "art gate: the list opened -> done");
-      rq = CellQ(9004); gE = GOn(); gE.Arm(ClickOwner.Equip, ClickTarget.ArtHeroCell, ClickGate.Expect(rq, SC(hPick, false)), 0);
-      gE.Observe(SC(HS(7, true, 9003, other, 9001, u5), false), 500);
-      Check(gE.Pending(ClickOwner.Equip), "art gate: a neighbour got selected -> not the effect");
-      gE.Observe(SC(hRep, false), 900); Check(!gE.Pending(ClickOwner.Equip), "art gate: the plan's artifact selected -> done");
-      // «Заменить»: the pop-up appears (worn by another hero) or the artifact is on the hero
-      rq = RQ(ClickTarget.ArtReplace); gE = GOn(); gE.Arm(ClickOwner.Equip, ClickTarget.ArtReplace, ClickGate.Expect(rq, SC(hRep, false)), 0); gE.Observe(SC(hRep, true), 400);
-      Check(!gE.Pending(ClickOwner.Equip) && !gE.Halted(ClickOwner.Equip), "art gate: «Заменить» -> the pop-up opened -> done");
-      gE = GOn(); gE.Arm(ClickOwner.Equip, ClickTarget.ArtReplace, ClickGate.Expect(rq, SC(HS(7, true, 9004, 0, 9001, u5), false)), 0); gE.Observe(SC(HS(7, true, 9004, hero, 9004, u5), false), 400);
-      Check(!gE.Pending(ClickOwner.Equip), "art gate: «Заменить» of a free artifact -> on the hero -> done");
-      gE = GOn(); gE.Arm(ClickOwner.Equip, ClickTarget.ArtReplace, ClickGate.Expect(rq, SC(hRep, false)), 0); gE.Observe(SC(hRep, false), ClickGate.SlowEffectMs + 20);
-      Check(gE.HaltReason(ClickOwner.Equip) == "nochange", "art gate: «Заменить» changes nothing within the time -> stop");
-      rq = RQ(ClickTarget.ArtTakeOverConfirm); gE = GOn(); gE.Arm(ClickOwner.Equip, ClickTarget.ArtTakeOverConfirm, ClickGate.Expect(rq, SC(hRep, true)), 0);
-      gE.Observe(SC(HS(7, true, 9004, hero, 9004, u5), false), 1500);
-      Check(!gE.Pending(ClickOwner.Equip), "art gate: the pop-up's «Заменить» -> the artifact on the hero -> done");
-      gE = GOn(); gE.Arm(ClickOwner.Equip, ClickTarget.ArtTakeOverConfirm, ClickGate.Expect(rq, SC(hRep, true)), 0); gE.Observe(SC(hRep, true), ClickGate.SlowEffectMs + 20);
-      Check(gE.HaltReason(ClickOwner.Equip) == "nochange", "art gate: the pop-up stays -> stop");
-    }
-    string wl = ClickGate.WhitelistText(ClickOwner.Equip);
-    Check(wl.Contains("ArtHeroTab@HeroScreen") && wl.Contains("ArtTakeOverConfirm@HeroScreen") && !wl.Contains("ArtBulk") && !wl.Contains("ArtWorkshop"), "art gate: the equip owner's whitelist has the hero-screen artifact targets only");
-    foreach (var oo in new[] { ClickOwner.Locate, ClickOwner.Sell }) { string w2 = ClickGate.WhitelistText(oo); Check(!w2.Contains("ArtHero") && !w2.Contains("ArtOpenList") && !w2.Contains("ArtReplace") && !w2.Contains("ArtTakeOver"), oo + ": none of the equip owner's artifact targets"); }
-    // the gate: the toggle's effect is the flag; the live cell kind of the artifact list
-    {
-      var rqf = RQ(ClickTarget.ArtHideWorn); var gF = GOn();
-      Check(gF.Check(rqf, SC(hf0, false), 0).Allowed, "art gate: «Скрыть надетое» with the list open -> allowed");
-      Check(!GOn().Check(rqf, SC(hOpen, false), 0).Allowed, "art gate: «Скрыть надетое» with the list closed -> stop");
-      gF.Arm(ClickOwner.Equip, ClickTarget.ArtHideWorn, ClickGate.Expect(rqf, SC(hf0, false)), 0); gF.Observe(SC(hf1, false), 400);
-      Check(!gF.Pending(ClickOwner.Equip), "art gate: the flag on -> the toggle's effect seen");
-      var rqo = RQ(ClickTarget.ArtHideWorn); rqo.Untick = true; var gO = GOn();
-      gO.Arm(ClickOwner.Equip, ClickTarget.ArtHideWorn, ClickGate.Expect(rqo, SC(hf1, false)), 0); gO.Observe(SC(hf0, false), 400);
-      Check(!gO.Pending(ClickOwner.Equip), "art gate: the flag off -> the toggle's effect seen (off)");
-      Check(RFX.UiCellKindOf(ClickTarget.ArtHeroCell) == UiCellKind.HeroArt && RFX.UiWidgetOf(ClickTarget.ArtHideWorn, null) != null, "art cells: the artifact list's cells and the toggle are read live");
-    }
-  }
-
-  static void ArtAutoTests() {
-    Console.WriteLine("Artifact flows with auto click (switch artAuto, gate whitelist, pilots)");
-    // --- the switch: off until the site says true
-    var sw = RemoteSwitches.Permissive();
-    Check(!sw.Allows("artAuto") && sw.Allows("autoclick"), "artAuto: off by default, the others on");
-    Check(!RemoteSwitches.Parse("{}").Allows("artAuto") && !RemoteSwitches.Parse("{\"features\":{\"artAuto\":\"yes\"}}").Allows("artAuto"), "artAuto: a missing or odd value is off");
-    Check(RemoteSwitches.Parse("{\"features\":{\"artAuto\":true}}").Allows("artAuto") && RemoteSwitches.Parse(RemoteSwitches.Parse("{\"features\":{\"artAuto\":true}}").ToJson()).Allows("artAuto"), "artAuto: only a plain true switches it on, the saved copy keeps it");
-    Check(RemoteSwitches.Parse("{\"features\":{\"artAuto\":true},\"readEnabled\":false}").Allows("artAuto") == false, "artAuto: reading off switches it off too");
-    Check(RemoteSwitches.Parse("{\"readEnabled\":true}").Off().Count == 0, "artAuto: starting off is not listed as 'switched off'");
-
-    double W = 1136, H = 640, U = Ui.Unit(W, H);
-    Func<InventoryScreen, ScreenState> S = i => ScreenState.Classify(new ScreenInputs { Inv = i }, 0);
-    var uids = new List<long>(); for (long i = 1; i <= 56; i++) uids.Add(9000 + i);   // 8 rows of 7
-    Func<bool, List<long>, InventoryScreen> artBulk = (ticked, sel) => { var v = new InventoryScreen { Open = true, ArtTab = true, ArtBulk = true, ArtBulkKnown = true, ArtMode = 2, ListPtr = 7, Uids = new List<long>(uids) }; foreach (var u in sel) v.Selected.Add(u); return v; };
-    var bulkNone = S(artBulk(false, new List<long>()));
-    var bulkTicked = S(artBulk(true, new List<long> { 9001, 9002 }));
-    var artNormal = S(new InventoryScreen { Open = true, ArtTab = true, ArtBulkKnown = true, ArtMode = -1, Uids = new List<long>(uids) });
-    var artOrganize = S(new InventoryScreen { Open = true, ArtTab = true, ArtBulkKnown = true, ArtMode = 1, Uids = new List<long>(uids) });
-    var artModeUnknown = S(new InventoryScreen { Open = true, ArtTab = true, ArtBulkKnown = false });
-    var equipNormal = S(new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true });
-    var equipBulk = S(new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true, Bulk = true });
-    var otherTab = S(new InventoryScreen { Open = true, BulkKnown = true });
-
-    // --- the cleanup (Sell owner)
-    Func<ClickTarget, ClickRequest> R = tg => new ClickRequest { Owner = ClickOwner.Sell, Target = tg, AutoOn = true, Front = true };
-    Func<ClickTarget, long, bool, ClickRequest> Cell = (tg, uid, untick) => { var q = R(tg); q.CellUid = uid; q.CellOk = new HashSet<long> { 9003, 9004 }; q.Untick = untick; return q; };
-    Func<ClickGate> Off = () => new ClickGate { NoSellClicks = true };
-    Func<ClickGate> On = () => new ClickGate { ArtSellAuto = true };
-    foreach (var tg in new[] { ClickTarget.ArtTab, ClickTarget.ArtBulkEnter, ClickTarget.ArtBulkCell, ClickTarget.ArtListDrag }) {
-      var g0 = Off(); var r0 = g0.Check(Cell(tg, 9003, false), bulkNone, 0);
-      Check(!r0.Allowed && g0.HaltReason(ClickOwner.Sell) == "artifact", "art auto: switch off -> " + tg + " is never clicked (" + r0.Reason + ")");
-      var g1 = new ClickGate(); var r1 = g1.Check(Cell(tg, 9003, false), bulkNone, 0);
-      Check(!r1.Allowed && g1.HaltReason(ClickOwner.Sell) == "artifact", "art auto: a run that is not an auto artifact run never clicks " + tg);
-    }
-    var gT = On();
-    Check(gT.Check(R(ClickTarget.ArtTab), equipNormal, 0).Allowed, "art auto: «Артефакт» tab from the equipment tab -> allowed");
-    gT = On(); Check(gT.Check(R(ClickTarget.ArtTab), otherTab, 0).Allowed, "art auto: «Артефакт» tab from another tab -> allowed");
-    gT = On(); var rb = gT.Check(R(ClickTarget.ArtTab), equipBulk, 0); Check(!rb.Allowed && rb.Reason == "bulk", "art auto: the equipment tab in bulk sale is not left by the app");
-    gT = On(); rb = gT.Check(R(ClickTarget.ArtTab), artNormal, 0); Check(!rb.Allowed && rb.Reason == "screen", "art auto: already on the artifact tab -> stop");
-    gT = On(); Check(gT.Check(R(ClickTarget.ArtBulkEnter), artNormal, 0).Allowed, "art auto: «Массовая продажа» in the artifact tab's normal mode -> allowed");
-    gT = On(); rb = gT.Check(R(ClickTarget.ArtBulkEnter), bulkNone, 0); Check(!rb.Allowed && rb.Reason == "bulk", "art auto: «Массовая продажа» while it is on already -> stop");
-    gT = On(); rb = gT.Check(R(ClickTarget.ArtBulkEnter), artOrganize, 0); Check(!rb.Allowed && rb.Reason == "bulk", "art auto: the arrange mode is not left by the app");
-    gT = On(); rb = gT.Check(R(ClickTarget.ArtBulkEnter), equipNormal, 0); Check(!rb.Allowed && rb.Reason == "screen", "art auto: «Массовая продажа» on the equipment tab -> stop");
-    gT = On(); rb = gT.Check(R(ClickTarget.ArtBulkEnter), artModeUnknown, 0); Check(rb.Verdict == GateVerdict.Wait, "art auto: the artifact tab's mode unreadable -> waited for");
-    gT = On(); Check(gT.Check(Cell(ClickTarget.ArtBulkCell, 9003, false), bulkNone, 0).Allowed, "art auto: a wanted, unticked card -> tick it");
-    gT = On(); rb = gT.Check(Cell(ClickTarget.ArtBulkCell, 9005, false), bulkNone, 0); Check(!rb.Allowed && rb.Reason == "cell", "art auto: a card that is not wanted is never ticked");
-    gT = On(); rb = gT.Check(Cell(ClickTarget.ArtBulkCell, 0, false), bulkNone, 0); Check(!rb.Allowed && rb.Reason == "cell", "art auto: the card under the click not worked out (no exact scroll) -> stop");
-    var bulkWantedTicked = S(artBulk(true, new List<long> { 9003 }));
-    gT = On(); rb = gT.Check(Cell(ClickTarget.ArtBulkCell, 9003, false), bulkWantedTicked, 0); Check(!rb.Allowed && rb.Reason == "cell", "art auto: a wanted card that is ticked already would be taken off -> stop");
-    gT = On(); Check(gT.Check(Cell(ClickTarget.ArtBulkCell, 9001, true), bulkTicked, 0).Allowed, "art auto: a ticked card that is not wanted -> taken off");
-    gT = On(); rb = gT.Check(Cell(ClickTarget.ArtBulkCell, 9003, true), bulkWantedTicked, 0); Check(!rb.Allowed && rb.Reason == "cell", "art auto: a wanted card is never taken off");
-    gT = On(); rb = gT.Check(Cell(ClickTarget.ArtBulkCell, 9005, true), bulkNone, 0); Check(!rb.Allowed && rb.Reason == "cell", "art auto: 'untick' of a card that is not ticked -> stop");
-    gT = On(); rb = gT.Check(Cell(ClickTarget.ArtBulkCell, 9003, false), artNormal, 0); Check(!rb.Allowed && rb.Reason == "screen", "art auto: a cell click outside the bulk-sale mode -> stop");
-    gT = On(); rb = gT.Check(R(ClickTarget.ArtListDrag), bulkNone, 0); Check(rb.Allowed, "art auto: scrolling the list in bulk sale -> allowed");
-    gT = On(); rb = gT.Check(R(ClickTarget.ArtListDrag), artNormal, 0); Check(!rb.Allowed, "art auto: scrolling in the normal mode is not the cleanup's");
-    // nothing else on the artifact run: the gear targets, the equipment cell, and the equip helper's
-    foreach (var tg in new[] { ClickTarget.InvBulkCell, ClickTarget.InvBulkEnter, ClickTarget.InvEquipTab, ClickTarget.InvListCell, ClickTarget.CityInventory, ClickTarget.FoundryButton }) {
-      gT = On(); rb = gT.Check(Cell(tg, 9003, false), bulkNone, 0);
-      Check(!rb.Allowed && gT.HaltReason(ClickOwner.Sell) == "artifact", "art auto: the artifact cleanup clicks no " + tg);
-    }
-    var gE = new ClickGate { ArtSellAuto = true, ArtLocateAuto = true }; var re = gE.Check(new ClickRequest { Owner = ClickOwner.Equip, Target = ClickTarget.ArtTab, AutoOn = true, Front = true }, otherTab, 0);
-    Check(!re.Allowed && gE.HaltReason(ClickOwner.Equip) == "target", "art auto: the equip helper has no artifact target");
-    gT = On(); rb = gT.Check(new ClickRequest { Owner = ClickOwner.Sell, Target = ClickTarget.ArtTab, AutoOn = false, Front = true }, otherTab, 0); Check(!rb.Allowed && rb.Reason == "off" && !gT.Halted(ClickOwner.Sell), "art auto: the player's auto click off -> no click, not a stop");
-    // the effect: the game's choice holds the card within 1 s, else stop
-    {
-      var q = Cell(ClickTarget.ArtBulkCell, 9003, false);
-      var after = S(artBulk(true, new List<long> { 9003 }));
-      var g2 = On(); g2.Arm(ClickOwner.Sell, ClickTarget.ArtBulkCell, ClickGate.Expect(q, bulkNone), 0);
-      g2.Observe(bulkNone, ClickGate.ArtTickMs + 20);
-      Check(g2.HaltReason(ClickOwner.Sell) == "nochange", "art auto: the tick does not show in the game's choice within 1 s -> stop");
-      g2 = On(); g2.Arm(ClickOwner.Sell, ClickTarget.ArtBulkCell, ClickGate.Expect(q, bulkNone), 0);
-      g2.Observe(S(artBulk(true, new List<long> { 9004 })), 500);
-      Check(g2.Pending(ClickOwner.Sell), "art auto: another card ticked (a neighbour was hit) is not the effect");
-      g2.Observe(S(artBulk(true, new List<long> { 9004 })), ClickGate.ArtTickMs + 20);
-      Check(g2.HaltReason(ClickOwner.Sell) == "nochange", "art auto: ... and stops the run after the second");
-      g2 = On(); g2.Arm(ClickOwner.Sell, ClickTarget.ArtBulkCell, ClickGate.Expect(q, bulkNone), 0); g2.Observe(after, 300);
-      Check(!g2.Pending(ClickOwner.Sell) && !g2.Halted(ClickOwner.Sell), "art auto: the card is in the choice -> done");
-      var qu = Cell(ClickTarget.ArtBulkCell, 9001, true);
-      g2 = On(); g2.Arm(ClickOwner.Sell, ClickTarget.ArtBulkCell, ClickGate.Expect(qu, bulkTicked), 0); g2.Observe(bulkTicked, 300);
-      Check(g2.Pending(ClickOwner.Sell), "art auto: a tick that is still there is not the effect of an untick");
-      g2.Observe(S(artBulk(true, new List<long> { 9002 })), 400);
-      Check(!g2.Pending(ClickOwner.Sell), "art auto: the tick gone -> done");
-    }
-
-    // --- the cleanup pilot ticks the cards it means (the card under its click point is the one meant)
-    {
-      var g = SellGeometry.Artifacts(W, H, U, 7);
-      var wanted = new HashSet<long> { 9001, 9010, 9043 };
-      var inv = artBulk(true, new List<long>());
-      var p = new SellPilot(g); long t = 1000;
-      double row1 = g.ViewTopPx(U) + g.TopPad * U;
-      var a = p.Step(new SellView { NowMs = t, Foreground = true, W = W, H = H, U = U, Screen = inv.AsSellArt(7), Wanted = wanted, Row1 = row1 });
-      long under = a.Kind == AutoKind.Click ? ClickGate.InvCellUid(inv, g, row1, 7, a.X, a.Y, W, U) : -1;
-      Check(a.Kind == AutoKind.Click && under == 9001, "art pilot: the first click lands on the first wanted card (card under it: " + under + ")");
-      inv.Selected.Add(9001); t += 400;
-      a = p.Step(new SellView { NowMs = t, Foreground = true, W = W, H = H, U = U, Screen = inv.AsSellArt(7), Wanted = wanted, Row1 = row1 });
-      under = a.Kind == AutoKind.Click ? ClickGate.InvCellUid(inv, g, row1, 7, a.X, a.Y, W, U) : -1;
-      Check(a.Kind == AutoKind.Click && under == 9010, "art pilot: then the next one (card under the click: " + under + ")");
-      inv.Selected.Add(9010); t += 400;
-      a = p.Step(new SellView { NowMs = t, Foreground = true, W = W, H = H, U = U, Screen = inv.AsSellArt(7), Wanted = wanted, Row1 = row1 });
-      Check(a.Kind == AutoKind.Drag, "art pilot: a card below the view -> the list is dragged first");
-      Check(!inv.AsSellArt(7).Open == false && !new InventoryScreen { Open = true, ArtTab = true, ArtBulk = false }.AsSellArt(7).Open && !new InventoryScreen { Open = true, EquipTab = true, Bulk = true }.AsSellArt(7).Open, "art pilot: the list is open only in the artifact tab's bulk sale");
-      // a ticked card that is not wanted comes off
-      var inv2 = artBulk(true, new List<long> { 9001, 9002 }); var p2 = new SellPilot(g);
-      var wanted2 = new HashSet<long> { 9001 };
-      a = p2.Step(new SellView { NowMs = 1000, Foreground = true, W = W, H = H, U = U, Screen = inv2.AsSellArt(7), Wanted = wanted2, Row1 = row1 });
-      Check(a.Kind == AutoKind.None, "art pilot: nothing wanted left to tick (done or waiting)");
-    }
-
-    // --- the promotion (Locate owner)
-    var art = new ArtPromoteInfo { Uid = 5001, Need = 2, Cap = 10, Via = "copy", Copy = 5002 }; art.Copies.AddRange(new long[] { 5002, 5003 });
-    var req = new LocateRequest { Id = "r", Purpose = "artPromote", Art = art };
-    Func<ClickTarget, ClickRequest> L = tg => new ClickRequest { Owner = ClickOwner.Locate, Target = tg, AutoOn = true, Front = true, CellOk = new HashSet<long> { 5001 } };
-    Func<ClickGate> LOn = () => new ClickGate { ArtLocateAuto = true };
-    var u3 = new long[] { 5010, 5001, 5002 };
-    Func<int, InventoryScreen> artSel = sel => { var i = new InventoryScreen { Open = true, ArtTab = true, ArtBulkKnown = true, ArtMode = -1, ArtSelKnown = true, ArtSel = sel, ListPtr = 7, List = new RFX.ListRead { ScrollY = 0, Cols = 7, RowUnits = 116, First = 0, Last = 27 } }; i.Uids.AddRange(u3); return i; };
-    foreach (var tg in new[] { ClickTarget.ArtTab, ClickTarget.ArtCell, ClickTarget.ArtWorkshop, ClickTarget.ArtPromoteTab, ClickTarget.ArtMatCell, ClickTarget.ArtListDrag, ClickTarget.ArtMatDrag }) {
-      var g0 = new ClickGate { NoLocateClicks = true }; var r0 = g0.Check(L(tg), S(artSel(2)), 0);
-      Check(!r0.Allowed && g0.HaltReason(ClickOwner.Locate) == "artifact", "art auto: switch off -> " + tg + " is never clicked on the promotion (" + r0.Reason + ")");
-      var g1 = new ClickGate(); r0 = g1.Check(L(tg), S(artSel(2)), 0);
-      Check(!r0.Allowed && g1.HaltReason(ClickOwner.Locate) == "artifact", "art auto: a request that is not an auto artifact one never clicks " + tg);
-    }
-    var gL = LOn(); var rl = gL.Check(L(ClickTarget.InvEquipTab), S(artSel(2)), 0); Check(!rl.Allowed && gL.HaltReason(ClickOwner.Locate) == "artifact", "art auto: the promotion clicks no gear target");
-    gL = LOn(); Check(gL.Check(L(ClickTarget.ArtTab), equipNormal, 0).Allowed, "art auto: promotion: «Артефакт» tab -> allowed");
-    gL = LOn(); rl = gL.Check(L(ClickTarget.ArtTab), equipBulk, 0); Check(!rl.Allowed && rl.Reason == "bulk", "art auto: promotion: the equipment sale is not left by the app");
-    var cellReq = L(ClickTarget.ArtCell); cellReq.CellUid = 5001;
-    gL = LOn(); Check(gL.Check(cellReq, S(artSel(0)), 0).Allowed, "art auto: promotion: the artifact's cell in the normal list -> allowed");
-    cellReq = L(ClickTarget.ArtCell); cellReq.CellUid = 5002;
-    gL = LOn(); rl = gL.Check(cellReq, S(artSel(0)), 0); Check(!rl.Allowed && rl.Reason == "cell", "art auto: promotion: a neighbour's cell -> stop");
-    cellReq = L(ClickTarget.ArtCell); cellReq.CellUid = 0;
-    gL = LOn(); rl = gL.Check(cellReq, S(artSel(0)), 0); Check(!rl.Allowed && rl.Reason == "cell", "art auto: promotion: a cell not worked out -> stop");
-    cellReq = L(ClickTarget.ArtCell); cellReq.CellUid = 5001;
-    gL = LOn(); rl = gL.Check(cellReq, bulkNone, 0); Check(!rl.Allowed && rl.Reason == "bulk", "art auto: promotion: never a cell in the bulk-sale mode (" + rl.Reason + ")");
-    gL = LOn(); Check(gL.Check(L(ClickTarget.ArtWorkshop), S(artSel(2)), 0).Allowed, "art auto: «Мастерская» with the artifact's card open -> allowed");
-    gL = LOn(); rl = gL.Check(L(ClickTarget.ArtWorkshop), S(artSel(3)), 0); Check(!rl.Allowed && rl.Reason == "cell", "art auto: «Мастерская» with another card open -> stop");
-    gL = LOn(); rl = gL.Check(L(ClickTarget.ArtWorkshop), S(artSel(0)), 0); Check(!rl.Allowed && rl.Reason == "cell", "art auto: «Мастерская» with no card open -> stop");
-    Func<long, int, long[], long[], int[], int[], ArtWorkshopScreen> Wk = (uid, tab, mats, lv, sel, itemIds) => { var w = new ArtWorkshopScreen { Open = true, Tab = tab, Uid = uid, Level = 10, Stage = 0, PanelKnown = mats != null };
-      if (mats != null) { w.Mats.AddRange(mats); foreach (var l in lv) w.MatLevels.Add((int)l); foreach (var x in sel) w.MatSel.Add(x); foreach (var x in itemIds) w.MatItemIds.Add(x); w.MatList = new RFX.ListRead { ScrollY = 0, Cols = 3, RowUnits = 114, First = 0, Last = 8 }; } return w; };
-    Func<ArtWorkshopScreen, ScreenState> SW = w => ScreenState.Classify(new ScreenInputs { ArtWs = w, Inv = artSel(2) }, 0);
-    var matsA = new long[] { 5003, 5002, 0 }; var lvA = new long[] { 7, 1, -1 }; var idsA = new[] { 200088, 200088, 16100 };
-    gL = LOn(); Check(gL.Check(L(ClickTarget.ArtPromoteTab), SW(Wk(5001, 1, null, null, null, null)), 0).Allowed, "art auto: the «Продвинуть» tab from «Улучшить» -> allowed");
-    gL = LOn(); rl = gL.Check(L(ClickTarget.ArtPromoteTab), SW(Wk(5001, 2, matsA, lvA, new int[0], idsA)), 0); Check(!rl.Allowed && rl.Reason == "screen", "art auto: already on the «Продвинуть» tab -> stop");
-    gL = LOn(); rl = gL.Check(L(ClickTarget.ArtPromoteTab), SW(Wk(9999, 1, null, null, null, null)), 0); Check(!rl.Allowed && rl.Reason == "cell", "art auto: the workshop holds another artifact -> stop");
-    gL = LOn(); rl = gL.Check(L(ClickTarget.ArtPromoteTab), artNormal, 0); Check(!rl.Allowed && rl.Reason == "screen", "art auto: «Продвинуть» tab on the inventory -> stop");
-    Func<int, long, ICollection<int>, ClickRequest> MatReq = (idx, uid, items) => { var q = L(ClickTarget.ArtMatCell); q.MatIndex = idx; q.CellUid = uid; q.CellOk = new HashSet<long> { 5001, 5002, 5003 }; q.ItemOk = items; return q; };
-    var wsP = Wk(5001, 2, matsA, lvA, new int[0], idsA);
-    gL = LOn(); Check(gL.Check(MatReq(2, 5002, null), SW(wsP), 0).Allowed, "art auto: the planned copy (entry 2) -> allowed");
-    gL = LOn(); Check(gL.Check(MatReq(1, 5003, null), SW(wsP), 0).Allowed, "art auto: the other planned copy (entry 1) -> allowed");
-    var art2 = Wk(5001, 2, new long[] { 5003, 5002, 5099 }, new long[] { 7, 1, 1 }, new int[0], idsA);
-    gL = LOn(); rl = gL.Check(MatReq(3, 5099, null), SW(art2), 0); Check(!rl.Allowed && rl.Reason == "cell", "art auto: a copy the plan did not name -> stop");
-    gL = LOn(); rl = gL.Check(MatReq(2, 5003, null), SW(wsP), 0); Check(!rl.Allowed && rl.Reason == "cell", "art auto: the click's uid must be the entry's own -> stop");
-    gL = LOn(); rl = gL.Check(MatReq(0, 0, null), SW(wsP), 0); Check(!rl.Allowed && rl.Reason == "cell", "art auto: no entry under the click -> stop");
-    gL = LOn(); rl = gL.Check(MatReq(4, 0, null), SW(wsP), 0); Check(!rl.Allowed && rl.Reason == "cell", "art auto: an entry past the list -> stop");
-    gL = LOn(); rl = gL.Check(MatReq(2, 5002, null), SW(Wk(5001, 2, matsA, lvA, new[] { 2 }, idsA)), 0); Check(!rl.Allowed && rl.Reason == "cell", "art auto: a copy that is chosen already would be taken off -> stop");
-    gL = LOn(); rl = gL.Check(MatReq(3, 0, null), SW(wsP), 0); Check(!rl.Allowed && rl.Reason == "cell", "art auto: an essence the plan did not name (no item id given) -> stop");
-    gL = LOn(); rl = gL.Check(MatReq(3, 0, new HashSet<int> { 16100 }), SW(wsP), 0); Check(rl.Allowed, "art auto: the planned essence (its item id) -> allowed");
-    gL = LOn(); rl = gL.Check(MatReq(3, 0, new HashSet<int> { 16101 }), SW(wsP), 0); Check(!rl.Allowed && rl.Reason == "cell", "art auto: another essence item -> stop");
-    gL = LOn(); rl = gL.Check(MatReq(1, 5003, null), SW(Wk(5001, 1, null, null, null, null)), 0); Check(!rl.Allowed && rl.Reason == "screen", "art auto: a copy click on the «Улучшить» tab -> stop");
-    gL = LOn(); rl = gL.Check(MatReq(1, 5001, null), SW(Wk(5001, 2, new long[] { 5001 }, new long[] { 3 }, new int[0], new[] { 1 })), 0); Check(!rl.Allowed && rl.Reason == "cell", "art auto: the open artifact itself is never a copy");
-    // the effects
-    {
-      var g2 = LOn(); var q = MatReq(2, 5002, null);
-      g2.Arm(ClickOwner.Locate, ClickTarget.ArtMatCell, ClickGate.Expect(q, SW(wsP)), 0);
-      g2.Observe(SW(wsP), ClickGate.GemEffectMs + 10);
-      Check(g2.HaltReason(ClickOwner.Locate) == "nochange", "art auto: the copy does not get chosen -> stop");
-      g2 = LOn(); g2.Arm(ClickOwner.Locate, ClickTarget.ArtMatCell, ClickGate.Expect(q, SW(wsP)), 0);
-      g2.Observe(SW(Wk(5001, 2, matsA, lvA, new[] { 2 }, idsA)), 500);
-      Check(!g2.Pending(ClickOwner.Locate) && !g2.Halted(ClickOwner.Locate), "art auto: m_vMatSelect holds the copy -> done");
-      g2 = LOn(); var qc = cellReq; g2.Arm(ClickOwner.Locate, ClickTarget.ArtCell, ClickGate.Expect(qc, S(artSel(0))), 0);
-      g2.Observe(S(artSel(2)), 300);
-      Check(!g2.Pending(ClickOwner.Locate), "art auto: the artifact's card opens -> done");
-      g2 = LOn(); g2.Arm(ClickOwner.Locate, ClickTarget.ArtWorkshop, ClickGate.Expect(L(ClickTarget.ArtWorkshop), S(artSel(2))), 0);
-      g2.Observe(S(artSel(2)), ClickGate.EffectMs + 100);
-      Check(!g2.Halted(ClickOwner.Locate), "art auto: the workshop may take a moment to open (slow effect window)");
-      g2.Observe(S(artSel(2)), ClickGate.SlowEffectMs + 100);
-      Check(g2.HaltReason(ClickOwner.Locate) == "nochange", "art auto: ... but not forever");
-    }
-
-    // --- the promotion pilot: what it decides, and never the last button
-    var geo = (GameGeometry)null;
-    Func<LocateStep, InventoryScreen, ArtWorkshopScreen, ArtView> V = (st, iv, ws) => new ArtView { NowMs = 10000, Foreground = true, W = W, H = H, U = U, Step = st, Inv = iv, Ws = ws, Art = art, Geometry = geo };
-    string why;
-    Func<InventoryScreen, ArtWorkshopScreen, ArtView> VN = (iv, ws) => V(LocateGuide.NextArt(req, iv, ws), iv, ws);
-    Eq(ArtTodo.ArtTab, ArtLocateAuto.Decide(VN(new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true }, null), out why), "art pilot: the equipment tab -> «Артефакт»");
-    Eq(ArtTodo.Hint, ArtLocateAuto.Decide(VN(new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true, Bulk = true }, null), out why), "art pilot: the equipment sale -> the player leaves it"); Eq("bulk", why, "art pilot: ... because of the bulk sale");
-    Eq(ArtTodo.Hint, ArtLocateAuto.Decide(VN(new InventoryScreen { Open = true, EquipTab = true }, null), out why), "art pilot: the equipment mode unreadable -> no click");
-    Eq(ArtTodo.Hint, ArtLocateAuto.Decide(VN(null, null), out why), "art pilot: nothing open, the city's button not seen -> a hint"); Eq("no_city", why, "art pilot: ... no_city");
-    {   // the way to the inventory from any screen (lab 1.6.66.377: an earlier request left the Foundry open, the pilot waited at openInventory)
-      var vc = VN(null, null); vc.CityButton = true; Eq(ArtTodo.InventoryButton, ArtLocateAuto.Decide(vc, out why), "art pilot: the city -> «Инвентарь»");
-      var vh = VN(null, null); vh.HeroScreenOpen = true; Eq(ArtTodo.HeroBack, ArtLocateAuto.Decide(vh, out why), "art pilot: the hero screen -> its back arrow");
-      var vf = VN(null, null); vf.OtherFormOpen = true; vf.CityButton = true;
-      Check(ArtLocateAuto.Decide(vf, out why) == ArtTodo.Hint && why == "form" && ArtLocateAuto.NeedsCityBack(vf), "art pilot: the Foundry / gem screen on top -> the host's back arrow");
-      Check(!ArtLocateAuto.NeedsCityBack(vc) && !ArtLocateAuto.NeedsCityBack(VN(new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true }, null)), "art pilot: no back arrow in the city / the inventory");
-      Check(ArtLocateAuto.NeedsCityButton(vc.Step, false, false) && !ArtLocateAuto.NeedsCityButton(vc.Step, true, false) && !ArtLocateAuto.NeedsCityButton(vc.Step, false, true), "art pilot: the city button is looked for only on the city");
-      var hg = new HeroGeometry(); var ap = new ArtPilot();
-      var mc = ap.Step(vc);
-      Check(mc.Todo == ArtTodo.InventoryButton && mc.Action.Kind == AutoKind.Click && Math.Abs(mc.Action.X - (W - vc.InvDX * U)) < 1 && Math.Abs(mc.Action.Y - (H - hg.HeroesBtnDY * U)) < 1, "art pilot: «Инвентарь» in the city's bar");
-      ap = new ArtPilot(); var mh = ap.Step(vh);
-      Check(mh.Todo == ArtTodo.HeroBack && Math.Abs(mh.Action.X - hg.BackX * U) < 1 && Math.Abs(mh.Action.Y - hg.BackY * U) < 1, "art pilot: the hero screen's back arrow");
-      var gw = LOn(); var cityS = ScreenState.Classify(new ScreenInputs { CityForm = true }, 0);
-      var rwy = gw.Check(L(ClickTarget.CityInventory), cityS, 0);
-      Check(rwy.Allowed || gw.HaltReason(ClickOwner.Locate) != "artifact", "art auto: the promotion may press the city's «Инвентарь» (" + rwy.Reason + ")");
-      gw = LOn(); var rg = gw.Check(L(ClickTarget.InvEquipTab), S(artSel(2)), 0);
-      Check(!rg.Allowed && gw.HaltReason(ClickOwner.Locate) == "artifact", "art auto: ... but still no gear target");
-    }
-    Eq(ArtTodo.Hint, ArtLocateAuto.Decide(VN(new InventoryScreen { Open = true, ArtTab = true, ArtBulkKnown = true, ArtMode = 2, ArtBulk = true, Uids = { 5001 } }, null), out why), "art pilot: the artifact tab's bulk sale -> a hint");
-    Eq(ArtTodo.Cell, ArtLocateAuto.Decide(VN(artSel(0), null), out why), "art pilot: the artifact in the list -> its cell");
-    Eq(ArtTodo.Workshop, ArtLocateAuto.Decide(VN(artSel(2), null), out why), "art pilot: its card open -> «Мастерская»");
-    Eq(ArtTodo.Cell, ArtLocateAuto.Decide(VN(artSel(3), null), out why), "art pilot: another card open -> the artifact's cell again, no «Мастерская»");
-    Eq(ArtTodo.PromoteTab, ArtLocateAuto.Decide(VN(null, Wk(5001, 1, null, null, null, null)), out why), "art pilot: the workshop on «Улучшить» -> «Продвинуть» tab");
-    Eq(ArtTodo.Hint, ArtLocateAuto.Decide(VN(null, new ArtWorkshopScreen { Open = true, Tab = 1, Uid = 5001, Level = 8 }), out why), "art pilot: below the cap -> «Улучшить» first is the player's");
-    Eq(ArtTodo.Hint, ArtLocateAuto.Decide(VN(null, Wk(9999, 2, matsA, lvA, new int[0], idsA)), out why), "art pilot: the workshop holds another artifact -> a hint");
-    var pk = VN(null, wsP);
-    Eq(ArtTodo.MatCell, ArtLocateAuto.Decide(pk, out why), "art pilot: «Продвинуть» panel -> the planned copy"); Eq(2, pk.Step.Pos, "art pilot: ... place 2");
-    Eq(ArtTodo.Hint, ArtLocateAuto.Decide(VN(null, Wk(5001, 2, matsA, lvA, new[] { 2, 1 }, idsA)), out why), "art pilot: all chosen -> «Продвинуть» is the player's"); Eq("player", why, "art pilot: ... said so");
-    Eq(ArtTodo.Hint, ArtLocateAuto.Decide(VN(null, Wk(5001, 2, matsA, lvA, new[] { 2, 3 }, idsA)), out why), "art pilot: a wrong essence chosen -> the player takes it off"); Eq("wrong", why, "art pilot: ... wrong");
-    var artNoPlan = new ArtPromoteInfo { Uid = 5001, Need = 1, Cap = 10, Via = "none" };
-    var reqNo = new LocateRequest { Id = "r", Purpose = "artPromote", Art = artNoPlan };
-    var vNo = new ArtView { NowMs = 10000, Foreground = true, W = W, H = H, U = U, Step = LocateGuide.NextArt(reqNo, null, wsP), Ws = wsP, Art = artNoPlan };
-    Eq(ArtTodo.Hint, ArtLocateAuto.Decide(vNo, out why), "art pilot: no plan -> a copy of the game's own order is the player's to pick"); Eq("plan", why, "art pilot: ... not planned");
-    var artEss = new ArtPromoteInfo { Uid = 5001, Need = 1, Cap = 10, Via = "essence" };
-    var vEss = new ArtView { NowMs = 10000, Foreground = true, W = W, H = H, U = U, Step = LocateGuide.NextArt(new LocateRequest { Id = "r", Purpose = "artPromote", Art = artEss }, null, wsP), Ws = wsP, Art = artEss };
-    Eq(ArtTodo.MatCell, ArtLocateAuto.Decide(vEss, out why), "art pilot: the plan spends an essence -> the essence stub is clicked");
-    var artEss2 = new ArtPromoteInfo { Uid = 5001, Need = 1, Cap = 10, Via = "copy" };
-    var vEss2 = new ArtView { NowMs = 10000, Foreground = true, W = W, H = H, U = U, Step = new LocateStep { Kind = LocateKind.ArtMatPick, Pos = 3 }, Ws = wsP, Art = artEss2 };
-    Eq(ArtTodo.Hint, ArtLocateAuto.Decide(vEss2, out why), "art pilot: an essence with a copy plan -> a hint");
-
-    // the pilot's actions: a click at the card's centre, a drag when it is off screen, the buttons' centres; never the last button
-    {
-      var p = new ArtPilot();
-      var mv = p.Step(VN(new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true }, null));
-      var tabRect = ArtFrames.Rect(geo, "inventory.leftTab.artifact", W, H, U);
-      Check(mv.State == "work" && mv.Todo == ArtTodo.ArtTab && mv.Action.Kind == AutoKind.Click && Math.Abs(mv.Action.X - tabRect.CX) < 1 && Math.Abs(mv.Action.Y - tabRect.CY) < 1, "art pilot: the tab click is at the middle of the «Артефакт» button");
-      p = new ArtPilot(); mv = p.Step(VN(artSel(0), null));
-      var iv = artSel(0); var stIn = LocateGuide.NextArt(req, iv, null);
-      int ci = ClickGate.ListCardIndexAt(geo, "inventory.artList", iv.List, 7, 116, mv.Action.X, mv.Action.Y, W, H, U);
-      Check(mv.Todo == ArtTodo.Cell && mv.Action.Kind == AutoKind.Click && ci == 1 && iv.Uids[ci] == 5001, "art pilot: the cell click lands on the artifact's own card (index " + ci + ")");
-      var far = new long[60]; for (int i = 0; i < 60; i++) far[i] = 6000 + i; far[50] = 5001;
-      var ivF = new InventoryScreen { Open = true, ArtTab = true, ArtBulkKnown = true, ArtMode = -1, ArtSelKnown = true, ArtSel = 1, Uids = new List<long>(far), List = new RFX.ListRead { ScrollY = 0, Cols = 7, RowUnits = 116, First = 0, Last = 27 } };
-      p = new ArtPilot(); mv = p.Step(VN(ivF, null));
-      Check(mv.Todo == ArtTodo.Cell && mv.Action.Kind == AutoKind.Drag && mv.Action.DY < 0 && mv.Drag, "art pilot: a card far down the list -> the list is dragged up");
-      var wsRect = ArtFrames.Rect(geo, "inventory.artWorkshop", W, H, U);
-      p = new ArtPilot(); mv = p.Step(VN(artSel(2), null));
-      Check(mv.Todo == ArtTodo.Workshop && Math.Abs(mv.Action.X - wsRect.CX) < 1 && Math.Abs(mv.Action.Y - wsRect.CY) < 1, "art pilot: «Мастерская» at the middle of its button");
-      var ptRect = ArtFrames.Rect(geo, "artifact.tab.promote", W, H, U);
-      p = new ArtPilot(); mv = p.Step(VN(null, Wk(5001, 1, null, null, null, null)));
-      Check(mv.Todo == ArtTodo.PromoteTab && Math.Abs(mv.Action.X - ptRect.CX) < 1 && Math.Abs(mv.Action.Y - ptRect.CY) < 1, "art pilot: the «Продвинуть» tab at the middle of its button");
-      p = new ArtPilot(); mv = p.Step(VN(null, wsP));
-      int mi = ClickGate.ListCardIndexAt(geo, "artifact.matList", wsP.MatList, 3, 114, mv.Action.X, mv.Action.Y, W, H, U);
-      Check(mv.Todo == ArtTodo.MatCell && mv.Action.Kind == AutoKind.Click && mi == 1 && wsP.Mats[mi] == 5002 && mv.MatIndex == 2, "art pilot: the copy click lands on the planned copy's card (index " + mi + ")");
-      // user busy / background / paused: no action
-      p = new ArtPilot(); var vb = VN(artSel(2), null); vb.UserBusy = true; mv = p.Step(vb);
-      Check(mv.State == "paused" && mv.Action.Kind == AutoKind.None, "art pilot: the player uses the mouse -> it waits");
-      p = new ArtPilot(); vb = VN(artSel(2), null); vb.Foreground = false; mv = p.Step(vb);
-      Check(mv.State == "background" && mv.Action.Kind == AutoKind.None, "art pilot: the game is not in front -> it waits");
-      // the same click again and again stops it
-      p = new ArtPilot(); int made = 0; bool stuck = false;
-      for (int i = 0; i < 12 && !stuck; i++) { var v = VN(new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true }, null); v.NowMs = 10000 + i * 4000; mv = p.Step(v); if (mv.Action.Kind == AutoKind.Click) made++; if (mv.State == "stopped") stuck = true; }
-      Check(stuck && made == ArtPilot.MaxStepClicks && p.Stopped && p.Reason == "stuck", "art pilot: a click that changes nothing is repeated only " + ArtPilot.MaxStepClicks + " times, then it stops (" + made + ")");
-      // whatever the screen says, no action of the pilot is on a button it never presses
-      var screens = new List<ArtView>();
-      var kinds = new[] { null, new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true }, artSel(0), artSel(2), artSel(3), ivF, new InventoryScreen { Open = true, ArtTab = true, ArtBulkKnown = true, ArtMode = 2, ArtBulk = true } };
-      var wss = new ArtWorkshopScreen[] { null, Wk(5001, 1, null, null, null, null), Wk(5001, 2, matsA, lvA, new int[0], idsA), Wk(5001, 2, matsA, lvA, new[] { 2 }, idsA), Wk(5001, 2, matsA, lvA, new[] { 2, 1 }, idsA), Wk(5001, 2, matsA, lvA, new[] { 2, 3 }, idsA),
-        new ArtWorkshopScreen { Open = true, Tab = 1, Uid = 5001, Level = 5 }, Wk(9999, 2, matsA, lvA, new int[0], idsA) };
-      int acts = 0, bad = 0;
-      foreach (var ik in kinds) foreach (var wk in wss) {
-        var v = VN(ik, wk); var pp = new ArtPilot(); mv = pp.Step(v);
-        if (mv.Action.Kind == AutoKind.None) continue;
-        acts++;
-        bool onWs = mv.Todo == ArtTodo.PromoteTab || mv.Todo == ArtTodo.MatCell;   // the workshop is where those buttons are
-        if (onWs && (ClickGate.OnNeverButton(geo, mv.Action.X, mv.Action.Y, W, H, U) || (mv.Action.Kind == AutoKind.Drag && ClickGate.OnNeverButton(geo, mv.Action.X, mv.Action.Y + mv.Action.DY, W, H, U)))) bad++;
-      }
-      Check(acts >= 6 && bad == 0, "art pilot: of " + acts + " actions over every screen, none lies on «Продвинуть» / «Улучшить» (" + bad + ")");
-    }
-
-    // --- the buttons never pressed: in no whitelist, and no click point of the artifact flows is inside them
-    foreach (string nm in Enum.GetNames(typeof(ClickTarget))) Check(!(nm.Contains("PromoteBtn") || nm.Contains("PromoteButton") || nm.Contains("Upgrade") || nm.Contains("Enhance") || nm.Contains("SellButton") || nm.Contains("SelectAll") || nm.Contains("Lock") || nm.EndsWith("Break")), "art gate: no target named " + nm + " is a final button, «Все» or a lock");
-    foreach (var nk in ClickGate.NeverKeys) {
-      bool placed = false;
-      foreach (ClickTarget tg in Enum.GetValues(typeof(ClickTarget))) if (ClickGate.KeyOf(tg) == nk) placed = true;
-      Check(!placed, "art gate: the button key " + nk + " places no target");
-      foreach (ClickOwner ow in Enum.GetValues(typeof(ClickOwner))) Check(!ClickGate.WhitelistText(ow).Contains(nk) && !ClickGate.WhitelistText(ow).Contains("PromoteBtn"), "art gate: " + ow + " whitelist does not name " + nk);
-    }
-    foreach (ClickTarget tg in Enum.GetValues(typeof(ClickTarget))) {
-      string key = ClickGate.KeyOf(tg); if (key == "") continue;
-      var rc = key == "inventory.artBulkSell" ? null : ArtFrames.Rect(null, key, W, H, U);
-      double cx, cy;
-      if (rc != null) { cx = rc.CX; cy = rc.CY; } else { var pb = SellHint.ArtBulkRect(W, H, U); cx = pb[0] + pb[2] / 2.0; cy = pb[1] + pb[3] / 2.0; }
-      Check(!ClickGate.OnNeverButton(null, cx, cy, W, H, U), "art gate: the middle of " + tg + " (" + key + ") is not on «Продвинуть» / «Улучшить»");
-    }
-    var pbtn = ArtFrames.Rect(null, "artifact.promoteBtn", W, H, U);
-    Check(ClickGate.OnNeverButton(null, pbtn.CX, pbtn.CY, W, H, U) && !ClickGate.OnNeverButton(null, 5, 5, W, H, U), "art gate: the guard knows «Продвинуть» (research numbers) and lets the rest of the screen be");
-    string rw = Path.Combine(WebRoot(), "data", "app-geometry", "1.6.39.829.1.json");
-    if (File.Exists(rw)) {
-      var rg = GameGeometry.Parse(File.ReadAllText(rw, Encoding.UTF8), "1.6.39.829.1");
-      var pb2 = rg != null ? ArtFrames.Rect(rg, "artifact.promoteBtn", W, H, U) : null;
-      Check(pb2 != null && ClickGate.OnNeverButton(rg, pb2.CX, pb2.CY, W, H, U), "art gate: the guard knows «Продвинуть» by the site's geometry too");
-      bool ok = true;
-      foreach (ClickTarget tg in Enum.GetValues(typeof(ClickTarget))) { string key = ClickGate.KeyOf(tg); if (key == "" || key == "inventory.artBulkSell") continue; var rc = ArtFrames.Rect(rg, key, W, H, U); if (rc == null || ClickGate.OnNeverButton(rg, rc.CX, rc.CY, W, H, U)) ok = false; }
-      Check(ok, "art gate: with the site's geometry no artifact button's middle is on «Продвинуть» / «Улучшить»");
-    }
-    var wsEss = new ArtWorkshopScreen(); Check(wsEss.MatItemIds.Count == 0, "art workshop: item ids start empty");
-  }
-
-  // Storage cleanup without auto click (src/SellHint.cs): the step and the frames from what the inventory shows
   static void SellHintTests() {
     Console.WriteLine("Sell hint (storage cleanup without auto click)");
     double W = 1920, H = 1009, U = Ui.Unit(W, H);
@@ -9209,19 +4535,6 @@ static partial class CoreTests {
       cb.Drop(); cb.MustSearch = false;
       Check(!cb.Look(true, 6000) && !cb.Look(false, 6000 + CityBar.SettleMs + 10) && !cb.Look(true, 6000 + CityBar.SettleMs + 20), "city bar: after a drop a lost picture starts the settling over");
     }
-    {   // «Инвентарь» changed nothing on the city: the bar read again and pressed once more, then the stop
-      var cg = new ClickGate(); var city = ScreenState.Classify(new ScreenInputs { CityForm = true }, 0);
-      var rq = new ClickRequest { Owner = ClickOwner.Locate, Target = ClickTarget.CityInventory, AutoOn = true, Front = true };
-      cg.Arm(ClickOwner.Locate, ClickTarget.CityInventory, ClickGate.Expect(rq, city), 0);
-      cg.Observe(city, ClickGate.SlowEffectMs + 20);
-      Check(!cg.Halted(ClickOwner.Locate) && !cg.Pending(ClickOwner.Locate) && cg.CityAgainDue.Contains(ClickOwner.Locate), "city again: the first press without effect on the city is pressed again");
-      Check(cg.Check(rq, city, ClickGate.SlowEffectMs + 500).Allowed, "city again: ... the gate allows the one more press");
-      cg.CityAgainDue.Clear(); cg.Arm(ClickOwner.Locate, ClickTarget.CityInventory, ClickGate.Expect(rq, city), 9000);
-      cg.Observe(city, 9000 + ClickGate.SlowEffectMs + 20);
-      Eq("nochange", cg.HaltReason(ClickOwner.Locate), "city again: the second press without effect stops (once a run)");
-      cg.Resume(ClickOwner.Locate); cg.Arm(ClickOwner.Locate, ClickTarget.CityInventory, ClickGate.Expect(rq, city), 20000); cg.Observe(city, 20000 + ClickGate.SlowEffectMs + 20);
-      Check(!cg.Halted(ClickOwner.Locate) && cg.CityAgainDue.Contains(ClickOwner.Locate), "city again: a new run may press again once");
-    }
     // a tiny game window (the owner's second PC, client 526x296): U, the bar's click point and its frame
     {
       double tW = 526, tH = 296, tU = Ui.Unit(tW, tH); var hgt = new HeroGeometry();
@@ -9245,580 +4558,938 @@ static partial class CoreTests {
     Check(!OverlayGate.Clip(new[] { 1925, 10, 100, 50 }, 0, 0, 1920, 1009, out clip), "gate: a frame outside the client rect is dropped");
   }
 
-  static void SellPilotTests() {
-    Console.WriteLine("Sell pilot");
-    var g = new SellGeometry();   // as measured on the game
-    var game = new FakeSellGame(g, 150, 60);
-    var rnd = new Random(3); var all = new List<long>(game.Pos.Keys); var want = new HashSet<long>();
-    while (want.Count < 60) want.Add(all[rnd.Next(all.Count)]);
-    var p = new SellPilot(g);
-    string st = RunSell(p, game, want, 30000);
-    Check(st == "done" && want.IsSubsetOf(game.Sel) && game.Sel.Count == want.Count && p.Extra == 0,
-          "60 items over 150 rows (all parts): all selected, nothing else (" + game.Clicks + " clicks, " + game.Drags + " drags, " + st + ")");
-    Check(game.Clicks <= want.Count * 2.0, "few extra clicks with the rows' phase from the screen (" + game.Clicks + " for " + want.Count + ", «Быстрое улучшение» closed too)");
-    Check(game.DangerClicks == 0, "never a click on «Быстрое улучшение» (it opens after a click on an item below +16)");
 
-    // fast marking on the game's exact scroll (the inventory): a click's answer (the choice changed) is judged at once and the next item in
-    // view clicked at once; a click or drag the host could not send is taken back (no miss, no drag the list ignored)
-    {
-      var gi = SellGeometry.Inventory(1920, 1009, 8); var fi = new FakeSellGame(gi, 40, 0, 8) { HasPopup = false };
-      var wi = new HashSet<long> { 5000, 5002, 5005 };
-      Func<long, SellView> vi = t => new SellView { NowMs = t, Foreground = true, W = fi.W, H = fi.H, U = fi.U, Screen = fi.Screen(), Wanted = wi, Row1 = fi.Row1, NeedExact = true };
-      var pi = new SellPilot(gi);
-      var a1 = pi.Step(vi(0)); fi.Act(a1); pi.Sent();
-      Check(a1.Kind == AutoKind.Click && pi.Polling, "fast: the first item in view is clicked, its answer awaited (polled)");
-      var a2 = pi.Step(vi(50));
-      Check(a2.Kind == AutoKind.Click && Math.Abs(a2.X - a1.X) > 1, "fast: answered within 50 ms, the next item is clicked at once (not after " + SellPilot.AfterClickMs + " ms)");
-      pi.NotSent();
-      Check(!pi.Polling, "fast: a click the host could not send awaits nothing");
-      var a3 = pi.Step(vi(100));
-      Check(a3.Kind == AutoKind.Click && Math.Abs(a3.X - a2.X) < 0.5 && Math.Abs(a3.Y - a2.Y) < 0.5 && !pi.Trace.Contains("hit 0"), "fast: ... and is clicked again, no miss counted (" + pi.Trace + ")");
-      fi.Act(a3); pi.Sent();
-      // a sparse list over 150 rows: drags start in the view; up drags (later rows) may end above it up to 0.03 H from the top edge, down drags
-      // end inside it (never towards «Массовая продажа» / «Продать» under the list); the gain off by up to 12 % (live 1.0 up, 0.84 down)
-      foreach (double[] gains in new[] { new[] { 1.0, 0.84 }, new[] { 1.12, 0.95 }, new[] { 0.9, 0.78 } }) {
-        var gl = new FakeSellGame(gi, 150, 0, 8) { HasPopup = false, Gain = gains[0], GainDown = gains[1] };
-        var wl = new HashSet<long>(); foreach (var kv in gl.Pos) if (kv.Value[0] % 9 == 4 && kv.Value[1] == 3) wl.Add(kv.Key);
-        wl.Add(5001);   // (and one at the top again after the sweep: a down drag)
-        var pl = new SellPilot(gi); string sl = "timeout"; var ends = new List<double[]>(); bool back = false;
-        for (long t = 0; t < 600000; t += 50) {
-          var a = pl.Step(new SellView { NowMs = t, Foreground = true, W = gl.W, H = gl.H, U = gl.U, Screen = gl.Screen(), Wanted = wl, Row1 = gl.Row1, NeedExact = true });
-          if (a.Kind == AutoKind.Drag) ends.Add(new[] { a.Y, a.Y + a.DY });
-          if (a.Kind == AutoKind.Click && a.Y > 0 && !back && gl.Sel.Count == wl.Count - 1) { back = true; gl.Sel.Remove(5001); }   // the player took one off: back up for it
-          gl.Act(a);
-          if (pl.State == "done" || pl.State == "failed") { sl = pl.State; break; }
-        }
-        double vt = gi.ViewTopPx(gl.U), vb = gi.ViewBottomPx(gl.H, gl.U); bool startIn = true, upOk = true, downOk = true, longer = false, down = false;
-        foreach (var d in ends) {
-          if (d[0] < vt || d[0] > vb) startIn = false;
-          if (d[1] < d[0]) { if (d[1] < 0.03 * gl.H - 0.5) upOk = false; if (d[1] < vt) longer = true; }
-          else { down = true; if (d[1] > vb + 0.5) downOk = false; }
-        }
-        Check(sl == "done" && wl.IsSubsetOf(gl.Sel) && gl.Sel.Count == wl.Count, "drags, gain " + gains[0] + "/" + gains[1] + ": " + wl.Count + " items over 150 rows, all selected, nothing else (" + gl.Drags + " drags, " + gl.Clicks + " clicks, " + sl + ")");
-        Check(startIn && upOk && downOk && down, "drags, gain " + gains[0] + ": every drag starts in the view, up ones end no higher than 0.03 H, down ones inside the view (" + ends.Count + " drags)");
-        Check(longer && gl.Clicks <= wl.Count + 3, "drags, gain " + gains[0] + ": up drags reach past the view's top, few extra clicks (" + gl.Clicks + " for " + wl.Count + ")");
-      }
+  // ---------------------------------------------------------------- 1.6.68: update download, hosts, backoff, 409
+  /// <summary>A fake connection: serves at most <c>Limit</c> bytes and then "stands still" (the read timeout fires: IOException), like a filtered link.</summary>
+  sealed class StallStream : System.IO.Stream {
+    readonly byte[] data; int pos; readonly int end, limit; int served;
+    public StallStream(byte[] d, int from, int to, int limit) { data = d; pos = from; end = to; this.limit = limit; }
+    public override int Read(byte[] b, int o, int c) {
+      if (pos >= end) return 0;
+      if (served >= limit) throw new System.IO.IOException("the read timed out");
+      int n = Math.Min(Math.Min(c, end - pos), limit - served);
+      Array.Copy(data, pos, b, o, n); pos += n; served += n; return n;
     }
-
-    // only rings and amulets: the part filter first (a shorter list), then the items
-    var gp = new FakeSellGame(g, 150, 0); var wp = new HashSet<long>();
-    foreach (var kv in gp.PartOf) if ((kv.Value == 3 || kv.Value == 4) && kv.Key % 7 == 0) wp.Add(kv.Key);
-    var pp = new SellPilot(g);
-    string sp = RunSell(pp, gp, wp, 30000);
-    Check(sp == "done" && gp.Parts.SetEquals(new[] { 3, 4 }) && wp.IsSubsetOf(gp.Sel) && gp.Sel.Count == wp.Count,
-          "two parts only: the list filtered to them, then all " + wp.Count + " selected (" + gp.Drags + " drags, " + sp + ")");
-
-    // the player's filter hides some: «Сбросить» once, before anything is selected
-    var gh = new FakeSellGame(g, 30, 0) { Hidden = true }; gh.Build(); var wh = new HashSet<long> { 5001, 5050, 5100 };
-    var ph = new SellPilot(g);
-    string sh = RunSell(ph, gh, wh, 5000);
-    Check(sh == "done" && wh.IsSubsetOf(gh.Sel) && gh.Sel.Count == 3, "items hidden by the player's filter: «Сбросить», then selected (" + sh + ")");
-
-    // no phase on the screen (drags only estimated): still done, by the clicks' answers
-    var gn = new FakeSellGame(g, 80, 30); var wn = new HashSet<long>(); var alln = new List<long>(gn.Pos.Keys);
-    while (wn.Count < 40) wn.Add(alln[rnd.Next(alln.Count)]);
-    var pn = new SellPilot(g);
-    string sn = RunSell(pn, gn, wn, 30000, false);
-    Check(sn == "done" && wn.IsSubsetOf(gn.Sel) && gn.Sel.Count == wn.Count, "without the screen's phase: all selected, nothing else (" + gn.Clicks + " clicks, " + sn + ")");
-
-    // the list is not at the top when the pilot starts (the player scrolled it): a neighbour hit is taken back at once
-    var off = new FakeSellGame(g, 40, 0); off.Scroll = 0.6 * g.PitchY * 1009;
-    var w2 = new HashSet<long>(); foreach (var kv in off.Pos) if (kv.Value[0] % 3 == 0 && kv.Value[1] % 2 == 0) w2.Add(kv.Key);
-    var p2 = new SellPilot(g);
-    string st2 = RunSell(p2, off, w2, 20000, false);
-    Check(st2 == "done" && w2.IsSubsetOf(off.Sel) && off.Sel.Count == w2.Count, "list scrolled by the player: neighbours hit by mistake are taken back, all selected (" + st2 + ")");
-
-    // the last rows: the list stops at its end, the pilot clicks them there (no endless drags, no stray clicks)
-    var ge = new FakeSellGame(g, 60, 0); var we = new HashSet<long>(); foreach (var kv in ge.Pos) if (kv.Value[0] >= 58 || kv.Value[0] == 2) we.Add(kv.Key);
-    var pe = new SellPilot(g);
-    string se = RunSell(pe, ge, we, 20000);
-    Check(se == "done" && we.IsSubsetOf(ge.Sel) && ge.Sel.Count == we.Count, "items in the last rows (the list's end): all selected, nothing else (" + se + ", " + ge.Drags + " drags, missing " + pe.Missing + ")");
-
-    // the player's own choice stays and is reported (and no filter click then: it would clear it)
-    var g3 = new FakeSellGame(g, 20, 0); g3.Sel.Add(5003); var w3 = new HashSet<long> { 5001, 5010, 99999 };
-    var p3 = new SellPilot(g);
-    string st3 = RunSell(p3, g3, w3, 5000);
-    Check(st3 == "done" && g3.Sel.Contains(5001) && g3.Sel.Contains(5010) && g3.Sel.Contains(5003) && p3.Extra == 1 && p3.Missing == 1 && g3.FilterClicks == 0,
-          "the player's own choice kept (extra 1, no filter clicks), an item not in the list counted missing");
-
-    // the inventory's bulk sale (the app's way): 8 columns, no pop-up, no filter; 1920×1009 and a 4:3-ish 1300×1000
-    foreach (var sz in new[] { new[] { 1920.0, 1009 }, new[] { 1300.0, 1000 } }) {
-      double W = sz[0], H = sz[1], U = Ui.Unit(W, H);
-      var gi = SellGeometry.Inventory(W, U, 8);
-      var gv = new FakeSellGame(gi, 130, 0, 8) { W = W, H = H, U = U, HasPopup = false };
-      var wi = new HashSet<long>(); var ri = new Random(7); var alli = new List<long>(gv.Pos.Keys);
-      while (wi.Count < 150) wi.Add(alli[ri.Next(alli.Count)]);
-      foreach (var kv in gv.Pos) if (kv.Value[0] >= 129) wi.Add(kv.Key);   // the list's last rows too
-      var pi = new SellPilot(gi);
-      string si = RunSell(pi, gv, wi, 40000);
-      Check(si == "done" && wi.IsSubsetOf(gv.Sel) && gv.Sel.Count == wi.Count && gv.FilterClicks == 0,
-            "inventory " + W + "×" + H + ": " + wi.Count + " items over 130 rows selected, nothing else, no filter clicks (" + gv.Clicks + " clicks, " + gv.Drags + " drags, " + si + ")");
-      Check(gv.Clicks <= wi.Count * 1.25, "inventory: about one click per item (" + gv.Clicks + " for " + wi.Count + ")");
-    }
-    // the game has 9 columns where the pilot counts 8: the first click lands in another column - it is taken back, stop
-    {
-      double W = 1920, H = 1009, U = 1009;
-      var g8 = SellGeometry.Inventory(W, U, 8); var g9 = SellGeometry.Inventory(W, U, 9);
-      var gw = new FakeSellGame(g8, 40, 0, 9) { W = W, H = H, U = U, RealX0 = g9.X0, RealPitchX = g9.PitchX, HasPopup = false };
-      var ww = new HashSet<long>(); foreach (var kv in gw.Pos) if (kv.Value[1] >= 6 && kv.Value[0] % 2 == 0) ww.Add(kv.Key);
-      var screen = gw.Screen(); screen.Pos.Clear();   // the pilot's own idea of the list: rows of 8
-      var pw = new SellPilot(g8); long nowW = 0; string sw8 = "timeout"; var order = new List<long>(); foreach (var kv in gw.Pos) order.Add(kv.Key); order.Sort();
-      for (int i = 0; i < 5000; i++) {
-        var sc = gw.Screen(); sc.Pos.Clear(); for (int k = 0; k < order.Count; k++) sc.Pos[order[k]] = new[] { k / 8 + 1, k % 8 + 1 };
-        var t8 = new int[(order.Count + 7) / 8 + 1]; for (int r = 1; r < t8.Length; r++) t8[r] = 1; sc.Types = t8;
-        var a = pw.Step(new SellView { NowMs = nowW, Foreground = true, W = W, H = H, U = U, Screen = sc, Wanted = ww, Phase = double.NaN });
-        gw.Act(a); nowW += 100;   // (a stopped pilot may still take a stray item back: the app performs that click)
-        if ((pw.State == "done" || pw.State == "failed") && a.Kind == AutoKind.None) { sw8 = pw.State; break; }
-      }
-      bool noExtra = true; foreach (var u in gw.Sel) if (!ww.Contains(u)) noExtra = false;
-      Check(sw8 == "failed" && noExtra, "wrong column count: stopped with nothing extra selected (" + sw8 + ", " + gw.Sel.Count + " selected)");
-    }
-
-    // never clicks without the game in front or while the player moves the mouse
-    var g4 = new FakeSellGame(g, 10, 0); var p4 = new SellPilot(g);
-    var a4 = p4.Step(new SellView { NowMs = 0, Foreground = false, W = 1920, H = 1009, U = 1009, Screen = g4.Screen(), Wanted = new HashSet<long> { 5001 } });
-    var a5 = p4.Step(new SellView { NowMs = 100, Foreground = true, UserBusy = true, W = 1920, H = 1009, U = 1009, Screen = g4.Screen(), Wanted = new HashSet<long> { 5001 } });
-    Check(a4.Kind == AutoKind.None && a5.Kind == AutoKind.None, "no clicks with the game behind or the player busy");
+    public override void Write(byte[] b, int o, int c) { throw new NotSupportedException(); }
+    public override void Flush() { }
+    public override long Seek(long o, System.IO.SeekOrigin so) { throw new NotSupportedException(); }
+    public override void SetLength(long v) { throw new NotSupportedException(); }
+    public override bool CanRead { get { return true; } }
+    public override bool CanSeek { get { return false; } }
+    public override bool CanWrite { get { return false; } }
+    public override long Length { get { throw new NotSupportedException(); } }
+    public override long Position { get { throw new NotSupportedException(); } set { throw new NotSupportedException(); } }
   }
 
-  static void HeroPilotTests() {
-    var g = new HeroGeometry(); double W = 1920, H = 1009;
-    {   // lab 4512f342: the plan went away while the pilot had the grid's filter pop-up open with a faction ticked: it clears the faction and closes the pop-up
-      var allC = new long[60]; var tagsC = new Dictionary<long, long[]>();
-      for (int i = 0; i < allC.Length; i++) { allC[i] = (200100 + i) * 100000L; tagsC[allC[i]] = new long[] { HeroGeometry.ClassOrder[i % 6], FakeHeroGame.FactionList[1 + i % 10] }; }
-      var gc = new FakeHeroGame(g, W, H) { All = allC, Tags = tagsC }; gc.Refilter();
-      var hpc = new HeroPilot(g); gc.FilterOpen = true; gc.Camps.Add(FakeHeroGame.FactionList[3]); gc.Refilter(); hpc.FilterDirty = true;
-      for (long t = 0; t < 20000 && hpc.FilterDirty; t += 100) {
-        var vc = new HeroView { NowMs = t, Foreground = true, W = W, H = H, ClientH = H, FilterOpen = gc.FilterOpen, ChosenCamps = gc.Camps.ToArray(), ClassChosen = gc.Class > 0 };
-        var ac = hpc.Cleanup(vc); if (ac != null && ac.Kind == AutoKind.Click) gc.Click(ac.X, ac.Y);
-      }
-      Check(!gc.FilterOpen && gc.Camps.Count == 0 && !hpc.FilterDirty, "the plan gone with the grid's filter pop-up open: the faction is cleared with «Все», the pop-up closed (open " + gc.FilterOpen + ", factions " + gc.Camps.Count + ")");
-      var hpn = new HeroPilot(g);
-      Check(hpn.Cleanup(new HeroView { NowMs = 0, Foreground = true, W = W, H = H, ClientH = H, FilterOpen = true }) == null, "a pop-up the pilot never touched is left alone");
-    }
-    // hint mode: a step label with no frame while the hero grid's filter pop-up covers the screen: the funnel is framed (never a label alone)
-    Check(HintExit.CloseFilterFirst(LocateKind.OpenInventory, false, true, true), "hint: OpenInventory with no frame under the hero filter pop-up: close it first");
-    Check(!HintExit.CloseFilterFirst(LocateKind.OpenInventory, true, true, true) && !HintExit.CloseFilterFirst(LocateKind.OpenInventory, false, false, true) && !HintExit.CloseFilterFirst(LocateKind.Done, false, true, true), "hint: a step with its own frame, no pop-up, or nothing to do keeps its own");
-    {   // the player's class / faction filter left on over the grid, the plan's hero in it but the pilot's clicks find no other hero (live 1.6.66.452:
-        // 24 clicks in the grid's middle, nothing): the filter is cleared and the hero is brought up
-      var allG = new long[80]; var tagsG = new Dictionary<long, long[]>();
-      for (int i = 0; i < allG.Length; i++) { allG[i] = (200100 + i) * 100000L; tagsG[allG[i]] = new long[] { HeroGeometry.ClassOrder[i % 6], FakeHeroGame.FactionList[1 + i % 10] }; }
-      var gg = new FakeHeroGame(g, W, H) { All = allG, Tags = tagsG, Shown = allG[1], DeadWhileFiltered = true };
-      gg.Camps.Add(FakeHeroGame.FactionList[1]); gg.Class = tagsG[allG[0]][0]; gg.Refilter();
-      gg.Shown = gg.Heroes[1]; gg.Blocked = false;
-      HeroView lvg; var hpg = new HeroPilot(g); string stg = RunHero(hpg, gg, gg.Heroes[0], 3000, out lvg, null) + (hpg.Why != "" ? " - " + hpg.Why : "") + ", " + gg.Clicks + " clicks, camps " + gg.Camps.Count + " class " + gg.Class + " open " + gg.FilterOpen;
-      Check(stg.StartsWith("done") && gg.Shown == gg.Heroes[0], "a player's filter left on over the hero grid: the plan's hero is brought up (" + stg + ")");
-    }
-    {   // live 1.6.66 (3440x1440): a faction filter hid the plan's hero, its «Все» brought the hero up (the game shows the first hero of
-        // the new grid) - the pilot said done with the grid's filter pop-up still open over the gear slots, the slot did not open
-        // after 3 clicks. The pop-up is closed with the funnel first, then done.
-      var allF = new long[60]; var tagsF = new Dictionary<long, long[]>();
-      for (int i = 0; i < allF.Length; i++) { allF[i] = (200100 + i) * 100000L; tagsF[allF[i]] = new long[] { HeroGeometry.ClassOrder[i % 6], FakeHeroGame.FactionList[1 + i % 10] }; }
-      var gp = new FakeHeroGame(g, W, H) { All = allF, Tags = tagsF, SelectFirst = true };
-      gp.Camps.Add(FakeHeroGame.FactionList[5]); gp.Refilter();   // the plan's hero (faction 1) is hidden; the grid shows a faction-5 hero
-      Check(Array.IndexOf(gp.Heroes, allF[0]) < 0 && gp.Shown != allF[0], "pop-up case: the plan's hero starts hidden by the faction filter");
-      HeroView lvp; string stp = RunHero(new HeroPilot(g), gp, allF[0], 3000, out lvp, tagsF[allF[0]]);
-      Check(stp == "done" && gp.Shown == allF[0] && !gp.FilterOpen, "the filter's «Все» brings up the plan's hero: its pop-up closed before done (" + stp + ", pop-up open " + gp.FilterOpen + ")");
-      // a pop-up the read keeps seeing (it does not close, or a misread): one funnel click, never a second (that would open it again)
-      var hp2 = new HeroPilot(g); int funnels = 0; string st2 = "";
-      for (long t = 0; t < 10000; t += 100) {
-        var a = hp2.Step(new HeroView { NowMs = t, Foreground = true, W = W, H = H, ClientH = H, Plan = allF[0], Hero = allF[0], Tab = 3, Part = -1, Heroes = allF, FilterOpen = true });
-        if (a == null) { st2 = hp2.State; break; }
-        if (a.Kind == AutoKind.Click && Math.Abs(a.X - g.FunnelX * H) < 2) funnels++;
-      }
-      Check(st2 == "done" && funnels == 1, "pop-up seen open at the plan's hero: one funnel click, then done (" + funnels + " clicks, " + st2 + ")");
-      // a stop says why (the report had an empty reason)
-      var gb0 = new FakeHeroGame(g, W, H) { Heroes = allF, Shown = allF[7], Blocked = true };
-      var pb0 = new HeroPilot(g);
-      for (long t = 0; t < 20000 && pb0.State != "failed"; t += 100) {
-        var v0 = new HeroView { NowMs = t, Foreground = true, W = W, H = H, ClientH = H, Plan = allF[5], Hero = gb0.Shown, Tab = 3, Part = -1, Heroes = gb0.Heroes, GridPtr = gb0.Grid };
-        var a0 = pb0.Step(v0); if (a0 != null && a0.Kind == AutoKind.Click) gb0.Click(a0.X, a0.Y);
-      }
-      Check(pb0.State == "failed" && pb0.Why.Contains("clicks") && pb0.Detail(new HeroView { Plan = allF[5], Hero = allF[7], Heroes = allF }).Contains("plan@5 shown@7"), "hero pilot stop: a reason and a detail line (" + pb0.Why + ")");
-    }
-    {   // noscreen does not stick: the city count starts again once the hero screen was reached; the game behind: waits
-      var hc = new HeroPilot(g); long plan = 200100 * 100000L;
-      Func<long, long, bool, bool, HeroView> hv = (t, hero, btn, fg) => new HeroView { NowMs = t, Foreground = fg, W = W, H = H, ClientH = H, Plan = plan, Hero = hero, HeroesButton = btn };
-      int cityClicks = 0; long ct = 0;
-      for (int i = 0; i < 2; i++) { ct += 4000; if (hc.Step(hv(ct, 0, true, true)).Kind == AutoKind.Click) cityClicks++; }
-      Check(cityClicks == 2, "hero pilot: two «Герои» clicks");
-      ct += 4000; hc.Step(hv(ct, 1, false, true));   // the hero screen was reached
-      ct += 4000; var ha = hc.Step(hv(ct, 0, true, true));
-      Check(hc.State == "work" && ha != null && ha.Kind == AutoKind.Click, "hero pilot: city again after the hero screen: work + click, not noscreen (" + hc.State + ")");
-      var hb = new HeroPilot(g); var hba = hb.Step(hv(1000, 0, false, false));
-      Check(hb.State == "background" && hba != null && hba.Kind != AutoKind.Click, "hero pilot: game not in front: background, not noscreen (" + hb.State + ")");
-    }
-    var heroes = new long[130]; for (int i = 0; i < heroes.Length; i++) heroes[i] = (200100 + i) * 100000L;
-    HeroView lv;
+  static void UpdateDownloadTests() {
+    Console.WriteLine("Update download: hosts, backoff, chunks");
+    // hosts: the feed's own host and scheme, or a listed mirror over https
+    var site = new Uri("https://staging.example.org");
+    Check(UpdateHosts.Allowed(site, new Uri("https://staging.example.org/downloads/a.exe")), "hosts: the same host and scheme");
+    Check(!UpdateHosts.Allowed(site, new Uri("http://staging.example.org/a.exe")), "hosts: another scheme of the same host refused");
+    Check(UpdateHosts.Allowed(site, new Uri("https://wardsage.com/downloads/a.exe")), "hosts: the listed mirror wardsage.com");
+    Check(UpdateHosts.Allowed(site, new Uri("https://WARDSAGE.com/a.exe")), "hosts: the list is case-insensitive");
+    Check(!UpdateHosts.Allowed(site, new Uri("http://wardsage.com/a.exe")), "hosts: the mirror only over https");
+    Check(!UpdateHosts.Allowed(site, new Uri("https://evil.wardsage.com.example/a.exe")) && !UpdateHosts.Allowed(site, new Uri("https://example.com/a.exe")), "hosts: any other host refused");
+    Check(UpdateHosts.Allowed(new Uri("http://localhost:3999"), new Uri("http://localhost:3999/a.exe")), "hosts: a local test site serves its own file");
+    // backoff: 1, 5, 30, 30, 30, 30 minutes, +-20 %, never above 30 minutes; six failed rounds end it
+    Eq(60000, UpdateRetry.DelayMs(1, 0.5), "update backoff: first 1 min");
+    Eq(300000, UpdateRetry.DelayMs(2, 0.5), "update backoff: second 5 min");
+    Eq(1800000, UpdateRetry.DelayMs(3, 0.5), "update backoff: third 30 min");
+    Eq(1800000, UpdateRetry.DelayMs(9, 0.5), "update backoff: stays at 30 min");
+    Eq(48000, UpdateRetry.DelayMs(1, 0.0), "update backoff: jitter -20 %");
+    Eq(72000, UpdateRetry.DelayMs(1, 1.0), "update backoff: jitter +20 %");
+    Eq(1800000, UpdateRetry.DelayMs(4, 1.0), "update backoff: the ceiling is 30 min even with the jitter");
+    Eq(60000, UpdateRetry.DelayMs(0, 0.5), "update backoff: failure 0 is the first");
+    Check(!UpdateRetry.GiveUp(5) && UpdateRetry.GiveUp(6) && UpdateRetry.GiveUp(7), "update backoff: six rounds in a row, then the long timer");
+    Check(UpdateRetry.GiveUpWaitMs >= 3600000, "update backoff: after giving up the next check is hours away, no 20 s loop");
 
-    {   // the shown hero in the middle column at the grid's middle (live 27.09, Элизия / Хассу): the first probe must not
-        // keep clicking its own card; the plan's hero near the top, half scrolled out
-      int okMid = 0, nMid = 0;
-      for (double sc = 0; sc <= 400; sc += 25) {
-        var gm = new FakeHeroGame(g, W, H) { Heroes = heroes, Scroll = sc };
-        double mid = (g.ViewTop * H + H - (1 - g.ViewBottom) * H) / 2, rel = mid - (g.Row1Top * H - sc);
-        int row = (int)Math.Floor(rel / (g.PitchY * H)); if (row < 0) continue;
-        gm.Shown = heroes[row * 3 + 1];
-        nMid++;
-        if (RunHero(new HeroPilot(g), gm, heroes[1], 3000, out lv) == "done" && gm.Shown == heroes[1]) okMid++;
-      }
-      Check(okMid == nMid, "shown hero under the first probe: " + okMid + "/" + nMid + " found");
-    }
-    {   // clicks do nothing for 20 s (a pop-up over the grid, live 27.09): failed, then tried again once it is gone
-      var gb = new FakeHeroGame(g, W, H) { Heroes = heroes, Shown = heroes[7], Blocked = true };
-      var pb = new HeroPilot(g); bool sawFail = false; string stb = "";
-      for (long t = 0; t < 60000; t += 100) {
-        if (t >= 20000) gb.Blocked = false;
-        var v = new HeroView { NowMs = t, Foreground = true, W = W, H = H, ClientH = H, Plan = heroes[5], Hero = gb.Shown, Tab = gb.Tab, Part = gb.Part, Heroes = gb.Heroes, GridPtr = gb.Grid };
-        var a = pb.Step(v);
-        if (pb.State == "failed") sawFail = true;
-        if (a == null) { stb = pb.State; break; }
-        if (a.Kind == AutoKind.Click) gb.Click(a.X, a.Y); else if (a.Kind == AutoKind.Drag) gb.Drag(a.DY);
-      }
-      Check(sawFail && stb == "done" && gb.Shown == heroes[5], "blocked grid: failed, retried after the pause -> " + stb);
-    }
-
-    {   // live 2026-10-18 (1.6.62): 720 heroes in the grid, the plan's hero (Count Dracula) at place 4, the grid left scrolled at place ~233
-        // by the last hero; the game's grid follows the pointer about twice as far as it is dragged
-      var big = new long[720]; for (int i = 0; i < big.Length; i++) big[i] = (200100 + i) * 100000L;
-      foreach (double gn in new[] { 0.4, 0.5, 0.7, 1.0, 2.0 }) {
-        var gb = new FakeHeroGame(g, W, H) { Heroes = big, Shown = big[233], Gain = gn };
-        gb.Scroll = Math.Min(gb.MaxScroll, (233 / 3) * g.PitchY * H - g.ViewTop * H * 2);
-        string sb2 = RunHero(new HeroPilot(g), gb, big[4], 3000, out lv);
-        Check(sb2 == "done" && gb.Shown == big[4], "720 heroes, the plan's hero at place 4, the grid left at place 233, no tags, drag gain " + gn + ": " + sb2 + " (" + gb.Clicks + " clicks, " + gb.Drags + " drags)");
-      }
-      // with the hero's class and faction known: the grid is filtered first (the hero is near the top of the grid, but the view is far from it)
-      var tagsBig = new Dictionary<long, long[]>(); var rb = new Random(3);
-      foreach (var u in big) tagsBig[u] = new long[] { HeroGeometry.ClassOrder[rb.Next(6)], FakeHeroGame.FactionList[1 + rb.Next(10)] };
-      var gf = new FakeHeroGame(g, W, H) { All = big, Tags = tagsBig, Gain = 1 }; gf.Refilter();
-      gf.Shown = big[233]; gf.Scroll = Math.Min(gf.MaxScroll, (233 / 3) * g.PitchY * H - g.ViewTop * H * 2);
-      string sf2 = RunHero(new HeroPilot(g), gf, big[4], 3000, out lv, tagsBig[big[4]]);
-      Check(sf2 == "done" && gf.Shown == big[4] && gf.Class == tagsBig[big[4]][0] && gf.Drags <= 2, "720 heroes, the plan's hero at place 4, the grid left at place 233, tags known: filtered first (" + sf2 + ", " + gf.Clicks + " clicks, " + gf.Drags + " drags)");
-      // the same hero with the view at the top: no filter, it is right there
-      var gn2 = new FakeHeroGame(g, W, H) { All = big, Tags = tagsBig, Gain = 1 }; gn2.Refilter(); gn2.Shown = big[8];
-      string sn2 = RunHero(new HeroPilot(g), gn2, big[4], 3000, out lv, tagsBig[big[4]]);
-      Check(sn2 == "done" && gn2.Shown == big[4] && gn2.Class == 0 && gn2.Camps.Count == 0, "the plan's hero a few rows from the view: no filter (" + sn2 + ")");
-    }
-
-    var game = new FakeHeroGame(g, W, H) { Heroes = heroes, Shown = heroes[4], Part = 2 };
-    string st = RunHero(new HeroPilot(g), game, heroes[100], 3000, out lv);
-    Check(st == "done" && game.Shown == heroes[100] && game.Tab == 3, "gear list open, hero 101 of 130 far below: back, scroll, click -> " + st
-      + " (" + game.Clicks + " clicks, " + game.Drags + " drags)");
-    Check(game.Backs == 1, "the back arrow once (not twice: that would close the hero screen)");
-    Check(game.Clicks <= 12, "few clicks: " + game.Clicks);
-
-    int ok = 0, worst = 0; var rnd = new Random(7);
-    for (int k = 0; k < 40; k++) {
-      var gm = new FakeHeroGame(g, W, H) { Heroes = heroes, Shown = heroes[rnd.Next(130)], Gain = 0.85 + rnd.NextDouble() * 0.3 };
-      gm.Scroll = rnd.NextDouble() * gm.MaxScroll;
-      long want = heroes[rnd.Next(130)];
-      if (RunHero(new HeroPilot(g), gm, want, 3000, out lv) == "done" && gm.Shown == want) ok++;
-      worst = Math.Max(worst, gm.Clicks + gm.Drags);
-    }
-    Check(ok == 40, "random scroll, target and drag gain (0.85-1.15): " + ok + "/40, worst " + worst + " actions");
-
-    int okSmall = 0; var rs = new Random(11);
-    for (int k = 0; k < 20; k++) {
-      var gs = new FakeHeroGame(g, W, H) { Heroes = heroes, Shown = heroes[rs.Next(130)], Small = true };
-      gs.Scroll = rs.NextDouble() * gs.MaxScroll; long want = heroes[rs.Next(130)];
-      if (RunHero(new HeroPilot(g), gs, want, 3000, out lv) == "done" && gs.Shown == want) okSmall++;
-    }
-    Check(okSmall == 20, "small cards (shorter rows): " + okSmall + "/20");
-    // the grid filter: every hero has a class and a faction
-    var tagsAll = new Dictionary<long, long[]>(); var rt = new Random(5);
-    foreach (var u in heroes) tagsAll[u] = new long[] { HeroGeometry.ClassOrder[rt.Next(6)], FakeHeroGame.FactionList[1 + rt.Next(10)] };
-    Func<FakeHeroGame> mk = () => { var f = new FakeHeroGame(g, W, H) { All = heroes, Tags = tagsAll, Shown = heroes[2] }; f.Refilter(); return f; };
-    var fg1 = mk(); long far = heroes[125];
-    string sf = RunHero(new HeroPilot(g), fg1, far, 3000, out lv, tagsAll[far]);
-    Check(sf == "done" && fg1.Shown == far && fg1.Class == tagsAll[far][0] && !fg1.FilterOpen && fg1.Drags <= 1,
-          "hero far down: the grid filtered by its class and faction, then picked (" + fg1.Clicks + " clicks, " + fg1.Drags + " drags)");
-    // the next plan's hero is not in that filtered grid: the filter is cleared, then it is found
-    long next = heroes[3]; if (Array.IndexOf(fg1.Heroes, next) >= 0) next = heroes[4];
-    string sn = RunHero(new HeroPilot(g), fg1, next, 3000, out lv, null);
-    Check(sn == "done" && fg1.Shown == next, "the next plan's hero hidden by the filter left from before: cleared, found");
-    var fg2 = mk(); fg2.Camps.Add(101); fg2.Class = 8; fg2.Refilter(); long hid = heroes[40];
-    if (Array.IndexOf(fg2.Heroes, hid) >= 0) { fg2.Camps.Clear(); fg2.Camps.Add(tagsAll[hid][1] == 101 ? 102 : 101); fg2.Refilter(); }
-    string sh = RunHero(new HeroPilot(g), fg2, hid, 3000, out lv, null);
-    Check(sh == "done" && fg2.Shown == hid, "hero hidden by the player's grid filter: «Все», then found (" + fg2.Clicks + " clicks)");
-    var fg3 = mk(); long wrong = heroes[110]; var badTags = new long[] { tagsAll[wrong][0] == 1 ? 2 : 1, tagsAll[wrong][1] };
-    string sw = RunHero(new HeroPilot(g), fg3, wrong, 3000, out lv, badTags);
-    Check(sw == "done" && fg3.Shown == wrong, "wrong class in the tags (a game patch): the hero vanishes, «Все» undoes it, found anyway");
-    // the pop-up is never recognised (a game build that draws it differently): the funnel clicks run out, then a stop - no click
-    // inside the pop-up's area (a grid click there picked a wrong class filter), whatever the hero
-    var fg4 = mk(); fg4.Blind = true; long blindHero = heroes[125];
-    var hp4 = new HeroPilot(g);
-    string s4 = RunHero(hp4, fg4, blindHero, 3000, out lv, tagsAll[blindHero]);
-    int inPop = 0; foreach (var pt in fg4.Pts) if (!(Math.Abs(pt[0] - g.FunnelX * H) < 20 && Math.Abs(pt[1] - (H - g.FunnelDY * H)) < 20) && pt[0] < 0.73 * H && pt[1] > 0.16 * H && pt[1] < 0.87 * H) inPop++;
-    Check(s4 == "notfound" && fg4.Clicks == 1 && inPop == 0 && hp4.Why != "", "pop-up never recognised: one funnel press (it is a toggle), then a stop, no click inside the pop-up area (" + s4 + ", " + fg4.Clicks + " clicks, " + inPop + " inside, " + hp4.Why + ")");
-    {   // the pop-up fades in for up to 800 ms: one press only, the cells are clicked once it shows (the funnel pressed every 500 ms shut the pop-up it had opened - live 522)
-      var fg5 = mk(); fg5.Camps.Add(tagsAll[heroes[40]][1] == 101 ? 102 : 101); fg5.Refilter(); long hid5 = heroes[40];
-      if (Array.IndexOf(fg5.Heroes, hid5) >= 0) { fg5.Camps.Clear(); fg5.Camps.Add(tagsAll[hid5][1] == 101 ? 102 : 101); fg5.Refilter(); }
-      var hp5 = new HeroPilot(g); long openedAt = -1; int funnels = 0; string res5 = "timeout";
-      for (long t = 0; t < 30000; t += 100) {
-        var v5 = new HeroView { NowMs = t, Foreground = true, W = W, H = H, Plan = hid5, Hero = fg5.Shown, Tab = 3, Part = -1, Heroes = fg5.Heroes, ClientH = H, NavOwned = true,
-          FilterOpen = fg5.FilterOpen && openedAt >= 0 && t >= openedAt + 800, ChosenCamps = fg5.Camps.ToArray(), ClassChosen = fg5.Class > 0, GridPtr = fg5.Grid, FactionList = FakeHeroGame.FactionList, ClassCount = 7 };
-        var a5 = hp5.Step(v5);
-        if (a5 == null) { res5 = hp5.State; break; }
-        if (a5.Kind == AutoKind.Click) {
-          bool fun = Math.Abs(a5.X - g.FunnelX * H) < 20 && Math.Abs(a5.Y - (H - g.FunnelDY * H)) < 20;
-          if (fun) { funnels++; if (!fg5.FilterOpen) openedAt = t; }
-          fg5.Click(a5.X, a5.Y);
-        } else if (a5.Kind == AutoKind.Drag) fg5.Drag(a5.DY);
-        if (hp5.State == "notfound" || hp5.State == "failed") { res5 = hp5.State; break; }
-      }
-      Check(funnels == 2 && Array.IndexOf(fg5.Heroes, hid5) >= 0 && fg5.Camps.Count == 0 && !fg5.FilterOpen, "grid filter hides the hero, pop-up fades in 800 ms: one press to open and one to close, «Все» in between (" + funnels + " funnel presses, " + res5 + ", factions " + fg5.Camps.Count + ")");
-    }
-    {   // a reset: the pilot that gave up (notfound) is idle again, finds the hero in the unfiltered grid, keeps what it learnt about the game
-      var fg6 = mk(); long far6 = heroes[60]; var hp6 = new HeroPilot(g); fg6.Blind = true; fg6.Camps.Add(tagsAll[far6][1] == 101 ? 102 : 101); fg6.Refilter();
-      if (Array.IndexOf(fg6.Heroes, far6) >= 0) { fg6.Camps.Clear(); fg6.Camps.Add(tagsAll[far6][1] == 101 ? 102 : 101); fg6.Refilter(); }
-      string s6 = RunHero(hp6, fg6, far6, 3000, out lv, null);
-      Check(s6 == "notfound", "hero hidden by a filter whose pop-up is blind: the pilot gives up (" + s6 + ")");
-      hp6.Reset(); Check(hp6.State == "idle", "a reset returns the pilot to idle (" + hp6.State + ")");
-      fg6.Blind = false; fg6.Camps.Clear(); fg6.FilterOpen = false; fg6.Refilter();   // (the game cleared its filter when the hero screen was opened again)
-      s6 = RunHero(hp6, fg6, far6, 3000, out lv, null);
-      Check(s6 == "done" && fg6.Shown == far6, "... and picks the hero from the unfiltered grid (" + s6 + ")");
-    }
-    {   // HeroFilterLook: 1.6.46 at 526×296 - no Class|Faction divider, a blue «Все» cell in the class column
-      double U = 295.875;
-      Func<bool, bool, bool, bool, double, double, Func<int, int, int, int, int[]>> frame2 = (strip, filterDiv, blueCell, classDiv, blueX0, blueRow) => (gx, gy, gw, gh) => {
-        var a = new int[gw * gh];
-        for (int j = 0; j < gh; j++) for (int i = 0; i < gw; i++) {
-          int x = gx + i, y = gy + j, c = (30 << 16) | (30 << 8) | 40;
-          if (!strip) c = (120 << 16) | (110 << 8) | 100;   // hero cards instead of the dark pop-up
-          if (filterDiv && Math.Abs(x - (int)(0.4836 * U)) <= 1 && y > 0.16 * U && y < 0.87 * U) c = (130 << 16) | (130 << 8) | 130;
-          if (classDiv && Math.Abs(x - (int)(0.2557 * U)) <= 1 && y > 0.16 * U && y < 0.87 * U) c = (130 << 16) | (130 << 8) | 130;
-          if (blueCell && x > blueX0 * U && x < blueX0 * U + 0.2 * U && Math.Abs(y - (0.2379 + blueRow * 0.1004) * U) < 0.05 * U) c = (30 << 16) | (90 << 8) | 170;
-          a[j * gw + i] = c;
-        }
-        return a;
+    // the file: 700 000 bytes, a source that serves 100 000 bytes per connection and stands still (the logs: 66-197 KB)
+    var data = new byte[700000]; var rnd = new Random(7); rnd.NextBytes(data);
+    string dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "rf-upd-" + Guid.NewGuid().ToString("N")); System.IO.Directory.CreateDirectory(dir);
+    try {
+      int opens = 0;
+      Func<int, bool, RangeOpener> src = (limit, range) => (off, len) => {
+        opens++;
+        if (!range) return new RangeReply { Status = 200, RangeStart = 0, Total = data.Length, Body = new StallStream(data, 0, data.Length, limit) };
+        int to = (int)Math.Min(data.Length, off + len);
+        return new RangeReply { Status = 206, RangeStart = off, Total = data.Length, Body = new StallStream(data, (int)off, to, limit) };
       };
-      Func<bool, bool, bool, bool, Func<int, int, int, int, int[]>> frame = (a1, a2, a3, a4) => frame2(a1, a2, a3, a4, 0.04, 0);
-      Check(HeroFilterLook.Seen(frame2(true, true, true, false, 0.04, 3), U), "filter pop-up seen: a class chosen (row 3 blue, «Все» not), no Класс|Фракция divider");
-      Check(HeroFilterLook.Seen(frame2(true, true, true, false, 0.30, 0), U), "filter pop-up seen: only the faction column's «Все» is blue");
-      Check(HeroFilterLook.Seen(frame(true, true, true, false), U), "filter pop-up seen: dark strip + Фракция|Фильтр divider + blue «Все» cell, no Класс|Фракция divider (1.6.46)");
-      Check(HeroFilterLook.Seen(frame(true, true, false, true), U), "filter pop-up seen: older layout (both dividers, no blue cell)");
-      Check(!HeroFilterLook.Seen(frame(true, false, false, false), U), "dark filtered grid without the Фильтр divider: not the pop-up");
-      Check(HeroFilterLook.Seen(frame(true, false, true, true), U), "blue class cell + Класс|Фракция divider, no Фильтр divider: 2 marks of 3 = the pop-up");
-      Check(!HeroFilterLook.Seen(frame(true, true, false, false), U), "Фильтр divider alone (a grid line): not the pop-up");
-      Check(!HeroFilterLook.Seen(frame(false, true, true, true), U), "no dark strip: not the pop-up");
-      {   // game 1.6.47 at 503x283 (U 282.94): the Фракция|Фильтр line is at 0.7705U, none at 0.4836U; blue «Все» in both columns
-        double U3 = 282.94;
-        Func<bool, bool, bool, bool, Func<int, int, int, int, int[]>> f3 = (strip, blue, d1, d2) => (gx, gy, gw, gh) => {
-          var a = new int[gw * gh];
-          for (int j = 0; j < gh; j++) for (int i = 0; i < gw; i++) {
-            int x = gx + i, y = gy + j, c = (30 << 16) | (30 << 8) | 40;
-            if (!strip) c = (120 << 16) | (110 << 8) | 100;
-            if (d1 && Math.Abs(x - 72) <= 1 && y > 0.16 * U3 && y < 0.87 * U3) c = (130 << 16) | (130 << 8) | 130;
-            if (d2 && Math.Abs(x - 218) <= 1 && y > 0.16 * U3 && y < 0.87 * U3) c = (130 << 16) | (130 << 8) | 130;
-            if (blue && ((x > 0.12 * U3 && x < 0.17 * U3) || (x > 0.35 * U3 && x < 0.385 * U3)) && Math.Abs(y - 0.2379 * U3) < 0.04 * U3) c = (30 << 16) | (90 << 8) | 170;
-            a[j * gw + i] = c;
-          }
-          return a;
-        };
-        Check(HeroFilterLook.Seen(f3(true, true, true, true), U3), "503x283: dark strip, blue «Все» in both columns, dividers at x 72 and 218, none at 137: the pop-up");
-        Check(HeroFilterLook.Seen(f3(true, true, false, false), U3), "503x283: both blue cells alone are 2 marks");
-        Check(!HeroFilterLook.Seen(f3(true, false, false, false), U3), "503x283: a closed grid of dark not-owned cards: not the pop-up");
-        Check(!HeroFilterLook.Seen(f3(true, false, true, false), U3), "503x283: one line alone: not the pop-up");
-        Check(!HeroFilterLook.Seen(f3(false, true, true, true), U3), "503x283: no dark strip: not the pop-up");
+      string part = System.IO.Path.Combine(dir, "a.part"); opens = 0;
+      var r = ChunkedDownload.Run(src(100000, true), part, data.Length, 256 * 1024, 5, null, null);
+      Check(r.Complete && r.Have == data.Length && r.Stalls >= 3, "chunks: a source that stalls after 100 KB per connection still completes (stalls " + r.Stalls + ")");
+      Check(opens >= 7 && opens <= 12, "chunks: in a few connections, no endless loop (" + opens + " opens)");
+      Check(System.IO.File.ReadAllBytes(part).Length == data.Length && BitConverter.ToString(System.IO.File.ReadAllBytes(part)) == BitConverter.ToString(data), "chunks: the assembled file is the same bytes");
+      // a source that never gives a byte: five attempts without progress, then the round ends
+      opens = 0; string p2 = System.IO.Path.Combine(dir, "b.part");
+      r = ChunkedDownload.Run(src(0, true), p2, data.Length, 256 * 1024, 5, null, null);
+      Check(!r.Complete && r.Why == "stalled" && opens == 5, "chunks: five attempts without a byte, then stalled (" + opens + " opens, " + r.Why + ")");
+      // the pause hook is called between failed attempts (the host sleeps there), with the count
+      int pauses = 0; r = ChunkedDownload.Run(src(0, true), p2, data.Length, 256 * 1024, 5, n => { pauses++; }, null);
+      Eq(5, pauses, "chunks: a pause after each attempt without progress");
+      // progress kept between runs: what the stalled run wrote stays in the .part, the next run continues from there
+      string p3 = System.IO.Path.Combine(dir, "c.part");
+      int firstOnly = 0;   // the first connection gives 60 000 bytes, every later one stands still at once
+      r = ChunkedDownload.Run((off, len) => { bool first = firstOnly++ == 0; int to = (int)Math.Min(data.Length, off + len); return new RangeReply { Status = 206, RangeStart = off, Total = data.Length, Body = new StallStream(data, (int)off, to, first ? 60000 : 0) }; }, p3, data.Length, 256 * 1024, 2, null, null);
+      long kept = new System.IO.FileInfo(p3).Length;
+      Check(!r.Complete && kept == 60000, "resume: a round that gives up keeps its bytes (" + kept + ")");
+      opens = 0; r = ChunkedDownload.Run(src(1 << 30, true), p3, data.Length, 256 * 1024, 5, null, null);
+      Check(r.Complete && BitConverter.ToString(System.IO.File.ReadAllBytes(p3)) == BitConverter.ToString(data) && opens == (int)Math.Ceiling((data.Length - kept) / 262144.0), "resume: the next run continues at the same offset (" + opens + " opens)");
+      // a part longer than the file is not trusted
+      string p4 = System.IO.Path.Combine(dir, "d.part"); System.IO.File.WriteAllBytes(p4, new byte[data.Length + 5]);
+      r = ChunkedDownload.Run(src(1 << 30, true), p4, data.Length, 256 * 1024, 5, null, null);
+      Check(r.Complete && System.IO.File.ReadAllBytes(p4).Length == data.Length && BitConverter.ToString(System.IO.File.ReadAllBytes(p4)) == BitConverter.ToString(data), "resume: a too long part starts over");
+      // a server without Range (answers 200 with the whole file): read whole; one that stands still before the end never completes, and does not loop
+      string p5 = System.IO.Path.Combine(dir, "e.part"); opens = 0;
+      r = ChunkedDownload.Run(src(1 << 30, false), p5, data.Length, 256 * 1024, 5, null, null);
+      Check(r.Complete && opens == 1, "no Range: the whole file in one connection (" + opens + ")");
+      string p6 = System.IO.Path.Combine(dir, "f.part"); opens = 0;
+      r = ChunkedDownload.Run(src(100000, false), p6, data.Length, 256 * 1024, 5, null, null);
+      Check(!r.Complete && r.Why == "stalled" && opens <= 7, "no Range and a stalling link: stalled after a few tries, no loop (" + opens + ")");
+      // another build on the server: the part is not continued
+      string p7 = System.IO.Path.Combine(dir, "g.part");
+      r = ChunkedDownload.Run((off, len) => new RangeReply { Status = 206, RangeStart = off, Total = data.Length + 1, Body = new System.IO.MemoryStream(new byte[10]) }, p7, data.Length, 256 * 1024, 5, null, null);
+      Check(!r.Complete && r.Mismatch, "a changed file size on the server stops the download");
+      // a wrong range start, an error status
+      r = ChunkedDownload.Run((off, len) => new RangeReply { Status = 206, RangeStart = off + 1, Total = data.Length, Body = new System.IO.MemoryStream(new byte[10]) }, System.IO.Path.Combine(dir, "h.part"), data.Length, 256 * 1024, 3, null, null);
+      Check(!r.Complete && r.Why == "stalled", "a reply for another range is not written");
+      r = ChunkedDownload.Run((off, len) => new RangeReply { Status = 416, Body = new System.IO.MemoryStream(new byte[0]) }, System.IO.Path.Combine(dir, "i.part"), data.Length, 256 * 1024, 3, null, null);
+      Check(!r.Complete && r.Why == "stalled", "an error status counts as a failed attempt");
+    } finally { try { System.IO.Directory.Delete(dir, true); } catch (Exception) { } }
+  }
+
+  static void Backoff409Tests() {
+    Console.WriteLine("409 is a refusal with a pause (every client but /api/sync)");
+    Check(NetBackoff.IsFailure(409) && NetBackoff.IsFailure(429) && NetBackoff.IsFailure(503) && NetBackoff.IsFailure(0), "409, 429, 5xx and no answer are failures");
+    Check(!NetBackoff.IsFailure(200) && !NetBackoff.IsFailure(401) && !NetBackoff.IsFailure(404) && !NetBackoff.IsFailure(422), "other answers are not backed off");
+    var bo = new NetBackoff(); var now = new DateTime(2026, 11, 6, 12, 0, 0, DateTimeKind.Utc);
+    Check(bo.Note(409, -1, now, 0.5) && bo.Blocked(now) && bo.Blocked(now.AddSeconds(4)) && !bo.Blocked(now.AddSeconds(6)), "a 409 blocks the next call: 5 s, not a poll every 20 s of the timer");
+    bo.Note(409, -1, now.AddSeconds(6), 0.5);
+    Check(bo.Failures == 2 && bo.Blocked(now.AddSeconds(6).AddSeconds(9)) && !bo.Blocked(now.AddSeconds(6).AddSeconds(11)), "the second 409 in a row waits longer (10 s)");
+    for (int i = 0; i < 12; i++) bo.Note(409, -1, now, 0.5);
+    Check(bo.Until <= now.AddMinutes(5).AddSeconds(1), "the wait stops growing at 5 minutes");
+    Check(!bo.Note(200, -1, now.AddMinutes(10), 0.5) && !bo.Blocked(now.AddMinutes(10)) && bo.Failures == 0, "one good answer resets it");
+    // the arena / guild watches ask Blocked() before reading and sending: after a 409 the unchanged payload is not sent again until the wait is over
+    bo.Note(409, -1, now, 0.5);
+    Check(bo.Blocked(now.AddSeconds(1)), "arena / guild: nothing is sent while the 409 pause runs");
+    // /api/sync keeps its own rule: 409 account_forgotten is SyncStatus.Forgotten (no retries), any other 409 is Unexpected
+    Eq(SyncStatus.Forgotten, SyncClient.Interpret(409, "{\"ok\":false,\"error\":\"account_forgotten\"}", null, null, "https://x.app").Status, "sync: 409 account_forgotten stays the special case");
+    Eq(SyncStatus.Unexpected, SyncClient.Interpret(409, "{\"ok\":false,\"error\":\"conflict\"}", null, null, "https://x.app").Status, "sync: another 409 is an unexpected answer");
+  }
+
+  static void FightPlanTests() {
+    Console.WriteLine("Fight plans");
+    string body = "{\"ok\":true,\"plans\":[{\"v\":1,\"boss\":\"guild-7\",\"stage\":5001007,\"name\":{\"ru\":\"Кошмар\",\"en\":\"Nightmare\"},"
+      + "\"field\":{\"w\":3,\"h\":2,\"t\":[32,32,2,2,36,36],\"boss\":[1,1],\"half\":[0,0]},"
+      + "\"steps\":[{\"u\":200,\"id\":2380,\"n\":{\"ru\":\"Ригар\",\"en\":\"Rigar\"},\"sq\":1,\"why\":\"leader\",\"x\":0,\"y\":0,\"dir\":1},"
+      + "{\"u\":300,\"id\":2147,\"n\":{\"ru\":\"Сунь Укун\",\"en\":\"Sun\"},\"sq\":1,\"why\":\"dmg\",\"x\":2,\"y\":1,\"dir\":3},"
+      + "{\"u\":100,\"id\":2001,\"n\":{\"ru\":\"Мика\",\"en\":\"Mika\"},\"sq\":1,\"why\":\"bench\",\"x\":null,\"y\":null,\"dir\":null}],"
+      + "\"hold\":10,\"holdU\":[300],\"pts\":8726},"
+      + "{\"boss\":\"bad\",\"stage\":0,\"steps\":[]}]}";
+    var r = FightPlanClient.Interpret(200, body);
+    Check(r.Status == PlansStatus.Ok && r.Plans.Count == 1, "one good plan, the malformed one skipped");
+    var p = r.Plans[0];
+    Check(p.Stage == 5001007 && p.W == 3 && p.H == 2 && p.Cell(2, 1) == 36 && p.BossX == 1, "field and stage");
+    Check(p.Steps.Count == 3 && p.Steps[0].X == 0 && p.Steps[0].Dir == 1 && p.Steps[2].Bench && p.Steps[2].X == -1, "steps with tiles, reserve without");
+    Check(p.Hold == 10 && p.HoldU.Contains(300) && p.Pts == 8726, "ultimate advice");
+    Eq(PlansStatus.InvalidToken, FightPlanClient.Interpret(401, "{}").Status, "401");
+    var feedOk = "[{\"v\":132,\"date\":\"2026-10-11\",\"items\":[{\"text\":\"x\",\"kind\":\"site\"}]}]";
+    Check(NewsClient.Interpret(200, feedOk) == feedOk && NewsClient.Interpret(500, feedOk) == null && NewsClient.Interpret(200, "{}") == null
+      && NewsClient.Interpret(200, "[]") == null && NewsClient.Interpret(200, "[{\"v\":1}]") == null && NewsClient.Interpret(200, "<html>") == null, "news feed parsing");
+    var unreadOk = "{\"ok\":true,\"total\":2,\"topics\":[],\"newTopicUrl\":\"https://x/community/new?kind=bug&area=app\"}";
+    Check(NewsClient.InterpretUnread(200, unreadOk) == unreadOk && NewsClient.InterpretUnread(401, "{}").Contains("invalid_token")
+      && NewsClient.InterpretUnread(500, unreadOk).Contains("\"error\":\"error\"") && NewsClient.InterpretUnread(200, "<html>").Contains("\"ok\":false")
+      && NewsClient.Unread("https://x", "").Contains("no_code"), "forum unread parsing");
+    Check(FightPlanClient.For(r.Plans, 5001007, new HashSet<long> { 200 }) == p && FightPlanClient.For(r.Plans, 1, null) == null, "plan by stage");
+
+    FightStep next, wrong; int wx, wy;
+    FightPlanClient.State(p, new List<HeroSample>(), out next, out wrong, out wx, out wy);
+    Check(next == p.Steps[0] && wrong == null, "nothing placed: step 1");
+    var hs = new List<HeroSample> { new HeroSample { Uid = 200, OnField = true, X = 0, Y = 0 } };
+    FightPlanClient.State(p, hs, out next, out wrong, out wx, out wy);
+    Check(next == p.Steps[1], "step 1 placed: step 2");
+    hs.Add(new HeroSample { Uid = 300, OnField = true, X = 1, Y = 0 });
+    FightPlanClient.State(p, hs, out next, out wrong, out wx, out wy);
+    Check(next == null && wrong == p.Steps[1] && wx == 1 && wy == 0, "all placed, one off its tile");
+    hs[1] = new HeroSample { Uid = 300, OnField = false, CardState = 2 };
+    FightPlanClient.State(p, hs, out next, out wrong, out wx, out wy);
+    Check(next == p.Steps[2], "a hero fell: the reserve is next");
+  }
+
+  static PlanItem LocItem(long uid, int slot, long setId, int main, params int[] subs) {
+    var it = new PlanItem { Uid = uid, Slot = slot, SetId = setId };
+    if (main > 0) it.Main.Add(new SubStat { Text = "m", Stat = main });
+    foreach (var x in subs) it.Subs.Add(new SubStat { Text = "s", Stat = x });
+    return it;
+  }
+
+
+
+
+  // hint mode, city first (live 1.6.66.442: a recast started on the Foundry's Ascension tab: the first hint said to open a tab on the right, which that screen
+  // does not have, and only then «go to the city»): on a screen the purpose's flow does not go on from the first hint is the back arrow
+  static void CityFirstHintTests() {
+    Console.WriteLine("Hint mode: city first");
+    var req = new LocateRequest { Id = "r1", Purpose = "recast", Item = new PlanItem { Uid = 77, Slot = 3, SetId = 5, Quality = 6 } };
+    // the Foundry on the Ascension tab, a recast request: the step of the Foundry's own list says «open the recast tab»; the first hint is the back arrow
+    var rs = new RecastScreen { SublimingOpen = true, CurType = 2 };
+    var st = LocateGuide.Next(req, null, rs, null, 8, 1);
+    Check(st.Kind == LocateKind.OpenRecastTab, "city first: the plain step of the Foundry's Ascension tab for a recast is OpenRecastTab");
+    var fo = new ScreenState { Kind = ScreenKind.Foundry, FoundryTab = 2 };
+    Check(LocateGuide.CityFirstStep(st, "recast", fo) && st.Kind == LocateKind.BackToCity && st.Covered == LocateKind.OpenRecastTab && st.Key == "backToCity", "city first: ... a recast on the Foundry's Ascension tab: the first hint is BackToCity");
+    Check(FrameTargets.Of("foundry.back") != null && FrameTargets.Of("hero.back") != null && FrameTargets.Of("inventory.back") != null && FrameTargets.Of("popup.exit") != null, "city first: the back arrow keys are mapped");
+    // an Ascension request on that tab goes on (the Foundry is its continuation screen)
+    var reqA = new LocateRequest { Id = "r2", Purpose = "ascend", Item = req.Item };
+    var rsA = new RecastScreen { SublimingOpen = true, CurType = 2, AscendShown = true };
+    st = LocateGuide.Next(reqA, null, rsA, null, 8, 1);
+    Check(!LocateGuide.CityFirstStep(st, "ascend", fo) && st.Kind != LocateKind.BackToCity, "city first: an Ascension request on the Ascension tab is not sent back");
+    // the gem screen for an Ascension request: not a continuation screen -> back first
+    st = new LocateStep { Kind = LocateKind.OpenInventory };
+    Check(LocateGuide.CityFirstStep(st, "ascend", new ScreenState { Kind = ScreenKind.Gem }) && st.Kind == LocateKind.BackToCity, "city first: the gem screen for an Ascension request -> back first");
+    // the recast with the Foundry over the inventory's own step (the sub-state): back first
+    st = new LocateStep { Kind = LocateKind.InList };
+    Check(LocateGuide.CityFirstStep(st, "recast", fo) && st.Kind == LocateKind.BackToCity, "city first: the inventory's step under the Foundry -> back first");
+    // the city, the hero screen, the inventory: the flow's own screens, nothing changes; no item / another account: never a back step
+    foreach (var k in new[] { ScreenKind.City, ScreenKind.HeroScreen, ScreenKind.Inventory }) {
+      st = new LocateStep { Kind = LocateKind.OpenInventory };
+      Check(!LocateGuide.CityFirstStep(st, "recast", new ScreenState { Kind = k }) && st.Kind == LocateKind.OpenInventory, "city first: " + k + " is a continuation screen of the recast: no back step");
+    }
+    st = new LocateStep { Kind = LocateKind.NoItem }; Check(!LocateGuide.CityFirstStep(st, "recast", fo), "city first: no item: no back step");
+    st = new LocateStep { Kind = LocateKind.OtherAccount }; Check(!LocateGuide.CityFirstStep(st, "recast", fo), "city first: another account: no back step");
+    st = new LocateStep { Kind = LocateKind.OpenRecastTab }; Check(!LocateGuide.CityFirstStep(st, "recast", new ScreenState { Kind = ScreenKind.Unknown }) && !LocateGuide.CityFirstStep(st, "recast", new ScreenState { Kind = ScreenKind.Foundry, Held = true }), "city first: an unknown or held screen changes nothing");
+    // after the back press the city is shown: the original step is there again (the step is recomputed every tick)
+    st = new LocateStep { Kind = LocateKind.OpenInventory };
+    Check(!LocateGuide.CityFirstStep(st, "recast", new ScreenState { Kind = ScreenKind.City }), "city first: back in the city -> the original step");
+  }
+
+  static string GeoBox(string key, string x0, string x1, string y0, string y1, double w, double h) {
+    // "L:0.1" style edges
+    Func<string, string> e = s => "[\"" + s.Split(':')[0] + "\"," + s.Split(':')[1] + "]";
+    return "\"" + key + "\":{\"x0\":" + e(x0) + ",\"x1\":" + e(x1) + ",\"y0\":" + e(y0) + ",\"y1\":" + e(y1) + ",\"w\":" + w.ToString(System.Globalization.CultureInfo.InvariantCulture) + ",\"h\":" + h.ToString(System.Globalization.CultureInfo.InvariantCulture) + "}";
+  }
+  const string GeoGame = "9.8.7.6.5";
+  static string GeoJson(string game = GeoGame, int v = 1) {
+    var b = new List<string> {
+      GeoBox("foundry.tab.forge", "R:-0.159", "R:0.0066", "T:0.0328", "T:0.1578", 0.1656, 0.125),
+      GeoBox("ascend.slot.3", "L:0.443", "L:0.5695", "M:-0.3969", "M:-0.3312", 0.1266, 0.0656),
+      GeoBox("ascend.filter", "L:0.4531", "L:0.6969", "M:-0.3136", "M:-0.2573", 0.2438, 0.0563),
+      GeoBox("ascend.button", "C:0.1039", "C:0.4414", "M:0.3488", "M:0.4581", 0.3375, 0.1093),
+      GeoBox("ascend.list", "L:0.1", "L:0.6", "T:0.2", "T:0.7", 0.5, 0.5),
+      GeoBox("ascend.cell", "L:0.3", "L:0.4", "T:0.3", "T:0.4625", 0.1, 0.1625),
+      GeoBox("inventory.workshop", "R:-0.6565", "R:-0.5125", "B:-0.1205", "B:-0.0201", 0.144, 0.1004),
+      GeoBox("hero.workshop", "R:-0.2515", "R:-0.1249", "M:0.2948", "M:0.4245", 0.1266, 0.1297),
+      GeoBox("inventory.cardLeft", "R:-0.4797", "R:-0.2578", "T:0.8505", "T:0.9333", 0.2219, 0.0828),
+      GeoBox("inventory.cardSolo", "R:-0.3688", "R:-0.1469", "B:-0.103", "B:-0.0202", 0.2219, 0.0828),
+      GeoBox("gem.list", "C:-0.8438", "C:-0.0938", "M:-0.3312", "M:0.4003", 0.75, 0.7316),
+      GeoBox("gem.cell", "L:-0.7703", "L:-0.0422", "T:0.1094", "T:0.2687", 0.7281, 0.1594),
+      GeoBox("gem.button", "R:-0.3688", "R:-0.1469", "B:-0.103", "B:-0.0202", 0.2219, 0.0828),
+      GeoBox("city.barButton", "L:0.0672", "L:0.2016", "B:0.3306", "B:0.465", 0.1344, 0.1344) };
+    return "{\"game\":\"" + game + "\",\"v\":" + v + ",\"rects\":{" + string.Join(",", b.ToArray()) + "},\"grids\":{\"ascend.list\":{\"cols\":5,\"lineSize\":108,\"padding\":[0,-10,0,0]},\"gem.list\":{\"cols\":1,\"lineSize\":110,\"padding\":[0,0,0,0]}}}";
+  }
+
+  // ------------------------------------------------------------------ the outline of a button (src/GuideShape.cs)
+  static void GuideShapeTests() {
+    Console.WriteLine("Button outlines (shape + inset from the geometry)");
+    string extra = ",\"shape\":{\"k\":\"bevel\",\"c\":0.1,\"cy\":0.2},\"inset\":{\"l\":0.1,\"t\":0,\"r\":0.1,\"b\":0.2}";
+    string j = GeoJson().Replace("\"w\":0.3375,\"h\":0.1093}", "\"w\":0.3375,\"h\":0.1093" + extra + "}");
+    var g = GameGeometry.Parse(j, GeoGame);
+    var sh = g != null ? g.Shape("ascend.button") : null; var ins = g != null ? g.Inset("ascend.button") : null;
+    Check(sh != null && sh.K == "bevel" && Math.Abs(sh.CX - 0.1) < 1e-9 && Math.Abs(sh.CY - 0.2) < 1e-9, "shape parsed (cx falls back to c)");
+    Check(ins != null && Math.Abs(ins.L - 0.1) < 1e-9 && Math.Abs(ins.B - 0.2) < 1e-9, "inset parsed");
+    var plain = GameGeometry.Parse(GeoJson(), GeoGame);
+    Check(plain.Shape("ascend.button") == null && plain.Inset("ascend.button") == null && plain.Shape("nope") == null, "missing shape / inset: a rectangle, no inset");
+    Check(GameGeometry.Parse(GeoJson().Replace("\"h\":0.1093}", "\"h\":0.1093,\"shape\":{\"k\":\"blob\"},\"inset\":{\"l\":\"x\"}}"), GeoGame) != null, "an odd shape / inset does not refuse the file");
+    var rect = new GeoRect { X = 100, Y = 50, W = 200, H = 100 };
+    var o = GuideShape.Outline(rect, null, null);
+    Eq(4, o.Count, "rect: 4 points"); Check(o[0].X == 100 && o[0].Y == 50 && o[2].X == 300 && o[2].Y == 150, "rect: the corners");
+    var art = GuideShape.ArtBox(rect, new GeoInset { L = 0.1, T = 0, R = 0.1, B = 0.2 });
+    Check(Math.Abs(art.X - 120) < 1e-9 && Math.Abs(art.W - 160) < 1e-9 && Math.Abs(art.H - 80) < 1e-9, "inset: the art box");
+    var neg = GuideShape.ArtBox(rect, new GeoInset { L = -0.1, T = -0.1, R = -0.1, B = -0.1 });
+    Check(Math.Abs(neg.X - 80) < 1e-9 && Math.Abs(neg.Y - 40) < 1e-9 && Math.Abs(neg.W - 240) < 1e-9 && Math.Abs(neg.H - 120) < 1e-9, "negative inset: the art sticks out");
+    var c = GuideShape.Outline(rect, new GeoShape { K = "circle" }, null);
+    Eq(48, c.Count, "circle: 48 points");
+    bool onCircle = true; foreach (var p in c) onCircle &= Math.Abs(Math.Sqrt((p.X - 200) * (p.X - 200) + (p.Y - 100) * (p.Y - 100)) - 50) < 1e-6;
+    Check(onCircle, "circle: diameter = the shorter side, centred");
+    var b = GuideShape.Outline(rect, new GeoShape { K = "bevel", CX = 0.1, CY = 0.2 }, null);
+    Eq(8, b.Count, "bevel: an octagon"); Check(Math.Abs(b[0].X - 110) < 1e-9 && b[0].Y == 50 && b[2].X == 300 && Math.Abs(b[2].Y - 70) < 1e-9, "bevel: cuts cx*h across, cy*h down");
+    var rd = GuideShape.Outline(rect, new GeoShape { K = "round", R = 0.3 }, null);
+    Eq(4 * (GuideShape.CornerSteps + 1), rd.Count, "round: arcs at the four corners");
+    bool inside = true; foreach (var p in rd) inside &= p.X >= 100 - 1e-9 && p.X <= 300 + 1e-9 && p.Y >= 50 - 1e-9 && p.Y <= 150 + 1e-9;
+    Check(inside, "round: inside the rectangle");
+    Check(GuideShape.Outline(new GeoRect { X = 0, Y = 0, W = 0, H = 10 }, null, null).Count == 0, "an empty box: no outline");
+    var hp = GuideShape.HandPos(5, 10, 40, 60, 0.5, 0.9, 1000, 500);
+    Check(hp.X == 0 && hp.Y == 0, "hand: kept inside the client");
+    var hp2 = GuideShape.HandPos(500, 300, 40, 60, 0.5, 0.9, 1000, 500);
+    Check(Math.Abs(hp2.X - 480) < 1e-9 && Math.Abs(hp2.Y - 246) < 1e-9, "hand: the fingertip lands on the point");
+    Check(GuideShape.FrameOutline(rect, null, null, 2) == null && GuideShape.FrameOutline(rect, new GeoShape { K = "rect" }, null, 2) == null && GuideShape.FrameOutline(rect, new GeoShape { K = "blob" }, null, 2) == null, "old frame: a rect / missing / unknown shape keeps the rectangle (null)");
+    var fo = GuideShape.FrameOutline(rect, new GeoShape { K = "circle" }, new GeoInset { L = 0.25, T = 0, R = 0.25, B = 0 }, 2);
+    bool onFo = fo != null; if (onFo) foreach (var p in fo) onFo &= Math.Abs(Math.Sqrt((p.X - 200) * (p.X - 200) + (p.Y - 100) * (p.Y - 100)) - 52) < 1e-6;
+    Check(onFo, "old frame: the circle of the inset art, grown by the margin");
+    var gr = GuideShape.Grow(rect, 5); Check(gr.X == 95 && gr.W == 210, "grown by a margin");
+    var rs = RemoteSwitches.Parse("{\"features\":{\"guideStyle\":true}}");
+    Check(rs.Allows("guideStyle") && !RemoteSwitches.Permissive().Allows("guideStyle") && !RemoteSwitches.Parse("{}").Allows("guideStyle"), "guideStyle: off until the site says true");
+    Check(AppConfig.FromJson("{\"guideStyle\":\"on\"}").GuideStyle == "on" && AppConfig.FromJson("{\"guideStyle\":\"x\"}").GuideStyle == "auto" && AppConfig.FromJson("{}").GuideStyle == "auto", "config: guideStyle auto / on / off");
+  }
+
+  static void GeometryTests() {
+    Console.WriteLine("Screen geometry (the site's file per game version, frames and Foundry clicks)");
+    const double W = 2000, H = 1000, U = 1000;
+    var g = GameGeometry.Parse(GeoJson(), GeoGame);
+    Check(g != null && g.Game == GeoGame && g.Count == 14, "geometry: the fixture parses");
+    var r = g.Rect("ascend.button", W, H, U);
+    Check(r != null && Math.Abs(r.X - (W / 2 + 0.1039 * U)) < 0.01 && Math.Abs(r.W - 0.3375 * U) < 0.01 && Math.Abs(r.Y - (H / 2 + 0.3488 * U)) < 0.01 && Math.Abs(r.H - 0.1093 * U) < 0.01, "geometry: C / M anchors from the centre");
+    r = g.Rect("inventory.workshop", W, H, U);
+    Check(Math.Abs(r.X - (W - 0.6565 * U)) < 0.01 && Math.Abs(r.Y - (H - 0.1205 * U)) < 0.01, "geometry: R / B anchors from the right and bottom edges");
+    r = g.Rect("ascend.list", W, H, U); Check(Math.Abs(r.X - 100) < 0.01 && Math.Abs(r.Y - 200) < 0.01 && Math.Abs(r.W - 500) < 0.01, "geometry: L / T anchors");
+    var r2 = g.Rect("ascend.list", 1000, 562, 562); Check(Math.Abs(r2.X - 56.2) < 0.01 && Math.Abs(r2.H - 281) < 0.01, "geometry: another window size scales with U");
+    Check(g.Rect("nope", W, H, U) == null && g.Rect(null, W, H, U) == null, "geometry: an unknown key -> null");
+    Eq(5, g.Grid("ascend.list").Cols, "geometry: the grid's columns"); Eq(-10.0, g.Grid("ascend.list").PadTop, "geometry: the grid's top padding"); Check(g.Grid("x") == null, "geometry: no such grid");
+    // parse refusals
+    Check(GameGeometry.Parse(GeoJson(), "9.8.7.6.4") == null, "geometry: another version is not used");
+    Check(GameGeometry.Parse(GeoJson(GeoGame, 2), GeoGame) == null, "geometry: another format is not used");
+    Check(GameGeometry.Parse(GeoJson().Replace("\"R\",-0.159", "\"Q\",-0.159"), GeoGame) == null, "geometry: an unknown anchor is refused");
+    Check(GameGeometry.Parse(GeoJson().Replace("\"w\":0.1656", "\"w\":\"x\""), GeoGame) == null, "geometry: a non-number size is refused");
+    Check(GameGeometry.Parse("{\"game\":\"" + GeoGame + "\",\"v\":1,\"rects\":{}}", GeoGame) == null, "geometry: no rectangles -> not used");
+    Check(GameGeometry.Parse("[1]", GeoGame) == null && GameGeometry.Parse("<html>", GeoGame) == null && GameGeometry.Parse(null, GeoGame) == null && GameGeometry.Parse("", GeoGame) == null, "geometry: not an object -> null");
+    Check(GameGeometry.Parse(GeoJson().Replace("\"game\"", "\"pad\":\"" + new string('x', 140000) + "\",\"game\""), GeoGame) == null, "geometry: an oversized reply is refused");
+    Check(GameGeometry.Parse(GeoJson().Replace("\"cols\":5", "\"cols\":0"), GeoGame).Grid("ascend.list") == null, "geometry: a bad grid is left out");
+    GameGeometry got;
+    Eq(Layout.Reply.Got, Geo.Interpret(200, GeoJson(), GeoGame, out got), "geometry reply 200: got"); Check(got != null, "  ... and parsed");
+    Eq(Layout.Reply.None, Geo.Interpret(404, "{}", GeoGame, out got), "geometry reply 404: none for this version");
+    Eq(Layout.Reply.Denied, Geo.Interpret(401, "{}", GeoGame, out got), "geometry reply 401: no valid code");
+    Eq(Layout.Reply.NoReply, Geo.Interpret(500, GeoJson(), GeoGame, out got), "geometry reply 5xx: no reply (what is held stays)");
+    Eq(Layout.Reply.NoReply, Geo.Interpret(200, "{}", GeoGame, out got), "geometry reply 200 with junk: no reply");
+    // the saved copies, per version
+    string dir = Path.Combine(Path.GetTempPath(), "rf-geo-" + Guid.NewGuid().ToString("N"));
+    Check(Geo.LoadCache(dir, GeoGame) == null, "geometry: no saved copy -> null");
+    Geo.SaveCache(dir, GeoGame, GeoJson());
+    Check(Geo.LoadCache(dir, GeoGame) != null, "geometry: the saved copy loads (offline use)");
+    Check(Geo.LoadCache(dir, "9.8.7.6.4") == null, "geometry: a copy of another version is not used");
+    File.WriteAllText(Path.Combine(dir, GeoGame + ".json"), "{broken");
+    Check(Geo.LoadCache(dir, GeoGame) == null, "geometry: a broken saved copy -> null, no crash");
+    Check(Geo.LoadCache(dir, "../x") == null, "geometry: a bad version is no path");
+    try { Directory.Delete(dir, true); } catch (Exception) { }
+    var heldGeo = Geo.Current;
+    Geo.Use(null); Check(Geo.Rect("ascend.list", W, H, U) == null, "geometry: none in force -> every rectangle is null (text hints)");
+    Geo.Use(g); Check(Geo.Rect("ascend.list", W, H, U) != null, "geometry: in force -> the accessor places it");
+    Geo.Use(heldGeo);
+
+    // tabs: the k-th shown tab sits k tab heights below the first position
+    Eq(2, FoundryPlace.TabIndex(null, "ascend"), "tabs: all shown -> Ascension is third");
+    Eq(1, FoundryPlace.TabIndex(new[] { true, false, true, true, true }, "ascend"), "tabs: Identify hidden -> Ascension moves up");
+    Eq(-1, FoundryPlace.TabIndex(new[] { true, true, false, true, true }, "ascend"), "tabs: Ascension hidden -> -1");
+    Eq(2, FoundryPlace.TabIndex(new[] { true, true, true, false, false }, "ascend"), "tabs: Recast / Reforge hidden do not move Ascension");
+    Eq(3, FoundryPlace.TabIndex(null, "recast"), "tabs: Recast is fourth");
+    Eq(-1, FoundryPlace.TabIndex(null, "nope"), "tabs: unknown name");
+    var tr = FoundryPlace.Tab(g, "ascend", null, W, H, U);
+    Check(tr != null && Math.Abs(tr.Y - (0.0328 + 2 * 0.125) * U) < 0.01 && Math.Abs(tr.X - (W - 0.159 * U)) < 0.01, "tabs: Ascension = the first position + 2 tab heights");
+    tr = FoundryPlace.Tab(g, "ascend", new[] { true, false, true, true, true }, W, H, U); Check(Math.Abs(tr.Y - (0.0328 + 0.125) * U) < 0.01, "tabs: one hidden before it -> one height");
+    Check(FoundryPlace.Tab(g, "ascend", new[] { true, true, false, true, true }, W, H, U) == null && FoundryPlace.Tab(null, "ascend", null, W, H, U) == null, "tabs: hidden or no geometry -> null");
+
+    // the list cell from the game's own scroll reading: 5 columns, row = 108 canvas units = 168.75 px at U 1000, the list at (100, 200) 500 x 500
+    Func<double, RFX.ListRead> L = s => new RFX.ListRead { ScrollY = s, Cols = 5, RowUnits = 108, First = 0, Last = 14 };
+    var c = FoundryPlace.Cell(g, "ascend", L(0), 7, W, H, U);   // row 1, column 2
+    Check(c != null && c.Mark.Kind == "box" && Math.Abs(c.Mark.X - 300) <= 1 && Math.Abs(c.Mark.Y - 387.5) <= 1 && c.Mark.W == 100 && Math.Abs(c.Mark.H - 162.5) <= 1, "cell: index 7 at scroll 0 -> column 2, row 2 (" + (c != null ? c.Mark.Kind + " " + c.Mark.X + "," + c.Mark.Y + " " + c.Mark.W + "x" + c.Mark.H : "null") + ")");
+    Check(c.Clickable && Math.Abs(c.ClickX - 350) <= 1 && Math.Abs(c.ClickY - (387.5 + 81.25)) <= 1, "cell: clickable at its centre");
+    c = FoundryPlace.Cell(g, "ascend", L(0), 0, W, H, U); Check(Math.Abs(c.Mark.X - 100) <= 1 && Math.Abs(c.Mark.Y - 218.75) <= 1, "cell: index 0 = the first cell, at the list's top + the padding");
+    c = FoundryPlace.Cell(g, "ascend", L(40), 7, W, H, U);   // scrolled by 40 units = 62.5 px: the frame moves exactly with the scrolling
+    Check(Math.Abs(c.Mark.Y - (387.5 - 62.5)) <= 1, "cell: the frame moves exactly with the scroll (" + c.Mark.Y + ")");
+    c = FoundryPlace.Cell(g, "ascend", L(640), 7, W, H, U); Check(c.Mark.Kind == "up" && c.Mark.Rows == 5 && c.ScrollPx > 0 && !c.Clickable, "cell: far above -> 'up', 5 rows, the content has to move down (" + c.Mark.Kind + " " + c.Mark.Rows + ")");
+    c = FoundryPlace.Cell(g, "ascend", L(0), 40, W, H, U); Check(c.Mark.Kind == "down" && c.Mark.Rows == 7 && c.ScrollPx < 0 && !c.Clickable, "cell: far below -> 'down', 7 rows, the content has to move up (" + c.Mark.Kind + " " + c.Mark.Rows + ")");
+    c = FoundryPlace.Cell(g, "ascend", L(0), 12, W, H, U);   // row 2: top at 215.6 + 337.5 = 553: bottom 715 is past the view's end (700): cut, not clickable
+    Check(c.Mark.Kind == "box" && !c.Clickable && c.Mark.Y + c.Mark.H <= 700, "cell: cut by the viewport edge -> clipped box, scrolled in before a click (" + c.Mark.H + ")");
+    var l2 = L(0); l2.Cols = 0; l2.RowUnits = 0; c = FoundryPlace.Cell(g, "ascend", l2, 7, W, H, U); Check(c != null && c.Mark.Kind == "box", "cell: columns / row size missing in the reading -> the authored numbers");
+    Check(FoundryPlace.Cell(g, "ascend", new RFX.ListRead(), 7, W, H, U) == null && FoundryPlace.Cell(g, "ascend", null, 7, W, H, U) == null && FoundryPlace.Cell(null, "ascend", L(0), 7, W, H, U) == null && FoundryPlace.Cell(g, "recast", L(0), 7, W, H, U) == null,
+      "cell: unreadable scroll / no geometry / no recast entry -> null");
+
+    // frames per step
+    var item = LocItem(777, 3, 720100, 12, 5, 7, 9, 3);
+    var rs = new RecastScreen { SublimingOpen = true, AscendShown = true, CurType = 2, AscendList = L(0) };
+    Func<LocateKind, LocateStep> S = k => new LocateStep { Kind = k };
+    var f = LocateFrames.For(S(LocateKind.OpenAscendTab), item, rs, null, g, W, H, U);
+    Check(f != null && f.Clickable && Math.Abs(f.ClickY - (0.0328 + 0.25 + 0.0625) * U) < 0.01, "frame: the «Вознесение» tab, clickable");
+    f = LocateFrames.For(new LocateStep { Kind = LocateKind.OpenFoundry }, item, rs, null, g, W, H, U); Check(f != null && f.Clickable && f.Target == "inventory.workshop", "frame: «Литейная» in the inventory, clickable");
+    f = LocateFrames.For(new LocateStep { Kind = LocateKind.OpenFoundry, OnGear = true }, item, rs, null, g, W, H, U); Check(f != null && f.Clickable && f.Target == "hero.workshop", "frame: «Литейная» on the hero's gear screen, clickable");
+    f = LocateFrames.For(new LocateStep { Kind = LocateKind.AscendFilter, Missing = new[] { "slot", "main" } }, item, rs, null, g, W, H, U); Check(f != null && f.Clickable && f.Target == "ascend.slot.3", "frame: the item's slot tab first, clickable");
+    f = LocateFrames.For(new LocateStep { Kind = LocateKind.AscendFilter, Missing = new[] { "main", "subs" } }, item, rs, null, g, W, H, U); Check(f != null && !f.Clickable && f.Target == "ascend.filter", "frame: the filter button is only pointed at");
+    f = LocateFrames.For(S(LocateKind.AscendReady), item, rs, null, g, W, H, U); Check(f != null && !f.Clickable && f.Target == "ascend.button", "frame: «Вознести», never clickable");
+    f = LocateFrames.For(new LocateStep { Kind = LocateKind.Selected, Worn = true }, item, rs, null, g, W, H, U); Check(f != null && f.Clickable && f.Target == "inventory.cardLeft", "frame: the card's gem button (worn item), clickable for the recast path");
+    f = LocateFrames.For(new LocateStep { Kind = LocateKind.Selected }, item, rs, null, g, W, H, U); Check(f != null && f.Clickable && f.Target == "inventory.cardSolo", "frame: the card's gem button alone (not worn), clickable");
+    f = LocateFrames.For(new LocateStep { Kind = LocateKind.Done, OnGem = true }, item, rs, null, g, W, H, U); Check(f != null && !f.Clickable && f.Target == "gem.button", "frame: «Улучшить» on the gem screen, never clickable");
+    f = LocateFrames.For(new LocateStep { Kind = LocateKind.GemFunction, Func = 8 }, item, new RecastScreen { GemOpen = true }, null, g, W, H, U); Check(f != null && !f.Clickable, "frame: the gem function row as a hint, not clickable");
+    f = LocateFrames.GemRow(g, new RecastScreen { GemOpen = true }, 8, W, H, U, true); Check(f != null && f.Clickable && f.ClickY > 0, "frame: the gem function row, clickable when asked and in view");
+    f = LocateFrames.GemRow(g, new RecastScreen { GemOpen = true, GemFuncList = new RFX.ListRead { ScrollY = 5000, Cols = 1, RowUnits = 110, First = 3, Last = 8 } }, 8, W, H, U, true); Check(f != null && !f.Clickable, "frame: the gem function row scrolled out of the list is not clicked");
+    f = LocateFrames.For(new LocateStep { Kind = LocateKind.AscendPick, Pos = 8 }, item, rs, null, g, W, H, U); Check(f != null && f.Clickable && f.ViewH > 0, "frame: the item's cell in the Ascension list, clickable");
+    f = LocateFrames.For(new LocateStep { Kind = LocateKind.AscendPick, Pos = 8 }, item, new RecastScreen { SublimingOpen = true }, null, g, W, H, U); Check(f == null, "frame: the list is unreadable and the game's cell range is unknown -> none");
+    f = LocateFrames.For(new LocateStep { Kind = LocateKind.AscendPick, Pos = 8, Scroll = "below", ScrollRows = 3 }, item, new RecastScreen { SublimingOpen = true }, null, g, W, H, U); Check(f != null && f.Mark.Kind == "down" && f.Mark.Rows == 3 && !f.Clickable, "frame: scroll not readable but the cell range says 'below' -> only the pill");
+    f = LocateFrames.For(new LocateStep { Kind = LocateKind.RecastPick, Pos = 1 }, item, rs, null, g, W, H, U); Check(f == null, "frame: no recast rectangles in the data -> none");
+    f = LocateFrames.For(S(LocateKind.AscendReady), item, rs, null, null, W, H, U); Check(f == null, "frame: no geometry -> none (text hints)");
+    f = LocateFrames.For(S(LocateKind.InList), item, rs, null, g, W, H, U); Check(f == null, "frame: the inventory list keeps its own placement");
+    var cs = LocateFrames.CityButtonSize(g, U); Check(Math.Abs(cs[0] - 134.4) < 0.01 && Math.Abs(cs[1] - 134.4) < 0.01, "frame: the city button's size from the geometry");
+    cs = LocateFrames.CityButtonSize(null, U); Check(Math.Abs(cs[0] - 110) < 0.01 && Math.Abs(cs[1] - 130) < 0.01, "frame: ... else the old estimate");
+
+    // the real file the site serves (the web repo next to this one): everything the frames use is in it and sits where the app's older constants say
+    string real = Path.Combine(WebRoot(), "data", "app-geometry");
+    if (Directory.Exists(real)) {
+      int n = 0;
+      foreach (var p in Directory.GetFiles(real, "*.json")) {
+        string v = Path.GetFileNameWithoutExtension(p);
+        var rg = GameGeometry.Parse(File.ReadAllText(p, Encoding.UTF8), v);
+        Check(rg != null, "the site's geometry file " + v + " parses");
+        if (rg == null) continue;
+        n++;
+        bool all = true; foreach (var k in new[] { "foundry.tab.forge", "ascend.list", "ascend.cell", "ascend.filter", "ascend.button", "ascend.slot.0", "ascend.slot.4", "recast.list", "recast.cell", "recast.button",
+                                                    "inventory.workshop", "hero.workshop", "inventory.cardLeft", "city.barButton" }) if (!rg.Has(k)) { all = false; Console.WriteLine("    missing " + k); }
+        Check(all && rg.Grid("ascend.list") != null && rg.Grid("recast.list") != null, "the site's geometry file " + v + " has every rectangle and grid the frames use");
+        var il = rg.Rect("inventory.list", 1920, 1009, 1009);
+        Check(il != null && Math.Abs(il.Y / 1009 - 0.190) < 0.003, "the site's geometry file " + v + ": the inventory list top agrees with the app's constant (" + (il != null ? (il.Y / 1009).ToString("0.0000") : "-") + ")");
+        var cell = FoundryPlace.Cell(rg, "ascend", L(0), 0, 1920, 1009, 1009); var vw = rg.Rect("ascend.list", 1920, 1009, 1009);
+        Check(cell != null && cell.Mark.Kind == "box" && cell.Mark.X >= vw.X - 1 && cell.Mark.X + cell.Mark.W <= vw.Right + 1 && cell.Mark.Y >= vw.Y - 1, "the site's geometry file " + v + ": the first Ascension cell sits inside the list");
+        // the filter pop-up: its frames sit to the right of the filter button, the set cell inside the set grid
+        if (rg.Has("filter.root")) {
+          var fbtn = rg.Rect("ascend.filter", 1920, 1009, 1009);
+          var pstep = new LocateStep { Kind = LocateKind.AscendFilter, Missing = new[] { "suit" }, FilterGo = "suitRow" };
+          var pf = LocateFrames.For(pstep, item, null, null, rg, 1920, 1009, 1009);
+          Check(pf != null && pf.Target == "filter.suitOpen" && !pf.Clickable && pf.Mark.X >= fbtn.Right - 1 && pf.Mark.Y > 0, "pop-up: the set row's button sits right of the filter button, never clickable");
+          pstep.FilterGo = "reset"; pf = LocateFrames.For(pstep, item, null, null, rg, 1920, 1009, 1009); Check(pf != null && pf.Target == "filter.reset" && pf.Mark.X >= fbtn.Right - 1, "pop-up: «Сбросить» frame");
+          pstep.FilterGo = "suitTab"; pstep.SuitTab = 1; var tab1 = LocateFrames.For(pstep, item, null, null, rg, 1920, 1009, 1009); pstep.SuitTab = 0; var tab0 = LocateFrames.For(pstep, item, null, null, rg, 1920, 1009, 1009);
+          Check(tab0 != null && tab1 != null && tab1.Mark.X > tab0.Mark.X && tab1.Mark.Y == tab0.Mark.Y, "pop-up: the 3-piece tab is right of the 2-piece tab");
+          var prs = new RecastScreen { FilterSuitGrid = new RFX.ListRead { ScrollY = 0, Cols = 2, RowUnits = 42, First = 0, Last = 17 } };
+          pstep.FilterGo = "suitCell"; pstep.SuitIndex = 0; var c0 = LocateFrames.For(pstep, item, prs, null, rg, 1920, 1009, 1009);
+          pstep.SuitIndex = 3; var c3 = LocateFrames.For(pstep, item, prs, null, rg, 1920, 1009, 1009);
+          Check(c0 != null && c3 != null && !c0.Clickable && c3.Mark.X > c0.Mark.X && c3.Mark.Y > c0.Mark.Y, "pop-up: set cells fill the grid two per row (index 3 = second row, right column)");
+          prs.FilterSuitGrid = null; pstep.SuitIndex = 3; var fb = LocateFrames.For(pstep, item, prs, null, rg, 1920, 1009, 1009); Check(fb != null && fb.Target == "ascend.filter", "pop-up: set grid unreadable -> only the filter button is pointed at");
+        }
+        var ab = LocateFrames.For(new LocateStep { Kind = LocateKind.AscendReady }, item, null, null, rg, 1920, 1009, 1009); var abr = rg.Rect("ascend.button", 1920, 1009, 1009);
+        Check(ab != null && ab.Mark.H < abr.H - 5 && ab.Mark.Y > abr.Y && ab.Mark.Y + ab.Mark.H < abr.Bottom, "«Вознести»: the frame hugs the visible picture, inside the image rectangle");
+        var t3 = FoundryPlace.Tab(rg, "ascend", null, 1920, 1009, 1009); Check(t3 != null && t3.X > 1920 / 2 && t3.Right <= 1920 + 10, "the site's geometry file " + v + ": the Ascension tab is at the right edge");
       }
-      {   // the real frames of the owner's recording (build 531, game 1.6.47, 503x283): x 0..231, y 40..249 of frames 20, 40 (closed) and 45, 48, 50, 54 (pop-up open), 4 bits per channel
-        string fp = Path.Combine("tests", "fixtures", "herofilter", "rec164843-503x283.bin.gz");
-        if (File.Exists(fp)) {
-          byte[] raw;
-          using (var fs = File.OpenRead(fp)) using (var gz = new GZipStream(fs, CompressionMode.Decompress)) using (var ms = new MemoryStream()) { gz.CopyTo(ms); raw = ms.ToArray(); }
-          const int FW = 232, FH = 210, FY = 40; int per = FW * FH * 3;
-          string[] names = { "closed 20", "closed 40", "open 45", "open 48", "open 50", "open 54" };
-          bool[] open = { false, false, true, true, true, true };
-          for (int k = 0; k < names.Length; k++) {
-            int off = k * per;
-            Func<int, int, int, int, int[]> grabR = (gx, gy, gw, gh) => {
-              var a = new int[gw * gh];
-              for (int j = 0; j < gh; j++) for (int i = 0; i < gw; i++) {
-                int x = gx + i, y = gy + j - FY;
-                if (x < 0 || x >= FW || y < 0 || y >= FH) return null;
-                int q = off + (y * FW + x) * 3; a[j * gw + i] = (raw[q] << 16) | (raw[q + 1] << 8) | raw[q + 2];
-              }
-              return a;
-            };
-            Check(HeroFilterLook.Seen(grabR, 282.94) == open[k], "recorded frame (" + names[k] + ") at 503x283: the filter pop-up is " + (open[k] ? "seen" : "not seen"));
-          }
-        } else Check(false, "fixture " + fp + " is missing");
+      Check(n > 0, "the site has geometry files");
+    } else Console.WriteLine("  (no ../wardsage-web: the site's geometry files not checked)");
+  }
+
+  // the recast path through the card's gem button, the gem screen's function list, the item's mark on the inventory's scroll bar
+  static void LocateGemAndListTests() {
+    Console.WriteLine("Locate: card button, gem function rows and steps, the list's scroll bar mark");
+    // function rows: the config order, locked functions drop out
+    Eq(0, GemRows.Index(7), "gem rows: Recast is the first row");
+    Eq(1, GemRows.Index(8), "gem rows: Advanced Recast the second");
+    Eq(2, GemRows.Index(5), "gem rows: Refine the third");
+    Eq(8, GemRows.Index(4), "gem rows: the last function is the ninth row");
+    Eq(-1, GemRows.Index(99), "gem rows: an unknown function is not in the list");
+    Eq(0, GemRows.Index(8, new[] { 7 }), "gem rows: Recast locked -> Advanced Recast moves up to the first row");
+    Eq(-1, GemRows.Index(7, new[] { 7 }), "gem rows: a locked function has no row");
+    Eq(7, GemRows.FuncOfQuality(6), "gem func: mythic -> Recast"); Eq(7, GemRows.FuncOfQuality(10), "gem func: variant of mythic's table row (10) -> Recast");
+    Eq(8, GemRows.FuncOfQuality(8), "gem func: ancient mythic -> Advanced Recast"); Eq(8, GemRows.FuncOfQuality(11), "gem func: 11 -> Advanced Recast");
+    Eq(8, GemRows.FuncOfQuality(12), "gem func: 12 -> Advanced Recast"); Eq(8, GemRows.FuncOfQuality(13), "gem func: 13 -> Advanced Recast");
+    Eq(0, GemRows.FuncOfQuality(0), "gem func: quality unknown -> either function"); Eq(0, GemRows.FuncOfQuality(3), "gem func: a lower quality has no recast");
+
+    // steps on the gem screen: the function the item needs; done as soon as it is chosen (no press of «Улучшить» waited for)
+    var mythic = LocItem(777, 4, 720100, 12, 5, 7, 9, 3); mythic.Quality = 6;
+    var ancient = LocItem(778, 4, 720100, 12, 5, 7, 9, 3); ancient.Quality = 8;
+    var rq = new LocateRequest { Id = "g1", Purpose = "recast", Item = mythic, HeroUid = 0 };
+    var ra = new LocateRequest { Id = "g2", Purpose = "recast", Item = ancient, HeroUid = 0 };
+    var gm = new RecastScreen { GemOpen = true, GemSel = 777, GemFunc = -1 };
+    var st = LocateGuide.Next(rq, null, gm, null, 8, 1);
+    Check(st.Kind == LocateKind.GemFunction && st.Func == 7 && !st.WrongFunc, "gem step: mythic, no function chosen -> «Преобразование»");
+    gm.GemFunc = 8; st = LocateGuide.Next(rq, null, gm, null, 8, 1);
+    Check(st.Kind == LocateKind.GemFunction && st.Func == 7 && st.WrongFunc, "gem step: mythic with Advanced Recast chosen -> still choosing, the other function is named");
+    gm.GemFunc = 7; st = LocateGuide.Next(rq, null, gm, null, 8, 1);
+    Check(st.Kind == LocateKind.Done && st.OnGem && st.Func == 7, "gem step: mythic with Recast chosen -> done at once");
+    gm.GemSel = 778; gm.GemFunc = 7; st = LocateGuide.Next(ra, null, gm, null, 8, 1);
+    Check(st.Kind == LocateKind.GemFunction && st.Func == 8 && st.WrongFunc, "gem step: ancient mythic with Recast chosen -> not done, «Продв. преобразование» is named");
+    gm.GemFunc = 8; st = LocateGuide.Next(ra, null, gm, null, 8, 1);
+    Check(st.Kind == LocateKind.Done && st.OnGem && st.Func == 8, "gem step: ancient mythic with Advanced Recast chosen -> done at once");
+    gm.GemFunc = 1; st = LocateGuide.Next(ra, null, gm, null, 8, 1);
+    Check(st.Kind == LocateKind.GemFunction && !st.WrongFunc, "gem step: a gem enhancement chosen -> choose the recast (not 'the other recast')");
+    gm.GemFunc = 8; gm.GemSel = 5; gm.GemList = new long[] { 5, 778 }; st = LocateGuide.Next(ra, null, gm, null, 8, 1);
+    Check(st.Kind == LocateKind.GemPick && st.Pos == 2, "gem step: the function is chosen but another item is on the screen -> pick the item in the pop-up");
+    // the card: both buttons for a worn item, the gem button alone otherwise
+    var invS = new InventoryScreen { Open = true, EquipTab = true, Uids = new List<long>(new long[] { 777 }), Current = 777 };
+    st = LocateGuide.Next(rq, invS, null, null, 8, 1); Check(st.Kind == LocateKind.Selected && !st.Worn, "card step: an item that is not worn -> the gem button is alone");
+    st = LocateGuide.Next(new LocateRequest { Id = "g3", Purpose = "recast", Item = mythic, HeroUid = 200 }, invS, null, null, 8, 1); Check(st.Kind == LocateKind.Selected && st.Worn, "card step: a worn item -> both buttons");
+
+    // frames on a fixture: the gem rows and the button
+    const double W = 2000, H = 1000, U = 1000;
+    var j = "{\"game\":\"" + GeoGame + "\",\"v\":1,\"rects\":{" + string.Join(",", new[] {
+      GeoBox("gem.list", "L:0.1", "L:0.58", "T:0.2", "T:0.7", 0.48, 0.5), GeoBox("gem.cell", "L:0", "L:0.45", "T:0.3", "T:0.4", 0.45, 0.1),
+      GeoBox("gem.button", "C:-0.17", "C:0.17", "M:0.345", "M:0.455", 0.34, 0.11),
+      GeoBox("inventory.cardLeft", "R:-0.48", "R:-0.26", "B:-0.1", "B:-0.02", 0.22, 0.08), GeoBox("inventory.cardSolo", "R:-0.37", "R:-0.15", "B:-0.1", "B:-0.02", 0.22, 0.08),
+      GeoBox("inventory.scrollbar", "L:0.8", "L:0.815", "T:0.2", "T:0.8", 0.015, 0.6), GeoBox("inventory.listView", "L:0.1", "L:0.8", "T:0.2", "T:0.75", 0.7, 0.55) })
+      + "},\"grids\":{\"gem.list\":{\"cols\":1,\"lineSize\":110,\"padding\":[0,0,0,0]}}}";
+    var g = GameGeometry.Parse(j, GeoGame);
+    var f7 = LocateFrames.For(new LocateStep { Kind = LocateKind.GemFunction, Func = 7 }, mythic, new RecastScreen { GemOpen = true }, null, g, W, H, U);
+    var f8 = LocateFrames.For(new LocateStep { Kind = LocateKind.GemFunction, Func = 8 }, ancient, new RecastScreen { GemOpen = true }, null, g, W, H, U);
+    double pitch = 110.0 / 640 * U;
+    Check(f7 != null && f8 != null && f7.Mark.Kind == "box" && !f7.Clickable, "gem frame: the function's row is framed, a hint only");
+    Check(Math.Abs((f7.Mark.Y) - (200 + (pitch - 100) / 2)) <= 1 && Math.Abs(f8.Mark.Y - f7.Mark.Y - pitch) <= 1 && f7.Mark.H == 100, "gem frame: the rows follow each other by the list's line size (Recast row 1, Advanced Recast row 2)");
+    Check(Math.Abs(f7.Mark.X - (100 + (480 - 450) / 2.0)) <= 1 && f7.Mark.W == 450, "gem frame: the row sits centred in the list's width");
+    var scr = new RecastScreen { GemOpen = true, GemFuncList = new RFX.ListRead { ScrollY = 220, Cols = 1, RowUnits = 110, First = 2, Last = 6 } };
+    var f7s = LocateFrames.For(new LocateStep { Kind = LocateKind.GemFunction, Func = 7 }, mythic, scr, null, g, W, H, U);
+    Check(f7s != null && f7s.Mark.Kind == "up" && f7s.Mark.Rows >= 1, "gem frame: the list scrolled past the row -> the pill says which way");
+    scr.GemFuncList.ScrollY = 110; var f8s = LocateFrames.For(new LocateStep { Kind = LocateKind.GemFunction, Func = 8 }, ancient, scr, null, g, W, H, U);
+    Check(f8s != null && Math.Abs(f8s.Mark.Y - (200 + (pitch - 100) / 2)) <= 1, "gem frame: the list's own scroll moves the rows (one row down = the second function is where the first was)");
+    Check(LocateFrames.For(new LocateStep { Kind = LocateKind.GemFunction, Func = 7 }, mythic, null, null, null, W, H, U) == null, "gem frame: no geometry -> none");
+    var fb = LocateFrames.For(new LocateStep { Kind = LocateKind.Done, OnGem = true, Func = 7 }, mythic, new RecastScreen(), null, g, W, H, U);
+    var br = g.Rect("gem.button", W, H, U);
+    Check(fb != null && fb.Target == "gem.button" && !fb.Clickable && fb.Mark.X == (int)Math.Round(br.X) && fb.Mark.W == (int)Math.Round(br.W), "gem frame: done -> «Улучшить» is framed, never clicked");
+    var fw = LocateFrames.For(new LocateStep { Kind = LocateKind.Selected, Worn = true }, mythic, null, null, g, W, H, U);
+    var fs2 = LocateFrames.For(new LocateStep { Kind = LocateKind.Selected, Worn = false }, mythic, null, null, g, W, H, U);
+    Check(fw != null && fs2 != null && fw.Target == "inventory.cardLeft" && fs2.Target == "inventory.cardSolo" && fs2.Mark.X > fw.Mark.X, "card frame: worn = left of the row, not worn = the centred button");
+    Check(fw.Mark.Y + fw.Mark.H == (int)Math.Round(H - 0.02 * U) || Math.Abs(fw.Mark.Y + fw.Mark.H - (H - 0.02 * U)) <= 1, "card frame: it sits on the card's bottom edge");
+
+    // the item's mark on the list's scroll bar: the bar is 600 px, the content 20 rows of 100 + 12 padding twice
+    double pad = 12, vt = 200, p100 = 100;
+    var mk = LocateFrames.ListMarker(g, vt + pad, vt, pad, p100, 20, 20, W, H, U);   // scrolled to the top, the item in the last row
+    double total = 20 * p100 + 2 * pad;
+    Check(mk != null && Math.Abs(mk[0] - (0.8 + 0.0075) * U) < 1 && mk[1] == 200 && mk[2] == 800, "list mark: on the bar's middle line, over the bar's whole height");
+    Check(Math.Abs(mk[3] - (200 + 600 * (pad + 19.5 * p100) / total)) < 0.5, "list mark: the dot at the item's share of the whole list (" + (mk != null ? mk[3].ToString("0.0") : "-") + ")");
+    Check(Math.Abs(mk[4] - 200) < 0.5 && Math.Abs(mk[5] - (200 + 600 * 550 / total)) < 0.5, "list mark: the bracket shows the part on the screen (top of the list)");
+    var mk1 = LocateFrames.ListMarker(g, vt + pad, vt, pad, p100, 20, 1, W, H, U);
+    Check(mk1[3] < mk[3] && Math.Abs(mk1[3] - (200 + 600 * (pad + 0.5 * p100) / total)) < 0.5, "list mark: the first row's dot is near the top");
+    var mk2 = LocateFrames.ListMarker(g, vt + pad - 500, vt, pad, p100, 20, 20, W, H, U);   // scrolled down by 500 px
+    Check(Math.Abs(mk2[4] - (200 + 600 * 500 / total)) < 0.5 && Math.Abs(mk2[3] - mk[3]) < 0.01, "list mark: scrolling moves the bracket, not the item's dot");
+    Check(LocateFrames.ListMarker(g, vt + pad, vt, pad, p100, 20, 21, W, H, U) == null && LocateFrames.ListMarker(g, vt + pad, vt, pad, p100, 20, 0, W, H, U) == null, "list mark: a row outside the list -> none");
+    Check(LocateFrames.ListMarker(null, vt + pad, vt, pad, p100, 20, 5, W, H, U) == null, "list mark: no geometry -> none (only the pill)");
+    {   // the storage cleanup's strip: the viewport's bracket and a dot for EACH target still to mark (a row of two targets = two dots)
+      var rowsT = new List<int> { 1, 5, 5, 20 };
+      var sv = LocateFrames.ListStrip(g, vt + pad - 500, vt, pad, p100, 20, rowsT, 20, W, H, U);
+      Check(sv != null && sv.Length == 7 + 2 * 3 && sv[6] == 1 && sv[8] == 1 && sv[10] == 2 && sv[12] == 1, "scroll strip: 4 targets, the two of one row merge into one marker with a count (" + (sv != null ? (sv.Length - 7).ToString() : "-") + ")");
+      var mkL = LocateFrames.ListMarker(g, vt + pad - 500, vt, pad, p100, 20, 20, W, H, U);
+      Check(sv != null && Math.Abs(sv[3] - mkL[3]) < 0.01 && Math.Abs(sv[4] - mkL[4]) < 0.01 && Math.Abs(sv[5] - mkL[5]) < 0.01 && Math.Abs(sv[7] - LocateFrames.ListMarker(g, vt + pad - 500, vt, pad, p100, 20, 1, W, H, U)[3]) < 0.01 && sv[7] > sv[1],
+        "scroll strip: the viewport's bracket and the lead dot as the single marker's; every marker at its row's share");
+      {   // 100 targets: clustered, at most 12 markers, all inside the bar, counts add up
+        var many = new List<int>(); for (int i = 1; i <= 20; i++) for (int jj = 0; jj < 5; jj++) many.Add(i);
+        var sm = LocateFrames.ListStrip(g, vt + pad, vt, pad, p100, 20, many, 1, W, H, U);
+        int nm = sm != null ? (sm.Length - 7) / 2 : -1, tot = 0; bool inside = sm != null, asc = true;
+        for (int i = 7; sm != null && i + 1 < sm.Length; i += 2) { tot += (int)sm[i + 1]; inside &= sm[i] >= sm[1] && sm[i] <= sm[2]; if (i > 7 && sm[i] < sm[i - 2]) asc = false; }
+        Check(sm != null && nm >= 1 && nm <= 12 && tot == 100 && inside && asc, "scroll strip: 100 targets -> " + nm + " markers (max 12), counts sum to 100, inside the bar");
+        var cl = LocateFrames.ClusterMarks(new List<double> { 100, 104, 109, 300 }, 50, 400);
+        Check(cl.Count == 2 && (int)cl[0][1] == 3 && (int)cl[1][1] == 1, "scroll strip: markers within 10 px merge");
+        var cl2 = LocateFrames.ClusterMarks(new List<double> { 0, 500 }, 50, 400);
+        Check(cl2[0][0] >= 50 && cl2[1][0] <= 400, "scroll strip: a marker is kept inside the bar");
+      }
+      Check(LocateFrames.ListStrip(g, vt + pad, vt, pad, p100, 20, new List<int>(), 1, W, H, U) == null && LocateFrames.ListStrip(null, vt + pad, vt, pad, p100, 20, rowsT, 1, W, H, U) == null, "scroll strip: no targets or no bar geometry -> none");
+    }
+
+    // the side scroll strip of a live list (ListStrip): view 200..800, 20 rows of 100 px, row 0's top now at the view's top
+    var ls0 = ListStrip.Of(500, 200, 800, 200, 100, 20, 19);
+    Check(ls0 != null && ls0[0] == 500 && ls0[1] == 200 && ls0[2] == 800, "list strip: the track beside the viewport, over its whole height");
+    Check(Math.Abs(ls0[3] - (200 + 600 * 1950.0 / 2000)) < 0.01 && Math.Abs(ls0[4] - 200) < 0.01 && Math.Abs(ls0[5] - (200 + 600 * 600.0 / 2000)) < 0.01, "list strip: the last row's dot near the bottom, the bracket the top 600 of 2000 px");
+    var ls1 = ListStrip.Of(500, 200, 800, 200 - 700, 100, 20, 19);   // scrolled down 700 px
+    Check(Math.Abs(ls1[4] - (200 + 600 * 700.0 / 2000)) < 0.01 && Math.Abs(ls1[5] - (200 + 600 * 1300.0 / 2000)) < 0.01 && Math.Abs(ls1[3] - ls0[3]) < 0.01, "list strip: the scroll moves the bracket, the dot stays on the item");
+    var ls2 = ListStrip.Of(500, 200, 800, 200 - 5000, 100, 20, 0);   // past the end: clamped inside the track
+    Check(Math.Abs(ls2[4] - (200 + 600 * 1400.0 / 2000)) < 0.01 && Math.Abs(ls2[5] - 800) < 0.01 && Math.Abs(ls2[3] - (200 + 600 * 50.0 / 2000)) < 0.01, "list strip: an overscroll stays on the track, the first row's dot at the top");
+    var ls3 = ListStrip.Of(500, 200, 800, 200, 100, 3, 1);   // a list shorter than the view: the bracket covers the track
+    Check(Math.Abs(ls3[4] - 200) < 0.01 && Math.Abs(ls3[5] - 800) < 0.01 && Math.Abs(ls3[3] - (200 + 150)) < 0.01, "list strip: a short list -> the whole track bracketed, the dot at the row's place");
+    Check(ListStrip.Of(500, 200, 800, 200, 100, 20, 20) == null && ListStrip.Of(500, 200, 800, 200, 100, 0, 0) == null && ListStrip.Of(500, 200, 800, double.NaN, 100, 20, 1) == null, "list strip: a row outside / no rows / no scroll -> none");
+    var lv0 = new GeoRect { X = 10, Y = 200, W = 300, H = 600 };
+    var lf0 = ListStrip.For(lv0, 200, 100, 3, 59, 58, 1000, 1000);   // 59 items in 3 columns: 20 rows, the last item in row 19
+    Check(lf0 != null && Math.Abs(lf0[0] - (310 + 12)) < 0.01 && Math.Abs(lf0[3] - ls0[3]) < 0.01, "list strip: a grid's item index -> its row (index / columns), the track 0.012 H right of the view");
+    Check(ListStrip.For(lv0, 200, 100, 3, 59, 59, 1000, 1000) == null && Math.Abs(ListStrip.For(lv0, 200, 100, 3, 59, 0, 315, 1000)[0] - 309) < 0.01, "list strip: an index past the list -> none; the track kept inside the client");
+    // the hero screen's artifact list (ArtFrames.Strip): the same rows as its card frames (ArtFrames.Cell)
+    var arl = new RFX.ListRead { ScrollY = 232, Cols = 3, RowUnits = 116 };
+    var ars = ArtFrames.Strip(null, ArtEquipFrames.KeyList, arl, 30, 29, 3, 116, W, H, U);
+    var arv = ArtFrames.Rect(null, ArtEquipFrames.KeyList, W, H, U); double ak = U / GameGeometry.CanvasH;
+    Check(ars != null && Math.Abs(ars[1] - arv.Y) < 0.01 && Math.Abs(ars[2] - arv.Bottom) < 0.01, "art list strip: the track over the artifact list's viewport");
+    Check(Math.Abs(ars[3] - (arv.Y + arv.H * 9.5 / 10)) < 0.01 && Math.Abs(ars[4] - (arv.Y + arv.H * Math.Min(1, 232 * ak / (10 * 116 * ak)))) < 0.01, "art list strip: 30 cards = 10 rows, the last card's dot in row 10, the bracket at the scroll (2 rows down)");
+    Check(ArtFrames.Strip(null, ArtEquipFrames.KeyList, new RFX.ListRead(), 30, 1, 3, 116, W, H, U) == null && ArtFrames.Strip(null, ArtEquipFrames.KeyList, arl, 30, 30, 3, 116, W, H, U) == null, "art list strip: no scroll reading / an index past the list -> none");
+    Check(FoundryPlace.Strip(null, "ascend", arl, 30, 1, W, H, U) == null, "ascension strip: no geometry -> none (the pill alone)");
+    // the find step's still list: framed once the scroll has not moved for ScrollStill.StillMs
+    var ss = new ScrollStill();
+    Check(ss.Note(100, 1000), "scroll still: the first reading counts as still (the card framed at once)");
+    Check(!ss.Note(140, 1100) && !ss.Note(180, 1200) && !ss.Note(180.3, 1200 + ScrollStill.StillMs - 1) && ss.Note(180, 1200 + ScrollStill.StillMs), "scroll still: moving -> the steady plate; held StillMs -> still");
+    Check(ss.Note(double.NaN, 1300), "scroll still: no reading -> still (nothing to wait for)");
+    ss.Reset(); Check(ss.Note(5, 9000), "scroll still: after a reset the next reading is still again");
+
+    // the real file: the card's button sits on the card's bottom edge at any window height, the bar next to the list
+    string real = Path.Combine(WebRoot(), "data", "app-geometry");
+    if (Directory.Exists(real)) foreach (var p in Directory.GetFiles(real, "*.json")) {
+      string v = Path.GetFileNameWithoutExtension(p);
+      var rg = GameGeometry.Parse(File.ReadAllText(p, Encoding.UTF8), v);
+      if (rg == null) continue;
+      bool all = true; foreach (var k in new[] { "inventory.cardSolo", "inventory.listView", "inventory.scrollbar", "gem.list", "gem.cell", "gem.button" }) if (!rg.Has(k)) { all = false; Console.WriteLine("    missing " + k); }
+      Check(all && rg.Grid("gem.list") != null, "the site's geometry file " + v + " has the card's solo button, the list's scroll bar and the gem screen");
+      foreach (var hh in new[] { 640.0, 1009.0, 1440.0 }) {
+        double ww = hh * 16 / 9, uu = hh;
+        var l = rg.Rect("inventory.cardLeft", ww, hh, uu); var r = rg.Rect("inventory.cardRight", ww, hh, uu); var so = rg.Rect("inventory.cardSolo", ww, hh, uu);
+        Check(Math.Abs(l.Bottom - (hh - 12.9 / 640 * uu)) < 1 && Math.Abs(so.CY - l.CY) < 0.5, "the site's geometry file " + v + ": the card's buttons sit on the card's bottom edge at " + hh + " px (" + l.Bottom.ToString("0.0") + ")");
+        Check(Math.Abs(so.CX - (l.X + r.Right) / 2) < 1.5, "the site's geometry file " + v + ": the lone button is in the middle of the pair's span");
+        var bar = rg.Rect("inventory.scrollbar", ww, hh, uu); var lv = rg.Rect("inventory.listView", ww, hh, uu);
+        Check(bar != null && lv != null && Math.Abs(bar.Y - lv.Y) < 1 && bar.X > lv.Right - 25 && bar.X < lv.Right + 25 && bar.Bottom > lv.Bottom - 5, "the site's geometry file " + v + ": the scroll bar runs beside the list at its right edge");
+        var gl = rg.Rect("gem.list", ww, hh, uu); var gb = rg.Rect("gem.button", ww, hh, uu);
+        Check(gl != null && gb != null && gb.CX > gl.CX && gb.Y > hh * 0.7 && gb.CX > ww * 0.5 && gb.CX < ww * 0.85, "the site's geometry file " + v + ": the function list is left of «Улучшить» (bottom right of the centre)");
+        var gf = FoundryPlace.Cell(rg, "gem", new RFX.ListRead { ScrollY = 0, Cols = 1, RowUnits = 110 }, GemRows.Index(8), ww, hh, uu);
+        Check(gf != null && gf.Mark.Kind == "box" && gf.Mark.Y >= gl.Y && gf.Mark.Y + gf.Mark.H <= gl.Bottom + 1, "the site's geometry file " + v + ": the second function's row is inside the list at the top");
       }
     }
-    var top = new FakeHeroGame(g, W, H) { Heroes = heroes, Shown = heroes[120] }; top.Scroll = top.MaxScroll;
-    Check(RunHero(new HeroPilot(g), top, heroes[0], 3000, out lv) == "done" && top.Shown == heroes[0], "grid at its end, the first hero: up to the top");
-
-    var tab = new FakeHeroGame(g, W, H) { Heroes = heroes, Shown = heroes[3], Tab = 1 };
-    Check(RunHero(new HeroPilot(g), tab, heroes[3], 100, out lv) == "done" && tab.Tab == 3 && tab.Clicks == 1, "the right hero on another tab: «Снаряжение» once");
-
-    var none = new FakeHeroGame(g, W, H) { Heroes = heroes, Shown = 0 };
-    Check(RunHero(new HeroPilot(g), none, heroes[3], 50, out lv) == "noscreen" && none.Clicks == 0, "hero screen closed, no «Герои» button seen: nothing clicked, the player is asked");
-    // the main city with its «Герои» button: pressed, the hero screen opens with the last hero, then as usual
-    var cityG = new FakeHeroGame(g, W, H) { Heroes = heroes, Shown = 0, City = true, CityHero = heroes[40] };
-    string stC = RunHero(new HeroPilot(g), cityG, heroes[2], 3000, out lv);
-    Check(stC == "done" && cityG.Shown == heroes[2] && !cityG.City, "from the city: «Герои», then the hero (" + cityG.Clicks + " clicks)");
-
-    var gone = new FakeHeroGame(g, W, H) { Heroes = heroes, Shown = heroes[1] };
-    Check(RunHero(new HeroPilot(g), gone, 999L, 50, out lv) == "notfound" && gone.Clicks == 0, "hero not in the grid (the game's hero filter): nothing clicked");
-    var idle = new FakeHeroGame(g, W, H) { Heroes = heroes, Shown = heroes[1] };
-    Check(RunHero(new HeroPilot(g), idle, 0, 50, out lv) == "idle" && idle.Clicks == 0, "no started plan: the pilot leaves the hero screen alone");
-
-    // the player clicks: the pilot steps back
-    var hp = new HeroPilot(g);
-    var busy = new HeroView { NowMs = 0, Foreground = true, W = W, H = H, Plan = heroes[50], Hero = heroes[1], Tab = 3, Part = -1, Heroes = heroes, UserClicked = true };
-    var ba = hp.Step(busy);
-    Check(ba != null && ba.Kind == AutoKind.None && hp.State == "paused", "the player clicked: paused");
-    busy.UserClicked = false; busy.NowMs = HeroPilot.UserPauseMs + 100;
-    ba = hp.Step(busy);
-    Check(ba != null && ba.Kind == AutoKind.Click, "then goes on");
-    var bg = new HeroPilot(g);
-    ba = bg.Step(new HeroView { NowMs = 0, Foreground = false, W = W, H = H, Plan = heroes[50], Hero = heroes[1], Tab = 3, Heroes = heroes });
-    Check(ba != null && ba.Kind == AutoKind.None && bg.State == "background", "game not in front: waits");
   }
+
+
+  static void OwnButtonTests() {
+    Console.WriteLine("Own buttons over the game (record button vs the back arrow, off-screen points):");
+    var hg = new HeroGeometry();
+    // live 2026-10-29 (laptop, game window not maximized): Locate's HeroBack @39,28 started a recording instead of pressing the game's arrow
+    var hint = new HintGeometry(); var fg = new FilterGeometry(); var sg = new SellGeometry(); var lg = new ListGeometry();
+    foreach (double U in new[] { 600.0, 757.0, 1009.0, 1440.0 }) {
+      foreach (double asp in new[] { 16.0 / 9, 1.6, 4.0 / 3 }) {
+        double H = U, W = Math.Round(H * asp);
+        if (Ui.Unit(W, H) != U) continue;
+        int[] rb0 = OwnButtons.RecBox(W, H);
+        var one = new List<int[]> { rb0 };
+        int bx = (int)Math.Round(hg.BackX * U), by = (int)Math.Round(hg.BackY * U);
+        string at = "U " + U + " W " + W + ": ";
+        Check(!OwnButtons.Covers(one, bx, by, by), at + "the record button does not cover the back arrow");
+        Check(rb0[0] >= 0 && rb0[1] >= 0 && rb0[0] + rb0[2] <= W && rb0[1] + rb0[3] <= H, at + "the record button lies in the client area");
+        // every known target box: the gear screen's, the hero grid's, the filter, the sell screen's and the list's, left edge / centre anchored
+        var boxes = new List<int[]> { hint.Filter(W, H), hint.Replace(W, H), hint.Equip(W, H) };
+        for (int sl = 0; sl < 5; sl++) boxes.Add(hint.Slot(sl, W, H));
+        double hx = hg.ColX(0) * U, cw = hg.PitchX * U * 0.9;
+        boxes.Add(new[] { (int)(hx - cw / 2), (int)(hg.ViewTop * H), (int)(cw * 3), (int)((hg.ViewBottom - hg.ViewTop) * H) });                       // the hero grid
+        boxes.Add(new[] { (int)(lg.X0 * U), (int)(lg.ViewTop * H), (int)(lg.CellW * U), (int)((lg.ViewBottom - lg.ViewTop) * H) });                   // the list's first column
+        boxes.Add(new[] { (int)(sg.SellBtnX * U) - 4, (int)(sg.SellBtnY * U) - 4, 8, 8 });
+        var pts = new List<double[]> {
+          new[] { hg.BackX * U, hg.BackY * U },
+          new[] { hg.FunnelX * U, H - hg.FunnelDY * U },
+          new[] { hg.ClassX * U, hg.FilterRow0 * U }, new[] { hg.FactionX * U, hg.FilterRow0 * U },
+          new[] { W - hg.GearTabDX * U, hg.GearTabY * U },
+          new[] { W - hg.HeroesBtnDX * U, H - hg.HeroesBtnDY * U },
+          new[] { W / 2 + fg.MainCloseX * U, fg.CloseY * U }, new[] { W / 2 + fg.SideCloseX * U, fg.CloseY * U },
+          new[] { W / 2 + fg.ResetX * U, Ui.FromMiddle(fg.ResetY, W, H) }, new[] { W / 2 + fg.HideEquippedX * U, Ui.FromMiddle(fg.HideEquippedY, W, H) },
+          new[] { W / 2 + sg.ResetX * U, Ui.FromMiddle(sg.ResetY, W, H) }, new[] { W / 2 + sg.CloseX * U, sg.CloseY * U },
+        };
+        for (int pi = 0; pi < 5; pi++) pts.Add(new[] { W / 2 + (sg.PartX0 + pi * sg.PartPitch) * U, Ui.FromMiddle(sg.PartY, W, H) });
+        for (int bi = 0; bi < boxes.Count; bi++) {
+          var bb = boxes[bi];
+          bool hit = bb[0] < rb0[0] + rb0[2] && rb0[0] < bb[0] + bb[2] && bb[1] < rb0[1] + rb0[3] && rb0[1] < bb[1] + bb[3];
+          Check(!hit, at + "the record button misses known box #" + bi);
+        }
+        for (int pi = 0; pi < pts.Count; pi++) {
+          int px = (int)Math.Round(pts[pi][0]), py = (int)Math.Round(pts[pi][1]);
+          Check(!OwnButtons.Covers(one, px, py, py), at + "the record button misses known click point #" + pi);
+        }
+      }
+    }
+    int[] rb = OwnButtons.RecBox(1346, 757);
+    Check(rb[0] == 0 && rb[2] == 28, "record box at U 757: flush with the left edge, 25 + 3 px");
+    Check(Math.Abs(rb[1] + rb[2] / 2 - 757 / 2) <= 1, "record box centred at mid-height");
+    Check(OwnButtons.Covers(new List<int[]> { rb }, 10, 378, 378), "a point on it is covered");
+    Check(!OwnButtons.Covers(new List<int[]> { rb }, 39, 28, 28) && !OwnButtons.Covers(new List<int[]> { rb }, 60, 378, 378), "the back arrow's live point and points beside it are free");
+    Check(OwnButtons.Covers(new List<int[]> { new[] { 100, 100, 20, 20 } }, 105, 50, 300), "a drag crossing a part touches it");
+    Check(!OwnButtons.Covers(new List<int[]>(), 1, 1, 1) && !OwnButtons.Covers(null, 1, 1, 1), "no parts: nothing covered");
+    int[] desk = { 0, 0, 1366, 768 };
+    Check(OwnButtons.AllInside(desk, 39, 28, 28), "on the desktop");
+    Check(!OwnButtons.AllInside(desk, 1400, 28, 28) && !OwnButtons.AllInside(desk, 100, 700, 800) && !OwnButtons.AllInside(desk, -1, 5, 5), "off the desktop (a window larger than the screen): refused");
+  }
+
+
+  // the game's window table (UIInstance) and its twin of the same shape, UIFormClass (form id -> the form's class): which one is read, the names,
+  // the shown flag, the reasons the log gives (live 2026-10-29: the finder took UIFormClass, no form name was ever read)
+  static void WindowTableTests() {
+    Console.WriteLine("Window table: UIInstance, not UIFormClass");
+    var m = new FakeLua(1 << 21); RFX.TestMemory = m; RFX.ForgetLive();
+    try {
+      var fs = new FakeState(m); long inst = 20001;
+      Func<string, FTab> Cls = nm => fs.T("__cname", nm, "ctor", 0L, "__index", 0L);
+      var cCity = Cls("Form_MainCity"); var cPlan = Cls("Form_EquipmentPlan"); var cHero = Cls("Form_CharactorMain"); var cBattle = Cls("Form_Battle");
+      Func<FTab, bool, FTab> Obj = (c, shown) => shown ? fs.T("m_LuaLogicActive", true, "class", c, "____instanceId", inst++) : fs.T("m_InitOK", true, "class", c, "____instanceId", inst++);
+      const long idCity = -1796900587, idPlan = 657588872, idHero = 1456276573, idBattle = -1008207313;
+      var classes = fs.T(idCity, cCity, idPlan, cPlan, idHero, cHero, idBattle, cBattle);                        // UIFormClass: every form file loaded
+      var forms = fs.T(idCity, Obj(cCity, false), idPlan, Obj(cPlan, true));                                    // UIInstance: the city (covered) and the plan screen
+      var ids = new[] { idHero, idBattle, idCity };
+      Check(RFX.PickUiTableForTest(new[] { classes.A, forms.A }, ids) == forms.A, "window table: of the two tables keyed by form ids the one with form objects is taken");
+      Check(RFX.PickUiTableForTest(new[] { forms.A, classes.A }, ids) == forms.A, "window table: ... whatever order the scan found them in");
+      Eq(0UL, RFX.PickUiTableForTest(new[] { classes.A }, ids), "window table: the class table alone is never taken");
+      Check(RFX.PickUiTableForTest(new[] { classes.A, forms.A }, new[] { idHero, idBattle }) == 0, "window table: no anchor form object (only the classes hold them): nothing is taken");
+      // read from the class table (the old bug): nothing shown, no names, and the log line says why
+      RFX.SetUiTableForTest(classes.A);
+      var off0 = RFX.ReadOffers();
+      Check(off0 != null && off0.Count == 0, "window table (class table): no offer read - what the lab saw");
+      string d0 = RFX.ShownFormsDiag(8);
+      Check(d0.Contains("0 shown") && d0.Contains("no form objects"), "window table (class table): the log line says it holds no form objects (" + d0 + ")");
+      // read from UIInstance: the build plan screen is the shown offer, its name is in the log line
+      RFX.SetUiTableForTest(forms.A);
+      var off = RFX.ReadOffers();
+      Check(off != null && off.Count == 1 && off[0] == "Form_EquipmentPlan", "window table: the build plan screen is read by its class name (" + (off == null ? "null" : string.Join(",", off.ToArray())) + ")");
+      string d1 = RFX.ShownFormsDiag(8);
+      Check(d1 == "window table: 2 forms, 1 shown: Form_EquipmentPlan", "window table: the log line lists the shown forms (" + d1 + ")");
+      Eq("", RFX.ReadShownKnownForms(), "window table: no known screen's form is shown (the city is covered)");
+      // a shown form without a class field: named by its key and the reason; the known-forms read is "not sure" (null)
+      var odd = fs.T(idCity, Obj(cCity, false), 777L, fs.T("m_LuaLogicActive", true, "m_Foo", 1L));
+      RFX.SetUiTableForTest(odd.A);
+      string d2 = RFX.ShownFormsDiag(8);
+      Check(d2.Contains("id:777(no class field)"), "window table: a form without a name is listed with the reason (" + d2 + ")");
+      Check(RFX.ReadShownKnownForms() == null, "window table: a shown form without a name: the known forms are not sure (null)");
+      // the battle and the hero screen shown are known screens (the back press is never made then); the tip toast is not one
+      var cTips = Cls("Form_CommonTips");
+      var fight = fs.T(idBattle, Obj(cBattle, true), 99L, Obj(cTips, true));
+      RFX.SetUiTableForTest(fight.A);
+      Eq("Form_Battle", RFX.ReadShownKnownForms(), "window table: the battle shown is a known screen's form, the tip toast is not");
+      // more forms without a name than one call may read: the ones after them are named on the next call (a miss is not read again for 10 s)
+      var many = new List<object>();
+      for (int i = 0; i < 30; i++) { many.Add((long)(1000 + i)); many.Add(fs.T("m_LuaLogicActive", true, "m_X", 1L)); }
+      many.Add(idPlan); many.Add(Obj(cPlan, true));
+      RFX.SetUiTableForTest(fs.T(many.ToArray()).A);
+      RFX.ReadOffers(); var off2 = RFX.ReadOffers();
+      Check(off2 != null && off2.Contains("Form_EquipmentPlan"), "window table: 30 nameless forms before it do not hide the plan screen for good (" + (off2 == null ? "null" : string.Join(",", off2.ToArray())) + ")");
+      // a form's id is the hash of its name (UIDefines): every screen-map form is an anchor of the search
+      Eq(idCity, RFX.FormIdOf("Form_MainCity"), "form id: the city's id from its name");
+      Eq(idHero, RFX.FormIdOf("Form_CharactorMain"), "form id: the hero screen's id from its name");
+      Eq(idBattle, RFX.FormIdOf("Form_Battle"), "form id: the battle's id from its name");
+      Eq(idPlan, RFX.FormIdOf("Form_EquipmentPlan"), "form id: the build plan's id from its name (odd length)");
+      // the full search from any screen (the scans over the test memory): the layout's anchors are the city, the hero screen and the battle
+      {
+        var m2 = new FakeLua(1 << 21); RFX.TestMemory = m2; RFX.ForgetLive();
+        var fs2 = new FakeState(m2); long inst2 = 30001;
+        Func<string, FTab> Cls2 = nm => fs2.T("__cname", nm, "ctor", 0L, "__index", 0L);
+        const long idGuild = -1859031432, idFoundry = -1395031855, idChat = 748358717, idPrivacy = -1015447067, idOdd = 123456789;
+        var k2City = Cls2("Form_MainCity"); var k2Guild = Cls2("Form_Union"); var k2Chat = Cls2("Form_MinChat");
+        // live 2026-10-30, the game on the guild after the app restarted: UIFormClass kept 3 classes (the city's and two never opened;
+        // the game cleared the destroyed forms' classes and a form required again is never registered again), the city destroyed
+        var cls2 = fs2.T(idCity, k2City, idPrivacy, Cls2("Form_PopupPrivacy"), idOdd, Cls2("Form_Something"), 1L, 0L);
+        var guildOnly = fs2.T(idGuild, fs2.T("m_LuaLogicActive", true, "class", k2Guild, "____instanceId", inst2++),
+                              idChat, fs2.T("m_LuaLogicActive", false, "class", k2Chat, "____instanceId", inst2++), 1L, 0L, 2L, 0L);   // UIInstance: the guild and the chat
+        var notForms = fs2.T(idFoundry, fs2.T("m_LuaLogicActive", true, "class", Cls2("UIStackItem"), "____instanceId", inst2++), 1L, 0L, 2L, 0L, 3L, 0L);   // keyed by a form id, not a form
+        string said;
+        ulong got = RFX.FindUiTableForTest(ids, out said);
+        Check(got == guildOnly.A, "window table: found on the guild with the city destroyed and UIFormClass nearly empty, by the screen map's form ids (" + said + ")");
+        Check(said.StartsWith("forms: window table found from Form_Union"), "window table: the log line names the screen it was found from (" + said + ")");
+        Check(!said.Contains("\n"), "window table found: no diagnostic lines");
+        // the test build's diagnostic of a failed search: each candidate's size, first keys and value marks
+        string dg = RFX.UiCandidatesDiagForTest(new[] { cls2.A, guildOnly.A }, ids, 40);
+        Check(dg.Contains("2 candidate table(s)") && dg.Contains("cname=Form_PopupPrivacy") && dg.Contains("class=Form_Union") && dg.Contains("inst") && dg.Contains("active=1"),
+              "window table diagnostic: sizes, keys and marks of the candidates (" + dg.Replace("\n", " | ") + ")");
+        Check(RFX.UiCandidatesDiagForTest(new[] { cls2.A, guildOnly.A, notForms.A }, ids, 2).Split('\n').Length <= 3, "window table diagnostic: capped");
+        Eq(0UL, RFX.PickUiTableForTest(new[] { notForms.A }, new[] { idFoundry }), "window table: objects whose class is not a Form_ are not forms");
+        // live 2026-10-30 (1.6.66.346): UIInstance shrunk to one or two nodes (the guild alone, the rest destroyed): a table of any size is a candidate
+        foreach (int n in new[] { 1, 2 }) {
+          var m5 = new FakeLua(1 << 21); RFX.TestMemory = m5; RFX.ForgetLive();
+          var fs5 = new FakeState(m5); long inst5 = 50001;
+          Func<string, FTab> Cls5 = nm => fs5.T("__cname", nm, "ctor", 0L, "__index", 0L);
+          var k5Guild = Cls5("Form_Union");
+          var cls5 = fs5.T(idCity, Cls5("Form_MainCity"), RFX.FormIdOf("Form_Login"), Cls5("Form_Login"), 631657439L, Cls5("Form_UnionAdd"));
+          var g5 = fs5.T("m_LuaLogicActive", true, "class", k5Guild, "____instanceId", inst5++);
+          var small = n == 1 ? fs5.T(idGuild, g5) : fs5.T(idGuild, g5, idChat, fs5.T("m_LuaLogicActive", false, "class", Cls5("Form_MinChat"), "____instanceId", inst5++));
+          got = RFX.FindUiTableForTest(ids, out said);
+          Check(got == small.A, "window table: UIInstance of " + n + " node(s) is found (" + said.Replace("\n", " | ") + ")");
+          Check(said.StartsWith("forms: window table found from Form_Union"), "window table: the small table names the guild (" + said + ")");
+          string nd = RFX.UiNodesDiagForTest(ids);
+          Check(nd.StartsWith("  form id nodes: ") && nd.Contains(", 0 outside the candidates"), "window table diagnostic: every form id node lies in a candidate (" + nd + ")");
+        }
+        // a node whose table header is not found: named in the diagnostic by its form name and its value's marks
+        {
+          var m6 = new FakeLua(1 << 21); RFX.TestMemory = m6; RFX.ForgetLive();
+          var fs6 = new FakeState(m6);
+          var lost = fs6.T(idGuild, fs6.T("m_LuaLogicActive", true, "class", fs6.T("__cname", "Form_Union"), "____instanceId", 60001L));
+          m6.Mem[lost.A - FakeLua.Base + 8] = 0;   // the header unreadable as a table: the node alone remains
+          string nd = RFX.UiNodesDiagForTest(ids);
+          Check(nd.Contains(", 1 outside the candidates") && nd.Contains("Form_Union") && nd.Contains("class=Form_Union") && nd.Contains("active=1"),
+                "window table diagnostic: a node outside the candidates is named with its marks (" + nd.Replace("\n", " | ") + ")");
+        }
+        // the city open: found in the first round, as before
+        var m3 = new FakeLua(1 << 21); RFX.TestMemory = m3; RFX.ForgetLive();
+        var fs3 = new FakeState(m3); long inst3 = 40001;
+        Func<string, FTab> Cls3 = nm => fs3.T("__cname", nm, "ctor", 0L, "__index", 0L);
+        var k3City = Cls3("Form_MainCity"); var k3Guild = Cls3("Form_Union");
+        var cls3 = fs3.T(idCity, k3City, idGuild, k3Guild, 1L, 0L, 2L, 0L);
+        var city = fs3.T(idCity, fs3.T("m_LuaLogicActive", true, "class", k3City, "____instanceId", inst3++), 1L, 0L, 2L, 0L, 3L, 0L);
+        got = RFX.FindUiTableForTest(ids, out said);
+        Check(got == city.A, "window table: found with the city open (" + said + ")");
+        Check(said.StartsWith("forms: window table found from Form_MainCity"), "window table: the city open (" + said + ")");
+        // only UIFormClass in memory (no form open at all): it is never taken
+        var m4 = new FakeLua(1 << 21); RFX.TestMemory = m4; RFX.ForgetLive();
+        var fs4 = new FakeState(m4);
+        var cls4 = fs4.T(idCity, fs4.T("__cname", "Form_MainCity", "ctor", 0L), idGuild, fs4.T("__cname", "Form_Union", "ctor", 0L), 1L, 0L, 2L, 0L);
+        got = RFX.FindUiTableForTest(ids, out said);
+        Eq(0UL, got, "window table: not fooled by UIFormClass (" + said + ")");
+        Check(said.StartsWith("forms: window table not found"), "window table: not found is logged (" + said + ")");
+        RFX.TestMemory = m; RFX.ForgetLive();
+      }
+      RFX.SetUiTableForTest(0);
+      Eq("window table not found yet", RFX.ShownFormsDiag(8), "window table: not found - the log line says so");
+      Check(RFX.ReadShownKnownForms() == null, "window table not found: the known forms are not read (null)");
+    } finally { RFX.SetUiTableForTest(0); RFX.TestMemory = null; RFX.ForgetLive(); }
+  }
+
+  // the hint-mode fallback of every flow (HintFallback): an unknown screen / a screen the flow does not continue from / a pop-up nobody knows -> «back to the city»
+  static void HintFallbackTests() {
+    Console.WriteLine("Hint fallback: back to the city");
+    const double W = 1366, H = 705; double U = Ui.Unit(W, H);
+    var hg = new HeroGeometry(); double bx = hg.BackX * U, by = hg.BackY * U;
+    Func<string, string, ScreenState> Unk = (top, known) => ScreenState.Classify(new ScreenInputs { CityForm = false, Offers = new List<string>(), TopUnknown = top, ShownKnown = known }, 0);
+    var inv = new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true };
+    var invS = ScreenState.Classify(new ScreenInputs { Inv = inv, Offers = new List<string>(), ShownKnown = "" }, 0);
+    var city = ScreenState.Classify(new ScreenInputs { CityForm = true, Offers = new List<string>(), ShownKnown = "" }, 0);
+    var heroS = ScreenState.Classify(new ScreenInputs { Hero = new HeroScreen { Hero = 5, FormOk = true }, Offers = new List<string>(), ShownKnown = "" }, 0);
+    var foundry = ScreenState.Classify(new ScreenInputs { Rs = new RecastScreen { SublimingOpen = true }, Offers = new List<string>(), ShownKnown = "" }, 0);
+    Func<PilotFlow, ScreenState, bool, HintFallbackPlan> D = (f, sc, live) => HintFallback.Decide(f, sc, LocateKind.None, live, W, H, U);
+    Func<GeoRect, bool> onBack = r => r != null && Math.Abs(r.CX - bx) <= 0.03 * U + 1 && Math.Abs(r.CY - by) <= 0.03 * U + 1;
+    // scenario 10 (live 10:5x): the gear filter pop-up is open (the game's flag, gear filter mem=yes) on the hero screen and the flow cannot go on from it: «Закройте фильтр» on its red ×, not «Вернитесь в город»
+    {
+      Func<Mem3, ScreenState> gearHero = open => { var gs = ScreenState.Classify(new ScreenInputs { Hero = new HeroScreen { Hero = 5, FormOk = true, Tab = HeroGeometry.GearTab, Part = 2, Gear = new GearMem { Open = open, Side = Mem3.No, SetPanel = Mem3.No } }, Offers = new List<string>(), ShownKnown = "Form_CharactorMain" }, 0);
+        if (open == Mem3.Yes) { gs.ModalOpen = true; gs.ModalWhy = "form:Form_EquipFilterWidget"; } return gs; };   // (the pop-up as a form nobody of the map names: a stray one)
+      var fgm = new FilterGeometry(); double xx = fgm.X(fgm.MainCloseX, W, H), yy = fgm.Y(fgm.CloseY, W, H);
+      foreach (var f in new[] { PilotFlow.LocateAscend, PilotFlow.LocateRecast, PilotFlow.Sell }) {
+        var pl = D(f, gearHero(Mem3.Yes), false);
+        Check(pl.Kind == HintLeave.Close && pl.Text == "closeFilter" && pl.Rect != null && Math.Abs(pl.Rect.CX - xx) < 2 && Math.Abs(pl.Rect.CY - yy) < 2, "fallback: " + f + " with the gear filter open (mem=yes): the plate says to close the filter, its × framed (" + pl.Kind + " '" + pl.Text + "')");
+        var pn = D(f, gearHero(Mem3.No), false);
+        Check(pn.Text == "", "fallback: " + f + " with the gear filter shut: not the filter's text (" + pn.Kind + ")");
+      }
+      Check(D(PilotFlow.Equip, gearHero(Mem3.Yes), false).Text != "closeFilter", "fallback: the equip flow's own open gear filter is not told to be closed by this plate");
+      // the page's step: the open gear filter covers the hero screen's buttons: «close the filter window» with the × key of the gear filter, whatever coverable step it hides
+      foreach (var k in new[] { LocateKind.OpenFoundry, LocateKind.OpenInventory }) {
+        var stp = new LocateStep { Kind = k, OnGear = true }; bool rep = LocateGuide.CoverStep(stp, gearHero(Mem3.Yes));
+        Check(rep && stp.Kind == LocateKind.ClosePopup && stp.Covered == k && stp.PopupTitle == "filter" && stp.PopupClose == "hero.filterClose", "locate step " + k + ": the gear filter open (mem=yes): the step is «close the filter window» on its ×, not the way back (" + stp.Kind + ")");
+        Check(!LocateGuide.CoverStep(new LocateStep { Kind = k, OnGear = true }, gearHero(Mem3.No)), "locate step " + k + ": the gear filter shut: the step stays");
+      }
+    }
+    // an unknown screen whose form the map knows with a back arrow: the arrow framed (every flow alike)
+    foreach (var f in CityFirst.All) {
+      var pl = D(f, Unk("Form_ActALinkageMain", ""), false);
+      Check(pl.Kind == HintLeave.Back && onBack(pl.Rect), "fallback: " + f + " on a screen with a back arrow: the arrow framed (" + pl.Kind + ")");
+    }
+    // an unknown screen nobody has in the map: the arrow when the host read it live, else the text alone with Escape (no frame)
+    var odd = Unk("Form_Odd", "");
+    Check(D(PilotFlow.Equip, odd, true).Kind == HintLeave.Back && onBack(D(PilotFlow.Equip, odd, true).Rect), "fallback: an unknown screen, back arrow read live: framed");
+    var esc = D(PilotFlow.Sell, odd, false);
+    Check(esc.Kind == HintLeave.Esc && esc.Rect == null, "fallback: an unknown screen, nothing read: «Esc», no frame");
+    // a known screen the flow does not go on from: the screen's back arrow (every flow has its own set)
+    Check(D(PilotFlow.Equip, foundry, false).Kind == HintLeave.Back && onBack(D(PilotFlow.Equip, foundry, false).Rect), "fallback: equip on the Foundry: back arrow");
+    Check(D(PilotFlow.LocateRecast, ScreenState.Classify(new ScreenInputs { Rs = new RecastScreen { GemOpen = true }, Offers = new List<string>(), ShownKnown = "" }, 0), false).Kind == HintLeave.None, "fallback: the recast flow goes on from the gem screen: no fallback");
+    Check(D(PilotFlow.LocateRecast, foundry, false).Kind == HintLeave.Back, "fallback: the recast flow on the Foundry's tab: back arrow");
+    // screens the flow goes on from, and the city: never
+    Check(D(PilotFlow.Sell, invS, false).Kind == HintLeave.None && D(PilotFlow.Equip, heroS, false).Kind == HintLeave.None && D(PilotFlow.Equip, city, false).Kind == HintLeave.None && D(PilotFlow.Equip, null, false).Kind == HintLeave.None, "fallback: a screen the flow goes on from, the city, no screen: nothing");
+    // a pop-up with a known close button over a screen: the close button framed (not the back arrow, it is covered)
+    var pop = ScreenState.Classify(new ScreenInputs { Rs = new RecastScreen { SublimingOpen = true }, Offers = new List<string>(), ShownKnown = "", TopNew = "Form_AccountInfo" }, 0);
+    var pc = D(PilotFlow.Equip, pop, false);
+    Check(pc.Kind == HintLeave.Close && pc.Rect != null && !onBack(pc.Rect), "fallback: a known pop-up over a screen the flow leaves: its close button framed (" + pc.Kind + ")");
+    // a pop-up nobody knows: no close button to frame - the text with Escape
+    var stray = ScreenState.Classify(new ScreenInputs { Inv = inv, Offers = new List<string>(), ShownKnown = "", TopNew = "Form_NobodyKnowsThis" }, 0);
+    Check(D(PilotFlow.Sell, stray, false).Kind == HintLeave.Esc, "fallback: an unrecognised pop-up over the inventory: «Esc»");
+    // the hero grid's filter pop-up open: the funnel that closes it is framed, for every flow, whatever step the flow has (never a step frame under it)
+    var hfp = ScreenState.Classify(new ScreenInputs { Hero = new HeroScreen { Hero = 5, FormOk = true, FilterOpen = true }, Offers = new List<string>(), ShownKnown = "" }, 0);
+    Check(hfp.ModalOpen && hfp.ModalWhy == "heroFilter", "fallback: the hero filter pop-up reads as open (" + hfp.ModalWhy + ")");
+    foreach (var f in CityFirst.All) {
+      var fp = D(f, hfp, false);
+      var fn = new HeroGeometry().GridBarRect(W, H);
+      Check(fp.Kind == HintLeave.Close && fp.Rect != null && Math.Abs(fp.Rect.CX - fn.CX) < 1 && Math.Abs(fp.Rect.CY - fn.CY) < 1, "fallback: " + f + " with the hero filter pop-up open: the filter bar framed (" + fp.Kind + ")");
+    }
+    {   // lab 552 equip_hint_filter_open (frame audit): the Equip fallback's layout of hero.filter was the funnel square [16,641,56,56]; the live m_BtnFilter is [3,637,275,40] at 1366x705
+      double W2 = 1366, H2 = 705, U2 = Ui.Unit(W2, H2); var fq = HintFallback.Decide(PilotFlow.Equip, hfp, LocateKind.None, false, W2, H2, U2); int[] lv = { 3, 637, 275, 40 };
+      Check(fq.Kind == HintLeave.Close && fq.Key == "hero.filter" && Math.Abs(fq.Rect.CX - (lv[0] + lv[2] / 2.0)) <= 12 && Math.Abs(fq.Rect.CY - (lv[1] + lv[3] / 2.0)) <= 12 && Math.Abs(fq.Rect.W - lv[2]) <= 12 && Math.Abs(fq.Rect.H - lv[3]) <= 12, "fallback: hero.filter layout vs the audit's live rect (lab 552): the whole bar (" + fq.Rect.X + "," + fq.Rect.Y + "," + fq.Rect.W + "x" + fq.Rect.H + ")");
+    }
+    // live state of the lab run: the game's own flag not read (ModalWhy empty) but the pop-up is on the picture: the same funnel
+    var hnf = ScreenState.Classify(new ScreenInputs { Hero = new HeroScreen { Hero = 5, FormOk = true }, Offers = new List<string>(), ShownKnown = "" }, 0);
+    Check(!hnf.ModalOpen && HintFallback.Decide(PilotFlow.Equip, hnf, LocateKind.None, false, W, H, U).Kind == HintLeave.None && HintFallback.Decide(PilotFlow.Equip, hnf, LocateKind.None, false, W, H, U, true).Kind == HintLeave.Close, "fallback: the hero filter pop-up seen on the picture only: the funnel framed; nothing when it is closed");
+    Check(HintFallback.Decide(PilotFlow.Equip, hnf, LocateKind.None, false, W, H, U, true).Key == "hero.filter" && FrameTargets.Of("hero.filter") != null, "fallback: the funnel frame carries the key hero.filter (FrameFor reads its live rect, the audit sees it)");
+    // a held screen is not judged; a locate request with nothing to drive never goes back
+    var held = Unk("Form_ActALinkageMain", ""); held.Held = true;
+    Check(D(PilotFlow.Equip, held, false).Kind == HintLeave.None, "fallback: a held screen is not judged");
+    Check(HintFallback.Decide(PilotFlow.LocateRecast, foundry, LocateKind.NoItem, false, W, H, U).Kind == HintLeave.None, "fallback: nothing to drive: no back");
+  }
+
+
+  // back to the city (ClickTarget.CityBack) from a known screen the pilot cannot start from, and the one Escape after a back press that changed nothing
+  // the screen map (src/ScreenMap.cs, src/ScreenMapData.cs): every form of the game has a class; every pop-up / full screen an exit that is not
+  // one of its never-click buttons; a dangerous form never gets a click
+
+
+
+  static ScreenState MapModel(List<string> stack) {
+    int fi = stack.Count - 1;
+    while (fi > 0 && "FKU".IndexOf(ScreenMap.ClassOf(stack[fi])) < 0) fi--;
+    string full = stack[fi];
+    var above = stack.GetRange(fi + 1, stack.Count - fi - 1);
+    var i = new ScreenInputs { CityForm = false, Offers = new List<string>(), ShownKnown = "" };
+    var inv = new InventoryScreen { Open = true, EquipTab = true, BulkKnown = true };
+    switch (full) {
+      case "Form_MainCity": i.CityForm = true; i.CitySeen = true; i.TopCity = string.Join(",", above.ToArray()); break;
+      case "Form_BackpackIntegration": i.Inv = inv; i.ShownKnown = full; i.TopNew = string.Join(",", above.ToArray()); break;
+      case "Form_EquipSubliming": i.Inv = inv; i.Rs = new RecastScreen { SublimingOpen = true, CurType = 1 }; i.ShownKnown = "Form_BackpackIntegration,Form_EquipSubliming"; i.TopNew = string.Join(",", above.ToArray()); break;
+      case "Form_CharactorMain": i.Hero = new HeroScreen { Hero = 5, FormOk = true }; i.ShownKnown = full; i.TopNew = string.Join(",", above.ToArray()); break;
+      default: { var l = new List<string> { full }; l.AddRange(above); i.TopUnknown = string.Join(",", l.ToArray()); break; }
+    }
+    var s = ScreenState.Classify(i, 0); s.SinceMs = 0;
+    return s;
+  }
+
+
+
+
+
+
+
+
+  // the artifact list's rows from the picture (the fallback of the game's own scroll): a drawn list at 1920 x 1009 (dark background, a dark gap of 6 canvas units between
+  // the rows, a card = a red body under a bright crest line), looked at as the overlay does (the strip of the list's viewport)
+  static int[] ArtListPicture(SellGeometry g, double W, double H, double U, double row1, int rowsN, out int sx, out int sy, out int sw, out int sh) {
+    ArtGridPicture.Strip(g, W, H, U, out sx, out sy, out sw, out sh);
+    var px = new int[sw * sh];
+    int bg = (33 << 16) | (36 << 8) | 43, body = (120 << 16) | (50 << 8) | 45, crest = (215 << 16) | (185 << 8) | 110;
+    for (int i = 0; i < px.Length; i++) px[i] = bg;
+    double pitch = g.PitchY * U, card = g.CellHeight * U, cardW = g.CellW * U;
+    for (int r = 0; r < rowsN; r++) {
+      double top = row1 + r * pitch;
+      for (int c = 0; c < g.Columns; c++) {
+        double left = g.X(g.X0 + c * g.PitchX, W, U) - sx;
+        for (int y = (int)Math.Round(top) - sy; y < (int)Math.Round(top + card) - sy; y++) {
+          if (y < 0 || y >= sh) continue;
+          int col = y < (int)Math.Round(top) - sy + 5 ? crest : body;
+          for (int x = (int)left; x < (int)(left + cardW); x++) if (x >= 0 && x < sw) px[y * sw + x] = col;
+        }
+      }
+    }
+    return px;
+  }
+
+  static void ArtGridPictureTests() {
+    double W = 1920, H = 1009, U = Ui.Unit(W, H);
+    var g = SellGeometry.Artifacts(W, H, U, 8);
+    double top0 = g.ViewTopPx(U) + g.TopPad * U, pitch = g.PitchY * U; int rowsN = 40;
+    int sx, sy, sw, sh;
+    var pic = new ArtGridPicture(); double r1;
+    // a list just built is at its top: row 1 where the geometry says, to a pixel
+    var px = ArtListPicture(g, W, H, U, top0, rowsN, out sx, out sy, out sw, out sh);
+    Check(pic.Update(px, sw, sh, sx, sy, g, W, U, rowsN, 7, 1000, out r1) && Math.Abs(r1 - top0) <= 1.5, "art picture: a new list is placed at its top (" + r1.ToString("0.0") + " of " + top0.ToString("0.0") + "; " + pic.Note + ")");
+    // the list moves by 41 px, then by 60: followed (the rows' phase gives the exact place)
+    px = ArtListPicture(g, W, H, U, top0 - 41, rowsN, out sx, out sy, out sw, out sh);
+    Check(pic.Update(px, sw, sh, sx, sy, g, W, U, rowsN, 7, 1030, out r1) && Math.Abs(r1 - (top0 - 41)) <= 1.5, "art picture: followed after a move of 41 px (" + r1.ToString("0.0") + "; " + pic.Note + ")");
+    px = ArtListPicture(g, W, H, U, top0 - 101, rowsN, out sx, out sy, out sw, out sh);
+    Check(pic.Update(px, sw, sh, sx, sy, g, W, U, rowsN, 7, 1060, out r1) && Math.Abs(r1 - (top0 - 101)) <= 1.5, "art picture: followed after another 60 px (" + r1.ToString("0.0") + "; " + pic.Note + ")");
+    // the same list opened already scrolled (no top seen): no place from the picture alone ...
+    var pic2 = new ArtGridPicture();
+    double far = top0 - 7 * pitch - 23;
+    px = ArtListPicture(g, W, H, U, far, rowsN, out sx, out sy, out sw, out sh);
+    Check(!pic2.Update(px, sw, sh, sx, sy, g, W, U, rowsN, 8, 3000, out r1) && double.IsNaN(r1), "art picture: a list first seen scrolled far down has no place by itself");
+    // ... until the player ticks a card: row 10 (0-based 9) under the pointer
+    int clickRow = 9; double rowTop = far + clickRow * pitch, cursorY = rowTop + 60;
+    Check(pic2.Update(px, sw, sh, sx, sy, g, W, U, rowsN, 8, 3100, out r1, clickRow, cursorY) && Math.Abs(r1 - far) <= 1.5, "art picture: the player's tick of row 10 places the list (" + r1.ToString("0.0") + " of " + far.ToString("0.0") + ")");
+    // the picture's list reading drives the same card frames as the game's: ScrollY from row 1
+    var lr = ArtGridPicture.ToListRead(g, U, far);
+    Check(Math.Abs(lr.ScrollY * U / 640 - (top0 - far)) <= 0.01 && lr.Cols == 8 && Math.Abs(lr.RowUnits - 116) <= 0.01, "art picture: ToListRead gives the scroll in canvas units (" + lr.ScrollY.ToString("0.0") + ")");
+    // nothing but background (another screen): no place
+    var pic3 = new ArtGridPicture(); var blank = new int[sw * sh]; for (int i = 0; i < blank.Length; i++) blank[i] = (33 << 16) | (36 << 8) | 43;
+    Check(!pic3.Update(blank, sw, sh, sx, sy, g, W, U, rowsN, 9, 5000, out r1), "art picture: an empty list strip gives no place");
+    // the recorder's replay draws the artifact cleanup with the artifact list's geometry (ctx.Art), cards 80 x 110 units
+    var rinv = new InventoryScreen { Open = true, ArtTab = true, ArtBulk = true, ArtBulkKnown = true, ListPtr = 5 }; for (long i = 1; i <= 16; i++) rinv.Uids.Add(500 + i);
+    var rctx = new RecCtx { Mode = "sell", Front = true, ShCols = 8, Art = true, Want = new long[] { 501, 509 } };
+    SellHintStep rstep; var rrects = RecScenes.Sell(rctx, rinv, null, top0, W, H, U, out rstep);
+    Check(rstep.Kind == SellHintKind.Select && rrects.Count == 2 && Math.Abs(rrects[0].H - 110.0 / 640 * U) <= 2 && Math.Abs(rrects[1].Y - rrects[0].Y - pitch) <= 2, "replay: the artifact cleanup's frames use the artifact list's geometry (" + rrects.Count + " frames)");
+    Check(RecCtx.Parse(MiniJson.Parse(rctx.ToJson())).Art, "replay: the context keeps the artifact flag");
+  }
+
+
+
+
+  // Storage cleanup without auto click (src/SellHint.cs): the step and the frames from what the inventory shows
+
+
 
   // The game's filter pop-up as the pilot sees it: clicks at the measured places toggle what they toggle in the game.
-  sealed class FakeFilterGame {
-    public bool Open, Side, SetSide, SubSide, HideEq;
-    public int Part;   // the slot the pop-up's list shows (its «Выбрать часть» row changes it)
-    public bool PartKeepsSet = true;   // the game keeps the filter when the part changes (false: it is dropped)
-    public int PartClicks;
-    public List<long> Suits = new List<long>(), Mains = new List<long>(), Subs = new List<long>();
-    public long[] SubList;
-    public long[] SetList, StatList;
-    public int SetShift;   // a wrong layout: a set click lands this many places off
-    public double SetScroll;   // rows the sets list is scrolled by
-    public double DragGain = 1;
-    readonly FilterGeometry g; readonly double W, H;
-    public FakeFilterGame(FilterGeometry g, double W, double H) { this.g = g; this.W = W; this.H = H; }
-    public void Drag(double dy) {
-      if (!(Side && SetSide)) return;
-      int rows = (SetList.Length + 1) / 2;
-      SetScroll = Math.Max(0, Math.Min(rows - FilterGeometry.SetRows, Math.Round(SetScroll - dy * DragGain / (g.SetPitch * H))));
-    }
-    static bool Near(double x, double y, double px, double py) { return Math.Abs(x - px) < 12 && Math.Abs(y - py) < 12; }
-    static void Toggle(List<long> l, long id) { if (l.Contains(id)) l.Remove(id); else l.Add(id); }
-    public void Click(double x, double y) {
-      if (!Open) { if (Near(x, y, 0.2185 * H, 0.9275 * H)) Open = true; return; }
-      // the × drops the filter (the game applies it only while the pop-up is open)
-      if (Near(x, y, g.X(g.MainCloseX, W, H), g.Y(g.CloseY, W, H))) { Open = Side = SetSide = SubSide = false; Suits.Clear(); Mains.Clear(); Subs.Clear(); return; }
-      if (Side && Near(x, y, g.X(g.SideCloseX, W, H), g.Y(g.CloseY, W, H))) { Side = SetSide = SubSide = false; return; }   // keeps the filter
-      if (!Side) for (int i = 0; i < 5; i++) { var pc = g.PartCell(i, W, H); if (Near(x, y, pc[0], pc[1])) { PartClicks++; if (i != Part) { Part = i; if (!PartKeepsSet) { Suits.Clear(); Mains.Clear(); Subs.Clear(); } } return; } }
-      if (Near(x, y, g.X(g.ResetX, W, H), g.Y(g.ResetY, W, H))) { Suits.Clear(); Mains.Clear(); Subs.Clear(); return; }
-      if (Near(x, y, g.X(g.SubArrowX, W, H), g.Y(g.SubArrowY, W, H))) { bool was = Side && SubSide; Side = SubSide = !was; SetSide = false; return; }
-      if (Near(x, y, g.X(g.SetArrowX, W, H), g.Y(g.SetArrowY, W, H))) { bool was = Side && SetSide; Side = SetSide = !was; return; }   // the list stays scrolled
-      if (Near(x, y, g.X(g.StatArrowX, W, H), g.Y(g.StatArrowY, W, H))) { bool was = Side && !SetSide && !SubSide; Side = !was; SetSide = SubSide = false; return; }
-      if (Near(x, y, g.X(g.HideEquippedX, W, H), g.Y(g.HideEquippedY, W, H))) { HideEq = !HideEq; return; }
-      if (Side && SetSide)
-        for (int i = 0; i < 2 * FilterGeometry.SetRows; i++) {
-          var c = g.SetCell(i, W, H); if (!Near(x, y, c[0], c[1])) continue;
-          int k = (int)Math.Round(i / 2 + SetScroll) * 2 + i % 2 + SetShift;
-          if (k >= 0 && k < SetList.Length) Toggle(Suits, SetList[k]);
-          return;
-        }
-      if (Side && SubSide && SubList != null)
-        for (int i = 0; i < SubList.Length; i++) { var c = g.StatCell(i, W, H); if (Near(x, y, c[0], c[1])) { if (Subs.Contains(SubList[i]) || Subs.Count < 4) Toggle(Subs, SubList[i]); return; } }
-      if (Side && !SetSide && !SubSide)
-        for (int i = 0; i < StatList.Length; i++) { var c = g.StatCell(i, W, H); if (Near(x, y, c[0], c[1])) { Toggle(Mains, StatList[i]); return; } }
-    }
-  }
-
-  // Runs the pilot against the fake game until it lets go; returns the clicks made.
-  static int RunFilter(FilterPilot p, FakeFilterGame game, long setId, long statId, bool onOther, bool wanted) { return RunFilter(p, game, setId, statId, onOther, wanted, null); }
-  static int RunFilter(FilterPilot p, FakeFilterGame game, long setId, long statId, bool onOther, bool wanted, long[] subIds) { return RunFilter(p, game, setId, statId, onOther, wanted, subIds, false); }
-  // (inView: the guide's verdict stops asking for the filter once the set and the stat are on - the item has come into the list's view)
-  static int RunFilter(FilterPilot p, FakeFilterGame game, long setId, long statId, bool onOther, bool wanted, long[] subIds, bool inView) {
-    int clicks = 0;
-    for (long t = 0; t < 120000; t += 100) {
-      bool filtered = (setId <= 0 || game.Suits.Contains(setId)) && (statId <= 0 || game.Mains.Contains(statId));
-      var v = new FilterView { NowMs = t, Foreground = true, W = 1920, H = 1009, Item = 5, Wanted = wanted && !(inView && filtered),
-        SetId = setId, StatId = statId, SetIndex = Array.IndexOf(game.SetList, setId), StatIndex = Array.IndexOf(game.StatList, statId),
-        Suits = game.Suits.ToArray(), MainAttrs = game.Mains.ToArray(), HideEquipped = game.HideEq, OnOtherHero = onOther, SetOrder = game.SetList,
-        SubIds = subIds, SubOrder = game.SubList, SubAttrs = game.Subs.ToArray(),
-        PanelOpen = game.Open, SidePanelOpen = game.Open && game.Side, SetPanelOpen = game.Open && game.Side && game.SetSide };
-      var a = p.Step(v);
-      if (a == null) break;
-      if (a.Kind == AutoKind.Click) { clicks++; game.Click(a.X, a.Y); }
-      else if (a.Kind == AutoKind.Drag) game.Drag(a.DY);
-    }
-    return clicks;
-  }
 
 
-  // F6b (owner's screenshot): the pop-up's own part row changes the slot, the pop-up stays open from slot to slot of a set group
-  static void FilterPartTests() {
-    var g = new FilterGeometry(); double W = 1920, H = 1009;
-    long[] sets = { 723000, 722900, 722800, 722600, 722500, 722200, 722100, 723100, 722400, 722300, 722000, 721900, 721600, 721500 };
-    long[] stats = { 1, 2, 7, 13, 14, 19, 23, 25, 27 };
-    // the geometry against the screenshot (1896 x 1006 shown, the × at 1281,95): the five icons at y 210 and x 589, 723, 919, 1053, 1189
-    var c0 = g.PartCell(0, W, H); var c4 = g.PartCell(4, W, H); var cl = new[] { g.X(g.MainCloseX, W, H), g.Y(g.CloseY, W, H) };
-    double sc = 1009.0 / 1006;
-    Check(Math.Abs((cl[0] - c0[0]) - (1281 - 589) * sc * 1.0) < 40 && Math.Abs((cl[0] - c4[0]) - (1281 - 1189) * sc) < 40 && Math.Abs((c0[1] - cl[1]) - (210 - 95) * sc) < 25, "part row: the icons sit where the screenshot has them, relative to the × (" + Math.Round(cl[0] - c0[0]) + " / " + Math.Round(cl[0] - c4[0]) + " px left of it, " + Math.Round(c0[1] - cl[1]) + " px below)");
-    // the pilot changes the slot inside the pop-up with one click and leaves the pop-up open (then reads the filter from memory)
-    foreach (bool keeps in new[] { true, false }) {
-      var game = new FakeFilterGame(g, W, H) { SetList = sets, StatList = stats, Open = true, Part = 3, PartKeepsSet = keeps };
-      game.Suits.Add(721500);
-      var p = new FilterPilot(g); int clicks = 0; long doneAt = -1;
-      for (long t = 0; t < 30000 && doneAt < 0; t += 100) {
-        var v = new FilterView { NowMs = t, Foreground = true, W = W, H = H, Item = 5, Wanted = !(game.Part == 4 && game.Suits.Contains(721500)), Part = game.Part, WantPart = 4, SetId = 721500, SetIndex = Array.IndexOf(sets, 721500), StatId = 0, SetOrder = sets, Suits = game.Suits.ToArray(), MainAttrs = game.Mains.ToArray(),
-          SubAttrs = new long[0], PanelOpen = game.Open, SidePanelOpen = game.Open && game.Side, SetPanelOpen = game.Open && game.Side && game.SetSide, PanelMem = game.Open ? Mem3.Yes : Mem3.No,
-          ItemRow = game.Part == 4 && game.Suits.Contains(721500) ? 2 : 60 };
-        var a = p.Step(v);
-        if (a == null) { if (game.Part == 4) doneAt = t; continue; }
-        if (a.Kind == AutoKind.Click) { clicks++; game.Click(a.X, a.Y); Check(a.CellKind == UiCellKind.GearPart ? a.CellId == 4 : true, "part row: the click names its cell (GearPart 4)"); }
-      }
-      Check(doneAt >= 0 && game.Part == 4 && game.Open && game.PartClicks == 1 && (keeps ? clicks == 1 && game.Suits.Count == 1 : game.Suits.Count == 1 && clicks <= 5),
-        "part row: slot 3 -> 4 inside the open pop-up, one click on the part icon, the pop-up stays open" + (keeps ? ", the set kept (" + clicks + " click)" : ", the game dropped the set: set again (" + clicks + " clicks)") + " done at " + doneAt + " ms");
-    }
-    // no part change when the want is unknown or the part is the same; a part that never switches fails with its reason after MaxPartTries
-    {
-      var game = new FakeFilterGame(g, W, H) { SetList = sets, StatList = stats, Open = true, Part = 2 }; var p = new FilterPilot(g);
-      var v = new FilterView { NowMs = 0, Foreground = true, W = W, H = H, Item = 5, Wanted = false, Part = 2, WantPart = 2, SetId = 0, Suits = new long[0], MainAttrs = new long[0], SubAttrs = new long[0], PanelOpen = true, PanelMem = Mem3.Yes };
-      var a = p.Step(v); Check(a == null, "part row: the same slot: no click");
-      var q = new FilterPilot(g); int n = 0; string note = "";
-      for (long t = 0; t < 20000; t += 100) {
-        var vv = new FilterView { NowMs = t, Foreground = true, W = W, H = H, Item = 6, Wanted = false, Part = 1, WantPart = 3, SetId = 0, Suits = new long[0], MainAttrs = new long[0], SubAttrs = new long[0], PanelOpen = true, PanelMem = Mem3.Yes };
-        var aa = q.Step(vv); if (aa != null && aa.Kind == AutoKind.Click) n++; if (q.State == "failed") { note = q.Note; break; }
-      }
-      Check(n == FilterPilot.MaxPartTries && note.IndexOf("part row did not switch", StringComparison.Ordinal) >= 0, "part row: a list that never switches: " + n + " clicks, then a named failure (" + note + ")");
-    }
-  }
 
-  // F6a (lab 572: eleven clicks, 6 s, per item): the filter is the minimum that brings the item into the first page by the game's memory. The row model: the item's row after the set, after the stat, after the sub stats.
-  static int RunMinFilter(FakeFilterGame game, long set, long stat, long[] subIds, int rowNone, int rowSet, int rowStat, int rowSubs, out int stepsAt) {
-    var g = new FilterGeometry(); var p = new FilterPilot(g); int clicks = 0; stepsAt = 0;
-    for (long t = 0; t < 60000; t += 100) {
-      bool hasSet = game.Suits.Contains(set), hasStat = game.Mains.Contains(stat), hasSubs = game.Subs.Count > 0;
-      int row = hasSubs ? rowSubs : hasStat ? rowStat : hasSet ? rowSet : rowNone;
-      var v = new FilterView { NowMs = t, Foreground = true, W = 1920, H = 1009, Item = 5, Wanted = row <= 0 || row > BuildPlanner.DirectMaxRow, ItemRow = row,
-        SetId = set, StatId = stat, SetIndex = Array.IndexOf(game.SetList, set), StatIndex = Array.IndexOf(game.StatList, stat),
-        Suits = game.Suits.ToArray(), MainAttrs = game.Mains.ToArray(), HideEquipped = game.HideEq, SetOrder = game.SetList, SubIds = subIds, SubOrder = game.SubList, SubAttrs = game.Subs.ToArray(),
-        PanelOpen = game.Open, SidePanelOpen = game.Open && game.Side, SetPanelOpen = game.Open && game.Side && game.SetSide };
-      var a = p.Step(v);
-      if (a == null) { stepsAt = (int)t; break; }
-      if (a.Kind == AutoKind.Click) { clicks++; game.Click(a.X, a.Y); }
-    }
-    return clicks;
-  }
-  static void FilterMinimalTests() {
-    var g = new FilterGeometry();
-    long[] sets = { 723000, 722900, 722800, 722600, 722500, 722200, 722100, 723100, 722400, 722300, 722000, 721900, 721600, 721500 };
-    long[] stats = { 1, 2, 7, 13, 14, 19, 23, 25, 27 };
-    Func<FakeFilterGame> mk = () => new FakeFilterGame(g, 1920, 1009) { SetList = sets, StatList = stats, SubList = new long[] { 24, 25, 13, 7, 29, 30 } };
-    int at; var game = mk();
-    int n = RunMinFilter(game, 721500, 13, new long[] { 24, 25, 13, 7 }, 60, 5, 3, 2, out at);
-    Check(game.Suits.Count == 1 && game.Mains.Count == 0 && game.Subs.Count == 0 && n <= 4 && at > 0, "F6a: the set brings the item to row 5: the set only, no stat, no sub stats (" + n + " clicks, the pilot lets go at " + at + " ms)");
-    game = mk();
-    n = RunMinFilter(game, 721500, 13, new long[] { 24, 25, 13, 7 }, 60, 40, 3, 2, out at);
-    Check(game.Suits.Count == 1 && game.Mains.Count == 1 && game.Subs.Count == 0 && at > 0, "F6a: row 40 after the set: the stat is added, and the sub stats are not once it is at row 3 (" + n + " clicks)");
-    game = mk();
-    n = RunMinFilter(game, 721500, 13, new long[] { 24, 25, 13, 7 }, 60, 40, 30, 2, out at);
-    Check(game.Suits.Count == 1 && game.Mains.Count == 1 && game.Subs.Count > 0 && at > 0, "F6a: still far after the set and the stat: the sub stats follow (" + game.Subs.Count + " of them, " + n + " clicks)");
-    game = mk();
-    n = RunMinFilter(game, 721500, 13, new long[] { 24, 25, 13, 7 }, 60, 0, 0, 0, out at);
-    Check(game.Suits.Count == 1 && game.Mains.Count == 1 && at > 0, "F6a: the row is not read after the set: after 0.9 s it counts as far, the stat follows");
-    Check(FilterPilot.WantedFor("pick", false, 10) == false && FilterPilot.WantedFor("pick", false, 14) && FilterPilot.WantedFor("pick", false, 0) && FilterPilot.WantedFor("rel", false, 13) == false && FilterPilot.WantedFor("filter", false, 5) && FilterPilot.WantedFor("hiddenEq", false, 0) && !FilterPilot.WantedFor("pick", true, 99),
-      "F6a: an item in the first 13 rows is found by drags, no filter for it; farther, hidden or unread: the filter");
-  }
+
 
   // Live 1.6.66.572 (applog_008, 10:29:01-10:29:44): what the filter pilot did with the bar (gear.filterBtn) and with the item changes.
   static FilterView ReplayView(long now, long item, Mem3 mem, bool pix, bool wanted) {
@@ -9826,266 +5497,5 @@ static partial class CoreTests {
       Suits = new long[0], MainAttrs = new long[0], SubAttrs = new long[0], SetOrder = new long[] { 723000, 722900, 722800, 722600 },
       PanelMem = mem, PanelOpen = pix };
   }
-  static void FilterReplayTests() {
-    var g = new FilterGeometry();
-    // the bar is a toggle: one press, then the game's flag is awaited (it showed the pop-up 1 s later), the pictures flickering (mem=yes pix=no, 7 times in the log) are not read
-    var p = new FilterPilot(g); int bar = 0, other = 0; long t = 0;
-    for (; t < 600; t += 100) { var a = p.Step(ReplayView(t, 10677, Mem3.No, false, true)); if (a != null && a.Kind == AutoKind.Click) { if (a.Widget == FrameTargets.KeyGearFilter) bar++; else other++; } }
-    for (; t < 6000; t += 100) {
-      var a = p.Step(ReplayView(t, 10677, Mem3.Yes, (t / 100) % 2 == 0, true));
-      if (a != null && a.Kind == AutoKind.Click && a.Widget == FrameTargets.KeyGearFilter) bar++;
-    }
-    Check(bar == 1 && other == 0, "filter replay: the bar pressed once (memory said no for 0.6 s, then yes with a flickering picture): " + bar + " bar presses");
-    // the flag stays «closed» for over 1.5 s after the press: the second press is allowed then (and not before)
-    p = new FilterPilot(g); var pressAt = new System.Collections.Generic.List<long>();
-    for (t = 0; t < 5000; t += 100) { var a = p.Step(ReplayView(t, 10677, Mem3.No, false, true)); if (a != null && a.Kind == AutoKind.Click && a.Widget == FrameTargets.KeyGearFilter) pressAt.Add(t); }
-    Check(pressAt.Count >= 2 && pressAt[1] - pressAt[0] >= FilterPilot.MemOpenWaitMs && FilterPilot.MemOpenWaitMs <= 1500, "filter replay: the second press only after the flag stood closed " + FilterPilot.MemOpenWaitMs + " ms (" + string.Join(",", pressAt) + ")");
-    // item 33643: the first tick of the new item sends a click that does not go out (the navigator waits for a stable screen) - NotSent rolls back; the old item's finished state must not
-    // come back under the new item (it counted «drops» until «dropped 3 times»)
-    p = new FilterPilot(g);
-    var game = new FakeFilterGame(g, 1920, 1009) { SetList = new long[] { 723000, 722900, 722800, 722600, 722500, 722200, 711300, 722100, 723100, 722400 }, StatList = new long[] { 1, 2, 7, 13, 14, 19, 23, 25, 27 } };
-    t = 0;
-    for (int k = 0; k < 600; k++, t += 100) {
-      var v = new FilterView { NowMs = t, Foreground = true, W = 1920, H = 1009, Item = 56120, Wanted = k < 5 || !game.Suits.Contains(722800), SetId = 722800, StatId = 13, SetIndex = 2, StatIndex = 3, SetOrder = game.SetList,
-        Suits = game.Suits.ToArray(), MainAttrs = game.Mains.ToArray(), SubAttrs = game.Subs.ToArray(), PanelOpen = game.Open, SidePanelOpen = game.Open && game.Side, SetPanelOpen = game.Open && game.Side && game.SetSide };
-      var a = p.Step(v); if (a == null) break;
-      if (a.Kind == AutoKind.Click) game.Click(a.X, a.Y);
-    }
-    Check(p.State == "done" && game.Open, "filter replay: item 56120 done, pop-up open (" + p.State + ")");
-    game.Open = game.Side = game.SetSide = game.SubSide = false; game.Suits.Clear(); game.Mains.Clear(); game.Subs.Clear();   // the plan closes the pop-up (its x drops the filter)
-    for (int k = 0; k < 8; k++, t += 700) {
-      var v = new FilterView { NowMs = t, Foreground = true, W = 1920, H = 1009, Item = 33643, Wanted = true, SetId = 711300, StatId = 0, SetIndex = 6, StatIndex = -1, SetOrder = game.SetList,
-        Suits = new long[0], MainAttrs = new long[0], SubAttrs = new long[0] };
-      var a = p.Step(v);
-      if (k >= 3) Check(a != null && a.Kind == AutoKind.Click && p.State == "work", "filter replay: tick " + k + " of the new item asks for the bar (" + p.State + " " + p.Note + ")");   // (the first 1.5 s: the pop-up was just seen open, the read may flicker)
-      p.NotSent();
-    }
-    Check(p.State != "failed" && !p.DroppedGiveUp, "filter replay: not sent 8 times in a row on a new item: no «dropped 3 times» (" + p.State + " " + p.Note + ")");
-    // live 572 df57b5 (10:45:54-57): «Скрыть надетое» pressed, the read stays «on» for 2-3 s, the player moves the mouse (paused): the wait is 3.5 s of the pilot's own time, a give-up is quiet (no reset)
-    p = new FilterPilot(g); var hv = new FilterView { NowMs = 0, Foreground = true, W = 1920, H = 1009, Item = 23715, Wanted = true, SetId = 0, StatId = 0, HideEquipped = true, OnOtherHero = true,
-      Suits = new long[0], MainAttrs = new long[0], SubAttrs = new long[0], PanelMem = Mem3.Yes, PanelOpen = true };
-    var pa = p.Step(hv); int hideClicks2 = pa != null && pa.Kind == AutoKind.Click ? 1 : 0;
-    for (long tt = 100; tt <= 3000; tt += 100) { hv.NowMs = tt; hv.UserBusy = tt >= 1000 && tt < 2000; pa = p.Step(hv); if (pa != null && pa.Kind == AutoKind.Click) hideClicks2++; }
-    Check(hideClicks2 == 1 && p.State != "failed", "filter replay: hide-worn read still «on» 3 s after the click (1 s of it the player's mouse): no give-up, no second click (" + p.State + ", " + hideClicks2 + " clicks)");
-    for (long tt = 3100; tt <= 6000; tt += 100) { hv.NowMs = tt; hv.UserBusy = false; p.Step(hv); }
-    Check(p.State == "failed" && p.DroppedGiveUp, "filter replay: still «on» after 3.5 s of own time: a quiet give-up, no reset of the step (" + p.State + ")");
-    // a closed pop-up that needed nothing (no set, no stat) was never «set»: it cannot be «dropped» three times
-    p = new FilterPilot(g);
-    for (int k = 0; k < 40; k++) {
-      var v = new FilterView { NowMs = 10000 + k * 700, Foreground = true, W = 1920, H = 1009, Item = 7, Wanted = k % 2 == 0, SetId = 0, StatId = 0, Suits = new long[0], MainAttrs = new long[0], SubAttrs = new long[0], PanelMem = Mem3.No };
-      p.Step(v);
-    }
-    Check(p.State != "failed" && !p.DroppedGiveUp, "filter replay: a filter that needs nothing is never «dropped» (" + p.State + " " + p.Note + ")");
-  }
 
-  static void FilterPilotTests() {
-    var g = new FilterGeometry(); double W = 1920, H = 1009;
-    // the ring's lists as the game showed them (sets by m_SuitSort, main stats by id)
-    long[] sets = { 723000, 722900, 722800, 722600, 722500, 722200, 722100, 723100, 722400, 722300, 722000, 721900, 721600, 721500,
-                    721400, 721300, 721200, 721100, 721000, 720900 };
-    long[] stats = { 1, 2, 7, 13, 14, 19, 23, 25, 27 };
-    var c = g.SetCell(13, W, H);
-    Check(Math.Abs(c[0] - 1690) < 3 && Math.Abs(c[1] - 650) < 3, "«Интуиция» (14th set) where the screenshot has it: " + c[0].ToString("0") + "," + c[1].ToString("0"));
-    c = g.StatCell(3, W, H);
-    Check(Math.Abs(c[0] - 1685) < 3 && Math.Abs(c[1] - 308) < 3, "«Бонус к АТК» (4th stat) where the screenshot has it: " + c[0].ToString("0") + "," + c[1].ToString("0"));
-
-    var game = new FakeFilterGame(g, W, H) { SetList = sets, StatList = stats };
-    int n = RunFilter(new FilterPilot(g), game, 721500, 13, false, true);
-    Check(game.Suits.Count == 1 && game.Suits[0] == 721500 && game.Mains.Count == 1 && game.Mains[0] == 13 && game.Open,
-          "set + main stat set, the pop-up left open: its × drops the filter (" + n + " clicks)");
-    Check(n <= 7, "few clicks");
-
-    game = new FakeFilterGame(g, W, H) { SetList = sets, StatList = stats };
-    game.Suits.Add(723000); game.Mains.Add(1);
-    RunFilter(new FilterPilot(g), game, 721500, 13, false, true);
-    Check(game.Suits.Count == 1 && game.Suits[0] == 721500 && game.Mains.Count == 1 && game.Mains[0] == 13, "an old filter is reset first");
-
-    game = new FakeFilterGame(g, W, H) { SetList = sets, StatList = stats, SetShift = 1 };
-    var fp = new FilterPilot(g);
-    RunFilter(fp, game, 721500, 13, false, true);
-    Check(game.Suits.Count == 0 && game.Mains.Count == 1 && game.Mains[0] == 13 && game.Open,
-          "wrong set clicked twice -> reset, the set is skipped, the stat still set, the pop-up open");
-
-    game = new FakeFilterGame(g, W, H) { SetList = sets, StatList = stats, HideEq = true };
-    RunFilter(new FilterPilot(g), game, 721500, 13, true, true);
-    Check(!game.HideEq && game.Open, "item on another hero: «Скрыть надетое» off");
-
-    // lab b3da8af5: the panel read flickers right after the «Фильтр» bar opened it (open, closed, open ...): the bar is a toggle - one click, never a second
-    // one that shuts the panel again (the pilot gave up with «the filter panel does not stay open (3 retries)»)
-    {
-      var gfl = new FakeFilterGame(g, W, H) { SetList = sets, StatList = stats, HideEq = false };
-      var pfl = new FilterPilot(g); int barClicks = 0;
-      double bx = (0.029 + 0.379 / 2) * Ui.Unit(W, H), by = Ui.FromBottom(0.9275, W, H);
-      for (long t = 0; t < 6000; t += 100) {
-        bool seen = gfl.Open && ((t / 200) % 3 != 1);   // a read in three says «closed»
-        var v = new FilterView { NowMs = t, Foreground = true, W = W, H = H, Item = 5, Wanted = true, Suits = gfl.Suits.ToArray(), MainAttrs = gfl.Mains.ToArray(),
-          SetId = sets[3], SetIndex = 3, SetOrder = gfl.SetList, SubOrder = gfl.SubList, SubAttrs = gfl.Subs.ToArray(), PanelOpen = seen, SidePanelOpen = false, SetPanelOpen = false };
-        var a = pfl.Step(v);
-        if (a == null) break;
-        if (a.Kind == AutoKind.Click) { if (Math.Abs(a.X - bx) < 12 && Math.Abs(a.Y - by) < 12) barClicks++; gfl.Click(a.X, a.Y); }
-      }
-      Check(barClicks == 1 && pfl.State != "failed", "a flickering panel read: the «Фильтр» bar is clicked once, the panel stays open (" + barClicks + " bar clicks, " + pfl.State + " " + pfl.Note + ")");
-    }
-    // the sub stats' side panel is still open: it swallows the click on «Скрыть надетое» - closed first, the filter is not done before
-    game = new FakeFilterGame(g, W, H) { SetList = sets, StatList = stats, HideEq = true, Open = true, Side = true, SubSide = true };
-    var fph = new FilterPilot(g); int swallowed = 0; double hx = g.X(g.HideEquippedX, W, H), hy = g.Y(g.HideEquippedY, W, H);
-    for (long t = 0; t < 20000; t += 100) {
-      var v = new FilterView { NowMs = t, Foreground = true, W = W, H = H, Item = 5, Wanted = true, Suits = game.Suits.ToArray(), MainAttrs = game.Mains.ToArray(),
-        HideEquipped = game.HideEq, OnOtherHero = true, SetOrder = game.SetList, SubOrder = game.SubList, SubAttrs = game.Subs.ToArray(),
-        PanelOpen = game.Open, SidePanelOpen = game.Open && game.Side, SetPanelOpen = false };
-      var a = fph.Step(v);
-      if (a == null) break;
-      if (a.Kind == AutoKind.Click) { if (game.Side && Math.Abs(a.X - hx) < 12 && Math.Abs(a.Y - hy) < 12) swallowed++; game.Click(a.X, a.Y); }
-    }
-    Check(swallowed == 0 && !game.HideEq, "side panel open: it is closed before «Скрыть надетое» is clicked (" + swallowed + " clicks into the panel)");
-    // the read of «Скрыть надетое» is stale (always "hidden") while the game already applied the untick: ONE click, never a second one
-    foreach (bool listed in new[] { false, true }) {
-      game = new FakeFilterGame(g, W, H) { SetList = sets, StatList = stats, HideEq = true, Open = true };
-      var fpst = new FilterPilot(g); int hideClicks = 0, hideClicksAfterOn = 0; bool doneStale = false, itemShown = false;
-      for (long t = 0; t < 20000; t += 100) {
-        var v = new FilterView { NowMs = t, Foreground = true, W = W, H = H, Item = 5, Wanted = true, Suits = new long[0], MainAttrs = new long[0],
-          HideEquipped = true, OnOtherHero = true, ItemListed = listed && itemShown, SetOrder = game.SetList, SubOrder = game.SubList, SubAttrs = new long[0], PanelOpen = true };
-        var a = fpst.Step(v);
-        if (fpst.State == "done") doneStale = true;
-        if (a != null && a.Kind == AutoKind.Click) {
-          if (Math.Abs(a.X - g.X(g.HideEquippedX, W, H)) < 12 && Math.Abs(a.Y - g.Y(g.HideEquippedY, W, H)) < 12) { hideClicks++; if (!game.HideEq) hideClicksAfterOn++; }
-          game.Click(a.X, a.Y); if (!game.HideEq) itemShown = true;
-        }
-      }
-      Check(hideClicks == 1 && hideClicksAfterOn == 0 && !game.HideEq, "stale hide-worn read (item listed turns " + listed + "): exactly one click, the game's toggle stays off (" + hideClicks + " clicks)");
-      if (listed) Check(doneStale && fpst.State == "done", "stale hide-worn read, item listed after the click: the filter finishes (" + fpst.State + ")");
-      else Check(!doneStale && fpst.State == "failed" && fpst.Note.Contains("did not switch off"), "stale read and the item never listed: failed with a note, no second click (" + fpst.State + ": " + fpst.Note + ")");
-    }
-
-    {   // live 1.6.66: the item on another hero is listed under the filter (the guide says «pick»), the read of «Скрыть надетое» stays
-        // "on": no click - the one click switched it ON and hid the item, then "did not switch off"
-      var gl = new FakeFilterGame(g, W, H) { SetList = sets, StatList = stats, HideEq = false, Open = true };
-      var fpl = new FilterPilot(g); int hideL = 0; string stL = "";
-      for (long t = 0; t < 10000; t += 100) {
-        var v = new FilterView { NowMs = t, Foreground = true, W = W, H = H, Item = 5, Wanted = true, Suits = new long[0], MainAttrs = new long[0],
-          HideEquipped = true, OnOtherHero = true, ItemListed = !gl.HideEq, SetOrder = gl.SetList, SubOrder = gl.SubList, SubAttrs = new long[0], PanelOpen = true };
-        var a = fpl.Step(v); stL = fpl.State;
-        if (a == null) break;
-        if (a.Kind == AutoKind.Click) { if (Math.Abs(a.X - g.X(g.HideEquippedX, W, H)) < 12 && Math.Abs(a.Y - g.Y(g.HideEquippedY, W, H)) < 12) hideL++; gl.Click(a.X, a.Y); }
-      }
-      Check(hideL == 0 && !gl.HideEq && stL != "failed", "item listed, hide-worn read stale «on»: no click, the item stays listed (" + hideL + " clicks, " + stL + ")");
-    }
-
-    game = new FakeFilterGame(g, W, H) { SetList = sets, StatList = stats, Open = true };
-    int m = RunFilter(new FilterPilot(g), game, 721500, 13, false, false);
-    Check(m == 0 && game.Open, "a panel the player opened (item not far): not touched");
-
-    game = new FakeFilterGame(g, W, H) { SetList = sets, StatList = stats };
-    RunFilter(new FilterPilot(g), game, 720900, 13, false, true);   // index 19: below the rows visible without scrolling
-    Check(game.Suits.Count == 1 && game.Suits[0] == 720900 && game.Mains.Count == 1 && game.Mains[0] == 13 && game.Open,
-          "set below the visible rows: the sets list is dragged, then the set clicked");
-    // sub stats: the set, then the item's four sub stats (the game's limit is 4; the main stat of a weapon is skipped)
-    long[] subList = { 1, 2, 7, 13, 14, 19, 23, 24, 25, 27, 29 };
-    game = new FakeFilterGame(g, W, H) { SetList = sets, StatList = stats, SubList = subList };
-    int ns = RunFilter(new FilterPilot(g), game, 721500, 0, false, true, new long[] { 25, 13, 7, 29 });
-    game.Subs.Sort();
-    Check(game.Suits.Count == 1 && game.Mains.Count == 0 && string.Join(",", game.Subs) == "7,13,25,29" && game.Open,
-          "set + the item's 4 sub stats chosen, the pop-up open (" + ns + " clicks)");
-    // lab 552 (the item filter open, 79 s): the sub stats' clicks 13,29,13,25,29,19 instead of 13,29,25,19. The game's read of the chosen sub stats LAGS behind the click (here 900 ms): a sub stat clicked last
-    // is not clicked again before the read shows it (a second click toggles it off), and the whole set + 4 sub stats takes the minimum of clicks
-    {
-      var lagGame = new FakeFilterGame(g, W, H) { SetList = sets, StatList = stats, SubList = subList };
-      var lp = new FilterPilot(g); var hist = new List<KeyValuePair<long, long[]>>(); int subClicks = 0; int[] cnt = new int[40]; long[] want = { 13, 29, 25, 19 };
-      for (long t = 0; t < 60000; t += 100) {
-        hist.Add(new KeyValuePair<long, long[]>(t, lagGame.Subs.ToArray()));
-        long[] stale = new long[0]; foreach (var h in hist) if (h.Key <= t - 900) stale = h.Value;
-        var lv2 = new FilterView { NowMs = t, Foreground = true, W = W, H = H, Item = 5, Wanted = true, SetId = 721500, StatId = 0, SetIndex = Array.IndexOf(sets, 721500L), StatIndex = -1,
-          Suits = lagGame.Suits.ToArray(), MainAttrs = lagGame.Mains.ToArray(), HideEquipped = lagGame.HideEq, SetOrder = sets, SubIds = want, SubOrder = subList, SubAttrs = stale,
-          PanelOpen = lagGame.Open, SidePanelOpen = lagGame.Open && lagGame.Side, SetPanelOpen = lagGame.Open && lagGame.Side && lagGame.SetSide };
-        var la = lp.Step(lv2);
-        if (la == null) break;
-        if (la.Kind == AutoKind.Click) {
-          var before = lagGame.Subs.ToArray(); lagGame.Click(la.X, la.Y);
-          foreach (var sId in lagGame.Subs) if (Array.IndexOf(before, sId) < 0) { subClicks++; cnt[Array.IndexOf(subList, sId)]++; }
-          foreach (var sId in before) if (!lagGame.Subs.Contains(sId)) subClicks += 10;   // a sub stat toggled off by a re-click
-        }
-      }
-      var fin = lagGame.Subs.ToArray(); Array.Sort(fin);
-      Check(string.Join(",", fin) == "13,19,25,29" && subClicks == 4 && lagGame.Suits.Count == 1 && lp.State == "done", "sub stats with a lagging read: each clicked once, none toggled off (" + subClicks + ", " + lp.State + ")");
-    }
-    // the set alone brings the item into the list's view (the guide's verdict is «pick» now, live 1.6.66.417): no main stat, no sub stat clicked
-    game = new FakeFilterGame(g, W, H) { SetList = sets, StatList = stats, SubList = subList };
-    int nv = RunFilter(new FilterPilot(g), game, 721500, 0, false, true, new long[] { 25, 13, 7, 29 }, true);
-    Check(game.Suits.Count == 1 && game.Subs.Count == 0 && game.Open && !game.Side && nv <= 4,
-          "the item in view with its set: the sub stats are not clicked, the side panel closed, the pop-up open (" + nv + " clicks)");
-    game = new FakeFilterGame(g, W, H) { SetList = sets, StatList = stats, SubList = subList };
-    game.Subs.Add(1);   // a sub stat left from before: reset, then the right ones
-    RunFilter(new FilterPilot(g), game, 721500, 13, false, true, new long[] { 24, 25 });
-    game.Subs.Sort();
-    Check(string.Join(",", game.Subs) == "24,25" && game.Mains.Count == 1, "an old sub stat is cleared first; main stat + sub stats");
-    // the side panel is still open after the last pick: closed (the filter stays) before the pilot says done
-    game = new FakeFilterGame(g, W, H) { SetList = sets, StatList = stats, SubList = subList };
-    var fpc = new FilterPilot(g);
-    RunFilter(fpc, game, 721500, 13, false, true, new long[] { 24, 25 });
-    Check(!game.Side && game.Open && game.Subs.Count == 2 && game.Suits.Count == 1 && fpc.State == "done", "sub stats picked: the side panel closed, the filter kept, then done (" + fpc.State + ")");
-    // a side panel that does not close: gives up with a note instead of done
-    game = new FakeFilterGame(g, W, H) { SetList = sets, StatList = stats, SubList = subList };
-    var fps = new FilterPilot(g);
-    for (long t = 0; t < 30000 && fps.State != "failed"; t += 100) {
-      bool sat = game.Suits.Contains(721500) && game.Mains.Contains(13);
-      var sv = new FilterView { NowMs = t, Foreground = true, W = W, H = H, Item = 5, Wanted = !sat, SetId = 721500, StatId = 13,
-        SetIndex = Array.IndexOf(sets, 721500L), StatIndex = Array.IndexOf(stats, 13L), Suits = game.Suits.ToArray(), MainAttrs = game.Mains.ToArray(),
-        SetOrder = sets, SubAttrs = new long[0], PanelOpen = game.Open, SidePanelOpen = game.Open && (game.Side || sat), SetPanelOpen = game.Open && game.Side && game.SetSide };
-      var sa = fps.Step(sv);
-      if (sa != null && sa.Kind == AutoKind.Click) game.Click(sa.X, sa.Y);
-    }
-    Check(fps.State == "failed" && fps.Note.Length > 0, "side panel stuck open: failed with a note, not done (" + fps.State + ")");
-    // the game drops a filter that was set (the hero screen opened again) for the same item: the second pass gets fresh
-    // tries (live 10.10: the sub stat and side panel tries left from the first pass made it give up after two sub stats)
-    game = new FakeFilterGame(g, W, H) { SetList = sets, StatList = stats, SubList = subList };
-    var fpr = new FilterPilot(g);
-    var subs4 = new long[] { 24, 25, 19, 29 };
-    RunFilter(fpr, game, 722800, 13, false, true, subs4);
-    game.Side = true;   // the side panel opened again over the done filter: closed once more
-    RunFilter(fpr, game, 722800, 13, false, true, subs4);
-    game.Open = game.Side = game.SetSide = game.SubSide = false; game.Suits.Clear(); game.Mains.Clear(); game.Subs.Clear();
-    RunFilter(fpr, game, 722800, 13, false, true, subs4);
-    game.Subs.Sort();
-    Check(fpr.State == "done" && game.Suits.Count == 1 && game.Mains.Count == 1 && string.Join(",", game.Subs) == "19,24,25,29" && !game.Side,
-          "filter dropped by the game after it was set: set again in full (" + fpr.State + ", subs " + string.Join(",", game.Subs) + ")");
-    // dropped again and again: gives up after a few passes instead of clicking forever
-    for (int k = 0; k < 4; k++) {
-      game.Open = game.Side = game.SetSide = game.SubSide = false; game.Suits.Clear(); game.Mains.Clear(); game.Subs.Clear();
-      RunFilter(fpr, game, 722800, 13, false, true, subs4);
-    }
-    Check(fpr.State == "failed", "filter dropped over and over: failed after " + FilterPilot.MaxPasses + " passes (" + fpr.State + ")");
-    // the panel closes before anything is applied (nothing opens it for good): it is opened again, not given up at once
-    {
-      var fpo = new FilterPilot(g);
-      int opens = 0; bool failedEarly = false, failedAtEnd = false;
-      for (long t = 0; t < 60000; t += 100) {
-        var v = new FilterView { NowMs = t, Foreground = true, W = 1920, H = 1009, Item = 9, Wanted = true, SetId = 722800, StatId = 13,
-          SetIndex = Array.IndexOf(sets, 722800L), StatIndex = Array.IndexOf(stats, 13L), SetOrder = sets,
-          Suits = new long[0], MainAttrs = new long[0], SubAttrs = new long[0], PanelOpen = false };
-        var a = fpo.Step(v);
-        if (a != null && a.Kind == AutoKind.Click) { opens++; if (opens <= 2 * (1 + FilterPilot.MaxReopens) && fpo.State == "failed") failedEarly = true; }
-        if (fpo.State == "failed") { failedAtEnd = true; break; }
-      }
-      Check(!failedEarly && opens > 2, "panel closed without settings: opened again, not failed after " + FilterPilot.PartTries + " tries (" + opens + " clicks)");
-      Check(failedAtEnd && opens == 2 * (1 + FilterPilot.MaxReopens), "panel never stays open: failed after " + FilterPilot.MaxReopens + " retries (" + opens + " clicks, " + fpo.State + ")");
-    }
-    // the item pilot: a side panel open over the list is closed first, the click is not counted
-    var ap = new AutoPilot(new ListGeometry());
-    var av = new AutoView { NowMs = 0, Foreground = true, H = 1009, Target = 77, Row = 2, Col = 1, SideClose = new[] { 1640.0, 91.0 } };
-    var aa = ap.Step(av);
-    Check(aa.Kind == AutoKind.Click && Math.Abs(aa.X - 1640) < 1 && Math.Abs(aa.Y - 91) < 1, "item pilot: the open side panel is closed first");
-    var longSets = new long[31]; for (int i = 0; i < longSets.Length; i++) longSets[i] = 730000 + i;
-    int okDrag = 0;
-    foreach (double gain in new[] { 0.7, 0.85, 1.0, 1.2, 1.4 })
-      foreach (int want in new[] { 18, 23, 30 }) {
-        game = new FakeFilterGame(g, W, H) { SetList = longSets, StatList = stats, DragGain = gain };
-        RunFilter(new FilterPilot(g), game, longSets[want], 13, false, true);
-        if (game.Suits.Count == 1 && game.Suits[0] == longSets[want] && game.Mains.Count == 1) okDrag++;
-      }
-    // the game keeps the list scrolled from before (another item's set): the first click is off, then corrected
-    game = new FakeFilterGame(g, W, H) { SetList = longSets, StatList = stats, SetScroll = 4 };
-    RunFilter(new FilterPilot(g), game, longSets[18], 13, false, true);
-    Check(game.Suits.Count == 1 && game.Suits[0] == longSets[18], "sets list left scrolled by 4 rows from before: found anyway");
-    Check(okDrag == 15, "31 sets, the wanted one at 19/24/31, drag gain 0.7-1.4 (a wrong set corrects the position): " + okDrag + "/15");
-  }
 }
