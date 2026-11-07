@@ -98,9 +98,9 @@ namespace RealmForge {
     public enum Ico { Own, Generic, None }
     /// <summary>One text drawn by Text() (a test hook: set Probe to a list to record them).</summary>
     public sealed class TextRec { public string Text; public RectangleF Box, Glyphs; public float Width; public Color Fill; }
-    public static List<TextRec> Probe;
+    public static List<TextRec> Probe = null;
     /// <summary>A test hook: Text() records but draws nothing (to read the background under the glyphs).</summary>
-    public static bool Suppress;
+    public static bool Suppress = false;
     /// <summary>Counters of what Portrait / SkillIcon found (the render test resets and reads them).</summary>
     public static int PortraitReal, PortraitFallback, IconOwn, IconGeneric, IconNone;
     public const int CacheLimit = 400;
