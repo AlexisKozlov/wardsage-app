@@ -65,6 +65,8 @@ namespace RealmForge {
     const int MaxBytes = 16 * 1024;
 
     public bool ReadEnabled = true;
+    /// <summary>The automatic switch to the spare host (src/SiteRoute.cs): on unless the site says features.siteFallback === false. Not in <see cref="Features"/> (it is no feature of the UI).</summary>
+    public bool SiteFallback = true;
     public readonly Dictionary<string, bool> Feature = new Dictionary<string, bool>();
     public string At;
     /// <summary>The site's announcement, kept in the saved copy so it stays after a restart and while the site is down; null when the site sent none.</summary>
@@ -91,7 +93,7 @@ namespace RealmForge {
 
     /// <summary>Same switches (the time of the reply aside).</summary>
     public bool SameAs(RemoteSwitches o) {
-      if (o == null || o.ReadEnabled != ReadEnabled) return false;
+      if (o == null || o.ReadEnabled != ReadEnabled || o.SiteFallback != SiteFallback) return false;
       if ((o.Notice == null) != (Notice == null) || (Notice != null && !Notice.SameAs(o.Notice))) return false;
       foreach (var f in Features) if (o.Feature[f] != Feature[f]) return false;
       return true;
@@ -106,6 +108,7 @@ namespace RealmForge {
       object v;
       if (o.TryGetValue("readEnabled", out v) && v is bool && !(bool)v) r.ReadEnabled = false;
       var fo = o.TryGetValue("features", out v) ? MiniJson.AsObject(v) : null;
+      if (fo != null && fo.TryGetValue("siteFallback", out v) && v is bool && !(bool)v) r.SiteFallback = false;
       if (fo != null) foreach (var f in Features) {
         bool has = fo.TryGetValue(f, out v);
         if (StartsOff(f)) r.Feature[f] = has && v is bool && (bool)v;
@@ -122,6 +125,7 @@ namespace RealmForge {
         if (i > 0) sb.Append(',');
         sb.Append('"').Append(Features[i]).Append("\":").Append(Feature[Features[i]] ? "true" : "false");
       }
+      if (!SiteFallback) sb.Append(",\"siteFallback\":false");
       sb.Append('}');
       if (Notice != null) sb.Append(",\"announcement\":").Append(Notice.ToJson());
       if (At != null) sb.Append(",\"at\":").Append(MiniJson.Quote(At));

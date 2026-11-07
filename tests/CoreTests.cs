@@ -2574,6 +2574,14 @@ static partial class CoreTests {
     var back = RemoteSwitches.Parse(r.ToJson());
     Check(back != null && back.SameAs(r) && back.At == r.At, "the saved copy reads back the same");
     Check(!back.SameAs(m) && !back.SameAs(null), "SameAs tells switches apart");
+    // SiteFallback: on by default, off only by an explicit features.siteFallback === false; not a UI feature; kept in the saved copy
+    Check(new RemoteSwitches().SiteFallback && RemoteSwitches.Parse("{}").SiteFallback && RemoteSwitches.Parse("{\"features\":{}}").SiteFallback, "siteFallback: on by default");
+    Check(RemoteSwitches.Parse("{\"features\":{\"siteFallback\":true}}").SiteFallback && RemoteSwitches.Parse("{\"features\":{\"siteFallback\":0}}").SiteFallback
+      && RemoteSwitches.Parse("{\"features\":{\"siteFallback\":\"false\"}}").SiteFallback && RemoteSwitches.Parse("{\"features\":{\"siteFallback\":null}}").SiteFallback, "siteFallback: an odd value keeps it on");
+    var sfOff = RemoteSwitches.Parse("{\"readEnabled\":true,\"features\":{\"siteFallback\":false,\"guild\":true}}");
+    Check(!sfOff.SiteFallback && sfOff.Off().Count == 0 && sfOff.Allows("guild"), "siteFallback false: off, and not shown among the switched-off features");
+    var sfBack = RemoteSwitches.Parse(sfOff.ToJson());
+    Check(!sfBack.SiteFallback && sfBack.SameAs(sfOff) && !sfBack.SameAs(new RemoteSwitches()), "siteFallback false survives the saved copy, SameAs sees it");
     Eq(2, RemoteSwitches.EveryMinutes(true), "test build asks every 2 minutes");
     Eq(10, RemoteSwitches.EveryMinutes(false), "release build asks every 10 minutes");
     string dir = Path.Combine(Path.GetTempPath(), "rf-remote-" + Guid.NewGuid().ToString("N"));
