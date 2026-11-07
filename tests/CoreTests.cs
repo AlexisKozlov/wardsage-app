@@ -4011,6 +4011,25 @@ static partial class CoreTests {
     string back;
     using (var gs = new GZipStream(new MemoryStream(gz), CompressionMode.Decompress)) using (var sr = new StreamReader(gs, Encoding.UTF8)) back = sr.ReadToEnd();
     Eq(fight, back, "trace upload: data is the base64 of the gzipped file");
+    // appVersion / gameVersion: in the kept fight, at the top of the request body, nothing else changed
+    Check(!body.Contains("appVersion") && !body.Contains("gameVersion"), "trace upload: a file without versions gives no version fields");
+    { string vf = TraceUpload.WithVersions(fight, "1.6.68.614", "2.14.7");
+      Check(vf.StartsWith("{\"appVersion\":\"1.6.68.614\",\"gameVersion\":\"2.14.7\",\"stage\":6001631,"), "versions: the fight file starts with appVersion and gameVersion");
+      Eq(fight, TraceUpload.WithVersions(vf.Replace("\"appVersion\":\"1.6.68.614\",\"gameVersion\":\"2.14.7\",", ""), null, null), "versions: the other fields are untouched");
+      var vo = MiniJson.Parse(vf) as Dictionary<string, object>;
+      Check((string)vo["appVersion"] == "1.6.68.614" && (string)vo["gameVersion"] == "2.14.7" && Convert.ToInt32(vo["stage"]) == 6001631, "versions: the file parses with both fields");
+      string vb = TraceUpload.BuildPayload(vf, out skip);
+      var bo = MiniJson.Parse(vb) as Dictionary<string, object>;
+      Check(vb != null && (string)bo["appVersion"] == "1.6.68.614" && (string)bo["gameVersion"] == "2.14.7" && Convert.ToInt32(bo["stage"]) == 6001631 && (string)bo["at"] == "2026-10-10T11:50:00Z" && bo.ContainsKey("data"), "versions: the request body carries them next to at / stage / data");
+      byte[] vgz = Convert.FromBase64String((string)bo["data"]); string vback;
+      using (var gs2 = new GZipStream(new MemoryStream(vgz), CompressionMode.Decompress)) using (var sr2 = new StreamReader(gs2, Encoding.UTF8)) vback = sr2.ReadToEnd();
+      Eq(vf, vback, "versions: the gzipped file holds them too");
+      Check(TimelineBuilder.StripTrace(vf).StartsWith("{\"appVersion\":\"1.6.68.614\",\"gameVersion\":\"2.14.7\""), "versions: the account snapshot copy (StripTrace) keeps them");
+      Eq("{\"appVersion\":\"1.6.68.614\",\"stage\":1}", TraceUpload.WithVersions("{\"stage\":1}", "1.6.68.614", null), "versions: no game version, only the app's");
+      Eq("{\"stage\":1}", TraceUpload.WithVersions("{\"stage\":1}", null, "bad version!"), "versions: an odd version is left out");
+      Eq("{\"appVersion\":\"1.6\"}", TraceUpload.WithVersions("{}", "1.6", null), "versions: an empty object");
+      Eq("[1]", TraceUpload.WithVersions("[1]", "1.6", "2"), "versions: not an object, unchanged");
+      Eq(null, TraceUpload.CleanVersion(new string('1', 41)), "versions: over 40 characters is dropped"); }
     Check(TraceUpload.BuildPayload(fight.Replace("\"v\":3", "\"v\":2"), out skip) == null && skip == "no timeline v3", "trace upload: timeline v2 is not sent");
     Check(TraceUpload.BuildPayload(fight.Replace("6001631", "1001631"), out skip) == null && skip == "not an arena, boss or Malric fight", "trace upload: another stage is not sent");
     Check(TraceUpload.BuildPayload(fight.Replace("\"stage\":6001631,", ""), out skip) == null && skip == "not an arena, boss or Malric fight", "trace upload: a fight without a stage is not sent");

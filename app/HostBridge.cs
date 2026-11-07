@@ -1083,6 +1083,7 @@ namespace RealmForge {
           if (st <= 0) Log.Write("battle end: stage unknown (screen " + kind + ")");
           if (st > 0 && json.StartsWith("{", StringComparison.Ordinal))
             json = "{\"stage\":" + st + "," + json.Substring(1);
+          json = TraceUpload.WithVersions(json, Program.Version, gameVersion);   // the app's and the game's version go into the kept fight (and its snapshot / trace upload)
           { var ai = arenaInfo; if (ai != null && st == arenaInfoStage && json.StartsWith("{", StringComparison.Ordinal)) { json = "{\"arenaInfo\":" + ai + "," + json.Substring(1); arenaInfo = null; } }
           string path = RFX.SaveBattle(json);
           if (path == null) { Log.Write("battle end: a replay of a kept fight, not kept"); win.BeginInvoke((Action)(() => Post("{\"ev\":\"battle\",\"ok\":false}"))); return; }

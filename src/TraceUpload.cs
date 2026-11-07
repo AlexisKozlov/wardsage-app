@@ -3,7 +3,8 @@
 //
 // Contract (implemented by the site, lib/battleTrace/handler.ts):
 //   POST {site}/api/extractor/trace      Authorization: Bearer <sync code>, X-RF-Player
-//        body {v:1, at:"ISO time of the fight", stage:<7-digit stage id>, data:"<base64 of the gzipped fight file>"}
+//        body {v:1, at:"ISO time of the fight", stage:<7-digit stage id>, [appVersion:"1.6.N", gameVersion:"..."], data:"<base64 of the gzipped fight file>"}
+//        (appVersion / gameVersion: the app's and the game's version when the fight was kept, from the fight file's own fields; left out for a file without them)
 //        200 {ok:true, stored:true|false}   401 invalid_token   422 invalid_payload   429 too_many (300 a day per account)
 // Fights already sent are listed by file name in trace-sent.txt (the app's data dir); unsent arena and boss v3 fights of the last
 // 3 days are retried (at most 8 per run). Nothing here may throw into the recorder: every failure is logged and left.
@@ -98,8 +99,33 @@ namespace RealmForge {
       if (string.IsNullOrEmpty(at) || !DateTime.TryParse(at, CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out t)) { skip = "no time"; return null; }
       byte[] gz = Gzip(Encoding.UTF8.GetBytes(fileJson));
       if (gz.Length > MaxGzBytes) { skip = "too large (" + gz.Length + " bytes gzipped)"; return null; }
+      string av = CleanVersion(MiniJson.GetString(o, "appVersion")), gv = CleanVersion(MiniJson.GetString(o, "gameVersion"));
       return "{\"v\":1,\"at\":\"" + t.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture) + "\",\"stage\":" + stage.ToString(CultureInfo.InvariantCulture)
+        + (av != null ? ",\"appVersion\":\"" + av + "\"" : "") + (gv != null ? ",\"gameVersion\":\"" + gv + "\"" : "")
         + ",\"data\":\"" + Convert.ToBase64String(gz) + "\"}";
+    }
+
+    /// <summary>A version string fit for a JSON field and the site's column: 1..40 characters of [0-9A-Za-z._+-], else null.</summary>
+    public static string CleanVersion(string v) {
+      if (string.IsNullOrEmpty(v)) return null;
+      v = v.Trim();
+      if (v.Length == 0 || v.Length > 40) return null;
+      foreach (char c in v) if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '.' || c == '_' || c == '+' || c == '-')) return null;
+      return v;
+    }
+
+    /// <summary>A fight file's JSON with "appVersion" and "gameVersion" as its first fields (the app's and the game's version at the time; a missing or odd one is
+    /// left out). Anything that is not a JSON object is returned as it is.</summary>
+    public static string WithVersions(string json, string appVersion, string gameVersion) {
+      if (json == null || !json.StartsWith("{", StringComparison.Ordinal)) return json;
+      string a = CleanVersion(appVersion), g = CleanVersion(gameVersion);
+      if (a == null && g == null) return json;
+      var sb = new StringBuilder("{");
+      if (a != null) sb.Append("\"appVersion\":\"").Append(a).Append("\",");
+      if (g != null) sb.Append("\"gameVersion\":\"").Append(g).Append("\",");
+      string rest = json.Substring(1);
+      if (rest.TrimStart().StartsWith("}", StringComparison.Ordinal)) sb.Length--;   // an empty object: no trailing comma
+      return sb.Append(rest).ToString();
     }
 
     public static byte[] Gzip(byte[] raw) {
