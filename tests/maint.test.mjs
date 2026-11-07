@@ -41,7 +41,9 @@ check(run('idle').length === 0, 'no maint event in the other scenarios');
 const app = readFileSync('ui/app.js', 'utf8');
 check(/case 'maint':/.test(app) && /maintCheck/.test(app) && /cmd: 'maint\.check'/.test(app), 'app.js handles the maint event and sends maint.check');
 check(/60000/.test(app.slice(app.indexOf('maintCooldown')), 0) && /Math\.ceil\(\(S\.maintCheckAt \+ 60000/.test(app), '«Check again» is limited to once in 60 s');
-check(/esc\(custom\)/.test(app) && /data-act="open" data-url="\$\{esc\(lk\)\}"/.test(app), 'the site text and link are escaped');
+const maintFn = app.slice(app.indexOf('  function maintScreen()'), app.indexOf('  // the numbers tick without'));
+check(/esc\(custom\)/.test(app), 'the site text is escaped');
+check(!/m\.link|maintMore|\blk\b/.test(maintFn) && !/maintTg/.test(maintFn), 'works screen: no separate button for the announcement link (m.link)');
 check(/id="maint"/.test(readFileSync('ui/index.html', 'utf8')), 'index.html has the screen container');
 
 // social icons: the mock gives two, the screen and the rail draw only known ids with https, the Discord button stays when the list is empty

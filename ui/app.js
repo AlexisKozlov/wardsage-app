@@ -193,7 +193,6 @@
     const m = S.maint;
     if (m.phase !== 'on') return '';
     const custom = (m[S.lang] || m.ru || m.en || '').trim();
-    const lk = m.link || '', tg = /^https:\/\/(t|telegram)\.me\//.test(lk);
     return `<div class="maint-veil" role="dialog" aria-modal="true" aria-labelledby="maintH">
       <div class="maint-card card framed">
         <div class="crest maint-crest" role="img" aria-label="Wardsage"></div>
@@ -205,7 +204,6 @@
         ${socialRow(m.social, 'maint-soc')}
         <div class="maint-btns">
           ${m.social && m.social.length ? '' : `<button class="btn-line" data-act="open" data-url="${DISCORD}">${I.ext}${esc(t('maintDiscord'))}</button>`}
-          ${lk ? `<button class="btn-line" data-act="open" data-url="${esc(lk)}">${I.ext}${esc(tg ? t('maintTg') : t('maintMore'))}</button>` : ''}
           <button class="btn-gold" data-act="maintCheck" data-mc="check" ${maintCooldown() > 0 ? 'disabled' : ''}>${esc(maintCheckLabel())}</button>
         </div>
       </div></div>`;
