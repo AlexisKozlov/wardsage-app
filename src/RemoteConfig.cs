@@ -57,6 +57,78 @@ namespace RealmForge {
     }
   }
 
+  /// <summary>The site's maintenance mode (app-config "maintenance"; always present, {state:"off"} when there is none). Unknown fields are ignored.
+  ///   {"state":"off|scheduled|on|reopening","startsAt":"<ISO UTC>","endsAt":"<ISO UTC>","mode":"readonly|full","ru":"..","en":"..","link":"<url>" or {"href":".."},
+  ///    "preStopMin":15,"reopenMin":20,"reopenPct":100}
+  /// The window logic (when the app is quiet, when it wakes) is in src/MaintenanceGate.cs.</summary>
+  public sealed class Maintenance {
+    public string State = "off", Mode = "readonly", Ru = "", En = "", Link;
+    public DateTime StartsAt = DateTime.MinValue, EndsAt = DateTime.MinValue;   // UTC; MinValue = not given
+    public int PreStopMin = 15, ReopenMin = 20, ReopenPct = 100;
+    const int MaxText = 600;
+
+    public bool HasStart { get { return StartsAt != DateTime.MinValue; } }
+    public bool HasEnd { get { return EndsAt != DateTime.MinValue; } }
+
+    static DateTime Time(Dictionary<string, object> o, string k) {
+      object v; DateTime t;
+      if (o.TryGetValue(k, out v) && v is string && ((string)v).Length <= 40
+          && DateTime.TryParse((string)v, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal, out t)) return t;
+      return DateTime.MinValue;
+    }
+
+    static int Num(Dictionary<string, object> o, string k, int def, int min, int max) {
+      object v;
+      if (o.TryGetValue(k, out v) && v is double) { double d = (double)v; if (d >= min && d <= max) return (int)d; }
+      return def;
+    }
+
+    static string Str(Dictionary<string, object> o, string k, int max) {
+      object v; if (o.TryGetValue(k, out v) && v is string && ((string)v).Length <= max) return (string)v;
+      return "";
+    }
+
+    /// <summary>From the reply's "maintenance" value; an absent, odd or unknown-state value is off.</summary>
+    public static Maintenance From(object v) {
+      var m = new Maintenance();
+      var o = MiniJson.AsObject(v);
+      if (o == null) return m;
+      string st = Str(o, "state", 12);
+      if (st != "scheduled" && st != "on" && st != "reopening") return m;
+      m.State = st;
+      m.StartsAt = Time(o, "startsAt"); m.EndsAt = Time(o, "endsAt");
+      m.Mode = Str(o, "mode", 10) == "full" ? "full" : "readonly";
+      m.Ru = Str(o, "ru", MaxText); m.En = Str(o, "en", MaxText);
+      object lv;
+      if (o.TryGetValue("link", out lv)) {
+        var lo = MiniJson.AsObject(lv);
+        string href = lv is string ? (string)lv : lo != null ? Str(lo, "href", 300) : "";
+        if (href.Length > 0 && href.Length <= 300) m.Link = href;
+      }
+      m.PreStopMin = Num(o, "preStopMin", 15, 0, 240);
+      m.ReopenMin = Num(o, "reopenMin", 20, 0, 240);
+      m.ReopenPct = Num(o, "reopenPct", 100, 0, 100);
+      return m;
+    }
+
+    public bool SameAs(Maintenance o) { return o != null && ToJson() == o.ToJson(); }
+
+    static string Iso(DateTime t) { return t.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", System.Globalization.CultureInfo.InvariantCulture); }
+
+    public string ToJson() {
+      var sb = new StringBuilder("{\"state\":").Append(MiniJson.Quote(State));
+      if (State == "off") return sb.Append('}').ToString();
+      if (HasStart) sb.Append(",\"startsAt\":").Append(MiniJson.Quote(Iso(StartsAt)));
+      if (HasEnd) sb.Append(",\"endsAt\":").Append(MiniJson.Quote(Iso(EndsAt)));
+      sb.Append(",\"mode\":").Append(MiniJson.Quote(Mode));
+      if (Ru.Length > 0) sb.Append(",\"ru\":").Append(MiniJson.Quote(Ru));
+      if (En.Length > 0) sb.Append(",\"en\":").Append(MiniJson.Quote(En));
+      if (Link != null) sb.Append(",\"link\":").Append(MiniJson.Quote(Link));
+      sb.Append(",\"preStopMin\":").Append(PreStopMin).Append(",\"reopenMin\":").Append(ReopenMin).Append(",\"reopenPct\":").Append(ReopenPct);
+      return sb.Append('}').ToString();
+    }
+  }
+
   public sealed class RemoteSwitches {
     public static readonly string[] Features = { "guild", "gvg", "battle", "equip", "locate", "guideStyle" };
     /// <summary>Features that are off until the site says true (a missing or odd value, no reply and no saved copy all mean off).</summary>
@@ -71,6 +143,8 @@ namespace RealmForge {
     public string At;
     /// <summary>The site's announcement, kept in the saved copy so it stays after a restart and while the site is down; null when the site sent none.</summary>
     public SiteNotice Notice;
+    /// <summary>The maintenance mode; never null (state "off" when the site says nothing). Not in <see cref="Features"/>.</summary>
+    public Maintenance Maint = new Maintenance();
 
     public RemoteSwitches() { foreach (var f in Features) Feature[f] = !StartsOff(f); }
 
@@ -95,6 +169,7 @@ namespace RealmForge {
     public bool SameAs(RemoteSwitches o) {
       if (o == null || o.ReadEnabled != ReadEnabled || o.SiteFallback != SiteFallback) return false;
       if ((o.Notice == null) != (Notice == null) || (Notice != null && !Notice.SameAs(o.Notice))) return false;
+      if (!Maint.SameAs(o.Maint)) return false;
       foreach (var f in Features) if (o.Feature[f] != Feature[f]) return false;
       return true;
     }
@@ -115,6 +190,7 @@ namespace RealmForge {
         else if (has && v is bool && !(bool)v) r.Feature[f] = false;
       }
       if (o.TryGetValue("announcement", out v)) r.Notice = SiteNotice.From(v);
+      if (o.TryGetValue("maintenance", out v)) r.Maint = Maintenance.From(v);
       if (o.TryGetValue("at", out v) && v is string && ((string)v).Length <= 40) r.At = (string)v;
       return r;
     }
@@ -128,6 +204,7 @@ namespace RealmForge {
       if (!SiteFallback) sb.Append(",\"siteFallback\":false");
       sb.Append('}');
       if (Notice != null) sb.Append(",\"announcement\":").Append(Notice.ToJson());
+      sb.Append(",\"maintenance\":").Append(Maint.ToJson());
       if (At != null) sb.Append(",\"at\":").Append(MiniJson.Quote(At));
       return sb.Append('}').ToString();
     }

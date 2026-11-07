@@ -1023,6 +1023,7 @@ static partial class CoreTests {
       Check(lim.TryAcquire(t0.AddMinutes(11)), "allowed again after the window passed"); }
 
     RemoteSwitchesTests();
+    MaintenanceTests();
     LayoutTests(mock);
     KlassScanTests();
     LuaRootTests();
@@ -2555,6 +2556,85 @@ static partial class CoreTests {
   }
 
   // the site's switches (src/RemoteConfig.cs)
+  static void MaintenanceTests() {
+    Console.WriteLine("maintenance mode");
+    Func<string, DateTime> T = x => DateTime.Parse(x, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal);
+    // Parse: always present, off by default, unknown fields ignored
+    Check(RemoteSwitches.Parse("{}").Maint.State == "off" && RemoteSwitches.Parse("{\"maintenance\":null}").Maint.State == "off" && RemoteSwitches.Parse("{\"maintenance\":{\"state\":\"off\"}}").Maint.State == "off", "maintenance: absent / null / off is off");
+    Check(RemoteSwitches.Parse("{\"maintenance\":{\"state\":\"soon\"}}").Maint.State == "off" && RemoteSwitches.Parse("{\"maintenance\":\"on\"}").Maint.State == "off", "maintenance: unknown state / not an object is off");
+    var full = RemoteSwitches.Parse("{\"readEnabled\":false,\"maintenance\":{\"state\":\"scheduled\",\"startsAt\":\"2026-11-10T01:00:00.000Z\",\"endsAt\":\"2026-11-10T03:00:00Z\",\"mode\":\"full\",\"ru\":\"Работы\",\"en\":\"Works\",\"link\":\"https://t.me/x\",\"preStopMin\":15,\"reopenMin\":20,\"reopenPct\":30,\"future\":{\"a\":1}}}");
+    var fm = full.Maint;
+    Check(fm.State == "scheduled" && fm.Mode == "full" && fm.StartsAt == T("2026-11-10T01:00:00Z") && fm.EndsAt == T("2026-11-10T03:00:00Z") && fm.Ru == "Работы" && fm.En == "Works" && fm.Link == "https://t.me/x"
+      && fm.PreStopMin == 15 && fm.ReopenMin == 20 && fm.ReopenPct == 30, "maintenance: every field read");
+    Check(RemoteSwitches.Parse("{\"maintenance\":{\"state\":\"on\",\"link\":{\"href\":\"https://d.gg/y\"}}}").Maint.Link == "https://d.gg/y", "maintenance: link as an object");
+    var odd = RemoteSwitches.Parse("{\"maintenance\":{\"state\":\"on\",\"startsAt\":\"junk\",\"mode\":\"x\",\"preStopMin\":-5,\"reopenMin\":\"20\",\"reopenPct\":500}}").Maint;
+    Check(odd.State == "on" && !odd.HasStart && !odd.HasEnd && odd.Mode == "readonly" && odd.PreStopMin == 15 && odd.ReopenMin == 20 && odd.ReopenPct == 100, "maintenance: odd values fall back to the defaults");
+    Check(!Array.Exists(RemoteSwitches.Features, f => f == "maintenance"), "maintenance is no feature");
+    Check(full.Allows("battle") == false && RemoteSwitches.Parse("{\"maintenance\":{\"state\":\"on\"}}").Allows("battle"), "maintenance does not change readEnabled by itself");
+    // the saved copy and SameAs
+    var back = RemoteSwitches.Parse(full.ToJson());
+    Check(back.Maint.SameAs(fm) && back.SameAs(full), "maintenance survives the saved copy");
+    Check(!full.SameAs(RemoteSwitches.Parse("{\"readEnabled\":false}")) && RemoteSwitches.Parse("{}").ToJson().Contains("\"maintenance\":{\"state\":\"off\"}"), "maintenance: SameAs sees it, off is saved as {state:off}");
+    string path = Path.Combine(Path.GetTempPath(), "rf-maint-" + Guid.NewGuid().ToString("N") + ".json");
+    full.SaveCache(path); var lc = RemoteSwitches.LoadCache(path); File.Delete(path);
+    Check(lc != null && lc.Maint.State == "scheduled" && lc.Maint.EndsAt == fm.EndsAt, "maintenance: cache round trip");
+    // the gate
+    var starts = T("2026-11-10T01:00:00Z"); var ends = T("2026-11-10T03:00:00Z");
+    var sch = new Maintenance { State = "scheduled", StartsAt = starts, EndsAt = ends };
+    Check(MaintenanceGate.StopAt(sch) == T("2026-11-10T00:45:00Z"), "gate: stop = startsAt - preStop");
+    Check(!MaintenanceGate.Active(sch, T("2026-11-10T00:44:59Z"), 7) && MaintenanceGate.Active(sch, T("2026-11-10T00:45:00Z"), 7) && MaintenanceGate.Active(sch, T("2026-11-10T02:00:00Z"), 7), "gate: active from startsAt - preStop");
+    Eq("soon", MaintenanceGate.Phase(sch, T("2026-11-10T00:00:00Z"), 7), "phase: soon");
+    Eq("stopped", MaintenanceGate.Phase(sch, T("2026-11-10T00:50:00Z"), 7), "phase: stopped (reading off, works not begun)");
+    Eq("on", MaintenanceGate.Phase(sch, T("2026-11-10T01:30:00Z"), 7), "phase: on");
+    Eq("off", MaintenanceGate.Phase(new Maintenance(), T("2026-11-10T01:30:00Z"), 7), "phase: off");
+    Eq("off", MaintenanceGate.Phase(sch, T("2026-11-10T05:00:00Z"), 7), "phase: a stale 'scheduled' long after the end is off");
+    // resume: endsAt + rand(0..reopenMin) by the seed, stable, different seeds differ
+    bool allIn = true; var seen = new System.Collections.Generic.HashSet<long>();
+    for (int sd = 1; sd <= 200; sd++) {
+      var r = MaintenanceGate.ResumeAt(sch, sd);
+      if (r < ends || r > ends.AddMinutes(20)) allIn = false;
+      if (r != MaintenanceGate.ResumeAt(sch, sd)) allIn = false;
+      seen.Add(r.Ticks);
+    }
+    Check(allIn, "gate: ResumeAt is within endsAt .. endsAt + reopenMin and stable per seed");
+    Check(seen.Count > 50, "gate: different seeds wake at different moments (" + seen.Count + " of 200)");
+    Check(MaintenanceGate.ResumeAt(new Maintenance { State = "on", EndsAt = ends, ReopenMin = 0 }, 9) == ends, "gate: reopenMin 0 wakes at endsAt");
+    Check(MaintenanceGate.ResumeAt(new Maintenance { State = "on" }, 9) == DateTime.MinValue, "gate: no end, no resume time");
+    int s1 = 3, s2 = 4; while (MaintenanceGate.ResumeAt(sch, s2) == MaintenanceGate.ResumeAt(sch, s1)) s2++;
+    var w1 = MaintenanceGate.ResumeAt(sch, s1); var w2 = MaintenanceGate.ResumeAt(sch, s2); var early = w1 < w2 ? w1 : w2; var late = w1 < w2 ? w2 : w1;
+    int sEarly = w1 < w2 ? s1 : s2, sLate = w1 < w2 ? s2 : s1;
+    Check(!MaintenanceGate.Active(sch, early.AddSeconds(1), sEarly) && MaintenanceGate.Active(sch, early.AddSeconds(1), sLate) && !MaintenanceGate.Active(sch, late.AddSeconds(1), sLate), "gate: the early seed wakes first, the late one later");
+    Check(MaintenanceGate.Active(new Maintenance { State = "on" }, T("2026-11-10T02:00:00Z"), 1), "gate: 'on' without an end stays quiet");
+    Check(!MaintenanceGate.Active(new Maintenance { State = "scheduled" }, T("2026-11-10T02:00:00Z"), 1), "gate: 'scheduled' without a start is not active");
+    // the rollout
+    int in30 = 0; for (int sd = 0; sd < 1000; sd++) if (MaintenanceGate.InRollout(sd, 30)) in30++;
+    Check(in30 > 200 && in30 < 400, "gate: InRollout(30) is about 30 % (" + in30 + " of 1000)");
+    Check(MaintenanceGate.InRollout(5, 100) && !MaintenanceGate.InRollout(5, 0) && MaintenanceGate.InRollout(5, 50) == MaintenanceGate.InRollout(5, 50), "gate: rollout 100 / 0 / stable");
+    var reo = new Maintenance { State = "reopening", EndsAt = ends, ReopenMin = 20, ReopenPct = 50 };
+    int sIn = 0, sOut = 0; for (int sd = 1; sd < 100 && (sIn == 0 || sOut == 0); sd++) { if (MaintenanceGate.InRollout(sd, 50)) { if (sIn == 0) sIn = sd; } else if (sOut == 0) sOut = sd; }
+    Check(MaintenanceGate.WakeAt(reo, sOut) == ends.AddMinutes(20) && MaintenanceGate.WakeAt(reo, sIn) == MaintenanceGate.ResumeAt(reo, sIn), "gate: outside the rollout waits the full reopenMin, inside wakes at its moment");
+    Check(MaintenanceGate.Active(reo, ends.AddMinutes(19), sOut) && !MaintenanceGate.Active(reo, ends.AddMinutes(21), sOut), "gate: reopening, outside the rollout, quiet until endsAt + reopenMin");
+    Check(!MaintenanceGate.Active(new Maintenance { State = "reopening" }, ends, 1), "gate: reopening without an end is not active");
+    // flag from a 503
+    DateTime until; var now0 = T("2026-11-10T01:00:00Z");
+    Check(MaintenanceGate.ParseBody("{\"error\":\"maintenance\",\"maintenance\":true,\"until\":\"2026-11-10T03:00:00Z\"}", out until) && until == ends, "503 body: flag and until");
+    Check(MaintenanceGate.ParseBody("{\"maintenance\":true}", out until) && until == DateTime.MinValue && MaintenanceGate.ParseBody("{\"error\":\"maintenance\"}", out until), "503 body: flag without until");
+    Check(!MaintenanceGate.ParseBody("{\"error\":\"busy\"}", out until) && !MaintenanceGate.ParseBody("<html>", out until) && !MaintenanceGate.ParseBody(null, out until) && !MaintenanceGate.ParseBody("{\"maintenance\":\"true\"}", out until), "503 body: not a flag");
+    Check(MaintenanceGate.IsHeader("1") && MaintenanceGate.IsHeader(" 1 ") && !MaintenanceGate.IsHeader("0") && !MaintenanceGate.IsHeader(null) && !MaintenanceGate.IsHeader("true"), "header X-Wardsage-Maintenance: 1");
+    var fr = MaintenanceGate.FlagResume(ends, -1, 20, 5, now0);
+    Check(fr >= ends && fr <= ends.AddMinutes(20), "flag: until plus the spread");
+    Check(MaintenanceGate.FlagResume(DateTime.MinValue, 120, 20, 5, now0) == now0.AddSeconds(120), "flag: no until, Retry-After seconds");
+    Check(MaintenanceGate.FlagResume(DateTime.MinValue, -1, 20, 5, now0) == now0.AddSeconds(300), "flag: nothing known, 5 minutes");
+    Check(MaintenanceGate.FlagResume(now0.AddDays(5), -1, 20, 5, now0) == now0.AddHours(6), "flag: capped at 6 hours");
+    Check(MaintenanceGate.FlagResume(DateTime.MinValue, 999999, 20, 5, now0) == now0.AddSeconds(3600), "flag: Retry-After capped at 1 hour");
+    // the silence of the network reports
+    var quietTo = MaintenanceGate.SilentUntil(ends, now0);
+    Check(quietTo == ends.AddMinutes(15) && MaintenanceGate.SilentUntil(DateTime.MinValue, now0) == now0.AddMinutes(15), "silence: until the end + 15 minutes");
+    Check(MaintenanceGate.ReportSilenced("sync.net", now0, quietTo) && MaintenanceGate.ReportSilenced("sync.server", ends.AddMinutes(14), quietTo) && MaintenanceGate.ReportSilenced("net", now0, quietTo), "silence: network kinds are quiet during the window and 15 minutes after");
+    Check(!MaintenanceGate.ReportSilenced("sync.net", ends.AddMinutes(15), quietTo) && !MaintenanceGate.ReportSilenced("sync.net", now0, DateTime.MinValue), "silence: ends 15 minutes after, none without a window");
+    Check(!MaintenanceGate.ReportSilenced("sync.read", now0, quietTo) && !MaintenanceGate.ReportSilenced("battle.no_stats", now0, quietTo) && !MaintenanceGate.ReportSilenced("unhandled", now0, quietTo) && !MaintenanceGate.ReportSilenced("live_poll_failed", now0, quietTo), "silence: other kinds go on");
+  }
+
   static void RemoteSwitchesTests() {
     Console.WriteLine("Remote switches");
     var d = RemoteSwitches.Permissive();
