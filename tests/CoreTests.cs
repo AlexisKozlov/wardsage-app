@@ -942,6 +942,7 @@ static partial class CoreTests {
     AttackLogTests.Run(Check);
     Console.WriteLine("Live DPS meter data (src/DpsFeed.cs):");
     DpsFeedTests();
+    DpsNamesTests();
     DpsReplayTests();
 
     Console.WriteLine("Error reports (src/ErrorReport.cs: opt-in, scrubbed, deduped, capped):");
@@ -5633,6 +5634,15 @@ static partial class CoreTests {
     return new DpsTick { Stage = stage, Frame = frame, Final = final, Stats = new List<StatLine>(st) };
   }
   static bool Near(double a, double b, double eps) { return Math.Abs(a - b) <= eps; }
+
+  static void DpsNamesTests() {
+    Check(DpsNames.Hero(2001, 0, 0, true) == "Рекс" && DpsNames.Hero(2001, 0, 0, false) == "Rex", "names: known hero by unit, both languages");
+    Check(DpsNames.Hero(0, 0, 200100000u, false) == "Rex", "names: hero found by hero id / 100000");
+    Check(DpsNames.Hero(99999, 2001, 0, false) == "Rex", "names: unknown unit falls back to the base id");
+    Check(DpsNames.Hero(98765, 0, 0, true) == "#98765" && !DpsNames.KnownHero(98765), "names: unknown hero is #id");
+    Check(DpsNames.Skill(200117, true) == "Физ. АТК" && DpsNames.Skill(200117, false) == "P. ATK", "names: known skill, both languages");
+    Check(DpsNames.Skill(987654321, true) == "Прочее (#987654321)" && DpsNames.Skill(987654321, false) == "Other (#987654321)" && !DpsNames.KnownSkill(987654321), "names: unknown skill is Other (#id)");
+  }
 
   static void DpsFeedTests() {
     const int Other = 1001001, Arena = 6001001, Boss = 5001001;
