@@ -132,6 +132,10 @@ namespace RealmForge {
         if (IsHandleCreated) { int ex = W32.GetWindowLong(Handle, -20); W32.SetWindowLong(Handle, -20, value ? ex & ~0x20 : ex | 0x20); }   // GWL_EXSTYLE, WS_EX_TRANSPARENT
       }
     }
+    /// <summary>A panel that takes clicks while it is movable (the DPS meter, TEST build): client x, y -> the hit-test code (1 = client, so the click reaches <see cref="Mouse"/>; 2 = caption, Windows drags the window).</summary>
+    public Func<int, int, int> HitTest { get; set; }
+    /// <summary>With <see cref="HitTest"/>: kind 0 = left down, 1 = move, 2 = left up, 3 = right up; client x, y.</summary>
+    public Action<int, int, int> Mouse { get; set; }
     bool downIn;
     /// <summary>Width of the pressable square at the window's left (0 = the whole window is the button): the record button's timer plate beside it is not.</summary>
     public int HitW;
@@ -140,6 +144,17 @@ namespace RealmForge {
       return x >= 0 && y >= 0 && (HitW <= 0 ? x < Width && y < Height : x < HitW && y < Math.Min(HitW, Height));
     }
     protected override void WndProc(ref Message m) {
+      if (movable && HitTest != null) {
+        if (m.Msg == 0x0084) {
+          long l = m.LParam.ToInt64(); var pc = PointToClient(new Point((short)(l & 0xFFFF), (short)((l >> 16) & 0xFFFF)));
+          m.Result = (IntPtr)HitTest(pc.X, pc.Y); return;
+        }
+        if (m.Msg == 0x0201 || m.Msg == 0x0200 || m.Msg == 0x0202 || m.Msg == 0x0205) {
+          long l = m.LParam.ToInt64(); var mc = Mouse;
+          if (mc != null) mc(m.Msg == 0x0201 ? 0 : m.Msg == 0x0200 ? 1 : m.Msg == 0x0202 ? 2 : 3, (short)(l & 0xFFFF), (short)((l >> 16) & 0xFFFF));
+          return;
+        }
+      }
       if (movable) {
         if (m.Msg == 0x0084) { m.Result = (IntPtr)2; return; }                 // WM_NCHITTEST -> HTCAPTION: Windows drags it
         if (m.Msg == 0x0021) { m.Result = (IntPtr)3; return; }                 // WM_MOUSEACTIVATE -> MA_NOACTIVATE
