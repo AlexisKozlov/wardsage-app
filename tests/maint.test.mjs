@@ -32,6 +32,9 @@ check(stopped && stopped.phase === 'stopped' && new Date(stopped.stopAt) < Date.
 check(on && on.phase === 'on' && new Date(on.endsAt) > Date.now() && /^https:\/\/t\.me\//.test(on.link), 'mock maint-on: the works with an end time and a Telegram link');
 const done = run('maint-done');
 check(done.length >= 1 && done[done.length - 1].phase === 'off' && done[done.length - 1].done === true, 'mock maint-done: the works end with the «done» event');
+const early = run('maint-early');
+check(early.length === 2 && early[0].phase === 'on' && new Date(early[0].endsAt) - Date.now() > 3600000 && early[1].phase === 'off' && early[1].done === true, 'mock maint-early: works screen with a far end, then an early «off» with the «done» event');
+check(/case 'maint':[\s\S]{0,400}if \(m\.done\) toast\(t\('maintDone'\)/.test(readFileSync('ui/app.js', 'utf8')) && /m\.phase \|\| 'off'/.test(readFileSync('ui/app.js', 'utf8')), 'app.js: the «off» event with done closes the window and shows the «works over» toast');
 check(run('idle').length === 0, 'no maint event in the other scenarios');
 
 // app.js contract: the event, the action, the screen, the rate limit, escaped text

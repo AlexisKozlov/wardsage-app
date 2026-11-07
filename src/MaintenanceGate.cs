@@ -78,6 +78,28 @@ namespace RealmForge {
       return "on";
     }
 
+    /// <summary>While the mode is live the app asks app-config (and nothing else) every 120..180 s: the pause never goes above 180 s and never below 90 s.</summary>
+    public const int ProbeLoSec = 120, ProbeHiSec = 180, ProbeMinSec = 90, ResumeJitterMaxSec = 20;
+
+    /// <summary>The works mode is live for the screen or the flag: any phase but "off" (soon, stopped, on, reopening), or a 503 flag still in force.</summary>
+    public static bool Live(Maintenance m, DateTime now, int seed, DateTime flagUntil) { return Phase(m, now, seed) != "off" || flagUntil > now; }
+
+    /// <summary>The pause before the next app-config probe while the mode is live: 120..180 s by <paramref name="rnd"/> (0..1), at most 180 s, at least 90 s,
+    /// and not past the wake time (<paramref name="wake"/>, MinValue = unknown) when that comes sooner than the floor allows.</summary>
+    public static int ProbeMs(double rnd, DateTime now, DateTime wake) {
+      if (rnd < 0 || double.IsNaN(rnd)) rnd = 0; else if (rnd > 1) rnd = 1;
+      double sec = ProbeLoSec + (ProbeHiSec - ProbeLoSec) * rnd;
+      if (wake != DateTime.MinValue && wake > now) sec = Math.Min(sec, (wake - now).TotalSeconds + 2);
+      sec = Math.Max(ProbeMinSec, Math.Min(ProbeHiSec, sec));
+      return (int)(sec * 1000);
+    }
+
+    /// <summary>A valid app-config answer without works (state "off" or no field) ends the mode at once: the flag from an earlier 503 is dropped, the planned wake time is not used.</summary>
+    public static DateTime FlagAfterAnswer(DateTime flagUntil, Maintenance answered) { return answered == null || answered.State == "off" ? DateTime.MinValue : flagUntil; }
+
+    /// <summary>The light spread (0..20 s) before the other calls resume after an early end.</summary>
+    public static int ResumeJitterMs(double rnd) { if (rnd < 0 || double.IsNaN(rnd)) rnd = 0; else if (rnd > 1) rnd = 1; return (int)(rnd * ResumeJitterMaxSec * 1000); }
+
     /// <summary>Not a maintenance 503 when it has no usable flag; the header value "1" is the flag.</summary>
     public static bool IsHeader(string v) { return v != null && v.Trim() == "1"; }
 

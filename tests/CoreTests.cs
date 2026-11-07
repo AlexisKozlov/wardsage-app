@@ -2683,6 +2683,29 @@ static partial class CoreTests {
     Check(MaintenanceGate.FlagResume(DateTime.MinValue, -1, 20, 5, now0) == now0.AddSeconds(300), "flag: nothing known, 5 minutes");
     Check(MaintenanceGate.FlagResume(now0.AddDays(5), -1, 20, 5, now0) == now0.AddHours(6), "flag: capped at 6 hours");
     Check(MaintenanceGate.FlagResume(DateTime.MinValue, 999999, 20, 5, now0) == now0.AddSeconds(3600), "flag: Retry-After capped at 1 hour");
+    // early end: the probe of app-config during the works, and the gate cleared by an «off» answer
+    {
+      var live = new Maintenance { State = "on", StartsAt = starts, EndsAt = ends };
+      var inW = T("2026-11-10T02:00:00Z"); bool probeOk = true; int pMin = int.MaxValue, pMax = 0;
+      for (int k = 0; k <= 100; k++) { int ms = MaintenanceGate.ProbeMs(k / 100.0, inW, ends); if (ms < pMin) pMin = ms; if (ms > pMax) pMax = ms; if (ms < 90000 || ms > 180000) probeOk = false; }
+      Check(probeOk && pMin == 120000 && pMax == 180000, "probe: 120..180 s while the works run (" + pMin + ".." + pMax + " ms)");
+      Eq(180000, MaintenanceGate.ProbeMs(5.0, inW, DateTime.MinValue), "probe: never later than 180 s, whatever the random part");
+      Eq(120000, MaintenanceGate.ProbeMs(-1.0, inW, DateTime.MinValue), "probe: a bad random part gives the 120 s floor of the range");
+      Eq(90000, MaintenanceGate.ProbeMs(0.5, ends.AddSeconds(-10), ends), "probe: never below 90 s, even when the wake time is near");
+      Eq(150000, MaintenanceGate.ProbeMs(0.5, inW, DateTime.MinValue), "probe: 150 s in the middle of the range");
+      Eq(0, MaintenanceGate.ResumeJitterMs(0.0), "resume jitter: 0 at the low end"); Eq(20000, MaintenanceGate.ResumeJitterMs(1.0), "resume jitter: 20 s at the top"); Eq(20000, MaintenanceGate.ResumeJitterMs(9.0), "resume jitter: capped at 20 s");
+      Check(MaintenanceGate.Live(live, inW, 7, DateTime.MinValue) && MaintenanceGate.Live(sch, T("2026-11-10T00:00:00Z"), 7, DateTime.MinValue) && MaintenanceGate.Live(sch, T("2026-11-10T00:50:00Z"), 7, DateTime.MinValue), "live: on, soon and stopped are live");
+      Check(MaintenanceGate.Live(reo, ends.AddMinutes(1), sOut, DateTime.MinValue), "live: reopening is live");
+      Check(MaintenanceGate.Live(new Maintenance(), inW, 7, inW.AddMinutes(5)) && !MaintenanceGate.Live(new Maintenance(), inW, 7, inW.AddMinutes(-5)) && !MaintenanceGate.Live(new Maintenance(), inW, 7, DateTime.MinValue), "live: a 503 flag in force is live, an old one is not");
+      // 'on' + an answer 'off' (or without the field): the gate is cleared at once, the planned resume time is not used
+      var gone = RemoteSwitches.Parse("{\"maintenance\":{\"state\":\"off\"}}").Maint; var none = RemoteSwitches.Parse("{}").Maint;
+      Check(MaintenanceGate.Active(live, inW, 7) && !MaintenanceGate.Active(gone, inW, 7) && !MaintenanceGate.Active(none, inW, 7), "early end: 'on' is active, the same moment with an 'off' answer (or none) is not");
+      Eq("off", MaintenanceGate.Phase(gone, inW, 7), "early end: the phase is off at once");
+      Check(MaintenanceGate.FlagAfterAnswer(inW.AddHours(1), gone) == DateTime.MinValue && MaintenanceGate.FlagAfterAnswer(inW.AddHours(1), none) == DateTime.MinValue, "early end: an 'off' answer clears the 503 flag");
+      Check(MaintenanceGate.FlagAfterAnswer(inW.AddHours(1), live) == inW.AddHours(1), "a 'still on' answer keeps the flag");
+      // reopening keeps the old logic
+      Check(MaintenanceGate.Active(reo, ends.AddMinutes(19), sOut) && !MaintenanceGate.Active(reo, ends.AddMinutes(21), sOut) && MaintenanceGate.WakeAt(reo, sOut) == ends.AddMinutes(20), "reopening: the rollout wake logic is as before");
+    }
     // the silence of the network reports
     var quietTo = MaintenanceGate.SilentUntil(ends, now0);
     Check(quietTo == ends.AddMinutes(15) && MaintenanceGate.SilentUntil(DateTime.MinValue, now0) == now0.AddMinutes(15), "silence: until the end + 15 minutes");

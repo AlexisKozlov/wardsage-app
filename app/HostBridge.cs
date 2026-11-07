@@ -153,14 +153,16 @@ namespace RealmForge {
     // poll of the switches is at the end of the works plus this install's spread; the network error reports stay silent until 15 minutes after.
     readonly int maintSeed = MaintenanceGate.SeedOf(Environment.MachineName + "|" + Environment.UserName);   // stable per install
     volatile bool maintWasQuiet, maintHadWorks;
-    DateTime maintFlagUntil = DateTime.MinValue, maintSilentUntil = DateTime.MinValue, maintCheckedAt = DateTime.MinValue;
+    DateTime maintResumeAt = DateTime.MinValue, maintFlagUntil = DateTime.MinValue, maintSilentUntil = DateTime.MinValue, maintCheckedAt = DateTime.MinValue;
     string maintPosted;
+    readonly Random maintRng = new Random();
 
     /// <summary>Until when the app must not call the site: the later of the announced window's wake time and the flag a 503 left; MinValue = not quiet.</summary>
     DateTime MaintQuietUntil(DateTime now) {
       var m = remote.Maint; DateTime q = DateTime.MinValue;
       if (MaintenanceGate.Active(m, now, maintSeed)) { q = MaintenanceGate.WakeAt(m, maintSeed); if (q == DateTime.MinValue) q = now.AddMinutes(5); }
       if (maintFlagUntil > now && maintFlagUntil > q) q = maintFlagUntil;
+      if (maintResumeAt > now && maintResumeAt > q) q = maintResumeAt;   // the light spread after an early end
       return q > now ? q : DateTime.MinValue;
     }
 
@@ -223,24 +225,29 @@ namespace RealmForge {
           if (mflag) NoteMaintFlag(muntil, mra);   // a maintenance 503: quiet, the next ask at the end of the works
           OnUi(() => {
             var qf = MaintQuietUntil(DateTime.UtcNow);
-            remoteTimer.Interval = qf != DateTime.MinValue && mflag ? (int)Math.Max(30000, Math.Min((qf - DateTime.UtcNow).TotalMilliseconds, 7200000))
+            remoteTimer.Interval = mflag || MaintenanceGate.Live(remote.Maint, DateTime.UtcNow, maintSeed, maintFlagUntil) ? MaintenanceGate.ProbeMs(maintRng.NextDouble(), DateTime.UtcNow, qf)   // the probe: app-config alone every 2-3 minutes
               : remoteBo.Blocked(DateTime.UtcNow) ? (int)Math.Max(5000, (remoteBo.Until - DateTime.UtcNow).TotalMilliseconds) : 20000;
             Post("{\"ev\":\"site\",\"ok\":" + B(reached) + "}"); PostMaint(false);
           });
           return;
         }
         r.SaveCache(RemoteSwitches.CachePath);
-        if (r.Maint.State == "off") maintFlagUntil = DateTime.MinValue;   // a good answer without works clears a flag from an earlier 503
         OnUi(() => {
+          bool wasQuiet = maintWasQuiet || maintFlagUntil > DateTime.UtcNow;
+          maintFlagUntil = MaintenanceGate.FlagAfterAnswer(maintFlagUntil, r.Maint);   // a good answer without works clears a flag from an earlier 503
+          if (r.Maint.State == "off" && wasQuiet) {   // early end: the gate opens now, the other calls come back within 0-20 s
+            maintResumeAt = DateTime.UtcNow.AddMilliseconds(MaintenanceGate.ResumeJitterMs(maintRng.NextDouble()));
+            Log.Write("maintenance: the site says the works are over (early), calls resume");
+          } else if (r.Maint.State == "off") maintResumeAt = DateTime.MinValue;
           remoteTimer.Interval = RemoteSwitches.EveryMinutes(Channel.IsTest) * 60 * 1000;
           Post("{\"ev\":\"site\",\"ok\":true}");
           bool changed = !r.SameAs(remote);
           remote = r;
           if (changed) { Log.Write("switches changed: " + r.ToJson()); ApplyRemote(); }
           else PostRemote();   // the announcement may have run out
-          // during the works the next ask is at their end plus the spread (not every 10 minutes)
-          var qn = MaintQuietUntil(DateTime.UtcNow);
-          if (qn != DateTime.MinValue) remoteTimer.Interval = (int)Math.Max(30000, Math.Min((qn - DateTime.UtcNow).TotalMilliseconds + 2000, 7200000));
+          // during the works only app-config is asked, every 2-3 minutes (an early end is seen at once)
+          var nowU = DateTime.UtcNow;
+          if (MaintenanceGate.Live(remote.Maint, nowU, maintSeed, maintFlagUntil)) remoteTimer.Interval = MaintenanceGate.ProbeMs(maintRng.NextDouble(), nowU, MaintQuietUntil(nowU));
           PostMaint(false);
         });
       });
