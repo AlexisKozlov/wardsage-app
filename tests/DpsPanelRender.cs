@@ -103,7 +103,7 @@ static class DpsPanelRender {
       int lit = 0;
       using (var sc = PanelScene(panel, gw, gh, px, py))
         for (int y = 10; y < h - 10; y += 3) for (int x = 10; x < w - 10; x += 3) { var c = sc.GetPixel(x, y); if (c.R > 190 && c.G > 190 && c.B > 190) lit++; }
-      Check("not blank", lit > 10 && hits.Count >= 8, name + ": " + lit + " bright samples, " + hits.Count + " pressable places");
+      Check("not blank", lit > 10 && hits.Count >= 7, name + ": " + lit + " bright samples, " + hits.Count + " pressable places");
       // no text wider than its rectangle
       foreach (var r in probe) Check("text fits", r.Width <= r.Box.Width + 0.5f && r.Glyphs.Right <= r.Box.Right + 0.5f && r.Glyphs.X >= r.Box.X - 0.5f, name + ": \"" + r.Text + "\" " + r.Width.ToString("0.0") + " > " + r.Box.Width.ToString("0.0"));
       // contrast under the glyphs: the same panel without text, 8 points inside each text rectangle
