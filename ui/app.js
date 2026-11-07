@@ -27,6 +27,8 @@
     locate: { req: null, step: null, tipKey: '', doneTimer: 0 }, locateEnded: {},
     // the site's switches: reading as a whole, and the features switched off
     remote: { readEnabled: true, off: [] },
+    // the site's maintenance (host event «maint»): phase off | soon | stopped | on, times as ISO UTC
+    maint: { phase: 'off' }, maintCheckAt: 0,
     // the running game version has no layout data from the server (yet): fights, the equip helper's screens, «Найти в игре» wait
     layout: { missing: false, noCode: false, game: '' },
   };
@@ -92,7 +94,7 @@
   setInterval(() => { try { const p = current(); if (p && S.hasCode && S.sticky && S.sticky[p.id] && S.sticky[p.id].on) syncHighlight(); } catch (e) { /* no plan yet */ } }, 500);
 
   // ---------------------------------------------------------------- shell
-  let lastRail = '', lastPage = '', lastView = '', lastModal = '';
+  let lastRail = '', lastPage = '', lastView = '', lastModal = '', lastMaint = '';
   // Re-renders only what changed (the game is polled several times a second): no flicker, hover and focus survive.
   function render() {
     syncHighlight();
@@ -103,8 +105,10 @@
     const nt = notices();
     if (nt !== lastNotices) { $('#notices').innerHTML = nt; lastNotices = nt; }
     const md = termsModal() || modal();
-    const appEl = document.querySelector('.app'); if (appEl) appEl.inert = !S.termsOk;   // the first-run card blocks the window behind it
+    const appEl = document.querySelector('.app'); if (appEl) appEl.inert = !S.termsOk || S.maint.phase === 'on';   // the first-run card blocks the window behind it
     if (md !== lastModal) { $('#modal').innerHTML = md; lastModal = md; }
+    const mh = maintScreen();
+    if (mh !== lastMaint) { $('#maint').innerHTML = mh; lastMaint = mh; }
     const view = S.compact ? 'compact' : S.page + (S.editCode || !S.hasCode ? ':code' : '');
     const html = S.compact ? compactView() : S.page === 'equip' ? equipPage() : S.page === 'settings' ? settingsPage() : S.page === 'news' ? newsPage() : S.page === 'community' ? communityPage() : syncPage();
     if (html === lastPage && view === lastView) return;
@@ -122,6 +126,11 @@
   function notices() {
     let h = '';
     const txt = noticeText();
+    if (S.maint.phase === 'soon' || S.maint.phase === 'stopped') {
+      const st = S.maint.phase === 'soon';
+      h += `<div class="remote-note site-note warn maint-note" role="status">${I.clock}<div><b>${esc(st
+        ? t('maintSoon', leftText(S.maint.startsAt, true), hhmm(S.maint.stopAt || S.maint.startsAt)) : t('maintStopped', hhmm(S.maint.startsAt)))}</b></div></div>`;
+    }
     if (S.offline) h += `<div class="remote-note site-note" role="status">${I.clock}<div><b>${esc(t('siteOffline'))}</b></div></div>`;
     if (txt && store('rf.noticeOff') !== txt) {
       const n = S.notice, lk = n.link && n.link.href ? `<button class="termsLink" data-act="open" data-url="${esc(window.RFForum.onSite(n.link.href, S.site))}">${esc(n.link[S.lang] || n.link.ru || n.link.en || '')}</button>` : '';
@@ -129,6 +138,45 @@
     }
     return h;
   }
+  // ---- maintenance: the banner before the works and the screen during them (times are shown in the player's local time)
+  const hhmm = (iso) => { const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleTimeString(S.lang === 'en' ? 'en-GB' : 'ru-RU', { hour: '2-digit', minute: '2-digit', hour12: false }); };
+  function leftText(iso, minOne) {
+    const ms = new Date(iso).getTime() - Date.now();
+    if (isNaN(ms) || ms <= 0) return minOne ? '1 ' + t('maintM') : t('maintLeftSoon');
+    const min = Math.max(minOne ? 1 : 0, Math.ceil(ms / 60000));
+    return min >= 60 ? Math.floor(min / 60) + ' ' + t('maintH') + (min % 60 ? ' ' + (min % 60) + ' ' + t('maintM') : '') : min + ' ' + t('maintM');
+  }
+  const maintLeftLine = () => { const e = S.maint.endsAt; if (!e) return ''; const ms = new Date(e).getTime() - Date.now(); return isNaN(ms) || ms < 60000 ? t('maintLeftSoon') : t('maintLeft', leftText(e, false)); };
+  const maintCooldown = () => Math.max(0, Math.ceil((S.maintCheckAt + 60000 - Date.now()) / 1000));
+  const maintCheckLabel = () => { const c = maintCooldown(); return c > 0 ? t('maintCheckWait', c) : t('maintCheck'); };
+  function maintScreen() {
+    const m = S.maint;
+    if (m.phase !== 'on') return '';
+    const custom = (m[S.lang] || m.ru || m.en || '').trim();
+    const lk = m.link || '', tg = /^https:\/\/(t|telegram)\.me\//.test(lk);
+    return `<div class="maint-veil" role="dialog" aria-modal="true" aria-labelledby="maintH">
+      <div class="maint-card card framed">
+        <div class="crest maint-crest" role="img" aria-label="Wardsage"></div>
+        <h1 id="maintH">${esc(t('maintTitle'))}</h1>
+        <p class="maint-until">${esc(m.endsAt ? t('maintUntil', hhmm(m.endsAt)) : t('maintUntilNone'))}</p>
+        ${m.endsAt ? `<div class="maint-count" data-mc="end">${esc(maintLeftLine())}</div>` : ''}
+        ${custom ? `<p class="maint-custom">${esc(custom)}</p>` : ''}
+        <p class="maint-ok">${esc(t('maintGameOk'))}</p>
+        <div class="maint-btns">
+          <button class="btn-line" data-act="open" data-url="${DISCORD}">${I.ext}${esc(t('maintDiscord'))}</button>
+          ${lk ? `<button class="btn-line" data-act="open" data-url="${esc(lk)}">${I.ext}${esc(tg ? t('maintTg') : t('maintMore'))}</button>` : ''}
+          <button class="btn-gold" data-act="maintCheck" data-mc="check" ${maintCooldown() > 0 ? 'disabled' : ''}>${esc(maintCheckLabel())}</button>
+        </div>
+      </div></div>`;
+  }
+  // the numbers tick without re-drawing the screen (focus and hover stay)
+  setInterval(() => {
+    if (S.maint.phase === 'off') return;
+    if (S.maint.phase !== 'on') { render(); return; }
+    const c = document.querySelector('[data-mc=end]'); if (c) c.textContent = maintLeftLine();
+    const b = document.querySelector('[data-mc=check]'); if (b) { b.textContent = maintCheckLabel(); b.disabled = maintCooldown() > 0; }
+  }, 1000);
+
   // the site is "down" after 20 s in a row without an answer (the config ask or the plans long poll); the first success clears it
   function siteState(src, ok) {
     clearTimeout(downTimers[src]); downTimers[src] = null;
@@ -947,6 +995,7 @@
     else if (a === 'sync') { S.sync = { phase: 'run', stage: 'find', seconds: 0 }; host.send({ cmd: 'sync' }); render(); }
     else if (a === 'saveOnly') { S.sync = { phase: 'run', stage: 'find', seconds: 0 }; host.send({ cmd: 'sync', saveOnly: true }); S.page = 'sync'; render(); }
     else if (a === 'termsAccept') { S.termsOk = true; host.send({ cmd: 'acceptTerms' }); render(); }
+    else if (a === 'maintCheck') { if (maintCooldown() > 0) return; S.maintCheckAt = Date.now(); host.send({ cmd: 'maint.check' }); render(); }
     else if (a === 'open') host.send({ cmd: 'open', url: el.dataset.url });
     else if (a === 'more') { S.more[el.dataset.k] = !S.more[el.dataset.k]; render(); }
     else if (a === 'openLog') host.send({ cmd: 'openLog' });
@@ -1095,6 +1144,10 @@
       case 'update': if (!S.update || S.update.version !== m.version) S.updDismissed = false; S.update = { version: m.version, ru: m.notesRu || '', en: m.notesEn || '' }; render(); break;
       case 'guild': if (m.state === 'noSelf' || m.state === 'short') toast(t(m.state === 'short' ? 'guildShort' : 'guildNoSelf'), 12000); break;
       case 'remote': S.remote = { readEnabled: m.readEnabled !== false, off: Array.isArray(m.off) ? m.off : [] }; S.notice = m.announcement && typeof m.announcement === 'object' ? m.announcement : null; render(); break;
+      case 'maint':
+        S.maint = { phase: m.phase || 'off', startsAt: m.startsAt, stopAt: m.stopAt, endsAt: m.endsAt, ru: m.ru, en: m.en, link: m.link };
+        if (m.done) toast(t('maintDone'), 8000);
+        render(); break;
       case 'site': siteState('cfg', m.ok === true); break;
       case 'layout': {
         const l = { missing: m.missing === true, noCode: m.noCode === true, game: typeof m.game === 'string' ? m.game : '' };

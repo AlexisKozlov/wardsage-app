@@ -93,6 +93,7 @@ node tests/news.test.mjs
 node tests/forum.test.mjs
 node tests/locate.test.mjs
 node tests/sellhint.test.mjs
+node tests/maint.test.mjs
 for f in ui/*.js; do node --check "$f"; done && echo "ui scripts: syntax ok"
 
 step "8b. Recording overlay: OverlayPaint.Composite draws a fake frame and hint box onto a bitmap (tests/RecOverlayPixels.cs; compiled always, run when Mono's GDI+ is there)"

@@ -2,6 +2,7 @@
 // Inert inside Wardsage.exe (window.chrome.webview exists there). Scenario: index.html?s=<name>
 //   locate | locate-select | locate-filter | locate-gone (a «Найти в игре» request)
 //   remote-off | remote-some (the site's switches; &page=equip) | remote-layout (no layout data for the game version) | remote-layout-code (no data: no valid sync code)
+//   maint-soon | maint-stopped | maint-on | maint-done (the site's maintenance: banner, screen, the «works over» toast; &lang=en)
 //   terms (the first-run Terms of Use card; also &terms=1 with any scenario) | onboard | idle | reading | done | error | equip | pick | rel | selected | hidden | done-plan | compact | settings | news | newsoff | en
 //   filter-open (the game's filter pop-up over the list) | filter-guide (the pop-up open for the «faster» tip: what to pick is lit) | far (the item more than three screens down: the filter tip)
 (function () {
@@ -55,6 +56,12 @@
         if (s === 'remote-layout') emit({ ev: 'layout', missing: true, game: '1.6.40.830.1' });
         if (s === 'remote-layout-code') emit({ ev: 'layout', missing: true, noCode: true, game: '1.6.40.830.1' });
         if (s.startsWith('remote') && q.get('page') === 'equip') setTimeout(() => document.querySelector('[data-page=equip]').click(), 20);
+        // the site's maintenance: times are relative to now so the countdown is alive
+        const mi = (min) => new Date(Date.now() + min * 60000).toISOString();
+        if (s === 'maint-soon') emit({ ev: 'maint', phase: 'soon', startsAt: mi(47), stopAt: mi(32), endsAt: mi(167), resumeAt: mi(175), mode: 'full', ru: '', en: '', link: null });
+        if (s === 'maint-stopped') emit({ ev: 'maint', phase: 'stopped', startsAt: mi(9), stopAt: mi(-6), endsAt: mi(129), resumeAt: mi(135), mode: 'full', ru: '', en: '', link: null });
+        if (s === 'maint-on' || s === 'maint-done') emit({ ev: 'maint', phase: 'on', startsAt: mi(-10), stopAt: mi(-25), endsAt: mi(s === 'maint-done' ? 0.3 : 83), resumeAt: mi(s === 'maint-done' ? 0.3 : 90), mode: 'full', ru: 'Обновляем сервер: заодно ускорим сайт.', en: 'Upgrading the server; the site will be faster too.', link: 'https://t.me/wardsage' });
+        if (s === 'maint-done') setTimeout(() => emit({ ev: 'maint', phase: 'off', done: true }), 20000);
         if (s === 'reading') emit({ ev: 'sync', stage: 'read', seconds: 17 });
         if (s === 'done') emit({ ev: 'sync', stage: 'done', result: { seconds: 41, heroes: 128, items: 1109, artifacts: 380, viewUrl: site + '/app/heroes' } });
         if (s === 'error') emit({ ev: 'sync', stage: 'error', error: { kind: 'not_running' } });
@@ -64,6 +71,8 @@
         if (s === 'settings') setTimeout(() => document.querySelector('[data-page=settings]').click(), 20);
         if (s === 'community' || s === 'forum' || s === 'forum0' || s === 'forum00' || s === 'onboard') setTimeout(() => document.querySelector('[data-page=community]').click(), 20);
         if (s === 'news' || s === 'newsoff') setTimeout(() => document.querySelector('[data-page=news]').click(), 20);
+      } else if (m.cmd === 'maint.check') {
+        console.log('[mock host]', JSON.stringify(m));
       } else if (m.cmd === 'acceptTerms') {
         try { sessionStorage.setItem('rfTerms', '1'); } catch (e) { /* preview only */ }
         console.log('[mock host]', JSON.stringify(m));
