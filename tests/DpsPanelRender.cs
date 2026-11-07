@@ -192,12 +192,34 @@ static class DpsPanelRender {
     }
     Check("other", total > 0 && other <= total * 0.05, "Other " + other + " of " + total + " (" + (total > 0 ? other * 100.0 / total : 0).ToString("0.0") + "%), " + ids.Count + " skill ids, " + heroesWithSkills + " heroes");
     Console.WriteLine("Other = " + (total > 0 ? other * 100.0 / total : 0).ToString("0.00") + "% of the damage on " + ids.Count + " skill ids");
+    AtlasBrightness();
     Timing(sb);
     Check("number format", DpsPanel.Short(1234567) == "1.23M" && DpsPanel.Short(950) == "950" && DpsPanel.Short(12345) == "12.3K" && DpsPanel.Short(2500000000) == "2.50B", "number format");
     foreach (var kv in passes) Console.WriteLine("ok: " + kv.Key + " (" + kv.Value + " cases)");
     Console.WriteLine("cache entries at the end: " + DpsArt.CacheCount);
     Console.WriteLine(fails == 0 ? "PASS" : "FAILED: " + fails);
     return fails == 0 ? 0 : 1;
+  }
+
+  // the mean brightness (0..255) of every icon cell of the skill atlas: an aspect icon (dark outline on alpha) must not vanish into the dark row (> 45);
+  // 35 skill icons are dark art by themselves (30..45, opaque pictures): those only must not be blank (> 25)
+  static void AtlasBrightness() {
+    var atl = DpsArt.SkillAtlas; if (atl == null) return;
+    var data = atl.LockBits(new Rectangle(0, 0, atl.Width, atl.Height), ImageLockMode.ReadOnly, PixelFormat.Format32bppPArgb);
+    try {
+      var buf = new byte[Math.Abs(data.Stride) * atl.Height]; System.Runtime.InteropServices.Marshal.Copy(data.Scan0, buf, 0, buf.Length);
+      double minAsp = 999, minSk = 999; string whoAsp = "", whoSk = ""; int nAsp = 0, nSk = 0, darkSk = 0;
+      foreach (var kv in DpsArtIndex.Skills) {
+        var r = kv.Value; double sum = 0; int n = 0;
+        for (int y = r[1]; y < r[1] + r[3]; y += 2) for (int x = r[0]; x < r[0] + r[2]; x += 2) {
+          int o = y * data.Stride + x * 4; sum += 0.299 * buf[o + 2] + 0.587 * buf[o + 1] + 0.114 * buf[o]; n++;
+        }
+        double m = n > 0 ? sum / n : 0;
+        if (kv.Key.StartsWith("aspect:")) { nAsp++; if (m < minAsp) { minAsp = m; whoAsp = kv.Key; } Check("aspect icons bright", m > 45, kv.Key + " mean brightness " + m.ToString("0.0")); }
+        else { nSk++; if (m < minSk) { minSk = m; whoSk = kv.Key; } if (m <= 45) darkSk++; Check("skill icons bright", m > 25, kv.Key + " mean brightness " + m.ToString("0.0")); }
+      }
+      Console.WriteLine("icon brightness: " + nAsp + " aspects, darkest " + whoAsp + " " + minAsp.ToString("0.0") + "; " + nSk + " skills, darkest " + whoSk + " " + minSk.ToString("0.0") + ", dark (<=45): " + darkSk);
+    } finally { atl.UnlockBits(data); }
   }
 
   // Render on 300x500: 50 frames per view, warm cache

@@ -17,6 +17,7 @@ UI = ("common_description_tips common_bg_popup_titel common_btn_hortab0 common_b
       "prof_Acrher prof_Fighter prof_Mage prof_Paladin prof_TacticMaster prof_Treatment back art-sep").split()
 CELL, COLS, WIN = 48, 32, 104          # icon side in the atlas, columns of a grid, side of the head window in the 122x185 portrait
 BG = (24, 28, 38)                       # what a transparent cut-out is laid on before JPEG (no alpha there)
+BG_ASPECT = (176, 160, 120)             # the aspect icons are dark outline dragons with alpha: they lie on a light gold plate (on BG they were invisible)
 PROF = {1: "Fighter", 2: "Paladin", 4: "Acrher", 8: "Mage", 16: "Treatment", 256: "TacticMaster"}   # lib/art.ts of the site
 
 ap = argparse.ArgumentParser()
@@ -33,8 +34,8 @@ def opened(path):
     return Image.open(path).convert("RGBA")
 
 
-def flat(im, side):
-    bg = Image.new("RGBA", im.size, BG + (255,)); bg.alpha_composite(im)
+def flat(im, side, back=BG):
+    bg = Image.new("RGBA", im.size, back + (255,)); bg.alpha_composite(im)
     return bg.convert("RGB").resize((side, side), Image.LANCZOS)
 
 
@@ -83,13 +84,14 @@ names = [("%s" % n, os.path.join(art, "skills", n + ".webp")) for n in sorted(ic
 for k, asp in sorted(jload("data/aspects.json").items(), key=lambda kv: int(kv[0])):
     if asp.get("icon"): names.append(("aspect:" + k, os.path.join(art, "aspects", k + ".webp")))
 ims = [(n, opened(p)) for n, p in names]
+BACK = lambda n: BG_ASPECT if n.startswith("aspect:") else BG
 ims = [(n, im) for n, im in ims if im is not None]
 rows = (len(ims) + COLS - 1) // COLS
 sk = Image.new("RGB", (COLS * CELL, max(1, rows) * CELL), BG)
 skill_rows = []
 for k, (n, im) in enumerate(ims):
     gx, gy = (k % COLS) * CELL, (k // COLS) * CELL
-    sk.paste(flat(im, CELL), (gx, gy)); skill_rows.append("%s|%d|%d|%d|%d" % (n, gx, gy, CELL, CELL))
+    sk.paste(flat(im, CELL, BACK(n)), (gx, gy)); skill_rows.append("%s|%d|%d|%d|%d" % (n, gx, gy, CELL, CELL))
 sk.save(os.path.join(a.res, "dps_skills.jpg"), quality=85, optimize=True)
 
 
