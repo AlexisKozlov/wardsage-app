@@ -15,7 +15,7 @@ namespace RealmForge {
   /// <summary>Which hosts the update file may come from.</summary>
   public static class UpdateHosts {
     /// <summary>Hosts besides the site's own that may serve the exe (https only). Add a mirror's host here.</summary>
-    public static readonly string[] Mirrors = { "wardsage.com" };
+    public static readonly string[] Mirrors = { "wardsage.com", "ru.wardsage.com" };
     /// <summary>The file's address is the feed's own host and scheme, or one of <see cref="Mirrors"/> over https.</summary>
     public static bool Allowed(Uri site, Uri file) {
       if (site == null || file == null) return false;

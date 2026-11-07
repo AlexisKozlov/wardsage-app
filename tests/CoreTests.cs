@@ -4647,6 +4647,8 @@ static partial class CoreTests {
     Check(!UpdateHosts.Allowed(site, new Uri("http://wardsage.com/a.exe")), "hosts: the mirror only over https");
     Check(!UpdateHosts.Allowed(site, new Uri("https://evil.wardsage.com.example/a.exe")) && !UpdateHosts.Allowed(site, new Uri("https://example.com/a.exe")), "hosts: any other host refused");
     Check(UpdateHosts.Allowed(new Uri("http://localhost:3999"), new Uri("http://localhost:3999/a.exe")), "hosts: a local test site serves its own file");
+    Check(UpdateHosts.Allowed(new Uri("https://wardsage.com"), new Uri("https://ru.wardsage.com/downloads/a.exe")) && UpdateHosts.Allowed(new Uri("https://ru.wardsage.com"), new Uri("https://wardsage.com/downloads/a.exe")), "hosts: ru.wardsage.com is a mirror both ways (https)");
+    Check(!UpdateHosts.Allowed(site, new Uri("http://ru.wardsage.com/a.exe")) && !UpdateHosts.Allowed(site, new Uri("https://ru.wardsage.com.evil.example/a.exe")) && !UpdateHosts.Allowed(site, new Uri("https://xru.wardsage.com/a.exe")), "hosts: ru.wardsage.com only over https, look-alikes refused");
     // backoff: 1, 5, 30, 30, 30, 30 minutes, +-20 %, never above 30 minutes; six failed rounds end it
     Eq(60000, UpdateRetry.DelayMs(1, 0.5), "update backoff: first 1 min");
     Eq(300000, UpdateRetry.DelayMs(2, 0.5), "update backoff: second 5 min");
