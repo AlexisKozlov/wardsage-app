@@ -112,6 +112,14 @@ namespace RealmForge {
       });
     }
 
+    /// <summary>For code with no bridge (the start-failure report): the host by the saved state and the saved switches, without any network.</summary>
+    public static string ResolveSaved(string cfgSite) {
+      try {
+        var sw = RemoteSwitches.LoadCache(RemoteSwitches.CachePath);
+        return new SiteRoute(null, null, null, StatePath, null).Resolve(cfgSite, sw == null || sw.SiteFallback);
+      } catch (Exception) { return cfgSite; }
+    }
+
     /// <summary>Report by the outcome: noAnswer true = NoteNoAnswer, false = NoteAnswer.</summary>
     public void Note(string usedSite, bool noAnswer) { if (noAnswer) NoteNoAnswer(usedSite); else NoteAnswer(usedSite); }
 

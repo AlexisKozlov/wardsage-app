@@ -159,12 +159,15 @@ namespace RealmForge {
       } catch (Exception) { }
     }
 
+    /// <summary>The last Fetch on this thread got no HTTP answer at all (no connection, timeout, cut connection, TLS). A 5xx is an answer: `reached` is false for it, this is not. For src/SiteRoute.cs.</summary>
+    [ThreadStatic] public static bool LastNoAnswer;
+
     /// <summary>The site's switches, or null (no connection, not a 2xx, not JSON).</summary>
     public static RemoteSwitches Fetch(string site) { bool reached; return Fetch(site, out reached); }
 
     /// <summary>As above; `reached` is false only when the site gave no answer or a 5xx (a 4xx means it is up).</summary>
     public static RemoteSwitches Fetch(string site, out bool reached) {
-      reached = false;
+      reached = false; LastNoAnswer = false;
       try {
         SyncClient.EnableTls12();
         var req = (HttpWebRequest)WebRequest.Create(site.TrimEnd('/') + "/api/extractor/app-config");
@@ -190,8 +193,9 @@ namespace RealmForge {
       } catch (WebException e) {
         var resp = e.Response as HttpWebResponse;
         if (resp != null) { reached = (int)resp.StatusCode < 500; NetBackoff.Record((int)resp.StatusCode, resp.Headers["Retry-After"]); resp.Close(); }
+        else LastNoAnswer = true;
         return null;
-      } catch (Exception) { return null; }
+      } catch (Exception) { LastNoAnswer = true; return null; }
     }
   }
 }

@@ -4894,7 +4894,7 @@ static partial class CoreTests {
         // failure 1: the main server takes the connection and says nothing (8 s timeout of RemoteSwitches.Fetch: reached == false)
         bool reached; var sw = RemoteSwitches.Fetch(rt.Resolve(A, true), out reached);
         Check(sw == null && !reached, "route net: Fetch against a silent server: reached == false");
-        rt.Note(A, !reached);
+        Check(RemoteSwitches.LastNoAnswer, "route net: Fetch says no answer"); rt.Note(A, RemoteSwitches.LastNoAnswer);
         Eq(A, rt.Resolve(A, true), "route net: one failure: still the preferred server");
         // failure 2: the main server reads 16 KB of the sync body and then says nothing (what the Contabo block does): Timeout
         a.Handler = c => { var buf = new byte[16384]; int got = 0, k; try { while (got < 16384 && (k = c.Request.InputStream.Read(buf, got, 16384 - got)) > 0) got += k; } catch (Exception) { } a.Stop.WaitOne(20000); try { c.Response.Abort(); } catch (Exception) { } };
@@ -4928,7 +4928,7 @@ static partial class CoreTests {
           for (int i = 0; i < 3; i++) {
             var r1 = SyncClient.Send(rt2.Resolve(A2, true), "rf_x", "{}"); rt2.Note(A2, SiteRoute.IsNoAnswer(r1.Status));
             var r2 = PlansClient.List(rt2.Resolve(A2, true), "rf_x", "ru"); rt2.Note(A2, SiteRoute.IsNoAnswer(r2.Status));
-            bool rc; RemoteSwitches.Fetch(rt2.Resolve(A2, true), out rc); rt2.Note(A2, !rc && cd < 500);
+            bool rc; RemoteSwitches.Fetch(rt2.Resolve(A2, true), out rc); Check(!RemoteSwitches.LastNoAnswer, "route net: Fetch: HTTP " + cd + " is an answer"); rt2.Note(A2, RemoteSwitches.LastNoAnswer);
           }
         }
         Eq(A2, rt2.Resolve(A2, true), "route net: 401, 404, 409, 422, 429, 5xx answers never switch");

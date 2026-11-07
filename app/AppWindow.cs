@@ -294,7 +294,7 @@ namespace RealmForge {
           if (!cfg.ErrorReports || !SyncClient.IsValidCode(cfg.Code)) return;
           string json = ErrorReports.BuildJson("webview.fallback", reason, Program.Version, null, null, ErrorReports.ReadLogTail(Log.Path),
                                                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
-          Log.Write("error report webview.fallback: " + ErrorReports.Send(cfg.Site, cfg.Code, json, ErrorReports.TimeoutMs));
+          Log.Write("error report webview.fallback: " + ErrorReports.Send(SiteRoute.ResolveSaved(cfg.Site), cfg.Code, json, ErrorReports.TimeoutMs));
         } catch (Exception ex) { Log.Write("error report webview.fallback: " + ex.Message); }
       });
     }

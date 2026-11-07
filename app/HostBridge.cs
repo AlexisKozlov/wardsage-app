@@ -45,6 +45,8 @@ namespace RealmForge {
     string updateReadyVersion;   // its version
     // the site's switches (src/RemoteConfig.cs): asked at start and every 10 min (test build 2); the saved copy until then
     RemoteSwitches remote = RemoteSwitches.LoadCache(RemoteSwitches.CachePath) ?? RemoteSwitches.Permissive();
+    // the automatic switch wardsage.com <-> ru.wardsage.com (src/SiteRoute.cs): every request goes to Site(), never straight to cfg.Site
+    SiteRoute route;
     readonly System.Windows.Forms.Timer remoteTimer = new System.Windows.Forms.Timer();
     readonly System.Windows.Forms.Timer testLogTimer = new System.Windows.Forms.Timer();   // TEST build only: log lines to the site
     bool testLogSending;
@@ -59,10 +61,11 @@ namespace RealmForge {
       SyncClient.LastPlayer = cfg.LastPlayer;
       TakeInstallLang();
       if (string.IsNullOrEmpty(cfg.Site)) cfg.Site = SyncClient.DefaultSite;
-      arenaWatch = new ArenaWatch(() => cfg.Site, () => cfg.Code);
-      guildWatch = new GuildWatch(() => cfg.Site, () => cfg.Code, st => Post("{\"ev\":\"guild\",\"state\":" + S(st) + "}"));
-      packsWatch = new PacksWatch(() => cfg.Site, () => cfg.Code);
-      codeWatch = new CodeWatch(() => cfg.SendCodes, () => cfg.Site, () => cfg.Code);
+      route = NewRoute();
+      arenaWatch = new ArenaWatch(() => Site(), () => cfg.Code);
+      guildWatch = new GuildWatch(() => Site(), () => cfg.Code, st => Post("{\"ev\":\"guild\",\"state\":" + S(st) + "}"));
+      packsWatch = new PacksWatch(() => Site(), () => cfg.Code);
+      codeWatch = new CodeWatch(() => cfg.SendCodes, () => Site(), () => cfg.Code);
       gradeWatch = new GradeWatch(() => cfg.Code);
       gameTimer.Interval = 2000; gameTimer.Tick += (s, e) => {
         long gt0 = LoadMeter.Now();
@@ -116,6 +119,18 @@ namespace RealmForge {
 
     // ------------------------------------------------------------------ the site's switches
 
+    SiteRoute NewRoute() {
+      return new SiteRoute(null, null, null, SiteRoute.StatePath, m => Log.Write(m));
+    }
+
+    /// <summary>The address every request goes to: the settings' site, or the spare host (ru.wardsage.com) while the route says so.</summary>
+    string Site() { return route.Resolve(cfg.Site, remote.SiteFallback); }
+
+    /// <summary>Tells the route whether the site was reached (no answer = no connection, a timeout, a cut connection; any HTTP status is an answer).</summary>
+    void NoteSite(string used, bool noAnswer) {
+      try { route.Note(used, noAnswer); } catch (Exception) { }
+    }
+
     /// <summary>The new button highlight: only the site's "guideStyle" switch.</summary>
     void ApplyGuideStyle() { overlay.GuideStyle = remote.Allows("guideStyle"); }
 
@@ -129,10 +144,11 @@ namespace RealmForge {
     DateTime forumAskedAt = DateTime.MinValue, sellAskedAt = DateTime.MinValue; string forumLast, sellLast;
 
     void FetchRemote() {
-      string site = cfg.Site;
+      string site = Site();
       Task.Factory.StartNew(() => {
         bool reached;
         var r = RemoteSwitches.Fetch(site, out reached);
+        NoteSite(site, RemoteSwitches.LastNoAnswer);   // not `reached`: that is false for a 5xx too
         remoteBo.NoteLast(DateTime.UtcNow);
         if (r == null) {   // no usable reply: the switches held (and the saved announcement) stay; ask again soon; the page says "no connection" only when the site was not reached
           OnUi(() => { remoteTimer.Interval = remoteBo.Blocked(DateTime.UtcNow) ? (int)Math.Max(5000, (remoteBo.Until - DateTime.UtcNow).TotalMilliseconds) : 20000; Post("{\"ev\":\"site\",\"ok\":" + B(reached) + "}"); });
@@ -222,7 +238,7 @@ namespace RealmForge {
       if (!GameLayout.IsVersion(v) || geoFetching || !SyncClient.IsValidCode(cfg.Code)) return;
       geoFetching = true;
       geoRetryAt = DateTime.UtcNow.AddMinutes(Layout.RetryMinutes(Channel.IsTest));
-      string site = cfg.Site, code = cfg.Code;
+      string site = Site(), code = cfg.Code;
       Task.Factory.StartNew(() => {
         GameGeometry g = null; string json = null; var r = Layout.Reply.NoReply;
         try { r = Geo.Fetch(site, code, v, out g, out json); } catch (Exception) { r = Layout.Reply.NoReply; }
@@ -245,7 +261,7 @@ namespace RealmForge {
       if (!SyncClient.IsValidCode(cfg.Code)) { if (!layoutDenied) { layoutDenied = true; PostLayout(); } return; }
       layoutFetching = true;
       layoutRetryAt = DateTime.UtcNow.AddMinutes(Layout.RetryMinutes(Channel.IsTest));
-      string site = cfg.Site, code = cfg.Code;
+      string site = Site(), code = cfg.Code;
       Task.Factory.StartNew(() => {
         GameLayout l = null; string json = null; var r = Layout.Reply.NoReply;
         try { r = Layout.Fetch(site, code, v, out l, out json); } catch (Exception) { r = Layout.Reply.NoReply; }
@@ -320,7 +336,7 @@ namespace RealmForge {
       var lines = Log.TestQueue.Take(500, 200 * 1024);
       if (lines.Count == 0) return;
       testLogSending = true;
-      string site = cfg.Site, code = cfg.Code;
+      string site = Site(), code = cfg.Code;
       Task.Factory.StartNew(() => {
         var r = TestLogClient.Result.Later;
         try { r = TestLogClient.Send(site, code, Program.Version, lines); } catch (Exception) { }
@@ -334,7 +350,7 @@ namespace RealmForge {
 
     void CheckUpdate() {
       if (!Channel.UpdatesEnabled(Channel.IsStreamer)) return;   // the streamer build never updates itself
-      string site = cfg.Site;
+      string site = Site();
       Task.Factory.StartNew(() => {
         var u = Updater.CheckAndDownload(site);
         // a failed download: the next try after 1, 5, 30 minutes (+-20 %), six in a row at most, then the long timer (src/UpdateDownload.cs UpdateRetry); no loop every 20 s
@@ -359,7 +375,7 @@ namespace RealmForge {
     // TEST build: the screen recorder starts / stops from Settings (rec.start / rec.stop) or from the button over the game (same code path)
     void StartRec() {
       if (!Channel.IsTest) return;
-      if (testRec == null) testRec = new ScreenRecorder(() => cfg.Site, () => cfg.Code, s => Log.Write(s), ev => Post(ev), on => OnUi(() => overlay.SetRecording(on)));
+      if (testRec == null) testRec = new ScreenRecorder(() => Site(), () => cfg.Code, s => Log.Write(s), ev => Post(ev), on => OnUi(() => overlay.SetRecording(on)));
       testRec.Start();
     }
     // TEST build: a recording starts by itself when a pilot stops, an unknown form is on top or an offer pop-up was not closed (src/AutoRec.cs)
@@ -369,7 +385,7 @@ namespace RealmForge {
       string why;
 
       if (!autoRec.Want(true, testRec != null && testRec.On, RecInfo.NowMs(), out why)) { Log.Write("rec: auto " + tag + " skipped (" + why + ")"); return; }
-      if (testRec == null) testRec = new ScreenRecorder(() => cfg.Site, () => cfg.Code, s => Log.Write(s), ev => Post(ev), on => OnUi(() => overlay.SetRecording(on)));
+      if (testRec == null) testRec = new ScreenRecorder(() => Site(), () => cfg.Code, s => Log.Write(s), ev => Post(ev), on => OnUi(() => overlay.SetRecording(on)));
       string id = testRec.StartAuto(tag, AutoRecPolicy.RecordMs);
       Log.Write("rec: auto " + tag + " recording " + (id != "" ? id : "(not started)") + " for " + AutoRecPolicy.RecordMs / 1000 + " s");
     }
@@ -378,15 +394,21 @@ namespace RealmForge {
 
     // the long poll runs while the game runs and a valid code is set; a new site / code restarts it; the page learns whether it works
     // (then its own polling slows down). A site without the endpoint (404) is left alone for this run
+    PlansWaiter NewPlansWaiter() {
+      var w = new PlansWaiter(() => Site(), () => cfg.Code, PlansChanged, (ok, reach) => Post("{\"ev\":\"plansWait\",\"ok\":" + B(ok) + ",\"reach\":" + B(reach) + "}"), s => Log.Write(s));
+      w.Result = (used, reached) => NoteSite(used, !reached);   // every long request: the route counts only «no answer»
+      return w;
+    }
+
     void SyncPlansWait() {
       bool want = gameRunning && SyncClient.IsValidCode(cfg.Code) && !SyncGate.IsForgotten(cfg.Code);
-      string key = want ? cfg.Site + "|" + cfg.Code : "";
-      if (plansWait == null) plansWait = new PlansWaiter(() => cfg.Site, () => cfg.Code, PlansChanged, (ok, reach) => Post("{\"ev\":\"plansWait\",\"ok\":" + B(ok) + ",\"reach\":" + B(reach) + "}"), s => Log.Write(s));
+      string key = want ? Site() + "|" + cfg.Code : "";
+      if (plansWait == null) plansWait = NewPlansWaiter();
       if (key != plansWaitKey) {
         bool dead = plansWait.Dead;
         plansWait.Stop();
         plansWaitKey = key;
-        if (dead) plansWait = new PlansWaiter(() => cfg.Site, () => cfg.Code, PlansChanged, (ok, reach) => Post("{\"ev\":\"plansWait\",\"ok\":" + B(ok) + ",\"reach\":" + B(reach) + "}"), s => Log.Write(s));
+        if (dead) plansWait = NewPlansWaiter();
       }
       if (want) plansWait.Start();
     }
@@ -450,7 +472,7 @@ namespace RealmForge {
           case "setErrorReports": cfg.ErrorReports = MiniJson.GetBool(m, "on", false); Save(); Log.Write("error reports " + (cfg.ErrorReports ? "on" : "off")); break;
           case "setSite": {
             string err; string site = SyncClient.NormalizeSite(MiniJson.GetString(m, "site"), out err);
-            if (site != null) { cfg.Site = site; Save(); SendState("siteSaved"); }
+            if (site != null) { cfg.Site = site; route.Reset(); route = NewRoute(); Save(); SendState("siteSaved"); }
             break;
           }
           case "paste": {
@@ -625,7 +647,7 @@ namespace RealmForge {
     /// <summary>Sends a report in the background (any thread).</summary>
     void Report(string kind, string message, Dictionary<string, string> ctx) {
       if (!ReportAllowed(kind)) return;
-      string site = cfg.Site, code = cfg.Code;
+      string site = Site(), code = cfg.Code;
       Task.Factory.StartNew(() => {
         var st = ErrorReports.Send(site, code, ReportJson(kind, message, ctx), ErrorReports.TimeoutMs);
         Log.Write("error report " + ErrorReports.NormalizeKind(kind) + ": " + st);
@@ -635,7 +657,7 @@ namespace RealmForge {
     /// <summary>An unhandled exception: sent right away with a short wait (the program may be about to end).</summary>
     void ReportFatal(Exception e) {
       if (!ReportAllowed("unhandled")) return;
-      var st = ErrorReports.Send(cfg.Site, cfg.Code, ReportJson("unhandled", e.GetType().Name + ": " + e.Message, Ctx("exception", e.ToString())), 5000);
+      var st = ErrorReports.Send(Site(), cfg.Code, ReportJson("unhandled", e.GetType().Name + ": " + e.Message, Ctx("exception", e.ToString())), 5000);
       Log.Write("error report unhandled: " + st);
     }
 
@@ -651,8 +673,9 @@ namespace RealmForge {
     void OpenAllowed(string url) {
       Uri u, site;
       if (url == null || !Uri.TryCreate(url, UriKind.Absolute, out u) || u.Scheme != Uri.UriSchemeHttps && !(u.Scheme == Uri.UriSchemeHttp && u.IsLoopback)) return;
-      bool ok = u.Host == "github.com" || u.Host == "go.microsoft.com" || u.Host == "discord.gg" || u.Host == "discord.com" || u.Host == "wardsage.com" || u.Host == "www.wardsage.com";
+      bool ok = u.Host == "github.com" || u.Host == "go.microsoft.com" || u.Host == "discord.gg" || u.Host == "discord.com" || u.Host == "wardsage.com" || u.Host == "www.wardsage.com" || u.Host == "ru.wardsage.com";
       if (Uri.TryCreate(cfg.Site, UriKind.Absolute, out site) && u.Host == site.Host) ok = true;
+      if (Uri.TryCreate(Site(), UriKind.Absolute, out site) && u.Host == site.Host) ok = true;   // the spare host the route switched to
       if (ok) Shell.OpenUrl(u.AbsoluteUri);
     }
 
@@ -830,7 +853,7 @@ namespace RealmForge {
       if (coach.Running) coach.Stop();
       // the player's plan for this boss (the site's «Отправить план в игру»): fresh from the site when the copy is over a
       // minute old, then the coach (off the UI thread: the site may take a moment)
-      string site = cfg.Site, code = cfg.Code;
+      string site = Site(), code = cfg.Code;
       Task.Factory.StartNew(() => {
         FightPlan plan = null;
         try {
@@ -893,7 +916,7 @@ namespace RealmForge {
 
     void UploadTraces() {
       if (!cfg.AutoSync || !SyncClient.IsValidCode(cfg.Code) || !On("battle")) return;
-      string site = cfg.Site, code = cfg.Code;
+      string site = Site(), code = cfg.Code;
       Task.Factory.StartNew(() => { try { TraceUpload.RunOnce(RFX.BattlesDir, traceSent, site, code, Log.Write); } catch (Exception e) { Log.Write("трасса боя: ошибка " + e.Message); } });
     }
 
@@ -1032,7 +1055,7 @@ namespace RealmForge {
       if (!auto) SyncGate.Clear();
       bool upload = !saveOnly && SyncClient.IsValidCode(cfg.Code);
       if (auto && !upload) return;
-      string code = cfg.Code, site = cfg.Site; bool copy = !auto && (cfg.SaveCopy || !upload);
+      string code = cfg.Code, site = Site(); bool copy = !auto && (cfg.SaveCopy || !upload);
       syncing = true; lastSyncStart = DateTime.UtcNow;
       var t = new Thread(() => {
         autoRun = auto;
@@ -1099,6 +1122,7 @@ namespace RealmForge {
       if (upload) {
         SyncEv("send", null);
         var r = SyncClient.Send(site, code, ex.Json);
+        NoteSite(site, SiteRoute.IsNoAnswer(r.Status));
         Log.Write("send: " + r.Status + " " + r.HttpCode + " " + (r.Details ?? "") + (r.Retried ? " (sent again on a fresh connection after the first was closed)" : ""));
         switch (r.Status) {
           case SyncStatus.Ok: break;
@@ -1180,7 +1204,7 @@ namespace RealmForge {
 
     // the unified «What's new» feed of the site; the page falls back to its built-in list when the reply is {"ok":false}
     void LoadNews(string lang) {
-      string site = cfg.Site;
+      string site = Site();
       Task.Factory.StartNew(() => {
         var feed = NewsClient.Fetch(site, lang);
         Post(feed == null ? "{\"ev\":\"news\",\"ok\":false}" : "{\"ev\":\"news\",\"ok\":true,\"feed\":" + feed + "}");
@@ -1189,7 +1213,7 @@ namespace RealmForge {
 
     // new replies in the player's community topics; the page never sees the sync code
     void LoadForum() {
-      string site = cfg.Site, code = cfg.Code;
+      string site = Site(), code = cfg.Code;
       DateTime now = DateTime.UtcNow;
       if (SyncGate.IsForgotten(code)) { Post("{\"ev\":\"forum\",\"r\":{\"ok\":false,\"error\":\"error\"}}"); return; }
       // while the game is not running (or backing off after a failure) the last reply is shown again instead of a call
@@ -1246,7 +1270,7 @@ namespace RealmForge {
     long changedAt;   // Stopwatch timestamp of the last plans.changed not yet delivered (0 = none)
     void PlansChanged() { Interlocked.Exchange(ref changedAt, Stopwatch.GetTimestamp()); Post("{\"ev\":\"plans.changed\"}"); }
     void LoadPlans(string lang) {
-      string site = cfg.Site, code = cfg.Code;
+      string site = Site(), code = cfg.Code;
       if (!SyncClient.IsValidCode(code)) { Post("{\"ev\":\"plans\",\"status\":\"invalid_token\"}"); return; }
       if (SyncGate.IsForgotten(code)) { Post("{\"ev\":\"plans\",\"status\":\"error\",\"detail\":\"account_forgotten\"}"); return; }
       if (!PollAllowed()) { heldPlansLang = lang; return; }
@@ -1254,6 +1278,7 @@ namespace RealmForge {
       Task.Factory.StartNew(() => {
        try {
         var r = PlansClient.List(site, code, lang == "en" ? "en" : "ru");
+        NoteSite(site, SiteRoute.IsNoAnswer(r.Status));
         // set and main stat of every plan item: the auto-pilot sets the game's gear filter with them
         if (r.Status == PlansStatus.Ok) {
           var info = new List<long[]>();
@@ -1358,7 +1383,7 @@ namespace RealmForge {
 
     // keep: the request is reported but its hints stay on the screen a little longer (the page stops them: locate.stop)
     void FinishLocate(string id, bool done, bool keep = false) {
-      string site = cfg.Site, code = cfg.Code;
+      string site = Site(), code = cfg.Code;
       if (!keep) overlay.SetLocate(null);
       if (string.IsNullOrEmpty(id) || !SyncClient.IsValidCode(code)) return;
       Task.Factory.StartNew(() => FinishBackground("locate", id, done, () => LocateClient.Finish(site, code, id, done).Status));
@@ -1513,7 +1538,7 @@ namespace RealmForge {
     }
 
     void FinishPlan(string id, bool done, bool taken) {
-      string site = cfg.Site, code = cfg.Code;
+      string site = Site(), code = cfg.Code;
       if (string.IsNullOrEmpty(id) || !SyncClient.IsValidCode(code)) return;
       Task.Factory.StartNew(() => {
         var st = FinishBackground("plan", id, done, () => PlansClient.Finish(site, code, id, done).Status);
@@ -1526,7 +1551,7 @@ namespace RealmForge {
     string sellLogId;   // the list id last logged ("" = none)
 
     void LoadSell(string lang) {
-      string site = cfg.Site, code = cfg.Code;
+      string site = Site(), code = cfg.Code;
       if (!SyncClient.IsValidCode(code)) { Post("{\"ev\":\"sell\",\"status\":\"invalid_token\"}"); return; }
       if (SyncGate.IsForgotten(code)) { Post("{\"ev\":\"sell\",\"status\":\"error\",\"detail\":\"account_forgotten\"}"); return; }
       if (!PollAllowed()) { heldSellLang = lang; return; }
@@ -1537,6 +1562,7 @@ namespace RealmForge {
       sellAskedAt = now;
       Task.Factory.StartNew(() => {
         var r = SellClient.Get(site, code, lang == "en" ? "en" : "ru");
+        NoteSite(site, SiteRoute.IsNoAnswer(r.Status));
         sellBo.NoteLast(DateTime.UtcNow);
         if (r.Status != PlansStatus.Ok) {
           Post("{\"ev\":\"sell\",\"status\":" + S(r.Status == PlansStatus.InvalidToken ? "invalid_token" : "error") + ",\"detail\":" + S(r.Details ?? ("HTTP " + r.HttpCode)) + "}");
@@ -1562,7 +1588,7 @@ namespace RealmForge {
 
     void FinishSell(string id, bool done) {
       sellAskedAt = DateTime.MinValue;   // the list changes: the next load goes to the site
-      string site = cfg.Site, code = cfg.Code;
+      string site = Site(), code = cfg.Code;
       if (string.IsNullOrEmpty(id) || !SyncClient.IsValidCode(code)) return;
       Task.Factory.StartNew(() => {
         var st = FinishBackground("sell list", id, done, () => SellClient.Finish(site, code, id, done).Status);

@@ -94,6 +94,8 @@ namespace RealmForge {
     readonly Action<bool, bool> state;    // the long poll works / does not, the site was reached / not (any thread)
     readonly Action<string> log;
     Thread th; volatile int gen; volatile bool on; volatile HttpWebRequest pending;
+    /// <summary>Optional: after every request (not an aborted one) the address it went to and whether the site answered at all (any thread). For src/SiteRoute.cs.</summary>
+    public Action<string, bool> Result;
     public bool Dead { get; private set; }   // the site has no such endpoint: not for this run
 
     public PlansWaiter(Func<string> site, Func<string> code, Action changed, Action<bool, bool> state, Action<string> log) {
@@ -124,6 +126,7 @@ namespace RealmForge {
         bool reached = PlansWait.Request(s0, c0, PlansWait.Since(since, DateTime.UtcNow), r0 => { pending = r0; if (my != gen) try { r0.Abort(); } catch (Exception) { } }, fresh, out http, out text);
         fresh = false;
         if (my != gen) return;
+        var res = Result; if (res != null) { try { res(s0, reached); } catch (Exception) { } }
         var r = reached ? PlansWait.Interpret(http, text) : new WaitReply { Kind = WaitKind.Error };
         if (r.Kind == WaitKind.Ok) {
           fails = 0; if (!ok) { ok = true; state(true, true); }
