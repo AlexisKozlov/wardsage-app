@@ -1,7 +1,8 @@
 // Wardsage - a small backoff for the app's periodic calls to the site (no threads, no timers of its own): after a failure
 // (no answer, 429, 409, any 5xx) the next call waits 5 s, 10 s, 20 s ... up to 5 min, +-20% jitter; a Retry-After the site
 // sent wins over that (clamped to 1 s .. 1 h, no jitter); one good answer resets it. Callers ask Blocked() before a call and
-// tell Note() the outcome (http 0 = the site was not reached).
+// tell Note() the outcome (http 0 = the site was not reached). While the site reopens after maintenance (Reopening, set by the app) a Retry-After
+// gets a spread of 0..+50% so that the players do not all come back in the same second; for ordinary errors nothing changes.
 using System;
 
 namespace RealmForge {
@@ -10,14 +11,26 @@ namespace RealmForge {
     public const double Jitter = 0.2;
     static readonly Random Rng = new Random();
 
+    /// <summary>The site is reopening after maintenance: a Retry-After is spread (set by the app from the maintenance state; any thread).</summary>
+    public static volatile bool Reopening;
+    public const double ReopenSpread = 0.5;
+
     int failures;
     DateTime until = DateTime.MinValue;
 
     // what the last call on this thread saw (set by PlansClient.Send / Layout / Geometry / RemoteConfig, read right after it)
     [ThreadStatic] static int lastHttp;
     [ThreadStatic] static int lastRetryAfter;
-    public static void Reset() { lastHttp = 0; lastRetryAfter = -1; }
+    [ThreadStatic] static bool lastMaint;
+    public static void Reset() { lastHttp = 0; lastRetryAfter = -1; lastMaint = false; }
     public static void Record(int http, string retryAfterHeader) { lastHttp = http; lastRetryAfter = ParseRetryAfter(retryAfterHeader, DateTime.UtcNow); }
+    /// <summary>As Record, plus the X-Wardsage-Maintenance header value of the reply ("1" = the site is in maintenance).</summary>
+    public static void Record(int http, string retryAfterHeader, string maintenanceHeader) {
+      Record(http, retryAfterHeader);
+      lastMaint = maintenanceHeader != null && maintenanceHeader.Trim() == "1";
+    }
+    /// <summary>The last reply on this thread carried X-Wardsage-Maintenance: 1.</summary>
+    public static bool LastMaintenance { get { return lastMaint; } }
     public static int LastHttp { get { return lastHttp; } }
     public static int LastRetryAfterSec { get { return lastRetryAfter; } }
 
@@ -34,15 +47,22 @@ namespace RealmForge {
       DateTime d;
       if (DateTime.TryParse(h, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal, out d)) {
         double s = (d - now).TotalSeconds;
-        return s <= 0 ? 0 : (int)Math.Ceiling(s);
+        return s <= 0 ? 0 : (int)Math.Min(Math.Ceiling(s), int.MaxValue / 2);
       }
       return -1;
     }
 
     /// <summary>The wait after the <paramref name="failureNo"/>-th failure in a row (1 = first): Retry-After (seconds, &gt;= 0) when given,
     /// else 5 s * 2^(n-1) capped at 5 min, scaled by 1 +- 20% with <paramref name="rnd01"/> in [0,1).</summary>
-    public static int DelayMs(int failureNo, int retryAfterSec, double rnd01) {
-      if (retryAfterSec >= 0) return Math.Max(1, Math.Min(retryAfterSec, MaxRetryAfterSec)) * 1000;
+    public static int DelayMs(int failureNo, int retryAfterSec, double rnd01) { return DelayMs(failureNo, retryAfterSec, rnd01, Reopening); }
+
+    /// <summary>As above; <paramref name="spread"/> (the site is reopening) adds 0..+50% to a Retry-After (never less than the site asked).</summary>
+    public static int DelayMs(int failureNo, int retryAfterSec, double rnd01, bool spread) {
+      if (retryAfterSec >= 0) {
+        double ra = Math.Max(1, Math.Min(retryAfterSec, MaxRetryAfterSec)) * 1000.0;
+        if (spread) { if (rnd01 < 0) rnd01 = 0; if (rnd01 > 1) rnd01 = 1; ra *= 1 + ReopenSpread * rnd01; }
+        return (int)ra;
+      }
       if (failureNo < 1) failureNo = 1;
       double ms = MinMs;
       for (int i = 1; i < failureNo && ms < MaxMs; i++) ms *= 2;

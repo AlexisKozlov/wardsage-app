@@ -568,6 +568,40 @@ static partial class CoreTests {
       bo.Note(429, 120, t0, 0.5); Check(bo.Blocked(t0.AddSeconds(119)) && !bo.Blocked(t0.AddSeconds(120)), "backoff: Retry-After 120 s");
       Check(!bo.Note(200, -1, t0, 0.5) && bo.Failures == 0 && !bo.Blocked(t0), "backoff: success resets");
     }
+    // maintenance in NetBackoff and PlansWait (no network)
+    { int ra;
+      NetBackoff.Reset(); NetBackoff.Record(503, "120", "1"); Check(NetBackoff.LastMaintenance && NetBackoff.LastRetryAfterSec == 120 && NetBackoff.LastHttp == 503, "backoff: X-Wardsage-Maintenance: 1 and Retry-After seconds are recorded");
+      NetBackoff.Reset(); NetBackoff.Record(503, "30", "0"); Check(!NetBackoff.LastMaintenance, "backoff: header 0 is no maintenance");
+      NetBackoff.Reset(); NetBackoff.Record(200, null, null); Check(!NetBackoff.LastMaintenance && NetBackoff.LastRetryAfterSec == -1, "backoff: no header, no Retry-After");
+      NetBackoff.Record(503, "Wed, 21 Oct 2099 07:28:00 GMT", "1"); ra = NetBackoff.LastRetryAfterSec;
+      Check(ra > 3600 && NetBackoff.DelayMs(1, ra, 0.5, false) == 3600000, "backoff: a Retry-After date far ahead is clamped to 1 h");
+      NetBackoff.Reset(); NetBackoff.Record(503, "-5", "1"); Check(NetBackoff.LastRetryAfterSec == -1, "backoff: negative Retry-After is ignored");
+      Eq(42000, NetBackoff.DelayMs(2, 42, 0.9, false), "backoff: no spread outside the reopening");
+      Eq(42000, NetBackoff.DelayMs(2, 42, 0.0, true), "reopening: spread low bound is the Retry-After itself");
+      Eq(63000, NetBackoff.DelayMs(2, 42, 1.0, true), "reopening: spread high bound is +50%");
+      Eq(52500, NetBackoff.DelayMs(2, 42, 0.5, true), "reopening: spread in the middle");
+      Eq(5000, NetBackoff.DelayMs(1, -1, 0.5, true), "reopening: no Retry-After, the ordinary backoff");
+      NetBackoff.Reopening = true; Eq(63000, NetBackoff.DelayMs(2, 42, 1.0), "reopening flag used by the short form"); NetBackoff.Reopening = false; Eq(42000, NetBackoff.DelayMs(2, 42, 1.0), "flag off: no spread");
+      var bo2 = new NetBackoff(); var tt = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+      bo2.Note(503, 600, tt, 0.5); Check(bo2.Blocked(tt.AddSeconds(599)) && !bo2.Blocked(tt.AddSeconds(601)), "backoff: a maintenance 503 with Retry-After 600 blocks 600 s");
+      // PlansWait.Interpret in maintenance
+      var mw = PlansWait.Interpret(503, "{\"error\":\"maintenance\",\"maintenance\":true,\"until\":\"2026-11-10T03:00:00Z\"}", false, 90);
+      Check(mw.Kind == WaitKind.Maintenance && mw.Until == new DateTime(2026, 11, 10, 3, 0, 0, DateTimeKind.Utc) && mw.RetryAfterSec == 90, "wait: 503 body maintenance with until");
+      var mh = PlansWait.Interpret(503, "<html>works</html>", true, -1);
+      Check(mh.Kind == WaitKind.Maintenance && mh.Until == DateTime.MinValue, "wait: the header alone is maintenance");
+      Check(PlansWait.Interpret(503, "<html>", false, -1).Kind == WaitKind.Error && PlansWait.Interpret(503, null, false, 30).Kind == WaitKind.Error, "wait: a plain 503 is an ordinary error");
+      Check(PlansWait.Interpret(200, "{\"changed\":true}", true, -1).Kind == WaitKind.Ok, "wait: a 200 is a reply even with the header");
+      var now1 = new DateTime(2026, 11, 10, 1, 0, 0, DateTimeKind.Utc);
+      int ms1 = PlansWait.MaintenanceWaitMs(mw, now1, 20, 5);
+      Check(ms1 >= 2 * 3600 * 1000 && ms1 <= 2 * 3600 * 1000 + 20 * 60 * 1000, "wait: sleeps until the end + the spread, not a loop (" + ms1 / 1000 + " s)");
+      Eq(120000, PlansWait.MaintenanceWaitMs(new WaitReply { Kind = WaitKind.Maintenance, RetryAfterSec = 120 }, now1, 20, 5), "wait: Retry-After when no end time");
+      Eq(300000, PlansWait.MaintenanceWaitMs(new WaitReply { Kind = WaitKind.Maintenance }, now1, 20, 5), "wait: 5 minutes when nothing is known");
+      Eq(21600000, PlansWait.MaintenanceWaitMs(new WaitReply { Kind = WaitKind.Maintenance, Until = now1.AddDays(3) }, now1, 20, 5), "wait: never more than 6 h");
+      Eq(30000, PlansWait.WaitMs(1, 30), "wait: Retry-After seconds win over the backoff");
+      Eq(2000, PlansWait.WaitMs(1, -1), "wait: no Retry-After, the backoff");
+      Eq(3600000, PlansWait.WaitMs(1, 99999), "wait: Retry-After clamped to 1 h");
+      Eq(1000, PlansWait.WaitMs(3, 0), "wait: Retry-After 0 is 1 s");
+    }
     Check(NetBackoff.IdleThrottled(false, new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc), new DateTime(2026, 1, 1, 0, 4, 0, DateTimeKind.Utc))
       && !NetBackoff.IdleThrottled(false, new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc), new DateTime(2026, 1, 1, 0, 5, 0, DateTimeKind.Utc))
       && !NetBackoff.IdleThrottled(true, new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc), new DateTime(2026, 1, 1, 0, 1, 0, DateTimeKind.Utc))

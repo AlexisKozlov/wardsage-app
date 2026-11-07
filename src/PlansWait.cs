@@ -2,26 +2,41 @@
 // after up to 25 s, earlier when something changed, so the app reloads the plans within a second or two instead of waiting for its timer.
 //   GET {site}/api/extractor/plans/wait?since=<ISO 8601 UTC>   Authorization: Bearer <sync code>
 //   200 {"changed":true|false,"at":"<server ISO>"} | 401 bad code | 429 too many waits | 404 not deployed (old site)
+//   503 with X-Wardsage-Maintenance: 1 / {"maintenance":true,"until":"<ISO>"}: the site is in maintenance (WaitKind.Maintenance): the loop sleeps until the
+//   end (plus the install's spread) instead of spinning; a Retry-After of other failures is honoured (1 s .. 1 h).
 using System;
 using System.Globalization;
 using System.Net;
 using System.Threading;
 
 namespace RealmForge {
-  public enum WaitKind { Ok, Unauthorized, TooMany, NotDeployed, Error }
+  public enum WaitKind { Ok, Unauthorized, TooMany, NotDeployed, Error, Maintenance }
 
   public sealed class WaitReply {
     public WaitKind Kind;
     public bool Changed;
     public string At = "";
+    /// <summary>For Maintenance: the end time the site named (MinValue = none) and the Retry-After seconds (-1 = none).</summary>
+    public DateTime Until = DateTime.MinValue;
+    public int RetryAfterSec = -1;
   }
 
   public static class PlansWait {
     public const int TimeoutMs = 35000, BackoffFirstMs = 2000, BackoffMaxMs = 60000;
 
     /// <summary>One reply of the site by HTTP code and body (pure).</summary>
-    public static WaitReply Interpret(int http, string body) {
-      var r = new WaitReply();
+    public static WaitReply Interpret(int http, string body) { return Interpret(http, body, false, -1); }
+
+    /// <summary>As above, with the reply's X-Wardsage-Maintenance flag and Retry-After seconds (-1 = none): a maintenance answer is a 5xx with the flag or the
+    /// body {"maintenance":true}; the header alone is enough (the static page has no JSON).</summary>
+    public static WaitReply Interpret(int http, string body, bool maintHeader, int retryAfterSec) {
+      var r = new WaitReply { RetryAfterSec = retryAfterSec };
+      DateTime until;
+      if (http >= 500 && (maintHeader || MaintenanceGate.ParseBody(body, out until))) {
+        r.Kind = WaitKind.Maintenance;
+        MaintenanceGate.ParseBody(body, out until); r.Until = until;
+        return r;
+      }
       if (http == 404) { r.Kind = WaitKind.NotDeployed; return r; }
       if (http == 401) { r.Kind = WaitKind.Unauthorized; return r; }
       if (http == 429) { r.Kind = WaitKind.TooMany; return r; }
@@ -43,6 +58,19 @@ namespace RealmForge {
       return (int)Math.Min(ms, BackoffMaxMs);
     }
 
+    /// <summary>The pause after the n-th failure: the site's Retry-After (1 s .. 1 h) when it sent one, else the backoff.</summary>
+    public static int WaitMs(int failures, int retryAfterSec) {
+      if (retryAfterSec >= 0) return Math.Max(1, Math.Min(retryAfterSec, NetBackoff.MaxRetryAfterSec)) * 1000;
+      return Backoff(failures);
+    }
+
+    /// <summary>How long the loop sleeps after a maintenance answer: until the end time plus the install's spread (<paramref name="reopenMin"/> minutes, by
+    /// <paramref name="seed"/>), else Retry-After, else 5 minutes (at most 6 hours); at least 1 s.</summary>
+    public static int MaintenanceWaitMs(WaitReply r, DateTime now, int reopenMin, int seed) {
+      var resume = MaintenanceGate.FlagResume(r.Until, r.RetryAfterSec, reopenMin, seed, now);
+      return (int)Math.Max(1000, Math.Min((resume - now).TotalMilliseconds, 6 * 3600 * 1000.0));
+    }
+
     /// <summary>The `since` to send: the server's last `at`, else the local UTC time minus 60 s.</summary>
     public static string Since(string lastAt, DateTime nowUtc) {
       return string.IsNullOrEmpty(lastAt) ? nowUtc.AddSeconds(-60).ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", CultureInfo.InvariantCulture) : lastAt;
@@ -50,6 +78,9 @@ namespace RealmForge {
 
     /// <summary>The last Request on this thread failed because a pooled keep-alive connection was closed.</summary>
     [ThreadStatic] public static bool LastClosed;
+    /// <summary>What the last Request on this thread saw: X-Wardsage-Maintenance: 1 and the Retry-After seconds (-1 = none).</summary>
+    [ThreadStatic] public static bool LastMaintHeader;
+    [ThreadStatic] public static int LastRetryAfterSec;
 
     /// <summary>One long request; false when the site was not reached.</summary>
     public static bool Request(string site, string code, string since, Action<HttpWebRequest> started, out int http, out string text) {
@@ -58,7 +89,7 @@ namespace RealmForge {
 
     /// <summary>fresh: a new connection (no keep-alive, its own group) - the retry after a pooled connection turned out dead.</summary>
     public static bool Request(string site, string code, string since, Action<HttpWebRequest> started, bool fresh, out int http, out string text) {
-      http = 0; text = null; LastClosed = false;
+      http = 0; text = null; LastClosed = false; LastMaintHeader = false; LastRetryAfterSec = -1;
       try {
         SyncClient.EnableTls12();
         ServicePointManager.Expect100Continue = false;
@@ -71,14 +102,19 @@ namespace RealmForge {
         req.Timeout = TimeoutMs; req.ReadWriteTimeout = TimeoutMs; req.AllowAutoRedirect = false;
         req.AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate;
         if (started != null) started(req);
-        using (var resp = (HttpWebResponse)req.GetResponse()) { http = (int)resp.StatusCode; text = Read(resp); }
+        using (var resp = (HttpWebResponse)req.GetResponse()) { http = (int)resp.StatusCode; Note(resp); text = Read(resp); }
         return true;
       } catch (WebException e) {
         var resp = e.Response as HttpWebResponse;
-        if (resp != null) using (resp) { http = (int)resp.StatusCode; text = Read(resp); return true; }
+        if (resp != null) using (resp) { http = (int)resp.StatusCode; Note(resp); text = Read(resp); return true; }
         LastClosed = SyncClient.IsConnectionClosed(e);
         return false;
       } catch (Exception) { return false; }
+    }
+
+    static void Note(HttpWebResponse resp) {
+      NetBackoff.Record((int)resp.StatusCode, resp.Headers["Retry-After"], resp.Headers["X-Wardsage-Maintenance"]);
+      LastMaintHeader = NetBackoff.LastMaintenance; LastRetryAfterSec = NetBackoff.LastRetryAfterSec;
     }
 
     static string Read(HttpWebResponse resp) {
@@ -96,6 +132,12 @@ namespace RealmForge {
     Thread th; volatile int gen; volatile bool on; volatile HttpWebRequest pending;
     /// <summary>Optional: after every request (not an aborted one) the address it went to and whether the site answered at all (any thread). For src/SiteRoute.cs.</summary>
     public Action<string, bool> Result;
+    /// <summary>Optional gate (app, any thread): the time until which the loop must not call the site (MinValue / the past = go on). The loop sleeps until then.</summary>
+    public Func<DateTime> QuietUntil;
+    /// <summary>Optional: the site answered with a maintenance flag (end time or MinValue, Retry-After seconds or -1); the app keeps its gate (any thread).</summary>
+    public Action<DateTime, int> Maintenance;
+    /// <summary>The install's seed for the spread of the wake-up and the reopenMin used with it (set by the app).</summary>
+    public int Seed; public int ReopenMin = 20;
     public bool Dead { get; private set; }   // the site has no such endpoint: not for this run
 
     public PlansWaiter(Func<string> site, Func<string> code, Action changed, Action<bool, bool> state, Action<string> log) {
@@ -120,14 +162,32 @@ namespace RealmForge {
 
     void Run(int my) {
       string since = "", s0 = site(), c0 = code();
-      int fails = 0; bool ok = false, lastUp = true, fresh = false;
+      int fails = 0; bool ok = false, lastUp = true, fresh = false, quietLogged = false;
       while (my == gen) {
+        var qg = QuietUntil;
+        if (qg != null) {
+          DateTime q = DateTime.MinValue; try { q = qg(); } catch (Exception) { }
+          if (q > DateTime.UtcNow) {
+            if (!quietLogged) { quietLogged = true; log("plans wait: maintenance, no calls until " + q.ToString("HH:mm:ss", CultureInfo.InvariantCulture) + " UTC"); }
+            while (my == gen && DateTime.UtcNow < q) Thread.Sleep(100);
+            continue;
+          }
+          quietLogged = false;
+        }
         int http; string text;
         bool reached = PlansWait.Request(s0, c0, PlansWait.Since(since, DateTime.UtcNow), r0 => { pending = r0; if (my != gen) try { r0.Abort(); } catch (Exception) { } }, fresh, out http, out text);
         fresh = false;
         if (my != gen) return;
         var res = Result; if (res != null) { try { res(s0, reached); } catch (Exception) { } }
-        var r = reached ? PlansWait.Interpret(http, text) : new WaitReply { Kind = WaitKind.Error };
+        var r = reached ? PlansWait.Interpret(http, text, PlansWait.LastMaintHeader, PlansWait.LastRetryAfterSec) : new WaitReply { Kind = WaitKind.Error };
+        if (r.Kind == WaitKind.Maintenance) {
+          var mn = Maintenance; if (mn != null) { try { mn(r.Until, r.RetryAfterSec); } catch (Exception) { } }
+          if (ok) { ok = false; state(false, true); }
+          int mw = PlansWait.MaintenanceWaitMs(r, DateTime.UtcNow, ReopenMin, Seed);
+          log("plans wait: the site is in maintenance, sleeping " + mw / 1000 + " s");
+          for (int t = 0; t < mw && my == gen; t += 100) Thread.Sleep(100);
+          continue;
+        }
         if (r.Kind == WaitKind.Ok) {
           fails = 0; if (!ok) { ok = true; state(true, true); }
           if (r.At != "") since = r.At;
@@ -140,7 +200,7 @@ namespace RealmForge {
         fails++;
         // an idle keep-alive connection the server dropped: once more on a fresh one, no pause
         if (fails == 1 && !reached && PlansWait.LastClosed) { fresh = true; continue; }
-        int wait = PlansWait.Backoff(fails);
+        int wait = PlansWait.WaitMs(fails, r.Kind == WaitKind.Error || r.Kind == WaitKind.TooMany ? PlansWait.LastRetryAfterSec : -1);
         if (fails == 1 || fails % 10 == 0) log("plans wait: " + r.Kind + (reached ? " (HTTP " + http + ")" : " (no connection)") + ", retry in " + wait / 1000 + " s");
         for (int t = 0; t < wait && my == gen; t += 100) Thread.Sleep(100);
       }

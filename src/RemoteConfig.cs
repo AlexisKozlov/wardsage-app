@@ -239,12 +239,35 @@ namespace RealmForge {
     /// <summary>The last Fetch on this thread got no HTTP answer at all (no connection, timeout, cut connection, TLS). A 5xx is an answer: `reached` is false for it, this is not. For src/SiteRoute.cs.</summary>
     [ThreadStatic] public static bool LastNoAnswer;
 
+    /// <summary>The last Fetch on this thread got a maintenance answer (header X-Wardsage-Maintenance: 1, or the 503 body {"maintenance":true}), with its end time
+    /// (MinValue = none) and Retry-After seconds (-1 = none). For the app's maintenance gate (app/HostBridge.cs).</summary>
+    [ThreadStatic] public static bool LastMaintenance;
+    [ThreadStatic] public static DateTime LastMaintUntil;
+    [ThreadStatic] public static int LastRetryAfterSec;
+
+    static void NoteMaintenance(HttpWebResponse resp, bool readBody) {
+      string hdr = resp.Headers["X-Wardsage-Maintenance"];
+      NetBackoff.Record((int)resp.StatusCode, resp.Headers["Retry-After"], hdr);
+      LastRetryAfterSec = NetBackoff.LastRetryAfterSec;
+      bool flag = NetBackoff.LastMaintenance;
+      if (readBody && (int)resp.StatusCode == 503) {
+        try {
+          using (var sr = new StreamReader(resp.GetResponseStream(), Encoding.UTF8)) {
+            var buf = new char[2048]; int n = sr.Read(buf, 0, buf.Length);
+            DateTime until;
+            if (n > 0 && MaintenanceGate.ParseBody(new string(buf, 0, n), out until)) { flag = true; LastMaintUntil = until; }
+          }
+        } catch (Exception) { }
+      }
+      if (flag) LastMaintenance = true;
+    }
+
     /// <summary>The site's switches, or null (no connection, not a 2xx, not JSON).</summary>
     public static RemoteSwitches Fetch(string site) { bool reached; return Fetch(site, out reached); }
 
     /// <summary>As above; `reached` is false only when the site gave no answer or a 5xx (a 4xx means it is up).</summary>
     public static RemoteSwitches Fetch(string site, out bool reached) {
-      reached = false; LastNoAnswer = false;
+      reached = false; LastNoAnswer = false; LastMaintenance = false; LastMaintUntil = DateTime.MinValue; LastRetryAfterSec = -1;
       try {
         SyncClient.EnableTls12();
         var req = (HttpWebRequest)WebRequest.Create(site.TrimEnd('/') + "/api/extractor/app-config");
@@ -258,7 +281,7 @@ namespace RealmForge {
         using (var resp = (HttpWebResponse)req.GetResponse())
         using (var s = resp.GetResponseStream())
         using (var ms = new MemoryStream()) {
-          NetBackoff.Record((int)resp.StatusCode, resp.Headers["Retry-After"]);
+          NoteMaintenance(resp, false);
           reached = (int)resp.StatusCode < 500;
           var buf = new byte[4096]; int n;
           while ((n = s.Read(buf, 0, buf.Length)) > 0) {
@@ -269,7 +292,7 @@ namespace RealmForge {
         }
       } catch (WebException e) {
         var resp = e.Response as HttpWebResponse;
-        if (resp != null) { reached = (int)resp.StatusCode < 500; NetBackoff.Record((int)resp.StatusCode, resp.Headers["Retry-After"]); resp.Close(); }
+        if (resp != null) { reached = (int)resp.StatusCode < 500; NoteMaintenance(resp, true); resp.Close(); }
         else LastNoAnswer = true;
         return null;
       } catch (Exception) { LastNoAnswer = true; return null; }

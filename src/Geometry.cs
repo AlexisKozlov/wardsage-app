@@ -256,7 +256,7 @@ namespace RealmForge {
           resp = e.Response as HttpWebResponse;
           if (resp == null) return Layout.Reply.NoReply;
         }
-        NetBackoff.Record((int)resp.StatusCode, resp.Headers["Retry-After"]);
+        NetBackoff.Record((int)resp.StatusCode, resp.Headers["Retry-After"], resp.Headers["X-Wardsage-Maintenance"]);
         using (resp)
         using (var s = resp.GetResponseStream())
         using (var ms = new MemoryStream()) {
