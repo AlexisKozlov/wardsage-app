@@ -103,6 +103,12 @@ namespace RealmForge {
       });
     }
 
+    /// <summary>The owl in the title plaque's right corner (23 px at s = 1), clear of the clock and the mode name.</summary>
+    public static RectangleF LogoRect(float x0, float y, float iw, float hh, float s) {
+      float d = Math.Min(23 * s, hh - 4 * s);
+      return new RectangleF(x0 + iw - 8 * s - d, y + (hh - d) / 2f, d, d);
+    }
+
     /// <summary>Draws the panel into a new w x h bitmap (32-bit ARGB, see-through). hits gets the pressable places (may be null).
     /// Sizes follow the plan (s = max(0.7, U/1000)); the layout never goes below 0.9 so that the 12/14 px text still fits the rows.</summary>
     public static Bitmap Render(DpsSnapshot snap, DpsView v, int w, int h, float s, List<DpsHit> hits) {
@@ -123,11 +129,13 @@ namespace RealmForge {
         { var pl = DpsArt.Plaque((int)Math.Round(iw), (int)Math.Round(hh), 0.55f); if (pl != null) g.DrawImageUnscaled(pl, (int)Math.Round(x0), (int)Math.Round(y)); }
         float tx = x0 + 64 * s;   // right of the emblem
         float clkW = 0;
+        var logo = LogoRect(x0, y, iw, hh, s);
+        DpsArt.Logo(g, logo);
         if (seg != null) {
           string clk = Clock(seg.Seconds) + (seg.Fights > 1 ? " x" + seg.Fights : "");
-          clkW = T(c, clk, Math.Max(13, 16 * s), true, White, new RectangleF(tx, y, x1 - tx - 8 * s, hh), 2);
+          clkW = T(c, clk, Math.Max(13, 16 * s), true, White, new RectangleF(tx, y, logo.X - 6 * s - tx, hh), 2);
         }
-        T(c, ModeName(v.Mode, en), Math.Max(13, 17 * s), true, TitleGold, new RectangleF(tx, y, Math.Max(10, x1 - tx - clkW - 14 * s), hh), 0);
+        T(c, ModeName(v.Mode, en), Math.Max(13, 17 * s), true, TitleGold, new RectangleF(tx, y, Math.Max(10, logo.X - 6 * s - tx - clkW - 8 * s), hh), 0);
         y += hh + 3 * s;
         // ---- segments and reset
         float sh = 22 * s;

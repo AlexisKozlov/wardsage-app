@@ -108,7 +108,7 @@ namespace RealmForge {
     static readonly Dictionary<string, float> widths = new Dictionary<string, float>();
     static readonly Dictionary<string, Font> fonts = new Dictionary<string, Font>();
     static float cacheS = -1;
-    static Bitmap uiAtlas, headAtlas, skillAtlas, frameTex;
+    static Bitmap uiAtlas, headAtlas, skillAtlas, frameTex, owlSrc;
     static ImageAttributes wrap;
     static Bitmap measBmp; static Graphics meas;
     static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
@@ -149,6 +149,32 @@ namespace RealmForge {
     public static Bitmap SkillAtlas { get { lock (gate) { return skillAtlas ?? (skillAtlas = LoadBitmap("dps/dps_skills.jpg", "dps_skills.jpg")); } } }
     public static Bitmap FrameTex { get { lock (gate) { return frameTex ?? (frameTex = LoadBitmap("overlay/frame.png", "frame.png")); } } }
     /// <summary>True when the three atlases were read.</summary>
+    /// <summary>The Wardsage owl (the splash's 256 px art, cut down on demand).</summary>
+    static Bitmap OwlSrc { get { lock (gate) { return owlSrc ?? (owlSrc = LoadBitmap("splash/owl256.png", "owl256.png") ?? LoadBitmap("overlay/owl.png", "owl.png")); } } }
+    /// <summary>A test hook: Logo() draws nothing.</summary>
+    public static bool NoLogo = false;
+    /// <summary>The owl in r (square): a soft dark shadow around it, 90% opaque. The DPS panel draws it from the cache; other windows (own = true, another thread's cache is not touched) paint it straight.</summary>
+    public static void Logo(Graphics g, RectangleF r, bool own = false) {
+      int px = (int)Math.Round(Math.Min(r.Width, r.Height));
+      if (px < 8 || NoLogo) return;
+      const int m = 3;
+      Func<Bitmap> make = () => { lock (gate) {
+        var src = OwlSrc; if (src == null) return null;
+        var o = new Bitmap(px + 2 * m, px + 2 * m, PixelFormat.Format32bppPArgb);
+        using (var g2 = Graphics.FromImage(o)) {
+          HqSetup(g2);
+          using (var sh = Tint(0f, 0f, 0f, 0.35f))
+            foreach (var d in new[] { new[] { -1, 0 }, new[] { 1, 0 }, new[] { 0, -1 }, new[] { 0, 1 }, new[] { 0, 2 }, new[] { -1, 1 }, new[] { 1, 1 } })
+              Blit(g2, src, 0, 0, src.Width, src.Height, m + d[0], m + d[1], px, px, sh);
+          using (var ia = Tint(1f, 1f, 1f, 0.9f)) Blit(g2, src, 0, 0, src.Width, src.Height, m, m, px, px, ia);
+        }
+        return o;
+      } };
+      int x = (int)Math.Round(r.X) - m, y = (int)Math.Round(r.Y) - m;
+      if (!own) { var bmp = Cached("logo|" + px, make); if (bmp != null) g.DrawImageUnscaled(bmp, x, y); return; }
+      using (var b = make()) if (b != null) g.DrawImageUnscaled(b, x, y);
+    }
+
     public static bool HasAtlases { get { return UiAtlas != null && HeadAtlas != null && SkillAtlas != null; } }
 
     /// <summary>Clamp edges: no seams between the slices.</summary>

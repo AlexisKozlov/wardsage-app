@@ -106,6 +106,24 @@ static class DpsPanelRender {
       Check("not blank", lit > 10 && hits.Count >= 7, name + ": " + lit + " bright samples, " + hits.Count + " pressable places");
       // no text wider than its rectangle
       foreach (var r in probe) Check("text fits", r.Width <= r.Box.Width + 0.5f && r.Glyphs.Right <= r.Box.Right + 0.5f && r.Glyphs.X >= r.Box.X - 0.5f, name + ": \"" + r.Text + "\" " + r.Width.ToString("0.0") + " > " + r.Box.Width.ToString("0.0"));
+      // the owl in the title plaque: drawn (the panel differs from one without it, inside its rectangle only) and clear of every text
+      {
+        float ls0 = Math.Max(s, 0.9f), pad0 = 8 * ls0;
+        var lr = DpsPanel.LogoRect(pad0, pad0, w - 2 * pad0, 30 * ls0, ls0);
+        DpsArt.NoLogo = true; int diff = 0, outside = 0;
+        try {
+          using (var p0 = DpsPanel.Render(snap, v, w, h, s, null)) {
+            var inl = Rectangle.Inflate(Rectangle.Round(lr), 4, 4);
+            for (int y = 0; y < h; y++) for (int x = 0; x < w; x++) {
+              if (x >= inl.Left - 3 && x < inl.Right + 3 && y >= inl.Top - 3 && y < inl.Bottom + 3) { if (inl.Contains(x, y) && panel.GetPixel(x, y) != p0.GetPixel(x, y)) diff++; continue; }
+              if (y < 30 * ls0 + pad0 && (panel.GetPixel(x, y) != p0.GetPixel(x, y))) outside++;
+            }
+          }
+        } finally { DpsArt.NoLogo = false; }
+        Check("logo", diff > lr.Width * lr.Height * 0.25 && lr.Width >= 20 && lr.Width <= 24 * ls0 + 0.5f, name + ": owl " + lr + " changes " + diff + " pixels");
+        Check("logo", outside == 0, name + ": owl paints outside its rectangle: " + outside + " pixels");
+        foreach (var r in probe) Check("logo", !(r.Glyphs.IntersectsWith(lr)), name + ": \"" + r.Text + "\" " + r.Glyphs + " overlaps the owl " + lr);
+      }
       // contrast under the glyphs: the same panel without text, 8 points inside each text rectangle
       DpsArt.Suppress = true;
       try {

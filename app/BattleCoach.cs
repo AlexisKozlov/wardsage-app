@@ -263,9 +263,12 @@ namespace RealmForge {
         using (var grey = new SolidBrush(Color.FromArgb(255, 200, 206, 218)))
         using (var red = new SolidBrush(Color.FromArgb(255, 255, 120, 100)))
         using (var shadow = new SolidBrush(Color.FromArgb(180, 0, 0, 0))) {
+          float od = Math.Max(16f, Math.Min(24f, w * 0.06f));   // the owl in the top right corner; the (centred) head line keeps clear of it on both sides
+          DpsArt.Logo(g, new RectangleF(w - 10 - od, 6 + (fs * 1.5f - od) / 2f, od, od), true);
           Action<string, Font, Brush, float, float> text = (s, f, b, y0, hh) => {
             if (string.IsNullOrEmpty(s)) return;
-            var rr = new RectangleF(8, y0, w - 16, hh);
+            float ins = y0 < 6 + fs ? od + 12 : 0;
+            var rr = new RectangleF(8 + ins, y0, w - 16 - 2 * ins, hh);
             g.DrawString(s, f, shadow, new RectangleF(rr.X + 1, rr.Y + 1.5f, rr.Width, rr.Height), sf);
             g.DrawString(s, f, b, rr, sf);
           };
@@ -359,8 +362,12 @@ namespace RealmForge {
         using (var white = new SolidBrush(alarm ? Color.FromArgb(255, 255, 214, 200) : Color.White))
         using (var grey = new SolidBrush(Color.FromArgb(255, 176, 184, 200)))
         using (var shadow = new SolidBrush(Color.FromArgb(180, 0, 0, 0))) {
+          float od = Math.Max(16f, h * 0.2f);   // the owl in the top right corner; the (centred) title keeps clear of it on both sides
+          var owl = new RectangleF(w - 12 - od, h * 0.06f + (h * 0.28f - od) / 2f, od, od);
+          DpsArt.Logo(g, owl, true);
           Action<string, Font, Brush, float, float> line = (s, f, b, y0, hh) => {
-            var rr = new RectangleF(10, y0, w - 20, hh);
+            float ins = y0 < h * 0.3f ? od + 14 : 0;
+            var rr = new RectangleF(10 + ins, y0, w - 20 - 2 * ins, hh);
             g.DrawString(s, f, shadow, new RectangleF(rr.X + 1, rr.Y + 1.5f, rr.Width, rr.Height), sf);
             g.DrawString(s, f, b, rr, sf);
           };
