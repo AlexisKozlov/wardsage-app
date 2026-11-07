@@ -48,6 +48,9 @@ check(/id="maint"/.test(readFileSync('ui/index.html', 'utf8')), 'index.html has 
 check(on && Array.isArray(on.social) && on.social.length === 2 && on.social[0].id === 'discord' && on.social[1].id === 'telegram', 'mock maint-on: two social icons (discord, telegram)');
 check(run('maint-early')[0].social === undefined, 'mock maint-early: no social list (the old Discord button)');
 check(/discord: '<svg/.test(app) && /telegram: '<svg/.test(app) && /SOCIAL_KEYS = \{ discord: 'maintDiscord', telegram: 'maintTg' \}/.test(app), 'app.js: discord and telegram icons, titles from the texts');
+const css = readFileSync(new URL('../ui/app.css', import.meta.url), 'utf8'), socCss = (css.match(/^\.soc[^\n]*$/gm) || []).join('\n');
+check(!/border-radius: 50%|radial-gradient|linear-gradient|social-ring/.test(socCss) && !/\.soc \{[^}]*box-shadow/.test(socCss), 'css: social icons have no ring, plate or gradient');
+check(/\.soc \{[^}]*width: 36px; height: 36px/.test(socCss) && /\.soc svg \{[^}]*width: 28px/.test(socCss) && /\.soc:hover svg \{[^}]*drop-shadow/.test(socCss) && /\.soc:focus-visible/.test(socCss), 'css: 36 px click area, 28 px icon, hover glow, focus ring');
 check(/socialRow\(m\.social, 'maint-soc'\)/.test(app) && /m\.social && m\.social\.length \? ''/.test(app), 'works screen: the icon row, the Discord button only without icons');
 check(/\$\{socialRow\(RAIL_SOCIAL\)\}\s*<\/div>`;/.test(app) && /RAIL_SOCIAL = \[\{ id: 'discord', url: 'https:\/\/discord\.gg\/xJrfv3zYx5' \}, \{ id: 'telegram', url: 'https:\/\/t\.me\/wardsage' \}\]/.test(app), 'rail: the two official links are built in, below the game status');
 {
