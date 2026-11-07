@@ -70,12 +70,14 @@ namespace RealmForge {
       gameTimer.Interval = 2000; gameTimer.Tick += (s, e) => {
         long gt0 = LoadMeter.Now();
         CheckGame(false);
+        MaintTick();
         SyncPlansWait();
         PollGateTick();
         if (On("battle")) WatchBattleEnd();
         bool live = gameRunning && !SyncGate.IsForgotten(cfg.Code);
-        arenaWatch.Tick(live && On("battle")); guildWatch.Tick(live && On("guild")); packsWatch.Tick(live); bool away = overlay.GameAway();
-        codeWatch.Tick(live, away); gradeWatch.Tick(live, away);
+        bool quiet = MaintActive();   // maintenance: no calls to the site (arena, guild, packs, codes, grades)
+        arenaWatch.Tick(live && !quiet && On("battle")); guildWatch.Tick(live && !quiet && On("guild")); packsWatch.Tick(live && !quiet); bool away = overlay.GameAway();
+        codeWatch.Tick(live && !quiet, away); gradeWatch.Tick(live && !quiet, away);
         TraceStartTick(); TryAutoUpdate(); LayoutTick();
         LoadMeter.Done(LoadMeter.Game, gt0);
       }; gameTimer.Start();
@@ -151,18 +153,89 @@ namespace RealmForge {
     readonly NetBackoff remoteBo = new NetBackoff(), geoBo = new NetBackoff(), layoutBo = new NetBackoff(), forumBo = new NetBackoff(), sellBo = new NetBackoff();
     DateTime forumAskedAt = DateTime.MinValue, sellAskedAt = DateTime.MinValue; string forumLast, sellLast;
 
+    // ------------------------------------------------------------------ maintenance gate (src/MaintenanceGate.cs)
+    // While the site's works run (app-config "maintenance", or a 503 with X-Wardsage-Maintenance: 1) the calls of the app to the site stay quiet and the next
+    // poll of the switches is at the end of the works plus this install's spread; the network error reports stay silent until 15 minutes after.
+    readonly int maintSeed = MaintenanceGate.SeedOf(Environment.MachineName + "|" + Environment.UserName);   // stable per install
+    volatile bool maintWasQuiet, maintHadWorks;
+    DateTime maintFlagUntil = DateTime.MinValue, maintSilentUntil = DateTime.MinValue, maintCheckedAt = DateTime.MinValue;
+    string maintPosted;
+
+    /// <summary>Until when the app must not call the site: the later of the announced window's wake time and the flag a 503 left; MinValue = not quiet.</summary>
+    DateTime MaintQuietUntil(DateTime now) {
+      var m = remote.Maint; DateTime q = DateTime.MinValue;
+      if (MaintenanceGate.Active(m, now, maintSeed)) { q = MaintenanceGate.WakeAt(m, maintSeed); if (q == DateTime.MinValue) q = now.AddMinutes(5); }
+      if (maintFlagUntil > now && maintFlagUntil > q) q = maintFlagUntil;
+      return q > now ? q : DateTime.MinValue;
+    }
+
+    bool MaintActive() {
+      var now = DateTime.UtcNow; DateTime q = MaintQuietUntil(now);
+      if (q == DateTime.MinValue) return false;
+      var su = MaintenanceGate.SilentUntil(q, now); if (su > maintSilentUntil) maintSilentUntil = su;
+      return true;
+    }
+
+    /// <summary>Every 2 s: logs the start and the end of the quiet time, tells the page the phase (only when it changes).</summary>
+    void MaintTick() {
+      NetBackoff.Reopening = remote.Maint.State == "reopening";
+      bool quiet = MaintActive();
+      if (quiet != maintWasQuiet) {
+        maintWasQuiet = quiet;
+        if (quiet) { maintHadWorks = true; Log.Write("maintenance: calls to the site paused until " + MaintQuietUntil(DateTime.UtcNow).ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture) + " UTC"); }
+        else Log.Write("maintenance: over, calls to the site resume");
+      }
+      PostMaint(false);
+    }
+
+    void PostMaint(bool force) {
+      var now = DateTime.UtcNow; var m = remote.Maint;
+      string phase = MaintenanceGate.Phase(m, now, maintSeed);
+      if (phase == "off" && maintFlagUntil > now) phase = "on";   // only a 503 flag: the screen without a time
+      bool done = false;
+      if (phase == "off" && maintHadWorks) { maintHadWorks = false; done = true; }
+      var sb = new StringBuilder("{\"ev\":\"maint\",\"phase\":").Append(S(phase));
+      if (phase != "off") {
+        Func<DateTime, string> iso = t => t == DateTime.MinValue ? "null" : S(t.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture));
+        DateTime wake = MaintQuietUntil(now);
+        sb.Append(",\"startsAt\":").Append(iso(m.StartsAt)).Append(",\"stopAt\":").Append(iso(MaintenanceGate.StopAt(m))).Append(",\"endsAt\":").Append(iso(m.EndsAt))
+          .Append(",\"resumeAt\":").Append(iso(wake)).Append(",\"mode\":").Append(S(m.Mode)).Append(",\"ru\":").Append(S(m.Ru)).Append(",\"en\":").Append(S(m.En)).Append(",\"link\":").Append(S(m.Link));
+      }
+      if (done) sb.Append(",\"done\":true");
+      string json = sb.Append('}').ToString();
+      if (!force && json == maintPosted) return;
+      maintPosted = done ? null : json;
+      Post(json);
+    }
+
+    /// <summary>A call saw the maintenance flag (header / 503 body): quiet until its end time plus the spread, else Retry-After, else 5 minutes.</summary>
+    void NoteMaintFlag(DateTime until, int retryAfterSec) {
+      var now = DateTime.UtcNow;
+      var q = MaintenanceGate.FlagResume(until, retryAfterSec, remote.Maint.ReopenMin, maintSeed, now);
+      if (q > maintFlagUntil) { maintFlagUntil = q; Log.Write("maintenance flag from the site: quiet until " + q.ToString("HH:mm:ss", CultureInfo.InvariantCulture) + " UTC"); }
+    }
+
     void FetchRemote() {
       string site = Site();
+      maintCheckedAt = DateTime.UtcNow;
       Task.Factory.StartNew(() => {
         bool reached;
         var r = RemoteSwitches.Fetch(site, out reached);
+        bool mflag = RemoteSwitches.LastMaintenance; DateTime muntil = RemoteSwitches.LastMaintUntil; int mra = RemoteSwitches.LastRetryAfterSec;
         NoteSite(site, RemoteSwitches.LastNoAnswer);   // not `reached`: that is false for a 5xx too
         remoteBo.NoteLast(DateTime.UtcNow);
         if (r == null) {   // no usable reply: the switches held (and the saved announcement) stay; ask again soon; the page says "no connection" only when the site was not reached
-          OnUi(() => { remoteTimer.Interval = remoteBo.Blocked(DateTime.UtcNow) ? (int)Math.Max(5000, (remoteBo.Until - DateTime.UtcNow).TotalMilliseconds) : 20000; Post("{\"ev\":\"site\",\"ok\":" + B(reached) + "}"); });
+          if (mflag) NoteMaintFlag(muntil, mra);   // a maintenance 503: quiet, the next ask at the end of the works
+          OnUi(() => {
+            var qf = MaintQuietUntil(DateTime.UtcNow);
+            remoteTimer.Interval = qf != DateTime.MinValue && mflag ? (int)Math.Max(30000, Math.Min((qf - DateTime.UtcNow).TotalMilliseconds, 7200000))
+              : remoteBo.Blocked(DateTime.UtcNow) ? (int)Math.Max(5000, (remoteBo.Until - DateTime.UtcNow).TotalMilliseconds) : 20000;
+            Post("{\"ev\":\"site\",\"ok\":" + B(reached) + "}"); PostMaint(false);
+          });
           return;
         }
         r.SaveCache(RemoteSwitches.CachePath);
+        if (r.Maint.State == "off") maintFlagUntil = DateTime.MinValue;   // a good answer without works clears a flag from an earlier 503
         OnUi(() => {
           remoteTimer.Interval = RemoteSwitches.EveryMinutes(Channel.IsTest) * 60 * 1000;
           Post("{\"ev\":\"site\",\"ok\":true}");
@@ -170,6 +243,10 @@ namespace RealmForge {
           remote = r;
           if (changed) { Log.Write("switches changed: " + r.ToJson()); ApplyRemote(); }
           else PostRemote();   // the announcement may have run out
+          // during the works the next ask is at their end plus the spread (not every 10 minutes)
+          var qn = MaintQuietUntil(DateTime.UtcNow);
+          if (qn != DateTime.MinValue) remoteTimer.Interval = (int)Math.Max(30000, Math.Min((qn - DateTime.UtcNow).TotalMilliseconds + 2000, 7200000));
+          PostMaint(false);
         });
       });
     }
@@ -224,6 +301,7 @@ namespace RealmForge {
     }
 
     void LayoutTick() {
+      if (MaintActive()) return;
       if (gameRunning && Layout.Current == null && !layoutFetching && DateTime.UtcNow >= layoutRetryAt) FetchLayout(layoutFor);
       if (gameRunning && Geo.Current == null && !geoFetching && DateTime.UtcNow >= geoRetryAt) FetchGeometry(layoutFor);
     }
@@ -358,6 +436,7 @@ namespace RealmForge {
 
     void CheckUpdate() {
       if (!Channel.UpdatesEnabled(Channel.IsStreamer)) return;   // the streamer build never updates itself
+      if (MaintActive()) return;   // maintenance: no calls to the site
       string site = Site();
       Task.Factory.StartNew(() => {
         var u = Updater.CheckAndDownload(site);
@@ -404,12 +483,15 @@ namespace RealmForge {
     // (then its own polling slows down). A site without the endpoint (404) is left alone for this run
     PlansWaiter NewPlansWaiter() {
       var w = new PlansWaiter(() => Site(), () => cfg.Code, PlansChanged, (ok, reach) => Post("{\"ev\":\"plansWait\",\"ok\":" + B(ok) + ",\"reach\":" + B(reach) + "}"), s => Log.Write(s));
+      w.Seed = maintSeed; w.ReopenMin = remote.Maint.ReopenMin;
+      w.QuietUntil = () => MaintQuietUntil(DateTime.UtcNow);
+      w.Maintenance = (until, ra) => NoteMaintFlag(until, ra);
       w.Result = (used, reached) => NoteSite(used, !reached);   // every long request: the route counts only «no answer»
       return w;
     }
 
     void SyncPlansWait() {
-      bool want = gameRunning && SyncClient.IsValidCode(cfg.Code) && !SyncGate.IsForgotten(cfg.Code);
+      bool want = gameRunning && SyncClient.IsValidCode(cfg.Code) && !SyncGate.IsForgotten(cfg.Code) && !MaintActive();
       string key = want ? Site() + "|" + cfg.Code : "";
       if (plansWait == null) plansWait = NewPlansWaiter();
       if (key != plansWaitKey) {
@@ -443,7 +525,7 @@ namespace RealmForge {
       if (cmd != "init" && cmd != "log") lastUi = DateTime.UtcNow;
       try {
         switch (cmd) {
-          case "init": win.PageReady(); SendState(null); CheckGame(true); PostRemote(); PostLayout(); if (updateReady != null) Post(updateReady); break;
+          case "init": win.PageReady(); SendState(null); CheckGame(true); PostRemote(); PostMaint(true); PostLayout(); if (updateReady != null) Post(updateReady); break;
           case "acceptTerms": cfg.TermsAccepted = AppConfig.TermsVersion; Save(); Log.Write("terms accepted: " + AppConfig.TermsVersion); break;
           case "setLang": cfg.Lang = MiniJson.GetString(m, "lang") == "en" ? "en" : "ru"; overlay.BackCityText = BackCityText(cfg.Lang); overlay.EscText = EscText(cfg.Lang); overlay.CloseGearFilterText = CloseGearFilterText(cfg.Lang); coach.Lang = cfg.Lang;
 #if TESTBUILD
@@ -492,6 +574,7 @@ namespace RealmForge {
           }
           case "sync": StartSync(MiniJson.GetBool(m, "saveOnly", false), false); break;
           case "open": OpenAllowed(MiniJson.GetString(m, "url")); break;
+          case "maint.check": if (DateTime.UtcNow - maintCheckedAt >= TimeSpan.FromSeconds(60)) FetchRemote(); break;   // «check again» of the works screen: at most once a minute
           case "openLog": Shell.OpenFile(Log.Path); break;
           case "openFolder": Shell.OpenFolder(lastSavedPath ?? Extractor.OutputDir); break;
           case "plans.load": LoadPlans(MiniJson.GetString(m, "lang")); break;
@@ -644,6 +727,9 @@ namespace RealmForge {
 
     /// <summary>On, a code to sign it with, and not the same kind in 10 minutes / not over 20 a day.</summary>
     bool ReportAllowed(string kind) {
+      // quiet mode: the network kinds stay silent during the works and 15 minutes after (the site is down on purpose)
+      MaintActive();
+      if (MaintenanceGate.ReportSilenced(ErrorReports.NormalizeKind(kind), DateTime.UtcNow, maintSilentUntil)) return false;
       return cfg.ErrorReports && SyncClient.IsValidCode(cfg.Code) && reportLimit.TryTake(ErrorReports.NormalizeKind(kind), DateTime.UtcNow);
     }
 
@@ -681,7 +767,7 @@ namespace RealmForge {
     void OpenAllowed(string url) {
       Uri u, site;
       if (url == null || !Uri.TryCreate(url, UriKind.Absolute, out u) || u.Scheme != Uri.UriSchemeHttps && !(u.Scheme == Uri.UriSchemeHttp && u.IsLoopback)) return;
-      bool ok = u.Host == "github.com" || u.Host == "go.microsoft.com" || u.Host == "discord.gg" || u.Host == "discord.com" || u.Host == "wardsage.com" || u.Host == "www.wardsage.com" || u.Host == "ru.wardsage.com";
+      bool ok = u.Host == "github.com" || u.Host == "go.microsoft.com" || u.Host == "discord.gg" || u.Host == "discord.com" || u.Host == "t.me" || u.Host == "telegram.me" || u.Host == "wardsage.com" || u.Host == "www.wardsage.com" || u.Host == "ru.wardsage.com";
       if (Uri.TryCreate(cfg.Site, UriKind.Absolute, out site) && u.Host == site.Host) ok = true;
       if (Uri.TryCreate(Site(), UriKind.Absolute, out site) && u.Host == site.Host) ok = true;   // the spare host the route switched to
       if (ok) Shell.OpenUrl(u.AbsoluteUri);
@@ -923,13 +1009,13 @@ namespace RealmForge {
     bool traceStartDone;
 
     void UploadTraces() {
-      if (!cfg.AutoSync || !SyncClient.IsValidCode(cfg.Code) || !On("battle")) return;
+      if (!cfg.AutoSync || !SyncClient.IsValidCode(cfg.Code) || !On("battle") || MaintActive()) return;   // (a trace not sent now goes with the next one)
       string site = Site(), code = cfg.Code;
       Task.Factory.StartNew(() => { try { TraceUpload.RunOnce(RFX.BattlesDir, traceSent, site, code, Log.Write); } catch (Exception e) { Log.Write("трасса боя: ошибка " + e.Message); } });
     }
 
     void TraceStartTick() {
-      if (traceStartDone || !gameRunning || SyncClient.Player <= 0) return;
+      if (traceStartDone || !gameRunning || SyncClient.Player <= 0 || MaintActive()) return;
       traceStartDone = true;
       UploadTraces();
     }
@@ -1036,7 +1122,7 @@ namespace RealmForge {
 
     void AutoSyncTick() {
       if (!gameRunning) gameSeenAt = DateTime.MinValue;
-      if (!cfg.AutoSync || !gameRunning || !remote.ReadEnabled || !(SyncClient.IsValidCode(cfg.Code)) || SyncGate.IsForgotten(cfg.Code)) return;
+      if (!cfg.AutoSync || !gameRunning || !remote.ReadEnabled || !(SyncClient.IsValidCode(cfg.Code)) || SyncGate.IsForgotten(cfg.Code) || MaintActive()) return;
       var now = DateTime.UtcNow;
       if (gameSeenAt == DateTime.MinValue) gameSeenAt = now;
       if (now - gameSeenAt < TimeSpan.FromSeconds(FirstSyncDelaySec)) return;   // the game is still loading / at the login screen
@@ -1058,7 +1144,7 @@ namespace RealmForge {
 
     void StartSync(bool saveOnly, bool auto) {
       if (syncing) return;
-      if (!remote.ReadEnabled) { if (!auto) SyncError("paused", null, 0); return; }   // the site's switch: no game reading
+      if (!remote.ReadEnabled || MaintActive()) { if (!auto) SyncError("paused", null, 0); return; }   // the site's switch or the works: no game reading
       if (auto && SyncGate.IsForgotten(cfg.Code)) return;   // the account is forgotten on the site: only a manual sync tries again
       if (!auto) SyncGate.Clear();
       bool upload = !saveOnly && SyncClient.IsValidCode(cfg.Code);
@@ -1211,10 +1297,16 @@ namespace RealmForge {
     // ------------------------------------------------------------------ equip helper
 
     // the unified «What's new» feed of the site; the page falls back to its built-in list when the reply is {"ok":false}
+    string newsLast, newsLastLang;
     void LoadNews(string lang) {
       string site = Site();
+      if (MaintActive()) {   // the works: the last feed again, else the page's built-in list
+        Post(newsLast != null && newsLastLang == lang ? "{\"ev\":\"news\",\"ok\":true,\"feed\":" + newsLast + "}" : "{\"ev\":\"news\",\"ok\":false}");
+        return;
+      }
       Task.Factory.StartNew(() => {
         var feed = NewsClient.Fetch(site, lang);
+        if (feed != null) { newsLast = feed; newsLastLang = lang; }
         Post(feed == null ? "{\"ev\":\"news\",\"ok\":false}" : "{\"ev\":\"news\",\"ok\":true,\"feed\":" + feed + "}");
       });
     }
@@ -1224,6 +1316,7 @@ namespace RealmForge {
       string site = Site(), code = cfg.Code;
       DateTime now = DateTime.UtcNow;
       if (SyncGate.IsForgotten(code)) { Post("{\"ev\":\"forum\",\"r\":{\"ok\":false,\"error\":\"error\"}}"); return; }
+      if (MaintActive()) { Post("{\"ev\":\"forum\",\"r\":" + (forumLast ?? "{\"ok\":false,\"error\":\"error\"}") + "}"); return; }   // the works: the last reply
       // while the game is not running (or backing off after a failure) the last reply is shown again instead of a call
       if (forumLast != null && (NetBackoff.IdleThrottled(gameRunning, forumAskedAt, now) || forumBo.Blocked(now))) { Post("{\"ev\":\"forum\",\"r\":" + forumLast + "}"); return; }
       if (forumBo.Blocked(now)) { Post("{\"ev\":\"forum\",\"r\":{\"ok\":false,\"error\":\"error\"}}"); return; }
@@ -1281,6 +1374,7 @@ namespace RealmForge {
       string site = Site(), code = cfg.Code;
       if (!SyncClient.IsValidCode(code)) { Post("{\"ev\":\"plans\",\"status\":\"invalid_token\"}"); return; }
       if (SyncGate.IsForgotten(code)) { Post("{\"ev\":\"plans\",\"status\":\"error\",\"detail\":\"account_forgotten\"}"); return; }
+      if (MaintActive()) { Post("{\"ev\":\"plans\",\"status\":\"error\",\"detail\":\"maintenance\"}"); return; }
       if (!PollAllowed()) { heldPlansLang = lang; return; }
       plansFor = SyncClient.PlanPlayer(SyncClient.Player, SyncClient.LastPlayer); shownPlansLang = lang;
       Task.Factory.StartNew(() => {
@@ -1562,6 +1656,7 @@ namespace RealmForge {
       string site = Site(), code = cfg.Code;
       if (!SyncClient.IsValidCode(code)) { Post("{\"ev\":\"sell\",\"status\":\"invalid_token\"}"); return; }
       if (SyncGate.IsForgotten(code)) { Post("{\"ev\":\"sell\",\"status\":\"error\",\"detail\":\"account_forgotten\"}"); return; }
+      if (MaintActive()) { Post(sellLast ?? "{\"ev\":\"sell\",\"status\":\"error\",\"detail\":\"maintenance\"}"); return; }
       if (!PollAllowed()) { heldSellLang = lang; return; }
       sellFor = SyncClient.PlanPlayer(SyncClient.Player, SyncClient.LastPlayer); shownSellLang = lang;
       DateTime now = DateTime.UtcNow;
