@@ -150,7 +150,7 @@ namespace RealmForge {
     /// <summary>A feature may run: the site's switch is on and, when it needs it, the layout data is there.</summary>
     bool On(string feature) { return remote.Allows(feature) && (!NeedsLayout.Contains(feature) || Layout.Current != null); }
 
-    readonly NetBackoff remoteBo = new NetBackoff(), geoBo = new NetBackoff(), layoutBo = new NetBackoff(), forumBo = new NetBackoff(), sellBo = new NetBackoff();
+    readonly NetBackoff remoteBo = new NetBackoff(), geoBo = new NetBackoff(), layoutBo = new NetBackoff(), forumBo = new NetBackoff(), sellBo = new NetBackoff(), plansBo = new NetBackoff();
     DateTime forumAskedAt = DateTime.MinValue, sellAskedAt = DateTime.MinValue; string forumLast, sellLast;
 
     // ------------------------------------------------------------------ maintenance gate (src/MaintenanceGate.cs)
@@ -1376,10 +1376,12 @@ namespace RealmForge {
       if (SyncGate.IsForgotten(code)) { Post("{\"ev\":\"plans\",\"status\":\"error\",\"detail\":\"account_forgotten\"}"); return; }
       if (MaintActive()) { Post("{\"ev\":\"plans\",\"status\":\"error\",\"detail\":\"maintenance\"}"); return; }
       if (!PollAllowed()) { heldPlansLang = lang; return; }
+      if (plansBo.Blocked(DateTime.UtcNow)) { Post("{\"ev\":\"plans\",\"status\":\"error\",\"detail\":\"busy, retrying later\"}"); return; }   // the site is busy: a short pause (2-20 s) instead of asking again at once
       plansFor = SyncClient.PlanPlayer(SyncClient.Player, SyncClient.LastPlayer); shownPlansLang = lang;
       Task.Factory.StartNew(() => {
        try {
         var r = PlansClient.List(site, code, lang == "en" ? "en" : "ru");
+        plansBo.NoteLast(DateTime.UtcNow);   // this thread's last reply (PlansClient.Send recorded it)
         NoteSite(site, SiteRoute.IsNoAnswer(r.Status));
         // set and main stat of every plan item: the auto-pilot sets the game's gear filter with them
         if (r.Status == PlansStatus.Ok) {
@@ -1710,7 +1712,7 @@ namespace RealmForge {
         st = send(); n++;
         Log.Write(key + " " + (done ? "done" : "cancelled") + ": " + st + (n > 1 ? " (try " + n + ")" : ""));
         if (!PlansClient.ShouldRetryFinish(st, sw.ElapsedMilliseconds)) break;
-        Thread.Sleep(PlansClient.CancelRetryMs);
+        Thread.Sleep(NetBackoff.Spread(PlansClient.CancelRetryMs, 20000));   // 10 s +-40%
         int cur; lock (finishGen) { if (!finishGen.TryGetValue(key, out cur) || cur != gen) return st; }   // superseded by a newer report
       }
       lock (finishGen) { int cur; if (finishGen.TryGetValue(key, out cur) && cur == gen) finishGen.Remove(key); }

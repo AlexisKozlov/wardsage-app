@@ -1,6 +1,6 @@
 // Wardsage - a small backoff for the app's periodic calls to the site (no threads, no timers of its own): after a failure
-// (no answer, 429, 409, any 5xx) the next call waits 5 s, 10 s, 20 s ... up to 5 min, +-20% jitter; a Retry-After the site
-// sent wins over that (clamped to 1 s .. 1 h, no jitter); one good answer resets it. Callers ask Blocked() before a call and
+// (no answer, 429, 409, any 5xx) the next call waits 5 s, 10 s, 20 s ... up to 5 min, +-40% jitter; a Retry-After the site
+// sent wins over that (clamped to 2 s .. 20 s while the site is only busy, 1 s .. 1 h in maintenance); one good answer resets it. Callers ask Blocked() before a call and
 // tell Note() the outcome (http 0 = the site was not reached). While the site reopens after maintenance (Reopening, set by the app) a Retry-After
 // gets a spread of 0..+50% so that the players do not all come back in the same second; for ordinary errors nothing changes.
 using System;
@@ -8,7 +8,9 @@ using System;
 namespace RealmForge {
   public sealed class NetBackoff {
     public const int MinMs = 5000, MaxMs = 5 * 60 * 1000, MaxRetryAfterSec = 3600;
-    public const double Jitter = 0.2;
+    /// <summary>Outside maintenance a Retry-After is clamped to MinRetryAfterSec .. BusyRetryAfterSec (a busy site is asked again soon, never in an hour); the maintenance gate keeps its own logic.</summary>
+    public const int MinRetryAfterSec = 2, BusyRetryAfterSec = 20;
+    public const double Jitter = 0.4;
     static readonly Random Rng = new Random();
 
     /// <summary>The site is reopening after maintenance: a Retry-After is spread (set by the app from the maintenance state; any thread).</summary>
@@ -57,7 +59,15 @@ namespace RealmForge {
     public static int DelayMs(int failureNo, int retryAfterSec, double rnd01) { return DelayMs(failureNo, retryAfterSec, rnd01, Reopening); }
 
     /// <summary>As above; <paramref name="spread"/> (the site is reopening) adds 0..+50% to a Retry-After (never less than the site asked).</summary>
-    public static int DelayMs(int failureNo, int retryAfterSec, double rnd01, bool spread) {
+    public static int DelayMs(int failureNo, int retryAfterSec, double rnd01, bool spread) { return DelayMs(failureNo, retryAfterSec, rnd01, spread, true); }
+
+    /// <summary>As above; <paramref name="maintenance"/> false (the site is only busy): a Retry-After is clamped to 2 s .. 20 s and spread 0..+30%, still at most 20 s.</summary>
+    public static int DelayMs(int failureNo, int retryAfterSec, double rnd01, bool spread, bool maintenance) {
+      if (retryAfterSec >= 0 && !maintenance) {
+        if (rnd01 < 0) rnd01 = 0; if (rnd01 > 1) rnd01 = 1;
+        double b = Math.Max(MinRetryAfterSec, Math.Min(retryAfterSec, BusyRetryAfterSec)) * 1000.0 * (1 + 0.3 * rnd01);
+        return (int)Math.Min(b, BusyRetryAfterSec * 1000.0);
+      }
       if (retryAfterSec >= 0) {
         double ra = Math.Max(1, Math.Min(retryAfterSec, MaxRetryAfterSec)) * 1000.0;
         if (spread) { if (rnd01 < 0) rnd01 = 0; if (rnd01 > 1) rnd01 = 1; ra *= 1 + ReopenSpread * rnd01; }
@@ -73,6 +83,15 @@ namespace RealmForge {
 
     /// <summary>The periodic polls (sell, forum-unread, guild, arena) while the game is not running go out at most this often.</summary>
     public const int IdleMinutes = 5;
+
+    /// <summary>The pause before a repeated request that no NetBackoff runs (the long poll, the repeated «done» report): <paramref name="baseMs"/> scaled
+    /// by 1 +- 40% with <paramref name="rnd01"/>, never under 1.5 s and never over <paramref name="maxMs"/>.</summary>
+    public static int Spread(int baseMs, int maxMs, double rnd01) {
+      if (rnd01 < 0) rnd01 = 0; if (rnd01 > 1) rnd01 = 1;
+      int ms = (int)(baseMs * (1 - Jitter + 2 * Jitter * rnd01));
+      return Math.Max(1500, Math.Min(ms, maxMs));
+    }
+    public static int Spread(int baseMs, int maxMs) { lock (Rng) return Spread(baseMs, maxMs, Rng.NextDouble()); }
     /// <summary>True when a poll made at <paramref name="last"/> is still fresh enough while the game is not running.</summary>
     public static bool IdleThrottled(bool gameRunning, DateTime last, DateTime now) { return !gameRunning && last != DateTime.MinValue && (now - last).TotalMinutes < IdleMinutes; }
 
@@ -82,16 +101,18 @@ namespace RealmForge {
 
     /// <summary>Records one outcome. Returns true when it was a failure (the caller may log it).</summary>
     public bool Note(int http, int retryAfterSec, DateTime now) { return Note(http, retryAfterSec, now, Rng.NextDouble()); }
-    public bool Note(int http, int retryAfterSec, DateTime now, double rnd01) {
+    public bool Note(int http, int retryAfterSec, DateTime now, double rnd01) { return Note(http, retryAfterSec, now, rnd01, true); }
+    /// <param name="maintenance">the reply was a maintenance one (a long Retry-After is honoured); false = the site is only busy.</param>
+    public bool Note(int http, int retryAfterSec, DateTime now, double rnd01, bool maintenance) {
       lock (this) {
         if (!IsFailure(http)) { failures = 0; until = DateTime.MinValue; return false; }
         failures++;
-        until = now.AddMilliseconds(DelayMs(failures, retryAfterSec, rnd01));
+        until = now.AddMilliseconds(DelayMs(failures, retryAfterSec, rnd01, Reopening, maintenance));
         return true;
       }
     }
 
     /// <summary>Records the outcome of the call just made on this thread (PlansClient.Send and friends set it).</summary>
-    public bool NoteLast(DateTime now) { return Note(lastHttp, lastRetryAfter, now); }
+    public bool NoteLast(DateTime now) { return Note(lastHttp, lastRetryAfter, now, Rng.NextDouble(), lastMaint); }
   }
 }

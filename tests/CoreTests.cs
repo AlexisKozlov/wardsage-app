@@ -548,9 +548,9 @@ static partial class CoreTests {
     Eq(5000, NetBackoff.DelayMs(1, -1, 0.5), "backoff: first failure 5 s");
     Eq(10000, NetBackoff.DelayMs(2, -1, 0.5), "backoff: second 10 s");
     Eq(300000, NetBackoff.DelayMs(20, -1, 0.5), "backoff: capped at 5 min");
-    Eq(4000, NetBackoff.DelayMs(1, -1, 0.0), "backoff: jitter low bound -20%");
-    Eq(6000, NetBackoff.DelayMs(1, -1, 1.0), "backoff: jitter high bound +20%");
-    Check(NetBackoff.DelayMs(30, -1, 1.0) <= 360000 && NetBackoff.DelayMs(30, -1, 0.0) >= 240000, "backoff: jitter around the cap");
+    Eq(3000, NetBackoff.DelayMs(1, -1, 0.0), "backoff: jitter low bound -40%");
+    Eq(7000, NetBackoff.DelayMs(1, -1, 1.0), "backoff: jitter high bound +40%");
+    Check(NetBackoff.DelayMs(30, -1, 1.0) <= 420000 && NetBackoff.DelayMs(30, -1, 0.0) >= 180000, "backoff: jitter around the cap");
     Eq(5000, NetBackoff.DelayMs(0, -1, 0.5), "backoff: failure 0 treated as the first");
     Eq(42000, NetBackoff.DelayMs(5, 42, 0.0), "backoff: Retry-After wins, no jitter");
     Eq(3600000, NetBackoff.DelayMs(1, 999999, 0.5), "backoff: Retry-After clamped to 1 h");
@@ -597,10 +597,32 @@ static partial class CoreTests {
       Eq(120000, PlansWait.MaintenanceWaitMs(new WaitReply { Kind = WaitKind.Maintenance, RetryAfterSec = 120 }, now1, 20, 5), "wait: Retry-After when no end time");
       Eq(300000, PlansWait.MaintenanceWaitMs(new WaitReply { Kind = WaitKind.Maintenance }, now1, 20, 5), "wait: 5 minutes when nothing is known");
       Eq(21600000, PlansWait.MaintenanceWaitMs(new WaitReply { Kind = WaitKind.Maintenance, Until = now1.AddDays(3) }, now1, 20, 5), "wait: never more than 6 h");
-      Eq(30000, PlansWait.WaitMs(1, 30), "wait: Retry-After seconds win over the backoff");
-      Eq(2000, PlansWait.WaitMs(1, -1), "wait: no Retry-After, the backoff");
-      Eq(3600000, PlansWait.WaitMs(1, 99999), "wait: Retry-After clamped to 1 h");
-      Eq(1000, PlansWait.WaitMs(3, 0), "wait: Retry-After 0 is 1 s");
+      // a busy site (not maintenance): short, jittered, bounded pauses
+      Eq(20000, PlansWait.WaitMs(1, 30, 0.5), "wait: Retry-After 30 s is cut to 20 s outside maintenance");
+      Eq(20000, PlansWait.WaitMs(1, 99999, 0.5), "wait: a huge Retry-After is cut to 20 s");
+      Eq(8000, PlansWait.WaitMs(1, 8, 0.0), "wait: Retry-After 8 s, no spread at the low end");
+      Check(PlansWait.WaitMs(1, 8, 1.0) == 10400, "wait: Retry-After spread is at most +30%");
+      Eq(2000, PlansWait.WaitMs(3, 0, 0.0), "wait: Retry-After 0 is raised to the 2 s minimum");
+      Eq(20000, NetBackoff.DelayMs(1, 3600, 0.0, false, false), "backoff: busy site, Retry-After 1 h is cut to 20 s");
+      Eq(3600000, NetBackoff.DelayMs(1, 3600, 0.0, false, true), "backoff: maintenance keeps the long Retry-After");
+      Eq(2000, NetBackoff.DelayMs(1, 0, 0.0, false, false), "backoff: busy site, Retry-After 0 is 2 s");
+      { var bo3 = new NetBackoff(); var t3 = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        bo3.Note(503, 3600, t3, 0.0, false); Check(bo3.Blocked(t3.AddSeconds(19)) && !bo3.Blocked(t3.AddSeconds(21)), "backoff: a busy 503 with Retry-After 1 h blocks 20 s only");
+        var bo4 = new NetBackoff(); bo4.Note(503, 3600, t3, 0.0, true); Check(bo4.Blocked(t3.AddSeconds(3599)), "backoff: a maintenance 503 keeps the 1 h Retry-After"); }
+      // growth, bounds and jitter of the pause (rnd 0 .. 1)
+      { int prevMax = 0; bool grows = true, inRange = true;
+        for (int n = 1; n <= 12; n++) {
+          int lo = PlansWait.WaitMs(n, -1, 0.0), hi = PlansWait.WaitMs(n, -1, 1.0), mid = PlansWait.WaitMs(n, -1, 0.5);
+          if (lo < 1500 || hi > 20000 || lo > mid || mid > hi) inRange = false;
+          if (hi < prevMax) grows = false; prevMax = hi;
+        }
+        Check(grows && inRange, "wait: pauses grow, stay within 1.5 s .. 20 s, jitter is inside the bounds");
+        Check(PlansWait.WaitMs(1, -1, 0.5) == 3000 && PlansWait.WaitMs(2, -1, 0.5) == 6000 && PlansWait.WaitMs(3, -1, 0.5) == 12000 && PlansWait.WaitMs(4, -1, 0.5) == 15000 && PlansWait.WaitMs(30, -1, 0.5) == 15000, "wait: 3, 6, 12, 15 s");
+        Eq(1800, PlansWait.WaitMs(1, -1, 0.0), "wait: first pause -40% = 1.8 s");
+        Eq(4200, PlansWait.WaitMs(1, -1, 1.0), "wait: first pause +40% = 4.2 s");
+        Eq(20000, PlansWait.WaitMs(4, -1, 1.0), "wait: the top is cut at 20 s");
+        Eq(6000, NetBackoff.Spread(10000, 20000, 0.0), "spread: 10 s -40%"); Eq(14000, NetBackoff.Spread(10000, 20000, 1.0), "spread: 10 s +40%");
+        Eq(1500, NetBackoff.Spread(1000, 20000, 0.0), "spread: never under 1.5 s"); }
     }
     Check(NetBackoff.IdleThrottled(false, new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc), new DateTime(2026, 1, 1, 0, 4, 0, DateTimeKind.Utc))
       && !NetBackoff.IdleThrottled(false, new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc), new DateTime(2026, 1, 1, 0, 5, 0, DateTimeKind.Utc))
@@ -648,8 +670,8 @@ static partial class CoreTests {
       Check(new AppConfig().ToJson().IndexOf("lastPlayer") < 0, "config: no lastPlayer before one is read");
     }
     Eq(0, PlansWait.Backoff(0), "backoff: none yet");
-    Check(PlansWait.Backoff(1) == 2000 && PlansWait.Backoff(2) == 4000 && PlansWait.Backoff(3) == 8000 && PlansWait.Backoff(5) == 32000, "backoff: 2 s, 4 s, 8 s ...");
-    Check(PlansWait.Backoff(6) == 60000 && PlansWait.Backoff(50) == 60000, "backoff: capped at 60 s");
+    Check(PlansWait.Backoff(1) == 3000 && PlansWait.Backoff(2) == 6000 && PlansWait.Backoff(3) == 12000 && PlansWait.Backoff(5) == 15000, "backoff: 3 s, 6 s, 12 s ...");
+    Check(PlansWait.Backoff(6) == 15000 && PlansWait.Backoff(50) == 15000, "backoff: capped at 15 s");
     Eq("2026-10-17T12:00:01.250Z", PlansWait.Since("2026-10-17T12:00:01.250Z", DateTime.UtcNow), "since: the server's last at");
     Eq("2026-10-17T11:59:00.000Z", PlansWait.Since("", new DateTime(2026, 10, 17, 12, 0, 0, DateTimeKind.Utc)), "since: now - 60 s at first");
 

@@ -22,7 +22,7 @@ namespace RealmForge {
   }
 
   public static class PlansWait {
-    public const int TimeoutMs = 35000, BackoffFirstMs = 2000, BackoffMaxMs = 60000;
+    public const int TimeoutMs = 35000, BackoffFirstMs = 3000, BackoffMaxMs = 15000, WaitCapMs = 20000;
 
     /// <summary>One reply of the site by HTTP code and body (pure).</summary>
     public static WaitReply Interpret(int http, string body) { return Interpret(http, body, false, -1); }
@@ -50,7 +50,7 @@ namespace RealmForge {
       return r;
     }
 
-    /// <summary>The wait after the n-th failure in a row (1-based): 2 s, 4 s, 8 s ... up to 60 s.</summary>
+    /// <summary>The wait after the n-th failure in a row (1-based): 3 s, 6 s, 12 s, 15 s (before the jitter).</summary>
     public static int Backoff(int failures) {
       if (failures < 1) return 0;
       long ms = BackoffFirstMs;
@@ -58,11 +58,15 @@ namespace RealmForge {
       return (int)Math.Min(ms, BackoffMaxMs);
     }
 
-    /// <summary>The pause after the n-th failure: the site's Retry-After (1 s .. 1 h) when it sent one, else the backoff.</summary>
-    public static int WaitMs(int failures, int retryAfterSec) {
-      if (retryAfterSec >= 0) return Math.Max(1, Math.Min(retryAfterSec, NetBackoff.MaxRetryAfterSec)) * 1000;
-      return Backoff(failures);
+    /// <summary>The pause after the n-th failure (the site is busy, not in maintenance): the site's Retry-After (2 s .. 20 s, a little spread) when it sent one,
+    /// else the backoff with +-40% jitter (1.5 s .. 20 s).</summary>
+    public static int WaitMs(int failures, int retryAfterSec) { return WaitMs(failures, retryAfterSec, NextRnd()); }
+    public static int WaitMs(int failures, int retryAfterSec, double rnd01) {
+      if (retryAfterSec >= 0) return NetBackoff.DelayMs(failures, retryAfterSec, rnd01, false, false);
+      return NetBackoff.Spread(Backoff(failures), WaitCapMs, rnd01);
     }
+    static readonly Random rng = new Random();
+    static double NextRnd() { lock (rng) return rng.NextDouble(); }
 
     /// <summary>How long the loop sleeps after a maintenance answer: until the end time plus the install's spread (<paramref name="reopenMin"/> minutes, by
     /// <paramref name="seed"/>), else Retry-After, else 5 minutes (at most 6 hours); at least 1 s.</summary>
