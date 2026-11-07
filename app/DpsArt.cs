@@ -423,17 +423,23 @@ namespace RealmForge {
       return (int)Math.Ceiling(f.Size * 1.3);
     }
 
+    /// <summary>Small text (up to 14 px) is drawn hinted (DrawString, AntiAliasGridFit) with a 1 px outline made of shifted copies: sharper than a path; bigger text is a path.</summary>
+    public static bool Hinted(float px) { return px <= 14.5f; }
+
     /// <summary>The width of a text in px (no outline), cached.</summary>
     public static float Measure(string t, float px, bool bold) {
       if (string.IsNullOrEmpty(t)) return 0;
       string key = (bold ? "b" : "s") + px.ToString("0.##", Inv) + "|" + t;
       float w; if (widths.TryGetValue(key, out w)) return w;
       lock (gate) { if (meas == null) { measBmp = new Bitmap(4, 4); meas = Graphics.FromImage(measBmp); meas.TextRenderingHint = TextRenderingHint.AntiAlias; } }
-      w = meas.MeasureString(t, TextFont(px, bold), new PointF(0, 0), StringFormat.GenericTypographic).Width;
+      lock (gate) {
+        meas.TextRenderingHint = Hinted(px) ? TextRenderingHint.AntiAliasGridFit : TextRenderingHint.AntiAlias;   // the same hint as the drawing: GridFit rounds the advances
+        w = meas.MeasureString(t, TextFont(px, bold), new PointF(0, 0), StringFormat.GenericTypographic).Width;
+      }
       widths[key] = w; return w;
     }
 
-    /// <summary>Draws a text with a dark outline (Pen 2.6*s, round joins) and a fill, from a cached bitmap, inside box (align 0 left, 1 centre, 2 right,
+    /// <summary>Draws a text with a dark outline (path: pen 1.5..2.6*s, round joins; small text: hinted, 1 px shifted copies) and a fill, from a cached bitmap, inside box (align 0 left, 1 centre, 2 right,
     /// vertically centred); a text wider than the box is cut with "…". Returns the width drawn.</summary>
     public static float Text(Graphics g, string t, float px, bool bold, Color fill, RectangleF box, int align) {
       if (string.IsNullOrEmpty(t) || box.Width < 4) return 0;
@@ -444,20 +450,30 @@ namespace RealmForge {
         if (tw > box.Width) return 0;
       }
       float s = Math.Max(0.7f, cacheS);
-      float pen = Math.Max(2f, 2.6f * s);
-      int m = (int)Math.Ceiling(pen / 2) + 1;
+      bool hinted = Hinted(px);
+      float pen = Math.Min(2.6f * s, Math.Max(1.5f, px * 0.13f));   // thin for small text (1.5..1.8 at 12..14 px), 2.6*s for big
+      int m = hinted ? 3 : (int)Math.Ceiling(pen / 2) + 1;
       Font f = TextFont(px, bold);
       int fh = LineH(f);
       string key = "tx|" + (bold ? "b" : "s") + px.ToString("0.##", Inv) + "|" + fill.ToArgb().ToString("x") + "|" + t;
       var bmp = Cached(key, () => {
         int bw = (int)Math.Ceiling(Measure(t, px, bold)) + 2 * m + 2, bh = fh + 2 * m;
         var o = new Bitmap(bw, bh, PixelFormat.Format32bppPArgb);
-        using (var g2 = Graphics.FromImage(o))
-        using (var path = new GraphicsPath()) {
+        using (var g2 = Graphics.FromImage(o)) {
+          if (hinted) {
+            g2.TextRenderingHint = TextRenderingHint.AntiAliasGridFit; g2.SmoothingMode = SmoothingMode.None;
+            using (var ob = new SolidBrush(Color.FromArgb(235, 10, 8, 14)))
+              for (int dy = -1; dy <= 1; dy++) for (int dx = -1; dx <= 1; dx++)
+                if (dx != 0 || dy != 0) g2.DrawString(t, f, ob, new PointF(m + dx, m + dy), StringFormat.GenericTypographic);
+            using (var fb = new SolidBrush(fill)) g2.DrawString(t, f, fb, new PointF(m, m), StringFormat.GenericTypographic);
+            return o;
+          }
+          using (var path = new GraphicsPath()) {
           g2.SmoothingMode = SmoothingMode.AntiAlias;
           path.AddString(t, f.FontFamily, (int)f.Style, f.Size, new PointF(m, m), StringFormat.GenericTypographic);
           using (var op = new Pen(Color.FromArgb(230, 10, 8, 14), pen) { LineJoin = LineJoin.Round }) g2.DrawPath(op, path);
           using (var fb = new SolidBrush(fill)) g2.FillPath(fb, path);
+          }
         }
         return o;
       });

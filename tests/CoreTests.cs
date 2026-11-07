@@ -5655,8 +5655,8 @@ static partial class CoreTests {
     Check(talent && (DpsNames.Skill(226650, true).Contains("5") || DpsNames.Skill(226650, true).Contains("«")), "names: a talent is labelled by its star or its quoted word");
     // the picture atlases (tools/dps-art.py): sizes of app/res/dps_*.* are 1536 wide for the two JPEG grids
     var hd = DpsArtIndex.Head(2266); var si = DpsArtIndex.Skill(226601);
-    Check(hd != null && hd.Length == 4 && hd[2] == 48 && hd[0] + 48 <= 1536 && hd[1] + 48 <= 480 && DpsArtIndex.Head(98765) == null, "art: a hero's portrait is a 48 px cell of the heads grid");
-    Check(si != null && si[2] == 48 && si[0] + 48 <= 1536 && DpsArtIndex.Skill(987654321) == null, "art: a skill's icon is a 48 px cell of the skills grid");
+    Check(hd != null && hd.Length == 4 && hd[2] == 64 && hd[0] + 64 <= 1536 && hd[1] + 64 <= 832 && DpsArtIndex.Head(98765) == null, "art: a hero's portrait is a 64 px cell of the heads grid");
+    Check(si != null && si[2] == 64 && si[0] + 64 <= 1536 && DpsArtIndex.Skill(987654321) == null, "art: a skill's icon is a 64 px cell of the skills grid");
     Check(DpsArtIndex.Piece("bar_bg") != null && DpsArtIndex.Piece("common_bg_popup_titel")[2] == 539 && DpsArtIndex.Piece("nope") == null, "art: UI pieces keep their size");
     Check(DpsArtIndex.Rarity(2266) == 5 && DpsArtIndex.ClassPiece(2266) == "prof_Mage" && DpsArtIndex.Faction(2266) > 0 && DpsArtIndex.Rarity(98765) == 0 && DpsArtIndex.ClassPiece(98765) == "", "art: rarity, class and faction of a hero");
     // the grouped list

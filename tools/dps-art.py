@@ -5,8 +5,8 @@
 
 The web folder is a checkout (or `git archive`) of the web repo's origin/main with: public/art/{ui,skills,aspects,heads},
 data/hero-pages/*.json, data/aspects.json, data/hero-head-crops.json.
-Writes app/res/dps_ui.png (UI pieces at their own size, 32 bpp), app/res/dps_heads.jpg (hero portraits 48x48, 32 columns),
-app/res/dps_skills.jpg (skill and aspect icons 48x48, 32 columns) and src/DpsArtIndex.cs (name|x|y|w|h, hero -> rarity, class, faction).
+Writes app/res/dps_ui.png (UI pieces at their own size, 32 bpp), app/res/dps_heads.jpg (hero portraits 64x64, 24 columns),
+app/res/dps_skills.jpg (skill and aspect icons 64x64, 24 columns (JPEG q90, 4:2:0)) and src/DpsArtIndex.cs (name|x|y|w|h, hero -> rarity, class, faction).
 Run it on the test server (not on the production machine): nice -n 19 python3 tools/dps-art.py --web /srv/work/artsrc
 """
 import argparse, glob, json, os, re, sys
@@ -15,7 +15,7 @@ from PIL import Image
 UI = ("common_description_tips common_bg_popup_titel common_btn_hortab0 common_btn_hortab2 common_btn_normal_s common_btn_special_s "
       "common_bg_barframe_01 bar_bg bar_red bar_yellow bar_blue bar_purple title_bg plate5 frame1 frame2 frame3 frame4 frame5 "
       "prof_Acrher prof_Fighter prof_Mage prof_Paladin prof_TacticMaster prof_Treatment back art-sep").split()
-CELL, COLS, WIN = 48, 32, 104          # icon side in the atlas, columns of a grid, side of the head window in the 122x185 portrait
+CELL, COLS, WIN = 64, 24, 104          # icon side in the atlas, columns of a grid, side of the head window in the 122x185 portrait
 BG = (24, 28, 38)                       # what a transparent cut-out is laid on before JPEG (no alpha there)
 BG_ASPECT = (176, 160, 120)             # the aspect icons are dark outline dragons with alpha: they lie on a light gold plate (on BG they were invisible)
 PROF = {1: "Fighter", 2: "Paladin", 4: "Acrher", 8: "Mage", 16: "Treatment", 256: "TacticMaster"}   # lib/art.ts of the site
@@ -73,7 +73,7 @@ for k, i in enumerate(ids):
     head_rows.append("%d|%d|%d|%d|%d" % (i, gx, gy, CELL, CELL))
     h = heroes[i]; fac = (h.get("fac") or [{}])[0].get("id", 0)
     hero_rows.append("%d|%d|%s|%d" % (i, h.get("r", 0), PROF.get(h.get("cls"), ""), fac))
-hd.save(os.path.join(a.res, "dps_heads.jpg"), quality=85, optimize=True)
+hd.save(os.path.join(a.res, "dps_heads.jpg"), quality=90, subsampling=2, optimize=True)   # 4:2:0
 
 # 3) skill icons (the ones the names table knows) and aspect icons
 icons = set()
@@ -92,7 +92,7 @@ skill_rows = []
 for k, (n, im) in enumerate(ims):
     gx, gy = (k % COLS) * CELL, (k // COLS) * CELL
     sk.paste(flat(im, CELL, BACK(n)), (gx, gy)); skill_rows.append("%s|%d|%d|%d|%d" % (n, gx, gy, CELL, CELL))
-sk.save(os.path.join(a.res, "dps_skills.jpg"), quality=85, optimize=True)
+sk.save(os.path.join(a.res, "dps_skills.jpg"), quality=90, subsampling=2, optimize=True)   # 4:2:0
 
 
 def arr(name, comment, rs):

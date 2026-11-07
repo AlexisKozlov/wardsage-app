@@ -110,7 +110,7 @@ namespace RealmForge {
     }
 
     /// <summary>Draws the panel into a new w x h bitmap (32-bit ARGB, see-through). hits gets the pressable places (may be null).
-    /// Sizes follow the plan (s = max(0.7, U/1000)); the layout never goes below 0.9 so that the 11/13 px text still fits the rows.</summary>
+    /// Sizes follow the plan (s = max(0.7, U/1000)); the layout never goes below 0.9 so that the 12/14 px text still fits the rows.</summary>
     public static Bitmap Render(DpsSnapshot snap, DpsView v, int w, int h, float s, List<DpsHit> hits) {
       s = Math.Max(s, 0.9f);
       DpsArt.Begin(s);
@@ -140,7 +140,7 @@ namespace RealmForge {
         string rs = en ? "Reset" : "Сброс";
         var names = new string[3]; var tws = new float[4]; bool shortSeg = false;
         float avail = iw - 3 * 3 * s, pp = 8 * s, sumw = 0;
-        float spx = Math.Max(11, 12 * s);
+        float spx = Math.Max(12, 12 * s);
         for (int attempt = 0; attempt < 2; attempt++) {
           for (int i = 0; i < 3; i++) names[i] = shortSeg ? SegShort(Segments[i], en) : SegName(Segments[i], en);
           string rl = shortSeg ? "\u00D7" : rs; pp = 8 * s;
@@ -167,12 +167,12 @@ namespace RealmForge {
         // ---- modes
         float mh = 26 * s, gapM = 3 * s, tabW = (iw - gapM * 3) / 4f;
         bool shortMode = false;
-        foreach (var mm in Modes) if (DpsArt.Measure(ModeName(mm, en), Math.Max(11, 13 * s), true) > tabW - 4 * s && DpsArt.Measure(ModeName(mm, en), 11, true) > tabW - 4 * s) shortMode = true;
+        foreach (var mm in Modes) if (DpsArt.Measure(ModeName(mm, en), Math.Max(12, 13 * s), true) > tabW - 4 * s && DpsArt.Measure(ModeName(mm, en), 12, true) > tabW - 4 * s) shortMode = true;
         for (int i = 0; i < Modes.Length; i++) {
           var r = new RectangleF(x0 + i * (tabW + gapM), y, tabW, mh);
           bool on = Modes[i] == v.Mode;
           string nm = shortMode ? ModeShort(Modes[i], en) : ModeName(Modes[i], en);
-          Button(c, r, on, nm, FitPx(nm, Math.Max(11, 13 * s), 11, true, tabW - 6 * s), true, on ? "common_btn_hortab2" : "common_btn_hortab0");
+          Button(c, r, on, nm, FitPx(nm, Math.Max(12, 13 * s), 12, true, tabW - 6 * s), true, on ? "common_btn_hortab2" : "common_btn_hortab0");
           Hit(c, r, "mode", i, 0);
         }
         y += mh + 4 * s;
@@ -273,11 +273,11 @@ namespace RealmForge {
       int px = (int)Math.Round(30 * s);
       DpsArt.Portrait(g, hero.Unit, hero.Base, hero.Hero, row.X + 3 * s, row.Y + (row.Height - px) / 2f, px, false);
       float tx = row.X + 3 * s + px + 7 * s, tr = row.Right - 5 * s, zone = tr - tx;
-      float vpx = Math.Max(13, 16 * s), npx = Math.Max(11, 14 * s), spx = Math.Max(11, 11 * s);
+      float vpx = Math.Max(14, 16 * s), npx = Math.Max(13, 14 * s), spx = Math.Max(12, 11 * s);
       var l1 = new RectangleF(tx, row.Y + 2 * s, zone, 17 * s);
       float vw = T(c, value, vpx, true, ValueCol, l1, 2);
       T(c, name, npx, true, White, new RectangleF(tx, l1.Y, Math.Max(10, zone - vw - 8 * s), l1.Height), 0);
-      var l2 = new RectangleF(tx, row.Y + 20 * s, zone, 13 * s);
+      var l2 = new RectangleF(tx, row.Y + 20 * s, zone, 14 * s);
       string st = back ?? sub;
       float sw = DpsArt.Measure(st, spx, false);
       if (back == null && sw > zone * 0.38f) { st = subShort; sw = DpsArt.Measure(st, spx, false); }
@@ -296,30 +296,30 @@ namespace RealmForge {
       if (v.Mode == DpsMode.Heal || v.Mode == DpsMode.Taken) {   // the skill rows are the hero's own damage: no heal / taken by skill in the game
         var nr = new RectangleF(x0, y, x1 - x0, 36 * s);
         string msg = v.Mode == DpsMode.Heal ? (en ? "The game does not track healing by skill" : "Лечение по скиллам игра не ведёт") : (en ? "The game does not track damage taken by skill" : "Получено по скиллам игра не ведёт");
-        T(c, msg, Math.Max(11, 13 * s), false, Idle, nr, 1);
+        T(c, msg, Math.Max(12, 13 * s), false, Idle, nr, 1);
         return;
       }
       var rows = DpsSkillRows.Group(hero.Unit, hero.Skills);
       if (rows.Count == 0) {
         var nr = new RectangleF(x0, y, x1 - x0, 36 * s);
-        T(c, en ? "Skills were not read in this fight" : "Скиллы в этом бою не прочитаны", Math.Max(11, 13 * s), false, Idle, nr, 1);
+        T(c, en ? "Skills were not read in this fight" : "Скиллы в этом бою не прочитаны", Math.Max(12, 13 * s), false, Idle, nr, 1);
         return;
       }
       long max = rows[0].Amount;
       string per = en ? "/s" : "/с";
-      float sh = 30 * s, gap = 2 * s;
-      int ipx = (int)Math.Round(28 * s);
+      float sh = 32 * s, gap = 2 * s;
+      int ipx = (int)Math.Round(30 * s);
       foreach (var sk in rows) {
         if (y + sh > bottom + 0.5f) break;
         var row = new RectangleF(x0, y, x1 - x0, sh);
         DpsArt.SkillIcon(c.G, sk.Tail ? 0 : sk.Id, row.X + 2 * s, row.Y + (sh - ipx) / 2f, ipx);
         float tx = row.X + 2 * s + ipx + 6 * s, tr = row.Right - 5 * s, zone = tr - tx;
-        var l1 = new RectangleF(tx, row.Y + 1 * s, zone, 15 * s);
-        float vw = T(c, Short(sk.Amount), Math.Max(13, 14 * s), true, ValueCol, l1, 2);
-        T(c, sk.Name(!en), Math.Max(11, 13 * s), false, White, new RectangleF(tx, l1.Y, Math.Max(10, zone - vw - 8 * s), l1.Height), 0);
-        var l2 = new RectangleF(tx, row.Y + 16 * s, zone, 12 * s);
+        var l1 = new RectangleF(tx, row.Y + 1 * s, zone, 16 * s);
+        float vw = T(c, Short(sk.Amount), Math.Max(14, 14 * s), true, ValueCol, l1, 2);
+        T(c, sk.Name(!en), Math.Max(13, 13 * s), false, White, new RectangleF(tx, l1.Y, Math.Max(10, zone - vw - 8 * s), l1.Height), 0);
+        var l2 = new RectangleF(tx, row.Y + 17 * s, zone, 13 * s);
         string st = ShortD(sk.Dps) + per + " · " + Pct(sk.Share);
-        float spx = Math.Max(11, 11 * s), sw = DpsArt.Measure(st, spx, false);
+        float spx = Math.Max(12, 11 * s), sw = DpsArt.Measure(st, spx, false);
         if (sw > zone * 0.45f) { st = Pct(sk.Share); sw = DpsArt.Measure(st, spx, false); }
         float barW = Math.Min(zone * 0.62f, zone - sw - 8 * s);
         if (barW > 10 * s) {
@@ -348,7 +348,7 @@ namespace RealmForge {
       using (var e = new Pen(Color.FromArgb(90, 200, 170, 110), 1f)) g.DrawRectangle(e, r.X, r.Y, r.Width, r.Height);
       double[] curve = Curve(seg, c.V.Mode, only, Math.Max(8, (int)(r.Width / 3)));
       if (c.V.Segment != DpsSegment.Current || curve == null) {
-        T(c, en ? "The curve is for the current fight" : "График есть только у текущего боя", Math.Max(11, 11 * s), false, Idle, r, 1);
+        T(c, en ? "The curve is for the current fight" : "График есть только у текущего боя", Math.Max(12, 11 * s), false, Idle, r, 1);
         return;
       }
       double peak = 0; foreach (var d in curve) if (d > peak) peak = d;
@@ -361,7 +361,7 @@ namespace RealmForge {
       var area = new List<PointF>(pts); area.Add(new PointF(pts[pts.Length - 1].X, cr.Bottom - 2 * s)); area.Add(new PointF(pts[0].X, cr.Bottom - 2 * s));
       using (var fb = new SolidBrush(Color.FromArgb(70, 240, 200, 110))) g.FillPolygon(fb, area.ToArray());
       using (var pen = new Pen(Color.FromArgb(255, 240, 200, 110), Math.Max(1.2f, 1.5f * s))) g.DrawLines(pen, pts);
-      float spx = Math.Max(11, 11 * s);
+      float spx = Math.Max(12, 11 * s);
       T(c, (en ? "peak " : "пик ") + ShortD(peak) + (en ? "/s" : "/с"), spx, false, SubCol, new RectangleF(r.X + 4 * s, r.Y, r.Width / 2, strip), 0);
       T(c, Clock(seg.Seconds), spx, false, SubCol, new RectangleF(r.X, r.Y, r.Width - 4 * s, strip), 2);
     }

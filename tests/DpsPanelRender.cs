@@ -88,9 +88,9 @@ static class DpsPanelRender {
 
 
   /// <summary>Renders one view at one game size, runs the checks, saves the scene when asked (and returns the panel size).</summary>
-  static void Shot(string dir, string name, DpsSnapshot snap, DpsView v, int gw, int gh, bool save, bool skillsView, bool needPortraits) {
+  static void Shot(string dir, string name, DpsSnapshot snap, DpsView v, int gw, int gh, bool save, bool skillsView, bool needPortraits, int ow = 0, int oh = 0, string crop = null) {
     double U = Math.Min(gh, gw * 675.0 / 1200.0); float s = DpsPanel.ScaleFor(U);
-    int w = DpsPanel.DefaultW(U), h = DpsPanel.DefaultH(U);
+    int w = ow > 0 ? ow : DpsPanel.DefaultW(U), h = oh > 0 ? oh : DpsPanel.DefaultH(U);
     int px = Math.Max(0, gw - w - (int)(0.012 * U)), py = (int)(0.22 * gh);
     var hits = new List<DpsHit>();
     DpsArt.PortraitReal = DpsArt.PortraitFallback = DpsArt.IconOwn = DpsArt.IconGeneric = DpsArt.IconNone = 0;
@@ -122,6 +122,25 @@ static class DpsPanelRender {
           }
         }
       } finally { DpsArt.Suppress = false; }
+      if (crop != null) {
+        // x3 crops (nearest neighbour: every pixel of the panel is visible): the top with the tabs, two hero rows, a hero header with two skill rows
+        float ls = Math.Max(s, 0.9f);
+        var rects = new List<KeyValuePair<string, Rectangle>>();
+        if (crop == "list") {
+          rects.Add(new KeyValuePair<string, Rectangle>("top", new Rectangle(0, 0, w, (int)(100 * ls))));
+          rects.Add(new KeyValuePair<string, Rectangle>("hero", new Rectangle(0, (int)(96 * ls), w, (int)(80 * ls))));
+        } else rects.Add(new KeyValuePair<string, Rectangle>("skill", new Rectangle(0, (int)(96 * ls), w, (int)(112 * ls))));
+        using (var sc = PanelScene(panel, gw, gh, px, py))
+          foreach (var kv in rects) {
+            var rc = Rectangle.Intersect(kv.Value, new Rectangle(0, 0, w, h));
+            using (var big = new Bitmap(rc.Width * 3, rc.Height * 3, PixelFormat.Format24bppRgb))
+            using (var gg = Graphics.FromImage(big)) {
+              gg.InterpolationMode = InterpolationMode.NearestNeighbor; gg.PixelOffsetMode = PixelOffsetMode.Half;
+              gg.DrawImage(sc, new Rectangle(0, 0, big.Width, big.Height), rc.X, rc.Y, rc.Width, rc.Height, GraphicsUnit.Pixel);
+              big.Save(Path.Combine(dir, "crop3-" + name + "-" + kv.Key + ".png"), ImageFormat.Png);
+            }
+          }
+      }
       if (save) using (var scene = new Bitmap(Bg(gw, gh))) {
         using (var g = Graphics.FromImage(scene)) g.DrawImage(panel, px, py);
         scene.Save(Path.Combine(dir, name + ".png"), ImageFormat.Png);
@@ -174,6 +193,16 @@ static class DpsPanelRender {
         // the four key pictures: the list and a hero's skills (Russian, damage)
         Shot(dir, sn + "-list-" + t, sb, new DpsView(), z[0], z[1], keep, false, true);
         Shot(dir, sn + "-skills-" + t, sb, Open(sb, new DpsView()), z[0], z[1], keep, true, true);
+      }
+    }
+    // the narrow window the owner has (about 0.25 x 0.39 of the game height, 250 x 393 on 1920x1009) and the default one, with x3 crops, three game sizes
+    foreach (var z in new[] { new[] { 1920, 1009 }, new[] { 2560, 1440 }, new[] { 3840, 2160 } }) {
+      double U = Math.Min(z[1], z[0] * 675.0 / 1200.0); string t = z[0] + "x" + z[1];
+      foreach (var win in new[] { new[] { (int)Math.Round(0.248 * U), (int)Math.Round(0.39 * U) }, new[] { DpsPanel.DefaultW(U), DpsPanel.DefaultH(U) } }) {
+        string tag = "w" + win[0] + "-" + t;
+        Shot(dir, "narrow-list-ru-" + tag, sb, new DpsView { Lang = "ru" }, z[0], z[1], true, false, true, win[0], win[1], "list");
+        Shot(dir, "narrow-skills-ru-" + tag, sb, Open(sb, new DpsView { Lang = "ru" }), z[0], z[1], true, true, true, win[0], win[1], "skills");
+        Shot(dir, "narrow-list-en-" + tag, sb, new DpsView { Lang = "en", Mode = DpsMode.Heal }, z[0], z[1], false, false, true, win[0], win[1], null);
       }
     }
     foreach (var f in new[] { "a-list", "a-skills" }) File.Copy(Path.Combine(dir, f + "-1920x1080.png"), Path.Combine(dir, f + ".png"), true);
