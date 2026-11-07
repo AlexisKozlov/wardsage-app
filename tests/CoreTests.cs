@@ -940,6 +940,8 @@ static partial class CoreTests {
     TimelineTests();
     Console.WriteLine("Attack event log (src/AttackLog.cs, test build only: the cooldown decode, caps, upload, offsets):");
     AttackLogTests.Run(Check);
+    Console.WriteLine("Live DPS meter data (src/DpsFeed.cs):");
+    DpsFeedTests();
 
     Console.WriteLine("Error reports (src/ErrorReport.cs: opt-in, scrubbed, deduped, capped):");
     ErrorReportTests(mock);
@@ -5620,6 +5622,154 @@ static partial class CoreTests {
     return new FilterView { NowMs = now, Foreground = true, W = 1920, H = 1009, Item = item, Wanted = wanted, SetId = 722800, StatId = 13, SetIndex = 2, StatIndex = 3,
       Suits = new long[0], MainAttrs = new long[0], SubAttrs = new long[0], SetOrder = new long[] { 723000, 722900, 722800, 722600 },
       PanelMem = mem, PanelOpen = pix };
+  }
+
+  // ---------------------------------------------------------------- the live DPS meter (src/DpsFeed.cs)
+  static StatLine DL(uint c, int unit, long dmg, long boss = 0, int heal = 0, int taken = 0) {
+    return new StatLine { C = c, Unit = unit, Hero = (uint)(1000 + unit), Base = 7000 + unit, Power = 5, Damage = dmg, ToBoss = boss, Heal = heal, Taken = taken };
+  }
+  static DpsTick DT(int stage, uint frame, bool final, params StatLine[] st) {
+    return new DpsTick { Stage = stage, Frame = frame, Final = final, Stats = new List<StatLine>(st) };
+  }
+  static bool Near(double a, double b, double eps) { return Math.Abs(a - b) <= eps; }
+
+  static void DpsFeedTests() {
+    const int Other = 1001001, Arena = 6001001, Boss = 5001001;
+    double fs = 270.0 / 4096;
+    // DPS and share
+    var f = new DpsFeed();
+    f.Push(DT(Other, 300, false, DL(1, 10, 3000), DL(1, 11, 1000)));
+    var sn = f.Snapshot; var cu = sn.Current;
+    Check(cu != null && cu.Heroes.Count == 2 && cu.Heroes[0].Unit == 10 && cu.Heroes[1].Unit == 11, "dps: heroes by damage, biggest first");
+    Check(Near(cu.Heroes[0].Avg[0], 3000 / (300 * fs), 1e-9) && Near(cu.Seconds, 300 * fs, 1e-9), "dps: damage / (frames x 270/4096 s)");
+    Check(Near(cu.Heroes[0].Share[0], 0.75, 1e-9) && Near(cu.Heroes[1].Share[0], 0.25, 1e-9), "share: 3000 and 1000 = 75% and 25%");
+    Check(cu.Kind == DpsKind.Other && cu.Open && !cu.Final && cu.Heroes[0].Base == 7010 && cu.Heroes[0].Hero == 1010, "segment: kind, open, identity of the hero");
+    Check(cu.Heroes[0].Share[1] == 0 && cu.Sorted(DpsMode.Damage)[0].Unit == 10, "share of an empty metric is 0 (no NaN)");
+    // the window of N seconds
+    f = new DpsFeed();
+    long d = 0;
+    for (uint fr = 15; fr <= 300; fr += 15) { d += 100; f.Push(DT(Other, fr, false, DL(1, 10, d))); }
+    double exp = (2000 - 900) / (152 * fs);   // the point at or before frame 300 - 152 is frame 135 (900)
+    Check(Near(f.Snapshot.Current.Heroes[0].Recent[0], exp, 1e-6) && f.WindowSec == 10, "window: damage of the last 10 s / the window (" + f.Snapshot.Current.Heroes[0].Recent[0].ToString("0.00") + ")");
+    f.WindowSec = 5; f.Push(DT(Other, 315, false, DL(1, 10, d + 100)));
+    long w5 = (long)Math.Round(5 / fs), tgt = 315 - w5;   // 76 frames: 240 -> value at <= 239 is frame 225 = 1500
+    Check(Near(f.Snapshot.Current.Heroes[0].Recent[0], (2100 - 1500) / (w5 * fs), 1e-6), "window: N = 5 s");
+    // a short fight: the window is the fight
+    f = new DpsFeed(); f.Push(DT(Other, 60, false, DL(1, 10, 600)));
+    Check(Near(f.Snapshot.Current.Heroes[0].Recent[0], f.Snapshot.Current.Heroes[0].Avg[0], 1e-9), "window: a fight shorter than N = the average");
+    // a point about a second
+    f = new DpsFeed();
+    f.Push(DT(Other, 15, false, DL(1, 10, 10))); f.Push(DT(Other, 20, false, DL(1, 10, 20))); f.Push(DT(Other, 29, false, DL(1, 10, 30))); f.Push(DT(Other, 30, false, DL(1, 10, 40)));
+    Check(f.Snapshot.Current.Heroes[0].Series.Length == 2 && f.Snapshot.Current.Heroes[0].Value[0] == 40, "step: a reading within a second of the last point is skipped");
+    // no change, no point
+    f.Push(DT(Other, 45, false, DL(1, 10, 40))); f.Push(DT(Other, 60, false, DL(1, 10, 40)));
+    Check(f.Snapshot.Current.Heroes[0].Series.Length == 2 && f.Snapshot.Current.Frames == 60, "points only when a value changes; the clock goes on");
+    // monotonic
+    f = new DpsFeed();
+    f.Push(DT(Other, 15, false, DL(1, 10, 500), DL(1, 11, 100)));
+    f.Push(DT(Other, 30, false, DL(1, 10, 400), DL(1, 11, 300)));   // the sum would fall? 700 vs 600: grows, but a hero went back
+    var h10 = f.Snapshot.Current.Heroes;
+    f.Push(DT(Other, 45, false, DL(1, 10, 100), DL(1, 11, 100)));   // the sum falls: dropped
+    Check(f.Snapshot.Rejected == 1 && f.Snapshot.Current.Frames == 30 && f.Snapshot.Current.Heroes[0].Value[0] >= 100, "monotonic: a reading with a smaller sum is dropped");
+    f.Push(DT(Other, 60, false, DL(1, 10, 900), DL(1, 11, 300)));
+    Check(f.Snapshot.Rejected == 1 && f.Snapshot.Current.Frames == 60, "monotonic: the next good reading goes on");
+    f.Push(DT(Other, 75, false, DL(1, 10, -5)));
+    Check(f.Snapshot.Rejected == 2 && f.Snapshot.Current.Frames == 60, "a negative value drops the reading");
+    // five dropped readings in a row: a new fight
+    f = new DpsFeed();
+    f.Push(DT(Other, 500, false, DL(1, 10, 9000)));
+    for (uint i = 0; i < 4; i++) f.Push(DT(Other, 520 + i * 20, false, DL(1, 10, 10 + i)));
+    Check(f.Snapshot.Rejected == 4 && f.Snapshot.Previous == null, "streak: four dropped, still the same fight");
+    f.Push(DT(Other, 600, false, DL(1, 10, 50)));
+    Check(f.Snapshot.Previous != null && f.Snapshot.Previous.Heroes[0].Value[0] == 9000 && f.Snapshot.Current.Heroes[0].Value[0] == 50, "streak: the fifth starts a new fight");
+    // skills: the check against the damage
+    f = new DpsFeed();
+    Func<uint, bool, long, long, DpsTick> SK = (fr, fin, a, b) => {
+      var t = DT(Other, fr, fin, DL(1, 10, 1000 + (long)fr));
+      t.Skills = new Dictionary<string, Dictionary<int, long>> { { "1:10", new Dictionary<int, long> { { 101, a }, { 102, b } } } };
+      return t;
+    };
+    f.Push(SK(15, false, 700, 315));   // sum 1015 = damage 1015
+    var sk = f.Snapshot.Current.Heroes[0].Skills;
+    Check(sk != null && sk.Count == 2 && sk[0].Id == 101 && Near(sk[0].Share, 700 / 1015.0, 1e-9) && f.Snapshot.Current.SkillsOn, "skills: by amount, share of the sum");
+    Check(Near(sk[0].Dps, 700 / (15 * fs), 1e-9), "skills: DPS over the fight");
+    f.Push(SK(30, false, 710, 330));   // 1040 vs 1030: within the tolerance
+    Check(!f.Snapshot.SkillsOff && f.Snapshot.Current.Heroes[0].Skills[0].Amount == 710, "skills: a small gap (read a moment apart) passes");
+    f.Push(SK(45, false, 2000, 2000)); f.Push(SK(60, false, 2000, 2000));
+    Check(!f.Snapshot.SkillsOff && f.Snapshot.Current.Heroes[0].Skills[0].Amount == 710, "skills: a wrong reading keeps the last good one");
+    f.Push(SK(75, false, 2000, 2000));
+    Check(f.Snapshot.SkillsOff && f.Snapshot.Current.Heroes[0].Skills == null && !f.Snapshot.Current.SkillsOn, "skills: three errors in a row switch them off for the fight");
+    f.Push(SK(90, false, 750, 340));
+    Check(f.Snapshot.SkillsOff && f.Snapshot.Current.Heroes[0].Skills == null && f.Snapshot.Current.Heroes[0].Value[0] == 1090, "skills: off stays off; the damage goes on");
+    f.Push(DT(Boss, 15, false, DL(1, 10, 100)));
+    Check(!f.Snapshot.SkillsOff, "skills: a new fight starts with them on");
+    // an exact check at the end
+    f = new DpsFeed();
+    f.Push(SK(15, false, 700, 315)); f.Push(SK(30, true, 700, 330));   // final: 1030 vs 1030 exact
+    Check(f.Snapshot.Current.Heroes[0].Skills != null && f.Snapshot.Current.Final, "skills: a final reading that adds up exactly");
+    f = new DpsFeed(); f.Push(SK(15, false, 700, 315)); f.Push(SK(30, true, 700, 331));
+    Check(f.Snapshot.Current.Heroes[0].Skills == null && f.Snapshot.Current.Final && f.Snapshot.Current.Heroes[0].Value[0] == 1030, "skills: a final reading 1 off hides the skills, the damage stays");
+    // arena side filter
+    f = new DpsFeed();
+    f.Push(DT(Arena, 30, false, DL(1, 10, 500), DL(2, 10, 9999), DL(2, 11, 800), DL(1, 11, 100)));
+    cu = f.Snapshot.Current;
+    Check(cu.Kind == DpsKind.Arena && cu.Primary == 1 && cu.Heroes.Count == 2 && cu.Heroes[0].C == 1 && cu.Heroes[0].Value[0] == 500 && cu.Heroes[1].C == 1, "arena: only the lowest controller; the same unit on the other side is not mixed in");
+    Check(Near(cu.Heroes[0].Share[0], 500 / 600.0, 1e-9), "arena: shares count the own side only");
+    f.Push(DT(6002001, 15, false, DL(1, 10, 1)));
+    Check(f.Snapshot.Current.Kind == DpsKind.Arena, "arena: the defence run (6002xxx) too");
+    f = new DpsFeed();
+    f.Push(DT(Boss, 30, false, DL(1, 10, 500, 400), DL(2, 10, 50)));
+    Check(f.Snapshot.Current.Kind == DpsKind.Boss && f.Snapshot.Current.Heroes.Count == 2 && f.Snapshot.Current.Heroes[0].Value[1] == 400, "boss: both controllers kept, to-boss is a metric");
+    Check(DpsFeed.KindOf(4809017) == DpsKind.Malrik && DpsFeed.KindOf(5201003) == DpsKind.Boss && DpsFeed.KindOf(4601001) == DpsKind.Boss && DpsFeed.KindOf(Other) == DpsKind.Other && DpsFeed.KindOf(0) == DpsKind.Other, "kinds of fight by stage");
+    // metrics
+    f = new DpsFeed();
+    f.Push(DT(Other, 150, false, DL(1, 10, 100, 60, 30, 20), DL(1, 11, 100, 40, 10, 80)));
+    cu = f.Snapshot.Current;
+    Check(Near(cu.Heroes[0].Share[2], 0.75, 1e-9) || Near(cu.Heroes[1].Share[2], 0.75, 1e-9), "metrics: heal share");
+    Check(cu.Sorted(DpsMode.Taken)[0].Unit == 11 && cu.Sorted(DpsMode.ToBoss)[0].Unit == 10, "metrics: sorted by taken / to boss");
+    // a change of the fight
+    f = new DpsFeed();
+    f.Push(DT(Other, 300, false, DL(1, 10, 1000)));
+    f.Push(DT(Other, 330, false, DL(1, 10, 1500)));
+    f.Push(DT(Boss, 15, false, DL(1, 10, 70)));
+    sn = f.Snapshot;
+    Check(sn.Previous != null && sn.Previous.Stage == Other && sn.Previous.Heroes[0].Value[0] == 1500 && sn.Current.Stage == Boss && sn.Current.Heroes[0].Value[0] == 70, "new fight: the old one is the previous segment");
+    Check(sn.Total != null && sn.Total.Heroes[0].Value[0] == 1570 && sn.Total.Fights == 2 && sn.Total.Frames == 345, "total: the old fight and the running one together");
+    f.Push(DT(Boss, 30, true, DL(1, 10, 100)));
+    sn = f.Snapshot;
+    Check(sn.Current.Final && !sn.Current.Open && sn.Total.Heroes[0].Value[0] == 1600 && sn.Total.Fights == 2 && !sn.Total.Open, "final: the fight closes, the total takes it once");
+    f.Push(DT(Boss, 30, true, DL(1, 10, 100)));
+    Check(f.Snapshot.Total.Heroes[0].Value[0] == 1600 && f.Snapshot.Previous.Stage == Other, "final: a second final reading changes nothing");
+    f.Push(DT(Other, 15, false, DL(1, 10, 20)));
+    sn = f.Snapshot;
+    Check(sn.Previous.Stage == Boss && sn.Current.Stage == Other && sn.Total.Heroes[0].Value[0] == 1620 && sn.Total.Fights == 3, "next fight after a final: the finished one is previous, total adds up");
+    // the clock going back in the same stage: a new fight
+    f.Push(DT(Other, 300, false, DL(1, 10, 400)));
+    f.Push(DT(Other, 45, false, DL(1, 10, 30)));
+    Check(f.Snapshot.Previous.Heroes[0].Value[0] == 400 && f.Snapshot.Current.Heroes[0].Value[0] == 30, "the frame going back = a new fight");
+    // the total merges a hero by (controller, unit) over fights; skills too
+    f = new DpsFeed();
+    f.Push(SK(15, true, 700, 315));
+    f.Push(DT(Other, 10, false, DL(1, 11, 5)));
+    var tsk = f.Snapshot.Total;
+    Check(tsk.Heroes.Count == 2 && tsk.Heroes[0].Unit == 10 && tsk.Heroes[0].Skills != null && tsk.Heroes[0].Skills[0].Amount == 700, "total: skills of a finished fight carry over");
+    // the buffer limit and the thinning
+    f = new DpsFeed();
+    long dd = 0;
+    for (uint fr = 15; fr <= 15 * 6000; fr += 15) { dd += 10; f.Push(DT(Other, fr, false, DL(1, 10, dd))); }
+    var ser = f.Snapshot.Current.Heroes[0].Series;
+    Check(ser.Length <= DpsFeed.MaxPoints && ser.Length > 1000 && ser[ser.Length - 1][1] == dd && ser[0][0] == 15, "buffer: at most " + DpsFeed.MaxPoints + " points, first and last kept (" + ser.Length + ")");
+    bool inc = true; for (int i = 1; i < ser.Length; i++) if (ser[i][0] <= ser[i - 1][0] || ser[i][1] < ser[i - 1][1]) inc = false;
+    Check(inc, "buffer: the thinned curve still goes forward");
+    // reset
+    f.Reset();
+    Check(f.Snapshot.Current == null && f.Snapshot.Previous == null && f.Snapshot.Total == null, "reset: nothing left");
+    f.Push(null); f.Push(new DpsTick());
+    Check(f.Snapshot.Current == null, "empty readings are ignored");
+    // no NaN, no negatives
+    f = new DpsFeed(); f.Push(DT(Other, 0, false, DL(1, 10, 0)));
+    var z = f.Snapshot.Current.Heroes[0];
+    Check(z.Avg[0] == 0 && z.Recent[0] == 0 && z.Share[0] == 0, "an empty first reading: zeros, no NaN");
   }
 
 }
