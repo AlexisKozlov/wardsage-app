@@ -29,7 +29,7 @@ namespace RealmForge {
   static class DpsPanel {
     public static readonly DpsMode[] Modes = { DpsMode.Damage, DpsMode.ToBoss, DpsMode.Heal, DpsMode.Taken };
     public static readonly DpsSegment[] Segments = { DpsSegment.Current, DpsSegment.Previous, DpsSegment.Total };
-    // the bar colours in turn (the Warcraft class colours the meters of that game use)
+    // the bar colours in turn
     static readonly int[] Palette = { 0xC79C6E, 0xF58CBA, 0xABD473, 0xFFF569, 0xE6E6E6, 0x0070DE, 0x69CCF0, 0x9482C9, 0xFF7D0A, 0x00FF96 };
 
     /// <summary>The scale for a game window: 1 at a 1000 px high game, never below 0.7 (src/ListTracker.cs Ui.Unit).</summary>
