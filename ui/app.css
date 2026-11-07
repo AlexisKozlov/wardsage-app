@@ -1,6 +1,8 @@
 /* Wardsage desktop — same palette and type as the site (wardsage.com). */
 @font-face { font-family: Cinzel; src: url(fonts/cinzel-500.woff2) format('woff2'); font-weight: 500; font-display: block }
 @font-face { font-family: Cinzel; src: url(fonts/cinzel-700.woff2) format('woff2'); font-weight: 700; font-display: block }
+@font-face { font-family: 'Cormorant SC'; src: url(fonts/cormorant-sc-cyrillic-700.woff2) format('woff2'); font-weight: 700; font-display: block; unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116 }
+@font-face { font-family: 'Cormorant SC'; src: url(fonts/cormorant-sc-latin-700.woff2) format('woff2'); font-weight: 700; font-display: block; unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD }
 @font-face { font-family: Alegreya; src: url(fonts/alegreya-sans-400.woff2) format('woff2'); font-weight: 400; font-display: block }
 @font-face { font-family: Alegreya; src: url(fonts/alegreya-sans-500.woff2) format('woff2'); font-weight: 500; font-display: block }
 @font-face { font-family: Alegreya; src: url(fonts/alegreya-sans-700.woff2) format('woff2'); font-weight: 700; font-display: block }
@@ -12,7 +14,8 @@
   --gold: #e8cf8e; --gold2: #c9a45c; --goldhi: #fff1c8; --golddim: #6b5a36;
   --text: #ece6d6; --muted: #b9b09a; --dim: #8c8472;
   --ok: #a9d68f; --okbg: #1a2a17; --err: #f0a08c; --errbg: #2d1a17; --info: #8fb8e8;
-  --display: Cinzel, Georgia, serif;
+  --display: Cinzel, 'Cormorant SC', Georgia, serif;   /* Cinzel has no Cyrillic: Russian headings take Cormorant SC */
+  --serif: 'Cormorant SC', Cinzel, Georgia, serif;
   --body: Alegreya, 'Segoe UI', system-ui, sans-serif;
   --ease: cubic-bezier(.2, .7, .2, 1);
 }
@@ -260,42 +263,96 @@ body.still *, body.still *::before, body.still *::after { animation-play-state: 
 .readonly svg { width: 16px; height: 16px; stroke: var(--dim); fill: none; stroke-width: 1.8; flex: none }
 
 /* ---------- settings ---------- */
-.setcols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; align-items: start }
-.setcol { display: grid; gap: 18px; min-width: 0 }
-.sec { padding: 16px 20px 6px }
-.sec h2 { margin: 0 0 4px; padding-bottom: 10px; border-bottom: 1px solid var(--line) }
-.srow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 16px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--line2) }
-.srow:last-child { border-bottom: 0 }
-.stx b { display: block; font-weight: 500 }
-.stx small { display: block; color: var(--dim); font-size: 13px; line-height: 1.3; margin-top: 2px }
-.stx .more { display: inline-block; margin-top: 4px; font-size: 13px }
-.sct { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap }
-.sdet { grid-column: 1 / -1; margin: 4px 0 0; padding: 10px 12px; font-size: 13.5px; line-height: 1.45; color: var(--muted); background: rgba(11, 16, 27, .45); border-left: 2px solid var(--golddim) }
+/* ---------- settings: one page of game-style section cards, the anchors beside them ---------- */
+.page:has(.setroot) { max-width: 1100px }
+.setroot { container-type: inline-size }
+.setgrid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start }
+.setsecs { display: grid; gap: 20px; min-width: 0 }
+.setnav { position: sticky; top: 0; z-index: 3; display: flex; gap: 6px; overflow-x: auto; padding: 8px 0; background: rgba(11, 16, 27, .94); border-bottom: 1px solid var(--line2); scrollbar-width: none }
+.setnav::-webkit-scrollbar { display: none }
+.setnav button { all: unset; box-sizing: border-box; cursor: pointer; flex: none; padding: 7px 14px; font: 500 14px/1.2 var(--body); color: var(--muted); border: 1px solid transparent; border-radius: 3px; white-space: nowrap; transition: color .15s, background .15s }
+.setnav button:hover { color: var(--text) }
+.setnav button.on { color: var(--goldhi); border-color: var(--line); background: linear-gradient(90deg, rgba(232, 207, 142, .16), rgba(232, 207, 142, .03)) }
+.setnav button:focus-visible { outline: 2px solid var(--goldhi); outline-offset: 1px }
+.sec { scroll-margin-top: 64px }
+.card.framed.sec { padding: 22px 26px 12px }
+@container (min-width: 900px) {
+  .setgrid { grid-template-columns: 180px minmax(0, 1fr); gap: 28px }
+  .setnav { top: 12px; flex-direction: column; gap: 2px; overflow: visible; padding: 0; margin: 0; background: none; border: 0 }
+  .setnav button { padding: 9px 12px; white-space: normal; border-radius: 0; border-width: 0 0 0 2px; border-left-style: solid; border-left-color: var(--line2) }
+  .setnav button.on { border-left-color: var(--gold) }
+  .setsecs { max-width: 760px }
+  .sec { scroll-margin-top: 14px }
+}
+/* the section title: a medal with the icon, the name, a golden line */
+.sh { display: flex; align-items: center; gap: 16px; margin: 0 0 8px; font: 700 18px/1.15 var(--serif); letter-spacing: .6px; color: var(--goldhi); text-transform: none }
+.sh::after { content: ''; flex: 1; min-width: 24px; height: 1px; background: linear-gradient(90deg, var(--gold2), transparent) }
+.sh .medal { flex: none; width: 36px; height: 36px; margin: 5px; border-radius: 50%; display: grid; place-items: center; background: radial-gradient(circle at 50% 30%, #1d2944, #0b101b);
+  box-shadow: 0 0 0 1px var(--gold2), 0 0 0 4px var(--bg2), 0 0 0 5px var(--edge) }
+.sh .medal svg { width: 18px; height: 18px; stroke: var(--gold); fill: none; stroke-width: 1.8 }
+.tbadge { margin-left: 4px; padding: 2px 8px 1px; background: var(--gold); color: var(--bg2); font: 700 11px/1.3 var(--display); letter-spacing: 1.2px; order: 1 }
+.advbtn { all: unset; box-sizing: border-box; cursor: pointer; display: flex; align-items: center; gap: 16px; width: 100%; font: inherit; color: inherit; letter-spacing: inherit }
+.advbtn:focus-visible { outline: 2px solid var(--goldhi); outline-offset: 4px }
+.sh:has(.advbtn)::after { display: none }
+.advbtn .shx { flex: 1; display: flex; align-items: center; gap: 16px }
+.advbtn .shx::after { content: ''; flex: 1; height: 1px; background: linear-gradient(90deg, var(--gold2), transparent) }
+.advbtn::after { content: ''; flex: none; width: 8px; height: 8px; border: solid var(--gold2); border-width: 0 2px 2px 0; transform: rotate(45deg) translateY(-2px); transition: transform .2s var(--ease) }
+.advbtn[aria-expanded=true]::after { transform: rotate(225deg) }
+.sec.adv.shut { padding-bottom: 14px } .sec.adv.shut .sh { margin-bottom: 0 }
+/* the account: the sync code on a full line over the banner art */
+.sec.acct { background: linear-gradient(90deg, rgba(14, 21, 36, .97) 38%, rgba(14, 21, 36, .72)), url(img/bg_banner.webp) 60% 40% / cover no-repeat, var(--panel); padding-bottom: 22px }
+.acct-code { display: flex; align-items: center; justify-content: space-between; gap: 12px 20px; flex-wrap: wrap; padding-top: 6px }
+.code.big { font-size: 18px; font-weight: 700; letter-spacing: .06em; color: var(--goldhi) }
+.acct-sub { margin: 6px 0 0; font-size: 14px; line-height: 1.45; color: var(--muted) }
+.acct-sub.none { margin: 4px 0 14px; font-size: 15px; color: var(--text) }
+.acct-btns { display: flex; align-items: center; gap: 14px; flex-wrap: wrap }
+.quiet { all: unset; cursor: pointer; padding: 6px 4px; font-size: 14px; color: var(--muted); text-decoration: underline dotted; text-underline-offset: 3px }
+.quiet:hover { color: var(--text) } .quiet[data-ask] { color: var(--err) }
+.quiet:focus-visible { outline: 2px solid var(--goldhi); outline-offset: 2px }
+/* a setting: title and one short line, the control on the right */
+.srow { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 20px; align-items: center; min-height: 64px; padding: 14px 0 }
+.srow::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 1px; background: linear-gradient(90deg, var(--line2), rgba(42, 50, 70, 0)) }
+.srow:last-child::after { display: none }
+.stx b { display: block; font: 500 16px/1.3 var(--body); color: var(--text) }
+.stx small { display: block; margin-top: 2px; font-size: 14px; line-height: 1.45; color: var(--muted) }
+.more { all: unset; box-sizing: border-box; cursor: pointer; display: inline-flex; align-items: center; gap: 8px; margin-top: 6px; font-size: 14px; color: var(--gold2) }
+.more::before { content: ''; width: 6px; height: 6px; border: solid currentColor; border-width: 0 2px 2px 0; transform: rotate(-45deg); transition: transform .2s var(--ease) }
+.more[aria-expanded=true]::before { transform: rotate(45deg) translate(-1px, -1px) }
+.more:hover { color: var(--gold) }
+.more:focus-visible { outline: 2px solid var(--goldhi); outline-offset: 3px }
+.sct { display: flex; align-items: center; justify-content: flex-end; gap: 12px; flex-wrap: wrap }
+.swl { min-width: 28px; font-size: 14px; color: var(--muted) }
+.switch[aria-checked=true] + .swl { color: var(--goldhi) }
+.sdet { grid-column: 1 / -1; margin: 0; padding: 10px 14px; font-size: 14px; line-height: 1.5; color: var(--muted); background: rgba(11, 16, 27, .45); border-left: 2px solid var(--golddim) }
+.sechint { margin: 0; padding: 12px 0 10px; font-size: 14px; line-height: 1.45; color: var(--muted) }
+.stx .lockb { display: flex; align-items: center; gap: 6px; width: fit-content; margin: 4px 0 2px; padding: 2px 10px 2px 8px; border: 1px solid var(--line); border-radius: 12px; font-size: 13px; color: var(--gold) }
+.lockb svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 2 }
 .srow.wide { grid-template-columns: minmax(0, 1fr) }
 .srow.wide .sct { justify-content: flex-start }
-.srow.wide .input { flex: 1 1 180px; min-width: 0 }
-.srow.dep { margin-left: 18px; padding-left: 14px; border-left: 1px solid var(--golddim) }
-.srow.off .stx b { color: var(--dim) }
-.srow.off .switch { opacity: .4; cursor: default }
+.srow.wide .input { flex: 1 1 220px; min-width: 0 }
+.warnhint { margin: 0 0 6px; color: var(--gold2) }
+.remote-note.wait { margin: 0 0 4px }
+@container (max-width: 520px) { .srow { grid-template-columns: minmax(0, 1fr) } .sct { justify-content: flex-start } }
 .code { font-family: Consolas, monospace; color: var(--gold) }
 .remote-note .row { margin-top: 12px }
-.btn-line.sm { --cut: 9px; --h: 30px; padding: 1px 16px 0; font-size: 11.5px }
+.btn-line.sm { --cut: 9px; --h: 30px; padding: 1px 16px 0; font-size: 13px }
 .btn-line.sm svg { width: 13px; height: 13px }
-.acct { margin-bottom: 18px }
-.acct .code { font-size: 16px; letter-spacing: .05em }
-.acct .srow { border-bottom: 0 }
-.setlang { display: flex; align-items: center; gap: 12px }
-.setlang > span { font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted) }
-.advbtn { all: unset; cursor: pointer; display: flex; align-items: center; gap: 8px; width: 100%; font: inherit; letter-spacing: inherit; text-transform: inherit; color: inherit }
-.advbtn::after { content: ''; margin-left: auto; width: 7px; height: 7px; border: solid var(--gold2); border-width: 0 2px 2px 0; transform: rotate(45deg) translateY(-2px); transition: transform .2s var(--ease) }
-.advbtn[aria-expanded=true]::after { transform: rotate(225deg) }
-.sec.adv h2 { margin-bottom: 0 } .sec.adv h2:has(.advbtn[aria-expanded=false]) { border-bottom: 0; padding-bottom: 12px }
+.srow .langs button { font-size: 13px; padding: 6px 12px; color: var(--muted) }
+.srow .langs button[aria-pressed=true] { color: var(--goldhi) }
 .setfoot { margin: 18px 0 0; color: var(--dim); font-size: 13px }
 .setfoot .btn-ghost { font-size: 13px }
-@media (max-width: 960px) { .setcols { grid-template-columns: minmax(0, 1fr) } }
-.switch { all: unset; cursor: pointer; width: 42px; height: 24px; border-radius: 12px; background: var(--line2); position: relative; transition: background .2s }
-.switch::after { content: ''; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: var(--muted); transition: transform .2s var(--ease), background .2s }
-.switch[aria-checked=true] { background: var(--gold2) } .switch[aria-checked=true]::after { transform: translateX(18px); background: #fff5da }
+/* the «gem» switch: a dark track with a stone, a golden track with a glowing stone when on */
+.switch { all: unset; box-sizing: border-box; cursor: pointer; flex: none; position: relative; width: 52px; height: 28px; border-radius: 14px; border: 1px solid var(--line);
+  background: url(img/hb_dark.webp) center / cover, #120d06; box-shadow: inset 0 2px 5px rgba(0, 0, 0, .7); transition: border-color .2s }
+.switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 22px; height: 22px; border-radius: 50%; background: radial-gradient(circle at 38% 32%, #b9b09a, #5d5646 75%);
+  box-shadow: 0 0 0 1px #120d06, 0 1px 3px rgba(0, 0, 0, .7); transition: transform .2s var(--ease), background .2s, box-shadow .2s }
+.switch[aria-checked=true] { border-color: var(--gold2); background: url(img/hb_gold.webp) center / cover, #4b3510; box-shadow: inset 0 2px 4px rgba(60, 40, 5, .55) }
+.switch[aria-checked=true]::after { transform: translateX(24px); background: radial-gradient(circle at 38% 32%, var(--goldhi), var(--gold2) 80%);
+  box-shadow: 0 0 0 2px #3b2a0c, 0 0 10px rgba(255, 241, 200, .75) }
+.switch:focus-visible { outline: 2px solid var(--goldhi); outline-offset: 3px }
+.switch:disabled { cursor: not-allowed; opacity: .8; filter: grayscale(1) }
+.switch:disabled::after { background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23222' stroke-width='2.6'%3E%3Crect x='5' y='11' width='14' height='9' rx='1.5'/%3E%3Cpath d='M8 11V8a4 4 0 0 1 8 0v3'/%3E%3C/svg%3E") center / 13px no-repeat, radial-gradient(circle at 38% 32%, #b9b09a, #5d5646 75%) }
+@media (prefers-reduced-motion: reduce) { .switch, .switch::after, .more::before, .advbtn::after { transition: none } }
 
 /* ---------- compact «поверх игры» ---------- */
 body.compact .app { grid-template-columns: minmax(0, 1fr) }
