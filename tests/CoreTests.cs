@@ -923,6 +923,7 @@ static partial class CoreTests {
     UpdateDownloadTests();
     RealRangeOpenerTests();
     Backoff409Tests();
+    SiteRouteTests();
     ScreenTopTests();
     ScreenMapTests();
     SellHintTests();
@@ -4759,6 +4760,74 @@ static partial class CoreTests {
       stop.Set(); try { listener.Stop(); } catch (Exception) { }
       try { System.IO.Directory.Delete(dir, true); } catch (Exception) { }
     }
+  }
+
+  static void SiteRouteTests() {
+    Console.WriteLine("SiteRoute: wardsage.com -> ru.wardsage.com by the owner's rule");
+    string M = SiteRoute.Main, R = SiteRoute.Ru;
+    var clock = new DateTime(2026, 11, 7, 12, 0, 0, DateTimeKind.Utc);
+    var probed = new List<string>(); bool mainUp = false, ruUp = true;
+    string dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "rf-route-" + Guid.NewGuid().ToString("N")); System.IO.Directory.CreateDirectory(dir);
+    string file = System.IO.Path.Combine(dir, "site-route.json");
+    var logs = new List<string>();
+    Func<SiteRoute> mk = () => { var r = new SiteRoute(null, () => clock, h => { probed.Add(h); return h == R ? ruUp : mainUp; }, file, s => logs.Add(s)); r.Run = a => a(); return r; };
+    try {
+      var rt = mk();
+      Eq(M, rt.Resolve(M, true), "the main site stays while nothing failed");
+      Eq("http://localhost:3000", rt.Resolve("http://localhost:3000", true), "localhost: no automatic choice");
+      rt.NoteNoAnswer("http://localhost:3000"); rt.NoteNoAnswer("http://localhost:3000"); rt.NoteNoAnswer("http://localhost:3000");
+      Eq(M, rt.Resolve(M, true), "a failure of a foreign address changes nothing");
+      Check(probed.Count == 0, "no probe for a foreign address");
+      Eq("https://test.wardsage.com", rt.Resolve("https://test.wardsage.com", true), "test.wardsage.com: no automatic choice");
+      rt.Resolve(M, true);
+      // one failure is not enough; the reports of an inactive host are ignored
+      rt.NoteNoAnswer(M);
+      Check(probed.Count == 0 && rt.Resolve(M, true) == M, "one failure: stays");
+      rt.NoteNoAnswer(R);
+      Check(probed.Count == 0, "a failure of the inactive spare is ignored");
+      rt.NoteAnswer(M);   // a success does not reset the window
+      clock = clock.AddMinutes(9);
+      rt.NoteNoAnswer(M);
+      Check(probed.Count == 1 && probed[0] == R && rt.Resolve(M, true) == R, "two failures in 10 minutes (a success between): the spare answers -> ru");
+      Check(System.IO.File.Exists(file) && System.IO.File.ReadAllText(file).Contains("ru.wardsage.com"), "the state is saved");
+      Check(logs.Count > 0 && logs[logs.Count - 1].Contains("switched"), "the switch is logged");
+      Eq(R, mk().Resolve(M, true), "a restart keeps ru");
+      Eq(M, rt.Resolve(M, false), "SiteFallback off: the settings' site");
+      clock = clock.AddDays(3).AddMinutes(-1);
+      Eq(R, rt.Resolve(M, true), "ru for the whole 3 days");
+      clock = clock.AddMinutes(2);
+      Eq(M, rt.Resolve(M, true), "after 3 days: a trial return to the main site");
+      probed.Clear(); rt.NoteNoAnswer(M);
+      Check(probed.Count == 1 && rt.Resolve(M, true) == R, "a trial with one failure: ru for 3 days again");
+      clock = clock.AddDays(3).AddMinutes(1);
+      Eq(M, rt.Resolve(M, true), "the second trial");
+      clock = clock.AddMinutes(11);
+      Eq(M, rt.Resolve(M, true), "the trial passed: the main site stays");
+      probed.Clear(); rt.NoteNoAnswer(M);
+      Check(probed.Count == 0, "after the trial one failure is not enough again");
+      ruUp = false; clock = clock.AddMinutes(1); rt.NoteNoAnswer(M);
+      Check(probed.Count == 1 && rt.Resolve(M, true) == M, "ru does not answer: stays on the main site");
+      rt.NoteNoAnswer(M); Check(probed.Count == 1, "no second probe within 5 minutes");
+      clock = clock.AddMinutes(5); ruUp = true; rt.NoteNoAnswer(M);
+      Eq(R, rt.Resolve(M, true), "after the pause the probe goes again and ru takes over");
+      probed.Clear(); mainUp = true; clock = clock.AddMinutes(30);
+      rt.NoteNoAnswer(R); Check(probed.Count == 0, "insurance: one failure of ru: stays");
+      rt.NoteNoAnswer(R);
+      Check(probed.Count == 1 && probed[0] == M && rt.Resolve(M, true) == M, "insurance: two failures of ru and the main site answers -> back at once");
+      mainUp = false; ruUp = true; clock = clock.AddMinutes(30); rt.NoteNoAnswer(M); rt.NoteNoAnswer(M);
+      Eq(R, rt.Resolve(M, true), "back on ru");
+      clock = clock.AddMinutes(30); rt.NoteNoAnswer(R); rt.NoteNoAnswer(R);
+      Eq(R, rt.Resolve(M, true), "insurance: the main site does not answer: ru stays");
+      rt.Reset();
+      Check(!System.IO.File.Exists(file) && rt.Resolve(M, true) == M, "Reset forgets the state");
+      ruUp = true; mainUp = true; clock = clock.AddMinutes(30); var rt2 = mk(); probed.Clear();
+      rt2.Resolve(R, true);
+      rt2.NoteNoAnswer(R); rt2.NoteNoAnswer(R);
+      Eq(M, rt2.Resolve(R, true), "the settings' site ru, no answer twice: the main site");
+      Check(rt2.IsGroupHost("ru.wardsage.com") && rt2.IsGroupHost("wardsage.com") && !rt2.IsGroupHost("evil.example"), "the hosts of the group");
+      System.IO.File.WriteAllText(file, "{\"active\":\"https://evil.example\",\"until\":\"2999-01-01T00:00:00Z\",\"strikes\":1}");
+      Eq(M, mk().Resolve(M, true), "a foreign host in site-route.json is ignored");
+    } finally { try { System.IO.Directory.Delete(dir, true); } catch (Exception) { } }
   }
 
   static void Backoff409Tests() {
