@@ -60,6 +60,8 @@
     game: '<svg viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="11" rx="3"/><path d="M8 11v3M6.5 12.5h3M15 12h.01M17.5 13.5h.01"/></svg>',
     key: '<svg viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="m11 12 9-9M17 6l2 2M15 8l2 2"/></svg>',
     clock: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
+    discord: '<svg viewBox="0 0 24 24"><path d="M20.317 4.37a19.79 19.79 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.211.375-.445.865-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.74 19.74 0 0 0 3.677 4.37a.07.07 0 0 0-.032.028C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.1 14.1 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.1 13.1 0 0 1-1.872-.892.077.077 0 0 1-.008-.128c.126-.094.252-.192.372-.292a.074.074 0 0 1 .078-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.009c.12.1.246.198.373.293a.077.077 0 0 1-.006.127 12.3 12.3 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.84 19.84 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/></svg>',
+    telegram: '<svg viewBox="0 0 24 24"><path d="M16.906 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/></svg>',
     ext: '<svg viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>',
     warn: '<svg viewBox="0 0 24 24"><path d="M12 3 2 20h20z"/><path d="M12 10v4M12 17h.01"/></svg>',
     lock: '<svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="1.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>',
@@ -200,8 +202,9 @@
         ${m.endsAt ? `<div class="maint-count" data-mc="end">${esc(maintLeftLine())}</div>` : ''}
         ${custom ? `<p class="maint-custom">${esc(custom)}</p>` : ''}
         <p class="maint-ok">${esc(t('maintGameOk'))}</p>
+        ${socialRow(m.social, 'maint-soc')}
         <div class="maint-btns">
-          <button class="btn-line" data-act="open" data-url="${DISCORD}">${I.ext}${esc(t('maintDiscord'))}</button>
+          ${m.social && m.social.length ? '' : `<button class="btn-line" data-act="open" data-url="${DISCORD}">${I.ext}${esc(t('maintDiscord'))}</button>`}
           ${lk ? `<button class="btn-line" data-act="open" data-url="${esc(lk)}">${I.ext}${esc(tg ? t('maintTg') : t('maintMore'))}</button>` : ''}
           <button class="btn-gold" data-act="maintCheck" data-mc="check" ${maintCooldown() > 0 ? 'disabled' : ''}>${esc(maintCheckLabel())}</button>
         </div>
@@ -222,6 +225,15 @@
     else { S.down[src] = false; S.offline = !!(S.down.cfg || S.down.plans); render(); }
   }
 
+  // the social icons: a round golden medal each; only the known ids are drawn, the title is the network's name
+  const SOCIAL_KEYS = { discord: 'maintDiscord', telegram: 'maintTg' };
+  const RAIL_SOCIAL = [{ id: 'discord', url: 'https://discord.gg/xJrfv3zYx5' }, { id: 'telegram', url: 'https://t.me/wardsage' }];
+  const socialList = (list) => (Array.isArray(list) ? list : []).filter((x) => x && SOCIAL_KEYS[x.id] && typeof x.url === 'string' && /^https:\/\//.test(x.url)).slice(0, 6);
+  const socialRow = (list, cls = '') => {
+    const l = socialList(list);
+    return l.length ? `<div class="soc-row ${cls}">${l.map((x) => `<button class="soc" data-act="open" data-url="${esc(x.url)}" title="${esc(t(SOCIAL_KEYS[x.id]))}" aria-label="${esc(t(SOCIAL_KEYS[x.id]))}">${I[x.id]}</button>`).join('')}</div>` : '';
+  };
+
   function rail() {
     const pending = S.plans.list.length + (S.sell.list ? 1 : 0);
     const nav = (id, icon, label, extra = '') =>
@@ -237,6 +249,7 @@
         ${S.update && S.updDismissed ? `<button class="btn-line" data-act="updOpen">${I.reload}<span>${esc(t('updAvail', shownVer(S.update.version)))}</span></button>` : ''}
         <div class="game-state"><span class="dot ${S.game.running ? 'on' : ''}"></span><div>${esc(S.game.running ? t('gameOn') : t('gameOff'))}
           ${S.game.running && S.game.version ? `<small>${esc(t('gameVer', S.game.version))}</small>` : ''}${S.version ? `<small>${esc(t('appVer', shownVer(S.version)))}${S.channel === 'test' && S.navCore ? ' · ядро: вкл' : ''}${S.streamer ? ' · стример' : ''}</small>` : ''}</div></div>
+        ${socialRow(RAIL_SOCIAL)}
       </div>`;
   }
 
@@ -1143,7 +1156,7 @@
       case 'guild': if (m.state === 'noSelf' || m.state === 'short') toast(t(m.state === 'short' ? 'guildShort' : 'guildNoSelf'), 12000); break;
       case 'remote': S.remote = { readEnabled: m.readEnabled !== false, off: Array.isArray(m.off) ? m.off : [] }; S.notice = m.announcement && typeof m.announcement === 'object' ? m.announcement : null; render(); break;
       case 'maint':
-        S.maint = { phase: m.phase || 'off', startsAt: m.startsAt, stopAt: m.stopAt, endsAt: m.endsAt, ru: m.ru, en: m.en, link: m.link };
+        S.maint = { phase: m.phase || 'off', startsAt: m.startsAt, stopAt: m.stopAt, endsAt: m.endsAt, ru: m.ru, en: m.en, link: m.link, social: socialList(m.social) };
         if (m.done) toast(t('maintDone'), 8000);
         render(); break;
       case 'site': siteState('cfg', m.ok === true); break;

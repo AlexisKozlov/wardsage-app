@@ -64,6 +64,10 @@ namespace RealmForge {
   public sealed class Maintenance {
     public string State = "off", Mode = "readonly", Ru = "", En = "", Link;
     public DateTime StartsAt = DateTime.MinValue, EndsAt = DateTime.MinValue;   // UTC; MinValue = not given
+    /// <summary>The social icons for the works screen, {id, url} pairs: only the known ids, https, the host of that id, each id once, at most MaxSocial. Empty = the app's own Discord button.</summary>
+    public List<string[]> Social = new List<string[]>();
+    public const int MaxSocial = 6;
+    static readonly string[][] SocialHosts = { new[] { "discord", "discord.gg" }, new[] { "telegram", "t.me" } };
     public int PreStopMin = 15, ReopenMin = 20, ReopenPct = 100;
     const int MaxText = 600;
 
@@ -88,6 +92,28 @@ namespace RealmForge {
       return "";
     }
 
+    /// <summary>The "social" array: [{"id":"discord","url":"https://discord.gg/.."}]; anything else in it is skipped.</summary>
+    public static List<string[]> ParseSocial(object v) {
+      var r = new List<string[]>();
+      var arr = v as List<object>;
+      if (arr == null) return r;
+      foreach (var it in arr) {
+        if (r.Count >= MaxSocial) break;
+        var o = MiniJson.AsObject(it);
+        if (o == null) continue;
+        string id = Str(o, "id", 20), url = Str(o, "url", 300);
+        string host = null;
+        foreach (var kh in SocialHosts) if (kh[0] == id) host = kh[1];
+        if (host == null) continue;
+        Uri u;
+        if (!Uri.TryCreate(url, UriKind.Absolute, out u) || u.Scheme != Uri.UriSchemeHttps || u.Host != host) continue;
+        bool dup = false;
+        foreach (var x in r) if (x[0] == id) dup = true;
+        if (!dup) r.Add(new[] { id, u.AbsoluteUri });
+      }
+      return r;
+    }
+
     /// <summary>From the reply's "maintenance" value; an absent, odd or unknown-state value is off.</summary>
     public static Maintenance From(object v) {
       var m = new Maintenance();
@@ -105,6 +131,8 @@ namespace RealmForge {
         string href = lv is string ? (string)lv : lo != null ? Str(lo, "href", 300) : "";
         if (href.Length > 0 && href.Length <= 300) m.Link = href;
       }
+      object sv;
+      if (o.TryGetValue("social", out sv)) m.Social = ParseSocial(sv);
       m.PreStopMin = Num(o, "preStopMin", 15, 0, 240);
       m.ReopenMin = Num(o, "reopenMin", 20, 0, 240);
       m.ReopenPct = Num(o, "reopenPct", 100, 0, 100);
@@ -124,6 +152,11 @@ namespace RealmForge {
       if (Ru.Length > 0) sb.Append(",\"ru\":").Append(MiniJson.Quote(Ru));
       if (En.Length > 0) sb.Append(",\"en\":").Append(MiniJson.Quote(En));
       if (Link != null) sb.Append(",\"link\":").Append(MiniJson.Quote(Link));
+      if (Social.Count > 0) {
+        sb.Append(",\"social\":[");
+        for (int i = 0; i < Social.Count; i++) sb.Append(i > 0 ? "," : "").Append("{\"id\":").Append(MiniJson.Quote(Social[i][0])).Append(",\"url\":").Append(MiniJson.Quote(Social[i][1])).Append('}');
+        sb.Append(']');
+      }
       sb.Append(",\"preStopMin\":").Append(PreStopMin).Append(",\"reopenMin\":").Append(ReopenMin).Append(",\"reopenPct\":").Append(ReopenPct);
       return sb.Append('}').ToString();
     }

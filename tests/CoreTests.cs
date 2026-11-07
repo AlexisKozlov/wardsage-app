@@ -2625,6 +2625,20 @@ static partial class CoreTests {
     Check(RemoteSwitches.Parse("{\"maintenance\":{\"state\":\"on\",\"link\":{\"href\":\"https://d.gg/y\"}}}").Maint.Link == "https://d.gg/y", "maintenance: link as an object");
     var odd = RemoteSwitches.Parse("{\"maintenance\":{\"state\":\"on\",\"startsAt\":\"junk\",\"mode\":\"x\",\"preStopMin\":-5,\"reopenMin\":\"20\",\"reopenPct\":500}}").Maint;
     Check(odd.State == "on" && !odd.HasStart && !odd.HasEnd && odd.Mode == "readonly" && odd.PreStopMin == 15 && odd.ReopenMin == 20 && odd.ReopenPct == 100, "maintenance: odd values fall back to the defaults");
+    // social icons of the works screen
+    Func<string, Maintenance> Soc = j => RemoteSwitches.Parse("{\"maintenance\":{\"state\":\"on\"," + j + "}}").Maint;
+    var so = Soc("\"social\":[{\"id\":\"discord\",\"url\":\"https://discord.gg/xJrfv3zYx5\"},{\"id\":\"telegram\",\"url\":\"https://t.me/wardsage\"}]").Social;
+    Check(so.Count == 2 && so[0][0] == "discord" && so[0][1] == "https://discord.gg/xJrfv3zYx5" && so[1][0] == "telegram" && so[1][1] == "https://t.me/wardsage", "social: two valid icons read in order");
+    Check(Soc("\"social\":[{\"id\":\"vk\",\"url\":\"https://vk.com/x\"},{\"id\":\"telegram\",\"url\":\"https://t.me/w\"}]").Social.Count == 1, "social: an unknown id is skipped");
+    Check(Soc("\"social\":[{\"id\":\"discord\",\"url\":\"http://discord.gg/x\"}]").Social.Count == 0, "social: http is refused");
+    Check(Soc("\"social\":[{\"id\":\"discord\",\"url\":\"https://evil.example/x\"},{\"id\":\"telegram\",\"url\":\"https://t.me.evil.example/x\"},{\"id\":\"telegram\",\"url\":\"https://discord.gg/x\"}]").Social.Count == 0, "social: a foreign host (or another id's host) is refused");
+    Check(Soc("\"social\":[{\"id\":\"discord\",\"url\":\"https://discord.gg/a\"},{\"id\":\"discord\",\"url\":\"https://discord.gg/b\"}]").Social.Count == 1, "social: an id is taken once");
+    Check(Soc("\"social\":\"x\"").Social.Count == 0 && Soc("\"social\":[1,null,\"a\",{\"id\":5}]").Social.Count == 0 && Soc("\"link\":\"https://t.me/x\"").Social.Count == 0, "social: absent / odd value is an empty list");
+    { var sb6 = new System.Text.StringBuilder("\"social\":["); for (int i = 0; i < 9; i++) sb6.Append(i > 0 ? "," : "").Append("{\"id\":\"discord\",\"url\":\"https://discord.gg/a\"}");
+      Check(Soc(sb6.Append(']').ToString()).Social.Count == 1 && Maintenance.MaxSocial == 6, "social: the list is cut at 6 (here the duplicates collapse first)"); }
+    var soSaved = RemoteSwitches.Parse(RemoteSwitches.Parse("{\"maintenance\":{\"state\":\"on\",\"social\":[{\"id\":\"telegram\",\"url\":\"https://t.me/wardsage\"}]}}").ToJson());
+    Check(soSaved.Maint.Social.Count == 1 && soSaved.Maint.Social[0][1] == "https://t.me/wardsage", "social: survives the saved copy");
+    Check(!soSaved.Maint.SameAs(Soc("")) && Soc("").SameAs(Soc("")), "social: SameAs sees the icons");
     Check(!Array.Exists(RemoteSwitches.Features, f => f == "maintenance"), "maintenance is no feature");
     Check(full.Allows("battle") == false && RemoteSwitches.Parse("{\"maintenance\":{\"state\":\"on\"}}").Allows("battle"), "maintenance does not change readEnabled by itself");
     // the saved copy and SameAs

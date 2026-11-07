@@ -197,6 +197,9 @@ namespace RealmForge {
         DateTime wake = MaintQuietUntil(now);
         sb.Append(",\"startsAt\":").Append(iso(m.StartsAt)).Append(",\"stopAt\":").Append(iso(MaintenanceGate.StopAt(m))).Append(",\"endsAt\":").Append(iso(m.EndsAt))
           .Append(",\"resumeAt\":").Append(iso(wake)).Append(",\"mode\":").Append(S(m.Mode)).Append(",\"ru\":").Append(S(m.Ru)).Append(",\"en\":").Append(S(m.En)).Append(",\"link\":").Append(S(m.Link));
+        sb.Append(",\"social\":[");
+        for (int i = 0; i < m.Social.Count; i++) sb.Append(i > 0 ? "," : "").Append("{\"id\":").Append(S(m.Social[i][0])).Append(",\"url\":").Append(S(m.Social[i][1])).Append('}');
+        sb.Append(']');
       }
       if (done) sb.Append(",\"done\":true");
       string json = sb.Append('}').ToString();

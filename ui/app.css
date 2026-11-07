@@ -61,6 +61,14 @@ button { cursor: pointer }
   font: 700 12px/20px var(--body); text-align: center }
 
 .rail-foot { margin-top: auto; display: grid; gap: 12px; padding: 0 8px }
+.soc-row { display: flex; gap: 10px; align-items: center }
+.soc { all: unset; box-sizing: border-box; width: 32px; height: 32px; flex: none; border-radius: 50%; display: grid; place-items: center; cursor: pointer;
+  background: radial-gradient(circle at 50% 30%, #1d2944, #0b101b); box-shadow: 0 0 0 1px var(--gold2), 0 0 0 3px var(--bg2), 0 0 0 4px var(--edge); margin: 4px; transition: box-shadow .18s, transform .18s }
+.soc svg { width: 17px; height: 17px; fill: var(--gold); stroke: none; shape-rendering: geometricPrecision; transition: fill .18s, filter .18s }
+.soc:hover { box-shadow: 0 0 0 1px var(--goldhi), 0 0 0 3px var(--bg2), 0 0 0 4px var(--gold2), 0 0 12px rgba(232, 207, 142, .35) }
+.soc:hover svg { fill: var(--goldhi) }
+.soc:focus-visible { outline: 2px solid var(--goldhi); outline-offset: 3px }
+.maint-soc { justify-content: center; gap: 14px }
 .game-state { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--muted); line-height: 1.25 }
 .game-state small { display: block; color: var(--dim); font-size: 12px }
 .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--dim); flex: none; position: relative }

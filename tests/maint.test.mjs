@@ -44,6 +44,22 @@ check(/60000/.test(app.slice(app.indexOf('maintCooldown')), 0) && /Math\.ceil\(\
 check(/esc\(custom\)/.test(app) && /data-act="open" data-url="\$\{esc\(lk\)\}"/.test(app), 'the site text and link are escaped');
 check(/id="maint"/.test(readFileSync('ui/index.html', 'utf8')), 'index.html has the screen container');
 
+// social icons: the mock gives two, the screen and the rail draw only known ids with https, the Discord button stays when the list is empty
+check(on && Array.isArray(on.social) && on.social.length === 2 && on.social[0].id === 'discord' && on.social[1].id === 'telegram', 'mock maint-on: two social icons (discord, telegram)');
+check(run('maint-early')[0].social === undefined, 'mock maint-early: no social list (the old Discord button)');
+check(/discord: '<svg/.test(app) && /telegram: '<svg/.test(app) && /SOCIAL_KEYS = \{ discord: 'maintDiscord', telegram: 'maintTg' \}/.test(app), 'app.js: discord and telegram icons, titles from the texts');
+check(/socialRow\(m\.social, 'maint-soc'\)/.test(app) && /m\.social && m\.social\.length \? ''/.test(app), 'works screen: the icon row, the Discord button only without icons');
+check(/\$\{socialRow\(RAIL_SOCIAL\)\}\s*<\/div>`;/.test(app) && /RAIL_SOCIAL = \[\{ id: 'discord', url: 'https:\/\/discord\.gg\/xJrfv3zYx5' \}, \{ id: 'telegram', url: 'https:\/\/t\.me\/wardsage' \}\]/.test(app), 'rail: the two official links are built in, below the game status');
+{
+  const a2 = app.indexOf('  const SOCIAL_KEYS'), b2 = app.indexOf('  function rail()');
+  const ctx = { esc: (x) => String(x), t: (k) => k, I: { discord: '<d/>', telegram: '<t/>' } };
+  const f = vm.runInNewContext(app.slice(a2, b2) + '; socialRow', ctx);
+  const good = f([{ id: 'discord', url: 'https://discord.gg/x' }, { id: 'telegram', url: 'https://t.me/y' }]);
+  check((good.match(/class="soc"/g) || []).length === 2 && /data-act="open"/.test(good) && /title="maintDiscord"/.test(good) && /aria-label="maintTg"/.test(good), 'socialRow: two buttons with title and aria-label');
+  check(f([{ id: 'vk', url: 'https://vk.com/x' }, { id: 'discord', url: 'http://discord.gg/x' }, null, 5]) === '' && f(undefined) === '' && f('x') === '', 'socialRow: unknown id, http, odd values give nothing');
+  check((f(Array(10).fill({ id: 'discord', url: 'https://discord.gg/x' })).match(/class="soc"/g) || []).length === 6, 'socialRow: at most 6');
+}
+
 // one note instead of three: run isMaintNotice() and notices() from app.js against stub state
 {
   const a = app.indexOf('  function isMaintNotice'), b = app.indexOf('  // ---- maintenance: the banner');
