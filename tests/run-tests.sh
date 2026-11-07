@@ -107,7 +107,7 @@ if command -v mono >/dev/null 2>&1 && ldconfig -p 2>/dev/null | grep -q libgdipl
 step "8c. DPS meter panel: app/DpsPanel.cs draws saved fights into PNGs (tests/DpsPanelRender.cs, TESTBUILD; run when Mono's GDI+ is there)"
 $CSC -langversion:7.3 -target:exe -platform:x64 -nostdlib -nowarn:1701,1702,649 -define:TESTBUILD -r:$FX48/mscorlib.dll -r:$FX48/System.dll -r:$FX48/System.Core.dll -r:$FX48/System.Drawing.dll \
   -r:$FX48/System.Windows.Forms.dll -r:$FX48/System.Security.dll -r:$FX48/System.IO.Compression.dll -r:$WV/Microsoft.Web.WebView2.Core.dll -r:$WV/Microsoft.Web.WebView2.WinForms.dll \
-  -out:"$OUT/DpsPanelRender.exe" $CORE_APP app/DpsPanel.cs app/DpsArt.cs app/DpsHint.cs src/DpsArtIndex.cs tests/DpsPanelRender.cs
+  -out:"$OUT/DpsPanelRender.exe" $CORE_APP app/DpsPanel.cs app/DpsArt.cs app/DpsHint.cs app/DpsDesc.cs app/DpsTip.cs src/DpsArtIndex.cs tests/DpsPanelRender.cs
 if command -v mono >/dev/null 2>&1 && ldconfig -p 2>/dev/null | grep -q libgdiplus; then mono "$OUT/DpsPanelRender.exe" "$OUT/dps-png"; else echo "DpsPanelRender run SKIPPED (no Mono + libgdiplus; compiles; run it on Windows)"; fi
 
 step "8. Wardsage.exe builds (C# 7.3, .NET Framework 4.8, WebView2 SDK checksums)"

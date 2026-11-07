@@ -24,9 +24,11 @@ namespace RealmForge {
     public bool Hint;
   }
 
-  /// <summary>A pressable place of the picture (client px): Kind = mode / seg / hero / back / reset.</summary>
+  /// <summary>A pressable place of the picture (client px): Kind = mode / seg / hero / back / reset / skill.</summary>
   sealed class DpsHit {
     public Rectangle R; public string Kind; public int Arg; public uint C;
+    /// <summary>For a skill row: the hero's unit (the tooltip looks up nested skills by it); Arg is the skill id, 0 for the folded "Other" row.</summary>
+    public int Unit;
   }
 
   static class DpsPanel {
@@ -90,7 +92,7 @@ namespace RealmForge {
       while (px > minPx && DpsArt.Measure(t, px, bold) > maxW) px -= 0.5f;
       return Math.Max(px, minPx);
     }
-    static void Hit(Ctx c, RectangleF r, string kind, int arg, uint cc) { if (c.Hits != null) c.Hits.Add(new DpsHit { R = Rectangle.Round(r), Kind = kind, Arg = arg, C = cc }); }
+    static void Hit(Ctx c, RectangleF r, string kind, int arg, uint cc, int unit = 0) { if (c.Hits != null) c.Hits.Add(new DpsHit { R = Rectangle.Round(r), Kind = kind, Arg = arg, C = cc, Unit = unit }); }
 
     static GraphicsPath Round(RectangleF r, float rad) {
       var p = new GraphicsPath(); float d = Math.Max(0.5f, rad * 2);
@@ -317,6 +319,7 @@ namespace RealmForge {
       foreach (var sk in rows) {
         if (y + sh > bottom + 0.5f) break;
         var row = new RectangleF(x0, y, x1 - x0, sh);
+        Hit(c, row, "skill", sk.Tail ? 0 : sk.Id, 0, hero.Unit);
         DpsArt.SkillIcon(c.G, sk.Tail ? 0 : sk.Id, row.X + 2 * s, row.Y + (sh - ipx) / 2f, ipx);
         float tx = row.X + 2 * s + ipx + 6 * s, tr = row.Right - 5 * s, zone = tr - tx;
         var l1 = new RectangleF(tx, row.Y + 1 * s, zone, 16 * s);

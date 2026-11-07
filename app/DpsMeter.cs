@@ -14,6 +14,8 @@ namespace RealmForge {
     readonly Timer timer = new Timer { Interval = 400 };
     readonly GlowWindow win = new GlowWindow { Name = "dps" };
     readonly DpsView view = new DpsView();
+    readonly GlowWindow tipWin = new GlowWindow { Name = "dpstip" };   // the skill tooltip beside the cursor (click-through)
+    Bitmap tipBmp; string tipKey;
     readonly DpsFightWatch watch = new DpsFightWatch();
     readonly DpsHintStore hint = new DpsHintStore(DpsHintStore.DefaultPath);
     int hintSerial = -1;
@@ -46,9 +48,9 @@ namespace RealmForge {
 
     public void Start() { if (Running) return; Running = true; drawn = null; timer.Start(); }
 
-    public void Stop() { Running = false; timer.Stop(); sizing = false; win.Movable = false; if (win.Visible) win.Hide(); }
+    public void Stop() { Running = false; timer.Stop(); sizing = false; win.Movable = false; if (win.Visible) win.Hide(); HideTip(); }
 
-    public void Dispose() { timer.Dispose(); win.Dispose(); if (bmp != null) bmp.Dispose(); }
+    public void Dispose() { timer.Dispose(); win.Dispose(); tipWin.Dispose(); if (bmp != null) bmp.Dispose(); if (tipBmp != null) tipBmp.Dispose(); }
 
     void BackToPlace() {
       X = Y = W = H = -1; drawn = null;
@@ -76,15 +78,42 @@ namespace RealmForge {
       try {
         if (kind == 3) { BackToPlace(); return; }
         if (kind == 0) {
+          HideTip();
           if (DpsPanel.Grip(curW, curH, curS).Contains(x, y)) { sizing = true; sizeFrom = Cursor.Position; sizeW0 = curW; sizeH0 = curH; win.Capture = true; }
           return;
         }
-        if (kind == 1) { if (sizing) Resize(); return; }
+        if (kind == 1) { if (sizing) Resize(); else UpdateTip(x, y); return; }
         if (kind == 2) {
           if (sizing) { Resize(); sizing = false; win.Capture = false; SaveSize(); return; }
           foreach (var h in hits) if (h.R.Contains(x, y)) { Press(h); break; }
         }
       } catch (Exception ex) { Log.Write("dps mouse: " + ex.Message); }
+    }
+
+    void HideTip() {
+      tipKey = null;
+      if (tipWin.Visible) tipWin.Hide();
+      if (tipBmp != null) { var o = tipBmp; tipBmp = null; o.Dispose(); }
+    }
+
+    /// <summary>The mouse is at (x, y) of the panel with Ctrl held: over a skill row the tooltip with its description shows beside the cursor, elsewhere it goes.</summary>
+    void UpdateTip(int x, int y) {
+      DpsHit hit = null;
+      if (view.Interactive && haveCr) foreach (var h in hits) if (h.Kind == "skill" && h.R.Contains(x, y)) { hit = h; break; }
+      if (hit == null) { HideTip(); return; }
+      bool ru = view.Lang != "en";
+      string key = hit.Unit + ":" + hit.Arg + "|" + view.Lang + "|" + (int)curU;
+      if (key != tipKey || tipBmp == null) {
+        var info = hit.Arg == 0 ? DpsDesc.Tail(ru) : DpsDesc.Find(hit.Unit, hit.Arg, ru);
+        var nb = DpsTip.Render(info, curS, DpsTip.MaxWidth(curU));
+        var old = tipBmp; tipBmp = nb; tipKey = key;
+        if (tipWin.Visible) tipWin.Hide();   // a new picture: the window is put again below
+        if (old != null) old.Dispose();
+      }
+      var p = Cursor.Position;
+      var scr = Screen.FromPoint(p).Bounds;
+      var at = DpsTip.Place(p, tipBmp.Width, tipBmp.Height, scr, (int)Math.Round(18 * curS));
+      tipWin.Put(tipBmp, at.X, at.Y);
     }
 
     void Resize() {
@@ -139,7 +168,7 @@ namespace RealmForge {
       bool live = snap.Current != null && snap.Current.Open;
       // nothing yet, or a finished fight shown long enough: hide (Ctrl brings it back while there is something)
       bool move = (Control.ModifierKeys & Keys.Control) != 0;
-      if (!any || (!live && !move && (DateTime.UtcNow - versionAt).TotalSeconds > LingerSec)) { win.Movable = false; if (win.Visible) win.Hide(); return; }
+      if (!any || (!live && !move && (DateTime.UtcNow - versionAt).TotalSeconds > LingerSec)) { win.Movable = false; if (win.Visible) win.Hide(); HideTip(); return; }
       var ps = GameInfo.GameProcesses();
       IntPtr hwnd = ps.Length > 0 ? ps[0].MainWindowHandle : IntPtr.Zero;
       int fp = 0, gp = 0;
@@ -150,8 +179,12 @@ namespace RealmForge {
       }
       if (win.Dragging || sizing) return;
       W32.RECT cr;
-      if (hwnd == IntPtr.Zero || W32.IsIconic(hwnd) || fp != gp || !W32.GetClientRect(hwnd, out cr) || cr.B < 200) { win.Movable = false; if (win.Visible) win.Hide(); return; }
+      if (hwnd == IntPtr.Zero || W32.IsIconic(hwnd) || fp != gp || !W32.GetClientRect(hwnd, out cr) || cr.B < 200) { win.Movable = false; if (win.Visible) win.Hide(); HideTip(); return; }
       win.Movable = move;
+      if (tipKey != null) {   // the tooltip goes when Ctrl is let go or the cursor left the panel
+        W32.RECT twr; var cp = Cursor.Position;
+        if (!move || !win.IsHandleCreated || !W32.GetWindowRect(win.Handle, out twr) || cp.X < twr.L || cp.X >= twr.R || cp.Y < twr.T || cp.Y >= twr.B) HideTip();
+      }
       view.Interactive = move;
       if (move) hint.UsedCtrl();   // the player found the Ctrl control: the hint goes away for good
       view.Hint = hint.Show;

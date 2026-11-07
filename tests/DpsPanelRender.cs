@@ -223,12 +223,73 @@ static class DpsPanelRender {
     Console.WriteLine("Other = " + (total > 0 ? other * 100.0 / total : 0).ToString("0.00") + "% of the damage on " + ids.Count + " skill ids");
     AtlasBrightness();
     HintTests(sb, dir);
+    TipTests(dir);
     Timing(sb);
     Check("number format", DpsPanel.Short(1234567) == "1.23M" && DpsPanel.Short(950) == "950" && DpsPanel.Short(12345) == "12.3K" && DpsPanel.Short(2500000000) == "2.50B", "number format");
     foreach (var kv in passes) Console.WriteLine("ok: " + kv.Key + " (" + kv.Value + " cases)");
     Console.WriteLine("cache entries at the end: " + DpsArt.CacheCount);
     Console.WriteLine(fails == 0 ? "PASS" : "FAILED: " + fails);
     return fails == 0 ? 0 : 1;
+  }
+
+  // the skill tooltip: the lookup (own text, a nested skill's root with a note, categories, nothing), the wrapping, the place, and the pictures at three sizes
+  static void TipTests(string dir) {
+    Check("tip data", DpsDesc.Count > 1500, "descriptions loaded: " + DpsDesc.Count);
+    var basic = DpsDesc.Find(2266, 226601, true);
+    Check("tip lookup", basic.Title == DpsNames.Skill(226601, true) && basic.Body.Contains("Солнечный режим") && basic.Note == null, "own text of 226601");
+    var en = DpsDesc.Find(2266, 226601, false);
+    Check("tip lookup", en.Body.Contains("Solar Mode") && en.Title == DpsNames.Skill(226601, false), "english text of 226601");
+    var nested = DpsDesc.Find(2266, 226609, true);
+    Check("tip lookup", DpsDesc.Get(226609, true) == null && nested.Body == DpsDesc.Get(226601, true) && nested.Title == DpsNames.Skill(226601, true) && nested.Note == "часть скилла: " + DpsNames.Skill(226601, true), "nested skill 226609: the root's text and the note (" + nested.Note + ")");
+    var nen = DpsDesc.Find(2266, 226609, false);
+    Check("tip lookup", nen.Note == "part of skill: " + DpsNames.Skill(226601, false), "nested skill, english note (" + nen.Note + ")");
+    var tal = DpsDesc.Find(2266, 226630, true);
+    Check("tip lookup", tal.Title.StartsWith("Талант", StringComparison.Ordinal) && tal.Body.Length > 20, "a talent has its text: " + tal.Title);
+    var asp = DpsDesc.Find(2266, 2290104, true); var set = DpsDesc.Find(2266, 102000201, true); var fld = DpsDesc.Find(2266, 13000926, false);
+    Check("tip lookup", asp.Title == DpsNames.Category(2290104, true) && asp.Body == "" && asp.Note == null && set.Title == "Комплект" && set.Body == "" && fld.Title == "Field effect" && fld.Body == "", "aspect, set, field effect: the category name only");
+    var none = DpsDesc.Find(2266, 987654321, true); var none2 = DpsDesc.Find(2266, 987654321, false);
+    Check("tip lookup", none.Title == "Прочее" && none.Body == "Описание недоступно" && none2.Body == "No description", "unknown id: no description");
+    Check("tip lookup", DpsDesc.Tail(true).Title == "Прочее" && DpsDesc.Tail(false).Body == "", "the folded row: its name");
+    // the table format: shared ids, escaped line breaks and backslashes
+    byte[] gz;
+    using (var ms = new MemoryStream()) {
+      using (var z = new System.IO.Compression.GZipStream(ms, System.IO.Compression.CompressionMode.Compress)) { var b = System.Text.Encoding.UTF8.GetBytes("1,2\tодин\\nдва\\\\x\tone\n3\tтри\tthree\nbad line"); z.Write(b, 0, b.Length); }
+      gz = ms.ToArray();
+    }
+    var tbl = DpsDesc.Parse(gz);
+    Check("tip data", tbl.Count == 3 && ReferenceEquals(tbl[1], tbl[2]) && tbl[1][0] == "один\nдва\\x" && tbl[3][1] == "three", "the table format: " + tbl.Count + " ids");
+    // wrapping
+    var f = DpsArt.Semi(12);
+    foreach (float mw in new[] { 90f, 150f, 240f }) {
+      var lines = DpsTip.Wrap("Солнечный режим: 1 раз наносит 120% масс. УРН нескольким (до 8) врагам.\nСверхдлинноесловобезпробеловсверхдлинноесловобезпробелов конец", 12, false, mw, 14);
+      bool ok = lines.Count > 1; foreach (var l in lines) if (DpsArt.Measure(l, 12, false) > mw + 0.5f) ok = false;
+      Check("tip wrap", ok, "wrapped to " + mw + " px: " + lines.Count + " lines");
+    }
+    var cutl = DpsTip.Wrap(new string('a', 5) + " " + string.Join(" ", new string[60]).Replace("  ", " слово "), 12, false, 100, 3);
+    Check("tip wrap", cutl.Count == 3 && cutl[2].EndsWith("…", StringComparison.Ordinal), "at most 3 lines, the last ends with an ellipsis: " + cutl.Count + " " + cutl[cutl.Count - 1]);
+    // the place: beside the cursor, flipped at the right and bottom edges, always inside the screen
+    var scr = new Rectangle(0, 0, 1920, 1080);
+    var pa = DpsTip.Place(new Point(100, 100), 300, 200, scr, 18); var pb = DpsTip.Place(new Point(1800, 100), 300, 200, scr, 18);
+    var pc = DpsTip.Place(new Point(100, 1000), 300, 200, scr, 18); var pd = DpsTip.Place(new Point(1900, 1075), 300, 200, scr, 18); var pe = DpsTip.Place(new Point(5, 5), 5000, 5000, scr, 18);
+    Check("tip place", pa.X == 118 && pa.Y == 118 && pb.X == 1482 && pc.Y == 782 && pd.X + 300 <= 1920 && pd.Y + 200 <= 1080 && pe.X >= 0 && pe.Y >= 0, "tooltip places: " + pa + " " + pb + " " + pc + " " + pd);
+    // the pictures
+    int[][] sizes = { new[] { 1920, 1009 }, new[] { 2560, 1440 }, new[] { 3840, 2160 } };
+    var cases = new[] { new { N = "long", I = DpsDesc.Find(2266, 226605, true) }, new { N = "short", I = DpsDesc.Find(2266, 226698, true) }, new { N = "nested", I = nested }, new { N = "nested-en", I = nen },
+      new { N = "none", I = none }, new { N = "aspect", I = asp }, new { N = "talent", I = tal }, new { N = "long-en", I = DpsDesc.Find(2266, 226605, false) } };
+    foreach (var z in sizes) {
+      double U = Math.Min(z[1], z[0] * 675.0 / 1200.0); float sc = DpsPanel.ScaleFor(U); int maxW = DpsTip.MaxWidth(U);
+      foreach (var cs in cases) {
+        string nm = "tip-" + cs.N + "-" + z[0] + "x" + z[1];
+        var probe = new List<DpsArt.TextRec>(); DpsArt.Probe = probe;
+        using (var tip = DpsTip.Render(cs.I, sc, maxW)) {
+          DpsArt.Probe = null;
+          Check("tip size", tip.Width <= maxW + 2 && tip.Width >= 60 && tip.Height <= z[1] * 0.6, nm + ": " + tip.Width + "x" + tip.Height + " (max width " + maxW + ")");
+          foreach (var r in probe) Check("tip text fits", r.Width <= r.Box.Width + 0.5f && r.Glyphs.Right <= tip.Width && r.Glyphs.Bottom <= tip.Height + 2, nm + ": \"" + r.Text + "\" " + r.Width.ToString("0.0") + " in " + r.Box.Width.ToString("0.0"));
+          Check("tip text fits", probe.Count > 0, nm + ": text drawn");
+          if (z[0] == 1920 || cs.N == "long" || cs.N == "nested") using (var scn = PanelScene(tip, z[0], z[1], z[0] / 2, z[1] / 3)) scn.Save(Path.Combine(dir, nm + ".png"), ImageFormat.Png);
+        }
+      }
+    }
   }
 
   // the Ctrl hint line: the counter file (5 fights, or the first use of Ctrl) and the picture with the line in the narrow and the default window
