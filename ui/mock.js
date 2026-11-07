@@ -57,7 +57,7 @@
         if (s === 'settings-test') emit({ ev: 'rec', on: false, sec: 0, sent: 3, total: 3, why: '' });
         if (s === 'settings-dpsoff') emit({ ev: 'remote', readEnabled: true, off: ['dps'] });
         if (s === 'settings-readoff') emit({ ev: 'remote', readEnabled: false, off: [] });
-        if (isSet && q.get('adv')) setTimeout(() => { const b = document.querySelector('[data-act=more][data-k=adv]'); if (b) b.click(); }, 60);
+        if (isSet && q.get('adv')) { let n = 0; const iv = setInterval(() => { const b = document.querySelector('[data-act=more][data-k=adv][aria-expanded=false]'); if (b) b.click(); if (b || ++n > 40) clearInterval(iv); }, 50); }
         if (q.get('upd')) emit({ ev: 'update', version: '1.6.47', notesRu: 'Чистка склада: программа показывает рамки на ячейках, нажимает игрок', notesEn: 'Storage cleanup: with «Auto click» off the app now says so and offers to turn it on with one button.' });
         // the site's switches: s=remote-off (game reading off), s=remote-some (some features off; &page=equip for the equip page)
         if (s === 'remote-off') emit({ ev: 'remote', readEnabled: false, off: [] });

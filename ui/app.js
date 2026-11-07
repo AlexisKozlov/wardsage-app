@@ -118,6 +118,33 @@
     if (keep != null && pg.querySelector('#code')) { pg.querySelector('#code').value = keep; pg.querySelector('#code').focus(); codeTyped(); }
     if (view !== lastView) { pg.className = ''; void pg.offsetWidth; pg.className = 'page'; }
     lastPage = html; lastView = view;
+    wireSettingsNav();
+  }
+
+  // the anchors of the settings page: the section in view gets .on (classList only, never in the markup, so the page is not redrawn on scroll)
+  let navIO = null, navOff = null;
+  function wireSettingsNav() {
+    if (navIO) { navIO.disconnect(); navIO = null; }
+    if (navOff) { navOff(); navOff = null; }
+    const nav = $('#setnav'); if (!nav || S.page !== 'settings' || S.compact) return;
+    const main = document.querySelector('.main'), secs = [...document.querySelectorAll('.setsecs > section')];
+    const mark = () => {
+      const top = main.getBoundingClientRect().top + main.clientHeight * 0.3;
+      let cur = secs[0];
+      secs.forEach((s) => { if (s.getBoundingClientRect().top <= top) cur = s; });
+      if (main.scrollTop + main.clientHeight >= main.scrollHeight - 2) cur = secs[secs.length - 1];
+      S.setSec = cur ? cur.id.replace('sec-', '') : '';
+      nav.querySelectorAll('button').forEach((b) => { const on = b.dataset.sec === S.setSec; b.classList.toggle('on', on); if (on) b.setAttribute('aria-current', 'true'); else b.removeAttribute('aria-current'); });
+    };
+    mark();
+    if (typeof IntersectionObserver === 'function') {
+      navIO = new IntersectionObserver(mark, { root: main, threshold: [0, .25, .5, .75, 1] });
+      secs.forEach((s) => navIO.observe(s));
+    }
+    let raf = 0;
+    const onScroll = () => { if (!raf) raf = requestAnimationFrame(() => { raf = 0; mark(); }); };   // a section's top crossing the line between the observer's steps
+    main.addEventListener('scroll', onScroll, { passive: true });
+    navOff = () => main.removeEventListener('scroll', onScroll);
   }
 
   // the site's announcement and the "no connection" note, above every page (text is escaped, never HTML)
@@ -879,7 +906,7 @@
   const recClock = (s) => Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
   const recLabel = () => S.rec.on ? t('recStop', recClock(S.rec.sec)) : t('recStart');
   const recNote = () => (S.rec.why === 'off' ? t('recOff') : S.rec.why ? t('recLimit') + ' ' : '') + (S.rec.why === 'off' ? '' : t('recSent', S.rec.sent, S.rec.total));
-  const settingsPage = () => window.RFSettings.html(S, t, esc, I, { dpsOff, codeBtns, recLabel, recNote, DISCORD, shownVer });
+  const settingsPage = () => window.RFSettings.html(S, t, esc, I, { dpsOff, remoteSwitchNote, recLabel, recNote, DISCORD, shownVer });
 
   // ---------------------------------------------------------------- actions
   function allUids() { const s = new Set(); S.plans.list.forEach((p) => p.items.forEach((i) => s.add(i.uid))); return [...s]; }
@@ -972,7 +999,12 @@
     else if (a === 'cancelCode') { S.editCode = false; render(); }
     else if (a === 'paste') host.send({ cmd: 'paste' });
     else if (a === 'saveCode') { const v = $('#code').value.trim(); if (CODE_RE.test(v)) host.send({ cmd: 'setCode', code: v }); }
-    else if (a === 'unlink') host.send({ cmd: 'clearCode' });
+    else if (a === 'unlink') {
+      // the first press asks «Точно отвязать?» for 4 s, the second one unlinks
+      if (!S.unlinkAsk) { S.unlinkAsk = true; clearTimeout(S.unlinkWd); S.unlinkWd = setTimeout(() => { S.unlinkAsk = false; render(); }, 4000); render(); }
+      else { S.unlinkAsk = false; clearTimeout(S.unlinkWd); host.send({ cmd: 'clearCode' }); render(); }
+    }
+    else if (a === 'setGo') { const s = document.getElementById('sec-' + el.dataset.sec); if (s) s.scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }); }
     else if (a === 'copy') { S.saveCopy = !S.saveCopy; host.send({ cmd: 'setSaveCopy', on: S.saveCopy }); render(); }
     else if (a === 'recButton') { S.recButton = !S.recButton; host.send({ cmd: 'setRecButton', on: S.recButton }); render(); }
     else if (a === 'sendCodes') { S.sendCodes = !S.sendCodes; host.send({ cmd: 'setSendCodes', on: S.sendCodes }); render(); }
