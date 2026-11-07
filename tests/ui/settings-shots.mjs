@@ -78,6 +78,12 @@ try {
       check(before > 0, `${w}x${h}: scrolled down before the click (${before})`);
       check(Math.abs(after - before) <= 1, `${w}x${h}: scrollTop kept after a switch click (${before} -> ${after})`);
       check((await sw.getAttribute('aria-checked')) !== on, `${w}x${h}: the switch flipped`);
+      await page.evaluate(() => document.querySelector('.main').scrollTo(0, 0));
+      await page.locator('#setnav [data-sec=help]').click();
+      await page.waitForTimeout(1200);
+      const st = await page.evaluate(() => ({ on: [...document.querySelectorAll('#setnav .on')].map((b) => b.dataset.sec), top: document.getElementById('sec-help').getBoundingClientRect().top, nav: document.getElementById('setnav').getBoundingClientRect().bottom }));
+      check(st.on.join() === 'help', `${w}x${h}: the anchor «Помощь» scrolls there and is the only one lit (${st.on})`);
+      check(st.top >= 0 && st.top < 120, `${w}x${h}: the section sits near the top, not under the strip (top ${Math.round(st.top)}, strip bottom ${Math.round(st.nav)})`);
       check(errs.length === 0, `${w}x${h}: no page errors`);
       await ctx.close();
     }
