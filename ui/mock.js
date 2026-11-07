@@ -4,6 +4,7 @@
 //   remote-off | remote-some (the site's switches; &page=equip) | remote-layout (no layout data for the game version) | remote-layout-code (no data: no valid sync code)
 //   maint-soon | maint-stopped | maint-on | maint-done | maint-early (the site's maintenance: banner, screen, the «works over» toast; &lang=en)
 //   terms (the first-run Terms of Use card; also &terms=1 with any scenario) | onboard | idle | reading | done | error | equip | pick | rel | selected | hidden | done-plan | compact | settings | news | newsoff | en
+//   settings | settings-on (every switch on, own site address) | settings-test (channel test, a recording sent) | settings-dpsoff | settings-readoff | settings-nocode  (&adv=1 opens «Дополнительно»)
 //   filter-open (the game's filter pop-up over the list) | filter-guide (the pop-up open for the «faster» tip: what to pick is lit) | far (the item more than three screens down: the filter tip)
 (function () {
   if (window.chrome && window.chrome.webview) return;
@@ -11,6 +12,7 @@
   const s = q.get('s') || 'idle';
   const site = location.origin + '/site';
   let handler = null;
+  const isSet = s.indexOf('settings') === 0;
   const emit = (m) => setTimeout(() => handler && handler(m), 0);
   const plan = {
     id: 'p1', heroUid: 214700000, heroName: 'Сунь Укун', createdAt: '2026-09-25T00:33:00Z',
@@ -46,9 +48,16 @@
     on: (f) => { handler = f; },
     send: (m) => {
       if (m.cmd === 'init') {
-        emit({ ev: 'state', lang: (s === 'en' || q.get('lang') === 'en') ? 'en' : 'ru', version: '1.6.53', site, defaultSite: 'https://wardsage.com', hasCode: s !== 'onboard', termsOk: !(s === 'terms' || q.get('terms')) || sessionStorage.getItem('rfTerms') === '1',
+        emit({ ev: 'state', lang: (s === 'en' || q.get('lang') === 'en') ? 'en' : 'ru', version: '1.6.53', site, defaultSite: 'https://wardsage.com', hasCode: s !== 'onboard' && s !== 'settings-nocode', termsOk: !(s === 'terms' || q.get('terms')) || sessionStorage.getItem('rfTerms') === '1',
           codePrefix: 'rf_VKSjw', saveCopy: false, game: { running: s !== 'error', version: '1.0.24' },
-          last: { at: '2026-09-24T20:26:00Z', heroes: 128, items: 1109, artifacts: 380, top: [2085, 2016, 2025] } });
+          last: { at: '2026-09-24T20:26:00Z', heroes: 128, items: 1109, artifacts: 380, top: [2085, 2016, 2025] },
+          ...(s === 'settings-on' || s === 'settings-test' || s === 'settings-dpsoff' || s === 'settings-readoff' ? { autoSync: true, errorReports: true, autoUpdate: true, tray: true, bossHints: true, dps: true, showInCapture: true, sendCodes: true, recButton: true, autostart: true } : {}),
+          ...(s === 'settings-test' ? { channel: 'test' } : {}) });
+        if (s === 'settings-on') emit({ ev: 'state', lang: q.get('lang') === 'en' ? 'en' : 'ru', version: '1.6.53', site: 'https://staging.wardsage.example', defaultSite: 'https://wardsage.com', hasCode: true, codePrefix: 'rf_VKSjw', saveCopy: true, autoSync: true, errorReports: true, autoUpdate: true, tray: true, bossHints: true, dps: true, showInCapture: true, sendCodes: true, recButton: true, autostart: true });
+        if (s === 'settings-test') emit({ ev: 'rec', on: false, sec: 0, sent: 3, total: 3, why: '' });
+        if (s === 'settings-dpsoff') emit({ ev: 'remote', readEnabled: true, off: ['dps'] });
+        if (s === 'settings-readoff') emit({ ev: 'remote', readEnabled: false, off: [] });
+        if (isSet && q.get('adv')) setTimeout(() => { const b = document.querySelector('[data-act=more][data-k=adv]'); if (b) b.click(); }, 60);
         if (q.get('upd')) emit({ ev: 'update', version: '1.6.47', notesRu: 'Чистка склада: программа показывает рамки на ячейках, нажимает игрок', notesEn: 'Storage cleanup: with «Auto click» off the app now says so and offers to turn it on with one button.' });
         // the site's switches: s=remote-off (game reading off), s=remote-some (some features off; &page=equip for the equip page)
         if (s === 'remote-off') emit({ ev: 'remote', readEnabled: false, off: [] });
@@ -71,7 +80,7 @@
         if (s.indexOf('tasks') === 0 || ['equip', 'pick', 'rel', 'selected', 'hidden', 'done-plan', 'compact', 'filter-open', 'filter-guide', 'far'].includes(s)) {
           setTimeout(() => document.querySelector('[data-page=equip]').click(), 20);
         }
-        if (s === 'settings') setTimeout(() => document.querySelector('[data-page=settings]').click(), 20);
+        if (isSet) setTimeout(() => document.querySelector('[data-page=settings]').click(), 20);
         if (s === 'community' || s === 'forum' || s === 'forum0' || s === 'forum00' || s === 'onboard') setTimeout(() => document.querySelector('[data-page=community]').click(), 20);
         if (s === 'news' || s === 'newsoff') setTimeout(() => document.querySelector('[data-page=news]').click(), 20);
       } else if (m.cmd === 'maint.check') {
