@@ -2638,7 +2638,7 @@ static partial class CoreTests {
       Check(Soc(sb6.Append(']').ToString()).Social.Count == 1 && Maintenance.MaxSocial == 6, "social: the list is cut at 6 (here the duplicates collapse first)"); }
     var soSaved = RemoteSwitches.Parse(RemoteSwitches.Parse("{\"maintenance\":{\"state\":\"on\",\"social\":[{\"id\":\"telegram\",\"url\":\"https://t.me/wardsage\"}]}}").ToJson());
     Check(soSaved.Maint.Social.Count == 1 && soSaved.Maint.Social[0][1] == "https://t.me/wardsage", "social: survives the saved copy");
-    Check(!soSaved.Maint.SameAs(Soc("")) && Soc("").SameAs(Soc("")), "social: SameAs sees the icons");
+    Check(!soSaved.Maint.SameAs(Soc("\"x\":1")) && Soc("\"x\":1").SameAs(Soc("\"x\":1")), "social: SameAs sees the icons");
     Check(!Array.Exists(RemoteSwitches.Features, f => f == "maintenance"), "maintenance is no feature");
     Check(full.Allows("battle") == false && RemoteSwitches.Parse("{\"maintenance\":{\"state\":\"on\"}}").Allows("battle"), "maintenance does not change readEnabled by itself");
     // the saved copy and SameAs
