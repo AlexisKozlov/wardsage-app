@@ -228,6 +228,13 @@ static partial class CoreTests {
         fm.W32(skills + 0x20, 100000); fm.W64(st + 0x78, outer);
         var big = RFX.ReadSkillStatsAt(st, 0x78, 0x10);
         Check(big == null || big.Count == 0, "too many skills: nothing read");
+        // the offsets by build: built-in for the checked builds 1.6.46 and 1.6.47, none for an unknown or an older one
+        string lfx = File.ReadAllText(Path.Combine("tests", "layout-fixture.json"), Encoding.UTF8);
+        foreach (var g in new[] { "1.6.46.841.1", "1.6.47.841.1", "1.6.39.829.1" }) {
+          int sk, da; bool known = RFX.SkillOffsets(GameLayout.Parse(lfx.Replace("\"game\": \"9.8.7.6.5\"", "\"game\": \"" + g + "\""), g), out sk, out da);
+          bool want = g != "1.6.39.829.1";
+          Check(known == want && (!want || (sk == 0x78 && da == 0x10)), "skill stats offsets for " + g + (want ? ": built-in 0x78 / 0x10" : ": unknown, none"));
+        }
       } finally { RFX.TestMemory = null; RFX.ForgetLive(); }
     }
 

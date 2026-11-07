@@ -530,16 +530,24 @@ namespace RealmForge {
       } catch (Exception) { return new Dictionary<int, long>(); }
     }
 
-    public const string SkillGame = "1.6.46.841.1";
+    // the builds whose dumps were checked for the skill statistics offsets (the same values in 1.6.46 and 1.6.47)
+    static readonly string[] SkillBuilds = { "1.6.46.841.1", "1.6.47.841.1" };
+
+    /// <summary>The skill statistics offsets for a layout: its "field" section, the built-in values for a checked build only; false = unknown.</summary>
+    public static bool SkillOffsets(GameLayout ly, out int oSk, out int oDa) {
+      oSk = -1; oDa = -1;
+      if (ly == null) return false;
+      oSk = ly.FieldOffset("StatisticsComponent.m_vSkillDamage"); oDa = ly.FieldOffset("SkillDamageStatisticsData.vDamageAmount");
+      if ((oSk < 0 || oDa < 0) && Array.IndexOf(SkillBuilds, ly.Game) >= 0) { oSk = 0x78; oDa = 0x10; }
+      return oSk >= 0 && oDa >= 0;
+    }
 
     /// <summary>The per-skill battle statistics: "controller:unit" -> {skill id: amount} (StatisticsComponent.m_vSkillDamage). Offsets
-    /// come from the layout's optional fields, or the built-in ones for game <see cref="SkillGame"/> only; null when unknown.</summary>
+    /// come from the layout's optional fields, or the built-in ones for the checked builds only; null when unknown.</summary>
     public static Dictionary<string, Dictionary<int, long>> ReadSkillStats(ulong sim) {
       try {
         var ly = Layout.Current; if (ly == null) return null;
-        int oSk = ly.FieldOffset("StatisticsComponent.m_vSkillDamage"), oDa = ly.FieldOffset("SkillDamageStatisticsData.vDamageAmount");
-        if ((oSk < 0 || oDa < 0) && ly.Game == SkillGame) { oSk = 0x78; oDa = 0x10; }
-        if (oSk < 0 || oDa < 0) return null;
+        int oSk, oDa; if (!SkillOffsets(ly, out oSk, out oDa)) return null;
         ulong world = P64(sim + 0x28); if (world == 0) return null;
         ulong st = Comp(CompNodes(P64(world + 0x58)), CT("Statistics"));
         if (st == 0 || !IsA(st, ClsStats)) return null;
