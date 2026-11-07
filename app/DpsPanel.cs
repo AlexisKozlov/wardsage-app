@@ -1,6 +1,6 @@
 // Wardsage app - the live DPS meter's picture (TEST build): heroes by a mode, tabs, segments, a hero's skills, a small curve.
 // A pure drawing function of (snapshot, state, size): no window, no game, no input - the window is app/DpsMeter.cs, the numbers src/DpsFeed.cs.
-// Two looks (DpsStyle, to be cut to one): A "hero window" (slate plate, game buttons, framed bars), B "battle strip" (a dark gradient per row, thin bars).
+// The look: the "hero window" (slate plate, game buttons, framed bars).
 // Text never lies on a coloured bar: bars sit under or beside the text, the text lies on the plate / the dark strip.
 #if TESTBUILD
 using System;
@@ -11,8 +11,6 @@ using System.Drawing.Imaging;
 using System.Globalization;
 
 namespace RealmForge {
-  enum DpsStyle { A, B }
-
   /// <summary>What the player chose in the panel.</summary>
   sealed class DpsView {
     public DpsMode Mode = DpsMode.Damage;
@@ -22,8 +20,6 @@ namespace RealmForge {
     public string Lang = "ru";
     /// <summary>Ctrl is held: the panel takes the mouse (the border glows, the resize grip shows).</summary>
     public bool Interactive;
-    /// <summary>The look (A or B): the test build shows one of the two until the owner picks.</summary>
-    public DpsStyle Style = DpsStyle.A;
   }
 
   /// <summary>A pressable place of the picture (client px): Kind = mode / seg / hero / back / reset.</summary>
@@ -83,13 +79,7 @@ namespace RealmForge {
     static string FillKind(DpsMode m) { return m == DpsMode.ToBoss ? "bar_yellow" : m == DpsMode.Heal ? "green" : m == DpsMode.Taken ? "bar_purple" : "bar_red"; }
 
     sealed class Ctx {
-      public Graphics G; public float S; public bool En, A; public List<DpsHit> Hits; public DpsView V; public string Fill;
-    }
-
-    /// <summary>B: a dark base under a row or a message (so that the fading strip never leaves the text on a bright game picture).</summary>
-    static void Base(Ctx c, RectangleF r) {
-      if (c.A) return;
-      using (var b = new SolidBrush(Color.FromArgb(150, 8, 8, 14))) c.G.FillRectangle(b, r);
+      public Graphics G; public float S; public bool En; public List<DpsHit> Hits; public DpsView V; public string Fill;
     }
 
     static float T(Ctx c, string t, float px, bool bold, Color col, RectangleF r, int al) { return DpsArt.Text(c.G, t, px, bold, col, r, al); }
@@ -107,12 +97,12 @@ namespace RealmForge {
       p.CloseFigure(); return p;
     }
 
-    /// <summary>The plate under everything (cached by size, scale, Ctrl and look): A the slate tips plate, B nothing; Ctrl adds the glowing frame.</summary>
-    static Bitmap Chrome(int w, int h, float s, bool inter, bool a) {
-      return DpsArt.Cached("ch|" + w + "|" + h + "|" + s.ToString("0.###", Inv) + "|" + inter + "|" + a, () => {
+    /// <summary>The plate under everything (cached by size, scale and Ctrl): the slate tips plate; Ctrl adds the glowing frame.</summary>
+    static Bitmap Chrome(int w, int h, float s, bool inter) {
+      return DpsArt.Cached("ch|" + w + "|" + h + "|" + s.ToString("0.###", Inv) + "|" + inter, () => {
         var bmp = new Bitmap(w, h, PixelFormat.Format32bppPArgb);
         using (var g = Graphics.FromImage(bmp)) {
-          if (a) { var n = DpsArt.Nine("common_description_tips", w, h, 0.5f * s, 0.88f); if (n != null) g.DrawImageUnscaled(n, 0, 0); else using (var b = new SolidBrush(Color.FromArgb(225, 30, 32, 42))) g.FillRectangle(b, 0, 0, w, h); }
+          var n = DpsArt.Nine("common_description_tips", w, h, 0.5f * s, 0.88f); if (n != null) g.DrawImageUnscaled(n, 0, 0); else using (var b = new SolidBrush(Color.FromArgb(225, 30, 32, 42))) g.FillRectangle(b, 0, 0, w, h);
           if (inter) { var f = DpsArt.GlowFrame(w, h, 0.5f * s); if (f != null) g.DrawImageUnscaled(f, 0, 0); }
         }
         return bmp;
@@ -126,20 +116,18 @@ namespace RealmForge {
       DpsArt.Begin(s);
       var bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb);
       if (hits != null) hits.Clear();
-      bool en = v.Lang == "en", A = v.Style == DpsStyle.A;
+      bool en = v.Lang == "en";
       using (var g = Graphics.FromImage(bmp)) {
         g.SmoothingMode = SmoothingMode.AntiAlias; g.PixelOffsetMode = PixelOffsetMode.Half; g.InterpolationMode = InterpolationMode.Bilinear;
-        var c = new Ctx { G = g, S = s, En = en, A = A, Hits = hits, V = v, Fill = FillKind(v.Mode) };
-        var chrome = Chrome(w, h, s, v.Interactive, A);
+        var c = new Ctx { G = g, S = s, En = en, Hits = hits, V = v, Fill = FillKind(v.Mode) };
+        var chrome = Chrome(w, h, s, v.Interactive);
         if (chrome != null) g.DrawImageUnscaled(chrome, 0, 0);
         float pad = 8 * s, x0 = pad, x1 = w - pad, iw = x1 - x0, y = pad;
         var seg = snap == null ? null : snap.Get(v.Segment);
         // ---- title: the mode on the left, the fight's clock on the right
         float hh = 30 * s;
-        var hr = new RectangleF(x0, y, iw, hh);
-        if (A) { var pl = DpsArt.Plaque((int)Math.Round(iw), (int)Math.Round(hh), 0.55f); if (pl != null) g.DrawImageUnscaled(pl, (int)Math.Round(x0), (int)Math.Round(y)); }
-        else { Base(c, hr); DpsArt.DrawPiece(g, "title_bg", hr); }
-        float tx = A ? x0 + 64 * s : x0 + 8 * s;   // A: right of the emblem
+        { var pl = DpsArt.Plaque((int)Math.Round(iw), (int)Math.Round(hh), 0.55f); if (pl != null) g.DrawImageUnscaled(pl, (int)Math.Round(x0), (int)Math.Round(y)); }
+        float tx = x0 + 64 * s;   // right of the emblem
         float clkW = 0;
         if (seg != null) {
           string clk = Clock(seg.Seconds) + (seg.Fights > 1 ? " x" + seg.Fights : "");
@@ -171,7 +159,7 @@ namespace RealmForge {
         for (int i = 0; i < 4; i++) {
           var r = new RectangleF(sx, y, tws[i], sh);
           bool on = i < 3 && Segments[i] == v.Segment;
-          Button(c, r, on, i < 3 ? names[i] : rs, spx, false, A ? (on ? "common_btn_special_s" : "common_btn_normal_s") : (on ? "common_btn_special_s" : null));
+          Button(c, r, on, i < 3 ? names[i] : rs, spx, false, on ? "common_btn_special_s" : "common_btn_normal_s");
           if (i < 3) Hit(c, r, "seg", i, 0); else Hit(c, r, "reset", 0, 0);
           sx += tws[i] + 3 * s;
         }
@@ -184,7 +172,7 @@ namespace RealmForge {
           var r = new RectangleF(x0 + i * (tabW + gapM), y, tabW, mh);
           bool on = Modes[i] == v.Mode;
           string nm = shortMode ? ModeShort(Modes[i], en) : ModeName(Modes[i], en);
-          Button(c, r, on, nm, FitPx(nm, Math.Max(11, 13 * s), 11, true, tabW - 6 * s), true, A ? (on ? "common_btn_hortab2" : "common_btn_hortab0") : (on ? "common_btn_special_s" : null));
+          Button(c, r, on, nm, FitPx(nm, Math.Max(11, 13 * s), 11, true, tabW - 6 * s), true, on ? "common_btn_hortab2" : "common_btn_hortab0");
           Hit(c, r, "mode", i, 0);
         }
         y += mh + 4 * s;
@@ -200,7 +188,7 @@ namespace RealmForge {
         DpsHero openHero = null;
         if (seg != null && v.HasOpen) foreach (var hh2 in seg.Heroes) if (hh2.C == v.OpenC && hh2.Unit == v.OpenUnit) openHero = hh2;
         if (seg == null) {
-          var nr = new RectangleF(x0, y, iw, 36 * s); Base(c, nr);
+          var nr = new RectangleF(x0, y, iw, 36 * s);
           T(c, en ? "No fight yet" : "Боя ещё не было", Math.Max(13, 14 * s), false, Idle, nr, 1);
         } else if (openHero != null) {
           DrawSkills(c, seg, openHero, x0, x1, y, bottom);
@@ -220,7 +208,7 @@ namespace RealmForge {
       return bmp;
     }
 
-    /// <summary>A button: a game sprite (9-sliced by its borders) or, for B's idle ones, a dark plate; the label lies on it.</summary>
+    /// <summary>A button: a game sprite (9-sliced by its borders) or, when the sprite is missing, a dark plate; the label lies on it.</summary>
     static void Button(Ctx c, RectangleF r, bool on, string text, float px, bool bold, string sprite) {
       int bw = (int)Math.Round(r.Width), bh = (int)Math.Round(r.Height);
       Bitmap b = null;
@@ -242,12 +230,12 @@ namespace RealmForge {
       T(c, text, px, bold, on ? TitleGold : Idle, new RectangleF(r.X + 2 * c.S, r.Y, r.Width - 4 * c.S, r.Height), 1);
     }
 
-    /// <summary>The bar beside the text: A a framed bar (game frame, dark track, coloured fill), B a thin track with the fill; frac 0..1.</summary>
-    static void DrawBar(Ctx c, RectangleF r, double frac, bool framed) {
+    /// <summary>The bar beside the text: a framed bar (game frame, dark track, coloured fill); frac 0..1.</summary>
+    static void DrawBar(Ctx c, RectangleF r, double frac) {
       var g = c.G; float s = c.S;
       float f = (float)Math.Max(0, Math.Min(1, frac));
       RectangleF inner = r;
-      if (framed) {
+      {
         var fr = new RectangleF(r.X - 1 * s, r.Y - 2.5f * s, r.Width + 2 * s, r.Height + 5 * s);
         int fw = (int)Math.Round(fr.Width), fh = (int)Math.Round(fr.Height);
         var nb = DpsArt.Nine("common_bg_barframe_01", fw, fh, DpsArt.HeightScale("common_bg_barframe_01", fh), 1f);
@@ -276,19 +264,14 @@ namespace RealmForge {
         Hit(c, row, "hero", hero.Unit, hero.C);
         y += rowH + gap; shown++;
       }
-      if (shown == 0) { var nr = new RectangleF(x0, y, x1 - x0, rowH); Base(c, nr); T(c, en ? "Nothing in this mode yet" : "В этом режиме пока пусто", Math.Max(13, 14 * s), false, Idle, nr, 1); }
+      if (shown == 0) { var nr = new RectangleF(x0, y, x1 - x0, rowH); T(c, en ? "Nothing in this mode yet" : "В этом режиме пока пусто", Math.Max(13, 14 * s), false, Idle, nr, 1); }
     }
 
     /// <summary>One hero row: the portrait, the name and the value on the first line, the bar and the small figures on the second.</summary>
     static void HeroRow(Ctx c, DpsHero hero, string name, RectangleF row, bool leader, double frac, string value, string sub, string subShort, string back) {
-      var g = c.G; float s = c.S; bool A = c.A;
-      if (!A) {
-        Base(c, row);
-        if (leader) { var pl = DpsArt.Darkened("plate5", (int)Math.Round(row.Width), (int)Math.Round(row.Height), 0.5f, 0.95f); if (pl != null) g.DrawImageUnscaled(pl, (int)Math.Round(row.X), (int)Math.Round(row.Y)); }
-        else DpsArt.DrawPiece(g, "title_bg", row);
-      }
+      var g = c.G; float s = c.S;
       int px = (int)Math.Round(30 * s);
-      DpsArt.Portrait(g, hero.Unit, hero.Base, hero.Hero, row.X + 3 * s, row.Y + (row.Height - px) / 2f, px, !A);
+      DpsArt.Portrait(g, hero.Unit, hero.Base, hero.Hero, row.X + 3 * s, row.Y + (row.Height - px) / 2f, px, false);
       float tx = row.X + 3 * s + px + 7 * s, tr = row.Right - 5 * s, zone = tr - tx;
       float vpx = Math.Max(13, 16 * s), npx = Math.Max(11, 14 * s), spx = Math.Max(11, 11 * s);
       var l1 = new RectangleF(tx, row.Y + 2 * s, zone, 17 * s);
@@ -299,7 +282,7 @@ namespace RealmForge {
       float sw = DpsArt.Measure(st, spx, false);
       if (back == null && sw > zone * 0.38f) { st = subShort; sw = DpsArt.Measure(st, spx, false); }
       float barW = Math.Min(zone * 0.62f, zone - sw - 8 * s);
-      if (barW > 12 * s) DrawBar(c, new RectangleF(tx, l2.Y + (l2.Height - 9 * s) / 2f, barW, 9 * s), frac, A);
+      if (barW > 12 * s) DrawBar(c, new RectangleF(tx, l2.Y + (l2.Height - 9 * s) / 2f, barW, 9 * s), frac);
       T(c, st, spx, false, back != null ? TitleGold : SubCol, l2, 2);
     }
 
@@ -310,14 +293,15 @@ namespace RealmForge {
       HeroRow(c, hero, HeroName(hero, en), head, true, 1, Short(hero.Value[mi]), null, null, en ? "‹ Back" : "‹ Назад");
       Hit(c, head, "back", 0, 0);
       y += rowH + 3 * s;
-      if (v.Mode == DpsMode.Heal) {
-        var nr = new RectangleF(x0, y, x1 - x0, 36 * s); Base(c, nr);
-        T(c, en ? "The game does not track healing by skill" : "Лечение по скиллам игра не ведёт", Math.Max(11, 13 * s), false, Idle, nr, 1);
+      if (v.Mode == DpsMode.Heal || v.Mode == DpsMode.Taken) {   // the skill rows are the hero's own damage: no heal / taken by skill in the game
+        var nr = new RectangleF(x0, y, x1 - x0, 36 * s);
+        string msg = v.Mode == DpsMode.Heal ? (en ? "The game does not track healing by skill" : "Лечение по скиллам игра не ведёт") : (en ? "The game does not track damage taken by skill" : "Получено по скиллам игра не ведёт");
+        T(c, msg, Math.Max(11, 13 * s), false, Idle, nr, 1);
         return;
       }
       var rows = DpsSkillRows.Group(hero.Unit, hero.Skills);
       if (rows.Count == 0) {
-        var nr = new RectangleF(x0, y, x1 - x0, 36 * s); Base(c, nr);
+        var nr = new RectangleF(x0, y, x1 - x0, 36 * s);
         T(c, en ? "Skills were not read in this fight" : "Скиллы в этом бою не прочитаны", Math.Max(11, 13 * s), false, Idle, nr, 1);
         return;
       }
@@ -328,7 +312,6 @@ namespace RealmForge {
       foreach (var sk in rows) {
         if (y + sh > bottom + 0.5f) break;
         var row = new RectangleF(x0, y, x1 - x0, sh);
-        if (!c.A) { Base(c, row); DpsArt.DrawPiece(c.G, "title_bg", row); }
         DpsArt.SkillIcon(c.G, sk.Tail ? 0 : sk.Id, row.X + 2 * s, row.Y + (sh - ipx) / 2f, ipx);
         float tx = row.X + 2 * s + ipx + 6 * s, tr = row.Right - 5 * s, zone = tr - tx;
         var l1 = new RectangleF(tx, row.Y + 1 * s, zone, 15 * s);
@@ -354,9 +337,7 @@ namespace RealmForge {
       if (only != null) sum = only.Value[mi]; else foreach (var h in seg.Heroes) sum += h.Value[mi];
       double dps = seg.Seconds > 0 ? sum / seg.Seconds : 0;
       string t = (c.En ? "Total " : "Всего ") + Short(sum) + " · " + ShortD(dps) + (c.En ? "/s" : "/с");
-      Base(c, r);
       T(c, t, Math.Max(13, 14 * c.S), true, SumGold, r, 0);
-      if (!c.A) DpsArt.DrawPiece(c.G, "art-sep", new RectangleF(r.X, r.Y - 2 * c.S, r.Width, 2));
     }
 
     /// <summary>The curve of the selected mode over the fight (the current fight only: the other segments have no curve).

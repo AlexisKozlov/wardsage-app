@@ -155,7 +155,7 @@ namespace RealmForge {
       w = Math.Max(DpsPanel.MinW(U), Math.Min(cr.R, w)); h = Math.Max(DpsPanel.MinH(U), Math.Min(cr.B, h));
       var o = new W32.POINT(0, 0); W32.ClientToScreen(hwnd, ref o);
       lastO = o; lastCr = cr; haveCr = true; curU = U; curS = DpsPanel.ScaleFor(U); curW = w; curH = h;
-      string key = snap.Version + "|" + view.Mode + "|" + view.Segment + "|" + view.HasOpen + view.OpenC + ":" + view.OpenUnit + "|" + w + "x" + h + "|" + move + "|" + view.Lang + "|" + view.Style;
+      string key = snap.Version + "|" + view.Mode + "|" + view.Segment + "|" + view.HasOpen + view.OpenC + ":" + view.OpenUnit + "|" + w + "x" + h + "|" + move + "|" + view.Lang;
       Bitmap old = null;
       if (key != drawn || bmp == null) { old = bmp; bmp = DpsPanel.Render(snap, view, w, h, curS, hits); drawn = key; }
       int px = X >= 0 ? (int)(X * cr.R) : cr.R - w - (int)(0.012 * U), py = Y >= 0 ? (int)(Y * cr.B) : (int)(0.22 * cr.B);

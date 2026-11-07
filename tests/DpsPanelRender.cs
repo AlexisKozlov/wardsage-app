@@ -1,6 +1,6 @@
 // Draws the DPS meter's panel (app/DpsPanel.cs) over a game picture (tests/fixtures/dps-bg.jpg), from the saved fights (tests/fixtures/dps-battles.json), into PNG files,
 // and checks it: game windows 1024x576 ... 3840x2160, Russian and English, the four modes, the three segments, a hero's skills open (boss fight and arena), no fight yet,
-// Ctrl, both looks (A and B). Checks: not blank; no text wider than its rectangle; the text/background contrast under the glyphs >= 4.5; a portrait for every hero
+// Ctrl. Checks: not blank; no text wider than its rectangle; the text/background contrast under the glyphs >= 4.5; a portrait for every hero
 // and an icon for the skills (counters); "Other" <= 5% of the damage on the fixture's skills; the time of Render on 300x500.
 // Needs GDI+ (Windows, or Mono with libgdiplus). Compiled with -define:TESTBUILD.
 //   DpsPanelRender.exe <out dir>      exit 0 = all checks passed
@@ -153,33 +153,31 @@ static class DpsPanelRender {
     Check("atlases", DpsArt.HasAtlases, "the three atlases are read (app/res/dps_*)");
     Check("atlases", DpsArt.HasFira, "Fira Sans is loaded");
     int[][] sizes = { new[] { 1024, 576 }, new[] { 1280, 720 }, new[] { 1920, 1080 }, new[] { 2560, 1440 }, new[] { 3840, 2160 } };
-    DpsStyle[] styles = { DpsStyle.A, DpsStyle.B };
     string[] langs = { "ru", "en" };
     foreach (var z in sizes) {
       string t = z[0] + "x" + z[1]; bool keep = z[0] == 1920 || z[0] == 1280;
-      foreach (var st in styles) {
-        string sn = st == DpsStyle.A ? "a" : "b";
+      {
+        string sn = "a";
         foreach (var lg in langs) {
           string pre = sn + "-" + lg + "-" + t + "-";
           foreach (var m in DpsPanel.Modes) {
-            Shot(dir, pre + "boss-" + m.ToString().ToLower(), sb, new DpsView { Style = st, Lang = lg, Mode = m }, z[0], z[1], keep && lg == "ru" && z[0] == 1920, false, true);
-            Shot(dir, pre + "arena-" + m.ToString().ToLower(), sa, new DpsView { Style = st, Lang = lg, Mode = m }, z[0], z[1], false, false, true);
-            Shot(dir, pre + "boss-skills-" + m.ToString().ToLower(), sb, Open(sb, new DpsView { Style = st, Lang = lg, Mode = m }), z[0], z[1], false, m == DpsMode.Damage || m == DpsMode.ToBoss, true);
+            Shot(dir, pre + "boss-" + m.ToString().ToLower(), sb, new DpsView { Lang = lg, Mode = m }, z[0], z[1], keep && lg == "ru" && z[0] == 1920, false, true);
+            Shot(dir, pre + "arena-" + m.ToString().ToLower(), sa, new DpsView { Lang = lg, Mode = m }, z[0], z[1], false, false, true);
+            Shot(dir, pre + "boss-skills-" + m.ToString().ToLower(), sb, Open(sb, new DpsView { Lang = lg, Mode = m }), z[0], z[1], false, m == DpsMode.Damage || m == DpsMode.ToBoss, true);
           }
-          foreach (var sg in DpsPanel.Segments) Shot(dir, pre + "boss-seg-" + sg.ToString().ToLower(), sb, new DpsView { Style = st, Lang = lg, Segment = sg }, z[0], z[1], false, false, sg != DpsSegment.Previous);
-          Shot(dir, pre + "arena-skills", sa, Open(sa, new DpsView { Style = st, Lang = lg }), z[0], z[1], false, false, true);
-          Shot(dir, pre + "live", sbMid, new DpsView { Style = st, Lang = lg }, z[0], z[1], false, false, true);
-          Shot(dir, pre + "empty", new DpsFeed().Snapshot, new DpsView { Style = st, Lang = lg }, z[0], z[1], false, false, false);
-          Shot(dir, pre + "ctrl", sb, new DpsView { Style = st, Lang = lg, Interactive = true, Mode = DpsMode.Taken }, z[0], z[1], keep && lg == "en", false, true);
+          foreach (var sg in DpsPanel.Segments) Shot(dir, pre + "boss-seg-" + sg.ToString().ToLower(), sb, new DpsView { Lang = lg, Segment = sg }, z[0], z[1], false, false, sg != DpsSegment.Previous);
+          Shot(dir, pre + "arena-skills", sa, Open(sa, new DpsView { Lang = lg }), z[0], z[1], false, false, true);
+          Shot(dir, pre + "live", sbMid, new DpsView { Lang = lg }, z[0], z[1], false, false, true);
+          Shot(dir, pre + "empty", new DpsFeed().Snapshot, new DpsView { Lang = lg }, z[0], z[1], false, false, false);
+          Shot(dir, pre + "ctrl", sb, new DpsView { Lang = lg, Interactive = true, Mode = DpsMode.Taken }, z[0], z[1], keep && lg == "en", false, true);
         }
         // the four key pictures: the list and a hero's skills (Russian, damage)
-        Shot(dir, sn + "-list-" + t, sb, new DpsView { Style = st }, z[0], z[1], keep, false, true);
-        Shot(dir, sn + "-skills-" + t, sb, Open(sb, new DpsView { Style = st }), z[0], z[1], keep, true, true);
+        Shot(dir, sn + "-list-" + t, sb, new DpsView(), z[0], z[1], keep, false, true);
+        Shot(dir, sn + "-skills-" + t, sb, Open(sb, new DpsView()), z[0], z[1], keep, true, true);
       }
     }
-    foreach (var f in new[] { "a-list", "a-skills", "b-list", "b-skills" }) File.Copy(Path.Combine(dir, f + "-1920x1080.png"), Path.Combine(dir, f + ".png"), true);
+    foreach (var f in new[] { "a-list", "a-skills" }) File.Copy(Path.Combine(dir, f + "-1920x1080.png"), Path.Combine(dir, f + ".png"), true);
     Console.WriteLine("portraits drawn " + ptReal + ", skill icons: own " + iconOwn + ", common " + iconGen);
-    Compare(dir, sb);
     // "Other" on the fixture: the rest row stays small
     long total = 0, other = 0; int heroesWithSkills = 0; var ids = new HashSet<int>();
     foreach (var fo in fights) {
@@ -202,25 +200,10 @@ static class DpsPanelRender {
     return fails == 0 ? 0 : 1;
   }
 
-  // both looks side by side at a 1280x720 game window, true size: A list, A skills, B list, B skills
-  static void Compare(string dir, DpsSnapshot sb) {
-    int gw = 1280, gh = 720; double U = 720; float s = DpsPanel.ScaleFor(U);
-    int w = DpsPanel.DefaultW(U), h = DpsPanel.DefaultH(U), gap = 24, x = (gw - 4 * w - 3 * gap) / 2, y = (gh - h) / 2;
-    using (var scene = new Bitmap(Bg(gw, gh)))
-    using (var g = Graphics.FromImage(scene)) {
-      foreach (var st in new[] { DpsStyle.A, DpsStyle.B }) for (int k = 0; k < 2; k++) {
-        var v = new DpsView { Style = st }; if (k == 1) Open(sb, v);
-        using (var p = DpsPanel.Render(sb, v, w, h, s, null)) g.DrawImage(p, x, y);
-        x += w + gap;
-      }
-      scene.Save(Path.Combine(dir, "compare-1280.png"), ImageFormat.Png);
-    }
-  }
-
   // Render on 300x500: 50 frames per view, warm cache
   static void Timing(DpsSnapshot sb) {
-    foreach (var st in new[] { DpsStyle.A, DpsStyle.B }) foreach (bool skills in new[] { false, true }) {
-      var v = new DpsView { Style = st }; if (skills) Open(sb, v);
+    foreach (bool skills in new[] { false, true }) {
+      var v = new DpsView(); if (skills) Open(sb, v);
       var sw = Stopwatch.StartNew();
       using (var cold = DpsPanel.Render(sb, v, 300, 500, 1f, null)) { }
       double c0 = sw.Elapsed.TotalMilliseconds;
@@ -230,7 +213,7 @@ static class DpsPanelRender {
         using (var b = DpsPanel.Render(sb, v, 300, 500, 1f, null)) { }
         double ms = sw.Elapsed.TotalMilliseconds; sum += ms; if (ms > max) max = ms;
       }
-      string nm = (st == DpsStyle.A ? "A" : "B") + (skills ? " skills" : " list");
+      string nm = skills ? "skills" : "list";
       Console.WriteLine("Render 300x500 " + nm + ": first " + c0.ToString("0.0") + " ms, 50 frames avg " + (sum / 50).ToString("0.00") + " ms, max " + max.ToString("0.0") + " ms");
       Check("render time", sum / 50 <= 8.0, "Render " + nm + " avg " + (sum / 50).ToString("0.00") + " ms > 8");
     }
