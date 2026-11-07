@@ -5650,6 +5650,9 @@ namespace RealmForge {
     public bool RecButton = true;   // TEST build: the record button over the game (app/Overlay.cs)
     public bool SendCodes = true;   // promo codes the player enters in the game, with the game's answer, go to the site (app/CodeWatch.cs; the player can turn it off)
     public bool BossHints = true;   // the boss coach's panel over the game during boss fights (app/BattleCoach.cs)
+    public bool DpsMeter;           // TEST build: the live DPS meter over the game (app/DpsMeter.cs); off by default
+    /// <summary>Where the DPS meter's window is: left, top, width, height as fractions of the game's window; -1 = default.</summary>
+    public double DpsX = -1, DpsY = -1, DpsW = -1, DpsH = -1;
     public bool ShowInCapture;      // the player's choice: hint windows stay in recordings / streams / screenshots (off by default: they are hidden from captures)
     // last successful sync (shown on the start screen; the busts of the strongest heroes decorate the banner)
     public string LastAt;                       // ISO 8601 UTC or null
@@ -5733,6 +5736,12 @@ namespace RealmForge {
       sb.Append(",\n  \"recButton\": ").Append(RecButton ? "true" : "false");
       sb.Append(",\n  \"sendCodes\": ").Append(SendCodes ? "true" : "false");
       sb.Append(",\n  \"bossHints\": ").Append(BossHints ? "true" : "false");
+      sb.Append(",\n  \"dpsMeter\": ").Append(DpsMeter ? "true" : "false");
+      if (DpsX >= 0 && DpsY >= 0) {
+        var ic = System.Globalization.CultureInfo.InvariantCulture;
+        sb.Append(",\n  \"dps\": [").Append(DpsX.ToString("0.####", ic)).Append(", ").Append(DpsY.ToString("0.####", ic)).Append(", ")
+          .Append(DpsW.ToString("0.####", ic)).Append(", ").Append(DpsH.ToString("0.####", ic)).Append("]");
+      }
       sb.Append(",\n  \"showInCapture\": ").Append(ShowInCapture ? "true" : "false");
       if (CoachX >= 0 && CoachY >= 0)
         sb.Append(",\n  \"coach\": [").Append(CoachX.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture))
@@ -5770,6 +5779,7 @@ namespace RealmForge {
       c.Tray = MiniJson.GetBool(d, "tray", true);
       c.BossHints = MiniJson.GetBool(d, "bossHints", true);
       c.ShowInCapture = MiniJson.GetBool(d, "showInCapture", false);
+      c.DpsMeter = MiniJson.GetBool(d, "dpsMeter", false);
       c.SendCodes = MiniJson.GetBool(d, "sendCodes", true);
       c.RecButton = MiniJson.GetBool(d, "recButton", true);
       string gs = MiniJson.GetString(d, "guideStyle"); c.GuideStyle = gs == "on" || gs == "off" ? gs : "auto";
@@ -5781,6 +5791,11 @@ namespace RealmForge {
       if (co != null && co.Count == 2 && co[0] is double && co[1] is double) {
         double x = (double)co[0], y = (double)co[1];
         if (x >= 0 && x <= 1 && y >= 0 && y <= 1) { c.CoachX = x; c.CoachY = y; }
+      }
+      var dp = d.TryGetValue("dps", out lv) ? lv as List<object> : null;
+      if (dp != null && dp.Count == 4 && dp[0] is double && dp[1] is double && dp[2] is double && dp[3] is double) {
+        double x = (double)dp[0], y = (double)dp[1], dw = (double)dp[2], dh = (double)dp[3];
+        if (x >= 0 && x <= 1 && y >= 0 && y <= 1 && dw > 0 && dw <= 1 && dh > 0 && dh <= 1) { c.DpsX = x; c.DpsY = y; c.DpsW = dw; c.DpsH = dh; }
       }
       var last = d.TryGetValue("last", out lv) ? MiniJson.AsObject(lv) : null;
       if (last != null && MiniJson.GetString(last, "at") != null) {
