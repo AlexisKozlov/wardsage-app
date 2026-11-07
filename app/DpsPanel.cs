@@ -20,6 +20,8 @@ namespace RealmForge {
     public string Lang = "ru";
     /// <summary>Ctrl is held: the panel takes the mouse (the border glows, the resize grip shows).</summary>
     public bool Interactive;
+    /// <summary>Show the small line at the bottom about the Ctrl control (the first fights after the install, until Ctrl was used).</summary>
+    public bool Hint;
   }
 
   /// <summary>A pressable place of the picture (client px): Kind = mode / seg / hero / back / reset.</summary>
@@ -179,6 +181,8 @@ namespace RealmForge {
         // ---- the bottom: the curve (when 4 hero rows still fit), the sum line
         float rowH = 36 * s, gap = 3 * s, gh = 52 * s, sumH = 16 * s;
         float bottom = h - pad;
+        RectangleF hintR = RectangleF.Empty;
+        if (v.Hint) { float hintH = 14 * s; hintR = new RectangleF(x0, bottom - hintH, iw, hintH); bottom -= hintH + 2 * s; }
         bool graphOn = seg != null && (bottom - y - sumH - 3 * s - gh - 3 * s) >= 4 * (rowH + gap) - gap;
         RectangleF graph = RectangleF.Empty;
         if (graphOn) { graph = new RectangleF(x0, bottom - gh, iw, gh); bottom -= gh + 3 * s; }
@@ -197,6 +201,7 @@ namespace RealmForge {
         }
         if (seg != null) DrawSum(c, seg, openHero, sumR);
         if (graphOn) DrawGraph(c, snap, seg, openHero, graph);
+        if (v.Hint) DrawHint(c, hintR);
         if (v.Interactive) {
           var gr = Grip(w, h, s);
           using (var pen = new Pen(Color.FromArgb(255, 255, 226, 150), 1.5f)) {
@@ -330,6 +335,18 @@ namespace RealmForge {
         T(c, st, spx, false, SubCol, l2, 2);
         y += sh + gap;
       }
+    }
+
+    /// <summary>"Ctrl: move, resize, click": the longer wording when it fits, else the short one.</summary>
+    public static string HintText(bool en, float px, float maxW) {
+      string[] cand = en ? new[] { "Ctrl: move, resize, click", "Ctrl: move, click" } : new[] { "Ctrl: двигать, менять размер, нажимать", "Ctrl: двигать, размер, клик" };
+      foreach (var t in cand) if (DpsArt.Measure(t, px, false) <= maxW) return t;
+      return cand[cand.Length - 1];
+    }
+
+    static void DrawHint(Ctx c, RectangleF r) {
+      float px = Math.Max(12, 11 * c.S);
+      T(c, HintText(c.En, px, r.Width), px, false, SubCol, r, 1);
     }
 
     static void DrawSum(Ctx c, DpsSegmentView seg, DpsHero only, RectangleF r) {

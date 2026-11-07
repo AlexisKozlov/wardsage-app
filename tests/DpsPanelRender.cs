@@ -222,12 +222,40 @@ static class DpsPanelRender {
     Check("other", total > 0 && other <= total * 0.05, "Other " + other + " of " + total + " (" + (total > 0 ? other * 100.0 / total : 0).ToString("0.0") + "%), " + ids.Count + " skill ids, " + heroesWithSkills + " heroes");
     Console.WriteLine("Other = " + (total > 0 ? other * 100.0 / total : 0).ToString("0.00") + "% of the damage on " + ids.Count + " skill ids");
     AtlasBrightness();
+    HintTests(sb, dir);
     Timing(sb);
     Check("number format", DpsPanel.Short(1234567) == "1.23M" && DpsPanel.Short(950) == "950" && DpsPanel.Short(12345) == "12.3K" && DpsPanel.Short(2500000000) == "2.50B", "number format");
     foreach (var kv in passes) Console.WriteLine("ok: " + kv.Key + " (" + kv.Value + " cases)");
     Console.WriteLine("cache entries at the end: " + DpsArt.CacheCount);
     Console.WriteLine(fails == 0 ? "PASS" : "FAILED: " + fails);
     return fails == 0 ? 0 : 1;
+  }
+
+  // the Ctrl hint line: the counter file (5 fights, or the first use of Ctrl) and the picture with the line in the narrow and the default window
+  static void HintTests(DpsSnapshot sb, string dir) {
+    string p = Path.Combine(Path.GetTempPath(), "dps-hint-test-" + Guid.NewGuid().ToString("N") + ".json");
+    try {
+      var st = new DpsHintStore(p);
+      Check("hint store", st.Show && st.Fights == 0 && !File.Exists(p), "a fresh store shows the hint and writes nothing");
+      for (int i = 0; i < DpsHintStore.MaxFights; i++) st.FightSeen();
+      Check("hint store", st.Show && new DpsHintStore(p).Show && new DpsHintStore(p).Fights == DpsHintStore.MaxFights, "the hint is still shown in the fifth fight (and after a restart)");
+      st.FightSeen();
+      Check("hint store", !st.Show && !new DpsHintStore(p).Show && !File.Exists(p + ".tmp"), "the sixth fight: no hint, kept over a restart, no temp file left");
+      string p2 = p + ".ctrl"; var s2 = new DpsHintStore(p2); s2.FightSeen(); s2.UsedCtrl();
+      Check("hint store", !s2.Show && !new DpsHintStore(p2).Show && new DpsHintStore(p2).CtrlUsed, "Ctrl used once: the hint is gone for good");
+      File.Delete(p2);
+      File.WriteAllText(p2, "{ not json"); Check("hint store", new DpsHintStore(p2).Show, "a broken file gives the defaults"); File.Delete(p2);
+    } finally { try { File.Delete(p); File.Delete(p + ".tmp"); } catch (Exception) { } }
+    Check("hint text", DpsPanel.HintText(false, 12, 1000) == "Ctrl: двигать, менять размер, нажимать" && DpsPanel.HintText(true, 12, 1000) == "Ctrl: move, resize, click" && DpsPanel.HintText(false, 12, 60).Length < 30, "the hint wording and its short form");
+    foreach (var z in new[] { new[] { 1920, 1009 }, new[] { 2560, 1440 }, new[] { 3840, 2160 } }) {
+      double U = Math.Min(z[1], z[0] * 675.0 / 1200.0); string t = z[0] + "x" + z[1];
+      foreach (var lg in new[] { "ru", "en" }) {
+        int nw = (int)Math.Round(0.248 * U), nh = (int)Math.Round(0.39 * U);
+        Shot(dir, "hint-" + lg + "-narrow-" + t, sb, new DpsView { Lang = lg, Hint = true }, z[0], z[1], lg == "ru", false, true, nw, nh);
+        Shot(dir, "hint-" + lg + "-" + t, sb, new DpsView { Lang = lg, Hint = true }, z[0], z[1], false, false, true);
+        Shot(dir, "hint-" + lg + "-skills-narrow-" + t, sb, Open(sb, new DpsView { Lang = lg, Hint = true }), z[0], z[1], false, false, true, nw, nh);
+      }
+    }
   }
 
   // the mean brightness (0..255) of every icon cell of the skill atlas: an aspect icon (dark outline on alpha) must not vanish into the dark row (> 45);
