@@ -17,6 +17,7 @@ static partial class CoreTests {
     var fights = MiniJson.Parse(File.ReadAllText(path)) as List<object>;
     Check(fights != null && fights.Count >= 4, "replay: the fixture has several fights");
     if (fights == null) return;
+    long grpTotal = 0, grpOther = 0; int grpBad = 0;
     int n = 0, withSkills = 0; var kinds = new HashSet<DpsKind>();
     foreach (var fo in fights) {
       var fx = fo as Dictionary<string, object>; if (fx == null) continue;
@@ -102,6 +103,16 @@ static partial class CoreTests {
           heroesWith++;
           long a = 0; double sh = 0; foreach (var k in h.Skills) { a += k.Amount; sh += k.Share; }
           if (a != h.Value[0] || Math.Abs(sh - 1) > 1e-9) ok = false;
+          // grouped by the owning skill: nothing is lost, shares add up, biggest first
+          var rows = DpsSkillRows.Group(h.Unit, h.Skills);
+          long ga = 0; double gs = 0;
+          for (int i = 0; i < rows.Count; i++) {
+            ga += rows[i].Amount; gs += rows[i].Share;
+            if (i > 0 && !rows[i].Tail && rows[i].Amount > rows[i - 1].Amount) grpBad++;
+          }
+          foreach (var k in h.Skills) { int rt = DpsNames.SkillRoot(h.Unit, k.Id); if (!DpsNames.KnownSkill(rt) && DpsNames.Category(rt, true) == null) grpOther += k.Amount; }
+          grpTotal += a;
+          if (ga != a || Math.Abs(gs - 1) > 1e-9 || rows.Count > h.Skills.Count) grpBad++;
         }
         Check(ok && heroesWith == ownSk && cu2.SkillsOn && !sn.SkillsOff, tag + "skills: sum == damage for each hero (" + heroesWith + " heroes), shares add up");
       }
@@ -111,6 +122,10 @@ static partial class CoreTests {
       foreach (var h in mid.Current.Heroes) foreach (var h2 in cu2.Heroes) if (h.C == h2.C && h.Unit == h2.Unit && h.Value[0] > h2.Value[0]) le = false;
       Check(le, tag + "the curve's last reading <= the final statistics");
     }
+    Check(grpTotal > 0 && grpBad == 0, "replay: grouped skill rows keep the sum, shares add up to 1, biggest first");
+    double otherShare = grpTotal > 0 ? grpOther / (double)grpTotal : 1;
+    Console.WriteLine("  (the unknown skill ids on the fixture: " + (otherShare * 100).ToString("0.00") + "% of the damage)");
+    Check(otherShare <= 0.05, "replay: the unnamed rest (\"Прочее\") is at most 5% of the damage on the fixture");
     Check(n >= 4 && withSkills >= 2, "replay: " + n + " fights, " + withSkills + " with skills");
     Check(kinds.Contains(DpsKind.Arena) && kinds.Contains(DpsKind.Boss) && kinds.Contains(DpsKind.Malrik), "replay: arena, boss and Malric fights covered");
   }

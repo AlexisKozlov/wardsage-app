@@ -2532,7 +2532,7 @@ static partial class CoreTests {
     var look = new System.Text.RegularExpressions.Regex(@"\.(Const|Span|Size|Hdr|Form|FieldOffset)\(""([^""]+)""\)|\b(CT|Span|Hdr|FormId)\(""([^""]+)""\)");
     var consts = new System.Text.RegularExpressions.Regex(@"\bClassRvas\b|\bconst\s+int\s+CT_\w+\s*=\s*\d|\bCmd(PutTower|RetreatTower|PowerSkill)\s*=\s*\d|\bForm\w*Id\s*=\s*-?\d");
     foreach (var f in files) {
-      if (Path.GetFileName(f) == "Layout.cs") continue;
+      if (Path.GetFileName(f) == "Layout.cs" || Path.GetFileName(f) == "DpsNames.cs") continue;   // (DpsNames.cs: generated skill and effect ids of the game data, not build values)
       string[] lines = File.ReadAllLines(f, Encoding.UTF8);
       for (int i = 0; i < lines.Length; i++) {
         foreach (System.Text.RegularExpressions.Match m in big.Matches(lines[i]))
@@ -5641,7 +5641,28 @@ static partial class CoreTests {
     Check(DpsNames.Hero(99999, 2001, 0, false) == "Rex", "names: unknown unit falls back to the base id");
     Check(DpsNames.Hero(98765, 0, 0, true) == "#98765" && !DpsNames.KnownHero(98765), "names: unknown hero is #id");
     Check(DpsNames.Skill(200117, true) == "Физ. АТК" && DpsNames.Skill(200117, false) == "P. ATK", "names: known skill, both languages");
-    Check(DpsNames.Skill(987654321, true) == "Прочее (#987654321)" && DpsNames.Skill(987654321, false) == "Other (#987654321)" && !DpsNames.KnownSkill(987654321), "names: unknown skill is Other (#id)");
+    Check(DpsNames.Skill(987654321, true) == "Прочее" && DpsNames.Skill(987654321, false) == "Other" && !DpsNames.KnownSkill(987654321), "names: unknown skill is Other, no raw id");
+    // nested skills of a hero are owned by the named skill (Ingrid 2266, Sun Wukong 2290)
+    Check(DpsNames.SkillRoot(2266, 226609) == 226601 && DpsNames.Skill(DpsNames.SkillRoot(2266, 226609), true) == "Маг. АТК", "names: 226609 is the basic attack of Ingrid");
+    Check(DpsNames.Skill(DpsNames.SkillRoot(2266, 226610), true) == "Гнев небес" && DpsNames.Skill(DpsNames.SkillRoot(2266, 222410), true) == "Гнев небес", "names: 226610 and its buff 222410 are Celestial Wrath");
+    Check(DpsNames.Skill(DpsNames.SkillRoot(2290, 229003), true) == "Волос разделения" && DpsNames.Skill(DpsNames.SkillRoot(2290, 229003), false) == "Splitting Hairs", "names: 229003 is Splitting Hairs");
+    Check(DpsNames.SkillRoot(2266, 987654321) == 987654321 && DpsNames.SkillRoot(0, 226609) == 226601, "names: no parent keeps the id; the hero comes from the id when the unit is unknown");
+    Check(DpsNames.Category(2290104, true) != null && DpsNames.Category(2173101, true) == "Пробуждение" && DpsNames.Category(2173101, false) == "Awakening", "names: aspect and awakening categories");
+    Check(DpsNames.Category(102000201, true) == "Комплект" && DpsNames.Category(13000926, true) == "Эффект поля" && DpsNames.Category(226601, true) == null, "names: set, field effect, none");
+    Check(DpsNames.SkillIcon(226601) == "skill_22660" && DpsNames.SkillIcon(987654321) == "", "names: skill icon");
+    bool talent = false; foreach (var tid in new[] { 226630, 226640, 226650 }) if (DpsNames.Skill(tid, true).StartsWith("Талант", StringComparison.Ordinal)) talent = true;
+    Check(talent && (DpsNames.Skill(226650, true).Contains("5") || DpsNames.Skill(226650, true).Contains("«")), "names: a talent is labelled by its star or its quoted word");
+    // the grouped list
+    var raw = new List<DpsSkill> {
+      new DpsSkill { Id = 226609, Amount = 600, Share = 0.6, Dps = 6 }, new DpsSkill { Id = 226601, Amount = 100, Share = 0.1, Dps = 1 },
+      new DpsSkill { Id = 226610, Amount = 200, Share = 0.2, Dps = 2 }, new DpsSkill { Id = 222410, Amount = 95, Share = 0.095, Dps = 1 },
+      new DpsSkill { Id = 987654321, Amount = 3, Share = 0.003 }, new DpsSkill { Id = 987654322, Amount = 2, Share = 0.002 }, new DpsSkill { Id = 226605, Amount = 4, Share = 0.004 } };
+    var gr = DpsSkillRows.Group(2266, raw);
+    Check(gr.Count == 3 && gr[0].Id == 226601 && gr[0].Amount == 700 && Near(gr[0].Share, 700 / 1004.0, 1e-9) && Near(gr[0].Dps, 7, 1e-9), "group: 226609 and 226601 add up under the basic attack, share recomputed");
+    Check(gr[1].Amount == 295 && gr[1].Name(true) == "Гнев небес" && gr[2].Tail && gr[2].Count == 2 && gr[2].Name(true) == "Прочее · 2" && gr[2].Name(false) == "Other · 2" && gr[2].Amount == 9, "group: the small unknown rest folds into 'Other · N'");
+    var one = DpsSkillRows.Group(2266, new List<DpsSkill> { new DpsSkill { Id = 226601, Amount = 1000 }, new DpsSkill { Id = 226610, Amount = 5 } });
+    Check(one.Count == 2 && !one[1].Tail && one[1].Name(true) == "Гнев небес", "group: a lone small row keeps its own name");
+    Check(DpsSkillRows.Group(1, null).Count == 0 && DpsSkillRows.Group(1, new List<DpsSkill>()).Count == 0, "group: null and empty give nothing");
   }
 
   static void DpsFeedTests() {
