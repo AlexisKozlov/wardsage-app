@@ -120,7 +120,15 @@ namespace RealmForge {
     // ------------------------------------------------------------------ the site's switches
 
     SiteRoute NewRoute() {
-      return new SiteRoute(null, null, null, SiteRoute.StatePath, m => Log.Write(m));
+      string[] group = null;
+#if TESTBUILD
+      // TEST build only: WARDSAGE_SITE_ALT (https or a loopback address) is the spare host for the settings' site, to try the switch against a test server
+      try {
+        string err, alt = SyncClient.NormalizeSite(Environment.GetEnvironmentVariable("WARDSAGE_SITE_ALT"), out err), cur = SyncClient.NormalizeSite(cfg.Site, out err);
+        if (alt != null && cur != null && !string.Equals(alt, cur, StringComparison.OrdinalIgnoreCase)) { group = new[] { cur, alt }; Log.Write("site route: test spare host " + alt + " for " + cur); }
+      } catch (Exception) { }
+#endif
+      return new SiteRoute(group, null, null, SiteRoute.StatePath, m => Log.Write(m));
     }
 
     /// <summary>The address every request goes to: the settings' site, or the spare host (ru.wardsage.com) while the route says so.</summary>
