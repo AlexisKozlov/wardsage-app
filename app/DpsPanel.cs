@@ -32,7 +32,7 @@ namespace RealmForge {
   }
 
   static class DpsPanel {
-    public static readonly DpsMode[] Modes = { DpsMode.Damage, DpsMode.ToBoss, DpsMode.Heal, DpsMode.Taken };
+    public static readonly DpsMode[] Modes = { DpsMode.Damage, DpsMode.Heal, DpsMode.Taken };
     public static readonly DpsSegment[] Segments = { DpsSegment.Current, DpsSegment.Previous, DpsSegment.Total };
     static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
     static readonly Color White = Color.White, TitleGold = Color.FromArgb(255, 255, 227, 160), Idle = Color.FromArgb(255, 201, 206, 218),
@@ -62,21 +62,12 @@ namespace RealmForge {
     static string ModeName(DpsMode m, bool en) {
       switch (m) {
         case DpsMode.Damage: return en ? "Damage" : "Урон";
-        case DpsMode.ToBoss: return en ? "Boss" : "Босс";
+        case DpsMode.ToBoss: return en ? "To boss" : "По боссу";
         case DpsMode.Heal: return en ? "Healing" : "Лечение";
         case DpsMode.Taken: return en ? "Taken" : "Получено";
         default: return en ? "Overflow" : "Перелив";
       }
     }
-    static string ModeShort(DpsMode m, bool en) {
-      switch (m) {
-        case DpsMode.Damage: return en ? "Dmg" : "Урон";
-        case DpsMode.ToBoss: return en ? "Boss" : "Босс";
-        case DpsMode.Heal: return en ? "Heal" : "Леч";
-        default: return en ? "Got" : "Пол";
-      }
-    }
-    static string SegShort(DpsSegment s, bool en) { return s == DpsSegment.Current ? (en ? "Now" : "Тек") : s == DpsSegment.Previous ? (en ? "Prev" : "Прош") : (en ? "All" : "Все"); }
     static string SegName(DpsSegment s, bool en) { return s == DpsSegment.Current ? (en ? "Current" : "Текущий") : s == DpsSegment.Previous ? (en ? "Previous" : "Прошлый") : (en ? "Total" : "Общий"); }
     static string HeroName(DpsHero h, bool en) { return DpsNames.Hero(h.Unit, h.Base, h.Hero, !en); }
     static string Pct(double share) { return (share * 100).ToString("0", Inv) + "%"; }
@@ -142,22 +133,16 @@ namespace RealmForge {
         // ---- segments and reset
         float sh = 22 * s;
         string rs = en ? "Reset" : "Сброс";
-        var names = new string[3]; var tws = new float[4]; bool shortSeg = false;
+        var names = new string[3]; var tws = new float[4];
         float avail = iw - 3 * 3 * s, pp = 8 * s, sumw = 0;
         float spx = Math.Max(12, 12 * s);
-        for (int attempt = 0; attempt < 2; attempt++) {
-          for (int i = 0; i < 3; i++) names[i] = shortSeg ? SegShort(Segments[i], en) : SegName(Segments[i], en);
-          string rl = shortSeg ? "\u00D7" : rs; pp = 8 * s;
-          do {
-            sumw = 0;
-            for (int i = 0; i < 3; i++) { tws[i] = DpsArt.Measure(names[i], spx, false) + 2 * pp; sumw += tws[i]; }
-            tws[3] = DpsArt.Measure(rl, spx, false) + 2 * pp; sumw += tws[3];
-            if (sumw > avail) pp -= 0.5f * s;
-          } while (sumw > avail && pp > 1.5f * s);
-          if (sumw <= avail || shortSeg) break;
-          shortSeg = true;   // too narrow for the words: short names and a cross for the reset
-        }
-        if (shortSeg) rs = "\u00D7";
+        for (int i = 0; i < 3; i++) names[i] = SegName(Segments[i], en);
+        do {
+          sumw = 0;
+          for (int i = 0; i < 3; i++) { tws[i] = DpsArt.Measure(names[i], spx, false) + 2 * pp; sumw += tws[i]; }
+          tws[3] = DpsArt.Measure(rs, spx, false) + 2 * pp; sumw += tws[3];
+          if (sumw > avail) pp -= 0.5f * s;
+        } while (sumw > avail && pp > 1.5f * s);
         if (sumw > avail) { float f = avail / sumw; for (int i = 0; i < 4; i++) tws[i] *= f; }
         float sx = x0;
         for (int i = 0; i < 4; i++) {
@@ -169,13 +154,11 @@ namespace RealmForge {
         }
         y += sh + 3 * s;
         // ---- modes
-        float mh = 26 * s, gapM = 3 * s, tabW = (iw - gapM * 3) / 4f;
-        bool shortMode = false;
-        foreach (var mm in Modes) if (DpsArt.Measure(ModeName(mm, en), Math.Max(12, 13 * s), true) > tabW - 4 * s && DpsArt.Measure(ModeName(mm, en), 12, true) > tabW - 4 * s) shortMode = true;
+        float mh = 26 * s, gapM = 3 * s, tabW = (iw - gapM * (Modes.Length - 1)) / Modes.Length;
         for (int i = 0; i < Modes.Length; i++) {
           var r = new RectangleF(x0 + i * (tabW + gapM), y, tabW, mh);
           bool on = Modes[i] == v.Mode;
-          string nm = shortMode ? ModeShort(Modes[i], en) : ModeName(Modes[i], en);
+          string nm = ModeName(Modes[i], en);
           Button(c, r, on, nm, FitPx(nm, Math.Max(12, 13 * s), 12, true, tabW - 6 * s), true, on ? "common_btn_hortab2" : "common_btn_hortab0");
           Hit(c, r, "mode", i, 0);
         }

@@ -205,6 +205,20 @@ static class DpsPanelRender {
         Shot(dir, "narrow-list-en-" + tag, sb, new DpsView { Lang = "en", Mode = DpsMode.Heal }, z[0], z[1], false, false, true, win[0], win[1], null);
       }
     }
+    // the mode tabs: three, in one row, with their full names (no "Boss" tab, no short forms), also in the narrowest window
+    {
+      bool ok = DpsPanel.Modes.Length == 3 && Array.IndexOf(DpsPanel.Modes, DpsMode.ToBoss) < 0;
+      foreach (var lg in langs) {
+        var hh = new List<DpsHit>(); var pr = new List<DpsArt.TextRec>(); DpsArt.Probe = pr;
+        using (var pn = DpsPanel.Render(sb, new DpsView { Lang = lg }, 250, 393, 1f, hh)) { }
+        DpsArt.Probe = null;
+        var tabs = hh.FindAll(x => x.Kind == "mode");
+        ok = ok && tabs.Count == 3 && tabs[0].R.Y == tabs[2].R.Y && tabs[0].R.Right <= tabs[1].R.X + 1;
+        string[] want = lg == "ru" ? new[] { "Урон", "Лечение", "Получено", "Текущий", "Прошлый", "Общий", "Сброс" } : new[] { "Damage", "Healing", "Taken", "Current", "Previous", "Total", "Reset" };
+        foreach (var wd in want) { bool seen = false; foreach (var r in pr) if (r.Text == wd) seen = true; ok = ok && seen; if (!seen) Console.WriteLine("missing label " + lg + " " + wd); }
+      }
+      Check("mode tabs", ok, "three tabs in a row with full names at 250x393");
+    }
     foreach (var f in new[] { "a-list", "a-skills" }) File.Copy(Path.Combine(dir, f + "-1920x1080.png"), Path.Combine(dir, f + ".png"), true);
     Console.WriteLine("portraits drawn " + ptReal + ", skill icons: own " + iconOwn + ", common " + iconGen);
     // "Other" on the fixture: the rest row stays small
