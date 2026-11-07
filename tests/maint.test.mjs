@@ -40,5 +40,33 @@ check(/case 'maint':/.test(app) && /maintCheck/.test(app) && /cmd: 'maint\.check
 check(/60000/.test(app.slice(app.indexOf('maintCooldown')), 0) && /Math\.ceil\(\(S\.maintCheckAt \+ 60000/.test(app), '«Check again» is limited to once in 60 s');
 check(/esc\(custom\)/.test(app) && /data-act="open" data-url="\$\{esc\(lk\)\}"/.test(app), 'the site text and link are escaped');
 check(/id="maint"/.test(readFileSync('ui/index.html', 'utf8')), 'index.html has the screen container');
+
+// one note instead of three: run isMaintNotice() and notices() from app.js against stub state
+{
+  const a = app.indexOf('  function isMaintNotice'), b = app.indexOf('  // ---- maintenance: the banner');
+  const src = app.slice(a, b);
+  const mk = (maint, notice, offline) => {
+    const S = { maint, notice, offline, lang: 'ru' };
+    const ctx = { S, I: { clock: '', x: '' }, esc: (x) => String(x), t: (k) => k, hhmm: () => 'HH', leftText: () => 'L', store: () => null, noticeText: () => (notice ? notice.ru : ''), window: { RFForum: { onSite: (x) => x } } };
+    return vm.runInNewContext(src + '; notices()', ctx);
+  };
+  const count = (h) => (h.match(/remote-note/g) || []).length;
+  const soon = { phase: 'soon', startsAt: '2026-11-07T11:30:00Z', endsAt: '2026-11-07T11:40:00Z' };
+  const nMaint = { id: 'maintenance:abc:scheduled', ru: 'Технические работы', tone: 'warn' };
+  check(count(mk(soon, nMaint, true)) === 1 && /maint-note/.test(mk(soon, nMaint, true)), 'maintenance active + site announcement "maintenance:abc:scheduled" + no connection: one note, ours');
+  check(count(mk(soon, { id: 'maintenance', ru: 'x', tone: 'warn' }, false)) === 1, 'announcement id "maintenance" is hidden too');
+  check(count(mk({ phase: 'stopped', startsAt: soon.startsAt, endsAt: soon.endsAt }, nMaint, true)) === 1, 'stopped: one note');
+  check(mk({ phase: 'on', endsAt: soon.endsAt }, nMaint, true) === '', 'works screen: no notes under it');
+  const other = { id: 'other', ru: 'Чужое', tone: 'warn' };
+  const ho = mk(soon, other, true);
+  check(count(ho) === 2 && /Чужое/.test(ho) && !/siteOffline/.test(ho), 'another announcement stays; "no connection" is hidden');
+  check(count(mk({ phase: 'off' }, nMaint, true)) === 2, 'maintenance off: announcement and "no connection" as before');
+  check(count(mk({ phase: 'off' }, other, false)) === 1, 'maintenance off: plain announcement');
+  const noId = { ru: 'x', tone: 'warn', until: '2026-11-07T11:45:00Z' };
+  check(count(mk(soon, noId, false)) === 1, 'no id, warning ending with the window: hidden');
+  check(count(mk(soon, { ru: 'x', tone: 'warn', until: '2026-11-09T11:45:00Z' }, false)) === 2, 'no id, another time: stays');
+  check(count(mk(soon, { ru: 'x', tone: 'info', until: noId.until }, false)) === 2, 'no id, not a warning: stays');
+  check(!/боёв|recording/i.test(T.ru.maintSoon + T.ru.maintStopped + T.en.maintSoon + T.en.maintStopped), 'no fight recording in the maintenance note');
+}
 if (fails) { console.log(fails + ' failed'); process.exit(1); }
 console.log('maintenance ui: all ok');

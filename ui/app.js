@@ -123,15 +123,26 @@
   // the site's announcement and the "no connection" note, above every page (text is escaped, never HTML)
   let lastNotices = '', downTimers = {};
   function noticeText() { const n = S.notice; return n ? (n[S.lang] || n.ru || n.en || '').trim() : ''; }
+  // the site's own maintenance announcement (id "maintenance:<window>:<state>"); an announcement without an id is taken for it only when it is a warning ending with the window
+  function isMaintNotice(n) {
+    const id = n && typeof n.id === 'string' ? n.id : '';
+    if (id === 'maintenance' || id.indexOf('maintenance:') === 0) return true;
+    if (id || !n || n.tone !== 'warn' || !n.until || !S.maint.endsAt) return false;
+    const a = new Date(n.until).getTime(), b = new Date(S.maint.endsAt).getTime();
+    return !isNaN(a) && !isNaN(b) && Math.abs(a - b) <= 15 * 60000;
+  }
   function notices() {
     let h = '';
-    const txt = noticeText();
-    if (S.maint.phase === 'soon' || S.maint.phase === 'stopped') {
-      const st = S.maint.phase === 'soon';
+    const mp = S.maint.phase;
+    if (mp === 'on') return '';   // the works screen is the only thing shown
+    let txt = noticeText();
+    if (mp !== 'off' && isMaintNotice(S.notice)) txt = '';   // one maintenance note: ours, with the time
+    if (mp === 'soon' || mp === 'stopped') {
+      const st = mp === 'soon';
       h += `<div class="remote-note site-note warn maint-note" role="status">${I.clock}<div><b>${esc(st
-        ? t('maintSoon', leftText(S.maint.startsAt, true), hhmm(S.maint.stopAt || S.maint.startsAt)) : t('maintStopped', hhmm(S.maint.startsAt)))}</b></div></div>`;
+        ? t('maintSoon', hhmm(S.maint.startsAt), leftText(S.maint.startsAt, true)) : t('maintStopped', hhmm(S.maint.startsAt)))}</b></div></div>`;
     }
-    if (S.offline) h += `<div class="remote-note site-note" role="status">${I.clock}<div><b>${esc(t('siteOffline'))}</b></div></div>`;
+    if (S.offline && mp === 'off') h += `<div class="remote-note site-note" role="status">${I.clock}<div><b>${esc(t('siteOffline'))}</b></div></div>`;
     if (txt && store('rf.noticeOff') !== txt) {
       const n = S.notice, lk = n.link && n.link.href ? `<button class="termsLink" data-act="open" data-url="${esc(window.RFForum.onSite(n.link.href, S.site))}">${esc(n.link[S.lang] || n.link.ru || n.link.en || '')}</button>` : '';
       h += `<div class="remote-note site-note${n.tone === 'warn' ? ' warn' : ''}" role="status">${I.clock}<div><b>${esc(txt)}</b>${lk}</div><button class="note-x" data-act="noticeX" aria-label="${esc(t('noticeClose'))}">${I.x}</button></div>`;
