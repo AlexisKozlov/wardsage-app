@@ -1,9 +1,13 @@
-// Draws the DPS meter's panel (app/DpsPanel.cs) over a fake game picture, from the saved fights (tests/fixtures/dps-battles.json), into PNG files:
-// boss / arena, a hero's skills open, three game window sizes. Needs GDI+ (Windows, or Mono with libgdiplus). Compiled with -define:TESTBUILD.
-//   DpsPanelRender.exe <out dir>      exit 0 = drawn, panels not blank
+// Draws the DPS meter's panel (app/DpsPanel.cs) over a game picture (tests/fixtures/dps-bg.jpg), from the saved fights (tests/fixtures/dps-battles.json), into PNG files,
+// and checks it: game windows 1024x576 ... 3840x2160, Russian and English, the four modes, the three segments, a hero's skills open (boss fight and arena), no fight yet,
+// Ctrl, both looks (A and B). Checks: not blank; no text wider than its rectangle; the text/background contrast under the glyphs >= 4.5; a portrait for every hero
+// and an icon for the skills (counters); "Other" <= 5% of the damage on the fixture's skills; the time of Render on 300x500.
+// Needs GDI+ (Windows, or Mono with libgdiplus). Compiled with -define:TESTBUILD.
+//   DpsPanelRender.exe <out dir>      exit 0 = all checks passed
 #if TESTBUILD
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
@@ -47,49 +51,189 @@ static class DpsPanelRender {
     return feed.Snapshot;
   }
 
-  static int fails;
-  static void Check(bool ok, string what) { if (!ok) { fails++; Console.WriteLine("FAIL: " + what); } else Console.WriteLine("ok: " + what); }
+  // ---- checks: failures are printed, the passes are counted per category
+  static int fails; static readonly int FailLimit = Environment.GetEnvironmentVariable("DPS_FAILS") == "all" ? int.MaxValue : 60;
+  static readonly Dictionary<string, int> passes = new Dictionary<string, int>();
+  static void Check(string cat, bool ok, string what) {
+    if (ok) { int n; passes.TryGetValue(cat, out n); passes[cat] = n + 1; }
+    else { fails++; if (fails <= FailLimit) Console.WriteLine("FAIL [" + cat + "]: " + what); }
+  }
 
-  static void Shot(string dir, string name, DpsSnapshot snap, DpsView v, int gw, int gh) {
+  // ---- the backdrop
+  static Bitmap bgSrc; static readonly Dictionary<string, Bitmap> bgScaled = new Dictionary<string, Bitmap>();
+  static Bitmap Bg(int gw, int gh) {
+    string key = gw + "x" + gh; Bitmap b;
+    if (bgScaled.TryGetValue(key, out b)) return b;
+    if (bgSrc == null && File.Exists("tests/fixtures/dps-bg.jpg")) bgSrc = new Bitmap("tests/fixtures/dps-bg.jpg");
+    b = new Bitmap(gw, gh, PixelFormat.Format24bppRgb);
+    using (var g = Graphics.FromImage(b)) {
+      if (bgSrc != null) { g.InterpolationMode = InterpolationMode.HighQualityBicubic; g.DrawImage(bgSrc, 0, 0, gw, gh); }
+      else using (var br = new LinearGradientBrush(new Rectangle(0, 0, gw, gh), Color.FromArgb(52, 86, 64), Color.FromArgb(120, 104, 70), 60f)) g.FillRectangle(br, 0, 0, gw, gh);
+    }
+    if (bgScaled.Count > 2) { foreach (var o in bgScaled.Values) o.Dispose(); bgScaled.Clear(); }
+    bgScaled[key] = b; return b;
+  }
+
+  static double Lum(Color c) {
+    Func<int, double> f = v => { double x = v / 255.0; return x <= 0.03928 ? x / 12.92 : Math.Pow((x + 0.055) / 1.055, 2.4); };
+    return 0.2126 * f(c.R) + 0.7152 * f(c.G) + 0.0722 * f(c.B);
+  }
+  static double Contrast(Color a, Color b) { double x = Lum(a), y = Lum(b); return (Math.Max(x, y) + 0.05) / (Math.Min(x, y) + 0.05); }
+
+  static Bitmap PanelScene(Bitmap panel, int gw, int gh, int px, int py) {
+    var o = new Bitmap(panel.Width, panel.Height, PixelFormat.Format24bppRgb);
+    using (var g = Graphics.FromImage(o)) { g.DrawImage(Bg(gw, gh), new Rectangle(0, 0, panel.Width, panel.Height), px, py, panel.Width, panel.Height, GraphicsUnit.Pixel); g.DrawImage(panel, 0, 0); }
+    return o;
+  }
+
+
+  /// <summary>Renders one view at one game size, runs the checks, saves the scene when asked (and returns the panel size).</summary>
+  static void Shot(string dir, string name, DpsSnapshot snap, DpsView v, int gw, int gh, bool save, bool skillsView, bool needPortraits) {
     double U = Math.Min(gh, gw * 675.0 / 1200.0); float s = DpsPanel.ScaleFor(U);
     int w = DpsPanel.DefaultW(U), h = DpsPanel.DefaultH(U);
+    int px = Math.Max(0, gw - w - (int)(0.012 * U)), py = (int)(0.22 * gh);
     var hits = new List<DpsHit>();
-    using (var panel = DpsPanel.Render(snap, v, w, h, s, hits))
-    using (var scene = new Bitmap(gw, gh, PixelFormat.Format24bppRgb)) {
-      using (var g = Graphics.FromImage(scene)) {
-        using (var bg = new LinearGradientBrush(new Rectangle(0, 0, gw, gh), Color.FromArgb(52, 86, 64), Color.FromArgb(120, 104, 70), 60f)) g.FillRectangle(bg, 0, 0, gw, gh);
-        using (var gr = new Pen(Color.FromArgb(40, 255, 255, 255))) for (int x = 0; x < gw; x += (int)(U / 8)) g.DrawLine(gr, x, 0, x, gh);
-        g.DrawImage(panel, gw - w - (int)(0.012 * U), (int)(0.22 * gh));
+    DpsArt.PortraitReal = DpsArt.PortraitFallback = DpsArt.IconOwn = DpsArt.IconGeneric = DpsArt.IconNone = 0;
+    var probe = new List<DpsArt.TextRec>(); DpsArt.Probe = probe;
+    int pr = 0, pf = 0, io = 0, ig = 0, ino = 0;
+    using (var panel = DpsPanel.Render(snap, v, w, h, s, hits)) {
+      pr = DpsArt.PortraitReal; pf = DpsArt.PortraitFallback; io = DpsArt.IconOwn; ig = DpsArt.IconGeneric; ino = DpsArt.IconNone;
+      DpsArt.Probe = null;
+      // not blank
+      int lit = 0;
+      using (var sc = PanelScene(panel, gw, gh, px, py))
+        for (int y = 10; y < h - 10; y += 3) for (int x = 10; x < w - 10; x += 3) { var c = sc.GetPixel(x, y); if (c.R > 190 && c.G > 190 && c.B > 190) lit++; }
+      Check("not blank", lit > 10 && hits.Count >= 8, name + ": " + lit + " bright samples, " + hits.Count + " pressable places");
+      // no text wider than its rectangle
+      foreach (var r in probe) Check("text fits", r.Width <= r.Box.Width + 0.5f && r.Glyphs.Right <= r.Box.Right + 0.5f && r.Glyphs.X >= r.Box.X - 0.5f, name + ": \"" + r.Text + "\" " + r.Width.ToString("0.0") + " > " + r.Box.Width.ToString("0.0"));
+      // contrast under the glyphs: the same panel without text, 8 points inside each text rectangle
+      DpsArt.Suppress = true;
+      try {
+        using (var p2 = DpsPanel.Render(snap, v, w, h, s, null))
+        using (var sc2 = PanelScene(p2, gw, gh, px, py)) {
+          foreach (var r in probe) {
+            double worst = 99;
+            for (int i = 0; i < 8; i++) {
+              int x = (int)(r.Glyphs.X + r.Glyphs.Width * ((i % 4) + 0.5) / 4.0), y = (int)(r.Glyphs.Y + r.Glyphs.Height * ((i / 4) * 0.5 + 0.25));
+              if (x < 0 || y < 0 || x >= w || y >= h) continue;
+              worst = Math.Min(worst, Contrast(r.Fill, sc2.GetPixel(x, y)));
+            }
+            Check("contrast >= 4.5", worst >= 4.5, name + ": \"" + r.Text + "\" contrast " + worst.ToString("0.0") + " at " + r.Glyphs + " panel " + w + "x" + h);
+          }
+        }
+      } finally { DpsArt.Suppress = false; }
+      if (save) using (var scene = new Bitmap(Bg(gw, gh))) {
+        using (var g = Graphics.FromImage(scene)) g.DrawImage(panel, px, py);
+        scene.Save(Path.Combine(dir, name + ".png"), ImageFormat.Png);
       }
-      // not blank: some pixels inside the panel differ from the backdrop clearly
-      int px = gw - w - (int)(0.012 * U), py = (int)(0.22 * gh), lit = 0;
-      for (int y = py + 10; y < py + h - 10; y += 3) for (int x = px + 10; x < px + w - 10; x += 3) { var c = scene.GetPixel(x, y); if (c.R > 190 && c.G > 190 && c.B > 190) lit++; }
-      Check(lit > 10 && hits.Count >= 7, name + ": drawn (" + lit + " bright samples, " + hits.Count + " pressable places)");
-      scene.Save(Path.Combine(dir, name + ".png"), ImageFormat.Png);
     }
+    if (needPortraits) Check("portraits", pf == 0, name + ": portraits found " + pr + ", fallback " + pf);
+    if (skillsView) Check("skill icons", io > 0 && ino == 0, name + ": own icons " + io + ", common " + ig + ", none " + ino);
+    iconOwn += io; iconGen += ig; ptReal += pr;
+  }
+  static int iconOwn, iconGen, ptReal;
+
+  static Dictionary<string, object> FightOf(List<object> fights, int stage) {
+    foreach (var f in fights) { var d = (Dictionary<string, object>)f; if ((int)Num(d, "stage") == stage) return d; }
+    return null;
+  }
+
+  static DpsView Open(DpsSnapshot snap, DpsView v) {
+    DpsHero pick = null;
+    foreach (var hh in snap.Current.Sorted(v.Mode)) { if (hh.Skills != null && hh.Skills.Count > 0) { pick = hh; break; } }
+    if (pick == null) pick = snap.Current.Sorted(v.Mode)[0];
+    v.HasOpen = true; v.OpenC = pick.C; v.OpenUnit = pick.Unit; return v;
   }
 
   static int Main(string[] args) {
     string dir = args.Length > 0 ? args[0] : "dps-png"; Directory.CreateDirectory(dir);
     var fights = (List<object>)MiniJson.Parse(File.ReadAllText("tests/fixtures/dps-battles.json"));
-    Dictionary<string, object> boss = null, arena = null;
-    foreach (var f in fights) { var d = (Dictionary<string, object>)f; int st = (int)Num(d, "stage"); if (st == 5001007) boss = d; if (st == 6001642) arena = d; }
+    var boss = FightOf(fights, 5001007); var arena = FightOf(fights, 6001642);
     var sb = Replay(boss, true); var sbMid = Replay(boss, false); var sa = Replay(arena, true);
-    int[][] sizes = { new[] { 1366, 705 }, new[] { 1920, 1080 }, new[] { 2560, 1440 } };
+    Check("atlases", DpsArt.HasAtlases, "the three atlases are read (app/res/dps_*)");
+    Check("atlases", DpsArt.HasFira, "Fira Sans is loaded");
+    int[][] sizes = { new[] { 1024, 576 }, new[] { 1280, 720 }, new[] { 1920, 1080 }, new[] { 2560, 1440 }, new[] { 3840, 2160 } };
+    DpsStyle[] styles = { DpsStyle.A, DpsStyle.B };
+    string[] langs = { "ru", "en" };
     foreach (var z in sizes) {
-      string t = z[0] + "x" + z[1];
-      Shot(dir, "boss-damage-" + t, sb, new DpsView(), z[0], z[1]);
-      Shot(dir, "boss-live-damage-" + t, sbMid, new DpsView(), z[0], z[1]);
-      Shot(dir, "boss-toboss-" + t, sb, new DpsView { Mode = DpsMode.ToBoss }, z[0], z[1]);
-      var top = sb.Current.Sorted(DpsMode.Damage)[0];
-      Shot(dir, "boss-skills-" + t, sb, new DpsView { HasOpen = true, OpenC = top.C, OpenUnit = top.Unit }, z[0], z[1]);
-      Shot(dir, "arena-damage-" + t, sa, new DpsView(), z[0], z[1]);
-      Shot(dir, "arena-taken-ctrl-" + t, sa, new DpsView { Mode = DpsMode.Taken, Interactive = true, Lang = "en" }, z[0], z[1]);
+      string t = z[0] + "x" + z[1]; bool keep = z[0] == 1920 || z[0] == 1280;
+      foreach (var st in styles) {
+        string sn = st == DpsStyle.A ? "a" : "b";
+        foreach (var lg in langs) {
+          string pre = sn + "-" + lg + "-" + t + "-";
+          foreach (var m in DpsPanel.Modes) {
+            Shot(dir, pre + "boss-" + m.ToString().ToLower(), sb, new DpsView { Style = st, Lang = lg, Mode = m }, z[0], z[1], keep && lg == "ru" && z[0] == 1920, false, true);
+            Shot(dir, pre + "arena-" + m.ToString().ToLower(), sa, new DpsView { Style = st, Lang = lg, Mode = m }, z[0], z[1], false, false, true);
+            Shot(dir, pre + "boss-skills-" + m.ToString().ToLower(), sb, Open(sb, new DpsView { Style = st, Lang = lg, Mode = m }), z[0], z[1], false, m == DpsMode.Damage || m == DpsMode.ToBoss, true);
+          }
+          foreach (var sg in DpsPanel.Segments) Shot(dir, pre + "boss-seg-" + sg.ToString().ToLower(), sb, new DpsView { Style = st, Lang = lg, Segment = sg }, z[0], z[1], false, false, sg != DpsSegment.Previous);
+          Shot(dir, pre + "arena-skills", sa, Open(sa, new DpsView { Style = st, Lang = lg }), z[0], z[1], false, false, true);
+          Shot(dir, pre + "live", sbMid, new DpsView { Style = st, Lang = lg }, z[0], z[1], false, false, true);
+          Shot(dir, pre + "empty", new DpsFeed().Snapshot, new DpsView { Style = st, Lang = lg }, z[0], z[1], false, false, false);
+          Shot(dir, pre + "ctrl", sb, new DpsView { Style = st, Lang = lg, Interactive = true, Mode = DpsMode.Taken }, z[0], z[1], keep && lg == "en", false, true);
+        }
+        // the four key pictures: the list and a hero's skills (Russian, damage)
+        Shot(dir, sn + "-list-" + t, sb, new DpsView { Style = st }, z[0], z[1], keep, false, true);
+        Shot(dir, sn + "-skills-" + t, sb, Open(sb, new DpsView { Style = st }), z[0], z[1], keep, true, true);
+      }
     }
-    Shot(dir, "boss-total-1920x1080", sb, new DpsView { Segment = DpsSegment.Total }, 1920, 1080);
-    Check(DpsPanel.Short(1234567) == "1.23M" && DpsPanel.Short(950) == "950" && DpsPanel.Short(12345) == "12.3K" && DpsPanel.Short(2500000000) == "2.50B", "number format");
+    foreach (var f in new[] { "a-list", "a-skills", "b-list", "b-skills" }) File.Copy(Path.Combine(dir, f + "-1920x1080.png"), Path.Combine(dir, f + ".png"), true);
+    Console.WriteLine("portraits drawn " + ptReal + ", skill icons: own " + iconOwn + ", common " + iconGen);
+    Compare(dir, sb);
+    // "Other" on the fixture: the rest row stays small
+    long total = 0, other = 0; int heroesWithSkills = 0; var ids = new HashSet<int>();
+    foreach (var fo in fights) {
+      var sn = Replay((Dictionary<string, object>)fo, true);
+      if (sn.Current == null) continue;
+      foreach (var hero in sn.Current.Heroes) {
+        if (hero.Skills == null) continue;
+        heroesWithSkills++;
+        foreach (var k in hero.Skills) { total += k.Amount; ids.Add(k.Id); }
+        foreach (var r in DpsSkillRows.Group(hero.Unit, hero.Skills)) if (r.Tail) other += r.Amount;
+      }
+    }
+    Check("other", total > 0 && other <= total * 0.05, "Other " + other + " of " + total + " (" + (total > 0 ? other * 100.0 / total : 0).ToString("0.0") + "%), " + ids.Count + " skill ids, " + heroesWithSkills + " heroes");
+    Console.WriteLine("Other = " + (total > 0 ? other * 100.0 / total : 0).ToString("0.00") + "% of the damage on " + ids.Count + " skill ids");
+    Timing(sb);
+    Check("number format", DpsPanel.Short(1234567) == "1.23M" && DpsPanel.Short(950) == "950" && DpsPanel.Short(12345) == "12.3K" && DpsPanel.Short(2500000000) == "2.50B", "number format");
+    foreach (var kv in passes) Console.WriteLine("ok: " + kv.Key + " (" + kv.Value + " cases)");
+    Console.WriteLine("cache entries at the end: " + DpsArt.CacheCount);
     Console.WriteLine(fails == 0 ? "PASS" : "FAILED: " + fails);
     return fails == 0 ? 0 : 1;
+  }
+
+  // both looks side by side at a 1280x720 game window, true size: A list, A skills, B list, B skills
+  static void Compare(string dir, DpsSnapshot sb) {
+    int gw = 1280, gh = 720; double U = 720; float s = DpsPanel.ScaleFor(U);
+    int w = DpsPanel.DefaultW(U), h = DpsPanel.DefaultH(U), gap = 24, x = (gw - 4 * w - 3 * gap) / 2, y = (gh - h) / 2;
+    using (var scene = new Bitmap(Bg(gw, gh)))
+    using (var g = Graphics.FromImage(scene)) {
+      foreach (var st in new[] { DpsStyle.A, DpsStyle.B }) for (int k = 0; k < 2; k++) {
+        var v = new DpsView { Style = st }; if (k == 1) Open(sb, v);
+        using (var p = DpsPanel.Render(sb, v, w, h, s, null)) g.DrawImage(p, x, y);
+        x += w + gap;
+      }
+      scene.Save(Path.Combine(dir, "compare-1280.png"), ImageFormat.Png);
+    }
+  }
+
+  // Render on 300x500: 50 frames per view, warm cache
+  static void Timing(DpsSnapshot sb) {
+    foreach (var st in new[] { DpsStyle.A, DpsStyle.B }) foreach (bool skills in new[] { false, true }) {
+      var v = new DpsView { Style = st }; if (skills) Open(sb, v);
+      var sw = Stopwatch.StartNew();
+      using (var cold = DpsPanel.Render(sb, v, 300, 500, 1f, null)) { }
+      double c0 = sw.Elapsed.TotalMilliseconds;
+      double max = 0, sum = 0;
+      for (int i = 0; i < 50; i++) {
+        sw.Restart();
+        using (var b = DpsPanel.Render(sb, v, 300, 500, 1f, null)) { }
+        double ms = sw.Elapsed.TotalMilliseconds; sum += ms; if (ms > max) max = ms;
+      }
+      string nm = (st == DpsStyle.A ? "A" : "B") + (skills ? " skills" : " list");
+      Console.WriteLine("Render 300x500 " + nm + ": first " + c0.ToString("0.0") + " ms, 50 frames avg " + (sum / 50).ToString("0.00") + " ms, max " + max.ToString("0.0") + " ms");
+      Check("render time", sum / 50 <= 8.0, "Render " + nm + " avg " + (sum / 50).ToString("0.00") + " ms > 8");
+    }
   }
 }
 #endif
