@@ -1,6 +1,5 @@
-// Wardsage app - skill descriptions for the DPS meter's tooltip (TEST build): the hero pages' texts (app/res/dps_desc.bin, tools/dps-desc.mjs), read lazily
+// Wardsage app - skill descriptions for the DPS meter's tooltip: the hero pages' texts (app/res/dps_desc.bin, tools/dps-desc.mjs), read lazily
 // on the first hover, and the lookup: a skill's own text; a nested skill gets its root's text with a note; an aspect, set or field effect gets its category.
-#if TESTBUILD
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -98,4 +97,3 @@ namespace RealmForge {
     }
   }
 }
-#endif

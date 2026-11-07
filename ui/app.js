@@ -331,6 +331,8 @@
       : '';
     return remoteSwitchNote(r, only) + lay;
   }
+  // the site switched the damage meter off (features.dps === false): the window is hidden and the switch is locked
+  const dpsOff = () => !!(S.remote && S.remote.readEnabled !== false && Array.isArray(S.remote.off) && S.remote.off.includes('dps'));
   function remoteSwitchNote(r, only) {
     if (!r.readEnabled) return `<div class="remote-note" role="status">${I.clock}<div><b>${esc(t('remoteOff'))}</b><p>${esc(t('remoteOffP'))}</p></div></div>`;
     const off = only ? r.off.filter((f) => only.includes(f)) : r.off;
@@ -896,7 +898,7 @@
         row(t('setAutoUpdate'), t('setAutoUpdateS'), sw('autoUpdate', S.autoUpdate), { more: 'setAutoUpdateP', key: 'autoUpdate' })
         + row(t('setSendCodes'), t('setSendCodesS'), sw('sendCodes', S.sendCodes), { more: 'setSendCodesP', key: 'sendCodes' })
         + row(t('setBossHints'), t('setBossHintsS'), sw('bossHints', S.bossHints), { more: 'setBossHintsP', key: 'bossHints' })
-        + (S.channel === 'test' ? row(t('setDps'), t('setDpsS'), sw('dps', S.dps), { more: 'setDpsP', key: 'dps' }) : '')
+        + row(t('setDps'), dpsOff() ? t('setDpsOff') : t('setDpsS'), sw('dps', S.dps && !dpsOff(), dpsOff()), { more: 'setDpsP', key: 'dps' })
         + row(t('setShowInCapture'), t(S.showInCapture ? 'setShowInCaptureOn' : 'setShowInCaptureS'), sw('showInCapture', S.showInCapture))
         + row(t('setTray'), t('setTrayS'), sw('tray', S.tray), { more: 'setTrayP', key: 'tray' })
         + row(t('setAutostart'), t('setAutostartS'), sw('autostart', S.autostart), { more: 'setAutostartP', key: 'autostart' })),
@@ -1010,7 +1012,7 @@
     else if (a === 'copy') { S.saveCopy = !S.saveCopy; host.send({ cmd: 'setSaveCopy', on: S.saveCopy }); render(); }
     else if (a === 'recButton') { S.recButton = !S.recButton; host.send({ cmd: 'setRecButton', on: S.recButton }); render(); }
     else if (a === 'sendCodes') { S.sendCodes = !S.sendCodes; host.send({ cmd: 'setSendCodes', on: S.sendCodes }); render(); }
-    else if (a === 'dps') { S.dps = !S.dps; host.send({ cmd: 'setDps', on: S.dps }); render(); }
+    else if (a === 'dps') { if (dpsOff()) return; S.dps = !S.dps; host.send({ cmd: 'setDps', on: S.dps }); render(); }
     else if (a === 'bossHints') { S.bossHints = !S.bossHints; host.send({ cmd: 'setBossHints', on: S.bossHints }); render(); }
     else if (a === 'showInCapture') { S.showInCapture = !S.showInCapture; host.send({ cmd: 'setShowInCapture', on: S.showInCapture }); render(); }
     else if (a === 'tray') { S.tray = !S.tray; host.send({ cmd: 'setTray', on: S.tray }); render(); }

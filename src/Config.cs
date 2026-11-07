@@ -30,7 +30,7 @@ namespace RealmForge {
     public bool RecButton = true;   // TEST build: the record button over the game (app/Overlay.cs)
     public bool SendCodes = true;   // promo codes the player enters in the game, with the game's answer, go to the site (app/CodeWatch.cs; the player can turn it off)
     public bool BossHints = true;   // the boss coach's panel over the game during boss fights (app/BattleCoach.cs)
-    public bool DpsMeter;           // TEST build: the live DPS meter over the game (app/DpsMeter.cs); off by default
+    public bool DpsMeter;           // the live DPS meter over the game (app/DpsMeter.cs); off by default
     /// <summary>Where the DPS meter's window is: left, top, width, height as fractions of the game's window; -1 = default.</summary>
     public double DpsX = -1, DpsY = -1, DpsW = -1, DpsH = -1;
     public bool ShowInCapture;      // the player's choice: hint windows stay in recordings / streams / screenshots (off by default: they are hidden from captures)

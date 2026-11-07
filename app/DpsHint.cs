@@ -1,6 +1,5 @@
-// Wardsage app - the DPS meter's one-line hint about the Ctrl control (TEST build): shown in the first fights after the install, until the player has
+// Wardsage app - the DPS meter's one-line hint about the Ctrl control: shown in the first fights after the install, until the player has
 // used Ctrl once. The counter lives in its own small file (local, per channel), written atomically; nothing else reads it.
-#if TESTBUILD
 using System;
 using System.IO;
 using System.Text;
@@ -47,4 +46,3 @@ namespace RealmForge {
     }
   }
 }
-#endif

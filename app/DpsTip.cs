@@ -1,6 +1,5 @@
-// Wardsage app - the DPS meter's skill tooltip picture (TEST build): the game's description plate (common_description_tips, 9-sliced), the skill's name on
+// Wardsage app - the DPS meter's skill tooltip picture: the game's description plate (common_description_tips, 9-sliced), the skill's name on
 // top, an optional grey note, the wrapped description; Fira Sans, outlined like the panel's text. A pure drawing function (the window is app/DpsMeter.cs).
-#if TESTBUILD
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -88,4 +87,3 @@ namespace RealmForge {
     }
   }
 }
-#endif

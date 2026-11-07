@@ -1,8 +1,7 @@
-// Wardsage app - the DPS meter's art (TEST build): the fonts (Fira Sans, SIL OFL 1.1, app/res/OFL-fira-sans.txt) and, later, the picture atlases.
+// Wardsage app - the DPS meter's art: the fonts (Fira Sans, SIL OFL 1.1, app/res/OFL-fira-sans.txt) and, later, the picture atlases.
 // Only GDI+ draws with these fonts (Graphics.DrawString / GraphicsPath.AddString), sizes are in pixels.
 // Also the picture side: lazy atlases (app/res/dps_*.png|jpg), a bitmap cache (9-slice, portraits, icons, outlined text) that is dropped when the scale changes
 // or it grows past CacheLimit; every frame only copies cached bitmaps (DrawImageUnscaled / DrawImage with a source rectangle).
-#if TESTBUILD
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -486,4 +485,3 @@ namespace RealmForge {
     }
   }
 }
-#endif

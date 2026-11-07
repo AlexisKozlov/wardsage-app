@@ -5244,6 +5244,14 @@ static partial class CoreTests {
     bool onFo = fo != null; if (onFo) foreach (var p in fo) onFo &= Math.Abs(Math.Sqrt((p.X - 200) * (p.X - 200) + (p.Y - 100) * (p.Y - 100)) - 52) < 1e-6;
     Check(onFo, "old frame: the circle of the inset art, grown by the margin");
     var gr = GuideShape.Grow(rect, 5); Check(gr.X == 95 && gr.W == 210, "grown by a margin");
+    // features.dps: on unless the site says an explicit false (not a DefaultOff feature, like siteFallback)
+    Check(!RemoteSwitches.StartsOff("dps") && Array.IndexOf(RemoteSwitches.Features, "dps") >= 0, "dps: a feature that does not start off");
+    Check(RemoteSwitches.Parse("{}").Allows("dps") && RemoteSwitches.Permissive().Allows("dps") && RemoteSwitches.Parse("{\"features\":{\"dps\":true}}").Allows("dps"), "dps: allowed by default and by true");
+    Check(RemoteSwitches.Parse("{\"features\":{\"dps\":\"no\"}}").Allows("dps") && RemoteSwitches.Parse("{\"features\":{\"dps\":0}}").Allows("dps") && RemoteSwitches.Parse("{\"features\":{}}").Allows("dps"), "dps: an odd value is on");
+    { var rdps = RemoteSwitches.Parse("{\"features\":{\"dps\":false}}");
+      Check(!rdps.Allows("dps") && rdps.Off().Contains("dps") && rdps.Allows("battle"), "dps: an explicit false switches it off, the others stay");
+      Check(RemoteSwitches.Parse(rdps.ToJson()).Off().Contains("dps") && !rdps.SameAs(RemoteSwitches.Parse("{}")), "dps: the saved copy keeps the switch, it counts as a change");
+      Check(!RemoteSwitches.Parse("{}").Off().Contains("dps") && !RemoteSwitches.Parse("{\"readEnabled\":false,\"features\":{\"dps\":false}}").Off().Contains("dps"), "dps: not listed while on or while reading is off as a whole"); }
     var rs = RemoteSwitches.Parse("{\"features\":{\"guideStyle\":true}}");
     Check(rs.Allows("guideStyle") && !RemoteSwitches.Permissive().Allows("guideStyle") && !RemoteSwitches.Parse("{}").Allows("guideStyle"), "guideStyle: off until the site says true");
     Check(AppConfig.FromJson("{\"guideStyle\":\"on\"}").GuideStyle == "on" && AppConfig.FromJson("{\"guideStyle\":\"x\"}").GuideStyle == "auto" && AppConfig.FromJson("{}").GuideStyle == "auto", "config: guideStyle auto / on / off");

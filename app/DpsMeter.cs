@@ -1,7 +1,6 @@
-// Wardsage app - the live DPS meter's window over the game (TEST build). Like the boss coach (app/BattleCoach.cs): shown only with the game in
+// Wardsage app - the live DPS meter's window over the game. Like the boss coach (app/BattleCoach.cs): shown only with the game in
 // front, click-through; with Ctrl held it takes the mouse (drag it, press the tabs, heroes and buttons, resize by the corner, a right click puts it back).
 // Reads only the DPS feed (src/DpsFeed.cs) that the fight recorder fills; nothing is sent to the game.
-#if TESTBUILD
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -203,4 +202,3 @@ namespace RealmForge {
     }
   }
 }
-#endif

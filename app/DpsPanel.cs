@@ -1,8 +1,7 @@
-// Wardsage app - the live DPS meter's picture (TEST build): heroes by a mode, tabs, segments, a hero's skills, a small curve.
+// Wardsage app - the live DPS meter's picture: heroes by a mode, tabs, segments, a hero's skills, a small curve.
 // A pure drawing function of (snapshot, state, size): no window, no game, no input - the window is app/DpsMeter.cs, the numbers src/DpsFeed.cs.
 // The look: the "hero window" (slate plate, game buttons, framed bars).
 // Text never lies on a coloured bar: bars sit under or beside the text, the text lies on the plate / the dark strip.
-#if TESTBUILD
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -401,4 +400,3 @@ namespace RealmForge {
     }
   }
 }
-#endif
