@@ -91,6 +91,12 @@ namespace RealmForge {
       coach.Lang = cfg.Lang;
       coach.PlaceX = cfg.CoachX; coach.PlaceY = cfg.CoachY;
       coach.PlaceChanged = (x, y) => { cfg.CoachX = x; cfg.CoachY = y; Save(); };
+#if TESTBUILD
+      try {
+        dps.Lang = cfg.Lang; dps.X = cfg.DpsX; dps.Y = cfg.DpsY; dps.W = cfg.DpsW; dps.H = cfg.DpsH;
+        dps.PlaceChanged = (x, y, w, h) => { cfg.DpsX = x; cfg.DpsY = y; cfg.DpsW = w; cfg.DpsH = h; Save(); };
+      } catch (Exception e) { Log.Write("dps init: " + e.Message); }
+#endif
       overlay.LocateChanged += (step, subs) => PostLocateState(step, subs);
       overlay.LocateFinished += (id, what) => {
         FinishLocate(id, true, true);   // reported done; the overlay shows its plate a few seconds and ends the hints itself
@@ -286,6 +292,9 @@ namespace RealmForge {
     public void Dispose() {
       Program.FatalReport = null;
       gameTimer.Dispose(); liveTimer.Dispose(); autoTimer.Dispose(); updateTimer.Dispose(); remoteTimer.Dispose(); testLogTimer.Dispose(); if (testRec != null) testRec.Stop(); if (plansWait != null) plansWait.Stop(); overlay.Dispose();
+#if TESTBUILD
+      try { dps.Dispose(); } catch (Exception) { }
+#endif
     }
 
     // «Обновлять автоматически» (on by default): a downloaded update is put in place by restarting in a quiet moment — no
@@ -406,7 +415,11 @@ namespace RealmForge {
         switch (cmd) {
           case "init": win.PageReady(); SendState(null); CheckGame(true); PostRemote(); PostLayout(); if (updateReady != null) Post(updateReady); break;
           case "acceptTerms": cfg.TermsAccepted = AppConfig.TermsVersion; Save(); Log.Write("terms accepted: " + AppConfig.TermsVersion); break;
-          case "setLang": cfg.Lang = MiniJson.GetString(m, "lang") == "en" ? "en" : "ru"; overlay.BackCityText = BackCityText(cfg.Lang); overlay.EscText = EscText(cfg.Lang); overlay.CloseGearFilterText = CloseGearFilterText(cfg.Lang); coach.Lang = cfg.Lang; Save(); break;
+          case "setLang": cfg.Lang = MiniJson.GetString(m, "lang") == "en" ? "en" : "ru"; overlay.BackCityText = BackCityText(cfg.Lang); overlay.EscText = EscText(cfg.Lang); overlay.CloseGearFilterText = CloseGearFilterText(cfg.Lang); coach.Lang = cfg.Lang;
+#if TESTBUILD
+            try { dps.Lang = cfg.Lang; } catch (Exception) { }
+#endif
+            Save(); break;
           case "setCode": {
             string code = SyncClient.ExtractCode(MiniJson.GetString(m, "code") ?? "");
             if (SyncClient.IsValidCode(code)) {
@@ -421,6 +434,15 @@ namespace RealmForge {
           case "setAutoSync": cfg.AutoSync = MiniJson.GetBool(m, "on", true); Save(); if (cfg.AutoSync) RequestAutoSync(0); break;
           case "setAutoUpdate": cfg.AutoUpdate = MiniJson.GetBool(m, "on", true); Save(); break;
           case "setSendCodes": cfg.SendCodes = MiniJson.GetBool(m, "on", true); Save(); break;
+          case "setDps":
+#if TESTBUILD
+            if (Channel.IsTest) {
+              cfg.DpsMeter = MiniJson.GetBool(m, "on", false);
+              try { if (!cfg.DpsMeter) dps.Stop(); else dps.Start(); } catch (Exception ex) { Log.Write("dps: " + ex.Message); }
+              Save();
+            }
+#endif
+            break;
           case "setBossHints": cfg.BossHints = MiniJson.GetBool(m, "on", true); if (!cfg.BossHints && coach.Running) coach.Stop(); Save(); break;
           case "setShowInCapture": if (!Channel.CaptureSetting) break; cfg.ShowInCapture = MiniJson.GetBool(m, "on", false); GlowWindow.SetShowInCapture(cfg.ShowInCapture); Save(); break;
           case "setTray": cfg.Tray = MiniJson.GetBool(m, "on", true); win.TrayEnabled = cfg.Tray; Save(); break;
@@ -649,7 +671,7 @@ namespace RealmForge {
       sb.Append(",\"codePrefix\":").Append(S(has ? cfg.Code.Substring(0, 8) : ""));
       sb.Append(",\"saveCopy\":").Append(B(cfg.SaveCopy));
       sb.Append(",\"autoSync\":").Append(B(cfg.AutoSync))        .Append(",\"errorReports\":").Append(B(cfg.ErrorReports)).Append(",\"autoUpdate\":").Append(B(cfg.AutoUpdate))
-        .Append(",\"tray\":").Append(B(cfg.Tray)).Append(",\"bossHints\":").Append(B(cfg.BossHints)).Append(",\"showInCapture\":").Append(B(CaptureAffinity.Allowed(cfg.ShowInCapture, Channel.CaptureSetting))).Append(",\"sendCodes\":").Append(B(cfg.SendCodes)).Append(",\"recButton\":").Append(B(cfg.RecButton)).Append(",\"guideStyle\":").Append(S(cfg.GuideStyle)).Append(",\"autostart\":").Append(B(Autostart.IsOn()));
+        .Append(",\"tray\":").Append(B(cfg.Tray)).Append(",\"bossHints\":").Append(B(cfg.BossHints)).Append(",\"dps\":").Append(B(cfg.DpsMeter && Channel.IsTest)).Append(",\"showInCapture\":").Append(B(CaptureAffinity.Allowed(cfg.ShowInCapture, Channel.CaptureSetting))).Append(",\"sendCodes\":").Append(B(cfg.SendCodes)).Append(",\"recButton\":").Append(B(cfg.RecButton)).Append(",\"guideStyle\":").Append(S(cfg.GuideStyle)).Append(",\"autostart\":").Append(B(Autostart.IsOn()));
       win.TrayEnabled = cfg.Tray;
       win.SetTrayLang(cfg.Lang);
       sb.Append(",\"last\":").Append(LastJson());
@@ -718,6 +740,10 @@ namespace RealmForge {
     Dictionary<int, string> endMarks;
     // the boss coach over the game (app/BattleCoach.cs): a new running simulation = a fight starts
     readonly BattleCoach coach = new BattleCoach();
+#if TESTBUILD
+    // the live DPS meter (app/DpsMeter.cs): the test build only, and only when the player turned it on (cfg.DpsMeter, off by default)
+    readonly DpsMeter dps = new DpsMeter();
+#endif
     // the arena's opponents to the site while the arena screen is open (app/ArenaWatch.cs); an arena fight's monster level
     // and opponent, read at its start (src/ArenaOpponents.cs) and kept with the fight as "arenaInfo"
     ArenaWatch arenaWatch;
@@ -793,6 +819,9 @@ namespace RealmForge {
       Log.Write("battle start: stage " + stage + " at " + RFX.FrameSeconds(fr).ToString("0") + " s" + (coach.Knows(stage) ? " (coach)" : "") + (wasSeen ? "" : " (first look)"));
       lastStage = stage; lastStageAt = DateTime.UtcNow; lastStageSim = sim;
       StartRecorder(sim, stage);
+#if TESTBUILD
+      try { if (Channel.IsTest && cfg.DpsMeter) dps.Start(); } catch (Exception ex) { Log.Write("dps: " + ex.Message); }   // (not tied to the boss hints)
+#endif
       if (stage / 1000 == 6001) {
         ShootField(stage);
         arenaInfo = null; arenaInfoStage = stage;
@@ -883,6 +912,11 @@ namespace RealmForge {
       var rec = new FightRecorder(sim, stage) { Log = Log.Write, OnSample = (f, hs) => coach.Feed(hs) };
 #if TESTBUILD
       if (Channel.IsTest) rec.AttackLog = true;   // the per-frame attack event log (src/AttackLog.cs): the test build only, the release exe has no path to it
+#endif
+#if TESTBUILD
+      try {
+        if (Channel.IsTest && cfg.DpsMeter) { rec.OnStats = dps.Feed.Push; rec.LiveSkills = true; }
+      } catch (Exception ex) { Log.Write("dps: " + ex.Message); }
 #endif
       recorder = rec;
       rec.Start();

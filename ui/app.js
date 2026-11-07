@@ -17,7 +17,7 @@
     sync: { phase: 'idle', stage: null, seconds: 0, result: null, error: null },
     plans: { status: 'idle', list: [], err: null }, sel: 0,
     scan: { status: 'idle', panel: false }, live: null, reported: {}, compact: false, overlay: 'off', ovFar: false, hl: '',
-    more: {}, autoSync: true, errorReports: false, autoUpdate: true, bossHints: true, showInCapture: false, sendCodes: true, recButton: true, plansWait: false, tray: true, autostart: false, auto: 'idle', autoAt: null,
+    more: {}, autoSync: true, errorReports: false, autoUpdate: true, bossHints: true, dps: false, showInCapture: false, sendCodes: true, recButton: true, plansWait: false, tray: true, autostart: false, auto: 'idle', autoAt: null,
     news: { status: 'idle', feed: null, filter: 'all', at: 0 },
     forum: { status: 'idle', reply: null, at: 0 },
     run: null, seen: null, bootAt: Date.now(), bootLoad: false, runKey: '', queue: [], takeOver: {},
@@ -848,6 +848,7 @@
         row(t('setAutoUpdate'), t('setAutoUpdateS'), sw('autoUpdate', S.autoUpdate), { more: 'setAutoUpdateP', key: 'autoUpdate' })
         + row(t('setSendCodes'), t('setSendCodesS'), sw('sendCodes', S.sendCodes), { more: 'setSendCodesP', key: 'sendCodes' })
         + row(t('setBossHints'), t('setBossHintsS'), sw('bossHints', S.bossHints), { more: 'setBossHintsP', key: 'bossHints' })
+        + (S.channel === 'test' ? row(t('setDps'), t('setDpsS'), sw('dps', S.dps), { more: 'setDpsP', key: 'dps' }) : '')
         + row(t('setShowInCapture'), t(S.showInCapture ? 'setShowInCaptureOn' : 'setShowInCaptureS'), sw('showInCapture', S.showInCapture))
         + row(t('setTray'), t('setTrayS'), sw('tray', S.tray), { more: 'setTrayP', key: 'tray' })
         + row(t('setAutostart'), t('setAutostartS'), sw('autostart', S.autostart), { more: 'setAutostartP', key: 'autostart' })),
@@ -960,6 +961,7 @@
     else if (a === 'copy') { S.saveCopy = !S.saveCopy; host.send({ cmd: 'setSaveCopy', on: S.saveCopy }); render(); }
     else if (a === 'recButton') { S.recButton = !S.recButton; host.send({ cmd: 'setRecButton', on: S.recButton }); render(); }
     else if (a === 'sendCodes') { S.sendCodes = !S.sendCodes; host.send({ cmd: 'setSendCodes', on: S.sendCodes }); render(); }
+    else if (a === 'dps') { S.dps = !S.dps; host.send({ cmd: 'setDps', on: S.dps }); render(); }
     else if (a === 'bossHints') { S.bossHints = !S.bossHints; host.send({ cmd: 'setBossHints', on: S.bossHints }); render(); }
     else if (a === 'showInCapture') { S.showInCapture = !S.showInCapture; host.send({ cmd: 'setShowInCapture', on: S.showInCapture }); render(); }
     else if (a === 'tray') { S.tray = !S.tray; host.send({ cmd: 'setTray', on: S.tray }); render(); }
@@ -1007,7 +1009,7 @@
     switch (m.ev) {
       case 'state':
         Object.assign(S, { lang: m.lang, version: m.version, channel: m.channel || 'main', streamer: !!m.streamer, site: m.site, defaultSite: m.defaultSite, termsOk: m.termsOk !== false, hasCode: m.hasCode, codePrefix: m.codePrefix, saveCopy: m.saveCopy, last: m.last || S.last });
-        if (m.autoSync !== undefined) { S.autoSync = m.autoSync; S.errorReports = !!m.errorReports; S.autoUpdate = m.autoUpdate !== false; S.tray = m.tray !== false; S.bossHints = m.bossHints !== false; S.showInCapture = !!m.showInCapture; S.sendCodes = m.sendCodes !== false; S.recButton = m.recButton !== false; S.autostart = !!m.autostart; }
+        if (m.autoSync !== undefined) { S.autoSync = m.autoSync; S.errorReports = !!m.errorReports; S.autoUpdate = m.autoUpdate !== false; S.tray = m.tray !== false; S.bossHints = m.bossHints !== false; S.dps = !!m.dps; S.showInCapture = !!m.showInCapture; S.sendCodes = m.sendCodes !== false; S.recButton = m.recButton !== false; S.autostart = !!m.autostart; }
         if (m.game) S.game = m.game;
         if (m.codeSaved) { S.editCode = false; toast(t('saved')); if (S.page === 'equip' || S.plans.status !== 'idle') loadPlans(); }
         if (m.siteSaved) toast(t('saved'));
