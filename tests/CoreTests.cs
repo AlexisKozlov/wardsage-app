@@ -942,6 +942,7 @@ static partial class CoreTests {
     AttackLogTests.Run(Check);
     Console.WriteLine("Live DPS meter data (src/DpsFeed.cs):");
     DpsFeedTests();
+    DpsReplayTests();
 
     Console.WriteLine("Error reports (src/ErrorReport.cs: opt-in, scrubbed, deduped, capped):");
     ErrorReportTests(mock);
@@ -5718,8 +5719,10 @@ static partial class CoreTests {
     f.Push(DT(6002001, 15, false, DL(1, 10, 1)));
     Check(f.Snapshot.Current.Kind == DpsKind.Arena, "arena: the defence run (6002xxx) too");
     f = new DpsFeed();
-    f.Push(DT(Boss, 30, false, DL(1, 10, 500, 400), DL(2, 10, 50)));
-    Check(f.Snapshot.Current.Kind == DpsKind.Boss && f.Snapshot.Current.Heroes.Count == 2 && f.Snapshot.Current.Heroes[0].Value[1] == 400, "boss: both controllers kept, to-boss is a metric");
+    f.Push(DT(Boss, 30, false, DL(1, 10, 500, 400), DL(100, 0, 50)));
+    Check(f.Snapshot.Current.Kind == DpsKind.Boss && f.Snapshot.Current.Heroes.Count == 1 && f.Snapshot.Current.Heroes[0].Value[1] == 400, "boss: the monsters' side (controller 100) is left out, to-boss is a metric");
+    f = new DpsFeed { AllSides = true }; f.Push(DT(Boss, 30, false, DL(1, 10, 500, 400), DL(100, 0, 50)));
+    Check(f.Snapshot.Current.Heroes.Count == 2, "AllSides: every controller shown");
     Check(DpsFeed.KindOf(4809017) == DpsKind.Malrik && DpsFeed.KindOf(5201003) == DpsKind.Boss && DpsFeed.KindOf(4601001) == DpsKind.Boss && DpsFeed.KindOf(Other) == DpsKind.Other && DpsFeed.KindOf(0) == DpsKind.Other, "kinds of fight by stage");
     // metrics
     f = new DpsFeed();

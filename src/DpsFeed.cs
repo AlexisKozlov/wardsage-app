@@ -68,6 +68,9 @@ namespace RealmForge {
 
     /// <summary>The window of the "recent" DPS, seconds.</summary>
     public int WindowSec = 10;
+    /// <summary>Show every controller. Off by default: the live statistics of boss, Malric and stage fights carry the monsters' side too
+    /// (controllers 100 and 101, unit 0), so only the player's own side (the lowest controller) is shown, as on the arena.</summary>
+    public bool AllSides;
 
     readonly object gate = new object();
     volatile DpsSnapshot snap = new DpsSnapshot { WindowSec = 10 };
@@ -142,7 +145,7 @@ namespace RealmForge {
       var sums = new long[4];
       foreach (var s in t.Stats) {
         if (s == null) continue;
-        if (Arena(f) && s.C != primary) continue;
+        if (!AllSides && s.C != primary) continue;
         if (s.Damage < 0 || s.ToBoss < 0 || s.Heal < 0 || s.Taken < 0 || s.Overflow < 0) return false;
         vis.Add(s);
         sums[0] += s.Damage; sums[1] += s.ToBoss; sums[2] += s.Heal; sums[3] += s.Taken;
