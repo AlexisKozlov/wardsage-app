@@ -106,7 +106,7 @@ namespace RealmForge {
 
   /// <summary>One hero's battle statistics with its controller (StatisticsComponent.m_vDamageStatistics[cUid][unit]).</summary>
   public sealed class StatLine {
-    public uint C; public int Unit; public uint Hero, Power; public ulong At;
+    public uint C; public int Unit, Base; public uint Hero, Power; public ulong At;   // Base = iBaseID (not written to the JSON)
     public long Damage, ToBoss, Overflow; public int Heal, Taken;
     public Dictionary<int, long> Skills;   // per-skill amounts at the fight's end (null: not read)
   }
@@ -233,6 +233,15 @@ namespace RealmForge {
     /// <summary>Commands of the simulation's record (read again and again: the union is kept).</summary>
     public void AddCommands(IEnumerable<FrameCmd> list) {
       foreach (var c in list) { if (c == null || c.Params == null) continue; cmds[c.Key()] = c; }
+    }
+
+    /// <summary>A copy of the kept statistics, with the skills attached by SetSkills (null: none yet); for the live meter.</summary>
+    public List<StatLine> StatsCopy() {
+      if (stats == null) return null;
+      var r = new List<StatLine>(stats.Count);
+      foreach (var s in stats) r.Add(new StatLine { C = s.C, Unit = s.Unit, Base = s.Base, Hero = s.Hero, Power = s.Power, At = s.At, Damage = s.Damage,
+        ToBoss = s.ToBoss, Overflow = s.Overflow, Heal = s.Heal, Taken = s.Taken, Skills = s.Skills });
+      return r;
     }
 
     /// <summary>The heroes' statistics by controller (read again and again: the last reading is kept).</summary>

@@ -500,7 +500,7 @@ namespace RealmForge {
         foreach (var u in DictRefs(side.Value, 128)) {
           if (!IsA(u.Value, ClsDmgStat)) continue;
           var b = Read(u.Value, Span("DamageStatisticsData")); if (b == null) continue;
-          res.Add(new StatLine { C = side.Key, Unit = (int)u.Key, At = u.Value, Hero = BitConverter.ToUInt32(b, 0x14), Power = BitConverter.ToUInt32(b, 0x18),
+          res.Add(new StatLine { C = side.Key, Unit = (int)u.Key, At = u.Value, Base = BitConverter.ToInt32(b, 0x10), Hero = BitConverter.ToUInt32(b, 0x14), Power = BitConverter.ToUInt32(b, 0x18),
                                  Damage = BitConverter.ToInt64(b, 0x28), ToBoss = BitConverter.ToInt64(b, 0x30), Heal = BitConverter.ToInt32(b, 0x38),
                                  Taken = BitConverter.ToInt32(b, 0x3C), Overflow = BitConverter.ToInt64(b, 0x58) });
         }
@@ -784,6 +784,10 @@ namespace RealmForge {
     public bool AttackLog;
     public Action<string> Log;
     public Action<uint, List<HeroSample>> OnSample;   // diagnostics
+    /// <summary>The live meter (src/DpsFeed.cs): the statistics about every second and once more at the end. Read-only, kept apart from the record.</summary>
+    public Action<DpsTick> OnStats;
+    /// <summary>With OnStats: also read the per-skill statistics each second (a failure there never touches the record).</summary>
+    public bool LiveSkills;
     readonly TimelineBuilder tl = new TimelineBuilder();
     readonly object gate = new object();
     readonly ManualResetEvent done = new ManualResetEvent(false);
@@ -824,7 +828,16 @@ namespace RealmForge {
       var st = RFX.ReadStatsBySide(Sim);
       if (st.Count > 0) {
         uint f; int cs;
-        lock (gate) { tl.SetStats(st); if (RFX.SimClock(Sim, out f, out cs)) tl.AddStatSample(f, st); }
+        bool clock;
+        lock (gate) { tl.SetStats(st); clock = RFX.SimClock(Sim, out f, out cs); if (clock) tl.AddStatSample(f, st); }
+        var cb = OnStats;
+        if (cb != null && clock) {
+          try {
+            Dictionary<string, Dictionary<int, long>> sk = null;
+            if (LiveSkills) try { sk = RFX.ReadSkillStats(Sim); } catch (Exception) { }
+            cb(new DpsTick { Stage = Stage, Frame = f, Stats = st, Skills = sk });
+          } catch (Exception) { }
+        }
       }
     }
 
@@ -910,6 +923,14 @@ namespace RealmForge {
             bool ok; int n2 = tl.SetSkills(sk, out ok);
             Say("battle stats: " + n2 + " heroes with per-skill data, sum check " + (n2 == 0 ? "n/a" : ok ? "ok" : "mismatch"));
           }
+        } catch (Exception) { }
+        var fcb = OnStats;
+        if (fcb != null) try {
+          List<StatLine> fst = null; Dictionary<string, Dictionary<int, long>> fsk = null;
+          lock (gate) fst = tl.StatsCopy();
+          if (LiveSkills) try { fsk = RFX.ReadSkillStats(Sim); } catch (Exception) { }
+          uint ff; int fs2;
+          if (fst != null && RFX.SimClock(Sim, out ff, out fs2)) fcb(new DpsTick { Stage = Stage, Frame = Math.Max(ff, ef), Stats = fst, Skills = fsk, Final = true });
         } catch (Exception) { }
         if (tracePasses > 0) lock (gate) Say("unit trace: " + tl.UnitCount + " units, avg " + (tracePassMs / (double)tracePasses).ToString("0.0") + " ms, " + tracePasses + " passes"
                                              + (tl.UnitsCut > 0 || tl.PointsCut > 0 ? ", cut " + tl.UnitsCut + " units / " + tl.PointsCut + " points" : ""));
