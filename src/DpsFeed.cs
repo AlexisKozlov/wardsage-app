@@ -53,6 +53,8 @@ namespace RealmForge {
 
   public sealed class DpsSnapshot {
     public int Version, Rejected; public bool SkillsOff; public int WindowSec;
+    /// <summary>Counts the fights started so far (a new stage, a frame going back, a tick after the final one, five ticks in a row thrown out): a change = a new fight began.</summary>
+    public int Serial;
     public DpsSegmentView Current, Previous, Total;
     public DpsSegmentView Get(DpsSegment s) { return s == DpsSegment.Current ? Current : s == DpsSegment.Previous ? Previous : Total; }
   }
@@ -103,6 +105,8 @@ namespace RealmForge {
     }
 
     /// <summary>Forgets every fight and the session total.</summary>
+    int serial;
+
     public void Reset() {
       lock (gate) {
         cur = null; prev = null; closed = new Dictionary<string, Acc>(); closedFrames = 0; closedFights = 0; rejected = 0;
@@ -133,6 +137,7 @@ namespace RealmForge {
 
     void StartFight(DpsTick t) {
       if (cur != null) { if (!cur.Closed) Close(cur); if (cur.Order.Count > 0) prev = cur; }
+      serial++;
       cur = new Fight { Stage = t.Stage, Kind = KindOf(t.Stage) };
     }
 
@@ -239,7 +244,7 @@ namespace RealmForge {
     // ------------------------------------------------------------------ the snapshot
 
     void Publish() {
-      var s = new DpsSnapshot { Version = ++version, Rejected = rejected, WindowSec = WindowSec };
+      var s = new DpsSnapshot { Version = ++version, Rejected = rejected, WindowSec = WindowSec, Serial = serial };
       if (cur != null) { s.Current = ViewOf(cur, !cur.Final); s.SkillsOff = cur.SkillsOff; }
       if (prev != null) s.Previous = ViewOf(prev, false);
       s.Total = TotalView();
@@ -317,6 +322,18 @@ namespace RealmForge {
       }
       Shares(v.Heroes); SortByDamage(v.Heroes);
       return v;
+    }
+  }
+
+  /// <summary>Tells the DPS window when a new fight began, so that it goes back to the general view (the open hero closed, the segment "Current");
+  /// the mode tab and the window's size and place are kept. The first snapshot it sees is not a change.</summary>
+  public sealed class DpsFightWatch {
+    int last = -1;
+    public bool Changed(DpsSnapshot s) {
+      if (s == null) return false;
+      bool c = last >= 0 && s.Serial != last;
+      last = s.Serial;
+      return c;
     }
   }
 }

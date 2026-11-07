@@ -944,6 +944,7 @@ static partial class CoreTests {
     DpsFeedTests();
     DpsNamesTests();
     DpsReplayTests();
+    DpsNewFightTests();
 
     Console.WriteLine("Error reports (src/ErrorReport.cs: opt-in, scrubbed, deduped, capped):");
     ErrorReportTests(mock);

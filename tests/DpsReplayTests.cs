@@ -130,3 +130,41 @@ static partial class CoreTests {
     Check(kinds.Contains(DpsKind.Arena) && kinds.Contains(DpsKind.Boss) && kinds.Contains(DpsKind.Malrik), "replay: arena, boss and Malric fights covered");
   }
 }
+
+static partial class CoreTests {
+  static DpsTick DpsT(int stage, uint frame, long dmg, bool fin = false) {
+    return new DpsTick { Stage = stage, Frame = frame, Final = fin, Stats = new List<StatLine> { new StatLine { C = 1, Unit = 2266, Damage = dmg, ToBoss = dmg } } };
+  }
+
+  // the window goes back to the general view at each new fight (src/DpsFeed.cs DpsFightWatch): a new stage, a frame going back, a tick after the final one, five rejected in a row
+  static void DpsNewFightTests() {
+    Console.WriteLine("DPS meter: a new fight is told to the window (back to the general view):");
+    var feed = new DpsFeed(); var w = new DpsFightWatch();
+    feed.Push(DpsT(5001007, 100, 1000));
+    Check(!w.Changed(feed.Snapshot), "new fight: the first snapshot is not a change");
+    feed.Push(DpsT(5001007, 400, 5000));
+    Check(!w.Changed(feed.Snapshot), "new fight: the same fight going on is not a change");
+    feed.Push(DpsT(5001007, 700, 9000, true));
+    Check(!w.Changed(feed.Snapshot), "new fight: the final tick closes the fight, not a new one");
+    feed.Push(DpsT(5001007, 800, 100));
+    Check(w.Changed(feed.Snapshot), "new fight: a tick after the final one starts one");
+    feed.Push(DpsT(5001007, 1000, 4000));
+    Check(!w.Changed(feed.Snapshot), "new fight: going on again, no change");
+    feed.Push(DpsT(5001008, 1100, 50));
+    Check(w.Changed(feed.Snapshot), "new fight: another stage");
+    feed.Push(DpsT(5001008, 1400, 6000));
+    Check(!w.Changed(feed.Snapshot), "new fight: still the same");
+    feed.Push(DpsT(5001008, 60, 20));
+    Check(w.Changed(feed.Snapshot), "new fight: the frame went back");
+    // five ticks in a row with the damage going down: the fight is thrown out and a new one starts
+    feed.Push(DpsT(5001008, 400, 8000));
+    w.Changed(feed.Snapshot);
+    int before = feed.Snapshot.Serial;
+    for (uint i = 0; i < 6; i++) feed.Push(DpsT(5001008, 600 + i * 60, 10 + i));
+    Check(feed.Snapshot.Serial == before + 1 && w.Changed(feed.Snapshot), "new fight: five rejected ticks in a row start a new fight");
+    feed.Push(DpsT(5001008, 1200, 500));
+    Check(!w.Changed(feed.Snapshot), "new fight: no change after it");
+    Check(!new DpsFightWatch().Changed(null), "new fight: no snapshot, no change");
+  }
+}
+
