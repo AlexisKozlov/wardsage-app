@@ -215,6 +215,7 @@ window.RF_TEXTS = {
     setHelpS: 'Сообщить об ошибке, задать вопрос, предложить идею.',
     setReportsS: 'При сбое программа сама сообщит разработчику. Пароли и файлы не отправляются.',
     secOver: 'Поверх игры',
+    secAccountS: 'Аккаунт', secSyncS: 'Данные', secOverS: 'Поверх игры', secAppS: 'Программа', secHelpS: 'Помощь', secAdvS: 'Ещё', secDevS: 'Тест',   // short names for the narrow anchor strip
     secDev: 'Для разработчиков',
     setCodeNone: 'Код не введён: сайт не знает, чей это аккаунт.',
     setDpsOffP: 'Включится само, делать ничего не нужно.',
@@ -449,6 +450,7 @@ window.RF_TEXTS = {
     setHelpS: 'Report a bug, ask a question, suggest an idea.',
     setReportsS: 'When something fails, the app tells the developer. No passwords or files are sent.',
     secOver: 'Over the game',
+    secAccountS: 'Account', secSyncS: 'Sync', secOverS: 'Overlay', secAppS: 'Program', secHelpS: 'Help', secAdvS: 'More', secDevS: 'Test',   // short names for the narrow anchor strip
     secDev: 'For developers',
     setCodeNone: 'No code yet: the site does not know whose account this is.',
     setDpsOffP: 'It comes back by itself, nothing to do.',

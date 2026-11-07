@@ -23,7 +23,7 @@
 html, body { height: 100%; margin: 0 }
 body {
   background: linear-gradient(180deg, rgba(11, 16, 27, .78), rgba(11, 16, 27, .93) 55%, var(--bg)) fixed,
-    url(img/bg_main.webp) center top / cover no-repeat fixed, var(--bg);
+    image-set(url(img/bg_main.webp) 1x, url(img/bg_main@2x.webp) 2x) center top / cover no-repeat fixed, var(--bg);
   color: var(--text); font: 16px/1.4 var(--body);
   overflow: hidden; user-select: none; -webkit-font-smoothing: antialiased;
 }
@@ -53,7 +53,7 @@ button { cursor: pointer }
 
 .nav { all: unset; display: flex; align-items: center; gap: 12px; padding: 11px 12px; border-radius: 3px; cursor: pointer;
   color: var(--muted); font: 500 15px/1.2 var(--body); position: relative; transition: background .18s, color .18s }
-.nav svg { width: 20px; height: 20px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.6 }
+.nav svg { width: 20px; height: 20px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; shape-rendering: geometricPrecision }
 .nav:hover { background: rgba(255, 255, 255, .035); color: var(--text) }
 .nav[aria-current=page] { background: linear-gradient(90deg, rgba(232, 207, 142, .13), rgba(232, 207, 142, .02)); color: var(--goldhi) }
 .nav[aria-current=page]::before { content: ''; position: absolute; left: -14px; top: 8px; bottom: 8px; width: 3px; background: var(--gold); box-shadow: 0 0 12px var(--gold) }
@@ -86,7 +86,6 @@ h2 { margin: 0 0 12px; font: 700 13px/1.2 var(--display); letter-spacing: 2px; c
   border: 1px solid var(--line2); border-radius: 4px; padding: 20px 22px;
   box-shadow: 0 12px 32px rgba(0, 0, 0, .28), inset 0 1px 0 rgba(255, 255, 255, .03);
 }
-.card.framed { border-color: var(--line); box-shadow: inset 0 0 0 4px var(--bg2), inset 0 0 0 5px var(--edge), 0 16px 40px rgba(0, 0, 0, .35) }
 .grid2 { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 18px; align-items: start }
 .stack { display: grid; gap: 18px }
 
@@ -94,7 +93,7 @@ h2 { margin: 0 0 12px; font: 700 13px/1.2 var(--display); letter-spacing: 2px; c
    The gold rim (the button's own gradient), a dark hairline (::before) and the game's metal band as the fill (::after).
    .btn-gold = the main action; .btn-line = a quiet bronze one (gold when pressed); in a dialog the second button is sapphire. */
 .btn-gold, .btn-line {
-  --cut: 10px; --h: 34px; --tex: url(img/hb_dark.webp); --gap: #120d06; --fg: var(--gold); --ts: 0 1px 1px rgba(0, 0, 0, .8);
+  --cut: 10px; --h: 34px; --tex: linear-gradient(180deg, #5a4733 0%, #46372a 48%, #3a2d21 52%, #56463a 100%); --gap: #120d06; --fg: var(--gold); --ts: 0 1px 1px rgba(0, 0, 0, .8);
   position: relative; isolation: isolate; display: inline-flex; align-items: center; justify-content: center; gap: 8px; box-sizing: border-box;
   min-height: var(--h); margin: 0; padding: 1px 20px 0; border: 0; border-radius: 0; cursor: pointer; text-align: center;
   font: 600 13px/1.15 var(--body); letter-spacing: .1em; text-transform: uppercase; color: var(--fg); text-shadow: var(--ts);
@@ -104,10 +103,10 @@ h2 { margin: 0 0 12px; font: 700 13px/1.2 var(--display); letter-spacing: 2px; c
 .btn-gold::before, .btn-gold::after, .btn-line::before, .btn-line::after { content: ''; position: absolute; z-index: -1 }
 .btn-gold::before, .btn-line::before { inset: 1.5px; background: var(--gap); clip-path: polygon(calc(var(--cut) - .6px) 0, calc(100% - var(--cut) + .6px) 0, 100% 50%, calc(100% - var(--cut) + .6px) 100%, calc(var(--cut) - .6px) 100%, 0 50%) }
 .btn-gold::after, .btn-line::after { inset: 2.5px; clip-path: polygon(calc(var(--cut) - 1px) 0, calc(100% - var(--cut) + 1px) 0, 100% 50%, calc(100% - var(--cut) + 1px) 100%, calc(var(--cut) - 1px) 100%, 0 50%);
-  background: linear-gradient(180deg, rgba(255, 255, 255, .35), rgba(255, 255, 255, 0) 2px), linear-gradient(0deg, rgba(0, 0, 0, .28), rgba(0, 0, 0, 0) 3px), var(--tex) center / 100% 100% no-repeat }
-.btn-gold { --tex: url(img/hb_gold.webp); --gap: #4b3510; --fg: #2e1d06; --ts: 0 1px 0 rgba(255, 238, 180, .7); --cut: 13px; --h: 42px; padding: 1px 30px 0; font-size: 15px }
+  background: linear-gradient(180deg, rgba(255, 255, 255, .35), rgba(255, 255, 255, 0) 2px), linear-gradient(0deg, rgba(0, 0, 0, .28), rgba(0, 0, 0, 0) 3px), var(--tex) }
+.btn-gold { --tex: linear-gradient(180deg, #d7ae6e 0%, #a07442 6%, #a97a3c 30%, #c28a3b 62%, #e0a846 92%, #f7c04f 100%); --gap: #4b3510; --fg: #2e1d06; --ts: 0 1px 0 rgba(255, 238, 180, .7); --cut: 13px; --h: 42px; padding: 1px 30px 0; font-size: 15px }
 .btn-gold.big { --cut: 15px; --h: 50px; width: 100%; font-size: 17px }
-.btn-line.on, .btn-line[aria-pressed="true"] { --tex: url(img/hb_gold.webp); --gap: #4b3510; --fg: #2e1d06; --ts: 0 1px 0 rgba(255, 238, 180, .7) }
+.btn-line.on, .btn-line[aria-pressed="true"] { --tex: linear-gradient(180deg, #d7ae6e 0%, #a07442 6%, #a97a3c 30%, #c28a3b 62%, #e0a846 92%, #f7c04f 100%); --gap: #4b3510; --fg: #2e1d06; --ts: 0 1px 0 rgba(255, 238, 180, .7) }
 .btn-gold:hover:not(:disabled), .btn-line:hover:not(:disabled) { filter: brightness(1.12) }
 .btn-gold:active:not(:disabled), .btn-line:active:not(:disabled) { transform: translateY(1px) }
 .btn-gold:focus-visible, .btn-line:focus-visible { outline: 2px solid var(--goldhi); outline-offset: 3px }
@@ -268,18 +267,20 @@ body.still *, body.still *::before, body.still *::after { animation-play-state: 
 .setroot { container-type: inline-size }
 .setgrid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start }
 .setsecs { display: grid; gap: 20px; min-width: 0 }
-.setnav { position: sticky; top: 0; z-index: 3; display: flex; gap: 6px; overflow-x: auto; padding: 8px 0; background: rgba(11, 16, 27, .94); border-bottom: 1px solid var(--line2); scrollbar-width: none }
-.setnav::-webkit-scrollbar { display: none }
-.setnav button { all: unset; box-sizing: border-box; cursor: pointer; flex: none; padding: 7px 14px; font: 500 14px/1.2 var(--body); color: var(--muted); border: 1px solid transparent; border-radius: 3px; white-space: nowrap; transition: color .15s, background .15s }
+.setnav { position: sticky; top: 0; z-index: 3; display: flex; flex-wrap: wrap; gap: 2px 4px; padding: 4px 0; background: rgba(11, 16, 27, .94); border-bottom: 1px solid var(--line2) }
+.setnav button { all: unset; box-sizing: border-box; cursor: pointer; flex: 1 1 auto; text-align: center; padding: 6px 10px; font: 500 14px/1.2 var(--body); color: var(--muted); border: 1px solid transparent; border-radius: 3px; white-space: nowrap; transition: color .15s, background .15s }
+.setnav .nf { display: none }
 .setnav button:hover { color: var(--text) }
 .setnav button.on { color: var(--goldhi); border-color: var(--line); background: linear-gradient(90deg, rgba(232, 207, 142, .16), rgba(232, 207, 142, .03)) }
 .setnav button:focus-visible { outline: 2px solid var(--goldhi); outline-offset: 1px }
+@container (max-width: 560px) { .setnav button { padding: 6px 6px; font-size: 13px } }
 .sec { scroll-margin-top: 64px }
 .card.framed.sec { padding: 22px 26px 12px }
 @container (min-width: 900px) {
   .setgrid { grid-template-columns: 180px minmax(0, 1fr); gap: 28px }
-  .setnav { top: 12px; flex-direction: column; gap: 2px; overflow: visible; padding: 0; margin: 0; background: none; border: 0 }
-  .setnav button { padding: 9px 12px; white-space: normal; border-radius: 0; border-width: 0 0 0 2px; border-left-style: solid; border-left-color: var(--line2) }
+  .setnav { top: 12px; flex-direction: column; flex-wrap: nowrap; gap: 2px; padding: 0; margin: 0; background: none; border: 0 }
+  .setnav .nf { display: inline } .setnav .ns { display: none }
+  .setnav button { flex: none; text-align: left; padding: 9px 12px; white-space: normal; border-radius: 0; border-width: 0 0 0 2px; border-left-style: solid; border-left-color: var(--line2) }
   .setnav button.on { border-left-color: var(--gold) }
   .setsecs { max-width: 760px }
   .sec { scroll-margin-top: 14px }
@@ -287,9 +288,9 @@ body.still *, body.still *::before, body.still *::after { animation-play-state: 
 /* the section title: a medal with the icon, the name, a golden line */
 .sh { display: flex; align-items: center; gap: 16px; margin: 0 0 8px; font: 700 18px/1.15 var(--serif); letter-spacing: .6px; color: var(--goldhi); text-transform: none }
 .sh::after { content: ''; flex: 1; min-width: 24px; height: 1px; background: linear-gradient(90deg, var(--gold2), transparent) }
-.sh .medal { flex: none; width: 36px; height: 36px; margin: 5px; border-radius: 50%; display: grid; place-items: center; background: radial-gradient(circle at 50% 30%, #1d2944, #0b101b);
+.sh .medal { flex: none; width: 40px; height: 40px; margin: 5px; border-radius: 50%; display: grid; place-items: center; background: radial-gradient(circle at 50% 30%, #1d2944, #0b101b);
   box-shadow: 0 0 0 1px var(--gold2), 0 0 0 4px var(--bg2), 0 0 0 5px var(--edge) }
-.sh .medal svg { width: 18px; height: 18px; stroke: var(--gold); fill: none; stroke-width: 1.8 }
+.sh .medal svg { width: 20px; height: 20px; stroke: var(--gold); fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; shape-rendering: geometricPrecision }
 .tbadge { margin-left: 4px; padding: 2px 8px 1px; background: var(--gold); color: var(--bg2); font: 700 11px/1.3 var(--display); letter-spacing: 1.2px; order: 1 }
 .advbtn { all: unset; box-sizing: border-box; cursor: pointer; display: flex; align-items: center; gap: 16px; width: 100%; font: inherit; color: inherit; letter-spacing: inherit }
 .advbtn:focus-visible { outline: 2px solid var(--goldhi); outline-offset: 4px }
@@ -341,14 +342,17 @@ body.still *, body.still *::before, body.still *::after { animation-play-state: 
 .srow .langs button[aria-pressed=true] { color: var(--goldhi) }
 .setfoot { margin: 18px 0 0; color: var(--dim); font-size: 13px }
 .setfoot .btn-ghost { font-size: 13px }
-/* the «gem» switch: a dark track with a stone, a golden track with a glowing stone when on */
-.switch { all: unset; box-sizing: border-box; cursor: pointer; flex: none; position: relative; width: 52px; height: 28px; border-radius: 14px; border: 1px solid var(--line);
-  background: url(img/hb_dark.webp) center / cover, #120d06; box-shadow: inset 0 2px 5px rgba(0, 0, 0, .7); transition: border-color .2s }
-.switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 22px; height: 22px; border-radius: 50%; background: radial-gradient(circle at 38% 32%, #b9b09a, #5d5646 75%);
-  box-shadow: 0 0 0 1px #120d06, 0 1px 3px rgba(0, 0, 0, .7); transition: transform .2s var(--ease), background .2s, box-shadow .2s }
-.switch[aria-checked=true] { border-color: var(--gold2); background: url(img/hb_gold.webp) center / cover, #4b3510; box-shadow: inset 0 2px 4px rgba(60, 40, 5, .55) }
-.switch[aria-checked=true]::after { transform: translateX(24px); background: radial-gradient(circle at 38% 32%, var(--goldhi), var(--gold2) 80%);
-  box-shadow: 0 0 0 2px #3b2a0c, 0 0 10px rgba(255, 241, 200, .75) }
+/* the «gem» switch, pure CSS (no bitmap, sharp at any scale): a dark metal track with a stone; a golden track and a glowing stone when on */
+.switch { all: unset; box-sizing: border-box; cursor: pointer; flex: none; position: relative; width: 52px; height: 28px; border-radius: 14px; border: 1px solid #6b5a36;
+  background: linear-gradient(180deg, #17120a, #2c2216 55%, #3a2e1f); box-shadow: inset 0 2px 4px rgba(0, 0, 0, .75), inset 0 -1px 0 rgba(255, 238, 190, .1), 0 0 0 1px rgba(0, 0, 0, .55);
+  transition: border-color .2s, background .2s, box-shadow .2s }
+.switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 22px; height: 22px; border-radius: 50%;
+  background: radial-gradient(circle at 36% 30%, #f1ead8 0, #b9b09a 28%, #6a6350 70%, #4b4535 100%);
+  box-shadow: 0 0 0 1px #120d06, 0 1px 3px rgba(0, 0, 0, .7), inset 0 -2px 3px rgba(0, 0, 0, .35); transition: transform .2s var(--ease), background .2s, box-shadow .2s }
+.switch[aria-checked=true] { border-color: var(--gold2); background: linear-gradient(180deg, #8a5f26, #c28a3b 45%, #e0a846);
+  box-shadow: inset 0 2px 4px rgba(60, 35, 0, .6), inset 0 -1px 0 rgba(255, 241, 200, .35), 0 0 0 1px rgba(0, 0, 0, .55) }
+.switch[aria-checked=true]::after { transform: translateX(24px); background: radial-gradient(circle at 36% 30%, #fffbe9 0, var(--goldhi) 25%, var(--gold2) 78%, #9a7a38 100%);
+  box-shadow: 0 0 0 1px #3b2a0c, 0 0 0 2px rgba(255, 241, 200, .25), 0 0 10px rgba(255, 241, 200, .75), inset 0 -2px 3px rgba(110, 70, 10, .4) }
 .switch:focus-visible { outline: 2px solid var(--goldhi); outline-offset: 3px }
 .switch:disabled { cursor: not-allowed; opacity: .8; filter: grayscale(1) }
 .switch:disabled::after { background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23222' stroke-width='2.6'%3E%3Crect x='5' y='11' width='14' height='9' rx='1.5'/%3E%3Cpath d='M8 11V8a4 4 0 0 1 8 0v3'/%3E%3C/svg%3E") center / 13px no-repeat, radial-gradient(circle at 38% 32%, #b9b09a, #5d5646 75%) }
@@ -407,7 +411,18 @@ body.compact .slots li .sub { font-size: 12px }
 
 /* ---------- game textures ---------- */
 .banner { background: linear-gradient(90deg, rgba(14, 21, 36, .96) 30%, rgba(14, 21, 36, .6) 70%, rgba(14, 21, 36, .35)), url(img/bg_banner.webp) 60% 40% / cover no-repeat, var(--panel) }
-.card.framed { border-image: url(img/frame.webp) 12 / 1px stretch }
+/* the card frame, vector and on whole css pixels (no stretched bitmap): a 1px gold rim, a dark gap, a 1px inner hairline, bracket corners (inline SVG) */
+.card.framed { position: relative; border: 1px solid var(--gold2); border-image: none; border-radius: 3px;
+  box-shadow: inset 0 0 0 3px var(--bg2), inset 0 0 0 4px var(--golddim), 0 16px 40px rgba(0, 0, 0, .35) }
+.card.framed::before, .card.framed::after { content: ''; position: absolute; inset: 6px; pointer-events: none; background-repeat: no-repeat; background-size: 16px 16px }
+.card.framed::before { background-image: var(--cor-tl), var(--cor-tr); background-position: left top, right top }
+.card.framed::after { background-image: var(--cor-bl), var(--cor-br); background-position: left bottom, right bottom }
+:root {
+  --cor-tl: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16' shape-rendering='crispEdges'%3E%3Cpath d='M0 0h10v1H1v9H0z' fill='%23c9a45c'/%3E%3Cpath d='M3 3h3v1H4v2H3z' fill='%236b5a36'/%3E%3C/svg%3E");
+  --cor-tr: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16' shape-rendering='crispEdges'%3E%3Cpath d='M16 0H6v1h9v9h1z' fill='%23c9a45c'/%3E%3Cpath d='M13 3h-3v1h2v2h1z' fill='%236b5a36'/%3E%3C/svg%3E");
+  --cor-bl: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16' shape-rendering='crispEdges'%3E%3Cpath d='M0 16h10v-1H1V6H0z' fill='%23c9a45c'/%3E%3Cpath d='M3 13h3v-1H4v-2H3z' fill='%236b5a36'/%3E%3C/svg%3E");
+  --cor-br: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16' shape-rendering='crispEdges'%3E%3Cpath d='M16 16H6v-1h9V6h1z' fill='%23c9a45c'/%3E%3Cpath d='M13 13h-3v-1h2v-2h1z' fill='%236b5a36'/%3E%3C/svg%3E");
+}
 .bust.lg { border: 0; box-shadow: 0 0 0 1px var(--gold2), 0 0 0 4px var(--bg2), 0 0 0 5px var(--edge), 0 12px 30px rgba(0, 0, 0, .4); background: url(img/card5.webp) center / cover }
 
 /* ---------- item card on hover (the game's item window) ---------- */
@@ -504,7 +519,7 @@ body.compact .say p { font-size: 16px }
 .modal-hint { margin: 12px 0 0; font-size: 12px; line-height: 1.45; color: var(--muted) }
 .modal-btns { display: flex; gap: 12px; justify-content: flex-end; margin-top: 18px; align-items: stretch }
 .modal-btns .btn-gold, .modal-btns .btn-line { --cut: 13px; --h: 42px; min-width: 130px; padding: 1px 28px 0; font-size: 14.5px }
-.modal-btns .btn-line { --tex: url(img/hb_blue.webp); --gap: #0c1640; --fg: #fff; --ts: 0 1px 2px rgba(0, 4, 40, .8) }
+.modal-btns .btn-line { --tex: linear-gradient(180deg, #8d93b0 0%, #3f4764 6%, #44507a 35%, #4f60a3 70%, #6f8ff1 98%); --gap: #0c1640; --fg: #fff; --ts: 0 1px 2px rgba(0, 4, 40, .8) }
 .rail-foot .btn-line { width: 100%; min-width: 0; padding: 0 8px; font-size: 11px; letter-spacing: 1px; white-space: nowrap }
 .nav .newdot { margin-left: auto; width: 9px; height: 9px; border-radius: 50%; background: var(--gold); box-shadow: 0 0 8px var(--gold) }
 
@@ -581,7 +596,7 @@ body.compact .say p { font-size: 16px }
 .tk-more { display: inline-grid; place-items: center; height: 24px; min-width: 32px; padding: 0 4px; font: 700 10px var(--body); color: var(--gold2); border: 1px solid var(--golddim); background: rgba(11, 16, 27, .6); border-radius: 2px; box-sizing: border-box }
 
 .tk-focus { position: relative; display: grid; grid-template-columns: 138px minmax(0, 1fr); gap: 22px; padding: 18px 20px 16px 18px; border-radius: 4px; overflow: hidden; border: 1px solid var(--gold2);
-  background: linear-gradient(90deg, rgba(11, 16, 27, .35), rgba(14, 21, 36, .92) 55%), linear-gradient(180deg, rgba(24, 34, 58, .4), rgba(11, 16, 27, .9)), url(img/bg_main.webp) center / cover;
+  background: linear-gradient(90deg, rgba(11, 16, 27, .35), rgba(14, 21, 36, .92) 55%), linear-gradient(180deg, rgba(24, 34, 58, .4), rgba(11, 16, 27, .9)), image-set(url(img/bg_main.webp) 1x, url(img/bg_main@2x.webp) 2x) center / cover;
   box-shadow: 0 0 0 1px rgba(232, 207, 142, .12), 0 0 26px rgba(232, 207, 142, .12), inset 0 0 0 3px var(--bg2), inset 0 0 0 4px var(--edge), 0 16px 40px rgba(0, 0, 0, .45) }
 .tk-art-col { display: flex; justify-content: center; align-items: flex-start; padding-top: 2px }
 /* the hero: the same card art as in the hero cards, larger */
@@ -591,7 +606,7 @@ body.compact .say p { font-size: 16px }
 .tk-art .cell.xl { width: 104px; height: 104px; border-radius: 3px; box-shadow: 0 0 0 2px var(--gold), 0 0 18px rgba(232, 207, 142, .45); overflow: visible }
 .tk-art .cell.xl .lv { font-size: 14px; right: 4px; bottom: 3px } .tk-art .cell.xl .sr { font-size: 11px }
 .tk-art.sprite { background: radial-gradient(circle at 50% 40%, rgba(var(--ab), .22), rgba(11, 16, 27, .85) 70%), var(--bg2) }
-.tk-art.sprite img { width: 72px; height: 72px; object-fit: contain; filter: drop-shadow(0 0 8px rgba(var(--ab), .5)) }
+.tk-art.sprite img { width: 48px; height: 48px; object-fit: contain; filter: drop-shadow(0 0 8px rgba(var(--ab), .5)) }
 .tk-main { display: grid; gap: 9px; align-content: start; min-width: 0 }
 .tk-top { display: flex; align-items: center; gap: 10px; min-width: 0; flex-wrap: wrap; min-height: 28px }
 .tk-kind { font: 700 10.5px/1.2 var(--display); letter-spacing: 1.3px; text-transform: uppercase; color: var(--ac); white-space: nowrap }
@@ -637,7 +652,7 @@ body.compact .say p { font-size: 16px }
 @container (max-width: 700px) {
   .tk-focus { grid-template-columns: 104px minmax(0, 1fr); gap: 16px; padding: 14px 14px 14px 14px }
   .bust.lg.xl, .tk-art { width: 102px; height: 136px }
-  .tk-art .cell.xl { width: 80px; height: 80px } .tk-art.sprite img { width: 56px; height: 56px }
+  .tk-art .cell.xl { width: 80px; height: 80px } .tk-art.sprite img { width: 40px; height: 40px }
   .tk-title { font-size: 23px }
   .tk-hint b { font-size: 17px }
   .tk-hint { height: 104px }
@@ -650,7 +665,7 @@ body.compact .say p { font-size: 16px }
 
 /* ---------- maintenance: the screen over the window ---------- */
 .maint-veil { position: fixed; inset: 0; z-index: 8; display: grid; place-items: center; padding: 24px; overflow: auto;
-  background: linear-gradient(rgba(8, 12, 22, .88), rgba(8, 12, 22, .94)), url(img/bg_main.webp) center / cover no-repeat }
+  background: linear-gradient(rgba(8, 12, 22, .88), rgba(8, 12, 22, .94)), image-set(url(img/bg_main.webp) 1x, url(img/bg_main@2x.webp) 2x) center / cover no-repeat }
 .maint-card { max-width: 560px; width: 100%; padding: 34px 36px 30px; text-align: center; display: grid; gap: 14px; justify-items: center;
   background: linear-gradient(180deg, rgba(14, 21, 36, .94), rgba(14, 21, 36, .86)), url(img/bg_banner.webp) 60% 40% / cover no-repeat, var(--panel) }
 .maint-crest { width: 64px; height: 64px }

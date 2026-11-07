@@ -105,5 +105,21 @@ check(/class="hint warnhint"/.test(bad) && !/class="hint warnhint"/.test(mk('ru'
 // the markup stays the same when only the scroll position changes: render has no scroll state
 check(!/setSec/.test(readFileSync('ui/settings.js', 'utf8')), 'settings.js knows nothing about the scroll state');
 
+// ---- the narrow anchor strip: short names in both languages, wraps instead of scrolling; the crisp (vector) look
+const SHORTK = SECTIONS.map((d) => d.short);
+check(SHORTK.every(Boolean) && new Set(SHORTK).size === SHORTK.length, 'every section has its own short anchor text key');
+for (const lang of ['ru', 'en']) {
+  check(SHORTK.every((k) => T[lang][k] && T[lang][k].length <= 12), lang + ': the short anchor names exist and are at most 12 characters');
+  const nav = mk(lang, { channel: 'test' });
+  check(SECTIONS.every((d) => nav.includes('<span class="ns">' + T[lang][d.short] + '</span>') && nav.includes('<span class="nf">' + esc(T[lang][d.title]) + '</span>')), lang + ': each anchor has the full and the short name');
+}
+const css = readFileSync('ui/app.css', 'utf8');
+const rule = (sel) => (css.match(new RegExp('^' + sel.replace(/[.[\]]/g, '\\$&') + ' \\{[^\n]*', 'm')) || [''])[0];
+check(!/overflow-x:\s*auto/.test(rule('.setnav')) && /flex-wrap:\s*wrap/.test(rule('.setnav')), 'the anchor strip wraps, no horizontal scroll');
+check(!/img\/hb_|img\/frame\.webp/.test(css), 'css: no stretched bitmaps for buttons, switches or the card frame');
+check(!/url\(img\//.test(css.slice(css.indexOf('.switch {'), css.indexOf('.switch:focus-visible'))), 'the gem switch has no bitmap');
+check(/image-set\(url\(img\/bg_main\.webp\) 1x, url\(img\/bg_main@2x\.webp\) 2x\)/.test(css), 'the background has a 1x and a 2x file');
+check(/stroke-width: 2;[^}]*shape-rendering: geometricPrecision/.test(rule('.sh .medal svg')) && /width: 40px; height: 40px/.test(rule('.sh .medal')), 'section medal 40px, icon stroke 2, geometricPrecision');
+
 console.log(fails ? fails + ' FAILED' : 'settings ui: all ok');
 process.exit(fails ? 1 : 0);

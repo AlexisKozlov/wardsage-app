@@ -6,13 +6,13 @@
 (function (root) {
   // the sections in page order: id (anchor #sec-<id>), icon from the set I, title text key; test: shown in the TEST build only
   const SECTIONS = [
-    { id: 'acct', ico: 'key', title: 'secAccount' },
-    { id: 'sync', ico: 'sync', title: 'secSync' },
-    { id: 'over', ico: 'game', title: 'secOver' },
-    { id: 'app', ico: 'gear', title: 'secApp' },
-    { id: 'help', ico: 'chat', title: 'secHelp' },
-    { id: 'adv', ico: 'filter', title: 'secAdv' },
-    { id: 'dev', ico: 'pin', title: 'secDev', test: true },
+    { id: 'acct', ico: 'key', title: 'secAccount', short: 'secAccountS' },
+    { id: 'sync', ico: 'sync', title: 'secSync', short: 'secSyncS' },
+    { id: 'over', ico: 'game', title: 'secOver', short: 'secOverS' },
+    { id: 'app', ico: 'gear', title: 'secApp', short: 'secAppS' },
+    { id: 'help', ico: 'chat', title: 'secHelp', short: 'secHelpS' },
+    { id: 'adv', ico: 'filter', title: 'secAdv', short: 'secAdvS' },
+    { id: 'dev', ico: 'pin', title: 'secDev', short: 'secDevS', test: true },
   ];
   const visible = (S) => SECTIONS.filter((s) => !s.test || S.channel === 'test');
 
@@ -79,7 +79,7 @@
       + (S.rec.sent || S.rec.total || S.rec.why ? `<p class="sdet" id="recInfo">${esc(recNote())}</p>` : ''));
 
     const nav = `<nav class="setnav" id="setnav" aria-label="${esc(t('setNav'))}">${visible(S).map((d) =>
-      `<button data-act="setGo" data-sec="${d.id}">${esc(t(d.title))}</button>`).join('')}</nav>`;
+      `<button data-act="setGo" data-sec="${d.id}" title="${esc(t(d.title))}"><span class="nf">${esc(t(d.title))}</span><span class="ns">${esc(t(d.short))}</span></button>`).join('')}</nav>`;
     return `
       <div class="head"><div><h1>${esc(t('setTitle'))}</h1></div></div>
       ${remoteSwitchNote(S.remote)}
