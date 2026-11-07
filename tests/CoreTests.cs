@@ -5652,6 +5652,12 @@ static partial class CoreTests {
     Check(DpsNames.SkillIcon(226601) == "skill_22660" && DpsNames.SkillIcon(987654321) == "", "names: skill icon");
     bool talent = false; foreach (var tid in new[] { 226630, 226640, 226650 }) if (DpsNames.Skill(tid, true).StartsWith("Талант", StringComparison.Ordinal)) talent = true;
     Check(talent && (DpsNames.Skill(226650, true).Contains("5") || DpsNames.Skill(226650, true).Contains("«")), "names: a talent is labelled by its star or its quoted word");
+    // the picture atlases (tools/dps-art.py): sizes of app/res/dps_*.* are 1536 wide for the two JPEG grids
+    var hd = DpsArtIndex.Head(2266); var si = DpsArtIndex.Skill(226601);
+    Check(hd != null && hd.Length == 4 && hd[2] == 48 && hd[0] + 48 <= 1536 && hd[1] + 48 <= 480 && DpsArtIndex.Head(98765) == null, "art: a hero's portrait is a 48 px cell of the heads grid");
+    Check(si != null && si[2] == 48 && si[0] + 48 <= 1536 && DpsArtIndex.Skill(987654321) == null, "art: a skill's icon is a 48 px cell of the skills grid");
+    Check(DpsArtIndex.Piece("bar_bg") != null && DpsArtIndex.Piece("common_bg_popup_titel")[2] == 539 && DpsArtIndex.Piece("nope") == null, "art: UI pieces keep their size");
+    Check(DpsArtIndex.Rarity(2266) == 5 && DpsArtIndex.ClassPiece(2266) == "prof_Mage" && DpsArtIndex.Faction(2266) > 0 && DpsArtIndex.Rarity(98765) == 0 && DpsArtIndex.ClassPiece(98765) == "", "art: rarity, class and faction of a hero");
     // the grouped list
     var raw = new List<DpsSkill> {
       new DpsSkill { Id = 226609, Amount = 600, Share = 0.6, Dps = 6 }, new DpsSkill { Id = 226601, Amount = 100, Share = 0.1, Dps = 1 },
