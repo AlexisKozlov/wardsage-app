@@ -924,6 +924,7 @@ static partial class CoreTests {
     RealRangeOpenerTests();
     Backoff409Tests();
     SiteRouteTests();
+    SiteRouteNetTests();
     ScreenTopTests();
     ScreenMapTests();
     SellHintTests();
@@ -4836,6 +4837,105 @@ static partial class CoreTests {
       System.IO.File.WriteAllText(file, "{\"active\":\"https://evil.example\",\"until\":\"2999-01-01T00:00:00Z\",\"strikes\":1}");
       Eq(M, mk().Resolve(M, true), "a foreign host in site-route.json is ignored");
     } finally { try { System.IO.Directory.Delete(dir, true); } catch (Exception) { } }
+  }
+
+  sealed class RouteServer {
+    public System.Net.HttpListener L = new System.Net.HttpListener(); public int Port;
+    public readonly List<string> Hits = new List<string>(); public readonly List<string> Auth = new List<string>();
+    public Action<System.Net.HttpListenerContext> Handler;
+    public System.Threading.ManualResetEvent Stop = new System.Threading.ManualResetEvent(false);
+    public string Url { get { return "http://127.0.0.1:" + Port; } }
+    public bool Start(Action<System.Net.HttpListenerContext> h) {
+      Handler = h;
+      for (int i = 0; i < 30; i++) {
+        Port = 20000 + new Random(Guid.NewGuid().GetHashCode()).Next(30000);
+        L.Prefixes.Clear(); L.Prefixes.Add(Url + "/");
+        try { L.Start(); break; } catch (Exception) { }
+      }
+      if (!L.IsListening) return false;
+      var t = new System.Threading.Thread(() => {
+        while (L.IsListening) {
+          System.Net.HttpListenerContext ctx;
+          try { ctx = L.GetContext(); } catch (Exception) { return; }
+          var c = ctx;
+          lock (Hits) { Hits.Add(c.Request.HttpMethod + " " + c.Request.Url.AbsolutePath); Auth.Add(c.Request.Headers["Authorization"]); }
+          new System.Threading.Thread(() => { try { Handler(c); } catch (Exception) { } }).Start();
+        }
+      });
+      t.IsBackground = true; t.Start();
+      return true;
+    }
+    public int Count(string prefix) { lock (Hits) { int n = 0; foreach (var h in Hits) if (h.StartsWith(prefix)) n++; return n; } }
+    public void Close() { Stop.Set(); try { L.Stop(); } catch (Exception) { } }
+    public static void Json(System.Net.HttpListenerContext c, int code, string body) {
+      byte[] b = System.Text.Encoding.UTF8.GetBytes(body); c.Response.StatusCode = code; c.Response.ContentType = "application/json";
+      c.Response.ContentLength64 = b.Length; c.Response.OutputStream.Write(b, 0, b.Length); c.Response.Close();
+    }
+  }
+
+  static void SiteRouteNetTests() {
+    Console.WriteLine("SiteRoute: two real local servers (HttpListener), the clients' own timeouts and statuses");
+    var a = new RouteServer(); var b = new RouteServer();
+    int oldTimeout = SyncClient.TimeoutMs;
+    try {
+      bool both = a.Start(c => { a.Stop.WaitOne(30000); try { c.Response.Abort(); } catch (Exception) { } }) && b.Start(c => {
+        if (c.Request.Url.AbsolutePath == "/api/extractor/app-config") RouteServer.Json(c, 200, "{\"readEnabled\":true,\"features\":{}}");
+        else RouteServer.Json(c, 200, "{\"plans\":[]}");
+      });
+      Check(both, "route net: both local listeners started");
+      if (!both) return;
+      string dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "rf-routenet-" + Guid.NewGuid().ToString("N")); System.IO.Directory.CreateDirectory(dir);
+      try {
+        string A = a.Url, B = b.Url;
+        var rt = new SiteRoute(new[] { A, B }, () => DateTime.UtcNow, null, System.IO.Path.Combine(dir, "site-route.json"), s => { });
+        rt.Run = act => act();
+        SyncClient.TimeoutMs = 2000;
+        Eq(A, rt.Resolve(A, true), "route net: the preferred server is used first");
+        // failure 1: the main server takes the connection and says nothing (8 s timeout of RemoteSwitches.Fetch: reached == false)
+        bool reached; var sw = RemoteSwitches.Fetch(rt.Resolve(A, true), out reached);
+        Check(sw == null && !reached, "route net: Fetch against a silent server: reached == false");
+        rt.Note(A, !reached);
+        Eq(A, rt.Resolve(A, true), "route net: one failure: still the preferred server");
+        // failure 2: the main server reads 16 KB of the sync body and then says nothing (what the Contabo block does): Timeout
+        a.Handler = c => { var buf = new byte[16384]; int got = 0, k; try { while (got < 16384 && (k = c.Request.InputStream.Read(buf, got, 16384 - got)) > 0) got += k; } catch (Exception) { } a.Stop.WaitOne(20000); try { c.Response.Abort(); } catch (Exception) { } };
+        var rnd = new Random(5); var junk = new byte[30000]; rnd.NextBytes(junk);
+        string json = "{\"pad\":\"" + Convert.ToBase64String(junk) + "\"}";
+        var sr = SyncClient.Send(rt.Resolve(A, true), "rf_testcode", json);
+        Eq(SyncStatus.Timeout, sr.Status, "route net: /api/sync cut after 16 KB: Timeout");
+        Check(SiteRoute.IsNoAnswer(sr.Status), "route net: Timeout counts as no answer");
+        rt.Note(A, SiteRoute.IsNoAnswer(sr.Status));
+        string site = rt.Resolve(A, true);
+        Eq(B, site, "route net: after the second failure the route goes to the spare server");
+        Check(b.Count("GET /api/extractor/app-config") == 1 && b.Auth[0] == null, "route net: the probe is one GET of app-config without a token");
+        var pl = PlansClient.List(site, "rf_plancode", "ru");
+        Check(pl.HttpCode == 200 && b.Count("GET /api/extractor/plans") == 1, "route net: PlansClient.List reached the second server");
+        string seen = null; lock (b.Hits) { for (int i = 0; i < b.Hits.Count; i++) if (b.Hits[i].StartsWith("GET /api/extractor/plans")) seen = b.Auth[i]; }
+        Eq("Bearer rf_plancode", seen, "route net: the second server got the Authorization header");
+        Check(!SiteRoute.IsNoAnswer(pl.Status), "route net: an answered list is no failure");
+        Check(SiteRoute.IsNoAnswer(SyncStatus.Unreachable) && !SiteRoute.IsNoAnswer(SyncStatus.InvalidToken) && !SiteRoute.IsNoAnswer(SyncStatus.RateLimited) && !SiteRoute.IsNoAnswer(SyncStatus.ServerError)
+          && !SiteRoute.IsNoAnswer(PlansStatus.ServerError) && !SiteRoute.IsNoAnswer(PlansStatus.NotFound) && SiteRoute.IsNoAnswer(PlansStatus.Unreachable), "route net: only no-answer statuses count");
+
+        // a main server that answers 401 / 429 / 503 / 404 / 409 / 422 does not switch, however often
+        a.Close();
+        var a2 = new RouteServer(); int code = 401;
+        Check(a2.Start(c => RouteServer.Json(c, code, "{\"ok\":false}")), "route net: a second main listener started");
+        string A2 = a2.Url;
+        var rt2 = new SiteRoute(new[] { A2, B }, () => DateTime.UtcNow, null, null, s => { });
+        rt2.Run = act => act();
+        int probesBefore = b.Count("GET /api/extractor/app-config");
+        foreach (int cd in new[] { 401, 404, 409, 422, 429, 503, 500 }) {
+          code = cd;
+          for (int i = 0; i < 3; i++) {
+            var r1 = SyncClient.Send(rt2.Resolve(A2, true), "rf_x", "{}"); rt2.Note(A2, SiteRoute.IsNoAnswer(r1.Status));
+            var r2 = PlansClient.List(rt2.Resolve(A2, true), "rf_x", "ru"); rt2.Note(A2, SiteRoute.IsNoAnswer(r2.Status));
+            bool rc; RemoteSwitches.Fetch(rt2.Resolve(A2, true), out rc); rt2.Note(A2, !rc && cd < 500);
+          }
+        }
+        Eq(A2, rt2.Resolve(A2, true), "route net: 401, 404, 409, 422, 429, 5xx answers never switch");
+        Eq(probesBefore, b.Count("GET /api/extractor/app-config"), "route net: and nothing is probed for them");
+        a2.Close();
+      } finally { try { System.IO.Directory.Delete(dir, true); } catch (Exception) { } }
+    } finally { SyncClient.TimeoutMs = oldTimeout; a.Close(); b.Close(); }
   }
 
   static void Backoff409Tests() {

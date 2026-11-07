@@ -112,6 +112,13 @@ namespace RealmForge {
       });
     }
 
+    /// <summary>Report by the outcome: noAnswer true = NoteNoAnswer, false = NoteAnswer.</summary>
+    public void Note(string usedSite, bool noAnswer) { if (noAnswer) NoteNoAnswer(usedSite); else NoteAnswer(usedSite); }
+
+    /// <summary>Only "no answer" counts: no connection, a timeout, a cut connection, TLS. 401, 404, 409, 422, 429, 5xx are answers.</summary>
+    public static bool IsNoAnswer(SyncStatus s) { return s == SyncStatus.Unreachable || s == SyncStatus.Timeout; }
+    public static bool IsNoAnswer(PlansStatus s) { return s == PlansStatus.Unreachable; }
+
     /// <summary>A request to <paramref name="usedSite"/> got an HTTP answer (any status). The window of failures is not reset by it.</summary>
     public void NoteAnswer(string usedSite) { }
 
